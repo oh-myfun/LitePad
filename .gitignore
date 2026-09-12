@@ -1,0 +1,12 @@
+node_modules/
+dist/
+target/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+.vite/
+src-tauri/gen/
+tsconfig.tsbuildinfo
+generated-images/

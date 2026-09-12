@@ -1,0 +1,1031 @@
+/* LiteMD 全局样式 —— 全部颜色走 CSS 变量，主题切换只改 data-theme */
+
+:root {
+  --font-ui: "Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", "Cascadia Mono", Consolas,
+    "Microsoft YaHei UI", monospace;
+  --font-size: 14px;
+  --radius: 5px;
+  --transition: 120ms ease;
+}
+
+:root[data-theme="dark"] {
+  /* color-scheme 让 Chromium 的原生控件（滚动条、下拉、表单）按暗色渲染 */
+  color-scheme: dark;
+  --bg: #1b1d1f;
+  --bg-toolbar: #1b1d1f;
+  --bg-status: #17191b;
+  --bg-elevated: #26292d;
+  --bg-hover: #2f3338;
+  --border: #34383d;
+  --fg: #d8dbe0;
+  --fg-muted: #8b9299;
+  --accent: #4c9ffe;
+  --accent-fg: #ffffff;
+  --danger: #f47067;
+  --warn: #e2b341;
+  /* 滚动条配色（thumb 用半透明白，能压在任何区域背景上都协调） */
+  --sb-thumb: rgba(255, 255, 255, 0.22);
+  --sb-thumb-hover: rgba(255, 255, 255, 0.36);
+  --sb-thumb-active: rgba(255, 255, 255, 0.46);
+  /* 查找命中高亮（编辑器内） */
+  --find-match: rgba(255, 214, 0, 0.26);
+  --find-match-active: rgba(255, 160, 0, 0.44);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --bg-toolbar: #f6f7f8;
+  --bg-status: #eef0f2;
+  --bg-elevated: #ffffff;
+  --bg-hover: #e6e8eb;
+  --border: #dcdfe3;
+  --fg: #24292f;
+  --fg-muted: #6a737d;
+  --accent: #0969da;
+  --accent-fg: #ffffff;
+  --danger: #cf222e;
+  --warn: #9a6700;
+  /* 滚动条配色（thumb 用半透明黑，浅色区域上可见且不刺眼） */
+  --sb-thumb: rgba(0, 0, 0, 0.24);
+  --sb-thumb-hover: rgba(0, 0, 0, 0.38);
+  --sb-thumb-active: rgba(0, 0, 0, 0.5);
+  /* 查找命中高亮（编辑器内） */
+  --find-match: rgba(255, 214, 0, 0.55);
+  --find-match-active: rgba(255, 150, 0, 0.7);
+}
+
+/* ---------- 滚动条：全应用统一 + 随深浅色联动 ----------
+   WebView2 默认滚动条是 Windows 系统样式，深色界面里会出现一条浅色亮条。
+   这里统一成细窄、圆角、无箭头的 overlapped 风格：轨道透明（露出区域背景），
+   thumb 走 --sb-* 变量随主题切换。标准属性（scrollbar-width/color）与
+   Chromium 的 ::-webkit-scrollbar 双写，任一生效都能保持一致的观感。 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sb-thumb) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+/* 去掉两端的箭头/按钮，只留滑块 */
+::-webkit-scrollbar-button {
+  display: none;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--sb-thumb);
+  border-radius: 6px;
+  /* 内缩 2px 形成悬浮观感；background-clip 保证边框不显示 thumb 颜色 */
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--sb-thumb-hover);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:active {
+  background: var(--sb-thumb-active);
+  background-clip: padding-box;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-ui);
+  font-size: var(--font-size);
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ---------- 顶栏（菜单 + 文档名 + 图标，参考 Win11 记事本单行布局） ---------- */
+
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  flex: 0 0 34px;
+  padding: 0 8px;
+  background: var(--bg-toolbar);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+.menu-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  background: transparent;
+}
+
+.menu-btn {
+  font-size: 12.5px;
+  padding: 2px 10px;
+  color: var(--fg-muted);
+  border-radius: var(--radius);
+}
+
+.menu-btn:hover,
+.menu-btn.menu-open {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.mnemonic {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.menu-sep {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border);
+}
+
+.menu-kbd {
+  margin-left: 24px;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+/* ---------- 图标按钮组（顶栏右侧） ---------- */
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.toolbar-actions .sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 5px;
+  background: var(--border);
+}
+
+.tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 26px;
+  padding: 0;
+  color: var(--fg-muted);
+}
+
+.tool-btn:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.tool-btn.tool-btn-active {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.tool-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.tool-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.tool-btn:disabled:hover {
+  background: transparent;
+  color: var(--fg-muted);
+}
+
+button {
+  font-family: inherit;
+  font-size: var(--font-size);
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition);
+}
+
+button:hover {
+  background: var(--bg-hover);
+}
+
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ---------- 标签栏 ---------- */
+
+.tabstrip {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 2px 6px 0;
+  background: var(--bg-status);
+  border-bottom: 1px solid var(--border);
+  /* 不显示滚动条：放不下的标签折叠进右侧下拉按钮，滚轮切换显示区间 */
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 10px;
+  max-width: 200px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  color: var(--fg-muted);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  transition: background 0.12s ease;
+}
+
+.tab-dragging {
+  opacity: 0.45;
+}
+
+.tab-drag-over {
+  border-left: 2px solid var(--accent, #4a9eff);
+  padding-left: 8px;
+}
+
+.tab:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.tab-active {
+  background: var(--bg);
+  border-color: var(--border);
+  color: var(--fg);
+}
+
+.tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.tab-mark {
+  color: var(--warn);
+  font-size: 10px;
+  min-width: 10px;
+  text-align: center;
+}
+
+.tab-close {
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1;
+  padding: 1px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.tab-close:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+/* ---------- 悬浮查找 / 替换栏（应用级浮层，不绑定文件/面板） ---------- */
+
+.find-bar {
+  position: fixed;
+  /* 初始位置：打开时由 JS 按窗口尺寸复位，并记忆上次拖动的位置 */
+  left: 24px;
+  top: 48px;
+  z-index: 60;
+  width: 460px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+}
+
+.find-bar-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--fg-muted);
+  /* 整条标题栏就是拖动把手 */
+  cursor: move;
+  user-select: none;
+}
+
+.find-x {
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+}
+.find-x:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.search-input {
+  flex: 1 1 auto;
+  min-width: 60px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.search-count {
+  color: var(--fg-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  min-width: 60px;
+  text-align: center;
+}
+
+.find-btn {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg-muted);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.find-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.find-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 「查找全部」是跨文件范围的主操作 */
+.find-primary {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.find-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.find-scope {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+  padding: 3px 4px;
+  flex: 0 0 auto;
+}
+
+.find-folder {
+  flex: 1 1 120px;
+}
+
+.find-results {
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.find-hit {
+  display: flex;
+  gap: 8px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  align-items: baseline;
+}
+
+.find-hit:hover {
+  background: var(--bg-hover);
+}
+
+.find-hit-loc {
+  color: var(--accent);
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+
+.find-hit-text {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.find-status {
+  font-size: 11px;
+  color: var(--fg-muted);
+  min-height: 14px;
+}
+
+/* 编辑器内的查找命中高亮（由悬浮查找栏驱动） */
+.cm-find-match {
+  background: var(--find-match);
+  border-radius: 2px;
+}
+.cm-find-match-active {
+  background: var(--find-match-active);
+  outline: 1px solid var(--accent);
+}
+
+/* ---------- 设置对话框 ---------- */
+
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.settings-dialog {
+  width: 420px;
+  max-height: 80vh;
+  overflow: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+}
+
+.settings-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--fg);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.settings-label {
+  flex: 0 0 72px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.settings-dialog select,
+.settings-dialog input[type="number"] {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+}
+
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.settings-dialog hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+
+.settings-keys {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 16px;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.settings-kbd {
+  display: inline-block;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--fg);
+}
+
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.settings-ok,
+.settings-cancel {
+  padding: 5px 16px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-ok {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+.settings-cancel {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+/* ---------- 分屏布局 ---------- */
+
+#main-row {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#toc-panel {
+  height: 100%;
+  /* 面板配色统一在 preview.css 的 .toc-panel（走全局主题变量）；这里不再重复定义背景 */
+}
+
+.layout-area {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.layout-split {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.layout-h {
+  flex-direction: row;
+}
+
+.layout-v {
+  flex-direction: column;
+}
+
+.layout-sep {
+  flex: 0 0 5px;
+  background: var(--border);
+  z-index: 5;
+}
+
+.layout-sep-h {
+  cursor: col-resize;
+}
+
+.layout-sep-v {
+  cursor: row-resize;
+}
+
+.layout-sep:hover {
+  background: var(--accent);
+}
+
+.layout-panel {
+  display: flex;
+  flex-direction: column;
+  /* 叶子面板必须可伸展：单面板撑满窗口；分屏时以内联 flex-basis 控制比例 */
+  flex: 1 1 auto;
+  min-width: 120px;
+  min-height: 80px;
+  border: 1px solid transparent;
+  /* 拖拽落点预览层（.split-preview）的定位基准：
+     必须锚定到面板自身，否则嵌套分屏时高亮画在整个布局区的一半上 */
+  position: relative;
+}
+
+.layout-panel-active {
+  /* 活动面板不做强调边框，避免视觉噪音；标签栏 active 已足够 */
+}
+
+/* 分屏拖拽预览层（Xshell 式方向高亮） */
+.split-preview {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 20;
+  display: none;
+}
+.split-preview.show {
+  display: block;
+}
+.split-preview::after {
+  content: "";
+  position: absolute;
+  background: var(--accent);
+  opacity: 0.22;
+  border: 2px solid var(--accent);
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+.split-preview.zone-left::after {
+  left: 0;
+  top: 0;
+  bottom: 0;
+  right: 50%;
+}
+.split-preview.zone-right::after {
+  right: 0;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+}
+.split-preview.zone-top::after {
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 50%;
+}
+.split-preview.zone-bottom::after {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: 50%;
+}
+.split-preview.zone-center::after {
+  inset: 0;
+}
+
+.panel-head {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  background: var(--bg-status);
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-tabstrip {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 2px 4px 0;
+  /* 不显示滚动条：溢出标签折叠进 .tab-more 下拉按钮，滚轮切换显示区间 */
+  overflow: hidden;
+}
+
+/* 折叠标签下拉：右侧常驻，靠 margin-left:auto 顶到末尾 */
+.tab-more {
+  flex: 0 0 auto;
+  margin-left: auto;
+  align-self: center;
+  min-width: 26px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.tab-more:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.panel-ops {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+}
+
+.panel-op {
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 13px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.panel-op:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.panel-op:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.panel-op:disabled:hover {
+  background: transparent;
+  color: var(--fg-muted);
+}
+
+.panel-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-host .cm-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* ---------- 行号 gutter 主题化 ----------
+   CM 默认/oneDark 的 gutter 配色不跟随 app 主题变量；
+   这里用高优先级选择器统一走 CSS 变量，深浅色切换时联动。 */
+.panel-host .cm-editor .cm-gutters {
+  background: var(--bg-toolbar);
+  color: var(--fg-muted);
+  border-right: 1px solid var(--border);
+  transition: background-color var(--transition), color var(--transition),
+    border-color var(--transition);
+}
+
+.panel-host .cm-editor .cm-activeLineGutter {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+/* 折叠图标（.cm-fold-marker 由 editor.ts 的 markerDOM 生成）：
+   chevron SVG + 悬停高亮，替代默认 "⌄/›" 文本字形 */
+.panel-host .cm-editor .cm-foldGutter .cm-gutterElement {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 5px;
+  cursor: pointer;
+}
+
+.panel-host .cm-editor .cm-fold-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  color: var(--fg-muted);
+  opacity: 0.7;
+  transition: background-color var(--transition), color var(--transition),
+    opacity var(--transition);
+}
+
+.panel-host .cm-editor .cm-fold-marker:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+  opacity: 1;
+}
+
+body.layout-dragging {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* 标签指针拖拽：抓取光标 + 禁止文本选区（指针拖拽没有原生 DnD 的光标/选区豁免） */
+body.tab-drag-active,
+body.tab-drag-active * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+/* ---------- 编辑区 ---------- */
+
+.editor-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.editor-host .cm-editor {
+  height: 100%;
+  font-family: var(--font-mono);
+  font-size: var(--font-size);
+}
+
+.editor-host .cm-scroller {
+  overflow: auto;
+}
+
+/* ---------- 状态栏 ---------- */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 26px;
+  flex: 0 0 26px;
+  padding: 0 8px;
+  background: var(--bg-status);
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--fg-muted);
+  user-select: none;
+}
+
+/* 查看 > 状态栏 关闭态 */
+.statusbar.statusbar-hidden {
+  display: none;
+}
+
+/* ---------- 转到行浮层（Ctrl+G） ---------- */
+
+.goto-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.18);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.goto-box {
+  margin-top: 72px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+}
+
+.goto-label {
+  font-size: 13px;
+  color: var(--fg);
+  white-space: nowrap;
+}
+
+.goto-input {
+  width: 120px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.goto-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.sb-item {
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+.sb-grow {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sb-btn {
+  font-size: 12px;
+  border-radius: 3px;
+  padding: 1px 7px;
+}
+
+.sb-btn:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+/* 状态栏视图切换按钮激活态（预览中）+ M↓ 徽标 */
+.sb-btn.sb-btn-active {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.sb-md-badge {
+  font-weight: 700;
+  margin-right: 3px;
+}
+
+/* 语言/格式项（sb-lang）：md 文件时带 .sb-btn 可点击；
+   其他类型为纯展示，去掉按钮的 hover 底色与手型指针 */
+.sb-lang:not(.sb-btn) {
+  cursor: default;
+}
+.sb-lang:not(.sb-btn):hover {
+  background: transparent;
+  color: var(--fg-muted);
+}
+
+.sb-message-error {
+  color: var(--danger);
+}
+
+/* ---------- 弹出菜单 ---------- */
+
+.popup-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 150px;
+  padding: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  font-size: 13px;
+}
+
+.popup-menu button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 5px 9px;
+  text-align: left;
+  border-radius: 3px;
+}
+
+.popup-menu button .check {
+  width: 16px;
+  flex: 0 0 16px;
+  color: var(--accent);
+}

@@ -1,0 +1,16 @@
+# LiteMD 工具链锁定
+#
+# 为什么不是常规的 stable-x86_64-pc-windows-msvc：
+#   本机没有 MSVC 生成工具（无 link.exe），而 build script / proc-macro 必须
+#   编译到宿主平台。因此宿主工具链必须选 GNU，由 MSYS2 MinGW-w64 提供链接器。
+#
+# 前置条件（一次性）：
+#   rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
+#   并把 MSYS2 的 MinGW 加入 PATH（见 scripts/dev.sh）：
+#     /c/msys64/mingw64/bin
+#
+# 若日后安装了 VS2022 生成工具想切回 MSVC：
+#   把下面 channel 改回 "stable"，或直接删除本文件，然后重新 cargo build。
+[toolchain]
+channel = "stable-x86_64-pc-windows-gnu"
+profile = "minimal"

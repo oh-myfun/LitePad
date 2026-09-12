@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "LiteMD 默认权限集：窗口标题/关闭 + 原生文件对话框。文件读写全部由 Rust 自定义命令承担，不授予前端 fs 权限。",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-title",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "dialog:default"
+  ]
+}

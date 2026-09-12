@@ -1,0 +1,324 @@
+/* Markdown 预览样式（M3）——应用内预览与 HTML 导出共用 */
+
+.md-preview {
+  --md-fg: #1f2328;
+  --md-bg: #ffffff;
+  --md-muted: #656d76;
+  --md-border: #d8dee4;
+  --md-code-bg: #f6f8fa;
+  --md-quote-bg: #f6f8fa;
+  --md-link: #0969da;
+
+  overflow-y: auto;
+  padding: 16px 24px 48px;
+  background: var(--md-bg);
+  color: var(--md-fg);
+  /* 预览字号跟随应用字号（--font-size 由 :root 提供，缩放/设置都改它）；
+     导出 HTML 只注入本文件，所以要给 14px 兜底 */
+  font-size: calc(var(--font-size, 14px) + 1px);
+  /* 行距由设置驱动（--md-line-height 设在 :root 上），缺省 1.7 */
+  line-height: var(--md-line-height, 1.7);
+  word-wrap: break-word;
+}
+
+:root[data-theme="dark"] .md-preview {
+  --md-fg: #e6e8eb;
+  --md-bg: #1e2227;
+  --md-muted: #9aa4ae;
+  --md-border: #3a4149;
+  --md-code-bg: #262c33;
+  --md-quote-bg: #262c33;
+  --md-link: #539bf5;
+}
+
+.md-preview .md-block {
+  max-width: 860px;
+  margin: 0 auto;
+}
+
+.md-preview .md-block > :first-child {
+  margin-top: 0;
+}
+.md-preview .md-block > :last-child {
+  margin-bottom: 0;
+}
+
+.md-preview h1,
+.md-preview h2,
+.md-preview h3,
+.md-preview h4,
+.md-preview h5,
+.md-preview h6 {
+  margin: 24px 0 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.md-preview h1 {
+  font-size: 1.7em;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--md-border);
+}
+.md-preview h2 {
+  font-size: 1.4em;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--md-border);
+}
+.md-preview h3 {
+  font-size: 1.2em;
+}
+.md-preview h4 {
+  font-size: 1.05em;
+}
+
+.md-preview p {
+  margin: 10px 0;
+}
+.md-preview a {
+  color: var(--md-link);
+  text-decoration: none;
+}
+.md-preview a:hover {
+  text-decoration: underline;
+}
+
+.md-preview ul,
+.md-preview ol {
+  margin: 10px 0;
+  padding-left: 26px;
+}
+.md-preview li {
+  margin: 4px 0;
+}
+.md-preview li.task-item {
+  list-style: none;
+  margin-left: -20px;
+}
+.md-preview input.md-task {
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.md-preview blockquote {
+  margin: 12px 0;
+  padding: 4px 16px;
+  border-left: 4px solid var(--md-border);
+  background: var(--md-quote-bg);
+  color: var(--md-muted);
+}
+
+.md-preview code {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.88em;
+  background: var(--md-code-bg);
+  border-radius: 4px;
+  padding: 2px 5px;
+}
+.md-preview pre.md-code,
+.md-preview pre:not(.mermaid-src) {
+  margin: 12px 0;
+  padding: 12px 14px;
+  background: var(--md-code-bg);
+  border: 1px solid var(--md-border);
+  border-radius: 6px;
+  overflow-x: auto;
+  /* em：跟随预览根字号一起缩放（Ctrl+滚轮 / Ctrl+=） */
+  font-size: 0.87em;
+  line-height: 1.5;
+}
+.md-preview pre code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+/* Shiki 双主题 */
+.md-preview pre.shiki span {
+  color: var(--shiki-light);
+}
+:root[data-theme="dark"] .md-preview pre.shiki span {
+  color: var(--shiki-dark);
+}
+
+.md-preview table {
+  border-collapse: collapse;
+  margin: 12px 0;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.md-preview th,
+.md-preview td {
+  border: 1px solid var(--md-border);
+  padding: 6px 12px;
+}
+.md-preview th {
+  background: var(--md-code-bg);
+  font-weight: 600;
+}
+
+.md-preview hr {
+  border: none;
+  border-top: 1px solid var(--md-border);
+  margin: 20px 0;
+}
+
+.md-preview img {
+  max-width: 100%;
+  border-radius: 4px;
+}
+
+.md-preview .footnotes {
+  margin-top: 32px;
+  border-top: 1px solid var(--md-border);
+  font-size: 0.9em;
+  color: var(--md-muted);
+}
+
+/* 数学公式占位（KaTeX 加载前）与结果 */
+.md-preview .math-inline-src,
+.md-preview .math-display-src {
+  font-family: Consolas, monospace;
+  font-size: 0.9em;
+  color: var(--md-muted);
+}
+.md-preview .math-display {
+  margin: 12px 0;
+  overflow-x: auto;
+}
+
+/* Mermaid */
+.md-preview .md-mermaid {
+  margin: 12px 0;
+  text-align: center;
+  overflow-x: auto;
+}
+.md-preview pre.mermaid-src {
+  padding: 12px 14px;
+  background: var(--md-code-bg);
+  border: 1px dashed var(--md-border);
+  border-radius: 6px;
+  font-size: 0.87em;
+}
+
+/* 大纲 TOC 抽屉（应用内组件，不在 .md-preview 内——必须用 :root 全局主题变量，
+   否则 md 系列变量与面板背景变量在此作用域未定义，永远落到浅色 fallback，不随深浅色联动） */
+.toc-panel {
+  /* 初始宽度：运行期由 attachTocResizer 写 inline width/min-width 覆盖（可拖拽，160–640px） */
+  width: 240px;
+  min-width: 160px;
+  flex: 0 0 auto;
+  border-right: 1px solid var(--border, #ddd);
+  overflow-y: auto;
+  padding: 8px 0;
+  background: var(--bg-elevated, #fafafa);
+}
+
+/* 大纲宽度分隔条：细条常驻，悬停/拖拽时高亮（走全局主题变量以随深浅色联动） */
+.toc-resizer {
+  flex: 0 0 4px;
+  cursor: col-resize;
+  background: transparent;
+}
+.toc-resizer:hover,
+body.layout-dragging .toc-resizer {
+  background: var(--accent, #06c);
+}
+.toc-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 12.5px;
+  color: inherit;
+  padding: 4px 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.toc-item:hover {
+  background: var(--bg-hover, #eee);
+}
+.toc-item.toc-active {
+  color: var(--accent, #06c);
+  font-weight: 600;
+}
+.toc-h1 {
+  padding-left: 12px;
+}
+.toc-h2 {
+  padding-left: 24px;
+}
+.toc-h3 {
+  padding-left: 36px;
+}
+.toc-h4,
+.toc-h5,
+.toc-h6 {
+  padding-left: 48px;
+}
+.toc-empty {
+  padding: 16px 12px;
+  font-size: 12.5px;
+  color: var(--fg-muted, #656d76);
+}
+
+/* 面板内视图：源码 / 预览（分屏是面板级独立功能，面板始终填满窗口） */
+.panel-host {
+  display: flex;
+  min-height: 0;
+}
+.panel-host .panel-editor {
+  flex: 1 1 100%;
+  min-width: 0;
+  /* 关键：flex 项的 min-height:auto = 内容高度（非滚动容器不被豁免），
+     缺了它 .panel-editor 会被整篇文档撑开、被 .panel-host 裁掉 → 无法滚动。
+     md-preview 能滚正是因为它是滚动容器（自动最小尺寸为 0）。 */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.panel-host .panel-editor .cm-editor {
+  flex: 1;
+  min-height: 0;
+}
+/* CM 基础主题只设了 overflow-x:auto；显式声明双轴滚动，
+   源码/非 md 文本与预览一致出现滚动条 */
+.panel-host .panel-editor .cm-scroller {
+  overflow: auto;
+}
+.panel-host.mode-source .md-preview {
+  display: none;
+}
+.panel-host.mode-preview .panel-editor {
+  display: none;
+}
+.panel-host.mode-preview .md-preview {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+/* 打印 / PDF 导出 */
+#print-root {
+  display: none;
+}
+@media print {
+  body.print-mode #app,
+  body.print-mode > *:not(#print-root) {
+    display: none !important;
+  }
+  body.print-mode #print-root {
+    display: block !important;
+  }
+  body.print-mode .md-preview {
+    overflow: visible;
+    background: #fff;
+    color: #000;
+  }
+  body.print-mode .md-preview pre,
+  body.print-mode .md-preview blockquote,
+  body.print-mode .md-preview table,
+  body.print-mode .md-preview .md-mermaid {
+    break-inside: avoid;
+  }
+}

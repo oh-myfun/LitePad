@@ -1,0 +1,32 @@
+[package]
+name = "litemd"
+version = "0.1.0"
+description = "LiteMD - 极度轻量的 Markdown 文本编辑器"
+authors = ["LiteMD"]
+edition = "2021"
+rust-version = "1.77.2"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["devtools", "protocol-asset"] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 编码识别与转换：GB18030/GBK/Big5/Shift-JIS/EUC-KR/UTF-16/Windows-1252
+encoding_rs = "0.8"
+# 非 UTF 编码的统计式猜测（ripgrep 同款）
+chardetng = "0.1"
+# M2 文件监听：外部修改提示
+notify = "6"
+# M2 跨文件搜索的正则支持
+regex = "1"
+base64 = "0.22"
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
