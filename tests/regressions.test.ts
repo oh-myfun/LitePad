@@ -266,4 +266,22 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(rs, "Rust Settings 需要 toc_width 字段并给默认值").toContain("pub toc_width: f64");
     expect(rs, "默认宽度应为 240").toContain("toc_width: 240.0");
   });
+
+  it("B25 应用图标四角圆角必须一致（下边缘与上边缘相同）", () => {
+    // 用户报告：图标下边缘接近直角、上边缘是大圆角。
+    // 修复：scripts/gen_icons.py 用「alpha 与垂直镜像取 min」统一四角；
+    // 断言脚本包含该逻辑且真的从 AI 源图取材（防止退回占位图）。
+    const gen = readFileSync("scripts/gen_icons.py", "utf-8");
+    expect(gen, "必须用垂直镜像统一上下圆角").toMatch(
+      /ImageChops\.darker\(alpha,\s*alpha\.transpose\(Image\.FLIP_TOP_BOTTOM\)\)/,
+    );
+    expect(gen, "必须从 AI 源图生成（而非内置占位图）").toContain("icon_final.png");
+    expect(gen, "ico 必须包含多尺寸（任务栏/资源管理器清晰）").toMatch(/ICO_SIZES/);
+    const conf = readJson("src-tauri/tauri.conf.json");
+    const icons: string[] = conf.bundle?.icon ?? [];
+    expect(
+      icons.some((i) => i.includes("icon.ico")),
+      "bundle.icon 必须含 icon.ico（exe/安装包图标来源）",
+    ).toBe(true);
+  });
 });
