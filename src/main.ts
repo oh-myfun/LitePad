@@ -60,7 +60,8 @@ import {
   type LayoutNode,
 } from "./shell/layout";
 import { showKeymapDialog } from "./shell/keymapdialog";
-import { renderSplitview, type PanelRenderData } from "./shell/splitview";
+import { renderSplitview, panelAt, zoneOf, clearAllDropPreviews, type PanelRenderData } from "./shell/splitview";
+import { needsChoice, showFileDropChoice, type FileDropTarget } from "./shell/filedrop";
 import { renderTabstrip, type TabViewData, type TabstripCallbacks } from "./shell/tabstrip";
 import {
   applyTheme,
@@ -1058,7 +1059,12 @@ function rebuildDocInstances(doc: Doc, text: string): void {
   }
 }
 
-async function doOpen(presetPath?: string, encoding?: string): Promise<void> {
+/** 打开文件。targetPanelId 指定落点面板（文件拖入分屏用）；返回新开/激活的 tabId。 */
+async function doOpen(
+  presetPath?: string,
+  encoding?: string,
+  targetPanelId?: number,
+): Promise<number | null> {
   let target = presetPath;
   if (!target) {
     const picked = await openDialog({
@@ -1066,7 +1072,7 @@ async function doOpen(presetPath?: string, encoding?: string): Promise<void> {
       directory: false,
       filters: TEXT_FILTERS,
     });
-    if (!picked || Array.isArray(picked)) return;
+    if (!picked || Array.isArray(picked)) return null;
     target = picked;
   }
 
@@ -1085,12 +1091,14 @@ async function doOpen(presetPath?: string, encoding?: string): Promise<void> {
         refreshAll();
         scheduleSessionSave();
         showMessage(`${file.name} 已在标签中打开`);
-        return;
+        return inst.tabId;
       }
     }
 
-    const panel = activePanel() ?? [...panels.values()][0];
-    if (!panel) return;
+    const panel = (targetPanelId !== undefined ? getPanel(targetPanelId) : undefined)
+      ?? activePanel()
+      ?? [...panels.values()][0];
+    if (!panel) return null;
     const doc = makeDoc(
       file.tabId,
       file.text,
@@ -1119,9 +1127,64 @@ async function doOpen(presetPath?: string, encoding?: string): Promise<void> {
     );
     logEvent("open", `${file.name} ${file.size}B ${file.encoding}${file.lossy ? " lossy" : ""}`);
     scheduleSessionSave();
+    return tab.tabId;
   } catch (err) {
     showMessage(String(err), true);
+    return null;
   }
+}
+
+// ---------------------------------------------------------------- 文件拖入（B24）
+
+/** Tauri 拖放事件坐标是物理像素，DOM 布局用逻辑像素，按缩放比例换算。 */
+function dropPosOf(p: { x: number; y: number }): { x: number; y: number } {
+  const scale = window.devicePixelRatio || 1;
+  return { x: p.x / scale, y: p.y / scale };
+}
+
+/** 悬停高亮：复用标签拖拽的落点预览层，指明会落到哪个面板的哪个分区。 */
+function showFileDropPreview(x: number, y: number): void {
+  clearAllDropPreviews();
+  const el = panelAt(x, y);
+  if (!el) return;
+  const preview = el.querySelector(".split-preview");
+  if (preview) preview.className = `split-preview show zone-${zoneOf(el.getBoundingClientRect(), x, y)}`;
+}
+
+/** 指针位置 → 落点面板与分区（不在任何面板内为 null，回落到活动面板打开）。 */
+function fileDropTargetAt(x: number, y: number): FileDropTarget | null {
+  const el = panelAt(x, y);
+  if (!el) return null;
+  const id = Number(el.dataset.panelId);
+  if (!Number.isFinite(id)) return null;
+  return { panelId: id, zone: zoneOf(el.getBoundingClientRect(), x, y) };
+}
+
+/** 按落点打开：中央 = 落进该面板；边缘 = 在该面板旁分屏打开。 */
+async function openDroppedAt(path: string, target: FileDropTarget | null): Promise<void> {
+  const tabId = await doOpen(path, undefined, target?.panelId);
+  if (tabId === null || !target || target.zone === "center") return;
+  const dir = target.zone === "left" || target.zone === "right" ? "h" : "v";
+  const newFirst = target.zone === "left" || target.zone === "top";
+  splitPanelWithTab(target.panelId, dir, tabId, newFirst, false);
+}
+
+/** 「插入文件路径」：把路径文本插到当前活动编辑器光标处（无编辑器则回落为打开）。 */
+function insertDroppedPath(path: string): void {
+  const panel = activePanel();
+  if (!panel?.view) {
+    void doOpen(path);
+    return;
+  }
+  const view = panel.view.view;
+  const pos = view.state.selection.main.head;
+  view.dispatch({
+    changes: { from: pos, insert: path },
+    selection: { anchor: pos + path.length },
+    scrollIntoView: true,
+  });
+  panel.view.focus();
+  showMessage(`已插入路径 ${path}`);
 }
 
 async function confirmLossy(chars: LossyChar[], encoding: string): Promise<void> {
@@ -2882,14 +2945,37 @@ async function bootstrap(): Promise<void> {
     if (e.payload?.path) handleFileChanged(e.payload.path);
   }).catch(() => {});
 
-  // 从资源管理器拖入文件：WebView2 原生拖放（dragDropEnabled: true）→ 逐个打开。
-  // 这是拿到真实文件路径的唯一方式（HTML5 file drop 只有内容没有路径），
-  // 打开后保留磁盘关联（监听外部修改 / 会话恢复 / 直接保存）。
+  // 从资源管理器拖入文件：WebView2 原生拖放（dragDropEnabled: true）→ 这是拿到
+  // 真实文件路径的唯一方式（HTML5 file drop 只有内容没有路径），打开后保留磁盘关联
+  // （监听外部修改 / 会话恢复 / 直接保存）。
+  // B24：悬停时高亮落点面板/分区；落地按分区打开（中央=该面板，边缘=分屏）；
+  //      单个 Markdown 弹菜单选「打开文档 / 插入文件路径」。
   void getCurrentWebview()
     .onDragDropEvent((ev) => {
-      if (ev.payload.type === "drop") {
-        for (const p of ev.payload.paths) void doOpen(p);
+      const p = ev.payload;
+      if (p.type === "enter" || p.type === "over") {
+        const pos = dropPosOf(p.position);
+        showFileDropPreview(pos.x, pos.y);
+        return;
       }
+      if (p.type === "leave") {
+        clearAllDropPreviews();
+        return;
+      }
+      // drop
+      const pos = dropPosOf(p.position);
+      const target = fileDropTargetAt(pos.x, pos.y);
+      clearAllDropPreviews();
+      if (needsChoice(p.paths)) {
+        const path = p.paths[0];
+        const name = path.split(/[\\/]/).pop() ?? path;
+        showFileDropChoice(name, pos, {
+          onOpen: () => void openDroppedAt(path, target),
+          onInsert: () => insertDroppedPath(path),
+        });
+        return;
+      }
+      for (const path of p.paths) void openDroppedAt(path, target);
     })
     .catch(() => {});
 

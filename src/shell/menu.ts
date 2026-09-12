@@ -17,8 +17,13 @@ export function closePopupMenu(): void {
   }
 }
 
-/** 在锚点元素附近弹出轻量菜单（默认向上弹，空间不足自动向下）。 */
-export function showPopupMenu(anchor: HTMLElement, items: MenuItem[]): void {
+/** 在锚点元素附近弹出轻量菜单（默认向上弹，空间不足自动向下）。
+ *  也可不传锚点、直接给逻辑坐标 `at`（文件拖放落点等无现成元素的场景）。 */
+export function showPopupMenu(
+  anchor: HTMLElement | null,
+  items: MenuItem[],
+  at?: { x: number; y: number },
+): void {
   closePopupMenu();
 
   const menu = document.createElement("div");
@@ -57,7 +62,7 @@ export function showPopupMenu(anchor: HTMLElement, items: MenuItem[]): void {
   }
 
   document.body.appendChild(menu);
-  positionMenu(menu, anchor);
+  positionMenu(menu, anchor, at);
 
   const onPointerDown = (e: PointerEvent) => {
     if (!menu.contains(e.target as Node)) closePopupMenu();
@@ -79,13 +84,30 @@ export function showPopupMenu(anchor: HTMLElement, items: MenuItem[]): void {
   };
 }
 
-function positionMenu(menu: HTMLElement, anchor: HTMLElement): void {
+function positionMenu(
+  menu: HTMLElement,
+  anchor: HTMLElement | null,
+  at?: { x: number; y: number },
+): void {
   // 先隐藏测量，避免闪烁
   menu.style.visibility = "hidden";
   menu.style.left = "0px";
   menu.style.top = "0px";
 
-  const rect = anchor.getBoundingClientRect();
+  // 无锚点时用逻辑坐标构造一个虚拟点（宽高为 0，向上弹的空间即 y 上方）
+  const rect = anchor
+    ? anchor.getBoundingClientRect()
+    : ({
+        left: at?.x ?? 0,
+        right: at?.x ?? 0,
+        top: at?.y ?? 0,
+        bottom: at?.y ?? 0,
+        width: 0,
+        height: 0,
+        x: at?.x ?? 0,
+        y: at?.y ?? 0,
+        toJSON() {},
+      } as DOMRect);
   const height = menu.offsetHeight;
   const width = menu.offsetWidth;
 

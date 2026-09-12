@@ -94,7 +94,8 @@ export function consumeTabClickSuppressed(): boolean {
   return v;
 }
 
-function panelAt(x: number, y: number): HTMLElement | null {
+/** 指针位置命中的面板（手动几何判定，jsdom 无布局也可测）。 */
+export function panelAt(x: number, y: number): HTMLElement | null {
   // 手动命中测试而非 elementFromPoint：逻辑确定且可在 jsdom（无布局）下测试
   for (const el of document.querySelectorAll<HTMLElement>(".layout-panel")) {
     const r = el.getBoundingClientRect();
@@ -107,6 +108,11 @@ function clearAllPreviews(): void {
   document.querySelectorAll(".split-preview.show").forEach((el) => {
     el.className = "split-preview";
   });
+}
+
+/** 清掉所有面板的分屏落点预览（标签拖拽与文件拖入共用）。 */
+export function clearAllDropPreviews(): void {
+  clearAllPreviews();
 }
 
 function onTabDragMove(e: MouseEvent): void {
@@ -252,9 +258,10 @@ function buildPanel(
   return panel;
 }
 
-type DropZone = "left" | "right" | "top" | "bottom" | "center";
+export type DropZone = "left" | "right" | "top" | "bottom" | "center";
 
-function zoneOf(rect: DOMRect, x: number, y: number): DropZone {
+/** 指针在面板内的分区：边缘 28% 为分屏方向，中间为移入/排序。 */
+export function zoneOf(rect: DOMRect, x: number, y: number): DropZone {
   const rx = (x - rect.left) / rect.width;
   const ry = (y - rect.top) / rect.height;
   const edge = 0.28;

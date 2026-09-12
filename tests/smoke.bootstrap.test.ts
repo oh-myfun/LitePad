@@ -484,12 +484,36 @@ describe("bootstrap + drag-split smoke", () => {
 
   it("从资源管理器拖入文件必须打开该文件（回归：拖入变成插入内容）", async () => {
     // 用户报告：拖文件进窗口应打开文件，而不是把内容复制进当前文档。
-    // 实现：dragDropEnabled: true + onDragDropEvent(drop) → 逐路径 doOpen。
+    // 实现：dragDropEnabled: true + onDragDropEvent(drop)。
+    // B24：拖入单个 Markdown 时先弹「打开文档 / 插入文件路径」选择菜单，
+    // 选「打开」才真正打开；其他类型 / 多文件仍然直接打开。
     expect(dragDropHandlers.length, "onDragDropEvent 应在启动时注册").toBeGreaterThan(0);
     fireDragDrop(["e.md"]);
     await new Promise((r) => setTimeout(r, 120));
 
     expect(capturedError, `拖入文件不应抛错：${String(capturedError)}`).toBeNull();
+
+    // B24：md 落地应弹选择菜单，且此时文件尚未打开
+    const choiceMenu = document.querySelector(".popup-menu");
+    expect(choiceMenu, "拖入 Markdown 应弹出 打开/插入路径 选择菜单").toBeTruthy();
+    const choices = Array.from(choiceMenu!.querySelectorAll("button")).map((b) => b.textContent ?? "");
+    expect(choices.some((t) => t.includes("打开")), "应有「打开文档」项").toBe(true);
+    expect(choices.some((t) => t.includes("插入文件路径")), "应有「插入文件路径」项").toBe(true);
+    let contentsBefore = Array.from(document.querySelectorAll(".cm-content")).map(
+      (c) => c.textContent ?? "",
+    );
+    expect(
+      contentsBefore.some((t) => t.includes("fifth document from E")),
+      "菜单未选择前不应直接打开",
+    ).toBe(false);
+
+    // 选择「打开」→ 文件作为新标签打开
+    const openBtn = Array.from(choiceMenu!.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").includes("打开"),
+    )!;
+    openBtn.click();
+    await new Promise((r) => setTimeout(r, 120));
+
     const contents = Array.from(document.querySelectorAll(".cm-content")).map(
       (c) => c.textContent ?? "",
     );
@@ -497,6 +521,7 @@ describe("bootstrap + drag-split smoke", () => {
       contents.some((t) => t.includes("fifth document from E")),
       `拖入的 e.md 应作为新标签打开并显示内容，实际：${JSON.stringify(contents)}`,
     ).toBe(true);
+    contentsBefore = [];
   });
 
   it("跨面板点击 tab 必须一次激活（回归：要点两下才激活）", async () => {
