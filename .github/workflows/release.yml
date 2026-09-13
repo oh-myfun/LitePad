@@ -1,5 +1,6 @@
 # LitePad GitHub Release 工作流
-# 触发：推送 v* tag（本地由 scripts/release.sh 创建）
+# 触发：① 推送 v* tag（本地由 scripts/release.sh 创建）
+#       ② 手动派发（workflow_dispatch）—— 用于重跑失败的任务，或对已有 tag 补发
 # 流程：Windows runner（GNU 工具链，与本地一致）→ tsc/vite → tauri build → NSIS → GitHub Release
 name: Release
 
@@ -7,6 +8,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布/重跑的 tag（如 v0.2.0）。留空则用触发时的 ref"
+        required: false
+        type: string
 
 permissions:
   contents: write # 创建 Release 需要写权限
@@ -16,6 +23,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # tag 推送时 ref 就是该 tag；手动派发时按输入 checkout，保证补发的是指定版本
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: actions/setup-node@v4
         with:
@@ -62,6 +72,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          name: LitePad ${{ inputs.tag || github.ref_name }}
           files: src-tauri/target/release/bundle/nsis/*.exe
           generate_release_notes: true
           draft: false

@@ -9,7 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/*.cjs\" eslint.config.js",
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/*.{cjs,mjs}\" eslint.config.js",
     "format": "prettier --write \"src/**/*.{ts,css}\" \"tests/**/*.ts\" \"scripts/*.{cjs,mjs}\" index.html eslint.config.js",
     "format:check": "prettier --check \"src/**/*.{ts,css}\" \"tests/**/*.ts\" \"scripts/*.{cjs,mjs}\" index.html eslint.config.js",
     "test": "node scripts/run-vitest.cjs",

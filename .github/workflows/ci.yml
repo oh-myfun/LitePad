@@ -1,0 +1,72 @@
+# LitePad 持续集成
+# 触发：push 到 main、任意 PR、手动派发
+# 流程：与本地质量门（.githooks）对齐 —— 格式 → lint → 类型 → 前端构建 → vitest → cargo test
+#
+# 说明：本机开发用 MSYS2 MinGW（无 MSVC），宿主工具链由 rust-toolchain.toml
+# 锁定为 stable-x86_64-pc-windows-gnu，故 CI 也必须配 MinGW64 才能链接。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支的旧运行自动取消，避免堆积
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # 与本地一致：MinGW-w64 提供 GNU 工具链的链接环境
+      - name: Set up MSYS2 MinGW64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-toolchain
+
+      - name: Add MinGW to PATH
+        shell: pwsh
+        run: Add-Content $env:GITHUB_PATH "C:\msys64\mingw64\bin"
+
+      # rust-toolchain.toml 锁定 stable-x86_64-pc-windows-gnu，rustup 会自动装宿主
+      - name: Install Rust (GNU host)
+        shell: pwsh
+        run: |
+          rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
+          rustup default stable-x86_64-pc-windows-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Format + lint
+        run: |
+          npm run format:check
+          npm run lint
+
+      - name: Typecheck + frontend build
+        run: |
+          npx tsc -b
+          npx vite build
+
+      - name: Frontend tests (vitest)
+        run: npx vitest run
+
+      - name: Rust tests (cargo test)
+        working-directory: src-tauri
+        run: cargo test
