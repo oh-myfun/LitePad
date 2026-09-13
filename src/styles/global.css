@@ -331,7 +331,8 @@ button:focus-visible {
   left: 24px;
   top: 48px;
   z-index: 60;
-  width: 460px;
+  width: 480px;
+  max-width: calc(100vw - 24px);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -342,12 +343,20 @@ button:focus-visible {
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
 }
 
+/* 修复：display:flex 会覆盖 hidden 属性的 UA 样式（display:none），
+   导致关闭按钮/Esc 把 hidden 置真后浮层仍然可见（回归：查找栏无法关闭） */
+.find-bar[hidden] {
+  display: none;
+}
+
 .find-bar-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
   font-size: 12px;
   color: var(--fg-muted);
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--border);
   /* 整条标题栏就是拖动把手 */
   cursor: move;
   user-select: none;
@@ -359,12 +368,22 @@ button:focus-visible {
   color: var(--fg-muted);
   font-size: 14px;
   line-height: 1;
-  padding: 0 2px;
+  padding: 2px 6px;
+  border-radius: 4px;
   cursor: pointer;
 }
 .find-x:hover {
   color: var(--fg);
   background: var(--bg-hover);
+}
+
+/* 查找/替换/范围行统一为 flex 行，窄窗下允许换行不溢出 */
+.find-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .search-row {
@@ -397,12 +416,25 @@ button:focus-visible {
   text-align: center;
 }
 
+/* 查找栏命中计数（无匹配时置警示色） */
+.find-count {
+  color: var(--fg-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  min-width: 64px;
+  text-align: right;
+  flex: 0 0 auto;
+}
+.find-count:empty {
+  min-width: 0;
+}
+
 .find-btn {
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--fg-muted);
   font-size: 11px;
-  padding: 3px 8px;
+  padding: 3px 10px;
   border-radius: 4px;
   cursor: pointer;
   white-space: nowrap;
@@ -411,6 +443,7 @@ button:focus-visible {
 .find-btn:hover:not(:disabled) {
   background: var(--bg-hover);
   color: var(--fg);
+  border-color: var(--accent);
 }
 
 .find-btn:disabled {
@@ -422,6 +455,10 @@ button:focus-visible {
 .find-primary {
   color: var(--accent);
   border-color: var(--accent);
+}
+.find-primary:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
 }
 
 .find-opt {
@@ -449,7 +486,7 @@ button:focus-visible {
 }
 
 .find-results {
-  max-height: 220px;
+  max-height: 240px;
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -462,10 +499,12 @@ button:focus-visible {
   font-size: 11px;
   cursor: pointer;
   align-items: baseline;
+  border-left: 2px solid transparent;
 }
 
 .find-hit:hover {
   background: var(--bg-hover);
+  border-left-color: var(--accent);
 }
 
 .find-hit-loc {

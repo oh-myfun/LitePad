@@ -292,6 +292,36 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     );
   });
 
+  it("B30 查找栏必须可关闭（[hidden] 不得被 display:flex 覆盖）且预览态接线齐全", () => {
+    // 用户报告：查找/替换悬浮条无法关闭。
+    // 根因：.find-bar { display: flex } 覆盖了 hidden 属性的 UA 样式（display:none），
+    // close() 置 dom.hidden=true 后浮层仍然可见。
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const hiddenRule = css.match(/\.find-bar\[hidden\]\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(hiddenRule, "必须有 .find-bar[hidden] { display: none } 规则").toContain(
+      "display: none",
+    );
+    expect(css, "查找行应有 flex 行布局（.find-row）").toMatch(/\.find-row\s*\{[^}]*display:\s*flex/);
+
+    // 预览态查找接线：高亮应用、重放、步进、清除
+    const main = readFileSync("src/main.ts", "utf-8");
+    expect(main, "applyFindQuery 必须同步预览高亮").toContain("applyPreviewFindEverywhere(q)");
+    expect(main, "重渲染后必须重放预览高亮").toMatch(
+      /renderMarkdownFor[\s\S]{0,600}?applyPreviewFindToPanel\(panel, findSpecOf\(findBar\.getQuery\(\)\)\)/,
+    );
+    expect(main, "clearFindHighlight 必须同时清预览高亮").toMatch(
+      /clearFindHighlight[\s\S]{0,200}?applyFind\(null\)/,
+    );
+    expect(main, "stepFind 必须有预览分支（在预览高亮里步进）").toMatch(
+      /stepFind[\s\S]{0,400}?viewMode === "preview" && panel\.preview/,
+    );
+    const preview = readFileSync("src/markdown/preview.ts", "utf-8");
+    expect(preview, "PreviewPane 必须提供 applyFind/stepFind/findState").toMatch(
+      /applyFind\(|stepFind\(|findState\(/,
+    );
+    expect(preview, "预览命中必须复用编辑器高亮样式类").toContain('cm-find-match');
+  });
+
   it("B25 应用图标四角圆角必须一致（下边缘与上边缘相同）", () => {
     // 用户报告：图标下边缘接近直角、上边缘是大圆角。
     // 修复：scripts/gen_icons.py 用「alpha 与垂直镜像取 min」统一四角；

@@ -82,6 +82,12 @@ export class PreviewPane {
 
   /** 增量 patch：逐 index 比对 html，相同复用节点。 */
   setBlocks(list: MdBlock[], options: { enhanced?: boolean } = {}): void {
+    // 查找标记先拆干净：被替换的 block 会带走标记，而复用的 block 会把
+    // 旧标记留在节点里，导致计数与 DOM 脱节（重放由 main 层在 patch 后进行）
+    if (this.findMarks.length > 0) {
+      this.clearFindMarks();
+      this.findActive = -1;
+    }
     const frag = document.createDocumentFragment();
     const next: BlockNode[] = [];
     let contentChanged = list.length !== this.blocks.length;
@@ -128,6 +134,104 @@ export class PreviewPane {
   clear(): void {
     this.blocks = [];
     this.root.replaceChildren();
+  }
+
+  // ------------------------------------------------ 预览态查找高亮（B30）
+
+  /** 当前查询包出的命中标记（文档顺序） */
+  private findMarks: HTMLElement[] = [];
+  private findActive = -1;
+
+  /**
+   * 把查找高亮应用到预览 DOM（q=null 清除），返回命中数。
+   * 直接对渲染后的文本节点做匹配包装，语义与编辑器查找一致
+   * （大小写 / 全词 / 正则）；重渲染会重建 block DOM，由 main 层重放。
+   */
+  applyFind(
+    q: { text: string; caseSensitive: boolean; wholeWord: boolean; regexp: boolean } | null,
+  ): number {
+    this.clearFindMarks();
+    this.findActive = -1;
+    if (!q || !q.text) return 0;
+    const source = q.regexp ? q.text : q.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    let re: RegExp;
+    try {
+      re = new RegExp(q.wholeWord ? `\\b(?:${source})\\b` : source, q.caseSensitive ? "g" : "gi");
+    } catch {
+      return 0; // 非法正则：与编辑器一致按无命中处理
+    }
+    // 快照当前文本节点再逐个分割包装（包装产生的新节点不在快照里，不会重复扫描）
+    const walker = document.createTreeWalker(this.root, NodeFilter.SHOW_TEXT);
+    const nodes: Text[] = [];
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const tag = (n as Text).parentElement?.tagName;
+      if (tag === "SCRIPT" || tag === "STYLE") continue;
+      nodes.push(n as Text);
+    }
+    for (const node of nodes) {
+      const text = node.nodeValue ?? "";
+      if (!text) continue;
+      re.lastIndex = 0;
+      const spans: Array<[number, number]> = [];
+      for (;;) {
+        const m = re.exec(text);
+        if (!m) break;
+        if (m[0].length === 0) {
+          re.lastIndex++;
+          continue; // 空匹配防死循环
+        }
+        spans.push([m.index, m.index + m[0].length]);
+      }
+      if (spans.length === 0) continue;
+      const frag = document.createDocumentFragment();
+      let at = 0;
+      for (const [s, e] of spans) {
+        if (s > at) frag.appendChild(document.createTextNode(text.slice(at, s)));
+        const mark = document.createElement("mark");
+        mark.className = "cm-find-match"; // 复用编辑器命中样式，视觉统一
+        mark.textContent = text.slice(s, e);
+        frag.appendChild(mark);
+        this.findMarks.push(mark);
+        at = e;
+      }
+      if (at < text.length) frag.appendChild(document.createTextNode(text.slice(at)));
+      node.parentNode?.replaceChild(frag, node);
+    }
+    return this.findMarks.length;
+  }
+
+  /** 步进当前命中（到头环绕）并滚动到视口中央。 */
+  stepFind(dir: 1 | -1): void {
+    const n = this.findMarks.length;
+    if (n === 0) return;
+    this.findActive =
+      this.findActive < 0 ? (dir === 1 ? 0 : n - 1) : (this.findActive + dir + n) % n;
+    this.findMarks.forEach((m, i) =>
+      m.classList.toggle("cm-find-match-active", i === this.findActive),
+    );
+    // jsdom 未实现 scrollIntoView；WebView2 正常。滚动 .md-preview 会触发
+    // 编辑器↔预览同步（回环锁在 onPreviewScroll 内处理）。
+    this.findMarks[this.findActive].scrollIntoView?.({ block: "center" });
+  }
+
+  findState(): { active: number; count: number } {
+    return { active: this.findActive, count: this.findMarks.length };
+  }
+
+  /** 拆掉全部命中标记，还原原始文本节点。 */
+  private clearFindMarks(): void {
+    const parents = new Set<ParentNode>();
+    for (const m of this.findMarks) {
+      const parent = m.parentNode;
+      if (!parent) continue;
+      while (m.firstChild) parent.insertBefore(m.firstChild, m);
+      m.remove();
+      parents.add(parent);
+    }
+    this.findMarks = [];
+    // 合并被标记拆开的相邻文本节点——否则下一次匹配会在拆分边界上
+    // 产生伪 \b 词边界（"foo"+"bar" 被当成两个独立词）
+    for (const parent of parents) parent.normalize();
   }
 
   // ------------------------------------------------ 懒加载增强

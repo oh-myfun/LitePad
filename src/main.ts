@@ -1789,21 +1789,61 @@ function applyFindQuery(q: FindBarQuery): void {
   for (const p of panels.values()) {
     if (p.view) p.view.view.dispatch({ effects: setFindQuery.of({ query, activeFrom: null }) });
   }
+  applyPreviewFindEverywhere(q);
   refreshFindCount();
+}
+
+/** 预览态查找高亮：仅 doc 范围、md 预览面板（源码模式由编辑器装饰覆盖）。 */
+function applyPreviewFindEverywhere(q: FindBarQuery): void {
+  const spec = findSpecOf(q);
+  for (const p of panels.values()) {
+    applyPreviewFindToPanel(p, spec);
+  }
+}
+
+type PreviewFindSpec = { text: string; caseSensitive: boolean; wholeWord: boolean; regexp: boolean } | null;
+
+function findSpecOf(q: FindBarQuery): PreviewFindSpec {
+  return q.scope === "doc" && q.text
+    ? { text: q.text, caseSensitive: q.caseSensitive, wholeWord: q.wholeWord, regexp: q.regexp }
+    : null;
+}
+
+function applyPreviewFindToPanel(p: Panel, spec: PreviewFindSpec): void {
+  if (!p.preview) return;
+  const tab = tabs.get(p.activeTabId);
+  if (!tab || !isMdTab(tab) || tab.viewMode === "source") return;
+  p.preview.applyFind(spec);
 }
 
 function clearFindHighlight(): void {
   for (const p of panels.values()) {
     if (p.view) clearFindQuery(p.view.view);
+    p.preview?.applyFind(null);
   }
 }
 
 function refreshFindCount(): void {
   const bar = findBar;
-  const view = activePanel()?.view?.view;
-  if (!bar || !view) return;
+  if (!bar) return;
   const q = bar.getQuery();
   if (q.scope !== "doc") return;
+  // 预览态：计数与当前项来自预览高亮（预览可见文本与源码一一对应，步进以它为准）
+  const panel = activePanel();
+  const tab = panel ? tabs.get(panel.activeTabId) : undefined;
+  if (panel && tab && isMdTab(tab) && tab.viewMode === "preview" && panel.preview) {
+    const st = panel.preview.findState();
+    if (st.count === 0) {
+      bar.setCount(q.text ? "无匹配" : "");
+    } else if (st.active < 0) {
+      bar.setCount(`共 ${st.count} 处`);
+    } else {
+      bar.setCount(`第 ${st.active + 1}/${st.count} 处`);
+    }
+    return;
+  }
+  const view = panel?.view?.view;
+  if (!view) return;
   const query = buildFindQuery(findOptionsOf(q));
   const matches = findMatches(view.state, query);
   if (matches.length === 0) {
@@ -1817,15 +1857,26 @@ function refreshFindCount(): void {
 /** 当前文档范围：跳到上一个 / 下一个命中（到头环绕）。 */
 function stepFind(dir: 1 | -1, q: FindBarQuery): void {
   const panel = activePanel();
-  const view = panel?.view?.view;
-  if (!panel || !view) return;
+  if (!panel) return;
+  const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
+  // 预览态：在预览高亮里步进 + 滚动到命中处（隐藏编辑器收不到滚动）
+  if (tab && isMdTab(tab) && tab.viewMode === "preview" && panel.preview) {
+    if (!q.text) {
+      findBar?.setCount("");
+      return;
+    }
+    panel.preview.stepFind(dir);
+    refreshFindCount();
+    return;
+  }
+  const view = panel.view?.view;
+  if (!view) return;
   const query = buildFindQuery(findOptionsOf(q));
   const matches = findMatches(view.state, query);
   if (matches.length === 0) {
     findBar?.setCount(q.text ? "无匹配" : "");
     return;
   }
-  const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
   const idx = nextMatchIndex(matches, view.state.selection.main.head, dir);
   const m = matches[idx];
   view.dispatch({
@@ -2070,6 +2121,8 @@ function renderMarkdownFor(panel: Panel): void {
   const doc = docOf(tab);
   preview.setBaseDir(doc.path ? dirname(doc.path) : null);
   preview.setBlocks(renderBlocks(tab.state.doc.toString()));
+  // 重渲染重建了 block DOM，查找高亮随之丢失——重放当前查询（B30）
+  if (findBar?.isOpen()) applyPreviewFindToPanel(panel, findSpecOf(findBar.getQuery()));
 }
 
 function scheduleMdRender(panelId: number): void {
