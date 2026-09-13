@@ -4,16 +4,30 @@
 set -u
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
+# Windows 常见 cargo 位置补充（干净 shell / 会话内 PATH 可能缺 cargo）。
+# 与 pre-commit 保持一致：找不到工具链时**警告跳过**，不要报成「测试未通过」——
+# 那会把「环境缺 cargo」误报成「代码有问题」，实测会白白拦住推送。
+command -v cargo >/dev/null 2>&1 || {
+  for d in "$HOME/.cargo/bin" "/c/msys64/mingw64/bin"; do
+    [ -x "$d/cargo.exe" ] && PATH="$d:$PATH"
+  done
+  export PATH
+}
+
 echo "▸ vitest 全量"
 node node_modules/vitest/vitest.mjs run || {
   echo "✗ pre-push 失败：vitest 未通过" >&2
   exit 1
 }
 
-echo "▸ cargo test"
-(cd src-tauri && cargo test) || {
-  echo "✗ pre-push 失败：cargo test 未通过" >&2
-  exit 1
-}
+if command -v cargo >/dev/null 2>&1; then
+  echo "▸ cargo test"
+  (cd src-tauri && cargo test) || {
+    echo "✗ pre-push 失败：cargo test 未通过" >&2
+    exit 1
+  }
+else
+  echo "⚠ 找不到 cargo，跳过 cargo test（Rust 侧未校验）" >&2
+fi
 
 echo "✓ pre-push 通过"
