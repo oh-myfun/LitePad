@@ -125,6 +125,26 @@ failed to read plugin permissions: failed to read file
 - 查进度与结果：`gh run list`、`gh run view <id> --json jobs --jq '.jobs[].steps[]'`、
   `gh release view vX.Y.Z --json assets`。
 
+## ⚠️ 发布包缺 DLL 的排查三步（B48：「装好起不来」）
+
+```sh
+# 1) exe 到底依赖谁（gnu 工具链下没有 libgcc/libwinpthread 依赖，别去搞静态链接）
+objdump -p src-tauri/target/release/litepad.exe | grep -i "DLL Name" | sort -u
+
+# 2) 安装包里实际装了什么（7z 在 scoop shims，能识别 NSIS 包）
+"/c/Users/maoyu/scoop/shims/7z" l src-tauri/target/release/bundle/nsis/LitePad_*_x64-setup.exe
+
+# 3) 干净目录启动验证（只放安装包会有的文件，避免 target 里其他文件"帮忙"造成假通过）
+python -c "复制 exe+dll 到 %TEMP% 目录 → subprocess.Popen → sleep 5 → poll() is None 即存活"
+```
+
+- Tauri 2 的 **`WebView2Loader.dll` 不会被 bundler 自动收进包**，必须显式声明：
+  ```jsonc
+  "bundle": { "resources": { "target/release/WebView2Loader.dll": "WebView2Loader.dll" } }
+  ```
+  用 **map 形式**：字符串形式会沿用 `target/release/` 子路径，装到目标机仍找不到。
+- 回归断言在 `tests/regressions.test.ts`（「B48 安装包必须自带 WebView2Loader.dll」）。
+
 ## ⚠️ 改图标后必须让 build.rs 盯 `icons/` 目录
 
 **症状**：换了 `src-tauri/icons/icon.ico` 并 `tauri build`，**exe 仍是旧图标**，且构建零报错
