@@ -1,4 +1,4 @@
-# LiteMD M3 完成汇报（M0–M3 全部交付）
+# LitePad M3 完成汇报（M0–M3 全部交付）
 
 ## 缺陷修复（2026-09-11 晚，commit d8d26c3）
 
@@ -30,7 +30,7 @@
 ## 验证结果
 
 - `npm run build:all` 全绿：tsc + vite → vitest 23/23 → cargo test 15/15 → release 构建
-- 产物：`litemd.exe` 9.0MB + `LiteMD_0.1.0_x64-setup.exe` 5.7MB（懒加载 chunk 已嵌入）
+- 产物：`litepad.exe` 9.0MB + `LitePad_0.1.0_x64-setup.exe` 5.7MB（懒加载 chunk 已嵌入）
 - git 提交 `879a267`（23 文件，+3364/-74）
 
 ## 附带修复
