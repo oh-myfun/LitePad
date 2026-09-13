@@ -752,23 +752,21 @@ async function closeTabById(tabId: number): Promise<void> {
   const doc = docOf(tab);
   // 同文档的其他实例数：仅最后一个实例关闭时才需要保存确认 + 关闭 Rust 文档
   const siblings = instancesOfDoc(doc.tabId).filter((t) => t.tabId !== tabId);
+  /** 本标签是不是该面板正显示的那一个（决定关闭后要不要换显示内容） */
+  const wasShown = panel.viewTabId === tabId || panel.activeTabId === tabId;
 
-  // 保存确认只针对该标签内容：切到该标签并激活其所在面板
-  if (panel.activeTabId !== tabId) switchTab(panel.panelId, tabId);
-  if (activePanelId !== panel.panelId) {
-    activePanelId = panel.panelId;
-    refreshTitle();
-    refreshStatus();
-    updateTocDrawer();
-    renderPanelTabs();
-  }
+  // B45：不再为了保存而先把待关闭标签切成活动标签。
+  // 原实现关闭非活动标签时会「切到待关文件 → 关掉 → 再切回原来的文件」闪一下；
+  // 保存确认的 await 会让这个中间态真的绘制出来，所以肉眼可见。
+  // saveDocCore 本身就是按**指定实例**保存（实例正显示在面板上才从视图写回，
+  // 否则用标签快照），并不需要先把待关标签激活。同理也不必切 activePanelId。
   if (doc.dirty && siblings.length === 0) {
     const save = await ask(`${doc.name} 有未保存的修改，保存后关闭吗？`, {
       title: "关闭标签",
       kind: "warning",
     });
     if (save) {
-      const ok = await doSave(false);
+      const ok = await saveDocCore(doc, tab, false);
       if (!ok) return;
     }
   }
@@ -795,6 +793,14 @@ async function closeTabById(tabId: number): Promise<void> {
       // 区域内文档已全部关闭 → 移除该分屏区域（树规约）
       disposePanel(panel.panelId);
     }
+    return;
+  }
+  // B45：关掉的是**后台标签**时不要动显示内容——原实现会把面板切到它的邻居标签，
+  // 表现为「平白跳到另一个文件」（这正是用户看到的「闪一下」的后半段）。
+  // 只重绘标签栏即可；「关闭其他/关闭右侧」批量关闭同样受益，不再逐个切换。
+  if (!wasShown) {
+    renderPanelTabs(panel.panelId);
+    scheduleSessionSave();
     return;
   }
   // 激活相邻标签

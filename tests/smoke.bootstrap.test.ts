@@ -843,4 +843,70 @@ describe("bootstrap + drag-split smoke", () => {
     expect(toc.hidden, "关闭对话框后快捷键应恢复").toBe(!before);
     window.dispatchEvent(hotkey({ code: "KeyO", key: "O", ctrlKey: true, shiftKey: true }));
   });
+
+  it("B45 关闭非活动标签不得切换视图（回归：切到待关文件→关掉→切回来，闪一下）", async () => {
+    // 用户报告：关掉的标签不是当前文件时会闪一下。
+    // 根因两处（都在 closeTabById）：
+    //   ① 为了复用只保存“活动标签”的 doSave，先把待关标签 switchTab 成活动标签；
+    //      switchTab 是**同步**的，而保存确认 await 在其后——中间态会被真的绘制出来。
+    //   ② 关完又无条件把面板切到待关标签的邻居（关后台标签本不该动显示内容）。
+    // 修复：保存改用按实例寻址的 saveDocCore，且仅当关的是正显示的标签才换内容。
+    capturedError = null;
+
+    const panelWithTwo = () =>
+      (Array.from(document.querySelectorAll(".layout-panel")) as HTMLElement[]).find(
+        (p) => p.querySelectorAll(".tab").length >= 2,
+      ) ?? null;
+    let panel = panelWithTwo();
+    if (!panel) {
+      // 前置用例可能把标签都拆成单标签面板：补开一个文件凑出多标签面板
+      openDialogResult.value = "c.md";
+      (document.getElementById("btn-open") as HTMLButtonElement).click();
+      await new Promise((r) => setTimeout(r, 150));
+      openDialogResult.value = null;
+      panel = panelWithTwo();
+    }
+    expect(panel, "应存在含两个及以上标签的面板（否则测不到后台标签关闭）").toBeTruthy();
+
+    const strip = panel!.querySelector(".panel-tabstrip") as HTMLElement;
+    const activeEl = strip.querySelector<HTMLElement>(".tab.tab-active");
+    expect(activeEl, "面板应有活动标签").toBeTruthy();
+    const activeName = activeEl!.title;
+    const others = Array.from(strip.querySelectorAll<HTMLElement>(".tab")).filter(
+      (t) => t !== activeEl,
+    );
+    expect(others.length, "应存在可关闭的非活动标签").toBeGreaterThan(0);
+    const victim = others[0];
+    const victimName = victim.title;
+
+    const dom = panel!.querySelector(".cm-editor");
+    const view = dom ? EditorView.findFromDOM(dom as HTMLElement) : null;
+    expect(view, "面板应挂载编辑器视图").toBeTruthy();
+    const before = view!.state.doc.toString();
+
+    // 点待关标签上的 ×（真实路径：tab-close 的 click → onClose → closeTabById）
+    const closeBtn = victim.querySelector<HTMLButtonElement>(".tab-close");
+    expect(closeBtn, "标签应有关闭按钮").toBeTruthy();
+    closeBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    // 同步采样：旧实现在这里已经 switchTab 过去，视图内容立刻变成待关文件。
+    // 这一步就是「闪一下」的可观测证据。
+    expect(view!.state.doc.toString(), "按下关闭的瞬间不得立刻切到待关文件（闪一下的第一段）").toBe(
+      before,
+    );
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    // 关完之后：活动标签没变、视图内容没变（不得跳到邻居标签）
+    const afterActive = strip.querySelector<HTMLElement>(".tab.tab-active");
+    expect(afterActive?.title, "关闭后台标签后活动标签不得改变").toBe(activeName);
+    expect(view!.state.doc.toString(), "关闭后台标签后不得跳到邻居标签（闪一下的第二段）").toBe(
+      before,
+    );
+
+    // 待关标签确实已经消失
+    const names = Array.from(strip.querySelectorAll(".tab")).map((t) => t.title);
+    expect(names, `${victimName} 应已被关闭`).not.toContain(victimName);
+    expect(capturedError, `关闭标签不应抛错：${String(capturedError)}`).toBeNull();
+  });
 });
