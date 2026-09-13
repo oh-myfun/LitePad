@@ -32,6 +32,9 @@ export interface SplitviewCallbacks {
   onDuplicateTab?: (tabId: number) => void;
   onDuplicateToSibling?: (tabId: number) => void;
   onReorderTab?: (panelId: number, fromTabId: number, toTabId: number) => void;
+  /** 拖拽标签落在 tab 区（B27）：插到 beforeTabId 之前（null = 追加到末尾）。
+   *  同面板 = 调整顺序；跨面板 = 移动到该面板的该位置。不是分屏。 */
+  onMoveTabToStrip: (panelId: number, tabId: number, beforeTabId: number | null) => void;
   onNewTab?: (panelId: number) => void;
   /** 拖拽标签落点：zone=left/right/top/bottom 表示分屏方向，center 表示移入该面板；
    *  overTabId 仅同面板排序时用于定位目标标签；copy=按住 Ctrl 拖拽（同源复制而非移动）。 */
@@ -115,6 +118,55 @@ export function clearAllDropPreviews(): void {
   clearAllPreviews();
 }
 
+/** 面板级 tab 区（strip）元素。 */
+function stripOf(panelEl: HTMLElement): HTMLElement | null {
+  return panelEl.querySelector(".panel-tabstrip");
+}
+
+/** 指针是否在某面板的 tab 区内；是则返回该 strip。 */
+function stripUnder(panelEl: HTMLElement, x: number, y: number): HTMLElement | null {
+  const strip = stripOf(panelEl);
+  if (!strip) return null;
+  const r = strip.getBoundingClientRect();
+  return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom ? strip : null;
+}
+
+export interface StripInsertInfo {
+  /** 插到该标签之前；null = 追加到末尾 */
+  beforeTabId: number | null;
+  /** 指示线相对 strip 左缘的偏移 */
+  offsetLeft: number;
+}
+
+/** 纯几何（jsdom 可测）：strip 内指针位置 → 插入位置与指示线偏移。 */
+export function stripInsertInfo(strip: HTMLElement, x: number): StripInsertInfo | null {
+  const r = strip.getBoundingClientRect();
+  if (x < r.left || x > r.right) return null;
+  const tabs = Array.from(strip.querySelectorAll<HTMLElement>(".tab"));
+  for (const tab of tabs) {
+    const tr = tab.getBoundingClientRect();
+    if (x < tr.left + tr.width / 2) {
+      return { beforeTabId: Number(tab.dataset.tabId), offsetLeft: tr.left - r.left };
+    }
+  }
+  const last = tabs[tabs.length - 1]?.getBoundingClientRect();
+  return { beforeTabId: null, offsetLeft: last ? last.right - r.left : r.width };
+}
+
+function showInsertIndicator(strip: HTMLElement, offsetLeft: number): void {
+  let el = strip.querySelector<HTMLElement>(".tab-insert");
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "tab-insert";
+    strip.appendChild(el);
+  }
+  el.style.left = `${offsetLeft}px`;
+}
+
+function clearInsertIndicators(): void {
+  document.querySelectorAll(".tab-insert").forEach((el) => el.remove());
+}
+
 function onTabDragMove(e: MouseEvent): void {
   if (!tabDrag) return;
   if (!tabDrag.active) {
@@ -131,7 +183,20 @@ function onTabDragMove(e: MouseEvent): void {
     if (prev) prev.className = "split-preview";
   }
   tabDrag.panelEl = panelEl;
-  if (!panelEl) return;
+  if (!panelEl) {
+    clearInsertIndicators();
+    return;
+  }
+  // B27：tab 区 = 调整顺序（插入指示线），面板区 = 分屏预览，两者互斥
+  const strip = stripUnder(panelEl, e.clientX, e.clientY);
+  if (strip) {
+    const preview = panelEl.querySelector(".split-preview");
+    if (preview) preview.className = "split-preview";
+    const info = stripInsertInfo(strip, e.clientX);
+    if (info) showInsertIndicator(strip, info.offsetLeft);
+    return;
+  }
+  clearInsertIndicators();
   const zone = zoneOf(panelEl.getBoundingClientRect(), e.clientX, e.clientY);
   const preview = panelEl.querySelector(".split-preview");
   if (preview) preview.className = `split-preview show zone-${zone}`;
@@ -141,14 +206,21 @@ function onTabDragEnd(e: MouseEvent): void {
   const drag = tabDrag;
   finishTabDrag();
   if (!drag || !drag.active) return; // 未超阈值：无拖拽发生，click 正常触发激活
+  if (!svCallbacks) return;
   suppressTabClick = true;
-  if (!svCallbacks?.onDropTabToPanel) return;
   const panelEl = panelAt(e.clientX, e.clientY);
   if (!panelEl) return;
   const panelId = Number(panelEl.dataset.panelId);
+  // B27：落在 tab 区 = 排序/移动（绝不分屏）
+  const strip = stripUnder(panelEl, e.clientX, e.clientY);
+  if (strip) {
+    const info = stripInsertInfo(strip, e.clientX);
+    if (info) svCallbacks?.onMoveTabToStrip(panelId, drag.tabId, info.beforeTabId);
+    return;
+  }
   const zone = zoneOf(panelEl.getBoundingClientRect(), e.clientX, e.clientY);
   const over = tabUnder(panelEl, e.clientX, e.clientY);
-  svCallbacks.onDropTabToPanel(drag.tabId, panelId, zone, over, e.ctrlKey);
+  svCallbacks?.onDropTabToPanel?.(drag.tabId, panelId, zone, over, e.ctrlKey);
 }
 
 function finishTabDrag(): void {
@@ -157,6 +229,7 @@ function finishTabDrag(): void {
   document.removeEventListener("mousemove", onTabDragMove);
   document.removeEventListener("mouseup", onTabDragEnd);
   clearAllPreviews();
+  clearInsertIndicators();
 }
 
 function build(

@@ -57,6 +57,7 @@ import {
   siblingLeafOf,
   splitPanel as treeSplitPanel,
   splitPanelAt,
+  updateRatio,
   type LayoutNode,
 } from "./shell/layout";
 import { showKeymapDialog } from "./shell/keymapdialog";
@@ -486,6 +487,9 @@ function rebuildLayout(): void {
     },
     onDuplicateToSibling: (tabId) => duplicateTabToSibling(tabId),
     onReorderTab: (panelId, from, to) => reorderTabInPanel(panelId, from, to),
+    // 拖拽标签落在 tab 区：调整顺序（同面板）或移动到目标面板该位置（B27）
+    onMoveTabToStrip: (panelId, tabId, beforeTabId) =>
+      moveTabToStrip(panelId, tabId, beforeTabId),
     onDropTabToPanel: (tabId, targetPanelId, zone, overTabId, copy) =>
       onDropTabToPanel(tabId, targetPanelId, zone, overTabId, copy),
     onNewTab: (panelId) => {
@@ -547,16 +551,7 @@ function rebuildLayout(): void {
   });
 }
 
-function updateRatio(node: LayoutNode, path: number[], ratio: number): void {
-  if (node.kind !== "split") return;
-  const [head, ...rest] = path;
-  if (rest.length === 0 && (head === 0 || head === 1)) {
-    node.ratio = ratio;
-    return;
-  }
-  if (head === 0) updateRatio(node.a, rest, ratio);
-  else updateRatio(node.b, rest, ratio);
-}
+// updateRatio 已移到 src/shell/layout.ts（与 build 的路径约定对齐，B26 修复）
 
 // ---------------------------------------------------------------- 标签操作
 
@@ -1035,6 +1030,52 @@ function reorderTabInPanel(panelId: number, from: number, to: number): void {
   p.tabs.splice(fi, 1);
   p.tabs.splice(p.tabs.indexOf(to) + (fi < ti ? 1 : 0), 0, from);
   renderPanelTabs(panelId);
+  scheduleSessionSave();
+}
+
+/** 拖拽标签落在 tab 区（B27）：同面板调整顺序，跨面板移动到该插入位置。
+ *  beforeTabId=null 表示追加到末尾。不会分屏。 */
+function moveTabToStrip(panelId: number, tabId: number, beforeTabId: number | null): void {
+  const dst = getPanel(panelId);
+  const tab = tabs.get(tabId);
+  const src = panelOfTab(tabId);
+  if (!dst || !tab || !src) return;
+  const from = src.tabs.indexOf(tabId);
+  if (from < 0) return;
+
+  let idx = beforeTabId !== null ? dst.tabs.indexOf(beforeTabId) : dst.tabs.length;
+  if (idx < 0) idx = dst.tabs.length;
+  if (src.panelId === panelId) {
+    if (from < idx) idx -= 1; // 先移除再插入，插到原位置右侧时索引左移
+    if (idx === from) return; // 位置没变：不重建（避免无谓闪烁）
+    // 同面板排序：只移动数组重绘标签条，不改激活标签——
+    // 若在此改 activeTabId 而不重挂视图，会破坏 panel.viewTabId 不变量
+    // （状态显示新标签、编辑器仍是旧内容），后续激活早退无法恢复。
+    src.tabs.splice(from, 1);
+    src.tabs.splice(idx, 0, tabId);
+    renderPanelTabs(panelId);
+    refreshTitle();
+    refreshStatus();
+    scheduleSessionSave();
+    return;
+  }
+
+  src.tabs.splice(from, 1);
+  dst.tabs.splice(idx, 0, tabId);
+  tab.panelId = panelId;
+  dst.activeTabId = tabId;
+  activePanelId = panelId;
+
+  if (src.tabs.length === 0 && countLeaves(layout) > 1) {
+    // 源面板被拖空：统一交给 disposePanel（内部会 rebuild）
+    disposePanel(src.panelId);
+  } else {
+    if (src.activeTabId === tabId) {
+      src.activeTabId = src.tabs[Math.min(from, src.tabs.length - 1)] ?? -1;
+    }
+    rebuildLayout();
+    refreshAll();
+  }
   scheduleSessionSave();
 }
 

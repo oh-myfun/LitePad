@@ -745,8 +745,23 @@ button:focus-visible {
   align-items: stretch;
   gap: 2px;
   padding: 2px 4px 0;
+  /* 拖拽 tab 的插入指示线（.tab-insert）以 strip 为定位基准 */
+  position: relative;
   /* 不显示滚动条：溢出标签折叠进 .tab-more 下拉按钮，滚轮切换显示区间 */
   overflow: hidden;
+}
+
+/* 拖拽 tab 落在 tab 区时的插入位置指示（区别于面板区的分屏预览层，B27） */
+.tab-insert {
+  position: absolute;
+  top: 2px;
+  bottom: 0;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+  pointer-events: none;
+  z-index: 6;
 }
 
 /* 折叠标签下拉：右侧常驻，靠 margin-left:auto 顶到末尾 */

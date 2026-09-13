@@ -186,6 +186,13 @@ function installRectStubs(): () => void {
       const idx = Array.from(document.querySelectorAll(".layout-panel")).indexOf(this);
       return mk(Math.max(0, idx) * 210, 0, 200, 200);
     }
+    // B27：tab 区必须是面板顶部的窄条——否则整个面板都被当成 tab 区，
+    // 拖拽落点全被判定为「排序」而永远无法分屏
+    if (this.classList.contains("panel-tabstrip")) {
+      const panel = this.closest(".layout-panel");
+      const idx = panel ? Array.from(document.querySelectorAll(".layout-panel")).indexOf(panel) : 0;
+      return mk(Math.max(0, idx) * 210, 0, 200, 24);
+    }
     if (this.classList.contains("tab")) return mk(0, 0, 20, 24);
     return mk(0, 0, 200, 200);
   };
@@ -279,9 +286,11 @@ describe("bootstrap + drag-split smoke", () => {
     const selfPanel = panelsMid[panelsMid.length - 1];
     const selfTab = selfPanel.querySelector(".tab") as HTMLElement;
     expect(selfTab, "分屏面板应有标签").toBeTruthy();
-    const selfLeft = (selfPanel.getBoundingClientRect().left);
     const beforeSelf = document.querySelectorAll(".layout-panel").length;
     const restoreRects2 = installRectStubs();
+    // selfLeft 必须在装上几何桩之后读取（jsdom 无布局时全为 0）；
+    // 落点 y=100 在 tab 区（高 24px）之下 → 面板区边缘 → 分屏
+    const selfLeft = selfPanel.getBoundingClientRect().left;
     dragTab(selfTab, 10, 12, selfLeft + 10, 100);
     restoreRects2();
     await new Promise((r) => setTimeout(r, 50));
@@ -522,6 +531,57 @@ describe("bootstrap + drag-split smoke", () => {
       `拖入的 e.md 应作为新标签打开并显示内容，实际：${JSON.stringify(contents)}`,
     ).toBe(true);
     contentsBefore = [];
+  });
+
+  it("拖拽 tab 到 tab 区 = 调整顺序（B27：显示插入线而非分屏预览，也不分屏）", async () => {
+    const restoreRects = installRectStubs();
+    try {
+      // 需要一个含两个标签的面板：panel1 = [a.md, b.md]（会话恢复即有）
+      const panelWithTwo = (): HTMLElement | null =>
+        (Array.from(document.querySelectorAll(".layout-panel")) as HTMLElement[]).find(
+          (p) => p.querySelectorAll(".tab").length >= 2,
+        ) ?? null;
+      let target = panelWithTwo();
+      if (!target) {
+        // 前置用例可能改过布局：把 b.md 拖进含 a.md 的面板（面板区中央 = 移入）
+        const amd = Array.from(document.querySelectorAll<HTMLElement>(".tab")).find(
+          (t) => t.title === "a.md",
+        );
+        const bmd = Array.from(document.querySelectorAll<HTMLElement>(".tab")).find(
+          (t) => t.title === "b.md",
+        );
+        expect(amd && bmd, "a.md 与 b.md 标签应可定位").toBeTruthy();
+        const p = bmd!.closest(".layout-panel") as HTMLElement;
+        const idx = Array.from(document.querySelectorAll(".layout-panel")).indexOf(p);
+        dragTab(amd!, 5, 5, idx * 210 + 100, 100);
+        await new Promise((r) => setTimeout(r, 60));
+        target = panelWithTwo();
+      }
+      expect(target, "应存在含两个标签的面板").toBeTruthy();
+      const beforePanels = document.querySelectorAll(".layout-panel").length;
+      const beforeCount = target!.querySelectorAll(".tab").length;
+
+      // 拖该面板的第一个标签到 tab 区末尾（y=12 在 24px 高的 strip 内）→ 追加
+      const firstTab = target!.querySelector(".tab") as HTMLElement;
+      const firstName = firstTab.title;
+      const stripLeft = target!.querySelector(".panel-tabstrip")!.getBoundingClientRect().left;
+      firstTab.dispatchEvent(mouse("mousedown", 5, 5));
+      document.dispatchEvent(mouse("mousemove", Math.round(stripLeft) + 150, 12));
+      document.dispatchEvent(mouse("mouseup", Math.round(stripLeft) + 150, 12));
+      await new Promise((r) => setTimeout(r, 60));
+
+      expect(
+        document.querySelectorAll(".layout-panel").length,
+        "tab 区落下不得分屏（面板数不变）",
+      ).toBe(beforePanels);
+      expect(document.body.classList.contains("tab-drag-active"), "拖拽光标类应移除").toBe(false);
+      expect(document.querySelector(".tab-insert"), "松手后插入指示线应移除").toBeNull();
+      const names = Array.from(target!.querySelectorAll(".tab")).map((t) => t.title);
+      expect(names[names.length - 1], "被拖标签应追加到末尾").toBe(firstName);
+      expect(names.length, "标签总数不变").toBe(beforeCount);
+    } finally {
+      restoreRects();
+    }
   });
 
   it("跨面板点击 tab 必须一次激活（回归：要点两下才激活）", async () => {
