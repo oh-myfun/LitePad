@@ -107,6 +107,14 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
 
 ## 8. 通用教训
 
+- **「同步改 UI + 之后才 await」= 中间态会被真的绘制出来，用户看到的就是「闪一下」**（B45）。
+  典型写法：为了让某个只作用于**当前活动项**的函数能复用，先把目标项切成活动项，
+  然后 `await ask(...)` —— 切换是同步的、浏览器在 await 处就会重绘。
+  修法两条：① 把该函数改造成**按指定实例寻址**（本项目是 `saveDocCore(doc, inst, forceDialog)`，
+  只保存活动标签的 `doSave` 才是罪魁），别靠切换 UI 来"喂"它；
+  ② 收尾逻辑要判断**被操作的是不是当前显示的那一项**，不是就别动显示内容。
+  **测法**：在点击后**同步采样** DOM/视图快照（此时旧实现已经改完了），
+  这个断言能精确锁住「闪一下」，并且把 `switchTab` 加回去验证它会失败。
 - **CodeMirror 内置键位会静默吞掉应用快捷键，并可能改写文档**（B42 实测，已锁进
   `tests/editor-keymap-conflicts.test.ts`）。CM `defaultKeymap` 的 `Mod-/`（切换注释）
   会抢走应用的 `Ctrl+/`，在 Markdown 下**往正文插入 `<!-- -->`**；`Shift-Alt-ArrowDown`

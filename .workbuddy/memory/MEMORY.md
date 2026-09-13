@@ -60,6 +60,9 @@
 - **B44** 标签栏折叠态不重算：补尺寸监听（ResizeObserver + window.resize 退化 + rAF 合并）、
   活动标签拉回门控 `activeChanged`、窗口没铺满时左移补满（`fitCountFromEnd`）。
   三条不变量已写进 `ARCHITECTURE.md` §7「标签栏溢出」，改这块前务必先读。
+- **B45** 关闭非活动标签不再「先切过去再切回」：保存改用按实例寻址的 `saveDocCore`，
+  并加 `wasShown` 判定——关后台标签不动显示内容。「关闭其他/右侧」的批量闪烁一并解决。
+  通用教训见 `ARCHITECTURE.md` §8 首条（同步改 UI + 之后 await = 中间态被绘制）。
 
 ## 下一步
 
