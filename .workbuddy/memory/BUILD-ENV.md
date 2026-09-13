@@ -75,6 +75,18 @@ Desktop(backend="uia").window(...) → descendants(control_type="MenuItem") → 
 脚本参考 `C:/Users/maoyu/AppData/Local/Temp/notepad_cap4.py`。
 **必须用专用临时文件启动记事本**（否则会自动恢复用户会话标签）。
 
+## ⚠️ 长构建不要在后台配 `| tail`（会永久挂住）
+
+会话内把长构建丢到后台并接管道，例如 `vite build 2>&1 | tail -6`：
+子进程一旦被会话 SIGTERM 打断，**管道仍被持有、永远等不到 EOF**，
+任务显示 running 但实际早已无进程活动（判据：`target/` 与 `dist/` 近 2 分钟无文件更新）。
+
+- **落文件代替管道**：`cmd > /tmp/build.log 2>&1; echo "EXIT=$?" >> /tmp/build.log`，
+  再 `tail` 该文件；配 `find <dir> -newermt "-2 minutes" | wc -l` 判断是否真在推进。
+- vite build 被打断会**留下残缺的 `dist/`**（只有 index.html、assets 全丢），
+  直接重试即可恢复（实测 44.6 s 重建 435 个产物）。
+- 实测耗时参考（本机，冷启动）：`cargo test` 全量 21 min；`tauri build --release` 38 min。
+
 ## ⚠️ 工作区目录改名后必须 `cargo clean`
 
 Rust 的构建缓存里**烙死了绝对路径**。本项目由 `E:\Project\LiteMD` 改名为
