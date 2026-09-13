@@ -453,10 +453,14 @@ button:focus-visible {
   cursor: not-allowed;
 }
 
-/* 选项行：区分大小写 / 全词匹配 / 正则 */
+/* 选项行：匹配选项在左，跨文档勾选 + 「查找全部」靠右 */
 .find-row-opts {
   gap: 12px;
   padding-top: 1px;
+}
+
+.find-spacer {
+  flex: 1 1 auto;
 }
 
 .find-opt {
@@ -467,6 +471,46 @@ button:focus-visible {
   color: var(--fg-muted);
   cursor: pointer;
   user-select: none;
+}
+
+/* 范围勾选（替代原范围下拉）：勾上即在全部已打开文档中查找 */
+.find-opt-docs {
+  color: var(--fg);
+}
+
+.find-results {
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.find-hit {
+  display: flex;
+  gap: 8px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  align-items: baseline;
+  border-left: 2px solid transparent;
+}
+
+.find-hit:hover {
+  background: var(--bg-hover);
+  border-left-color: var(--accent);
+}
+
+.find-hit-loc {
+  color: var(--accent);
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+
+.find-hit-text {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .find-status {

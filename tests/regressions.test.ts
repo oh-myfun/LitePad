@@ -360,22 +360,26 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(preview, "预览命中必须复用编辑器高亮样式类").toContain("cm-find-match");
   });
 
-  it("B39 查找栏只作用于当前文档：跨文件/文件夹搜索必须全链路移除", () => {
-    // 用户要求：查找替换悬浮栏无需查找文件夹功能，也不用下拉菜单来选择查找范围。
-    // 原实现是「范围下拉 + 文件夹搜索 IPC」一整条链路；UI 移除后后端与包装不得留残骸。
+  it("B39/B40 查找范围：不得有范围下拉与文件夹搜索，跨文档必须是勾选框", () => {
+    // 用户要求：查找替换悬浮栏无需查找文件夹功能，也不用下拉菜单选择查找范围——
+    // 但「所有打开的文档」这个能力要保留，改成直接勾选。
     const bar = readFileSync("src/shell/findbar.ts", "utf-8");
     expect(bar, "查询对象不得再有 scope").not.toMatch(/\bscope\b/);
-    expect(bar, "不得再有文件夹路径字段").not.toMatch(/\bfolder\b/);
     expect(bar, "不得再有范围下拉控件").not.toContain("find-scope");
+    expect(bar, "查找栏内不得出现任何 select 下拉").not.toContain('createElement("select")');
+    expect(bar, "不得再有文件夹搜索控件").not.toContain("find-folder");
+    expect(bar, "跨文档范围必须是勾选框").toContain("find-opt-docs");
+    expect(bar, "勾选态必须进入查询对象").toContain("allDocs");
 
     const main = readFileSync("src/main.ts", "utf-8");
-    expect(main, "不得再调用跨文件搜索 IPC").not.toContain("searchFiles");
-    expect(main, "不得再有跨范围搜索函数").not.toContain("searchAllInScope");
-    expect(main, "不得再有结果列表点击跳转").not.toContain("openFindHit");
+    expect(main, "不得再调用读盘的跨文件搜索 IPC").not.toContain("searchFiles");
+    expect(main, "不得再有默认搜索目录推导").not.toContain("defaultSearchDir");
     expect(main, "不得再有 Ctrl+Shift+F 入口").not.toContain("Ctrl+Shift+F");
+    expect(main, "跨文档查找必须只扫内存快照").toContain("function searchOpenDocs(");
+    expect(main, "整行替换必须支持勾选后的跨文档分支").toContain("if (!q.allDocs) {");
 
     const api = readFileSync("src/ipc/api.ts", "utf-8");
-    expect(api, "IPC 包装必须一并删除").not.toContain("search_files");
+    expect(api, "读盘搜索的 IPC 包装必须删除").not.toContain("search_files");
 
     const rust = readFileSync("src-tauri/src/commands/mod.rs", "utf-8");
     expect(rust, "Rust 搜索命令必须删除").not.toContain("pub async fn search_files");
@@ -383,7 +387,7 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     const rustMain = readFileSync("src-tauri/src/main.rs", "utf-8");
     expect(rustMain, "不得再注册 search_files 命令").not.toContain("commands::search_files");
     const cargo = readFileSync("src-tauri/Cargo.toml", "utf-8");
-    expect(cargo, "regex 依赖只服务于跨文件搜索，应一并移除").not.toMatch(/^regex\s*=/m);
+    expect(cargo, "regex 依赖只服务于读盘搜索，应一并移除").not.toMatch(/^regex\s*=/m);
   });
 
   it("B31 转到行必须顶部对齐（与大纲跳转一致，不得最小滚动贴底）", () => {

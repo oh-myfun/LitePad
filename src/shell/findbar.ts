@@ -2,9 +2,10 @@
  * 悬浮查找/替换栏。
  *
  * 设计要点（用户要求）：
- * - **只作用于当前活动文档**：栏内不再有「范围」下拉，也不做跨文件/文件夹搜索。
  * - **不绑定文件/面板**：挂在 #app 上，是应用级浮层；切换标签/面板/分屏都不会自动关闭。
- * - 一个入口干所有事：查找、替换、替换全部都在这一栏里，编辑器内不再嵌 CM6 搜索面板。
+ * - **一个入口干所有事**：查找、替换、跨文档查找都在这一栏里，编辑器内不再嵌 CM6 搜索面板。
+ * - **范围不用下拉菜单**：跨文档能力收敛成一个「所有打开的文档」勾选框；
+ *   不做文件夹搜索（不读盘、无搜索目录、无结果跨文件写回）。
  * - 可拖动（拖标题栏），位置记在 localStorage。
  */
 
@@ -14,15 +15,33 @@ export interface FindBarQuery {
   caseSensitive: boolean;
   wholeWord: boolean;
   regexp: boolean;
+  /** 勾选「所有打开的文档」时为真：查找全部 / 全部替换作用于全部已打开文档 */
+  allDocs: boolean;
+}
+
+/** 一条命中（仅在已打开文档的内存快照里，不涉及磁盘文件）。 */
+export interface FindHit {
+  /** Rust tabId */
+  docId: number;
+  path: string;
+  name: string;
+  line: number;
+  col: number;
+  text: string;
+  from: number;
+  to: number;
 }
 
 export interface FindBarCallbacks {
   /** 查找内容 / 选项变化（主程序据此刷新高亮与计数） */
   onQueryChange: (q: FindBarQuery) => void;
-  /** 上一个 / 下一个 */
+  /** 上一个 / 下一个（当前文档） */
   onStep: (dir: 1 | -1, q: FindBarQuery) => void;
   onReplace: (q: FindBarQuery) => void;
   onReplaceAll: (q: FindBarQuery) => void;
+  /** 勾选「所有打开的文档」时执行跨文档搜索（扫内存快照，同步返回） */
+  onSearchAll: (q: FindBarQuery) => FindHit[];
+  onOpenHit: (hit: FindHit) => void;
   onClose: () => void;
 }
 
@@ -35,6 +54,7 @@ export interface FindBarHandle {
   step(dir: 1 | -1): void;
   setCount(text: string): void;
   setStatus(text: string): void;
+  setHits(hits: FindHit[]): void;
   focusFind(): void;
   focusReplace(): void;
   getQuery(): FindBarQuery;
@@ -93,24 +113,35 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   replaceInput.placeholder = "替换为";
   replaceInput.spellcheck = false;
   const doReplace = btn("find-btn", "替换", "替换当前（Enter）");
-  const doAll = btn("find-btn", "全部替换", "替换当前文档中的全部匹配");
+  const doAll = btn("find-btn", "全部替换", "替换全部匹配");
   const rowReplace = document.createElement("div");
   rowReplace.className = "find-row";
   rowReplace.append(replaceInput, doReplace, doAll);
 
-  // ---- 选项行 ----
+  // ---- 选项行：匹配选项 + 右对齐的跨文档范围勾选 ----
   const caseChk = check("区分大小写", "区分大小写");
   const wordChk = check("全词匹配", "全词匹配");
   const reChk = check("正则", "正则表达式");
+  const docsChk = check(
+    "所有打开的文档",
+    "勾选后在全部已打开的文档中查找（回车或「查找全部」）；不勾选只查当前文档",
+  );
+  docsChk.label.classList.add("find-opt-docs");
+  const searchAll = btn("find-btn", "查找全部", "在全部已打开的文档中查找");
+  const spacer = document.createElement("span");
+  spacer.className = "find-spacer";
   const rowOpts = document.createElement("div");
   rowOpts.className = "find-row find-row-opts";
-  rowOpts.append(caseChk.label, wordChk.label, reChk.label);
+  rowOpts.append(caseChk.label, wordChk.label, reChk.label, spacer, docsChk.label, searchAll);
 
-  // ---- 状态 ----
+  // ---- 结果 / 状态 ----
+  const results = document.createElement("div");
+  results.className = "find-results";
+  results.hidden = true;
   const status = document.createElement("div");
   status.className = "find-status";
 
-  dom.append(title, rowFind, rowReplace, rowOpts, status);
+  dom.append(title, rowFind, rowReplace, rowOpts, results, status);
   host.appendChild(dom);
 
   function query(): FindBarQuery {
@@ -120,6 +151,7 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
       caseSensitive: caseChk.input.checked,
       wholeWord: wordChk.input.checked,
       regexp: reChk.input.checked,
+      allDocs: docsChk.input.checked,
     };
   }
 
@@ -127,13 +159,67 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     status.textContent = text;
   }
 
-  findInput.addEventListener("input", () => cb.onQueryChange(query()));
+  function setHits(hits: FindHit[]): void {
+    results.textContent = "";
+    if (hits.length === 0) {
+      results.hidden = true;
+      return;
+    }
+    results.hidden = false;
+    const files = new Set(hits.map((h) => h.path || h.name));
+    setStatus(`${hits.length} 条结果（${files.size} 个文档）`);
+    for (const h of hits.slice(0, 300)) {
+      const item = document.createElement("div");
+      item.className = "find-hit";
+      const loc = document.createElement("span");
+      loc.className = "find-hit-loc";
+      loc.textContent = `${h.name}:${h.line}`;
+      const text = document.createElement("span");
+      text.className = "find-hit-text";
+      text.textContent = h.text;
+      item.append(loc, text);
+      item.title = `${h.path}:${h.line}:${h.col}`;
+      item.addEventListener("click", () => cb.onOpenHit(h));
+      results.appendChild(item);
+    }
+  }
+
+  /** 勾选态联动：只有跨文档范围才需要「查找全部」；取消勾选时清掉上一次的结果。 */
+  function syncAllDocs(): void {
+    const on = docsChk.input.checked;
+    searchAll.style.display = on ? "" : "none";
+    findInput.placeholder = on
+      ? "查找内容（回车在全部已打开的文档中查找）"
+      : "查找内容（回车下一个，Shift+回车上一个）";
+    if (!on) setHits([]);
+  }
+
+  function runSearch(): void {
+    const q = query();
+    if (!q.text) {
+      setStatus("请输入查找内容");
+      setHits([]);
+      return;
+    }
+    setHits(cb.onSearchAll(q));
+  }
+
+  findInput.addEventListener("input", () => {
+    // 查询变了，上一次的跨文档结果就作废，避免展示过期命中
+    if (docsChk.input.checked) setHits([]);
+    cb.onQueryChange(query());
+  });
   findInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
       const q = query();
-      if (e.shiftKey) cb.onStep(-1, q);
-      else cb.onStep(1, q);
+      if (q.allDocs) {
+        runSearch();
+      } else if (e.shiftKey) {
+        cb.onStep(-1, q);
+      } else {
+        cb.onStep(1, q);
+      }
     } else if (e.key === "Escape") {
       e.stopPropagation();
       close();
@@ -153,6 +239,11 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   next.addEventListener("click", () => cb.onStep(1, query()));
   doReplace.addEventListener("click", () => cb.onReplace(query()));
   doAll.addEventListener("click", () => cb.onReplaceAll(query()));
+  searchAll.addEventListener("click", () => runSearch());
+  docsChk.input.addEventListener("change", () => {
+    syncAllDocs();
+    cb.onQueryChange(query());
+  });
   for (const c of [caseChk.input, wordChk.input, reChk.input]) {
     c.addEventListener("change", () => cb.onQueryChange(query()));
   }
@@ -226,6 +317,7 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     if (seed) {
       findInput.value = seed;
     }
+    syncAllDocs();
     cb.onQueryChange(query());
   }
 
@@ -247,6 +339,7 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
       count.textContent = t;
     },
     setStatus,
+    setHits,
     focusFind: () => findInput.select(),
     focusReplace: () => replaceInput.select(),
     getQuery: query,
