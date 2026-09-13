@@ -51,6 +51,10 @@
 - **B34** 应用更名 LitePad + 矢量图标；**B35** prettier/eslint/rustfmt 链 + `scripts/release.sh` + GitHub Actions；
   **B36** 全仓库清理 LiteMD 残留（回归断言升级为全仓库扫描）+ 旧空间记忆归档；
   **B37** 接入 main 分支 CI + 手动触发，发布 **v0.2.0**（首个 GitHub Release，流水线首次实跑通过）。
+- **B41** 图标定为无背景折角文档+钢笔（钢笔头朝左下），修好 `build.rs` 未盯 `icons/` 导致旧图标入 exe；
+  **B42** 菜单重组为 文件/编辑/查看/设置/帮助，新增「设置→首选项（二级子菜单）」与**可编辑快捷键面板**
+  （`src/shell/keymap.ts` 注册表 + `Settings.keymap` 持久化），大纲/折叠展开补齐默认键位。
+  该批暴露 **CodeMirror 内置键位静默吞键并改写文档** 的问题（详见 `ARCHITECTURE.md` §8）。
 
 ## 下一步
 

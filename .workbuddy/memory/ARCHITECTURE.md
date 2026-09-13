@@ -68,8 +68,18 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   可见实例滚动、离屏写快照。
 - **缩放**：Ctrl+滚轮走 `src/shell/zoom.ts`（`passive:false` + 累加阈值 30 防触控板跳档）；
   预览字号必须写成 `calc(var(--font-size,14px)+1px)`、代码块用 `em` 才能联动。
-- **设置**：已无设置对话框，偏好分散进各菜单（文件=自动保存/默认行尾·编码；查看=主题三态/预览行距/大纲宽度），
-  帮助只留只读快捷键对话框。改偏好统一走 `persistSettings()`。
+- **设置**（B42 后）：偏好已收口到「设置」菜单。**首选项 = 二级子菜单**（`menu.ts` 的 `submenu`），
+  含 主题三态/预览行距三档/大纲宽度三档/新建默认行尾/新建默认编码；**快捷键…** 打开可编辑面板
+  （`src/shell/keymapdialog.ts`）。改偏好统一走 `persistSettings()`。
+  仍无设置**对话框**，但快捷键面板本身是一个模态浮层。
+- **键盘快捷键**（B42 新增，`src/shell/keymap.ts`）：单一注册表 `CommandDef{id,label,group,keys[],editable,force}`；
+  解析用 `KeyboardEvent.code`（**不可用 `e.key`**，`Ctrl+Shift+[` 的 key 是 `{`）；
+  覆盖层 `KeymapOverrides`（id→键位串，`""` = 显式解绑）持久化到 `Settings.keymap`（Rust `HashMap<String,String>`）。
+  分发在 `main.ts` 的**全局捕获阶段** `onGlobalKeydown`，`shortcutApplies(id)` 按上下文放行。
+  `force:true` 只给 F5（必须压过 WebView2 刷新）；`isUsableBinding` 拒绝裸字母/数字/符号（否则打字被吞）。
+- **菜单系统**（`src/shell/menu.ts`）：`MenuItem.submenu?: MenuItem[] | (() => MenuItem[])`。
+  子菜单**扁平挂到 `document.body`**（按父按钮 rect 定位、右侧越界左翻），**不能挂进父菜单 DOM**——
+  父菜单有 `overflow` 会裁掉子菜单。`chain`/`created` 数组维护展开层级，`closeDeeperThan(level)` 收深层。
 - **标签栏溢出**：不用滚动条。`renderTabstrip` 先全量渲染 → 测量 → 裁剪，区间外折叠进 `.tab-more` 下拉，
   滚轮改 `start`；活动标签**仅在下标变化时**拉回可视区（否则滚轮会被拽回）。
 - **图标**：`scripts/gen_icons.py` 纯矢量自绘；四角圆角用「alpha 与垂直镜像取 min」保证上下一致；
@@ -77,6 +87,14 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
 
 ## 8. 通用教训
 
+- **CodeMirror 内置键位会静默吞掉应用快捷键，并可能改写文档**（B42 实测，已锁进
+  `tests/editor-keymap-conflicts.test.ts`）。CM `defaultKeymap` 的 `Mod-/`（切换注释）
+  会抢走应用的 `Ctrl+/`，在 Markdown 下**往正文插入 `<!-- -->`**；`Shift-Alt-ArrowDown`
+  （整行复制）会抢走 `Alt+Shift+↓`（垂直分屏）。**二者都不会报错**，只表现为「快捷键失灵 + 文档被改」。
+  对策：① 应用全局 `keydown` 挂**捕获阶段**并 `stopPropagation`，先于 CM 拿到事件；
+  ② 用 `shortcutApplies(id)` 对非 Markdown 文件放行 `view.toggle`，保留 CM 原生注释切换。
+  **推论**：任何「按了没反应」的应用快捷键，先怀疑 editor 的 keymap，再用真实 `defaultKeymap`
+  探针实测（不要凭记忆断言）。
 - 改方案/改名时要**连注释与 docstring 一起清**——静态断言会抓到注释里的旧字符串（B34）。
 - 一个测试文件内多个用例**共享模块状态**（`main` 只 bootstrap 一次、按钮是 toggle）；
   多用例文件必须先确保 UI 状态再操作，否则假阴性（B33）。
