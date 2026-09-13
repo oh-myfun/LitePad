@@ -133,3 +133,25 @@ export function siblingLeafOf(n: LayoutNode, panelId: number): number | null {
   }
   return null;
 }
+
+/**
+ * 把拖拽后的分割比例写回树中 path 指向的分割节点。
+ *
+ * 路径约定与 splitview.build 一致：path 是**从根到该分割节点**的子树下标序列
+ * （根分割 = []，根分割的 a 子树里的分割 = [0]……）。
+ *
+ * B26 回归：旧实现按「寻址子节点」解释（要求 path 末位是 0/1 才写 ratio），
+ * 与 build 传参错位一层——根分割的比例永远写不进树、嵌套分割写到父节点上。
+ * 平时看不出（拖拽只改了内联样式），任何 rebuildLayout（开/关文档等）都会用
+ * 旧 ratio 重排 → 分割条跳位。
+ */
+export function updateRatio(node: LayoutNode, path: number[], ratio: number): void {
+  if (node.kind !== "split") return;
+  if (path.length === 0) {
+    node.ratio = Math.min(0.95, Math.max(0.05, ratio));
+    return;
+  }
+  const [head, ...rest] = path;
+  if (head === 0) updateRatio(node.a, rest, ratio);
+  else if (head === 1) updateRatio(node.b, rest, ratio);
+}

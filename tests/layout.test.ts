@@ -9,6 +9,7 @@ import {
   splitPanel,
   splitPanelAt,
   type LayoutNode,
+  updateRatio,
 } from "../src/shell/layout";
 
 const tree: LayoutNode = {
@@ -159,5 +160,44 @@ describe("layout tree", () => {
     }
     // 目标不存在时原样返回
     expect(splitPanelAt(leaf(1), 42, "h", 9, false)).toEqual({ kind: "leaf", panelId: 1 });
+  });
+});
+
+describe("updateRatio 路径约定（B26 回归：分割条位置随开/关文档跳变）", () => {
+  // build() 传给 onRatioChange 的 path 是「分割节点自身」的树路径：
+  // 根分割 = []，根的 a 子树里的分割 = [0]，b 子树里 = [1]……
+  const nested = (): LayoutNode => ({
+    kind: "split",
+    dir: "h",
+    ratio: 0.5,
+    a: { kind: "split", dir: "v", ratio: 0.5, a: leaf(1), b: leaf(2) },
+    b: { kind: "split", dir: "v", ratio: 0.5, a: leaf(3), b: leaf(4) },
+  });
+
+  it("根分割用空路径写入（旧实现永远写不进 → 开/关文档后跳位）", () => {
+    const t = nested();
+    updateRatio(t, [], 0.3);
+    expect(t.ratio).toBe(0.3);
+  });
+
+  it("嵌套分割写到对应子节点，而不是父节点", () => {
+    const t = nested();
+    updateRatio(t, [0], 0.25);
+    expect(t.a.kind === "split" && t.a.ratio).toBe(0.25);
+    expect(t.ratio, "父节点比例不得被误改").toBe(0.5);
+    updateRatio(t, [1], 0.8);
+    expect(t.b.kind === "split" && t.b.ratio).toBe(0.8);
+    // [1,0] 指向 b.a（叶子）→ 安全无操作，b 的比例不变
+    updateRatio(t, [1, 0], 0.6);
+    expect(t.b.kind === "split" && t.b.ratio).toBe(0.8);
+  });
+
+  it("叶子节点与非法下标安全无操作；比例收敛到合法区间", () => {
+    const t = nested();
+    updateRatio(t, [0, 1, 2], 0.7); // 指向叶子 → 无操作
+    expect(t.ratio).toBe(0.5);
+    updateRatio(t, [], 5); // 越界值收敛
+    expect(t.ratio).toBeLessThanOrEqual(0.95);
+    expect(t.ratio).toBeGreaterThanOrEqual(0.05);
   });
 });
