@@ -92,15 +92,17 @@ export function attachTocResizer(
 
 export function renderToc(
   host: HTMLElement,
-  entries: TocEntry[],
+  /** null = 当前文档类型不支持大纲；[] = 支持但没有可显示的节点 */
+  entries: TocEntry[] | null,
   activeLine: number,
   cb: TocCallbacks,
 ): void {
   host.textContent = "";
-  if (entries.length === 0) {
+  if (entries === null || entries.length === 0) {
     const empty = document.createElement("div");
     empty.className = "toc-empty";
-    empty.textContent = "当前文档没有标题";
+    empty.textContent =
+      entries === null ? "当前文档类型不支持大纲" : "当前文档没有标题";
     host.appendChild(empty);
     return;
   }

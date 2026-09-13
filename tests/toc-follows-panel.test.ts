@@ -150,4 +150,42 @@ describe("大纲必须跟随活动面板的当前文档", () => {
     await wait(50);
     expect(tocTexts(), "切回 md 面板应恢复大纲").toEqual(["A标题", "A二级"]);
   });
+
+  it("B33 点击文档内容（cm-content）激活另一面板，大纲必须清空", async () => {
+    // 用户报告：带大纲文件 → 不带大纲文件（跨面板、点击文档内容激活），
+    // 左侧大纲仍残留。内容点击会冒泡到 .layout-panel 触发 onActivatePanel；
+    // 该路径必须有幂等的大纲刷新兜底。
+    await import("../src/main");
+    await wait(300);
+
+    const outline = document.getElementById("btn-outline") as HTMLButtonElement;
+    const tocPanelEl = document.getElementById("toc-panel") as HTMLElement;
+    // 用例间共享模块状态：前一个用例可能已把抽屉打开/关闭，这里确保打开
+    if (tocPanelEl.hidden) outline.click();
+    await wait(50);
+    const tocItems = () =>
+      Array.from(document.querySelectorAll("#toc-panel .toc-item")).map((e) => e.textContent ?? "");
+    const panels = Array.from(document.querySelectorAll(".layout-panel")) as HTMLElement[];
+    expect(tocPanelEl.hidden, "大纲抽屉应已打开").toBe(false);
+    expect(tocItems().length, "初始应显示 md 大纲").toBe(2);
+
+    const content = (i: number) =>
+      panels[i].querySelector(".cm-content") as HTMLElement;
+    const click = (el: HTMLElement) =>
+      el.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, cancelable: true, clientX: 5, clientY: 5, button: 0 }),
+      );
+
+    click(content(1));
+    await wait(50);
+    expect(tocItems(), "点击纯文本面板内容后大纲应清空").toEqual([]);
+
+    click(content(0));
+    await wait(50);
+    expect(tocItems(), "点回 md 面板内容应恢复大纲").toEqual(["A标题", "A二级"]);
+
+    click(content(1));
+    await wait(50);
+    expect(tocItems(), "再次点击文本内容应再次清空").toEqual([]);
+  });
 });

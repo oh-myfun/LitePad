@@ -42,7 +42,8 @@ import {
   type Settings,
 } from "./ipc/api";
 import { buildExportHtml, printToPdf } from "./markdown/exporter";
-import { extractToc, renderBlocks, renderFull, type TocEntry } from "./markdown/pipeline";
+import { renderBlocks, renderFull, type TocEntry } from "./markdown/pipeline";
+import { extractOutline } from "./markdown/outline";
 import { PreviewPane } from "./markdown/preview";
 import { renderToc, attachTocResizer, clampTocWidth, type TocResizerHandle } from "./markdown/toc";
 import { attachWheelZoom } from "./shell/zoom";
@@ -444,15 +445,21 @@ function rebuildLayout(): void {
       // （同面板点标签、跨面板点标签"要点两下"都是这么来的）。
       // 活动面板的视觉差异（标题/状态栏）由 refreshTitle/refreshStatus 覆盖；
       // .layout-panel-active 当前无视觉样式，无需同步。
-      if (activePanelId === panelId) return;
+      const changed = activePanelId !== panelId;
+      if (!changed) {
+        // 幂等兜底（B33）：即使面板没变也要刷大纲——桌面实测存在
+        // activePanelId 已是目标面板但大纲仍残留上一份文档的路径，
+        // 早退会跳过清空。updateTocDrawer 幂等且开销小。
+        updateTocDrawer();
+        return;
+      }
       activePanelId = panelId;
       refreshTitle();
       refreshStatus();
       // 大纲跟随**活动面板**的活动文档：分屏下点另一块面板（文本 ↔ md）若不刷新，
       // 大纲会一直停在上一份 md 的大纲上（B23）。这里不重绘标签条（会吞掉 click）。
       updateTocDrawer();
-      const p = getPanel(panelId);
-      p?.view?.focus();
+      getPanel(panelId)?.view?.focus();
       retargetFindBar();
     },
     onActivateTab: (panelId, tabId) => switchTab(panelId, tabId),
@@ -695,6 +702,7 @@ async function closeTabById(tabId: number): Promise<void> {
     activePanelId = panel.panelId;
     refreshTitle();
     refreshStatus();
+    updateTocDrawer();
     renderPanelTabs();
   }
   if (doc.dirty && siblings.length === 0) {
@@ -2217,12 +2225,21 @@ function toggleToc(): void {
 function updateTocDrawer(): void {
   if (tocPanel.hidden) return;
   const tab = activeTab();
-  if (!tab || !isMdTab(tab)) {
+  if (!tab) {
     tocEntries = [];
-    renderToc(tocPanel, [], -1, { onJump: () => {} });
+    renderToc(tocPanel, null, -1, { onJump: () => {} });
     return;
   }
-  tocEntries = extractToc(tab.state.doc.toString());
+  // 多格式大纲（B33）：md 之外 toml/ini/yaml/json/py 也有大纲；
+  // null = 格式不支持 → 空态文案不同
+  const doc = docs.get(tab.docId);
+  const result = doc ? extractOutline(doc.name, tab.state.doc.toString()) : null;
+  if (result === null) {
+    tocEntries = [];
+    renderToc(tocPanel, null, -1, { onJump: () => {} });
+    return;
+  }
+  tocEntries = result;
   const cursorLine = tab.state.doc.lineAt(tab.state.selection.main.head).number;
   renderToc(tocPanel, tocEntries, cursorLine, {
     onJump: (entry) => {
