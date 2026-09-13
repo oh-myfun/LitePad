@@ -660,3 +660,24 @@ describe("B42：快捷键可浏览可编辑", () => {
     expect(dlg, "不得再保留只读的 KEYMAP_DOC 清单").not.toContain("KEYMAP_DOC");
   });
 });
+
+describe("B48 安装包必须自带 WebView2Loader.dll（缺了应用起不来）", () => {
+  // 用户报告：装好的应用双击无反应。根因是 NSIS 包里只有 litepad.exe，
+  // 而它的导入表依赖 WebView2Loader.dll（Tauri 的 WebView2 加载器，必须与 exe 同目录）；
+  // 该 dll 由构建生成到 target/release/，但 bundler 不会自动收进包。
+  it("bundle.resources 必须把 WebView2Loader.dll 打到安装目录根", () => {
+    const conf = readJson("src-tauri/tauri.conf.json");
+    const res = conf.bundle?.resources;
+    expect(res, "bundle.resources 必须存在（否则 WebView2Loader.dll 不会进包）").toBeTruthy();
+
+    // 两种写法都要认：["路径"] 与 { "源": "目标" }
+    const pairs: [string, string][] = Array.isArray(res)
+      ? (res as string[]).map((p) => [p, p])
+      : Object.entries(res as Record<string, string>);
+
+    const hit = pairs.find(([, target]) => /WebView2Loader\.dll$/i.test(target));
+    expect(hit, "必须把 WebView2Loader.dll 打进安装包").toBeTruthy();
+    // 目标若带子路径（如 target/release/...），exe 仍会在同目录找不到它
+    expect(hit![1], "目标必须是安装目录根下的文件名，不能带子路径").toBe("WebView2Loader.dll");
+  });
+});
