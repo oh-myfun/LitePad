@@ -424,6 +424,42 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     ).toBe(true);
   });
 
+  it("B43 折角文档不得带投影，钢笔需缩短且笔尖收进文档中部（不再顶角）", () => {
+    // B43 用户反馈：① 钢笔太长；② 笔尖不要顶到文档角落，落在「中间靠下」即可；
+    //              ③ 去掉折角文档的投影（折角处与下面两个圆角处能看到阴影）。
+    const gen = readFileSync("scripts/gen_icons.py", "utf-8");
+
+    // ① 文档投影必须关闭（保留开关常量，便于日后回退）
+    expect(gen, "方案 B 必须关闭文档投影").toMatch(/B_CARD_SHADOW\s*=\s*False/);
+
+    // ② 钢笔必须明显短于 B41 那版（0.78）
+    const lenRaw = gen.match(/B_PEN_LENGTH\s*=\s*([\d.]+)/)?.[1];
+    expect(lenRaw, "缺少 B_PEN_LENGTH 常量").toBeTruthy();
+    const len = Number(lenRaw);
+    expect(len, "钢笔应明显短于原 0.78").toBeLessThanOrEqual(0.66);
+    expect(len, "钢笔也不该短到失去比例").toBeGreaterThanOrEqual(0.5);
+
+    // ③ 笔尖落点 = 中心 + (长度/2)·(-0.707, +0.707)，必须收在文档内、且在中线以下
+    const cRaw = gen.match(/B_PEN_CENTER\s*=\s*\(\s*([\d.]+)\s*,\s*([\d.]+)\s*\)/);
+    const cardRaw = gen.match(
+      /B_CARD\s*=\s*\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*\)/,
+    );
+    expect(cRaw, "缺少 B_PEN_CENTER").toBeTruthy();
+    expect(cardRaw, "缺少 B_CARD").toBeTruthy();
+
+    const cx = Number(cRaw![1]);
+    const cy = Number(cRaw![2]);
+    const [x0, y0, x1, y1] = cardRaw!.slice(1, 5).map(Number);
+    const k = (len / 2) * 0.7071067811865476; // 135° 对角线的单位分量
+    const tipX = cx - k;
+    const tipY = cy + k;
+
+    expect(tipX, "笔尖不得再顶到文档左边缘").toBeGreaterThan(x0 + 0.08);
+    expect(tipY, "笔尖不得再顶到文档下边缘").toBeLessThan(y1 - 0.08);
+    expect(tipY, "笔尖应落在文档水平中线以下（中间靠下）").toBeGreaterThan((y0 + y1) / 2);
+    expect(Math.abs(tipX - (x0 + x1) / 2), "笔尖不应偏离文档竖直中线过远").toBeLessThan(0.12);
+  });
+
   it("B34/B36 应用更名为 LitePad 后，全仓库不得有 LiteMD/litemd 残留", () => {
     // B34：应用名改为 LitePad（源码 + 配置 + Rust）。
     // B36：用户要求「梳理项目中所有文件」把 LiteMD 全部改成 LitePad——
