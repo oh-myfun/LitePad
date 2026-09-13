@@ -9,8 +9,12 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/*.cjs\" eslint.config.js",
+    "format": "prettier --write \"src/**/*.{ts,css}\" \"tests/**/*.ts\" \"scripts/*.{cjs,mjs}\" index.html eslint.config.js",
+    "format:check": "prettier --check \"src/**/*.{ts,css}\" \"tests/**/*.ts\" \"scripts/*.{cjs,mjs}\" index.html eslint.config.js",
     "test": "node scripts/run-vitest.cjs",
     "build:all": "bash scripts/build-all.sh",
+    "release": "bash scripts/release.sh",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -33,10 +37,16 @@
     "shiki": "^4.4.3"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "@tauri-apps/cli": "^2.9.2",
     "@types/markdown-it": "^14.2.0",
     "@types/markdown-it-footnote": "^3.0.4",
+    "eslint": "10.10.0",
+    "globals": "17.12.0",
+    "jsdom": "30.0.1",
+    "prettier": "3.9.6",
     "typescript": "^5.9.3",
+    "typescript-eslint": "8.70.0",
     "vite": "^6.4.3",
     "vitest": "~4.1.11"
   }

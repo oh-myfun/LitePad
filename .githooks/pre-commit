@@ -1,0 +1,55 @@
+#!/bin/sh
+# LitePad pre-commit：格式 + 静态检查（快速，目标 <30s）
+# 激活：git config core.hooksPath .githooks
+set -u
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+# Windows 常见 cargo 位置补充（干净 shell 下 PATH 可能缺 cargo）
+command -v cargo >/dev/null 2>&1 || {
+  for d in "$HOME/.cargo/bin" "/c/msys64/mingw64/bin"; do
+    [ -x "$d/cargo.exe" ] && PATH="$d:$PATH"
+  done
+  export PATH
+}
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$STAGED" ] && exit 0
+
+fail() {
+  echo "✗ pre-commit 失败：$1" >&2
+  echo "  （修复后重试；确需跳过用 git commit --no-verify，不建议）" >&2
+  exit 1
+}
+
+# 1) prettier：staged 的前端文件（排除产物目录与编码样例）
+FRONT=$(printf '%s\n' "$STAGED" | grep -E '\.(ts|css|html|json)$' |
+  grep -v -E '^(dist/|src-tauri/|generated-images/|test-data/|package-lock\.json)' || true)
+if [ -n "$FRONT" ]; then
+  echo "▸ prettier --check"
+  printf '%s\n' "$FRONT" | xargs node node_modules/prettier/bin/prettier.cjs --check ||
+    fail "prettier 格式不符（node node_modules/prettier/bin/prettier.cjs -w <file> 修复）"
+fi
+
+# 2) eslint：staged 的 TS
+TS=$(printf '%s\n' "$STAGED" | grep -E '\.ts$' | grep -v -E '^(dist/|src-tauri/)' || true)
+if [ -n "$TS" ]; then
+  echo "▸ eslint"
+  printf '%s\n' "$TS" | xargs node node_modules/eslint/bin/eslint.js || fail "eslint 未通过"
+fi
+
+# 3) tsc 增量类型检查
+echo "▸ tsc -b"
+node node_modules/typescript/bin/tsc -b || fail "类型检查未通过"
+
+# 4) rustfmt：仅当 Rust 源有改动
+RS=$(printf '%s\n' "$STAGED" | grep -E '^src-tauri/src/.*\.rs$' || true)
+if [ -n "$RS" ]; then
+  if command -v cargo >/dev/null 2>&1; then
+    echo "▸ cargo fmt --check"
+    (cd src-tauri && cargo fmt --check) || fail "rustfmt 不符（cd src-tauri && cargo fmt 修复）"
+  else
+    echo "⚠ 找不到 cargo，跳过 rustfmt 检查"
+  fi
+fi
+
+echo "✓ pre-commit 通过"

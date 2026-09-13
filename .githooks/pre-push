@@ -1,0 +1,19 @@
+#!/bin/sh
+# LitePad pre-push：推送前跑全量测试（前端 vitest + 后端 cargo test）
+# 激活：git config core.hooksPath .githooks
+set -u
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+echo "▸ vitest 全量"
+node node_modules/vitest/vitest.mjs run || {
+  echo "✗ pre-push 失败：vitest 未通过" >&2
+  exit 1
+}
+
+echo "▸ cargo test"
+(cd src-tauri && cargo test) || {
+  echo "✗ pre-push 失败：cargo test 未通过" >&2
+  exit 1
+}
+
+echo "✓ pre-push 通过"

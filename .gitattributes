@@ -1,0 +1,10 @@
+# 仓库统一 LF（编辑器核心约定：内存一律 LF，落盘时还原行尾）
+* text=auto eol=lf
+
+# 编码/行尾测试样例必须原样保留（CRLF/GBK/UTF-16 样例被任何转换都会破坏测试语义）
+test-data/** -text
+
+# 二进制
+*.png binary
+*.ico binary
+*.exe binary
