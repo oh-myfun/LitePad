@@ -727,8 +727,35 @@ describe("bootstrap + drag-split smoke", () => {
 
       // 点击第二个标题（## 第二题，第 5 行）
       const h2Pos = amdViewsBefore[0].state.doc.line(5).from;
+      // B29：拦截全部视图的 dispatch——源码模式跳转必须携带 y:"start" 滚动效果
+      // （把标题行顶到视口顶部），不得再用最小滚动的 scrollIntoView:true（会贴底）
+      const dispatchSpecs: Array<Record<string, unknown>> = [];
+      const wrapped = viewsOf().map((v) => {
+        const orig = v.dispatch.bind(v);
+        (v as unknown as { dispatch: unknown }).dispatch = (spec: unknown) => {
+          dispatchSpecs.push(spec as Record<string, unknown>);
+          return orig(spec as Parameters<typeof orig>[0]);
+        };
+        return v;
+      });
       itemOf()[1].click();
       await new Promise((r) => setTimeout(r, 20));
+      wrapped.forEach((v) => {
+        delete (v as unknown as { dispatch?: unknown }).dispatch;
+      });
+      const hasStartScroll = dispatchSpecs.some((spec) => {
+        const effs = Array.isArray(spec.effects)
+          ? spec.effects
+          : spec.effects
+            ? [spec.effects]
+            : [];
+        return effs.some((ef) => (ef as { value?: { y?: string } })?.value?.y === "start");
+      });
+      expect(hasStartScroll, "源码模式大纲跳转必须以 y:start 滚动（行顶到视口顶部）").toBe(true);
+      expect(
+        dispatchSpecs.some((spec) => spec.scrollIntoView === true),
+        "不得再用最小滚动的 scrollIntoView:true",
+      ).toBe(false);
 
       // 断言：每一个 a.md 实例选区都跳到该标题行首
       for (const [i, v] of amdViewsBefore.entries()) {

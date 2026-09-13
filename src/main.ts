@@ -2179,8 +2179,12 @@ function updateTocDrawer(): void {
       const doc = docOf(tab2);
       const line = Math.min(Math.max(1, entry.line), tab2.state.doc.lines);
       const pos = tab2.state.doc.line(line).from;
-      // 活动实例：视图定位 + 聚焦
-      panel.view.view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+      // 活动实例：视图定位 + 聚焦（y:"start" 把标题行顶到视口顶部；
+      // scrollIntoView:true 是最小滚动，行在视口下方时会贴底）
+      panel.view.view.dispatch({
+        selection: { anchor: pos },
+        effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: 0 }),
+      });
       tab2.state = panel.view.view.state;
       if (tab2.viewMode === "preview") panel.preview?.syncToLine(line);
       // 同文件的其他实例：选区同步写进快照（内容经 ChangeSet 广播保持一致，
@@ -2189,7 +2193,10 @@ function updateTocDrawer(): void {
         if (inst.tabId === tab2.tabId) continue;
         const p = panels.get(inst.panelId);
         if (p?.view && p.viewTabId === inst.tabId) {
-          p.view.view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+          p.view.view.dispatch({
+            selection: { anchor: pos },
+            effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: 0 }),
+          });
           inst.state = p.view.view.state;
           // 预览态面板编辑器是隐藏的，收不到滚动事件——显式按行定位预览
           if (inst.viewMode === "preview") p.preview?.syncToLine(line);
