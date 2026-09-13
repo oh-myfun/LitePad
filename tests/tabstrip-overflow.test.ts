@@ -6,7 +6,8 @@ import { renderTabstrip, type TabViewData, type TabstripCallbacks } from "../src
 import { closePopupMenu } from "../src/shell/menu";
 
 const TAB_W = 100;
-const STRIP_W = 250;
+/** 标签区可视宽度。可变：B44 用例模拟「缩放窗口」。 */
+let STRIP_W = 250;
 
 beforeAll(() => {
   // 可视宽度：只有标签栏容器有宽度
@@ -36,6 +37,7 @@ beforeAll(() => {
 afterEach(() => {
   closePopupMenu();
   document.body.textContent = "";
+  STRIP_W = 250;
 });
 
 function tabs(n: number, active = 0): TabViewData[] {
@@ -201,6 +203,73 @@ describe("标签栏溢出折叠", () => {
     renderTabstrip(host, tabs(2, 1), cb());
     expect(host.querySelector(".tab-more")).toBeNull();
     expect(visibleNames(host)).toEqual(["tab1", "tab2"]);
+  });
+});
+
+// B44 用户报告：标签处于**折叠状态**时，缩放窗口 / 滚动鼠标 / 关闭标签 /
+// 新建·打开文件都不会重新调整可见的标签项。四条各自锁定一条根因。
+describe("B44 折叠态下必须随尺寸与标签变化自动重算可见区间", () => {
+  /** 尺寸变化经 rAF 合并（setup.ts 把 rAF 换成 setTimeout 0），等一个宏任务即可。 */
+  const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
+  const resizeTo = async (w: number): Promise<void> => {
+    STRIP_W = w;
+    window.dispatchEvent(new Event("resize"));
+    await flush();
+  };
+
+  it("缩小窗口：折叠必须跟着变多（原来完全不重算）", async () => {
+    STRIP_W = 700;
+    const { host } = mount(6); // 6×100+5×2=610 ≤ 700 → 全显示
+    expect(visibleNames(host)).toEqual(["tab1", "tab2", "tab3", "tab4", "tab5", "tab6"]);
+
+    await resizeTo(250);
+    expect(visibleNames(host), "缩窄后放不下，应折叠到 2 个").toEqual(["tab1", "tab2"]);
+    expect(host.querySelector(".tab-more"), "应出现折叠按钮").toBeTruthy();
+  });
+
+  it("放大窗口：折叠的标签必须放出来", async () => {
+    STRIP_W = 250;
+    const { host } = mount(6);
+    expect(visibleNames(host)).toEqual(["tab1", "tab2"]);
+
+    await resizeTo(700);
+    expect(visibleNames(host), "变宽后 6 个都放得下").toEqual([
+      "tab1",
+      "tab2",
+      "tab3",
+      "tab4",
+      "tab5",
+      "tab6",
+    ]);
+    expect(host.querySelector(".tab-more"), "放得下就不该再有折叠按钮").toBeNull();
+  });
+
+  it("滚轮向左：活动标签在右端时也必须能调整可见区间", () => {
+    const { host } = mount(6, 5); // 活动 = 末位 tab6，窗口尾部对齐
+    expect(visibleNames(host)).toEqual(["tab5", "tab6"]);
+    wheel(host, -100);
+    expect(visibleNames(host), "向左滚应看到更靠前的标签，不能被活动标签拽回").toEqual([
+      "tab4",
+      "tab5",
+    ]);
+  });
+
+  it("关闭标签后窗口必须重新铺满可用宽度（不能只显示 1 个）", () => {
+    const { host } = mount(4, 3); // 活动 = tab4 → 窗口 [2,4)
+    expect(visibleNames(host)).toEqual(["tab3", "tab4"]);
+    // 关掉 tab4，剩 tab1..tab3 且活动变为 tab3
+    const rest = tabs(4, 3)
+      .filter((t) => t.tabId !== 4)
+      .map((t, i) => ({ ...t, active: i === 2 }));
+    renderTabstrip(host, rest, cb());
+    expect(visibleNames(host), "预算还够放 2 个，不能只显示 1 个").toEqual(["tab2", "tab3"]);
+  });
+
+  it("打开/新建文件后，新标签必须在可见区间内", () => {
+    const { host } = mount(6, 5);
+    renderTabstrip(host, tabs(7, 6), cb());
+    expect(visibleNames(host), "新标签是活动标签，必须显示出来").toContain("tab7");
   });
 });
 

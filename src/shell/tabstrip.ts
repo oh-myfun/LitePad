@@ -47,10 +47,60 @@ interface StripEntry {
   /** 上次渲染时的活动标签下标——仅在其变化时才把活动标签拉回可视区 */
   lastActive: number;
   acc: number;
+  /** 尺寸监听（B44）：窗口缩放 / 分屏拖拽都要重新折叠 */
+  observer?: ResizeObserver;
 }
 
 const strips = new WeakMap<HTMLElement, StripEntry>();
 const wheelBound = new WeakSet<HTMLElement>();
+
+/**
+ * 当前挂载中的标签栏（B44）。WeakMap 不能遍历，而「窗口变小了要重算折叠」
+ * 需要能反过来找到所有标签栏，故另存一个 Set；每次重排时顺手剔除已卸载的，
+ * 避免面板增删后集合无限增长。
+ */
+const liveStrips = new Set<HTMLElement>();
+let relayoutQueued = false;
+let resizeBound = false;
+
+/** 合并同一帧内的多次尺寸变化（窗口连续缩放会每帧触发一次）。 */
+function scheduleRelayout(): void {
+  if (relayoutQueued) return;
+  relayoutQueued = true;
+  const run = (): void => {
+    relayoutQueued = false;
+    for (const host of [...liveStrips]) {
+      if (!host.isConnected) {
+        liveStrips.delete(host);
+        continue;
+      }
+      const entry = strips.get(host);
+      if (entry) renderTabstrip(host, entry.tabs, entry.cb);
+    }
+  };
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(run);
+  else run();
+}
+
+/**
+ * 监听标签栏自身宽度变化。ResizeObserver 能同时覆盖「窗口缩放」与
+ * 「拖拽分屏分隔条导致本面板变窄」（后者不触发 window.resize）；
+ * 无 RO 的环境（jsdom）退化为 window.resize。
+ */
+function watchStripSize(host: HTMLElement, entry: StripEntry): void {
+  // 顺手剔除已卸载的标签栏：rebuildLayout 会整棵重建面板 DOM，旧 strip 元素
+  // 不再连接，放任不管会越积越多（集合规模只等于面板数，全量扫一遍很便宜）。
+  for (const h of liveStrips) if (!h.isConnected) liveStrips.delete(h);
+  liveStrips.add(host);
+  if (typeof window !== "undefined" && !resizeBound) {
+    resizeBound = true;
+    window.addEventListener("resize", scheduleRelayout);
+  }
+  if (typeof ResizeObserver === "function") {
+    if (!entry.observer) entry.observer = new ResizeObserver(() => scheduleRelayout());
+    entry.observer.observe(host); // 重复 observe 同一元素是 no-op
+  }
+}
 
 /** 折叠按钮预留宽度（px） */
 const MORE_WIDTH = 34;
@@ -87,6 +137,8 @@ export function renderTabstrip(
     wheelBound.add(host);
     host.addEventListener("wheel", (e) => onWheel(host, e), { passive: false });
   }
+  // B44：窗口缩放 / 分屏拖拽后必须重新折叠（否则折叠区间停留在旧宽度上）
+  watchStripSize(host, entry);
 
   applyOverflow(host, entry, els, activeIdx, activeIdx !== entry.lastActive);
   entry.lastActive = activeIdx;
@@ -198,6 +250,13 @@ function fitCount(widths: number[], from: number, budget: number): number {
   return n;
 }
 
+/** 从末尾往前数、在 budget 内最多能放几个（用于把没铺满的窗口补满）。 */
+function fitCountFromEnd(widths: number[], budget: number): number {
+  let n = 0;
+  while (n < widths.length && widthOf(widths, widths.length - n - 1, n + 1) <= budget) n++;
+  return n;
+}
+
 /**
  * 打开/关闭标签后按 tabId 重对齐窗口起点：start 是下标，增删标签后
  * 下标内容整体位移（关掉左侧折叠标签会让窗口漂移一格、看到错误的标签）。
@@ -247,8 +306,10 @@ function applyOverflow(
     entry.start = activeIdx;
     count = fitCount(widths, entry.start, budget);
   }
-  // 活动标签折叠在右侧 → 尾部对齐拉进来（也使切换可见标签时窗口不跳动）
-  if (activeIdx >= 0 && entry.start + count <= activeIdx) {
+  // 活动标签折叠在右侧 → 尾部对齐拉进来（也使切换可见标签时窗口不跳动）。
+  // 必须限定 activeChanged：否则滚轮向左滚、或缩窗后活动标签落到窗口右外侧时，
+  // 窗口会被无条件拽回，表现为「滚不动 / 缩窗后布局卡住」。
+  if (activeChanged && activeIdx >= 0 && entry.start + count <= activeIdx) {
     entry.start = Math.max(0, activeIdx - count + 1);
     count = fitCount(widths, entry.start, budget);
   }
@@ -257,6 +318,16 @@ function applyOverflow(
     entry.start = Math.max(0, els.length - count);
   }
   count = fitCount(widths, entry.start, budget);
+  // 窗口没铺满可用宽度（关标签后 start 被夹到末尾、只剩下一个可见）→ 整体左移补满。
+  // 不补的话会出现「明明还放得下 2 个却只显示 1 个」，用户看到的就是「没自动调整」。
+  // 只在没铺满时生效：已铺满时不动，免得把用户滚出来的位置拽走。
+  if (entry.start > 0) {
+    const fromEnd = fitCountFromEnd(widths, budget);
+    if (fromEnd > count) {
+      entry.start = Math.max(0, els.length - fromEnd);
+      count = fromEnd;
+    }
+  }
 
   for (let i = 0; i < els.length; i++) {
     if (i < entry.start || i >= entry.start + count) els[i].remove();
