@@ -1,20 +1,20 @@
-"""生成 LitePad 的 Tauri 打包图标（B38 重制）。
+"""生成 LitePad 的 Tauri 打包图标。
 
-纯矢量自绘（Pillow），不依赖任何外部源图。相比 B34 增补：
-  - 45° 对角渐变底 + 左上柔光 + 右下暗角 + 内描边（玻璃质感，非纯平色块）
-  - 卡片/工具均带柔和投影（空间层次）
-  - 圆筒形明暗（圆柱高光）替代纯色矩形，工具更有体积感
-  - 提供 3 个候选设计变体，先出对比图再选定安装
+纯矢量自绘（Pillow），不依赖任何外部源图。
+
+**当前采用方案 B**：透明画布上直接是「折角文档 + 钢笔」，不加圆角渐变底；
+钢笔沿对角线反放——**笔头朝左下角、笔尾在右上角**。
+（用户要求：不排除背景时白纸在浅色底上会糊成一片，故纸面加了极淡描边 + 投影兜底。）
 
 用法（venv 解释器）：
   PY=C:/Users/maoyu/.workbuddy/binaries/python/envs/default/Scripts/python.exe
-  $PY scripts/gen_icons.py                # 生成 3 个候选 + generated-images/icon_variants.png
-  $PY scripts/gen_icons.py --install B    # 把选定变体写入 src-tauri/icons 与单图预览
+  $PY scripts/gen_icons.py                # 生成候选对比图 generated-images/icon_variants.png
+  $PY scripts/gen_icons.py --install B    # 写入 src-tauri/icons 并出预览板（当前采用）
 
-变体：
-  A  便签纸 + 铅笔（精修版，B34 的进化）
-  B  折角文档 + 钢笔（更"应用图标"的极简感）
-  C  字母 L + 光标（品牌字母 + 编辑意象）
+三个变体（B 为选定方案，A/C 保留备查）：
+  A  便签纸 + 铅笔（带圆角渐变底，B34 的进化）
+  B  折角文档 + 钢笔（**无背景**，透明画布）
+  C  字母 L + 光标（带圆角渐变底）
 
 产物：src-tauri/icons/{32x32.png, 128x128.png, 128x128@2x.png, icon.ico(多尺寸)}
 """
@@ -154,8 +154,11 @@ def _tile(s):
     return base, mask
 
 
-def _card(s, x0, y0, x1, y1, radius, cut=0.0):
-    """白色卡片（带竖直微渐变），可选右上折角。返回 (img, mask)。"""
+def _card(s, x0, y0, x1, y1, radius, cut=0.0, outline=None, fold_edge=None):
+    """白色卡片（带竖直微渐变），可选右上折角与描边。返回 (img, mask)。
+
+    无背景方案下纸面是白色，落在浅色底上会糊掉，故支持极淡描边兜底。
+    """
     bx0, by0, bx1, by1 = int(x0 * s), int(y0 * s), int(x1 * s), int(y1 * s)
     w, h = bx1 - bx0, by1 - by0
     img = _vgrad(w, h, (255, 255, 255), CARD_BOTTOM)
@@ -182,6 +185,25 @@ def _card(s, x0, y0, x1, y1, radius, cut=0.0):
         fold_sh = fold_sh.filter(ImageFilter.GaussianBlur(max(1, int(s * 0.006))))
         fold_sh.putalpha(ImageChops.multiply(fold_sh.getchannel("A"), m))
         img.alpha_composite(fold_sh)
+        if fold_edge:
+            ImageDraw.Draw(img).line(
+                [(w - c, 0), (w - 1, c), (w - c, c), (w - c, 0)],
+                fill=fold_edge,
+                width=max(1, int(s * 0.0026)),
+                joint="curve",
+            )
+
+    if outline:
+        ow = max(1, int(s * 0.0030))
+        layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        ImageDraw.Draw(layer).rounded_rectangle(
+            [ow / 2, ow / 2, w - 1 - ow / 2, h - 1 - ow / 2],
+            radius=int(radius * s) - ow // 2,
+            outline=outline,
+            width=ow,
+        )
+        layer.putalpha(ImageChops.multiply(layer.getchannel("A"), m))
+        img.alpha_composite(layer)
     return img, m
 
 
@@ -194,9 +216,9 @@ def _bar(img, box, color, radius_px):
 # --------------------------------------------------------------------------- #
 # 工具：铅笔 / 钢笔（水平绘制，笔尖朝右，之后整体旋转）
 # --------------------------------------------------------------------------- #
-def _tool(s, kind):
-    L = int(s * 0.62)
-    W = int(s * 0.098) if kind == "pencil" else int(s * 0.074)
+def _tool(s, kind, length=0.62):
+    L = int(s * length)
+    W = int(s * 0.098) if kind == "pencil" else int(s * 0.064)
     img = Image.new("RGBA", (L, W), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
@@ -322,27 +344,51 @@ def variant_a(s):
 
 
 # --------------------------------------------------------------------------- #
-# 变体 B：折角文档 + 钢笔
+# 变体 B：折角文档 + 钢笔（无背景，用户选定方案）
 # --------------------------------------------------------------------------- #
 def variant_b(s):
-    base, mask = _tile(s)
-    card, cm = _card(s, 0.243, 0.190, 0.700, 0.792, 0.042, cut=0.155)
-    cx, cy = int(0.243 * s), int(0.190 * s)
+    """透明画布上直接是「折角文档 + 钢笔」，不加圆角渐变底。
+
+    钢笔反放：笔头朝左下角、笔尾在右上角（局部 +x 是笔尖方向，故旋转 -135°）。
+    """
+    base = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+
+    card, cm = _card(
+        s,
+        0.232,
+        0.150,
+        0.684,
+        0.830,
+        0.044,
+        cut=0.148,
+        outline=(203, 213, 225, 205),
+        fold_edge=(165, 180, 252, 255),
+    )
+    cx, cy = int(0.232 * s), int(0.150 * s)
     base.alpha_composite(
-        _shadow_from_alpha(cm, max(2, int(s * 0.022)), (int(s * 0.010), int(s * 0.024)),
-                           (8, 18, 50), 105),
+        _shadow_from_alpha(
+            cm, max(2, int(s * 0.026)), (int(s * 0.013), int(s * 0.028)), (15, 23, 42), 118
+        ),
         (cx, cy),
     )
     base.alpha_composite(card, (cx, cy))
 
-    lx0, lx1 = int(0.302 * s), int(0.600 * s)
-    lh = int(0.034 * s)
-    for i, frac in enumerate((0.60, 1.0, 1.0, 0.78)):
-        y = int((0.352 + i * 0.078) * s)
-        _bar(base, (lx0, y, lx0 + (lx1 - lx0) * frac, y + lh), LIGHT_LINE + (255,), lh / 2)
+    # 文本行：首行是「标题」（中靛，兼作白纸上的对比锚点），其余淡靛
+    lx0, lx1 = int(0.292 * s), int(0.624 * s)
+    lh = int(0.036 * s)
+    rows = (
+        (0.60, (99, 102, 241)),
+        (1.0, (165, 180, 252)),
+        (1.0, (165, 180, 252)),
+        (1.0, (165, 180, 252)),
+        (0.72, (165, 180, 252)),
+    )
+    for i, (frac, col) in enumerate(rows):
+        y = int((0.338 + i * 0.078) * s)
+        _bar(base, (lx0, y, lx0 + (lx1 - lx0) * frac, y + lh), col + (255,), lh / 2)
 
-    _place_tool(base, _tool(s, "pen"), s, (0.600, 0.672), -36)
-    return _finish(base, mask)
+    _place_tool(base, _tool(s, "pen", length=0.78), s, (0.524, 0.524), -135)
+    return base
 
 
 # --------------------------------------------------------------------------- #
@@ -401,10 +447,60 @@ def write_icons(img):
 
 
 def write_single_preview(img, letter):
+    """预览板：透明底（棋盘格）+ 浅色底 / 深色底 + 尺寸梯队。
+
+    无背景方案必须同时看两种底色，否则「白纸在浅色底上会不会糊掉」判断不了。
+    """
     os.makedirs(PREVIEW_DIR, exist_ok=True)
     path = os.path.join(PREVIEW_DIR, "litepad_icon_preview.png")
-    img.resize((512, 512), Image.LANCZOS).save(path)
-    print(f"  预览：{path}")
+
+    W, H, pad, col_x = 1120, 584, 28, 540
+    board = Image.new("RGBA", (W, H), (20, 20, 30, 255))
+    d = ImageDraw.Draw(board)
+    f_title, f_cap, f_lab = _font(20), _font(15), _font(17)
+
+    d.text(
+        (pad, 18),
+        f"LitePad 图标 · 方案 {letter}（透明画布，无背景）",
+        font=f_title,
+        fill=(226, 232, 240, 255),
+    )
+
+    # 透明底：棋盘格示意
+    cb = Image.new("RGBA", (480, 480), (255, 255, 255, 255))
+    cbd = ImageDraw.Draw(cb)
+    step = 20
+    for i in range(0, 480, step):
+        for j in range(0, 480, step):
+            if (i // step + j // step) % 2:
+                cbd.rectangle([i, j, i + step - 1, j + step - 1], fill=(226, 232, 240, 255))
+    board.alpha_composite(cb, (pad, 50))
+    board.alpha_composite(img.resize((480, 480), Image.LANCZOS), (pad, 50))
+    d.text((pad, 540), "透明底（棋盘格示意）", font=f_cap, fill=(139, 147, 168, 255))
+
+    # 浅色底 / 深色底对照
+    for k, (bg, fg, cap) in enumerate(
+        (
+            ((247, 249, 252, 255), (100, 116, 139, 255), "浅色底"),
+            ((30, 32, 48, 255), (148, 163, 184, 255), "深色底"),
+        )
+    ):
+        y0 = 50 + k * 160
+        d.rounded_rectangle((col_x, y0, W - pad, y0 + 144), radius=14, fill=bg)
+        board.alpha_composite(img.resize((112, 112), Image.LANCZOS), (col_x + 26, y0 + 16))
+        d.text((col_x + 166, y0 + 62), cap, font=f_lab, fill=fg)
+
+    # 尺寸梯队（底对齐）
+    d.text((col_x, 386), "尺寸梯队", font=f_cap, fill=(139, 147, 168, 255))
+    x = col_x
+    for sz in (128, 64, 48, 32, 16):
+        board.alpha_composite(
+            img.resize((sz, sz), Image.LANCZOS), (x, 408 + (128 - sz))
+        )
+        x += sz + 16
+
+    board.convert("RGB").save(path)
+    print(f"  预览板：{path}")
 
 
 def _font(size):

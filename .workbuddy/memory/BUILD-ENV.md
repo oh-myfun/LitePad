@@ -121,6 +121,31 @@ failed to read plugin permissions: failed to read file
 - 查进度与结果：`gh run list`、`gh run view <id> --json jobs --jq '.jobs[].steps[]'`、
   `gh release view vX.Y.Z --json assets`。
 
+## ⚠️ 改图标后必须让 build.rs 盯 `icons/` 目录
+
+**症状**：换了 `src-tauri/icons/icon.ico` 并 `tauri build`，**exe 仍是旧图标**，且构建零报错
+（最阴的地方：不报错，你以为生效了）。
+
+**根因**：`tauri-build` 的 rerun 触发条件只覆盖 `tauri.conf.json` / capabilities 等，
+**不监听 `icons/` 目录**。cargo 认为 build script 无需重跑 → `target/.../out/libresource.a`
+保持旧内容（实测 26174 B 未被重写）→ 旧图标被打进 exe。
+
+**修复**（`src-tauri/build.rs`，B41 起长期保留）：
+
+```rust
+fn main() {
+    println!("cargo:rerun-if-changed=icons");   // 关键一行
+    tauri_build::build()
+}
+```
+
+加完后重建：`libresource.a` 26174 → 30558 B，exe 内嵌 PNG 与 `icon.ico` 各档 **逐字节 sha256 一致**。
+
+**验证套路（不依赖 PowerShell `Add-Type`，那条路被会话安全策略拦）**：
+用 Python 扫 exe 二进制里的 PNG 签名（`\x89PNG\r\n\x1a\n`）切出每个 PNG chunk，
+分别 sha256，与 `icon.ico` 各档解出的 PNG 对比 —— 全中才算真嵌进去了。
+改图标后**只认这个证据**，不看「构建成功」。
+
 ## 诊断基建
 
 - `frontend_ready` 命令写 `%TEMP%\litepad-smoke.log`；`scripts/cdp_diag.mjs` 连 CDP 抓页面异常。
