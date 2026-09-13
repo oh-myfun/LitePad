@@ -1,9 +1,9 @@
-# LiteMD 项目长期备忘
+# LitePad 项目长期备忘（B34 起应用更名 LitePad，仓库目录仍为 E:\Project\LiteMD）
 
 ## 技术栈
 
 - Tauri 2 + Rust + Vite 6 + TypeScript + CodeMirror 6
-- 平台：仅 Windows（用户确认）
+- 平台：仅 Windows（用户确认）；应用名 LitePad（productName/exe=litepad.exe/identifier com.litepad.app）
 - 编码处理：encoding_rs + chardetng；原子写入：临时文件 + fsync + rename
 
 ## 构建环境（本机关键约束）
@@ -12,7 +12,7 @@
   由项目根 `rust-toolchain.toml` 锁定（原 `.cargo/config.toml` 已删除）。
 - 构建前导出：`export PATH="/c/msys64/mingw64/bin:$HOME/.cargo/bin:$PATH"`
 - npm 从 PATH 直接可用（node 22.22.2 / npm 10.9.7）。
-- 沙箱内 cargo build 需 `dangerouslyDisableSandbox`；链接前先杀运行中的 litemd.exe（os error 32）。
+- 沙箱内 cargo build 需 `dangerouslyDisableSandbox`；链接前先杀运行中的 litepad.exe（os error 32）。
 - **Tauri 2 ACL**：capabilities/default.json 需含 `core:window:allow-close`/`allow-destroy`
   （onCloseRequested 未 preventDefault 时内部调 destroy()，缺权限则关闭窗口报错）。
 - **会话 shell 可能整体丢 PATH**（shim dirname 报错）且后台长构建挂死：命令内显式 export
@@ -63,7 +63,7 @@
 - IPC 字段：Rust 侧 `#[serde(rename_all = "camelCase")]`，前端 camelCase。
 - 编码识别顺序：BOM → UTF-16 无 BOM 启发式 → UTF-8 校验 → chardetng。
 - 明确不做：插件商店、内置终端、Git 集成、LSP。
-- 诊断基建：`frontend_ready` 命令写 `%TEMP%\litemd-smoke.log`；`scripts/cdp_diag.mjs` 连 CDP。
+- 诊断基建：`frontend_ready` 命令写 `%TEMP%\litepad-smoke.log`；`scripts/cdp_diag.mjs` 连 CDP。
 
 ## 进度
 
