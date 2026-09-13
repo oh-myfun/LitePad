@@ -21,8 +21,19 @@
   运行时可测 → `tests/smoke.bootstrap.test.ts`（jsdom 真实 bootstrap）；
   配置/样式根因 → `tests/regressions.test.ts`（静态文件断言）。
 - **每次编译都要产出发布版本**：`npm run build:all`（tsc → vite → vitest → cargo build+test → tauri build，出 exe + NSIS）。
-- 质量门 = `.githooks`（pre-commit: prettier/eslint/tsc/cargo fmt --check；pre-push: vitest/cargo test）。
+- 质量门 = `.githooks`（pre-commit: prettier/eslint/tsc/cargo fmt --check；pre-push: vitest/cargo test）；
+  GitHub 侧另跑 `CI`（push main / PR：format→lint→tsc→vite→vitest→cargo test）。
 - ⚠️ **沙箱内禁止 `git stash -u` 或任何触碰 `.git` 的重操作**（09-13 一次误操作致全历史丢失，只能重建）。
+
+## 发布
+
+- `bash scripts/release.sh <x.y.z|patch|minor|major> [--ci]`：版本**四处**同步
+  （package.json / tauri.conf.json / Cargo.toml / Cargo.lock）→ 构建 → `chore(release): vX.Y.Z` + tag。
+  `--ci` 跳过本地全量构建（本机冷启 tauri build 要 38 分钟；Actions 本来就会构建）。
+- **GitHub 的 Release 只由 `v*` tag 触发**：只推 `main` 只会跑 CI 编译校验，不会发布。
+  推 tag：`git push origin main --follow-tags`；失败可在 Actions 手动 dispatch（填 tag）重跑。
+- 当前状态：**v0.2.0 已发布**（tag v0.2.0 → NSIS `LitePad_0.2.0_x64-setup.exe`）；
+  版本一致性由 `tests/regressions.test.ts` 断言守护。
 
 ## 构建环境要点
 
@@ -38,7 +49,8 @@
   指针拖拽分屏、查找悬浮栏、大纲跟随活动面板、标签溢出折叠、Ctrl+滚轮缩放、图标矢量重绘、
   发布流程与格式检查链。逐条见 git log 与日志。
 - **B34** 应用更名 LitePad + 矢量图标；**B35** prettier/eslint/rustfmt 链 + `scripts/release.sh` + GitHub Actions；
-  **B36** 全仓库清理 LiteMD 残留（回归断言升级为全仓库扫描）+ 旧空间记忆归档。
+  **B36** 全仓库清理 LiteMD 残留（回归断言升级为全仓库扫描）+ 旧空间记忆归档；
+  **B37** 接入 main 分支 CI + 手动触发，发布 **v0.2.0**（首个 GitHub Release，流水线首次实跑通过）。
 
 ## 下一步
 

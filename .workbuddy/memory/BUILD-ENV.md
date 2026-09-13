@@ -101,6 +101,26 @@ failed to read plugin permissions: failed to read file
 排查：`grep -rl "Project.LiteMD" src-tauri/target/debug/build/ | head`。
 修复：`cd src-tauri && cargo clean` 后全量重建（数分钟）。**改目录名/移动仓库后第一件事就是 clean。**
 
+## GitHub 流水线（CI / Release）
+
+两个 workflow，**触发条件不同，别混**：
+
+| workflow | 触发 | 做什么 |
+| --- | --- | --- |
+| `ci.yml` | push `main`、任意 PR、手动 | format:check → lint → tsc → vite build → vitest → cargo test |
+| `release.yml` | **push `v*` tag**、手动 dispatch | 构建 NSIS → 创建 GitHub Release 并附安装包 |
+
+- **只推 main 不会有任何发布**——这是「GitHub 上没触发发布」的常见根因：
+  仓库曾长期一个 tag 都没有（`gh run list` 为空）。必须 `git push origin main --follow-tags`。
+- Release 失败时不必再推 tag：Actions 页面手动 dispatch，填 `tag` 输入即可重跑
+  （checkout 与 `tag_name` 都跟随该输入，保证补发的是指定版本）。
+- 两条流水线都必须装 **MSYS2 MinGW64** 并 `rustup default stable-x86_64-pc-windows-gnu`
+  （本项目无 MSVC，`rust-toolchain.toml` 锁 GNU 宿主；runner 上不加 MinGW 就链接不了）。
+- 实测耗时（windows-latest，含装 MSYS2/Rust）：CI ≈ 6m40s，Release ≈ 8m30s
+  （本地冷启动分别是 21 min / 38 min，所以优先让 Actions 构建）。
+- 查进度与结果：`gh run list`、`gh run view <id> --json jobs --jq '.jobs[].steps[]'`、
+  `gh release view vX.Y.Z --json assets`。
+
 ## 诊断基建
 
 - `frontend_ready` 命令写 `%TEMP%\litepad-smoke.log`；`scripts/cdp_diag.mjs` 连 CDP 抓页面异常。
