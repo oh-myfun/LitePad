@@ -24,16 +24,17 @@ if (typeof window !== "undefined") {
       }) as unknown as MediaQueryList) as unknown as typeof window.matchMedia;
   }
 
-  // 2) requestAnimationFrame / cancelAnimationFrame：jsdom 需 pretendToBeVisual 才有
-  if (typeof window.requestAnimationFrame !== "function") {
-    window.requestAnimationFrame = ((cb: FrameRequestCallback) =>
-      setTimeout(
-        () => cb(performance.now()),
-        0,
-      ) as unknown as number) as typeof window.requestAnimationFrame;
-    window.cancelAnimationFrame = ((id: number) =>
-      clearTimeout(id)) as typeof window.cancelAnimationFrame;
-  }
+  // 2) requestAnimationFrame / cancelAnimationFrame：**无条件覆盖**。
+  //    jsdom 自带的实现走 16 ms 视觉时钟且在测试里不可靠，会让「等一帧」的用例
+  //    逼近 5 s 默认超时（view-switch-noedit 曾因此稳定超时）。统一换成
+  //    setTimeout(0)，与既有可稳定通过的配置一致。
+  window.requestAnimationFrame = ((cb: FrameRequestCallback) =>
+    setTimeout(
+      () => cb(performance.now()),
+      0,
+    ) as unknown as number) as typeof window.requestAnimationFrame;
+  window.cancelAnimationFrame = ((id: number) =>
+    clearTimeout(id)) as typeof window.cancelAnimationFrame;
 
   // 3) Range.getClientRects / getBoundingClientRect：jsdom 24 未实现，
   //    而 CodeMirror 在 mousedown 处理里会调用 → 「getClientRects is not a function」。
