@@ -75,6 +75,20 @@ Desktop(backend="uia").window(...) → descendants(control_type="MenuItem") → 
 脚本参考 `C:/Users/maoyu/AppData/Local/Temp/notepad_cap4.py`。
 **必须用专用临时文件启动记事本**（否则会自动恢复用户会话标签）。
 
+## ⚠️ 工作区目录改名后必须 `cargo clean`
+
+Rust 的构建缓存里**烙死了绝对路径**。本项目由 `E:\Project\LiteMD` 改名为
+`E:\Project\LitePad` 后，`src-tauri/target/`（当时 6.4 GB）里的 build script 产物仍在引用旧路径，
+表现为 `cargo build` / `cargo test` 失败：
+
+```
+failed to read plugin permissions: failed to read file
+'\\?\E:\Project\LiteMD\src-tauri\target\debug\build\tauri-.../out/permissions/...' (os error 3)
+```
+
+排查：`grep -rl "Project.LiteMD" src-tauri/target/debug/build/ | head`。
+修复：`cd src-tauri && cargo clean` 后全量重建（数分钟）。**改目录名/移动仓库后第一件事就是 clean。**
+
 ## 诊断基建
 
 - `frontend_ready` 命令写 `%TEMP%\litepad-smoke.log`；`scripts/cdp_diag.mjs` 连 CDP 抓页面异常。
