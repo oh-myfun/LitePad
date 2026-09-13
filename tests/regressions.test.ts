@@ -267,6 +267,31 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(rs, "默认宽度应为 240").toContain("toc_width: 240.0");
   });
 
+  it("B28 大纲分隔条必须与分屏分割条同款（5px 常显 border 色 + hover accent，无双线）", () => {
+    // 用户要求：大纲区分隔条样式与面板分割条保持一致。
+    // 旧样式是 4px 透明细条，视觉上与 5px 常显 var(--border) 的 .layout-sep 不统一；
+    // 且 .toc-panel 自带 border-right 会与常显分隔条叠成双线。
+    const previewCss = readFileSync("src/styles/preview.css", "utf-8");
+    const resizer = previewCss.match(/\.toc-resizer\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(resizer, "应有 .toc-resizer 规则块").toBeTruthy();
+    expect(resizer, "宽度必须与 .layout-sep 一致（5px）").toContain("flex: 0 0 5px");
+    expect(resizer, "必须常显 border 色（与 .layout-sep 同款）").toContain(
+      "background: var(--border)",
+    );
+    const highlight = previewCss.match(/\.toc-resizer:hover,\s*body\.layout-dragging \.toc-resizer\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(highlight, "悬停/拖拽高亮必须是 accent（允许带回退值）").toMatch(/var\(--accent[,\)]/);
+
+    const globalCss = readFileSync("src/styles/global.css", "utf-8");
+    const sep = globalCss.match(/\.layout-sep\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(sep, "分屏分割条基准样式应存在").toContain("flex: 0 0 5px");
+    expect(sep, "分屏分割条基准色应为 var(--border)").toContain("background: var(--border)");
+
+    const panel = previewCss.match(/\.toc-panel\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(panel, ".toc-panel 不得自带 border-right（与常显分隔条叠成双线）").not.toContain(
+      "border-right",
+    );
+  });
+
   it("B25 应用图标四角圆角必须一致（下边缘与上边缘相同）", () => {
     // 用户报告：图标下边缘接近直角、上边缘是大圆角。
     // 修复：scripts/gen_icons.py 用「alpha 与垂直镜像取 min」统一四角；

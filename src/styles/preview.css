@@ -206,17 +206,19 @@
   width: 240px;
   min-width: 160px;
   flex: 0 0 auto;
-  border-right: 1px solid var(--border, #ddd);
+  /* 分隔线由右侧 .toc-resizer 提供（与分屏 .layout-sep 同款），面板不再自带右侧边框线免得叠成双线 */
   overflow-y: auto;
   padding: 8px 0;
   background: var(--bg-elevated, #fafafa);
 }
 
-/* 大纲宽度分隔条：细条常驻，悬停/拖拽时高亮（走全局主题变量以随深浅色联动） */
+/* 大纲宽度分隔条：与分屏分割条 .layout-sep 同款——5px 常显 var(--border)，
+   悬停/拖拽时高亮 accent（走全局主题变量以随深浅色联动） */
 .toc-resizer {
-  flex: 0 0 4px;
+  flex: 0 0 5px;
   cursor: col-resize;
-  background: transparent;
+  background: var(--border);
+  z-index: 5;
 }
 .toc-resizer:hover,
 body.layout-dragging .toc-resizer {
