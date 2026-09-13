@@ -1,12 +1,6 @@
 import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import {
-  bracketMatching,
-  foldGutter,
-  foldKeymap,
-  indentOnInput,
-  indentUnit,
-} from "@codemirror/language";
+import { bracketMatching, foldGutter, indentOnInput, indentUnit } from "@codemirror/language";
 import {
   highlightSelectionMatches,
   selectNextOccurrence,
@@ -79,7 +73,10 @@ function baseExtensions(): Extension[] {
       ...closeBracketsKeymap,
       ...defaultKeymap,
       ...historyKeymap,
-      ...foldKeymap,
+      // 折叠键位（foldKeymap：Ctrl-Shift-[ / ] 折叠展开光标块、Ctrl-Alt-[ / ] 全部）
+      // 不在这里注册——已收归 src/shell/keymap.ts 统一管理，这样设置里能改键，
+      // 且菜单显示的键位提示与实际生效键位始终一致。折叠由 editor.ts 之外的
+      // foldOperation / foldCodeOperation 驱动。
       // 选中区扩展：CM searchKeymap 里只保留这两条有用的。
       // 其余（Mod-f / F3 / Mod-g / Escape / Mod-Alt-g）会打开 CM6 自带搜索面板或抢键，
       // 与“悬浮查找栏统一入口”冲突——查找统一由 src/shell/findbar.ts 处理。

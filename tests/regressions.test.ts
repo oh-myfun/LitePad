@@ -469,3 +469,142 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(lockVersion, "Cargo.lock 中 litepad 版本必须与 package.json 一致").toBe(pkgVersion);
   });
 });
+
+describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
+  const menu = (): string => readFileSync("src/shell/menubar.ts", "utf-8");
+  const main = (): string => readFileSync("src/main.ts", "utf-8");
+
+  it("「查看」不得再有主题 / 预览行距 / 大纲宽度 / 分屏", () => {
+    // 只看「查看」菜单那一段，避免把「设置 → 首选项」里的同名词条误判为残留
+    const src = menu();
+    const viewBlock = src.slice(src.indexOf('label: "查看"'), src.indexOf('label: "设置"'));
+    expect(viewBlock, "查看菜单不得再有主题三态").not.toContain("主题：");
+    expect(viewBlock, "查看菜单不得再有预览行距").not.toContain("预览行距");
+    expect(viewBlock, "查看菜单不得再有大纲宽度").not.toContain("大纲宽度");
+    expect(viewBlock, "查看菜单不得再有分屏项").not.toContain("分屏");
+    // 保留项不能被顺手删掉
+    expect(viewBlock).toContain("切换 源码 / 预览");
+    expect(viewBlock).toContain("大纲 TOC");
+    expect(viewBlock).toContain("折叠全部");
+    expect(viewBlock).toContain("自动换行");
+    expect(viewBlock).toContain("状态栏");
+  });
+
+  it("「文件」不得再有新建默认行尾/编码，「帮助」不得再有快捷键", () => {
+    const src = menu();
+    const fileBlock = src.slice(src.indexOf('label: "文件"'), src.indexOf('label: "编辑"'));
+    expect(fileBlock, "文件菜单不得再有新建默认行尾入口").not.toContain("新建文件默认行尾");
+    expect(fileBlock, "文件菜单不得再有新建默认编码入口").not.toContain("新建文件默认编码");
+    expect(fileBlock, "文件菜单应保留自动保存").toContain("自动保存");
+
+    const helpBlock = src.slice(src.indexOf('label: "帮助"'));
+    expect(helpBlock, "帮助菜单只留关于").toContain("关于 LitePad");
+    expect(helpBlock, "帮助菜单不得再有快捷键入口").not.toContain("快捷键");
+  });
+
+  it("「设置」菜单必须含首选项（二级子菜单）与快捷键，并收齐全部预设值", () => {
+    const src = menu();
+    const setBlock = src.slice(src.indexOf('label: "设置"'), src.indexOf('label: "帮助"'));
+    expect(setBlock, "设置菜单必须有首选项").toContain('label: "首选项"');
+    expect(setBlock, "首选项必须是子菜单（submenu）").toContain("submenu:");
+    expect(setBlock, "设置菜单必须有快捷键入口").toContain('label: "快捷键…"');
+
+    for (const item of [
+      "主题：跟随系统",
+      "预览行距：标准",
+      "大纲宽度：默认",
+      "新建默认行尾：",
+      "新建默认编码：",
+    ]) {
+      expect(src, `首选项必须含「${item}」`).toContain(item);
+    }
+  });
+
+  it("菜单显示的键位必须来自快捷键注册表（不能写死）", () => {
+    const src = menu();
+    expect(src, "菜单必须通过 keyHint 取键位").toContain("cb.keyHint(");
+    expect(src, "不得再手写硬编码快捷键").not.toContain("新建\\tCtrl+N");
+    expect(main(), "main 必须提供 keyHint 实现").toContain("function keyHint(");
+  });
+
+  it("子菜单能力与长菜单滚动", () => {
+    const m = readFileSync("src/shell/menu.ts", "utf-8");
+    expect(m, "MenuItem 必须支持 submenu").toContain("submenu?");
+    expect(m, "必须有子菜单箭头").toContain("menu-arrow");
+    expect(m, "嵌套层必须能被整体回收").toContain("function closeDeeperThan");
+
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    expect(css, "子菜单箭头样式").toContain(".menu-arrow");
+    expect(css, "长菜单必须自身滚动").toMatch(/\.popup-menu\s*\{[\s\S]*?overflow-y:\s*auto/);
+  });
+});
+
+describe("B42：快捷键可浏览可编辑", () => {
+  const main = (): string => readFileSync("src/main.ts", "utf-8");
+
+  it("注册表覆盖全部命令，且大纲/折叠/分屏都有默认键位", () => {
+    const km = readFileSync("src/shell/keymap.ts", "utf-8");
+    for (const id of [
+      "view.outline",
+      "view.foldCode",
+      "view.unfoldCode",
+      "view.foldAll",
+      "view.unfoldAll",
+      "panel.splitH",
+      "panel.splitV",
+      "panel.close",
+    ]) {
+      expect(km, `注册表必须登记 ${id}`).toContain(`id: "${id}"`);
+    }
+    // 大纲此前没有快捷键，B42 起必须有
+    expect(km, "大纲必须有默认键位").toMatch(
+      /id: "view\.outline"[\s\S]{0,120}keys: \["Ctrl\+Shift\+O"\]/,
+    );
+    // 折叠全部用 CM 约定的 Ctrl+Alt+[（Ctrl+Shift+[ 是折叠光标处）
+    expect(km, "折叠光标处必须是 Ctrl+Shift+[").toMatch(
+      /id: "view\.foldCode"[\s\S]{0,120}keys: \["Ctrl\+Shift\+\["\]/,
+    );
+    expect(km, "折叠全部必须是 Ctrl+Alt+[").toMatch(
+      /id: "view\.foldAll"[\s\S]{0,120}keys: \["Ctrl\+Alt\+\["\]/,
+    );
+  });
+
+  it("折叠键位归应用层：编辑器不得再自带 foldKeymap", () => {
+    const ed = readFileSync("src/editor/editor.ts", "utf-8");
+    expect(ed, "不得再展开 CM 的 foldKeymap").not.toContain("...foldKeymap");
+    const src = main();
+    expect(src, "必须有折叠当前块的处理").toContain("function foldCodeOperation(");
+    expect(src, "必须从 CM 引入 foldCode/unfoldCode").toMatch(/\bfoldCode\b/);
+  });
+
+  it("全局快捷键统一分发：旧的手写分支必须删除", () => {
+    const src = main();
+    expect(src, "必须走 resolveCommand").toContain("resolveCommand(e, keymapOverrides)");
+    expect(src, "动作表必须是 runShortcut").toContain("function runShortcut(");
+    expect(src, "不得再手写 e.key 分支").not.toContain("const key = e.key.toLowerCase();");
+    expect(src, "不得再散落三份 keydown 监听").not.toMatch(/Ctrl\+Shift\+F/);
+  });
+
+  it("快捷键覆盖表必须前后端都有字段，且后端保持前向兼容", () => {
+    const api = readFileSync("src/ipc/api.ts", "utf-8");
+    expect(api, "Settings 必须暴露 keymap").toMatch(/keymap:\s*Record<string,\s*string>/);
+
+    const rust = readFileSync("src-tauri/src/session/mod.rs", "utf-8");
+    expect(rust, "Rust Settings 必须有 keymap").toContain("pub keymap: HashMap<String, String>");
+    expect(rust, "缺字段时必须能回落到默认（旧配置文件兼容）").toContain("#[serde(default)]");
+  });
+
+  it("快捷键对话框必须是对话框形态（不是第二套设置窗口）", () => {
+    const dlg = readFileSync("src/shell/keymapdialog.ts", "utf-8");
+    expect(dlg).toContain("settings-overlay");
+    expect(dlg, "必须有搜索").toContain("keymap-search");
+    expect(dlg, "必须可改键").toContain("keymap-key");
+    expect(dlg, "必须能恢复默认").toContain("恢复全部默认");
+    expect(dlg, "必须拦冲突").toContain("findConflict");
+    expect(dlg, "录制态要挂 document 捕获（按钮未必有焦点）").toContain(
+      'document.addEventListener("keydown", recordHandler, true)',
+    );
+    // 旧的只读说明清单已废弃
+    expect(dlg, "不得再保留只读的 KEYMAP_DOC 清单").not.toContain("KEYMAP_DOC");
+  });
+});

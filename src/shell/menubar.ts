@@ -1,9 +1,12 @@
 import { closePopupMenu, showPopupMenu, type MenuItem } from "./menu";
 
 /**
- * 菜单栏（文件 / 编辑 / 查看 / 帮助）：点击展开下拉，hover 自动切换已打开的菜单。
- * 结构参考 Win11 记事本：编辑菜单含 剪贴板/查找定位/全选/时间日期，
- * 查看菜单含 缩放/自动换行（勾选态）。
+ * 菜单栏（文件 / 编辑 / 查看 / 设置 / 帮助）。
+ *
+ * 结构参考 Win11 记事本：点击展开下拉，hover 自动切换已打开的菜单。
+ * 「设置 → 首选项」把散落各处的偏好（主题 / 预览行距 / 大纲宽度 /
+ * 新建默认行尾 / 新建默认编码）收拢成二级子菜单；「设置 → 快捷键…」
+ * 打开可浏览、可编辑的快捷键对话框。分屏不占菜单项，只保留快捷键。
  */
 
 export interface MenuBarCallbacks {
@@ -29,6 +32,8 @@ export interface MenuBarCallbacks {
   onTimeDate: () => void;
   onToggleView: () => void;
   onOutline: () => void;
+  /** 大纲抽屉展开态（勾选显示） */
+  tocChecked: () => boolean;
   onFoldAll: () => void;
   onUnfoldAll: () => void;
   onZoomIn: () => void;
@@ -39,16 +44,9 @@ export interface MenuBarCallbacks {
   wrapChecked: () => boolean;
   onToggleStatusbar: () => void;
   statusbarChecked: () => boolean;
-  onSplitH: () => void;
-  onSplitV: () => void;
-  onClosePanel: () => void;
-  // ---- 原「设置」对话框的内容已分散到各菜单：文件（保存/新建默认值）、
-  //      查看（主题/行距/大纲宽度）、帮助（快捷键说明）----
   onToggleAutosave: () => void;
   autosaveChecked: () => boolean;
-  /** 新建文件的默认行尾 / 编码：以菜单按钮为锚点就地弹二级列表 */
-  onDefaultEol: (anchor: HTMLElement) => void;
-  onDefaultEncoding: (anchor: HTMLElement) => void;
+  // ---- 设置 → 首选项 ----
   /** 主题三态单选 */
   themeChecked: (mode: "system" | "light" | "dark") => boolean;
   onSetTheme: (mode: "system" | "light" | "dark") => void;
@@ -58,139 +56,150 @@ export interface MenuBarCallbacks {
   /** 大纲抽屉宽度（px） */
   tocWidthChecked: (width: number) => boolean;
   onSetTocWidth: (width: number) => void;
+  /** 新建文件默认行尾（候选由 main 预取后同步提供） */
+  defaultEol: () => string;
+  eolOptions: () => string[];
+  onSetDefaultEol: (value: string) => void;
+  /** 新建文件默认编码 */
+  defaultEncoding: () => string;
+  encodingOptions: () => string[];
+  onSetDefaultEncoding: (value: string) => void;
+  // ---- 设置 → 快捷键 ----
   onKeymap: () => void;
+  // ---- 帮助 ----
   onAbout: () => void;
+  /** 当前生效键位（菜单右侧提示），空串则不显示 */
+  keyHint: (id: string) => string;
 }
 
-const MENUS: { label: string; items: (cb: MenuBarCallbacks, anchor: HTMLElement) => MenuItem[] }[] =
-  [
-    {
-      label: "文件",
-      items: (cb, anchor) => [
-        { label: "新建\tCtrl+N", onSelect: cb.onNew },
-        { label: "打开…\tCtrl+O", onSelect: cb.onOpen },
-        { separator: true },
-        { label: "保存\tCtrl+S", onSelect: cb.onSave },
-        { label: "另存为…\tCtrl+Shift+S", onSelect: cb.onSaveAs },
-        { label: "全部保存\tCtrl+Alt+S", onSelect: cb.onSaveAll },
-        { separator: true },
-        { label: "自动保存", checked: cb.autosaveChecked(), onSelect: cb.onToggleAutosave },
-        { label: "新建文件默认行尾…", onSelect: () => cb.onDefaultEol(anchor) },
-        { label: "新建文件默认编码…", onSelect: () => cb.onDefaultEncoding(anchor) },
-        { separator: true },
-        { label: "关闭标签\tCtrl+W", onSelect: cb.onCloseTab },
-        { label: "退出", onSelect: cb.onExit },
-      ],
-    },
-    {
-      label: "编辑",
-      items: (cb) => [
-        { label: "撤销\tCtrl+Z", onSelect: cb.onUndo },
-        { label: "重做\tCtrl+Y", onSelect: cb.onRedo },
-        { separator: true },
-        { label: "剪切\tCtrl+X", onSelect: cb.onCut },
-        { label: "复制\tCtrl+C", onSelect: cb.onCopy },
-        { label: "粘贴\tCtrl+V", onSelect: cb.onPaste },
-        { label: "删除\tDel", onSelect: cb.onDelete },
-        { separator: true },
-        { label: "查找…\tCtrl+F", onSelect: cb.onFind },
-        { label: "查找下一个\tF3", onSelect: cb.onFindNext },
-        { label: "查找上一个\tShift+F3", onSelect: cb.onFindPrev },
-        { label: "替换…\tCtrl+H", onSelect: cb.onReplace },
-        { label: "转到…\tCtrl+G", onSelect: cb.onGoto },
-        { separator: true },
-        { label: "全选\tCtrl+A", onSelect: cb.onSelectAll },
-        { label: "时间/日期\tF5", onSelect: cb.onTimeDate },
-      ],
-    },
-    {
-      label: "查看",
-      items: (cb) => [
-        { label: "切换 源码 / 预览\tCtrl+/", onSelect: cb.onToggleView },
-        { label: "大纲 TOC", onSelect: cb.onOutline },
-        { separator: true },
-        {
-          label: "折叠全部",
-          title: "折叠当前文档全部可折叠块（Ctrl+Shift+[）",
-          onSelect: cb.onFoldAll,
-        },
-        {
-          label: "展开全部",
-          title: "展开当前文档全部折叠（Ctrl+Shift+]）",
-          onSelect: cb.onUnfoldAll,
-        },
-        { separator: true },
-        { label: "放大\tCtrl+=", onSelect: cb.onZoomIn },
-        { label: "缩小\tCtrl+-", onSelect: cb.onZoomOut },
-        { label: "重置缩放\tCtrl+0", onSelect: cb.onZoomReset },
-        { separator: true },
-        { label: "自动换行", checked: cb.wrapChecked(), onSelect: cb.onToggleWrap },
-        { label: "状态栏", checked: cb.statusbarChecked(), onSelect: cb.onToggleStatusbar },
-        { separator: true },
-        {
-          label: "主题：跟随系统",
-          checked: cb.themeChecked("system"),
-          onSelect: () => cb.onSetTheme("system"),
-        },
-        {
-          label: "主题：浅色",
-          checked: cb.themeChecked("light"),
-          onSelect: () => cb.onSetTheme("light"),
-        },
-        {
-          label: "主题：深色",
-          checked: cb.themeChecked("dark"),
-          onSelect: () => cb.onSetTheme("dark"),
-        },
-        { separator: true },
-        {
-          label: "预览行距：紧凑",
-          checked: cb.lineHeightChecked(1.3),
-          onSelect: () => cb.onSetLineHeight(1.3),
-        },
-        {
-          label: "预览行距：标准",
-          checked: cb.lineHeightChecked(1.7),
-          onSelect: () => cb.onSetLineHeight(1.7),
-        },
-        {
-          label: "预览行距：宽松",
-          checked: cb.lineHeightChecked(2.1),
-          onSelect: () => cb.onSetLineHeight(2.1),
-        },
-        { separator: true },
-        {
-          label: "大纲宽度：窄",
-          checked: cb.tocWidthChecked(200),
-          onSelect: () => cb.onSetTocWidth(200),
-        },
-        {
-          label: "大纲宽度：默认",
-          checked: cb.tocWidthChecked(240),
-          onSelect: () => cb.onSetTocWidth(240),
-        },
-        {
-          label: "大纲宽度：宽",
-          checked: cb.tocWidthChecked(320),
-          onSelect: () => cb.onSetTocWidth(320),
-        },
-        { separator: true },
-        { label: "左右分屏", onSelect: cb.onSplitH },
-        { label: "上下分屏", onSelect: cb.onSplitV },
-        { label: "移除分屏（标签并入相邻）", onSelect: cb.onClosePanel },
-      ],
-    },
-    {
-      label: "帮助",
-      items: (cb) => [
-        { label: "快捷键…", onSelect: cb.onKeymap },
-        { label: "关于 LitePad", onSelect: cb.onAbout },
-      ],
-    },
-  ];
+/** 拼接菜单标签：`文字\t快捷键`，快捷键为空时只留文字。 */
+function withKey(label: string, hint: string): string {
+  return hint ? `${label}\t${hint}` : label;
+}
+
+/** 设置 → 首选项：把原先散落的偏好收拢成扁平单选列表（用分隔线分组）。 */
+function preferenceItems(cb: MenuBarCallbacks): MenuItem[] {
+  const items: MenuItem[] = [];
+  const radio = (label: string, checked: boolean, onSelect: () => void): MenuItem => ({
+    label,
+    checked,
+    onSelect,
+  });
+
+  items.push(
+    radio("主题：跟随系统", cb.themeChecked("system"), () => cb.onSetTheme("system")),
+    radio("主题：浅色", cb.themeChecked("light"), () => cb.onSetTheme("light")),
+    radio("主题：深色", cb.themeChecked("dark"), () => cb.onSetTheme("dark")),
+    { separator: true },
+    radio("预览行距：紧凑", cb.lineHeightChecked(1.3), () => cb.onSetLineHeight(1.3)),
+    radio("预览行距：标准", cb.lineHeightChecked(1.7), () => cb.onSetLineHeight(1.7)),
+    radio("预览行距：宽松", cb.lineHeightChecked(2.1), () => cb.onSetLineHeight(2.1)),
+    { separator: true },
+    radio("大纲宽度：窄", cb.tocWidthChecked(200), () => cb.onSetTocWidth(200)),
+    radio("大纲宽度：默认", cb.tocWidthChecked(240), () => cb.onSetTocWidth(240)),
+    radio("大纲宽度：宽", cb.tocWidthChecked(320), () => cb.onSetTocWidth(320)),
+  );
+
+  const eols = cb.eolOptions();
+  if (eols.length > 0) {
+    items.push({ separator: true });
+    for (const e of eols) {
+      items.push(radio(`新建默认行尾：${e}`, cb.defaultEol() === e, () => cb.onSetDefaultEol(e)));
+    }
+  }
+
+  const encodings = cb.encodingOptions();
+  if (encodings.length > 0) {
+    items.push({ separator: true });
+    for (const enc of encodings) {
+      items.push(
+        radio(`新建默认编码：${enc}`, cb.defaultEncoding() === enc, () =>
+          cb.onSetDefaultEncoding(enc),
+        ),
+      );
+    }
+  }
+
+  return items;
+}
+
+const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = [
+  {
+    label: "文件",
+    items: (cb) => [
+      { label: withKey("新建", cb.keyHint("file.new")), onSelect: cb.onNew },
+      { label: withKey("打开…", cb.keyHint("file.open")), onSelect: cb.onOpen },
+      { separator: true },
+      { label: withKey("保存", cb.keyHint("file.save")), onSelect: cb.onSave },
+      { label: withKey("另存为…", cb.keyHint("file.saveAs")), onSelect: cb.onSaveAs },
+      { label: withKey("全部保存", cb.keyHint("file.saveAll")), onSelect: cb.onSaveAll },
+      { separator: true },
+      { label: "自动保存", checked: cb.autosaveChecked(), onSelect: cb.onToggleAutosave },
+      { separator: true },
+      { label: withKey("关闭标签", cb.keyHint("file.close")), onSelect: cb.onCloseTab },
+      { label: "退出", onSelect: cb.onExit },
+    ],
+  },
+  {
+    label: "编辑",
+    items: (cb) => [
+      { label: "撤销\tCtrl+Z", onSelect: cb.onUndo },
+      { label: "重做\tCtrl+Y", onSelect: cb.onRedo },
+      { separator: true },
+      { label: "剪切\tCtrl+X", onSelect: cb.onCut },
+      { label: "复制\tCtrl+C", onSelect: cb.onCopy },
+      { label: "粘贴\tCtrl+V", onSelect: cb.onPaste },
+      { label: "删除\tDel", onSelect: cb.onDelete },
+      { separator: true },
+      { label: withKey("查找…", cb.keyHint("edit.find")), onSelect: cb.onFind },
+      { label: withKey("查找下一个", cb.keyHint("edit.findNext")), onSelect: cb.onFindNext },
+      { label: withKey("查找上一个", cb.keyHint("edit.findPrev")), onSelect: cb.onFindPrev },
+      { label: withKey("替换…", cb.keyHint("edit.replace")), onSelect: cb.onReplace },
+      { label: withKey("转到…", cb.keyHint("edit.goto")), onSelect: cb.onGoto },
+      { separator: true },
+      { label: "全选\tCtrl+A", onSelect: cb.onSelectAll },
+      { label: withKey("时间/日期", cb.keyHint("edit.timeDate")), onSelect: cb.onTimeDate },
+    ],
+  },
+  {
+    label: "查看",
+    items: (cb) => [
+      { label: withKey("切换 源码 / 预览", cb.keyHint("view.toggle")), onSelect: cb.onToggleView },
+      {
+        label: withKey("大纲 TOC", cb.keyHint("view.outline")),
+        checked: cb.tocChecked(),
+        onSelect: cb.onOutline,
+      },
+      { separator: true },
+      { label: withKey("折叠全部", cb.keyHint("view.foldAll")), onSelect: cb.onFoldAll },
+      { label: withKey("展开全部", cb.keyHint("view.unfoldAll")), onSelect: cb.onUnfoldAll },
+      { separator: true },
+      { label: withKey("放大", cb.keyHint("view.zoomIn")), onSelect: cb.onZoomIn },
+      { label: withKey("缩小", cb.keyHint("view.zoomOut")), onSelect: cb.onZoomOut },
+      { label: withKey("重置缩放", cb.keyHint("view.zoomReset")), onSelect: cb.onZoomReset },
+      { separator: true },
+      { label: "自动换行", checked: cb.wrapChecked(), onSelect: cb.onToggleWrap },
+      { label: "状态栏", checked: cb.statusbarChecked(), onSelect: cb.onToggleStatusbar },
+    ],
+  },
+  {
+    label: "设置",
+    items: (cb) => [
+      { label: "首选项", submenu: () => preferenceItems(cb) },
+      { label: "快捷键…", onSelect: cb.onKeymap },
+    ],
+  },
+  {
+    label: "帮助",
+    items: (cb) => [{ label: "关于 LitePad", onSelect: cb.onAbout }],
+  },
+];
 
 /** 菜单栏按钮（含助记符信息），供 Alt 助记符定位。 */
-const MENU_KEYS = ["F", "E", "V", "H"] as const;
+const MENU_KEYS = ["F", "E", "V", "S", "H"] as const;
+
+/** 设置菜单在菜单栏中的索引（Alt+S 用）。 */
+export const SETTINGS_MENU_INDEX = 3;
 
 export function createMenuBar(host: HTMLElement, cb: MenuBarCallbacks): void {
   host.textContent = "";
@@ -202,7 +211,7 @@ export function createMenuBar(host: HTMLElement, cb: MenuBarCallbacks): void {
     openBtn?.classList.remove("menu-open");
     openBtn = btn;
     btn.classList.add("menu-open");
-    showPopupMenu(btn, MENUS[idx].items(cb, btn));
+    showPopupMenu(btn, MENUS[idx].items(cb));
   }
 
   MENUS.forEach((m, idx) => {
@@ -254,7 +263,7 @@ export function createMenuBar(host: HTMLElement, cb: MenuBarCallbacks): void {
   observer.observe(document.body, { childList: true });
 }
 
-/** 按索引打开菜单（0=文件 … 3=帮助），供 Alt 助记符调用。 */
+/** 按索引打开菜单（0=文件 … 4=帮助），供 Alt 助记符调用。 */
 export function openMenuByIndex(idx: number): void {
   const host = document.getElementById("menu-bar") as
     (HTMLElement & { openMenuByIndex?: (i: number) => void }) | null;

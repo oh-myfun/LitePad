@@ -58,6 +58,11 @@ export interface Settings {
   preview_line_height: number;
   /** 大纲抽屉宽度（px，160–640） */
   toc_width: number;
+  /**
+   * 快捷键覆盖表：命令 id → 键位串（如 `file.save: "Ctrl+S"`）。
+   * 空串表示显式解绑；缺项表示用 COMMANDS 里的默认键位。
+   */
+  keymap: Record<string, string>;
 }
 
 export function newTab(encoding?: string | null): Promise<TabInfo> {

@@ -3,6 +3,7 @@
 //! M0 只落地主题等少量偏好；会话/布局持久化属于 M2。
 //! `#[serde(default)]` 保证旧版本配置文件缺字段时也能读出来（前向兼容）。
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -26,6 +27,9 @@ pub struct Settings {
     pub preview_line_height: f64,
     /// 大纲（TOC）抽屉宽度（px，160–640，默认 240）。前端拖拽分隔条后回写。
     pub toc_width: f64,
+    /// 快捷键覆盖表：命令 id → 键位串（空串 = 显式解绑）。
+    /// 后端不解释内容，只负责存取；合法性由前端 keymap 模块过滤。
+    pub keymap: HashMap<String, String>,
 }
 
 impl Default for Settings {
@@ -40,6 +44,7 @@ impl Default for Settings {
             autosave: true,
             preview_line_height: 1.7,
             toc_width: 240.0,
+            keymap: HashMap::new(),
         }
     }
 }

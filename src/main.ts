@@ -3,7 +3,7 @@ import "./styles/global.css";
 import { EditorState, type ChangeSet } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { redo, selectAll, undo } from "@codemirror/commands";
-import { foldAll, unfoldAll } from "@codemirror/language";
+import { foldAll, foldCode, unfoldAll, unfoldCode } from "@codemirror/language";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { oneDark as oneDarkTheme } from "@codemirror/theme-one-dark";
 import { invoke } from "@tauri-apps/api/core";
@@ -75,7 +75,15 @@ import {
   updateRatio,
   type LayoutNode,
 } from "./shell/layout";
-import { showKeymapDialog } from "./shell/keymapdialog";
+import {
+  commandById,
+  effectiveKeys,
+  parseKey,
+  formatBinding,
+  resolveCommand,
+  type KeymapOverrides,
+} from "./shell/keymap";
+import { KEYMAP_RECORDING_CLASS, showKeymapDialog } from "./shell/keymapdialog";
 import {
   renderSplitview,
   panelAt,
@@ -195,6 +203,11 @@ let nextInstId = 1;
 let activePanelId = 0;
 
 let settings: Settings | null = null;
+/** 快捷键用户覆盖的前端镜像（与 settings.keymap 同步，改完立即持久化）。 */
+let keymapOverrides: KeymapOverrides = {};
+/** 「首选项 → 新建默认行尾/编码」的候选：启动预取，供子菜单同步渲染。 */
+let eolOptions: string[] = ["CRLF", "LF", "CR"];
+let encodingOptions: string[] = ["UTF-8"];
 let themeMode: ThemeMode = "system";
 let isDark = false;
 let isWrap = true;
@@ -2471,9 +2484,54 @@ async function toggleTheme(): Promise<void> {
   }
 }
 
-// ---------------------------------------------------------------- 偏好（原设置对话框已分散到各菜单）
+// ---------------------------------------------------------------- 偏好（设置 → 首选项）
 
-/** 主题三态（文件/查看菜单）：立即生效 + 持久化。 */
+/**
+ * 过滤从磁盘读回的快捷键覆盖表：
+ * 丢掉未知命令、无法解析的键位，以及抄了默认值的冗余项。
+ * 让配置文件被手改坏时也只影响个别命令，而不是整张键位表。
+ */
+function sanitizeKeymap(raw: Record<string, string>): KeymapOverrides {
+  const out: KeymapOverrides = {};
+  for (const [id, spec] of Object.entries(raw)) {
+    const cmd = commandById(id);
+    if (!cmd || cmd.editable === false) continue;
+    if (spec === "") {
+      out[id] = "";
+      continue;
+    }
+    if (!parseKey(spec)) continue;
+    out[id] = formatBinding(parseKey(spec)!);
+  }
+  return out;
+}
+
+/** 预取行尾/编码候选，供「首选项」子菜单同步渲染（IPC 失败则用内置兜底）。 */
+async function loadPreferenceOptions(): Promise<void> {
+  try {
+    const list = await listEols();
+    if (list.length > 0) eolOptions = list;
+  } catch {
+    // 保持内置三档
+  }
+  try {
+    const list = await listEncodings();
+    if (list.length > 0) encodingOptions = list;
+  } catch {
+    // 保持 UTF-8 兜底
+  }
+}
+
+/** 菜单右侧显示的当前生效键位（可用 `\t` 拼进菜单项）。 */
+function keyHint(id: string): string {
+  const keys = effectiveKeys(id, keymapOverrides);
+  if (keys.length === 0) return "";
+  return keys
+    .map((k) => formatBinding(parseKey(k) ?? { ctrl: false, alt: false, shift: false, key: k }))
+    .join(" / ");
+}
+
+/** 主题三态（设置 → 首选项）：立即生效 + 持久化。 */
 async function setThemeMode(mode: ThemeMode): Promise<void> {
   themeMode = mode;
   const dark = applyTheme(mode);
@@ -2484,54 +2542,37 @@ async function setThemeMode(mode: ThemeMode): Promise<void> {
   showMessage(mode === "system" ? "主题：跟随系统" : mode === "dark" ? "主题：深色" : "主题：浅色");
 }
 
-/** 新建文件的默认行尾：以菜单按钮为锚点就地弹列表。 */
-async function showDefaultEolMenu(anchor: HTMLElement): Promise<void> {
-  let eols: string[] = [];
-  try {
-    eols = await listEols();
-  } catch {
-    // 取不到就用内置三档
-  }
-  if (eols.length === 0) eols = ["CRLF", "LF", "CR"];
-  const current = settings?.default_eol ?? "CRLF";
-  showPopupMenu(
-    anchor,
-    eols.map((e) => ({
-      label: e,
-      checked: e === current,
-      onSelect: () => {
-        if (!settings) return;
-        settings.default_eol = e;
-        void persistSettings();
-        showMessage(`新建文件默认行尾：${e}`);
-      },
-    })),
-  );
+/** 新建文件的默认行尾（设置 → 首选项）。 */
+async function setDefaultEol(value: string): Promise<void> {
+  if (!settings) return;
+  settings.default_eol = value;
+  await persistSettings();
+  showMessage(`新建文件默认行尾：${value}`);
 }
 
-/** 新建文件的默认编码：同上，弹编码列表。 */
-async function showDefaultEncodingMenu(anchor: HTMLElement): Promise<void> {
-  let encodings: string[] = [];
-  try {
-    encodings = await listEncodings();
-  } catch {
-    // 取不到就只给 UTF-8
+/** 新建文件的默认编码（设置 → 首选项）。 */
+async function setDefaultEncoding(value: string): Promise<void> {
+  if (!settings) return;
+  settings.default_encoding = value;
+  await persistSettings();
+  showMessage(`新建文件默认编码：${value}`);
+}
+
+/** 快捷键覆盖表变更（快捷键对话框 → 立即持久化）。 */
+async function applyKeymapOverrides(next: KeymapOverrides): Promise<void> {
+  keymapOverrides = next;
+  if (settings) {
+    settings.keymap = { ...next };
+    await persistSettings();
   }
-  if (encodings.length === 0) encodings = ["UTF-8"];
-  const current = settings?.default_encoding ?? "UTF-8";
-  showPopupMenu(
-    anchor,
-    encodings.map((enc) => ({
-      label: enc,
-      checked: enc === current,
-      onSelect: () => {
-        if (!settings) return;
-        settings.default_encoding = enc;
-        void persistSettings();
-        showMessage(`新建文件默认编码：${enc}`);
-      },
-    })),
-  );
+}
+
+/** 打开快捷键对话框（设置 → 快捷键）。 */
+function openKeymapDialog(): void {
+  showKeymapDialog({
+    overrides: keymapOverrides,
+    onChange: (next) => void applyKeymapOverrides(next),
+  });
 }
 
 async function toggleAutosave(): Promise<void> {
@@ -2589,104 +2630,158 @@ function bindEvents(): void {
   sbEncoding.addEventListener("click", () => void showEncodingMenu());
   sbEol.addEventListener("click", () => showEolMenu());
 
-  window.addEventListener("keydown", (e) => {
-    const ctrl = e.ctrlKey || e.metaKey;
-    if (!ctrl) return;
-    const key = e.key.toLowerCase();
-    if (key === "o") {
+  // 全局快捷键：统一走 keymap 注册表（设置 → 快捷键 里可浏览 / 改键）。
+  // 见 onGlobalKeydown 的注释：必须挂捕获阶段。
+  window.addEventListener("keydown", onGlobalKeydown, true);
+}
+
+/**
+ * 全局快捷键分发（注册在 window 捕获阶段）。
+ *
+ * 为什么要捕获阶段：CodeMirror 的 keymap 处理器挂在编辑器 DOM 上，等到冒泡到 window
+ * 已经晚了——CM 的 defaultKeymap 里有 `Mod-/`（切换注释）与 `Shift-Alt-ArrowDown`
+ * （向下复制行），会分别抢走「切换源码/预览」和「上下分屏」，并顺手改坏文档。
+ * 捕获阶段命中后 `stopPropagation`，编辑器就完全收不到这个事件。
+ */
+function onGlobalKeydown(e: KeyboardEvent): void {
+  // 设置对话框打开时整体让路：模态层上的按键不该再去触发「新建 / 保存」。
+  if (document.querySelector(".settings-overlay")) return;
+  if (document.body.classList.contains(KEYMAP_RECORDING_CLASS)) return;
+
+  const id = resolveCommand(e, keymapOverrides);
+  if (id && shortcutApplies(id)) {
+    const def = commandById(id);
+    // 编辑器内部已消化的组合键不再重复处理（F5 除外——必须拦住 WebView2 刷新）
+    if (e.defaultPrevented && !def?.force) return;
+    e.preventDefault();
+    e.stopPropagation();
+    runShortcut(id);
+    return;
+  }
+
+  // Alt 菜单助记符：与菜单名绑定，属于只读项，这里单独兜底
+  if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+    const idx = ALT_MENU_INDEX[e.code];
+    if (idx !== undefined) {
       e.preventDefault();
-      void doOpen();
-    } else if (key === "n") {
-      e.preventDefault();
+      openMenuByIndex(idx);
+    }
+  }
+}
+
+/**
+ * 少数命令只在特定上下文成立；不成立时**不抢键**，把事件还给编辑器。
+ * 典型是 Ctrl+/：CodeMirror 用它切换注释（JSON/JS 等格式很有用），
+ * 只有 Markdown 才把它当「源码 / 预览切换」。
+ */
+function shortcutApplies(id: string): boolean {
+  switch (id) {
+    case "view.toggle":
+      return isMdActive();
+    case "panel.splitH":
+    case "panel.splitV":
+    case "panel.close":
+      return !!activePanel();
+    default:
+      return true;
+  }
+}
+
+/** Alt 助记符 → 菜单索引（Alt+S = 设置菜单）。 */
+const ALT_MENU_INDEX: Record<string, number> = {
+  KeyF: 0,
+  KeyE: 1,
+  KeyV: 2,
+  KeyS: 3,
+  KeyH: 4,
+};
+
+/** 快捷键命令 → 动作。id 与 keymap.ts 的 COMMANDS 一一对应。 */
+function runShortcut(id: string): void {
+  switch (id) {
+    case "file.new":
       void newUntitled();
-    } else if (key === "w") {
-      e.preventDefault();
+      break;
+    case "file.open":
+      void doOpen();
+      break;
+    case "file.save":
+      void doSave(false);
+      break;
+    case "file.saveAs":
+      void doSave(true);
+      break;
+    case "file.saveAll":
+      void doSaveAll();
+      break;
+    case "file.close": {
       const tab = activeTab();
       if (tab) void closeTabById(tab.tabId);
-    } else if (key === "tab" || key === "pagedown") {
-      e.preventDefault();
+      break;
+    }
+    case "tab.next":
       cycleTabInPanel(1);
-    } else if (key === "pageup") {
-      e.preventDefault();
+      break;
+    case "tab.prev":
       cycleTabInPanel(-1);
-    } else if (key === "/") {
-      e.preventDefault();
-      toggleViewMode();
-    } else if (key === "f") {
-      e.preventDefault();
+      break;
+    case "edit.find":
       openFindReplace();
-    } else if (key === "h") {
-      e.preventDefault();
+      break;
+    case "edit.replace":
       openFindBar("replace");
-    } else if (key === "s" && e.shiftKey) {
-      e.preventDefault();
-      void doSave(true);
-    } else if (key === "s" && e.altKey) {
-      e.preventDefault();
-      void doSaveAll();
-    } else if (key === "s") {
-      e.preventDefault();
-      void doSave(false);
-    } else if (key === "g" && !e.defaultPrevented) {
-      // 编辑器聚焦时 CM searchKeymap 会把 Ctrl+G 当「查找下一个」吃掉（已 preventDefault），
-      // 此时跳过；否则打开「转到行」
-      e.preventDefault();
+      break;
+    case "edit.findNext":
+      findStep(1);
+      break;
+    case "edit.findPrev":
+      findStep(-1);
+      break;
+    case "edit.goto":
       openGotoLine();
-    } else if (e.code === "Equal") {
-      e.preventDefault();
-      void changeFontSize(1);
-    } else if (e.code === "Minus") {
-      e.preventDefault();
-      void changeFontSize(-1);
-    } else if (e.code === "Digit0") {
-      e.preventDefault();
-      void changeFontSize(null);
-    }
-  });
-
-  // F3 / F5 / 查找步进：CM 聚焦时 F3/Shift+F3 由 searchKeymap 处理（已 preventDefault），跳过；
-  // F5 必须拦截——WebView2 默认 F5 刷新页面
-  window.addEventListener("keydown", (e) => {
-    if (e.key === "F5") {
-      e.preventDefault();
+      break;
+    case "edit.timeDate":
       insertTimeDate();
-      return;
-    }
-    if (e.defaultPrevented) return;
-    if (e.key === "F3") {
-      e.preventDefault();
-      findStep(e.shiftKey ? -1 : 1);
-    }
-  });
-
-  // Alt 快捷键：菜单栏助记符 + 分屏
-  window.addEventListener("keydown", (e) => {
-    const combo = e.ctrlKey || e.metaKey;
-    const key = e.key.toLowerCase();
-    if (e.altKey && !combo && key === "f") {
-      e.preventDefault();
-      return openMenuByIndex(0);
-    }
-    if (e.altKey && !combo && key === "e") {
-      e.preventDefault();
-      return openMenuByIndex(1);
-    }
-    if (e.altKey && !combo && key === "v") {
-      e.preventDefault();
-      return openMenuByIndex(2);
-    }
-    if (e.altKey && !combo && key === "h") {
-      e.preventDefault();
-      return openMenuByIndex(3);
-    }
-    if (e.altKey && e.shiftKey && key === "arrowright") {
-      e.preventDefault();
-      if (activePanel()) splitActivePanel(activePanelId, "h");
-    } else if (e.altKey && e.shiftKey && key === "arrowdown") {
-      e.preventDefault();
-      if (activePanel()) splitActivePanel(activePanelId, "v");
-    }
-  });
+      break;
+    case "view.toggle":
+      toggleViewMode();
+      break;
+    case "view.outline":
+      toggleToc();
+      break;
+    case "view.foldCode":
+      foldCodeOperation(true);
+      break;
+    case "view.unfoldCode":
+      foldCodeOperation(false);
+      break;
+    case "view.foldAll":
+      foldOperation(true);
+      break;
+    case "view.unfoldAll":
+      foldOperation(false);
+      break;
+    case "view.zoomIn":
+      void changeFontSize(1);
+      break;
+    case "view.zoomOut":
+      void changeFontSize(-1);
+      break;
+    case "view.zoomReset":
+      void changeFontSize(null);
+      break;
+    case "panel.splitH":
+      if (activePanel()) void splitActivePanel(activePanelId, "h");
+      break;
+    case "panel.splitV":
+      if (activePanel()) void splitActivePanel(activePanelId, "v");
+      break;
+    case "panel.close":
+      if (activePanel()) closePanelById(activePanelId);
+      break;
+    default:
+      break;
+  }
 }
 
 function showExportMenu(): void {
@@ -2812,7 +2907,23 @@ function foldOperation(all: boolean): void {
   view.focus();
 }
 
-// ---------------------------------------------------------------- 转到行（Ctrl+G）
+/**
+ * 折叠 / 展开光标所在的块（CM foldCode/unfoldCode）。
+ * 与 foldOperation 同源：只作用于活动实例，折叠状态不随同源广播。
+ */
+function foldCodeOperation(fold: boolean): void {
+  const panel = activePanel();
+  const view = panel?.view?.view;
+  if (!panel || !view) return;
+  const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
+  if (!tab) return;
+  if (fold) foldCode(view);
+  else unfoldCode(view);
+  tab.state = view.state;
+  view.focus();
+}
+
+// ---------------------------------------------------------------- 转到行
 
 /** 轻量「转到行」浮层：输入行号回车定位（Esc 取消）。 */
 function openGotoLine(): void {
@@ -2934,7 +3045,7 @@ function setupToolbar(): void {
   refreshThemeButton();
 }
 
-/** 菜单栏初始化（文件/编辑/查看/帮助，结构参考 Win11 记事本）。 */
+/** 菜单栏初始化（文件 / 编辑 / 查看 / 设置 / 帮助，结构参考 Win11 记事本）。 */
 function setupMenuBar(): void {
   createMenuBar(menuBar, {
     onNew: () => void newUntitled(),
@@ -2962,6 +3073,7 @@ function setupMenuBar(): void {
     onTimeDate: () => insertTimeDate(),
     onToggleView: () => toggleViewMode(),
     onOutline: () => toggleToc(),
+    tocChecked: () => !tocPanel.hidden,
     onFoldAll: () => foldOperation(true),
     onUnfoldAll: () => foldOperation(false),
     onZoomIn: () => void changeFontSize(1),
@@ -2971,26 +3083,24 @@ function setupMenuBar(): void {
     wrapChecked: () => isWrap,
     onToggleStatusbar: () => toggleStatusbar(),
     statusbarChecked: () => statusbarVisible,
-    onSplitH: () => {
-      if (activePanel()) void splitActivePanel(activePanelId, "h");
-    },
-    onSplitV: () => {
-      if (activePanel()) void splitActivePanel(activePanelId, "v");
-    },
-    onClosePanel: () => {
-      if (activePanel()) closePanelById(activePanelId);
-    },
     onToggleAutosave: () => void toggleAutosave(),
     autosaveChecked: () => settings?.autosave ?? true,
-    onDefaultEol: (anchor) => void showDefaultEolMenu(anchor),
-    onDefaultEncoding: (anchor) => void showDefaultEncodingMenu(anchor),
+    // ---- 设置 → 首选项 ----
     themeChecked: (mode) => themeMode === mode,
     onSetTheme: (mode) => void setThemeMode(mode),
     lineHeightChecked: (v) => Math.abs((settings?.preview_line_height ?? 1.7) - v) < 0.05,
     onSetLineHeight: (v) => void setPreviewLineHeight(v),
     tocWidthChecked: (w) => tocWidth === w,
     onSetTocWidth: (w) => void setTocWidthValue(w),
-    onKeymap: () => showKeymapDialog(),
+    defaultEol: () => settings?.default_eol ?? "CRLF",
+    eolOptions: () => eolOptions,
+    onSetDefaultEol: (v) => void setDefaultEol(v),
+    defaultEncoding: () => settings?.default_encoding ?? "UTF-8",
+    encodingOptions: () => encodingOptions,
+    onSetDefaultEncoding: (v) => void setDefaultEncoding(v),
+    // ---- 设置 → 快捷键 ----
+    onKeymap: () => openKeymapDialog(),
+    // ---- 帮助 ----
     onAbout: () => {
       void ask(
         "LitePad v0.1.0\n轻量级 Markdown / 文本编辑器（Tauri 2 + CodeMirror 6）\n\n仅 Windows 平台。",
@@ -3002,6 +3112,7 @@ function setupMenuBar(): void {
         },
       );
     },
+    keyHint,
   });
 }
 
@@ -3083,6 +3194,9 @@ async function bootstrap(): Promise<void> {
   } catch {
     settings = null;
   }
+
+  keymapOverrides = sanitizeKeymap(settings?.keymap ?? {});
+  void loadPreferenceOptions();
 
   themeMode = normalizeMode(settings?.theme);
   isDark = applyTheme(themeMode);

@@ -171,6 +171,19 @@ body {
   color: var(--fg-muted);
 }
 
+/* 子菜单父项（设置 → 首选项 ▸）：文字左、箭头贴右 */
+.menu-arrow {
+  margin-left: auto;
+  padding-left: 18px;
+  font-size: 10px;
+  color: var(--fg-muted);
+}
+
+.popup-menu button.has-submenu.submenu-open {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
 /* ---------- 图标按钮组（顶栏右侧） ---------- */
 
 .toolbar-actions {
@@ -598,14 +611,6 @@ button:focus-visible {
   margin: 12px 0;
 }
 
-.settings-keys {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px 16px;
-  font-size: 11px;
-  color: var(--fg-muted);
-}
-
 .settings-kbd {
   display: inline-block;
   padding: 0 5px;
@@ -616,13 +621,139 @@ button:focus-visible {
   color: var(--fg);
 }
 
+/* ---------- 快捷键对话框（浏览 + 编辑） ---------- */
+
+.keymap-dialog {
+  width: 560px;
+}
+
+.keymap-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.keymap-search {
+  flex: 1 1 auto;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+}
+
+.keymap-reset {
+  flex: 0 0 auto;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.keymap-reset:hover {
+  background: var(--bg-hover);
+}
+
+.keymap-hint {
+  min-height: 17px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.keymap-hint.warn {
+  color: var(--danger);
+}
+
+.keymap-list {
+  max-height: 46vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding-bottom: 4px;
+}
+
+.keymap-group {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 5px 10px 3px;
+  background: var(--bg-elevated);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+
+.keymap-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--fg);
+}
+
+.keymap-row:hover {
+  background: var(--bg-hover);
+}
+
+.keymap-cmd {
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.keymap-key {
+  flex: 0 0 auto;
+  min-width: 136px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.keymap-key:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.keymap-key.recording {
+  border-color: var(--accent);
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+.keymap-static {
+  flex: 0 0 auto;
+  min-width: 136px;
+  text-align: center;
+  opacity: 0.72;
+}
+
+.keymap-empty {
+  padding: 14px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
 .settings-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 14px;
 }
-
 .settings-ok,
 .settings-cancel {
   padding: 5px 16px;
@@ -1092,6 +1223,10 @@ body.tab-drag-active * {
   border-radius: var(--radius);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
   font-size: 13px;
+  /* 首选项一类长菜单：超高时自身滚动，避免顶出视口 */
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .popup-menu button {

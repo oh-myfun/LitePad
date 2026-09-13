@@ -793,4 +793,54 @@ describe("bootstrap + drag-split smoke", () => {
       restoreRects();
     }
   });
+
+  it("B42：全局快捷键走注册表（大纲开合 / 裸字母不被吞 / 设置对话框让路）", async () => {
+    capturedError = null;
+    const toc = document.getElementById("toc-panel") as HTMLElement;
+    const hotkey = (init: KeyboardEventInit): KeyboardEvent =>
+      new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+
+    // 大纲此前没有快捷键；Ctrl+Shift+O 是 B42 新增的默认键位
+    const before = toc.hidden;
+    const open = hotkey({ code: "KeyO", key: "O", ctrlKey: true, shiftKey: true });
+    window.dispatchEvent(open);
+    expect(open.defaultPrevented, "命中的快捷键应被接管").toBe(true);
+    expect(toc.hidden, "Ctrl+Shift+O 应切换大纲").toBe(!before);
+    window.dispatchEvent(hotkey({ code: "KeyO", key: "O", ctrlKey: true, shiftKey: true }));
+    expect(toc.hidden, "再按一次应回到原状态").toBe(before);
+
+    // 裸字母绝不能被全局快捷键吞掉，否则编辑器没法打字
+    for (const code of ["KeyN", "KeyS", "KeyO"]) {
+      const bare = hotkey({ code, key: code.slice(3).toLowerCase() });
+      window.dispatchEvent(bare);
+      expect(bare.defaultPrevented, `${code} 裸按下不得被吞`).toBe(false);
+    }
+    expect(capturedError, `裸按键不应抛错：${String(capturedError)}`).toBeNull();
+
+    // 折叠全部/展开全部（B42 起从 CM foldKeymap 收归应用层，Ctrl+Alt+[ / ]）
+    window.dispatchEvent(hotkey({ code: "BracketLeft", key: "[", ctrlKey: true, altKey: true }));
+    window.dispatchEvent(hotkey({ code: "BracketRight", key: "]", ctrlKey: true, altKey: true }));
+    // 折叠光标处（Ctrl+Shift+[ / ]）走 CM 命令，不得抛错
+    window.dispatchEvent(hotkey({ code: "BracketLeft", key: "{", ctrlKey: true, shiftKey: true }));
+    window.dispatchEvent(hotkey({ code: "BracketRight", key: "}", ctrlKey: true, shiftKey: true }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(capturedError, `折叠快捷键不应抛错：${String(capturedError)}`).toBeNull();
+
+    // 设置 → 快捷键：对话框打开时全局快捷键必须整体让路
+    const { showKeymapDialog } = await import("../src/shell/keymapdialog");
+    showKeymapDialog({ overrides: {}, onChange: () => {} });
+    expect(document.querySelector(".settings-overlay"), "对话框应已打开").toBeTruthy();
+    const during = hotkey({ code: "KeyO", key: "O", ctrlKey: true, shiftKey: true });
+    window.dispatchEvent(during);
+    expect(during.defaultPrevented, "对话框打开时全局快捷键应让路").toBe(false);
+    expect(toc.hidden, "让路时不得改动大纲状态").toBe(before);
+
+    document.querySelector<HTMLButtonElement>(".settings-ok")!.click();
+    expect(document.querySelector(".settings-overlay"), "确定后应关闭").toBeNull();
+
+    // 关掉对话框后快捷键必须恢复
+    window.dispatchEvent(hotkey({ code: "KeyO", key: "O", ctrlKey: true, shiftKey: true }));
+    expect(toc.hidden, "关闭对话框后快捷键应恢复").toBe(!before);
+    window.dispatchEvent(hotkey({ code: "KeyO", key: "O", ctrlKey: true, shiftKey: true }));
+  });
 });

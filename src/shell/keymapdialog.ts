@@ -1,32 +1,38 @@
 /**
- * 快捷键说明对话框（只读）。
+ * 快捷键对话框：浏览 + 编辑。
  *
- * 原「设置与快捷键」对话框已拆散：设置项分别归入 文件 / 查看 菜单
- * （自动保存、新建默认值 → 文件；主题、预览行距、大纲宽度 → 查看），
- * 帮助菜单只保留这份只读的快捷键清单。
+ * - 分组命令清单，右侧显示当前键位。可编辑项是按钮：点一下进入录制态，
+ *   按下新组合键即生效（Esc 取消，Backspace/Delete 清除绑定）。
+ * - `editable: false` 的命令由 CodeMirror / 系统原生处理，只展示不可改。
+ * - 冲突会当场拦下并提示占用者，避免两个命令抢同一个键。
+ * - 改动即时交给 `onChange`（由 main 负责持久化），不需要「保存」按钮。
  */
 
-const KEYMAP_DOC: [string, string][] = [
-  ["Ctrl+N", "新建标签"],
-  ["Ctrl+O", "打开文件"],
-  ["Ctrl+S", "保存"],
-  ["Ctrl+Shift+S", "另存为"],
-  ["Ctrl+Alt+S", "全部保存"],
-  ["Ctrl+W", "关闭标签"],
-  ["Ctrl+Tab / Ctrl+Shift+Tab", "切换标签"],
-  ["Ctrl+PgUp / Ctrl+PgDn", "切换标签"],
-  ["Ctrl+F", "查找（悬浮栏）"],
-  ["Ctrl+H", "替换（悬浮栏，聚焦替换框）"],
-  ["F3 / Shift+F3", "查找下一个 / 上一个"],
-  ["Ctrl+G", "转到行"],
-  ["Ctrl+/", "Markdown 源码 / 预览切换"],
-  ["Ctrl+Shift+[ / ]", "折叠全部 / 展开全部"],
-  ["Ctrl+= / Ctrl+- / Ctrl+0", "放大 / 缩小 / 重置字号"],
-  ["F5", "插入时间 / 日期"],
-  ["Alt+F / E / V / H", "打开对应菜单"],
-];
+import {
+  bindingFromEvent,
+  commandById,
+  effectiveKeys,
+  findConflict,
+  formatBinding,
+  groupedCommands,
+  isUsableBinding,
+  parseKey,
+  type KeymapOverrides,
+} from "./keymap";
 
-export function showKeymapDialog(): void {
+export interface KeymapDialogOptions {
+  overrides: KeymapOverrides;
+  /** 覆盖表变化时回调（含清空恢复默认） */
+  onChange: (next: KeymapOverrides) => void;
+}
+
+/** 录制态 body class，供全局快捷键分发器让路（否则 Ctrl+N 会被当成「新建」）。 */
+export const KEYMAP_RECORDING_CLASS = "keymap-recording";
+
+export function showKeymapDialog(opts: KeymapDialogOptions): void {
+  // 对话框持有副本，每次改动同步外抛（main 负责持久化）
+  const overrides: KeymapOverrides = { ...opts.overrides };
+
   const overlay = document.createElement("div");
   overlay.className = "settings-overlay";
 
@@ -37,16 +43,23 @@ export function showKeymapDialog(): void {
   title.className = "settings-title";
   title.textContent = "快捷键";
 
-  const grid = document.createElement("div");
-  grid.className = "settings-keys";
-  for (const [k, desc] of KEYMAP_DOC) {
-    const line = document.createElement("div");
-    const kbd = document.createElement("span");
-    kbd.className = "settings-kbd";
-    kbd.textContent = k;
-    line.append(kbd, document.createTextNode(` ${desc}`));
-    grid.appendChild(line);
-  }
+  const toolbar = document.createElement("div");
+  toolbar.className = "keymap-toolbar";
+  const search = document.createElement("input");
+  search.className = "keymap-search";
+  search.type = "search";
+  search.placeholder = "搜索命令或键位…";
+  const reset = document.createElement("button");
+  reset.type = "button";
+  reset.className = "keymap-reset";
+  reset.textContent = "恢复全部默认";
+  toolbar.append(search, reset);
+
+  const hint = document.createElement("div");
+  hint.className = "keymap-hint";
+
+  const list = document.createElement("div");
+  list.className = "keymap-list";
 
   const actions = document.createElement("div");
   actions.className = "settings-actions";
@@ -55,14 +68,194 @@ export function showKeymapDialog(): void {
   ok.textContent = "确定";
   actions.append(ok);
 
-  dialog.append(title, grid, actions);
+  dialog.append(title, toolbar, hint, list, actions);
   overlay.appendChild(dialog);
   document.body.appendChild(overlay);
 
-  const close = (): void => overlay.remove();
+  // 录制态：同一时刻只允许一个键位按钮处于录制中
+  let recording: HTMLButtonElement | null = null;
+  let recordId: string | null = null;
+  let recordHandler: ((e: KeyboardEvent) => void) | null = null;
+
+  function stopRecording(): void {
+    if (recordHandler) document.removeEventListener("keydown", recordHandler, true);
+    recordHandler = null;
+    recordId = null;
+    recording?.classList.remove("recording");
+    recording = null;
+    document.body.classList.remove(KEYMAP_RECORDING_CLASS);
+    hint.textContent = "";
+    hint.classList.remove("warn");
+  }
+
+  function applyChange(): void {
+    opts.onChange({ ...overrides });
+  }
+
+  function displayKeys(id: string, editable: boolean): string {
+    const keys = effectiveKeys(id, overrides);
+    if (keys.length === 0) return editable ? "未设置" : "";
+    return keys
+      .map((k) => formatBinding(parseKey(k) ?? { ctrl: false, alt: false, shift: false, key: k }))
+      .join(" / ");
+  }
+
+  /** 按键 → 写入覆盖表。返回是否已处理完（用于决定是否退出录制态）。 */
+  function handleRecordKey(e: KeyboardEvent, id: string, rerender: () => void): void {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (e.key === "Escape") {
+      stopRecording();
+      rerender();
+      return;
+    }
+    if (e.key === "Backspace" || e.key === "Delete") {
+      overrides[id] = "";
+      stopRecording();
+      applyChange();
+      rerender();
+      return;
+    }
+
+    const b = bindingFromEvent(e);
+    if (!b) return; // 纯修饰键：继续等待
+    if (!isUsableBinding(b)) {
+      hint.textContent = "该键位需要配合 Ctrl 或 Alt，或改用功能键";
+      hint.classList.add("warn");
+      return;
+    }
+    const spec = formatBinding(b);
+    const conflictCmd = findConflict(id, spec, overrides);
+    if (conflictCmd) {
+      hint.textContent = `已占用：${spec} → ${conflictCmd.label}`;
+      hint.classList.add("warn");
+      return;
+    }
+    overrides[id] = spec;
+    stopRecording();
+    applyChange();
+    rerender();
+  }
+
+  /**
+   * 录制监听挂在 document 捕获阶段，而不是键位按钮上：
+   * 按钮不一定拿到焦点，挂按钮会「点了没反应」。
+   */
+  function startRecording(btn: HTMLButtonElement, id: string, rerender: () => void): void {
+    stopRecording();
+    recording = btn;
+    recordId = id;
+    btn.classList.add("recording");
+    btn.textContent = "按下新键…";
+    document.body.classList.add(KEYMAP_RECORDING_CLASS);
+    hint.textContent = "按下新的组合键；Esc 取消，Backspace 清除绑定";
+    hint.classList.remove("warn");
+    btn.focus();
+    recordHandler = (e) => {
+      if (recordId !== id) return;
+      handleRecordKey(e, id, rerender);
+    };
+    document.addEventListener("keydown", recordHandler, true);
+  }
+
+  const render = (): void => {
+    stopRecording();
+    list.textContent = "";
+    const query = search.value.trim().toLowerCase();
+
+    for (const { group, commands } of groupedCommands()) {
+      const rows = commands.filter((cmd) => {
+        if (!query) return true;
+        const keys = effectiveKeys(cmd.id, overrides).join(" ").toLowerCase();
+        return (
+          cmd.label.toLowerCase().includes(query) ||
+          cmd.group.toLowerCase().includes(query) ||
+          keys.includes(query)
+        );
+      });
+      if (rows.length === 0) continue;
+
+      const head = document.createElement("div");
+      head.className = "keymap-group";
+      head.textContent = group;
+      list.appendChild(head);
+
+      for (const cmd of rows) {
+        const row = document.createElement("div");
+        row.className = "keymap-row";
+
+        const name = document.createElement("span");
+        name.className = "keymap-cmd";
+        name.textContent = cmd.label;
+        if (cmd.note) name.title = cmd.note;
+        row.appendChild(name);
+
+        if (cmd.editable === false) {
+          const kbd = document.createElement("span");
+          kbd.className = "settings-kbd keymap-static";
+          kbd.textContent = displayKeys(cmd.id, false);
+          row.appendChild(kbd);
+        } else {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "keymap-key";
+          btn.textContent = displayKeys(cmd.id, true);
+          btn.addEventListener("click", () => {
+            if (recording === btn) {
+              stopRecording();
+              render();
+            } else {
+              startRecording(btn, cmd.id, render);
+            }
+          });
+          row.appendChild(btn);
+        }
+
+        list.appendChild(row);
+      }
+    }
+
+    if (list.childElementCount === 0) {
+      const empty = document.createElement("div");
+      empty.className = "keymap-empty";
+      empty.textContent = "没有匹配的命令";
+      list.appendChild(empty);
+    }
+  };
+
+  search.addEventListener("input", render);
+  reset.addEventListener("click", () => {
+    for (const key of Object.keys(overrides)) delete overrides[key];
+    stopRecording();
+    applyChange();
+    render();
+    hint.textContent = "已恢复全部默认键位";
+    hint.classList.remove("warn");
+  });
+
+  render();
+  search.focus();
+
+  const onDocKeyDown = (e: KeyboardEvent): void => {
+    // 录制中的按键由 recordHandler 专管，不能顺带把对话框关掉
+    if (e.key === "Escape" && !recording) close();
+  };
+
+  const close = (): void => {
+    stopRecording();
+    document.removeEventListener("keydown", onDocKeyDown, true);
+    overlay.remove();
+  };
+
   ok.addEventListener("click", close);
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) close();
   });
-  ok.focus();
+  document.addEventListener("keydown", onDocKeyDown, true);
+}
+
+/** 供 main 判断某命令是否可编辑（菜单/提示用）。 */
+export function commandEditable(id: string): boolean {
+  return commandById(id)?.editable !== false;
 }
