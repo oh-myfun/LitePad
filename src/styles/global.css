@@ -808,20 +808,45 @@ button:focus-visible {
   flex: 0 0 auto;
   margin-left: auto;
   align-self: center;
-  min-width: 26px;
-  height: 20px;
-  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 5px;
   background: var(--bg);
   color: var(--fg-muted);
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
 }
 .tab-more:hover {
   background: var(--bg-hover);
   color: var(--fg);
+  border-color: var(--accent);
+}
+
+/* 折叠数量徽标 */
+.tab-more-count {
+  font-size: 10px;
+  min-width: 15px;
+  padding: 2px 4px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  color: var(--fg-muted);
+  text-align: center;
+}
+
+/* 活动标签被折叠：提示当前编辑的文件不可见，展开列表即可跳回 */
+.tab-more-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.tab-more-active .tab-more-count {
+  background: var(--accent);
+  color: #fff;
 }
 
 .panel-ops {

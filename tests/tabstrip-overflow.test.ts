@@ -72,14 +72,56 @@ describe("标签栏溢出折叠", () => {
     expect(host.querySelector(".tab-more"), "不应出现折叠按钮").toBeNull();
   });
 
-  it("放不下时折叠超出的标签，并在右侧给出下拉按钮（标注折叠数量）", () => {
+  it("放不下时折叠超出的标签，并在右侧给出下拉按钮（箭头 + 数量徽标）", () => {
     const { host } = mount(6);
     // 预算 = 250 - 34 = 216 → 只能放 2 个（100 + 2 + 100 = 202）
     expect(visibleNames(host)).toEqual(["tab1", "tab2"]);
     const more = host.querySelector<HTMLButtonElement>(".tab-more");
     expect(more, "必须有折叠按钮").toBeTruthy();
-    expect(more!.textContent).toBe("»");
+    expect(more!.querySelector(".tab-more-chev")?.textContent).toBe("»");
+    expect(more!.querySelector(".tab-more-count")?.textContent, "折叠数量徽标").toBe("4");
     expect(more!.title).toContain("4 个标签已折叠");
+  });
+
+  it("B32 活动标签被折叠时按钮高亮（tab-more-active）", () => {
+    const { host } = mount(6, 3);
+    // 活动标签 tab4 被拉进窗口，不触发高亮
+    expect(visibleNames(host)).toEqual(["tab3", "tab4"]);
+    expect(host.querySelector(".tab-more-active")).toBeNull();
+    // 滚轮浏览使活动标签离开可视区（滚离活动标签是允许的）→ 高亮提示
+    wheel(host, 100);
+    wheel(host, 100);
+    expect(visibleNames(host)).toEqual(["tab5", "tab6"]);
+    expect(host.querySelector(".tab-more-active"), "活动标签已折叠应高亮").toBeTruthy();
+  });
+
+  it("B32 关闭左侧折叠标签后窗口不漂移（按 tabId 锚定，不再按纯下标）", () => {
+    const { host } = mount(6, 0);
+    wheel(host, 100);
+    wheel(host, 100);
+    expect(visibleNames(host)).toEqual(["tab3", "tab4"]);
+    // 关掉折叠在左侧的 tab2：下标整体前移，窗口内容必须仍是 tab3/tab4
+    const list = tabs(6, 0).filter((t) => t.tabId !== 2);
+    renderTabstrip(host, list, cb());
+    expect(visibleNames(host), "锚点 tab3 应停在原位").toEqual(["tab3", "tab4"]);
+  });
+
+  it("B32 切换两个可见标签时窗口不跳动", () => {
+    const { host } = mount(6, 0);
+    wheel(host, 100);
+    wheel(host, 100);
+    expect(visibleNames(host)).toEqual(["tab3", "tab4"]);
+    // 激活可见的 tab4：窗口保持不动（旧实现会把活动标签强制左对齐 → 跳成 tab4/tab5）
+    renderTabstrip(host, tabs(6, 3), cb());
+    expect(visibleNames(host), "活动标签已可见，窗口不得移动").toEqual(["tab3", "tab4"]);
+  });
+
+  it("B32 追加打开新文件只做最小移动（尾部对齐，保留左侧上下文）", () => {
+    const { host } = mount(6, 0);
+    expect(visibleNames(host)).toEqual(["tab1", "tab2"]);
+    // 新开的 tab7 追加在末尾并激活：窗口尾部对齐，tab6 仍在可视区
+    renderTabstrip(host, tabs(7, 6), cb());
+    expect(visibleNames(host), "应显示 tab6/tab7 而不是只显示 tab7").toEqual(["tab6", "tab7"]);
   });
 
   it("下拉里同时列出左侧与右侧被折叠的标签（中间用分隔线分组）", () => {

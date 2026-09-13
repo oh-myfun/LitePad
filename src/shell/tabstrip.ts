@@ -70,10 +70,9 @@ export function renderTabstrip(
     strips.set(host, entry);
   }
   const activeIdx = tabs.findIndex((t) => t.active);
-  // 活动标签变了（用户切换标签）→ 先把它拉进可视区；滚轮浏览时不干预
-  if (activeIdx >= 0 && activeIdx !== entry.lastActive) {
-    entry.start = Math.max(0, activeIdx);
-  }
+  // 先按 tabId 把窗口起点重对齐（打开/关闭标签会让纯下标漂移一格），
+  // 活动标签的可见性修正统一交给 applyOverflow（左右两侧、最小移动）
+  entry.start = reanchorStart(entry, tabs);
   entry.tabs = tabs;
   entry.cb = cb;
 
@@ -89,7 +88,7 @@ export function renderTabstrip(
     host.addEventListener("wheel", (e) => onWheel(host, e), { passive: false });
   }
 
-  applyOverflow(host, entry, els, activeIdx);
+  applyOverflow(host, entry, els, activeIdx, activeIdx !== entry.lastActive);
   entry.lastActive = activeIdx;
 }
 
@@ -199,11 +198,35 @@ function fitCount(widths: number[], from: number, budget: number): number {
   return n;
 }
 
+/**
+ * 打开/关闭标签后按 tabId 重对齐窗口起点：start 是下标，增删标签后
+ * 下标内容整体位移（关掉左侧折叠标签会让窗口漂移一格、看到错误的标签）。
+ * 锚点（原窗口第一个标签）还在就停在它的当前位置；被关掉则退而求其次，
+ * 取原窗口内仍存在的最近标签，尽量保持用户正在浏览的范围不跳变。
+ */
+function reanchorStart(entry: StripEntry, tabs: TabViewData[]): number {
+  const oldTabs = entry.tabs;
+  const anchor = oldTabs[entry.start];
+  if (!anchor) return Math.min(entry.start, Math.max(0, tabs.length - 1));
+  const at = tabs.findIndex((t) => t.tabId === anchor.tabId);
+  if (at >= 0) return at;
+  for (let i = entry.start + 1; i < oldTabs.length; i++) {
+    const j = tabs.findIndex((t) => t.tabId === oldTabs[i].tabId);
+    if (j >= 0) return Math.max(0, j - 1);
+  }
+  for (let i = entry.start - 1; i >= 0; i--) {
+    const j = tabs.findIndex((t) => t.tabId === oldTabs[i].tabId);
+    if (j >= 0) return j;
+  }
+  return 0;
+}
+
 function applyOverflow(
   host: HTMLElement,
   entry: StripEntry,
   els: HTMLElement[],
   activeIdx: number,
+  activeChanged: boolean,
 ): void {
   const avail = host.clientWidth;
   const widths = els.map((el) => el.getBoundingClientRect().width || el.offsetWidth);
@@ -218,9 +241,16 @@ function applyOverflow(
   const budget = Math.max(MORE_WIDTH, avail - MORE_WIDTH);
   entry.start = Math.min(Math.max(0, entry.start), els.length - 1);
   let count = fitCount(widths, entry.start, budget);
-  // 活动标签必须可见（start 已在渲染入口被设为活动下标，这里再补齐尾部对齐）
+  // 活动标签折叠在左侧：仅在激活事件时把窗口左移拉进来——
+  // 滚轮浏览不得被拽回（用户有权滚离活动标签，折叠按钮会提示）
+  if (activeChanged && activeIdx >= 0 && activeIdx < entry.start) {
+    entry.start = activeIdx;
+    count = fitCount(widths, entry.start, budget);
+  }
+  // 活动标签折叠在右侧 → 尾部对齐拉进来（也使切换可见标签时窗口不跳动）
   if (activeIdx >= 0 && entry.start + count <= activeIdx) {
     entry.start = Math.max(0, activeIdx - count + 1);
+    count = fitCount(widths, entry.start, budget);
   }
   // 尾部越界回收（关标签后窗口可能滑出末尾）
   if (entry.start + count > els.length) {
@@ -234,7 +264,8 @@ function applyOverflow(
   host.appendChild(makeMoreButton(entry.tabs, entry.start, count, entry.cb));
 }
 
-/** 折叠按钮：点击展开"看不见的标签"列表（左侧溢出在前，右侧溢出在后）。 */
+/** 折叠按钮：点击展开"看不见的标签"列表（左侧溢出在前，右侧溢出在后）。
+ *  显示折叠数量徽标；活动标签被折叠时高亮提示（当前编辑的文件不可见）。 */
 function makeMoreButton(
   tabs: TabViewData[],
   start: number,
@@ -243,11 +274,18 @@ function makeMoreButton(
 ): HTMLElement {
   const left = tabs.slice(0, start);
   const right = tabs.slice(start + count);
+  const folded = [...left, ...right];
   const btn = document.createElement("button");
   btn.type = "button";
-  btn.className = "tab-more";
-  btn.textContent = "»";
-  btn.title = `${left.length + right.length} 个标签已折叠（点击展开列表，滚轮可切换显示区间）`;
+  btn.className = "tab-more" + (folded.some((t) => t.active) ? " tab-more-active" : "");
+  const chev = document.createElement("span");
+  chev.className = "tab-more-chev";
+  chev.textContent = "»";
+  const badge = document.createElement("span");
+  badge.className = "tab-more-count";
+  badge.textContent = String(folded.length);
+  btn.append(chev, badge);
+  btn.title = `${folded.length} 个标签已折叠${folded.some((t) => t.active) ? "（含当前活动标签）" : ""}——点击展开列表，滚轮可切换显示区间`;
 
   const items: MenuItem[] = [];
   const itemOf = (t: TabViewData): MenuItem => ({
