@@ -42,6 +42,9 @@
 
 - 状态归 Rust、视图归前端（方案第 3 节）；内存中文本一律 LF，落盘时还原行尾。
 - **git 全程管理**：每个交付一个 Conventional Commit（用户明确要求）。
+- **⚠️ 会话沙箱内禁止随意 `git stash -u` / `rm` / 任何会触碰 `.git` 的重操作**：2026-09-13 一次
+  `git stash -u` 后 `.git` 整目录消失、全部历史（M0–M22）不可恢复，只能 `git init` 重建。
+  对照基线请改用 `git diff > /tmp/x.patch` 另存，或开两个 worktree，勿动 `.git` 本身。
 - **用户报告的每个 bug 必须有对应回归测试用例**（用户明确要求，2026-09-12）：
   运行时可测的进 tests/smoke.bootstrap.test.ts（jsdom 真实 bootstrap），
   配置/样式根因的进 tests/regressions.test.ts（静态文件断言）；修 bug 与补测试同一提交。
@@ -109,6 +112,10 @@
   + B7 跨面板单击/滚动（9574546）+ B8 新菜单项与搜索条替换行（ab0b95f）
   + B9 大纲配色/同步跳转（2a5b8cb）+ B10 流式语言缩进折叠 + 折叠全部/展开全部（7966302）
   + B11 标题顺序（53f0197）+ B12 图标（c7f2cc2）+ B13 隐藏控制台（f9d192e）
+  + B14/B15 预览态大纲跳转与定位精度 + B16 大纲宽度拖拽 + B17 滚动条统一
+  + B18 查找悬浮栏 + B19 设置入口散入菜单 + B20 Ctrl+滚轮缩放预览跟随 + B21 标签溢出折叠
+  + B22 切视图/点击不改文件 + B23 大纲跳转精度 + 大纲跟随活动面板（均含桌面验证；B23 同日 .git 丢失已重建）
+  + B24 文件拖入落点预览/分区打开 + md 选择菜单（3cf9366）+ B25 图标四角圆角统一（e3d6487）
   + B14/B15 预览态大纲跳转与定位精度（2787ce3 / 2a00cf7）+ B16 大纲宽度拖拽（6fbd8ef）
   + B17 滚动条统一 + 深浅色（dea9c5a）
   + B18 查找/替换统一为悬浮栏（ada78fa）
@@ -116,6 +123,9 @@
   + B20 Ctrl+滚轮缩放 + 预览跟随（e38b2c0）
   + B21 标签区溢出折叠（下拉 + 滚轮，去滚动条，c54e0d3）
   + B22 切视图/点击不再改动文件（32e7e5c）
+  + B23 大纲跳转不准 + 大纲不随文档切换（e1ecc90；同会话内 .git 丢失重建 c47c542+e1ecc90）
+  + B24 文件拖入落点预览/分区打开 + md 选择菜单（3cf9366）+ B25 图标四角圆角统一（e3d6487）
+  + B26 开关文档分割条跳位（updateRatio 路径约定错位一层）+ B27 tab 区拖拽排序（见下）
 - **置脏判据（重要）**：CM6 的 `update.docChanged` 不等于"内容变了"。
   handleUpdate 必须比较 `update.startState.doc.toString() !== update.state.doc.toString()`
   才置脏/排程自动保存；切视图（编辑器隐藏恢复）要用 suppressDirty 包住。
@@ -133,6 +143,20 @@
   替换/高亮，**不用 CM6 search() 扩展**，否则 Mod-f/F3/Mod-g 抢键且多一套面板）。
 - **滚动条**：全应用统一在 global.css（--sb-thumb 等变量 + color-scheme +
   全局 `*`/`::-webkit-scrollbar` 双写）；改配色只动两个主题块的 --sb-* 变量。
+- **B24 文件拖入**：落点预览复用 `.split-preview`；drop 中央=落进该面板、边缘=`splitPanelWithTab` 旁分屏；
+  **md 选择菜单只能在 drop 后弹**（原生拖拽期间系统捕获鼠标，页面控件收不到点击）；
+  拖放坐标是物理像素 → 除以 devicePixelRatio；`showPopupMenu` 支持 `at` 坐标无锚点弹出。
+- **B25 图标**：`scripts/gen_icons.py` 用「alpha 与垂直镜像取 min」统一四角圆角（下=上，无需猜半径）；
+  源图 generated-images/icon_final.png（gitignore）；ico 多尺寸 16–256；改图标后必须重跑 tauri build 才进 exe。
 - **B16 大纲宽度拖拽**：#toc-resizer 4px 细条；指针事件序列（HTML5 DnD 在
   dragDropEnabled:true 下失效）；宽度写 inline width+min-width；Settings.toc_width 持久化。
+- **B26 分割条比例**：`splitview.build()` 给 `onRatioChange` 的 path 是**分割节点自身**的树路径
+  （根分割=[]）；`layout.updateRatio(node, path, ratio)` 按此约定——空路径写 node.ratio、
+  否则按 head 下钻。若按「寻址子节点」解释会错位一层，平时拖拽只改内联样式看不出，
+  任何 rebuildLayout（开/关文档）都会跳位。
+- **B27 tab 区拖拽排序**：strip（`.panel-tabstrip` 需 position:relative）落下 = 排序
+  （插入指示线 `.tab-insert`），面板区落下 = 分屏预览（`.split-preview`），互斥；
+  strip 判定必须先于 zoneOf。**同面板排序绝不能改 activeTabId**——改了不重挂视图会破坏
+  panel.viewTabId 不变量（状态/编辑器脱节，后续激活早退无法恢复）；只 splice + renderPanelTabs。
+  可选属性回调要双层可选链 `svCallbacks?.onDropTabToPanel?.(...)`。
 - 下一步：M4 性能与打磨（大文件分级降级、命令面板、键位预设、正式图标）
