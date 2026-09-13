@@ -159,7 +159,6 @@ vi.mock("../src/ipc/api", () => ({
   savePasteImage: () => Promise.resolve(""),
   saveSession: () => Promise.resolve(),
   saveSettings: () => Promise.resolve(),
-  searchFiles: () => Promise.resolve([]),
 }));
 
 // 指针事件序列（标签拖拽已从 HTML5 DnD 改为 mousedown/mousemove/mouseup 编排）

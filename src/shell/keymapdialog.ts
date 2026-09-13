@@ -17,7 +17,6 @@ const KEYMAP_DOC: [string, string][] = [
   ["Ctrl+PgUp / Ctrl+PgDn", "切换标签"],
   ["Ctrl+F", "查找（悬浮栏）"],
   ["Ctrl+H", "替换（悬浮栏，聚焦替换框）"],
-  ["Ctrl+Shift+F", "在所有打开的文档 / 文件夹中查找"],
   ["F3 / Shift+F3", "查找下一个 / 上一个"],
   ["Ctrl+G", "转到行"],
   ["Ctrl+/", "Markdown 源码 / 预览切换"],

@@ -360,6 +360,32 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(preview, "预览命中必须复用编辑器高亮样式类").toContain("cm-find-match");
   });
 
+  it("B39 查找栏只作用于当前文档：跨文件/文件夹搜索必须全链路移除", () => {
+    // 用户要求：查找替换悬浮栏无需查找文件夹功能，也不用下拉菜单来选择查找范围。
+    // 原实现是「范围下拉 + 文件夹搜索 IPC」一整条链路；UI 移除后后端与包装不得留残骸。
+    const bar = readFileSync("src/shell/findbar.ts", "utf-8");
+    expect(bar, "查询对象不得再有 scope").not.toMatch(/\bscope\b/);
+    expect(bar, "不得再有文件夹路径字段").not.toMatch(/\bfolder\b/);
+    expect(bar, "不得再有范围下拉控件").not.toContain("find-scope");
+
+    const main = readFileSync("src/main.ts", "utf-8");
+    expect(main, "不得再调用跨文件搜索 IPC").not.toContain("searchFiles");
+    expect(main, "不得再有跨范围搜索函数").not.toContain("searchAllInScope");
+    expect(main, "不得再有结果列表点击跳转").not.toContain("openFindHit");
+    expect(main, "不得再有 Ctrl+Shift+F 入口").not.toContain("Ctrl+Shift+F");
+
+    const api = readFileSync("src/ipc/api.ts", "utf-8");
+    expect(api, "IPC 包装必须一并删除").not.toContain("search_files");
+
+    const rust = readFileSync("src-tauri/src/commands/mod.rs", "utf-8");
+    expect(rust, "Rust 搜索命令必须删除").not.toContain("pub async fn search_files");
+    expect(rust, "递归收集文件的辅助函数必须删除").not.toContain("fn collect_files");
+    const rustMain = readFileSync("src-tauri/src/main.rs", "utf-8");
+    expect(rustMain, "不得再注册 search_files 命令").not.toContain("commands::search_files");
+    const cargo = readFileSync("src-tauri/Cargo.toml", "utf-8");
+    expect(cargo, "regex 依赖只服务于跨文件搜索，应一并移除").not.toMatch(/^regex\s*=/m);
+  });
+
   it("B31 转到行必须顶部对齐（与大纲跳转一致，不得最小滚动贴底）", () => {
     const src = readFileSync("src/main.ts", "utf-8");
     // 转到行 overlay（.goto-overlay 所在函数链）里的跳转必须用 y:"start"

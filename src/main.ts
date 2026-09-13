@@ -46,9 +46,7 @@ import {
   savePasteImage,
   saveSession,
   saveSettings,
-  searchFiles,
   type LossyChar,
-  type SearchHit,
   type SessionState,
   type Settings,
 } from "./ipc/api";
@@ -58,13 +56,7 @@ import { extractOutline } from "./markdown/outline";
 import { PreviewPane } from "./markdown/preview";
 import { renderToc, attachTocResizer, clampTocWidth, type TocResizerHandle } from "./markdown/toc";
 import { attachWheelZoom } from "./shell/zoom";
-import {
-  createFindBar,
-  type FindBarHandle,
-  type FindHit,
-  type FindBarQuery,
-  type FindScope,
-} from "./shell/findbar";
+import { createFindBar, type FindBarHandle, type FindBarQuery } from "./shell/findbar";
 import { ICONS, type IconName } from "./shell/icons";
 import { createMenuBar, openMenuByIndex } from "./shell/menubar";
 import { showPopupMenu } from "./shell/menu";
@@ -1789,39 +1781,12 @@ function handleFileChanged(path: string): void {
   }
 }
 
-// ---------------------------------------------------------------- 在文件中查找（M2）
-
-function defaultSearchDir(): string {
-  const t = activeTab();
-  const doc = t ? docs.get(t.docId) : undefined;
-  if (doc?.path) {
-    const idx = doc.path.lastIndexOf("\\");
-    return idx > 0 ? doc.path.slice(0, idx) : doc.path;
-  }
-  return "";
-}
-
-async function jumpToHit(hit: SearchHit): Promise<void> {
-  await doOpen(hit.path);
-  const panel = activePanel();
-  const tab = activeTab();
-  if (!panel?.view || !tab) return;
-  const doc = docs.get(tab.docId);
-  if (!doc?.path || doc.path.toLowerCase() !== hit.path.toLowerCase()) return;
-  const line = Math.min(Math.max(1, hit.line), tab.state.doc.lines);
-  const pos = tab.state.doc.line(line).from + Math.max(0, hit.col - 1);
-  panel.view.view.dispatch({
-    selection: { anchor: pos },
-    effects: EditorView.scrollIntoView(pos, { y: "center" }),
-  });
-  tab.state = panel.view.view.state;
-}
-
 // ---------------------------------------------------------------- 悬浮查找 / 替换栏
 
 /**
- * 统一查找入口：编辑器内不再嵌 CM6 搜索面板，「在文件中查找」也不再是独立窗口，
- * 全部收敛到这一个应用级浮层（不绑定文件/面板，切换标签、分屏都不会自动关闭）。
+ * 查找入口：编辑器内不再嵌 CM6 搜索面板，查找/替换统一收敛到这一个应用级浮层
+ * （不绑定文件/面板，切换标签、分屏都不会自动关闭）。
+ * 按用户要求只作用于当前活动文档，栏内不再提供范围下拉与跨文件/文件夹搜索。
  */
 let findBar: FindBarHandle | null = null;
 
@@ -1831,24 +1796,16 @@ function ensureFindBar(): FindBarHandle {
     onQueryChange: (q) => applyFindQuery(q),
     onStep: (dir, q) => stepFind(dir, q),
     onReplace: (q) => replaceCurrent(q),
-    onReplaceAll: (q) => void replaceAllInScope(q),
-    onSearchAll: (q) => searchAllInScope(q),
-    onOpenHit: (hit) => void openFindHit(hit),
-    onPickFolder: async () => {
-      const picked = await openDialog({ directory: true, multiple: false, title: "选择搜索目录" });
-      return typeof picked === "string" ? picked : null;
-    },
+    onReplaceAll: (q) => void replaceAllInDocument(q),
     onClose: () => clearFindHighlight(),
   });
   return findBar;
 }
 
-/** 打开查找栏（scope 省略时保持上次范围）。seed 一般为当前选中的文本。 */
-function openFindBar(scope?: FindScope, focus: "find" | "replace" = "find"): void {
+/** 打开查找栏（种子一般为当前选中的文本）。 */
+function openFindBar(focus: "find" | "replace" = "find"): void {
   const bar = ensureFindBar();
-  const seed = selectedTextInActiveView();
-  bar.open(scope, seed);
-  if (scope === "folder") bar.setFolder(defaultSearchDir());
+  bar.open(selectedTextInActiveView());
   if (focus === "replace") bar.focusReplace();
   else bar.focusFind();
 }
@@ -1882,7 +1839,7 @@ function applyFindQuery(q: FindBarQuery): void {
   refreshFindCount();
 }
 
-/** 预览态查找高亮：仅 doc 范围、md 预览面板（源码模式由编辑器装饰覆盖）。 */
+/** 预览态查找高亮：md 预览面板（源码模式由编辑器装饰覆盖）。 */
 function applyPreviewFindEverywhere(q: FindBarQuery): void {
   const spec = findSpecOf(q);
   for (const p of panels.values()) {
@@ -1898,7 +1855,7 @@ type PreviewFindSpec = {
 } | null;
 
 function findSpecOf(q: FindBarQuery): PreviewFindSpec {
-  return q.scope === "doc" && q.text
+  return q.text
     ? { text: q.text, caseSensitive: q.caseSensitive, wholeWord: q.wholeWord, regexp: q.regexp }
     : null;
 }
@@ -1921,7 +1878,6 @@ function refreshFindCount(): void {
   const bar = findBar;
   if (!bar) return;
   const q = bar.getQuery();
-  if (q.scope !== "doc") return;
   // 预览态：计数与当前项来自预览高亮（预览可见文本与源码一一对应，步进以它为准）
   const panel = activePanel();
   const tab = panel ? tabs.get(panel.activeTabId) : undefined;
@@ -2015,12 +1971,8 @@ function replaceCurrent(q: FindBarQuery): void {
   findBar?.setStatus("已替换 1 处");
 }
 
-/** 当前文档或所有打开的文档范围内的全部替换（文件夹范围不支持写回）。 */
-async function replaceAllInScope(q: FindBarQuery): Promise<void> {
-  if (q.scope === "folder") {
-    findBar?.setStatus("文件夹范围不支持替换");
-    return;
-  }
+/** 当前活动文档内的全部替换。 */
+function replaceAllInDocument(q: FindBarQuery): void {
   if (!q.text) {
     findBar?.setStatus("请输入查找内容");
     return;
@@ -2030,135 +1982,19 @@ async function replaceAllInScope(q: FindBarQuery): Promise<void> {
     findBar?.setStatus("查找内容无效（正则语法错误？）");
     return;
   }
-  let files = 0;
-  let total = 0;
-  if (q.scope === "doc") {
-    const panel = activePanel();
-    const view = panel?.view?.view;
-    if (!panel || !view) return;
-    const matches = findMatches(view.state, query);
-    if (matches.length === 0) {
-      findBar?.setStatus("无匹配");
-      return;
-    }
-    view.dispatch({ changes: matches.map((m) => ({ from: m.from, to: m.to, insert: q.replace })) });
-    const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
-    if (tab) tab.state = view.state;
-    files = 1;
-    total = matches.length;
-  } else {
-    for (const doc of docs.values()) {
-      if (doc.readonly) continue;
-      const insts = instancesOfDoc(doc.tabId);
-      if (insts.length === 0) continue;
-      const state = insts[0].state;
-      const matches = findMatches(state, query);
-      if (matches.length === 0) continue;
-      const changes = matches.map((m) => ({ from: m.from, to: m.to, insert: q.replace }));
-      // 优先派发给正挂在视图上的实例——由 syncDocInstances 广播到兄弟实例并置脏；
-      // 全部离屏时才直接改快照，并手动置脏
-      const visible = insts.find((t) => {
-        const p = panels.get(t.panelId);
-        return !!p?.view && p.viewTabId === t.tabId;
-      });
-      if (visible) {
-        const p = panels.get(visible.panelId)!;
-        p.view!.view.dispatch({ changes });
-        visible.state = p.view!.view.state;
-      } else {
-        for (const t of insts) t.state = t.state.update({ changes }).state;
-        if (!doc.dirty) {
-          doc.dirty = true;
-          refreshTitle();
-          renderPanelTabs();
-        }
-      }
-      files++;
-      total += matches.length;
-    }
-  }
-  findBar?.setStatus(total === 0 ? "无匹配" : `已在 ${files} 个文档中替换 ${total} 处`);
-  refreshFindCount();
-}
-
-/** 所有打开的文档 / 文件夹 范围搜索。 */
-async function searchAllInScope(q: FindBarQuery): Promise<FindHit[]> {
-  if (q.scope === "folder") {
-    const hits = await searchFiles({
-      root: q.folder,
-      query: q.text,
-      caseSensitive: q.caseSensitive,
-      regex: q.regexp,
-      maxResults: 300,
-    });
-    return hits.map((h) => ({
-      kind: "file" as const,
-      path: h.path,
-      name: h.name,
-      line: h.line,
-      col: h.col,
-      text: h.text,
-      from: 0,
-      to: 0,
-    }));
-  }
-  // 所有打开的文档：直接扫描内存中的标签快照（无需读盘）
-  const query = buildFindQuery(findOptionsOf(q));
-  if (!query) return [];
-  const out: FindHit[] = [];
-  for (const doc of [...docs.values()]) {
-    const inst = instancesOfDoc(doc.tabId)[0];
-    if (!inst) continue;
-    const state = inst.state;
-    for (const m of findMatches(state, query)) {
-      const line = state.doc.lineAt(m.from);
-      out.push({
-        kind: "doc",
-        docId: doc.tabId,
-        path: doc.path ?? "",
-        name: doc.name,
-        line: line.number,
-        col: m.from - line.from + 1,
-        text: line.text.trim().slice(0, 200),
-        from: m.from,
-        to: m.to,
-      });
-      if (out.length >= 300) break;
-    }
-    if (out.length >= 300) break;
-  }
-  return out;
-}
-
-/** 结果列表点击：已打开文档直接切过去定位；磁盘文件先打开再定位。 */
-async function openFindHit(hit: FindHit): Promise<void> {
-  if (hit.kind === "file") {
-    await jumpToHit({
-      path: hit.path,
-      name: hit.name,
-      line: hit.line,
-      col: hit.col,
-      text: hit.text,
-    });
+  const panel = activePanel();
+  const view = panel?.view?.view;
+  if (!panel || !view) return;
+  const matches = findMatches(view.state, query);
+  if (matches.length === 0) {
+    findBar?.setStatus("无匹配");
     return;
   }
-  const insts = instancesOfDoc(hit.docId ?? -1);
-  if (insts.length === 0) return;
-  const target = insts[0];
-  switchTab(target.panelId, target.tabId);
-  for (const inst of insts) {
-    const p = panels.get(inst.panelId);
-    if (p?.view && p.viewTabId === inst.tabId) {
-      p.view.view.dispatch({
-        selection: { anchor: hit.from, head: hit.to },
-        effects: EditorView.scrollIntoView(hit.from, { y: "center" }),
-      });
-      inst.state = p.view.view.state;
-    } else {
-      inst.state = inst.state.update({ selection: { anchor: hit.from, head: hit.to } }).state;
-    }
-  }
-  activePanel()?.view?.focus();
+  view.dispatch({ changes: matches.map((m) => ({ from: m.from, to: m.to, insert: q.replace })) });
+  const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
+  if (tab) tab.state = view.state;
+  findBar?.setStatus(`已替换 ${matches.length} 处`);
+  refreshFindCount();
 }
 
 /** 标签/面板切换后：浮层保持打开，把当前查询重新应用到新的活动视图。 */
@@ -2672,16 +2508,12 @@ function bindEvents(): void {
     } else if (key === "/") {
       e.preventDefault();
       toggleViewMode();
-    } else if (key === "f" && !e.shiftKey) {
+    } else if (key === "f") {
       e.preventDefault();
       openFindReplace();
-    } else if (key === "f" && e.shiftKey) {
-      e.preventDefault();
-      // 在文件中查找：同一个悬浮栏，切到「文件夹…」范围
-      openFindBar("folder");
     } else if (key === "h") {
       e.preventDefault();
-      openFindBar("doc", "replace");
+      openFindBar("replace");
     } else if (key === "s" && e.shiftKey) {
       e.preventDefault();
       void doSave(true);
@@ -2763,7 +2595,7 @@ function showExportMenu(): void {
 
 /** 打开悬浮查找栏（Ctrl+F / 工具栏「查找」）。 */
 function openFindReplace(): void {
-  openFindBar("doc");
+  openFindBar();
 }
 
 // ---------------------------------------------------------------- 编辑菜单操作
@@ -2787,7 +2619,7 @@ function withView(fn: (view: EditorView) => void): void {
 /** 查找下一个/上一个（F3 / 菜单）：查找栏未开则先打开（参考记事本 F3 行为）。 */
 function findStep(dir: 1 | -1): void {
   const bar = ensureFindBar();
-  if (!bar.isOpen()) openFindBar("doc");
+  if (!bar.isOpen()) openFindBar();
   else bar.retarget();
   bar.step(dir);
 }
@@ -3020,8 +2852,7 @@ function setupMenuBar(): void {
     onFind: () => openFindReplace(),
     onFindNext: () => findStep(1),
     onFindPrev: () => findStep(-1),
-    onReplace: () => openFindBar("doc", "replace"),
-    onFindInFiles: () => openFindBar("folder"),
+    onReplace: () => openFindBar("replace"),
     onGoto: () => openGotoLine(),
     onSelectAll: () => withView((v) => selectAll(v)),
     onTimeDate: () => insertTimeDate(),
@@ -3255,8 +3086,8 @@ async function bootstrap(): Promise<void> {
     p?.view?.focus();
     showMessage(
       restored
-        ? "已恢复上次会话 · Ctrl+N 新建，Ctrl+O 打开，Ctrl+Shift+F 在文件中查找"
-        : "就绪 · Ctrl+N 新建，Ctrl+O 打开，Ctrl+S 保存，Ctrl+Shift+F 在文件中查找",
+        ? "已恢复上次会话 · Ctrl+N 新建，Ctrl+O 打开，Ctrl+F 查找"
+        : "就绪 · Ctrl+N 新建，Ctrl+O 打开，Ctrl+S 保存，Ctrl+F 查找",
     );
     void persistSession();
 

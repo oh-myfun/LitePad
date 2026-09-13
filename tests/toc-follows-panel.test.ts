@@ -119,7 +119,6 @@ vi.mock("../src/ipc/api", () => ({
   savePasteImage: () => Promise.resolve(""),
   saveSession: () => Promise.resolve(),
   saveSettings: () => Promise.resolve(),
-  searchFiles: () => Promise.resolve([]),
 }));
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));

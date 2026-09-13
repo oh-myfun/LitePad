@@ -149,32 +149,6 @@ export function saveSession(state: SessionState): Promise<void> {
   return invoke<void>("save_session", { state });
 }
 
-// ---------------------------------------------------------------- 跨文件搜索（M2）
-
-export interface SearchHit {
-  path: string;
-  name: string;
-  line: number;
-  col: number;
-  text: string;
-}
-
-export function searchFiles(args: {
-  root: string;
-  query: string;
-  caseSensitive?: boolean;
-  regex?: boolean;
-  maxResults?: number;
-}): Promise<SearchHit[]> {
-  return invoke<SearchHit[]>("search_files", {
-    root: args.root,
-    query: args.query,
-    caseSensitive: args.caseSensitive ?? false,
-    regex: args.regex ?? false,
-    maxResults: args.maxResults ?? 200,
-  });
-}
-
 /** Unicode 编码不会丢字符，可跳过不可逆检查以省掉一次全量扫描。 */
 export function isUnicodeEncoding(label: string): boolean {
   return /^utf-?8|^utf-?16/i.test(label.trim());

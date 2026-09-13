@@ -1850,7 +1850,6 @@ dependencies = [
  "chardetng",
  "encoding_rs",
  "notify",
- "regex",
  "serde",
  "serde_json",
  "tauri",

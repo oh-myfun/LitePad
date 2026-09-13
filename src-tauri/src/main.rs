@@ -53,7 +53,6 @@ fn main() {
             commands::frontend_ready,
             commands::load_session,
             commands::save_session,
-            commands::search_files,
             commands::export_file,
             commands::save_paste_image,
         ])

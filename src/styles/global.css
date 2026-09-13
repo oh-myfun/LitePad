@@ -379,7 +379,7 @@ button:focus-visible {
   background: var(--bg-hover);
 }
 
-/* 查找/替换/范围行统一为 flex 行，窄窗下允许换行不溢出 */
+/* 查找/替换/选项行统一为 flex 行，窄窗下允许换行不溢出 */
 .find-row {
   display: flex;
   align-items: center;
@@ -453,14 +453,10 @@ button:focus-visible {
   cursor: not-allowed;
 }
 
-/* 「查找全部」是跨文件范围的主操作 */
-.find-primary {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-.find-primary:hover:not(:disabled) {
-  background: var(--accent);
-  color: #fff;
+/* 选项行：区分大小写 / 全词匹配 / 正则 */
+.find-row-opts {
+  gap: 12px;
+  padding-top: 1px;
 }
 
 .find-opt {
@@ -471,55 +467,6 @@ button:focus-visible {
   color: var(--fg-muted);
   cursor: pointer;
   user-select: none;
-}
-
-.find-scope {
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  color: var(--fg);
-  font-size: 12px;
-  padding: 3px 4px;
-  flex: 0 0 auto;
-}
-
-.find-folder {
-  flex: 1 1 120px;
-}
-
-.find-results {
-  max-height: 240px;
-  overflow: auto;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-}
-
-.find-hit {
-  display: flex;
-  gap: 8px;
-  padding: 3px 8px;
-  font-size: 11px;
-  cursor: pointer;
-  align-items: baseline;
-  border-left: 2px solid transparent;
-}
-
-.find-hit:hover {
-  background: var(--bg-hover);
-  border-left-color: var(--accent);
-}
-
-.find-hit-loc {
-  color: var(--accent);
-  white-space: nowrap;
-  font-family: var(--font-mono);
-}
-
-.find-hit-text {
-  color: var(--fg);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .find-status {

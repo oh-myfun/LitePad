@@ -137,13 +137,14 @@ describe("菜单栏（参考 Win11 记事本）", () => {
       "查找下一个\tF3",
       "查找上一个\tShift+F3",
       "替换…\tCtrl+H",
-      "在文件中查找\tCtrl+Shift+F",
       "转到…\tCtrl+G",
       "全选\tCtrl+A",
       "时间/日期\tF5",
     ]) {
       expect(texts, `编辑菜单应含「${t}」`).toContain(t);
     }
+    // B39：跨文件/文件夹搜索已从查找能力中移除，菜单不得再有该入口
+    expect(texts, "不得再有「在文件中查找」").not.toContain("在文件中查找\tCtrl+Shift+F");
   });
 
   it("查看菜单：缩放三项 + 自动换行/状态栏勾选态实时求值", async () => {
@@ -287,19 +288,30 @@ describe("设置项分散到各菜单（不再有设置窗口）", () => {
 });
 
 describe("查找入口统一（悬浮查找栏）", () => {
-  it("main.ts 必须接线悬浮查找栏：查找/替换/在文件中查找都走同一个 openFindBar", () => {
+  it("main.ts 必须接线悬浮查找栏：查找/替换都走同一个 openFindBar", () => {
     const src = readFileSync("src/main.ts", "utf-8");
     // prettier 会重排 import，断言只看标识符存在（不锁定排版）
     expect(/\bcreateFindBar\b/.test(src), "必须引入 createFindBar").toBe(true);
     expect(src.includes("function openFindBar("), "必须有统一入口 openFindBar").toBe(true);
-    expect(src.includes('openFindBar("doc", "replace")'), "菜单「替换…」/Ctrl+H 走同一入口").toBe(
-      true,
-    );
-    expect(src.includes('openFindBar("folder")'), "「在文件中查找」切到文件夹范围").toBe(true);
+    expect(src.includes('openFindBar("replace")'), "菜单「替换…」/Ctrl+H 走同一入口").toBe(true);
     expect(src.includes("async function doSaveAll")).toBe(true);
     // F5 插入时间日期必须拦截 WebView2 默认刷新
     expect(src.includes('"F5"')).toBe(true);
     expect(src.includes("insertTimeDate")).toBe(true);
+  });
+
+  it("B39：查找不得再有跨文件/文件夹范围（无 range 下拉、无 Ctrl+Shift+F）", () => {
+    const src = readFileSync("src/main.ts", "utf-8");
+    expect(src, "不得再出现 folder 范围入口").not.toContain('openFindBar("folder")');
+    expect(src, "不得再调用跨文件搜索 IPC").not.toContain("searchFiles");
+    expect(src, "不得再有默认搜索目录推导").not.toContain("defaultSearchDir");
+    expect(src, "不得再注册 Ctrl+Shift+F").not.toContain("Ctrl+Shift+F");
+
+    const barSrc = readFileSync("src/shell/findbar.ts", "utf-8");
+    expect(barSrc, "查找栏不得再有 scope 概念").not.toContain("FindScope");
+    expect(barSrc, "查找栏不得再有范围下拉").not.toContain("find-scope");
+    expect(barSrc, "查找栏不得再有文件夹搜索控件").not.toContain("find-folder");
+    expect(barSrc, "查找栏不得再有跨文件结果列表").not.toContain("find-results");
   });
 
   it("不得再存在第二套查找 UI（CM6 面板 / 独立查找窗口）", () => {

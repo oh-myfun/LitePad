@@ -104,7 +104,6 @@ vi.mock("../src/ipc/api", () => ({
   savePasteImage: () => Promise.resolve(""),
   saveSession: () => Promise.resolve(),
   saveSettings: () => Promise.resolve(),
-  searchFiles: () => Promise.resolve([]),
 }));
 
 const dirty = (): boolean =>

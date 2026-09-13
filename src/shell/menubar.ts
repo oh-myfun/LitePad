@@ -24,7 +24,6 @@ export interface MenuBarCallbacks {
   onFindNext: () => void;
   onFindPrev: () => void;
   onReplace: () => void;
-  onFindInFiles: () => void;
   onGoto: () => void;
   onSelectAll: () => void;
   onTimeDate: () => void;
@@ -98,7 +97,6 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks, anchor: HTMLElement)
         { label: "查找下一个\tF3", onSelect: cb.onFindNext },
         { label: "查找上一个\tShift+F3", onSelect: cb.onFindPrev },
         { label: "替换…\tCtrl+H", onSelect: cb.onReplace },
-        { label: "在文件中查找\tCtrl+Shift+F", onSelect: cb.onFindInFiles },
         { label: "转到…\tCtrl+G", onSelect: cb.onGoto },
         { separator: true },
         { label: "全选\tCtrl+A", onSelect: cb.onSelectAll },
