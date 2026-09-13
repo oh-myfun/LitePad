@@ -90,7 +90,12 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
 - **标签栏溢出**：不用滚动条。`renderTabstrip` 先全量渲染 → 测量 → 裁剪，区间外折叠进 `.tab-more` 下拉，
   滚轮改 `start`；活动标签**仅在下标变化时**拉回可视区（否则滚轮会被拽回）。
 - **图标**：`scripts/gen_icons.py` 纯矢量自绘；四角圆角用「alpha 与垂直镜像取 min」保证上下一致；
-  改图标后必须重跑 `tauri build` 才会进 exe。
+  改图标后必须重跑 `tauri build` 才会进 exe（`src-tauri/build.rs` 已 `rerun-if-changed=icons`，
+  否则增量构建会**静默**沿用旧图标，B41 踩过）。
+  方案 B（当前采用）的几何全部收在 `B_*` 常量里：`B_CARD / B_PEN_LENGTH / B_PEN_CENTER /
+  B_PEN_ANGLE / B_CARD_SHADOW`。钢笔是 135° 对角线，笔尖 = 中心 + (长度/2)·(-0.707,+0.707)，
+  改长度会**同时**移动两端，要定点落笔就得反算中心。`B_CARD_SHADOW=False` 表示纸面无投影。
+  **验收方式**：从 exe 里按 PNG 签名抠出内嵌图标，与 `src-tauri/icons/icon.ico` 逐条 sha256 比对。
 
 ## 8. 通用教训
 

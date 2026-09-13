@@ -39,6 +39,10 @@ node node_modules/@tauri-apps/cli/tauri.js build \
 ```
 
 - `cargo collect2` 的 ICE 也可能是**瞬时故障，重试即过**。
+- **`windres: preprocessing failed` 同样是瞬时故障**（09-13 B43 推送时 pre-push 的 cargo test
+  在 build script 处报 `tauri-winres ... Failed("windres failed to compile resource.rc ... exit code: 1")`，
+  而**同一图标刚用 `tauri build` 打包成功过**）。直接重跑 `cd src-tauri && cargo test` 即 15/15 通过，
+  再 push 也过。**不要**因这个报错去改 .rc 或图标——先重试一次。
 - 链接前必须**杀掉运行中的 litepad.exe**，否则 `os error 32`（文件被占用）。
 - **npx 偶发解析异常**（wsl.exe shim 报 blocked + 乱码）：`run-vitest.cjs` 内部 `execSync("npx vitest")`
   会挂 → 用 `scripts/run-vitest-direct.cjs`（execFileSync 直调 `node_modules/vitest/vitest.mjs`，
