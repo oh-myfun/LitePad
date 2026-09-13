@@ -3,7 +3,7 @@
 // 约定：用户每报告一个 bug，修复时必须在此（或 smoke.bootstrap.test.ts）补对应用例。
 // 这三个 bug 的根因都在配置/样式层，无法在运行时断言，故用文件内容断言防回归。
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { extname, join } from "node:path";
 
 // JSON 配置结构松散（tauri.conf/package.json 各异），此处刻意放宽：
@@ -679,5 +679,14 @@ describe("B48 安装包必须自带 WebView2Loader.dll（缺了应用起不来�
     expect(hit, "必须把 WebView2Loader.dll 打进安装包").toBeTruthy();
     // 目标若带子路径（如 target/release/...），exe 仍会在同目录找不到它
     expect(hit![1], "目标必须是安装目录根下的文件名，不能带子路径").toBe("WebView2Loader.dll");
+
+    // 源路径**不能**指向构建产物：Tauri 的 codegen 在**编译前**就校验 resources 路径存在，
+    // 而 target/release/ 下的 dll 是链接阶段才生成的 —— 冷构建（CI）必然报
+    // "resource path ... doesn't exist"。本地能过只是因为 target 里有上次构建的残留。
+    expect(hit![0], "源路径不得指向 target/（构建产物在校验时还不存在）").not.toContain("target/");
+    expect(
+      existsSync(`src-tauri/${hit![0]}`),
+      `源文件 src-tauri/${hit![0]} 必须存在于仓库（随包分发的运行时依赖）`,
+    ).toBe(true);
   });
 });
