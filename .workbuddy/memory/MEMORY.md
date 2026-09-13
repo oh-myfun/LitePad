@@ -41,6 +41,18 @@
 ## 项目约定
 
 - 状态归 Rust、视图归前端（方案第 3 节）；内存中文本一律 LF，落盘时还原行尾。
+- **格式检查链（B35）**：prettier(printWidth=100)+eslint flat+rustfmt+clippy；
+  hooks=.githooks（pre-commit: prettier/eslint/tsc/cargo fmt --check；pre-push:
+  vitest+cargo test），已 `git config core.hooksPath .githooks`。
+  test-data/ 在 .gitattributes 里 -text 保护（编码样例不可转换行尾）。
+- **发布流程（B35）**：`bash scripts/release.sh <x.y.z|patch|minor|major>`
+  （版本三处同步+build:all+commit+tag）；push tag 后 GitHub Actions
+  release.yml 自动构建 NSIS 建 Release（workflow 首次实跑未验证）。
+- **npm install 被会话 SIGTERM 会回滚 package.json 并删刚装包**（jsdom 丢失时
+  jsdom 测试文件被静默跳过——测试文件数骤减且不报错）；npm 走 PowerShell 通道
+  或手工写 devDeps + `npm install --package-lock-only --offline`。
+
+- 状态归 Rust、视图归前端（方案第 3 节）；内存中文本一律 LF，落盘时还原行尾。
 - **git 全程管理**：每个交付一个 Conventional Commit（用户明确要求）。
 - **⚠️ 会话沙箱内禁止随意 `git stash -u` / `rm` / 任何会触碰 `.git` 的重操作**：2026-09-13 一次
   `git stash -u` 后 `.git` 整目录消失、全部历史（M0–M22）不可恢复，只能 `git init` 重建。
