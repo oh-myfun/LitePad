@@ -87,8 +87,16 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
 - **菜单系统**（`src/shell/menu.ts`）：`MenuItem.submenu?: MenuItem[] | (() => MenuItem[])`。
   子菜单**扁平挂到 `document.body`**（按父按钮 rect 定位、右侧越界左翻），**不能挂进父菜单 DOM**——
   父菜单有 `overflow` 会裁掉子菜单。`chain`/`created` 数组维护展开层级，`closeDeeperThan(level)` 收深层。
-- **标签栏溢出**：不用滚动条。`renderTabstrip` 先全量渲染 → 测量 → 裁剪，区间外折叠进 `.tab-more` 下拉，
-  滚轮改 `start`；活动标签**仅在下标变化时**拉回可视区（否则滚轮会被拽回）。
+- **标签栏溢出**（B44 重写过）：不用滚动条。`renderTabstrip` 先全量渲染 → 测量 → 裁剪，
+  区间外折叠进 `.tab-more` 下拉，滚轮改 `start`。三条**不能违反**的不变量：
+  1. **尺寸变化必须重算**：`watchStripSize()` 用 `ResizeObserver` 观察标签栏自身宽度
+     （顺带覆盖拖分屏分隔条——那**不触发** `window.resize`），无 RO 时退化 `window.resize`，
+     用 rAF 合并。`WeakMap` 不能遍历，故另存 `liveStrips` 集合并在注册/重排时剔除 `!isConnected` 节点。
+  2. **活动标签的拉回只在 `activeChanged` 时生效**（左右两侧规则都要这个门），
+     否则滚轮向左滚会被无条件拽回——活动标签在窗口右外侧（新开文件后的常态）时表现为"滚不动"。
+  3. **窗口必须铺满预算**：`fitCountFromEnd()`——关标签后 `start` 被夹到末尾时
+     `fitCount` 只剩 1 个，会显示成「明明还放得下 2 个却只显示 1 个」。
+     只在**没铺满**时左移补满，已铺满不动（免得把用户滚出来的位置拽走）。
 - **图标**：`scripts/gen_icons.py` 纯矢量自绘；四角圆角用「alpha 与垂直镜像取 min」保证上下一致；
   改图标后必须重跑 `tauri build` 才会进 exe（`src-tauri/build.rs` 已 `rerun-if-changed=icons`，
   否则增量构建会**静默**沿用旧图标，B41 踩过）。

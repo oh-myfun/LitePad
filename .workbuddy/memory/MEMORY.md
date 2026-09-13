@@ -57,6 +57,9 @@
   该批暴露 **CodeMirror 内置键位静默吞键并改写文档** 的问题（详见 `ARCHITECTURE.md` §8）。
 - **B43** 图标微调：钢笔 0.78→0.62、笔尖收进文档中间靠下（不再压角）、去掉文档投影。
   方案 B 几何已收进 `gen_icons.py` 的 `B_*` 常量，改图标只需动那几个数。
+- **B44** 标签栏折叠态不重算：补尺寸监听（ResizeObserver + window.resize 退化 + rAF 合并）、
+  活动标签拉回门控 `activeChanged`、窗口没铺满时左移补满（`fitCountFromEnd`）。
+  三条不变量已写进 `ARCHITECTURE.md` §7「标签栏溢出」，改这块前务必先读。
 
 ## 下一步
 
