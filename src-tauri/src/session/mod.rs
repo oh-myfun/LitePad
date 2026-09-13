@@ -1,4 +1,4 @@
-//! 配置持久化（%APPDATA%\LiteMD\settings.json）。
+//! 配置持久化（%APPDATA%\LitePad\settings.json）。
 //!
 //! M0 只落地主题等少量偏好；会话/布局持久化属于 M2。
 //! `#[serde(default)]` 保证旧版本配置文件缺字段时也能读出来（前向兼容）。
@@ -46,7 +46,7 @@ impl Default for Settings {
 
 /// 配置文件路径。当前构建仅面向 Windows，直接使用 APPDATA。
 pub fn settings_path() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|d| PathBuf::from(d).join("LiteMD").join("settings.json"))
+    std::env::var_os("APPDATA").map(|d| PathBuf::from(d).join("LitePad").join("settings.json"))
 }
 
 /// 读取配置；任何异常都静默回落默认值，绝不让配置损坏导致启动失败。
@@ -136,7 +136,7 @@ impl Default for SessionState {
 }
 
 pub fn session_path() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|d| PathBuf::from(d).join("LiteMD").join("session.json"))
+    std::env::var_os("APPDATA").map(|d| PathBuf::from(d).join("LitePad").join("session.json"))
 }
 
 /// 读取会话；异常静默返回 None（坏会话绝不阻塞启动）。

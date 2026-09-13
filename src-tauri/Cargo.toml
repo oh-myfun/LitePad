@@ -1,8 +1,8 @@
 [package]
-name = "litemd"
+name = "litepad"
 version = "0.1.0"
-description = "LiteMD - 极度轻量的 Markdown 文本编辑器"
-authors = ["LiteMD"]
+description = "LitePad - 极度轻量的 Markdown 文本编辑器"
+authors = ["LitePad"]
 edition = "2021"
 rust-version = "1.77.2"
 

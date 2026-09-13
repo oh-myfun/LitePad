@@ -112,7 +112,7 @@ export function saveSettings(settings: Settings): Promise<void> {
   return invoke<void>("save_settings", { settings });
 }
 
-/** 运行日志埋点：追加写 %TEMP%\litemd-app.log，失败静默。 */
+/** 运行日志埋点：追加写 %TEMP%\litepad-app.log，失败静默。 */
 export function logEvent(event: string, detail?: string, level = "info"): void {
   void invoke("log_event", { level, event, detail: detail ?? null }).catch(() => {});
 }

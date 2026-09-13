@@ -301,8 +301,8 @@ function refreshTitle(): void {
   const doc = tab ? docs.get(tab.docId) : undefined;
   const mark = doc?.dirty ? " ●" : "";
   const suffix = doc?.readonly ? " [只读]" : "";
-  // 软件名在前，文件名在后：无文档时只有 LiteMD
-  const title = doc ? `LiteMD - ${doc.name}${mark}${suffix}` : "LiteMD";
+  // 软件名在前，文件名在后：无文档时只有 LitePad
+  const title = doc ? `LitePad - ${doc.name}${mark}${suffix}` : "LitePad";
   void getCurrentWindow()
     .setTitle(title)
     .then(() => {
@@ -2957,8 +2957,8 @@ function setupMenuBar(): void {
     onSetTocWidth: (w) => void setTocWidthValue(w),
     onKeymap: () => showKeymapDialog(),
     onAbout: () => {
-      void ask("LiteMD v0.1.0\n轻量级 Markdown / 文本编辑器（Tauri 2 + CodeMirror 6）\n\n仅 Windows 平台。", {
-        title: "关于 LiteMD",
+      void ask("LitePad v0.1.0\n轻量级 Markdown / 文本编辑器（Tauri 2 + CodeMirror 6）\n\n仅 Windows 平台。", {
+        title: "关于 LitePad",
         kind: "info",
         okLabel: "确定",
         cancelLabel: "关闭",
@@ -2981,7 +2981,7 @@ function cycleTabInPanel(dir: 1 | -1): void {
 /** 把致命启动错误渲染到屏幕可见的覆盖层（同时回传 Rust 日志），避免静默白屏。 */
 function showFatalError(err: unknown): void {
   const msg = err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err);
-  console.error("[LiteMD] 启动错误：", err);
+  console.error("[LitePad] 启动错误：", err);
   try {
     (window as any).__TAURI_INTERNALS__?.invoke("frontend_ready", { detail: "fatal: " + msg }).catch(() => {});
   } catch {
@@ -2998,7 +2998,7 @@ function showFatalError(err: unknown): void {
         "font:13px/1.5 Consolas,Menlo,monospace;white-space:pre-wrap;";
       document.body.appendChild(box);
     }
-    box.textContent += "⚠ LiteMD 启动出错：\n" + msg + "\n\n";
+    box.textContent += "⚠ LitePad 启动出错：\n" + msg + "\n\n";
   } catch {
     /* ignore */
   }
@@ -3017,7 +3017,7 @@ function registerWindowClose(): void {
       const names = dirty.map((d) => d.name).join("、");
       const quit = await ask(
         `${dirty.length} 个文档有未保存的修改（${names}），未保存的内容将丢失。\n确定退出吗？`,
-        { title: "退出 LiteMD", kind: "warning" },
+        { title: "退出 LitePad", kind: "warning" },
       );
       if (!quit) return;
       try {

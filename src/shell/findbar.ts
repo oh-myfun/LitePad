@@ -67,7 +67,7 @@ export interface FindBarHandle {
   getQuery(): FindBarQuery;
 }
 
-const POS_KEY = "litemd.findbar.pos";
+const POS_KEY = "litepad.findbar.pos";
 
 function btn(cls: string, text: string, title: string): HTMLButtonElement {
   const b = document.createElement("button");

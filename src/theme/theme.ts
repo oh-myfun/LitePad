@@ -1,6 +1,6 @@
 export type ThemeMode = "system" | "light" | "dark";
 
-const STORAGE_FALLBACK_KEY = "litemd.theme";
+const STORAGE_FALLBACK_KEY = "litepad.theme";
 
 /**
  * 把主题模式落到 DOM 上。system 模式跟随系统偏好。

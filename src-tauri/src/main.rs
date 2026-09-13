@@ -58,5 +58,5 @@ fn main() {
             commands::save_paste_image,
         ])
         .run(tauri::generate_context!())
-        .expect("LiteMD 启动失败");
+        .expect("LitePad 启动失败");
 }

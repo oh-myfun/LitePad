@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "LiteMD",
+  "productName": "LitePad",
   "version": "0.1.0",
-  "identifier": "com.litemd.app",
+  "identifier": "com.litepad.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://127.0.0.1:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "LiteMD",
+        "title": "LitePad",
         "width": 1180,
         "height": 760,
         "minWidth": 560,

@@ -119,8 +119,8 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
 
   it("窗口标题软件名在前、文件名在后（用户要求）", () => {
     const src = readFileSync("src/main.ts", "utf-8");
-    expect(src, "标题格式应为 LiteMD - 文件名").toContain("`LiteMD - ${doc.name}${mark}${suffix}`");
-    expect(src, "不得再使用「文件名 - LiteMD」格式").not.toContain("${text} - LiteMD");
+    expect(src, "标题格式应为 LitePad - 文件名").toContain("`LitePad - ${doc.name}${mark}${suffix}`");
+    expect(src, "不得再使用「文件名 - LitePad」格式").not.toContain("${text} - LitePad");
   });
 
   it("悬浮查找栏必须挂在应用根、且不随标签/面板切换关闭（用户要求）", () => {
@@ -336,15 +336,21 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     );
   });
 
-  it("B25 应用图标四角圆角必须一致（下边缘与上边缘相同）", () => {
-    // 用户报告：图标下边缘接近直角、上边缘是大圆角。
-    // 修复：scripts/gen_icons.py 用「alpha 与垂直镜像取 min」统一四角；
-    // 断言脚本包含该逻辑且真的从 AI 源图取材（防止退回占位图）。
+  it("B25/B34 应用图标四角圆角必须一致（矢量自绘，非镜像修角）", () => {
+    // B25 用户报告：图标下边缘接近直角、上边缘是大圆角。
+    // B34 用户要求：改名 LitePad 并重绘图标，背景四角全部圆角。
+    // 修复：scripts/gen_icons.py 改为矢量自绘——圆角矩形 rounded_rectangle
+    // 一次成型（四角半径天然一致），不再依赖 AI 源图与镜像修角。
     const gen = readFileSync("scripts/gen_icons.py", "utf-8");
-    expect(gen, "必须用垂直镜像统一上下圆角").toMatch(
-      /ImageChops\.darker\(alpha,\s*alpha\.transpose\(Image\.FLIP_TOP_BOTTOM\)\)/,
+    expect(gen, "必须用 rounded_rectangle 保证四角圆角一致").toMatch(
+      /rounded_rectangle\(/,
     );
-    expect(gen, "必须从 AI 源图生成（而非内置占位图）").toContain("icon_final.png");
+    expect(gen, "背景必须是渐变（蓝→青）").toMatch(
+      /2563EB[\s\S]{0,600}06B6D4|06B6D4[\s\S]{0,600}2563EB/,
+    );
+    expect(gen, "不得再依赖 AI 源图（B25 镜像方案已废弃）").not.toContain(
+      "icon_final.png",
+    );
     expect(gen, "ico 必须包含多尺寸（任务栏/资源管理器清晰）").toMatch(/ICO_SIZES/);
     const conf = readJson("src-tauri/tauri.conf.json");
     const icons: string[] = conf.bundle?.icon ?? [];
@@ -352,5 +358,35 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
       icons.some((i) => i.includes("icon.ico")),
       "bundle.icon 必须含 icon.ico（exe/安装包图标来源）",
     ).toBe(true);
+  });
+
+  it("B34 应用更名为 LitePad 后不得有 LiteMD 残留", () => {
+    // 用户报告：应用名改为 LitePad。源码（src + index.html + 配置 + Rust）
+    // 中的 LiteMD/litemd 必须全部替换（gen/schemas 与 target 由构建再生，不查）。
+    for (const f of [
+      "index.html",
+      "package.json",
+      "src-tauri/tauri.conf.json",
+      "src-tauri/Cargo.toml",
+      "src/main.ts",
+      "src/shell/menubar.ts",
+      "src/markdown/exporter.ts",
+      "src/shell/findbar.ts",
+      "src/theme/theme.ts",
+      "src-tauri/src/session/mod.rs",
+      "src-tauri/src/commands/mod.rs",
+    ]) {
+      const text = readFileSync(f, "utf-8");
+      expect(text, `${f} 不得含 LiteMD/litemd 残留`).not.toMatch(
+        /[Ll]ite[Mm][Dd]/,
+      );
+    }
+    const conf = readJson("src-tauri/tauri.conf.json");
+    expect(conf.productName, "productName 必须是 LitePad").toBe("LitePad");
+    expect(conf.identifier, "identifier 必须是 com.litepad.app").toBe(
+      "com.litepad.app",
+    );
+    const pkg = readJson("package.json");
+    expect(pkg.name, "package.json name 必须是 litepad").toBe("litepad");
   });
 });

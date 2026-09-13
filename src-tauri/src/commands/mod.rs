@@ -409,11 +409,11 @@ pub fn load_settings() -> session::Settings {
     session::load()
 }
 
-/// 冒烟诊断：写入 %TEMP%\litemd-smoke.log。
+/// 冒烟诊断：写入 %TEMP%\litepad-smoke.log。
 /// 用文件而不是 stdout，是因为 GUI 子系统下 stdout 未必有接收端。
 fn smoke_log(msg: &str) {
     use std::io::Write;
-    let path = std::env::temp_dir().join("litemd-smoke.log");
+    let path = std::env::temp_dir().join("litepad-smoke.log");
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = writeln!(f, "{}", msg);
     }
@@ -425,11 +425,11 @@ pub fn frontend_ready(detail: Option<String>) {
     smoke_log(&format!("frontend: {}", detail.unwrap_or_default()));
 }
 
-/// 运行日志（方案 M1「日志与埋点」）：追加写 %TEMP%\litemd-app.log。
+/// 运行日志（方案 M1「日志与埋点」）：追加写 %TEMP%\litepad-app.log。
 #[tauri::command]
 pub fn log_event(level: String, event: String, detail: Option<String>) {
     use std::io::Write;
-    let path = std::env::temp_dir().join("litemd-app.log");
+    let path = std::env::temp_dir().join("litepad-app.log");
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

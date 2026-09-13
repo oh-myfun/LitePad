@@ -141,7 +141,7 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks, anchor: HTMLElement)
     label: "帮助",
     items: (cb) => [
       { label: "快捷键…", onSelect: cb.onKeymap },
-      { label: "关于 LiteMD", onSelect: cb.onAbout },
+      { label: "关于 LitePad", onSelect: cb.onAbout },
     ],
   },
 ];

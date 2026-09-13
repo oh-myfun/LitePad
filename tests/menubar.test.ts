@@ -201,7 +201,7 @@ describe("菜单栏（参考 Win11 记事本）", () => {
     await clickMenuBtn(host, "帮助");
     const texts = menuTexts();
     expect(texts).toContain("快捷键…");
-    expect(texts).toContain("关于 LiteMD");
+    expect(texts).toContain("关于 LitePad");
     expect(texts, "帮助菜单不得再保留设置入口").not.toContain("设置");
     await clickItem("快捷键…");
     expect(calls).toEqual(["keymap"]);

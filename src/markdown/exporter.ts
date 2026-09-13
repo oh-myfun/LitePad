@@ -46,7 +46,7 @@ export function printToPdf(title: string, bodyHtml: string): void {
     window.removeEventListener("afterprint", cleanup);
   };
   window.addEventListener("afterprint", cleanup);
-  document.title = `${title} - LiteMD`;
+  document.title = `${title} - LitePad`;
   window.print();
   // afterprint 在取消打印时也可能不触发，兜底清理
   setTimeout(cleanup, 60_000);

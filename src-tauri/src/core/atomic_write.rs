@@ -17,7 +17,7 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
     let file_name = path
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "litemd".to_string());
+        .unwrap_or_else(|| "litepad".to_string());
     let tmp = dir.join(format!(".{}.{}.tmp", file_name, std::process::id()));
 
     let result = write_and_swap(&tmp, path, data);
@@ -56,7 +56,7 @@ mod tests {
 
     #[test]
     fn writes_and_overwrites() {
-        let dir = std::env::temp_dir().join(format!("litemd-atomic-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("litepad-atomic-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let target = dir.join("a.txt");
 

@@ -1,13 +1,15 @@
 """
-生成 Tauri 打包所需的图标。
+生成 LitePad 的 Tauri 打包图标（B34）。
 
-优先用 AI 设计源图 generated-images/icon_final.png（gitignore 的中间产物，需要 Pillow）：
+绘制逻辑（需 Pillow，venv：
   C:/Users/maoyu/.workbuddy/binaries/python/envs/default/Scripts/python.exe scripts/gen_icons.py
-源图缺失时退回内置占位图绘制（纯标准库，与 M0 版一致）。
-
-关键修复（B25）：源图上边缘圆角 ~100px、下边缘完全直角。这里把 alpha 通道与
-「垂直镜像后的 alpha」逐像素取 min —— 下边缘于是获得与上边缘**完全相同**的圆角，
-无需手猜半径；上边缘形状不变（min 取的是自己与更方的镜像）。
+）：
+  **矢量自绘 draw_litepad()**——简洁 flat 风：
+  - 圆角方形背景（四角同半径，rounded_rectangle 天然一致）+ 蓝→青垂直渐变
+    （「轻量记事本」的清爽感）
+  - 白色便签纸 + 淡靛文本行（贴合「Pad / 记事」功能）
+  - 右下角一支斜放铅笔（写作/编辑的隐喻）
+  纯矢量自绘，不依赖任何外部源图（B25 的 AI 源图镜像方案已废弃）。
 
 产物：src-tauri/icons/{32x32.png, 128x128.png, 128x128@2x.png, icon.ico(多尺寸)}
 """
@@ -19,34 +21,86 @@ import zlib
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 OUT_DIR = os.path.join(ROOT, "src-tauri", "icons")
-SRC = os.path.join(ROOT, "generated-images", "icon_final.png")
 
 SIZES = [("32x32.png", 32), ("128x128.png", 128), ("128x128@2x.png", 256)]
 ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
 
 
-def from_source() -> "object | None":
-    """读源图并做上下圆角统一；Pillow 缺失或源图不存在时返回 None。"""
-    if not os.path.exists(SRC):
-        return None
-    try:
-        from PIL import Image, ImageChops
-    except ImportError:
-        print("  [warn] 未安装 Pillow，退回内置占位图绘制")
-        return None
+def draw_litepad(size: int = 1024):
+    """矢量绘制 LitePad 图标：圆角渐变底 + 便签纸 + 铅笔。四角圆角天然一致。"""
+    from PIL import Image, ImageDraw
 
-    img = Image.open(SRC).convert("RGBA")
-    side = min(img.size)
-    img = img.crop((0, 0, side, side))
-    alpha = img.getchannel("A")
-    # 下边缘 = 上边缘：与垂直镜像逐像素取较暗（更透明）者
-    uniform = ImageChops.darker(alpha, alpha.transpose(Image.FLIP_TOP_BOTTOM))
-    img.putalpha(uniform)
-    return img
+    s = size
+    base = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+
+    # ---- 背景：圆角矩形 + 蓝→青垂直渐变 ----
+    radius = int(s * 0.224)  # 与主流现代图标圆角比例一致，四角同半径
+    mask = Image.new("L", (s, s), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, s - 1, s - 1], radius=radius, fill=255)
+
+    grad = Image.new("RGBA", (s, s))
+    top, bottom = (37, 99, 235), (6, 182, 212)  # #2563EB → #06B6D4
+    gd = ImageDraw.Draw(grad)
+    for y in range(s):
+        t = y / (s - 1)
+        gd.line(
+            [(0, y), (s, y)],
+            fill=(
+                round(top[0] + (bottom[0] - top[0]) * t),
+                round(top[1] + (bottom[1] - top[1]) * t),
+                round(top[2] + (bottom[2] - top[2]) * t),
+                255,
+            ),
+        )
+    base.paste(grad, (0, 0), mask)
+
+    d = ImageDraw.Draw(base)
+
+    # ---- 便签纸（白色圆角矩形）----
+    px0, py0, px1, py1 = int(s * 0.30), int(s * 0.235), int(s * 0.745), int(s * 0.79)
+    d.rounded_rectangle([px0, py0, px1, py1], radius=int(s * 0.04), fill=(255, 255, 255, 255))
+
+    # ---- 纸上文本行（淡靛，最后一行短）----
+    line_color = (199, 210, 254, 255)  # #C7D2FE
+    line_h = int(s * 0.028)
+    lx0, lx1 = px0 + int(s * 0.05), px1 - int(s * 0.05)
+    for i, frac in enumerate((1.0, 1.0, 1.0, 0.62)):
+        y = py0 + int(s * 0.075) + i * int(s * 0.085)
+        d.rounded_rectangle(
+            [lx0, y, lx0 + int((lx1 - lx0) * frac), y + line_h],
+            radius=line_h // 2,
+            fill=line_color,
+        )
+
+    # ---- 铅笔（正立绘制后旋转 -35°，压在纸右下角）----
+    pw, ph = int(s * 0.42), int(s * 0.10)
+    pencil = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
+    pd = ImageDraw.Draw(pencil)
+    eraser_w = int(pw * 0.16)   # 橡皮（粉）
+    band_w = int(pw * 0.10)     # 金属箍（浅灰）
+    tip_w = int(pw * 0.16)      # 木尖（黄）
+    body_x0 = eraser_w + band_w
+    body_x1 = pw - tip_w
+    half = ph // 2
+    pd.rounded_rectangle([0, half - int(ph * 0.30), eraser_w + 8, half + int(ph * 0.30)],
+                         radius=int(ph * 0.14), fill=(248, 113, 113, 255))          # 橡皮
+    pd.rectangle([eraser_w, half - int(ph * 0.34), eraser_w + band_w, half + int(ph * 0.34)],
+                 fill=(229, 231, 235, 255))                                            # 箍
+    pd.rectangle([body_x0, half - int(ph * 0.34), body_x1, half + int(ph * 0.34)],
+                 fill=(245, 158, 11, 255))                                             # 杆
+    pd.polygon([(body_x1, half - int(ph * 0.34)), (body_x1, half + int(ph * 0.34)), (pw - 2, half)],
+               fill=(253, 224, 71, 255))                                               # 木尖
+    pd.polygon([(pw - int(tip_w * 0.42), half - int(ph * 0.075)),
+                (pw - int(tip_w * 0.42), half + int(ph * 0.075)), (pw - 2, half)],
+               fill=(55, 65, 81, 255))                                                 # 铅芯
+    pencil = pencil.rotate(-32, expand=True, resample=Image.BICUBIC)
+    base.alpha_composite(pencil, (int(s * 0.50), int(s * 0.53)))
+
+    return base
 
 
 def write_with_pillow(img) -> None:
-    from PIL import Image  # noqa: F401  （resize 常量需要）
+    from PIL import Image  # noqa: F401
     os.makedirs(OUT_DIR, exist_ok=True)
     for name, size in SIZES:
         img.resize((size, size), Image.LANCZOS).save(os.path.join(OUT_DIR, name))
@@ -59,104 +113,9 @@ def write_with_pillow(img) -> None:
     print(f"  icon.ico  ({', '.join(str(s) for s in ICO_SIZES)})")
 
 
-# ---------------- 内置占位图（无源图/Pillow 时的兜底，纯标准库） ----------------
-
-BG = (31, 111, 235, 255)      # 品牌蓝
-PAPER = (255, 255, 255, 255)  # 文档白
-LINE = (31, 111, 235, 255)    # 文档上的行
-
-
-def in_rounded_rect(x: int, y: int, w: int, h: int, r: int) -> bool:
-    """判断像素是否落在圆角矩形内（含边界）。"""
-    if x < 0 or y < 0 or x >= w or y >= h:
-        return False
-    cx = min(max(x, r), w - 1 - r)
-    cy = min(max(y, r), h - 1 - r)
-    dx = x - cx
-    dy = y - cy
-    return dx * dx + dy * dy <= r * r
-
-
-def render(size: int):
-    """画一个「圆角蓝底 + 白色文档」的图标（四角圆角一致）。"""
-    rows = []
-    r = max(1, int(size * 0.20))
-    dx0, dx1 = int(size * 0.30), int(size * 0.72)
-    dy0, dy1 = int(size * 0.22), int(size * 0.78)
-    line_gap = max(1, int(size * 0.10))
-    line_h = max(1, int(size * 0.045))
-    for y in range(size):
-        row = []
-        for x in range(size):
-            if not in_rounded_rect(x, y, size, size, r):
-                row.append((0, 0, 0, 0))
-                continue
-            pixel = BG
-            if dx0 <= x < dx1 and dy0 <= y < dy1:
-                pixel = PAPER
-                rel = y - dy0 - line_gap
-                if rel > 0 and rel % line_gap < line_h:
-                    limit = dx1 - int(size * 0.12) if rel > (dy1 - dy0) * 0.55 else dx1 - int(size * 0.08)
-                    if x < limit:
-                        pixel = LINE
-            row.append(pixel)
-        rows.append(row)
-    return rows
-
-
-def encode_png(size: int, rows) -> bytes:
-    raw = bytearray()
-    for row in rows:
-        raw.append(0)  # filter type 0
-        for r, g, b, a in row:
-            raw += bytes((r, g, b, a))
-
-    def chunk(tag: bytes, data: bytes) -> bytes:
-        return (
-            struct.pack(">I", len(data))
-            + tag
-            + data
-            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
-        )
-
-    ihdr = struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)
-    return (
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", ihdr)
-        + chunk(b"IDAT", zlib.compress(bytes(raw), 9))
-        + chunk(b"IEND", b"")
-    )
-
-
-def encode_ico(size: int, png_bytes: bytes) -> bytes:
-    """ICO 容器里直接嵌入 PNG（Windows Vista+ 支持）。"""
-    header = struct.pack("<HHH", 0, 1, 1)
-    dim = 0 if size >= 256 else size
-    entry = struct.pack("<BBBBHHII", dim, dim, 0, 0, 1, 32, len(png_bytes), 6 + 16)
-    return header + entry + png_bytes
-
-
-def write_placeholder() -> None:
-    os.makedirs(OUT_DIR, exist_ok=True)
-    for name, size in SIZES:
-        png = encode_png(size, render(size))
-        with open(os.path.join(OUT_DIR, name), "wb") as f:
-            f.write(png)
-        print(f"  {name}  ({size}x{size}, {len(png)} bytes)")
-    ico_png = encode_png(256, render(256))
-    with open(os.path.join(OUT_DIR, "icon.ico"), "wb") as f:
-        f.write(encode_ico(256, ico_png))
-    print(f"  icon.ico  ({len(ico_png)} bytes payload)")
-
-
 def main():
-    img = from_source()
-    if img is not None:
-        print(f"  source: {os.path.relpath(SRC, ROOT)}（上下圆角已统一）")
-        write_with_pillow(img)
-    else:
-        print("  source 缺失，使用内置占位图")
-        write_placeholder()
+    print("  绘制 LitePad 图标（圆角渐变底 + 便签纸 + 铅笔）")
+    write_with_pillow(draw_litepad())
 
 
 if __name__ == "__main__":
