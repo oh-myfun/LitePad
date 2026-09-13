@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LiteMD release build (frontend + rust + bundle).
+# LitePad release build (frontend + rust + bundle).
 #
 # Requires the GNU host toolchain; see rust-toolchain.toml.
 set -e

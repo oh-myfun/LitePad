@@ -1,4 +1,4 @@
-# LiteMD · 轻量 Markdown 文本编辑器技术方案
+# LitePad · 轻量 Markdown 文本编辑器技术方案
 
 > 目标：一个**极度轻量、启动快、内存低**的文本编辑器，具备多标签 + 自由分屏 + 完善的 Markdown 渲染，用来替代 Notepad++，并砍掉其中低频功能。
 > 版本：v1.0 草案 · 2026-09-10
@@ -145,7 +145,7 @@ interface Tab {
 
 **键盘操作**：`Alt+方向键` 在面板间移动焦点；`Ctrl+Alt+方向键` 移动当前标签到相邻面板；`Ctrl+1..9` 切标签；`Ctrl+W` 关标签，关掉最后一个标签时自动销毁面板并合并父 split（树自动规约）。
 
-**持久化**：布局树 + 每个标签的 `path / encoding / eol / viewState` 序列化进 `session.json`（`$APPDATA/LiteMD/session.json`），启动时恢复；写入采用防抖 + 退出时 flush，避免频繁落盘。
+**持久化**：布局树 + 每个标签的 `path / encoding / eol / viewState` 序列化进 `session.json`（`$APPDATA/LitePad/session.json`），启动时恢复；写入采用防抖 + 退出时 flush，避免频繁落盘。
 
 **树规约**：删除叶子后父节点若只剩一个子节点，用子节点替换父节点，保持树最简（避免深层嵌套带来的渲染抖动）。
 
@@ -256,7 +256,7 @@ interface Tab {
 ## 8. 建议的目录结构
 
 ```
-litemd/
+litepad/
 ├─ src-tauri/                 # Rust 后端
 │  ├─ src/
 │  │  ├─ main.rs
@@ -298,4 +298,4 @@ litemd/
 
 1. **平台范围**：仅 Windows（可最大化优化、用 Win32 API 做原子写与文件监听），还是一开始就兼顾 macOS/Linux（Tauri 天然支持，仅需适配打包与快捷键）？
 2. **是否现在开始搭 M0 脚手架**（我可以按本方案直接生成工程骨架与可运行的最小版本）。
-3. **项目命名**（本文档暂用 LiteMD）与是否需要内置更新服务。
+3. **项目命名**（本文档暂用 LitePad）与是否需要内置更新服务。

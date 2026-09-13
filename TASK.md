@@ -1,4 +1,4 @@
-# LiteMD · 任务清单
+# LitePad · 任务清单
 
 > 勾选式跟踪。M0 完成后按方案第 7 节推进 M1。
 
@@ -36,7 +36,7 @@
 - [x] 多标签（单面板）：Rust 多文档集合（tab_id）+ CM6 快照切换；Ctrl+N/W/Tab；脏标签关闭确认
 - [x] 自绘搜索条（中文提示 + 匹配计数：查找/替换/全部替换，Aa 正则 全词选项，Ctrl+F/Esc）
 - [x] 设置界面（主题/默认行尾/编码/字号/换行/自动保存）+ 内置 keybindings 只读说明
-- [x] 日志与埋点（log_event 命令写 %TEMP%\litemd-app.log，打开/保存/设置埋点）
+- [x] 日志与埋点（log_event 命令写 %TEMP%\litepad-app.log，打开/保存/设置埋点）
 
 ## M2 分屏与会话
 

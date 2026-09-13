@@ -3,12 +3,46 @@
 // 约定：用户每报告一个 bug，修复时必须在此（或 smoke.bootstrap.test.ts）补对应用例。
 // 这三个 bug 的根因都在配置/样式层，无法在运行时断言，故用文件内容断言防回归。
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { extname, join } from "node:path";
 
 // JSON 配置结构松散（tauri.conf/package.json 各异），此处刻意放宽：
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function readJson(path: string): any {
   return JSON.parse(readFileSync(path, "utf-8"));
+}
+
+// 全仓库文本文件枚举（B36 改名残留检查用）：跳过构建产物 / 依赖 / 二进制。
+const SKIP_DIRS = new Set([
+  "node_modules",
+  "dist",
+  "target",
+  "gen",
+  ".git",
+  "generated-images",
+  ".vite",
+]);
+const BINARY_EXT = new Set([
+  ".png",
+  ".jpg",
+  ".ico",
+  ".exe",
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".pdf",
+  ".zip",
+]);
+function collectTextFiles(dir: string, acc: string[] = []): string[] {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) {
+      if (!SKIP_DIRS.has(e.name)) collectTextFiles(p, acc);
+    } else if (!BINARY_EXT.has(extname(e.name).toLowerCase())) {
+      acc.push(p);
+    }
+  }
+  return acc;
 }
 
 describe("用户报告过的 bug 回归（静态配置断言）", () => {
@@ -360,25 +394,24 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     ).toBe(true);
   });
 
-  it("B34 应用更名为 LitePad 后不得有 LiteMD 残留", () => {
-    // 用户报告：应用名改为 LitePad。源码（src + index.html + 配置 + Rust）
-    // 中的 LiteMD/litemd 必须全部替换（gen/schemas 与 target 由构建再生，不查）。
-    for (const f of [
-      "index.html",
-      "package.json",
-      "src-tauri/tauri.conf.json",
-      "src-tauri/Cargo.toml",
-      "src/main.ts",
-      "src/shell/menubar.ts",
-      "src/markdown/exporter.ts",
-      "src/shell/findbar.ts",
-      "src/theme/theme.ts",
-      "src-tauri/src/session/mod.rs",
-      "src-tauri/src/commands/mod.rs",
-    ]) {
-      const text = readFileSync(f, "utf-8");
-      expect(text, `${f} 不得含 LiteMD/litemd 残留`).not.toMatch(/[Ll]ite[Mm][Dd]/);
+  it("B34/B36 应用更名为 LitePad 后，全仓库不得有 LiteMD/litemd 残留", () => {
+    // B34：应用名改为 LitePad（源码 + 配置 + Rust）。
+    // B36：用户要求「梳理项目中所有文件」把 LiteMD 全部改成 LitePad——
+    // 故断言从 11 个文件硬编码升级为**全仓库文本文件扫描**，
+    // 覆盖文档（DESIGN/TASK/技术方案）、脚本注释、样式注释、测试数据、记忆文件。
+    // 排除：构建产物（dist/target/gen）、依赖（node_modules）、本文件（规则定义处）。
+    const offenders: string[] = [];
+    for (const f of collectTextFiles(".")) {
+      const rel = f.replace(/\\/g, "/");
+      if (rel === "tests/regressions.test.ts") continue;
+      // 记忆/归档类文件豁免：它们必须能写下「原名是 LiteMD」这一历史事实
+      // （如 .workbuddy/memory/MEMORY.md 的更名说明、LiteMD-Space-Archive.md 的空间归档），
+      // 属于对过去的记录，不是会泄漏到产品里的命名残留。
+      if (rel.startsWith(".workbuddy/")) continue;
+      if (/[Ll]ite[Mm][Dd]/.test(readFileSync(f, "utf-8"))) offenders.push(rel);
     }
+    expect(offenders, "以下文件仍含 LiteMD/litemd 残留").toEqual([]);
+
     const conf = readJson("src-tauri/tauri.conf.json");
     expect(conf.productName, "productName 必须是 LitePad").toBe("LitePad");
     expect(conf.identifier, "identifier 必须是 com.litepad.app").toBe("com.litepad.app");

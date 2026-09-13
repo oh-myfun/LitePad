@@ -1,4 +1,4 @@
-# LiteMD 冒烟测试
+# LitePad 冒烟测试
 
 这是一个 UTF-8 编码的测试文件，包含中文、Emoji 与 Markdown 语法。
 
@@ -12,7 +12,7 @@
 
 ```rust
 fn main() {
-    println!("你好，LiteMD！");
+    println!("你好，LitePad！");
 }
 ```
 

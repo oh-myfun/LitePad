@@ -2,7 +2,7 @@
 窗口截屏工具（纯标准库：ctypes + zlib，不依赖 Pillow）。
 
 用法：python scripts/screenshot.py [标题关键字] [输出路径]
-默认查找标题含 "LiteMD" 的可见窗口，保存到 scripts 同级的 smoke-window.png。
+默认查找标题含 "LitePad" 的可见窗口，保存到 scripts 同级的 smoke-window.png。
 """
 
 import ctypes
@@ -121,7 +121,7 @@ def encode_png(width: int, height: int, rgba: bytes) -> bytes:
 
 
 def main() -> int:
-    keyword = sys.argv[1] if len(sys.argv) > 1 else "LiteMD"
+    keyword = sys.argv[1] if len(sys.argv) > 1 else "LitePad"
     out = sys.argv[2] if len(sys.argv) > 2 else "smoke-window.png"
 
     if keyword == "--screen":

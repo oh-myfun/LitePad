@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LiteMD 全量构建：debug 校验 + 测试 + release 发布产物（exe + NSIS 安装包）。
+# LitePad 全量构建：debug 校验 + 测试 + release 发布产物（exe + NSIS 安装包）。
 #
 # 项目约定：每次编译都要把发布版本也编译出来，日常交付用本脚本。
 # Requires the GNU host toolchain; see rust-toolchain.toml.
@@ -28,6 +28,6 @@ npm run tauri -- build --config '{"build":{"beforeBuildCommand":""}}'
 
 echo
 echo "构建完成，产物："
-ls -lh src-tauri/target/debug/litemd.exe 2>/dev/null || true
-ls -lh src-tauri/target/release/litemd.exe
+ls -lh src-tauri/target/debug/litepad.exe 2>/dev/null || true
+ls -lh src-tauri/target/release/litepad.exe
 ls -lh src-tauri/target/release/bundle/nsis/*.exe

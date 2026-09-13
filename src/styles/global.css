@@ -1,4 +1,4 @@
-/* LiteMD 全局样式 —— 全部颜色走 CSS 变量，主题切换只改 data-theme */
+/* LitePad 全局样式 —— 全部颜色走 CSS 变量，主题切换只改 data-theme */
 
 :root {
   --font-ui: "Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif;

@@ -5,7 +5,7 @@ const host = process.env.TAURI_DEV_HOST;
 // 诊断用：打印每个进入 dev server 的 HTTP 请求
 function requestLogger(): Plugin {
   return {
-    name: "litemd-request-logger",
+    name: "litepad-request-logger",
     configureServer(server) {
       server.middlewares.use((req, _res, next) => {
         console.log(`[vite-req] ${new Date().toISOString()} ${req.method} ${req.url}`);

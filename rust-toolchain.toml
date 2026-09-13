@@ -1,4 +1,4 @@
-# LiteMD 工具链锁定
+# LitePad 工具链锁定
 #
 # 为什么不是常规的 stable-x86_64-pc-windows-msvc：
 #   本机没有 MSVC 生成工具（无 link.exe），而 build script / proc-macro 必须

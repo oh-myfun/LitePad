@@ -1,6 +1,6 @@
-# LiteMD · M0 设计与实现说明
+# LitePad · M0 设计与实现说明
 
-> 对应《LiteMD-技术方案.md》第 7 节路线图的 **M0 脚手架**。
+> 对应《LitePad-技术方案.md》第 7 节路线图的 **M0 脚手架**。
 > 本文记录实际落地时的决策、与本方案的偏差、以及 M0 明确不做的部分。
 
 ---
@@ -48,7 +48,7 @@ src-tauri/src/
 │  ├─ eol.rs            行尾统计/归一化/还原；内存文本一律 LF
 │  ├─ atomic_write.rs   临时文件→fsync→rename 原子写
 │  └─ doc.rs            文档元数据、二进制检测、只读检测、M0 打开上限
-└─ session/mod.rs       %APPDATA%\LiteMD\settings.json 配置持久化
+└─ session/mod.rs       %APPDATA%\LitePad\settings.json 配置持久化
 ```
 
 前端（`src/`）按方案第 8 节目录预留了 `layout/ markdown/`，M0 只实现：
@@ -131,7 +131,7 @@ src/
   已将 vite `host` 与 tauri `devUrl` 双侧锁定为 `127.0.0.1`。
 - **WebView2 browser 进程复用陷阱**：同用户数据目录的残留 msedgewebview2 进程会让
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 等新参数完全失效；换参数实验前必须先杀干净进程。
-- **诊断基建**：`commands::frontend_ready` 写 `%TEMP%\litemd-smoke.log`（IPC 与 bootstrap 回报）；
+- **诊断基建**：`commands::frontend_ready` 写 `%TEMP%\litepad-smoke.log`（IPC 与 bootstrap 回报）；
   `scripts/cdp_diag.mjs` 可连 WebView2 CDP（`--remote-debugging-port=9222`）做页内诊断。
 
 ## M1-A 编辑器内核（第一批：语言与编辑增强）
@@ -215,7 +215,7 @@ src/
   asset 协议地址）。
 - **新命令**：`export_file` / `save_paste_image`（base64 解码，assets 目录自动创建）；
   Cargo 新增 base64 0.22，tauri 启用 `protocol-asset` feature。
-- **产物**：release litemd.exe 9.0MB + NSIS 5.7MB（懒加载 chunk 全部嵌入，首屏不受影响）。
+- **产物**：release litepad.exe 9.0MB + NSIS 5.7MB（懒加载 chunk 全部嵌入，首屏不受影响）。
 
 ## M3 缺陷修复（视图切换 / 打开布局 / 窗口关闭）
 

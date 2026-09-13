@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LiteMD dev runner.
+# LitePad dev runner.
 #
 # This machine has no MSVC Build Tools, so the project pins the GNU host
 # toolchain (see rust-toolchain.toml) and links with MSYS2 MinGW-w64.
