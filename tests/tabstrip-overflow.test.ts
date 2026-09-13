@@ -19,7 +19,17 @@ beforeAll(() => {
   // 元素宽度：标签 100px，其余 0
   Element.prototype.getBoundingClientRect = function (this: Element): DOMRect {
     const w = this.classList?.contains("tab") ? TAB_W : 0;
-    return { width: w, height: 20, top: 0, left: 0, right: w, bottom: 20, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+    return {
+      width: w,
+      height: 20,
+      top: 0,
+      left: 0,
+      right: w,
+      bottom: 20,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect;
   };
 });
 
@@ -60,7 +70,12 @@ const visibleNames = (host: HTMLElement): string[] =>
   [...host.querySelectorAll<HTMLElement>(".tab .tab-name")].map((e) => e.textContent ?? "");
 
 function wheel(host: HTMLElement, delta: number, ctrl = false): void {
-  const e = new WheelEvent("wheel", { deltaY: delta, ctrlKey: ctrl, bubbles: true, cancelable: true });
+  const e = new WheelEvent("wheel", {
+    deltaY: delta,
+    ctrlKey: ctrl,
+    bubbles: true,
+    cancelable: true,
+  });
   host.dispatchEvent(e);
 }
 
@@ -190,7 +205,12 @@ describe("标签栏溢出折叠", () => {
 });
 
 function wheelEvent(host: HTMLElement, delta: number, ctrl = false): WheelEvent {
-  const e = new WheelEvent("wheel", { deltaY: delta, ctrlKey: ctrl, bubbles: true, cancelable: true });
+  const e = new WheelEvent("wheel", {
+    deltaY: delta,
+    ctrlKey: ctrl,
+    bubbles: true,
+    cancelable: true,
+  });
   host.dispatchEvent(e);
   return e;
 }

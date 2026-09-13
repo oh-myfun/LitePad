@@ -79,7 +79,8 @@ describe("layout tree", () => {
     const after = removePanel(t, 1);
     expect(after).not.toBeNull();
     if (after && after.kind === "split") {
-      const s = 35 / 65, r = 0.4;
+      const s = 35 / 65,
+        r = 0.4;
       const expected = s + r - s * r; // ≈ 0.723：P2 保持相邻、P3 绝对尺寸近似不变
       expect(after.ratio).toBeCloseTo(expected, 6);
     } else {

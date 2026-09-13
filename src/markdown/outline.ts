@@ -168,5 +168,10 @@ function extractPythonToc(text: string): TocEntry[] {
 }
 
 function slugOf(text: string): string {
-  return text.toLowerCase().replace(/[^\w\u4e00-\u9fa5]+/g, "-").replace(/^-+|-+$/g, "") || "n";
+  return (
+    text
+      .toLowerCase()
+      .replace(/[^\w\u4e00-\u9fa5]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "n"
+  );
 }

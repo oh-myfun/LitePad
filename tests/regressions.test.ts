@@ -5,6 +5,8 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 
+// JSON 配置结构松散（tauri.conf/package.json 各异），此处刻意放宽：
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function readJson(path: string): any {
   return JSON.parse(readFileSync(path, "utf-8"));
 }
@@ -15,12 +17,8 @@ describe("用户报告过的 bug 回归（静态配置断言）", () => {
     // onCloseRequested 未 preventDefault 时内部调 destroy()，缺权限则关闭窗口报错。
     const cap = readJson("src-tauri/capabilities/default.json");
     const perms: string[] = cap.permissions ?? [];
-    expect(perms, "必须包含 core:window:allow-close").toContain(
-      "core:window:allow-close",
-    );
-    expect(perms, "必须包含 core:window:allow-destroy").toContain(
-      "core:window:allow-destroy",
-    );
+    expect(perms, "必须包含 core:window:allow-close").toContain("core:window:allow-close");
+    expect(perms, "必须包含 core:window:allow-destroy").toContain("core:window:allow-destroy");
   });
 
   it("文件拖入窗口必须能拿到路径打开：dragDropEnabled 必须为 true", () => {
@@ -29,9 +27,7 @@ describe("用户报告过的 bug 回归（静态配置断言）", () => {
     // + onDragDropEvent 的 drop.paths）。代价是页面内 HTML5 DnD 失效——
     // 因此标签拖拽已改为 mousedown/mousemove/mouseup 指针编排（见 splitview.ts）。
     const conf = readJson("src-tauri/tauri.conf.json");
-    const win = (conf.app?.windows ?? []).find(
-      (w: { label?: string }) => w.label === "main",
-    );
+    const win = (conf.app?.windows ?? []).find((w: { label?: string }) => w.label === "main");
     expect(win, "tauri.conf.json 应有 main 窗口配置").toBeTruthy();
     expect(win.dragDropEnabled, "dragDropEnabled 必须为 true").toBe(true);
   });
@@ -44,7 +40,10 @@ describe("用户报告过的 bug 回归（静态配置断言）", () => {
     expect(ts.includes('addEventListener("dragstart"'), "不得监听 dragstart").toBe(false);
     expect(ts.includes("beginTabDrag"), "必须走指针拖拽（beginTabDrag）").toBe(true);
     const sv = readFileSync("src/shell/splitview.ts", "utf-8");
-    expect(sv.includes("getCurrentWebview"), "splitview 不得处理文件拖放（归 main.ts 原生通道）").toBe(false);
+    expect(
+      sv.includes("getCurrentWebview"),
+      "splitview 不得处理文件拖放（归 main.ts 原生通道）",
+    ).toBe(false);
     expect(sv.includes('addEventListener("drop"'), "面板不得再挂 HTML5 drop 处理器").toBe(false);
   });
 
@@ -54,9 +53,7 @@ describe("用户报告过的 bug 回归（静态配置断言）", () => {
     // .panel-editor 缺 min-height:0 时被整篇文档撑开、被 .panel-host 裁掉。
     const css = readFileSync("src/styles/preview.css", "utf-8");
     const editorBlock = css.match(/\.panel-host \.panel-editor \{[^}]*\}/)?.[0] ?? "";
-    expect(editorBlock, ".panel-editor 必须允许收缩（min-height: 0）").toContain(
-      "min-height: 0",
-    );
+    expect(editorBlock, ".panel-editor 必须允许收缩（min-height: 0）").toContain("min-height: 0");
     const scrollerBlock =
       css.match(/\.panel-host \.panel-editor \.cm-scroller \{[^}]*\}/)?.[0] ?? "";
     expect(
@@ -72,9 +69,7 @@ describe("用户报告过的 bug 回归（静态配置断言）", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
     const block = css.match(/\.layout-panel\s*\{[^}]*\}/);
     expect(block, "global.css 应有 .layout-panel 规则块").toBeTruthy();
-    expect(block![0], ".layout-panel 必须包含 position: relative").toMatch(
-      /position:\s*relative/,
-    );
+    expect(block![0], ".layout-panel 必须包含 position: relative").toMatch(/position:\s*relative/);
   });
 });
 
@@ -91,7 +86,10 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     const { foldMarkerDOM } = await import("../src/editor/editor");
     const open = foldMarkerDOM(true);
     const closed = foldMarkerDOM(false);
-    for (const [name, el] of [["open", open], ["closed", closed]] as const) {
+    for (const [name, el] of [
+      ["open", open],
+      ["closed", closed],
+    ] as const) {
       expect(el.className, `${name} 应带 cm-fold-marker 类`).toContain("cm-fold-marker");
       expect(el.querySelector("svg"), `${name} 应为内联 SVG 图标`).toBeTruthy();
     }
@@ -119,16 +117,16 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
 
   it("窗口标题软件名在前、文件名在后（用户要求）", () => {
     const src = readFileSync("src/main.ts", "utf-8");
-    expect(src, "标题格式应为 LitePad - 文件名").toContain("`LitePad - ${doc.name}${mark}${suffix}`");
+    expect(src, "标题格式应为 LitePad - 文件名").toContain(
+      "`LitePad - ${doc.name}${mark}${suffix}`",
+    );
     expect(src, "不得再使用「文件名 - LitePad」格式").not.toContain("${text} - LitePad");
   });
 
   it("悬浮查找栏必须挂在应用根、且不随标签/面板切换关闭（用户要求）", () => {
     // 用户要求：查找/替换用一个悬浮栏，不绑定文件/面板——切换文件/面板不自动消失。
     const src = readFileSync("src/main.ts", "utf-8");
-    expect(src, "必须挂到 #app（应用级浮层），不能挂在面板里").toContain(
-      'createFindBar(el("app")',
-    );
+    expect(src, "必须挂到 #app（应用级浮层），不能挂在面板里").toContain('createFindBar(el("app")');
     // 切换标签（switchTab）与切换活动面板都要重新把查询应用到新视图，而不是关闭浮层
     expect(src, "切换标签后必须重新定位查找查询").toContain("retargetFindBar()");
     const switchBody = src.match(/function switchTab\([\s\S]*?\n\}/)?.[0] ?? "";
@@ -150,7 +148,9 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(handler, "自动保存必须挂在文本变化上").toContain(
       "if (textChanged && !suppressDirty) scheduleAutosave()",
     );
-    expect(handler, "选区变化不应触发自动保存").not.toContain("if (!suppressDirty) {\n    scheduleAutosave();");
+    expect(handler, "选区变化不应触发自动保存").not.toContain(
+      "if (!suppressDirty) {\n    scheduleAutosave();",
+    );
     // ③ 切换视图隐藏/恢复编辑器时 CM6 可能产生事务——整个切换过程抑制置脏
     const toggle = src.match(/function toggleViewMode\(\)[\s\S]*?\n\}/)?.[0] ?? "";
     expect(toggle, "切换视图必须抑制置脏").toContain("suppressDirty = true;");
@@ -247,10 +247,9 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     const src = readFileSync("src/main.ts", "utf-8");
     expect(src, "bootstrap 必须挂载大纲分隔条").toContain("setupTocResizer()");
     expect(src, "挂载必须走 attachTocResizer").toContain("attachTocResizer(");
-    expect(
-      src,
-      "收起/展开大纲时分隔条必须与面板同步显隐，否则留下 4px 死区",
-    ).toContain("tocResizer.hidden = tocPanel.hidden");
+    expect(src, "收起/展开大纲时分隔条必须与面板同步显隐，否则留下 4px 死区").toContain(
+      "tocResizer.hidden = tocPanel.hidden",
+    );
 
     const css = readFileSync("src/styles/preview.css", "utf-8");
     const resizer = css.match(/\.toc-resizer\s*\{[^}]*\}/)?.[0] ?? "";
@@ -278,8 +277,11 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(resizer, "必须常显 border 色（与 .layout-sep 同款）").toContain(
       "background: var(--border)",
     );
-    const highlight = previewCss.match(/\.toc-resizer:hover,\s*body\.layout-dragging \.toc-resizer\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(highlight, "悬停/拖拽高亮必须是 accent（允许带回退值）").toMatch(/var\(--accent[,\)]/);
+    const highlight =
+      previewCss.match(
+        /\.toc-resizer:hover,\s*body\.layout-dragging \.toc-resizer\s*\{[^}]*\}/,
+      )?.[0] ?? "";
+    expect(highlight, "悬停/拖拽高亮必须是 accent（允许带回退值）").toMatch(/var\(--accent[,)]/);
 
     const globalCss = readFileSync("src/styles/global.css", "utf-8");
     const sep = globalCss.match(/\.layout-sep\s*\{[^}]*\}/)?.[0] ?? "";
@@ -301,7 +303,9 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(hiddenRule, "必须有 .find-bar[hidden] { display: none } 规则").toContain(
       "display: none",
     );
-    expect(css, "查找行应有 flex 行布局（.find-row）").toMatch(/\.find-row\s*\{[^}]*display:\s*flex/);
+    expect(css, "查找行应有 flex 行布局（.find-row）").toMatch(
+      /\.find-row\s*\{[^}]*display:\s*flex/,
+    );
 
     // 预览态查找接线：高亮应用、重放、步进、清除
     const main = readFileSync("src/main.ts", "utf-8");
@@ -319,7 +323,7 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(preview, "PreviewPane 必须提供 applyFind/stepFind/findState").toMatch(
       /applyFind\(|stepFind\(|findState\(/,
     );
-    expect(preview, "预览命中必须复用编辑器高亮样式类").toContain('cm-find-match');
+    expect(preview, "预览命中必须复用编辑器高亮样式类").toContain("cm-find-match");
   });
 
   it("B31 转到行必须顶部对齐（与大纲跳转一致，不得最小滚动贴底）", () => {
@@ -342,15 +346,11 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     // 修复：scripts/gen_icons.py 改为矢量自绘——圆角矩形 rounded_rectangle
     // 一次成型（四角半径天然一致），不再依赖 AI 源图与镜像修角。
     const gen = readFileSync("scripts/gen_icons.py", "utf-8");
-    expect(gen, "必须用 rounded_rectangle 保证四角圆角一致").toMatch(
-      /rounded_rectangle\(/,
-    );
+    expect(gen, "必须用 rounded_rectangle 保证四角圆角一致").toMatch(/rounded_rectangle\(/);
     expect(gen, "背景必须是渐变（蓝→青）").toMatch(
       /2563EB[\s\S]{0,600}06B6D4|06B6D4[\s\S]{0,600}2563EB/,
     );
-    expect(gen, "不得再依赖 AI 源图（B25 镜像方案已废弃）").not.toContain(
-      "icon_final.png",
-    );
+    expect(gen, "不得再依赖 AI 源图（B25 镜像方案已废弃）").not.toContain("icon_final.png");
     expect(gen, "ico 必须包含多尺寸（任务栏/资源管理器清晰）").toMatch(/ICO_SIZES/);
     const conf = readJson("src-tauri/tauri.conf.json");
     const icons: string[] = conf.bundle?.icon ?? [];
@@ -377,15 +377,11 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
       "src-tauri/src/commands/mod.rs",
     ]) {
       const text = readFileSync(f, "utf-8");
-      expect(text, `${f} 不得含 LiteMD/litemd 残留`).not.toMatch(
-        /[Ll]ite[Mm][Dd]/,
-      );
+      expect(text, `${f} 不得含 LiteMD/litemd 残留`).not.toMatch(/[Ll]ite[Mm][Dd]/);
     }
     const conf = readJson("src-tauri/tauri.conf.json");
     expect(conf.productName, "productName 必须是 LitePad").toBe("LitePad");
-    expect(conf.identifier, "identifier 必须是 com.litepad.app").toBe(
-      "com.litepad.app",
-    );
+    expect(conf.identifier, "identifier 必须是 com.litepad.app").toBe("com.litepad.app");
     const pkg = readJson("package.json");
     expect(pkg.name, "package.json name 必须是 litepad").toBe("litepad");
   });

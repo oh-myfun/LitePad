@@ -355,7 +355,10 @@ pub async fn save_file(
 pub fn close_tab(tab_id: u64, state: State<'_, AppState>) -> Result<(), String> {
     let path = {
         let mut guard = state.docs.lock().map_err(|e| e.to_string())?;
-        let p = guard.iter().find(|d| d.id == tab_id).map(|d| d.path.clone());
+        let p = guard
+            .iter()
+            .find(|d| d.id == tab_id)
+            .map(|d| d.path.clone());
         guard.retain(|d| d.id != tab_id);
         p
     };
@@ -394,7 +397,10 @@ pub fn check_encodable(text: String, encoding: String) -> Vec<LossyChar> {
 /// 列出可用编码，供状态栏菜单渲染。
 #[tauri::command]
 pub fn list_encodings() -> Vec<String> {
-    codec::Encoding::all().iter().map(|e| e.label().into()).collect()
+    codec::Encoding::all()
+        .iter()
+        .map(|e| e.label().into())
+        .collect()
 }
 
 /// 列出可选行尾，供状态栏菜单渲染（与 list_encodings 保持同一数据源）。
@@ -414,7 +420,11 @@ pub fn load_settings() -> session::Settings {
 fn smoke_log(msg: &str) {
     use std::io::Write;
     let path = std::env::temp_dir().join("litepad-smoke.log");
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = writeln!(f, "{}", msg);
     }
 }
@@ -430,16 +440,16 @@ pub fn frontend_ready(detail: Option<String>) {
 pub fn log_event(level: String, event: String, detail: Option<String>) {
     use std::io::Write;
     let path = std::env::temp_dir().join("litepad-app.log");
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let _ = writeln!(
-            f,
-            "{ts} [{level}] {event} {}",
-            detail.unwrap_or_default()
-        );
+        let _ = writeln!(f, "{ts} [{level}] {event} {}", detail.unwrap_or_default());
     }
 }
 
@@ -491,7 +501,8 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>, budget: &mut usize) {
         if ft.is_dir() {
             let name = entry.file_name().to_string_lossy().into_owned();
             // 跳过常见巨型依赖目录与隐藏目录
-            if name.starts_with('.') || name == "node_modules" || name == "target" || name == "dist" {
+            if name.starts_with('.') || name == "node_modules" || name == "target" || name == "dist"
+            {
                 continue;
             }
             let depth_ok = out.len() < SEARCH_MAX_FILES;
@@ -542,6 +553,9 @@ fn search_one_file(
     hits
 }
 
+/// 行匹配器：输入一行文本，返回命中起始字节偏移（None = 未命中）。
+type LineMatcher = std::sync::Arc<dyn Fn(&str) -> Option<usize> + Send + Sync>;
+
 /// 跨文件并行搜索：递归扫描 root 下的文本文件。
 /// `regex=false` 时按普通子串（大小写不敏感可选）匹配。
 #[tauri::command]
@@ -560,21 +574,20 @@ pub async fn search_files(
     let use_regex = regex.unwrap_or(false);
     let root = PathBuf::from(root);
 
-    let matcher: std::sync::Arc<dyn Fn(&str) -> Option<usize> + Send + Sync> =
-        if use_regex {
-            let pattern = if case_sensitive {
-                query.clone()
-            } else {
-                format!("(?i){query}")
-            };
-            let re = regex::Regex::new(&pattern).map_err(|e| format!("正则无效：{}", e))?;
-            std::sync::Arc::new(move |line: &str| re.find(line).map(|m| m.start()))
-        } else if case_sensitive {
-            std::sync::Arc::new(move |line: &str| line.find(&query))
+    let matcher: LineMatcher = if use_regex {
+        let pattern = if case_sensitive {
+            query.clone()
         } else {
-            let q = query.to_lowercase();
-            std::sync::Arc::new(move |line: &str| line.to_lowercase().find(&q))
+            format!("(?i){query}")
         };
+        let re = regex::Regex::new(&pattern).map_err(|e| format!("正则无效：{}", e))?;
+        std::sync::Arc::new(move |line: &str| re.find(line).map(|m| m.start()))
+    } else if case_sensitive {
+        std::sync::Arc::new(move |line: &str| line.find(&query))
+    } else {
+        let q = query.to_lowercase();
+        std::sync::Arc::new(move |line: &str| line.to_lowercase().find(&q))
+    };
 
     tauri::async_runtime::spawn_blocking(move || {
         let mut files = Vec::new();

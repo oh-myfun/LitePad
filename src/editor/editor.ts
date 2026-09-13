@@ -1,10 +1,5 @@
 import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
-import {
-  defaultKeymap,
-  history,
-  historyKeymap,
-  indentWithTab,
-} from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import {
   bracketMatching,
   foldGutter,
@@ -12,10 +7,25 @@ import {
   indentOnInput,
   indentUnit,
 } from "@codemirror/language";
-import { highlightSelectionMatches, selectNextOccurrence, selectSelectionMatches } from "@codemirror/search";
+import {
+  highlightSelectionMatches,
+  selectNextOccurrence,
+  selectSelectionMatches,
+} from "@codemirror/search";
 import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { oneDark } from "@codemirror/theme-one-dark";
-import { EditorView, crosshairCursor, drawSelection, dropCursor, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers, rectangularSelection, type ViewUpdate } from "@codemirror/view";
+import {
+  EditorView,
+  crosshairCursor,
+  drawSelection,
+  dropCursor,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  keymap,
+  lineNumbers,
+  rectangularSelection,
+  type ViewUpdate,
+} from "@codemirror/view";
 import { findHighlight } from "./find";
 
 export interface EditorHandle {
@@ -136,10 +146,7 @@ export function makeTabState(
  * CodeMirror 6 封装（M1 多标签）：
  * 单一 EditorView 承载多个标签，切换 = view.setState(标签快照)。
  */
-export function createEditor(
-  parent: HTMLElement,
-  initialState: EditorState,
-): EditorHandle {
+export function createEditor(parent: HTMLElement, initialState: EditorState): EditorHandle {
   const view = new EditorView({ state: initialState, parent });
 
   return {

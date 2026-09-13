@@ -9,8 +9,7 @@ const STORAGE_FALLBACK_KEY = "litepad.theme";
 export function applyTheme(mode: ThemeMode): boolean {
   const dark =
     mode === "dark" ||
-    (mode === "system" &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches);
+    (mode === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
 
   document.documentElement.dataset.theme = dark ? "dark" : "light";
   try {

@@ -101,16 +101,14 @@ export function renderToc(
   if (entries === null || entries.length === 0) {
     const empty = document.createElement("div");
     empty.className = "toc-empty";
-    empty.textContent =
-      entries === null ? "当前文档类型不支持大纲" : "当前文档没有标题";
+    empty.textContent = entries === null ? "当前文档类型不支持大纲" : "当前文档没有标题";
     host.appendChild(empty);
     return;
   }
   for (const e of entries) {
     const item = document.createElement("button");
     item.type = "button";
-    item.className =
-      "toc-item toc-h" + e.level + (e.line === activeLine ? " toc-active" : "");
+    item.className = "toc-item toc-h" + e.level + (e.line === activeLine ? " toc-active" : "");
     item.textContent = e.text || "(无标题)";
     item.title = `第 ${e.line} 行`;
     item.addEventListener("click", () => cb.onJump(e));

@@ -2,8 +2,8 @@
 
 :root {
   --font-ui: "Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --font-mono: "Cascadia Code", "JetBrains Mono", "Cascadia Mono", Consolas,
-    "Microsoft YaHei UI", monospace;
+  --font-mono:
+    "Cascadia Code", "JetBrains Mono", "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace;
   --font-size: 14px;
   --radius: 5px;
   --transition: 120ms ease;
@@ -231,7 +231,9 @@ button {
   border-radius: var(--radius);
   padding: 3px 10px;
   cursor: pointer;
-  transition: background var(--transition), border-color var(--transition);
+  transition:
+    background var(--transition),
+    border-color var(--transition);
 }
 
 button:hover {
@@ -820,7 +822,10 @@ button:focus-visible {
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
-  transition: color 0.12s, background 0.12s, border-color 0.12s;
+  transition:
+    color 0.12s,
+    background 0.12s,
+    border-color 0.12s;
 }
 .tab-more:hover {
   background: var(--bg-hover);
@@ -900,7 +905,9 @@ button:focus-visible {
   background: var(--bg-toolbar);
   color: var(--fg-muted);
   border-right: 1px solid var(--border);
-  transition: background-color var(--transition), color var(--transition),
+  transition:
+    background-color var(--transition),
+    color var(--transition),
     border-color var(--transition);
 }
 
@@ -928,7 +935,9 @@ button:focus-visible {
   border-radius: 4px;
   color: var(--fg-muted);
   opacity: 0.7;
-  transition: background-color var(--transition), color var(--transition),
+  transition:
+    background-color var(--transition),
+    color var(--transition),
     opacity var(--transition);
 }
 

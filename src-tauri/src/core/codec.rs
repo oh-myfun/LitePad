@@ -132,7 +132,11 @@ pub fn encode(text: &str, enc: Encoding) -> (Vec<u8>, usize) {
 /// UTF-16 编码（总是带 BOM，否则下次打开无法可靠识别）。
 fn encode_utf16(text: &str, big_endian: bool) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len() * 2 + 2);
-    out.extend_from_slice(if big_endian { &[0xFE, 0xFF] } else { &[0xFF, 0xFE] });
+    out.extend_from_slice(if big_endian {
+        &[0xFE, 0xFF]
+    } else {
+        &[0xFF, 0xFE]
+    });
     for unit in text.encode_utf16() {
         let bytes = if big_endian {
             unit.to_be_bytes()
@@ -376,7 +380,10 @@ mod tests {
         assert_eq!(replaced, 0);
         assert_eq!(detect(&bytes), Encoding::Gb18030);
         // 内容必须能原样还原
-        assert_eq!(decode(&bytes, Encoding::Gb18030).text, "这是一段用于编码检测的中文内容，长度需要足够让统计式识别器做出判断。");
+        assert_eq!(
+            decode(&bytes, Encoding::Gb18030).text,
+            "这是一段用于编码检测的中文内容，长度需要足够让统计式识别器做出判断。"
+        );
     }
 
     #[test]

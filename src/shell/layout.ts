@@ -18,7 +18,9 @@ export function countLeaves(n: LayoutNode): number {
 
 /** 树中是否存在某面板。 */
 export function hasPanel(n: LayoutNode, panelId: number): boolean {
-  return n.kind === "leaf" ? n.panelId === panelId : hasPanel(n.a, panelId) || hasPanel(n.b, panelId);
+  return n.kind === "leaf"
+    ? n.panelId === panelId
+    : hasPanel(n.a, panelId) || hasPanel(n.b, panelId);
 }
 
 /** 遍历全部面板 id（中序）。 */

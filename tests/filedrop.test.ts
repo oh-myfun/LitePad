@@ -34,10 +34,14 @@ describe("落点选择菜单（打开文档 / 插入文件路径）", () => {
   it("渲染两个选项并分别触发回调，选择后菜单关闭", () => {
     let opened = 0;
     let inserted = 0;
-    showFileDropChoice("note.md", { x: 120, y: 80 }, {
-      onOpen: () => opened++,
-      onInsert: () => inserted++,
-    });
+    showFileDropChoice(
+      "note.md",
+      { x: 120, y: 80 },
+      {
+        onOpen: () => opened++,
+        onInsert: () => inserted++,
+      },
+    );
 
     const menu = document.querySelector(".popup-menu");
     expect(menu, "应弹出菜单").toBeTruthy();
@@ -53,10 +57,14 @@ describe("落点选择菜单（打开文档 / 插入文件路径）", () => {
     expect(document.querySelector(".popup-menu"), "选择后菜单应关闭").toBeNull();
 
     // 再验证「打开文档」分支
-    showFileDropChoice("note.md", { x: 120, y: 80 }, {
-      onOpen: () => opened++,
-      onInsert: () => inserted++,
-    });
+    showFileDropChoice(
+      "note.md",
+      { x: 120, y: 80 },
+      {
+        onOpen: () => opened++,
+        onInsert: () => inserted++,
+      },
+    );
     (document.querySelector(".popup-menu button") as HTMLButtonElement).click();
     expect(opened, "应触发打开回调").toBe(1);
   });

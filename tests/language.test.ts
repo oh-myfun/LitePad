@@ -43,7 +43,7 @@ describe("detectLanguage", () => {
   it("首行魔数识别 XML / HTML", () => {
     expect(detectLanguage(null, '<?xml version="1.0"?>').label).toBe("XML");
     expect(detectLanguage(null, "<!DOCTYPE html>").label).toBe("HTML");
-    expect(detectLanguage(null, "<html lang=\"en\">").label).toBe("HTML");
+    expect(detectLanguage(null, '<html lang="en">').label).toBe("HTML");
   });
 
   it("无匹配回退 Plain Text", () => {
@@ -67,7 +67,7 @@ describe("流式语言缩进折叠（回归：JSON 等除 Markdown 外全部不�
     const { EditorState } = await import("@codemirror/state");
     const info = detectLanguage("test.json");
     expect(info.extension).not.toBeNull();
-    const doc = ['{', '  "a": {', '    "b": 1', '  }', '}', ''].join("\n");
+    const doc = ["{", '  "a": {', '    "b": 1', "  }", "}", ""].join("\n");
     const state = EditorState.create({ doc, extensions: [info.extension!] });
     // 第 1 行 `{`：缩进 0，后续 2/4 缩进 → 可折叠
     const l1 = state.doc.line(1);
@@ -87,7 +87,9 @@ describe("流式语言缩进折叠（回归：JSON 等除 Markdown 外全部不�
     const { foldable } = await import("@codemirror/language");
     const { EditorState } = await import("@codemirror/state");
     const py = detectLanguage("a.py");
-    const doc = ["def f():", "    if x:", "        return 1", "", "def g():", "    pass", ""].join("\n");
+    const doc = ["def f():", "    if x:", "        return 1", "", "def g():", "    pass", ""].join(
+      "\n",
+    );
     const state = EditorState.create({ doc, extensions: [py.extension!] });
     const l1 = state.doc.line(1);
     const range = foldable(state, l1.from, l1.to);

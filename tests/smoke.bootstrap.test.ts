@@ -41,22 +41,38 @@ beforeAll(() => {
   // jsdom 24 未实现 Range.getClientRects/getBoundingClientRect，
   // 而 CodeMirror 在 mousedown 处理里会调用 → 抛 “getClientRects is not a function”。
   // WebView2（Chromium）原生支持，这里补一个空实现让交互测试可运行。
-  if (typeof (window.Range?.prototype as { getClientRects?: unknown }).getClientRects !== "function") {
+  if (
+    typeof (window.Range?.prototype as { getClientRects?: unknown }).getClientRects !== "function"
+  ) {
     const rangeProto = window.Range.prototype as unknown as {
       getClientRects: () => DOMRectList;
       getBoundingClientRect: () => DOMRect;
     };
     rangeProto.getClientRects = () => [] as unknown as DOMRectList;
     rangeProto.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON() {} }) as DOMRect;
+      ({
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+        width: 0,
+        height: 0,
+        x: 0,
+        y: 0,
+        toJSON() {},
+      }) as DOMRect;
   }
 });
 
 // ---- 记录启动期 / 事件期未捕获异常 ----
 let capturedError: unknown = null;
-process.on("unhandledRejection", (e) => { capturedError = e; });
+process.on("unhandledRejection", (e) => {
+  capturedError = e;
+});
 beforeAll(() => {
-  window.addEventListener("error", (e) => { capturedError = (e as ErrorEvent).error ?? (e as ErrorEvent).message; });
+  window.addEventListener("error", (e) => {
+    capturedError = (e as ErrorEvent).error ?? (e as ErrorEvent).message;
+  });
 });
 
 // ---- 桩：Tauri 运行时 ----
@@ -116,13 +132,30 @@ vi.mock("../src/ipc/api", () => ({
     Promise.resolve({
       activePanel: 0,
       panels: [
-        { active: 0, tabs: [{ path: "a.md", encoding: "UTF-8", viewMode: "source", cursorLine: 1, cursorCol: 1 }] },
+        {
+          active: 0,
+          tabs: [
+            { path: "a.md", encoding: "UTF-8", viewMode: "source", cursorLine: 1, cursorCol: 1 },
+          ],
+        },
         // 同一路径出现两次：应创建两个同源实例（内容同步，内存一份）
-        { active: 0, tabs: [{ path: "a.md", encoding: "UTF-8", viewMode: "source", cursorLine: 1, cursorCol: 1 }, { path: "b.md", encoding: "UTF-8", viewMode: "source", cursorLine: 1, cursorCol: 1 }] },
+        {
+          active: 0,
+          tabs: [
+            { path: "a.md", encoding: "UTF-8", viewMode: "source", cursorLine: 1, cursorCol: 1 },
+            { path: "b.md", encoding: "UTF-8", viewMode: "source", cursorLine: 1, cursorCol: 1 },
+          ],
+        },
       ],
     }),
   loadSettings: () =>
-    Promise.resolve({ theme: "system", word_wrap: true, font_size: 14, default_encoding: "UTF-8", default_eol: "CRLF" }),
+    Promise.resolve({
+      theme: "system",
+      word_wrap: true,
+      font_size: 14,
+      default_encoding: "UTF-8",
+      default_eol: "CRLF",
+    }),
   logEvent: () => {},
   newTab: () =>
     Promise.resolve({ tabId: 1, name: "未命名", readonly: false, encoding: "UTF-8", eol: "CRLF" }),
@@ -138,15 +171,16 @@ vi.mock("../src/ipc/api", () => ({
               : _path === "d.md"
                 ? 104
                 : 105,
-      text: _path === "a.md"
-        ? "hello world from A"
-        : _path === "b.md"
-          ? "second document from B"
-          : _path === "c.md"
-            ? "third document from C"
-            : _path === "d.md"
-              ? "fourth document from D"
-              : "fifth document from E",
+      text:
+        _path === "a.md"
+          ? "hello world from A"
+          : _path === "b.md"
+            ? "second document from B"
+            : _path === "c.md"
+              ? "third document from C"
+              : _path === "d.md"
+                ? "fourth document from D"
+                : "fifth document from E",
       name: _path,
       path: _path,
       encoding: "UTF-8",
@@ -155,7 +189,16 @@ vi.mock("../src/ipc/api", () => ({
       mixedEol: false,
     }),
   reloadFile: () =>
-    Promise.resolve({ tabId: 1, text: "", name: "x", path: "x", encoding: "UTF-8", eol: "LF", readonly: false, mixedEol: false }),
+    Promise.resolve({
+      tabId: 1,
+      text: "",
+      name: "x",
+      path: "x",
+      encoding: "UTF-8",
+      eol: "LF",
+      readonly: false,
+      mixedEol: false,
+    }),
   saveFile: () => Promise.resolve({ lossy: [], path: "" }),
   savePasteImage: () => Promise.resolve(""),
   saveSession: () => Promise.resolve(),
@@ -181,7 +224,17 @@ function installRectStubs(): () => void {
   const origRect = Element.prototype.getBoundingClientRect;
   Element.prototype.getBoundingClientRect = function (this: Element) {
     const mk = (left: number, top: number, w: number, h: number) =>
-      ({ left, top, right: left + w, bottom: top + h, width: w, height: h, x: left, y: top, toJSON() {} }) as DOMRect;
+      ({
+        left,
+        top,
+        right: left + w,
+        bottom: top + h,
+        width: w,
+        height: h,
+        x: left,
+        y: top,
+        toJSON() {},
+      }) as DOMRect;
     if (this.classList.contains("layout-panel")) {
       const idx = Array.from(document.querySelectorAll(".layout-panel")).indexOf(this);
       return mk(Math.max(0, idx) * 210, 0, 200, 200);
@@ -202,9 +255,18 @@ function installRectStubs(): () => void {
 }
 
 /** 模拟一次标签拖拽：mousedown(标签) → mousemove(落点) → mouseup(落点)。 */
-function dragTab(tab: HTMLElement, fromX: number, fromY: number, toX: number, toY: number, ctrlKey = false): void {
+function dragTab(
+  tab: HTMLElement,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+  ctrlKey = false,
+): void {
   tab.dispatchEvent(mouse("mousedown", fromX, fromY));
-  document.dispatchEvent(mouse("mousemove", Math.round((fromX + toX) / 2), Math.round((fromY + toY) / 2), ctrlKey));
+  document.dispatchEvent(
+    mouse("mousemove", Math.round((fromX + toX) / 2), Math.round((fromY + toY) / 2), ctrlKey),
+  );
   document.dispatchEvent(mouse("mousemove", toX, toY, ctrlKey));
   document.dispatchEvent(mouse("mouseup", toX, toY, ctrlKey));
 }
@@ -239,18 +301,21 @@ describe("bootstrap + drag-split smoke", () => {
     expect(allViews[1].state.doc.toString(), "面板1 应载入 a.md").toContain("hello world");
     allViews[0].dispatch({ changes: { from: 0, insert: "SYNC-MARK " } });
     await new Promise((r) => setTimeout(r, 30));
+    expect(allViews[1].state.doc.toString(), "面板1 的同源实例应实时跟随内容变更").toContain(
+      "SYNC-MARK hello world",
+    );
+    const marks = Array.from(document.querySelectorAll(".tab-mark")).map(
+      (m) => m.textContent ?? "",
+    );
     expect(
-      allViews[1].state.doc.toString(),
-      "面板1 的同源实例应实时跟随内容变更",
-    ).toContain("SYNC-MARK hello world");
-    const marks = Array.from(document.querySelectorAll(".tab-mark")).map((m) => m.textContent ?? "");
-    expect(marks.some((m) => m.includes("●")), "脏标记应出现在标签上").toBe(true);
+      marks.some((m) => m.includes("●")),
+      "脏标记应出现在标签上",
+    ).toBe(true);
 
     // ---- 模拟把面板0的标签拖到面板1的左侧区域（应触发 splitPanelWithTab）----
     const panels = Array.from(layoutArea!.querySelectorAll(".layout-panel")) as HTMLElement[];
     expect(panels.length, "应有两个面板").toBe(2);
     const panel0 = panels[0];
-    const panel1 = panels[1];
     const tab0 = panel0.querySelector(".tab") as HTMLElement;
     expect(tab0, "面板0应有标签").toBeTruthy();
 
@@ -299,7 +364,9 @@ describe("bootstrap + drag-split smoke", () => {
       document.querySelectorAll(".layout-panel").length,
       "同面板边缘拖放应真正分屏（面板数 +1）",
     ).toBe(beforeSelf + 1);
-    const textsAfter = Array.from(document.querySelectorAll(".cm-content")).map((c) => c.textContent ?? "");
+    const textsAfter = Array.from(document.querySelectorAll(".cm-content")).map(
+      (c) => c.textContent ?? "",
+    );
     expect(
       textsAfter.some((t) => t === "SYNC-MARK hello world from A"),
       "被拖动文档应原样出现在新分屏",
@@ -338,7 +405,9 @@ describe("bootstrap + drag-split smoke", () => {
     const before = document.querySelectorAll(".cm-content").length;
     strips[0].dispatchEvent(new Event("dblclick", { bubbles: true }));
     await new Promise((r) => setTimeout(r, 120)); // newUntitled 内部有 ipcNewTab 异步
-    const contents = Array.from(document.querySelectorAll(".cm-content")).map((c) => c.textContent ?? "");
+    const contents = Array.from(document.querySelectorAll(".cm-content")).map(
+      (c) => c.textContent ?? "",
+    );
     expect(contents.length, "新建后面板数不减").toBeGreaterThanOrEqual(before);
     // 新建标签应插入一个空文档视图；任何视图都不应凭空出现旧文档内容重复
     const emptyish = contents.filter((t) => t.length === 0);
@@ -375,9 +444,7 @@ describe("bootstrap + drag-split smoke", () => {
     openDialogResult.value = null;
 
     const tabOf = (name: string) =>
-      Array.from(document.querySelectorAll<HTMLElement>(".tab")).find(
-        (el) => el.title === name,
-      );
+      Array.from(document.querySelectorAll<HTMLElement>(".tab")).find((el) => el.title === name);
     const dTab = tabOf("d.md");
     expect(dTab, "打开的 d.md 应出现在标签条").toBeTruthy();
     const strip = dTab!.closest(".panel-tabstrip") as HTMLElement;
@@ -485,10 +552,9 @@ describe("bootstrap + drag-split smoke", () => {
     await new Promise((r) => setTimeout(r, 80)); // 跨面板激活的延迟重绘也等完
     const dom = panelEl.querySelector(".cm-editor");
     const view = dom ? EditorView.findFromDOM(dom as HTMLElement) : null;
-    expect(
-      view?.state.doc.toString() ?? "",
-      "click 后该面板应显示 c.md 的内容",
-    ).toContain("third document from C");
+    expect(view?.state.doc.toString() ?? "", "click 后该面板应显示 c.md 的内容").toContain(
+      "third document from C",
+    );
   });
 
   it("从资源管理器拖入文件必须打开该文件（回归：拖入变成插入内容）", async () => {
@@ -505,10 +571,18 @@ describe("bootstrap + drag-split smoke", () => {
     // B24：md 落地应弹选择菜单，且此时文件尚未打开
     const choiceMenu = document.querySelector(".popup-menu");
     expect(choiceMenu, "拖入 Markdown 应弹出 打开/插入路径 选择菜单").toBeTruthy();
-    const choices = Array.from(choiceMenu!.querySelectorAll("button")).map((b) => b.textContent ?? "");
-    expect(choices.some((t) => t.includes("打开")), "应有「打开文档」项").toBe(true);
-    expect(choices.some((t) => t.includes("插入文件路径")), "应有「插入文件路径」项").toBe(true);
-    let contentsBefore = Array.from(document.querySelectorAll(".cm-content")).map(
+    const choices = Array.from(choiceMenu!.querySelectorAll("button")).map(
+      (b) => b.textContent ?? "",
+    );
+    expect(
+      choices.some((t) => t.includes("打开")),
+      "应有「打开文档」项",
+    ).toBe(true);
+    expect(
+      choices.some((t) => t.includes("插入文件路径")),
+      "应有「插入文件路径」项",
+    ).toBe(true);
+    const contentsBefore = Array.from(document.querySelectorAll(".cm-content")).map(
       (c) => c.textContent ?? "",
     );
     expect(
@@ -530,7 +604,6 @@ describe("bootstrap + drag-split smoke", () => {
       contents.some((t) => t.includes("fifth document from E")),
       `拖入的 e.md 应作为新标签打开并显示内容，实际：${JSON.stringify(contents)}`,
     ).toBe(true);
-    contentsBefore = [];
   });
 
   it("拖拽 tab 到 tab 区 = 调整顺序（B27：显示插入线而非分屏预览，也不分屏）", async () => {
@@ -606,10 +679,7 @@ describe("bootstrap + drag-split smoke", () => {
     // 旧实现的 setTimeout 延迟重绘会在此间隔内触发、销毁光标下的标签。
     target!.dispatchEvent(mouse("mousedown", 5, 5));
     await new Promise((r) => setTimeout(r, 15));
-    expect(
-      target!.isConnected,
-      "按压期间（跨面板激活后）标签不得被重绘替换",
-    ).toBe(true);
+    expect(target!.isConnected, "按压期间（跨面板激活后）标签不得被重绘替换").toBe(true);
     target!.dispatchEvent(mouse("click", 5, 5));
     await new Promise((r) => setTimeout(r, 80));
 
@@ -662,8 +732,7 @@ describe("bootstrap + drag-split smoke", () => {
         Array.from(document.querySelectorAll(".cm-editor"))
           .map((dom) => EditorView.findFromDOM(dom as HTMLElement))
           .filter((v): v is EditorView => !!v);
-      const panelTabs = (p: HTMLElement) =>
-        Array.from(p.querySelectorAll(".tab")) as HTMLElement[];
+      const panelTabs = (p: HTMLElement) => Array.from(p.querySelectorAll(".tab")) as HTMLElement[];
       const tabIsAmd = (t: HTMLElement) => (t.textContent ?? "").includes("a.md");
 
       let panels = Array.from(document.querySelectorAll(".layout-panel")) as HTMLElement[];
@@ -711,10 +780,7 @@ describe("bootstrap + drag-split smoke", () => {
         changes: { from: 0, to: amdViewsBefore[0].state.doc.length, insert: md },
       });
       await new Promise((r) => setTimeout(r, 30));
-      expect(
-        amdViewsBefore[1].state.doc.toString(),
-        "第二实例应同步到新内容",
-      ).toBe(md);
+      expect(amdViewsBefore[1].state.doc.toString(), "第二实例应同步到新内容").toBe(md);
 
       // 打开大纲
       const btnOutline = document.getElementById("btn-outline") as HTMLButtonElement;
@@ -759,10 +825,7 @@ describe("bootstrap + drag-split smoke", () => {
 
       // 断言：每一个 a.md 实例选区都跳到该标题行首
       for (const [i, v] of amdViewsBefore.entries()) {
-        expect(
-          v.state.selection.main.head,
-          `实例${i} 应跳到「## 第二题」行首`,
-        ).toBe(h2Pos);
+        expect(v.state.selection.main.head, `实例${i} 应跳到「## 第二题」行首`).toBe(h2Pos);
       }
       // 大纲活动项高亮应更新到点击的标题
       const activeItems = document.querySelectorAll("#toc-panel .toc-active");

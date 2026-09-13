@@ -66,7 +66,17 @@ function key(el: HTMLElement, k: string, shift = false): void {
 }
 
 function hit(name: string, line: number): FindHit {
-  return { kind: "doc", docId: 1, path: `C:\\${name}`, name, line, col: 1, text: "hello", from: 0, to: 5 };
+  return {
+    kind: "doc",
+    docId: 1,
+    path: `C:\\${name}`,
+    name,
+    line,
+    col: 1,
+    text: "hello",
+    from: 0,
+    to: 5,
+  };
 }
 
 describe("悬浮查找栏：入口与范围", () => {
@@ -182,8 +192,12 @@ describe("悬浮查找栏：不绑定文件/面板", () => {
     const m = mount();
     m.bar.open("doc");
     const title = m.q<HTMLElement>(".find-bar-title");
-    title.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: 200, clientY: 60, button: 0 }));
-    document.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 300, clientY: 90 }));
+    title.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, clientX: 200, clientY: 60, button: 0 }),
+    );
+    document.dispatchEvent(
+      new MouseEvent("mousemove", { bubbles: true, clientX: 300, clientY: 90 }),
+    );
     expect(document.body.classList.contains("layout-dragging")).toBe(true);
     expect(m.dom.style.left).toBe("100px");
     document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 300, clientY: 90 }));

@@ -25,9 +25,7 @@ function menuTexts(): string[] {
 }
 
 async function clickMenuBtn(host: HTMLElement, label: string): Promise<void> {
-  const btn = [...host.querySelectorAll("button.menu-btn")].find(
-    (b) => b.textContent === label,
-  );
+  const btn = [...host.querySelectorAll("button.menu-btn")].find((b) => b.textContent === label);
   expect(btn, `菜单栏按钮「${label}」应存在`).toBeTruthy();
   btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await flush();
@@ -158,7 +156,7 @@ describe("菜单栏（参考 Win11 记事本）", () => {
     cb.statusbarChecked = () => statusbar;
     createMenuBar(host, cb);
     await clickMenuBtn(host, "查看");
-    let texts = menuTexts();
+    const texts = menuTexts();
     expect(texts).toContain("放大\tCtrl+=");
     expect(texts).toContain("缩小\tCtrl+-");
     expect(texts).toContain("重置缩放\tCtrl+0");
@@ -182,7 +180,6 @@ describe("菜单栏（参考 Win11 记事本）", () => {
     closePopupMenu();
     await flush();
     await clickMenuBtn(host, "查看");
-    texts = menuTexts();
     const items2 = [...document.querySelectorAll(".popup-menu button")];
     const wrap2 = items2.find((b) => (b.textContent ?? "").includes("自动换行"));
     expect(wrap2?.querySelector(".check")?.textContent).toBe("");
@@ -292,9 +289,12 @@ describe("设置项分散到各菜单（不再有设置窗口）", () => {
 describe("查找入口统一（悬浮查找栏）", () => {
   it("main.ts 必须接线悬浮查找栏：查找/替换/在文件中查找都走同一个 openFindBar", () => {
     const src = readFileSync("src/main.ts", "utf-8");
-    expect(src.includes('import { createFindBar'), "必须引入 createFindBar").toBe(true);
+    // prettier 会重排 import，断言只看标识符存在（不锁定排版）
+    expect(/\bcreateFindBar\b/.test(src), "必须引入 createFindBar").toBe(true);
     expect(src.includes("function openFindBar("), "必须有统一入口 openFindBar").toBe(true);
-    expect(src.includes('openFindBar("doc", "replace")'), "菜单「替换…」/Ctrl+H 走同一入口").toBe(true);
+    expect(src.includes('openFindBar("doc", "replace")'), "菜单「替换…」/Ctrl+H 走同一入口").toBe(
+      true,
+    );
     expect(src.includes('openFindBar("folder")'), "「在文件中查找」切到文件夹范围").toBe(true);
     expect(src.includes("async function doSaveAll")).toBe(true);
     // F5 插入时间日期必须拦截 WebView2 默认刷新

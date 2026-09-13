@@ -388,8 +388,10 @@ export class PreviewPane {
     // 拿它当预览内容偏移会带上几十像素常量误差 → 改用相对预览容器的 rect 差值。
     let top = this.blockTop(el);
     if (next) {
-      const range =
-        Math.max(1, (Number(next.el.dataset.lineStart) - Number(el.dataset.lineStart)) || 1);
+      const range = Math.max(
+        1,
+        Number(next.el.dataset.lineStart) - Number(el.dataset.lineStart) || 1,
+      );
       const into = Math.min(range, Math.max(0, line - Number(el.dataset.lineStart)));
       top += ((this.blockTop(next.el) - top) * into) / range;
     }
@@ -417,10 +419,7 @@ export class PreviewPane {
     if (this.syncLock === "editor") return;
     // 自家程序滚动的回执：锁（120ms）可能刚好在重渲染清空 scrollTop 后过期，
     // 只靠锁会把这次事件误判成用户手动滚动 → 清掉 pendingSyncLine，跳转落点丢失。
-    if (
-      this.programmaticTop !== null &&
-      Math.abs(this.root.scrollTop - this.programmaticTop) < 1
-    ) {
+    if (this.programmaticTop !== null && Math.abs(this.root.scrollTop - this.programmaticTop) < 1) {
       return;
     }
     this.programmaticTop = null;

@@ -19,12 +19,32 @@ function installRectStub(): () => void {
   const orig = Element.prototype.getBoundingClientRect;
   Element.prototype.getBoundingClientRect = function (this: Element) {
     if (curRoot && this === curRoot) {
-      return { left: 0, top: CONTAINER_TOP, right: 0, bottom: CONTAINER_TOP, width: 0, height: 0, x: 0, y: CONTAINER_TOP, toJSON() {} } as DOMRect;
+      return {
+        left: 0,
+        top: CONTAINER_TOP,
+        right: 0,
+        bottom: CONTAINER_TOP,
+        width: 0,
+        height: 0,
+        x: 0,
+        y: CONTAINER_TOP,
+        toJSON() {},
+      } as DOMRect;
     }
     const ct = contentTops.get(this) ?? 0;
     const off = curRoot ? curRoot.scrollTop : 0;
     const top = ct - off + CONTAINER_TOP;
-    return { left: 0, top, right: 0, bottom: top, width: 0, height: 0, x: 0, y: top, toJSON() {} } as DOMRect;
+    return {
+      left: 0,
+      top,
+      right: 0,
+      bottom: top,
+      width: 0,
+      height: 0,
+      x: 0,
+      y: top,
+      toJSON() {},
+    } as DOMRect;
   };
   return () => {
     Element.prototype.getBoundingClientRect = orig;
@@ -204,10 +224,9 @@ describe("预览同步接线（静态断言）", () => {
     expect(src, "scheduleMdRender 调用必须由 textChanged 门控").toMatch(
       /if \(textChanged && isMdTab\(tab\)\) scheduleMdRender\(/,
     );
-    expect(
-      src,
-      "不得再出现「任意 update 都重渲染预览」的写法",
-    ).not.toMatch(/\n\s*if \(isMdTab\(tab\)\) scheduleMdRender\(/);
+    expect(src, "不得再出现「任意 update 都重渲染预览」的写法").not.toMatch(
+      /\n\s*if \(isMdTab\(tab\)\) scheduleMdRender\(/,
+    );
   });
 
   it("syncToLine 必须相对预览容器计算（不得直接用 offsetTop 当内容偏移）", async () => {

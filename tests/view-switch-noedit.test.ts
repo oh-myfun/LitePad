@@ -28,19 +28,32 @@ beforeAll(() => {
     dispatchEvent: () => false,
   });
   // @ts-expect-error jsdom 兜底
-  window.requestAnimationFrame = (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0) as unknown as number;
+  window.requestAnimationFrame = (cb: FrameRequestCallback) =>
+    setTimeout(() => cb(0), 0) as unknown as number;
   // @ts-expect-error jsdom 兜底
   window.cancelAnimationFrame = (id: number) => clearTimeout(id);
   // jsdom 24 未实现 Range.getClientRects/getBoundingClientRect，
   // CodeMirror 在 mousedown 处理里会调用 → 抛 “getClientRects is not a function”。
-  if (typeof (window.Range?.prototype as { getClientRects?: unknown }).getClientRects !== "function") {
+  if (
+    typeof (window.Range?.prototype as { getClientRects?: unknown }).getClientRects !== "function"
+  ) {
     const rangeProto = window.Range.prototype as unknown as {
       getClientRects: () => DOMRectList;
       getBoundingClientRect: () => DOMRect;
     };
     rangeProto.getClientRects = () => [] as unknown as DOMRectList;
     rangeProto.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON() {} }) as DOMRect;
+      ({
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+        width: 0,
+        height: 0,
+        x: 0,
+        y: 0,
+        toJSON() {},
+      }) as DOMRect;
   }
 });
 
@@ -79,7 +92,9 @@ vi.mock("../src/ipc/api", () => ({
       panels: [
         {
           active: 0,
-          tabs: [{ path: "a.md", encoding: "UTF-8", viewMode: "source", cursorLine: 1, cursorCol: 1 }],
+          tabs: [
+            { path: "a.md", encoding: "UTF-8", viewMode: "source", cursorLine: 1, cursorCol: 1 },
+          ],
         },
       ],
     }),
@@ -95,7 +110,8 @@ vi.mock("../src/ipc/api", () => ({
       preview_line_height: 1.7,
     }),
   logEvent: () => {},
-  newTab: () => Promise.resolve({ tabId: 1, name: "未命名", readonly: false, encoding: "UTF-8", eol: "CRLF" }),
+  newTab: () =>
+    Promise.resolve({ tabId: 1, name: "未命名", readonly: false, encoding: "UTF-8", eol: "CRLF" }),
   openFile: (p: string) =>
     Promise.resolve({
       tabId: 101,
@@ -108,7 +124,16 @@ vi.mock("../src/ipc/api", () => ({
       mixedEol: false,
     }),
   reloadFile: () =>
-    Promise.resolve({ tabId: 1, text: "", name: "x", path: "x", encoding: "UTF-8", eol: "LF", readonly: false, mixedEol: false }),
+    Promise.resolve({
+      tabId: 1,
+      text: "",
+      name: "x",
+      path: "x",
+      encoding: "UTF-8",
+      eol: "LF",
+      readonly: false,
+      mixedEol: false,
+    }),
   saveFile: (args: unknown) => {
     saved.push(args);
     return Promise.resolve({ lossy: [], path: "" });
@@ -120,7 +145,9 @@ vi.mock("../src/ipc/api", () => ({
 }));
 
 const dirty = (): boolean =>
-  Array.from(document.querySelectorAll(".tab-mark")).some((m) => (m.textContent ?? "").includes("●"));
+  Array.from(document.querySelectorAll(".tab-mark")).some((m) =>
+    (m.textContent ?? "").includes("●"),
+  );
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

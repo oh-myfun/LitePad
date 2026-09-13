@@ -25,19 +25,19 @@ describe("预览态查找（B30：高亮与跳转和源码一致）", () => {
   it("区分大小写 / 全词 / 正则语义与编辑器一致", () => {
     const p = new PreviewPane();
     p.setBlocks(blocksOf(["<p>Foo foo foobar</p>"]));
-    expect(
-      p.applyFind({ text: "foo", caseSensitive: true, wholeWord: false, regexp: false }),
-    ).toBe(2);
-    expect(
-      p.applyFind({ text: "foo", caseSensitive: true, wholeWord: true, regexp: false }),
-    ).toBe(1);
+    expect(p.applyFind({ text: "foo", caseSensitive: true, wholeWord: false, regexp: false })).toBe(
+      2,
+    );
+    expect(p.applyFind({ text: "foo", caseSensitive: true, wholeWord: true, regexp: false })).toBe(
+      1,
+    );
     expect(
       p.applyFind({ text: "foo\\w*", caseSensitive: false, wholeWord: false, regexp: true }),
     ).toBe(3);
     // 非法正则按无命中处理
-    expect(
-      p.applyFind({ text: "([", caseSensitive: false, wholeWord: false, regexp: true }),
-    ).toBe(0);
+    expect(p.applyFind({ text: "([", caseSensitive: false, wholeWord: false, regexp: true })).toBe(
+      0,
+    );
   });
 
   it("清除时还原原始文本节点（可重复应用）", () => {
@@ -49,7 +49,9 @@ describe("预览态查找（B30：高亮与跳转和源码一致）", () => {
     expect(p.root.querySelectorAll("mark").length, "清除后无 mark").toBe(0);
     expect(p.root.querySelector("strong")?.textContent).toBe("abc");
     // 可重复应用
-    expect(p.applyFind({ text: "def", caseSensitive: false, wholeWord: false, regexp: false })).toBe(1);
+    expect(
+      p.applyFind({ text: "def", caseSensitive: false, wholeWord: false, regexp: false }),
+    ).toBe(1);
   });
 
   it("stepFind 设当前项高亮并到头环绕；重渲染（setBlocks）后旧标记失效、需重放", () => {

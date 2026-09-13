@@ -15,8 +15,19 @@ import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-
 import "katex/dist/katex.min.css";
 import "./styles/preview.css";
 
-import { createEditor, makeTabState, type EditorHandle, type TabCompartments } from "./editor/editor";
-import { buildFindQuery, clearFindQuery, findMatches, nextMatchIndex, setFindQuery } from "./editor/find";
+import {
+  createEditor,
+  makeTabState,
+  type EditorHandle,
+  type TabCompartments,
+} from "./editor/editor";
+import {
+  buildFindQuery,
+  clearFindQuery,
+  findMatches,
+  nextMatchIndex,
+  setFindQuery,
+} from "./editor/find";
 import { detectLanguage } from "./editor/language";
 import {
   checkEncodable,
@@ -47,7 +58,13 @@ import { extractOutline } from "./markdown/outline";
 import { PreviewPane } from "./markdown/preview";
 import { renderToc, attachTocResizer, clampTocWidth, type TocResizerHandle } from "./markdown/toc";
 import { attachWheelZoom } from "./shell/zoom";
-import { createFindBar, type FindBarHandle, type FindHit, type FindBarQuery, type FindScope } from "./shell/findbar";
+import {
+  createFindBar,
+  type FindBarHandle,
+  type FindHit,
+  type FindBarQuery,
+  type FindScope,
+} from "./shell/findbar";
 import { ICONS, type IconName } from "./shell/icons";
 import { createMenuBar, openMenuByIndex } from "./shell/menubar";
 import { showPopupMenu } from "./shell/menu";
@@ -62,22 +79,39 @@ import {
   type LayoutNode,
 } from "./shell/layout";
 import { showKeymapDialog } from "./shell/keymapdialog";
-import { renderSplitview, panelAt, zoneOf, clearAllDropPreviews, type PanelRenderData } from "./shell/splitview";
+import {
+  renderSplitview,
+  panelAt,
+  zoneOf,
+  clearAllDropPreviews,
+  type PanelRenderData,
+} from "./shell/splitview";
 import { needsChoice, showFileDropChoice, type FileDropTarget } from "./shell/filedrop";
 import { renderTabstrip, type TabViewData, type TabstripCallbacks } from "./shell/tabstrip";
-import {
-  applyTheme,
-  normalizeMode,
-  watchSystemTheme,
-  type ThemeMode,
-} from "./theme/theme";
+import { applyTheme, normalizeMode, watchSystemTheme, type ThemeMode } from "./theme/theme";
 
 const TEXT_FILTERS = [
   {
     name: "文本文件",
     extensions: [
-      "txt", "md", "markdown", "json", "js", "ts", "rs", "py", "html",
-      "css", "xml", "yml", "yaml", "ini", "bat", "sh", "sql", "log",
+      "txt",
+      "md",
+      "markdown",
+      "json",
+      "js",
+      "ts",
+      "rs",
+      "py",
+      "html",
+      "css",
+      "xml",
+      "yml",
+      "yaml",
+      "ini",
+      "bat",
+      "sh",
+      "sql",
+      "log",
     ],
   },
   { name: "所有文件", extensions: ["*"] },
@@ -157,7 +191,7 @@ interface Panel {
 
 let tabs = new Map<number, Tab>();
 let docs = new Map<number, Doc>();
-let panels = new Map<number, Panel>();
+const panels = new Map<number, Panel>();
 let layout: LayoutNode = leaf(0);
 let nextPanelId = 1;
 let nextInstId = 1;
@@ -495,8 +529,7 @@ function rebuildLayout(): void {
     onDuplicateToSibling: (tabId) => duplicateTabToSibling(tabId),
     onReorderTab: (panelId, from, to) => reorderTabInPanel(panelId, from, to),
     // 拖拽标签落在 tab 区：调整顺序（同面板）或移动到目标面板该位置（B27）
-    onMoveTabToStrip: (panelId, tabId, beforeTabId) =>
-      moveTabToStrip(panelId, tabId, beforeTabId),
+    onMoveTabToStrip: (panelId, tabId, beforeTabId) => moveTabToStrip(panelId, tabId, beforeTabId),
     onDropTabToPanel: (tabId, targetPanelId, zone, overTabId, copy) =>
       onDropTabToPanel(tabId, targetPanelId, zone, overTabId, copy),
     onNewTab: (panelId) => {
@@ -632,7 +665,12 @@ function makeInstance(doc: Doc, panelId: number, text: string): Tab {
     doc.name === "未命名" && !text
       ? { label: "Plain Text", extension: null }
       : detectLanguage(doc.name === "未命名" ? null : doc.name, firstLine);
-  const { state, comps } = makeTabState(text, lang.extension, { dark: isDark, wrap: isWrap }, handleUpdate);
+  const { state, comps } = makeTabState(
+    text,
+    lang.extension,
+    { dark: isDark, wrap: isWrap },
+    handleUpdate,
+  );
   return {
     tabId: nextInstId++,
     docId: doc.tabId,
@@ -661,7 +699,16 @@ async function newUntitled(): Promise<void> {
     layout = leaf(0);
     nextPanelId = 1;
     activePanelId = 0;
-    panels.set(0, { panelId: 0, tabs: [], activeTabId: -1, view: null, viewTabId: null, preview: null, previewTimer: null, bodyEl: null });
+    panels.set(0, {
+      panelId: 0,
+      tabs: [],
+      activeTabId: -1,
+      view: null,
+      viewTabId: null,
+      preview: null,
+      previewTimer: null,
+      bodyEl: null,
+    });
     panel = panels.get(0);
   }
   try {
@@ -817,7 +864,16 @@ function splitActivePanel(panelId: number, dir: "h" | "v"): void {
   layout = treeSplitPanel(layout, panelId, dir, newId);
   const currentTabId = panel.activeTabId;
   const tab = tabs.get(currentTabId);
-  panels.set(newId, { panelId: newId, tabs: [], activeTabId: -1, view: null, viewTabId: null, preview: null, previewTimer: null, bodyEl: null });
+  panels.set(newId, {
+    panelId: newId,
+    tabs: [],
+    activeTabId: -1,
+    view: null,
+    viewTabId: null,
+    preview: null,
+    previewTimer: null,
+    bodyEl: null,
+  });
   if (tab) {
     tab.panelId = newId;
     const p = panels.get(newId)!;
@@ -839,7 +895,15 @@ function splitActivePanel(panelId: number, dir: "h" | "v"): void {
       panel.activeTabId = -1;
       void (async () => {
         const info = await ipcNewTab(settings?.default_encoding ?? "UTF-8");
-        const doc = makeDoc(info.tabId, "", info.name, null, settings?.default_encoding ?? info.encoding, settings?.default_eol ?? info.eol, info.readonly);
+        const doc = makeDoc(
+          info.tabId,
+          "",
+          info.name,
+          null,
+          settings?.default_encoding ?? info.encoding,
+          settings?.default_eol ?? info.eol,
+          info.readonly,
+        );
         registerDoc(doc);
         const t = makeInstance(doc, panel.panelId, "");
         attachTabToPanel(t, panel);
@@ -1144,9 +1208,10 @@ async function doOpen(
       }
     }
 
-    const panel = (targetPanelId !== undefined ? getPanel(targetPanelId) : undefined)
-      ?? activePanel()
-      ?? [...panels.values()][0];
+    const panel =
+      (targetPanelId !== undefined ? getPanel(targetPanelId) : undefined) ??
+      activePanel() ??
+      [...panels.values()][0];
     if (!panel) return null;
     const doc = makeDoc(
       file.tabId,
@@ -1197,7 +1262,8 @@ function showFileDropPreview(x: number, y: number): void {
   const el = panelAt(x, y);
   if (!el) return;
   const preview = el.querySelector(".split-preview");
-  if (preview) preview.className = `split-preview show zone-${zoneOf(el.getBoundingClientRect(), x, y)}`;
+  if (preview)
+    preview.className = `split-preview show zone-${zoneOf(el.getBoundingClientRect(), x, y)}`;
 }
 
 /** 指针位置 → 落点面板与分区（不在任何面板内为 null，回落到活动面板打开）。 */
@@ -1355,7 +1421,9 @@ async function doSaveAll(): Promise<void> {
   const parts: string[] = [];
   if (ok > 0) parts.push(`已保存 ${ok} 个文档`);
   if (untitled.length > 0) {
-    parts.push(`${untitled.length} 个未命名文档需手动保存（${untitled.map((d) => d.name).join("、")}）`);
+    parts.push(
+      `${untitled.length} 个未命名文档需手动保存（${untitled.map((d) => d.name).join("、")}）`,
+    );
   }
   if (failed.length > 0) parts.push(`${failed.length} 个保存失败（${failed.join("、")}）`);
   showMessage(parts.length > 0 ? parts.join("；") : "没有需要保存的修改");
@@ -1501,10 +1569,7 @@ function snapshotSession(): Parameters<typeof saveSession>[0] {
 }
 
 /** 布局树叶子 panelId → 会话面板索引（JSON 深拷贝）。 */
-function convertLayoutForSession(
-  node: LayoutNode,
-  panelIndex: Map<number, number>,
-): unknown {
+function convertLayoutForSession(node: LayoutNode, panelIndex: Map<number, number>): unknown {
   if (node.kind === "leaf") {
     return { kind: "leaf", panelId: panelIndex.get(node.panelId) ?? 0 };
   }
@@ -1527,7 +1592,7 @@ async function persistSession(): Promise<void> {
 
 /** 启动时恢复上次会话：按保存的布局树重建面板，逐个打开文件并恢复光标。失败返回 false（退回空白标签）。 */
 async function restoreSession(): Promise<boolean> {
-  let sess: SessionState | null = null;
+  let sess: SessionState | null;
   try {
     sess = await loadSession();
   } catch {
@@ -1551,16 +1616,30 @@ async function restoreSession(): Promise<boolean> {
     let realId = idMap.get(idx);
     if (realId === undefined) {
       realId = nextPanelId++;
-      panels.set(realId, { panelId: realId, tabs: [], activeTabId: -1, view: null, viewTabId: null, preview: null, previewTimer: null, bodyEl: null });
+      panels.set(realId, {
+        panelId: realId,
+        tabs: [],
+        activeTabId: -1,
+        view: null,
+        viewTabId: null,
+        preview: null,
+        previewTimer: null,
+        bodyEl: null,
+      });
       idMap.set(idx, realId);
     }
     return leaf(realId);
   }
 
   function buildTree(node: unknown): LayoutNode {
-    const n = node as
-      | { kind?: string; dir?: string; ratio?: number; a?: unknown; b?: unknown; panelId?: number }
-      | null;
+    const n = node as {
+      kind?: string;
+      dir?: string;
+      ratio?: number;
+      a?: unknown;
+      b?: unknown;
+      panelId?: number;
+    } | null;
     if (n && n.kind === "split") {
       return {
         kind: "split",
@@ -1627,8 +1706,7 @@ async function restoreSession(): Promise<boolean> {
         // 恢复光标（实例独立）
         const lineNo = Math.min(Math.max(1, st.cursorLine || 1), inst.state.doc.lines);
         const line = inst.state.doc.line(lineNo);
-        const pos =
-          line.from + Math.min(Math.max(0, (st.cursorCol || 1) - 1), line.length);
+        const pos = line.from + Math.min(Math.max(0, (st.cursorCol || 1) - 1), line.length);
         inst.state = inst.state.update({ selection: { anchor: pos } }).state;
         opened++;
       } catch {
@@ -1699,11 +1777,9 @@ function handleFileChanged(path: string): void {
     for (const inst of instancesOfDoc(doc.tabId)) {
       const panel = panels.get(inst.panelId);
       if (panel?.view && panel.viewTabId === inst.tabId) {
-        panel.view.view
-          .dispatch({
-            effects: [],
-          })
-          ; // 触发标签栏刷新
+        panel.view.view.dispatch({
+          effects: [],
+        }); // 触发标签栏刷新
       }
       renderPanelTabs(inst.panelId);
     }
@@ -1788,7 +1864,12 @@ function selectedTextInActiveView(): string {
 }
 
 function findOptionsOf(q: FindBarQuery) {
-  return { search: q.text, caseSensitive: q.caseSensitive, wholeWord: q.wholeWord, regexp: q.regexp };
+  return {
+    search: q.text,
+    caseSensitive: q.caseSensitive,
+    wholeWord: q.wholeWord,
+    regexp: q.regexp,
+  };
 }
 
 /** 把查询写到全部可见视图（高亮同步；离屏实例不参与高亮）。 */
@@ -1809,7 +1890,12 @@ function applyPreviewFindEverywhere(q: FindBarQuery): void {
   }
 }
 
-type PreviewFindSpec = { text: string; caseSensitive: boolean; wholeWord: boolean; regexp: boolean } | null;
+type PreviewFindSpec = {
+  text: string;
+  caseSensitive: boolean;
+  wholeWord: boolean;
+  regexp: boolean;
+} | null;
 
 function findSpecOf(q: FindBarQuery): PreviewFindSpec {
   return q.scope === "doc" && q.text
@@ -2641,10 +2727,22 @@ function bindEvents(): void {
   window.addEventListener("keydown", (e) => {
     const combo = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
-    if (e.altKey && !combo && key === "f") { e.preventDefault(); return openMenuByIndex(0); }
-    if (e.altKey && !combo && key === "e") { e.preventDefault(); return openMenuByIndex(1); }
-    if (e.altKey && !combo && key === "v") { e.preventDefault(); return openMenuByIndex(2); }
-    if (e.altKey && !combo && key === "h") { e.preventDefault(); return openMenuByIndex(3); }
+    if (e.altKey && !combo && key === "f") {
+      e.preventDefault();
+      return openMenuByIndex(0);
+    }
+    if (e.altKey && !combo && key === "e") {
+      e.preventDefault();
+      return openMenuByIndex(1);
+    }
+    if (e.altKey && !combo && key === "v") {
+      e.preventDefault();
+      return openMenuByIndex(2);
+    }
+    if (e.altKey && !combo && key === "h") {
+      e.preventDefault();
+      return openMenuByIndex(3);
+    }
     if (e.altKey && e.shiftKey && key === "arrowright") {
       e.preventDefault();
       if (activePanel()) splitActivePanel(activePanelId, "h");
@@ -2708,7 +2806,9 @@ function insertTimeDate(): void {
   });
 }
 
-/** 剪切/复制：聚焦编辑器内容区后走浏览器原生命令（WebView2 支持且写入系统剪贴板）。 */function clipboardOp(op: "cut" | "copy"): void {
+/** 剪切/复制：聚焦编辑器内容区后走浏览器原生命令（WebView2 支持且写入系统剪贴板）。 */ function clipboardOp(
+  op: "cut" | "copy",
+): void {
   const view = activePanel()?.view?.view;
   if (!view) return;
   view.focus();
@@ -2957,12 +3057,15 @@ function setupMenuBar(): void {
     onSetTocWidth: (w) => void setTocWidthValue(w),
     onKeymap: () => showKeymapDialog(),
     onAbout: () => {
-      void ask("LitePad v0.1.0\n轻量级 Markdown / 文本编辑器（Tauri 2 + CodeMirror 6）\n\n仅 Windows 平台。", {
-        title: "关于 LitePad",
-        kind: "info",
-        okLabel: "确定",
-        cancelLabel: "关闭",
-      });
+      void ask(
+        "LitePad v0.1.0\n轻量级 Markdown / 文本编辑器（Tauri 2 + CodeMirror 6）\n\n仅 Windows 平台。",
+        {
+          title: "关于 LitePad",
+          kind: "info",
+          okLabel: "确定",
+          cancelLabel: "关闭",
+        },
+      );
     },
   });
 }
@@ -2983,7 +3086,12 @@ function showFatalError(err: unknown): void {
   const msg = err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err);
   console.error("[LitePad] 启动错误：", err);
   try {
-    (window as any).__TAURI_INTERNALS__?.invoke("frontend_ready", { detail: "fatal: " + msg }).catch(() => {});
+    const internals = (
+      window as unknown as {
+        __TAURI_INTERNALS__?: { invoke(cmd: string, args?: unknown): Promise<unknown> };
+      }
+    ).__TAURI_INTERNALS__;
+    internals?.invoke("frontend_ready", { detail: "fatal: " + msg }).catch(() => {});
   } catch {
     /* ignore */
   }
@@ -3102,19 +3210,23 @@ async function bootstrap(): Promise<void> {
     .catch(() => {});
 
   // 尝试恢复上次会话；失败则退回空白未命名标签
-  let restored = false;
-  try {
-    restored = await restoreSession();
-  } catch {
-    restored = false;
-  }
+  const restored = await restoreSession().catch(() => false);
   if (!restored) {
     panels.clear();
     tabs = new Map();
     docs = new Map();
     nextPanelId = 1;
     nextInstId = 1;
-    panels.set(0, { panelId: 0, tabs: [], activeTabId: -1, view: null, viewTabId: null, preview: null, previewTimer: null, bodyEl: null });
+    panels.set(0, {
+      panelId: 0,
+      tabs: [],
+      activeTabId: -1,
+      view: null,
+      viewTabId: null,
+      preview: null,
+      previewTimer: null,
+      bodyEl: null,
+    });
     const defEncoding = settings?.default_encoding ?? "UTF-8";
     const defEol = settings?.default_eol ?? "CRLF";
     try {
@@ -3129,7 +3241,10 @@ async function bootstrap(): Promise<void> {
       return;
     }
   } else {
-    logEvent("session", `restored ${docs.size} docs / ${tabs.size} instances / ${panels.size} panels`);
+    logEvent(
+      "session",
+      `restored ${docs.size} docs / ${tabs.size} instances / ${panels.size} panels`,
+    );
   }
 
   try {

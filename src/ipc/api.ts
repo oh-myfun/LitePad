@@ -192,11 +192,7 @@ export interface PastedImage {
   rel: string;
 }
 
-export function savePasteImage(
-  tabId: number,
-  dataB64: string,
-  ext: string,
-): Promise<PastedImage> {
+export function savePasteImage(tabId: number, dataB64: string, ext: string): Promise<PastedImage> {
   return invoke<PastedImage>("save_paste_image", {
     tabId,
     dataB64,

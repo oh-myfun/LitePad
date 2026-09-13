@@ -269,9 +269,7 @@ function buildPanel(
   cb: SplitviewCallbacks,
   panelData: Map<number, PanelRenderData>,
 ): HTMLElement {
-  const data =
-    panelData.get(panelId) ??
-    ({ panelId, active: false, tabs: [] } as PanelRenderData);
+  const data = panelData.get(panelId) ?? ({ panelId, active: false, tabs: [] } as PanelRenderData);
 
   const panel = document.createElement("div");
   panel.className = "layout-panel" + (data.active ? " layout-panel-active" : "");
@@ -303,9 +301,10 @@ function buildPanel(
   closeP.textContent = "⨯";
   // VS Code 式语义：⨯ 仅移除该分屏（标签并入相邻面板），不关文档；唯一面板时禁用
   closeP.disabled = data.canClose === false;
-  closeP.title = data.canClose === false
-    ? "唯一面板不可移除（退出请用窗口关闭或菜单「退出」）"
-    : "移除该分屏（标签并入相邻面板）";
+  closeP.title =
+    data.canClose === false
+      ? "唯一面板不可移除（退出请用窗口关闭或菜单「退出」）"
+      : "移除该分屏（标签并入相邻面板）";
   closeP.addEventListener("click", (e) => {
     e.stopPropagation();
     cb.onClosePanel(panelId);

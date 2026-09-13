@@ -26,7 +26,8 @@ beforeAll(() => {
     dispatchEvent: () => false,
   });
   // @ts-expect-error jsdom 兜底
-  window.requestAnimationFrame = (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0) as unknown as number;
+  window.requestAnimationFrame = (cb: FrameRequestCallback) =>
+    setTimeout(() => cb(0), 0) as unknown as number;
   // @ts-expect-error jsdom 兜底
   window.cancelAnimationFrame = (id: number) => clearTimeout(id);
 });
@@ -66,11 +67,15 @@ vi.mock("../src/ipc/api", () => ({
       panels: [
         {
           active: 0,
-          tabs: [{ path: "a.md", encoding: "UTF-8", viewMode: "source", cursorLine: 1, cursorCol: 1 }],
+          tabs: [
+            { path: "a.md", encoding: "UTF-8", viewMode: "source", cursorLine: 1, cursorCol: 1 },
+          ],
         },
         {
           active: 0,
-          tabs: [{ path: "b.txt", encoding: "UTF-8", viewMode: "source", cursorLine: 1, cursorCol: 1 }],
+          tabs: [
+            { path: "b.txt", encoding: "UTF-8", viewMode: "source", cursorLine: 1, cursorCol: 1 },
+          ],
         },
       ],
     }),
@@ -86,7 +91,8 @@ vi.mock("../src/ipc/api", () => ({
       preview_line_height: 1.7,
     }),
   logEvent: () => {},
-  newTab: () => Promise.resolve({ tabId: 1, name: "未命名", readonly: false, encoding: "UTF-8", eol: "CRLF" }),
+  newTab: () =>
+    Promise.resolve({ tabId: 1, name: "未命名", readonly: false, encoding: "UTF-8", eol: "CRLF" }),
   openFile: (p: string) =>
     Promise.resolve({
       tabId: p.includes("a.md") ? 101 : 102,
@@ -99,7 +105,16 @@ vi.mock("../src/ipc/api", () => ({
       mixedEol: false,
     }),
   reloadFile: () =>
-    Promise.resolve({ tabId: 1, text: "", name: "x", path: "x", encoding: "UTF-8", eol: "LF", readonly: false, mixedEol: false }),
+    Promise.resolve({
+      tabId: 1,
+      text: "",
+      name: "x",
+      path: "x",
+      encoding: "UTF-8",
+      eol: "LF",
+      readonly: false,
+      mixedEol: false,
+    }),
   saveFile: () => Promise.resolve({ lossy: [], path: "" }),
   savePasteImage: () => Promise.resolve(""),
   saveSession: () => Promise.resolve(),
@@ -112,7 +127,13 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** 面板激活由 .layout-panel 的 mousedown 触发（splitview 指针编排）。 */
 function activatePanel(panel: HTMLElement): void {
   panel.dispatchEvent(
-    new MouseEvent("mousedown", { bubbles: true, cancelable: true, clientX: 5, clientY: 5, button: 0 }),
+    new MouseEvent("mousedown", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 5,
+      clientY: 5,
+      button: 0,
+    }),
   );
 }
 
@@ -169,11 +190,16 @@ describe("大纲必须跟随活动面板的当前文档", () => {
     expect(tocPanelEl.hidden, "大纲抽屉应已打开").toBe(false);
     expect(tocItems().length, "初始应显示 md 大纲").toBe(2);
 
-    const content = (i: number) =>
-      panels[i].querySelector(".cm-content") as HTMLElement;
+    const content = (i: number) => panels[i].querySelector(".cm-content") as HTMLElement;
     const click = (el: HTMLElement) =>
       el.dispatchEvent(
-        new MouseEvent("mousedown", { bubbles: true, cancelable: true, clientX: 5, clientY: 5, button: 0 }),
+        new MouseEvent("mousedown", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 5,
+          clientY: 5,
+          button: 0,
+        }),
       );
 
     click(content(1));

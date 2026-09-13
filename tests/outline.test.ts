@@ -7,13 +7,10 @@ const lines = (r: { text: string; level: number; line: number }[]) =>
 
 describe("多格式大纲提取（B33）", () => {
   it("TOML：段名按点分深度分层，忽略注释", () => {
-    const r = extractOutline("app.toml", [
-      "# 注释 [fake]",
-      'title = "x"',
-      "[server]",
-      "[server.tls]",
-      '[[products]]',
-    ].join("\n"));
+    const r = extractOutline(
+      "app.toml",
+      ["# 注释 [fake]", 'title = "x"', "[server]", "[server.tls]", "[[products]]"].join("\n"),
+    );
     expect(lines(r)).toEqual([
       { t: "server", l: 1, n: 3 },
       { t: "server.tls", l: 2, n: 4 },
@@ -22,12 +19,10 @@ describe("多格式大纲提取（B33）", () => {
   });
 
   it("INI：段一级，跳过注释行", () => {
-    const r = extractOutline("config.ini", [
-      "; 注释 [no]",
-      "[General]",
-      "key=1",
-      "  [ Display ]  ",
-    ].join("\n"));
+    const r = extractOutline(
+      "config.ini",
+      ["; 注释 [no]", "[General]", "key=1", "  [ Display ]  "].join("\n"),
+    );
     expect(lines(r)).toEqual([
       { t: "General", l: 1, n: 2 },
       { t: "Display", l: 1, n: 4 },
@@ -35,16 +30,19 @@ describe("多格式大纲提取（B33）", () => {
   });
 
   it("YAML：缩进映射键，跳过列表项/注释/分隔符", () => {
-    const r = extractOutline("a.yaml", [
-      "---",
-      "top:",
-      "  nested:",
-      "    deeper: 1",
-      "  list:",
-      "    - item: 2",
-      "# comment: x",
-      "scalar: 3",
-    ].join("\n"));
+    const r = extractOutline(
+      "a.yaml",
+      [
+        "---",
+        "top:",
+        "  nested:",
+        "    deeper: 1",
+        "  list:",
+        "    - item: 2",
+        "# comment: x",
+        "scalar: 3",
+      ].join("\n"),
+    );
     expect(lines(r)).toEqual([
       { t: "top", l: 1, n: 2 },
       { t: "nested", l: 2, n: 3 },
@@ -55,16 +53,19 @@ describe("多格式大纲提取（B33）", () => {
   });
 
   it("JSON：逐行键扫描，深度随花括号/方括号 nesting，忽略注释", () => {
-    const r = extractOutline("pkg.json", [
-      "{",
-      '  "name": "x", // 注释 "fake": 1',
-      '  "scripts": {',
-      '    "build": "tsc",',
-      '    "arr": [1, 2],',
-      "  },",
-      '  "version": "1.0"',
-      "}",
-    ].join("\n"));
+    const r = extractOutline(
+      "pkg.json",
+      [
+        "{",
+        '  "name": "x", // 注释 "fake": 1',
+        '  "scripts": {',
+        '    "build": "tsc",',
+        '    "arr": [1, 2],',
+        "  },",
+        '  "version": "1.0"',
+        "}",
+      ].join("\n"),
+    );
     expect(lines(r)).toEqual([
       { t: "name", l: 1, n: 2 },
       { t: "scripts", l: 1, n: 3 },
@@ -75,18 +76,21 @@ describe("多格式大纲提取（B33）", () => {
   });
 
   it("Python：class/def 按缩进分层，支持 async", () => {
-    const r = extractOutline("m.py", [
-      "class A:",
-      "    def method(self):",
-      "        pass",
-      "",
-      "    async def amethod(self):",
-      "        pass",
-      "",
-      "def top():",
-      "    pass",
-      "# def fake():",
-    ].join("\n"));
+    const r = extractOutline(
+      "m.py",
+      [
+        "class A:",
+        "    def method(self):",
+        "        pass",
+        "",
+        "    async def amethod(self):",
+        "        pass",
+        "",
+        "def top():",
+        "    pass",
+        "# def fake():",
+      ].join("\n"),
+    );
     expect(lines(r)).toEqual([
       { t: "class A", l: 1, n: 1 },
       { t: "def method()", l: 2, n: 2 },

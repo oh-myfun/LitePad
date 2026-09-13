@@ -1,10 +1,5 @@
 import { SearchQuery } from "@codemirror/search";
-import {
-  EditorState,
-  StateEffect,
-  StateField,
-  type Extension,
-} from "@codemirror/state";
+import { EditorState, StateEffect, StateField, type Extension } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView } from "@codemirror/view";
 
 /**
@@ -109,9 +104,7 @@ function buildDecorations(state: EditorState, f: FindState): DecorationSet {
   const matches = findMatches(state, f.query);
   if (matches.length === 0) return Decoration.none;
   return Decoration.set(
-    matches.map((m) =>
-      (m.from === f.activeFrom ? activeMark : matchMark).range(m.from, m.to),
-    ),
+    matches.map((m) => (m.from === f.activeFrom ? activeMark : matchMark).range(m.from, m.to)),
     true,
   );
 }

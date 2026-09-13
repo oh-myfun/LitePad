@@ -74,8 +74,10 @@ interface Entry {
   parser?: Extension | null;
 }
 
-const stream = (p: Parameters<typeof StreamLanguage.define>[0]): Extension =>
-  [StreamLanguage.define(p), indentFoldService];
+const stream = (p: Parameters<typeof StreamLanguage.define>[0]): Extension => [
+  StreamLanguage.define(p),
+  indentFoldService,
+];
 
 /**
  * 缩进折叠服务（流式语言通用折叠）。
@@ -102,7 +104,7 @@ const indentFoldService = foldService.of((state, lineStart) => {
   const base = lineIndent(line.text);
   let end = line.to;
   let found = false;
-  for (let pos = line.to; pos < state.doc.length; ) {
+  for (let pos = line.to; pos < state.doc.length;) {
     const next = state.doc.lineAt(pos + 1);
     if (!next.text.trim()) {
       pos = next.to; // 跳过空行继续找（折叠范围不含尾部空行）
@@ -161,7 +163,12 @@ const REGISTRY: Entry[] = [
     parser: stream(powerShell),
   },
   { label: "SQL", exts: ["sql"], parser: stream(standardSQL) },
-  { label: "XML", exts: ["xml", "svg", "xsl", "xslt", "plist"], magic: /<\?xml/, parser: stream(xml) },
+  {
+    label: "XML",
+    exts: ["xml", "svg", "xsl", "xslt", "plist"],
+    magic: /<\?xml/,
+    parser: stream(xml),
+  },
   {
     label: "HTML",
     exts: ["html", "htm", "xhtml"],
@@ -173,7 +180,11 @@ const REGISTRY: Entry[] = [
   { label: "LESS", exts: ["less"], parser: stream(less) },
   { label: "YAML", exts: ["yml", "yaml"], parser: stream(yaml) },
   { label: "TOML", exts: ["toml"], parser: stream(toml) },
-  { label: "INI", exts: ["ini", "cfg", "conf", "env", "gitconfig", "editorconfig"], parser: stream(properties) },
+  {
+    label: "INI",
+    exts: ["ini", "cfg", "conf", "env", "gitconfig", "editorconfig"],
+    parser: stream(properties),
+  },
   { label: "Properties", exts: ["properties"], parser: stream(properties) },
   { label: "Dockerfile", names: ["dockerfile"], exts: ["dockerfile"], parser: stream(dockerFile) },
   { label: "CMake", names: ["cmakelists.txt"], exts: ["cmake"], parser: stream(cmake) },
@@ -185,7 +196,12 @@ const REGISTRY: Entry[] = [
   { label: "Fortran", exts: ["f", "for", "f90", "f95", "f03", "f08"], parser: stream(fortran) },
   { label: "Julia", exts: ["jl"], shebang: /julia/, parser: stream(julia) },
   { label: "Clojure", exts: ["clj", "cljs", "cljc", "edn"], parser: stream(clojure) },
-  { label: "Groovy", exts: ["groovy", "gradle", "jenkinsfile"], names: ["jenkinsfile"], parser: stream(groovy) },
+  {
+    label: "Groovy",
+    exts: ["groovy", "gradle", "jenkinsfile"],
+    names: ["jenkinsfile"],
+    parser: stream(groovy),
+  },
   { label: "Erlang", exts: ["erl", "hrl"], parser: stream(erlang) },
   { label: "Tcl", exts: ["tcl"], parser: stream(tcl) },
   { label: "VB.NET", exts: ["vb"], parser: stream(vb) },

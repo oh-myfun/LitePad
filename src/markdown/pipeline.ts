@@ -38,7 +38,18 @@ function slugify(text: string): string {
   );
 }
 
-function createMd(): ReturnType<typeof MarkdownIt> {
+/** markdown-it 实例类型（export = 风格的 @types 包不支持命名空间引用，借实例类型取 Token）。 */
+type MdInstance = ReturnType<typeof MarkdownIt>;
+type MdToken = ReturnType<MdInstance["parse"]>[number];
+
+/** inline 规则实际用到的最小 state 结构（StateInline 结构兼容此接口）。 */
+interface InlineState {
+  src: string;
+  pos: number;
+  push(type: string, tag: string, nesting: number): { content: string };
+}
+
+function createMd(): MdInstance {
   const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
   md.use(footnote);
 
@@ -64,7 +75,7 @@ function createMd(): ReturnType<typeof MarkdownIt> {
   });
 
   // ---------- 数学占位：$...$ / $$...$$ → span（增强阶段用 KaTeX 替换）----------
-  function mathPlaceholder(state: any, silent: boolean): boolean {
+  function mathPlaceholder(state: InlineState, silent: boolean): boolean {
     const src = state.src;
     const pos = state.pos;
     if (src[pos] !== "$") return false;
@@ -127,8 +138,8 @@ export function renderBlocks(src: string): MdBlock[] {
   const env = {};
   const tokens = md.parse(src, env);
 
-  const groups: { map: [number, number]; tokens: any[] }[] = [];
-  let current: { map: [number, number]; tokens: any[] } | null = null;
+  const groups: { map: [number, number]; tokens: MdToken[] }[] = [];
+  let current: { map: [number, number]; tokens: MdToken[] } | null = null;
   for (const t of tokens) {
     if (t.level === 0) {
       if (t.hidden && current && t.type !== "heading_open") {

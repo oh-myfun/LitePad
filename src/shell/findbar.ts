@@ -149,7 +149,15 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   const searchAll = btn("find-btn find-primary", "查找全部", "在所有打开的文档 / 文件夹中查找");
   const rowScope = document.createElement("div");
   rowScope.className = "find-row find-row-scope";
-  rowScope.append(scopeSel, folderInput, pick, caseChk.label, wordChk.label, reChk.label, searchAll);
+  rowScope.append(
+    scopeSel,
+    folderInput,
+    pick,
+    caseChk.label,
+    wordChk.label,
+    reChk.label,
+    searchAll,
+  );
 
   // ---- 结果 / 状态 ----
   const results = document.createElement("div");
@@ -183,9 +191,8 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     replaceInput.disabled = !canReplace;
     doReplace.disabled = !canReplace;
     doAll.disabled = !canReplace;
-    doAll.title = scopeSel.value === "docs"
-      ? "在所有打开的文档中替换全部匹配"
-      : "替换当前文档中的全部匹配";
+    doAll.title =
+      scopeSel.value === "docs" ? "在所有打开的文档中替换全部匹配" : "替换当前文档中的全部匹配";
     // 切到跨文件范围时清掉“第 n/m 处”这类单文档计数
     if (scopeSel.value !== "doc") count.textContent = "";
     else cb.onQueryChange(query());
@@ -305,10 +312,7 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   }
   function savePos(): void {
     try {
-      localStorage.setItem(
-        POS_KEY,
-        JSON.stringify({ left: dom.offsetLeft, top: dom.offsetTop }),
-      );
+      localStorage.setItem(POS_KEY, JSON.stringify({ left: dom.offsetLeft, top: dom.offsetTop }));
     } catch {
       // 忽略
     }

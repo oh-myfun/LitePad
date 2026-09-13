@@ -99,20 +99,11 @@ impl Default for TabSession {
 }
 
 /// 会话面板：标签有序列表 + 活动索引（索引指向 tabs）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PanelSession {
     pub tabs: Vec<TabSession>,
     pub active: usize,
-}
-
-impl Default for PanelSession {
-    fn default() -> Self {
-        PanelSession {
-            tabs: Vec::new(),
-            active: 0,
-        }
-    }
 }
 
 /// 完整会话：面板列表 + 前端布局树 JSON（panelId 用 panels 的索引；Rust 纯透传）。

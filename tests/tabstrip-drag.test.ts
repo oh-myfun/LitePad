@@ -8,7 +8,10 @@ import { readFileSync } from "node:fs";
 import { stripInsertInfo } from "../src/shell/splitview";
 
 // 几何桩：jsdom 无布局，按元素逐个登记矩形
-const rects = new WeakMap<Element, { left: number; top: number; right: number; bottom: number; width: number; height: number }>();
+const rects = new WeakMap<
+  Element,
+  { left: number; top: number; right: number; bottom: number; width: number; height: number }
+>();
 let restore: (() => void) | null = null;
 
 beforeAll(() => {
@@ -32,14 +35,25 @@ function el(cls: string, r: { left: number; width: number }, tabId?: number): HT
   if (tabId !== undefined) e.dataset.tabId = String(tabId);
   const top = 0;
   const height = 26;
-  rects.set(e, { left: r.left, top, right: r.left + r.width, bottom: top + height, width: r.width, height });
+  rects.set(e, {
+    left: r.left,
+    top,
+    right: r.left + r.width,
+    bottom: top + height,
+    width: r.width,
+    height,
+  });
   return e;
 }
 
 /** strip [0..250]，三个 tab：[0..80][82..162][164..244] */
 function stripWithTabs(): HTMLElement {
   const strip = el("panel-tabstrip", { left: 0, width: 250 });
-  strip.append(el("tab", { left: 0, width: 80 }, 11), el("tab", { left: 82, width: 80 }, 12), el("tab", { left: 164, width: 80 }, 13));
+  strip.append(
+    el("tab", { left: 0, width: 80 }, 11),
+    el("tab", { left: 82, width: 80 }, 12),
+    el("tab", { left: 164, width: 80 }, 13),
+  );
   return strip;
 }
 
@@ -76,9 +90,7 @@ describe("B26/B27 接线（静态断言）", () => {
     expect(layout, "不得再按「寻址子节点」解释路径").not.toMatch(
       /rest\.length === 0 && \(head === 0 \|\| head === 1\)/,
     );
-    expect(main, "main.ts 不得再有本地旧实现").not.toMatch(
-      /function updateRatio\(/,
-    );
+    expect(main, "main.ts 不得再有本地旧实现").not.toMatch(/function updateRatio\(/);
   });
 
   it("tab 区拖拽 = 排序指示，且先于分屏预览判定", () => {
@@ -92,9 +104,7 @@ describe("B26/B27 接线（静态断言）", () => {
       /onMoveTabToStrip: \(panelId, tabId, beforeTabId\) =>\s*\n?\s*moveTabToStrip\(panelId, tabId, beforeTabId\)/,
     );
     expect(css, "插入指示线样式必须存在").toContain(".tab-insert");
-    expect(css, "strip 必须是定位基准").toMatch(
-      /\.panel-tabstrip\s*\{[^}]*position: relative/,
-    );
+    expect(css, "strip 必须是定位基准").toMatch(/\.panel-tabstrip\s*\{[^}]*position: relative/);
   });
 
   it("两种预览互斥：显示插入线时必须先隐藏分屏预览层", () => {
