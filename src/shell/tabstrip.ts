@@ -1,5 +1,12 @@
-import { showPopupMenu, type MenuItem } from "./menu";
+import {
+  closePopupMenu,
+  popupMenuAnchor,
+  refreshPopupMenu,
+  showPopupMenu,
+  type MenuItem,
+} from "./menu";
 import { beginTabDrag, consumeTabClickSuppressed } from "./splitview";
+import { ICONS } from "./icons";
 
 /**
  * 标签栏渲染：纯函数式全量重绘（标签数量小，简单可靠）。
@@ -42,6 +49,8 @@ export interface TabstripCallbacks {
 /** 每个标签栏的可见窗口状态（重绘之间保留）。 */
 interface StripEntry {
   start: number;
+  /** 上次算出的可见数量（B47：折叠菜单刷新要知道折叠区间） */
+  count: number;
   tabs: TabViewData[];
   cb: TabstripCallbacks;
   /** 上次渲染时的活动标签下标——仅在其变化时才把活动标签拉回可视区 */
@@ -62,6 +71,15 @@ const wheelBound = new WeakSet<HTMLElement>();
 const liveStrips = new Set<HTMLElement>();
 let relayoutQueued = false;
 let resizeBound = false;
+
+/**
+ * 折叠列表菜单是「保持打开」的（可连着点、逐个找文件），所以模块要记住
+ * 它属于哪个标签栏：重绘后原地刷新条目（当前项标记跟着激活状态走），
+ * 标签栏不再折叠时（都放得下了）才关掉。
+ */
+let moreMenuHost: HTMLElement | null = null;
+/** 展开态按钮（菜单关闭时还原其高亮样式）。 */
+let openMoreBtn: HTMLButtonElement | null = null;
 
 /** 合并同一帧内的多次尺寸变化（窗口连续缩放会每帧触发一次）。 */
 function scheduleRelayout(): void {
@@ -102,8 +120,8 @@ function watchStripSize(host: HTMLElement, entry: StripEntry): void {
   }
 }
 
-/** 折叠按钮预留宽度（px） */
-const MORE_WIDTH = 34;
+/** 折叠按钮预留宽度（px；B47 起用矢量图标 + 角标，比原先的 34 更窄） */
+const MORE_WIDTH = 28;
 /** 与 .panel-tabstrip 的 gap 保持一致 */
 const TAB_GAP = 2;
 /** 滚轮步进阈值：鼠标一格约 100，触控板单帧很小（防一次滑动跳太多） */
@@ -116,7 +134,7 @@ export function renderTabstrip(
 ): void {
   let entry = strips.get(host);
   if (!entry) {
-    entry = { start: 0, tabs, cb, lastActive: -1, acc: 0 };
+    entry = { start: 0, count: tabs.length, tabs, cb, lastActive: -1, acc: 0 };
     strips.set(host, entry);
   }
   const activeIdx = tabs.findIndex((t) => t.active);
@@ -141,7 +159,41 @@ export function renderTabstrip(
   watchStripSize(host, entry);
 
   applyOverflow(host, entry, els, activeIdx, activeIdx !== entry.lastActive);
+  // B47：活动标签变了（含从折叠列表里点选）→ 闪一下，一眼定位它出现在哪。
+  // 首次渲染（lastActive=-1）不闪，免得启动就跳一下。
+  if (activeIdx >= 0 && entry.lastActive >= 0 && activeIdx !== entry.lastActive) {
+    flashTab(els[activeIdx]);
+  }
   entry.lastActive = activeIdx;
+  syncMoreMenu(host, entry);
+}
+
+/**
+ * 新激活的标签闪一次高亮。窗口整体滑动时（折叠列表点选、Ctrl+Tab）尤其有用：
+ * 否则标签栏突然换了内容，用户不知道该看哪儿。
+ */
+function flashTab(el: HTMLElement | undefined): void {
+  if (!el || !el.isConnected) return;
+  el.classList.add("tab-flash");
+  const done = (): void => el.classList.remove("tab-flash");
+  el.addEventListener("animationend", done, { once: true });
+  // 动画被系统禁用 / jsdom 无动画时的兜底，避免 class 常驻
+  setTimeout(done, 1200);
+}
+
+/**
+ * 折叠菜单开着时的同步：内容要跟着激活状态刷新（当前项标记跟着走）。
+ * 本栏这次不再折叠（标签都放得下）→ 菜单已无意义，直接关掉。
+ */
+function syncMoreMenu(host: HTMLElement, entry: StripEntry): void {
+  if (moreMenuHost !== host) return;
+  const btn = host.querySelector<HTMLButtonElement>(".tab-more");
+  if (
+    !btn ||
+    !refreshPopupMenu(makeMoreItems(entry.tabs, entry.start, entry.count, entry.cb), btn)
+  ) {
+    closePopupMenu();
+  }
 }
 
 function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
@@ -294,6 +346,7 @@ function applyOverflow(
   // 放得下：不折叠（把窗口复位到 0，避免关掉标签后残留偏移）
   if (avail <= 0 || widthOf(widths, 0, els.length) <= avail) {
     entry.start = 0;
+    entry.count = els.length;
     return;
   }
 
@@ -329,50 +382,84 @@ function applyOverflow(
     }
   }
 
+  entry.count = count;
   for (let i = 0; i < els.length; i++) {
     if (i < entry.start || i >= entry.start + count) els[i].remove();
   }
-  host.appendChild(makeMoreButton(entry.tabs, entry.start, count, entry.cb));
+  host.appendChild(makeMoreButton(host, entry.tabs, entry.start, count, entry.cb));
 }
 
-/** 折叠按钮：点击展开"看不见的标签"列表（左侧溢出在前，右侧溢出在后）。
- *  显示折叠数量徽标；活动标签被折叠时高亮提示（当前编辑的文件不可见）。 */
-function makeMoreButton(
+/** 折叠列表的条目（左侧溢出在前，右侧溢出在后，中间一条分隔线）。 */
+function makeMoreItems(
   tabs: TabViewData[],
   start: number,
   count: number,
   cb: TabstripCallbacks,
-): HTMLElement {
+): MenuItem[] {
   const left = tabs.slice(0, start);
   const right = tabs.slice(start + count);
-  const folded = [...left, ...right];
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "tab-more" + (folded.some((t) => t.active) ? " tab-more-active" : "");
-  const chev = document.createElement("span");
-  chev.className = "tab-more-chev";
-  chev.textContent = "»";
-  const badge = document.createElement("span");
-  badge.className = "tab-more-count";
-  badge.textContent = String(folded.length);
-  btn.append(chev, badge);
-  btn.title = `${folded.length} 个标签已折叠${folded.some((t) => t.active) ? "（含当前活动标签）" : ""}——点击展开列表，滚轮可切换显示区间`;
-
   const items: MenuItem[] = [];
   const itemOf = (t: TabViewData): MenuItem => ({
     label: (t.dirty ? "● " : "") + t.name,
-    checked: t.active,
+    // B47：当前标签用整行观感（与标签栏里的活动标签一致），不打 ✓——
+    // ✓ 是「开关项」的语义，这里只是「你现在在这儿」。
+    active: t.active,
     title: t.path ?? undefined,
     onSelect: () => cb.onActivate(t.tabId),
   });
   for (const t of left) items.push(itemOf(t));
   if (left.length > 0 && right.length > 0) items.push({ separator: true });
   for (const t of right) items.push(itemOf(t));
+  return items;
+}
+
+/** 折叠按钮：矢量三点图标 + 折叠数量角标。点击展开列表，再点一次收起。 */
+function makeMoreButton(
+  host: HTMLElement,
+  tabs: TabViewData[],
+  start: number,
+  count: number,
+  cb: TabstripCallbacks,
+): HTMLButtonElement {
+  const left = tabs.slice(0, start);
+  const right = tabs.slice(start + count);
+  const folded = [...left, ...right];
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "tab-more" + (folded.some((t) => t.active) ? " tab-more-active" : "");
+  // 重绘时若菜单正开着（连点切标签），新按钮要延续展开态
+  if (moreMenuHost === host) btn.classList.add("tab-more-open");
+
+  const icon = document.createElement("span");
+  icon.className = "tab-more-icon";
+  icon.innerHTML = ICONS.more;
+  const badge = document.createElement("span");
+  badge.className = "tab-more-badge";
+  badge.textContent = folded.length > 99 ? "99+" : String(folded.length);
+  btn.append(icon, badge);
+  btn.title = `${folded.length} 个标签已折叠${folded.some((t) => t.active) ? "（含当前活动标签）" : ""}——点击展开列表（可连着点），滚轮可切换显示区间`;
+  btn.setAttribute("aria-label", btn.title);
 
   btn.addEventListener("mousedown", (e) => e.stopPropagation());
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
-    showPopupMenu(btn, items);
+    // 已展开 → 再点收起（菜单是 keepOpen 的，必须能靠按钮关掉）
+    if (popupMenuAnchor() === btn) {
+      closePopupMenu();
+      return;
+    }
+    moreMenuHost = host;
+    openMoreBtn = btn;
+    btn.classList.add("tab-more-open");
+    showPopupMenu(btn, makeMoreItems(tabs, start, count, cb), undefined, {
+      keepOpen: true,
+      anchorToggle: true,
+      onClose: () => {
+        moreMenuHost = null;
+        openMoreBtn?.classList.remove("tab-more-open");
+        openMoreBtn = null;
+      },
+    });
   });
   return btn;
 }

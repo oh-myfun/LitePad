@@ -97,6 +97,13 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   3. **窗口必须铺满预算**：`fitCountFromEnd()`——关标签后 `start` 被夹到末尾时
      `fitCount` 只剩 1 个，会显示成「明明还放得下 2 个却只显示 1 个」。
      只在**没铺满**时左移补满，已铺满不动（免得把用户滚出来的位置拽走）。
+  4. **折叠菜单是常开的（B47）**：`.tab-more` 用 `keepOpen` 打开，可连着点选；
+     重绘后由 `syncMoreMenu()` 调 `refreshPopupMenu()` 原地刷新条目（当前项标记跟着激活走），
+     标签都放得下时自动 `closePopupMenu()`。这要求 `entry.count` 记下可见数量，
+     且 refresh **必须复用首次的 opts**（否则刷新出的条目丢掉 keepOpen，第二次点击就关掉菜单）。
+- **弹层的两种选中态别混用**：`checked`（打 ✓，语义是「开关」）vs `active`（B47 新增，
+  整行走 `.menu-item-current`，语义是「你当前在这儿」）。折叠标签列表属于后者——
+  用户明确要求「不要钩子，要和标签栏里活动标签一个效果」。
 - **图标**：`scripts/gen_icons.py` 纯矢量自绘；四角圆角用「alpha 与垂直镜像取 min」保证上下一致；
   改图标后必须重跑 `tauri build` 才会进 exe（`src-tauri/build.rs` 已 `rerun-if-changed=icons`，
   否则增量构建会**静默**沿用旧图标，B41 踩过）。

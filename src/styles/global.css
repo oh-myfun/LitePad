@@ -309,6 +309,33 @@ button:focus-visible {
   color: var(--fg);
 }
 
+/* B47：活动标签切换后闪一次（从折叠列表点选、Ctrl+Tab 时定位用）。
+   动画结束回到常态，不保留结束态，避免遮住 .tab-active 的配色。 */
+@keyframes tab-flash {
+  0% {
+    background: color-mix(in srgb, var(--accent) 34%, var(--bg));
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  70% {
+    background: color-mix(in srgb, var(--accent) 18%, var(--bg));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  100% {
+    background: var(--bg);
+    box-shadow: inset 0 0 0 1px transparent;
+  }
+}
+
+.tab-flash {
+  animation: tab-flash 720ms ease-out 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-flash {
+    animation: none;
+  }
+}
+
 .tab-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -960,53 +987,85 @@ button:focus-visible {
   z-index: 6;
 }
 
-/* 折叠标签下拉：右侧常驻，靠 margin-left:auto 顶到末尾 */
+/* 折叠标签下拉：右侧常驻，靠 margin-left:auto 顶到末尾。
+   B47：矢量三点图标 + 右上角数字角标（角标不占宽度，按钮更窄、留给标签） */
 .tab-more {
+  position: relative;
   flex: 0 0 auto;
   margin-left: auto;
   align-self: center;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  width: 24px;
   height: 22px;
-  padding: 0 7px;
-  border: 1px solid var(--border);
+  padding: 0;
+  border: 1px solid transparent;
   border-radius: 5px;
-  background: var(--bg);
+  background: transparent;
   color: var(--fg-muted);
-  font-size: 12px;
-  line-height: 1;
   cursor: pointer;
   transition:
     color 0.12s,
     background 0.12s,
     border-color 0.12s;
 }
+
+/* 图标本身不接收指针事件，点击一律落在按钮上 */
+.tab-more-icon {
+  display: inline-flex;
+  pointer-events: none;
+}
+
 .tab-more:hover {
   background: var(--bg-hover);
   color: var(--fg);
-  border-color: var(--accent);
+  border-color: var(--border);
 }
 
-/* 折叠数量徽标 */
-.tab-more-count {
-  font-size: 10px;
-  min-width: 15px;
-  padding: 2px 4px;
-  border-radius: 8px;
+/* 展开态：菜单是常开的（可连着点），按钮要一直显示「已展开」 */
+.tab-more-open,
+.tab-more-open:hover {
   background: var(--bg-hover);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tab-more:active {
+  transform: translateY(0.5px);
+}
+
+/* 折叠数量角标：贴在按钮右上角（不占宽度）。
+   注意标签栏是 overflow:hidden 的，角标只能微超出按钮，不能被裁掉；
+   描边用中性 --border，顶部标签栏与分屏面板两种底色上都协调。 */
+.tab-more-badge {
+  position: absolute;
+  top: -1px;
+  right: -2px;
+  min-width: 14px;
+  height: 13px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--bg-hover);
+  box-shadow: 0 0 0 1px var(--border);
   color: var(--fg-muted);
+  font-size: 9px;
+  line-height: 13px;
   text-align: center;
+  pointer-events: none;
 }
 
 /* 活动标签被折叠：提示当前编辑的文件不可见，展开列表即可跳回 */
 .tab-more-active {
-  border-color: var(--accent);
   color: var(--accent);
 }
-.tab-more-active .tab-more-count {
+.tab-more-active .tab-more-badge {
   background: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
   color: #fff;
+}
+.tab-more-active .tab-more-icon {
+  color: var(--accent);
 }
 
 .panel-ops {
@@ -1275,4 +1334,12 @@ body.tab-drag-active * {
   width: 16px;
   flex: 0 0 16px;
   color: var(--accent);
+}
+
+/* B47「当前项」：与标签栏里活动标签同一套观感（背景/前景 + 左侧色条），
+   不打 ✓——✓ 表示可开关，而这里只是「你现在在这儿」。 */
+.popup-menu button.menu-item-current {
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: inset 2px 0 0 var(--accent);
 }

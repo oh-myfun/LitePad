@@ -12,6 +12,26 @@ export interface MenuItem {
    */
   submenu?: MenuItem[] | (() => MenuItem[]);
   onSelect?: () => void;
+  /**
+   * 「当前项」视觉（B47）：与标签栏里活动标签同一套观感（背景/前景/左侧色条），
+   * **不打 ✓**——✓ 用于「可开关的开关项」，当前项不是开关。
+   */
+  active?: boolean;
+}
+
+export interface PopupMenuOptions {
+  /**
+   * 点选后**不关闭**菜单（B47 折叠标签列表：可连着点，逐个找文件）。
+   * 内容需要跟着变时由调用方 refreshPopupMenu() 原地刷新。
+   */
+  keepOpen?: boolean;
+  /**
+   * 允许锚点元素自己 toggle：点击锚点不再被「点外面就关」的兜底先关掉，
+   * 交给锚点的 click 判断（已展开则收起）。仅折叠按钮这类需要开关的场景启用。
+   */
+  anchorToggle?: boolean;
+  /** 菜单关闭回调（供调用方还原锚点按钮的展开态） */
+  onClose?: () => void;
 }
 
 /**
@@ -25,6 +45,17 @@ let cleanup: (() => void) | null = null;
 
 /** 记下每个子菜单的父项按钮，用于收起时还原箭头高亮。 */
 const parentButton = new WeakMap<HTMLElement, HTMLElement>();
+/** 本次菜单的锚点 / 逻辑坐标（refreshPopupMenu 复用，以及锚点 toggle 判定）。 */
+let currentAnchor: HTMLElement | null = null;
+let currentAt: { x: number; y: number } | undefined;
+let currentOnClose: (() => void) | null = null;
+/** 首次弹窗的选项：refresh 后条目要沿用（否则 keepOpen 会失效） */
+let currentOpts: PopupMenuOptions | null = null;
+
+/** 当前打开菜单的锚点元素（未打开为 null）。供调用方判断是否同一按钮再次点击。 */
+export function popupMenuAnchor(): HTMLElement | null {
+  return cleanup ? currentAnchor : null;
+}
 
 export function closePopupMenu(): void {
   if (cleanup) {
@@ -54,12 +85,17 @@ export function showPopupMenu(
   anchor: HTMLElement | null,
   items: MenuItem[],
   at?: { x: number; y: number },
+  opts?: PopupMenuOptions,
 ): void {
   closePopupMenu();
   chain = [];
   created = [];
+  currentAnchor = anchor;
+  currentAt = at;
+  currentOnClose = opts?.onClose ?? null;
+  currentOpts = opts ?? null;
 
-  const root = buildMenu(items);
+  const root = buildMenu(items, opts);
   created.push(root);
   chain.push(root);
   document.body.appendChild(root);
@@ -67,6 +103,8 @@ export function showPopupMenu(
 
   const onPointerDown = (e: PointerEvent) => {
     const t = e.target as Node;
+    // 锚点 toggle 模式：点在锚点自身上时不兜底关闭，交给锚点的 click 判断
+    if (opts?.anchorToggle && anchor && anchor.contains(t)) return;
     if (!created.some((m) => m.contains(t))) closePopupMenu();
   };
   const onKeyDown = (e: KeyboardEvent) => {
@@ -85,19 +123,58 @@ export function showPopupMenu(
     }
     created = [];
     chain = [];
+    currentAnchor = null;
+    currentAt = undefined;
+    const cb = currentOnClose;
+    currentOnClose = null;
+    currentOpts = null;
     document.removeEventListener("pointerdown", onPointerDown, true);
     document.removeEventListener("keydown", onKeyDown, true);
     window.removeEventListener("resize", onResize);
+    cb?.();
   };
 }
 
-function buildMenu(items: MenuItem[]): HTMLElement {
+/**
+ * 原地刷新已打开的根菜单内容（B47：折叠列表连点时，当前项标记要跟着走）。
+ * 复用首次的锚点/坐标重建条目，不重新挂载节点——避免关再开导致的闪烁。
+ * 传入 anchor 可把菜单重新对齐到新锚点（标签栏重绘后按钮是新建的）。
+ * 没有打开的菜单时返回 false。
+ */
+export function refreshPopupMenu(items: MenuItem[], anchor?: HTMLElement | null): boolean {
+  if (!cleanup || created.length === 0) return false;
+  const root = created[0];
+  if (anchor !== undefined) currentAnchor = anchor;
+  fillMenu(root, items, currentOpts ?? undefined);
+  positionMenu(root, currentAnchor, currentAt);
+  return true;
+}
+
+/** 只创建菜单容器（滚动监听只绑一次，内容可被 fillMenu 反复替换）。 */
+function createMenuEl(): HTMLElement {
   const menu = document.createElement("div");
   menu.className = "popup-menu";
+  // 菜单自身滚动时子菜单会脱离原位，直接收起
+  menu.addEventListener("scroll", () => {
+    const lvl = chain.indexOf(menu);
+    if (lvl >= 0) closeDeeperThan(lvl);
+  });
+  return menu;
+}
+
+function buildMenu(items: MenuItem[], opts?: PopupMenuOptions): HTMLElement {
+  const menu = createMenuEl();
+  fillMenu(menu, items, opts);
+  return menu;
+}
+
+/** 往菜单容器里填条目（可重复调用以原地刷新内容）。 */
+function fillMenu(menu: HTMLElement, items: MenuItem[], opts?: PopupMenuOptions): void {
+  menu.textContent = "";
 
   const openChild = (btn: HTMLElement, sub: MenuItem[]): void => {
     closeDeeperThan(chain.indexOf(menu));
-    const child = buildMenu(sub);
+    const child = buildMenu(sub, opts);
     parentButton.set(child, btn);
     created.push(child);
     chain.push(child);
@@ -117,9 +194,11 @@ function buildMenu(items: MenuItem[]): HTMLElement {
     const btn = document.createElement("button");
     btn.type = "button";
 
+    // 当前项（B47）：不打 ✓，改整行观感（与活动标签一致），见 .menu-item-current
     const check = document.createElement("span");
     check.className = "check";
-    check.textContent = item.checked ? "✓" : "";
+    check.textContent = !item.active && item.checked ? "✓" : "";
+    if (item.active) btn.classList.add("menu-item-current");
 
     const [text, shortcut] = (item.label ?? "").split("\t");
     const textEl = document.createElement("span");
@@ -159,20 +238,17 @@ function buildMenu(items: MenuItem[]): HTMLElement {
         openChild(btn, sub);
         return;
       }
+      // keepOpen：点选后菜单留着（折叠标签列表可连着点），内容由调用方刷新
+      if (opts?.keepOpen) {
+        item.onSelect?.();
+        return;
+      }
       closePopupMenu();
       item.onSelect?.();
     });
 
     menu.appendChild(btn);
   }
-
-  // 菜单自身滚动时子菜单会脱离原位，直接收起
-  menu.addEventListener("scroll", () => {
-    const lvl = chain.indexOf(menu);
-    if (lvl >= 0) closeDeeperThan(lvl);
-  });
-
-  return menu;
 }
 
 function positionMenu(

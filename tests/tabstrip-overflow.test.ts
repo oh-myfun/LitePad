@@ -89,14 +89,14 @@ describe("标签栏溢出折叠", () => {
     expect(host.querySelector(".tab-more"), "不应出现折叠按钮").toBeNull();
   });
 
-  it("放不下时折叠超出的标签，并在右侧给出下拉按钮（箭头 + 数量徽标）", () => {
+  it("放不下时折叠超出的标签，并在右侧给出下拉按钮（矢量图标 + 数量角标）", () => {
     const { host } = mount(6);
-    // 预算 = 250 - 34 = 216 → 只能放 2 个（100 + 2 + 100 = 202）
+    // 预算 = 250 - 28 = 222 → 只能放 2 个（100 + 2 + 100 = 202）
     expect(visibleNames(host)).toEqual(["tab1", "tab2"]);
     const more = host.querySelector<HTMLButtonElement>(".tab-more");
     expect(more, "必须有折叠按钮").toBeTruthy();
-    expect(more!.querySelector(".tab-more-chev")?.textContent).toBe("»");
-    expect(more!.querySelector(".tab-more-count")?.textContent, "折叠数量徽标").toBe("4");
+    expect(more!.querySelector(".tab-more-icon svg"), "B47：折叠按钮用矢量图标").toBeTruthy();
+    expect(more!.querySelector(".tab-more-badge")?.textContent, "折叠数量角标").toBe("4");
     expect(more!.title).toContain("4 个标签已折叠");
   });
 
@@ -161,14 +161,20 @@ describe("标签栏溢出折叠", () => {
       "tab5",
       "tab6",
     ]);
-    expect(
-      menu!.querySelector("button")!.querySelector(".check")?.textContent,
-      "列表里应标出当前活动标签",
-    ).toBe("✓");
     expect(menu!.querySelectorAll(".menu-sep").length, "左右两组之间要有分隔线").toBe(1);
-    // 点列表项即激活对应标签
+
+    // B47：当前项不打 ✓，改用整行观感（menu-item-current）
+    const currentRow = menu!.querySelector<HTMLElement>("button.menu-item-current");
+    expect(currentRow, "活动项必须标为当前项").toBeTruthy();
+    expect(
+      currentRow!.querySelector(".check")?.textContent,
+      "当前项不得再打 ✓（✓ 是开关语义）",
+    ).toBe("");
+
+    // 点列表项即激活对应标签；菜单保持打开，可连着点
     [...menu!.querySelectorAll<HTMLButtonElement>("button")][3].click();
     expect(c.activated).toEqual([6]);
+    expect(document.querySelector(".popup-menu"), "点完菜单要留着，可连续切换").toBeTruthy();
   });
 
   it("滚轮改变可见区间，并吞掉事件（不传给页面）", () => {
@@ -270,6 +276,85 @@ describe("B44 折叠态下必须随尺寸与标签变化自动重算可见区间
     const { host } = mount(6, 5);
     renderTabstrip(host, tabs(7, 6), cb());
     expect(visibleNames(host), "新标签是活动标签，必须显示出来").toContain("tab7");
+  });
+});
+
+// B47 用户反馈：折叠列表点完就关、选中项用 ✓ 不好认、折叠按钮样式偏重。
+// 本批锁定：保持打开可连点、当前项与活动标签同款观感、矢量图标按钮 + 可收起。
+describe("B47 折叠列表交互与折叠按钮", () => {
+  const moreBtn = (host: HTMLElement): HTMLButtonElement =>
+    host.querySelector<HTMLButtonElement>(".tab-more")!;
+  const menuLabels = (): string[] =>
+    [...document.querySelectorAll(".popup-menu .menu-label")].map((e) => e.textContent ?? "");
+  const currentLabel = (): string =>
+    document.querySelector(".popup-menu button.menu-item-current .menu-label")?.textContent ?? "";
+
+  it("再点折叠按钮即可收起（原来是关了又开，看起来像关不掉）", () => {
+    const { host } = mount(6);
+    moreBtn(host).click();
+    expect(document.querySelector(".popup-menu"), "第一次点击应展开").toBeTruthy();
+    expect(moreBtn(host).classList.contains("tab-more-open"), "展开态要显示在按钮上").toBe(true);
+
+    moreBtn(host).click();
+    expect(document.querySelector(".popup-menu"), "再点应收起").toBeNull();
+    expect(moreBtn(host).classList.contains("tab-more-open"), "收起后要还原按钮样式").toBe(false);
+  });
+
+  it("真实指针序列（pointerdown → click）也要能收起：兜底关闭不得抢在锚点前面", () => {
+    const { host } = mount(6);
+    const btn = moreBtn(host);
+    btn.click();
+    expect(document.querySelector(".popup-menu")).toBeTruthy();
+
+    // 浏览器里点按钮会先派发 pointerdown：若被「点外面就关」的兜底先关掉，
+    // 随后的 click 又会重新打开 → 表现为按钮收不起来。
+    btn.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    btn.click();
+    expect(document.querySelector(".popup-menu"), "pointerdown+click 应完成收起").toBeNull();
+  });
+
+  it("活动标签切换后，新活动标签闪一下（折叠列表点选后能定位）", () => {
+    const { host } = mount(6, 0);
+    expect(host.querySelector(".tab-flash"), "首次渲染不该闪").toBeNull();
+
+    renderTabstrip(host, tabs(6, 5), cb());
+    const flashed = host.querySelector<HTMLElement>(".tab-flash");
+    expect(flashed, "新活动标签必须带闪烁提示").toBeTruthy();
+    expect(flashed!.textContent, "闪的应是新激活的标签").toContain("tab6");
+  });
+
+  it("菜单保持打开：点一项后它被拉进可见区，列表原地刷新", () => {
+    const { host, c } = mount(6, 3);
+    wheel(host, 100); // → tab4/tab5
+    wheel(host, 100); // → tab5/tab6，活动 tab4 折到左侧
+    expect(visibleNames(host)).toEqual(["tab5", "tab6"]);
+
+    moreBtn(host).click();
+    expect(menuLabels()).toEqual(["tab1", "tab2", "tab3", "tab4"]);
+    expect(currentLabel(), "活动标签在折叠区里应标为当前项").toBe("tab4");
+
+    // 点 tab2 → 激活；菜单不关，刷新后 tab2 已可见、从列表里移除
+    [...document.querySelectorAll<HTMLButtonElement>(".popup-menu button")][1].click();
+    expect(c.activated).toEqual([2]);
+    renderTabstrip(host, tabs(6, 1), c); // 模拟 main 激活后的重绘
+    expect(document.querySelector(".popup-menu"), "菜单应保持打开，可继续点").toBeTruthy();
+    expect(visibleNames(host), "激活的标签必须回到可见区").toContain("tab2");
+    expect(menuLabels(), "已可见的标签不该还留在折叠列表里").not.toContain("tab2");
+
+    // 刷新出来的条目必须沿用 keepOpen（否则「连点」第二次就把菜单关了）
+    [...document.querySelectorAll<HTMLButtonElement>(".popup-menu button")][0].click();
+    expect(c.activated).toEqual([2, 1]);
+    expect(document.querySelector(".popup-menu"), "刷新后的条目也要保持菜单打开").toBeTruthy();
+  });
+
+  it("不再折叠时（标签都放得下），开着的折叠菜单自动关掉", () => {
+    const { host } = mount(6);
+    moreBtn(host).click();
+    expect(document.querySelector(".popup-menu")).toBeTruthy();
+
+    renderTabstrip(host, tabs(2, 0), cb());
+    expect(host.querySelector(".tab-more"), "放得下就不该有折叠按钮").toBeNull();
+    expect(document.querySelector(".popup-menu"), "没有折叠按钮了，菜单应关闭").toBeNull();
   });
 });
 

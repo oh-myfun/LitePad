@@ -66,6 +66,10 @@
 - **B46** 首选项从二级子菜单升级为**弹窗设置窗口**（`src/shell/preferencesdialog.ts`，即时生效+持久化），
   新增精细选项：编辑器字体（`Settings.font_family`）、编辑器行距（`Settings.editor_line_height`）、
   字号档位；偏好 setter 全部改为绝对值型（setWordWrap/setAutosave 等），toggle 系是其包装。
+- **B47** 折叠标签列表：点选后**菜单保持打开**可连点（menu.ts 的 keepOpen + refreshPopupMenu）、
+  当前项不打 ✓ 改整行观感（`.menu-item-current`）、激活标签闪一下（`.tab-flash`）、
+  折叠按钮改矢量图标 + 角标（`MORE_WIDTH` 34→28）并可再点收起（anchorToggle）。
+  弹层通用能力见 `ARCHITECTURE.md` §7。
 
 ## 下一步
 
