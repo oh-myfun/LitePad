@@ -159,4 +159,9 @@
   strip 判定必须先于 zoneOf。**同面板排序绝不能改 activeTabId**——改了不重挂视图会破坏
   panel.viewTabId 不变量（状态/编辑器脱节，后续激活早退无法恢复）；只 splice + renderPanelTabs。
   可选属性回调要双层可选链 `svCallbacks?.onDropTabToPanel?.(...)`。
+- **B30 查找栏**：`.find-bar` 设了 display:flex，**必须配 `.find-bar[hidden]{display:none}`**
+  否则 hidden 属性失效关不掉；DOM 类名 `.find-count` 与旧 `.search-count` 并存。
+  预览态查找 = PreviewPane.applyFind/stepFind/findState（文本节点包装 mark 复用
+  cm-find-match 样式；拆标记后必须 normalize 防伪 \b 边界；setBlocks 开头清标记防脱节，
+  main 层在 renderMarkdownFor 重放）。
 - 下一步：M4 性能与打磨（大文件分级降级、命令面板、键位预设、正式图标）
