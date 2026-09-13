@@ -1,4 +1,5 @@
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig } from "vitest/config";
+import type { Plugin } from "vite";
 
 const host = process.env.TAURI_DEV_HOST;
 
@@ -33,6 +34,11 @@ export default defineConfig({
   },
   // 让 Vite 能读取 Tauri 注入的平台变量
   envPrefix: ["VITE_", "TAURI_ENV_*"],
+  test: {
+    // jsdom 与 WebView2(Chromium) 的环境差距统一在 tests/setup.ts 打桩；
+    // 缺桩会让 CM6 的 mousedown 链路抛未捕获异常 → vitest 非 0 退出、pre-push 误拦推送。
+    setupFiles: ["tests/setup.ts"],
+  },
   build: {
     // WebView2 基于 Chromium
     target: "chrome105",

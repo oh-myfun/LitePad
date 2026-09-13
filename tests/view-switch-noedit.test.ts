@@ -16,45 +16,8 @@ beforeAll(() => {
     "",
   );
   document.body.innerHTML = body;
-  // @ts-expect-error jsdom 兜底
-  window.matchMedia = (q: string) => ({
-    matches: false,
-    media: q,
-    onchange: null,
-    addEventListener() {},
-    removeEventListener() {},
-    addListener() {},
-    removeListener() {},
-    dispatchEvent: () => false,
-  });
-  // @ts-expect-error jsdom 兜底
-  window.requestAnimationFrame = (cb: FrameRequestCallback) =>
-    setTimeout(() => cb(0), 0) as unknown as number;
-  // @ts-expect-error jsdom 兜底
-  window.cancelAnimationFrame = (id: number) => clearTimeout(id);
-  // jsdom 24 未实现 Range.getClientRects/getBoundingClientRect，
-  // CodeMirror 在 mousedown 处理里会调用 → 抛 “getClientRects is not a function”。
-  if (
-    typeof (window.Range?.prototype as { getClientRects?: unknown }).getClientRects !== "function"
-  ) {
-    const rangeProto = window.Range.prototype as unknown as {
-      getClientRects: () => DOMRectList;
-      getBoundingClientRect: () => DOMRect;
-    };
-    rangeProto.getClientRects = () => [] as unknown as DOMRectList;
-    rangeProto.getBoundingClientRect = () =>
-      ({
-        left: 0,
-        top: 0,
-        right: 0,
-        bottom: 0,
-        width: 0,
-        height: 0,
-        x: 0,
-        y: 0,
-        toJSON() {},
-      }) as DOMRect;
-  }
+  // matchMedia / requestAnimationFrame / Range.getClientRects 等 jsdom 贴片
+  // 已统一到 tests/setup.ts（vite.config.ts 的 test.setupFiles），不再各文件重复。
 });
 
 vi.mock("@tauri-apps/api/window", () => ({

@@ -241,6 +241,13 @@ export function createMenuBar(host: HTMLElement, cb: MenuBarCallbacks): void {
 
   // 菜单被外部点击/Escape 关闭时清除按钮高亮
   const observer = new MutationObserver(() => {
+    // 兜底：jsdom 测试环境拆除 DOM 后，MutationObserver 的微任务仍可能触发，
+    // 此时 document 已不存在（ReferenceError 会让 vitest 以未捕获异常收尾）。
+    // 真实 WebView2 中 document 始终存在，该分支不会命中。
+    if (typeof document === "undefined") {
+      observer.disconnect();
+      return;
+    }
     if (!document.querySelector(".popup-menu") && openBtn) {
       openBtn.classList.remove("menu-open");
       openBtn = null;
