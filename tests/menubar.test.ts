@@ -42,19 +42,6 @@ async function clickMenuBtn(host: HTMLElement, label: string): Promise<void> {
   await flush();
 }
 
-/** 打开某一层的子菜单（父项悬停即展开）。 */
-async function openSubmenu(menu: Element, needle: string): Promise<Element> {
-  const parent = [...menu.querySelectorAll(":scope > button")].find((b) =>
-    (b.querySelector(".menu-label")?.textContent ?? "").includes(needle),
-  );
-  expect(parent, `子菜单父项「${needle}」应存在`).toBeTruthy();
-  parent!.dispatchEvent(new MouseEvent("mouseenter"));
-  await flush();
-  const menus = [...document.querySelectorAll(".popup-menu")];
-  expect(menus.length, "应展开出子菜单").toBeGreaterThan(1);
-  return menus[menus.length - 1];
-}
-
 /** 在所有已展开层里找项并点击。 */
 async function clickAny(needle: string): Promise<void> {
   for (const menu of document.querySelectorAll(".popup-menu")) {
@@ -238,66 +225,28 @@ describe("菜单栏（文件 / 编辑 / 查看 / 设置 / 帮助）", () => {
     expect(wrap2?.querySelector(".check")?.textContent).toBe("");
   });
 
-  it("设置菜单：首选项（二级子菜单）+ 快捷键…", async () => {
+  it("B46：设置菜单 = 首选项… + 快捷键…，都是叶子（不再有子菜单）", async () => {
     const host = document.createElement("nav");
     document.body.appendChild(host);
     const cb = makeCb();
     const calls: string[] = [];
+    cb.onPreferences = () => calls.push("preferences");
     cb.onKeymap = () => calls.push("keymap");
     createMenuBar(host, cb);
     await clickMenuBtn(host, "设置");
-    const texts = rootTexts();
-    expect(texts).toContain("首选项");
-    expect(texts).toContain("快捷键…");
-    // 首选项是父项（带箭头），不是叶子
-    const pref = [...document.querySelectorAll(".popup-menu > button")].find(
-      (b) => b.querySelector(".menu-label")?.textContent === "首选项",
-    );
-    expect(pref, "首选项应是子菜单父项").toBeTruthy();
-    expect(pref!.classList.contains("has-submenu")).toBe(true);
-    expect(pref!.querySelector(".menu-arrow")).toBeTruthy();
+    expect(rootTexts()).toEqual(["首选项…", "快捷键…"]);
 
-    await clickAny("快捷键…");
-    expect(calls).toEqual(["keymap"]);
-  });
+    // 弹窗化后设置菜单不得再有任何子菜单父项
+    const submenuParents = [...document.querySelectorAll(".popup-menu .has-submenu")];
+    expect(submenuParents, "设置菜单不得再有子菜单父项").toHaveLength(0);
 
-  it("设置 → 首选项：收齐全部被移出的预设值（主题/行距/大纲宽度/行尾/编码）", async () => {
-    const host = document.createElement("nav");
-    document.body.appendChild(host);
-    createMenuBar(host, makeCb());
+    await clickAny("首选项…");
+    expect(calls).toEqual(["preferences"]);
+    expect(document.querySelector(".popup-menu"), "点击叶子项后弹层应收起").toBeNull();
+
     await clickMenuBtn(host, "设置");
-    const sub = await openSubmenu(rootMenu(), "首选项");
-    const texts = itemTexts(sub);
-
-    for (const t of [
-      "主题：跟随系统",
-      "主题：浅色",
-      "主题：深色",
-      "预览行距：紧凑",
-      "预览行距：标准",
-      "预览行距：宽松",
-      "大纲宽度：窄",
-      "大纲宽度：默认",
-      "大纲宽度：宽",
-      "新建默认行尾：CRLF",
-      "新建默认行尾：LF",
-      "新建默认行尾：CR",
-      "新建默认编码：UTF-8",
-      "新建默认编码：GB18030",
-    ]) {
-      expect(texts, `首选项应含「${t}」`).toContain(t);
-    }
-
-    // 单选勾选态
-    const pick = (needle: string) =>
-      [...sub.querySelectorAll(":scope > button")].find(
-        (b) => b.querySelector(".menu-label")?.textContent === needle,
-      );
-    expect(pick("主题：跟随系统")?.querySelector(".check")?.textContent).toBe("✓");
-    expect(pick("预览行距：标准")?.querySelector(".check")?.textContent).toBe("✓");
-    expect(pick("大纲宽度：默认")?.querySelector(".check")?.textContent).toBe("✓");
-    expect(pick("新建默认行尾：CRLF")?.querySelector(".check")?.textContent).toBe("✓");
-    expect(pick("新建默认编码：UTF-8")?.querySelector(".check")?.textContent).toBe("✓");
+    await clickAny("快捷键…");
+    expect(calls).toEqual(["preferences", "keymap"]);
   });
 
   it("帮助菜单：只剩「关于 LitePad」（快捷键已移入设置）", async () => {
@@ -315,60 +264,7 @@ describe("菜单栏（文件 / 编辑 / 查看 / 设置 / 帮助）", () => {
   });
 });
 
-describe("设置 → 首选项 交互", () => {
-  it("点击首选项里的项即回调，并收起整棵弹层树", async () => {
-    const host = document.createElement("nav");
-    document.body.appendChild(host);
-    const cb = makeCb();
-    const calls: string[] = [];
-    cb.onSetTheme = (m) => calls.push(`theme:${m}`);
-    cb.onSetLineHeight = (v) => calls.push(`lh:${v}`);
-    cb.onSetTocWidth = (w) => calls.push(`toc:${w}`);
-    cb.onSetDefaultEol = (e) => calls.push(`eol:${e}`);
-    cb.onSetDefaultEncoding = (enc) => calls.push(`enc:${enc}`);
-    createMenuBar(host, cb);
-
-    await clickMenuBtn(host, "设置");
-    await openSubmenu(rootMenu(), "首选项");
-    await clickAny("主题：深色");
-    expect(calls).toEqual(["theme:dark"]);
-    expect(document.querySelector(".popup-menu"), "点击叶子项后弹层应全部收起").toBeNull();
-
-    await clickMenuBtn(host, "设置");
-    await openSubmenu(rootMenu(), "首选项");
-    await clickAny("预览行距：宽松");
-    await clickMenuBtn(host, "设置");
-    await openSubmenu(rootMenu(), "首选项");
-    await clickAny("大纲宽度：宽");
-    await clickMenuBtn(host, "设置");
-    await openSubmenu(rootMenu(), "首选项");
-    await clickAny("新建默认行尾：LF");
-    await clickMenuBtn(host, "设置");
-    await openSubmenu(rootMenu(), "首选项");
-    await clickAny("新建默认编码：GB18030");
-
-    expect(calls).toEqual(["theme:dark", "lh:2.1", "toc:320", "eol:LF", "enc:GB18030"]);
-  });
-
-  it("悬停同级另一项时，旧的子菜单应收起（不叠层）", async () => {
-    const host = document.createElement("nav");
-    document.body.appendChild(host);
-    createMenuBar(host, makeCb());
-    await clickMenuBtn(host, "设置");
-    const root = rootMenu();
-    await openSubmenu(root, "首选项");
-    expect(document.querySelectorAll(".popup-menu").length).toBe(2);
-    // 悬停「快捷键…」（叶子）应把子菜单收掉
-    const leaf = [...root.querySelectorAll(":scope > button")].find(
-      (b) => b.textContent === "快捷键…",
-    )!;
-    leaf.dispatchEvent(new MouseEvent("mouseenter"));
-    await flush();
-    expect(document.querySelectorAll(".popup-menu").length, "叶子项不应保留子菜单").toBe(1);
-  });
-});
-
-describe("设置项归属与接线（B42）", () => {
+describe("设置项归属与接线（B42/B46）", () => {
   it("原设置对话框必须已删除，且不再有任何入口", () => {
     expect(existsSync("src/shell/settingsdialog.ts"), "设置对话框文件必须删除").toBe(false);
     expect(existsSync("src/shell/keymapdialog.ts"), "快捷键对话框应存在").toBe(true);
@@ -380,8 +276,34 @@ describe("设置项归属与接线（B42）", () => {
     expect(html, "工具栏不再有设置齿轮").not.toContain("btn-settings");
     const menu = readFileSync("src/shell/menubar.ts", "utf-8");
     expect(menu, "菜单栏不得再保留设置项回调").not.toContain("onSettings");
-    expect(menu, "设置菜单必须有首选项子菜单").toContain('label: "首选项"');
+    expect(menu, "设置菜单必须有首选项入口").toContain('label: "首选项…"');
+    expect(menu, "B46 后首选项不再是子菜单").not.toContain("submenu:");
     expect(menu, "设置菜单必须有快捷键入口").toContain('label: "快捷键…"');
+  });
+
+  it("B46：首选项弹窗必须存在并接线到 main.ts", () => {
+    expect(existsSync("src/shell/preferencesdialog.ts"), "首选项弹窗文件应存在").toBe(true);
+    const dlg = readFileSync("src/shell/preferencesdialog.ts", "utf-8");
+    // 收拢原子菜单的全部预设值 + 新增精细选项
+    for (const item of [
+      "主题",
+      "编辑器字体",
+      "字号",
+      "编辑器行距",
+      "自动换行",
+      "自动保存",
+      "预览行距",
+      "大纲宽度",
+      "默认行尾",
+      "默认编码",
+    ]) {
+      expect(dlg, `首选项弹窗必须含「${item}」`).toContain(item);
+    }
+    const src = readFileSync("src/main.ts", "utf-8");
+    expect(src, "main 必须引入 showPreferencesDialog").toContain("showPreferencesDialog(");
+    expect(src, "main 必须有弹窗入口函数").toContain("function openPreferencesDialog(");
+    const menu = readFileSync("src/shell/menubar.ts", "utf-8");
+    expect(menu, "菜单必须回调 onPreferences").toContain("onPreferences");
   });
 
   it("每个被移出的设置项都在首选项里接线到 main.ts", () => {

@@ -4,9 +4,9 @@ import { closePopupMenu, showPopupMenu, type MenuItem } from "./menu";
  * 菜单栏（文件 / 编辑 / 查看 / 设置 / 帮助）。
  *
  * 结构参考 Win11 记事本：点击展开下拉，hover 自动切换已打开的菜单。
- * 「设置 → 首选项」把散落各处的偏好（主题 / 预览行距 / 大纲宽度 /
- * 新建默认行尾 / 新建默认编码）收拢成二级子菜单；「设置 → 快捷键…」
- * 打开可浏览、可编辑的快捷键对话框。分屏不占菜单项，只保留快捷键。
+ * 「设置 → 首选项…」打开弹窗设置窗口（B46，含字体/行距等精细选项）；
+ * 「设置 → 快捷键…」打开可浏览、可编辑的快捷键对话框。
+ * 分屏不占菜单项，只保留快捷键。
  */
 
 export interface MenuBarCallbacks {
@@ -46,25 +46,10 @@ export interface MenuBarCallbacks {
   statusbarChecked: () => boolean;
   onToggleAutosave: () => void;
   autosaveChecked: () => boolean;
-  // ---- 设置 → 首选项 ----
-  /** 主题三态单选 */
-  themeChecked: (mode: "system" | "light" | "dark") => boolean;
-  onSetTheme: (mode: "system" | "light" | "dark") => void;
-  /** Markdown 预览行距（倍数） */
-  lineHeightChecked: (value: number) => boolean;
-  onSetLineHeight: (value: number) => void;
-  /** 大纲抽屉宽度（px） */
-  tocWidthChecked: (width: number) => boolean;
-  onSetTocWidth: (width: number) => void;
-  /** 新建文件默认行尾（候选由 main 预取后同步提供） */
-  defaultEol: () => string;
-  eolOptions: () => string[];
-  onSetDefaultEol: (value: string) => void;
-  /** 新建文件默认编码 */
-  defaultEncoding: () => string;
-  encodingOptions: () => string[];
-  onSetDefaultEncoding: (value: string) => void;
-  // ---- 设置 → 快捷键 ----
+  // ---- 设置 ----
+  /** 打开首选项弹窗（原二级子菜单已升级为设置窗口） */
+  onPreferences: () => void;
+  /** 打开快捷键对话框 */
   onKeymap: () => void;
   // ---- 帮助 ----
   onAbout: () => void;
@@ -75,52 +60,6 @@ export interface MenuBarCallbacks {
 /** 拼接菜单标签：`文字\t快捷键`，快捷键为空时只留文字。 */
 function withKey(label: string, hint: string): string {
   return hint ? `${label}\t${hint}` : label;
-}
-
-/** 设置 → 首选项：把原先散落的偏好收拢成扁平单选列表（用分隔线分组）。 */
-function preferenceItems(cb: MenuBarCallbacks): MenuItem[] {
-  const items: MenuItem[] = [];
-  const radio = (label: string, checked: boolean, onSelect: () => void): MenuItem => ({
-    label,
-    checked,
-    onSelect,
-  });
-
-  items.push(
-    radio("主题：跟随系统", cb.themeChecked("system"), () => cb.onSetTheme("system")),
-    radio("主题：浅色", cb.themeChecked("light"), () => cb.onSetTheme("light")),
-    radio("主题：深色", cb.themeChecked("dark"), () => cb.onSetTheme("dark")),
-    { separator: true },
-    radio("预览行距：紧凑", cb.lineHeightChecked(1.3), () => cb.onSetLineHeight(1.3)),
-    radio("预览行距：标准", cb.lineHeightChecked(1.7), () => cb.onSetLineHeight(1.7)),
-    radio("预览行距：宽松", cb.lineHeightChecked(2.1), () => cb.onSetLineHeight(2.1)),
-    { separator: true },
-    radio("大纲宽度：窄", cb.tocWidthChecked(200), () => cb.onSetTocWidth(200)),
-    radio("大纲宽度：默认", cb.tocWidthChecked(240), () => cb.onSetTocWidth(240)),
-    radio("大纲宽度：宽", cb.tocWidthChecked(320), () => cb.onSetTocWidth(320)),
-  );
-
-  const eols = cb.eolOptions();
-  if (eols.length > 0) {
-    items.push({ separator: true });
-    for (const e of eols) {
-      items.push(radio(`新建默认行尾：${e}`, cb.defaultEol() === e, () => cb.onSetDefaultEol(e)));
-    }
-  }
-
-  const encodings = cb.encodingOptions();
-  if (encodings.length > 0) {
-    items.push({ separator: true });
-    for (const enc of encodings) {
-      items.push(
-        radio(`新建默认编码：${enc}`, cb.defaultEncoding() === enc, () =>
-          cb.onSetDefaultEncoding(enc),
-        ),
-      );
-    }
-  }
-
-  return items;
 }
 
 const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = [
@@ -185,7 +124,7 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
   {
     label: "设置",
     items: (cb) => [
-      { label: "首选项", submenu: () => preferenceItems(cb) },
+      { label: "首选项…", onSelect: cb.onPreferences },
       { label: "快捷键…", onSelect: cb.onKeymap },
     ],
   },

@@ -84,6 +84,7 @@ import {
   type KeymapOverrides,
 } from "./shell/keymap";
 import { KEYMAP_RECORDING_CLASS, showKeymapDialog } from "./shell/keymapdialog";
+import { showPreferencesDialog } from "./shell/preferencesdialog";
 import {
   renderSplitview,
   panelAt,
@@ -2469,6 +2470,29 @@ function applyPreviewLineHeight(value: number): void {
   document.documentElement.style.setProperty("--md-line-height", String(v));
 }
 
+/**
+ * 编辑器字体：写 :root 上的 --font-editor，.cm-editor 优先取它；
+ * 空串（默认）则移除内联变量，回落到内置等宽栈。状态栏 kbd 等仍用 --font-mono。
+ */
+function applyFontFamily(family: string): void {
+  const root = document.documentElement.style;
+  const f = family.trim();
+  if (!f) {
+    root.removeProperty("--font-editor");
+  } else {
+    // 族名带空格时必须加引号，否则 CSS 解析会当成多个族名
+    root.setProperty("--font-editor", f.includes(" ") ? `"${f}"` : f);
+  }
+  for (const p of panels.values()) p.view?.view.requestMeasure();
+}
+
+/** 编辑器行距：写 :root 上的 --editor-line-height，.cm-content 通过 var() 生效。 */
+function applyEditorLineHeight(value: number): void {
+  const v = Math.min(2.5, Math.max(1, Number(value) || 1.5));
+  document.documentElement.style.setProperty("--editor-line-height", String(v));
+  for (const p of panels.values()) p.view?.view.requestMeasure();
+}
+
 async function toggleTheme(): Promise<void> {
   // 直接在当前“已生效”的明暗之间切换：点一下必定改变外观。
   // 不再走 system→light→dark 循环——否则当系统偏好与当前态一致时，
@@ -2581,11 +2605,16 @@ function openKeymapDialog(): void {
   });
 }
 
-async function toggleAutosave(): Promise<void> {
-  if (!settings) return;
-  settings.autosave = !settings.autosave;
+/** 自动保存开关（绝对值；菜单勾选项与首选项弹窗共用）。 */
+async function setAutosave(on: boolean): Promise<void> {
+  if (!settings || settings.autosave === on) return;
+  settings.autosave = on;
   await persistSettings();
-  showMessage(settings.autosave ? "已启用自动保存" : "已停用自动保存");
+  showMessage(on ? "已启用自动保存" : "已停用自动保存");
+}
+
+async function toggleAutosave(): Promise<void> {
+  await setAutosave(!(settings?.autosave ?? true));
 }
 
 /** Markdown 预览行距（查看菜单三档）。 */
@@ -2607,6 +2636,83 @@ async function setTocWidthValue(width: number): Promise<void> {
     await persistSettings();
   }
   showMessage(`大纲宽度 ${tocWidth}px`);
+}
+
+/** 编辑器字体族（首选项弹窗；空串 = 内置默认栈）。 */
+async function setFontFamily(family: string): Promise<void> {
+  applyFontFamily(family);
+  if (settings) {
+    settings.font_family = family.trim();
+    await persistSettings();
+  }
+  showMessage(family.trim() ? `编辑器字体 ${family.trim()}` : "编辑器字体：默认");
+}
+
+/** 编辑器行距（首选项弹窗，1.0–2.5 倍）。 */
+async function setEditorLineHeight(value: number): Promise<void> {
+  applyEditorLineHeight(value);
+  if (settings) {
+    settings.editor_line_height = applyClamp(value);
+    await persistSettings();
+  }
+  showMessage(`编辑器行距 ${applyClamp(value)}`);
+}
+
+/** 行距落盘值与生效值共用同一夹取范围（1.0–2.5）。 */
+function applyClamp(value: number): number {
+  return Math.min(2.5, Math.max(1, Number(value) || 1.5));
+}
+
+/** 字号绝对值设置（首选项弹窗；快捷键缩放走 changeFontSize 增量链路）。 */
+async function setFontSizeValue(px: number): Promise<void> {
+  const next = Math.min(28, Math.max(10, Math.round(px)));
+  if (next === currentFontSize()) return;
+  applyFontSize(next);
+  if (settings) {
+    settings.font_size = next;
+    await persistSettings();
+  }
+  showMessage(`字号 ${next}px`);
+}
+
+/** 自动换行开关（绝对值；菜单勾选项与首选项弹窗共用）。 */
+async function setWordWrap(on: boolean): Promise<void> {
+  if (isWrap === on) return;
+  isWrap = on;
+  applyWrapToTabs(on);
+  if (settings) {
+    settings.word_wrap = on;
+    await persistSettings();
+  }
+}
+
+/** 打开首选项弹窗（设置 → 首选项…）。 */
+function openPreferencesDialog(): void {
+  showPreferencesDialog({
+    theme: () => themeMode,
+    onTheme: (mode) => void setThemeMode(mode),
+    fontFamily: () => settings?.font_family ?? "",
+    onFontFamily: (family) => void setFontFamily(family),
+    fontSize: () => currentFontSize(),
+    onFontSize: (px) => void setFontSizeValue(px),
+    editorLineHeight: () => settings?.editor_line_height ?? 1.5,
+    onEditorLineHeight: (v) => void setEditorLineHeight(v),
+    previewLineHeight: () => settings?.preview_line_height ?? 1.7,
+    onPreviewLineHeight: (v) => void setPreviewLineHeight(v),
+    tocWidth: () => tocWidth,
+    onTocWidth: (px) => void setTocWidthValue(px),
+    wordWrap: () => isWrap,
+    onWordWrap: (on) => void setWordWrap(on),
+    autosave: () => settings?.autosave ?? true,
+    onAutosave: (on) => void setAutosave(on),
+    defaultEol: () => settings?.default_eol ?? "CRLF",
+    eolOptions: () => eolOptions,
+    onDefaultEol: (v) => void setDefaultEol(v),
+    defaultEncoding: () => settings?.default_encoding ?? "UTF-8",
+    encodingOptions: () => encodingOptions,
+    onDefaultEncoding: (v) => void setDefaultEncoding(v),
+    onKeymap: () => openKeymapDialog(),
+  });
 }
 
 async function persistSettings(): Promise<void> {
@@ -3015,16 +3121,7 @@ async function changeFontSize(delta: number | null): Promise<void> {
 }
 
 async function toggleWrapSetting(): Promise<void> {
-  const next = !isWrap;
-  applyWrapToTabs(next);
-  if (settings) {
-    settings.word_wrap = next;
-    try {
-      await saveSettings(settings);
-    } catch {
-      // 持久化失败不影响本次生效
-    }
-  }
+  await setWordWrap(!isWrap);
 }
 
 let statusbarVisible = true;
@@ -3091,20 +3188,8 @@ function setupMenuBar(): void {
     statusbarChecked: () => statusbarVisible,
     onToggleAutosave: () => void toggleAutosave(),
     autosaveChecked: () => settings?.autosave ?? true,
-    // ---- 设置 → 首选项 ----
-    themeChecked: (mode) => themeMode === mode,
-    onSetTheme: (mode) => void setThemeMode(mode),
-    lineHeightChecked: (v) => Math.abs((settings?.preview_line_height ?? 1.7) - v) < 0.05,
-    onSetLineHeight: (v) => void setPreviewLineHeight(v),
-    tocWidthChecked: (w) => tocWidth === w,
-    onSetTocWidth: (w) => void setTocWidthValue(w),
-    defaultEol: () => settings?.default_eol ?? "CRLF",
-    eolOptions: () => eolOptions,
-    onSetDefaultEol: (v) => void setDefaultEol(v),
-    defaultEncoding: () => settings?.default_encoding ?? "UTF-8",
-    encodingOptions: () => encodingOptions,
-    onSetDefaultEncoding: (v) => void setDefaultEncoding(v),
-    // ---- 设置 → 快捷键 ----
+    // ---- 设置（B46：首选项弹窗化，子菜单的偏好回调全部移入弹窗 setter） ----
+    onPreferences: () => openPreferencesDialog(),
     onKeymap: () => openKeymapDialog(),
     // ---- 帮助 ----
     onAbout: () => {
@@ -3208,7 +3293,9 @@ async function bootstrap(): Promise<void> {
   isDark = applyTheme(themeMode);
   isWrap = settings?.word_wrap ?? true;
   applyFontSize(settings?.font_size ?? 14);
+  applyFontFamily(settings?.font_family ?? "");
   applyPreviewLineHeight(settings?.preview_line_height ?? 1.7);
+  applyEditorLineHeight(settings?.editor_line_height ?? 1.5);
   setupTocResizer();
   setupToolbar();
   setupMenuBar();

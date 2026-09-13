@@ -763,6 +763,39 @@ button:focus-visible {
   cursor: pointer;
 }
 
+/* ---------- 首选项弹窗（B46） ---------- */
+
+.preferences-dialog {
+  width: 460px;
+}
+
+.preferences-body {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* 分组标题（外观 / 字体与行距 / 编辑器 / 预览 / 新建文件） */
+.preferences-group {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px 0 4px;
+  margin-top: 4px;
+  background: var(--bg-elevated);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+
+/* 勾选框比下拉稍大，便于点击 */
+.settings-dialog input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 .settings-ok {
   background: var(--accent);
   border-color: var(--accent);

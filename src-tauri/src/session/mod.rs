@@ -20,6 +20,10 @@ pub struct Settings {
     pub default_encoding: String,
     pub recent_files: Vec<String>,
     pub font_size: f64,
+    /// 编辑器等宽字体族名；空串 = 用内置默认栈（Cascadia Code / Consolas…）
+    pub font_family: String,
+    /// 编辑器行距（1.0–2.5，默认 1.5），作用于 .cm-content
+    pub editor_line_height: f64,
     pub word_wrap: bool,
     /// 自动保存已关联磁盘文件的脏文档（1.5s 防抖，M2 生效）
     pub autosave: bool,
@@ -40,6 +44,8 @@ impl Default for Settings {
             default_encoding: "UTF-8".into(),
             recent_files: Vec::new(),
             font_size: 14.0,
+            font_family: String::new(),
+            editor_line_height: 1.5,
             word_wrap: true,
             autosave: true,
             preview_line_height: 1.7,

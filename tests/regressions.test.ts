@@ -538,21 +538,37 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     expect(helpBlock, "帮助菜单不得再有快捷键入口").not.toContain("快捷键");
   });
 
-  it("「设置」菜单必须含首选项（二级子菜单）与快捷键，并收齐全部预设值", () => {
+  it("「设置」菜单 = 首选项弹窗入口 + 快捷键；预设值收进弹窗（B46）", () => {
     const src = menu();
     const setBlock = src.slice(src.indexOf('label: "设置"'), src.indexOf('label: "帮助"'));
-    expect(setBlock, "设置菜单必须有首选项").toContain('label: "首选项"');
-    expect(setBlock, "首选项必须是子菜单（submenu）").toContain("submenu:");
+    expect(setBlock, "设置菜单必须有首选项入口").toContain('label: "首选项…"');
+    expect(setBlock, "B46 后首选项不再是子菜单").not.toContain("submenu:");
     expect(setBlock, "设置菜单必须有快捷键入口").toContain('label: "快捷键…"');
 
+    // 原子菜单的预设值全部收进首选项弹窗（按分组标签断言）
+    const dlg = readFileSync("src/shell/preferencesdialog.ts", "utf-8");
     for (const item of [
-      "主题：跟随系统",
-      "预览行距：标准",
-      "大纲宽度：默认",
-      "新建默认行尾：",
-      "新建默认编码：",
+      "外观",
+      "主题",
+      "字体与行距",
+      "编辑器字体",
+      "字号",
+      "编辑器行距",
+      "Markdown 预览",
+      "预览行距",
+      "大纲宽度",
+      "新建文件",
+      "默认行尾",
+      "默认编码",
     ]) {
-      expect(src, `首选项必须含「${item}」`).toContain(item);
+      expect(dlg, `首选项弹窗必须含「${item}」`).toContain(item);
+    }
+    // 新增精细设置的字段必须持久化（前后端成对）
+    const api = readFileSync("src/ipc/api.ts", "utf-8");
+    const rust = readFileSync("src-tauri/src/session/mod.rs", "utf-8");
+    for (const field of ["font_family", "editor_line_height"]) {
+      expect(api, `Settings 接口必须含 ${field}`).toContain(field);
+      expect(rust, `Rust Settings 必须含 ${field}`).toContain(field);
     }
   });
 

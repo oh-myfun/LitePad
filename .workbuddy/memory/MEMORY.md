@@ -63,6 +63,9 @@
 - **B45** 关闭非活动标签不再「先切过去再切回」：保存改用按实例寻址的 `saveDocCore`，
   并加 `wasShown` 判定——关后台标签不动显示内容。「关闭其他/右侧」的批量闪烁一并解决。
   通用教训见 `ARCHITECTURE.md` §8 首条（同步改 UI + 之后 await = 中间态被绘制）。
+- **B46** 首选项从二级子菜单升级为**弹窗设置窗口**（`src/shell/preferencesdialog.ts`，即时生效+持久化），
+  新增精细选项：编辑器字体（`Settings.font_family`）、编辑器行距（`Settings.editor_line_height`）、
+  字号档位；偏好 setter 全部改为绝对值型（setWordWrap/setAutosave 等），toggle 系是其包装。
 
 ## 下一步
 

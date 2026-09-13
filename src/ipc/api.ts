@@ -52,6 +52,10 @@ export interface Settings {
   default_encoding: string;
   recent_files: string[];
   font_size: number;
+  /** 编辑器等宽字体族名；空串 = 用内置默认栈（Cascadia Code / Consolas…） */
+  font_family: string;
+  /** 编辑器行距（1.0–2.5，默认 1.5） */
+  editor_line_height: number;
   word_wrap: boolean;
   autosave: boolean;
   /** Markdown 预览行距（1.0–2.5） */
