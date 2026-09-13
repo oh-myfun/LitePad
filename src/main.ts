@@ -2796,7 +2796,11 @@ function openGotoLine(): void {
       if (Number.isFinite(line) && line >= 1) {
         const target = Math.min(line, view.state.doc.lines);
         const pos = view.state.doc.line(target).from;
-        view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+        // 顶部对齐（与大纲跳转一致；scrollIntoView:true 最小滚动会贴底）
+        view.dispatch({
+          selection: { anchor: pos },
+          effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: 0 }),
+        });
         const t = tabStateWriteBack(view);
         // 活动面板是预览态时编辑器隐藏、收不到滚动事件，显式定位预览
         if (t?.viewMode === "preview") panel.preview?.syncToLine(target);

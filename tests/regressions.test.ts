@@ -322,6 +322,20 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(preview, "预览命中必须复用编辑器高亮样式类").toContain('cm-find-match');
   });
 
+  it("B31 转到行必须顶部对齐（与大纲跳转一致，不得最小滚动贴底）", () => {
+    const src = readFileSync("src/main.ts", "utf-8");
+    // 转到行 overlay（.goto-overlay 所在函数链）里的跳转必须用 y:"start"
+    const gotoIdx = src.indexOf('overlay.className = "goto-overlay"');
+    expect(gotoIdx, "goto overlay 应存在").toBeGreaterThan(0);
+    const region = src.slice(gotoIdx, gotoIdx + 4000);
+    expect(region, "转到行跳转必须 y:start 顶部对齐").toContain(
+      'EditorView.scrollIntoView(pos, { y: "start", yMargin: 0 })',
+    );
+    expect(region, "转到行不得再用最小滚动的 scrollIntoView:true").not.toContain(
+      "scrollIntoView: true",
+    );
+  });
+
   it("B25 应用图标四角圆角必须一致（下边缘与上边缘相同）", () => {
     // 用户报告：图标下边缘接近直角、上边缘是大圆角。
     // 修复：scripts/gen_icons.py 用「alpha 与垂直镜像取 min」统一四角；
