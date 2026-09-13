@@ -1,0 +1,67 @@
+# LitePad GitHub Release 工作流
+# 触发：推送 v* tag（本地由 scripts/release.sh 创建）
+# 流程：Windows runner（GNU 工具链，与本地一致）→ tsc/vite → tauri build → NSIS → GitHub Release
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # 创建 Release 需要写权限
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # 与本地一致：MinGW-w64 提供 GNU 工具链的链接环境
+      - name: Set up MSYS2 MinGW64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-toolchain
+
+      - name: Add MinGW to PATH
+        shell: pwsh
+        run: Add-Content $env:GITHUB_PATH "C:\msys64\mingw64\bin"
+
+      # rust-toolchain.toml 锁定 stable-x86_64-pc-windows-gnu，rustup 会自动安装对应宿主
+      - name: Install Rust (GNU host)
+        shell: pwsh
+        run: |
+          rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
+          rustup default stable-x86_64-pc-windows-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build frontend
+        run: |
+          npx tsc -b
+          npx vite build
+
+      - name: Build Tauri app + NSIS bundle
+        shell: bash
+        run: >
+          node node_modules/@tauri-apps/cli/tauri.js build
+          --config '{"build":{"beforeBuildCommand":""}}'
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: src-tauri/target/release/bundle/nsis/*.exe
+          generate_release_notes: true
+          draft: false
