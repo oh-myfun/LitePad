@@ -84,15 +84,24 @@ pub fn save(settings: &Settings) -> Result<(), String> {
 // ---------------------------------------------------------------- 会话状态（M2）
 
 /// 单个会话标签：按路径恢复（未命名文档不参与会话）。
+///
+/// 线上格式是 **camelCase**（`cursorLine` / `viewMode`），与前端
+/// `src/ipc/api.ts` 的 `TabSession` 一致。B49 之前这里漏了 `rename_all`，
+/// 于是前端发来的 `cursorLine`/`viewMode` 被当作未知字段丢掉、Rust 落盘的
+/// `cursor_line` 前端又读不到——表现为「重启后光标回到第 1 行、预览模式丢失」。
+/// `alias` 用于继续兼容旧版本落盘的 snake_case 字段。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, rename_all = "camelCase")]
 pub struct TabSession {
     pub path: String,
     pub encoding: String,
     pub eol: String,
+    #[serde(alias = "cursor_line")]
     pub cursor_line: u32,
+    #[serde(alias = "cursor_col")]
     pub cursor_col: u32,
     /// Markdown 视图模式（source/split/preview），仅 md 文件有意义
+    #[serde(alias = "view_mode")]
     pub view_mode: Option<String>,
 }
 
@@ -111,7 +120,7 @@ impl Default for TabSession {
 
 /// 会话面板：标签有序列表 + 活动索引（索引指向 tabs）。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, rename_all = "camelCase")]
 pub struct PanelSession {
     pub tabs: Vec<TabSession>,
     pub active: usize,
@@ -119,11 +128,12 @@ pub struct PanelSession {
 
 /// 完整会话：面板列表 + 前端布局树 JSON（panelId 用 panels 的索引；Rust 纯透传）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, rename_all = "camelCase")]
 pub struct SessionState {
     pub panels: Vec<PanelSession>,
     /// 前端布局树（leaf.panelId = panels 索引）；结构由前端定义
     pub layout: serde_json::Value,
+    #[serde(alias = "active_panel")]
     pub active_panel: usize,
 }
 
@@ -158,3 +168,65 @@ pub fn save_session(state: &SessionState) -> Result<(), String> {
 }
 
 use crate::core::atomic_write;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// B49：会话线上格式必须是 camelCase（与前端 `src/ipc/api.ts` 对齐）。
+    /// 之前漏了 `rename_all`，导致光标/预览模式/活动面板跨会话恢复全部失效。
+    #[test]
+    fn session_round_trip_uses_camel_case() {
+        let json = r#"{
+          "panels": [
+            { "tabs": [
+                { "path": "a.md", "encoding": "UTF-8", "eol": "LF",
+                  "cursorLine": 12, "cursorCol": 5, "viewMode": "preview" }
+              ], "active": 0 }
+          ],
+          "layout": { "kind": "leaf", "panelId": 0 },
+          "activePanel": 0
+        }"#;
+
+        let state: SessionState = serde_json::from_str(json).expect("应能读入前端 camelCase 会话");
+        let tab = &state.panels[0].tabs[0];
+        assert_eq!(tab.cursor_line, 12, "cursorLine 必须被读到");
+        assert_eq!(tab.cursor_col, 5, "cursorCol 必须被读到");
+        assert_eq!(
+            tab.view_mode.as_deref(),
+            Some("preview"),
+            "viewMode 必须被读到"
+        );
+
+        // 落盘也必须用 camelCase，否则前端 st.viewMode 永远是 undefined
+        let out = serde_json::to_string(&state).unwrap();
+        assert!(out.contains("\"cursorLine\""), "落盘应为 cursorLine：{out}");
+        assert!(out.contains("\"viewMode\""), "落盘应为 viewMode：{out}");
+        assert!(
+            out.contains("\"activePanel\""),
+            "落盘应为 activePanel：{out}"
+        );
+        assert!(!out.contains("cursor_line"), "不应再落盘 snake_case：{out}");
+    }
+
+    /// 旧版本（B48 及更早）落盘的是 snake_case，升级后仍要能读出来。
+    #[test]
+    fn legacy_snake_case_session_still_loads() {
+        let json = r#"{
+          "panels": [
+            { "tabs": [
+                { "path": "a.md", "encoding": "UTF-8", "eol": "LF",
+                  "cursor_line": 7, "cursor_col": 3, "view_mode": "preview" }
+              ], "active": 0 }
+          ],
+          "layout": { "kind": "leaf", "panelId": 0 },
+          "active_panel": 1
+        }"#;
+
+        let state: SessionState = serde_json::from_str(json).expect("旧会话应兼容读入");
+        let tab = &state.panels[0].tabs[0];
+        assert_eq!(tab.cursor_line, 7);
+        assert_eq!(tab.view_mode.as_deref(), Some("preview"));
+        assert_eq!(state.active_panel, 1);
+    }
+}
