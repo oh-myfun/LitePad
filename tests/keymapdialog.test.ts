@@ -3,16 +3,26 @@
 // 覆盖录制改键、冲突拦截、Esc 只取消录制、Backspace 解绑、恢复默认、搜索过滤。
 import { describe, it, expect, afterEach } from "vitest";
 import { KEYMAP_RECORDING_CLASS, showKeymapDialog } from "../src/shell/keymapdialog";
-import type { KeymapOverrides } from "../src/shell/keymap";
+import { DEFAULT_PRESET_ID, setKeymapPreset, type KeymapOverrides } from "../src/shell/keymap";
 
 function pressDoc(init: KeyboardEventInit): void {
   document.dispatchEvent(new KeyboardEvent("keydown", { ...init, bubbles: true }));
 }
 
-function openDialog(overrides: KeymapOverrides = {}): { changes: KeymapOverrides[] } {
+function openDialog(
+  overrides: KeymapOverrides = {},
+  preset = DEFAULT_PRESET_ID,
+  onPresetChange: (id: string) => void = () => {},
+): { changes: KeymapOverrides[] } {
   const changes: KeymapOverrides[] = [];
-  showKeymapDialog({ overrides, onChange: (n) => changes.push(n) });
+  showKeymapDialog({ overrides, onChange: (n) => changes.push(n), preset, onPresetChange });
   return { changes };
+}
+
+function presetSelect(): HTMLSelectElement {
+  const sel = document.querySelector<HTMLSelectElement>(".keymap-preset");
+  expect(sel, "对话框应有键位预设下拉").toBeTruthy();
+  return sel!;
 }
 
 function rowOf(label: string): Element {
@@ -95,12 +105,13 @@ describe("快捷键对话框：编辑", () => {
     expect(document.body.classList.contains(KEYMAP_RECORDING_CLASS), "应进入录制态").toBe(true);
     expect(keyButton("打开文件…").textContent).toBe("按下新键…");
 
-    pressDoc({ code: "KeyP", key: "P", ctrlKey: true, shiftKey: true });
+    // Ctrl+Shift+P 已是「命令面板」的默认键位，这里换一个确实空闲的键
+    pressDoc({ code: "KeyJ", key: "J", ctrlKey: true, altKey: true });
 
-    expect(changes).toEqual([{ "file.open": "Ctrl+Shift+P" }]);
+    expect(changes).toEqual([{ "file.open": "Ctrl+Alt+J" }]);
     expect(document.body.classList.contains(KEYMAP_RECORDING_CLASS), "录制应结束").toBe(false);
     // 列表已重绘为新键位
-    expect(keyButton("打开文件…").textContent).toBe("Ctrl+Shift+P");
+    expect(keyButton("打开文件…").textContent).toBe("Ctrl+Alt+J");
   });
 
   it("纯修饰键按下不结束录制（等真正的按键）", () => {
@@ -169,5 +180,60 @@ describe("快捷键对话框：编辑", () => {
     document.querySelector<HTMLButtonElement>(".settings-ok")!.click();
     expect(document.querySelector(".settings-overlay")).toBeNull();
     expect(document.body.classList.contains(KEYMAP_RECORDING_CLASS)).toBe(false);
+  });
+});
+
+// ------------------------------------------------------------------ M4 键位预设下拉
+
+describe("M4 快捷键对话框：键位预设下拉", () => {
+  afterEach(() => {
+    setKeymapPreset(DEFAULT_PRESET_ID);
+  });
+
+  it("下拉列出全部预设，并选中当前预设", () => {
+    openDialog({}, "vscode");
+    const sel = presetSelect();
+    expect([...sel.options].map((o) => o.textContent)).toContain("Notepad++");
+    expect(sel.value).toBe("vscode");
+  });
+
+  it("切换预设立即改变列表里显示的键位", () => {
+    openDialog({});
+    expect(keyButton("另存为…").textContent).toBe("Ctrl+Shift+S");
+
+    const sel = presetSelect();
+    sel.value = "notepadpp";
+    sel.dispatchEvent(new Event("change"));
+
+    // Notepad++ 预设下另存为是 Ctrl+Alt+S
+    expect(keyButton("另存为…").textContent).toBe("Ctrl+Alt+S");
+  });
+
+  it("切换预设会清掉旧的自定义覆盖（否则换回默认仍带着旧键位）", () => {
+    const { changes } = openDialog({ "file.save": "Ctrl+Q" });
+    changes.length = 0;
+
+    const sel = presetSelect();
+    sel.value = "vscode";
+    sel.dispatchEvent(new Event("change"));
+
+    expect(changes.length).toBeGreaterThan(0);
+    expect(changes[changes.length - 1], "覆盖表应已被清空").toEqual({});
+  });
+
+  it("切换预设会回调 onPresetChange（供 main 持久化）", () => {
+    const picked: string[] = [];
+    openDialog({}, DEFAULT_PRESET_ID, (id) => picked.push(id));
+
+    const sel = presetSelect();
+    sel.value = "notepadpp";
+    sel.dispatchEvent(new Event("change"));
+
+    expect(picked).toEqual(["notepadpp"]);
+  });
+
+  it("预设 id 非法时下拉回落默认，不崩也不改状态", () => {
+    openDialog({}, "no-such-preset");
+    expect(presetSelect().value).toBe(DEFAULT_PRESET_ID);
   });
 });

@@ -21,6 +21,7 @@ import {
   type ViewUpdate,
 } from "@codemirror/view";
 import { findHighlight } from "./find";
+import { perfProfileFor, type PerfProfile } from "./perf";
 
 export interface EditorHandle {
   view: EditorView;
@@ -48,13 +49,13 @@ export function foldMarkerDOM(open: boolean): HTMLElement {
  * 基础扩展集（所有标签共享同一份配置）。
  * 语言与主题用 Compartment 注入，每个 EditorState 持有独立 compartment 实例，
  * 因此切换标签（setState）时语言/主题/换行随快照自动恢复。
+ *
+ * M4：`perf` 按文档体量裁剪昂贵特性（语法高亮 / 折叠 / 括号匹配 / 选中匹配高亮 /
+ * 当前行高亮），见 `perf.ts`。行号与撤销历史始终保留——它们是导航与安全的底线。
  */
-function baseExtensions(): Extension[] {
-  return [
+function baseExtensions(perf: PerfProfile): Extension[] {
+  const ext: Extension[] = [
     lineNumbers(),
-    highlightActiveLineGutter(),
-    highlightActiveLine(),
-    foldGutter({ markerDOM: foldMarkerDOM }),
     history(),
     drawSelection(),
     dropCursor(),
@@ -67,7 +68,6 @@ function baseExtensions(): Extension[] {
     EditorState.tabSize.of(4),
     indentOnInput(),
     // 括号：匹配高亮 + 自动闭合
-    bracketMatching(),
     closeBrackets(),
     keymap.of([
       ...closeBracketsKeymap,
@@ -84,15 +84,30 @@ function baseExtensions(): Extension[] {
       { key: "Mod-Shift-l", run: selectSelectionMatches },
       indentWithTab,
     ]),
-    highlightSelectionMatches(),
     // 查找命中高亮（由悬浮查找栏通过 setFindQuery 驱动）
     findHighlight(),
   ];
+
+  if (perf.activeLine) {
+    ext.push(highlightActiveLineGutter(), highlightActiveLine());
+  }
+  if (perf.folding) {
+    ext.push(foldGutter({ markerDOM: foldMarkerDOM }));
+  }
+  if (perf.bracketMatching) {
+    ext.push(bracketMatching());
+  }
+  if (perf.selectionMatches) {
+    ext.push(highlightSelectionMatches());
+  }
+  return ext;
 }
 
 interface EditorStateEnv {
   dark: boolean;
   wrap: boolean;
+  /** M4 大文件分级档位；缺省 normal（新建/未命名文档） */
+  perf?: PerfProfile;
 }
 
 export interface TabCompartments {
@@ -110,6 +125,9 @@ export interface TabState {
  * 构造一个标签的 EditorState：文档内容 + 语言 + 主题/换行。
  * 返回 compartment 引用，供离线更新非活动标签（如切换主题时
  * `tab.state.update({ effects: comps.theme.reconfigure(...) })`）。
+ *
+ * M4：`env.perf.syntax === false` 时不注入语言扩展（语法高亮是最大的一项开销）。
+ * 语言 compartment 仍然建着——用户后续手动改回时无需重建状态。
  */
 export function makeTabState(
   doc: string,
@@ -117,6 +135,7 @@ export function makeTabState(
   env: EditorStateEnv,
   onUpdate: (view: EditorView, update: ViewUpdate) => void,
 ): TabState {
+  const perf = env.perf ?? perfProfileFor("normal");
   const comps: TabCompartments = {
     theme: new Compartment(),
     wrap: new Compartment(),
@@ -125,10 +144,10 @@ export function makeTabState(
   const state = EditorState.create({
     doc,
     extensions: [
-      ...baseExtensions(),
+      ...baseExtensions(perf),
       comps.wrap.of(env.wrap ? EditorView.lineWrapping : []),
       comps.theme.of(env.dark ? oneDark : []),
-      comps.lang.of(language ?? []),
+      comps.lang.of(perf.syntax ? (language ?? []) : []),
       EditorView.updateListener.of((update) => {
         if (update.docChanged || update.selectionSet) {
           onUpdate(update.view, update);

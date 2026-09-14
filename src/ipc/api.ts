@@ -27,6 +27,13 @@ export interface OpenedFile {
   size: number;
   /** 解码时出现无法映射的字节，提示编码可能选错 */
   lossy: boolean;
+  /**
+   * M4 大文件档位："normal" | "large" | "huge"。由 Rust 按字节数判定，
+   * 前端据此裁剪编辑器特性（见 src/editor/perf.ts）。
+   */
+  size_class: string;
+  /** 分级提示文案（normal 为空串），直接显示给用户。 */
+  size_hint: string;
 }
 
 export interface LossyChar {
@@ -67,6 +74,11 @@ export interface Settings {
    * 空串表示显式解绑；缺项表示用 COMMANDS 里的默认键位。
    */
   keymap: Record<string, string>;
+  /**
+   * 键位预设 id（M4）。优先级：keymap 覆盖 > keymap_preset > 命令默认键位。
+   * 未知值按 "default" 处理。
+   */
+  keymap_preset: string;
 }
 
 export function newTab(encoding?: string | null): Promise<TabInfo> {

@@ -581,6 +581,106 @@ button:focus-visible {
   z-index: 100;
 }
 
+/* ---------- 命令面板（M4：Ctrl+Shift+P） ----------
+   快速启动型：面板贴着窗口上方，不遮挡正在编辑的内容，
+   与 VS Code 的观感一致。 */
+
+.palette-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.28);
+  /* 顶部对齐而非居中：搜索时列表往下长，位置不会跳 */
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 8vh;
+  z-index: 120;
+}
+
+.palette {
+  width: 560px;
+  max-width: 90vw;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.palette-input {
+  flex: 0 0 auto;
+  padding: 12px 14px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  font-size: 14px;
+  outline: none;
+}
+
+.palette-input::placeholder {
+  color: var(--fg-muted);
+}
+
+.palette-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.palette-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.palette-item.is-active {
+  background: var(--bg-hover);
+}
+
+.palette-item-label {
+  flex: 0 0 auto;
+  color: var(--fg);
+}
+
+.palette-item-group {
+  flex: 1 1 auto;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+
+.palette-item-keys {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.palette-empty {
+  padding: 18px 14px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.palette-footer {
+  flex: 0 0 auto;
+  padding: 7px 14px;
+  border-top: 1px solid var(--border);
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+
 .settings-dialog {
   width: 420px;
   max-height: 80vh;
@@ -659,6 +759,27 @@ button:focus-visible {
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+/* 键位预设下拉（M4）：与搜索框同高，宽度只够放下预设名 */
+.keymap-preset {
+  flex: 0 0 auto;
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.keymap-preset:hover {
+  background: var(--bg-hover);
+}
+
+.keymap-preset:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .keymap-search {

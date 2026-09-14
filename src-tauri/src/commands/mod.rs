@@ -83,6 +83,10 @@ pub struct OpenedFile {
     pub size: u64,
     /// 解码过程中出现无法映射的字节，提示用户可能选错编码
     pub lossy: bool,
+    /// M4 大文件分级：`"normal" | "large" | "huge"`，前端据此裁剪编辑器特性。
+    pub size_class: String,
+    /// 分级提示文案（normal 为空串）：直接显示给用户，说明关掉了哪些特性。
+    pub size_hint: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -157,13 +161,14 @@ pub async fn open_file(
     let target = PathBuf::from(&path);
 
     let meta = fs::metadata(&target).map_err(|e| format!("无法访问文件：{}", e))?;
-    if meta.len() > doc::MAX_OPEN_BYTES {
-        return Err(format!(
-            "文件过大（{:.1} MB）。当前版本暂支持 {} MB 以内的文件，大文件分级模式将在 M4 提供。",
+    // M4：不再一上来就拒绝大文件，而是先定档再降级。超过硬上限才拒绝。
+    let class = doc::size_class(meta.len()).ok_or_else(|| {
+        format!(
+            "文件过大（{:.1} MB）。当前版本支持 {} MB 以内的文件。",
             meta.len() as f64 / 1024.0 / 1024.0,
-            doc::MAX_OPEN_BYTES / 1024 / 1024
-        ));
-    }
+            doc::SIZE_HUGE_MAX / 1024 / 1024
+        )
+    })?;
 
     let bytes = fs::read(&target).map_err(|e| format!("读取失败：{}", e))?;
     if doc::is_probably_binary(&bytes) {
@@ -206,6 +211,8 @@ pub async fn open_file(
             readonly,
             size: meta.len(),
             lossy: decoded.lossy,
+            size_class: class.as_str().into(),
+            size_hint: doc::size_class_hint(class).into(),
         });
     }
 
@@ -235,6 +242,8 @@ pub async fn open_file(
         readonly,
         size: meta.len(),
         lossy: decoded.lossy,
+        size_class: class.as_str().into(),
+        size_hint: doc::size_class_hint(class).into(),
     })
 }
 

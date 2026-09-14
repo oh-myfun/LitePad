@@ -34,6 +34,10 @@ pub struct Settings {
     /// 快捷键覆盖表：命令 id → 键位串（空串 = 显式解绑）。
     /// 后端不解释内容，只负责存取；合法性由前端 keymap 模块过滤。
     pub keymap: HashMap<String, String>,
+    /// 键位预设 id（"default" | "notepadpp" | "vscode"）。
+    /// 优先级：keymap 覆盖 > keymap_preset > 命令默认值。未知值由前端回落默认，
+    /// 后端不校验——预设是前端概念，放到后端枚举反而要跟着前端改。
+    pub keymap_preset: String,
 }
 
 impl Default for Settings {
@@ -51,6 +55,7 @@ impl Default for Settings {
             preview_line_height: 1.7,
             toc_width: 240.0,
             keymap: HashMap::new(),
+            keymap_preset: "default".into(),
         }
     }
 }
@@ -228,5 +233,40 @@ mod tests {
         assert_eq!(tab.cursor_line, 7);
         assert_eq!(tab.view_mode.as_deref(), Some("preview"));
         assert_eq!(state.active_panel, 1);
+    }
+
+    /// M4：Settings 新增 `keymap_preset`。
+    /// 老配置文件里没有这个字段——`#[serde(default)]` 必须让它回落 "default"，
+    /// 否则 `load()` 会因为缺字段直接整体失败、用户所有偏好一起丢。
+    #[test]
+    fn settings_without_keymap_preset_falls_back_to_default() {
+        let json = r#"{
+          "theme": "dark",
+          "keymap": { "file.save": "Ctrl+Q" }
+        }"#;
+
+        let s: Settings = serde_json::from_str(json).expect("缺 keymap_preset 也应能读入");
+        assert_eq!(s.keymap_preset, "default", "未知/缺失应回落 default");
+        assert_eq!(
+            s.keymap.get("file.save").map(String::as_str),
+            Some("Ctrl+Q")
+        );
+        assert_eq!(Settings::default().keymap_preset, "default");
+    }
+
+    /// 落盘的字段名必须是 keymap_preset（前端按同名读取）。
+    /// 注意：Settings 走 snake_case（只有会话结构 TabSession/PanelSession 是 camelCase），
+    /// 前端 `settings?.keymap_preset` 与之对应，别顺手加 rename_all。
+    #[test]
+    fn settings_keymap_preset_round_trip() {
+        let s = Settings {
+            keymap_preset: "notepadpp".into(),
+            ..Settings::default()
+        };
+        let out = serde_json::to_string(&s).unwrap();
+        assert!(
+            out.contains("\"keymap_preset\":\"notepadpp\""),
+            "落盘字段应为 snake_case keymap_preset：{out}"
+        );
     }
 }

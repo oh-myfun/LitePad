@@ -21,6 +21,18 @@
   word-wrap: break-word;
 }
 
+/* M4：大文件停用自动预览时的占位说明（PreviewPane.setNotice）。
+   用 muted 色 + 左侧竖线，与正文区分开，避免被当成文档内容。 */
+.md-preview-notice {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--md-border);
+  background: var(--md-code-bg);
+  color: var(--md-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 :root[data-theme="dark"] .md-preview {
   --md-fg: #e6e8eb;
   --md-bg: #1e2227;

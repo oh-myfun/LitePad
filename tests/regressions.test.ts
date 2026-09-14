@@ -344,8 +344,14 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     // 预览态查找接线：高亮应用、重放、步进、清除
     const main = readFileSync("src/main.ts", "utf-8");
     expect(main, "applyFindQuery 必须同步预览高亮").toContain("applyPreviewFindEverywhere(q)");
-    expect(main, "重渲染后必须重放预览高亮").toMatch(
-      /renderMarkdownFor[\s\S]{0,600}?applyPreviewFindToPanel\(panel, findSpecOf\(findBar\.getQuery\(\)\)\)/,
+    // 重放必须发生在 renderMarkdownFor **函数体内**。
+    // 早期这里按「renderMarkdownFor 后 600 字符内」匹配，M4 给该函数加了
+    // 大文件降级分支后距离超限就误报——按函数体截取才稳。
+    const rmStart = main.indexOf("function renderMarkdownFor");
+    expect(rmStart, "应能定位 renderMarkdownFor").toBeGreaterThan(-1);
+    const rmBody = main.slice(rmStart, main.indexOf("\nfunction ", rmStart + 10));
+    expect(rmBody, "重渲染后必须重放预览高亮").toContain(
+      "applyPreviewFindToPanel(panel, findSpecOf(findBar.getQuery()))",
     );
     expect(main, "clearFindHighlight 必须同时清预览高亮").toMatch(
       /clearFindHighlight[\s\S]{0,200}?applyFind\(null\)/,
@@ -796,5 +802,85 @@ describe("B48 安装包必须自带 WebView2Loader.dll（缺了应用起不来�
       existsSync(`src-tauri/${hit![0]}`),
       `源文件 src-tauri/${hit![0]} 必须存在于仓库（随包分发的运行时依赖）`,
     ).toBe(true);
+  });
+});
+
+describe("M4 大文件分级：降级而不是拒绝（原先 20 MB 直接打不开）", () => {
+  // M0 起 open_file 对 >20MB 一律返回 Err，提示「大文件分级模式将在 M4 提供」。
+  // M4 的做法是先定档再降级：只有超过硬上限（64MB）才拒绝。
+  it("doc.rs 必须是阈值表，不再用单一 MAX_OPEN_BYTES", () => {
+    const src = readFileSync("src-tauri/src/core/doc.rs", "utf-8");
+    expect(src).toMatch(/pub const SIZE_NORMAL_MAX: u64/);
+    expect(src).toMatch(/pub const SIZE_LARGE_MAX: u64/);
+    expect(src).toMatch(/pub const SIZE_HUGE_MAX: u64/);
+    expect(src, "单一上限已被阈值表取代").not.toContain("MAX_OPEN_BYTES");
+    expect(src, "必须有 size_class 定档函数").toMatch(/pub fn size_class\(/);
+  });
+
+  it("open_file 按档位放行，超限才报错（错误信息不再提 M4 未提供）", () => {
+    const src = readFileSync("src-tauri/src/commands/mod.rs", "utf-8");
+    expect(src).toMatch(/doc::size_class\(/);
+    expect(src, "不该再写「大文件分级模式将在 M4 提供」").not.toContain("将在 M4 提供");
+    // 定档结果要随文件内容回传前端
+    expect(src).toMatch(/size_class: class\.as_str\(\)\.into\(\)/);
+  });
+
+  it("OpenedFile 必须带上 size_class / size_hint 给前端", () => {
+    const src = readFileSync("src-tauri/src/commands/mod.rs", "utf-8");
+    expect(src).toMatch(/pub size_class: String/);
+    expect(src).toMatch(/pub size_hint: String/);
+  });
+
+  it("前端必须有 perf 档位表，且编辑器真的按档裁剪", () => {
+    const perf = readFileSync("src/editor/perf.ts", "utf-8");
+    expect(perf).toMatch(/export type SizeClass/);
+    expect(perf).toMatch(/export function perfProfileFor/);
+    expect(perf).toMatch(/export function normalizeSizeClass/);
+
+    const ed = readFileSync("src/editor/editor.ts", "utf-8");
+    expect(ed, "基础扩展必须接受档位参数").toMatch(/function baseExtensions\(perf/);
+    expect(ed, "语法高亮必须受档位控制").toMatch(/perf\.syntax/);
+    expect(ed, "折叠必须受档位控制").toMatch(/perf\.folding/);
+  });
+
+  it("大文件停用自动预览，但手动切预览仍可渲染（降级不是禁用）", () => {
+    const src = readFileSync("src/main.ts", "utf-8");
+    expect(src).toMatch(/function renderMarkdownFor\(panel: Panel, force = false\)/);
+    expect(src).toMatch(/perfProfileFor\(doc\.sizeClass\)\.autoPreview/);
+    // 用户主动切模式时必须传 force=true
+    expect(src).toMatch(/renderMarkdownFor\(panel, true\)/);
+  });
+});
+
+describe("M4 命令面板与键位预设已接入", () => {
+  it("命令面板：模块存在、命令已登记、main 已分发", () => {
+    const km = readFileSync("src/shell/keymap.ts", "utf-8");
+    expect(km, "必须登记 palette.open 命令").toMatch(/id: "palette\.open"/);
+
+    const main = readFileSync("src/main.ts", "utf-8");
+    expect(main).toMatch(/case "palette\.open":/);
+    expect(main).toMatch(/showCommandPalette\(/);
+    // 面板打开期间全局快捷键必须让路，否则输入框里的按键会触发命令
+    expect(main).toMatch(/if \(paletteOpen\(\)\) return;/);
+  });
+
+  it("键位预设：注册表有预设表，设置里有持久化字段", () => {
+    const km = readFileSync("src/shell/keymap.ts", "utf-8");
+    expect(km).toMatch(/export const KEYMAP_PRESETS/);
+    // 优先级：用户覆盖 > 预设 > 默认，effectiveKeys 必须同时看两层
+    expect(km).toMatch(/currentPreset\.overrides\[id\]/);
+
+    const rs = readFileSync("src-tauri/src/session/mod.rs", "utf-8");
+    expect(rs).toMatch(/pub keymap_preset: String/);
+
+    const main = readFileSync("src/main.ts", "utf-8");
+    // 预设必须在任何 effectiveKeys/resolveCommand 之前落地
+    expect(main).toMatch(/setKeymapPreset\(normalizePresetId\(settings\?\.keymap_preset\)\)/);
+  });
+
+  it("快捷键对话框必须能切预设", () => {
+    const dlg = readFileSync("src/shell/keymapdialog.ts", "utf-8");
+    expect(dlg).toMatch(/onPresetChange/);
+    expect(dlg).toContain("keymap-preset");
   });
 });

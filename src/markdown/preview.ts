@@ -131,9 +131,33 @@ export class PreviewPane {
     this.applyPending();
   }
 
+  private noticeEl: HTMLElement | null = null;
+
+  /**
+   * 在预览区顶部显示一条占位说明（M4 大文件：自动预览被停用时告诉用户原因）。
+   * 传 null 移除。它不是 block，不参与 patch、行号同步与查找高亮。
+   *
+   * 注意：`setBlocks()` 会 `replaceChildren` 整块重建，所以调用顺序必须是
+   * 先 setBlocks 再 setNotice，否则提示会被下一次渲染抹掉。
+   */
+  setNotice(text: string | null): void {
+    if (!text) {
+      this.noticeEl?.remove();
+      this.noticeEl = null;
+      return;
+    }
+    if (!this.noticeEl) {
+      this.noticeEl = document.createElement("div");
+      this.noticeEl.className = "md-preview-notice";
+      this.root.appendChild(this.noticeEl);
+    }
+    this.noticeEl.textContent = text;
+  }
+
   clear(): void {
     this.blocks = [];
     this.root.replaceChildren();
+    this.noticeEl = null;
   }
 
   // ------------------------------------------------ 预览态查找高亮（B30）

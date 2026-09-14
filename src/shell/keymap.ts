@@ -288,6 +288,13 @@ export const COMMANDS: CommandDef[] = [
   { id: "view.zoomIn", label: "放大字号", group: "视图", keys: ["Ctrl+="] },
   { id: "view.zoomOut", label: "缩小字号", group: "视图", keys: ["Ctrl+-"] },
   { id: "view.zoomReset", label: "重置字号", group: "视图", keys: ["Ctrl+0"] },
+  {
+    id: "palette.open",
+    label: "命令面板…",
+    group: "视图",
+    keys: ["Ctrl+Shift+P"],
+    note: "按名字搜索并执行任意命令，右侧显示当前键位",
+  },
 
   // ---- 面板 ----
   { id: "panel.splitH", label: "左右分屏", group: "面板", keys: ["Alt+Shift+ArrowRight"] },
@@ -448,10 +455,91 @@ export function commandById(id: string): CommandDef | undefined {
   return BY_ID.get(id);
 }
 
+/**
+ * 键位预设：在「LitePad 默认」之上替换一组键位（M4）。
+ *
+ * 优先级：**用户覆盖 > 当前预设 > COMMANDS 里的默认值**。
+ * 预设只记**差异项**（与默认值不同才有必要写），这样以后新增命令时
+ * 不必回头同步维护每一套预设，缺项自然落回默认值。
+ */
+export interface KeymapPreset {
+  id: string;
+  label: string;
+  /** 一句话说明这套预设的取向（对话框下拉旁显示） */
+  note: string;
+  overrides: KeymapOverrides;
+}
+
+export const KEYMAP_PRESETS: KeymapPreset[] = [
+  {
+    id: "default",
+    label: "LitePad 默认",
+    note: "常规 Windows 编辑器习惯",
+    overrides: {},
+  },
+  {
+    id: "notepadpp",
+    label: "Notepad++",
+    note: "另存为 / 全部保存对调，折叠用 Alt+0",
+    overrides: {
+      // Notepad++ 里「另存为」是 Ctrl+Alt+S、「全部保存」是 Ctrl+Shift+S，
+      // 与 LitePad 默认正好相反——这是两套预设最容易被感知的差异。
+      "file.saveAs": "Ctrl+Alt+S",
+      "file.saveAll": "Ctrl+Shift+S",
+      "view.foldAll": "Alt+0",
+      "view.unfoldAll": "Alt+Shift+0",
+    },
+  },
+  {
+    id: "vscode",
+    label: "VS Code",
+    note: "预览 Ctrl+Shift+V、左右分屏 Ctrl+\\",
+    overrides: {
+      "view.toggle": "Ctrl+Shift+V",
+      "panel.splitH": "Ctrl+\\",
+    },
+  },
+];
+
+export const DEFAULT_PRESET_ID = KEYMAP_PRESETS[0].id;
+
+export function presetById(id: string): KeymapPreset | undefined {
+  return KEYMAP_PRESETS.find((p) => p.id === id);
+}
+
+/** 归一化预设 id：未知值一律回落默认，避免旧配置里的脏数据把键位表清空。 */
+export function normalizePresetId(id: string | undefined | null): string {
+  return presetById(id ?? "") ? (id as string) : DEFAULT_PRESET_ID;
+}
+
+/**
+ * 当前预设（模块级状态）。
+ *
+ * 刻意不做成 `effectiveKeys` 的入参：预设是全局基线，调用点有菜单、命令面板、
+ * 快捷键对话框、事件分发器四处，逐个传参容易漏；漏了就表现为「改了预设没生效」。
+ */
+let currentPreset: KeymapPreset = KEYMAP_PRESETS[0];
+
+export function getKeymapPreset(): KeymapPreset {
+  return currentPreset;
+}
+
+/** 切换预设。返回是否真的变了（调用方据此决定是否提示/持久化）。 */
+export function setKeymapPreset(id: string): boolean {
+  const next = presetById(id);
+  if (!next || next.id === currentPreset.id) return false;
+  currentPreset = next;
+  // 预设换了，绑定索引必须重建，否则 resolveCommand 还按旧键位分发
+  resetBindingIndex();
+  return true;
+}
+
 /** 某命令当前生效的键位（有覆盖则只返回覆盖的那条；显式解绑返回空数组）。 */
 export function effectiveKeys(id: string, overrides: KeymapOverrides): string[] {
   const custom = overrides[id];
   if (custom !== undefined) return custom ? [custom] : [];
+  const fromPreset = currentPreset.overrides[id];
+  if (fromPreset !== undefined) return fromPreset ? [fromPreset] : [];
   return BY_ID.get(id)?.keys ?? [];
 }
 
@@ -496,6 +584,15 @@ export function findConflict(
 let indexForOverrides: KeymapOverrides | null = null;
 let index: Map<string, string> | null = null;
 
+/** 让绑定索引失效：切预设、改键位后必须调用，否则命中表是旧的。 */
+function resetBindingIndex(): void {
+  indexForOverrides = null;
+  index = null;
+}
+
+/** `effectiveKeys` 的「无用户覆盖」视角：只取预设 + 默认，用作铺底基线。 */
+const NO_OVERRIDES: KeymapOverrides = {};
+
 function bindingKey(b: Binding): string {
   return `${b.ctrl ? 1 : 0}${b.alt ? 1 : 0}${b.shift ? 1 : 0}:${b.key}`;
 }
@@ -503,13 +600,39 @@ function bindingKey(b: Binding): string {
 function indexOf(overrides: KeymapOverrides): Map<string, string> {
   if (indexForOverrides === overrides && index) return index;
   const map = new Map<string, string>();
+
+  // ① 铺底：所有可编辑命令的「预设 + 默认」键位。
   for (const cmd of COMMANDS) {
     if (cmd.editable === false) continue;
-    for (const k of effectiveKeys(cmd.id, overrides)) {
+    for (const k of effectiveKeys(cmd.id, NO_OVERRIDES)) {
       const b = parseKey(k);
       if (b) map.set(bindingKey(b), cmd.id);
     }
   }
+
+  // ② 撤掉被覆盖命令的铺底键位（含显式解绑：spec 为空 = 注销该键）。
+  //    先统一删、再统一写，避免「A 解绑 Ctrl+S / B 改到 Ctrl+S」互相踩。
+  for (const id of Object.keys(overrides)) {
+    const cmd = BY_ID.get(id);
+    if (!cmd || cmd.editable === false) continue;
+    for (const k of effectiveKeys(id, NO_OVERRIDES)) {
+      const b = parseKey(k);
+      if (b) map.delete(bindingKey(b));
+    }
+  }
+
+  // ③ 写入用户覆盖。
+  //
+  // 覆盖是用户的显式意图，必须压过任何默认/预设键位。若只按声明顺序写一张表，
+  // 后声明的命令会用它的「默认键位」静默抢走先声明命令的「用户覆盖键位」
+  // （如 palette.open 默认 Ctrl+Shift+P 抢走用户给 file.save 设的同键位）。
+  for (const [id, spec] of Object.entries(overrides)) {
+    const cmd = BY_ID.get(id);
+    if (!cmd || cmd.editable === false || !spec) continue;
+    const b = parseKey(spec);
+    if (b) map.set(bindingKey(b), id);
+  }
+
   indexForOverrides = overrides;
   index = map;
   return map;

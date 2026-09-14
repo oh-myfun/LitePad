@@ -2,9 +2,11 @@
 // 快捷键注册表（src/shell/keymap.ts）单元测试。
 // 覆盖：键位串解析/格式化、事件匹配、冲突检测、用户覆盖与解绑、
 // 以及 B42 新增的「大纲 / 折叠展开 / 移除分屏」默认键位。
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 import {
   COMMANDS,
+  DEFAULT_PRESET_ID,
+  KEYMAP_PRESETS,
   bindingFromEvent,
   commandById,
   duplicateKeys,
@@ -13,8 +15,10 @@ import {
   formatBinding,
   isUsableBinding,
   keyHint,
+  normalizePresetId,
   parseKey,
   resolveCommand,
+  setKeymapPreset,
   type KeymapOverrides,
 } from "../src/shell/keymap";
 
@@ -191,6 +195,29 @@ describe("用户覆盖", () => {
     expect(resolveCommand(key({ code: "KeyS", key: "s", ctrlKey: true }), ov)).toBeNull();
   });
 
+  it("M4：用户覆盖压过别的命令的默认键位（与声明顺序无关）", () => {
+    // palette.open 默认就是 Ctrl+Shift+P，且声明在 file.save 之后。
+    // 若绑定索引按声明顺序「后写覆盖前写」，覆盖会被默认键位静默抢走。
+    const ov: KeymapOverrides = { "file.save": "Ctrl+Shift+P" };
+    expect(resolveCommand(key({ code: "KeyP", key: "P", ctrlKey: true, shiftKey: true }), ov)).toBe(
+      "file.save",
+    );
+  });
+
+  it("M4：命令面板默认键位在无覆盖时仍归命令面板", () => {
+    const noOv: KeymapOverrides = {};
+    expect(
+      resolveCommand(key({ code: "KeyP", key: "P", ctrlKey: true, shiftKey: true }), noOv),
+    ).toBe("palette.open");
+  });
+
+  it("M4：解绑命令面板后该键位不再分发", () => {
+    const ov: KeymapOverrides = { "palette.open": "" };
+    expect(
+      resolveCommand(key({ code: "KeyP", key: "P", ctrlKey: true, shiftKey: true }), ov),
+    ).toBeNull();
+  });
+
   it("覆盖会取代命令的多条默认键位", () => {
     const ov: KeymapOverrides = { "tab.next": "Ctrl+Alt+N" };
     expect(effectiveKeys("tab.next", ov)).toEqual(["Ctrl+Alt+N"]);
@@ -269,5 +296,77 @@ describe("命令表自检", () => {
     ]) {
       expect(commandById(id), `应登记 ${id}`).toBeTruthy();
     }
+  });
+});
+
+// ------------------------------------------------------------------ M4 键位预设
+
+describe("M4 键位预设：优先级 = 用户覆盖 > 预设 > 默认", () => {
+  // 预设是模块级状态，测试之间必须复位，否则会串味
+  afterEach(() => {
+    setKeymapPreset(DEFAULT_PRESET_ID);
+  });
+
+  it("预设表第一项就是默认预设，且 id 唯一", () => {
+    expect(KEYMAP_PRESETS.length).toBeGreaterThanOrEqual(3);
+    expect(KEYMAP_PRESETS[0].id).toBe(DEFAULT_PRESET_ID);
+    const ids = KEYMAP_PRESETS.map((p) => p.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("未知预设 id 一律回落默认（旧配置脏数据不得清空键位表）", () => {
+    expect(normalizePresetId("nope")).toBe(DEFAULT_PRESET_ID);
+    expect(normalizePresetId(undefined)).toBe(DEFAULT_PRESET_ID);
+    expect(normalizePresetId(null)).toBe(DEFAULT_PRESET_ID);
+    expect(normalizePresetId("notepadpp")).toBe("notepadpp");
+  });
+
+  it("切到 Notepad++ 预设：另存为与全部保存对调", () => {
+    expect(effectiveKeys("file.saveAs", {})).toEqual(["Ctrl+Shift+S"]);
+    expect(setKeymapPreset("notepadpp")).toBe(true);
+    expect(effectiveKeys("file.saveAs", {})).toEqual(["Ctrl+Alt+S"]);
+    expect(effectiveKeys("file.saveAll", {})).toEqual(["Ctrl+Shift+S"]);
+  });
+
+  it("预设未覆盖的命令仍取默认值（预设只记差异）", () => {
+    setKeymapPreset("notepadpp");
+    expect(effectiveKeys("file.save", {})).toEqual(["Ctrl+S"]);
+    expect(effectiveKeys("edit.find", {})).toEqual(["Ctrl+F"]);
+  });
+
+  it("用户覆盖压过预设", () => {
+    setKeymapPreset("notepadpp");
+    expect(effectiveKeys("file.saveAs", { "file.saveAs": "Ctrl+Q" })).toEqual(["Ctrl+Q"]);
+    // 显式解绑（空串）同样压过预设
+    expect(effectiveKeys("file.saveAs", { "file.saveAs": "" })).toEqual([]);
+  });
+
+  it("所有预设的键位串都能解析，且不与自身默认表重复", () => {
+    for (const p of KEYMAP_PRESETS) {
+      setKeymapPreset(p.id);
+      for (const [id, spec] of Object.entries(p.overrides)) {
+        expect(parseKey(spec), `${p.id} 的 ${id} 键位「${spec}」应可解析`).toBeTruthy();
+        expect(commandById(id), `${p.id} 引用了不存在的命令 ${id}`).toBeTruthy();
+      }
+      expect(duplicateKeys({}), `${p.id} 预设内部不应有重复键位`).toEqual([]);
+    }
+  });
+
+  it("切预设后事件分发立即走新键位（绑定索引必须重建）", () => {
+    setKeymapPreset("notepadpp");
+    // Ctrl+Alt+S → 另存为（默认预设下它是「全部保存」）
+    expect(resolveCommand(key({ code: "KeyS", ctrlKey: true, altKey: true }), {})).toBe(
+      "file.saveAs",
+    );
+    setKeymapPreset(DEFAULT_PRESET_ID);
+    expect(resolveCommand(key({ code: "KeyS", ctrlKey: true, altKey: true }), {})).toBe(
+      "file.saveAll",
+    );
+  });
+
+  it("切到同一预设返回 false（避免无谓的持久化与提示）", () => {
+    setKeymapPreset("vscode");
+    expect(setKeymapPreset("vscode")).toBe(false);
+    expect(setKeymapPreset("unknown")).toBe(false);
   });
 });

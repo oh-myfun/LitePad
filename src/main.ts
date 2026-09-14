@@ -29,6 +29,7 @@ import {
   setFindQuery,
 } from "./editor/find";
 import { detectLanguage } from "./editor/language";
+import { normalizeSizeClass, perfProfileFor, type SizeClass } from "./editor/perf";
 import {
   checkEncodable,
   closeTab as ipcCloseTab,
@@ -63,6 +64,7 @@ import {
   type FindHit,
 } from "./shell/findbar";
 import { ICONS, type IconName } from "./shell/icons";
+import { paletteOpen, showCommandPalette } from "./shell/commandpalette";
 import { createMenuBar, openMenuByIndex } from "./shell/menubar";
 import { showPopupMenu } from "./shell/menu";
 import {
@@ -78,9 +80,12 @@ import {
 import {
   commandById,
   effectiveKeys,
-  parseKey,
   formatBinding,
+  getKeymapPreset,
+  normalizePresetId,
+  parseKey,
   resolveCommand,
+  setKeymapPreset,
   type KeymapOverrides,
 } from "./shell/keymap";
 import { KEYMAP_RECORDING_CLASS, showKeymapDialog } from "./shell/keymapdialog";
@@ -191,6 +196,11 @@ interface Doc {
   /** 磁盘文件在会话期间被外部修改（状态栏提示，标记被保存动作清除） */
   external: boolean;
   langLabel: string;
+  /**
+   * M4 大文件档位：由 Rust 按文件字节数判定（OpenedFile.sizeClass），
+   * 决定该文档关闭哪些昂贵编辑器特性；未命名文档恒为 normal。
+   */
+  sizeClass: SizeClass;
 }
 
 /** 标签实例：文档在某面板中的一份视图（独立光标/撤销历史/视图模式）。
@@ -679,6 +689,8 @@ function makeDoc(
   encoding: string,
   eol: string,
   readonly: boolean,
+  /** M4 大文件档位；缺省 normal（新建 / 未命名 / 会话里没带档位的旧数据） */
+  sizeClass: SizeClass = "normal",
 ): Doc {
   const firstLine = text.split("\n", 1)[0] ?? "";
   const lang =
@@ -696,6 +708,7 @@ function makeDoc(
     dirty: false,
     external: false,
     langLabel: lang.label,
+    sizeClass,
   };
 }
 
@@ -706,10 +719,11 @@ function makeInstance(doc: Doc, panelId: number, text: string): Tab {
     doc.name === "未命名" && !text
       ? { label: "Plain Text", extension: null }
       : detectLanguage(doc.name === "未命名" ? null : doc.name, firstLine);
+  const perf = perfProfileFor(doc.sizeClass);
   const { state, comps } = makeTabState(
     text,
     lang.extension,
-    { dark: isDark, wrap: isWrap },
+    { dark: isDark, wrap: isWrap, perf },
     handleUpdate,
   );
   return {
@@ -1268,6 +1282,7 @@ async function doOpen(
       file.encoding,
       file.eol,
       file.readonly,
+      normalizeSizeClass(file.size_class),
     );
     doc.mixedEol = file.mixedEol;
     registerDoc(doc);
@@ -1281,12 +1296,16 @@ async function doOpen(
     renderPanelTabs(panel.panelId);
 
     showMessage(
-      file.lossy
-        ? `已打开 ${file.name}（部分字节无法用 ${file.encoding} 解码，建议在状态栏手动指定编码）`
-        : `已打开 ${file.name}`,
+      file.size_hint ||
+        (file.lossy
+          ? `已打开 ${file.name}（部分字节无法用 ${file.encoding} 解码，建议在状态栏手动指定编码）`
+          : `已打开 ${file.name}`),
       file.lossy,
     );
-    logEvent("open", `${file.name} ${file.size}B ${file.encoding}${file.lossy ? " lossy" : ""}`);
+    logEvent(
+      "open",
+      `${file.name} ${file.size}B ${file.encoding}${file.lossy ? " lossy" : ""} size=${doc.sizeClass}`,
+    );
     scheduleSessionSave();
     return tab.tabId;
   } catch (err) {
@@ -1762,6 +1781,7 @@ async function restoreSession(): Promise<boolean> {
             file.encoding,
             file.eol,
             file.readonly,
+            normalizeSizeClass(file.size_class),
           );
           doc.mixedEol = file.mixedEol;
           registerDoc(doc);
@@ -2212,7 +2232,8 @@ function applyPanelMode(panel: Panel): void {
   panel.bodyEl.classList.remove("mode-source", "mode-split", "mode-preview");
   panel.bodyEl.classList.add("mode-" + mode);
   if (mode !== "source") {
-    renderMarkdownFor(panel);
+    // 用户主动切模式 → force，大文件也要渲染一次（降级不是禁用）
+    renderMarkdownFor(panel, true);
     // 预览从零开始渲染（scrollTop=0），按编辑器当前可见位置对齐，
     // 否则切到预览/切标签时永远停在文档开头。
     if (anchorLine > 1) panel.preview?.syncToLine(anchorLine);
@@ -2221,13 +2242,32 @@ function applyPanelMode(panel: Panel): void {
   panel.view?.view.requestMeasure();
 }
 
-/** 全量重渲染某面板预览（增量 patch 由 PreviewPane 内部处理）。 */
-function renderMarkdownFor(panel: Panel): void {
+/**
+ * 全量重渲染某面板预览（增量 patch 由 PreviewPane 内部处理）。
+ *
+ * M4：`force = false`（输入防抖触发的自动渲染）时，大文件档位会直接跳过——
+ * 每敲一个字就重渲染几十 MB 的 Markdown 会把界面拖死。
+ * 用户**显式**切到预览/分屏模式时传 `force = true`，仍然照常渲染：
+ * 降级不等于禁用，用户明确要看的时候必须给得出来。
+ */
+function renderMarkdownFor(panel: Panel, force = false): void {
   const preview = panel.preview;
   const tab = tabs.get(panel.activeTabId);
   if (!preview || !tab || !isMdTab(tab)) return;
   const doc = docOf(tab);
   preview.setBaseDir(doc.path ? dirname(doc.path) : null);
+
+  if (!force && !perfProfileFor(doc.sizeClass).autoPreview) {
+    preview.setBlocks([]);
+    preview.setNotice(
+      doc.sizeClass === "huge"
+        ? "文件很大（>20 MB）：已停用自动预览。切到「预览」模式可手动渲染一次。"
+        : "文件较大（>2 MB）：已停用自动预览。切到「预览」模式可手动渲染一次。",
+    );
+    return;
+  }
+  preview.setNotice(null);
+
   preview.setBlocks(renderBlocks(tab.state.doc.toString()));
   // 重渲染重建了 block DOM，查找高亮随之丢失——重放当前查询（B30）
   if (findBar?.isOpen()) applyPreviewFindToPanel(panel, findSpecOf(findBar.getQuery()));
@@ -2651,11 +2691,26 @@ async function applyKeymapOverrides(next: KeymapOverrides): Promise<void> {
   }
 }
 
+/**
+ * 切换键位预设（快捷键对话框下拉 → 立即生效 + 持久化）。
+ *
+ * 预设是「基线」，切换时前端已把旧的自定义覆盖清空（见 keymapdialog），
+ * 这里跟着落盘，避免重启后覆盖表残留成旧预设的差异项。
+ */
+async function applyKeymapPreset(id: string): Promise<void> {
+  if (!settings) return;
+  settings.keymap_preset = normalizePresetId(id);
+  await persistSettings();
+  showMessage(`键位预设：${getKeymapPreset().label}`);
+}
+
 /** 打开快捷键对话框（设置 → 快捷键）。 */
 function openKeymapDialog(): void {
   showKeymapDialog({
     overrides: keymapOverrides,
     onChange: (next) => void applyKeymapOverrides(next),
+    preset: getKeymapPreset().id,
+    onPresetChange: (id) => void applyKeymapPreset(id),
   });
 }
 
@@ -2813,6 +2868,9 @@ function onGlobalKeydown(e: KeyboardEvent): void {
   // 设置对话框打开时整体让路：模态层上的按键不该再去触发「新建 / 保存」。
   if (document.querySelector(".settings-overlay")) return;
   if (document.body.classList.contains(KEYMAP_RECORDING_CLASS)) return;
+  // 命令面板打开时同理：面板的输入框要吃下 ↑↓/Enter/Esc，
+  // 且 win 捕获阶段先于 document，这里不让路面板就收不到方向键。
+  if (paletteOpen()) return;
 
   const id = resolveCommand(e, keymapOverrides);
   if (id && shortcutApplies(id)) {
@@ -2945,9 +3003,27 @@ function runShortcut(id: string): void {
     case "panel.close":
       if (activePanel()) closePanelById(activePanelId);
       break;
+    case "palette.open":
+      openCommandPalette();
+      break;
     default:
       break;
   }
+}
+
+/**
+ * 命令面板（M4，Ctrl+Shift+P）。
+ *
+ * 数据源直接取 keymap 的命令注册表，选中的 id 走同一条 runShortcut，
+ * 因此面板与菜单/快捷键永远执行同一份动作，不会出现「面板能跑、快捷键不行」。
+ */
+function openCommandPalette(): void {
+  showCommandPalette({
+    overrides: keymapOverrides,
+    onRun: (id) => runShortcut(id),
+    // 关闭后把焦点还给编辑器：否则光标还在文档里，却敲不动字
+    onClose: () => activePanel()?.view?.focus(),
+  });
 }
 
 function showExportMenu(): void {
@@ -3342,6 +3418,9 @@ async function bootstrap(): Promise<void> {
   bootMark("settings");
 
   keymapOverrides = sanitizeKeymap(settings?.keymap ?? {});
+  // 预设必须在任何 effectiveKeys / resolveCommand 之前落地：它是键位基线，
+  // 晚设置会让菜单、命令面板先按默认键位渲染一遍，表现为「预设没生效」。
+  setKeymapPreset(normalizePresetId(settings?.keymap_preset));
   void loadPreferenceOptions();
 
   themeMode = normalizeMode(settings?.theme);
