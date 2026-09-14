@@ -4,6 +4,44 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LitePad</title>
+
+    <!-- B50 首屏着色：模块脚本还在下载/解析时，这段内联样式与脚本已经跑完，
+         于是 WebView2 画出的第一帧就是主题底色而不是白板。
+         配色必须与 src/styles/global.css 的 --bg、src-tauri/src/main.rs 的
+         BG_DARK/BG_LIGHT、tauri.conf.json 的 backgroundColor 四处保持一致。 -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #ffffff;
+      }
+      html[data-theme="dark"],
+      html[data-theme="dark"] body {
+        background: #1b1d1f;
+      }
+      /* 没拿到 data-theme（首次启动 / localStorage 不可用）时先跟系统 */
+      @media (prefers-color-scheme: dark) {
+        html:not([data-theme="light"]),
+        html:not([data-theme="light"]) body {
+          background: #1b1d1f;
+        }
+      }
+    </style>
+    <script>
+      // 主题模式在 localStorage 里有一份镜像（src/theme/theme.ts 的 applyTheme 写入），
+      // 这里同步读出来，让首帧就落在正确的深浅色上。
+      (function () {
+        try {
+          var mode = localStorage.getItem("litepad.theme");
+          var dark =
+            mode === "dark" ||
+            (mode !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+        } catch (_) {
+          /* localStorage 不可用就交给上面的 media query 兜底 */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="app">

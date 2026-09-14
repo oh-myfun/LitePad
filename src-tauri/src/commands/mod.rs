@@ -5,13 +5,17 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 use notify::{RecommendedWatcher, Watcher};
 use tauri::State;
 
 use crate::core::{atomic_write, codec, doc, eol};
 use crate::session;
+
+/// 进程启动时刻（在 `main()` 第一行写入），用于计算「点击图标 → 界面出现」的端到端耗时。
+pub static BOOT: OnceLock<Instant> = OnceLock::new();
 
 /// 应用级共享状态：打开文档集合的「真实状态」归 Rust 持有。
 ///
@@ -429,10 +433,21 @@ fn smoke_log(msg: &str) {
     }
 }
 
-/// 冒烟诊断：前端 bootstrap 完成后回报关键状态（也接收 index.html 的启动错误上报）。
+/// 前端界面就绪后回报：显示主窗口 + 记录端到端启动耗时。
+///
+/// 前端启动阶段回报（B50：纯诊断用）。
+///
+/// 前端在「外壳就绪」和「全部就绪」各调一次，detail 里带上各阶段耗时，
+/// 写进 `%TEMP%\litepad-smoke.log`，用来定位启动慢在哪一段。
+/// 注意：这里**不负责显示窗口**——主窗口一直是可见的，白屏靠
+/// `main.rs` 里 `set_background_color` 刷主题底色解决。
 #[tauri::command]
 pub fn frontend_ready(detail: Option<String>) {
-    smoke_log(&format!("frontend: {}", detail.unwrap_or_default()));
+    let elapsed = BOOT.get().map(|t| t.elapsed().as_millis()).unwrap_or(0);
+    smoke_log(&format!(
+        "frontend: +{elapsed}ms {}",
+        detail.unwrap_or_default()
+    ));
 }
 
 /// 运行日志（方案 M1「日志与埋点」）：追加写 %TEMP%\litepad-app.log。

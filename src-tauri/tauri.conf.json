@@ -22,6 +22,7 @@
         "decorations": true,
         "center": true,
         "dragDropEnabled": true,
+        "backgroundColor": "#1b1d1f",
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu"
       }
     ],

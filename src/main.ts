@@ -96,6 +96,36 @@ import { needsChoice, showFileDropChoice, type FileDropTarget } from "./shell/fi
 import { renderTabstrip, type TabViewData, type TabstripCallbacks } from "./shell/tabstrip";
 import { applyTheme, normalizeMode, watchSystemTheme, type ThemeMode } from "./theme/theme";
 
+// ------------------------------------------------------------------ 启动计时（B50）
+
+/** 模块脚本执行到本文件首行的时刻（相对 navigationStart）。 */
+const BOOT_T0 = performance.now();
+const BOOT_MARKS: string[] = [];
+
+/**
+ * 记录一个启动阶段的耗时（从 `from` 到现在），并返回当前时刻以便串成链。
+ * 只进诊断日志（`frontend_ready` 的 detail），失败也不影响启动。
+ */
+function bootMark(name: string, from = BOOT_T0): number {
+  const now = performance.now();
+  BOOT_MARKS.push(`${name}=${Math.round(now - from)}ms`);
+  return now;
+}
+
+/**
+ * 上报一条启动阶段的诊断（写进 Rust 侧 `%TEMP%\litepad-smoke.log`）。
+ *
+ * B50 备注：窗口不再先隐藏再显形——那样「窗口是否出现」就完全取决于前端
+ * 能否跑完 bootstrap，一旦前端卡住用户就是「点了图标什么都没有」。
+ * 现在窗口照常可见、底色由 Rust 刷成主题色（`main.rs` 的
+ * `set_background_color`），这里只负责回传各阶段耗时，方便定位启动慢在哪段。
+ */
+function reportBoot(stage: string): void {
+  void invoke("frontend_ready", { detail: `${stage} [${BOOT_MARKS.join(" ")}]` }).catch(() => {
+    /* 诊断上报失败不阻塞启动 */
+  });
+}
+
 const TEXT_FILTERS = [
   {
     name: "文本文件",
@@ -1688,6 +1718,29 @@ async function restoreSession(): Promise<boolean> {
     }
   }
 
+  // 预取：并行发起所有文件的读取。按「面板索引|路径」去重——同一文件在多个面板
+  // 打开时共用同一份 doc（同源多实例），本来也只需读一次盘。
+  const pending: Array<{ key: string; path: string; encoding: string | null }> = [];
+  for (let i = 0; i < panels0.length; i++) {
+    for (const st of panels0[i].tabs) {
+      if (!st.path) continue;
+      const key = `${i}|${st.path}`;
+      if (!pending.some((p) => p.key === key)) {
+        pending.push({ key, path: st.path, encoding: st.encoding ?? null });
+      }
+    }
+  }
+  const openedCache = new Map<string, Awaited<ReturnType<typeof openFile>>>();
+  await Promise.all(
+    pending.map(async (p) => {
+      try {
+        openedCache.set(p.key, await openFile(p.path, p.encoding));
+      } catch {
+        /* 文件已删除 / 读不了 → 该标签跳过 */
+      }
+    }),
+  );
+
   // 逐面板恢复标签
   let opened = 0;
   for (let i = 0; i < panels0.length; i++) {
@@ -1696,8 +1749,9 @@ async function restoreSession(): Promise<boolean> {
     if (!panel) continue;
     for (const st of spanel.tabs) {
       if (!st.path) continue;
+      const file = openedCache.get(`${i}|${st.path}`);
+      if (!file) continue;
       try {
-        const file = await openFile(st.path, st.encoding ?? null);
         let doc = docs.get(file.tabId);
         if (!doc) {
           doc = makeDoc(
@@ -3285,6 +3339,7 @@ async function bootstrap(): Promise<void> {
   } catch {
     settings = null;
   }
+  bootMark("settings");
 
   keymapOverrides = sanitizeKeymap(settings?.keymap ?? {});
   void loadPreferenceOptions();
@@ -3351,8 +3406,15 @@ async function bootstrap(): Promise<void> {
     })
     .catch(() => {});
 
+  // 主题、菜单、工具栏全部就绪。此刻 DOM 已是正确配色的界面外壳，后面的会话
+  // 恢复（读盘）再久也只是「内容晚一点出现」，不会让用户盯着一块空板。
+  bootMark("shell");
+  reportBoot("shell");
+
   // 尝试恢复上次会话；失败则退回空白未命名标签
+  let t = bootMark("session-start");
   const restored = await restoreSession().catch(() => false);
+  t = bootMark("session", t);
   if (!restored) {
     panels.clear();
     tabs = new Map();
@@ -3400,15 +3462,10 @@ async function bootstrap(): Promise<void> {
         ? "已恢复上次会话 · Ctrl+N 新建，Ctrl+O 打开，Ctrl+F 查找"
         : "就绪 · Ctrl+N 新建，Ctrl+O 打开，Ctrl+S 保存，Ctrl+F 查找",
     );
+    bootMark("render", t);
     void persistSession();
 
-    try {
-      await invoke("frontend_ready", {
-        detail: `set_title=${diagSetTitle} dom_ok=true tabs=${tabs.size} panels=${panels.size}`,
-      });
-    } catch {
-      // 诊断通道失败不影响正常运行
-    }
+    reportBoot(`ready set_title=${diagSetTitle} tabs=${tabs.size} panels=${panels.size}`);
   } catch (err) {
     // 渲染期异常不应让整个应用静默白屏：显示错误，且关闭处理器已提前注册
     showFatalError(err);
