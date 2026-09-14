@@ -81,6 +81,15 @@
   表现为重启后**光标回到第 1 行、预览模式丢失、活动面板错位**（B49 前一直是坏的）。
   修法 = 加 `rename_all` + 对旧字段加 `serde(alias)` 兼容，并补 Rust round-trip 测试。
   截图基建：`scripts/screenshot.py` 支持 `--exe` / `--pid` / `--size`（按进程定位窗口，避免标题撞名）。
+- **B50** 消除启动白屏：WebView2 首帧前的客户区是 Chromium 纯白，深色主题下就是「白屏一下」。
+  修法 = `main.rs` 的 `set_background_color`（按 settings.theme / 系统主题取 `--bg` 同款色）
+  + `tauri.conf.json` 的 `backgroundColor` 兜底 + `index.html` 内联首屏样式/脚本（同步读
+  `localStorage["litepad.theme"]` 设 `data-theme`）。**四处配色必须一致**，回归测试守护。
+  另：`restoreSession` 改为 `Promise.all` 并行预取（原先逐文件串行 await）。
+  ⚠️ **不要用 `visible:false` + 就绪后 show()**：窗口出现与否会依赖前端 bootstrap，
+  前端卡住时用户「点了图标什么都没有」（实测发生过），比白屏严重得多。
+  ⚠️ **WebView2 数据目录损坏 = 窗口空白且无 IPC**：`%LOCALAPPDATA%\com.litepad.app\EBWebView`
+  坏掉时页面不加载；改名重建即可恢复（不要删，改名留退路）。强杀进程易造成。
 
 ## 下一步
 
