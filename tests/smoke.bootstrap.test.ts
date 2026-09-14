@@ -233,6 +233,23 @@ function clickTab(tab: HTMLElement): void {
 }
 
 describe("bootstrap + drag-split smoke", () => {
+  /**
+   * 把主题按钮点回默认档「跟随系统」。
+   *
+   * B51 起主题按钮是三态循环，档位是跨用例共享的模块状态：
+   * 上一个用例把档位留在「显式浅色」时，下一个用例里第一次点击会走到
+   * 「跟随系统」（jsdom 偏好浅色 → 外观不变），断言就会无辜失败。
+   * 因此凡是依赖「点一下必然翻转」的用例，都必须先把档位归位。
+   */
+  async function resetThemeToSystem(): Promise<void> {
+    const btn = document.getElementById("btn-theme") as HTMLButtonElement | null;
+    if (!btn) return;
+    for (let i = 0; i < 3 && btn.dataset.themeMode !== "system"; i++) {
+      btn.click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  }
+
   it("启动正常、内容渲染、拖拽分屏后状态仍有效", async () => {
     await import("../src/main");
     await new Promise((r) => setTimeout(r, 300));
@@ -336,6 +353,7 @@ describe("bootstrap + drag-split smoke", () => {
     // 用户报告：深浅色按钮有时候要点两下才生效。
     // 根因是旧的 system→light→dark 循环在系统偏好与当前态一致时视觉无变化；
     // 回归断言：任意连续两次点击，dataset.theme 都必须翻转。
+    await resetThemeToSystem();
     const btn = document.getElementById("btn-theme") as HTMLButtonElement | null;
     expect(btn, "btn-theme 应存在").toBeTruthy();
     const themeOf = () => document.documentElement.dataset.theme;
@@ -350,6 +368,72 @@ describe("bootstrap + drag-split smoke", () => {
     btn!.click();
     await new Promise((r) => setTimeout(r, 20));
     expect(themeOf(), "第二次点击必须切回").not.toBe(second);
+  });
+
+  it("B51：主题按钮三态循环（浅色 / 深色 / 跟随系统），图标每次都变", async () => {
+    // 需求：深浅色按钮改成三态切换。可行的契约：
+    //   ① 每点一次都进入下一档，按钮图标/提示必然变化（不会「点了像没反应」）；
+    //   ② 从默认档（跟随系统）出发的第一下点击必定翻转明暗——正好覆盖老 bug
+    //      「浅色系统下点一下没变化」；
+    //   ③ 连续四次点击走遍三档并回到起点，三档图标互不相同。
+    // 注意：「显式档 → 跟随系统」这条边是否翻转取决于系统偏好，是明暗翻转无法
+    // 三条边全保的固有限制，所以「每次都翻转」不再作为契约。
+    const btn = document.getElementById("btn-theme") as HTMLButtonElement | null;
+    expect(btn, "btn-theme 应存在").toBeTruthy();
+    const b = btn!;
+    const mode = () => b.dataset.themeMode;
+    const themeOf = () => document.documentElement.dataset.theme;
+    const tick = () => new Promise((r) => setTimeout(r, 20));
+    expect(["light", "dark", "system"], "初始档位应合法").toContain(mode());
+
+    // 先回到默认档「跟随系统」（此前的用例可能点过按钮）
+    await resetThemeToSystem();
+    expect(mode(), "应能回到跟随系统档").toBe("system");
+
+    // ② 默认档点一下，明暗必须翻转
+    const systemTheme = themeOf();
+    b.click();
+    await tick();
+    expect(themeOf(), "从「跟随系统」点一下必须改变明暗").not.toBe(systemTheme);
+    const startMode = mode();
+
+    // ①③ 连续点击走遍三档，图标每次都变，第四次回到起点
+    const seen = [startMode];
+    const icons = [b.innerHTML];
+    for (let i = 0; i < 3; i++) {
+      const prev = mode();
+      const prevIcon = b.innerHTML;
+      b.click();
+      await tick();
+      expect(mode(), "每次点击都应进入下一档").not.toBe(prev);
+      expect(b.innerHTML, "图标必须随档位变化").not.toBe(prevIcon);
+      seen.push(mode());
+      icons.push(b.innerHTML);
+    }
+    expect(new Set(seen).size, "三档都应被访问到").toBe(3);
+    expect(seen[3], "第四次点击回到起点").toBe(startMode);
+    expect(new Set(icons).size, "三档图标互不相同").toBe(3);
+  });
+
+  it("B51：浅色 ⇄ 深色 之间的切换必须翻转明暗", async () => {
+    // 一轮三档循环里，「跟随系统」只占一格，两个显式档必然相邻；
+    // 相邻即浅→深或深→浅，明暗必须翻转。
+    const btn = document.getElementById("btn-theme") as HTMLButtonElement | null;
+    expect(btn, "btn-theme 应存在").toBeTruthy();
+    const b = btn!;
+    const themeOf = () => document.documentElement.dataset.theme;
+    await resetThemeToSystem();
+    const trace: { mode: string; theme: string | undefined }[] = [
+      { mode: b.dataset.themeMode ?? "", theme: themeOf() },
+    ];
+    for (let i = 0; i < 3; i++) {
+      b.click();
+      await new Promise((r) => setTimeout(r, 20));
+      trace.push({ mode: b.dataset.themeMode ?? "", theme: themeOf() });
+    }
+    const explicit = trace.filter((t) => t.mode !== "system");
+    expect(explicit.length, "一轮里应恰好出现两档显式主题").toBe(2);
+    expect(explicit[0].theme, "浅⇄深之间必须翻转明暗").not.toBe(explicit[1].theme);
   });
 
   it("新建标签必须是空白文档（回归：attach 后 rebuild 快照回写污染新标签）", async () => {
@@ -649,6 +733,7 @@ describe("bootstrap + drag-split smoke", () => {
   it("深浅色切换时所有面板的编辑器必须一起变（回归：部分面板不跟随）", async () => {
     // 用户报告：深浅色切换，所有面板要一起跟着变。
     // 断言：点击主题按钮后，每一个已挂载面板的 CodeMirror 明暗状态都同步翻转。
+    await resetThemeToSystem();
     const btn = document.getElementById("btn-theme") as HTMLButtonElement | null;
     expect(btn, "btn-theme 应存在").toBeTruthy();
     const viewsOf = () =>

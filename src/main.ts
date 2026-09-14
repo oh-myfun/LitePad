@@ -2325,11 +2325,45 @@ function refreshViewModeButton(): void {
   }
 }
 
-/** 主题按钮的活动态与日/月图标（深色→月亮，浅色→太阳）。 */
+/**
+ * 主题按钮的三态循环顺序（浅色 / 深色 / 跟随系统）。
+ *
+ * 顺序**跟着系统偏好走**：默认档是 system，若固定成 system→浅色→深色，
+ * 在浅色系统上第一下点击（system→浅色）外观毫无变化——正是之前的
+ * 「深浅色按钮要点两下才生效」。让 system 的下一档取「与当前生效相反」的显式档，
+ * 保证从默认档出发的第一次点击必定翻转明暗；浅色⇄深色之间也必定翻转。
+ * 唯一可能不翻转的一条边是「显式档 → system」（当二者恰好一致），这是三态的固有限制，
+ * 此时按钮图标与状态栏提示仍会变化，不会出现「点了没反应」。
+ */
+function themeCycle(): ThemeMode[] {
+  const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  return systemDark ? ["system", "light", "dark"] : ["system", "dark", "light"];
+}
+
+/** 三态各自的图标与名称。 */
+const THEME_STATES: Record<ThemeMode, { icon: IconName; label: string }> = {
+  light: { icon: "sun", label: "浅色" },
+  dark: { icon: "moon", label: "深色" },
+  system: { icon: "followSystem", label: "跟随系统" },
+};
+
+/** 当前档位的下一档（循环闭合）。 */
+function nextThemeMode(): ThemeMode {
+  const cycle = themeCycle();
+  const idx = cycle.indexOf(themeMode);
+  return cycle[(idx + 1) % cycle.length];
+}
+
+/** 主题按钮：图标随三态变化；仅「显式深色」点亮，与改动前的观感一致。 */
 function refreshThemeButton(): void {
-  btnTheme.classList.toggle("tool-btn-active", isDark);
-  btnTheme.innerHTML = isDark ? ICONS.moon : ICONS.sun;
-  btnTheme.title = isDark ? "切换为浅色主题" : "切换为深色主题";
+  const state = THEME_STATES[themeMode];
+  const next = THEME_STATES[nextThemeMode()].label;
+  btnTheme.innerHTML = ICONS[state.icon];
+  btnTheme.title = `主题：${state.label}（点击切换为${next}）`;
+  btnTheme.setAttribute("aria-label", `主题：${state.label}，点击切换为${next}`);
+  // 测试与样式钩子：当前处于哪一档
+  btnTheme.dataset.themeMode = themeMode;
+  btnTheme.classList.toggle("tool-btn-active", themeMode === "dark");
 }
 
 // ---------------------------------------------------------------- 大纲 TOC（M3）
@@ -2587,25 +2621,15 @@ function applyEditorLineHeight(value: number): void {
   for (const p of panels.values()) p.view?.view.requestMeasure();
 }
 
-async function toggleTheme(): Promise<void> {
-  // 直接在当前“已生效”的明暗之间切换：点一下必定改变外观。
-  // 不再走 system→light→dark 循环——否则当系统偏好与当前态一致时，
-  // system 这一档视觉无变化，表现为“要点两下才生效”。system 模式仍可在设置里选择。
-  const nextMode: ThemeMode = isDark ? "light" : "dark";
-  themeMode = nextMode;
-  const dark = applyTheme(themeMode);
-  if (dark !== isDark) applyDarkToTabs(dark);
-  isDark = dark;
-  refreshThemeButton();
-
-  if (settings) {
-    settings.theme = themeMode;
-    try {
-      await saveSettings(settings);
-    } catch {
-      // 配置写失败不应影响使用
-    }
-  }
+/**
+ * 工具栏主题按钮：三态循环 跟随系统 / 浅色 / 深色（顺序见 `themeCycle`）。
+ *
+ * 与老实现的区别：老版只在明暗之间二选一，system 只能去首选项里选；
+ * 现在三档都能从按钮点到，且每次点击都会在状态栏给出「主题：X」的回执，
+ * 不会出现「点了不知道有没有生效」。
+ */
+async function cycleTheme(): Promise<void> {
+  await setThemeMode(nextThemeMode());
 }
 
 // ---------------------------------------------------------------- 偏好（设置 → 首选项）
@@ -2714,7 +2738,7 @@ function openKeymapDialog(): void {
   });
 }
 
-/** 自动保存开关（绝对值；菜单勾选项与首选项弹窗共用）。 */
+/** 自动保存开关（绝对值；由「设置」菜单的勾选项切换）。 */
 async function setAutosave(on: boolean): Promise<void> {
   if (!settings || settings.autosave === on) return;
   settings.autosave = on;
@@ -2784,7 +2808,7 @@ async function setFontSizeValue(px: number): Promise<void> {
   showMessage(`字号 ${next}px`);
 }
 
-/** 自动换行开关（绝对值；菜单勾选项与首选项弹窗共用）。 */
+/** 自动换行开关（绝对值；由「查看」菜单的勾选项切换）。 */
 async function setWordWrap(on: boolean): Promise<void> {
   if (isWrap === on) return;
   isWrap = on;
@@ -2810,17 +2834,12 @@ function openPreferencesDialog(): void {
     onPreviewLineHeight: (v) => void setPreviewLineHeight(v),
     tocWidth: () => tocWidth,
     onTocWidth: (px) => void setTocWidthValue(px),
-    wordWrap: () => isWrap,
-    onWordWrap: (on) => void setWordWrap(on),
-    autosave: () => settings?.autosave ?? true,
-    onAutosave: (on) => void setAutosave(on),
     defaultEol: () => settings?.default_eol ?? "CRLF",
     eolOptions: () => eolOptions,
     onDefaultEol: (v) => void setDefaultEol(v),
     defaultEncoding: () => settings?.default_encoding ?? "UTF-8",
     encodingOptions: () => encodingOptions,
     onDefaultEncoding: (v) => void setDefaultEncoding(v),
-    onKeymap: () => openKeymapDialog(),
   });
 }
 
@@ -2843,7 +2862,7 @@ function bindEvents(): void {
   btnFind.addEventListener("click", () => openFindReplace());
   btnOutline.addEventListener("click", () => toggleToc());
   btnExport.addEventListener("click", () => showExportMenu());
-  btnTheme.addEventListener("click", () => void toggleTheme());
+  btnTheme.addEventListener("click", () => void cycleTheme());
 
   sbLang.addEventListener("click", () => {
     if (isMdActive()) toggleViewMode();
@@ -3271,10 +3290,10 @@ function setupToolbar(): void {
     [btnFind, "find"],
     [btnOutline, "outline"],
     [btnExport, "export"],
-    [btnTheme, "theme"],
   ];
   for (const [btn, name] of icons) btn.innerHTML = ICONS[name];
   refreshViewModeButton();
+  // 主题按钮的图标由 refreshThemeButton 按当前档位（浅色/深色/跟随系统）决定
   refreshThemeButton();
 }
 

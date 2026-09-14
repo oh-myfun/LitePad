@@ -2,7 +2,8 @@
 // B46 首选项弹窗运行时测试：
 // 1) 打开后渲染全部分组与控件，且控件初值取自 opts 的 getter；
 // 2) 任何控件 change 立即回调对应 setter（即时生效 + 持久化由 main 负责）；
-// 3) 「快捷键…」先关本窗再回调 onKeymap；确定/Esc/点蒙层关窗。
+// 3) 确定/Esc/点蒙层关窗。
+// B51 起「自动换行 / 自动保存 / 快捷键…」从弹窗移除（改由菜单直达），见文末用例。
 import { describe, it, expect, afterEach } from "vitest";
 import {
   showPreferencesDialog,
@@ -25,17 +26,12 @@ function makeOpts(): PreferencesDialogOptions {
     onPreviewLineHeight: noop,
     tocWidth: () => 240,
     onTocWidth: noop,
-    wordWrap: () => true,
-    onWordWrap: noop,
-    autosave: () => false,
-    onAutosave: noop,
     defaultEol: () => "CRLF",
     eolOptions: () => ["CRLF", "LF", "CR"],
     onDefaultEol: noop,
     defaultEncoding: () => "UTF-8",
     encodingOptions: () => ["UTF-8", "GB18030"],
     onDefaultEncoding: noop,
-    onKeymap: noop,
   };
 }
 
@@ -67,15 +63,13 @@ afterEach(() => {
 describe("B46 首选项弹窗", () => {
   it("打开后渲染全部分组，控件初值取自 getter", () => {
     showPreferencesDialog(makeOpts());
-    for (const g of ["外观", "字体与行距", "编辑器", "Markdown 预览", "新建文件"]) {
+    for (const g of ["外观", "字体与行距", "Markdown 预览", "新建文件"]) {
       expect(groups(), `应有分组「${g}」`).toContain(g);
     }
     expect((rowControl("主题") as HTMLSelectElement).value).toBe("system");
     expect((rowControl("编辑器字体") as HTMLSelectElement).value).toBe("");
     expect((rowControl("字号（px）") as HTMLSelectElement).value).toBe("14");
     expect((rowControl("编辑器行距") as HTMLSelectElement).value).toBe("1.5");
-    expect((rowControl("自动换行") as HTMLInputElement).checked).toBe(true);
-    expect((rowControl("自动保存") as HTMLInputElement).checked).toBe(false);
     expect((rowControl("预览行距") as HTMLSelectElement).value).toBe("1.7");
     expect((rowControl("大纲宽度") as HTMLSelectElement).value).toBe("240");
     expect((rowControl("默认行尾") as HTMLSelectElement).value).toBe("CRLF");
@@ -92,8 +86,6 @@ describe("B46 首选项弹窗", () => {
     opts.onFontFamily = (f) => calls.push(`font:${f}`);
     opts.onFontSize = (px) => calls.push(`size:${px}`);
     opts.onEditorLineHeight = (v) => calls.push(`elh:${v}`);
-    opts.onWordWrap = (on) => calls.push(`wrap:${on}`);
-    opts.onAutosave = (on) => calls.push(`autosave:${on}`);
     opts.onPreviewLineHeight = (v) => calls.push(`plh:${v}`);
     opts.onTocWidth = (w) => calls.push(`toc:${w}`);
     opts.onDefaultEol = (e) => calls.push(`eol:${e}`);
@@ -114,8 +106,6 @@ describe("B46 首选项弹窗", () => {
     fire("编辑器字体", "Consolas");
     fire("字号（px）", "18");
     fire("编辑器行距", "1.8");
-    fire("自动换行", "false");
-    fire("自动保存", "true");
     fire("预览行距", "2.1");
     fire("大纲宽度", "320");
     fire("默认行尾", "LF");
@@ -126,8 +116,6 @@ describe("B46 首选项弹窗", () => {
       "font:Consolas",
       "size:18",
       "elh:1.8",
-      "wrap:false",
-      "autosave:true",
       "plh:2.1",
       "toc:320",
       "eol:LF",
@@ -137,18 +125,8 @@ describe("B46 首选项弹窗", () => {
     expect(document.querySelector(".preferences-dialog")).toBeTruthy();
   });
 
-  it("「快捷键…」先关本窗再回调；确定/Esc/点蒙层都能关窗", () => {
+  it("确定/Esc/点蒙层都能关窗", () => {
     const opts = makeOpts();
-    let keymapOpened = false;
-    opts.onKeymap = () => {
-      // 回调触发时本窗必须已关闭（避免两层蒙层叠放）
-      keymapOpened = document.querySelector(".preferences-dialog") === null;
-    };
-    showPreferencesDialog(opts);
-    const btn = [...dialog().querySelectorAll("button")].find((b) => b.textContent === "快捷键…");
-    expect(btn, "应有快捷键按钮").toBeTruthy();
-    btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    expect(keymapOpened, "回调时本窗应已关闭").toBe(true);
 
     // Esc 关窗
     showPreferencesDialog(opts);
@@ -166,5 +144,16 @@ describe("B46 首选项弹窗", () => {
     const ok = dialog().querySelector(".settings-ok")!;
     (ok as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(document.querySelector(".preferences-dialog"), "确定应关窗").toBeNull();
+  });
+
+  it("B51：弹窗里不再有自动换行 / 自动保存 / 快捷键按钮（改由菜单直达）", () => {
+    showPreferencesDialog(makeOpts());
+    const labels = [...dialog().querySelectorAll(".settings-label")].map((s) => s.textContent);
+    expect(labels, "自动换行应移出弹窗").not.toContain("自动换行");
+    expect(labels, "自动保存应移出弹窗").not.toContain("自动保存");
+    expect(groups(), "「编辑器」分组已空，不应再渲染").not.toContain("编辑器");
+    const btnTexts = [...dialog().querySelectorAll("button")].map((b) => b.textContent);
+    expect(btnTexts, "快捷键入口应在「设置」菜单，不在弹窗里").not.toContain("快捷键…");
+    expect(btnTexts, "弹窗只留确定").toEqual(["确定"]);
   });
 });

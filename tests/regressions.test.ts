@@ -578,6 +578,44 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     }
   });
 
+  it("B51：首选项弹窗移除自动换行 / 自动保存 / 快捷键（功能留在菜单里）", () => {
+    // 需求：这三项从首选项弹窗里去掉——它们是高频开关，菜单里一点即达，
+    // 塞进弹窗只会让「改一个开关」变成三层点击。
+    const dlg = readFileSync("src/shell/preferencesdialog.ts", "utf-8");
+    for (const gone of [
+      '"自动换行"',
+      '"自动保存"',
+      '"快捷键…"',
+      "onWordWrap",
+      "onAutosave",
+      "onKeymap",
+      "checkRow",
+    ]) {
+      expect(dlg, `首选项弹窗不得再出现 ${gone}`).not.toContain(gone);
+    }
+    // 只是搬家，不是砍功能：菜单入口必须都还在
+    // （自动换行在「查看」，自动保存在「文件」，快捷键在「设置」）
+    const src = menu();
+    const viewBlock = src.slice(src.indexOf('label: "查看"'), src.indexOf('label: "设置"'));
+    const setBlock = src.slice(src.indexOf('label: "设置"'), src.indexOf('label: "帮助"'));
+    expect(viewBlock, "「查看」菜单必须保留自动换行").toContain("自动换行");
+    expect(src, "「文件」菜单必须保留自动保存").toContain("自动保存");
+    expect(setBlock, "「设置」菜单必须保留快捷键入口").toContain('label: "快捷键…"');
+  });
+
+  it("B51：主题按钮三态循环，导出图标改语义", () => {
+    const main = readFileSync("src/main.ts", "utf-8");
+    expect(main, "主题必须按档位循环（三态）").toContain("nextThemeMode()");
+    expect(main, "档位要写进 data 属性供测试/样式用").toContain("dataset.themeMode");
+    expect(main, "三态图标须含「跟随系统」").toContain("followSystem");
+    expect(main, "不得再退回明暗二选一的旧写法").not.toContain('isDark ? "light" : "dark"');
+
+    const icons = readFileSync("src/shell/icons.ts", "utf-8");
+    expect(icons, "应导出「跟随系统」图标").toContain("followSystem:");
+    expect(icons, "导出图标不得再用「箭头落入托盘」（下载语义）").not.toContain("M12 3v12");
+    expect(icons, "导出图标应为文档 + 出向箭头").toContain("M13 3v5h5");
+  });
+
   it("菜单显示的键位必须来自快捷键注册表（不能写死）", () => {
     const src = menu();
     expect(src, "菜单必须通过 keyHint 取键位").toContain("cb.keyHint(");

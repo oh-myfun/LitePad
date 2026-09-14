@@ -5,7 +5,9 @@
  * - 与快捷键对话框同一套模态骨架（settings-overlay / settings-dialog）。
  * - 每个控件 change 即回调 main 里的 setter：立即生效 + 立即持久化，
  *   不需要「保存」按钮（「确定」只负责关窗）。
- * - 快捷键按钮复用 main 的 openKeymapDialog：先关本窗再开键位表，避免两层蒙层。
+ * - **不放「自动换行 / 自动保存 / 快捷键」**：这三项是高频开关，
+ *   分别由「查看」菜单、「设置」菜单的勾选项与「设置 → 快捷键…」直接给出，
+ *   放进弹窗只会让「改一个开关要多点三层」。
  */
 
 export type ThemeChoice = "system" | "light" | "dark";
@@ -24,17 +26,12 @@ export interface PreferencesDialogOptions {
   onPreviewLineHeight: (value: number) => void;
   tocWidth: () => number;
   onTocWidth: (px: number) => void;
-  wordWrap: () => boolean;
-  onWordWrap: (on: boolean) => void;
-  autosave: () => boolean;
-  onAutosave: (on: boolean) => void;
   defaultEol: () => string;
   eolOptions: () => string[];
   onDefaultEol: (value: string) => void;
   defaultEncoding: () => string;
   encodingOptions: () => string[];
   onDefaultEncoding: (value: string) => void;
-  onKeymap: () => void;
 }
 
 /** 编辑器等宽字体候选（第一个是「默认」占位，value 为空串）。 */
@@ -71,14 +68,10 @@ export function showPreferencesDialog(opts: PreferencesDialogOptions): void {
 
   const actions = document.createElement("div");
   actions.className = "settings-actions";
-  const keymapBtn = document.createElement("button");
-  keymapBtn.type = "button";
-  keymapBtn.className = "settings-cancel";
-  keymapBtn.textContent = "快捷键…";
   const ok = document.createElement("button");
   ok.className = "settings-ok";
   ok.textContent = "确定";
-  actions.append(keymapBtn, ok);
+  actions.append(ok);
 
   dialog.append(title, body, actions);
   overlay.appendChild(dialog);
@@ -137,21 +130,6 @@ export function showPreferencesDialog(opts: PreferencesDialogOptions): void {
     );
   }
 
-  /** 勾选行。 */
-  function checkRow(label: string, current: boolean, onToggle: (on: boolean) => void): void {
-    const row = document.createElement("div");
-    row.className = "settings-row";
-    const lab = document.createElement("span");
-    lab.className = "settings-label";
-    lab.textContent = label;
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.checked = current;
-    cb.addEventListener("change", () => onToggle(cb.checked));
-    row.append(lab, cb);
-    body.appendChild(row);
-  }
-
   // ---- 外观 ----
   group("外观");
   const themeSel = selectRow("主题", (v) => opts.onTheme(v as ThemeChoice));
@@ -185,11 +163,6 @@ export function showPreferencesDialog(opts: PreferencesDialogOptions): void {
     (v) => `${v} 倍`,
     (v) => opts.onEditorLineHeight(v),
   );
-
-  // ---- 编辑器 ----
-  group("编辑器");
-  checkRow("自动换行", opts.wordWrap(), (on) => opts.onWordWrap(on));
-  checkRow("自动保存", opts.autosave(), (on) => opts.onAutosave(on));
 
   // ---- 预览 ----
   group("Markdown 预览");
@@ -232,10 +205,6 @@ export function showPreferencesDialog(opts: PreferencesDialogOptions): void {
     if (e.key === "Escape") close();
   };
 
-  keymapBtn.addEventListener("click", () => {
-    close();
-    opts.onKeymap();
-  });
   ok.addEventListener("click", close);
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) close();
