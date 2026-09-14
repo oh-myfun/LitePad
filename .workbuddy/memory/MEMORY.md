@@ -17,6 +17,10 @@
 
 - **状态归 Rust、视图归前端**；内存中文本一律 LF，落盘时还原原行尾。
 - **git 全程管理**：每个交付一个 Conventional Commit。
+- **README 定位 = 面向使用者的说明**（0914 用户明确）：开头**只放一张截图**（`main.png`），
+  不写截图生成/维护方法，不写快捷键表、安装、从源码构建、明确不做等章节；
+  特性描述用使用者视角，避免库名/内部机制等实现细节。技术细节留在
+  `docs/screenshots/README.md`、`.workbuddy/memory/` 与代码注释里。
 - **用户报告的每个 bug 必须补对应回归测试用例**，修 bug 与补测试同一提交：
   运行时可测 → `tests/smoke.bootstrap.test.ts`（jsdom 真实 bootstrap）；
   配置/样式根因 → `tests/regressions.test.ts`（静态文件断言）；
