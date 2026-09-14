@@ -45,6 +45,12 @@
     ],
     "resources": {
       "WebView2Loader.dll": "WebView2Loader.dll"
+    },
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico"
+      }
     }
   }
 }

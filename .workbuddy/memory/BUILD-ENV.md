@@ -207,6 +207,47 @@ fn main() {
 分别 sha256，与 `icon.ico` 各档解出的 PNG 对比 —— 全中才算真嵌进去了。
 改图标后**只认这个证据**，不看「构建成功」。
 
+**现成脚本**（B52 补）：
+
+```sh
+PY=C:/Users/maoyu/.workbuddy/binaries/python/versions/3.13.12/python.exe
+$PY scripts/icon_check.py        # 扫**未压缩 PNG**：exe 与安装包里的内嵌资源
+$PY scripts/icon_check_pe.py     # 解析 **PE 资源段** RT_ICON：外壳图标（安装器/卸载器）
+```
+
+两个脚本都要跑，因为**它们查的不是同一层东西**：
+- `icon_check.py` 查的是「应用自己带的内嵌图片资源」（NSIS 包未压缩时也能扫到）；
+- `icon_check_pe.py` 查的是「Windows 拿来做外壳图标的那份 RT_ICON」——
+  安装程序自己的图标**只在这一层**，`icon_check.py` 扫不到（改动前实测安装包切出 0 个 PNG，
+  但并不代表图标错，只是查错了层）。
+
+## ⚠️ 安装程序外壳图标要单独配（B52）
+
+**症状**：用户报「生成的二进制文件的图标还是旧的」。实测 `litepad.exe` **完全正确**
+（7 档与 `icon.ico` 字节一致），错的是**安装程序外壳**——双击 setup.exe 的任务栏图标、
+标题栏图标、「应用和功能」里的卸载图标全是 NSIS 默认图标。
+
+**根因**：`bundle.icon` 只喂给 exe 与快捷方式。NSIS 安装器/卸载器图标是**另一组配置项**，
+不配就被 Tauri 渲染成 `!define INSTALLERICON ""`（空串）→ NSIS 回落默认图标，**零报错**。
+
+**修复**（`src-tauri/tauri.conf.json`）：
+
+```jsonc
+"bundle": {
+  "windows": { "nsis": {
+    "installerIcon":   "icons/icon.ico",
+    "uninstallerIcon": "icons/icon.ico"
+  }}
+}
+```
+
+改后 `target/release/nsis/x64/installer.nsi` 的 `INSTALLERICON` 从空串变成真实路径，
+`MUI_ICON` 分支生效，安装包 5806026 → 5807335 B。回归断言见
+`tests/regressions.test.ts`「B52 安装程序自身必须有 LitePad 图标」。
+
+⚠️ 排查这类问题**先分层**：`exe 图标` / `安装器外壳图标` / `快捷方式图标` 是三套独立机制，
+别一看到「图标旧」就去动 `build.rs`。
+
 ## 诊断基建
 
 - `frontend_ready` 命令写 `%TEMP%\litepad-smoke.log`；`scripts/cdp_diag.mjs` 连 CDP 抓页面异常。

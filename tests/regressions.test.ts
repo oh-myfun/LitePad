@@ -843,6 +843,45 @@ describe("B48 安装包必须自带 WebView2Loader.dll（缺了应用起不来�
   });
 });
 
+describe("B52 安装程序自身必须有 LitePad 图标（否则显示 NSIS 默认图标）", () => {
+  // 用户报告「生成的二进制文件的图标还是旧的」。实测 exe 是对的
+  // （7 档 PNG 与 icon.ico 逐字节一致），错的是**安装程序外壳**：
+  // 双击 setup.exe 时任务栏/标题栏图标、「应用和功能」里的卸载图标
+  // 全是 NSIS 自带的默认图标。
+  // 根因：bundle.icon 只喂给 exe 与快捷方式；NSIS 安装器图标要
+  // bundle.windows.nsis.installerIcon / uninstallerIcon 单独指定，
+  // 不配就被 Tauri 渲染成 INSTALLERICON ""（空串），NSIS 回落默认图标。
+  const nsisOf = () => readJson("src-tauri/tauri.conf.json").bundle?.windows?.nsis;
+
+  it("必须给 installerIcon 与 uninstallerIcon 指定图标文件", () => {
+    const nsis = nsisOf();
+    expect(nsis, "bundle.windows.nsis 必须存在（否则安装器用 NSIS 默认图标）").toBeTruthy();
+    expect(nsis.installerIcon, "必须配置 installerIcon").toBeTruthy();
+    expect(nsis.uninstallerIcon, "必须配置 uninstallerIcon（卸载项也要有图标）").toBeTruthy();
+  });
+
+  it("指定的图标文件必须真实存在，且是 ICO 格式", () => {
+    const nsis = nsisOf();
+    for (const key of ["installerIcon", "uninstallerIcon"] as const) {
+      const rel: string = nsis[key];
+      const abs = `src-tauri/${rel}`;
+      expect(existsSync(abs), `${abs} 必须存在`).toBe(true);
+      // ico 头：reserved=0, type=1, count>=1
+      const buf = readFileSync(abs);
+      expect(buf.readUInt16LE(0), "ICO 保留字段必须为 0").toBe(0);
+      expect(buf.readUInt16LE(2), "类型必须是 1（ICO）").toBe(1);
+      expect(buf.readUInt16LE(4), "至少含 1 档图像").toBeGreaterThan(0);
+    }
+  });
+
+  it("图标不能只在 target/ 之类构建产物里（冷构建会取不到）", () => {
+    const nsis = nsisOf();
+    for (const key of ["installerIcon", "uninstallerIcon"] as const) {
+      expect(nsis[key], `${key} 不得指向 target/`).not.toContain("target/");
+    }
+  });
+});
+
 describe("M4 大文件分级：降级而不是拒绝（原先 20 MB 直接打不开）", () => {
   // M0 起 open_file 对 >20MB 一律返回 Err，提示「大文件分级模式将在 M4 提供」。
   // M4 的做法是先定档再降级：只有超过硬上限（64MB）才拒绝。
