@@ -105,8 +105,20 @@
   ⚠️ 遗留：截图未刷新（keymap.png 多了预设下拉、建议补 command-palette.png），
   沙箱 WebView2 引导卡死无法补拍，**需桌面环境按 docs/screenshots/README.md 补拍**。
 
+- **B51（0914，提交 f3f142a）界面微调**：① 首选项弹窗去掉「自动换行 / 自动保存 /
+  快捷键」（功能留在 查看菜单 / 文件菜单 / 设置菜单，有回归断言同时查「弹窗没有 + 菜单有」）；
+  ② 导出图标由「箭头落入托盘」改「文档 + 出向箭头」；
+  ③ 主题按钮改三态循环 浅色/深色/跟随系统（`followSystem` 半明半暗圆图标，
+  档位写 `dataset.themeMode`）。
+  ⚠️ **三态循环顺序跟着系统偏好走**（`themeCycle()`：system 的下一档取「与当前生效相反」
+  的显式档）：三态里「显式档 → system」是否翻转取决于系统偏好，无法三条边全保证翻转；
+  这样排序可保证从默认档出发第一下必翻转（老 bug「要点两下才生效」的场景）。
+  改这块前先读 `.workbuddy/memory/2026-09-14.md` 的 B51 段与
+  `smoke.bootstrap.test.ts` 里的 `resetThemeToSystem()`（档位是跨用例共享状态）。
+
 ## 下一步
 
+- 待办：桌面环境补拍截图（M4 的 keymap.png / command-palette.png + B51 的
+  main.png / preferences.png）。
 - M4 之后：M5 规划未定；候选见 DESIGN.md。
-- 待办：桌面环境补拍 M4 截图（keymap.png / command-palette.png）。
 - 待用户桌面环境验证的条目散见各日志（沙箱内无法做 UI 冒烟）。
