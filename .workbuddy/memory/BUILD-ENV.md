@@ -138,12 +138,46 @@ objdump -p src-tauri/target/release/litepad.exe | grep -i "DLL Name" | sort -u
 python -c "复制 exe+dll 到 %TEMP% 目录 → subprocess.Popen → sleep 5 → poll() is None 即存活"
 ```
 
-- Tauri 2 的 **`WebView2Loader.dll` 不会被 bundler 自动收进包**，必须显式声明：
+- Tauri 2 的 **`WebView2Loader.dll` 不会被 bundler 自动收进包**，必须显式声明。
+  用 **map 形式**，且**源必须是仓库内的副本**（`src-tauri/WebView2Loader.dll`，已提交）：
   ```jsonc
-  "bundle": { "resources": { "target/release/WebView2Loader.dll": "WebView2Loader.dll" } }
+  "bundle": { "resources": { "WebView2Loader.dll": "WebView2Loader.dll" } }
   ```
-  用 **map 形式**：字符串形式会沿用 `target/release/` 子路径，装到目标机仍找不到。
-- 回归断言在 `tests/regressions.test.ts`（「B48 安装包必须自带 WebView2Loader.dll」）。
+  ⚠️ **不要**写成 `target/release/WebView2Loader.dll`——本地因为有构建产物会"假通过"，
+  但 CI 冷构建时 Tauri 的 codegen 在**编译之前**就校验资源路径，直接报
+  `resource path target\release\WebView2Loader.dll doesn't exist` 而失败。
+- 回归断言在 `tests/regressions.test.ts`（「B48 安装包必须自带 WebView2Loader.dll」，
+  同时断言该源文件在仓库内、且不含 `target/`）。
+
+## ⚠️ `cargo build --release` ≠ 可运行的 exe
+
+`custom-protocol` feature 只有 `tauri build` 会开。直接 `cargo build --release` 产出的 exe
+运行后走 devUrl，界面是 `ERR_CONNECTION_REFUSED`（"无法访问此页面"）。
+**要跑、要打包一律 `node node_modules/@tauri-apps/cli/tauri.js build`**；
+`cargo build` 只用来快速验证 Rust 编译/链接。增量下 `tauri build` 全流程约 1m45s（含 NSIS）。
+
+## 抓界面截图（README / docs）
+
+`scripts/screenshot.py` 纯 ctypes + zlib，不依赖 Pillow：
+
+```sh
+python scripts/screenshot.py --exe litepad.exe --size 1600x1000 --out docs/screenshots/main.png
+```
+
+- `--exe <镜像名>`：按**进程**定位窗口（推荐）。用标题关键字会误抓——资源管理器标题里也含 "LitePad"。
+  另有 `--pid <pid>`、`--screen`（全屏）、`--out`、`--size WxH`。
+- 脚本会先 `SetProcessDPIAware()` 再 `SetWindowPos`，所以 `--size` 是**真实物理像素**
+  （本机 2520x1680 @150%，不加这句会被放大 1.5 倍）。
+- **要拍到指定状态必须先构造演示会话**（改 `%APPDATA%\LitePad\session.json` / `settings.json`，
+  字段是 camelCase；`viewMode: "source"|"preview"` 决定预览），拍完记得恢复用户原文件。
+  完整流程见 `docs/screenshots/README.md`。
+- **exe 必须以后台常驻任务启动**：从会话里 `(./litepad.exe &)` 启动，命令一结束进程就被回收，
+  表现为「刚才是活的，截图时 NOT RUNNING」。用 run_in_background 起，拍完再杀。
+- **弹层/对话框截图**：窗口固定在 `(0,0)`–`(W,H)`，可先截一张图，再**按亮度阈值聚类**量出
+  菜单文字簇的物理中心（不要凭肉眼估，150% 缩放下目测偏差可达 ±25px）：
+  菜单栏一行 → 按列聚类；弹层条目 → 按行聚类。得到坐标后用 `SetCursorPos` + `mouse_event`
+  点击，最后再截一张。
+- 杀进程用 PowerShell `Stop-Process -Name litepad -Force`（`taskkill //F` 在 Git Bash 里报参数错）。
 
 ## ⚠️ 改图标后必须让 build.rs 盯 `icons/` 目录
 
@@ -173,4 +207,4 @@ fn main() {
 ## 诊断基建
 
 - `frontend_ready` 命令写 `%TEMP%\litepad-smoke.log`；`scripts/cdp_diag.mjs` 连 CDP 抓页面异常。
-- `scripts/screenshot.py [标题关键字]` 截窗口（纯 ctypes + zlib，不依赖 Pillow），默认关键字 `LitePad`。
+- `scripts/screenshot.py` 截窗口（纯 ctypes + zlib）；用法与截图流程见上文「抓界面截图」。

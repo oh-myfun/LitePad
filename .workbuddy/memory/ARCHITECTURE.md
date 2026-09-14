@@ -68,10 +68,12 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   可见实例滚动、离屏写快照。
 - **缩放**：Ctrl+滚轮走 `src/shell/zoom.ts`（`passive:false` + 累加阈值 30 防触控板跳档）；
   预览字号必须写成 `calc(var(--font-size,14px)+1px)`、代码块用 `em` 才能联动。
-- **设置**（B42 后）：偏好已收口到「设置」菜单。**首选项 = 二级子菜单**（`menu.ts` 的 `submenu`），
-  含 主题三态/预览行距三档/大纲宽度三档/新建默认行尾/新建默认编码；**快捷键…** 打开可编辑面板
-  （`src/shell/keymapdialog.ts`）。改偏好统一走 `persistSettings()`。
-  仍无设置**对话框**，但快捷键面板本身是一个模态浮层。
+- **设置**（B46 起）：偏好收口在「设置」菜单 = **首选项…**（`src/shell/preferencesdialog.ts`，
+  模态**弹窗**，分组：外观 / 字体与行距 / 编辑器 / Markdown 预览 / 新建文件；改动即时生效并落盘）
+  + **快捷键…**（`src/shell/keymapdialog.ts`，可编辑面板）。
+  偏好 setter 一律是**绝对值型**（`setWordWrap(v)` / `setAutosave(v)` / `setFontSizeValue(v)`…），
+  toggle 系只是它们的包装——这样弹窗、菜单、快捷键三处入口可以共用同一套 setter。
+  改偏好统一走 `persistSettings()`。
 - **键盘快捷键**（B42 新增，`src/shell/keymap.ts`）：单一注册表 `CommandDef{id,label,group,keys[],editable,force}`；
   解析用 `KeyboardEvent.code`（**不可用 `e.key`**，`Ctrl+Shift+[` 的 key 是 `{`）；
   覆盖层 `KeymapOverrides`（id→键位串，`""` = 显式解绑）持久化到 `Settings.keymap`（Rust `HashMap<String,String>`）。
@@ -114,6 +116,24 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
 
 ## 8. 通用教训
 
+- **跨 IPC 的 DTO 命名必须两侧对齐，且要有测试锁住**（B49）。Rust `TabSession` /
+  `SessionState` 只有 `#[serde(default)]` 没有 `rename_all`，字段是 snake_case，
+  而 `src/ipc/api.ts` 的接口与 `main.ts` 读的是 camelCase（`st.viewMode` / `sess.activePanel`）。
+  后果**两个方向同时坏**：前端发来的 `viewMode` 被 serde 当未知字段丢弃，
+  落盘写出的 `view_mode` 前端又读不到 —— 表现得像「会话恢复就是不好用」：
+  重启后光标回到第 1 行、预览模式丢失、活动面板错位，**全程不报错**。
+  **为什么长期没被发现**：会话相关测试全部 mock 了 `loadSession`，只走 JS 侧，
+  serde 这一层从没被真跑过。
+  对策：① 前端用的字段一律给 Rust 加 `rename_all = "camelCase"`（`TabInfo`/`OpenedFile` 本来就是这样）；
+  ② 换格式时对旧字段加 `serde(alias = "old_name")` 兜住旧文件；
+  ③ **补一个真正过 serde 的 round-trip 测试**（`session::tests`），
+  断言「能读入 camelCase + 落盘也是 camelCase + 旧 snake_case 仍可读」——
+  只测 JS 侧的 mock 测试永远抓不到这类问题。
+  推论：凡是前端 mock 掉 IPC 的模块，都要另外在 Rust 侧补一条真实序列化测试。
+- **`cargo build --release` 得到的 exe 是 devUrl 变体**：`custom-protocol` feature 只由
+  `tauri build` 打开，直接 `cargo build --release` 出来的 exe 会去连 `http://127.0.0.1:1420`，
+  运行起来是「无法访问此页面 / ERR_CONNECTION_REFUSED」。**要能跑、要打包就一律走
+  `node node_modules/@tauri-apps/cli/tauri.js build`**（只想快速过编译错误才用 cargo build）。
 - **「同步改 UI + 之后才 await」= 中间态会被真的绘制出来，用户看到的就是「闪一下」**（B45）。
   典型写法：为了让某个只作用于**当前活动项**的函数能复用，先把目标项切成活动项，
   然后 `await ask(...)` —— 切换是同步的、浏览器在 await 处就会重绘。

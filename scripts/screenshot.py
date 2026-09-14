@@ -1,8 +1,18 @@
 """
 窗口截屏工具（纯标准库：ctypes + zlib，不依赖 Pillow）。
 
-用法：python scripts/screenshot.py [标题关键字] [输出路径]
-默认查找标题含 "LitePad" 的可见窗口，保存到 scripts 同级的 smoke-window.png。
+用法：
+  python scripts/screenshot.py <标题关键字> <输出路径>
+      查找标题含关键字的第一个可见窗口（注意：资源管理器标题里也含
+      "LitePad" 这类目录名时容易误抓，此时请改用 --exe）。
+  python scripts/screenshot.py --exe litepad.exe <输出路径>
+      按进程名定位窗口，最稳（推荐用于 README 截图）。
+  python scripts/screenshot.py --pid 24076 <输出路径>
+      直接指定窗口所属进程 pid。
+  python scripts/screenshot.py --screen <输出路径>
+      抓全屏。
+
+默认输出 scripts 同级的 smoke-window.png。
 """
 
 import ctypes
@@ -14,9 +24,76 @@ import zlib
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
+kernel32 = ctypes.windll.kernel32
 
 SRCCOPY = 0x00CC0020
 SW_RESTORE = 9
+TH32CS_SNAPPROCESS = 0x00000002
+MAX_PATH = 260
+
+
+class PROCESSENTRY32(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", ctypes.c_uint32),
+        ("cntUsage", ctypes.c_uint32),
+        ("th32ProcessID", ctypes.c_uint32),
+        ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+        ("th32ModuleID", ctypes.c_uint32),
+        ("cntThreads", ctypes.c_uint32),
+        ("th32ParentProcessID", ctypes.c_uint32),
+        ("pcPriClassBase", ctypes.c_long),
+        ("dwFlags", ctypes.c_uint32),
+        ("szExeFile", ctypes.c_char * MAX_PATH),
+    ]
+
+
+def pids_by_exe(exe_name: str) -> list[int]:
+    """按镜像名（如 litepad.exe）枚举进程 pid，不依赖 OpenProcess 权限。"""
+    snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if snap == -1:
+        return []
+    entry = PROCESSENTRY32()
+    entry.dwSize = ctypes.sizeof(PROCESSENTRY32)
+    pids: list[int] = []
+    ok = kernel32.Process32First(snap, ctypes.byref(entry))
+    while ok:
+        name = entry.szExeFile.decode("mbcs", "ignore").lower()
+        if name == exe_name.lower():
+            pids.append(int(entry.th32ProcessID))
+        ok = kernel32.Process32Next(snap, ctypes.byref(entry))
+    kernel32.CloseHandle(snap)
+    return pids
+
+
+def find_window(keyword: str = "", pids: set[int] | None = None):
+    """返回标题含 keyword（或属于 pids）的第一个可见顶层窗口。"""
+    result = []
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)
+    def callback(hwnd, _lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        if pids is not None:
+            owner = wt.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+            if owner.value not in pids:
+                return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return True
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        if keyword and keyword not in buf.value:
+            return True
+        result.append((hwnd, buf.value, length))
+        return True
+
+    user32.EnumWindows(callback, 0)
+    if not result:
+        return (None, None)
+    # 优先取标题最长的那个：Tauri 主窗口标题最长，托盘/隐藏壳窗口更短
+    result.sort(key=lambda r: -r[2])
+    return result[0][0], result[0][1]
 
 
 class RECT(ctypes.Structure):
@@ -31,28 +108,6 @@ class BMIHEADER(ctypes.Structure):
                 ("biSizeImage", ctypes.c_uint32), ("biXPelsPerMeter", ctypes.c_int32),
                 ("biYPelsPerMeter", ctypes.c_int32), ("biClrUsed", ctypes.c_uint32),
                 ("biClrImportant", ctypes.c_uint32)]
-
-
-def find_window(keyword: str):
-    """返回第一个标题含 keyword 的可见窗口句柄。"""
-    result = []
-
-    @ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)
-    def callback(hwnd, _lparam):
-        if not user32.IsWindowVisible(hwnd):
-            return True
-        length = user32.GetWindowTextLengthW(hwnd)
-        if length <= 0:
-            return True
-        buf = ctypes.create_unicode_buffer(length + 1)
-        user32.GetWindowTextW(hwnd, buf, length + 1)
-        if keyword in buf.value:
-            result.append((hwnd, buf.value))
-            return False
-        return True
-
-    user32.EnumWindows(callback, 0)
-    return result[0] if result else (None, None)
 
 
 def capture(hwnd) -> bytes:
@@ -120,11 +175,57 @@ def encode_png(width: int, height: int, rgba: bytes) -> bytes:
             + chunk(b"IDAT", zlib.compress(bytes(raw), 6)) + chunk(b"IEND", b""))
 
 
-def main() -> int:
-    keyword = sys.argv[1] if len(sys.argv) > 1 else "LitePad"
-    out = sys.argv[2] if len(sys.argv) > 2 else "smoke-window.png"
+def resize_window(hwnd, width: int, height: int) -> None:
+    """把窗口移到左上角并调整为指定整体尺寸（物理像素，调用前需 DPI aware）。"""
+    SWP_NOZORDER = 0x0004
+    user32.SetWindowPos(hwnd, 0, 0, 0, width, height, SWP_NOZORDER)
+    time.sleep(0.6)  # 等布局（分屏比例/标签重排）稳定
 
-    if keyword == "--screen":
+
+def main() -> int:
+    # 先声明 DPI 感知，否则 SetWindowPos 的尺寸会被系统按缩放比放大
+    user32.SetProcessDPIAware()
+
+    args = sys.argv[1:]
+    out = "smoke-window.png"
+    mode = "title"
+    value = "LitePad"
+    size = None
+    rest: list[str] = []
+
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("--exe", "--pid", "--screen"):
+            mode = a[2:]
+            if a != "--screen":
+                i += 1
+                value = args[i] if i < len(args) else ""
+        elif a == "--out":
+            i += 1
+            out = args[i] if i < len(args) else out
+        elif a == "--size":
+            i += 1
+            spec = args[i] if i < len(args) else ""
+            try:
+                w, h = spec.lower().split("x")
+                size = (int(w), int(h))
+            except ValueError:
+                print(f"--size 需要 WxH 格式，收到 {spec!r}")
+                return 2
+        else:
+            rest.append(a)
+        i += 1
+
+    if rest:
+        if mode == "title":
+            value = rest[0]
+            if len(rest) > 1:
+                out = rest[1]
+        else:
+            out = rest[0]
+
+    if mode == "screen":
         user32.SetProcessDPIAware()
         width = user32.GetSystemMetrics(0)
         height = user32.GetSystemMetrics(1)
@@ -160,15 +261,32 @@ def main() -> int:
         print(f"已捕获全屏 ({width}x{height}) -> {out}")
         return 0
 
-    hwnd, title = find_window(keyword)
+    pids = None
+    if mode == "pid":
+        try:
+            pids = {int(value)}
+        except ValueError:
+            print(f"--pid 需要整数，收到 {value!r}")
+            return 2
+    elif mode == "exe":
+        found = pids_by_exe(value)
+        if not found:
+            print(f"未找到名为 {value!r} 的进程")
+            return 1
+        pids = set(found)
+
+    hwnd, title = find_window("" if pids else value, pids)
     if not hwnd:
-        print(f"未找到标题含 {keyword!r} 的可见窗口")
+        print(f"未找到匹配窗口 (mode={mode}, value={value!r})")
         return 1
 
-    png, size = capture(hwnd)
+    if size:
+        resize_window(hwnd, size[0], size[1])
+
+    png, dim = capture(hwnd)
     with open(out, "wb") as f:
         f.write(png)
-    print(f"已捕获 {title!r} ({size[0]}x{size[1]}) -> {out}")
+    print(f"已捕获 {title!r} ({dim[0]}x{dim[1]}) -> {out}")
     return 0
 
 

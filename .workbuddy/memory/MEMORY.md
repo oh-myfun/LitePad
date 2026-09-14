@@ -19,7 +19,12 @@
 - **git 全程管理**：每个交付一个 Conventional Commit。
 - **用户报告的每个 bug 必须补对应回归测试用例**，修 bug 与补测试同一提交：
   运行时可测 → `tests/smoke.bootstrap.test.ts`（jsdom 真实 bootstrap）；
-  配置/样式根因 → `tests/regressions.test.ts`（静态文件断言）。
+  配置/样式根因 → `tests/regressions.test.ts`（静态文件断言）；
+  Rust 侧 wire 格式/序列化 → `src-tauri/src/**` 内联 `#[cfg(test)] mod tests`。
+- **界面有改动必须刷新 `docs/screenshots/` 截图**（B49 起，用户明确要求）：
+  菜单/工具栏/状态栏/对话框/配色/字体/标签栏等观感变化，与代码改动**同一提交**更新截图；
+  代码合并前确认截图与当前界面一致，确实不影响观感则在提交信息注明「界面无变化」。
+  截图清单、演示会话构造与截取命令见 `docs/screenshots/README.md`。
 - **每次编译都要产出发布版本**：`npm run build:all`（tsc → vite → vitest → cargo build+test → tauri build，出 exe + NSIS）。
 - 质量门 = `.githooks`（pre-commit: prettier/eslint/tsc/cargo fmt --check；pre-push: vitest/cargo test）；
   GitHub 侧另跑 `CI`（push main / PR：format→lint→tsc→vite→vitest→cargo test）。
@@ -32,7 +37,7 @@
   `--ci` 跳过本地全量构建（本机冷启 tauri build 要 38 分钟；Actions 本来就会构建）。
 - **GitHub 的 Release 只由 `v*` tag 触发**：只推 `main` 只会跑 CI 编译校验，不会发布。
   推 tag：`git push origin main --follow-tags`；失败可在 Actions 手动 dispatch（填 tag）重跑。
-- 当前状态：**v0.2.0 已发布**（tag v0.2.0 → NSIS `LitePad_0.2.0_x64-setup.exe`）；
+- 当前状态：**v0.2.2 已发布**（v0.2.0 首个 Release → v0.2.1 构建成功 → v0.2.2 修好安装包缺 DLL）；
   版本一致性由 `tests/regressions.test.ts` 断言守护。
 
 ## 构建环境要点
@@ -70,6 +75,12 @@
   当前项不打 ✓ 改整行观感（`.menu-item-current`）、激活标签闪一下（`.tab-flash`）、
   折叠按钮改矢量图标 + 角标（`MORE_WIDTH` 34→28）并可再点收起（anchorToggle）。
   弹层通用能力见 `ARCHITECTURE.md` §7。
+- **B48** 安装包补 `WebView2Loader.dll`（否则装好起不来）；踩坑与排查三步见 `BUILD-ENV.md`。
+- **B49** ① 写 `README.md`（含真实截图）；② **修会话恢复全线失效**：Rust `TabSession`/`SessionState`
+  少 `rename_all = "camelCase"`，前端 camelCase 与落盘 snake_case 两侧对不上，
+  表现为重启后**光标回到第 1 行、预览模式丢失、活动面板错位**（B49 前一直是坏的）。
+  修法 = 加 `rename_all` + 对旧字段加 `serde(alias)` 兼容，并补 Rust round-trip 测试。
+  截图基建：`scripts/screenshot.py` 支持 `--exe` / `--pid` / `--size`（按进程定位窗口，避免标题撞名）。
 
 ## 下一步
 
