@@ -168,6 +168,9 @@ python scripts/screenshot.py --exe litepad.exe --size 1600x1000 --out docs/scree
   另有 `--pid <pid>`、`--screen`（全屏）、`--out`、`--size WxH`。
 - 脚本会先 `SetProcessDPIAware()` 再 `SetWindowPos`，所以 `--size` 是**真实物理像素**
   （本机 2520x1680 @150%，不加这句会被放大 1.5 倍）。
+- ⚠️ `--out` 必须给**显式盘符绝对路径**（如 `E:/Project/LitePad/docs/screenshots/main.png`）。
+  Windows 原生 python 收到 `/tmp/x.png` 这类无盘符路径会按**当前盘符**解析成 `E:\tmp\x.png`，
+  脚本报「已捕获」但文件不在你以为的地方。
 - **要拍到指定状态必须先构造演示会话**（改 `%APPDATA%\LitePad\session.json` / `settings.json`，
   字段是 camelCase；`viewMode: "source"|"preview"` 决定预览），拍完记得恢复用户原文件。
   完整流程见 `docs/screenshots/README.md`。

@@ -91,7 +91,22 @@
   ⚠️ **WebView2 数据目录损坏 = 窗口空白且无 IPC**：`%LOCALAPPDATA%\com.litepad.app\EBWebView`
   坏掉时页面不加载；改名重建即可恢复（不要删，改名留退路）。强杀进程易造成。
 
+- **M4（0914，提交 0be87d2）性能与打磨收尾**：① 大文件分级降级（>64MB 拒绝；
+  2–20MB 关语法/折叠/括号/选区匹配/**自动预览**；20–64MB 再关活动行高亮；
+  `core/doc.rs` 的 `size_class()` + 新文件 `src/editor/perf.ts` 的 `perfProfileFor`，
+  `baseExtensions(perf)` 按档裁剪，预览降级提示 `.md-preview-notice`）；
+  ② 命令面板（`src/shell/commandpalette.ts`，`palette.open` 默认 Ctrl+Shift+P）；
+  ③ 键位预设（`KEYMAP_PRESETS`：default/notepadpp/vscode 只记差异；
+  `effectiveKeys` 链 = 用户覆盖 > 预设 > 默认；`Settings.keymap_preset` 持久化，
+  bootstrap 最先落地）。
+  ⚠️ **绑定索引不能按声明顺序写一张表**：`palette.open` 靠后会用默认键位抢走
+  先声明命令的用户覆盖。`indexOf()` 必须三趟：铺底 → 撤被覆盖命令的铺底（含
+  显式解绑）→ 写用户覆盖，保证覆盖与声明顺序无关（有回归测试）。
+  ⚠️ 遗留：截图未刷新（keymap.png 多了预设下拉、建议补 command-palette.png），
+  沙箱 WebView2 引导卡死无法补拍，**需桌面环境按 docs/screenshots/README.md 补拍**。
+
 ## 下一步
 
-- M4 性能与打磨：大文件分级降级、命令面板、键位预设、正式图标。
+- M4 之后：M5 规划未定；候选见 DESIGN.md。
+- 待办：桌面环境补拍 M4 截图（keymap.png / command-palette.png）。
 - 待用户桌面环境验证的条目散见各日志（沙箱内无法做 UI 冒烟）。
