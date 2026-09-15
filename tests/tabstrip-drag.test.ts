@@ -74,6 +74,18 @@ describe("stripInsertInfo（tab 区插入位置）", () => {
     expect(stripInsertInfo(strip, 300)).toBeNull();
     expect(stripInsertInfo(strip, -5)).toBeNull();
   });
+
+  it("B53 标签栏横向滚动后，插入线偏移必须补上 scrollLeft", () => {
+    // .tab-insert 是 strip 的绝对定位子元素，left 走**内容坐标**（会随内容滚），
+    // 而 getBoundingClientRect 的差值是**视口坐标**。B53 起标签栏可横向滚动，
+    // 两者相差一个 strip.scrollLeft —— 不补就会把插入线画到错误的标签之间。
+    // 其余用例里 scrollLeft 恒为 0，正好掩盖了这个 bug，所以这里显式造一个非零值。
+    const strip = stripWithTabs();
+    Object.defineProperty(strip, "scrollLeft", { configurable: true, value: 100 });
+    // 指针视口坐标不变（桩固定），内容坐标应整体右移 100
+    expect(stripInsertInfo(strip, 100)).toEqual({ beforeTabId: 12, offsetLeft: 182 });
+    expect(stripInsertInfo(strip, 240)).toEqual({ beforeTabId: null, offsetLeft: 344 });
+  });
 });
 
 describe("B26/B27 接线（静态断言）", () => {

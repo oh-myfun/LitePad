@@ -421,6 +421,23 @@ function refreshAll(): void {
   renderPanelTabs();
 }
 
+/**
+ * 切活动面板，并**就地**同步 `.layout-panel-active`（不重建任何 DOM）。
+ *
+ * 为什么需要它：焦点面板的视觉表达（非活动分屏里活动标签降亮度）依赖这个 class
+ * 实时正确，而 `renderSplitview` 只在布局结构变化时整体重建；单纯点击切换面板
+ * 走的是这里。
+ *
+ * ⚠️ 绝不能用「重绘标签条」来同步 —— 重绘会销毁光标下的 `.tab`，
+ * 导致点标签「要点两下」（见 onActivatePanel 里的详细注释）。
+ */
+function markActivePanel(panelId: number): void {
+  activePanelId = panelId;
+  for (const el of layoutArea.querySelectorAll<HTMLElement>(".layout-panel")) {
+    el.classList.toggle("layout-panel-active", Number(el.dataset.panelId) === panelId);
+  }
+}
+
 /** 渲染全部面板标签栏（轻量：不动 EditorView）。 */
 function renderPanelTabs(onlyPanelId?: number): void {
   for (const p of panels.values()) {
@@ -528,9 +545,9 @@ function rebuildLayout(): void {
       // 由面板 mousedown 触发。注意：这里绝不能重绘标签条——
       // 重绘会销毁光标下的 .tab，click 永远不会落在原元素上
       // （同面板点标签、跨面板点标签"要点两下"都是这么来的）。
-      // 活动面板的视觉差异（标题/状态栏）由 refreshTitle/refreshStatus 覆盖；
-      // .layout-panel-active 当前无视觉样式，无需同步。
+      // 焦点面板的视觉走 class 切换（markActivePanel），同样不重建 DOM。
       const changed = activePanelId !== panelId;
+      markActivePanel(panelId);
       if (!changed) {
         // 幂等兜底（B33）：即使面板没变也要刷大纲——桌面实测存在
         // activePanelId 已是目标面板但大纲仍残留上一份文档的路径，
@@ -538,7 +555,6 @@ function rebuildLayout(): void {
         updateTocDrawer();
         return;
       }
-      activePanelId = panelId;
       refreshTitle();
       refreshStatus();
       // 大纲跟随**活动面板**的活动文档：分屏下点另一块面板（文本 ↔ md）若不刷新，
@@ -584,7 +600,7 @@ function rebuildLayout(): void {
     onDropTabToPanel: (tabId, targetPanelId, zone, overTabId, copy) =>
       onDropTabToPanel(tabId, targetPanelId, zone, overTabId, copy),
     onNewTab: (panelId) => {
-      activePanelId = panelId;
+      markActivePanel(panelId);
       void newUntitled();
     },
     mountView: (panelId, hostEl) => {

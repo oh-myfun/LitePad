@@ -1,23 +1,20 @@
-import {
-  closePopupMenu,
-  popupMenuAnchor,
-  refreshPopupMenu,
-  showPopupMenu,
-  type MenuItem,
-} from "./menu";
+import { showPopupMenu } from "./menu";
 import { beginTabDrag, consumeTabClickSuppressed } from "./splitview";
-import { ICONS } from "./icons";
 
 /**
  * 标签栏渲染：纯函数式全量重绘（标签数量小，简单可靠）。
  * 事件通过回调上抛，模块本身不持有应用状态。
  *
  * 交互：左键激活 / 中键关闭 / 右键菜单（关闭·关闭其他·关闭右侧·复制路径）/
- *       拖拽排序 / 双击空白处新建 / **滚轮切换可见区间**。
+ *       拖拽排序 / 双击空白处新建 / **滚轮横向滚动**。
  *
- * 溢出策略（用户要求）：标签区**不再显示滚动条**；放不下的标签不横向滚动，
- * 而是折叠进右侧的下拉按钮（左侧与右侧超出可视区的标签都在该列表里），
- * 滚轮改变"可见窗口"的起始位置——所以窗口两侧都可能折叠。
+ * 溢出策略（B53 起，用户要求）：**不再折叠**。放不下的标签就是普通的横向滚动
+ * （VS Code 式）——先靠 flex 收缩到最小宽度，仍放不下才开始滚。
+ *
+ * B32–B47 的「可见窗口 + 折叠下拉列表」已整体删除。它要求手写三条不变量
+ * （尺寸变化必须重算、活动标签拉回要门控、窗口必须铺满预算）+ ResizeObserver 记账，
+ * 而这些能力**浏览器原生滚动全部自带**：布局与裁剪由 flex + overflow 自动重算，
+ * 「滚到哪」由 scrollLeft 持有，不再需要模块自己维护区间。
  */
 
 export interface TabViewData {
@@ -46,86 +43,22 @@ export interface TabstripCallbacks {
   onNew?: () => void;
 }
 
-/** 每个标签栏的可见窗口状态（重绘之间保留）。 */
+/** 重绘之间保留的状态。滚动位置本身由 DOM 的 scrollLeft 持有，无需模块记账。 */
 interface StripEntry {
-  start: number;
-  /** 上次算出的可见数量（B47：折叠菜单刷新要知道折叠区间） */
-  count: number;
   tabs: TabViewData[];
   cb: TabstripCallbacks;
-  /** 上次渲染时的活动标签下标——仅在其变化时才把活动标签拉回可视区 */
-  lastActive: number;
-  acc: number;
-  /** 尺寸监听（B44）：窗口缩放 / 分屏拖拽都要重新折叠 */
-  observer?: ResizeObserver;
+  /** 上次渲染时活动标签的 tabId（-1 = 首次渲染） */
+  lastActiveId: number;
 }
 
 const strips = new WeakMap<HTMLElement, StripEntry>();
 const wheelBound = new WeakSet<HTMLElement>();
 
 /**
- * 当前挂载中的标签栏（B44）。WeakMap 不能遍历，而「窗口变小了要重算折叠」
- * 需要能反过来找到所有标签栏，故另存一个 Set；每次重排时顺手剔除已卸载的，
- * 避免面板增删后集合无限增长。
+ * 滚轮 deltaMode 归一化系数：某些设备/驱动按「行」或「页」上报 delta，
+ * 直接当像素用会几乎滚不动（deltaMode=1 时 delta 常常只有 3）。
  */
-const liveStrips = new Set<HTMLElement>();
-let relayoutQueued = false;
-let resizeBound = false;
-
-/**
- * 折叠列表菜单是「保持打开」的（可连着点、逐个找文件），所以模块要记住
- * 它属于哪个标签栏：重绘后原地刷新条目（当前项标记跟着激活状态走），
- * 标签栏不再折叠时（都放得下了）才关掉。
- */
-let moreMenuHost: HTMLElement | null = null;
-/** 展开态按钮（菜单关闭时还原其高亮样式）。 */
-let openMoreBtn: HTMLButtonElement | null = null;
-
-/** 合并同一帧内的多次尺寸变化（窗口连续缩放会每帧触发一次）。 */
-function scheduleRelayout(): void {
-  if (relayoutQueued) return;
-  relayoutQueued = true;
-  const run = (): void => {
-    relayoutQueued = false;
-    for (const host of [...liveStrips]) {
-      if (!host.isConnected) {
-        liveStrips.delete(host);
-        continue;
-      }
-      const entry = strips.get(host);
-      if (entry) renderTabstrip(host, entry.tabs, entry.cb);
-    }
-  };
-  if (typeof requestAnimationFrame === "function") requestAnimationFrame(run);
-  else run();
-}
-
-/**
- * 监听标签栏自身宽度变化。ResizeObserver 能同时覆盖「窗口缩放」与
- * 「拖拽分屏分隔条导致本面板变窄」（后者不触发 window.resize）；
- * 无 RO 的环境（jsdom）退化为 window.resize。
- */
-function watchStripSize(host: HTMLElement, entry: StripEntry): void {
-  // 顺手剔除已卸载的标签栏：rebuildLayout 会整棵重建面板 DOM，旧 strip 元素
-  // 不再连接，放任不管会越积越多（集合规模只等于面板数，全量扫一遍很便宜）。
-  for (const h of liveStrips) if (!h.isConnected) liveStrips.delete(h);
-  liveStrips.add(host);
-  if (typeof window !== "undefined" && !resizeBound) {
-    resizeBound = true;
-    window.addEventListener("resize", scheduleRelayout);
-  }
-  if (typeof ResizeObserver === "function") {
-    if (!entry.observer) entry.observer = new ResizeObserver(() => scheduleRelayout());
-    entry.observer.observe(host); // 重复 observe 同一元素是 no-op
-  }
-}
-
-/** 折叠按钮预留宽度（px；B47 起用矢量图标 + 角标，比原先的 34 更窄） */
-const MORE_WIDTH = 28;
-/** 与 .panel-tabstrip 的 gap 保持一致 */
-const TAB_GAP = 2;
-/** 滚轮步进阈值：鼠标一格约 100，触控板单帧很小（防一次滑动跳太多） */
-const WHEEL_THRESHOLD = 30;
+const LINE_PX = 16;
 
 export function renderTabstrip(
   host: HTMLElement,
@@ -134,15 +67,15 @@ export function renderTabstrip(
 ): void {
   let entry = strips.get(host);
   if (!entry) {
-    entry = { start: 0, count: tabs.length, tabs, cb, lastActive: -1, acc: 0 };
+    entry = { tabs, cb, lastActiveId: -1 };
     strips.set(host, entry);
   }
-  const activeIdx = tabs.findIndex((t) => t.active);
-  // 先按 tabId 把窗口起点重对齐（打开/关闭标签会让纯下标漂移一格），
-  // 活动标签的可见性修正统一交给 applyOverflow（左右两侧、最小移动）
-  entry.start = reanchorStart(entry, tabs);
   entry.tabs = tabs;
   entry.cb = cb;
+
+  // 全量重绘会清空子节点 → 滚动位置被浏览器归零，必须自己存取。
+  // 少了这一步，每次激活/关闭标签标签栏都会跳回最左端。
+  const prevScroll = host.scrollLeft;
 
   host.textContent = "";
   const els = tabs.map((t) => createTabEl(t, cb));
@@ -151,26 +84,46 @@ export function renderTabstrip(
   host.ondblclick = (e) => {
     if (e.target === host) cb.onNew?.();
   };
-  if (!wheelBound.has(host)) {
-    wheelBound.add(host);
-    host.addEventListener("wheel", (e) => onWheel(host, e), { passive: false });
-  }
-  // B44：窗口缩放 / 分屏拖拽后必须重新折叠（否则折叠区间停留在旧宽度上）
-  watchStripSize(host, entry);
+  bindWheel(host);
 
-  applyOverflow(host, entry, els, activeIdx, activeIdx !== entry.lastActive);
-  // B47：活动标签变了（含从折叠列表里点选）→ 闪一下，一眼定位它出现在哪。
-  // 首次渲染（lastActive=-1）不闪，免得启动就跳一下。
-  if (activeIdx >= 0 && entry.lastActive >= 0 && activeIdx !== entry.lastActive) {
-    flashTab(els[activeIdx]);
+  host.scrollLeft = prevScroll;
+
+  const activeIdx = tabs.findIndex((t) => t.active);
+  const activeId = activeIdx >= 0 ? tabs[activeIdx].tabId : -1;
+  // 只在活动标签**真的换了**时才滚动定位。无脑滚动会把用户手动滚出去的位置
+  // 无条件拽回来——活动标签在可视区外的右侧（新开文件的常态）时表现为「滚不动」。
+  if (activeIdx >= 0 && activeId !== entry.lastActiveId) {
+    ensureVisible(host, els[activeIdx]);
+    // 首次渲染（lastActiveId=-1）不闪，免得启动就跳一下
+    if (entry.lastActiveId >= 0) flashTab(els[activeIdx]);
   }
-  entry.lastActive = activeIdx;
-  syncMoreMenu(host, entry);
+  entry.lastActiveId = activeId;
 }
 
 /**
- * 新激活的标签闪一次高亮。窗口整体滑动时（折叠列表点选、Ctrl+Tab）尤其有用：
- * 否则标签栏突然换了内容，用户不知道该看哪儿。
+ * 把某个标签滚进可见区。
+ *
+ * 不用 `scrollIntoView()`，两个原因：① jsdom 没有这个方法（测试要跑）；
+ * ② 它会把**所有**祖先滚动容器一起滚动，在分屏/嵌套布局里会连带整页跳动。
+ *
+ * 「已经可见就不动」是自然满足的，这正好保住了老实现用 `activeChanged` 门控
+ * 才换来的行为：切换到已可见的标签时标签栏不跳。
+ */
+function ensureVisible(host: HTMLElement, el: HTMLElement): void {
+  const view = host.clientWidth;
+  if (view <= 0) return; // 未布局（隐藏面板 / jsdom）：无从判断，不动
+  const left = el.offsetLeft;
+  const right = left + el.offsetWidth;
+  if (left < host.scrollLeft) {
+    host.scrollLeft = left;
+  } else if (right > host.scrollLeft + view) {
+    host.scrollLeft = right - view;
+  }
+}
+
+/**
+ * 新激活的标签闪一次高亮。切换标签（含 Ctrl+Tab、跨面板拖入）时标签栏可能
+ * 刚滚动过，闪一下便于定位。动画结束回到常态，不保留结束态。
  */
 function flashTab(el: HTMLElement | undefined): void {
   if (!el || !el.isConnected) return;
@@ -181,30 +134,22 @@ function flashTab(el: HTMLElement | undefined): void {
   setTimeout(done, 1200);
 }
 
-/**
- * 折叠菜单开着时的同步：内容要跟着激活状态刷新（当前项标记跟着走）。
- * 本栏这次不再折叠（标签都放得下）→ 菜单已无意义，直接关掉。
- */
-function syncMoreMenu(host: HTMLElement, entry: StripEntry): void {
-  if (moreMenuHost !== host) return;
-  const btn = host.querySelector<HTMLButtonElement>(".tab-more");
-  if (
-    !btn ||
-    !refreshPopupMenu(makeMoreItems(entry.tabs, entry.start, entry.count, entry.cb), btn)
-  ) {
-    closePopupMenu();
-  }
-}
-
 function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   const el = document.createElement("div");
-  el.className = "tab" + (t.active ? " tab-active" : "");
+  // tab-dirty 供 CSS 决定槽位里显示 ● 还是空（VS Code 式）：
+  // 平时只见 ●（未保存）/ 空（已保存），鼠标悬停到标签上才换成 ×。
+  el.className = "tab" + (t.active ? " tab-active" : "") + (t.dirty ? " tab-dirty" : "");
   el.dataset.tabId = String(t.tabId);
   el.title = t.readonly ? `${t.name} [只读]` : t.name;
 
   const name = document.createElement("span");
   name.className = "tab-name";
   name.textContent = t.name;
+
+  // ● 与 × 共用同一个**固定尺寸**槽位（.tab-action）：悬停时 ● 换成 ×。
+  // 槽位宽度固定、只换内容，否则鼠标划过时标签宽度会变、整排标签左右抖动。
+  const action = document.createElement("span");
+  action.className = "tab-action";
 
   const mark = document.createElement("span");
   mark.className = "tab-mark";
@@ -215,11 +160,14 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   close.className = "tab-close";
   close.textContent = "×";
   close.title = "关闭 (Ctrl+W)";
+  close.setAttribute("aria-label", `关闭 ${t.name}`);
   close.addEventListener("click", (e) => {
     e.stopPropagation();
     cb.onClose(t.tabId);
   });
   close.addEventListener("mousedown", (e) => e.stopPropagation());
+
+  action.append(mark, close);
 
   // 中键关闭
   el.addEventListener("mousedown", (e) => {
@@ -278,7 +226,7 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
     beginTabDrag(t.tabId, e);
   });
 
-  el.append(name, mark, close);
+  el.append(name, action);
   el.addEventListener("click", () => {
     if (consumeTabClickSuppressed()) return; // 拖拽提交后的 click 不激活
     cb.onActivate(t.tabId);
@@ -286,198 +234,27 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   return el;
 }
 
-/** 宽度合计（含标签之间的 gap）。 */
-function widthOf(widths: number[], from: number, count: number): number {
-  let sum = 0;
-  for (let i = from; i < from + count && i < widths.length; i++) {
-    sum += widths[i] + (i > from ? TAB_GAP : 0);
-  }
-  return sum;
+/** wheel 监听只挂一次（同一 host 会被反复重绘）。 */
+function bindWheel(host: HTMLElement): void {
+  if (wheelBound.has(host)) return;
+  wheelBound.add(host);
+  // passive:false 才能 preventDefault；非 passive 下滚轮才不会被页面抢走
+  host.addEventListener("wheel", (e) => onWheel(host, e), { passive: false });
 }
 
-/** 从 from 起、在 budget 内最多能放几个标签（至少 1 个）。 */
-function fitCount(widths: number[], from: number, budget: number): number {
-  let n = 0;
-  while (n < widths.length - from && widthOf(widths, from, n + 1) <= budget) n++;
-  return n;
-}
-
-/** 从末尾往前数、在 budget 内最多能放几个（用于把没铺满的窗口补满）。 */
-function fitCountFromEnd(widths: number[], budget: number): number {
-  let n = 0;
-  while (n < widths.length && widthOf(widths, widths.length - n - 1, n + 1) <= budget) n++;
-  return n;
-}
-
-/**
- * 打开/关闭标签后按 tabId 重对齐窗口起点：start 是下标，增删标签后
- * 下标内容整体位移（关掉左侧折叠标签会让窗口漂移一格、看到错误的标签）。
- * 锚点（原窗口第一个标签）还在就停在它的当前位置；被关掉则退而求其次，
- * 取原窗口内仍存在的最近标签，尽量保持用户正在浏览的范围不跳变。
- */
-function reanchorStart(entry: StripEntry, tabs: TabViewData[]): number {
-  const oldTabs = entry.tabs;
-  const anchor = oldTabs[entry.start];
-  if (!anchor) return Math.min(entry.start, Math.max(0, tabs.length - 1));
-  const at = tabs.findIndex((t) => t.tabId === anchor.tabId);
-  if (at >= 0) return at;
-  for (let i = entry.start + 1; i < oldTabs.length; i++) {
-    const j = tabs.findIndex((t) => t.tabId === oldTabs[i].tabId);
-    if (j >= 0) return Math.max(0, j - 1);
-  }
-  for (let i = entry.start - 1; i >= 0; i--) {
-    const j = tabs.findIndex((t) => t.tabId === oldTabs[i].tabId);
-    if (j >= 0) return j;
-  }
-  return 0;
-}
-
-function applyOverflow(
-  host: HTMLElement,
-  entry: StripEntry,
-  els: HTMLElement[],
-  activeIdx: number,
-  activeChanged: boolean,
-): void {
-  const avail = host.clientWidth;
-  const widths = els.map((el) => el.getBoundingClientRect().width || el.offsetWidth);
-  if (els.length === 0) return;
-
-  // 放得下：不折叠（把窗口复位到 0，避免关掉标签后残留偏移）
-  if (avail <= 0 || widthOf(widths, 0, els.length) <= avail) {
-    entry.start = 0;
-    entry.count = els.length;
-    return;
-  }
-
-  const budget = Math.max(MORE_WIDTH, avail - MORE_WIDTH);
-  entry.start = Math.min(Math.max(0, entry.start), els.length - 1);
-  let count = fitCount(widths, entry.start, budget);
-  // 活动标签折叠在左侧：仅在激活事件时把窗口左移拉进来——
-  // 滚轮浏览不得被拽回（用户有权滚离活动标签，折叠按钮会提示）
-  if (activeChanged && activeIdx >= 0 && activeIdx < entry.start) {
-    entry.start = activeIdx;
-    count = fitCount(widths, entry.start, budget);
-  }
-  // 活动标签折叠在右侧 → 尾部对齐拉进来（也使切换可见标签时窗口不跳动）。
-  // 必须限定 activeChanged：否则滚轮向左滚、或缩窗后活动标签落到窗口右外侧时，
-  // 窗口会被无条件拽回，表现为「滚不动 / 缩窗后布局卡住」。
-  if (activeChanged && activeIdx >= 0 && entry.start + count <= activeIdx) {
-    entry.start = Math.max(0, activeIdx - count + 1);
-    count = fitCount(widths, entry.start, budget);
-  }
-  // 尾部越界回收（关标签后窗口可能滑出末尾）
-  if (entry.start + count > els.length) {
-    entry.start = Math.max(0, els.length - count);
-  }
-  count = fitCount(widths, entry.start, budget);
-  // 窗口没铺满可用宽度（关标签后 start 被夹到末尾、只剩下一个可见）→ 整体左移补满。
-  // 不补的话会出现「明明还放得下 2 个却只显示 1 个」，用户看到的就是「没自动调整」。
-  // 只在没铺满时生效：已铺满时不动，免得把用户滚出来的位置拽走。
-  if (entry.start > 0) {
-    const fromEnd = fitCountFromEnd(widths, budget);
-    if (fromEnd > count) {
-      entry.start = Math.max(0, els.length - fromEnd);
-      count = fromEnd;
-    }
-  }
-
-  entry.count = count;
-  for (let i = 0; i < els.length; i++) {
-    if (i < entry.start || i >= entry.start + count) els[i].remove();
-  }
-  host.appendChild(makeMoreButton(host, entry.tabs, entry.start, count, entry.cb));
-}
-
-/** 折叠列表的条目（左侧溢出在前，右侧溢出在后，中间一条分隔线）。 */
-function makeMoreItems(
-  tabs: TabViewData[],
-  start: number,
-  count: number,
-  cb: TabstripCallbacks,
-): MenuItem[] {
-  const left = tabs.slice(0, start);
-  const right = tabs.slice(start + count);
-  const items: MenuItem[] = [];
-  const itemOf = (t: TabViewData): MenuItem => ({
-    label: (t.dirty ? "● " : "") + t.name,
-    // B47：当前标签用整行观感（与标签栏里的活动标签一致），不打 ✓——
-    // ✓ 是「开关项」的语义，这里只是「你现在在这儿」。
-    active: t.active,
-    title: t.path ?? undefined,
-    onSelect: () => cb.onActivate(t.tabId),
-  });
-  for (const t of left) items.push(itemOf(t));
-  if (left.length > 0 && right.length > 0) items.push({ separator: true });
-  for (const t of right) items.push(itemOf(t));
-  return items;
-}
-
-/** 折叠按钮：矢量三点图标 + 折叠数量角标。点击展开列表，再点一次收起。 */
-function makeMoreButton(
-  host: HTMLElement,
-  tabs: TabViewData[],
-  start: number,
-  count: number,
-  cb: TabstripCallbacks,
-): HTMLButtonElement {
-  const left = tabs.slice(0, start);
-  const right = tabs.slice(start + count);
-  const folded = [...left, ...right];
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "tab-more" + (folded.some((t) => t.active) ? " tab-more-active" : "");
-  // 重绘时若菜单正开着（连点切标签），新按钮要延续展开态
-  if (moreMenuHost === host) btn.classList.add("tab-more-open");
-
-  const icon = document.createElement("span");
-  icon.className = "tab-more-icon";
-  icon.innerHTML = ICONS.more;
-  const badge = document.createElement("span");
-  badge.className = "tab-more-badge";
-  badge.textContent = folded.length > 99 ? "99+" : String(folded.length);
-  btn.append(icon, badge);
-  btn.title = `${folded.length} 个标签已折叠${folded.some((t) => t.active) ? "（含当前活动标签）" : ""}——点击展开列表（可连着点），滚轮可切换显示区间`;
-  btn.setAttribute("aria-label", btn.title);
-
-  btn.addEventListener("mousedown", (e) => e.stopPropagation());
-  btn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    // 已展开 → 再点收起（菜单是 keepOpen 的，必须能靠按钮关掉）
-    if (popupMenuAnchor() === btn) {
-      closePopupMenu();
-      return;
-    }
-    moreMenuHost = host;
-    openMoreBtn = btn;
-    btn.classList.add("tab-more-open");
-    showPopupMenu(btn, makeMoreItems(tabs, start, count, cb), undefined, {
-      keepOpen: true,
-      anchorToggle: true,
-      onClose: () => {
-        moreMenuHost = null;
-        openMoreBtn?.classList.remove("tab-more-open");
-        openMoreBtn = null;
-      },
-    });
-  });
-  return btn;
-}
-
-/** 滚轮：改变可见区间的起始位置（Ctrl+滚轮让位给字号缩放）。 */
+/** 滚轮：横向滚动标签栏（Ctrl+滚轮让位给字号缩放）。 */
 function onWheel(host: HTMLElement, e: WheelEvent): void {
   if (e.ctrlKey) return;
-  const entry = strips.get(host);
-  if (!entry) return;
-  const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-  entry.acc += delta;
-  if (Math.abs(entry.acc) < WHEEL_THRESHOLD) return;
-  const dir = entry.acc > 0 ? 1 : -1;
-  entry.acc = 0;
-  const next = Math.max(0, entry.start + dir);
-  if (next === entry.start) return;
-  entry.start = next;
-  // 自己消化滚轮，不要传给页面
+  const max = host.scrollWidth - host.clientWidth;
+  if (max <= 0) return; // 没溢出：不处理也不拦截
+  const raw = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+  // deltaMode：0=像素 1=行 2=页
+  const delta =
+    e.deltaMode === 1 ? raw * LINE_PX : e.deltaMode === 2 ? raw * host.clientWidth : raw;
+  if (!delta) return;
+  const before = host.scrollLeft;
+  host.scrollLeft = Math.max(0, Math.min(max, before + delta));
+  // 已经贴到边界、同方向再也滚不动 → 不吞事件，留给页面
+  if (host.scrollLeft === before) return;
   e.preventDefault();
-  renderTabstrip(host, entry.tabs, entry.cb);
 }

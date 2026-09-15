@@ -1,4 +1,5 @@
 import type { LayoutNode } from "./layout";
+import { ICONS } from "./icons";
 import { renderTabstrip, type TabViewData } from "./tabstrip";
 
 /**
@@ -142,15 +143,20 @@ export interface StripInsertInfo {
 export function stripInsertInfo(strip: HTMLElement, x: number): StripInsertInfo | null {
   const r = strip.getBoundingClientRect();
   if (x < r.left || x > r.right) return null;
+  // .tab-insert 是 strip 的绝对定位子元素，left 走**内容坐标**，会随内容一起滚；
+  // 而 getBoundingClientRect 的差值是**视口坐标**。标签栏横向滚动后两者相差一个
+  // strip.scrollLeft（B53 起标签栏可滚动），必须补上 —— 否则滚动过的标签栏上
+  // 插入指示线会画在错误的标签之间。
+  const scroll = strip.scrollLeft;
   const tabs = Array.from(strip.querySelectorAll<HTMLElement>(".tab"));
   for (const tab of tabs) {
     const tr = tab.getBoundingClientRect();
     if (x < tr.left + tr.width / 2) {
-      return { beforeTabId: Number(tab.dataset.tabId), offsetLeft: tr.left - r.left };
+      return { beforeTabId: Number(tab.dataset.tabId), offsetLeft: tr.left - r.left + scroll };
     }
   }
   const last = tabs[tabs.length - 1]?.getBoundingClientRect();
-  return { beforeTabId: null, offsetLeft: last ? last.right - r.left : r.width };
+  return { beforeTabId: null, offsetLeft: (last ? last.right - r.left : r.width) + scroll };
 }
 
 function showInsertIndicator(strip: HTMLElement, offsetLeft: number): void {
@@ -294,22 +300,45 @@ function buildPanel(
     onNew: () => cb.onNewTab?.(panelId),
   });
 
+  // 编辑器操作栏（B53 图标化）：左右分屏 / 上下分屏 / 移除分屏。
+  // VS Code 式语义：分屏按钮作用于**本面板**（cb.onSplitPanel 收面板 id，
+  // 不是"当前活动面板"——否则在非活动面板上点分屏会分错块）；
+  // ⨯ 仅移除该分屏（标签并入相邻面板），不关文档，唯一面板时禁用。
   const ops = document.createElement("div");
   ops.className = "panel-ops";
-  const closeP = document.createElement("button");
-  closeP.className = "panel-op";
-  closeP.textContent = "⨯";
+  const mkOp = (icon: string, title: string, onClick: () => void): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.className = "panel-op";
+    b.innerHTML = icon;
+    b.title = title;
+    b.setAttribute("aria-label", title);
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      onClick();
+    });
+    return b;
+  };
+  // 空面板分屏只会多出一个同样空的分屏，没有意义 → 无标签时禁用
+  const empty = data.tabs.length === 0;
+  const splitH = mkOp(ICONS.splitH, "向右分屏（把当前标签移到新面板）", () =>
+    cb.onSplitPanel(panelId, "h"),
+  );
+  const splitV = mkOp(ICONS.splitV, "向下分屏（把当前标签移到新面板）", () =>
+    cb.onSplitPanel(panelId, "v"),
+  );
+  splitH.disabled = empty;
+  splitV.disabled = empty;
+
+  const closeP = mkOp(ICONS.closePanel, "移除该分屏", () => cb.onClosePanel(panelId));
   // VS Code 式语义：⨯ 仅移除该分屏（标签并入相邻面板），不关文档；唯一面板时禁用
   closeP.disabled = data.canClose === false;
   closeP.title =
     data.canClose === false
       ? "唯一面板不可移除（退出请用窗口关闭或菜单「退出」）"
       : "移除该分屏（标签并入相邻面板）";
-  closeP.addEventListener("click", (e) => {
-    e.stopPropagation();
-    cb.onClosePanel(panelId);
-  });
-  ops.append(closeP);
+  closeP.setAttribute("aria-label", closeP.title);
+
+  ops.append(splitH, splitV, closeP);
 
   head.append(strip, ops);
 

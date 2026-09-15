@@ -190,22 +190,123 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(toggle, "切换视图必须抑制置脏").toContain("suppressDirty = true;");
   });
 
-  it("标签区不显示滚动条：溢出折叠为下拉按钮 + 滚轮切换区间（用户要求）", () => {
-    // 用户要求：tab 区不显示滚动条；超出宽度的标签折叠成一个下拉按钮；
-    // 滚轮调节显示的标签区间，左右两侧超出的都进下拉列表。
+  it("B53 标签区改为横向滚动（折叠机制已整体移除，用户要求）", () => {
+    // 用户要求：去掉 tab 折叠功能，保留滚动能力，参考 VS Code 优化。
+    // 旧实现是「不显示滚动条 + 溢出的标签折叠进下拉按钮」——那套机制已删除，
+    // 连同它需要的 ResizeObserver 重算 / tabId 重对齐 / 预算铺满三条不变量。
     const css = readFileSync("src/styles/global.css", "utf-8");
     const strip = css.match(/\.panel-tabstrip\s*\{[^}]*\}/)?.[0] ?? "";
     expect(strip, "应有 .panel-tabstrip 规则").toBeTruthy();
-    expect(strip, "标签区不得再横向滚动（不再出现滚动条）").not.toContain("overflow-x: auto");
-    expect(strip, "标签区应为 overflow: hidden").toContain("overflow: hidden");
+    expect(strip, "标签区必须可横向滚动").toContain("overflow-x: auto");
+    expect(strip, "滚动条要细：全局 10px 会吃掉 34px 高的标签一大截").toContain(
+      "scrollbar-width: thin",
+    );
+    expect(strip, "标签永不换行（VS Code）").toContain("flex-wrap: nowrap");
+    expect(css, "折叠按钮的样式必须整体删除").not.toContain("tab-more");
 
     const ts = readFileSync("src/shell/tabstrip.ts", "utf-8");
-    expect(ts, "必须有折叠下拉按钮").toContain("tab-more");
-    expect(ts, "必须挂载滚轮切换").toContain('addEventListener("wheel"');
+    expect(ts, "折叠机制必须整体删除（含下拉列表构造）").not.toContain("tab-more");
+    expect(ts, "不应再按 tabId 重对齐可见窗口（原生滚动不需要）").not.toContain("reanchorStart");
+    expect(ts, "不应再手写 ResizeObserver 重算可见区间").not.toContain("new ResizeObserver");
+    expect(ts, "必须挂载滚轮滚动").toContain('addEventListener("wheel"');
     expect(ts, "滚轮需用 passive:false 才能 preventDefault").toContain("passive: false");
     expect(ts, "Ctrl+滚轮要让位给字号缩放").toContain("if (e.ctrlKey) return;");
-    expect(ts, "左右两侧溢出的标签都要进列表").toContain("tabs.slice(0, start)");
-    expect(ts, "右侧溢出同样要进列表").toContain("tabs.slice(start + count)");
+    expect(ts, "全量重绘必须存取滚动位置，否则每次重绘都跳回最左").toContain(
+      "const prevScroll = host.scrollLeft",
+    );
+    expect(ts, "必须把活动标签滚进可见区").toContain("ensureVisible(host");
+    // 用 scrollIntoView 会连带滚动所有祖先容器（分屏/嵌套布局下整页跳），且 jsdom 没有它。
+    // 只禁止**调用**（注释里提到它没关系），故匹配带接收者的调用式。
+    expect(ts, "定位用自身几何而不是 scrollIntoView").not.toMatch(/\.scrollIntoView\(/);
+
+    // 滚动条余量必须**恒定预留**：原生横向滚动条从内容区里切高度，
+    // 不预留则「溢出↔不溢出」切换时标签栏 34↔37px 跳变，编辑器内容跟着抖
+    expect(strip, "标签栏高度必须固定（含滚动条余量）").toMatch(/height:\s*\d+px/);
+    const tabRule = css.match(/\n\.tab\s*\{[^}]*\}/)?.[0] ?? "";
+    const stripH = Number(strip.match(/height:\s*(\d+)px/)![1]);
+    const tabH = Number(tabRule.match(/height:\s*(\d+)px/)![1]);
+    expect(stripH, "标签栏高度必须大于标签高度（差值即滚动条余量）").toBeGreaterThan(tabH);
+  });
+
+  it("B53 标签先收缩再滚动（VS Code tabSizing），而不是一超宽就溢出", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const tab = css.match(/\n\.tab\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(tab, "应有 .tab 规则").toBeTruthy();
+    expect(tab, "标签必须可收缩（flex-shrink:1），否则超宽立刻溢出").toMatch(/flex:\s*0 1 auto/);
+    expect(tab, "收缩下限（到它才开始滚动）").toMatch(/min-width:\s*\d+px/);
+  });
+
+  it("B53 活动标签用顶部 accent 条，且不与 tab-flash 动画打架", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    // 强调条必须用伪元素：.tab-flash 的关键帧也在改 box-shadow，
+    // 用 box-shadow 画条会被动画结束态（inset 0 0 0 1px transparent）盖掉
+    expect(css, "活动标签顶部强调条走 ::before").toMatch(
+      /\.tab-active::before\s*\{[^}]*height:\s*2px/,
+    );
+  });
+
+  it("B53 ● 与 × 共用固定尺寸槽位（悬停才显示 ×，切换时标签不抖）", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const slot = css.match(/\n\.tab-action\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(slot, "应有 .tab-action 槽位规则").toBeTruthy();
+    expect(slot, "槽位尺寸必须固定，否则悬停切换会改变标签宽度").toMatch(/width:\s*\d+px/);
+    expect(slot).toMatch(/height:\s*\d+px/);
+    // 平时藏 ×、悬停才显示；未保存才见 ●
+    expect(css, "平时不显示关闭按钮").toMatch(/\.tab-close\s*\{[^}]*display:\s*none/);
+    expect(css, "悬停标签才出现 ×").toMatch(/\.tab:hover\s+\.tab-close\s*\{[^}]*display:\s*flex/);
+    expect(css, "悬停时藏掉 ●（与 × 同一个槽位）").toMatch(
+      /\.tab:hover\s+\.tab-mark\s*\{[^}]*display:\s*none/,
+    );
+    expect(css, "已保存的标签槽位留空").toMatch(
+      /\.tab:not\(\.tab-dirty\)\s+\.tab-mark\s*\{[^}]*display:\s*none/,
+    );
+
+    const ts = readFileSync("src/shell/tabstrip.ts", "utf-8");
+    expect(ts, "未保存必须打 tab-dirty（CSS 靠它决定槽位内容）").toContain("tab-dirty");
+  });
+
+  describe("B53 面板区优化（VS Code 风格）", () => {
+    it("面板操作按钮图标化，并补上分屏入口", () => {
+      const sv = readFileSync("src/shell/splitview.ts", "utf-8");
+      expect(sv, "不得再用 ⨯ 文本字形").not.toContain('textContent = "⨯"');
+      expect(sv, "必须有左右分屏按钮").toContain("ICONS.splitH");
+      expect(sv, "必须有上下分屏按钮").toContain("ICONS.splitV");
+      expect(sv, "必须有移除分屏按钮").toContain("ICONS.closePanel");
+      // 分屏按钮必须作用于**本面板**：cb.onSplitPanel 收面板 id，而不是"当前活动面板"
+      expect(sv, "分屏必须传本面板 panelId").toMatch(/cb\.onSplitPanel\(panelId, "h"\)/);
+      expect(sv, "分屏必须传本面板 panelId").toMatch(/cb\.onSplitPanel\(panelId, "v"\)/);
+      // 空面板分屏只会多出一个空面板
+      expect(sv, "无标签时应禁用分屏按钮").toMatch(/splitH\.disabled = empty|splitH\.disabled/);
+    });
+
+    it("分隔条：视觉细线 + 更宽命中区（原先 5px 可视条兼当命中区，容易抓空）", () => {
+      const css = readFileSync("src/styles/global.css", "utf-8");
+      const sep = css.match(/\n\.layout-sep\s*\{[^}]*\}/)?.[0] ?? "";
+      expect(sep, "应有 .layout-sep 规则").toBeTruthy();
+      const m = sep.match(/flex:\s*0 0 (\d+)px/);
+      expect(m, "命中区宽度必须显式给出").toBeTruthy();
+      expect(Number(m![1]), "命中区至少 7px（原先是 5px 兼当视觉条）").toBeGreaterThanOrEqual(7);
+      expect(sep, "命中区保持透明，视觉线交给伪元素").toContain("background: transparent");
+      expect(css, "悬停高亮落在伪元素上").toMatch(/\.layout-sep:hover::after/);
+      expect(css, "细线由伪元素画").toMatch(/\.layout-sep-h::after\s*\{/);
+    });
+
+    it("焦点面板：非活动分屏的活动标签降亮度；class 必须实时同步且不重建 DOM", () => {
+      const css = readFileSync("src/styles/global.css", "utf-8");
+      expect(css, "非活动面板的活动标签要降亮度").toMatch(
+        /\.layout-panel:not\(\.layout-panel-active\)\s+\.tab-active/,
+      );
+
+      const main = readFileSync("src/main.ts", "utf-8");
+      const fn = main.match(/function markActivePanel\([\s\S]*?\n\}/)?.[0] ?? "";
+      expect(fn, "必须有 markActivePanel 同步 class").toBeTruthy();
+      // 切面板绝不能重绘标签条：会销毁光标下的 .tab → 点标签要点两下（B33 的坑）
+      expect(fn, "只切 class，不得重建标签条").not.toContain("renderTabstrip");
+      expect(fn, "只切 class，不得重建布局").not.toContain("renderSplitview");
+      expect(main, "onActivatePanel 必须走 markActivePanel 而不是裸赋值").toMatch(
+        /markActivePanel\(panelId\);\s*\n\s*if \(!changed\)/,
+      );
+    });
   });
 
   it("Ctrl+滚轮缩放字号，且预览随之缩放（用户要求）", () => {
@@ -300,30 +401,43 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(rs, "默认宽度应为 240").toContain("toc_width: 240.0");
   });
 
-  it("B28 大纲分隔条必须与分屏分割条同款（5px 常显 border 色 + hover accent，无双线）", () => {
+  it("B28 大纲分隔条必须与分屏分割条同款（细线 + 宽命中区 + hover accent，无双线）", () => {
     // 用户要求：大纲区分隔条样式与面板分割条保持一致。
-    // 旧样式是 4px 透明细条，视觉上与 5px 常显 var(--border) 的 .layout-sep 不统一；
-    // 且 .toc-panel 自带 border-right 会与常显分隔条叠成双线。
+    // 旧样式是 4px 透明细条，与 .layout-sep 不统一；
+    // 且 .toc-panel 自带 border-right 会与分隔条叠成双线。
+    // B53 起两者统一升级为「透明命中区 + ::after 细线」——改一处必须改另一处。
     const previewCss = readFileSync("src/styles/preview.css", "utf-8");
     const resizer = previewCss.match(/\.toc-resizer\s*\{[^}]*\}/)?.[0] ?? "";
     expect(resizer, "应有 .toc-resizer 规则块").toBeTruthy();
-    expect(resizer, "宽度必须与 .layout-sep 一致（5px）").toContain("flex: 0 0 5px");
-    expect(resizer, "必须常显 border 色（与 .layout-sep 同款）").toContain(
-      "background: var(--border)",
-    );
+    const globalCss = readFileSync("src/styles/global.css", "utf-8");
+    const sep = globalCss.match(/\.layout-sep\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(sep, "分屏分割条基准样式应存在").toBeTruthy();
+
+    // 两个分隔条的命中区宽度必须一致
+    const wResizer = resizer.match(/flex:\s*0 0 (\d+)px/)?.[1];
+    const wSep = sep.match(/flex:\s*0 0 (\d+)px/)?.[1];
+    expect(wResizer, "大纲分隔条宽度必须显式给出").toBeTruthy();
+    expect(wResizer, "大纲与分屏分隔条宽度必须一致").toBe(wSep);
+
+    // 视觉线走伪元素：命中区透明 + ::after 画 2px 常显 border 色
+    expect(resizer, "命中区必须透明（视觉线交给伪元素）").toContain("background: transparent");
+    expect(sep, "命中区必须透明（视觉线交给伪元素）").toContain("background: transparent");
+    const line = previewCss.match(/\.toc-resizer::after\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(line, "大纲分隔条细线必须由伪元素画").toContain("background: var(--border)");
+    // 分屏分隔条：颜色在共享的 .layout-sep::after，几何按方向类定位
+    const sepLine = globalCss.match(/\.layout-sep::after\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(sepLine, "分屏分隔条细线必须由伪元素画").toContain("background: var(--border)");
+    expect(globalCss, "横向分隔条的细线几何").toMatch(/\.layout-sep-h::after\s*\{/);
+    expect(globalCss, "纵向分隔条的细线几何").toMatch(/\.layout-sep-v::after\s*\{/);
+
     const highlight =
       previewCss.match(
-        /\.toc-resizer:hover,\s*body\.layout-dragging \.toc-resizer\s*\{[^}]*\}/,
+        /\.toc-resizer:hover::after,\s*body\.layout-dragging \.toc-resizer::after\s*\{[^}]*\}/,
       )?.[0] ?? "";
     expect(highlight, "悬停/拖拽高亮必须是 accent（允许带回退值）").toMatch(/var\(--accent[,)]/);
 
-    const globalCss = readFileSync("src/styles/global.css", "utf-8");
-    const sep = globalCss.match(/\.layout-sep\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(sep, "分屏分割条基准样式应存在").toContain("flex: 0 0 5px");
-    expect(sep, "分屏分割条基准色应为 var(--border)").toContain("background: var(--border)");
-
     const panel = previewCss.match(/\.toc-panel\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(panel, ".toc-panel 不得自带 border-right（与常显分隔条叠成双线）").not.toContain(
+    expect(panel, ".toc-panel 不得自带 border-right（与分隔条叠成双线）").not.toContain(
       "border-right",
     );
   });

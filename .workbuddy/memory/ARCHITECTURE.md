@@ -89,23 +89,51 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
 - **菜单系统**（`src/shell/menu.ts`）：`MenuItem.submenu?: MenuItem[] | (() => MenuItem[])`。
   子菜单**扁平挂到 `document.body`**（按父按钮 rect 定位、右侧越界左翻），**不能挂进父菜单 DOM**——
   父菜单有 `overflow` 会裁掉子菜单。`chain`/`created` 数组维护展开层级，`closeDeeperThan(level)` 收深层。
-- **标签栏溢出**（B44 重写过）：不用滚动条。`renderTabstrip` 先全量渲染 → 测量 → 裁剪，
-  区间外折叠进 `.tab-more` 下拉，滚轮改 `start`。三条**不能违反**的不变量：
-  1. **尺寸变化必须重算**：`watchStripSize()` 用 `ResizeObserver` 观察标签栏自身宽度
-     （顺带覆盖拖分屏分隔条——那**不触发** `window.resize`），无 RO 时退化 `window.resize`，
-     用 rAF 合并。`WeakMap` 不能遍历，故另存 `liveStrips` 集合并在注册/重排时剔除 `!isConnected` 节点。
-  2. **活动标签的拉回只在 `activeChanged` 时生效**（左右两侧规则都要这个门），
-     否则滚轮向左滚会被无条件拽回——活动标签在窗口右外侧（新开文件后的常态）时表现为"滚不动"。
-  3. **窗口必须铺满预算**：`fitCountFromEnd()`——关标签后 `start` 被夹到末尾时
-     `fitCount` 只剩 1 个，会显示成「明明还放得下 2 个却只显示 1 个」。
-     只在**没铺满**时左移补满，已铺满不动（免得把用户滚出来的位置拽走）。
-  4. **折叠菜单是常开的（B47）**：`.tab-more` 用 `keepOpen` 打开，可连着点选；
-     重绘后由 `syncMoreMenu()` 调 `refreshPopupMenu()` 原地刷新条目（当前项标记跟着激活走），
-     标签都放得下时自动 `closePopupMenu()`。这要求 `entry.count` 记下可见数量，
-     且 refresh **必须复用首次的 opts**（否则刷新出的条目丢掉 keepOpen，第二次点击就关掉菜单）。
-- **弹层的两种选中态别混用**：`checked`（打 ✓，语义是「开关」）vs `active`（B47 新增，
-  整行走 `.menu-item-current`，语义是「你当前在这儿」）。折叠标签列表属于后者——
-  用户明确要求「不要钩子，要和标签栏里活动标签一个效果」。
+- **标签栏溢出**（B53 整体重写）：**不折叠，也不手写区间管理** —— 放不下的标签就是
+  普通的横向滚动（VS Code 式）。`renderTabstrip` 仍是「全量渲染 → 测量 → 收缩/滚动」，
+  但「滚到哪」交给浏览器（DOM 的 `scrollLeft`），模块不再维护"可见窗口"。
+  1. `.panel-tabstrip` = `overflow-x: auto` + `flex-wrap: nowrap`，滚动条 **3px**
+     （全局 10px 会吃掉 34px 高的标签一大截）。
+  2. `.tab` = `flex: 0 1 auto` + `min-width`：**先收缩再滚动**（VS Code tabSizing），
+     不是一超宽就溢出。
+  3. **全量重绘会重置 `scrollLeft`**：必须在 `host.textContent = ""` **之前**存下、
+     之后还原（`prevScroll`），否则每次激活/关闭标签标签栏都跳回最左端。
+  4. **活动标签定位用 `ensureVisible()` 手工几何，不用 `scrollIntoView()`** ——
+     后者会连带滚动所有祖先容器（分屏/嵌套布局整页跳），而且 jsdom 没有它（测试跑不了）。
+     「已可见就不动」是天然满足的，等价于老实现靠 `activeChanged` 门控换来的行为。
+  5. 只在**活动标签真的换了**时才定位（`lastActiveId`），否则会把用户滚出去的
+     位置无条件拽回来——活动标签在右外侧（新开文件的常态）时表现为「滚不动」。
+  6. 滚轮做 `deltaMode` 归一化（0=像素 / 1=行×16 / 2=页×可视宽）：某些驱动按「行」
+     上报，delta 只有 3，当像素用几乎滚不动。没溢出 / 已贴边时不 `preventDefault`。
+  - **B32–B47 的「可见窗口 + `.tab-more` 下拉折叠列表」已整体删除**，连同上述不变量
+    需要的 `ResizeObserver`、`liveStrips` 记账、`reanchorStart`、`fitCountFromEnd`、
+    `keepOpen` 菜单原地刷新 —— 这些能力**浏览器原生滚动全部自带**。净删约 150 行。
+- **拖拽插入线必须补偿 scrollLeft**（B53）：`.tab-insert` 绝对定位在 strip 内，
+  `left` 走**内容坐标**（会随内容一起滚），而 `getBoundingClientRect` 的差值是**视口坐标**。
+  `splitview.stripInsertInfo` 必须 `+ strip.scrollLeft`，否则滚动过的标签栏上插入线
+  画在错误的标签之间。其余用例 `scrollLeft` 恒为 0，正好掩盖这个 bug ——
+  `tabstrip-drag.test.ts` 里显式造了个非零值来锁它。
+- **标签的 ● / × 共用一个固定尺寸槽位**（`.tab-action`，B53，VS Code 行为）：
+  平时只见 ●（未保存）或留空（已保存），悬停标签才换成 ×。
+  槽位尺寸**必须固定**，否则鼠标划过时标签宽度变化、整排标签左右抖动。
+  代价：× 不再常驻，键盘/触屏略弱（Ctrl+W 与右键菜单仍在）。
+- **活动标签顶部 accent 条用 `::before` 画**，不能用 `box-shadow` ——
+  `.tab-flash` 的关键帧也在改 `box-shadow`，用它会盖掉强调条。
+- **面板区**（B53）：面板操作栏 = 3 个矢量图标按钮（`ICONS.splitH` / `splitV` /
+  `closePanel`），替代原来的 `⨯` 文本字形。分屏按钮必须传**本面板** panelId
+  （`cb.onSplitPanel(panelId, "h")`），不是"当前活动面板"；空面板禁用分屏。
+  **焦点面板**（`.layout-panel-active`）的视觉 = 非活动分屏的活动标签降亮度。
+  它只能靠切 class 同步（`main.ts` 的 `markActivePanel()`）——
+  ⚠️ 切面板时**绝不能重绘标签条**：会销毁光标下的 `.tab`，点标签"要点两下"（B33 的坑）。
+- **分隔条统一「细线 + 宽命中区」**（B53）：`.layout-sep*` 与 `.toc-resizer` 都是
+  7px 透明命中区 + `::after` 画 2px 线、悬停高亮 accent。两者**必须同款**（B28 的约定），
+  改一个就要改另一个；`regressions.test.ts` 直接断言两者 `flex` 宽度相等。
+- **弹层的两种选中态别混用**：`checked`（打 ✓，语义是「开关」）vs `active`（整行走
+  `.menu-item-current`，语义是「你当前在这儿」）。
+  ⚠️ 折叠列表是 `active` 语义的**唯一调用方**，已随 B53 删除 ——
+  `menu.ts` 的 `MenuItem.active` 与 `.menu-item-current` 样式目前**无使用者**，
+  属待清理项（未删是因为 menu 是共享模块，超出本次改动范围）。
+
 - **图标**：`scripts/gen_icons.py` 纯矢量自绘；四角圆角用「alpha 与垂直镜像取 min」保证上下一致；
   改图标后必须重跑 `tauri build` 才会进 exe（`src-tauri/build.rs` 已 `rerun-if-changed=icons`，
   否则增量构建会**静默**沿用旧图标，B41 踩过）。

@@ -258,35 +258,30 @@ button:focus-visible {
   outline-offset: 1px;
 }
 
-/* ---------- 标签栏 ---------- */
-
-.tabstrip {
-  display: flex;
-  align-items: stretch;
-  gap: 2px;
-  padding: 2px 6px 0;
-  background: var(--bg-status);
-  border-bottom: 1px solid var(--border);
-  /* 不显示滚动条：放不下的标签折叠进右侧下拉按钮，滚轮切换显示区间 */
-  overflow: hidden;
-  flex: 0 0 auto;
-}
+/* ---------- 标签栏 ----------
+   VS Code 风格（B53）：方形、扁平，活动标签用**顶部 accent 条**标识，
+   放不下的标签横向滚动（见 .panel-tabstrip），不再折叠。 */
 
 .tab {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 6px 4px 10px;
+  height: 34px;
+  padding: 0 6px 0 10px;
+  min-width: 62px;
   max-width: 200px;
-  border: 1px solid transparent;
-  border-bottom: none;
-  border-radius: 6px 6px 0 0;
+  border: none;
   color: var(--fg-muted);
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
-  flex: 0 0 auto;
-  transition: background 0.12s ease;
+  /* 可收缩：先把标签压窄，压到 min-width 仍放不下才开始滚动（VS Code tabSizing）。
+     老实现是 flex: 0 0 auto（不可收缩），一超宽就直接折叠。 */
+  flex: 0 1 auto;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
 
 .tab-dragging {
@@ -303,10 +298,33 @@ button:focus-visible {
   color: var(--fg);
 }
 
+/* 活动标签：底色与编辑区一致（视觉上与下方内容连成一片）+ 顶部 accent 条。
+   强调条用 ::before 而不是 box-shadow —— .tab-flash 的动画也在改 box-shadow，
+   用它会被动画结束态（inset 0 0 0 1px transparent）盖掉。 */
 .tab-active {
   background: var(--bg);
-  border-color: var(--border);
   color: var(--fg);
+}
+
+.tab-active::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+}
+
+/* 非活动分屏里，活动标签压低亮度（VS Code）：分屏时一眼看出焦点在哪块面板。
+   依赖 .layout-panel-active 实时正确 —— 由 main.ts 的 markActivePanel 同步。 */
+.layout-panel:not(.layout-panel-active) .tab-active {
+  background: transparent;
+  color: var(--fg-muted);
+}
+
+.layout-panel:not(.layout-panel-active) .tab-active::before {
+  opacity: 0.35;
 }
 
 /* B47：活动标签切换后闪一次（从折叠列表点选、Ctrl+Tab 时定位用）。
@@ -340,13 +358,37 @@ button:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+  /* 名字吸收收缩量，动作槽位（.tab-action）宽度恒定 */
+  flex: 1 1 auto;
+}
+
+/* ● 与 × 共用的固定尺寸槽位（VS Code 行为）：
+   平时只见 ●（未保存）或留空（已保存），鼠标悬停到标签上才换成 ×。
+   槽位尺寸恒定、只换内容——否则鼠标划过时标签宽度会变、整排标签左右抖动。 */
+.tab-action {
+  position: relative;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+}
+
+.tab-mark,
+.tab-close {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .tab-mark {
   color: var(--warn);
   font-size: 10px;
-  min-width: 10px;
-  text-align: center;
+}
+
+/* 已保存（无 tab-dirty）：槽位留空，不显示 ● */
+.tab:not(.tab-dirty) .tab-mark {
+  display: none;
 }
 
 .tab-close {
@@ -355,9 +397,19 @@ button:focus-visible {
   color: var(--fg-muted);
   font-size: 13px;
   line-height: 1;
-  padding: 1px 4px;
-  border-radius: 4px;
+  padding: 0;
+  border-radius: 3px;
   cursor: pointer;
+  /* 平时不显示：悬停标签时才出现（VS Code）。Ctrl+W / 右键菜单仍可关闭 */
+  display: none;
+}
+
+.tab:hover .tab-close {
+  display: flex;
+}
+
+.tab:hover .tab-mark {
+  display: none;
 }
 
 .tab-close:hover {
@@ -992,10 +1044,21 @@ button:focus-visible {
   flex-direction: column;
 }
 
+/* 分隔条（B53 改「细线 + 宽命中区」）：
+   视觉上仍是一条 2px 细线，但可抓取区域有 7px —— 原先 5px 的可视条同时充当命中区，
+   拖动时容易抓空。VS Code 的 sash 同样把命中区做得比视觉宽。 */
 .layout-sep {
-  flex: 0 0 5px;
-  background: var(--border);
+  flex: 0 0 7px;
+  background: transparent;
+  position: relative;
   z-index: 5;
+}
+
+.layout-sep::after {
+  content: "";
+  position: absolute;
+  background: var(--border);
+  transition: background var(--transition);
 }
 
 .layout-sep-h {
@@ -1006,7 +1069,23 @@ button:focus-visible {
   cursor: row-resize;
 }
 
-.layout-sep:hover {
+.layout-sep-h::after {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+}
+
+.layout-sep-v::after {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+}
+
+.layout-sep:hover::after {
   background: var(--accent);
 }
 
@@ -1024,7 +1103,9 @@ button:focus-visible {
 }
 
 .layout-panel-active {
-  /* 活动面板不做强调边框，避免视觉噪音；标签栏 active 已足够 */
+  /* 活动面板自身不加边框（避免视觉噪音）；「焦点在哪」由
+     .layout-panel:not(.layout-panel-active) .tab-active 的降亮度规则表达。
+     该类必须实时正确 —— main.ts 的 markActivePanel 负责同步。 */
 }
 
 /* 分屏拖拽预览层（Xshell 式方向高亮） */
@@ -1086,20 +1167,51 @@ button:focus-visible {
 .panel-tabstrip {
   flex: 1 1 auto;
   display: flex;
-  align-items: stretch;
+  /* 标签永不换行（VS Code）：放不下就滚动，不折行 */
+  flex-wrap: nowrap;
+  align-items: flex-start;
   gap: 2px;
-  padding: 2px 4px 0;
+  padding: 0 4px;
+  min-width: 0;
   /* 拖拽 tab 的插入指示线（.tab-insert）以 strip 为定位基准 */
   position: relative;
-  /* 不显示滚动条：溢出标签折叠进 .tab-more 下拉按钮，滚轮切换显示区间 */
-  overflow: hidden;
+  /* 溢出 = 横向滚动（VS Code 式），不再折叠进下拉按钮。
+     滚动位置由 scrollLeft 持有，浏览器负责裁剪与边界收敛。 */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--sb-thumb) transparent;
+  /* 高度 = 34px 标签 + 3px 滚动条余量**恒定预留**。
+     原生横向滚动条是从内容区里切走高度的，不预留的话「溢出 ↔ 不溢出」切换时
+     标签栏会 34↔37px 跳变，编辑器内容跟着上下抖一下。 */
+  height: 37px;
 }
 
-/* 拖拽 tab 落在 tab 区时的插入位置指示（区别于面板区的分屏预览层，B27） */
+/* 标签栏滚动条必须比全局的 10px 细，否则会吃掉 34px 高的标签一大截。
+   overflow-x:auto 决定了它只在真正溢出时出现。 */
+.panel-tabstrip::-webkit-scrollbar {
+  height: 3px;
+}
+
+.panel-tabstrip::-webkit-scrollbar-thumb {
+  background: var(--sb-thumb);
+  border-radius: 2px;
+}
+
+/* 常态隐藏滚动条 thumb，指针进入标签栏才显形（VS Code 的淡化观感） */
+.panel-tabstrip::-webkit-scrollbar-thumb:vertical,
+.panel-tabstrip:not(:hover)::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+/* 拖拽 tab 落在 tab 区时的插入位置指示（区别于面板区的分屏预览层，B27）。
+   注意 left 走的是**内容坐标**：strip 是 position:relative 的滚动容器，
+   绝对定位子元素会随内容一起滚 —— splitview 计算偏移时必须补上 scrollLeft。 */
 .tab-insert {
   position: absolute;
-  top: 2px;
-  bottom: 0;
+  top: 0;
+  /* 只覆盖 34px 的标签行，不压到下方预留的滚动条余量上 */
+  bottom: 3px;
   width: 2px;
   border-radius: 1px;
   background: var(--accent);
@@ -1108,23 +1220,28 @@ button:focus-visible {
   z-index: 6;
 }
 
-/* 折叠标签下拉：右侧常驻，靠 margin-left:auto 顶到末尾。
-   B47：矢量三点图标 + 右上角数字角标（角标不占宽度，按钮更窄、留给标签） */
-.tab-more {
-  position: relative;
+.panel-ops {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 0 4px;
+  /* 不被标签栏挤扁：标签栏滚动，操作按钮恒定可见 */
   flex: 0 0 auto;
-  margin-left: auto;
-  align-self: center;
+}
+
+/* 面板操作按钮（B53 图标化）：左右分屏 / 上下分屏 / 移除分屏。
+   原来是单个 ⨯ 文本字形，与工具栏的矢量图标不是一套语言。 */
+.panel-op {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
+  width: 22px;
   height: 22px;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 5px;
   background: transparent;
   color: var(--fg-muted);
+  border-radius: 4px;
   cursor: pointer;
   transition:
     color 0.12s,
@@ -1132,78 +1249,10 @@ button:focus-visible {
     border-color 0.12s;
 }
 
-/* 图标本身不接收指针事件，点击一律落在按钮上 */
-.tab-more-icon {
-  display: inline-flex;
-  pointer-events: none;
-}
-
-.tab-more:hover {
-  background: var(--bg-hover);
-  color: var(--fg);
-  border-color: var(--border);
-}
-
-/* 展开态：菜单是常开的（可连着点），按钮要一直显示「已展开」 */
-.tab-more-open,
-.tab-more-open:hover {
-  background: var(--bg-hover);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.tab-more:active {
-  transform: translateY(0.5px);
-}
-
-/* 折叠数量角标：贴在按钮右上角（不占宽度）。
-   注意标签栏是 overflow:hidden 的，角标只能微超出按钮，不能被裁掉；
-   描边用中性 --border，顶部标签栏与分屏面板两种底色上都协调。 */
-.tab-more-badge {
-  position: absolute;
-  top: -1px;
-  right: -2px;
-  min-width: 14px;
-  height: 13px;
-  padding: 0 3px;
-  border-radius: 7px;
-  background: var(--bg-hover);
-  box-shadow: 0 0 0 1px var(--border);
-  color: var(--fg-muted);
-  font-size: 9px;
-  line-height: 13px;
-  text-align: center;
-  pointer-events: none;
-}
-
-/* 活动标签被折叠：提示当前编辑的文件不可见，展开列表即可跳回 */
-.tab-more-active {
-  color: var(--accent);
-}
-.tab-more-active .tab-more-badge {
-  background: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
-  color: #fff;
-}
-.tab-more-active .tab-more-icon {
-  color: var(--accent);
-}
-
-.panel-ops {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 0 4px;
-}
-
-.panel-op {
-  border: none;
-  background: transparent;
-  color: var(--fg-muted);
-  font-size: 13px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  cursor: pointer;
+/* 图标是 24×24 viewBox 的 18px 默认尺寸，22px 按钮里略大 */
+.panel-op svg {
+  width: 15px;
+  height: 15px;
 }
 
 .panel-op:hover {

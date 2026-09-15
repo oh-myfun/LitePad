@@ -54,8 +54,6 @@ export const ICONS = {
   ),
   splitH: svg('<rect x="3" y="4" width="18" height="16" rx="1"/><path d="M12 4v16"/>'),
   splitV: svg('<rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 12h18"/>'),
-  /** 折叠标签列表入口（标签栏右侧，14px 小尺寸） */
-  more: svg('<path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="2.6"/>', 14),
   closePanel: svg(
     '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9l6 6M15 9l-6 6"/>',
   ),

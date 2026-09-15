@@ -436,6 +436,30 @@ describe("bootstrap + drag-split smoke", () => {
     expect(explicit[0].theme, "浅⇄深之间必须翻转明暗").not.toBe(explicit[1].theme);
   });
 
+  it("B53：面板操作栏必须是矢量图标（分屏×2 + 移除），标签栏不再有折叠按钮", async () => {
+    // 用户要求：参考 VS Code 优化面板区。原先面板头只有一个「⨯」文本字形。
+    const panel = document.querySelector(".layout-panel") as HTMLElement;
+    expect(panel, "应有面板").toBeTruthy();
+    const ops = Array.from(panel.querySelectorAll<HTMLButtonElement>(".panel-op"));
+    expect(ops.length, "应为 分屏×2 + 移除分屏 共 3 个操作按钮").toBe(3);
+    for (const op of ops) {
+      expect(op.querySelector("svg"), `「${op.title}」必须是矢量图标`).toBeTruthy();
+    }
+    // 语义顺序：右分屏 / 下分屏 / 移除分屏
+    expect(ops[0].title).toContain("分屏");
+    expect(ops[1].title).toContain("分屏");
+    expect(ops[2].title, "第三个是移除分屏").toContain("移除");
+
+    // 折叠机制已整体删除
+    expect(document.querySelector(".tab-more"), "折叠按钮必须已删除").toBeNull();
+    expect(document.querySelector(".tab-action"), "● 与 × 应共用一个动作槽位").toBeTruthy();
+
+    // 焦点面板 class 必须恰好落在一块面板上
+    expect(document.querySelectorAll(".layout-panel-active").length, "有且仅有一个活动面板").toBe(
+      1,
+    );
+  });
+
   it("新建标签必须是空白文档（回归：attach 后 rebuild 快照回写污染新标签）", async () => {
     // 机制：attachTabToPanel 已把 activeTabId 指向新标签，而视图仍显示旧标签；
     // 若 rebuildLayout 的回写按 activeTabId 寻址，会把旧文档内容写进新标签。
