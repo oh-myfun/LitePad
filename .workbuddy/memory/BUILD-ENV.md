@@ -43,6 +43,16 @@ node node_modules/@tauri-apps/cli/tauri.js build \
   在 build script 处报 `tauri-winres ... Failed("windres failed to compile resource.rc ... exit code: 1")`，
   而**同一图标刚用 `tauri build` 打包成功过**）。直接重跑 `cd src-tauri && cargo test` 即 15/15 通过，
   再 push 也过。**不要**因这个报错去改 .rc 或图标——先重试一次。
+- ⚠️ **但 `NotAttempted("windres")` 不是瞬时故障，是 PATH 漏了 MSYS2**（09-15 踩）。
+  `tauri-winres` 报 `panicked at ... NotAttempted("windres")` 的字面意思就是
+  **找不到 windres 这个二进制**，和上面那个「找到了但预处理失败」是两回事。
+  **症状**：`git push` 时 pre-push 的 `cargo test` 挂，报 `✗ pre-push 失败：cargo test 未通过`。
+  **根因**：push 命令只导出了 PortableGit + System32，**漏了 `/c/msys64/mingw64/bin`**。
+  为什么以前 push 都过？因为 build script 只在被监听的文件变化时重跑 ——
+  **平时 push 不动 `tauri.conf.json`，根本不触发 winres**；一旦改了 `tauri.conf.json`
+  （最典型：`release.sh` bump 版本号），build script 重跑就需要 windres 了。
+  **修**：push 也用完整 PATH（见上文「会话内 PATH」），并先 `which windres` 确认可见。
+  **判据**：报错里是 `NotAttempted("windres")` → 查 PATH；是 `preprocessing failed` → 先重试。
 - 链接前必须**杀掉运行中的 litepad.exe**，否则 `os error 32`（文件被占用）。
 - **npx 偶发解析异常**（wsl.exe shim 报 blocked + 乱码）：`run-vitest.cjs` 内部 `execSync("npx vitest")`
   会挂 → 用 `scripts/run-vitest-direct.cjs`（execFileSync 直调 `node_modules/vitest/vitest.mjs`，

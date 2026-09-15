@@ -92,10 +92,13 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
 - **标签栏溢出**（B53 整体重写）：**不折叠，也不手写区间管理** —— 放不下的标签就是
   普通的横向滚动（VS Code 式）。`renderTabstrip` 仍是「全量渲染 → 测量 → 收缩/滚动」，
   但「滚到哪」交给浏览器（DOM 的 `scrollLeft`），模块不再维护"可见窗口"。
-  1. `.panel-tabstrip` = `overflow-x: auto` + `flex-wrap: nowrap`，滚动条 **3px**
-     （全局 10px 会吃掉 34px 高的标签一大截）。
+  1. `.panel-tabstrip` = `overflow-x: auto` + `flex-wrap: nowrap`，滚动条 **2px**、无两端箭头。
+     ⚠️ **必须显式复位 `scrollbar-width: auto; scrollbar-color: auto`**（B54 踩坑）：全局
+     `*` 上有这两个标准属性时，元素上再写一遍会让 Chromium **忽略 `::-webkit-scrollbar`**，
+     标签栏于是拿回系统滚动条 —— 两端带箭头、也压不细。复位后才轮到自绘规则生效。
   2. `.tab` = `flex: 0 1 auto` + `min-width`：**先收缩再滚动**（VS Code tabSizing），
-     不是一超宽就溢出。
+     不是一超宽就溢出。高度 **24px 固定**（不用 padding 撑）：B53 曾改成 34px 方角平标签，
+     用户反馈「太高了」→ B54 回退圆角 + 描边；固定高度保证字号档位变化时栏高恒定。
   3. **全量重绘会重置 `scrollLeft`**：必须在 `host.textContent = ""` **之前**存下、
      之后还原（`prevScroll`），否则每次激活/关闭标签标签栏都跳回最左端。
   4. **活动标签定位用 `ensureVisible()` 手工几何，不用 `scrollIntoView()`** ——
@@ -117,11 +120,15 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   平时只见 ●（未保存）或留空（已保存），悬停标签才换成 ×。
   槽位尺寸**必须固定**，否则鼠标划过时标签宽度变化、整排标签左右抖动。
   代价：× 不再常驻，键盘/触屏略弱（Ctrl+W 与右键菜单仍在）。
-- **活动标签顶部 accent 条用 `::before` 画**，不能用 `box-shadow` ——
-  `.tab-flash` 的关键帧也在改 `box-shadow`，用它会盖掉强调条。
-- **面板区**（B53）：面板操作栏 = 3 个矢量图标按钮（`ICONS.splitH` / `splitV` /
-  `closePanel`），替代原来的 `⨯` 文本字形。分屏按钮必须传**本面板** panelId
-  （`cb.onSplitPanel(panelId, "h")`），不是"当前活动面板"；空面板禁用分屏。
+- **活动标签的顶部 accent 条已回退**（B54）：B53 试过用 `::before` 画 2px 强调条
+  （不能用 `box-shadow` 画 —— `.tab-flash` 的关键帧也在改 `box-shadow`，会被动画结束态盖掉），
+  用户要求「风格退回之前的样式」后整体删除。现在活动标签靠**底色 + 描边**区分：
+  `.tab-active { background: var(--bg); border-color: var(--border) }`。
+- **面板区**（B54）：面板操作栏**只剩「移除分屏」**一个矢量图标按钮（`ICONS.closePanel`）。
+  B53 曾加过 `ICONS.splitH` / `splitV`，B54 按用户要求去掉 —— 分屏改由**把标签拖到面板边缘**
+  （`zoneOf` + 拖拽落点）；`cb.onSplitPanel` 回调与接口字段一并删除。
+  ⚠️ **删按钮 ≠ 删功能**：菜单「视图 → 左右/上下分屏」与快捷键（`panel.splitH`/`splitV`）
+  仍然走 `main.ts` 的 `splitActivePanel(activePanelId, dir)` —— 回归测试同时锁「按钮没了」+「菜单/键位还在」。
   **焦点面板**（`.layout-panel-active`）的视觉 = 非活动分屏的活动标签降亮度。
   它只能靠切 class 同步（`main.ts` 的 `markActivePanel()`）——
   ⚠️ 切面板时**绝不能重绘标签条**：会销毁光标下的 `.tab`，点标签"要点两下"（B33 的坑）。
