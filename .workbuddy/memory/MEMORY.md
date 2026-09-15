@@ -120,9 +120,34 @@
   改这块前先读 `.workbuddy/memory/2026-09-14.md` 的 B51 段与
   `smoke.bootstrap.test.ts` 里的 `resetThemeToSystem()`（档位是跨用例共享状态）。
 
+- **B52（0914）安装程序图标**：用户报「二进制图标还是旧的」，实测**应用本体 exe 完全正确**，
+  错的是**安装器外壳**（双击 setup.exe 的图标、「应用和功能」里的卸载图标 = NSIS 默认图标）。
+  根因：`bundle.icon` 只喂 exe 与快捷方式，NSIS 安装/卸载器图标要单独配
+  `bundle.windows.nsis.installerIcon` / `uninstallerIcon`，不配就渲染成 `INSTALLERICON ""` 且零报错。
+  ⚠️ **排查图标问题先分层**：exe 图标 / 安装器外壳图标 / 快捷方式图标是三套机制。
+  新增两个校验脚本：`scripts/icon_check.py`（扫未压缩 PNG 流）与
+  `scripts/icon_check_pe.py`（解析 PE 资源段 RT_ICON，**外壳图标只在这一层**，前者查不到）。
+
+- **B53（0915，提交 80f982b）标签栏改原生横向滚动 + VS Code 化**：**折叠机制整体删除**
+  （`.tab-more` 下拉 + 可见窗口区间 + B44 三条不变量 + ResizeObserver/liveStrips 记账 +
+  B47 keepOpen 菜单），因为**原生滚动自带这些能力**；`tabstrip.ts` 484 → 245 行。
+  同时按 VS Code：标签先收缩再滚动（`flex:0 1 auto` + min-width）、活动标签顶部 accent 条
+  （**必须用 `::before`**，`box-shadow` 会被 `.tab-flash` 关键帧盖掉）、●/× 共用固定尺寸槽位
+  `.tab-action`（平时 ● 或空，悬停才变 ×）、面板操作栏 3 个矢量图标、焦点面板降亮度、
+  分隔条 7px 透明命中区 + `::after` 细线（`.toc-resizer` 必须同款，B28 约定）。
+  ⚠️ 三个坑：① 全量重绘会重置 `scrollLeft`，必须存/还原 `prevScroll`；
+  ② `.tab-insert` 的 `left` 走内容坐标，`stripInsertInfo` 必须 `+ scrollLeft`
+  （原用例 `scrollLeft=0` 正好掩盖）；③ 原生横向滚动条占 3px，必须**恒定预留**
+  （`height:37px` = 34px 标签 + 3px 余量）否则溢出切换时编辑器内容上下抖。
+  ⚠️ 切面板**绝不能重绘标签条**（会销毁光标下的 `.tab` → 点标签要点两下）；
+  焦点面板视觉只能靠 `main.ts` 的 `markActivePanel()` 切 class。
+  ⚠️ 遗留待清理：`menu.ts` 的 `MenuItem.active` 与 `.menu-item-current` 已无使用者
+  （折叠列表是唯一调用方）。详见 `.workbuddy/memory/2026-09-15.md` 与 `ARCHITECTURE.md` §7。
+
 ## 下一步
 
 - 待办：桌面环境补拍截图（M4 的 keymap.png / command-palette.png + B51 的
-  main.png / preferences.png）。
+  main.png / preferences.png + **B53 的 main.png，标签栏/面板操作栏/分隔条都变了**）。
+- 待清理：`menu.ts` 的 `MenuItem.active` / `.menu-item-current`（B53 后无使用者）。
 - M4 之后：M5 规划未定；候选见 DESIGN.md。
 - 待用户桌面环境验证的条目散见各日志（沙箱内无法做 UI 冒烟）。
