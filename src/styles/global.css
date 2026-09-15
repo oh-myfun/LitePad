@@ -259,24 +259,28 @@ button:focus-visible {
 }
 
 /* ---------- 标签栏 ----------
-   VS Code 风格（B53）：方形、扁平，活动标签用**顶部 accent 条**标识，
-   放不下的标签横向滚动（见 .panel-tabstrip），不再折叠。 */
+   标签样式沿用 B53 之前的观感（上沿圆角、活动标签底色与编辑区一致、描边）。
+   B53 保留下来的只有**溢出改为横向滚动**（见 .panel-tabstrip），不再折叠。 */
 
 .tab {
-  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 34px;
+  /* 高度回退到 B53 之前的矮标签（≈ 旧版 4px 内边距 + 14px 行高的视觉高度）。
+     B53 曾改成 34px 的方角平标签，用户反馈「太高了、风格要退回」。
+     固定高度而非靠 padding 撑：字号档位变化时标签栏高度仍恒定，不挤压编辑器。 */
+  height: 24px;
   padding: 0 6px 0 10px;
-  min-width: 62px;
+  min-width: 60px;
   max-width: 200px;
-  border: none;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
   color: var(--fg-muted);
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
-  /* 可收缩：先把标签压窄，压到 min-width 仍放不下才开始滚动（VS Code tabSizing）。
+  /* 可收缩：先把标签压窄，压到 min-width 仍放不下才开始滚动。
      老实现是 flex: 0 0 auto（不可收缩），一超宽就直接折叠。 */
   flex: 0 1 auto;
   transition:
@@ -298,33 +302,18 @@ button:focus-visible {
   color: var(--fg);
 }
 
-/* 活动标签：底色与编辑区一致（视觉上与下方内容连成一片）+ 顶部 accent 条。
-   强调条用 ::before 而不是 box-shadow —— .tab-flash 的动画也在改 box-shadow，
-   用它会被动画结束态（inset 0 0 0 1px transparent）盖掉。 */
+/* 活动标签：底色与编辑区一致（视觉上与下方内容连成一片）+ 描边 */
 .tab-active {
   background: var(--bg);
+  border-color: var(--border);
   color: var(--fg);
 }
 
-.tab-active::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--accent);
-}
-
-/* 非活动分屏里，活动标签压低亮度（VS Code）：分屏时一眼看出焦点在哪块面板。
+/* 非活动分屏里，活动标签压低亮度：分屏时一眼看出焦点在哪块面板。
    依赖 .layout-panel-active 实时正确 —— 由 main.ts 的 markActivePanel 同步。 */
 .layout-panel:not(.layout-panel-active) .tab-active {
   background: transparent;
   color: var(--fg-muted);
-}
-
-.layout-panel:not(.layout-panel-active) .tab-active::before {
-  opacity: 0.35;
 }
 
 /* B47：活动标签切换后闪一次（从折叠列表点选、Ctrl+Tab 时定位用）。
@@ -1167,41 +1156,53 @@ button:focus-visible {
 .panel-tabstrip {
   flex: 1 1 auto;
   display: flex;
-  /* 标签永不换行（VS Code）：放不下就滚动，不折行 */
+  /* 标签永不换行：放不下就滚动，不折行 */
   flex-wrap: nowrap;
   align-items: flex-start;
   gap: 2px;
-  padding: 0 4px;
+  padding: 2px 4px 0;
   min-width: 0;
   /* 拖拽 tab 的插入指示线（.tab-insert）以 strip 为定位基准 */
   position: relative;
-  /* 溢出 = 横向滚动（VS Code 式），不再折叠进下拉按钮。
+  /* 溢出 = 横向滚动，不再折叠进下拉按钮。
      滚动位置由 scrollLeft 持有，浏览器负责裁剪与边界收敛。 */
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: var(--sb-thumb) transparent;
-  /* 高度 = 34px 标签 + 3px 滚动条余量**恒定预留**。
+  /* ⚠️ 必须把全局 `*` 设的 scrollbar-width / scrollbar-color 复位成 auto：
+     Chromium 在元素上指定了这两个标准属性后会**忽略 ::-webkit-scrollbar**，
+     于是标签栏拿到的是系统滚动条 —— 两端带箭头、也压不细（用户实测反馈）。
+     复位后才轮到下面的 ::-webkit-scrollbar 自绘规则生效。 */
+  scrollbar-width: auto;
+  scrollbar-color: auto;
+  /* 高度 = 24px 标签 + 2px 上边距 + 2px 滚动条余量**恒定预留**。
      原生横向滚动条是从内容区里切走高度的，不预留的话「溢出 ↔ 不溢出」切换时
-     标签栏会 34↔37px 跳变，编辑器内容跟着上下抖一下。 */
-  height: 37px;
+     标签栏会 26↔28px 跳变，编辑器内容跟着上下抖一下。 */
+  height: 28px;
 }
 
-/* 标签栏滚动条必须比全局的 10px 细，否则会吃掉 34px 高的标签一大截。
+/* 标签栏滚动条要尽可能细（比全局的 10px 细得多），且**不要两端的箭头**。
    overflow-x:auto 决定了它只在真正溢出时出现。 */
 .panel-tabstrip::-webkit-scrollbar {
-  height: 3px;
+  height: 2px;
+}
+
+.panel-tabstrip::-webkit-scrollbar-track,
+.panel-tabstrip::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .panel-tabstrip::-webkit-scrollbar-thumb {
   background: var(--sb-thumb);
-  border-radius: 2px;
+  border-radius: 1px;
 }
 
-/* 常态隐藏滚动条 thumb，指针进入标签栏才显形（VS Code 的淡化观感） */
-.panel-tabstrip::-webkit-scrollbar-thumb:vertical,
-.panel-tabstrip:not(:hover)::-webkit-scrollbar-thumb {
-  background: transparent;
+/* 去掉滚动条两端的箭头按钮（Chromium 自绘滚动条默认会渲染 button，
+   全局那条 `::-webkit-scrollbar-button { display: none }` 在这里被
+   scrollbar-width 覆盖过，所以显式再声明一次，并顺手清零占位尺寸）。 */
+.panel-tabstrip::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 /* 拖拽 tab 落在 tab 区时的插入位置指示（区别于面板区的分屏预览层，B27）。
@@ -1209,9 +1210,9 @@ button:focus-visible {
    绝对定位子元素会随内容一起滚 —— splitview 计算偏移时必须补上 scrollLeft。 */
 .tab-insert {
   position: absolute;
-  top: 0;
-  /* 只覆盖 34px 的标签行，不压到下方预留的滚动条余量上 */
-  bottom: 3px;
+  top: 2px;
+  /* 只覆盖 24px 的标签行，不压到下方预留的滚动条余量上 */
+  bottom: 2px;
   width: 2px;
   border-radius: 1px;
   background: var(--accent);
@@ -1229,8 +1230,8 @@ button:focus-visible {
   flex: 0 0 auto;
 }
 
-/* 面板操作按钮（B53 图标化）：左右分屏 / 上下分屏 / 移除分屏。
-   原来是单个 ⨯ 文本字形，与工具栏的矢量图标不是一套语言。 */
+/* 面板操作按钮：B54 起只剩「移除分屏」⨯（左右/上下分屏按钮已去掉，
+   分屏改为把标签拖到面板边缘）。矢量图标，与工具栏同一套语言。 */
 .panel-op {
   display: inline-flex;
   align-items: center;

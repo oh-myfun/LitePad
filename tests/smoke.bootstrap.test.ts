@@ -436,19 +436,17 @@ describe("bootstrap + drag-split smoke", () => {
     expect(explicit[0].theme, "浅⇄深之间必须翻转明暗").not.toBe(explicit[1].theme);
   });
 
-  it("B53：面板操作栏必须是矢量图标（分屏×2 + 移除），标签栏不再有折叠按钮", async () => {
-    // 用户要求：参考 VS Code 优化面板区。原先面板头只有一个「⨯」文本字形。
+  it("B54：面板操作栏只剩「移除分屏」一个矢量图标按钮，标签栏不再有折叠按钮", async () => {
+    // B53 参考 VS Code 把面板头图标化，B54 按用户要求去掉左右/上下分屏按钮
+    // （分屏改为把标签拖到面板边缘），只留「移除该分屏」。
     const panel = document.querySelector(".layout-panel") as HTMLElement;
     expect(panel, "应有面板").toBeTruthy();
     const ops = Array.from(panel.querySelectorAll<HTMLButtonElement>(".panel-op"));
-    expect(ops.length, "应为 分屏×2 + 移除分屏 共 3 个操作按钮").toBe(3);
+    expect(ops.length, "应只剩 移除分屏 共 1 个操作按钮").toBe(1);
     for (const op of ops) {
       expect(op.querySelector("svg"), `「${op.title}」必须是矢量图标`).toBeTruthy();
     }
-    // 语义顺序：右分屏 / 下分屏 / 移除分屏
-    expect(ops[0].title).toContain("分屏");
-    expect(ops[1].title).toContain("分屏");
-    expect(ops[2].title, "第三个是移除分屏").toContain("移除");
+    expect(ops[0].title, "唯一按钮是移除分屏").toContain("移除");
 
     // 折叠机制已整体删除
     expect(document.querySelector(".tab-more"), "折叠按钮必须已删除").toBeNull();

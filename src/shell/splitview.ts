@@ -22,7 +22,6 @@ export interface SplitviewCallbacks {
   onActivateTab: (panelId: number, tabId: number) => void;
   onCloseTab: (tabId: number) => void;
   onClosePanel: (panelId: number) => void;
-  onSplitPanel: (panelId: number, dir: "h" | "v") => void;
   /** 拖拽结束回写比例；path 为树路径（0=左/上，1=右/下） */
   onRatioChange: (path: number[], ratio: number) => void;
   /** 标签栏扩展交互（右键菜单/拖拽排序/双击新建） */
@@ -300,10 +299,10 @@ function buildPanel(
     onNew: () => cb.onNewTab?.(panelId),
   });
 
-  // 编辑器操作栏（B53 图标化）：左右分屏 / 上下分屏 / 移除分屏。
-  // VS Code 式语义：分屏按钮作用于**本面板**（cb.onSplitPanel 收面板 id，
-  // 不是"当前活动面板"——否则在非活动面板上点分屏会分错块）；
-  // ⨯ 仅移除该分屏（标签并入相邻面板），不关文档，唯一面板时禁用。
+  // 面板操作栏：仅保留「移除该分屏」⨯。
+  // B54 起去掉左右/上下分屏按钮——分屏改为把标签拖到面板边缘完成（zoneOf +
+  // 拖拽落点），按钮重复且占位。⨯ 仅移除该分屏（标签并入相邻面板），不关文档，
+  // 唯一面板时禁用。
   const ops = document.createElement("div");
   ops.className = "panel-ops";
   const mkOp = (icon: string, title: string, onClick: () => void): HTMLButtonElement => {
@@ -318,19 +317,8 @@ function buildPanel(
     });
     return b;
   };
-  // 空面板分屏只会多出一个同样空的分屏，没有意义 → 无标签时禁用
-  const empty = data.tabs.length === 0;
-  const splitH = mkOp(ICONS.splitH, "向右分屏（把当前标签移到新面板）", () =>
-    cb.onSplitPanel(panelId, "h"),
-  );
-  const splitV = mkOp(ICONS.splitV, "向下分屏（把当前标签移到新面板）", () =>
-    cb.onSplitPanel(panelId, "v"),
-  );
-  splitH.disabled = empty;
-  splitV.disabled = empty;
 
   const closeP = mkOp(ICONS.closePanel, "移除该分屏", () => cb.onClosePanel(panelId));
-  // VS Code 式语义：⨯ 仅移除该分屏（标签并入相邻面板），不关文档；唯一面板时禁用
   closeP.disabled = data.canClose === false;
   closeP.title =
     data.canClose === false
@@ -338,7 +326,7 @@ function buildPanel(
       : "移除该分屏（标签并入相邻面板）";
   closeP.setAttribute("aria-label", closeP.title);
 
-  ops.append(splitH, splitV, closeP);
+  ops.append(closeP);
 
   head.append(strip, ops);
 

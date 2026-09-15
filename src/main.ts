@@ -566,7 +566,6 @@ function rebuildLayout(): void {
     onActivateTab: (panelId, tabId) => switchTab(panelId, tabId),
     onCloseTab: (tabId) => void closeTabById(tabId),
     onClosePanel: (panelId) => void closePanelById(panelId),
-    onSplitPanel: (panelId, dir) => void splitActivePanel(panelId, dir),
     onRatioChange: (path, ratio) => {
       updateRatio(layout, path, ratio);
       scheduleSessionSave();

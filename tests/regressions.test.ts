@@ -198,8 +198,11 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     const strip = css.match(/\.panel-tabstrip\s*\{[^}]*\}/)?.[0] ?? "";
     expect(strip, "应有 .panel-tabstrip 规则").toBeTruthy();
     expect(strip, "标签区必须可横向滚动").toContain("overflow-x: auto");
-    expect(strip, "滚动条要细：全局 10px 会吃掉 34px 高的标签一大截").toContain(
-      "scrollbar-width: thin",
+    // 细滚动条由 ::-webkit-scrollbar 自绘。⚠️ B54 踩坑：元素上写了 scrollbar-width /
+    // scrollbar-color（标准属性）后 Chromium 会**忽略** ::-webkit-scrollbar，标签栏
+    // 会拿回系统滚动条（两端带箭头、也压不细）→ 必须复位成 auto，见下面 B54 用例。
+    expect(css, "标签栏滚动条必须自绘且很细").toMatch(
+      /\.panel-tabstrip::-webkit-scrollbar\s*\{[^}]*height:\s*[1-4]px/,
     );
     expect(strip, "标签永不换行（VS Code）").toContain("flex-wrap: nowrap");
     expect(css, "折叠按钮的样式必须整体删除").not.toContain("tab-more");
@@ -220,7 +223,7 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(ts, "定位用自身几何而不是 scrollIntoView").not.toMatch(/\.scrollIntoView\(/);
 
     // 滚动条余量必须**恒定预留**：原生横向滚动条从内容区里切高度，
-    // 不预留则「溢出↔不溢出」切换时标签栏 34↔37px 跳变，编辑器内容跟着抖
+    // 不预留则「溢出↔不溢出」切换时标签栏 26↔28px 跳变，编辑器内容跟着抖
     expect(strip, "标签栏高度必须固定（含滚动条余量）").toMatch(/height:\s*\d+px/);
     const tabRule = css.match(/\n\.tab\s*\{[^}]*\}/)?.[0] ?? "";
     const stripH = Number(strip.match(/height:\s*(\d+)px/)![1]);
@@ -234,15 +237,6 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(tab, "应有 .tab 规则").toBeTruthy();
     expect(tab, "标签必须可收缩（flex-shrink:1），否则超宽立刻溢出").toMatch(/flex:\s*0 1 auto/);
     expect(tab, "收缩下限（到它才开始滚动）").toMatch(/min-width:\s*\d+px/);
-  });
-
-  it("B53 活动标签用顶部 accent 条，且不与 tab-flash 动画打架", () => {
-    const css = readFileSync("src/styles/global.css", "utf-8");
-    // 强调条必须用伪元素：.tab-flash 的关键帧也在改 box-shadow，
-    // 用 box-shadow 画条会被动画结束态（inset 0 0 0 1px transparent）盖掉
-    expect(css, "活动标签顶部强调条走 ::before").toMatch(
-      /\.tab-active::before\s*\{[^}]*height:\s*2px/,
-    );
   });
 
   it("B53 ● 与 × 共用固定尺寸槽位（悬停才显示 ×，切换时标签不抖）", () => {
@@ -265,18 +259,60 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(ts, "未保存必须打 tab-dirty（CSS 靠它决定槽位内容）").toContain("tab-dirty");
   });
 
-  describe("B53 面板区优化（VS Code 风格）", () => {
-    it("面板操作按钮图标化，并补上分屏入口", () => {
+  describe("B54 标签回退 / 面板按钮精简 / 标签栏滚动条收细", () => {
+    it("面板操作栏只剩「移除分屏」，分屏按钮已去掉（分屏仍走拖拽与菜单）", () => {
       const sv = readFileSync("src/shell/splitview.ts", "utf-8");
       expect(sv, "不得再用 ⨯ 文本字形").not.toContain('textContent = "⨯"');
-      expect(sv, "必须有左右分屏按钮").toContain("ICONS.splitH");
-      expect(sv, "必须有上下分屏按钮").toContain("ICONS.splitV");
-      expect(sv, "必须有移除分屏按钮").toContain("ICONS.closePanel");
-      // 分屏按钮必须作用于**本面板**：cb.onSplitPanel 收面板 id，而不是"当前活动面板"
-      expect(sv, "分屏必须传本面板 panelId").toMatch(/cb\.onSplitPanel\(panelId, "h"\)/);
-      expect(sv, "分屏必须传本面板 panelId").toMatch(/cb\.onSplitPanel\(panelId, "v"\)/);
-      // 空面板分屏只会多出一个空面板
-      expect(sv, "无标签时应禁用分屏按钮").toMatch(/splitH\.disabled = empty|splitH\.disabled/);
+      expect(sv, "必须保留移除分屏按钮").toContain("ICONS.closePanel");
+      expect(sv, "不得再有左右分屏按钮").not.toContain("ICONS.splitH");
+      expect(sv, "不得再有上下分屏按钮").not.toContain("ICONS.splitV");
+      expect(sv, "面板渲染不得再调 onSplitPanel").not.toContain("onSplitPanel");
+
+      // 删按钮 ≠ 删功能：菜单 / 快捷键的分屏入口必须还在（B53 之前就有）
+      const main = readFileSync("src/main.ts", "utf-8");
+      expect(main, "菜单左右分屏处理必须保留").toContain('splitActivePanel(activePanelId, "h")');
+      expect(main, "菜单上下分屏处理必须保留").toContain('splitActivePanel(activePanelId, "v")');
+      const km = readFileSync("src/shell/keymap.ts", "utf-8");
+      expect(km, "分屏快捷键必须保留").toContain("panel.splitH");
+      expect(km, "分屏快捷键必须保留").toContain("panel.splitV");
+    });
+
+    it("标签样式回退：矮标签 + 上方圆角 + 描边，且不再有顶部强调条", () => {
+      const css = readFileSync("src/styles/global.css", "utf-8");
+      const tab = css.match(/\n\.tab\s*\{[^}]*\}/)?.[0] ?? "";
+      expect(tab, "应有 .tab 规则").toBeTruthy();
+      const h = tab.match(/height:\s*(\d+)px/);
+      expect(h, "标签高度必须显式给出（字号档位变化时栏高才恒定）").toBeTruthy();
+      expect(Number(h![1]), "标签要矮（B53 的 34px 用户反馈太高）").toBeLessThanOrEqual(26);
+      expect(tab, "上边两角圆角（B53 的 VS Code 方角要退回）").toContain(
+        "border-radius: 6px 6px 0 0",
+      );
+      expect(tab, "必须有描边（B53 去掉了边框）").toMatch(/border:\s*1px solid/);
+      expect(css, "不得再有 .tab-active::before 顶部强调条（B53 引入，已回退）").not.toMatch(
+        /\.tab-active::before/,
+      );
+      const active = css.match(/\n\.tab-active\s*\{[^}]*\}/)?.[0] ?? "";
+      expect(active, "活动标签靠描边 + 底色区分").toContain("border-color: var(--border)");
+    });
+
+    it("标签栏滚动条：2px 细条、无两端箭头（须复位标准属性否则 webkit 规则失效）", () => {
+      const css = readFileSync("src/styles/global.css", "utf-8");
+      const strip = css.match(/\n\.panel-tabstrip\s*\{[^}]*\}/)?.[0] ?? "";
+      expect(strip, "应有 .panel-tabstrip 规则").toBeTruthy();
+      // 关键坑：元素上指定 scrollbar-width/color 后 Chromium 会忽略 ::-webkit-scrollbar，
+      // 标签栏就拿回系统滚动条（两端带箭头、压不细）。必须复位成 auto。
+      expect(strip, "scrollbar-width 必须复位为 auto").toMatch(/scrollbar-width:\s*auto/);
+      expect(strip, "scrollbar-color 必须复位为 auto").toMatch(/scrollbar-color:\s*auto/);
+
+      const thin = css.match(/\.panel-tabstrip::-webkit-scrollbar\s*\{[^}]*\}/)?.[0] ?? "";
+      expect(thin, "必须有 webkit 滚动条规则").toBeTruthy();
+      const th = thin.match(/height:\s*(\d+)px/);
+      expect(th, "滚动条高度必须显式给出").toBeTruthy();
+      expect(Number(th![1]), "滚动条要细（≤4px）").toBeLessThanOrEqual(4);
+
+      const btn = css.match(/\.panel-tabstrip::-webkit-scrollbar-button\s*\{[^}]*\}/)?.[0] ?? "";
+      expect(btn, "必须显式去掉两端箭头按钮").toBeTruthy();
+      expect(btn, "箭头按钮必须 display:none").toMatch(/display:\s*none/);
     });
 
     it("分隔条：视觉细线 + 更宽命中区（原先 5px 可视条兼当命中区，容易抓空）", () => {
