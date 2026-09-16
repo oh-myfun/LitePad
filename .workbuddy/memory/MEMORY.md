@@ -163,6 +163,19 @@
   ⚠️ 标签视觉已摇摆三次（B53 accent 条 → B54 描边 → B55 药丸）：**「描边」是最易被推翻的一项**，
   再改前先确认用户要「描边派」还是「底色派」。
 
+- **B56（0916）标签不再收缩（宽度跟内容走，溢出交给横向滚动）**：用户报「标签变多后标签被压窄、
+  文件名被裁剪成 `…`」。根因两处叠加：`.tab { flex: 0 1 auto }`（B53 的「先收缩再滚动」，
+  模仿 VS Code `tabSizing: fit`）+ `.tab-name { text-overflow: ellipsis }`；另有
+  `.tab { max-width: 200px }` 让长文件名**即使标签不多**也被截断。
+  改法 = `.tab` 改 **`flex: 0 0 auto`** 并**删掉 `max-width`**（对应 `tabSizing: fixed`），
+  `.tab-name` 改 **`flex: 1 0 auto`** 并删掉 `ellipsis` / `overflow: hidden`（`min-width: 60px` 仅作下限保留）。
+  高度几何（20px / 28px = 4+20+4）**不变**，只改横向排布。
+  💡 教训：**「标签太窄」与「标签太高」是最易被反复推翻的两项** —— 改标签尺寸前先问用户要
+  「收缩派」还是「自然宽度派」，别默认抄 VS Code 的 fit。
+  ⚠️ 静态断言要先剥 CSS 注释：本批第一版断言被 `.tab` 注释里记录的旧值
+  （`flex: 0 1 auto`）误伤 → 新增 `cssDecls()` 辅助函数（`tests/regressions.test.ts`）。
+  ⚠️ 副作用：不收缩 ⇒ 更早进入溢出 ⇒ 横向滚动比以前更常出现（预期行为）。
+
 - **参考源码库**：`docs/vscode-reference/`（VS Code MIT **只读**副本，70 份，钉 commit `632abec`），
   由 `scripts/fetch-vscode-ref.sh` 拉取（不 clone，逐文件 curl，可 `RESUME=1`）；`INDEX.md` 按 A–H
   说明**每份文件对我们有什么用**。⚠️ **`src/` 目录被 `.gitignore` 排除**（只入库 INDEX/REVISION/LICENSE + 脚本）：

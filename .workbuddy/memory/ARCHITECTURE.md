@@ -101,8 +101,16 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
      标签靠 `align-items: flex-start` 钉在顶部 → 「溢出 ↔ 不溢出」不跳变（B53 踩过 26↔28px 抖动）。
      ⚠️ 改任一段都要改全部：`.tab` 高度、`strip` 高度、`::-webkit-scrollbar` 高度、
      `.tab-insert` 的 `top/bottom`。回归测试直接断言 `stripH - tabH === 滚动条高度 × 2`。
-  3. `.tab` = `flex: 0 1 auto` + `min-width`：**先收缩再滚动**（VS Code tabSizing），
-     不是一超宽就溢出。高度 **20px 固定**（不用 padding 撑）：B53 曾改成 34px 方角平标签，
+  3. `.tab` = **`flex: 0 0 auto`（不可收缩，B56）**：标签宽度 = **内容宽度**，
+     **绝不因标签变多而被压窄**，放不下就直接横向滚动（对应 VS Code 的 `tabSizing: fixed`）。
+     ⚠️ **这是一次反向翻转**：B53 曾是 `flex: 0 1 auto` + `min-width`（「先收缩再滚动」，
+     模仿 VS Code 的 `tabSizing: fit`），用户反馈「标签变多后宽度被压窄、文件名被裁剪成
+     `…`」。因此 `.tab` 上**不能有 `max-width`**、`.tab-name` 上**不能有
+     `text-overflow: ellipsis` / `overflow: hidden`**（`min-width: 60px` 只作最小宽度下限保留）。
+     回归用例会同时断言「有 `flex: 0 0 auto`」与「没有 `flex: 0 1 auto` / `max-width`」。
+     💡 教训：**「标签太窄」和「标签太高」是这个 UI 里最容易被反复推翻的两项** ——
+     改标签尺寸前先问用户要「收缩派」还是「自然宽度派」，别默认抄 VS Code 的 fit 模式。
+     高度 **20px 固定**（不用 padding 撑）：B53 曾改成 34px 方角平标签，
      用户反馈「太高了」→ B54 回退圆角 + 描边；固定高度保证字号档位变化时栏高恒定。
   4. **B55 起标签是 VS Code Modern UI 的「药丸」**（对标 `contrib/modernUI/browser/media/tabs.css`，
      compact 档）：**无描边**、圆角 4px、间距 4px、非活动文字 = `color-mix(fg 50%, transparent)`、

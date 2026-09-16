@@ -286,7 +286,6 @@ button:focus-visible {
   /* 对应 VS Code 的 `padding: 0 size80 0 size60`（右侧留 2px 给操作列） */
   padding: 0 8px 0 6px;
   min-width: 60px;
-  max-width: 200px;
   border: none;
   border-radius: 4px;
   /* 非活动：文字降到 50% 前景（VS Code 的 color-mix 写法），底色全透明 */
@@ -294,9 +293,11 @@ button:focus-visible {
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
-  /* 可收缩：先把标签压窄，压到 min-width 仍放不下才开始滚动。
-     老实现是 flex: 0 0 auto（不可收缩），一超宽就直接折叠。 */
-  flex: 0 1 auto;
+  /* 不收缩（B56）：标签宽度 = 内容宽度，**不因标签变多而被压窄** → 文件名不会被裁剪成
+     「…」；放不下就交给标签栏横向滚动（对应 VS Code 的 tabSizing: fixed）。
+     ⚠️ 这是一次反向翻转：B53 曾是「先收缩再滚动」（flex: 0 1 auto + 收缩下限），
+     用户反馈收缩导致文本被裁剪，故改回不可收缩。改回去之前先读 ARCHITECTURE.md 标签栏一节。 */
+  flex: 0 0 auto;
   transition:
     background 0.12s ease,
     color 0.12s ease;
@@ -359,11 +360,10 @@ button:focus-visible {
 }
 
 .tab-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-  /* 名字吸收收缩量，动作槽位（.tab-action）宽度恒定 */
-  flex: 1 1 auto;
+  /* 吸收 min-width 带来的松弛，让 ●/× 槽位贴住标签右缘。
+     **不收缩**（flex-shrink: 0）且**不做省略号裁剪**（B56）——文件名整段显示，
+     想要「…」的旧行为请先读 .tab 那段的翻转记录再决定。 */
+  flex: 1 0 auto;
 }
 
 /* ● 与 × 共用的固定尺寸槽位（VS Code 行为）：

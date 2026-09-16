@@ -12,6 +12,12 @@ function readJson(path: string): any {
   return JSON.parse(readFileSync(path, "utf-8"));
 }
 
+// 断样式规则时先剥掉注释：注释里常写「旧值是什么」（如 flex: 0 1 auto），
+// 不剥离的话 not.toMatch 会被自己的文档误伤。
+function cssDecls(block: string): string {
+  return block.replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
 // 全仓库文本文件枚举（B36 改名残留检查用）：跳过构建产物 / 依赖 / 二进制。
 const SKIP_DIRS = new Set([
   "node_modules",
@@ -231,12 +237,27 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(stripH, "标签栏高度必须大于标签高度（差值即滚动条余量）").toBeGreaterThan(tabH);
   });
 
-  it("B53 标签先收缩再滚动（VS Code tabSizing），而不是一超宽就溢出", () => {
+  it("B56 标签不收缩：宽度跟内容走，放不下就横向滚动（文件名不裁剪成「…」）", () => {
+    // 用户反馈：标签变多后标签被压窄，文件名被裁剪成「…」。
+    // 根因 = .tab 上的 flex-shrink:1（B53 的「先收缩再滚动」）+ .tab-name 的
+    // text-overflow: ellipsis。B56 反过来：宽度 = 内容宽度，溢出交给横向滚动。
     const css = readFileSync("src/styles/global.css", "utf-8");
-    const tab = css.match(/\n\.tab\s*\{[^}]*\}/)?.[0] ?? "";
+    const tab = cssDecls(css.match(/\n\.tab\s*\{[^}]*\}/)?.[0] ?? "");
     expect(tab, "应有 .tab 规则").toBeTruthy();
-    expect(tab, "标签必须可收缩（flex-shrink:1），否则超宽立刻溢出").toMatch(/flex:\s*0 1 auto/);
-    expect(tab, "收缩下限（到它才开始滚动）").toMatch(/min-width:\s*\d+px/);
+    expect(tab, "标签必须不可收缩（flex-shrink:0），否则标签变多时宽度被压窄").toMatch(
+      /flex:\s*0 0 auto/,
+    );
+    expect(tab, "不得再写 flex: 0 1 auto（那是会裁剪文本的可收缩行为）").not.toMatch(
+      /flex:\s*0 1 auto/,
+    );
+    expect(tab, "不得再给标签设宽度上限，否则超长文件名仍会被截断").not.toMatch(/max-width/);
+    expect(tab, "保留收缩下限当最小宽度（短名标签不至于窄成一条）").toMatch(/min-width:\s*\d+px/);
+
+    const name = cssDecls(css.match(/\n\.tab-name\s*\{[^}]*\}/)?.[0] ?? "");
+    expect(name, "应有 .tab-name 规则").toBeTruthy();
+    expect(name, "文件名不得收缩").toMatch(/flex:\s*1 0 auto/);
+    expect(name, "不得再用省略号裁剪文件名").not.toContain("text-overflow: ellipsis");
+    expect(name, "不得再裁剪溢出（文件名必须整段可见）").not.toContain("overflow: hidden");
   });
 
   it("B53 ● 与 × 共用固定尺寸槽位（悬停才显示 ×，切换时标签不抖）", () => {
