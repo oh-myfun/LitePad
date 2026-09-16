@@ -10,3 +10,9 @@ target/
 src-tauri/gen/
 tsconfig.tsbuildinfo
 generated-images/
+
+# VS Code 参考源码的**批量副本**不入库（第三方 MIT 代码，只读、不参与构建）。
+# 理由：① 70 份上游 CSS/TS 会被 pre-commit 的 prettier/eslint 扫到，得往格式链里塞例外；
+#       ② 它可由 scripts/fetch-vscode-ref.sh 按 REVISION.txt 里钉的 commit 精确复现。
+# 入库的是元数据（INDEX.md / REVISION.txt / LICENSE.txt）与脚本本身。
+docs/vscode-reference/src/

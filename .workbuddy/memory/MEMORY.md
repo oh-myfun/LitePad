@@ -144,10 +144,37 @@
   ⚠️ 遗留待清理：`menu.ts` 的 `MenuItem.active` 与 `.menu-item-current` 已无使用者
   （折叠列表是唯一调用方）。详见 `.workbuddy/memory/2026-09-15.md` 与 `ARCHITECTURE.md` §7。
 
+- **B54（0915）标签风格回退 + 面板按钮精简 + 滚动条 2px 去箭头**：B53 的 34px 方角平标签
+  被用户嫌「太高、风格退回」→ 标签回 24px 上圆角 + 1px 描边（accent 条删除）；
+  面板操作栏去掉 B53 加的分屏按钮（分屏改由**把标签拖到面板边缘**触发）；
+  `::-webkit-scrollbar` 收到 2px、`::-webkit-scrollbar-button { display:none }`。
+  ⚠️ **Chromium 坑**：元素上写 `scrollbar-width/color`（**非 `auto`**）会让它**忽略
+  `::-webkit-scrollbar`** → 标签栏拿回系统滚动条（带箭头、压不细）。必须显式复位 `auto`。
+
+- **B55（0915，提交 c52e257）标签改 VS Code Modern UI 药丸 + 滚动条 4px 塞下间隙**：
+  对标 `contrib/modernUI/browser/media/tabs.css` 的 **compact 档**（20px 药丸 + 上下各 4px = 28px，
+  **与 B54 标签栏同高 → 零高度变化**）：`.tab` 20px / `border:none` / `border-radius:4px` /
+  非活动文字 `color-mix(--fg 50%, transparent)`；间距 4px；`::-webkit-scrollbar` 4px。
+  新增三档底色 `--tab-bg-hover/-active/-active-hover`（**浅深两套主题齐补**），活动态改**只靠底色**。
+  ⚠️ **几何不变量**：28px = 4 + 20 + 4，**那 4px 滚动条正好吃掉下间隙**，滚动条出现/消失不改栏高；
+  `.tab` 高 / `strip` 高 / 滚动条高 / `.tab-insert` 的 top·bottom **四处绑死**（回归断言
+  `stripH - tabH === 滚动条高 × 2`）。⚠️ `@keyframes tab-flash` 结束态必须写 `var(--tab-bg-active)`
+  （原 `var(--bg)` 会「闪完回旧配色」，一帧的 bug 测不出）；非活动面板降亮度规则要**连 `:hover` 一起覆盖**。
+  ⚠️ 标签视觉已摇摆三次（B53 accent 条 → B54 描边 → B55 药丸）：**「描边」是最易被推翻的一项**，
+  再改前先确认用户要「描边派」还是「底色派」。
+
+- **参考源码库**：`docs/vscode-reference/`（VS Code MIT **只读**副本，70 份，钉 commit `632abec`），
+  由 `scripts/fetch-vscode-ref.sh` 拉取（不 clone，逐文件 curl，可 `RESUME=1`）；`INDEX.md` 按 A–H
+  说明**每份文件对我们有什么用**。⚠️ **`src/` 目录被 `.gitignore` 排除**（只入库 INDEX/REVISION/LICENSE + 脚本）：
+  否则 70 份 `.css/.ts` 会被 pre-commit 的 prettier/eslint 扫到；它是可复现的，需要时重跑脚本。
+  ⚠️ `raw.githubusercontent` **间歇限流**（首轮 65 份挂 14 份）→ curl 要 `--retry 4 --retry-all-errors`。
+  改观感先读 A 段（Modern UI），改交互读 B/C 段的 `.ts`（重点抄状态机与边界，不抄实现）。
+
 ## 下一步
 
 - 待办：桌面环境补拍截图（M4 的 keymap.png / command-palette.png + B51 的
-  main.png / preferences.png + **B53 的 main.png，标签栏/面板操作栏/分隔条都变了**）。
+  main.png / preferences.png + **B53/B54/B55 的 main.png，标签栏/面板操作栏/分隔条都变了**）。
 - 待清理：`menu.ts` 的 `MenuItem.active` / `.menu-item-current`（B53 后无使用者）。
-- M4 之后：M5 规划未定；候选见 DESIGN.md。
+- 待定：是否发 **v0.3.1**（B55 改了界面；B54 也留了同一问题未决）。
+- M4 之后：M5 规划未定；候选见 DESIGN.md；观感/交互改进可对照 `docs/vscode-reference/`。
 - 待用户桌面环境验证的条目散见各日志（沙箱内无法做 UI 冒烟）。

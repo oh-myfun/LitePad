@@ -1,0 +1,9 @@
+upstream: https://github.com/microsoft/vscode
+ref:      main
+commit:   632abec535785c5fd76dec5b8ceb2f4c53d8cfc3
+fetched:  2026-09-16T00:09:15Z
+license:  MIT (见同目录 LICENSE.txt)
+files:    70 份
+
+本目录是 microsoft/vscode 源码的**只读参考副本**，用于 LitePad 的样式与架构对照。
+不要在这里改代码 —— 要更新请重跑 scripts/fetch-vscode-ref.sh。

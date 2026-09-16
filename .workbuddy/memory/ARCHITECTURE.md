@@ -92,25 +92,40 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
 - **标签栏溢出**（B53 整体重写）：**不折叠，也不手写区间管理** —— 放不下的标签就是
   普通的横向滚动（VS Code 式）。`renderTabstrip` 仍是「全量渲染 → 测量 → 收缩/滚动」，
   但「滚到哪」交给浏览器（DOM 的 `scrollLeft`），模块不再维护"可见窗口"。
-  1. `.panel-tabstrip` = `overflow-x: auto` + `flex-wrap: nowrap`，滚动条 **2px**、无两端箭头。
+  1. `.panel-tabstrip` = `overflow-x: auto` + `flex-wrap: nowrap`，滚动条 **4px**、无两端箭头。
      ⚠️ **必须显式复位 `scrollbar-width: auto; scrollbar-color: auto`**（B54 踩坑）：全局
      `*` 上有这两个标准属性时，元素上再写一遍会让 Chromium **忽略 `::-webkit-scrollbar`**，
      标签栏于是拿回系统滚动条 —— 两端带箭头、也压不细。复位后才轮到自绘规则生效。
-  2. `.tab` = `flex: 0 1 auto` + `min-width`：**先收缩再滚动**（VS Code tabSizing），
-     不是一超宽就溢出。高度 **24px 固定**（不用 padding 撑）：B53 曾改成 34px 方角平标签，
+  2. **高度 28px 是硬约束，且是「4 + 20 + 4」三段**（B55）：4px 上间距 + 20px 药丸行 +
+     4px 下间隙；**那 4px 滚动条正好吃掉下间隙**，所以滚动条出现/消失都不改变标签栏高度。
+     标签靠 `align-items: flex-start` 钉在顶部 → 「溢出 ↔ 不溢出」不跳变（B53 踩过 26↔28px 抖动）。
+     ⚠️ 改任一段都要改全部：`.tab` 高度、`strip` 高度、`::-webkit-scrollbar` 高度、
+     `.tab-insert` 的 `top/bottom`。回归测试直接断言 `stripH - tabH === 滚动条高度 × 2`。
+  3. `.tab` = `flex: 0 1 auto` + `min-width`：**先收缩再滚动**（VS Code tabSizing），
+     不是一超宽就溢出。高度 **20px 固定**（不用 padding 撑）：B53 曾改成 34px 方角平标签，
      用户反馈「太高了」→ B54 回退圆角 + 描边；固定高度保证字号档位变化时栏高恒定。
-  3. **全量重绘会重置 `scrollLeft`**：必须在 `host.textContent = ""` **之前**存下、
+  4. **B55 起标签是 VS Code Modern UI 的「药丸」**（对标 `contrib/modernUI/browser/media/tabs.css`，
+     compact 档）：**无描边**、圆角 4px、间距 4px、非活动文字 = `color-mix(fg 50%, transparent)`、
+     活动态**只靠 `--tab-bg-active` 底色**区分（原来靠描边）。
+     三档底色 `--tab-bg-hover/-active/-active-hover` 必须**浅深两套主题齐补**，
+     且三档要拉开可感知差距 —— hover 与 active 同色就分不出「划过」和「选中」。
+  5. **全量重绘会重置 `scrollLeft`**：必须在 `host.textContent = ""` **之前**存下、
      之后还原（`prevScroll`），否则每次激活/关闭标签标签栏都跳回最左端。
-  4. **活动标签定位用 `ensureVisible()` 手工几何，不用 `scrollIntoView()`** ——
+  6. **活动标签定位用 `ensureVisible()` 手工几何，不用 `scrollIntoView()`** ——
      后者会连带滚动所有祖先容器（分屏/嵌套布局整页跳），而且 jsdom 没有它（测试跑不了）。
      「已可见就不动」是天然满足的，等价于老实现靠 `activeChanged` 门控换来的行为。
-  5. 只在**活动标签真的换了**时才定位（`lastActiveId`），否则会把用户滚出去的
+  7. 只在**活动标签真的换了**时才定位（`lastActiveId`），否则会把用户滚出去的
      位置无条件拽回来——活动标签在右外侧（新开文件的常态）时表现为「滚不动」。
-  6. 滚轮做 `deltaMode` 归一化（0=像素 / 1=行×16 / 2=页×可视宽）：某些驱动按「行」
+  8. 滚轮做 `deltaMode` 归一化（0=像素 / 1=行×16 / 2=页×可视宽）：某些驱动按「行」
      上报，delta 只有 3，当像素用几乎滚不动。没溢出 / 已贴边时不 `preventDefault`。
   - **B32–B47 的「可见窗口 + `.tab-more` 下拉折叠列表」已整体删除**，连同上述不变量
     需要的 `ResizeObserver`、`liveStrips` 记账、`reanchorStart`、`fitCountFromEnd`、
     `keepOpen` 菜单原地刷新 —— 这些能力**浏览器原生滚动全部自带**。净删约 150 行。
+  - ⚠️ **`.tab-flash` 的关键帧结束态必须写 `var(--tab-bg-active)`**（B55）：原来写的是
+    `var(--bg)`，药丸化后不改就会「闪完回到旧配色」。一帧的视觉 bug，运行时测不出来 →
+    靠 `regressions.test.ts` 静态锁。
+  - ⚠️ **非活动面板降亮度规则要连 `:hover` 一起覆盖**（B55）：否则鼠标划过非焦点面板时
+    药丸会「亮回来」，比不降级更迷惑焦点。见 `.layout-panel:not(.layout-panel-active) .tab-active:hover`。
 - **拖拽插入线必须补偿 scrollLeft**（B53）：`.tab-insert` 绝对定位在 strip 内，
   `left` 走**内容坐标**（会随内容一起滚），而 `getBoundingClientRect` 的差值是**视口坐标**。
   `splitview.stripInsertInfo` 必须 `+ strip.scrollLeft`，否则滚动过的标签栏上插入线
@@ -120,10 +135,13 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   平时只见 ●（未保存）或留空（已保存），悬停标签才换成 ×。
   槽位尺寸**必须固定**，否则鼠标划过时标签宽度变化、整排标签左右抖动。
   代价：× 不再常驻，键盘/触屏略弱（Ctrl+W 与右键菜单仍在）。
-- **活动标签的顶部 accent 条已回退**（B54）：B53 试过用 `::before` 画 2px 强调条
-  （不能用 `box-shadow` 画 —— `.tab-flash` 的关键帧也在改 `box-shadow`，会被动画结束态盖掉），
-  用户要求「风格退回之前的样式」后整体删除。现在活动标签靠**底色 + 描边**区分：
-  `.tab-active { background: var(--bg); border-color: var(--border) }`。
+- **标签视觉的三次摇摆（别再来第四次）**：
+  B53 曾用 `::before` 画 2px 顶部 accent 条 + 34px 方角平标签 → 用户嫌「太高、风格要退回」；
+  B54 回退成 24px 上圆角 + 1px 描边 + 强调条删除（**当时活动态 = 底色 + 描边**）；
+  B55 再改成 VS Code Modern UI **药丸**（20px、无描边、圆角 4px、只靠底色区分）。
+  ⚠️ 教训：**「描边」是这套 UI 里最容易被反复推翻的一项**。改活动标签的识别方式前，
+  先确认用户要的是「描边派」还是「底色派」—— 两条路线的可见性差异在浅色主题下尤其大。
+  accent 条那条不能回来的原因见上：`box-shadow` 会被 `.tab-flash` 的动画结束态盖掉。
 - **面板区**（B54）：面板操作栏**只剩「移除分屏」**一个矢量图标按钮（`ICONS.closePanel`）。
   B53 曾加过 `ICONS.splitH` / `splitV`，B54 按用户要求去掉 —— 分屏改由**把标签拖到面板边缘**
   （`zoneOf` + 拖拽落点）；`cb.onSplitPanel` 回调与接口字段一并删除。
