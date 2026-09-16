@@ -97,6 +97,12 @@ Desktop(backend="uia").window(...) → descendants(control_type="MenuItem") → 
 
 - **落文件代替管道**：`cmd > /tmp/build.log 2>&1; echo "EXIT=$?" >> /tmp/build.log`，
   再 `tail` 该文件；配 `find <dir> -newermt "-2 minutes" | wc -l` 判断是否真在推进。
+- **更省事的替代（B59 实测）**：直接**把 `build:all` 拆成 4 步前台分别执行**
+  （`npm run build` → `node scripts/run-vitest.cjs` → `cd src-tauri && cargo build && cargo test`
+  → `npm run tauri -- build --config '{"build":{"beforeBuildCommand":""}}'`），
+  每步都在 10 分钟前台窗口内跑完，比整脚本后台跑更快也更可控（本次 1m + 15s + 1m36s）。
+  ⚠️ 实测症状会骗人：**有时前几步已成功（`dist/` 已更新）之后才挂住**，
+  所以别只看「产物有没有更新」就以为整体在推进 —— 要查进程（`Get-Process` / `tasklist`）。
 - vite build 被打断会**留下残缺的 `dist/`**（只有 index.html、assets 全丢），
   直接重试即可恢复（实测 44.6 s 重建 435 个产物）。
 - 实测耗时参考（本机，冷启动）：`cargo test` 全量 21 min；`tauri build --release` 38 min。
