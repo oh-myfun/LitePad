@@ -22,6 +22,7 @@ import {
   setKeymapPreset,
   type KeymapOverrides,
 } from "./keymap";
+import { setTip } from "./tooltip";
 
 export interface KeymapDialogOptions {
   overrides: KeymapOverrides;
@@ -56,11 +57,14 @@ export function showKeymapDialog(opts: KeymapDialogOptions): void {
   // 预设下拉（M4）：换的是「基线」，下拉右边跟一句说明
   const presetSel = document.createElement("select");
   presetSel.className = "keymap-preset";
-  presetSel.title = "键位预设：决定各命令的默认键位；在此之上的单独改动仍可继续自定义";
+  setTip(presetSel, "键位预设", {
+    detail: "决定各命令的默认键位；在此之上的单独改动仍可继续自定义",
+  });
   for (const p of KEYMAP_PRESETS) {
     const opt = document.createElement("option");
     opt.value = p.id;
     opt.textContent = p.label;
+    // 原生下拉里的 <option> 由系统绘制，提示只能用原生 title（自绘层盖不到原生弹层）
     opt.title = p.note;
     presetSel.appendChild(opt);
   }
@@ -209,7 +213,8 @@ export function showKeymapDialog(opts: KeymapDialogOptions): void {
         const name = document.createElement("span");
         name.className = "keymap-cmd";
         name.textContent = cmd.label;
-        if (cmd.note) name.title = cmd.note;
+        // B58：note 是命令的补充说明，走自绘提示层
+        if (cmd.note) setTip(name, cmd.note, { group: "keymap" });
         row.appendChild(name);
 
         if (cmd.editable === false) {

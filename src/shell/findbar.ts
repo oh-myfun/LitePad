@@ -9,6 +9,8 @@
  * - 可拖动（拖标题栏），位置记在 localStorage。
  */
 
+import { setTip } from "./tooltip";
+
 export interface FindBarQuery {
   text: string;
   replace: string;
@@ -62,19 +64,29 @@ export interface FindBarHandle {
 
 const POS_KEY = "litepad.findbar.pos";
 
-function btn(cls: string, text: string, title: string): HTMLButtonElement {
+/**
+ * 按钮工厂。B58 起提示走自绘层：`tip` 是文案、`key` 是快捷键（渲染成键帽，
+ * 不再写成 `关闭（Esc）` 那种挤在一起的括号）。
+ * 图标/符号按钮（× ↑ ↓）没有可读文本，必须显式补 aria-label。
+ */
+function btn(cls: string, text: string, tip: string, key?: string): HTMLButtonElement {
   const b = document.createElement("button");
   b.className = cls;
   b.textContent = text;
-  b.title = title;
   b.type = "button";
+  setTip(b, tip, { key, group: "findbar" });
+  b.setAttribute("aria-label", key ? `${tip} (${key})` : tip);
   return b;
 }
 
-function check(label: string, title: string): { label: HTMLElement; input: HTMLInputElement } {
+/**
+ * 复选框。只在**文案不足以说明**时才给提示（`detail`）——
+ * 「区分大小写」这类控件，提示文字与旁边可见的 label 一模一样，纯属噪音。
+ */
+function check(label: string, detail?: string): { label: HTMLElement; input: HTMLInputElement } {
   const l = document.createElement("label");
   l.className = "find-opt";
-  l.title = title;
+  if (detail) setTip(l, detail, { group: "findbar" });
   const input = document.createElement("input");
   input.type = "checkbox";
   l.append(input, document.createTextNode(label));
@@ -91,7 +103,7 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   title.className = "find-bar-title";
   const titleText = document.createElement("span");
   titleText.textContent = "查找 / 替换";
-  const closeBtn = btn("find-x", "×", "关闭（Esc）");
+  const closeBtn = btn("find-x", "×", "关闭", "Esc");
   title.append(titleText, closeBtn);
 
   // ---- 查找行 ----
@@ -99,8 +111,8 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   findInput.className = "find-input search-input";
   findInput.placeholder = "查找内容（回车下一个，Shift+回车上一个）";
   findInput.spellcheck = false;
-  const prev = btn("find-btn", "↑", "上一个（Shift+Enter）");
-  const next = btn("find-btn", "↓", "下一个（Enter）");
+  const prev = btn("find-btn", "↑", "上一个", "Shift+Enter");
+  const next = btn("find-btn", "↓", "下一个", "Enter");
   const count = document.createElement("span");
   count.className = "find-count";
   const rowFind = document.createElement("div");
@@ -112,16 +124,16 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   replaceInput.className = "find-replace-input search-input";
   replaceInput.placeholder = "替换为";
   replaceInput.spellcheck = false;
-  const doReplace = btn("find-btn", "替换", "替换当前（Enter）");
+  const doReplace = btn("find-btn", "替换", "替换当前", "Enter");
   const doAll = btn("find-btn", "全部替换", "替换全部匹配");
   const rowReplace = document.createElement("div");
   rowReplace.className = "find-row";
   rowReplace.append(replaceInput, doReplace, doAll);
 
   // ---- 选项行：匹配选项 + 右对齐的跨文档范围勾选 ----
-  const caseChk = check("区分大小写", "区分大小写");
-  const wordChk = check("全词匹配", "全词匹配");
-  const reChk = check("正则", "正则表达式");
+  const caseChk = check("区分大小写");
+  const wordChk = check("全词匹配");
+  const reChk = check("正则");
   const docsChk = check(
     "所有打开的文档",
     "勾选后在全部已打开的文档中查找（回车或「查找全部」）；不勾选只查当前文档",
@@ -178,7 +190,8 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
       text.className = "find-hit-text";
       text.textContent = h.text;
       item.append(loc, text);
-      item.title = `${h.path}:${h.line}:${h.col}`;
+      // B58：命中行的可见文本是「文件名:行 + 片段」，提示补上完整路径
+      setTip(item, `${h.name}:${h.line}:${h.col}`, { detail: h.path, group: "findbar" });
       item.addEventListener("click", () => cb.onOpenHit(h));
       results.appendChild(item);
     }

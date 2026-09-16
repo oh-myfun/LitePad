@@ -50,6 +50,16 @@
   /* 查找命中高亮（编辑器内） */
   --find-match: rgba(255, 214, 0, 0.26);
   --find-match-active: rgba(255, 160, 0, 0.44);
+  /* tooltip（B58，取代原生 title）。配色照搬 VS Code：
+     底色 = editorWidget.background（暗色 #252526），边框 = transparent(foreground, 0.2)，
+     shadow = --vscode-shadow-lg，键帽三色 = keybindingLabel.* 令牌。 */
+  --tip-bg: #26292d;
+  --tip-border: color-mix(in srgb, var(--fg) 20%, transparent);
+  --tip-shadow: 0 0 12px rgba(0, 0, 0, 0.14);
+  --tip-key-bg: rgba(128, 128, 128, 0.17);
+  --tip-key-fg: #cccccc;
+  --tip-key-border: rgba(51, 51, 51, 0.6);
+  --tip-key-bottom: rgba(68, 68, 68, 0.6);
 }
 
 :root[data-theme="light"] {
@@ -89,6 +99,15 @@
   /* 查找命中高亮（编辑器内） */
   --find-match: rgba(255, 214, 0, 0.55);
   --find-match-active: rgba(255, 150, 0, 0.7);
+  /* tooltip（B58）：浅色档底色取 VS Code 的 editorWidget.background = #F3F3F3
+     （**不是纯白** —— 纯白气泡压在白色编辑区上只剩一圈描边，浮不起来）。 */
+  --tip-bg: #f3f3f3;
+  --tip-border: color-mix(in srgb, var(--fg) 20%, transparent);
+  --tip-shadow: 0 0 12px rgba(0, 0, 0, 0.14);
+  --tip-key-bg: rgba(221, 221, 221, 0.4);
+  --tip-key-fg: #555555;
+  --tip-key-border: rgba(204, 204, 204, 0.4);
+  --tip-key-bottom: rgba(187, 187, 187, 0.4);
 }
 
 /* ---------- 滚动条：全应用统一 + 随深浅色联动 ----------
@@ -1634,4 +1653,154 @@ body.tab-drag-active * {
   background: var(--bg);
   color: var(--fg);
   box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* ---------- tooltip（B58：应用级提示层，取代原生 title） ----------
+   外观照抄 VS Code 的 `.monaco-hover.workbench-hover`（见
+   docs/vscode-reference/src/vs/platform/hover/browser/hover.css），数值出处
+   逐条写在 src/shell/tooltip.ts 的模块注释里。要点：
+   - 13px / 行高 19px，内边距 4px 8px（= VS Code `.hover-contents`）；
+   - 圆角 **3px**：VS Code 常规是 5px，**带指针时降到 3px**（本项目提示恒带指针）；
+   - caret 是 6px 方块旋转 45°，**只画朝外的两条边**，颜色 = 底色 + 边框色；
+   - `pointer-events: none`：提示紧贴目标，可交互的话鼠标滑上去会掐断目标的 :hover。 */
+
+.tooltip {
+  position: fixed;
+  /* 高于弹出菜单（1000）与转到行浮层（1000）：菜单项也要能弹提示 */
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  /* ⚠️ 420px 是**有意偏离** VS Code 的 700px（那是给树视图长文本留的），
+     详见 tooltip.ts 顶部说明；改宽之前先想清楚会不会挡住编辑器。 */
+  max-width: 420px;
+  max-height: calc(100vh - 16px);
+  padding: 4px 8px;
+  font-size: 13px;
+  line-height: 19px;
+  color: var(--fg);
+  background: var(--tip-bg);
+  border: 1px solid var(--tip-border);
+  border-radius: 3px;
+  box-shadow: var(--tip-shadow);
+  /* caret 要露在框外，所以不能裁剪 */
+  overflow: visible;
+  /* 不参与命中：见文件头说明。用户无法选中提示文字，这是有意取舍。 */
+  pointer-events: none;
+  cursor: default;
+}
+
+.tooltip[hidden] {
+  display: none;
+}
+
+.tooltip-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tooltip-text {
+  white-space: nowrap;
+}
+
+/* 第二行补充说明（完整路径 / 行列号）：小字弱色，允许折行 */
+.tooltip-detail {
+  color: var(--fg-muted);
+  font-size: 11px;
+  line-height: 15px;
+  overflow-wrap: anywhere;
+}
+
+.tooltip-key {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+/* 键帽：`.monaco-keybinding > .monaco-keybinding-key` 的数值
+   （11px / min-width 12px / padding 3px 5px / 圆角 3px / margin 0 2px） */
+.tooltip-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 12px;
+  padding: 3px 5px;
+  margin: 0 2px;
+  font-size: 11px;
+  line-height: 10px;
+  color: var(--tip-key-fg);
+  background: var(--tip-key-bg);
+  border: 1px solid var(--tip-key-border);
+  /* 下边框单独深一档：VS Code 用这一档做出「键帽有厚度」的观感 */
+  border-bottom-color: var(--tip-key-bottom);
+  border-radius: 3px;
+}
+
+.tooltip-kbd:first-child {
+  margin-left: 0;
+}
+
+.tooltip-kbd:last-child {
+  margin-right: 0;
+}
+
+.tooltip-key-sep {
+  padding: 0 1px;
+  font-size: 11px;
+  line-height: 10px;
+  color: var(--fg-muted);
+}
+
+/* ⚠️ `[hidden]` 必须显式写：`.tooltip-key` 上的 `display: flex` 会盖掉浏览器
+   对 hidden 属性默认的 `display: none`，否则没有快捷键的提示会多出一块空白。 */
+.tooltip-key[hidden],
+.tooltip-detail[hidden] {
+  display: none;
+}
+
+/* caret：6px 方块转 45°，只留朝外的两条边，于是看起来是一个贴着目标的三角。
+   位置由 JS 给 `left`，摆在框的中央或对准目标中心（VS Code 的定位规则）。 */
+.tooltip-caret {
+  position: absolute;
+  box-sizing: border-box;
+  width: 6px;
+  height: 6px;
+  background: var(--tip-bg);
+  border-right: 1px solid var(--tip-border);
+  border-bottom: 1px solid var(--tip-border);
+  pointer-events: none;
+}
+
+/* 提示框在目标**上方** → caret 挂在下沿、尖朝下（对应 hover.css 的 rotate(45deg)） */
+.tooltip[data-placement="top"] > .tooltip-caret {
+  bottom: -3px;
+  transform: rotate(45deg);
+}
+
+/* 提示框在目标**下方** → caret 挂在上沿、尖朝上（hover.css 用 rotate(225deg)） */
+.tooltip[data-placement="bottom"] > .tooltip-caret {
+  top: -3px;
+  transform: rotate(225deg);
+}
+
+/* VS Code 的 `.monaco-hover.fade-in` 是 100ms linear；同组秒开时 JS 不加这个类，
+   所以顺着工具栏滑过去不会一路闪。 */
+.tooltip.fade-in {
+  animation: tip-fadein 100ms linear;
+}
+
+@keyframes tip-fadein {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tooltip.fade-in {
+    animation: none;
+  }
 }

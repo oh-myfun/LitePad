@@ -186,6 +186,31 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   `menu.ts` 的 `MenuItem.active` 与 `.menu-item-current` 样式目前**无使用者**，
   属待清理项（未删是因为 menu 是共享模块，超出本次改动范围）。
 
+- **提示（tooltip）自绘层**（B58，`src/shell/tooltip.ts` + `global.css` 的 `.tooltip` 段）：
+  **全应用弃用原生 `title`**，改 `data-tip` 系列属性 + 全局单例 `.tooltip` 层。
+  动机：原生提示由 OS 绘制，**配色/圆角/键帽/延迟全不可控**，深色界面里会弹出一个浅色系统气泡。
+  - **检索方式**：`document` 上 `mouseover/mouseout/focusin/focusout/mousedown` 委托
+    （`window` 上 `scroll/resize/blur` + `Esc`）—— 标签栏/查找结果/大纲都是整块重绘的，
+    逐个挂钩子要么漏、要么得在每次重绘后重挂。
+  - **定位**抽成纯函数 `computeTipGeometry(target, tip, viewport, preferred)`（jsdom 无布局，
+    只能喂数字测）：垂直越界翻面、水平夹进视口、caret 默认居中/越界改对准目标中心/最后夹进框内。
+  - **秒开规则**取 VS Code `groupId`：同 `data-tip-group` 内已有提示显示时，下一个**秒开且不淡入**
+    （顺着工具栏滑过去提示跟手、不闪）。
+  - **数值全部有出处**（VS Code，见 `tooltip.ts` 模块注释，逐条列了源文件）：
+    `13px/19px`、`padding:4px 8px`、**带指针档圆角 3px**、`PointerSize=3`/`EdgeMargin=2`、
+    `workbench.hover.delay=500`（仅 Windows，本项目就只跑 Windows）、键帽 `11px/min-width 12px/3px 圆角`。
+  - **两处有意偏离 VS Code**（改前先读 `tooltip.ts` 顶部）：① `max-width:420px`（VS Code 700px，
+    那是给树视图长文本留的）；② 提示层 `pointer-events:none`（**否则鼠标从目标滑到提示上会掐断
+    目标的 `:hover`、提示闪烁**；代价是提示文字不可选中，不需要）。
+  - ⚠️ **`[hidden]` 必须显式 `display:none`**：`.tooltip` 自身是 `display:flex`、
+    `.tooltip-key` 也是 `display:flex`，会盖掉浏览器对 hidden 默认的 `display:none`
+    （同 B30 查找栏的坑）；`.tooltip-key[hidden]` / `.tooltip-detail[hidden]` 两处都写了。
+  - ⚠️ **`setTip` 会顺带补 `aria-label`**：原生 `title` 兼任图标的可访问名，
+    换成 `data-tip` 后图标按钮会「失名」；只对**自身无文本且无 aria-label** 的元素补，不覆盖调用方。
+  - ⚠️ `resetTooltipsForTest()` **故意不重置 `bound`**（监听器生命周期与 `document` 一致，
+    反复 `initTooltips()` 只会重复注册）。要重绑请开新文档。
+  - 回归：`tests/tooltip.test.ts`（纯函数 + DOM 行为 20 条）+ `regressions.test.ts` 的 B58 块（静态锁样式/接线）。
+
 - **图标**：`scripts/gen_icons.py` 纯矢量自绘；四角圆角用「alpha 与垂直镜像取 min」保证上下一致；
   改图标后必须重跑 `tauri build` 才会进 exe（`src-tauri/build.rs` 已 `rerun-if-changed=icons`，
   否则增量构建会**静默**沿用旧图标，B41 踩过）。
@@ -231,5 +256,9 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   **推论**：任何「按了没反应」的应用快捷键，先怀疑 editor 的 keymap，再用真实 `defaultKeymap`
   探针实测（不要凭记忆断言）。
 - 改方案/改名时要**连注释与 docstring 一起清**——静态断言会抓到注释里的旧字符串（B34）。
+- **原生 `title` 不是「轻量提示」，它是「不可控提示」**（B58）。它由操作系统绘制：
+  配色/字体/圆角**跟不了应用主题**，加不了键帽与第二行小字，延迟也由 OS 定（约 1s）。
+  凡是「要跟主题、要显示快捷键、要控制延迟」的提示，都得换成自绘层。
+  代价与做法见 §7 的「提示（tooltip）自绘层」。
 - 一个测试文件内多个用例**共享模块状态**（`main` 只 bootstrap 一次、按钮是 toggle）；
   多用例文件必须先确保 UI 状态再操作，否则假阴性（B33）。

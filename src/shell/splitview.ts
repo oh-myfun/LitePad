@@ -1,6 +1,7 @@
 import type { LayoutNode } from "./layout";
 import { ICONS } from "./icons";
 import { renderTabstrip, type TabViewData } from "./tabstrip";
+import { setTip } from "./tooltip";
 
 /**
  * 分屏区域渲染：递归布局树 → DOM。
@@ -305,12 +306,18 @@ function buildPanel(
   // 唯一面板时禁用。
   const ops = document.createElement("div");
   ops.className = "panel-ops";
-  const mkOp = (icon: string, title: string, onClick: () => void): HTMLButtonElement => {
+  const mkOp = (
+    icon: string,
+    text: string,
+    detail: string | undefined,
+    onClick: () => void,
+  ): HTMLButtonElement => {
     const b = document.createElement("button");
     b.className = "panel-op";
     b.innerHTML = icon;
-    b.title = title;
-    b.setAttribute("aria-label", title);
+    // B58：提示走自绘层。图标按钮没有文本，aria-label 必须显式给。
+    setTip(b, text, { detail });
+    b.setAttribute("aria-label", detail ? `${text}（${detail}）` : text);
     b.addEventListener("click", (e) => {
       e.stopPropagation();
       onClick();
@@ -318,13 +325,17 @@ function buildPanel(
     return b;
   };
 
-  const closeP = mkOp(ICONS.closePanel, "移除该分屏", () => cb.onClosePanel(panelId));
+  const closeP = mkOp(
+    ICONS.closePanel,
+    "移除该分屏",
+    data.canClose === false ? undefined : "标签并入相邻面板",
+    () => cb.onClosePanel(panelId),
+  );
   closeP.disabled = data.canClose === false;
-  closeP.title =
-    data.canClose === false
-      ? "唯一面板不可移除（退出请用窗口关闭或菜单「退出」）"
-      : "移除该分屏（标签并入相邻面板）";
-  closeP.setAttribute("aria-label", closeP.title);
+  if (data.canClose === false) {
+    setTip(closeP, "唯一面板不可移除", { detail: "退出请用窗口关闭或菜单「退出」" });
+    closeP.setAttribute("aria-label", "唯一面板不可移除（退出请用窗口关闭或菜单「退出」）");
+  }
 
   ops.append(closeP);
 

@@ -64,6 +64,7 @@ import {
   type FindHit,
 } from "./shell/findbar";
 import { ICONS, type IconName } from "./shell/icons";
+import { clearTip, initTooltips, setTip } from "./shell/tooltip";
 import { paletteOpen, showCommandPalette } from "./shell/commandpalette";
 import { createMenuBar, openMenuByIndex } from "./shell/menubar";
 import { showPopupMenu } from "./shell/menu";
@@ -403,9 +404,12 @@ function refreshStatus(): void {
   const doc = tab ? docs.get(tab.docId) : undefined;
   sbEncoding.textContent = doc?.encoding ?? "UTF-8";
   sbEol.textContent = doc?.mixedEol ? "Mixed" : (doc?.eol ?? "CRLF");
-  sbEol.title = doc?.mixedEol
-    ? `文件中混用了多种行尾，保存时将统一为 ${doc.eol}`
-    : "点击切换行尾（保存时生效）";
+  // B58：提示走自绘层（原生 title 的配色/键帽都不可控）
+  if (doc?.mixedEol) {
+    setTip(sbEol, "行尾混用", { detail: `保存时将统一为 ${doc.eol}` });
+  } else {
+    setTip(sbEol, "点击切换行尾", { detail: "保存时生效" });
+  }
   sbCount.textContent = `${tab?.state.doc.length ?? 0} 个字符`;
   sbEncoding.disabled = !tab;
   sbEol.disabled = !tab;
@@ -2335,11 +2339,11 @@ function refreshViewModeButton(): void {
   if (md) {
     const preview = tab!.viewMode === "preview";
     sbLang.innerHTML = `<span class="sb-md-badge">M↓</span> Markdown ${preview ? "预览" : "语法"}`;
-    sbLang.title = preview ? "切换到源码 (Ctrl+/)" : "切换到预览 (Ctrl+/)";
+    setTip(sbLang, preview ? "切换到源码" : "切换到预览", { key: "Ctrl+/" });
   } else {
     const doc = tab ? docs.get(tab.docId) : undefined;
     sbLang.textContent = doc?.langLabel ?? "Plain Text";
-    sbLang.title = "";
+    clearTip(sbLang);
   }
 }
 
@@ -2377,7 +2381,8 @@ function refreshThemeButton(): void {
   const state = THEME_STATES[themeMode];
   const next = THEME_STATES[nextThemeMode()].label;
   btnTheme.innerHTML = ICONS[state.icon];
-  btnTheme.title = `主题：${state.label}（点击切换为${next}）`;
+  // B58：提示走自绘层，文案随三态变化
+  setTip(btnTheme, `主题：${state.label}`, { detail: `点击切换为${next}` });
   btnTheme.setAttribute("aria-label", `主题：${state.label}，点击切换为${next}`);
   // 测试与样式钩子：当前处于哪一档
   btnTheme.dataset.themeMode = themeMode;
@@ -3468,6 +3473,9 @@ async function bootstrap(): Promise<void> {
   applyPreviewLineHeight(settings?.preview_line_height ?? 1.7);
   applyEditorLineHeight(settings?.editor_line_height ?? 1.5);
   setupTocResizer();
+  // B58：装配自绘提示层。必须**早于任何控件创建**地委托一次——
+  // 它靠全局事件委托工作，控件只需带 data-tip，不需要逐个挂钩子。
+  initTooltips();
   setupToolbar();
   setupMenuBar();
   // Ctrl + 滚轮缩放字号（Ctrl+= / Ctrl+- 走同一条 changeFontSize 链路）

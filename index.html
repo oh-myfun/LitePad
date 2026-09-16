@@ -47,19 +47,63 @@
     <div id="app">
       <!-- 单行顶栏（参考 Win11 记事本）：左侧菜单、右侧快捷图标（文件名只出现在窗口标题与标签页） -->
       <header class="top-bar">
-        <nav id="menu-bar" class="menu-bar"></nav>
-        <div class="toolbar-actions">
-          <button id="btn-new" class="tool-btn" title="新建 (Ctrl+N)"></button>
-          <button id="btn-open" class="tool-btn" title="打开 (Ctrl+O)"></button>
-          <button id="btn-save" class="tool-btn" title="保存 (Ctrl+S)"></button>
-          <button id="btn-save-as" class="tool-btn" title="另存为 (Ctrl+Shift+S)"></button>
+        <nav id="menu-bar" class="menu-bar" data-tip-group="menubar"></nav>
+        <!-- 提示走自绘层（B58，src/shell/tooltip.ts）：data-tip 文案 + data-tip-key 快捷键。
+             不再用原生 title —— 它由系统绘制，配色/圆角/键帽都改不了，深色界面下很突兀。
+             图标按钮没有文本，必须显式给 aria-label，否则去掉 title 后就「失名」了。 -->
+        <div class="toolbar-actions" data-tip-group="toolbar">
+          <button
+            id="btn-new"
+            class="tool-btn"
+            data-tip="新建"
+            data-tip-key="Ctrl+N"
+            aria-label="新建 (Ctrl+N)"
+          ></button>
+          <button
+            id="btn-open"
+            class="tool-btn"
+            data-tip="打开"
+            data-tip-key="Ctrl+O"
+            aria-label="打开 (Ctrl+O)"
+          ></button>
+          <button
+            id="btn-save"
+            class="tool-btn"
+            data-tip="保存"
+            data-tip-key="Ctrl+S"
+            aria-label="保存 (Ctrl+S)"
+          ></button>
+          <button
+            id="btn-save-as"
+            class="tool-btn"
+            data-tip="另存为"
+            data-tip-key="Ctrl+Shift+S"
+            aria-label="另存为 (Ctrl+Shift+S)"
+          ></button>
           <span class="sep" aria-hidden="true"></span>
-          <button id="btn-find" class="tool-btn" title="查找 / 替换（Ctrl+F）"></button>
+          <button
+            id="btn-find"
+            class="tool-btn"
+            data-tip="查找 / 替换"
+            data-tip-key="Ctrl+F"
+            aria-label="查找 / 替换 (Ctrl+F)"
+          ></button>
           <span class="sep" aria-hidden="true"></span>
-          <button id="btn-outline" class="tool-btn" title="大纲 TOC"></button>
-          <button id="btn-export" class="tool-btn" title="导出 HTML / PDF"></button>
+          <button
+            id="btn-outline"
+            class="tool-btn"
+            data-tip="大纲 TOC"
+            aria-label="大纲 TOC"
+          ></button>
+          <button
+            id="btn-export"
+            class="tool-btn"
+            data-tip="导出 HTML / PDF"
+            aria-label="导出 HTML / PDF"
+          ></button>
           <span class="sep" aria-hidden="true"></span>
-          <button id="btn-theme" class="tool-btn" title="主题：浅色 / 深色 / 跟随系统"></button>
+          <!-- 文案随主题三态变化，由 main.ts 的 refreshThemeButton() 动态写入 -->
+          <button id="btn-theme" class="tool-btn" aria-label="主题"></button>
         </div>
       </header>
 
@@ -68,19 +112,22 @@
         <div
           id="toc-resizer"
           class="toc-resizer"
-          title="拖动调整大纲宽度（双击恢复默认 240px）"
+          data-tip="拖动调整大纲宽度"
+          data-tip-detail="双击恢复默认 240px"
+          aria-label="拖动调整大纲宽度，双击恢复默认"
           hidden
         ></div>
         <div id="layout-area" class="layout-area"></div>
       </div>
 
-      <footer class="statusbar">
+      <footer class="statusbar" data-tip-group="statusbar">
         <span id="sb-message" class="sb-item sb-grow">就绪</span>
         <span id="sb-pos" class="sb-item">行 1, 列 1</span>
         <span id="sb-count" class="sb-item">0 个字符</span>
         <button id="sb-lang" class="sb-item">Plain Text</button>
-        <button id="sb-encoding" class="sb-item sb-btn" title="点击可切换编码">UTF-8</button>
-        <button id="sb-eol" class="sb-item sb-btn" title="点击切换行尾">CRLF</button>
+        <button id="sb-encoding" class="sb-item sb-btn" data-tip="点击可切换编码">UTF-8</button>
+        <!-- data-tip 由 main.ts 的 refreshStatus() 按「是否混用行尾」动态写入 -->
+        <button id="sb-eol" class="sb-item sb-btn">CRLF</button>
       </footer>
     </div>
 

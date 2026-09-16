@@ -442,9 +442,9 @@ describe("bootstrap + drag-split smoke", () => {
     const ops = Array.from(panel.querySelectorAll<HTMLButtonElement>(".panel-op"));
     expect(ops.length, "应只剩 移除分屏 共 1 个操作按钮").toBe(1);
     for (const op of ops) {
-      expect(op.querySelector("svg"), `「${op.title}」必须是矢量图标`).toBeTruthy();
+      expect(op.querySelector("svg"), `「${op.dataset.tip}」必须是矢量图标`).toBeTruthy();
     }
-    expect(ops[0].title, "唯一按钮是移除分屏").toContain("移除");
+    expect(ops[0].dataset.tip, "唯一按钮是移除分屏").toContain("移除");
 
     // 折叠机制已整体删除
     expect(document.querySelector(".tab-more"), "折叠按钮必须已删除").toBeNull();
@@ -503,13 +503,15 @@ describe("bootstrap + drag-split smoke", () => {
     openDialogResult.value = null;
 
     const tabOf = (name: string) =>
-      Array.from(document.querySelectorAll<HTMLElement>(".tab")).find((el) => el.title === name);
+      Array.from(document.querySelectorAll<HTMLElement>(".tab")).find(
+        (el) => el.dataset.tip === name,
+      );
     const dTab = tabOf("d.md");
     expect(dTab, "打开的 d.md 应出现在标签条").toBeTruthy();
     const strip = dTab!.closest(".panel-tabstrip") as HTMLElement;
     const panelEl = dTab!.closest(".layout-panel") as HTMLElement;
     const otherTab = Array.from(strip.querySelectorAll<HTMLElement>(".tab")).find(
-      (el) => el.title !== "d.md",
+      (el) => el.dataset.tip !== "d.md",
     );
     expect(otherTab, "所在面板应有其他标签可供切换").toBeTruthy();
 
@@ -573,7 +575,7 @@ describe("bootstrap + drag-split smoke", () => {
 
     // 切回 d.md：内容必须还在（被清空即为用户报告的空白回归）
     const dTab = Array.from(document.querySelectorAll<HTMLElement>(".tab")).find(
-      (el) => el.title === "d.md",
+      (el) => el.dataset.tip === "d.md",
     );
     expect(dTab, "d.md 标签应仍存在").toBeTruthy();
     const panelEl = dTab!.closest(".layout-panel") as HTMLElement;
@@ -595,7 +597,7 @@ describe("bootstrap + drag-split smoke", () => {
     // ① 同面板 mousedown 后原 .tab 元素必须仍在文档中（未被重绘替换）；
     // ② mousedown 之后对该元素派发 click，视图必须真的切过去。
     const cTab = Array.from(document.querySelectorAll<HTMLElement>(".tab")).find(
-      (el) => el.title === "c.md",
+      (el) => el.dataset.tip === "c.md",
     );
     expect(cTab, "c.md 标签应存在").toBeTruthy();
     const panelEl = cTab!.closest(".layout-panel") as HTMLElement;
@@ -677,10 +679,10 @@ describe("bootstrap + drag-split smoke", () => {
       if (!target) {
         // 前置用例可能改过布局：把 b.md 拖进含 a.md 的面板（面板区中央 = 移入）
         const amd = Array.from(document.querySelectorAll<HTMLElement>(".tab")).find(
-          (t) => t.title === "a.md",
+          (t) => t.dataset.tip === "a.md",
         );
         const bmd = Array.from(document.querySelectorAll<HTMLElement>(".tab")).find(
-          (t) => t.title === "b.md",
+          (t) => t.dataset.tip === "b.md",
         );
         expect(amd && bmd, "a.md 与 b.md 标签应可定位").toBeTruthy();
         const p = bmd!.closest(".layout-panel") as HTMLElement;
@@ -695,7 +697,7 @@ describe("bootstrap + drag-split smoke", () => {
 
       // 拖该面板的第一个标签到 tab 区末尾（y=12 在 24px 高的 strip 内）→ 追加
       const firstTab = target!.querySelector(".tab") as HTMLElement;
-      const firstName = firstTab.title;
+      const firstName = firstTab.dataset.tip;
       const stripLeft = target!.querySelector(".panel-tabstrip")!.getBoundingClientRect().left;
       firstTab.dispatchEvent(mouse("mousedown", 5, 5));
       document.dispatchEvent(mouse("mousemove", Math.round(stripLeft) + 150, 12));
@@ -708,7 +710,7 @@ describe("bootstrap + drag-split smoke", () => {
       ).toBe(beforePanels);
       expect(document.body.classList.contains("tab-drag-active"), "拖拽光标类应移除").toBe(false);
       expect(document.querySelector(".tab-insert"), "松手后插入指示线应移除").toBeNull();
-      const names = Array.from(target!.querySelectorAll(".tab")).map((t) => t.title);
+      const names = Array.from(target!.querySelectorAll(".tab")).map((t) => t.dataset.tip);
       expect(names[names.length - 1], "被拖标签应追加到末尾").toBe(firstName);
       expect(names.length, "标签总数不变").toBe(beforeCount);
     } finally {
@@ -722,14 +724,14 @@ describe("bootstrap + drag-split smoke", () => {
     // 按住鼠标期间 timeout 触发 → 销毁光标下的 .tab → click 丢失。
     // 修复后 onActivatePanel 完全不重绘；单击必须直接切换并显示内容。
     const cTab = Array.from(document.querySelectorAll<HTMLElement>(".tab")).find(
-      (el) => el.title === "c.md",
+      (el) => el.dataset.tip === "c.md",
     );
     expect(cTab, "c.md 标签应存在").toBeTruthy();
     const cPanel = cTab!.closest(".layout-panel") as HTMLElement;
 
     // 找一个不在 c.md 所在面板的标签（跨面板点击）
     const target = Array.from(document.querySelectorAll<HTMLElement>(".tab")).find(
-      (el) => el.title === "a.md" && el.closest(".layout-panel") !== cPanel,
+      (el) => el.dataset.tip === "a.md" && el.closest(".layout-panel") !== cPanel,
     );
     expect(target, "应存在其他面板中的 a.md 标签").toBeTruthy();
     const targetPanel = target!.closest(".layout-panel") as HTMLElement;
@@ -976,13 +978,13 @@ describe("bootstrap + drag-split smoke", () => {
     const strip = panel!.querySelector(".panel-tabstrip") as HTMLElement;
     const activeEl = strip.querySelector<HTMLElement>(".tab.tab-active");
     expect(activeEl, "面板应有活动标签").toBeTruthy();
-    const activeName = activeEl!.title;
+    const activeName = activeEl!.dataset.tip;
     const others = Array.from(strip.querySelectorAll<HTMLElement>(".tab")).filter(
       (t) => t !== activeEl,
     );
     expect(others.length, "应存在可关闭的非活动标签").toBeGreaterThan(0);
     const victim = others[0];
-    const victimName = victim.title;
+    const victimName = victim.dataset.tip;
 
     const dom = panel!.querySelector(".cm-editor");
     const view = dom ? EditorView.findFromDOM(dom as HTMLElement) : null;
@@ -1004,13 +1006,13 @@ describe("bootstrap + drag-split smoke", () => {
 
     // 关完之后：活动标签没变、视图内容没变（不得跳到邻居标签）
     const afterActive = strip.querySelector<HTMLElement>(".tab.tab-active");
-    expect(afterActive?.title, "关闭后台标签后活动标签不得改变").toBe(activeName);
+    expect(afterActive?.dataset.tip, "关闭后台标签后活动标签不得改变").toBe(activeName);
     expect(view!.state.doc.toString(), "关闭后台标签后不得跳到邻居标签（闪一下的第二段）").toBe(
       before,
     );
 
     // 待关标签确实已经消失
-    const names = Array.from(strip.querySelectorAll(".tab")).map((t) => t.title);
+    const names = Array.from(strip.querySelectorAll(".tab")).map((t) => t.dataset.tip);
     expect(names, `${victimName} 应已被关闭`).not.toContain(victimName);
     expect(capturedError, `关闭标签不应抛错：${String(capturedError)}`).toBeNull();
   });

@@ -1,4 +1,5 @@
 import type { TocEntry } from "./pipeline";
+import { setTip } from "../shell/tooltip";
 
 /**
  * 大纲 TOC 抽屉（M3）：渲染活动 Markdown 标签的标题大纲，点击跳转。
@@ -110,7 +111,8 @@ export function renderToc(
     item.type = "button";
     item.className = "toc-item toc-h" + e.level + (e.line === activeLine ? " toc-active" : "");
     item.textContent = e.text || "(无标题)";
-    item.title = `第 ${e.line} 行`;
+    // B58：提示给行号（标题文本本身就在眼前，重复它没意义）；group 让顺着大纲扫过去秒开
+    setTip(item, `第 ${e.line} 行`, { group: "toc" });
     item.addEventListener("click", () => cb.onJump(e));
     host.appendChild(item);
   }

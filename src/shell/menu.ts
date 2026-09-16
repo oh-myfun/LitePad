@@ -1,3 +1,5 @@
+import { setTip } from "./tooltip";
+
 export interface MenuItem {
   label?: string;
   checked?: boolean;
@@ -222,7 +224,8 @@ function fillMenu(menu: HTMLElement, items: MenuItem[], opts?: PopupMenuOptions)
         btn.appendChild(kbd);
       }
     }
-    if (item.title) btn.title = item.title;
+    // B58：note 是「这个命令干什么」的补充说明，走自绘提示层（菜单项本身已有快捷键列）
+    if (item.title) setTip(btn, item.title);
 
     btn.addEventListener("mouseenter", () => {
       // 移到同级其他项时收起旧的子菜单（连同其更深层）

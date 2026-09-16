@@ -9,7 +9,7 @@ bash scripts/fetch-vscode-ref.sh v1.137.0   # 或钉到某个 tag
 ```
 
 > **入库说明**：只有 `INDEX.md` / `REVISION.txt` / `LICENSE.txt` 与 `scripts/fetch-vscode-ref.sh`
-> 进 git，`src/`（70 份上游源码）**被 `.gitignore` 排除**。
+> 进 git，`src/`（80 份上游源码）**被 `.gitignore` 排除**。
 > 原因：它是可复现的第三方只读副本（`REVISION.txt` 里钉了确切 commit），
 > 且整目录入库会被 pre-commit 的 prettier/eslint 扫到、得往格式检查链里塞例外。
 > 新克隆想拿到源码，跑一次上面的脚本即可（需要外网）。
@@ -88,6 +88,26 @@ bash scripts/fetch-vscode-ref.sh v1.137.0   # 或钉到某个 tag
 | `contextview/contextview.css` | 弹层容器（定位、阴影、焦点陷阱）→ 对应我们 `menu.ts` 的 popup |
 | `workbench/browser/media/floatingPanels.css` | 浮层面板（命令面板 / 快速挑选的外壳定位） |
 
+## D2. 悬停提示（tooltip）—— 本项目自绘 `.tooltip` 层的数值来源
+
+原生 `title` 由操作系统绘制，配色/圆角/键帽/延迟全不可控（深色界面里会弹浅色系统气泡）。
+B58 起全应用改为**自绘单例层**（`src/shell/tooltip.ts`），数值逐条取自这几份：
+
+| 文件 | 用途 |
+| --- | --- |
+| `platform/hover/browser/hover.css` | **外观基线**（`.monaco-hover.workbench-hover`）：13px / 行高 19px、`max-width`、背景/边框取色、**带指针档圆角 3px**、`box-shadow` |
+| `base/browser/ui/hover/hoverWidget.css` | `.hover-contents { padding: 4px 8px }`、淡入 100ms、`cursor: default` |
+| `base/browser/ui/hover/hoverWidget.ts` | 指针定位规则：默认居中于提示框，中心点跑出目标横向范围则对准目标中心 |
+| `platform/hover/browser/hoverWidget.ts` | `PointerSize = 3`（→ caret 6px 方块）、`HoverWindowEdgeMargin = 2` |
+| `platform/hover/browser/hoverService.ts` | **`groupId` 规则**：同组内相邻目标秒开且跳过淡入（顺着工具栏滑过去不闪） |
+| `platform/hover/browser/updatableHoverWidget.ts` | 提示内容的增量更新（我们不需要，留作对照） |
+| `base/browser/ui/hover/hover.ts` | 提示的 DOM 结构与 `.hover-row` 组成 |
+| `base/browser/ui/keybindingLabel/keybindingLabel.css` | **键帽**数值：11px / `min-width: 12px` / `padding: 3px 5px` / 圆角 3px |
+| `editor/contrib/hover/browser/hover.css` | 编辑器内悬停浮层（我们暂未做，留作对照） |
+
+> 延迟（`workbench.hover.delay` = Windows 500ms）定义在 `workbench/browser/workbench.contribution.ts`，
+> 该文件未收录 —— 数值已固化进 `tooltip.ts` 的 `SHOW_DELAY` 常量并注明出处。
+
 ## E. 工具栏 / 按钮 / 输入控件
 
 | 文件 | 用途 |
@@ -130,6 +150,8 @@ bash scripts/fetch-vscode-ref.sh v1.137.0   # 或钉到某个 tag
 | `markdown/browser/media/markdown.css` | **Markdown 预览的排版基线**（标题/列表/引用/表格/代码块）→ 我们 `preview.css` 的对照物 |
 | `markdown/browser/markdownDocumentRenderer.ts` | Markdown → HTML 的渲染与安全策略（我们 `marked` + DOMPurify 链路可对照） |
 | `platform/theme/common/colors/baseColors.ts` | 基础色令牌定义 |
+| `platform/theme/common/colors/editorColors.ts` | 编辑器色令牌（`editorHoverWidget.*` 提示背景/边框、`keybindingLabel.*` 键帽配色） |
+| `platform/theme/common/colors/miscColors.ts` | 杂项色令牌（阴影 `shadow` 等） |
 | `workbench/common/theme.ts` | **`tab.*` / `editorGroup.*` / `statusBar.*` 等语义色令牌的权威定义**（我们的 `--tab-bg-*` 该照这个思路命名） |
 
 ---

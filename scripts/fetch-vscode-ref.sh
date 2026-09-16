@@ -103,8 +103,25 @@ FILES=(
   "src/vs/workbench/contrib/markdown/browser/media/markdown.css"
   "src/vs/workbench/contrib/markdown/browser/markdownDocumentRenderer.ts"
 
+  # ---------- 悬停提示（tooltip，对应本项目自绘的 .tooltip 层）----------
+  # B58 起提示全应用改为自绘层（原生 title 不可控），外观/交互数值取自这几份：
+  #   外观与指针几何 → platform/hover/browser/hover.css、base/browser/ui/hover/hoverWidget.css
+  #   延时与 groupId 秒开规则 → platform/hover/browser/hoverService.ts、workbench.contribution.ts
+  #   键帽数值 → base/browser/ui/keybindingLabel/keybindingLabel.css
+  "src/vs/platform/hover/browser/hover.css"
+  "src/vs/platform/hover/browser/hoverWidget.ts"
+  "src/vs/platform/hover/browser/hoverService.ts"
+  "src/vs/platform/hover/browser/updatableHoverWidget.ts"
+  "src/vs/base/browser/ui/hover/hoverWidget.css"
+  "src/vs/base/browser/ui/hover/hoverWidget.ts"
+  "src/vs/base/browser/ui/hover/hover.ts"
+  "src/vs/base/browser/ui/keybindingLabel/keybindingLabel.css"
+  "src/vs/editor/contrib/hover/browser/hover.css"
+
   # ---------- 主题色彩令牌（tab.* / editorGroup.* 等定义处）----------
   "src/vs/platform/theme/common/colors/baseColors.ts"
+  "src/vs/platform/theme/common/colors/editorColors.ts"
+  "src/vs/platform/theme/common/colors/miscColors.ts"
   "src/vs/workbench/common/theme.ts"
   "LICENSE.txt"
 )

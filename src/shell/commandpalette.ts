@@ -12,6 +12,7 @@
  */
 
 import { COMMANDS, effectiveKeys, formatBinding, parseKey, type KeymapOverrides } from "./keymap";
+import { setTip } from "./tooltip";
 
 export interface PaletteItem {
   id: string;
@@ -171,7 +172,8 @@ export function showCommandPalette(opts: CommandPaletteOptions): void {
         kbd.textContent = item.keys;
         row.appendChild(kbd);
       }
-      if (item.note) row.title = item.note;
+      // B58：note 是命令的补充说明（行里已经有键位了），走自绘提示层
+      if (item.note) setTip(row, item.note, { group: "palette" });
 
       row.addEventListener("mousemove", () => {
         if (active === i) return;

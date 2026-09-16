@@ -194,18 +194,47 @@
   改了 `tabstrip-scroll` / `smoke.bootstrap` / `view-switch-noedit` 三处。
   新增回归：图标 16px 不收缩 + 10 个 `data-fam` + **浅深两套各 10 个 `--ficon-*`** + 家族覆盖度。
 
-- **参考源码库**：`docs/vscode-reference/`（VS Code MIT **只读**副本，70 份，钉 commit `632abec`），
+- **B58（0916）应用级 tooltip 自绘层（取代原生 `title`，外观对齐 VS Code hover）**：
+  用户要求「优化 tooltips 样式，可参考 vscode 源码」。动机：原生提示由 OS 绘制，**配色/圆角/
+  键帽/延迟全不可控**，深色界面里会弹出一个浅色系统气泡。
+  ① **新增 `src/shell/tooltip.ts`**：全局单例 `.tooltip` 层 + `data-tip` 系列属性
+  （`data-tip` / `-key` / `-detail` / `-placement` / `-group`），**事件委托**（`document` 上
+  `mouseover/mouseout/focusin/focusout/mousedown`，`window` 上 `scroll/resize/blur` + `Esc`）。
+  导出 `setTip/clearTip/initTooltips/hideTip/isTipVisible/resetTooltipsForTest/computeTipGeometry`。
+  ② **数值全部有出处**（逐条写在 `tooltip.ts` 模块注释）：`13px/19px`、`padding:4px 8px`、
+  **带指针档圆角 3px**、`PointerSize=3`（caret 6px 方块）、`EdgeMargin=2`、
+  `workbench.hover.delay=500`（仅 Windows）、键帽 `11px/min-width 12px/3px 圆角`。
+  ③ **两处有意偏离**：`max-width:420px`（VS Code 700px，那是给树视图长文本的）；
+  提示层 `pointer-events:none`（**否则鼠标滑到提示上会掐断目标 `:hover`、提示闪烁**）。
+  ④ **秒开规则**取 VS Code `groupId`：同 `data-tip-group` 内已有提示时下一个**秒开且不淡入**
+  （工具栏 `data-tip-group="toolbar"`、菜单栏 `menubar`、状态栏 `statusbar`、标签 `tabstrip`）。
+  ⑤ **定位抽成纯函数 `computeTipGeometry`**（jsdom 无布局，只能喂数字测）：垂直越界翻面、
+  水平夹进视口、caret 默认居中/越界对准目标中心/最后夹进框内。
+  ⑥ ⚠️ **两个坑**：`.tooltip` / `.tooltip-key` 是 `display:flex`，**`[hidden]` 必须显式
+  `display:none`**（同 B30 查找栏）；`setTip` 会给「自身无文本且无 aria-label」的元素**补
+  `aria-label`**（原生 `title` 兼任可访问名，去掉后图标按钮会失名）。
+  ⑦ **接线**：`index.html` 顶栏按钮改 `data-tip`、`initTooltips()` 在 `bootstrap` 里装配；
+  `menubar/menu/tabstrip/splitview/toc/commandpalette/keymapdialog/findbar/main` 共 10 处
+  `title` 全部迁到 `setTip`（`keymapdialog.ts` 的 `<option>` 仍留原生 `opt.title`，
+  原生下拉覆盖不到自绘层）。
+  新增 `tests/tooltip.test.ts`（20 条：纯函数 + DOM 行为）+ `regressions.test.ts` 的 B58 静态块。
+
+- **参考源码库**：`docs/vscode-reference/`（VS Code MIT **只读**副本，80 份；精确 commit 见
+  `REVISION.txt`，B58 后补的 hover / keybindingLabel / 色彩令牌共 12 份已登记进
+  `scripts/fetch-vscode-ref.sh` 的 FILES 与 `INDEX.md` 新增的「D2. 悬停提示」段），
   由 `scripts/fetch-vscode-ref.sh` 拉取（不 clone，逐文件 curl，可 `RESUME=1`）；`INDEX.md` 按 A–H
   说明**每份文件对我们有什么用**。⚠️ **`src/` 目录被 `.gitignore` 排除**（只入库 INDEX/REVISION/LICENSE + 脚本）：
-  否则 70 份 `.css/.ts` 会被 pre-commit 的 prettier/eslint 扫到；它是可复现的，需要时重跑脚本。
-  ⚠️ `raw.githubusercontent` **间歇限流**（首轮 65 份挂 14 份）→ curl 要 `--retry 4 --retry-all-errors`。
+  否则 80 份 `.css/.ts` 会被 pre-commit 的 prettier/eslint 扫到；它是可复现的，需要时重跑脚本。
+  ⚠️ `raw.githubusercontent` **间歇限流**（首轮 65 份挂 14 份）→ curl 要 `--retry 4 --retry-all-errors`；
+  会话内也可用 `gh api repos/microsoft/vscode/contents/<path>?ref=main` 取 base64（api.github.com 更稳）。
   改观感先读 A 段（Modern UI），改交互读 B/C 段的 `.ts`（重点抄状态机与边界，不抄实现）。
 
 ## 下一步
 
 - 待办：桌面环境补拍截图（M4 的 keymap.png / command-palette.png + B51 的
-  main.png / preferences.png + **B53–B57 的 main.png，标签栏（含文件类型图标）/面板操作栏/分隔条都变了**）。
+  main.png / preferences.png + **B53–B58 的 main.png**，标签栏（含文件类型图标）/面板操作栏/分隔条都变了；
+  B58 后**任一控件的悬停提示观感也变了**，可选补一张 tooltip 演示图）。
 - 待清理：`menu.ts` 的 `MenuItem.active` / `.menu-item-current`（B53 后无使用者）。
-- 待定：是否发 **v0.3.1**（B55/B56/B57 都改了界面；B54 也留了同一问题未决）。
+- 待定：是否发 **v0.3.1**（B55/B56/B57/B58 都改了界面；B54 也留了同一问题未决）。
 - M4 之后：M5 规划未定；候选见 DESIGN.md；观感/交互改进可对照 `docs/vscode-reference/`。
 - 待用户桌面环境验证的条目散见各日志（沙箱内无法做 UI 冒烟）。

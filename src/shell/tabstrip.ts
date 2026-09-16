@@ -2,6 +2,7 @@ import { showPopupMenu } from "./menu";
 import { beginTabDrag, consumeTabClickSuppressed } from "./splitview";
 import { fileIconSvg, familyOf } from "./fileicons";
 import { ICONS, dotIcon } from "./icons";
+import { setTip } from "./tooltip";
 
 /**
  * 标签栏渲染：纯函数式全量重绘（标签数量小，简单可靠）。
@@ -148,7 +149,13 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   // 平时只见 ●（未保存）/ 空（已保存），鼠标悬停到标签上才换成 ×。
   el.className = "tab" + (t.active ? " tab-active" : "") + (t.dirty ? " tab-dirty" : "");
   el.dataset.tabId = String(t.tabId);
-  el.title = t.readonly ? `${t.name} [只读]` : t.name;
+  // B58：标签提示 = 文件名（+ 只读标记），第二行给完整路径 —— 标签会被横向滚动
+  // 推出视野、文件名也可能与同目录的其他同名文件混淆，路径这一行才是真正有用的信息。
+  // group 让「顺着标签滑过去」时提示秒开、不忽明忽暗（VS Code 的 groupId 行为）。
+  setTip(el, t.readonly ? `${t.name} [只读]` : t.name, {
+    detail: t.path,
+    group: "tabstrip",
+  });
 
   // 文件类型图标（B57，参考 VS Code 的 .tab.has-icon）：
   // 名字左边一个 16px 的家族字形，颜色由 data-fam 走 CSS 变量（浅深两套）。
@@ -179,7 +186,7 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   const close = document.createElement("button");
   close.className = "tab-close";
   close.innerHTML = ICONS.close;
-  close.title = "关闭 (Ctrl+W)";
+  setTip(close, "关闭", { key: "Ctrl+W", group: "tabstrip" });
   close.setAttribute("aria-label", `关闭 ${t.name}`);
   close.addEventListener("click", (e) => {
     e.stopPropagation();

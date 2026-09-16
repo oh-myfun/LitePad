@@ -1270,3 +1270,116 @@ describe("M4 命令面板与键位预设已接入", () => {
     expect(dlg).toContain("keymap-preset");
   });
 });
+
+// B58：原生 `title` 由操作系统绘制，配色/圆角/键帽/延迟全不可控（深色界面里会突然弹出
+// 一个浅色系统气泡）。改为全局单例自绘层，外观对齐 VS Code hover。
+describe("B58 应用级 tooltip（取代原生 title，外观对齐 VS Code hover）", () => {
+  it("提示层外观取自 VS Code：fixed / 13px / 19px / 4px 8px / 3px 圆角 / 不参与命中", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const tip = cssDecls(css.match(/\n\.tooltip\s*\{[^}]*\}/)?.[0] ?? "");
+    expect(tip, "应有 .tooltip 规则").toBeTruthy();
+    expect(tip, "fixed 定位（提示不随内容滚动）").toMatch(/position:\s*fixed/);
+    // 菜单（1000）与转到行浮层（1000）之上：菜单项自己也要能弹提示
+    expect(tip, "必须浮在菜单之上").toMatch(/z-index:\s*2000/);
+    expect(tip, "13px 字号（= VS Code .hover-contents）").toMatch(/font-size:\s*13px/);
+    expect(tip, "19px 行高（= VS Code .hover-contents）").toMatch(/line-height:\s*19px/);
+    expect(tip, "padding 4px 8px（= VS Code .hover-contents）").toMatch(/padding:\s*4px 8px/);
+    expect(tip, "恒带指针 → 用 VS Code 的 with-pointer 圆角 3px（不是常规档 5px）").toMatch(
+      /border-radius:\s*3px/,
+    );
+    expect(tip, "420px 是相对 VS Code 700px 的有意收窄（见 tooltip.ts 顶部说明）").toMatch(
+      /max-width:\s*420px/,
+    );
+    expect(tip, "不得裁剪：caret 要露在框外").toMatch(/overflow:\s*visible/);
+    // 提示紧贴目标：可交互的话鼠标滑上去会掐断目标的 :hover，提示闪烁
+    expect(tip, "不参与命中").toMatch(/pointer-events:\s*none/);
+    expect(tip, "配色必须走主题变量（深浅色联动，这是弃用原生 title 的主因之一）").toMatch(
+      /background:\s*var\(--tip-bg\)/,
+    );
+
+    // ⚠️ hidden 必须显式 display:none：.tooltip 自身是 display:flex，
+    // 会盖掉浏览器对 hidden 属性默认的 display:none（B30 查找栏同款坑）。
+    expect(css, "隐藏态必须显式 display:none").toMatch(
+      /\.tooltip\[hidden\]\s*\{[^}]*display:\s*none/,
+    );
+  });
+
+  it("两套主题都备齐 --tip-* 变量（缺一个 → 某主题下提示丢配色）", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const VARS = [
+      "--tip-bg:",
+      "--tip-border:",
+      "--tip-shadow:",
+      "--tip-key-bg:",
+      "--tip-key-fg:",
+      "--tip-key-border:",
+      "--tip-key-bottom:",
+    ] as const;
+    for (const [name, block] of [
+      ["深色", css.match(/:root\[data-theme="dark"\]\s*\{[^}]*\}/)?.[0] ?? ""],
+      ["浅色", css.match(/:root\[data-theme="light"\]\s*\{[^}]*\}/)?.[0] ?? ""],
+    ] as const) {
+      expect(block, `未取到${name}主题变量块`).toContain("--tip-bg:");
+      for (const v of VARS) expect(block, `${name}主题缺 ${v}`).toContain(v);
+    }
+  });
+
+  it("键帽与 caret 齐全：快捷键渲染成键帽，caret 只画朝外两条边", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+
+    // 键帽数值 = VS Code keybindingLabel.css（11px / min-width 12px / padding 3px 5px / 圆角 3px）
+    const kbd = cssDecls(css.match(/\n\.tooltip-kbd\s*\{[^}]*\}/)?.[0] ?? "");
+    expect(kbd, "应有 .tooltip-kbd 规则").toBeTruthy();
+    expect(kbd, "min-width 12px").toMatch(/min-width:\s*12px/);
+    expect(kbd, "padding 3px 5px").toMatch(/padding:\s*3px 5px/);
+    expect(kbd, "圆角 3px").toMatch(/border-radius:\s*3px/);
+    expect(kbd, "下边框单独深一档（做出键帽厚度的观感）").toMatch(
+      /border-bottom-color:\s*var\(--tip-key-bottom\)/,
+    );
+
+    // caret：6px 方块转 45°，只留朝外的两条边 → 看起来是一个贴住目标的三角
+    const caret = cssDecls(css.match(/\n\.tooltip-caret\s*\{[^}]*\}/)?.[0] ?? "");
+    expect(caret, "应有 .tooltip-caret 规则").toBeTruthy();
+    expect(caret, "6px 方块（= VS Code PointerSize 的一半为 3px）").toMatch(/width:\s*6px/);
+    expect(caret).toMatch(/height:\s*6px/);
+    expect(caret, "只画右边").toMatch(/border-right:[^;}]*var\(--tip-border\)/);
+    expect(caret, "只画下边").toMatch(/border-bottom:[^;}]*var\(--tip-border\)/);
+    expect(caret, "caret 也不能参与命中").toMatch(/pointer-events:\s*none/);
+    expect(css, "上方提示 caret 挂下沿、尖朝下").toMatch(
+      /\.tooltip\[data-placement="top"\]\s*>\s*\.tooltip-caret\s*\{[^}]*rotate\(45deg\)/,
+    );
+    expect(css, "下方提示 caret 挂上沿、尖朝上").toMatch(
+      /\.tooltip\[data-placement="bottom"\]\s*>\s*\.tooltip-caret\s*\{[^}]*rotate\(225deg\)/,
+    );
+
+    // 没有快捷键 / 没有补充说明时不得留出空白格（flex 会盖掉 hidden 默认值）
+    expect(css, "键帽与详情的 hidden 必须显式 display:none").toMatch(
+      /\.tooltip-key\[hidden\][^{]*\{[^}]*display:\s*none/,
+    );
+  });
+
+  it("接线：bootstrap 装配委托、顶栏弃用原生 title、同组标 data-tip-group", () => {
+    const ts = readFileSync("src/shell/tooltip.ts", "utf-8");
+    expect(ts, "必须导出 initTooltips").toMatch(/export function initTooltips/);
+    expect(ts, "必须导出 setTip").toMatch(/export function setTip/);
+    expect(ts, "必须导出 clearTip（控件变成无可提示时用）").toMatch(/export function clearTip/);
+    // 500ms 是 VS Code workbench.hover.delay 在 Windows/Linux 的默认值（本项目仅 Windows）
+    expect(ts, "显示延迟必须是 500ms").toMatch(/SHOW_DELAY\s*=\s*500/);
+    // 全局委托而非逐个挂钩子：标签栏/查找结果/大纲都是整块重绘的
+    expect(ts, "必须走事件委托（挂 document，而不是给每个元素加监听）").toMatch(
+      /doc\.addEventListener\(\s*\n?\s*"mouseover"/,
+    );
+
+    const main = readFileSync("src/main.ts", "utf-8");
+    expect(main, "bootstrap 必须装配 tooltip 委托").toMatch(/initTooltips\(\)/);
+
+    const html = readFileSync("index.html", "utf-8");
+    expect(html, "顶栏按钮必须改用 data-tip").toContain('data-tip="新建"');
+    expect(html, "不得再用原生 title 给工具栏按钮做提示").not.toMatch(
+      /class="tool-btn"[^>]*\stitle=/,
+    );
+    expect(html, "工具栏容器必须标 data-tip-group（同组秒开）").toContain(
+      'data-tip-group="toolbar"',
+    );
+  });
+});

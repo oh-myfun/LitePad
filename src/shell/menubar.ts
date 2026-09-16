@@ -1,4 +1,5 @@
 import { closePopupMenu, showPopupMenu, type MenuItem } from "./menu";
+import { setTip } from "./tooltip";
 
 /**
  * 菜单栏（文件 / 编辑 / 查看 / 设置 / 帮助）。
@@ -157,7 +158,8 @@ export function createMenuBar(host: HTMLElement, cb: MenuBarCallbacks): void {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "menu-btn";
-    btn.title = `Alt+${MENU_KEYS[idx]}`;
+    // B58：走自绘提示层。Alt+字母是**助记符**（不是组合键），单独放详情行更清楚。
+    setTip(btn, `${m.label}菜单`, { key: `Alt+${MENU_KEYS[idx]}` });
     // 助记符下划线首字（Alt+字母定位）
     btn.innerHTML = `<span class="mnemonic">${m.label[0]}</span>${m.label.slice(1)}`;
     btn.addEventListener("click", (e) => {
