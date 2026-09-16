@@ -219,15 +219,20 @@
   原生下拉覆盖不到自绘层）。
   新增 `tests/tooltip.test.ts`（20 条：纯函数 + DOM 行为）+ `regressions.test.ts` 的 B58 静态块。
 
-- **参考源码库**：`docs/vscode-reference/`（VS Code MIT **只读**副本，80 份；精确 commit 见
-  `REVISION.txt`，B58 后补的 hover / keybindingLabel / 色彩令牌共 12 份已登记进
-  `scripts/fetch-vscode-ref.sh` 的 FILES 与 `INDEX.md` 新增的「D2. 悬停提示」段），
-  由 `scripts/fetch-vscode-ref.sh` 拉取（不 clone，逐文件 curl，可 `RESUME=1`）；`INDEX.md` 按 A–H
-  说明**每份文件对我们有什么用**。⚠️ **`src/` 目录被 `.gitignore` 排除**（只入库 INDEX/REVISION/LICENSE + 脚本）：
-  否则 80 份 `.css/.ts` 会被 pre-commit 的 prettier/eslint 扫到；它是可复现的，需要时重跑脚本。
-  ⚠️ `raw.githubusercontent` **间歇限流**（首轮 65 份挂 14 份）→ curl 要 `--retry 4 --retry-all-errors`；
-  会话内也可用 `gh api repos/microsoft/vscode/contents/<path>?ref=main` 取 base64（api.github.com 更稳）。
-  改观感先读 A 段（Modern UI），改交互读 B/C 段的 `.ts`（重点抄状态机与边界，不抄实现）。
+- **参考源码库**：`docs/vscode-reference/`（VS Code MIT **只读**副本，分两类，均落 `src/` 被 `.gitignore` 排除）：
+  - **A–H 精选约 82 份**（`fetch-vscode-ref.sh` + `REVISION.txt`，commit `632abec`）：逐文件 curl，镜像上游路径，
+    B58 后补的 hover / keybindingLabel / 色彩令牌共 12 份已登记进 FILES 与 `INDEX.md` 的「D2. 悬停提示」段；
+    `INDEX.md` 按 A–H 说明**每份文件对我们有什么用**。
+  - **I 编辑器整模块约 3283 份**（`fetch-vscode-editor-ref.sh` + `REVISION_EDITOR.txt`，commit `9100222`，main 抓取）：
+    sparse-clone `src/vs/editor` + `src/vs/base` + `src/vs/platform`，**仅源码**——过滤
+    `.test.ts` / worker（`/worker/` 与文件名含 worker 的 `.ts/.css`）/ 语法定义（`/basic-languages/`、`/language/`）。
+    导航见 `INDEX.md` 的「I. 编辑器模块」段。
+  ⚠️ **`src/` 不入库**（只入库 INDEX/REVISION*/LICENSE + 脚本）：否则上千份上游 `.css/.ts/.tsx` 会被
+  pre-commit 的 prettier/eslint 扫到；它是可复现的，需要时重跑脚本。
+  ⚠️ 环境坑：① 整仓 clone 走 HTTP/2 易 `CANCEL` 中断 → 设 `git config --global http.version HTTP/1.1` +
+  `core.compression 0` + `postBuffer`，用 `--depth 1 --filter=blob:none --sparse`；② 逐文件 curl 走
+  `raw.githubusercontent` 间歇限流 → `--retry 4 --retry-all-errors`，或改用 `gh api repos/microsoft/vscode/contents/<path>?ref=main`。
+  改观感先读 A 段（Modern UI），改交互读 B/C 段的 `.ts`（重点抄状态机与边界，不抄实现）；I 段是 Monaco/编辑器内核，按需深挖。
 
 ## 下一步
 
