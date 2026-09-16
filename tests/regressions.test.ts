@@ -478,10 +478,12 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
       const css = readFileSync("src/styles/global.css", "utf-8");
       const sep = css.match(/\n\.layout-sep\s*\{[^}]*\}/)?.[0] ?? "";
       expect(sep, "应有 .layout-sep 规则").toBeTruthy();
-      const m = sep.match(/flex:\s*0 0 (\d+)px/);
+      // B60：分隔条本身改为**不占布局**（flex 基准 0）—— 原先 7px 的透明占位会撑开
+      // 两侧内容、露出祖先底色，视觉上就是一条粗带；命中区搬到 ::before 向两侧溢出。
+      expect(sep, "分隔条不得占布局宽度").toMatch(/flex:\s*0 0 0/);
+      const m = css.match(/\.layout-sep-h::before\s*\{[^}]*width:\s*(\d+)px/);
       expect(m, "命中区宽度必须显式给出").toBeTruthy();
       expect(Number(m![1]), "命中区至少 7px（原先是 5px 兼当视觉条）").toBeGreaterThanOrEqual(7);
-      expect(sep, "命中区保持透明，视觉线交给伪元素").toContain("background: transparent");
       expect(css, "悬停高亮落在伪元素上").toMatch(/\.layout-sep:hover::after/);
       expect(css, "细线由伪元素画").toMatch(/\.layout-sep-h::after\s*\{/);
     });
@@ -608,15 +610,16 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     const sep = globalCss.match(/\.layout-sep\s*\{[^}]*\}/)?.[0] ?? "";
     expect(sep, "分屏分割条基准样式应存在").toBeTruthy();
 
-    // 两个分隔条的命中区宽度必须一致
-    const wResizer = resizer.match(/flex:\s*0 0 (\d+)px/)?.[1];
-    const wSep = sep.match(/flex:\s*0 0 (\d+)px/)?.[1];
-    expect(wResizer, "大纲分隔条宽度必须显式给出").toBeTruthy();
-    expect(wResizer, "大纲与分屏分隔条宽度必须一致").toBe(wSep);
+    // B60：两条分隔条都改为**不占布局**（flex 基准 0），命中区改由 ::before 向两侧溢出。
+    // 原先 7px 的透明占位会把两侧内容撑开、中间露出祖先底色 —— 用户看到的就是「粗带」。
+    expect(resizer, "大纲分隔条不得占布局宽度").toMatch(/flex:\s*0 0 0/);
+    expect(sep, "分屏分隔条不得占布局宽度").toMatch(/flex:\s*0 0 0/);
 
-    // 视觉线走伪元素：命中区透明 + ::after 画 2px 常显 border 色
-    expect(resizer, "命中区必须透明（视觉线交给伪元素）").toContain("background: transparent");
-    expect(sep, "命中区必须透明（视觉线交给伪元素）").toContain("background: transparent");
+    // 命中区宽度必须一致（B53 起的「细线 + 宽命中区」约定；宽度从元素搬到 ::before）
+    const hitResizer = previewCss.match(/\.toc-resizer::before\s*\{[^}]*width:\s*(\d+)px/)?.[1];
+    const hitSep = globalCss.match(/\.layout-sep-h::before\s*\{[^}]*width:\s*(\d+)px/)?.[1];
+    expect(hitResizer, "大纲分隔条命中区宽度必须显式给出").toBeTruthy();
+    expect(hitResizer, "大纲与分屏分隔条命中区宽度必须一致").toBe(hitSep);
     const line = previewCss.match(/\.toc-resizer::after\s*\{[^}]*\}/)?.[0] ?? "";
     expect(line, "大纲分隔条细线必须由伪元素画").toContain("background: var(--sep-line)");
     // 分屏分隔条：颜色在共享的 .layout-sep::after，几何按方向类定位
@@ -696,10 +699,13 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
       expect(block, `${name} 主题必须有 --drop-fill`).toContain("--drop-fill:");
     }
 
-    // S2/S3 落点高亮：纯半透明无边框 + 70ms 位移 / 150ms opacity 过渡
+    // S3 落点高亮过渡（B60 保留）：70ms 位移 / 150ms opacity（VS Code editordroptarget.css）
     const preview = css.match(/\.split-preview::after\s*\{[^}]*\}/)?.[0] ?? "";
     expect(preview, "填充走 --drop-fill").toContain("background: var(--drop-fill)");
-    expect(preview, "必须去掉 2px 实色描边").not.toMatch(/border:\s*2px solid/);
+    // B60：描边回来了 —— 去掉描边后落点边界看不清，用户要求换回 B59 之前的浅蓝观感。
+    // 描边与填充**同源**（都走 --drop-fill），叠加成约 @0.39，改主题不会只改一半。
+    expect(preview, "描边必须与填充同源").toMatch(/border:\s*2px solid var\(--drop-fill\)/);
+    expect(preview, "圆角 4px").toMatch(/border-radius:\s*4px/);
     expect(preview, "位移过渡 70ms").toMatch(/70ms/);
     expect(preview, "不透明度过渡 150ms").toMatch(/150ms/);
     expect(css, "基础态 opacity:0，靠 .show 点亮").toMatch(
@@ -713,6 +719,62 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(sv, "角手柄双类 start/end（对齐 VS Code）").toMatch(
       /layout-corner \$\{atStart \? "start" : "end"\}/,
     );
+  });
+
+  it("B60 分隔条改细 + 落点回退浅蓝 + 对齐联动（静态契约）", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const previewCss = readFileSync("src/styles/preview.css", "utf-8");
+    const sv = readFileSync("src/shell/splitview.ts", "utf-8");
+
+    // ① 分隔条不占布局（对齐 VS Code sash 的浮层做法）。
+    // B59 的 flex:0 0 7px 透明占位会撑开两侧内容、露出祖先底色 = 视觉上的粗带。
+    expect(css, "分屏分隔条不占布局").toMatch(/\.layout-sep\s*\{[^}]*flex:\s*0 0 0/);
+    expect(previewCss, "大纲分隔条同款（B28）").toMatch(/\.toc-resizer\s*\{[^}]*flex:\s*0 0 0/);
+    // 命中区搬到 ::before，向两侧各溢出 3.5px（共 7px）
+    expect(css, "竖线命中区 7px 宽").toMatch(/\.layout-sep-h::before\s*\{[^}]*width:\s*7px/);
+    expect(css, "横线命中区 7px 高").toMatch(/\.layout-sep-v::before\s*\{[^}]*height:\s*7px/);
+    expect(previewCss, "大纲命中区 7px 宽（同款）").toMatch(
+      /\.toc-resizer::before\s*\{[^}]*width:\s*7px/,
+    );
+    // 视觉线：静息 1px（VS Code editorGroup.border），激活 4px（--vscode-sash-size）
+    expect(css, "静息线 1px").toMatch(/\.layout-sep-h::after\s*\{[^}]*width:\s*1px/);
+    expect(css, "静息线 1px（横线）").toMatch(/\.layout-sep-v::after\s*\{[^}]*height:\s*1px/);
+    expect(css, "激活涨到 4px").toMatch(
+      /\.layout-sep-h:hover::after,[\s\S]{0,160}?\{\s*width:\s*4px/,
+    );
+    expect(css, "激活涨到 4px（横线）").toMatch(
+      /\.layout-sep-v:hover::after,[\s\S]{0,160}?\{\s*height:\s*4px/,
+    );
+    expect(previewCss, "大纲分隔条同款涨到 4px").toMatch(
+      /\.toc-resizer:hover::after,[\s\S]{0,120}?width:\s*4px/,
+    );
+    // 角手柄改为骑在界线上（分隔条主轴尺寸已为 0，原先 top:0/left:0 会偏到一侧）
+    expect(css, "横线上的角手柄骑线").toMatch(
+      /\.layout-sep-v\s*>\s*\.layout-corner\s*\{[^}]*top:\s*-4px/,
+    );
+    expect(css, "竖线上的角手柄骑线").toMatch(
+      /\.layout-sep-h\s*>\s*\.layout-corner\s*\{[^}]*left:\s*-4px/,
+    );
+
+    // ② 落点回退浅蓝：accent 系（深 #4c9ffe / 浅 #0969da）@0.22，不再用 VS Code 的灰
+    const darkTheme = css.match(/:root\[data-theme="dark"\]\s*\{[\s\S]*?\n\}/)?.[0] ?? "";
+    const lightTheme = css.match(/:root\[data-theme="light"\]\s*\{[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(darkTheme, "深色落点为 accent 浅蓝").toContain("--drop-fill: rgba(76, 159, 254, 0.22)");
+    expect(lightTheme, "浅色落点为 accent 浅蓝").toContain("--drop-fill: rgba(9, 105, 218, 0.22)");
+    expect(darkTheme, "不得残留 VS Code 的深灰落点").not.toContain("rgba(83, 89, 93, 0.5)");
+
+    // ③ 对齐联动：注册表 + 查找 + 双击复位转发（对标 sash.ts 的 linkedSash）
+    expect(sv, "登记真实分隔条").toMatch(/sashRegistry\.push\(/);
+    expect(sv, "按同向 + 中线容差查找对齐项").toMatch(/function alignedSashesOf/);
+    expect(sv, "拖拽中同步联动目标").toMatch(/for \(const l of links\) applyTarget/);
+    expect(sv, "松手回写联动目标").toMatch(/for \(const l of links\) l\.target\.commit/);
+    expect(sv, "双击复位转发给联动条（sash.ts:622）").toMatch(
+      /for \(const l of mode === "corner" \? \[\] : alignedSashesOf\(handle, mode\)\)/,
+    );
+    expect(sv, "角手柄不参与联动").toMatch(
+      /mode === "corner" \? \[\] : alignedSashesOf\(handle, mode\)/,
+    );
+    expect(css, ".linked 高亮（悬停可见的联动提示）").toMatch(/\.layout-sep\.linked::after/);
   });
 
   it("B30 查找栏必须可关闭（[hidden] 不得被 display:flex 覆盖）且预览态接线齐全", () => {

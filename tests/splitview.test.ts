@@ -219,6 +219,88 @@ describe("正交角手柄（B59 O7）", () => {
   });
 });
 
+describe("对齐联动（B60：对标 VS Code 2x2 的 linkedSash）", () => {
+  // 2x2：上下两行，每行左右两栏 → 两条**竖**分隔条在同一 x 上
+  const GRID: LayoutNode = {
+    kind: "split",
+    dir: "v",
+    ratio: 0.5,
+    a: { kind: "split", dir: "h", ratio: 0.5, a: leaf(1), b: leaf(2) },
+    b: { kind: "split", dir: "h", ratio: 0.5, a: leaf(3), b: leaf(4) },
+  };
+
+  function stub(el: HTMLElement, r: DOMRect): void {
+    el.getBoundingClientRect = () => r;
+  }
+
+  /** 上下两行容器 + 两条竖分隔条；secondX = null 表示第二条错开（不联动） */
+  function mountGrid(secondX: number | null = 200) {
+    const m = mount(GRID);
+    // 只取两个「行容器」（.layout-h）；外层 .layout-v 是它们的父，排在文档序最前
+    const [top, bottom] = Array.from(
+      m.root.querySelectorAll<HTMLElement>(".layout-split.layout-h"),
+    ) as [HTMLElement, HTMLElement];
+    stub(top, rect(0, 0, 400, 150));
+    stub(bottom, rect(0, 150, 400, 150));
+    const [sep1, sep2] = Array.from(
+      m.root.querySelectorAll<HTMLElement>(".layout-sep-h"),
+    ) as HTMLElement[];
+    stub(sep1, rect(198, 0, 4, 150)); // 中线 x=200
+    stub(sep2, rect((secondX ?? 0) - 2, 150, 4, 150));
+    return { ...m, sep1, sep2 };
+  }
+
+  it("两条竖线位置一致 → 拖一条，另一条跟着走并各自回写比例", () => {
+    const { root, sep1, sep2, onRatioChange } = mountGrid();
+    sep1.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    expect(sep2.classList.contains("resizing"), "联动的那条也要高亮").toBe(true);
+
+    document.dispatchEvent(
+      new MouseEvent("mousemove", { bubbles: true, clientX: 300, clientY: 0 }),
+    );
+    const panels = Array.from(root.querySelectorAll<HTMLElement>(".layout-panel"));
+    expect(panels[0].style.flexBasis, "上行左栏跟到 75%").toBe("75%");
+    expect(panels[2].style.flexBasis, "下行左栏同步跟到 75%").toBe("75%");
+
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 300, clientY: 0 }));
+    expect(onRatioChange).toHaveBeenCalledWith([0], 0.75);
+    expect(onRatioChange).toHaveBeenCalledWith([1], 0.75);
+    expect(sep2.classList.contains("resizing"), "松手后清高亮").toBe(false);
+  });
+
+  it("位置错开（中线差 > 2px）的两条不联动", () => {
+    const { root, sep1, onRatioChange } = mountGrid(300);
+    sep1.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    document.dispatchEvent(
+      new MouseEvent("mousemove", { bubbles: true, clientX: 300, clientY: 0 }),
+    );
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 300, clientY: 0 }));
+
+    const panels = Array.from(root.querySelectorAll<HTMLElement>(".layout-panel"));
+    expect(panels[0].style.flexBasis).toBe("75%");
+    expect(panels[2].style.flexBasis, "错开的一条保持原比例").toBe("50%");
+    expect(onRatioChange).toHaveBeenCalledWith([0], 0.75);
+    for (const call of onRatioChange.mock.calls) {
+      expect(call[0], "不得回写错开分隔条的路径").not.toEqual([1]);
+    }
+  });
+
+  it("悬停一条 → 对齐的另一条也高亮（.linked），移开即撤", () => {
+    const { sep1, sep2 } = mountGrid();
+    sep1.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(sep2.classList.contains("linked")).toBe(true);
+    sep1.dispatchEvent(new MouseEvent("mouseleave"));
+    expect(sep2.classList.contains("linked")).toBe(false);
+  });
+
+  it("双击复位联动（对标 sash.ts:622 —— onDidReset 转发给 linkedSash）", () => {
+    const { sep1, onRatioChange } = mountGrid();
+    sep1.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(onRatioChange).toHaveBeenCalledWith([0], 0.5);
+    expect(onRatioChange).toHaveBeenCalledWith([1], 0.5);
+  });
+});
+
 describe("拖拽落点 Alt（B59 O5）", () => {
   function dragTo(x: number, y: number, altKey: boolean): Mounted {
     const m = mount(leaf(1));

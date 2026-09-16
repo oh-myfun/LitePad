@@ -207,6 +207,26 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   - **空面板自动收起**（O8）**早在 B45 前就有**：`closeTabById` / `moveTabToPanel` /
     `splitPanelWithTab` 三处都在「源面板空了且非唯一」时调 `disposePanel`，
     而 `layout.ts` 的 `removePanel` + `promoteSibling` 的 ratio 补偿就是「邻居吃满」。
+  - **B60：分隔条改成「不占布局」的浮层**（用户反馈「有点粗」）。根因不是线宽而是**占位**：
+    `flex: 0 0 7px` 的透明空档把两侧撑开、露出祖先底色（标签栏行上是 `--bg-status` vs `--bg`），
+    看着就是一条 7px 粗带。VS Code 的 sash 是 absolute 浮层、完全不占位。
+    现在：元素 `flex: 0 0 0` → **主轴尺寸 0、交叉轴仍 stretch 成满长**（所以
+    `.layout-sep-h::before` 敢写 `top:0;bottom:0`、`.layout-sep-v::before` 敢写 `left:0;right:0`）；
+    7px 命中区搬到 `::before` 向两侧各溢出 3.5px；视觉线 `::after` 静息 1px、激活 4px。
+    ⚠️ **角手柄必须跟着改成骑线**（`top/left: -4px` + 8px），原先 `top:0/left:0 + 7px`
+    是贴着已经消失的 7px 带摆的。
+  - **B60：对齐联动**（对标 VS Code 2x2 的 `linkedSash`）：`sashRegistry`（真实分隔条，
+    角手柄不登记）+ `centerOf()` + `alignedSashesOf(handle, dir)`，判定是
+    **同向 + 中线差 ≤ 2px**（比 VS Code 的「2x2 且首子尺寸相等」更通用，能覆盖 3×2 网格）。
+    转发三件事：`onMove` 同步 `applyTarget`、`onUp` 各自 `commit`、`dblclick` 一并复位
+    （`sash.ts:622` 的 `_onDidReset` 也转发）；还有 `mouseenter/mouseleave` → `.linked`
+    让联动在按下之前就可见（`sash.ts:629-648`）。**角手柄 `links = []`**（双轴不参与）。
+    ⚠️ `sashRegistry` 必须在 `renderSplitview` 里清空 —— 否则拿已脱离文档的旧句柄算对齐时
+    `centerOf` 恒为 0，会误判成「全部对齐」。
+  - **B60：落点高亮回退浅蓝**。`--drop-fill` 改回 accent 系 @0.22（深 `#4c9ffe` / 浅 `#0969da`），
+    `::after` 加回 `border: 2px solid var(--drop-fill)` + 4px 圆角 —— B59 照搬 VS Code 的
+    `dropBackground`（深灰@0.5 / 浅蓝@0.18）在 LitePad 上落点边界看不清。
+    ⚠️ **填充与描边必须同源**（都走 `--drop-fill`），否则改主题只改一半。
 - **弹层的两种选中态别混用**：`checked`（打 ✓，语义是「开关」）vs `active`（整行走
   `.menu-item-current`，语义是「你当前在这儿」）。
   ⚠️ 折叠列表是 `active` 语义的**唯一调用方**，已随 B53 删除 ——

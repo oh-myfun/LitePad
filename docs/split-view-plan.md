@@ -157,3 +157,57 @@
 `regressions.test.ts` 的 B28 两条断言随线色变量更名同步更新。全量 **341 vitest + 22 cargo** 全绿。
 
 ⚠️ **视觉确认需在桌面环境**（沙箱内 WebView2 起不来）：尤其 **S2 落点填充色**与 **O7 角手柄手感**。
+
+---
+
+## 七、B60 用户反馈三项（分隔条变细 / 落点回退浅蓝 / 对齐联动）
+
+用户原话：「分割条有点粗（参考 vscode 样式）。分屏预览颜色还是用之前的浅蓝色。
+如果两条竖分割线位置一致时要能同时调整上下两根竖分割线（vscode 逻辑）。」
+
+### ① 分隔条改细 —— 根因是「占位」不是「线宽」
+
+B59 的 `.layout-sep` 是 `flex: 0 0 7px` 的**透明占位**：线本身只有 2px，但 7px 的空档
+把两侧内容撑开，中间露出祖先底色（标签栏行上是 `--bg-status` 与 `--bg` 之差），
+于是在标签栏那一横排看起来就是一条 **7px 粗带**。VS Code 的 sash 是 **absolute 浮层、
+完全不占位**（`sash.css`，`--vscode-sash-size: 4px`），所以边界永远只是一条细线。
+
+改法（分屏 `.layout-sep` 与大纲 `.toc-resizer` 同步，B28 同款约定）：
+
+- 元素本身 `flex: 0 0 0`（**主轴尺寸 0**；交叉轴仍 stretch 成满长，所以
+  `.layout-sep-h::before` 能写 `top:0;bottom:0`、`.layout-sep-v::before` 能写 `left:0;right:0`）。
+- 7px 命中区搬到 `::before`，向两侧各溢出 3.5px，压在相邻面板之上（B53 的宽命中区保留）。
+- 视觉线由 `::after` 画：静息 **1px**（VS Code `editorGroup.border` 就是 1px），
+  悬停/拖拽/联动涨到 **4px**（= `--vscode-sash-size`）。
+- 角手柄随之从「贴着 7px 带摆」（`top:0` / `left:0`）改为**骑在界线上**（`-4px` + 8px）。
+
+### ② 落点预览回退浅蓝
+
+B59 照搬的 VS Code `editorGroup.dropBackground`（深灰 `#53595D`@0.5 / 浅蓝 `#2677CB`@0.18）
+在 LitePad 上落点边界几乎看不出来。回退到 B59 之前的观感：**accent @0.22 填充 +
+同色 2px 描边 + 4px 圆角**；描边压在填充上叠加成约 @0.39，形成「淡蓝底 + 略深蓝边」。
+填充与描边**同源**（都走 `--drop-fill`），改主题不会只改一半。
+过渡（70ms 位移 / 150ms opacity）保留 —— 那是 B59 从 `editordroptarget.css` 搬来的，有效。
+
+### ③ 对齐联动（对标 VS Code 2x2 的 linkedSash）
+
+上游依据：
+
+- `gridview.ts:715-722` 的 `trySet2x2`：两个 2 子节点分支且首子尺寸相等时互为 `linkedSash`。
+- `sash.ts:342-347`：「A linked sash will be forwarded the same user interactions and events
+  so it moves exactly the same way as this sash. Useful in 2x2 grids.」
+- `sash.ts:622-623`：`_onDidReset` 也转发给 linkedSash（**双击复位要联动**）。
+- `sash.ts:629-648`：`onMouseEnter/onMouseLeave` 同样转发（**悬停高亮要联动**）。
+
+LitePad 的判定比 VS Code 更通用：不要求「2x2 且尺寸相等」，而是**同向 + 中线差 ≤ 2px**
+（`sashRegistry` + `centerOf()` + `alignedSashesOf()`，容差 `ALIGN_TOL`）。因为用户说的是
+「两条竖分割线**位置一致**时」，中线判定最直接，且能覆盖 3×2 等多行网格。
+
+转发三件事：拖拽中同步 `applyTarget`、松手各自 `commit`、双击复位。**角手柄不参与**
+（它是双轴操作，`links = []`）。
+
+⚠️ `sashRegistry` 必须在 `renderSplitview` 里清空 —— 否则会拿已脱离文档的旧句柄算对齐
+（`centerOf` 恒为 0，误判成「全部对齐」）。
+
+**测试**：`tests/splitview.test.ts` 新增 4 条（联动生效 / 错开不联动 / 悬停 `.linked` /
+双击复位联动）+ `regressions.test.ts` 新增 B60 静态块。全量 **346 vitest + 22 cargo** 全绿。

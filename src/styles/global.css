@@ -64,9 +64,12 @@
      大纲 .toc-resizer 共用，B28 要求两者同款）。深色取 VS Code editorGroup.border
      的 #444444 档 —— 比通用边框略清晰，分屏边界更明确。 */
   --sep-line: #444444;
-  /* 拖拽落点高亮的填充色（B59，S2）：照搬 VS Code editorGroup.dropBackground ——
-     深色是半透明灰（#53595D @ 0.5），压在深色编辑区上只是「微微泛白」。 */
-  --drop-fill: rgba(83, 89, 93, 0.5);
+  /* 拖拽落点高亮的填充色（B60 回退为**浅蓝**）：B59 照搬 VS Code 的
+     editorGroup.dropBackground（深灰 @0.5 / 浅蓝 @0.18），实测在 LitePad 上落点
+     边界几乎看不出来，用户明确要求换回 B59 之前的浅蓝。取 accent @0.22 —— 填充与
+     2px 描边同色，描边压在填充上叠加成约 @0.39，形成「淡蓝底 + 略深蓝边」。
+     ⚠️ 填充/描边必须同源（都走 --drop-fill），否则改主题只改一半。 */
+  --drop-fill: rgba(76, 159, 254, 0.22);
 }
 
 :root[data-theme="light"] {
@@ -119,9 +122,9 @@
      但那在 LitePad 更密的布局里几乎看不见，故不照搬（同 tooltip 的 max-width 一样，
      属有意偏离，已记录在此）。 */
   --sep-line: #dcdfe3;
-  /* 拖拽落点高亮填充（B59，S2）：VS Code 浅色档是**半透明蓝**（#2677CB @ 0.18），
-     不是灰 —— 在白底编辑区上蓝色提示更醒目。 */
-  --drop-fill: rgba(38, 119, 203, 0.18);
+  /* 拖拽落点高亮填充（B60 回退浅蓝）：浅色档取 accent(#0969da) @0.22，同深色档。
+     B59 曾用 VS Code 的 #2677CB @0.18 —— 偏灰且太淡，落点不醒目。 */
+  --drop-fill: rgba(9, 105, 218, 0.22);
 }
 
 /* ---------- 滚动条：全应用统一 + 随深浅色联动 ----------
@@ -1176,21 +1179,48 @@ button:focus-visible {
   flex-direction: column;
 }
 
-/* 分隔条（B53 改「细线 + 宽命中区」；B59 补 active / 极限光标 / 角手柄）：
-   视觉上仍是一条 2px 细线，但可抓取区域有 7px —— 原先 5px 的可视条同时充当命中区，
-   拖动时容易抓空。VS Code 的 sash 同样把命中区做得比视觉宽。 */
+/* 分隔条（B60：**不占布局**的浮层，对齐 VS Code sash）。
+   B59 之前是 `flex: 0 0 7px` 的透明占位 —— 它本身看不见，却把两侧内容**撑开** 7px，
+   中间露出祖先底色（标签栏是 --bg-status、编辑区是 --bg），于是在标签栏那一横排
+   看起来就是一条 7px 粗带。VS Code 的 sash 是 absolute 浮层、完全不占位
+   （sash.css，--vscode-sash-size: 4px），所以边界永远只是一条细线。
+   这里两者兼得：元素本身 flex 基准 0（不占位），7px 命中区由 ::before 向两侧各溢出
+   3.5px 叠在邻居之上，视觉线由 ::after 画 —— 静息 1px（VS Code editorGroup.border
+   就是 1px），悬停/拖拽/联动才涨到 4px（= --vscode-sash-size）。 */
 .layout-sep {
-  flex: 0 0 7px;
-  background: transparent;
+  flex: 0 0 0;
   position: relative;
   z-index: 5;
+}
+
+/* 命中区（不可见）：向两侧各溢出 3.5px，压在相邻面板之上 */
+.layout-sep::before {
+  content: "";
+  position: absolute;
 }
 
 .layout-sep::after {
   content: "";
   position: absolute;
   background: var(--sep-line);
-  transition: background var(--transition);
+  transition:
+    background var(--transition),
+    width var(--transition),
+    height var(--transition);
+}
+
+.layout-sep-h::before {
+  top: 0;
+  bottom: 0;
+  left: -3.5px;
+  width: 7px;
+}
+
+.layout-sep-v::before {
+  left: 0;
+  right: 0;
+  top: -3.5px;
+  height: 7px;
 }
 
 .layout-sep-h {
@@ -1218,24 +1248,38 @@ button:focus-visible {
 .layout-sep-h::after {
   top: 0;
   bottom: 0;
-  left: 50%;
-  width: 2px;
+  left: 0;
+  width: 1px;
   transform: translateX(-50%);
 }
 
 .layout-sep-v::after {
   left: 0;
   right: 0;
-  top: 50%;
-  height: 2px;
+  top: 0;
+  height: 1px;
   transform: translateY(-50%);
 }
 
-/* B59 S1：悬停与**拖拽中**同色。只写 :hover 时，鼠标一旦滑出 7px 细线高亮就消失，
-   看起来像「没抓住」。 */
+/* B59 S1：悬停与**拖拽中**同色。只写 :hover 时，鼠标一旦滑出命中区高亮就消失，
+   看起来像「没抓住」。
+   B60：`.linked` = 与本条对齐联动的另一条（对标 sash.ts:629-648 的 onMouseEnter
+   转发），悬停一组里任意一条，另一条同时变粗染色 —— 联动关系在按下之前就可见。
+   静息 1px → 激活 4px，即 VS Code 的 --vscode-sash-size。 */
 .layout-sep:hover::after,
-.layout-sep.resizing::after {
+.layout-sep.resizing::after,
+.layout-sep.linked::after {
   background: var(--accent);
+}
+.layout-sep-h:hover::after,
+.layout-sep-h.resizing::after,
+.layout-sep-h.linked::after {
+  width: 4px;
+}
+.layout-sep-v:hover::after,
+.layout-sep-v.resizing::after,
+.layout-sep-v.linked::after {
+  height: 4px;
 }
 
 /* B59 O7 正交角手柄：两条互相垂直的分隔条相接处（T/十字口）的 8px 手柄，
@@ -1246,10 +1290,12 @@ button:focus-visible {
   z-index: 6;
   cursor: nwse-resize;
 }
-/* 水平分隔条（.layout-sep-v 是横线）→ 相接端在左右两侧 */
+/* 水平分隔条（.layout-sep-v 是横线）→ 相接端在左右两侧。
+   B60：分隔条已不占位（主轴尺寸 0），手柄必须**骑在界线上**（top:-4px + 高 8px），
+   原先 top:0 + 高 7px 是贴着已废弃的 7px 占位带摆的。 */
 .layout-sep-v > .layout-corner {
-  top: 0;
-  height: 7px;
+  top: -4px;
+  height: 8px;
   width: 8px;
 }
 .layout-sep-v > .layout-corner.start {
@@ -1258,10 +1304,10 @@ button:focus-visible {
 .layout-sep-v > .layout-corner.end {
   right: -4px;
 }
-/* 垂直分隔条（.layout-sep-h 是竖线）→ 相接端在上下两端 */
+/* 垂直分隔条（.layout-sep-h 是竖线）→ 相接端在上下两端（同 B60） */
 .layout-sep-h > .layout-corner {
-  left: 0;
-  width: 7px;
+  left: -4px;
+  width: 8px;
   height: 8px;
 }
 .layout-sep-h > .layout-corner.start {
@@ -1305,9 +1351,13 @@ button:focus-visible {
   content: "";
   position: absolute;
   inset: 0;
-  /* B59 S2：纯半透明填充、**无边框**，照搬 VS Code editorGroup.dropBackground
-     （深色半透明灰 / 浅色半透明蓝），比原先「accent 实色 + 2px 描边 + 圆角」更柔和。 */
+  /* B60：填充与描边同源（accent @0.22 的浅蓝）。描边压在填充上叠加成约 @0.39，
+     落点边界比纯无边框填充清楚得多（B59 去掉描边后用户反馈「看不出落在哪」）。
+     位移/淡入过渡仍是 B59 从 VS Code editordroptarget.css 搬来的 70ms / 150ms。 */
   background: var(--drop-fill);
+  border: 2px solid var(--drop-fill);
+  border-radius: 4px;
+  box-sizing: border-box;
   opacity: 0;
   transition:
     top 70ms ease-out,

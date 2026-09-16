@@ -134,7 +134,8 @@
   同时按 VS Code：标签先收缩再滚动（`flex:0 1 auto` + min-width）、活动标签顶部 accent 条
   （**必须用 `::before`**，`box-shadow` 会被 `.tab-flash` 关键帧盖掉）、●/× 共用固定尺寸槽位
   `.tab-action`（平时 ● 或空，悬停才变 ×）、面板操作栏 3 个矢量图标、焦点面板降亮度、
-  分隔条 7px 透明命中区 + `::after` 细线（`.toc-resizer` 必须同款，B28 约定）。
+  分隔条 7px 命中区（B53 起「细线 + 宽命中区」，**B60 改为不占布局**：元素 `flex: 0 0 0`、
+  命中区搬到 `::before` 向两侧溢出、视觉线静息 1px / 激活 4px；`.toc-resizer` 必须同款，B28 约定）。
   ⚠️ 三个坑：① 全量重绘会重置 `scrollLeft`，必须存/还原 `prevScroll`；
   ② `.tab-insert` 的 `left` 走内容坐标，`stripInsertInfo` 必须 `+ scrollLeft`
   （原用例 `scrollLeft=0` 正好掩盖）；③ 原生横向滚动条占 3px，必须**恒定预留**
@@ -258,8 +259,21 @@
 - 待办：桌面环境补拍截图（M4 的 keymap.png / command-palette.png + B51 的
   main.png / preferences.png + **B53–B59 的 main.png**：标签栏（含文件类型图标）/面板操作栏/
   分隔条/分屏落点高亮都变了；B58 后**任一控件的悬停提示观感也变了**，可选补一张 tooltip 演示图）。
-- ⚠️ **B59 观感项待桌面环境确认**：分屏落点填充色（深色灰 #53595D@0.5 / 浅色蓝 #2677CB@0.18）
-  与**正交角手柄**（T 型相接处斜拖两条）的手感；这两项是这次唯一「需要眼睛看」的部分。
+- **B60（0917）用户反馈三项**：① **分隔条改细** —— 根因不是线宽而是**占位**：
+  `flex: 0 0 7px` 的透明空档撑开两侧、露出祖先底色（标签栏行 `--bg-status` vs `--bg`），
+  看着就是 7px 粗带；改法 = 元素 `flex: 0 0 0`（**主轴 0、交叉轴仍 stretch 满长**）+
+  7px 命中区交给 `::before` 向两侧各溢出 3.5px + `::after` 静息 1px / 激活 4px（VS Code
+  sash 是 absolute 浮层不占位）。角手柄随之改成**骑线**（`-4px` + 8px）。
+  ② **落点预览回退浅蓝** —— `--drop-fill` 回到 accent @0.22（深 `#4c9ffe` / 浅 `#0969da`）
+  + 同色 2px 描边 + 4px 圆角；B59 照搬的 VS Code `dropBackground` 在 LitePad 上边界看不清。
+  填充与描边**同源**（都走 `--drop-fill`）。③ **对齐联动**（对标 VS Code 2x2 的
+  `linkedSash`，`gridview.ts:715` / `sash.ts:342,622,629`）—— `sashRegistry` +
+  `alignedSashesOf()`，判定 **同向 + 中线差 ≤ 2px**（比 VS Code 更通用，覆盖 3×2）；
+  转发拖拽/回写/双击复位 + 悬停 `.linked` 高亮；角手柄不参与。
+  ⚠️ `sashRegistry` 必须在 `renderSplitview` 清空（旧句柄 `centerOf` 恒 0 → 误判全对齐）。
+  测试 346 vitest + 22 cargo；逐条依据见 `docs/split-view-plan.md` 第七节。
+- ⚠️ **B60 观感项待桌面环境确认**：1px 静息线是否偏细（VS Code 也是 1px）、4px 激活线宽、
+  角手柄骑线后是否好抓、浅蓝落点在深色下是否够醒目；**对齐联动**需真机拖一次 2×2 验证。
 - 待清理：`menu.ts` 的 `MenuItem.active` / `.menu-item-current`（B53 后无使用者）。
 - 待定：是否发 **v0.3.1**（B55–B59 都改了界面；B54 也留了同一问题未决）。
 - M4 之后：M5 规划未定；候选见 DESIGN.md；观感/交互改进可对照 `docs/vscode-reference/`。

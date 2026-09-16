@@ -224,30 +224,41 @@
   background: var(--bg-elevated, #fafafa);
 }
 
-/* 大纲宽度分隔条：与分屏分割条 .layout-sep 同款（B53 起同为「细线 + 宽命中区」；
-   B59 起线色统一走 --sep-line）—— 视觉是一条 2px var(--sep-line) 细线，
-   可抓取区域 7px；悬停/拖拽高亮 accent（走全局主题变量以随深浅色联动）。 */
+/* 大纲宽度分隔条：与分屏分割条 .layout-sep 同款（B28 要求改一处必须改另一处）。
+   B60 随 .layout-sep 一起改为**不占布局**：元素 flex 基准 0，7px 命中区由 ::before
+   向两侧各溢出 3.5px，视觉线由 ::after 画（静息 1px，悬停/拖拽 4px）。
+   原先 `flex: 0 0 7px` 的透明占位会把大纲面板与编辑区撑开 7px、露出祖先底色。 */
 .toc-resizer {
-  flex: 0 0 7px;
+  flex: 0 0 0;
   cursor: col-resize;
-  background: transparent;
   position: relative;
   z-index: 5;
+}
+.toc-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3.5px;
+  width: 7px;
 }
 .toc-resizer::after {
   content: "";
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 50%;
-  width: 2px;
+  left: 0;
+  width: 1px;
   transform: translateX(-50%);
   background: var(--sep-line);
-  transition: background var(--transition, 0.12s);
+  transition:
+    background var(--transition, 0.12s),
+    width var(--transition, 0.12s);
 }
 .toc-resizer:hover::after,
 body.layout-dragging .toc-resizer::after {
   background: var(--accent, #06c);
+  width: 4px;
 }
 .toc-item {
   display: block;
