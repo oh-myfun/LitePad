@@ -224,9 +224,9 @@
   background: var(--bg-elevated, #fafafa);
 }
 
-/* 大纲宽度分隔条：与分屏分割条 .layout-sep 同款（B53 起同为「细线 + 宽命中区」）
-   —— 视觉是一条 2px var(--border) 细线，可抓取区域 7px；悬停/拖拽高亮 accent
-   （走全局主题变量以随深浅色联动）。 */
+/* 大纲宽度分隔条：与分屏分割条 .layout-sep 同款（B53 起同为「细线 + 宽命中区」；
+   B59 起线色统一走 --sep-line）—— 视觉是一条 2px var(--sep-line) 细线，
+   可抓取区域 7px；悬停/拖拽高亮 accent（走全局主题变量以随深浅色联动）。 */
 .toc-resizer {
   flex: 0 0 7px;
   cursor: col-resize;
@@ -242,7 +242,7 @@
   left: 50%;
   width: 2px;
   transform: translateX(-50%);
-  background: var(--border);
+  background: var(--sep-line);
   transition: background var(--transition, 0.12s);
 }
 .toc-resizer:hover::after,

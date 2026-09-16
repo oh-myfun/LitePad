@@ -54,6 +54,7 @@ FILES=(
   "src/vs/workbench/browser/parts/editor/editorAutoSave.ts"
   "src/vs/workbench/browser/parts/editor/editorConfiguration.ts"
   "src/vs/workbench/browser/parts/editor/editorDropTarget.ts"
+  "src/vs/workbench/browser/parts/editor/media/editordroptarget.css"
 
   # ---------- 网格布局 / 分屏 / 分隔条 / 滚动条 ----------
   "src/vs/base/browser/ui/grid/gridview.css"

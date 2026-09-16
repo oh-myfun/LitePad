@@ -618,10 +618,11 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(resizer, "命中区必须透明（视觉线交给伪元素）").toContain("background: transparent");
     expect(sep, "命中区必须透明（视觉线交给伪元素）").toContain("background: transparent");
     const line = previewCss.match(/\.toc-resizer::after\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(line, "大纲分隔条细线必须由伪元素画").toContain("background: var(--border)");
+    expect(line, "大纲分隔条细线必须由伪元素画").toContain("background: var(--sep-line)");
     // 分屏分隔条：颜色在共享的 .layout-sep::after，几何按方向类定位
+    // （B59 S5：线色从通用 --border 抽成 --sep-line，两条分隔条同步改并共用）
     const sepLine = globalCss.match(/\.layout-sep::after\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(sepLine, "分屏分隔条细线必须由伪元素画").toContain("background: var(--border)");
+    expect(sepLine, "分屏分隔条细线必须由伪元素画").toContain("background: var(--sep-line)");
     expect(globalCss, "横向分隔条的细线几何").toMatch(/\.layout-sep-h::after\s*\{/);
     expect(globalCss, "纵向分隔条的细线几何").toMatch(/\.layout-sep-v::after\s*\{/);
 
@@ -634,6 +635,83 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     const panel = previewCss.match(/\.toc-panel\s*\{[^}]*\}/)?.[0] ?? "";
     expect(panel, ".toc-panel 不得自带 border-right（与分隔条叠成双线）").not.toContain(
       "border-right",
+    );
+  });
+
+  it("B59 分屏对齐 VS Code：复位/极限光标/方向光标/角手柄/落点高亮（静态契约）", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const previewCss = readFileSync("src/styles/preview.css", "utf-8");
+    const sv = readFileSync("src/shell/splitview.ts", "utf-8");
+
+    // S1 拖拽中必须与 hover 同色（只写 :hover 时鼠标滑出 7px 细线就失色）
+    const sepHL = css.match(/\.layout-sep:hover::after,[\s\S]{0,80}?\{[^}]*\}/)?.[0] ?? "";
+    expect(sepHL, "拖拽中要加 .resizing 并保持高亮").toMatch(/\.layout-sep\.resizing::after/);
+    expect(sepHL, "高亮色为 accent").toMatch(/var\(--accent/);
+
+    // O2 极限光标（对标 sash.css 的 .minimum/.maximum）
+    expect(css, "水平分隔条到极限的光标").toMatch(/\.layout-sep-h\.at-min\s*\{[^}]*e-resize/);
+    expect(css, "水平分隔条到极限的光标").toMatch(/\.layout-sep-h\.at-max\s*\{[^}]*w-resize/);
+    expect(css, "垂直分隔条到极限的光标").toMatch(/\.layout-sep-v\.at-min\s*\{[^}]*s-resize/);
+    expect(css, "垂直分隔条到极限的光标").toMatch(/\.layout-sep-v\.at-max\s*\{[^}]*n-resize/);
+
+    // O7 角手柄：绝对定位的 8px 命中块，按分隔条朝向摆在两端
+    expect(css, "角手柄基准样式").toMatch(/\.layout-corner\s*\{[^}]*position:\s*absolute/);
+    expect(css, "横线上的角手柄在左右端").toMatch(
+      /\.layout-sep-v\s*>\s*\.layout-corner\.start\s*\{/,
+    );
+    expect(css, "横线上的角手柄在左右端").toMatch(/\.layout-sep-v\s*>\s*\.layout-corner\.end\s*\{/);
+    expect(css, "竖线上的角手柄在上下端").toMatch(
+      /\.layout-sep-h\s*>\s*\.layout-corner\.start\s*\{/,
+    );
+    expect(css, "竖线上的角手柄在上下端").toMatch(/\.layout-sep-h\s*>\s*\.layout-corner\.end\s*\{/);
+
+    // O3 方向光标：默认 col-resize（大纲/查找栏/水平分隔条都靠它），
+    // 只有垂直分隔条叠加 -v → row-resize（原实现恒为 col-resize，是 bug）
+    expect(css, "垂直分隔条拖拽时 row-resize").toMatch(
+      /body\.layout-dragging\.layout-dragging-v\s*\{[^}]*row-resize/,
+    );
+    expect(css, "角手柄拖拽时光标").toMatch(
+      /body\.layout-dragging\.layout-dragging-corner\s*\{[^}]*nwse-resize/,
+    );
+
+    // S4 缩放期间抑制面板内过渡（拖动不发飘）
+    expect(css, "缩放期间抑制过渡").toMatch(/body\.layout-dragging \.layout-panel \*/);
+
+    // S5 线色抽成 --sep-line，分屏与大纲两条分隔条共用（B28 要求同款），两套主题齐补
+    expect(css, "分屏分隔条线色走 --sep-line").toMatch(
+      /\.layout-sep::after\s*\{[^}]*background:\s*var\(--sep-line\)/,
+    );
+    expect(previewCss, "大纲分隔条线色同款").toMatch(
+      /\.toc-resizer::after\s*\{[^}]*background:\s*var\(--sep-line\)/,
+    );
+    const darkTheme = css.match(/:root\[data-theme="dark"\]\s*\{[\s\S]*?\n\}/)?.[0] ?? "";
+    const lightTheme = css.match(/:root\[data-theme="light"\]\s*\{[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(darkTheme, "深色主题块必须找到").toBeTruthy();
+    expect(lightTheme, "浅色主题块必须找到").toBeTruthy();
+    for (const [name, block] of [
+      ["dark", darkTheme],
+      ["light", lightTheme],
+    ] as const) {
+      expect(block, `${name} 主题必须有 --sep-line`).toContain("--sep-line:");
+      expect(block, `${name} 主题必须有 --drop-fill`).toContain("--drop-fill:");
+    }
+
+    // S2/S3 落点高亮：纯半透明无边框 + 70ms 位移 / 150ms opacity 过渡
+    const preview = css.match(/\.split-preview::after\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(preview, "填充走 --drop-fill").toContain("background: var(--drop-fill)");
+    expect(preview, "必须去掉 2px 实色描边").not.toMatch(/border:\s*2px solid/);
+    expect(preview, "位移过渡 70ms").toMatch(/70ms/);
+    expect(preview, "不透明度过渡 150ms").toMatch(/150ms/);
+    expect(css, "基础态 opacity:0，靠 .show 点亮").toMatch(
+      /\.split-preview\.show::after\s*\{[^}]*opacity:\s*1/,
+    );
+
+    // 接线：统一走 attachResize（双击复位 + 指针捕获 + 方向修饰类），角手柄双类写法
+    expect(sv, "双击复位接线").toMatch(/addEventListener\("dblclick"/);
+    expect(sv, "指针捕获（移出窗口不丢事件）").toMatch(/setPointerCapture/);
+    expect(sv, "垂直分隔条加方向修饰类").toMatch(/layout-dragging-v/);
+    expect(sv, "角手柄双类 start/end（对齐 VS Code）").toMatch(
+      /layout-corner \$\{atStart \? "start" : "end"\}/,
     );
   });
 

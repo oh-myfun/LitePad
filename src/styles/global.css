@@ -60,6 +60,13 @@
   --tip-key-fg: #cccccc;
   --tip-key-border: rgba(51, 51, 51, 0.6);
   --tip-key-bottom: rgba(68, 68, 68, 0.6);
+  /* 分隔条线色（B59，S5）：从通用 --border 里抽出来单独可调（分屏 .layout-sep 与
+     大纲 .toc-resizer 共用，B28 要求两者同款）。深色取 VS Code editorGroup.border
+     的 #444444 档 —— 比通用边框略清晰，分屏边界更明确。 */
+  --sep-line: #444444;
+  /* 拖拽落点高亮的填充色（B59，S2）：照搬 VS Code editorGroup.dropBackground ——
+     深色是半透明灰（#53595D @ 0.5），压在深色编辑区上只是「微微泛白」。 */
+  --drop-fill: rgba(83, 89, 93, 0.5);
 }
 
 :root[data-theme="light"] {
@@ -108,6 +115,13 @@
   --tip-key-fg: #555555;
   --tip-key-border: rgba(204, 204, 204, 0.4);
   --tip-key-bottom: rgba(187, 187, 187, 0.4);
+  /* 分隔条线色（B59，S5）：浅色**沿用原 --border 值**。VS Code 浅色档是 #E7E7E7，
+     但那在 LitePad 更密的布局里几乎看不见，故不照搬（同 tooltip 的 max-width 一样，
+     属有意偏离，已记录在此）。 */
+  --sep-line: #dcdfe3;
+  /* 拖拽落点高亮填充（B59，S2）：VS Code 浅色档是**半透明蓝**（#2677CB @ 0.18），
+     不是灰 —— 在白底编辑区上蓝色提示更醒目。 */
+  --drop-fill: rgba(38, 119, 203, 0.18);
 }
 
 /* ---------- 滚动条：全应用统一 + 随深浅色联动 ----------
@@ -1162,7 +1176,7 @@ button:focus-visible {
   flex-direction: column;
 }
 
-/* 分隔条（B53 改「细线 + 宽命中区」）：
+/* 分隔条（B53 改「细线 + 宽命中区」；B59 补 active / 极限光标 / 角手柄）：
    视觉上仍是一条 2px 细线，但可抓取区域有 7px —— 原先 5px 的可视条同时充当命中区，
    拖动时容易抓空。VS Code 的 sash 同样把命中区做得比视觉宽。 */
 .layout-sep {
@@ -1175,16 +1189,30 @@ button:focus-visible {
 .layout-sep::after {
   content: "";
   position: absolute;
-  background: var(--border);
+  background: var(--sep-line);
   transition: background var(--transition);
 }
 
 .layout-sep-h {
   cursor: col-resize;
 }
+/* B59 O2：拖到 10%/90% 极限时光标变形（对标 sash.css 的 .minimum/.maximum）——
+   否则拖到头毫无反馈，像是卡住。 */
+.layout-sep-h.at-min {
+  cursor: e-resize;
+}
+.layout-sep-h.at-max {
+  cursor: w-resize;
+}
 
 .layout-sep-v {
   cursor: row-resize;
+}
+.layout-sep-v.at-min {
+  cursor: s-resize;
+}
+.layout-sep-v.at-max {
+  cursor: n-resize;
 }
 
 .layout-sep-h::after {
@@ -1203,8 +1231,44 @@ button:focus-visible {
   transform: translateY(-50%);
 }
 
-.layout-sep:hover::after {
+/* B59 S1：悬停与**拖拽中**同色。只写 :hover 时，鼠标一旦滑出 7px 细线高亮就消失，
+   看起来像「没抓住」。 */
+.layout-sep:hover::after,
+.layout-sep.resizing::after {
   background: var(--accent);
+}
+
+/* B59 O7 正交角手柄：两条互相垂直的分隔条相接处（T/十字口）的 8px 手柄，
+   斜向拖动可**同时**改两条（对标 VS Code sash 的 orthogonal-drag-handle）。
+   手柄挂在对角那条分隔条的相接端上，按该分隔条的朝向摆放。 */
+.layout-corner {
+  position: absolute;
+  z-index: 6;
+  cursor: nwse-resize;
+}
+/* 水平分隔条（.layout-sep-v 是横线）→ 相接端在左右两侧 */
+.layout-sep-v > .layout-corner {
+  top: 0;
+  height: 7px;
+  width: 8px;
+}
+.layout-sep-v > .layout-corner.start {
+  left: -4px;
+}
+.layout-sep-v > .layout-corner.end {
+  right: -4px;
+}
+/* 垂直分隔条（.layout-sep-h 是竖线）→ 相接端在上下两端 */
+.layout-sep-h > .layout-corner {
+  left: 0;
+  width: 7px;
+  height: 8px;
+}
+.layout-sep-h > .layout-corner.start {
+  top: -4px;
+}
+.layout-sep-h > .layout-corner.end {
+  bottom: -4px;
 }
 
 .layout-panel {
@@ -1226,52 +1290,55 @@ button:focus-visible {
      该类必须实时正确 —— main.ts 的 markActivePanel 负责同步。 */
 }
 
-/* 分屏拖拽预览层（Xshell 式方向高亮） */
+/* 分屏拖拽预览层（Xshell 式方向高亮）。
+   B59：改为「常驻元素 + ::after 的 opacity 过渡」，让高亮在区域之间**平滑滑动**
+   （对标 VS Code 落点 overlay 的 70ms 位移 / 150ms opacity，见
+   docs/vscode-reference/.../editordroptarget.css）。基础态铺满（与 center 同形），
+   这样刚开始拖拽时不会从退化的小方块「飞」出来。 */
 .split-preview {
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 20;
-  display: none;
-}
-.split-preview.show {
-  display: block;
 }
 .split-preview::after {
   content: "";
   position: absolute;
-  background: var(--accent);
-  opacity: 0.22;
-  border: 2px solid var(--accent);
-  border-radius: 4px;
-  box-sizing: border-box;
+  inset: 0;
+  /* B59 S2：纯半透明填充、**无边框**，照搬 VS Code editorGroup.dropBackground
+     （深色半透明灰 / 浅色半透明蓝），比原先「accent 实色 + 2px 描边 + 圆角」更柔和。 */
+  background: var(--drop-fill);
+  opacity: 0;
+  transition:
+    top 70ms ease-out,
+    left 70ms ease-out,
+    right 70ms ease-out,
+    bottom 70ms ease-out,
+    opacity 150ms ease-out;
+}
+.split-preview.show::after {
+  opacity: 1;
 }
 .split-preview.zone-left::after {
-  left: 0;
-  top: 0;
-  bottom: 0;
   right: 50%;
 }
 .split-preview.zone-right::after {
-  right: 0;
-  top: 0;
-  bottom: 0;
   left: 50%;
 }
 .split-preview.zone-top::after {
-  left: 0;
-  right: 0;
-  top: 0;
   bottom: 50%;
 }
 .split-preview.zone-bottom::after {
-  left: 0;
-  right: 0;
-  bottom: 0;
   top: 50%;
 }
 .split-preview.zone-center::after {
   inset: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .split-preview::after {
+    transition: none;
+  }
 }
 
 .panel-head {
@@ -1472,9 +1539,27 @@ button:focus-visible {
   opacity: 1;
 }
 
+/* 拖拽分隔条期间的全局态：禁选 + 按方向给光标。
+   B59 O3：原先恒为 col-resize —— 上下分屏拖**垂直**分隔条时光标是错的。
+   这里默认 col-resize（水平分隔条 / 大纲 / 查找栏都是横向拖），
+   只有垂直分隔条拖拽才叠加 .layout-dragging-v → row-resize。 */
 body.layout-dragging {
   cursor: col-resize;
   user-select: none;
+}
+body.layout-dragging.layout-dragging-v {
+  cursor: row-resize;
+}
+body.layout-dragging.layout-dragging-corner {
+  cursor: nwse-resize;
+}
+
+/* B59 S4：缩放期间抑制布局内的过渡 —— 拖动时面板几何每次 mousemove 都在变，
+   再叠一层缓动会让拖动显得「发飘」。与 layout-dragging 同生命周期（开始加、结束移除），
+   不引入新的失败模式。 */
+body.layout-dragging .layout-panel,
+body.layout-dragging .layout-panel * {
+  transition: none !important;
 }
 
 /* 标签指针拖拽：抓取光标 + 禁止文本选区（指针拖拽没有原生 DnD 的光标/选区豁免） */

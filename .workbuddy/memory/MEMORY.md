@@ -219,6 +219,25 @@
   原生下拉覆盖不到自绘层）。
   新增 `tests/tooltip.test.ts`（20 条：纯函数 + DOM 行为）+ `regressions.test.ts` 的 B58 静态块。
 
+- **B59（0917）分屏操作与样式对齐 VS Code（用户选「C 完整对齐」）**：先出
+  `docs/split-view-plan.md`（13 项改进 + A/B/C 三档，逐条注上游出处），用户选档后实施。
+  ① **`splitview.ts`**：`attachDrag` → **`attachResize(handle, targets[], mode)`**
+  （targets = 一对兄弟元素 + 容器 + ratio 回写路径；普通分隔条 1 个、
+  **角手柄 2 个 → 斜向同时拖两条**）；`build` 改返回 `BuiltNode {el, split}` 以便挂角手柄；
+  `zoneOf` 改 VS Code 的 **1/3 方向优先**（边缘带维持 28%，角部归左右；零尺寸早退 `center`）；
+  Alt 落点改判 `center`（临时取消分屏，**无需改 `main.ts`**）；双击复位 50%。
+  ② **样式**：新增 `--sep-line`（深 `#444444` / 浅 `#dcdfe3`，**分屏与大纲分隔条共用**）与
+  `--drop-fill`（深 `#53595D`@0.5 / 浅 `#2677CB`@0.18）；`.layout-corner` 角手柄（**双类** start/end）；
+  `.split-preview` 改「常驻 + `::after` 70ms 位移 / 150ms opacity + **无边框半透明**」；
+  极限光标 `.at-min/.at-max`、拖拽中 `.resizing` 染色、`layout-dragging[-v|-corner]` 方向光标。
+  ③ ⚠️ `body.layout-dragging` **三处共用**（分屏 / 大纲 `toc.ts` / 查找栏 `findbar.ts`）→
+  只加方向修饰类，**别改基础类的语义**。
+  ④ ⚠️ `zoneOf` 也被**文件拖入**（`main.ts`）复用；`tabstrip-drag.test.ts` 有**源码级静态断言**
+  锁 `clearInsertIndicators();` 紧跟 `const zone = zoneOf(`。
+  ⑤ **O8「空面板收起」原本就实现了**（`closeTabById` / `moveTabToPanel` / `splitPanelWithTab`
+  三处早已调 `disposePanel`，`removePanel` + `promoteSibling` 即「邻居吃满」）—— 方案里列了但无需改。
+  新增 `tests/splitview.test.ts`（15 条）+ `regressions.test.ts` 的 B59 静态块（全量 **341 vitest**）。
+
 - **参考源码库**：`docs/vscode-reference/`（VS Code MIT **只读**副本，分两类，均落 `src/` 被 `.gitignore` 排除）：
   - **A–H 精选约 82 份**（`fetch-vscode-ref.sh` + `REVISION.txt`，commit `632abec`）：逐文件 curl，镜像上游路径，
     B58 后补的 hover / keybindingLabel / 色彩令牌共 12 份已登记进 FILES 与 `INDEX.md` 的「D2. 悬停提示」段；
@@ -237,9 +256,11 @@
 ## 下一步
 
 - 待办：桌面环境补拍截图（M4 的 keymap.png / command-palette.png + B51 的
-  main.png / preferences.png + **B53–B58 的 main.png**，标签栏（含文件类型图标）/面板操作栏/分隔条都变了；
-  B58 后**任一控件的悬停提示观感也变了**，可选补一张 tooltip 演示图）。
+  main.png / preferences.png + **B53–B59 的 main.png**：标签栏（含文件类型图标）/面板操作栏/
+  分隔条/分屏落点高亮都变了；B58 后**任一控件的悬停提示观感也变了**，可选补一张 tooltip 演示图）。
+- ⚠️ **B59 观感项待桌面环境确认**：分屏落点填充色（深色灰 #53595D@0.5 / 浅色蓝 #2677CB@0.18）
+  与**正交角手柄**（T 型相接处斜拖两条）的手感；这两项是这次唯一「需要眼睛看」的部分。
 - 待清理：`menu.ts` 的 `MenuItem.active` / `.menu-item-current`（B53 后无使用者）。
-- 待定：是否发 **v0.3.1**（B55/B56/B57/B58 都改了界面；B54 也留了同一问题未决）。
+- 待定：是否发 **v0.3.1**（B55–B59 都改了界面；B54 也留了同一问题未决）。
 - M4 之后：M5 规划未定；候选见 DESIGN.md；观感/交互改进可对照 `docs/vscode-reference/`。
 - 待用户桌面环境验证的条目散见各日志（沙箱内无法做 UI 冒烟）。

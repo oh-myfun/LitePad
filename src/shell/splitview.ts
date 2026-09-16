@@ -8,6 +8,11 @@ import { setTip } from "./tooltip";
  * - split 节点 = flex 容器 + 可拖拽分隔条（拖拽实时改 flex-basis，松手回写 ratio）
  * - leaf 节点 = 面板（面板级标签栏 + 编辑器宿主）
  * 结构变化时整体重绘；拖拽只改内联样式不重建 EditorView。
+ *
+ * B59 对齐 VS Code（参考 docs/vscode-reference/）：
+ * - 分隔条：双击复位 50%、拖到极限光标变形、拖拽中保持高亮、方向光标（O1–O3/S1）
+ * - 角手柄：两条相垂直接处斜向同时拖两条（O7）
+ * - 落点：边缘 28% 带 + 1/3 方向优先（O6）、Alt 临时取消分屏（O5）
  */
 
 export interface PanelRenderData {
@@ -58,7 +63,7 @@ export function renderSplitview(
 ): void {
   svCallbacks = cb;
   root.textContent = "";
-  root.appendChild(build(tree, [], cb, panelData));
+  root.appendChild(build(tree, [], cb, panelData).el);
 }
 
 /** 当前布局回调（单一布局区；指针拖拽的落点提交需要访问 onDropTabToPanel）。 */
@@ -204,8 +209,11 @@ function onTabDragMove(e: MouseEvent): void {
   }
   clearInsertIndicators();
   const zone = zoneOf(panelEl.getBoundingClientRect(), e.clientX, e.clientY);
+  // O5：按住 Alt = 临时取消分屏（本次落点按 center 处理）。预览同步切换成 center，
+  // 拖拽时就能看到「这次不会分屏」。（对标 editorDropTarget.ts:382-384 的 Alt 反转开关）
+  const effZone = e.altKey ? "center" : zone;
   const preview = panelEl.querySelector(".split-preview");
-  if (preview) preview.className = `split-preview show zone-${zone}`;
+  if (preview) preview.className = `split-preview show zone-${effZone}`;
 }
 
 function onTabDragEnd(e: MouseEvent): void {
@@ -226,7 +234,8 @@ function onTabDragEnd(e: MouseEvent): void {
   }
   const zone = zoneOf(panelEl.getBoundingClientRect(), e.clientX, e.clientY);
   const over = tabUnder(panelEl, e.clientX, e.clientY);
-  svCallbacks?.onDropTabToPanel?.(drag.tabId, panelId, zone, over, e.ctrlKey);
+  // O5：Alt 按住 = 取消分屏 → 边缘落点按 center 处理（同面板即 no-op，跨面板即移入）。
+  svCallbacks?.onDropTabToPanel?.(drag.tabId, panelId, e.altKey ? "center" : zone, over, e.ctrlKey);
 }
 
 function finishTabDrag(): void {
@@ -238,35 +247,73 @@ function finishTabDrag(): void {
   clearInsertIndicators();
 }
 
+/** build 的产物：元素 + （仅 split 节点）其根分隔条与 a/b 子元素，供角手柄联动使用。 */
+interface BuiltNode {
+  el: HTMLElement;
+  split: { sep: HTMLElement; dir: "h" | "v"; aEl: HTMLElement; bEl: HTMLElement } | null;
+}
+
 function build(
   node: LayoutNode,
   path: number[],
   cb: SplitviewCallbacks,
   panelData: Map<number, PanelRenderData>,
-): HTMLElement {
+): BuiltNode {
   if (node.kind === "leaf") {
-    return buildPanel(node.panelId, path, cb, panelData);
+    return { el: buildPanel(node.panelId, path, cb, panelData), split: null };
   }
 
   const container = document.createElement("div");
   container.className = "layout-split layout-" + (node.dir === "h" ? "h" : "v");
 
-  const aEl = build(node.a, [...path, 0], cb, panelData);
-  const bEl = build(node.b, [...path, 1], cb, panelData);
+  const A = build(node.a, [...path, 0], cb, panelData);
+  const B = build(node.b, [...path, 1], cb, panelData);
   const sep = document.createElement("div");
   sep.className = "layout-sep layout-sep-" + (node.dir === "h" ? "h" : "v");
 
   // 按 ratio 分配：a 占 ratio，b 占剩余
-  aEl.style.flexBasis = `${node.ratio * 100}%`;
-  bEl.style.flexBasis = `${(1 - node.ratio) * 100}%`;
+  A.el.style.flexBasis = `${node.ratio * 100}%`;
+  B.el.style.flexBasis = `${(1 - node.ratio) * 100}%`;
 
-  attachDrag(sep, node.dir, aEl, bEl, () => {
-    const pct = parseFloat(aEl.style.flexBasis) / 100;
-    cb.onRatioChange(path, Math.min(0.9, Math.max(0.1, pct)));
-  });
+  const self: ResizeTarget = {
+    container,
+    dir: node.dir,
+    aEl: A.el,
+    bEl: B.el,
+    commit: (ratio) => cb.onRatioChange(path, ratio),
+  };
+  attachResize(sep, [self], node.dir);
 
-  container.append(aEl, sep, bEl);
-  return container;
+  // O7 角手柄：子树的根分隔条若与本分隔条**垂直**，则两者在那一端相接成 T/十字
+  // （如「左 | 右上下分屏」，右侧上下两条水平线的一端贴在中间竖线上）。
+  // 在相接端装一个 8px 手柄，斜向拖动可**同时**改两条 —— 对标 VS Code sash 的
+  // orthogonal-drag-handle（sash.css:64-103 / sash.ts:357-417）。
+  const kids: Array<{ built: BuiltNode; side: "a" | "b" }> = [
+    { built: A, side: "a" },
+    { built: B, side: "b" },
+  ];
+  for (const { built, side } of kids) {
+    const child = built.split;
+    if (!child || child.dir === node.dir) continue;
+    // 相接端：位于 b 侧（右/下）的子树，其分隔条的**首端**贴父；
+    // 位于 a 侧（左/上）的子树，其分隔条的**末端**贴父。
+    const atStart = side === "b";
+    const handle = document.createElement("div");
+    // 双类写法与 VS Code 的 `.orthogonal-drag-handle.start/.end` 一致
+    handle.className = `layout-corner ${atStart ? "start" : "end"}`;
+    child.sep.appendChild(handle);
+    const childTarget: ResizeTarget = {
+      container: built.el,
+      dir: child.dir,
+      aEl: child.aEl,
+      bEl: child.bEl,
+      commit: (ratio) => cb.onRatioChange([...path, side === "a" ? 0 : 1], ratio),
+    };
+    attachResize(handle, [self, childTarget], "corner");
+  }
+
+  container.append(A.el, sep, B.el);
+  return { el: container, split: { sep, dir: node.dir, aEl: A.el, bEl: B.el } };
 }
 
 function buildPanel(
@@ -360,16 +407,23 @@ function buildPanel(
 
 export type DropZone = "left" | "right" | "top" | "bottom" | "center";
 
-/** 指针在面板内的分区：边缘 28% 为分屏方向，中间为移入/排序。 */
+/**
+ * 指针在面板内的分区。
+ * - 两轴都落在内侧（边缘 28% 带以内）= `center`（移入/排序，不分屏）。
+ * - 落在边缘带时用 VS Code 的「1/3 方向优先」定方向：左右各占外侧 1/3 优先左右分屏，
+ *   中 1/3 才按上/下半区给上/下 —— 角部归属因此可预期
+ *   （对标 `workbench/.../editorDropTarget.ts:424-479` 的 splitWidthThreshold = 宽/3）。
+ * - jsdom 无布局（宽高为 0）时回 `center`，避免 NaN 判定落到意外分支。
+ */
 export function zoneOf(rect: DOMRect, x: number, y: number): DropZone {
+  if (!(rect.width > 0) || !(rect.height > 0)) return "center";
   const rx = (x - rect.left) / rect.width;
   const ry = (y - rect.top) / rect.height;
-  const edge = 0.28;
-  if (rx < edge) return "left";
-  if (rx > 1 - edge) return "right";
-  if (ry < edge) return "top";
-  if (ry > 1 - edge) return "bottom";
-  return "center";
+  const EDGE = 0.28;
+  if (rx >= EDGE && rx <= 1 - EDGE && ry >= EDGE && ry <= 1 - EDGE) return "center";
+  if (rx < 1 / 3) return "left";
+  if (rx > 2 / 3) return "right";
+  return ry < 0.5 ? "top" : "bottom";
 }
 
 function tabUnder(panel: HTMLElement, x: number, y: number): number | null {
@@ -384,42 +438,95 @@ function tabUnder(panel: HTMLElement, x: number, y: number): number | null {
   return null;
 }
 
-function attachDrag(
-  sep: HTMLElement,
-  dir: "h" | "v",
-  aEl: HTMLElement,
-  bEl: HTMLElement,
-  onDone: () => void,
-): void {
-  let dragging = false;
-  sep.addEventListener("mousedown", (e) => {
-    e.preventDefault();
-    dragging = true;
-    document.body.classList.add("layout-dragging");
-    const parentRect = (sep.parentElement as HTMLElement).getBoundingClientRect();
+// ---------------------------------------------------------------- 分隔条缩放
+// 一个「可缩放目标」= 一对兄弟元素 + 它们所在的容器 + 比例回写路径。
+// 普通分隔条只有 1 个目标；角手柄（O7）有 2 个（父分隔条 + 子分隔条，轴互相垂直），
+// 斜向拖动时两个目标各按自己的轴换算比例，实现「一脚拖两条」。
 
-    function onMove(ev: MouseEvent): void {
-      if (!dragging) return;
-      if (dir === "h") {
-        const pct = ((ev.clientX - parentRect.left) / parentRect.width) * 100;
-        const clamped = Math.min(90, Math.max(10, pct));
-        aEl.style.flexBasis = `${clamped}%`;
-        bEl.style.flexBasis = `${100 - clamped}%`;
-      } else {
-        const pct = ((ev.clientY - parentRect.top) / parentRect.height) * 100;
-        const clamped = Math.min(90, Math.max(10, pct));
-        aEl.style.flexBasis = `${clamped}%`;
-        bEl.style.flexBasis = `${100 - clamped}%`;
+/** 比例上下限（百分比）。与 CSS 的 min-width/min-height 一起构成缩放下限。 */
+const MIN_PCT = 10;
+const MAX_PCT = 90;
+
+interface ResizeTarget {
+  /** 被分割的容器：把指针坐标换算成比例 */
+  container: HTMLElement;
+  dir: "h" | "v";
+  aEl: HTMLElement;
+  bEl: HTMLElement;
+  /** 拖拽结束把比例（0.1–0.9）回写布局树 */
+  commit: (ratio: number) => void;
+}
+
+/** 指针位置 → 该目标的比例（百分比）。jsdom 无布局（长度 0）时回中，避免 NaN 写坏树。 */
+function pctFor(t: ResizeTarget, x: number, y: number): number {
+  const r = t.container.getBoundingClientRect();
+  const len = t.dir === "h" ? r.width : r.height;
+  if (!(len > 0)) return (MIN_PCT + MAX_PCT) / 2;
+  const raw = (t.dir === "h" ? x - r.left : y - r.top) / len;
+  return Math.min(MAX_PCT, Math.max(MIN_PCT, raw * 100));
+}
+
+function applyTarget(t: ResizeTarget, pct: number): void {
+  t.aEl.style.flexBasis = `${pct}%`;
+  t.bEl.style.flexBasis = `${100 - pct}%`;
+}
+
+/** 拖拽模式：h/v 决定 `body.layout-dragging` 叠加的光标修饰类；corner = 斜向。 */
+type ResizeMode = "h" | "v" | "corner";
+
+/**
+ * 给分隔条（或角手柄）装上「拖拽改比例」。
+ * - **双击复位**（O1）：回到 50%（对标 VS Code sash 的 onDidReset）。
+ * - **极限提示**（O2）：拖到 10%/90% 时给手柄加 `.at-min`/`.at-max`，光标变形。
+ * - **方向光标**（O3）：垂直分隔条拖拽时 `body` 加 `layout-dragging-v` → row-resize；
+ *   其余（水平分隔条 / 大纲 / 查找栏）保持默认 col-resize。
+ * - **指针捕获**（O4）：真实浏览器里把后续事件锁定到本元素，鼠标移出窗口也不丢事件；
+ *   jsdom 无 setPointerCapture 时静默跳过。
+ */
+function attachResize(handle: HTMLElement, targets: ResizeTarget[], mode: ResizeMode): void {
+  const body = document.body;
+  const BODY_CLASSES = ["layout-dragging", "layout-dragging-v", "layout-dragging-corner"];
+
+  handle.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    // 分隔条落在面板之上；不 stopPropagation 会让面板的 mousedown 抢焦点。
+    e.stopPropagation();
+    body.classList.add("layout-dragging");
+    if (mode === "v") body.classList.add("layout-dragging-v");
+    if (mode === "corner") body.classList.add("layout-dragging-corner");
+    handle.classList.add("resizing");
+
+    const pid = (e as MouseEvent & { pointerId?: number }).pointerId;
+    if (typeof pid === "number" && typeof handle.setPointerCapture === "function") {
+      try {
+        handle.setPointerCapture(pid);
+      } catch {
+        /* 浏览器/环境不支持时忽略 */
       }
     }
-    function onUp(): void {
-      dragging = false;
-      document.body.classList.remove("layout-dragging");
+
+    const onMove = (ev: MouseEvent): void => {
+      for (const t of targets) applyTarget(t, pctFor(t, ev.clientX, ev.clientY));
+      const p = pctFor(targets[0], ev.clientX, ev.clientY);
+      handle.classList.toggle("at-min", p <= MIN_PCT + 1e-6);
+      handle.classList.toggle("at-max", p >= MAX_PCT - 1e-6);
+    };
+    const onUp = (ev: MouseEvent): void => {
+      body.classList.remove(...BODY_CLASSES);
+      handle.classList.remove("resizing", "at-min", "at-max");
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
-      onDone();
-    }
+      for (const t of targets) t.commit(pctFor(t, ev.clientX, ev.clientY) / 100);
+    };
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
+  });
+
+  // O1：双击复位。只回写比例与内联样式，不重建 DOM（重建会引发整树重绘/闪烁）。
+  handle.addEventListener("dblclick", () => {
+    for (const t of targets) {
+      applyTarget(t, 50);
+      t.commit(0.5);
+    }
   });
 }

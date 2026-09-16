@@ -180,6 +180,33 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
 - **分隔条统一「细线 + 宽命中区」**（B53）：`.layout-sep*` 与 `.toc-resizer` 都是
   7px 透明命中区 + `::after` 画 2px 线、悬停高亮 accent。两者**必须同款**（B28 的约定），
   改一个就要改另一个；`regressions.test.ts` 直接断言两者 `flex` 宽度相等。
+  **B59 起线色统一走 `--sep-line`**（不再是通用 `--border`）：深色 `#444444`（对齐 VS Code
+  `editorGroup.border`）/ 浅色沿用 `#dcdfe3`。改线色只动这一个变量，但**两条分隔条仍要一起改**。
+- **分屏交互**（B59，对齐 VS Code；源码依据见 `docs/split-view-plan.md` 与
+  `docs/vscode-reference/` 的 `sash.ts/css`、`splitview.css`、`editorDropTarget.ts`）：
+  - 分隔条缩放统一走 `splitview.ts` 的 **`attachResize(handle, targets[], mode)`**：
+    `targets` 是「一对兄弟元素 + 容器 + ratio 回写路径」。普通分隔条 1 个目标；
+    **角手柄 2 个目标**（父 + 子，轴相垂直）→ 斜向拖动同时改两条比例。
+  - **双击复位**到 50%、拖到极限加 `.at-min`/`.at-max` 变形光标、拖拽中加 `.resizing`
+    保持高亮（只写 `:hover` 时鼠标滑出 7px 细线就失色）。
+  - ⚠️ **`body.layout-dragging` 是三处共用的**（分屏分隔条 / 大纲 `toc.ts` / 查找栏 `findbar.ts`），
+    默认 `cursor: col-resize`。B59 给垂直分隔条叠加 `.layout-dragging-v` → `row-resize`；
+    **新增方向修饰类，不要改基础类的语义**，否则大纲/查找栏的横向拖拽光标会一起错。
+  - **角手柄**挂在**子分隔条的相接端**（位于 a 侧 → `end`，b 侧 → `start`），双类写法对齐
+    VS Code 的 `.orthogonal-drag-handle.start/.end`；只在 `child.dir !== node.dir` 时生成。
+    同行/同列嵌套（如两条竖线）**不生成**角手柄。
+  - **落点 `zoneOf`**：两轴都在 **28% 边缘带**以内 = `center`；否则按 VS Code 的
+    **1/3 方向优先**定方向（左右各占外侧 1/3，中 1/3 才轮到上/下）—— 角部归左右。
+    ⚠️ jsdom 无布局（宽高 0）时必须早退 `center`，否则 NaN 判定会落到意外分支。
+    ⚠️ `zoneOf` 同时被**文件拖入**（`main.ts` 的 `showFileDropPreview` / `fileDropTargetAt`）复用，
+    改动要一起回归。
+  - **Alt 拖拽 = 临时取消分屏**：在 `splitview.ts` 的落点处理里把 edge zone 改判为 `center`
+    （预览同步切换），**不需要动 `main.ts`** —— `onDropTabToPanel` 的签名保持 `(zone, …)` 不变。
+  - ⚠️ **`tabstrip-drag.test.ts` 有源码级静态断言**：`clearInsertIndicators();` 必须紧跟
+    `const zone = zoneOf(`（`onTabDragMove` 里）。改这段代码要保持这个形状。
+  - **空面板自动收起**（O8）**早在 B45 前就有**：`closeTabById` / `moveTabToPanel` /
+    `splitPanelWithTab` 三处都在「源面板空了且非唯一」时调 `disposePanel`，
+    而 `layout.ts` 的 `removePanel` + `promoteSibling` 的 ratio 补偿就是「邻居吃满」。
 - **弹层的两种选中态别混用**：`checked`（打 ✓，语义是「开关」）vs `active`（整行走
   `.menu-item-current`，语义是「你当前在这儿」）。
   ⚠️ 折叠列表是 `active` 语义的**唯一调用方**，已随 B53 删除 ——

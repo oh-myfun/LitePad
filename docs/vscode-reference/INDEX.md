@@ -85,7 +85,9 @@ bash scripts/fetch-vscode-ref.sh v1.137.0   # 或钉到某个 tag
 | --- | --- |
 | `gridview.ts` / `gridview.css` | **分屏布局的核心算法**（可序列化的网格、增删分屏、比例、嵌套）→ LitePad 的自由分屏直接对照 |
 | `splitview.ts` / `splitview.css` | 一维分屏（拖拽改比例、最小尺寸约束） |
-| `sash.ts` / `sash.css` | 分隔条的拖拽实现（命中区、悬停反馈、光标） |
+| `sash.ts` / `sash.css` | 分隔条的拖拽实现（命中区、悬停反馈、光标、**双击复位**、**正交角手柄**） |
+| `editorDropTarget.ts` | **拖拽分屏的落点语义**（10% 边缘阈值 / 33% 方向优先 / 中心=合并 / Ctrl·Alt·Shift 修饰键）→ LitePad `splitview.ts` 的 `zoneOf` 对照 |
+| `media/editordroptarget.css` | **落点高亮的样式与过渡**（透明 overlay + `opacity 150ms` + 位移 `70ms ease-out`「滑动」效果） |
 | `scrollbar/media/scrollbars.css` | 自绘滚动条样式 —— 我们标签栏那套自绘滚动条可对照 |
 
 ## D. 菜单 / 弹层
