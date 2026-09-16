@@ -1,0 +1,9 @@
+upstream: https://github.com/microsoft/vscode
+scope:    src/vs/editor + src/vs/base + src/vs/platform（文本编辑相关）
+ref:      main
+commit:   910022280199230abe1566caf96a5e70262527f7
+fetched:  2026-09-16T16:01:00Z
+license:  MIT (见同目录 LICENSE.txt)
+filter:   仅 .ts/.css；排除 *.test.ts、文件名含 worker、standalone/basic-languages、standalone/language
+counts:   落盘 3283 份（editor 1297 + base 553 + platform 3235 原始，过滤后）
+note:     本目录（src/）不入库（.gitignore），需要时用 scripts/fetch-vscode-editor-ref.sh 重跑。

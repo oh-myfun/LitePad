@@ -8,8 +8,9 @@ bash scripts/fetch-vscode-ref.sh            # 更新到 main
 bash scripts/fetch-vscode-ref.sh v1.137.0   # 或钉到某个 tag
 ```
 
-> **入库说明**：只有 `INDEX.md` / `REVISION.txt` / `LICENSE.txt` 与 `scripts/fetch-vscode-ref.sh`
-> 进 git，`src/`（80 份上游源码）**被 `.gitignore` 排除**。
+> **入库说明**：只有 `INDEX.md` / `REVISION.txt` / `REVISION_EDITOR.txt` / `LICENSE.txt` 与
+> `scripts/fetch-vscode-ref.sh` + `scripts/fetch-vscode-editor-ref.sh` 进 git，`src/`（约 3300 份上游源码）
+> **被 `.gitignore` 排除**。
 > 原因：它是可复现的第三方只读副本（`REVISION.txt` 里钉了确切 commit），
 > 且整目录入库会被 pre-commit 的 prettier/eslint 扫到、得往格式检查链里塞例外。
 > 新克隆想拿到源码，跑一次上面的脚本即可（需要外网）。
@@ -26,8 +27,16 @@ bash scripts/fetch-vscode-ref.sh v1.137.0   # 或钉到某个 tag
 
 ## 为什么只抓这些文件
 
-整仓 1.4 GB，但我们要的是「**设计语言 + 关键控件实现**」，不是编辑器内核
-（LitePad 用 CodeMirror 6，Monaco 的实现对我们没有复用价值）。
+整仓 1.4 GB。来源分两类：
+
+- **A–H 段（精选散文件，约 80 份）**：`scripts/fetch-vscode-ref.sh` 逐文件抓取，针对**设计语言
+  + 关键控件**（Modern UI、标签栏、分屏、菜单、提示、色彩令牌等）。我们用 CodeMirror 6 而非
+  Monaco，Monaco 内核实现对我们没有复用价值，所以只挑「观感/控件」层面的文件。
+- **I 段（目录级整模块，约 3283 份）**：`scripts/fetch-vscode-editor-ref.sh` 一次性拉取
+  `src/vs/editor` + `src/vs/base` + `src/vs/platform`，针对**文本编辑交互**（光标/选择/撤销/装饰/
+  虚拟滚动/补全/折叠/格式化/查找/悬停/重命名/Diff）。同样是借鉴状态机与边界条件，不是抄 Monaco。
+
+两份都经 `ref` 钉版本（`REVISION.txt` / `REVISION_EDITOR.txt`），且 `src/` 被 gitignore，需要重跑脚本即可复现。
 
 ---
 
@@ -153,6 +162,49 @@ B58 起全应用改为**自绘单例层**（`src/shell/tooltip.ts`），数值�
 | `platform/theme/common/colors/editorColors.ts` | 编辑器色令牌（`editorHoverWidget.*` 提示背景/边框、`keybindingLabel.*` 键帽配色） |
 | `platform/theme/common/colors/miscColors.ts` | 杂项色令牌（阴影 `shadow` 等） |
 | `workbench/common/theme.ts` | **`tab.*` / `editorGroup.*` / `statusBar.*` 等语义色令牌的权威定义**（我们的 `--tab-bg-*` 该照这个思路命名） |
+
+## I. 编辑器模块（editor + base + platform，目录级整模块）
+
+B58 之后按用户要求一次性拉取了**所有文本编辑相关源码**：`src/vs/editor` + `src/vs/base` +
+`src/vs/platform`（main，`commit 9100222`），过滤后落盘约 3283 份（`REVISION_EDITOR.txt`）。
+由 `scripts/fetch-vscode-editor-ref.sh` 拉取（depth 1 + blob:none + sparse + 排除测试/worker/
+语法定义），`src/` 被 gitignore。**内部 import 可跳转**——这是相对 A–H 段「精选散文件」最大的差别。
+
+> ⚠️ 我们用自己的 CodeMirror 6，不是 Monaco。这些源码的价值在**文本编辑交互的状态机与边界
+> 条件**（光标/选择/撤销栈/装饰/虚拟滚动/补全/折叠/格式化/查找/悬停/重命名/Diff），
+> 而不是 Monaco 的实现；内部读到 `monaco.*` / `StandaloneServices` 的部分与我们无关，略过。
+
+### `src/vs/editor/` 导航
+
+| 子目录 | 内容（与 LitePad 编辑器可对照的部分） |
+| --- | --- |
+| `common/model.ts` / `common/model/*` | **文本模型**：`TextModel`、行模型、版本/变更、tokenization 接口 |
+| `common/editorCommon.ts` | 编辑器公共类型（光标、选择、滚动、配置） |
+| `common/viewModel*` / `common/viewEvents.ts` | 视图模型与视图事件 |
+| `common/config/*` / `common/editorOptions.ts` | 编辑器配置项定义（参考 `editorConfiguration.ts`） |
+| `common/cursor*.ts` / `common/controller/*` | 光标移动 / 选择 / 输入控制器（键盘/鼠标交互状态机） |
+| `common/commands/*` | 编辑命令、撤销/重做栈 |
+| `browser/editorBrowser.ts` / `browser/widget/*` | 编辑器 DOM 装配、滚动、溢出守卫、 minimap |
+| `browser/view/*` | 渲染层（行、装饰、行号、内容区、视口虚拟滚动） |
+| `contrib/` | **交互功能集合**（每个子目录一个 feature）：`find`（查找/替换）、`suggest`（补全）、`folding`（折叠）、`format`（格式化）、`hover`（悬停）、`rename`（重命名）、`smartSelect`、`comment`、`clipboard`、`multicursor`、`wordHighlighter`、`links`、`gotoSymbol`、`bracketMatching`、`indentation`、`toggleTabFocusMode` 等 |
+| `standalone/` | Monaco 独立打包胶水（仅 `editor/` `common/` `browser/` 部分有用，已排除 basic-languages/language） |
+
+### `src/vs/base/`（UI 与基础件，A–H 段已部分收录）
+
+| 子目录 | 内容 |
+| --- | --- |
+| `browser/ui/` | 所有基础控件（hover、keybindingLabel、list、grid、splitview、sash、menu、toolbar、button、inputbox、contextview…）—— A–H 段引用的就是这里 |
+| `common/` | 通用工具（event、lifecycle、scrollable、decorators、worker 已排除） |
+| `common/diff/` | 行级 diff 算法（对应我们的差异视图） |
+
+### `src/vs/platform/`（基础服务，供 editor 依赖）
+
+| 子目录 | 内容 |
+| --- | --- |
+| `theme/common/colors/` | 全部语义色令牌定义（`baseColors` / `editorColors` / `miscColors` 等，D2 段引用） |
+| `instantiation` / `registry` / `contextkey` | 依赖注入、贡献点注册、上下文键（VS Code 的扩展/命令体系） |
+| `configuration` / `files` / `workspace` / `editor/` | 配置、文件、编辑器服务接口 |
+| `hover/browser/` | 悬停宿主服务（D2 段引用） |
 
 ---
 
