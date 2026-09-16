@@ -212,7 +212,7 @@ describe("B53 滚动定位：活动标签要看得见，但不乱跳", () => {
 });
 
 describe("B53 脏标记与关闭按钮共用槽位（VS Code 行为）", () => {
-  it("未保存的标签带 tab-dirty 且槽位显示 ●", () => {
+  it("未保存的标签带 tab-dirty 且槽位显示矢量圆点（B57）", () => {
     const { host } = mount(2);
     const [clean, dirty] = [
       host.querySelectorAll<HTMLElement>(".tab")[0],
@@ -224,8 +224,14 @@ describe("B53 脏标记与关闭按钮共用槽位（VS Code 行为）", () => {
     renderTabstrip(host, [tabs(2)[0], { ...tabs(2)[1], dirty: true }], cb());
     const els = host.querySelectorAll<HTMLElement>(".tab");
     expect(els[1].classList.contains("tab-dirty")).toBe(true);
-    expect(els[1].querySelector(".tab-mark")?.textContent, "未保存显示 ●").toBe("●");
-    expect(els[0].querySelector(".tab-mark")?.textContent, "已保存槽位留空").toBe("");
+    // B57 起 ● 是矢量字形（dotIcon），且槽位用 opacity 显隐、恒定存在于 DOM，
+    // 所以这里断「有图标」+「带 tab-dirty」，而不是断文本内容。
+    expect(els[1].querySelector(".tab-mark svg"), "未保存要显示矢量圆点").toBeTruthy();
+    expect(els[0].classList.contains("tab-dirty"), "已保存不带 tab-dirty").toBe(false);
+    expect(
+      els[0].querySelector(".tab-mark svg"),
+      "已保存槽位结构仍在（靠 opacity: 0 隐藏，固定槽位保证悬停切换不抖动）",
+    ).toBeTruthy();
   });
 
   it("● 与 × 在同一个固定尺寸槽位里（.tab-action）", () => {

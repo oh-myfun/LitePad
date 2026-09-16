@@ -462,6 +462,9 @@ function tabViewDataOf(p: Panel): TabViewData[] {
         dirty: doc?.dirty ?? false,
         readonly: doc?.readonly ?? false,
         active: t.tabId === p.activeTabId,
+        // B57：标签类型图标按语言选字形/配色；langLabel 由 detectLanguage 维护，
+        // 改名、重载编码时都会同步（见 rebuildDocInstances / 另存为分支）。
+        lang: doc?.langLabel,
         path: doc?.path ?? undefined,
         hasSibling: countLeaves(layout) > 1,
       };

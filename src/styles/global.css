@@ -30,6 +30,19 @@
   --tab-bg-hover: rgba(255, 255, 255, 0.05);
   --tab-bg-active: #2b2f34;
   --tab-bg-active-hover: #343940;
+  /* 标签文件类型图标的家族配色（B57）：十个家族各一色。
+     同一族内用同一个色相（形状负责细分），浅深两套取各自的中调，
+     保证在 #1b1d1f / #ffffff 两种底上都能看清。 */
+  --ficon-md: #4c9ffe;
+  --ficon-code: #e2c04d;
+  --ficon-brace: #e0913f;
+  --ficon-hash: #4fc08d;
+  --ficon-tag: #f47067;
+  --ficon-brk: #a78bfa;
+  --ficon-db: #e879b9;
+  --ficon-diff: #45b8c8;
+  --ficon-build: #9aa4ad;
+  --ficon-txt: #8b9299;
   /* 滚动条配色（thumb 用半透明白，能压在任何区域背景上都协调） */
   --sb-thumb: rgba(255, 255, 255, 0.22);
   --sb-thumb-hover: rgba(255, 255, 255, 0.36);
@@ -58,6 +71,17 @@
   --tab-bg-hover: rgba(0, 0, 0, 0.05);
   --tab-bg-active: #ffffff;
   --tab-bg-active-hover: #e6e8eb;
+  /* 标签文件类型图标的家族配色（B57）：浅色底上要更深一档，否则发飘。 */
+  --ficon-md: #0969da;
+  --ficon-code: #9a6700;
+  --ficon-brace: #bc4c00;
+  --ficon-hash: #1a7f37;
+  --ficon-tag: #cf222e;
+  --ficon-brk: #6639ba;
+  --ficon-db: #bf3989;
+  --ficon-diff: #0d7d87;
+  --ficon-build: #57606a;
+  --ficon-txt: #6a737d;
   /* 滚动条配色（thumb 用半透明黑，浅色区域上可见且不刺眼） */
   --sb-thumb: rgba(0, 0, 0, 0.24);
   --sb-thumb-hover: rgba(0, 0, 0, 0.38);
@@ -270,21 +294,30 @@ button:focus-visible {
 }
 
 /* ---------- 标签栏 ----------
-   B55：标签改成 VS Code Modern UI 的「药丸」（compact 档）。
-   依据 microsoft/vscode `src/vs/workbench/contrib/modernUI/browser/media/tabs.css`：
-   透明底、**无描边**、小圆角药丸；非活动文字降到 50% 前景；活动态只靠底色区分。
-   标签栏仍 28px = 4px 上间距 + 20px 药丸 + 4px 下间隙（正好放下 4px 滚动条）。
+   B55：标签改成 VS Code Modern UI 的「药丸」。
+   B57：升到 Modern UI 的**常规档**并加上文件类型图标。
+   依据 microsoft/vscode `src/vs/workbench/contrib/modernUI/browser/media/tabs.css`
+   与 `editorTabsControl.ts` 的 `EDITOR_TAB_HEIGHT`（normal 35 / compact 22 /
+   **modernUI 32** / modernUICompact 28）。源码注释写得最清楚的一条：
+     modernUICompact: 28 // 20px tab + 4px top + 4px bottom padding
+                         // (20px = minimum to fit 16px icon + 2px padding)
+   —— 「16px 图标 + 上下各 2px」= 20px 只是**刚够放图标的下限**；
+   要给图标留呼吸，就得用常规档 24px 药丸 / 32px 标签栏。
+   于是现在：标签栏 32px = 4px 上间距 + 24px 药丸 + 4px 下间隙（4px 滚动条坐在下间隙里）。
    B53 保留下来的只有**溢出改为横向滚动**（见 .panel-tabstrip），不再折叠。 */
 
 .tab {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  /* 20px 药丸 = VS Code compact 档的 --editor-group-tab-height。
+  /* 24px 药丸 = VS Code Modern UI 常规档的 --editor-group-tab-height。
      固定高度而非靠 padding 撑：字号档位变化时标签栏高度仍恒定，不挤压编辑器。 */
-  height: 20px;
-  /* 对应 VS Code 的 `padding: 0 size80 0 size60`（右侧留 2px 给操作列） */
-  padding: 0 8px 0 6px;
+  height: 24px;
+  /* 左 6px = VS Code 的 `padding-left: size60`；有图标时正是这一档
+     （VS Code 在 `:not(.show-file-icons)` 时才放宽到 8px —— 图标自己撑出视觉留白）。
+     右 4px：配合 .tab-action 槽位（20px、字形 16px 居中）凑出「字形到药丸右缘 6px」，
+     与左侧的 6px 对称。 */
+  padding: 0 4px 0 6px;
   min-width: 60px;
   border: none;
   border-radius: 4px;
@@ -366,14 +399,65 @@ button:focus-visible {
   flex: 1 0 auto;
 }
 
-/* ● 与 × 共用的固定尺寸槽位（VS Code 行为）：
-   平时只见 ●（未保存）或留空（已保存），鼠标悬停到标签上才换成 ×。
-   槽位尺寸恒定、只换内容——否则鼠标划过时标签宽度会变、整排标签左右抖动。 */
-.tab-action {
-  position: relative;
+/* 文件类型图标（B57，对应 VS Code 的 `.tab.has-icon`）：
+   名字左边一个 16px 的家族字形。字形负责「像什么」（见 shell/fileicons.ts），
+   颜色负责「哪一类」—— 走 --ficon-* 变量，浅深两套主题各一份。 */
+.tab-icon {
   flex: 0 0 auto;
   width: 16px;
   height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 非活动标签的图标跟着文字一起降透明度，否则图标比文字亮，视觉重心跑偏 */
+  opacity: 0.75;
+}
+
+.tab:hover .tab-icon,
+.tab-active .tab-icon {
+  opacity: 1;
+}
+
+.tab-icon[data-fam="md"] {
+  color: var(--ficon-md);
+}
+.tab-icon[data-fam="code"] {
+  color: var(--ficon-code);
+}
+.tab-icon[data-fam="brace"] {
+  color: var(--ficon-brace);
+}
+.tab-icon[data-fam="hash"] {
+  color: var(--ficon-hash);
+}
+.tab-icon[data-fam="tag"] {
+  color: var(--ficon-tag);
+}
+.tab-icon[data-fam="brk"] {
+  color: var(--ficon-brk);
+}
+.tab-icon[data-fam="db"] {
+  color: var(--ficon-db);
+}
+.tab-icon[data-fam="diff"] {
+  color: var(--ficon-diff);
+}
+.tab-icon[data-fam="build"] {
+  color: var(--ficon-build);
+}
+.tab-icon[data-fam="txt"] {
+  color: var(--ficon-txt);
+}
+
+/* ● 与 × 共用的固定尺寸槽位（VS Code 行为）：
+   平时只见 ●（未保存）或留空（已保存），鼠标悬停/活动标签上才换成 ×。
+   槽位尺寸恒定、只换内容——否则鼠标划过时标签宽度会变、整排标签左右抖动。
+   12/20/24/28 这四档对应 VS Code Modern UI 的覆盖列宽度，供调参时对齐。 */
+.tab-action {
+  position: relative;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
 }
 
 .tab-mark,
@@ -383,42 +467,53 @@ button:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* 显隐一律走 opacity（B57，参考 VS Code）——
+     布局本来就靠固定槽位锁住，用 opacity 可淡入，也不会让 display 切换抢占重排。 */
+  opacity: 0;
+  transition: opacity var(--transition);
 }
 
 .tab-mark {
+  /* 未保存圆点：VS Code 用 codicon 的 `circle-filled`，颜色取 warn */
   color: var(--warn);
-  font-size: 10px;
 }
 
-/* 已保存（无 tab-dirty）：槽位留空，不显示 ● */
-.tab:not(.tab-dirty) .tab-mark {
-  display: none;
+/* 未保存的标签常驻显示 ●（不悬停时它就是 ● 槽位的内容） */
+.tab-dirty .tab-mark {
+  opacity: 1;
+}
+
+/* × 的显示条件（对齐 VS Code：悬停 / 活动标签 / 键盘聚焦）：
+   活动标签上常驻 × —— 关闭当前文件是最高频操作，不该先悬停才给。 */
+.tab:hover .tab-close,
+.tab-active .tab-close,
+.tab:focus-within .tab-close {
+  opacity: 1;
+}
+
+/* 悬停时 ● 让位给 ×：同一个槽位只显示一个，否则两者叠在一起 */
+.tab:hover .tab-mark {
+  opacity: 0;
 }
 
 .tab-close {
   border: none;
   background: transparent;
-  color: var(--fg-muted);
-  font-size: 13px;
-  line-height: 1;
+  /* 颜色继承标签文字色（VS Code 的做法）——非活动是灰、悬停/活动自动变亮 */
+  color: inherit;
   padding: 0;
   border-radius: 3px;
   cursor: pointer;
-  /* 平时不显示：悬停标签时才出现（VS Code）。Ctrl+W / 右键菜单仍可关闭 */
-  display: none;
-}
-
-.tab:hover .tab-close {
-  display: flex;
-}
-
-.tab:hover .tab-mark {
-  display: none;
 }
 
 .tab-close:hover {
   background: var(--bg-hover);
-  color: var(--fg);
+}
+
+/* 非焦点面板降一档（对应 VS Code 非活动编辑器组里 `opacity: 0.5`）：
+   ⚠️ 必须连默认态一起压，否则分屏时两块面板的 × 一样亮，看不出焦点。 */
+.layout-panel:not(.layout-panel-active) .tab-close {
+  opacity: 0.5;
 }
 
 /* ---------- 悬浮查找 / 替换栏（应用级浮层，不绑定文件/面板） ---------- */
@@ -1191,10 +1286,10 @@ button:focus-visible {
   scrollbar-width: auto;
   scrollbar-color: auto;
   /* ⚠️ 高度是硬约束，不是三行加起来「约等于」：
-     28px = 4px 上间距 + 20px 药丸 + 4px 下间隙。
+     32px = 4px 上间距 + **24px 药丸** + 4px 下间隙（B57 从 20px 药丸升到常规档）。
      标签靠 align-items: flex-start 钉在顶部 → 滚动条出现/消失都不会挪动标签行，
-     「溢出 ↔ 不溢出」高度恒定 28px，编辑器不会跟着抖（B53 就踩过 26↔28px 抖动）。 */
-  height: 28px;
+     「溢出 ↔ 不溢出」高度恒定 32px，编辑器不会跟着抖（B53 就踩过 26↔28px 抖动）。 */
+  height: 32px;
 }
 
 /* 标签栏滚动条：**4px**，正好吃掉下面那 4px 间隙（不额外占高度、不挤压药丸行），
@@ -1236,7 +1331,7 @@ button:focus-visible {
    绝对定位子元素会随内容一起滚 —— splitview 计算偏移时必须补上 scrollLeft。 */
 .tab-insert {
   position: absolute;
-  /* 对齐 20px 药丸行：4px 上间距起、4px 下间隙止（滚动条就在这 4px 里） */
+  /* 对齐 24px 药丸行：4px 上间距起、4px 下间隙止（滚动条就在这 4px 里） */
   top: 4px;
   bottom: 4px;
   width: 2px;

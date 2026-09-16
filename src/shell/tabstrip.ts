@@ -1,5 +1,7 @@
 import { showPopupMenu } from "./menu";
 import { beginTabDrag, consumeTabClickSuppressed } from "./splitview";
+import { fileIconSvg, familyOf } from "./fileicons";
+import { ICONS, dotIcon } from "./icons";
 
 /**
  * 标签栏渲染：纯函数式全量重绘（标签数量小，简单可靠）。
@@ -9,7 +11,8 @@ import { beginTabDrag, consumeTabClickSuppressed } from "./splitview";
  *       拖拽排序 / 双击空白处新建 / **滚轮横向滚动**。
  *
  * 溢出策略（B53 起，用户要求）：**不再折叠**。放不下的标签就是普通的横向滚动
- * （VS Code 式）——先靠 flex 收缩到最小宽度，仍放不下才开始滚。
+ * （VS Code 式）——B56 起标签**不收缩**（宽度 = 内容宽度、文件名不裁剪），
+ * 所以溢出比之前来得更早，这是预期行为。
  *
  * B32–B47 的「可见窗口 + 折叠下拉列表」已整体删除。它要求手写三条不变量
  * （尺寸变化必须重算、活动标签拉回要门控、窗口必须铺满预算）+ ResizeObserver 记账，
@@ -23,6 +26,11 @@ export interface TabViewData {
   dirty: boolean;
   readonly: boolean;
   active: boolean;
+  /**
+   * 语言标签（来自 `language.ts` 的注册表，如 "Markdown" / "TypeScript"）。
+   * 标签左侧的类型图标按它选字形与家族配色；缺省按纯文本处理。
+   */
+  lang?: string;
   /** 完整路径（右键「复制路径」用，可空） */
   path?: string;
   /** 存在其他分屏面板（右键「复制到相邻面板」的显示条件） */
@@ -142,23 +150,35 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   el.dataset.tabId = String(t.tabId);
   el.title = t.readonly ? `${t.name} [只读]` : t.name;
 
+  // 文件类型图标（B57，参考 VS Code 的 .tab.has-icon）：
+  // 名字左边一个 16px 的家族字形，颜色由 data-fam 走 CSS 变量（浅深两套）。
+  const fam = familyOf(t.lang);
+  const icon = document.createElement("span");
+  icon.className = "tab-icon";
+  icon.dataset.fam = fam;
+  icon.dataset.lang = t.lang ?? "";
+  icon.innerHTML = fileIconSvg(fam);
+  icon.setAttribute("aria-hidden", "true");
+
   const name = document.createElement("span");
   name.className = "tab-name";
   name.textContent = t.name;
 
   // ● 与 × 共用同一个**固定尺寸**槽位（.tab-action）：悬停时 ● 换成 ×。
   // 槽位宽度固定、只换内容，否则鼠标划过时标签宽度会变、整排标签左右抖动。
+  // B57 起显隐改走 `opacity`（参考 VS Code：`opacity: 0` → 悬停/活动/未保存时 1），
+  // 不再用 display 切换 —— 布局本来就稳定，opacity 还能顺势做淡入。
   const action = document.createElement("span");
   action.className = "tab-action";
 
   const mark = document.createElement("span");
   mark.className = "tab-mark";
-  mark.textContent = t.dirty ? "●" : "";
+  mark.innerHTML = dotIcon();
   mark.setAttribute("aria-hidden", "true");
 
   const close = document.createElement("button");
   close.className = "tab-close";
-  close.textContent = "×";
+  close.innerHTML = ICONS.close;
   close.title = "关闭 (Ctrl+W)";
   close.setAttribute("aria-label", `关闭 ${t.name}`);
   close.addEventListener("click", (e) => {
@@ -226,7 +246,7 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
     beginTabDrag(t.tabId, e);
   });
 
-  el.append(name, action);
+  el.append(icon, name, action);
   el.addEventListener("click", () => {
     if (consumeTabClickSuppressed()) return; // 拖拽提交后的 click 不激活
     cb.onActivate(t.tabId);

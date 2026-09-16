@@ -18,6 +18,20 @@ function cssDecls(block: string): string {
   return block.replace(/\/\*[\s\S]*?\*\//g, "");
 }
 
+// B57 文件类型图标的 10 个家族（与 src/shell/fileicons.ts 的 FileFamily 一一对应）
+const FILE_FAMILIES = [
+  "md",
+  "code",
+  "brace",
+  "hash",
+  "tag",
+  "brk",
+  "db",
+  "diff",
+  "build",
+  "txt",
+] as const;
+
 // 全仓库文本文件枚举（B36 改名残留检查用）：跳过构建产物 / 依赖 / 二进制。
 const SKIP_DIRS = new Set([
   "node_modules",
@@ -260,24 +274,115 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(name, "不得再裁剪溢出（文件名必须整段可见）").not.toContain("overflow: hidden");
   });
 
-  it("B53 ● 与 × 共用固定尺寸槽位（悬停才显示 ×，切换时标签不抖）", () => {
+  it("B57 ● 与 × 共用固定尺寸槽位，显隐走 opacity（对齐 VS Code 标签操作列）", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
-    const slot = css.match(/\n\.tab-action\s*\{[^}]*\}/)?.[0] ?? "";
+    const slot = cssDecls(css.match(/\n\.tab-action\s*\{[^}]*\}/)?.[0] ?? "");
     expect(slot, "应有 .tab-action 槽位规则").toBeTruthy();
     expect(slot, "槽位尺寸必须固定，否则悬停切换会改变标签宽度").toMatch(/width:\s*\d+px/);
     expect(slot).toMatch(/height:\s*\d+px/);
-    // 平时藏 ×、悬停才显示；未保存才见 ●
-    expect(css, "平时不显示关闭按钮").toMatch(/\.tab-close\s*\{[^}]*display:\s*none/);
-    expect(css, "悬停标签才出现 ×").toMatch(/\.tab:hover\s+\.tab-close\s*\{[^}]*display:\s*flex/);
-    expect(css, "悬停时藏掉 ●（与 × 同一个槽位）").toMatch(
-      /\.tab:hover\s+\.tab-mark\s*\{[^}]*display:\s*none/,
+
+    // VS Code 标签操作列用 opacity 而不是 display 做显隐（经典档 multieditortabscontrol.css
+    // 与 Modern UI 档 tabs.css 都是这套）：布局本来就被固定槽位锁住，
+    // opacity 既能淡入，也不触发重排。
+    const layer = cssDecls(css.match(/\.tab-mark,\s*\.tab-close\s*\{[^}]*\}/)?.[0] ?? "");
+    expect(layer, "应有 .tab-mark / .tab-close 公共层规则").toBeTruthy();
+    expect(layer, "默认必须隐藏（opacity: 0）").toMatch(/opacity:\s*0\b/);
+    expect(layer, "不得再用 display 切换显隐").not.toMatch(/display:\s*none/);
+
+    expect(css, "未保存的 ● 常驻显示").toMatch(/\.tab-dirty\s+\.tab-mark\s*\{[^}]*opacity:\s*1/);
+    expect(css, "悬停标签显示 ×").toMatch(/\.tab:hover\s+\.tab-close[^{]*\{[^}]*opacity:\s*1/);
+    expect(css, "活动标签常驻 ×（关闭当前文件是高频操作，不该先悬停）").toMatch(
+      /\.tab-active\s+\.tab-close[^{]*\{[^}]*opacity:\s*1/,
     );
-    expect(css, "已保存的标签槽位留空").toMatch(
-      /\.tab:not\(\.tab-dirty\)\s+\.tab-mark\s*\{[^}]*display:\s*none/,
+    expect(css, "悬停时 ● 让位给 ×（同槽位只显示一个）").toMatch(
+      /\.tab:hover\s+\.tab-mark\s*\{[^}]*opacity:\s*0/,
+    );
+    expect(css, "× 颜色继承标签文字色（VS Code 做法，非独立灰）").toMatch(
+      /\.tab-close\s*\{[^}]*color:\s*inherit/,
     );
 
     const ts = readFileSync("src/shell/tabstrip.ts", "utf-8");
-    expect(ts, "未保存必须打 tab-dirty（CSS 靠它决定槽位内容）").toContain("tab-dirty");
+    expect(ts, "未保存必须打 tab-dirty（CSS 靠它决定槽位状态）").toContain("tab-dirty");
+    expect(ts, "× 必须用矢量图标（ICONS.close），不再是文本字形").toContain("ICONS.close");
+    expect(ts, "不得再用文本 ×").not.toContain('textContent = "×"');
+    expect(ts, "未保存圆点必须走矢量（dotIcon）").toContain("dotIcon()");
+    expect(ts, "不得再用文本 ●").not.toContain('textContent = "●"');
+  });
+
+  it("B57 标签前置文件类型图标：家族字形 + 家族配色，且家族覆盖注册表全部语言", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const icon = cssDecls(css.match(/\n\.tab-icon\s*\{[^}]*\}/)?.[0] ?? "");
+    expect(icon, "应有 .tab-icon 规则").toBeTruthy();
+    expect(icon, "图标不得收缩（文件名变长不能把图标挤扁）").toMatch(/flex:\s*0 0 auto/);
+    expect(icon, "图标固定 16px").toMatch(/width:\s*16px/);
+    expect(icon, "非活动图标要跟着文字一起降透明度").toMatch(/opacity:\s*0\.75/);
+    expect(css, "悬停/活动图标回到全不透明").toMatch(
+      /\.tab-active\s+\.tab-icon\s*\{[^}]*opacity:\s*1/,
+    );
+
+    // 家族配色 = 10 个 data-fam 选择器 + 浅深两套 --ficon-* 变量。
+    // 缺任意一处 → 某主题下该家族图标没有颜色（继承文字色，等于「图标丢了」）。
+    const FAMILIES = FILE_FAMILIES;
+    for (const fam of FAMILIES) {
+      expect(css, `缺 .tab-icon[data-fam="${fam}"] 配色`).toContain(`.tab-icon[data-fam="${fam}"]`);
+    }
+    for (const [name, block] of [
+      ["深色", css.match(/:root\[data-theme="dark"\]\s*\{[^}]*\}/)?.[0] ?? ""],
+      ["浅色", css.match(/:root\[data-theme="light"\]\s*\{[^}]*\}/)?.[0] ?? ""],
+    ] as const) {
+      for (const fam of FAMILIES) {
+        expect(block, `${name}主题缺 --ficon-${fam}`).toContain(`--ficon-${fam}:`);
+      }
+    }
+
+    // 接线：tabstrip 建图标节点并带上 data-fam；main 把检测到的语言传下去。
+    // 漏掉 lang 的话所有标签都会退化成 txt 图标（灰三条横线），是最容易静默发生的回归。
+    const ts = readFileSync("src/shell/tabstrip.ts", "utf-8");
+    expect(ts, "标签必须建 .tab-icon 节点").toContain('"tab-icon"');
+    expect(ts, "图标必须带 data-fam（CSS 靠它取色）").toContain("data-fam");
+    expect(ts, "图标必须来自 fileIconSvg").toContain("fileIconSvg(");
+    const main = readFileSync("src/main.ts", "utf-8");
+    expect(main, "main 必须把语言标签喂给标签视图数据").toMatch(/lang:\s*doc\?\.langLabel/);
+  });
+
+  it("B57 图标家族：覆盖语言注册表全部 label，未知语言回落 txt", async () => {
+    const { familyOf, knownLabels, fileIconSvg } = await import("../src/shell/fileicons");
+    const known = new Set(knownLabels());
+
+    // 从 language.ts 抽出 REGISTRY 里的全部 label（未导出，只能静态抽）。
+    const src = readFileSync("src/editor/language.ts", "utf-8");
+    const reg = src.slice(
+      src.indexOf("const REGISTRY"),
+      src.indexOf("export interface LanguageInfo"),
+    );
+    const labels = [...reg.matchAll(/label:\s*"([^"]+)"/g)].map((m) => m[1]);
+    expect(labels.length, "应当抽到语言注册表（数量级在 50+）").toBeGreaterThanOrEqual(50);
+    const uncovered = labels.filter((l) => !known.has(l));
+    expect(uncovered, `这些语言没有归属家族（会退化成 txt 图标）：${uncovered.join(", ")}`).toEqual(
+      [],
+    );
+
+    // 抽样确认映射方向正确（覆盖度对不代表映射对）。
+    expect(familyOf("Markdown")).toBe("md");
+    expect(familyOf("TypeScript")).toBe("code");
+    expect(familyOf("JSON")).toBe("brace");
+    expect(familyOf("Python")).toBe("hash");
+    expect(familyOf("HTML")).toBe("tag");
+    expect(familyOf("Rust")).toBe("brk");
+    expect(familyOf("SQL")).toBe("db");
+    expect(familyOf("Diff")).toBe("diff");
+    expect(familyOf("Dockerfile")).toBe("build");
+    expect(familyOf("Plain Text")).toBe("txt");
+    // 未知 / 空值必须落到 txt（新建未命名缓冲区的 langLabel 可能是 null）
+    expect(familyOf(null)).toBe("txt");
+    expect(familyOf("Klingon")).toBe("txt");
+
+    // 字形必须是真 SVG（不是空串 / 占位文本），且每个家族各不相同。
+    const svgs = FILE_FAMILIES.map((f) => fileIconSvg(f));
+    for (let i = 0; i < svgs.length; i++) {
+      expect(svgs[i], `家族 ${FILE_FAMILIES[i]} 的字形不能为空`).toContain("<svg");
+    }
+    expect(new Set(svgs).size, "十个家族应有十个不同字形").toBe(FILE_FAMILIES.length);
   });
 
   describe("B54/B55 面板按钮精简 + 标签药丸化（Modern UI）", () => {
@@ -304,7 +409,7 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
       expect(tab, "应有 .tab 规则").toBeTruthy();
       const h = tab.match(/height:\s*(\d+)px/);
       expect(h, "标签高度必须显式给出（字号档位变化时栏高才恒定）").toBeTruthy();
-      expect(Number(h![1]), "药丸高 20px（VS Code Modern UI compact 档）").toBeLessThanOrEqual(22);
+      expect(Number(h![1]), "药丸高 24px（VS Code Modern UI 常规档）").toBeLessThanOrEqual(26);
       expect(tab, "药丸必须无描边（B54 的 1px 描边是旧观感）").toMatch(/border:\s*none/);
       expect(tab, "药丸圆角 4px").toMatch(/border-radius:\s*4px/);
       expect(tab, "不得退回上圆角方标签").not.toContain("6px 6px 0 0");
@@ -357,7 +462,7 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
       expect(btn, "必须显式去掉两端箭头按钮").toBeTruthy();
       expect(btn, "箭头按钮必须 display:none").toMatch(/display:\s*none/);
 
-      // 几何自洽：28 = 4(上间距) + 20(药丸) + 4(滚动条)。三个数绑在一起，
+      // 几何自洽：32 = 4(上间距) + 24(药丸) + 4(滚动条)。三个数绑在一起，
       // 改一个必须改全部，否则滚动条会压到药丸上（或药丸行被挤下去）。
       const tabH = Number(css.match(/\n\.tab\s*\{[^}]*\}/)![0].match(/height:\s*(\d+)px/)![1]);
       const stripH = Number(strip.match(/height:\s*(\d+)px/)![1]);

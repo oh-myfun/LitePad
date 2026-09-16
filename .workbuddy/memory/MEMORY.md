@@ -169,12 +169,30 @@
   `.tab { max-width: 200px }` 让长文件名**即使标签不多**也被截断。
   改法 = `.tab` 改 **`flex: 0 0 auto`** 并**删掉 `max-width`**（对应 `tabSizing: fixed`），
   `.tab-name` 改 **`flex: 1 0 auto`** 并删掉 `ellipsis` / `overflow: hidden`（`min-width: 60px` 仅作下限保留）。
-  高度几何（20px / 28px = 4+20+4）**不变**，只改横向排布。
+  高度几何（20px / 28px = 4+20+4）**当时不变**，只改横向排布（⚠️ B57 已把药丸升到 24px / 栏 32px）。
   💡 教训：**「标签太窄」与「标签太高」是最易被反复推翻的两项** —— 改标签尺寸前先问用户要
   「收缩派」还是「自然宽度派」，别默认抄 VS Code 的 fit。
   ⚠️ 静态断言要先剥 CSS 注释：本批第一版断言被 `.tab` 注释里记录的旧值
   （`flex: 0 1 auto`）误伤 → 新增 `cssDecls()` 辅助函数（`tests/regressions.test.ts`）。
   ⚠️ 副作用：不收缩 ⇒ 更早进入溢出 ⇒ 横向滚动比以前更常出现（预期行为）。
+
+- **B57（0916）标签高度 / 关闭按钮 / 文件类型图标全面对齐 VS Code Modern UI**：
+  用户要求「标签高度和关闭按钮也参考下 vscode，vscode 标签上还有图标」，开工前 AskUserQuestion
+  确认两处设计：**24px 药丸 / 32px 栏（常规档，非 compact 的 20/28）** + **家族矢量字形 + 家族配色**。
+  ① **高度 20→24px**（`EDITOR_TAB_HEIGHT.modernUI = 32 = 4+24+4`）：上游源码注释写明
+  「20px 只是刚够放 16px 图标的下限」，24px 才从容 → 几何不变量整体从 `28=4+20+4` 升到 **`32=4+24+4`**，
+  四值依旧绑死（`.tab` / `.panel-tabstrip` / 滚动条 / `.tab-insert` top·bottom）。
+  ② **关闭/未保存槽位改 `opacity` 显隐**（原 `display:none`）：`.tab-mark`/`.tab-close` 共用
+  `.tab-action`（16→20px）固定槽位，`.tab-dirty .tab-mark{opacity:1}`、
+  `:hover`/`.tab-active`/`:focus-within` 显示 ×、悬停时 ● 让位 ×；`.tab-close` 改 `color:inherit`；
+  非焦点面板 `opacity:0.5`。
+  ③ **新增 `src/shell/fileicons.ts`**：10 个家族（md/code/brace/hash/tag/brk/db/diff/build/txt）
+  各一 SVG 字形 + `--ficon-*` 配色（浅深两套），`FAMILY_OF` **覆盖 language.ts 全部 56 个 label**，
+  未知/`null` 回落 `txt`；`tabstrip` 在名字前插 `.tab-icon`（`data-fam`），`main.ts` 传 `lang`。
+  ⚠️ **改 ● 的表示法会连带改测试**：脏状态判定要从「`.tab-mark` 文本含 ●」改为
+  「存在 `.tab.tab-dirty`」（B57 槽位恒定存在、靠 opacity 显隐，不能再断「已保存留空」）——
+  改了 `tabstrip-scroll` / `smoke.bootstrap` / `view-switch-noedit` 三处。
+  新增回归：图标 16px 不收缩 + 10 个 `data-fam` + **浅深两套各 10 个 `--ficon-*`** + 家族覆盖度。
 
 - **参考源码库**：`docs/vscode-reference/`（VS Code MIT **只读**副本，70 份，钉 commit `632abec`），
   由 `scripts/fetch-vscode-ref.sh` 拉取（不 clone，逐文件 curl，可 `RESUME=1`）；`INDEX.md` 按 A–H
@@ -186,8 +204,8 @@
 ## 下一步
 
 - 待办：桌面环境补拍截图（M4 的 keymap.png / command-palette.png + B51 的
-  main.png / preferences.png + **B53/B54/B55 的 main.png，标签栏/面板操作栏/分隔条都变了**）。
+  main.png / preferences.png + **B53–B57 的 main.png，标签栏（含文件类型图标）/面板操作栏/分隔条都变了**）。
 - 待清理：`menu.ts` 的 `MenuItem.active` / `.menu-item-current`（B53 后无使用者）。
-- 待定：是否发 **v0.3.1**（B55 改了界面；B54 也留了同一问题未决）。
+- 待定：是否发 **v0.3.1**（B55/B56/B57 都改了界面；B54 也留了同一问题未决）。
 - M4 之后：M5 规划未定；候选见 DESIGN.md；观感/交互改进可对照 `docs/vscode-reference/`。
 - 待用户桌面环境验证的条目散见各日志（沙箱内无法做 UI 冒烟）。

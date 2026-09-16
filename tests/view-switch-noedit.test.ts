@@ -106,9 +106,10 @@ vi.mock("../src/ipc/api", () => ({
   saveSettings: () => Promise.resolve(),
 }));
 
+// B57 起 ● 是矢量字形且槽位恒定存在（靠 opacity 显隐），脏状态改看 tab-dirty 类。
 const dirty = (): boolean =>
-  Array.from(document.querySelectorAll(".tab-mark")).some((m) =>
-    (m.textContent ?? "").includes("●"),
+  Array.from(document.querySelectorAll(".tab.tab-dirty")).some(
+    (t) => t.querySelector(".tab-mark svg") !== null,
   );
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));

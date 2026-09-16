@@ -96,11 +96,14 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
      ⚠️ **必须显式复位 `scrollbar-width: auto; scrollbar-color: auto`**（B54 踩坑）：全局
      `*` 上有这两个标准属性时，元素上再写一遍会让 Chromium **忽略 `::-webkit-scrollbar`**，
      标签栏于是拿回系统滚动条 —— 两端带箭头、也压不细。复位后才轮到自绘规则生效。
-  2. **高度 28px 是硬约束，且是「4 + 20 + 4」三段**（B55）：4px 上间距 + 20px 药丸行 +
-     4px 下间隙；**那 4px 滚动条正好吃掉下间隙**，所以滚动条出现/消失都不改变标签栏高度。
+  2. **标签栏高度是硬约束，且是「4 + N + 4」三段**（B55 起，B57 把 N 从 20 提到 **24**，
+     故现在是 **32 = 4 + 24 + 4**）：4px 上间距 + N px 药丸行 + 4px 下间隙；
+     **那 4px 滚动条正好吃掉下间隙**，所以滚动条出现/消失都不改变标签栏高度。
      标签靠 `align-items: flex-start` 钉在顶部 → 「溢出 ↔ 不溢出」不跳变（B53 踩过 26↔28px 抖动）。
      ⚠️ 改任一段都要改全部：`.tab` 高度、`strip` 高度、`::-webkit-scrollbar` 高度、
      `.tab-insert` 的 `top/bottom`。回归测试直接断言 `stripH - tabH === 滚动条高度 × 2`。
+     （**N 必须有 24px 这一档**：VS Code `editorTabsControl.ts` 注释写明 20px 只是
+     「刚够放 16px 图标 + 2px padding」的**下限**，放图标要 24px 才有呼吸。）
   3. `.tab` = **`flex: 0 0 auto`（不可收缩，B56）**：标签宽度 = **内容宽度**，
      **绝不因标签变多而被压窄**，放不下就直接横向滚动（对应 VS Code 的 `tabSizing: fixed`）。
      ⚠️ **这是一次反向翻转**：B53 曾是 `flex: 0 1 auto` + `min-width`（「先收缩再滚动」，
@@ -110,13 +113,15 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
      回归用例会同时断言「有 `flex: 0 0 auto`」与「没有 `flex: 0 1 auto` / `max-width`」。
      💡 教训：**「标签太窄」和「标签太高」是这个 UI 里最容易被反复推翻的两项** ——
      改标签尺寸前先问用户要「收缩派」还是「自然宽度派」，别默认抄 VS Code 的 fit 模式。
-     高度 **20px 固定**（不用 padding 撑）：B53 曾改成 34px 方角平标签，
+     高度 **24px 固定**（B57；不用 padding 撑）：B53 曾改成 34px 方角平标签，
      用户反馈「太高了」→ B54 回退圆角 + 描边；固定高度保证字号档位变化时栏高恒定。
-  4. **B55 起标签是 VS Code Modern UI 的「药丸」**（对标 `contrib/modernUI/browser/media/tabs.css`，
-     compact 档）：**无描边**、圆角 4px、间距 4px、非活动文字 = `color-mix(fg 50%, transparent)`、
+  4. **B55 起标签是 VS Code Modern UI 的「药丸」**（对标 `contrib/modernUI/browser/media/tabs.css`）：
+     **无描边**、圆角 4px、间距 4px、非活动文字 = `color-mix(fg 50%, transparent)`、
      活动态**只靠 `--tab-bg-active` 底色**区分（原来靠描边）。
      三档底色 `--tab-bg-hover/-active/-active-hover` 必须**浅深两套主题齐补**，
      且三档要拉开可感知差距 —— hover 与 active 同色就分不出「划过」和「选中」。
+     **B57 起高度走「常规档」24px**（B55 的 20px 是 compact 档），并且**名字前有文件类型图标**
+     （见下文「标签的文件类型图标」）。
   5. **全量重绘会重置 `scrollLeft`**：必须在 `host.textContent = ""` **之前**存下、
      之后还原（`prevScroll`），否则每次激活/关闭标签标签栏都跳回最左端。
   6. **活动标签定位用 `ensureVisible()` 手工几何，不用 `scrollIntoView()`** ——
@@ -143,12 +148,26 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   平时只见 ●（未保存）或留空（已保存），悬停标签才换成 ×。
   槽位尺寸**必须固定**，否则鼠标划过时标签宽度变化、整排标签左右抖动。
   代价：× 不再常驻，键盘/触屏略弱（Ctrl+W 与右键菜单仍在）。
-- **标签视觉的三次摇摆（别再来第四次）**：
+  ⚠️ **B57 起显隐走 `opacity`（0→1），不再用 `display: none`**（对齐 VS Code 的覆盖层做法）：
+  布局本来就靠固定槽位锁住，opacity 还能顺势淡入。**副作用必须知道**：
+  槽位结构**恒定存在于 DOM**（连「已保存」的 ● 也在，只是 `opacity: 0`），
+  所以**任何「脏状态」断言都不能再看 `.tab-mark` 的文本/存在性**，
+  要改判 `.tab.tab-dirty` 这个 class（`tabstrip-scroll` / `smoke.bootstrap` /
+  `view-switch-noedit` 三处用例已按此改写）。
+- **标签的文件类型图标**（B57，对应 VS Code 的 `.tab.has-icon`）：名字左边一个 **16px**
+  家族字形，`.tab-icon[data-fam]` 取 `--ficon-*` 配色（**浅深两套主题各 10 个**，缺一个就是
+  某主题下该家族图标没颜色）。字形与家族映射在 **`src/shell/fileicons.ts`**（零依赖内联 SVG，
+  `strokeIcon` 产出；不引图标库）—— 10 个家族覆盖 `language.ts` 注册表**全部 56 个 label**，
+  未知 / `null` 回落 `txt`。语言标签由 `main.ts` 经 `TabViewData.lang` 传下来
+  （漏传 ⇒ 所有标签静默退化成灰色三条横线，回归测试锁覆盖度）。
+- **标签视觉的摇摆史（别再来一轮）**：
   B53 曾用 `::before` 画 2px 顶部 accent 条 + 34px 方角平标签 → 用户嫌「太高、风格要退回」；
   B54 回退成 24px 上圆角 + 1px 描边 + 强调条删除（**当时活动态 = 底色 + 描边**）；
-  B55 再改成 VS Code Modern UI **药丸**（20px、无描边、圆角 4px、只靠底色区分）。
+  B55 再改成 VS Code Modern UI **药丸**（20px、无描边、圆角 4px、只靠底色区分）；
+  B56 标签改不可收缩；B57 把药丸升到 **24px** 并加**文件类型图标**。
   ⚠️ 教训：**「描边」是这套 UI 里最容易被反复推翻的一项**。改活动标签的识别方式前，
   先确认用户要的是「描边派」还是「底色派」—— 两条路线的可见性差异在浅色主题下尤其大。
+  高度/宽度同理：**「太高」「太窄」各已被推翻一次**，动手前先问，别默认抄 VS Code 的档位。
   accent 条那条不能回来的原因见上：`box-shadow` 会被 `.tab-flash` 的动画结束态盖掉。
 - **面板区**（B54）：面板操作栏**只剩「移除分屏」**一个矢量图标按钮（`ICONS.closePanel`）。
   B53 曾加过 `ICONS.splitH` / `splitV`，B54 按用户要求去掉 —— 分屏改由**把标签拖到面板边缘**

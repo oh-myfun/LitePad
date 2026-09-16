@@ -276,13 +276,11 @@ describe("bootstrap + drag-split smoke", () => {
     expect(allViews[1].state.doc.toString(), "面板1 的同源实例应实时跟随内容变更").toContain(
       "SYNC-MARK hello world",
     );
-    const marks = Array.from(document.querySelectorAll(".tab-mark")).map(
-      (m) => m.textContent ?? "",
-    );
-    expect(
-      marks.some((m) => m.includes("●")),
-      "脏标记应出现在标签上",
-    ).toBe(true);
+    // B57 起 ● 是矢量字形（dotIcon），槽位恒定存在、靠 opacity 显隐，
+    // 所以脏状态只能看 tab-dirty 类，不能再看 .tab-mark 的文本。
+    const dirtyTabs = Array.from(document.querySelectorAll(".tab.tab-dirty"));
+    expect(dirtyTabs.length, "脏标记应出现在标签上").toBeGreaterThan(0);
+    expect(dirtyTabs[0].querySelector(".tab-mark svg"), "脏标记槽位里应有矢量圆点").toBeTruthy();
 
     // ---- 模拟把面板0的标签拖到面板1的左侧区域（应触发 splitPanelWithTab）----
     const panels = Array.from(layoutArea!.querySelectorAll(".layout-panel")) as HTMLElement[];

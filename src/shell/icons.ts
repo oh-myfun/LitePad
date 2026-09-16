@@ -3,8 +3,25 @@
  * 不引入图标库，保持零依赖。
  */
 
-function svg(paths: string, size = 18): string {
+/**
+ * 描边图标构造器（24×24 视图框 + currentColor）。
+ * 导出是为了让标签的文件类型字形（fileicons.ts）用**同一套**描边参数，
+ * 两处图标风格不会漂。
+ */
+export function strokeIcon(paths: string, size = 18): string {
   return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+}
+
+/** 本模块内部沿用的短名 */
+const svg = strokeIcon;
+
+/**
+ * 实心圆点（未保存标记）。
+ * 对应 VS Code 标签操作列里的 `circle-filled` codicon：字形盒 16px，
+ * 圆点本身约 8px 直径 —— 所以 r 取 5.5（24 视图框缩到 16px 约 7.3px）。
+ */
+export function dotIcon(size = 16): string {
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="5.5"/></svg>`;
 }
 
 export const ICONS = {
@@ -57,6 +74,13 @@ export const ICONS = {
   closePanel: svg(
     '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9l6 6M15 9l-6 6"/>',
   ),
+  /**
+   * 标签上的关闭（×）。VS Code 标签操作列用的是 codicon 的 `close`，字形 16px，
+   * 放在 24px 宽的覆盖列里居中（经典档）/ 20px（本项目按药丸宽度等比收窄）。
+   * 这里给 16px，与 `.tab-action` 槽位（20px）配套：槽位留 2px 呼吸，
+   * 于是「字形到药丸右缘」= 2 + 4 = 6px，和左侧「药丸左缘到类型图标」的 6px 对称。
+   */
+  close: strokeIcon('<path d="M18 6L6 18"/><path d="M6 6l12 12"/>', 16),
 } as const;
 
 export type IconName = keyof typeof ICONS;
