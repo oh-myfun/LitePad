@@ -259,7 +259,7 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(ts, "未保存必须打 tab-dirty（CSS 靠它决定槽位内容）").toContain("tab-dirty");
   });
 
-  describe("B54 标签回退 / 面板按钮精简 / 标签栏滚动条收细", () => {
+  describe("B54/B55 面板按钮精简 + 标签药丸化（Modern UI）", () => {
     it("面板操作栏只剩「移除分屏」，分屏按钮已去掉（分屏仍走拖拽与菜单）", () => {
       const sv = readFileSync("src/shell/splitview.ts", "utf-8");
       expect(sv, "不得再用 ⨯ 文本字形").not.toContain('textContent = "⨯"');
@@ -277,25 +277,46 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
       expect(km, "分屏快捷键必须保留").toContain("panel.splitV");
     });
 
-    it("标签样式回退：矮标签 + 上方圆角 + 描边，且不再有顶部强调条", () => {
+    it("B55：标签改成 Modern UI 药丸（无描边、圆角 4px、非活动文字 50%）", () => {
       const css = readFileSync("src/styles/global.css", "utf-8");
       const tab = css.match(/\n\.tab\s*\{[^}]*\}/)?.[0] ?? "";
       expect(tab, "应有 .tab 规则").toBeTruthy();
       const h = tab.match(/height:\s*(\d+)px/);
       expect(h, "标签高度必须显式给出（字号档位变化时栏高才恒定）").toBeTruthy();
-      expect(Number(h![1]), "标签要矮（B53 的 34px 用户反馈太高）").toBeLessThanOrEqual(26);
-      expect(tab, "上边两角圆角（B53 的 VS Code 方角要退回）").toContain(
-        "border-radius: 6px 6px 0 0",
+      expect(Number(h![1]), "药丸高 20px（VS Code Modern UI compact 档）").toBeLessThanOrEqual(22);
+      expect(tab, "药丸必须无描边（B54 的 1px 描边是旧观感）").toMatch(/border:\s*none/);
+      expect(tab, "药丸圆角 4px").toMatch(/border-radius:\s*4px/);
+      expect(tab, "不得退回上圆角方标签").not.toContain("6px 6px 0 0");
+      expect(tab, "非活动文字降到 50% 前景（VS Code color-mix 写法）").toMatch(
+        /color:\s*color-mix\(in srgb, var\(--fg\) 50%, transparent\)/,
       );
-      expect(tab, "必须有描边（B53 去掉了边框）").toMatch(/border:\s*1px solid/);
-      expect(css, "不得再有 .tab-active::before 顶部强调条（B53 引入，已回退）").not.toMatch(
-        /\.tab-active::before/,
-      );
+
       const active = css.match(/\n\.tab-active\s*\{[^}]*\}/)?.[0] ?? "";
-      expect(active, "活动标签靠描边 + 底色区分").toContain("border-color: var(--border)");
+      expect(active, "活动标签只靠药丸底色区分").toContain("var(--tab-bg-active)");
+      expect(active, "活动标签不得再有描边").not.toContain("border");
+
+      const hover = css.match(/\.tab:hover:not\(\.tab-active\)\s*\{[^}]*\}/)?.[0] ?? "";
+      expect(hover, "悬停要有独立一档底色").toContain("var(--tab-bg-hover)");
+
+      // 三档底色两套主题都要齐：缺一个就是某个主题下某状态完全没有反馈
+      for (const [name, block] of [
+        ["深色", css.match(/:root\[data-theme="dark"\]\s*\{[^}]*\}/)?.[0] ?? ""],
+        ["浅色", css.match(/:root\[data-theme="light"\]\s*\{[^}]*\}/)?.[0] ?? ""],
+      ] as const) {
+        for (const v of ["--tab-bg-hover:", "--tab-bg-active:", "--tab-bg-active-hover:"]) {
+          expect(block, `${name}主题必须定义 ${v}`).toContain(v);
+        }
+      }
+
+      // tab-flash 结束态必须回到药丸底色。写 var(--bg) 会「闪完变回旧配色」——
+      // 一帧的视觉 bug，运行时测不出来，只能静态锁死。
+      const flash = css.match(/@keyframes tab-flash\s*\{[\s\S]*?\n\}/)?.[0] ?? "";
+      expect(flash, "应有 tab-flash 关键帧").toBeTruthy();
+      expect(flash, "结束态必须回到药丸底色").toContain("background: var(--tab-bg-active)");
+      expect(flash, "关键帧不得再引用旧配色 var(--bg)").not.toContain("var(--bg))");
     });
 
-    it("标签栏滚动条：2px 细条、无两端箭头（须复位标准属性否则 webkit 规则失效）", () => {
+    it("B55：标签栏滚动条 4px，正好塞进药丸行下方那 4px 间隙", () => {
       const css = readFileSync("src/styles/global.css", "utf-8");
       const strip = css.match(/\n\.panel-tabstrip\s*\{[^}]*\}/)?.[0] ?? "";
       expect(strip, "应有 .panel-tabstrip 规则").toBeTruthy();
@@ -303,16 +324,28 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
       // 标签栏就拿回系统滚动条（两端带箭头、压不细）。必须复位成 auto。
       expect(strip, "scrollbar-width 必须复位为 auto").toMatch(/scrollbar-width:\s*auto/);
       expect(strip, "scrollbar-color 必须复位为 auto").toMatch(/scrollbar-color:\s*auto/);
+      expect(strip, "药丸之间要有 4px 间距").toMatch(/gap:\s*4px/);
+      expect(strip, "下内边距为 0（下方 4px 让给滚动条）").toMatch(/padding:\s*4px 4px 0/);
 
       const thin = css.match(/\.panel-tabstrip::-webkit-scrollbar\s*\{[^}]*\}/)?.[0] ?? "";
       expect(thin, "必须有 webkit 滚动条规则").toBeTruthy();
-      const th = thin.match(/height:\s*(\d+)px/);
-      expect(th, "滚动条高度必须显式给出").toBeTruthy();
-      expect(Number(th![1]), "滚动条要细（≤4px）").toBeLessThanOrEqual(4);
+      const bar = Number(thin.match(/height:\s*(\d+)px/)?.[1]);
+      expect(bar, "滚动条 4px").toBe(4);
 
       const btn = css.match(/\.panel-tabstrip::-webkit-scrollbar-button\s*\{[^}]*\}/)?.[0] ?? "";
       expect(btn, "必须显式去掉两端箭头按钮").toBeTruthy();
       expect(btn, "箭头按钮必须 display:none").toMatch(/display:\s*none/);
+
+      // 几何自洽：28 = 4(上间距) + 20(药丸) + 4(滚动条)。三个数绑在一起，
+      // 改一个必须改全部，否则滚动条会压到药丸上（或药丸行被挤下去）。
+      const tabH = Number(css.match(/\n\.tab\s*\{[^}]*\}/)![0].match(/height:\s*(\d+)px/)![1]);
+      const stripH = Number(strip.match(/height:\s*(\d+)px/)![1]);
+      expect(stripH - tabH, "药丸行上下各留 4px，滚动条正好吃下面那 4px").toBe(bar * 2);
+
+      // 拖拽插入线必须跟着药丸行走，且让开滚动条那 4px（B55 计划的头号雷点）
+      const insert = css.match(/\.tab-insert\s*\{[^}]*\}/)?.[0] ?? "";
+      expect(insert, "拖拽插入线必须与药丸行等高").toMatch(/top:\s*4px/);
+      expect(insert, "拖拽插入线必须让开滚动条").toMatch(/bottom:\s*4px/);
     });
 
     it("分隔条：视觉细线 + 更宽命中区（原先 5px 可视条兼当命中区，容易抓空）", () => {

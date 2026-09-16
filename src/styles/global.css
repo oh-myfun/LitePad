@@ -24,6 +24,12 @@
   --accent-fg: #ffffff;
   --danger: #f47067;
   --warn: #e2b341;
+  /* 标签药丸底色（B55，对应 VS Code Modern UI 的 modernEditorTab-* 三档）：
+     非活动 = 全透明；hover 只比标签栏抬一点点；活动明显抬一档；活动+hover 再亮。
+     ⚠️ 三档必须拉开可感知的差距 —— hover 若与 active 同色就分不出「选中」和「划过」。 */
+  --tab-bg-hover: rgba(255, 255, 255, 0.05);
+  --tab-bg-active: #2b2f34;
+  --tab-bg-active-hover: #343940;
   /* 滚动条配色（thumb 用半透明白，能压在任何区域背景上都协调） */
   --sb-thumb: rgba(255, 255, 255, 0.22);
   --sb-thumb-hover: rgba(255, 255, 255, 0.36);
@@ -47,6 +53,11 @@
   --accent-fg: #ffffff;
   --danger: #cf222e;
   --warn: #9a6700;
+  /* 标签药丸底色（B55）：浅色下活动药丸取纯白（浮在 #eef0f2 的标签栏上），
+     悬停反而压暗一档 —— 浅色主题里「变亮」没有感知空间 */
+  --tab-bg-hover: rgba(0, 0, 0, 0.05);
+  --tab-bg-active: #ffffff;
+  --tab-bg-active-hover: #e6e8eb;
   /* 滚动条配色（thumb 用半透明黑，浅色区域上可见且不刺眼） */
   --sb-thumb: rgba(0, 0, 0, 0.24);
   --sb-thumb-hover: rgba(0, 0, 0, 0.38);
@@ -259,24 +270,27 @@ button:focus-visible {
 }
 
 /* ---------- 标签栏 ----------
-   标签样式沿用 B53 之前的观感（上沿圆角、活动标签底色与编辑区一致、描边）。
+   B55：标签改成 VS Code Modern UI 的「药丸」（compact 档）。
+   依据 microsoft/vscode `src/vs/workbench/contrib/modernUI/browser/media/tabs.css`：
+   透明底、**无描边**、小圆角药丸；非活动文字降到 50% 前景；活动态只靠底色区分。
+   标签栏仍 28px = 4px 上间距 + 20px 药丸 + 4px 下间隙（正好放下 4px 滚动条）。
    B53 保留下来的只有**溢出改为横向滚动**（见 .panel-tabstrip），不再折叠。 */
 
 .tab {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  /* 高度回退到 B53 之前的矮标签（≈ 旧版 4px 内边距 + 14px 行高的视觉高度）。
-     B53 曾改成 34px 的方角平标签，用户反馈「太高了、风格要退回」。
+  /* 20px 药丸 = VS Code compact 档的 --editor-group-tab-height。
      固定高度而非靠 padding 撑：字号档位变化时标签栏高度仍恒定，不挤压编辑器。 */
-  height: 24px;
-  padding: 0 6px 0 10px;
+  height: 20px;
+  /* 对应 VS Code 的 `padding: 0 size80 0 size60`（右侧留 2px 给操作列） */
+  padding: 0 8px 0 6px;
   min-width: 60px;
   max-width: 200px;
-  border: 1px solid transparent;
-  border-bottom: none;
-  border-radius: 6px 6px 0 0;
-  color: var(--fg-muted);
+  border: none;
+  border-radius: 4px;
+  /* 非活动：文字降到 50% 前景（VS Code 的 color-mix 写法），底色全透明 */
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
@@ -288,47 +302,48 @@ button:focus-visible {
     color 0.12s ease;
 }
 
-.tab-dragging {
-  opacity: 0.45;
-}
-
-.tab-drag-over {
-  border-left: 2px solid var(--accent, #4a9eff);
-  padding-left: 8px;
-}
-
-.tab:hover {
-  background: var(--bg-hover);
+.tab:hover:not(.tab-active) {
+  background: var(--tab-bg-hover);
   color: var(--fg);
 }
 
-/* 活动标签：底色与编辑区一致（视觉上与下方内容连成一片）+ 描边 */
+/* 活动标签：只靠药丸底色区分，不再描边（新版 VS Code 的药丸是无边框的）。
+   活动/非活动的差异 = 底色 + 文字明度两档，比原来「描边 + 底色」更干净。 */
 .tab-active {
-  background: var(--bg);
-  border-color: var(--border);
+  background: var(--tab-bg-active);
   color: var(--fg);
 }
 
-/* 非活动分屏里，活动标签压低亮度：分屏时一眼看出焦点在哪块面板。
+/* 悬停在活动标签上再亮一档，否则 hover 完全没有反馈（底色已经是最亮那档了） */
+.tab-active:hover {
+  background: var(--tab-bg-active-hover);
+}
+
+/* 非活动分屏里，活动标签的药丸整体降一档（底色降到 hover 档 + 文字变灰）：
+   分屏时一眼看出焦点在哪块面板。
+   ⚠️ 必须连 :hover 一起覆盖，否则鼠标划过非焦点面板时药丸会「亮回来」。
    依赖 .layout-panel-active 实时正确 —— 由 main.ts 的 markActivePanel 同步。 */
-.layout-panel:not(.layout-panel-active) .tab-active {
-  background: transparent;
+.layout-panel:not(.layout-panel-active) .tab-active,
+.layout-panel:not(.layout-panel-active) .tab-active:hover {
+  background: var(--tab-bg-hover);
   color: var(--fg-muted);
 }
 
 /* B47：活动标签切换后闪一次（从折叠列表点选、Ctrl+Tab 时定位用）。
-   动画结束回到常态，不保留结束态，避免遮住 .tab-active 的配色。 */
+   动画结束回到常态，不保留结束态，避免遮住 .tab-active 的配色。
+   ⚠️ B55：结束态必须用 --tab-bg-active（药丸底色），不能再写 var(--bg) ——
+   否则闪完会回到旧配色。这是一帧的视觉 bug，脚本测不出来，只能靠回归断言锁住。 */
 @keyframes tab-flash {
   0% {
-    background: color-mix(in srgb, var(--accent) 34%, var(--bg));
+    background: color-mix(in srgb, var(--accent) 34%, var(--tab-bg-active));
     box-shadow: inset 0 0 0 1px var(--accent);
   }
   70% {
-    background: color-mix(in srgb, var(--accent) 18%, var(--bg));
+    background: color-mix(in srgb, var(--accent) 18%, var(--tab-bg-active));
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
   }
   100% {
-    background: var(--bg);
+    background: var(--tab-bg-active);
     box-shadow: inset 0 0 0 1px transparent;
   }
 }
@@ -1159,8 +1174,9 @@ button:focus-visible {
   /* 标签永不换行：放不下就滚动，不折行 */
   flex-wrap: nowrap;
   align-items: flex-start;
-  gap: 2px;
-  padding: 2px 4px 0;
+  /* 药丸之间的视觉间距 4px（对应 VS Code 药丸 `inset: 0 2px` 的效果） */
+  gap: 4px;
+  padding: 4px 4px 0;
   min-width: 0;
   /* 拖拽 tab 的插入指示线（.tab-insert）以 strip 为定位基准 */
   position: relative;
@@ -1174,16 +1190,17 @@ button:focus-visible {
      复位后才轮到下面的 ::-webkit-scrollbar 自绘规则生效。 */
   scrollbar-width: auto;
   scrollbar-color: auto;
-  /* 高度 = 24px 标签 + 2px 上边距 + 2px 滚动条余量**恒定预留**。
-     原生横向滚动条是从内容区里切走高度的，不预留的话「溢出 ↔ 不溢出」切换时
-     标签栏会 26↔28px 跳变，编辑器内容跟着上下抖一下。 */
+  /* ⚠️ 高度是硬约束，不是三行加起来「约等于」：
+     28px = 4px 上间距 + 20px 药丸 + 4px 下间隙。
+     标签靠 align-items: flex-start 钉在顶部 → 滚动条出现/消失都不会挪动标签行，
+     「溢出 ↔ 不溢出」高度恒定 28px，编辑器不会跟着抖（B53 就踩过 26↔28px 抖动）。 */
   height: 28px;
 }
 
-/* 标签栏滚动条要尽可能细（比全局的 10px 细得多），且**不要两端的箭头**。
-   overflow-x:auto 决定了它只在真正溢出时出现。 */
+/* 标签栏滚动条：**4px**，正好吃掉下面那 4px 间隙（不额外占高度、不挤压药丸行），
+   且**不要两端的箭头**。overflow-x:auto 决定了它只在真正溢出时出现。 */
 .panel-tabstrip::-webkit-scrollbar {
-  height: 2px;
+  height: 4px;
 }
 
 .panel-tabstrip::-webkit-scrollbar-track,
@@ -1193,7 +1210,16 @@ button:focus-visible {
 
 .panel-tabstrip::-webkit-scrollbar-thumb {
   background: var(--sb-thumb);
-  border-radius: 1px;
+  border-radius: 2px;
+}
+
+/* 去掉滚动条两端的箭头按钮（Chromium 自绘滚动条默认会渲染 button，
+   全局那条 `::-webkit-scrollbar-button { display: none }` 在这里被
+   scrollbar-width 覆盖过，所以显式再声明一次，并顺手清零占位尺寸）。 */
+.panel-tabstrip::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 /* 去掉滚动条两端的箭头按钮（Chromium 自绘滚动条默认会渲染 button，
@@ -1210,9 +1236,9 @@ button:focus-visible {
    绝对定位子元素会随内容一起滚 —— splitview 计算偏移时必须补上 scrollLeft。 */
 .tab-insert {
   position: absolute;
-  top: 2px;
-  /* 只覆盖 24px 的标签行，不压到下方预留的滚动条余量上 */
-  bottom: 2px;
+  /* 对齐 20px 药丸行：4px 上间距起、4px 下间隙止（滚动条就在这 4px 里） */
+  top: 4px;
+  bottom: 4px;
   width: 2px;
   border-radius: 1px;
   background: var(--accent);
