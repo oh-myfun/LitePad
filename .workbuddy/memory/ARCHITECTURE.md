@@ -223,10 +223,18 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
     让联动在按下之前就可见（`sash.ts:629-648`）。**角手柄 `links = []`**（双轴不参与）。
     ⚠️ `sashRegistry` 必须在 `renderSplitview` 里清空 —— 否则拿已脱离文档的旧句柄算对齐时
     `centerOf` 恒为 0，会误判成「全部对齐」。
-  - **B60：落点高亮回退浅蓝**。`--drop-fill` 改回 accent 系 @0.22（深 `#4c9ffe` / 浅 `#0969da`），
-    `::after` 加回 `border: 2px solid var(--drop-fill)` + 4px 圆角 —— B59 照搬 VS Code 的
-    `dropBackground`（深灰@0.5 / 浅蓝@0.18）在 LitePad 上落点边界看不清。
-    ⚠️ **填充与描边必须同源**（都走 `--drop-fill`），否则改主题只改一半。
+    ⚠️⚠️ **`centerOf` 判空必须看交叉轴，不能看主轴**：分隔条是 `flex: 0 0 0` 的浮层，
+    主轴尺寸**恒为 0** —— 按主轴判空（`len > 0`）会让它恒返回 `null`、`alignedSashesOf`
+    永远拿到空数组，**联动一次都不会生效**（这就是 B60 首版的真机 bug）。正确写法是
+    `cross = dir === "h" ? r.height : r.width`；主轴为 0 恰好意味着 `left`/`top` 就是界线。
+    判据与 VS Code 的 `trySet2x2`（要求两分支首子尺寸相等）在两行等宽时**等价**。
+    ⚠️ **测试桩必须忠实于真实几何**：原用例把分隔条 rect 桩成 4px 宽（= B60 之前的几何），
+    正好掩盖了上面这个 bug。改几何的改动，务必回头核对 test 里的 rect 桩。
+  - **B60：落点高亮回退浅蓝、不描边**。`--drop-fill` 回到 accent 系 @0.22（深 `#4c9ffe` /
+    浅 `#0969da`）；B59 照搬 VS Code 的 `dropBackground`（深灰@0.5 / 浅蓝@0.18）在 LitePad 上
+    落点边界看不清。中间短暂加过 2px 同色描边，用户明确「不用描边」后去掉 `border`，
+    **填充值一字未动**（去的是那圈深边，区域内侧观感不变）；圆角 4px 保留。
+    想调浓淡只改 `--drop-fill` 一处。
 - **弹层的两种选中态别混用**：`checked`（打 ✓，语义是「开关」）vs `active`（整行走
   `.menu-item-current`，语义是「你当前在这儿」）。
   ⚠️ 折叠列表是 `active` 语义的**唯一调用方**，已随 B53 删除 ——

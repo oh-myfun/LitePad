@@ -245,10 +245,37 @@ describe("对齐联动（B60：对标 VS Code 2x2 的 linkedSash）", () => {
     const [sep1, sep2] = Array.from(
       m.root.querySelectorAll<HTMLElement>(".layout-sep-h"),
     ) as HTMLElement[];
-    stub(sep1, rect(198, 0, 4, 150)); // 中线 x=200
-    stub(sep2, rect((secondX ?? 0) - 2, 150, 4, 150));
+    // ⚠️ 桩必须**忠实于 B60 的真实几何**：分隔条是不占布局的浮层，**主轴尺寸为 0**
+    // （宽 0），只有交叉轴（高）是 stretch 出来的满长 —— 界线位置就是 r.left。
+    // 早先把这里桩成 4px 宽（= B60 之前的几何），正好掩盖了
+    // 「centerOf 按主轴判空 → 恒 null → 联动从未生效」这个真机 bug。
+    stub(sep1, rect(200, 0, 0, 150)); // 竖线：宽 0、高 150 → 界线 x=200
+    stub(sep2, rect(secondX ?? 200, 150, 0, 150));
     return { ...m, sep1, sep2 };
   }
+
+  it("分隔条主轴尺寸为 0（B60 不占布局）也必须能判定对齐", () => {
+    // 「联动不生效」的回归用例：判空只能看**交叉轴**。
+    // 若改回按主轴判空（len > 0），links 恒为空，本用例立刻失败。
+    const { sep1, sep2 } = mountGrid();
+    for (const sep of [sep1, sep2]) {
+      const r = sep.getBoundingClientRect();
+      expect(r.width, "竖线的主轴（宽）必须是 0").toBe(0);
+      expect(r.height, "交叉轴（高）必须有跨度，才说明真的摆了盘").toBeGreaterThan(0);
+    }
+    sep1.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(sep2.classList.contains("linked"), "主轴为 0 也要认得出对齐").toBe(true);
+  });
+
+  it("完全没有布局（交叉轴也为 0）时不得联动 —— 否则全部零值会被当成「都在 0 点」", () => {
+    const m = mount(GRID); // 不桩任何 rect：jsdom 下全是 0
+    const [sep1, sep2] = Array.from(
+      m.root.querySelectorAll<HTMLElement>(".layout-sep-h"),
+    ) as HTMLElement[];
+    sep1.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    expect(sep2.classList.contains("resizing")).toBe(false);
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
 
   it("两条竖线位置一致 → 拖一条，另一条跟着走并各自回写比例", () => {
     const { root, sep1, sep2, onRatioChange } = mountGrid();

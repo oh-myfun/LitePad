@@ -702,10 +702,10 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     // S3 落点高亮过渡（B60 保留）：70ms 位移 / 150ms opacity（VS Code editordroptarget.css）
     const preview = css.match(/\.split-preview::after\s*\{[^}]*\}/)?.[0] ?? "";
     expect(preview, "填充走 --drop-fill").toContain("background: var(--drop-fill)");
-    // B60：描边回来了 —— 去掉描边后落点边界看不清，用户要求换回 B59 之前的浅蓝观感。
-    // 描边与填充**同源**（都走 --drop-fill），叠加成约 @0.39，改主题不会只改一半。
-    expect(preview, "描边必须与填充同源").toMatch(/border:\s*2px solid var\(--drop-fill\)/);
-    expect(preview, "圆角 4px").toMatch(/border-radius:\s*4px/);
+    // B60：填充与描边同源（都走 --drop-fill），叠加成约 @0.39，改主题不会只改一半。
+    // B60 二次反馈：用户明确「不用描边」—— 填充值保持不动，只去掉那圈 2px 边。
+    expect(preview, "用户要求落点预览不描边").not.toMatch(/border:\s*\d+px/);
+    expect(preview, "圆角 4px 保留").toMatch(/border-radius:\s*4px/);
     expect(preview, "位移过渡 70ms").toMatch(/70ms/);
     expect(preview, "不透明度过渡 150ms").toMatch(/150ms/);
     expect(css, "基础态 opacity:0，靠 .show 点亮").toMatch(

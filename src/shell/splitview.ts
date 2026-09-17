@@ -463,11 +463,19 @@ interface BuiltSash {
 /** 对齐容差（px）：两条同向分隔条中线相差不超过它就视为「位置一致」。 */
 const ALIGN_TOL = 2;
 
-/** 分隔条在自己轴上的中线；jsdom 无布局（厚度为 0）时返回 null。 */
+/**
+ * 分隔条在**自己轴上的位置**（须比较的坐标）；没有布局时返回 null。
+ *
+ * ⚠️ 判空必须看**交叉轴**，不能看主轴：B60 起分隔条是 `flex: 0 0 0` 的浮层，
+ * **主轴尺寸恒为 0** —— 早先按主轴判空（`len > 0`）会导致恒返回 null，
+ * `alignedSashesOf` 永远拿到空数组，联动在真机上从未生效过一次。
+ * 交叉轴是 stretch 出来的满长（竖线有高度、横线有宽度），它 > 0 才说明浏览器真的摆了盘。
+ * 主轴为 0 恰好意味着 `left` / `top` **就是**界线本身，直接取用即可。
+ */
 function centerOf(entry: BuiltSash): number | null {
   const r = entry.handle.getBoundingClientRect();
-  const len = entry.dir === "h" ? r.width : r.height;
-  if (!(len > 0)) return null;
+  const cross = entry.dir === "h" ? r.height : r.width;
+  if (!(cross > 0)) return null;
   return entry.dir === "h" ? r.left + r.width / 2 : r.top + r.height / 2;
 }
 

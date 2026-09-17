@@ -264,16 +264,21 @@
   看着就是 7px 粗带；改法 = 元素 `flex: 0 0 0`（**主轴 0、交叉轴仍 stretch 满长**）+
   7px 命中区交给 `::before` 向两侧各溢出 3.5px + `::after` 静息 1px / 激活 4px（VS Code
   sash 是 absolute 浮层不占位）。角手柄随之改成**骑线**（`-4px` + 8px）。
-  ② **落点预览回退浅蓝** —— `--drop-fill` 回到 accent @0.22（深 `#4c9ffe` / 浅 `#0969da`）
-  + 同色 2px 描边 + 4px 圆角；B59 照搬的 VS Code `dropBackground` 在 LitePad 上边界看不清。
-  填充与描边**同源**（都走 `--drop-fill`）。③ **对齐联动**（对标 VS Code 2x2 的
+  ② **落点预览回退浅蓝、不描边** —— `--drop-fill` 回到 accent @0.22（深 `#4c9ffe` /
+  浅 `#0969da`）+ 4px 圆角，**无 border**（用户二次反馈「不用描边」；中间加过 2px 同色描边）。
+  想调浓淡只改 `--drop-fill` 一处。③ **对齐联动**（对标 VS Code 2x2 的
   `linkedSash`，`gridview.ts:715` / `sash.ts:342,622,629`）—— `sashRegistry` +
-  `alignedSashesOf()`，判定 **同向 + 中线差 ≤ 2px**（比 VS Code 更通用，覆盖 3×2）；
-  转发拖拽/回写/双击复位 + 悬停 `.linked` 高亮；角手柄不参与。
-  ⚠️ `sashRegistry` 必须在 `renderSplitview` 清空（旧句柄 `centerOf` 恒 0 → 误判全对齐）。
-  测试 346 vitest + 22 cargo；逐条依据见 `docs/split-view-plan.md` 第七节。
+  `alignedSashesOf()`，判定 **同向 + 位置差 ≤ 2px**（与 VS Code 的「两分支首子尺寸相等」
+  在两行等宽时等价）；转发拖拽/回写/双击复位 + 悬停 `.linked` 高亮；角手柄不参与。
+  ⚠️ `sashRegistry` 必须在 `renderSplitview` 清空。
+  ⚠️⚠️ **`centerOf` 判空必须看交叉轴，不能看主轴** —— 分隔条 `flex: 0 0 0` 使主轴尺寸
+  **恒为 0**，按主轴判空（`len > 0`）会恒返回 null、联动**一次都不生效**（B60 首版的真机 bug，
+  二次反馈才发现）。且**旧用例把 rect 桩成 4px 宽 = 改动前的几何**，正好盖住了它。
+  **通用教训：改了几何，务必回头核对 test 里的 rect 桩**（桩比现实宽松 = 测试全绿、真机全坏）。
+  测试 348 vitest + 22 cargo；逐条依据见 `docs/split-view-plan.md` 第七节。
 - ⚠️ **B60 观感项待桌面环境确认**：1px 静息线是否偏细（VS Code 也是 1px）、4px 激活线宽、
-  角手柄骑线后是否好抓、浅蓝落点在深色下是否够醒目；**对齐联动**需真机拖一次 2×2 验证。
+  角手柄骑线后是否好抓、浅蓝落点在深色下是否够醒目；**对齐联动**需真机拖一次 2×2 验证
+  （代码路径已修 + 有回归用例，但沙箱内起不了 WebView2）。
 - 待清理：`menu.ts` 的 `MenuItem.active` / `.menu-item-current`（B53 后无使用者）。
 - 待定：是否发 **v0.3.1**（B55–B59 都改了界面；B54 也留了同一问题未决）。
 - M4 之后：M5 规划未定；候选见 DESIGN.md；观感/交互改进可对照 `docs/vscode-reference/`。

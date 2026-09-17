@@ -1351,11 +1351,13 @@ button:focus-visible {
   content: "";
   position: absolute;
   inset: 0;
-  /* B60：填充与描边同源（accent @0.22 的浅蓝）。描边压在填充上叠加成约 @0.39，
-     落点边界比纯无边框填充清楚得多（B59 去掉描边后用户反馈「看不出落在哪」）。
-     位移/淡入过渡仍是 B59 从 VS Code editordroptarget.css 搬来的 70ms / 150ms。 */
+  /* B60：浅蓝填充（accent @0.22，深 `#4c9ffe` / 浅 `#0969da`），**不描边**。
+     用户反馈轨迹：B59 照搬 VS Code 的 dropBackground（深灰@0.5 / 浅蓝@0.18）→
+     看不清落点；改回浅蓝 + 2px 同色描边 → 反馈「不用描边」。故去掉 border，
+     填充值保持用户认可的那一档（区域内侧观感与上一版一致，只是没了那圈深边）。
+     ⚠️ 想调浓淡只改 `--drop-fill` 一处；圆角留着（无描边时它只是边角略收，无害）。
+     位移/淡入过渡是 B59 从 VS Code editordroptarget.css 搬来的 70ms / 150ms。 */
   background: var(--drop-fill);
-  border: 2px solid var(--drop-fill);
   border-radius: 4px;
   box-sizing: border-box;
   opacity: 0;
