@@ -240,6 +240,15 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
     判据与 VS Code 的 `trySet2x2`（要求两分支首子尺寸相等）在两行等宽时**等价**。
     ⚠️ **测试桩必须忠实于真实几何**：原用例把分隔条 rect 桩成 4px 宽（= B60 之前的几何），
     正好掩盖了上面这个 bug。改几何的改动，务必回头核对 test 里的 rect 桩。
+    ⚠️⚠️ **凡是「先读几何、再据此行动」的路径，都必须先取快照再动手**（B62）：
+    `dblclick` 复位时若先 `applyTarget(self, 50)` 再调 `alignedSashesOf`，本条已被挪走、
+    与联动条差了几百 px，集合为空 → 「只有点中的那条居中」。**先取集合，再统一改比例。**
+    ⚠️ **纯点击（无 `mousemove`）不得回写比例**（B62）：命中区 7px 宽，指针常落在离界线
+    几个像素处，一次点击就能把比例推走约 1%（400px 容器 ≈ 4px），而对齐容差只有 2px ——
+    **点一下就把两条对齐的线推出容差，之后拖谁都不再联动**。故 `mousedown` 记 `moved`，
+    只有真收到 `mousemove` 才在 `onUp` 回写（VS Code 的 sash 同样是「没 move 就不改尺寸」）。
+    ⚠️ **rect 桩不能是常量**：上面两个 bug 都只有「桩随 inline `flexBasis` 实时变化」才暴露。
+    见 `tests/splitview.test.ts` 的 `stubVerticalSash()`（读左栏 inline basis 算界线位置）。
   - **B60：落点高亮回退浅蓝、不描边**。`--drop-fill` 回到 accent 系 @0.22（深 `#4c9ffe` /
     浅 `#0969da`）；B59 照搬 VS Code 的 `dropBackground`（深灰@0.5 / 浅蓝@0.18）在 LitePad 上
     落点边界看不清。中间短暂加过 2px 同色描边，用户明确「不用描边」后去掉 `border`，

@@ -576,7 +576,15 @@ function attachResize(handle: HTMLElement, targets: ResizeTarget[], mode: Resize
       }
     }
 
+    // B62：纯点击（按下→抬起，全程没有 mousemove）不得回写比例。
+    // 命中区有 7px 宽，指针落点可能离界线好几个像素 —— 会把比例「啪」地推走一点，
+    // 而对齐联动是按 2px 容差判定的：**一次点击就能把两条对齐的线推到容差之外**，
+    // 之后拖谁都不再联动（表现为「单击一下，联动就没了」）。
+    // VS Code 的 sash 同样是「没有 move 事件就不改尺寸」。
+    let moved = false;
+
     const onMove = (ev: MouseEvent): void => {
+      moved = true;
       for (const t of targets) applyTarget(t, pctFor(t, ev.clientX, ev.clientY));
       // 联动：同向对齐的分隔条各自按**自己的容器**把指针换算成比例。对齐的两条容器
       // 在拖拽轴上的起止一致，所以换算结果相同 —— 两条始终停在同一个位置。
@@ -591,6 +599,7 @@ function attachResize(handle: HTMLElement, targets: ResizeTarget[], mode: Resize
       for (const l of links) l.handle.classList.remove("resizing");
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
+      if (!moved) return; // 纯点击：比例保持原样
       for (const t of targets) t.commit(pctFor(t, ev.clientX, ev.clientY) / 100);
       for (const l of links) l.target.commit(pctFor(l.target, ev.clientX, ev.clientY) / 100);
     };
@@ -601,12 +610,19 @@ function attachResize(handle: HTMLElement, targets: ResizeTarget[], mode: Resize
   // O1：双击复位。只回写比例与内联样式，不重建 DOM（重建会引发整树重绘/闪烁）。
   // B60：联动的一并复位（对标 sash.ts:622 —— `_onDidReset` 会转发给 linkedSash），
   // 否则复位一条就把「位置一致」打破，联动关系当场消失。
+  //
+  // ⚠️⚠️ **联动集合必须在改任何比例之前求出来**（B62 用户反馈：「双击任意一条，
+  // 所有的都应该居中」）。`alignedSashesOf` 读的是 `getBoundingClientRect` 的**实时几何**：
+  // 一旦先 `applyTarget(self, 50)` 把本条挪到中间，它和还没动的联动条之间就差了
+  // 十几个百分点 —— 远超 `ALIGN_TOL`，求出来的集合是空的，表现为「只有点中的那条居中」。
+  // （老测试抓不到：rect 桩返回常量，不随 inline flexBasis 变化。）
   handle.addEventListener("dblclick", () => {
+    const links = mode === "corner" ? [] : alignedSashesOf(handle, mode);
     for (const t of targets) {
       applyTarget(t, 50);
       t.commit(0.5);
     }
-    for (const l of mode === "corner" ? [] : alignedSashesOf(handle, mode)) {
+    for (const l of links) {
       applyTarget(l.target, 50);
       l.target.commit(0.5);
     }

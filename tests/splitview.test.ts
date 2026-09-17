@@ -229,13 +229,37 @@ describe("对齐联动（B60：对标 VS Code 2x2 的 linkedSash）", () => {
     b: { kind: "split", dir: "h", ratio: 0.5, a: leaf(3), b: leaf(4) },
   };
 
+  // 两行都停在 30% —— 仍算对齐（界线都在 x=120），用来验证「双击一起居中」
+  const GRID_30: LayoutNode = {
+    kind: "split",
+    dir: "v",
+    ratio: 0.5,
+    a: { kind: "split", dir: "h", ratio: 0.3, a: leaf(1), b: leaf(2) },
+    b: { kind: "split", dir: "h", ratio: 0.3, a: leaf(3), b: leaf(4) },
+  };
+
   function stub(el: HTMLElement, r: DOMRect): void {
     el.getBoundingClientRect = () => r;
   }
 
-  /** 上下两行容器 + 两条竖分隔条；secondX = null 表示第二条错开（不联动） */
-  function mountGrid(secondX: number | null = 200) {
-    const m = mount(GRID);
+  /**
+   * 竖分隔条的 rect **随左栏的 inline flexBasis 实时变化** —— 忠实于浏览器。
+   *
+   * ⚠️ 这一步是必须的：早先的桩返回**常量** rect，于是「先 applyTarget(self, 50)
+   * 再求联动集合」这种次序 bug 完全不会暴露（常量几何永远认为两条仍对齐）。
+   * 而真机上 getBoundingClientRect 会立刻反映刚写下的 inline 样式。
+   */
+  function stubVerticalSash(sep: HTMLElement, box: DOMRect): void {
+    sep.getBoundingClientRect = () => {
+      const a = sep.previousElementSibling as HTMLElement;
+      const pct = Number.parseFloat(a.style.flexBasis) || 0;
+      return rect(box.left + (box.width * pct) / 100, box.top, 0, box.height);
+    };
+  }
+
+  /** 上下两行容器 + 两条竖分隔条；secondOffset 非 0 时把第二条错开（不联动） */
+  function mountGrid(secondOffset = 0, tree: LayoutNode = GRID) {
+    const m = mount(tree);
     // 只取两个「行容器」（.layout-h）；外层 .layout-v 是它们的父，排在文档序最前
     const [top, bottom] = Array.from(
       m.root.querySelectorAll<HTMLElement>(".layout-split.layout-h"),
@@ -249,8 +273,14 @@ describe("对齐联动（B60：对标 VS Code 2x2 的 linkedSash）", () => {
     // （宽 0），只有交叉轴（高）是 stretch 出来的满长 —— 界线位置就是 r.left。
     // 早先把这里桩成 4px 宽（= B60 之前的几何），正好掩盖了
     // 「centerOf 按主轴判空 → 恒 null → 联动从未生效」这个真机 bug。
-    stub(sep1, rect(200, 0, 0, 150)); // 竖线：宽 0、高 150 → 界线 x=200
-    stub(sep2, rect(secondX ?? 200, 150, 0, 150));
+    stubVerticalSash(sep1, rect(0, 0, 400, 150));
+    stubVerticalSash(sep2, rect(0, 150, 400, 150));
+    if (secondOffset !== 0) {
+      // 强行给第二条加偏移（模拟两条本来就没对齐）
+      const [p3] = Array.from(m.root.querySelectorAll<HTMLElement>(".layout-panel")).slice(2);
+      const pct = (Number.parseFloat(p3.style.flexBasis) || 0) + (secondOffset / 400) * 100;
+      p3.style.flexBasis = `${pct}%`;
+    }
     return { ...m, sep1, sep2 };
   }
 
@@ -295,17 +325,20 @@ describe("对齐联动（B60：对标 VS Code 2x2 的 linkedSash）", () => {
     expect(sep2.classList.contains("resizing"), "松手后清高亮").toBe(false);
   });
 
-  it("位置错开（中线差 > 2px）的两条不联动", () => {
-    const { root, sep1, onRatioChange } = mountGrid(300);
+  it("位置错开（界线差 > 2px）的两条不联动", () => {
+    const { root, sep1, onRatioChange } = mountGrid(20);
+    const panels = Array.from(root.querySelectorAll<HTMLElement>(".layout-panel"));
+    const before = panels[2].style.flexBasis;
+    expect(before, "前置：下行左栏与上行错开 20px").toBe("55%");
+
     sep1.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     document.dispatchEvent(
       new MouseEvent("mousemove", { bubbles: true, clientX: 300, clientY: 0 }),
     );
     document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 300, clientY: 0 }));
 
-    const panels = Array.from(root.querySelectorAll<HTMLElement>(".layout-panel"));
     expect(panels[0].style.flexBasis).toBe("75%");
-    expect(panels[2].style.flexBasis, "错开的一条保持原比例").toBe("50%");
+    expect(panels[2].style.flexBasis, "错开的一条保持原比例").toBe(before);
     expect(onRatioChange).toHaveBeenCalledWith([0], 0.75);
     for (const call of onRatioChange.mock.calls) {
       expect(call[0], "不得回写错开分隔条的路径").not.toEqual([1]);
@@ -320,11 +353,35 @@ describe("对齐联动（B60：对标 VS Code 2x2 的 linkedSash）", () => {
     expect(sep2.classList.contains("linked")).toBe(false);
   });
 
-  it("双击复位联动（对标 sash.ts:622 —— onDidReset 转发给 linkedSash）", () => {
-    const { sep1, onRatioChange } = mountGrid();
+  it("双击任意一条 → 联动的两条**一起**居中（联动集合必须先于改比例求出）", () => {
+    // B62 用户反馈：「分割条联动时双击任意一条，所有的都应该居中」。
+    // 真机 bug：老代码先 `applyTarget(self, 50)` 再调 `alignedSashesOf`，
+    // 而后者读的是**实时几何** —— 本条已经挪到中间、联动条还停在 30%，
+    // 两者差了 80px ≫ ALIGN_TOL，集合为空 → 只有点中的那条居中。
+    // 两行都在 30%（= 界线 x=120），仍算对齐，所以能触发联动。
+    const { root, sep1, onRatioChange } = mountGrid(0, GRID_30);
+    const panels = Array.from(root.querySelectorAll<HTMLElement>(".layout-panel"));
+    expect(panels[0].style.flexBasis, "前置：上行左栏 30%").toBe("30%");
+    expect(panels[2].style.flexBasis, "前置：下行左栏 30%（两条对齐）").toBe("30%");
+
     sep1.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+
+    expect(panels[0].style.flexBasis, "点中的那条居中").toBe("50%");
+    expect(panels[2].style.flexBasis, "联动的另一条也必须居中").toBe("50%");
     expect(onRatioChange).toHaveBeenCalledWith([0], 0.5);
     expect(onRatioChange).toHaveBeenCalledWith([1], 0.5);
+  });
+
+  it("纯点击（全程无 mousemove）不得回写比例 —— 否则点一下就把对齐推歪", () => {
+    // 命中区有 7px 宽，指针常落在离界线几个像素处；若点击也回写，
+    // 一次点击就能把两条对齐的线推到 2px 容差之外 → 之后拖谁都不再联动。
+    const { sep1, onRatioChange } = mountGrid();
+    sep1.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 204, clientY: 0 }));
+
+    expect(onRatioChange, "没拖动就不该有任何回写").not.toHaveBeenCalled();
+    expect(document.body.classList.contains("layout-dragging"), "拖拽态要正常清掉").toBe(false);
+    expect(sep1.classList.contains("resizing")).toBe(false);
   });
 });
 

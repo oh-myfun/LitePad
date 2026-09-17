@@ -300,3 +300,48 @@ LitePad 的分屏是网格（= gridview 那一套），所以网格里的角手�
 **测试**：`regressions.test.ts` 新增 B61 静态块（竖/横线、两个极限档、拖拽兜底三档、
 角手柄、大纲同款，以及三条「不得残留 mac 档 / nwse」反向断言）；B28 的光标断言与
 B59 的方向光标断言同步更新。全量 **349 vitest + 22 cargo** 全绿。
+
+---
+
+## 九、B62 双击复位要「整组居中」（用户反馈）
+
+用户原话：「分割条联动时双击任意一条，所有的都应该居中。」
+
+### 根因：联动集合在改比例**之后**才求出来（次序 bug）
+
+老代码：
+
+```ts
+for (const t of targets) { applyTarget(t, 50); t.commit(0.5); }   // ← 先把本条挪到中间
+for (const l of mode === "corner" ? [] : alignedSashesOf(handle, mode)) { … }
+//                                        ↑ 这里才求集合
+```
+
+`alignedSashesOf` 依赖 `centerOf` → `getBoundingClientRect`，读的是**实时几何**。
+第一条循环一跑，本条就移到了 50%，而联动的那条还停在原位（例如 30%）——
+两者差了十几个百分点（几百 px），远超 `ALIGN_TOL = 2px`，**求出来的集合是空的**。
+表现：双击只有点中的那条居中，其它的不动。3 行以上的网格更明显。
+
+修法：**先把集合取出来，再统一改比例**（顺序反了就等于要求「挪走之后再认出它原本和谁对齐」）。
+
+### 顺带修掉一个会「悄悄拆散」联动的 bug：纯点击也回写比例
+
+`onUp` 无条件 `commit(pctFor(指针))`。但命中区宽 7px，指针常落在离界线几个像素处，
+**一次不带拖动的点击就能把比例推走约 1%**（400px 容器 ≈ 4px）。而对齐判定只有 2px 容差：
+点一下，两条对齐的线就出了容差，之后拖谁都不再联动 —— 用户会感觉「联动时灵时不灵」。
+VS Code 的 sash 同样是「没有 move 事件就不改尺寸」。修法：`mousedown` 记 `moved`，
+只有真正收到 `mousemove` 才在 `onUp` 回写。
+
+### ⚠️ 测试教训（第二次了）：rect 桩不能是常量
+
+上面两个 bug 都能被「常量 rect 桩」掩盖：
+- 次序 bug 需要桩**随 inline flexBasis 变化**才会暴露（常量几何里，先把本条挪到 50%
+  之后，桩仍然认为两条在同一位置）；
+- 点击推挤 bug 需要 `pctFor` 真的按桩算得一个不同的比例才会暴露。
+
+现在 `tests/splitview.test.ts` 的 `stubVerticalSash()` 会读**左栏的 inline flexBasis**
+实时算界线位置，忠实于浏览器。并已反向验证：把两处修复分别还原，对应用例各自失败。
+
+**测试**：splitview 增至 22 条（+「双击一起居中」「纯点击不回写」）；regressions 的
+B60 静态块改为断言 `alignedSashesOf` 出现在 `applyTarget` **之前**（把次序写进契约）。
+全量 **350 vitest + 22 cargo** 全绿。

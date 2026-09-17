@@ -770,9 +770,20 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(sv, "按同向 + 中线容差查找对齐项").toMatch(/function alignedSashesOf/);
     expect(sv, "拖拽中同步联动目标").toMatch(/for \(const l of links\) applyTarget/);
     expect(sv, "松手回写联动目标").toMatch(/for \(const l of links\) l\.target\.commit/);
-    expect(sv, "双击复位转发给联动条（sash.ts:622）").toMatch(
-      /for \(const l of mode === "corner" \? \[\] : alignedSashesOf\(handle, mode\)\)/,
-    );
+    expect(sv, "双击复位转发给联动条（sash.ts:622）").toBeTruthy();
+    // 双击复位要转发给联动条，且**联动集合必须先求**——centerOf 读的是实时几何，
+    // 先 applyTarget 把本条挪到 50% 就会让集合变空（B62 用户反馈的真机 bug）
+    const dblStart = sv.indexOf('addEventListener("dblclick"');
+    expect(dblStart, "应能定位 dblclick 处理器").toBeGreaterThan(-1);
+    const dbl = sv.slice(dblStart);
+    expect(dbl, "双击要转发给联动条").toMatch(/alignedSashesOf\(handle, mode\)/);
+    expect(
+      dbl.indexOf("alignedSashesOf(handle, mode)"),
+      "联动集合必须先于改比例求出（否则只剩点中的那条居中）",
+    ).toBeLessThan(dbl.indexOf("applyTarget"));
+    expect(dbl, "联动条也要一并复位").toMatch(/l\.target\.commit\(0\.5\)/);
+    // 纯点击（无 mousemove）不得回写比例：命中区 7px 宽，点一下就能把两条对齐推到容差外
+    expect(sv, "没有拖动就不回写比例").toMatch(/if \(!moved\) return;/);
     expect(sv, "角手柄不参与联动").toMatch(
       /mode === "corner" \? \[\] : alignedSashesOf\(handle, mode\)/,
     );
