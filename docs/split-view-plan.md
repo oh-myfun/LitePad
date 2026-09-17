@@ -345,3 +345,105 @@ VS Code 的 sash 同样是「没有 move 事件就不改尺寸」。修法：`mo
 **测试**：splitview 增至 22 条（+「双击一起居中」「纯点击不回写」）；regressions 的
 B60 静态块改为断言 `alignedSashesOf` 出现在 `applyTarget` **之前**（把次序写进契约）。
 全量 **350 vitest + 22 cargo** 全绿。
+
+---
+
+## 十、B63 交叉点联动 + 双击按分割数量均分（用户反馈）
+
+用户原话：「在交叉点拖动时，也要支持联动（高亮和一起拖动）。分割条双击不一定是居中，
+而是根据分割数量均分（对应的所有分割线一起调整）。」
+
+两件事：**① 角手柄（交叉点）也要进联动**；**② 双击的语义从「一律 50%」改成「按段数等分」**。
+
+### ① 交叉点联动：把「一起动的那组」抽成一个入口
+
+B60 的联动只认「同向且位置一致」，而角手柄被显式排除：
+
+```ts
+for (const l of mode === "corner" ? [] : alignedSashesOf(handle, mode)) { … }
+//                       ↑ 角手柄干脆不联动
+```
+
+但角手柄恰恰是**轴互相垂直的两条线的交点**，它一次拖两条，这两条各自还有同向的联动伙伴
+（2×2 网格里，交叉点一拖，x 轴的两条竖线 + y 轴的那条横线**三条**都该动）。所以：
+
+```ts
+/** 本次拖拽会一起动的全部分隔条：每个目标自身 + 与它同向对齐的伙伴。 */
+function movingGroupOf(targets: ResizeTarget[]): BuiltSash[] { … }
+```
+
+- 普通分隔条 1 个目标 → 组 = 本条 + 同向伙伴；
+- 角手柄 2 个目标（双轴）→ 两轴各自的组都并进来。
+
+四个地方（`mouseenter` 悬停预告 / `mousedown` 高亮 / `onMove` 应用 / `onUp` 回写）
+**全部改走这一个入口**，避免「高亮了一组、实际只动了一条」的错位。
+
+⚠️ **角手柄必须复用子分隔条已注册的那个 `ResizeTarget` 对象**，不能另造：
+
+```ts
+attachResize(cHandle, [self, child.target], "corner");   // child.target = 已注册的那个
+```
+
+注册表按 **target 身份**（`sashOfTarget`）查联动伙伴。另造一个对象的话，
+`sashOfTarget` 找不到它 → 子轴一侧的联动静默失效（而且不会报错）。
+为此 `BuiltNode.split` 新增了 `target: ResizeTarget` 字段把注册对象带出来。
+
+### ② 双击均分：同轴链 + 均分比例
+
+「居中」在**只有 2 段**时恰好等于均分，段数一多就不对了。用户要的是「按分割数量均分」，
+所以先要能认出「**哪些分隔条属于同一条链**」——即同一条边界上相连的那些。
+
+```ts
+interface ChainCtx { dir: "h" | "v"; chainId: number }   // 父节点同向 → 沿用父的链号
+function segmentsAlong(node, d): number                  // 沿轴向数「最后并排几个面板」
+// equalRatio = segA / (segA + segB)                     // 两侧段数相等即为均分点
+```
+
+`build()` 顺带算出每条的 `chainId` 与 `equalRatio`，登记进注册表。双击时：
+
+```ts
+const chains = new Set(movingGroupOf(targets).map((s) => s.chainId));
+for (const s of sashRegistry) {
+  if (!chains.has(s.chainId)) continue;
+  applyTarget(s.target, s.equalRatio * 100);
+  s.target.commit(s.equalRatio);
+}
+```
+
+`equalRatio` 是**相对本节点两侧**的比例，但逐层累乘后正好每格等宽 —— 这是它的关键性质：
+
+| 段数 | 逐级比例 | 各格实际占比 |
+| --- | --- | --- |
+| 2 | 1/2 | 50 / 50 |
+| 3 | 1/3 · 1/2 | 33.3 / 33.3 / 33.3 |
+| 4 | 1/4 · 1/3 · 1/2 | 25 / 25 / 25 / 25 |
+
+> 直觉：第 k 级拿到 1/(n−k+1)，剩余 (n−k)/(n−k+1) 交给下一级，望远镜式相乘后每格都是 1/n。
+
+`movingGroupOf` 让双击也带上**同向对齐的伙伴**（2×2 网格里两条竖线一起调），
+所以「对应的所有分割线一起调整」既覆盖**同轴链**，也覆盖**跨行的对齐条**。
+不同向的嵌套各自成链（横线归横线的链、竖线归竖线的链），互不干扰。
+
+⚠️ `chainSeq`（链号自增源）必须与 `sashRegistry` 一同在 `renderSplitview` 归零 ——
+注册表既然清了，链号留着不会串场，但归零后同一棵树每次渲染的链号恒定，
+断言与调试都不再依赖绘制次数。
+
+### ⚠️ 连带修掉的旧断言
+
+B59 那条「父分隔条不得被连带激活」的用例，判据本身就是 B63 要推翻的语义：
+
+```ts
+expect(corner.parentElement.classList.contains("resizing")).toBe(false);  // 旧
+```
+
+角手柄挂在子分隔条上，B63 起**它本该高亮**（因为它跟着动）。但 `stopPropagation`
+这条不变量仍然要守（否则子分隔条会再开一次拖拽 → 重复监听 + 重复 commit），
+**判据换成「回写次数」**：一次斜拖恰好 2 条（父 + 子），多一条就说明注册了两次。
+
+**测试**：splitview 增至 27 条（+ 交叉点拖动联动 / 交叉点悬停预告 / 三栏均分 /
+四栏均分 / 异向嵌套不串链）；regressions 新增 B63 静态块（`movingGroupOf` 单一入口、
+角手柄复用 target、链号与 `equalRatio`、`chainSeq` 随注册表重置），B60 静态块同步升级
+（「角手柄不参与联动」的反向断言删除，改为断言链式均分）。
+全量 **356 vitest + 22 cargo** 全绿；已反向验证：把 `movingGroupOf` 限回单目标、
+把均分改回 `commit(0.5)`，对应用例各自失败。
+

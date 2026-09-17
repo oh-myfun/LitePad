@@ -10,9 +10,19 @@ import { setTip } from "./tooltip";
  * 结构变化时整体重绘；拖拽只改内联样式不重建 EditorView。
  *
  * B59 对齐 VS Code（参考 docs/vscode-reference/）：
- * - 分隔条：双击复位 50%、拖到极限光标变形、拖拽中保持高亮、方向光标（O1–O3/S1）
+ * - 分隔条：双击复位、拖到极限光标变形、拖拽中保持高亮、方向光标（O1–O3/S1）
  * - 角手柄：两条相垂直接处斜向同时拖两条（O7）
  * - 落点：边缘 28% 带 + 1/3 方向优先（O6）、Alt 临时取消分屏（O5）
+ *
+ * B60/B61/B62 补齐「对齐联动」（对标 sash 的 linkedSash）：同向且落同一位置的分隔条
+ * 视为一组，一起拖动 / 一起高亮 / 一起复位。
+ *
+ * B63 两项（用户反馈）：
+ * - **交叉点也要联动**：角手柄有 2 个目标、轴互相垂直 → 两轴各自的联动组都并入
+ *   「移动组」（见 `movingGroupOf`），拖动与悬停预告同时覆盖两条轴。
+ * - **双击不再一律 50%，而是按分割数量均分**：沿同轴链（`chainId`）把每条分隔条
+ *   调成「两侧同轴段数相等」（`segmentsAlong` → `equalRatio`），2 段 = 50%、
+ *   3 段 = 1/3 与 1/2、4 段 = 1/4 · 1/3 · 1/2（逐层累乘后每格等宽）。
  */
 
 export interface PanelRenderData {
@@ -66,6 +76,9 @@ export function renderSplitview(
   // B60：每次重绘都换一批分隔条元素，注册表必须跟着清 —— 否则会拿已脱离文档的
   // 旧句柄去算对齐（centerOf 恒为 0，误判成「全部对齐」）。
   sashRegistry = [];
+  // B63：同轴链号每次重绘重排。注册表一起清，所以链号本身不会串场；归零只为
+  // 让同一棵树的链号恒定（渲染结果可复现，断言与调试都不依赖绘制次数）。
+  chainSeq = 0;
   root.appendChild(build(tree, [], cb, panelData).el);
 }
 
@@ -250,10 +263,37 @@ function finishTabDrag(): void {
   clearInsertIndicators();
 }
 
-/** build 的产物：元素 + （仅 split 节点）其根分隔条与 a/b 子元素，供角手柄联动使用。 */
+/** build 的产物：元素 + （仅 split 节点）其根分隔条、a/b 子元素与**已注册的缩放目标**，
+ *  后者供角手柄复用（角手柄要按 target 身份去注册表里找联动伙伴，不能另造一个对象）。 */
 interface BuiltNode {
   el: HTMLElement;
-  split: { sep: HTMLElement; dir: "h" | "v"; aEl: HTMLElement; bEl: HTMLElement } | null;
+  split: {
+    sep: HTMLElement;
+    dir: "h" | "v";
+    aEl: HTMLElement;
+    bEl: HTMLElement;
+    target: ResizeTarget;
+  } | null;
+}
+
+/** 同轴链的上下文：父节点是不是同方向、以及它所属链的编号。 */
+interface ChainCtx {
+  dir: "h" | "v";
+  chainId: number;
+}
+
+/** 同轴链编号自增源；每次 renderSplitview 归零。 */
+let chainSeq = 0;
+
+/**
+ * 沿轴向的「段数」：把子树里所有与 `d` 同向的嵌套都展开，数出最后并排多少个面板。
+ * 不同向的子树整体算作 1 段（它再切也只是在自己那段里切）。
+ * 用于「按分割数量均分」：节点两侧的均分比例 = segA / (segA + segB)。
+ */
+function segmentsAlong(node: LayoutNode, d: "h" | "v"): number {
+  if (node.kind === "leaf") return 1;
+  if (node.dir !== d) return 1;
+  return segmentsAlong(node.a, d) + segmentsAlong(node.b, d);
 }
 
 function build(
@@ -261,16 +301,22 @@ function build(
   path: number[],
   cb: SplitviewCallbacks,
   panelData: Map<number, PanelRenderData>,
+  parent: ChainCtx | null = null,
 ): BuiltNode {
   if (node.kind === "leaf") {
     return { el: buildPanel(node.panelId, path, cb, panelData), split: null };
   }
 
+  // 同轴链：与父节点同向 → 沿用父的链号（一条链 = 一根竖/横边界上所有相连的分隔条）；
+  // 不同向则另起一条链。双击均分时按链整条一起调整。
+  const chainId = parent && parent.dir === node.dir ? parent.chainId : ++chainSeq;
+  const ctx: ChainCtx = { dir: node.dir, chainId };
+
   const container = document.createElement("div");
   container.className = "layout-split layout-" + (node.dir === "h" ? "h" : "v");
 
-  const A = build(node.a, [...path, 0], cb, panelData);
-  const B = build(node.b, [...path, 1], cb, panelData);
+  const A = build(node.a, [...path, 0], cb, panelData, ctx);
+  const B = build(node.b, [...path, 1], cb, panelData, ctx);
   const sep = document.createElement("div");
   sep.className = "layout-sep layout-sep-" + (node.dir === "h" ? "h" : "v");
 
@@ -285,9 +331,18 @@ function build(
     bEl: B.el,
     commit: (ratio) => cb.onRatioChange(path, ratio),
   };
+  const segA = segmentsAlong(node.a, node.dir);
+  const segB = segmentsAlong(node.b, node.dir);
   attachResize(sep, [self], node.dir);
   // B60：登记真实分隔条（角手柄不是独立分隔条，不登记），供「对齐联动」查找。
-  sashRegistry.push({ handle: sep, dir: node.dir, target: self });
+  // B63：同时记录同轴链号与「均分比例」，双击时按链整条一起调整。
+  sashRegistry.push({
+    handle: sep,
+    dir: node.dir,
+    target: self,
+    chainId,
+    equalRatio: segA / (segA + segB),
+  });
 
   // O7 角手柄：子树的根分隔条若与本分隔条**垂直**，则两者在那一端相接成 T/十字
   // （如「左 | 右上下分屏」，右侧上下两条水平线的一端贴在中间竖线上）。
@@ -303,22 +358,20 @@ function build(
     // 相接端：位于 b 侧（右/下）的子树，其分隔条的**首端**贴父；
     // 位于 a 侧（左/上）的子树，其分隔条的**末端**贴父。
     const atStart = side === "b";
-    const handle = document.createElement("div");
+    const cHandle = document.createElement("div");
     // 双类写法与 VS Code 的 `.orthogonal-drag-handle.start/.end` 一致
-    handle.className = `layout-corner ${atStart ? "start" : "end"}`;
-    child.sep.appendChild(handle);
-    const childTarget: ResizeTarget = {
-      container: built.el,
-      dir: child.dir,
-      aEl: child.aEl,
-      bEl: child.bEl,
-      commit: (ratio) => cb.onRatioChange([...path, side === "a" ? 0 : 1], ratio),
-    };
-    attachResize(handle, [self, childTarget], "corner");
+    cHandle.className = `layout-corner ${atStart ? "start" : "end"}`;
+    child.sep.appendChild(cHandle);
+    // ⚠️ 必须复用子分隔条**已注册的那个 target 对象**（不要另造）：注册表按 target 身份
+    // 查联动伙伴，另造对象会让 `sashOfTarget` 找不到它，交叉点拖动时子轴一侧的联动失效。
+    attachResize(cHandle, [self, child.target], "corner");
   }
 
   container.append(A.el, sep, B.el);
-  return { el: container, split: { sep, dir: node.dir, aEl: A.el, bEl: B.el } };
+  return {
+    el: container,
+    split: { sep, dir: node.dir, aEl: A.el, bEl: B.el, target: self },
+  };
 }
 
 function buildPanel(
@@ -449,7 +502,7 @@ function tabUnder(panel: HTMLElement, x: number, y: number): number | null {
 // 斜向拖动时两个目标各按自己的轴换算比例，实现「一脚拖两条」。
 
 /**
- * 本次布局的全部**真实分隔条**（角手柄不计），用于「对齐联动」。
+ * 本次布局的全部**真实分隔条**（角手柄不计），用于「对齐联动」与「双击均分」。
  * 每次 renderSplitview 前清空。
  */
 let sashRegistry: BuiltSash[] = [];
@@ -458,9 +511,13 @@ interface BuiltSash {
   handle: HTMLElement;
   dir: "h" | "v";
   target: ResizeTarget;
+  /** 同轴链编号：同一条边界上相连的分隔条共用一个号（B63 双击均分按链整条调整） */
+  chainId: number;
+  /** 均分比例（0–1）：让该节点两侧的**同轴段数**相等，即「按分割数量均分」 */
+  equalRatio: number;
 }
 
-/** 对齐容差（px）：两条同向分隔条中线相差不超过它就视为「位置一致」。 */
+/** 对齐容差（px）：两条同向分隔条位置相差不超过它就视为「位置一致」。 */
 const ALIGN_TOL = 2;
 
 /**
@@ -479,21 +536,44 @@ function centerOf(entry: BuiltSash): number | null {
   return entry.dir === "h" ? r.left + r.width / 2 : r.top + r.height / 2;
 }
 
+/** 按 target 身份在注册表里找到这条分隔条（交叉点拖动时两端都要能查到）。 */
+function sashOfTarget(t: ResizeTarget): BuiltSash | undefined {
+  return sashRegistry.find((s) => s.target === t);
+}
+
 /**
  * 与给定分隔条**同向且位置一致**的其他分隔条。
  * 对标 VS Code 2x2 网格的 linkedSash（`gridview.ts:715` 的 trySet2x2 + `sash.ts:342`）：
  * 两条竖线（或两条横线）落在同一位置时联动，拖一条两条一起走。
  */
-function alignedSashesOf(handle: HTMLElement, dir: "h" | "v"): BuiltSash[] {
-  const self = sashRegistry.find((s) => s.handle === handle);
-  if (!self) return [];
+function alignedSashesOf(self: BuiltSash): BuiltSash[] {
   const c = centerOf(self);
   if (c === null) return [];
   return sashRegistry.filter((s) => {
-    if (s === self || s.dir !== dir) return false;
+    if (s === self || s.dir !== self.dir) return false;
     const other = centerOf(s);
     return other !== null && Math.abs(other - c) <= ALIGN_TOL;
   });
+}
+
+/**
+ * 本次拖拽会**一起动**的全部分隔条：每个拖拽目标自身 + 与它同向对齐的伙伴。
+ *
+ * 普通分隔条只有 1 个目标；**交叉点（角手柄）有 2 个目标、轴互相垂直**，
+ * 于是两个轴向各自的联动伙伴都会被带进来（B63 用户要求「交叉点拖动也要联动」）。
+ * 这也正是判定「拖一条两条一起走」的统一入口。
+ */
+function movingGroupOf(targets: ResizeTarget[]): BuiltSash[] {
+  const out: BuiltSash[] = [];
+  for (const t of targets) {
+    const self = sashOfTarget(t);
+    if (!self) continue;
+    if (!out.includes(self)) out.push(self);
+    for (const l of alignedSashesOf(self)) {
+      if (!out.includes(l)) out.push(l);
+    }
+  }
+  return out;
 }
 
 /** 比例上下限（百分比）。与 CSS 的 min-width/min-height 一起构成缩放下限。 */
@@ -529,7 +609,8 @@ type ResizeMode = "h" | "v" | "corner";
 
 /**
  * 给分隔条（或角手柄）装上「拖拽改比例」。
- * - **双击复位**（O1）：回到 50%（对标 VS Code sash 的 onDidReset）。
+ * - **双击均分**（O1，B63 起）：把该分隔条所在的**同轴链**整条调成等分（见 `equalRatio`），
+ *   而不是一律回到 50% —— 对标 VS Code sash 的 onDidReset，但按分割数量分配。
  * - **极限提示**（O2）：拖到 10%/90% 时给手柄加 `.at-min`/`.at-max`，光标变形。
  * - **方向光标**（O3）：垂直分隔条拖拽时 `body` 加 `layout-dragging-v` → `ns-resize`；
  *   其余（水平分隔条 / 大纲 / 查找栏）保持默认 `ew-resize`。
@@ -537,35 +618,39 @@ type ResizeMode = "h" | "v" | "corner";
  *   原先的 `col-resize`/`row-resize` 是 mac 档，Windows 上观感不同。
  * - **指针捕获**（O4）：真实浏览器里把后续事件锁定到本元素，鼠标移出窗口也不丢事件；
  *   jsdom 无 setPointerCapture 时静默跳过。
+ *
+ * ⚠️ 所有「哪些线一起动」的判断都走 `movingGroupOf(targets)` 一个入口：普通分隔条
+ * 1 个目标，角手柄 2 个（双轴）。悬停高亮、按下高亮、拖动、回写四处必须一致，
+ * 否则会出现「高亮了一组、实际只动了一条」的错位。
  */
 function attachResize(handle: HTMLElement, targets: ResizeTarget[], mode: ResizeMode): void {
   const body = document.body;
   const BODY_CLASSES = ["layout-dragging", "layout-dragging-v", "layout-dragging-corner"];
 
   // B60：悬停也联动高亮 —— 对标 sash.ts:629-648 的 onMouseEnter/onMouseLeave 转发给
-  // linkedSash。还没按下就能看到「这两条是一组的」，联动才可发现。角手柄双轴，不参与。
-  if (mode !== "corner") {
-    handle.addEventListener("mouseenter", () => {
-      for (const l of alignedSashesOf(handle, mode)) l.handle.classList.add("linked");
-    });
-    handle.addEventListener("mouseleave", () => {
-      for (const s of sashRegistry) s.handle.classList.remove("linked");
-    });
-  }
+  // linkedSash。还没按下就能看到「这些是一组、会一起动」，联动才可发现。
+  // B63：改走 `movingGroupOf` —— 交叉点有 2 个目标（双轴），悬停时两条轴各自的联动组
+  // 都要亮，用户才能预判「斜拖这一下会带动谁」。
+  handle.addEventListener("mouseenter", () => {
+    for (const s of movingGroupOf(targets)) s.handle.classList.add("linked");
+  });
+  handle.addEventListener("mouseleave", () => {
+    for (const s of sashRegistry) s.handle.classList.remove("linked");
+  });
 
   handle.addEventListener("mousedown", (e) => {
     e.preventDefault();
     // 分隔条落在面板之上；不 stopPropagation 会让面板的 mousedown 抢焦点。
     e.stopPropagation();
-    // B60：拖拽开始时求一次「对齐联动」——与本条**同向且位置一致**的分隔条一起走
-    // （VS Code 2x2 的 linkedSash；角手柄是双轴操作，不参与）。
-    const links = mode === "corner" ? [] : alignedSashesOf(handle, mode);
-    for (const l of links) l.handle.classList.add("resizing");
+    // B60/B63：按下时求一次「整组」——每个目标自身 + 同向对齐的伙伴。普通分隔条是
+    // 「本条 + 它的联动条」，交叉点是「父线 + 子线 + 两条轴各自的联动条」。
+    const group = movingGroupOf(targets);
+    const links = group.filter((s) => !targets.includes(s.target));
+    for (const s of group) s.handle.classList.add("resizing");
 
     body.classList.add("layout-dragging");
     if (mode === "v") body.classList.add("layout-dragging-v");
     if (mode === "corner") body.classList.add("layout-dragging-corner");
-    handle.classList.add("resizing");
 
     const pid = (e as MouseEvent & { pointerId?: number }).pointerId;
     if (typeof pid === "number" && typeof handle.setPointerCapture === "function") {
@@ -589,14 +674,18 @@ function attachResize(handle: HTMLElement, targets: ResizeTarget[], mode: Resize
       // 联动：同向对齐的分隔条各自按**自己的容器**把指针换算成比例。对齐的两条容器
       // 在拖拽轴上的起止一致，所以换算结果相同 —— 两条始终停在同一个位置。
       for (const l of links) applyTarget(l.target, pctFor(l.target, ev.clientX, ev.clientY));
-      const p = pctFor(targets[0], ev.clientX, ev.clientY);
-      handle.classList.toggle("at-min", p <= MIN_PCT + 1e-6);
-      handle.classList.toggle("at-max", p >= MAX_PCT - 1e-6);
+      // 极限提示：每个目标按**自己的容器**换算（交叉点两个目标的轴不同）
+      for (const t of targets) {
+        const pct = pctFor(t, ev.clientX, ev.clientY);
+        const el = targetElOf(t);
+        el.classList.toggle("at-min", pct <= MIN_PCT + 1e-6);
+        el.classList.toggle("at-max", pct >= MAX_PCT - 1e-6);
+      }
     };
     const onUp = (ev: MouseEvent): void => {
       body.classList.remove(...BODY_CLASSES);
-      handle.classList.remove("resizing", "at-min", "at-max");
-      for (const l of links) l.handle.classList.remove("resizing");
+      for (const s of group) s.handle.classList.remove("resizing");
+      for (const t of targets) targetElOf(t).classList.remove("at-min", "at-max");
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
       if (!moved) return; // 纯点击：比例保持原样
@@ -615,16 +704,21 @@ function attachResize(handle: HTMLElement, targets: ResizeTarget[], mode: Resize
   // 所有的都应该居中」）。`alignedSashesOf` 读的是 `getBoundingClientRect` 的**实时几何**：
   // 一旦先 `applyTarget(self, 50)` 把本条挪到中间，它和还没动的联动条之间就差了
   // 十几个百分点 —— 远超 `ALIGN_TOL`，求出来的集合是空的，表现为「只有点中的那条居中」。
-  // （老测试抓不到：rect 桩返回常量，不随 inline flexBasis 变化。）
+  //
+  // B63：不再是「一律 50%」，而是**按分割数量均分**：沿该分隔条的同轴链把每一段都
+  // 调成等分（2 段 = 50%，3 段 = 1/3 与 1/2 …，见 `segmentsAlong` / `equalRatio`）。
+  // 「对应的所有分割线一起调整」= 该链上的每条分隔条 + 它们各自的联动伙伴。
   handle.addEventListener("dblclick", () => {
-    const links = mode === "corner" ? [] : alignedSashesOf(handle, mode);
-    for (const t of targets) {
-      applyTarget(t, 50);
-      t.commit(0.5);
-    }
-    for (const l of links) {
-      applyTarget(l.target, 50);
-      l.target.commit(0.5);
+    const chains = new Set(movingGroupOf(targets).map((s) => s.chainId));
+    for (const s of sashRegistry) {
+      if (!chains.has(s.chainId)) continue;
+      applyTarget(s.target, s.equalRatio * 100);
+      s.target.commit(s.equalRatio);
     }
   });
+}
+
+/** 分隔条元素（`.at-min`/`.at-max` 只能落在分隔条本体上，角手柄上没有样式）。 */
+function targetElOf(t: ResizeTarget): HTMLElement {
+  return sashOfTarget(t)?.handle ?? (t.aEl.parentElement as HTMLElement);
 }

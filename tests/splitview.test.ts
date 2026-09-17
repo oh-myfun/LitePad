@@ -201,10 +201,14 @@ describe("正交角手柄（B59 O7）", () => {
     const corner = root.querySelector<HTMLElement>(".layout-corner")!;
     corner.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     expect(document.body.classList.contains("layout-dragging-corner")).toBe(true);
-    // 角手柄是分隔条的子元素：mousedown 必须被 stopPropagation 截住，
-    // 否则父分隔条也会同时开一次拖拽（重复监听 + 重复 commit）。
-    const parentSep = corner.parentElement as HTMLElement;
-    expect(parentSep.classList.contains("resizing"), "父分隔条不得被连带激活").toBe(false);
+    // B63：角手柄挂在子分隔条上，拖它两条轴上的线**都要动** → 两条都要高亮。
+    // （B59 只把角手柄自己标成拖拽态，用户看不出「这两条会一起走」。）
+    const childSep = corner.parentElement as HTMLElement;
+    expect(childSep.classList.contains("resizing"), "子轴的线也要高亮").toBe(true);
+    expect(
+      root.querySelector<HTMLElement>(".layout-sep-h")!.classList.contains("resizing"),
+      "父轴的线也要高亮",
+    ).toBe(true);
     document.dispatchEvent(
       new MouseEvent("mousemove", { bubbles: true, clientX: 300, clientY: 150 }),
     );
@@ -215,6 +219,11 @@ describe("正交角手柄（B59 O7）", () => {
     // 父：x=300/400 → 0.75；子：y=150/300 → 0.5（子容器 rect 的 top=0, height=300）
     expect(onRatioChange).toHaveBeenCalledWith([], 0.75);
     expect(onRatioChange).toHaveBeenCalledWith([1], 0.5);
+    // ⚠️ 角手柄是分隔条的子元素，mousedown 必须被 stopPropagation 截住，
+    // 否则子分隔条会**再开一次拖拽**（重复监听 + 重复 commit）。
+    // B63 起不能再用「子分隔条有没有 resizing」当判据（它现在**本该**高亮），
+    // 改为数回写次数：一次斜拖恰好 2 条（父 + 子），多一条就说明注册了两次。
+    expect(onRatioChange, "恰好回写 2 条，不得重复注册").toHaveBeenCalledTimes(2);
     expect(document.body.classList.contains("layout-dragging-corner")).toBe(false);
   });
 });
@@ -382,6 +391,165 @@ describe("对齐联动（B60：对标 VS Code 2x2 的 linkedSash）", () => {
     expect(onRatioChange, "没拖动就不该有任何回写").not.toHaveBeenCalled();
     expect(document.body.classList.contains("layout-dragging"), "拖拽态要正常清掉").toBe(false);
     expect(sep1.classList.contains("resizing")).toBe(false);
+  });
+
+  it("B63 在交叉点（角手柄）拖动 → 双轴各自的联动组都要高亮并一起走", () => {
+    // 用户要求：「在交叉点拖动时，也要支持联动（高亮和一起拖动）」。
+    // 角手柄有 2 个目标、轴互相垂直 → 移动组 = x 轴的线 + 它的联动伙伴 + y 轴的线。
+    // 本用例：2x2 网格，两行的竖线都停在 50%（对齐）。
+    const m = mountGrid();
+    // 根容器（上下分屏）也要桩上，交叉点拖动会用它的 rect 换算 x 轴比例
+    stub(m.root.querySelector<HTMLElement>(".layout-split.layout-v")!, rect(0, 0, 400, 300));
+
+    const corners = Array.from(m.root.querySelectorAll<HTMLElement>(".layout-corner"));
+    expect(corners.length, "两行各有一个相接端").toBe(2);
+    // 上行的相接端在其竖线的下端 → end；下行的在上端 → start
+    expect(corners[0].classList.contains("end"), "上行角手柄贴在下端").toBe(true);
+    expect(corners[1].classList.contains("start"), "下行角手柄贴在上端").toBe(true);
+
+    corners[0].dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    expect(m.sep1.classList.contains("resizing"), "x 轴本线高亮").toBe(true);
+    expect(m.sep2.classList.contains("resizing"), "x 轴的联动伙伴也要高亮").toBe(true);
+    expect(
+      m.root.querySelector<HTMLElement>(".layout-sep-v")!.classList.contains("resizing"),
+      "y 轴那条线也要高亮",
+    ).toBe(true);
+
+    document.dispatchEvent(
+      new MouseEvent("mousemove", { bubbles: true, clientX: 300, clientY: 150 }),
+    );
+    const panels = Array.from(m.root.querySelectorAll<HTMLElement>(".layout-panel"));
+    expect(panels[0].style.flexBasis, "上行左栏跟到 75%").toBe("75%");
+    expect(panels[2].style.flexBasis, "下行左栏也跟到 75%（同轴联动）").toBe("75%");
+
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, clientX: 300, clientY: 150 }),
+    );
+    expect(m.onRatioChange).toHaveBeenCalledWith([0], 0.75);
+    expect(m.onRatioChange).toHaveBeenCalledWith([1], 0.75);
+    expect(m.onRatioChange).toHaveBeenCalledWith([], 0.5); // y 轴：150/300
+    const hSep = m.root.querySelector<HTMLElement>(".layout-sep-v")!;
+    for (const sep of [m.sep1, m.sep2, hSep]) {
+      expect(sep.classList.contains("resizing"), "松手后全部清高亮").toBe(false);
+    }
+  });
+
+  it("B63 交叉点悬停即预告：两条轴上的联动组一起亮", () => {
+    const m = mountGrid();
+    stub(m.root.querySelector<HTMLElement>(".layout-split.layout-v")!, rect(0, 0, 400, 300));
+    const corner = m.root.querySelector<HTMLElement>(".layout-corner")!;
+    corner.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(m.sep1.classList.contains("linked"), "x 轴本线").toBe(true);
+    expect(m.sep2.classList.contains("linked"), "x 轴的联动伙伴").toBe(true);
+    expect(
+      m.root.querySelector<HTMLElement>(".layout-sep-v")!.classList.contains("linked"),
+      "y 轴那条线也要预告",
+    ).toBe(true);
+    corner.dispatchEvent(new MouseEvent("mouseleave"));
+    expect(m.sep1.classList.contains("linked")).toBe(false);
+    expect(m.root.querySelector<HTMLElement>(".layout-sep-v")!.classList.contains("linked")).toBe(
+      false,
+    );
+  });
+});
+
+describe("B63 双击按分割数量均分（不是一律 50%）", () => {
+  const chain3: LayoutNode = {
+    kind: "split",
+    dir: "h",
+    ratio: 0.7,
+    a: leaf(1),
+    b: { kind: "split", dir: "h", ratio: 0.3, a: leaf(2), b: leaf(3) },
+  };
+  const chain4: LayoutNode = {
+    kind: "split",
+    dir: "h",
+    ratio: 0.7,
+    a: leaf(1),
+    b: {
+      kind: "split",
+      dir: "h",
+      ratio: 0.5,
+      a: leaf(2),
+      b: { kind: "split", dir: "h", ratio: 0.4, a: leaf(3), b: leaf(4) },
+    },
+  };
+
+  /** 每条分隔条两侧的**同轴段数**相等 —— 即「按分割数量均分」。 */
+  function expectEven(root: HTMLElement, count: number): void {
+    const panels = Array.from(root.querySelectorAll<HTMLElement>(".layout-panel"));
+    expect(panels.length).toBe(count);
+    // 面板的 flexBasis 是相对**各自父容器**的，逐层累乘才是占整条轴的比例：
+    // 只要「本元素」的父是分屏容器，就把本元素的 flexBasis 乘进去，然后上移一层。
+    const share = panels.map((p) => {
+      let v = 1;
+      let el: HTMLElement | null = p;
+      while (el && el !== root) {
+        const parent: HTMLElement | null = el.parentElement;
+        if (!parent) break;
+        if (parent.classList.contains("layout-split")) {
+          v *= (Number.parseFloat(el.style.flexBasis) || 0) / 100;
+        }
+        el = parent;
+      }
+      return v * 100;
+    });
+    for (const s of share) expect(s).toBeCloseTo(100 / count, 5);
+  }
+
+  it("三栏：双击任意一条 → 三条等分（1/3），不是「本条 50%」", () => {
+    // 老行为（B62）：双击哪条，哪条 + 联动条一起回 50% —— 三栏时仍然是一大两小。
+    const { root, onRatioChange } = mount(chain3);
+    const seps = Array.from(root.querySelectorAll<HTMLElement>(".layout-sep"));
+    expect(seps.length).toBe(2);
+
+    seps[0].dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expectEven(root, 3);
+    expect(onRatioChange).toHaveBeenCalledWith([], 1 / 3);
+    expect(onRatioChange).toHaveBeenCalledWith([1], 0.5);
+
+    // 换点第二条，结果必须完全一致（「对应的所有分割线一起调整」）
+    onRatioChange.mockClear();
+    // 先打乱，确认不是「碰巧本来就是等分」
+    seps[0].dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    document.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 5, clientY: 0 }));
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 5, clientY: 0 }));
+    seps[1].dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expectEven(root, 3);
+    expect(onRatioChange).toHaveBeenCalledWith([], 1 / 3);
+    expect(onRatioChange).toHaveBeenCalledWith([1], 0.5);
+  });
+
+  it("四栏：双击任意一条 → 四条等分（1/4），整链逐级收敛", () => {
+    const { root, onRatioChange } = mount(chain4);
+    const seps = Array.from(root.querySelectorAll<HTMLElement>(".layout-sep"));
+    expect(seps.length).toBe(3);
+
+    seps[2].dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expectEven(root, 4);
+    expect(onRatioChange).toHaveBeenCalledWith([], 1 / 4);
+    expect(onRatioChange).toHaveBeenCalledWith([1], 1 / 3);
+    expect(onRatioChange).toHaveBeenCalledWith([1, 1], 0.5);
+  });
+
+  it("不同向的嵌套各自成链：双击横线不得动到竖线", () => {
+    // 左 | 右(上下)：横向那条（x 轴）与纵向那条（y 轴）不是同一条链。
+    const tree: LayoutNode = {
+      kind: "split",
+      dir: "h",
+      ratio: 0.4,
+      a: leaf(1),
+      b: { kind: "split", dir: "v", ratio: 0.3, a: leaf(2), b: leaf(3) },
+    };
+    const { root, onRatioChange } = mount(tree);
+    const childSep = root.querySelector<HTMLElement>(".layout-sep-v")!;
+    childSep.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    // 纵向两条各占一半 → 50%；横向那条（40%）纹丝不动
+    expect(onRatioChange).toHaveBeenCalledWith([1], 0.5);
+    for (const call of onRatioChange.mock.calls) {
+      expect(call[0], "不得动到另一条链").not.toEqual([]);
+    }
+    expect(root.querySelector<HTMLElement>(".layout-panel")!.style.flexBasis).toBe("40%");
   });
 });
 

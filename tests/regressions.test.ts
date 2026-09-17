@@ -770,24 +770,66 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(sv, "按同向 + 中线容差查找对齐项").toMatch(/function alignedSashesOf/);
     expect(sv, "拖拽中同步联动目标").toMatch(/for \(const l of links\) applyTarget/);
     expect(sv, "松手回写联动目标").toMatch(/for \(const l of links\) l\.target\.commit/);
-    expect(sv, "双击复位转发给联动条（sash.ts:622）").toBeTruthy();
     // 双击复位要转发给联动条，且**联动集合必须先求**——centerOf 读的是实时几何，
     // 先 applyTarget 把本条挪到 50% 就会让集合变空（B62 用户反馈的真机 bug）
     const dblStart = sv.indexOf('addEventListener("dblclick"');
     expect(dblStart, "应能定位 dblclick 处理器").toBeGreaterThan(-1);
     const dbl = sv.slice(dblStart);
-    expect(dbl, "双击要转发给联动条").toMatch(/alignedSashesOf\(handle, mode\)/);
+    expect(dbl, "双击按链整条一起调整").toMatch(
+      /movingGroupOf\(targets\)\.map\(\(s\) => s\.chainId\)/,
+    );
     expect(
-      dbl.indexOf("alignedSashesOf(handle, mode)"),
+      dbl.indexOf("movingGroupOf(targets)"),
       "联动集合必须先于改比例求出（否则只剩点中的那条居中）",
     ).toBeLessThan(dbl.indexOf("applyTarget"));
-    expect(dbl, "联动条也要一并复位").toMatch(/l\.target\.commit\(0\.5\)/);
+    expect(dbl, "整链按均分比例回写（不是一律 50%）").toMatch(/s\.target\.commit\(s\.equalRatio\)/);
     // 纯点击（无 mousemove）不得回写比例：命中区 7px 宽，点一下就能把两条对齐推到容差外
     expect(sv, "没有拖动就不回写比例").toMatch(/if \(!moved\) return;/);
-    expect(sv, "角手柄不参与联动").toMatch(
-      /mode === "corner" \? \[\] : alignedSashesOf\(handle, mode\)/,
-    );
     expect(css, ".linked 高亮（悬停可见的联动提示）").toMatch(/\.layout-sep\.linked::after/);
+  });
+
+  it("B63 交叉点联动 + 双击按分割数量均分（静态契约）", () => {
+    const sv = readFileSync("src/shell/splitview.ts", "utf-8");
+    const stripComments = (s: string): string => s.replace(/\/\*[\s\S]*?\*\//g, "");
+    const code = stripComments(sv);
+
+    // ① 「一起动的那一组」统一入口：每个拖拽目标自身 + 它同向对齐的伙伴。
+    // 角手柄有 2 个目标（轴互相垂直）→ 两条轴各自的联动组都会被带进来。
+    expect(code, "统一的移动组入口").toMatch(/function movingGroupOf\(targets: ResizeTarget\[\]\)/);
+    expect(code, "组 = 自身 + 同向对齐伙伴").toMatch(
+      /out\.push\(self\)[\s\S]{0,220}?alignedSashesOf\(self\)/,
+    );
+    expect(code, "按 target 身份反查注册项（交叉点两端都要查得到）").toMatch(
+      /function sashOfTarget\(t: ResizeTarget\)/,
+    );
+
+    // ② 悬停/按下/拖动/松手都必须走这个组 —— 不能再有「corner 不联动」的分支。
+    expect(code, "悬停高亮走移动组").toMatch(/mouseenter"[\s\S]{0,120}?movingGroupOf\(targets\)/);
+    expect(code, "按下时求整组与联动条").toMatch(
+      /const group = movingGroupOf\(targets\);[\s\S]{0,140}?const links = group\.filter/,
+    );
+    expect(code, "不得残留「角手柄不参与联动」分支").not.toMatch(/mode === "corner" \? \[\]/);
+
+    // ③ 角手柄必须**复用子分隔条已注册的 target 对象**：注册表按 target 身份查伙伴，
+    // 另造对象会让 sashOfTarget 找不到它，交叉点拖动时子轴一侧的联动失效。
+    expect(code, "角手柄挂在子分隔条上").toMatch(/child\.sep\.appendChild\(cHandle\)/);
+    expect(code, "角手柄复用子分隔条的 target").toMatch(
+      /attachResize\(cHandle, \[self, child\.target\], "corner"\)/,
+    );
+
+    // ④ 同轴链 + 均分比例：沿轴向数段数，两侧段数相等即为均分点。
+    expect(code, "链号随父沿用（同向才同链）").toMatch(
+      /parent\.dir === node\.dir \? parent\.chainId : \+\+chainSeq/,
+    );
+    expect(code, "轴向段数递归").toMatch(
+      /function segmentsAlong\(node: LayoutNode, d: "h" \| "v"\)/,
+    );
+    expect(code, "均分比例 = segA / (segA + segB)").toMatch(/equalRatio: segA \/ \(segA \+ segB\)/);
+    // 链号自增源必须每次重绘归零（与注册表一同清），否则渲染结果不可复现
+    expect(code, "chainSeq 随 sashRegistry 一同重置").toMatch(
+      /sashRegistry = \[\];[\s\S]{0,240}?chainSeq = 0;/,
+    );
+    expect(code, "注册表登记链号与均分比例").toMatch(/chainId,\s*\n\s*equalRatio:/);
   });
 
   it("B61 分隔条光标与 VS Code 非 mac 档一致（ew/ns，不是 col/row）", () => {

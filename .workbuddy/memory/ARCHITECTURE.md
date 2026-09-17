@@ -187,7 +187,10 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   - 分隔条缩放统一走 `splitview.ts` 的 **`attachResize(handle, targets[], mode)`**：
     `targets` 是「一对兄弟元素 + 容器 + ratio 回写路径」。普通分隔条 1 个目标；
     **角手柄 2 个目标**（父 + 子，轴相垂直）→ 斜向拖动同时改两条比例。
-  - **双击复位**到 50%、拖到极限加 `.at-min`/`.at-max` 变形光标、拖拽中加 `.resizing`
+  - **双击均分**（B63 起不再是「一律 50%」）：沿**同轴链**把每条分隔条调成
+    「两侧同轴段数相等」（`chainId` + `segmentsAlong` → `equalRatio`），
+    2 段 = 50%、3 段 = 1/3·1/2、4 段 = 1/4·1/3·1/2；逐层累乘后每格等宽。
+    拖到极限加 `.at-min`/`.at-max` 变形光标、拖拽中加 `.resizing`
     保持高亮（只写 `:hover` 时鼠标滑出 7px 细线就失色）。
   - ⚠️ **`body.layout-dragging` 是三处共用的**（分屏分隔条 / 大纲 `toc.ts` / 查找栏 `findbar.ts`），
     默认光标 = 横向拖拽档。B59 给垂直分隔条叠加 `.layout-dragging-v`；
@@ -226,13 +229,10 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
     ⚠️ **角手柄必须跟着改成骑线**（`top/left: -4px` + 8px），原先 `top:0/left:0 + 7px`
     是贴着已经消失的 7px 带摆的。
   - **B60：对齐联动**（对标 VS Code 2x2 的 `linkedSash`）：`sashRegistry`（真实分隔条，
-    角手柄不登记）+ `centerOf()` + `alignedSashesOf(handle, dir)`，判定是
+    角手柄不登记，但**它的目标**登记在案）+ `centerOf()` + `alignedSashesOf(self)`，判定是
     **同向 + 中线差 ≤ 2px**（比 VS Code 的「2x2 且首子尺寸相等」更通用，能覆盖 3×2 网格）。
-    转发三件事：`onMove` 同步 `applyTarget`、`onUp` 各自 `commit`、`dblclick` 一并复位
-    （`sash.ts:622` 的 `_onDidReset` 也转发）；还有 `mouseenter/mouseleave` → `.linked`
-    让联动在按下之前就可见（`sash.ts:629-648`）。**角手柄 `links = []`**（双轴不参与）。
-    ⚠️ `sashRegistry` 必须在 `renderSplitview` 里清空 —— 否则拿已脱离文档的旧句柄算对齐时
-    `centerOf` 恒为 0，会误判成「全部对齐」。
+    ⚠️ `sashRegistry` 必须在 `renderSplitview` 里清空（B63 起 `chainSeq` 也一并归零）——
+    否则拿已脱离文档的旧句柄算对齐时 `centerOf` 恒为 0，会误判成「全部对齐」。
     ⚠️⚠️ **`centerOf` 判空必须看交叉轴，不能看主轴**：分隔条是 `flex: 0 0 0` 的浮层，
     主轴尺寸**恒为 0** —— 按主轴判空（`len > 0`）会让它恒返回 `null`、`alignedSashesOf`
     永远拿到空数组，**联动一次都不会生效**（这就是 B60 首版的真机 bug）。正确写法是
@@ -249,6 +249,23 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
     只有真收到 `mousemove` 才在 `onUp` 回写（VS Code 的 sash 同样是「没 move 就不改尺寸」）。
     ⚠️ **rect 桩不能是常量**：上面两个 bug 都只有「桩随 inline `flexBasis` 实时变化」才暴露。
     见 `tests/splitview.test.ts` 的 `stubVerticalSash()`（读左栏 inline basis 算界线位置）。
+  - **B63：「一起动的那一组」只有一个入口 —— `movingGroupOf(targets)`**
+    = 每个拖拽目标**自身** + 与它**同向对齐的伙伴**。
+    ⚠️ **四处（`mouseenter` 悬停预告 / `mousedown` 高亮 / `onMove` 应用 / `onUp` 回写）
+    必须全走它**，否则会出现「高亮了一组、实际只动了一条」的错位。
+    - **交叉点（角手柄）也联动**：角手柄有 **2 个目标、轴互相垂直** → 两轴各自的联动组
+      都并入。用户原话「在交叉点拖动时，也要支持联动（高亮和一起拖动）」。
+      B60/B62 的 `mode === "corner" ? [] : …` 分支已删除，**不要再加回来**。
+    - ⚠️⚠️ **角手柄必须复用子分隔条已注册的那个 `ResizeTarget` 对象**：
+      `attachResize(cHandle, [self, child.target], "corner")`，`child.target` 来自
+      `BuiltNode.split.target`。注册表按 **target 身份**（`sashOfTarget`）查伙伴，
+      另造对象会让查找落空 → 子轴一侧的联动**静默失效**（不报错，最难查）。
+    - **双击 = 按分割数量均分**（用户明确「不一定是居中」）：`chainId` 认链、
+      `equalRatio = segA/(segA+segB)` 给比例，双击时把**整条链**（含各条的联动伙伴）一起调。
+      不同向的嵌套各自成链，互不干扰。
+    - ⚠️ **连带推翻的旧断言**：B59 的「父分隔条不得被连带激活」判据本身就与 B63 冲突
+      （角手柄拖起来时子分隔条**本该**高亮）。`stopPropagation` 这条不变量仍要守，
+      但判据要换成**回写次数**（一次斜拖恰好 2 条），不能再看 `resizing` class。
   - **B60：落点高亮回退浅蓝、不描边**。`--drop-fill` 回到 accent 系 @0.22（深 `#4c9ffe` /
     浅 `#0969da`）；B59 照搬 VS Code 的 `dropBackground`（深灰@0.5 / 浅蓝@0.18）在 LitePad 上
     落点边界看不清。中间短暂加过 2px 同色描边，用户明确「不用描边」后去掉 `border`，
