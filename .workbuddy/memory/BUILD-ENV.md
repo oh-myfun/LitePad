@@ -198,6 +198,31 @@ python scripts/screenshot.py --exe litepad.exe --size 1600x1000 --out docs/scree
   点击，最后再截一张。
 - 杀进程用 PowerShell `Stop-Process -Name litepad -Force`（`taskkill //F` 在 Git Bash 里报参数错）。
 
+## 沙箱内预览纯 DOM/CSS 观感（B64 起可用）
+
+沙箱跑不了 WebView2（见上文「会话环境坑清单」），但**要看的如果只是纯 DOM + CSS 的观感**，
+可以绕过去：用**真实代码**生成静态页 → 无头 Chromium 截图。不需要装 playwright 包，
+Playwright 下载好的 chromium 二进制可以直接命令行当 headless 浏览器用：
+
+```sh
+CHROME="$HOME/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe"
+"$CHROME" --headless --no-sandbox --disable-gpu --hide-scrollbars \
+  --force-device-scale-factor=2 --window-size=860,240 \
+  --screenshot="E:/out.png" "file:///E:/path/preview.html"
+```
+
+**生成静态页**（保证是真实标记而不是手抄）：
+1. `esbuild`（vite 的依赖，已在 `node_modules`）把目标模块打成 `platform: node` 的 ESM；
+2. 起一个 `jsdom`，把 `window/document/Element/HTMLElement/MouseEvent/...` 挂到 `globalThis`，
+   再 `import()` 那个 bundle；
+3. 用真实渲染函数产出 DOM，甚至可以**派发真实事件**（如 `mousedown` + `mousemove`）把
+   拖拽中间态跑出来；最后把 `document.body.innerHTML` 序列化进一个引 `global.css` 的壳页。
+
+现成脚本：`generated-images/gen-drag-ghost-preview.mjs`（拖拽影像那次留下的，可照抄改）。
+⚠️ 局限：只能验证**静态观感**（尺寸/配色/层级/留白），拖拽跟手、光标形状、滚动等交互
+仍必须由用户在桌面环境验证；也**不能**当作 `docs/screenshots/` 的正式截图。
+无头产物放进被 gitignore 的 `generated-images/`，别污染仓库。
+
 ## ⚠️ 改图标后必须让 build.rs 盯 `icons/` 目录
 
 **症状**：换了 `src-tauri/icons/icon.ico` 并 `tauri build`，**exe 仍是旧图标**，且构建零报错

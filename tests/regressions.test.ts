@@ -832,6 +832,61 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(code, "注册表登记链号与均分比例").toMatch(/chainId,\s*\n\s*equalRatio:/);
   });
 
+  it("B64 标签拖拽要有跟随光标的浮动影像（静态契约）", () => {
+    // 用户反馈：「标签拖动时，要像 vscode 那样有一个 tab 随光标移动的效果。」
+    // VS Code 出处：`multiEditorTabsControl.ts:1295` —— 拖单个标签且 tabSizing 非
+    // shrink 时 `e.dataTransfer.setDragImage(tab, 0, 0)`（注释：把被拖标签的左上角
+    // 放到光标处，好给落点边框反馈让位）。本项目标签是 tabSizing: fixed（B56 起
+    // 不收缩、不裁剪），正落在那一档；但拖拽是指针事件自编排的（WebView2 原生拖放
+    // 钩子禁用了页面内 HTML5 DnD），拿不到浏览器影像 → 自己造浮层。
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const sv = readFileSync("src/shell/splitview.ts", "utf-8");
+    const ts = readFileSync("src/shell/tabstrip.ts", "utf-8");
+    const stripComments = (s: string): string => s.replace(/\/\*[\s\S]*?\*\//g, "");
+    const svCode = stripComments(sv);
+
+    // ① tabstrip 必须把标签元素交出去（只测 splitview 入参会漏掉这层接线）
+    expect(ts, "tabstrip 传标签元素给 beginTabDrag").toMatch(/beginTabDrag\(t\.tabId, e, el\)/);
+    expect(sv, "beginTabDrag 接受标签元素").toMatch(
+      /export function beginTabDrag\(\s*tabId: number,\s*e: MouseEvent,\s*tabEl: HTMLElement \| null = null,?\s*\)/,
+    );
+    // 事件目标可能是图标/文件名等子元素 → 必须反查
+    expect(svCode, "从事件目标反查所在标签").toMatch(/target\.closest<HTMLElement>\("\.tab"\)/);
+
+    // ② 越过阈值才亮出影像（纯点击不该闪副本）；必须克隆而非搬走原标签
+    expect(svCode, "进入拖拽时造副本").toMatch(/dragGhost = createDragGhost\(tabDrag\.tabEl\)/);
+    expect(svCode, "影像是原标签的克隆（原地不动的原标签才是参照物）").toMatch(
+      /tabEl\.cloneNode\(true\)/,
+    );
+    expect(svCode, "副本去掉 tabId（否则按 tabId 查元素会命中副本）").toMatch(
+      /copy\.removeAttribute\("data-tab-id"\)/,
+    );
+
+    // ③ 跟随光标：锚点 = 左上角（setDragImage(tab, 0, 0) 的语义），且要放在
+    //    「离开面板就 return」之前 —— 拖到面板之外影像同样得跟着走
+    expect(svCode, "拖拽中持续跟随光标").toMatch(/moveDragGhost\(e\.clientX, e\.clientY\)/);
+    const moveIdx = svCode.indexOf("moveDragGhost(e.clientX, e.clientY)");
+    expect(moveIdx, "应能定位跟随调用").toBeGreaterThan(-1);
+    expect(moveIdx, "跟随必须在「离开面板就 return」之前，否则拖到面板外影像会僵住").toBeLessThan(
+      svCode.indexOf("const panelEl = panelAt(e.clientX, e.clientY)"),
+    );
+
+    // ④ 收尾必须清理（松手 / 重复进入 / 拖出窗口失焦三条路径）
+    expect(svCode, "收尾移除影像").toMatch(
+      /function finishTabDrag[\s\S]{0,420}?removeDragGhost\(\)/,
+    );
+    expect(svCode, "拖到窗口外失焦即取消（mouseup 收不到）").toMatch(
+      /window\.addEventListener\("blur", finishTabDrag\)/,
+    );
+
+    // ⑤ 样式：浮层 + 不拦截指针（否则会掐断下方元素的 :hover，自绘提示层也会误判）
+    expect(css, "影像浮层").toMatch(/\.tab-drag-ghost\s*\{[^}]*position:\s*fixed/);
+    expect(css, "影像不得拦截指针").toMatch(/\.tab-drag-ghost\s*\{[^}]*pointer-events:\s*none/);
+    expect(css, "层级与弹出菜单同档（VS Code .monaco-drag-image 也是 1000）").toMatch(
+      /\.tab-drag-ghost\s*\{[^}]*z-index:\s*1000/,
+    );
+  });
+
   it("B61 分隔条光标与 VS Code 非 mac 档一致（ew/ns，不是 col/row）", () => {
     // 用户反馈「分割条拖动光标和 vscode 不一样」。
     // 根因：我们用的是 VS Code 的 **mac 档** cursor（sash.css）

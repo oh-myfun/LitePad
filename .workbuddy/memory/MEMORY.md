@@ -83,7 +83,7 @@
   default / notepadpp / vscode）。
 - **B41–B59**（应用图标 / 标签栏多轮摇摆 / 首选项弹窗 / tooltip 自绘层 / 启动白屏 /
   安装包与安装器图标分层 / 分屏对齐 VS Code）：逐条见 git log、`ARCHITECTURE.md` 与当日日志。
-- **B60–B63 分屏联动四连修**（依据与推导见 `docs/split-view-plan.md` 七～十节）：
+- **B60–B64 分屏/拖拽五连修**（B60–B63 依据与推导见 `docs/split-view-plan.md` 七～十节）：
   - **B60** 分隔条改「不占布局」浮层（`flex:0 0 0` + `::before` 7px 命中区 +
     `::after` 静息 1px / 激活 4px）、落点回退浅蓝**无描边**、新增**对齐联动**
     （`sashRegistry` + `alignedSashesOf`）。⚠️ `centerOf` 判空必须看**交叉轴**
@@ -97,19 +97,27 @@
     ② 双击不再一律 50%，改为**按分割数量均分**：`chainId` 认同轴链，
     `segmentsAlong` → `equalRatio = segA/(segA+segB)`（2 段 50%、3 段 1/3·1/2、
     4 段 1/4·1/3·1/2），整条链 + 各条的联动伙伴一起调。
-- **测试规模**：356 vitest + 22 cargo。分屏运行时用例在 `tests/splitview.test.ts`，
-  静态契约在 `tests/regressions.test.ts`。
+  - **B64** 标签拖拽要有**跟随光标的浮动副本**（`.tab-drag-ghost`，对标 VS Code
+    `setDragImage(tab, 0, 0)`）：克隆原标签挂在 body 上、锚点 = 左上角 = 光标处
+    （`left/top` 直接写 `clientX/clientY`）；越过拖拽阈值才亮出；原标签原地不动。
+    ⚠️ 必须 `pointer-events: none`，克隆要剥 `data-tab-id` / `data-tip*`；
+    跟随调用要在「离开面板就 return」之前；三条清理路径（mouseup / 重复进入 /
+    **窗口 blur**，缺 blur 会留下跟不动的幽灵标签）。
+- **测试规模**：364 vitest + 22 cargo。分屏与标签拖拽的运行时用例在
+  `tests/splitview.test.ts`，静态契约在 `tests/regressions.test.ts`。
 
 ## 下一步
 
 - **待桌面环境补拍截图**（沙箱内起不了 WebView2，只能由用户拍）：
   M4 的 `keymap.png` / `command-palette.png`；B51 的 `main.png` / `preferences.png`；
-  **B53–B63 的 `main.png`**（标签栏含文件类型图标 / 面板操作栏 / 分隔条细线 /
-  分屏落点浅蓝）；可选补一张 tooltip 演示图。
-- ⚠️ **B60–B63 的观感与交互待真机确认**：1px 静息线是否偏细、4px 激活线宽、角手柄
+  **B53–B64 的 `main.png`**（标签栏含文件类型图标 / 面板操作栏 / 分隔条细线 /
+  分屏落点浅蓝）；可选补一张 tooltip 演示图、一张**标签拖拽中的浮动副本**图。
+- ⚠️ **B60–B64 的观感与交互待真机确认**：1px 静息线是否偏细、4px 激活线宽、角手柄
   骑线 + `all-scroll` 是否好抓、浅蓝落点在深色下是否够醒目；**联动**（拖一条一起走 /
-  悬停预告 / 交叉点双轴联动 / 双击按段数均分）需真机在 2×2 与 3 栏各验证一次
-  （代码路径已修 + 有回归用例，但沙箱内无法跑 UI）。
+  悬停预告 / 交叉点双轴联动 / 双击按段数均分）需真机在 2×2 与 3 栏各验证一次；
+  **B64 的拖拽影像**是否跟手、光标落在影像左上角的手感是否可接受（代码路径已修 +
+  有回归用例，但沙箱内跑不了 UI；静态观感已用无头浏览器核过 ——
+  `generated-images/drag-ghost-{dark,light}.png`，做法见 `BUILD-ENV.md`）。
 - 待清理：`menu.ts` 的 `MenuItem.active` 与 `.menu-item-current`（B53 后已无使用者）。
-- 待定：是否发 **v0.3.1**（B55–B63 都改了界面；B54 起就留了同一问题未决）。
+- 待定：是否发 **v0.3.1**（B55–B64 都改了界面；B54 起就留了同一问题未决）。
 - M4 之后：M5 规划未定（候选见 DESIGN.md）；观感/交互改进先查 `docs/vscode-reference/`。

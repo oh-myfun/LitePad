@@ -40,6 +40,25 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   落在面板区 = 分屏预览；**strip 判定必须先于 `zoneOf`**。
 - **同面板排序绝不能改 `activeTabId`**：改了却不重挂视图会破坏 `panel.viewTabId` 不变量
   （状态与编辑器脱节，后续激活早退无法恢复）；只 `splice` + `renderPanelTabs`。
+- **标签拖拽的浮动影像**（B64，`.tab-drag-ghost`）：指针编排的拖拽拿不到浏览器的原生
+  拖拽影像，所以自己造一个跟随光标的浮层。对标 VS Code
+  `multiEditorTabsControl.ts:1295` 的单标签档 `setDragImage(tab, 0, 0)`：
+  - **影像是原标签的克隆**（图标/文件名/未保存点/配色一并带过来），**不能搬走原标签** ——
+    原地不动的原标签才是用户判断「拖到哪儿了」的参照物。
+  - **锚点 = 左上角**：`left/top` 直接写 `clientX/clientY`（对齐 `setDragImage(tab, 0, 0)`
+    的语义；VS Code 的注释说明这是为了给落点边框反馈让位）。
+  - ⚠️ **`pointer-events: none` 不能省**：否则鼠标划过影像会掐断其下方元素的 `:hover`，
+    自绘提示层也可能把影像当成悬停目标。另外克隆时必须剥掉 `data-tab-id`（否则
+    「按 tabId 查元素」的逻辑会命中副本）与 `data-tip*`（副本不是真标签，不该接提示）。
+  - ⚠️ **克隆的读取时机**：影像在**越过 `DRAG_THRESHOLD` 那一刻**才创建（纯点击不该闪出副本），
+    且**必须每次 `mousemove` 都跟随**，位置更新要放在「离开面板就 `return`」**之前** ——
+    拖到面板之外时影像同样得跟着走，否则会僵在最后一个面板上。
+  - 三条清理路径缺一不可：`mouseup` 收尾、连续第二次拖拽进入时先清场、
+    **窗口 `blur`**（拖到窗口外松手收不到 `mouseup`，不加这条会留下一个跟不动的幽灵标签）。
+  - ⚠️ 有意偏离 VS Code 一处：原生影像是元素快照，非活动标签底色本就是透明的；
+    本浮层要盖在编辑器/预览等任意内容上，透明底会糊成一片 —— 故补 `--bg-elevated` 底色
+    + 内侧描边（`outline` + `offset:-1px`，照搬 `.monaco-drag-image` 的写法，用 `outline`
+    而非 `border` 才不会撑大盒子）+ 阴影。想调观感只动 `.tab-drag-ghost` 一处。
 
 ## 5. 视图刷新红线
 

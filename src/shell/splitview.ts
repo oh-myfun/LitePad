@@ -89,6 +89,8 @@ let svCallbacks: SplitviewCallbacks | null = null;
 // 说明：标签拖拽不用 HTML5 DnD——Windows 上 WebView2 开启原生拖放钩子
 // （dragDropEnabled，文件拖入需要它）会让页面内 HTML5 DnD 全部失效。
 // 改用 mousedown/mousemove/mouseup 指针序列自行编排，落点判定与预览逻辑不变。
+// 代价之一：没有浏览器自带的拖拽影像 → B64 自己造一个跟随光标的标签副本
+// （`createDragGhost`，对齐 VS Code 的 `setDragImage(tab, 0, 0)`）。
 
 /** 移动超过该距离才进入拖拽（否则保持点击激活语义）。 */
 const DRAG_THRESHOLD = 5;
@@ -99,17 +101,86 @@ interface TabDragState {
   startY: number;
   active: boolean;
   panelEl: HTMLElement | null;
+  /** 被拖的标签元素：越过阈值后据此造「跟随光标的副本」。 */
+  tabEl: HTMLElement | null;
 }
 let tabDrag: TabDragState | null = null;
 let suppressTabClick = false;
 
-/** tabstrip 的 mousedown 调用：开始观察一次潜在的标签拖拽。 */
-export function beginTabDrag(tabId: number, e: MouseEvent): void {
+/**
+ * tabstrip 的 mousedown 调用：开始观察一次潜在的标签拖拽。
+ * `tabEl` = 标签元素本身（拖拽影像要克隆它）。缺省时从事件目标反查；
+ * 两者都没有就不显示影像，拖拽本身照常工作。
+ */
+export function beginTabDrag(tabId: number, e: MouseEvent, tabEl: HTMLElement | null = null): void {
   if (tabDrag) finishTabDrag(); // 上一次拖拽未正常收尾（如释放到窗外）→ 先强制清场
   suppressTabClick = false;
-  tabDrag = { tabId, startX: e.clientX, startY: e.clientY, active: false, panelEl: null };
+  tabDrag = {
+    tabId,
+    startX: e.clientX,
+    startY: e.clientY,
+    active: false,
+    panelEl: null,
+    tabEl: tabEl ?? tabElFrom(e.target),
+  };
   document.addEventListener("mousemove", onTabDragMove);
   document.addEventListener("mouseup", onTabDragEnd);
+  // 拖到窗口外松手时 mouseup 收不到 → 窗口失焦即视为取消，顺手清掉浮动影像。
+  window.addEventListener("blur", finishTabDrag);
+}
+
+/** 事件目标可能是图标/文件名等子元素 → 反查它所在的标签。 */
+function tabElFrom(target: EventTarget | null): HTMLElement | null {
+  return target instanceof Element ? target.closest<HTMLElement>(".tab") : null;
+}
+
+/** 拖拽中跟随光标的浮动标签影像（`.tab-drag-ghost`）；非拖拽期为 null。 */
+let dragGhost: HTMLElement | null = null;
+
+/**
+ * 造一个「跟随光标的标签副本」—— 对标 VS Code 的单标签拖拽影像。
+ *
+ * 出处：`multiEditorTabsControl.ts:1295`，拖单个标签且 `tabSizing` 非 shrink 时
+ * `e.dataTransfer.setDragImage(tab, 0, 0)`，注释写明「把被拖标签的左上角放到光标处，
+ * 好给落点边框反馈让位」。本项目标签是 `tabSizing: fixed`（B56 起不收缩、不裁剪），
+ * 正落在这一档 —— 所以影像 = **标签元素本身**（克隆：图标/文件名/未保存点/配色
+ * 一并带过来），锚点也是左上角（见 `moveDragGhost`）。
+ *
+ * ⚠️ 必须**克隆**而不是搬走原标签：VS Code 的原生影像期间原标签原地不动，
+ * 它是用户判断「从哪儿拖的、拖到哪儿了」的参照物。
+ *
+ * ⚠️ 为什么自己造浮层：我们是指针事件自己编排拖拽（Windows 上 WebView2 的原生拖放
+ * 钩子会禁用页面内 HTML5 DnD，见 ARCHITECTURE §4），拿不到浏览器的拖拽影像。
+ */
+function createDragGhost(tabEl: HTMLElement): HTMLElement {
+  const ghost = document.createElement("div");
+  ghost.className = "tab-drag-ghost";
+  ghost.setAttribute("aria-hidden", "true");
+  const copy = tabEl.cloneNode(true) as HTMLElement;
+  // 副本不得带 tabId：多处逻辑「按 tabId 查元素」，留着会让查询命中副本而非真标签。
+  copy.removeAttribute("data-tab-id");
+  // 副本不是真标签：剥掉提示接线。眼下靠外层 pointer-events:none 已经收不到
+  // 悬停，但那是「隐式」保护 —— 哪天提示改成 elementFromPoint 就会静默复活。
+  for (const el of [copy, ...copy.querySelectorAll<HTMLElement>("[data-tip]")]) {
+    el.removeAttribute("data-tip");
+    el.removeAttribute("data-tip-group");
+  }
+  // 影像里不该有可聚焦元素（外面套着 aria-hidden）。
+  copy.querySelectorAll<HTMLElement>("button").forEach((b) => (b.tabIndex = -1));
+  ghost.appendChild(copy);
+  return ghost;
+}
+
+/** 影像左上角跟到光标处（= `setDragImage(tab, 0, 0)` 的锚点语义）。 */
+function moveDragGhost(x: number, y: number): void {
+  if (!dragGhost) return;
+  dragGhost.style.left = `${x}px`;
+  dragGhost.style.top = `${y}px`;
+}
+
+function removeDragGhost(): void {
+  dragGhost?.remove();
+  dragGhost = null;
 }
 
 /** click 处理器调用：刚完成一次真实拖拽时吞掉紧随的 click（避免拖完又激活标签）。 */
@@ -203,7 +274,15 @@ function onTabDragMove(e: MouseEvent): void {
     tabDrag.active = true;
     // 拖拽光标 + 禁止文本选区（指针拖拽没有原生 DnD 的光标/选区豁免）
     document.body.classList.add("tab-drag-active");
+    // 越过阈值才算真的在拖 → 这时才亮出影像（纯点击不该闪出一个副本）
+    if (tabDrag.tabEl) {
+      dragGhost = createDragGhost(tabDrag.tabEl);
+      document.body.appendChild(dragGhost);
+    }
   }
+  // 影像跟随光标。⚠️ 必须放在下面「离开面板就 return」**之前** —— 拖到面板之外
+  // （空白区、状态栏上方）时影像同样要跟着走，否则会僵在最后一个面板上。
+  moveDragGhost(e.clientX, e.clientY);
   const panelEl = panelAt(e.clientX, e.clientY);
   if (tabDrag.panelEl && tabDrag.panelEl !== panelEl) {
     const prev = tabDrag.panelEl.querySelector(".split-preview");
@@ -259,6 +338,8 @@ function finishTabDrag(): void {
   document.body.classList.remove("tab-drag-active");
   document.removeEventListener("mousemove", onTabDragMove);
   document.removeEventListener("mouseup", onTabDragEnd);
+  window.removeEventListener("blur", finishTabDrag);
+  removeDragGhost();
   clearAllPreviews();
   clearInsertIndicators();
 }

@@ -1630,6 +1630,40 @@ body.tab-drag-active * {
   user-select: none;
 }
 
+/* ---------- 标签拖拽的浮动影像（B64） ---------- */
+
+/* 跟随光标的「标签副本」。出处：VS Code `multiEditorTabsControl.ts:1295` ——
+   拖单个标签（且 tabSizing 非 shrink）时 `e.dataTransfer.setDragImage(tab, 0, 0)`，
+   注释写明「把被拖标签的左上角放到光标处，好给落点边框反馈让位」。
+   本项目标签是 tabSizing: fixed（B56 起不收缩、不裁剪），正落在那一档：
+   影像 = **标签元素本身**，锚点也是左上角（JS 直接写 left/top = clientX/clientY）。
+   ⚠️ 影像之所以要自己造：本项目用指针事件编排拖拽（Windows 上 WebView2 的原生拖放
+   钩子会禁用页面内 HTML5 DnD，见 ARCHITECTURE §4），拿不到浏览器的拖拽影像。
+
+   ⚠️ 有意偏离 VS Code 一处：原生影像是标签元素的快照，非活动标签的底色本就是透明的；
+   我们的浮层要盖在编辑器/预览等任意内容上，透明底会糊成一片 —— 故补一层
+   --bg-elevated 底色 + 阴影（与弹出菜单同档），并轻微半透明以示「这是副本」。 */
+.tab-drag-ghost {
+  position: fixed;
+  /* 与弹出菜单/转到行浮层同档（VS Code `.monaco-drag-image` 也是 z-index: 1000），
+     低于自绘提示层（2000）—— 提示要能盖在影像上。 */
+  z-index: 1000;
+  /* ⚠️ 绝不能拦截指针：否则鼠标划过影像会掐断其下方元素的 :hover，
+     自绘提示层也会把影像当成悬停目标。 */
+  pointer-events: none;
+  /* 定宽由内容决定（fixed + flex = shrink-to-fit），影子与真标签同尺寸 */
+  display: flex;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  /* 内侧描边（照搬 VS Code `.monaco-drag-image` 的 outline + offset:-1px 写法）：
+     用 outline 而不是 border —— 后者会撑大盒子，影像就比真标签大一圈。
+     深色靠底色差 + 阴影已够；浅色是白影压白编辑区，没有这圈线几乎浮不起来。 */
+  outline: 1px solid var(--border);
+  outline-offset: -1px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  opacity: 0.9;
+}
+
 /* ---------- 编辑区 ---------- */
 
 .editor-host {

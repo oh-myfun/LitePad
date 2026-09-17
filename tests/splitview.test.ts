@@ -11,6 +11,7 @@ import {
   type SplitviewCallbacks,
 } from "../src/shell/splitview";
 import { eachLeaf, leaf, type LayoutNode } from "../src/shell/layout";
+import { renderTabstrip } from "../src/shell/tabstrip";
 
 function rect(left = 0, top = 0, width = 400, height = 300): DOMRect {
   return {
@@ -579,5 +580,142 @@ describe("拖拽落点 Alt（B59 O5）", () => {
   it("按住 Alt 落同一位置 → center（临时取消分屏）", () => {
     const { onDrop } = dragTo(10, 160, true);
     expect(onDrop).toHaveBeenCalledWith(7, 1, "center", null, false);
+  });
+});
+
+describe("B64 拖拽标签的浮动影像（对齐 VS Code 的 drag image）", () => {
+  // 用户反馈：「标签拖动时，要像 vscode 那样有一个 tab 随光标移动的效果。」
+  // VS Code 出处：`multiEditorTabsControl.ts:1295`，拖单个标签且 tabSizing 非 shrink 时
+  //   e.dataTransfer.setDragImage(tab, 0, 0);  // 被拖标签的左上角放到光标处
+  // 本项目拿不到浏览器的拖拽影像（指针事件自编排），只能自己造一个浮层。
+  //
+  // 用例走**真实 tabstrip 渲染 + 真实 mousedown**，顺带验证 tabstrip 确实把
+  // 标签元素交给了 beginTabDrag（只测 splitview 的入参会漏掉这层接线）。
+
+  /** 渲染一个真标签栏，返回第一个标签元素。 */
+  function mountStrip(): HTMLElement {
+    const host = document.createElement("div");
+    host.className = "panel-tabstrip";
+    document.body.appendChild(host);
+    renderTabstrip(
+      host,
+      [
+        {
+          tabId: 11,
+          name: "README.md",
+          dirty: false,
+          readonly: false,
+          active: true,
+          lang: "Markdown",
+        },
+        {
+          tabId: 12,
+          name: "main.ts",
+          dirty: true,
+          readonly: false,
+          active: false,
+          lang: "TypeScript",
+        },
+      ],
+      { onActivate: () => {}, onClose: () => {} },
+    );
+    return host.querySelectorAll<HTMLElement>(".tab")[0];
+  }
+
+  const ghost = (): HTMLElement | null => document.querySelector<HTMLElement>(".tab-drag-ghost");
+
+  /** 从标签上按下左键，再移动到 (x, y)。 */
+  function startDrag(tab: HTMLElement, x: number, y: number): void {
+    tab.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        clientX: 10,
+        clientY: 10,
+      }),
+    );
+    document.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: x, clientY: y }));
+  }
+
+  it("未越过拖拽阈值时不得亮出影像（纯点击不该闪出一个副本）", () => {
+    const tab = mountStrip();
+    startDrag(tab, 12, 11); // 距离 ≈ 2.2 < DRAG_THRESHOLD(5)
+    expect(ghost()).toBeNull();
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 12, clientY: 11 }));
+    expect(ghost()).toBeNull();
+  });
+
+  it("越过阈值后挂到 body 上，且是原标签的克隆（文件名/图标/未保存点一并带过来）", () => {
+    const tab = mountStrip();
+    startDrag(tab, 100, 60);
+    const g = ghost();
+    expect(g, "必须有跟随光标的影像").not.toBeNull();
+    expect(g!.parentElement, "fixed 定位挂 body（面板会被 overflow 裁掉）").toBe(document.body);
+    expect(g!.getAttribute("aria-hidden"), "影像不该进可访问树").toBe("true");
+
+    const copy = g!.querySelector<HTMLElement>(".tab")!;
+    expect(copy).not.toBeNull();
+    expect(copy.querySelector(".tab-name")!.textContent, "文件名照搬").toBe("README.md");
+    expect(copy.querySelector<HTMLElement>(".tab-icon")!.dataset.fam, "类型图标照搬").toBe("md");
+    expect(copy.classList.contains("tab-active"), "活动态配色照搬").toBe(true);
+    // 副本必须与真标签可区分：留着 tabId 会让「按 tabId 查元素」的逻辑命中副本
+    expect(copy.dataset.tabId, "副本不得保留 tabId").toBeUndefined();
+    expect(tab.dataset.tabId, "原标签原地不动（影像期间它是参照物）").toBe("11");
+    expect(copy.querySelectorAll("button[tabindex='-1']").length, "副本里的按钮不可聚焦").toBe(1);
+  });
+
+  it("影像左上角跟到光标处（= setDragImage(tab, 0, 0) 的锚点），并随移动更新", () => {
+    const tab = mountStrip();
+    startDrag(tab, 100, 60);
+    expect(ghost()!.style.left).toBe("100px");
+    expect(ghost()!.style.top).toBe("60px");
+
+    document.dispatchEvent(
+      new MouseEvent("mousemove", { bubbles: true, clientX: 251, clientY: 133 }),
+    );
+    expect(ghost()!.style.left).toBe("251px");
+    expect(ghost()!.style.top).toBe("133px");
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+
+  it("拖到面板之外影像照样跟随（不得僵在最后一个面板上）", () => {
+    const tab = mountStrip(); // 本例没有任何 .layout-panel：全程都在「面板之外」
+    startDrag(tab, 400, 500);
+    expect(ghost(), "没有面板时更要靠影像给出反馈").not.toBeNull();
+    expect(ghost()!.style.left).toBe("400px");
+    document.dispatchEvent(
+      new MouseEvent("mousemove", { bubbles: true, clientX: 420, clientY: 520 }),
+    );
+    expect(ghost()!.style.left).toBe("420px");
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+
+  it("松手即移除影像（落到任何面板之外也一样）", () => {
+    const tab = mountStrip();
+    startDrag(tab, 300, 200);
+    expect(ghost()).not.toBeNull();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, clientX: 300, clientY: 200 }),
+    );
+    expect(ghost(), "松手后不得残留").toBeNull();
+    expect(document.body.classList.contains("tab-drag-active")).toBe(false);
+  });
+
+  it("中途窗口失焦（拖到窗口外松手收不到 mouseup）也要清掉影像", () => {
+    const tab = mountStrip();
+    startDrag(tab, 300, 200);
+    expect(ghost()).not.toBeNull();
+    window.dispatchEvent(new Event("blur"));
+    expect(ghost(), "缺这条兜底就会留下一个跟不动的幽灵标签").toBeNull();
+  });
+
+  it("连续第二次拖拽不得叠加影像（上一次的残留必须先被清掉）", () => {
+    const tab = mountStrip();
+    startDrag(tab, 300, 200);
+    startDrag(tab, 120, 90); // 未松手就再次按下
+    expect(document.querySelectorAll(".tab-drag-ghost").length).toBe(1);
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    expect(ghost()).toBeNull();
   });
 });

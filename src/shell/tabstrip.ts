@@ -250,7 +250,7 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   el.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return; // 仅左键启动拖拽（中键关闭已有独立处理器）
     if ((e.target as HTMLElement).closest(".tab-close")) return; // × 上不拖
-    beginTabDrag(t.tabId, e);
+    beginTabDrag(t.tabId, e, el);
   });
 
   el.append(icon, name, action);
