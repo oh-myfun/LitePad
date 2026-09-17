@@ -531,8 +531,10 @@ type ResizeMode = "h" | "v" | "corner";
  * 给分隔条（或角手柄）装上「拖拽改比例」。
  * - **双击复位**（O1）：回到 50%（对标 VS Code sash 的 onDidReset）。
  * - **极限提示**（O2）：拖到 10%/90% 时给手柄加 `.at-min`/`.at-max`，光标变形。
- * - **方向光标**（O3）：垂直分隔条拖拽时 `body` 加 `layout-dragging-v` → row-resize；
- *   其余（水平分隔条 / 大纲 / 查找栏）保持默认 col-resize。
+ * - **方向光标**（O3）：垂直分隔条拖拽时 `body` 加 `layout-dragging-v` → `ns-resize`；
+ *   其余（水平分隔条 / 大纲 / 查找栏）保持默认 `ew-resize`。
+ *   B61：取值改为 VS Code 的**非 mac** 档（`sash.css:52/59` 的 `ew-resize`/`ns-resize`），
+ *   原先的 `col-resize`/`row-resize` 是 mac 档，Windows 上观感不同。
  * - **指针捕获**（O4）：真实浏览器里把后续事件锁定到本元素，鼠标移出窗口也不丢事件；
  *   jsdom 无 setPointerCapture 时静默跳过。
  */

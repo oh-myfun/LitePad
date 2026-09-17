@@ -190,8 +190,18 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   - **双击复位**到 50%、拖到极限加 `.at-min`/`.at-max` 变形光标、拖拽中加 `.resizing`
     保持高亮（只写 `:hover` 时鼠标滑出 7px 细线就失色）。
   - ⚠️ **`body.layout-dragging` 是三处共用的**（分屏分隔条 / 大纲 `toc.ts` / 查找栏 `findbar.ts`），
-    默认 `cursor: col-resize`。B59 给垂直分隔条叠加 `.layout-dragging-v` → `row-resize`；
+    默认光标 = 横向拖拽档。B59 给垂直分隔条叠加 `.layout-dragging-v`；
     **新增方向修饰类，不要改基础类的语义**，否则大纲/查找栏的横向拖拽光标会一起错。
+  - **B61 光标取 VS Code 的「非 mac 档」**（`sash.css`，Windows 才这么渲染）：
+    竖线 `ew-resize` / 横线 `ns-resize`，极限档 `e-resize`/`w-resize`/`s-resize`/`n-resize`，
+    正交角手柄 **`all-scroll`**。
+    ⚠️ **`col-resize` / `row-resize` 是 VS Code 的 mac 档**（`.monaco-sash.mac.*`）——
+    Windows 上 `col-resize` 渲染成「双箭头中间多一根竖杠」，和 VS Code 一眼就能看出不同。
+    ⚠️ 角手柄用 `all-scroll` 而非斜向箭头：`sash.css:63` 的基础光标就是 `all-scroll`，
+    那几条 `nwse/nesw-resize` 覆盖规则要求 `.orthogonal-edge-north/south`，
+    而该属性**只有 `resizable.ts` 设**、`gridview.ts` 从不设 —— 网格里的角手柄恒为 `all-scroll`。
+    ⚠️ 断言「不得残留 col-resize / row-resize」时必须**先剥掉 CSS 注释**：注释里正是要写
+    「为什么不用 col/row」，对全文断言会把说明文字当违规（B61 踩过一次）。
   - **角手柄**挂在**子分隔条的相接端**（位于 a 侧 → `end`，b 侧 → `start`），双类写法对齐
     VS Code 的 `.orthogonal-drag-handle.start/.end`；只在 `child.dir !== node.dir` 时生成。
     同行/同列嵌套（如两条竖线）**不生成**角手柄。

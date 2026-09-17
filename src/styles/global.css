@@ -1223,11 +1223,16 @@ button:focus-visible {
   height: 7px;
 }
 
+/* B61：分隔条光标对齐 VS Code 的**非 mac** 档（`sash.css:52` / `:59`）——
+   竖线（左右分屏）`ew-resize`、横线（上下分屏）`ns-resize`。
+   `col-resize` / `row-resize` 是 VS Code 的 **mac 档**（`sash.css:26` / `:34`，只有在
+   `.mac` 类下才生效），而 Windows 上 `col-resize` 会渲染成「箭头中间多一根竖杠」，
+   和 VS Code 一对比就明显不同。目标平台只有 Windows，故直接取非 mac 档。 */
 .layout-sep-h {
-  cursor: col-resize;
+  cursor: ew-resize;
 }
 /* B59 O2：拖到 10%/90% 极限时光标变形（对标 sash.css 的 .minimum/.maximum）——
-   否则拖到头毫无反馈，像是卡住。 */
+   否则拖到头毫无反馈，像是卡住。极限档两平台一致，无需区分。 */
 .layout-sep-h.at-min {
   cursor: e-resize;
 }
@@ -1236,7 +1241,7 @@ button:focus-visible {
 }
 
 .layout-sep-v {
-  cursor: row-resize;
+  cursor: ns-resize;
 }
 .layout-sep-v.at-min {
   cursor: s-resize;
@@ -1284,11 +1289,15 @@ button:focus-visible {
 
 /* B59 O7 正交角手柄：两条互相垂直的分隔条相接处（T/十字口）的 8px 手柄，
    斜向拖动可**同时**改两条（对标 VS Code sash 的 orthogonal-drag-handle）。
-   手柄挂在对角那条分隔条的相接端上，按该分隔条的朝向摆放。 */
+   手柄挂在对角那条分隔条的相接端上，按该分隔条的朝向摆放。
+   B61 光标：`sash.css:63` 的 `.orthogonal-drag-handle` 基础光标就是 **`all-scroll`**；
+   那几个 `nwse-/nesw-resize` 覆盖规则都要求 `.orthogonal-edge-north/south`（`sash.css:71-82`），
+   而该属性只有 `resizable.ts` 会设 —— **gridview 的 2x2 从不设**，所以网格网格里的
+   角手柄在 VS Code 里恒为 `all-scroll`（四向箭头）。原先写死 `nwse-resize` 是不对的。 */
 .layout-corner {
   position: absolute;
   z-index: 6;
-  cursor: nwse-resize;
+  cursor: all-scroll;
 }
 /* 水平分隔条（.layout-sep-v 是横线）→ 相接端在左右两侧。
    B60：分隔条已不占位（主轴尺寸 0），手柄必须**骑在界线上**（top:-4px + 高 8px），
@@ -1593,17 +1602,17 @@ button:focus-visible {
 
 /* 拖拽分隔条期间的全局态：禁选 + 按方向给光标。
    B59 O3：原先恒为 col-resize —— 上下分屏拖**垂直**分隔条时光标是错的。
-   这里默认 col-resize（水平分隔条 / 大纲 / 查找栏都是横向拖），
-   只有垂直分隔条拖拽才叠加 .layout-dragging-v → row-resize。 */
+   B61：三档都用 VS Code 非 mac 档的值（与 `.layout-sep-h/-v` 一致），
+   否则按下后光标会「变样」—— 命中区只有 7px 宽，指针一离开就得靠 body 兜住。 */
 body.layout-dragging {
-  cursor: col-resize;
+  cursor: ew-resize;
   user-select: none;
 }
 body.layout-dragging.layout-dragging-v {
-  cursor: row-resize;
+  cursor: ns-resize;
 }
 body.layout-dragging.layout-dragging-corner {
-  cursor: nwse-resize;
+  cursor: all-scroll;
 }
 
 /* B59 S4：缩放期间抑制布局内的过渡 —— 拖动时面板几何每次 mousemove 都在变，

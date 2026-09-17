@@ -100,7 +100,7 @@ describe("分隔条缩放（B59 O1/O2/O3/S1）", () => {
     expect(onRatioChange).toHaveBeenCalledWith([], 0.5);
   });
 
-  it("O3 垂直分隔条拖拽 → body 加 layout-dragging-v（上下分屏光标应为 row-resize）", () => {
+  it("O3 垂直分隔条拖拽 → body 加 layout-dragging-v（上下分屏光标应为 ns-resize）", () => {
     const { root } = mount(V2);
     const sep = root.querySelector<HTMLElement>(".layout-sep-v")!;
     sep.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
@@ -114,7 +114,7 @@ describe("分隔条缩放（B59 O1/O2/O3/S1）", () => {
     expect(sep.classList.contains("resizing")).toBe(false);
   });
 
-  it("O3 水平分隔条拖拽不得加 layout-dragging-v（保持 col-resize）", () => {
+  it("O3 水平分隔条拖拽不得加 layout-dragging-v（保持 ew-resize）", () => {
     const { root } = mount(H2);
     const sep = root.querySelector<HTMLElement>(".layout-sep-h")!;
     sep.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));

@@ -586,7 +586,9 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     const css = readFileSync("src/styles/preview.css", "utf-8");
     const resizer = css.match(/\.toc-resizer\s*\{[^}]*\}/)?.[0] ?? "";
     expect(resizer, "应有 .toc-resizer 规则块").toBeTruthy();
-    expect(resizer, "分隔条必须是左右调整光标").toContain("col-resize");
+    // B61：竖线光标取 VS Code **非 mac** 档的 ew-resize（col-resize 是 mac 档，
+    // Windows 上会渲染成「箭头中间多一根竖杠」）
+    expect(resizer, "分隔条必须是左右调整光标（非 mac 档 ew-resize）").toContain("ew-resize");
     // 旧样式把 min-width 写死为 240px，会挡住拖动变窄
     const panel = css.match(/\.toc-panel\s*\{[^}]*\}/)?.[0] ?? "";
     expect(panel, ".toc-panel 不得再写死 min-width: 240px").not.toContain("min-width: 240px");
@@ -668,13 +670,13 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     );
     expect(css, "竖线上的角手柄在上下端").toMatch(/\.layout-sep-h\s*>\s*\.layout-corner\.end\s*\{/);
 
-    // O3 方向光标：默认 col-resize（大纲/查找栏/水平分隔条都靠它），
-    // 只有垂直分隔条叠加 -v → row-resize（原实现恒为 col-resize，是 bug）
-    expect(css, "垂直分隔条拖拽时 row-resize").toMatch(
-      /body\.layout-dragging\.layout-dragging-v\s*\{[^}]*row-resize/,
+    // O3 方向光标：默认 ew-resize（大纲/查找栏/水平分隔条都靠它），
+    // 只有垂直分隔条叠加 -v → ns-resize（原实现恒为 col-resize，是 bug）
+    expect(css, "垂直分隔条拖拽时 ns-resize").toMatch(
+      /body\.layout-dragging\.layout-dragging-v\s*\{[^}]*ns-resize/,
     );
     expect(css, "角手柄拖拽时光标").toMatch(
-      /body\.layout-dragging\.layout-dragging-corner\s*\{[^}]*nwse-resize/,
+      /body\.layout-dragging\.layout-dragging-corner\s*\{[^}]*all-scroll/,
     );
 
     // S4 缩放期间抑制面板内过渡（拖动不发飘）
@@ -775,6 +777,56 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
       /mode === "corner" \? \[\] : alignedSashesOf\(handle, mode\)/,
     );
     expect(css, ".linked 高亮（悬停可见的联动提示）").toMatch(/\.layout-sep\.linked::after/);
+  });
+
+  it("B61 分隔条光标与 VS Code 非 mac 档一致（ew/ns，不是 col/row）", () => {
+    // 用户反馈「分割条拖动光标和 vscode 不一样」。
+    // 根因：我们用的是 VS Code 的 **mac 档** cursor（sash.css）
+    //   .monaco-sash.mac.vertical   { cursor: col-resize }
+    //   .monaco-sash.mac.horizontal { cursor: row-resize }
+    // Windows/Linux 走的是基础档：
+    //   .monaco-sash.vertical   { cursor: ew-resize }
+    //   .monaco-sash.horizontal { cursor: ns-resize }
+    // Windows 上 col-resize 会渲染成「箭头中间多一根竖杠」，一眼就能看出不同。
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const previewCss = readFileSync("src/styles/preview.css", "utf-8");
+    // ⚠️ 「不得残留」类断言必须先把注释剥掉 —— 注释里恰恰要写清「为什么不用 col-row」
+    // （含这两个词），直接对全文断言会把说明文字当成违规。
+    const stripComments = (s: string): string => s.replace(/\/\*[\s\S]*?\*\//g, "");
+    const cssCode = stripComments(css);
+
+    expect(css, "竖线（左右分屏）走非 mac 档 ew-resize").toMatch(
+      /\.layout-sep-h\s*\{[^}]*cursor:\s*ew-resize/,
+    );
+    expect(css, "横线（上下分屏）走非 mac 档 ns-resize").toMatch(
+      /\.layout-sep-v\s*\{[^}]*cursor:\s*ns-resize/,
+    );
+    // 极限档两平台一致（e/w/s/n-resize），不得被顺手改成 col/row
+    expect(css, ".layout-sep-h.at-min 保持 e-resize").toMatch(
+      /\.layout-sep-h\.at-min\s*\{[^}]*e-resize/,
+    );
+    expect(css, ".layout-sep-v.at-min 保持 s-resize").toMatch(
+      /\.layout-sep-v\.at-min\s*\{[^}]*s-resize/,
+    );
+
+    // 拖拽期间由 body 兜住光标（命中区只有 7px，指针一离开就没了），三档值必须与上面一致
+    const drag = css.match(/body\.layout-dragging\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(drag, "拖拽默认光标与竖线一致").toMatch(/cursor:\s*ew-resize/);
+    expect(cssCode, "不得残留 mac 档 col-resize").not.toContain("col-resize");
+    expect(cssCode, "不得残留 mac 档 row-resize").not.toContain("row-resize");
+    expect(cssCode, "不得残留 nwse-resize（角手柄改用 all-scroll）").not.toContain("nwse-resize");
+    expect(css, "上下分屏拖拽光标与横线一致").toMatch(
+      /body\.layout-dragging\.layout-dragging-v\s*\{[^}]*ns-resize/,
+    );
+
+    // 正交角手柄：VS Code 的 .orthogonal-drag-handle 基础光标是 all-scroll；
+    // 那几条 nwse/nesw 覆盖规则要求 .orthogonal-edge-north/south（只有 resizable.ts 设），
+    // gridview 的 2x2 从不设 → 网格里的角手柄恒为 all-scroll。
+    expect(css, "角手柄用 all-scroll（VS Code 基础档）").toMatch(
+      /\.layout-corner\s*\{[^}]*cursor:\s*all-scroll/,
+    );
+    // 大纲分隔条与分屏分隔条同款（B28 约定）
+    expect(previewCss, "大纲分隔条光标同款").toMatch(/\.toc-resizer\s*\{[^}]*cursor:\s*ew-resize/);
   });
 
   it("B30 查找栏必须可关闭（[hidden] 不得被 display:flex 覆盖）且预览态接线齐全", () => {

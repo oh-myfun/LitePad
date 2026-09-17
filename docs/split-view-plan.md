@@ -255,3 +255,48 @@ return entry.dir === "h" ? r.left + r.width / 2 : r.top + r.height / 2;
 **测试**：`tests/splitview.test.ts` 增至 21 条（新增「主轴为 0 也必须判定对齐」
 「完全无布局不得联动」）；`regressions.test.ts` 的描边断言反转为「不得有描边」。
 全量 **348 vitest + 22 cargo** 全绿。
+
+---
+
+## 八、B61 分隔条光标对齐 VS Code（用户反馈「和 vscode 不一样」）
+
+**根因：我们抄的是 VS Code 的 mac 档。** `sash.css` 里光标是分平台给的：
+
+```css
+/* mac 档（sash.css:26 / :34，只在 .mac 类下生效） */
+.monaco-sash.mac.vertical   { cursor: col-resize; }
+.monaco-sash.mac.horizontal { cursor: row-resize; }
+
+/* 基础档 = Windows / Linux（sash.css:52 / :59） */
+.monaco-sash.vertical   { cursor: ew-resize; }
+.monaco-sash.horizontal { cursor: ns-resize; }
+```
+
+LitePad 用的是 `col-resize` / `row-resize` —— 即 mac 档。Windows 上 `col-resize` 会渲染成
+**「双箭头中间多一根竖杠」**（`⇔` 带竖线），`ew-resize` 是干净的双箭头（不带竖线），
+一对比就明显不同。目标平台只有 Windows，故直接取基础档。
+
+| 元素 | 改前 | 改后（= VS Code 非 mac 档） |
+| --- | --- | --- |
+| `.layout-sep-h` 竖线（左右分屏） | `col-resize` | **`ew-resize`** |
+| `.layout-sep-v` 横线（上下分屏） | `row-resize` | **`ns-resize`** |
+| `.layout-sep-h.at-min / .at-max` | `e-resize` / `w-resize` | 不变（极限档两平台一致） |
+| `.layout-sep-v.at-min / .at-max` | `s-resize` / `n-resize` | 不变 |
+| `body.layout-dragging`（拖拽中兜底） | `col-resize` | `ew-resize` |
+| `body.layout-dragging-v` | `row-resize` | `ns-resize` |
+| `.layout-corner` 与 `body.layout-dragging-corner` | `nwse-resize` | **`all-scroll`** |
+| `.toc-resizer`（大纲，B28 同款） | `col-resize` | `ew-resize` |
+
+**角手柄为什么是 `all-scroll` 而不是斜向箭头？** `sash.css:63` 给
+`.orthogonal-drag-handle` 的**基础**光标就是 `all-scroll`；那几条 `nwse-resize` /
+`nesw-resize` 覆盖规则都要求 `.orthogonal-edge-north` / `-south`（`sash.css:71-82`），
+而该属性**只有 `resizable.ts` 会设**（四处边缘的定尺盒子），`gridview.ts` 从不设。
+LitePad 的分屏是网格（= gridview 那一套），所以网格里的角手柄在 VS Code 里恒为
+`all-scroll`（四向箭头）。原先写死 `nwse-resize` 并不符合上游行为。
+
+⚠️ 顺手记一笔：**「不得残留 col-resize」这类断言必须先把 CSS 注释剥掉** ——
+注释里恰恰要写清「为什么不用 col/row」（含这两个词），对全文断言会把说明文字当违规。
+
+**测试**：`regressions.test.ts` 新增 B61 静态块（竖/横线、两个极限档、拖拽兜底三档、
+角手柄、大纲同款，以及三条「不得残留 mac 档 / nwse」反向断言）；B28 的光标断言与
+B59 的方向光标断言同步更新。全量 **349 vitest + 22 cargo** 全绿。

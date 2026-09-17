@@ -230,7 +230,9 @@
    原先 `flex: 0 0 7px` 的透明占位会把大纲面板与编辑区撑开 7px、露出祖先底色。 */
 .toc-resizer {
   flex: 0 0 0;
-  cursor: col-resize;
+  /* B61：竖线光标对齐 VS Code 非 mac 档的 `ew-resize`（原 `col-resize` 是 mac 档，
+     Windows 上渲染成「箭头中间多一根竖杠」）。与分屏分隔条保持一致（B28 同款约定）。 */
+  cursor: ew-resize;
   position: relative;
   z-index: 5;
 }

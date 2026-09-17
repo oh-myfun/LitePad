@@ -276,9 +276,18 @@
   二次反馈才发现）。且**旧用例把 rect 桩成 4px 宽 = 改动前的几何**，正好盖住了它。
   **通用教训：改了几何，务必回头核对 test 里的 rect 桩**（桩比现实宽松 = 测试全绿、真机全坏）。
   测试 348 vitest + 22 cargo；逐条依据见 `docs/split-view-plan.md` 第七节。
-- ⚠️ **B60 观感项待桌面环境确认**：1px 静息线是否偏细（VS Code 也是 1px）、4px 激活线宽、
-  角手柄骑线后是否好抓、浅蓝落点在深色下是否够醒目；**对齐联动**需真机拖一次 2×2 验证
-  （代码路径已修 + 有回归用例，但沙箱内起不了 WebView2）。
+- **B61（0917）分隔条光标对齐 VS Code**：用户反馈「和 vscode 不一样」。根因 = 我们抄的是
+  VS Code 的 **mac 档**（`.monaco-sash.mac.* { col-resize/row-resize }`），基础档（Windows）
+  才是 `ew-resize` / `ns-resize` —— Windows 上 `col-resize` 渲染成「双箭头中间多一根竖杠」。
+  改：竖线 `ew-resize` / 横线 `ns-resize`；极限档 `e/w/s/n-resize` 不动（两平台一致）；
+  `body.layout-dragging[-v]` 同步；**角手柄 `all-scroll`**（`sash.css:63` 基础档就是它，
+  那几条斜向箭头规则要求 `.orthogonal-edge-north/south`，只有 `resizable.ts` 设、
+  `gridview` 从不设 → 网格里的角手柄恒为四向箭头）；`.toc-resizer` 同款（B28）。
+  ⚠️ 反向断言「不得残留 col-resize」必须**先剥 CSS 注释**，否则被「为什么不用 col/row」
+  的说明文字打挂。测试 349 vitest + 22 cargo；依据见 `docs/split-view-plan.md` 第八节。
+- ⚠️ **B60/B61 观感项待桌面环境确认**：1px 静息线是否偏细（VS Code 也是 1px）、4px 激活线宽、
+  角手柄骑线 + `all-scroll` 是否好抓、浅蓝落点（无描边）在深色下是否够醒目；
+  **对齐联动**需真机拖一次 2×2 验证（代码路径已修 + 有回归用例，但沙箱内起不了 WebView2）。
 - 待清理：`menu.ts` 的 `MenuItem.active` / `.menu-item-current`（B53 后无使用者）。
 - 待定：是否发 **v0.3.1**（B55–B59 都改了界面；B54 也留了同一问题未决）。
 - M4 之后：M5 规划未定；候选见 DESIGN.md；观感/交互改进可对照 `docs/vscode-reference/`。
