@@ -66,7 +66,7 @@
 
 | 编号 | 改进 | 依据 | 成本/风险 | 涉及 |
 | --- | --- | --- | --- | --- |
-| **O1** | **双击分隔条复位到 50%** | `sash.ts:451,626` | 低 | `splitview.ts` + 测试 |
+| **O1** | **双击分隔条按分割数量均分**（B59 初版是「一律 50%」，B63 已改语义，见第十节） | `sash.ts:451,626` + `splitview.ts:1083` 的 `distributeViewSizes()` | 低 | `splitview.ts` + 测试 |
 | **O2** | **拖到 10%/90% 极限时光标变形** | `sash.css:25-31` | 低 | `splitview.ts` |
 | **O3** | 修正 `layout-dragging` 恒为 `col-resize` 的 bug（垂直→`row-resize`） | `sash.css:50-62` | 低（修 bug） | `global.css` + `splitview.ts` |
 | **O4** | 大拖拽时自动锁定光标（`setPointerCapture`），避免移出条就丢事件 | — | 低 | `splitview.ts` |
@@ -133,7 +133,7 @@
 
 | 编号 | 状态 | 说明 |
 | --- | --- | --- |
-| O1 双击复位 | ✅ | `attachResize` 的 `dblclick` → 50% 并回写树（对标 sash 的 `onDidReset`） |
+| O1 双击复位 | ✅ | `attachResize` 的 `dblclick` 并回写树（对标 sash 的 `onDidReset`）。**比例值已在 B63 改语义**：不再是 50%，而是按分割数量均分 —— 见第十节 |
 | O2 极限光标 | ✅ | 拖到 10%/90% 加 `.at-min`/`.at-max`，四个方向光标齐备 |
 | O3 光标 bug | ✅ | 新增 `body.layout-dragging-v` → `row-resize`；默认 `col-resize` 不变（大纲/查找栏共用 `layout-dragging`，不受影响） |
 | O4 指针捕获 | ✅ | `setPointerCapture`（无此 API 的环境静默跳过） |
@@ -151,7 +151,9 @@
 
 - 边缘阈值维持 **28%**（VS Code 为 10%）：LitePad 面板少、拖拽更需容错。
 - 浅色分隔线沿用 `#dcdfe3`（VS Code 为 `#E7E7E7`，在 LitePad 更密的布局里几乎不可见）。
-- 角手柄统一用 `nwse-resize` 光标，未按四个角细分方向。
+- 角手柄光标：B59 曾用 `nwse-resize`，**B61 起改为 `all-scroll`**（对齐 `sash.css:63`；
+  4 个 `nwse-/nesw-resize` 覆盖规则要求 `.orthogonal-edge-north/south`，而 gridview 的
+  2×2 从不设该属性，故 VS Code 里恒为 `all-scroll`）。
 
 **测试**：新增 `tests/splitview.test.ts`（15 条）+ `regressions.test.ts` 的 B59 静态块；
 `regressions.test.ts` 的 B28 两条断言随线色变量更名同步更新。全量 **341 vitest + 22 cargo** 全绿。
@@ -446,4 +448,84 @@ expect(corner.parentElement.classList.contains("resizing")).toBe(false);  // 旧
 （「角手柄不参与联动」的反向断言删除，改为断言链式均分）。
 全量 **356 vitest + 22 cargo** 全绿；已反向验证：把 `movingGroupOf` 限回单目标、
 把均分改回 `commit(0.5)`，对应用例各自失败。
+
+---
+
+## 十一、B67 复核：双击均分的**真机取证**（用户反馈「这一条还没改」）
+
+用户复核：「分割条双击不一定是居中，而是根据分割数量均分（对应的所有分割线一起调整）。
+这一条还没改，可以参考 vscode 上的实现。」
+
+### 结论：行为已在 B63 落地，**是本文档没跟上**
+
+第十节落地的是**新语义**，但本文档另外三处仍写着 B59 的旧语义（「双击复位到 50%」），
+读清单自然会以为这一条还停在 50%：
+
+| 位置 | 原文 | 已改为 |
+| --- | --- | --- |
+| 第三节 O1 行 | 双击分隔条复位到 50% | 双击分隔条**按分割数量均分** + 注明 B63 改语义 |
+| 第六节状态表 O1 行 | `dblclick` → 50% 并回写树 | 注明「比例值已在 B63 改语义」并指向第十节 |
+| 第六节「有意偏离」 | 角手柄统一用 `nwse-resize` | B61 起已是 `all-scroll`（同样过时） |
+
+### 取证方法：真实 Chromium + CDP 派发真实鼠标
+
+jsdom 没有布局（`getBoundingClientRect` 恒为 0），`splitview.test.ts` 里的均分用例
+是靠**内联 flexBasis 逐层累乘**推算的 —— 它能锁住实现，但**证明不了浏览器里的实际宽度**。
+本次改用真机几何：
+
+1. `generated-images/gen-splitview-dblclick.mjs` 用 esbuild 把**真实的**
+   `renderSplitview` 打成 **IIFE**（⚠️ 不能用 `type="module"`：`file://` 下 origin 为 null，
+   模块脚本会被 CORS 静默拦掉）塞进预览页；
+2. 无头 Chromium 开 `--remote-debugging-port`，用 CDP 的
+   `Input.dispatchMouseEvent` 派发**真实**的 `mousePressed/mouseMoved/mouseReleased`
+   （双击要连发两轮、第二轮 `clickCount: 2` 才会合成 `dblclick`）；
+3. 读每个 `.layout-panel` 的 `getBoundingClientRect()` 换算成占整轴百分比，
+   得到的是**数值**而不是肉眼判断。
+
+### 实测数据（stage 900×600，可见面板宽度占比 %）
+
+| 场景（初始） | 双击哪条 | 双击后 |
+| --- | --- | --- |
+| 两栏 50/50（先拖成 46.7/53.3） | 唯一那条 | **50 / 50** |
+| 三栏 `h(P1, h(P2,P3))` 50/25/25 | 外侧（根） | **33.3 / 33.3 / 33.3** |
+| 同上 | 内侧 | **33.3 / 33.3 / 33.3** |
+| 三栏 `h(h(P1,P2), P3)` 25/25/50 | 内侧 | **33.3 / 33.3 / 33.3** |
+| 四栏链 50/25/12.5/12.5 | #0 / #1 / #2 任意一条 | **25 / 25 / 25 / 25** |
+| 三栏纵向 `v(P1, v(P2,P3))` | 任一条 | 行高 **33.3 / 33.3 / 33.3** |
+| 2×2 网格（先拖竖线到 56.7） | 竖线 | 四格 **50 / 50 / 50 / 50** |
+| 左 \| 右(上下) 70/30/30 | 横线（x 轴） | **50 / 50 / 50**（竖线不动） |
+| 三栏 先拖歪成 56.7/21.7/21.7 | 根 | **33.3 / 33.3 / 33.3** |
+
+即：**任意一条**被双击后，该轴上的**所有**分隔条都会动到「每格等宽」的位置；
+另一条轴的分隔条不动 —— 与 VS Code 一致。
+
+### 上游依据（本次补齐，之前只引了 `sash.ts`）
+
+| 上游位置 | 内容 |
+| --- | --- |
+| `base/browser/ui/splitview/splitview.ts:1083` | `distributeViewSizes()`：把**本 splitview** 里所有可伸缩 view 设成 `floor(可伸缩总长 / 条数)` = 等宽 |
+| `base/browser/ui/grid/grid.ts:312` | `this.gridview.onDidSashReset(this.onDidSashReset, this)` —— 双击的入口在 grid 上 |
+| `base/browser/ui/grid/grid.ts:714-745` | 双击的处理：先试相邻 view 的 `preferredWidth/Height`（**编辑器组没有这个属性**，见下），否则 `this.gridview.distributeViewSizes(parentLocation)` —— **只均分「含这条 sash 的那个 splitview」，不递归到别的轴** |
+| `workbench/browser/parts/editor/editorGroupView.ts` | 只有 `minimumWidth`/`maximumWidth`，**没有 `preferredWidth`/`preferredHeight`** → 编辑器网格里双击必然走到 `distributeViewSizes` 这一档 |
+| `workbench/browser/parts/editor/sideBySideEditor.ts:209` | `onDidSashReset(() => this.splitview?.distributeViewSizes())` —— 同一语义的最简写法（单轴均分） |
+
+所以在 VS Code 里：3 栏横向（**一个含 3 个 view 的 splitview**）双击任一条 → 三个都变 1/3；
+2×2 网格双击横线 → 只动横线（另一轴不动）。
+LitePad 用二叉嵌套树表示同样的排布，靠 `chainId` 把同一轴的嵌套**拉平**成一条链，
+逐级累乘后得到同一个结果（第十节的表）。
+
+### 复现
+
+```sh
+# 起无头 Chromium（端口 9227）
+"$CHROME" --headless --no-sandbox --disable-gpu --hide-scrollbars \
+  --force-device-scale-factor=1 --window-size=940,660 \
+  --remote-debugging-port=9227 --user-data-dir=".../litepad-cdp-split" about:blank &
+node generated-images/gen-splitview-dblclick.mjs
+```
+
+⚠️ 反过来说，本文档（以及任何 `docs/*.md`）**只是说明，不是行为契约**：
+改语义时必须连同清单/状态表一起改，否则下一个人（包括用户）会照着过时的行判断
+「这条还没做」。真正的契约在代码与测试里。
+
 

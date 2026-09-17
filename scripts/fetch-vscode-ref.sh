@@ -57,8 +57,13 @@ FILES=(
   "src/vs/workbench/browser/parts/editor/media/editordroptarget.css"
 
   # ---------- 网格布局 / 分屏 / 分隔条 / 滚动条 ----------
+  "src/vs/base/browser/ui/grid/grid.ts"
   "src/vs/base/browser/ui/grid/gridview.css"
   "src/vs/base/browser/ui/grid/gridview.ts"
+  # B67：双击分隔条的**入口与语义**在这里 —— grid.ts:312 订阅 gridview.onDidSashReset，
+  # :714-745 先试相邻 view 的 preferredWidth/Height，否则 distributeViewSizes(parentLocation)
+  # （只均分含该 sash 的那个 splitview）；sideBySideEditor.ts:209 是同一语义的最简写法。
+  "src/vs/workbench/browser/parts/editor/sideBySideEditor.ts"
   "src/vs/base/browser/ui/splitview/splitview.css"
   "src/vs/base/browser/ui/splitview/splitview.ts"
   "src/vs/base/browser/ui/sash/sash.css"
@@ -157,8 +162,14 @@ for f in "${FILES[@]}"; do
   fi
 done
 
-sha=$(curl -fsS --max-time 30 "${API}/commits/${REF}" 2>/dev/null |
-  grep -o '"sha": *"[0-9a-f]\{40\}"' | head -1 | cut -d'"' -f4)
+# ⚠️ REF 本身是完整 SHA 时别再问 API：raw.githubusercontent 能取内容，而 api.github.com
+#    可能被限流/掐连接（实测返回空 → SHA 被写成 unknown，把钉住的锚点洗掉）。
+if printf '%s' "$REF" | grep -Eq '^[0-9a-f]{40}$'; then
+  sha="$REF"
+else
+  sha=$(curl -fsS --max-time 30 "${API}/commits/${REF}" 2>/dev/null |
+    grep -o '"sha": *"[0-9a-f]\{40\}"' | head -1 | cut -d'"' -f4)
+fi
 
 cat >"${DEST}/REVISION.txt" <<EOF
 upstream: https://github.com/microsoft/vscode

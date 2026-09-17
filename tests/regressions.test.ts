@@ -915,6 +915,32 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(code, "注册表登记链号与均分比例").toMatch(/chainId,\s*\n\s*equalRatio:/);
   });
 
+  it("B67 方案文档不得再断言「双击复位到 50%」（与代码的均分语义冲突）", () => {
+    // 用户按 `docs/split-view-plan.md` 的清单核对进度，而 O1 行与状态表还写着 B59 的
+    // 旧语义（「双击分隔条复位到 50%」）→ 得出「这条还没做」的结论（实为文档没跟上 B63）。
+    // 行为契约在代码与测试里（本文件 B63 块 + `splitview.test.ts` 的均分用例）；
+    // 这条只挡「文档与代码说法冲突」这一种误导，不去锁文档的其他措辞。
+    const doc = readFileSync("docs/split-view-plan.md", "utf-8");
+    const sv = readFileSync("src/shell/splitview.ts", "utf-8");
+    const code = sv.replace(/\/\*[\s\S]*?\*\//g, "");
+
+    expect(code, "双击的语义取自 equalRatio（均分），不是常数").toMatch(
+      /addEventListener\("dblclick"[\s\S]{0,400}?equalRatio/,
+    );
+    expect(code, "双击不得再写回常数 0.5").not.toMatch(
+      /addEventListener\("dblclick"[\s\S]{0,400}?commit\(0\.5\)/,
+    );
+
+    const o1 = doc.split("\n").find((l) => l.startsWith("| **O1**")) ?? "";
+    expect(o1, "改进项清单里有 O1 行").not.toBe("");
+    expect(o1, "O1 行要写明按分割数量均分").toMatch(/按分割数量均分/);
+    expect(o1, "O1 行不得再是「复位到 50%」").not.toMatch(/复位到\s*50%/);
+
+    const status = doc.split("\n").find((l) => l.startsWith("| O1 双击复位")) ?? "";
+    expect(status, "实施记录里有 O1 行").not.toBe("");
+    expect(status, "状态表要指向 B63 改语义后的说明").toMatch(/B63|第十节/);
+  });
+
   it("B64 标签拖拽要有跟随光标的浮动影像（静态契约）", () => {
     // 用户反馈：「标签拖动时，要像 vscode 那样有一个 tab 随光标移动的效果。」
     // VS Code 出处：`multiEditorTabsControl.ts:1295` —— 拖单个标签且 tabSizing 非

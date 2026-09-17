@@ -29,6 +29,11 @@
   配置/样式根因 → `tests/regressions.test.ts`（静态文件断言）；
   Rust wire 格式 / 序列化 → `src-tauri/src/**` 内联 `#[cfg(test)] mod tests`。
   ↳ 惯例：**改完先反向验证**（把修复还原一次，确认对应用例真的会失败）。
+- ⚠️ **`docs/*.md` 是说明，不是行为契约；改语义必须同步改清单/状态表**。
+  B67 的教训：B63 把「双击 → 50%」改成「按分割数量均分」只更新了正文，
+  用户照 `docs/split-view-plan.md` 的 O1 行核对，直接得出「这条还没做」。
+  现有一条守卫挡这类冲突（`regressions.test.ts` 的 B67 块）。
+  ↳ 顺带：`docs/vscode-reference/src/` 里引用的文件必须在 `fetch-vscode-ref.sh` 清单里。
 - **界面有改动必须刷新 `docs/screenshots/` 截图**，与代码改动同一提交；
   确实不影响观感则在提交信息注明「界面无变化」。
 - **每次编译都要产出发布版本**（tsc → vite → vitest → cargo build+test → tauri build，
@@ -87,9 +92,11 @@
   （B53 后为**原生横向滚动**，折叠机制整体删除）/ 首选项弹窗 / 启动白屏 /
   安装包与安装器图标三套机制分层 / 分屏对齐 VS Code（B59–B63 见
   `docs/split-view-plan.md` 七～十节）/ B64 标签拖拽浮动影像 /
-  **B65+B66 标签槽位：● 与 × 互斥、未保存默认 ●、指针进关闭区才换 ×**。
+  **B65+B66 标签槽位：● 与 × 互斥、未保存默认 ●、指针进关闭区才换 ×** /
+  **B67 复核 B63 的「双击按分割数量均分」**（行为早就在，是清单文档没跟上 → 已订正 +
+  加守卫；真机取证法见 `BUILD-ENV.md`「想量行为而不是观感」）。
   逐条依据见 git log 与当日日志；**不变量与根因都写进 `ARCHITECTURE.md`，改前先读**。
-- **测试规模**：368 vitest + 22 cargo。分屏与标签拖拽的运行时用例在
+- **测试规模**：369 vitest + 22 cargo。分屏与标签拖拽的运行时用例在
   `tests/splitview.test.ts`，静态契约在 `tests/regressions.test.ts`。
 
 ## 下一步

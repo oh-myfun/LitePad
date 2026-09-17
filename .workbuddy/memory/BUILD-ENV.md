@@ -267,7 +267,33 @@ Node 22 **自带全局 `WebSocket`**，所以零依赖即可连 CDP（连法照�
 `getComputedStyle(el).opacity`，就能把「哪个 glyph 在显示」量出来（0 / 0.5 / 1），
 比只看图可靠 —— 本环境拿不到 CSS 级联（vitest 是 jsdom），这是唯一的自动核对手段。
 现成脚本：`generated-images/gen-tab-action-hover-shots.mjs`。
-裁切放大对照用 Pillow（venv `~/.workbuddy/binaries/python/envs/default` 里有）。
+裁切放大对照用 Pillow：**Windows 下 venv 的解释器在 `Scripts/python.exe`**（不是 `bin/`）——
+`~/.workbuddy/binaries/python/envs/default/Scripts/python.exe`（Pillow 12.x）；
+`versions/3.13.12/python.exe` 那个**裸装没有 Pillow**，别用它跑裁切脚本。
+
+### 想量「行为」而不是观感？同一条路读几何（B67 起）
+
+「双击分隔条到底把各面板调成多少」这类问题**肉眼看不准**（2 面板时「均分」和「居中」
+长得一模一样），而 jsdom 没有布局（`getBoundingClientRect` 恒为 0）——
+`splitview.test.ts` 只能靠内联 flexBasis 逐层累乘推算。要证真机行为就走 CDP：
+
+1. 用 esbuild 把**真实模块**打成 **IIFE**（`format: "iife"`，`<script src>` 引入）。
+   ⚠️ **不能用 `type="module"`**：`file://` 下 origin 是 `null`，模块脚本被 CORS
+   静默拦掉 —— 页面什么都不执行，且 console 里未必有醒目报错（实测踩过）。
+   入口里挂 `window.__mount/__measure` 之类供 CDP 调用（脚本见
+   `generated-images/splitview-entry.mjs`）。
+2. 派发鼠标：双击 = **两轮** press/release，第二轮 `clickCount: 2` 才会合成 `dblclick`；
+   拖拽 = press → 分几步 move → release（每步间隔 30ms 更像真人）。
+3. `Runtime.evaluate` 里 `getBoundingClientRect()` 换算成百分比 → **数值断言**。
+4. 截图用 `Page.captureScreenshot` 的 `clip: {x,y,width,height,scale:1}` 只裁目标区域。
+   ⚠️ `--window-size` 在无头下**不一定等于视口**（实测要 940×660 却拿到 918×506）：
+   先在页面里读 `window.innerWidth/Height`、把容器设成那么大，再按该尺寸裁，
+   否则图里带一条黑边。
+5. ⚠️ CDP 的 `Runtime.evaluate` 出错时返回的是 `exceptionDetails`，`result.value` 是
+   `undefined` —— 封装 `evalJs` 时要显式抛，否则会看到「undefined 传给下游」的假错。
+
+现成脚本：`generated-images/gen-splitview-dblclick.mjs`（+ `splitview-entry.mjs`、
+`crop-splitview-dblclick.py`）。
 
 ## ⚠️ 改图标后必须让 build.rs 盯 `icons/` 目录
 
