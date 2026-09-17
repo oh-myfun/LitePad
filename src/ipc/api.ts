@@ -170,6 +170,15 @@ export interface TabSession {
    * 未命名文档只靠它才能被恢复。
    */
   backupId?: string | null;
+  /**
+   * 前端文档 ID（B69，与 Rust `doc::Doc::id` 同源）。
+   *
+   * 空的未命名文档既没有 `path`、也不脏（没输入过内容 → 不会写副本），
+   * 上面两个字段都认不出它，只能靠 `docId`：既用来把它记进会话，
+   * 也用来在恢复时判断「哪些标签其实是同一个文档」——同一个空文档被分屏成
+   * 两个实例时，不能恢复成两份互不相干的文档。
+   */
+  docId?: number | null;
 }
 
 export interface PanelSession {

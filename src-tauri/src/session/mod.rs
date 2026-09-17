@@ -125,6 +125,16 @@ pub struct TabSession {
     /// 于是「副本写失败」「副本被手动删了」这类情况都能自愈。
     #[serde(alias = "backup_id")]
     pub backup_id: Option<String>,
+    /// 前端文档 ID（= Rust `doc::Doc::id`，B69）。
+    ///
+    /// 空的新建文档既没有 `path`、又不脏（没输入过内容，压根不会写副本），
+    /// 光看 `path` / `backup_id` 两个字段是认不出它的，于是会被会话漏掉。
+    /// 带上 `docId` 才能：① 把它记进会话；② 恢复时判断「哪些标签其实是同一个文档」
+    /// ——同一个空文档被分屏成两个实例时，不能恢复成两份互不相干的文档。
+    ///
+    /// 旧版本落盘的会话没有这个字段，反序列化为 `None`，行为与 B69 之前一致。
+    #[serde(alias = "doc_id")]
+    pub doc_id: Option<u64>,
 }
 
 impl Default for TabSession {
@@ -137,6 +147,7 @@ impl Default for TabSession {
             cursor_col: 1,
             view_mode: None,
             backup_id: None,
+            doc_id: None,
         }
     }
 }
@@ -323,6 +334,39 @@ mod tests {
                          "layout":{},"activePanel":0}"#;
         let old: SessionState = serde_json::from_str(legacy).expect("老会话要能读入");
         assert_eq!(old.panels[0].tabs[0].backup_id, None, "缺字段应回落 None");
+    }
+
+    /// B69：空的未命名文档靠 `docId` 进会话。
+    ///
+    /// 它既没有 `path`、也不脏（没输入过内容 → 不会写副本），光看
+    /// `path` / `backup_id` 两个字段认不出它，于是整条被会话漏掉，
+    /// 表现为「新建了但还没打字」的标签重启后凭空消失。
+    #[test]
+    fn session_carries_doc_id_for_empty_untitled() {
+        let json = r#"{
+          "panels": [
+            { "tabs": [
+                { "path": "", "encoding": "UTF-8", "eol": "LF",
+                  "cursorLine": 1, "cursorCol": 1, "docId": 7 }
+              ], "active": 0 }
+          ],
+          "layout": { "kind": "leaf", "panelId": 0 },
+          "activePanel": 0
+        }"#;
+
+        let state: SessionState =
+            serde_json::from_str(json).expect("带 docId 的空文档会话应能读入");
+        assert_eq!(state.panels[0].tabs[0].doc_id, Some(7), "docId 必须被读到");
+
+        let out = serde_json::to_string(&state).unwrap();
+        assert!(out.contains("\"docId\""), "落盘应为 camelCase：{out}");
+        assert!(!out.contains("doc_id"), "不该落盘 snake_case：{out}");
+
+        // 旧会话没有 docId → None，行为与 B69 之前一致（这类标签本来就没进过会话）
+        let legacy = r#"{"panels":[{"tabs":[{"path":""}],"active":0}],
+                         "layout":{},"activePanel":0}"#;
+        let old: SessionState = serde_json::from_str(legacy).expect("老会话要能读入");
+        assert_eq!(old.panels[0].tabs[0].doc_id, None, "缺字段应回落 None");
     }
 
     /// B68：`autosave` 与 `hot_exit` 是两个独立开关，默认值对齐 VS Code 桌面版。

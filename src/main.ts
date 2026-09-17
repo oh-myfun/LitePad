@@ -1667,7 +1667,14 @@ function snapshotSession(): Parameters<typeof saveSession>[0] {
           if (!d) return false;
           // B68：有磁盘路径的照旧入会话；没有路径的未命名文档，只有在
           // 备份区里确实存着副本时才值得留住（否则恢复时无据可依，只会白占一行）。
-          return !!d.path || d.backedUp;
+          if (d.path || d.backedUp) return true;
+          // B69：热退出开着时，**空的**未命名文档也要留住。它没有内容要救，
+          // 但标签本身该原样回来——「新建了还没开始打字」不该重启后凭空消失。
+          //
+          // ⚠️ 判定必须是「无路径 **且 不脏**」：脏、却又没备份成功的未命名文档
+          // 绝不能按空文档恢复，那会把用户打的字真的丢掉。那种情况只能走
+          // 关窗确认框（快照里没有它 → 恢复时也不会被当成空文档）。
+          return settings?.hot_exit === true && !d.dirty;
         });
       return {
         tabs: tabList.map((t) => {
@@ -1682,6 +1689,8 @@ function snapshotSession(): Parameters<typeof saveSession>[0] {
             cursorCol: pos - line.from + 1,
             viewMode: isMdTab(t) ? t.viewMode : null,
             backupId: d.backupId,
+            // B69：空未命名文档的认领凭据（见 TabSession.docId 注释）
+            docId: d.tabId,
           };
         }),
         active: Math.max(
@@ -1804,27 +1813,44 @@ async function restoreSession(): Promise<boolean> {
   // 该文档是脏的，副本内容才是用户最后看到的东西；副本不在（已保存 / 已被丢弃 /
   // 写失败）才按路径读原文件。未命名文档没有路径，只能靠副本。
   //
-  // 去重按**文档身份**（有 path 就是 path，未命名的用副本 ID），**不带面板索引**：
+  // 去重按**文档身份**（有 path 就是 path；未命名但有副本的用副本 ID；
+  // 空的未命名文档用 B69 的 docId），**不带面板索引**：
   // 同一个文件可以同时在多个面板打开并共用同一份 doc（同源多实例），只该读一次盘。
   // ⚠️ 这里必须跨面板去重，而不能每个面板各取一次——`restore_backup` 每次都新建
   // 一个标签，取两次就会得到两份**互不同步**的文档，把「同源多实例」悄悄破坏掉。
-  type Restored = { kind: "backup"; data: RestoredBackup } | { kind: "file"; data: OpenedFile };
-  const identityOf = (st: { path: string; backupId?: string | null }): string =>
-    st.path || `#${st.backupId ?? ""}`;
+  type Restored =
+    | { kind: "backup"; data: RestoredBackup }
+    | { kind: "file"; data: OpenedFile }
+    /** B69：空的未命名文档——会话里既没路径也没副本，内容本来就是空的 */
+    | { kind: "empty"; data: OpenedFile };
+  /** 认不出身份返回空串（旧版本落盘的会话不会写出这种标签，直接跳过）。 */
+  const identityOf = (st: {
+    path: string;
+    backupId?: string | null;
+    docId?: number | null;
+  }): string =>
+    st.path || (st.backupId ? `#${st.backupId}` : st.docId != null ? `#doc:${st.docId}` : "");
 
   const pending: Array<{
     key: string;
     path: string;
     encoding: string | null;
+    eol: string | null;
     backupId: string | null;
   }> = [];
   for (const spanel of panels0) {
     for (const st of spanel.tabs) {
       const backupId = st.backupId ?? null;
-      if (!st.path && !backupId) continue;
       const key = identityOf(st);
+      if (!key) continue; // 认不出身份 → 跳过（见 identityOf 注释）
       if (!pending.some((p) => p.key === key)) {
-        pending.push({ key, path: st.path, encoding: st.encoding ?? null, backupId });
+        pending.push({
+          key,
+          path: st.path,
+          encoding: st.encoding ?? null,
+          eol: st.eol ?? null,
+          backupId,
+        });
       }
     }
   }
@@ -1842,7 +1868,37 @@ async function restoreSession(): Promise<boolean> {
           /* 副本读不了 / 格式坏了 → 退回按路径打开原文件 */
         }
       }
-      if (!p.path) return;
+      // B69：既没有路径、又没有副本 ⇒ 上次关窗时这是一个**空的**未命名文档。
+      // 内容本来就是空的，不需要副本（也没东西可写），直接开一个空白文档即可。
+      //
+      // ⚠️ 走到这里的前提是「不脏」——快照只在 `!d.dirty` 时才写这种标签，
+      // 所以不存在「有内容却被当成空文档恢复」的风险（那会真的丢字）。
+      if (!p.path) {
+        try {
+          const info = await ipcNewTab(p.encoding);
+          restoredCache.set(p.key, {
+            kind: "empty",
+            data: {
+              tabId: info.tabId,
+              reused: false,
+              path: "",
+              name: info.name,
+              text: "",
+              encoding: info.encoding,
+              eol: p.eol || info.eol,
+              mixedEol: false,
+              readonly: info.readonly,
+              size: 0,
+              lossy: false,
+              sizeClass: "normal",
+              sizeHint: "",
+            },
+          });
+        } catch {
+          /* 建不出来就跳过该标签 */
+        }
+        return;
+      }
       try {
         restoredCache.set(p.key, { kind: "file", data: await openFile(p.path, p.encoding) });
       } catch {

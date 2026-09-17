@@ -129,6 +129,26 @@ describe("B68 热退出（自动保存关 / 热退出开）", () => {
     await wait(300);
   });
 
+  it("新建的空文档也要进会话（带 docId），下次启动才回得来", async () => {
+    // B69：冷启动出的空文档既没有 path、也不脏（没输入过内容 → 不会写副本），
+    // 若会话只认「有 path || 有副本」，它就被整条漏掉、重启后凭空消失。
+    await wait(1200); // 越过 800ms 会话防抖
+    expect(sessions.length, "冷启动后应已存过一次会话").toBeGreaterThan(0);
+    const snap = sessions[sessions.length - 1] as {
+      panels: Array<{
+        tabs: Array<{ path?: string; backupId?: string | null; docId?: number | null }>;
+      }>;
+    };
+    const tabs = snap.panels.flatMap((p) => p.tabs);
+    const empty = tabs.find((t) => !t.path && !t.backupId);
+    expect(empty, `空文档应被写进会话，实际会话标签：${JSON.stringify(tabs)}`).toBeTruthy();
+    expect(
+      typeof empty!.docId,
+      "必须带 docId：它是认领这个空文档（以及分屏时判断「同一个文档」）的唯一凭据",
+    ).toBe("number");
+    expect(backups.length, "空文档没有内容可备份 → 不该写副本").toBe(0);
+  });
+
   it("真实编辑只写副本，绝不写原文件", async () => {
     const view = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement);
     expect(view, "编辑器应已挂载").toBeTruthy();

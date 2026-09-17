@@ -1625,7 +1625,11 @@ describe("B68 热退出：关窗不询问，下次启动还原未保存内容", 
   it("会话必须带上 backupId，未命名文档靠它才能恢复", () => {
     expect(src, "会话快照必须写 backupId").toContain("backupId: d.backupId");
     // 没有路径的未命名文档，只有在备份区里确实有副本时才该进会话
-    expect(src, "未命名文档以 backedUp 为入会话条件").toMatch(/return !!d\.path \|\| d\.backedUp;/);
+    // （B69 起拆成两步 return：先认 path/副本，再补「热退出 + 空的未命名」，
+    //  后半条的判定与守卫见下面 B69 块）
+    expect(src, "有路径或有副本的立即入会话").toMatch(
+      /if \(d\.path \|\| d\.backedUp\) return true;/,
+    );
   });
 
   it("孤儿副本清理必须以「会话读成功」为前提（防会话坏掉时误删全部副本）", () => {
@@ -1655,6 +1659,64 @@ describe("B68 热退出：关窗不询问，下次启动还原未保存内容", 
     // 关掉热退出时必须把现存副本一并丢掉，否则「关了还生效」
     const off = fnBody("async function setHotExit");
     expect(off, "关掉热退出要丢弃现存副本").toMatch(/if \(!on\) discardAllBackups\(\);/);
+  });
+});
+
+describe("B69 空的新建文档也要跨重启回来", () => {
+  // 用户报告：热退出开着，新建了但还没打字的空文档，下次打开却没了。
+  // 根因：它既没有 path、也不脏（没输入 → 不写副本），而 B68 的会话包含条件是
+  // 「有 path || 有副本」，于是整条被漏掉。改法是靠 docId 认领。
+  const src = readFileSync("src/main.ts", "utf-8");
+  const api = readFileSync("src/ipc/api.ts", "utf-8");
+  const rustSession = readFileSync("src-tauri/src/session/mod.rs", "utf-8");
+
+  /** 截取某个顶层函数的源码体（到下一个顶层 `\n}` 为止）。 */
+  function fnBody(name: string): string {
+    const start = src.indexOf(name);
+    expect(start, `必须能定位 ${name}`).toBeGreaterThan(-1);
+    return src.slice(start, src.indexOf("\n}", start) + 2);
+  }
+
+  it("快照接纳空的未命名文档，但**绝不**接纳「脏却没备份成功」的", () => {
+    const body = fnBody("function snapshotSession");
+    // 空文档（无 path、不脏）必须进会话，否则重启后凭空消失
+    expect(body, "热退出开着时要接纳「无路径且不脏」的文档").toMatch(
+      /settings\?\.hot_exit === true && !d\.dirty/,
+    );
+    // ⚠️ 反向约束：判定必须带 !d.dirty。若退化成「无路径就收」，
+    // 「脏、但备份失败」的未命名文档也会被收进去，恢复时按空文档处理
+    // ——那会真的把用户打的字丢掉。那种情况只能走关窗确认框。
+    expect(body, "判定必须同时约束 dirty，不能只看有没有路径").toMatch(/!d\.dirty/);
+  });
+
+  it("空文档靠 docId 认领：会话 schema 与快照都要带上", () => {
+    expect(rustSession, "Rust TabSession 必须有 doc_id").toMatch(/pub doc_id: Option<u64>/);
+    expect(rustSession, "doc_id 要有 snake_case alias 兼容旧会话").toMatch(
+      /#\[serde\(alias = "doc_id"\)\]/,
+    );
+    expect(api, "前端 TabSession 必须有 docId").toMatch(/docId\?: number \| null;/);
+    const body = fnBody("function snapshotSession");
+    expect(body, "快照必须写入 docId").toMatch(/docId: d\.tabId,/);
+  });
+
+  it("恢复时按 docId 认身份：同一个空文档在多个面板只造一份", () => {
+    const body = fnBody("async function restoreSession");
+    // 没有 docId 分支时，两个空标签的身份会退化成同一个键，被去重成一份
+    expect(body, "identityOf 必须有 docId 分支").toMatch(/#doc:\$\{st\.docId\}/);
+    // 无路径、无副本 ⇒ 空文档：必须新开一个空白文档，而不是整条跳过
+    expect(body, "无路径无副本的标签要 newTab 造空文档").toMatch(
+      /await ipcNewTab\([\s\S]*?kind: "empty"/,
+    );
+  });
+
+  it("恢复出来的空文档不是脏的（不亮 ●、关闭不弹框）", () => {
+    const body = fnBody("async function restoreSession");
+    // 置脏只属于副本分支：空文档内容本来就是空的，标脏会亮 ● 且关闭时要问「保存吗」
+    const dirtyAssigns = body.match(/dirty = true/g) ?? [];
+    expect(dirtyAssigns.length, "恢复流程里只有副本分支可以置脏").toBe(1);
+    expect(body, "置脏必须在副本分支内").toMatch(
+      /if \(hit\.kind === "backup"\)[\s\S]{0,300}dirty = true/,
+    );
   });
 });
 
