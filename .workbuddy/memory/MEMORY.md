@@ -89,7 +89,7 @@
   `docs/split-view-plan.md` 七～十节）/ B64 标签拖拽浮动影像 /
   **B65+B66 标签槽位：● 与 × 互斥、未保存默认 ●、指针进关闭区才换 ×**。
   逐条依据见 git log 与当日日志；**不变量与根因都写进 `ARCHITECTURE.md`，改前先读**。
-- **测试规模**：367 vitest + 22 cargo。分屏与标签拖拽的运行时用例在
+- **测试规模**：368 vitest + 22 cargo。分屏与标签拖拽的运行时用例在
   `tests/splitview.test.ts`，静态契约在 `tests/regressions.test.ts`。
 
 ## 下一步
@@ -106,5 +106,5 @@
   `transition: opacity` 是否显得迟钝**。
   ↳ 沙箱内能自证的静态/悬停观感见 `BUILD-ENV.md`「沙箱内预览纯 DOM/CSS 观感」。
 - 待清理：`menu.ts` 的 `MenuItem.active` 与 `.menu-item-current`（B53 后已无使用者）。
-- 待定：是否发 **v0.3.1**（B55–B65 都改了界面；B54 起就留了同一问题未决）。
+- 待定：是否发 **v0.3.1**（B55–B66 都改了界面；B54 起就留了同一问题未决）。
 - M4 之后：M5 规划未定（候选见 DESIGN.md）；观感/交互改进先查 `docs/vscode-reference/`。

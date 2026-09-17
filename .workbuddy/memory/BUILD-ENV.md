@@ -107,6 +107,25 @@ Desktop(backend="uia").window(...) → descendants(control_type="MenuItem") → 
   直接重试即可恢复（实测 44.6 s 重建 435 个产物）。
 - 实测耗时参考（本机，冷启动）：`cargo test` 全量 21 min；`tauri build --release` 38 min。
 
+## ⚠️ 构建「卡住不推进」先怀疑沙箱，别干等（B66 实测）
+
+B66 把 `vite build && cargo test && tauri build` 整条链丢进后台时**漏了
+`dangerouslyDisableSandbox: true`**，症状如下：
+
+- vite 卡在打包阶段 **7 分 41 秒**不推进；
+- 日志只写到 `✓ 2666 modules transformed.`，**没有** `rendering chunks` / `✓ built in`；
+- 判据：`dist/index.html` 时间戳还是**上一次**构建的，`dist/assets/*` 也没更新
+  （vite 是打包完成后才 `emptyOutDir` + 落盘，所以「老文件还在」= 还没进落盘阶段）；
+- `tasklist` 里 node.exe 活着（有进程、无产出）。
+
+→ **处理**：用 `TaskStop` 停掉后台任务，带 `dangerouslyDisableSandbox: true` 重跑，
+同一条链 **2 分 39 秒**走完（vite + cargo test + tauri build + NSIS）。
+本机 2666 模块的 vite 产物构建正常就是 **30–45 s**；**超过 2 分钟没推进 = 沙箱在拦**。
+
+⚠️ 不要用 `taskkill`/`Stop-Process` 按名字杀 node.exe：会话自身也跑在 node 上
+（实测同时有 7 个 node.exe，其中占 1.7 GB / 8.5 GB 的两个就是宿主），杀错直接断会话。
+一律走 `TaskStop`。
+
 ## ⚠️ 工作区目录改名后必须 `cargo clean`
 
 Rust 的构建缓存里**烙死了绝对路径**。本项目由 `E:\Project\LiteMD` 改名为
