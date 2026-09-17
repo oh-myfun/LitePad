@@ -47,6 +47,9 @@ export interface MenuBarCallbacks {
   statusbarChecked: () => boolean;
   onToggleAutosave: () => void;
   autosaveChecked: () => boolean;
+  /** 热退出：关窗时把未保存内容写进独立副本，于是关窗不再弹确认框（B68） */
+  onToggleHotExit: () => void;
+  hotExitChecked: () => boolean;
   // ---- 设置 ----
   /** 打开首选项弹窗（原二级子菜单已升级为设置窗口） */
   onPreferences: () => void;
@@ -75,6 +78,11 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
       { label: withKey("全部保存", cb.keyHint("file.saveAll")), onSelect: cb.onSaveAll },
       { separator: true },
       { label: "自动保存", checked: cb.autosaveChecked(), onSelect: cb.onToggleAutosave },
+      {
+        label: "热退出（关窗不询问）",
+        checked: cb.hotExitChecked(),
+        onSelect: cb.onToggleHotExit,
+      },
       { separator: true },
       { label: withKey("关闭标签", cb.keyHint("file.close")), onSelect: cb.onCloseTab },
       { label: "退出", onSelect: cb.onExit },

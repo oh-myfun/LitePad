@@ -111,6 +111,9 @@ vi.mock("../src/ipc/api", () => ({
       font_size: 14,
       default_encoding: "UTF-8",
       default_eol: "CRLF",
+      // B68 起的两个默认值：自动保存关、热退出开
+      autosave: false,
+      hot_exit: true,
     }),
   logEvent: () => {},
   newTab: () =>
@@ -143,6 +146,9 @@ vi.mock("../src/ipc/api", () => ({
       eol: "LF",
       readonly: false,
       mixedEol: false,
+      // 线上是 camelCase（Rust rename_all），别跟着误写成 size_class
+      sizeClass: "normal",
+      sizeHint: "",
     }),
   reloadFile: () =>
     Promise.resolve({
@@ -159,6 +165,13 @@ vi.mock("../src/ipc/api", () => ({
   savePasteImage: () => Promise.resolve(""),
   saveSession: () => Promise.resolve(),
   saveSettings: () => Promise.resolve(),
+  // ---- B68 热退出 ----
+  // restoreBackup 恒返回 null：让会话恢复走「文件兜底」这条路，
+  // 与 B68 之前的用例预期一致（副本优先那条路径由回归测试静态守护）。
+  writeBackup: () => Promise.resolve(),
+  restoreBackup: () => Promise.resolve(null),
+  discardBackup: () => Promise.resolve(),
+  discardOrphanBackups: () => Promise.resolve(0),
 }));
 
 // 指针事件序列（标签拖拽已从 HTML5 DnD 改为 mousedown/mousemove/mouseup 编排）

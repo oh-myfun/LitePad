@@ -119,6 +119,11 @@ vi.mock("../src/ipc/api", () => ({
   savePasteImage: () => Promise.resolve(""),
   saveSession: () => Promise.resolve(),
   saveSettings: () => Promise.resolve(),
+  // ---- B68 热退出（桩必须覆盖主模块真实 import 的每个符号）----
+  writeBackup: () => Promise.resolve(),
+  restoreBackup: () => Promise.resolve(null),
+  discardBackup: () => Promise.resolve(),
+  discardOrphanBackups: () => Promise.resolve(0),
 }));
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));

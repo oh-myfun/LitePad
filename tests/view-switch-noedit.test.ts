@@ -104,6 +104,12 @@ vi.mock("../src/ipc/api", () => ({
   savePasteImage: () => Promise.resolve(""),
   saveSession: () => Promise.resolve(),
   saveSettings: () => Promise.resolve(),
+  // ---- B68 热退出（桩必须覆盖主模块真实 import 的每个符号，
+  //      否则缺的那个调用会抛 TypeError 把 bootstrap 打断）----
+  writeBackup: () => Promise.resolve(),
+  restoreBackup: () => Promise.resolve(null),
+  discardBackup: () => Promise.resolve(),
+  discardOrphanBackups: () => Promise.resolve(0),
 }));
 
 // B57 起 ● 是矢量字形且槽位恒定存在（靠 opacity 显隐），脏状态改看 tab-dirty 类。

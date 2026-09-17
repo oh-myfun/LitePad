@@ -30,10 +30,15 @@ export interface OpenedFile {
   /**
    * M4 大文件档位："normal" | "large" | "huge"。由 Rust 按字节数判定，
    * 前端据此裁剪编辑器特性（见 src/editor/perf.ts）。
+   *
+   * ⚠️ 字段名是 **camelCase**：Rust 侧 `OpenedFile` 标了 `rename_all = "camelCase"`，
+   * 于是 `size_class` 出去的线上名字是 `sizeClass`。B68 之前这里写的是
+   * `size_class`，一直读到 undefined → 回落 "normal" → **大文件降级从未真正生效**。
+   * 同名的 `mixed_eol` / `lossy_chars` 早就按 camelCase 写对了，只有这两个漏了。
    */
-  size_class: string;
+  sizeClass: string;
   /** 分级提示文案（normal 为空串），直接显示给用户。 */
-  size_hint: string;
+  sizeHint: string;
 }
 
 export interface LossyChar {
@@ -64,7 +69,16 @@ export interface Settings {
   /** 编辑器行距（1.0–2.5，默认 1.5） */
   editor_line_height: number;
   word_wrap: boolean;
+  /** 自动保存：把脏文档写回**原文件**（VS Code `files.autoSave`）。B68 起默认关。 */
   autosave: boolean;
+  /**
+   * 热退出：关窗时把未保存内容写进独立副本，于是不必弹「未保存将丢失」的确认框，
+   * 下次启动还原成未保存标签（VS Code `files.hotExit`）。B68 起默认开。
+   *
+   * 与 `autosave` 是两件事：自动保存写**原文件**（脏标记清除），
+   * 热退出只写 LitePad 自己的备份区（原文件一个字节都不动）。
+   */
+  hot_exit: boolean;
   /** Markdown 预览行距（1.0–2.5） */
   preview_line_height: number;
   /** 大纲抽屉宽度（px，160–640） */
@@ -148,6 +162,14 @@ export interface TabSession {
   cursorCol: number;
   /** Markdown 视图模式（source/split/preview） */
   viewMode?: string | null;
+  /**
+   * 热退出副本 ID（B68）。跨会话稳定，一个文档一个。
+   *
+   * 恢复时**副本优先于 `path`**：副本还在就说明关窗时该文档是脏的，
+   * 要用副本内容而不是磁盘内容；副本不存在则退回按 `path` 打开原文件。
+   * 未命名文档只靠它才能被恢复。
+   */
+  backupId?: string | null;
 }
 
 export interface PanelSession {
@@ -168,6 +190,68 @@ export function loadSession(): Promise<SessionState | null> {
 
 export function saveSession(state: SessionState): Promise<void> {
   return invoke<void>("save_session", { state });
+}
+
+// ---------------------------------------------------------------- 热退出（B68）
+
+/** 与 Rust `RestoredBackup` 对应（rename_all = camelCase）。 */
+export interface RestoredBackup {
+  tabId: number;
+  /** 原路径；未命名文档为空字符串 */
+  path: string;
+  name: string;
+  /** LF 归一化的正文 */
+  text: string;
+  encoding: string;
+  eol: string;
+  mixedEol: boolean;
+  readonly: boolean;
+  /** 同 `OpenedFile`：线上是 camelCase（`rename_all = "camelCase"`） */
+  sizeClass: string;
+  sizeHint: string;
+}
+
+/**
+ * 写入热退出副本。
+ *
+ * ⚠️ 写的是 LitePad 自己的备份区（`%APPDATA%\LitePad\backups`），
+ * **绝不碰 `path` 指向的原文件** —— 写原文件是自动保存的职责。
+ */
+export function writeBackup(args: {
+  id: string;
+  text: string;
+  path: string;
+  name: string;
+  encoding: string;
+  eol: string;
+  mixedEol: boolean;
+}): Promise<void> {
+  return invoke<void>("write_backup", args);
+}
+
+/**
+ * 把副本还原成新标签（内容仍是未保存状态）。
+ *
+ * 返回 `null` 表示「没有可用副本」（已丢弃 / 写失败 / 格式坏了）——
+ * 正常分支而非错误，调用方退回按原路径打开原文件。
+ */
+export function restoreBackup(id: string): Promise<RestoredBackup | null> {
+  return invoke<RestoredBackup | null>("restore_backup", { id });
+}
+
+/** 丢弃单个副本（保存成功 / 转干净 / 关闭标签选「不保存」）。幂等。 */
+export function discardBackup(id: string): Promise<void> {
+  return invoke<void>("discard_backup", { id });
+}
+
+/**
+ * 清理会话不再引用的孤儿副本，返回删除个数。
+ *
+ * ⚠️ 只在**会话读成功之后**调用：会话文件坏掉时 `keep` 会是空表，
+ * 那时候清理等于把用户全部未保存内容删掉。
+ */
+export function discardOrphanBackups(keep: string[]): Promise<number> {
+  return invoke<number>("discard_orphan_backups", { keep });
 }
 
 /** Unicode 编码不会丢字符，可跳过不可逆检查以省掉一次全量扫描。 */

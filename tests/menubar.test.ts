@@ -95,6 +95,8 @@ function makeCb(): MenuBarCallbacks {
     statusbarChecked: () => false,
     onToggleAutosave: noop,
     autosaveChecked: () => true,
+    onToggleHotExit: noop,
+    hotExitChecked: () => true,
     // 设置 → 首选项
     themeChecked: (mode) => mode === "system",
     onSetTheme: noop,
@@ -122,7 +124,7 @@ afterEach(() => {
 });
 
 describe("菜单栏（文件 / 编辑 / 查看 / 设置 / 帮助）", () => {
-  it("文件菜单：保留 新建/打开/保存三兄弟/自动保存/关闭标签/退出", async () => {
+  it("文件菜单：保留 新建/打开/保存三兄弟/自动保存/热退出/关闭标签/退出", async () => {
     const host = document.createElement("nav");
     document.body.appendChild(host);
     createMenuBar(host, makeCb());
@@ -134,6 +136,8 @@ describe("菜单栏（文件 / 编辑 / 查看 / 设置 / 帮助）", () => {
     expect(texts).toContain("另存为…\tCtrl+Shift+S");
     expect(texts).toContain("全部保存\tCtrl+Alt+S");
     expect(texts).toContain("自动保存");
+    // B68：热退出与自动保存并列，但语义完全不同（一个写原文件、一个写副本）
+    expect(texts).toContain("热退出（关窗不询问）");
     expect(texts).toContain("关闭标签\tCtrl+W");
     expect(texts).toContain("退出");
     expect(

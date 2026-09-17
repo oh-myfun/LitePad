@@ -1,6 +1,7 @@
 // release 隐藏控制台（debug 保留便于定位启动期错误）
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod backup;
 mod commands;
 mod core;
 mod session;
@@ -92,6 +93,10 @@ fn main() {
             commands::frontend_ready,
             commands::load_session,
             commands::save_session,
+            commands::write_backup,
+            commands::restore_backup,
+            commands::discard_backup,
+            commands::discard_orphan_backups,
             commands::export_file,
             commands::save_paste_image,
         ])

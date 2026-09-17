@@ -198,10 +198,13 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(handler, "应有 handleUpdate").toBeTruthy();
     // ① docChanged 不等于"内容变了"——要比较前后文本
     expect(handler, "必须比较事务前后文本").toContain("const textChanged =");
-    // ② 自动保存只能在内容真的变化时排程（单纯移动光标不写盘）
-    expect(handler, "自动保存必须挂在文本变化上").toContain(
-      "if (textChanged && !suppressDirty) scheduleAutosave()",
-    );
+    // ② 自动保存/热退出备份只能在内容真的变化时排程（单纯移动光标不写盘）。
+    //    B68 起两者并排成块，但**都**必须在 `textChanged && !suppressDirty` 门控内：
+    //    热退出写的是副本，若跟着任意事务走，切换视图/点击内容区也会每 1s 写一次盘。
+    expect(handler, "必须有 textChanged 门控").toContain("if (textChanged && !suppressDirty) {");
+    const gated = handler.slice(handler.indexOf("if (textChanged && !suppressDirty) {"));
+    expect(gated, "自动保存必须在门控分支里").toContain("scheduleAutosave();");
+    expect(gated, "热退出备份也必须在门控分支里").toContain("scheduleBackup();");
     expect(handler, "选区变化不应触发自动保存").not.toContain(
       "if (!suppressDirty) {\n    scheduleAutosave();",
     );
@@ -1517,17 +1520,141 @@ describe("B50 启动不得露出白色窗口（用户反馈：打开时先白屏
 describe("B50 会话恢复必须并行读盘（而不是逐个 await）", () => {
   // 原先 restoreSession 对每个标签 `await openFile(...)`，N 个文件就是 N 次串行
   // 往返（读盘 + 编码检测），总耗时是各次之和；并行后总耗时≈最慢的那一次。
+  // B68 起预取里多了「先问副本」这一步，但仍然是同一个 Promise.all 扇出。
   it("restoreSession 内必须先把文件并行预取好，再按序组装标签", () => {
     const src = readFileSync("src/main.ts", "utf-8");
     const start = src.indexOf("async function restoreSession");
     expect(start, "必须能定位 restoreSession").toBeGreaterThan(-1);
-    const body = src.slice(start, start + 5000);
+    const body = src.slice(start, start + 8000);
     expect(body, "必须并行预取（Promise.all）").toContain("Promise.all");
-    expect(body, "必须有预取缓存 openedCache").toContain("openedCache");
-    expect(body, "组装阶段应读缓存而不是再读盘").toContain("openedCache.get(");
+    expect(body, "必须有预取缓存 restoredCache").toContain("restoredCache");
+    expect(body, "组装阶段应读缓存而不是再读盘").toContain("restoredCache.get(");
     expect(body, "组装循环里不得再逐个 await openFile（那是串行的老写法）").not.toMatch(
       /const file = await openFile\(/,
     );
+    // B68：预取必须是「副本优先、文件兜底」——先 restoreBackup，拿不到才 openFile
+    expect(body, "副本必须先问，原文件作为兜底").toMatch(
+      /await restoreBackup\([\s\S]*?await openFile\(/,
+    );
+  });
+});
+
+describe("B68 热退出：关窗不询问，下次启动还原未保存内容", () => {
+  const src = readFileSync("src/main.ts", "utf-8");
+  const api = readFileSync("src/ipc/api.ts", "utf-8");
+  const rustBackup = readFileSync("src-tauri/src/backup/mod.rs", "utf-8");
+  const rustCommands = readFileSync("src-tauri/src/commands/mod.rs", "utf-8");
+  const rustMain = readFileSync("src-tauri/src/main.rs", "utf-8");
+
+  /** 截取某个顶层函数的源码体（到下一个顶层 `\n}` 为止）。 */
+  function fnBody(name: string): string {
+    const start = src.indexOf(name);
+    expect(start, `必须能定位 ${name}`).toBeGreaterThan(-1);
+    return src.slice(start, src.indexOf("\n}", start) + 2);
+  }
+
+  it("关窗流程：先 flush 副本，逐文档确认后才跳过确认框，否则仍要问", () => {
+    const body = fnBody("function registerWindowClose");
+    // 排程中的备份（1s 防抖）必须在关窗时立刻兑现——防抖窗口里关窗是最常见的丢数据场景
+    expect(body, "关窗前必须取消防抖排程").toMatch(
+      /cancelPendingBackup\(\);[\s\S]*?settings\?\.hot_exit/,
+    );
+    expect(body, "必须等待 flushBackups 落盘").toContain("await flushBackups();");
+    // 判定必须逐文档查 backedUp，而不能只信 flushBackups 的返回值
+    expect(body, "必须以 backedUp 逐文档判定").toMatch(
+      /filter\(\(d\) => d\.dirty && !d\.backedUp\)/,
+    );
+    // 兜底确认框必须还在：备份失败 / 关掉热退出时不能静默丢内容
+    expect(body, "备份没成时必须退回确认框").toContain("未保存的内容将丢失");
+    // 跳过确认框之前必须先把会话写下来，否则重启后没人认领那些副本
+    const fast = body.slice(body.indexOf("if (settings?.hot_exit)"));
+    expect(fast, "快路径必须先存会话再关窗").toMatch(
+      /const unbacked[\s\S]*?saveSession\(snapshotSession\(\)\)[\s\S]*?\.close\(\)/,
+    );
+  });
+
+  it("保存 / 自动保存 / 重载后必须丢弃副本（否则旧快照会顶掉已保存内容）", () => {
+    for (const fn of ["async function saveDocCore", "function scheduleAutosave"]) {
+      expect(fnBody(fn), `${fn} 里转干净后必须丢弃副本`).toContain("discardBackupFor(doc)");
+    }
+  });
+
+  it("副本 ID 只能含白名单字符（它直接参与拼路径，防穿越）", () => {
+    const body = fnBody("function newBackupId");
+    expect(body, "必须用密码学随机源").toContain("crypto.getRandomValues");
+    expect(body, "必须只产出十六进制").toContain("toString(16)");
+    expect(body, "只用连字符分隔").toContain('"-"');
+    // 白名单必须与 Rust 侧一致
+    expect(rustBackup, "Rust 侧必须有同款白名单校验").toContain("pub fn is_valid_id");
+    expect(rustBackup, "白名单必须是 ascii_alphanumeric + '-'").toMatch(
+      /is_ascii_alphanumeric\(\)\s*\|\|\s*c == '-'/,
+    );
+  });
+
+  it("副本是独立文件，格式自带魔数与头部，且从不写原文件", () => {
+    expect(rustBackup, "必须有版本化魔数").toContain('MAGIC: &str = "LitePadBackup/1"');
+    expect(rustBackup, "副本落在 %APPDATA%\\LitePad\\backups").toContain(
+      '.join("LitePad").join("backups")',
+    );
+    // write_backup 命令只收内容与元数据，没有任何「写到 path」的动作
+    const wb = rustCommands.slice(rustCommands.indexOf("pub fn write_backup"));
+    expect(wb.slice(0, 900), "write_backup 只应交给 backup::write").toContain("backup::write(");
+    // 四条命令都要注册进 invoke_handler，否则前端调用会静默失败
+    for (const cmd of [
+      "commands::write_backup",
+      "commands::restore_backup",
+      "commands::discard_backup",
+      "commands::discard_orphan_backups",
+    ]) {
+      expect(rustMain, `${cmd} 必须注册`).toContain(cmd);
+    }
+  });
+
+  it("同一文档在多个面板时只预取一次（否则副本会还原成两份不同步的文档）", () => {
+    const body = src.slice(src.indexOf("async function restoreSession"));
+    // 同一个文件可以同时在多个面板打开并共用同一份 doc（同源多实例）。
+    // 若按「面板索引|路径」各取一次，`restore_backup` 每次都新建标签，
+    // 就会得到两份**互不同步**的文档，把同源多实例悄悄破坏掉。
+    expect(body, "预取 key 只能是文档身份，不能带面板索引").toMatch(
+      /const key = identityOf\(st\);/,
+    );
+    expect(body, "组装阶段必须按同一身份键取值").toContain("restoredCache.get(identityOf(st))");
+    expect(body, "不得再出现带面板索引的缓存键").not.toContain("${i}|");
+  });
+
+  it("会话必须带上 backupId，未命名文档靠它才能恢复", () => {
+    expect(src, "会话快照必须写 backupId").toContain("backupId: d.backupId");
+    // 没有路径的未命名文档，只有在备份区里确实有副本时才该进会话
+    expect(src, "未命名文档以 backedUp 为入会话条件").toMatch(/return !!d\.path \|\| d\.backedUp;/);
+  });
+
+  it("孤儿副本清理必须以「会话读成功」为前提（防会话坏掉时误删全部副本）", () => {
+    const body = fnBody("async function bootstrap");
+    expect(body, "清理必须在 restored 为真时才做").toMatch(/if \(restored\) \{[\s\S]*?keep/);
+    expect(body, "keep 只收已备份的文档").toMatch(/filter\(\(d\) => d\.backedUp && d\.backupId\)/);
+  });
+
+  it("前端必须按 camelCase 读 IPC 字段（size_class / size_hint 是真实事故）", () => {
+    // B68 之前 api.ts 把这两个字段写成 snake_case，于是 `file.size_class` 恒为
+    // undefined → normalizeSizeClass 回落 "normal" → **M4 大文件降级从未生效**。
+    // Rust 侧 `rename_all = "camelCase"` 才是线上真名（有 cargo 测试钉住）。
+    expect(api, "OpenedFile 必须用 sizeClass").toMatch(/sizeClass: string;/);
+    expect(api, "OpenedFile 必须用 sizeHint").toMatch(/sizeHint: string;/);
+    expect(api, "不得再有 snake_case 的 size_class 声明").not.toContain("size_class: string");
+    expect(src, "不得再读 file.size_class").not.toContain("file.size_class");
+    expect(src, "不得再读 file.size_hint").not.toContain("file.size_hint");
+    expect(src, "必须读 file.sizeClass").toContain("normalizeSizeClass(file.sizeClass)");
+  });
+
+  it("两个开关是独立的，且默认值对齐 VS Code 桌面版", () => {
+    const menubar = readFileSync("src/shell/menubar.ts", "utf-8");
+    expect(menubar, "文件菜单要有热退出项").toContain("热退出（关窗不询问）");
+    expect(menubar, "热退出走独立回调").toContain("onToggleHotExit");
+    expect(src, "热退出默认开（?? true）").toContain("settings?.hot_exit ?? true");
+    expect(src, "自动保存默认关（?? false）").toContain("settings?.autosave ?? false");
+    // 关掉热退出时必须把现存副本一并丢掉，否则「关了还生效」
+    const off = fnBody("async function setHotExit");
+    expect(off, "关掉热退出要丢弃现存副本").toMatch(/if \(!on\) discardAllBackups\(\);/);
   });
 });
 

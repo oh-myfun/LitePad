@@ -33,6 +33,8 @@ import { normalizeSizeClass, perfProfileFor, type SizeClass } from "./editor/per
 import {
   checkEncodable,
   closeTab as ipcCloseTab,
+  discardBackup,
+  discardOrphanBackups,
   exportFile,
   isUnicodeEncoding,
   listEncodings,
@@ -43,11 +45,15 @@ import {
   newTab as ipcNewTab,
   openFile,
   reloadFile,
+  restoreBackup,
   saveFile,
   savePasteImage,
   saveSession,
   saveSettings,
+  writeBackup,
   type LossyChar,
+  type OpenedFile,
+  type RestoredBackup,
   type SessionState,
   type Settings,
 } from "./ipc/api";
@@ -202,6 +208,14 @@ interface Doc {
    * 决定该文档关闭哪些昂贵编辑器特性；未命名文档恒为 normal。
    */
   sizeClass: SizeClass;
+  /**
+   * 热退出副本 ID（B68）：首次需要写副本时生成一次，此后跨会话稳定。
+   * 它是副本的唯一身份——副本文件本身不含「属于哪个标签」的索引，
+   * 全靠会话里的这个 ID 把副本认领回来。
+   */
+  backupId: string | null;
+  /** 磁盘备份区里当前确实存在该文档的副本（决定关窗能否跳过确认框） */
+  backedUp: boolean;
 }
 
 /** 标签实例：文档在某面板中的一份视图（独立光标/撤销历史/视图模式）。
@@ -336,7 +350,12 @@ function handleUpdate(view: EditorView, update: ViewUpdate): void {
       renderPanelTabs();
     }
     // 自动保存只在内容真的变化时才排程：单纯点一下/移动光标不写盘
-    if (textChanged && !suppressDirty) scheduleAutosave();
+    if (textChanged && !suppressDirty) {
+      scheduleAutosave();
+      // 热退出同理：内容一变就防抖写一次副本，不等关窗。
+      // 这样强杀进程也能捞回未保存内容。
+      scheduleBackup();
+    }
     syncDocInstances(tab, update.changes);
   }
   if (!suppressDirty) {
@@ -713,6 +732,8 @@ function makeDoc(
   readonly: boolean,
   /** M4 大文件档位；缺省 normal（新建 / 未命名 / 会话里没带档位的旧数据） */
   sizeClass: SizeClass = "normal",
+  /** 热退出副本 ID；恢复会话时沿用，其余情况留空等首次写副本时再生成 */
+  backupId: string | null = null,
 ): Doc {
   const firstLine = text.split("\n", 1)[0] ?? "";
   const lang =
@@ -731,6 +752,8 @@ function makeDoc(
     external: false,
     langLabel: lang.label,
     sizeClass,
+    backupId,
+    backedUp: false,
   };
 }
 
@@ -839,6 +862,10 @@ async function closeTabById(tabId: number): Promise<void> {
   }
 
   if (siblings.length === 0) {
+    // 该文档要彻底离开了：无论是「已保存」还是「用户选了不保存」，
+    // 备份区里的副本都不该再留着——热退出的承诺是「关窗才还原」，不是
+    // 「关标签也还原」。用户明确丢弃的内容必须真的丢弃。
+    discardBackupFor(doc);
     try {
       await ipcCloseTab(doc.tabId);
     } catch (err) {
@@ -1304,7 +1331,7 @@ async function doOpen(
       file.encoding,
       file.eol,
       file.readonly,
-      normalizeSizeClass(file.size_class),
+      normalizeSizeClass(file.sizeClass),
     );
     doc.mixedEol = file.mixedEol;
     registerDoc(doc);
@@ -1318,7 +1345,7 @@ async function doOpen(
     renderPanelTabs(panel.panelId);
 
     showMessage(
-      file.size_hint ||
+      file.sizeHint ||
         (file.lossy
           ? `已打开 ${file.name}（部分字节无法用 ${file.encoding} 解码，建议在状态栏手动指定编码）`
           : `已打开 ${file.name}`),
@@ -1452,6 +1479,8 @@ async function saveDocCore(doc: Doc, inst: Tab, forceDialog: boolean): Promise<b
     doc.mixedEol = false;
     doc.dirty = false;
     doc.external = false;
+    // 已落盘 → 副本失去意义，删掉它（否则下次启动会拿旧快照顶掉刚保存的内容）
+    discardBackupFor(doc);
     scheduleSessionSave();
 
     const lang = detectLanguage(saved.name, text.split("\n", 1)[0]);
@@ -1570,6 +1599,8 @@ async function switchEncoding(label: string): Promise<void> {
     doc.readonly = file.readonly;
     doc.name = file.name;
     doc.dirty = false;
+    // 重新载入 = 内容以磁盘为准，此前的未保存副本必须作废
+    discardBackupFor(doc);
     // 重载替换内容：重建该文档全部实例并刷新挂载中的视图
     rebuildDocInstances(doc, file.text);
     suppressDirty = false;
@@ -1630,7 +1661,14 @@ function snapshotSession(): Parameters<typeof saveSession>[0] {
       const p = panels.get(id)!;
       const tabList = p.tabs
         .map((tid) => tabs.get(tid))
-        .filter((t): t is Tab => !!t && !!docs.get(t.docId)?.path);
+        .filter((t): t is Tab => {
+          if (!t) return false;
+          const d = docs.get(t.docId);
+          if (!d) return false;
+          // B68：有磁盘路径的照旧入会话；没有路径的未命名文档，只有在
+          // 备份区里确实存着副本时才值得留住（否则恢复时无据可依，只会白占一行）。
+          return !!d.path || d.backedUp;
+        });
       return {
         tabs: tabList.map((t) => {
           const d = docs.get(t.docId)!;
@@ -1643,6 +1681,7 @@ function snapshotSession(): Parameters<typeof saveSession>[0] {
             cursorLine: line.number,
             cursorCol: pos - line.from + 1,
             viewMode: isMdTab(t) ? t.viewMode : null,
+            backupId: d.backupId,
           };
         }),
         active: Math.max(
@@ -1759,23 +1798,53 @@ async function restoreSession(): Promise<boolean> {
     }
   }
 
-  // 预取：并行发起所有文件的读取。按「面板索引|路径」去重——同一文件在多个面板
-  // 打开时共用同一份 doc（同源多实例），本来也只需读一次盘。
-  const pending: Array<{ key: string; path: string; encoding: string | null }> = [];
-  for (let i = 0; i < panels0.length; i++) {
-    for (const st of panels0[i].tabs) {
-      if (!st.path) continue;
-      const key = `${i}|${st.path}`;
+  // 预取：并行发起所有标签的读取。
+  //
+  // B68 起是「**副本优先、文件兜底**」：备份区里还留着副本，就说明上次关窗时
+  // 该文档是脏的，副本内容才是用户最后看到的东西；副本不在（已保存 / 已被丢弃 /
+  // 写失败）才按路径读原文件。未命名文档没有路径，只能靠副本。
+  //
+  // 去重按**文档身份**（有 path 就是 path，未命名的用副本 ID），**不带面板索引**：
+  // 同一个文件可以同时在多个面板打开并共用同一份 doc（同源多实例），只该读一次盘。
+  // ⚠️ 这里必须跨面板去重，而不能每个面板各取一次——`restore_backup` 每次都新建
+  // 一个标签，取两次就会得到两份**互不同步**的文档，把「同源多实例」悄悄破坏掉。
+  type Restored = { kind: "backup"; data: RestoredBackup } | { kind: "file"; data: OpenedFile };
+  const identityOf = (st: { path: string; backupId?: string | null }): string =>
+    st.path || `#${st.backupId ?? ""}`;
+
+  const pending: Array<{
+    key: string;
+    path: string;
+    encoding: string | null;
+    backupId: string | null;
+  }> = [];
+  for (const spanel of panels0) {
+    for (const st of spanel.tabs) {
+      const backupId = st.backupId ?? null;
+      if (!st.path && !backupId) continue;
+      const key = identityOf(st);
       if (!pending.some((p) => p.key === key)) {
-        pending.push({ key, path: st.path, encoding: st.encoding ?? null });
+        pending.push({ key, path: st.path, encoding: st.encoding ?? null, backupId });
       }
     }
   }
-  const openedCache = new Map<string, Awaited<ReturnType<typeof openFile>>>();
+  const restoredCache = new Map<string, Restored>();
   await Promise.all(
     pending.map(async (p) => {
+      if (p.backupId) {
+        try {
+          const backup = await restoreBackup(p.backupId);
+          if (backup) {
+            restoredCache.set(p.key, { kind: "backup", data: backup });
+            return;
+          }
+        } catch {
+          /* 副本读不了 / 格式坏了 → 退回按路径打开原文件 */
+        }
+      }
+      if (!p.path) return;
       try {
-        openedCache.set(p.key, await openFile(p.path, p.encoding));
+        restoredCache.set(p.key, { kind: "file", data: await openFile(p.path, p.encoding) });
       } catch {
         /* 文件已删除 / 读不了 → 该标签跳过 */
       }
@@ -1789,27 +1858,34 @@ async function restoreSession(): Promise<boolean> {
     const panel = panels.get(idMap.get(i)!);
     if (!panel) continue;
     for (const st of spanel.tabs) {
-      if (!st.path) continue;
-      const file = openedCache.get(`${i}|${st.path}`);
-      if (!file) continue;
+      const hit = restoredCache.get(identityOf(st));
+      if (!hit) continue;
       try {
-        let doc = docs.get(file.tabId);
+        const src = hit.data;
+        let doc = docs.get(src.tabId);
         if (!doc) {
           doc = makeDoc(
-            file.tabId,
-            file.text,
-            file.name,
-            file.path,
-            file.encoding,
-            file.eol,
-            file.readonly,
-            normalizeSizeClass(file.size_class),
+            src.tabId,
+            src.text,
+            src.name,
+            src.path || null,
+            src.encoding,
+            src.eol,
+            src.readonly,
+            normalizeSizeClass(src.sizeClass),
+            st.backupId ?? null,
           );
-          doc.mixedEol = file.mixedEol;
+          doc.mixedEol = src.mixedEol;
+          if (hit.kind === "backup") {
+            // 副本还原 = 原样回到「有未保存修改」的状态：
+            // 脏 + 已知副本存在，于是关窗依旧不需要确认框。
+            doc.dirty = true;
+            doc.backedUp = true;
+          }
           registerDoc(doc);
         }
         // 同一路径出现在多个面板：各建一个同源实例（内容自动同步）
-        const inst = makeInstance(doc, panel.panelId, file.text);
+        const inst = makeInstance(doc, panel.panelId, src.text);
         tabs.set(inst.tabId, inst);
         panel.tabs.push(inst.tabId);
         // 恢复 Markdown 视图模式（旧版 "split" 映射回 source）
@@ -1869,6 +1945,9 @@ function scheduleAutosave(): void {
           });
           doc.dirty = false;
           doc.external = false;
+          // 内容已经落盘，备份区里的副本就成了「过期快照」——留着会让下次启动
+          // 拿旧内容顶掉用户的已保存版本。必须在转干净的同时丢弃。
+          discardBackupFor(doc);
           savedAny = true;
         } catch {
           // 单个文档保存失败不打断其余
@@ -1880,6 +1959,137 @@ function scheduleAutosave(): void {
       }
     })();
   }, 1500) as unknown as number;
+}
+
+// ---------------------------------------------------------------- 热退出（B68）
+//
+// 与自动保存是两件事，别混：
+//   自动保存 → 写**原文件**，脏标记随之清除；
+//   热退出  → 写 %APPDATA%\LitePad\backups 里的**独立副本**，原文件一个字节不动。
+// 正因为原文件不动，「关窗」才有了另一种处理方式：内容没丢，不必再问
+// 「未保存的内容将丢失」。VS Code 里这个职责属于 files.hotExit 而不是 autoSave。
+//
+// 对应 VS Code 的 WorkingCopyBackupTracker：内容一变就防抖排一次备份，
+// 而不是攒到关窗才写——这样强杀进程（任务管理器 / 断电）也能捞回未保存内容。
+
+/**
+ * 单个副本的体积上限（字符数）。
+ *
+ * 超过 2 MB 的文档不写副本：这类文档每次按键都要重写几 MB 到几十 MB，
+ * 副本本身也极占地方（备份区落在 %APPDATA% 这个用户配置目录里）。
+ * 它们关窗时退回确认框，行为与 B68 之前一致——宁可多问一句，不要拖垮交互。
+ */
+const BACKUP_MAX_CHARS = 2 * 1024 * 1024;
+
+/**
+ * 副本 ID：32 位十六进制 + 连字符。
+ *
+ * ⚠️ 字符集必须与 Rust `backup::is_valid_id` 的白名单一致（ASCII 字母数字与连字符）。
+ * 这个 ID 由前端生成后直接参与拼路径，一旦掺进 `/` 或 `..` 就能写到备份区之外。
+ */
+function newBackupId(): string {
+  const buf = new Uint8Array(16);
+  crypto.getRandomValues(buf);
+  const hex = [...buf].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ].join("-");
+}
+
+let backupTimer: number | null = null;
+
+/** 热退出：把脏文档排进副本队列（1s 防抖，与 VS Code 的备份节奏一致）。 */
+function scheduleBackup(): void {
+  if (!settings?.hot_exit) return;
+  if (backupTimer !== null) clearTimeout(backupTimer);
+  backupTimer = setTimeout(() => {
+    backupTimer = null;
+    void flushBackups();
+  }, 1000) as unknown as number;
+}
+
+/** 取消排队的备份（关窗前要换成「立刻写」）。 */
+function cancelPendingBackup(): void {
+  if (backupTimer !== null) {
+    clearTimeout(backupTimer);
+    backupTimer = null;
+  }
+}
+
+/**
+ * 立刻把所有脏文档写进备份区，返回**没能备份成功**的文档数。
+ *
+ * 返回值 0 是「关窗可以不弹确认框」的唯一充分条件，所以判定必须严格：
+ * 正文取不到、体积超限、写盘失败都计入失败，绝不假装成功——
+ * 一旦这里虚报成功，用户的未保存内容就真的没了。
+ */
+async function flushBackups(): Promise<number> {
+  if (!settings?.hot_exit) return 0;
+  let failed = 0;
+  let assignedNewId = false;
+  const jobs: Promise<void>[] = [];
+
+  for (const doc of docs.values()) {
+    if (!doc.dirty) continue;
+    const text = freshTextOfDoc(doc);
+    if (text === null || text.length > BACKUP_MAX_CHARS) {
+      failed++;
+      continue;
+    }
+    if (!doc.backupId) {
+      doc.backupId = newBackupId();
+      assignedNewId = true;
+    }
+    const id = doc.backupId;
+    jobs.push(
+      writeBackup({
+        id,
+        text,
+        path: doc.path ?? "",
+        name: doc.name,
+        encoding: doc.encoding,
+        eol: doc.eol,
+        mixedEol: doc.mixedEol,
+      })
+        .then(() => {
+          doc.backedUp = true;
+        })
+        .catch(() => {
+          failed++;
+        }),
+    );
+  }
+
+  // 新分配的 ID 要尽快落到会话里：强杀进程时全靠会话把副本认领回来，
+  // 晚一步落盘就等于白写了一份没人认领的副本。
+  if (assignedNewId) scheduleSessionSave();
+  await Promise.all(jobs);
+  return failed;
+}
+
+/**
+ * 丢弃某文档的副本（保存成功 / 内容转干净 / 重载 / 关闭标签选「不保存」）。
+ *
+ * 「备份区里存着副本」≡「该文档有未保存内容」，这是恢复时唯一的判据，
+ * 所以内容一旦与磁盘一致就必须立刻丢弃，否则下次启动会拿旧快照
+ * 冒充用户的修改。
+ */
+function discardBackupFor(doc: Doc): void {
+  if (!doc.backedUp || !doc.backupId) return;
+  const id = doc.backupId;
+  doc.backedUp = false;
+  void discardBackup(id).catch(() => {
+    // 删不掉不阻塞任何事：最坏只是下次启动多还原一个陈旧副本
+  });
+}
+
+/** 丢弃全部副本（用户关掉热退出开关 / 应用启动后的孤儿清理之外的重置场景）。 */
+function discardAllBackups(): void {
+  for (const doc of docs.values()) discardBackupFor(doc);
 }
 
 /** 外部修改事件：匹配打开的文档，标记 + 提示（影响该文档全部实例）。 */
@@ -2761,16 +2971,40 @@ function openKeymapDialog(): void {
   });
 }
 
-/** 自动保存开关（绝对值；由「设置」菜单的勾选项切换）。 */
+/**
+ * 自动保存开关（绝对值；由「文件」菜单的勾选项切换）。
+ *
+ * 写的是**原文件**——这正是它与热退出的分野，提示语必须说清，
+ * 否则用户以为开了自动保存就不会有未保存状态（B68 把默认值改成了关）。
+ */
 async function setAutosave(on: boolean): Promise<void> {
   if (!settings || settings.autosave === on) return;
   settings.autosave = on;
   await persistSettings();
-  showMessage(on ? "已启用自动保存" : "已停用自动保存");
+  showMessage(on ? "已启用自动保存（修改会直接写入原文件）" : "已停用自动保存");
 }
 
 async function toggleAutosave(): Promise<void> {
-  await setAutosave(!(settings?.autosave ?? true));
+  await setAutosave(!(settings?.autosave ?? false));
+}
+
+/**
+ * 热退出开关（绝对值）。
+ *
+ * 关掉时要一并丢弃现存副本：留着的话，下次启动仍会拿旧快照还原出「未保存标签」，
+ * 那就成了「关了还生效」。同时清空排程，避免关闭瞬间又写出几份新的。
+ */
+async function setHotExit(on: boolean): Promise<void> {
+  if (!settings || settings.hot_exit === on) return;
+  settings.hot_exit = on;
+  cancelPendingBackup();
+  if (!on) discardAllBackups();
+  await persistSettings();
+  showMessage(on ? "已启用热退出（关窗不再询问，未保存内容下次启动还原）" : "已停用热退出");
+}
+
+async function toggleHotExit(): Promise<void> {
+  await setHotExit(!(settings?.hot_exit ?? true));
 }
 
 /** Markdown 预览行距（查看菜单三档）。 */
@@ -3359,7 +3593,9 @@ function setupMenuBar(): void {
     onToggleStatusbar: () => toggleStatusbar(),
     statusbarChecked: () => statusbarVisible,
     onToggleAutosave: () => void toggleAutosave(),
-    autosaveChecked: () => settings?.autosave ?? true,
+    autosaveChecked: () => settings?.autosave ?? false,
+    onToggleHotExit: () => void toggleHotExit(),
+    hotExitChecked: () => settings?.hot_exit ?? true,
     // ---- 设置（B46：首选项弹窗化，子菜单的偏好回调全部移入弹窗 setter） ----
     onPreferences: () => openPreferencesDialog(),
     onKeymap: () => openKeymapDialog(),
@@ -3421,7 +3657,14 @@ function showFatalError(err: unknown): void {
   }
 }
 
-/** 始终注册窗口关闭：脏文档确认 + 立即持久化会话。放在最前，保证即使后续渲染失败窗口也能关闭。 */
+/**
+ * 始终注册窗口关闭：脏文档确认 + 立即持久化会话。
+ * 放在最前，保证即使后续渲染失败窗口也能关闭。
+ *
+ * B68 起多了一条快路径：**热退出开着且副本全部写成功**时不再弹确认框。
+ * 这不是「跳过确认」，而是「确认的前提已经不存在了」——内容已经落到备份区，
+ * 下次启动会原样还原成未保存标签，没有东西会丢。
+ */
 function registerWindowClose(): void {
   let windowCloseConfirmed = false;
   void getCurrentWindow()
@@ -3431,12 +3674,42 @@ function registerWindowClose(): void {
       const dirty = [...docs.values()].filter((d) => d.dirty);
       if (dirty.length === 0) return; // 无脏文档：允许默认关闭
       event.preventDefault();
+
+      // ---- 快路径：热退出 ----
+      // 排程中的备份作废，改成此刻同步写完（防抖窗口里关窗是最常见的丢数据场景）
+      cancelPendingBackup();
+      if (settings?.hot_exit) {
+        try {
+          await flushBackups();
+        } catch {
+          // 备份整体抛错按「没备成」处理，落到下面的确认框
+        }
+        // 判定必须逐个文档查 backedUp，不能只看 flushBackups 的返回值：
+        // 万一某个文档被中途改动/关闭，返回值就不可靠了。
+        const unbacked = [...docs.values()].filter((d) => d.dirty && !d.backedUp);
+        if (unbacked.length === 0) {
+          try {
+            await saveSession(snapshotSession());
+          } catch {
+            // 会话写失败不阻塞退出
+          }
+          windowCloseConfirmed = true;
+          await getCurrentWindow().close();
+          return;
+        }
+      }
+
+      // ---- 兜底：确认框（B67 及更早的行为） ----
       const names = dirty.map((d) => d.name).join("、");
       const quit = await ask(
         `${dirty.length} 个文档有未保存的修改（${names}），未保存的内容将丢失。\n确定退出吗？`,
         { title: "退出 LitePad", kind: "warning" },
       );
-      if (!quit) return;
+      if (!quit) {
+        // 用户取消退出：把刚才为了 flush 而取消的排程还回去（内容还是脏的）
+        scheduleBackup();
+        return;
+      }
       try {
         await saveSession(snapshotSession());
       } catch {
@@ -3573,6 +3846,24 @@ async function bootstrap(): Promise<void> {
       "session",
       `restored ${docs.size} docs / ${tabs.size} instances / ${panels.size} panels`,
     );
+  }
+
+  // 备份区孤儿清理：副本文件本身不含「属于哪个标签」的索引，认领全靠会话，
+  // 所以「会话里没人引用」就是「永远还原不了」，留着只会越积越多。
+  //
+  // ⚠️ 只在 `restored === true`（会话确实读成功并恢复了标签）时才敢清。
+  // 会话文件损坏 / 读不出来时 restored 也是 false，这时 keep 会是空表，
+  // 一刀切清理就等于把用户全部未保存内容删掉——宁可漏删，不可错删，
+  // 漏掉的那些等下次成功启动再说。
+  if (restored) {
+    const keep = [...docs.values()].filter((d) => d.backedUp && d.backupId).map((d) => d.backupId!);
+    void discardOrphanBackups(keep)
+      .then((n) => {
+        if (n > 0) logEvent("hot-exit", `discarded ${n} orphan backups`);
+      })
+      .catch(() => {
+        // 清理失败不影响使用
+      });
   }
 
   try {

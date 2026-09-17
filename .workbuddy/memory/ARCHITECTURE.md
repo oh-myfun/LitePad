@@ -343,6 +343,37 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
     反复 `initTooltips()` 只会重复注册）。要重绑请开新文档。
   - 回归：`tests/tooltip.test.ts`（纯函数 + DOM 行为 20 条）+ `regressions.test.ts` 的 B58 块（静态锁样式/接线）。
 
+- **保存体系（B68）：自动保存与热退出是两个独立开关，别混为一谈**
+  - **自动保存**（`Settings.autosave`，对应 VS Code `files.autoSave`）写**原文件** → 脏标记清除。
+    默认 **关**（对齐 VS Code 桌面版；B67 及更早是默认开）。
+  - **热退出**（`Settings.hot_exit`，对应 VS Code `files.hotExit`）写**独立副本** → 原文件一个字节不动，
+    默认 **开**。正因为它不动原文件，「关窗不弹确认框」才成立 —— **这个职责属于热退出，
+    不属于自动保存**（VS Code 里 `hotExit=off` 的官方枚举说明原文就是
+    "A prompt will show when attempting to close a window with editors that have unsaved changes."）。
+  - 前端落点：`scheduleBackup()`（1s 防抖，挂在**与 `scheduleAutosave()` 同一个
+    `textChanged && !suppressDirty` 门控**上）→ `flushBackups()`（关窗前 `cancelPendingBackup()`
+    再同步兑现；判定是否跳过确认框必须**逐文档**查 `doc.backedUp`，不能只信返回值）
+    → `discardBackupFor(doc)`（保存成功 / 转干净 / 重载 / 关闭标签 / 关掉热退出时都必须丢）。
+  - Rust 落点：`src-tauri/src/backup/mod.rs`（副本读写 + 孤儿清理）+ `commands` 的四条命令
+    `write_backup` / `restore_backup` / `discard_backup` / `discard_orphan_backups`。
+    副本 = `%APPDATA%\LitePad\backups\<随机 ID>`，格式为 **魔数行 + 单行头部 JSON + 正文（UTF-8、LF）**；
+    正文一律存 UTF-8，文档原本声明的编码记在头部 —— 副本因此与 GBK / UTF-16 原编码无关。
+  - ⚠️ **副本 ID 必须过白名单**（`backup::is_valid_id`：ASCII 字母数字与连字符，长度 ≤64）。
+    它由前端生成后**直接参与拼路径**，放行 `/` 或 `..` 就能把副本写到备份区之外。
+    前端 `newBackupId()` 用 `crypto.getRandomValues` 产十六进制，两侧字符集必须一致。
+  - ⚠️ **副本文件本身不含「这份副本属于哪个标签」的索引**，认领全靠 `session.json` 里的
+    `TabSession.backupId`。于是「丢弃时机」本身就是正确性：漏丢 → 下次启动拿旧快照顶掉
+    用户刚保存的内容；错删 → 未保存内容真的没了。
+  - ⚠️ **孤儿副本清理只在会话读成功（`restored === true`）时做**。会话文件坏掉时 keep 是空表，
+    一刀切清理等于删光用户全部未保存内容。**宁可漏删，不可错删**，漏掉的等下次成功启动再说。
+  - ⚠️ 未命名文档在 B68 之前**完全不进会话**（`snapshotSession` 只收有 `path` 的文档），
+    于是「从没保存过的草稿」关窗即丢。现在入会话判据是 `!!doc.path || doc.backedUp`。
+  - ⚠️ 恢复是「**副本优先、文件兜底**」，两个方向都必须留着：副本读不到（已丢 / 写失败 / 格式坏）
+    就退回按 `path` 打开原文件；读不到副本又没路径的标签直接跳过。这是自愈的关键。
+  - 回归：`tests/hot-exit.test.ts`（jsdom 真实 bootstrap：编辑只写副本不写原文件、
+    有脏文档关窗不弹确认框且会话先落盘）+ `regressions.test.ts` 的 B68 块（静态契约）
+    + `backup::tests` / `commands::tests`（格式、路径穿越、线上字段名）。
+
 - **图标**：`scripts/gen_icons.py` 纯矢量自绘；四角圆角用「alpha 与垂直镜像取 min」保证上下一致；
   改图标后必须重跑 `tauri build` 才会进 exe（`src-tauri/build.rs` 已 `rerun-if-changed=icons`，
   否则增量构建会**静默**沿用旧图标，B41 踩过）。
@@ -367,6 +398,17 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   断言「能读入 camelCase + 落盘也是 camelCase + 旧 snake_case 仍可读」——
   只测 JS 侧的 mock 测试永远抓不到这类问题。
   推论：凡是前端 mock 掉 IPC 的模块，都要另外在 Rust 侧补一条真实序列化测试。
+  **B68 补记：同一个坑又踩了一次，这次栽在 `OpenedFile` 上。** 该结构体早就标了
+  `rename_all = "camelCase"`，于是 Rust 字段 `size_class` 出去的线上名字是 `sizeClass`；
+  但 `src/ipc/api.ts` 的接口写成了 `size_class: string`，`main.ts` 也跟着读 `file.size_class`
+  —— 恒为 `undefined` → `normalizeSizeClass(undefined)` 回落 `"normal"`
+  → **M4 的「大文件分级降级」从上线起就没有真正生效过**，而且全程不报错。
+  同结构体里的 `mixed_eol`→`mixedEol`、`lossy_chars`→`lossyChars` 早就写对了，
+  只有**后加的** `size_class`/`size_hint` 漏了 —— **后加字段最容易漏，因为没人会回头重看注解**。
+  对策：加一条**直接序列化 Rust DTO 的字段名契约测试**
+  （`commands::tests::ipc_structs_use_camel_case_field_names`，断言线上是 `tabId` /
+  `sizeClass` / `sizeHint` / `mixedEol`），再在 `regressions.test.ts` 里断言前端读的是 camelCase。
+  这类测试断言的只是**字段名字符串本身**，比任何行为测试都便宜且精准，值得每个 DTO 都来一条。
 - **`cargo build --release` 得到的 exe 是 devUrl 变体**：`custom-protocol` feature 只由
   `tauri build` 打开，直接 `cargo build --release` 出来的 exe 会去连 `http://127.0.0.1:1420`，
   运行起来是「无法访问此页面 / ERR_CONNECTION_REFUSED」。**要能跑、要打包就一律走

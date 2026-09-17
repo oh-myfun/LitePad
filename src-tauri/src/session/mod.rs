@@ -25,8 +25,14 @@ pub struct Settings {
     /// 编辑器行距（1.0–2.5，默认 1.5），作用于 .cm-content
     pub editor_line_height: f64,
     pub word_wrap: bool,
-    /// 自动保存已关联磁盘文件的脏文档（1.5s 防抖，M2 生效）
+    /// 自动保存：把脏文档写回**原文件**（对应 VS Code `files.autoSave`）。
+    /// B68 起默认 **false**，对齐 VS Code 桌面版默认值——它和热退出是两件事，
+    /// 详见 `backup` 模块头部注释。
     pub autosave: bool,
+    /// 热退出：关窗时把未保存内容写进独立副本，于是不必再弹「未保存将丢失」的
+    /// 确认框，下次启动还原成未保存标签（对应 VS Code `files.hotExit`）。
+    /// B68 起默认 **true**，对齐 VS Code 桌面版的 `onExit`。
+    pub hot_exit: bool,
     /// Markdown 预览行距（1.0–2.5，默认 1.7）
     pub preview_line_height: f64,
     /// 大纲（TOC）抽屉宽度（px，160–640，默认 240）。前端拖拽分隔条后回写。
@@ -51,7 +57,11 @@ impl Default for Settings {
             font_family: String::new(),
             editor_line_height: 1.5,
             word_wrap: true,
-            autosave: true,
+            // B68：两个开关各管一件事，默认值对齐 VS Code 桌面版
+            // （自动保存关、热退出开）。别顺手把 autosave 改回 true——
+            // 自动保存会写脏用户的文件，热退出只写自己的备份区。
+            autosave: false,
+            hot_exit: true,
             preview_line_height: 1.7,
             toc_width: 240.0,
             keymap: HashMap::new(),
@@ -108,6 +118,13 @@ pub struct TabSession {
     /// Markdown 视图模式（source/split/preview），仅 md 文件有意义
     #[serde(alias = "view_mode")]
     pub view_mode: Option<String>,
+    /// 热退出副本 ID（B68）。跨会话稳定，一个文档一个。
+    ///
+    /// 恢复时**副本优先于路径**：副本还在就说明关闭时该文档是脏的，
+    /// 要用副本内容而不是磁盘内容。副本不存在则退回按 `path` 打开。
+    /// 于是「副本写失败」「副本被手动删了」这类情况都能自愈。
+    #[serde(alias = "backup_id")]
+    pub backup_id: Option<String>,
 }
 
 impl Default for TabSession {
@@ -119,6 +136,7 @@ impl Default for TabSession {
             cursor_line: 1,
             cursor_col: 1,
             view_mode: None,
+            backup_id: None,
         }
     }
 }
@@ -267,6 +285,75 @@ mod tests {
         assert!(
             out.contains("\"keymap_preset\":\"notepadpp\""),
             "落盘字段应为 snake_case keymap_preset：{out}"
+        );
+    }
+
+    /// B68：会话必须带上热退出副本 ID。
+    ///
+    /// 这是「关窗不弹确认框」的命脉：副本文件本身不含「属于哪个标签」的索引，
+    /// 全靠会话里的 backupId 把副本认领回来。少了它，副本就是一堆孤儿文件。
+    #[test]
+    fn session_carries_hot_exit_backup_id() {
+        let json = r#"{
+          "panels": [
+            { "tabs": [
+                { "path": "a.md", "encoding": "UTF-8", "eol": "LF",
+                  "cursorLine": 3, "cursorCol": 2, "viewMode": null,
+                  "backupId": "0f2b1c34-abcd-4e11-9a55-0123456789ab" }
+              ], "active": 0 }
+          ],
+          "layout": { "kind": "leaf", "panelId": 0 },
+          "activePanel": 0
+        }"#;
+
+        let state: SessionState = serde_json::from_str(json).expect("带 backupId 的会话应能读入");
+        assert_eq!(
+            state.panels[0].tabs[0].backup_id.as_deref(),
+            Some("0f2b1c34-abcd-4e11-9a55-0123456789ab"),
+            "backupId 必须被读到"
+        );
+
+        let out = serde_json::to_string(&state).unwrap();
+        assert!(out.contains("\"backupId\""), "落盘应为 camelCase：{out}");
+        assert!(!out.contains("backup_id"), "不该落盘 snake_case：{out}");
+
+        // 旧会话（B67 及更早）没有 backupId —— 必须能读入并回落 None，
+        // 否则升级后所有用户的老会话都会解析失败、标签全丢。
+        let legacy = r#"{"panels":[{"tabs":[{"path":"a.md"}],"active":0}],
+                         "layout":{},"activePanel":0}"#;
+        let old: SessionState = serde_json::from_str(legacy).expect("老会话要能读入");
+        assert_eq!(old.panels[0].tabs[0].backup_id, None, "缺字段应回落 None");
+    }
+
+    /// B68：`autosave` 与 `hot_exit` 是两个独立开关，默认值对齐 VS Code 桌面版。
+    ///
+    /// 写成断言是为了挡住「顺手改默认值」：自动保存会**写脏用户的文件**，
+    /// 而热退出只写 LitePad 自己的备份区——两者默认值的取舍完全不是一回事。
+    #[test]
+    fn save_related_defaults_match_vscode_desktop() {
+        let s = Settings::default();
+        assert!(
+            !s.autosave,
+            "自动保存默认关（VS Code files.autoSave 桌面默认 off）"
+        );
+        assert!(
+            s.hot_exit,
+            "热退出默认开（VS Code files.hotExit 桌面默认 onExit）"
+        );
+
+        // 老配置文件里没有 hot_exit —— 必须回落 true 而不是让整个配置读失败。
+        let legacy = r#"{ "theme": "dark", "autosave": true }"#;
+        let old: Settings = serde_json::from_str(legacy).expect("缺 hot_exit 也应能读入");
+        assert!(old.hot_exit, "缺失 hot_exit 应回落 true");
+        assert!(
+            old.autosave,
+            "用户显式存过的 autosave=true 必须保留（不能被默认值覆盖）"
+        );
+
+        let out = serde_json::to_string(&s).unwrap();
+        assert!(
+            out.contains("\"hot_exit\":true"),
+            "落盘应为 snake_case hot_exit：{out}"
         );
     }
 }
