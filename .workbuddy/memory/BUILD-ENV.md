@@ -218,10 +218,37 @@ CHROME="$HOME/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe"
 3. 用真实渲染函数产出 DOM，甚至可以**派发真实事件**（如 `mousedown` + `mousemove`）把
    拖拽中间态跑出来；最后把 `document.body.innerHTML` 序列化进一个引 `global.css` 的壳页。
 
-现成脚本：`generated-images/gen-drag-ghost-preview.mjs`（拖拽影像那次留下的，可照抄改）。
+现成脚本：`generated-images/gen-drag-ghost-preview.mjs`（拖拽影像那次留下的，可照抄改）、
+`generated-images/gen-tab-action-preview.mjs`（标签槽位，第二个参数可指定挂哪份 `global.css`，
+用于「改前/改后」同机对比）。
 ⚠️ 局限：只能验证**静态观感**（尺寸/配色/层级/留白），拖拽跟手、光标形状、滚动等交互
 仍必须由用户在桌面环境验证；也**不能**当作 `docs/screenshots/` 的正式截图。
 无头产物放进被 gitignore 的 `generated-images/`，别污染仓库。
+
+### 想验 `:hover` / 中间态？用 CDP 派发真实鼠标（B66 起可用）
+
+`--screenshot` 是一次性快照，拿不到 `:hover`；改走**远程调试端口自己驱动**：
+
+```sh
+"$CHROME" --headless --no-sandbox --disable-gpu --hide-scrollbars \
+  --force-device-scale-factor=2 --window-size=880,320 \
+  --remote-debugging-port=9222 \
+  --user-data-dir="C:/Users/maoyu/AppData/Local/Temp/litepad-cdp-profile" about:blank &
+```
+
+Node 22 **自带全局 `WebSocket`**，所以零依赖即可连 CDP（连法照抄 `scripts/cdp_diag.mjs`，
+它是连 WebView2 的；换成 `fetch("http://127.0.0.1:9222/json/list")` 取 page target 即可）：
+
+1. `Page.enable` → `Page.navigate` 到 `file:///.../preview.html`；
+2. `Runtime.evaluate` 取目标元素的 `getBoundingClientRect()` 中心 → `Input.dispatchMouseEvent`
+   `{type:"mouseMoved", x, y}`（**只有派发事件才会更新 `:hover` 状态**，改 CSS 或 JS 赋值都不算）；
+3. 等 `var(--transition)` 走完（~300ms）再 `Page.captureScreenshot`，可连拍多态。
+
+**顺手拿到一个运行时断言**：同一次 `Runtime.evaluate` 里读
+`getComputedStyle(el).opacity`，就能把「哪个 glyph 在显示」量出来（0 / 0.5 / 1），
+比只看图可靠 —— 本环境拿不到 CSS 级联（vitest 是 jsdom），这是唯一的自动核对手段。
+现成脚本：`generated-images/gen-tab-action-hover-shots.mjs`。
+裁切放大对照用 Pillow（venv `~/.workbuddy/binaries/python/envs/default` 里有）。
 
 ## ⚠️ 改图标后必须让 build.rs 盯 `icons/` 目录
 

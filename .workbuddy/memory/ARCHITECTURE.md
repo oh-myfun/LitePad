@@ -164,27 +164,37 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   画在错误的标签之间。其余用例 `scrollLeft` 恒为 0，正好掩盖这个 bug ——
   `tabstrip-drag.test.ts` 里显式造了个非零值来锁它。
 - **标签的 ● / × 共用一个固定尺寸槽位**（`.tab-action`，B53，VS Code 行为）：
-  平时只见 ●（未保存）或留空（已保存），悬停标签才换成 ×。
+  **已保存**：平时留空，悬停标签 / 活动标签给 ×；
+  **未保存**：平时 ●，**只有指针进到这个槽位（关闭按钮区域）才换成 ×**（B66，用户要求）。
   槽位尺寸**必须固定**，否则鼠标划过时标签宽度变化、整排标签左右抖动。
-  代价：× 不再常驻，键盘/触屏略弱（Ctrl+W 与右键菜单仍在）。
   ⚠️ **B57 起显隐走 `opacity`（0→1），不再用 `display: none`**（对齐 VS Code 的覆盖层做法）：
   布局本来就靠固定槽位锁住，opacity 还能顺势淡入。**副作用必须知道**：
   槽位结构**恒定存在于 DOM**（连「已保存」的 ● 也在，只是 `opacity: 0`），
   所以**任何「脏状态」断言都不能再看 `.tab-mark` 的文本/存在性**，
   要改判 `.tab.tab-dirty` 这个 class（`tabstrip-scroll` / `smoke.bootstrap` /
   `view-switch-noedit` 三处用例已按此改写）。
-  - ⚠️ **● 与 × 的互斥只能写成 CSS 的 `:not()` 链**（B65）：× 有三个出场口
-    （`:hover` / `.tab-active` / `:focus-within`），而**未保存的当前标签**必然同时带
-    `.tab-dirty` 与 `.tab-active` → 老写法「● 常驻 + 只在 `:hover` 时压回 0」在这上面让
-    两个 glyph 双双 `opacity: 1`，叠死在同一个槽位里（观感 = 一个带橙调的 ×）。
-    正确写法是**一条** `.tab-dirty:not(:hover):not(.tab-active):not(:focus-within) .tab-mark`：
-    条件必须写全在同一条里 —— 另加几条「压回 0」的规则与 `.tab-dirty` 同特异度，
-    只能靠源码顺序取胜，日后调整样式表顺序就静默失效。B64 的拖拽影像克隆的正是活动标签、
-    副本永不 `:hover`，由同一条规则一并兜住（见 §4）。
-    ⚠️ 同理，**非活动面板的 × 降亮度也必须逐条对齐这三个触发口**：无条件写
+  - ⚠️ **换装判据必须挂在关闭区（`.tab-action`）上，不能挂在标签（`.tab`）上**（B66）：
+    挂到标签上 = 「指针划过文件名 ● 就消失」，不是用户要的。
+    上游同款：`.tab.dirty > .tab-actions .action-label:not(:hover)::before`
+    取 `circle-filled`（`multieditortabscontrol.css:491`），它的「关闭区」就是 label 自己的盒子。
+    连带要求 **× 必须铺满槽位**（`.tab-mark, .tab-close { position:absolute; inset:0 }`），
+    否则指针压在 ● 上却换不出 ×。
+  - ⚠️ **● 与 × 的互斥只能写成一条 CSS `:not()` 链**（B65 定、B66 换判据）：
+    现在是一句 `.tab-dirty .tab-action:not(:hover):not(:focus-within) .tab-mark { opacity: 1 }`。
+    × 有四个出场口，其中「关闭区悬停 / 关闭区聚焦」两档对脏标签也生效，所以必须被上面这条排除；
+    另两档（`.tab:hover` / `.tab-active`）自带 `:not(.tab-dirty)`，不可能与 `.tab-dirty` 撞上。
+    ⚠️ **两档为什么不合并成「活动标签常驻 ×」**：B57 曾让活动标签无条件给 ×，而
+    「未保存的当前标签」必然同时带 `.tab-dirty` 与 `.tab-active` → ● 与 × 双双 `opacity: 1`
+    叠死在槽位里（B65），且与 B66 的要求直接冲突。
+    ⚠️ 条件必须写全在**一条**规则里，不能退回「● 常驻 + 几条压回 0 的补丁」：
+    后者与 `.tab-dirty` 同特异度，只能靠源码顺序取胜，调样式表顺序就静默失效。
+    B64 的拖拽影像克隆的正是活动标签、副本永不 `:hover`，由同一条规则兜住 ——
+    所以影像拖动未保存标签时稳定显示 ●（静息态，见 §4）。
+    ⚠️ **非活动面板的 × 降亮度必须与上面四个出场口逐条对齐**：无条件写
     `.layout-panel:not(.layout-panel-active) .tab-close { opacity: 0.5 }`（B57 老写法）
-    会让非焦点面板里**每个**标签常驻一个 50% 的 ×，未保存标签的 ● 直接跟它叠在一起。
-    静态锁在 `regressions.test.ts` 的 B65 块（含两条反向断言 + 分屏那条）。
+    会让非焦点面板里**每个**标签常驻一个 50% 的 ×，未保存标签的 ● 直接跟它叠在一起；
+    漏掉 B66 新增的两档同样会让脏标签在非焦点面板里复发。**这个坑已经连踩两次（B65/B66）**，
+    改任一侧都要同步另一侧。静态锁在 `regressions.test.ts` 的 B65 / B66 块。
 - **标签的文件类型图标**（B57，对应 VS Code 的 `.tab.has-icon`）：名字左边一个 **16px**
   家族字形，`.tab-icon[data-fam]` 取 `--ficon-*` 配色（**浅深两套主题各 10 个**，缺一个就是
   某主题下该家族图标没颜色）。字形与家族映射在 **`src/shell/fileicons.ts`**（零依赖内联 SVG，

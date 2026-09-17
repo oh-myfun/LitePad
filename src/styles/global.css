@@ -486,8 +486,9 @@ button:focus-visible {
 }
 
 /* ● 与 × 共用的固定尺寸槽位（VS Code 行为）：
-   平时只见 ●（未保存）或留空（已保存），鼠标悬停/活动标签/键盘聚焦时换成 ×。
-   **任意时刻只显示一个**（B65）：互斥锁在 CSS 里，见下方 .tab-mark 那条 `:not()` 链。
+   已保存标签：平时留空，悬停标签 / 活动标签时显示 ×；
+   未保存标签：平时显示 ●，**只有指针进到这个槽位（关闭按钮区域）才换成 ×**（B66）。
+   任意时刻只显示一个（B65）：互斥锁在 CSS 里，见下方 .tab-mark 那条 `:not()` 链。
    槽位尺寸恒定、只换内容——否则鼠标划过时标签宽度会变、整排标签左右抖动。
    12/20/24/28 这四档对应 VS Code Modern UI 的覆盖列宽度，供调参时对齐。 */
 .tab-action {
@@ -515,25 +516,34 @@ button:focus-visible {
   color: var(--warn);
 }
 
-/* × 的显示条件（对齐 VS Code：悬停 / 活动标签 / 键盘聚焦）：
-   活动标签上常驻 × —— 关闭当前文件是最高频操作，不该先悬停才给。 */
-.tab:hover .tab-close,
-.tab-active .tab-close,
-.tab:focus-within .tab-close {
+/* × 的出场口（B66 起按保存状态分档）。
+   ① ② 关闭区（`.tab-action` 这 20px 见方）被指针命中 / 键盘落焦 —— **脏标签只走这两条**：
+      即「未保存标签默认显示 ●，只有鼠标进到关闭按钮区域才换成 ×」。
+      与 VS Code 同构：`.tab.dirty > .tab-actions .action-label:not(:hover)::before`
+      取 `circle-filled`，它的「关闭区」就是 action-label 自己的盒子（16px + 2px padding）。
+   ③ ④ 已保存标签沿用 B57 的行为：悬停整个标签 / 活动标签常驻 ×
+      （关闭当前文件是高频操作，不该先悬停才给）。
+   ⚠️ ③④ 必须带 `:not(.tab-dirty)`：少了它，未保存的活动标签会常驻 ×，
+      把 ● 顶掉、或与它叠在同一个槽位里（B65 的病就是这么来的）。
+   ⚠️ `:focus-within` 挂在 `.tab-action` 上而不是 `.tab` 上：标签元素本身没有 tabIndex，
+      槽位里唯一可聚焦的是关闭按钮，两者等价，但前者的语义更准（「焦点就在关闭键上」）。 */
+.tab-action:hover .tab-close,
+.tab-action:focus-within .tab-close,
+.tab:hover:not(.tab-dirty) .tab-close,
+.tab-active:not(.tab-dirty) .tab-close {
   opacity: 1;
 }
 
-/* ● 的显示条件 = **未保存，且槽位没被 × 占用**（B65 修）。
-   ⚠️ 「互斥」全靠这条 `:not()` 链，不能再退回「● 常驻 + 悬停时压回 0」的补丁写法：
-   × 有三个出场口，而**未保存的当前文件**必然同时带 `.tab-dirty` 与 `.tab-active`，
-   键盘聚焦到标签也不经过 `:hover` —— 老写法只补了 `:hover` 一档，这两种状态上
-   ● 与 × 都是 opacity: 1，叠死在同一个槽位里（观感即「一个带橙调的 ×」）。
-   B64 的拖拽影像克隆的正是活动标签、且副本永不 `:hover`，同样靠这条规则兜住。
-   ⚠️ 条件必须写全在一条规则里：另加几条「压回 0」的规则与 `.tab-dirty` 同特异度，
-   只能靠源码顺序取胜，日后调整样式表顺序就静默失效。
-   （与 VS Code 同构：它是单 glyph + `.action-label:not(:hover)::before` 换内容，
-   等价于「● 只在 × 不出场时出场」。） */
-.tab-dirty:not(:hover):not(.tab-active):not(:focus-within) .tab-mark {
+/* ● 的出场条件 = **未保存，且指针/焦点不在关闭区**（B65 定的「一条 :not() 链」，B66 换判据）。
+   ⚠️ `:not()` 必须挂在 `.tab-action` 上，**不能挂在 `.tab` 上** ——
+   挂到标签上就成了「悬停标签任意位置都让位」，指针只在文件名上划过 ● 就没了，
+   而用户要的是「放到关闭按钮区域才变」。
+   ⚠️ 条件写全在一条规则里，而不是「● 常驻 + 几条压回 0 的补丁」：后者与 `.tab-dirty`
+   同特异度，只能靠源码顺序取胜，调样式表顺序就静默失效。
+   只需排除上面 ①② 两个口（指针进入关闭区 / 焦点落在关闭键上）——③④ 自带
+   `:not(.tab-dirty)`，与 `.tab-dirty` 不可能同时命中。
+   B64 的拖拽影像克隆的正是活动标签、副本永不 `:hover`，由同一条规则兜住（影像显示静息态）。 */
+.tab-dirty .tab-action:not(:hover):not(:focus-within) .tab-mark {
   opacity: 1;
 }
 
@@ -557,10 +567,13 @@ button:focus-visible {
    那样非焦点面板里**每个**标签都常驻一个 50% 的 ×（VS Code 非活动组的 × 同样只在
    悬停/活动/聚焦时出现，只是暗一档）；更要命的是 B65：未保存标签的 ●（opacity: 1）
    会跟这个常驻的 ×（opacity: 0.5）在同一个槽位里叠着显示。
-   焦点感由「同样命中时更暗」保证：两块面板都悬停、或都是活动标签时 0.5 vs 1。 */
-.layout-panel:not(.layout-panel-active) .tab:hover .tab-close,
-.layout-panel:not(.layout-panel-active) .tab-active .tab-close,
-.layout-panel:not(.layout-panel-active) .tab:focus-within .tab-close {
+   焦点感由「同样命中时更暗」保证：两块面板都悬停、或都是活动标签时 0.5 vs 1。
+   ⚠️ B66 起那组多了「关闭区命中」两档，这里必须同步补 —— 漏一档就会让脏标签
+   在非焦点面板里再次变成 ● 与 × 叠着（同一类 bug 的第三次）。 */
+.layout-panel:not(.layout-panel-active) .tab-action:hover .tab-close,
+.layout-panel:not(.layout-panel-active) .tab-action:focus-within .tab-close,
+.layout-panel:not(.layout-panel-active) .tab:hover:not(.tab-dirty) .tab-close,
+.layout-panel:not(.layout-panel-active) .tab-active:not(.tab-dirty) .tab-close {
   opacity: 0.5;
 }
 

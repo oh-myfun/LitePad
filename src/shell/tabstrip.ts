@@ -146,7 +146,7 @@ function flashTab(el: HTMLElement | undefined): void {
 function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   const el = document.createElement("div");
   // tab-dirty 供 CSS 决定槽位里显示 ● 还是空（VS Code 式）：
-  // 平时只见 ●（未保存）/ 空（已保存），鼠标悬停到标签上才换成 ×。
+  // 未保存 → 平时 ●，指针进到关闭区才换 ×；已保存 → 平时留空，悬停标签 / 活动标签给 ×。
   el.className = "tab" + (t.active ? " tab-active" : "") + (t.dirty ? " tab-dirty" : "");
   el.dataset.tabId = String(t.tabId);
   // B58：标签提示 = 文件名（+ 只读标记），第二行给完整路径 —— 标签会被横向滚动
@@ -171,9 +171,11 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   name.className = "tab-name";
   name.textContent = t.name;
 
-  // ● 与 × 共用同一个**固定尺寸**槽位（.tab-action）：悬停时 ● 换成 ×。
+  // ● 与 × 共用同一个**固定尺寸**槽位（.tab-action）：未保存时平时显示 ●，
+  // **指针进到这个槽位（关闭按钮区域）才换成 ×**（B66；对齐 VS Code 的
+  // `.tab.dirty … .action-label:not(:hover)::before { circle-filled }` 内容替换）。
   // 槽位宽度固定、只换内容，否则鼠标划过时标签宽度会变、整排标签左右抖动。
-  // B57 起显隐改走 `opacity`（参考 VS Code：`opacity: 0` → 悬停/活动/未保存时 1），
+  // B57 起显隐改走 `opacity`（参考 VS Code：`opacity: 0` → 命中时 1），
   // 不再用 display 切换 —— 布局本来就稳定，opacity 还能顺势做淡入。
   const action = document.createElement("span");
   action.className = "tab-action";

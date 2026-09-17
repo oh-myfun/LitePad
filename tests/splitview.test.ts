@@ -665,10 +665,11 @@ describe("B64 拖拽标签的浮动影像（对齐 VS Code 的 drag image）", (
     expect(copy.querySelectorAll("button[tabindex='-1']").length, "副本里的按钮不可聚焦").toBe(1);
   });
 
-  it("B65 影像克隆的是「未保存 + 当前」标签：● 与 × 同时在副本里，互斥同样只能靠 CSS", () => {
+  it("B65/B66 影像克隆的是「未保存 + 当前」标签：副本里 ● 与 × 都在，显示只能靠 CSS", () => {
     // 影像副本永不 :hover（外层 pointer-events: none），所以「悬停时把 ● 压回 0」
-    // 那种单点补丁在影像里完全失效 —— B65 的互斥必须落在 `.tab-active` 这条排除上，
-    // 否则拖「未保存的当前标签」时副本里 ● 和 × 会叠在一起。
+    // 那种单点补丁在影像里完全失效。B66 起判据是「关闭区未命中 → ●」，
+    // 副本既然永远命中不了关闭区，拖动未保存标签时影像就稳定显示 ●（静息态）。
+    // 这条用例锁的是前提：两个 glyph 与两个状态类都在副本里。
     const host = document.createElement("div");
     host.className = "panel-tabstrip";
     document.body.appendChild(host);
@@ -690,8 +691,11 @@ describe("B64 拖拽标签的浮动影像（对齐 VS Code 的 drag image）", (
     startDrag(tab, 200, 120);
 
     const copy = ghost()!.querySelector<HTMLElement>(".tab")!;
-    expect(copy.classList.contains("tab-dirty"), "副本带未保存态（● 会亮）").toBe(true);
-    expect(copy.classList.contains("tab-active"), "副本带活动态（× 会亮）").toBe(true);
+    expect(copy.classList.contains("tab-dirty"), "副本带未保存态（● 的判据靠它）").toBe(true);
+    expect(
+      copy.classList.contains("tab-active"),
+      "副本带活动态（配色照搬；B66 起活动态不再给脏标签点亮 ×）",
+    ).toBe(true);
     expect(copy.querySelector(".tab-action .tab-mark"), "● 在副本里照样常驻 DOM").toBeTruthy();
     expect(copy.querySelector(".tab-action .tab-close"), "× 在副本里照样常驻 DOM").toBeTruthy();
     document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
