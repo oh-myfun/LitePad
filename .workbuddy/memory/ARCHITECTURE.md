@@ -173,6 +173,18 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   所以**任何「脏状态」断言都不能再看 `.tab-mark` 的文本/存在性**，
   要改判 `.tab.tab-dirty` 这个 class（`tabstrip-scroll` / `smoke.bootstrap` /
   `view-switch-noedit` 三处用例已按此改写）。
+  - ⚠️ **● 与 × 的互斥只能写成 CSS 的 `:not()` 链**（B65）：× 有三个出场口
+    （`:hover` / `.tab-active` / `:focus-within`），而**未保存的当前标签**必然同时带
+    `.tab-dirty` 与 `.tab-active` → 老写法「● 常驻 + 只在 `:hover` 时压回 0」在这上面让
+    两个 glyph 双双 `opacity: 1`，叠死在同一个槽位里（观感 = 一个带橙调的 ×）。
+    正确写法是**一条** `.tab-dirty:not(:hover):not(.tab-active):not(:focus-within) .tab-mark`：
+    条件必须写全在同一条里 —— 另加几条「压回 0」的规则与 `.tab-dirty` 同特异度，
+    只能靠源码顺序取胜，日后调整样式表顺序就静默失效。B64 的拖拽影像克隆的正是活动标签、
+    副本永不 `:hover`，由同一条规则一并兜住（见 §4）。
+    ⚠️ 同理，**非活动面板的 × 降亮度也必须逐条对齐这三个触发口**：无条件写
+    `.layout-panel:not(.layout-panel-active) .tab-close { opacity: 0.5 }`（B57 老写法）
+    会让非焦点面板里**每个**标签常驻一个 50% 的 ×，未保存标签的 ● 直接跟它叠在一起。
+    静态锁在 `regressions.test.ts` 的 B65 块（含两条反向断言 + 分屏那条）。
 - **标签的文件类型图标**（B57，对应 VS Code 的 `.tab.has-icon`）：名字左边一个 **16px**
   家族字形，`.tab-icon[data-fam]` 取 `--ficon-*` 配色（**浅深两套主题各 10 个**，缺一个就是
   某主题下该家族图标没颜色）。字形与家族映射在 **`src/shell/fileicons.ts`**（零依赖内联 SVG，

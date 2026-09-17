@@ -30,9 +30,9 @@
   Rust wire 格式 / 序列化 → `src-tauri/src/**` 内联 `#[cfg(test)] mod tests`。
   ↳ 惯例：**改完先反向验证**（把修复还原一次，确认对应用例真的会失败）。
 - **界面有改动必须刷新 `docs/screenshots/` 截图**，与代码改动同一提交；
-  确实不影响观感则在提交信息注明「界面无变化」（清单与命令见该目录 README）。
-- **每次编译都要产出发布版本**：`npm run build:all`（tsc → vite → vitest →
-  cargo build+test → tauri build，出 exe + NSIS）；会话内改前台分步（见 `BUILD-ENV.md`）。
+  确实不影响观感则在提交信息注明「界面无变化」。
+- **每次编译都要产出发布版本**（tsc → vite → vitest → cargo build+test → tauri build，
+  出 exe + NSIS）；会话内改前台分步（见 `BUILD-ENV.md`）。
 - 质量门 = `.githooks`（pre-commit: prettier/eslint/tsc/cargo fmt --check；
   pre-push: vitest/cargo test）+ GitHub `CI`（push main / PR）。
 - ⚠️ **沙箱内禁止 `git stash -u` 或任何触碰 `.git` 的重操作**（09-13 一次误操作致全历史丢失）。
@@ -58,12 +58,14 @@
 - git bash 里调 PowerShell 会被安全策略拒 → 用 PowerShell 工具。
 - ⚠️ **不要给长构建接 `| tail`**（会话 SIGTERM 后管道永挂，任务假 running）；
   落日志文件，或直接拆成前台分步。
+- 沙箱内起不了 WebView2 → 纯 DOM/CSS 观感可用「esbuild + jsdom 生成静态页 → Playwright
+  的 chromium 无头截图」验证（产物进 gitignore 的 `generated-images/`）；
+  **不能**当正式截图。做法与现成脚本见 `BUILD-ENV.md`。
 
 ## 参考源码库 `docs/vscode-reference/`（MIT 只读副本）
 
 - 两类：**A–H 精选约 82 份**（`fetch-vscode-ref.sh` + `REVISION.txt`），
-  **I 编辑器整模块约 3283 份**（`fetch-vscode-editor-ref.sh` + `REVISION_EDITOR.txt`，
-  sparse-clone `src/vs/editor` + `base` + `platform`，只留源码）。
+  **I 编辑器整模块约 3283 份**（`fetch-vscode-editor-ref.sh` + `REVISION_EDITOR.txt`）。
   `INDEX.md` 说明每份文件对我们有什么用、按 A–I 分段导航。
 - ⚠️ **`src/` 不入库**（只入库 INDEX / REVISION* / LICENSE / 脚本）：否则上千份上游
   `.css/.ts/.tsx` 会被 pre-commit 的 prettier/eslint 扫到；它是可复现的，需要时重跑脚本。
@@ -73,51 +75,33 @@
   `core.compression 0` + `postBuffer`，配 `--depth 1 --filter=blob:none --sparse`；
   ② 逐文件 curl 会限流 → `--retry 4 --retry-all-errors`，或 `gh api .../contents/<path>?ref=main`。
 - 改观感读 A 段（Modern UI 的 css）；改交互读 B/C 段的 `.ts`（**抄状态机与边界，不抄实现**）；
-  I 段是 Monaco/编辑器内核，按需深挖。
+  I 段按需深挖。
 
 ## 进度
 
-- **M0–M4 全部交付**：M0 脚手架 → M1（语言注册表 55 类 / 多标签 / 搜索 / 设置 / 日志）→
+- **M0–M4 全部交付**：M0 脚手架 → M1（语言注册表 / 多标签 / 搜索 / 设置 / 日志）→
   M2（自由分屏 / 会话恢复 / 自动保存 / 文件监听 / 跨文件搜索）→ M3（Markdown 渲染）→
   M4（大文件分级降级 ≤2MB / 2–20MB / 20–64MB / >64MB 拒绝 + 命令面板 + 键位预设
   default / notepadpp / vscode）。
-- **B41–B59**（应用图标 / 标签栏多轮摇摆 / 首选项弹窗 / tooltip 自绘层 / 启动白屏 /
-  安装包与安装器图标分层 / 分屏对齐 VS Code）：逐条见 git log、`ARCHITECTURE.md` 与当日日志。
-- **B60–B64 分屏/拖拽五连修**（B60–B63 依据与推导见 `docs/split-view-plan.md` 七～十节）：
-  - **B60** 分隔条改「不占布局」浮层（`flex:0 0 0` + `::before` 7px 命中区 +
-    `::after` 静息 1px / 激活 4px）、落点回退浅蓝**无描边**、新增**对齐联动**
-    （`sashRegistry` + `alignedSashesOf`）。⚠️ `centerOf` 判空必须看**交叉轴**
-    （主轴恒为 0），否则联动恒不生效；旧用例的 4px rect 桩正好掩盖了它。
-  - **B61** 拖动光标取 VS Code **非 mac** 档（竖线 `ew-resize` / 横线 `ns-resize` /
-    角手柄 `all-scroll`）—— `col-resize`/`row-resize` 是 mac 档，Windows 上观感不同。
-  - **B62** 双击要「整组居中」（**联动集合必须先求**再改比例）+ 纯点击不得回写比例
-    （`moved` 标记；否则一次点击就把对齐推出 2px 容差）。
-  - **B63** ① 交叉点（角手柄）拖动也联动：`movingGroupOf(targets)` 作为唯一入口，
-    悬停 / 按下 / 拖动 / 回写四处全走它；角手柄必须**复用子分隔条已注册的 target 对象**。
-    ② 双击不再一律 50%，改为**按分割数量均分**：`chainId` 认同轴链，
-    `segmentsAlong` → `equalRatio = segA/(segA+segB)`（2 段 50%、3 段 1/3·1/2、
-    4 段 1/4·1/3·1/2），整条链 + 各条的联动伙伴一起调。
-  - **B64** 标签拖拽要有**跟随光标的浮动副本**（`.tab-drag-ghost`，对标 VS Code
-    `setDragImage(tab, 0, 0)`）：克隆原标签挂在 body 上、锚点 = 左上角 = 光标处
-    （`left/top` 直接写 `clientX/clientY`）；越过拖拽阈值才亮出；原标签原地不动。
-    ⚠️ 必须 `pointer-events: none`，克隆要剥 `data-tab-id` / `data-tip*`；
-    跟随调用要在「离开面板就 return」之前；三条清理路径（mouseup / 重复进入 /
-    **窗口 blur**，缺 blur 会留下跟不动的幽灵标签）。
-- **测试规模**：364 vitest + 22 cargo。分屏与标签拖拽的运行时用例在
+- **B34–B65 缺陷修复与界面打磨**：更名与图标 / prettier+eslint+CI / 标签栏多轮摇摆
+  （B53 后为**原生横向滚动**，折叠机制整体删除）/ 首选项弹窗 / 启动白屏 /
+  安装包与安装器图标三套机制分层 / 分屏对齐 VS Code（B59–B63 见
+  `docs/split-view-plan.md` 七～十节）/ B64 标签拖拽浮动影像 / **B65 ● 与 × 不再同时显示**。
+  逐条依据见 git log 与当日日志；**不变量与根因都写进 `ARCHITECTURE.md`，改前先读**。
+- **测试规模**：367 vitest + 22 cargo。分屏与标签拖拽的运行时用例在
   `tests/splitview.test.ts`，静态契约在 `tests/regressions.test.ts`。
 
 ## 下一步
 
 - **待桌面环境补拍截图**（沙箱内起不了 WebView2，只能由用户拍）：
   M4 的 `keymap.png` / `command-palette.png`；B51 的 `main.png` / `preferences.png`；
-  **B53–B64 的 `main.png`**（标签栏含文件类型图标 / 面板操作栏 / 分隔条细线 /
-  分屏落点浅蓝）；可选补一张 tooltip 演示图、一张**标签拖拽中的浮动副本**图。
-- ⚠️ **B60–B64 的观感与交互待真机确认**：1px 静息线是否偏细、4px 激活线宽、角手柄
-  骑线 + `all-scroll` 是否好抓、浅蓝落点在深色下是否够醒目；**联动**（拖一条一起走 /
-  悬停预告 / 交叉点双轴联动 / 双击按段数均分）需真机在 2×2 与 3 栏各验证一次；
-  **B64 的拖拽影像**是否跟手、光标落在影像左上角的手感是否可接受（代码路径已修 +
-  有回归用例，但沙箱内跑不了 UI；静态观感已用无头浏览器核过 ——
-  `generated-images/drag-ghost-{dark,light}.png`，做法见 `BUILD-ENV.md`）。
+  **B53–B65 的 `main.png`**（标签栏文件类型图标 / 面板操作栏 / 分隔条细线 /
+  分屏落点浅蓝 / 非焦点面板不再常驻 50% 的 ×）；可选补一张 tooltip 演示图、
+  一张**拖拽中的浮动副本**图。
+- ⚠️ **B60–B65 的观感与交互待真机确认**：分隔条 1px 静息线是否偏细 / 4px 激活线宽 /
+  角手柄 `all-scroll` 好不好抓 / 浅蓝落点在深色下是否醒目；**联动**（拖一条一起走 /
+  悬停预告 / 交叉点双轴联动 / 双击按段数均分）需在 2×2 与 3 栏各验一次；
+  B64 影像是否跟手、B65 的 × 与 ● 在长文件名下的观感。
 - 待清理：`menu.ts` 的 `MenuItem.active` 与 `.menu-item-current`（B53 后已无使用者）。
-- 待定：是否发 **v0.3.1**（B55–B64 都改了界面；B54 起就留了同一问题未决）。
+- 待定：是否发 **v0.3.1**（B55–B65 都改了界面；B54 起就留了同一问题未决）。
 - M4 之后：M5 规划未定（候选见 DESIGN.md）；观感/交互改进先查 `docs/vscode-reference/`。

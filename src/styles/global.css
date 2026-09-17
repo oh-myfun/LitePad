@@ -486,7 +486,8 @@ button:focus-visible {
 }
 
 /* ● 与 × 共用的固定尺寸槽位（VS Code 行为）：
-   平时只见 ●（未保存）或留空（已保存），鼠标悬停/活动标签上才换成 ×。
+   平时只见 ●（未保存）或留空（已保存），鼠标悬停/活动标签/键盘聚焦时换成 ×。
+   **任意时刻只显示一个**（B65）：互斥锁在 CSS 里，见下方 .tab-mark 那条 `:not()` 链。
    槽位尺寸恒定、只换内容——否则鼠标划过时标签宽度会变、整排标签左右抖动。
    12/20/24/28 这四档对应 VS Code Modern UI 的覆盖列宽度，供调参时对齐。 */
 .tab-action {
@@ -514,11 +515,6 @@ button:focus-visible {
   color: var(--warn);
 }
 
-/* 未保存的标签常驻显示 ●（不悬停时它就是 ● 槽位的内容） */
-.tab-dirty .tab-mark {
-  opacity: 1;
-}
-
 /* × 的显示条件（对齐 VS Code：悬停 / 活动标签 / 键盘聚焦）：
    活动标签上常驻 × —— 关闭当前文件是最高频操作，不该先悬停才给。 */
 .tab:hover .tab-close,
@@ -527,9 +523,18 @@ button:focus-visible {
   opacity: 1;
 }
 
-/* 悬停时 ● 让位给 ×：同一个槽位只显示一个，否则两者叠在一起 */
-.tab:hover .tab-mark {
-  opacity: 0;
+/* ● 的显示条件 = **未保存，且槽位没被 × 占用**（B65 修）。
+   ⚠️ 「互斥」全靠这条 `:not()` 链，不能再退回「● 常驻 + 悬停时压回 0」的补丁写法：
+   × 有三个出场口，而**未保存的当前文件**必然同时带 `.tab-dirty` 与 `.tab-active`，
+   键盘聚焦到标签也不经过 `:hover` —— 老写法只补了 `:hover` 一档，这两种状态上
+   ● 与 × 都是 opacity: 1，叠死在同一个槽位里（观感即「一个带橙调的 ×」）。
+   B64 的拖拽影像克隆的正是活动标签、且副本永不 `:hover`，同样靠这条规则兜住。
+   ⚠️ 条件必须写全在一条规则里：另加几条「压回 0」的规则与 `.tab-dirty` 同特异度，
+   只能靠源码顺序取胜，日后调整样式表顺序就静默失效。
+   （与 VS Code 同构：它是单 glyph + `.action-label:not(:hover)::before` 换内容，
+   等价于「● 只在 × 不出场时出场」。） */
+.tab-dirty:not(:hover):not(.tab-active):not(:focus-within) .tab-mark {
+  opacity: 1;
 }
 
 .tab-close {
@@ -546,9 +551,16 @@ button:focus-visible {
   background: var(--bg-hover);
 }
 
-/* 非焦点面板降一档（对应 VS Code 非活动编辑器组里 `opacity: 0.5`）：
-   ⚠️ 必须连默认态一起压，否则分屏时两块面板的 × 一样亮，看不出焦点。 */
-.layout-panel:not(.layout-panel-active) .tab-close {
+/* 非焦点面板降一档（对应 VS Code 非活动编辑器组里 `opacity: 0.5`）。
+   ⚠️ 触发条件必须与上面「× 何时出场」那组**逐条对齐**，不能写成无条件的
+   `.layout-panel:not(.layout-panel-active) .tab-close`（B57 的老写法）——
+   那样非焦点面板里**每个**标签都常驻一个 50% 的 ×（VS Code 非活动组的 × 同样只在
+   悬停/活动/聚焦时出现，只是暗一档）；更要命的是 B65：未保存标签的 ●（opacity: 1）
+   会跟这个常驻的 ×（opacity: 0.5）在同一个槽位里叠着显示。
+   焦点感由「同样命中时更暗」保证：两块面板都悬停、或都是活动标签时 0.5 vs 1。 */
+.layout-panel:not(.layout-panel-active) .tab:hover .tab-close,
+.layout-panel:not(.layout-panel-active) .tab-active .tab-close,
+.layout-panel:not(.layout-panel-active) .tab:focus-within .tab-close {
   opacity: 0.5;
 }
 

@@ -242,6 +242,23 @@ describe("B53 脏标记与关闭按钮共用槽位（VS Code 行为）", () => {
     expect(action!.querySelector(".tab-close")).toBeTruthy();
   });
 
+  it("B65 未保存的当前标签会同时带 tab-dirty 与 tab-active —— 互斥只能由 CSS 保证", () => {
+    // 这条用例的价值在于**锁住前提**：同一个标签上两个状态类会并存，而且槽位里
+    // ● 与 × 两个 glyph 始终都在 DOM 里（靠 opacity 显隐）。所以「不同时显示」
+    // 不可能是 JS 的职责，只能在 CSS 里用 :not() 链表达（B65）。
+    // 哪天有人把槽位改成「谁可见才渲染谁」，这条会失败 —— 那时才该删掉 CSS 那份互斥。
+    const { host } = mount(1);
+    renderTabstrip(host, [{ ...tabs(1)[0], dirty: true, active: true }], cb());
+
+    const el = host.querySelector<HTMLElement>(".tab")!;
+    expect(el.classList.contains("tab-dirty"), "未保存 → tab-dirty").toBe(true);
+    expect(el.classList.contains("tab-active"), "当前标签 → tab-active").toBe(true);
+
+    const action = el.querySelector(".tab-action")!;
+    expect(action.querySelector(".tab-mark"), "● 常驻 DOM，靠 CSS 决定显隐").toBeTruthy();
+    expect(action.querySelector(".tab-close"), "× 常驻 DOM，靠 CSS 决定显隐").toBeTruthy();
+  });
+
   it("关闭按钮仍然能关（即使 CSS 平时把它藏起来）", () => {
     const { host } = mount(1);
     const closed: number[] = [];

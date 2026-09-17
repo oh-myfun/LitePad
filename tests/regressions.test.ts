@@ -289,13 +289,10 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(layer, "默认必须隐藏（opacity: 0）").toMatch(/opacity:\s*0\b/);
     expect(layer, "不得再用 display 切换显隐").not.toMatch(/display:\s*none/);
 
-    expect(css, "未保存的 ● 常驻显示").toMatch(/\.tab-dirty\s+\.tab-mark\s*\{[^}]*opacity:\s*1/);
+    expect(css, "未保存时 ● 要能显示").toMatch(/\.tab-dirty[^{]*\.tab-mark\s*\{[^}]*opacity:\s*1/);
     expect(css, "悬停标签显示 ×").toMatch(/\.tab:hover\s+\.tab-close[^{]*\{[^}]*opacity:\s*1/);
     expect(css, "活动标签常驻 ×（关闭当前文件是高频操作，不该先悬停）").toMatch(
       /\.tab-active\s+\.tab-close[^{]*\{[^}]*opacity:\s*1/,
-    );
-    expect(css, "悬停时 ● 让位给 ×（同槽位只显示一个）").toMatch(
-      /\.tab:hover\s+\.tab-mark\s*\{[^}]*opacity:\s*0/,
     );
     expect(css, "× 颜色继承标签文字色（VS Code 做法，非独立灰）").toMatch(
       /\.tab-close\s*\{[^}]*color:\s*inherit/,
@@ -307,6 +304,56 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(ts, "不得再用文本 ×").not.toContain('textContent = "×"');
     expect(ts, "未保存圆点必须走矢量（dotIcon）").toContain("dotIcon()");
     expect(ts, "不得再用文本 ●").not.toContain('textContent = "●"');
+  });
+
+  it("B65 ● 与 × 不得同时显示（同槽位互斥，含 hover / 活动标签 / 拖拽影像）", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+
+    // × 的三个出场口。回归点：这三个口里只有「悬停」会经过 .tab:hover，
+    // 而「未保存的当前标签」必然同时带 .tab-dirty 与 .tab-active —— 老写法
+    // （● 无条件常驻 + 只在 :hover 时压回 0）在这上面让 ● × 双双 opacity:1，
+    // 叠死在同一个槽位里（观感是一个带橙调的 ×）。B64 的拖拽影像克隆的正是
+    // 活动标签、且副本永不 :hover，同样中招。
+    const CLOSE_TRIGGERS = [
+      ["悬停", ".tab:hover .tab-close"],
+      ["活动标签", ".tab-active .tab-close"],
+      ["键盘聚焦", ".tab:focus-within .tab-close"],
+    ] as const;
+
+    const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    for (const [label, sel] of CLOSE_TRIGGERS) {
+      expect(css, `${label}时必须能显示 ×`).toMatch(
+        new RegExp(`${esc(sel)}[^{]*\\{[^}]*opacity:\\s*1`),
+      );
+    }
+
+    // ● 的显示条件必须**显式排除**这三个口：互斥就靠这一条 :not() 链。
+    const mark = cssDecls(css.match(/\.tab-dirty[^{]*\.tab-mark\s*\{[^}]*\}/)?.[0] ?? "");
+    expect(mark, "应有「未保存时显示 ●」的规则").toBeTruthy();
+    expect(mark, "● 只在未悬停时出场").toContain(":not(:hover)");
+    expect(mark, "● 不得在活动标签上出场（× 在那里常驻）").toContain(":not(.tab-active)");
+    expect(mark, "● 不得在键盘聚焦时出场").toContain(":not(:focus-within)");
+
+    // 反向：旧写法必须消失 —— 少了任何一条排除都会让 ● 与 × 同时亮。
+    expect(css, "不得再把 ● 写成无条件常驻").not.toMatch(/\.tab-dirty\s+\.tab-mark\s*\{/);
+    expect(css, "不得再靠「悬停时把 ● 压回 0」这种单点补丁（覆盖不到活动/聚焦）").not.toMatch(
+      /\.tab:hover\s+\.tab-mark\s*\{/,
+    );
+
+    // 非焦点面板的 × 降亮度同样要逐条对齐触发条件：无条件降亮度（B57 老写法）会让
+    // 非焦点面板里**每个**标签都常驻一个 50% 的 ×，未保存标签的 ●（opacity: 1）
+    // 就跟它叠在一起 —— 这是 B65 在分屏下的同一个病。
+    expect(css, "非焦点面板不得无条件把 × 压到 0.5").not.toMatch(
+      /\.layout-panel:not\(\.layout-panel-active\)\s+\.tab-close\s*\{/,
+    );
+    for (const [label, sel] of CLOSE_TRIGGERS) {
+      expect(css, `非焦点面板：${label}时 × 要暗一档（0.5 而不是 1）`).toContain(
+        `.layout-panel:not(.layout-panel-active) ${sel}`,
+      );
+    }
+    expect(css, "非焦点面板降亮度要落到 0.5").toMatch(
+      /\.layout-panel:not\(\.layout-panel-active\)\s+\.tab:focus-within\s+\.tab-close[^{]*\{[^}]*opacity:\s*0\.5/,
+    );
   });
 
   it("B57 标签前置文件类型图标：家族字形 + 家族配色，且家族覆盖注册表全部语言", () => {
