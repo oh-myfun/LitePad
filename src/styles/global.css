@@ -50,12 +50,30 @@
   /* 查找命中高亮（编辑器内） */
   --find-match: rgba(255, 214, 0, 0.26);
   --find-match-active: rgba(255, 160, 0, 0.44);
+  /* 浮层投影 = VS Code `--vscode-shadow-lg`（tooltip 与查找栏共用同一条，改一处两处生效） */
+  --shadow-lg: 0 0 12px rgba(0, 0, 0, 0.14);
+  /* 查找栏输入区底色。VS Code 的 `input.background` 与浮层底色是**反向拉开**的：
+     深色档输入框比浮层更亮、浅色档比浮层更暗 —— 靠填充自己浮起来，不靠描边
+     （vs `input.border` 深浅两档都是 null，即**无边框**）。 */
+  --find-field-bg: #2f3338;
+  /* 查找栏图标的两档悬停色，照抄 VS Code —— ⚠️ 两者**不是同一个值**：
+     工具栏按钮（上一个、下一个、替换、关闭）走 toolbar.hoverBackground @0x50，
+     输入框内开关（Aa、ab、.* 正则、选区、AB）走 inputOption.hoverBackground @0x80。
+     ⚠️ 注释里别写「点·星号·斜杠」连排的字面量：那三个字符会**提前闭合注释**，
+     后面的词就被当成 CSS 代码解析（prettier 会直接报 Unknown word）。 */
+  --find-btn-hover: #5a5d5e50;
+  --find-opt-hover: #5a5d5e80;
+  /* 输入框内开关的激活三态 = VS Code inputOption.active{Background,Border,Foreground}：
+     底色 transparent(focusBorder, 0.4) / 边框 #007ACC / 字形白。 */
+  --find-opt-active: color-mix(in srgb, var(--accent) 40%, transparent);
+  --find-opt-active-border: var(--accent);
+  --find-opt-active-fg: #ffffff;
   /* tooltip（B58，取代原生 title）。配色照搬 VS Code：
      底色 = editorWidget.background（暗色 #252526），边框 = transparent(foreground, 0.2)，
      shadow = --vscode-shadow-lg，键帽三色 = keybindingLabel.* 令牌。 */
   --tip-bg: #26292d;
   --tip-border: color-mix(in srgb, var(--fg) 20%, transparent);
-  --tip-shadow: 0 0 12px rgba(0, 0, 0, 0.14);
+  --tip-shadow: var(--shadow-lg);
   --tip-key-bg: rgba(128, 128, 128, 0.17);
   --tip-key-fg: #cccccc;
   --tip-key-border: rgba(51, 51, 51, 0.6);
@@ -109,11 +127,23 @@
   /* 查找命中高亮（编辑器内） */
   --find-match: rgba(255, 214, 0, 0.55);
   --find-match-active: rgba(255, 150, 0, 0.7);
+  /* 浮层投影（同深色档：VS Code 的 shadow-lg 深浅两色共用一条） */
+  --shadow-lg: 0 0 12px rgba(0, 0, 0, 0.14);
+  /* 查找栏输入区底色：浅色档压暗一档（浮层是纯白，输入框必须比它暗才分得开）。 */
+  --find-field-bg: #f6f7f8;
+  /* 两档悬停色：浅色档 VS Code 给的**就是同一个值**（toolbar/inputOption 都是 #b8b8b850）。 */
+  --find-btn-hover: #b8b8b850;
+  --find-opt-hover: #b8b8b850;
+  /* 激活三态：底色取 transparent(focusBorder, 0.2)（浅色档比深色档更淡），
+     字形改用**黑色** —— VS Code 就是这么给的，白字压在浅蓝底上会读不出来。 */
+  --find-opt-active: color-mix(in srgb, var(--accent) 20%, transparent);
+  --find-opt-active-border: var(--accent);
+  --find-opt-active-fg: #000000;
   /* tooltip（B58）：浅色档底色取 VS Code 的 editorWidget.background = #F3F3F3
      （**不是纯白** —— 纯白气泡压在白色编辑区上只剩一圈描边，浮不起来）。 */
   --tip-bg: #f3f3f3;
   --tip-border: color-mix(in srgb, var(--fg) 20%, transparent);
-  --tip-shadow: 0 0 12px rgba(0, 0, 0, 0.14);
+  --tip-shadow: var(--shadow-lg);
   --tip-key-bg: rgba(221, 221, 221, 0.4);
   --tip-key-fg: #555555;
   --tip-key-border: rgba(204, 204, 204, 0.4);
@@ -577,11 +607,22 @@ button:focus-visible {
   opacity: 0.5;
 }
 
-/* ---------- 悬浮查找 / 替换栏（方案 C：钉右上角的紧凑浮层） ---------- */
+/* ---------- 悬浮查找 / 替换栏（方案 C：钉右上角的紧凑浮层） ----------
+   本节的尺寸与配色**逐条对齐 VS Code 的查找组件**，改动前先看这三份参考：
+     · docs/vscode-reference/src/vs/editor/contrib/find/browser/findWidget.css（浮层盒模型 / 工具按钮 / 计数）
+     · docs/vscode-reference/src/vs/base/browser/ui/findinput/findInput.css（输入框内嵌开关的定位）
+     · docs/vscode-reference/src/vs/base/browser/ui/toggle/toggle.css（开关本体尺寸）
+   配色令牌见 src/vs/platform/theme/common/colors/{editorColors,inputColors}.ts。
+   ⚠️ 有意偏离 VS Code 的地方都在下面逐条注明了原因，别当成漏抄。 */
 
+/* 盒模型折算：VS Code 的 `.find-widget` 把它自己的高度**由 JS 写死**成
+   4 + 输入框(24+2 边框) + 4 = 34px；我们的浮层还要容纳跨文档结果列表，不能写死高度，
+   于是改成「内边距 上3 / 右4 / 下4 / 左9 + 行高 25」，让折叠态自然量到 ≈34px。
+   左 9 的由来同 VS Code：给浮层左缘留出比右侧稍大的喘息。 */
 .find-bar {
   position: fixed;
-  /* 钉在编辑器右上，尽量少遮挡正文（不再支持拖动 / 记忆位置） */
+  /* 钉在编辑器右上，尽量少遮挡正文（不再支持拖动 / 记忆位置）。
+     ⚠️ 这个 position 同时是 chevron 与关闭按钮**绝对定位的定位基准**。 */
   right: 16px;
   top: 8px;
   z-index: 60;
@@ -589,12 +630,15 @@ button:focus-visible {
   max-width: calc(100vw - 24px);
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px 8px 8px;
+  gap: 3px;
+  padding: 3px 4px 4px 9px;
+  box-sizing: border-box;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
+  /* = VS Code --vscode-cornerRadius-large（8px） */
   border-radius: 8px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  /* = VS Code --vscode-shadow-lg。原先那条 0 10px 30px @0.28 太重，浮层像「飘」在半空 */
+  box-shadow: var(--shadow-lg);
 }
 
 /* 修复：display:flex 会覆盖 hidden 属性的 UA 样式（display:none），
@@ -603,11 +647,17 @@ button:focus-visible {
   display: none;
 }
 
-/* chevron（展开/折叠替换行）与替换行左侧占位，用于对齐主行输入框 */
+/* 行首折叠把手。VS Code = `.button.toggle { position:absolute; top:0; left:0; width:18px }`
+   —— 它**脱离行流**贴在最左侧，于是两行自己靠 margin-left 让出位置。
+   ⚠️ 高度不照抄 VS Code 的 `height:100%`：它的浮层高度固定，而我们的会被跨文档结果列表撑高，
+   100% 会把这颗按钮拉成一根竖条。改为「与查找行等高」，左缘对齐。
+   ⚠️ 有了它，替换行**不再需要左侧占位元素**（原 .find-chevron-ghost 已删）。 */
 .find-chevron {
-  width: 20px;
-  height: 26px;
-  flex: 0 0 auto;
+  position: absolute;
+  top: 3px;
+  left: 0;
+  width: 18px;
+  height: 25px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -619,30 +669,24 @@ button:focus-visible {
   cursor: pointer;
 }
 .find-chevron:hover {
-  background: var(--bg-hover);
+  background: var(--find-btn-hover);
   color: var(--fg);
 }
 .find-chevron svg {
-  width: 14px;
-  height: 14px;
-}
-.find-chevron-ghost {
-  width: 20px;
-  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
 }
 
-/* 主行 / 替换行统一为单行 flex；窄窗下不允许换行，靠 max-width 收缩 */
+/* 查找行 / 替换行：单行 flex。
+   左右各留一条固定沟槽 —— 左 17px 给绝对定位的 chevron（18px 宽），
+   右 25px 给绝对定位的关闭按钮。两行用同一组边距，输入框左右边缘天然对齐。 */
 .find-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
-}
-.find-row-main {
-  height: 28px;
-}
-.find-row-replace {
-  height: 28px;
+  height: 25px;
+  margin: 0 25px 0 17px;
 }
 /* 同 .find-bar[hidden]：display:flex 会覆盖 hidden 的 UA 样式，折叠态必须显式 none，
    否则替换行永远露在外面（chevron 形同虚设）。 */
@@ -650,22 +694,32 @@ button:focus-visible {
   display: none;
 }
 
-/* 输入框 + 右内侧图标开关（VS Code 同款：开关嵌在输入框内） */
+/* 输入区 = VS Code 的 input box：**填充式、无描边**，开关嵌在它的右内侧。
+   聚焦时给 `outline: 1px + outline-offset: -1px`（VS Code `.monaco-inputbox.synthetic-focus`）——
+   用 outline 而不是改 border-color，既照搬了 VS Code，也不会因边框增删而抖动 1px。
+   内边距来源（VS Code 两层叠加）：inputBox.css 的 `.ibwrapper > .input { padding: 4px 6px }`
+   被 findWidget.css 压成 `2px 6px` —— 所以文本左内缩 6px 是有出处的，不是随手写的。
+   右边只留 2px：VS Code 的 `.controls` 是**绝对定位浮在输入框上**（`right: 2px`），
+   而我们的开关是行内 flex 兄弟节点、不会压住文本，故只需 2px 的间隔。 */
 .find-field {
   display: flex;
   align-items: center;
   gap: 2px;
   flex: 1 1 auto;
   min-width: 60px;
-  padding: 1px 3px 1px 7px;
-  border: 1px solid var(--border);
+  min-height: 25px;
+  box-sizing: border-box;
+  padding: 1px 2px 1px 6px;
+  border: none;
   border-radius: 4px;
-  background: var(--bg);
+  background: var(--find-field-bg);
 }
 .find-field:focus-within {
-  border-color: var(--accent);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
+/* 输入文本：VS Code 查找框用 13px（比它自己的 12px 行字号大一档，可读性优先）。 */
 .search-input {
   flex: 1 1 auto;
   min-width: 0;
@@ -673,16 +727,17 @@ button:focus-visible {
   border: 0;
   background: transparent;
   color: var(--fg);
-  font-size: 12px;
+  font-size: 13px;
   font-family: var(--font-sans);
   outline: none;
 }
 
-/* 图标开关（Aa / ab / .* / 选区 / AB）：激活态高亮 */
+/* 输入框内嵌的图标开关（Aa / ab / .* / 选区 / AB）。
+   尺寸照 toggle.css：20×20、圆角 3px、1px 内边距（border-box）、左边距 2px、
+   常态边框 transparent（**只占位不上色**，于是激活时不产生任何位移）。 */
 .find-toggles {
   display: inline-flex;
   align-items: center;
-  gap: 1px;
   flex: 0 0 auto;
 }
 .find-toggle {
@@ -692,130 +747,183 @@ button:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
+  box-sizing: border-box;
+  margin-left: 2px;
+  padding: 1px;
   border: 1px solid transparent;
   border-radius: 3px;
   background: none;
   color: var(--fg-muted);
-  font-size: 10px;
+  font-size: 11px;
   font-family: var(--font-mono);
   line-height: 1;
-  padding: 0;
   cursor: pointer;
+  user-select: none;
 }
 .find-toggle:hover {
-  background: var(--bg-hover);
+  background: var(--find-opt-hover);
   color: var(--fg);
 }
 .find-toggle svg {
-  width: 13px;
-  height: 13px;
+  width: 16px;
+  height: 16px;
 }
+/* VS Code 给开关的焦点环是**虚线边框**（`.monaco-custom-toggle:focus-visible { border: 1px
+   dashed focusBorder }`），换的是那条本来透明的 1px 边框 —— 外框尺寸不变。
+   ⚠️ 别用 outline：outline 画在边框**外面**，会让开关视觉上胀 1px，
+   一排开关在焦点移动时互相推挤。 */
+.find-toggle:focus-visible,
+.find-docs:focus-visible {
+  border-style: dashed;
+  border-color: var(--accent);
+  outline: none;
+}
+/* 激活态 = inputOption.active{Background,Border,Foreground} 三件套一起换：
+   底色淡蓝 + 实线蓝边框 + 高对比字形（深色档白字 / 浅色档黑字） */
 .find-toggle.on {
-  background: color-mix(in srgb, var(--accent) 30%, transparent);
-  color: var(--fg);
-  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: var(--find-opt-active);
+  border-color: var(--find-opt-active-border);
+  color: var(--find-opt-active-fg);
 }
 
-/* 紧凑计数：命中时 N / M；无匹配变红 */
+/* 紧凑计数 N / M。VS Code `.matchesCount`：高 25、行高 23、上内边距 2、左边距 3、
+   居中，颜色**随浮层前景**（不是弱化色 —— 它是要读的数字，别调暗）。
+   唯一有意偏离：VS Code 用 JS 逐次测量后写死宽度，我们固定 min-width 防抖（免得数字位数变化时
+   右边的按钮整排左右横跳）。 */
 .find-count {
-  color: var(--fg-muted);
-  font-size: 11px;
-  white-space: nowrap;
-  min-width: 44px;
-  text-align: right;
   flex: 0 0 auto;
+  box-sizing: border-box;
+  height: 25px;
+  line-height: 23px;
+  margin-left: 3px;
+  padding: 2px 0 0 2px;
+  min-width: 44px;
+  text-align: center;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--fg);
 }
 .find-count:empty {
   min-width: 0;
 }
+/* 无匹配 = VS Code `.no-results .matchesCount { color: errorForeground }`。
+   ⚠️ 这里原先写的是 `var(--error, #e5534b)`，而项目**并没有 --error 令牌**
+   （只有 --danger / --warn），等于一直在吃那个硬编码 fallback、不随主题走。 */
 .find-count-bad {
-  color: var(--error, #e5534b);
+  color: var(--danger);
 }
 
-/* 导航 / 替换 / 全部替换 / 关闭：统一图标按钮 */
+/* 工具栏图标按钮（上一个 / 下一个 / 替换 / 全部替换 / 关闭）。
+   VS Code `.button`：`width:16px; height:16px; padding:3px; border-radius:5px; margin-left:3px`
+   —— 16px 图标 + 两侧各 3px = **22px 命中区**，无描边无底色，只在悬停时压一层
+   toolbar.hoverBackground。
+   ⚠️ **盒模型折算**：VS Code 那份 CSS 里没有全局 `box-sizing`，`.button` 走的是
+   content-box，所以「16 + 3×2」自然等于 22。本项目在 `*` 上全局设了 `border-box`，
+   直接抄 `width:16px; padding:3px` 会得到 **16px 外框 + 10px 内容盒**，16px 的图标
+   从内容盒里溢出去、悬停底色也缩成 16px。故这里把外框写成 22px（22 − 3×2 = 16 内容盒）。
+   同理 `.find-toggle` 抄 toggle.css 时**不用折算** —— 那份自己声明了 border-box。
+   ⚠️ 之前是「24px 方框 + 1px 描边 + 自身底色」—— 那是工具栏按钮的观感，
+   连排五六个压在浮层里会显得很重，也是与 VS Code 差距最大的一处，故改成扁平式。 */
 .find-nav,
 .find-replace-one,
 .find-replace-all,
 .find-x {
-  width: 24px;
-  height: 24px;
   flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border);
-  background: var(--bg);
+  padding: 3px;
+  margin-left: 3px;
+  border: none;
+  border-radius: 5px;
+  background: none;
   color: var(--fg-muted);
-  border-radius: 4px;
-  padding: 0;
   cursor: pointer;
 }
 .find-nav:hover:not(:disabled),
 .find-replace-one:hover,
 .find-replace-all:hover,
 .find-x:hover {
-  background: var(--bg-hover);
+  background: var(--find-btn-hover);
   color: var(--fg);
-  border-color: var(--accent);
+}
+/* 禁用态 = VS Code `.disabled`（弱化而不是消失；.find-widget 里只有折叠布局会整颗 display:none） */
+.find-nav:disabled,
+.find-replace-one:disabled,
+.find-replace-all:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 .find-nav svg,
 .find-replace-one svg,
 .find-replace-all svg,
 .find-x svg {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
+/* 关闭按钮：VS Code `.button.codicon-widget-close { position:absolute; top:5px; right:4px }`
+   —— 脱离行流钉在浮层右上角（查找行右侧那 25px 沟槽就是给它让的）。 */
 .find-x {
-  border-color: transparent;
-  background: none;
+  position: absolute;
+  top: 5px;
+  right: 4px;
+  margin-left: 0;
 }
 
-/* 跨文档文档图标（带「打开文档数」徽标；激活态高亮） */
+/* 跨文档文档图标（带「打开文档数」徽标）。这是 LitePad 自加的能力（VS Code 查找框没有），
+   但它在语义上是**开关**而不是动作按钮，所以外壳照 .find-toggle 来（20×20 / 圆角 3px /
+   常态透明边框），激活态直接复用同一个三件套令牌。 */
 .find-docs {
   position: relative;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border);
-  background: var(--bg);
+  box-sizing: border-box;
+  margin-left: 4px;
+  padding: 1px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: none;
   color: var(--fg-muted);
-  border-radius: 4px;
-  padding: 0;
   cursor: pointer;
 }
 .find-docs:hover {
-  background: var(--bg-hover);
+  background: var(--find-opt-hover);
   color: var(--fg);
 }
 .find-docs svg {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
+/* .find-docs:focus-visible 与 .find-toggle 合并声明（见上） */
 .find-docs.on {
-  color: var(--fg);
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: var(--find-opt-active);
+  border-color: var(--find-opt-active-border);
+  color: var(--find-opt-active-fg);
 }
 /* ⚠️ 徽标必须**收在按钮盒内**（top/right = 0）。
    原先写 `top:-6px; right:-6px` 会溢出到按钮外：既盖住右边的关闭按钮，
-   又在 28px 高的行里向上探出、看着像飘在外面。overflow 在这里是 visible 没被裁，
-   但那是运气（换 WebView2 版本/加 overflow 就会把数字裁掉）。 */
+   又在行里向上探出、看着像飘在外面。overflow 在这里是 visible 没被裁，
+   但那是运气（换 WebView2 版本/加 overflow 就会把数字裁掉）。
+   徽标是 LitePad 自加物，VS Code 无可对标项，取「不撑破 20px 按钮」的紧凑档。 */
 .find-badge {
   position: absolute;
   top: 0;
   right: 0;
   font-size: 8px;
   font-style: normal;
-  line-height: 1;
-  min-width: 9px;
-  padding: 1px 2px;
+  line-height: 9px;
+  min-width: 8px;
+  padding: 0 2px;
   text-align: center;
   border-radius: 5px;
   background: var(--accent);
-  color: var(--accent-fg, #fff);
+  color: var(--accent-fg);
   /* 只是标注，别抢按钮本身的点击 */
   pointer-events: none;
 }
@@ -855,10 +963,18 @@ button:focus-visible {
   white-space: nowrap;
 }
 
+/* 状态行（跨文档结果的「N 条结果（M 个文档）」等）。
+   ⚠️ min-height 只是给**有文案时**留着不跳动；空态靠 `hidden` 整行收起 ——
+   别指望 min-height 养一个空盒子，那就是 B76 用户实测的「浮层底部一条空白」
+   （14px 行 + 3px gap + 4px 底内距）。下面这条 [hidden] 与 .find-bar[hidden] 同理：
+   一旦有人给 .find-status 加上 display，UA 的 `[hidden] { display: none }` 就会被覆盖。 */
 .find-status {
   font-size: 11px;
   color: var(--fg-muted);
   min-height: 14px;
+}
+.find-status[hidden] {
+  display: none;
 }
 
 /* 编辑器内的查找命中高亮（由悬浮查找栏驱动） */

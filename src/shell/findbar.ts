@@ -6,9 +6,12 @@
  * - **一个入口干所有事**：查找、替换、跨文档查找都在这一栏里，编辑器内不再嵌 CM6 搜索面板。
  * - **钉在右上角**：去掉了可拖动的标题栏（方案 C），固定停靠编辑器右上，尽量少遮挡正文。
  * - **替换行可折叠**：主行永远是「查找」；点 chevron（或菜单「替换」）才展开替换行。
+ *   chevron **绝对定位贴在浮层左缘**（VS Code 的 `.button.toggle` 同款），两行各留 17px 边距让位。
  * - **匹配选项改成图标开关**（Aa / ab / .* / 选区 / AB），嵌在输入框右内侧，激活态高亮。
  * - **跨文档收敛成一个文档图标**：不再用「复选框 + 查找全部按钮」，徽标显示当前打开文档数。
  * - 紧凑计数 `N / M`；无匹配变红。
+ * - **样式逐条对齐 VS Code 的查找组件**：盒模型 / 工具按钮 / 计数 / 开关三态都照抄参考源码
+ *   （见 `global.css` 该节的注释头），有意偏离处均已就地注明原因。
  * - 不绑定快捷键：VS Code 的 Alt+C/W/R/L/P 在 LitePad 不可用（菜单助记符与 B71 命令已占），
  *   故只在 UI 上做图标开关，不注册快捷键。
  */
@@ -177,8 +180,8 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   rowMain.append(chevron, field, count, prev, next, docsBtn, closeBtn);
 
   // ---- 替换行（默认隐藏，chevron 展开）：替换输入框（内嵌 AB 保留大小写）+ 替换/全部替换 ----
-  const chevGhost = document.createElement("span");
-  chevGhost.className = "find-chevron-ghost";
+  // ⚠️ 这里**不再需要左侧占位元素**：chevron 改为绝对定位贴在浮层左缘，
+  //    两行各自靠 CSS 的 `margin-left: 17px` 让位，输入框边缘自然对齐（VS Code 同款做法）。
   const replaceInput = document.createElement("input");
   replaceInput.className = "find-replace-input search-input";
   replaceInput.placeholder = "替换为";
@@ -195,7 +198,7 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   const rowReplace = document.createElement("div");
   rowReplace.className = "find-row find-row-replace";
   rowReplace.hidden = true;
-  rowReplace.append(chevGhost, replField, doReplace, doAll);
+  rowReplace.append(replField, doReplace, doAll);
 
   // ---- 结果 / 状态 ----
   const results = document.createElement("div");

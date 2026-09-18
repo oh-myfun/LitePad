@@ -12,6 +12,81 @@ function readJson(path: string): any {
   return JSON.parse(readFileSync(path, "utf-8"));
 }
 
+// 取 `:root[data-theme="X"] { ... }` 的**块体**（不含选择器）。
+// ⚠️ 必须先剥注释、再按花括号配对计数，不能图省事写 `\{[^}]*\}`：
+// 变量块里只要有一条注释含 `}`（例如注释里写 `inputOption.active{Foo,Bar}`），
+// 那个 `[^}]*` 就会**从注释里的花括号处截断**，块内后面的变量全被判「缺失」。
+// 结果是双向失真 —— 既会把「注释里写了个花括号」误报成「变量漏定义」（假红），
+// 也可能在截断点之后恰好没有断言对象时**静默放行**（假绿）。
+function themeBlock(css: string, theme: "dark" | "light"): string {
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const m = new RegExp(`:root\\[data-theme="${theme}"\\]\\s*\\{`).exec(code);
+  if (!m) return "";
+  const open = m.index + m[0].length - 1; // 指向 `{`
+  let depth = 0;
+  for (let i = open; i < code.length; i++) {
+    const ch = code.charAt(i);
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return code.slice(open + 1, i);
+    }
+  }
+  return "";
+}
+
+// 取某条规则的**声明块体**（同样剥注释 + 数花括号）。selector 直接当字面量用。
+// 支持三种写法：
+//   · 单选择器 `.find-bar { }`
+//   · 选择器列表里的一员 `.find-nav, ... .find-x { }`（会自动扫到列表末尾的那个 `{`）
+//   · 同一选择器出现多次时用 filter 指定取哪一条：
+//       - 数字 = 取第 n 处；
+//       - 字符串 = 取**块体里含该声明**的那一处（推荐，比数序号稳）。
+//     例：`.find-x` 先出现在扁平按钮列表里，自己还有一条定位规则 →
+//     `ruleBlock(css, ".find-x", "position")`
+// ⚠️ 新写的用例请用它，不要再用 `\.foo\s*\{[^}]*\}` —— 那个写法在块内注释含 `}` 时
+// 会从注释处截断：断言 `toContain` 会误报「缺失」（假红），而断言 `not.toContain`
+// 会**静默通过**（假绿），后者尤其危险。
+// TODO(backlog): 文件里还有 ~46 处旧写法待迁移，见 .workbuddy/memory/open-items/backlog.md。
+function ruleBlock(css: string, selector: string, filter?: number | string): string {
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // 选择器后必须是边界字符，免得 `.find-row` 命中 `.find-row-replace`
+  const re = new RegExp(`${esc}(?=[\\s,{])`, "g");
+  let seen = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(code))) {
+    seen++;
+    const open = code.indexOf("{", m.index);
+    if (open < 0) return "";
+    // 选择器与该 `{` 之间只允许出现选择器列的字符（`.a, .b:hover > c[attr="x"]`）。
+    // 判据：中间**不能出现 `;` / `}`** —— 那说明已经越过上一条声明或上一条规则，
+    // 撞到的是别处的 `{`（例如 `.foo` 恰好在某个属性值里被提到）。
+    const between = code.slice(m.index + m[0].length, open);
+    if (/[;{}]/.test(between)) continue;
+    let depth = 0;
+    let body = "";
+    for (let i = open; i < code.length; i++) {
+      const ch = code.charAt(i);
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          body = code.slice(open + 1, i);
+          break;
+        }
+      }
+    }
+    if (typeof filter === "string") {
+      if (body.includes(filter)) return body;
+      continue;
+    }
+    if (typeof filter === "number" && seen < filter) continue;
+    return body;
+  }
+  return "";
+}
+
 // 断样式规则时先剥掉注释：注释里常写「旧值是什么」（如 flex: 0 1 auto），
 // 不剥离的话 not.toMatch 会被自己的文档误伤。
 function cssDecls(block: string): string {
@@ -434,8 +509,8 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
       expect(css, `缺 .tab-icon[data-fam="${fam}"] 配色`).toContain(`.tab-icon[data-fam="${fam}"]`);
     }
     for (const [name, block] of [
-      ["深色", css.match(/:root\[data-theme="dark"\]\s*\{[^}]*\}/)?.[0] ?? ""],
-      ["浅色", css.match(/:root\[data-theme="light"\]\s*\{[^}]*\}/)?.[0] ?? ""],
+      ["深色", themeBlock(css, "dark")],
+      ["浅色", themeBlock(css, "light")],
     ] as const) {
       for (const fam of FAMILIES) {
         expect(block, `${name}主题缺 --ficon-${fam}`).toContain(`--ficon-${fam}:`);
@@ -533,8 +608,8 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
 
       // 三档底色两套主题都要齐：缺一个就是某个主题下某状态完全没有反馈
       for (const [name, block] of [
-        ["深色", css.match(/:root\[data-theme="dark"\]\s*\{[^}]*\}/)?.[0] ?? ""],
-        ["浅色", css.match(/:root\[data-theme="light"\]\s*\{[^}]*\}/)?.[0] ?? ""],
+        ["深色", themeBlock(css, "dark")],
+        ["浅色", themeBlock(css, "light")],
       ] as const) {
         for (const v of ["--tab-bg-hover:", "--tab-bg-active:", "--tab-bg-active-hover:"]) {
           expect(block, `${name}主题必须定义 ${v}`).toContain(v);
@@ -639,8 +714,8 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     // WebView2 默认滚动条走 Windows 系统样式 → 深色界面里是一条浅色亮条。
     // 统一方案：轨道透明 + thumb 走 --sb-* 变量（两个主题各一套），全局生效。
     const g = readFileSync("src/styles/global.css", "utf-8");
-    const dark = g.match(/:root\[data-theme="dark"\]\s*\{[^}]*\}/)?.[0] ?? "";
-    const light = g.match(/:root\[data-theme="light"\]\s*\{[^}]*\}/)?.[0] ?? "";
+    const dark = themeBlock(g, "dark");
+    const light = themeBlock(g, "light");
     expect(dark, "应有深色主题变量块").toBeTruthy();
     expect(light, "应有浅色主题变量块").toBeTruthy();
 
@@ -796,8 +871,8 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(previewCss, "大纲分隔条线色同款").toMatch(
       /\.toc-resizer::after\s*\{[^}]*background:\s*var\(--sep-line\)/,
     );
-    const darkTheme = css.match(/:root\[data-theme="dark"\]\s*\{[\s\S]*?\n\}/)?.[0] ?? "";
-    const lightTheme = css.match(/:root\[data-theme="light"\]\s*\{[\s\S]*?\n\}/)?.[0] ?? "";
+    const darkTheme = themeBlock(css, "dark");
+    const lightTheme = themeBlock(css, "light");
     expect(darkTheme, "深色主题块必须找到").toBeTruthy();
     expect(lightTheme, "浅色主题块必须找到").toBeTruthy();
     for (const [name, block] of [
@@ -866,8 +941,8 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     );
 
     // ② 落点回退浅蓝：accent 系（深 #4c9ffe / 浅 #0969da）@0.22，不再用 VS Code 的灰
-    const darkTheme = css.match(/:root\[data-theme="dark"\]\s*\{[\s\S]*?\n\}/)?.[0] ?? "";
-    const lightTheme = css.match(/:root\[data-theme="light"\]\s*\{[\s\S]*?\n\}/)?.[0] ?? "";
+    const darkTheme = themeBlock(css, "dark");
+    const lightTheme = themeBlock(css, "light");
     expect(darkTheme, "深色落点为 accent 浅蓝").toContain("--drop-fill: rgba(76, 159, 254, 0.22)");
     expect(lightTheme, "浅色落点为 accent 浅蓝").toContain("--drop-fill: rgba(9, 105, 218, 0.22)");
     expect(darkTheme, "不得残留 VS Code 的深灰落点").not.toContain("rgba(83, 89, 93, 0.5)");
@@ -1369,6 +1444,190 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(main, "F3 那条 retarget 必须走同一处判断").toMatch(/else retargetFindBar\(\);/);
   });
 
+  it("B77 查找栏外观对齐 VS Code：盒模型折算 / 扁平按钮 / 两档悬停 / 虚焦环", () => {
+    // 用户要求「参考 VS Code 优化搜索悬浮框」。已按 docs/vscode-reference 里的
+    // findWidget.css / findInput.css / toggle.css / inputBox.css 逐条对齐，
+    // 拿不到出处的地方（跨文档文档图标、min-width 防抖）都在 CSS 注释里注明了。
+    const css = readFileSync("src/styles/global.css", "utf-8");
+
+    // ---- ① 浮层盒模型 = `.find-widget`（34px 高由 JS 写死，我们改由内边距自然量到）----
+    const bar = ruleBlock(css, ".find-bar");
+    expect(bar, "圆角 = cornerRadius-large（8px）").toMatch(/border-radius:\s*8px/);
+    expect(bar, "投影必须共用 --shadow-lg（= VS Code --vscode-shadow-lg）").toContain(
+      "box-shadow: var(--shadow-lg)",
+    );
+    expect(bar, "内边距左右必须是 9 / 4（VS Code `0 4px 0 9px`）").toMatch(
+      /padding:\s*[\d.]+px\s+4px\s+[\d.]+px\s+9px/,
+    );
+    expect(bar, "浮层必须是定位基准（chevron 与关闭按钮都绝对定位在里面）").toMatch(
+      /position:\s*(fixed|absolute)/,
+    );
+
+    // ---- ② 行盒模型 = `.find-part { margin: 3px 25px 0 17px }` ----
+    // 左 17 给绝对定位的 chevron，右 25 给绝对定位的关闭按钮；两行共用同一组边距，
+    // 于是主行与替换行的输入框左右边缘天然对齐。
+    const row = ruleBlock(css, ".find-row");
+    expect(row, "行要留出左右两条沟槽（25 / 17）").toMatch(/margin:\s*0\s+25px\s+0\s+17px/);
+    expect(row, "行高 25px（= `.find-part .find-actions`）").toMatch(/height:\s*25px/);
+
+    // ---- ③ 输入区：填充式无描边 + 聚焦向内 outline ----
+    const field = ruleBlock(css, ".find-field");
+    expect(field, "必须无描边（VS Code input.border 深浅两档都是 null）").toMatch(/border:\s*none/);
+    expect(field, "底色必须走令牌，不得写死").toContain("background: var(--find-field-bg)");
+    expect(field, "最小高度 25px（= `.monaco-inputbox`）").toMatch(/min-height:\s*25px/);
+    const fieldFocus = ruleBlock(css, ".find-field:focus-within");
+    expect(fieldFocus, "聚焦走 `.synthetic-focus` 的 outline").toMatch(/outline:\s*1px solid/);
+    expect(fieldFocus, "⚠️ 必须 outline-offset:-1px，否则聚焦时整行抖 1px").toMatch(
+      /outline-offset:\s*-1px/,
+    );
+
+    // ---- ④ 输入框内开关 = toggle.css（那份**自己声明了 border-box**，故不用折算）----
+    const toggle = ruleBlock(css, ".find-toggle");
+    expect(toggle, "开关宽 20px").toMatch(/width:\s*20px/);
+    expect(toggle, "开关高 20px").toMatch(/height:\s*20px/);
+    expect(toggle, "开关圆角 3px").toMatch(/border-radius:\s*3px/);
+    expect(toggle, "⚠️ 常态边框必须是 transparent 的 1px（只占位不上色 → 激活时才不位移）").toMatch(
+      /border:\s*1px solid transparent/,
+    );
+    expect(toggle, "内边距 1px").toMatch(/padding:\s*1px/);
+    expect(toggle, "必须显式 border-box（toggle.css 原文如此）").toMatch(
+      /box-sizing:\s*border-box/,
+    );
+    expect(toggle, "左间距 2px").toMatch(/margin-left:\s*2px/);
+    expect(ruleBlock(css, ".find-toggle svg"), "开关图标 16px").toMatch(/width:\s*16px/);
+
+    // 激活三态 = inputOption.active{Background,Border,Foreground} 三件套一起换
+    const toggleOn = ruleBlock(css, ".find-toggle.on");
+    expect(toggleOn, "激活底色 = inputOption.activeBackground").toContain("var(--find-opt-active)");
+    expect(toggleOn, "激活边框 = inputOption.activeBorder").toContain(
+      "var(--find-opt-active-border)",
+    );
+    expect(toggleOn, "激活字色 = inputOption.activeForeground").toContain(
+      "var(--find-opt-active-fg)",
+    );
+
+    // ---- ⑤ 工具按钮：**22px 外框**（本项目全局 border-box，必须折算）----
+    // ⚠️ 本节最容易被「照着 VS Code 抄」抄错的一处：VS Code 无全局 box-sizing，
+    // 它的 `.button { width:16px; padding:3px }` 是 content-box → 外框 22px。
+    // 我们全局是 border-box，照抄会得到 16px 外框 + 10px 内容盒，16px 图标直接溢出去。
+    const btn = ruleBlock(css, ".find-nav");
+    expect(btn, "外框必须写 22px（22 − 3×2 = 16 内容盒）").toMatch(/width:\s*22px/);
+    expect(btn, "高度同样 22px").toMatch(/height:\s*22px/);
+    expect(btn, "⚠️ 不得直接抄 16px：全局 border-box 下图标会溢出、悬停底色缩水").not.toMatch(
+      /width:\s*16px/,
+    );
+    expect(btn, "内边距 3px").toMatch(/padding:\s*3px/);
+    expect(btn, "圆角 5px（= VS Code `.button`）").toMatch(/border-radius:\s*5px/);
+    expect(btn, "平常无底色（扁平式，不像工具栏按钮那样自带填充）").toMatch(/background:\s*none/);
+    expect(btn, "平常无描边").toMatch(/border:\s*none/);
+    expect(css, "按钮图标 16px").toMatch(
+      /\.find-nav svg,[\s\S]{0,240}?\{\s*width:\s*16px;\s*height:\s*16px;/,
+    );
+    expect(css, "禁用态必须弱化而不是消失").toMatch(
+      /\.find-nav:disabled,[\s\S]{0,200}?opacity:\s*0?\.\d+/,
+    );
+
+    // 关闭按钮 = `.button.codicon-widget-close { position:absolute; top:5px; right:4px }`
+    // ⚠️ `.find-x` 先出现在上面那组扁平按钮列表里，这里要的是它自己的定位规则 → 按内容选。
+    const close = ruleBlock(css, ".find-x", "position");
+    expect(close, "关闭按钮必须脱离行流钉在浮层右上").toMatch(/position:\s*absolute/);
+    expect(close, "上边距 5px（VS Code 同款）").toMatch(/top:\s*5px/);
+    expect(close, "右边距 4px（VS Code 同款）").toMatch(/right:\s*4px/);
+
+    // chevron = `.button.toggle { position:absolute; top:0; left:0; width:18px }`
+    const chev = ruleBlock(css, ".find-chevron");
+    expect(chev, "chevron 必须绝对定位在最左").toMatch(/position:\s*absolute/);
+    expect(chev, "宽 18px（VS Code 同款）").toMatch(/width:\s*18px/);
+    expect(chev, "必须贴左缘（left: 0）").toMatch(/left:\s*0/);
+
+    // ---- ⑥ 计数 = `.matchesCount` ----
+    const count = ruleBlock(css, ".find-count");
+    expect(count, "高 25px").toMatch(/height:\s*25px/);
+    expect(count, "行高 23px").toMatch(/line-height:\s*23px/);
+    expect(count, "内边距 2px 0 0 2px").toMatch(/padding:\s*2px\s+0\s+0\s+2px/);
+    expect(count, "左边距 3px").toMatch(/margin-left:\s*3px/);
+    expect(count, "居中").toMatch(/text-align:\s*center/);
+    // 有意偏离：VS Code 用 JS 逐次测量写死宽度，我们固定 min-width 防抖（数字位数变化时
+    // 右边那排按钮不会左右横跳），已在此与 CSS 注释里记录。
+    expect(count, "固定 min-width 以防抖（有意偏离，已在注释说明）").toMatch(/min-width:\s*\d+px/);
+    expect(css, "空计数不得占宽度").toMatch(/\.find-count:empty\s*\{[^}]*min-width:\s*0/);
+    // 无匹配的红 = errorForeground；⚠️ 原先写成 `var(--error, #e5534b)`，
+    // 而项目根本没有 --error 令牌 → 一直吃硬编码 fallback、不随主题走。
+    const bad = ruleBlock(css, ".find-count-bad");
+    expect(bad, "无匹配必须走 --danger 令牌").toContain("var(--danger)");
+    expect(bad, "不得再引用不存在的 --error").not.toContain("--error");
+
+    // ---- ⑦ 两档悬停色必须**各就各位**（VS Code 给的是两个不同的值）----
+    // toolbar.hoverBackground @0x50 给工具栏按钮，inputOption.hoverBackground @0x80 给输入框内开关。
+    // 抄成同一个值 = 「划过输入框开关比划过按钮亮一档」的层级感丢失。
+    expect(css, "工具按钮悬停必须用 --find-btn-hover").toMatch(
+      /\.find-nav:hover:not\(:disabled\),[\s\S]{0,300}?\{\s*background:\s*var\(--find-btn-hover\)/,
+    );
+    expect(ruleBlock(css, ".find-toggle:hover"), "开关悬停必须用 --find-opt-hover").toContain(
+      "var(--find-opt-hover)",
+    );
+    expect(
+      ruleBlock(css, ".find-docs:hover"),
+      "文档图标属开关，也必须用 --find-opt-hover",
+    ).toContain("var(--find-opt-hover)");
+
+    // ---- ⑧ 焦点环必须是**虚线边框**而不是 outline ----
+    // outline 画在边框外面 → 开关会视觉上胀 1px，一排开关在焦点移动时互相推挤。
+    expect(css, "开关/文档图标的焦点环必须是虚线边框").toMatch(
+      /\.find-toggle:focus-visible,\s*\n\s*\.find-docs:focus-visible\s*\{[^}]*border-style:\s*dashed/,
+    );
+    expect(css, "⚠️ 不得用 outline 画开关焦点环（会胀 1px）").not.toMatch(/outline:\s*1px dashed/);
+
+    // ---- ⑨ 令牌：两套主题都要齐，且取值 = VS Code ----
+    const dark = themeBlock(css, "dark");
+    const light = themeBlock(css, "light");
+    expect(dark, "深色 inputOption.hoverBackground = #5a5d5e80").toContain(
+      "--find-opt-hover: #5a5d5e80",
+    );
+    expect(dark, "深色 toolbar.hoverBackground = #5a5d5e50").toContain(
+      "--find-btn-hover: #5a5d5e50",
+    );
+    expect(light, "浅色两档在 VS Code 里**就是同一个值** #b8b8b850").toContain(
+      "--find-opt-hover: #b8b8b850",
+    );
+    expect(light, "浅色 toolbar 档同为 #b8b8b850").toContain("--find-btn-hover: #b8b8b850");
+    expect(dark, "activeForeground 深色档 = 白").toContain("--find-opt-active-fg: #ffffff");
+    expect(light, "activeForeground 浅色档 = 黑（白字压浅蓝底读不出来）").toContain(
+      "--find-opt-active-fg: #000000",
+    );
+    for (const [name, block] of [
+      ["深色", dark],
+      ["浅色", light],
+    ] as const) {
+      for (const v of [
+        "--find-field-bg:",
+        "--find-btn-hover:",
+        "--find-opt-hover:",
+        "--find-opt-active:",
+        "--find-opt-active-border:",
+        "--find-opt-active-fg:",
+        "--shadow-lg:",
+      ]) {
+        expect(block, `${name}主题缺 ${v}`).toContain(v);
+      }
+      expect(block, `${name}主题的激活边框必须走 accent`).toContain(
+        "--find-opt-active-border: var(--accent)",
+      );
+    }
+    // 投影只此一条，tooltip 与查找栏共用（VS Code 也是同一个 --vscode-shadow-lg）
+    expect(css, "投影值 = VS Code style.css 的 --vscode-shadow-lg").toContain(
+      "--shadow-lg: 0 0 12px rgba(0, 0, 0, 0.14)",
+    );
+    expect(css, "tooltip 与查找栏必须共用同一条投影").toMatch(/--tip-shadow:\s*var\(--shadow-lg\)/);
+
+    // ---- ⑩ 状态行的收起必须有显式 [hidden] 兜底 ----
+    // 与 .find-bar[hidden] 同理：一旦有人给 .find-status 加上 display，
+    // UA 的 `[hidden] { display: none }` 就会被覆盖 → B76 那条底部空白复活。
+    expect(css, "状态行必须有显式 [hidden] 收起").toMatch(
+      /\.find-status\[hidden\]\s*\{[^}]*display:\s*none/,
+    );
+  });
+
   it("B31 转到行必须顶部对齐（与大纲跳转一致，不得最小滚动贴底）", () => {
     const src = readFileSync("src/main.ts", "utf-8");
     // 转到行 overlay（.goto-overlay 所在函数链）里的跳转必须用 y:"start"
@@ -1736,7 +1995,9 @@ describe("B50 启动不得露出白色窗口（用户反馈：打开时先白屏
     );
 
     // global.css: :root[data-theme="dark"] { --bg: #1b1d1f; }
-    const cssDark = css.match(/\[data-theme="dark"\][\s\S]*?--bg:\s*#([0-9a-fA-F]{6})/);
+    // 必须在**深色块体内**取 --bg：原先用 `[data-theme="dark"][\s\S]*?--bg:` 是非贪婪
+    // 跨块匹配，深色块一旦丢了 --bg 就会一路扫进浅色块、拿浅色的值来比对（假绿）。
+    const cssDark = /--bg:\s*#([0-9a-fA-F]{6})/.exec(themeBlock(css, "dark"));
     expect(cssDark?.[1]?.toLowerCase(), "global.css 深色 --bg 必须同上").toBe(confBg);
 
     // index.html 内联首屏样式必须同时覆盖深/浅两套
@@ -2523,8 +2784,8 @@ describe("B58 应用级 tooltip（取代原生 title，外观对齐 VS Code hove
       "--tip-key-bottom:",
     ] as const;
     for (const [name, block] of [
-      ["深色", css.match(/:root\[data-theme="dark"\]\s*\{[^}]*\}/)?.[0] ?? ""],
-      ["浅色", css.match(/:root\[data-theme="light"\]\s*\{[^}]*\}/)?.[0] ?? ""],
+      ["深色", themeBlock(css, "dark")],
+      ["浅色", themeBlock(css, "light")],
     ] as const) {
       expect(block, `未取到${name}主题变量块`).toContain("--tip-bg:");
       for (const v of VARS) expect(block, `${name}主题缺 ${v}`).toContain(v);
