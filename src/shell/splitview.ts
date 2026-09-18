@@ -187,17 +187,25 @@ function tabElFrom(target: EventTarget | null): HTMLElement | null {
   return target instanceof Element ? target.closest<HTMLElement>(".tab") : null;
 }
 
-/** 拖拽中跟随光标的浮动标签影像（`.tab-drag-ghost`）；非拖拽期为 null。 */
+/** 拖拽中跟随光标的浮动影像（`.tab-drag-ghost`）；非拖拽期为 null。 */
 let dragGhost: HTMLElement | null = null;
 
 /**
- * 造一个「跟随光标的标签副本」—— 对标 VS Code 的单标签拖拽影像。
+ * 影像左上角相对指针的偏移（像素）。
  *
- * 出处：`multiEditorTabsControl.ts:1295`，拖单个标签且 `tabSizing` 非 shrink 时
- * `e.dataTransfer.setDragImage(tab, 0, 0)`，注释写明「把被拖标签的左上角放到光标处，
- * 好给落点边框反馈让位」。本项目标签是 `tabSizing: fixed`（B56 起不收缩、不裁剪），
- * 正落在这一档 —— 所以影像 = **标签元素本身**（克隆：图标/文件名/未保存点/配色
- * 一并带过来），锚点也是左上角（见 `moveDragGhost`）。
+ * 两种影像的锚点不同，各自对标 VS Code 的一处 `setDragImage`：
+ *   · 单标签副本 = `setDragImage(tab, 0, 0)`（`multiEditorTabsControl.ts:1295`，
+ *     注释写明「把被拖标签的左上角放到光标处，好给落点边框反馈让位」）→ 偏移 0；
+ *   · 整组药丸 = `applyDragImage` 里的 `setDragImage(dragImage, -10, -10)`
+ *     （`dnd.ts:27`）→ 指针落在药丸**内部**靠左上处，读起来像「捏着它」而不是
+ *     「挂在角上」。
+ */
+const GHOST_ANCHOR_TAB = { x: 0, y: 0 };
+const GHOST_ANCHOR_PILL = { x: 10, y: 10 };
+let dragGhostAnchor = GHOST_ANCHOR_TAB;
+
+/**
+ * 造一个「跟随光标的标签副本」—— 对标 VS Code 的**单标签**拖拽影像。
  *
  * ⚠️ 必须**克隆**而不是搬走原标签：VS Code 的原生影像期间原标签原地不动，
  * 它是用户判断「从哪儿拖的、拖到哪儿了」的参照物。
@@ -205,19 +213,13 @@ let dragGhost: HTMLElement | null = null;
  * ⚠️ 为什么自己造浮层：我们是指针事件自己编排拖拽（Windows 上 WebView2 的原生拖放
  * 钩子会禁用页面内 HTML5 DnD，见 ARCHITECTURE §4），拿不到浏览器的拖拽影像。
  */
-function createDragGhost(srcEl: HTMLElement, group = false): HTMLElement {
+function createDragGhost(srcEl: HTMLElement): HTMLElement {
   const ghost = document.createElement("div");
-  ghost.className = "tab-drag-ghost" + (group ? " tab-drag-ghost-group" : "");
+  ghost.className = "tab-drag-ghost";
   ghost.setAttribute("aria-hidden", "true");
   const copy = srcEl.cloneNode(true) as HTMLElement;
   // 副本不得带 tabId：多处逻辑「按 tabId 查元素」，留着会让查询命中副本而非真标签。
   copy.removeAttribute("data-tab-id");
-  // 整组影像克隆的是标签栏 → 里面的每个 .tab 也都要剥掉（同上理由）
-  if (group) {
-    copy.querySelectorAll<HTMLElement>("[data-tab-id]").forEach((el) => {
-      el.removeAttribute("data-tab-id");
-    });
-  }
   // 副本不是真标签：剥掉提示接线。眼下靠外层 pointer-events:none 已经收不到
   // 悬停，但那是「隐式」保护 —— 哪天提示改成 elementFromPoint 就会静默复活。
   for (const el of [copy, ...copy.querySelectorAll<HTMLElement>("[data-tip]")]) {
@@ -230,16 +232,62 @@ function createDragGhost(srcEl: HTMLElement, group = false): HTMLElement {
   return ghost;
 }
 
-/** 影像左上角跟到光标处（= `setDragImage(tab, 0, 0)` 的锚点语义）。 */
+/**
+ * 造「整组拖拽」的影像：一颗只有文字的**聚合药丸**，形如 `a.md (+2)`。
+ *
+ * 出处：`editorTabsControl.ts:487-494` —— 拖整组时 VS Code 不搬标签 DOM，而是取
+ * 「活动标签名」拼上其余数量（`localize('draggedEditorGroup', "{0} (+{1})")`），
+ * 交给 `applyDragImage` 渲染成 `.monaco-drag-image`（12px / 圆角 / 单行 / 超长省略）。
+ *
+ * ⚠️ 为什么不再克隆整条标签栏（B71 的做法）：克隆出来的是一条真标签带子，
+ *   · 不裁 → 8 个标签能拖出一条横贯窗口的带子，把落点预览全盖住；
+ *   · 裁（旧 `max-width: 260px; overflow: hidden`）→ 最后一个标签被拦腰切掉半个，
+ *     看起来像「坏了」；
+ *   · 而且它和真标签长得一模一样，用户分不清「这是副本还是它们还没搬走」。
+ * 药丸只说两件事：**这一组以谁为主、一共几个**，既不遮落点也不需要裁剪。
+ *
+ * ⚠️ 有意偏离 VS Code 一处：它把 `名字 (+N)` 当成一个字符串，被 `max-width` 截断时
+ * **连计数一起吃掉**（`dnd.css` 的 120px）。而「拖的是整组、一共几个」恰恰是整组影像
+ * 唯一不可替代的信息，文件名反倒可以从标签栏上认出来 —— 所以这里拆成两个 span：
+ * 名字可截断（`overflow: hidden` + 省略号），计数永不截断（`flex: 0 0 auto`）。
+ */
+function createGroupDragGhost(strip: HTMLElement): HTMLElement {
+  const tabs = Array.from(strip.querySelectorAll<HTMLElement>(".tab"));
+  const active = strip.querySelector<HTMLElement>(".tab.tab-active") ?? tabs[0] ?? null;
+  const name = active?.querySelector<HTMLElement>(".tab-name")?.textContent?.trim() ?? "";
+  const ghost = document.createElement("div");
+  ghost.className = "tab-drag-ghost tab-drag-ghost-group";
+  ghost.setAttribute("aria-hidden", "true");
+  const nameEl = document.createElement("span");
+  nameEl.className = "tab-drag-ghost-name";
+  ghost.appendChild(nameEl);
+  // 名字读不出来（面板正在重建？）也别给一颗空药丸 —— 至少把数量说清楚
+  if (!name) {
+    nameEl.textContent = `${tabs.length} 个标签`;
+    return ghost;
+  }
+  nameEl.textContent = name;
+  // 只有一个标签时不带计数（同 VS Code 的 `count > 1` 判据）
+  if (tabs.length > 1) {
+    const countEl = document.createElement("span");
+    countEl.className = "tab-drag-ghost-count";
+    countEl.textContent = ` (+${tabs.length - 1})`;
+    ghost.appendChild(countEl);
+  }
+  return ghost;
+}
+
+/** 影像左上角跟到光标处（锚点语义见 `GHOST_ANCHOR_*`）。 */
 function moveDragGhost(x: number, y: number): void {
   if (!dragGhost) return;
-  dragGhost.style.left = `${x}px`;
-  dragGhost.style.top = `${y}px`;
+  dragGhost.style.left = `${x - dragGhostAnchor.x}px`;
+  dragGhost.style.top = `${y - dragGhostAnchor.y}px`;
 }
 
 function removeDragGhost(): void {
   dragGhost?.remove();
   dragGhost = null;
+  dragGhostAnchor = GHOST_ANCHOR_TAB;
 }
 
 /** click 处理器调用：刚完成一次真实拖拽时吞掉紧随的 click（避免拖完又激活标签）。 */
@@ -350,9 +398,11 @@ function onTabDragMove(e: MouseEvent): void {
     document.body.classList.add("tab-drag-active");
     // 越过阈值才算真的在拖 → 这时才亮出影像（纯点击不该闪出一个副本）
     if (tabDrag.tabEl) {
-      // B71：整组拖拽时 tabEl 是**整个标签栏**（VS Code 的 group drag image 同样是
-      // applyDragImage(e, tabsContainer)），影像因此带着这一组的全部标签。
-      dragGhost = createDragGhost(tabDrag.tabEl, tabDrag.groupPanelId !== null);
+      // B71：整组拖拽时 tabEl 是**整个标签栏**（VS Code 的 group drag image 也是
+      // 从 group 取的），B72 起整组改用药丸影像（见 createGroupDragGhost）。
+      const group = tabDrag.groupPanelId !== null;
+      dragGhost = group ? createGroupDragGhost(tabDrag.tabEl) : createDragGhost(tabDrag.tabEl);
+      dragGhostAnchor = group ? GHOST_ANCHOR_PILL : GHOST_ANCHOR_TAB;
       document.body.appendChild(dragGhost);
     }
   }

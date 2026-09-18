@@ -608,7 +608,7 @@ pub fn load_settings() -> session::Settings {
 
 /// 冒烟诊断：写入 %TEMP%\litepad-smoke.log。
 /// 用文件而不是 stdout，是因为 GUI 子系统下 stdout 未必有接收端。
-fn smoke_log(msg: &str) {
+pub(crate) fn smoke_log(msg: &str) {
     use std::io::Write;
     let path = std::env::temp_dir().join("litepad-smoke.log");
     if let Ok(mut f) = std::fs::OpenOptions::new()

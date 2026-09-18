@@ -983,9 +983,9 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(svCode, "从事件目标反查所在标签").toMatch(/target\.closest<HTMLElement>\("\.tab"\)/);
 
     // ② 越过阈值才亮出影像（纯点击不该闪副本）；必须克隆而非搬走原标签
-    // B71：第二个参数 = 是否整组（整组时克隆的是整个标签栏，要逐个剥掉 tabId）
+    // B72：分岔成两种影像 —— 整组走「聚合药丸」，单标签才克隆标签元素
     expect(svCode, "进入拖拽时造副本").toMatch(
-      /dragGhost = createDragGhost\(tabDrag\.tabEl, tabDrag\.groupPanelId !== null\)/,
+      /dragGhost = group \? createGroupDragGhost\(tabDrag\.tabEl\) : createDragGhost\(tabDrag\.tabEl\)/,
     );
     expect(svCode, "影像是原标签的克隆（原地不动的原标签才是参照物）").toMatch(
       /const copy = \w+\.cloneNode\(true\) as HTMLElement;/,
@@ -1016,6 +1016,130 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(css, "影像不得拦截指针").toMatch(/\.tab-drag-ghost\s*\{[^}]*pointer-events:\s*none/);
     expect(css, "层级与弹出菜单同档（VS Code .monaco-drag-image 也是 1000）").toMatch(
       /\.tab-drag-ghost\s*\{[^}]*z-index:\s*1000/,
+    );
+  });
+
+  it("B72 整组拖拽影像 = VS Code 的聚合药丸，不再是裁剪的标签栏副本（静态契约）", () => {
+    // 用户反馈：「面板整体拖拽时，随鼠标拖动的图案优化下，尤其是面板包含多个标签时，
+    // 可以参考 vscode。」旧实现（B71）把整个 `.panel-tabstrip` 克隆成影像 + CSS
+    // `max-width: 260px; overflow: hidden` 硬裁 → 最后一个标签被切掉半个，像坏了。
+    // VS Code 出处：`editorTabsControl.ts:487-494` 拖整组时取活动标签名拼其余数量
+    // （`localize('draggedEditorGroup', "{0} (+{1})")`），再交给 `applyDragImage`
+    // 渲染成 `.monaco-drag-image`（`base/browser/ui/dnd/dnd.css`：12px、圆角 10px、
+    // 单行、max-width + 省略号）。
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const sv = readFileSync("src/shell/splitview.ts", "utf-8");
+    const svCode = sv.replace(/\/\*[\s\S]*?\*\//g, "");
+    const pill = css.match(/\.tab-drag-ghost-group\s*\{([^}]*)\}/)?.[1] ?? "";
+    const nameRule =
+      css.match(/\.tab-drag-ghost-group \.tab-drag-ghost-name\s*\{([^}]*)\}/)?.[1] ?? "";
+    const countRule =
+      css.match(/\.tab-drag-ghost-group \.tab-drag-ghost-count\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(pill, "药丸规则必须存在").not.toBe("");
+    expect(nameRule, "名字 span 规则必须存在").not.toBe("");
+    expect(countRule, "计数 span 规则必须存在").not.toBe("");
+
+    // ① 药丸本体：单行 + 圆角 + 收宽度（旧实现的整条带子硬裁已删除）
+    expect(pill, "单行").toMatch(/white-space:\s*nowrap/);
+    expect(pill, "圆角药丸").toMatch(/border-radius:\s*10px/);
+    expect(pill, "12px（对齐 .monaco-drag-image）").toMatch(/font-size:\s*12px/);
+    expect(pill, "宽度收住").toMatch(/max-width:\s*220px/);
+    // ② 名字可截断：flex 子项要真截断，必须同时有 overflow:hidden 与 min-width:0
+    //    （少了 min-width 就根本不会收缩，省略号静默不出现）
+    expect(nameRule, "名字要能截断").toMatch(/overflow:\s*hidden/);
+    expect(nameRule, "名字打省略号").toMatch(/text-overflow:\s*ellipsis/);
+    expect(nameRule, "flex 子项必须 min-width: 0").toMatch(/min-width:\s*0/);
+    // ③ 计数不可截断 —— 这正是有意偏离 VS Code 的那一处
+    expect(countRule, "计数不得被压缩").toMatch(/flex:\s*0 0 auto/);
+
+    // ④ 文案 = 活动标签名 (+其余数量)；计数只在多标签时出现
+    expect(sv, "整组文案取活动标签名").toMatch(/querySelector<HTMLElement>\("\.tab\.tab-active"\)/);
+    expect(sv, "文案形态 name (+N)").toMatch(/\(\+\$\{tabs\.length - 1\}\)/);
+    expect(sv, "计数判据 tabs.length > 1").toMatch(/if \(tabs\.length > 1\)/);
+    expect(sv, "名字读不出来时不出现空药丸").toMatch(/`\$\{tabs\.length\} 个标签`/);
+    // ⑤ 药丸是**纯文字**：不能再往里塞标签 DOM 副本（那正是旧实现的病根）；
+    //    名字与计数必须是**两个** span（合成一个字符串的话 max-width 会把计数一起吃掉）
+    const pillFn = sv.match(/function createGroupDragGhost[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(pillFn, "药丸工厂必须存在").not.toBe("");
+    expect(pillFn, "不得克隆标签栏").not.toMatch(/cloneNode/);
+    expect(pillFn, "名字 span").toMatch(/className = "tab-drag-ghost-name"/);
+    expect(pillFn, "计数 span").toMatch(/className = "tab-drag-ghost-count"/);
+
+    // ⑤ 锚点分档：药丸 = setDragImage(pill, -10, -10)（指针落在药丸内部），
+    //    单标签 = setDragImage(tab, 0, 0)（左上角顶到指针）
+    expect(svCode, "药丸锚点 -10,-10").toMatch(/GHOST_ANCHOR_PILL = \{ x: 10, y: 10 \}/);
+    expect(svCode, "单标签锚点 0,0").toMatch(/GHOST_ANCHOR_TAB = \{ x: 0, y: 0 \}/);
+    expect(svCode, "跟随光标时应用锚点").toMatch(
+      /dragGhost\.style\.left = `\$\{x - dragGhostAnchor\.x\}px`/,
+    );
+    expect(svCode, "整组挂药丸锚点").toMatch(
+      /dragGhostAnchor = group \? GHOST_ANCHOR_PILL : GHOST_ANCHOR_TAB/,
+    );
+    // 影像收尾要把锚点复位，否则下一次单标签拖拽会带着药丸的 10px 偏移
+    expect(svCode, "收尾复位锚点").toMatch(
+      /function removeDragGhost[\s\S]{0,160}?dragGhostAnchor = GHOST_ANCHOR_TAB/,
+    );
+  });
+
+  it("B72 卫星窗口必须照抄主窗口的 WebView2 浏览器参数（静态契约）", () => {
+    // 用户反馈：「卫星窗口打不开，状态栏提示『新窗口没能打开，标签保留在原窗口』」。
+    //
+    // 根因（可查证，不是猜的）：Windows 上同一进程的 WebView2 环境按用户数据目录复用，
+    // Tauri 会给每个 WebView 兜底同一个目录（`tauri/src/manager/webview.rs`：
+    // 「in `windows`, we need to force a data_directory」→ `%LOCALAPPDATA%\<identifier>`）。
+    // 而 MS Learn `CoreWebView2Environment` 明写：「WebView creation fails if a running
+    // instance using the same user data folder exists, and the Environment objects have
+    // different CoreWebView2EnvironmentOptions」（同款故障在 WebView2Feedback#257 里的
+    // 表现是 `0x8007139F`）。主窗口的参数来自 tauri.conf.json 的 `additionalBrowserArgs`
+    // （含 `--disable-gpu`），而运行期 `WebviewWindowBuilder::new(...)` **不继承**这份配置
+    // → 落到 wry 内置默认值（少了 `--disable-gpu`）→ 参数不一致 → 建窗直接失败。
+    const rs = readFileSync("src-tauri/src/windows.rs", "utf-8");
+    const conf = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf-8")) as {
+      app: { windows: Array<{ label?: string; additionalBrowserArgs?: string }> };
+    };
+    const mainArgs = conf.app.windows.find((w) => w.label === "main")?.additionalBrowserArgs;
+    expect(mainArgs, "主窗口确实配了 additionalBrowserArgs（否则这条守卫没有对象）").toBeTruthy();
+
+    // ① 取参数必须**读运行时配置**，不能抄成字面量 —— 抄一份就会随 tauri.conf.json 漂移，
+    //    而漂移的后果就是「卫星窗口整个打不开」这种致命且难查的故障
+    expect(rs, "参数从 app.config() 里取").toMatch(
+      /fn shared_browser_args\(app: &AppHandle\)[\s\S]{0,160}?app\.config\(\)\.app\.windows/,
+    );
+    // ② main 条目说了算，缺失时才退回第一条
+    expect(rs, "以 main 条目为准").toMatch(/\.find\(\|w\| w\.label == MAIN_LABEL\)/);
+    expect(rs, "缺失时退回第一条").toMatch(/\.or_else\(\|\| windows\.first\(\)\)/);
+    // ③ 必须真的喂给建窗器（「函数写对了但没人这么调」是最常见的漏网形态）
+    const buildFn = rs.match(/fn build_satellite\([\s\S]*?\n\}/)?.[0] ?? "";
+    expect(buildFn, "build_satellite 存在").not.toBe("");
+    expect(buildFn, "建窗时把参数喂进去").toMatch(
+      /builder = builder\.additional_browser_args\(&args\);/,
+    );
+    // ④ 喂进去的必须是**取来的**那份，不能把 --disable-gpu 抄成字面量。
+    // ⚠️ 断言范围必须卡在 build_satellite 函数体内、且先剥掉注释 —— 注释里恰恰要写明
+    //    「为什么不能少 --disable-gpu」，对全文断言或忘了剥注释都会得到一条永远为真的守卫
+    //    （这条守卫的第一版就是因为对全文断言而失效，反向验证时抓出来的）。
+    const buildFnCode = buildFn.replace(/\/\/[^\n]*/g, "");
+    expect(buildFnCode, "不得把 --disable-gpu 抄成字面量（会与 tauri.conf.json 漂移）").not.toMatch(
+      /--disable-gpu/,
+    );
+
+    // ⑤ 失败原因必须带出来：原先两种情况（建窗失败 / 就绪超时）都只报一句
+    //    「没能打开」，把 WebView2 拒绝创建这种可诊断的信息一起吞掉了
+    const main = readFileSync("src/main.ts", "utf-8");
+    expect(main, "失败原因按 label 存下来").toMatch(/failedLabels\.set\(l, e\.payload\?\.message/);
+    expect(main, "detail 必须真的由原因拼出来").toMatch(
+      /const detail = why \? `：\$\{why\}` : "：等待新窗口就绪超时";/,
+    );
+    expect(main, "提示里带上 detail").toMatch(/`新窗口没能打开\$\{detail\}，标签保留在原窗口`/);
+    expect(rs, "Rust 侧把 message 一起发出来").toMatch(
+      /"satellite-failed",[\s\S]{0,160}?"message": e\.to_string\(\)/,
+    );
+
+    // ⑥ 启动自检：把「实际生效的那份参数」落一行日志。这组参数不一致时界面上只有
+    //    一句「新窗口没能打开」，没有别的线索 —— 这一行是唯一能事后定位的东西。
+    const mainRs = readFileSync("src-tauri/src/main.rs", "utf-8");
+    expect(mainRs, "启动时记录实际生效的浏览器参数").toMatch(
+      /"browser args = \{:\?\}"[\s\S]{0,120}?windows::shared_browser_args/,
     );
   });
 

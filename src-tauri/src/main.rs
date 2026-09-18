@@ -74,6 +74,16 @@ fn main() {
                 let _ = win.set_background_color(Some(boot_background(&win)));
             }
 
+            // B72 启动自检：记一行「实际生效的 WebView2 附加浏览器参数」。
+            // 这组参数必须被**所有**窗口照抄 —— 共用同一用户数据目录时 EnvironmentOptions
+            // 不一致会让新建 WebView 直接失败（见 `windows::pick_browser_args`），而这类
+            // 不一致在界面上只表现为「新窗口没能打开」，没有别的线索。落一行日志，
+            // 下次出问题一条命令就能定位（`%TEMP%\litepad-smoke.log`）。
+            commands::smoke_log(&format!(
+                "browser args = {:?}",
+                windows::shared_browser_args(app.handle())
+            ));
+
             // M2 文件监听：单个全局 watcher，内容变更 → file-changed 事件 → 前端提示
             let handle = app.handle().clone();
             let (tx, rx) = std::sync::mpsc::channel();

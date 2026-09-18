@@ -1704,11 +1704,39 @@ body.tab-drag-active * {
   opacity: 0.9;
 }
 
-/* B71 整组拖拽：影像克隆的是**整个标签栏**（VS Code 的 group drag image 同理），
-   不设上限的话 8 个标签能拖出一条横贯窗口的带子，把落点全盖住。 */
+/* B72 整组拖拽：影像不再是「整条标签栏的裁剪副本」，而是 VS Code 的**聚合药丸**
+   （`.monaco-drag-image`，出处 `base/browser/ui/dnd/dnd.css`）—— 只报「以谁为主 +
+   一共几个」（`a.md (+2)`）。理由见 `splitview.ts` 的 `createGroupDragGhost`：
+   裁剪副本会把最后一个标签切成半个，不裁又会拖出一条盖住落点的带子。 */
 .tab-drag-ghost-group {
-  max-width: 260px;
+  /* 沿用基类的 flex（药丸 = 名字 + 计数两个 span），只把单行与尺寸收住 */
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  /* 长文件名收住（VS Code 同款：max-width + 省略号，避免影像大到看不清） */
+  max-width: 220px;
   overflow: hidden;
+  /* 底色取活动标签的强调色：与「活动标签」建立联系，一眼看出拖的是哪一组
+     （VS Code 用的是 list-activeSelectionBackground，语义相同） */
+  background: var(--accent);
+  color: var(--accent-fg);
+  opacity: 1;
+}
+
+/* ⚠️ 有意偏离 VS Code 一处：它把「名字 (+N)」当一个字符串，`max-width` 截断时**连计数
+   一起吃掉**；而「一共几个」是整组影像唯一不可替代的信息。所以拆成两个 span：
+   名字可截断（flex 子项要截断必须自带 overflow + min-width: 0），计数永不截断。 */
+.tab-drag-ghost-group .tab-drag-ghost-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* flex 子项默认 min-width: auto，不置 0 就不会真的收缩，省略号也不会出现 */
+  min-width: 0;
+}
+.tab-drag-ghost-group .tab-drag-ghost-count {
+  flex: 0 0 auto;
 }
 
 /* ---------- 编辑区 ---------- */

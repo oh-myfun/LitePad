@@ -75,6 +75,20 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
     本浮层要盖在编辑器/预览等任意内容上，透明底会糊成一片 —— 故补 `--bg-elevated` 底色
     + 内侧描边（`outline` + `offset:-1px`，照搬 `.monaco-drag-image` 的写法，用 `outline`
     而非 `border` 才不会撑大盒子）+ 阴影。想调观感只动 `.tab-drag-ghost` 一处。
+- **整组拖拽的影像 = 聚合药丸**（B72，`.tab-drag-ghost-group`）：对标 VS Code
+  `editorTabsControl.ts:487` 的 `localize('draggedEditorGroup', "{0} (+{1})")`（活动标签名 +
+  其余数量），但**不走元素克隆** —— 克隆整条 strip 会带出十几个标签、宽度失控且读不出重点，
+  故改成**纯文本药丸**：`圆角 10px / 12px 字号 / 单行 / max-width 220px`，照搬
+  `base/browser/ui/dnd/dnd.css` 的 `.monaco-drag-image`。
+  - ⚠️ **锚点与单标签档不同**：单标签是 `setDragImage(tab, 0, 0)`（左上角贴光标）；药丸有
+    圆角与内边距，贴 `(0,0)` 会把光标压在字上，故用 `GHOST_ANCHOR_PILL = { x: 10, y: 10 }`
+    （与 `.monaco-drag-image` 的 `setDragImage(img, -10, -10)` 同思路，方向不同是因为原生影像
+    的偏移是「光标落在影像内部」，而自绘层只能整体平移）。⚠️ `removeDragGhost()` 必须把锚点
+    **复位回 `GHOST_ANCHOR_TAB`**，否则紧接的单标签拖拽会莫名偏 10px。
+  - ⚠️ **有意偏离 VS Code 一处**：VS Code 把 `名称 (+N)` 拼成**一个字符串**，`max-width` 截断时
+    会把 `(+N)` 一起吃掉（长文件名下看不到数量）。本项目拆成两个 span：名字 `min-width: 0`
+    可截断，数量 `flex: 0 0 auto` 永不被截 —— 数量是「拖了几张」的唯一线索。
+  - 空名兜底 `N 个标签`（用户此刻能信的就是数字）。
 
 ## 5. 视图刷新红线
 
@@ -558,3 +572,22 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   ACL 清单）是构建产物、不入库：本地因为一直在构建所以存在，CI 干净检出上没有 ——
   用例会在本机长期绿、**一推就红**。要么只断言入库的源文件（`capabilities/default.json`、
   `windows.rs`），要么 `existsSync` 后跳过并**在注释里写明「跳过 ≠ 通过」**。
+- ⚠️ **卫星窗口必须照抄主窗口的 WebView2 浏览器参数**（B72；不照抄的表现是**根本建不出窗口**，
+  状态栏只留下一句「新窗口没能打开，标签保留在原窗口」）。根因链：
+  1. Windows 的 WebView2 **按 user data 目录共享同一个环境**；Tauri 强制同一 app 下所有
+     `windows` 用同一目录（`%LOCALAPPDATA%\<identifier>`，见 `tauri/src/manager/webview.rs`
+     的「in `windows`, we need to force a data_directory」）。
+  2. MS Learn `CoreWebView2Environment` 明写：**user data 目录相同时，若 Environment 的
+     `CoreWebView2EnvironmentOptions` 不一致，WebView 创建失败**（对应
+     `0x8007139F` `ERROR_INVALID_STATE`，见 WebView2Feedback#257）。
+  3. 主窗口的参数来自 `tauri.conf.json` 的 `additionalBrowserArgs`（本项目含 `--disable-gpu`），
+     而 `WebviewWindowBuilder::new(...)` **不继承**它 → 卫星窗口落到 wry 默认值 → 与已在跑的
+     主窗口环境参数分叉 → 创建被拒。
+  - 修法：`windows.rs::shared_browser_args()` 从**运行时 `app.config()`** 读 `main` 条目的
+    `additional_browser_args` 喂给 `build_satellite`。⚠️ **别写死 `--disable-gpu`** ——
+    配置将来一改两边又分叉；取不到（没配）就返回 `None`，全体回落 wry 默认值（仍然一致）。
+    `main.rs` setup 里有启动自检 `smoke_log("browser args = …")` 可直接核。
+  - 建窗失败的**原因必须原样带出**（`satellite-failed` 载荷从 `e` 改成 `e.to_string()`，
+    状态栏渲染成「新窗口没能打开:<原因>」）：只报「没能打开」的话，下一次同类故障又要从头猜。
+    同一不变量由 `tests/regressions.test.ts` 的「B72 卫星窗口必须照抄主窗口的 WebView2
+    浏览器参数」锁住（4 条：不写死字面量 / 从 `app.config()` 取 / 喂给 builder / 原因回传）。

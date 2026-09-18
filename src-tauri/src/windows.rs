@@ -27,6 +27,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
+use tauri::utils::config::WindowConfig;
 use tauri::window::Color;
 use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
@@ -137,6 +138,39 @@ pub fn window_payload(
     })
 }
 
+/// 挑出「本进程所有 WebView 都必须照抄的那份附加浏览器参数」（B72）。
+///
+/// ## 为什么这不是「顺手对齐一下」而是建窗成功的前提
+///
+/// Windows 上同一进程内的 WebView2 **环境按用户数据目录复用**，而 Tauri 会给每个
+/// WebView 兜底同一个目录（`%LOCALAPPDATA%\<identifier>`，见
+/// `tauri/src/manager/webview.rs` 的「in `windows`, we need to force a data_directory」）。
+/// WebView2 的硬规则是：**共用同一用户数据目录的实例，`CoreWebView2EnvironmentOptions`
+/// 必须完全一致，否则新建 WebView 直接失败**（`0x8007139F` ERROR_INVALID_STATE，
+/// 见 MS Learn `CoreWebView2Environment` 备注与 WebView2Feedback#257）。
+///
+/// 主窗口的参数来自 `tauri.conf.json` 的 `app.windows[0].additionalBrowserArgs`
+/// （我们有 `--disable-gpu`）；而运行期 `WebviewWindowBuilder::new(...)` **不会**继承
+/// 这份配置，不显式传就落到 wry 的内置默认值（少了 `--disable-gpu`）→ 参数不一致 →
+/// 卫星窗口的 WebView 建不出来 → `build()` 报错，前端只看到「新窗口没能打开」。
+/// 这就是 B72 的真实根因：拖出去没有任何窗口出现。
+///
+/// 取值**读运行时配置**而不是抄一份字符串常量：抄一份就会随 tauri.conf.json 漂移，
+/// 而一旦漂移就是「卫星窗口整个打不开」这种致命又难查的故障（正是我们要防的形态）。
+fn pick_browser_args(windows: &[WindowConfig]) -> Option<String> {
+    // 主窗口那份说了算（它是进程里第一个建起来的 WebView，环境由它定型）；
+    // 配置里没有 main 条目时退而取第一条 —— 任何一条都比「什么都不传」强。
+    windows
+        .iter()
+        .find(|w| w.label == MAIN_LABEL)
+        .or_else(|| windows.first())
+        .and_then(|w| w.additional_browser_args.clone())
+}
+
+pub(crate) fn shared_browser_args(app: &AppHandle) -> Option<String> {
+    pick_browser_args(&app.config().app.windows)
+}
+
 /// 新建卫星窗口，返回它的 label（源窗口据此定位窗口，供「移回主窗口」等后续动作使用）。
 ///
 /// 建窗必须回到主线程：Windows 上创建原生窗口/WebView 只能在事件循环线程做，而命令是在
@@ -216,6 +250,11 @@ fn build_satellite(
         .background_color(SAT_BG)
         // 文件拖入走的是 WebView2 原生拖放（与主窗口一致），关掉会让「拖文件进窗口打开」失效
         .drag_and_drop(true);
+    // ⚠️ 必须与主窗口逐字一致，否则 WebView2 拒绝创建（原因见 `pick_browser_args`）。
+    // 这一段缺失就是 B72「卫星窗口打不开」的根因，别删。
+    if let Some(args) = shared_browser_args(app) {
+        builder = builder.additional_browser_args(&args);
+    }
     // 指定了落点就落在落点上：拖出窗口松手时新窗口出现在松手处，「拖到另一块屏幕上
     // 接着看」才成立。没给就交给系统按默认规则摆放。
     if let Some((x, y)) = spot {
@@ -297,5 +336,31 @@ mod tests {
             "NaN 会把窗口摆到不可预期的位置"
         );
         assert_eq!(spot_of(Some(0.0), Some(f64::INFINITY)), None);
+    }
+
+    /// B72：卫星窗口必须照抄**主窗口那份**附加浏览器参数。
+    ///
+    /// 反例就是发布版的实际故障：卫星窗口不传 → 落到 wry 默认值（少了 `--disable-gpu`）
+    /// → 与主窗口共用用户数据目录却参数不一致 → WebView2 拒绝创建 → 拖出去什么窗口都没有。
+    #[test]
+    fn browser_args_follow_the_main_window() {
+        let mut main = WindowConfig::default();
+        main.label = MAIN_LABEL.to_string();
+        main.additional_browser_args = Some("--disable-gpu".into());
+
+        let mut sat = WindowConfig::default();
+        sat.label = "sat-1".into();
+        sat.additional_browser_args = Some("--别的参数".into());
+
+        // 有 main 时以 main 为准（卫星窗口自己那份配置说了不算）
+        assert_eq!(
+            pick_browser_args(&[main.clone(), sat.clone()]).as_deref(),
+            Some("--disable-gpu")
+        );
+        // 配置里没有 main 条目 → 退而取第一条（有总比没有强）
+        assert_eq!(pick_browser_args(&[sat]).as_deref(), Some("--别的参数"));
+        // 谁都没配 → None。此时两个 WebView 都会落到 wry 的内置默认值，仍然一致
+        assert_eq!(pick_browser_args(&[]), None);
+        assert_eq!(pick_browser_args(&[WindowConfig::default()]), None);
     }
 }

@@ -4122,7 +4122,9 @@ async function openTabsInNewWindow(tabIds: number[], spot?: WindowSpot | null): 
 
   // 新窗口冷启可能比一次 IPC 往返还快 → 监听必须先挂上，且不能假设「label 已拿到」
   const readyLabels = new Set<string>();
-  const failedLabels = new Set<string>();
+  // label → 失败原因。B72 起必须**带出原因**：原先两种情况（建窗失败 / 就绪超时）都
+  // 只报一句「没能打开」，把 WebView2 拒绝创建这种可诊断的错误信息一起吞掉了。
+  const failedLabels = new Map<string, string>();
   let notify: ((label: string) => void) | null = null;
   const onReady = await listen<{ label: string }>("satellite-ready", (e) => {
     const l = e.payload?.label;
@@ -4130,10 +4132,10 @@ async function openTabsInNewWindow(tabIds: number[], spot?: WindowSpot | null): 
     readyLabels.add(l);
     notify?.(l);
   });
-  const onFailed = await listen<{ label: string }>("satellite-failed", (e) => {
+  const onFailed = await listen<{ label: string; message?: string }>("satellite-failed", (e) => {
     const l = e.payload?.label;
     if (!l) return;
-    failedLabels.add(l);
+    failedLabels.set(l, e.payload?.message ?? "");
     notify?.(l);
   });
 
@@ -4151,7 +4153,10 @@ async function openTabsInNewWindow(tabIds: number[], spot?: WindowSpot | null): 
       };
     });
     if (!ok) {
-      showMessage("新窗口没能打开，标签保留在原窗口", true);
+      const why = failedLabels.get(label);
+      const detail = why ? `：${why}` : "：等待新窗口就绪超时";
+      logEvent("window", `satellite ${label} failed${detail}`);
+      showMessage(`新窗口没能打开${detail}，标签保留在原窗口`, true);
       return;
     }
   } catch (err) {
