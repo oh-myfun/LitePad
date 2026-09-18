@@ -64,7 +64,7 @@ A–H 精选约 82 份、I 编辑器整模块约 3283 份（`fetch-vscode-ref.sh
   `%APPDATA%\LitePad\backups`，靠会话 `backupId` 认领。⚠️ 顺带发现
   `OpenedFile.size_class` 按 snake_case 读 → **M4 大文件降级从未生效**，已修。
   不变量见 `ARCHITECTURE.md` §7「保存体系」/§8 首条。
-- **测试规模**：427 vitest + 39 cargo；热退出 → `tests/hot-exit.test.ts`，静态契约 →
+- **测试规模**：443 vitest + 39 cargo；热退出 → `tests/hot-exit.test.ts`，静态契约 →
   `tests/regressions.test.ts`，分屏/拖拽 → `tests/splitview.test.ts` / `tests/panel-group-drag.test.ts`
   / `tests/window-drag-out.test.ts`。**反向验证**是硬要求（改完把修复还原一次，确认用例真会红）。
 - **B71 面板操作对齐 VS Code**（`72892b2`）：① 5 条面板命令（移动标签 Ctrl+Alt+←/→、
@@ -75,8 +75,18 @@ A–H 精选约 82 份、I 编辑器整模块约 3283 份（`fetch-vscode-ref.sh
   建窗+身份+载荷登记；跨窗口**只传 ChangeSet**（带 `baseLen`，不符即转全文重同步）；
   标签搬走后本地留**隐藏实例**（`panelId = -1`）供会话与异常兜底；**拖出窗口**
   主窗口开新窗（落在松手处）、卫星窗口交回主窗口。不变量见 `ARCHITECTURE.md` §9。
+- **B70 提示层三档**：A 档**菜单开着绝不弹提示**（判据 = DOM 有无 `.popup-menu`，
+  放在读 `dataset.tip` 之前；tooltip 不许反向 import menu）+ `showPopupMenu` 开场
+  `hideTip()`；B 档**菜单项一律不挂提示**（`MenuItem.title` 删除，共删 4 处）并把拖放判据
+  换成 `needsChoice(paths, targetIsMarkdown)` = 单个文件 + **落点面板的活动文档是 .md**；
+  C 档命令面板：**悬停只切 `.is-active` 不重建列表**（重建会把滚动位置归零 → 弹回顶端）、
+  **呼出面板先 `closePopupMenu()`**（菜单遮罩盖不住、会压在上面）。
+  不变量见 `ARCHITECTURE.md` §4 / §7「菜单 vs 面板/提示的互斥」/「提示（tooltip）自绘层」。
 
 ## 下一步
+- ⚠️ **B70 待真机确认**：① 菜单开着时划过工具栏/状态栏**不弹**提示，关掉菜单后恢复；
+  ② 拖一个非 md 文件到 md 面板 → 弹选择菜单；拖 md 文件到 txt 面板 → **不弹**、直接打开；
+  ③ 命令面板里鼠标上下挪行，列表**不**弹回顶端；开着菜单按 Ctrl+Shift+P，菜单消失。
 - ⚠️ **B71 ④ 待真机确认**（沙箱起不了 WebView2，全部无法自证）：拖出落点（含多显示器）/
   卫星窗口拖回主窗口 / **两窗口同开一份文档时正文实时同步** / 强杀卫星窗口后主窗口接管
   隐藏实例 / 卫星窗口未保存内容的热退出恢复 / 最大化窗口贴边拖动不该误弹新窗。

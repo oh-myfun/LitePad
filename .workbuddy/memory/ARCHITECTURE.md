@@ -46,6 +46,12 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
 - 文件拖入：落点预览复用 `.split-preview`；drop 中央 = 落进该面板，边缘 = `splitPanelWithTab` 旁分屏；
   拖放坐标是**物理像素**，要除以 `devicePixelRatio`。
 - **md 选择菜单只能在 drop 之后弹**（原生拖拽期间系统捕获鼠标，页面控件收不到点击）。
+- ⚠️ **弹不弹选择菜单的判据是「落点面板的活动文档是 Markdown」，不是「拖进来的是 .md 文件」（B70）**：
+  `needsChoice(paths, targetIsMarkdown)` = **单个文件 + 落点是 md 文档**。菜单两项的语义是
+  「打开它」还是「把路径插进光标处」，后者只有落点是一份 `.md` 才谈得上（往 `.txt` 里插一行路径
+  没有读者要的语义）；反过来「拖进来的是 .md 而落点是 .txt」时用户想做的是**打开**它，
+  不该被拦下来多问一句。落点类型由 `main.ts` 的 `panelDocIsMarkdown(panelId)` 回答
+  （取该面板的活动标签再判 `isMdTab`）；`filedrop.ts` 里原来的 `isMarkdownPath` 已删除。
 - 标签拖拽双语义且互斥：落在 `.panel-tabstrip`（需 `position:relative`）= 排序（`.tab-insert` 指示线），
   落在面板区 = 分屏预览；**strip 判定必须先于 `zoneOf`**。
 - **同面板排序绝不能改 `activeTabId`**：改了却不重挂视图会破坏 `panel.viewTabId` 不变量
@@ -118,6 +124,25 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
 - **菜单系统**（`src/shell/menu.ts`）：`MenuItem.submenu?: MenuItem[] | (() => MenuItem[])`。
   子菜单**扁平挂到 `document.body`**（按父按钮 rect 定位、右侧越界左翻），**不能挂进父菜单 DOM**——
   父菜单有 `overflow` 会裁掉子菜单。`chain`/`created` 数组维护展开层级，`closeDeeperThan(level)` 收深层。
+  ⚠️ **菜单项一律不挂提示（B70 B 档）**：`MenuItem.title` 字段已删除。VS Code 的 `menu.ts`
+  全文不注册悬停提示，而 A 档之后菜单开着时提示也根本弹不出来 —— 留着就是「写了永远不显示」的死代码。
+- **菜单 vs 面板/提示的互斥（B70 A/C 档）**：
+  - **菜单开着时绝不弹提示**：`tooltip.ts` 的 `showFor` 开头 `if (menuOpen(...)) return;`，
+    判据是 DOM 里有没有 `.popup-menu`。⚠️ **不许 import menu**（menu → tooltip 已是单向依赖，
+    反向引用成环）；菜单元素本就平铺在 `body` 上，一次 `querySelector` 足够。配套：`showPopupMenu`
+    开场先 `hideTip()`，把已显示的提示收掉。
+    **根因**：提示层 `z-index:2000` 刻意高于菜单 `1000`（好让菜单项也能弹提示），代价就是
+    菜单一开、划过工具栏/状态栏的提示会浮到菜单之上，正对着下拉展开的位置。
+  - **呼出命令面板必须顶掉已打开的菜单**：`showCommandPalette` 在「已有面板就不叠」的守卫**之后**
+    调 `closePopupMenu()`。**根因**：菜单只认 `Escape` 与外部 `pointerdown`，不认键盘呼出，
+    所以 `Ctrl+Shift+P` 时菜单原地留着 —— 面板遮罩（`z-index:120`）盖不住菜单（1000），
+    两者同屏且菜单还压在上面。
+  - **命令面板悬停只切选中态，绝不重建行**：`paint()` 只 toggle `.is-active`，`revealActive()`
+    （唯一调 `scrollIntoView` 的地方）只由键盘导航触发。⚠️ 曾经的写法是「鼠标移到哪行就整表重绘」，
+    而重绘要先 `list.textContent = ""` —— **列表滚动位置随之归零**，再靠补一次 `scrollIntoView`
+    打补丁，补不回来就是用户看到的「鼠标挪到某行、列表弹回最顶端」；顺带每悬停一次行元素就被
+    销毁重建（行上的提示得重新等 500ms）。回归：`tests/commandpalette.test.ts` 的 B70 C 档块
+    （断节点同一性 + `scrollIntoView` 只在键盘路径被调用）。
 - **标签栏溢出**（B53 整体重写）：**不折叠，也不手写区间管理** —— 放不下的标签就是
   普通的横向滚动（VS Code 式）。`renderTabstrip` 仍是「全量渲染 → 测量 → 收缩/滚动」，
   但「滚到哪」交给浏览器（DOM 的 `scrollLeft`），模块不再维护"可见窗口"。
@@ -351,7 +376,9 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
     换成 `data-tip` 后图标按钮会「失名」；只对**自身无文本且无 aria-label** 的元素补，不覆盖调用方。
   - ⚠️ `resetTooltipsForTest()` **故意不重置 `bound`**（监听器生命周期与 `document` 一致，
     反复 `initTooltips()` 只会重复注册）。要重绑请开新文档。
-  - 回归：`tests/tooltip.test.ts`（纯函数 + DOM 行为 20 条）+ `regressions.test.ts` 的 B58 块（静态锁样式/接线）。
+  - ⚠️ **菜单开着时优先让位（B70 A 档）**：`showFor` 开头先判 `.popup-menu` 在不在，
+    在就早退。**判据必须在读取 `dataset.tip` 之前**（否则等于没拦）。详见 §7「菜单 vs 面板/提示的互斥」。
+  - 回归：`tests/tooltip.test.ts`（纯函数 + DOM 行为 23 条）+ `regressions.test.ts` 的 B58 / B70 块（静态锁样式/接线/三档行为）。
 
 - **保存体系（B68）：自动保存与热退出是两个独立开关，别混为一谈**
   - **自动保存**（`Settings.autosave`，对应 VS Code `files.autoSave`）写**原文件** → 脏标记清除。
