@@ -5,11 +5,12 @@
 > **不要在会话开头一次性读全部 ref/rules/pitfalls/open-items/，只在触碰对应域时加载。**
 
 ## 身份 / 技术栈 / 范围
-LitePad（B34 更名，LiteMD 已 B36 清理）Tauri 2（Rust 持状态）+ Vite6/TS + CodeMirror6，**仅 Windows**，工作区 `E:\Project\LitePad`。标识 `litepad`/`com.litepad.app`；配置落 `%APPDATA%\LitePad`；原子写入 = 临时文件+fsync+rename。不做：插件商店/内置终端/Git/LSP。里程碑 **v0.3.0**。
+LitePad（B34 更名，LiteMD 已 B36 清理）Tauri 2（Rust 持状态）+ Vite6/TS + CodeMirror6，**仅 Windows**，工作区 `E:\Project\LitePad`。标识 `litepad`/`com.litepad.app`；配置落 `%APPDATA%\LitePad`；原子写入 = 临时文件+fsync+rename。不做：插件商店/内置终端/Git/LSP。里程碑 **v0.4.0**。
 
 ## 关键红线（每次会话必读，违反即回滚）
 - 📁 **临时文件一律落本项目 `.tmp/`**（09-18，已进 `.gitignore`/`.prettierignore`/eslint `ignores`）；禁写 `%TEMP%`、`~/.workbuddy/`（除 memory/skills）、Git Bash 的 `/tmp`（=`%TEMP%`）。
 - ⚠️ **沙箱内禁 `git stash -u`** 或任何触碰 `.git` 的重操作（09-13 全历史丢失）。
+- ⚠️ **`.workbuddy` 的搬/删只动索引、别碰磁盘命令**：对本目录跑 `git mv`/`git rm`/`rmdir` 会让运行时**整棵 `.workbuddy` 从磁盘消失**（连未触碰的 `skills/`、`overview.md` 一起）。文件仍在 git 索引/`.git/` 里，用 `git checkout HEAD -- .workbuddy` 还原。
 - **状态归 Rust、视图归前端**；内存文本 LF，落盘还原原行尾。
 - 每个交付一个 Conventional Commit；每个 bug 必须补回归测试 + 改完先**反向验证**（技能 `litepad-reverse-verify`）。
 - **界面改动必刷 `docs/screenshots/` 同一提交**；不影响观感在提交信息注明。
@@ -17,6 +18,7 @@ LitePad（B34 更名，LiteMD 已 B36 清理）Tauri 2（Rust 持状态）+ Vite
 - 每次编译产出发布版本：tsc→vite→vitest→cargo build+test→tauri build（门 = `.githooks` + GitHub `CI`）。
 - **README 使用者向**：顶部一张 `main.png`，无快捷键/安装/构建/明确不做，避开库名与内部机制。
 - 发布版本只通过 `v*` tag 发布（`git push origin main --follow-tags`）；CI 经 `.githooks` + GitHub Actions。
+- **版本号必须跟着交付动**（09-18 起）：距最近 tag 有任一 `feat` → `npm run release minor`；有效提交累计 ≥10 → `patch`。pre-push 由 `scripts/check-version-bump.sh` 卡门（达阈值阻断推送），不准出现「开发很久版本号没变」。`CHANGELOG.md` 由 `scripts/gen-changelog.sh` 自动生成，勿手改。
 
 ## 路由表（按需读取，勿全量）
 | 你需要… | 读 |

@@ -14,6 +14,8 @@
 - 编译门：tsc→vite→vitest→cargo build+test→tauri build（`.githooks`+CI） → `docs/build-env.md`
 - README 使用者向（顶部一张 `main.png`，无快捷键/安装/构建） → `docs/conventions.md`
 - 发布仅 `v*` tag（`git push origin main --follow-tags`）+ GitHub Actions → `docs/conventions.md`
+- **版本号跟着交付动**：有 `feat` → minor、有效提交 ≥10 → patch；pre-push 守卫 `scripts/check-version-bump.sh`（达阈值阻断）；三处版本号须一致 → `docs/conventions.md`
+- `CHANGELOG.md` 由 `scripts/gen-changelog.sh` 自动生成，`release.sh` 里刷新，**勿手改** → `docs/conventions.md`
 
 ## 文档模型 / 同步
 - 同文件多面板同源：Doc 持有元数据/脏标记，实例持有 state/comps/viewMode；ChangeSet 广播同步，`syncingDocId` 抑制回环 → `ref/architecture-detail.md` §1
