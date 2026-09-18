@@ -69,6 +69,9 @@ node -e "
 (cd src-tauri && cargo update -p litepad -q)   # 同步 Cargo.lock
 echo "✓ 版本号已同步到 v$VER（package.json / tauri.conf.json / Cargo.toml / Cargo.lock）"
 
+# ---- 1.5) 更新日志：从 Conventional Commit 自动生成本版小节（随后进同一个 release 提交）----
+bash scripts/gen-changelog.sh "$(git describe --tags --abbrev=0 2>/dev/null)" "$VER"
+
 # ---- 2) 全量构建（含测试与 NSIS 打包）----
 if [ "$SKIP_BUILD" -eq 1 ]; then
   echo "⏭ 跳过本地全量构建（--ci）：交由 GitHub Actions 在 tag 上构建 NSIS 并创建 Release"
@@ -80,7 +83,7 @@ else
 fi
 
 # ---- 3) 提交 + tag ----
-git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
+git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock CHANGELOG.md
 git commit -m "chore(release): v$VER"
 git tag -a "v$VER" -m "LitePad v$VER"
 echo "✓ 已提交并打 tag v$VER"

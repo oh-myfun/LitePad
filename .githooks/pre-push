@@ -14,6 +14,12 @@ command -v cargo >/dev/null 2>&1 || {
   export PATH
 }
 
+echo "▸ 版本号守卫（feat 未 bump / 有效提交超阈值即阻断，口径见 docs/conventions.md）"
+bash scripts/check-version-bump.sh || {
+  echo "✗ pre-push 失败：版本号未按规则 bump" >&2
+  exit 1
+}
+
 echo "▸ vitest 全量"
 node node_modules/vitest/vitest.mjs run || {
   echo "✗ pre-push 失败：vitest 未通过" >&2

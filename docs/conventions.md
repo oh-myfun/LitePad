@@ -12,6 +12,30 @@
 - **发布只由 `v*` tag 触发**：`bash scripts/release.sh <版本>` 同步四文件版本 → 构建 → tag，
   然后 `git push origin main --follow-tags`。`--ci` 跳过本地全量（tauri build 冷启约 38 分钟）。
 
+### 版本号何时该动（SemVer + Conventional Commit）
+
+发布工具不缺（release.sh 已能四处同步 + 打 tag + CI 出包），缺的是**触发**。口径：
+
+| 提交类型 | 版本位 |
+| --- | --- |
+| `feat`（含 `feat!`） | MINOR |
+| `fix` / `perf` | PATCH |
+| 破坏性变更（`!` / `BREAKING CHANGE`） | 1.0.0 前记 MINOR，之后 MAJOR |
+| `docs` / `test` / `chore` / `style` / `ci` / `refactor` | 不单独触发，只计入累积 |
+
+触发时机（满足任一即 bump）：
+
+- 距最近 tag 出现**任一 `feat`** → `npm run release minor`
+- 或有效提交（feat/fix/perf/refactor/revert）累计 **≥10** → `npm run release patch`
+
+**牙齿**：pre-push 先跑 `scripts/check-version-bump.sh`（排在 vitest 之前，失败得快）——
+未达阈值只告警，达阈值**直接阻断推送**并打印该执行的命令；同时校验
+`package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml` 三处版本号必须一致。
+确属误报可用 `LITEPAD_SKIP_VERSION_CHECK=1` 绕过。
+
+**CHANGELOG.md**：由 `scripts/gen-changelog.sh` 从 Conventional Commit 自动生成，
+`release.sh` 发布时自动刷新并进同一个 release 提交，**不要手改**。
+
 ## 测试与验证
 
 - **每个 bug 必须补回归测试、与修复同一提交**，且**改完先反向验证**：把修复还原一次，确认用例真会红
