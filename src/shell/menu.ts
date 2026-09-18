@@ -1,10 +1,8 @@
-import { setTip } from "./tooltip";
+import { hideTip } from "./tooltip";
 
 export interface MenuItem {
   label?: string;
   checked?: boolean;
-  /** 悬停提示（可选） */
-  title?: string;
   /** 显示为分隔线（忽略其他字段） */
   separator?: boolean;
   /**
@@ -90,6 +88,10 @@ export function showPopupMenu(
   opts?: PopupMenuOptions,
 ): void {
   closePopupMenu();
+  // B70 A 档：菜单一开就把已显示的提示收掉。
+  // 提示层 z-index（2000）高于菜单（1000），留着它会盖在刚展开的菜单上 ——
+  // 菜单栏那条尤其糟：提示默认朝下，正对着下拉菜单展开的位置。
+  hideTip();
   chain = [];
   created = [];
   currentAnchor = anchor;
@@ -224,8 +226,9 @@ function fillMenu(menu: HTMLElement, items: MenuItem[], opts?: PopupMenuOptions)
         btn.appendChild(kbd);
       }
     }
-    // B58：note 是「这个命令干什么」的补充说明，走自绘提示层（菜单项本身已有快捷键列）
-    if (item.title) setTip(btn, item.title);
+    // 菜单项**不挂提示**（B70 B 档）：VS Code 的 menu.ts 全文不注册任何悬停提示，
+    // 连原生 title 都不设；而 A 档之后菜单开着时提示也根本出不来 ——
+    // 留着 title 字段只会变成「写了永远不显示」的死代码。
 
     btn.addEventListener("mouseenter", () => {
       // 移到同级其他项时收起旧的子菜单（连同其更深层）

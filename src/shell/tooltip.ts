@@ -191,7 +191,24 @@ function renderKey(key: string): void {
   });
 }
 
+/**
+ * 菜单是否开着（B70 A 档：开着就不弹提示）。
+ *
+ * 判据是 DOM 里有没有 `.popup-menu`，而不是去问 menu.ts —— tooltip 与 menu 之间是
+ * 单向依赖（menu → tooltip 调 setTip），反过来引用会成环。菜单元素本来就平铺在
+ * body 上（各层都要躲开父级 overflow），一次 querySelector 足够准也足够便宜。
+ */
+function menuOpen(doc: Document): boolean {
+  return !!doc.querySelector(".popup-menu");
+}
+
 function showFor(el: HTMLElement, immediate: boolean): void {
+  // B70 A 档：**菜单开着就绝不弹**。提示层 z-index 2000 是刻意高于菜单 1000 的
+  // （好让菜单项也能弹提示），代价就是菜单一开，划过工具栏/状态栏/菜单栏的提示
+  // 会浮到菜单之上、正对着下拉展开的位置 —— 用户看到的正是这个重叠。
+  // VS Code 的做法更彻底：菜单部件根本不注册悬停提示（menubar.ts / menu.ts 全文
+  // 0 次 hover），这里我们只做到「菜单开着时不弹」，其余提示照常保留。
+  if (menuOpen(el.ownerDocument)) return;
   const text = el.dataset.tip;
   if (!text || !el.isConnected) return;
   build();

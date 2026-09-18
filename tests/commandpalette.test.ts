@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   PALETTE_OPEN_CLASS,
+  PALETTE_OVERLAY_CLASS,
   filterItems,
   paletteItems,
   paletteOpen,
@@ -40,7 +41,16 @@ function type(text: string): void {
 }
 
 afterEach(() => {
+  // ⚠️ 必须**用 Esc 正式关闭**，不能直接 remove 元素：
+  // close() 里才会摘掉挂在 document 上的 keydown 监听。直接摘元素会把监听留在
+  // document 上，后续用例按方向键时旧监听也会响应（打到已脱离文档的旧列表上），
+  // 造成「一次按键触发多次滚动」这类幽灵现象。
+  let guard = 0;
+  while (document.querySelector(`.${PALETTE_OVERLAY_CLASS}`) && guard++ < 20) {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  }
   for (const el of document.querySelectorAll(".palette-overlay")) el.remove();
+  for (const el of document.querySelectorAll(".popup-menu")) el.remove();
   document.body.classList.remove(PALETTE_OPEN_CLASS);
   setKeymapPreset(DEFAULT_PRESET_ID);
 });
@@ -174,5 +184,77 @@ describe("M4 命令面板：交互", () => {
     type("zzzzzzz");
     expect(rows().length).toBe(0);
     expect(document.querySelector(".palette-empty")).toBeTruthy();
+  });
+});
+
+// ---- B70 C 档 ----
+// 两个用户报告的缺陷：
+//  1. 「光标挪到某一项时，列表会自动滚动到最顶端」—— 根因是悬停走整表重绘，
+//     `list.textContent = ""` 把滚动位置归零。修法是悬停只切 `.is-active`。
+//  2. 「有菜单打开着时呼出命令面板，菜单不消失」—— 菜单只认 Escape 与外部
+//     pointerdown，不认键盘呼出，所以 Ctrl+Shift+P 时它原地留着、还压在面板之上。
+describe("B70 C 档：悬停不重建列表 / 呼出面板顶掉菜单", () => {
+  it("悬停只切 is-active，不销毁重建行（重建会让列表滚动位置归零）", () => {
+    showCommandPalette({ overrides: {}, onRun: () => {} });
+    const before = rows();
+    expect(before.length).toBeGreaterThan(2);
+
+    before[2].dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+
+    const after = rows();
+    expect(after.length, "行数不变").toBe(before.length);
+    // 节点同一性：一旦重建，这些引用全部失效（"列表弹回顶端" 的根因）
+    expect(after[0], "第一行必须是同一个节点").toBe(before[0]);
+    expect(after[2], "第 3 行也必须是同一个节点").toBe(before[2]);
+    expect(activeRow()).toBe(after[2]);
+  });
+
+  it("鼠标悬停不调 scrollIntoView，只有键盘导航才滚动", () => {
+    // 只统计**仍在文档里**的行：万一有用例留下没关闭的面板，那些旧监听会打到
+    // 已脱离文档的旧列表上 —— 那是用例污染，不是本缺陷，不该计入。
+    const live = (els: Element[]): Element[] => els.filter((e) => e.isConnected);
+    const calls: Element[] = [];
+    const orig = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      calls.push(this);
+    };
+    try {
+      showCommandPalette({ overrides: {}, onRun: () => {} });
+      expect(live(calls).length, "初次渲染本来就在顶端，不该滚动").toBe(0);
+
+      rows()[1].dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+      expect(live(calls).length, "悬停不得触碰滚动位置（列表才不会弹回顶端）").toBe(0);
+
+      pressKey("ArrowDown");
+      expect(live(calls).length, "键盘导航才把选中行滚进视野").toBe(1);
+      // 滚的必须是**当下高亮的那一行**（悬停已经把高亮挪到第 2 行，↓ 之后是第 3 行，
+      // 所以这里不能写死 index）
+      expect(live(calls)[0]).toBe(activeRow());
+    } finally {
+      Element.prototype.scrollIntoView = orig;
+    }
+  });
+
+  it("悬停在已选中行上不重复切态（避免无谓的写样式）", () => {
+    showCommandPalette({ overrides: {}, onRun: () => {} });
+    const first = rows()[0];
+    expect(first.classList.contains("is-active")).toBe(true);
+    first.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    expect(rows()[0], "仍应是同一节点且仍选中").toBe(first);
+    expect(activeRow()).toBe(first);
+  });
+
+  it("呼出命令面板会顶掉打开着的菜单", async () => {
+    const { showPopupMenu, closePopupMenu } = await import("../src/shell/menu");
+    const anchor = document.createElement("button");
+    document.body.appendChild(anchor);
+    showPopupMenu(anchor, [{ label: "示例项" }]);
+    expect(document.querySelector(".popup-menu"), "先得有菜单开着").toBeTruthy();
+
+    showCommandPalette({ overrides: {}, onRun: () => {} });
+
+    expect(document.querySelector(".popup-menu"), "面板一开菜单就该消失").toBeNull();
+    expect(paletteOpen()).toBe(true);
+    closePopupMenu();
   });
 });

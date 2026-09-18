@@ -226,7 +226,6 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
       { label: "关闭", onSelect: () => cb.onClose(t.tabId) },
       {
         label: "复制标签",
-        title: "创建同源副本（内容实时同步），可拖到其他面板对照查看",
         onSelect: () => cb.onDuplicateTab?.(t.tabId),
       },
       ...(t.hasSibling
@@ -243,7 +242,6 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
         ? [
             {
               label: "在新窗口打开",
-              title: "把这份文档交给一个新窗口；原窗口是「搬走」而不是复制",
               onSelect: () => cb.onOpenInNewWindow?.(t.tabId),
             },
           ]

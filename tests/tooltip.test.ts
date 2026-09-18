@@ -305,4 +305,51 @@ describe("tooltip 层行为（jsdom）", () => {
     vi.advanceTimersByTime(600);
     expect(isTipVisible()).toBe(false);
   });
+
+  // ---- B70 A 档：菜单开着就不弹提示 ----
+  // 提示层 z-index（2000）刻意高于菜单（1000），所以「菜单开着时划过别处」会把提示
+  // 浮到菜单之上、正对着下拉展开的位置。VS Code 干脆不给菜单栏/菜单项注册悬停提示。
+  const mkMenu = (): HTMLElement => {
+    const m = document.createElement("div");
+    m.className = "popup-menu";
+    document.body.appendChild(m);
+    return m;
+  };
+
+  it("菜单开着时不弹新提示（划过工具栏也不弹）", () => {
+    mkMenu();
+    const b = mkTip("新建", "toolbar", "Ctrl+N");
+    hover(b);
+    vi.advanceTimersByTime(600);
+    expect(isTipVisible(), "菜单开着不该弹提示").toBe(false);
+  });
+
+  it("菜单关掉后提示恢复正常", () => {
+    const menu = mkMenu();
+    const b = mkTip("新建", "toolbar", "Ctrl+N");
+    hover(b);
+    vi.advanceTimersByTime(600);
+    expect(isTipVisible()).toBe(false);
+    menu.remove(); // 菜单关了
+    leave(b);
+    vi.advanceTimersByTime(300);
+    hover(b);
+    vi.advanceTimersByTime(600);
+    expect(isTipVisible(), "菜单关掉后应恢复").toBe(true);
+  });
+
+  it("打开菜单会把已经显示出来的提示收掉（menu.ts 调 hideTip）", async () => {
+    // 这条走真实接线：showPopupMenu 一开就先 hideTip，否则提示会盖在刚展开的菜单上。
+    const { showPopupMenu, closePopupMenu } = await import("../src/shell/menu");
+    const b = mkTip("新建", "toolbar", "Ctrl+N");
+    hover(b);
+    vi.advanceTimersByTime(600);
+    expect(isTipVisible(), "先得有提示显示着").toBe(true);
+
+    showPopupMenu(b, [{ label: "示例项" }]);
+    expect(isTipVisible(), "菜单一开就该把提示收掉").toBe(false);
+    expect(document.querySelector(".popup-menu"), "菜单本身要开出来").toBeTruthy();
+    closePopupMenu();
+    expect(document.querySelector(".popup-menu")).toBeNull();
+  });
 });

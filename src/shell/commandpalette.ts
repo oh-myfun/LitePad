@@ -11,6 +11,7 @@
  * - 键盘优先：↑↓ 选择、Enter 执行、Esc 关闭；鼠标悬停/点击同样可用。
  */
 
+import { closePopupMenu } from "./menu";
 import { COMMANDS, effectiveKeys, formatBinding, parseKey, type KeymapOverrides } from "./keymap";
 import { setTip } from "./tooltip";
 
@@ -111,6 +112,12 @@ export function showCommandPalette(opts: CommandPaletteOptions): void {
   // 已有面板就不叠第二层（Ctrl+Shift+P 连按只会关掉重开，观感很差）
   if (paletteOpen()) return;
 
+  // B70 C 档：先把打开着的菜单收掉。
+  // 菜单不监听键盘（只认 Escape 与外部 pointerdown），所以 Ctrl+Shift+P 呼出面板时
+  // 菜单会原地留着 —— 面板的遮罩（z-index 120）盖不住菜单（1000），两者同屏且
+  // 菜单还压在上面。用户要的是「呼出面板」这一个动作把菜单顶掉。
+  closePopupMenu();
+
   const items = paletteItems(opts.overrides);
   let rows = filterItems(items, "");
   let active = 0;
@@ -139,6 +146,35 @@ export function showCommandPalette(opts: CommandPaletteOptions): void {
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
   document.body.classList.add(PALETTE_OPEN_CLASS);
+
+  /**
+   * 只改选中态，**不重建行**。
+   *
+   * ⚠️ 这里曾经是「鼠标移到哪一行就整表重绘一次」，代价有两个：
+   *   1. 重绘要先把 `list.textContent = ""` 清空 —— **列表滚动位置随之归零**，
+   *      再靠给选中行 `scrollIntoView` 补一次滚动，而补滚动只在「选中行确实不在
+   *      视野内」时才动，一旦补不回来，用户看到的就是「鼠标挪到某行、列表弹回顶端」。
+   *      现在悬停完全不碰 DOM，滚动位置自然不受影响。
+   *   2. 行元素被销毁重建 → 挂在这行上的提示（note）每次悬停都从头等 500ms，
+   *      且鼠标下的元素在重绘瞬间换了一个，观感与命中都不稳。
+   */
+  const paint = (): void => {
+    list.querySelectorAll<HTMLElement>(".palette-item").forEach((el, i) => {
+      el.classList.toggle("is-active", i === active);
+    });
+  };
+
+  /** 把选中行滚进视野。**只在键盘移动时调**：鼠标不可能停在看不见的行上。 */
+  const revealActive = (): void => {
+    list.children[active]?.scrollIntoView({ block: "nearest" });
+  };
+
+  /** 选中项变化：悬停走静默路径（不滚动），键盘导航才滚动。 */
+  const select = (i: number, reveal: boolean): void => {
+    active = i;
+    paint();
+    if (reveal) revealActive();
+  };
 
   const render = (): void => {
     list.textContent = "";
@@ -177,16 +213,13 @@ export function showCommandPalette(opts: CommandPaletteOptions): void {
 
       row.addEventListener("mousemove", () => {
         if (active === i) return;
-        active = i;
-        render();
+        select(i, false);
       });
       row.addEventListener("click", () => run(item.id));
       list.appendChild(row);
-      if (i === active) {
-        // 键盘移动时把当前项滚进视野（列表可滚动时否则看不到高亮）
-        row.scrollIntoView({ block: "nearest" });
-      }
     });
+    // 重建后滚动位置本来就在顶端（`textContent = ""` 会归零），
+    // 第一项必然可见 —— 这里**不需要**也不该再 scrollIntoView。
   };
 
   const run = (id: string): void => {
@@ -212,15 +245,13 @@ export function showCommandPalette(opts: CommandPaletteOptions): void {
     if (e.key === "ArrowDown") {
       e.preventDefault();
       e.stopPropagation();
-      if (rows.length > 0) active = (active + 1) % rows.length;
-      render();
+      if (rows.length > 0) select((active + 1) % rows.length, true);
       return;
     }
     if (e.key === "ArrowUp") {
       e.preventDefault();
       e.stopPropagation();
-      if (rows.length > 0) active = (active - 1 + rows.length) % rows.length;
-      render();
+      if (rows.length > 0) select((active - 1 + rows.length) % rows.length, true);
       return;
     }
     if (e.key === "Enter") {

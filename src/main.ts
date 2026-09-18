@@ -1592,6 +1592,18 @@ function fileDropTargetAt(x: number, y: number): FileDropTarget | null {
   return { panelId: id, zone: zoneOf(el.getBoundingClientRect(), x, y) };
 }
 
+/**
+ * 落点面板的**活动文档**是不是 Markdown（拖放选择菜单的判据，见 `needsChoice`）。
+ *
+ * 拖到面板外（target 为 null）时不问：那时用户没瞄准任何文档，谈不上「插到哪儿」，
+ * 直接按原来的兜底行为打开即可。
+ */
+function panelDocIsMarkdown(panelId: number): boolean {
+  const p = panels.get(panelId);
+  const t = p ? tabs.get(p.activeTabId) : undefined;
+  return !!t && isMdTab(t);
+}
+
 /** 按落点打开：中央 = 落进该面板；边缘 = 在该面板旁分屏打开。 */
 async function openDroppedAt(path: string, target: FileDropTarget | null): Promise<void> {
   const tabId = await doOpen(path, undefined, target?.panelId);
@@ -4775,7 +4787,9 @@ async function setupShell(): Promise<void> {
       const pos = dropPosOf(p.position);
       const target = fileDropTargetAt(pos.x, pos.y);
       clearAllDropPreviews();
-      if (needsChoice(p.paths)) {
+      // B70 B 档：问「打开 / 插入路径」的前提是**落点是一份 Markdown**，
+      // 而不是「拖进来的文件是 Markdown」。
+      if (needsChoice(p.paths, target !== null && panelDocIsMarkdown(target.panelId))) {
         const path = p.paths[0];
         const name = path.split(/[\\/]/).pop() ?? path;
         showFileDropChoice(name, pos, {

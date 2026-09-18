@@ -2080,6 +2080,23 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
   });
 });
 
+// md 扩展名清单在多个文件各写一份，必须同步。
+// B70 三档（菜单开着不弹提示 / 删菜单项提示 / 命令面板两处修复）的行为断言见文件
+// 末尾的「B70 提示与菜单」块 —— 这里不再重复同一约束，否则改一处要同步两处。
+it("md 扩展名集合在多处各写了一份，必须完全一致", () => {
+  // filedrop 里那份随 B70 B 档判据改动删掉了，剩下的三处（main ×2 + outline）仍要同步：
+  // 不一致会出现「面板认它是 Markdown、导出却不认」这种半吊子状态。
+  // ⚠️ 只比 Markdown 那一条：outline 里还另有一组「配置类扩展名」，那不是同一件事。
+  const outline = readFileSync("src/markdown/outline.ts", "utf-8");
+  const mainSrc = readFileSync("src/main.ts", "utf-8");
+  const literals = [...`${mainSrc}\n${outline}`.matchAll(/\\\.\([a-z|]+\)\$/g)]
+    .map((m) => m[0])
+    .filter((s) => s.includes("markdown"));
+  expect(literals.length, "至少三处（main ×2 + outline ×1）").toBeGreaterThanOrEqual(3);
+  expect(new Set(literals).size, "各处必须完全一致").toBe(1);
+  expect(literals[0]).toBe("\\.(md|markdown|mdown|mkd)$");
+});
+
 describe("B48 安装包必须自带 WebView2Loader.dll（缺了应用起不来）", () => {
   // 用户报告：装好的应用双击无反应。根因是 NSIS 包里只有 litepad.exe，
   // 而它的导入表依赖 WebView2Loader.dll（Tauri 的 WebView2 加载器，必须与 exe 同目录）；
@@ -2339,5 +2356,146 @@ describe("B58 应用级 tooltip（取代原生 title，外观对齐 VS Code hove
     expect(html, "工具栏容器必须标 data-tip-group（同组秒开）").toContain(
       'data-tip-group="toolbar"',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B70：提示层三档调整（用户逐条提的观感问题）
+//   A 档 菜单开着时不弹提示（提示层 z-index 2000 > 菜单 1000，会盖在展开的菜单上）
+//   B 档 删掉 3 处菜单项提示，并把「拖放选择菜单」的触发判据从
+//        「拖进来的是 .md」改成「落点面板的活动文档是 .md」
+//   C 档 修命令面板两处：悬停不重建列表（列表弹回顶端）、呼出面板顶掉菜单
+// ---------------------------------------------------------------------------
+describe("B70 提示与菜单：菜单开着不弹提示 + 删菜单项提示 + 命令面板两处修复", () => {
+  const tooltipSrc = readFileSync("src/shell/tooltip.ts", "utf-8");
+  const menuSrc = readFileSync("src/shell/menu.ts", "utf-8");
+  const filedropSrc = readFileSync("src/shell/filedrop.ts", "utf-8");
+  const tabstripSrc = readFileSync("src/shell/tabstrip.ts", "utf-8");
+  const paletteSrc = readFileSync("src/shell/commandpalette.ts", "utf-8");
+  const mainSrc = readFileSync("src/main.ts", "utf-8");
+
+  describe("A 档：菜单开着就绝不弹提示", () => {
+    it("tooltip 侧靠 DOM 里的 .popup-menu 判断菜单是否开着", () => {
+      expect(tooltipSrc, "必须有 menuOpen 判据").toMatch(/function menuOpen\(doc: Document\)/);
+      expect(tooltipSrc, "判据就是 DOM 里有没有菜单元素").toMatch(
+        /doc\.querySelector\("\.popup-menu"\)/,
+      );
+      // menu → tooltip 是单向依赖；反过来 import menu 会成环，所以只查 DOM
+      const showFor = topLevelFnBody(tooltipSrc, "function showFor");
+      expect(showFor, "取不到 showFor").toBeTruthy();
+      expect(showFor, "showFor 开头必须早退：菜单开着就不显示（这是 A 档的核心）").toMatch(
+        /if \(menuOpen\(el\.ownerDocument\)\) return;/,
+      );
+    });
+
+    it("reading 目标文本前就要拦下（否则等于没拦）", () => {
+      const showFor = topLevelFnBody(tooltipSrc, "function showFor");
+      const guard = showFor.indexOf("menuOpen(el.ownerDocument)");
+      const readText = showFor.indexOf("el.dataset.tip");
+      expect(guard, "守卫必须存在").toBeGreaterThan(-1);
+      expect(readText, "守卫必须在读取 dataset.tip 之前").toBeGreaterThan(guard);
+    });
+
+    it("菜单侧：showPopupMenu 一开就先 hideTip（已显示的提示不能盖在菜单上）", () => {
+      expect(menuSrc, "必须从 tooltip 只引入 hideTip（不要 setTip —— 菜单项已无提示）").toMatch(
+        /import \{ hideTip \} from "\.\/tooltip";/,
+      );
+      const open = topLevelFnBody(menuSrc, "function showPopupMenu");
+      expect(open, "取不到 showPopupMenu").toBeTruthy();
+      expect(open, "开场第一件事就把已显示的提示收掉").toMatch(/hideTip\(\);/);
+    });
+  });
+
+  describe("B 档：删掉菜单项提示（写了也永远不显示 = 死代码）", () => {
+    it("MenuItem 不再有 title 字段，fillMenu 也不再挂提示", () => {
+      expect(menuSrc, "MenuItem 不该再留 title 字段").not.toMatch(/^\s*title\?: string;/m);
+      const fill = topLevelFnBody(menuSrc, "function fillMenu");
+      expect(fill, "取不到 fillMenu").toBeTruthy();
+      expect(fill, "菜单项不得再调 setTip").not.toMatch(/setTip\(/);
+    });
+
+    it("标签右键菜单的高频项不带 title（复制标签 / 在新窗口打开）", () => {
+      for (const label of ["复制标签", "在新窗口打开"]) {
+        const i = tabstripSrc.indexOf(`label: "${label}"`);
+        expect(i, `找不到菜单项 ${label}`).toBeGreaterThan(-1);
+        // 该项到下一个 } 之间不得出现 title
+        const chunk = tabstripSrc.slice(i, tabstripSrc.indexOf("}", i));
+        expect(chunk, `${label} 不该再挂提示`).not.toMatch(/title/);
+      }
+    });
+
+    it("拖放选择菜单两项也不再挂 title", () => {
+      const choice = topLevelFnBody(filedropSrc, "function showFileDropChoice");
+      expect(choice, "取不到 showFileDropChoice").toBeTruthy();
+      expect(choice, "两项都不该有 title").not.toMatch(/title/);
+    });
+
+    it("触发判据改成「落点面板的活动文档是 Markdown」，而不是「拖进来的是 .md」", () => {
+      expect(filedropSrc, "needsChoice 必须接收落点文档是否为 Markdown").toMatch(
+        /export function needsChoice\(paths: string\[\], targetIsMarkdown: boolean\): boolean/,
+      );
+      expect(filedropSrc, "单个文件 + 落点是 Markdown 才问").toMatch(
+        /return paths\.length === 1 && targetIsMarkdown;/,
+      );
+      expect(filedropSrc, "isMarkdownPath 这条旧判据应已删除").not.toMatch(/isMarkdownPath/);
+
+      // main.ts 接线：落点面板的活动文档是不是 md 由 panelDocIsMarkdown 回答
+      expect(mainSrc, "落点判定必须问「落点面板的活动文档」").toMatch(
+        /needsChoice\(p\.paths, target !== null && panelDocIsMarkdown\(target\.panelId\)\)/,
+      );
+      const helper = topLevelFnBody(mainSrc, "function panelDocIsMarkdown");
+      expect(helper, "取不到 panelDocIsMarkdown").toBeTruthy();
+      expect(helper, "必须取该面板的活动标签再判 isMdTab").toMatch(/isMdTab\(t\)/);
+    });
+  });
+
+  describe("C 档：命令面板两处修复", () => {
+    it("悬停只切选中态，绝不重建列表（重建会把滚动位置归零 → 弹回顶端）", () => {
+      const show = topLevelFnBody(paletteSrc, "function showCommandPalette");
+      expect(show, "取不到 showCommandPalette").toBeTruthy();
+
+      expect(paletteSrc, "必须有独立的 paint（只切 is-active，不碰 DOM 结构）").toMatch(
+        /const paint = \(\): void => \{/,
+      );
+      expect(paletteSrc, "必须有 revealActive（滚动只在键盘导航时发生）").toMatch(
+        /const revealActive = \(\): void => \{/,
+      );
+      expect(paletteSrc, "select 的第二个参数决定是否滚动").toMatch(
+        /const select = \(i: number, reveal: boolean\): void => \{/,
+      );
+
+      // 鼠标路径：只 select(i, false) —— 不重建、不滚动
+      const box = show.slice(show.indexOf('"mousemove"'));
+      const handler = box.slice(0, box.indexOf("});"));
+      expect(handler, "悬停必须走静默路径 select(i, false)").toMatch(/select\(i, false\);/);
+      expect(handler, "悬停不得调 render()（那是重建列表）").not.toMatch(/render\(\)/);
+
+      // 键盘路径：select(..., true) 才滚动
+      expect(show, "↓ 必须滚动选中行").toMatch(/select\(\(active \+ 1\) % rows\.length, true\)/);
+      expect(show, "↑ 必须滚动选中行").toMatch(
+        /select\(\(active - 1 \+ rows\.length\) % rows\.length, true\)/,
+      );
+
+      // 渲染路径里不得再出现 scrollIntoView 调用：它曾经就在这里「重建完再补一次滚动」，
+      // 而重建本身已经把滚动位置清零 —— 补不回来的那一次就是用户看到的「弹回顶端」。
+      const renderBody = paletteSrc.slice(
+        paletteSrc.indexOf("const render = ()"),
+        paletteSrc.indexOf("const run = (id"),
+      );
+      expect(renderBody.length, "必须能截出渲染函数体").toBeGreaterThan(0);
+      expect(renderBody, "渲染里不得再调 scrollIntoView").not.toMatch(/scrollIntoView\(/);
+    });
+
+    it("呼出面板先把打开着的菜单收掉（菜单只认 Esc / 外部 pointerdown，不认键盘呼出）", () => {
+      expect(paletteSrc, "必须引入 closePopupMenu").toMatch(
+        /import \{ closePopupMenu \} from "\.\/menu";/,
+      );
+      const show = topLevelFnBody(paletteSrc, "function showCommandPalette");
+      const guard = show.indexOf("if (paletteOpen()) return;");
+      const close = show.indexOf("closePopupMenu();");
+      expect(guard, "取不到「已有面板就不叠第二层」的守卫").toBeGreaterThan(-1);
+      expect(close, "必须调用 closePopupMenu").toBeGreaterThan(-1);
+      expect(close, "收菜单必须在守卫之后（面板没开才需要收）").toBeGreaterThan(guard);
+    });
   });
 });

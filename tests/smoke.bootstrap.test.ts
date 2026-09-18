@@ -67,10 +67,21 @@ vi.mock("@tauri-apps/api/webview", () => ({
   }),
 }));
 
-function fireDragDrop(paths: string[]): void {
+/**
+ * 触发一次原生拖放 drop。
+ *
+ * `pos` 是**物理像素**坐标，与 Tauri 的 `PhysicalPosition` 一致（main 里按
+ * devicePixelRatio 换算成逻辑像素再命中面板）。默认 (-1,-1) 表示**不在任何面板内**
+ * —— 也就是「拖到窗口空白处」，此时按没有落点面板处理（直接打开、不弹选择菜单）。
+ *
+ * ⚠️ 早先这里传的是 `{ Logical: {...} }`，而真实载荷的 `position` 是 `{ x, y }`，
+ * 于是落点一直是 undefined（换算成 NaN、panelAt 永远返回 null）—— 落点分支其实
+ * 从没被测到。B70 把菜单判据改成「看落点」之后这里必须给真坐标。
+ */
+function fireDragDrop(paths: string[], pos: { x: number; y: number } = { x: -1, y: -1 }): void {
   const cb = dragDropHandlers[dragDropHandlers.length - 1];
   if (!cb) throw new Error("onDragDropEvent 未注册");
-  cb({ payload: { type: "drop", paths, position: { Logical: { x: 0, y: 0 } } } });
+  cb({ payload: { type: "drop", paths, position: pos } });
 }
 
 // ---- 桩：IPC 层 ----
@@ -638,50 +649,76 @@ describe("bootstrap + drag-split smoke", () => {
   it("从资源管理器拖入文件必须打开该文件（回归：拖入变成插入内容）", async () => {
     // 用户报告：拖文件进窗口应打开文件，而不是把内容复制进当前文档。
     // 实现：dragDropEnabled: true + onDragDropEvent(drop)。
-    // B24：拖入单个 Markdown 时先弹「打开文档 / 插入文件路径」选择菜单，
-    // 选「打开」才真正打开；其他类型 / 多文件仍然直接打开。
+    // B24：落到 Markdown 文档上时先弹「打开文档 / 插入文件路径」选择菜单，
+    // 选「打开」才真正打开；落点不是 Markdown / 多文件则直接打开。
+    // B70 B 档：弹菜单的判据是**落点面板的活动文档**，不再是「拖进来的文件是 .md」。
     expect(dragDropHandlers.length, "onDragDropEvent 应在启动时注册").toBeGreaterThan(0);
-    fireDragDrop(["e.md"]);
-    await new Promise((r) => setTimeout(r, 120));
 
-    expect(capturedError, `拖入文件不应抛错：${String(capturedError)}`).toBeNull();
+    // 需要真实几何：否则所有面板的 rect 都是 0，panelAt 永远命中文档里第一个面板，
+    // 「落到哪个面板」这件事就测不出来了。
+    const restoreRects = installRectStubs();
+    try {
+      // 挑一个活动标签是 .md 的面板（前面若干用例可能把布局换成过别的形态）
+      const panelsEl = Array.from(document.querySelectorAll<HTMLElement>(".layout-panel"));
+      const mdPanelIdx = panelsEl.findIndex((p) =>
+        (p.querySelector(".tab.tab-active .tab-name")?.textContent ?? "").includes(".md"),
+      );
+      expect(mdPanelIdx, "夹具里应有一个显示 .md 的面板").toBeGreaterThanOrEqual(0);
+      // 面板矩形是 [idx*210, +200]，取中心偏下（避开顶部 24px 的标签条）
+      const at = { x: mdPanelIdx * 210 + 100, y: 100 };
 
-    // B24：md 落地应弹选择菜单，且此时文件尚未打开
-    const choiceMenu = document.querySelector(".popup-menu");
-    expect(choiceMenu, "拖入 Markdown 应弹出 打开/插入路径 选择菜单").toBeTruthy();
-    const choices = Array.from(choiceMenu!.querySelectorAll("button")).map(
-      (b) => b.textContent ?? "",
-    );
-    expect(
-      choices.some((t) => t.includes("打开")),
-      "应有「打开文档」项",
-    ).toBe(true);
-    expect(
-      choices.some((t) => t.includes("插入文件路径")),
-      "应有「插入文件路径」项",
-    ).toBe(true);
-    const contentsBefore = Array.from(document.querySelectorAll(".cm-content")).map(
-      (c) => c.textContent ?? "",
-    );
-    expect(
-      contentsBefore.some((t) => t.includes("fifth document from E")),
-      "菜单未选择前不应直接打开",
-    ).toBe(false);
+      fireDragDrop(["e.md"], at);
+      await new Promise((r) => setTimeout(r, 120));
 
-    // 选择「打开」→ 文件作为新标签打开
-    const openBtn = Array.from(choiceMenu!.querySelectorAll("button")).find((b) =>
-      (b.textContent ?? "").includes("打开"),
-    )!;
-    openBtn.click();
-    await new Promise((r) => setTimeout(r, 120));
+      expect(capturedError, `拖入文件不应抛错：${String(capturedError)}`).toBeNull();
 
-    const contents = Array.from(document.querySelectorAll(".cm-content")).map(
-      (c) => c.textContent ?? "",
-    );
-    expect(
-      contents.some((t) => t.includes("fifth document from E")),
-      `拖入的 e.md 应作为新标签打开并显示内容，实际：${JSON.stringify(contents)}`,
-    ).toBe(true);
+      const choiceMenu = document.querySelector(".popup-menu");
+      expect(choiceMenu, "落到 Markdown 文档上应弹出 打开/插入路径 选择菜单").toBeTruthy();
+      const choices = Array.from(choiceMenu!.querySelectorAll("button")).map(
+        (b) => b.textContent ?? "",
+      );
+      expect(
+        choices.some((t) => t.includes("打开")),
+        "应有「打开文档」项",
+      ).toBe(true);
+      expect(
+        choices.some((t) => t.includes("插入文件路径")),
+        "应有「插入文件路径」项",
+      ).toBe(true);
+      const contentsBefore = Array.from(document.querySelectorAll(".cm-content")).map(
+        (c) => c.textContent ?? "",
+      );
+      expect(
+        contentsBefore.some((t) => t.includes("fifth document from E")),
+        "菜单未选择前不应直接打开",
+      ).toBe(false);
+
+      // 选择「打开」→ 文件作为新标签打开
+      const openBtn = Array.from(choiceMenu!.querySelectorAll("button")).find((b) =>
+        (b.textContent ?? "").includes("打开"),
+      )!;
+      openBtn.click();
+      await new Promise((r) => setTimeout(r, 120));
+
+      const contents = Array.from(document.querySelectorAll(".cm-content")).map(
+        (c) => c.textContent ?? "",
+      );
+      expect(
+        contents.some((t) => t.includes("fifth document from E")),
+        `拖入的 e.md 应作为新标签打开并显示内容，实际：${JSON.stringify(contents)}`,
+      ).toBe(true);
+
+      // B70 B 档的反向约束：拖进来的**不是** md 也要问 —— 判据看落点。
+      // 这里只验「菜单起来了」，随后 Esc 取消，别真去打开一个 txt。
+      fireDragDrop(["notes.txt"], at);
+      await new Promise((r) => setTimeout(r, 120));
+      const menuForNonMd = document.querySelector(".popup-menu");
+      expect(menuForNonMd, "拖非 md 文件落到 Markdown 文档上同样要问（可以只插路径）").toBeTruthy();
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(document.querySelector(".popup-menu"), "Esc 应关掉菜单").toBeNull();
+    } finally {
+      restoreRects();
+    }
   });
 
   it("拖拽 tab 到 tab 区 = 调整顺序（B27：显示插入线而非分屏预览，也不分屏）", async () => {
