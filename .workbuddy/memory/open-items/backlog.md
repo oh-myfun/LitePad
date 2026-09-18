@@ -30,9 +30,17 @@
 ## 待补截图（沿用 B60–B66 欠账，沙箱拍不了）
 - M4 `keymap.png`/`command-palette.png`；B51 `main.png`/`preferences.png`；B53–B71 `main.png`
   （标签图标 / 面板操作栏 / 分隔条细线 / 分屏落点 / ●↔× 换装 / 最大化后的「还原」按钮）。
+- **B77 查找栏**：外观已按 VS Code 重做（折叠态 34px / 扁平图标按钮 / 两档悬停 / 输入框内嵌开关），
+  尚无任何真机截图。它与 `command-palette.png` 可一次会话同拍。现有四张截图都不含查找栏。
+  （已同步记入 `docs/screenshots/README.md`。）
 
 ## 待清理
 - `menu.ts` 的 `MenuItem.active` 与 `.menu-item-current`（B53 后无使用者）。
+- **测试守卫的可假绿写法（B77 派生）**：`tests/regressions.test.ts` 还有约 46 处
+  `\.xxx\s*\{[^}]*\}` 的静态提取。块内注释一旦出现 `}`（见 `pitfalls/0075`）就会从那里截断：
+  带 `toContain` 的会假红好发现，带 `not.toContain` / `not.toMatch` 的会**静默通过**（假绿）。
+  已提供 `themeBlock()` / `ruleBlock()` 两个剥注释 + 数花括号的助手，新用例必须用它；
+  旧点逐批迁移（按域分批，改一批跑一批，别一次性重排整个文件）。
 
 ## 待定
 - 是否发 **v0.3.1**；M5 规划未定（候选见 `DESIGN.md`）。

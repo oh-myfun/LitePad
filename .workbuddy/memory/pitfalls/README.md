@@ -8,6 +8,8 @@
 |---|---|---|
 | 0072 | webview2-shared-env | 卫星窗口须照抄主窗口 WebView2 浏览器参数，否则建不出窗口 |
 | 0073 | hidden-vs-display-flex | 设了 `display:flex` 的元素，`hidden` 属性被盖掉（静默失效，已踩三次） |
+| 0074 | prepush-windres-path | pre-push 缺 MSYS2 PATH 时会把「缺 windres」误报成测试失败 |
+| 0075 | css-comment-star-slash | CSS 注释里写出 `*/`（如 `.*` 紧跟 `/`）会提前闭合注释，并连带打穿静态守卫 |
 
 新增踩坑时：在对应 `ref/<domain>.md` 的原文处替换为指向本目录某记录的指针，并新建一条
 `<NNNN>-<slug>.md`（序号取 B 编号，slug 用 kebab-case 概括根因）。

@@ -54,6 +54,12 @@ agent_created: true
 - ⚠️ **一个 `from` 片段必须全文唯一命中**（B72 实测的假绿）：`String.replace` 只改**第一处**，
   若该片段在文件里出现多次，被改的可能根本不是这条修复所在的地方 ——
   此时无论脚本判红还是判绿，都**不构成任何证据**。模板里已把它当硬失败处理。
+- ⚠️ **别手搓探针**（B77 实测的假绿）：在 `.tmp/` 里临时写几条探针看着更快，
+  但它**正好绕过了上一条护栏**。B77 手搓版把「按钮悬停该用 `--find-btn-hover`」改成
+  `--find-opt-hover`，而同一片段在 `.find-chevron:hover` 里先出现一次，
+  `String.replace` 只换了那一处 → 被守的规则根本没动 → 判出「守卫没咬住」的**假绿**，
+  白排查一轮。定型脚本里的 `replaceOnce()` 命中数 ≠ 1 会把该条判成**无效**（既不是红也不是绿），
+  这一条才是省时间的地方。**先落 `scripts/reverse-verify-<B号>.cjs` 再探，不要反过来。**
 - ⚠️ **「还原点」必须落在因果链上最终决定值的那一处**（B73 实测的假绿）：同一个状态常常被写多次，
   若改回的是**创建时**的默认值，而之后 `open()` / 重新渲染又会把它复位，则该 case **恒绿**、
   不构成证据。改前先顺一遍「谁最后写这个值」，`from` 落在**最后生效**那一处
@@ -154,8 +160,10 @@ process.exit(bad === 0 && broken === 0 ? 0 : 1); // 非零码：别让人只看�
 
 ```sh
 export PATH="/c/Users/maoyu/.workbuddy/binaries/PortableGit/versions/1.2.0/usr/bin:/c/msys64/mingw64/bin:/c/Users/maoyu/.cargo/bin:/c/Users/maoyu/.workbuddy/binaries/node/versions/22.22.2-3:/c/WINDOWS/System32:$PATH"
-node "E:/Project/LitePad/.tmp/reverse-verify-b70.cjs"
+node "E:/Project/LitePad/scripts/reverse-verify-B77.cjs"
 ```
+
+（B77 起定型脚本一律入库到 `scripts/reverse-verify-<B号>.cjs`，见铁律第 2 条；`.tmp/` 只放草稿。）
 
 ## 覆盖清单（照这个列 case，别漏）
 
