@@ -49,12 +49,17 @@ const FILE_FAMILIES = [
 ] as const;
 
 // 全仓库文本文件枚举（B36 改名残留检查用）：跳过构建产物 / 依赖 / 二进制。
+// ⚠️ `.tmp` 与 `generated-images` 同理：都是**永不入库、可随时整目录删掉**的临时落点
+//    （见 MEMORY.md「临时文件一律落在本项目内」），里面允许放历史副本 —— 历史副本里
+//    提到旧名是「对过去的记录」，不是会泄漏到产品里的命名残留。少了这条，
+//    往 .tmp/ 扔一个引用旧名的探针脚本就会把全仓改名守卫判红（09-18 B72 推送时实测）。
 const SKIP_DIRS = new Set([
   "node_modules",
   "dist",
   "target",
   "gen",
   ".git",
+  ".tmp",
   "generated-images",
   ".vite",
 ]);
