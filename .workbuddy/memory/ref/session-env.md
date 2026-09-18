@@ -43,6 +43,20 @@
   拒绝访问 (os error 5)`。先按**进程路径**确认是 LitePad 再强杀（不要无差别杀 `node`）。
 - 后台任务用宿主的 `TaskStop` 收，不要按名字杀 `node`（会误伤其它会话）。
 
+## 6.5 git 钩子环境缺 coreutils（**静默假绿**，09-18 实测）
+- 本机 Git 的钩子环境 **PATH 不含 `<git>/usr/bin`**，于是钩子里的 `grep`/`sed`/`head` 全部 `command not found`。
+- 危险点在于**失败被吞**：`.githooks/pre-commit` 的 `printf … | grep … || true` 会返回空串 ⇒
+  prettier/eslint 段落**整段静默跳过**（提交输出只剩「▸ tsc -b」，看着像全绿）；
+  `scripts/check-version-bump.sh` 的 `grep -cE … || true` 同样变空 ⇒ 阈值比较退化成
+  `[ "" -ge 1 ]`（"integer expression expected"）⇒ **版本号守卫静默放行**。两处门都形同虚设。
+- 补 PATH 的两个坑：① `C:/msys64/mingw64/bin` 里**没有** grep/sed（只有 windres/gcc），补了也没用；
+  ② 从 `git --exec-path` 反推 usr/bin 时**层级要探测不能算死** —— 官方 Git 是
+  `<git>/mingw64/libexec/git-core`（退 **3** 层到 `<git>/usr/bin`），部分发行版退 2 层。
+- 已修（两个钩子都改）：探测 `../../../usr/bin` 与 `../../usr/bin` 谁有 `grep(.exe)` 就补谁，
+  并在补完后再验一次 —— 缺 coreutils 就**响亮失败**，不再静默跳过。
+- ⚠️ 复查口诀：钩子打印的段落里**没有「▸ prettier --check」/「▸ eslint」** 就是被跳过了，
+  别把「✓ pre-commit 通过」当成四个检查都跑了。
+
 ## 7. 测试链路坑
 - `scripts/run-vitest.cjs` 自己会补 `run`：手动再写 `run` 会变成 `vitest run "run" "<file>"` 且失败时被吞 stdout。
   排查直接用 `npx vitest run <file>` 看输出。

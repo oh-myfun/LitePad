@@ -12,6 +12,35 @@ command -v cargo >/dev/null 2>&1 || {
   export PATH
 }
 
+# —— coreutils PATH 兜底（grep / sed / head / ls…）——
+# ⚠️ 必须显式补：Git for Windows 的钩子环境**不再**把自带的 `<git>/usr/bin` 放进 PATH，
+#    而下面按类型过滤 staged 文件全靠 `grep`。09-18 实测：grep 找不到时
+#    `printf … | grep … || true` 会把失败**吞掉** ⇒ prettier / eslint 静默跳过、
+#    门形同虚设（commit 输出只剩「▸ tsc -b」，看着像全绿）。
+#    注意 `C:/msys64/mingw64/bin` 里**没有** grep/sed（只有 windres/gcc），补不了这个缺口。
+#    从 `git --exec-path` 反推 Git 自带的 usr/bin，不写死盘符。⚠️ 层级要**探测**不能算死：
+#    官方 Git 是 `<git>/mingw64/libexec/git-core`（要退 3 层到 `<git>/usr/bin`），
+#    而部分发行版是 `<git>/libexec/git-core`（退 2 层）；算错一层就会静默失效。
+#    ⚠️ 命中后必须 `cd … && pwd` **规范化**：带 `..` 的原始路径写进 PATH 后，MSYS 的
+#    `command -v` 搜不到（实测把 `<git>/mingw64/libexec/git-core/../../../usr/bin` 塞进 PATH
+#    仍然 command not found）。`pwd` 会归一成 `<git>/usr/bin` 才生效。
+COREUTILS_DIR=""
+EXEC_PATH="$(git --exec-path 2>/dev/null || true)"
+for d in "$EXEC_PATH/../../../usr/bin" "$EXEC_PATH/../../usr/bin"; do
+  if [ -x "$d/grep.exe" ] || [ -x "$d/grep" ]; then
+    COREUTILS_DIR="$(cd "$d" 2>/dev/null && pwd)"
+    break
+  fi
+done
+if [ -n "$COREUTILS_DIR" ]; then
+  case ":$PATH:" in
+  *":$COREUTILS_DIR:"*) ;;
+  *) PATH="$COREUTILS_DIR:$PATH" ;;
+  esac
+  export PATH
+  echo "▸ coreutils: $COREUTILS_DIR"
+fi
+
 STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
 [ -z "$STAGED" ] && exit 0
 
@@ -20,6 +49,12 @@ fail() {
   echo "  （修复后重试；确需跳过用 git commit --no-verify，不建议）" >&2
   exit 1
 }
+
+# 补完 PATH 再验一次：宁可**响亮地失败**，也不要静默跳过整段检查。
+# （钩子的既有哲学是「缺工具就警告跳过」，但那只对 Rust/C++ 这类可选工具成立；
+#   prettier/eslint 是前端门的核心，缺了就等于没有门。）
+command -v grep >/dev/null 2>&1 ||
+  fail "找不到 grep（Git 自带的 usr/bin 也没有）—— 无法按类型过滤 staged 文件，拒绝静默跳过"
 
 # 1) prettier：staged 的前端文件（排除产物目录与编码样例）
 FRONT=$(printf '%s\n' "$STAGED" | grep -E '\.(ts|css|html|json)$' |

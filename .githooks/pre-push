@@ -13,6 +13,34 @@ for d in "$HOME/.cargo/bin" "/c/msys64/mingw64/bin" "C:/msys64/mingw64/bin"; do
 done
 export PATH
 
+# —— coreutils PATH 兜底（grep / sed / head…）——
+# ⚠️ 与 pre-commit 同源问题：Git for Windows 的钩子环境不含自带的 `<git>/usr/bin`，
+#    而 `scripts/check-version-bump.sh` 内部用 grep/sed/head 统计提交类型。
+#    09-18 实测：grep 缺失时该脚本的三处 `grep -cE … || true` 全部返回空 ⇒ 阈值比较变成
+#    `[ "" -ge 1 ]`（报 "integer expression expected"）⇒ **版本号守卫静默放行**，
+#    看起来「✓ 版本号守卫通过」，实际上根本没统计。注意 msys64/mingw64/bin **没有** grep。
+#    层级要**探测**不能算死：官方 Git 是 `<git>/mingw64/libexec/git-core`（退 3 层），
+#    部分发行版是 `<git>/libexec/git-core`（退 2 层）；算错一层就静默失效。
+#    ⚠️ 命中后必须 `cd … && pwd` **规范化**：带 `..` 的原始路径写进 PATH 后，MSYS 的
+#    `command -v` 搜不到（实测把 `<git>/mingw64/libexec/git-core/../../../usr/bin` 塞进 PATH
+#    仍然 command not found）。`pwd` 会归一成 `<git>/usr/bin` 才生效。
+COREUTILS_DIR=""
+EXEC_PATH="$(git --exec-path 2>/dev/null || true)"
+for d in "$EXEC_PATH/../../../usr/bin" "$EXEC_PATH/../../usr/bin"; do
+  if [ -x "$d/grep.exe" ] || [ -x "$d/grep" ]; then
+    COREUTILS_DIR="$(cd "$d" 2>/dev/null && pwd)"
+    break
+  fi
+done
+if [ -n "$COREUTILS_DIR" ]; then
+  case ":$PATH:" in
+  *":$COREUTILS_DIR:"*) ;;
+  *) PATH="$COREUTILS_DIR:$PATH" ;;
+  esac
+  export PATH
+  echo "▸ coreutils: $COREUTILS_DIR"
+fi
+
 # MSYS2 MinGW64 提供 windres / gcc（工具链见 rust-toolchain.toml）。
 # ⚠️ 这段**必须独立存在**，不能挂在「找不到 cargo」的条件里：msys64/mingw64/bin 里并没有
 #    cargo.exe，挂进去就等于永不生效 ⇒ tauri-winres 在 build.rs 阶段拿不到 windres，
@@ -24,6 +52,16 @@ for w in "C:/msys64/mingw64/bin" "/c/msys64/mingw64/bin" "/c/msys64/ucrt64/bin" 
   [ -x "$w/windres.exe" ] && { WINDRES_DIR="$w"; break; }
 done
 if [ -n "$WINDRES_DIR" ]; then PATH="$PATH:$WINDRES_DIR"; export PATH; fi
+
+# 守卫内部靠 grep/sed/head 统计提交类型；缺工具时它会「静默放行」并打印 ✓ —— 假绿。
+# 这类门绝不能靠「看起来通过」，缺工具就硬失败。
+for t in grep sed head bash; do
+  command -v "$t" >/dev/null 2>&1 || {
+    echo "✗ pre-push 失败：找不到 $t（Git 自带的 usr/bin 也没有）" >&2
+    echo "  版本号守卫会因缺工具静默放行，拒绝继续。" >&2
+    exit 1
+  }
+done
 
 echo "▸ 版本号守卫（feat 未 bump / 有效提交超阈值即阻断，口径见 docs/conventions.md）"
 bash scripts/check-version-bump.sh || {
