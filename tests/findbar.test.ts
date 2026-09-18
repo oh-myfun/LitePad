@@ -59,6 +59,11 @@ function mount(overrides: Partial<Parameters<typeof createFindBar>[1]> = {}) {
     toggles: () => [...dom.querySelectorAll<HTMLElement>(".find-toggle")],
     docs: () => q<HTMLButtonElement>(".find-docs"),
     badge: () => q<HTMLElement>(".find-badge"),
+    // 「在选区中查找」B78 起从输入框内嵌开关（.find-toggle）挪到了 prev/next 之后，
+    // 成了工具栏上的一颗 .find-sel —— 不再被 .find-toggle 选中。
+    selBtn: () => q<HTMLButtonElement>(".find-sel"),
+    sash: () => q<HTMLElement>(".find-sash"),
+    results: () => q<HTMLElement>(".find-results"),
     replaceRow: () => q<HTMLElement>(".find-row-replace"),
     chevron: () => q<HTMLButtonElement>(".find-chevron"),
     closeBtn: () => q<HTMLButtonElement>(".find-x"),
@@ -232,19 +237,43 @@ describe("悬浮查找栏：方案 C 的折叠替换行与图标开关", () => {
     expect(document.activeElement).toBe(m.q(".find-replace-input"));
   });
 
-  it("五个图标开关（大小写/全词/正则/选区/保留大小写）进入查询对象", () => {
+  it("图标开关（大小写/全词/正则/保留大小写）进入查询对象，选区开关在箭头之后", () => {
     const m = mount();
     m.bar.open();
-    expect(m.toggles(), "查找行 4 个 + 替换行 1 个").toHaveLength(5);
+    // 输入框内嵌开关 3 个 + 替换行 1 个；选区那个已挪出输入框（B78）
+    expect(m.toggles(), "查找行 3 个 + 替换行 1 个").toHaveLength(4);
     m.tgl("区分大小写").click();
     m.tgl("正则").click();
-    m.tgl("在选区中查找").click();
+    m.selBtn().click();
     m.tgl("保留大小写").click();
     expect(m.lastQuery()?.caseSensitive).toBe(true);
     expect(m.lastQuery()?.wholeWord).toBe(false);
     expect(m.lastQuery()?.regexp).toBe(true);
     expect(m.lastQuery()?.inSelection).toBe(true);
     expect(m.lastQuery()?.preserveCase).toBe(true);
+    expect(m.selBtn().getAttribute("aria-pressed"), "选区开关也要用 aria-pressed").toBe("true");
+
+    // 顺序：选区开关必须排在上下箭头之后（VS Code find-actions 的顺序）
+    const order = [...m.dom.querySelectorAll<HTMLElement>(".find-row-main > *")].map((el) =>
+      el.classList.contains("find-field")
+        ? "field"
+        : el.classList.contains("find-chevron")
+          ? "chevron"
+          : el.classList.contains("find-count")
+            ? "count"
+            : el.classList.contains("find-prev")
+              ? "prev"
+              : el.classList.contains("find-next")
+                ? "next"
+                : el.classList.contains("find-sel")
+                  ? "sel"
+                  : el.classList.contains("find-docs")
+                    ? "docs"
+                    : el.classList.contains("find-x")
+                      ? "close"
+                      : "?",
+    );
+    expect(order).toEqual(["chevron", "field", "count", "prev", "next", "sel", "docs", "close"]);
   });
 
   it("图标开关用 aria-pressed 表达激活态", () => {
@@ -307,14 +336,24 @@ describe("悬浮查找栏：不绑定文件/面板", () => {
     expect(m.q(".find-count").classList.contains("find-count-bad"), "无匹配变红").toBe(true);
   });
 
-  it("setHits 直接渲染结果并给出「N 条结果（M 个文档）」", () => {
+  it("setHits 渲染结果并给出「N 条结果（M 个文档）」，空列表留一行「无结果」", () => {
     const m = mount();
     m.bar.open();
+    // 结果区是**跨文档查找**的结果列表：不点亮文档图标时它不该存在（单文档查找的命中
+    // 数在计数里，不在结果区）。
+    expect(m.results().hidden, "未开跨文档时结果区收起").toBe(true);
+    m.docs().click();
+    expect(m.results().hidden, "跨文档一开结果区就常驻").toBe(false);
+    expect(m.q(".find-empty").textContent, "空态占位").toBe("无结果");
+
     m.bar.setHits([hit("a.md", 3), hit("b.md", 7)]);
     expect(m.hitRows()).toHaveLength(2);
     expect(m.q(".find-status").textContent).toContain("2 条结果（2 个文档）");
+    // 关键：清空后结果区**不能整块消失**（否则浮层高度来回跳），要留空位
     m.bar.setHits([]);
     expect(m.hitRows()).toHaveLength(0);
+    expect(m.results().hidden, "空结果也要保留空位").toBe(false);
+    expect(m.q(".find-empty"), "空态渲染「无结果」").toBeTruthy();
   });
 
   it("文档图标徽标显示打开文档数（仅在跨文档激活时可见）", () => {
@@ -371,6 +410,133 @@ describe("B76：状态行不占位、徽标数字必有值、选区锚点冻结"
     m.docs().click(); // 熄灭后重亮，数字不能丢
     m.docs().click();
     expect(m.badge().textContent).toBe("23");
+  });
+});
+
+// B78：①左侧宽度手柄 ②替换行展开后折叠按钮变高 ③选区按钮移到箭头之后
+//      ④选区与跨文档互斥 ⑤结果区常驻（空态也显示无结果）⑥两行输入框同宽 ⑦替换图标重绘
+describe("B78：左侧手柄 / 折叠按钮变高 / 选区与跨文档互斥 / 结果区常驻", () => {
+  /** jsdom 没有布局，需要宽度的地方只能打桩 */
+  const rect = (w: number): DOMRect =>
+    ({
+      width: w,
+      height: 25,
+      top: 0,
+      left: 0,
+      right: w,
+      bottom: 25,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }) as DOMRect;
+
+  it("左侧有宽度调节手柄", () => {
+    const m = mount();
+    m.bar.open();
+    const sash = m.sash();
+    expect(sash, "必须有手柄").toBeTruthy();
+    expect(m.dom.firstElementChild, "手柄贴浮层左缘（与 chevron 一样绝对定位在 left:0）").toBe(
+      sash,
+    );
+    expect(sash.getAttribute("aria-label"), "手柄要有可读名字").toBeTruthy();
+  });
+
+  it("拖手柄改宽度：浮层钉在右上，所以往左拖 = 变宽", () => {
+    const m = mount();
+    m.bar.open();
+    const dom = m.dom;
+    dom.getBoundingClientRect = () => rect(parseFloat(dom.style.width) || 470);
+    m.sash().dispatchEvent(new MouseEvent("pointerdown", { button: 0, clientX: 100 }));
+    window.dispatchEvent(new MouseEvent("pointermove", { clientX: 60 }));
+    // 470 + (100 - 60) = 510：往左拖 40px 就宽 40px
+    expect(dom.style.width).toBe("510px");
+    window.dispatchEvent(new MouseEvent("pointerup", {}));
+
+    // 松手后再动鼠标不该还跟着改宽度（监听器必须解绑）
+    window.dispatchEvent(new MouseEvent("pointermove", { clientX: 20 }));
+    expect(dom.style.width, "松手后必须解绑").toBe("510px");
+  });
+
+  it("双击手柄在「默认宽度 ↔ 可用最大宽度」间切换（同 VS Code onDidReset）", () => {
+    const m = mount();
+    m.bar.open();
+    const dom = m.dom;
+    dom.getBoundingClientRect = () => rect(parseFloat(dom.style.width) || 470);
+    // 没调过宽度 → 双击放大到可用宽度（jsdom 的 innerWidth = 1024，减两侧 16）
+    m.sash().dispatchEvent(new MouseEvent("dblclick", {}));
+    expect(dom.style.width).toBe(`${window.innerWidth - 32}px`);
+    // 再双击 → 复原到默认 470
+    m.sash().dispatchEvent(new MouseEvent("dblclick", {}));
+    expect(dom.style.width).toBe("470px");
+  });
+
+  it("替换行展开后浮层带 replace-toggled（CSS 据此把折叠按钮拉成两行高）", () => {
+    const m = mount();
+    m.bar.open();
+    expect(m.dom.classList.contains("replace-toggled"), "折叠态不带").toBe(false);
+    m.chevron().click();
+    expect(m.dom.classList.contains("replace-toggled"), "展开态必须带").toBe(true);
+    m.chevron().click();
+    expect(m.dom.classList.contains("replace-toggled")).toBe(false);
+  });
+
+  it("选区查找与所有文档查找互斥：同一时间只能选一个", () => {
+    const m = mount();
+    m.bar.open();
+    m.docs().click();
+    expect(m.lastQuery()?.allDocs).toBe(true);
+    // 点亮选区 → 熄掉跨文档
+    m.selBtn().click();
+    expect(m.lastQuery()?.inSelection).toBe(true);
+    expect(m.lastQuery()?.allDocs, "点亮选区必须熄掉跨文档").toBe(false);
+    expect(m.docs().classList.contains("on")).toBe(false);
+    // 反过来：点亮跨文档 → 熄掉选区
+    m.docs().click();
+    expect(m.lastQuery()?.allDocs).toBe(true);
+    expect(m.lastQuery()?.inSelection, "点亮跨文档必须熄掉选区").toBe(false);
+    expect(m.selBtn().classList.contains("on")).toBe(false);
+    expect(m.selBtn().getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("输入框内容清空后，结果区仍留着空位并显示「无结果」", () => {
+    const m = mount();
+    m.setHits([hit("a.md", 3)]);
+    m.bar.open();
+    m.docs().click();
+    const input = m.q<HTMLInputElement>(".find-input");
+    input.value = "todo";
+    input.dispatchEvent(new Event("input"));
+    key(input, "Enter");
+    expect(m.hitRows()).toHaveLength(1);
+    input.value = "";
+    input.dispatchEvent(new Event("input"));
+    expect(m.results().hidden, "清空输入后结果区也不能整块消失").toBe(false);
+    expect(m.q(".find-empty").textContent).toBe("无结果");
+  });
+
+  it("替换输入框与查找输入框同宽（JS 量出查找框宽度后写死）", () => {
+    const m = mount();
+    m.bar.open();
+    const findField = m.q<HTMLElement>(".find-row-main .find-field");
+    const replField = m.q<HTMLElement>(".find-row-replace .find-field");
+    // jsdom 没有布局：量出来是 0 时不能写死 0px
+    expect(replField.style.width, "无布局时不下手").toBe("");
+    findField.getBoundingClientRect = () => rect(260);
+    m.chevron().click();
+    expect(replField.style.width).toBe("260px");
+  });
+
+  it("替换 / 全部替换图标不同：全部替换是两支箭头，替换是一支", () => {
+    const m = mount();
+    m.bar.open("", true);
+    const one = m.q<HTMLElement>(".find-replace-one").innerHTML;
+    const all = m.q<HTMLElement>(".find-replace-all").innerHTML;
+    expect(one).toContain("<rect", "替换图标是一个「匹配块 + 一支箭头」");
+    expect(all).toContain("<rect");
+    // 箭头段数：全部替换比替换多一条（同 viewBox / 同描边，字形族保持一致）
+    const arrows = (svg: string) => (svg.match(/M10\.6/g) ?? []).length;
+    expect(arrows(one)).toBe(1);
+    expect(arrows(all)).toBe(2);
   });
 });
 

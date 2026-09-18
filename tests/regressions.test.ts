@@ -1628,6 +1628,117 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     );
   });
 
+  it("B78 查找栏七处观感：宽度手柄 / 折叠按钮变高 / 选区按钮移位 / 两个范围互斥 / 结果区常驻 / 两框同宽 / 替换图标", () => {
+    // 用户反馈的七条：①左侧有宽度调节手柄 ②替换区展开后折叠按钮变高
+    // ③选区查找按钮在上下箭头之后 ④选区查找与所有文档查找互斥
+    // ⑤结果区始终保留空位（输入为空也显示无结果）⑥查找与替换输入框同宽 ⑦替换图标改进
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const bar = readFileSync("src/shell/findbar.ts", "utf-8");
+
+    // ---- ① 左侧宽度手柄 = VS Code `.find-widget .monaco-sash`（sash.css 的 vertical 变体）----
+    const sash = ruleBlock(css, ".find-sash");
+    expect(sash, "手柄必须存在").not.toBe("");
+    expect(sash, "必须绝对定位在浮层最左缘（findWidget.css 的 `left: 0 !important`）").toMatch(
+      /position:\s*absolute/,
+    );
+    expect(sash, "必须贴左缘 left: 0").toMatch(/left:\s*0/);
+    expect(sash, "宽 4px（= --vscode-sash-size）").toMatch(/width:\s*4px/);
+    expect(sash, "高度铺满").toMatch(/height:\s*100%/);
+    expect(sash, "光标必须是左右拉伸").toMatch(/cursor:\s*ew-resize/);
+    expect(sash, "触屏要接管手势，否则会被页面滚动抢走").toMatch(/touch-action:\s*none/);
+    // 高亮线画在 ::before 上：本体保持透明，只有悬停/拖拽时才显形（sash.css 的 .hover/.active）
+    expect(css, "手柄的高亮必须走 ::before").toMatch(/\.find-sash::before/);
+    expect(css, "悬停与拖拽都要亮").toMatch(
+      /\.find-sash:hover::before,\s*\n\s*\.find-sash\.active::before/,
+    );
+    // 拖拽方向：浮层钉在右上角，手柄在左缘 → 往左拖 = 变宽（startX - currentX）
+    expect(bar, "往左拖必须变宽（用 startX - currentX，别写反）").toMatch(
+      /startW \+ \(startX - ev\.clientX\)/,
+    );
+    expect(bar, "双击手柄要能复原（同 VS Code 的 onDidReset）").toMatch(
+      /sash\.addEventListener\("dblclick"/,
+    );
+
+    // ---- ② 替换行展开后折叠按钮变高（VS Code `.button.toggle { height: -webkit-fill-available }`）----
+    const chevToggled = ruleBlock(css, ".find-bar.replace-toggled .find-chevron");
+    expect(chevToggled, "展开态必须给 chevron 一个更高的高度").toMatch(/height:\s*53px/);
+    // 53 = 主行 25 + 行间距 3 + 替换行 25。⚠️ 不能用 fill-available：结果区能撑到 220px，
+    // 铺满会把这颗按钮拉成一根竖条（CSS 注释里已记原因）。
+    expect(css, "⚠️ chevron 不得用 fill-available（会被结果区拉成竖条）").not.toMatch(
+      /find-chevron[\s\S]{0,200}?fill-available/,
+    );
+    expect(bar, "展开/折叠必须同步浮层上的 replace-toggled 类").toMatch(
+      /dom\.classList\.toggle\("replace-toggled", on\)/,
+    );
+
+    // ---- ③ 选区按钮在上下箭头之后（VS Code find-actions：count → prev → next → selection）----
+    expect(bar, "选区开关必须是工具栏那颗 .find-sel，不再是 .find-toggle").toMatch(
+      /const selT = iconBtn\("find-nav find-sel"/,
+    );
+    expect(bar, "主行顺序必须是 …prev, next, selT…").toMatch(
+      /rowMain\.append\(chevron, field, count, prev, next, selT, docsBtn, closeBtn\)/,
+    );
+    expect(css, "选区开关必须与 .find-nav 同尺寸（22×22 组里要有它）").toMatch(
+      /\.find-nav,\s*\n\s*\.find-sel,/,
+    );
+    // 它是开关，激活态要出边框，但 .find-nav 是 border:none —— 加真 border 会把 16px 图标挤成 14px
+    const selOn = ruleBlock(css, ".find-sel.on");
+    expect(selOn, "激活环必须用 inset 阴影画（外框尺寸一动不动）").toMatch(
+      /box-shadow:\s*inset 0 0 0 1px/,
+    );
+    expect(selOn, "激活底色复用开关那套令牌").toContain("var(--find-opt-active)");
+    expect(selOn, "⚠️ 不得给 .find-sel.on 加真 border（border-box 下会挤掉 2px 图标）").not.toMatch(
+      /border-color/,
+    );
+
+    // ---- ④ 选区查找与所有文档查找互斥 ----
+    // 一个说「只搜光标选中的一段」，另一个说「搜全部已打开文档」，同时成立自相矛盾。
+    expect(bar, "点亮选区必须熄掉跨文档").toMatch(
+      /if \(on && docsBtn\.classList\.contains\("on"\)\) setAllDocs\(false\)/,
+    );
+    expect(bar, "点亮跨文档必须熄掉选区").toMatch(
+      /if \(on && opt\.selection\) setSelection\(false\)/,
+    );
+
+    // ---- ⑤ 结果区常驻：空列表也占一行，显示「无结果」 ----
+    const results = ruleBlock(css, ".find-results");
+    expect(results, "结果区必须有 min-height 兜住空态（否则有/无结果时浮层整块跳）").toMatch(
+      /min-height:\s*\d+px/,
+    );
+    expect(css, "结果区收起必须显式 [hidden]（一旦加 display 就收不回去）").toMatch(
+      /\.find-results\[hidden\]\s*\{[^}]*display:\s*none/,
+    );
+    expect(css, "空态占位样式必须存在").toMatch(/\.find-empty\s*\{/);
+    expect(bar, "空态必须渲染出「无结果」").toMatch(/empty\.textContent = "无结果"/);
+    expect(bar, "结果区是否常驻必须由跨文档开关决定").toMatch(/results\.hidden = !on/);
+    // ⚠️ 收起时不能只靠 hidden：过期命中还挂在 DOM 里，下次查出来会带出来
+    expect(bar, "收起时必须把结果行清掉").toMatch(/results\.textContent = ""/);
+
+    // ---- ⑥ 查找与替换输入框同宽 ----
+    expect(css, "替换框必须改 flex: 0 0 auto 好让 JS 写死宽度").toMatch(
+      /\.find-row-replace \.find-field\s*\{[^}]*flex:\s*0 0 auto/,
+    );
+    expect(bar, "必须把查找框量出来的宽度写到替换框上").toMatch(/replField\.style\.width = /);
+    // jsdom（测试）没有布局，量出来是 0 —— 写死 0px 会让替换框彻底消失
+    expect(bar, "⚠️ 无布局时必须不下手，别写死 0px").toMatch(/if \(w <= 0\) return;/);
+
+    // ---- ⑦ 替换 / 全部替换图标 ----
+    // VS Code 的 codicon 只以字体发布，参考仓库里只有码位（replace 0xeb3d / replaceAll 0xeb3c），
+    // 拿不到轮廓 → 字形自绘，但语义必须清楚：一支箭头 = 替换当前，两支 = 替换全部。
+    const svgOf = (name: string): string =>
+      bar.match(new RegExp(`${name}:\\s*'([^']*)'`))?.[1] ?? "";
+    const repl = svgOf("repl");
+    const replAll = svgOf("replAll");
+    expect(repl, "替换图标要有被替换的匹配块").toContain("<rect");
+    expect(replAll, "全部替换图标同样要有匹配块").toContain("<rect");
+    expect(repl).not.toBe(replAll);
+    const arrows = (s: string): number => (s.match(/M10\.6/g) ?? []).length;
+    expect(arrows(repl), "替换 = 一支箭头").toBe(1);
+    expect(arrows(replAll), "全部替换 = 两支箭头").toBe(2);
+    expect(repl, "viewBox 与其它图标一致（16×16）").toContain('viewBox="0 0 16 16"');
+    expect(replAll, "viewBox 与其它图标一致（16×16）").toContain('viewBox="0 0 16 16"');
+  });
+
   it("B31 转到行必须顶部对齐（与大纲跳转一致，不得最小滚动贴底）", () => {
     const src = readFileSync("src/main.ts", "utf-8");
     // 转到行 overlay（.goto-overlay 所在函数链）里的跳转必须用 y:"start"

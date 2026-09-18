@@ -677,6 +677,46 @@ button:focus-visible {
   height: 16px;
 }
 
+/* 左侧宽度调节手柄 = VS Code 的 `.find-widget .monaco-sash`
+   （sash.css 的 vertical 变体 + findWidget.css 的 `left: 0 !important`）：
+   贴浮层左缘、整条高度、4px 宽（--vscode-sash-size），平时透明，
+   悬停/拖拽时才在正中画一条 2px 高亮线（`::before` + .hover/.active）。
+   ⚠️ 它和 chevron 一样绝对定位在 left:0，会压住 chevron 最左 4px ——
+   VS Code 也是这个叠法（sash 的 z-index 35 盖住 toggle 按钮）：手柄优先，
+   chevron 剩下的 14px 足够点。 */
+.find-sash {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  z-index: 2;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.find-sash::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 1px;
+  width: 2px;
+  background: transparent;
+  pointer-events: none;
+}
+.find-sash:hover::before,
+.find-sash.active::before {
+  background: var(--accent);
+}
+
+/* 替换行展开后折叠按钮跟着变高 —— VS Code 是 `.button.toggle { height: -webkit-fill-available }`。
+   ⚠️ 不照抄 fill-available：它的浮层高度由 JS 写死（只有两行），铺满即两行；
+   我们的浮层还会被跨文档结果区撑到 220px，铺满就把这颗按钮拉成一根竖条。
+   故按行算死：主行 25 + 行间距 3 + 替换行 25 = 53。 */
+.find-bar.replace-toggled .find-chevron {
+  height: 53px;
+}
+
 /* 查找行 / 替换行：单行 flex。
    左右各留一条固定沟槽 —— 左 17px 给绝对定位的 chevron（18px 宽），
    右 25px 给绝对定位的关闭按钮。两行用同一组边距，输入框左右边缘天然对齐。 */
@@ -813,7 +853,27 @@ button:focus-visible {
   color: var(--danger);
 }
 
-/* 工具栏图标按钮（上一个 / 下一个 / 替换 / 全部替换 / 关闭）。
+/* 「在选区中查找」：VS Code 把它放在 prev/next **之后**（findWidget.ts 的 find-actions，
+   顺序是 matchesCount → prev → next → selection），尺寸与 .find-nav 同款 22×22
+   （findWidget.css 的 `.codicon-find-selection`）。
+   ⚠️ 它是**开关**不是动作按钮，激活态要出边框 —— 但 .find-nav 是 `border: none`，
+   加真 border 会因全局 border-box 把 16px 的图标挤成 14px。故用 inset 阴影画 1px 环，
+   外框尺寸一个像素都不动（与 .find-toggle 那条「透明边框只占位」是同一个道理）。 */
+.find-sel.on {
+  background: var(--find-opt-active);
+  color: var(--find-opt-active-fg);
+  box-shadow: inset 0 0 0 1px var(--find-opt-active-border);
+}
+
+/* 替换输入框与查找输入框同宽。VS Code 在「展开替换行」和「拖完手柄」后都补一句
+   `this._replaceInput.width = getTotalWidth(this._findInput.domNode)`（findWidget.ts）。
+   两行右侧挂的按钮数不同（主行多出计数 / 导航 / 选区 / 跨文档四组），纯 flex 会让替换框
+   比查找框宽一截、右缘也错开 —— 由 JS 把查找框量出来的宽度写死到替换框上。 */
+.find-row-replace .find-field {
+  flex: 0 0 auto;
+}
+
+/* 工具栏图标按钮（上一个 / 下一个 / 选区 / 替换 / 全部替换 / 关闭）。
    VS Code `.button`：`width:16px; height:16px; padding:3px; border-radius:5px; margin-left:3px`
    —— 16px 图标 + 两侧各 3px = **22px 命中区**，无描边无底色，只在悬停时压一层
    toolbar.hoverBackground。
@@ -825,6 +885,7 @@ button:focus-visible {
    ⚠️ 之前是「24px 方框 + 1px 描边 + 自身底色」—— 那是工具栏按钮的观感，
    连排五六个压在浮层里会显得很重，也是与 VS Code 差距最大的一处，故改成扁平式。 */
 .find-nav,
+.find-sel,
 .find-replace-one,
 .find-replace-all,
 .find-x {
@@ -843,6 +904,7 @@ button:focus-visible {
   cursor: pointer;
 }
 .find-nav:hover:not(:disabled),
+.find-sel:hover,
 .find-replace-one:hover,
 .find-replace-all:hover,
 .find-x:hover {
@@ -857,6 +919,7 @@ button:focus-visible {
   cursor: default;
 }
 .find-nav svg,
+.find-sel svg,
 .find-replace-one svg,
 .find-replace-all svg,
 .find-x svg {
@@ -928,11 +991,26 @@ button:focus-visible {
   pointer-events: none;
 }
 
+/* 结果区：跨文档模式一打开就常驻，**空列表也要占住一行**（渲染成「无结果」）。
+   原先 `hidden` 会让它整个收掉，于是「有结果 → 再搜 → 无结果」时浮层整块缩一截、
+   连输入框被清空时也跟着跳。min-height 保证空态也有一行的高度（22 = 一行 20 + 上下边框）。 */
 .find-results {
   max-height: 220px;
   overflow: auto;
+  min-height: 22px;
   border: 1px solid var(--border);
   border-radius: 4px;
+}
+/* 与 .find-bar[hidden] / .find-row-replace[hidden] 同理：一旦给 .find-results 加了 display，
+   UA 的 `[hidden] { display: none }` 就会被盖掉，收不回去。 */
+.find-results[hidden] {
+  display: none;
+}
+/* 空态占位。弱化色：它不是命中行，别抢 .find-hit 的视觉重量。 */
+.find-empty {
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--fg-muted);
 }
 
 .find-hit {
