@@ -27,11 +27,16 @@ node node_modules/vitest/vitest.mjs run || {
 }
 
 if command -v cargo >/dev/null 2>&1; then
-  echo "▸ cargo test"
-  (cd src-tauri && cargo test) || {
-    echo "✗ pre-push 失败：cargo test 未通过" >&2
-    exit 1
-  }
+  if command -v windres >/dev/null 2>&1; then
+    echo "▸ cargo test"
+    (cd src-tauri && cargo test) || {
+      echo "✗ pre-push 失败：cargo test 未通过" >&2
+      exit 1
+    }
+  else
+    echo "⚠ 找不到 windres（MSYS2 MinGW64 未进 PATH），跳过 cargo test —— Rust 侧未校验" >&2
+    echo "  修：把 MSYS2 的 mingw64/bin 放进 PATH（工具链见 rust-toolchain.toml）" >&2
+  fi
 else
   echo "⚠ 找不到 cargo，跳过 cargo test（Rust 侧未校验）" >&2
 fi
