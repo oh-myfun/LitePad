@@ -49,8 +49,14 @@ export function preserveCase(matchText: string, replacement: string): string {
   const hasLower = matchText !== matchText.toUpperCase();
   if (!hasUpper) return replacement.toLowerCase();
   if (!hasLower) return replacement.toUpperCase();
+  // Title Case：首字母大写**且其余全小写**（"ConCat" 这种内部有大写的算混合，原样）
   const first = matchText[0];
-  if (first === first.toUpperCase() && first !== first.toLowerCase()) {
+  const rest = matchText.slice(1);
+  if (
+    first === first.toUpperCase() &&
+    first !== first.toLowerCase() &&
+    rest === rest.toLowerCase()
+  ) {
     return replacement.charAt(0).toUpperCase() + replacement.slice(1).toLowerCase();
   }
   return replacement;

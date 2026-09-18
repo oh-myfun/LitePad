@@ -393,7 +393,7 @@ describe("查找入口统一（悬浮查找栏）", () => {
     expect(km, "F5 必须是 force（否则会被 WebView2 刷新吃掉）").toContain("force: true");
   });
 
-  it("B39/B40：查找范围不用下拉菜单，跨文档改为勾选框，且不做文件夹搜索", () => {
+  it("B39/B40：查找范围不用下拉菜单，跨文档改为文档图标，且不做文件夹搜索", () => {
     const src = readFileSync("src/main.ts", "utf-8");
     expect(src, "不得再出现 folder 范围入口").not.toContain('openFindBar("folder")');
     expect(src, "不得再调用读盘的跨文件搜索 IPC").not.toContain("searchFiles");
@@ -404,7 +404,7 @@ describe("查找入口统一（悬浮查找栏）", () => {
     expect(barSrc, "查找栏不得再有 scope 概念").not.toContain("FindScope");
     expect(barSrc, "查找栏不得再有范围下拉").not.toContain("find-scope");
     expect(barSrc, "查找栏不得再有文件夹搜索控件").not.toContain("find-folder");
-    expect(barSrc, "跨文档必须保留为勾选框").toContain("find-opt-docs");
+    expect(barSrc, "跨文档必须保留（方案 C：文档图标按钮）").toContain("find-docs");
     expect(barSrc, "跨文档结果列表必须保留").toContain("find-results");
   });
 

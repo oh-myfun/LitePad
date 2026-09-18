@@ -1236,15 +1236,17 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(preview, "预览命中必须复用编辑器高亮样式类").toContain("cm-find-match");
   });
 
-  it("B39/B40 查找范围：不得有范围下拉与文件夹搜索，跨文档必须是勾选框", () => {
+  it("B39/B40 查找范围：不得有范围下拉与文件夹搜索，跨文档收敛为文档图标（方案 C）", () => {
     // 用户要求：查找替换悬浮栏无需查找文件夹功能，也不用下拉菜单选择查找范围——
-    // 但「所有打开的文档」这个能力要保留，改成直接勾选。
+    // 但「所有打开的文档」这个能力要保留。B73（方案 C）把它从勾选框收敛成
+    // 带打开文档数徽标的文档图标按钮（对齐 VS Code），能力不变、只是换了形态。
     const bar = readFileSync("src/shell/findbar.ts", "utf-8");
     expect(bar, "查询对象不得再有 scope").not.toMatch(/\bscope\b/);
     expect(bar, "不得再有范围下拉控件").not.toContain("find-scope");
     expect(bar, "查找栏内不得出现任何 select 下拉").not.toContain('createElement("select")');
     expect(bar, "不得再有文件夹搜索控件").not.toContain("find-folder");
-    expect(bar, "跨文档范围必须是勾选框").toContain("find-opt-docs");
+    expect(bar, "跨文档能力必须保留（方案 C：文档图标按钮）").toContain("find-docs");
+    expect(bar, "文档图标必须带打开文档数徽标").toContain("find-badge");
     expect(bar, "勾选态必须进入查询对象").toContain("allDocs");
 
     const main = readFileSync("src/main.ts", "utf-8");
@@ -1264,6 +1266,107 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(rustMain, "不得再注册 search_files 命令").not.toContain("commands::search_files");
     const cargo = readFileSync("src-tauri/Cargo.toml", "utf-8");
     expect(cargo, "regex 依赖只服务于读盘搜索，应一并移除").not.toMatch(/^regex\s*=/m);
+  });
+
+  it("B73 查找栏方案 C：钉右上角（不可拖动）+ 图标开关 + 折叠替换行 + 紧凑计数", () => {
+    // 用户从 A/B/C 三套预览方案里选了 C：对齐 VS Code 的紧凑浮层。
+    const bar = readFileSync("src/shell/findbar.ts", "utf-8");
+    // 去掉标题栏与拖动（方案 C 不再记忆/恢复位置）
+    expect(bar, "不得再有可拖动的标题栏").not.toContain("find-bar-title");
+    expect(bar, "不得再有位置持久化键").not.toContain("POS_KEY");
+    expect(bar, "不得再挂布局拖拽类").not.toContain("layout-dragging");
+    // 图标开关 + 折叠替换行 + 文档图标（`"find-toggle"` 带引号：容器叫 find-toggles，不能误命中）
+    expect(bar, "匹配选项必须是图标开关").toContain('"find-toggle"');
+    expect(bar, "替换行必须可折叠").toContain("find-row-replace");
+    expect(bar, "chevron 控制替换行展开").toContain("find-chevron");
+    // 查询对象要带新增两个开关
+    expect(bar, "查询对象必须有 inSelection").toContain("inSelection");
+    expect(bar, "查询对象必须有 preserveCase").toContain("preserveCase");
+
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const barBlock = css.match(/\.find-bar\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(barBlock, "浮层必须钉在右侧").toMatch(/right:\s*\d+px/);
+    expect(barBlock, "浮层不得再用 left 定位").not.toMatch(/(^|[^-])left:\s*\d+px/);
+    expect(css, "标题栏的 move 光标必须移除").not.toContain("cursor: move");
+    expect(css, "无匹配变红的样式必须存在").toContain(".find-count-bad");
+    expect(css, "图标开关激活态必须高亮").toMatch(/\.find-toggle\.on\s*\{/);
+    expect(css, "文档图标徽标必须存在").toContain(".find-badge");
+    // ⚠️ .find-row 是 display:flex，会盖掉 hidden 的 UA 样式 —— 折叠态必须显式 none
+    expect(css, "折叠的替换行必须显式 display:none").toMatch(
+      /\.find-row-replace\[hidden\]\s*\{[^}]*display:\s*none/,
+    );
+
+    const findKernel = readFileSync("src/editor/find.ts", "utf-8");
+    expect(findKernel, "选区限制必须是可测的纯函数").toContain("export function restrictToRange");
+    expect(findKernel, "保留大小写必须是可测的纯函数").toContain("export function preserveCase");
+
+    // 计数改紧凑写法：不得再出现「第 N/M 处」这种冗长文案
+    const main = readFileSync("src/main.ts", "utf-8");
+    expect(main, "计数必须用紧凑的 N / M").toMatch(
+      /bar\.setCount\(`\$\{idx \+ 1\} \/ \$\{matches\.length\}`\)/,
+    );
+    expect(main, "不得再用旧的「第 N/M 处」查找计数").not.toContain("第 ${idx + 1}/");
+    expect(main, "预览态也不得用「第 … 处」查找计数").not.toContain("第 ${st.active + 1}/");
+    expect(main, "在选区中查找必须把命中限定在选区").toContain("restrictMatches");
+    expect(main, "替换必须支持保留大小写（接线到替换当前）").toContain(
+      "applyPreserveCase(matched, q.replace)",
+    );
+  });
+
+  it("B76 查找栏三处报障：状态行不占位 / 徽标必有数字 / 选区锚点必须冻结", () => {
+    const bar = readFileSync("src/shell/findbar.ts", "utf-8");
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const main = readFileSync("src/main.ts", "utf-8");
+
+    // ---- ① 浮层底部那条空白：状态行空文本时必须收起 ----
+    // 用户实测：主行下面吊着一条空白。根因是 .find-status 一直挂着 min-height，
+    // 而正常打开查找栏时主程序**从不调 setStatus**，空盒子就一直占着位置。
+    expect(bar, "状态行创建后就必须先收起").toMatch(/status\.hidden = true/);
+    expect(bar, "状态行必须有「空文本即收起」的派生逻辑").toMatch(/status\.hidden = !text/);
+    expect(bar, "熄灭跨文档要连「N 条结果」文案一起收").toMatch(
+      /setHits\(\[\]\);\s*\n\s*setStatus\(""\);/,
+    );
+
+    // ---- ② 文档图标上的数字显示不出来：徽标不能只靠 setDocCount 渲染 ----
+    // 查找栏是懒建的，主程序只在标签栏重绘时才喂文档数；只把数字写进 DOM 的话，
+    // 「首次打开栏 → 立刻点亮图标」会渲染出空徽标。
+    expect(bar, "徽标数字要自己存一份源真值").toMatch(/let docCount = 0/);
+    const syncAllDocsBody =
+      bar.match(/function syncAllDocs\(\)[^{]*\{([\s\S]*?)\n {2}\}/)?.[1] ?? "";
+    expect(syncAllDocsBody, "点亮时必须用记着的文档数重绘徽标").toMatch(
+      /badge\.textContent = String\(docCount\)/,
+    );
+    expect(main, "打开查找栏时必须主动喂一次文档数").toMatch(/bar\.setDocCount\(docs\.size\)/);
+    const badgeBlock = css.match(/\.find-badge\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(badgeBlock, "徽标必须收在按钮盒内，不得用负偏移溢出").not.toMatch(/\b(top|right):\s*-/);
+    expect(badgeBlock, "徽标只是标注，不得抢按钮的点击").toContain("pointer-events: none");
+
+    // ---- ③ 选区锚点必须冻结（点「下一个」后计数塌缩成 1 条）----
+    // 根因：restrictMatches 每次实时读活动选区，而 stepFind 会把选区换成**命中本身**，
+    // 于是第二次步进的范围就只剩这一个命中。
+    // 最有效的一条判据：活动选区**只允许被读一次**（在播种锚点处）。
+    const withoutDecl = main.replace(/function activeSelectionRange\(\)[^{]*\{[\s\S]*?\n\}/, "");
+    const liveReads = [...withoutDecl.matchAll(/activeSelectionRange\(\)/g)];
+    expect(liveReads, "activeSelectionRange 只允许在播种锚点时读一次").toHaveLength(1);
+    const seedBody =
+      main.match(/function seedFindSelectionAnchor\(\)[^{]*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    expect(seedBody, "那唯一一次读取必须在 seedFindSelectionAnchor 里").toContain(
+      "activeSelectionRange()",
+    );
+    expect(main, "判断范围一律读冻结锚点").toContain("currentFindRestrict(q)");
+    expect(main, "不得再出现「实时取选区当范围」的写法").not.toMatch(
+      /restrict:\s*q\.inSelection \? activeSelectionRange\(\)/,
+    );
+    expect(main, "锚点只在开关「刚被打开」时播种").toMatch(
+      /if \(q\.inSelection !== findSelectionOn\)/,
+    );
+    expect(main, "重开查找栏时重播种").toMatch(
+      /if \(findSelectionOn\) seedFindSelectionAnchor\(\)/,
+    );
+    expect(main, "换文档时重播种（旧偏移量无意义）").toMatch(
+      /findSelectionAnchor\?\.docId !== activeTabIdOf\(\)\) seedFindSelectionAnchor\(\)/,
+    );
+    expect(main, "F3 那条 retarget 必须走同一处判断").toMatch(/else retargetFindBar\(\);/);
   });
 
   it("B31 转到行必须顶部对齐（与大纲跳转一致，不得最小滚动贴底）", () => {

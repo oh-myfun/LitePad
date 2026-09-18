@@ -203,12 +203,22 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   results.hidden = true;
   const status = document.createElement("div");
   status.className = "find-status";
+  // 初始无内容 → 直接收起。⚠️ 不能等第一次 setStatus 才收：正常打开查找栏时主程序
+  // 根本不会调 setStatus，空的状态行会一直吊在主行下面 = 浮层底部那条空白（用户实测反馈）。
+  status.hidden = true;
 
   dom.append(rowMain, rowReplace, results, status);
   host.appendChild(dom);
 
   // ---- 选项状态（图标开关的源真值）----
   const opt = { case: false, word: false, regexp: false, selection: false, preserve: false };
+  /**
+   * 已打开的文档数（徽标数字的源真值）。
+   * ⚠️ 必须自己存一份：查找栏是**懒建**的（`ensureFindBar`），而主程序只在标签栏重绘时
+   * 调 `setDocCount`；若只把数字写在 DOM 里，则「首次打开查找栏后立刻点亮文档图标」
+   * 会渲染出一个**空徽标**（用户实测：数字显示不出来）。
+   */
+  let docCount = 0;
 
   function query(): FindBarQuery {
     return {
@@ -228,8 +238,14 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     btn.setAttribute("aria-pressed", on ? "true" : "false");
   }
 
+  /**
+   * 状态行。**空文本时整行收起来**：
+   * ⚠️ 不能只靠 `.find-status { min-height: 14px }` 养着一个空盒子 —— 主行下面会
+   * 多出 14px 状态行 + 4px gap + 8px 底内距，肉眼就是浮层底部挂着一条空带（用户实测反馈）。
+   */
   function setStatus(text: string): void {
     status.textContent = text;
+    status.hidden = !text;
   }
 
   function setHits(hits: FindHit[]): void {
@@ -260,11 +276,17 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   /** 跨文档范围：图标激活即搜索全部打开文档；取消时清掉上一次的结果。 */
   function syncAllDocs(): void {
     const on = docsBtn.classList.contains("on");
+    // 点亮/熄灭时都用记着的那份文档数重绘（见 docCount 注释：不能再依赖 setDocCount 及时被调用）
+    badge.textContent = String(docCount);
     badge.hidden = !on;
     findInput.placeholder = on
       ? "查找内容（回车在全部已打开的文档中查找）"
       : "查找内容（回车下一个，Shift+回车上一个）";
-    if (!on) setHits([]);
+    if (!on) {
+      // 熄灭跨文档：结果列表与「N 条结果」那行一起收掉，别留下过期文案
+      setHits([]);
+      setStatus("");
+    }
   }
 
   function runSearch(): void {
@@ -378,17 +400,23 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     step: (dir) => cb.onStep(dir, query()),
     setCount: (t, bad) => {
       count.textContent = t;
-      count.classList.toggle("find-count-bad", !!bad);
+      // 无匹配一律置警示色（主程序传「无匹配」即可，无需额外标记）
+      count.classList.toggle("find-count-bad", !!bad || t === "无匹配");
     },
     setStatus,
     setHits,
     setDocCount: (n) => {
+      docCount = n;
       badge.textContent = String(n);
       badge.hidden = !docsBtn.classList.contains("on");
     },
-    focusFind: () => findInput.select(),
+    focusFind: () => {
+      findInput.focus();
+      findInput.select();
+    },
     focusReplace: () => {
       setReplaceExpanded(true);
+      replaceInput.focus();
       replaceInput.select();
     },
     getQuery: query,

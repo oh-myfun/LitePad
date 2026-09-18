@@ -29,6 +29,8 @@ import {
   type FindMatch,
   findMatches,
   nextMatchIndex,
+  preserveCase,
+  restrictToRange,
   setFindQuery,
 } from "./editor/find";
 import { detectLanguage } from "./editor/language";
@@ -2459,6 +2461,11 @@ function ensureFindBar(): FindBarHandle {
 /** 打开查找栏（种子一般为当前选中的文本）。 */
 function openFindBar(focus: "find" | "replace" = "find"): void {
   const bar = ensureFindBar();
+  // 重开时按当前选区重新播种（用户可能刚重新选了一段）
+  if (findSelectionOn) seedFindSelectionAnchor();
+  // ⚠️ 文档数必须在这里喂一次：查找栏是**懒建**的，主程序只在标签栏重绘时才调
+  //    setDocCount，否则首次打开后点亮文档图标会渲染出空徽标（数字显示不出来）。
+  bar.setDocCount(docs.size);
   bar.open(selectedTextInActiveView(), focus === "replace");
   if (focus === "replace") bar.focusReplace();
   else bar.focusFind();
@@ -2483,7 +2490,11 @@ function findOptionsOf(q: FindBarQuery) {
   };
 }
 
-/** 活动视图当前选区（非空）起点/终点；用于「在选区中查找」的限制范围。 */
+/**
+ * 活动视图当前选区（非空）起点/终点。
+ * ⚠️ **只在播种锚点时调用**（见 `seedFindSelectionAnchor`）。判断作用范围一律读冻结的
+ * 锚点 —— 别在这里实时读：步进会把选区换成命中本身。
+ */
 function activeSelectionRange(): { from: number; to: number } | null {
   const view = activePanel()?.view?.view;
   if (!view) return null;
@@ -2492,10 +2503,55 @@ function activeSelectionRange(): { from: number; to: number } | null {
   return { from: Math.min(sel.from, sel.to), to: Math.max(sel.from, sel.to) };
 }
 
+/** 活动编辑器所属标签 id（`tabs` 的 key）；没有活动视图时返回 null。 */
+function activeTabIdOf(): number | null {
+  const p = activePanel();
+  return p && p.viewTabId !== null ? p.viewTabId : null;
+}
+
+/**
+ * 「在选区中查找」的**冻结**选区锚点。
+ *
+ * ⚠️ 为什么不能每次实时读选区：`stepFind()` 步进时会把编辑器选区设成**命中本身**，
+ * 于是第二次点「下一个」时范围就塌缩成「只剩这一个命中」（用户实测反馈）。
+ * 因此锚点只在**用户动作**时播种：开关由关→开、重开查找栏、切换文档；
+ * 导航（上/下一个、替换）全程只读，不改。
+ *
+ * 同时记住所属标签 id：切文档后旧偏移量没有意义，必须重取。
+ */
+let findSelectionAnchor: { docId: number; from: number; to: number } | null = null;
+/** 上一轮的「在选区中查找」开关值，用于识别「刚被打开」这一瞬间。 */
+let findSelectionOn = false;
+
+/** 用当前选区播种锚点（只在用户动作时调用）。 */
+function seedFindSelectionAnchor(): void {
+  const range = activeSelectionRange();
+  const docId = activeTabIdOf();
+  findSelectionAnchor = range && docId !== null ? { docId, from: range.from, to: range.to } : null;
+}
+
+/**
+ * 当前生效的选区限制（**只读**，绝不改锚点）。
+ * 锚点为空、或它属于别的文档时返回 null（= 不限制）。
+ */
+function currentFindRestrict(q: FindBarQuery): { from: number; to: number } | null {
+  if (!q.inSelection) return null;
+  const a = findSelectionAnchor;
+  if (!a || a.docId !== activeTabIdOf()) return null;
+  return { from: a.from, to: a.to };
+}
+
 /** 把查询写到全部可见视图（高亮同步；离屏实例不参与高亮）。 */
 function applyFindQuery(q: FindBarQuery): void {
   const query = buildFindQuery(findOptionsOf(q));
-  const restrict = q.inSelection ? activeSelectionRange() : null;
+  // 开关刚被打开 / 关掉 → 播种或清除锚点。只有用户点开关会改 inSelection，
+  // 导航不会，所以冻结的锚点不会被步进改掉的选区带偏。
+  if (q.inSelection !== findSelectionOn) {
+    findSelectionOn = q.inSelection;
+    if (q.inSelection) seedFindSelectionAnchor();
+    else findSelectionAnchor = null;
+  }
+  const restrict = currentFindRestrict(q);
   const active = activePanel();
   for (const p of panels.values()) {
     if (!p.view) continue;
@@ -2542,27 +2598,17 @@ function clearFindHighlight(): void {
   }
 }
 
-/** 保留大小写：把命中词的大小写迁移到替换串（VS Code 同款算法）。 */
+/** 保留大小写：复用 find.ts 的纯函数（VS Code 同款算法）。 */
 function applyPreserveCase(matchText: string, replacement: string): string {
-  if (!replacement) return replacement;
-  const hasUpper = matchText !== matchText.toLowerCase();
-  const hasLower = matchText !== matchText.toUpperCase();
-  if (!hasUpper) return replacement.toLowerCase();
-  if (!hasLower) return replacement.toUpperCase();
-  // 首字母大写、其余小写（Title Case）→ 对应迁移
-  const first = matchText[0];
-  if (first === first.toUpperCase() && first !== first.toLowerCase()) {
-    return replacement.charAt(0).toUpperCase() + replacement.slice(1).toLowerCase();
-  }
-  return replacement;
+  return preserveCase(matchText, replacement);
 }
 
-/** 把命中集合按「在选区中查找」限制到选区内。 */
+/**
+ * 把命中集合按「在选区中查找」限制到**锚定**的选区内（复用 find.ts 的纯函数）。
+ * ⚠️ 读的是冻结锚点而非实时选区 —— 否则步进一次就只剩一个命中。
+ */
 function restrictMatches(matches: FindMatch[], q: FindBarQuery): FindMatch[] {
-  if (!q.inSelection) return matches;
-  const r = activeSelectionRange();
-  if (!r) return matches;
-  return matches.filter((m) => m.from >= r.from && m.to <= r.to);
+  return restrictToRange(matches, currentFindRestrict(q));
 }
 
 function refreshFindCount(): void {
@@ -2631,7 +2677,8 @@ function stepFind(dir: 1 | -1, q: FindBarQuery): void {
       setFindQuery.of({
         query,
         activeFrom: m.from,
-        restrict: q.inSelection ? activeSelectionRange() : null,
+        // 冻结锚点：步进刚把选区换成了命中本身，这里若实时读选区就会自我塌缩
+        restrict: currentFindRestrict(q),
       }),
     ],
   });
@@ -2665,7 +2712,7 @@ function replaceCurrent(q: FindBarQuery): void {
       setFindQuery.of({
         query,
         activeFrom: target.from,
-        restrict: q.inSelection ? activeSelectionRange() : null,
+        restrict: currentFindRestrict(q),
       }),
     ],
   });
@@ -2805,6 +2852,9 @@ function openFindHit(hit: FindHit): void {
 
 /** 标签/面板切换后：浮层保持打开，把当前查询重新应用到新的活动视图。 */
 function retargetFindBar(): void {
+  // 换了文档 → 旧锚点的偏移量作废，按新文档的选区重取；
+  // 同一文档时**不动**锚点（否则 F3 步进后的「命中选区」会被当成新锚点）。
+  if (findSelectionOn && findSelectionAnchor?.docId !== activeTabIdOf()) seedFindSelectionAnchor();
   if (findBar?.isOpen()) findBar.retarget();
 }
 
@@ -3735,7 +3785,7 @@ function withView(fn: (view: EditorView) => void): void {
 function findStep(dir: 1 | -1): void {
   const bar = ensureFindBar();
   if (!bar.isOpen()) openFindBar();
-  else bar.retarget();
+  else retargetFindBar();
   bar.step(dir);
 }
 

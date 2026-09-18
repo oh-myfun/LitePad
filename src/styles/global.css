@@ -577,20 +577,20 @@ button:focus-visible {
   opacity: 0.5;
 }
 
-/* ---------- 悬浮查找 / 替换栏（应用级浮层，不绑定文件/面板） ---------- */
+/* ---------- 悬浮查找 / 替换栏（方案 C：钉右上角的紧凑浮层） ---------- */
 
 .find-bar {
   position: fixed;
-  /* 初始位置：打开时由 JS 按窗口尺寸复位，并记忆上次拖动的位置 */
-  left: 24px;
-  top: 48px;
+  /* 钉在编辑器右上，尽量少遮挡正文（不再支持拖动 / 记忆位置） */
+  right: 16px;
+  top: 8px;
   z-index: 60;
-  width: 480px;
+  width: 470px;
   max-width: calc(100vw - 24px);
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px 10px;
+  gap: 4px;
+  padding: 6px 8px 8px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -603,131 +603,221 @@ button:focus-visible {
   display: none;
 }
 
-.find-bar-title {
+/* chevron（展开/折叠替换行）与替换行左侧占位，用于对齐主行输入框 */
+.find-chevron {
+  width: 20px;
+  height: 26px;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  font-size: 12px;
-  color: var(--fg-muted);
-  padding-bottom: 5px;
-  border-bottom: 1px solid var(--border);
-  /* 整条标题栏就是拖动把手 */
-  cursor: move;
-  user-select: none;
-}
-
-.find-x {
+  justify-content: center;
   border: none;
   background: none;
   color: var(--fg-muted);
-  font-size: 14px;
-  line-height: 1;
-  padding: 2px 6px;
   border-radius: 4px;
+  padding: 0;
   cursor: pointer;
 }
-.find-x:hover {
-  color: var(--fg);
+.find-chevron:hover {
   background: var(--bg-hover);
+  color: var(--fg);
+}
+.find-chevron svg {
+  width: 14px;
+  height: 14px;
+}
+.find-chevron-ghost {
+  width: 20px;
+  flex: 0 0 auto;
 }
 
-/* 查找/替换/选项行统一为 flex 行，窄窗下允许换行不溢出 */
+/* 主行 / 替换行统一为单行 flex；窄窗下不允许换行，靠 max-width 收缩 */
 .find-row {
   display: flex;
   align-items: center;
   gap: 4px;
-  flex-wrap: wrap;
   min-width: 0;
 }
+.find-row-main {
+  height: 28px;
+}
+.find-row-replace {
+  height: 28px;
+}
+/* 同 .find-bar[hidden]：display:flex 会覆盖 hidden 的 UA 样式，折叠态必须显式 none，
+   否则替换行永远露在外面（chevron 形同虚设）。 */
+.find-row-replace[hidden] {
+  display: none;
+}
 
-.search-row {
+/* 输入框 + 右内侧图标开关（VS Code 同款：开关嵌在输入框内） */
+.find-field {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 60px;
+  padding: 1px 3px 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+}
+.find-field:focus-within {
+  border-color: var(--accent);
 }
 
 .search-input {
   flex: 1 1 auto;
-  min-width: 60px;
-  padding: 3px 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  background: transparent;
   color: var(--fg);
   font-size: 12px;
-}
-
-.search-input:focus {
+  font-family: var(--font-sans);
   outline: none;
-  border-color: var(--accent);
 }
 
-.search-count {
+/* 图标开关（Aa / ab / .* / 选区 / AB）：激活态高亮 */
+.find-toggles {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  flex: 0 0 auto;
+}
+.find-toggle {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: none;
   color: var(--fg-muted);
-  font-size: 11px;
-  white-space: nowrap;
-  min-width: 60px;
-  text-align: center;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+.find-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.find-toggle svg {
+  width: 13px;
+  height: 13px;
+}
+.find-toggle.on {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
 }
 
-/* 查找栏命中计数（无匹配时置警示色） */
+/* 紧凑计数：命中时 N / M；无匹配变红 */
 .find-count {
   color: var(--fg-muted);
   font-size: 11px;
   white-space: nowrap;
-  min-width: 64px;
+  min-width: 44px;
   text-align: right;
   flex: 0 0 auto;
 }
 .find-count:empty {
   min-width: 0;
 }
+.find-count-bad {
+  color: var(--error, #e5534b);
+}
 
-.find-btn {
+/* 导航 / 替换 / 全部替换 / 关闭：统一图标按钮 */
+.find-nav,
+.find-replace-one,
+.find-replace-all,
+.find-x {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--fg-muted);
-  font-size: 11px;
-  padding: 3px 10px;
   border-radius: 4px;
+  padding: 0;
   cursor: pointer;
-  white-space: nowrap;
 }
-
-.find-btn:hover:not(:disabled) {
+.find-nav:hover:not(:disabled),
+.find-replace-one:hover,
+.find-replace-all:hover,
+.find-x:hover {
   background: var(--bg-hover);
   color: var(--fg);
   border-color: var(--accent);
 }
-
-.find-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+.find-nav svg,
+.find-replace-one svg,
+.find-replace-all svg,
+.find-x svg {
+  width: 14px;
+  height: 14px;
+}
+.find-x {
+  border-color: transparent;
+  background: none;
 }
 
-/* 选项行：匹配选项在左，跨文档勾选 + 「查找全部」靠右 */
-.find-row-opts {
-  gap: 12px;
-  padding-top: 1px;
-}
-
-.find-spacer {
-  flex: 1 1 auto;
-}
-
-.find-opt {
-  display: inline-flex;
+/* 跨文档文档图标（带「打开文档数」徽标；激活态高亮） */
+.find-docs {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  display: flex;
   align-items: center;
-  gap: 3px;
-  font-size: 11px;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: var(--bg);
   color: var(--fg-muted);
+  border-radius: 4px;
+  padding: 0;
   cursor: pointer;
-  user-select: none;
 }
-
-/* 范围勾选（替代原范围下拉）：勾上即在全部已打开文档中查找 */
-.find-opt-docs {
+.find-docs:hover {
+  background: var(--bg-hover);
   color: var(--fg);
+}
+.find-docs svg {
+  width: 14px;
+  height: 14px;
+}
+.find-docs.on {
+  color: var(--fg);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+/* ⚠️ 徽标必须**收在按钮盒内**（top/right = 0）。
+   原先写 `top:-6px; right:-6px` 会溢出到按钮外：既盖住右边的关闭按钮，
+   又在 28px 高的行里向上探出、看着像飘在外面。overflow 在这里是 visible 没被裁，
+   但那是运气（换 WebView2 版本/加 overflow 就会把数字裁掉）。 */
+.find-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  font-size: 8px;
+  font-style: normal;
+  line-height: 1;
+  min-width: 9px;
+  padding: 1px 2px;
+  text-align: center;
+  border-radius: 5px;
+  background: var(--accent);
+  color: var(--accent-fg, #fff);
+  /* 只是标注，别抢按钮本身的点击 */
+  pointer-events: none;
 }
 
 .find-results {
