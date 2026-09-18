@@ -55,6 +55,10 @@ export interface TabstripCallbacks {
    *  `doubleClickTabToToggleEditorGroupSizes = 'maximize'`，LitePad 无「固定标签」，
    *  双击标签原本空闲）。给了这个回调才会接管双击，否则保持无行为。 */
   onToggleMaximize?: () => void;
+  /** B71 ④：把该标签放到新窗口（多窗口）。主窗口与卫星窗口都可用。 */
+  onOpenInNewWindow?: (tabId: number) => void;
+  /** B71 ④：把该标签交回主窗口（只在卫星窗口给；主窗口给了没有意义）。 */
+  onReturnToMain?: (tabId: number) => void;
   onReorder?: (fromTabId: number, toTabId: number) => void;
   onNew?: () => void;
 }
@@ -235,6 +239,18 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
         : []),
       ...(cb.onSplitH ? [{ label: "左右分屏", onSelect: () => cb.onSplitH?.(t.tabId) }] : []),
       ...(cb.onSplitV ? [{ label: "上下分屏", onSelect: () => cb.onSplitV?.(t.tabId) }] : []),
+      ...(cb.onOpenInNewWindow
+        ? [
+            {
+              label: "在新窗口打开",
+              title: "把这份文档交给一个新窗口；原窗口是「搬走」而不是复制",
+              onSelect: () => cb.onOpenInNewWindow?.(t.tabId),
+            },
+          ]
+        : []),
+      ...(cb.onReturnToMain
+        ? [{ label: "移回主窗口", onSelect: () => cb.onReturnToMain?.(t.tabId) }]
+        : []),
       {
         label: "关闭其他标签",
         onSelect: () => cb.onCloseOther?.(t.tabId),

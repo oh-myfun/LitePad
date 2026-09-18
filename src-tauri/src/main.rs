@@ -5,6 +5,7 @@ mod backup;
 mod commands;
 mod core;
 mod session;
+mod windows;
 
 use tauri::window::Color;
 use tauri::{Emitter, Manager, Theme};
@@ -39,6 +40,27 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(commands::AppState::default())
+        // B71 ④ 多窗口：label → 待投递载荷（见 windows 模块头部）
+        .manage(windows::WindowRegistry::default())
+        // B71 ④：卫星窗口被销毁时，把它的 label 广播出去。
+        // 主窗口据此收尾（把它承载的标签接回来）——只靠前端的 onCloseRequested 不够：
+        // 进程退出、崩溃、被任务管理器结束都拿不到那个回调，事件是最后一道保险。
+        .on_window_event(|win, event| {
+            if !matches!(event, tauri::WindowEvent::Destroyed) {
+                return;
+            }
+            if win.label() == windows::MAIN_LABEL {
+                return;
+            }
+            let app = win.app_handle();
+            if let Some(reg) = app.try_state::<windows::WindowRegistry>() {
+                reg.forget_pending(win.label());
+            }
+            let _ = app.emit(
+                "satellite-closed",
+                serde_json::json!({ "label": win.label() }),
+            );
+        })
         .setup(|app| {
             // B50 启动白屏：WebView2 渲染出第一帧之前，窗口客户区由 Chromium 用
             // 纯白填充，深色主题下就是「启动先白屏一下」。这里把预渲染底色刷成
@@ -99,6 +121,8 @@ fn main() {
             commands::discard_orphan_backups,
             commands::export_file,
             commands::save_paste_image,
+            windows::window_payload,
+            windows::open_satellite_window,
         ])
         .run(tauri::generate_context!())
         .expect("LitePad 启动失败");

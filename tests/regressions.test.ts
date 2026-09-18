@@ -18,6 +18,22 @@ function cssDecls(block: string): string {
   return block.replace(/\/\*[\s\S]*?\*\//g, "");
 }
 
+// 截某个顶层函数的源码体（源文本里第一条「行首 } 后紧跟换行/EOF」，即顶层收尾花括号）。
+// ⚠️ 不能只找第一条 `\n}`：多行返回类型字面量也会以 `} {` 出现在行首
+//（如 `function f(): {\n  a: number;\n} {`），那样会在签名处就截断，
+// 于是函数体内所有断言都变成「找不到」——B71 ④ 的 sessionTabRecordOf 就踩过这个坑。
+function topLevelFnBody(fileText: string, name: string): string {
+  const start = fileText.indexOf(name);
+  if (start < 0) return "";
+  let end = fileText.indexOf("\n}", start);
+  while (end > -1) {
+    const after = fileText[end + 2];
+    if (after === undefined || after === "\n") break;
+    end = fileText.indexOf("\n}", end + 1);
+  }
+  return fileText.slice(start, end + 2);
+}
+
 // B57 文件类型图标的 10 个家族（与 src/shell/fileicons.ts 的 FileFamily 一一对应）
 const FILE_FAMILIES = [
   "md",
@@ -1550,11 +1566,11 @@ describe("B68 热退出：关窗不询问，下次启动还原未保存内容", 
   const rustCommands = readFileSync("src-tauri/src/commands/mod.rs", "utf-8");
   const rustMain = readFileSync("src-tauri/src/main.rs", "utf-8");
 
-  /** 截取某个顶层函数的源码体（到下一个顶层 `\n}` 为止）。 */
+  /** 截取某个顶层函数的源码体（见顶层 topLevelFnBody 的说明）。 */
   function fnBody(name: string): string {
-    const start = src.indexOf(name);
-    expect(start, `必须能定位 ${name}`).toBeGreaterThan(-1);
-    return src.slice(start, src.indexOf("\n}", start) + 2);
+    const body = topLevelFnBody(src, name);
+    expect(body, `必须能定位 ${name}`).not.toBe("");
+    return body;
   }
 
   it("关窗流程：先 flush 副本，逐文档确认后才跳过确认框，否则仍要问", () => {
@@ -1674,15 +1690,17 @@ describe("B69 空的新建文档也要跨重启回来", () => {
   const api = readFileSync("src/ipc/api.ts", "utf-8");
   const rustSession = readFileSync("src-tauri/src/session/mod.rs", "utf-8");
 
-  /** 截取某个顶层函数的源码体（到下一个顶层 `\n}` 为止）。 */
+  /** 截取某个顶层函数的源码体（见顶层 topLevelFnBody 的说明）。 */
   function fnBody(name: string): string {
-    const start = src.indexOf(name);
-    expect(start, `必须能定位 ${name}`).toBeGreaterThan(-1);
-    return src.slice(start, src.indexOf("\n}", start) + 2);
+    const body = topLevelFnBody(src, name);
+    expect(body, `必须能定位 ${name}`).not.toBe("");
+    return body;
   }
 
   it("快照接纳空的未命名文档，但**绝不**接纳「脏却没备份成功」的", () => {
-    const body = fnBody("function snapshotSession");
+    // B71 ④ 起「值不值得进会话」抽到了 sessionWorthy（卫星窗口与隐藏实例共用同一判据），
+    // 所以断言跟着挪到那个函数体上 —— 判据本身没变。
+    const body = fnBody("function sessionWorthy");
     // 空文档（无 path、不脏）必须进会话，否则重启后凭空消失
     expect(body, "热退出开着时要接纳「无路径且不脏」的文档").toMatch(
       /settings\?\.hot_exit === true && !d\.dirty/,
@@ -1691,6 +1709,10 @@ describe("B69 空的新建文档也要跨重启回来", () => {
     // 「脏、但备份失败」的未命名文档也会被收进去，恢复时按空文档处理
     // ——那会真的把用户打的字丢掉。那种情况只能走关窗确认框。
     expect(body, "判定必须同时约束 dirty，不能只看有没有路径").toMatch(/!d\.dirty/);
+    // 有路径或有副本的立即放行（B68 的原判据）
+    expect(body, "有路径或有副本的立即入会话").toMatch(
+      /if \(d\.path \|\| d\.backedUp\) return true;/,
+    );
   });
 
   it("空文档靠 docId 认领：会话 schema 与快照都要带上", () => {
@@ -1699,8 +1721,8 @@ describe("B69 空的新建文档也要跨重启回来", () => {
       /#\[serde\(alias = "doc_id"\)\]/,
     );
     expect(api, "前端 TabSession 必须有 docId").toMatch(/docId\?: number \| null;/);
-    const body = fnBody("function snapshotSession");
-    expect(body, "快照必须写入 docId").toMatch(/docId: d\.tabId,/);
+    // 标签记录构造抽到了 sessionTabRecordOf（面板标签与卫星标签共用），断言跟过去
+    expect(fnBody("function sessionTabRecordOf"), "快照必须写入 docId").toMatch(/docId: d\.tabId,/);
   });
 
   it("恢复时按 docId 认身份：同一个空文档在多个面板只造一份", () => {
@@ -1739,11 +1761,11 @@ describe("B71 面板操作补齐（移动标签 / 切焦点 / 右键分屏 / 最
   // 根因是**能力缺失**不是 bug，故这里守护的是「接线别断」——这几处一旦漏接，
   // 命令面板里看得见、按下去没反应，属于最难自查的回归。
 
-  /** 截取某个顶层函数的源码体（到下一个顶层 `\n}` 为止）。 */
+  /** 截取某个顶层函数的源码体（见顶层 topLevelFnBody 的说明）。 */
   function fnBody(name: string): string {
-    const start = src.indexOf(name);
-    expect(start, `必须能定位 ${name}`).toBeGreaterThan(-1);
-    return src.slice(start, src.indexOf("\n}", start) + 2);
+    const body = topLevelFnBody(src, name);
+    expect(body, `必须能定位 ${name}`).not.toBe("");
+    return body;
   }
 
   it("五条命令必须登记进命令表（否则首选项里改不了键）", () => {
@@ -1873,7 +1895,7 @@ describe("B71 面板操作补齐（移动标签 / 切焦点 / 右键分屏 / 最
       /if \(cb\.onToggleMaximize\)[\s\S]{0,200}addEventListener\("dblclick"/,
     );
     expect(src, "仅多面板时才给双击回调").toMatch(
-      /onToggleMaximize: countLeaves\(layout\) > 1 \? \(\) => toggleMaximizePanel\(p\.panelId\) : undefined/,
+      /onToggleMaximize:\s*\n?\s*countLeaves\(layout\) > 1 \? \(\) => toggleMaximizePanel\(p\.panelId\) : undefined/,
     );
   });
 
@@ -1899,6 +1921,148 @@ describe("B71 面板操作补齐（移动标签 / 切焦点 / 右键分屏 / 最
       /src\.tabs = \[\];[\s\S]{0,400}disposePanel\(srcId\)/,
     );
     expect(body, "标签要改挂到新面板").toMatch(/t\.panelId = newId/);
+  });
+});
+
+describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是复制一份）", () => {
+  const src = readFileSync("src/main.ts", "utf-8");
+  const sv = readFileSync("src/shell/splitview.ts", "utf-8");
+  const rust = readFileSync("src-tauri/src/windows.rs", "utf-8");
+  const api = readFileSync("src/ipc/api.ts", "utf-8");
+  const caps = readJson("src-tauri/capabilities/default.json");
+
+  /** 截取某个顶层函数的源码体（见顶层 topLevelFnBody 的说明）。 */
+  function fnBody(name: string): string {
+    const body = topLevelFnBody(src, name);
+    expect(body, `必须能定位 ${name}`).not.toBe("");
+    return body;
+  }
+
+  it("卫星窗口 label 前缀必须被 ACL 通配覆盖（漏了 = 界面能画但 emit/listen 全废）", () => {
+    expect(caps.windows, "windows 必须用通配覆盖 sat-*").toContain("sat-*");
+    expect(caps.windows, "主窗口也要留在授权名单里").toContain("main");
+    expect(rust, "Rust 侧前缀常量必须与 capabilities 一致").toMatch(/SAT_PREFIX: &str = "sat-"/);
+    // 跨窗口定位要用到的一组只读窗口命令，全部落在 core:window:default 里 ——
+    // 一旦有人为了“最小权限”把 core:default 拆开，落点计算会静默失效（catch 后返回 null）。
+    const manifest = readJson("src-tauri/gen/schemas/acl-manifests.json");
+    const winDefault: string[] = manifest["core:window"].default_permission.permissions;
+    for (const p of [
+      "allow-outer-position",
+      "allow-outer-size",
+      "allow-inner-size",
+      "allow-scale-factor",
+    ]) {
+      expect(winDefault, `core:window:default 少了 ${p}，新窗口落点会失效`).toContain(p);
+    }
+    expect(caps.permissions, "core:default 必须在授权里").toContain("core:default");
+  });
+
+  it("跨窗口同步只传变更集，且必须带基准长度（基准是防分叉的唯一凭据）", () => {
+    // 基准长度是「两边说的是同一份文本」的证据：位置增量套在错的基准上会在错的地方
+    // 插入文本，属于静默改坏用户内容，比不同步严重得多。
+    const body = fnBody("function broadcastDocChange");
+    expect(body, "基准长度必须真的写进广播载荷（只出现在参数表里等于没传）").toMatch(
+      /baseLen,\s*\n\s*changes: changes\.toJSON\(\),/,
+    );
+    expect(body, "发的是变更集而不是全文").toMatch(/changes: changes\.toJSON\(\)/);
+    expect(body, "正在套用远端变更时不得再广播（否则无限弹）").toMatch(/applyingRemote/);
+    const upd = fnBody("function handleUpdate");
+    expect(upd, "编辑后要广播，且只有文本真变才广播").toMatch(
+      /if \(textChanged\) broadcastDocChange\(tab\.docId, update\.changes, update\.startState\.doc\.length\)/,
+    );
+    expect(src, "两种窗口都要装同步监听").toMatch(/listenDocSync\(\);/);
+  });
+
+  it("基准不符 = 分叉：不许硬套增量，必须转为要一份全文", () => {
+    const body = fnBody("function applyRemoteDocChange");
+    expect(body, "基准校验失败 → 走重同步").toMatch(
+      /t\.state\.doc\.length !== baseLen[\s\S]{0,200}requestDocResync\(docId\)/,
+    );
+    expect(body, "变更集解析失败也要走重同步（不能吞掉）").toMatch(
+      /catch \{[\s\S]{0,120}requestDocResync\(docId\)/,
+    );
+    expect(body, "远端变更要按同源多实例落到每个实例").toMatch(/instances/);
+    expect(body, "远端改了内容 → 本窗口这份也要变脏").toMatch(/doc\.dirty = true/);
+    // 接收侧不得自己排自动保存/副本：同一个文件两边写会互相触发 file-changed
+    expect(body, "接收侧不许排自动保存").not.toContain("scheduleAutosave()");
+    expect(body, "接收侧不许排热退出副本").not.toContain("scheduleBackup()");
+    const req = fnBody("function requestDocResync");
+    expect(req, "重同步请求要防抖（同一个文档不连发）").toMatch(/resyncPending/);
+    expect(req, "广播要带窗口身份，供对端定向应答").toMatch(/from: windowLabel/);
+    // 三个事件名必须一致（对不上就是「发出去了没人接」）
+    for (const evt of ["doc-change", "doc-resync-request", "doc-resync-full"]) {
+      expect(src, `事件名 ${evt} 必须同时出现在常量与监听里`).toContain(`"${evt}"`);
+    }
+  });
+
+  it("全文纠错不得覆盖本窗口未保存的修改（分叉时谁更新无从判断）", () => {
+    const body = fnBody("function applyDocResyncFull");
+    expect(body, "本地是脏的就不动手，只提示").toMatch(/if \(doc\?\.dirty\)[\s\S]{0,200}return;/);
+    // 全文替换必须整态重建，否则视图与 tab.state 会不同步（后续切标签立刻串档）
+    expect(body, "整段替换要经过 setState").toMatch(/setState\(whole\)/);
+  });
+
+  it("拖出窗口：拖拽层只负责判出界，去哪个窗口由宿主按身份决定", () => {
+    // 判据必须带余量：最大化窗口贴边拖动会擦出去，无余量就会莫名弹出新窗口
+    expect(sv, "出界判据要留余量").toMatch(/DRAG_OUT_MARGIN/);
+    expect(sv, "出界要在落点判定之前处理").toMatch(
+      /if \(outsideWindow\(e\.clientX, e\.clientY\)\)[\s\S]{0,400}finishTabDrag\(\)/,
+    );
+    expect(sv, "出界后要吞掉紧随的 click").toMatch(
+      /finishTabDrag\(\);[\s\S]{0,80}suppressTabClick = true;[\s\S]{0,120}onDragOutOfWindow/,
+    );
+    expect(sv, "上报要带松手坐标（新窗口落在松手处）").toMatch(
+      /clientX: e\.clientX,\s*\n\s*clientY: e\.clientY,/,
+    );
+    const body = fnBody("function dragTabsOutOfWindow");
+    expect(body, "整组拖出取该面板全部标签").toMatch(
+      /drag\.groupPanelId !== null[\s\S]{0,160}panels\.get\(drag\.groupPanelId\)\?\.tabs/,
+    );
+    expect(body, "卫星窗口拖出 = 交回主窗口（否则越拖越多窗口）").toMatch(
+      /windowKind === "satellite"[\s\S]{0,200}returnTabsToMain\(ids\)/,
+    );
+    expect(body, "主窗口拖出才开新窗").toMatch(/openTabsInNewWindow\(ids, spot\)/);
+  });
+
+  it("新窗口落点：拿得到就落在松手处，拿不到退回系统摆放", () => {
+    const body = fnBody("async function dropSpotOf");
+    expect(body, "要靠窗口外框位置换算（screenX 在多显示器下口径不对）").toMatch(
+      /outerPosition\(\)/,
+    );
+    expect(body, "外框→客户区要扣掉边框").toMatch(/borderX/);
+    expect(body, "拿不到坐标返回 null").toMatch(/catch \{\s*\n\s*return null;/);
+    expect(api, "落点随建窗命令一起交给 Rust").toMatch(/x: spot\?\.x \?\? null/);
+    expect(rust, "Rust 侧只接受「两个都合法」的落点").toMatch(/fn spot_of/);
+    expect(rust, "建窗时应用落点").toMatch(/builder = builder\.position\(x, y\)/);
+  });
+
+  it("被搬到别的窗口的文档再被打开：必须取回，不能变成两份互不同步的实例", () => {
+    // 同源多实例的前提是同一窗口内共用一条 docs 记录。隐藏实例的正文停在载荷时的
+    // 样子，而重新打开拿到的是磁盘内容 —— 两份各说各话，正是最怕的状态。
+    const body = fnBody("async function doOpen");
+    expect(body, "隐藏实例（在别的窗口）要先取回").toMatch(
+      /const remoted = remotedTabs\.get\(existingDoc\.tabId\);\s*\n\s*if \(inst && remoted !== undefined\) \{[\s\S]{0,240}reclaimRemoted\(inst\.tabId, host\)/,
+    );
+    expect(body, "取回要走既有的激活收尾（重建/刷新/存会话）").toMatch(
+      /reclaimRemoted\(inst\.tabId, host\);[\s\S]{0,240}scheduleSessionSave\(\);/,
+    );
+  });
+
+  it("交出去之后本地只摘视图，绝不删 Rust 侧的文档", () => {
+    // 走 closeTabById 会连文档一起删掉，接手方拿到空壳（首次保存报「文档不存在」）。
+    const body = fnBody("function detachLocally");
+    expect(body, "只动内存视图").toMatch(/tabs\.delete\(tabId\)/);
+    expect(body).not.toContain("ipcCloseTab");
+    expect(body).not.toContain("closeTabById");
+    // 卫星窗口被交空 → 自己关掉，别留一个空窗口
+    expect(body, "交空后自动关窗").toMatch(
+      /tabs\.size === 0[\s\S]{0,120}getCurrentWindow\(\)\.close\(\)/,
+    );
+    // 摘标签会改变面板构成 → 最大化态必须先还原（与分屏/关面板同一不变量）
+    const open = fnBody("async function openTabsInNewWindow");
+    expect(open, "摘标签前先退出最大化").toMatch(
+      /exitMaximize\(\);[\s\S]{0,200}remoteTabLocally\(id, label\)/,
+    );
   });
 });
 

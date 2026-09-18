@@ -65,6 +65,21 @@ export interface SplitviewCallbacks {
   ) => void;
   /** B71：最大化 / 还原该面板（双击标签、操作栏「还原」按钮都走这里） */
   onToggleMaximizePanel?: (panelId: number) => void;
+  /** B71 ④：把标签放到新窗口 / 从卫星窗口交回主窗口 */
+  onOpenTabInNewWindow?: (tabId: number) => void;
+  onReturnTabToMain?: (tabId: number) => void;
+  /**
+   * B71 ④：标签被**拖出窗口边界**（用户想让它在另一个窗口里活着）。
+   *
+   * 这里只负责判定与上报，具体是「开新窗口」还是「还回主窗口」由宿主按窗口身份决定
+   * —— 拖拽层不该知道窗口有几扇。`clientX/clientY` 一并带上：新窗口要落在松手处。
+   */
+  onDragOutOfWindow?: (drag: {
+    tabId: number;
+    groupPanelId: number | null;
+    clientX: number;
+    clientY: number;
+  }) => void;
   /** 拖拽标签落在 tab 区（B27）：插到 beforeTabId 之前（null = 追加到末尾）。
    *  同面板 = 调整顺序；跨面板 = 移动到该面板的该位置。不是分屏。 */
   onMoveTabToStrip: (panelId: number, tabId: number, beforeTabId: number | null) => void;
@@ -111,6 +126,15 @@ let svCallbacks: SplitviewCallbacks | null = null;
 
 /** 移动超过该距离才进入拖拽（否则保持点击激活语义）。 */
 const DRAG_THRESHOLD = 5;
+
+/**
+ * 指针要越过窗口边界这么多像素才算「想扔到另一个窗口」。
+ *
+ * 为什么不直接用「出界」当判据：贴着窗口边缘拖动（尤其是最大化的窗口，边缘就是屏幕
+ * 边缘）时指针很容易擦出去几十毫秒，那会莫名其妙弹出一个新窗口。留一段余量，把
+ * 「擦边」和「真的拖出去」区分开。
+ */
+const DRAG_OUT_MARGIN = 24;
 
 interface TabDragState {
   tabId: number;
@@ -225,6 +249,21 @@ export function consumeTabClickSuppressed(): boolean {
   return v;
 }
 
+/**
+ * 指针是否已经拖出窗口客户区（留 `DRAG_OUT_MARGIN` 余量，防擦边误触）。
+ *
+ * 用客户区尺寸而不是 `screenX/screenY` 比较：后者在多显示器下是相对**当前显示器**
+ * 的坐标，主窗口与卫星窗口算出来的口径不一致，判据会时灵时不灵。
+ */
+export function outsideWindow(x: number, y: number): boolean {
+  return (
+    x < -DRAG_OUT_MARGIN ||
+    y < -DRAG_OUT_MARGIN ||
+    x > window.innerWidth + DRAG_OUT_MARGIN ||
+    y > window.innerHeight + DRAG_OUT_MARGIN
+  );
+}
+
 /** 指针位置命中的面板（手动几何判定，jsdom 无布局也可测）。 */
 export function panelAt(x: number, y: number): HTMLElement | null {
   // 手动命中测试而非 elementFromPoint：逻辑确定且可在 jsdom（无布局）下测试
@@ -320,6 +359,21 @@ function onTabDragMove(e: MouseEvent): void {
   // 影像跟随光标。⚠️ 必须放在下面「离开面板就 return」**之前** —— 拖到面板之外
   // （空白区、状态栏上方）时影像同样要跟着走，否则会僵在最后一个面板上。
   moveDragGhost(e.clientX, e.clientY);
+  // B71 ④：指针拖出窗口 → 这一拖的目标是「另一个窗口」，交给宿主处理。
+  // 必须放在落点判定**之前**：指针已经在客户区外，panelAt 必为 null，继续往下
+  // 走只是空转；而 finishTabDrag 会清掉影像/预览与全部监听，所以这里必须先收尾。
+  if (outsideWindow(e.clientX, e.clientY)) {
+    const out = {
+      tabId: tabDrag.tabId,
+      groupPanelId: tabDrag.groupPanelId,
+      clientX: e.clientX,
+      clientY: e.clientY,
+    };
+    finishTabDrag();
+    suppressTabClick = true;
+    svCallbacks?.onDragOutOfWindow?.(out);
+    return;
+  }
   const panelEl = panelAt(e.clientX, e.clientY);
   if (tabDrag.panelEl && tabDrag.panelEl !== panelEl) {
     const prev = tabDrag.panelEl.querySelector(".split-preview");
@@ -552,6 +606,10 @@ function buildPanel(
     // doubleClickTabToToggleEditorGroupSizes = 'maximize'；LitePad 无「固定标签」，
     // 双击标签本来没有其它用途）。仅多面板时 main 才会传这个回调。
     onToggleMaximize: () => cb.onToggleMaximizePanel?.(panelId),
+    onOpenInNewWindow: cb.onOpenTabInNewWindow
+      ? (tabId) => cb.onOpenTabInNewWindow?.(tabId)
+      : undefined,
+    onReturnToMain: cb.onReturnTabToMain ? (tabId) => cb.onReturnTabToMain?.(tabId) : undefined,
     onReorder: (from, to) => cb.onReorderTab?.(panelId, from, to),
     onNew: () => cb.onNewTab?.(panelId),
   });

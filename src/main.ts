@@ -1,13 +1,15 @@
 import "./styles/global.css";
 
-import { EditorState, type ChangeSet } from "@codemirror/state";
+// ChangeSet 既要当类型又要用运行时的 `ChangeSet.fromJSON`（跨窗口同步要还原对端的
+// 变更集），所以这里不能写成 `type ChangeSet`。
+import { ChangeSet, EditorState } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { redo, selectAll, undo } from "@codemirror/commands";
 import { foldAll, foldCode, unfoldAll, unfoldCode } from "@codemirror/language";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { oneDark as oneDarkTheme } from "@codemirror/theme-one-dark";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { emit, emitTo, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -44,18 +46,24 @@ import {
   logEvent,
   newTab as ipcNewTab,
   openFile,
+  openSatelliteWindow,
   reloadFile,
   restoreBackup,
   saveFile,
   savePasteImage,
   saveSession,
   saveSettings,
+  windowPayload,
   writeBackup,
   type LossyChar,
   type OpenedFile,
   type RestoredBackup,
+  type SatellitePayload,
+  type SatelliteTab,
   type SessionState,
   type Settings,
+  type WindowPayload,
+  type WindowSpot,
 } from "./ipc/api";
 import { buildExportHtml, printToPdf } from "./markdown/exporter";
 import { renderBlocks, renderFull, type TocEntry } from "./markdown/pipeline";
@@ -362,6 +370,9 @@ function handleUpdate(view: EditorView, update: ViewUpdate): void {
       scheduleBackup();
     }
     syncDocInstances(tab, update.changes);
+    // B71 ④：同一文档可能同时挂在另一个窗口上（拖出去过、或两个窗口各开了一份），
+    // 变更要广播过去，否则两个窗口各编各的、最后谁保存谁赢。
+    if (textChanged) broadcastDocChange(tab.docId, update.changes, update.startState.doc.length);
   }
   if (!suppressDirty) {
     scheduleSessionSave();
@@ -530,6 +541,10 @@ function tabstripCallbacks(p: Panel): TabstripCallbacks {
     onSplitV: (tabId) => splitPanelWithTab(p.panelId, "v", tabId, false, true),
     // 双击标签 = 最大化/还原。仅多面板时给（单面板给了就是个永远没反应的手势）。
     onToggleMaximize: countLeaves(layout) > 1 ? () => toggleMaximizePanel(p.panelId) : undefined,
+    // B71 ④：把标签交给新窗口。主窗口与卫星窗口都可用 —— 卫星窗口里再开一个窗口，
+    // 对用户来说就是「再拎出去一份」，没有理由禁止。
+    onOpenInNewWindow: (tabId) => void openTabsInNewWindow([tabId]),
+    onReturnToMain: windowKind === "satellite" ? (tabId) => returnTabToMain(tabId) : undefined,
     onReorder: (from, to) => {
       const fi = p.tabs.indexOf(from);
       const ti = p.tabs.indexOf(to);
@@ -640,6 +655,10 @@ function rebuildLayout(): void {
     // B71：右键「左右/上下分屏」与双击标签最大化（splitview 首次构建标签栏时也要有）
     onSplitTab: (panelId, tabId, dir) => splitPanelWithTab(panelId, dir, tabId, false, true),
     onToggleMaximizePanel: (panelId) => toggleMaximizePanel(panelId),
+    onOpenTabInNewWindow: (tabId) => void openTabsInNewWindow([tabId]),
+    onReturnTabToMain: windowKind === "satellite" ? (tabId) => returnTabToMain(tabId) : undefined,
+    // B71 ④：拖出窗口边界 = 把标签送到另一个窗口（主窗口开新窗口，卫星窗口交回主窗口）
+    onDragOutOfWindow: (drag) => dragTabsOutOfWindow(drag),
     // B71：拖标签栏空白处 = 拖整组。并入 = 「关掉这个分屏但指定并入目标」
     onMergeGroup: (srcId, targetId) => closePanelById(srcId, targetId),
     onMoveGroupToPanel: (srcId, targetId, dir, newFirst) =>
@@ -1483,6 +1502,22 @@ async function doOpen(
         showMessage(`${file.name} 已在标签中打开`);
         return inst.tabId;
       }
+      // B71 ④：这份文档正挂在**另一个窗口**上（本地只剩隐藏实例，panelId = -1）。
+      // 直接往下走会为同一个 docId 再建一个实例 —— 隐藏那份的正文停在载荷时的样子，
+      // 新建这份来自磁盘，两份共用一条 docs 记录却各说各话，正是「同源多实例」最怕的
+      // 状态。所以先把它**取回**本窗口（隐藏实例在那边一直跟着远端编辑同步，内容是最新的）。
+      const remoted = remotedTabs.get(existingDoc.tabId);
+      if (inst && remoted !== undefined) {
+        const host =
+          (targetPanelId !== undefined ? getPanel(targetPanelId) : undefined)?.panelId ??
+          activePanelId;
+        reclaimRemoted(inst.tabId, host);
+        rebuildLayout();
+        refreshAll();
+        scheduleSessionSave();
+        showMessage(`${file.name} 已从另一个窗口取回`);
+        return inst.tabId;
+      }
     }
 
     const panel =
@@ -1809,6 +1844,9 @@ function showEolMenu(): void {
 // ---------------------------------------------------------------- 会话 / 自动保存（M2）
 
 function scheduleSessionSave(): void {
+  // 卫星窗口不碰 session.json：会话只有一份，两个窗口都写就是互相覆盖
+  // （表现为「另一个窗口的标签时有时无」）。卫星窗口承载的标签由主窗口兜底持有。
+  if (windowKind !== "main") return;
   if (sessionTimer !== null) clearTimeout(sessionTimer);
   sessionTimer = setTimeout(() => {
     sessionTimer = null;
@@ -1817,6 +1855,49 @@ function scheduleSessionSave(): void {
 }
 
 let sessionTimer: number | null = null;
+
+/** 一个标签的会话记录（面板内标签与 `satelliteTabs` 共用同一形状）。 */
+function sessionTabRecordOf(t: Tab): {
+  path: string;
+  encoding: string;
+  eol: string;
+  cursorLine: number;
+  cursorCol: number;
+  viewMode: string | null;
+  backupId: string | null;
+  docId: number;
+} {
+  const d = docs.get(t.docId)!;
+  const pos = t.state.selection.main.head;
+  const line = t.state.doc.lineAt(pos);
+  return {
+    path: d.path ?? "",
+    encoding: d.encoding,
+    eol: d.eol,
+    cursorLine: line.number,
+    cursorCol: pos - line.from + 1,
+    viewMode: isMdTab(t) ? t.viewMode : null,
+    backupId: d.backupId,
+    // B69：空未命名文档的认领凭据（见 TabSession.docId 注释）
+    docId: d.tabId,
+  };
+}
+
+/** 该文档值不值得进会话（B68/B69 的判据；面板标签与隐藏实例共用）。 */
+function sessionWorthy(t: Tab): boolean {
+  const d = docs.get(t.docId);
+  if (!d) return false;
+  // B68：有磁盘路径的照旧入会话；没有路径的未命名文档，只有在
+  // 备份区里确实存着副本时才值得留住（否则恢复时无据可依，只会白占一行）。
+  if (d.path || d.backedUp) return true;
+  // B69：热退出开着时，**空的**未命名文档也要留住。它没有内容要救，
+  // 但标签本身该原样回来——「新建了还没开始打字」不该重启后凭空消失。
+  //
+  // ⚠️ 判定必须是「无路径 **且 不脏**」：脏、却又没备份成功的未命名文档
+  // 绝不能按空文档恢复，那会把用户打的字真的丢掉。那种情况只能走
+  // 关窗确认框（快照里没有它 → 恢复时也不会被当成空文档）。
+  return settings?.hot_exit === true && !d.dirty;
+}
 
 function snapshotSession(): Parameters<typeof saveSession>[0] {
   const panelIndex = new Map<number, number>();
@@ -1828,44 +1909,22 @@ function snapshotSession(): Parameters<typeof saveSession>[0] {
       const p = panels.get(id)!;
       const tabList = p.tabs
         .map((tid) => tabs.get(tid))
-        .filter((t): t is Tab => {
-          if (!t) return false;
-          const d = docs.get(t.docId);
-          if (!d) return false;
-          // B68：有磁盘路径的照旧入会话；没有路径的未命名文档，只有在
-          // 备份区里确实存着副本时才值得留住（否则恢复时无据可依，只会白占一行）。
-          if (d.path || d.backedUp) return true;
-          // B69：热退出开着时，**空的**未命名文档也要留住。它没有内容要救，
-          // 但标签本身该原样回来——「新建了还没开始打字」不该重启后凭空消失。
-          //
-          // ⚠️ 判定必须是「无路径 **且 不脏**」：脏、却又没备份成功的未命名文档
-          // 绝不能按空文档恢复，那会把用户打的字真的丢掉。那种情况只能走
-          // 关窗确认框（快照里没有它 → 恢复时也不会被当成空文档）。
-          return settings?.hot_exit === true && !d.dirty;
-        });
+        .filter((t): t is Tab => !!t && sessionWorthy(t));
       return {
-        tabs: tabList.map((t) => {
-          const d = docs.get(t.docId)!;
-          const pos = t.state.selection.main.head;
-          const line = t.state.doc.lineAt(pos);
-          return {
-            path: d.path ?? "",
-            encoding: d.encoding,
-            eol: d.eol,
-            cursorLine: line.number,
-            cursorCol: pos - line.from + 1,
-            viewMode: isMdTab(t) ? t.viewMode : null,
-            backupId: d.backupId,
-            // B69：空未命名文档的认领凭据（见 TabSession.docId 注释）
-            docId: d.tabId,
-          };
-        }),
+        tabs: tabList.map((t) => sessionTabRecordOf(t)),
         active: Math.max(
           0,
           tabList.findIndex((t) => t.tabId === p.activeTabId),
         ),
       };
     }),
+    // B71 ④：搬到其他窗口的标签也要进会话（它们在本窗口是隐藏实例，见 remoteTabLocally）。
+    // 卫星窗口自己不写会话，这里是这些标签唯一的兜底——不然「拖到新窗口 + 强杀进程」
+    // 会让未保存内容变成没人认领的孤儿副本。
+    satelliteTabs: [...remotedTabs.values()]
+      .map((r) => tabs.get(r.tabId))
+      .filter((t): t is Tab => !!t && sessionWorthy(t))
+      .map((t) => sessionTabRecordOf(t)),
     // 最大化不进会话：0/1 的比例存下来会让下次启动只剩一块面板（见 layoutForSession）
     layout: convertLayoutForSession(layoutForSession(), panelIndex),
     activePanel: panelIndex.get(activePanelId) ?? 0,
@@ -1904,6 +1963,15 @@ async function restoreSession(): Promise<boolean> {
   }
   const sp = sess?.panels;
   if (!sess || !sp || sp.length === 0) return false;
+  // B71 ④：被搬到其他窗口的标签并回主窗口（v1 不回放多窗口布局）。
+  // 追加到**第一个面板**而不是新建分屏：这些标签本来就不属于本窗口的某块分屏，
+  // 让它们和主窗口的标签待在一起，比凭空多出一块空面板好理解。
+  //
+  // 插在这里（而不是在恢复流程末尾单独走一遍）是为了复用同一条恢复链路：
+  // 副本优先/文件兜底、按文档身份去重、光标与视图模式恢复都在下面那套里。
+  if (sess.satelliteTabs?.length) {
+    sp[0].tabs = [...sp[0].tabs, ...sess.satelliteTabs];
+  }
   if (!sp.some((p) => p.tabs.length > 0)) return false;
   const panels0 = sp;
 
@@ -2290,7 +2358,20 @@ async function flushBackups(): Promise<number> {
 
   // 新分配的 ID 要尽快落到会话里：强杀进程时全靠会话把副本认领回来，
   // 晚一步落盘就等于白写了一份没人认领的副本。
-  if (assignedNewId) scheduleSessionSave();
+  if (assignedNewId) {
+    scheduleSessionSave();
+    // B71 ④：卫星窗口新分配的副本 ID 必须同步给主窗口 —— 会话只有主窗口在写，
+    // 主窗口不知道这个 ID 的话，重启时会拿**旧的** backupId（或干脆没有）去恢复，
+    // 用户真正最后看到的内容反而成了没人认领的孤儿副本被清掉。
+    if (windowKind === "satellite") {
+      const assigned = [...docs.values()]
+        .filter((d) => d.backupId)
+        .map((d) => ({ docId: d.tabId, backupId: d.backupId, backedUp: d.backedUp }));
+      void emitTo(MAIN_WINDOW_LABEL, "backup-ids", { from: windowLabel, docs: assigned }).catch(
+        () => {},
+      );
+    }
+  }
   await Promise.all(jobs);
   return failed;
 }
@@ -3911,6 +3992,657 @@ function showFatalError(err: unknown): void {
  * 这不是「跳过确认」，而是「确认的前提已经不存在了」——内容已经落到备份区，
  * 下次启动会原样还原成未保存标签，没有东西会丢。
  */
+// ---------------------------------------------------------------- 多窗口（B71 ④）
+//
+// 一个 LitePad 进程可以开多个窗口：`main` 是主窗口（会话、设置、自动保存的持有者），
+// `sat-<n>` 是**卫星窗口**（承载用户拎出去的几个标签）。
+//
+// 设计要点（都是踩过或差点踩到的点）：
+//   · 文档 id 是**进程级**的，两个窗口共用同一批 id，卫星窗口不重新分配 —— 于是
+//     `save_file` / `write_backup` 这些按 id 寻址的命令天然通用。
+//   · 正文**随载荷一起传**：未保存的修改、未命名的文档都只存在于源窗口的内存里，
+//     让新窗口自己去读盘会拿到旧内容。
+//   · 源窗口必须等新窗口**确认拿到载荷**才敢把标签摘掉 —— 建窗失败（内存不足等）
+//     时若已经摘了，用户看到的就是「标签没了，新窗口也没出来」。
+//   · 会话始终由**主窗口**持有：卫星窗口不读也不写 session.json，否则两个窗口会
+//     互相覆盖（见 scheduleSessionSave 的闸门）。
+
+/** 本窗口的身份。启动时问一次 Rust，之后不再变。 */
+let windowKind: "main" | "satellite" = "main";
+/** 本窗口 label（"main" / "sat-1"…）：定向投递事件要用。 */
+let windowLabel = "main";
+
+/** 主窗口 label。与 Rust `windows::MAIN_LABEL`、capabilities 的 `main` 三处必须一致。 */
+const MAIN_WINDOW_LABEL = "main";
+
+/** 等新窗口「已就绪」的上限。超时按没开起来处理（源窗口保留标签，只提示一句）。 */
+const SATELLITE_READY_TIMEOUT_MS = 6000;
+
+/**
+ * 已搬到别的窗口的文档：docId → { 本地隐藏实例的 tabId, 承载它的窗口 label }。
+ *
+ * 隐藏实例（panelId = -1）继续留在 `tabs` 里，但不属于任何面板 —— 它承担两件事：
+ * 会话快照能带上这些标签（见 snapshotSession 的 satelliteTabs）、卫星窗口异常消失时
+ * 还能把标签恢复成可见的。
+ */
+const remotedTabs = new Map<number, { tabId: number; owner: string }>();
+
+/** 把某实例摊平成可跨窗口传输的快照（正文取实例状态，不需要回写磁盘）。 */
+function transferSnapshotOf(tabId: number): SatelliteTab | null {
+  const tab = tabs.get(tabId);
+  if (!tab) return null;
+  const doc = docs.get(tab.docId);
+  if (!doc) return null;
+  const text = tab.state.doc.toString();
+  const pos = Math.min(tab.state.selection.main.head, text.length);
+  const line = tab.state.doc.lineAt(pos);
+  return {
+    docId: doc.tabId,
+    path: doc.path,
+    name: doc.name,
+    text,
+    encoding: doc.encoding,
+    eol: doc.eol,
+    readonly: doc.readonly,
+    dirty: doc.dirty,
+    viewMode: isMdTab(tab) ? tab.viewMode : "source",
+    cursorLine: line.number,
+    cursorCol: pos - line.from + 1,
+    sizeClass: doc.sizeClass,
+    backupId: doc.backupId,
+    backedUp: doc.backedUp,
+  };
+}
+
+/**
+ * 标签被搬到别的窗口后，本地要留一个**隐藏实例**（panelId = -1）。
+ *
+ * 为什么不留着不管、直接删掉：会话与热退出都靠「本地还认得这个文档」才能把它的
+ * 内容写进 session.json。卫星窗口自己不写会话（见 scheduleSessionSave 闸门），
+ * 如果这里删干净，用户把一份未保存文档拖到新窗口、然后用任务管理器结束进程，
+ * 那份文档就再也没人记得 —— 副本会变成孤儿被清理掉。
+ *
+ * 隐藏实例不进任何面板（标签条上看不到），只用于：
+ *   · snapshotSession 把它写进会话的 `satelliteTabs` 段
+ *   · 卫星窗口异常消失（崩溃/被杀）时把它**恢复成可见标签**当作兜底
+ */
+function remoteTabLocally(tabId: number, owner: string): void {
+  const tab = tabs.get(tabId);
+  if (!tab) return;
+  const panel = panels.get(tab.panelId);
+  if (panel) {
+    const idx = panel.tabs.indexOf(tabId);
+    if (idx >= 0) panel.tabs.splice(idx, 1);
+    if (panel.activeTabId === tabId)
+      panel.activeTabId = panel.tabs[idx] ?? panel.tabs[idx - 1] ?? -1;
+    if (panel.viewTabId === tabId) panel.viewTabId = null;
+  }
+  tab.panelId = -1;
+  remotedTabs.set(tab.docId, { tabId, owner });
+}
+
+/** 把隐藏实例恢复成可见标签（卫星窗口消失、或用户点「移回主窗口」时用）。 */
+function reclaimRemoted(tabId: number, panelId = activePanelId): void {
+  const tab = tabs.get(tabId);
+  if (!tab) return;
+  const panel = panels.get(panelId) ?? panels.get([...panels.keys()][0]);
+  if (!panel) return;
+  remotedTabs.delete(tab.docId);
+  tab.panelId = panel.panelId;
+  panel.tabs.push(tabId);
+  panel.activeTabId = tabId;
+}
+
+/**
+ * 把指定标签搬到新窗口。
+ *
+ * 顺序是刻意的：先挂「就绪 / 失败」监听 → 建窗 → 等到应答 → 才摘本地标签。
+ * 反向（先摘再建）在建窗失败时会让标签凭空消失，用户没有任何补救手段。
+ */
+async function openTabsInNewWindow(tabIds: number[], spot?: WindowSpot | null): Promise<void> {
+  const snapshots = tabIds
+    .map((id) => transferSnapshotOf(id))
+    .filter((s): s is SatelliteTab => s !== null);
+  if (snapshots.length === 0) return;
+
+  const title = snapshots.length === 1 ? snapshots[0].name : `LitePad — ${snapshots.length} 个标签`;
+  const payload: SatellitePayload = { tabs: snapshots };
+
+  // 新窗口冷启可能比一次 IPC 往返还快 → 监听必须先挂上，且不能假设「label 已拿到」
+  const readyLabels = new Set<string>();
+  const failedLabels = new Set<string>();
+  let notify: ((label: string) => void) | null = null;
+  const onReady = await listen<{ label: string }>("satellite-ready", (e) => {
+    const l = e.payload?.label;
+    if (!l) return;
+    readyLabels.add(l);
+    notify?.(l);
+  });
+  const onFailed = await listen<{ label: string }>("satellite-failed", (e) => {
+    const l = e.payload?.label;
+    if (!l) return;
+    failedLabels.add(l);
+    notify?.(l);
+  });
+
+  let label: string;
+  try {
+    label = await openSatelliteWindow(title, payload, spot);
+    const ok = await new Promise<boolean>((resolve) => {
+      if (readyLabels.has(label)) return resolve(true);
+      if (failedLabels.has(label)) return resolve(false);
+      const timer = setTimeout(() => resolve(false), SATELLITE_READY_TIMEOUT_MS);
+      notify = (l) => {
+        if (l !== label) return;
+        clearTimeout(timer);
+        resolve(readyLabels.has(label));
+      };
+    });
+    if (!ok) {
+      showMessage("新窗口没能打开，标签保留在原窗口", true);
+      return;
+    }
+  } catch (err) {
+    showMessage(`新窗口打开失败：${err}`, true);
+    return;
+  } finally {
+    notify = null;
+    onReady();
+    onFailed();
+  }
+
+  // 面板结构变了（标签被摘走）→ 最大化态必须先还原，否则会留下「0 宽但还在树里」
+  // 的面板（同 splitPanelWithTab / closePanelById 的处理）
+  exitMaximize();
+  for (const id of tabIds) remoteTabLocally(id, label);
+  rebuildLayout();
+  refreshAll();
+  scheduleSessionSave();
+}
+
+/**
+ * 接管一批从别的窗口交过来的标签（主窗口的 `docs-return`、或卫星窗口启动时自带的载荷）。
+ *
+ * 文档已在本窗口存在时**只加实例**：同一文档在两个窗口各有一份实例是允许的，
+ * 但 `docs` 镜像必须只有一份（同源多实例的唯一真相）。
+ */
+function adoptTransferredTabs(incoming: SatelliteTab[], panelId = activePanelId): void {
+  const panel = panels.get(panelId) ?? panels.get([...panels.keys()][0]);
+  if (!panel) return;
+  for (const st of incoming) {
+    // 该文档在本地还留着隐藏实例（刚从别的窗口交回来）→ 先把它摘掉，避免出现
+    // 「两份实例同源但互不同步」——同源多实例的前提是同一窗口内共用一个 docs 条目，
+    // 而隐藏实例的正文可能与交回来的最新正文不一致。
+    const remoted = remotedTabs.get(st.docId);
+    if (remoted !== undefined) {
+      const hidden = tabs.get(remoted.tabId);
+      if (hidden && hidden !== tabs.get(st.docId)) tabs.delete(remoted.tabId);
+      remotedTabs.delete(st.docId);
+    }
+    let doc = docs.get(st.docId);
+    if (!doc) {
+      doc = makeDoc(
+        st.docId,
+        st.text,
+        st.name,
+        st.path,
+        st.encoding,
+        st.eol,
+        st.readonly,
+        normalizeSizeClass(st.sizeClass),
+        st.backupId ?? null,
+      );
+      registerDoc(doc);
+    }
+    doc.dirty = st.dirty;
+    doc.backedUp = st.backedUp;
+    const inst = makeInstance(doc, panel.panelId, st.text);
+    if (isMdTab(inst) && st.viewMode === "preview") inst.viewMode = "preview";
+    const lineNo = Math.min(Math.max(1, st.cursorLine || 1), inst.state.doc.lines);
+    const line = inst.state.doc.line(lineNo);
+    const pos = line.from + Math.min(Math.max(0, (st.cursorCol || 1) - 1), line.length);
+    inst.state = inst.state.update({ selection: { anchor: pos } }).state;
+    attachTabToPanel(inst, panel);
+  }
+  rebuildLayout();
+  refreshAll();
+  scheduleSessionSave();
+}
+
+/** 卫星窗口：把手上的标签交还主窗口（定向投递，主窗口那边 applyTabsReturn）。 */
+function returnTabsToMain(tabIds: number[]): void {
+  const snapshots = tabIds
+    .map((id) => transferSnapshotOf(id))
+    .filter((s): s is SatelliteTab => s !== null);
+  if (snapshots.length === 0) return;
+  void emitTo(MAIN_WINDOW_LABEL, "tabs-return", {
+    from: windowLabel,
+    tabs: snapshots,
+  }).catch(() => {
+    // 主窗口没在（正在退出）→ 未保存内容仍由热退出副本兜底
+  });
+}
+
+/** 卫星窗口：把单个标签交回主窗口（标签右键「移回主窗口」）。 */
+function returnTabToMain(tabId: number): void {
+  returnTabsToMain([tabId]);
+  detachLocally([tabId]);
+}
+
+/**
+ * 把本窗口的若干标签「摘掉」（交出去之后）。
+ *
+ * ⚠️ 不能走 `closeTabById` —— 那会连 Rust 侧的文档一起删掉，接手的窗口拿到的
+ * 就只剩一个空壳（首次保存会报「文档不存在」）。这里只动本窗口的内存视图，
+ * 文档本体留在 Rust 等对方认领。
+ */
+function detachLocally(tabIds: number[]): void {
+  for (const tabId of tabIds) {
+    const tab = tabs.get(tabId);
+    if (!tab) continue;
+    const panel = panels.get(tab.panelId);
+    tabs.delete(tabId);
+    if (panel) {
+      panel.tabs = panel.tabs.filter((id) => id !== tabId);
+      if (panel.activeTabId === tabId) panel.activeTabId = panel.tabs[0] ?? -1;
+      if (panel.viewTabId === tabId) panel.viewTabId = null;
+    }
+    if (![...tabs.values()].some((t) => t.docId === tab.docId)) docs.delete(tab.docId);
+  }
+  // 空了的卫星窗口自己关掉：留一个没有标签的窗口没有意义
+  if (windowKind === "satellite" && tabs.size === 0) {
+    void getCurrentWindow().close();
+    return;
+  }
+  rebuildLayout();
+  refreshAll();
+  scheduleSessionSave();
+}
+
+/**
+ * 标签被拖出窗口边界（splitview 上报）。
+ *
+ * 同一个手势在两种窗口里含义不同，但都指向「让它去另一个窗口」：
+ *   · 主窗口 / 卫星窗口套卫星窗口 → **开新窗口**，落点就是松手处；
+ *   · 卫星窗口 → **交回主窗口**（这才是「拖回去」，否则只会越拖越多窗口）。
+ */
+function dragTabsOutOfWindow(drag: {
+  tabId: number;
+  groupPanelId: number | null;
+  clientX: number;
+  clientY: number;
+}): void {
+  // 整组拖出的标签集合：从标签栏空白处起手时 tabId 是 -1（无意义），取该面板全部标签
+  const ids =
+    drag.groupPanelId !== null ? [...(panels.get(drag.groupPanelId)?.tabs ?? [])] : [drag.tabId];
+  if (ids.length === 0) return;
+
+  if (windowKind === "satellite") {
+    returnTabsToMain(ids);
+    detachLocally(ids);
+    showMessage(`已交回主窗口 ${ids.length} 个标签`);
+    return;
+  }
+
+  void (async () => {
+    const spot = await dropSpotOf(drag.clientX, drag.clientY);
+    await openTabsInNewWindow(ids, spot);
+  })();
+}
+
+/**
+ * 松手处对应的屏幕坐标（逻辑像素），用于给新窗口定位。
+ *
+ * 为什么不用 `screenX/screenY`：那对坐标在多显示器下是相对**当前显示器**原点的，
+ * 摆到第二块屏幕上就会跑偏。窗口外框位置（`outerPosition`）才是相对整个虚拟桌面的
+ * 口径，加上「外框→客户区」的偏移与指针在客户区内的位置即可。代价是标题栏高度被
+ * 当成客户区算进了 y —— 几十像素的偏差，换实现简单与跨屏正确，划算。
+ *
+ * 拿不到就返回 null：让系统按默认规则摆，也好过按一个瞎猜的坐标摆。
+ */
+async function dropSpotOf(clientX: number, clientY: number): Promise<WindowSpot | null> {
+  try {
+    const win = getCurrentWindow();
+    const [outer, outerSize, innerSize, scale] = await Promise.all([
+      win.outerPosition(),
+      win.outerSize(),
+      win.innerSize(),
+      win.scaleFactor(),
+    ]);
+    // 左右边框各一半，上边框 + 标题栏 + 下边框全算在上边（见函数注释的取舍）
+    const borderX = (outerSize.width - innerSize.width) / 2;
+    const chromeY = outerSize.height - innerSize.height;
+    return {
+      x: (outer.x + borderX + clientX * scale) / scale,
+      y: (outer.y + chromeY + clientY * scale) / scale,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** 主窗口：接住卫星窗口交回来的标签。 */
+function applyTabsReturn(payload: { from?: string; tabs?: SatelliteTab[] } | null): void {
+  if (windowKind !== "main") return;
+  const incoming = payload?.tabs;
+  if (!incoming || incoming.length === 0) return;
+  adoptTransferredTabs(incoming);
+  showMessage(`已从另一个窗口接回 ${incoming.length} 个标签`);
+}
+
+/**
+ * 主窗口：接收卫星窗口新分配的副本 ID。
+ *
+ * 会话只有主窗口在写（卫星窗口的 scheduleSessionSave 是空操作），而热退出副本是
+ * 卫星窗口自己写的 —— 不回传这个 ID，主窗口的会话就会记着一个旧的（或空的）副本号，
+ * 重启时用户真正看到的内容反而成了没人认领的孤儿副本被清掉。
+ */
+function applyBackupIds(
+  payload: { docs?: Array<{ docId: number; backupId: string | null; backedUp: boolean }> } | null,
+): void {
+  if (windowKind !== "main") return;
+  let touched = false;
+  for (const d of payload?.docs ?? []) {
+    const doc = docs.get(d.docId);
+    if (!doc) continue;
+    doc.backupId = d.backupId;
+    doc.backedUp = d.backedUp;
+    touched = true;
+  }
+  if (touched) scheduleSessionSave();
+}
+
+/**
+ * 主窗口：卫星窗口**异常消失**（崩溃 / 被任务管理器结束）时的兜底。
+ *
+ * 正常关闭走的是「先交还标签再 destroy」，到这里 remotedTabs 里已经空了，本函数
+ * 自然成为空操作。真正命中只有异常路径 —— 那时把隐藏实例恢复成可见标签，
+ * 至少让用户看得见、能继续编辑（代价是最后一次未交还的编辑不在，副本仍能兜住）。
+ */
+function reclaimFromVanished(label: string): void {
+  if (windowKind !== "main") return;
+  const orphans = [...remotedTabs.entries()].filter(([, v]) => v.owner === label);
+  if (orphans.length === 0) return;
+  for (const [docId, v] of orphans) {
+    remotedTabs.delete(docId);
+    reclaimRemoted(v.tabId);
+  }
+  rebuildLayout();
+  refreshAll();
+  scheduleSessionSave();
+  showMessage(`另一个窗口已关闭，接回 ${orphans.length} 个标签`);
+}
+
+// ------------------------------------------------------------ 跨窗口同源同步
+
+/**
+ * 同一文档同时挂在两个窗口上时，正文必须双向实时同步。
+ *
+ * 什么情况下会同时挂两个窗口：
+ *   · 一个窗口把标签拖出去，又在原窗口重新打开了同一个文件（本地会先取回隐藏实例）；
+ *   · 两个窗口各用「打开文件」打开了同一个路径（Rust 侧是同一条文档记录）。
+ * 这时如果不同步，两边各编各的，最后谁按保存谁赢 —— 另一边的编辑无声消失。
+ *
+ * 只传变更集，不传全文：CM6 的 ChangeSet 本身就是可 JSON 化的位置增量，几百字节，
+ * 每次按键发一份也不心疼；传全文在几十 MB 的文件上会把 IPC 打爆。
+ *
+ * 三层保护，缺一不可：
+ *   1. 发送侧 `applyingRemote` —— 正在套用远端变更时产生的 update 不再广播，
+ *      否则 A 改 → B 广播 → A 广播 …… 无穷弹；
+ *   2. 接收侧复用 `syncingDocId` —— 让 handleUpdate 不把远端变更当用户编辑，
+ *      否则两个窗口会各排一份自动保存与热退出副本，对着同一个文件写盘打架；
+ *   3. 基准校验 —— 变更集自带 baseLen，对端长度对不上说明两边**已经分叉**
+ *      （对端从磁盘重载过、或中间丢过一次事件）。此时硬套位置增量就会在错误的
+ *      位置插入文本，属于静默改坏用户内容，绝不接受 → 转为要一份全文（见下）。
+ */
+interface DocChangePayload {
+  from?: string;
+  docId?: number;
+  /** 变更前的文档长度（两个窗口必须一致，否则视为分叉） */
+  baseLen?: number;
+  changes?: unknown;
+}
+
+/** 事件名三兄弟：常规变更、分叉纠错请求、分叉纠错应答。 */
+const EVT_DOC_CHANGE = "doc-change";
+const EVT_DOC_RESYNC_REQ = "doc-resync-request";
+const EVT_DOC_RESYNC_FULL = "doc-resync-full";
+
+/** 正在套用远端变更：期间本窗口产生的 update 不再广播。 */
+let applyingRemote = false;
+/** 已发出、还没等到应答的重同步请求（同一文档不重复发）。 */
+const resyncPending = new Set<number>();
+
+/** 把本地编辑广播给其他窗口（自己也会收到这份事件，靠 payload.from 过滤掉）。 */
+function broadcastDocChange(docId: number, changes: ChangeSet, baseLen: number): void {
+  if (applyingRemote || changes.empty) return;
+  void emit(EVT_DOC_CHANGE, {
+    from: windowLabel,
+    docId,
+    baseLen,
+    changes: changes.toJSON(),
+  }).catch(() => {
+    // 没有别的窗口 / 事件系统不可用：本窗口照常工作，不是错误
+  });
+}
+
+/** 本窗口某文档的当前正文（取挂载中的实例，与 freshTextOfDoc 同一口径）。 */
+function textOfDocId(docId: number): string | null {
+  const doc = docs.get(docId);
+  return doc ? freshTextOfDoc(doc) : null;
+}
+
+/** 收到远端变更：按「同源多实例」的方式落到本窗口该文档的每个实例上。 */
+function applyRemoteDocChange(payload: DocChangePayload | null): void {
+  const docId = payload?.docId;
+  if (!payload || payload.from === windowLabel || typeof docId !== "number") return;
+  const instances = [...tabs.values()].filter((t) => t.docId === docId);
+  if (instances.length === 0) return; // 本窗口没这份文档：谁显示谁同步，无需理会
+
+  let changes: ChangeSet;
+  try {
+    changes = ChangeSet.fromJSON(payload.changes);
+  } catch {
+    requestDocResync(docId);
+    return;
+  }
+  if (changes.empty) return;
+
+  const baseLen = payload.baseLen;
+  if (typeof baseLen === "number" && instances.some((t) => t.state.doc.length !== baseLen)) {
+    // 分叉了：宁可要一份全文，也不在错的基准上套增量
+    requestDocResync(docId);
+    return;
+  }
+
+  applyingRemote = true;
+  syncingDocId = docId; // 与窗口内同源同步共用同一个回环闸门
+  try {
+    for (const inst of instances) {
+      const p = panels.get(inst.panelId);
+      if (p?.view && p.viewTabId === inst.tabId) {
+        p.view.view.dispatch({ changes });
+      } else {
+        inst.state = inst.state.update({ changes }).state;
+      }
+    }
+  } catch {
+    // 位置越界（理论上过不了 baseLen 校验才会到这里）→ 退回全文纠错
+    requestDocResync(docId);
+    return;
+  } finally {
+    syncingDocId = null;
+    applyingRemote = false;
+  }
+
+  // 同一个文档、同一份磁盘文件：远端改了内容，本窗口这份同样算「有未保存修改」。
+  // 不能指望 handleUpdate —— 远端变更被 syncingDocId 抑制，走不到置脏那一段。
+  // ⚠️ 也不在这里排自动保存/热退出：那些由**动手编辑的那个窗口**负责，两边都写
+  // 同一个文件只会互相触发 file-changed。
+  const doc = docs.get(docId);
+  if (doc && !doc.dirty) {
+    doc.dirty = true;
+    refreshTitle();
+    renderPanelTabs();
+  }
+  scheduleSessionSave();
+}
+
+/** 请对端把全文发过来：只在侦测到分叉时的一次性纠错，不是常规路径。 */
+function requestDocResync(docId: number): void {
+  if (resyncPending.has(docId)) return;
+  resyncPending.add(docId);
+  window.setTimeout(() => resyncPending.delete(docId), 2000);
+  void emit(EVT_DOC_RESYNC_REQ, { from: windowLabel, docId }).catch(() => {});
+}
+
+/** 收到全文纠错请求：本窗口持有该文档就回一份全文（两边取到的内容相同）。 */
+function answerDocResync(payload: DocChangePayload | null): void {
+  const docId = payload?.docId;
+  if (!payload?.from || payload.from === windowLabel || typeof docId !== "number") return;
+  const text = textOfDocId(docId);
+  if (text === null) return;
+  void emitTo(payload.from, EVT_DOC_RESYNC_FULL, {
+    from: windowLabel,
+    docId,
+    text,
+  }).catch(() => {});
+}
+
+/**
+ * 收到全文纠错应答：把本窗口该文档的正文换成对端的。
+ *
+ * ⚠️ 这一步会**丢弃本窗口的正文**，所以加了闸门：本地有未保存修改时自动纠正可能
+ * 正好把用户刚敲的东西抹掉（分叉意味着谁更新已经无从判断）。这时只提示、不动手，
+ * 把选择权交回用户。
+ */
+function applyDocResyncFull(
+  payload: { from?: string; docId?: number; text?: string } | null,
+): void {
+  const { from, docId, text } = payload ?? {};
+  if (!from || from === windowLabel || typeof docId !== "number" || typeof text !== "string") {
+    return;
+  }
+  const instances = [...tabs.values()].filter((t) => t.docId === docId);
+  if (instances.length === 0) return;
+  const doc = docs.get(docId);
+  if (doc?.dirty) {
+    showMessage(`${doc.name} 在两个窗口的内容已不一致，为避免覆盖未保存的修改请手动处理`, true);
+    return;
+  }
+  applyingRemote = true;
+  syncingDocId = docId;
+  try {
+    for (const inst of instances) {
+      const p = panels.get(inst.panelId);
+      const view = p && p.viewTabId === inst.tabId ? p.view : null;
+      // 基准取**挂载中的视图状态**（同 freshTextOfDoc 的口径）：快照与视图万一短暂不一致，
+      // 按快照算出的整段替换会把视图拽回旧长度。
+      const base = view ? view.view.state : inst.state;
+      const whole = base.update({
+        changes: { from: 0, to: base.doc.length, insert: text },
+      }).state;
+      // 整态重建：只 dispatch changes 的话 tab.state 与视图会不同步（后续切标签立刻串档）
+      if (view) view.setState(whole);
+      inst.state = whole;
+    }
+  } finally {
+    syncingDocId = null;
+    applyingRemote = false;
+  }
+  if (doc) {
+    showMessage(`${doc.name} 已按另一个窗口的内容重新同步`);
+    refreshTitle();
+    renderPanelTabs();
+  }
+}
+
+/** 注册跨窗口同步的三个事件监听（两种窗口都要装）。 */
+function listenDocSync(): void {
+  void listen<DocChangePayload>("doc-change", (e) => applyRemoteDocChange(e.payload ?? null)).catch(
+    () => {},
+  );
+  void listen<DocChangePayload>("doc-resync-request", (e) =>
+    answerDocResync(e.payload ?? null),
+  ).catch(() => {});
+  void listen<{ from?: string; docId?: number; text?: string }>("doc-resync-full", (e) =>
+    applyDocResyncFull(e.payload ?? null),
+  ).catch(() => {});
+}
+
+// ---------------------------------------------------------------- 卫星窗口引导
+
+/**
+ * 卫星窗口的引导：只画一个面板，承载主窗口交过来的标签。
+ *
+ * 与主窗口的三处**刻意不同**：
+ *   1. 不读也不写 session.json（会话归主窗口，两个窗口写同一份就是互相覆盖）；
+ *   2. 关窗不问「是否保存」—— 标签会交回主窗口，内容并没有消失；
+ *   3. 没有「恢复上次会话」这一步，内容全部来自载荷。
+ */
+async function initSatelliteWindow(me: WindowPayload | null): Promise<void> {
+  registerSatelliteClose();
+
+  const payload = me?.payload;
+  const incoming = payload?.tabs ?? [];
+  if (incoming.length === 0) {
+    // 载荷丢了（正常情况下不会）：宁可明确报错，也不要留一个空白窗口让人以为文档没了
+    showFatalError(new Error("新窗口没有拿到要打开的文档，请回原窗口重新打开一次"));
+    return;
+  }
+
+  await setupShell();
+
+  panels.clear();
+  tabs = new Map();
+  docs = new Map();
+  nextPanelId = 1;
+  nextInstId = 1;
+  panels.set(0, {
+    panelId: 0,
+    tabs: [],
+    activeTabId: -1,
+    view: null,
+    viewTabId: null,
+    preview: null,
+    previewTimer: null,
+    bodyEl: null,
+  });
+  activePanelId = 0;
+
+  // 承载标签（内部会 rebuildLayout / refreshAll；scheduleSessionSave 在卫星窗口是空操作）
+  adoptTransferredTabs(incoming, 0);
+
+  bindEvents();
+  rebuildLayout();
+  refreshAll();
+  panels.get(0)?.view?.focus();
+  const only = incoming.length === 1 ? incoming[0].name : `${incoming.length} 个标签`;
+  showMessage(`${only} · 已在新窗口打开（关闭本窗口会把它交回主窗口）`);
+
+  // 告诉源窗口「载荷已到手」——它据此才敢把原标签摘掉（见 openTabsInNewWindow）
+  void emit("satellite-ready", { label: windowLabel }).catch(() => {});
+}
+
+/** 卫星窗口的关窗流程：先把标签与副本号交还主窗口，再销毁自己。 */
+function registerSatelliteClose(): void {
+  let confirmed = false;
+  void getCurrentWindow().onCloseRequested(async (event) => {
+    if (confirmed) return;
+    confirmed = true;
+    event.preventDefault();
+    // 交还优先于关窗：主窗口会把标签重新变成可见标签，用户不会觉得东西丢了
+    returnTabsToMain([...tabs.values()].map((t) => t.tabId));
+    try {
+      cancelPendingBackup();
+      await flushBackups();
+    } catch {
+      // 备份失败也照关：标签已经交回主窗口，内容在那边还活着
+    }
+    await getCurrentWindow().destroy();
+  });
+}
+
 function registerWindowClose(): void {
   let windowCloseConfirmed = false;
   void getCurrentWindow()
@@ -3967,10 +4699,14 @@ function registerWindowClose(): void {
     .catch(() => {});
 }
 
-async function bootstrap(): Promise<void> {
-  // 先注册关闭处理器：即使后续渲染抛错，窗口也能正常关闭（避免“点 X 无反应”）
-  registerWindowClose();
-
+/**
+ * 外壳装配：主题 / 字体 / 提示层 / 工具栏 / 菜单 / 滚轮缩放 / 全局监听。
+ *
+ * 主窗口与卫星窗口**必须走同一套** —— 两个窗口长得不一样（字体大小、主题、
+ * 缩进行距有一个没跟上）会让用户以为是两个应用。所以这段从 bootstrap 里提出来共用，
+ * 窗口**身份相关**的部分（会话恢复、关窗流程、会话保存）留在各自的 bootstrap 里。
+ */
+async function setupShell(): Promise<void> {
   try {
     settings = await loadSettings();
   } catch {
@@ -4015,6 +4751,9 @@ async function bootstrap(): Promise<void> {
     if (e.payload?.path) handleFileChanged(e.payload.path);
   }).catch(() => {});
 
+  // B71 ④：跨窗口同源正文同步（主窗口与卫星窗口都要装，见 listenDocSync）
+  listenDocSync();
+
   // 从资源管理器拖入文件：WebView2 原生拖放（dragDropEnabled: true）→ 这是拿到
   // 真实文件路径的唯一方式（HTML5 file drop 只有内容没有路径），打开后保留磁盘关联
   // （监听外部修改 / 会话恢复 / 直接保存）。
@@ -4048,6 +4787,42 @@ async function bootstrap(): Promise<void> {
       for (const path of p.paths) void openDroppedAt(path, target);
     })
     .catch(() => {});
+}
+
+async function bootstrap(): Promise<void> {
+  // B71 ④：第一件事就是问 Rust「我是谁」。必须是**第一个** IPC —— 卫星窗口不能
+  // 先跑主窗口那套（读会话、注册关窗确认、写 session.json），否则两个窗口会抢同一份会话。
+  let me: WindowPayload | null = null;
+  try {
+    me = await windowPayload();
+    windowKind = me.kind;
+    windowLabel = me.label;
+  } catch {
+    // 老版本后端 / 单窗口环境下拿不到身份应答：按主窗口走（退回 B71 之前的行为）
+    windowKind = "main";
+  }
+
+  if (windowKind === "satellite") {
+    await initSatelliteWindow(me);
+    return;
+  }
+
+  // 先注册关闭处理器：即使后续渲染抛错，窗口也能正常关闭（避免“点 X 无反应”）
+  registerWindowClose();
+
+  await setupShell();
+
+  // B71 ④：接住卫星窗口交回来的标签 / 副本 ID；卫星窗口异常消失时兜底恢复
+  void listen<{ from?: string; tabs?: SatelliteTab[] }>("tabs-return", (e) =>
+    applyTabsReturn(e.payload ?? null),
+  ).catch(() => {});
+  void listen<{ docs?: Array<{ docId: number; backupId: string | null; backedUp: boolean }> }>(
+    "backup-ids",
+    (e) => applyBackupIds(e.payload ?? null),
+  ).catch(() => {});
+  void listen<{ label?: string }>("satellite-closed", (e) => {
+    if (e.payload?.label) reclaimFromVanished(e.payload.label);
+  }).catch(() => {});
 
   // 主题、菜单、工具栏全部就绪。此刻 DOM 已是正确配色的界面外壳，后面的会话
   // 恢复（读盘）再久也只是「内容晚一点出现」，不会让用户盯着一块空板。

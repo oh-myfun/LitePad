@@ -169,6 +169,15 @@ pub struct SessionState {
     pub layout: serde_json::Value,
     #[serde(alias = "active_panel")]
     pub active_panel: usize,
+    /// B71 ④：**被搬到其他窗口**的标签（卫星窗口里那些）。
+    ///
+    /// 卫星窗口自己不写会话（两个窗口同时写就是互相覆盖），所以这些标签只能由主窗口
+    /// 代为登记。少了这一段，「把未保存文档拖到新窗口 + 强杀进程」会让副本变成孤儿
+    /// 被清理掉 —— 用户的字就真的没了。
+    ///
+    /// 启动时**不区分窗口**：这些标签一律并回主窗口（v1 不回放多窗口布局）。
+    #[serde(alias = "satellite_tabs")]
+    pub satellite_tabs: Vec<TabSession>,
 }
 
 impl Default for SessionState {
@@ -177,6 +186,7 @@ impl Default for SessionState {
             panels: Vec::new(),
             layout: serde_json::json!({ "kind": "leaf", "panelId": 0 }),
             active_panel: 0,
+            satellite_tabs: Vec::new(),
         }
     }
 }

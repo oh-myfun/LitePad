@@ -31,7 +31,11 @@ vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: (p: string) => `asset://${p}`,
   invoke: () => Promise.resolve(),
 }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: () => Promise.resolve({ unlisten: () => {} }) }));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: () => Promise.resolve({ unlisten: () => {} }),
+  emit: () => Promise.resolve(),
+  emitTo: () => Promise.resolve(),
+}));
 vi.mock("@tauri-apps/api/webview", () => ({
   getCurrentWebview: () => ({ onDragDropEvent: () => Promise.resolve({ unlisten: () => {} }) }),
 }));

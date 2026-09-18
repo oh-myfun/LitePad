@@ -64,13 +64,25 @@ A–H 精选约 82 份、I 编辑器整模块约 3283 份（`fetch-vscode-ref.sh
   `%APPDATA%\LitePad\backups`，靠会话 `backupId` 认领。⚠️ 顺带发现
   `OpenedFile.size_class` 按 snake_case 读 → **M4 大文件降级从未生效**，已修。
   不变量见 `ARCHITECTURE.md` §7「保存体系」/§8 首条。
-- **测试规模**：380 vitest + 33 cargo；热退出 → `tests/hot-exit.test.ts`，静态契约 →
-  `tests/regressions.test.ts`，分屏/拖拽 → `tests/splitview.test.ts`。
+- **测试规模**：427 vitest + 39 cargo；热退出 → `tests/hot-exit.test.ts`，静态契约 →
+  `tests/regressions.test.ts`，分屏/拖拽 → `tests/splitview.test.ts` / `tests/panel-group-drag.test.ts`
+  / `tests/window-drag-out.test.ts`。**反向验证**是硬要求（改完把修复还原一次，确认用例真会红）。
+- **B71 面板操作对齐 VS Code**（`72892b2`）：① 5 条面板命令（移动标签 Ctrl+Alt+←/→、
+  切焦点 F6/Shift+F6、Alt+Shift+↑ 最大化）② **最大化/还原 = 只改比例不动结构**
+  （沿路径推 0/1 + 快照还原；⚠️ 需 `.layout-panel-collapsed` 才能真的收到 0；
+  会话必须存未最大化比例）③ 拖标签栏空白处 = 拖整组（`e.target === strip` 判据）。
+- **B71 ④ 完整多窗口**（用户明确选「与主窗口共享文档、可来回拖」）：Rust `windows.rs`
+  建窗+身份+载荷登记；跨窗口**只传 ChangeSet**（带 `baseLen`，不符即转全文重同步）；
+  标签搬走后本地留**隐藏实例**（`panelId = -1`）供会话与异常兜底；**拖出窗口**
+  主窗口开新窗（落在松手处）、卫星窗口交回主窗口。不变量见 `ARCHITECTURE.md` §9。
 
 ## 下一步
+- ⚠️ **B71 ④ 待真机确认**（沙箱起不了 WebView2，全部无法自证）：拖出落点（含多显示器）/
+  卫星窗口拖回主窗口 / **两窗口同开一份文档时正文实时同步** / 强杀卫星窗口后主窗口接管
+  隐藏实例 / 卫星窗口未保存内容的热退出恢复 / 最大化窗口贴边拖动不该误弹新窗。
 - **待桌面环境补拍截图**（沙箱起不了 WebView2）：M4 `keymap.png`/`command-palette.png`；
-  B51 `main.png`/`preferences.png`；B53–B66 `main.png`（标签图标/面板操作栏/分隔条细线/
-  分屏落点/●↔× 换装）。
+  B51 `main.png`/`preferences.png`；B53–B71 `main.png`（标签图标/面板操作栏/分隔条细线/
+  分屏落点/●↔× 换装/最大化后的「还原」按钮）。
 - ⚠️ **B60–B66 待真机确认**：1px 静息线 / 4px 激活线 / 角手柄 `all-scroll` 手感 / 深色下
   浅蓝落点；联动（拖一条一起走 / 悬停预告 / 交叉点双轴 / 双击按段数均分）在 2×2 与 3 栏
   各验；B64 影像跟手；B66 关闭区 20px 手感与 `transition: opacity` 是否迟钝。

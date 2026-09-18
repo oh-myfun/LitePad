@@ -191,6 +191,11 @@ export interface SessionState {
   /** 前端布局树（leaf.panelId = panels 索引），Rust 纯透传 */
   layout: unknown;
   activePanel: number;
+  /**
+   * B71 ④：被搬到其他窗口的标签。卫星窗口不写会话，由主窗口代为登记，
+   * 启动时一律并回主窗口（v1 不回放多窗口布局）。
+   */
+  satelliteTabs?: TabSession[];
 }
 
 export function loadSession(): Promise<SessionState | null> {
@@ -285,5 +290,76 @@ export function savePasteImage(tabId: number, dataB64: string, ext: string): Pro
     tabId,
     dataB64,
     ext,
+  });
+}
+
+// ---------------------------------------------------------------- 多窗口（B71 ④）
+
+/**
+ * 卫星窗口承载的标签快照。
+ *
+ * ⚠️ 正文必须**随载荷一起传**，不能让新窗口自己去读盘：未保存的修改、未命名文档
+ * 都只存在于源窗口的内存里，读盘会拿到旧内容（甚至拿不到路径）。这也是把载荷
+ * 定义成一个显式结构、而不是让新窗口「按 docId 回问」的原因。
+ */
+export interface SatelliteTab {
+  /** 文档 id（全进程唯一，两个窗口共用同一批 id，不重新分配） */
+  docId: number;
+  path: string | null;
+  name: string;
+  /** LF 归一化的正文 */
+  text: string;
+  encoding: string;
+  eol: string;
+  readonly: boolean;
+  dirty: boolean;
+  /** 编辑器视图模式；非 Markdown 恒为 "source" */
+  viewMode: string;
+  cursorLine: number;
+  cursorCol: number;
+  sizeClass: "normal" | "large" | "huge";
+  /** 热退出副本 id / 是否已备份，随标签一起带走，避免新窗口重复写一份副本 */
+  backupId: string | null;
+  backedUp: boolean;
+}
+
+/** 交付给卫星窗口的载荷（Rust 只透传，结构由前端定义）。 */
+export interface SatellitePayload {
+  tabs: SatelliteTab[];
+}
+
+/** 窗口身份应答。 */
+export interface WindowPayload {
+  kind: "main" | "satellite";
+  label: string;
+  payload: SatellitePayload | null;
+}
+
+/** 问 Rust「我是谁、我承载什么」。每个窗口启动时调一次。 */
+export function windowPayload(): Promise<WindowPayload> {
+  return invoke<WindowPayload>("window_payload");
+}
+
+/** 新窗口落点（逻辑像素，相对整个虚拟桌面）。 */
+export interface WindowSpot {
+  x: number;
+  y: number;
+}
+
+/**
+ * 新建卫星窗口，返回其 label。`payload` 会原样存在 Rust 侧等新窗口来取。
+ * `spot` 给定时新窗口出现在该处 —— 「把标签拖到窗口外」的落点就是用户松手的
+ * 地方，不让新窗口跑到系统随机摆放的位置去。
+ */
+export function openSatelliteWindow(
+  title: string,
+  payload: SatellitePayload,
+  spot?: WindowSpot | null,
+): Promise<string> {
+  return invoke<string>("open_satellite_window", {
+    title,
+    payload,
+    x: spot?.x ?? null,
+    y: spot?.y ?? null,
   });
 }

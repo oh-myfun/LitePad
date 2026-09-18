@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "LitePad 默认权限集：窗口标题/关闭 + 原生文件对话框。文件读写全部由 Rust 自定义命令承担，不授予前端 fs 权限。",
-  "windows": ["main"],
+  "description": "LitePad 默认权限集：窗口标题/关闭 + 原生文件对话框。文件读写全部由 Rust 自定义命令承担，不授予前端 fs 权限。B71 ④ 起 windows 用通配覆盖卫星窗口 label（sat-*，见 src-tauri/src/windows.rs 的前缀约定）—— 漏了通配的话卫星窗口能画界面但 emit/listen 全被 ACL 拒掉。",
+  "windows": ["main", "sat-*"],
   "permissions": [
     "core:default",
     "core:window:allow-set-title",
