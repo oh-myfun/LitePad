@@ -527,3 +527,7 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
 - ⚠️ `outerPosition/outerSize/innerSize/scaleFactor` 都在 `core:window:default` 里
   （`core:default` 已包含）。若哪天为了「最小权限」把 `core:default` 拆开，
   落点会静默失效（`dropSpotOf` catch 后返回 null）。
+- **静态契约测试不得读被 gitignore 的构建产物**（B71 ④）。`src-tauri/gen/`（含 Tauri 生成的
+  ACL 清单）是构建产物、不入库：本地因为一直在构建所以存在，CI 干净检出上没有 ——
+  用例会在本机长期绿、**一推就红**。要么只断言入库的源文件（`capabilities/default.json`、
+  `windows.rs`），要么 `existsSync` 后跳过并**在注释里写明「跳过 ≠ 通过」**。

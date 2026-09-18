@@ -1942,19 +1942,33 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
     expect(caps.windows, "windows 必须用通配覆盖 sat-*").toContain("sat-*");
     expect(caps.windows, "主窗口也要留在授权名单里").toContain("main");
     expect(rust, "Rust 侧前缀常量必须与 capabilities 一致").toMatch(/SAT_PREFIX: &str = "sat-"/);
-    // 跨窗口定位要用到的一组只读窗口命令，全部落在 core:window:default 里 ——
-    // 一旦有人为了“最小权限”把 core:default 拆开，落点计算会静默失效（catch 后返回 null）。
-    const manifest = readJson("src-tauri/gen/schemas/acl-manifests.json");
-    const winDefault: string[] = manifest["core:window"].default_permission.permissions;
-    for (const p of [
-      "allow-outer-position",
-      "allow-outer-size",
-      "allow-inner-size",
-      "allow-scale-factor",
-    ]) {
-      expect(winDefault, `core:window:default 少了 ${p}，新窗口落点会失效`).toContain(p);
+    // 跨窗口定位用的全是**只读**窗口命令，都落在 core:window:default 里、被 core:default 覆盖。
+    // 这条断言不依赖任何生成物：源码一旦用上需要额外授权的写接口，就在**这里**红掉，
+    // 而不是等到卫星窗口静默失灵（dropSpotOf 的 catch 会把 ACL 拒绝咽下去变成 null）。
+    const dropSpot = fnBody("async function dropSpotOf");
+    expect(dropSpot, "落点换算只用只读接口").toMatch(/outerPosition\(\)/);
+    expect(dropSpot, "不得出现需要额外授权的窗口写接口").not.toMatch(
+      /setPosition|setSize|setFullscreen|setAlwaysOnTop/,
+    );
+    expect(caps.permissions, "core:default 必须在授权里（它内含 core:window:default）").toContain(
+      "core:default",
+    );
+    // ⚠️ 更深一层的核对要读 Tauri **生成**的 ACL 清单，而 `src-tauri/gen/` 不入库 ——
+    // CI 的干净检出上根本没有这个文件（B71 ④ 首次推送就是在 CI 上炸在这里）。
+    // 所以这一层只在有清单的本机跑：**跳过 ≠ 通过**，只是没有更深的信息可核。
+    const manifestPath = "src-tauri/gen/schemas/acl-manifests.json";
+    if (existsSync(manifestPath)) {
+      const winDefault: string[] =
+        readJson(manifestPath)["core:window"].default_permission.permissions;
+      for (const p of [
+        "allow-outer-position",
+        "allow-outer-size",
+        "allow-inner-size",
+        "allow-scale-factor",
+      ]) {
+        expect(winDefault, `core:window:default 少了 ${p}，新窗口落点会失效`).toContain(p);
+      }
     }
-    expect(caps.permissions, "core:default 必须在授权里").toContain("core:default");
   });
 
   it("跨窗口同步只传变更集，且必须带基准长度（基准是防分叉的唯一凭据）", () => {
