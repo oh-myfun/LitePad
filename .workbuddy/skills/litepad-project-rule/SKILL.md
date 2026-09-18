@@ -20,6 +20,8 @@ agent_created: true
    这个文件每次会话都会被注入，是全仓**唯一「一定会被读到」**的地方。
    写法照既有条目：短句、可执行、把**禁忌**与**例外**都写上（例外尤其重要 ——
    不写清楚，下次会把不该搬的东西搬走，例如受管工具链 `~/.workbuddy/binaries`）。
+  ⚠️ **MEMORY.md 是被整篇注入的索引，保持精简**：历史改动 / 待办清单挪到 `OPEN-ITEMS.md`
+  （按需读取，不进会话常载），别堆在索引里让会话越来越臃肿（09-18 重构经验）。
 2. **让规则在工具链上有牙齿**（按需）：`.gitignore` / `.prettierignore` /
    `eslint.config.js` 的 `ignores`；涉及源码目录的还要看 `tsconfig.json` 的 `include`。
    ⚠️ **顺序不能反**：先让它被忽略，否则往里塞的探针脚本会被 lint / 被 tsc 扫 / 进 commit。
