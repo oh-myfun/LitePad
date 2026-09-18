@@ -27,6 +27,16 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   **按「寻址子节点」解释会错位一层**——平时拖拽只改内联样式看不出，任何 `rebuildLayout`（开/关文档）都会跳位。
   → B26。
 - 关闭面板要做比例补偿 `promoteSibling`，否则其余分割位置漂移。
+- **最大化（B71）= 只改比例，不动结构**：`maximizePanel()` 沿「根→叶」把各层 ratio 推到 0/1
+  并返回原比例快照；面板/标签/编辑器实例全保留，被挤的一侧靠 `.layout-panel-collapsed`
+  收成 0（`.layout-panel` 有 `min-width:120px`，只推比例收不掉；也**不能**用 `display:none`，
+  会销毁 CodeMirror 度量）。
+  - 任何改布局的操作（分屏 / 关面板 / 挪标签 / 拖分隔条）前必须 `exitMaximize()`，
+    否则得到「一半 0 宽」的布局且还原快照同时失效。
+  - **会话存未最大化的比例**（`layoutForSession()` 还原到副本上）：0/1 进 session
+    会让下次启动只剩一块面板。最大化态本身不持久化。
+- 整组拖拽（B71）起手判据是 `e.target === strip`（VS Code `onGroupDragStart` 同款）：
+  写成「点在 strip 上就算」会把拖单个标签变成拖整组。
 
 ## 4. 拖拽体系（B6/B24/B27）
 

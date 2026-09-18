@@ -137,6 +137,65 @@ export function siblingLeafOf(n: LayoutNode, panelId: number): number | null {
 }
 
 /**
+ * 最大化某面板（B71）：沿「根 → 该叶子」的每一层 split 把比例推到 0/1，
+ * 于是它独占整块编辑区，其余面板被挤成 0（仍在树里、标签与编辑器实例都不销毁）。
+ *
+ * 就地修改（与 `updateRatio` 同风格），返回被改动的各层**原比例**用于原样还原。
+ * 面板不存在、或整棵树只有这一个叶子时返回 null（无事可做）。
+ *
+ * ⚠️ 为什么要把比例推到 0/1 而不是记一个「最大化中」的标志去改渲染：
+ * 比例本来就是布局树的持久化状态，最大化后拖分隔条、保存会话、序列化都走同一条路；
+ * 另外引入一套隐藏面板的渲染分支反而要处理「隐藏面板的编辑器实例去哪了」。
+ */
+export function maximizePanel(n: LayoutNode, panelId: number): MaximizeSnapshot | null {
+  const path = pathToPanel(n, panelId);
+  if (!path || path.length === 0) return null;
+  const ratios: number[] = [];
+  let cur: LayoutNode = n;
+  for (const idx of path) {
+    if (cur.kind !== "split") break;
+    ratios.push(cur.ratio);
+    // A 侧占 ratio、B 侧占 1-ratio（与 splitview.build 的 flexBasis 一致）
+    cur.ratio = idx === 0 ? 1 : 0;
+    cur = idx === 0 ? cur.a : cur.b;
+  }
+  return { path, ratios };
+}
+
+/**
+ * 还原 `maximizePanel` 改过的各层比例。
+ *
+ * 容错：最大化期间若发生过结构变化（分屏/关面板），路径可能变短或指向叶子，
+ * 遇到就停在那里——还原不到位的部分保持现状，总比把比例写坏好。
+ */
+export function restoreRatios(n: LayoutNode, snap: MaximizeSnapshot): void {
+  let cur: LayoutNode = n;
+  for (let i = 0; i < snap.path.length; i++) {
+    if (cur.kind !== "split") return;
+    cur.ratio = snap.ratios[i];
+    cur = snap.path[i] === 0 ? cur.a : cur.b;
+  }
+}
+
+/** `maximizePanel` 的还原凭据：路径 + 该路径上各层的原比例。 */
+export interface MaximizeSnapshot {
+  /** 根 → 叶子的子树下标序列（0 = a，1 = b） */
+  path: number[];
+  /** 与 path 一一对应的各层原比例 */
+  ratios: number[];
+}
+
+/** 从根到 panelId 叶子的路径（0 = a 子树，1 = b 子树）；不存在返回 null。 */
+export function pathToPanel(n: LayoutNode, panelId: number): number[] | null {
+  if (n.kind === "leaf") return n.panelId === panelId ? [] : null;
+  const inA = pathToPanel(n.a, panelId);
+  if (inA) return [0, ...inA];
+  const inB = pathToPanel(n.b, panelId);
+  if (inB) return [1, ...inB];
+  return null;
+}
+
+/**
  * 把拖拽后的分割比例写回树中 path 指向的分割节点。
  *
  * 路径约定与 splitview.build 一致：path 是**从根到该分割节点**的子树下标序列

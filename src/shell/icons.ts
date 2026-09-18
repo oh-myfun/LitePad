@@ -75,6 +75,15 @@ export const ICONS = {
     '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9l6 6M15 9l-6 6"/>',
   ),
   /**
+   * B71 最大化 / 还原面板：Windows「最大化 / 向下还原」的双框字形。
+   * maximize = 单个方框；restore = 前小后大两个错开的框（经典的「还原」）。
+   * 只在**已最大化**的面板操作栏上出现（未最大化时不占位置，避免 B54 想去掉的拥挤）。
+   */
+  maximize: svg('<rect x="4" y="4" width="16" height="16" rx="2"/>'),
+  restore: svg(
+    '<rect x="3" y="7" width="12" height="13" rx="1"/><path d="M7 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2"/>',
+  ),
+  /**
    * 标签上的关闭（×）。VS Code 标签操作列用的是 codicon 的 `close`，字形 16px，
    * 放在 24px 宽的覆盖列里居中（经典档）/ 20px（本项目按药丸宽度等比收窄）。
    * 这里给 16px，与 `.tab-action` 槽位（20px）配套：槽位留 2px 呼吸，

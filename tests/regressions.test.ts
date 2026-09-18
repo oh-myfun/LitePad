@@ -959,16 +959,20 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
 
     // ① tabstrip 必须把标签元素交出去（只测 splitview 入参会漏掉这层接线）
     expect(ts, "tabstrip 传标签元素给 beginTabDrag").toMatch(/beginTabDrag\(t\.tabId, e, el\)/);
-    expect(sv, "beginTabDrag 接受标签元素").toMatch(
-      /export function beginTabDrag\(\s*tabId: number,\s*e: MouseEvent,\s*tabEl: HTMLElement \| null = null,?\s*\)/,
+    // B71 起多了 groupPanelId（拖整组）：签名断言放宽到「四参、后两个可空」
+    expect(sv, "beginTabDrag 接受标签元素与整组面板").toMatch(
+      /export function beginTabDrag\(\s*\n\s*tabId: number,\s*\n\s*e: MouseEvent,\s*\n\s*tabEl: HTMLElement \| null = null,\s*\n\s*groupPanelId: number \| null = null,\s*\n\)/,
     );
     // 事件目标可能是图标/文件名等子元素 → 必须反查
     expect(svCode, "从事件目标反查所在标签").toMatch(/target\.closest<HTMLElement>\("\.tab"\)/);
 
     // ② 越过阈值才亮出影像（纯点击不该闪副本）；必须克隆而非搬走原标签
-    expect(svCode, "进入拖拽时造副本").toMatch(/dragGhost = createDragGhost\(tabDrag\.tabEl\)/);
+    // B71：第二个参数 = 是否整组（整组时克隆的是整个标签栏，要逐个剥掉 tabId）
+    expect(svCode, "进入拖拽时造副本").toMatch(
+      /dragGhost = createDragGhost\(tabDrag\.tabEl, tabDrag\.groupPanelId !== null\)/,
+    );
     expect(svCode, "影像是原标签的克隆（原地不动的原标签才是参照物）").toMatch(
-      /tabEl\.cloneNode\(true\)/,
+      /const copy = \w+\.cloneNode\(true\) as HTMLElement;/,
     );
     expect(svCode, "副本去掉 tabId（否则按 tabId 查元素会命中副本）").toMatch(
       /copy\.removeAttribute\("data-tab-id"\)/,
@@ -1717,6 +1721,184 @@ describe("B69 空的新建文档也要跨重启回来", () => {
     expect(body, "置脏必须在副本分支内").toMatch(
       /if \(hit\.kind === "backup"\)[\s\S]{0,300}dirty = true/,
     );
+  });
+});
+
+describe("B71 面板操作补齐（移动标签 / 切焦点 / 右键分屏 / 最大化还原）", () => {
+  // 用户：VS Code 面板支持拖拽，可能还有其他实用特性，参考下给出改进方案。
+  // 落地四件事（用户勾选）：
+  //   ① Move Editor into Next/Previous Group（Ctrl+Alt+←/→）
+  //   ② 面板间切焦点（F6 / Shift+F6，Windows「下一窗格」的通行键位）
+  //   ③ 标签右键的「左右分屏 / 上下分屏」（同时补上 splitview 首次构建时的接线）
+  //   ④ 最大化 / 还原面板（Alt+Shift+↑、双击标签、面板上的还原按钮）
+  const src = readFileSync("src/main.ts", "utf-8");
+  const km = readFileSync("src/shell/keymap.ts", "utf-8");
+  const ts = readFileSync("src/shell/tabstrip.ts", "utf-8");
+  const sv = readFileSync("src/shell/splitview.ts", "utf-8");
+  const css = readFileSync("src/styles/global.css", "utf-8");
+  // 根因是**能力缺失**不是 bug，故这里守护的是「接线别断」——这几处一旦漏接，
+  // 命令面板里看得见、按下去没反应，属于最难自查的回归。
+
+  /** 截取某个顶层函数的源码体（到下一个顶层 `\n}` 为止）。 */
+  function fnBody(name: string): string {
+    const start = src.indexOf(name);
+    expect(start, `必须能定位 ${name}`).toBeGreaterThan(-1);
+    return src.slice(start, src.indexOf("\n}", start) + 2);
+  }
+
+  it("五条命令必须登记进命令表（否则首选项里改不了键）", () => {
+    for (const id of [
+      "panel.moveTabNext",
+      "panel.moveTabPrev",
+      "panel.focusNext",
+      "panel.focusPrev",
+      "panel.toggleMaximize",
+    ]) {
+      expect(km, `命令表缺 ${id}`).toContain(`id: "${id}"`);
+      expect(src, `runShortcut 未接线 ${id}`).toMatch(
+        new RegExp(`case "${id.replace(".", "\\.")}":`),
+      );
+    }
+    expect(km, "移动到下一面板 = Ctrl+Alt+→").toMatch(
+      /id: "panel\.moveTabNext"[\s\S]{0,200}Ctrl\+Alt\+ArrowRight/,
+    );
+    expect(km, "切焦点 = F6 / Shift+F6").toMatch(
+      /id: "panel\.focusNext"[\s\S]{0,200}keys: \["F6"\]/,
+    );
+    expect(km, "最大化/还原 = Alt+Shift+↑").toMatch(
+      /id: "panel\.toggleMaximize"[\s\S]{0,200}Alt\+Shift\+ArrowUp/,
+    );
+  });
+
+  it("只有一个面板时不得抢键（把事件还给编辑器）", () => {
+    // ⚠️ 反向约束：这四条若不加 countLeaves 闸门，单面板时 F6 / Ctrl+Alt+← 会被
+    // 静默吞掉。F6 在编辑器里是「跳到下一个错误/光标位置」的常见用途，吞了很难查。
+    const body = fnBody("function shortcutApplies");
+    expect(body, "四条命令共用一道 countLeaves > 1 闸门").toMatch(
+      /case "panel\.moveTabNext":[\s\S]{0,200}countLeaves\(layout\) > 1/,
+    );
+  });
+
+  it("移动 / 切焦点按叶子顺序环状取模（几何相邻在网格里没有唯一答案）", () => {
+    const order = fnBody("function panelIdsInOrder");
+    expect(order, "顺序必须来自分屏树的深度优先遍历").toMatch(/eachLeaf\(layout/);
+    for (const fn of ["function moveActiveTabByDelta", "function focusPanelByDelta"]) {
+      const body = fnBody(fn);
+      // + delta + length 保证负向也回绕到末尾（两处的收尾括号不同，只取核心表达式）
+      expect(body, `${fn} 必须环状取模`).toMatch(/\+ delta \+ ids\.length\) % ids\.length/);
+      expect(body, `${fn} 必须少于两个面板时直接返回`).toMatch(/if \(ids\.length < 2\) return;/);
+    }
+  });
+
+  it("切焦点必须走整套收尾（少一个就残留上一份文档）", () => {
+    // onActivatePanel 的收尾有五项：标题 / 状态栏 / 大纲 / 查找栏目标 / 焦点。
+    // 只 markActivePanel 会让标题栏、大纲、查找栏还指向上一个面板的文档。
+    const body = fnBody("function focusPanelByDelta");
+    for (const call of [
+      "markActivePanel(next);",
+      "refreshTitle();",
+      "refreshStatus();",
+      "updateTocDrawer();",
+      "retargetFindBar();",
+    ]) {
+      expect(body, `focusPanelByDelta 缺 ${call}`).toContain(call);
+    }
+    expect(body, "焦点也要跟着过去").toMatch(/panels\.get\(next\)\?\.view\?\.focus\(\)/);
+  });
+
+  it("右键分屏是**复制**不是移动（VS Code 的 Split 是同一文档开两份）", () => {
+    expect(ts, "tabstrip 回调要有 onSplitH/onSplitV").toMatch(
+      /onSplitH\?: \(tabId: number\) => void;[\s\S]{0,120}onSplitV\?: \(tabId: number\) => void;/,
+    );
+    expect(ts, "右键菜单要挂出两个方向").toMatch(/label: "左右分屏"[\s\S]{0,200}label: "上下分屏"/);
+    // 末位 copy=true：源面板只剩这一个标签时不会留下空面板
+    expect(src, "左右分屏 = 水平 + copy").toMatch(
+      /onSplitH: \(tabId\) => splitPanelWithTab\(p\.panelId, "h", tabId, false, true\)/,
+    );
+    expect(src, "上下分屏 = 垂直 + copy").toMatch(
+      /onSplitV: \(tabId\) => splitPanelWithTab\(p\.panelId, "v", tabId, false, true\)/,
+    );
+    // splitview 首次构建标签栏时也要有这两个入口，否则「分屏后右键菜单少两项」
+    expect(sv, "splitview 也要转发 onSplitTab").toMatch(
+      /onSplitH: \(tabId\) => cb\.onSplitTab\?\.\(panelId, tabId, "h"\)/,
+    );
+  });
+
+  it("改布局的操作必须先退出最大化（否则会留下 0 宽的怪布局）", () => {
+    // 最大化时路径上全是 0/1。在这个状态下分屏/关面板/挪标签/拖分隔条，
+    // 得到的都是「一半看不见」的布局，而且还原快照的路径也同时失效。
+    for (const fn of [
+      "function splitPanelWithTab",
+      "function splitActivePanel",
+      "function closePanelById",
+      "function moveTabToPanel",
+      "function moveTabToStrip",
+    ]) {
+      expect(fnBody(fn), `${fn} 缺 exitMaximize()`).toContain("exitMaximize();");
+    }
+    expect(src, "拖分隔条也要退出最大化").toMatch(/onRatioChange:[\s\S]{0,200}exitMaximize\(\);/);
+  });
+
+  it("最大化不进会话：0/1 的比例存下来会让下次启动只剩一块面板", () => {
+    expect(src, "snapshotSession 要用未最大化的布局").toContain(
+      "convertLayoutForSession(layoutForSession(), panelIndex)",
+    );
+    const body = fnBody("function layoutForSession");
+    expect(body, "有快照时才还原副本，不能直接改当前布局").toMatch(
+      /const c = cloneTree\(layout\);[\s\S]{0,80}restoreRatios\(c, maximizeSnapshot\);/,
+    );
+    expect(body, "没最大化时原样返回").toMatch(/return layout;/);
+  });
+
+  it("被挤掉的一侧必须真的收成 0（.layout-panel 有 min-width: 120px）", () => {
+    const block = css.slice(css.indexOf(".layout-panel-collapsed"));
+    const decls = cssDecls(block.slice(0, block.indexOf("}")));
+    expect(decls, "min-width/min-height 必须归零").toMatch(/min-width:\s*0/);
+    expect(decls, "min-height 也要归零").toMatch(/min-height:\s*0/);
+    expect(decls, "不许再伸展").toMatch(/flex-grow:\s*0/);
+    expect(src, "main 要标记 collapsed").toMatch(
+      /collapsed: maximizedPanelId !== null && maximizedPanelId !== p\.panelId/,
+    );
+    expect(sv, "splitview 要挂上折叠类").toMatch(/data\.collapsed \? " layout-panel-collapsed"/);
+  });
+
+  it("最大化态必须有看得见的退路：还原按钮 + 双击标签", () => {
+    // 另一侧被挤成 0，只给快捷键的话用户会以为面板丢了。
+    expect(sv, "仅最大化时追加还原按钮（未最大化不占位）").toMatch(
+      /if \(data\.maximized\)[\s\S]{0,300}ICONS\.restore/,
+    );
+    expect(sv, "按钮文案要说明恢复比例").toContain("还原面板");
+    // 双击标签：只有传了回调（多面板）才接管 —— 单面板时双击必须保持无行为
+    expect(ts, "tabstrip 双击受回调门控").toMatch(
+      /if \(cb\.onToggleMaximize\)[\s\S]{0,200}addEventListener\("dblclick"/,
+    );
+    expect(src, "仅多面板时才给双击回调").toMatch(
+      /onToggleMaximize: countLeaves\(layout\) > 1 \? \(\) => toggleMaximizePanel\(p\.panelId\) : undefined/,
+    );
+  });
+
+  it("拖标签栏空白处 = 拖整组：起手判据与落点语义都锁在 splitview", () => {
+    // VS Code `editorTabsControl.ts:455`：只有 `e.target === tabsContainer` 才算整组。
+    // 写成「点在 strip 上就算」（用 closest 之类）会连点标签都变成整组拖拽。
+    expect(sv, "起手必须是事件目标就是容器本身").toMatch(
+      /strip\.addEventListener\("mousedown"[\s\S]{0,200}if \(e\.target !== strip\) return;/,
+    );
+    expect(sv, "整组落点优先于单标签分支").toMatch(
+      /if \(drag\.groupPanelId !== null\)[\s\S]{0,900}onMergeGroup\?\.\(drag\.groupPanelId, panelId\)/,
+    );
+    expect(sv, "拖回自己 = 无操作").toMatch(/if \(drag\.groupPanelId === panelId\) return;/);
+    expect(src, "并入 = 关掉这个分屏但指定并入目标").toMatch(
+      /onMergeGroup: \(srcId, targetId\) => closePanelById\(srcId, targetId\)/,
+    );
+    expect(src, "搬到边缘 = moveGroupToPanel").toMatch(
+      /onMoveGroupToPanel: \(srcId, targetId, dir, newFirst\) =>\s*\n\s*moveGroupToPanel\(srcId, targetId, dir, newFirst\)/,
+    );
+    // 整组搬走后源面板必须消失（否则留下一个空面板，等于分屏数莫名 +1）
+    const body = fnBody("function moveGroupToPanel");
+    expect(body, "源面板清空后要摘除").toMatch(
+      /src\.tabs = \[\];[\s\S]{0,400}disposePanel\(srcId\)/,
+    );
+    expect(body, "标签要改挂到新面板").toMatch(/t\.panelId = newId/);
   });
 });
 

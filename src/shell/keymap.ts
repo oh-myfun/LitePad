@@ -313,6 +313,41 @@ export const COMMANDS: CommandDef[] = [
     group: "面板",
     keys: ["Alt+Shift+ArrowLeft"],
   },
+  {
+    id: "panel.moveTabNext",
+    label: "把标签移到下一个面板",
+    group: "面板",
+    keys: ["Ctrl+Alt+ArrowRight"],
+    note: "按分屏树的顺序环状移动；只有一个面板时此命令不抢键",
+  },
+  {
+    id: "panel.moveTabPrev",
+    label: "把标签移到上一个面板",
+    group: "面板",
+    keys: ["Ctrl+Alt+ArrowLeft"],
+  },
+  {
+    id: "panel.focusNext",
+    label: "聚焦下一个面板",
+    group: "面板",
+    // F6 是 Windows「下一窗格」的通行键位，VS Code 也是 F6
+    keys: ["F6"],
+  },
+  {
+    id: "panel.focusPrev",
+    label: "聚焦上一个面板",
+    group: "面板",
+    keys: ["Shift+F6"],
+  },
+  {
+    id: "panel.toggleMaximize",
+    label: "最大化 / 还原面板",
+    group: "面板",
+    // ↑ 补上分屏三键（→分屏 / ↓上下分屏 / ←移除）的第四向；
+    // 与它们一样会覆盖编辑器的「向上复制行」（Shift+Alt+↑）。
+    keys: ["Alt+Shift+ArrowUp"],
+    note: "最大化时其余面板收起但保留；再按一次（或点面板上的还原按钮、双击标签）还原",
+  },
 
   // ---- 编辑器内置（只读） ----
   { id: "editor.undo", label: "撤销", group: "编辑器内置", keys: ["Ctrl+Z"], editable: false },

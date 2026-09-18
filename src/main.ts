@@ -76,13 +76,18 @@ import { createMenuBar, openMenuByIndex } from "./shell/menubar";
 import { showPopupMenu } from "./shell/menu";
 import {
   countLeaves,
+  eachLeaf,
   leaf,
+  maximizePanel,
   removePanel,
+  restoreRatios,
   siblingLeafOf,
   splitPanel as treeSplitPanel,
   splitPanelAt,
+  cloneTree,
   updateRatio,
   type LayoutNode,
+  type MaximizeSnapshot,
 } from "./shell/layout";
 import {
   commandById,
@@ -518,6 +523,13 @@ function tabstripCallbacks(p: Panel): TabstripCallbacks {
     },
     onDuplicateTab: (tabId) => duplicateTabToPanel(tabId, p.panelId),
     onDuplicateToSibling: (tabId) => duplicateTabToSibling(tabId),
+    // 左右 / 上下分屏：**复制**而非移动（与 VS Code 一致 —— Split 是同一文档开两份，
+    // 移动另有 "Move Editor into Next Group"）。用 copy=true 也顺带避开了
+    // splitPanelWithTab 在「源面板只剩这一个标签」时留下空面板的问题。
+    onSplitH: (tabId) => splitPanelWithTab(p.panelId, "h", tabId, false, true),
+    onSplitV: (tabId) => splitPanelWithTab(p.panelId, "v", tabId, false, true),
+    // 双击标签 = 最大化/还原。仅多面板时给（单面板给了就是个永远没反应的手势）。
+    onToggleMaximize: countLeaves(layout) > 1 ? () => toggleMaximizePanel(p.panelId) : undefined,
     onReorder: (from, to) => {
       const fi = p.tabs.indexOf(from);
       const ti = p.tabs.indexOf(to);
@@ -563,6 +575,9 @@ function rebuildLayout(): void {
       active: p.panelId === activePanelId,
       tabs: tabViewDataOf(p),
       canClose: countLeaves(layout) > 1,
+      // B71：被最大化挤扁的一侧要真的收成 0（CSS 里 .layout-panel 有 min-width）
+      maximized: maximizedPanelId === p.panelId,
+      collapsed: maximizedPanelId !== null && maximizedPanelId !== p.panelId,
     });
   }
 
@@ -593,6 +608,8 @@ function rebuildLayout(): void {
     onCloseTab: (tabId) => void closeTabById(tabId),
     onClosePanel: (panelId) => void closePanelById(panelId),
     onRatioChange: (path, ratio) => {
+      // 拖分隔条 = 用户要自己摆布局 → 退出最大化（否则快照与手摆的比例互相打架）
+      exitMaximize();
       updateRatio(layout, path, ratio);
       scheduleSessionSave();
     },
@@ -620,6 +637,13 @@ function rebuildLayout(): void {
     },
     onDuplicateToSibling: (tabId) => duplicateTabToSibling(tabId),
     onReorderTab: (panelId, from, to) => reorderTabInPanel(panelId, from, to),
+    // B71：右键「左右/上下分屏」与双击标签最大化（splitview 首次构建标签栏时也要有）
+    onSplitTab: (panelId, tabId, dir) => splitPanelWithTab(panelId, dir, tabId, false, true),
+    onToggleMaximizePanel: (panelId) => toggleMaximizePanel(panelId),
+    // B71：拖标签栏空白处 = 拖整组。并入 = 「关掉这个分屏但指定并入目标」
+    onMergeGroup: (srcId, targetId) => closePanelById(srcId, targetId),
+    onMoveGroupToPanel: (srcId, targetId, dir, newFirst) =>
+      moveGroupToPanel(srcId, targetId, dir, newFirst),
     // 拖拽标签落在 tab 区：调整顺序（同面板）或移动到目标面板该位置（B27）
     onMoveTabToStrip: (panelId, tabId, beforeTabId) => moveTabToStrip(panelId, tabId, beforeTabId),
     onDropTabToPanel: (tabId, targetPanelId, zone, overTabId, copy) =>
@@ -946,11 +970,13 @@ function disposePanel(panelId: number): void {
 }
 
 /** 关闭面板（VS Code 式）：仅移除该分屏，标签整体并入视觉相邻面板，不关文档。
- *  唯一面板时为空操作（⨯ 已禁用；退出走窗口关闭 / 菜单「退出」）。 */
-function closePanelById(panelId: number): void {
+ *  唯一面板时为空操作（⨯ 已禁用；退出走窗口关闭 / 菜单「退出」）。
+ *  `hostId` 指定并入目标（B71 整组拖拽落到哪个面板就并入哪个），缺省按视觉相邻。 */
+function closePanelById(panelId: number, hostId?: number): void {
   const panel = getPanel(panelId);
   if (!panel || countLeaves(layout) <= 1) return;
-  const sibId = siblingLeafOf(layout, panelId);
+  exitMaximize(); // 最大化态下关面板会留下「0 宽但还在树里」的怪布局
+  const sibId = hostId ?? siblingLeafOf(layout, panelId);
   const host = sibId !== null ? getPanel(sibId) : null;
   if (!host) return;
   for (const id of panel.tabs) {
@@ -970,6 +996,7 @@ function closePanelById(panelId: number): void {
 function splitActivePanel(panelId: number, dir: "h" | "v"): void {
   const panel = getPanel(panelId);
   if (!panel) return;
+  exitMaximize(); // 同 splitPanelWithTab：最大化态下不先还原就会分出 0 宽的新面板
   const newId = nextPanelId++;
   layout = treeSplitPanel(layout, panelId, dir, newId);
   const currentTabId = panel.activeTabId;
@@ -1038,6 +1065,8 @@ function moveTabToPanel(tabId: number, hostId: number, copy = false): void {
   const src = panelOfTab(tabId);
   const host = getPanel(hostId);
   if (!tab || !src || !host || src.panelId === hostId) return;
+  // 最大化时把标签挪到「看不见的那一侧」等于让它凭空消失 → 先还原再挪
+  exitMaximize();
   src.tabs = src.tabs.filter((id) => id !== tabId);
   tab.panelId = hostId;
   host.tabs.push(tabId);
@@ -1050,6 +1079,141 @@ function moveTabToPanel(tabId: number, hostId: number, copy = false): void {
     rebuildLayout();
     refreshAll();
   }
+}
+
+/**
+ * 布局树叶子的面板 id（深度优先、左→右），作为「上一个 / 下一个面板」的稳定顺序。
+ *
+ * 网格布局里「相邻」没有唯一答案，所以走**叶子顺序**而不是几何位置：
+ * 它与分屏树一致、顺序稳定，环状回绕后也总能回到起点。
+ */
+function panelIdsInOrder(): number[] {
+  const ids: number[] = [];
+  eachLeaf(layout, (id) => ids.push(id));
+  return ids;
+}
+
+/** 把活动标签移到「下一个 / 上一个」面板（VS Code: Move Editor into Next/Previous Group）。 */
+function moveActiveTabByDelta(delta: number): void {
+  const panel = activePanel();
+  if (!panel || panel.activeTabId < 0) return;
+  const ids = panelIdsInOrder();
+  if (ids.length < 2) return;
+  const i = ids.indexOf(panel.panelId);
+  if (i < 0) return;
+  moveTabToPanel(panel.activeTabId, ids[(i + delta + ids.length) % ids.length]);
+}
+
+/** 切换活动面板焦点（F6 / Shift+F6；VS Code 的 F6 就是「下一个窗格」）。 */
+function focusPanelByDelta(delta: number): void {
+  const ids = panelIdsInOrder();
+  if (ids.length < 2) return;
+  const i = ids.indexOf(activePanelId);
+  if (i < 0) return;
+  const next = ids[(i + delta + ids.length) % ids.length];
+  // 与「点面板」走同一套收尾（见 renderSplitview 的 onActivatePanel）：
+  // 标题 / 状态栏 / 大纲 / 查找栏的目标都跟着活动面板走，少一个就会残留上一份文档。
+  markActivePanel(next);
+  refreshTitle();
+  refreshStatus();
+  updateTocDrawer();
+  panels.get(next)?.view?.focus();
+  retargetFindBar();
+}
+
+// ---------------------------------------------------------------- 面板最大化（B71）
+
+/**
+ * 最大化中的面板 id；null = 没有。
+ *
+ * 最大化**只改比例**（沿路径推到 0/1），不动树结构、不销毁面板：
+ * 标签、编辑器实例、会话全都照旧，只是被挤的那一侧渲染成 0 宽（见
+ * `.layout-panel-collapsed`，`.layout-panel` 有 min-width: 120px，只推比例收不掉）。
+ */
+let maximizedPanelId: number | null = null;
+/** 最大化前的各层比例快照（路径 + 原比例），用于原样还原。 */
+let maximizeSnapshot: MaximizeSnapshot | null = null;
+
+/**
+ * 取消最大化：把比例还原回去，**不重绘**（调用方负责）。
+ *
+ * 任何改布局的操作（分屏 / 关面板 / 拖分隔条 / 把标签挪到别的面板）前都要先调它：
+ * 最大化下的比例是 0/1，直接在上面改结构会得到「一半是 0 宽」的怪布局，
+ * 而且还原快照的路径也会失效。先还原再改，用户看到的始终是真实布局。
+ */
+function exitMaximize(): void {
+  if (maximizedPanelId === null || !maximizeSnapshot) return;
+  restoreRatios(layout, maximizeSnapshot);
+  maximizedPanelId = null;
+  maximizeSnapshot = null;
+}
+
+/** 最大化 / 还原某个面板（默认活动面板）。已在最大化态时一律还原。 */
+function toggleMaximizePanel(panelId: number = activePanelId): void {
+  if (maximizedPanelId !== null) {
+    exitMaximize();
+    rebuildLayout();
+    scheduleSessionSave();
+    return;
+  }
+  if (countLeaves(layout) < 2) return; // 只有一个面板：无事可做（快捷键也不该抢键）
+  const snap = maximizePanel(layout, panelId);
+  if (!snap) return;
+  maximizedPanelId = panelId;
+  maximizeSnapshot = snap;
+  markActivePanel(panelId);
+  rebuildLayout();
+  // 另一侧被挤成 0，必须明确告诉用户怎么回来（操作栏那个「还原」按钮是第二条退路）
+  const hint = keyHint("panel.toggleMaximize");
+  showMessage(hint ? `已最大化该面板，${hint} 还原` : "已最大化该面板");
+  scheduleSessionSave();
+}
+
+/** 会话里存**未最大化**的比例：0/1 存进 session 会让下次启动只剩一块面板。 */
+function layoutForSession(): LayoutNode {
+  if (maximizedPanelId === null || !maximizeSnapshot) return layout;
+  const c = cloneTree(layout);
+  restoreRatios(c, maximizeSnapshot);
+  return c;
+}
+
+/**
+ * B71 整组拖拽：把 src 面板的**全部标签**搬到目标面板旁的新分屏位置。
+ *
+ * 与「拖单个标签到边缘」的区别是源面板整体消失（而不是留下一个空面板），
+ * 所以这里不能复用 splitPanelWithTab —— 它只搬一个标签，源面板空了才顺手摘除。
+ */
+function moveGroupToPanel(
+  srcId: number,
+  targetId: number,
+  dir: "h" | "v",
+  newFirst: boolean,
+): void {
+  const src = getPanel(srcId);
+  if (!src || srcId === targetId || countLeaves(layout) < 2) return;
+  exitMaximize();
+  const newId = nextPanelId++;
+  const moved = [...src.tabs];
+  panels.set(newId, {
+    panelId: newId,
+    tabs: moved,
+    activeTabId: src.activeTabId,
+    view: null,
+    viewTabId: null,
+    preview: null,
+    previewTimer: null,
+    bodyEl: null,
+  });
+  for (const id of moved) {
+    const t = tabs.get(id);
+    if (t) t.panelId = newId;
+  }
+  src.tabs = [];
+  src.activeTabId = -1;
+  layout = splitPanelAt(layout, targetId, dir, newId, newFirst);
+  activePanelId = newId;
+  // 源面板已空 → 摘除（内部会 rebuild + refreshAll）
+  disposePanel(srcId);
 }
 
 /** 取文档当前最新文本：优先回写活动实例的视图快照，否则任一实例快照。 */
@@ -1108,6 +1272,8 @@ function splitPanelWithTab(
   if (!tab) return;
   const doc = docs.get(tab.docId);
   if (!doc) return;
+  // 最大化态下分屏会得到「一半 0 宽」的怪布局 → 先还原再分（见 exitMaximize）
+  exitMaximize();
 
   if (copy) {
     // 同源复制分屏：回写源实例快照（按视图实际显示的实例判定，防止串档）
@@ -1222,6 +1388,7 @@ function moveTabToStrip(panelId: number, tabId: number, beforeTabId: number | nu
   const tab = tabs.get(tabId);
   const src = panelOfTab(tabId);
   if (!dst || !tab || !src) return;
+  exitMaximize(); // 同 moveTabToPanel：跨面板移动前先退出最大化
   const from = src.tabs.indexOf(tabId);
   if (from < 0) return;
 
@@ -1699,7 +1866,8 @@ function snapshotSession(): Parameters<typeof saveSession>[0] {
         ),
       };
     }),
-    layout: convertLayoutForSession(layout, panelIndex),
+    // 最大化不进会话：0/1 的比例存下来会让下次启动只剩一块面板（见 layoutForSession）
+    layout: convertLayoutForSession(layoutForSession(), panelIndex),
     activePanel: panelIndex.get(activePanelId) ?? 0,
   };
 }
@@ -3238,6 +3406,13 @@ function shortcutApplies(id: string): boolean {
     case "panel.splitV":
     case "panel.close":
       return !!activePanel();
+    case "panel.moveTabNext":
+    case "panel.moveTabPrev":
+    case "panel.focusNext":
+    case "panel.focusPrev":
+    case "panel.toggleMaximize":
+      // 只有一个面板时这些命令无事可做 —— 不抢键，把事件还给编辑器
+      return countLeaves(layout) > 1;
     default:
       return true;
   }
@@ -3334,6 +3509,21 @@ function runShortcut(id: string): void {
       break;
     case "panel.close":
       if (activePanel()) closePanelById(activePanelId);
+      break;
+    case "panel.moveTabNext":
+      moveActiveTabByDelta(1);
+      break;
+    case "panel.moveTabPrev":
+      moveActiveTabByDelta(-1);
+      break;
+    case "panel.focusNext":
+      focusPanelByDelta(1);
+      break;
+    case "panel.focusPrev":
+      focusPanelByDelta(-1);
+      break;
+    case "panel.toggleMaximize":
+      toggleMaximizePanel();
       break;
     case "palette.open":
       openCommandPalette();

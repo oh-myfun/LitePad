@@ -48,6 +48,13 @@ export interface TabstripCallbacks {
   onDuplicateTab?: (tabId: number) => void;
   /** 同源复制到视觉相邻面板（左右分屏对照源码/预览的快捷入口） */
   onDuplicateToSibling?: (tabId: number) => void;
+  /** 把该标签分屏到新面板（左右 / 上下）。对标 VS Code 标签右键的 Split Right/Down */
+  onSplitH?: (tabId: number) => void;
+  onSplitV?: (tabId: number) => void;
+  /** B71：双击标签 = 最大化/还原本面板（仅多面板时才有；VS Code 的
+   *  `doubleClickTabToToggleEditorGroupSizes = 'maximize'`，LitePad 无「固定标签」，
+   *  双击标签原本空闲）。给了这个回调才会接管双击，否则保持无行为。 */
+  onToggleMaximize?: () => void;
   onReorder?: (fromTabId: number, toTabId: number) => void;
   onNew?: () => void;
 }
@@ -226,6 +233,8 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
             },
           ]
         : []),
+      ...(cb.onSplitH ? [{ label: "左右分屏", onSelect: () => cb.onSplitH?.(t.tabId) }] : []),
+      ...(cb.onSplitV ? [{ label: "上下分屏", onSelect: () => cb.onSplitV?.(t.tabId) }] : []),
       {
         label: "关闭其他标签",
         onSelect: () => cb.onCloseOther?.(t.tabId),
@@ -245,6 +254,18 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
     ];
     showPopupMenu(el, items);
   });
+
+  // B71：双击标签 = 最大化 / 还原本面板。
+  // ⚠️ 只在 main 传了 onToggleMaximize（= 存在多个面板）时才接管：单面板时双击
+  // 必须保持「什么都不做」，否则会得到一个永远按不出效果的手势。
+  // 不能挂在 host 上（那里的双击是「空白处新建」），也不能阻止冒泡以外的行为。
+  if (cb.onToggleMaximize) {
+    el.addEventListener("dblclick", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      cb.onToggleMaximize?.();
+    });
+  }
 
   // 拖拽：指针事件序列（mousedown 阈值进入拖拽，mousemove 预览，mouseup 提交），
   // 具体落点逻辑在 splitview.ts。不用 HTML5 DnD——Windows 上 WebView2 原生拖放

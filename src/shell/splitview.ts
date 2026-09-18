@@ -31,6 +31,10 @@ export interface PanelRenderData {
   tabs: TabViewData[];
   /** 是否可关闭该分屏（唯一面板时 ⨯ 禁用，退出只走窗口关闭/菜单） */
   canClose?: boolean;
+  /** B71：该面板正处于最大化（操作栏多一个「还原」⨯，其余面板 collapsed） */
+  maximized?: boolean;
+  /** B71：被最大化挤成 0 的那一侧（仍留在 DOM 里，只是不占地方） */
+  collapsed?: boolean;
 }
 
 export interface SplitviewCallbacks {
@@ -48,6 +52,19 @@ export interface SplitviewCallbacks {
   onDuplicateTab?: (tabId: number) => void;
   onDuplicateToSibling?: (tabId: number) => void;
   onReorderTab?: (panelId: number, fromTabId: number, toTabId: number) => void;
+  /** B71：标签右键「左右/上下分屏」——复制一份到新面板（VS Code 的 Split Right/Down） */
+  onSplitTab?: (panelId: number, tabId: number, dir: "h" | "v") => void;
+  /** B71：整组拖拽落在本面板的标签区 / 中心 → 整组并入目标面板（源面板消失） */
+  onMergeGroup?: (sourcePanelId: number, targetPanelId: number) => void;
+  /** B71：整组拖拽落在边缘 → 整组搬到该侧的新分屏位置 */
+  onMoveGroupToPanel?: (
+    sourcePanelId: number,
+    targetPanelId: number,
+    dir: "h" | "v",
+    newFirst: boolean,
+  ) => void;
+  /** B71：最大化 / 还原该面板（双击标签、操作栏「还原」按钮都走这里） */
+  onToggleMaximizePanel?: (panelId: number) => void;
   /** 拖拽标签落在 tab 区（B27）：插到 beforeTabId 之前（null = 追加到末尾）。
    *  同面板 = 调整顺序；跨面板 = 移动到该面板的该位置。不是分屏。 */
   onMoveTabToStrip: (panelId: number, tabId: number, beforeTabId: number | null) => void;
@@ -103,6 +120,12 @@ interface TabDragState {
   panelEl: HTMLElement | null;
   /** 被拖的标签元素：越过阈值后据此造「跟随光标的副本」。 */
   tabEl: HTMLElement | null;
+  /**
+   * B71：非 null = **拖整组**（从标签栏空白处起手，对标 VS Code 的
+   * `editorTabsControl.onGroupDragStart`：只有 `e.target === tabsContainer` 才算整组）。
+   * 此时 tabId 无意义（传 -1），落点按「整个面板」处理。
+   */
+  groupPanelId: number | null;
 }
 let tabDrag: TabDragState | null = null;
 let suppressTabClick = false;
@@ -112,7 +135,12 @@ let suppressTabClick = false;
  * `tabEl` = 标签元素本身（拖拽影像要克隆它）。缺省时从事件目标反查；
  * 两者都没有就不显示影像，拖拽本身照常工作。
  */
-export function beginTabDrag(tabId: number, e: MouseEvent, tabEl: HTMLElement | null = null): void {
+export function beginTabDrag(
+  tabId: number,
+  e: MouseEvent,
+  tabEl: HTMLElement | null = null,
+  groupPanelId: number | null = null,
+): void {
   if (tabDrag) finishTabDrag(); // 上一次拖拽未正常收尾（如释放到窗外）→ 先强制清场
   suppressTabClick = false;
   tabDrag = {
@@ -122,6 +150,7 @@ export function beginTabDrag(tabId: number, e: MouseEvent, tabEl: HTMLElement | 
     active: false,
     panelEl: null,
     tabEl: tabEl ?? tabElFrom(e.target),
+    groupPanelId,
   };
   document.addEventListener("mousemove", onTabDragMove);
   document.addEventListener("mouseup", onTabDragEnd);
@@ -152,13 +181,19 @@ let dragGhost: HTMLElement | null = null;
  * ⚠️ 为什么自己造浮层：我们是指针事件自己编排拖拽（Windows 上 WebView2 的原生拖放
  * 钩子会禁用页面内 HTML5 DnD，见 ARCHITECTURE §4），拿不到浏览器的拖拽影像。
  */
-function createDragGhost(tabEl: HTMLElement): HTMLElement {
+function createDragGhost(srcEl: HTMLElement, group = false): HTMLElement {
   const ghost = document.createElement("div");
-  ghost.className = "tab-drag-ghost";
+  ghost.className = "tab-drag-ghost" + (group ? " tab-drag-ghost-group" : "");
   ghost.setAttribute("aria-hidden", "true");
-  const copy = tabEl.cloneNode(true) as HTMLElement;
+  const copy = srcEl.cloneNode(true) as HTMLElement;
   // 副本不得带 tabId：多处逻辑「按 tabId 查元素」，留着会让查询命中副本而非真标签。
   copy.removeAttribute("data-tab-id");
+  // 整组影像克隆的是标签栏 → 里面的每个 .tab 也都要剥掉（同上理由）
+  if (group) {
+    copy.querySelectorAll<HTMLElement>("[data-tab-id]").forEach((el) => {
+      el.removeAttribute("data-tab-id");
+    });
+  }
   // 副本不是真标签：剥掉提示接线。眼下靠外层 pointer-events:none 已经收不到
   // 悬停，但那是「隐式」保护 —— 哪天提示改成 elementFromPoint 就会静默复活。
   for (const el of [copy, ...copy.querySelectorAll<HTMLElement>("[data-tip]")]) {
@@ -276,7 +311,9 @@ function onTabDragMove(e: MouseEvent): void {
     document.body.classList.add("tab-drag-active");
     // 越过阈值才算真的在拖 → 这时才亮出影像（纯点击不该闪出一个副本）
     if (tabDrag.tabEl) {
-      dragGhost = createDragGhost(tabDrag.tabEl);
+      // B71：整组拖拽时 tabEl 是**整个标签栏**（VS Code 的 group drag image 同样是
+      // applyDragImage(e, tabsContainer)），影像因此带着这一组的全部标签。
+      dragGhost = createDragGhost(tabDrag.tabEl, tabDrag.groupPanelId !== null);
       document.body.appendChild(dragGhost);
     }
   }
@@ -320,6 +357,29 @@ function onTabDragEnd(e: MouseEvent): void {
   const panelEl = panelAt(e.clientX, e.clientY);
   if (!panelEl) return;
   const panelId = Number(panelEl.dataset.panelId);
+
+  // B71：拖整组（从标签栏空白处起手）。落点只有两种语义：
+  //   落在别的面板的标签区 / 中心 → 整组并入；落在边缘 → 整组搬到新分屏位置。
+  // 拖回自己所在面板 = 无操作（VS Code 也是这样，不做「原地重排」）。
+  if (drag.groupPanelId !== null) {
+    if (drag.groupPanelId === panelId) return;
+    const overStrip = stripUnder(panelEl, e.clientX, e.clientY);
+    const zone = zoneOf(panelEl.getBoundingClientRect(), e.clientX, e.clientY);
+    // O5：Alt = 临时取消分屏 → 边缘落点按 center（= 并入）处理
+    const eff = e.altKey ? "center" : zone;
+    if (overStrip || eff === "center") {
+      svCallbacks?.onMergeGroup?.(drag.groupPanelId, panelId);
+      return;
+    }
+    svCallbacks?.onMoveGroupToPanel?.(
+      drag.groupPanelId,
+      panelId,
+      eff === "left" || eff === "right" ? "h" : "v",
+      eff === "left" || eff === "top",
+    );
+    return;
+  }
+
   // B27：落在 tab 区 = 排序/移动（绝不分屏）
   const strip = stripUnder(panelEl, e.clientX, e.clientY);
   if (strip) {
@@ -464,7 +524,10 @@ function buildPanel(
   const data = panelData.get(panelId) ?? ({ panelId, active: false, tabs: [] } as PanelRenderData);
 
   const panel = document.createElement("div");
-  panel.className = "layout-panel" + (data.active ? " layout-panel-active" : "");
+  panel.className =
+    "layout-panel" +
+    (data.active ? " layout-panel-active" : "") +
+    (data.collapsed ? " layout-panel-collapsed" : "");
   panel.dataset.panelId = String(panelId);
   panel.dataset.path = path.join(",");
 
@@ -482,6 +545,13 @@ function buildPanel(
     onCopyPath: (tabId) => cb.onCopyTabPath?.(tabId),
     onDuplicateTab: (tabId) => cb.onDuplicateTab?.(tabId),
     onDuplicateToSibling: (tabId) => cb.onDuplicateToSibling?.(tabId),
+    // B71：右键「左右/上下分屏」。panelId 由闭包带上（tabstrip 只认 tabId）
+    onSplitH: (tabId) => cb.onSplitTab?.(panelId, tabId, "h"),
+    onSplitV: (tabId) => cb.onSplitTab?.(panelId, tabId, "v"),
+    // B71：双击标签 = 最大化/还原本面板（对标 VS Code 的
+    // doubleClickTabToToggleEditorGroupSizes = 'maximize'；LitePad 无「固定标签」，
+    // 双击标签本来没有其它用途）。仅多面板时 main 才会传这个回调。
+    onToggleMaximize: () => cb.onToggleMaximizePanel?.(panelId),
     onReorder: (from, to) => cb.onReorderTab?.(panelId, from, to),
     onNew: () => cb.onNewTab?.(panelId),
   });
@@ -490,6 +560,15 @@ function buildPanel(
   // B54 起去掉左右/上下分屏按钮——分屏改为把标签拖到面板边缘完成（zoneOf +
   // 拖拽落点），按钮重复且占位。⨯ 仅移除该分屏（标签并入相邻面板），不关文档，
   // 唯一面板时禁用。
+  // B71：**拖标签栏空白处 = 拖整组**（VS Code `onGroupDragStart` 要求
+  // `e.target === tabsContainer`，也就是只能从标签之间的空隙起手）。
+  // 起手点判据必须是「事件目标就是容器本身」——命中任何 .tab 都归单标签拖拽。
+  strip.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    if (e.target !== strip) return;
+    beginTabDrag(-1, e, strip, panelId);
+  });
+
   const ops = document.createElement("div");
   ops.className = "panel-ops";
   const mkOp = (
@@ -523,6 +602,15 @@ function buildPanel(
     closeP.setAttribute("aria-label", "唯一面板不可移除（退出请用窗口关闭或菜单「退出」）");
   }
 
+  // B71：最大化中的面板才多一个「还原」按钮 —— 未最大化时不占位（B54 的精简原则），
+  // 但最大化后必须有一个**看得见**的退路：另一侧被挤成 0，只靠快捷键容易让人以为丢了。
+  if (data.maximized) {
+    ops.append(
+      mkOp(ICONS.restore, "还原面板", "恢复最大化前的分屏比例", () =>
+        cb.onToggleMaximizePanel?.(panelId),
+      ),
+    );
+  }
   ops.append(closeP);
 
   head.append(strip, ops);

@@ -1364,6 +1364,21 @@ button:focus-visible {
   position: relative;
 }
 
+/* B71 最大化面板时被挤掉的那一侧：比例已推到 0/1，但 .layout-panel 有
+   min-width: 120px / min-height: 80px，只推比例收不成 0，会留一条 120px 的残边。
+   这里把下限与伸缩一起关掉，让它真的收成 0（面板、标签、编辑器实例都还在 DOM 里，
+   只是不占地方，还原时不用重建任何东西）。
+   ⚠️ 不能改成 display: none —— 那会连带销毁 CodeMirror 的度量，还原时编辑器要重排。 */
+.layout-panel-collapsed {
+  min-width: 0;
+  min-height: 0;
+  flex-grow: 0;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-width: 0;
+  pointer-events: none;
+}
+
 .layout-panel-active {
   /* 活动面板自身不加边框（避免视觉噪音）；「焦点在哪」由
      .layout-panel:not(.layout-panel-active) .tab-active 的降亮度规则表达。
@@ -1687,6 +1702,13 @@ body.tab-drag-active * {
   outline-offset: -1px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
   opacity: 0.9;
+}
+
+/* B71 整组拖拽：影像克隆的是**整个标签栏**（VS Code 的 group drag image 同理），
+   不设上限的话 8 个标签能拖出一条横贯窗口的带子，把落点全盖住。 */
+.tab-drag-ghost-group {
+  max-width: 260px;
+  overflow: hidden;
 }
 
 /* ---------- 编辑区 ---------- */

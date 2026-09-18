@@ -367,6 +367,30 @@ $PY scripts/icon_check_pe.py     # 解析 **PE 资源段** RT_ICON：外壳图�
 ⚠️ 排查这类问题**先分层**：`exe 图标` / `安装器外壳图标` / `快捷方式图标` 是三套独立机制，
 别一看到「图标旧」就去动 `build.rs`。
 
+## ⚠️ `failed to remove file litepad.exe / 拒绝访问` = 有残留进程占着产物
+
+**症状**：`tauri build` 走到最后一步报
+
+```
+   Compiling litepad v0.3.0 (E:\Project\LitePad\src-tauri)
+error: failed to remove file `...\target\release\litepad.exe`
+Caused by: 拒绝访问。 (os error 5)
+```
+
+而且**失败时旧 exe 已被删掉**——构建结束后 `target/release/litepad.exe` 干脆不存在，
+`bundle/nsis/` 里还是上一次的安装包（看时间戳能分辨，别误以为构建成功）。
+
+**根因**：之前手动启动的 `litepad.exe`（从 release 目录直接跑起来试用的那个）还在运行，
+Windows 锁住映像文件 → 既不能删也不能覆盖。`taskkill //F //IM litepad.exe` 在 Git Bash 里
+**会静默失败**（`2>/dev/null` 吃掉了报错），所以「脚本开头已经 kill 过」并不代表真的杀掉了。
+
+**正确排查**：用 PowerShell 工具（不要从 Bash 工具里外部调用 powershell）查
+`Get-Process -Name litepad` 的 `Path`，确认它正是 `target\release\litepad.exe` 后再
+`Stop-Process -Force`；从 `target/debug/` 或已安装目录启动的进程不会锁 release 产物，别误杀。
+
+⚠️ 本会话里 PowerShell 工具的 stdout **经常回显为空**，所以「探测 + 结论」要
+`Set-Content` 落一个临时文件再用 Read 读，别把「没有输出」当成「没有进程」。
+
 ## 诊断基建
 
 - `frontend_ready` 命令写 `%TEMP%\litepad-smoke.log`；`scripts/cdp_diag.mjs` 连 CDP 抓页面异常。

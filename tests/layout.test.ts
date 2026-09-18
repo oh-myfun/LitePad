@@ -4,7 +4,10 @@ import {
   eachLeaf,
   hasPanel,
   leaf,
+  maximizePanel,
+  pathToPanel,
   removePanel,
+  restoreRatios,
   siblingLeafOf,
   splitPanel,
   splitPanelAt,
@@ -200,5 +203,91 @@ describe("updateRatio 路径约定（B26 回归：分割条位置随开/关文�
     updateRatio(t, [], 5); // 越界值收敛
     expect(t.ratio).toBeLessThanOrEqual(0.95);
     expect(t.ratio).toBeGreaterThanOrEqual(0.05);
+  });
+});
+
+describe("B71 最大化 / 还原面板（只改比例，不动结构）", () => {
+  // 用户：VS Code 的面板还能最大化/还原，LitePad 没有。
+  // 取舍：不新增「隐藏面板」的渲染分支 —— 最大化只是把「根 → 该叶子」路径上
+  // 每一层的比例推到 0/1，面板、标签、编辑器实例全都留着（另一侧渲染成 0 宽）。
+  // 这样拖分隔条、保存会话、序列化都仍然只认识 ratio 一种状态。
+  const sample = (): LayoutNode => ({
+    kind: "split",
+    dir: "h",
+    ratio: 0.4,
+    a: leaf(1),
+    b: { kind: "split", dir: "v", ratio: 0.7, a: leaf(2), b: leaf(3) },
+  });
+
+  const shape = (n: LayoutNode): string =>
+    n.kind === "leaf"
+      ? "leaf:" + n.panelId
+      : "split:" + n.dir + "(" + shape(n.a) + "," + shape(n.b) + ")";
+
+  it("pathToPanel 给出根到叶子的下标序列；不存在时为 null", () => {
+    expect(pathToPanel(leaf(1), 1)).toEqual([]);
+    expect(pathToPanel(sample(), 1)).toEqual([0]);
+    expect(pathToPanel(sample(), 2)).toEqual([1, 0]);
+    expect(pathToPanel(sample(), 3)).toEqual([1, 1]);
+    expect(pathToPanel(sample(), 99)).toBeNull();
+  });
+
+  it("最大化 = 沿路径把比例推到 0/1（A 侧占 1，B 侧占 0）", () => {
+    const t = sample();
+    const snap = maximizePanel(t, 3);
+    expect(snap).not.toBeNull();
+    if (t.kind !== "split" || !snap) return;
+    // 3 在 b 侧 → 根比例推到 0；它又在 b 的 b 侧 → 内层也推到 0
+    expect(t.ratio, "根：目标在 b → 0").toBe(0);
+    expect(t.b.kind === "split" && t.b.ratio, "内层：目标在 b → 0").toBe(0);
+    expect(snap.path).toEqual([1, 1]);
+    expect(snap.ratios, "快照记的是**原**比例").toEqual([0.4, 0.7]);
+  });
+
+  it("最大化最左侧面板时根比例推到 1", () => {
+    const t = sample();
+    maximizePanel(t, 1);
+    expect(t.kind === "split" && t.ratio).toBe(1);
+  });
+
+  it("还原把各层比例原样写回", () => {
+    const t = sample();
+    const snap = maximizePanel(t, 2);
+    expect(snap).not.toBeNull();
+    // 2 在 b.a → 根 0、内层 1
+    expect(t.kind === "split" && t.ratio).toBe(0);
+    expect(t.b.kind === "split" && t.b.ratio).toBe(1);
+    if (!snap) return;
+    restoreRatios(t, snap);
+    expect(t.kind === "split" && t.ratio).toBe(0.4);
+    expect(t.b.kind === "split" && t.b.ratio).toBe(0.7);
+  });
+
+  it("唯一面板 / 不存在的面板：返回 null（调用方据此什么都不做）", () => {
+    // 单叶子时路径是 []，最大化没有意义 —— 若返回非 null，UI 会进入「最大化态」
+    // 却看不出任何变化，还原按钮也变得莫名其妙。
+    expect(maximizePanel(leaf(1), 1)).toBeNull();
+    expect(maximizePanel(sample(), 42)).toBeNull();
+  });
+
+  it("树结构在最大化前后完全一致（只有 ratio 变了）", () => {
+    const t = sample();
+    const before = shape(t);
+    maximizePanel(t, 2);
+    expect(shape(t), "面板与分割方向都不许变").toBe(before);
+    expect(countLeaves(t)).toBe(3);
+  });
+
+  it("还原快照对已变化的树是容错的（路径走不通就停在原地，不写坏比例）", () => {
+    const t = sample();
+    const snap = maximizePanel(t, 3); // path = [1,1]
+    if (!snap) return;
+    // 最大化期间内层面板被关掉 → [1] 那一层塌成叶子
+    const shrunk = removePanel(t, 2);
+    expect(shrunk).not.toBeNull();
+    if (!shrunk) return;
+    expect(shrunk.kind === "split" && shrunk.ratio, "前置：仍是最大化态的 0").toBe(0);
+    restoreRatios(shrunk, snap);
+    expect(shrunk.kind === "split" && shrunk.ratio, "根比例仍被还原").toBe(0.4);
   });
 });
