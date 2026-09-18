@@ -26,6 +26,7 @@ import {
 import {
   buildFindQuery,
   clearFindQuery,
+  type FindMatch,
   findMatches,
   nextMatchIndex,
   setFindQuery,
@@ -487,6 +488,8 @@ function renderPanelTabs(onlyPanelId?: number): void {
     if (!strip) continue;
     renderTabstrip(strip, tabViewDataOf(p), tabstripCallbacks(p));
   }
+  // 打开文档数变化（标签增删）时同步查找栏徽标
+  findBar?.setDocCount(docs.size);
 }
 
 function tabViewDataOf(p: Panel): TabViewData[] {
@@ -2456,7 +2459,7 @@ function ensureFindBar(): FindBarHandle {
 /** 打开查找栏（种子一般为当前选中的文本）。 */
 function openFindBar(focus: "find" | "replace" = "find"): void {
   const bar = ensureFindBar();
-  bar.open(selectedTextInActiveView());
+  bar.open(selectedTextInActiveView(), focus === "replace");
   if (focus === "replace") bar.focusReplace();
   else bar.focusFind();
 }
@@ -2480,11 +2483,25 @@ function findOptionsOf(q: FindBarQuery) {
   };
 }
 
+/** 活动视图当前选区（非空）起点/终点；用于「在选区中查找」的限制范围。 */
+function activeSelectionRange(): { from: number; to: number } | null {
+  const view = activePanel()?.view?.view;
+  if (!view) return null;
+  const sel = view.state.selection.main;
+  if (sel.empty) return null;
+  return { from: Math.min(sel.from, sel.to), to: Math.max(sel.from, sel.to) };
+}
+
 /** 把查询写到全部可见视图（高亮同步；离屏实例不参与高亮）。 */
 function applyFindQuery(q: FindBarQuery): void {
   const query = buildFindQuery(findOptionsOf(q));
+  const restrict = q.inSelection ? activeSelectionRange() : null;
+  const active = activePanel();
   for (const p of panels.values()) {
-    if (p.view) p.view.view.dispatch({ effects: setFindQuery.of({ query, activeFrom: null }) });
+    if (!p.view) continue;
+    // 选区限制只作用于活动编辑器（其余面板没有这份选区，按全文高亮）
+    const r = p === active ? restrict : null;
+    p.view.view.dispatch({ effects: setFindQuery.of({ query, activeFrom: null, restrict: r }) });
   }
   applyPreviewFindEverywhere(q);
   refreshFindCount();
@@ -2525,11 +2542,34 @@ function clearFindHighlight(): void {
   }
 }
 
+/** 保留大小写：把命中词的大小写迁移到替换串（VS Code 同款算法）。 */
+function applyPreserveCase(matchText: string, replacement: string): string {
+  if (!replacement) return replacement;
+  const hasUpper = matchText !== matchText.toLowerCase();
+  const hasLower = matchText !== matchText.toUpperCase();
+  if (!hasUpper) return replacement.toLowerCase();
+  if (!hasLower) return replacement.toUpperCase();
+  // 首字母大写、其余小写（Title Case）→ 对应迁移
+  const first = matchText[0];
+  if (first === first.toUpperCase() && first !== first.toLowerCase()) {
+    return replacement.charAt(0).toUpperCase() + replacement.slice(1).toLowerCase();
+  }
+  return replacement;
+}
+
+/** 把命中集合按「在选区中查找」限制到选区内。 */
+function restrictMatches(matches: FindMatch[], q: FindBarQuery): FindMatch[] {
+  if (!q.inSelection) return matches;
+  const r = activeSelectionRange();
+  if (!r) return matches;
+  return matches.filter((m) => m.from >= r.from && m.to <= r.to);
+}
+
 function refreshFindCount(): void {
   const bar = findBar;
   if (!bar) return;
   const q = bar.getQuery();
-  // 跨文档范围由结果列表给出「N 条结果（M 个文档）」，单文档的「第 n/m 处」会误导
+  // 跨文档范围由结果列表给出「N 条结果（M 个文档）」，单文档的计数会误导
   if (q.allDocs) {
     bar.setCount("");
     return;
@@ -2541,23 +2581,22 @@ function refreshFindCount(): void {
     const st = panel.preview.findState();
     if (st.count === 0) {
       bar.setCount(q.text ? "无匹配" : "");
-    } else if (st.active < 0) {
-      bar.setCount(`共 ${st.count} 处`);
     } else {
-      bar.setCount(`第 ${st.active + 1}/${st.count} 处`);
+      const cur = st.active >= 0 ? st.active : 0;
+      bar.setCount(`${cur + 1} / ${st.count}`);
     }
     return;
   }
   const view = panel?.view?.view;
   if (!view) return;
   const query = buildFindQuery(findOptionsOf(q));
-  const matches = findMatches(view.state, query);
+  const matches = restrictMatches(findMatches(view.state, query), q);
   if (matches.length === 0) {
     bar.setCount(q.text ? "无匹配" : "");
     return;
   }
   const idx = nextMatchIndex(matches, view.state.selection.main.head, 1);
-  bar.setCount(`第 ${idx + 1}/${matches.length} 处`);
+  bar.setCount(`${idx + 1} / ${matches.length}`);
 }
 
 /** 当前文档范围：跳到上一个 / 下一个命中（到头环绕）。 */
@@ -2578,7 +2617,7 @@ function stepFind(dir: 1 | -1, q: FindBarQuery): void {
   const view = panel.view?.view;
   if (!view) return;
   const query = buildFindQuery(findOptionsOf(q));
-  const matches = findMatches(view.state, query);
+  const matches = restrictMatches(findMatches(view.state, query), q);
   if (matches.length === 0) {
     findBar?.setCount(q.text ? "无匹配" : "");
     return;
@@ -2589,11 +2628,15 @@ function stepFind(dir: 1 | -1, q: FindBarQuery): void {
     selection: { anchor: m.from, head: m.to },
     effects: [
       EditorView.scrollIntoView(m.from, { y: "center" }),
-      setFindQuery.of({ query, activeFrom: m.from }),
+      setFindQuery.of({
+        query,
+        activeFrom: m.from,
+        restrict: q.inSelection ? activeSelectionRange() : null,
+      }),
     ],
   });
   if (tab) tab.state = view.state;
-  findBar?.setCount(`第 ${idx + 1}/${matches.length} 处`);
+  findBar?.setCount(`${idx + 1} / ${matches.length}`);
 }
 
 /** 替换当前命中（没有选中命中时，先跳到下一个再替换下一次点击生效）。 */
@@ -2602,7 +2645,7 @@ function replaceCurrent(q: FindBarQuery): void {
   const view = panel?.view?.view;
   if (!panel || !view) return;
   const query = buildFindQuery(findOptionsOf(q));
-  const matches = findMatches(view.state, query);
+  const matches = restrictMatches(findMatches(view.state, query), q);
   const sel = view.state.selection.main;
   const target =
     matches.find((m) => m.from === sel.from && m.to === sel.to) ??
@@ -2611,14 +2654,19 @@ function replaceCurrent(q: FindBarQuery): void {
     findBar?.setStatus("没有可替换的匹配");
     return;
   }
-  const insert = q.replace;
+  const matched = view.state.sliceDoc(target.from, target.to);
+  const insert = q.preserveCase ? applyPreserveCase(matched, q.replace) : q.replace;
   const nextFrom = target.from + insert.length;
   view.dispatch({
     changes: { from: target.from, to: target.to, insert },
     selection: { anchor: nextFrom },
     effects: [
       EditorView.scrollIntoView(nextFrom, { y: "center" }),
-      setFindQuery.of({ query, activeFrom: target.from }),
+      setFindQuery.of({
+        query,
+        activeFrom: target.from,
+        restrict: q.inSelection ? activeSelectionRange() : null,
+      }),
     ],
   });
   const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
@@ -2646,14 +2694,19 @@ function replaceAllInScope(q: FindBarQuery): void {
     const panel = activePanel();
     const view = panel?.view?.view;
     if (!panel || !view) return;
-    const matches = findMatches(view.state, query);
+    const matches = restrictMatches(findMatches(view.state, query), q);
     if (matches.length === 0) {
       findBar?.setStatus("无匹配");
       return;
     }
-    view.dispatch({
-      changes: matches.map((m) => ({ from: m.from, to: m.to, insert: q.replace })),
-    });
+    const changes = matches.map((m) => ({
+      from: m.from,
+      to: m.to,
+      insert: q.preserveCase
+        ? applyPreserveCase(view.state.sliceDoc(m.from, m.to), q.replace)
+        : q.replace,
+    }));
+    view.dispatch({ changes });
     const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
     if (tab) tab.state = view.state;
     findBar?.setStatus(`已替换 ${matches.length} 处`);
@@ -2669,7 +2722,13 @@ function replaceAllInScope(q: FindBarQuery): void {
     if (insts.length === 0) continue;
     const matches = findMatches(insts[0].state, query);
     if (matches.length === 0) continue;
-    const changes = matches.map((m) => ({ from: m.from, to: m.to, insert: q.replace }));
+    const changes = matches.map((m) => ({
+      from: m.from,
+      to: m.to,
+      insert: q.preserveCase
+        ? applyPreserveCase(insts[0].state.sliceDoc(m.from, m.to), q.replace)
+        : q.replace,
+    }));
     // 优先派发给正挂在视图上的实例——由 syncDocInstances 广播到兄弟实例并置脏；
     // 全部离屏时才直接改快照，并手动置脏
     const visible = insts.find((t) => {
