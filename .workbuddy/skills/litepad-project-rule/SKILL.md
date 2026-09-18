@@ -27,6 +27,13 @@ agent_created: true
    `docs/vscode-reference`），重点改**仍会被复用的脚本** —— 只改文档不改脚本 =
    下次一跑又把旧行为带回来。顺手看 `%TEMP%` 一类外部目录里是否已堆了历史产物
    （只扫描报告，**不要**擅自删）。
+   ⚠️ **新落点也要告诉「全仓扫描型」守卫**：本项目里有一批测试/脚本会**枚举整个仓库**
+   （`tests/regressions.test.ts` 的 `collectTextFiles` + `SKIP_DIRS`、prettier/eslint 的
+   ignore 链、`tsconfig.json` 的 `include`）。新增一个可放任意内容的目录（`.tmp/`）
+   而不同步这些清单，**下次往里面扔一个探针文件就会把无关的守卫判红** ——
+   B72 推送时实测：`.tmp/notepad-ref/notepad_cap.py` 里一句「for LiteMD menu redesign」
+   的注释把全仓改名守卫顶红了（历史副本记录旧名是正当的，是**守卫的扫描范围**错）。
+   反之也要注意别有 `SKIP_DIRS` 漏项：加完先跑一遍受影响的守卫。
 4. **同步「照抄型」文档**：`BUILD-ENV.md` 是精确命令手册，规则与它冲突时**必须改它**
    （下个会话就是照它抄命令的）；`.workbuddy/skills/**` 里已固化的老教条同理，
    冲突的整条改写，别只加注解。

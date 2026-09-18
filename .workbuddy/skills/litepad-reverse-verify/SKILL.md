@@ -47,6 +47,13 @@ agent_created: true
 - 断言「某个分支存在」时，别只查函数里出现过 `foo(` —— 把守卫条件一起写进正则，
   否则「`if (false && ...)` 关掉的分支」也算命中。
 - 顺序类断言（如「必须早于读取 `dataset.tip`」）要用 `indexOf` 比较先后，不能只查存在。
+- ⚠️ **「不得出现 X」型断言会被注释误伤**（B72 实测的假红）：文件里往往正写着
+  「为什么不能写死 X」的注释，于是断言「全文不含 X」永远失败。要先**剥掉注释**再断言，
+  而且最好**只截目标函数的函数体**（把 `const fn = (` 到下一个顶层 `}` 之间切出来）——
+  这样断言既不含解释性文字，也不会被别处的同名写法干扰。
+- ⚠️ **一个 `from` 片段必须全文唯一命中**（B72 实测的假绿）：`String.replace` 只改**第一处**，
+  若该片段在文件里出现多次，被改的可能根本不是这条修复所在的地方 ——
+  此时无论脚本判红还是判绿，都**不构成任何证据**。模板里已把它当硬失败处理。
 
 ## 脚本模板
 
@@ -54,47 +61,75 @@ agent_created: true
 // 放 E:/Project/LitePad/.tmp/reverse-verify-<B号>.cjs，用 node 直接跑（cwd 为项目根）；
 // 定型后搬进 scripts/ 入库（入库那份必须过 prettier + eslint，见「铁律」第 2 条）。
 const { readFileSync, writeFileSync } = require("node:fs");
-const { execFileSync } = require("node:child_process");
-const crypto = require("node:crypto");
+const { execFileSync, execSync } = require("node:child_process");
+const { createHash } = require("node:crypto");
+const { join } = require("node:path");
 
-const ROOT = "E:/Project/LitePad";
-const hash = (s) => crypto.createHash("sha256").update(s).digest("hex").slice(0, 12);
-const abs = (p) => `${ROOT}/${p}`;
+const ROOT = join(__dirname, "..");
+const read = (p) => readFileSync(join(ROOT, p), "utf-8");
+const write = (p, s) => writeFileSync(join(ROOT, p), s);
+const sha = (s) => createHash("sha256").update(s).digest("hex").slice(0, 12);
 
 function runVitest(files) {
   try {
-    execFileSync(process.execPath, [`${ROOT}/node_modules/vitest/vitest.mjs`, "run", ...files], {
-      cwd: ROOT, stdio: "pipe", encoding: "utf-8",
+    execSync(`node ${join(ROOT, "scripts/run-vitest.cjs")} ${files.join(" ")}`, {
+      cwd: ROOT, stdio: "pipe", timeout: 300000,
     });
     return true; // 绿
   } catch { return false; } // 红（正是我们要的）
 }
 
-const cases = [
+// Rust 用例（B72 起）：runner: "cargo"。⚠️ 会话 shell 会整体丢 PATH，
+// 别指望环境，脚本里自己把 MSYS2 MinGW + cargo 拼进 PATH，否则 windres 报 NotAttempted。
+function runCargo(filters) {
+  const PATH = [
+    "C:/Users/maoyu/.workbuddy/binaries/PortableGit/versions/1.2.0/usr/bin",
+    "C:/msys64/mingw64/bin", "C:/Users/maoyu/.cargo/bin", "C:/WINDOWS/System32",
+    process.env.PATH,
+  ].join(";");
+  try {
+    execSync(`cargo test ${filters.join(" ")}`, {
+      cwd: join(ROOT, "src-tauri"), stdio: "pipe", timeout: 900000,
+      env: { ...process.env, PATH },
+    });
+    return true;
+  } catch { return false; }
+}
+
+const CASES = [
   {
     name: "一句话说清这条修复的作用",
     file: "src/xxx.ts",
-    from: "修复后的代码（必须能在文件里精确命中，含缩进）",
+    from: "修复后的代码（必须全文唯一命中，含缩进）",
     to: "还原成修复之前的样子",
     tests: ["tests/regressions.test.ts"],
+    // runner: "cargo",   // Rust 用例才写；tests 这里是 filter 名，如 ["browser_args_follow"]
   },
   // …每条修复一个 case
 ];
 
-let problems = 0;
-for (const c of cases) {
-  const original = readFileSync(abs(c.file), "utf-8");
-  if (!original.includes(c.from)) { console.log(`✗ 找不到片段：${c.name}`); problems++; continue; }
-  const patched = original.replace(c.from, c.to);
-  writeFileSync(abs(c.file), patched);
-  const green = runVitest(c.tests);
-  writeFileSync(abs(c.file), original);
-  const restored = hash(readFileSync(abs(c.file), "utf-8")) === hash(original);
-  const ok = !green && restored;
-  if (!ok) problems++;
-  console.log(`${ok ? "✓" : "✗"} ${c.name} → ${!green ? "红（符合预期）" : "⚠️ 仍然绿（守卫无效）"}；还原${restored ? "一致" : "不一致！"}`);
+let bad = 0, broken = 0, n = 0;
+for (const c of CASES) {
+  const orig = read(c.file);
+  const origHash = sha(orig);
+  const hits = orig.split(c.from).length - 1;
+  if (hits === 0) { console.log(`✗ ${c.name} —— 源码里找不到片段，判据失效`); bad++; continue; }
+  if (hits > 1) { console.log(`✗ ${c.name} —— 片段出现 ${hits} 次，判据失效`); bad++; continue; }
+  try {
+    write(c.file, orig.replace(c.from, c.to));
+    const green = c.runner === "cargo" ? runCargo(c.tests) : runVitest(c.tests);
+    n++;
+    console.log(`${green ? "✗ 无效守卫" : "✓ 会变红"}  ${c.name}`);
+    if (green) bad++;
+  } finally {
+    write(c.file, orig); // 逐字节还原，不一致就是在破坏工作区
+    if (sha(read(c.file)) !== origHash) { console.log(`✗ ${c.name} 还原不一致`); broken++; }
+  }
 }
-console.log(problems === 0 ? "\n全部通过，文件均已还原。" : `\n有 ${problems} 处要处理。`);
+console.log(bad === 0 && broken === 0
+  ? `\n${n}/${CASES.length} 条都能抓到对应缺陷，文件均已逐字节还原。`
+  : `\n有 ${bad} 条守卫无效、${broken} 处还原不一致。`);
+process.exit(bad === 0 && broken === 0 ? 0 : 1); // 非零码：别让人只看最后一行就以为过了
 ```
 
 跑法（会话 shell 会丢 PATH，先显式导出，见 `BUILD-ENV.md`）：
