@@ -301,6 +301,54 @@ Node 22 **自带全局 `WebSocket`**，所以零依赖即可连 CDP（连法照�
 现成脚本：`generated-images/gen-splitview-dblclick.mjs`（+ `splitview-entry.mjs`、
 `crop-splitview-dblclick.py`）。
 
+### 量滚动位置 / 真实计时器（B70 起）：`generated-images/b70-cdp-verify.mjs`
+
+命令面板那类「悬停会不会动滚动条」的缺陷 jsdom 量不出来（没有布局、`scrollTop` 恒 0），
+只能断言「DOM 有没有被重建」这种代理指标。要看真东西就走 CDP：
+
+```sh
+CHROME="$HOME/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe"
+"$CHROME" --headless --no-sandbox --disable-gpu --hide-scrollbars \
+  --force-device-scale-factor=1 --window-size=800,420 \
+  --remote-debugging-port=9222 \
+  --user-data-dir="C:/Users/maoyu/AppData/Local/Temp/litepad-b70-profile" about:blank &
+node generated-images/b70-cdp-verify.mjs                      # 当前源码
+node generated-images/b70-cdp-verify.mjs <broken.html 路径>    # 对照（B70 之前）
+```
+
+页面由 `b70-preview/entry.ts`（esbuild → IIFE）+ `b70-preview/index.html`（引真实
+`global.css`）组成，入口把 `showCommandPalette/showPopupMenu/initTooltips` 挂到 `window`，
+再由 CDP 用 `Input.dispatchMouseEvent`（`mouseMoved` / `mouseWheel`）与
+`Input.dispatchKeyEvent` 驱动，读 `scrollTop` / `getBoundingClientRect()` 做数值断言。
+
+⚠️ **两个坑，别重踩**：
+
+1. **`Input.dispatchMouseEvent` 的 `mouseMoved` 必须带 `x`/`y`**，只给 `type` 会报
+   `mandatory field missing`；`Runtime.evaluate` 出错返回的是 `exceptionDetails`，
+   `result.value` 是 `undefined` —— `evalJs` 要显式抛，否则下游拿到 undefined 假错。
+2. ⚠️ **测「悬停后提示该不该弹」必须先离开并等过 `HIDE_GRACE`（220ms）**。
+   只等 50ms 时 `shownTarget` 还没清空，紧接着的 `mouseover` 会被 `el === shownTarget`
+   早退吃掉 —— 于是**旧代码也「通过」**，量出来的绿是假的。改前先拿旧代码跑一遍对照页，
+   确认量法真能把缺陷照出来（这一步筛掉过一条假绿）。
+
+⚠️ **已知局限（重要）**：**「悬停重绘导致列表滚回顶端」这类缺陷，无头 Chromium 复现不出来**。
+B70 实测：把 `f30070f^` 的整套旧源码打包成对照页（`tooltip.ts`/`menu.ts`/`commandpalette.ts`
+全部还原），滚轮与键盘两条路径、滚到 386px 后再悬停，`scrollTop` 都**停在 386**；
+同时 DOM 确实被整表重建（首行节点已换）—— 即 Chromium 的**滚动锚定**（scroll anchoring）
+把「清空 `list.textContent` → 再填回」的短暂归零掩盖了。
+所以这套量法只能证明「当前实现不动滚动位置」（必要条件），**不能**证明「修好了用户看到的
+那个症状」。遇到这类缺陷：先补齐可判定的契约（DOM 是否被重建 / 是否调 `scrollIntoView`），
+再请用户在真机上确认。
+对照页的重建方式（用完可删）：
+
+```sh
+cd generated-images/b70-preview && cp -r ../../src broken-src
+for f in tooltip menu commandpalette; do
+  git -C ../.. show f30070f^:src/shell/$f.ts > broken-src/shell/$f.ts
+done
+# broken-entry.ts 不能 import 旧 menu 的 closePopupMenu（旧版没导出），关菜单直接摘 DOM
+```
+
 ## ⚠️ 改图标后必须让 build.rs 盯 `icons/` 目录
 
 **症状**：换了 `src-tauri/icons/icon.ico` 并 `tauri build`，**exe 仍是旧图标**，且构建零报错
