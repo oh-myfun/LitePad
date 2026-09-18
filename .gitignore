@@ -11,6 +11,11 @@ src-tauri/gen/
 tsconfig.tsbuildinfo
 generated-images/
 
+# 项目内临时文件统一落点：日志、探针/一次性脚本、CDP profile、对照副本、临时下载。
+# ⚠️ 临时文件一律写这里，**不要写全局目录**（`%TEMP%`、`/tmp`、`~/.workbuddy/`）——
+#    规则见 .workbuddy/memory/MEMORY.md「临时文件一律落在本项目内」。
+.tmp/
+
 # VS Code 参考源码的**批量副本**不入库（第三方 MIT 代码，只读、不参与构建）。
 # 理由：① 70 份上游 CSS/TS 会被 pre-commit 的 prettier/eslint 扫到，得往格式链里塞例外；
 #       ② 它可由 scripts/fetch-vscode-ref.sh 按 REVISION.txt 里钉的 commit 精确复现。

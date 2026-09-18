@@ -26,15 +26,19 @@ agent_created: true
      `node node_modules/prettier/bin/prettier.cjs -w <file>` 与
      `node node_modules/eslint/bin/eslint.js <file>`（后者常报「无用的 eslint-disable 指令」，
      删掉那行即可）。
-   - 临时目录（`C:/Users/maoyu/AppData/Local/Temp/`）只当**草稿**，定型后搬进 `scripts/`；
-     曾出现过草稿「写进去后文件消失」，别把它当可信产物。
+   - 草稿一律放**项目内** `E:/Project/LitePad/.tmp/`（项目规则：临时文件不写全局目录，
+     见 `MEMORY.md` 项目约定 / `BUILD-ENV.md`「临时文件统一落 `.tmp/`」），定型后搬进 `scripts/`。
+     ⚠️ 曾经把草稿放 `%TEMP%`，出现过「写进去后文件消失」，别把它当可信产物。
 3. **逐条还原校验**：改回 → 跑测试 → 立即写回原文 → 用 sha256 比对确认逐字节一致 →
    报告里打印「还原一致/不一致」。任何一条不一致都必须立刻人工修。
 4. **只跑受影响的测试文件**（`tests/regressions.test.ts`、`tests/tooltip.test.ts`…），
    不要跑全量：一条要 ~10s，九条就三分钟，没必要。
 5. **判据是「红」**：脚本绿灯 = 守卫无效，必须回头看断言为什么没生效（这是最有价值的产出）。
-6. Bash 里 `/tmp` 会被解析成 `E:\tmp`；Python 是 Windows 原生二进制，**不认 `/c/...`**，
-   要写 `C:/Users/...`。
+6. ⚠️ **`/tmp` 不是项目内**：Git Bash 的 `/tmp` 实测就是 `%TEMP%`
+   （`C:/Users/maoyu/AppData/Local/Temp`，**不是** `E:\tmp`）→ 按项目规则不许写，
+   脚本路径一律写 `E:/Project/LitePad/.tmp/xxx.cjs`。
+   反过来，Python 是 Windows 原生二进制，**既不认 `/c/...` 也不认 `/tmp`**（会把 `/tmp` 按
+   当前盘符解析成 `E:\tmp\`），所以命令行参数要写带盘符的绝对路径。
 
 ## 硬性守卫（本项目实测最容易写空的两类）
 
@@ -47,7 +51,8 @@ agent_created: true
 ## 脚本模板
 
 ```js
-// 放 C:/Users/maoyu/AppData/Local/Temp/reverse-verify-<B号>.cjs，用 node 直接跑（cwd 为项目根）
+// 放 E:/Project/LitePad/.tmp/reverse-verify-<B号>.cjs，用 node 直接跑（cwd 为项目根）；
+// 定型后搬进 scripts/ 入库（入库那份必须过 prettier + eslint，见「铁律」第 2 条）。
 const { readFileSync, writeFileSync } = require("node:fs");
 const { execFileSync } = require("node:child_process");
 const crypto = require("node:crypto");
@@ -96,7 +101,7 @@ console.log(problems === 0 ? "\n全部通过，文件均已还原。" : `\n有 $
 
 ```sh
 export PATH="/c/Users/maoyu/.workbuddy/binaries/PortableGit/versions/1.2.0/usr/bin:/c/msys64/mingw64/bin:/c/Users/maoyu/.cargo/bin:/c/Users/maoyu/.workbuddy/binaries/node/versions/22.22.2-3:/c/WINDOWS/System32:$PATH"
-node "C:/Users/maoyu/AppData/Local/Temp/reverse-verify-b70.cjs"
+node "E:/Project/LitePad/.tmp/reverse-verify-b70.cjs"
 ```
 
 ## 覆盖清单（照这个列 case，别漏）

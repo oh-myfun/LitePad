@@ -5,7 +5,14 @@ import globals from "globals";
 
 export default tseslint.config(
   {
-    ignores: ["dist/**", "node_modules/**", "src-tauri/**", "generated-images/**", "test-data/**"],
+    ignores: [
+      "dist/**",
+      "node_modules/**",
+      "src-tauri/**",
+      "generated-images/**",
+      ".tmp/**",
+      "test-data/**",
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

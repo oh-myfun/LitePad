@@ -22,6 +22,29 @@ export PATH="/c/Users/maoyu/.workbuddy/binaries/PortableGit/versions/1.2.0/usr/b
 Python（分析/脚本）：`C:\Users\maoyu\.workbuddy\binaries\python\versions\3.13.12\python.exe`；
 需要 pillow/pywinauto 时用 venv `~/.workbuddy/binaries/python/envs/default`。
 
+## 📁 临时文件统一落 `.tmp/`（一律不写全局目录）
+
+**项目规则**（见 `MEMORY.md` 项目约定）：本项目产生的临时文件全部放项目内，常量落点
+`E:\Project\LitePad\.tmp\`（已进 `.gitignore` / `.prettierignore` / eslint `ignores`，
+可以随时整目录删掉）。日志、探针与一次性脚本、对照副本、CDP `--user-data-dir`、临时下载都进这里。
+
+⚠️ **别写全局目录**：
+
+- `%TEMP%` = `C:\Users\maoyu\AppData\Local\Temp` —— 历史上 `litepad-build*.log`、
+  `litepad-*-profile`、`notepad_cap*.py` 全堆在这儿；
+- **Git Bash 的 `/tmp` 就是 `%TEMP%`**（实测 `cd /tmp && pwd -W` →
+  `C:/Users/maoyu/AppData/Local/Temp`，**不是** `E:\tmp`），所以下面旧文里「落 `/tmp/build.log`」
+  实际是往全局写 —— 一律改成 `.tmp/`；
+- 反过来，**原生 Windows 程序（`python.exe`）不认 MSYS 路径**：给它 `/tmp/x.png`
+  会按当前盘符解析成 `E:\tmp\x.png`（见下文「抓界面截图」）→ 命令行参数一律写**带盘符的绝对路径**；
+- 例外（是工具链不是临时文件，别搬）：`~/.workbuddy/binaries/**` 受管运行时与工具链
+  （python venv / node / PortableGit）、Playwright chromium、msys2、cargo。
+
+```sh
+mkdir -p E:/Project/LitePad/.tmp          # 已存在；跑完可整目录清空
+node E:/Project/LitePad/.tmp/probe.mjs    # 一次性脚本、日志、中间产物都放这儿
+```
+
 ## 前台分步构建（绕过 npm 链路）
 
 `npm run build:all` 在会话内**后台**跑会在 cargo test / tauri 链接（collect2）处挂死：
@@ -92,7 +115,8 @@ Desktop(backend="uia").window(...) → descendants(control_type="MenuItem") → 
 → 全屏 BitBlt(SRCCOPY|CAPTUREBLT) 截图
 ```
 
-脚本参考 `C:/Users/maoyu/AppData/Local/Temp/notepad_cap4.py`。
+脚本参考 `E:/Project/LitePad/.tmp/notepad-ref/notepad_cap4.py`（09-18 按「临时文件放项目内」
+从 `%TEMP%` 复制进来的历史脚本副本）。
 **必须用专用临时文件启动记事本**（否则会自动恢复用户会话标签）。
 
 ## ⚠️ 长构建不要在后台配 `| tail`（会永久挂住）
@@ -101,8 +125,10 @@ Desktop(backend="uia").window(...) → descendants(control_type="MenuItem") → 
 子进程一旦被会话 SIGTERM 打断，**管道仍被持有、永远等不到 EOF**，
 任务显示 running 但实际早已无进程活动（判据：`target/` 与 `dist/` 近 2 分钟无文件更新）。
 
-- **落文件代替管道**：`cmd > /tmp/build.log 2>&1; echo "EXIT=$?" >> /tmp/build.log`，
-  再 `tail` 该文件；配 `find <dir> -newermt "-2 minutes" | wc -l` 判断是否真在推进。
+- **落文件代替管道**：`cmd > E:/Project/LitePad/.tmp/build.log 2>&1; echo "EXIT=$?" >>
+  E:/Project/LitePad/.tmp/build.log`，再 `tail` 该文件；配
+  `find <dir> -newermt "-2 minutes" | wc -l` 判断是否真在推进。
+  ⚠️ 别写 `/tmp/build.log` —— Git Bash 的 `/tmp` 就是 `%TEMP%`（全局目录，见上「临时文件」节）。
 - **更省事的替代（B59 实测）**：直接**把 `build:all` 拆成 4 步前台分别执行**
   （`npm run build` → `node scripts/run-vitest.cjs` → `cd src-tauri && cargo build && cargo test`
   → `npm run tauri -- build --config '{"build":{"beforeBuildCommand":""}}'`），
@@ -176,7 +202,7 @@ objdump -p src-tauri/target/release/litepad.exe | grep -i "DLL Name" | sort -u
 "/c/Users/maoyu/scoop/shims/7z" l src-tauri/target/release/bundle/nsis/LitePad_*_x64-setup.exe
 
 # 3) 干净目录启动验证（只放安装包会有的文件，避免 target 里其他文件"帮忙"造成假通过）
-python -c "复制 exe+dll 到 %TEMP% 目录 → subprocess.Popen → sleep 5 → poll() is None 即存活"
+python -c "复制 exe+dll 到 E:/Project/LitePad/.tmp/install-sim （干净空目录即可，别用 %TEMP%）→ subprocess.Popen → sleep 5 → poll() is None 即存活"
 ```
 
 - Tauri 2 的 **`WebView2Loader.dll` 不会被 bundler 自动收进包**，必须显式声明。
@@ -245,7 +271,12 @@ CHROME="$HOME/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe"
 
 现成脚本：`generated-images/gen-drag-ghost-preview.mjs`（拖拽影像那次留下的，可照抄改）、
 `generated-images/gen-tab-action-preview.mjs`（标签槽位，第二个参数可指定挂哪份 `global.css`，
-用于「改前/改后」同机对比）。
+用于「改前/改后」同机对比）、`generated-images/gen-group-ghost-preview.mjs`（B72 整组药丸；
+末位参数 `longActive` 可换一份长文件名活动标签，专门看「名字截断但 `(+N)` 还在」）。
+⚠️ **拖拽影像这类「mousedown 起手」的中间态**别只派发 `mousedown` 就算数：整组拖拽的监听挂在
+`renderSplitView` 产出的 strip 上，裸 `<div class="panel-tabstrip">` 上没人听 —— 直接调
+`beginTabDrag(-1, e, strip, 1)` 起手（最后一个参数是标签数），再派发 `mousemove` 让影像落位；
+脚本里同时**内置一份 B71 旧实现（克隆 strip）**做同页对照，一眼看出改进。
 ⚠️ 局限：只能验证**静态观感**（尺寸/配色/层级/留白），拖拽跟手、光标形状、滚动等交互
 仍必须由用户在桌面环境验证；也**不能**当作 `docs/screenshots/` 的正式截图。
 无头产物放进被 gitignore 的 `generated-images/`，别污染仓库。
@@ -258,7 +289,7 @@ CHROME="$HOME/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe"
 "$CHROME" --headless --no-sandbox --disable-gpu --hide-scrollbars \
   --force-device-scale-factor=2 --window-size=880,320 \
   --remote-debugging-port=9222 \
-  --user-data-dir="C:/Users/maoyu/AppData/Local/Temp/litepad-cdp-profile" about:blank &
+  --user-data-dir="E:/Project/LitePad/.tmp/cdp-profile" about:blank &
 ```
 
 Node 22 **自带全局 `WebSocket`**，所以零依赖即可连 CDP（连法照抄 `scripts/cdp_diag.mjs`，
@@ -311,7 +342,7 @@ CHROME="$HOME/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe"
 "$CHROME" --headless --no-sandbox --disable-gpu --hide-scrollbars \
   --force-device-scale-factor=1 --window-size=800,420 \
   --remote-debugging-port=9222 \
-  --user-data-dir="C:/Users/maoyu/AppData/Local/Temp/litepad-b70-profile" about:blank &
+  --user-data-dir="E:/Project/LitePad/.tmp/b70-cdp-profile" about:blank &
 node generated-images/b70-cdp-verify.mjs                      # 当前源码
 node generated-images/b70-cdp-verify.mjs <broken.html 路径>    # 对照（B70 之前）
 ```
@@ -442,4 +473,6 @@ Windows 锁住映像文件 → 既不能删也不能覆盖。`taskkill //F //IM 
 ## 诊断基建
 
 - `frontend_ready` 命令写 `%TEMP%\litepad-smoke.log`；`scripts/cdp_diag.mjs` 连 CDP 抓页面异常。
+  ⚠️ 这两条是**应用自身**的运行时行为（Rust 侧写、产品语义），不属于「临时文件」规则管辖；
+  是否也改到项目内（或 `%APPDATA%\LitePad\`）**待用户定夺**，改代码前别自作主张。
 - `scripts/screenshot.py` 截窗口（纯 ctypes + zlib）；用法与截图流程见上文「抓界面截图」。

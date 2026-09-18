@@ -3,6 +3,7 @@ node_modules/
 src-tauri/target/
 src-tauri/gen/
 generated-images/
+.tmp/
 test-data/
 package-lock.json
 *.min.*

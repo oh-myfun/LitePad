@@ -2,7 +2,7 @@
 
 **LitePad**（B34 更名，LiteMD 已 B36 全仓清理）；工作区 `E:\Project\LitePad`。
 
-> 本文件只是索引。**改代码前必读**同目录 `ARCHITECTURE.md`（架构不变量 1–8 与踩坑根因）；
+> 本文件只是索引。**改代码前必读**同目录 `ARCHITECTURE.md`（架构不变量 1–9 与踩坑根因）；
 > 构建/会话环境精确命令照抄 `BUILD-ENV.md`；最详细的逐日日志见 `2026-09-*.md`；旧空间归档
 > 见 `LiteMD-Space-Archive.md`。仓库内另有 `docs/split-view-plan.md`、
 > `docs/screenshots/README.md`、`docs/vscode-reference/`。
@@ -27,6 +27,17 @@ Tauri 2（Rust 持状态）+ Vite 6/TS + CodeMirror 6（视图）；**仅 Window
 - 质量门 = `.githooks`（pre-commit: prettier/eslint/tsc/cargo fmt；pre-push: vitest/cargo
   test）+ GitHub `CI`。
 - ⚠️ **沙箱内禁止 `git stash -u` 或任何触碰 `.git` 的重操作**（09-13 曾致全历史丢失）。
+- 📁 **临时文件一律落在本项目内**（用户明确要求，09-18 定）：常量落点
+  `E:\Project\LitePad\.tmp\`（已同时进 `.gitignore` / `.prettierignore` / eslint `ignores`）。
+  日志、探针与一次性脚本、对照副本、CDP `--user-data-dir`、临时下载、中间 JSON 全进这里。
+  ⚠️ **禁止写全局目录**：`%TEMP%`（`C:\Users\maoyu\AppData\Local\Temp`）、
+  `~/.workbuddy/` 下除 memory / skills 以外的地方、**Git Bash 的 `/tmp`（实测就是 `%TEMP%`，
+  不是 `E:\tmp`）**。历史漏法：`%TEMP%` 里堆过 `litepad-build*.log` / `litepad-*-profile` /
+  `notepad_cap*.py`。**例外（是工具链不是临时文件，别搬）**：`~/.workbuddy/binaries/**`
+  受管运行时（python venv / node / PortableGit）、Playwright chromium、msys2、cargo；
+  既有 `generated-images/` 保持原样（仍作观感自证截图与对照页专用目录）。
+  待定：应用自身运行时日志 `%TEMP%\litepad-app.log` / `litepad-smoke.log`（Rust 侧写、
+  属产品行为）是否也收进项目内。
 
 ## 发布
 `bash scripts/release.sh <版本|patch|minor|major> [--ci]`：四处同步（package.json /
@@ -64,9 +75,10 @@ A–H 精选约 82 份、I 编辑器整模块约 3283 份（`fetch-vscode-ref.sh
   `%APPDATA%\LitePad\backups`，靠会话 `backupId` 认领。⚠️ 顺带发现
   `OpenedFile.size_class` 按 snake_case 读 → **M4 大文件降级从未生效**，已修。
   不变量见 `ARCHITECTURE.md` §7「保存体系」/§8 首条。
-- **测试规模**：443 vitest + 39 cargo；热退出 → `tests/hot-exit.test.ts`，静态契约 →
+- **测试规模**：450 vitest + 40 cargo；热退出 → `tests/hot-exit.test.ts`，静态契约 →
   `tests/regressions.test.ts`，分屏/拖拽 → `tests/splitview.test.ts` / `tests/panel-group-drag.test.ts`
-  / `tests/window-drag-out.test.ts`。**反向验证**是硬要求（改完把修复还原一次，确认用例真会红）。
+  / `tests/window-drag-out.test.ts`。**反向验证**是硬要求（改完把修复还原一次，确认用例真会红），
+  脚本落 `scripts/reverse-verify-<B号>.cjs` 入库、流程见项目 skill `litepad-reverse-verify`。
 - **B71 面板操作对齐 VS Code**（`72892b2`）：① 5 条面板命令（移动标签 Ctrl+Alt+←/→、
   切焦点 F6/Shift+F6、Alt+Shift+↑ 最大化）② **最大化/还原 = 只改比例不动结构**
   （沿路径推 0/1 + 快照还原；⚠️ 需 `.layout-panel-collapsed` 才能真的收到 0；
@@ -82,8 +94,19 @@ A–H 精选约 82 份、I 编辑器整模块约 3283 份（`fetch-vscode-ref.sh
   C 档命令面板：**悬停只切 `.is-active` 不重建列表**（重建会把滚动位置归零 → 弹回顶端）、
   **呼出面板先 `closePopupMenu()`**（菜单遮罩盖不住、会压在上面）。
   不变量见 `ARCHITECTURE.md` §4 / §7「菜单 vs 面板/提示的互斥」/「提示（tooltip）自绘层」。
+- **B72 拖拽影像药丸 + 卫星窗口建窗修复**：① 整组拖拽影像从「克隆整条标签栏」改成
+  **纯文本聚合药丸**（活动名 + `(+N)`，对齐 VS Code `draggedEditorGroup`；⚠️ 名字可截断、
+  数量 `flex:0 0 auto` 不可截断 —— 有意偏离 VS Code 的单字符串写法）；② **卫星窗口打不开**
+  的根因 = WebView2 **按 user data 目录共享环境、参数必须一致**，而
+  `WebviewWindowBuilder` 不继承 `tauri.conf.json` 的 `additionalBrowserArgs` →
+  `shared_browser_args()` 从运行时 `app.config()` 取 `main` 条目喂给卫星窗口；建窗失败原因
+  也一并回传状态栏。不变量见 `ARCHITECTURE.md` §4 末条 / §9.4 末条。
 
 ## 下一步
+- ⚠️ **B72 待真机确认**（沙箱起不了 WebView2，两条都无法自证）：① 拖出标签/整组时
+  **新窗口真的能打开**（此前必失败；开窗后核对 `%TEMP%` 无关日志或 `smoke_log` 里
+  `browser args` 与主窗口一致）；② 整组拖拽时跟随光标的**药丸**观感（圆角/字号/长文件名
+  截断且 `(+N)` 仍在/光标不压字）。
 - ⚠️ **B70 待真机确认**：① 菜单开着时划过工具栏/状态栏**不弹**提示，关掉菜单后恢复；
   ② 拖一个非 md 文件到 md 面板 → 弹选择菜单；拖 md 文件到 txt 面板 → **不弹**、直接打开；
   ③ 命令面板里鼠标上下挪行，列表**不**弹回顶端；开着菜单按 Ctrl+Shift+P，菜单消失。
