@@ -45,7 +45,7 @@ Tauri 2 的 **`WebView2Loader.dll` 不会被 bundler 自动收进包**，必须�
 ## 改名 / 移动仓库后必须 `cargo clean`
 
 Rust 构建缓存里烙死了绝对路径。改目录名后 `cargo build/test` 会报
-`failed to read plugin permissions ... Project.LiteMD ... (os error 3)`。修复：
+`failed to read plugin permissions ... <旧仓库路径> ... (os error 3)`（路径还是改名前那份）。修复：
 `cd src-tauri && cargo clean` 后全量重建。**移动仓库后第一件事就是 clean。**
 
 ## 图标

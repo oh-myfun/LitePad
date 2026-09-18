@@ -54,6 +54,24 @@ agent_created: true
 - ⚠️ **一个 `from` 片段必须全文唯一命中**（B72 实测的假绿）：`String.replace` 只改**第一处**，
   若该片段在文件里出现多次，被改的可能根本不是这条修复所在的地方 ——
   此时无论脚本判红还是判绿，都**不构成任何证据**。模板里已把它当硬失败处理。
+- ⚠️ **「还原点」必须落在因果链上最终决定值的那一处**（B73 实测的假绿）：同一个状态常常被写多次，
+  若改回的是**创建时**的默认值，而之后 `open()` / 重新渲染又会把它复位，则该 case **恒绿**、
+  不构成证据。改前先顺一遍「谁最后写这个值」，`from` 落在**最后生效**那一处
+  （B73 折叠替换行：默认态判据在 `setReplaceExpanded`，改创建处的 `hidden = true` 测不出来）。
+- ⚠️ **显隐 / 样式类修复不能只断言状态值**（B73 实测的假绿）：`expect(el.hidden).toBe(true)`
+  在「属性确实置位、但样式让它照样可见」时**仍会通过**（`[hidden]` 被 `display:flex` 盖掉）。
+  必须再断一条**让状态真正生效的样式规则**存在（如 `.find-row-replace[hidden]{display:none}`），
+  且用正则匹配**整块规则**（`/[^}]*display:\s*none/`）而不是 `toContain("display: none")` ——
+  后者会被文件里别的 `display:none` 假绿。
+- ⚠️ **多条修复覆盖同一症状时，单独还原一条可能不红**（B75 实测的假绿）：同一症状常见于
+  写了「两处保险」（如状态行既在创建时 `hidden = true`，又在 `syncAllDocs` 里 `setStatus("")`）。
+  只还原其中一处，另一处仍把症状压住 → 该 case 恒绿。**改断言、别改 case**：把断言挪到
+  **只有这一处能影响**的时机。B75 的做法是断言 `open()` **之前**的状态 —— 那里只有「创建时收起」
+  生效，`syncAllDocs` 还没跑，于是还原它必红。
+- ⚠️ **jsdom 没有布局**：`getBoundingClientRect().height` 恒为 0、`offsetParent` 恒为 null。
+  断「高度是 0 / 元素真的没占位」在 jsdom 里**等于没断**。要么断属性/类名，要么像 B75 那样
+  另用真浏览器量（`.tmp/` 里放一页 `chrome --headless --dump-dom` 把
+  `getBoundingClientRect()` 写成文本再读回来）。
 
 ## 脚本模板
 

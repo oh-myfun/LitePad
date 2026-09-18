@@ -105,15 +105,43 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   `--panel-bg`/`--bg-panel` 根本不存在 —— 顶层 `aside`（TOC）用它就会恒落浅色 fallback，不随深浅色切换（B9）。
 - **CSS 注释里不能出现 `*/` 序列**（会把注释提前闭合）。
 - 滚动条统一在 `global.css`（`--sb-*` 变量 + `color-scheme` + 全局 `*` 与 `::-webkit-scrollbar` 双写）。
-- 隐藏元素陷阱：`.find-bar` 设了 `display:flex`，**必须配 `.find-bar[hidden]{display:none}`**，
-  否则 `hidden` 属性失效、面板关不掉（B30）。
+- 隐藏元素陷阱：元素一旦设了 `display:flex`（或任何非 `none` 值），就**必须再配一条
+  `<选择器>[hidden]{display:none}`**，否则 `hidden` 属性被盖掉、元素关不掉。
+  已踩三次：`.find-bar`（B30）、`.tooltip-key`/`.tooltip-detail`（B58）、`.find-row-replace`（B73）。
+  根因与判据见 `pitfalls/0073-hidden-vs-display-flex.md`。
 
 ## 7. 功能架构落点
 
-- **查找/替换**：统一入口 = 悬浮栏 `src/shell/findbar.ts`（挂在 `#app`，切文件/面板不关闭；
-  范围 = 当前文档/所有打开文档/文件夹）。内核 `src/editor/find.ts` 自持匹配/导航/替换/高亮，
-  **不用 CM6 `search()` 扩展**（否则 Mod-f/F3/Mod-g 抢键，且多一套面板）。预览态由
-  `PreviewPane.applyFind/stepFind` 复用 `cm-find-match` 样式。
+- **查找/替换**：统一入口 = 悬浮栏 `src/shell/findbar.ts`（挂在 `#app`，切文件/面板不关闭）。
+  **B73 起对齐 VS Code 的紧凑浮层（用户从 A/B/C 三案选了 C）**：钉在右上角、**无标题栏、
+  不可拖动、不记忆位置**；匹配选项是**输入框内侧的图标开关**（`Aa` 大小写 / `ab` 全词 / `.*` 正则）；
+  另有**文档图标 `find-docs`**（在全部已打开文档中查找，激活时徽标显示文档数）与
+  **chevron `find-chevron`** 折叠替换行（默认折叠，替换行内嵌「保留大小写」开关 `AB`）。
+  计数为紧凑写法 `n/m`，**无匹配时变红**（`.find-count-bad`）。
+  内核 `src/editor/find.ts` 自持匹配/导航/替换/高亮（`restrictToRange` 限定选区、
+  `preserveCase` 迁移大小写，两者都是**可测的纯函数**），**不用 CM6 `search()` 扩展**
+  （否则 Mod-f/F3/Mod-g 抢键，且多一套面板）。预览态由 `PreviewPane.applyFind/stepFind`
+  复用 `cm-find-match` 样式。
+  ⚠️ 范围**没有「文件夹」档**（B39/B40 已删）：`FindScope`/`find-scope`/`find-folder`
+  与 `openFindBar("folder")` 都不得复活（`tests/menubar.test.ts` 锁住）。
+
+  **B76 三条不变量**（`tests/regressions.test.ts` 的 B76 块锁住，反向验证 `scripts/reverse-verify-b76.cjs`；
+  源自 B73 交付后的用户实测报障，编号最初误写 B75，勿再混用）：
+  1. **状态行 `.find-status` 空文本必须收起**。主程序正常打开查找栏时**从不调 `setStatus`**，
+     光靠 CSS 的 `min-height: 14px` 会留一个空盒子 → 主行下面吊一条空白（用户实测反馈）。
+     故：创建时就 `hidden`、`setStatus` 按文本有无派生 `hidden`、熄灭跨文档时把结果列表与
+     「N 条结果」文案一起收掉。
+  2. **文档图标上的数字必须有值**。徽标数字要自己存一份源真值（`docCount`），点亮时从它渲染 ——
+     查找栏是**懒建**的（`ensureFindBar`），主程序只在标签栏重绘时才喂 `setDocCount`，
+     只把数字写在 DOM 里的话「首次打开栏 → 立刻点亮图标」会渲染出一个**空徽标**。
+     位置**必须收在按钮盒内**（`top/right: 0`）：负偏移会盖住右边的关闭按钮、还会向上探出。
+  3. **「在选区中查找」的选区锚点必须冻结**（`findSelectionAnchor`，带 `docId`）。
+     步进会把编辑器选区换成**命中本身**，实时读选区的话第二次点「下一个」范围就塌缩成一条。
+     只在**用户动作**时播种：开关由关→开、重开查找栏、换文档；换文档要判 `docId` 是否变了
+     （免得 F3 那次 retarget 把命中选区当成新锚点）。导航全程只读 `currentFindRestrict(q)`。
+     ⚠️ 最有效的判据是结构性的：`activeSelectionRange()` 全文件**只允许出现一次**（在播种函数里）。
+  ⚠️ **已知缺口**：预览态**不认**这个选区范围 —— `PreviewPane.applyFind` 匹配的是渲染后的文本节点，
+  没有源码偏移，故预览态的计数仍是全文的（要补得先做「预览 DOM ↔ 源码偏移」的映射）。
 - **大纲**：`extractOutline` 统一提取（md 标题；yaml/json 按缩进映射键，`level = depth` 而非 depth+1；
   py class/def）。返回 `null` = 格式不支持，用于区分空态文案。跳转要**遍历 `instancesOfDoc` 广播**，
   可见实例滚动、离屏写快照。
@@ -281,9 +309,10 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
     2 段 = 50%、3 段 = 1/3·1/2、4 段 = 1/4·1/3·1/2；逐层累乘后每格等宽。
     拖到极限加 `.at-min`/`.at-max` 变形光标、拖拽中加 `.resizing`
     保持高亮（只写 `:hover` 时鼠标滑出 7px 细线就失色）。
-  - ⚠️ **`body.layout-dragging` 是三处共用的**（分屏分隔条 / 大纲 `toc.ts` / 查找栏 `findbar.ts`），
+  - ⚠️ **`body.layout-dragging` 是两处共用的**（分屏分隔条 / 大纲 `toc.ts`）——
+    B73 起查找栏**改为不可拖动**、不再挂这个类（`findbar.ts` 里已无 `layout-dragging`）。
     默认光标 = 横向拖拽档。B59 给垂直分隔条叠加 `.layout-dragging-v`；
-    **新增方向修饰类，不要改基础类的语义**，否则大纲/查找栏的横向拖拽光标会一起错。
+    **新增方向修饰类，不要改基础类的语义**，否则大纲的横向拖拽光标会一起错。
   - **B61 光标取 VS Code 的「非 mac 档」**（`sash.css`，Windows 才这么渲染）：
     竖线 `ew-resize` / 横线 `ns-resize`，极限档 `e-resize`/`w-resize`/`s-resize`/`n-resize`，
     正交角手柄 **`all-scroll`**。
@@ -384,7 +413,8 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
     目标的 `:hover`、提示闪烁**；代价是提示文字不可选中，不需要）。
   - ⚠️ **`[hidden]` 必须显式 `display:none`**：`.tooltip` 自身是 `display:flex`、
     `.tooltip-key` 也是 `display:flex`，会盖掉浏览器对 hidden 默认的 `display:none`
-    （同 B30 查找栏的坑）；`.tooltip-key[hidden]` / `.tooltip-detail[hidden]` 两处都写了。
+    （同 B30 查找栏、B73 `.find-row-replace` 的坑，见 `pitfalls/0073-hidden-vs-display-flex.md`）；
+    `.tooltip-key[hidden]` / `.tooltip-detail[hidden]` 两处都写了。
   - ⚠️ **`setTip` 会顺带补 `aria-label`**：原生 `title` 兼任图标的可访问名，
     换成 `data-tip` 后图标按钮会「失名」；只对**自身无文本且无 aria-label** 的元素补，不覆盖调用方。
   - ⚠️ `resetTooltipsForTest()` **故意不重置 `bound`**（监听器生命周期与 `document` 一致，
