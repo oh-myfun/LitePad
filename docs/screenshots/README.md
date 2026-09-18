@@ -95,6 +95,6 @@
 ## 注意
 
 - 会话与会话恢复相关字段若出现「重启后光标回到第 1 行 / 预览模式丢失」，
-  多半是 Rust `TabSession` 的 serde 命名与前端不一致（详见 `.workbuddy/memory/ARCHITECTURE.md`），
+  多半是 Rust `TabSession` 的 serde 命名与前端不一致（详见 `.workbuddy/memory/ref/architecture-detail.md`），
   而不是截图脚本的问题。
 - 本机显示缩放为 150%，`scripts/screenshot.py` 会先声明 DPI 感知，因此 `--size` 即真实像素。

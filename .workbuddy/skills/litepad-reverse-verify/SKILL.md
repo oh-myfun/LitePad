@@ -27,7 +27,7 @@ agent_created: true
      `node node_modules/eslint/bin/eslint.js <file>`（后者常报「无用的 eslint-disable 指令」，
      删掉那行即可）。
    - 草稿一律放**项目内** `E:/Project/LitePad/.tmp/`（项目规则：临时文件不写全局目录，
-     见 `MEMORY.md` 项目约定 / `BUILD-ENV.md`「临时文件统一落 `.tmp/`」），定型后搬进 `scripts/`。
+     见 `MEMORY.md` 关键红线 / `docs/build-env.md`「临时文件统一落 `.tmp/`」），定型后搬进 `scripts/`。
      ⚠️ 曾经把草稿放 `%TEMP%`，出现过「写进去后文件消失」，别把它当可信产物。
 3. **逐条还原校验**：改回 → 跑测试 → 立即写回原文 → 用 sha256 比对确认逐字节一致 →
    报告里打印「还原一致/不一致」。任何一条不一致都必须立刻人工修。
@@ -132,7 +132,7 @@ console.log(bad === 0 && broken === 0
 process.exit(bad === 0 && broken === 0 ? 0 : 1); // 非零码：别让人只看最后一行就以为过了
 ```
 
-跑法（会话 shell 会丢 PATH，先显式导出，见 `BUILD-ENV.md`）：
+跑法（会话 shell 会丢 PATH，先显式导出，见 `ref/session-env.md` / `docs/build-env.md`）：
 
 ```sh
 export PATH="/c/Users/maoyu/.workbuddy/binaries/PortableGit/versions/1.2.0/usr/bin:/c/msys64/mingw64/bin:/c/Users/maoyu/.cargo/bin:/c/Users/maoyu/.workbuddy/binaries/node/versions/22.22.2-3:/c/WINDOWS/System32:$PATH"
@@ -152,5 +152,5 @@ node "E:/Project/LitePad/.tmp/reverse-verify-b70.cjs"
 ## 收尾
 
 1. 全绿后跑 `tsc -b` + `node scripts/run-vitest.cjs`（全量）+ prettier/eslint 改动文件。
-2. 提交信息里写清「反向验证 N/N 通过」，并记进当日 `.workbuddy/memory/YYYY-MM-DD.md`
+2. 提交信息里写清「反向验证 N/N 通过」，并记进当日 `.workbuddy/memory/open-items/YYYY-MM-DD.md`
    （含**哪几条初版守卫无效、怎么加强的** —— 这是下次最容易重犯的地方）。

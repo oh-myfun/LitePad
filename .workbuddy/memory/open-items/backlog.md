@@ -2,10 +2,10 @@
 
 > 本文件**不**在每次会话自动加载（只有 `MEMORY.md` 会被整篇注入）。需要回顾「还有什么没做 /
 > 哪些待真机确认」时再读它。
-> 已交付细节见 `ARCHITECTURE.md` 与各 `2026-09-*.md` 当日日志。
+> 已交付细节见 `ref/architecture-detail.md` 与各 `2026-09-*.md` 当日日志。
 > 本清单由 `MEMORY.md` 的「进度」与「下一步」迁出（09-18 重构，给索引瘦身）。
 
-## 已交付里程碑速查（不变量见 `ARCHITECTURE.md`）
+## 已交付里程碑速查（不变量见 `ref/architecture-detail.md`）
 - M0–M4：脚手架 → 多标签/搜索/设置/日志 → 分屏/会话恢复/自动保存/文件监听/跨文件搜索 →
   Markdown 渲染 → 大文件分级降级 + 命令面板 + 三档键位预设（default / notepadpp / vscode）。
 - B34–B68：更名+图标 / prettier+eslint+CI / 标签栏**原生横向滚动**（折叠机制已删）/ 首选项弹窗 /

@@ -86,7 +86,7 @@
 | **S5** | 分隔条常态线色对齐 `editorGroup.border` 观感（`#444` 档） | `theme.ts:237-242` | 低（观感主观） | `global.css` |
 
 ⚠️ **约束（不可破坏）**：
-- `.layout-sep*` 与 `.toc-resizer` **必须同款**（B28 约定，`ARCHITECTURE.md` §7）。
+- `.layout-sep*` 与 `.toc-resizer` **必须同款**（B28 约定，`ref/architecture-detail.md` §7）。
 - 命中区 7px **不缩**（B53 明确记录：原 5px 难抓）。
 - 改动 `zoneOf` 会动到**文件拖入**的落点（与标签拖拽共用 `zoneOf`），必须同步回归。
 - 新增主题变量**浅色/深色两套齐补**。

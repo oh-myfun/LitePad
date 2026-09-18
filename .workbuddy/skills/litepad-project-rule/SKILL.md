@@ -16,12 +16,14 @@ agent_created: true
 
 ## 五步（照做，别跳）
 
-1. **规则落点 = `.workbuddy/memory/MEMORY.md` 的「项目约定（用户明确要求）」**
-   这个文件每次会话都会被注入，是全仓**唯一「一定会被读到」**的地方。
+1. **规则落点 = `.workbuddy/memory/MEMORY.md` 的「关键红线（每次会话必读）」**
+   这个文件每次会话都会被整篇注入，是全仓**唯一「一定会被读到」**的地方。
    写法照既有条目：短句、可执行、把**禁忌**与**例外**都写上（例外尤其重要 ——
    不写清楚，下次会把不该搬的东西搬走，例如受管工具链 `~/.workbuddy/binaries`）。
-  ⚠️ **MEMORY.md 是被整篇注入的索引，保持精简**：历史改动 / 待办清单挪到 `OPEN-ITEMS.md`
-  （按需读取，不进会话常载），别堆在索引里让会话越来越臃肿（09-18 重构经验）。
+  ⚠️ **MEMORY.md 是精简的「路由索引」（09-18 起五分法）**：域细节 → `ref/`、
+   约束红线全量 → `rules/`、踩坑根因 → `pitfalls/`、未决/待办/日志 → `open-items/`
+   （`open-items/backlog.md` + `open-items/YYYY-MM-DD.md`）；可发布文档 → 仓库 `docs/`。
+   规则按此路由选落点，别把历史改动 / 待办堆进索引让会话越来越臃肿。
 2. **让规则在工具链上有牙齿**（按需）：`.gitignore` / `.prettierignore` /
    `eslint.config.js` 的 `ignores`；涉及源码目录的还要看 `tsconfig.json` 的 `include`。
    ⚠️ **顺序不能反**：先让它被忽略，否则往里塞的探针脚本会被 lint / 被 tsc 扫 / 进 commit。
@@ -36,7 +38,7 @@ agent_created: true
    B72 推送时实测：`.tmp/notepad-ref/notepad_cap.py` 里一句「for LiteMD menu redesign」
    的注释把全仓改名守卫顶红了（历史副本记录旧名是正当的，是**守卫的扫描范围**错）。
    反之也要注意别有 `SKIP_DIRS` 漏项：加完先跑一遍受影响的守卫。
-4. **同步「照抄型」文档**：`BUILD-ENV.md` 是精确命令手册，规则与它冲突时**必须改它**
+4. **同步「照抄型」文档**：`docs/build-env.md`（可发布命令手册）与 `ref/session-env.md`（沙箱专属坑）是精确命令手册，规则与它冲突时**必须改它**
    （下个会话就是照它抄命令的）；`.workbuddy/skills/**` 里已固化的老教条同理，
    冲突的整条改写，别只加注解。
 5. **验证规则真的生效**（本项目硬要求：写了不算，得自证）：
