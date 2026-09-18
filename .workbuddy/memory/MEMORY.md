@@ -10,6 +10,7 @@ LitePad（B34 更名，LiteMD 已 B36 清理）Tauri 2（Rust 持状态）+ Vite
 ## 关键红线（每次会话必读，违反即回滚）
 - 📁 **临时文件一律落本项目 `.tmp/`**（09-18，已进 `.gitignore`/`.prettierignore`/eslint `ignores`）；禁写 `%TEMP%`、`~/.workbuddy/`（除 memory/skills）、Git Bash 的 `/tmp`（=`%TEMP%`）。
 - ⚠️ **沙箱内禁 `git stash -u`** 或任何触碰 `.git` 的重操作（09-13 全历史丢失）。
+- ⚠️ **编辑回报成功 ≠ 已落盘**：改脚本/钩子/配置后必须**回读或 grep 复核**（本环境已多次出现「写了没生效」，09-18 的 pre-push 修复只落了一半，靠一次真实 push 才暴露）→ 踩坑 `pitfalls/0074-prepush-windres-path.md`。
 - ⚠️ **`.workbuddy` 的搬/删只动索引、别碰磁盘命令**：对本目录跑 `git mv`/`git rm`/`rmdir` 会让运行时**整棵 `.workbuddy` 从磁盘消失**（连未触碰的 `skills/`、`overview.md` 一起）。文件仍在 git 索引/`.git/` 里，用 `git checkout HEAD -- .workbuddy` 还原。
 - **状态归 Rust、视图归前端**；内存文本 LF，落盘还原原行尾。
 - 每个交付一个 Conventional Commit；每个 bug 必须补回归测试 + 改完先**反向验证**（技能 `litepad-reverse-verify`）。
