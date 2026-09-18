@@ -63,13 +63,13 @@ agent_created: true
   必须再断一条**让状态真正生效的样式规则**存在（如 `.find-row-replace[hidden]{display:none}`），
   且用正则匹配**整块规则**（`/[^}]*display:\s*none/`）而不是 `toContain("display: none")` ——
   后者会被文件里别的 `display:none` 假绿。
-- ⚠️ **多条修复覆盖同一症状时，单独还原一条可能不红**（B75 实测的假绿）：同一症状常见于
+- ⚠️ **多条修复覆盖同一症状时，单独还原一条可能不红**（B76 实测的假绿）：同一症状常见于
   写了「两处保险」（如状态行既在创建时 `hidden = true`，又在 `syncAllDocs` 里 `setStatus("")`）。
   只还原其中一处，另一处仍把症状压住 → 该 case 恒绿。**改断言、别改 case**：把断言挪到
-  **只有这一处能影响**的时机。B75 的做法是断言 `open()` **之前**的状态 —— 那里只有「创建时收起」
+  **只有这一处能影响**的时机。B76 的做法是断言 `open()` **之前**的状态 —— 那里只有「创建时收起」
   生效，`syncAllDocs` 还没跑，于是还原它必红。
 - ⚠️ **jsdom 没有布局**：`getBoundingClientRect().height` 恒为 0、`offsetParent` 恒为 null。
-  断「高度是 0 / 元素真的没占位」在 jsdom 里**等于没断**。要么断属性/类名，要么像 B75 那样
+  断「高度是 0 / 元素真的没占位」在 jsdom 里**等于没断**。要么断属性/类名，要么像 B76 那样
   另用真浏览器量（`.tmp/` 里放一页 `chrome --headless --dump-dom` 把
   `getBoundingClientRect()` 写成文本再读回来）。
 
