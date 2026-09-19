@@ -3,6 +3,26 @@
 > 本文件由 `scripts/gen-changelog.sh` 从 Conventional Commit 自动生成，
 > `scripts/release.sh` 发布时自动刷新；版本口径见 `docs/conventions.md`「版本号规则」。
 
+## v0.6.0 — 2026-09-19
+
+本版距 `v0.5.0` 共 5 个提交。
+
+### 新功能
+
+- 手柄对齐 VS Code、去掉底部结果区、徽标改为总匹配数（B80） `b866097`
+
+### 修复
+
+- 主题档位写回 settings，三态按钮不再点亮（B79） `fe6faed`
+
+### 其他
+
+- 截图合并成单一 Python 流程，补拍 main.png `3a65764`
+- 截图改走 CDP 直连 WebView2，补拍流程固化为配方脚本 `e44a150`
+- 补记 B78 收尾状态与 vite 在 build-all.sh 里卡死的规避法 `f179488`
+
+---
+
 ## v0.5.0 — 2026-09-19
 
 本版距 `v0.4.0` 共 12 个提交。
