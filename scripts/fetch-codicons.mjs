@@ -228,8 +228,9 @@ version:  ${VERSION}
 fetched:  ${new Date().toISOString().replace(/\.\d+Z$/, "Z")}
 license:  MIT (见同目录上游包内的 LICENSE)
 
-本目录是 codicon 图标源的**只读参考副本**（只含 src/shell/codicons.ts 用到的那几颗）。
-不要在这里改 —— 重跑 scripts/fetch-codicons.mjs 即可复现。
+本目录是 codicon 图标源的**只读参考副本（全量 639 颗）。应用 src/shell/codicons.ts
+只引用其中子集，子集的抽取由 scripts/fetch-codicons.mjs 生成、全量补齐由
+scripts/fetch-codicons-all.mjs 负责。不要在这里改 —— 重跑这两个脚本即可复现。
 `,
     "utf8",
   );

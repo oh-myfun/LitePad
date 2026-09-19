@@ -24,3 +24,7 @@ docs/vscode-reference/src/
 # codicon 图标源同理：由 scripts/fetch-codicons.mjs 从 npm 包精确复现，只读、不入库。
 # 构建真正依赖的是生成物 src/shell/codicons.ts（那个入库）。
 docs/vscode-reference/codicons/
+# VS Code 其它图标集（seti 文件图标 / 主题图标 / 产品 logo），由 scripts/fetch-vscode-icons.mjs 复现，只读、不入库。
+docs/vscode-reference/file-icons/
+docs/vscode-reference/theme-icons/
+docs/vscode-reference/product/

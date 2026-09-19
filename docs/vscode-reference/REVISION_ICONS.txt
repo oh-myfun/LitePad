@@ -1,0 +1,10 @@
+upstream: https://github.com/microsoft/vscode
+commit:   632abec535785c5fd76dec5b8ceb2f4c53d8cfc3
+fetched:  2026-09-19T23:43:34Z
+license:  MIT
+count:    233 个（失败 0）
+scope:    codicon 之外的图标集：
+          file-icons/seti  ← extensions/theme-seti/icons（seti 文件图标主题）
+          theme-icons      ← src/vs/**/media/*.{svg,png}（UI 主题图标）
+          product          ← resources/**/*.{ico,png,icns}（产品/logo 图标）
+note:     本目录树不入库（.gitignore），重跑 scripts/fetch-vscode-icons.mjs 复现。

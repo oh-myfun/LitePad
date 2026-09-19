@@ -210,13 +210,20 @@ B58 之后按用户要求一次性拉取了**所有文本编辑相关源码**：
 
 ---
 
-## J. 图标轮廓（codicon）—— 自绘字形的替代来源
+## J. 图标（codicon + 其它图标集）—— 自绘字形的替代来源
+
+> 2026-09-20 起：本目录下的图标从「只抽应用用到的几十颗」扩充为 **VS Code 的完整图标体系**
+> （全量 codicon + seti 文件图标主题 + 工作台 UI 主题图标 + 产品 logo），落点见下表。
+> 全部**只读、不入库**（口径见 `.gitignore`），可由脚本精确复现。
+
+### J1. codicon（UI 图标，应用唯一图标来源）
 
 | 位置 | 内容 |
 | --- | --- |
-| `codicons/*.svg` | 从 `@vscode/codicons@0.0.46-24`（MIT）的 `src/icons/` 逐字抽出的 33 颗图标（只读副本，**不入库**，口径见 `.gitignore`） |
+| `codicons/*.svg` | `@vscode/codicons@0.0.46-24`（MIT）`src/icons/` 的**全量 639 颗**图标轮廓（只读副本）。由 `scripts/fetch-codicons-all.mjs` 补齐；`src/shell/codicons.ts` 只引用其中子集 |
+| `codicons/codicon.ttf` / `codicons/codicon.css` | 官方字体与样式（离线对照字形用，应用不引字体，内联 SVG 即可） |
 
-**为什么单独抽这一份**：手绘的字形与 VS Code 永远差一档（查找栏的替换图标、
+**为什么用 codicon 而不是手绘/引字体**：手绘的字形与 VS Code 永远差一档（查找栏的替换图标、
 `Aa`/`ab`/`.*` 三个开关最初就是自绘的，语义对但轮廓不像）；引字体又要背一个 150KB 的
 ttf + 一份 css，而全项目只用到几十颗。codicon 的 `src/icons/*.svg` 是**纯路径 +
 `fill="currentColor"` + 16×16 网格**，内联进 DOM 即 1:1 像素对应，零缩放、零依赖。
@@ -228,15 +235,28 @@ ttf + 一份 css，而全项目只用到几十颗。codicon 的 `src/icons/*.svg
 
 **取用约定**：
 
-- 跑 `node scripts/fetch-codicons.mjs` 拉取/更新 —— 它把 SVG 落到本目录，并重新生成
-  `src/shell/codicons.ts`；
+- 应用子集由 `node scripts/fetch-codicons.mjs` 生成（落到 `src/shell/codicons.ts`）；
+- 全量参考副本由 `node scripts/fetch-codicons-all.mjs` 补齐到 `codicons/`；
 - `src/shell/codicons.ts` 是**生成物、要入库**（构建依赖它），不要手改；
 - 上游版本**钉死**在脚本的 `VERSION` 常量里：图标字形会随版本变，升级要连版本号一起改，
   重跑后目视核对工具栏 / 标签文件类型图标 / 查找栏（`Aa`/`ab`/`.*`/替换两枚/选区查找）；
 - 脚本末段会**调 prettier 收尾**生成物（生成物也要过 `npm run format:check`）；
   `FILE_FAMILIES` 的 10 个家族必须映射到 10 颗不同字形，`assertFamilies()` 会在联网前先拦撞车。
-- 本目录（含脚本生成的 `REVISION.txt`）整体不入库，与 `src/` 段同一口径：
-  可由脚本精确复现的第三方副本不进仓库。
+- `codicons/`（含 `REVISION.txt`）整体不入库，与 `src/` 段同一口径。
+
+### J2. 其它图标集（codicon 之外）
+
+| 位置 | 内容 | 来源 |
+| --- | --- | --- |
+| `file-icons/seti/` | seti 文件图标主题（字体 `seti.woff` + `icons.yml` 映射） | `extensions/theme-seti/icons/` |
+| `theme-icons/` | 工作台 / 编辑器 / 平台层 UI 主题图标（`src/vs/**/media/*.{svg,png}`，保持上游目录结构） | `src/vs/` 下各 `media/` 目录 |
+| `product/` | VS Code 产品 / logo 图标（`resources/**/*.{ico,png,icns}`） | `resources/` |
+
+- 由 `node scripts/fetch-vscode-icons.mjs` 一次性拉取（先调 GitHub git/trees API 枚举整仓、
+  按扩展名 + 路径白名单过滤，再逐颗 curl raw.githubusercontent）。`REVISION_ICONS.txt` 记数量；
+- 与 `codicons/` 同口径：**只读、不入库**（`.gitignore` 已加 `file-icons/` / `theme-icons/` / `product/`）；
+- 这些集子与 LitePad 的 codicon-only 红线**无关**，纯作「VS Code 全量图标」参考用——
+  要加文件类型图标 / 产品图标时可来挑，挑完仍走 codicon（或用户确认的图标集）落地。
 
 ---
 
