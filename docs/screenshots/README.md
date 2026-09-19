@@ -1,7 +1,8 @@
 # 界面截图
 
-本目录保存 README 与文档引用的界面截图。所有图片均由 `scripts/screenshot.py`
-**直接截取真实运行窗口**生成，不含手绘、拼接或后期修饰。
+本目录保存 README 与文档引用的界面截图。所有图片都由 `scripts/capture-screenshots.mjs`
+驱动**真实运行的 LitePad**、经 CDP（Chrome DevTools Protocol）让页面自己渲染出图的，
+不含手绘、拼接或后期修饰。
 
 ## ⚠️ 维护约定（硬性）
 
@@ -39,69 +40,118 @@
 | `keymap.png` | 设置 → 快捷键 面板：搜索过滤、分组列表、可改绑键位 |
 | `code-light.png` | 浅色主题下的代码视图：多标签、TypeScript 语法高亮、代码折叠 |
 
-⚠️ **待刷新（B53–B57 改了标签栏，图已过期）**：`main.png`。
-标签已是 **24px 药丸、标签栏 32px**，且**名字前有文件类型图标**（按语言家族取色的矢量字形）。
-补拍 `main.png` 时演示会话请**放几个不同语言的标签**（如 `docs/example.md` + 某个 `.ts` / `.json`），
-否则截图里看不出图标按家族配色 —— 只有一个 md 标签时所有图标都是同一色，等于白拍。
+⚠️ **待重拍（B79 改了工具栏主题按钮）**：`main.png`。
+B79 起主题按钮三档一律不点亮（删掉了「只有深色档顶着色块」那个写死的激活态），
+而 `main.png` 是深色主题、工具栏上正好有这颗按钮 —— 现图仍是旧观感。
+四张图**未随 B79 一起重拍**，原因见下面「已知问题」。
 
 > B58 把提示换成了自绘层（原生 `title` 已弃用），但**提示只在悬停时出现，静态截图不受影响**，
 > 所以 `main.png` 那几张不必因此重拍；想展示提示效果可另拍一张 `tooltip.png`（悬停工具栏或标签）。
 
+## 为什么不再用「截屏幕」
+
+以前是 `python scripts/screenshot.py`：`SetForegroundWindow(窗口)` → `BitBlt(屏幕 DC, 窗口矩形)`，
+也就是**对着屏幕那一块位置抄像素**。三个毛病是这条路本身决定的：
+
+1. 鼠标只要停在那块区域里，就会被一起拍进去；
+2. 窗口没抢到前台（Windows 的焦点窃取防护会让 `SetForegroundWindow` 静默失败）就拍到别的窗口，
+   表现为「经常失败」；
+3. 抓的是屏幕，所以桌面背景、压在窗口上的别的窗口都可能混进来。
+
+现在改成 CDP：`Page.captureScreenshot` 是让**页面自己**把视口合成出来再返回 base64 ——
+没有系统光标、没有遮挡窗口、不依赖前台焦点，因而可重复、可脚本化。
+（`scripts/screenshot.py` 仍留在仓库里做兜底，但补拍请走下面的流程。）
+
 ## 如何刷新
 
-截图依赖运行中的 exe 与一份演示会话。**不要用当前工作会话去拍**，否则会拍到无关文件。
+### 1. 打开 WebView2 的调试端口
 
-1. 构建可运行版本（`cargo build --release` 产出的是 devUrl 变体，会白屏）：
+Tauri 在 `tauri.conf.json` 里显式设了 `additionalBrowserArgs`，**它会盖掉**
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 环境变量。所以要么把端口写进配置再构建，
+要么让环境变量生效 —— 推荐后者（配置保持出厂态，端口只活在这次构建里）：
 
-   ```bash
-   node node_modules/@tauri-apps/cli/tauri.js build --config '{"build":{"beforeBuildCommand":""}}'
-   ```
+```bash
+# 构建一份「不传浏览器参数」的临时变体（--no-bundle 跳过 NSIS 打包）
+node node_modules/@tauri-apps/cli/tauri.js build --no-bundle \
+  --config '{"build":{"beforeBuildCommand":""},
+             "app":{"windows":[{"label":"main","additionalBrowserArgs":null}]}}'
+```
 
-2. 备份并写入演示会话 `%APPDATA%\LitePad\session.json`。
-   会话字段为 **camelCase**（`cursorLine` / `viewMode` / `activePanel`），
-   与 `src/ipc/api.ts` 的 `SessionState` 一致。
+> 直接改 `tauri.conf.json` 加 `--remote-debugging-port` 也能通，但那样**发布版 exe 也带着
+> 调试端口**，不要这么干。
 
-   分屏「左源码 + 右预览」的关键是把**同一个 md 文件**放进两个面板，
-   分别指定 `viewMode: "source"` 与 `viewMode: "preview"`：
+### 2. 一键重拍
 
-   ```jsonc
-   {
-     "panels": [
-       { "tabs": [ { "path": "E:/Project/LitePad/docs/example.md", "encoding": "UTF-8",
-                     "eol": "LF", "cursorLine": 8, "cursorCol": 1, "viewMode": "source" } ],
-         "active": 0 },
-       { "tabs": [ { "path": "E:/Project/LitePad/docs/example.md", "encoding": "UTF-8",
-                     "eol": "LF", "cursorLine": 1, "cursorCol": 1, "viewMode": "preview" } ],
-         "active": 0 }
-     ],
-     "layout": { "kind": "split", "dir": "h", "ratio": 0.5,
-                 "a": { "kind": "leaf", "panelId": 0 },
-                 "b": { "kind": "leaf", "panelId": 1 } },
-     "activePanel": 0
-   }
-   ```
+```bash
+node scripts/capture-screenshots.mjs            # 全部四张
+node scripts/capture-screenshots.mjs main keymap # 只拍指定几张
+node scripts/capture-screenshots.mjs --size 1440x900
+```
 
-   主题等在 `settings.json` 中设置（`"theme": "dark"` / `"light"`）。
+它会：把 WebView2 的用户数据目录挪走一份 → 写入演示 `session.json` / `settings.json`
+（**真实会话先备份到 `.tmp/screenshot-backup/`**）→ 带 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`
+启动 exe → 需要开对话框的配方用页内脚本点菜单 → 抓图 → 最后杀进程并**原样还原真实会话**。
 
-3. 启动 exe 并截图。窗口会先被移到左上角、调整为 1600×1000 再抓取：
+配方的演示状态（哪个文件、什么主题、要不要开对话框）都写在脚本顶部的 `RECIPES` 里，
+要加一张新截图就往里加一条。四张图的配方：
 
-   ```bash
-   python scripts/screenshot.py --exe litepad.exe --size 1600x1000 \
-       --out docs/screenshots/main.png
-   ```
+| 配方 | 状态 |
+| --- | --- |
+| `main` | 深色；左面板 `example.md`(源码) + `.ts` + `.json` 三个标签，右面板 `example.md`(预览) |
+| `code-light` | 浅色；单面板，`findbar.ts`(活动) + `codicons.ts` + `tauri.conf.json` |
+| `preferences` | 深色；点「设置 → 首选项…」 |
+| `keymap` | 深色；点「设置 → 快捷键…」 |
 
-   `--exe <进程名>` 按进程定位窗口，比标题关键字可靠（资源管理器标题里也可能含 "LitePad"）；
-   另有 `--pid <pid>` 与 `--screen`（全屏）。
+只拍单张、或要自己控制状态时，直接用底层引擎（它只负责「连上 → 定视口 → 抓图」）：
 
-4. 对话框需要点开菜单再截。菜单栏各项与弹层的**物理像素**坐标可先用脚本量出来，
-   不要凭肉眼估：`docs/screenshots` 的窗口四角固定为 `(0,0)`–`(1600,1000)`，
-   菜单文字簇的中心可按亮度阈值聚类定位（参考历史脚本思路：按行/列扫描截图找文字簇）。
+```bash
+node scripts/cdp-shot.mjs --out docs/screenshots/main.png --size 1600x1000 \
+    --eval "document.getElementById('btn-theme').click()"
+node scripts/cdp-shot.mjs --list          # 列 CDP 目标，排查用
+```
 
-5. 拍完删除备份的演示会话，恢复用户自己的 `session.json` / `settings.json`。
+- `--size` 是**输出图片的像素尺寸**，默认走视口模拟（`Emulation.setDeviceMetricsOverride`）
+  定死，不动系统窗口 —— 实测 `Browser.setWindowBounds` 会让 WebView2 渲染进程直接崩，
+  所以默认不碰窗口（代价：图里不含系统标题栏）。想要带标题栏的真窗口可加 `--mode window`。
+- `--eval` 是抓图前在页面里执行的 JS，用来摆出静态截图需要的那一下点击。
+
+### 3. 拍完检查
+
+- `git status docs/screenshots/` 应该只多了你要的那几张；
+- 打开看一眼：没有鼠标、没有桌面背景、没有半截别的窗口；
+- 真实 `session.json` / `settings.json` 已还原（脚本会在结尾打印一行确认）。
+
+## 已知问题（本沙箱环境实测）
+
+在 WorkBuddy 会话沙箱里，**开调试端口后 WebView2 会起不来或随即崩掉**：
+
+- CDP 端口能打开、`/json/list` 能列出目标，但页面**停在 `about:blank`** 不导航，
+  紧接着渲染进程消失；
+- 渲染进程活着时执行 `Page.captureScreenshot` 也不返回（连接被重置）。
+
+顺带排掉的两条路：`PrintWindow(PW_RENDERFULLCONTENT)` 抓不到 WebView2 的合成画面
+（内容区全黑，只有窗口边框）；注册表策略 `HKCU\Software\Policies\Microsoft\Edge\
+WebView2\AdditionalBrowserArguments` 在本沙箱里写不进去（`New-Item` 报成功但 `Test-Path` 仍是 false）。
+
+**处置**：`capture-screenshots.mjs` / `cdp-shot.mjs` 保留并经静态检查；四张图**未重拍**，
+需要在不受该限制的桌面会话里跑一次第 2 步。别再回到 `screenshot.py` 当主力 ——
+它的三个毛病是方法本身的。
+
+### 重拍失败时先做这三件事
+
+1. **关干净**：任务管理器里确认 `litepad.exe` 与它的 `msedgewebview2.exe` 子进程都没了。
+   硬杀（`taskkill /F`）会留下孤儿 webview 进程占住用户数据目录 —— 这是本机最常见的
+   「webview 起不来」原因（`DESIGN.md` 的「WebView2 browser 进程复用陷阱」记的就是它）；
+2. **挪走用户数据**：`%LOCALAPPDATA%\com.litepad.app\EBWebView` 改名即可（纯缓存，
+   删了会自动重建；`capture-screenshots.mjs` 每次启动前都会自动做这一步）；
+3. **确认端口**：`node scripts/cdp-shot.mjs --list` 能列出 `page` 目标才算通了。
 
 ## 注意
 
 - 会话与会话恢复相关字段若出现「重启后光标回到第 1 行 / 预览模式丢失」，
   多半是 Rust `TabSession` 的 serde 命名与前端不一致（详见 `.workbuddy/memory/ref/architecture-detail.md`），
   而不是截图脚本的问题。
-- 本机显示缩放为 150%，`scripts/screenshot.py` 会先声明 DPI 感知，因此 `--size` 即真实像素。
+- 本机显示缩放为 150%。CDP 的 `--size` 按**物理像素**折算 CSS 视口
+  （`round(像素 / devicePixelRatio)`），所以四张图仍是 1600×1000。
+- 演示会话引用的文件路径必须真实存在，否则会话恢复会开出一个错误标签；
+  换机器前先改 `capture-screenshots.mjs` 顶部那几个路径常量。

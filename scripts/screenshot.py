@@ -1,12 +1,21 @@
 """
 窗口截屏工具（纯标准库：ctypes + zlib，不依赖 Pillow）。
 
+⚠️ **补拍 README 截图请用 `scripts/capture-screenshots.mjs`（走 CDP），不要先来这里。**
+本脚本抓的是**屏幕像素**（`BitBlt(屏幕 DC, 窗口矩形)`），因此天生有三个毛病：
+  ① 鼠标停在那块区域里会被一起拍进去；
+  ② 没抢到前台（`SetForegroundWindow` 会被焦点窃取防护静默拒掉）就拍到别的窗口 ——
+     这就是「经常失败」的来源；
+  ③ 桌面背景 / 压在上面的别的窗口都可能混进来。
+留着它是当兜底（比如 CDP 端口在本机开不出来时，至少还能出一张）。
+成因与新流程见 docs/screenshots/README.md。
+
 用法：
   python scripts/screenshot.py <标题关键字> <输出路径>
       查找标题含关键字的第一个可见窗口（注意：资源管理器标题里也含
       "LitePad" 这类目录名时容易误抓，此时请改用 --exe）。
   python scripts/screenshot.py --exe litepad.exe <输出路径>
-      按进程名定位窗口，最稳（推荐用于 README 截图）。
+      按进程名定位窗口，比标题关键字可靠（兜底路径用这个）。
   python scripts/screenshot.py --pid 24076 <输出路径>
       直接指定窗口所属进程 pid。
   python scripts/screenshot.py --screen <输出路径>

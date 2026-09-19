@@ -76,10 +76,22 @@ Rust 构建缓存里烙死了绝对路径。改目录名后 `cargo build/test` �
 
 ## 界面截图（README / docs）
 
+截图走 CDP 直连 WebView2（引擎 `scripts/cdp-shot.mjs`，一键四张用
+`scripts/capture-screenshots.mjs`）：
+
 ```sh
-python scripts/screenshot.py --exe litepad.exe --size 1600x1000 --out E:/Project/LitePad/docs/screenshots/main.png
+node scripts/capture-screenshots.mjs          # 全部四张 → docs/screenshots/
+node scripts/capture-screenshots.mjs main     # 只拍一张
 ```
 
-exe 须以后台常驻任务启动；`--out` 给显式盘符绝对路径。要拍到指定状态先构造演示会话
-（`%APPDATA%\LitePad\session.json` / `settings.json`，字段 camelCase）。流程见 `docs/screenshots/README.md`。
+前提是先构建一份「不传浏览器参数」的临时版本（环境变量才会被 WebView2 采纳）：
+
+```sh
+node node_modules/@tauri-apps/cli/tauri.js build --no-bundle \
+  --config '{"build":{"beforeBuildCommand":""},"app":{"windows":[{"label":"main","additionalBrowserArgs":null}]}}'
+```
+
+脚本自己会备份/写入演示会话并还原真实的 `session.json` / `settings.json`
+（字段 camelCase）。**不要再用 `scripts/screenshot.py` 当主力** —— 它抓的是屏幕像素，
+会连鼠标与桌面背景一起拍进去；三个毛病的成因与新流程见 `docs/screenshots/README.md`。
 界面改动必须在同一提交刷新 `docs/screenshots/`。
