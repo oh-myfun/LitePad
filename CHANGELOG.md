@@ -3,6 +3,16 @@
 > 本文件由 `scripts/gen-changelog.sh` 从 Conventional Commit 自动生成，
 > `scripts/release.sh` 发布时自动刷新；版本口径见 `docs/conventions.md`「版本号规则」。
 
+## v0.8.0 — 2026-09-19
+
+本版距 `v0.7.0` 共 1 个提交。
+
+### 其他
+
+- 图标红线落档 + 补记 v0.7.0 与 InkNote 对照提案 `e07d1bc`
+
+---
+
 ## v0.7.0 — 2026-09-19
 
 本版距 `v0.6.0` 共 1 个提交。
