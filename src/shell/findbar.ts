@@ -67,7 +67,7 @@ export interface FindBarCallbacks {
   /**
    * 跨文档搜索（扫内存快照）。
    * ⚠️ 是**命令**不是查询：命中总数与命中表都由主程序持有（它才知道怎么跳转、怎么计数），
-   * 查找栏只负责把结果数字显示出来 —— 见 `setMatchCount`。
+   * 查找栏只负责把结果数字显示出来 —— 见 `setDocIndex`。
    */
   onSearchAll: (q: FindBarQuery) => void;
   onClose: () => void;
@@ -83,11 +83,10 @@ export interface FindBarHandle {
   setCount(text: string, bad?: boolean): void;
   setStatus(text: string): void;
   /**
-   * 跨文档命中的**总数**（B80）：显示在文档图标右上角的徽标上。
-   * 传 0 或不点亮文档图标时徽标收起 —— 它只表达「搜到了多少条」，
-   * 不再承担「已打开多少文档」（那是 B78 的旧语义，已废弃）。
+   * 跨文档徽标：`a/b` —— a = 当前命中所属文档的序号，b = 含结果的文档数。
+   * 传 (0,0) 或不点亮文档图标时徽标收起。
    */
-  setMatchCount(n: number): void;
+  setDocIndex(a: number, b: number): void;
   focusFind(): void;
   focusReplace(): void;
   getQuery(): FindBarQuery;
@@ -245,11 +244,12 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   // ---- 选项状态（图标开关的源真值）----
   const opt = { case: false, word: false, regexp: false, selection: false, preserve: false };
   /**
-   * 跨文档命中的总数（徽标数字的源真值）。
-   * ⚠️ 必须自己存一份：查找栏是**懒建**的，主程序可能在它建出来之前就算好了命中数；
-   * 若只把数字写在 DOM 里，「先搜出结果、再打开查找栏」就会渲染出一个空徽标。
+   * 跨文档徽标的 `a/b` 源真值（a=当前文档序号，b=含结果文档数）。
+   * ⚠️ 必须自己存一份：查找栏是**懒建**的，主程序可能在它建出来之前就算好了命中文档；
+   * 若只把数字写在 DOM 里，「先搜出结果、再点亮图标」会渲染出一个空徽标。
    */
-  let matchCount = 0;
+  let docA = 0;
+  let docB = 0;
 
   function query(): FindBarQuery {
     return {
@@ -275,19 +275,16 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     syncToggle(selT, on);
   }
 
-  /**
-   * 徽标文案。四位数会把徽标拉得比 20px 按钮还宽（它是 `right: 0`、向左长的药丸），
-   * 故超过 99 折成 `99+` —— 与 VS Code 各处的徽标同一套约定。
-   */
+  /** 徽标文案：`a/b`（a=当前命中所属文档序号，b=含结果文档数）。 */
   function badgeText(): string {
-    return matchCount > 99 ? "99+" : String(matchCount);
+    return docB > 0 ? `${docA}/${docB}` : "";
   }
 
-  /** 徽标 = 跨文档命中的总匹配数；未点亮跨文档、或一条都没搜到时收起。 */
+  /** 徽标 = 跨文档 `a/b`；未点亮跨文档、或没有含结果的文档时收起。 */
   function syncBadge(): void {
     const on = docsBtn.classList.contains("on");
     badge.textContent = badgeText();
-    badge.hidden = !on || matchCount <= 0;
+    badge.hidden = !(on && docB > 0);
   }
 
   /** 跨文档开关：翻 .on 之后必须走 syncAllDocs（徽标 / 占位提示都在那里） */
@@ -313,8 +310,9 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
       ? "查找内容（回车在全部已打开的文档中查找）"
       : "查找内容（回车下一个，Shift+回车上一个）";
     if (!on) {
-      // 熄灭跨文档：总数与提示一起清掉，别留下过期文案
-      matchCount = 0;
+      // 熄灭跨文档：a/b 与提示一起清掉，别留下过期文案
+      docA = 0;
+      docB = 0;
       setStatus("");
     }
     syncBadge();
@@ -351,7 +349,8 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     // 查询一变，上一次的跨文档命中就作废：主程序会在 onQueryChange 里清掉它那份命中表，
     // 徽标也必须跟着归零 —— 否则会一直挂着一个「上一串内容」搜出来的数字。
     if (docsBtn.classList.contains("on")) {
-      matchCount = 0;
+      docA = 0;
+      docB = 0;
       syncBadge();
     }
     cb.onQueryChange(query());
@@ -495,15 +494,21 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     },
     step: (dir) => cb.onStep(dir, query()),
     setCount: (t, bad) => {
-      count.textContent = t;
-      // 无匹配一律置警示色（主程序传「无匹配」即可，无需额外标记）
-      count.classList.toggle("find-count-bad", !!bad || t === "无匹配");
+      // 空文本一律显示「无内容」：计数区始终占位、不隐藏（用户要求）。
+      const text = t || "无内容";
+      count.textContent = text;
+      // 无内容 / 无匹配 → 没有可导航的命中，prev/next 置灰；有命中（N / M）才点亮。
+      const noResults = text === "无内容" || text === "无匹配";
+      count.classList.toggle("find-count-bad", !!bad || text === "无匹配");
+      prev.disabled = noResults;
+      next.disabled = noResults;
       // 计数位数变了 → 查找框宽度变了 → 替换框要跟着对齐（见 ResizeObserver 那条注释）
       syncWidths();
     },
     setStatus,
-    setMatchCount: (n) => {
-      matchCount = n;
+    setDocIndex: (a, b) => {
+      docA = a;
+      docB = b;
       syncBadge();
     },
     focusFind: () => {

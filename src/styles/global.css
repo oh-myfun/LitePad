@@ -636,9 +636,10 @@ button:focus-visible {
 .find-bar {
   position: fixed;
   /* 钉在编辑器右上，尽量少遮挡正文（不再支持拖动 / 记忆位置）。
-     ⚠️ 这个 position 同时是 chevron 与关闭按钮**绝对定位的定位基准**。 */
-  right: 16px;
-  top: 8px;
+     ⚠️ 这个 position 同时是 chevron 与关闭按钮**绝对定位的定位基准**。
+     整体往右上角再挪一点（top 8→6、right 16→10），更贴角、少挡正文。 */
+  right: 10px;
+  top: 6px;
   z-index: 60;
   width: 470px;
   max-width: calc(100vw - 24px);
@@ -672,7 +673,9 @@ button:focus-visible {
 .find-chevron {
   position: absolute;
   top: 3px;
-  left: 0;
+  /* 折叠按钮右移 4px，让出最左那条 4px 给宽度手柄（.find-sash），
+     否则两者都 absolute 在 left:0 会重叠、手柄压住按钮最左 4px。 */
+  left: 4px;
   width: 18px;
   height: 25px;
   display: flex;
@@ -705,9 +708,8 @@ button:focus-visible {
         不碰本体的底色；
      ③ `transition: background-color 0.1s ease-out` = sash.css 的
         `.monaco-enable-motion .monaco-sash:before`，变色是渐变而不是瞬间跳（用户实测「很生硬」）。
-   ⚠️ 它和 chevron 一样绝对定位在 left:0，会压住 chevron 最左 4px ——
-   VS Code 也是这个叠法（sash 的 z-index 35 盖住 toggle 按钮）：手柄优先，
-   chevron 剩下的 14px 足够点。
+   ⚠️ 折叠按钮（.find-chevron）已右移到 left:4px，正好让出最左这 4px 给手柄，
+   两者不再重叠（手柄占 0–4px，按钮占 4–22px）；手柄优先抢左缘拖动。
    ⚠️ 两端的直角由 `.find-bar` 的 `overflow: hidden` + 8px 圆角裁掉（VS Code 同款）。 */
 .find-sash {
   position: absolute;
@@ -869,10 +871,7 @@ button:focus-visible {
   white-space: nowrap;
   color: var(--fg);
 }
-.find-count:empty {
-  min-width: 0;
-}
-/* 无匹配 = VS Code `.no-results .matchesCount { color: errorForeground }`。
+/* 无匹配 = VS Code `.no-results .matchesCount { color: errorForeground }`.
    ⚠️ 这里原先写的是 `var(--error, #e5534b)`，而项目**并没有 --error 令牌**
    （只有 --danger / --warn），等于一直在吃那个硬编码 fallback、不随主题走。 */
 .find-count-bad {

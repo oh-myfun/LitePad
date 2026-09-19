@@ -2460,7 +2460,7 @@ let findHitIndex = -1;
 function resetFindAll(bar: FindBarHandle | null = findBar): void {
   findHits = [];
   findHitIndex = -1;
-  bar?.setMatchCount(0);
+  bar?.setDocIndex(0, 0);
 }
 
 function ensureFindBar(): FindBarHandle {
@@ -2640,7 +2640,7 @@ function refreshFindCount(): void {
   const q = bar.getQuery();
   // 跨文档范围：命中总数在文档图标的徽标上，这里不再显示单文档计数（会误导）
   if (q.allDocs) {
-    bar.setCount("");
+    bar.setCount("无内容");
     return;
   }
   // 预览态：计数与当前项来自预览高亮（预览可见文本与源码一一对应，步进以它为准）
@@ -2649,7 +2649,7 @@ function refreshFindCount(): void {
   if (panel && tab && isMdTab(tab) && tab.viewMode === "preview" && panel.preview) {
     const st = panel.preview.findState();
     if (st.count === 0) {
-      bar.setCount(q.text ? "无匹配" : "");
+      bar.setCount(q.text ? "无匹配" : "无内容");
     } else {
       const cur = st.active >= 0 ? st.active : 0;
       bar.setCount(`${cur + 1} / ${st.count}`);
@@ -2863,26 +2863,49 @@ function searchOpenDocs(q: FindBarQuery): FindHit[] {
   return out;
 }
 
+/** 含结果的文档（按首次出现顺序去重），用于跨文档徽标的 b。 */
+function docsWithHits(): number[] {
+  const order: number[] = [];
+  for (const h of findHits) if (!order.includes(h.docId)) order.push(h.docId);
+  return order;
+}
+
+/** 跨文档徽标：a = 当前命中（findHitIndex）所属文档的序号，b = 含结果的文档数。 */
+function updateDocBadge(): void {
+  const docs = docsWithHits();
+  const b = docs.length;
+  let a = 0;
+  if (findHitIndex >= 0 && findHits[findHitIndex]) {
+    a = docs.indexOf(findHits[findHitIndex].docId) + 1;
+  } else if (b > 0) {
+    a = 1;
+  }
+  findBar?.setDocIndex(a, b);
+}
+
 /**
- * 跨文档查找：重算命中表 → 徽标显示总匹配数。
+ * 跨文档查找：重算命中表 → 徽标显示 `a/b`（a=当前文档序号，b=含结果文档数）。
  *
  * `announce` 为真时还会写状态行（用户主动按回车触发的那一次）；
- * 由查询变更自动触发的那次只更新徽标，不刷状态行文案。
+ * 由查询变更自动触发的那次只更新徽标与计数，不刷状态行文案。
  */
 function runFindInDocs(q: FindBarQuery, announce: boolean): void {
   const bar = findBar;
   const query = q.text ? buildFindQuery(findOptionsOf(q)) : null;
   if (!query) {
     resetFindAll(bar);
+    bar?.setCount("无内容");
     if (announce) bar?.setStatus(q.text ? "查找内容无效（正则语法错误？）" : "请输入查找内容");
     return;
   }
   findHits = searchOpenDocs(q);
   findHitIndex = -1;
-  bar?.setMatchCount(findHits.length);
+  // 徽标 = a/b（a=当前文档序号，b=含结果文档数）；计数区 = 当前命中序号 / 总命中数。
+  updateDocBadge();
   if (announce) {
     bar?.setStatus(findHits.length === 0 ? "无匹配" : `共 ${findHits.length} 处匹配，回车逐个跳转`);
   }
+  bar?.setCount(findHits.length === 0 ? "无匹配" : `1 / ${findHits.length}`);
 }
 
 /**
@@ -2894,7 +2917,7 @@ function runFindInDocs(q: FindBarQuery, announce: boolean): void {
 function stepFindInDocs(dir: 1 | -1, q: FindBarQuery): void {
   const bar = findBar;
   if (!q.text) {
-    bar?.setCount("");
+    bar?.setCount("无内容");
     return;
   }
   if (findHits.length === 0) {
@@ -2907,6 +2930,7 @@ function stepFindInDocs(dir: 1 | -1, q: FindBarQuery): void {
   } else {
     findHitIndex = (findHitIndex + dir + findHits.length) % findHits.length;
   }
+  updateDocBadge();
   openFindHit(findHits[findHitIndex]);
   bar?.setCount(`${findHitIndex + 1} / ${findHits.length}`);
 }
@@ -3430,6 +3454,11 @@ function keyHint(id: string): string {
 async function setThemeMode(mode: ThemeMode): Promise<void> {
   themeMode = mode;
   // ⚠️ **必须写回 settings，否则根本存不下来**（B79 用户实测：每次打开都是深色）。
+  // 根因：persistSettings() 存的是整个 settings 对象，而启动时读的是 `settings.theme`
+  // （main 里 `themeMode = normalizeMode(settings?.theme)`）。其它每一项设置都会在这里写回自己的字段，
+  // 唯独主题漏了 —— 于是落盘永远是启动时的初始值 "system"，深色系统上解析成深色，表现为「设了重启就丢」。
+  if (settings) settings.theme = mode;
+  // ⚠️ 写回之后必须落盘（下面这行 persistSettings 存的是整个 settings 对象，含刚改的 theme）。
   // 根因：`persistSettings()` 存的是这整个 settings 对象，而启动时读的是
   // `settings.theme`（main 里 `themeMode = normalizeMode(settings?.theme)`）。
   // 其它每一项设置（`word_wrap` / `font_size` / `keymap`…）都会在这里写回自己的字段，

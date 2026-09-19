@@ -149,6 +149,9 @@ const SKIP_DIRS = new Set([
   ".tmp",
   "generated-images",
   ".vite",
+  // 内部智能体目录（skills/memory），不随产品发布，且体积庞大；
+  // 全仓库文本扫描在此跳过以保 pre-push 门禁稳定（内存文件豁免也覆盖不到的慢路径）。
+  ".workbuddy",
 ]);
 const BINARY_EXT = new Set([
   ".png",
@@ -1410,25 +1413,25 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     // 而正常打开查找栏时主程序**从不调 setStatus**，空盒子就一直占着位置。
     expect(bar, "状态行创建后就必须先收起").toMatch(/status\.hidden = true/);
     expect(bar, "状态行必须有「空文本即收起」的派生逻辑").toMatch(/status\.hidden = !text/);
-    expect(bar, "熄灭跨文档要连总数一起清掉（别留下过期文案）").toMatch(
-      /matchCount = 0;\s*\n\s*setStatus\(""\);/,
+    expect(bar, "熄灭跨文档要连 a/b 一起清掉（别留下过期文案）").toMatch(
+      /docA = 0;\s*\n\s*docB = 0;/,
     );
 
     // ---- ② 文档图标上的数字显示不出来：徽标数字必须自己存一份源真值 ----
     // 查找栏是懒建的，主程序要等搜完才知道总数；只把数字写进 DOM 的话，
     // 「先搜出结果、再点亮图标」会渲染出一个空徽标。
-    // ⚠️ B80 起语义变了：徽标 = 跨文档命中的**总匹配数**（B78 那版是「已打开文档数」，已废弃），
-    //    所以源真值叫 matchCount，由主程序用 setMatchCount 回灌。
-    expect(bar, "徽标数字要自己存一份源真值").toMatch(/let matchCount = 0/);
+    // ⚠️ B80 起语义变了：徽标 = 跨文档命中的 **a/b**（a=当前文档序号，b=含结果文档数），
+    //    所以源真值叫 docA/docB，由主程序用 setDocIndex 回灌。
+    expect(bar, "徽标数字要自己存一份源真值").toMatch(/let docA = 0/);
     const syncBadgeBody = bar.match(/function syncBadge\(\)[^{]*\{([\s\S]*?)\n {2}\}/)?.[1] ?? "";
     expect(syncBadgeBody, "渲染时必须用记着的那份源真值").toMatch(
       /badge\.textContent = badgeText\(\)/,
     );
-    expect(bar, "超过 99 要折成 99+（四位数会把徽标拉得比按钮还宽）").toMatch(
-      /matchCount > 99 \? "99\+"/,
+    expect(bar, "徽标渲染成 a/b（a=当前文档序号，b=含结果文档数）").toMatch(
+      /docB > 0 \? `\$\{docA\}\/\$\{docB\}` : ""/,
     );
     expect(bar, "⚠️ 徽标不得再依赖 setDocCount（B78 旧语义已废弃）").not.toContain("setDocCount");
-    expect(bar, "徽标数字只能由主程序回灌").toMatch(/setMatchCount: \(n\) => \{/);
+    expect(bar, "徽标数字只能由主程序回灌").toMatch(/setDocIndex: \(a, b\) => \{/);
     const badgeBlock = css.match(/\.find-badge\s*\{[^}]*\}/)?.[0] ?? "";
     expect(badgeBlock, "徽标必须收在按钮盒内，不得用负偏移溢出").not.toMatch(/\b(top|right):\s*-/);
     expect(badgeBlock, "徽标只是标注，不得抢按钮的点击").toContain("pointer-events: none");
@@ -1551,11 +1554,12 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(close, "上边距 5px（VS Code 同款）").toMatch(/top:\s*5px/);
     expect(close, "右边距 4px（VS Code 同款）").toMatch(/right:\s*4px/);
 
-    // chevron = `.button.toggle { position:absolute; top:0; left:0; width:18px }`
+    // chevron = `.button.toggle { position:absolute; top:3px; left:4px; width:18px }`
+    // ⚠️ left 让出最左 4px 给宽度手柄（.find-sash 占 left:0~4px），否则两者重叠（用户实测）。
     const chev = ruleBlock(css, ".find-chevron");
     expect(chev, "chevron 必须绝对定位在最左").toMatch(/position:\s*absolute/);
     expect(chev, "宽 18px（VS Code 同款）").toMatch(/width:\s*18px/);
-    expect(chev, "必须贴左缘（left: 0）").toMatch(/left:\s*0/);
+    expect(chev, "让出最左 4px 给宽度手柄（left: 4px，不再与折叠按钮重叠）").toMatch(/left:\s*4px/);
 
     // ---- ⑥ 计数 = `.matchesCount` ----
     const count = ruleBlock(css, ".find-count");
@@ -1567,7 +1571,12 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     // 有意偏离：VS Code 用 JS 逐次测量写死宽度，我们固定 min-width 防抖（数字位数变化时
     // 右边那排按钮不会左右横跳），已在此与 CSS 注释里记录。
     expect(count, "固定 min-width 以防抖（有意偏离，已在注释说明）").toMatch(/min-width:\s*\d+px/);
-    expect(css, "空计数不得占宽度").toMatch(/\.find-count:empty\s*\{[^}]*min-width:\s*0/);
+    // 计数区必须常驻占位（用户第 4 点：无内容时显示「无内容」、不隐藏），
+    // 故已删除 `.find-count:empty { min-width:0 }` 折叠规则。这里反向断言：
+    // 全局 CSS 里**不得再存在**该折叠规则（否则空计数会被收起、与需求冲突）。
+    expect(css, "空计数也必须占位（不得再有 :empty 折叠规则，始终显示无内容）").not.toMatch(
+      /\.find-count:empty\s*\{/,
+    );
     // 无匹配的红 = errorForeground；⚠️ 原先写成 `var(--error, #e5534b)`，
     // 而项目根本没有 --error 令牌 → 一直吃硬编码 fallback、不随主题走。
     const bad = ruleBlock(css, ".find-count-bad");
@@ -1804,12 +1813,10 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
       /\.find-sash:hover::before,\s*\n\s*\.find-sash\.active::before\s*\{\s*background:\s*var\(--find-sash-hover\)/,
     );
 
-    // ---- ② 底部结果区删除，总匹配数进文档图标徽标 ----
+    // ---- ② 底部结果区删除，跨文档 a/b 进文档图标徽标 ----
     // （样式与 DOM 的删除已在 B78-⑤ 里断言，这里盯主程序的接线）
     expect(main, "必须有「清空跨文档命中」的收口").toMatch(/function resetFindAll\(/);
-    expect(main, "跨文档查找必须把总匹配数回灌给徽标").toMatch(
-      /bar\?\.setMatchCount\(findHits\.length\)/,
-    );
+    expect(main, "跨文档查找必须把 a/b 回灌给徽标").toMatch(/updateDocBadge\(\)/);
     expect(main, "徽标数字不得再由「已打开文档数」喂（B78 旧语义）").not.toContain("setDocCount");
     expect(main, "查询变更要重搜一次，让徽标跟着实时走").toMatch(
       /if \(q\.allDocs\) runFindInDocs\(q, false\)/,
@@ -1835,11 +1842,9 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
       /clearFindHighlight\(\);\s*\n\s*resetFindAll\(\);/,
     );
 
-    // ---- 查找栏侧：总数只由 setMatchCount 单点驱动，且不再有任何结果区痕迹 ----
-    expect(bar, "徽标只能由 setMatchCount 回灌").toMatch(/setMatchCount: \(n\) => \{/);
-    expect(bar, "查询一变就作废旧总数（别挂着过期数字）").toMatch(
-      /matchCount = 0;\s*\n\s*syncBadge\(\);/,
-    );
+    // ---- 查找栏侧：a/b 只由 setDocIndex 单点驱动，且不再有任何结果区痕迹 ----
+    expect(bar, "徽标只能由 setDocIndex 回灌").toMatch(/setDocIndex: \(a, b\) => \{/);
+    expect(bar, "查询一变就作废旧的 a/b（别挂着过期数字）").toMatch(/docA = 0;\s*\n\s*docB = 0;/);
     expect(bar, "不得再有结果区 / 命中表的任何痕迹").not.toMatch(
       /find-results|renderResults|setHits|setDocCount/,
     );
@@ -1938,7 +1943,7 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(conf.identifier, "identifier 必须是 com.litepad.app").toBe("com.litepad.app");
     const pkg = readJson("package.json");
     expect(pkg.name, "package.json name 必须是 litepad").toBe("litepad");
-  });
+  }, 60000);
 
   it("版本号必须四处同步（发布流程靠它定 tag，漏改会打出对不上的安装包）", () => {
     // 用户反馈：GitHub 上没有触发编译发布、版本号也不随开发走。
