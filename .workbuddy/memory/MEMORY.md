@@ -18,6 +18,7 @@ LitePad（B34 更名，LiteMD 已 B36 清理）Tauri 2（Rust 持状态）+ Vite
 - **界面改动必刷 `docs/screenshots/` 同一提交**；不影响观感在提交信息注明。
 - 🎨 **图标一律用 VS Code codicon**（`src/shell/codicons.ts`，由 `scripts/fetch-codicons.mjs` 从 `@vscode/codicons` 抽取；取用 `CODICONS.<name>`）；**禁手绘 SVG**；codicon 无对应字形先与用户商量再引别的图标集（详见 `docs/conventions.md`「图标」/ `rules/index.md`）。
 - ⚠️ `docs/*.md` 是说明不是契约，改语义须同步改清单/状态表（B67 守卫）。
+- **pre-push 会本地构建并产出 release exe**（构建失败阻断推送，缺工具链才跳过）：`npm run build` → `tauri build` → `src-tauri/target/release/litepad.exe`。⚠️ 这也是**截图能拍的前提**（`capture-screenshots.py` 驱动的就是这个 exe；`release.sh --ci` 跳过本地构建会让 exe 停在旧代码，曾连着漏刷两个版本的 `main.png`）。跑截图脚本必须 `export CODEBUDDY_SAFE_DELETE_ENABLED=0`（清 WebView2 用户数据会被 safe-delete 钩子拦）。
 - 每次编译产出发布版本：tsc→vite→vitest→cargo build+test→tauri build（门 = `.githooks` + GitHub `CI`）。
 - **README 使用者向**：顶部一张 `main.png`，无快捷键/安装/构建/明确不做，避开库名与内部机制。
 - 发布版本只通过 `v*` tag 发布（`git push origin main --follow-tags`）；CI 经 `.githooks` + GitHub Actions。

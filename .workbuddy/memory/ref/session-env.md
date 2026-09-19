@@ -40,9 +40,18 @@
 - 某些删除类操作可能触发 `CODEBUDDY_SAFE_DELETE_ENABLED` 守卫导致被拦；需要时显式
   `export CODEBUDDY_SAFE_DELETE_ENABLED=0`（谨慎，仅限明确知道在删什么时）。
 
-## 5. 后台构建管道挂起
+## 5. 后台构建管道挂起 / **vite 挂死（09-20 坐实根因）**
 - `tauri build` / `cargo build` 等长任务可能让输出管道挂起。优先用后台运行（run_in_background）或
   省略 timeout 让系统默认接管；不要在管道里等同步长输出。
+- ⚠️ **区分「慢」和「挂」的判据**：本项目 release 构建真的要几分钟，但那表现为
+  **rustc 的 CPU 时间持续爬升**（实测 2.5 分钟 → 76s）。挂死则是 **CPU 停在 ~25s 不涨、
+  内存却涨到 ~1.8G**、`dist/assets` 被清空后一直不写入、esbuild 子进程 CPU ~0.4s。
+  看 `Get-Process -Name rustc,cargo,node | Select CPU,StartTime` 的 **CPU 列是否随墙钟增长**。
+- ⚠️ **根因：PATH 里有 MSYS2 条目（`/c/msys64/mingw64/bin`）时 `vite build` 挂死。**
+  09-20 对照实测：带该条目挂 13 分钟不出产物；剥离后同一命令 **40s** 完成。
+  修法见 `pitfalls/0085-vite-hangs-when-msys2-in-path.md`，两处脚本（pre-push / build-all.sh）
+  都已「跑前端前临时剥离 MSYS2 条目」，守卫 B85。
+  卡死会清空 `dist/assets` 且只写一半 → **kill 后必须重跑 vite**，别直接进下一步。
 
 ## 6. 进程清理（打包前必查）
 - 打包前若 `target/release/litepad.exe` 仍残留进程，会占用产物 → `failed to remove file litepad.exe /
