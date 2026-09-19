@@ -490,8 +490,6 @@ function renderPanelTabs(onlyPanelId?: number): void {
     if (!strip) continue;
     renderTabstrip(strip, tabViewDataOf(p), tabstripCallbacks(p));
   }
-  // 打开文档数变化（标签增删）时同步查找栏徽标
-  findBar?.setDocCount(docs.size);
 }
 
 function tabViewDataOf(p: Panel): TabViewData[] {
@@ -2444,6 +2442,27 @@ function handleFileChanged(path: string): void {
  */
 let findBar: FindBarHandle | null = null;
 
+/**
+ * 跨文档查找的命中表与游标（B80）。
+ *
+ * ⚠️ 命中表必须由主程序持有，不能放回查找栏：只有这里才知道怎么切标签、怎么把
+ * 命中处选中并滚到视野中间（`openFindHit`）。查找栏那边只落一个**总数**，
+ * 用来渲染文档图标右上角的徽标。
+ *
+ * 既然不再有结果列表，`findHits` 就只服务于**步进**：Enter / 上下箭头在跨文档范围下
+ * 逐条跳转（VS Code 的多文件结果在侧边栏搜索视图里，我们这一栏等价于「按顺序走」）。
+ */
+let findHits: FindHit[] = [];
+/** 当前停留的命中下标；-1 = 还没定位（下一次步进从表头/表尾开始） */
+let findHitIndex = -1;
+
+/** 清空跨文档命中（查询变了、关栏、熄掉跨文档开关时都要调）。 */
+function resetFindAll(bar: FindBarHandle | null = findBar): void {
+  findHits = [];
+  findHitIndex = -1;
+  bar?.setMatchCount(0);
+}
+
 function ensureFindBar(): FindBarHandle {
   if (findBar) return findBar;
   findBar = createFindBar(el("app"), {
@@ -2451,9 +2470,11 @@ function ensureFindBar(): FindBarHandle {
     onStep: (dir, q) => stepFind(dir, q),
     onReplace: (q) => replaceCurrent(q),
     onReplaceAll: (q) => replaceAllInScope(q),
-    onSearchAll: (q) => searchOpenDocs(q),
-    onOpenHit: (hit) => openFindHit(hit),
-    onClose: () => clearFindHighlight(),
+    onSearchAll: (q) => runFindInDocs(q, true),
+    onClose: () => {
+      clearFindHighlight();
+      resetFindAll();
+    },
   });
   return findBar;
 }
@@ -2463,9 +2484,6 @@ function openFindBar(focus: "find" | "replace" = "find"): void {
   const bar = ensureFindBar();
   // 重开时按当前选区重新播种（用户可能刚重新选了一段）
   if (findSelectionOn) seedFindSelectionAnchor();
-  // ⚠️ 文档数必须在这里喂一次：查找栏是**懒建**的，主程序只在标签栏重绘时才调
-  //    setDocCount，否则首次打开后点亮文档图标会渲染出空徽标（数字显示不出来）。
-  bar.setDocCount(docs.size);
   bar.open(selectedTextInActiveView(), focus === "replace");
   if (focus === "replace") bar.focusReplace();
   else bar.focusFind();
@@ -2560,6 +2578,11 @@ function applyFindQuery(q: FindBarQuery): void {
     p.view.view.dispatch({ effects: setFindQuery.of({ query, activeFrom: null, restrict: r }) });
   }
   applyPreviewFindEverywhere(q);
+  // 跨文档范围：查询一变，上一次的命中表就作废 —— 这里直接重搜一次，
+  // 让文档图标右上角的总数跟着实时走（与 VS Code 搜索视图「改选项即重跑」一致）。
+  // 非跨文档范围则把旧的命中表清掉，免得下次点亮开关时徽标挂着一个过期的数字。
+  if (q.allDocs) runFindInDocs(q, false);
+  else resetFindAll();
   refreshFindCount();
 }
 
@@ -2615,7 +2638,7 @@ function refreshFindCount(): void {
   const bar = findBar;
   if (!bar) return;
   const q = bar.getQuery();
-  // 跨文档范围由结果列表给出「N 条结果（M 个文档）」，单文档的计数会误导
+  // 跨文档范围：命中总数在文档图标的徽标上，这里不再显示单文档计数（会误导）
   if (q.allDocs) {
     bar.setCount("");
     return;
@@ -2645,8 +2668,16 @@ function refreshFindCount(): void {
   bar.setCount(`${idx + 1} / ${matches.length}`);
 }
 
-/** 当前文档范围：跳到上一个 / 下一个命中（到头环绕）。 */
+/**
+ * 步进：当前文档范围内跳到上一个 / 下一个命中（到头环绕）。
+ * ⚠️ 跨文档范围（点亮了文档图标）要转给 `stepFindInDocs` —— 命中表在主程序手里，
+ * 这里的 `view` 只是活动编辑器，走不到别的文档去。
+ */
 function stepFind(dir: 1 | -1, q: FindBarQuery): void {
+  if (q.allDocs) {
+    stepFindInDocs(dir, q);
+    return;
+  }
   const panel = activePanel();
   if (!panel) return;
   const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
@@ -2801,12 +2832,17 @@ function replaceAllInScope(q: FindBarQuery): void {
   refreshFindCount();
 }
 
-/** 在所有已打开的文档中查找（直接扫内存里的标签快照，不读盘）。 */
+/**
+ * 在所有已打开的文档中查找（直接扫内存里的标签快照，不读盘）。
+ *
+ * ⚠️ **不设条数上限**（B80 去掉结果列表后，原先那个「最多 300 条」的保护就没意义了）：
+ * 返回数组既是步进的命中表，也是徽标上「总匹配数」的来源 —— 截断会让徽标少报数。
+ */
 function searchOpenDocs(q: FindBarQuery): FindHit[] {
   const query = buildFindQuery(findOptionsOf(q));
   if (!query) return [];
   const out: FindHit[] = [];
-  for (const doc of [...docs.values()]) {
+  for (const doc of docs.values()) {
     const inst = instancesOfDoc(doc.tabId)[0];
     if (!inst) continue;
     const state = inst.state;
@@ -2822,14 +2858,60 @@ function searchOpenDocs(q: FindBarQuery): FindHit[] {
         from: m.from,
         to: m.to,
       });
-      if (out.length >= 300) break;
     }
-    if (out.length >= 300) break;
   }
   return out;
 }
 
-/** 结果列表点击：切到该文档并把命中处选中、滚到视野中间。 */
+/**
+ * 跨文档查找：重算命中表 → 徽标显示总匹配数。
+ *
+ * `announce` 为真时还会写状态行（用户主动按回车触发的那一次）；
+ * 由查询变更自动触发的那次只更新徽标，不刷状态行文案。
+ */
+function runFindInDocs(q: FindBarQuery, announce: boolean): void {
+  const bar = findBar;
+  const query = q.text ? buildFindQuery(findOptionsOf(q)) : null;
+  if (!query) {
+    resetFindAll(bar);
+    if (announce) bar?.setStatus(q.text ? "查找内容无效（正则语法错误？）" : "请输入查找内容");
+    return;
+  }
+  findHits = searchOpenDocs(q);
+  findHitIndex = -1;
+  bar?.setMatchCount(findHits.length);
+  if (announce) {
+    bar?.setStatus(findHits.length === 0 ? "无匹配" : `共 ${findHits.length} 处匹配，回车逐个跳转`);
+  }
+}
+
+/**
+ * 跨文档步进：在命中表里往前走 / 往后走（到头环绕），并把该命中处选中、滚到视野中间。
+ *
+ * 命中表为空有两种可能：①真的没命中；②用户没按回车、直接点箭头进来的。
+ * 后者要先补搜一次 —— 否则「勾了文档图标点下一个没反应」。
+ */
+function stepFindInDocs(dir: 1 | -1, q: FindBarQuery): void {
+  const bar = findBar;
+  if (!q.text) {
+    bar?.setCount("");
+    return;
+  }
+  if (findHits.length === 0) {
+    runFindInDocs(q, false);
+    if (findHits.length === 0) {
+      bar?.setStatus("无匹配");
+      return;
+    }
+    findHitIndex = dir > 0 ? 0 : findHits.length - 1;
+  } else {
+    findHitIndex = (findHitIndex + dir + findHits.length) % findHits.length;
+  }
+  openFindHit(findHits[findHitIndex]);
+  bar?.setCount(`${findHitIndex + 1} / ${findHits.length}`);
+}
+
+/** 跳到某条命中：切到该文档并把命中处选中、滚到视野中间。 */
 function openFindHit(hit: FindHit): void {
   const insts = instancesOfDoc(hit.docId);
   if (insts.length === 0) return;
@@ -3347,6 +3429,12 @@ function keyHint(id: string): string {
 /** 主题三态（设置 → 首选项）：立即生效 + 持久化。 */
 async function setThemeMode(mode: ThemeMode): Promise<void> {
   themeMode = mode;
+  // ⚠️ **必须写回 settings，否则根本存不下来**（B79 用户实测：每次打开都是深色）。
+  // 根因：`persistSettings()` 存的是这整个 settings 对象，而启动时读的是
+  // `settings.theme`（main 里 `themeMode = normalizeMode(settings?.theme)`）。
+  // 其它每一项设置（`word_wrap` / `font_size` / `keymap`…）都会在这里写回自己的字段，
+  // 唯独主题漏了 —— 于是落盘的永远是启动时的初始值 "system"，
+  // 而 system 在深色系统的机器上解析成深色，表现为「主题设了、重启就丢」。
   const dark = applyTheme(mode);
   if (dark !== isDark) applyDarkToTabs(dark);
   isDark = dark;
@@ -3429,12 +3517,6 @@ async function toggleAutosave(): Promise<void> {
 async function setHotExit(on: boolean): Promise<void> {
   if (!settings || settings.hot_exit === on) return;
   settings.hot_exit = on;
-  // ⚠️ **必须写回 settings，否则根本存不下来**（B79 用户实测：每次打开都是深色）。
-  // 根因：`persistSettings()` 存的是这整个 settings 对象，而启动时读的是
-  // `settings.theme`（main 里 `themeMode = normalizeMode(settings?.theme)`）。
-  // 其它每一项设置（`word_wrap` / `font_size` / `keymap`…）都会在这里写回自己的字段，
-  // 唯独主题漏了 —— 于是落盘的永远是启动时的初始值 "system"，
-  // 而 system 在深色系统的机器上解析成深色，表现为「主题设了、重启就丢」。
   cancelPendingBackup();
   if (!on) discardAllBackups();
   await persistSettings();

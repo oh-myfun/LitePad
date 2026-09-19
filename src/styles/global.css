@@ -68,6 +68,14 @@
   --find-opt-active: color-mix(in srgb, var(--accent) 40%, transparent);
   --find-opt-active-border: var(--accent);
   --find-opt-active-fg: #ffffff;
+  /* 浮层左缘那条宽度手柄的着色（B80）= VS Code `.find-widget .monaco-sash`：
+     常态 = editorWidget.resizeBorder（默认注册为 null）→ 回退 editorWidget.border
+            = transparent(foreground, 0.2)；
+     悬停 / 拖拽 = sash.hoverBorder → 回退 focusBorder，即我们的 --accent。
+     ⚠️ 原先常态全透明、只在悬停时凭空冒出一条线，且没有过渡 —— 用户实测「很生硬」。
+     这两条同时补齐：常态给一条淡线打底，悬停换 accent 并走 0.1s 缓动（见 .find-sash）。 */
+  --find-sash: color-mix(in srgb, var(--fg) 20%, transparent);
+  --find-sash-hover: var(--accent);
   /* tooltip（B58，取代原生 title）。配色照搬 VS Code：
      底色 = editorWidget.background（暗色 #252526），边框 = transparent(foreground, 0.2)，
      shadow = --vscode-shadow-lg，键帽三色 = keybindingLabel.* 令牌。 */
@@ -139,6 +147,9 @@
   --find-opt-active: color-mix(in srgb, var(--accent) 20%, transparent);
   --find-opt-active-border: var(--accent);
   --find-opt-active-fg: #000000;
+  /* 左缘宽度手柄（B80）：语义与深色档完全一致，只是 --fg 换了，color-mix 自己跟着走 */
+  --find-sash: color-mix(in srgb, var(--fg) 20%, transparent);
+  --find-sash-hover: var(--accent);
   /* tooltip（B58）：浅色档底色取 VS Code 的 editorWidget.background = #F3F3F3
      （**不是纯白** —— 纯白气泡压在白色编辑区上只剩一圈描边，浮不起来）。 */
   --tip-bg: #f3f3f3;
@@ -616,9 +627,12 @@ button:focus-visible {
    ⚠️ 有意偏离 VS Code 的地方都在下面逐条注明了原因，别当成漏抄。 */
 
 /* 盒模型折算：VS Code 的 `.find-widget` 把它自己的高度**由 JS 写死**成
-   4 + 输入框(24+2 边框) + 4 = 34px；我们的浮层还要容纳跨文档结果列表，不能写死高度，
-   于是改成「内边距 上3 / 右4 / 下4 / 左9 + 行高 25」，让折叠态自然量到 ≈34px。
-   左 9 的由来同 VS Code：给浮层左缘留出比右侧稍大的喘息。 */
+   4 + 输入框(24+2 边框) + 4 = 34px；我们改成「内边距 上3 / 右4 / 下4 / 左9 + 行高 25」，
+   折叠态自然量到 ≈34px（B80 删掉底部结果区后，浮层高度已不再有额外变量）。
+   左 9 的由来同 VS Code：给浮层左缘留出比右侧稍大的喘息。
+   ⚠️ `overflow: hidden` 是**照抄** VS Code（findWidget.css 的 `.find-widget { overflow: hidden }`），
+   而且必须留着：左缘那条 4px 手柄要由 8px 圆角裁掉两端的直角，否则它会从圆角里戳出来 ——
+   用户实测的「拖拽高亮条错位」正是这个（B80）。工具提示挂在 body 上，不受这里裁切影响。 */
 .find-bar {
   position: fixed;
   /* 钉在编辑器右上，尽量少遮挡正文（不再支持拖动 / 记忆位置）。
@@ -633,6 +647,8 @@ button:focus-visible {
   gap: 3px;
   padding: 3px 4px 4px 9px;
   box-sizing: border-box;
+  /* 见上方注释：裁掉左缘手柄两端的直角（VS Code `.find-widget` 同款） */
+  overflow: hidden;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   /* = VS Code --vscode-cornerRadius-large（8px） */
@@ -649,8 +665,9 @@ button:focus-visible {
 
 /* 行首折叠把手。VS Code = `.button.toggle { position:absolute; top:0; left:0; width:18px }`
    —— 它**脱离行流**贴在最左侧，于是两行自己靠 margin-left 让出位置。
-   ⚠️ 高度不照抄 VS Code 的 `height:100%`：它的浮层高度固定，而我们的会被跨文档结果列表撑高，
-   100% 会把这颗按钮拉成一根竖条。改为「与查找行等高」，左缘对齐。
+   ⚠️ 高度不照抄 VS Code 的 `height:100%`：它的浮层高度由 JS 写死（就是两行），铺满即两行；
+   我们的浮层高度由内容自然量出，100% 在展开替换行时会比「两行」略短/略长、对不齐。
+   改为「与查找行等高」，展开态再由 `.replace-toggled` 补到两行。
    ⚠️ 有了它，替换行**不再需要左侧占位元素**（原 .find-chevron-ghost 已删）。 */
 .find-chevron {
   position: absolute;
@@ -679,11 +696,19 @@ button:focus-visible {
 
 /* 左侧宽度调节手柄 = VS Code 的 `.find-widget .monaco-sash`
    （sash.css 的 vertical 变体 + findWidget.css 的 `left: 0 !important`）：
-   贴浮层左缘、整条高度、4px 宽（--vscode-sash-size），平时透明，
-   悬停/拖拽时才在正中画一条 2px 高亮线（`::before` + .hover/.active）。
+   贴浮层左缘、整条高度、4px 宽（--vscode-sash-size）。
+   **三层结构照抄，缺一层观感就变**：
+     ① 本体这条 4px 条 = `editorWidget.resizeBorder`（没定义）→ `editorWidget.border`
+        = transparent(foreground, 0.2)。**常态就有一条淡线**，不是悬停才凭空冒出来；
+     ② `::before` 铺满本体、常态 transparent，悬停 / 拖拽时换成 `sash.hoverBorder`
+        （→ focusBorder，即 --accent）——用伪元素是为了让变色**只覆盖条本身**，
+        不碰本体的底色；
+     ③ `transition: background-color 0.1s ease-out` = sash.css 的
+        `.monaco-enable-motion .monaco-sash:before`，变色是渐变而不是瞬间跳（用户实测「很生硬」）。
    ⚠️ 它和 chevron 一样绝对定位在 left:0，会压住 chevron 最左 4px ——
    VS Code 也是这个叠法（sash 的 z-index 35 盖住 toggle 按钮）：手柄优先，
-   chevron 剩下的 14px 足够点。 */
+   chevron 剩下的 14px 足够点。
+   ⚠️ 两端的直角由 `.find-bar` 的 `overflow: hidden` + 8px 圆角裁掉（VS Code 同款）。 */
 .find-sash {
   position: absolute;
   top: 0;
@@ -693,26 +718,27 @@ button:focus-visible {
   z-index: 2;
   cursor: ew-resize;
   touch-action: none;
+  background: var(--find-sash);
 }
 .find-sash::before {
   content: "";
   position: absolute;
   top: 0;
-  bottom: 0;
-  left: 1px;
-  width: 2px;
+  left: 0;
+  width: 100%;
+  height: 100%;
   background: transparent;
   pointer-events: none;
+  transition: background-color 0.1s ease-out;
 }
 .find-sash:hover::before,
 .find-sash.active::before {
-  background: var(--accent);
+  background: var(--find-sash-hover);
 }
 
 /* 替换行展开后折叠按钮跟着变高 —— VS Code 是 `.button.toggle { height: -webkit-fill-available }`。
-   ⚠️ 不照抄 fill-available：它的浮层高度由 JS 写死（只有两行），铺满即两行；
-   我们的浮层还会被跨文档结果区撑到 220px，铺满就把这颗按钮拉成一根竖条。
-   故按行算死：主行 25 + 行间距 3 + 替换行 25 = 53。 */
+   ⚠️ 不照抄 fill-available：它是相对写死高度的浮层铺满，在我们这里会跟着状态行一起长，
+   两行反而对不齐。故按行算死：主行 25 + 行间距 3 + 替换行 25 = 53。 */
 .find-bar.replace-toggled .find-chevron {
   height: 53px;
 }
@@ -935,8 +961,10 @@ button:focus-visible {
   margin-left: 0;
 }
 
-/* 跨文档文档图标（带「打开文档数」徽标）。这是 LitePad 自加的能力（VS Code 查找框没有），
-   但它在语义上是**开关**而不是动作按钮，所以外壳照 .find-toggle 来（20×20 / 圆角 3px /
+/* 跨文档文档图标（B80：右上角徽标 = 跨文档命中的**总匹配数**）。
+   这是 LitePad 自加的能力 —— VS Code 的查找浮层里没有跨文档，它的多文件结果去侧边栏
+   搜索视图（所以我们这一栏**不再有结果列表**，见 findbar.ts 头部注释）。
+   它在语义上是**开关**而不是动作按钮，所以外壳照 .find-toggle 来（20×20 / 圆角 3px /
    常态透明边框），激活态直接复用同一个三件套令牌。 */
 .find-docs {
   position: relative;
@@ -973,7 +1001,8 @@ button:focus-visible {
    原先写 `top:-6px; right:-6px` 会溢出到按钮外：既盖住右边的关闭按钮，
    又在行里向上探出、看着像飘在外面。overflow 在这里是 visible 没被裁，
    但那是运气（换 WebView2 版本/加 overflow 就会把数字裁掉）。
-   徽标是 LitePad 自加物，VS Code 无可对标项，取「不撑破 20px 按钮」的紧凑档。 */
+   徽标是 LitePad 自加物，VS Code 无可对标项，取「不撑破 20px 按钮」的紧凑档。
+   数字超过 99 时由 findbar.ts 折成 `99+` —— 否则四位数会把徽标拉得比按钮还宽。 */
 .find-badge {
   position: absolute;
   top: 0;
@@ -991,57 +1020,7 @@ button:focus-visible {
   pointer-events: none;
 }
 
-/* 结果区：跨文档模式一打开就常驻，**空列表也要占住一行**（渲染成「无结果」）。
-   原先 `hidden` 会让它整个收掉，于是「有结果 → 再搜 → 无结果」时浮层整块缩一截、
-   连输入框被清空时也跟着跳。min-height 保证空态也有一行的高度（22 = 一行 20 + 上下边框）。 */
-.find-results {
-  max-height: 220px;
-  overflow: auto;
-  min-height: 22px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-}
-/* 与 .find-bar[hidden] / .find-row-replace[hidden] 同理：一旦给 .find-results 加了 display，
-   UA 的 `[hidden] { display: none }` 就会被盖掉，收不回去。 */
-.find-results[hidden] {
-  display: none;
-}
-/* 空态占位。弱化色：它不是命中行，别抢 .find-hit 的视觉重量。 */
-.find-empty {
-  padding: 3px 8px;
-  font-size: 11px;
-  color: var(--fg-muted);
-}
-
-.find-hit {
-  display: flex;
-  gap: 8px;
-  padding: 3px 8px;
-  font-size: 11px;
-  cursor: pointer;
-  align-items: baseline;
-  border-left: 2px solid transparent;
-}
-
-.find-hit:hover {
-  background: var(--bg-hover);
-  border-left-color: var(--accent);
-}
-
-.find-hit-loc {
-  color: var(--accent);
-  white-space: nowrap;
-  font-family: var(--font-mono);
-}
-
-.find-hit-text {
-  color: var(--fg);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 状态行（跨文档结果的「N 条结果（M 个文档）」等）。
+/* 状态行（「共 N 处匹配」「已替换 N 处」「请输入查找内容」等）。
    ⚠️ min-height 只是给**有文案时**留着不跳动；空态靠 `hidden` 整行收起 ——
    别指望 min-height 养一个空盒子，那就是 B76 用户实测的「浮层底部一条空白」
    （14px 行 + 3px gap + 4px 底内距）。下面这条 [hidden] 与 .find-bar[hidden] 同理：

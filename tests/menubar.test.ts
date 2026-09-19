@@ -405,7 +405,11 @@ describe("查找入口统一（悬浮查找栏）", () => {
     expect(barSrc, "查找栏不得再有范围下拉").not.toContain("find-scope");
     expect(barSrc, "查找栏不得再有文件夹搜索控件").not.toContain("find-folder");
     expect(barSrc, "跨文档必须保留（方案 C：文档图标按钮）").toContain("find-docs");
-    expect(barSrc, "跨文档结果列表必须保留").toContain("find-results");
+    // ⚠️ B80 反转了这条：原先要求「结果列表必须保留」，用户实测要求「底下不要结果区」，
+    //    参考 VS Code（它的查找浮层里没有内联结果列表）后整个删掉 —— 总匹配数改由
+    //    文档图标右上角的徽标承载。
+    expect(barSrc, "不得再有底部结果列表").not.toContain("find-results");
+    expect(barSrc, "总匹配数必须由徽标承载").toContain("find-badge");
   });
 
   it("不得再存在第二套查找 UI（CM6 面板 / 独立查找窗口）", () => {

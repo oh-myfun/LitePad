@@ -160,7 +160,9 @@ for (const [f, h] of Object.entries(originalHashes)) {
   const now = hashOf(readFileSync(f, "utf8"));
   const same = now === h;
   restored = restored && same;
-  console.log(`还原校验 ${f}：sha256 ${same ? "一致" : "不一致（立即人工修！）"} ${now.slice(0, 12)}…`);
+  console.log(
+    `还原校验 ${f}：sha256 ${same ? "一致" : "不一致（立即人工修！）"} ${now.slice(0, 12)}…`,
+  );
 }
 console.log(`\n反向验证 B78: ${results.filter(Boolean).length}/${results.length} 通过`);
 

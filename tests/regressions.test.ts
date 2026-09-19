@@ -1333,7 +1333,7 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(bar, "查找栏内不得出现任何 select 下拉").not.toContain('createElement("select")');
     expect(bar, "不得再有文件夹搜索控件").not.toContain("find-folder");
     expect(bar, "跨文档能力必须保留（方案 C：文档图标按钮）").toContain("find-docs");
-    expect(bar, "文档图标必须带打开文档数徽标").toContain("find-badge");
+    expect(bar, "文档图标必须带徽标（B80：跨文档命中的总匹配数）").toContain("find-badge");
     expect(bar, "勾选态必须进入查询对象").toContain("allDocs");
 
     const main = readFileSync("src/main.ts", "utf-8");
@@ -1410,20 +1410,25 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     // 而正常打开查找栏时主程序**从不调 setStatus**，空盒子就一直占着位置。
     expect(bar, "状态行创建后就必须先收起").toMatch(/status\.hidden = true/);
     expect(bar, "状态行必须有「空文本即收起」的派生逻辑").toMatch(/status\.hidden = !text/);
-    expect(bar, "熄灭跨文档要连「N 条结果」文案一起收").toMatch(
-      /setHits\(\[\]\);\s*\n\s*setStatus\(""\);/,
+    expect(bar, "熄灭跨文档要连总数一起清掉（别留下过期文案）").toMatch(
+      /matchCount = 0;\s*\n\s*setStatus\(""\);/,
     );
 
-    // ---- ② 文档图标上的数字显示不出来：徽标不能只靠 setDocCount 渲染 ----
-    // 查找栏是懒建的，主程序只在标签栏重绘时才喂文档数；只把数字写进 DOM 的话，
-    // 「首次打开栏 → 立刻点亮图标」会渲染出空徽标。
-    expect(bar, "徽标数字要自己存一份源真值").toMatch(/let docCount = 0/);
-    const syncAllDocsBody =
-      bar.match(/function syncAllDocs\(\)[^{]*\{([\s\S]*?)\n {2}\}/)?.[1] ?? "";
-    expect(syncAllDocsBody, "点亮时必须用记着的文档数重绘徽标").toMatch(
-      /badge\.textContent = String\(docCount\)/,
+    // ---- ② 文档图标上的数字显示不出来：徽标数字必须自己存一份源真值 ----
+    // 查找栏是懒建的，主程序要等搜完才知道总数；只把数字写进 DOM 的话，
+    // 「先搜出结果、再点亮图标」会渲染出一个空徽标。
+    // ⚠️ B80 起语义变了：徽标 = 跨文档命中的**总匹配数**（B78 那版是「已打开文档数」，已废弃），
+    //    所以源真值叫 matchCount，由主程序用 setMatchCount 回灌。
+    expect(bar, "徽标数字要自己存一份源真值").toMatch(/let matchCount = 0/);
+    const syncBadgeBody = bar.match(/function syncBadge\(\)[^{]*\{([\s\S]*?)\n {2}\}/)?.[1] ?? "";
+    expect(syncBadgeBody, "渲染时必须用记着的那份源真值").toMatch(
+      /badge\.textContent = badgeText\(\)/,
     );
-    expect(main, "打开查找栏时必须主动喂一次文档数").toMatch(/bar\.setDocCount\(docs\.size\)/);
+    expect(bar, "超过 99 要折成 99+（四位数会把徽标拉得比按钮还宽）").toMatch(
+      /matchCount > 99 \? "99\+"/,
+    );
+    expect(bar, "⚠️ 徽标不得再依赖 setDocCount（B78 旧语义已废弃）").not.toContain("setDocCount");
+    expect(bar, "徽标数字只能由主程序回灌").toMatch(/setMatchCount: \(n\) => \{/);
     const badgeBlock = css.match(/\.find-badge\s*\{[^}]*\}/)?.[0] ?? "";
     expect(badgeBlock, "徽标必须收在按钮盒内，不得用负偏移溢出").not.toMatch(/\b(top|right):\s*-/);
     expect(badgeBlock, "徽标只是标注，不得抢按钮的点击").toContain("pointer-events: none");
@@ -1618,6 +1623,8 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
         "--find-opt-active:",
         "--find-opt-active-border:",
         "--find-opt-active-fg:",
+        "--find-sash:",
+        "--find-sash-hover:",
         "--shadow-lg:",
       ]) {
         expect(block, `${name}主题缺 ${v}`).toContain(v);
@@ -1674,9 +1681,9 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     // ---- ② 替换行展开后折叠按钮变高（VS Code `.button.toggle { height: -webkit-fill-available }`）----
     const chevToggled = ruleBlock(css, ".find-bar.replace-toggled .find-chevron");
     expect(chevToggled, "展开态必须给 chevron 一个更高的高度").toMatch(/height:\s*53px/);
-    // 53 = 主行 25 + 行间距 3 + 替换行 25。⚠️ 不能用 fill-available：结果区能撑到 220px，
-    // 铺满会把这颗按钮拉成一根竖条（CSS 注释里已记原因）。
-    expect(css, "⚠️ chevron 不得用 fill-available（会被结果区拉成竖条）").not.toMatch(
+    // 53 = 主行 25 + 行间距 3 + 替换行 25。⚠️ 不能用 fill-available：在 LitePad 里它是相对
+    // 整个浮层（含状态行）铺满，两行反而对不齐（CSS 注释里已记原因）。
+    expect(css, "⚠️ chevron 不得用 fill-available（会跟着状态行一起长，两行对不齐）").not.toMatch(
       /find-chevron[\s\S]{0,200}?fill-available/,
     );
     expect(bar, "展开/折叠必须同步浮层上的 replace-toggled 类").toMatch(
@@ -1712,19 +1719,20 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
       /if \(on && opt\.selection\) setSelection\(false\)/,
     );
 
-    // ---- ⑤ 结果区常驻：空列表也占一行，显示「无结果」 ----
-    const results = ruleBlock(css, ".find-results");
-    expect(results, "结果区必须有 min-height 兜住空态（否则有/无结果时浮层整块跳）").toMatch(
-      /min-height:\s*\d+px/,
+    // ---- ⑤ 结果区已删除（B80）----
+    // 用户实测反馈「右边的结果区没有一直占位，底下不要添加结果区」，并要求参考 VS Code：
+    // VS Code 的查找浮层（findWidget.css / findWidget.ts）**没有任何内联结果列表** ——
+    // 多文件结果在侧边栏的搜索视图里。我们这一栏只把总匹配数交给文档按钮的徽标。
+    expect(css, "结果区样式必须删除").not.toContain(".find-results");
+    expect(css, "空态占位样式必须删除").not.toContain(".find-empty");
+    expect(css, "命中行样式必须删除").not.toContain(".find-hit");
+    expect(bar, "查找栏不得再渲染结果区").not.toContain("find-results");
+    expect(bar, "查找栏不得再持有命中表（命中表归主程序）").not.toMatch(/\bsetHits\b/);
+    expect(bar, "查找栏不得再渲染「无结果」空态").not.toContain("无结果");
+    // 删掉列表后，命中之间靠 Enter / 上下箭头跨文档步进（主程序侧）
+    expect(bar, "onSearchAll 必须收敛成命令（void）").toMatch(
+      /onSearchAll: \(q: FindBarQuery\) => void/,
     );
-    expect(css, "结果区收起必须显式 [hidden]（一旦加 display 就收不回去）").toMatch(
-      /\.find-results\[hidden\]\s*\{[^}]*display:\s*none/,
-    );
-    expect(css, "空态占位样式必须存在").toMatch(/\.find-empty\s*\{/);
-    expect(bar, "空态必须渲染出「无结果」").toMatch(/empty\.textContent = "无结果"/);
-    expect(bar, "结果区是否常驻必须由跨文档开关决定").toMatch(/results\.hidden = !on/);
-    // ⚠️ 收起时不能只靠 hidden：过期命中还挂在 DOM 里，下次查出来会带出来
-    expect(bar, "收起时必须把结果行清掉").toMatch(/results\.textContent = ""/);
 
     // ---- ⑥ 查找与替换输入框同宽 ----
     expect(css, "替换框必须改 flex: 0 0 auto 好让 JS 写死宽度").toMatch(
@@ -1734,21 +1742,107 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     // jsdom（测试）没有布局，量出来是 0 —— 写死 0px 会让替换框彻底消失
     expect(bar, "⚠️ 无布局时必须不下手，别写死 0px").toMatch(/if \(w <= 0\) return;/);
 
-    // ---- ⑦ 替换 / 全部替换图标 ----
-    // VS Code 的 codicon 只以字体发布，参考仓库里只有码位（replace 0xeb3d / replaceAll 0xeb3c），
-    // 拿不到轮廓 → 字形自绘，但语义必须清楚：一支箭头 = 替换当前，两支 = 替换全部。
-    const svgOf = (name: string): string =>
-      bar.match(new RegExp(`${name}:\\s*'([^']*)'`))?.[1] ?? "";
-    const repl = svgOf("repl");
-    const replAll = svgOf("replAll");
-    expect(repl, "替换图标要有被替换的匹配块").toContain("<rect");
-    expect(replAll, "全部替换图标同样要有匹配块").toContain("<rect");
-    expect(repl).not.toBe(replAll);
-    const arrows = (s: string): number => (s.match(/M10\.6/g) ?? []).length;
-    expect(arrows(repl), "替换 = 一支箭头").toBe(1);
-    expect(arrows(replAll), "全部替换 = 两支箭头").toBe(2);
-    expect(repl, "viewBox 与其它图标一致（16×16）").toContain('viewBox="0 0 16 16"');
-    expect(replAll, "viewBox 与其它图标一致（16×16）").toContain('viewBox="0 0 16 16"');
+    // ---- ⑦ 图标全部照搬 VS Code 的 codicon（B80）----
+    // 用户要求「按钮图标可以直接照搬 vscode 的，如果参考源码里没有就先下载到参考源码」。
+    // codicon 只以字体（codicon.ttf）+ 码位发布，参考仓库里拿不到轮廓 —— 于是
+    // scripts/fetch-codicons.mjs 从官方包 `@vscode/codicons` 的 src/icons/*.svg 抽取，
+    // 生成 src/shell/codicons.ts（生成物，勿手改），参考副本落在 docs/vscode-reference/codicons/。
+    const icons = readFileSync("src/shell/codicons.ts", "utf-8");
+    expect(icons, "codicons.ts 必须写明上游来源与版本").toContain("@vscode/codicons@");
+    expect(icons, "必须声明是生成物（防手改）").toContain("不要手改");
+    const fetchScript = readFileSync("scripts/fetch-codicons.mjs", "utf-8");
+    expect(fetchScript, "必须有可重跑的上游抽取脚本").toContain("@vscode/codicons");
+    expect(fetchScript, "必须把「图标名 → 官方文件名」逐条列出").toContain("ICONS");
+    // 每一颗都得是 currentColor 填充（否则不跟主题变色）；视图框尺寸不做统一要求
+    // （官方那里 files 就是 24 视图框，抽取时已把 width/height 归一到 16）。
+    const svgTags = [...icons.matchAll(/<svg[^>]*>/g)].map((m) => m[0]);
+    expect(svgTags.length, "至少 13 颗图标").toBeGreaterThanOrEqual(13);
+    for (const tag of svgTags) {
+      expect(tag, "必须有 viewBox").toContain("viewBox=");
+      expect(tag, "必须是 currentColor 填充（跟随主题）").toContain('fill="currentColor"');
+      expect(tag, "落到 16px 图标位：width/height 必须是 16").toContain('width="16"');
+    }
+    expect(icons, "必须含「在选区中查找」用的 find-selection").toContain("findSelection");
+    // 查找栏侧：所有图标一律来自 CODICONS，不得再有文字字形或自绘 svg
+    expect(bar, "必须从 codicons.ts 取图标").toContain('from "./codicons"');
+    expect(bar, "不得再自绘 svg（应全部走 CODICONS）").not.toContain("<svg");
+    const innerHtmlLines = bar.match(/innerHTML = .*/g) ?? [];
+    expect(innerHtmlLines.length, "图标是懒建的，必须仍走 innerHTML 注入").toBeGreaterThan(0);
+    for (const line of innerHtmlLines) {
+      // CODICONS.x（具名）或 CODICONS[icon]（工厂传名）都算，重点是不能写死字形
+      expect(line, "图标只能来自 CODICONS，不得再写死字形").toMatch(/CODICONS[.[]/);
+    }
+  });
+
+  it("B80 查找栏三处对齐：左缘手柄不再生硬 / 删除底部结果区 / 图标照搬 codicon", () => {
+    // 用户实测三条：①左侧拖拽高亮条很生硬且有错位 ②底下不要结果区，多文档时只在文档
+    // 按钮右上角显示总匹配数 ③按钮图标直接照搬 VS Code。
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const bar = readFileSync("src/shell/findbar.ts", "utf-8");
+    const main = readFileSync("src/main.ts", "utf-8");
+
+    // ---- ① 左缘手柄对齐 VS Code（findWidget.css + sash.css）----
+    // 「错位」的根因：VS Code 的 `.find-widget` 带 `overflow: hidden`，那条 4px 手柄被
+    // 8px 圆角裁掉两端的直角；我们原先没有 → 方角从圆角里戳出来，看着就是错位。
+    expect(ruleBlock(css, ".find-bar"), "浮层必须照抄 overflow: hidden（圆角裁手柄）").toMatch(
+      /overflow:\s*hidden/,
+    );
+    const sash = ruleBlock(css, ".find-sash");
+    expect(sash, "手柄常态就是一条淡线（resizeBorder→border = fg@20%）").toContain(
+      "background: var(--find-sash)",
+    );
+    const before = ruleBlock(css, ".find-sash::before");
+    expect(before, "::before 常态透明（只负责悬停变色）").toMatch(/background:\s*transparent/);
+    expect(before, "⚠️ 必须带 0.1s 缓动，否则变色是瞬间跳（用户实测「很生硬」）").toMatch(
+      /transition:\s*background-color 0\.1s ease-out/,
+    );
+    // 「生硬」的另一半根因：原先高亮只有 2px、还从 left:1px 起，与 4px 手柄和浮层边缘都对不上
+    expect(before, "::before 必须铺满手柄本体（100%），别再内缩 1px / 缩成 2px").toMatch(
+      /width:\s*100%/,
+    );
+    expect(css, "悬停/拖拽换成 sash.hoverBorder（→ focusBorder = --accent）").toMatch(
+      /\.find-sash:hover::before,\s*\n\s*\.find-sash\.active::before\s*\{\s*background:\s*var\(--find-sash-hover\)/,
+    );
+
+    // ---- ② 底部结果区删除，总匹配数进文档图标徽标 ----
+    // （样式与 DOM 的删除已在 B78-⑤ 里断言，这里盯主程序的接线）
+    expect(main, "必须有「清空跨文档命中」的收口").toMatch(/function resetFindAll\(/);
+    expect(main, "跨文档查找必须把总匹配数回灌给徽标").toMatch(
+      /bar\?\.setMatchCount\(findHits\.length\)/,
+    );
+    expect(main, "徽标数字不得再由「已打开文档数」喂（B78 旧语义）").not.toContain("setDocCount");
+    expect(main, "查询变更要重搜一次，让徽标跟着实时走").toMatch(
+      /if \(q\.allDocs\) runFindInDocs\(q, false\)/,
+    );
+    expect(main, "stepFind 必须把跨文档范围转给跨文档步进").toMatch(
+      /if \(q\.allDocs\) \{\s*\n\s*stepFindInDocs\(dir, q\);/,
+    );
+    expect(main, "跨文档步进要在命中表里前后环绕").toMatch(
+      /\(findHitIndex \+ dir \+ findHits\.length\) % findHits\.length/,
+    );
+    // ⚠️ 命中表不能再截断：它同时是「总匹配数」的来源，截断会让徽标少报数
+    const searchBody = main.match(/function searchOpenDocs\([\s\S]*?\n\}/)?.[0] ?? "";
+    expect(searchBody, "searchOpenDocs 不得再截断到 300 条").not.toMatch(/300/);
+    expect(searchBody, "必须扫全部已打开文档的内存快照").toMatch(
+      /for \(const doc of docs\.values\(\)\)/,
+    );
+    expect(main, "onSearchAll 必须接成命令并带上「要播报」标记").toMatch(
+      /onSearchAll: \(q\) => runFindInDocs\(q, true\)/,
+    );
+    expect(main, "onOpenHit 回调必须删除（已经没有结果列表可点）").not.toContain("onOpenHit");
+    // 关栏即清：否则下次打开会带着上一次的总数
+    expect(main, "关栏时必须清空命中表").toMatch(
+      /clearFindHighlight\(\);\s*\n\s*resetFindAll\(\);/,
+    );
+
+    // ---- 查找栏侧：总数只由 setMatchCount 单点驱动，且不再有任何结果区痕迹 ----
+    expect(bar, "徽标只能由 setMatchCount 回灌").toMatch(/setMatchCount: \(n\) => \{/);
+    expect(bar, "查询一变就作废旧总数（别挂着过期数字）").toMatch(
+      /matchCount = 0;\s*\n\s*syncBadge\(\);/,
+    );
+    expect(bar, "不得再有结果区 / 命中表的任何痕迹").not.toMatch(
+      /find-results|renderResults|setHits|setDocCount/,
+    );
   });
 
   it("B31 转到行必须顶部对齐（与大纲跳转一致，不得最小滚动贴底）", () => {
@@ -1971,6 +2065,41 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     expect(icons, "导出图标应为文档 + 出向箭头").toContain("M13 3v5h5");
   });
 
+  it("B79 主题：档位必须写回 settings 才存得下；三态按钮一律不点亮", () => {
+    // ⚠️ 断言必须落在**代码**上，不能落在整份文件上：上面这段说明性的注释里就写着
+    // `persistSettings()` 和 `themeMode = normalizeMode(settings?.theme)`，
+    // 反向验证实测——挖掉真正的调用后，只要还比对整份文件，断言照样通过（假绿）。
+    // 所以先剥掉整行注释再断言。
+    const main = stripLineComments(readFileSync("src/main.ts", "utf-8"));
+
+    // ---- ① 落盘：settings.theme 必须被写回 ----
+    // 用户实测「每次打开都是深色」。根因：启动时读的是 `settings.theme`，而 setThemeMode
+    // 只改了内存里的 themeMode，**没写回 settings** —— persistSettings() 存的是整个对象，
+    // 于是 theme 永远是启动时的 "system"，深色系统下解析出来就是深色。
+    // ⚠️ 判据必须落在「写回」这个动作上：只断言「调了 persistSettings」会假绿（一直在调）。
+    const setBody =
+      main.match(/async function setThemeMode\(mode: ThemeMode\)[^{]*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    expect(setBody, "setThemeMode 必须把档位写回 settings（否则根本存不下来）").toMatch(
+      /settings\.theme = mode/,
+    );
+    expect(setBody, "写回之后必须落盘").toContain("persistSettings()");
+    expect(main, "启动时必须按 settings.theme 还原档位").toContain(
+      "normalizeMode(settings?.theme)",
+    );
+
+    // ---- ② 激活态：循环按钮三档外观必须一致 ----
+    // 用户实测「深色模式按钮带激活状态，其它模式没有」。旧代码是
+    // `btnTheme.classList.toggle("tool-btn-active", themeMode === "dark")`：
+    // 它是**循环按钮**不是开关，「激活」没有语义，且只有深色档点亮 = 三档观感各不相同。
+    expect(main, "⚠️ 主题按钮不得再按深色档点亮（循环按钮没有「激活」语义）").not.toMatch(
+      /btnTheme[\s\S]{0,160}?tool-btn-active/,
+    );
+    expect(main, "当前档位仍要写进 data 属性供测试/样式用").toContain("btnTheme.dataset.themeMode");
+    // .tool-btn-active 本身还要留着（自动换行等开关按钮在用），别整条删掉
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    expect(css, "开关按钮的激活态样式必须保留").toContain(".tool-btn.tool-btn-active");
+  });
+
   it("菜单显示的键位必须来自快捷键注册表（不能写死）", () => {
     const src = menu();
     expect(src, "菜单必须通过 keyHint 取键位").toContain("cb.keyHint(");
@@ -2065,41 +2194,6 @@ describe("B50 启动不得露出白色窗口（用户反馈：打开时先白屏
   // 窗口内容由 Chromium 用纯白填充，而前端要走完 `await loadSettings()`
   // → `await restoreSession()` 才有东西可画。
   //
-  it("B79 主题：档位必须写回 settings 才存得下；三态按钮一律不点亮", () => {
-    // ⚠️ 断言必须落在**代码**上，不能落在整份文件上：上面这段说明性的注释里就写着
-    // `persistSettings()` 和 `themeMode = normalizeMode(settings?.theme)`，
-    // 反向验证实测——挖掉真正的调用后，只要还比对整份文件，断言照样通过（假绿）。
-    // 所以先剥掉整行注释再断言。
-    const main = stripLineComments(readFileSync("src/main.ts", "utf-8"));
-
-    // ---- ① 落盘：settings.theme 必须被写回 ----
-    // 用户实测「每次打开都是深色」。根因：启动时读的是 `settings.theme`，而 setThemeMode
-    // 只改了内存里的 themeMode，**没写回 settings** —— persistSettings() 存的是整个对象，
-    // 于是 theme 永远是启动时的 "system"，深色系统下解析出来就是深色。
-    // ⚠️ 判据必须落在「写回」这个动作上：只断言「调了 persistSettings」会假绿（一直在调）。
-    const setBody =
-      main.match(/async function setThemeMode\(mode: ThemeMode\)[^{]*\{([\s\S]*?)\n\}/)?.[1] ?? "";
-    expect(setBody, "setThemeMode 必须把档位写回 settings（否则根本存不下来）").toMatch(
-      /settings\.theme = mode/,
-    );
-    expect(setBody, "写回之后必须落盘").toContain("persistSettings()");
-    expect(main, "启动时必须按 settings.theme 还原档位").toContain(
-      "normalizeMode(settings?.theme)",
-    );
-
-    // ---- ② 激活态：循环按钮三档外观必须一致 ----
-    // 用户实测「深色模式按钮带激活状态，其它模式没有」。旧代码是
-    // `btnTheme.classList.toggle("tool-btn-active", themeMode === "dark")`：
-    // 它是**循环按钮**不是开关，「激活」没有语义，且只有深色档点亮 = 三档观感各不相同。
-    expect(main, "⚠️ 主题按钮不得再按深色档点亮（循环按钮没有「激活」语义）").not.toMatch(
-      /btnTheme[\s\S]{0,160}?tool-btn-active/,
-    );
-    expect(main, "当前档位仍要写进 data 属性供测试/样式用").toContain("btnTheme.dataset.themeMode");
-    // .tool-btn-active 本身还要留着（自动换行等开关按钮在用），别整条删掉
-    const css = readFileSync("src/styles/global.css", "utf-8");
-    expect(css, "开关按钮的激活态样式必须保留").toContain(".tool-btn.tool-btn-active");
-  });
-
   // 修法分两层：
   //   1) Rust 侧把 WebView2 的「预渲染底色」刷成界面背景色（set_background_color）；
   //   2) index.html 内联样式+脚本，让 HTML 的第一帧也是主题色。

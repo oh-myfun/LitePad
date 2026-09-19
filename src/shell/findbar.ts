@@ -8,21 +8,27 @@
  * - **替换行可折叠**：主行永远是「查找」；点 chevron（或菜单「替换」）才展开替换行。
  *   chevron **绝对定位贴在浮层左缘**（VS Code 的 `.button.toggle` 同款），两行各留 17px 边距让位。
  * - **匹配选项改成图标开关**（Aa / ab / .* / 选区 / AB），嵌在输入框右内侧，激活态高亮。
- * - **跨文档收敛成一个文档图标**：不再用「复选框 + 查找全部按钮」，徽标显示当前打开文档数。
+ * - **跨文档收敛成一个文档图标**：不再用「复选框 + 查找全部按钮」，命中总数显示在
+ *   图标**右上角的徽标**里（B80，见下）。
  * - 紧凑计数 `N / M`；无匹配变红。
  * - **样式逐条对齐 VS Code 的查找组件**：盒模型 / 工具按钮 / 计数 / 开关三态都照抄参考源码
  *   （见 `global.css` 该节的注释头），有意偏离处均已就地注明原因。
- * - **替换图标**：`repl` = 「被替换的匹配块 + 一支替换箭头」，`replAll` = 同款块 + **两支**箭头。
- *   ⚠️ 字形是 LitePad 自绘的：VS Code 的 codicon 只以字体形式发布，参考仓库里只有码位
- *   （codiconsLibrary.ts：`replace: 0xeb3d` / `replaceAll: 0xeb3c`），拿不到轮廓。
- *   语义（单处 / 全部）与命中区尺寸照 VS Code 的 `.button`。
+ * - **图标全部照搬 VS Code 的 codicon**（B80）：不再自绘、也不再用 `Aa`/`ab`/`.*`/`AB`
+ *   这类文字字形。轮廓由 `scripts/fetch-codicons.mjs` 从官方包 `@vscode/codicons` 抽出
+ *   并内联成 `codicons.ts`，与 VS Code 查找栏的注册图标一一对应（含「在选区中查找」
+ *   用的 `find-selection`，官方码位 \eb85）。16×16 视图框 → 与 16px 图标位**零缩放**。
  * - **左侧宽度调节手柄**：VS Code 的 `.find-widget .monaco-sash`（findWidget.ts 的 `_resizeSash`），
  *   拖左缘改宽度、双击复原/最大化；宽度不写回磁盘（与 VS Code 一致，只活在本次会话）。
+ * - ⚠️ **没有底部结果区**（B80 删）：VS Code 的查找浮层里也没有结果列表 —— 多文档搜索结果
+ *   在那边去侧边栏的搜索视图，我们这一栏只把**总匹配数**交给文档按钮右上角的徽标，
+ *   命中之间靠 Enter / 上下箭头跨文档步进（见 main.ts 的 `runFindInDocs` / `stepFindInDocs`）。
+ *   原先那块「常驻占位的结果列表」是 B78 加的，用户实测反馈「底下不要添加结果区」，已移除。
  * - **不绑定快捷键**：VS Code 的 Alt+C/W/R/L/P 在 LitePad 不可用（菜单助记符与 B71 命令已占），
  *   故只在 UI 上做图标开关，不注册快捷键。
  */
 
 import { setTip } from "./tooltip";
+import { CODICONS } from "./codicons";
 
 export interface FindBarQuery {
   text: string;
@@ -54,13 +60,16 @@ export interface FindHit {
 export interface FindBarCallbacks {
   /** 查找内容 / 选项变化（主程序据此刷新高亮与计数） */
   onQueryChange: (q: FindBarQuery) => void;
-  /** 上一个 / 下一个（当前文档） */
+  /** 上一个 / 下一个（当前文档；跨文档范围时由主程序改为跨文档步进） */
   onStep: (dir: 1 | -1, q: FindBarQuery) => void;
   onReplace: (q: FindBarQuery) => void;
   onReplaceAll: (q: FindBarQuery) => void;
-  /** 勾选「所有打开的文档」时执行跨文档搜索（扫内存快照，同步返回） */
-  onSearchAll: (q: FindBarQuery) => FindHit[];
-  onOpenHit: (hit: FindHit) => void;
+  /**
+   * 跨文档搜索（扫内存快照）。
+   * ⚠️ 是**命令**不是查询：命中总数与命中表都由主程序持有（它才知道怎么跳转、怎么计数），
+   * 查找栏只负责把结果数字显示出来 —— 见 `setMatchCount`。
+   */
+  onSearchAll: (q: FindBarQuery) => void;
   onClose: () => void;
 }
 
@@ -73,35 +82,15 @@ export interface FindBarHandle {
   step(dir: 1 | -1): void;
   setCount(text: string, bad?: boolean): void;
   setStatus(text: string): void;
-  setHits(hits: FindHit[]): void;
-  /** 刷新「打开文档数」徽标（由主程序在标签增删时调用） */
-  setDocCount(n: number): void;
+  /**
+   * 跨文档命中的**总数**（B80）：显示在文档图标右上角的徽标上。
+   * 传 0 或不点亮文档图标时徽标收起 —— 它只表达「搜到了多少条」，
+   * 不再承担「已打开多少文档」（那是 B78 的旧语义，已废弃）。
+   */
+  setMatchCount(n: number): void;
   focusFind(): void;
   focusReplace(): void;
   getQuery(): FindBarQuery;
-}
-
-/** 图标内联 SVG（避免依赖图标字体/emoji，渲染稳定）。 */
-const SVG = {
-  prev: '<svg viewBox="0 0 16 16"><path d="M8 12V4M4.5 7.5L8 4l3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  next: '<svg viewBox="0 0 16 16"><path d="M8 4v8M4.5 8.5L8 12l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  // 替换：左侧圆角块 = 被替换的匹配，右侧一支箭头 = 替换动作。
-  repl: '<svg viewBox="0 0 16 16"><rect x="1.5" y="5.5" width="7" height="5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.6 8h3.2M12.2 6.4l1.6 1.6-1.6 1.6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  // 全部替换：同一个匹配块 + **两支**箭头（上下各一），表示每一处命中都被替换掉。
-  replAll:
-    '<svg viewBox="0 0 16 16"><rect x="1.5" y="5.5" width="7" height="5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.6 6.6h3.2M12.2 5l1.6 1.6-1.6 1.6M10.6 9.4h3.2M12.2 7.8l1.6 1.6-1.6 1.6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  sel: '<svg viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="3 2"/></svg>',
-  docs: '<svg viewBox="0 0 16 16"><rect x="2" y="2.5" width="8.5" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M12.5 4.5v9.5a1 1 0 0 1-1 1H5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>',
-  close:
-    '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
-  chevR:
-    '<svg viewBox="0 0 16 16"><path d="M6 3.5L10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  chevD:
-    '<svg viewBox="0 0 16 16"><path d="M3.5 6L8 10.5 12.5 6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-};
-
-function svg(name: keyof typeof SVG): string {
-  return SVG[name];
 }
 
 /**
@@ -110,7 +99,7 @@ function svg(name: keyof typeof SVG): string {
  */
 function iconBtn(
   cls: string,
-  svgName: keyof typeof SVG,
+  icon: keyof typeof CODICONS,
   label: string,
   tip: string,
   key?: string,
@@ -118,26 +107,21 @@ function iconBtn(
   const b = document.createElement("button");
   b.className = cls;
   b.type = "button";
-  b.innerHTML = svg(svgName);
+  b.innerHTML = CODICONS[icon];
   setTip(b, tip, { key, group: "findbar" });
   b.setAttribute("aria-label", key ? `${label} (${key})` : label);
   return b;
 }
 
 /**
- * 匹配选项图标开关（Aa / ab / .* / 选区 / AB）。`iconSvg` 给需要图标的（选区），
- * 其余给纯文字字形。`label` 用于 aria + 提示；激活态由 `.on` 与 `aria-pressed` 表达。
+ * 图标开关（区分大小写 / 全词 / 正则 / 保留大小写）。图标即 VS Code 的同名 codicon，
+ * `label` 用于 aria + 提示；激活态由 `.on` 与 `aria-pressed` 表达。
  */
-function toggle(
-  glyph: string,
-  iconSvg: keyof typeof SVG | null,
-  label: string,
-  tip: string,
-): HTMLButtonElement {
+function toggle(icon: keyof typeof CODICONS, label: string, tip: string): HTMLButtonElement {
   const b = document.createElement("button");
   b.className = "find-toggle";
   b.type = "button";
-  b.innerHTML = iconSvg ? svg(iconSvg) : glyph;
+  b.innerHTML = CODICONS[icon];
   b.setAttribute("aria-pressed", "false");
   b.setAttribute("aria-label", label);
   setTip(b, tip, { group: "findbar" });
@@ -150,15 +134,15 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   dom.hidden = true;
 
   // ---- 主行：chevron + 查找输入框（内嵌图标开关）+ 计数 + 导航 + 跨文档 + 关闭 ----
-  const chevron = iconBtn("find-chevron", "chevR", "展开/折叠替换", "展开或折叠替换");
+  const chevron = iconBtn("find-chevron", "chevronRight", "展开/折叠替换", "展开或折叠替换");
   const findInput = document.createElement("input");
   findInput.className = "find-input search-input";
   findInput.placeholder = "查找内容（回车下一个，Shift+回车上一个）";
   findInput.spellcheck = false;
 
-  const caseT = toggle("Aa", null, "区分大小写", "区分大小写");
-  const wordT = toggle("ab", null, "全词匹配", "全词匹配");
-  const reT = toggle(".*", null, "正则", "使用正则表达式");
+  const caseT = toggle("caseSensitive", "区分大小写", "区分大小写");
+  const wordT = toggle("wholeWord", "全词匹配", "全词匹配");
+  const reT = toggle("regex", "正则", "使用正则表达式");
   // ⚠️「在选区中查找」**不在这里**：VS Code 把它放在 prev/next **之后**（findWidget.ts
   //    的 find-actions 里顺序是 matchesCount → prev → next → selection），是工具栏上的
   //    一颗 22×22 扁平按钮，而不是输入框内嵌的开关。见下方 selT。
@@ -173,15 +157,15 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   const count = document.createElement("span");
   count.className = "find-count";
 
-  const prev = iconBtn("find-nav find-prev", "prev", "上一个", "上一个匹配", "Shift+Enter");
-  const next = iconBtn("find-nav find-next", "next", "下一个", "下一个匹配", "Enter");
+  const prev = iconBtn("find-nav find-prev", "arrowUp", "上一个", "上一个匹配", "Shift+Enter");
+  const next = iconBtn("find-nav find-next", "arrowDown", "下一个", "下一个匹配", "Enter");
   // 在选区中查找：紧跟在上下箭头之后（VS Code 的 find-actions 顺序）。
   // 它是**开关**而不是动作按钮，除了 .find-nav 的外观还要额外维护 aria-pressed / .on。
-  const selT = iconBtn("find-nav find-sel", "sel", "在选区中查找", "仅在当前选区中查找");
+  const selT = iconBtn("find-nav find-sel", "findSelection", "在选区中查找", "仅在当前选区中查找");
   selT.setAttribute("aria-pressed", "false");
 
-  // 跨文档：文档图标按钮（带打开文档数徽标）
-  const docsBtn = iconBtn("find-docs", "docs", "所有打开的文档", "在全部已打开的文档中查找");
+  // 跨文档：文档图标按钮（右上角徽标 = 跨文档命中的总匹配数）
+  const docsBtn = iconBtn("find-docs", "files", "所有打开的文档", "在全部已打开的文档中查找");
   const badge = document.createElement("i");
   badge.className = "find-badge";
   badge.hidden = true;
@@ -210,31 +194,29 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   replaceInput.className = "find-replace-input search-input";
   replaceInput.placeholder = "替换为";
   replaceInput.spellcheck = false;
-  const presT = toggle("AB", null, "保留大小写", "替换时保留被替换文本的大小写");
+  const presT = toggle("preserveCase", "保留大小写", "替换时保留被替换文本的大小写");
   const replToggles = document.createElement("span");
   replToggles.className = "find-toggles";
   replToggles.append(presT);
   const replField = document.createElement("span");
   replField.className = "find-field";
   replField.append(replaceInput, replToggles);
-  const doReplace = iconBtn("find-replace-one", "repl", "替换", "替换当前匹配", "Enter");
-  const doAll = iconBtn("find-replace-all", "replAll", "全部替换", "替换全部匹配");
+  const doReplace = iconBtn("find-replace-one", "replace", "替换", "替换当前匹配", "Enter");
+  const doAll = iconBtn("find-replace-all", "replaceAll", "全部替换", "替换全部匹配");
   const rowReplace = document.createElement("div");
   rowReplace.className = "find-row find-row-replace";
   rowReplace.hidden = true;
   rowReplace.append(replField, doReplace, doAll);
 
-  // ---- 结果 / 状态 ----
-  const results = document.createElement("div");
-  results.className = "find-results";
-  results.hidden = true;
+  // ---- 状态行（临时提示；空文本时整行收起）----
   const status = document.createElement("div");
   status.className = "find-status";
   // 初始无内容 → 直接收起。⚠️ 不能等第一次 setStatus 才收：正常打开查找栏时主程序
   // 根本不会调 setStatus，空的状态行会一直吊在主行下面 = 浮层底部那条空白（用户实测反馈）。
   status.hidden = true;
 
-  dom.append(sash, rowMain, rowReplace, results, status);
+  // ⚠️ 底部**没有**结果区（B80 删）。命中总数走文档按钮的徽标，命中之间走 Enter / 上下箭头。
+  dom.append(sash, rowMain, rowReplace, status);
   host.appendChild(dom);
 
   // ---- 宽度（由左侧手柄调节；不落盘，与 VS Code 一样只在本次会话内有效）----
@@ -263,12 +245,11 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   // ---- 选项状态（图标开关的源真值）----
   const opt = { case: false, word: false, regexp: false, selection: false, preserve: false };
   /**
-   * 已打开的文档数（徽标数字的源真值）。
-   * ⚠️ 必须自己存一份：查找栏是**懒建**的（`ensureFindBar`），而主程序只在标签栏重绘时
-   * 调 `setDocCount`；若只把数字写在 DOM 里，则「首次打开查找栏后立刻点亮文档图标」
-   * 会渲染出一个**空徽标**（用户实测：数字显示不出来）。
+   * 跨文档命中的总数（徽标数字的源真值）。
+   * ⚠️ 必须自己存一份：查找栏是**懒建**的，主程序可能在它建出来之前就算好了命中数；
+   * 若只把数字写在 DOM 里，「先搜出结果、再打开查找栏」就会渲染出一个空徽标。
    */
-  let docCount = 0;
+  let matchCount = 0;
 
   function query(): FindBarQuery {
     return {
@@ -294,7 +275,22 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     syncToggle(selT, on);
   }
 
-  /** 跨文档开关：翻 .on 之后必须走 syncAllDocs（徽标 / 占位提示 / 结果区常驻都在那里） */
+  /**
+   * 徽标文案。四位数会把徽标拉得比 20px 按钮还宽（它是 `right: 0`、向左长的药丸），
+   * 故超过 99 折成 `99+` —— 与 VS Code 各处的徽标同一套约定。
+   */
+  function badgeText(): string {
+    return matchCount > 99 ? "99+" : String(matchCount);
+  }
+
+  /** 徽标 = 跨文档命中的总匹配数；未点亮跨文档、或一条都没搜到时收起。 */
+  function syncBadge(): void {
+    const on = docsBtn.classList.contains("on");
+    badge.textContent = badgeText();
+    badge.hidden = !on || matchCount <= 0;
+  }
+
+  /** 跨文档开关：翻 .on 之后必须走 syncAllDocs（徽标 / 占位提示都在那里） */
   function setAllDocs(on: boolean): void {
     docsBtn.classList.toggle("on", on);
     syncAllDocs();
@@ -310,81 +306,27 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     status.hidden = !text;
   }
 
-  /**
-   * 结果区渲染。**空列表也要留一行「无结果」**（用户反馈「结果区始终保留空位」）——
-   * 原先 `hidden = true` 会让浮层在「有结果 / 无结果」之间整块上下跳，
-   * 连输入框内容被清空时也照样占着那个位置（此时同样显示「无结果」）。
-   */
-  function renderResults(hits: FindHit[]): void {
-    results.textContent = "";
-    if (hits.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "find-empty";
-      empty.textContent = "无结果";
-      results.appendChild(empty);
-      return;
-    }
-    for (const h of hits.slice(0, 300)) {
-      const item = document.createElement("div");
-      item.className = "find-hit";
-      const loc = document.createElement("span");
-      loc.className = "find-hit-loc";
-      loc.textContent = `${h.name}:${h.line}`;
-      const text = document.createElement("span");
-      text.className = "find-hit-text";
-      text.textContent = h.text;
-      item.append(loc, text);
-      setTip(item, `${h.name}:${h.line}:${h.col}`, { detail: h.path, group: "findbar" });
-      item.addEventListener("click", () => cb.onOpenHit(h));
-      results.appendChild(item);
-    }
-  }
-
-  function setHits(hits: FindHit[]): void {
-    // 结果区只在跨文档模式下存在：单文档查找没有「命中列表」这个概念，
-    // 那时候留一行「无结果」既占地方又是错的（命中数在计数里，不在结果区）。
-    const on = docsBtn.classList.contains("on");
-    if (hits.length > 0) {
-      const files = new Set(hits.map((h) => h.path || h.name));
-      setStatus(`${hits.length} 条结果（${files.size} 个文档）`);
-    }
-    results.hidden = !on;
-    if (!on) {
-      // 收起时也把行清掉：hidden 只是看不见，过期命中还挂在 DOM 里（查询结果会带出来）
-      results.textContent = "";
-      return;
-    }
-    renderResults(hits);
-  }
-
-  /** 跨文档范围：图标激活即搜索全部打开文档；取消时清掉上一次的结果。 */
+  /** 跨文档范围：图标激活即搜索全部打开文档；取消时清掉上一次的总数。 */
   function syncAllDocs(): void {
     const on = docsBtn.classList.contains("on");
-    // 点亮/熄灭时都用记着的那份文档数重绘（见 docCount 注释：不能再依赖 setDocCount 及时被调用）
-    badge.textContent = String(docCount);
-    badge.hidden = !on;
     findInput.placeholder = on
       ? "查找内容（回车在全部已打开的文档中查找）"
       : "查找内容（回车下一个，Shift+回车上一个）";
     if (!on) {
-      // 熄灭跨文档：结果列表与「N 条结果」那行一起收掉，别留下过期文案
-      setHits([]);
+      // 熄灭跨文档：总数与提示一起清掉，别留下过期文案
+      matchCount = 0;
       setStatus("");
-    } else {
-      // 点亮：结果区立刻常驻（空态那行「无结果」也一起渲染出来），
-      // 免得「先看到有结果 → 再搜 → 无结果」时浮层整块缩一截。
-      setHits([]);
     }
+    syncBadge();
   }
 
+  /** 跨文档范围的回车：把「搜」交给主程序（它持有命中表与总数），这里只负责问一句。 */
   function runSearch(): void {
-    const q = query();
-    if (!q.text) {
+    if (!findInput.value) {
       setStatus("请输入查找内容");
-      setHits([]);
       return;
     }
-    setHits(cb.onSearchAll(q));
+    cb.onSearchAll(query());
   }
 
   function setReplaceExpanded(on: boolean): void {
@@ -392,7 +334,7 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     // VS Code 用同一个类名（`.replaceToggled`）把 chevron 拉高，这里照搬：
     // 展开后折叠按钮从 25px 长成 53px，把两行输入框都罩住（见 global.css）。
     dom.classList.toggle("replace-toggled", on);
-    chevron.innerHTML = svg(on ? "chevD" : "chevR");
+    chevron.innerHTML = on ? CODICONS.chevronDown : CODICONS.chevronRight;
     chevron.setAttribute("aria-label", on ? "折叠替换" : "展开替换");
     if (on) syncWidths();
   }
@@ -406,7 +348,12 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   }
 
   findInput.addEventListener("input", () => {
-    if (docsBtn.classList.contains("on")) setHits([]);
+    // 查询一变，上一次的跨文档命中就作废：主程序会在 onQueryChange 里清掉它那份命中表，
+    // 徽标也必须跟着归零 —— 否则会一直挂着一个「上一串内容」搜出来的数字。
+    if (docsBtn.classList.contains("on")) {
+      matchCount = 0;
+      syncBadge();
+    }
     cb.onQueryChange(query());
   });
   findInput.addEventListener("keydown", (e) => {
@@ -555,11 +502,9 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
       syncWidths();
     },
     setStatus,
-    setHits,
-    setDocCount: (n) => {
-      docCount = n;
-      badge.textContent = String(n);
-      badge.hidden = !docsBtn.classList.contains("on");
+    setMatchCount: (n) => {
+      matchCount = n;
+      syncBadge();
     },
     focusFind: () => {
       findInput.focus();

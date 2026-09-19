@@ -21,3 +21,6 @@ generated-images/
 #       ② 它可由 scripts/fetch-vscode-ref.sh 按 REVISION.txt 里钉的 commit 精确复现。
 # 入库的是元数据（INDEX.md / REVISION.txt / LICENSE.txt）与脚本本身。
 docs/vscode-reference/src/
+# codicon 图标源同理：由 scripts/fetch-codicons.mjs 从 npm 包精确复现，只读、不入库。
+# 构建真正依赖的是生成物 src/shell/codicons.ts（那个入库）。
+docs/vscode-reference/codicons/

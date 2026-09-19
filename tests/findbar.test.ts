@@ -1,17 +1,18 @@
 // @vitest-environment jsdom
 // 悬浮查找/替换栏行为测试（方案 C：对齐 VS Code 的紧凑浮层）。
 // 契约：①一个悬浮栏统一查找/替换/跨文档查找；②不绑定文件/面板——切换标签、分屏都不自动关闭；
-// ③跨文档收敛成一个文档图标（带打开文档数徽标）；④钉在右上角、不再可拖动；
-// ⑤替换行可折叠；⑥匹配选项是图标开关（Aa/ab/.*/选区/AB）；⑦紧凑计数、无匹配变红。
+// ③跨文档收敛成一个文档图标（B80：右上角徽标 = 跨文档命中的总匹配数，不再有结果列表）；
+// ④钉在右上角、不再可拖动；⑤替换行可折叠；⑥匹配选项是图标开关（B80 起全部照搬 codicon）；
+// ⑦紧凑计数、无匹配变红。
 import { describe, it, expect } from "vitest";
-import { createFindBar, type FindBarQuery, type FindHit } from "../src/shell/findbar";
+import { createFindBar, type FindBarQuery } from "../src/shell/findbar";
+import { CODICONS } from "../src/shell/codicons";
 import { preserveCase, restrictToRange } from "../src/editor/find";
 
 function mount(overrides: Partial<Parameters<typeof createFindBar>[1]> = {}) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const calls: string[] = [];
-  let hits: FindHit[] = [];
   let lastQuery: FindBarQuery | null = null;
   const bar = createFindBar(host, {
     onQueryChange: (q) => {
@@ -30,12 +31,12 @@ function mount(overrides: Partial<Parameters<typeof createFindBar>[1]> = {}) {
       lastQuery = q;
       calls.push("replaceAll");
     },
+    // B80：onSearchAll 是**命令**（返回 void）——命中表与总数由主程序持有，
+    // 它算完再用 setMatchCount 把总数回灌给徽标。查找栏自己不存命中。
     onSearchAll: (q) => {
       lastQuery = q;
       calls.push("searchAll");
-      return hits;
     },
-    onOpenHit: (h) => calls.push(`hit:${h.name}:${h.line}`),
     onClose: () => calls.push("close"),
     ...overrides,
   });
@@ -52,9 +53,6 @@ function mount(overrides: Partial<Parameters<typeof createFindBar>[1]> = {}) {
     calls,
     q,
     tgl,
-    setHits: (h: FindHit[]) => {
-      hits = h;
-    },
     lastQuery: () => lastQuery,
     toggles: () => [...dom.querySelectorAll<HTMLElement>(".find-toggle")],
     docs: () => q<HTMLButtonElement>(".find-docs"),
@@ -63,29 +61,14 @@ function mount(overrides: Partial<Parameters<typeof createFindBar>[1]> = {}) {
     // 成了工具栏上的一颗 .find-sel —— 不再被 .find-toggle 选中。
     selBtn: () => q<HTMLButtonElement>(".find-sel"),
     sash: () => q<HTMLElement>(".find-sash"),
-    results: () => q<HTMLElement>(".find-results"),
     replaceRow: () => q<HTMLElement>(".find-row-replace"),
     chevron: () => q<HTMLButtonElement>(".find-chevron"),
     closeBtn: () => q<HTMLButtonElement>(".find-x"),
-    hitRows: () => [...dom.querySelectorAll<HTMLElement>(".find-hit")],
   };
 }
 
 function key(el: HTMLElement, k: string, shift = false): void {
   el.dispatchEvent(new KeyboardEvent("keydown", { key: k, shiftKey: shift, bubbles: true }));
-}
-
-function hit(name: string, line: number): FindHit {
-  return {
-    docId: 1,
-    path: `C:\\${name}`,
-    name,
-    line,
-    col: 1,
-    text: "hello",
-    from: 0,
-    to: 5,
-  };
 }
 
 describe("悬浮查找栏：入口与范围", () => {
@@ -140,9 +123,8 @@ describe("悬浮查找栏：入口与范围", () => {
     expect(m.lastQuery()?.text).toBe("abc");
   });
 
-  it("点击文档图标后：回车执行跨文档查找并渲染结果", () => {
+  it("点击文档图标后：回车把跨文档查找交给主程序，徽标显示总匹配数", () => {
     const m = mount();
-    m.setHits([hit("a.md", 3), hit("b.md", 7)]);
     m.bar.open();
     m.docs().click();
     expect(m.lastQuery()?.allDocs, "点击后进入查询对象").toBe(true);
@@ -153,54 +135,60 @@ describe("悬浮查找栏：入口与范围", () => {
     input.dispatchEvent(new Event("input"));
     key(input, "Enter");
     expect(m.calls).toContain("searchAll");
-    const rows = m.hitRows();
-    expect(rows).toHaveLength(2);
-    expect(rows[0].textContent).toContain("a.md:3");
-    rows[1].click();
-    expect(m.calls[m.calls.length - 1]).toBe("hit:b.md:7");
+
+    // 主程序搜完把总匹配数回灌到徽标上（B80：徽标 = 总匹配数，不再是文档数）
+    m.bar.setMatchCount(7);
+    expect(m.badge().textContent).toBe("7");
+    expect(m.badge().hidden).toBe(false);
   });
 
-  it("跨文档空查询给提示且不产生结果", () => {
+  it("跨文档空查询给提示，且不触发搜索", () => {
     const m = mount();
-    m.setHits([hit("a.md", 1)]);
     m.bar.open();
     m.docs().click();
     key(m.q<HTMLElement>(".find-input"), "Enter");
     expect(m.calls).not.toContain("searchAll");
     expect(m.q(".find-status").textContent).toBe("请输入查找内容");
-    expect(m.hitRows()).toHaveLength(0);
   });
 
-  it("关闭跨文档后清空结果列表", () => {
+  it("关闭跨文档后徽标收起（总数不再有意义）", () => {
     const m = mount();
-    m.setHits([hit("a.md", 3)]);
     m.bar.open();
     m.docs().click();
-    const input = m.q<HTMLInputElement>(".find-input");
-    input.value = "todo";
-    input.dispatchEvent(new Event("input"));
-    key(input, "Enter");
-    expect(m.hitRows()).toHaveLength(1);
+    m.bar.setMatchCount(3);
+    expect(m.badge().hidden).toBe(false);
 
     m.docs().click();
     expect(m.lastQuery()?.allDocs).toBe(false);
-    expect(m.hitRows()).toHaveLength(0);
-    expect(m.q<HTMLElement>(".find-results").hidden).toBe(true);
+    expect(m.badge().hidden, "熄掉跨文档后徽标必须收起").toBe(true);
   });
 
-  it("查询变更会作废上一次的跨文档结果，避免展示过期命中", () => {
+  it("查询变更会作废上一次的跨文档总数，避免徽标挂着过期数字", () => {
     const m = mount();
-    m.setHits([hit("a.md", 3)]);
     m.bar.open();
     m.docs().click();
     const input = m.q<HTMLInputElement>(".find-input");
     input.value = "todo";
     input.dispatchEvent(new Event("input"));
     key(input, "Enter");
-    expect(m.hitRows()).toHaveLength(1);
+    m.bar.setMatchCount(4);
+    expect(m.badge().hidden).toBe(false);
+
     input.value = "todo2";
     input.dispatchEvent(new Event("input"));
-    expect(m.hitRows()).toHaveLength(0);
+    expect(m.badge().hidden, "查询一变，旧数字必须作废").toBe(true);
+  });
+
+  it("总匹配数超过 99 折成 99+（四位数会把徽标拉得比按钮还宽）", () => {
+    const m = mount();
+    m.bar.open();
+    m.docs().click();
+    m.bar.setMatchCount(99);
+    expect(m.badge().textContent).toBe("99");
+    m.bar.setMatchCount(100);
+    expect(m.badge().textContent).toBe("99+");
+    m.bar.setMatchCount(1234);
+    expect(m.badge().textContent).toBe("99+");
   });
 
   it("种子文本在 open() 时写入并只同步一次查询", () => {
@@ -336,32 +324,22 @@ describe("悬浮查找栏：不绑定文件/面板", () => {
     expect(m.q(".find-count").classList.contains("find-count-bad"), "无匹配变红").toBe(true);
   });
 
-  it("setHits 渲染结果并给出「N 条结果（M 个文档）」，空列表留一行「无结果」", () => {
+  it("B80：跨文档不再有底部结果区（对齐 VS Code 的查找浮层）", () => {
     const m = mount();
     m.bar.open();
-    // 结果区是**跨文档查找**的结果列表：不点亮文档图标时它不该存在（单文档查找的命中
-    // 数在计数里，不在结果区）。
-    expect(m.results().hidden, "未开跨文档时结果区收起").toBe(true);
     m.docs().click();
-    expect(m.results().hidden, "跨文档一开结果区就常驻").toBe(false);
-    expect(m.q(".find-empty").textContent, "空态占位").toBe("无结果");
-
-    m.bar.setHits([hit("a.md", 3), hit("b.md", 7)]);
-    expect(m.hitRows()).toHaveLength(2);
-    expect(m.q(".find-status").textContent).toContain("2 条结果（2 个文档）");
-    // 关键：清空后结果区**不能整块消失**（否则浮层高度来回跳），要留空位
-    m.bar.setHits([]);
-    expect(m.hitRows()).toHaveLength(0);
-    expect(m.results().hidden, "空结果也要保留空位").toBe(false);
-    expect(m.q(".find-empty"), "空态渲染「无结果」").toBeTruthy();
+    expect(m.dom.querySelector(".find-results"), "结果区必须整个消失").toBeNull();
+    expect(m.dom.querySelector(".find-empty")).toBeNull();
+    expect(m.dom.querySelector(".find-hit")).toBeNull();
   });
 
-  it("文档图标徽标显示打开文档数（仅在跨文档激活时可见）", () => {
+  it("B80：文档图标徽标 = 跨文档命中的总匹配数（点亮且有条数时才显示）", () => {
     const m = mount();
     m.bar.open();
-    m.bar.setDocCount(23);
-    expect(m.badge().textContent).toBe("23");
-    expect(m.badge().hidden, "未激活跨文档时徽标不显示").toBe(true);
+    expect(m.badge().hidden, "没搜过 → 收起").toBe(true);
+    m.bar.setMatchCount(12);
+    expect(m.badge().hidden, "未点亮跨文档时徽标不显示").toBe(true);
+    expect(m.badge().textContent, "数字要自己存一份源真值，懒建也能补上").toBe("12");
     m.docs().click();
     expect(m.badge().hidden).toBe(false);
   });
@@ -384,38 +362,35 @@ describe("B76：状态行不占位、徽标数字必有值、选区锚点冻结"
     expect(status.hidden, "文案清空后要重新收起").toBe(true);
   });
 
-  it("熄灭跨文档时，结果列表与「N 条结果」文案一起收掉", () => {
+  it("熄灭跨文档时，总数与状态行文案一起收掉", () => {
     const m = mount();
     m.bar.open();
-    m.bar.setHits([hit("a.md", 3)]);
-    expect(m.q(".find-status").textContent).toContain("条结果");
     m.docs().click(); // 点亮
+    m.bar.setMatchCount(5);
+    m.bar.setStatus("共 5 处匹配，回车逐个跳转");
     m.docs().click(); // 熄灭
-    expect(m.hitRows()).toHaveLength(0);
+    expect(m.badge().hidden, "别留下过期的总数").toBe(true);
     expect(m.q<HTMLElement>(".find-status").hidden, "别留下过期文案").toBe(true);
   });
 
-  it("懒建后立刻点亮文档图标，徽标也必须有数字", () => {
+  it("懒建后立刻点亮文档图标，总数回灌时徽标必须出得来", () => {
     const m = mount();
     m.bar.open();
-    // 关键：**不调 setDocCount**。查找栏是懒建的，主程序只在标签栏重绘时才喂文档数，
-    // 所以「打开查找栏 → 立刻点亮文档图标」这条路是常态。
+    // 关键：**不预先喂任何值**。查找栏是懒建的，主程序可能在它建出来之前/之后才算命中数，
+    // 所以徽标数字必须自己存一份源真值（只写 DOM 的话「先搜出结果、再点亮图标」会渲染出空徽标）。
     m.docs().click();
     const b = m.badge();
+    expect(b.textContent, "0 命中时也得有个确定的数字（空徽标 = 数字显示不出来）").toBe("0");
+    expect(b.hidden, "0 命中不点亮徽标").toBe(true);
+    m.bar.setMatchCount(23); // 主程序随后回灌真实总数
+    expect(b.textContent).toBe("23");
     expect(b.hidden).toBe(false);
-    expect(b.textContent, "空徽标 = 数字显示不出来（用户实测）").not.toBe("");
-    expect(b.textContent).toBe("0");
-    m.bar.setDocCount(23); // 主程序随后补喂真实数量
-    expect(m.badge().textContent).toBe("23");
-    m.docs().click(); // 熄灭后重亮，数字不能丢
-    m.docs().click();
-    expect(m.badge().textContent).toBe("23");
   });
 });
 
 // B78：①左侧宽度手柄 ②替换行展开后折叠按钮变高 ③选区按钮移到箭头之后
-//      ④选区与跨文档互斥 ⑤结果区常驻（空态也显示无结果）⑥两行输入框同宽 ⑦替换图标重绘
-describe("B78：左侧手柄 / 折叠按钮变高 / 选区与跨文档互斥 / 结果区常驻", () => {
+//      ④选区与跨文档互斥 ⑤两行输入框同宽 ⑥图标改为 codicon（B80 接续）
+describe("B78：左侧手柄 / 折叠按钮变高 / 选区与跨文档互斥 / 两框同宽", () => {
   /** jsdom 没有布局，需要宽度的地方只能打桩 */
   const rect = (w: number): DOMRect =>
     ({
@@ -498,20 +473,19 @@ describe("B78：左侧手柄 / 折叠按钮变高 / 选区与跨文档互斥 / �
     expect(m.selBtn().getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("输入框内容清空后，结果区仍留着空位并显示「无结果」", () => {
+  it("输入框内容清空后，跨文档总数一并归零", () => {
     const m = mount();
-    m.setHits([hit("a.md", 3)]);
     m.bar.open();
     m.docs().click();
     const input = m.q<HTMLInputElement>(".find-input");
     input.value = "todo";
     input.dispatchEvent(new Event("input"));
     key(input, "Enter");
-    expect(m.hitRows()).toHaveLength(1);
+    m.bar.setMatchCount(1);
+    expect(m.badge().hidden).toBe(false);
     input.value = "";
     input.dispatchEvent(new Event("input"));
-    expect(m.results().hidden, "清空输入后结果区也不能整块消失").toBe(false);
-    expect(m.q(".find-empty").textContent).toBe("无结果");
+    expect(m.badge().hidden, "清空输入后旧总数必须归零").toBe(true);
   });
 
   it("替换输入框与查找输入框同宽（JS 量出查找框宽度后写死）", () => {
@@ -526,17 +500,47 @@ describe("B78：左侧手柄 / 折叠按钮变高 / 选区与跨文档互斥 / �
     expect(replField.style.width).toBe("260px");
   });
 
-  it("替换 / 全部替换图标不同：全部替换是两支箭头，替换是一支", () => {
+  it("图标全部照搬 VS Code 的 codicon（不再自绘、也不用 Aa/ab/.*/AB 文字字形）", () => {
     const m = mount();
     m.bar.open("", true);
-    const one = m.q<HTMLElement>(".find-replace-one").innerHTML;
-    const all = m.q<HTMLElement>(".find-replace-all").innerHTML;
-    expect(one).toContain("<rect", "替换图标是一个「匹配块 + 一支箭头」");
-    expect(all).toContain("<rect");
-    // 箭头段数：全部替换比替换多一条（同 viewBox / 同描边，字形族保持一致）
-    const arrows = (svg: string) => (svg.match(/M10\.6/g) ?? []).length;
-    expect(arrows(one)).toBe(1);
-    expect(arrows(all)).toBe(2);
+    // 与官方包逐字一致（codicons.ts 由 scripts/fetch-codicons.mjs 从 @vscode/codicons 抽取）
+    // ⚠️ 不能直接比字符串：DOM 会把 svg 里的自闭合 `<path … />` 规整成 `<path …></path>`，
+    //    所以先把官方串按同一规则归一，再逐字节比 —— 这样仍能证明「与官方轮廓逐字一致」。
+    const norm = (s: string): string => s.replace(/<(\w+)([^>]*)\/>/g, "<$1$2></$1>");
+    const same = (el: Element, svg: string, msg: string): void => {
+      expect(el.innerHTML, msg).toBe(norm(svg));
+    };
+    same(m.q(".find-prev"), CODICONS.arrowUp, "上一个 = arrow-up");
+    same(m.q(".find-next"), CODICONS.arrowDown, "下一个 = arrow-down");
+    same(m.q(".find-sel"), CODICONS.findSelection, "在选区中查找 = find-selection");
+    same(m.q(".find-x"), CODICONS.close, "关闭 = close");
+    same(m.q(".find-replace-one"), CODICONS.replace, "替换 = replace");
+    same(m.q(".find-replace-all"), CODICONS.replaceAll, "全部替换 = replace-all");
+    same(m.tgl("区分大小写"), CODICONS.caseSensitive, "区分大小写");
+    same(m.tgl("全词匹配"), CODICONS.wholeWord, "全词匹配");
+    same(m.tgl("正则"), CODICONS.regex, "正则");
+    same(m.tgl("保留大小写"), CODICONS.preserveCase, "保留大小写");
+    // 文档图标按钮里还挂着徽标（<i class="find-badge">），故用 toContain
+    expect(m.q<HTMLElement>(".find-docs").innerHTML, "文档图标 = files").toContain(
+      norm(CODICONS.files),
+    );
+
+    // 每个图标按钮/开关都必须渲染出 svg，且不含任何文字字形
+    const iconEls = [
+      ...m.dom.querySelectorAll<HTMLElement>(
+        ".find-chevron, .find-nav, .find-x, .find-replace-one, .find-replace-all, .find-toggle, .find-docs",
+      ),
+    ];
+    expect(iconEls.length).toBeGreaterThan(10);
+    for (const el of iconEls) {
+      expect(el.querySelector("svg"), `${el.className} 必须是 svg 图标`).toBeTruthy();
+      // 徽标是挂在文档图标里的数字，不算「文字字形」，先摘掉再判
+      el.querySelector(".find-badge")?.remove();
+      expect(el.textContent?.trim(), `${el.className} 不得再有文字字形`).toBe("");
+    }
+    // 16×16 视图框 + currentColor：落到 16px 图标位零缩放，颜色随主题
+    expect(CODICONS.replace).toContain('viewBox="0 0 16 16"');
+    expect(CODICONS.replaceAll).toContain('fill="currentColor"');
   });
 });
 
