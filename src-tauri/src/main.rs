@@ -84,7 +84,13 @@ fn main() {
                 windows::shared_browser_args(app.handle())
             ));
 
-            // M2 文件监听：单个全局 watcher，内容变更 → file-changed 事件 → 前端提示
+            // M2 文件监听：单个全局 watcher，内容变更 → file-changed 事件 → 前端刷新/弹冲突。
+            //
+            // ⚠️ 事件里带的是 **tabId + 磁盘版本号（mtime+size）**，不是路径：
+            //   1) 路径匹配本来就脆 —— 监听用的是 `fs::canonicalize` 之后的，
+            //      `doc.path` 却可能是用户给的原始写法，两端对不上就永远收不到事件；
+            //   2) 版本号是前端抑制回声的唯一依据（自己保存也会激起事件）。
+            // 于是匹配在这里一次性做完（Rust 持有全部 doc），前端只认 tabId。
             let handle = app.handle().clone();
             let (tx, rx) = std::sync::mpsc::channel();
             let watcher =
@@ -100,9 +106,31 @@ fn main() {
                         continue;
                     }
                     for path in event.paths {
+                        // 事件路径也要规范化：它与监听时登记的那条必须是同一种写法才比得出来
+                        let norm = std::fs::canonicalize(&path).unwrap_or(path.clone());
+                        let Some(state) = handle.try_state::<commands::AppState>() else {
+                            continue;
+                        };
+                        let tab_id = {
+                            let Ok(guard) = state.docs.lock() else {
+                                continue;
+                            };
+                            match guard
+                                .iter()
+                                .find(|d| !d.path.as_os_str().is_empty() && d.path == norm)
+                            {
+                                Some(d) => d.id,
+                                None => continue,
+                            }
+                        };
+                        let (mtime_ms, size) = commands::disk_version(&norm);
                         let _ = handle.emit(
                             "file-changed",
-                            serde_json::json!({ "path": path.to_string_lossy() }),
+                            serde_json::json!({
+                                "tabId": tab_id,
+                                "mtimeMs": mtime_ms,
+                                "size": size,
+                            }),
                         );
                     }
                 }

@@ -59,6 +59,7 @@ import {
   windowPayload,
   writeBackup,
   type LossyChar,
+  type FileChangedPayload,
   type OpenedFile,
   type RestoredBackup,
   type SatellitePayload,
@@ -81,6 +82,7 @@ import {
   type FindHit,
 } from "./shell/findbar";
 import { ICONS } from "./shell/icons";
+import { showExternalConflictDialog } from "./shell/conflictdialog";
 import { CODICONS, type CodiconName } from "./shell/codicons";
 import { clearTip, initTooltips, setTip } from "./shell/tooltip";
 import { paletteOpen, showCommandPalette } from "./shell/commandpalette";
@@ -220,6 +222,14 @@ interface Doc {
   /** 磁盘文件在会话期间被外部修改（状态栏提示，标记被保存动作清除） */
   external: boolean;
   langLabel: string;
+  /**
+   * 已知磁盘版本：`file-changed` 事件里的 (mtimeMs, size) 与它相同 ⇒ 那次事件是
+   * **自己保存激起的回声**，必须忽略；不同 ⇒ 真的被外部改了（VS Code 的 etag 同理）。
+   *
+   * 只有关联了磁盘路径的文档才有意义；未命名文档恒为 0/0，不会收到事件。
+   */
+  diskMtimeMs: number;
+  diskSize: number;
   /**
    * M4 大文件档位：由 Rust 按文件字节数判定（OpenedFile.sizeClass），
    * 决定该文档关闭哪些昂贵编辑器特性；未命名文档恒为 normal。
@@ -801,6 +811,8 @@ function makeDoc(
     sizeClass,
     backupId,
     backedUp: false,
+    diskMtimeMs: 0,
+    diskSize: 0,
   };
 }
 
@@ -826,6 +838,18 @@ function makeInstance(doc: Doc, panelId: number, text: string): Tab {
     state,
     viewMode: "source",
   };
+}
+
+/**
+ * 记下「已知磁盘版本」。
+ *
+ * 每次从磁盘读/写之后都要更新：它是 `file-changed` 事件里区分「外部改动」与
+ * 「自己刚写盘激起的回声」的唯一依据。漏更新一次，用户保存完就会立刻被弹一次
+ * 「文件已在外部被修改」。
+ */
+function markDiskVersion(doc: Doc, mtimeMs: number, size: number): void {
+  doc.diskMtimeMs = mtimeMs;
+  doc.diskSize = size;
 }
 
 function registerDoc(doc: Doc): void {
@@ -1453,15 +1477,33 @@ function moveTabToStrip(panelId: number, tabId: number, beforeTabId: number | nu
 
 // ---------------------------------------------------------------- 打开 / 保存
 
-/** 重载（编码切换等）后重建文档全部实例的编辑器状态，并刷新挂载中的视图。 */
-function rebuildDocInstances(doc: Doc, text: string): void {
+/**
+ * 重载 / 外部刷新 / 编码切换后重建文档全部实例的编辑器状态，并刷新挂载中的视图。
+ *
+ * `keepCursor`：尽量把光标留在原来的字符偏移上（外部刷新时内容可能变了，
+ * 所以按新长度裁剪）。**默认 false** —— 换编码重载这类场景内容已经不是原来那份，
+ * 保留一个「指到别处」的光标没有意义。
+ */
+function rebuildDocInstances(doc: Doc, text: string, keepCursor = false): void {
   const firstLine = text.split("\n", 1)[0] ?? "";
   const lang = detectLanguage(doc.name === "未命名" ? null : doc.name, firstLine);
   doc.langLabel = lang.label;
+  // 档位必须跟着 doc 走：不传就回落 normal，大文件重载一次就把降级特性全开了
+  const perf = perfProfileFor(doc.sizeClass);
   for (const inst of instancesOfDoc(doc.tabId)) {
-    const made = makeTabState(text, lang.extension, { dark: isDark, wrap: isWrap }, handleUpdate);
+    const head = keepCursor ? inst.state.selection.main.head : 0;
+    const made = makeTabState(
+      text,
+      lang.extension,
+      { dark: isDark, wrap: isWrap, perf },
+      handleUpdate,
+    );
     inst.state = made.state;
     inst.comps = made.comps;
+    if (keepCursor && head > 0) {
+      const pos = Math.min(head, inst.state.doc.length);
+      inst.state = inst.state.update({ selection: { anchor: pos } }).state;
+    }
     const panel = panels.get(inst.panelId);
     if (panel?.view && panel.viewTabId === inst.tabId) {
       suppressDirty = true;
@@ -1540,6 +1582,7 @@ async function doOpen(
       normalizeSizeClass(file.sizeClass),
     );
     doc.mixedEol = file.mixedEol;
+    markDiskVersion(doc, file.mtimeMs, file.size);
     registerDoc(doc);
     const tab = makeInstance(doc, panel.panelId, file.text);
     attachTabToPanel(tab, panel);
@@ -1697,6 +1740,8 @@ async function saveDocCore(doc: Doc, inst: Tab, forceDialog: boolean): Promise<b
     doc.mixedEol = false;
     doc.dirty = false;
     doc.external = false;
+    // 写盘之后磁盘版本变了：记下来，否则这次保存自己激起的 file-changed 会被当成外部修改
+    markDiskVersion(doc, saved.mtimeMs, saved.size);
     // 已落盘 → 副本失去意义，删掉它（否则下次启动会拿旧快照顶掉刚保存的内容）
     discardBackupFor(doc);
     scheduleSessionSave();
@@ -1817,6 +1862,7 @@ async function switchEncoding(label: string): Promise<void> {
     doc.readonly = file.readonly;
     doc.name = file.name;
     doc.dirty = false;
+    markDiskVersion(doc, file.mtimeMs, file.size);
     // 重新载入 = 内容以磁盘为准，此前的未保存副本必须作废
     discardBackupFor(doc);
     // 重载替换内容：重建该文档全部实例并刷新挂载中的视图
@@ -2144,6 +2190,7 @@ async function restoreSession(): Promise<boolean> {
               lossy: false,
               sizeClass: "normal",
               sizeHint: "",
+              mtimeMs: 0,
             },
           });
         } catch {
@@ -2189,6 +2236,10 @@ async function restoreSession(): Promise<boolean> {
             // 脏 + 已知副本存在，于是关窗依旧不需要确认框。
             doc.dirty = true;
             doc.backedUp = true;
+            // 已知版本无从得知（副本里不存 mtime），留 0：于是接下来的第一个
+            // file-changed 一定被判成外部改动 —— 这份本来就脏，正是要弹冲突框的情形。
+          } else if (hit.kind === "file") {
+            markDiskVersion(doc, hit.data.mtimeMs, hit.data.size);
           }
           registerDoc(doc);
         }
@@ -2244,7 +2295,7 @@ function scheduleAutosave(): void {
         const text = freshTextOfDoc(doc);
         if (text === null) continue;
         try {
-          await saveFile({
+          const saved = await saveFile({
             tabId: doc.tabId,
             text,
             encoding: doc.encoding,
@@ -2253,6 +2304,7 @@ function scheduleAutosave(): void {
           });
           doc.dirty = false;
           doc.external = false;
+          markDiskVersion(doc, saved.mtimeMs, saved.size);
           // 内容已经落盘，备份区里的副本就成了「过期快照」——留着会让下次启动
           // 拿旧内容顶掉用户的已保存版本。必须在转干净的同时丢弃。
           discardBackupFor(doc);
@@ -2413,23 +2465,181 @@ function discardAllBackups(): void {
   for (const doc of docs.values()) discardBackupFor(doc);
 }
 
-/** 外部修改事件：匹配打开的文档，标记 + 提示（影响该文档全部实例）。 */
-function handleFileChanged(path: string): void {
-  for (const doc of docs.values()) {
-    if (!doc.path || doc.path.toLowerCase() !== path.toLowerCase()) continue;
-    doc.external = true;
-    for (const inst of instancesOfDoc(doc.tabId)) {
-      const panel = panels.get(inst.panelId);
-      if (panel?.view && panel.viewTabId === inst.tabId) {
-        panel.view.view.dispatch({
-          effects: [],
-        }); // 触发标签栏刷新
-      }
-      renderPanelTabs(inst.panelId);
-    }
-    if (activeTab()?.docId === doc.tabId) {
-      showMessage(`${doc.name} 已被外部修改（保存时将覆盖外部内容）`, true);
-    }
+/**
+ * 外部修改事件的防抖窗口（ms）。
+ *
+ * notify（ReadDirectoryChangesW）一次保存常常连着给好几个 Modify 事件，
+ * 写内容、写属性、目录项变更都会各来一次，全落在几十毫秒内。
+ * 攒一下再读盘，省掉一串无意义的读盘（以及随之而来的弹框）。
+ */
+const EXTERNAL_DEBOUNCE_MS = 150;
+
+/** 防抖窗口内最后一次事件的磁盘版本（以最后一次为准，中间的作废）。 */
+const externalPending = new Map<number, FileChangedPayload>();
+/** 每文档的防抖定时器。 */
+const externalTimers = new Map<number, number>();
+/** 正在处理中的文档：读盘 / 等用户选择期间不重入。 */
+const externalBusy = new Set<number>();
+
+/**
+ * 外部修改事件：磁盘内容变了，把编辑器里这份同步过去（VS Code 的三态模型）。
+ *
+ * 三种情形：
+ *   1. 磁盘内容与内存**完全一致** → 静默（外部只是重写了同样的字节）。
+ *   2. 编辑器**没改过**（clean） → 直接以磁盘为准，自动重新载入（保留光标）。
+ *   3. 两边**都改过** → 弹三选一：保留我的修改 / 载入磁盘版本 / 打开磁盘版本对照。
+ *
+ * ⚠️ 回声抑制：保存也会激起 file-changed（watcher 看的是同一个文件）。
+ * 判据是「已知磁盘版本」（mtime+size），与事件里的一致就说明是自己的写入，忽略。
+ */
+function handleFileChanged(payload: FileChangedPayload): void {
+  const doc = docs.get(payload.tabId);
+  if (!doc || !doc.path) return;
+  // 这份文档的正主在另一个窗口（本窗口只剩一个隐藏实例，跟着远端同步走）。
+  // 两个窗口都会收到同一个事件，让对面去处理：否则会各弹一个冲突框。
+  if (remotedTabs.has(payload.tabId)) return;
+  if (payload.mtimeMs === doc.diskMtimeMs && payload.size === doc.diskSize) return;
+
+  // 一次保存往往会连着给好几个 Modify 事件，攒一下再读盘
+  externalPending.set(doc.tabId, payload);
+  const timer = externalTimers.get(doc.tabId);
+  if (timer !== undefined) clearTimeout(timer);
+  externalTimers.set(
+    doc.tabId,
+    window.setTimeout(() => {
+      externalTimers.delete(doc.tabId);
+      void resolveExternalChange(doc.tabId);
+    }, EXTERNAL_DEBOUNCE_MS),
+  );
+}
+
+async function resolveExternalChange(tabId: number): Promise<void> {
+  // 读盘 / 等用户选的过程里不许重入：否则同一个冲突会叠出好几个弹框
+  if (externalBusy.has(tabId)) return;
+  const payload = externalPending.get(tabId);
+  if (!payload) return;
+  externalPending.delete(tabId);
+  const doc = docs.get(tabId);
+  if (!doc || !doc.path) return;
+
+  externalBusy.add(tabId);
+  try {
+    await resolveExternalChangeCore(doc, payload);
+  } finally {
+    externalBusy.delete(tabId);
+  }
+  // 处理期间又来了新事件（用户对着一个过期的弹框做了决定 / 外部又写了一次）→ 接着处理
+  if (externalPending.has(tabId)) void resolveExternalChange(tabId);
+}
+
+async function resolveExternalChangeCore(doc: Doc, payload: FileChangedPayload): Promise<void> {
+  // 带上当前编码：不指定时 open_file 会重新探测编码，那会把用户手动选定的编码冲掉
+  // —— 外部刷新只该换内容，不该顺手改掉用户的编码/行尾选择。
+  let file: OpenedFile;
+  try {
+    file = await reloadFile(doc.tabId, doc.encoding);
+  } catch {
+    // 文件正被别的进程独占 / 刚被删 → 这次跳过，下一个事件还会再来
+    return;
+  }
+  // 已知版本按「实际读到的那一份」记（事件与读盘之间可能又变了一次），
+  // 这样「已知版本」与「编辑器里的内容」永远是一一对应的。
+  const mtimeMs = file.mtimeMs || payload.mtimeMs;
+  const size = file.size || payload.size;
+
+  const mine = freshTextOfDoc(doc);
+  if (mine === null) return;
+
+  if (file.text === mine) {
+    // 情形 1：内容一致 → 静默，连提示都不给（提示会让人以为丢了什么）
+    markDiskVersion(doc, mtimeMs, size);
+    doc.external = false;
+    return;
+  }
+
+  if (!doc.dirty) {
+    // 情形 2：编辑器没动过 → 自动以磁盘为准
+    applyDiskContent(doc, file, mtimeMs, size);
+    showMessage(`${doc.name} 已在外部被修改，已自动载入最新内容`);
+    return;
+  }
+
+  // 情形 3：两边都改过 → 交给用户决定
+  const choice = await showExternalConflictDialog({
+    name: doc.name,
+    diskChars: file.text.length,
+    mineChars: mine.length,
+  });
+  if (choice === "take-disk") {
+    applyDiskContent(doc, file, mtimeMs, size);
+    showMessage(`已载入 ${doc.name} 的磁盘版本`);
+    return;
+  }
+  if (choice === "compare") {
+    markDiskVersion(doc, mtimeMs, size);
+    await openDiskCopyForCompare(doc, file);
+    return;
+  }
+  // keep-mine：内容一字不动，只记下「磁盘上有一份更新的版本」，保存时覆盖它是用户刚做的选择
+  markDiskVersion(doc, mtimeMs, size);
+  doc.external = true;
+  refreshAll();
+  for (const inst of instancesOfDoc(doc.tabId)) renderPanelTabs(inst.panelId);
+  showMessage(`保留你的修改：保存 ${doc.name} 时会覆盖磁盘上的外部版本`);
+}
+
+/** 用磁盘内容替换整个文档（自动刷新 / 用户选择「载入磁盘版本」）。 */
+function applyDiskContent(doc: Doc, file: OpenedFile, mtimeMs: number, size: number): void {
+  const eol = doc.eol;
+  doc.name = file.name;
+  doc.mixedEol = file.mixedEol;
+  doc.readonly = file.readonly;
+  // 外部那一下可能把文件撑大了：档位跟着变，否则重载完反而少了降级
+  doc.sizeClass = normalizeSizeClass(file.sizeClass);
+  doc.eol = eol;
+  markDiskVersion(doc, mtimeMs, size);
+  doc.dirty = false;
+  doc.external = false;
+  // 内容以磁盘为准 → 此前那份未保存副本作废（留着会让下次启动拿它顶掉刚载入的内容）
+  discardBackupFor(doc);
+  rebuildDocInstances(doc, file.text, true);
+  refreshAll();
+}
+
+/** 把磁盘版本开成一个新的未命名标签（对照用），当前文档一字不动。 */
+async function openDiskCopyForCompare(doc: Doc, file: OpenedFile): Promise<void> {
+  try {
+    const info = await ipcNewTab(file.encoding);
+    // 后缀插在扩展名**之前**（`a（磁盘版本）.md`）：语言判定与 Markdown 预览
+    // 都认扩展名，把它盖掉的话这份对照就只是纯文本了。
+    const dot = doc.name.lastIndexOf(".");
+    const copyName =
+      dot > 0
+        ? `${doc.name.slice(0, dot)}（磁盘版本）${doc.name.slice(dot)}`
+        : `${doc.name}（磁盘版本）`;
+    const copy = makeDoc(
+      info.tabId,
+      file.text,
+      copyName,
+      null,
+      file.encoding,
+      file.eol,
+      false,
+      normalizeSizeClass(file.sizeClass),
+    );
+    copy.mixedEol = file.mixedEol;
+    registerDoc(copy);
+    const panel = activePanel() ?? [...panels.values()][0];
+    if (!panel) return;
+    const inst = makeInstance(copy, panel.panelId, file.text);
+    attachTabToPanel(inst, panel);
+    rebuildLayout();
+    refreshAll();
+    getPanel(panel.panelId)?.view?.focus();
+    renderPanelTabs(panel.panelId);
+    showMessage(`已在新标签中打开磁盘版本，${doc.name} 未改动`);
+  } catch (err) {
+    showMessage(String(err), true);
   }
 }
 
@@ -4996,9 +5206,10 @@ async function setupShell(): Promise<void> {
     },
   );
 
-  // 外部修改事件：Rust watcher → file-changed → 标记脏文件
-  void listen<{ path: string }>("file-changed", (e) => {
-    if (e.payload?.path) handleFileChanged(e.payload.path);
+  // 外部修改事件：Rust watcher → file-changed → 自动刷新 / 冲突三选一
+  void listen<FileChangedPayload>("file-changed", (e) => {
+    const p = e.payload;
+    if (p && typeof p.tabId === "number") handleFileChanged(p);
   }).catch(() => {});
 
   // B71 ④：跨窗口同源正文同步（主窗口与卫星窗口都要装，见 listenDocSync）

@@ -1429,6 +1429,30 @@ button:focus-visible {
   color: var(--fg);
 }
 
+/* ---------- 外部修改冲突弹窗（文件监听） ----------
+   三个按钮并排在 420px 里太挤，允许换行；正文用正常字色，不要用 muted，
+   这是一次需要用户认真读的取舍。 */
+
+.conflict-dialog {
+  width: 480px;
+}
+
+.conflict-text {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--fg);
+}
+
+.conflict-meta {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.conflict-actions {
+  flex-wrap: wrap;
+}
+
 /* ---------- 分屏布局 ---------- */
 
 #main-row {

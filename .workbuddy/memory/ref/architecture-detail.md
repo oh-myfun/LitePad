@@ -485,6 +485,28 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
     + `regressions.test.ts` 的 B68 / B69 块（静态契约）
     + `backup::tests` / `commands::tests` / `session::tests`（副本格式、路径穿越、线上字段名）。
 
+- **文件监听 / 外部修改（B87）**：全局单个 `notify` watcher（`src-tauri/src/main.rs` 的 setup
+  段），事件 `file-changed` 由主窗口与卫星窗口**各自**收（Rust 用 `app.emit` 广播）。
+  三条不变量（`tests/regressions.test.ts` 的 B87 块锁住，已逐条反向验证）：
+  1. **事件认 `tabId`，不认路径**。监听登记的是 `fs::canonicalize` 之后的路径，
+     而 `OpenedFile.path` 是用户给的原始写法，两端字符串比不出来 —— 这就是 B87 之前
+     「外部修改提示时有时无」的根因。匹配因此在 Rust 侧做完（它持有全部 doc），
+     事件载荷 = `{ tabId, mtimeMs, size }`。
+  2. **回声抑制靠「已知磁盘版本」**（`Doc.diskMtimeMs` + `Doc.diskSize`，mtime 毫秒 + 字节数）。
+     保存自己也写同一个文件 → 也会激起事件；版本号与已知的一致就早退。
+     所以**每次读盘 / 写盘都必须 `markDiskVersion()`**：`doOpen` / `saveDocCore` /
+     `scheduleAutosave` / 编码重载 / 会话恢复（`backup` 那份没有 mtime，留 0）。漏一处
+     的表现就是「保存完立刻弹冲突框」。
+  3. **三态判定**（按 VS Code 语义复刻）：磁盘内容 == 内存内容 → 静默；
+     编辑器 clean → 自动以磁盘为准重载（保留光标）；两边都改 → 弹三选一
+     （保留我的修改 / 载入磁盘版本 / 打开磁盘版本对照，`src/shell/conflictdialog.ts`）。
+     Esc 与点遮罩一律兜底成 **keep-mine** —— 唯一不会丢用户数据的一支。
+     事件还有 150ms 防抖 + `externalBusy` 不重入（一次保存会连着给好几个 Modify）。
+  ⚠️ 外部刷新**不得**改掉用户的编码 / 行尾：`reloadFile(doc.tabId, doc.encoding)` 必须带编码
+  （不指定时 `open_file` 会重新探测，把用户选的冲掉），`applyDiskContent` 要还原 `doc.eol`。
+  ⚠️ 多窗口：文档被搬到卫星窗口后本窗口只剩隐藏实例，`handleFileChanged` 见到
+  `remotedTabs.has(tabId)` 必须让位，否则两个窗口各弹一个冲突框。
+
 - **图标**：`scripts/gen_icons.py` 纯矢量自绘；四角圆角用「alpha 与垂直镜像取 min」保证上下一致；
   改图标后必须重跑 `tauri build` 才会进 exe（`src-tauri/build.rs` 已 `rerun-if-changed=icons`，
   否则增量构建会**静默**沿用旧图标，B41 踩过）。

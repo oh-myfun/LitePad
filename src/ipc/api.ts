@@ -39,6 +39,28 @@ export interface OpenedFile {
   sizeClass: string;
   /** 分级提示文案（normal 为空串），直接显示给用户。 */
   sizeHint: string;
+  /**
+   * 读盘那一刻的磁盘版本号（mtime 毫秒，取不到为 0）。
+   *
+   * 前端把它记成「已知磁盘版本」，用来区分 `file-changed` 是外部改动还是
+   * 自己刚保存激起的回声。字段名是 camelCase（Rust `rename_all`）。
+   */
+  mtimeMs: number;
+}
+
+/**
+ * 外部修改事件（`file-changed`）。
+ *
+ * ⚠️ 认文档靠 `tabId` 而不是路径：监听用的是规范化后的绝对路径，
+ * 而 `OpenedFile.path` 是用户给的原始写法，两端比不出来（M2 起就是这么漏事件的）。
+ * 匹配由 Rust 侧做（它持有全部 doc），这里只负责消费。
+ */
+export interface FileChangedPayload {
+  tabId: number;
+  /** 事件当时的 mtime 毫秒；文件已被删除/暂时读不到时为 0 */
+  mtimeMs: number;
+  /** 事件当时的字节数；读不到时为 0 */
+  size: number;
 }
 
 export interface LossyChar {
@@ -56,6 +78,11 @@ export interface SavedFile {
   eol: string;
   lossy: boolean;
   lossyChars: LossyChar[];
+  /**
+   * 写盘之后的磁盘版本号（mtime 毫秒）。前端据此刷新「已知磁盘版本」，
+   * 否则自己保存激起的 `file-changed` 会被当成外部修改，表现为「保存完立刻弹冲突框」。
+   */
+  mtimeMs: number;
 }
 
 export interface Settings {

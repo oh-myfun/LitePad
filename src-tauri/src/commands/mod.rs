@@ -55,6 +55,29 @@ fn unwatch_file(state: &AppState, path: &Path) {
     }
 }
 
+/// 取文件的「修改时刻（毫秒）+ 字节数」，用作**磁盘版本号**。
+///
+/// 前端据此判断一次 `file-changed` 是不是自己刚写盘激起的回声：
+/// 自己保存 → 事件里的版本号必然等于保存后记录的已知版本 → 忽略；
+/// 别人保存 → 版本号不同 → 真的外部修改。
+///
+/// 只比对 mtime 不够：Windows 上同一次写入可能给出相同的 mtime，
+/// 所以把 size 一起带上（VS Code 的 etag 也是这么拼的）。
+pub fn disk_version(path: &Path) -> (i64, u64) {
+    match fs::metadata(path) {
+        Ok(m) => (
+            m.modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0),
+            m.len(),
+        ),
+        // 文件刚被删/正在被替换：版本号记 0，下次事件必然与之不同，于是不会被当成回声吞掉
+        Err(_) => (0, 0),
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TabInfo {
@@ -88,6 +111,8 @@ pub struct OpenedFile {
     pub size_class: String,
     /// 分级提示文案（normal 为空串）：直接显示给用户，说明关掉了哪些特性。
     pub size_hint: String,
+    /// 读盘那一刻的文件版本号（mtime 毫秒）。前端记下来用于抑制自身保存的回声事件。
+    pub mtime_ms: i64,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -109,6 +134,9 @@ pub struct SavedFile {
     pub eol: String,
     pub lossy: bool,
     pub lossy_chars: Vec<LossyChar>,
+    /// 写盘之后的文件版本号（mtime 毫秒）：前端更新「已知磁盘版本」用的就是它，
+    /// 否则自己保存激起的 `file-changed` 会被当成外部修改（表现为保存完立刻弹冲突框）。
+    pub mtime_ms: i64,
 }
 
 fn tab_info(d: &doc::Doc) -> TabInfo {
@@ -188,6 +216,8 @@ pub async fn open_file(
     let text = eol::to_lf(&decoded.text);
     let readonly = doc::is_readonly(&target);
     let abs = fs::canonicalize(&target).unwrap_or(target.clone());
+    // 读完之后再取版本号：这样「已知磁盘版本」与装进编辑器的内容严格对应
+    let (mtime_ms, _) = disk_version(&target);
 
     let mut guard = state.docs.lock().map_err(|e| e.to_string())?;
 
@@ -214,6 +244,7 @@ pub async fn open_file(
             lossy: decoded.lossy,
             size_class: class.as_str().into(),
             size_hint: doc::size_class_hint(class).into(),
+            mtime_ms,
         });
     }
 
@@ -245,6 +276,7 @@ pub async fn open_file(
         lossy: decoded.lossy,
         size_class: class.as_str().into(),
         size_hint: doc::size_class_hint(class).into(),
+        mtime_ms,
     })
 }
 
@@ -349,6 +381,10 @@ pub async fn save_file(
     }
     watch_file(&state, &abs);
 
+    // 写盘之后再取版本号：前端据此更新「已知磁盘版本」，于是自己这次保存激起的
+    // file-changed 会被认成回声（版本号相同）而忽略。
+    let (mtime_ms, _) = disk_version(&target);
+
     Ok(SavedFile {
         tab_id,
         path: target.to_string_lossy().into_owned(),
@@ -361,6 +397,7 @@ pub async fn save_file(
         eol: eol_kind.label().into(),
         lossy: had_errors,
         lossy_chars,
+        mtime_ms,
     })
 }
 
