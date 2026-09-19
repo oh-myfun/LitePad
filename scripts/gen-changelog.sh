@@ -27,9 +27,15 @@ mkdir -p .tmp
 TMP=".tmp/changelog-$$.md"
 
 # —— 按类型归类（保持 git log 的新→旧顺序）——
+#
+# ⚠️ 循环条件里的 `|| [ -n "$sha" ]` 不是保险起见，是**必须**：
+#    `git log --pretty=format:` 的最后一条记录**不带尾换行**，而 `read` 在遇到
+#    「有内容但无换行」的 EOF 时返回非 0 → 循环体不执行 → **区间内最旧的提交被静默丢弃**。
+#    事故：v0.8.0 的 CHANGELOG 少了本版唯一的 feat 条目（a3bc51f）——因为新→旧排列下
+#    最后一行正好是它。改这行前请先读 regressions 的 B82 守卫。
 FEAT=""; FIX=""; PERF=""; REFACTOR=""; OTHER=""
 COUNT=0
-while IFS=$'\x1f' read -r sha subj; do
+while IFS=$'\x1f' read -r sha subj || [ -n "$sha" ]; do
   [ -n "$subj" ] || continue
   COUNT=$((COUNT + 1))
   line="- ${subj#*: } \`$sha\`"

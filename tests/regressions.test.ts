@@ -2122,6 +2122,18 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     expect(keys, "icons.ts 只应剩 sun / moon（其余一律 codicon）").toEqual(["sun", "moon"]);
   });
 
+  it("B82 CHANGELOG 生成器不得吞掉区间内最后一个提交（git log 无尾换行）", () => {
+    // 事故：v0.8.0 的 CHANGELOG 少了本版唯一的 feat 条目（a3bc51f）。
+    // 根因：`git log --pretty=format:'%h%x1f%s'` 的最后一条记录**不带尾换行**，而
+    // `while IFS=… read` 在「有内容但无换行」的 EOF 上返回非 0 → 循环体不执行 →
+    // 区间内**最旧**的提交被静默丢弃（新→旧排列下，丢的正好是本版头号 feature）。
+    // 修法：循环条件补 `|| [ -n "$sha" ]`。这条断言就是防止它被「简化」回去。
+    const sh = readFileSync("scripts/gen-changelog.sh", "utf-8");
+    expect(sh, '读循环必须补 EOF 兜底（|| [ -n "$sha" ]），否则吞提交').toContain(
+      'read -r sha subj || [ -n "$sha" ]',
+    );
+  });
+
   it("B79 主题：档位必须写回 settings 才存得下；三态按钮一律不点亮", () => {
     // ⚠️ 断言必须落在**代码**上，不能落在整份文件上：上面这段说明性的注释里就写着
     // `persistSettings()` 和 `themeMode = normalizeMode(settings?.theme)`，
