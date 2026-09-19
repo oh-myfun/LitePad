@@ -10,6 +10,7 @@
 - 状态归 Rust、视图归前端；内存 LF、落盘还原原行尾 → `ref/architecture-detail.md` §1
 - 每个交付一个 Conventional Commit + 回归测试 + 反向验证 → `docs/conventions.md` / 技能 `litepad-reverse-verify`
 - 界面改动必刷 `docs/screenshots/` 同一提交 → `MEMORY.md` 红线
+- **按钮图标一律用 VS Code codicon**（`src/shell/codicons.ts` + `scripts/fetch-codicons.mjs`）；**禁手绘 SVG**；codicon 无对应字形时**先与用户商量**再引别的图标集 → `docs/conventions.md`
 - `docs/*.md` 是说明不是契约，改语义同步清单/状态表（B67） → `MEMORY.md` 红线
 - 编译门：tsc→vite→vitest→cargo build+test→tauri build（`.githooks`+CI） → `docs/build-env.md`
 - README 使用者向（顶部一张 `main.png`，无快捷键/安装/构建） → `docs/conventions.md`

@@ -15,6 +15,7 @@ LitePad（B34 更名，LiteMD 已 B36 清理）Tauri 2（Rust 持状态）+ Vite
 - **状态归 Rust、视图归前端**；内存文本 LF，落盘还原原行尾。
 - 每个交付一个 Conventional Commit；每个 bug 必须补回归测试 + 改完先**反向验证**（技能 `litepad-reverse-verify`）。
 - **界面改动必刷 `docs/screenshots/` 同一提交**；不影响观感在提交信息注明。
+- 🎨 **图标一律用 VS Code codicon**（`src/shell/codicons.ts`，由 `scripts/fetch-codicons.mjs` 从 `@vscode/codicons` 抽取；取用 `CODICONS.<name>`）；**禁手绘 SVG**；codicon 无对应字形先与用户商量再引别的图标集（详见 `docs/conventions.md`「图标」/ `rules/index.md`）。
 - ⚠️ `docs/*.md` 是说明不是契约，改语义须同步改清单/状态表（B67 守卫）。
 - 每次编译产出发布版本：tsc→vite→vitest→cargo build+test→tauri build（门 = `.githooks` + GitHub `CI`）。
 - **README 使用者向**：顶部一张 `main.png`，无快捷键/安装/构建/明确不做，避开库名与内部机制。

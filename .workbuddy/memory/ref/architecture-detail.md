@@ -109,12 +109,29 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   `<选择器>[hidden]{display:none}`**，否则 `hidden` 属性被盖掉、元素关不掉。
   已踩三次：`.find-bar`（B30）、`.tooltip-key`/`.tooltip-detail`（B58）、`.find-row-replace`（B73）。
   根因与判据见 `pitfalls/0073-hidden-vs-display-flex.md`。
+- **图标只有两个来源**（用户 2026-09-18 立规：「按钮图标全部用 vscode 图标集中的图标，
+  不要自己绘制 svg」，见 `docs/conventions.md`「图标」节）：
+  - `src/shell/codicons.ts` = **全应用按钮图标**的唯一来源，**生成物、要入库**。由
+    `scripts/fetch-codicons.mjs` 从 `@vscode/codicons@0.0.46-24`（MIT）的 `src/icons/*.svg`
+    逐字抽取（现 33 颗）。取用一律 `CODICONS.<name>`，不得把字形写死在消费方。
+    ⚠️ **生成物必须过 `format:check`，而不要手写折行规则去猜 prettier** —— 实测按
+    printWidth 数长度在 33 颗里错 5 颗（save/code/json/tag/diff），脚本改为直接调 prettier 收尾。
+    ⚠️ 文件类型 10 家族必须映射到 10 颗**互不相同**的 codicon（brace/brk 最容易撞车：
+    现在 brace→`json`、brk→`symbolClass`），脚本 `assertFamilies()` 与回归测试双重拦截。
+  - `src/shell/icons.ts` = **只剩 sun / moon 两颗手绘**（官方 639 颗清单里没有日/月字形，
+    最接近的 `color-mode` 已用于「跟随系统」档），经用户确认豁免；其余历史自绘图标已全删。
+  - 家族配色仍由我们维护：`.tab-icon[data-fam]` 取 `--ficon-*`（浅深各 10 个）；字形由
+    `src/shell/fileicons.ts` 的 `FAM_ICON` 表给出（家族 → codicon 名）。
+  - 红线由 `regressions.test.ts` 的 **B81** 把守：消费方源码里不得出现 `<svg`；工具栏整张表
+    必须是 codicon 名；`fileicons.ts` 不得再自建 `GLYPHS` 表；`icons.ts` 只能有 `sun`/`moon` 两个键
+    （反向验证过：任一条被破坏都会立刻报红）。
 
 ## 7. 功能架构落点
 
 - **查找/替换**：统一入口 = 悬浮栏 `src/shell/findbar.ts`（挂在 `#app`，切文件/面板不关闭）。
   **B73 起对齐 VS Code 的紧凑浮层（用户从 A/B/C 三案选了 C）**：钉在右上角、**无标题栏、
-  不可拖动、不记忆位置**；匹配选项是**输入框内侧的图标开关**（`Aa` 大小写 / `ab` 全词 / `.*` 正则）；
+  不可拖动、不记忆位置**；匹配选项是**输入框内侧的图标开关**（`CODICONS.caseSensitive` /
+  `wholeWord` / `regex` / `preserveCase`，B81 起全部照搬官方字形，不再是自绘的 `Aa`/`ab`/`.*`）；
   另有**文档图标 `find-docs`**（在全部已打开文档中查找，激活时徽标显示文档数）与
   **chevron `find-chevron`** 折叠替换行（默认折叠，替换行内嵌「保留大小写」开关 `AB`）。
   计数为紧凑写法 `n/m`，**无匹配时变红**（`.find-count-bad`）。
@@ -273,8 +290,9 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
     改任一侧都要同步另一侧。静态锁在 `regressions.test.ts` 的 B65 / B66 块。
 - **标签的文件类型图标**（B57，对应 VS Code 的 `.tab.has-icon`）：名字左边一个 **16px**
   家族字形，`.tab-icon[data-fam]` 取 `--ficon-*` 配色（**浅深两套主题各 10 个**，缺一个就是
-  某主题下该家族图标没颜色）。字形与家族映射在 **`src/shell/fileicons.ts`**（零依赖内联 SVG，
-  `strokeIcon` 产出；不引图标库）—— 10 个家族覆盖 `language.ts` 注册表**全部 56 个 label**，
+  某主题下该家族图标没颜色）。字形与家族映射在 **`src/shell/fileicons.ts`**（`FAM_ICON` 表 →
+  `CODICONS.*`，见 §6「图标只有两个来源」；**已不再是自绘 `strokeIcon`**）—— 10 个家族覆盖
+  `language.ts` 注册表**全部 56 个 label**，
   未知 / `null` 回落 `txt`。语言标签由 `main.ts` 经 `TabViewData.lang` 传下来
   （漏传 ⇒ 所有标签静默退化成灰色三条横线，回归测试锁覆盖度）。
 - **标签视觉的摇摆史（别再来一轮）**：
@@ -286,8 +304,8 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   先确认用户要的是「描边派」还是「底色派」—— 两条路线的可见性差异在浅色主题下尤其大。
   高度/宽度同理：**「太高」「太窄」各已被推翻一次**，动手前先问，别默认抄 VS Code 的档位。
   accent 条那条不能回来的原因见上：`box-shadow` 会被 `.tab-flash` 的动画结束态盖掉。
-- **面板区**（B54）：面板操作栏**只剩「移除分屏」**一个矢量图标按钮（`ICONS.closePanel`）。
-  B53 曾加过 `ICONS.splitH` / `splitV`，B54 按用户要求去掉 —— 分屏改由**把标签拖到面板边缘**
+- **面板区**（B54）：面板操作栏**只剩「移除分屏」**一个矢量图标按钮（`CODICONS.close`）。
+  B53 曾加过左右/上下分屏两个图标按钮，B54 按用户要求去掉 —— 分屏改由**把标签拖到面板边缘**
   （`zoneOf` + 拖拽落点）；`cb.onSplitPanel` 回调与接口字段一并删除。
   ⚠️ **删按钮 ≠ 删功能**：菜单「视图 → 左右/上下分屏」与快捷键（`panel.splitH`/`splitV`）
   仍然走 `main.ts` 的 `splitActivePanel(activePanelId, dir)` —— 回归测试同时锁「按钮没了」+「菜单/键位还在」。

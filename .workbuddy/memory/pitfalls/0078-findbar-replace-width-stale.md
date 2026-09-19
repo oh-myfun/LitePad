@@ -15,6 +15,10 @@
 - **顺带的事实**：VS Code 的 codicon **只以字体发布**，`docs/vscode-reference` 里
   `codiconsLibrary.ts` 只有码位（`replace: 0xeb3d`、`replaceAll: 0xeb3c`），**拿不到轮廓**；
   沙箱也拉不了 raw.githubusercontent.com（curl exit 35 / WebFetch 失败）。
-  要抄图标字形时别再去找源码 —— 要么自绘（本项目选这条），要么引字体文件。
+  ⚠️ **2026-09-18 更正**：轮廓其实拿得到 —— 官方 npm 包 `@vscode/codicons` 的
+  `src/icons/*.svg` 就是纯路径 SVG。当时只试了 raw.githubusercontent 与仓库内引用，
+  没想到包里带源文件。现在一律走 `scripts/fetch-codicons.mjs` 抽取（见
+  `docs/vscode-reference/INDEX.md` J 段），**不要再自绘** —— 自绘是本条记录留下的弯路，
+  已被 B81 红线取代（`docs/conventions.md`「图标」节）。
 - **教训**：凡「JS 量 A 写死给 B」的同步，先问一句「A 之后还会不会变」；会变就上
   `ResizeObserver`，别指望在正确的时机量一次。

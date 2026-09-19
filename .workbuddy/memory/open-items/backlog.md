@@ -33,6 +33,8 @@
 - **B77 查找栏**：外观已按 VS Code 重做（折叠态 34px / 扁平图标按钮 / 两档悬停 / 输入框内嵌开关），
   尚无任何真机截图。它与 `command-palette.png` 可一次会话同拍。现有四张截图都不含查找栏。
   （已同步记入 `docs/screenshots/README.md`。）
+  ⚠️ **v0.7.0 又改**：整体右上角微调、修「折叠按钮 vs 左侧拖拽条」重叠（chevron `left:4px`）、
+  计数区常驻「无内容」、多文档徽标改 a/b —— 重拍 `main.png` 时需体现这些新观感。
 
 ## 待清理
 - `menu.ts` 的 `MenuItem.active` 与 `.menu-item-current`（B53 后无使用者）。
@@ -41,8 +43,21 @@
   带 `toContain` 的会假红好发现，带 `not.toContain` / `not.toMatch` 的会**静默通过**（假绿）。
   已提供 `themeBlock()` / `ruleBlock()` 两个剥注释 + 数花括号的助手，新用例必须用它；
   旧点逐批迁移（按域分批，改一批跑一批，别一次性重排整个文件）。
+- **`tests/` 从未被类型检查（09-19 实测，52 个错误）**：`tsconfig.json` 是 `"include": ["src"]`，
+  29 个测试文件 + `setup.ts` 完全不在 `tsc --noEmit` 范围内。实测含 TS2339×17（`layout.test.ts`
+  判别联合未收窄）、TS2307×13（缺 `@types/node`）、**TS2578×4（`@ts-expect-error` 已成空转）**，
+  以及 `tests/menubar.test.ts:101` 给 `MenuBarCallbacks` 传**已不存在的 `themeChecked` 字段**
+  （该用例是否还在验证当前行为存疑）。详见 `open-items/inknote-benchmark.md` §2 P1-6。
+  修法：`include: ["src", "tests"]` 或新增 `tsconfig.test.json` 并在 CI 跑；**修完类型后必须复跑测试**，
+  若某用例变红即说明它此前是假绿。
 
 ## 待定
+- **InkNote 借鉴提案**（09-19 新建 `open-items/inknote-benchmark.md`）：外部开源编辑器 InkNote
+  （Tauri 2 + React 19 + CM6，`E:\Project\InkNote`）源码研读后的 8 个可借鉴模式 + 5 条「不要学」+
+  S2→S1→S3→S4/S5/S6 落地顺序。**尚未开工，待用户确认。** 核心结论：LitePad 的问题不是
+  「main.ts 太大」而是「没有状态边界」（`refreshAll()` 手工调用 25 处）。
+- **键盘/右键补齐候选**（原会话任务 #49，09-19 会话任务列表清理时移入此处）：移动标签到相邻面板 /
+  按序号切面板 / 右键方向拆分。未纳入当前里程碑，待定。
 - 是否发 **v0.3.1**；M5 规划未定（候选见 `DESIGN.md`）。
 - **应用自身日志** `%TEMP%\litepad-app.log` / `litepad-smoke.log`（Rust 侧 `commands/mod.rs` 经
   `std::env::temp_dir()`）是否也收进项目内或 `%APPDATA%\LitePad`（`MEMORY.md` 的「临时文件落项目内」
