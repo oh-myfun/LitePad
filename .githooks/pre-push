@@ -128,10 +128,26 @@ if command -v npm >/dev/null 2>&1 && { [ -x "$HOME/.cargo/bin/cargo.exe" ] || co
     esac
   done
   IFS="$OLDIFS"
-  PATH="$FE_PATH" npm run build || {
-    echo "✗ pre-push 失败：前端构建（tsc + vite）未通过" >&2
+  # ⚠️ 第二层兜底：**vite 会间歇性挂死**，光靠剥离 PATH 挡不住。09-20 钩子内实测：
+  #    已经剥离过 MSYS2 条目，仍然卡在「✓ 2667 modules transformed」之后的写盘阶段不动，
+  #    内存涨到 ~1.7G（同一指纹手动跑时又是 71s 正常完成）→ 是**概率性**问题。
+  #    所以加超时 + 重试一次：卡住就杀掉重来，仍卡住才判失败（不会把推送无限期挂起）。
+  #    `timeout -k` 是必须的：只发 TERM 时 npm 未必带走 node 子进程，会留下孤儿继续吃内存。
+  #    `timeout` 本身若不存在（极简环境）就退化为不超时，别让「缺 coreutils」挡住推送。
+  TO=""
+  if command -v timeout >/dev/null 2>&1; then TO="timeout -k 10 240"; fi
+  BUILD_OK=0
+  for attempt in 1 2; do
+    if PATH="$FE_PATH" $TO npm run build; then
+      BUILD_OK=1
+      break
+    fi
+    echo "⚠ 前端构建第 ${attempt} 次失败或超时（vite 会间歇性挂死，见 pitfalls/0085），重试…" >&2
+  done
+  if [ "$BUILD_OK" != 1 ]; then
+    echo "✗ pre-push 失败：前端构建（tsc + vite）未通过（已重试 1 次）" >&2
     exit 1
-  }
+  fi
   # 缺 makensis 就只出 exe（--no-bundle）：「没有安装包工具」不该挡住推送，exe 才是硬需求
   BUNDLE_FLAG=""
   if ! [ -x "$HOME/AppData/Local/tauri/NSIS/makensis.exe" ] && ! command -v makensis >/dev/null 2>&1; then

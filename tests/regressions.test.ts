@@ -2200,9 +2200,12 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     const buildAll = stripHash(readFileSync("scripts/build-all.sh", "utf-8"));
 
     expect(hook, "pre-push 必须过滤掉含 msys64 的 PATH 条目").toContain("*msys64*) ;;");
-    expect(hook, "前端构建必须用剥离后的 PATH 跑，不能直接用原 PATH").toContain(
-      'PATH="$FE_PATH" npm run build',
-    );
+    expect(hook, "前端构建必须用剥离后的 PATH 跑，不能直接用原 PATH").toContain('PATH="$FE_PATH"');
+    // ⚠️ 剥离 PATH **不足以兜住**：09-20 钩子内实测剥离后仍挂在写盘阶段（内存 ~1.7G），
+    // 而手动跑同一命令 71s 就完成 —— 是间歇性的。所以必须有超时 + 重试，
+    // 否则一次挂死就会把推送无限期卡住（第一次就是挂了 12 分钟才被人工杀掉）。
+    expect(hook, "vite 必须带超时，挂死时能自己退场").toContain("timeout -k 10 240");
+    expect(hook, "超时/失败后要重试一次，别把间歇性挂死当真失败").toMatch(/for attempt in 1 2/);
     // build-all.sh 顶部恰恰把 msys64 前插进 PATH，是卡死的原发地，同样要剥
     expect(buildAll, "build-all.sh 的前端构建同样必须剥离 MSYS2 条目").toContain(
       'PATH="$FE_PATH" npm run build',

@@ -1,61 +1,73 @@
-# ADR 0085：vite build 在 PATH 含 MSYS2 条目时**挂死**（不是慢，是不动）
+# ADR 0085：`vite build` 会**间歇性挂死**（写盘阶段不动，内存 ~1.7G）
 
-- **状态**：Accepted（09-20 实测坐实；此前两轮只记为「疑点未定论」）
+> ⚠️ 文件名是**历史遗留**：初版误以为根因是「PATH 含 MSYS2 条目」，后来证实那只是诱因之一
+> （剥离后仍复现），真实范围是「vite 构建间歇性挂死」。改名要动 `.workbuddy` 目录（`git mv`
+> 有清空整棵目录的风险，见 `MEMORY.md` 红线），故保留旧名 + 在此注明。
+
+
+- **状态**：Accepted（09-20 多轮实测）
 - **域**：构建 / 环境
-- **来源**：B85（v0.8.0 之后的复盘；同源记录见 `ref/session-env.md` §5、open-items/2026-09-19.md B78 节）
+- **来源**：B85（`pre-push` 引入本地构建门后暴露；09-19 在 build-all.sh 里已出现过两次）
 - **关联**：`.githooks/pre-push`、`scripts/build-all.sh`、守卫 `tests/regressions.test.ts` B85；
-  与 0083 同源（都是「MSYS 下 PATH 条目对某个消费者是毒药」，只是这次的消费者是 node/vite 而非原生 cargo）
+  `ref/session-env.md` §5；与 0083 同族（MSYS 下「PATH 条目对某个消费者是毒药」）
 
 ## 背景（Context）
-09-19 在 `build-all.sh` 里 `vite build` **两次卡死**：transform 完、写完部分产物后进程不退出，
-挂 1 小时。当时规避为「分步跑」，疑点标在脚本顶部把 `/c/msys64/mingw64/bin` 前插进 PATH，
-**未定论**。
+09-19 `build-all.sh` 里 `vite build` 两次卡死：transform 完、写完部分产物后进程不退出，挂 1 小时。
+09-20 给 pre-push 加本地构建门后又连着复现，一共拿到四次观测：
 
-09-20 做「推送前本地构建」时再次复现，这次有条件做对照：
-
-| 命令 | PATH | 结果 |
-|---|---|---|
-| `npm run build` | 含 `/c/msys64/mingw64/bin` | **挂死** 13 分钟不出产物 |
-| `npm run build` | 剥离该条目 | **40s** 完成 |
+| # | 场景 | PATH | 结果 |
+|---|---|---|---|
+| 1 | 手动 `npm run build` | **含** `/c/msys64/mingw64/bin` | 挂 13 分钟 |
+| 2 | 手动 `npm run build` | 剥离该条目 | **40s** 完成 |
+| 3 | pre-push 钩子内（已剥离该条目） | 钩子 PATH | **挂住**，卡在 `✓ 2667 modules transformed` 之后 |
+| 4 | 手动 `npm run build`（剥离后） | 同 #2 | **71s** 完成 |
 
 ## 根因（Root Cause）
-为给 cargo 提供 `windres` 而把 MSYS2 的 `mingw64/bin` 加进 PATH 后，**node/vite 会在其中挂住**。
+**没有单一根因，是概率性的写盘阶段挂死。** 能确定的只有：
 
-指纹（**判别「慢」还是「挂」的关键**）——挂死时：
+- 挂点固定：rollup 报完 `✓ N modules transformed` 之后，**写 `dist/assets` 的阶段**不动；
+- 指纹：**CPU 不再增长**（实测停 ~25s / 64s），**内存却涨到 ~1.7–1.8G**；
+  `esbuild` 子进程 CPU ~0.2s 全空闲；`dist/assets` 被清空后不写入（或只写一部分）。
 
-- `dist/assets/` 被**清空后一直不写入**（`index.html` 也停在旧时间）；
-- 主 node 进程 **CPU 只走 ~25s 就不再增长**，内存却涨到 **~1.8G**；
-- `esbuild.exe` 子进程 CPU ~0.4s，完全空闲；
-- 没有任何 cargo/rustc 进程（说明根本没走到 Rust 侧）。
-
-⚠️ **不要把它当成「构建很慢」去等**。本项目 release 构建确实要几分钟，但那是
-**rustc CPU 持续爬升**（实测 2.5 分钟爬到 76s）。**CPU 不涨 + 内存畸高 = 挂死**，
-判据就是看 CPU 时间是否随墙钟增长。
+⚠️ **结论修正（重要）**：#1/#2 的 A/B 一度指向「PATH 含 MSYS2 条目」，但 **#3 证明剥离后仍会挂**
+—— 所以 MSYS2 条目至多是**诱因之一，不是充分条件**。曾把它写成「根因坐实」是错的，别再照抄旧结论。
+（剥离仍然要做：#1/#2 表明它确实会提高触发概率。）
 
 ## 决策（Decision）
-前端构建**必须在剥离 MSYS2 条目后的 PATH 下跑**，Rust 侧仍用完整 PATH（它需要 windres）：
+两层兜底，**缺一不可**：
+
+1. **跑前端构建前剥离 PATH 里的 MSYS2 条目**（Rust 侧需要 windres，仍走完整 PATH）：
 
 ```sh
 FE_PATH=""
 OLDIFS="$IFS"; IFS=":"
 for d in $PATH; do
-  case "$d" in
-  *msys64*) ;;                       # ← 摘掉
-  *) FE_PATH="${FE_PATH:+$FE_PATH:}$d" ;;
-  esac
+  case "$d" in *msys64*) ;; *) FE_PATH="${FE_PATH:+$FE_PATH:}$d" ;; esac
 done
 IFS="$OLDIFS"
-PATH="$FE_PATH" npm run build        # 仅对这一条命令生效，跑完 PATH 自动恢复
 ```
 
-落地在两处：`.githooks/pre-push`（新增的本地构建段）与 `scripts/build-all.sh`（原发地）。
-守卫 **B85** 断言两处都有 `PATH="$FE_PATH" npm run build` 与 `*msys64*) ;;`。
+2. **超时 + 重试一次**（挡住「挂死把推送无限期卡住」）：
+
+```sh
+TO=""; if command -v timeout >/dev/null 2>&1; then TO="timeout -k 10 240"; fi
+BUILD_OK=0
+for attempt in 1 2; do
+  if PATH="$FE_PATH" $TO npm run build; then BUILD_OK=1; break; fi
+done
+```
+
+- `timeout -k` 是必须的：只发 TERM 时 npm 未必带走 node，会留下孤儿继续吃 1.7G 内存；
+- `timeout` 不存在时退化为不超时，别让「缺 coreutils」反过来挡住推送。
+
+落地：`.githooks/pre-push`（两层都有）、`scripts/build-all.sh`（第 1 层）。守卫 **B85**。
 
 ## 后果与守卫（Consequences）
-- 前端构建稳定在 ~40s；「推送前本地构建」这条硬门才可能落地（否则每次推送都可能挂住）。
-- ⚠️ **与 0083 是同一族问题**：MSYS 环境里「为 A 加的 PATH 条目，可能是 B 的毒药」。
-  0083 里 `C:/…` 毒死原生 cargo；这里 `/c/msys64/mingw64/bin` 毒死 node/vite。
-  以后往 PATH 里加东西，要想一遍「这份 PATH 还会被谁消费」。
-- ⚠️ 排查口诀：**先看 CPU 时间是否随墙钟增长**，再看产物目录有没有被清空后不写入。
-  光看「命令还在跑」会把挂死误判成慢（`ps -W` 的 CPU 列 / `Get-Process` 的 `CPU`）。
-- ⚠️ 卡死会清空 `dist/assets` 且只写一半 → **kill 后必须重跑 vite**，别直接进下一步。
+- 前端构建正常时 40–75s；挂住时最多 240s×2 后退场并报明确错误，不再无限期挂着。
+- ⚠️ **判别「慢」还是「挂」**：真的在编译时 rustc 的 CPU 时间**随墙钟持续爬升**（2.5 分钟 → 76s）；
+  vite 挂死是 **CPU 不涨 + 内存畸高**。看 `Get-Process … | Select CPU,StartTime`。
+- ⚠️ **别只看退出码/日志**：卡住时日志停在 `transforming...` / `✓ N modules transformed`，
+  没有任何报错行，看起来就是「还在跑」。
+- ⚠️ 挂死会清空 `dist/assets` 且只写一半 → **kill 后必须重跑前端构建**，别直接进 tauri build。
+- ⚠️ 同类教训（0082 / 0083 / 本条）：本项目脚本反复出现**静默失效 / 假成功**，
+  改动后一律真跑一次并**回读产物**。

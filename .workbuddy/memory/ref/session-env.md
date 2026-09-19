@@ -47,11 +47,15 @@
   **rustc 的 CPU 时间持续爬升**（实测 2.5 分钟 → 76s）。挂死则是 **CPU 停在 ~25s 不涨、
   内存却涨到 ~1.8G**、`dist/assets` 被清空后一直不写入、esbuild 子进程 CPU ~0.4s。
   看 `Get-Process -Name rustc,cargo,node | Select CPU,StartTime` 的 **CPU 列是否随墙钟增长**。
-- ⚠️ **根因：PATH 里有 MSYS2 条目（`/c/msys64/mingw64/bin`）时 `vite build` 挂死。**
-  09-20 对照实测：带该条目挂 13 分钟不出产物；剥离后同一命令 **40s** 完成。
-  修法见 `pitfalls/0085-vite-hangs-when-msys2-in-path.md`，两处脚本（pre-push / build-all.sh）
-  都已「跑前端前临时剥离 MSYS2 条目」，守卫 B85。
-  卡死会清空 `dist/assets` 且只写一半 → **kill 后必须重跑 vite**，别直接进下一步。
+- ⚠️ **vite 会间歇性挂死**（09-20 四轮实测）。挂点固定在 rollup 报完 `✓ N modules transformed`
+  之后的**写盘阶段**；指纹是 CPU 不涨 + 内存 ~1.7–1.8G + `dist/assets` 被清空后不写入。
+  - ⚠️ **结论修正**：一度以为根因是「PATH 含 MSYS2 条目」（A/B 一次 13 分钟挂 / 一次 40s 成），
+    但剥离后钩子内**仍然挂** → 那只是**诱因之一**。完整结论见
+    `pitfalls/0085-vite-hangs-when-msys2-in-path.md`。
+  - 兜底是两层：跑前端构建前**剥离 MSYS2 PATH 条目**（Rust 侧仍需 windres，走完整 PATH）
+    **＋ `timeout -k 10 240` 并重试一次** —— 少了超时，一次挂死就会把 `git push` 无限期卡住
+    （实测挂了 12 分钟才被人工杀掉）。守卫 B85。
+  - 卡死会清空 `dist/assets` 且只写一半 → **kill 后必须重跑 vite**，别直接进下一步。
 
 ## 6. 进程清理（打包前必查）
 - 打包前若 `target/release/litepad.exe` 仍残留进程，会占用产物 → `failed to remove file litepad.exe /

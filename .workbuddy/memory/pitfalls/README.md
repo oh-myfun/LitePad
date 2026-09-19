@@ -13,7 +13,7 @@
 | 0078 | findbar-replace-width-stale | 查找/替换两框同宽要跟随 resize，量一次会过期（测量早于 setCount 会算出旧值） |
 | 0082 | changelog-gen-drops-last | `git log --pretty=format:` 末条无换行，`while read` 静默吞掉区间内最旧提交 |
 | 0083 | prepush-windres-posix-path | 钩子里写进 PATH 的探测结果必须 `cd … && pwd` 归一，`C:/…` 对原生子进程是死路 |
-| 0085 | vite-hangs-when-msys2-in-path | PATH 含 MSYS2 条目时 `vite build` **挂死**（CPU 不涨、内存 1.8G），跑前端前必须剥离 |
+| 0085 | vite-hangs-when-msys2-in-path（文件名历史遗留，实为「vite 间歇性挂死」） | `vite build` 会概率性挂在写盘阶段（CPU 不涨、内存 ~1.7G）；须剥离 MSYS2 PATH 条目 + 超时重试 |
 
 新增踩坑时：在对应 `ref/<domain>.md` 的原文处替换为指向本目录某记录的指针，并新建一条
 `<NNNN>-<slug>.md`（序号取 B 编号，slug 用 kebab-case 概括根因）。
