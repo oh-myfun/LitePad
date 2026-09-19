@@ -42,12 +42,10 @@ export function showExternalConflictDialog(
     title.textContent = "文件在外部被修改了";
 
     const body = document.createElement("div");
-    body.className = "conflict-body";
 
     const lead = document.createElement("p");
     lead.className = "conflict-text";
-    lead.textContent =
-      `${opts.name} 已在 LitePad 之外被修改，而你在编辑器里也有未保存的修改。` + `想保留哪一份？`;
+    lead.textContent = `${opts.name} 已在 LitePad 之外被修改，而你在编辑器里也有未保存的修改。想保留哪一份？`;
 
     const meta = document.createElement("div");
     meta.className = "conflict-meta";
