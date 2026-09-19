@@ -15,6 +15,12 @@
   export PATH="/c/Users/maoyu/.workbuddy/binaries/PortableGit/versions/1.2.0/bin:/c/Users/maoyu/.workbuddy/binaries/PortableGit/versions/1.2.0/usr/bin:/c/Windows/System32:/c/Windows:$PATH"
   ```
 - `git` 走系统 PATH 能找到，但 `git mv/rm` 等也建议显式带上上面 PATH 以防万一。
+- **09-19 实测可用的等价变体**（比上面短、够用；`/usr/bin` 是 shell 内的虚拟挂载，指向 Git 的 usr/bin）：
+  ```sh
+  export PATH="/usr/bin:/bin:/mingw64/bin:/c/Users/maoyu/.cargo/bin:/c/Windows/System32:$PATH"
+  ```
+  这一条同时解决了 coreutils（`/usr/bin`）与 cargo（`~/.cargo/bin`）——本次全流程（tsc/vitest/
+  cargo test/git push）都靠它跑通，**每条 Bash 命令都要带**（shell 状态不跨命令保留）。
 
 ## 2. 禁 `cd` + 永远用 `git -C` 绝对路径
 - **绝对不要在 Bash 里 `cd`**：shim 的 `cd` 会失败（`cd: null directory`），且一旦 cd 失败，后续相对路径的
@@ -57,7 +63,21 @@
 - ⚠️ 复查口诀：钩子打印的段落里**没有「▸ prettier --check」/「▸ eslint」** 就是被跳过了，
   别把「✓ pre-commit 通过」当成四个检查都跑了。
 
-## 7. 测试链路坑
+## 8. 注入的 `current_time` 可能是过期的（09-19 实测）
+- 会话上下文里注入的「当前时间」**不一定等于系统时间**：本次注入 `Friday, September 18, 2026
+  22:00 GMT+8`，而 `date` 与 `git log -1 --format=%ci` 都显示 **`Sat Sep 19 23:55 2026`**，
+  差了约 26 小时。
+- 后果：按注入日期给文件命名/写日志会**标错日期**（`memory/2026-09-18.md` 里装的其实是 09-19 的工作，
+  同批次还有 CHANGELOG 的日期）。
+- 判据：涉及「今天/日期」时，**以 `date` 和 `git log -1 --format=%ci` 为准**，不要用注入时间。
+
+## 9. 网络推送偶发 `HTTP 408`（09-19 实测）
+- 症状：pre-push 全绿后，`git push` 报 `RPC failed; HTTP 408` + `send-pack: unexpected disconnect`。
+  与代码无关；**先排查体积**（本次 5 个提交最大 blob 200KB、合计约 1MB，排除 payload 过大）。
+- 处置：重试即可；本次同时设了
+  `git config http.postBuffer 524288000`、`http.lowSpeedLimit 0`、`http.lowSpeedTime 999999`
+  后第二次成功。这些写入 `.git/config`（本地、不入库）。
+
 - `scripts/run-vitest.cjs` 自己会补 `run`：手动再写 `run` 会变成 `vitest run "run" "<file>"` 且失败时被吞 stdout。
   排查直接用 `npx vitest run <file>` 看输出。
 - 不要在本会话里和智能体写文件的同时手改同一文件（并发编辑冲突）。
