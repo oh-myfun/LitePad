@@ -3012,7 +3012,14 @@ function nextThemeMode(): ThemeMode {
   return cycle[(idx + 1) % cycle.length];
 }
 
-/** 主题按钮：图标随三态变化；仅「显式深色」点亮，与改动前的观感一致。 */
+/**
+ * 主题按钮：图标随三态变化（太阳 / 月亮 / 显示器）。
+ *
+ * ⚠️ **三档一律不点亮**（B79）：它是**循环按钮**，不是开关 —— 「激活态」在这里没有语义，
+ * 而旧代码写的是 `themeMode === "dark"` 才点亮，于是深色档顶着一块实蓝底、浅色与
+ * 跟随系统却是平的，三档观感各不相同（用户实测反馈）。当前档位由图标 + 悬停提示
+ * 「主题：X」表达，底色三档统一。
+ */
 function refreshThemeButton(): void {
   const state = THEME_STATES[themeMode];
   const next = THEME_STATES[nextThemeMode()].label;
@@ -3022,7 +3029,6 @@ function refreshThemeButton(): void {
   btnTheme.setAttribute("aria-label", `主题：${state.label}，点击切换为${next}`);
   // 测试与样式钩子：当前处于哪一档
   btnTheme.dataset.themeMode = themeMode;
-  btnTheme.classList.toggle("tool-btn-active", themeMode === "dark");
 }
 
 // ---------------------------------------------------------------- 大纲 TOC（M3）
@@ -3423,6 +3429,12 @@ async function toggleAutosave(): Promise<void> {
 async function setHotExit(on: boolean): Promise<void> {
   if (!settings || settings.hot_exit === on) return;
   settings.hot_exit = on;
+  // ⚠️ **必须写回 settings，否则根本存不下来**（B79 用户实测：每次打开都是深色）。
+  // 根因：`persistSettings()` 存的是这整个 settings 对象，而启动时读的是
+  // `settings.theme`（main 里 `themeMode = normalizeMode(settings?.theme)`）。
+  // 其它每一项设置（`word_wrap` / `font_size` / `keymap`…）都会在这里写回自己的字段，
+  // 唯独主题漏了 —— 于是落盘的永远是启动时的初始值 "system"，
+  // 而 system 在深色系统的机器上解析成深色，表现为「主题设了、重启就丢」。
   cancelPendingBackup();
   if (!on) discardAllBackups();
   await persistSettings();

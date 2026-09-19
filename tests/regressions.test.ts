@@ -35,6 +35,18 @@ function themeBlock(css: string, theme: "dark" | "light"): string {
   return "";
 }
 
+// 剥掉整行 `//` 注释（保留行号不变，便于报错定位）。
+// ⚠️ 源码断言必须落在**代码**上：本文件/源码里常有说明性注释，里面会原样复述被断言的
+// 标识符（B79 就在注释里写了 `persistSettings()` 与 `themeMode = normalizeMode(...)`）。
+// 反向验证实测：挖掉真正的调用后，只要比对整份文件，断言照样通过（**假绿**）。
+// 只剥「整行都是注释」的行，行内的 `//`（如 URL `https://`）不受影响。
+function stripLineComments(src: string): string {
+  return src
+    .split("\n")
+    .map((l) => (/^\s*\/\//.test(l) ? "" : l))
+    .join("\n");
+}
+
 // 取某条规则的**声明块体**（同样剥注释 + 数花括号）。selector 直接当字面量用。
 // 支持三种写法：
 //   · 单选择器 `.find-bar { }`
@@ -2053,6 +2065,41 @@ describe("B50 启动不得露出白色窗口（用户反馈：打开时先白屏
   // 窗口内容由 Chromium 用纯白填充，而前端要走完 `await loadSettings()`
   // → `await restoreSession()` 才有东西可画。
   //
+  it("B79 主题：档位必须写回 settings 才存得下；三态按钮一律不点亮", () => {
+    // ⚠️ 断言必须落在**代码**上，不能落在整份文件上：上面这段说明性的注释里就写着
+    // `persistSettings()` 和 `themeMode = normalizeMode(settings?.theme)`，
+    // 反向验证实测——挖掉真正的调用后，只要还比对整份文件，断言照样通过（假绿）。
+    // 所以先剥掉整行注释再断言。
+    const main = stripLineComments(readFileSync("src/main.ts", "utf-8"));
+
+    // ---- ① 落盘：settings.theme 必须被写回 ----
+    // 用户实测「每次打开都是深色」。根因：启动时读的是 `settings.theme`，而 setThemeMode
+    // 只改了内存里的 themeMode，**没写回 settings** —— persistSettings() 存的是整个对象，
+    // 于是 theme 永远是启动时的 "system"，深色系统下解析出来就是深色。
+    // ⚠️ 判据必须落在「写回」这个动作上：只断言「调了 persistSettings」会假绿（一直在调）。
+    const setBody =
+      main.match(/async function setThemeMode\(mode: ThemeMode\)[^{]*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    expect(setBody, "setThemeMode 必须把档位写回 settings（否则根本存不下来）").toMatch(
+      /settings\.theme = mode/,
+    );
+    expect(setBody, "写回之后必须落盘").toContain("persistSettings()");
+    expect(main, "启动时必须按 settings.theme 还原档位").toContain(
+      "normalizeMode(settings?.theme)",
+    );
+
+    // ---- ② 激活态：循环按钮三档外观必须一致 ----
+    // 用户实测「深色模式按钮带激活状态，其它模式没有」。旧代码是
+    // `btnTheme.classList.toggle("tool-btn-active", themeMode === "dark")`：
+    // 它是**循环按钮**不是开关，「激活」没有语义，且只有深色档点亮 = 三档观感各不相同。
+    expect(main, "⚠️ 主题按钮不得再按深色档点亮（循环按钮没有「激活」语义）").not.toMatch(
+      /btnTheme[\s\S]{0,160}?tool-btn-active/,
+    );
+    expect(main, "当前档位仍要写进 data 属性供测试/样式用").toContain("btnTheme.dataset.themeMode");
+    // .tool-btn-active 本身还要留着（自动换行等开关按钮在用），别整条删掉
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    expect(css, "开关按钮的激活态样式必须保留").toContain(".tool-btn.tool-btn-active");
+  });
+
   // 修法分两层：
   //   1) Rust 侧把 WebView2 的「预渲染底色」刷成界面背景色（set_background_color）；
   //   2) index.html 内联样式+脚本，让 HTML 的第一帧也是主题色。

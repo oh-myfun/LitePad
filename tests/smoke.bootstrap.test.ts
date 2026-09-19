@@ -87,6 +87,12 @@ function fireDragDrop(paths: string[], pos: { x: number; y: number } = { x: -1, 
 // ---- 桩：IPC 层 ----
 // 打开对话框返回值可编程（供"打开文件"回归测试驱动 doOpen）
 const openDialogResult: { value: string | null } = { value: null };
+/**
+ * 记录**最后一次落盘的 settings**（B79）。
+ * 主题不存盘那个 bug 的本质是「存了，但存的是没被改过的对象」——
+ * 光断言「调用了 saveSettings」看不出来，必须看落盘内容里 theme 到底是不是当前档位。
+ */
+const savedSettings = vi.hoisted(() => ({ last: null as Record<string, unknown> | null }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   ask: () => Promise.resolve(true),
   open: () => Promise.resolve(openDialogResult.value),
@@ -179,7 +185,10 @@ vi.mock("../src/ipc/api", () => ({
   saveFile: () => Promise.resolve({ lossy: [], path: "" }),
   savePasteImage: () => Promise.resolve(""),
   saveSession: () => Promise.resolve(),
-  saveSettings: () => Promise.resolve(),
+  saveSettings: (s: Record<string, unknown>) => {
+    savedSettings.last = s;
+    return Promise.resolve();
+  },
   // ---- B68 热退出 ----
   // restoreBackup 恒返回 null：让会话恢复走「文件兜底」这条路，
   // 与 B68 之前的用例预期一致（副本优先那条路径由回归测试静态守护）。
@@ -439,6 +448,50 @@ describe("bootstrap + drag-split smoke", () => {
     expect(new Set(seen).size, "三档都应被访问到").toBe(3);
     expect(seen[3], "第四次点击回到起点").toBe(startMode);
     expect(new Set(icons).size, "三档图标互不相同").toBe(3);
+  });
+
+  it("B79：主题档位必须写进 settings 才能存盘（回归：重启后变回深色）", async () => {
+    // 用户实测：每次打开都是深色。根因是 `settings.theme` 只在启动时**读**，
+    // 切换时从没**写回** —— persistSettings() 存的是整个 settings 对象，而它的 theme
+    // 一直停在启动时的 "system"，深色系统下解析出来就是深色。
+    // ⚠️ 判据必须落在**落盘内容**上：只断言「调用了 saveSettings」会假绿（存了一直存，
+    // 只是存的是旧值）。
+    const btn = document.getElementById("btn-theme") as HTMLButtonElement | null;
+    expect(btn, "btn-theme 应存在").toBeTruthy();
+    const b = btn!;
+    await resetThemeToSystem();
+    const saved: (string | undefined)[] = [];
+    for (let i = 0; i < 3; i++) {
+      b.click();
+      await new Promise((r) => setTimeout(r, 20));
+      const mode = b.dataset.themeMode;
+      expect(savedSettings.last, "切换主题必须落一次盘").toBeTruthy();
+      expect(savedSettings.last!.theme, `落盘的 theme 必须等于当前档位（${mode}）`).toBe(mode);
+      saved.push(savedSettings.last!.theme as string | undefined);
+    }
+    // 三档里至少两档是显式档：它们必须真的写进去了（这就是旧代码做不到的事）
+    expect(saved.filter((t) => t === "light" || t === "dark").length, "显式档必须落盘").toBe(2);
+  });
+
+  it("B79：主题按钮三档一律不点亮（回归：深色档顶着一块实蓝底）", async () => {
+    // 用户实测：深色模式按钮的样式和其它模式不同，带激活状态。
+    // 根因是 refreshThemeButton 里写死 `themeMode === "dark"` 才加 .tool-btn-active。
+    // 它是**循环按钮**不是开关，「激活」没有语义 —— 三档外观必须完全一致。
+    const btn = document.getElementById("btn-theme") as HTMLButtonElement | null;
+    expect(btn, "btn-theme 应存在").toBeTruthy();
+    const b = btn!;
+    await resetThemeToSystem();
+    const seen = new Set<string>();
+    for (let i = 0; i < 4; i++) {
+      expect(
+        b.classList.contains("tool-btn-active"),
+        `第 ${i + 1} 档（${b.dataset.themeMode}）不该有点亮态`,
+      ).toBe(false);
+      seen.add(b.dataset.themeMode ?? "");
+      b.click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(seen.size, "应走遍三档").toBe(3);
   });
 
   it("B51：浅色 ⇄ 深色 之间的切换必须翻转明暗", async () => {
