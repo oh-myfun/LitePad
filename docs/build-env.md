@@ -76,22 +76,26 @@ Rust 构建缓存里烙死了绝对路径。改目录名后 `cargo build/test` �
 
 ## 界面截图（README / docs）
 
-截图走 CDP 直连 WebView2（引擎 `scripts/cdp-shot.mjs`，一键四张用
-`scripts/capture-screenshots.mjs`）：
+唯一入口是 `scripts/capture-screenshots.py`（BitBlt 抓真实窗口，可见外框裁剪）：
 
 ```sh
-node scripts/capture-screenshots.mjs          # 全部四张 → docs/screenshots/
-node scripts/capture-screenshots.mjs main     # 只拍一张
+python scripts/capture-screenshots.py          # 拍 main → docs/screenshots/
+python scripts/capture-screenshots.py --list   # 看有哪些配方
+python scripts/capture-screenshots.py --keep   # 保留演示会话（排查用）
 ```
 
-前提是先构建一份「不传浏览器参数」的临时版本（环境变量才会被 WebView2 采纳）：
+它自己会**先杀干净旧实例、再**备份/写入演示会话（顺序反了会被退出中的旧实例覆盖），
+启动后等窗口标题带上演示文件名才抓图，最后还原真实的 `session.json` / `settings.json`
+（字段 camelCase）；抓到全黑图会直接报错而不是写出。界面改动必须在同一提交刷新
+`docs/screenshots/`。
+
+底层件在 `scripts/screenshot.py`（PNG 编码、窗口查找、BitBlt），也能单独用：
 
 ```sh
-node node_modules/@tauri-apps/cli/tauri.js build --no-bundle \
-  --config '{"build":{"beforeBuildCommand":""},"app":{"windows":[{"label":"main","additionalBrowserArgs":null}]}}'
+python scripts/screenshot.py --exe litepad.exe --out x.png --size 1600x1000
 ```
 
-脚本自己会备份/写入演示会话并还原真实的 `session.json` / `settings.json`
-（字段 camelCase）。**不要再用 `scripts/screenshot.py` 当主力** —— 它抓的是屏幕像素，
-会连鼠标与桌面背景一起拍进去；三个毛病的成因与新流程见 `docs/screenshots/README.md`。
-界面改动必须在同一提交刷新 `docs/screenshots/`。
+**为什么不用 CDP**：曾经走 `Page.captureScreenshot`（引擎 `cdp-shot.mjs`），它能免掉系统
+标题栏、不怕遮挡，但要求 WebView2 开出调试端口；在本机沙箱里调试端口开得出来、抓图却不
+返回（页面停在 `about:blank`），两套流程并存反而容易用错，现已合并成上面这一套。
+成因与取舍见 `docs/screenshots/README.md`。

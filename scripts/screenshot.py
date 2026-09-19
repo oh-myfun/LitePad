@@ -1,26 +1,28 @@
 """
 窗口截屏工具（纯标准库：ctypes + zlib，不依赖 Pillow）。
 
-⚠️ **补拍 README 截图请用 `scripts/capture-screenshots.mjs`（走 CDP），不要先来这里。**
-本脚本抓的是**屏幕像素**（`BitBlt(屏幕 DC, 窗口矩形)`），因此天生有三个毛病：
-  ① 鼠标停在那块区域里会被一起拍进去；
-  ② 没抢到前台（`SetForegroundWindow` 会被焦点窃取防护静默拒掉）就拍到别的窗口 ——
-     这就是「经常失败」的来源；
-  ③ 桌面背景 / 压在上面的别的窗口都可能混进来。
-留着它是当兜底（比如 CDP 端口在本机开不出来时，至少还能出一张）。
-成因与新流程见 docs/screenshots/README.md。
+⚠️ **补拍 README 截图请用 `scripts/capture-screenshots.py`**（它会备份/写演示会话、
+清 WebView2 用户数据、抢前台、空白自检，一条龙）。本脚本是它底下的**底层件**：
+PNG 编码、窗口查找、BitBlt 抓图，也能单独当命令行用（见下）。
+
+抓图口径：只抓**窗口可见外框**（`DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)`），
+不是 `GetWindowRect` —— Win10/11 那圈不可见的调整边框会把桌面背景带进图里。
+仍有两个固有毛病（调用方负责规避）：① 光标停在窗口里会被拍进去（补拍脚本会先挪走）；
+② 没抢到前台（`SetForegroundWindow` 会被焦点窃取防护静默拒掉）就会拍到别的窗口。
+完整流程与踩坑记录见 docs/screenshots/README.md。
 
 用法：
   python scripts/screenshot.py <标题关键字> <输出路径>
       查找标题含关键字的第一个可见窗口（注意：资源管理器标题里也含
       "LitePad" 这类目录名时容易误抓，此时请改用 --exe）。
   python scripts/screenshot.py --exe litepad.exe <输出路径>
-      按进程名定位窗口，比标题关键字可靠（兜底路径用这个）。
+      按进程名定位窗口，比标题关键字可靠（补拍脚本用这个）。
   python scripts/screenshot.py --pid 24076 <输出路径>
       直接指定窗口所属进程 pid。
   python scripts/screenshot.py --screen <输出路径>
       抓全屏。
 
+可选参数：`--size WxH` 先把窗口可见外框调成该尺寸；`--inset N` 四边各再切 N 像素。
 默认输出 scripts 同级的 smoke-window.png。
 """
 
@@ -110,6 +112,53 @@ class RECT(ctypes.Structure):
                 ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
 
 
+DWMWA_EXTENDED_FRAME_BOUNDS = 9
+
+
+def visible_rect(hwnd, inset: int = 0):
+    """窗口**可见**外框。
+
+    为什么不用 `GetWindowRect`：Win10/11 会给窗口套一圈**不可见**的调整边框（左右下各约
+    7-8px），`GetWindowRect` 把它算在内，直接照这个矩形 BitBlt 就会在图四周留一圈
+    桌面背景（实测左边和上边各约 7px）。DWM 的 extended frame bounds 才是眼睛看到的框。
+    """
+    rect = RECT()
+    ok = -1
+    try:
+        ok = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+            hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, ctypes.byref(rect), ctypes.sizeof(rect)
+        )
+    except Exception:
+        ok = -1
+    if ok != 0 or rect.right <= rect.left or rect.bottom <= rect.top:
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    if inset:
+        rect.left += inset
+        rect.top += inset
+        rect.right -= inset
+        rect.bottom -= inset
+    return rect
+
+
+def resize_window_to_frame(hwnd, width: int, height: int, inset: int = 0) -> None:
+    """把**可见外框**调成 width×height 并贴到屏幕 (0,0)。
+
+    对 `SetWindowPos` 来说尺寸含那圈不可见边框，所以先设一次、量一次实际可见框，
+    再按差值补一次——两次就收敛。这样导出的 PNG 正好是 width×height，
+    且窗口坐标 = 屏幕坐标（点击时不用换算）。
+    """
+    SWP_NOZORDER = 0x0004
+    user32.SetWindowPos(hwnd, 0, 0, 0, width, height, SWP_NOZORDER)
+    time.sleep(0.5)
+    r = visible_rect(hwnd, inset)
+    dx, dy = r.left, r.top
+    # 可见框比外框小一圈（左右下各约 8px），所以要**补上**差值，不是减掉
+    dw = width - (r.right - r.left)
+    dh = height - (r.bottom - r.top)
+    user32.SetWindowPos(hwnd, 0, -dx, -dy, width + dw, height + dh, SWP_NOZORDER)
+    time.sleep(0.6)
+
+
 class BMIHEADER(ctypes.Structure):
     _fields_ = [("biSize", ctypes.c_uint32), ("biWidth", ctypes.c_int32),
                 ("biHeight", ctypes.c_int32), ("biPlanes", ctypes.c_uint16),
@@ -119,15 +168,17 @@ class BMIHEADER(ctypes.Structure):
                 ("biClrImportant", ctypes.c_uint32)]
 
 
-def capture(hwnd) -> bytes:
-    """截取窗口矩形区域，返回 PNG 字节。"""
+def capture(hwnd, inset: int = 0) -> bytes:
+    """截取窗口**可见外框**，返回 (PNG 字节, (宽, 高))。
+
+    `inset` 会从四边再各切掉几个像素（取整像素用；圆角窗口的四个角若混进桌面可给 1-2）。
+    """
     user32.SetProcessDPIAware()
     user32.ShowWindow(hwnd, SW_RESTORE)
     user32.SetForegroundWindow(hwnd)
     time.sleep(0.4)  # 等待窗口置顶与重绘
 
-    rect = RECT()
-    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    rect = visible_rect(hwnd, inset)
     width = rect.right - rect.left
     height = rect.bottom - rect.top
     if width <= 0 or height <= 0:
@@ -185,10 +236,8 @@ def encode_png(width: int, height: int, rgba: bytes) -> bytes:
 
 
 def resize_window(hwnd, width: int, height: int) -> None:
-    """把窗口移到左上角并调整为指定整体尺寸（物理像素，调用前需 DPI aware）。"""
-    SWP_NOZORDER = 0x0004
-    user32.SetWindowPos(hwnd, 0, 0, 0, width, height, SWP_NOZORDER)
-    time.sleep(0.6)  # 等布局（分屏比例/标签重排）稳定
+    """把窗口的**可见外框**调成 width×height 并贴到 (0,0)（物理像素，需先 DPI aware）。"""
+    resize_window_to_frame(hwnd, width, height)
 
 
 def main() -> int:
@@ -200,6 +249,7 @@ def main() -> int:
     mode = "title"
     value = "LitePad"
     size = None
+    inset = 0
     rest: list[str] = []
 
     i = 0
@@ -213,6 +263,13 @@ def main() -> int:
         elif a == "--out":
             i += 1
             out = args[i] if i < len(args) else out
+        elif a == "--inset":
+            i += 1
+            try:
+                inset = int(args[i])
+            except (IndexError, ValueError):
+                print("--inset 需要整数")
+                return 2
         elif a == "--size":
             i += 1
             spec = args[i] if i < len(args) else ""
@@ -292,7 +349,7 @@ def main() -> int:
     if size:
         resize_window(hwnd, size[0], size[1])
 
-    png, dim = capture(hwnd)
+    png, dim = capture(hwnd, inset)
     with open(out, "wb") as f:
         f.write(png)
     print(f"已捕获 {title!r} ({dim[0]}x{dim[1]}) -> {out}")
