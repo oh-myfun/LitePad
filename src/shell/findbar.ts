@@ -64,12 +64,6 @@ export interface FindBarCallbacks {
   onStep: (dir: 1 | -1, q: FindBarQuery) => void;
   onReplace: (q: FindBarQuery) => void;
   onReplaceAll: (q: FindBarQuery) => void;
-  /**
-   * 跨文档搜索（扫内存快照）。
-   * ⚠️ 是**命令**不是查询：命中总数与命中表都由主程序持有（它才知道怎么跳转、怎么计数），
-   * 查找栏只负责把结果数字显示出来 —— 见 `setDocIndex`。
-   */
-  onSearchAll: (q: FindBarQuery) => void;
   onClose: () => void;
 }
 
@@ -303,12 +297,14 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     status.hidden = !text;
   }
 
-  /** 跨文档范围：图标激活即搜索全部打开文档；取消时清掉上一次的总数。 */
+  /**
+   * 跨文档范围切换：图标激活即搜索全部打开文档；熄灭时清掉上一次的总数。
+   * ⚠️ 09-20 统一触发逻辑后，**三种范围（当前文档 / 选区 / 全部打开文档）的触发方式完全一致**：
+   * 改文本、改选项、切范围都会立刻重算并刷新计数与按钮状态，回车一律是「下一个」。
+   * 所以不再需要「回车在全部已打开的文档中查找」这句专门提示，placeholder 只留一份。
+   */
   function syncAllDocs(): void {
     const on = docsBtn.classList.contains("on");
-    findInput.placeholder = on
-      ? "查找内容（回车在全部已打开的文档中查找）"
-      : "查找内容（回车下一个，Shift+回车上一个）";
     if (!on) {
       // 熄灭跨文档：a/b 与提示一起清掉，别留下过期文案
       docA = 0;
@@ -316,15 +312,6 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
       setStatus("");
     }
     syncBadge();
-  }
-
-  /** 跨文档范围的回车：把「搜」交给主程序（它持有命中表与总数），这里只负责问一句。 */
-  function runSearch(): void {
-    if (!findInput.value) {
-      setStatus("请输入查找内容");
-      return;
-    }
-    cb.onSearchAll(query());
   }
 
   function setReplaceExpanded(on: boolean): void {
@@ -359,13 +346,12 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     if (e.key === "Enter") {
       e.preventDefault();
       const q = query();
-      if (q.allDocs) {
-        runSearch();
-      } else if (e.shiftKey) {
-        cb.onStep(-1, q);
-      } else {
-        cb.onStep(1, q);
-      }
+      // ⚠️ 09-20 起三种范围（当前文档 / 选区 / 全部打开文档）同一套逻辑：**回车一律是「下一个」**
+      // （Shift+回车上一个）。早先跨文档范围要「回车才触发搜索」，于是点亮文档图标、
+      // 改搜索文本都不会刷新结果，必须再按一次回车 —— 现在搜索由「查询或范围发生变化」
+      // 统一触发，主程序每次都会重算命中并刷新计数、徽标与 prev/next 的可用态。
+      if (e.shiftKey) cb.onStep(-1, q);
+      else cb.onStep(1, q);
     } else if (e.key === "Escape") {
       e.stopPropagation();
       close();

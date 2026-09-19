@@ -31,12 +31,6 @@ function mount(overrides: Partial<Parameters<typeof createFindBar>[1]> = {}) {
       lastQuery = q;
       calls.push("replaceAll");
     },
-    // B80：onSearchAll 是**命令**（返回 void）——命中表与总数由主程序持有，
-    // 它算完再用 setDocIndex 把 a/b 回灌给徽标。查找栏自己不存命中。
-    onSearchAll: (q) => {
-      lastQuery = q;
-      calls.push("searchAll");
-    },
     onClose: () => calls.push("close"),
     ...overrides,
   });
@@ -123,18 +117,23 @@ describe("悬浮查找栏：入口与范围", () => {
     expect(m.lastQuery()?.text).toBe("abc");
   });
 
-  it("点击文档图标后：回车把跨文档查找交给主程序，徽标显示 a/b", () => {
+  it("点击文档图标后：回车与单文档一致地走「下一个」，徽标显示 a/b", () => {
+    // 09-20 统一：搜索由「查询或范围变化」触发（onQueryChange），
+    // 回车在三种范围里**一律是步进**，不再有跨文档专用的搜索分支。
     const m = mount();
     m.bar.open();
     m.docs().click();
     expect(m.lastQuery()?.allDocs, "点击后进入查询对象").toBe(true);
     expect(m.docs().classList.contains("on"), "激活态高亮").toBe(true);
+    expect(m.calls, "激活范围本身就要通知主程序重算").toContain("change");
 
     const input = m.q<HTMLInputElement>(".find-input");
     input.value = "todo";
     input.dispatchEvent(new Event("input"));
+    expect(m.calls, "改文本也要通知主程序重算").toContain("change");
+
     key(input, "Enter");
-    expect(m.calls).toContain("searchAll");
+    expect(m.calls, "回车 = 下一个（与单文档同一套）").toContain("step:1");
 
     // 主程序搜完把 a/b 回灌到徽标上（a=当前文档序号，b=含结果文档数）
     m.bar.setDocIndex(1, 7);
@@ -142,13 +141,15 @@ describe("悬浮查找栏：入口与范围", () => {
     expect(m.badge().hidden).toBe(false);
   });
 
-  it("跨文档空查询给提示，且不触发搜索", () => {
+  it("跨文档空查询：回车同样只是步进，不再弹「请输入查找内容」", () => {
+    // 与单文档/选区一致：空文本时回车仍是一次步进，有没有命中由主程序用计数区表达，
+    // 不再由查找栏往底部状态行写提示（那条提示在另外两种范围里也没有）。
     const m = mount();
     m.bar.open();
     m.docs().click();
     key(m.q<HTMLElement>(".find-input"), "Enter");
-    expect(m.calls).not.toContain("searchAll");
-    expect(m.q(".find-status").textContent).toBe("请输入查找内容");
+    expect(m.calls).toContain("step:1");
+    expect(m.q(".find-status").hidden, "不再写底部状态行提示").toBe(true);
   });
 
   it("关闭跨文档后徽标收起（a/b 不再有意义）", () => {

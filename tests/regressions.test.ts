@@ -1739,9 +1739,10 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(bar, "查找栏不得再持有命中表（命中表归主程序）").not.toMatch(/\bsetHits\b/);
     expect(bar, "查找栏不得再渲染「无结果」空态").not.toContain("无结果");
     // 删掉列表后，命中之间靠 Enter / 上下箭头跨文档步进（主程序侧）
-    expect(bar, "onSearchAll 必须收敛成命令（void）").toMatch(
-      /onSearchAll: \(q: FindBarQuery\) => void/,
-    );
+    // ⚠️ 09-20 起跨文档**不再是命令**：搜索改由「查询/范围变化」统一触发（与另两种范围一致），
+    // 回车在三种范围里一律是步进 —— 查找栏因此不再需要 onSearchAll / runSearch。
+    expect(bar, "查找栏不得再持有跨文档搜索命令 onSearchAll").not.toMatch(/onSearchAll/);
+    expect(bar, "查找栏不得再有跨文档专用的 runSearch 分支").not.toContain("runSearch");
 
     // ---- ⑥ 查找与替换输入框同宽 ----
     expect(css, "替换框必须改 flex: 0 0 auto 好让 JS 写死宽度").toMatch(
@@ -1819,7 +1820,7 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(main, "跨文档查找必须把 a/b 回灌给徽标").toMatch(/updateDocBadge\(\)/);
     expect(main, "徽标数字不得再由「已打开文档数」喂（B78 旧语义）").not.toContain("setDocCount");
     expect(main, "查询变更要重搜一次，让徽标跟着实时走").toMatch(
-      /if \(q\.allDocs\) runFindInDocs\(q, false\)/,
+      /if \(q\.allDocs\) runFindInDocs\(q\);/,
     );
     expect(main, "stepFind 必须把跨文档范围转给跨文档步进").toMatch(
       /if \(q\.allDocs\) \{\s*\n\s*stepFindInDocs\(dir, q\);/,
@@ -1833,9 +1834,12 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(searchBody, "必须扫全部已打开文档的内存快照").toMatch(
       /for \(const doc of docs\.values\(\)\)/,
     );
-    expect(main, "onSearchAll 必须接成命令并带上「要播报」标记").toMatch(
-      /onSearchAll: \(q\) => runFindInDocs\(q, true\)/,
+    // ⚠️ 09-20 起跨文档不再是「带播报标记的命令」：范围/查询变化即重算（不带 announce），
+    // 且不再往底部状态行写「共 N 处匹配，回车逐个跳转」（另两种范围都没有这条提示）。
+    expect(main, "查询/范围变化必须统一重算跨文档命中").toMatch(
+      /if \(q\.allDocs\) runFindInDocs\(q\);/,
     );
+    expect(main, "「共 N 处匹配，回车逐个跳转」提示必须删除").not.toContain("回车逐个跳转");
     expect(main, "onOpenHit 回调必须删除（已经没有结果列表可点）").not.toContain("onOpenHit");
     // 关栏即清：否则下次打开会带着上一次的总数
     expect(main, "关栏时必须清空命中表").toMatch(
@@ -2144,6 +2148,100 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     expect(hook, "WINDRES_DIR 必须经 `cd … && pwd` 归一，不能直接用 C:/… 条目").toContain(
       'WINDRES_DIR="$(cd "$w" 2>/dev/null && pwd)"',
     );
+  });
+
+  it("B84 pre-push 必须先本地构建并产出 release exe（exe 不刷新 ⇒ 截图也刷不了）", () => {
+    // 09-20 复盘：v0.7.0 / v0.8.0 连续两个版本没刷新 `docs/screenshots/main.png`，
+    // 当时归因为「沙箱拍不了图」，真正原因是 **release exe 是旧的** ——
+    // `release.sh <ver> --ci` 会跳过本地构建，而 `scripts/capture-screenshots.py` 的
+    // 前置就是 `src-tauri/target/release/litepad.exe`。把构建做成 pre-push 的硬门后，
+    // exe 每次推送都是新的，截图随时可拍。
+    // ⚠️ 断言必须**先剥 `#` 注释**再比：本守卫要找的 `npm run build`、
+    //   `beforeBuildCommand` 等字样在说明性注释里同样出现，直接比对整份文件的话，
+    //   挖掉真正的命令照样通过 —— B79 那条已经踩过一次这种假绿。
+    const raw = readFileSync(".githooks/pre-push", "utf-8");
+    const hook = raw
+      .split("\n")
+      .map((l) => (/^\s*#/.test(l) ? "" : l))
+      .join("\n");
+
+    expect(hook, "pre-push 必须跑前端构建（tsc + vite）").toContain("npm run build");
+    expect(hook, "pre-push 必须生成 release exe").toContain("npm run tauri -- build");
+    expect(
+      hook,
+      "必须置空 beforeBuildCommand，否则 tauri 会把 vite 再跑一遍（build-all.sh 里卡死过）",
+    ).toContain('{"build":{"beforeBuildCommand":""}}');
+    expect(hook, "vite 清 dist/assets 会被 safe-delete 钩子拦，必须关掉").toContain(
+      "CODEBUDDY_SAFE_DELETE_ENABLED=0",
+    );
+    // 「构建命令返回 0 却没写出 exe」出现过，光看退出码不够
+    expect(hook, "必须复核 exe 真的产出，不能只信退出码").toContain(
+      "src-tauri/target/release/litepad.exe",
+    );
+    // 硬门：构建失败必须阻断推送，不是警告跳过
+    expect(hook, "release 构建失败必须 exit 1 阻断推送").toMatch(
+      /release 构建未通过[\s\S]*?exit 1/,
+    );
+  });
+
+  it("B85 vite 构建前必须剥离 PATH 里的 MSYS2 条目（否则 vite 挂死）", () => {
+    // 09-20 实测坐实（此前只标为「疑点未定论」）：PATH 里带 `/c/msys64/mingw64/bin`
+    // （为给 cargo 提供 windres 而加）时，`vite build` 会**挂死** —— 不是慢，是不动：
+    // CPU 只走 ~25s 就停、内存涨到 1.8G、`dist/assets` 被清空后一直不写入，
+    // 挂 13 分钟也不出产物。同一指纹 09-19 在 build-all.sh 里出现过两次。
+    // 摘掉这些条目后同一条命令 **40s** 完成。
+    // ⚠️ 同样先剥 `#` 注释再断言（注释里也写了 `msys64` / `npm run build`）。
+    const stripHash = (src: string) =>
+      src
+        .split("\n")
+        .map((l) => (/^\s*#/.test(l) ? "" : l))
+        .join("\n");
+    const hook = stripHash(readFileSync(".githooks/pre-push", "utf-8"));
+    const buildAll = stripHash(readFileSync("scripts/build-all.sh", "utf-8"));
+
+    expect(hook, "pre-push 必须过滤掉含 msys64 的 PATH 条目").toContain("*msys64*) ;;");
+    expect(hook, "前端构建必须用剥离后的 PATH 跑，不能直接用原 PATH").toContain(
+      'PATH="$FE_PATH" npm run build',
+    );
+    // build-all.sh 顶部恰恰把 msys64 前插进 PATH，是卡死的原发地，同样要剥
+    expect(buildAll, "build-all.sh 的前端构建同样必须剥离 MSYS2 条目").toContain(
+      'PATH="$FE_PATH" npm run build',
+    );
+  });
+
+  it("B86 三种查找范围共用同一套触发与计数逻辑（不再靠回车触发搜索）", () => {
+    // 事故：点亮「所有打开的文档」后既不刷新结果也不更新按钮，改搜索文本同样没反应，
+    // **必须再按一次回车**才搜。两个根因：
+    //   ① 查找栏把跨文档做成**独立命令**（onSearchAll），只有回车会调它；
+    //   ② 主程序 `runFindInDocs` 刚写完计数，紧随其后的 `refreshFindCount()` 又因
+    //      `q.allDocs` 把它覆盖成「无内容」→ prev/next 被置灰，看起来就是「没触发」。
+    // 修法：搜索统一由「查询或范围变化」触发；计数统一由 `refreshFindCount()` 一个出口产出；
+    // 回车在三种范围里一律是步进（下一个 / 上一个）。
+    const main = stripLineComments(readFileSync("src/main.ts", "utf-8"));
+    const bar = stripLineComments(readFileSync("src/shell/findbar.ts", "utf-8"));
+
+    // ① 触发统一：回车不再按范围分叉
+    expect(bar, "回车在三种范围里一律是步进，不得再按 allDocs 分叉").not.toContain("q.allDocs");
+    expect(bar, "查找栏不再有跨文档专用搜索入口").not.toContain("runSearch");
+    expect(main, "范围/查询变化必须统一重算跨文档命中").toMatch(
+      /if \(q\.allDocs\) runFindInDocs\(q\);/,
+    );
+
+    // ② 计数统一：跨文档也走 refreshFindCount 这一个出口
+    const refresh = main.match(/function refreshFindCount\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(refresh, "refreshFindCount 必须覆盖跨文档范围").toContain("q.allDocs");
+    expect(refresh, "跨文档有命中时计数 = 当前序号 / 总数").toMatch(/findHits\.length/);
+    expect(refresh, "跨文档有文本无命中时显示「无匹配」（与单文档一致）").toContain("无匹配");
+    // ⚠️ 关键回归点：早先这里一律写「无内容」，会顺带把 prev/next 置灰
+    expect(refresh, "跨文档不得一律写成「无内容」").not.toMatch(/q\.allDocs[\s\S]{0,200}无内容/);
+
+    // ③ 底部提示：跨文档不再写「共 N 处匹配，回车逐个跳转」
+    expect(main, "删除「共 N 处匹配，回车逐个跳转」提示").not.toContain("回车逐个跳转");
+
+    // ④ 步进后同样走那一个出口，不再自己写计数/状态行
+    const step = main.match(/function stepFindInDocs\([\s\S]*?\n\}/)?.[0] ?? "";
+    expect(step, "跨文档步进后必须走 refreshFindCount").toContain("refreshFindCount()");
+    expect(step, "跨文档步进不得再自己写状态行").not.toContain("setStatus");
   });
 
   it("B79 主题：档位必须写回 settings 才存得下；三态按钮一律不点亮", () => {

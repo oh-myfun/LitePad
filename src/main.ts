@@ -2471,7 +2471,6 @@ function ensureFindBar(): FindBarHandle {
     onStep: (dir, q) => stepFind(dir, q),
     onReplace: (q) => replaceCurrent(q),
     onReplaceAll: (q) => replaceAllInScope(q),
-    onSearchAll: (q) => runFindInDocs(q, true),
     onClose: () => {
       clearFindHighlight();
       resetFindAll();
@@ -2582,7 +2581,7 @@ function applyFindQuery(q: FindBarQuery): void {
   // 跨文档范围：查询一变，上一次的命中表就作废 —— 这里直接重搜一次，
   // 让文档图标右上角的总数跟着实时走（与 VS Code 搜索视图「改选项即重跑」一致）。
   // 非跨文档范围则把旧的命中表清掉，免得下次点亮开关时徽标挂着一个过期的数字。
-  if (q.allDocs) runFindInDocs(q, false);
+  if (q.allDocs) runFindInDocs(q);
   else resetFindAll();
   refreshFindCount();
 }
@@ -2639,9 +2638,14 @@ function refreshFindCount(): void {
   const bar = findBar;
   if (!bar) return;
   const q = bar.getQuery();
-  // 跨文档范围：命中总数在文档图标的徽标上，这里不再显示单文档计数（会误导）
+  // 跨文档范围：计数口径与「当前文档 / 选区」**完全一致** —— 有文本没命中 = 「无匹配」，
+  // 有命中 = 「当前序号 / 总数」（总数来自跨文档命中表，序号即 findHitIndex）。
+  // ⚠️ 早先这里一律写「无内容」（当时认为总数已在徽标上，会误导），副作用是
+  //    prev/next 被置灰、结果区看起来没更新 —— 用户反馈「激活多文件搜索没反应」的根因。
+  //    命中总数是「几个文档有结果」另有徽标 a/b，与这里的「第几个命中」不冲突。
   if (q.allDocs) {
-    bar.setCount("无内容");
+    if (findHits.length === 0) bar.setCount(q.text ? "无匹配" : "");
+    else bar.setCount(`${(findHitIndex >= 0 ? findHitIndex : 0) + 1} / ${findHits.length}`);
     return;
   }
   // 预览态：计数与当前项来自预览高亮（预览可见文本与源码一一对应，步进以它为准）
@@ -2885,28 +2889,18 @@ function updateDocBadge(): void {
 }
 
 /**
- * 跨文档查找：重算命中表 → 徽标显示 `a/b`（a=当前文档序号，b=含结果文档数）。
+ * 跨文档查找：重算命中表 → 刷新徽标（`a/b`）。
  *
- * `announce` 为真时还会写状态行（用户主动按回车触发的那一次）；
- * 由查询变更自动触发的那次只更新徽标与计数，不刷状态行文案。
+ * ⚠️ 09-20 起**只负责算，不负责显示**：计数与按钮状态一律交给 `refreshFindCount()`，
+ * 与「当前文档」「选区」两种范围走同一个出口 —— 早先这里会顺手写 `setCount` 并播报一行
+ * 「共 N 处匹配…」那条成功播报，结果 ① 那行提示在另外两种范围里都没有（不一致，已按用户
+ * 要求删除）；② 写完还被紧随其后的 `refreshFindCount()` 覆盖成「无内容」，
+ * 于是 prev/next 被置灰 —— 表现就是「点亮多文件搜索没反应」。
  */
-function runFindInDocs(q: FindBarQuery, announce: boolean): void {
-  const bar = findBar;
-  const query = q.text ? buildFindQuery(findOptionsOf(q)) : null;
-  if (!query) {
-    resetFindAll(bar);
-    bar?.setCount("无内容");
-    if (announce) bar?.setStatus(q.text ? "查找内容无效（正则语法错误？）" : "请输入查找内容");
-    return;
-  }
-  findHits = searchOpenDocs(q);
+function runFindInDocs(q: FindBarQuery): void {
+  findHits = q.text ? searchOpenDocs(q) : [];
   findHitIndex = -1;
-  // 徽标 = a/b（a=当前文档序号，b=含结果文档数）；计数区 = 当前命中序号 / 总命中数。
   updateDocBadge();
-  if (announce) {
-    bar?.setStatus(findHits.length === 0 ? "无匹配" : `共 ${findHits.length} 处匹配，回车逐个跳转`);
-  }
-  bar?.setCount(findHits.length === 0 ? "无匹配" : `1 / ${findHits.length}`);
 }
 
 /**
@@ -2916,15 +2910,15 @@ function runFindInDocs(q: FindBarQuery, announce: boolean): void {
  * 后者要先补搜一次 —— 否则「勾了文档图标点下一个没反应」。
  */
 function stepFindInDocs(dir: 1 | -1, q: FindBarQuery): void {
-  const bar = findBar;
   if (!q.text) {
-    bar?.setCount("无内容");
+    refreshFindCount();
     return;
   }
   if (findHits.length === 0) {
-    runFindInDocs(q, false);
+    // 补搜一次：查询/范围变化时主程序已经搜过，这里兜的是「命中表被清掉又直接点箭头」的路径
+    runFindInDocs(q);
     if (findHits.length === 0) {
-      bar?.setStatus("无匹配");
+      refreshFindCount();
       return;
     }
     findHitIndex = dir > 0 ? 0 : findHits.length - 1;
@@ -2933,7 +2927,7 @@ function stepFindInDocs(dir: 1 | -1, q: FindBarQuery): void {
   }
   updateDocBadge();
   openFindHit(findHits[findHitIndex]);
-  bar?.setCount(`${findHitIndex + 1} / ${findHits.length}`);
+  refreshFindCount();
 }
 
 /** 跳到某条命中：切到该文档并把命中处选中、滚到视野中间。 */
