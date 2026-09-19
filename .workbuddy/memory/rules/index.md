@@ -49,6 +49,10 @@
 - **沙箱 PATH 丢失**：先 `export PATH=...usr/bin...` 再跑 coreutils；`git` 走系统 PATH → `ref/session-env.md`
 - **沙箱 WebView2 http(s) 导航被拦**：预览/本地资源走 file:// 或 release build，绕过 dev server → `ref/session-env.md`
 - 截图经 `scripts/screenshot.py`；临时文件落 `.tmp/` → `docs/build-env.md` / `ref/session-env.md`
+- **写进 PATH 的探测结果必须 `cd … && pwd` 归一**（`C:/…` 与带 `..` 的原始路径对 shell 与原生子进程都是死路；pre-push 的 COREUTILS_DIR / WINDRES_DIR 各踩一次） → `pitfalls/0083-prepush-windres-posix-path.md` / `0074`
+- `while read` 消费 `git log --pretty=format:` 时必须带 `|| [ -n "$sha" ]`（末条无换行会被静默吞掉，区间内最旧提交整条丢失） → `pitfalls/0082-changelog-gen-drops-last.md`
+- `scripts/gen-changelog.sh` 只在前置位置插新小节、**不去重**：仅能在发布流程里跑一次；核对历史版本用 `git show <release-commit>:CHANGELOG.md` → `pitfalls/0082`
+- **门禁脚本「退出码 0 + 日志正常」≠ 生效**：钩子/脚本/生成器改完必须**真跑一次并回读产物**（已连续出现 0074 半落盘、0082 静默丢提交、0083 打印正确却失败） → `pitfalls/0074` / `0082` / `0083`
 
 ## 范围（明确不做）
 - 不做：插件商店 / 内置终端 / Git / LSP → `docs/conventions.md`
