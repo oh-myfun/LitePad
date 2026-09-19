@@ -1,5 +1,5 @@
 #!/bin/sh
-# LitePad pre-push：推送前跑全量测试（前端 vitest + 后端 cargo test）
+# LitePad pre-push：推送前跑全量测试（前端 vitest + 后端 cargo test）+ **本地构建产出 release exe**
 # 激活：git config core.hooksPath .githooks
 set -u
 cd "$(git rev-parse --show-toplevel)" || exit 1
@@ -97,6 +97,60 @@ if [ -x "$HOME/.cargo/bin/cargo.exe" ] || command -v cargo >/dev/null 2>&1; then
   fi
 else
   echo "⚠ 找不到 cargo，跳过 cargo test（Rust 侧未校验）" >&2
+fi
+
+# —— 本地构建：前端 dist + release exe（09-20 用户要求：推送前先本地编译并生成 exe）——
+# ⚠️ 为什么必须有这一段（两段理由，第二条更隐蔽）：
+#   ① 「能不能编译出来」不该只由 CI 判断 —— 推上去等 CI 变红再回来修，一轮来回几十分钟。
+#   ② **连带损失：截图刷不了**。`scripts/capture-screenshots.py` 的前置就是
+#      `src-tauri/target/release/litepad.exe`；而发布走 `release.sh <ver> --ci` 会跳过本地构建，
+#      exe 停在旧版本 ⇒ `docs/screenshots/main.png` 无米下锅 ⇒ 「界面改动必刷截图」这条红线落空
+#      （v0.7.0 / v0.8.0 连续两个版本因此漏刷，09-20 复盘才定位到）。有这一段，exe 每次推送都是新的。
+# ⚠️ vite 清空 `dist/assets` 会触发本会话的 safe-delete 钩子 → 必须关掉（与 build-all.sh 同一条）。
+# ⚠️ `beforeBuildCommand` 必须置空：上面已单独跑过 `npm run build`，否则 tauri 会把 vite 再跑一遍
+#    （build-all.sh 里那次「vite 卡死 + dist 只写一半」就出在重复构建上）。
+if command -v npm >/dev/null 2>&1 && { [ -x "$HOME/.cargo/bin/cargo.exe" ] || command -v cargo >/dev/null 2>&1; }; then
+  echo "▸ 本地构建（tsc + vite → dist，再嵌入前端生成 release exe）"
+  export CODEBUDDY_SAFE_DELETE_ENABLED=0
+  # ⚠️ **vite 必须在「不含 MSYS2 条目」的 PATH 下跑**，否则会挂死（09-20 实测坐实）：
+  #    上面为给 cargo 提供 windres 把 `/c/msys64/mingw64/bin` 加进了 PATH，而 PATH 里带它时
+  #    `vite build` 表现为——CPU 只走 25s 就不动、内存涨到 1.8G、`dist/assets` 被清空后
+  #    始终不写入，挂 13 分钟也不出产物（同一指纹 09-19 在 build-all.sh 里出现过两次，
+  #    当时只记为「疑点未定论」）。去掉这些条目后同一条命令 **40s** 完成。
+  #    Rust 侧确实需要 windres，所以只在这一步**临时**摘掉，跑完 PATH 自动恢复。
+  FE_PATH=""
+  OLDIFS="$IFS"
+  IFS=":"
+  for d in $PATH; do
+    case "$d" in
+    *msys64*) ;;
+    *) FE_PATH="${FE_PATH:+$FE_PATH:}$d" ;;
+    esac
+  done
+  IFS="$OLDIFS"
+  PATH="$FE_PATH" npm run build || {
+    echo "✗ pre-push 失败：前端构建（tsc + vite）未通过" >&2
+    exit 1
+  }
+  # 缺 makensis 就只出 exe（--no-bundle）：「没有安装包工具」不该挡住推送，exe 才是硬需求
+  BUNDLE_FLAG=""
+  if ! [ -x "$HOME/AppData/Local/tauri/NSIS/makensis.exe" ] && ! command -v makensis >/dev/null 2>&1; then
+    echo "⚠ 找不到 makensis（NSIS），改用 --no-bundle：只生成 exe，不出安装包" >&2
+    BUNDLE_FLAG="--no-bundle"
+  fi
+  npm run tauri -- build $BUNDLE_FLAG --config '{"build":{"beforeBuildCommand":""}}' || {
+    echo "✗ pre-push 失败：release 构建未通过（未产出 exe）" >&2
+    exit 1
+  }
+  # ⚠️ 别只看退出码：构建命令返回 0 却没写出 exe 的情况出现过（产物被占用/写一半）。
+  EXE="src-tauri/target/release/litepad.exe"
+  if [ ! -f "$EXE" ]; then
+    echo "✗ pre-push 失败：构建命令返回 0，但 $EXE 不存在" >&2
+    exit 1
+  fi
+  echo "  ✓ $EXE（$(date -r "$EXE" '+%F %H:%M')，$(wc -c < "$EXE") 字节）"
+else
+  echo "⚠ 找不到 npm 或 cargo，跳过本地构建（未生成 exe：前端/Rust 产物均未校验）" >&2
 fi
 
 echo "✓ pre-push 通过"

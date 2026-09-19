@@ -84,6 +84,9 @@ python scripts/capture-screenshots.py --list   # 看有哪些配方
 python scripts/capture-screenshots.py --keep   # 保留演示会话（排查用）
 ```
 
+前提：`src-tauri/target/release/litepad.exe` 必须是**当前代码**编译出来的。任何一次 `git push`
+都会由 pre-push 自动重建它；手动构建用 `npm run tauri -- build`。
+
 它自己会**先杀干净旧实例、再**备份/写入演示会话（顺序反了会被退出中的旧实例覆盖），
 启动后等窗口标题带上演示文件名才抓图，最后还原真实的 `session.json` / `settings.json`
 （字段 camelCase）；抓到全黑图会直接报错而不是写出。界面改动必须在同一提交刷新
