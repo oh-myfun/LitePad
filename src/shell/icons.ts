@@ -1,95 +1,30 @@
 /**
- * 工具栏内联 SVG 图标（24×24 stroke 风格，currentColor 继承文字色）。
- * 不引入图标库，保持零依赖。
+ * **仅剩的两颗手绘图标**：主题按钮的浅色 / 深色。
+ *
+ * 🚩 红线（docs/conventions.md「图标」节）：应用内所有按钮图标一律取 VS Code codicon
+ * （`./codicons`，生成物），**不得手绘 SVG**；codicon 里确无合适字形时先与用户商量
+ * 是否引入别的图标集。
+ *
+ * 这里之所以破例：官方 codicon 的 639 颗清单里**没有** sun / moon 字形（最接近的
+ * `color-mode` 是半明半暗的圆，已用作「跟随系统」那一档）。经用户确认，这两颗豁免。
+ * 于是主题三态 = sun（本文件）/ moon（本文件）/ color-mode（codicons，main.ts 里直接取）。
+ *
+ * ⚠️ 风格差异：codicon 是 fill 风格（16 网格），这两颗是 stroke 风格（24 视图框）。
+ *    都是单色线条，18px 下并排看不出拼接感；真要统一得先有官方日/月字形。
  */
 
-/**
- * 描边图标构造器（24×24 视图框 + currentColor）。
- * 导出是为了让标签的文件类型字形（fileicons.ts）用**同一套**描边参数，
- * 两处图标风格不会漂。
- */
-export function strokeIcon(paths: string, size = 18): string {
+/** 描边图标构造器（24 视图框 + currentColor），只为上面那两颗服务，故不再导出。 */
+function strokeIcon(paths: string, size = 18): string {
   return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
 }
 
-/** 本模块内部沿用的短名 */
-const svg = strokeIcon;
-
-/**
- * 实心圆点（未保存标记）。
- * 对应 VS Code 标签操作列里的 `circle-filled` codicon：字形盒 16px，
- * 圆点本身约 8px 直径 —— 所以 r 取 5.5（24 视图框缩到 16px 约 7.3px）。
- */
-export function dotIcon(size = 16): string {
-  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="5.5"/></svg>`;
-}
-
 export const ICONS = {
-  new: svg(
-    '<path d="M13 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9z"/><path d="M13 3v6h6"/><path d="M12 12v6M9 15h6"/>',
-  ),
-  open: svg(
-    '<path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M3 10h18"/>',
-  ),
-  save: svg(
-    '<path d="M5 3h11l5 5v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M8 3v5h7V3"/><path d="M7 21v-7h10v7"/>',
-  ),
-  saveAs: svg(
-    '<path d="M5 3h11l5 5v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M7 21v-7h10v7"/><path d="M14 3l4 4"/>',
-  ),
-  find: svg('<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/>'),
-  findInFiles: svg(
-    '<circle cx="10" cy="10" r="5.5"/><path d="M14 14l6 6"/><path d="M8 10h4M10 8v4"/>',
-  ),
-  preview: svg(
-    '<path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
-  ),
-  code: svg('<path d="M8 6l-6 6 6 6"/><path d="M16 6l6 6-6 6"/>'),
-  outline: svg(
-    '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/>',
-  ),
-  /**
-   * 导出：文档 + 指向右侧的出向箭头（「把这份文档输出成别的格式」）。
-   * 原先用的是「箭头落入托盘」（下载语义），与菜单里的导出 HTML/PDF 不符。
-   */
-  export: svg(
-    '<path d="M6 3h7l5 5v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M13 3v5h5"/><path d="M9 14.5h5.6"/><path d="M12.6 12l2.5 2.5-2.5 2.5"/>',
-  ),
-  moon: svg('<path d="M20 13.5A8.5 8.5 0 0 1 10.5 4a8.5 8.5 0 1 0 9.5 9.5z"/>'),
-  sun: svg(
+  /** 浅色档：太阳。 */
+  sun: strokeIcon(
     '<circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v2.2M12 20.3v2.2M4.2 4.2l1.6 1.6M18.2 18.2l1.6 1.6M1.5 12h2.2M20.3 12h2.2M4.2 19.8l1.6-1.6M18.2 5.8l1.6-1.6"/>',
   ),
-  /**
-   * 跟随系统：半明半暗的圆（左半实心）——明暗交给系统决定。
-   * 与 sun / moon 组成主题按钮的三态图标，18px 下仍可一眼区分。
-   */
-  followSystem: svg(
-    '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none"/>',
-  ),
-  settings: svg(
-    '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.83l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.83-.34 1.7 1.7 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.83.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.83l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.7 1.7 0 0 0 1 1.51 1.7 1.7 0 0 0 1.83-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z"/>',
-  ),
-  splitH: svg('<rect x="3" y="4" width="18" height="16" rx="1"/><path d="M12 4v16"/>'),
-  splitV: svg('<rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 12h18"/>'),
-  closePanel: svg(
-    '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9l6 6M15 9l-6 6"/>',
-  ),
-  /**
-   * B71 最大化 / 还原面板：Windows「最大化 / 向下还原」的双框字形。
-   * maximize = 单个方框；restore = 前小后大两个错开的框（经典的「还原」）。
-   * 只在**已最大化**的面板操作栏上出现（未最大化时不占位置，避免 B54 想去掉的拥挤）。
-   */
-  maximize: svg('<rect x="4" y="4" width="16" height="16" rx="2"/>'),
-  restore: svg(
-    '<rect x="3" y="7" width="12" height="13" rx="1"/><path d="M7 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2"/>',
-  ),
-  /**
-   * 标签上的关闭（×）。VS Code 标签操作列用的是 codicon 的 `close`，字形 16px，
-   * 放在 24px 宽的覆盖列里居中（经典档）/ 20px（本项目按药丸宽度等比收窄）。
-   * 这里给 16px，与 `.tab-action` 槽位（20px）配套：槽位留 2px 呼吸，
-   * 于是「字形到药丸右缘」= 2 + 4 = 6px，和左侧「药丸左缘到类型图标」的 6px 对称。
-   */
-  close: strokeIcon('<path d="M18 6L6 18"/><path d="M6 6l12 12"/>', 16),
+  /** 深色档：月亮。 */
+  moon: strokeIcon('<path d="M20 13.5A8.5 8.5 0 0 1 10.5 4a8.5 8.5 0 1 0 9.5 9.5z"/>'),
 } as const;
 
 export type IconName = keyof typeof ICONS;

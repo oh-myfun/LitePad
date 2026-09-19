@@ -1,5 +1,5 @@
 import type { LayoutNode } from "./layout";
-import { ICONS } from "./icons";
+import { CODICONS } from "./codicons";
 import { renderTabstrip, type TabViewData } from "./tabstrip";
 import { setTip } from "./tooltip";
 
@@ -699,7 +699,7 @@ function buildPanel(
   };
 
   const closeP = mkOp(
-    ICONS.closePanel,
+    CODICONS.close,
     "移除该分屏",
     data.canClose === false ? undefined : "标签并入相邻面板",
     () => cb.onClosePanel(panelId),
@@ -714,7 +714,7 @@ function buildPanel(
   // 但最大化后必须有一个**看得见**的退路：另一侧被挤成 0，只靠快捷键容易让人以为丢了。
   if (data.maximized) {
     ops.append(
-      mkOp(ICONS.restore, "还原面板", "恢复最大化前的分屏比例", () =>
+      mkOp(CODICONS.chromeRestore, "还原面板", "恢复最大化前的分屏比例", () =>
         cb.onToggleMaximizePanel?.(panelId),
       ),
     );

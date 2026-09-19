@@ -214,12 +214,17 @@ B58 之后按用户要求一次性拉取了**所有文本编辑相关源码**：
 
 | 位置 | 内容 |
 | --- | --- |
-| `codicons/*.svg` | 从 `@vscode/codicons@0.0.46-24`（MIT）的 `src/icons/` 逐字抽出的 13 颗图标（只读副本，**不入库**，口径见 `.gitignore`） |
+| `codicons/*.svg` | 从 `@vscode/codicons@0.0.46-24`（MIT）的 `src/icons/` 逐字抽出的 33 颗图标（只读副本，**不入库**，口径见 `.gitignore`） |
 
 **为什么单独抽这一份**：手绘的字形与 VS Code 永远差一档（查找栏的替换图标、
 `Aa`/`ab`/`.*` 三个开关最初就是自绘的，语义对但轮廓不像）；引字体又要背一个 150KB 的
-ttf + 一份 css，而全项目只用到十来颗。codicon 的 `src/icons/*.svg` 是**纯路径 +
+ttf + 一份 css，而全项目只用到几十颗。codicon 的 `src/icons/*.svg` 是**纯路径 +
 `fill="currentColor"` + 16×16 网格**，内联进 DOM 即 1:1 像素对应，零缩放、零依赖。
+
+> 🚩 **红线（2026-09-18 起）**：应用内**所有按钮图标一律取 codicon**，禁止手绘 SVG；
+> codicon 里确无合适字形时先与用户商量是否引入别的图标集。唯一豁免是主题的 sun / moon
+> 两颗（官方清单里没有日/月字形，经用户确认），仍留在 `src/shell/icons.ts`。
+> 规则正文见 `docs/conventions.md`「图标」节，回归守卫见 `regressions.test.ts` B81。
 
 **取用约定**：
 
@@ -227,7 +232,9 @@ ttf + 一份 css，而全项目只用到十来颗。codicon 的 `src/icons/*.svg
   `src/shell/codicons.ts`；
 - `src/shell/codicons.ts` 是**生成物、要入库**（构建依赖它），不要手改；
 - 上游版本**钉死**在脚本的 `VERSION` 常量里：图标字形会随版本变，升级要连版本号一起改，
-  重跑后目视核对查找栏（`Aa`/`ab`/`.*`/替换两枚/选区查找）；
+  重跑后目视核对工具栏 / 标签文件类型图标 / 查找栏（`Aa`/`ab`/`.*`/替换两枚/选区查找）；
+- 脚本末段会**调 prettier 收尾**生成物（生成物也要过 `npm run format:check`）；
+  `FILE_FAMILIES` 的 10 个家族必须映射到 10 颗不同字形，`assertFamilies()` 会在联网前先拦撞车。
 - 本目录（含脚本生成的 `REVISION.txt`）整体不入库，与 `src/` 段同一口径：
   可由脚本精确复现的第三方副本不进仓库。
 

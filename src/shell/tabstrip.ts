@@ -1,7 +1,7 @@
 import { showPopupMenu } from "./menu";
 import { beginTabDrag, consumeTabClickSuppressed } from "./splitview";
 import { fileIconSvg, familyOf } from "./fileicons";
-import { ICONS, dotIcon } from "./icons";
+import { CODICONS } from "./codicons";
 import { setTip } from "./tooltip";
 
 /**
@@ -193,12 +193,12 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
 
   const mark = document.createElement("span");
   mark.className = "tab-mark";
-  mark.innerHTML = dotIcon();
+  mark.innerHTML = CODICONS.circleFilled;
   mark.setAttribute("aria-hidden", "true");
 
   const close = document.createElement("button");
   close.className = "tab-close";
-  close.innerHTML = ICONS.close;
+  close.innerHTML = CODICONS.close;
   setTip(close, "关闭", { key: "Ctrl+W", group: "tabstrip" });
   close.setAttribute("aria-label", `关闭 ${t.name}`);
   close.addEventListener("click", (e) => {

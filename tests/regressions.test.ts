@@ -416,9 +416,9 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
 
     const ts = readFileSync("src/shell/tabstrip.ts", "utf-8");
     expect(ts, "未保存必须打 tab-dirty（CSS 靠它决定槽位状态）").toContain("tab-dirty");
-    expect(ts, "× 必须用矢量图标（ICONS.close），不再是文本字形").toContain("ICONS.close");
+    expect(ts, "× 必须用矢量图标（CODICONS.close），不再是文本字形").toContain("CODICONS.close");
     expect(ts, "不得再用文本 ×").not.toContain('textContent = "×"');
-    expect(ts, "未保存圆点必须走矢量（dotIcon）").toContain("dotIcon()");
+    expect(ts, "未保存圆点必须走矢量（CODICONS.circleFilled）").toContain("CODICONS.circleFilled");
     expect(ts, "不得再用文本 ●").not.toContain('textContent = "●"');
   });
 
@@ -586,9 +586,9 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     it("面板操作栏只剩「移除分屏」，分屏按钮已去掉（分屏仍走拖拽与菜单）", () => {
       const sv = readFileSync("src/shell/splitview.ts", "utf-8");
       expect(sv, "不得再用 ⨯ 文本字形").not.toContain('textContent = "⨯"');
-      expect(sv, "必须保留移除分屏按钮").toContain("ICONS.closePanel");
-      expect(sv, "不得再有左右分屏按钮").not.toContain("ICONS.splitH");
-      expect(sv, "不得再有上下分屏按钮").not.toContain("ICONS.splitV");
+      expect(sv, "必须保留移除分屏按钮").toContain("CODICONS.close");
+      expect(sv, "不得再有左右分屏按钮").not.toContain("splitH");
+      expect(sv, "不得再有上下分屏按钮").not.toContain("splitV");
       expect(sv, "面板渲染不得再调 onSplitPanel").not.toContain("onSplitPanel");
 
       // 删按钮 ≠ 删功能：菜单 / 快捷键的分屏入口必须还在（B53 之前就有）
@@ -2061,13 +2061,65 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     const main = readFileSync("src/main.ts", "utf-8");
     expect(main, "主题必须按档位循环（三态）").toContain("nextThemeMode()");
     expect(main, "档位要写进 data 属性供测试/样式用").toContain("dataset.themeMode");
-    expect(main, "三态图标须含「跟随系统」").toContain("followSystem");
+    expect(main, "「跟随系统」档须照搬官方 color-mode（半明半暗的圆）").toContain(
+      "CODICONS.colorMode",
+    );
     expect(main, "不得再退回明暗二选一的旧写法").not.toContain('isDark ? "light" : "dark"');
 
+    // 导出图标（B51 本来改过一次语义：下载托盘 → 文档 + 出向箭头）现在直接照搬官方
+    // `export`，手绘版已删 —— 字形由上游版本钉住（scripts/fetch-codicons.mjs 的 VERSION），
+    // 这里只守「确实来自 codicon」。
+    const codicons = readFileSync("src/shell/codicons.ts", "utf-8");
+    expect(codicons, "导出图标必须来自官方 export").toContain("export:");
+  });
+
+  it("B81 图标红线：按钮图标一律走 codicon，手绘只剩 sun/moon（用户确认豁免）", () => {
+    // 用户要求：「软件里按钮图标全部使用 vscode 图标集中的图标（如果没有合适的就和我商量
+    // 去下载别的图标集），不要自己绘制 svg（除非和我讨论确认或者我明确要求）。」
+    // 据此：消费方一律从 codicons.ts 取；源码里不得再内联手绘字形。
+
+    // ---- ① 消费方一律不得手绘 <svg> ----
+    const CONSUMERS = [
+      "src/main.ts",
+      "src/shell/tabstrip.ts",
+      "src/shell/splitview.ts",
+      "src/shell/findbar.ts",
+      "src/shell/fileicons.ts",
+      "src/editor/editor.ts",
+    ] as const;
+    for (const f of CONSUMERS) {
+      expect(readFileSync(f, "utf-8"), `${f} 不得手绘 <svg>，图标必须来自 CODICONS`).not.toContain(
+        "<svg",
+      );
+    }
+
+    // ---- ② 工具栏整张表都得是 codicon 名（旧的自绘名 new/open/find/outline 已废） ----
+    const main = readFileSync("src/main.ts", "utf-8");
+    for (const pair of [
+      '[btnNew, "newFile"]',
+      '[btnOpen, "folderOpened"]',
+      '[btnSave, "save"]',
+      '[btnSaveAs, "saveAs"]',
+      '[btnFind, "search"]',
+      '[btnOutline, "listTree"]',
+      '[btnExport, "export"]',
+    ]) {
+      expect(main, `工具栏缺 ${pair}`).toContain(pair);
+    }
+    expect(main, "工具栏必须从 CODICONS 取名取图").toContain("btn.innerHTML = CODICONS[name]");
+
+    // ---- ③ 文件类型字形也必须走 codicon（不得再自建手绘字形表） ----
+    const fi = readFileSync("src/shell/fileicons.ts", "utf-8");
+    expect(fi, "家族字形必须从 CODICONS 取").toContain("CODICONS[");
+    expect(fi, "不得再自建 GLYPHS 手绘表").not.toContain("GLYPHS");
+
+    // ---- ④ 手绘豁免只有 icons.ts 的 sun / moon 两颗 ----
+    // 官方 639 颗 codicon 里没有日/月字形（最接近的 color-mode 已用于「跟随系统」），
+    // 经用户确认这两颗保留手绘；其余任何键冒出来都说明有人又手绘了图标。
     const icons = readFileSync("src/shell/icons.ts", "utf-8");
-    expect(icons, "应导出「跟随系统」图标").toContain("followSystem:");
-    expect(icons, "导出图标不得再用「箭头落入托盘」（下载语义）").not.toContain("M12 3v12");
-    expect(icons, "导出图标应为文档 + 出向箭头").toContain("M13 3v5h5");
+    const body = icons.slice(icons.indexOf("export const ICONS = {"), icons.indexOf("} as const;"));
+    const keys = [...body.matchAll(/\n {2}(\w+):/g)].map((m) => m[1]);
+    expect(keys, "icons.ts 只应剩 sun / moon（其余一律 codicon）").toEqual(["sun", "moon"]);
   });
 
   it("B79 主题：档位必须写回 settings 才存得下；三态按钮一律不点亮", () => {
@@ -2637,7 +2689,7 @@ describe("B71 面板操作补齐（移动标签 / 切焦点 / 右键分屏 / 最
   it("最大化态必须有看得见的退路：还原按钮 + 双击标签", () => {
     // 另一侧被挤成 0，只给快捷键的话用户会以为面板丢了。
     expect(sv, "仅最大化时追加还原按钮（未最大化不占位）").toMatch(
-      /if \(data\.maximized\)[\s\S]{0,300}ICONS\.restore/,
+      /if \(data\.maximized\)[\s\S]{0,300}CODICONS\.chromeRestore/,
     );
     expect(sv, "按钮文案要说明恢复比例").toContain("还原面板");
     // 双击标签：只有传了回调（多面板）才接管 —— 单面板时双击必须保持无行为

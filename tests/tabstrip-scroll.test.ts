@@ -224,8 +224,8 @@ describe("B53 脏标记与关闭按钮共用槽位（VS Code 行为）", () => {
     renderTabstrip(host, [tabs(2)[0], { ...tabs(2)[1], dirty: true }], cb());
     const els = host.querySelectorAll<HTMLElement>(".tab");
     expect(els[1].classList.contains("tab-dirty")).toBe(true);
-    // B57 起 ● 是矢量字形（dotIcon），且槽位用 opacity 显隐、恒定存在于 DOM，
-    // 所以这里断「有图标」+「带 tab-dirty」，而不是断文本内容。
+    // B57 起 ● 是矢量字形（VS Code codicon 的 circle-filled），且槽位用 opacity 显隐、
+    // 恒定存在于 DOM，所以这里断「有图标」+「带 tab-dirty」，而不是断文本内容。
     expect(els[1].querySelector(".tab-mark svg"), "未保存要显示矢量圆点").toBeTruthy();
     expect(els[0].classList.contains("tab-dirty"), "已保存不带 tab-dirty").toBe(false);
     expect(

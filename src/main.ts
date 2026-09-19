@@ -80,7 +80,8 @@ import {
   type FindBarQuery,
   type FindHit,
 } from "./shell/findbar";
-import { ICONS, type IconName } from "./shell/icons";
+import { ICONS } from "./shell/icons";
+import { CODICONS, type CodiconName } from "./shell/codicons";
 import { clearTip, initTooltips, setTip } from "./shell/tooltip";
 import { paletteOpen, showCommandPalette } from "./shell/commandpalette";
 import { createMenuBar, openMenuByIndex } from "./shell/menubar";
@@ -3104,11 +3105,17 @@ function themeCycle(): ThemeMode[] {
   return systemDark ? ["system", "light", "dark"] : ["system", "dark", "light"];
 }
 
-/** 三态各自的图标与名称。 */
-const THEME_STATES: Record<ThemeMode, { icon: IconName; label: string }> = {
-  light: { icon: "sun", label: "浅色" },
-  dark: { icon: "moon", label: "深色" },
-  system: { icon: "followSystem", label: "跟随系统" },
+/**
+ * 三态各自的图标与名称。
+ *
+ * ⚠️ icon 直接存**画好的 SVG 字符串**，三档可以来自不同源：浅/深是 `icons.ts` 里唯二
+ * 手绘的（官方 codicon 没有 sun / moon 字形，经用户确认豁免），跟随系统取官方的
+ * `color-mode`（半明半暗的圆）。存字符串比存「图标名」少一层转发。
+ */
+const THEME_STATES: Record<ThemeMode, { icon: string; label: string }> = {
+  light: { icon: ICONS.sun, label: "浅色" },
+  dark: { icon: ICONS.moon, label: "深色" },
+  system: { icon: CODICONS.colorMode, label: "跟随系统" },
 };
 
 /** 当前档位的下一档（循环闭合）。 */
@@ -3119,7 +3126,7 @@ function nextThemeMode(): ThemeMode {
 }
 
 /**
- * 主题按钮：图标随三态变化（太阳 / 月亮 / 显示器）。
+ * 主题按钮：图标随三态变化（太阳 / 月亮 / 半明半暗的圆）。
  *
  * ⚠️ **三档一律不点亮**（B79）：它是**循环按钮**，不是开关 —— 「激活态」在这里没有语义，
  * 而旧代码写的是 `themeMode === "dark"` 才点亮，于是深色档顶着一块实蓝底、浅色与
@@ -3129,7 +3136,7 @@ function nextThemeMode(): ThemeMode {
 function refreshThemeButton(): void {
   const state = THEME_STATES[themeMode];
   const next = THEME_STATES[nextThemeMode()].label;
-  btnTheme.innerHTML = ICONS[state.icon];
+  btnTheme.innerHTML = state.icon;
   // B58：提示走自绘层，文案随三态变化
   setTip(btnTheme, `主题：${state.label}`, { detail: `点击切换为${next}` });
   btnTheme.setAttribute("aria-label", `主题：${state.label}，点击切换为${next}`);
@@ -4108,18 +4115,18 @@ function toggleStatusbar(): void {
   document.querySelector(".statusbar")?.classList.toggle("statusbar-hidden", !statusbarVisible);
 }
 
-/** 工具栏图标填充。 */
+/** 工具栏图标填充（一律来自 official codicon，见 docs/conventions.md「图标」节）。 */
 function setupToolbar(): void {
-  const icons: [HTMLButtonElement, IconName][] = [
-    [btnNew, "new"],
-    [btnOpen, "open"],
+  const icons: [HTMLButtonElement, CodiconName][] = [
+    [btnNew, "newFile"],
+    [btnOpen, "folderOpened"],
     [btnSave, "save"],
     [btnSaveAs, "saveAs"],
-    [btnFind, "find"],
-    [btnOutline, "outline"],
+    [btnFind, "search"],
+    [btnOutline, "listTree"],
     [btnExport, "export"],
   ];
-  for (const [btn, name] of icons) btn.innerHTML = ICONS[name];
+  for (const [btn, name] of icons) btn.innerHTML = CODICONS[name];
   refreshViewModeButton();
   // 主题按钮的图标由 refreshThemeButton 按当前档位（浅色/深色/跟随系统）决定
   refreshThemeButton();

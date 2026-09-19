@@ -63,6 +63,14 @@
   （`.gitignore` / `.prettierignore` / eslint `ignores` / `tsconfig.include` / 测试里的 `SKIP_DIRS`），
   否则探针会误伤无关守卫。
 
+## 图标
+
+- **所有按钮图标一律用 VS Code codicon**（`src/shell/codicons.ts`，由 `scripts/fetch-codicons.mjs`
+  从官方包 `@vscode/codicons@0.0.46-24`（MIT）逐字抽取；生成物**勿手改**，改脚本里的 `ICONS`
+  映射后重跑即可复现）。取用一律 `CODICONS.<name>` / `CODICONS[name]`，不得把字形写死在消费方。
+- **禁止手绘 SVG 充当图标**。codicon 里确无合适字形时，**先与用户商量**是否引入别的图标集，
+  不得自行绘制、临时拼一个或改字号凑数。
+
 ## 范围（明确不做）
 
 不做：插件商店、内置终端、Git 集成、LSP。

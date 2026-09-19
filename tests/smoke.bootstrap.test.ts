@@ -313,7 +313,7 @@ describe("bootstrap + drag-split smoke", () => {
     expect(allViews[1].state.doc.toString(), "面板1 的同源实例应实时跟随内容变更").toContain(
       "SYNC-MARK hello world",
     );
-    // B57 起 ● 是矢量字形（dotIcon），槽位恒定存在、靠 opacity 显隐，
+    // B57 起 ● 是矢量字形（VS Code codicon 的 circle-filled），槽位恒定存在、靠 opacity 显隐，
     // 所以脏状态只能看 tab-dirty 类，不能再看 .tab-mark 的文本。
     const dirtyTabs = Array.from(document.querySelectorAll(".tab.tab-dirty"));
     expect(dirtyTabs.length, "脏标记应出现在标签上").toBeGreaterThan(0);

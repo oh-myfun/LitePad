@@ -1,4 +1,4 @@
-import { strokeIcon } from "./icons";
+import { CODICONS, type CodiconName } from "./codicons";
 
 /**
  * 标签上的**文件类型图标**（B57）。
@@ -7,8 +7,17 @@ import { strokeIcon } from "./icons";
  * 有图标时左侧内边距从 8px 收到 6px（图标自己撑出视觉留白）。
  *
  * 差别在于图标从哪来：VS Code 有一整套「文件图标主题」（Seti 等，按文件名匹配几千个后缀），
- * LitePad 既没有图标主题、也不引图标库（项目约定：零依赖 + 内联 SVG），
- * 所以这里按**语言家族**给 10 个字形，家族配色走 CSS 变量（浅深两套）。
+ * LitePad 没有图标主题，于是按**语言家族**给 10 个字形。
+ *
+ * 字形一律取 VS Code codicon（`./codicons`，生成物）。🚩 红线：消费方**禁止手绘 SVG**
+ * （docs/conventions.md「图标」节）。10 个家族必须对 10 颗**互不相同**的 codicon ——
+ * 抽取脚本 scripts/fetch-codicons.mjs 的 assertFamilies() 与 regressions 的
+ * 「十个家族应有十个不同字形」双重守着撞车。
+ *
+ * ⚠️ 家族仍按**语义最近**挑字形：codicon 没有「Python」「Rust」这类语言字形（那是文件图标
+ *    主题的活），只有通用符号字形，所以映射是「家族 → 最像的通用符号」，不追求一一对应。
+ *    家族配色（`.tab-icon[data-fam]` 的 CSS 变量，浅深两套）承担「哪一类」的辨识，
+ *    字形承担「像什么」——两者合起来才是完整信息。
  *
  * ⚠️ 尺寸依据（VS Code 源码 `editorTabsControl.ts` 的原话）：
  *     modernUICompact: 28  // 20px tab + 4px top + 4px bottom padding
@@ -21,39 +30,32 @@ import { strokeIcon } from "./icons";
 export type FileFamily =
   "md" | "code" | "brace" | "hash" | "tag" | "brk" | "db" | "diff" | "build" | "txt";
 
-/** 家族字形（24×24 视图框，与工具栏图标同参数，实际渲染 16px） */
-const GLYPHS: Record<FileFamily, string> = {
-  /** Markdown：文档 + 向下箭头（Markdown 的经典记号），也是本应用的主力类型 */
-  md:
-    '<path d="M13.5 3H7a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7.5z"/>' +
-    '<path d="M13.5 3v4.5H18"/>' +
-    '<path d="M12 11.5v5.5"/>' +
-    '<path d="M9.6 14.6L12 17l2.4-2.4"/>',
-  /** 动态语言：尖括号 < > */
-  code: '<path d="M9 7l-5 5 5 5"/><path d="M15 7l5 5-5 5"/>',
-  /** 结构化配置：花括号 { } */
-  brace:
-    '<path d="M10 4c-2.2 0-2.6 1.2-2.6 2.7v2.3c0 1.6-.9 2.6-2.9 2.8 2 .2 2.9 1.2 2.9 2.8v2.3c0 1.5.4 2.7 2.6 2.7"/>' +
-    '<path d="M14 4c2.2 0 2.6 1.2 2.6 2.7v2.3c0 1.6.9 2.6 2.9 2.8-2 .2-2.9 1.2-2.9 2.8v2.3c0 1.5-.4 2.7-2.6 2.7"/>',
-  /** 脚本语言：# */
-  hash: '<path d="M9.5 4L7.5 20"/><path d="M16.5 4l-2 16"/><path d="M4.5 9h15"/><path d="M3.5 15h15"/>',
-  /** 标记语言：</> */
-  tag: '<path d="M9.5 8L4 12l5.5 4"/><path d="M14.5 8L20 12l-5.5 4"/><path d="M13.2 6.5l-2.4 11"/>',
-  /** 编译型 / 静态语言：方括号 [ ] */
-  brk:
-    '<path d="M9.5 4H7.5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h2"/>' +
-    '<path d="M14.5 4h2a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-2"/>',
-  /** 数据库：圆柱 */
-  db:
-    '<ellipse cx="12" cy="6" rx="7" ry="2.6"/>' +
-    '<path d="M5 6v12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6V6"/>' +
-    '<path d="M5 12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6"/>',
-  /** 差异：加号 + 减号 */
-  diff: '<path d="M4 7h6"/><path d="M7 4v6"/><path d="M14 17h6"/>',
-  /** 构建 / 部署：六角螺母（比扳手在 16px 下更干净） */
-  build: '<path d="M12 3l7.5 4.3v8.4L12 20l-7.5-4.3V7.3z"/><circle cx="12" cy="11.6" r="2.6"/>',
-  /** 纯文本：三条横线 */
-  txt: '<path d="M5 6.5h14"/><path d="M5 12h14"/><path d="M5 17.5h9"/>',
+/**
+ * 家族 → codicon 名（10 颗必须互不相同，见文件头）。
+ *
+ * 挑法（code / brace / brk 三兄弟最容易撞车，这里刻意拉开）：
+ *   md    → markdown      官方就是 Markdown 记号
+ *   code  → code          尖括号，动态语言（JS / TS / Vue）
+ *   brace → json          花括号，结构化配置（JSON / YAML / CSS / TOML…）
+ *   hash  → terminal      命令行框，脚本语言（Python / Shell / Ruby / Lua…）
+ *   tag   → tag           标签，标记语言（HTML / XML / PHP）
+ *   brk   → symbolClass   类符号，编译型 / 静态语言（C / C++ / Java / Rust…）
+ *   db    → database      数据库圆柱（SQL）
+ *   diff  → diff          左右两栏对照（Diff）
+ *   build → tools         工具（Dockerfile / Makefile / CMake / Nginx…）
+ *   txt   → fileText      纯文本
+ */
+const FAM_ICON: Record<FileFamily, CodiconName> = {
+  md: "markdown",
+  code: "code",
+  brace: "json",
+  hash: "terminal",
+  tag: "tag",
+  brk: "symbolClass",
+  db: "database",
+  diff: "diff",
+  build: "tools",
+  txt: "fileText",
 };
 
 /**
@@ -121,9 +123,19 @@ export function familyOf(langLabel: string | null | undefined): FileFamily {
   return LOOKUP.get(langLabel) ?? "txt";
 }
 
-/** 家族 → 16px 内联 SVG（颜色由 `.tab-icon[data-fam]` 的 CSS 变量给，这里只描边） */
+/**
+ * 家族 → 16px 内联 SVG。
+ *
+ * 颜色不由这里管：codicon 统一带 `fill="currentColor"`，配色仍走 `.tab-icon[data-fam]`
+ * 的 CSS 变量（浅深两套）。
+ *
+ * ⚠️ 生成的 codicon 固定 `width/height="16"`（抽取时已归一，见 fetch-codicons.mjs）；
+ *    只有显式传别的尺寸时才改写那两个属性，默认路径零字符串处理。
+ */
 export function fileIconSvg(fam: FileFamily, size = 16): string {
-  return strokeIcon(GLYPHS[fam], size);
+  const svg = CODICONS[FAM_ICON[fam]];
+  if (size === 16) return svg;
+  return svg.replace('width="16" height="16"', `width="${size}" height="${size}"`);
 }
 
 /** 供测试断言「家族覆盖了多少种语言」用 */

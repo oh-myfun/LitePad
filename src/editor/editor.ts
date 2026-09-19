@@ -22,6 +22,7 @@ import {
 } from "@codemirror/view";
 import { findHighlight } from "./find";
 import { perfProfileFor, type PerfProfile } from "./perf";
+import { CODICONS } from "../shell/codicons";
 
 export interface EditorHandle {
   view: EditorView;
@@ -32,16 +33,18 @@ export interface EditorHandle {
 }
 
 /**
- * 折叠标记：内联 SVG chevron（默认的 "⌄/›" 文本字形观感差）。
- * 颜色与悬停效果走 CSS 变量（.cm-fold-marker，见 global.css），随深浅色联动。
+ * 折叠标记：内联 SVG chevron。
+ *
+ * ⚠️ 图标红线（docs/conventions.md「图标」节）：一律取 VS Code codicon，不手绘。
+ * 这里原先手写了两段 12px 视图框的 chevron path，现改取官方的 chevron-down /
+ * chevron-right —— 16 网格，正好填满 `.cm-fold-marker` 的 16px 槽位（见 global.css）。
+ * 颜色与悬停效果仍走 CSS 变量，随深浅色联动。
  */
 export function foldMarkerDOM(open: boolean): HTMLElement {
   const span = document.createElement("span");
   span.className = "cm-fold-marker";
   span.setAttribute("aria-hidden", "true");
-  span.innerHTML = open
-    ? '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4.5 6l3.5 4 3.5-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-    : '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 4.5l4 3.5-4 3.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  span.innerHTML = open ? CODICONS.chevronDown : CODICONS.chevronRight;
   return span;
 }
 
