@@ -47,9 +47,18 @@ fi
 #    panic `NotAttempted("windres")`，被本钩子误报成「cargo test 未通过」
 #    （09-18 push 实测：vitest 458 全绿，cargo 却被这个纯环境问题判红）。
 # ⚠️ 别用 `command -v windres` 判断能否用 —— 钩子环境里实测不准；统一用 `-x` 直接测文件。
+# ⚠️ 命中后**必须 `cd … && pwd` 归一成 POSIX 形式**（与上面 COREUTILS_DIR 同一条教训）：
+#    MSYS 下 `C:/msys64/mingw64/bin` 这种 Windows 风格条目，shell 内 `which` 搜不到，
+#    传给**原生**子进程（cargo → build.rs → embed-resource 找 windres）也照样命中不了。
+#    09-18 再次实测：候选表第一项 `C:/…` 命中后打印「windres: C:/msys64/mingw64/bin」
+#    看起来一切正常，cargo 却仍然 panic NotAttempted("windres")；归一成
+#    `/c/msys64/mingw64/bin` 后 40 个 Rust 测试全绿。改这段前先读 regressions 的 B83。
 WINDRES_DIR=""
 for w in "C:/msys64/mingw64/bin" "/c/msys64/mingw64/bin" "/c/msys64/ucrt64/bin" "/c/msys64/clang64/bin"; do
-  [ -x "$w/windres.exe" ] && { WINDRES_DIR="$w"; break; }
+  if [ -x "$w/windres.exe" ]; then
+    WINDRES_DIR="$(cd "$w" 2>/dev/null && pwd)"
+    break
+  fi
 done
 if [ -n "$WINDRES_DIR" ]; then PATH="$PATH:$WINDRES_DIR"; export PATH; fi
 

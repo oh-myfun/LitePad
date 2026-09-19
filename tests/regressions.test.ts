@@ -2134,6 +2134,18 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     );
   });
 
+  it("B83 pre-push 的 windres 目录必须归一成 POSIX 路径（Windows 风格条目是死路）", () => {
+    // 事故：钩子打印「cargo test（windres: C:/msys64/mingw64/bin）」，看起来工具链找到了，
+    // cargo 却 panic `NotAttempted("windres")` —— 因为 MSYS 下 `C:/…` 风格的 PATH 条目
+    // 既搜不到、也不会被转成可用形式传给**原生**子进程（cargo → build.rs → embed-resource）。
+    // 归一成 `/c/msys64/mingw64/bin` 后 40 个 Rust 测试全绿（实测）。
+    // ⚠️ 这条与 COREUTILS_DIR 的 `cd … && pwd` 是同一类教训：命中路径必须规范化。
+    const hook = readFileSync(".githooks/pre-push", "utf-8");
+    expect(hook, "WINDRES_DIR 必须经 `cd … && pwd` 归一，不能直接用 C:/… 条目").toContain(
+      'WINDRES_DIR="$(cd "$w" 2>/dev/null && pwd)"',
+    );
+  });
+
   it("B79 主题：档位必须写回 settings 才存得下；三态按钮一律不点亮", () => {
     // ⚠️ 断言必须落在**代码**上，不能落在整份文件上：上面这段说明性的注释里就写着
     // `persistSettings()` 和 `themeMode = normalizeMode(settings?.theme)`，
