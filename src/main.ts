@@ -688,6 +688,8 @@ function rebuildLayout(): void {
     },
     // B89：**松手**时指针在窗外 → 这时才决定去哪儿（别的窗口接手 / 回落开新窗口）
     onDropOutOfWindow: (drag) => void dropTabsOutOfWindow(drag),
+    // B90：拖拽收尾（松手 / 失焦 / 强制清场都要通知）→ 让别的窗口收掉预览
+    onDragEnd: () => endWindowDrag(),
     // B71：拖标签栏空白处 = 拖整组。并入 = 「关掉这个分屏但指定并入目标」
     onMergeGroup: (srcId, targetId) => closePanelById(srcId, targetId),
     onMoveGroupToPanel: (srcId, targetId, dir, newFirst) =>
@@ -1029,6 +1031,33 @@ function disposePanel(panelId: number): void {
   rebuildLayout();
   refreshAll();
   scheduleSessionSave();
+}
+
+/**
+ * 摘掉所有**一个标签都没有**的面板（B90）。
+ *
+ * 什么时候会空：把面板里最后一个标签挪走 —— 移到别的面板、在自家边缘分屏出去、
+ * 整组搬到另一个窗口。留着它就是一个占着位置、什么也没有的空框，和「窗口内移动后
+ * 合并分屏」的既有行为不一致（`moveTabToStrip` / `moveTabToPanel` / `moveGroupToPanel`
+ * 各自都写了这个判据，但总有路径漏掉：同面板分屏、跨窗口拖走）。
+ *
+ * ⚠️ 唯一面板不摘：摘了就没地方放标签了（关面板那条路径也是同一个判据）。
+ *
+ * @returns 是否真的摘掉了。调用方据此决定要不要自己 rebuild —— `disposePanel` 内部已刷过。
+ */
+function pruneEmptyPanels(): boolean {
+  if (countLeaves(layout) <= 1) return false;
+  const empties = [...panels.values()].filter((p) => p.tabs.length === 0);
+  if (empties.length === 0) return false;
+  exitMaximize(); // 同上：最大化态下摘面板会留下「0 宽但还在树里」的怪布局
+  let removed = false;
+  for (const p of empties) {
+    if (countLeaves(layout) <= 1) break; // 摘到只剩一个为止
+    if (!panels.has(p.panelId)) continue; // 可能已被前一轮连带摘掉
+    disposePanel(p.panelId);
+    removed = true;
+  }
+  return removed;
 }
 
 /** 关闭面板（VS Code 式）：仅移除该分屏，标签整体并入视觉相邻面板，不关文档。
@@ -1391,9 +1420,13 @@ function splitPanelWithTab(
     disposePanel(src.panelId);
   } else {
     if (src.tabs.length > 0) src.activeTabId = src.tabs[src.tabs.length - 1];
-    else src.activeTabId = -1; // 同面板分屏移出唯一标签：原面板留空
-    rebuildLayout();
-    refreshAll();
+    else src.activeTabId = -1;
+    // B90：**同面板**分屏把唯一标签挪走后，原面板就空了 —— 以前这里留着一个空框。
+    // 交给 pruneEmptyPanels 统一摘掉（摘掉后新面板正好落在原位置，等价于「没动」）。
+    if (!pruneEmptyPanels()) {
+      rebuildLayout();
+      refreshAll();
+    }
   }
 }
 
@@ -4718,6 +4751,8 @@ async function openTabsInNewWindow(tabIds: number[], spot?: WindowSpot | null): 
   // 的面板（同 splitPanelWithTab / closePanelById 的处理）
   exitMaximize();
   for (const id of tabIds) remoteTabLocally(id, label);
+  // B90：最后一个标签被送到新窗口后原面板会空 —— 摘掉，别留一个空框
+  pruneEmptyPanels();
   rebuildLayout();
   refreshAll();
   scheduleSessionSave();
@@ -4832,6 +4867,18 @@ function detachLocally(tabIds: number[]): void {
 let winDrag: WindowDragSession | null = null;
 
 /**
+ * 一次拖拽收尾（splitview 的 `finishTabDrag` 回调）：广播「结束了」，让**别的窗口**
+ * 收掉它们亮着的落点预览。
+ *
+ * ⚠️ 这里**不清引用**：`finishTabDrag` 早于落点提交，松手在窗外时还要用同一个会话去问
+ * 「有没有别的窗口接手」。清早了就问不成，只能一路回落成「开新窗口」。
+ * 引用的清理在 `dropTabsOutOfWindow` 里做。
+ */
+function endWindowDrag(): void {
+  winDrag?.finish();
+}
+
+/**
  * **松手**时指针在窗口外（B89）。
  *
  * 与 B71④ 的旧行为（出界即生效）的差别就一句：**先问有没有别的窗口愿意接手**。
@@ -4869,10 +4916,14 @@ async function dropTabsOutOfWindow(drag: {
     if (windowKind === "satellite") {
       // 卫星窗口不留隐藏实例：它被摘空了就自己关掉（detachLocally 里处理）
       detachLocally(ids);
+      pruneEmptyPanels(); // B90：被拖走的那一组留下的空面板要摘掉
     } else {
       // 主窗口留隐藏实例：会话要能写它、对方异常消失时还能接回来（见 remoteTabLocally）
       exitMaximize();
       for (const id of ids) remoteTabLocally(id, target);
+      // B90：整组（或最后一个标签）被拖走后那个面板就空了 —— 摘掉，别留一个空框。
+      // 卫星窗口那侧同理：`detachLocally` 之后也要 prune。
+      pruneEmptyPanels();
       rebuildLayout();
       refreshAll();
       scheduleSessionSave();
@@ -4886,6 +4937,7 @@ async function dropTabsOutOfWindow(drag: {
   if (windowKind === "satellite") {
     returnTabsToMain(ids);
     detachLocally(ids);
+    pruneEmptyPanels(); // B90：同上，交回主窗口后不留空面板
     showMessage(`已交回主窗口 ${ids.length} 个标签`);
     return;
   }

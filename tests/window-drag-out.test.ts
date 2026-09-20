@@ -45,6 +45,7 @@ function mount(withTab = false) {
 
   const onDragOutside = vi.fn();
   const onDropOutOfWindow = vi.fn();
+  const onDragEnd = vi.fn();
   const onDropTabToPanel = vi.fn();
   const onMergeGroup = vi.fn();
   const onMoveTabToStrip = vi.fn();
@@ -59,6 +60,7 @@ function mount(withTab = false) {
     onMergeGroup,
     onDragOutside,
     onDropOutOfWindow,
+    onDragEnd,
     mountView: () => {},
   } as unknown as SplitviewCallbacks;
 
@@ -86,6 +88,7 @@ function mount(withTab = false) {
     strips,
     onDragOutside,
     onDropOutOfWindow,
+    onDragEnd,
     onDropTabToPanel,
     onMergeGroup,
     onMoveTabToStrip,
@@ -229,6 +232,42 @@ describe("B89 拖出窗口：途中只通知，松手才提交", () => {
     expect(m.root.querySelectorAll(".split-preview.show").length, "预览要收掉").toBe(0);
     expect(m.root.querySelectorAll(".tab-insert").length, "插入线也要收掉").toBe(0);
     up(W + 60, 200);
+  });
+
+  it("影像始终精确跟随光标：出界也不夹取（B90）", () => {
+    const m = mount(true);
+    const tab = m.strips[0].querySelector<HTMLElement>(".tab")!;
+    down(tab, 20, 14);
+    move(W + 60, 200);
+    // 单标签的影像锚点是 (0,0)：左上角就该落在光标处
+    const ghost = document.querySelector<HTMLElement>(".tab-drag-ghost")!;
+    expect(ghost.style.left, "横向不得被拉回窗口内").toBe(`${W + 60}px`);
+    expect(ghost.style.top).toBe("200px");
+    move(-80, -40);
+    expect(ghost.style.left, "左上出界同样照跟").toBe("-80px");
+    expect(ghost.style.top).toBe("-40px");
+    up(-80, -40);
+  });
+
+  it("拖出去又拖回来松手：也要通知收尾（否则另一个窗口的预览一直亮着）", () => {
+    const m = mount(true);
+    const tab = m.strips[0].querySelector<HTMLElement>(".tab")!;
+    down(tab, 20, 14);
+    move(W + 60, 200); // 出界：另一个窗口亮了预览
+    move(600, 150); // 又拖回本窗口
+    up(600, 150); // 在本窗口松手
+    expect(m.onDropOutOfWindow, "落在本窗口 = 普通分屏落点").not.toHaveBeenCalled();
+    expect(m.onDragEnd, "收尾通知必须发：别的窗口要靠它收掉预览").toHaveBeenCalled();
+  });
+
+  it("失焦取消也要通知收尾（mouseup 收不到时的清场路径）", () => {
+    const m = mount(true);
+    const tab = m.strips[0].querySelector<HTMLElement>(".tab")!;
+    down(tab, 20, 14);
+    move(W + 60, 200);
+    window.dispatchEvent(new Event("blur"));
+    expect(m.onDragEnd).toHaveBeenCalled();
+    expect(document.querySelector(".tab-drag-ghost")).toBeNull();
   });
 
   it("宿主没接回调时什么也不发生（不抛错，松手后照常清场）", () => {

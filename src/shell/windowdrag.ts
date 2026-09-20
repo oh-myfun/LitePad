@@ -181,12 +181,20 @@ let lastSpot: unknown = null;
 let previewActive = false;
 let receiverUnlisten: UnlistenFn[] = [];
 
-/** 收掉本窗口的落点预览（幂等）。 */
-function clearReceiver(): void {
+/**
+ * 收掉本窗口的落点预览。
+ *
+ * `forgetSpot`（默认 true）= 连落点一起作废：指针**不在本窗口**了，那个落点已经过时。
+ *
+ * ⚠️ 拖拽结束（`EVT_END`）必须传 **false** —— 只收视觉、留住落点。因为发起窗口是
+ * 「先广播 END 收尾、再定向投递正文」（`finishTabDrag` 早于落点提交），把落点一起清掉
+ * 的话，接手方收到正文时已经不知道该放哪儿了，只能退回活动面板（预览在这、落下在那）。
+ */
+function clearReceiver(forgetSpot = true): void {
   if (!receiver) return;
   if (previewActive) receiver.clear();
   previewActive = false;
-  lastSpot = null;
+  if (forgetSpot) lastSpot = null;
 }
 
 /**
@@ -243,7 +251,7 @@ export async function installWindowDropTarget<Spot>(
 
   const onEnd = (e: { payload: CoordPayload }) => {
     if (!receiver || e.payload?.from === receiverLabel) return;
-    clearReceiver();
+    clearReceiver(false);
   };
 
   receiverUnlisten = await Promise.all([

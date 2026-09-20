@@ -1165,8 +1165,9 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     //    单标签 = setDragImage(tab, 0, 0)（左上角顶到指针）
     expect(svCode, "药丸锚点 -10,-10").toMatch(/GHOST_ANCHOR_PILL = \{ x: 10, y: 10 \}/);
     expect(svCode, "单标签锚点 0,0").toMatch(/GHOST_ANCHOR_TAB = \{ x: 0, y: 0 \}/);
-    expect(svCode, "跟随光标时应用锚点").toMatch(/let left = x - dragGhostAnchor\.x;/);
-    expect(svCode, "锚点同样作用于纵向").toMatch(/let top = y - dragGhostAnchor\.y;/);
+    expect(svCode, "跟随光标时应用锚点").toMatch(
+      /dragGhost\.style\.left = `\$\{x - dragGhostAnchor\.x\}px`/,
+    );
     expect(svCode, "整组挂药丸锚点").toMatch(
       /dragGhostAnchor = group \? GHOST_ANCHOR_PILL : GHOST_ANCHOR_TAB/,
     );
@@ -2954,9 +2955,9 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
     expect(mv, "出界只通知宿主（让它广播指针位置）").toMatch(
       /outsideWindow\(e\.clientX, e\.clientY\)[\s\S]{0,500}onDragOutside\?\.\(/,
     );
-    expect(mv, "出界后影像要贴边（否则用户看不见自己拖着什么）").toMatch(
-      /moveDragGhost\(e\.clientX, e\.clientY, outside\)/,
-    );
+    // B90：影像**始终**精确跟随光标，出界也不夹取（夹取会让「指针在哪」与「影像在哪」对不上）
+    expect(mv, "影像原样跟随光标").toMatch(/moveDragGhost\(e\.clientX, e\.clientY\)/);
+    expect(mv, "跟随不得夹取坐标").not.toMatch(/clampToWindow/);
     expect(mv, "出界要记状态，供松手时判定走哪条路").toMatch(/tabDrag\.outOfWindow = true/);
     expect(mv, "拖回窗口内要清掉出界状态").toMatch(/tabDrag\.outOfWindow = false/);
     expect(mv, "刚出界时要收掉本窗口的落点痕迹").toMatch(
@@ -2998,6 +2999,37 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
     );
     expect(src, "落点用**本窗口**算出来的那块（预览在哪就落哪）").toMatch(
       /preview: \(x, y\) => previewDropAt\(x, y\)/,
+    );
+  });
+
+  it("拖拽收尾必须通知宿主，且 END 不得吃掉落点（B90）", () => {
+    const fin = topLevelFnBody(sv, "function finishTabDrag");
+    expect(fin, "任何收尾路径都要通知（松手 / 失焦 / 强制清场）").toMatch(/onDragEnd\?\.\(\)/);
+    expect(src, "宿主接线：收尾广播「结束」，让别的窗口收掉预览").toMatch(
+      /onDragEnd: \(\) => endWindowDrag\(\)/,
+    );
+    // ⚠️ 发起窗口是「先广播 END 收尾（finishTabDrag 早于落点提交）、再定向投递正文」，
+    // 所以接手方收到 END 只能清视觉、**必须留住落点** —— 否则正文到达时已经不知道
+    // 该放哪儿，只能退回活动面板（预览在这、落下在那）。
+    const wd2 = readFileSync("src/shell/windowdrag.ts", "utf-8");
+    expect(wd2, "END 只收视觉，留住落点").toMatch(/clearReceiver\(false\)/);
+    expect(wd2, "指针不在本窗口才作废落点").toMatch(/function clearReceiver\(forgetSpot = true\)/);
+  });
+
+  it("移空的面板要摘掉，不留空框（B90）", () => {
+    const prune = fnBody("function pruneEmptyPanels");
+    expect(prune, "唯一面板不摘（摘了就没地方放标签）").toMatch(/countLeaves\(layout\) <= 1/);
+    expect(prune, "摘之前先还原最大化").toMatch(/exitMaximize\(\)/);
+    const drop = fnBody("async function dropTabsOutOfWindow");
+    expect(drop, "拖到别的窗口后要清理空面板（主窗口侧）").toMatch(
+      /remoteTabLocally\(id, target\);[\s\S]{0,220}pruneEmptyPanels\(\)/,
+    );
+    expect(drop, "拖到别的窗口后要清理空面板（卫星侧 / 交回主窗口）").toMatch(
+      /detachLocally\(ids\);[\s\S]{0,140}pruneEmptyPanels\(\)/,
+    );
+    const split = fnBody("function splitPanelWithTab");
+    expect(split, "同面板分屏挪走唯一标签后也要摘（以前这里留空框）").toMatch(
+      /pruneEmptyPanels\(\)/,
     );
   });
 

@@ -133,4 +133,16 @@ describe("B26/B27 接线（静态断言）", () => {
       /preview\.className = `split-preview show zone-\$\{effZone\}`/,
     );
   });
+
+  it("空标签栏的插入线贴最左（B90：否则空面板上悬停会冒出一条滚动条）", () => {
+    const strip = document.createElement("div");
+    strip.className = "panel-tabstrip";
+    rects.set(strip, { left: 0, top: 0, right: 300, bottom: 28, width: 300, height: 28 });
+    const info = stripInsertInfo(strip, 150);
+    expect(info, "空标签栏也要给出插入位置").not.toBeNull();
+    // ⚠️ 取 strip 宽度会把 scrollWidth 顶到可视宽度之外 —— 指示线是 absolute 定位，
+    // 一样参与滚动区域计算，于是「拖过一块空面板」就多出一条横向滚动条。
+    expect(info!.offsetLeft, "空标签栏的插入线贴最左").toBe(0);
+    expect(info!.beforeTabId).toBeNull();
+  });
 });

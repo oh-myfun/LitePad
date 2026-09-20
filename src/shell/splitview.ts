@@ -92,6 +92,14 @@ export interface SplitviewCallbacks {
     clientX: number;
     clientY: number;
   }) => void;
+  /**
+   * B90：一次拖拽**收尾**的统一通知（松手、失焦取消、下一次拖拽前的强制清场都走这里）。
+   *
+   * 宿主据此广播「拖拽结束」，让**别的窗口**收掉它们亮着的落点预览。之前只在
+   * 「松手在窗外」这条路径上收尾，于是「拖出去又拖回本窗口松手」会在另一个窗口
+   * 留下一块高亮，久久不散。
+   */
+  onDragEnd?: () => void;
   /** 拖拽标签落在 tab 区（B27）：插到 beforeTabId 之前（null = 追加到末尾）。
    *  同面板 = 调整顺序；跨面板 = 移动到该面板的该位置。不是分屏。 */
   onMoveTabToStrip: (panelId: number, tabId: number, beforeTabId: number | null) => void;
@@ -299,27 +307,14 @@ function createGroupDragGhost(strip: HTMLElement): HTMLElement {
 /**
  * 影像跟随光标。
  *
- * `clampToWindow`（B89）：指针拖到窗口外之后，影像若照着坐标走就整个跑到客户区外
- * —— 用户手上「拖着的东西」凭空消失，只剩目标窗口那块预览。贴住边缘、至少露出一条
- * 边，才知道这一拖还在进行中。（原生 DnD 的 drag image 由 OS 画、跨窗口都能看见，
- * 我们是指针事件自己编排的，只能靠这个近似。）
- *
- * ⚠️ 只在上一步判定出界时才夹：窗口内的拖拽必须**精确**跟随，否则贴着面板右侧拖动
- * 时影像会被拉回来一截，落点看着就不准了。
+ * ⚠️ **不做任何夹取**（B90 回退了 B89 的「出界贴边」）：用户要的是影像始终精确跟着
+ * 指针。指针拖到客户区外之后影像确实看不见了（它是本窗口的 DOM），但那是窗口的
+ * 边界，不是拖拽的边界 —— 把它钉在边缘反而会让「指针在哪」和「影像在哪」对不上。
  */
-function moveDragGhost(x: number, y: number, clampToWindow = false): void {
+function moveDragGhost(x: number, y: number): void {
   if (!dragGhost) return;
-  let left = x - dragGhostAnchor.x;
-  let top = y - dragGhostAnchor.y;
-  if (clampToWindow) {
-    // 露出固定一小条即可：按影像实际尺寸算会让「露出多少」随文件名长短变化
-    const keepX = Math.min(dragGhost.offsetWidth || 0, 48);
-    const keepY = Math.min(dragGhost.offsetHeight || 0, 24);
-    left = Math.min(Math.max(left, 0), Math.max(window.innerWidth - keepX, 0));
-    top = Math.min(Math.max(top, 0), Math.max(window.innerHeight - keepY, 0));
-  }
-  dragGhost.style.left = `${left}px`;
-  dragGhost.style.top = `${top}px`;
+  dragGhost.style.left = `${x - dragGhostAnchor.x}px`;
+  dragGhost.style.top = `${y - dragGhostAnchor.y}px`;
 }
 
 function removeDragGhost(): void {
@@ -401,6 +396,12 @@ export function stripInsertInfo(strip: HTMLElement, x: number): StripInsertInfo 
   // 插入指示线会画在错误的标签之间。
   const scroll = strip.scrollLeft;
   const tabs = Array.from(strip.querySelectorAll<HTMLElement>(".tab"));
+  if (tabs.length === 0) {
+    // 空标签栏（空面板）：插入线贴最左。
+    // ⚠️ 不能取 strip 宽度 —— 指示线是 absolute 定位，left 顶到 clientWidth 会把
+    // scrollWidth 撑到可视宽度之外，于是「拖过一块空面板」就冒出一条横向滚动条（B90）。
+    return { beforeTabId: null, offsetLeft: 0 };
+  }
   for (const tab of tabs) {
     const tr = tab.getBoundingClientRect();
     if (x < tr.left + tr.width / 2) {
@@ -492,7 +493,8 @@ function onTabDragMove(e: MouseEvent): void {
   // 影像跟随光标。⚠️ 必须放在下面「离开面板就 return」**之前** —— 拖到面板之外
   // （空白区、状态栏上方、乃至窗口之外）时影像同样要跟着走，否则会僵在最后一个面板上。
   const outside = outsideWindow(e.clientX, e.clientY);
-  moveDragGhost(e.clientX, e.clientY, outside);
+  // 坐标**原样**给影像：出界也照跟（B90）
+  moveDragGhost(e.clientX, e.clientY);
   // B89：出界**不再**立刻把标签送走 —— 那正是用户报的毛病（指针擦过另一个窗口的
   // 某块面板就被合入，根本没法挑落点）。这里只记状态 + 通知宿主广播指针位置，
   // 让**目标窗口**自己亮预览；真正的搬运一律等松手（`onDropOutOfWindow`）。
@@ -574,6 +576,7 @@ function onTabDragEnd(e: MouseEvent): void {
 }
 
 function finishTabDrag(): void {
+  const cb = svCallbacks;
   tabDrag = null;
   document.body.classList.remove("tab-drag-active");
   document.removeEventListener("mousemove", onTabDragMove);
@@ -582,6 +585,9 @@ function finishTabDrag(): void {
   removeDragGhost();
   clearAllPreviews();
   clearInsertIndicators();
+  // B90：不管这次拖拽是怎么结束的（松手 / 失焦 / 下一次拖拽前强制清场），都要让宿主
+  // 知道「没了」—— 别的窗口可能还亮着为它准备的落点预览。
+  cb?.onDragEnd?.();
 }
 
 /** build 的产物：元素 + （仅 split 节点）其根分隔条、a/b 子元素与**已注册的缩放目标**，
