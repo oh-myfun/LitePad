@@ -94,4 +94,18 @@
 - `scripts/run-vitest.cjs` 自己会补 `run`：手动再写 `run` 会变成 `vitest run "run" "<file>"` 且失败时被吞 stdout。
   排查直接用 `npx vitest run <file>` 看输出。
 - 不要在本会话里和智能体写文件的同时手改同一文件（并发编辑冲突）。
+
+## 10. `scripts/release.sh` 没有 PATH 兜底，且失败时机很坑（09-21 实测）
+- 症状：会话 shell 里直接 `bash scripts/release.sh minor` → `line 69: cargo: command not found`，
+  505ms 就退出。`pre-push`/`build-all.sh` 都自带 `export PATH="/c/msys64/mingw64/bin:$HOME/.cargo/bin:$PATH"`，
+  **release.sh 没有**。
+- ⚠️ 失败时机：脚本先改三处版本号（package.json / tauri.conf.json / Cargo.toml），**再**跑
+  `cargo update -p litepad`（同步 Cargo.lock）。所以挂在第 69 行时版本号**已经写进文件**、
+  工作树变脏。此时重跑 `minor` 会把 0.10.0 再升成 0.11.0。
+- 补救：要么 `export PATH=...` 后用**显式版本号**重跑（`bash scripts/release.sh 0.10.0`），
+  要么手动续完剩余四步（cargo update → gen-changelog → build:all → commit + tag）。
+  后者更常用，因为紧接着还要提交，工作树本来就不干净（release.sh 开头就要求干净树）。
+- 另：`git ls-remote` / `git push` 连不上 `github.com:443`（`curl` 也是 21s 超时）时是**网络不通**，
+  不是 TLS 吊销（那种会报 `CRYPT_E_NO_REVOCATION_CHECK`，加 `--ssl-no-revoke` 可解）。
+  网络不通只能等，本地产物照常可交付。
 - Vitest 固定 ~4.1.11；该脚本在启动前把盘符转大写以绕过沙箱限制。
