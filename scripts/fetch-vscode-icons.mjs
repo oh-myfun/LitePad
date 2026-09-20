@@ -93,7 +93,12 @@ mkdirSync(dirname(CACHE), { recursive: true });
 try {
   curl(API, CACHE);
 } catch (e) {
-  if (!existsSync(CACHE)) throw new Error(`tree 拉取失败：${String(e.message).split("\n")[0]}`);
+  // ⚠️ 抛新错误时必须用 `cause` 带上原始异常：丢掉它，上层就只能看到一句
+  //    「tree 拉取失败」，真正的原因（DNS / TLS / 限流）全被吞掉 —— 这正是
+  //    eslint `preserve-caught-error` 要拦的。
+  if (!existsSync(CACHE)) {
+    throw new Error(`tree 拉取失败：${String(e.message).split("\n")[0]}`, { cause: e });
+  }
   console.warn("⚠ tree 拉取失败，复用 .tmp 缓存");
 }
 const tree = JSON.parse(readFileSync(CACHE, "utf8"));
