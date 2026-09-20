@@ -3,6 +3,31 @@
 > 本文件由 `scripts/gen-changelog.sh` 从 Conventional Commit 自动生成，
 > `scripts/release.sh` 发布时自动刷新；版本口径见 `docs/conventions.md`「版本号规则」。
 
+## v0.10.0 — 2026-09-21
+
+本版距 `v0.9.0` 共 7 个提交。
+
+### 新功能
+
+- 跨窗口拖拽改为途中预览、松手才提交（B89） `534efa6`
+- 保存时检测磁盘版本变化并弹框让用户选择（B88） `59d4288`
+
+### 修复
+
+- fetch-vscode-icons 抛错带上 cause（eslint preserve-caught-error） `5bdf5ec`
+
+### 重构
+
+- 冲突弹窗去掉无样式钩子的空 class，文案合成一条模板串 `6f90ec7`
+
+### 其他
+
+- 记 B88 收尾与 B89 跨窗口拖拽（四条新不变量进 multiwindow §9.4） `b3e4cac`
+- 补齐 VS Code 全量图标参考集 `e211bf4`
+- 记 B87 文件监听（三态+回声抑制）与 v0.9.0 `ec93d7d`
+
+---
+
 ## v0.9.0 — 2026-09-20
 
 本版距 `v0.8.0` 共 9 个提交。
