@@ -1091,11 +1091,12 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
 
     // ③ 跟随光标：锚点 = 左上角（setDragImage(tab, 0, 0) 的语义），且要放在
     //    「离开面板就 return」之前 —— 拖到面板之外影像同样得跟着走
-    expect(svCode, "拖拽中持续跟随光标").toMatch(/moveDragGhost\(e\.clientX, e\.clientY\)/);
-    const moveIdx = svCode.indexOf("moveDragGhost(e.clientX, e.clientY)");
+    // B89 起第三个参数是「出界时贴边」的开关，跟随本身没变
+    expect(svCode, "拖拽中持续跟随光标").toMatch(/moveDragGhost\(e\.clientX, e\.clientY/);
+    const moveIdx = svCode.indexOf("moveDragGhost(e.clientX, e.clientY");
     expect(moveIdx, "应能定位跟随调用").toBeGreaterThan(-1);
-    expect(moveIdx, "跟随必须在「离开面板就 return」之前，否则拖到面板外影像会僵住").toBeLessThan(
-      svCode.indexOf("const panelEl = panelAt(e.clientX, e.clientY)"),
+    expect(moveIdx, "跟随必须在落点判定之前，否则拖到面板外影像会僵住").toBeLessThan(
+      svCode.indexOf("previewDropAt(e.clientX, e.clientY, e.altKey)"),
     );
 
     // ④ 收尾必须清理（松手 / 重复进入 / 拖出窗口失焦三条路径）
@@ -1164,9 +1165,8 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     //    单标签 = setDragImage(tab, 0, 0)（左上角顶到指针）
     expect(svCode, "药丸锚点 -10,-10").toMatch(/GHOST_ANCHOR_PILL = \{ x: 10, y: 10 \}/);
     expect(svCode, "单标签锚点 0,0").toMatch(/GHOST_ANCHOR_TAB = \{ x: 0, y: 0 \}/);
-    expect(svCode, "跟随光标时应用锚点").toMatch(
-      /dragGhost\.style\.left = `\$\{x - dragGhostAnchor\.x\}px`/,
-    );
+    expect(svCode, "跟随光标时应用锚点").toMatch(/let left = x - dragGhostAnchor\.x;/);
+    expect(svCode, "锚点同样作用于纵向").toMatch(/let top = y - dragGhostAnchor\.y;/);
     expect(svCode, "整组挂药丸锚点").toMatch(
       /dragGhostAnchor = group \? GHOST_ANCHOR_PILL : GHOST_ANCHOR_TAB/,
     );
@@ -2943,26 +2943,62 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
     expect(body, "整段替换要经过 setState").toMatch(/setState\(whole\)/);
   });
 
-  it("拖出窗口：拖拽层只负责判出界，去哪个窗口由宿主按身份决定", () => {
-    // 判据必须带余量：最大化窗口贴边拖动会擦出去，无余量就会莫名弹出新窗口
+  it("拖出窗口：拖拽途中只通知，松手才提交（B89）", () => {
+    // 判据必须带余量：最大化窗口贴边拖动会擦出去，无余量就会莫名弹新窗口
     expect(sv, "出界判据要留余量").toMatch(/DRAG_OUT_MARGIN/);
-    expect(sv, "出界要在落点判定之前处理").toMatch(
-      /if \(outsideWindow\(e\.clientX, e\.clientY\)\)[\s\S]{0,400}finishTabDrag\(\)/,
+    // ⚠️ 拖拽层的函数本体在 splitview.ts，main.ts 的宿主函数才走 fnBody
+    const mv = topLevelFnBody(sv, "function onTabDragMove");
+    // ⚠️ 这两条是 B89 的核心：旧实现在这里 finishTabDrag + 上报，副作用发生在拖拽途中，
+    // 表现为「指针擦过另一个窗口的一块面板就被合入」（用户报的毛病）。
+    expect(mv, "出界不得收尾：影像要继续跟着光标走").not.toContain("finishTabDrag()");
+    expect(mv, "出界只通知宿主（让它广播指针位置）").toMatch(
+      /outsideWindow\(e\.clientX, e\.clientY\)[\s\S]{0,500}onDragOutside\?\.\(/,
     );
-    expect(sv, "出界后要吞掉紧随的 click").toMatch(
-      /finishTabDrag\(\);[\s\S]{0,80}suppressTabClick = true;[\s\S]{0,120}onDragOutOfWindow/,
+    expect(mv, "出界后影像要贴边（否则用户看不见自己拖着什么）").toMatch(
+      /moveDragGhost\(e\.clientX, e\.clientY, outside\)/,
     );
-    expect(sv, "上报要带松手坐标（新窗口落在松手处）").toMatch(
-      /clientX: e\.clientX,\s*\n\s*clientY: e\.clientY,/,
+    expect(mv, "出界要记状态，供松手时判定走哪条路").toMatch(/tabDrag\.outOfWindow = true/);
+    expect(mv, "拖回窗口内要清掉出界状态").toMatch(/tabDrag\.outOfWindow = false/);
+    expect(mv, "刚出界时要收掉本窗口的落点痕迹").toMatch(
+      /if \(!tabDrag\.outOfWindow\) \{[\s\S]{0,200}clearAllPreviews\(\)/,
     );
-    const body = fnBody("function dragTabsOutOfWindow");
+    const end = topLevelFnBody(sv, "function onTabDragEnd");
+    expect(end, "松手时才上报一次，且带松手坐标").toMatch(
+      /if \(drag\.outOfWindow\)[\s\S]{0,220}onDropOutOfWindow\?\.\([\s\S]{0,160}clientX: e\.clientX/,
+    );
+    const body = fnBody("async function dropTabsOutOfWindow");
     expect(body, "整组拖出取该面板全部标签").toMatch(
       /drag\.groupPanelId !== null[\s\S]{0,160}panels\.get\(drag\.groupPanelId\)\?\.tabs/,
     );
-    expect(body, "卫星窗口拖出 = 交回主窗口（否则越拖越多窗口）").toMatch(
+    expect(body, "先问有没有别的窗口愿意接手").toMatch(/await session\.release\(\)/);
+    expect(body, "有人接手时正文只发给它").toMatch(/session\.deliver\(target, snapshots\)/);
+    expect(body, "没人接手才回落：卫星窗口交回主窗口").toMatch(
       /windowKind === "satellite"[\s\S]{0,200}returnTabsToMain\(ids\)/,
     );
-    expect(body, "主窗口拖出才开新窗").toMatch(/openTabsInNewWindow\(ids, spot\)/);
+    expect(body, "没人接手才回落：主窗口开新窗").toMatch(/openTabsInNewWindow\(ids, spot\)/);
+  });
+
+  it("跨窗口拖拽协议：正文绝不广播（B89）", () => {
+    const wd = readFileSync("src/shell/windowdrag.ts", "utf-8");
+    // hover/release 只带坐标：广播一次 = 每个窗口都收到一份，正文跟着广播就是
+    // 「几十 MB × 窗口数」。
+    expect(wd, "hover 只带坐标，不得夹带正文").toMatch(
+      /EVT_HOVER, \{\s*\n\s*from: selfLabel,\s*\n\s*screen: clientToScreen\(g, lastClient\.x, lastClient\.y\),\s*\n\s*\}\)/,
+    );
+    expect(wd, "release 也只广播坐标").toMatch(/EVT_RELEASE, \{ from: selfLabel, screen \}/);
+    expect(wd, "正文走定向投递").toMatch(/emitTo\(target, EVT_PAYLOAD/);
+    // 顺序是刻意的：先挂 claim 监听再广播 release，反过来的话接手方的回答可能早于
+    // 监听就位，这一次拖拽就只能等到超时再回落成「开新窗口」。
+    expect(wd, "必须先挂 claim 监听再广播 release").toMatch(
+      /listen<ClaimPayload>\(EVT_CLAIM[\s\S]{0,600}emit\(EVT_RELEASE/,
+    );
+    expect(wd, "坐标口径要除以缩放（高 DPI 屏否则整体偏一倍）").toMatch(/scaleFactor\(\)/);
+    expect(src, "两个窗口都要装接收侧（谁都可能成为落点）").toMatch(
+      /^ {2}void installWindowDropTarget\(windowLabel, \{/m,
+    );
+    expect(src, "落点用**本窗口**算出来的那块（预览在哪就落哪）").toMatch(
+      /preview: \(x, y\) => previewDropAt\(x, y\)/,
+    );
   });
 
   it("新窗口落点：拿得到就落在松手处，拿不到退回系统摆放", () => {

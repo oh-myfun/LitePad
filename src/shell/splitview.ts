@@ -69,12 +69,24 @@ export interface SplitviewCallbacks {
   onOpenTabInNewWindow?: (tabId: number) => void;
   onReturnTabToMain?: (tabId: number) => void;
   /**
-   * B71 ④：标签被**拖出窗口边界**（用户想让它在另一个窗口里活着）。
+   * B89：拖拽途中指针**在窗口外**时，每次移动都通知一次（宿主据此广播指针位置，
+   * 让别的窗口亮预览）。
    *
-   * 这里只负责判定与上报，具体是「开新窗口」还是「还回主窗口」由宿主按窗口身份决定
-   * —— 拖拽层不该知道窗口有几扇。`clientX/clientY` 一并带上：新窗口要落在松手处。
+   * ⚠️ 这里只准做「告知」，不准产生任何副作用 —— 出界就生效正是用户报的毛病
+   * （擦过另一个窗口的面板就被合入）。真正的搬运一律等 `onDropOutOfWindow`。
    */
-  onDragOutOfWindow?: (drag: {
+  onDragOutside?: (drag: {
+    tabId: number;
+    groupPanelId: number | null;
+    clientX: number;
+    clientY: number;
+  }) => void;
+  /**
+   * B89：**松手**时指针在窗口外。宿主决定去哪儿：
+   *   · 别的 LitePad 窗口接手了 → 交给它（具体面板/分屏位置由那边算）；
+   *   · 没人接手（扔在桌面上）→ 回落到旧语义（主窗口开新窗口，卫星窗口交回主窗口）。
+   */
+  onDropOutOfWindow?: (drag: {
     tabId: number;
     groupPanelId: number | null;
     clientX: number;
@@ -141,7 +153,13 @@ interface TabDragState {
   startX: number;
   startY: number;
   active: boolean;
-  panelEl: HTMLElement | null;
+  /**
+   * B89：指针此刻是否在**窗口外**。
+   *
+   * 只用来决定「松手时该走窗口内落点还是跨窗口」，不触发任何副作用——出界瞬间就
+   * 把标签送走的做法已被 B89 废掉（见 `onDragOutside` 的注释）。
+   */
+  outOfWindow: boolean;
   /** 被拖的标签元素：越过阈值后据此造「跟随光标的副本」。 */
   tabEl: HTMLElement | null;
   /**
@@ -172,7 +190,7 @@ export function beginTabDrag(
     startX: e.clientX,
     startY: e.clientY,
     active: false,
-    panelEl: null,
+    outOfWindow: false,
     tabEl: tabEl ?? tabElFrom(e.target),
     groupPanelId,
   };
@@ -278,10 +296,30 @@ function createGroupDragGhost(strip: HTMLElement): HTMLElement {
 }
 
 /** 影像左上角跟到光标处（锚点语义见 `GHOST_ANCHOR_*`）。 */
-function moveDragGhost(x: number, y: number): void {
+/**
+ * 影像跟随光标。
+ *
+ * `clampToWindow`（B89）：指针拖到窗口外之后，影像若照着坐标走就整个跑到客户区外
+ * —— 用户手上「拖着的东西」凭空消失，只剩目标窗口那块预览。贴住边缘、至少露出一条
+ * 边，才知道这一拖还在进行中。（原生 DnD 的 drag image 由 OS 画、跨窗口都能看见，
+ * 我们是指针事件自己编排的，只能靠这个近似。）
+ *
+ * ⚠️ 只在上一步判定出界时才夹：窗口内的拖拽必须**精确**跟随，否则贴着面板右侧拖动
+ * 时影像会被拉回来一截，落点看着就不准了。
+ */
+function moveDragGhost(x: number, y: number, clampToWindow = false): void {
   if (!dragGhost) return;
-  dragGhost.style.left = `${x - dragGhostAnchor.x}px`;
-  dragGhost.style.top = `${y - dragGhostAnchor.y}px`;
+  let left = x - dragGhostAnchor.x;
+  let top = y - dragGhostAnchor.y;
+  if (clampToWindow) {
+    // 露出固定一小条即可：按影像实际尺寸算会让「露出多少」随文件名长短变化
+    const keepX = Math.min(dragGhost.offsetWidth || 0, 48);
+    const keepY = Math.min(dragGhost.offsetHeight || 0, 24);
+    left = Math.min(Math.max(left, 0), Math.max(window.innerWidth - keepX, 0));
+    top = Math.min(Math.max(top, 0), Math.max(window.innerHeight - keepY, 0));
+  }
+  dragGhost.style.left = `${left}px`;
+  dragGhost.style.top = `${top}px`;
 }
 
 function removeDragGhost(): void {
@@ -387,6 +425,51 @@ function clearInsertIndicators(): void {
   document.querySelectorAll(".tab-insert").forEach((el) => el.remove());
 }
 
+/** 清掉一切落点痕迹：分屏预览 + 标签插入指示线（本窗口拖拽收尾与跨窗口清场共用）。 */
+export function clearDropIndicators(): void {
+  clearAllPreviews();
+  clearInsertIndicators();
+}
+
+/** 一次落点判定的结果：面板 + 分屏方位 + （落在标签区时）插到谁之前。 */
+export interface DropSpot {
+  panelId: number;
+  zone: DropZone;
+  /** 仅 `panel-tabstrip` 上有效：插到该标签之前；null = 追加到末尾 */
+  beforeTabId: number | null;
+}
+
+/**
+ * 在 (x, y) 画落点预览，并把算出来的落点交回调用方。
+ *
+ * 两个调用方，同一套判定（不各写一份，免得窗口内和跨窗口的落点语义走偏）：
+ *   · 本窗口拖拽的 mousemove（`onTabDragMove`）；
+ *   · **别的窗口**拖着标签悬停到本窗口时（`windowdrag` 的接收侧，B89）。
+ *
+ * 每次都先全清再画：拖拽途中「上一个面板的预览」必须消失，否则会同时亮两块。
+ */
+export function previewDropAt(x: number, y: number, altKey = false): DropSpot | null {
+  clearAllPreviews();
+  clearInsertIndicators();
+  const panelEl = panelAt(x, y);
+  if (!panelEl) return null;
+  const panelId = Number(panelEl.dataset.panelId);
+  // B27：tab 区 = 调整顺序（插入指示线），面板区 = 分屏预览，两者互斥
+  const strip = stripUnder(panelEl, x, y);
+  if (strip) {
+    const info = stripInsertInfo(strip, x);
+    if (info) showInsertIndicator(strip, info.offsetLeft);
+    return { panelId, zone: "center", beforeTabId: info?.beforeTabId ?? null };
+  }
+  const zone = zoneOf(panelEl.getBoundingClientRect(), x, y);
+  // O5：按住 Alt = 临时取消分屏（本次落点按 center 处理）。预览同步切换成 center，
+  // 拖拽时就能看到「这次不会分屏」。（对标 editorDropTarget.ts:382-384 的 Alt 反转开关）
+  const effZone = altKey ? "center" : zone;
+  const preview = panelEl.querySelector(".split-preview");
+  if (preview) preview.className = `split-preview show zone-${effZone}`;
+  return { panelId, zone: effZone, beforeTabId: null };
+}
+
 function onTabDragMove(e: MouseEvent): void {
   if (!tabDrag) return;
   if (!tabDrag.active) {
@@ -407,49 +490,31 @@ function onTabDragMove(e: MouseEvent): void {
     }
   }
   // 影像跟随光标。⚠️ 必须放在下面「离开面板就 return」**之前** —— 拖到面板之外
-  // （空白区、状态栏上方）时影像同样要跟着走，否则会僵在最后一个面板上。
-  moveDragGhost(e.clientX, e.clientY);
-  // B71 ④：指针拖出窗口 → 这一拖的目标是「另一个窗口」，交给宿主处理。
-  // 必须放在落点判定**之前**：指针已经在客户区外，panelAt 必为 null，继续往下
-  // 走只是空转；而 finishTabDrag 会清掉影像/预览与全部监听，所以这里必须先收尾。
-  if (outsideWindow(e.clientX, e.clientY)) {
-    const out = {
+  // （空白区、状态栏上方、乃至窗口之外）时影像同样要跟着走，否则会僵在最后一个面板上。
+  const outside = outsideWindow(e.clientX, e.clientY);
+  moveDragGhost(e.clientX, e.clientY, outside);
+  // B89：出界**不再**立刻把标签送走 —— 那正是用户报的毛病（指针擦过另一个窗口的
+  // 某块面板就被合入，根本没法挑落点）。这里只记状态 + 通知宿主广播指针位置，
+  // 让**目标窗口**自己亮预览；真正的搬运一律等松手（`onDropOutOfWindow`）。
+  if (outside) {
+    if (!tabDrag.outOfWindow) {
+      // 刚出界：本窗口的预览/插入线必须收掉，否则会和目标窗口的预览同时亮着，
+      // 看起来像「两个地方都要接住它」。
+      clearAllPreviews();
+      clearInsertIndicators();
+    }
+    tabDrag.outOfWindow = true;
+    svCallbacks?.onDragOutside?.({
       tabId: tabDrag.tabId,
       groupPanelId: tabDrag.groupPanelId,
       clientX: e.clientX,
       clientY: e.clientY,
-    };
-    finishTabDrag();
-    suppressTabClick = true;
-    svCallbacks?.onDragOutOfWindow?.(out);
+    });
     return;
   }
-  const panelEl = panelAt(e.clientX, e.clientY);
-  if (tabDrag.panelEl && tabDrag.panelEl !== panelEl) {
-    const prev = tabDrag.panelEl.querySelector(".split-preview");
-    if (prev) prev.className = "split-preview";
-  }
-  tabDrag.panelEl = panelEl;
-  if (!panelEl) {
-    clearInsertIndicators();
-    return;
-  }
-  // B27：tab 区 = 调整顺序（插入指示线），面板区 = 分屏预览，两者互斥
-  const strip = stripUnder(panelEl, e.clientX, e.clientY);
-  if (strip) {
-    const preview = panelEl.querySelector(".split-preview");
-    if (preview) preview.className = "split-preview";
-    const info = stripInsertInfo(strip, e.clientX);
-    if (info) showInsertIndicator(strip, info.offsetLeft);
-    return;
-  }
-  clearInsertIndicators();
-  const zone = zoneOf(panelEl.getBoundingClientRect(), e.clientX, e.clientY);
-  // O5：按住 Alt = 临时取消分屏（本次落点按 center 处理）。预览同步切换成 center，
-  // 拖拽时就能看到「这次不会分屏」。（对标 editorDropTarget.ts:382-384 的 Alt 反转开关）
-  const effZone = e.altKey ? "center" : zone;
-  const preview = panelEl.querySelector(".split-preview");
-  if (preview) preview.className = `split-preview show zone-${effZone}`;
+  tabDrag.outOfWindow = false;
+  // 落点判定与预览只有一份实现（跨窗口悬停时由 windowdrag 的接收侧复用同一函数）
+  previewDropAt(e.clientX, e.clientY, e.altKey);
 }
 
 function onTabDragEnd(e: MouseEvent): void {
@@ -458,6 +523,17 @@ function onTabDragEnd(e: MouseEvent): void {
   if (!drag || !drag.active) return; // 未超阈值：无拖拽发生，click 正常触发激活
   if (!svCallbacks) return;
   suppressTabClick = true;
+  // B89：松手时指针在窗外 → 交给宿主。它可能把标签交给另一个窗口（那边算落点），
+  // 也可能没人接手而回落成「开新窗口 / 交回主窗口」。拖拽层不关心是哪一种。
+  if (drag.outOfWindow) {
+    svCallbacks.onDropOutOfWindow?.({
+      tabId: drag.tabId,
+      groupPanelId: drag.groupPanelId,
+      clientX: e.clientX,
+      clientY: e.clientY,
+    });
+    return;
+  }
   const panelEl = panelAt(e.clientX, e.clientY);
   if (!panelEl) return;
   const panelId = Number(panelEl.dataset.panelId);

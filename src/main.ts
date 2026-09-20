@@ -122,8 +122,16 @@ import {
   panelAt,
   zoneOf,
   clearAllDropPreviews,
+  clearDropIndicators,
+  previewDropAt,
+  type DropSpot,
   type PanelRenderData,
 } from "./shell/splitview";
+import {
+  beginWindowDrag,
+  installWindowDropTarget,
+  type WindowDragSession,
+} from "./shell/windowdrag";
 import { needsChoice, showFileDropChoice, type FileDropTarget } from "./shell/filedrop";
 import { renderTabstrip, type TabViewData, type TabstripCallbacks } from "./shell/tabstrip";
 import { applyTheme, normalizeMode, watchSystemTheme, type ThemeMode } from "./theme/theme";
@@ -672,8 +680,14 @@ function rebuildLayout(): void {
     onToggleMaximizePanel: (panelId) => toggleMaximizePanel(panelId),
     onOpenTabInNewWindow: (tabId) => void openTabsInNewWindow([tabId]),
     onReturnTabToMain: windowKind === "satellite" ? (tabId) => returnTabToMain(tabId) : undefined,
-    // B71 ④：拖出窗口边界 = 把标签送到另一个窗口（主窗口开新窗口，卫星窗口交回主窗口）
-    onDragOutOfWindow: (drag) => dragTabsOutOfWindow(drag),
+    // B89：拖拽途中指针在窗外 → 只广播位置让**目标窗口**亮预览。
+    // 这里绝不能搬运标签：出界即生效正是「擦过一块面板就被合入」的根因。
+    onDragOutside: (drag) => {
+      winDrag ??= beginWindowDrag(windowLabel);
+      winDrag.hover(drag.clientX, drag.clientY);
+    },
+    // B89：**松手**时指针在窗外 → 这时才决定去哪儿（别的窗口接手 / 回落开新窗口）
+    onDropOutOfWindow: (drag) => void dropTabsOutOfWindow(drag),
     // B71：拖标签栏空白处 = 拖整组。并入 = 「关掉这个分屏但指定并入目标」
     onMergeGroup: (srcId, targetId) => closePanelById(srcId, targetId),
     onMoveGroupToPanel: (srcId, targetId, dir, newFirst) =>
@@ -4715,9 +4729,10 @@ async function openTabsInNewWindow(tabIds: number[], spot?: WindowSpot | null): 
  * 文档已在本窗口存在时**只加实例**：同一文档在两个窗口各有一份实例是允许的，
  * 但 `docs` 镜像必须只有一份（同源多实例的唯一真相）。
  */
-function adoptTransferredTabs(incoming: SatelliteTab[], panelId = activePanelId): void {
+function adoptTransferredTabs(incoming: SatelliteTab[], panelId = activePanelId): number[] {
   const panel = panels.get(panelId) ?? panels.get([...panels.keys()][0]);
-  if (!panel) return;
+  if (!panel) return [];
+  const adopted: number[] = [];
   for (const st of incoming) {
     // 该文档在本地还留着隐藏实例（刚从别的窗口交回来）→ 先把它摘掉，避免出现
     // 「两份实例同源但互不同步」——同源多实例的前提是同一窗口内共用一个 docs 条目，
@@ -4752,10 +4767,13 @@ function adoptTransferredTabs(incoming: SatelliteTab[], panelId = activePanelId)
     const pos = line.from + Math.min(Math.max(0, (st.cursorCol || 1) - 1), line.length);
     inst.state = inst.state.update({ selection: { anchor: pos } }).state;
     attachTabToPanel(inst, panel);
+    adopted.push(inst.tabId);
   }
+  if (adopted.length === 0) return [];
   rebuildLayout();
   refreshAll();
   scheduleSessionSave();
+  return adopted;
 }
 
 /** 卫星窗口：把手上的标签交还主窗口（定向投递，主窗口那边 applyTabsReturn）。 */
@@ -4809,34 +4827,98 @@ function detachLocally(tabIds: number[]): void {
 }
 
 /**
- * 标签被拖出窗口边界（splitview 上报）。
- *
- * 同一个手势在两种窗口里含义不同，但都指向「让它去另一个窗口」：
- *   · 主窗口 / 卫星窗口套卫星窗口 → **开新窗口**，落点就是松手处；
- *   · 卫星窗口 → **交回主窗口**（这才是「拖回去」，否则只会越拖越多窗口）。
+ * 拖拽期间「指针在窗外」用的跨窗口会话（B89）。懒建：只有真拖出去了才需要广播。
  */
-function dragTabsOutOfWindow(drag: {
+let winDrag: WindowDragSession | null = null;
+
+/**
+ * **松手**时指针在窗口外（B89）。
+ *
+ * 与 B71④ 的旧行为（出界即生效）的差别就一句：**先问有没有别的窗口愿意接手**。
+ *   · 有 → 交给它，落点用**它**算出来的那块面板（悬停时用户看到的就是那块预览），
+ *     正文只发给它一个窗口；
+ *   · 没有（扔在桌面上）→ 回落旧语义：主窗口开新窗口，卫星窗口交回主窗口。
+ *
+ * 等待接手的时间（`CLAIM_TIMEOUT_MS`）只有回落路径会真等到超时 —— 那条路本来就
+ * 要新建窗口，200ms 无感；有人接手时 claim 通常几毫秒就回来了。
+ */
+async function dropTabsOutOfWindow(drag: {
   tabId: number;
   groupPanelId: number | null;
   clientX: number;
   clientY: number;
-}): void {
-  // 整组拖出的标签集合：从标签栏空白处起手时 tabId 是 -1（无意义），取该面板全部标签
+}): Promise<void> {
   const ids =
     drag.groupPanelId !== null ? [...(panels.get(drag.groupPanelId)?.tabs ?? [])] : [drag.tabId];
   if (ids.length === 0) return;
 
+  const session = winDrag;
+  winDrag = null;
+  const target = session ? await session.release() : null;
+
+  // `session` 要显式判空：TS 看不出 `target` 非空 ⟹ `session` 非空（前者是后者的产物）
+  if (session && target) {
+    const snapshots = ids
+      .map((id) => transferSnapshotOf(id))
+      .filter((s): s is SatelliteTab => s !== null);
+    if (snapshots.length === 0) {
+      session.finish();
+      return;
+    }
+    session.deliver(target, snapshots);
+    if (windowKind === "satellite") {
+      // 卫星窗口不留隐藏实例：它被摘空了就自己关掉（detachLocally 里处理）
+      detachLocally(ids);
+    } else {
+      // 主窗口留隐藏实例：会话要能写它、对方异常消失时还能接回来（见 remoteTabLocally）
+      exitMaximize();
+      for (const id of ids) remoteTabLocally(id, target);
+      rebuildLayout();
+      refreshAll();
+      scheduleSessionSave();
+    }
+    showMessage(`已移到另一个窗口 ${snapshots.length} 个标签`);
+    session.finish();
+    return;
+  }
+
+  session?.finish();
   if (windowKind === "satellite") {
     returnTabsToMain(ids);
     detachLocally(ids);
     showMessage(`已交回主窗口 ${ids.length} 个标签`);
     return;
   }
+  const spot = await dropSpotOf(drag.clientX, drag.clientY);
+  await openTabsInNewWindow(ids, spot);
+}
 
-  void (async () => {
-    const spot = await dropSpotOf(drag.clientX, drag.clientY);
-    await openTabsInNewWindow(ids, spot);
-  })();
+/**
+ * 别的窗口把标签拖到本窗口、并在这里松手（B89）。
+ *
+ * `spot` 是**本窗口**在对方悬停时算好的落点（哪块面板、分屏还是并入、插到哪个标签
+ * 之前）。拖拽期间用户看到的就是这块预览，所以提交必须严格照它来，绝不能重新猜一个
+ * ——那会让「预览在这、落下在那」。
+ */
+function acceptDroppedTabs(raw: unknown, spot: DropSpot | null): boolean {
+  const incoming = Array.isArray(raw) ? (raw as SatelliteTab[]) : [];
+  const valid = incoming.filter(
+    (s) => s && typeof s.docId === "number" && typeof s.text === "string",
+  );
+  if (valid.length === 0) return false;
+  const panelId = spot?.panelId ?? activePanelId;
+  const adopted = adoptTransferredTabs(valid, panelId);
+  if (adopted.length === 0) return false;
+  const first = adopted[0];
+  if (spot && spot.zone !== "center") {
+    // 落在面板边缘 = 分屏（与窗口内拖拽同一套语义：左右成 h、上下成 v）
+    const dir = spot.zone === "left" || spot.zone === "right" ? "h" : "v";
+    splitPanelWithTab(panelId, dir, first, spot.zone === "left" || spot.zone === "top");
+  } else if (spot?.beforeTabId != null && spot.beforeTabId !== first) {
+    moveTabToStrip(panelId, first, spot.beforeTabId);
+  }
+  showMessage(`已从另一个窗口接来 ${adopted.length} 个标签`);
+  return true;
 }
 
 /**
@@ -5353,6 +5435,14 @@ async function bootstrap(): Promise<void> {
     // 老版本后端 / 单窗口环境下拿不到身份应答：按主窗口走（退回 B71 之前的行为）
     windowKind = "main";
   }
+
+  // B89：装上「别的窗口把标签拖过来」的接收侧。**两个窗口都要装** —— 谁都可能成为
+  // 落点（主窗口能接卫星窗口的，卫星窗口之间也能互拖）。
+  void installWindowDropTarget(windowLabel, {
+    preview: (x, y) => previewDropAt(x, y),
+    accept: (tabs, spot) => acceptDroppedTabs(tabs, spot),
+    clear: () => clearDropIndicators(),
+  }).catch(() => {});
 
   if (windowKind === "satellite") {
     await initSatelliteWindow(me);

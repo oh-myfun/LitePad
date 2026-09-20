@@ -119,12 +119,18 @@ describe("B26/B27 接线（静态断言）", () => {
     expect(css, "strip 必须是定位基准").toMatch(/\.panel-tabstrip\s*\{[^}]*position: relative/);
   });
 
-  it("两种预览互斥：显示插入线时必须先隐藏分屏预览层", () => {
-    expect(sv, "进入 tab 区时应清掉该面板的分屏预览").toMatch(
-      /if \(strip\) \{\s*\n\s*const preview = panelEl\.querySelector\("\.split-preview"\);\s*\n\s*if \(preview\) preview\.className = "split-preview";/,
+  it("两种预览互斥：一次落点判定只留一种痕迹", () => {
+    // B89：落点判定抽成了 previewDropAt（本窗口拖拽与**跨窗口悬停**共用同一份），
+    // 互斥的做法从「进 tab 区时手动清预览」变成「每次判定开头先清两种痕迹」——
+    // 后者更不容易漏：任何一处忘记清理都不会留下上一帧的残影。
+    expect(sv, "落点判定开头先把两种痕迹都清掉").toMatch(
+      /function previewDropAt[\s\S]{0,300}clearAllPreviews\(\);\s*\n\s*clearInsertIndicators\(\);/,
     );
-    expect(sv, "离开 tab 区进入面板区时应清掉插入线").toMatch(
-      /clearInsertIndicators\(\);\s*\n\s*const zone = zoneOf\(/,
+    expect(sv, "落在 tab 区只画插入线").toMatch(
+      /if \(strip\) \{[\s\S]{0,240}showInsertIndicator\(strip, info\.offsetLeft\)/,
+    );
+    expect(sv, "落在面板区才画分屏预览").toMatch(
+      /preview\.className = `split-preview show zone-\$\{effZone\}`/,
     );
   });
 });

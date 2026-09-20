@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
-// B71 ④：把标签**拖出窗口边界** = 让它去另一个窗口活着（主窗口开新窗、卫星窗口还回主窗口）。
+// B89：跨窗口拖拽 = **拖拽途中只预览，松手才提交**。
 //
-// 拖拽层只负责判定与上报，不关心「另一个窗口」是谁 —— 这套用例锁的正是这条边界：
-//   · 出界的判据带余量（擦边不能误触）；
-//   · 命中就**立刻**收尾并上报，不能继续走落点判定（否则指针在客户区外，
-//     panelAt 必然为 null，白跑一趟还留着浮动影像）；
-//   · 上报里要带松手坐标（新窗口落在松手处）。
+// 这条边界是用户报出来的：旧实现（B71 ④）在拖拽途中一判定出界就立刻把标签送走，
+// 于是「想把窗口 A 的标签拖到窗口 B 的面板 A，路过面板 B 就被合入」，而且主窗口拖出时
+// 鼠标还没松手就弹出了新窗口。
+//
+// 本文件锁的是拖拽层这一侧的契约：
+//   · 出界的判据仍带余量（擦边不能误触）；
+//   · 出界**只通知**（onDragOutside，宿主据此广播指针位置），不得收尾、不得搬运；
+//   · **松手**才上报一次 onDropOutOfWindow，且带松手坐标；
+//   · 出界期间本窗口的落点痕迹要清掉（否则会和目标窗口的预览同时亮着）。
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   outsideWindow,
@@ -13,6 +17,7 @@ import {
   type PanelRenderData,
   type SplitviewCallbacks,
 } from "../src/shell/splitview";
+import { hitTest, clientToScreen, screenToClient } from "../src/shell/windowdrag";
 import { leaf, type LayoutNode } from "../src/shell/layout";
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {
@@ -38,7 +43,8 @@ function mount(withTab = false) {
   const root = document.createElement("div");
   document.body.appendChild(root);
 
-  const onDragOutOfWindow = vi.fn();
+  const onDragOutside = vi.fn();
+  const onDropOutOfWindow = vi.fn();
   const onDropTabToPanel = vi.fn();
   const onMergeGroup = vi.fn();
   const onMoveTabToStrip = vi.fn();
@@ -51,7 +57,8 @@ function mount(withTab = false) {
     onMoveTabToStrip,
     onDropTabToPanel,
     onMergeGroup,
-    onDragOutOfWindow,
+    onDragOutside,
+    onDropOutOfWindow,
     mountView: () => {},
   } as unknown as SplitviewCallbacks;
 
@@ -77,7 +84,8 @@ function mount(withTab = false) {
     root,
     panels,
     strips,
-    onDragOutOfWindow,
+    onDragOutside,
+    onDropOutOfWindow,
     onDropTabToPanel,
     onMergeGroup,
     onMoveTabToStrip,
@@ -106,16 +114,14 @@ function up(x: number, y: number, init: MouseEventInit = {}): void {
   );
 }
 
-describe("B71 拖出窗口边界 = 送到另一个窗口", () => {
+describe("B89 拖出窗口：途中只通知，松手才提交", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
     document.body.className = "";
   });
 
   it("出界判据要留余量：贴着边缘擦出去不算，明确拖出去才算", () => {
-    // 客户区内
     expect(outsideWindow(W / 2, H / 2)).toBe(false);
-    // 刚好在边界上（含边界本身）不算出界
     expect(outsideWindow(0, 0)).toBe(false);
     expect(outsideWindow(W, H)).toBe(false);
     // 出界但在余量内 → 视为擦边，不算（否则最大化窗口贴边拖动会莫名弹出新窗口）
@@ -129,31 +135,50 @@ describe("B71 拖出窗口边界 = 送到另一个窗口", () => {
     expect(outsideWindow(W / 2, H + 40), "底部拖出").toBe(true);
   });
 
-  it("单个标签拖出：上报 tabId 与松手坐标，且不再走落点判定", () => {
+  it("拖出后一路经过窗外：只通知位置，绝不提交（用户报的『路过就被合入』）", () => {
+    const m = mount(true);
+    const tab = m.strips[0].querySelector<HTMLElement>(".tab")!;
+    down(tab, 20, 14);
+    // 一路在窗外挪动：模拟「擦过另一个窗口的好几块面板」
+    move(W + 60, 200);
+    move(W + 120, 260);
+    move(W + 180, 320);
+    expect(m.onDragOutside.mock.calls.length, "每次移动都要通知（宿主据此广播）").toBeGreaterThan(
+      1,
+    );
+    expect(m.onDropOutOfWindow, "拖拽途中一律不提交").not.toHaveBeenCalled();
+    expect(m.onDropTabToPanel).not.toHaveBeenCalled();
+    expect(m.onMoveTabToStrip).not.toHaveBeenCalled();
+    // 影像要跟着走（用户得看见自己拖着什么），不能中途被收尾清掉
+    expect(document.querySelector(".tab-drag-ghost")).not.toBeNull();
+  });
+
+  it("松手才上报一次，且带的是松手坐标", () => {
     const m = mount(true);
     const tab = m.strips[0].querySelector<HTMLElement>(".tab")!;
     down(tab, 20, 14);
     move(W + 60, 200);
-    expect(m.onDragOutOfWindow).toHaveBeenCalledTimes(1);
-    expect(m.onDragOutOfWindow.mock.calls[0][0]).toMatchObject({
+    move(W + 180, 320);
+    up(W + 180, 320);
+    expect(m.onDropOutOfWindow).toHaveBeenCalledTimes(1);
+    expect(m.onDropOutOfWindow.mock.calls[0][0]).toMatchObject({
       tabId: 11,
       groupPanelId: null,
-      clientX: W + 60,
-      clientY: 200,
+      clientX: W + 180,
+      clientY: 320,
     });
-    // 拖出后立刻收尾：落点判定与浮动影像都不该再参与
-    expect(m.onDropTabToPanel, "出界就不该再判落点").not.toHaveBeenCalled();
-    expect(document.querySelector(".tab-drag-ghost"), "影像要被清掉").toBeNull();
-    up(W + 60, 200);
-    expect(m.onDropTabToPanel, "松手时也不能补一次落点").not.toHaveBeenCalled();
+    // 松手后照常收尾：影像与拖拽类都要清掉
+    expect(document.querySelector(".tab-drag-ghost")).toBeNull();
+    expect(document.body.classList.contains("tab-drag-active")).toBe(false);
   });
 
-  it("整组拖出（从标签栏空白处起手）：groupPanelId 非 null，tabId 是占位 -1", () => {
+  it("整组拖出（从标签栏空白处起手）：松手时 groupPanelId 非 null，tabId 是占位 -1", () => {
     const m = mount(true);
     down(m.strips[0], 350, 14);
     move(-60, 200);
-    expect(m.onDragOutOfWindow).toHaveBeenCalledTimes(1);
-    expect(m.onDragOutOfWindow.mock.calls[0][0]).toMatchObject({
+    expect(m.onDropOutOfWindow, "途中不提交").not.toHaveBeenCalled();
+    up(-60, 200);
+    expect(m.onDropOutOfWindow.mock.calls[0][0]).toMatchObject({
       groupPanelId: 1,
       tabId: -1,
     });
@@ -161,28 +186,52 @@ describe("B71 拖出窗口边界 = 送到另一个窗口", () => {
     expect(m.onMoveTabToStrip).not.toHaveBeenCalled();
   });
 
-  it("只越阈值不出界：照常走落点判定，绝不触发开窗", () => {
+  it("出界又拖回来松手：走普通落点，绝不触发跨窗口", () => {
+    const m = mount(true);
+    const tab = m.strips[0].querySelector<HTMLElement>(".tab")!;
+    down(tab, 20, 14);
+    move(W + 60, 200); // 出界
+    expect(m.onDragOutside).toHaveBeenCalled();
+    move(600, 150); // 又拖回窗口内的另一块面板
+    up(600, 150);
+    expect(m.onDropOutOfWindow, "松手时在窗口内 = 普通分屏落点").not.toHaveBeenCalled();
+    expect(m.onDropTabToPanel).toHaveBeenCalled();
+  });
+
+  it("只越阈值不出界：照常走落点判定", () => {
     const m = mount(true);
     const tab = m.strips[0].querySelector<HTMLElement>(".tab")!;
     down(tab, 20, 14);
     move(600, 150);
-    expect(m.onDragOutOfWindow, "面板之间挪动不算出界").not.toHaveBeenCalled();
+    expect(m.onDragOutside).not.toHaveBeenCalled();
     up(600, 150);
     expect(m.onDropTabToPanel).toHaveBeenCalled();
   });
 
-  it("擦边出界再拖回来：不触发开窗（余量的意义）", () => {
+  it("擦边出界再拖回来：不触发跨窗口（余量的意义）", () => {
     const m = mount(true);
     const tab = m.strips[0].querySelector<HTMLElement>(".tab")!;
     down(tab, 20, 14);
     move(-8, 150); // 出界但在余量内
     move(600, 150); // 又拖回面板上
     up(600, 150);
-    expect(m.onDragOutOfWindow).not.toHaveBeenCalled();
+    expect(m.onDropOutOfWindow).not.toHaveBeenCalled();
     expect(m.onDropTabToPanel).toHaveBeenCalled();
   });
 
-  it("宿主没接拖出回调时什么也不发生（不抛错，也不残留影像）", () => {
+  it("出界时本窗口的落点痕迹要清掉（不能和目标窗口的预览同时亮着）", () => {
+    const m = mount(true);
+    const tab = m.strips[0].querySelector<HTMLElement>(".tab")!;
+    down(tab, 20, 14);
+    move(600, 150); // 先在窗口内 → 该面板亮起分屏预览
+    expect(m.root.querySelectorAll(".split-preview.show").length).toBe(1);
+    move(W + 60, 200); // 再拖出去
+    expect(m.root.querySelectorAll(".split-preview.show").length, "预览要收掉").toBe(0);
+    expect(m.root.querySelectorAll(".tab-insert").length, "插入线也要收掉").toBe(0);
+    up(W + 60, 200);
+  });
+
+  it("宿主没接回调时什么也不发生（不抛错，松手后照常清场）", () => {
     document.body.innerHTML = "";
     const root = document.createElement("div");
     document.body.appendChild(root);
@@ -206,7 +255,45 @@ describe("B71 拖出窗口边界 = 送到另一个窗口", () => {
     strip.getBoundingClientRect = () => rect(0, 0, 400, 28);
     down(strip, 350, 14);
     expect(() => move(W + 80, 200)).not.toThrow();
-    expect(document.querySelector(".tab-drag-ghost"), "收尾照常清场").toBeNull();
-    up(W + 80, 200);
+    expect(() => up(W + 80, 200)).not.toThrow();
+    expect(document.querySelector(".tab-drag-ghost"), "松手后照常清场").toBeNull();
+  });
+});
+
+describe("B89 跨窗口落点：屏幕坐标 ⇄ 客户坐标", () => {
+  // 一个 1000×800 客户区的窗口，左上角在虚拟桌面的 (80, 60)
+  const g = { originX: 80, originY: 60, width: 1000, height: 800 };
+
+  it("命中判定：客户区矩形内才算（含边界）", () => {
+    expect(hitTest(g, { x: 80, y: 60 }), "左上角").toBe(true);
+    expect(hitTest(g, { x: 1080, y: 860 }), "右下角").toBe(true);
+    expect(hitTest(g, { x: 500, y: 400 }), "正中").toBe(true);
+    expect(hitTest(g, { x: 79, y: 400 }), "左边差一格").toBe(false);
+    expect(hitTest(g, { x: 1081, y: 400 }), "右边差一格").toBe(false);
+    expect(hitTest(g, { x: 500, y: 59 }), "上方差一格").toBe(false);
+    expect(hitTest(g, { x: 500, y: 861 }), "下方差一格").toBe(false);
+  });
+
+  it("几何拿不到时一律判不命中（宁可不亮预览，也不能送错窗口）", () => {
+    expect(hitTest(null, { x: 500, y: 400 })).toBe(false);
+    expect(hitTest(g, null)).toBe(false);
+  });
+
+  it("两个方向的换算互为逆运算（坐标口径一致才不会整体偏移）", () => {
+    for (const [cx, cy] of [
+      [0, 0],
+      [12, 34],
+      [999, 799],
+    ]) {
+      const s = clientToScreen(g, cx, cy);
+      const c = screenToClient(g, s);
+      expect(c.x).toBe(cx);
+      expect(c.y).toBe(cy);
+    }
+  });
+
+  it("换算带上了客户区原点（漏掉原点 = 预览整体偏移一个窗口）", () => {
+    const s = clientToScreen(g, 100, 200);
+    expect(s).toEqual({ x: 180, y: 260 });
   });
 });
