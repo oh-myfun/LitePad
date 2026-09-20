@@ -135,14 +135,49 @@ export function reloadFile(tabId: number, encoding?: string | null): Promise<Ope
   return invoke<OpenedFile>("reload_file", { tabId, encoding: encoding ?? null });
 }
 
+/**
+ * 保存冲突：磁盘上的版本比编辑器已知的新。
+ *
+ * ⚠️ 撞冲突时 Rust **一个字节都没写** —— 不是「保存失败」，所以不能走 Err。
+ */
+export interface SaveConflict {
+  tabId: number;
+  path: string;
+  name: string;
+  /** 磁盘上当前的文件版本号（mtime 毫秒） */
+  diskMtimeMs: number;
+  /** 磁盘上当前的字节数 */
+  diskSize: number;
+}
+
+/**
+ * `save_file` 的回包（Rust `SaveOutcome`，adjacently tagged：`kind` + `value`）。
+ *
+ * 前端按 `kind` 分派：`saved` 走正常落盘流程，`conflict` 弹框让用户选。
+ */
+export type SaveOutcome =
+  { kind: "saved"; value: SavedFile } | { kind: "conflict"; value: SaveConflict };
+
 export function saveFile(args: {
   tabId: number;
   text: string;
   encoding: string;
   eol: string;
   path?: string | null;
-}): Promise<SavedFile> {
-  return invoke<SavedFile>("save_file", args);
+  /**
+   * 编辑器上次读/写时记下的磁盘版本（「已知版本」）。
+   * 两个都给了才做脏写检查；缺一个或为 0 表示没有基线（未命名 / 备份恢复 /
+   * 另存到别处），此时不检查。
+   */
+  expectMtimeMs?: number | null;
+  expectSize?: number | null;
+  /**
+   * true = 跳过磁盘版本检查直接覆盖。只在用户在冲突框里明确选了「覆盖保存」时传，
+   * 其余情况一律不带 —— 否则就失去了防脏写的意义。
+   */
+  force?: boolean;
+}): Promise<SaveOutcome> {
+  return invoke<SaveOutcome>("save_file", args);
 }
 
 export function closeTab(tabId: number): Promise<void> {

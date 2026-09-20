@@ -139,6 +139,64 @@ pub struct SavedFile {
     pub mtime_ms: i64,
 }
 
+/**
+ * 「磁盘上的版本比编辑器已知的更新」——保存冲突。
+ *
+ * 参考 VS Code 的 `FileOperationResult.FILE_MODIFIED_SINCE`（脏写保护）：写盘时带上
+ * 「期望的版本号」，落盘前发现磁盘版本已经变了就**拒绝写入**，把「谁覆盖谁」交回
+ * 给用户。返回的是磁盘当前版本号，前端可以据此刷新已知版本或开对照。
+ */
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveConflict {
+    pub tab_id: u64,
+    pub path: String,
+    pub name: String,
+    /// 磁盘上**当前**的版本号（mtime 毫秒）
+    pub disk_mtime_ms: i64,
+    /// 磁盘上**当前**的字节数
+    pub disk_size: u64,
+}
+
+/**
+ * 保存结果：要么写成功了，要么撞上冲突（**一个字节都没写**）。
+ *
+ * ⚠️ 用 tagged enum 而不是 `Err(String)`：冲突是**预期内的分支**（要弹框让用户选），
+ * 不是异常；走 Err 会跟真正的写盘失败（只读 / 权限 / 磁盘满）混在一起，前端只能靠
+ * 匹配错误字符串来分辨——那种写法一改文案就断。
+ */
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "kind", content = "value", rename_all = "camelCase")]
+pub enum SaveOutcome {
+    Saved(SavedFile),
+    Conflict(SaveConflict),
+}
+
+/**
+ * 磁盘版本是否与「编辑器上次已知的版本」一致（不一致 = 期间被外部改过）。
+ *
+ * 抽成纯函数是为了能单测：真实的 `save_file` 依赖 `AppState` 与文件系统，测不动。
+ * `expect` 为 `None` 表示「没有已知版本」（未命名文档 / 备份恢复 / 另存到新文件），
+ * 这时不做判断 —— 没有基线就无从谈「变过」。
+ */
+fn is_stale(expect: Option<(i64, u64)>, current: (i64, u64)) -> bool {
+    match expect {
+        Some((mtime, size)) => current.0 != mtime || current.1 != size,
+        None => false,
+    }
+}
+
+/**
+ * 把两个独立的可选参数合成「期望版本」。
+ *
+ * ⚠️ **两个都得有**才算一份完整基线：只给 mtime 不给 size（或反之）时，
+ * 单靠一半判不出「变过没有」（同 mtime 但内容长度不同是常见的），
+ * 这时宁可不做检查（返回 None），也不要拿半个基线去误报冲突。
+ */
+fn expected_version(expect_mtime_ms: Option<i64>, expect_size: Option<u64>) -> Option<(i64, u64)> {
+    expect_mtime_ms.and_then(|m| expect_size.map(|s| (m, s)))
+}
+
 fn tab_info(d: &doc::Doc) -> TabInfo {
     TabInfo {
         tab_id: d.id,
@@ -302,6 +360,9 @@ pub async fn reload_file(
 }
 
 /// 保存。`path` 为空表示保存到该标签已关联路径；尚无路径时提示改用「另存为」。
+///
+/// `expect_mtime_ms` + `expect_size`：编辑器上次读/写时记下的磁盘版本（「已知版本」）。
+/// 两个都给了才做脏写检查；`force` 为 true 时跳过检查直接覆盖（用户选了「覆盖保存」）。
 #[tauri::command]
 pub async fn save_file(
     tab_id: u64,
@@ -309,8 +370,11 @@ pub async fn save_file(
     encoding: String,
     eol: String,
     path: Option<String>,
+    expect_mtime_ms: Option<i64>,
+    expect_size: Option<u64>,
+    force: Option<bool>,
     state: State<'_, AppState>,
-) -> Result<SavedFile, String> {
+) -> Result<SaveOutcome, String> {
     let target: PathBuf = match path.as_deref().map(|s| s.trim()) {
         Some(p) if !p.is_empty() => PathBuf::from(p),
         _ => {
@@ -325,6 +389,30 @@ pub async fn save_file(
 
     if target.exists() && doc::is_readonly(&target) {
         return Err("目标文件为只读，无法覆盖保存，请使用「另存为」。".into());
+    }
+
+    // —— 脏写检查（VS Code FILE_MODIFIED_SINCE） ——
+    // ⚠️ 必须放在**本命令内、写盘之前**，不能让前端先查版本再调保存：那样会有
+    //    「查完被别的进程改掉、我们照旧盖上去」的窗口。放在写盘前至少把窗口压到
+    //    单次系统调用之间，且与 VS Code 的做法一致（写操作自带期望版本号）。
+    // ⚠️ 只在**目标存在**时检查：文件被外部删掉的话 disk_version 是 (0,0)，
+    //    会误判成「版本变了」，而此时正确行为是重建文件（用户的内容还在编辑器里）。
+    // ⚠️ 放在编码/lossy 扫描之前：冲突时根本不会写盘，没必要先做一遍昂贵的编码。
+    if force != Some(true) && target.exists() {
+        let expect = expected_version(expect_mtime_ms, expect_size);
+        let current = disk_version(&target);
+        if is_stale(expect, current) {
+            return Ok(SaveOutcome::Conflict(SaveConflict {
+                tab_id,
+                path: target.to_string_lossy().into_owned(),
+                name: target
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                disk_mtime_ms: current.0,
+                disk_size: current.1,
+            }));
+        }
     }
 
     let enc = codec::Encoding::from_label(&encoding);
@@ -385,7 +473,7 @@ pub async fn save_file(
     // file-changed 会被认成回声（版本号相同）而忽略。
     let (mtime_ms, _) = disk_version(&target);
 
-    Ok(SavedFile {
+    Ok(SaveOutcome::Saved(SavedFile {
         tab_id,
         path: target.to_string_lossy().into_owned(),
         name: target
@@ -398,7 +486,7 @@ pub async fn save_file(
         lossy: had_errors,
         lossy_chars,
         mtime_ms,
-    })
+    }))
 }
 
 /// 关闭标签（脏检查由前端负责）。
@@ -634,6 +722,59 @@ mod tests {
         let tout = serde_json::to_string(&t).unwrap();
         assert!(tout.contains("\"tabId\":1"), "{tout}");
         assert!(!tout.contains("tab_id"), "{tout}");
+    }
+
+    // —— B88：保存时的「脏写」检查（VS Code FILE_MODIFIED_SINCE）——
+
+    #[test]
+    fn stale_when_mtime_differs() {
+        assert!(is_stale(Some((111, 10)), (222, 10)));
+    }
+
+    #[test]
+    fn stale_when_size_differs() {
+        assert!(is_stale(Some((111, 10)), (111, 11)));
+    }
+
+    #[test]
+    fn not_stale_when_version_identical() {
+        assert!(!is_stale(Some((111, 10)), (111, 10)));
+    }
+
+    /** 没有已知版本（未命名 / 备份恢复 / 另存到新文件）→ 无从判断，不做检查。 */
+    #[test]
+    fn not_stale_without_expectation() {
+        assert!(!is_stale(None, (111, 10)));
+    }
+
+    /** 半份基线不算基线：缺 mtime 或缺 size 都得退回「不检查」。 */
+    #[test]
+    fn expected_version_needs_both_halves() {
+        assert_eq!(expected_version(Some(1), Some(2)), Some((1, 2)));
+        assert_eq!(expected_version(Some(1), None), None);
+        assert_eq!(expected_version(None, Some(2)), None);
+        assert_eq!(expected_version(None, None), None);
+    }
+
+    /**
+     * `SaveOutcome` 的线上形状：adjacently tagged（`kind` + `value`）+ camelCase。
+     * 前端靠 `kind` 分派「保存成功 / 撞冲突」，字段名写错就会把冲突当成保存失败
+     * （或反过来把失败当成成功），所以这里把契约钉住。
+     */
+    #[test]
+    fn save_outcome_serializes_as_kind_plus_value() {
+        let c = SaveOutcome::Conflict(SaveConflict {
+            tab_id: 3,
+            path: "C:\\a.md".into(),
+            name: "a.md".into(),
+            disk_mtime_ms: 42,
+            disk_size: 7,
+        });
+        let out = serde_json::to_string(&c).unwrap();
+        assert!(out.contains("\"kind\":\"conflict\""), "{out}");
+        assert!(out.contains("\"diskMtimeMs\":42"), "应为 camelCase：{out}");
+        assert!(out.contains("\"diskSize\":7"), "应为 camelCase：{out}");
+        assert!(!out.contains("disk_mtime_ms"), "{out}");
     }
 }
 

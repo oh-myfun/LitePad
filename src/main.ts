@@ -62,6 +62,7 @@ import {
   type FileChangedPayload,
   type OpenedFile,
   type RestoredBackup,
+  type SaveConflict,
   type SatellitePayload,
   type SatelliteTab,
   type SessionState,
@@ -82,7 +83,7 @@ import {
   type FindHit,
 } from "./shell/findbar";
 import { ICONS } from "./shell/icons";
-import { showExternalConflictDialog } from "./shell/conflictdialog";
+import { showExternalConflictDialog, showSaveConflictDialog } from "./shell/conflictdialog";
 import { CODICONS, type CodiconName } from "./shell/codicons";
 import { clearTip, initTooltips, setTip } from "./shell/tooltip";
 import { paletteOpen, showCommandPalette } from "./shell/commandpalette";
@@ -1726,13 +1727,41 @@ async function saveDocCore(doc: Doc, inst: Tab, forceDialog: boolean): Promise<b
       if (bad.length > 0) await confirmLossy(bad, doc.encoding);
     }
 
-    const saved = await saveFile({
+    // 「已知磁盘版本」只在**原地保存**时才有意义：另存为的目标可能是另一个文件，
+    // 拿旧文件的版本号去比对会凭空报冲突。
+    const inPlace = !forceDialog && !!doc.path && target === doc.path;
+    const hasBaseline = inPlace && doc.diskMtimeMs > 0;
+
+    let outcome = await saveFile({
       tabId: doc.tabId,
       text,
       encoding: doc.encoding,
       eol: doc.eol,
       path: target,
+      // 带基线 = 让 Rust 在写盘前比对磁盘版本，不一致就一个字节都不写
+      // （VS Code 的 FILE_MODIFIED_SINCE）。没有基线（未命名 / 另存 / 备份恢复）时传 null。
+      expectMtimeMs: hasBaseline ? doc.diskMtimeMs : null,
+      expectSize: hasBaseline ? doc.diskSize : null,
     });
+
+    if (outcome.kind === "conflict") {
+      // 磁盘上的版本比我们知道的新 —— 此时**还没写盘**，把选择权交回用户
+      if ((await resolveSaveConflict(doc, outcome.value)) !== "overwrite") return false;
+      // 用户明确选了「覆盖保存」→ 跳过版本检查重存一次
+      outcome = await saveFile({
+        tabId: doc.tabId,
+        text,
+        encoding: doc.encoding,
+        eol: doc.eol,
+        path: target,
+        force: true,
+      });
+    }
+    if (outcome.kind !== "saved") {
+      showMessage(`保存 ${doc.name} 失败`, true);
+      return false;
+    }
+    const saved = outcome.value;
 
     doc.path = saved.path;
     doc.name = saved.name;
@@ -1774,6 +1803,60 @@ async function saveDocCore(doc: Doc, inst: Tab, forceDialog: boolean): Promise<b
     showMessage(String(err), true);
     return false;
   }
+}
+
+/**
+ * 保存时撞上「磁盘版本更新」：把选择权交回用户（VS Code 的 FILE_MODIFIED_SINCE）。
+ *
+ * ⚠️ 只在**手动保存**时调用。自动保存遇到冲突是静默跳过的（见 `scheduleAutosave`）：
+ *    用户正打字时弹个模态框出来，体验上是灾难；而替他盖掉外部的新版本，数据上是灾难。
+ *
+ * @returns `"overwrite"` 让调用方用 force 重存一次；`"abort"` 这次不写盘。
+ */
+async function resolveSaveConflict(
+  doc: Doc,
+  conflict: SaveConflict,
+): Promise<"overwrite" | "abort"> {
+  // 磁盘当前内容要么给弹框显示两边字数，要么 revert / 对照时直接要用，先读一次
+  let file: OpenedFile;
+  try {
+    file = await reloadFile(doc.tabId, doc.encoding);
+  } catch {
+    // 读不出来（被别的进程独占 / 刚被删）→ 不替用户决定，这次不写
+    showMessage(`${doc.name} 的磁盘版本读不出来，已取消本次保存`, true);
+    return "abort";
+  }
+  const mine = freshTextOfDoc(doc);
+  if (mine === null) return "abort";
+
+  const choice = await showSaveConflictDialog({
+    name: doc.name,
+    diskChars: file.text.length,
+    mineChars: mine.length,
+  });
+
+  if (choice === "overwrite") return "overwrite";
+
+  if (choice === "revert") {
+    applyDiskContent(
+      doc,
+      file,
+      file.mtimeMs || conflict.diskMtimeMs,
+      file.size || conflict.diskSize,
+    );
+    showMessage(`已放弃你的修改，载入 ${doc.name} 的磁盘版本`);
+    return "abort";
+  }
+  if (choice === "compare") {
+    // 已知版本刷新成磁盘这份：用户已经看过对照，之后再保存就是「看过之后的有意覆盖」，
+    // 不该再弹一次框（与监听器那条路径的 compare 行为保持一致）。
+    markDiskVersion(doc, file.mtimeMs || conflict.diskMtimeMs, file.size || conflict.diskSize);
+    await openDiskCopyForCompare(doc, file);
+    return "abort";
+  }
+  // cancel：既没写盘也没丢改动，文档仍然脏，下次保存会再问一次
+  showMessage(`已取消保存 ${doc.name}（磁盘上的新版本未被覆盖）`);
+  return "abort";
 }
 
 /** 全部保存（Ctrl+Alt+S）：有路径的脏文档直接写盘；未命名文档保留，汇总提示。 */
@@ -2295,13 +2378,19 @@ function scheduleAutosave(): void {
         const text = freshTextOfDoc(doc);
         if (text === null) continue;
         try {
-          const saved = await saveFile({
+          const outcome = await saveFile({
             tabId: doc.tabId,
             text,
             encoding: doc.encoding,
             eol: doc.eol,
             path: null,
+            expectMtimeMs: doc.diskMtimeMs > 0 ? doc.diskMtimeMs : null,
+            expectSize: doc.diskMtimeMs > 0 ? doc.diskSize : null,
           });
+          // 撞冲突（磁盘版本被外部改过）→ **静默跳过**：自动保存既不能在用户打字时
+          // 弹模态框，也不能替他盖掉外部的新版本。文档保持脏，手动保存时会再问一次。
+          if (outcome.kind === "conflict") continue;
+          const saved = outcome.value;
           doc.dirty = false;
           doc.external = false;
           markDiskVersion(doc, saved.mtimeMs, saved.size);
