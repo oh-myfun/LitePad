@@ -6,7 +6,7 @@
 // 3) 静态断言入口唯一（不再有设置窗口；分屏只留快捷键）。
 import { describe, it, expect, afterEach } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
-import { topLevelFnBody } from "./static";
+import { stripLineComments, topLevelFnBody } from "./static";
 import { createMenuBar, type MenuBarCallbacks } from "../src/shell/menubar";
 import { closePopupMenu } from "../src/shell/menu";
 import { keyHint as realKeyHint } from "../src/shell/keymap";
@@ -476,5 +476,336 @@ describe("B 档：删掉菜单项提示（写了也永远不显示 = 死代码�
     const helper = topLevelFnBody(mainSrc, "function panelDocIsMarkdown");
     expect(helper, "取不到 panelDocIsMarkdown").toBeTruthy();
     expect(helper, "必须取该面板的活动标签再判 isMdTab").toMatch(/isMdTab\(t\)/);
+  });
+});
+
+describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
+  const menu = (): string => readFileSync("src/shell/menubar.ts", "utf-8");
+  const main = (): string => readFileSync("src/main.ts", "utf-8");
+
+  it("「查看」不得再有主题 / 预览行距 / 大纲宽度 / 分屏", () => {
+    // 只看「查看」菜单那一段，避免把「设置 → 首选项」里的同名词条误判为残留
+    const src = menu();
+    const viewBlock = src.slice(src.indexOf('label: "查看"'), src.indexOf('label: "设置"'));
+    expect(viewBlock, "查看菜单不得再有主题三态").not.toContain("主题：");
+    expect(viewBlock, "查看菜单不得再有预览行距").not.toContain("预览行距");
+    expect(viewBlock, "查看菜单不得再有大纲宽度").not.toContain("大纲宽度");
+    expect(viewBlock, "查看菜单不得再有分屏项").not.toContain("分屏");
+    // 保留项不能被顺手删掉
+    expect(viewBlock).toContain("切换 源码 / 预览");
+    expect(viewBlock).toContain("大纲 TOC");
+    expect(viewBlock).toContain("折叠全部");
+    expect(viewBlock).toContain("自动换行");
+    expect(viewBlock).toContain("状态栏");
+  });
+
+  it("「文件」不得再有新建默认行尾/编码，「帮助」不得再有快捷键", () => {
+    const src = menu();
+    const fileBlock = src.slice(src.indexOf('label: "文件"'), src.indexOf('label: "编辑"'));
+    expect(fileBlock, "文件菜单不得再有新建默认行尾入口").not.toContain("新建文件默认行尾");
+    expect(fileBlock, "文件菜单不得再有新建默认编码入口").not.toContain("新建文件默认编码");
+    expect(fileBlock, "文件菜单应保留自动保存").toContain("自动保存");
+
+    const helpBlock = src.slice(src.indexOf('label: "帮助"'));
+    expect(helpBlock, "帮助菜单只留关于").toContain("关于 LitePad");
+    expect(helpBlock, "帮助菜单不得再有快捷键入口").not.toContain("快捷键");
+  });
+
+  it("「设置」菜单 = 首选项弹窗入口 + 快捷键；预设值收进弹窗（B46）", () => {
+    const src = menu();
+    const setBlock = src.slice(src.indexOf('label: "设置"'), src.indexOf('label: "帮助"'));
+    expect(setBlock, "设置菜单必须有首选项入口").toContain('label: "首选项…"');
+    expect(setBlock, "B46 后首选项不再是子菜单").not.toContain("submenu:");
+    expect(setBlock, "设置菜单必须有快捷键入口").toContain('label: "快捷键…"');
+
+    // 原子菜单的预设值全部收进首选项弹窗（按分组标签断言）
+    const dlg = readFileSync("src/shell/preferencesdialog.ts", "utf-8");
+    for (const item of [
+      "外观",
+      "主题",
+      "字体与行距",
+      "编辑器字体",
+      "字号",
+      "编辑器行距",
+      "Markdown 预览",
+      "预览行距",
+      "大纲宽度",
+      "新建文件",
+      "默认行尾",
+      "默认编码",
+    ]) {
+      expect(dlg, `首选项弹窗必须含「${item}」`).toContain(item);
+    }
+    // 新增精细设置的字段必须持久化（前后端成对）
+    const api = readFileSync("src/ipc/api.ts", "utf-8");
+    const rust = readFileSync("src-tauri/src/session/mod.rs", "utf-8");
+    for (const field of ["font_family", "editor_line_height"]) {
+      expect(api, `Settings 接口必须含 ${field}`).toContain(field);
+      expect(rust, `Rust Settings 必须含 ${field}`).toContain(field);
+    }
+  });
+
+  it("B51：首选项弹窗移除自动换行 / 自动保存 / 快捷键（功能留在菜单里）", () => {
+    // 需求：这三项从首选项弹窗里去掉——它们是高频开关，菜单里一点即达，
+    // 塞进弹窗只会让「改一个开关」变成三层点击。
+    const dlg = readFileSync("src/shell/preferencesdialog.ts", "utf-8");
+    for (const gone of [
+      '"自动换行"',
+      '"自动保存"',
+      '"快捷键…"',
+      "onWordWrap",
+      "onAutosave",
+      "onKeymap",
+      "checkRow",
+    ]) {
+      expect(dlg, `首选项弹窗不得再出现 ${gone}`).not.toContain(gone);
+    }
+    // 只是搬家，不是砍功能：菜单入口必须都还在
+    // （自动换行在「查看」，自动保存在「文件」，快捷键在「设置」）
+    const src = menu();
+    const viewBlock = src.slice(src.indexOf('label: "查看"'), src.indexOf('label: "设置"'));
+    const setBlock = src.slice(src.indexOf('label: "设置"'), src.indexOf('label: "帮助"'));
+    expect(viewBlock, "「查看」菜单必须保留自动换行").toContain("自动换行");
+    expect(src, "「文件」菜单必须保留自动保存").toContain("自动保存");
+    expect(setBlock, "「设置」菜单必须保留快捷键入口").toContain('label: "快捷键…"');
+  });
+
+  it("B51：主题按钮三态循环，导出图标改语义", () => {
+    const main = readFileSync("src/main.ts", "utf-8");
+    expect(main, "主题必须按档位循环（三态）").toContain("nextThemeMode()");
+    expect(main, "档位要写进 data 属性供测试/样式用").toContain("dataset.themeMode");
+    expect(main, "「跟随系统」档须照搬官方 color-mode（半明半暗的圆）").toContain(
+      "CODICONS.colorMode",
+    );
+    expect(main, "不得再退回明暗二选一的旧写法").not.toContain('isDark ? "light" : "dark"');
+
+    // 导出图标（B51 本来改过一次语义：下载托盘 → 文档 + 出向箭头）现在直接照搬官方
+    // `export`，手绘版已删 —— 字形由上游版本钉住（scripts/fetch-codicons.mjs 的 VERSION），
+    // 这里只守「确实来自 codicon」。
+    const codicons = readFileSync("src/shell/codicons.ts", "utf-8");
+    expect(codicons, "导出图标必须来自官方 export").toContain("export:");
+  });
+
+  it("B81 图标红线：按钮图标一律走 codicon，手绘只剩 sun/moon（用户确认豁免）", () => {
+    // 用户要求：「软件里按钮图标全部使用 vscode 图标集中的图标（如果没有合适的就和我商量
+    // 去下载别的图标集），不要自己绘制 svg（除非和我讨论确认或者我明确要求）。」
+    // 据此：消费方一律从 codicons.ts 取；源码里不得再内联手绘字形。
+
+    // ---- ① 消费方一律不得手绘 <svg> ----
+    const CONSUMERS = [
+      "src/main.ts",
+      "src/shell/tabstrip.ts",
+      "src/shell/splitview.ts",
+      "src/shell/findbar.ts",
+      "src/shell/fileicons.ts",
+      "src/editor/editor.ts",
+    ] as const;
+    for (const f of CONSUMERS) {
+      expect(readFileSync(f, "utf-8"), `${f} 不得手绘 <svg>，图标必须来自 CODICONS`).not.toContain(
+        "<svg",
+      );
+    }
+
+    // ---- ② 工具栏整张表都得是 codicon 名（旧的自绘名 new/open/find/outline 已废） ----
+    const main = readFileSync("src/main.ts", "utf-8");
+    for (const pair of [
+      '[btnNew, "newFile"]',
+      '[btnOpen, "folderOpened"]',
+      '[btnSave, "save"]',
+      '[btnSaveAs, "saveAs"]',
+      '[btnFind, "search"]',
+      '[btnOutline, "listTree"]',
+      '[btnExport, "export"]',
+    ]) {
+      expect(main, `工具栏缺 ${pair}`).toContain(pair);
+    }
+    expect(main, "工具栏必须从 CODICONS 取名取图").toContain("btn.innerHTML = CODICONS[name]");
+
+    // ---- ③ 文件类型字形也必须走 codicon（不得再自建手绘字形表） ----
+    const fi = readFileSync("src/shell/fileicons.ts", "utf-8");
+    expect(fi, "家族字形必须从 CODICONS 取").toContain("CODICONS[");
+    expect(fi, "不得再自建 GLYPHS 手绘表").not.toContain("GLYPHS");
+
+    // ---- ④ 手绘豁免只有 icons.ts 的 sun / moon 两颗 ----
+    // 官方 639 颗 codicon 里没有日/月字形（最接近的 color-mode 已用于「跟随系统」），
+    // 经用户确认这两颗保留手绘；其余任何键冒出来都说明有人又手绘了图标。
+    const icons = readFileSync("src/shell/icons.ts", "utf-8");
+    const body = icons.slice(icons.indexOf("export const ICONS = {"), icons.indexOf("} as const;"));
+    const keys = [...body.matchAll(/\n {2}(\w+):/g)].map((m) => m[1]);
+    expect(keys, "icons.ts 只应剩 sun / moon（其余一律 codicon）").toEqual(["sun", "moon"]);
+  });
+
+  it("B82 CHANGELOG 生成器不得吞掉区间内最后一个提交（git log 无尾换行）", () => {
+    // 事故：v0.8.0 的 CHANGELOG 少了本版唯一的 feat 条目（a3bc51f）。
+    // 根因：`git log --pretty=format:'%h%x1f%s'` 的最后一条记录**不带尾换行**，而
+    // `while IFS=… read` 在「有内容但无换行」的 EOF 上返回非 0 → 循环体不执行 →
+    // 区间内**最旧**的提交被静默丢弃（新→旧排列下，丢的正好是本版头号 feature）。
+    // 修法：循环条件补 `|| [ -n "$sha" ]`。这条断言就是防止它被「简化」回去。
+    const sh = readFileSync("scripts/gen-changelog.sh", "utf-8");
+    expect(sh, '读循环必须补 EOF 兜底（|| [ -n "$sha" ]），否则吞提交').toContain(
+      'read -r sha subj || [ -n "$sha" ]',
+    );
+  });
+
+  it("B83 pre-push 的 windres 目录必须归一成 POSIX 路径（Windows 风格条目是死路）", () => {
+    // 事故：钩子打印「cargo test（windres: C:/msys64/mingw64/bin）」，看起来工具链找到了，
+    // cargo 却 panic `NotAttempted("windres")` —— 因为 MSYS 下 `C:/…` 风格的 PATH 条目
+    // 既搜不到、也不会被转成可用形式传给**原生**子进程（cargo → build.rs → embed-resource）。
+    // 归一成 `/c/msys64/mingw64/bin` 后 40 个 Rust 测试全绿（实测）。
+    // ⚠️ 这条与 COREUTILS_DIR 的 `cd … && pwd` 是同一类教训：命中路径必须规范化。
+    const hook = readFileSync(".githooks/pre-push", "utf-8");
+    expect(hook, "WINDRES_DIR 必须经 `cd … && pwd` 归一，不能直接用 C:/… 条目").toContain(
+      'WINDRES_DIR="$(cd "$w" 2>/dev/null && pwd)"',
+    );
+  });
+
+  it("B84 pre-push 必须先本地构建并产出 release exe（exe 不刷新 ⇒ 截图也刷不了）", () => {
+    // 09-20 复盘：v0.7.0 / v0.8.0 连续两个版本没刷新 `docs/screenshots/main.png`，
+    // 当时归因为「沙箱拍不了图」，真正原因是 **release exe 是旧的** ——
+    // `release.sh <ver> --ci` 会跳过本地构建，而 `scripts/capture-screenshots.py` 的
+    // 前置就是 `src-tauri/target/release/litepad.exe`。把构建做成 pre-push 的硬门后，
+    // exe 每次推送都是新的，截图随时可拍。
+    // ⚠️ 断言必须**先剥 `#` 注释**再比：本守卫要找的 `npm run build`、
+    //   `beforeBuildCommand` 等字样在说明性注释里同样出现，直接比对整份文件的话，
+    //   挖掉真正的命令照样通过 —— B79 那条已经踩过一次这种假绿。
+    const raw = readFileSync(".githooks/pre-push", "utf-8");
+    const hook = raw
+      .split("\n")
+      .map((l) => (/^\s*#/.test(l) ? "" : l))
+      .join("\n");
+
+    expect(hook, "pre-push 必须跑前端构建（tsc + vite）").toContain("npm run build");
+    expect(hook, "pre-push 必须生成 release exe").toContain("npm run tauri -- build");
+    expect(
+      hook,
+      "必须置空 beforeBuildCommand，否则 tauri 会把 vite 再跑一遍（build-all.sh 里卡死过）",
+    ).toContain('{"build":{"beforeBuildCommand":""}}');
+    expect(hook, "vite 清 dist/assets 会被 safe-delete 钩子拦，必须关掉").toContain(
+      "CODEBUDDY_SAFE_DELETE_ENABLED=0",
+    );
+    // 「构建命令返回 0 却没写出 exe」出现过，光看退出码不够
+    expect(hook, "必须复核 exe 真的产出，不能只信退出码").toContain(
+      "src-tauri/target/release/litepad.exe",
+    );
+    // 硬门：构建失败必须阻断推送，不是警告跳过
+    expect(hook, "release 构建失败必须 exit 1 阻断推送").toMatch(
+      /release 构建未通过[\s\S]*?exit 1/,
+    );
+  });
+
+  it("B85 vite 构建前必须剥离 PATH 里的 MSYS2 条目（否则 vite 挂死）", () => {
+    // 09-20 实测坐实（此前只标为「疑点未定论」）：PATH 里带 `/c/msys64/mingw64/bin`
+    // （为给 cargo 提供 windres 而加）时，`vite build` 会**挂死** —— 不是慢，是不动：
+    // CPU 只走 ~25s 就停、内存涨到 1.8G、`dist/assets` 被清空后一直不写入，
+    // 挂 13 分钟也不出产物。同一指纹 09-19 在 build-all.sh 里出现过两次。
+    // 摘掉这些条目后同一条命令 **40s** 完成。
+    // ⚠️ 同样先剥 `#` 注释再断言（注释里也写了 `msys64` / `npm run build`）。
+    const stripHash = (src: string) =>
+      src
+        .split("\n")
+        .map((l) => (/^\s*#/.test(l) ? "" : l))
+        .join("\n");
+    const hook = stripHash(readFileSync(".githooks/pre-push", "utf-8"));
+    const buildAll = stripHash(readFileSync("scripts/build-all.sh", "utf-8"));
+
+    expect(hook, "pre-push 必须过滤掉含 msys64 的 PATH 条目").toContain("*msys64*) ;;");
+    expect(hook, "前端构建必须用剥离后的 PATH 跑，不能直接用原 PATH").toContain('PATH="$FE_PATH"');
+    // ⚠️ 剥离 PATH **不足以兜住**：09-20 钩子内实测剥离后仍挂在写盘阶段（内存 ~1.7G），
+    // 而手动跑同一命令 71s 就完成 —— 是间歇性的。所以必须有超时 + 重试，
+    // 否则一次挂死就会把推送无限期卡住（第一次就是挂了 12 分钟才被人工杀掉）。
+    expect(hook, "vite 必须带超时，挂死时能自己退场").toContain("timeout -k 10 240");
+    expect(hook, "超时/失败后要重试一次，别把间歇性挂死当真失败").toMatch(/for attempt in 1 2/);
+    // build-all.sh 顶部恰恰把 msys64 前插进 PATH，是卡死的原发地，同样要剥
+    expect(buildAll, "build-all.sh 的前端构建同样必须剥离 MSYS2 条目").toContain(
+      'PATH="$FE_PATH" npm run build',
+    );
+  });
+
+  it("B86 三种查找范围共用同一套触发与计数逻辑（不再靠回车触发搜索）", () => {
+    // 事故：点亮「所有打开的文档」后既不刷新结果也不更新按钮，改搜索文本同样没反应，
+    // **必须再按一次回车**才搜。两个根因：
+    //   ① 查找栏把跨文档做成**独立命令**（onSearchAll），只有回车会调它；
+    //   ② 主程序 `runFindInDocs` 刚写完计数，紧随其后的 `refreshFindCount()` 又因
+    //      `q.allDocs` 把它覆盖成「无内容」→ prev/next 被置灰，看起来就是「没触发」。
+    // 修法：搜索统一由「查询或范围变化」触发；计数统一由 `refreshFindCount()` 一个出口产出；
+    // 回车在三种范围里一律是步进（下一个 / 上一个）。
+    const main = stripLineComments(readFileSync("src/main.ts", "utf-8"));
+    const bar = stripLineComments(readFileSync("src/shell/findbar.ts", "utf-8"));
+
+    // ① 触发统一：回车不再按范围分叉
+    expect(bar, "回车在三种范围里一律是步进，不得再按 allDocs 分叉").not.toContain("q.allDocs");
+    expect(bar, "查找栏不再有跨文档专用搜索入口").not.toContain("runSearch");
+    expect(main, "范围/查询变化必须统一重算跨文档命中").toMatch(
+      /if \(q\.allDocs\) runFindInDocs\(q\);/,
+    );
+
+    // ② 计数统一：跨文档也走 refreshFindCount 这一个出口
+    const refresh = main.match(/function refreshFindCount\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(refresh, "refreshFindCount 必须覆盖跨文档范围").toContain("q.allDocs");
+    expect(refresh, "跨文档有命中时计数 = 当前序号 / 总数").toMatch(/findHits\.length/);
+    expect(refresh, "跨文档有文本无命中时显示「无匹配」（与单文档一致）").toContain("无匹配");
+    // ⚠️ 关键回归点：早先这里一律写「无内容」，会顺带把 prev/next 置灰
+    expect(refresh, "跨文档不得一律写成「无内容」").not.toMatch(/q\.allDocs[\s\S]{0,200}无内容/);
+
+    // ③ 底部提示：跨文档不再写「共 N 处匹配，回车逐个跳转」
+    expect(main, "删除「共 N 处匹配，回车逐个跳转」提示").not.toContain("回车逐个跳转");
+
+    // ④ 步进后同样走那一个出口，不再自己写计数/状态行
+    const step = main.match(/function stepFindInDocs\([\s\S]*?\n\}/)?.[0] ?? "";
+    expect(step, "跨文档步进后必须走 refreshFindCount").toContain("refreshFindCount()");
+    expect(step, "跨文档步进不得再自己写状态行").not.toContain("setStatus");
+  });
+
+  it("B79 主题：档位必须写回 settings 才存得下；三态按钮一律不点亮", () => {
+    // ⚠️ 断言必须落在**代码**上，不能落在整份文件上：上面这段说明性的注释里就写着
+    // `persistSettings()` 和 `themeMode = normalizeMode(settings?.theme)`，
+    // 反向验证实测——挖掉真正的调用后，只要还比对整份文件，断言照样通过（假绿）。
+    // 所以先剥掉整行注释再断言。
+    const main = stripLineComments(readFileSync("src/main.ts", "utf-8"));
+
+    // ---- ① 落盘：settings.theme 必须被写回 ----
+    // 用户实测「每次打开都是深色」。根因：启动时读的是 `settings.theme`，而 setThemeMode
+    // 只改了内存里的 themeMode，**没写回 settings** —— persistSettings() 存的是整个对象，
+    // 于是 theme 永远是启动时的 "system"，深色系统下解析出来就是深色。
+    // ⚠️ 判据必须落在「写回」这个动作上：只断言「调了 persistSettings」会假绿（一直在调）。
+    const setBody =
+      main.match(/async function setThemeMode\(mode: ThemeMode\)[^{]*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    expect(setBody, "setThemeMode 必须把档位写回 settings（否则根本存不下来）").toMatch(
+      /settings\.theme = mode/,
+    );
+    expect(setBody, "写回之后必须落盘").toContain("persistSettings()");
+    expect(main, "启动时必须按 settings.theme 还原档位").toContain(
+      "normalizeMode(settings?.theme)",
+    );
+
+    // ---- ② 激活态：循环按钮三档外观必须一致 ----
+    // 用户实测「深色模式按钮带激活状态，其它模式没有」。旧代码是
+    // `btnTheme.classList.toggle("tool-btn-active", themeMode === "dark")`：
+    // 它是**循环按钮**不是开关，「激活」没有语义，且只有深色档点亮 = 三档观感各不相同。
+    expect(main, "⚠️ 主题按钮不得再按深色档点亮（循环按钮没有「激活」语义）").not.toMatch(
+      /btnTheme[\s\S]{0,160}?tool-btn-active/,
+    );
+    expect(main, "当前档位仍要写进 data 属性供测试/样式用").toContain("btnTheme.dataset.themeMode");
+    // .tool-btn-active 本身还要留着（自动换行等开关按钮在用），别整条删掉
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    expect(css, "开关按钮的激活态样式必须保留").toContain(".tool-btn.tool-btn-active");
+  });
+
+  it("菜单显示的键位必须来自快捷键注册表（不能写死）", () => {
+    const src = menu();
+    expect(src, "菜单必须通过 keyHint 取键位").toContain("cb.keyHint(");
+    expect(src, "不得再手写硬编码快捷键").not.toContain("新建\\tCtrl+N");
+    expect(main(), "main 必须提供 keyHint 实现").toContain("function keyHint(");
+  });
+
+  it("子菜单能力与长菜单滚动", () => {
+    const m = readFileSync("src/shell/menu.ts", "utf-8");
+    expect(m, "MenuItem 必须支持 submenu").toContain("submenu?");
+    expect(m, "必须有子菜单箭头").toContain("menu-arrow");
+    expect(m, "嵌套层必须能被整体回收").toContain("function closeDeeperThan");
+
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    expect(css, "子菜单箭头样式").toContain(".menu-arrow");
+    expect(css, "长菜单必须自身滚动").toMatch(/\.popup-menu\s*\{[\s\S]*?overflow-y:\s*auto/);
   });
 });
