@@ -154,3 +154,7 @@
   `tsc --noEmit` → `vite build` → `run-vitest.cjs --run` → `cargo build && cargo test` →
   `tauri.js build --config '{"build":{"beforeBuildCommand":""}}'`。
   长任务一律后台 + 重定向日志；打包前先确认没有残留的 `litepad.exe` 进程（§6）。
+  ⚠️ **别漏了 vite 的 `timeout -k 10 300` + 重试一次**（§5）：漏了它，一次挂死就是
+  「日志停在 `✓ N modules transformed` 之后再无输出」的无限等待 —— 09-22 实测白等 11 分钟
+  才被发现。`timeout` 不在会话 PATH 里，用绝对路径
+  `/d/Program Files/Git/usr/bin/timeout.exe -k 10 300 …`。
