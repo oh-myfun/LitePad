@@ -3,6 +3,20 @@
 > 本文件由 `scripts/gen-changelog.sh` 从 Conventional Commit 自动生成，
 > `scripts/release.sh` 发布时自动刷新；版本口径见 `docs/conventions.md`「版本号规则」。
 
+## v0.11.0 — 2026-09-21
+
+本版距 `v0.10.1` 共 2 个提交。
+
+### 新功能
+
+- 标签拖拽改用 HTML5 DnD，影像交系统绘制并跟出窗口（B91） `e2e7776`
+
+### 其他
+
+- 记 v0.10.1 打包产物与推送仍受阻（github.com 线路不通） `0675c07`
+
+---
+
 ## v0.10.1 — 2026-09-21
 
 本版距 `v0.10.0` 共 3 个提交。
