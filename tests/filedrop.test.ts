@@ -231,8 +231,79 @@ describe("B91 页面级收接：dragover 允许落点、悬停节流、离开与
   });
 });
 
+// --------------------------------------------------- B91-2 回归：文件拖入不能漏给页面内编辑器
+
+describe("B91-2 回归：文件拖入被捕获阶段拦下，不漏给页面内编辑器", () => {
+  let previews: { x: number; y: number }[];
+  let clears: number;
+  let uninstall: () => void;
+  /** 编辑器 DOM 的替身：真实环境里 CM6 把 dragover/drop 等监听挂在 `view.contentDOM` 上。 */
+  let editor: HTMLElement;
+  /** 替身收到的事件类型 —— 收到 `drop` 就等于 CM6 会把文件内容读出来插进文档。 */
+  let leaked: string[];
+
+  beforeEach(() => {
+    previews = [];
+    clears = 0;
+    leaked = [];
+    editor = document.createElement("div");
+    editor.className = "cm-content";
+    document.body.appendChild(editor);
+    for (const t of ["dragenter", "dragover", "dragleave", "drop"]) {
+      editor.addEventListener(t, () => leaked.push(t));
+    }
+    uninstall = installFileDropTarget(
+      { preview: (x, y) => previews.push({ x, y }), clear: () => clears++ },
+      1,
+    );
+  });
+
+  afterEach(() => {
+    uninstall();
+    editor.remove();
+  });
+
+  it("文件落到编辑器上：编辑器收不到 drop（否则 CM6 会把文件内容读出来插进文档）", () => {
+    installHost();
+    const drop = dragEvent("drop", {
+      types: ["Files"],
+      x: 5,
+      y: 6,
+      files: [{ name: "note.md" } as unknown as File],
+    });
+    editor.dispatchEvent(drop);
+    expect(drop.defaultPrevented, "默认动作必须由文件通道拦掉").toBe(true);
+    expect(leaked, "编辑器不该收到 drop —— 收到就会插入文件内容").toEqual([]);
+    expect(sent.length, "路径仍要交给宿主（打开/分屏逻辑不受影响）").toBe(1);
+    expect(clears, "落地照常清高亮").toBe(1);
+  });
+
+  it("文件悬停也不该漏给编辑器（CM6 的 dragover 观察器会画落点光标）", () => {
+    const over = dragEvent("dragover", { types: ["Files"], x: 1, y: 2, at: 2000 });
+    editor.dispatchEvent(over);
+    expect(over.defaultPrevented).toBe(true);
+    expect(leaked, "文件拖拽的 dragover 不该漏下去").toEqual([]);
+    expect(previews, "高亮仍由文件通道自己驱动").toEqual([{ x: 1, y: 2 }]);
+  });
+
+  it("编辑器内部拖选区（types=Text）原样放行：那是 CM6 自己的功能", () => {
+    const drop = dragEvent("drop", { types: ["Text"], x: 1, y: 1 });
+    editor.dispatchEvent(drop);
+    expect(drop.defaultPrevented, "不该拦 CM6 自己的拖选区").toBe(false);
+    expect(leaked, "必须留给 CM6").toEqual(["drop"]);
+  });
+
+  it("标签拖拽（自定义 MIME）原样放行：不归文件通道管", () => {
+    const drop = dragEvent("drop", { types: ["application/x-litepad-tab"], x: 1, y: 1 });
+    editor.dispatchEvent(drop);
+    expect(drop.defaultPrevented, "标签拖拽的默认动作不该被文件通道拦掉").toBe(false);
+    expect(leaked, "要留给 tabdnd 认领").toEqual(["drop"]);
+  });
+});
+
 describe("B91 接线（静态断言）", () => {
   const main = readFileSync("src/main.ts", "utf-8");
+  const filedrop = readFileSync("src/shell/filedrop.ts", "utf-8");
   const bridge = readFileSync("src-tauri/src/dropbridge.rs", "utf-8");
 
   it("页面侧必须装上收接，且只处理 drop（enter/over/leave 已由页面内监听接管）", () => {
@@ -241,6 +312,21 @@ describe("B91 接线（静态断言）", () => {
     );
     expect(main, "onDragDropEvent 只该管 drop").toMatch(/if \(p\.type !== "drop"\) return;/);
     expect(main, "出口不可用要留一行日志，别静默失效").toContain("hasFileDropBridge()");
+  });
+
+  it("页面级监听必须挂捕获阶段 + stopPropagation（冒泡阶段抢不过 CM6）", () => {
+    // ⚠️ 这条是 B91-2 回归的契约：CM6 的 drop 处理器一旦发现 dataTransfer.files 非空，
+    // 就用 FileReader.readAsText 把**文件内容**读出来插进文档。监听挂在冒泡阶段时它已经
+    // 跑完了 —— 只有捕获阶段（document 上比任何页面内组件都早）+ stopPropagation 拦得住。
+    for (const t of ["dragenter", "dragover", "dragleave", "drop"]) {
+      expect(filedrop, `${t} 必须挂捕获阶段`).toMatch(
+        new RegExp(`addEventListener\\("${t}", on\\w+, CAPTURE\\)`),
+      );
+    }
+    expect(filedrop, "CAPTURE 必须是 { capture: true }").toMatch(/capture:\s*true/);
+    expect(filedrop, "光 preventDefault 不够，还要 stopPropagation").toContain("stopPropagation()");
+    // 卸载也要带同样的选项，否则 removeEventListener 摘不掉
+    expect(filedrop).toMatch(/removeEventListener\("drop", onDrop, CAPTURE\)/);
   });
 
   it("落点之后怎么办：仍按面板+分区打开，落点是 Markdown 才弹菜单", () => {

@@ -714,7 +714,9 @@ describe("bootstrap + drag-split smoke", () => {
 
   it("从资源管理器拖入文件必须打开该文件（回归：拖入变成插入内容）", async () => {
     // 用户报告：拖文件进窗口应打开文件，而不是把内容复制进当前文档。
-    // 实现：dragDropEnabled: true + onDragDropEvent(drop)。
+    // 实现：onDragDropEvent(drop)（B91 起 wry 原生拖放关掉了，路径改走页面内拖放 + 桥）。
+    // B91-2：光有这条不够 —— 它只测到宿主事件层；页面这一层的拦截（CM6 会把拖入的文件
+    // 按文本内容读出来插进文档）由 `tests/filedrop.test.ts` 的捕获阶段用例守着。
     // B24：落到 Markdown 文档上时先弹「打开文档 / 插入文件路径」选择菜单，
     // 选「打开」才真正打开；落点不是 Markdown / 多文件则直接打开。
     // B70 B 档：弹菜单的判据是**落点面板的活动文档**，不再是「拖进来的文件是 .md」。

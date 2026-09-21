@@ -13,6 +13,8 @@ import { showPopupMenu } from "./menu";
  * - 落点决定打开位置：面板中央 = 在该面板打开，边缘 = 在该面板旁分屏打开；
  * - 落到**活动文档是 Markdown 的面板**上且只拖了一个文件时弹菜单：打开文档 / 插入文件路径。
  *   （OS 拖拽期间鼠标被系统捕获，无法点击页面控件，所以选择菜单在 drop 后弹出。）
+ * - ⚠️ 页面级监听挂**捕获阶段**并 `stopPropagation`：编辑器（CM6）会先把拖入的文件按文本
+ *   内容读出来插进文档 —— 本项目没有这个功能，只有比它早拦才拦得住（见函数头）。
  */
 
 /** 与 Rust 侧 `dropbridge::MSG_TAG` 必须逐字一致（桥靠它筛掉别的 web message）。 */
@@ -80,6 +82,19 @@ export interface FileDropHoverCallbacks {
  * ⚠️ `dragover` 必须 `preventDefault()`：不拦的话 Chromium 按默认动作处理「拖入文件」，
  * 光标是禁止态而且 `drop` 根本不触发 —— 关掉 wry 之后，「这个窗口收文件」这句话得由
  * 页面自己说。`dragenter`/`dragleave` 用计数配对，只有归零（或真的离开窗口）才算拖出去。
+ *
+ * ⚠️⚠️ **监听一律挂捕获阶段 + `stopPropagation`**（用户报「拖入文档会直接插入文档内容」）：
+ *    监听挂在**冒泡**阶段时，页面内的编辑器（CodeMirror 6）会**先**收到 `drop` —— 而 CM6
+ *    的 drop 处理器一旦发现 `dataTransfer.files` 非空，就用 `FileReader.readAsText` 把
+ *    **文件内容**读出来插进文档（`@codemirror/view` 的 `handlers.drop`）。等我们的处理器
+ *    跑到，`preventDefault()` 已经无从撤销那次插入。捕获阶段挂在 document 上比任何页面内
+ *    组件都早，拦得住。
+ *    ⚠️ 本项目**没有「插入文档内容」这个功能**：菜单里那一项插的是**文件路径**
+ *    （`main.ts` 的 `insertDroppedPath`）—— 内容从来不是我们要的东西。
+ *
+ * ⚠️ 只认**文件拖拽**（`types` 含 `Files`），其余原样放行：
+ *    · 编辑器内部拖选区（`types` 是 `Text`）= CM6 的「把选中的文字拖到别处」，必须留给 CM6；
+ *    · 标签拖拽走自定义 MIME，由 `tabdnd.ts` 在捕获阶段认领。
  */
 export function installFileDropTarget(
   cb: FileDropHoverCallbacks,
@@ -88,13 +103,19 @@ export function installFileDropTarget(
   let depth = 0;
   let lastHover = 0;
 
+  /** 认领一个文件拖拽事件：preventDefault（拦默认动作）+ stopPropagation（拦住页面内组件）。 */
+  const claim = (e: DragEvent): boolean => {
+    if (!isFileDrag(e.dataTransfer)) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    return true;
+  };
+
   const onEnter = (e: DragEvent): void => {
-    if (!isFileDrag(e.dataTransfer)) return;
-    depth += 1;
+    if (claim(e)) depth += 1;
   };
   const onOver = (e: DragEvent): void => {
-    if (!isFileDrag(e.dataTransfer)) return;
-    e.preventDefault();
+    if (!claim(e)) return;
     if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
     const now = e.timeStamp;
     if (now - lastHover < HOVER_THROTTLE_MS) return;
@@ -102,14 +123,13 @@ export function installFileDropTarget(
     cb.preview(e.clientX, e.clientY);
   };
   const onLeave = (e: DragEvent): void => {
-    if (!isFileDrag(e.dataTransfer)) return;
+    if (!claim(e)) return;
     depth = Math.max(0, depth - 1);
     // relatedTarget 为空 = 真的离开窗口，而不是在子元素之间移动
     if (depth === 0 || e.relatedTarget === null) cb.clear();
   };
   const onDrop = (e: DragEvent): void => {
-    if (!isFileDrag(e.dataTransfer)) return;
-    e.preventDefault();
+    if (!claim(e)) return;
     depth = 0;
     lastHover = 0;
     // 先清高亮再做别的：桥万一不可用（旧运行时）或取文件出错，也不该在界面上留一块高亮
@@ -118,15 +138,17 @@ export function installFileDropTarget(
     postFilesToHost(files, e.clientX, e.clientY, dpr);
   };
 
-  document.addEventListener("dragenter", onEnter);
-  document.addEventListener("dragover", onOver);
-  document.addEventListener("dragleave", onLeave);
-  document.addEventListener("drop", onDrop);
+  /** 捕获阶段挂载：见函数头「CM6 会先把文件内容读出来插进文档」的说明。 */
+  const CAPTURE = { capture: true } as const;
+  document.addEventListener("dragenter", onEnter, CAPTURE);
+  document.addEventListener("dragover", onOver, CAPTURE);
+  document.addEventListener("dragleave", onLeave, CAPTURE);
+  document.addEventListener("drop", onDrop, CAPTURE);
   return () => {
-    document.removeEventListener("dragenter", onEnter);
-    document.removeEventListener("dragover", onOver);
-    document.removeEventListener("dragleave", onLeave);
-    document.removeEventListener("drop", onDrop);
+    document.removeEventListener("dragenter", onEnter, CAPTURE);
+    document.removeEventListener("dragover", onOver, CAPTURE);
+    document.removeEventListener("dragleave", onLeave, CAPTURE);
+    document.removeEventListener("drop", onDrop, CAPTURE);
   };
 }
 
