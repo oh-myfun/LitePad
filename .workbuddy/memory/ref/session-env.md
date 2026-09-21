@@ -99,6 +99,20 @@
 - 症状：会话 shell 里直接 `bash scripts/release.sh minor` → `line 69: cargo: command not found`，
   505ms 就退出。`pre-push`/`build-all.sh` 都自带 `export PATH="/c/msys64/mingw64/bin:$HOME/.cargo/bin:$PATH"`，
   **release.sh 没有**。
+- 症状（09-21 二次实测，同一条根因的另一副面孔）：`line 18: git: command not found` —— release.sh
+  第 18 行就是 `cd "$(git rev-parse --show-toplevel)"`。**这次失败反而无害**（版本号还没被改，
+  工作树仍干净）。区别在于补的 PATH 有没有 git。
+- ⚠️ **补 PATH 时 git 要用 `<PortableGit>/cmd`，不是 `<PortableGit>/usr/bin`**：实测本机
+  `PortableGit/versions/1.2.0/usr/bin` 里**只有 coreutils**（grep/sed/ls…，没有 git.exe），
+  git.exe 在 `cmd/`。所以最小可用前缀是：
+  ```sh
+  export PATH="/c/Users/maoyu/.workbuddy/binaries/PortableGit/versions/1.2.0/cmd:\
+  /c/Users/maoyu/.workbuddy/binaries/PortableGit/versions/1.2.0/usr/bin:\
+  /c/msys64/mingw64/bin:/c/Users/maoyu/.cargo/bin:\
+  /c/Users/maoyu/.workbuddy/binaries/node/versions/22.22.2-3:/c/WINDOWS/System32:/usr/bin:/bin"
+  ```
+- ⚠️ **不要在会话里嵌套 `bash -c '…'` 探测**：实测会撞上沙箱黑名单（`wsl.exe` 被拒绝）并输出乱码，
+  直接跑目标脚本即可。
 - ⚠️ 失败时机：脚本先改三处版本号（package.json / tauri.conf.json / Cargo.toml），**再**跑
   `cargo update -p litepad`（同步 Cargo.lock）。所以挂在第 69 行时版本号**已经写进文件**、
   工作树变脏。此时重跑 `minor` 会把 0.10.0 再升成 0.11.0。
