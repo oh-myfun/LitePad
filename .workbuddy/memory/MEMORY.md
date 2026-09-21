@@ -17,7 +17,13 @@ LitePad（B34 更名，LiteMD 已 B36 清理）Tauri 2（Rust 持状态）+ Vite
 - ⚠️ **反向验证的 `-t` 过滤器必须写「用例名」**（B91 实测，一次踩 4 条假绿）：写成 `expect()` 的**断言消息**时 vitest 一个用例都选不中，而「筛掉全部用例」的退出码仍是 **0** → 判出「守卫咬不住」的假绿。`scripts/reverse-verify-*.cjs` 已加 `checkFilter` 前置校验（未打补丁时该过滤器必须至少选中 1 个用例）；写过滤器前先 `grep 'it("' <file>` 抄名字。
 - ⚠️ **`.workbuddy` 的搬/删只动索引、别碰磁盘命令**：对本目录跑 `git mv`/`git rm`/`rmdir` 会让运行时**整棵 `.workbuddy` 从磁盘消失**（连未触碰的 `skills/`、`overview.md` 一起）。文件仍在 git 索引/`.git/` 里，用 `git checkout HEAD -- .workbuddy` 还原。
 - **状态归 Rust、视图归前端**；内存文本 LF，落盘还原原行尾。
-- 每个交付一个 Conventional Commit；每个 bug 必须补回归测试 + 改完先**反向验证**（技能 `litepad-reverse-verify`）。
+- 每个交付一个 Conventional Commit；每个 bug 必须补回归测试 + 改完先**反向验证**。
+  ⚠️ **反向验证本身也是测试用例，优先放 `tests/`**（09-22 用户指示）：落点是
+  `tests/reverse-verify.test.ts` —— 用「**退化实现替身**」证明守卫咬得住（错误写法复刻成
+  可安装处理器，断言它确实坏掉；基准用例断言真实实现正确，两者结果不同 ⇒ 正向用例不恒真）。
+  它**不改源码**、随 `npm test` 一起跑；`scripts/reverse-verify-*.cjs`（改真实源码 + 子进程）
+  只作补充，覆盖面含静态契约。退化用例要先 `defaultPrevented` 自证「处理器确实跑了」，
+  否则「没人拦」与「拦不住」分不开 → 恒真假绿。
 - **界面改动必刷 `docs/screenshots/` 同一提交**；不影响观感在提交信息注明。
 - 🎨 **图标一律用 VS Code codicon**（`src/shell/codicons.ts`，由 `scripts/fetch-codicons.mjs` 从 `@vscode/codicons` 抽取；取用 `CODICONS.<name>`）；**禁手绘 SVG**；codicon 无对应字形先与用户商量再引别的图标集（详见 `docs/conventions.md`「图标」/ `rules/index.md`）。
 - ⚠️ `docs/*.md` 是说明不是契约，改语义须同步改清单/状态表（B67 守卫）。

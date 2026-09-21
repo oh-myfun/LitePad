@@ -47,6 +47,11 @@
 - **每个 bug 必须补回归测试、与修复同一提交**，且**改完先反向验证**：把修复还原一次，确认用例真会红
   （运行时 → `tests/smoke.bootstrap.test.ts`；配置/样式 → `tests/regressions.test.ts`；
   Rust wire/序列化 → 内联 `#[cfg(test)] mod tests`）。流程见技能 `litepad-reverse-verify`。
+- **反向验证本身也是测试用例**，优先写成 `tests/reverse-verify.test.ts` 里的对照用例：
+  把错误写法复刻成一个「退化实现」并断言它**确实坏掉**，再与真实实现的基准用例对照 ——
+  两者结果不同，才说明正向用例不是恒真。它不改源码、随 `npm test` 一起跑；
+  退化用例须先自证「处理器确实执行了」（如断言 `defaultPrevented`），否则「没人拦」
+  与「拦不住」分不开，退化用例会变成恒真的假绿。
 - 跨 IPC 的 DTO 命名两侧必须对齐（camelCase），并补一条真实序列化 round-trip 测试锁住字段名。
 
 ## README 与文档
