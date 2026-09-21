@@ -22,12 +22,12 @@
 
 发布工具不缺（release.sh 已能四处同步 + 打 tag + CI 出包），缺的是**触发**。口径：
 
-| 提交类型 | 版本位 |
-| --- | --- |
-| `feat`（含 `feat!`） | MINOR |
-| `fix` / `perf` | PATCH |
-| 破坏性变更（`!` / `BREAKING CHANGE`） | 1.0.0 前记 MINOR，之后 MAJOR |
-| `docs` / `test` / `chore` / `style` / `ci` / `refactor` | 不单独触发，只计入累积 |
+| 提交类型                                                | 版本位                       |
+| ------------------------------------------------------- | ---------------------------- |
+| `feat`（含 `feat!`）                                    | MINOR                        |
+| `fix` / `perf`                                          | PATCH                        |
+| 破坏性变更（`!` / `BREAKING CHANGE`）                   | 1.0.0 前记 MINOR，之后 MAJOR |
+| `docs` / `test` / `chore` / `style` / `ci` / `refactor` | 不单独触发，只计入累积       |
 
 触发时机（满足任一即 bump）：
 
@@ -45,7 +45,7 @@
 ## 测试与验证
 
 - **每个 bug 必须补回归测试、与修复同一提交**，且**改完先反向验证**：把修复还原一次，确认用例真会红
-  （运行时 → `tests/smoke.bootstrap.test.ts`；配置/样式 → `tests/regressions.test.ts`；
+  （运行时 → `tests/smoke.bootstrap.test.ts`；配置/样式 → 对应模块的静态契约用例，如 `tests/findbar.test.ts`；
   Rust wire/序列化 → 内联 `#[cfg(test)] mod tests`）。流程见技能 `litepad-reverse-verify`。
 - **反向验证本身也是测试用例**，优先写成 `tests/reverse-verify.test.ts` 里的对照用例：
   把错误写法复刻成一个「退化实现」并断言它**确实坏掉**，再与真实实现的基准用例对照 ——
