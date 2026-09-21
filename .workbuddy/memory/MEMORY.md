@@ -5,7 +5,7 @@
 > **不要在会话开头一次性读全部 ref/rules/pitfalls/open-items/，只在触碰对应域时加载。**
 
 ## 身份 / 技术栈 / 范围
-LitePad（B34 更名，LiteMD 已 B36 清理）Tauri 2（Rust 持状态）+ Vite6/TS + CodeMirror6，**仅 Windows**，工作区 `E:\Project\LitePad`。标识 `litepad`/`com.litepad.app`；配置落 `%APPDATA%\LitePad`；原子写入 = 临时文件+fsync+rename。不做：插件商店/内置终端/Git/LSP。最新发布 **v0.11.0**（tag 与 Release 均已推送/发布；远端 `main` 与本地一致）。
+LitePad（B34 更名，LiteMD 已 B36 清理）Tauri 2（Rust 持状态）+ Vite6/TS + CodeMirror6，**仅 Windows**，工作区 `E:\Project\LitePad`。标识 `litepad`/`com.litepad.app`；配置落 `%APPDATA%\LitePad`；原子写入 = 临时文件+fsync+rename。不做：插件商店/内置终端/Git/LSP。最新发布 **v0.11.0**（tag 与 Release 均已推送/发布；本地 `main` 可能领先远端若干本地记忆提交，属正常）。
 
 ## 关键红线（每次会话必读，违反即回滚）
 - 📁 **临时文件一律落本项目 `.tmp/`**（09-18，已进 `.gitignore`/`.prettierignore`/eslint `ignores`）；禁写 `%TEMP%`、`~/.workbuddy/`（除 memory/skills）、Git Bash 的 `/tmp`（=`%TEMP%`）。
@@ -24,6 +24,9 @@ LitePad（B34 更名，LiteMD 已 B36 清理）Tauri 2（Rust 持状态）+ Vite
 - 每次编译产出发布版本：tsc→vite→vitest→cargo build+test→tauri build（门 = `.githooks` + GitHub `CI`）。
 - **README 使用者向**：顶部一张 `main.png`，无快捷键/安装/构建/明确不做，避开库名与内部机制。
 - 发布版本只通过 `v*` tag 发布（`git push origin main --follow-tags`）；CI 经 `.githooks` + GitHub Actions。
+- 🚦 **不要每次修改都推送**（09-21 用户明确要求）：默认只做本地 commit，**推送必须由用户显式要求**。
+  发布仍走 `release.sh <ver>`（它自己会打 tag），但最后那步 `git push` 由用户点头后再做。
+  例外：用户说「交付」「发布」「推上去」时照常推。
 - **版本号必须跟着交付动**（09-18 起）：距最近 tag 有任一 `feat` → `npm run release minor`；有效提交累计 ≥10 → `patch`。pre-push 由 `scripts/check-version-bump.sh` 卡门（达阈值阻断推送），不准出现「开发很久版本号没变」。`CHANGELOG.md` 由 `scripts/gen-changelog.sh` 自动生成，勿手改。
 
 ## 路由表（按需读取，勿全量）
