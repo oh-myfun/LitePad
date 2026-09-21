@@ -9,6 +9,7 @@
 //     悬停高亮改由 dragover 驱动。
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
+import { readJson } from "./static";
 import {
   FILE_DROP_TAG,
   bridgeMessage,
@@ -348,5 +349,40 @@ describe("B91 接线（静态断言）", () => {
     const rustTag = bridge.match(/pub const MSG_TAG: &str = "([^"]+)"/)?.[1];
     expect(rustTag, "Rust 侧必须有 MSG_TAG 常量").toBeTruthy();
     expect(rustTag, "两侧 tag 必须逐字一致").toBe(FILE_DROP_TAG);
+  });
+});
+
+describe("B91 路径桥静态契约（从 regressions 拆出）", () => {
+  it("拖文件进窗口仍要拿得到真实路径：关掉原生拖放必须与路径桥成对出现（B91）", () => {
+    // 用户报告：拖文件进窗口应打开文件而不是把内容插进当前文档。
+    //
+    // B91 起改走「页面内 HTML5 拖放 + 路径桥」：wry 的原生处理器（dragDropEnabled: true）
+    // 在 Windows 上会 `SetAllowExternalDrop(false)` 并覆盖子窗口的 drop target，把页面内
+    // HTML5 拖放一起废掉（源码位置与原文注释见 `src-tauri/src/dropbridge.rs` 模块头）。
+    // 关掉它之后路径由 WebView2 官方出口补回：页面 postMessageWithAdditionalObjects →
+    // 宿主从 `ICoreWebView2File::Path` 取真实路径。
+    //
+    // ⚠️ 这条断言是**成对**的，拆开任一半都是静默故障：
+    //   · 只改配置不装桥 → 拖文件进来毫无反应；
+    //   · 只留桥不改配置 → 页面内收不到 drop，桥永远等不到消息。
+    const conf = readJson("src-tauri/tauri.conf.json");
+    const win = (conf.app?.windows ?? []).find((w: { label?: string }) => w.label === "main");
+    expect(win, "tauri.conf.json 应有 main 窗口配置").toBeTruthy();
+    expect(win.dragDropEnabled, "必须关掉 wry 原生拖放（否则页面内 HTML5 拖放全废）").toBe(false);
+
+    const bridge = readFileSync("src-tauri/src/dropbridge.rs", "utf-8");
+    expect(bridge, "必须用 ICoreWebView2File 取真实路径").toContain("ICoreWebView2File");
+    expect(bridge, "必须发与 Tauri 逐字同名的事件（前端因此零改动）").toContain(
+      '"tauri://drag-drop"',
+    );
+    const main = readFileSync("src-tauri/src/main.rs", "utf-8");
+    expect(main, "主窗口必须装桥").toMatch(
+      /dropbridge::install\(app\.handle\(\), windows::MAIN_LABEL\)/,
+    );
+    const wins = readFileSync("src-tauri/src/windows.rs", "utf-8");
+    expect(wins, "卫星窗口建窗时必须一起关掉原生拖放").toContain(".drag_and_drop(false)");
+    expect(wins, "卫星窗口必须装桥（文件也可以落在它上面）").toMatch(
+      /dropbridge::install\(app, label\)/,
+    );
   });
 });

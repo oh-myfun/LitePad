@@ -3,6 +3,8 @@
 // 正交角手柄 / 落点 1/3 方向优先 / Alt 临时取消分屏。
 // 参考源码见 docs/vscode-reference/（sash.ts/css、splitview.css、editorDropTarget.ts）。
 import { describe, expect, it, beforeEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { themeBlock } from "./static";
 
 // B91-2：标签拖拽走 HTML5 DnD，影像交给 `dataTransfer.setDragImage` 由系统绘制。
 // 本文件要验「tabstrip 确实造了影像并交给了系统」，因此需要一个装着传输层的环境；
@@ -759,5 +761,342 @@ describe("B64/B91-2 拖拽影像：造出来交给系统绘制", () => {
     ).toBeLessThanOrEqual(1);
     await new Promise((r) => setTimeout(r, 0));
     expect(document.querySelectorAll(".tab-drag-ghost").length, "拍完都不留").toBe(0);
+  });
+});
+
+describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
+  it("B28 大纲分隔条必须与分屏分割条同款（细线 + 宽命中区 + hover accent，无双线）", () => {
+    // 用户要求：大纲区分隔条样式与面板分割条保持一致。
+    // 旧样式是 4px 透明细条，与 .layout-sep 不统一；
+    // 且 .toc-panel 自带 border-right 会与分隔条叠成双线。
+    // B53 起两者统一升级为「透明命中区 + ::after 细线」——改一处必须改另一处。
+    const previewCss = readFileSync("src/styles/preview.css", "utf-8");
+    const resizer = previewCss.match(/\.toc-resizer\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(resizer, "应有 .toc-resizer 规则块").toBeTruthy();
+    const globalCss = readFileSync("src/styles/global.css", "utf-8");
+    const sep = globalCss.match(/\.layout-sep\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(sep, "分屏分割条基准样式应存在").toBeTruthy();
+
+    // B60：两条分隔条都改为**不占布局**（flex 基准 0），命中区改由 ::before 向两侧溢出。
+    // 原先 7px 的透明占位会把两侧内容撑开、中间露出祖先底色 —— 用户看到的就是「粗带」。
+    expect(resizer, "大纲分隔条不得占布局宽度").toMatch(/flex:\s*0 0 0/);
+    expect(sep, "分屏分隔条不得占布局宽度").toMatch(/flex:\s*0 0 0/);
+
+    // 命中区宽度必须一致（B53 起的「细线 + 宽命中区」约定；宽度从元素搬到 ::before）
+    const hitResizer = previewCss.match(/\.toc-resizer::before\s*\{[^}]*width:\s*(\d+)px/)?.[1];
+    const hitSep = globalCss.match(/\.layout-sep-h::before\s*\{[^}]*width:\s*(\d+)px/)?.[1];
+    expect(hitResizer, "大纲分隔条命中区宽度必须显式给出").toBeTruthy();
+    expect(hitResizer, "大纲与分屏分隔条命中区宽度必须一致").toBe(hitSep);
+    const line = previewCss.match(/\.toc-resizer::after\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(line, "大纲分隔条细线必须由伪元素画").toContain("background: var(--sep-line)");
+    // 分屏分隔条：颜色在共享的 .layout-sep::after，几何按方向类定位
+    // （B59 S5：线色从通用 --border 抽成 --sep-line，两条分隔条同步改并共用）
+    const sepLine = globalCss.match(/\.layout-sep::after\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(sepLine, "分屏分隔条细线必须由伪元素画").toContain("background: var(--sep-line)");
+    expect(globalCss, "横向分隔条的细线几何").toMatch(/\.layout-sep-h::after\s*\{/);
+    expect(globalCss, "纵向分隔条的细线几何").toMatch(/\.layout-sep-v::after\s*\{/);
+
+    const highlight =
+      previewCss.match(
+        /\.toc-resizer:hover::after,\s*body\.layout-dragging \.toc-resizer::after\s*\{[^}]*\}/,
+      )?.[0] ?? "";
+    expect(highlight, "悬停/拖拽高亮必须是 accent（允许带回退值）").toMatch(/var\(--accent[,)]/);
+
+    const panel = previewCss.match(/\.toc-panel\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(panel, ".toc-panel 不得自带 border-right（与分隔条叠成双线）").not.toContain(
+      "border-right",
+    );
+  });
+  it("B59 分屏对齐 VS Code：复位/极限光标/方向光标/角手柄/落点高亮（静态契约）", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const previewCss = readFileSync("src/styles/preview.css", "utf-8");
+    const sv = readFileSync("src/shell/splitview.ts", "utf-8");
+
+    // S1 拖拽中必须与 hover 同色（只写 :hover 时鼠标滑出 7px 细线就失色）
+    const sepHL = css.match(/\.layout-sep:hover::after,[\s\S]{0,80}?\{[^}]*\}/)?.[0] ?? "";
+    expect(sepHL, "拖拽中要加 .resizing 并保持高亮").toMatch(/\.layout-sep\.resizing::after/);
+    expect(sepHL, "高亮色为 accent").toMatch(/var\(--accent/);
+
+    // O2 极限光标（对标 sash.css 的 .minimum/.maximum）
+    expect(css, "水平分隔条到极限的光标").toMatch(/\.layout-sep-h\.at-min\s*\{[^}]*e-resize/);
+    expect(css, "水平分隔条到极限的光标").toMatch(/\.layout-sep-h\.at-max\s*\{[^}]*w-resize/);
+    expect(css, "垂直分隔条到极限的光标").toMatch(/\.layout-sep-v\.at-min\s*\{[^}]*s-resize/);
+    expect(css, "垂直分隔条到极限的光标").toMatch(/\.layout-sep-v\.at-max\s*\{[^}]*n-resize/);
+
+    // O7 角手柄：绝对定位的 8px 命中块，按分隔条朝向摆在两端
+    expect(css, "角手柄基准样式").toMatch(/\.layout-corner\s*\{[^}]*position:\s*absolute/);
+    expect(css, "横线上的角手柄在左右端").toMatch(
+      /\.layout-sep-v\s*>\s*\.layout-corner\.start\s*\{/,
+    );
+    expect(css, "横线上的角手柄在左右端").toMatch(/\.layout-sep-v\s*>\s*\.layout-corner\.end\s*\{/);
+    expect(css, "竖线上的角手柄在上下端").toMatch(
+      /\.layout-sep-h\s*>\s*\.layout-corner\.start\s*\{/,
+    );
+    expect(css, "竖线上的角手柄在上下端").toMatch(/\.layout-sep-h\s*>\s*\.layout-corner\.end\s*\{/);
+
+    // O3 方向光标：默认 ew-resize（大纲/查找栏/水平分隔条都靠它），
+    // 只有垂直分隔条叠加 -v → ns-resize（原实现恒为 col-resize，是 bug）
+    expect(css, "垂直分隔条拖拽时 ns-resize").toMatch(
+      /body\.layout-dragging\.layout-dragging-v\s*\{[^}]*ns-resize/,
+    );
+    expect(css, "角手柄拖拽时光标").toMatch(
+      /body\.layout-dragging\.layout-dragging-corner\s*\{[^}]*all-scroll/,
+    );
+
+    // S4 缩放期间抑制面板内过渡（拖动不发飘）
+    expect(css, "缩放期间抑制过渡").toMatch(/body\.layout-dragging \.layout-panel \*/);
+
+    // S5 线色抽成 --sep-line，分屏与大纲两条分隔条共用（B28 要求同款），两套主题齐补
+    expect(css, "分屏分隔条线色走 --sep-line").toMatch(
+      /\.layout-sep::after\s*\{[^}]*background:\s*var\(--sep-line\)/,
+    );
+    expect(previewCss, "大纲分隔条线色同款").toMatch(
+      /\.toc-resizer::after\s*\{[^}]*background:\s*var\(--sep-line\)/,
+    );
+    const darkTheme = themeBlock(css, "dark");
+    const lightTheme = themeBlock(css, "light");
+    expect(darkTheme, "深色主题块必须找到").toBeTruthy();
+    expect(lightTheme, "浅色主题块必须找到").toBeTruthy();
+    for (const [name, block] of [
+      ["dark", darkTheme],
+      ["light", lightTheme],
+    ] as const) {
+      expect(block, `${name} 主题必须有 --sep-line`).toContain("--sep-line:");
+      expect(block, `${name} 主题必须有 --drop-fill`).toContain("--drop-fill:");
+    }
+
+    // S3 落点高亮过渡（B60 保留）：70ms 位移 / 150ms opacity（VS Code editordroptarget.css）
+    const preview = css.match(/\.split-preview::after\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(preview, "填充走 --drop-fill").toContain("background: var(--drop-fill)");
+    // B60：填充与描边同源（都走 --drop-fill），叠加成约 @0.39，改主题不会只改一半。
+    // B60 二次反馈：用户明确「不用描边」—— 填充值保持不动，只去掉那圈 2px 边。
+    expect(preview, "用户要求落点预览不描边").not.toMatch(/border:\s*\d+px/);
+    expect(preview, "圆角 4px 保留").toMatch(/border-radius:\s*4px/);
+    expect(preview, "位移过渡 70ms").toMatch(/70ms/);
+    expect(preview, "不透明度过渡 150ms").toMatch(/150ms/);
+    expect(css, "基础态 opacity:0，靠 .show 点亮").toMatch(
+      /\.split-preview\.show::after\s*\{[^}]*opacity:\s*1/,
+    );
+
+    // 接线：统一走 attachResize（双击复位 + 指针捕获 + 方向修饰类），角手柄双类写法
+    expect(sv, "双击复位接线").toMatch(/addEventListener\("dblclick"/);
+    expect(sv, "指针捕获（移出窗口不丢事件）").toMatch(/setPointerCapture/);
+    expect(sv, "垂直分隔条加方向修饰类").toMatch(/layout-dragging-v/);
+    expect(sv, "角手柄双类 start/end（对齐 VS Code）").toMatch(
+      /layout-corner \$\{atStart \? "start" : "end"\}/,
+    );
+  });
+  it("B60 分隔条改细 + 落点回退浅蓝 + 对齐联动（静态契约）", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const previewCss = readFileSync("src/styles/preview.css", "utf-8");
+    const sv = readFileSync("src/shell/splitview.ts", "utf-8");
+
+    // ① 分隔条不占布局（对齐 VS Code sash 的浮层做法）。
+    // B59 的 flex:0 0 7px 透明占位会撑开两侧内容、露出祖先底色 = 视觉上的粗带。
+    expect(css, "分屏分隔条不占布局").toMatch(/\.layout-sep\s*\{[^}]*flex:\s*0 0 0/);
+    expect(previewCss, "大纲分隔条同款（B28）").toMatch(/\.toc-resizer\s*\{[^}]*flex:\s*0 0 0/);
+    // 命中区搬到 ::before，向两侧各溢出 3.5px（共 7px）
+    expect(css, "竖线命中区 7px 宽").toMatch(/\.layout-sep-h::before\s*\{[^}]*width:\s*7px/);
+    expect(css, "横线命中区 7px 高").toMatch(/\.layout-sep-v::before\s*\{[^}]*height:\s*7px/);
+    expect(previewCss, "大纲命中区 7px 宽（同款）").toMatch(
+      /\.toc-resizer::before\s*\{[^}]*width:\s*7px/,
+    );
+    // 视觉线：静息 1px（VS Code editorGroup.border），激活 4px（--vscode-sash-size）
+    expect(css, "静息线 1px").toMatch(/\.layout-sep-h::after\s*\{[^}]*width:\s*1px/);
+    expect(css, "静息线 1px（横线）").toMatch(/\.layout-sep-v::after\s*\{[^}]*height:\s*1px/);
+    expect(css, "激活涨到 4px").toMatch(
+      /\.layout-sep-h:hover::after,[\s\S]{0,160}?\{\s*width:\s*4px/,
+    );
+    expect(css, "激活涨到 4px（横线）").toMatch(
+      /\.layout-sep-v:hover::after,[\s\S]{0,160}?\{\s*height:\s*4px/,
+    );
+    expect(previewCss, "大纲分隔条同款涨到 4px").toMatch(
+      /\.toc-resizer:hover::after,[\s\S]{0,120}?width:\s*4px/,
+    );
+    // 角手柄改为骑在界线上（分隔条主轴尺寸已为 0，原先 top:0/left:0 会偏到一侧）
+    expect(css, "横线上的角手柄骑线").toMatch(
+      /\.layout-sep-v\s*>\s*\.layout-corner\s*\{[^}]*top:\s*-4px/,
+    );
+    expect(css, "竖线上的角手柄骑线").toMatch(
+      /\.layout-sep-h\s*>\s*\.layout-corner\s*\{[^}]*left:\s*-4px/,
+    );
+
+    // ② 落点回退浅蓝：accent 系（深 #4c9ffe / 浅 #0969da）@0.22，不再用 VS Code 的灰
+    const darkTheme = themeBlock(css, "dark");
+    const lightTheme = themeBlock(css, "light");
+    expect(darkTheme, "深色落点为 accent 浅蓝").toContain("--drop-fill: rgba(76, 159, 254, 0.22)");
+    expect(lightTheme, "浅色落点为 accent 浅蓝").toContain("--drop-fill: rgba(9, 105, 218, 0.22)");
+    expect(darkTheme, "不得残留 VS Code 的深灰落点").not.toContain("rgba(83, 89, 93, 0.5)");
+
+    // ③ 对齐联动：注册表 + 查找 + 双击复位转发（对标 sash.ts 的 linkedSash）
+    expect(sv, "登记真实分隔条").toMatch(/sashRegistry\.push\(/);
+    expect(sv, "按同向 + 中线容差查找对齐项").toMatch(/function alignedSashesOf/);
+    expect(sv, "拖拽中同步联动目标").toMatch(/for \(const l of links\) applyTarget/);
+    expect(sv, "松手回写联动目标").toMatch(/for \(const l of links\) l\.target\.commit/);
+    // 双击复位要转发给联动条，且**联动集合必须先求**——centerOf 读的是实时几何，
+    // 先 applyTarget 把本条挪到 50% 就会让集合变空（B62 用户反馈的真机 bug）
+    const dblStart = sv.indexOf('addEventListener("dblclick"');
+    expect(dblStart, "应能定位 dblclick 处理器").toBeGreaterThan(-1);
+    const dbl = sv.slice(dblStart);
+    expect(dbl, "双击按链整条一起调整").toMatch(
+      /movingGroupOf\(targets\)\.map\(\(s\) => s\.chainId\)/,
+    );
+    expect(
+      dbl.indexOf("movingGroupOf(targets)"),
+      "联动集合必须先于改比例求出（否则只剩点中的那条居中）",
+    ).toBeLessThan(dbl.indexOf("applyTarget"));
+    expect(dbl, "整链按均分比例回写（不是一律 50%）").toMatch(/s\.target\.commit\(s\.equalRatio\)/);
+    // 纯点击（无 mousemove）不得回写比例：命中区 7px 宽，点一下就能把两条对齐推到容差外
+    expect(sv, "没有拖动就不回写比例").toMatch(/if \(!moved\) return;/);
+    expect(css, ".linked 高亮（悬停可见的联动提示）").toMatch(/\.layout-sep\.linked::after/);
+  });
+  it("B63 交叉点联动 + 双击按分割数量均分（静态契约）", () => {
+    const sv = readFileSync("src/shell/splitview.ts", "utf-8");
+    const stripComments = (s: string): string => s.replace(/\/\*[\s\S]*?\*\//g, "");
+    const code = stripComments(sv);
+
+    // ① 「一起动的那一组」统一入口：每个拖拽目标自身 + 它同向对齐的伙伴。
+    // 角手柄有 2 个目标（轴互相垂直）→ 两条轴各自的联动组都会被带进来。
+    expect(code, "统一的移动组入口").toMatch(/function movingGroupOf\(targets: ResizeTarget\[\]\)/);
+    expect(code, "组 = 自身 + 同向对齐伙伴").toMatch(
+      /out\.push\(self\)[\s\S]{0,220}?alignedSashesOf\(self\)/,
+    );
+    expect(code, "按 target 身份反查注册项（交叉点两端都要查得到）").toMatch(
+      /function sashOfTarget\(t: ResizeTarget\)/,
+    );
+
+    // ② 悬停/按下/拖动/松手都必须走这个组 —— 不能再有「corner 不联动」的分支。
+    expect(code, "悬停高亮走移动组").toMatch(/mouseenter"[\s\S]{0,120}?movingGroupOf\(targets\)/);
+    expect(code, "按下时求整组与联动条").toMatch(
+      /const group = movingGroupOf\(targets\);[\s\S]{0,140}?const links = group\.filter/,
+    );
+    expect(code, "不得残留「角手柄不参与联动」分支").not.toMatch(/mode === "corner" \? \[\]/);
+
+    // ③ 角手柄必须**复用子分隔条已注册的 target 对象**：注册表按 target 身份查伙伴，
+    // 另造对象会让 sashOfTarget 找不到它，交叉点拖动时子轴一侧的联动失效。
+    expect(code, "角手柄挂在子分隔条上").toMatch(/child\.sep\.appendChild\(cHandle\)/);
+    expect(code, "角手柄复用子分隔条的 target").toMatch(
+      /attachResize\(cHandle, \[self, child\.target\], "corner"\)/,
+    );
+
+    // ④ 同轴链 + 均分比例：沿轴向数段数，两侧段数相等即为均分点。
+    expect(code, "链号随父沿用（同向才同链）").toMatch(
+      /parent\.dir === node\.dir \? parent\.chainId : \+\+chainSeq/,
+    );
+    expect(code, "轴向段数递归").toMatch(
+      /function segmentsAlong\(node: LayoutNode, d: "h" \| "v"\)/,
+    );
+    expect(code, "均分比例 = segA / (segA + segB)").toMatch(/equalRatio: segA \/ \(segA \+ segB\)/);
+    // 链号自增源必须每次重绘归零（与注册表一同清），否则渲染结果不可复现
+    expect(code, "chainSeq 随 sashRegistry 一同重置").toMatch(
+      /sashRegistry = \[\];[\s\S]{0,240}?chainSeq = 0;/,
+    );
+    expect(code, "注册表登记链号与均分比例").toMatch(/chainId,\s*\n\s*equalRatio:/);
+  });
+  it("B67 方案文档不得再断言「双击复位到 50%」（与代码的均分语义冲突）", () => {
+    // 用户按 `docs/split-view-plan.md` 的清单核对进度，而 O1 行与状态表还写着 B59 的
+    // 旧语义（「双击分隔条复位到 50%」）→ 得出「这条还没做」的结论（实为文档没跟上 B63）。
+    // 行为契约在代码与测试里（本文件 B63 块 + `splitview.test.ts` 的均分用例）；
+    // 这条只挡「文档与代码说法冲突」这一种误导，不去锁文档的其他措辞。
+    const doc = readFileSync("docs/split-view-plan.md", "utf-8");
+    const sv = readFileSync("src/shell/splitview.ts", "utf-8");
+    const code = sv.replace(/\/\*[\s\S]*?\*\//g, "");
+
+    expect(code, "双击的语义取自 equalRatio（均分），不是常数").toMatch(
+      /addEventListener\("dblclick"[\s\S]{0,400}?equalRatio/,
+    );
+    expect(code, "双击不得再写回常数 0.5").not.toMatch(
+      /addEventListener\("dblclick"[\s\S]{0,400}?commit\(0\.5\)/,
+    );
+
+    const o1 = doc.split("\n").find((l) => l.startsWith("| **O1**")) ?? "";
+    expect(o1, "改进项清单里有 O1 行").not.toBe("");
+    expect(o1, "O1 行要写明按分割数量均分").toMatch(/按分割数量均分/);
+    expect(o1, "O1 行不得再是「复位到 50%」").not.toMatch(/复位到\s*50%/);
+
+    const status = doc.split("\n").find((l) => l.startsWith("| O1 双击复位")) ?? "";
+    expect(status, "实施记录里有 O1 行").not.toBe("");
+    expect(status, "状态表要指向 B63 改语义后的说明").toMatch(/B63|第十节/);
+  });
+  it("B61 分隔条光标与 VS Code 非 mac 档一致（ew/ns，不是 col/row）", () => {
+    // 用户反馈「分割条拖动光标和 vscode 不一样」。
+    // 根因：我们用的是 VS Code 的 **mac 档** cursor（sash.css）
+    //   .monaco-sash.mac.vertical   { cursor: col-resize }
+    //   .monaco-sash.mac.horizontal { cursor: row-resize }
+    // Windows/Linux 走的是基础档：
+    //   .monaco-sash.vertical   { cursor: ew-resize }
+    //   .monaco-sash.horizontal { cursor: ns-resize }
+    // Windows 上 col-resize 会渲染成「箭头中间多一根竖杠」，一眼就能看出不同。
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const previewCss = readFileSync("src/styles/preview.css", "utf-8");
+    // ⚠️ 「不得残留」类断言必须先把注释剥掉 —— 注释里恰恰要写清「为什么不用 col-row」
+    // （含这两个词），直接对全文断言会把说明文字当成违规。
+    const stripComments = (s: string): string => s.replace(/\/\*[\s\S]*?\*\//g, "");
+    const cssCode = stripComments(css);
+
+    expect(css, "竖线（左右分屏）走非 mac 档 ew-resize").toMatch(
+      /\.layout-sep-h\s*\{[^}]*cursor:\s*ew-resize/,
+    );
+    expect(css, "横线（上下分屏）走非 mac 档 ns-resize").toMatch(
+      /\.layout-sep-v\s*\{[^}]*cursor:\s*ns-resize/,
+    );
+    // 极限档两平台一致（e/w/s/n-resize），不得被顺手改成 col/row
+    expect(css, ".layout-sep-h.at-min 保持 e-resize").toMatch(
+      /\.layout-sep-h\.at-min\s*\{[^}]*e-resize/,
+    );
+    expect(css, ".layout-sep-v.at-min 保持 s-resize").toMatch(
+      /\.layout-sep-v\.at-min\s*\{[^}]*s-resize/,
+    );
+
+    // 拖拽期间由 body 兜住光标（命中区只有 7px，指针一离开就没了），三档值必须与上面一致
+    const drag = css.match(/body\.layout-dragging\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(drag, "拖拽默认光标与竖线一致").toMatch(/cursor:\s*ew-resize/);
+    expect(cssCode, "不得残留 mac 档 col-resize").not.toContain("col-resize");
+    expect(cssCode, "不得残留 mac 档 row-resize").not.toContain("row-resize");
+    expect(cssCode, "不得残留 nwse-resize（角手柄改用 all-scroll）").not.toContain("nwse-resize");
+    expect(css, "上下分屏拖拽光标与横线一致").toMatch(
+      /body\.layout-dragging\.layout-dragging-v\s*\{[^}]*ns-resize/,
+    );
+
+    // 正交角手柄：VS Code 的 .orthogonal-drag-handle 基础光标是 all-scroll；
+    // 那几条 nwse/nesw 覆盖规则要求 .orthogonal-edge-north/south（只有 resizable.ts 设），
+    // gridview 的 2x2 从不设 → 网格里的角手柄恒为 all-scroll。
+    expect(css, "角手柄用 all-scroll（VS Code 基础档）").toMatch(
+      /\.layout-corner\s*\{[^}]*cursor:\s*all-scroll/,
+    );
+    // 大纲分隔条与分屏分隔条同款（B28 约定）
+    expect(previewCss, "大纲分隔条光标同款").toMatch(/\.toc-resizer\s*\{[^}]*cursor:\s*ew-resize/);
+  });
+});
+
+describe("分屏：面板操作栏与分隔条（B54）", () => {
+  it("面板操作栏只剩「移除分屏」，分屏按钮已去掉（分屏仍走拖拽与菜单）", () => {
+    const sv = readFileSync("src/shell/splitview.ts", "utf-8");
+    expect(sv, "不得再用 ⨯ 文本字形").not.toContain('textContent = "⨯"');
+    expect(sv, "必须保留移除分屏按钮").toContain("CODICONS.close");
+    expect(sv, "不得再有左右分屏按钮").not.toContain("splitH");
+    expect(sv, "不得再有上下分屏按钮").not.toContain("splitV");
+    expect(sv, "面板渲染不得再调 onSplitPanel").not.toContain("onSplitPanel");
+
+    // 删按钮 ≠ 删功能：菜单 / 快捷键的分屏入口必须还在（B53 之前就有）
+    const main = readFileSync("src/main.ts", "utf-8");
+    expect(main, "菜单左右分屏处理必须保留").toContain('splitActivePanel(activePanelId, "h")');
+    expect(main, "菜单上下分屏处理必须保留").toContain('splitActivePanel(activePanelId, "v")');
+    const km = readFileSync("src/shell/keymap.ts", "utf-8");
+    expect(km, "分屏快捷键必须保留").toContain("panel.splitH");
+    expect(km, "分屏快捷键必须保留").toContain("panel.splitV");
+  });
+  it("分隔条：视觉细线 + 更宽命中区（原先 5px 可视条兼当命中区，容易抓空）", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const sep = css.match(/\n\.layout-sep\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(sep, "应有 .layout-sep 规则").toBeTruthy();
+    // B60：分隔条本身改为**不占布局**（flex 基准 0）—— 原先 7px 的透明占位会撑开
+    // 两侧内容、露出祖先底色，视觉上就是一条粗带；命中区搬到 ::before 向两侧溢出。
+    expect(sep, "分隔条不得占布局宽度").toMatch(/flex:\s*0 0 0/);
+    const m = css.match(/\.layout-sep-h::before\s*\{[^}]*width:\s*(\d+)px/);
+    expect(m, "命中区宽度必须显式给出").toBeTruthy();
+    expect(Number(m![1]), "命中区至少 7px（原先是 5px 兼当视觉条）").toBeGreaterThanOrEqual(7);
+    expect(css, "悬停高亮落在伪元素上").toMatch(/\.layout-sep:hover::after/);
+    expect(css, "细线由伪元素画").toMatch(/\.layout-sep-h::after\s*\{/);
   });
 });

@@ -170,3 +170,28 @@ describe("切换视图 / 点击内容区不得改动文件", () => {
     expect(saved.length, "真实编辑应触发自动保存").toBeGreaterThan(0);
   });
 });
+
+describe("非编辑操作不得改动文件（静态契约）", () => {
+  it("非编辑操作不得改动文件：只有文本真变化才置脏/写盘（用户要求）", () => {
+    // 用户反馈：切换 Markdown 预览/源码、或点击内容区，不应该改变文件内容。
+    // 根因防线有三条，缺一条就会"没编辑却被自动保存改写磁盘文件"：
+    const src = readFileSync("src/main.ts", "utf-8");
+    const handler = src.match(/function handleUpdate\([\s\S]*?\n\}/)?.[0] ?? "";
+    expect(handler, "应有 handleUpdate").toBeTruthy();
+    // ① docChanged 不等于"内容变了"——要比较前后文本
+    expect(handler, "必须比较事务前后文本").toContain("const textChanged =");
+    // ② 自动保存/热退出备份只能在内容真的变化时排程（单纯移动光标不写盘）。
+    //    B68 起两者并排成块，但**都**必须在 `textChanged && !suppressDirty` 门控内：
+    //    热退出写的是副本，若跟着任意事务走，切换视图/点击内容区也会每 1s 写一次盘。
+    expect(handler, "必须有 textChanged 门控").toContain("if (textChanged && !suppressDirty) {");
+    const gated = handler.slice(handler.indexOf("if (textChanged && !suppressDirty) {"));
+    expect(gated, "自动保存必须在门控分支里").toContain("scheduleAutosave();");
+    expect(gated, "热退出备份也必须在门控分支里").toContain("scheduleBackup();");
+    expect(handler, "选区变化不应触发自动保存").not.toContain(
+      "if (!suppressDirty) {\n    scheduleAutosave();",
+    );
+    // ③ 切换视图隐藏/恢复编辑器时 CM6 可能产生事务——整个切换过程抑制置脏
+    const toggle = src.match(/function toggleViewMode\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(toggle, "切换视图必须抑制置脏").toContain("suppressDirty = true;");
+  });
+});

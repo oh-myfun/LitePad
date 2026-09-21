@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 
 import { extractToc, renderBlocks, renderFull } from "../src/markdown/pipeline";
 
@@ -61,5 +62,24 @@ describe("markdown pipeline", () => {
   it("标题渲染带锚点 id", () => {
     const html = renderFull("# Hello World\n");
     expect(html).toMatch(/<h1 id="h-hello-world">/);
+  });
+});
+
+describe("md 扩展名清单必须多处一致", () => {
+  // md 扩展名清单在多个文件各写一份，必须同步。
+  // B70 三档（菜单开着不弹提示 / 删菜单项提示 / 命令面板两处修复）的行为断言见文件
+  // 末尾的「B70 提示与菜单」块 —— 这里不再重复同一约束，否则改一处要同步两处。
+  it("md 扩展名集合在多处各写了一份，必须完全一致", () => {
+    // filedrop 里那份随 B70 B 档判据改动删掉了，剩下的三处（main ×2 + outline）仍要同步：
+    // 不一致会出现「面板认它是 Markdown、导出却不认」这种半吊子状态。
+    // ⚠️ 只比 Markdown 那一条：outline 里还另有一组「配置类扩展名」，那不是同一件事。
+    const outline = readFileSync("src/markdown/outline.ts", "utf-8");
+    const mainSrc = readFileSync("src/main.ts", "utf-8");
+    const literals = [...`${mainSrc}\n${outline}`.matchAll(/\\\.\([a-z|]+\)\$/g)]
+      .map((m) => m[0])
+      .filter((s) => s.includes("markdown"));
+    expect(literals.length, "至少三处（main ×2 + outline ×1）").toBeGreaterThanOrEqual(3);
+    expect(new Set(literals).size, "各处必须完全一致").toBe(1);
+    expect(literals[0]).toBe("\\.(md|markdown|mdown|mkd)$");
   });
 });

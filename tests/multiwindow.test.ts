@@ -311,3 +311,67 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
     );
   });
 });
+
+describe("卫星窗口静态契约", () => {
+  it("B72 卫星窗口必须照抄主窗口的 WebView2 浏览器参数（静态契约）", () => {
+    // 用户反馈：「卫星窗口打不开，状态栏提示『新窗口没能打开，标签保留在原窗口』」。
+    //
+    // 根因（可查证，不是猜的）：Windows 上同一进程的 WebView2 环境按用户数据目录复用，
+    // Tauri 会给每个 WebView 兜底同一个目录（`tauri/src/manager/webview.rs`：
+    // 「in `windows`, we need to force a data_directory」→ `%LOCALAPPDATA%\<identifier>`）。
+    // 而 MS Learn `CoreWebView2Environment` 明写：「WebView creation fails if a running
+    // instance using the same user data folder exists, and the Environment objects have
+    // different CoreWebView2EnvironmentOptions」（同款故障在 WebView2Feedback#257 里的
+    // 表现是 `0x8007139F`）。主窗口的参数来自 tauri.conf.json 的 `additionalBrowserArgs`
+    // （含 `--disable-gpu`），而运行期 `WebviewWindowBuilder::new(...)` **不继承**这份配置
+    // → 落到 wry 内置默认值（少了 `--disable-gpu`）→ 参数不一致 → 建窗直接失败。
+    const rs = readFileSync("src-tauri/src/windows.rs", "utf-8");
+    const conf = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf-8")) as {
+      app: { windows: Array<{ label?: string; additionalBrowserArgs?: string }> };
+    };
+    const mainArgs = conf.app.windows.find((w) => w.label === "main")?.additionalBrowserArgs;
+    expect(mainArgs, "主窗口确实配了 additionalBrowserArgs（否则这条守卫没有对象）").toBeTruthy();
+
+    // ① 取参数必须**读运行时配置**，不能抄成字面量 —— 抄一份就会随 tauri.conf.json 漂移，
+    //    而漂移的后果就是「卫星窗口整个打不开」这种致命且难查的故障
+    expect(rs, "参数从 app.config() 里取").toMatch(
+      /fn shared_browser_args\(app: &AppHandle\)[\s\S]{0,160}?app\.config\(\)\.app\.windows/,
+    );
+    // ② main 条目说了算，缺失时才退回第一条
+    expect(rs, "以 main 条目为准").toMatch(/\.find\(\|w\| w\.label == MAIN_LABEL\)/);
+    expect(rs, "缺失时退回第一条").toMatch(/\.or_else\(\|\| windows\.first\(\)\)/);
+    // ③ 必须真的喂给建窗器（「函数写对了但没人这么调」是最常见的漏网形态）
+    const buildFn = rs.match(/fn build_satellite\([\s\S]*?\n\}/)?.[0] ?? "";
+    expect(buildFn, "build_satellite 存在").not.toBe("");
+    expect(buildFn, "建窗时把参数喂进去").toMatch(
+      /builder = builder\.additional_browser_args\(&args\);/,
+    );
+    // ④ 喂进去的必须是**取来的**那份，不能把 --disable-gpu 抄成字面量。
+    // ⚠️ 断言范围必须卡在 build_satellite 函数体内、且先剥掉注释 —— 注释里恰恰要写明
+    //    「为什么不能少 --disable-gpu」，对全文断言或忘了剥注释都会得到一条永远为真的守卫
+    //    （这条守卫的第一版就是因为对全文断言而失效，反向验证时抓出来的）。
+    const buildFnCode = buildFn.replace(/\/\/[^\n]*/g, "");
+    expect(buildFnCode, "不得把 --disable-gpu 抄成字面量（会与 tauri.conf.json 漂移）").not.toMatch(
+      /--disable-gpu/,
+    );
+
+    // ⑤ 失败原因必须带出来：原先两种情况（建窗失败 / 就绪超时）都只报一句
+    //    「没能打开」，把 WebView2 拒绝创建这种可诊断的信息一起吞掉了
+    const main = readFileSync("src/main.ts", "utf-8");
+    expect(main, "失败原因按 label 存下来").toMatch(/failedLabels\.set\(l, e\.payload\?\.message/);
+    expect(main, "detail 必须真的由原因拼出来").toMatch(
+      /const detail = why \? `：\$\{why\}` : "：等待新窗口就绪超时";/,
+    );
+    expect(main, "提示里带上 detail").toMatch(/`新窗口没能打开\$\{detail\}，标签保留在原窗口`/);
+    expect(rs, "Rust 侧把 message 一起发出来").toMatch(
+      /"satellite-failed",[\s\S]{0,160}?"message": e\.to_string\(\)/,
+    );
+
+    // ⑥ 启动自检：把「实际生效的那份参数」落一行日志。这组参数不一致时界面上只有
+    //    一句「新窗口没能打开」，没有别的线索 —— 这一行是唯一能事后定位的东西。
+    const mainRs = readFileSync("src-tauri/src/main.rs", "utf-8");
+    expect(mainRs, "启动时记录实际生效的浏览器参数").toMatch(
+      /"browser args = \{:\?\}"[\s\S]{0,120}?windows::shared_browser_args/,
+    );
+  });
+});

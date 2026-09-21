@@ -122,3 +122,13 @@ describe("B50 启动不得露出白色窗口（用户反馈：打开时先白屏
     ).toBeGreaterThanOrEqual(3);
   });
 });
+
+describe("窗口标题：软件名在前、文件名在后", () => {
+  it("窗口标题软件名在前、文件名在后（用户要求）", () => {
+    const src = readFileSync("src/main.ts", "utf-8");
+    expect(src, "标题格式应为 LitePad - 文件名").toContain(
+      "`LitePad - ${doc.name}${mark}${suffix}`",
+    );
+    expect(src, "不得再使用「文件名 - LitePad」格式").not.toContain("${text} - LitePad");
+  });
+});

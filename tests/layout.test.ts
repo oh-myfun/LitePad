@@ -477,3 +477,22 @@ describe("B71 面板操作补齐（移动标签 / 切焦点 / 右键分屏 / 最
     expect(body, "标签要改挂到新面板").toMatch(/t\.panelId = newId/);
   });
 });
+
+describe("焦点面板：非活动分屏降亮度（class 实时同步）", () => {
+  it("焦点面板：非活动分屏的活动标签降亮度；class 必须实时同步且不重建 DOM", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    expect(css, "非活动面板的活动标签要降亮度").toMatch(
+      /\.layout-panel:not\(\.layout-panel-active\)\s+\.tab-active/,
+    );
+
+    const main = readFileSync("src/main.ts", "utf-8");
+    const fn = main.match(/function markActivePanel\([\s\S]*?\n\}/)?.[0] ?? "";
+    expect(fn, "必须有 markActivePanel 同步 class").toBeTruthy();
+    // 切面板绝不能重绘标签条：会销毁光标下的 .tab → 点标签要点两下（B33 的坑）
+    expect(fn, "只切 class，不得重建标签条").not.toContain("renderTabstrip");
+    expect(fn, "只切 class，不得重建布局").not.toContain("renderSplitview");
+    expect(main, "onActivatePanel 必须走 markActivePanel 而不是裸赋值").toMatch(
+      /markActivePanel\(panelId\);\s*\n\s*if \(!changed\)/,
+    );
+  });
+});
