@@ -113,6 +113,9 @@
   ```
 - ⚠️ **不要在会话里嵌套 `bash -c '…'` 探测**：实测会撞上沙箱黑名单（`wsl.exe` 被拒绝）并输出乱码，
   直接跑目标脚本即可。
+- ⚠️ **git 钩子（pre-commit / pre-push）也需要 node 在 PATH 里**：pre-commit 的 `tsc -b`、
+  pre-push 的构建都靠 node。补 PATH 时一次补齐 —— 漏了 node 的症状是
+  `.githooks/pre-commit: line 77: node: command not found` + 「类型检查未通过」（误导性报错）。
 - ⚠️ 失败时机：脚本先改三处版本号（package.json / tauri.conf.json / Cargo.toml），**再**跑
   `cargo update -p litepad`（同步 Cargo.lock）。所以挂在第 69 行时版本号**已经写进文件**、
   工作树变脏。此时重跑 `minor` 会把 0.10.0 再升成 0.11.0。

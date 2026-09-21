@@ -5,7 +5,7 @@
 > **不要在会话开头一次性读全部 ref/rules/pitfalls/open-items/，只在触碰对应域时加载。**
 
 ## 身份 / 技术栈 / 范围
-LitePad（B34 更名，LiteMD 已 B36 清理）Tauri 2（Rust 持状态）+ Vite6/TS + CodeMirror6，**仅 Windows**，工作区 `E:\Project\LitePad`。标识 `litepad`/`com.litepad.app`；配置落 `%APPDATA%\LitePad`；原子写入 = 临时文件+fsync+rename。不做：插件商店/内置终端/Git/LSP。最新发布 **v0.10.1**（tag 已打；注意 tag 尚未推到远端，网络恢复后补 `git push origin main --follow-tags`）。
+LitePad（B34 更名，LiteMD 已 B36 清理）Tauri 2（Rust 持状态）+ Vite6/TS + CodeMirror6，**仅 Windows**，工作区 `E:\Project\LitePad`。标识 `litepad`/`com.litepad.app`；配置落 `%APPDATA%\LitePad`；原子写入 = 临时文件+fsync+rename。不做：插件商店/内置终端/Git/LSP。最新发布 **v0.11.0**（tag 与 Release 均已推送/发布；远端 `main` 与本地一致）。
 
 ## 关键红线（每次会话必读，违反即回滚）
 - 📁 **临时文件一律落本项目 `.tmp/`**（09-18，已进 `.gitignore`/`.prettierignore`/eslint `ignores`）；禁写 `%TEMP%`、`~/.workbuddy/`（除 memory/skills）、Git Bash 的 `/tmp`（=`%TEMP%`）。
