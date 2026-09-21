@@ -58,39 +58,54 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
   落在面板区 = 分屏预览；**strip 判定必须先于 `zoneOf`**。
 - **同面板排序绝不能改 `activeTabId`**：改了却不重挂视图会破坏 `panel.viewTabId` 不变量
   （状态与编辑器脱节，后续激活早退无法恢复）；只 `splice` + `renderPanelTabs`。
-- **标签拖拽的浮动影像**（B64，`.tab-drag-ghost`）：指针编排的拖拽拿不到浏览器的原生
-  拖拽影像，所以自己造一个跟随光标的浮层。对标 VS Code
+- **标签拖拽的影像**（`.tab-drag-ghost`，**B91-2 起由系统绘制**，元素只是快照源）：B91-2 把
+  拖拽从指针编排（B64–B90）换成 **HTML5 DnD**，影像改由 `dataTransfer.setDragImage` 交给
+  **系统**画 —— 于是它能跟出窗口、压在别的应用之上（DOM 浮层做不到：指针一越过窗口边界就
+  看不见）。传输层在 `src/shell/tabdnd.ts`，影像工厂在 `tabstrip.ts`。对标 VS Code
   `multiEditorTabsControl.ts:1295` 的单标签档 `setDragImage(tab, 0, 0)`：
   - **影像是原标签的克隆**（图标/文件名/未保存点/配色一并带过来），**不能搬走原标签** ——
-    原地不动的原标签才是用户判断「拖到哪儿了」的参照物。
-  - **锚点 = 左上角**：`left/top` 直接写 `clientX/clientY`（对齐 `setDragImage(tab, 0, 0)`
-    的语义；VS Code 的注释说明这是为了给落点边框反馈让位）。
-  - ⚠️ **`pointer-events: none` 不能省**：否则鼠标划过影像会掐断其下方元素的 `:hover`，
-    自绘提示层也可能把影像当成悬停目标。另外克隆时必须剥掉 `data-tab-id`（否则
-    「按 tabId 查元素」的逻辑会命中副本）与 `data-tip*`（副本不是真标签，不该接提示）。
-  - ⚠️ **克隆的读取时机**：影像在**越过 `DRAG_THRESHOLD` 那一刻**才创建（纯点击不该闪出副本），
-    且**必须每次 `mousemove` 都跟随**，位置更新要放在「离开面板就 `return`」**之前** ——
-    拖到面板之外时影像同样得跟着走，否则会僵在最后一个面板上。
-  - 三条清理路径缺一不可：`mouseup` 收尾、连续第二次拖拽进入时先清场、
-    **窗口 `blur`**（拖到窗口外松手收不到 `mouseup`，不加这条会留下一个跟不动的幽灵标签）。
-  - ⚠️ 有意偏离 VS Code 一处：原生影像是元素快照，非活动标签底色本就是透明的；
-    本浮层要盖在编辑器/预览等任意内容上，透明底会糊成一片 —— 故补 `--bg-elevated` 底色
+    原地不动的原标签才是用户判断「拖到哪儿了」的参照物。克隆必须剥掉 `data-tab-id`
+    （否则「按 tabId 查元素」的逻辑会命中副本）与 `data-tip*`（副本不是真标签，不该接提示），
+    副本里的按钮 `tabIndex = -1`。
+  - **锚点 = 左上角 `TAB_IMAGE_ANCHOR {0, 0}`**：对齐 `setDragImage(tab, 0, 0)` 的语义
+    （VS Code 注释说明这是为了给落点边框反馈让位）。
+  - ⚠️ **快照源必须「已渲染 + 离屏可见」**：`position: fixed; left/top: -10000px` 挪出屏
+    （CSS `.tab-drag-image`）。不能 `display:none` / `visibility:hidden`（不渲染 → 拍成空图），
+    也不能是 detached 元素（部分 Chromium 版本同样拍空）。
+  - ⚠️⚠️ **摘除必须推到下一轮宏任务**：`setTimeout(() => image.remove(), 0)`，**绝不能同步摘**。
+    Chromium 是在 `dragstart` 派发**返回之后**（`DragController::StartDrag`）才读元素拍快照的；
+    同步 `remove()` 会让快照时元素已 detached → 系统拿不到图 → **拖整个标签栏、整组、跨窗口
+    全程都没有跟手影像**（用户报过的真 bug）。对齐 VS Code `applyDragImage` 的写法。
+    → `pitfalls/0093-dnd-dragimage-sync-remove.md`
+  - ⚠️ **绝不放 `text/plain`**：标签拖拽是**内部协议**（私有 MIME + claim/payload IPC），
+    dataTransfer 里只要有一份可读文本，落点的 `contenteditable` 编辑器就会把它当「拖进来
+    的一段文本」插进正文（用户报过「拖标签把文件名插进了别的文档」）。
+    → `pitfalls/0094-dnd-textplain-leaks-into-editor.md`
+  - ⚠️ **事件监听一律挂捕获阶段 + `stopPropagation`**（`tabdnd.ts` 的 `installTabDnd`）：
+    挂冒泡阶段的话，页面内组件（编辑器）自己的监听会**先**收到 `drop` 并插入内容，我们的
+    处理器后到 —— 拦得住「落在哪」，拦不住「正文被改」。捕获阶段挂在 document 上比任何
+    组件都早。`drop` 还要**先无条件 `preventDefault` 再读载荷**：读不出载荷也必须拦默认动作。
+  - ⚠️ **有意偏离 VS Code 一处**：原生影像是元素快照，非活动标签底色本就是透明的；本快照源
+    要盖在编辑器/预览等任意内容上，透明底会糊成一片 —— 故补 `--bg-elevated` 底色
     + 内侧描边（`outline` + `offset:-1px`，照搬 `.monaco-drag-image` 的写法，用 `outline`
     而非 `border` 才不会撑大盒子）+ 阴影。想调观感只动 `.tab-drag-ghost` 一处。
-- **整组拖拽的影像 = 聚合药丸**（B72，`.tab-drag-ghost-group`）：对标 VS Code
-  `editorTabsControl.ts:487` 的 `localize('draggedEditorGroup', "{0} (+{1})")`（活动标签名 +
-  其余数量），但**不走元素克隆** —— 克隆整条 strip 会带出十几个标签、宽度失控且读不出重点，
-  故改成**纯文本药丸**：`圆角 10px / 12px 字号 / 单行 / max-width 220px`，照搬
-  `base/browser/ui/dnd/dnd.css` 的 `.monaco-drag-image`。
-  - ⚠️ **锚点与单标签档不同**：单标签是 `setDragImage(tab, 0, 0)`（左上角贴光标）；药丸有
-    圆角与内边距，贴 `(0,0)` 会把光标压在字上，故用 `GHOST_ANCHOR_PILL = { x: 10, y: 10 }`
-    （与 `.monaco-drag-image` 的 `setDragImage(img, -10, -10)` 同思路，方向不同是因为原生影像
-    的偏移是「光标落在影像内部」，而自绘层只能整体平移）。⚠️ `removeDragGhost()` 必须把锚点
-    **复位回 `GHOST_ANCHOR_TAB`**，否则紧接的单标签拖拽会莫名偏 10px。
+- **整组拖拽的影像 = 聚合药丸**（B72，`.tab-drag-ghost-group`；B91-2 起同样交给系统绘制）：
+  对标 VS Code `editorTabsControl.ts:487` 的 `localize('draggedEditorGroup', "{0} (+{1})")`
+  （活动标签名 + 其余数量），但**不走元素克隆** —— 克隆整条 strip 会带出十几个标签、宽度失控
+  且读不出重点，故改成**纯文本药丸**：`圆角 10px / 12px 字号 / 单行 / max-width 220px`，
+  照搬 `base/browser/ui/dnd/dnd.css` 的 `.monaco-drag-image`。
+  - ⚠️ **锚点与单标签档不同**：单标签贴 `(0,0)`（左上角连光标）；药丸有圆角与内边距，
+    贴 `(0,0)` 会把光标压在字上，故用 `GROUP_IMAGE_ANCHOR = { x: 10, y: 10 }`（与
+    `.monaco-drag-image` 的 `setDragImage(img, -10, -10)` 同思路；方向不同是因为原生影像的
+    偏移是「光标落在影像内部」，药丸要在光标处留出内缩）。
   - ⚠️ **有意偏离 VS Code 一处**：VS Code 把 `名称 (+N)` 拼成**一个字符串**，`max-width` 截断时
     会把 `(+N)` 一起吃掉（长文件名下看不到数量）。本项目拆成两个 span：名字 `min-width: 0`
     可截断，数量 `flex: 0 0 auto` 永不被截 —— 数量是「拖了几张」的唯一线索。
   - 空名兜底 `N 个标签`（用户此刻能信的就是数字）。
+  - ⚠️ 起手判据：单标签从 `.tab` 起（`el.draggable = true`），整组从**标签栏空白处**起
+    （`strip.draggable = true`，且 `e.target === strip` —— 命中任何 `.tab` 都归单标签，
+    浏览器自己就把 `dragstart` 派给了更近的那个 draggable）；空标签栏 `preventDefault`
+    （免得弹出一颗「0 个标签」的药丸）。从 `.tab-close` 按钮上起拖也显式挡掉。
 
 ## 5. 视图刷新红线
 
@@ -351,8 +366,12 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
     改动要一起回归。
   - **Alt 拖拽 = 临时取消分屏**：在 `splitview.ts` 的落点处理里把 edge zone 改判为 `center`
     （预览同步切换），**不需要动 `main.ts`** —— `onDropTabToPanel` 的签名保持 `(zone, …)` 不变。
-  - ⚠️ **`tabstrip-drag.test.ts` 有源码级静态断言**：`clearInsertIndicators();` 必须紧跟
-    `const zone = zoneOf(`（`onTabDragMove` 里）。改这段代码要保持这个形状。
+  - ⚠️ **`tabstrip-drag.test.ts` 有源码级静态断言**（B91-2 起落在 `previewDropAt` 与
+    `commitTabDrop` 两个函数上）：① 落点判定开头必须先 `clearAllPreviews(); clearInsertIndicators();`
+    再 `stripUnder(...)`、**最后才** `zoneOf(...)`（strip 判定先于分屏）；② 落在标签区只画插入线
+    （`showInsertIndicator(strip, info.offsetLeft)`），落在面板区才画 `split-preview show zone-*`；
+    ③ `commitTabDrop` 里 `stripInsertInfo(strip, req.x)` 之后要走 `onMoveTabToStrip`（排序），
+    不得分屏。改这段代码要保持这些形状。
   - **空面板自动收起**（O8）**早在 B45 前就有**：`closeTabById` / `moveTabToPanel` /
     `splitPanelWithTab` 三处都在「源面板空了且非唯一」时调 `disposePanel`，
     而 `layout.ts` 的 `removePanel` + `promoteSibling` 的 ratio 补偿就是「邻居吃满」。
