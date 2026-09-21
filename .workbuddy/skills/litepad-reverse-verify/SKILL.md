@@ -39,6 +39,14 @@ agent_created: true
    脚本路径一律写 `E:/Project/LitePad/.tmp/xxx.cjs`。
    反过来，Python 是 Windows 原生二进制，**既不认 `/c/...` 也不认 `/tmp`**（会把 `/tmp` 按
    当前盘符解析成 `E:\tmp\`），所以命令行参数要写带盘符的绝对路径。
+7. ⚠️⚠️ **跑脚本一律「后台 + 重定向到日志」，绝不要 `node script.cjs | tail`**（B91-2 实测踩到）：
+   - 管道下 `process.exit()` 会**截断缓冲输出**，日志看起来像「什么都没跑」，把真正原因藏起来；
+   - Bash 工具超时会 **SIGTERM 杀掉进程** → `finally` 不执行、**源文件停在探针补丁状态**
+     （Windows 上 Node 捕不到 SIGTERM，注册 handler 也没用）。
+   留了补丁的症状：`git status` 里有个你没动过的源文件被改，内容正是某条探针的 `to` 片段；
+   单跑那条用例红，而它在你刚提交的版本里是绿的 —— **看起来像自己写的代码有 bug**。
+   脚本侧要做到：注册 `process.on("exit", restoreAll)` + `SIGINT/SIGTERM` 兜底，
+   并在末尾打印 sha256 自检（见模板）；人侧要做到：**跑完立刻 `git status` 复核**。
 
 ## 硬性守卫（本项目实测最容易写空的两类）
 
@@ -57,6 +65,16 @@ agent_created: true
   → 探针判绿，读起来像「守卫咬不住」，实际什么都没跑。定型脚本必须对每个过滤器做
   **前置校验**：未加补丁时该过滤器至少要选中 1 个用例（见模板 `checkFilter`），
   否则直接判该批无效。写过滤器时去 `grep 'it("' <file>` 抄名字，别凭记忆写。
+- ⚠️ **`checkFilter` 必须把「没选中」与「选中但失败」分开**（B91-2 实测被带偏一轮）：
+  用 `passed > 0` 判断时，「用例选中了但**失败**」的 `passed` 也是 0 → 被误报成
+  「过滤器无效」。正确判据是 `Tests ` 汇总行里有没有 `N passed|N failed`（见模板的 `ran`）。
+  同理，判「红」要写成 `!ok && ran`：只看退出码的话，vitest 启动失败会让**每个**探针都「红」。
+- ⚠️ **修复改动了 `from` 片段所在的写法时，脚本会静默失效**（B91-2 实测）：把
+  `image.remove();` 改成 `setTimeout(() => image.remove(), 0)` 之后，原先锚在
+  `    image.remove();` 上的探针命中 0 次 —— 好在 `replaceOnce()` 会把它判成**无效**
+  （既不是红也不是绿），而不是默默判绿。**改了被探针锚定的代码，必须同步改脚本**，
+  并**重跑一次**确认（本次就是这么发现旧 `-t` 过滤器早已因测试改名而失效的）。
+  历史交付的 `scripts/reverse-verify-*.cjs` 不随重构自动更新，**动到旧模块的写法时要顺手修它们**。
 - ⚠️ **`from` 片段必须全文唯一命中**（B72 实测的假绿）：`String.replace` 只改**第一处**，
   若该片段在文件里出现多次，被改的可能根本不是这条修复所在的地方 ——
   此时无论脚本判红还是判绿，都**不构成任何证据**。模板里已把它当硬失败处理。
@@ -100,28 +118,52 @@ const read = (p) => readFileSync(join(ROOT, p), "utf-8");
 const write = (p, s) => writeFileSync(join(ROOT, p), s);
 const sha = (s) => createHash("sha256").update(s).digest("hex").slice(0, 12);
 
+// ⚠️ 兜底还原：脚本是「改源文件 → 跑测试 → 立刻还原」。被超时**硬杀**时 finally 跑不到，
+//    源文件会停在探针补丁状态（症状：`git status` 里有个你没动过的源文件被改，
+//    内容正是某条探针的 `to` 片段；单跑那条用例红、而它在你刚提交的版本里是绿的）。
+//    下面这组 handler 覆盖正常退出与 Ctrl-C；Windows 上捕不到 SIGTERM，
+//    所以**跑完必须看末尾的 sha256 自检，或 `git status` 复核**。
+const BACKUP = new Map();
+function restoreAll() {
+  for (const [p, s] of BACKUP) write(p, s);
+}
+process.on("exit", restoreAll);
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(sig, () => {
+    restoreAll();
+    process.exit(130);
+  });
+}
+
 // ⚠️ 过滤器必须写**用例名**（vitest -t 匹配 describe/it 名字）。写成断言消息时
 // 一个用例都选不中，而 vitest 筛掉全部用例仍退出 0 → 判出「守卫咬不住」的假绿。
 // 所以先 checkFilter 前置校验，再探。B91 起模板自带这道护栏。
+// ⚠️ 且必须把「没选中」与「选中但失败」分开：后者的 passed 也是 0，用 passed > 0 判
+// 「有没有选中」会把失败误报成「过滤器无效」（B91-2 被带偏一轮）→ 用 `ran`。
 function runVitest(files) {
+  let out = "";
+  let ok = true;
   try {
-    const out = execSync(`node ${join(ROOT, "scripts/run-vitest.cjs")} ${files.join(" ")}`, {
+    // ⚠️ execFileSync + 参数数组：走 cmd.exe 的字符串命令会把中文参数按代码页糟蹋
+    out = execFileSync("node", [join(ROOT, "scripts/run-vitest.cjs"), ...files], {
       cwd: ROOT, stdio: "pipe", timeout: 300000,
     }).toString();
-    const m = out.match(/(\d+) passed/);
-    return { ok: true, passed: m ? Number(m[1]) : 0 };
   } catch (e) {
-    return { ok: false, passed: Number(String(e.stdout ?? "").match(/(\d+) passed/)?.[1] ?? 0) };
+    ok = false;
+    out = `${e.stdout ?? ""}${e.stderr ?? ""}`;
   }
+  const summary = out.split(/\r?\n/).find((l) => l.includes("Tests ")) ?? "";
+  const m = summary.match(/(\d+) passed/);
+  return { ok, ran: /\d+ (passed|failed)/.test(summary), passed: m ? Number(m[1]) : 0 };
 }
 
 const FILTER_CACHE = new Map();
-/** 前置校验：未加补丁时该过滤器必须至少选中 1 个用例，否则判红判绿都没意义。 */
+/** 前置校验：未加补丁时该过滤器必须至少**选中** 1 个用例，否则判红判绿都没意义。 */
 function checkFilter(f) {
   const key = f.join(" ");
   if (!FILTER_CACHE.has(key)) {
     const r = runVitest(f);
-    FILTER_CACHE.set(key, r.passed > 0 ? null : `过滤器「${key}」一个用例都没选中（应写用例名）`);
+    FILTER_CACHE.set(key, r.ran ? null : `过滤器「${key}」一个用例都没选中（应写用例名）`);
   }
   return FILTER_CACHE.get(key);
 }
@@ -164,6 +206,7 @@ for (const c of CASES) {
   }
   const orig = read(c.file);
   const origHash = sha(orig);
+  BACKUP.set(c.file, orig);
   const hits = orig.split(c.from).length - 1;
   if (hits === 0) { console.log(`✗ ${c.name} —— 源码里找不到片段，判据失效`); bad++; continue; }
   if (hits > 1) { console.log(`✗ ${c.name} —— 片段出现 ${hits} 次，判据失效`); bad++; continue; }
@@ -184,11 +227,14 @@ console.log(bad === 0 && broken === 0
 process.exit(bad === 0 && broken === 0 ? 0 : 1); // 非零码：别让人只看最后一行就以为过了
 ```
 
-跑法（会话 shell 会丢 PATH，先显式导出，见 `ref/session-env.md` / `docs/build-env.md`）：
+跑法（会话 shell 会丢 PATH，先显式导出，见 `ref/session-env.md` / `docs/build-env.md`。
+⚠️ **一律后台跑 + 重定向到日志，绝不要 `| tail`** —— 管道下 `process.exit()` 会截断缓冲输出，
+看起来像「什么都没跑」；而 Bash 工具超时会 SIGTERM 掉进程，留下探针补丁）：
 
 ```sh
-export PATH="/c/Users/maoyu/.workbuddy/binaries/PortableGit/versions/1.2.0/usr/bin:/c/msys64/mingw64/bin:/c/Users/maoyu/.cargo/bin:/c/Users/maoyu/.workbuddy/binaries/node/versions/22.22.2-3:/c/WINDOWS/System32:$PATH"
-node "E:/Project/LitePad/scripts/reverse-verify-B77.cjs"
+export PATH="/c/Users/maoyu/.workbuddy/binaries/PortableGit/versions/1.2.0/cmd:/c/Users/maoyu/.workbuddy/binaries/PortableGit/versions/1.2.0/usr/bin:/c/msys64/mingw64/bin:/c/Users/maoyu/.cargo/bin:/c/Users/maoyu/.workbuddy/binaries/node/versions/22.22.2-3:/c/WINDOWS/System32:$PATH"
+node "E:/Project/LitePad/scripts/reverse-verify-B77.cjs" > .tmp/rv-b77.log 2>&1; echo "exit=$?"
+cat .tmp/rv-b77.log
 ```
 
 （B77 起定型脚本一律入库到 `scripts/reverse-verify-<B号>.cjs`，见铁律第 2 条；`.tmp/` 只放草稿。）

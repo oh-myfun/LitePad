@@ -24,6 +24,11 @@
 //      → 回落不看认领（每次跨窗口拖拽都顺手弹一个新窗口 = 标签复制两份）判红
 //      → 桌面坐标不挡 (0,0)（多显示器折算偏了会落到角落）判红
 //      → 上游接线不接 commitTabDrop（拖拽松手什么都不发生）判红
+//   ③ 交付后回归修复（B91-2 fix，用户报的两个毛病）
+//      → 影像同步摘（Chromium 在 dragstart 返回后才拍快照 → 全程无跟手影像）判红
+//      → 还原 `text/plain`（落点编辑器把标签名当「拖入文本」插进正文）判红
+//      → 监听退回冒泡阶段（编辑器比我们先收到 drop，正文被改）判红
+//      → drop 不先 claim（读不出载荷就放行默认动作 = 浏览器自己往文档里插东西）判红
 //
 // 反向对照（应**不**判红）：改与契约无关的注释 / 文案 → 必须仍然绿。
 //
@@ -35,6 +40,9 @@
 //    写成断言消息时 `-t` 一个用例都选不中，而 vitest 在「筛掉全部用例」时的退出码仍是
 //    **0** → 探针判绿，得到一条「守卫咬不住」的**假绿**（B91 首轮实测踩到 4 条）。
 //    因此脚本对每个过滤器做前置校验：未加补丁时该过滤器必须至少选中 1 个用例。
+//
+// ⚠️ 跑完之后**务必看末尾的 sha256 自检**：本脚本会临时改写源文件，被超时杀掉时可能
+//    留下补丁（Windows 上捕不到 SIGTERM）。留了补丁的症状是「全量绿、单跑一条红」。
 //
 // 铁律（同技能 litepad-reverse-verify）：不碰 .git。
 //
@@ -68,7 +76,35 @@ const sources = Object.fromEntries(FILES.map((f) => [f, readFileSync(f, "utf8")]
 const hashOf = (s) => createHash("sha256").update(s, "utf8").digest("hex");
 const originalHashes = Object.fromEntries(FILES.map((f) => [f, hashOf(sources[f])]));
 
-/** 跑一个文件 + `-t` 过滤器，返回 { ok, passed }（passed = vitest 报的通过数）。 */
+/**
+ * 兜底还原。
+ *
+ * ⚠️ **被硬杀（超时 kill / 关窗）会留下补丁**：`finally` 跑不到，`src/` 就停在探针状态。
+ *    实测踩过一次 —— 之后「全量 vitest 全绿、单跑那条用例却红」，排查方向被带偏很久。
+ *    所以注册 `exit` / `SIGINT` 兜底；但 SIGTERM 在 Windows 上捕不到（Node 不会生成它），
+ *    超时被杀仍可能留补丁 → 跑完务必看末尾的 sha256 自检，或 `git status` 复核。
+ */
+function restoreAll() {
+  for (const f of FILES) writeFileSync(f, sources[f], "utf8");
+}
+process.on("exit", restoreAll);
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(sig, () => {
+    restoreAll();
+    process.exit(130);
+  });
+}
+
+/** 跑一个文件 + `-t` 过滤器，返回 { ok, ran, passed }。
+ *
+ *  ⚠️ 必须把**三种**结果分开，它们的退出码会骗人：
+ *    · `ran=false` —— 过滤器一个用例都没选中。vitest 在「筛掉全部用例」时退出码仍是
+ *      **0**，只看退出码会把它当成「绿」→ 一条「守卫咬不住」的**假绿**（B91 首轮实测
+ *      踩到 4 条）。判据取 `Tests ` 汇总行里有没有 `N passed|N failed`。
+ *    · `ran=true && passed=0` —— 选中了但**失败**（这正是探针要的红）。
+ *    · `ok=false` —— vitest 非零退出。
+ *  早期版本把后两者混为一谈，于是「用例失败」被误报成「过滤器无效」，排查时会被带偏。
+ */
 function runVitest(file, filter) {
   let out;
   let ok = true;
@@ -81,17 +117,19 @@ function runVitest(file, filter) {
     ok = false;
     out = `${e.stdout ?? ""}${e.stderr ?? ""}`;
   }
-  const m = out.match(/(\d+) passed/);
-  return { ok, passed: m ? Number(m[1]) : 0 };
+  const summary = out.split(/\r?\n/).find((l) => l.includes("Tests ")) ?? "";
+  const ran = /\d+ (passed|failed)/.test(summary);
+  const m = summary.match(/(\d+) passed/);
+  return { ok, ran, passed: m ? Number(m[1]) : 0 };
 }
 
-/** 过滤器前置校验：未加补丁时至少要选中 1 个用例，否则判红判绿都没意义。 */
+/** 过滤器前置校验：未加补丁时至少要**选中** 1 个用例，否则判红判绿都没意义。 */
 const filterCache = new Map();
 function checkFilter(f) {
   if (!filterCache.has(f)) {
     const [file, filter] = f.split(":");
-    const { passed } = runVitest(file, filter);
-    filterCache.set(f, passed > 0 ? null : `过滤器「${filter}」一个用例都没选中（应写用例名）`);
+    const { ran } = runVitest(file, filter);
+    filterCache.set(f, ran ? null : `过滤器「${filter}」一个用例都没选中（应写用例名）`);
   }
   return filterCache.get(f);
 }
@@ -113,13 +151,20 @@ const DRAGGABLE = ["tests/regressions.test.ts:标签拖拽必须走 HTML5 DnD"];
 const GROUP_START = ["tests/regressions.test.ts:拖标签栏空白处"];
 const STRIP_DRAG = ["tests/regressions.test.ts:拖标签栏空白处"];
 const IMAGE_HANDOFF = [
-  "tests/tabdnd.test.ts:影像：先挂进 body",
+  "tests/tabdnd.test.ts:影像：挂进 body 拍快照",
   "tests/splitview.test.ts:影像是原标签的克隆",
 ];
 const IMAGE_REMOVE = [
-  "tests/tabdnd.test.ts:影像：先挂进 body",
+  "tests/tabdnd.test.ts:影像：挂进 body 拍快照",
   "tests/splitview.test.ts:拍快照那一刻影像",
 ];
+const IMAGE_SYNC_REMOVE = [
+  "tests/tabdnd.test.ts:推一帧再摘",
+  "tests/splitview.test.ts:拍快照那一刻影像",
+];
+const NO_TEXT_PLAIN = ["tests/tabdnd.test.ts:不放可读正文"];
+const NO_LEAK = ["tests/tabdnd.test.ts:绝不漏进页面内组件"];
+const DROP_CLAIMS = ["tests/tabdnd.test.ts:载荷读不出来"];
 const LOCAL_FINISH = ["tests/tabdnd.test.ts:窗口内落点就地收尾"];
 const FOREIGN_CLAIM = ["tests/tabdnd.test.ts:别的窗口拖来的"];
 const CLAIM_DELIVER = ["tests/tabdnd.test.ts:有人来认领"];
@@ -207,7 +252,7 @@ const probes = [
     target: TABDND,
     filters: IMAGE_REMOVE,
     expectRed: true,
-    from: "    image.remove();",
+    from: "    setTimeout(() => image.remove(), 0);",
     to: "    void image;",
   },
   {
@@ -262,6 +307,39 @@ const probes = [
     expectRed: true,
     from: "    commitLocal: (req) => commitTabDrop(req),",
     to: "    commitLocal: () => true,",
+  },
+  // ---- ③ 交付后回归修复（B91-2 fix）----
+  {
+    name: "③-1 影像同步摘掉（Chromium 在 dragstart 返回后才拍快照 → 全程没有跟手影像）",
+    target: TABDND,
+    filters: IMAGE_SYNC_REMOVE,
+    expectRed: true,
+    from: "    setTimeout(() => image.remove(), 0);",
+    to: "    image.remove();",
+  },
+  {
+    name: "③-2 还原 text/plain（落点编辑器把标签名当「拖入文本」插进正文）",
+    target: TABDND,
+    filters: NO_TEXT_PLAIN,
+    expectRed: true,
+    from: "  dt.setData(TAB_MIME, encodeTabDrag(full));",
+    to: '  dt.setData(TAB_MIME, encodeTabDrag(full));\n  dt.setData("text/plain", "note.md");',
+  },
+  {
+    name: "③-3 监听退回冒泡阶段（编辑器比我们先收到 drop，正文被改）",
+    target: TABDND,
+    filters: NO_LEAK,
+    expectRed: true,
+    from: '  document.addEventListener("drop", onDrop, CAPTURE);',
+    to: '  document.addEventListener("drop", onDrop);',
+  },
+  {
+    name: "③-4 drop 不先 claim（读不出载荷就放行默认动作 = 浏览器自己往文档里插东西）",
+    target: TABDND,
+    filters: DROP_CLAIMS,
+    expectRed: true,
+    from: "    if (!claim(e)) return;\n    hopDepth = 0;",
+    to: "    if (!isTabDragData(e.dataTransfer)) return;\n    hopDepth = 0;",
   },
   // ---- 反向对照：改无关的东西必须仍然绿 ----
   {
@@ -318,7 +396,10 @@ for (const p of probes) {
   try {
     for (const f of p.filters) {
       const [vfile, filter] = f.split(":");
-      results.push({ f, red: !runVitest(vfile, filter).ok });
+      const { ok, ran } = runVitest(vfile, filter);
+      // ⚠️ 红 = 「非零退出 **且** 确实选中并跑了用例」。只看退出码的话，vitest 启动失败
+      //    （配置错 / 模块加载失败）会让每个探针都「红」，看着全绿其实什么都没验。
+      results.push({ f, red: !ok && ran, noRun: !ran });
     }
   } finally {
     writeFileSync(p.target, file, "utf8"); // 立刻按字节还原
@@ -326,7 +407,9 @@ for (const p of probes) {
   const anyRed = results.some((r) => r.red);
   const ok = p.expectRed ? anyRed : !anyRed;
   if (!ok) failed++;
-  const detail = results.map((r) => `${r.f.split(":")[1]}=${r.red ? "红" : "绿"}`).join(" ");
+  const detail = results
+    .map((r) => `${r.f.split(":")[1]}=${r.noRun ? "未选中" : r.red ? "红" : "绿"}`)
+    .join(" ");
   console.log(`${ok ? "✓" : "✗"} ${p.name}  [${detail}]`);
 }
 
