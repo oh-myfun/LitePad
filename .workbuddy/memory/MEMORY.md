@@ -16,11 +16,14 @@ LitePad（B34 更名，LiteMD 已 B36 清理）Tauri 2（Rust 持状态）+ Vite
 - 🖼️ **HTML5 DnD 两条铁律**（B91-2 首交付连踩，用户当场报出）：① 交给 `setDragImage` 的元素**绝不能同步摘**（Chromium 在 `dragstart` 返回**之后**才拍快照）→ 一律 `setTimeout(() => el.remove(), 0)`；② **内部拖拽协议不放 `text/plain`**（落点 contenteditable 会把它当「拖入文本」插进正文），事件监听一律**捕获阶段 + `stopPropagation`**，`drop` 先无条件 `preventDefault` 再读载荷 → `pitfalls/0093` / `0094`。
 - ⚠️ **反向验证的 `-t` 过滤器必须写「用例名」**（B91 实测，一次踩 4 条假绿）：写成 `expect()` 的**断言消息**时 vitest 一个用例都选不中，而「筛掉全部用例」的退出码仍是 **0** → 判出「守卫咬不住」的假绿。`scripts/reverse-verify-*.cjs` 已加 `checkFilter` 前置校验（未打补丁时该过滤器必须至少选中 1 个用例）；写过滤器前先 `grep 'it("' <file>` 抄名字。
 - ⚠️ **`.workbuddy` 的搬/删只动索引、别碰磁盘命令**：对本目录跑 `git mv`/`git rm`/`rmdir` 会让运行时**整棵 `.workbuddy` 从磁盘消失**（连未触碰的 `skills/`、`overview.md` 一起）。文件仍在 git 索引/`.git/` 里，用 `git checkout HEAD -- .workbuddy` 还原。
+- ⚠️ **`tests/` 不进 tsc，搬用例漏 import 只到运行时才红**（09-22 测试整理实测，拆 regressions 一次红 35 条）：`tsconfig.json` 的 `include` 只有 `["src"]`，pre-commit 的 `tsc -b` **完全不查 tests/**。跨文件搬 `it` 块后，门禁绿 ≠ 真没问题，必须**真跑一次 vitest**；搬块时 import 跟着走，拆工具别只搬 `describe` 体。自检见 `.tmp/check-imports.cjs`；长期修法待定 → `pitfalls/0097-tsc-skip-tests.md`。
 - **状态归 Rust、视图归前端**；内存文本 LF，落盘还原原行尾。
 - 每个交付一个 Conventional Commit；每个 bug 必须补回归测试 + 改完先**反向验证**。
   ⚠️ **反向验证本身也是测试用例，优先放 `tests/`**（09-22 用户指示）：落点是
-  `tests/reverse-verify.test.ts` —— 用「**退化实现替身**」证明守卫咬得住（错误写法复刻成
-  可安装处理器，断言它确实坏掉；基准用例断言真实实现正确，两者结果不同 ⇒ 正向用例不恒真）。
+  `tests/reverse-verify.test.ts` + `tests/static-guards.test.ts` —— 用「**退化实现替身**」证明守卫咬得住
+  （错误写法复刻成可安装处理器，断言它确实坏掉；基准用例断言真实实现正确，两者结果不同 ⇒ 正向用例不恒真）。
+  退化用例先自证「替身确实跑了」（如断言 `defaultPrevented`）。原 `scripts/reverse-verify-*.cjs` 已退役
+  （全硬编码 `tests/regressions.test.ts` 作目标，文件拆掉后变静默假绿，比不跑还危险）。
   它**不改源码**、随 `npm test` 一起跑；`scripts/reverse-verify-*.cjs`（改真实源码 + 子进程）
   只作补充，覆盖面含静态契约。退化用例要先 `defaultPrevented` 自证「处理器确实跑了」，
   否则「没人拦」与「拦不住」分不开 → 恒真假绿。
