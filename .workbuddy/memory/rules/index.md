@@ -32,6 +32,7 @@
 - **B91 起反转**：`dragDropEnabled:false`（关掉 wry 原生拖放）+ 页面内 HTML5 DnD；真实路径用 WebView2 官方 API 桥回（`src-tauri/src/dropbridge.rs`） → `docs/build-env.md` / `ref/architecture-detail.md` §4
 - drop 物理像素 ÷ devicePixelRatio；选择菜单判据 = 落点活动文档是 md（非拖入的是 .md） → `ref/architecture-detail.md` §4
 - 标签拖拽影像是原标签克隆、锚点左上角，**交给 `setDragImage` 由系统绘制**（`tabstrip.ts`）；⚠️ 摘除必须 `setTimeout(…, 0)`（同步摘 → 系统拍不到图）；⚠️ **不放 `text/plain`**、监听挂捕获阶段 + `stopPropagation`；整组药丸两个 span → `ref/architecture-detail.md` §4 / `pitfalls/0093` / `0094`
+- 文件拖入监听同样**必须挂捕获阶段 + `stopPropagation`**：CM6 会把 `dataTransfer.files` 用 `FileReader.readAsText` 读成内容插进文档，而本项目只有「插入**路径**」→ `ref/architecture-detail.md` §4 / `pitfalls/0096`
 - 同面板排序绝不改 `activeTabId`；strip 判定先于 `zoneOf` → `ref/architecture-detail.md` §4
 - 标签栏：横向滚动不折叠；`scrollbar-width/color` 显式复位；高度 4+N+4（N=24）；`.tab` `flex:0 0 auto`；药丸无描边；`scrollLeft` 存还原；`ensureVisible()` 定位 → `ref/architecture-detail.md` §7
 - ●/× 同槽位固定尺寸；B57 起 `opacity` 显隐、判据挂 `.tab-action`、互斥一条 `:not()` 链、非活动面板 × 降亮同步 → `ref/architecture-detail.md` §7

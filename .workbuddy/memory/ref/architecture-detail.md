@@ -42,11 +42,17 @@ CM6 的 `update.docChanged` **不等于**「内容变了」。`handleUpdate` 必
 
 ## 4. 拖拽体系（B6/B24/B27）
 
-- `tauri.conf.json` 必须 `dragDropEnabled: true`：这是拿到拖入文件**真实路径**的唯一途径
-  （`onDragDropEvent` 的 `drop.paths`）。**代价**：WebView2 原生钩子会让页面内 HTML5 DnD 全部失效——
-  因此标签拖拽、大纲宽度拖拽一律改成 **mousedown/mousemove/mouseup 指针编排**（`splitview.ts`）。
+- ⚠️ **B91 起 `dragDropEnabled: false`**（wry 原生拖放的两处劫持会把页面内 HTML5 DnD 一起废掉，
+  详见 `src-tauri/src/dropbridge.rs` 模块头）。代价是页面内拖放本身拿不到路径，于是路径改走桥：
+  `chrome.webview.postMessageWithAdditionalObjects` 把 drop 到的 File 对象交回宿主，Rust 取
+  `ICoreWebView2File::Path` 后 emit `tauri://drag-drop`（载荷与原生一致，所以后续逻辑不用改）。
 - 文件拖入：落点预览复用 `.split-preview`；drop 中央 = 落进该面板，边缘 = `splitPanelWithTab` 旁分屏；
-  拖放坐标是**物理像素**，要除以 `devicePixelRatio`。
+  拖放坐标是**物理像素**，要除以 `devicePixelRatio`（页面侧上报时**乘**回去）。
+- ⚠️⚠️ **页面级文件拖入监听必须挂捕获阶段 + `stopPropagation`**：CM6 的 `handlers.drop`
+  一旦看到 `dataTransfer.files` 非空，就用 `FileReader.readAsText` 把**文件内容**读出来插进
+  文档 —— 本项目**没有「插入文档内容」这个功能**（菜单那一项插的是**文件路径**）。挂冒泡阶段
+  时 CM6（监听在 `view.contentDOM`）先跑完，`preventDefault()` 无从撤销。
+  → `pitfalls/0096-dnd-filedrop-cm6-reads-content.md`
 - **md 选择菜单只能在 drop 之后弹**（原生拖拽期间系统捕获鼠标，页面控件收不到点击）。
 - ⚠️ **弹不弹选择菜单的判据是「落点面板的活动文档是 Markdown」，不是「拖进来的是 .md 文件」（B70）**：
   `needsChoice(paths, targetIsMarkdown)` = **单个文件 + 落点是 md 文档**。菜单两项的语义是
