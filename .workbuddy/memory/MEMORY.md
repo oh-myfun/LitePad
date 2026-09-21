@@ -25,9 +25,15 @@ LitePad（B34 更名，LiteMD 已 B36 清理）Tauri 2（Rust 持状态）+ Vite
 - 每次编译产出发布版本：tsc→vite→vitest→cargo build+test→tauri build（门 = `.githooks` + GitHub `CI`）。
 - **README 使用者向**：顶部一张 `main.png`，无快捷键/安装/构建/明确不做，避开库名与内部机制。
 - 发布版本只通过 `v*` tag 发布（`git push origin main --follow-tags`）；CI 经 `.githooks` + GitHub Actions。
-- 🚦 **不要每次修改都推送**（09-21 用户明确要求）：默认只做本地 commit，**推送必须由用户显式要求**。
-  发布仍走 `release.sh <ver>`（它自己会打 tag），但最后那步 `git push` 由用户点头后再做。
-  例外：用户说「交付」「发布」「推上去」时照常推。
+- 🚦 **完成功能 = 自动「提交 + 打包」，但绝不自动推送**（09-21 提出、09-22 收紧）：
+  · 收尾动作固定三件：**commit → 本地打包 → 停手**，不用等用户发话；
+  · **推送必须由用户显式要求**（打 tag 与 `git push origin main --follow-tags` 都在这一步）；
+  · 本地打包**不 bump 版本、不打 tag**：版本号只在 `release.sh` 里动（达阈值才走
+    `npm run release patch/minor`），日常打包沿用当前版本、覆盖同名产物即可；
+  · 打包 = `scripts/build-all.sh` 四步（tsc→vite→vitest→cargo build+test→tauri release+NSIS），
+    产物 `src-tauri/target/release/litepad.exe` 与 `bundle/nsis/LitePad_<ver>_x64-setup.exe`。
+    沙箱里 `npm` 不可用，改直调（配方见 `ref/session-env.md` §11）。
+  例外：用户说「交付」「发布」「推上去」时才推。
 - **版本号必须跟着交付动**（09-18 起）：距最近 tag 有任一 `feat` → `npm run release minor`；有效提交累计 ≥10 → `patch`。pre-push 由 `scripts/check-version-bump.sh` 卡门（达阈值阻断推送），不准出现「开发很久版本号没变」。`CHANGELOG.md` 由 `scripts/gen-changelog.sh` 自动生成，勿手改。
 
 ## 路由表（按需读取，勿全量）

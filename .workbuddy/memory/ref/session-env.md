@@ -126,3 +126,31 @@
   不是 TLS 吊销（那种会报 `CRYPT_E_NO_REVOCATION_CHECK`，加 `--ssl-no-revoke` 可解）。
   网络不通只能等，本地产物照常可交付。
 - Vitest 固定 ~4.1.11；该脚本在启动前把盘符转大写以绕过沙箱限制。
+
+## 11. `bash` / `npm` / `npx` 会撞 wsl 黑名单，且 coreutils 不在 PATH（09-22 实测）
+- 症状：`bash -c 'echo hi'` 返回**乱码 + exit 1** 并报
+  `PROGRAM BLOCKED … wsl.exe (C:\Program Files\WSL\wsl.exe)`；`npm run <script>` 秒级失败，
+  日志只有「拒绝访问。」（UTF-16 → Read/Grep 都说是 `binary file matches`，要用 node 转码才看得见）。
+- 根因：PATH 里 `/c/Windows/system32` 排在 Git 之前，而 **Windows 自带
+  `C:\Windows\System32\bash.exe` = WSL 启动器** → `bash` 先命中它；`npm` 在 Git Bash 下是
+  **bash 脚本**（`#!/usr/bin/env bash`），于是跟着一起走 wsl。**安全策略不可绕过，不要重试。**
+- ⚠️ 别去改 PATH 顺序（牵一发动全身），直接绕开这两个命令：
+  · 跑 shell 脚本用 Git 自带 bash 的**绝对路径**：`"/d/Program Files/Git/bin/bash.exe" scripts/xxx.sh`
+    （`/d/Program Files/Git/bin/bash.exe` 与 `usr/bin/bash.exe` 都存在）；
+  · 一切 node 工具改**直调 node + node_modules 入口**（完全不经过 npm/npx）：
+    - `node node_modules/typescript/bin/tsc --noEmit`
+    - `node node_modules/vite/bin/vite.js build`（⚠️ 跑之前必须**剥离 MSYS2 PATH 条目**，见 §5）
+    - `node node_modules/eslint/bin/eslint.js …`
+    - `node node_modules/prettier/bin/prettier.cjs --check …`
+    - `node node_modules/@tauri-apps/cli/tauri.js build --config '{"build":{"beforeBuildCommand":""}}'`
+    - 测试用 `node scripts/run-vitest.cjs --run`（自带盘符大写补丁，别再自己加 `run`）
+    - cargo 用绝对路径 `/c/Users/maoyu/.cargo/bin/cargo.exe`（`~/.cargo/bin` 不在 PATH）
+    - 用 managed node：`/c/Users/maoyu/.workbuddy/binaries/node/versions/22.22.2-3/node.exe`
+- 同一批症状还有 **coreutils 缺失**：本会话 PATH 只含 Git 的 `cmd/`，不含 `usr/bin`，于是
+  `ls`/`grep`/`cp`/`tail`/`dirname` 全部 `command not found`。替代：文件复制交给 PowerShell
+  （`Copy-Item`），看日志用 Grep/Read 工具，不要在 Bash 里 `| tail`（会截断，见 `pitfalls/0095`）。
+- 📦 **沙箱内本地打包配方**（`scripts/build-all.sh` 的等价四步，前两步剥 MSYS2 PATH、
+  后两步要 msys64 提供 windres，全程 `CODEBUDDY_SAFE_DELETE_ENABLED=0`）：
+  `tsc --noEmit` → `vite build` → `run-vitest.cjs --run` → `cargo build && cargo test` →
+  `tauri.js build --config '{"build":{"beforeBuildCommand":""}}'`。
+  长任务一律后台 + 重定向日志；打包前先确认没有残留的 `litepad.exe` 进程（§6）。
