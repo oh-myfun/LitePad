@@ -605,7 +605,8 @@ describe("B64/B91-2 拖拽影像：造出来交给系统绘制", () => {
   // 所以这里锁的不再是「left/top 有没有跟着 clientX/clientY」，而是：
   //   · 影像本体克隆得全不全、该剥的有没有剥；
   //   · 有没有**真的交给系统**（setDragImage 的入参与锚点）；
-  //   · 拍快照那一刻是不是「挂着 + 离屏」（拍空图的两种写法都要躲开），拍完有没有摘。
+  //   · 拍快照那一刻是不是「挂着 + 离屏」（拍空图的写法都要躲开），以及**推一帧再摘**
+  //     （同步摘会让系统拍不到图 —— 用户报过「拖标签完全没有影像」）。
   // 用例走**真实 tabstrip 渲染 + 真实 dragstart**，顺带验证 tabstrip 确实造了影像并
   // 交给了传输层（只测传输层的入参会漏掉这层接线）。
 
@@ -719,32 +720,44 @@ describe("B64/B91-2 拖拽影像：造出来交给系统绘制", () => {
     expect(dt.images[0]).toMatchObject({ x: 0, y: 0 });
   });
 
-  it("拍快照那一刻影像「挂着 + 离屏」，拍完立刻摘掉", () => {
-    // ⚠️ 两个坑各踩一次就废：detached 或 display:none 的元素渲染不出来，Chromium
-    //    会拍出一张**空图**（用户看到的是「拖着个看不见的东西」）；而留在 body 里
-    //    又会在拖拽期间跟系统画的那一份叠成两层。
+  it("拍快照那一刻影像「挂着 + 离屏」，**推一帧再摘**（同步摘会让系统拍不到图）", async () => {
+    // ⚠️ 三个坑，各踩一次就废：
+    //    · detached 或 display:none 的元素渲染不出来 → Chromium 拍出一张**空图**；
+    //    · **同步 remove()** → 快照时元素已 detached → 系统拿不到图（用户报「拖标签
+    //      完全没有影像」），所以摘除必须推到下一轮宏任务；
+    //    · 不摘 → 拖拽期间跟系统画的那一份叠成两层。
     const dt = makeDataTransfer();
     fireDrag("dragstart", mountStrip(), dt);
     expect(dt.images[0].inDom, "必须在文档里").toBe(true);
     expect(dt.images[0].offscreen, "而且要离屏摆（可见，只是不在屏内）").toBe(true);
-    expect(document.querySelector(".tab-drag-ghost"), "拍完不留浮层").toBeNull();
+    expect(document.querySelector(".tab-drag-ghost"), "快照当刻绝不能提前摘").not.toBeNull();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(document.querySelector(".tab-drag-ghost"), "快照拍完就摘，不留浮层").toBeNull();
   });
 
-  it("拖拽期间 body 带标记，dragend 收掉（CSS 据此禁文本选区）", () => {
+  it("拖拽期间 body 带标记，dragend 收掉（CSS 据此禁文本选区）", async () => {
     const dt = makeDataTransfer();
     fireDrag("dragstart", mountStrip(), dt);
     expect(document.body.classList.contains("tab-drag-active")).toBe(true);
-    expect(document.querySelector(".tab-drag-ghost"), "任何时刻都不留浮层").toBeNull();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(document.querySelector(".tab-drag-ghost"), "影像只活一帧，之后不留浮层").toBeNull();
     fireDrag("dragend", document, dt);
     expect(document.body.classList.contains("tab-drag-active")).toBe(false);
+    expect(document.querySelector(".tab-drag-ghost"), "收尾后照样没有浮层").toBeNull();
   });
 
-  it("两次拖拽各拍各的影像，不留残影（不再有「上一次的浮层没收掉」这种失败模式）", () => {
+  it("两次拖拽各拍各的影像，不留残影（不再有「上一次的浮层没收掉」这种失败模式）", async () => {
     const tab = mountStrip();
     dragImageOf(tab);
     const dt2 = makeDataTransfer();
     fireDrag("dragstart", tab, dt2);
     expect(dt2.images.length, "第二次照样把影像交给系统").toBe(1);
-    expect(document.querySelectorAll(".tab-drag-ghost").length, "页面上不留任何影像").toBe(0);
+    // 起手时会先把上一轮的残影清掉，所以页面上任何时刻最多只有一张影像
+    expect(
+      document.querySelectorAll(".tab-drag-ghost").length,
+      "不跟上一轮叠层",
+    ).toBeLessThanOrEqual(1);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(document.querySelectorAll(".tab-drag-ghost").length, "拍完都不留").toBe(0);
   });
 });

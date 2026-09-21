@@ -32,17 +32,19 @@
   `state/doc` 的字符串。
 - **布局树与分割条**：`splitview.build()` 传给 `onRatioChange` 的 path 是分割节点自身树路径；
   最大化 = 只改比例不动结构；关面板要做比例补偿。
-- **拖拽体系**：标签/大纲拖拽用指针编排（mousedown/move/up）—— 跨窗口协议按「全程坐标 + 定向
-  投递」设计，指针序列才拿得到窗口外的坐标；文件拖入走页面内 HTML5 拖放 + 路径桥（关掉 wry 的
-  原生拖放处理器后，用 WebView2 的 `postMessageWithAdditionalObjects` 换回真实路径，见
+- **拖拽体系**：标签与标签栏空白处的拖拽走 **HTML5 DnD**（`draggable` + `dragstart`/`dragover`/
+  `drop`），传输层在 `src/shell/tabdnd.ts` —— 影像交给 `dataTransfer.setDragImage` 由**系统**
+  绘制（才能跟出窗口），载荷走私有 MIME `application/x-litepad-tab`；跨窗口交接按「**松手才
+  提交** + 定向投递」设计：目标窗口 drop 后带 `dragId` 定向认领，源窗口只把正文回发给它一个
+  （正文绝不广播，标签快照可能几十 MB）。文件拖入另走一路：页面内 HTML5 拖放 + 路径桥（关掉
+  wry 的原生拖放处理器后，用 WebView2 的 `postMessageWithAdditionalObjects` 换回真实路径，见
   `src-tauri/src/dropbridge.rs`），拿到路径之后仍由 `onDragDropEvent` 的 drop 分支接管。
 - **视图刷新红线**：mousedown 链路上绝不做 DOM 重建（否则「切换面板要点两下」）。
 - **样式与主题**：组件统一用 CSS 变量；`hidden` 属性必须配 `display:none`。
 - **查找/大纲/缩放/设置/快捷键/菜单/标签栏/分屏/提示/保存/图标**：见 `src/shell/` 与各 `ref` 详情。
 - **多窗口（卫星窗口）**：新窗口与主窗口共享文档状态、标签可来回拖；「文档只有一个真相」跨 WebView 成立。
   跨窗口拖拽与窗口内**同语义**：途中只亮落点预览，**松手才提交**——指针掠过哪块面板都不会
-  立刻生效（Windows 的鼠标隐式捕获让目标窗口收不到鼠标事件，落点靠 `src/shell/windowdrag.ts`
-  的跨窗口协议来回通报）。
+  立刻生效（落点由目标窗口自己的 drop 事件决定，然后向源窗口认领正文，见 `src/shell/tabdnd.ts`）。
   详情见 `.workbuddy/memory/ref/multiwindow.md`。
 
 ## 质量与发布
@@ -51,4 +53,4 @@
   （技能 `litepad-reverse-verify`）。
 - 每次编译产出发布版本：`tsc → vite → vitest → cargo build+test → tauri build`，
   质量门 = `.githooks`（pre-commit: prettier/eslint/tsc/cargo fmt；pre-push: vitest/cargo test）+ GitHub `CI`。
-- 发布只由 `v*` tag 触发（`git push origin main --follow-tags`）。当前里程碑 **v0.3.0**。
+- 发布只由 `v*` tag 触发（`git push origin main --follow-tags`）。最新发布 **v0.11.0**。

@@ -186,14 +186,26 @@ function nextDragId(): string {
  * 从 `dragstart` 里调用：写载荷 + 把影像交给系统。
  *
  * `image` 由调用方造（标签副本 / 整组药丸）。本函数负责把它离屏挂进 body、
- * 交给 `setDragImage`、随即摘掉 —— **必须已经渲染过**才能拍出图：detached 元素在
- * 部分 Chromium 版本上会拍出一张空图，所以不能只 createElement 就传进来。
+ * 交给 `setDragImage`、**推一帧再摘掉**。
  *
- * ⚠️ `setDragImage` 是**同步快照**，返回后就可以把元素摘掉，不会拍成空白。
+ * ⚠️ 影像元素必须**已经渲染过**才能拍出图（detached 元素在部分 Chromium 版本上会拍成
+ * 空图），所以不能只 createElement 就传进来。
+ *
+ * ⚠️⚠️ **绝不能在这个函数里同步摘掉影像**（B91-2 首次交付的真 bug，用户报「拖标签
+ * 完全没有影像」）：Chromium 是在 `dragstart` **派发返回之后**（`DragController::
+ * StartDrag`）才去读那个元素、给它拍快照的；同步 `remove()` 会让快照时元素已 detached
+ * → 系统拿不到图 → 拖整个标签栏、整组、跨窗口全程都没有跟手影像。
+ * 对齐 VS Code `applyDragImage` 的 `setTimeout(() => dragImage.remove(), 0)`：
+ * 推到下一轮宏任务，快照已拍完，页面上也不会留下浮层。
+ *
+ * ⚠️ **不放 `text/plain`**（同批的另一个真 bug，用户报「拖标签会把文件名插进别的文档」）：
+ * dataTransfer 里只要有一份可读文本，落点那个 contenteditable 编辑器就会把它当「拖了
+ * 一段文本进来」插进正文（我们自己的 `drop` 拦得住窗口内，跨窗口时自定义 MIME 可能没
+ * 跨过进程边界、载荷读不出来，就完全拦不住）。标签拖拽是**内部协议**，不对外提供正文。
  */
 export function startTabDrag(
   e: DragEvent,
-  payload: { tabId: number; groupPanelId: number | null; count: number; name?: string },
+  payload: { tabId: number; groupPanelId: number | null; count: number },
   image: HTMLElement | null,
   anchor: DragImageAnchor = { x: 0, y: 0 },
 ): string | null {
@@ -214,18 +226,13 @@ export function startTabDrag(
   };
   dt.effectAllowed = "copyMove";
   dt.setData(TAB_MIME, encodeTabDrag(full));
-  // 顺手给别的应用一个可读正文（拖进编辑器 = 粘上标签名）。只给名字不给路径：
-  // 路径会跟着跑到无关的应用里，而标签名已经够用户认出自己拖的是什么。
-  try {
-    if (payload.name) dt.setData("text/plain", payload.name);
-  } catch {
-    /* 个别环境拒收自定义 MIME，不影响本窗口内与窗口间的拖拽 */
-  }
   if (image) {
+    // 上一次拖拽的影像若还没摘（极端时序下可能），先清掉，免得越堆越多
+    for (const stale of document.querySelectorAll(".tab-drag-image")) stale.remove();
     image.classList.add("tab-drag-image");
     document.body.appendChild(image);
     dt.setDragImage(image, anchor.x, anchor.y);
-    image.remove();
+    setTimeout(() => image.remove(), 0);
   }
   source = { payload: full, taken: false };
   document.body.classList.add(TAB_DRAG_CLASS);
@@ -262,6 +269,11 @@ let pendingForeign: { dragId: string; spot: unknown } | null = null;
 /**
  * 装上标签拖拽的页面级收接（每个窗口都要装：谁都可能成为落点）。
  * 返回卸载函数。
+ *
+ * ⚠️ 监听一律挂**捕获阶段**并 `stopPropagation`：标签拖拽是**本页协议**，事件绝不能
+ *    漏进页面内的组件 —— 尤其是编辑器（`contenteditable`）。漏进去的后果是
+ *    「拖一下标签，文件名被插进了正文」（用户报的 bug）：编辑器会按「有人拖了一段文本
+ *    进来」处理。捕获阶段挂在 document 上，比任何组件自己的监听都早，拦得住。
  */
 export async function installTabDnd(cfg: TabDndConfig): Promise<() => void> {
   config = cfg;
@@ -269,15 +281,25 @@ export async function installTabDnd(cfg: TabDndConfig): Promise<() => void> {
   lastPreviewAt = 0;
   pendingForeign = null;
 
+  /**
+   * 认领一个标签拖拽事件：preventDefault（拦默认动作）+ stopPropagation（拦住页面内组件）。
+   * 不是标签拖拽（例如文件拖入）则原样放行，绝不干扰 `filedrop.ts`。
+   */
+  const claim = (e: DragEvent): boolean => {
+    if (!isTabDragData(e.dataTransfer)) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    return true;
+  };
+
   const onEnter = (e: DragEvent): void => {
-    if (isTabDragData(e.dataTransfer)) hopDepth += 1;
+    if (claim(e)) hopDepth += 1;
   };
 
   const onOver = (e: DragEvent): void => {
-    if (!isTabDragData(e.dataTransfer)) return;
     // ⚠️ 必须 preventDefault：不拦的话光标是禁止态、drop 根本不触发 ——
     // 「这个窗口收标签」这句话得由页面自己说。
-    e.preventDefault();
+    if (!claim(e)) return;
     if (e.dataTransfer) e.dataTransfer.dropEffect = e.ctrlKey ? "copy" : "move";
     const now = e.timeStamp;
     if (now - lastPreviewAt < HOVER_THROTTLE_MS) return;
@@ -286,23 +308,27 @@ export async function installTabDnd(cfg: TabDndConfig): Promise<() => void> {
   };
 
   const onLeave = (e: DragEvent): void => {
-    if (!isTabDragData(e.dataTransfer)) return;
+    if (!claim(e)) return;
     hopDepth = Math.max(0, hopDepth - 1);
     // relatedTarget 为空 = 真的离开窗口，而不是在子元素之间挪动
     if (hopDepth === 0 || e.relatedTarget === null) cfg.clear();
   };
 
   const onDrop = (e: DragEvent): void => {
+    // ⚠️ **只要是标签拖拽就先 preventDefault，再谈载荷读不读得出来**：读不出载荷
+    //    （自定义 MIME 没能跨过进程边界）也必须拦住默认动作，否则浏览器会把
+    //    dataTransfer 里的可读文本插进落点那个编辑器。空拦截的代价只是「这次拖拽没落地」，
+    //    漏拦的代价是**用户文档被改坏**。
+    if (!claim(e)) return;
+    hopDepth = 0;
+    lastPreviewAt = 0;
     const payload = readTabDragPayload(e.dataTransfer);
     if (!payload) {
       // types 说是标签拖拽、data 却读不出来 = 自定义 MIME 没能跨过进程边界。
       // 后果是「跨窗口拖拽静默无效」，必须留一行日志才排得动。
-      if (isTabDragData(e.dataTransfer)) cfg.onWarn?.("tab drag payload unreadable");
+      cfg.onWarn?.("tab drag payload unreadable");
       return;
     }
-    e.preventDefault();
-    hopDepth = 0;
-    lastPreviewAt = 0;
     // 松手坐标可能比最后一次 dragover 精确一帧：按它重算一次落点再收痕迹
     const spot = cfg.preview(e.clientX, e.clientY, e.altKey);
     cfg.clear();
@@ -336,6 +362,8 @@ export async function installTabDnd(cfg: TabDndConfig): Promise<() => void> {
   };
 
   const onDragEnd = (e: DragEvent): void => {
+    // 收尾也要止步：源元素上可能挂着别的监听，不该因为一次标签拖拽被惊动
+    if (isTabDragData(e.dataTransfer)) e.stopPropagation();
     const s = source;
     document.body.classList.remove(TAB_DRAG_CLASS);
     config?.clear();
@@ -375,11 +403,13 @@ export async function installTabDnd(cfg: TabDndConfig): Promise<() => void> {
     cfg.adopt(p.tabs, pend.spot);
   };
 
-  document.addEventListener("dragenter", onEnter);
-  document.addEventListener("dragover", onOver);
-  document.addEventListener("dragleave", onLeave);
-  document.addEventListener("drop", onDrop);
-  document.addEventListener("dragend", onDragEnd);
+  /** 捕获阶段挂载：见函数头「不能漏进页面内组件」的说明。 */
+  const CAPTURE = { capture: true } as const;
+  document.addEventListener("dragenter", onEnter, CAPTURE);
+  document.addEventListener("dragover", onOver, CAPTURE);
+  document.addEventListener("dragleave", onLeave, CAPTURE);
+  document.addEventListener("drop", onDrop, CAPTURE);
+  document.addEventListener("dragend", onDragEnd, CAPTURE);
 
   let unlisten: UnlistenFn[] = [];
   try {
@@ -392,11 +422,11 @@ export async function installTabDnd(cfg: TabDndConfig): Promise<() => void> {
   }
 
   return () => {
-    document.removeEventListener("dragenter", onEnter);
-    document.removeEventListener("dragover", onOver);
-    document.removeEventListener("dragleave", onLeave);
-    document.removeEventListener("drop", onDrop);
-    document.removeEventListener("dragend", onDragEnd);
+    document.removeEventListener("dragenter", onEnter, CAPTURE);
+    document.removeEventListener("dragover", onOver, CAPTURE);
+    document.removeEventListener("dragleave", onLeave, CAPTURE);
+    document.removeEventListener("drop", onDrop, CAPTURE);
+    document.removeEventListener("dragend", onDragEnd, CAPTURE);
     for (const off of unlisten) off();
     unlisten = [];
     pendingForeign = null;

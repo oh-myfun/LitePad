@@ -95,14 +95,14 @@ afterEach(() => {
 
 /** 开始一次「本窗口发起」的拖拽，返回它写好的 dataTransfer。 */
 function beginDrag(
-  over: Partial<{ tabId: number; groupPanelId: number | null; count: number; name: string }> = {},
+  over: Partial<{ tabId: number; groupPanelId: number | null; count: number }> = {},
 ): FakeDataTransfer {
   const dt = makeDataTransfer();
   const e = new MouseEvent("dragstart", { bubbles: true, cancelable: true });
   Object.defineProperty(e, "dataTransfer", { value: dt, configurable: true });
   startTabDrag(
     e as unknown as DragEvent,
-    { tabId: 11, groupPanelId: null, count: 1, name: "a.md", ...over },
+    { tabId: 11, groupPanelId: null, count: 1, ...over },
     null,
   );
   return dt;
@@ -172,17 +172,23 @@ describe("拖拽载荷：编解码与校验", () => {
 // ------------------------------------------------------------ 2. 源侧
 
 describe("源侧：dragstart 写载荷 + 把影像交给系统", () => {
-  it("写私有 MIME、effectAllowed 允许移动/复制，并顺手给别的应用一个可读正文", async () => {
+  it("写私有 MIME、effectAllowed 允许移动/复制，且**不放可读正文**", async () => {
     uninstall = await installTabDnd(makeConfig().cfg);
-    const dt = beginDrag({ name: "note.md" });
+    const dt = beginDrag({ count: 2 });
     const p = readTabDragPayload(dt)!;
     expect(p.from, "载荷里带上发起窗口").toBe("main");
     expect(p.dragId, "每次拖拽都有唯一编号").not.toBe("");
     expect(dt.effectAllowed, "Ctrl 拖拽 = 复制，所以两种都要允许").toBe("copyMove");
-    expect(dt.getData("text/plain"), "拖到别的编辑器里粘出标签名").toBe("note.md");
+    // ⚠️ 用户报的 bug：拖标签会把文件名插进落点文档的正文。根因就是这里曾经写了
+    //    `text/plain` —— 落点的 contenteditable 编辑器看到可读文本，就当成「有人拖了
+    //    一段文本进来」插进正文（窗口内我们自己的 drop 拦得住，跨窗口时自定义 MIME
+    //    可能没跨过进程边界、载荷读不出来，就完全拦不住）。标签拖拽是**内部协议**，
+    //    对外不留任何可读正文。
+    expect(dt.getData("text/plain"), "标签拖拽不对提供正文").toBe("");
+    expect(dt.types, "对外只暴露私有 MIME").toEqual([TAB_MIME]);
   });
 
-  it("影像：先挂进 body 拍快照、拍完立刻摘掉（拍空图的两个坑都躲开了）", async () => {
+  it("影像：挂进 body 拍快照、**推一帧再摘**（同步摘会让系统拍不到图）", async () => {
     uninstall = await installTabDnd(makeConfig().cfg);
     const image = document.createElement("div");
     image.className = "tab-drag-ghost";
@@ -203,7 +209,12 @@ describe("源侧：dragstart 写载荷 + 把影像交给系统", () => {
     // Chromium 会拍出一张空图 —— 用户看到的就是「拖着个看不见的东西」。
     expect(dt.images[0].inDom, "拍快照那一刻必须在文档里").toBe(true);
     expect(dt.images[0].offscreen, "而且是离屏摆着（可见但不在屏内）").toBe(true);
-    expect(document.body.contains(image), "拍完即摘，不留浮层").toBe(false);
+    // ⚠️ 摘除**必须推到下一轮宏任务**（用户报的另一个 bug：拖标签完全没有影像）。
+    //    Chromium 是在 `dragstart` 派发**返回之后**才去读元素、给它拍快照的；这里同步
+    //    `remove()` 会让快照时元素已 detached → 系统拿不到图 → 全程无跟手影像。
+    expect(document.body.contains(image), "快照当刻绝不能提前摘").toBe(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(document.body.contains(image), "快照拍完就摘，不留浮层").toBe(false);
   });
 
   it("没有影像也照常起拖（不抛错）", async () => {
@@ -322,14 +333,50 @@ describe("目标侧：dragover / drop", () => {
     expect(claims[0].payload).toMatchObject({ from: "main", dragId: "peer-1" });
   });
 
-  it("载荷读不出来（自定义 MIME 没跨过进程边界）→ 记一笔告警，不抛错", async () => {
+  it("载荷读不出来（自定义 MIME 没跨过进程边界）→ 拦掉默认动作 + 记一笔告警，不抛错", async () => {
     const { cfg, calls } = makeConfig();
     uninstall = await installTabDnd(cfg);
     const dt = makeDataTransfer([TAB_MIME]);
     dt.throwsOnGet = true;
-    expect(() => fireDrag("drop", document, dt)).not.toThrow();
+    let e!: MouseEvent;
+    expect(() => {
+      e = fireDrag("drop", document, dt);
+    }).not.toThrow();
+    // ⚠️ 用户报的 bug：拖标签会把文件名插进落点文档的正文。读不出载荷也必须
+    //    preventDefault —— 放行默认动作 = 浏览器自己往编辑器里插东西。
+    expect(e.defaultPrevented, "读不出载荷也要拦默认动作").toBe(true);
     expect(calls.onWarn).toHaveBeenCalledWith("tab drag payload unreadable");
     expect(calls.commitLocal).not.toHaveBeenCalled();
+  });
+
+  it("标签拖拽的事件绝不漏进页面内组件（捕获阶段就拦下）", async () => {
+    // ⚠️ 用户报的 bug 的另一半根因：监听曾挂在**冒泡**阶段，页面内的编辑器
+    //    （contenteditable）会比我们先收到 dragover/drop，于是按「有人拖了一段文本
+    //    进来」处理、把内容插进正文。捕获阶段挂在 document 上比任何组件都早。
+    const { cfg } = makeConfig();
+    uninstall = await installTabDnd(cfg);
+    const editor = document.createElement("div");
+    document.body.appendChild(editor);
+    const heard: string[] = [];
+    for (const type of ["dragover", "drop", "dragend"]) {
+      editor.addEventListener(type, () => heard.push(type));
+    }
+    const dt = beginDrag();
+    fireDrag("dragover", editor, dt, { clientX: 10, clientY: 10 });
+    fireDrag("drop", editor, dt, { clientX: 10, clientY: 10 });
+    fireDrag("dragend", editor, dt, { screenX: 1, screenY: 1 });
+    expect(heard, "编辑器一个都不该听到").toEqual([]);
+  });
+
+  it("但文件拖入照旧漏给页面内组件（那是 filedrop.ts 的地盘，不许误伤）", async () => {
+    const { cfg } = makeConfig();
+    uninstall = await installTabDnd(cfg);
+    const editor = document.createElement("div");
+    document.body.appendChild(editor);
+    const heard: string[] = [];
+    editor.addEventListener("dragover", () => heard.push("dragover"));
+    fireDrag("dragover", editor, makeDataTransfer(["Files"]), { clientX: 10, clientY: 10 });
+    expect(heard, "文件拖入必须原样放行").toEqual(["dragover"]);
   });
 });
 

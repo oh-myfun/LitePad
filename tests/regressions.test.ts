@@ -1121,14 +1121,30 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(imageFn, "影像是原标签的克隆").toMatch(/cloneNode\(true\) as HTMLElement/);
     expect(imageFn, "副本去掉 tabId").toMatch(/removeAttribute\("data-tab-id"\)/);
 
-    // ③ 影像是「离屏挂进 body → 交快照 → 立刻摘掉」：detached 元素在部分 Chromium
-    //    版本上会拍成空图，所以必须先渲染；setDragImage 是同步快照，拍完就能摘。
+    // ③ 影像是「离屏挂进 body → 交快照 → **推一帧再摘**」：detached 元素在部分 Chromium
+    //    版本上会拍成空图，所以必须先渲染；而 Chromium 是在 `dragstart` 派发**返回之后**
+    //    才读元素拍快照的，**同步 `remove()` 会让快照时元素已 detached → 系统拿不到图**
+    //    （用户报过「拖标签完全没有影像」）。所以摘除必须推到下一轮宏任务
+    //    （对齐 VS Code `applyDragImage` 的 `setTimeout(() => dragImage.remove(), 0)`）。
     expect(dndCode, "影像离屏挂进 body").toMatch(/document\.body\.appendChild\(image\)/);
     expect(dndCode, "交给系统绘制（带锚点）").toMatch(
       /dt\.setDragImage\(image, anchor\.x, anchor\.y\)/,
     );
-    expect(dndCode, "快照后立刻摘掉").toMatch(
-      /setDragImage\(image, anchor\.x, anchor\.y\);[\s\S]{0,40}?image\.remove\(\)/,
+    expect(dndCode, "摘除必须推到下一轮宏任务，绝不能同步摘").toMatch(
+      /setDragImage\(image, anchor\.x, anchor\.y\);[\s\S]{0,40}?setTimeout\(\(\) => image\.remove\(\), 0\)/,
+    );
+
+    // ③′ **不放 `text/plain`**：dataTransfer 里只要有一份可读文本，落点的 contenteditable
+    //    编辑器就会把它当「拖进来的一段文本」插进正文（用户报过「拖标签会把文件名插进
+    //    别的文档」）。标签拖拽是内部协议，只写私有 MIME。
+    expect(dndCode, "不对外提供可读正文").not.toMatch(/setData\(\s*["']text\/plain["']/);
+    expect(dndCode, "只写私有 MIME").toMatch(/dt\.setData\(TAB_MIME,/);
+
+    // ③″ 监听一律挂**捕获阶段**：冒泡阶段的话，页面内组件（编辑器）会先收到事件并
+    //     插入文本 —— 捕获阶段挂在 document 上比任何组件都早，拦得住。
+    expect(dndCode, "事件监听挂捕获阶段").toMatch(/addEventListener\("drop", onDrop, CAPTURE\)/);
+    expect(dndCode, "捕获阶段就 stopPropagation").toMatch(
+      /e\.preventDefault\(\);\s*\n\s*e\.stopPropagation\(\)/,
     );
 
     // ④ 拖拽期间挂 body 类（禁文本选区）；收尾会摘掉（拖拽循环结束 / drop 就地收尾）
@@ -3015,8 +3031,14 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
       /cfg\.preview\(e\.clientX, e\.clientY, e\.altKey\)/,
     );
     expect(overBody, "dragover 阶段绝不提交").not.toMatch(/commitLocal|relinquish|onFallback/);
-    // ⚠️ 必须 preventDefault：不拦的话光标是禁止态，drop 根本不触发
-    expect(overBody, "dragover 要 preventDefault").toMatch(/e\.preventDefault\(\)/);
+    // ⚠️ 必须拦住默认动作：不拦的话光标是禁止态，drop 根本不触发。
+    //    B91-2 收尾把「拦」集中到 claim() 一处做（preventDefault + stopPropagation），
+    //    dragover 先认领即可 —— 顺带解决「标签拖拽事件漏进编辑器、把文件名插进正文」
+    //    那个 bug（见 ③″）。
+    expect(overBody, "dragover 先认领（认领里拦默认动作）").toMatch(/if \(!claim\(e\)\) return;/);
+    expect(dndCode, "认领要真的拦住默认动作").toMatch(
+      /const claim = \(e: DragEvent\): boolean => \{[\s\S]{0,200}?e\.preventDefault\(\)/,
+    );
 
     // ② drop 才提交：本窗口直接消化；别的窗口先认领
     const dropBody = seg("const onDrop", "const onDragEnd");

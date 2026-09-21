@@ -90,7 +90,8 @@ const LINE_PX = 16;
 // DOM 浮层，越过窗口边界就没了。
 //
 // ⚠️ 影像元素必须**已经渲染过**才能拍出图（detached 元素在部分 Chromium 版本上会拍成
-// 空图）。`startTabDrag` 负责把它离屏挂进 body、交快照、随即摘掉。
+// 空图）。`startTabDrag` 负责把它离屏挂进 body、交快照、**推一帧再摘掉**（同步摘会在
+// Chromium 拍快照之前就把元素移出文档 → 系统根本拿不到图）。
 
 /** 单标签影像锚点：光标落在影像左上角（VS Code `setDragImage(tab, 0, 0)`）。 */
 export const TAB_IMAGE_ANCHOR: DragImageAnchor = { x: 0, y: 0 };
@@ -388,7 +389,7 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
     }
     startTabDrag(
       e,
-      { tabId: t.tabId, groupPanelId: null, count: 1, name: t.name },
+      { tabId: t.tabId, groupPanelId: null, count: 1 },
       createTabDragImage(el),
       TAB_IMAGE_ANCHOR,
     );

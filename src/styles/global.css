@@ -1961,8 +1961,10 @@ body.tab-drag-active * {
 /* ---------- 标签拖拽的影像（B64；B91-2 起交给系统绘制） ---------- */
 
 /* 拖拽影像。B91-2 起**不再是跟随光标的浮层**，而是 `dataTransfer.setDragImage` 的
-   快照源：`tabdnd.ts` 把它离屏挂进 body → 拍快照 → 立刻摘掉，影像由**系统**绘制，
-   于是指针移出窗口、压到别的应用上照样跟着走（这正是 B64–B90 那套指针编排做不到的）。
+   快照源：`tabdnd.ts` 把它离屏挂进 body → 拍快照 → **推一帧再摘掉**（⚠️ 不能同步摘：
+   Chromium 是在 `dragstart` 派发**返回之后**才拍快照的，同步 `remove()` 会让系统拿不到图
+   → 拖拽全程没有跟手影像），影像由**系统**绘制，于是指针移出窗口、压到别的应用上照样
+   跟着走（这正是 B64–B90 那套指针编排做不到的）。
 
    出处：VS Code `multiEditorTabsControl.ts:1295` —— 拖单个标签（且 tabSizing 非 shrink）
    时 `e.dataTransfer.setDragImage(tab, 0, 0)`，注释写明「把被拖标签的左上角放到光标处，
@@ -2024,7 +2026,7 @@ body.tab-drag-active * {
   flex: 0 0 auto;
 }
 
-/* 拍快照期间的临时容器：`startTabDrag` 拍完立刻把它摘掉，只在屏外存在一瞬。
+/* 拍快照期间的临时容器：`startTabDrag` 拍完**推一帧**再把它摘掉（只在屏外多待一轮宏任务）。
    ⚠️ 只挪位置、**绝不能用 display:none / visibility:hidden** —— 那样元素不渲染，
    `setDragImage` 拍出来会是一张空图（部分 Chromium 版本对 detached 元素同样拍空）。 */
 .tab-drag-image {
