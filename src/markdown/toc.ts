@@ -35,9 +35,10 @@ export interface TocResizerHandle {
 /**
  * 给大纲抽屉挂上可拖拽的宽度分隔条。
  *
- * 说明：分隔条是独立元素（#toc-resizer）而非面板边框，因为 WebView2 下
- * `dragDropEnabled: true` 会禁用页面内 HTML5 拖放，这里沿用与分屏一致的
- * 指针事件序列（mousedown → document mousemove/mouseup）自行编排。
+ * 说明：分隔条是独立元素（#toc-resizer）而非面板边框，且沿用与分屏一致的
+ * 指针事件序列（mousedown → document mousemove/mouseup）自行编排 ——
+ * 历史原因是 WebView2 的拖放钩子会禁用页面内 HTML5 拖放（B91 已关掉该钩子），
+ * 现在依旧用指针序列：拖分隔条是「按住并移动」，与 HTML5 DnD 的搬运语义无关。
  */
 export function attachTocResizer(
   resizer: HTMLElement,

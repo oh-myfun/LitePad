@@ -106,11 +106,13 @@ describe("B26/B27 接线（静态断言）", () => {
   });
 
   it("tab 区拖拽 = 排序指示，且先于分屏预览判定", () => {
-    expect(sv, "拖拽移动时必须先判 tab 区（stripUnder）再判分屏 zone").toMatch(
-      /const strip = stripUnder\(panelEl, e\.clientX, e\.clientY\);[\s\S]{0,600}zoneOf\(panelEl\.getBoundingClientRect\(\)/,
+    // B91-2：落点提交搬进 commitTabDrop（参数从 MouseEvent 换成显式的 TabDropRequest），
+    // 判据的顺序一字未改：先看是不是落在标签区（排序），再谈分屏。
+    expect(sv, "落点判定时必须先判 tab 区（stripUnder）再判分屏 zone").toMatch(
+      /const strip = stripUnder\(panelEl, req\.x, req\.y\);[\s\S]{0,600}zoneOf\(panelEl\.getBoundingClientRect\(\)/,
     );
     expect(sv, "tab 区落下必须走 onMoveTabToStrip（排序/移动），不得分屏").toMatch(
-      /stripInsertInfo\(strip, e\.clientX\)[\s\S]{0,120}onMoveTabToStrip\(/,
+      /stripInsertInfo\(strip, req\.x\)[\s\S]{0,120}onMoveTabToStrip\(/,
     );
     expect(main, "main.ts 必须接线 onMoveTabToStrip → moveTabToStrip").toMatch(
       /onMoveTabToStrip: \(panelId, tabId, beforeTabId\) =>\s*\n?\s*moveTabToStrip\(panelId, tabId, beforeTabId\)/,

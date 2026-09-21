@@ -123,16 +123,19 @@ import {
   zoneOf,
   clearAllDropPreviews,
   clearDropIndicators,
+  commitTabDrop,
   previewDropAt,
   type DropSpot,
   type PanelRenderData,
 } from "./shell/splitview";
+import { installTabDnd, type TabDragPayload } from "./shell/tabdnd";
 import {
-  beginWindowDrag,
-  installWindowDropTarget,
-  type WindowDragSession,
-} from "./shell/windowdrag";
-import { needsChoice, showFileDropChoice, type FileDropTarget } from "./shell/filedrop";
+  hasFileDropBridge,
+  installFileDropTarget,
+  needsChoice,
+  showFileDropChoice,
+  type FileDropTarget,
+} from "./shell/filedrop";
 import { renderTabstrip, type TabViewData, type TabstripCallbacks } from "./shell/tabstrip";
 import { applyTheme, normalizeMode, watchSystemTheme, type ThemeMode } from "./theme/theme";
 
@@ -680,16 +683,6 @@ function rebuildLayout(): void {
     onToggleMaximizePanel: (panelId) => toggleMaximizePanel(panelId),
     onOpenTabInNewWindow: (tabId) => void openTabsInNewWindow([tabId]),
     onReturnTabToMain: windowKind === "satellite" ? (tabId) => returnTabToMain(tabId) : undefined,
-    // B89：拖拽途中指针在窗外 → 只广播位置让**目标窗口**亮预览。
-    // 这里绝不能搬运标签：出界即生效正是「擦过一块面板就被合入」的根因。
-    onDragOutside: (drag) => {
-      winDrag ??= beginWindowDrag(windowLabel);
-      winDrag.hover(drag.clientX, drag.clientY);
-    },
-    // B89：**松手**时指针在窗外 → 这时才决定去哪儿（别的窗口接手 / 回落开新窗口）
-    onDropOutOfWindow: (drag) => void dropTabsOutOfWindow(drag),
-    // B90：拖拽收尾（松手 / 失焦 / 强制清场都要通知）→ 让别的窗口收掉预览
-    onDragEnd: () => endWindowDrag(),
     // B71：拖标签栏空白处 = 拖整组。并入 = 「关掉这个分屏但指定并入目标」
     onMergeGroup: (srcId, targetId) => closePanelById(srcId, targetId),
     onMoveGroupToPanel: (srcId, targetId, dir, newFirst) =>
@@ -4862,78 +4855,65 @@ function detachLocally(tabIds: number[]): void {
 }
 
 /**
- * 拖拽期间「指针在窗外」用的跨窗口会话（B89）。懒建：只有真拖出去了才需要广播。
- */
-let winDrag: WindowDragSession | null = null;
-
-/**
- * 一次拖拽收尾（splitview 的 `finishTabDrag` 回调）：广播「结束了」，让**别的窗口**
- * 收掉它们亮着的落点预览。
+ * 一次拖拽涉及哪些标签实例（整组 = 该面板的全部标签）。
  *
- * ⚠️ 这里**不清引用**：`finishTabDrag` 早于落点提交，松手在窗外时还要用同一个会话去问
- * 「有没有别的窗口接手」。清早了就问不成，只能一路回落成「开新窗口」。
- * 引用的清理在 `dropTabsOutOfWindow` 里做。
+ * 从载荷反推而不是随拖拽携带 id 列表：整组拖拽期间面板的标签集合可能被别的操作
+ * 改动，**以松手那一刻的实际状态为准**才不会漏掉或多带。
  */
-function endWindowDrag(): void {
-  winDrag?.finish();
+function dragTabIds(payload: TabDragPayload): number[] {
+  if (payload.groupPanelId === null) return [payload.tabId];
+  return [...(panels.get(payload.groupPanelId)?.tabs ?? [])];
+}
+
+/** 别的窗口来认领标签：把这次拖拽涉及的标签全部摊平成快照（正文一起带走）。 */
+function snapshotDrag(payload: TabDragPayload): SatelliteTab[] | null {
+  const snapshots = dragTabIds(payload)
+    .map((id) => transferSnapshotOf(id))
+    .filter((s): s is SatelliteTab => s !== null);
+  return snapshots.length > 0 ? snapshots : null;
 }
 
 /**
- * **松手**时指针在窗口外（B89）。
+ * 标签已经交给**另一个窗口**了，本窗口收干净（B91-2）。
  *
- * 与 B71④ 的旧行为（出界即生效）的差别就一句：**先问有没有别的窗口愿意接手**。
- *   · 有 → 交给它，落点用**它**算出来的那块面板（悬停时用户看到的就是那块预览），
- *     正文只发给它一个窗口；
- *   · 没有（扔在桌面上）→ 回落旧语义：主窗口开新窗口，卫星窗口交回主窗口。
- *
- * 等待接手的时间（`CLAIM_TIMEOUT_MS`）只有回落路径会真等到超时 —— 那条路本来就
- * 要新建窗口，200ms 无感；有人接手时 claim 通常几毫秒就回来了。
+ * 与「交回主窗口」分成两条路径，差别只在本地留不留隐藏实例：
+ *   · 主窗口 → 留隐藏实例（`remoteTabLocally`）：会话与热退出靠它记住这份文档的
+ *     正文，卫星窗口被任务管理器结束时还能把标签恢复成可见的；
+ *   · 卫星窗口 → 直接摘掉（`detachLocally`，摘空了它自己关窗）。
  */
-async function dropTabsOutOfWindow(drag: {
-  tabId: number;
-  groupPanelId: number | null;
-  clientX: number;
-  clientY: number;
-}): Promise<void> {
-  const ids =
-    drag.groupPanelId !== null ? [...(panels.get(drag.groupPanelId)?.tabs ?? [])] : [drag.tabId];
+function relinquishDrag(payload: TabDragPayload, toLabel: string): void {
+  const ids = dragTabIds(payload);
   if (ids.length === 0) return;
-
-  const session = winDrag;
-  winDrag = null;
-  const target = session ? await session.release() : null;
-
-  // `session` 要显式判空：TS 看不出 `target` 非空 ⟹ `session` 非空（前者是后者的产物）
-  if (session && target) {
-    const snapshots = ids
-      .map((id) => transferSnapshotOf(id))
-      .filter((s): s is SatelliteTab => s !== null);
-    if (snapshots.length === 0) {
-      session.finish();
-      return;
-    }
-    session.deliver(target, snapshots);
-    if (windowKind === "satellite") {
-      // 卫星窗口不留隐藏实例：它被摘空了就自己关掉（detachLocally 里处理）
-      detachLocally(ids);
-      pruneEmptyPanels(); // B90：被拖走的那一组留下的空面板要摘掉
-    } else {
-      // 主窗口留隐藏实例：会话要能写它、对方异常消失时还能接回来（见 remoteTabLocally）
-      exitMaximize();
-      for (const id of ids) remoteTabLocally(id, target);
-      // B90：整组（或最后一个标签）被拖走后那个面板就空了 —— 摘掉，别留一个空框。
-      // 卫星窗口那侧同理：`detachLocally` 之后也要 prune。
-      pruneEmptyPanels();
-      rebuildLayout();
-      refreshAll();
-      scheduleSessionSave();
-    }
-    showMessage(`已移到另一个窗口 ${snapshots.length} 个标签`);
-    session.finish();
-    return;
+  if (windowKind === "satellite") {
+    // 卫星窗口不留隐藏实例：它被摘空了就自己关掉（detachLocally 里处理）
+    detachLocally(ids);
+    pruneEmptyPanels(); // B90：被拖走的那一组留下的空面板要摘掉
+  } else {
+    exitMaximize();
+    for (const id of ids) remoteTabLocally(id, toLabel);
+    // B90：整组（或最后一个标签）被拖走后那个面板就空了 —— 摘掉，别留一个空框。
+    pruneEmptyPanels();
+    rebuildLayout();
+    refreshAll();
+    scheduleSessionSave();
   }
+  showMessage(`已移到另一个窗口 ${ids.length} 个标签`);
+}
 
-  session?.finish();
+/**
+ * 拖拽落在**窗口外**、且没有别的 LitePad 窗口接手（扔在桌面上）：源窗口的回落。
+ *
+ * B89 定下的语义一字未改：主窗口 → 在落点处开一个新窗口；卫星窗口 → 交回主窗口。
+ * 区别只在「有没有别的窗口接手」不再靠源窗口猜（B89 是广播指针坐标 + 200ms 抢单），
+ * 而是 `tabdnd.ts` 观察对方发来的认领 —— 走到这里就说明确实没人接。
+ */
+async function dropOnDesktop(
+  payload: TabDragPayload,
+  screenX: number,
+  screenY: number,
+): Promise<void> {
+  const ids = dragTabIds(payload);
+  if (ids.length === 0) return;
   if (windowKind === "satellite") {
     returnTabsToMain(ids);
     detachLocally(ids);
@@ -4941,8 +4921,22 @@ async function dropTabsOutOfWindow(drag: {
     showMessage(`已交回主窗口 ${ids.length} 个标签`);
     return;
   }
-  const spot = await dropSpotOf(drag.clientX, drag.clientY);
-  await openTabsInNewWindow(ids, spot);
+  await openTabsInNewWindow(ids, desktopSpotOf(screenX, screenY));
+}
+
+/**
+ * 桌面松手处的屏幕坐标（逻辑像素，虚拟桌面口径）。
+ *
+ * 用 `dragend` 的 `screenX/screenY`：整段拖拽手势被系统交给了拖放循环，页面在此期间
+ * 收不到任何指针事件，`dragend` 是唯一还带着最后位置的时机。
+ *
+ * ⚠️ 多显示器不同缩放时这两个值会有偏差（它们按当前显示器的缩放折算）。所以拿不到
+ * （0,0）就返回 null，让系统自己摆窗口 —— 摆错位置比不摆更让人困惑。
+ */
+function desktopSpotOf(screenX: number, screenY: number): WindowSpot | null {
+  if (!Number.isFinite(screenX) || !Number.isFinite(screenY)) return null;
+  if (screenX === 0 && screenY === 0) return null;
+  return { x: screenX, y: screenY };
 }
 
 /**
@@ -4971,37 +4965,6 @@ function acceptDroppedTabs(raw: unknown, spot: DropSpot | null): boolean {
   }
   showMessage(`已从另一个窗口接来 ${adopted.length} 个标签`);
   return true;
-}
-
-/**
- * 松手处对应的屏幕坐标（逻辑像素），用于给新窗口定位。
- *
- * 为什么不用 `screenX/screenY`：那对坐标在多显示器下是相对**当前显示器**原点的，
- * 摆到第二块屏幕上就会跑偏。窗口外框位置（`outerPosition`）才是相对整个虚拟桌面的
- * 口径，加上「外框→客户区」的偏移与指针在客户区内的位置即可。代价是标题栏高度被
- * 当成客户区算进了 y —— 几十像素的偏差，换实现简单与跨屏正确，划算。
- *
- * 拿不到就返回 null：让系统按默认规则摆，也好过按一个瞎猜的坐标摆。
- */
-async function dropSpotOf(clientX: number, clientY: number): Promise<WindowSpot | null> {
-  try {
-    const win = getCurrentWindow();
-    const [outer, outerSize, innerSize, scale] = await Promise.all([
-      win.outerPosition(),
-      win.outerSize(),
-      win.innerSize(),
-      win.scaleFactor(),
-    ]);
-    // 左右边框各一半，上边框 + 标题栏 + 下边框全算在上边（见函数注释的取舍）
-    const borderX = (outerSize.width - innerSize.width) / 2;
-    const chromeY = outerSize.height - innerSize.height;
-    return {
-      x: (outer.x + borderX + clientX * scale) / scale,
-      y: (outer.y + chromeY + clientY * scale) / scale,
-    };
-  } catch {
-    return null;
-  }
 }
 
 /** 主窗口：接住卫星窗口交回来的标签。 */
@@ -5438,24 +5401,25 @@ async function setupShell(): Promise<void> {
   // B71 ④：跨窗口同源正文同步（主窗口与卫星窗口都要装，见 listenDocSync）
   listenDocSync();
 
-  // 从资源管理器拖入文件：WebView2 原生拖放（dragDropEnabled: true）→ 这是拿到
-  // 真实文件路径的唯一方式（HTML5 file drop 只有内容没有路径），打开后保留磁盘关联
-  // （监听外部修改 / 会话恢复 / 直接保存）。
-  // B24：悬停时高亮落点面板/分区；落地按分区打开（中央=该面板，边缘=分屏）；
-  //      单个 Markdown 弹菜单选「打开文档 / 插入文件路径」。
+  // 从资源管理器拖入文件（B91 改造）：wry 的原生拖放处理器已关闭（它做的两处劫持会把
+  // 页面内 HTML5 拖放一起废掉，详见 `src-tauri/src/dropbridge.rs` 模块头），改由两层拼：
+  //   · 悬停高亮：页面内 dragover 驱动（原生没了就没有 enter/over/leave 事件），
+  //     坐标直接用 clientX/clientY；
+  //   · 落地路径：页面把 File 对象交给 Rust，Rust 取回真实路径后 emit
+  //     `tauri://drag-drop` —— 也就是下面这个 onDragDropEvent，载荷与原生逐字一致。
+  //     （HTML5 file drop 本身只有内容没有路径，所以这一段必须过桥。）
+  installFileDropTarget({
+    preview: (x, y) => showFileDropPreview(x, y),
+    clear: () => clearAllDropPreviews(),
+  });
+  if (!hasFileDropBridge()) logEvent("drop", "path bridge unavailable");
+
+  // B24：落地按分区打开（中央=该面板，边缘=分屏）；单个 Markdown 弹菜单选「打开文档 /
+  // 插入文件路径」。这里只处理 drop —— enter/over/leave 已由上面的页面内监听接管。
   void getCurrentWebview()
     .onDragDropEvent((ev) => {
       const p = ev.payload;
-      if (p.type === "enter" || p.type === "over") {
-        const pos = dropPosOf(p.position);
-        showFileDropPreview(pos.x, pos.y);
-        return;
-      }
-      if (p.type === "leave") {
-        clearAllDropPreviews();
-        return;
-      }
-      // drop
+      if (p.type !== "drop") return;
       const pos = dropPosOf(p.position);
       const target = fileDropTargetAt(pos.x, pos.y);
       clearAllDropPreviews();
@@ -5488,12 +5452,21 @@ async function bootstrap(): Promise<void> {
     windowKind = "main";
   }
 
-  // B89：装上「别的窗口把标签拖过来」的接收侧。**两个窗口都要装** —— 谁都可能成为
-  // 落点（主窗口能接卫星窗口的，卫星窗口之间也能互拖）。
-  void installWindowDropTarget(windowLabel, {
-    preview: (x, y) => previewDropAt(x, y),
-    accept: (tabs, spot) => acceptDroppedTabs(tabs, spot),
+  // B91-2：标签拖拽走 HTML5 DnD（影像是系统绘制的，能跟出窗口）。**两个窗口都要装**
+  // —— 谁都可能成为落点（主窗口能接卫星窗口的，卫星窗口之间也能互拖）。
+  // 这里把四件事接到宿主状态上：落点怎么算、窗口内松手怎么办、跨窗口怎么交接、
+  // 扔在桌面上怎么回落。
+  void installTabDnd({
+    selfLabel: windowLabel,
+    preview: (x, y, altKey) => previewDropAt(x, y, altKey),
     clear: () => clearDropIndicators(),
+    commitLocal: (req) => commitTabDrop(req),
+    snapshot: (payload) => snapshotDrag(payload),
+    relinquish: (payload, toLabel) => relinquishDrag(payload, toLabel),
+    adopt: (tabs, spot) => acceptDroppedTabs(tabs, spot as DropSpot | null),
+    onFallback: (payload, sx, sy) => void dropOnDesktop(payload, sx, sy),
+    // 自定义 MIME 没能跨过进程边界时记一行：否则跨窗口拖拽会「静默无效」，无从排查
+    onWarn: (what) => logEvent("drop", what),
   }).catch(() => {});
 
   if (windowKind === "satellite") {

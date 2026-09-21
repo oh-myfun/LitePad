@@ -5,13 +5,15 @@
 > **不要在会话开头一次性读全部 ref/rules/pitfalls/open-items/，只在触碰对应域时加载。**
 
 ## 身份 / 技术栈 / 范围
-LitePad（B34 更名，LiteMD 已 B36 清理）Tauri 2（Rust 持状态）+ Vite6/TS + CodeMirror6，**仅 Windows**，工作区 `E:\Project\LitePad`。标识 `litepad`/`com.litepad.app`；配置落 `%APPDATA%\LitePad`；原子写入 = 临时文件+fsync+rename。不做：插件商店/内置终端/Git/LSP。最新发布 **v0.8.0**。
+LitePad（B34 更名，LiteMD 已 B36 清理）Tauri 2（Rust 持状态）+ Vite6/TS + CodeMirror6，**仅 Windows**，工作区 `E:\Project\LitePad`。标识 `litepad`/`com.litepad.app`；配置落 `%APPDATA%\LitePad`；原子写入 = 临时文件+fsync+rename。不做：插件商店/内置终端/Git/LSP。最新发布 **v0.10.1**（tag 已打；注意 tag 尚未推到远端，网络恢复后补 `git push origin main --follow-tags`）。
 
 ## 关键红线（每次会话必读，违反即回滚）
 - 📁 **临时文件一律落本项目 `.tmp/`**（09-18，已进 `.gitignore`/`.prettierignore`/eslint `ignores`）；禁写 `%TEMP%`、`~/.workbuddy/`（除 memory/skills）、Git Bash 的 `/tmp`（=`%TEMP%`）。
 - ⚠️ **沙箱内禁 `git stash -u`** 或任何触碰 `.git` 的重操作（09-13 全历史丢失）。
 - ⚠️ **编辑回报成功 ≠ 已落盘**：改脚本/钩子/配置后必须**回读或 grep 复核**（本环境已多次出现「写了没生效」，09-18 的 pre-push 修复只落了一半，靠一次真实 push 才暴露）→ 踩坑 `pitfalls/0074-prepush-windres-path.md`。
+- ⚠️ **同一文件同一条消息只发一个 Edit**（09-21 新增）：同批多个 Edit 会各自基于旧快照整文件写回、互相覆盖，而**每个都回报成功**——B91 里 `dropbridge.rs` 4 处只落 1 处、`main.rs` 2 处只落 1 处，`cargo check` 报的还是旧行号才暴露。跨文件批量安全。改完逐处 `grep` 回读 → `pitfalls/0091-batched-edits-overwrite.md`。
 - ⚠️ **门禁脚本「退出码 0 + 日志正常」≠ 生效**（本项目已三连踩）：pre-push 探测结果写 PATH 必须 `cd … && pwd` 归一；`while read` 消费 `git log --pretty=format:` 必须带 `|| [ -n "$sha" ]`；`gen-changelog.sh` 只在发布流程跑一次。门禁/生成器改完一律**真跑一次 + 回读产物** → `pitfalls/0082-changelog-gen-drops-last.md` / `0083-prepush-windres-posix-path.md`。
+- ⚠️ **反向验证的 `-t` 过滤器必须写「用例名」**（B91 实测，一次踩 4 条假绿）：写成 `expect()` 的**断言消息**时 vitest 一个用例都选不中，而「筛掉全部用例」的退出码仍是 **0** → 判出「守卫咬不住」的假绿。`scripts/reverse-verify-*.cjs` 已加 `checkFilter` 前置校验（未打补丁时该过滤器必须至少选中 1 个用例）；写过滤器前先 `grep 'it("' <file>` 抄名字。
 - ⚠️ **`.workbuddy` 的搬/删只动索引、别碰磁盘命令**：对本目录跑 `git mv`/`git rm`/`rmdir` 会让运行时**整棵 `.workbuddy` 从磁盘消失**（连未触碰的 `skills/`、`overview.md` 一起）。文件仍在 git 索引/`.git/` 里，用 `git checkout HEAD -- .workbuddy` 还原。
 - **状态归 Rust、视图归前端**；内存文本 LF，落盘还原原行尾。
 - 每个交付一个 Conventional Commit；每个 bug 必须补回归测试 + 改完先**反向验证**（技能 `litepad-reverse-verify`）。

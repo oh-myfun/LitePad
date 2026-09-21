@@ -51,7 +51,13 @@ agent_created: true
   「为什么不能写死 X」的注释，于是断言「全文不含 X」永远失败。要先**剥掉注释**再断言，
   而且最好**只截目标函数的函数体**（把 `const fn = (` 到下一个顶层 `}` 之间切出来）——
   这样断言既不含解释性文字，也不会被别处的同名写法干扰。
-- ⚠️ **一个 `from` 片段必须全文唯一命中**（B72 实测的假绿）：`String.replace` 只改**第一处**，
+- ⚠️ **`-t` 过滤器必须是「用例名」，不能写断言消息**（B91 实测的假绿，一次踩了 4 条）：
+  `vitest -t <子串>` 匹配的是 describe/it **名字**；写成 `expect()` 的消息（如
+  「标签必须可拖」）时一个用例都选不中，而**筛选掉全部用例时 vitest 的退出码仍是 0**
+  → 探针判绿，读起来像「守卫咬不住」，实际什么都没跑。定型脚本必须对每个过滤器做
+  **前置校验**：未加补丁时该过滤器至少要选中 1 个用例（见模板 `checkFilter`），
+  否则直接判该批无效。写过滤器时去 `grep 'it("' <file>` 抄名字，别凭记忆写。
+- ⚠️ **`from` 片段必须全文唯一命中**（B72 实测的假绿）：`String.replace` 只改**第一处**，
   若该片段在文件里出现多次，被改的可能根本不是这条修复所在的地方 ——
   此时无论脚本判红还是判绿，都**不构成任何证据**。模板里已把它当硬失败处理。
 - ⚠️ **别手搓探针**（B77 实测的假绿）：在 `.tmp/` 里临时写几条探针看着更快，
@@ -94,13 +100,30 @@ const read = (p) => readFileSync(join(ROOT, p), "utf-8");
 const write = (p, s) => writeFileSync(join(ROOT, p), s);
 const sha = (s) => createHash("sha256").update(s).digest("hex").slice(0, 12);
 
+// ⚠️ 过滤器必须写**用例名**（vitest -t 匹配 describe/it 名字）。写成断言消息时
+// 一个用例都选不中，而 vitest 筛掉全部用例仍退出 0 → 判出「守卫咬不住」的假绿。
+// 所以先 checkFilter 前置校验，再探。B91 起模板自带这道护栏。
 function runVitest(files) {
   try {
-    execSync(`node ${join(ROOT, "scripts/run-vitest.cjs")} ${files.join(" ")}`, {
+    const out = execSync(`node ${join(ROOT, "scripts/run-vitest.cjs")} ${files.join(" ")}`, {
       cwd: ROOT, stdio: "pipe", timeout: 300000,
-    });
-    return true; // 绿
-  } catch { return false; } // 红（正是我们要的）
+    }).toString();
+    const m = out.match(/(\d+) passed/);
+    return { ok: true, passed: m ? Number(m[1]) : 0 };
+  } catch (e) {
+    return { ok: false, passed: Number(String(e.stdout ?? "").match(/(\d+) passed/)?.[1] ?? 0) };
+  }
+}
+
+const FILTER_CACHE = new Map();
+/** 前置校验：未加补丁时该过滤器必须至少选中 1 个用例，否则判红判绿都没意义。 */
+function checkFilter(f) {
+  const key = f.join(" ");
+  if (!FILTER_CACHE.has(key)) {
+    const r = runVitest(f);
+    FILTER_CACHE.set(key, r.passed > 0 ? null : `过滤器「${key}」一个用例都没选中（应写用例名）`);
+  }
+  return FILTER_CACHE.get(key);
 }
 
 // Rust 用例（B72 起）：runner: "cargo"。⚠️ 会话 shell 会整体丢 PATH，
@@ -134,6 +157,11 @@ const CASES = [
 
 let bad = 0, broken = 0, n = 0;
 for (const c of CASES) {
+  // 前置：过滤器必须真选中用例（见 checkFilter 说明），否则后面的判绿毫无意义
+  if (c.runner !== "cargo") {
+    const err = checkFilter(c.tests);
+    if (err) { console.log(`✗ ${c.name} —— ${err}`); bad++; continue; }
+  }
   const orig = read(c.file);
   const origHash = sha(orig);
   const hits = orig.split(c.from).length - 1;
@@ -141,7 +169,7 @@ for (const c of CASES) {
   if (hits > 1) { console.log(`✗ ${c.name} —— 片段出现 ${hits} 次，判据失效`); bad++; continue; }
   try {
     write(c.file, orig.replace(c.from, c.to));
-    const green = c.runner === "cargo" ? runCargo(c.tests) : runVitest(c.tests);
+    const green = c.runner === "cargo" ? runCargo(c.tests) : runVitest(c.tests).ok;
     n++;
     console.log(`${green ? "✗ 无效守卫" : "✓ 会变红"}  ${c.name}`);
     if (green) bad++;

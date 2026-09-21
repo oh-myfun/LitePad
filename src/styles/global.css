@@ -1949,34 +1949,33 @@ body.layout-dragging .layout-panel * {
   transition: none !important;
 }
 
-/* 标签指针拖拽：抓取光标 + 禁止文本选区（指针拖拽没有原生 DnD 的光标/选区豁免） */
+/* 标签拖拽期间（`tabdnd.ts` 挂在 body 上）：禁止文本选区 —— 从标签上按下再拖动时，
+   越过阈值之前那一小段仍是普通鼠标手势，不该顺手把标签名选成一片高亮。
+   ⚠️ 不再有「抓取光标」：B91-2 起是原生拖拽，这一段的指针形状由系统按 dropEffect
+   决定（移动 / 复制），CSS `cursor` 在手势期间根本不生效。 */
 body.tab-drag-active,
 body.tab-drag-active * {
-  cursor: grabbing !important;
   user-select: none;
 }
 
-/* ---------- 标签拖拽的浮动影像（B64） ---------- */
+/* ---------- 标签拖拽的影像（B64；B91-2 起交给系统绘制） ---------- */
 
-/* 跟随光标的「标签副本」。出处：VS Code `multiEditorTabsControl.ts:1295` ——
-   拖单个标签（且 tabSizing 非 shrink）时 `e.dataTransfer.setDragImage(tab, 0, 0)`，
-   注释写明「把被拖标签的左上角放到光标处，好给落点边框反馈让位」。
-   本项目标签是 tabSizing: fixed（B56 起不收缩、不裁剪），正落在那一档：
-   影像 = **标签元素本身**，锚点也是左上角（JS 直接写 left/top = clientX/clientY）。
-   ⚠️ 影像之所以要自己造：本项目用指针事件编排拖拽（Windows 上 WebView2 的原生拖放
-   钩子会禁用页面内 HTML5 DnD，见 ARCHITECTURE §4），拿不到浏览器的拖拽影像。
+/* 拖拽影像。B91-2 起**不再是跟随光标的浮层**，而是 `dataTransfer.setDragImage` 的
+   快照源：`tabdnd.ts` 把它离屏挂进 body → 拍快照 → 立刻摘掉，影像由**系统**绘制，
+   于是指针移出窗口、压到别的应用上照样跟着走（这正是 B64–B90 那套指针编排做不到的）。
 
-   ⚠️ 有意偏离 VS Code 一处：原生影像是标签元素的快照，非活动标签的底色本就是透明的；
-   我们的浮层要盖在编辑器/预览等任意内容上，透明底会糊成一片 —— 故补一层
-   --bg-elevated 底色 + 阴影（与弹出菜单同档），并轻微半透明以示「这是副本」。 */
+   出处：VS Code `multiEditorTabsControl.ts:1295` —— 拖单个标签（且 tabSizing 非 shrink）
+   时 `e.dataTransfer.setDragImage(tab, 0, 0)`，注释写明「把被拖标签的左上角放到光标处，
+   好给落点边框反馈让位」。本项目标签是 tabSizing: fixed（B56 起不收缩、不裁剪），
+   正落在那一档：影像 = **标签元素本身**，锚点也是左上角。
+
+   ⚠️ 有意偏离 VS Code 一处：快照要能压在编辑器/预览等任意内容上，而真实标签的底色
+   本来就跟标签栏连成一片、看着会糊 —— 故补一层 --bg-elevated 底色 + 阴影
+   （与弹出菜单同档）。 */
 .tab-drag-ghost {
+  /* 定位基准：`left/top` 由 `.tab-drag-image` 挪到屏外。用 fixed 而不是 absolute，
+     是为了让这一帧的离屏摆放**完全不参与滚动区域计算**（否则可能闪出一条滚动条）。 */
   position: fixed;
-  /* 与弹出菜单/转到行浮层同档（VS Code `.monaco-drag-image` 也是 z-index: 1000），
-     低于自绘提示层（2000）—— 提示要能盖在影像上。 */
-  z-index: 1000;
-  /* ⚠️ 绝不能拦截指针：否则鼠标划过影像会掐断其下方元素的 :hover，
-     自绘提示层也会把影像当成悬停目标。 */
-  pointer-events: none;
   /* 定宽由内容决定（fixed + flex = shrink-to-fit），影子与真标签同尺寸 */
   display: flex;
   border-radius: 4px;
@@ -1992,7 +1991,7 @@ body.tab-drag-active * {
 
 /* B72 整组拖拽：影像不再是「整条标签栏的裁剪副本」，而是 VS Code 的**聚合药丸**
    （`.monaco-drag-image`，出处 `base/browser/ui/dnd/dnd.css`）—— 只报「以谁为主 +
-   一共几个」（`a.md (+2)`）。理由见 `splitview.ts` 的 `createGroupDragGhost`：
+   一共几个」（`a.md (+2)`）。理由见 `tabstrip.ts` 的 `createGroupDragImage`：
    裁剪副本会把最后一个标签切成半个，不裁又会拖出一条盖住落点的带子。 */
 .tab-drag-ghost-group {
   /* 沿用基类的 flex（药丸 = 名字 + 计数两个 span），只把单行与尺寸收住 */
@@ -2023,6 +2022,15 @@ body.tab-drag-active * {
 }
 .tab-drag-ghost-group .tab-drag-ghost-count {
   flex: 0 0 auto;
+}
+
+/* 拍快照期间的临时容器：`startTabDrag` 拍完立刻把它摘掉，只在屏外存在一瞬。
+   ⚠️ 只挪位置、**绝不能用 display:none / visibility:hidden** —— 那样元素不渲染，
+   `setDragImage` 拍出来会是一张空图（部分 Chromium 版本对 detached 元素同样拍空）。 */
+.tab-drag-image {
+  position: fixed;
+  left: -10000px;
+  top: -10000px;
 }
 
 /* ---------- 编辑区 ---------- */

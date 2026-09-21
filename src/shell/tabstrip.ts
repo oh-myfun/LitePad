@@ -1,5 +1,5 @@
 import { showPopupMenu } from "./menu";
-import { beginTabDrag, consumeTabClickSuppressed } from "./splitview";
+import { startTabDrag, type DragImageAnchor } from "./tabdnd";
 import { fileIconSvg, familyOf } from "./fileicons";
 import { CODICONS } from "./codicons";
 import { setTip } from "./tooltip";
@@ -19,6 +19,9 @@ import { setTip } from "./tooltip";
  * （尺寸变化必须重算、活动标签拉回要门控、窗口必须铺满预算）+ ResizeObserver 记账，
  * 而这些能力**浏览器原生滚动全部自带**：布局与裁剪由 flex + overflow 自动重算，
  * 「滚到哪」由 scrollLeft 持有，不再需要模块自己维护区间。
+ *
+ * B91-2 起拖拽改回 **HTML5 DnD**（`draggable` + `dragstart` + 系统绘制影像），
+ * 传输与跨窗口交接在 `tabdnd.ts`；本模块只负责「从哪个标签起手、影像是谁」。
  */
 
 export interface TabViewData {
@@ -79,6 +82,98 @@ const wheelBound = new WeakSet<HTMLElement>();
  * 直接当像素用会几乎滚不动（deltaMode=1 时 delta 常常只有 3）。
  */
 const LINE_PX = 16;
+
+// ---------------------------------------------------------------- 拖拽影像（B91-2）
+//
+// 影像现在交给 `dataTransfer.setDragImage`，由**系统**绘制 —— 指针移出窗口、压到
+// 别的应用上照样跟着走。这正是指针编排（B64–B90）做不到的：那时影像是本窗口的一个
+// DOM 浮层，越过窗口边界就没了。
+//
+// ⚠️ 影像元素必须**已经渲染过**才能拍出图（detached 元素在部分 Chromium 版本上会拍成
+// 空图）。`startTabDrag` 负责把它离屏挂进 body、交快照、随即摘掉。
+
+/** 单标签影像锚点：光标落在影像左上角（VS Code `setDragImage(tab, 0, 0)`）。 */
+export const TAB_IMAGE_ANCHOR: DragImageAnchor = { x: 0, y: 0 };
+
+/**
+ * 整组影像锚点：光标落在药丸**内部**靠左上处（VS Code `applyDragImage` 的
+ * `setDragImage(dragImage, -10, -10)`）—— 读起来像「捏着它」而不是「挂在角上」。
+ */
+export const GROUP_IMAGE_ANCHOR: DragImageAnchor = { x: 10, y: 10 };
+
+/**
+ * 造单标签的拖拽影像：被拖标签的**副本**。
+ *
+ * ⚠️ 必须克隆而不是搬走原标签：影像期间原标签原地不动，它是用户判断「从哪儿拖的、
+ * 拖到哪儿了」的参照物。
+ */
+export function createTabDragImage(srcEl: HTMLElement): HTMLElement {
+  const ghost = document.createElement("div");
+  ghost.className = "tab-drag-ghost";
+  ghost.setAttribute("aria-hidden", "true");
+  const copy = srcEl.cloneNode(true) as HTMLElement;
+  // 副本不得带 tabId：多处逻辑「按 tabId 查元素」，留着会让查询命中副本而非真标签。
+  copy.removeAttribute("data-tab-id");
+  // 副本不是真标签：剥掉提示接线。
+  for (const el of [copy, ...copy.querySelectorAll<HTMLElement>("[data-tip]")]) {
+    el.removeAttribute("data-tip");
+    el.removeAttribute("data-tip-group");
+  }
+  // 影像里不该有可聚焦元素（外面套着 aria-hidden）。
+  copy.querySelectorAll<HTMLElement>("button").forEach((b) => (b.tabIndex = -1));
+  ghost.appendChild(copy);
+  return ghost;
+}
+
+/**
+ * 造「整组拖拽」的影像：一颗只有文字的**聚合药丸**，形如 `a.md (+2)`。
+ *
+ * 出处：`editorTabsControl.ts:487-494` —— 拖整组时 VS Code 不搬标签 DOM，而是取
+ * 「活动标签名」拼上其余数量（`localize('draggedEditorGroup', "{0} (+{1})")`），
+ * 交给 `applyDragImage` 渲染成 `.monaco-drag-image`（12px / 圆角 / 单行 / 超长省略）。
+ *
+ * ⚠️ 为什么不克隆整条标签栏（B71 的做法）：克隆出来的是一条真标签带子，
+ *   · 不裁 → 8 个标签能拖出一条横贯窗口的带子，把落点预览全盖住；
+ *   · 裁（旧 `max-width: 260px; overflow: hidden`）→ 最后一个标签被拦腰切掉半个，
+ *     看起来像「坏了」；
+ *   · 而且它和真标签长得一模一样，用户分不清「这是副本还是它们还没搬走」。
+ * 药丸只说两件事：**这一组以谁为主、一共几个**，既不遮落点也不需要裁剪。
+ *
+ * ⚠️ 有意偏离 VS Code 一处：它把 `名字 (+N)` 当成一个字符串，被 `max-width` 截断时
+ * **连计数一起吃掉**（`dnd.css` 的 120px）。而「拖的是整组、一共几个」恰恰是整组影像
+ * 唯一不可替代的信息，文件名反倒可以从标签栏上认出来 —— 所以这里拆成两个 span：
+ * 名字可截断（`overflow: hidden` + 省略号），计数永不截断（`flex: 0 0 auto`）。
+ */
+export function createGroupDragImage(strip: HTMLElement): HTMLElement {
+  const tabs = Array.from(strip.querySelectorAll<HTMLElement>(".tab"));
+  const active = strip.querySelector<HTMLElement>(".tab.tab-active") ?? tabs[0] ?? null;
+  const name = active?.querySelector<HTMLElement>(".tab-name")?.textContent?.trim() ?? "";
+  const ghost = document.createElement("div");
+  ghost.className = "tab-drag-ghost tab-drag-ghost-group";
+  ghost.setAttribute("aria-hidden", "true");
+  const nameEl = document.createElement("span");
+  nameEl.className = "tab-drag-ghost-name";
+  ghost.appendChild(nameEl);
+  // 名字读不出来（面板正在重建？）也别给一颗空药丸 —— 至少把数量说清楚
+  if (!name) {
+    nameEl.textContent = `${tabs.length} 个标签`;
+    return ghost;
+  }
+  nameEl.textContent = name;
+  // 只有一个标签时不带计数（同 VS Code 的 `count > 1` 判据）
+  if (tabs.length > 1) {
+    const countEl = document.createElement("span");
+    countEl.className = "tab-drag-ghost-count";
+    countEl.textContent = ` (+${tabs.length - 1})`;
+    ghost.appendChild(countEl);
+  }
+  return ghost;
+}
+
+/** 标签栏里有几个标签（整组拖拽的载荷与「空栏不起拖」判据共用）。 */
+export function tabCountOf(strip: HTMLElement): number {
+  return strip.querySelectorAll(".tab").length;
+}
 
 export function renderTabstrip(
   host: HTMLElement,
@@ -281,20 +376,27 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
     });
   }
 
-  // 拖拽：指针事件序列（mousedown 阈值进入拖拽，mousemove 预览，mouseup 提交），
-  // 具体落点逻辑在 splitview.ts。不用 HTML5 DnD——Windows 上 WebView2 原生拖放
-  // 钩子（dragDropEnabled，文件拖入打开需要它）会禁用页面内 HTML5 DnD。
-  el.addEventListener("mousedown", (e) => {
-    if (e.button !== 0) return; // 仅左键启动拖拽（中键关闭已有独立处理器）
-    if ((e.target as HTMLElement).closest(".tab-close")) return; // × 上不拖
-    beginTabDrag(t.tabId, e, el);
+  // B91-2：拖拽改回 HTML5 DnD。`draggable` 让浏览器接管整段手势（越过阈值自动进入
+  // 拖拽、松手自动结束），影像由系统绘制后就能跟出窗口。传输与跨窗口交接见 tabdnd.ts。
+  // ⚠️ 影像里的 × 是按钮：从它上面起拖会让用户「点关闭却拖走了标签」，显式挡掉。
+  el.draggable = true;
+  el.addEventListener("dragstart", (e) => {
+    const onCloseBtn = e.target instanceof Element && e.target.closest(".tab-close") !== null;
+    if (onCloseBtn) {
+      e.preventDefault();
+      return;
+    }
+    startTabDrag(
+      e,
+      { tabId: t.tabId, groupPanelId: null, count: 1, name: t.name },
+      createTabDragImage(el),
+      TAB_IMAGE_ANCHOR,
+    );
   });
 
   el.append(icon, name, action);
-  el.addEventListener("click", () => {
-    if (consumeTabClickSuppressed()) return; // 拖拽提交后的 click 不激活
-    cb.onActivate(t.tabId);
-  });
+  // HTML5 拖拽结束后浏览器不会补发 click，所以这里不再需要「吞掉拖拽后那次点击」
+  el.addEventListener("click", () => cb.onActivate(t.tabId));
   return el;
 }
 

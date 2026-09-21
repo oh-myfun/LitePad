@@ -109,3 +109,51 @@
   `windows.rs`），要么 `existsSync` 后跳过并**在注释里写明「跳过 ≠ 通过」**。
 - ⚠️ **卫星窗口必须照抄主窗口的 WebView2 浏览器参数**（B72）—— 根因与修法见
   **`adr/0072-webview2-shared-env.md`**（不照抄的表现是**根本建不出窗口**）。
+
+### 9.4.2 Windows 上「影像跟出窗口」的两处劫持与三条路线（调研，2026-09-21）
+
+- **wry 0.55.1 实证**（`wry/src/webview2/mod.rs` 与 `webview2/drag_drop.rs`）：`dragDropEnabled: true`
+  时装 handler 会做两件事 —— ① `controller.SetAllowExternalDrop(false)`（源码注释原文
+  "Disable file drops, so our handler can capture it"），**页内 HTML5 拖放熄火的真凶是这一刀**，
+  不是 `RegisterDragDrop`；② `EnumChildWindows` 遍历子窗口逐个 `RevokeDragDrop` +
+  `RegisterDragDrop`，**覆盖 WebView2 自身的拖放目标**。
+- wry 的 target 只认 `CF_HDROP`（`DragDropTarget::iterate_filenames` 取不到即返回 `DROPEFFECT_NONE`）
+  → 任何非文件拖放在自家窗口上都显示禁止光标。`dragDropEnabled: false` 时 wry **完全不动**
+  `AllowExternalDrop`（保持默认 true）→ 页内 DnD 恢复，代价是拖入文件只能读、拿不到路径。
+- 所以**不存在「把开关掰成两半」的解法**，只有三条路线（对比与取舍见当日日志 `2026-09-21.md`）：
+  B 置顶穿透浮层窗承载影像（改动小、与现有 IPC 协议兼容）；C Rust 侧自建 `DoDragDrop` +
+  `IDragSourceHelper` 出系统影像并接管 drop target（最像 VS Code，unsafe COM 最多）；
+  D `dragDropEnabled: false` 换回 HTML5 DnD（Chromium 自带跟手影像）+ 低级鼠标钩子抢 `CF_HDROP` 补路径。
+- ⚠️ **路线 D 有未验证前提**：WebView2 里 HTML5 拖放的影像是否真跟出窗口（Chromium 走
+  `IDragSourceHelper`，是窗口外的系统层绘制，理论上会跟）。要走 D 必须先做一次 spike。
+- 路线 B 所需 API 在 tauri 2.11.5 齐备：`set_ignore_cursor_events` / `set_always_on_top` /
+  `set_skip_taskbar` / `set_shadow` / `set_focusable`（`src/webview/webview_window.rs`）。
+- 网络备用线路：`github.com:443` 偶发不通，但 **`ssh.github.com:443` 稳定可连、SSH 认证通过
+  （`oh-myfun`）** —— 推送卡住时改用
+  `git push ssh://git@ssh.github.com:443/oh-myfun/LitePad.git main --follow-tags`。
+
+### 9.4.3 三方库调研：缺口的拼图都是现成的（2026-09-21）
+
+- **没有单个库能同时给「文件拖入拿路径」+「跨窗口拖拽影像」** —— 限制在 WebView2 host 层，不在库层。
+  但缺口的每一块都有现成实现，可以拼出「两件事都要」的方案。
+- 🎯 **关键拼图（路线 D 的解法）**：WebView2 官方 API `window.chrome.webview.postMessageWithAdditionalObjects`
+  + Rust 侧 `ICoreWebView2WebMessageReceivedEventArgs2::AdditionalObjects()` → cast 到 `ICoreWebView2File`
+  → `.Path()` 拿到**真实文件路径**。**在 `dragDropEnabled: false` 的前提下就能拿到路径** ——
+  不需要 yyzTools 那套全局低级鼠标钩子，也不需要自研 CF_HDROP 拦截。
+  已有 `tauri-plugin-windows-file-drop` 0.1.0（MIT，2026-08-30）用它做了桥接，**发出的事件名就是
+  `tauri://drag-drop`、载荷也是 `{paths, position}`** → `main.ts` 的 `onDragDropEvent` 零改动。
+  ⚠️ 但该库只能当**参考实现抄**，不能当依赖：0.1.0 / 17 次下载 / 单人 / 无文档；而且**发布的源码里
+  注入脚本多了一个 `}`**（`src/desktop.rs:24` 的 `}}`，README 里的同一段是平衡的）→ 注入脚本语法错误，
+  而 `ExecuteScript` 的错误被 `let _ =` 吞掉，按发布版大概率根本不生效。另有「Tauri 收到同一条 web message
+  会打 JSON error」的已知噪音。最低 WebView2 运行时版本（约 1.0.1774+）与 `FileList` 是否可直接当数组传需实测。
+- 🔁 **拖拽层（若要重写成 HTML5 DnD）**：`@atlaskit/pragmatic-drag-and-drop` 3.1.0（Trello/Jira/Confluence
+  在用，2026-08-29 仍在更新）= 基于原生 HTML5 DnD 的工具箱；external adapter 明确覆盖「从其它窗口开始的
+  拖拽」与「从 OS 拖入的文件」，`onGenerateDragPreview` 可定制原生拖拽影像。
+- 🖼️ **原生拖拽影像（路线 C 的源侧）**：`drag` 2.1.1 / `tauri-plugin-drag` 2.1.1（CrabNebula，2026-05 更新，
+  12 万下载）= Rust 侧 `DoDragDrop` + `IDragSourceHelper`（`CLSID_DragDropHelper`）→ **影像由系统绘制、
+  天然跟手**（`platform_impl/windows/mod.rs` 390 行，可直接当参考实现）。但取向是「文件/数据拖出」，
+  落点侧仍要自己接。同仓库 `tauri-plugin-drag-as-window` 2.1.1（html2canvas 抓 DOM + 拖动时开窗）≈ 路线 B
+  的现成参考实现，但 6 千下载、npm 绑定停在 2025-02。
+- 结论倾向：**路线 D 从「高风险」变成「可行性最高且最像 VS Code」** —— `dragDropEnabled: false`
+  让页内 HTML5 DnD 复活（影像由 Chromium 交给系统画、天然跟出窗口），路径用上面的 130 行桥接补回。
+  代价是重写 B89/B90 的拖拽层（含测试），并且**拖拽影像是否真跟出窗口仍需一次 spike 实测**。

@@ -1,6 +1,13 @@
 import type { LayoutNode } from "./layout";
 import { CODICONS } from "./codicons";
-import { renderTabstrip, type TabViewData } from "./tabstrip";
+import {
+  GROUP_IMAGE_ANCHOR,
+  createGroupDragImage,
+  renderTabstrip,
+  tabCountOf,
+  type TabViewData,
+} from "./tabstrip";
+import { startTabDrag, type TabDragPayload } from "./tabdnd";
 import { setTip } from "./tooltip";
 
 /**
@@ -68,38 +75,6 @@ export interface SplitviewCallbacks {
   /** B71 ④：把标签放到新窗口 / 从卫星窗口交回主窗口 */
   onOpenTabInNewWindow?: (tabId: number) => void;
   onReturnTabToMain?: (tabId: number) => void;
-  /**
-   * B89：拖拽途中指针**在窗口外**时，每次移动都通知一次（宿主据此广播指针位置，
-   * 让别的窗口亮预览）。
-   *
-   * ⚠️ 这里只准做「告知」，不准产生任何副作用 —— 出界就生效正是用户报的毛病
-   * （擦过另一个窗口的面板就被合入）。真正的搬运一律等 `onDropOutOfWindow`。
-   */
-  onDragOutside?: (drag: {
-    tabId: number;
-    groupPanelId: number | null;
-    clientX: number;
-    clientY: number;
-  }) => void;
-  /**
-   * B89：**松手**时指针在窗口外。宿主决定去哪儿：
-   *   · 别的 LitePad 窗口接手了 → 交给它（具体面板/分屏位置由那边算）；
-   *   · 没人接手（扔在桌面上）→ 回落到旧语义（主窗口开新窗口，卫星窗口交回主窗口）。
-   */
-  onDropOutOfWindow?: (drag: {
-    tabId: number;
-    groupPanelId: number | null;
-    clientX: number;
-    clientY: number;
-  }) => void;
-  /**
-   * B90：一次拖拽**收尾**的统一通知（松手、失焦取消、下一次拖拽前的强制清场都走这里）。
-   *
-   * 宿主据此广播「拖拽结束」，让**别的窗口**收掉它们亮着的落点预览。之前只在
-   * 「松手在窗外」这条路径上收尾，于是「拖出去又拖回本窗口松手」会在另一个窗口
-   * 留下一块高亮，久久不散。
-   */
-  onDragEnd?: () => void;
   /** 拖拽标签落在 tab 区（B27）：插到 beforeTabId 之前（null = 追加到末尾）。
    *  同面板 = 调整顺序；跨面板 = 移动到该面板的该位置。不是分屏。 */
   onMoveTabToStrip: (panelId: number, tabId: number, beforeTabId: number | null) => void;
@@ -137,213 +112,15 @@ export function renderSplitview(
 /** 当前布局回调（单一布局区；指针拖拽的落点提交需要访问 onDropTabToPanel）。 */
 let svCallbacks: SplitviewCallbacks | null = null;
 
-// ---------------------------------------------------------------- 标签指针拖拽
-// 说明：标签拖拽不用 HTML5 DnD——Windows 上 WebView2 开启原生拖放钩子
-// （dragDropEnabled，文件拖入需要它）会让页面内 HTML5 DnD 全部失效。
-// 改用 mousedown/mousemove/mouseup 指针序列自行编排，落点判定与预览逻辑不变。
-// 代价之一：没有浏览器自带的拖拽影像 → B64 自己造一个跟随光标的标签副本
-// （`createDragGhost`，对齐 VS Code 的 `setDragImage(tab, 0, 0)`）。
-
-/** 移动超过该距离才进入拖拽（否则保持点击激活语义）。 */
-const DRAG_THRESHOLD = 5;
-
-/**
- * 指针要越过窗口边界这么多像素才算「想扔到另一个窗口」。
- *
- * 为什么不直接用「出界」当判据：贴着窗口边缘拖动（尤其是最大化的窗口，边缘就是屏幕
- * 边缘）时指针很容易擦出去几十毫秒，那会莫名其妙弹出一个新窗口。留一段余量，把
- * 「擦边」和「真的拖出去」区分开。
- */
-const DRAG_OUT_MARGIN = 24;
-
-interface TabDragState {
-  tabId: number;
-  startX: number;
-  startY: number;
-  active: boolean;
-  /**
-   * B89：指针此刻是否在**窗口外**。
-   *
-   * 只用来决定「松手时该走窗口内落点还是跨窗口」，不触发任何副作用——出界瞬间就
-   * 把标签送走的做法已被 B89 废掉（见 `onDragOutside` 的注释）。
-   */
-  outOfWindow: boolean;
-  /** 被拖的标签元素：越过阈值后据此造「跟随光标的副本」。 */
-  tabEl: HTMLElement | null;
-  /**
-   * B71：非 null = **拖整组**（从标签栏空白处起手，对标 VS Code 的
-   * `editorTabsControl.onGroupDragStart`：只有 `e.target === tabsContainer` 才算整组）。
-   * 此时 tabId 无意义（传 -1），落点按「整个面板」处理。
-   */
-  groupPanelId: number | null;
-}
-let tabDrag: TabDragState | null = null;
-let suppressTabClick = false;
-
-/**
- * tabstrip 的 mousedown 调用：开始观察一次潜在的标签拖拽。
- * `tabEl` = 标签元素本身（拖拽影像要克隆它）。缺省时从事件目标反查；
- * 两者都没有就不显示影像，拖拽本身照常工作。
- */
-export function beginTabDrag(
-  tabId: number,
-  e: MouseEvent,
-  tabEl: HTMLElement | null = null,
-  groupPanelId: number | null = null,
-): void {
-  if (tabDrag) finishTabDrag(); // 上一次拖拽未正常收尾（如释放到窗外）→ 先强制清场
-  suppressTabClick = false;
-  tabDrag = {
-    tabId,
-    startX: e.clientX,
-    startY: e.clientY,
-    active: false,
-    outOfWindow: false,
-    tabEl: tabEl ?? tabElFrom(e.target),
-    groupPanelId,
-  };
-  document.addEventListener("mousemove", onTabDragMove);
-  document.addEventListener("mouseup", onTabDragEnd);
-  // 拖到窗口外松手时 mouseup 收不到 → 窗口失焦即视为取消，顺手清掉浮动影像。
-  window.addEventListener("blur", finishTabDrag);
-}
-
-/** 事件目标可能是图标/文件名等子元素 → 反查它所在的标签。 */
-function tabElFrom(target: EventTarget | null): HTMLElement | null {
-  return target instanceof Element ? target.closest<HTMLElement>(".tab") : null;
-}
-
-/** 拖拽中跟随光标的浮动影像（`.tab-drag-ghost`）；非拖拽期为 null。 */
-let dragGhost: HTMLElement | null = null;
-
-/**
- * 影像左上角相对指针的偏移（像素）。
- *
- * 两种影像的锚点不同，各自对标 VS Code 的一处 `setDragImage`：
- *   · 单标签副本 = `setDragImage(tab, 0, 0)`（`multiEditorTabsControl.ts:1295`，
- *     注释写明「把被拖标签的左上角放到光标处，好给落点边框反馈让位」）→ 偏移 0；
- *   · 整组药丸 = `applyDragImage` 里的 `setDragImage(dragImage, -10, -10)`
- *     （`dnd.ts:27`）→ 指针落在药丸**内部**靠左上处，读起来像「捏着它」而不是
- *     「挂在角上」。
- */
-const GHOST_ANCHOR_TAB = { x: 0, y: 0 };
-const GHOST_ANCHOR_PILL = { x: 10, y: 10 };
-let dragGhostAnchor = GHOST_ANCHOR_TAB;
-
-/**
- * 造一个「跟随光标的标签副本」—— 对标 VS Code 的**单标签**拖拽影像。
- *
- * ⚠️ 必须**克隆**而不是搬走原标签：VS Code 的原生影像期间原标签原地不动，
- * 它是用户判断「从哪儿拖的、拖到哪儿了」的参照物。
- *
- * ⚠️ 为什么自己造浮层：我们是指针事件自己编排拖拽（Windows 上 WebView2 的原生拖放
- * 钩子会禁用页面内 HTML5 DnD，见 ARCHITECTURE §4），拿不到浏览器的拖拽影像。
- */
-function createDragGhost(srcEl: HTMLElement): HTMLElement {
-  const ghost = document.createElement("div");
-  ghost.className = "tab-drag-ghost";
-  ghost.setAttribute("aria-hidden", "true");
-  const copy = srcEl.cloneNode(true) as HTMLElement;
-  // 副本不得带 tabId：多处逻辑「按 tabId 查元素」，留着会让查询命中副本而非真标签。
-  copy.removeAttribute("data-tab-id");
-  // 副本不是真标签：剥掉提示接线。眼下靠外层 pointer-events:none 已经收不到
-  // 悬停，但那是「隐式」保护 —— 哪天提示改成 elementFromPoint 就会静默复活。
-  for (const el of [copy, ...copy.querySelectorAll<HTMLElement>("[data-tip]")]) {
-    el.removeAttribute("data-tip");
-    el.removeAttribute("data-tip-group");
-  }
-  // 影像里不该有可聚焦元素（外面套着 aria-hidden）。
-  copy.querySelectorAll<HTMLElement>("button").forEach((b) => (b.tabIndex = -1));
-  ghost.appendChild(copy);
-  return ghost;
-}
-
-/**
- * 造「整组拖拽」的影像：一颗只有文字的**聚合药丸**，形如 `a.md (+2)`。
- *
- * 出处：`editorTabsControl.ts:487-494` —— 拖整组时 VS Code 不搬标签 DOM，而是取
- * 「活动标签名」拼上其余数量（`localize('draggedEditorGroup', "{0} (+{1})")`），
- * 交给 `applyDragImage` 渲染成 `.monaco-drag-image`（12px / 圆角 / 单行 / 超长省略）。
- *
- * ⚠️ 为什么不再克隆整条标签栏（B71 的做法）：克隆出来的是一条真标签带子，
- *   · 不裁 → 8 个标签能拖出一条横贯窗口的带子，把落点预览全盖住；
- *   · 裁（旧 `max-width: 260px; overflow: hidden`）→ 最后一个标签被拦腰切掉半个，
- *     看起来像「坏了」；
- *   · 而且它和真标签长得一模一样，用户分不清「这是副本还是它们还没搬走」。
- * 药丸只说两件事：**这一组以谁为主、一共几个**，既不遮落点也不需要裁剪。
- *
- * ⚠️ 有意偏离 VS Code 一处：它把 `名字 (+N)` 当成一个字符串，被 `max-width` 截断时
- * **连计数一起吃掉**（`dnd.css` 的 120px）。而「拖的是整组、一共几个」恰恰是整组影像
- * 唯一不可替代的信息，文件名反倒可以从标签栏上认出来 —— 所以这里拆成两个 span：
- * 名字可截断（`overflow: hidden` + 省略号），计数永不截断（`flex: 0 0 auto`）。
- */
-function createGroupDragGhost(strip: HTMLElement): HTMLElement {
-  const tabs = Array.from(strip.querySelectorAll<HTMLElement>(".tab"));
-  const active = strip.querySelector<HTMLElement>(".tab.tab-active") ?? tabs[0] ?? null;
-  const name = active?.querySelector<HTMLElement>(".tab-name")?.textContent?.trim() ?? "";
-  const ghost = document.createElement("div");
-  ghost.className = "tab-drag-ghost tab-drag-ghost-group";
-  ghost.setAttribute("aria-hidden", "true");
-  const nameEl = document.createElement("span");
-  nameEl.className = "tab-drag-ghost-name";
-  ghost.appendChild(nameEl);
-  // 名字读不出来（面板正在重建？）也别给一颗空药丸 —— 至少把数量说清楚
-  if (!name) {
-    nameEl.textContent = `${tabs.length} 个标签`;
-    return ghost;
-  }
-  nameEl.textContent = name;
-  // 只有一个标签时不带计数（同 VS Code 的 `count > 1` 判据）
-  if (tabs.length > 1) {
-    const countEl = document.createElement("span");
-    countEl.className = "tab-drag-ghost-count";
-    countEl.textContent = ` (+${tabs.length - 1})`;
-    ghost.appendChild(countEl);
-  }
-  return ghost;
-}
-
-/** 影像左上角跟到光标处（锚点语义见 `GHOST_ANCHOR_*`）。 */
-/**
- * 影像跟随光标。
- *
- * ⚠️ **不做任何夹取**（B90 回退了 B89 的「出界贴边」）：用户要的是影像始终精确跟着
- * 指针。指针拖到客户区外之后影像确实看不见了（它是本窗口的 DOM），但那是窗口的
- * 边界，不是拖拽的边界 —— 把它钉在边缘反而会让「指针在哪」和「影像在哪」对不上。
- */
-function moveDragGhost(x: number, y: number): void {
-  if (!dragGhost) return;
-  dragGhost.style.left = `${x - dragGhostAnchor.x}px`;
-  dragGhost.style.top = `${y - dragGhostAnchor.y}px`;
-}
-
-function removeDragGhost(): void {
-  dragGhost?.remove();
-  dragGhost = null;
-  dragGhostAnchor = GHOST_ANCHOR_TAB;
-}
-
-/** click 处理器调用：刚完成一次真实拖拽时吞掉紧随的 click（避免拖完又激活标签）。 */
-export function consumeTabClickSuppressed(): boolean {
-  const v = suppressTabClick;
-  suppressTabClick = false;
-  return v;
-}
-
-/**
- * 指针是否已经拖出窗口客户区（留 `DRAG_OUT_MARGIN` 余量，防擦边误触）。
- *
- * 用客户区尺寸而不是 `screenX/screenY` 比较：后者在多显示器下是相对**当前显示器**
- * 的坐标，主窗口与卫星窗口算出来的口径不一致，判据会时灵时不灵。
- */
-export function outsideWindow(x: number, y: number): boolean {
-  return (
-    x < -DRAG_OUT_MARGIN ||
-    y < -DRAG_OUT_MARGIN ||
-    x > window.innerWidth + DRAG_OUT_MARGIN ||
-    y > window.innerHeight + DRAG_OUT_MARGIN
-  );
-}
+// ---------------------------------------------------------------- 标签拖拽
+// B91-2 起走 **HTML5 DnD**（`draggable` + `dragstart`/`dragover`/`drop`），不再是指针
+// 事件编排。换的理由只有一个但很硬：**影像要跟出窗口**。指针编排里影像是本窗口的一个
+// DOM 浮层（B64 的 `.tab-drag-ghost`），指针一越过窗口边界就看不见了；HTML5 的影像由
+// **系统**绘制，压在别的应用上照样跟着走。
+// 运输与跨窗口交接整体搬去 `tabdnd.ts`；本模块只留两件事：
+//   · 落点判定与预览（`previewDropAt`）—— 窗口内与跨窗口共用同一份实现；
+//   · 落点提交（`commitTabDrop`）—— 把一次松手翻译成 排序 / 分屏 / 并入 的调用。
+// 影像构造（标签副本、整组药丸）在 `tabstrip.ts`：它更贴近「标签长什么样」。
 
 /** 指针位置命中的面板（手动几何判定，jsdom 无布局也可测）。 */
 export function panelAt(x: number, y: number): HTMLElement | null {
@@ -443,9 +220,8 @@ export interface DropSpot {
 /**
  * 在 (x, y) 画落点预览，并把算出来的落点交回调用方。
  *
- * 两个调用方，同一套判定（不各写一份，免得窗口内和跨窗口的落点语义走偏）：
- *   · 本窗口拖拽的 mousemove（`onTabDragMove`）；
- *   · **别的窗口**拖着标签悬停到本窗口时（`windowdrag` 的接收侧，B89）。
+ * 调用方只有一处 —— `tabdnd.ts` 的页面级 dragover/drop。窗口内拖拽与**别的窗口**
+ * 拖过来的标签都走它，落点语义因此天然一致，不会「窗口内一种、跨窗口另一种」。
  *
  * 每次都先全清再画：拖拽途中「上一个面板的预览」必须消失，否则会同时亮两块。
  */
@@ -471,123 +247,71 @@ export function previewDropAt(x: number, y: number, altKey = false): DropSpot | 
   return { panelId, zone: effZone, beforeTabId: null };
 }
 
-function onTabDragMove(e: MouseEvent): void {
-  if (!tabDrag) return;
-  if (!tabDrag.active) {
-    if (Math.hypot(e.clientX - tabDrag.startX, e.clientY - tabDrag.startY) < DRAG_THRESHOLD) {
-      return;
-    }
-    tabDrag.active = true;
-    // 拖拽光标 + 禁止文本选区（指针拖拽没有原生 DnD 的光标/选区豁免）
-    document.body.classList.add("tab-drag-active");
-    // 越过阈值才算真的在拖 → 这时才亮出影像（纯点击不该闪出一个副本）
-    if (tabDrag.tabEl) {
-      // B71：整组拖拽时 tabEl 是**整个标签栏**（VS Code 的 group drag image 也是
-      // 从 group 取的），B72 起整组改用药丸影像（见 createGroupDragGhost）。
-      const group = tabDrag.groupPanelId !== null;
-      dragGhost = group ? createGroupDragGhost(tabDrag.tabEl) : createDragGhost(tabDrag.tabEl);
-      dragGhostAnchor = group ? GHOST_ANCHOR_PILL : GHOST_ANCHOR_TAB;
-      document.body.appendChild(dragGhost);
-    }
-  }
-  // 影像跟随光标。⚠️ 必须放在下面「离开面板就 return」**之前** —— 拖到面板之外
-  // （空白区、状态栏上方、乃至窗口之外）时影像同样要跟着走，否则会僵在最后一个面板上。
-  const outside = outsideWindow(e.clientX, e.clientY);
-  // 坐标**原样**给影像：出界也照跟（B90）
-  moveDragGhost(e.clientX, e.clientY);
-  // B89：出界**不再**立刻把标签送走 —— 那正是用户报的毛病（指针擦过另一个窗口的
-  // 某块面板就被合入，根本没法挑落点）。这里只记状态 + 通知宿主广播指针位置，
-  // 让**目标窗口**自己亮预览；真正的搬运一律等松手（`onDropOutOfWindow`）。
-  if (outside) {
-    if (!tabDrag.outOfWindow) {
-      // 刚出界：本窗口的预览/插入线必须收掉，否则会和目标窗口的预览同时亮着，
-      // 看起来像「两个地方都要接住它」。
-      clearAllPreviews();
-      clearInsertIndicators();
-    }
-    tabDrag.outOfWindow = true;
-    svCallbacks?.onDragOutside?.({
-      tabId: tabDrag.tabId,
-      groupPanelId: tabDrag.groupPanelId,
-      clientX: e.clientX,
-      clientY: e.clientY,
-    });
-    return;
-  }
-  tabDrag.outOfWindow = false;
-  // 落点判定与预览只有一份实现（跨窗口悬停时由 windowdrag 的接收侧复用同一函数）
-  previewDropAt(e.clientX, e.clientY, e.altKey);
+/** 一次落点提交（HTML5 `drop` 处理器调用）。 */
+export interface TabDropRequest {
+  payload: TabDragPayload;
+  x: number;
+  y: number;
+  altKey: boolean;
+  ctrlKey: boolean;
 }
 
-function onTabDragEnd(e: MouseEvent): void {
-  const drag = tabDrag;
-  finishTabDrag();
-  if (!drag || !drag.active) return; // 未超阈值：无拖拽发生，click 正常触发激活
-  if (!svCallbacks) return;
-  suppressTabClick = true;
-  // B89：松手时指针在窗外 → 交给宿主。它可能把标签交给另一个窗口（那边算落点），
-  // 也可能没人接手而回落成「开新窗口 / 交回主窗口」。拖拽层不关心是哪一种。
-  if (drag.outOfWindow) {
-    svCallbacks.onDropOutOfWindow?.({
-      tabId: drag.tabId,
-      groupPanelId: drag.groupPanelId,
-      clientX: e.clientX,
-      clientY: e.clientY,
-    });
-    return;
-  }
-  const panelEl = panelAt(e.clientX, e.clientY);
-  if (!panelEl) return;
+/**
+ * 把「松手在本窗口」翻译成具体动作（排序 / 分屏 / 并入）。
+ *
+ * 运输方式换过两次（B71 指针 → B89 指针 + 跨窗口交接 → B91-2 HTML5 DnD），这一段
+ * 语义一次都没动过：它只认「落点在哪块面板的什么位置」，与拖拽是怎么送过来的无关。
+ *
+ * 返回 false = 这块地方不收标签（面板之间的空白、状态栏上方…）。**调用方不得据此
+ * 回落** —— 窗口内松手却弹出个新窗口是最糟的失败模式。
+ */
+export function commitTabDrop(req: TabDropRequest): boolean {
+  if (!svCallbacks) return false;
+  const panelEl = panelAt(req.x, req.y);
+  if (!panelEl) return false;
   const panelId = Number(panelEl.dataset.panelId);
+  const groupPanelId = req.payload.groupPanelId;
 
   // B71：拖整组（从标签栏空白处起手）。落点只有两种语义：
   //   落在别的面板的标签区 / 中心 → 整组并入；落在边缘 → 整组搬到新分屏位置。
   // 拖回自己所在面板 = 无操作（VS Code 也是这样，不做「原地重排」）。
-  if (drag.groupPanelId !== null) {
-    if (drag.groupPanelId === panelId) return;
-    const overStrip = stripUnder(panelEl, e.clientX, e.clientY);
-    const zone = zoneOf(panelEl.getBoundingClientRect(), e.clientX, e.clientY);
+  if (groupPanelId !== null) {
+    if (groupPanelId === panelId) return false;
+    const overStrip = stripUnder(panelEl, req.x, req.y);
+    const zone = zoneOf(panelEl.getBoundingClientRect(), req.x, req.y);
     // O5：Alt = 临时取消分屏 → 边缘落点按 center（= 并入）处理
-    const eff = e.altKey ? "center" : zone;
+    const eff = req.altKey ? "center" : zone;
     if (overStrip || eff === "center") {
-      svCallbacks?.onMergeGroup?.(drag.groupPanelId, panelId);
-      return;
+      svCallbacks.onMergeGroup?.(groupPanelId, panelId);
+      return true;
     }
-    svCallbacks?.onMoveGroupToPanel?.(
-      drag.groupPanelId,
+    svCallbacks.onMoveGroupToPanel?.(
+      groupPanelId,
       panelId,
       eff === "left" || eff === "right" ? "h" : "v",
       eff === "left" || eff === "top",
     );
-    return;
+    return true;
   }
 
   // B27：落在 tab 区 = 排序/移动（绝不分屏）
-  const strip = stripUnder(panelEl, e.clientX, e.clientY);
+  const strip = stripUnder(panelEl, req.x, req.y);
   if (strip) {
-    const info = stripInsertInfo(strip, e.clientX);
-    if (info) svCallbacks?.onMoveTabToStrip(panelId, drag.tabId, info.beforeTabId);
-    return;
+    const info = stripInsertInfo(strip, req.x);
+    if (info) svCallbacks.onMoveTabToStrip(panelId, req.payload.tabId, info.beforeTabId);
+    return true;
   }
-  const zone = zoneOf(panelEl.getBoundingClientRect(), e.clientX, e.clientY);
-  const over = tabUnder(panelEl, e.clientX, e.clientY);
+  const zone = zoneOf(panelEl.getBoundingClientRect(), req.x, req.y);
+  const over = tabUnder(panelEl, req.x, req.y);
   // O5：Alt 按住 = 取消分屏 → 边缘落点按 center 处理（同面板即 no-op，跨面板即移入）。
-  svCallbacks?.onDropTabToPanel?.(drag.tabId, panelId, e.altKey ? "center" : zone, over, e.ctrlKey);
-}
-
-function finishTabDrag(): void {
-  const cb = svCallbacks;
-  tabDrag = null;
-  document.body.classList.remove("tab-drag-active");
-  document.removeEventListener("mousemove", onTabDragMove);
-  document.removeEventListener("mouseup", onTabDragEnd);
-  window.removeEventListener("blur", finishTabDrag);
-  removeDragGhost();
-  clearAllPreviews();
-  clearInsertIndicators();
-  // B90：不管这次拖拽是怎么结束的（松手 / 失焦 / 下一次拖拽前强制清场），都要让宿主
-  // 知道「没了」—— 别的窗口可能还亮着为它准备的落点预览。
-  cb?.onDragEnd?.();
+  svCallbacks.onDropTabToPanel?.(
+    req.payload.tabId,
+    panelId,
+    req.altKey ? "center" : zone,
+    over,
+    req.ctrlKey,
+  );
+  return true;
 }
 
 /** build 的产物：元素 + （仅 split 节点）其根分隔条、a/b 子元素与**已注册的缩放目标**，
@@ -752,11 +476,23 @@ function buildPanel(
   // 唯一面板时禁用。
   // B71：**拖标签栏空白处 = 拖整组**（VS Code `onGroupDragStart` 要求
   // `e.target === tabsContainer`，也就是只能从标签之间的空隙起手）。
-  // 起手点判据必须是「事件目标就是容器本身」——命中任何 .tab 都归单标签拖拽。
-  strip.addEventListener("mousedown", (e) => {
-    if (e.button !== 0) return;
+  // 起手点判据必须是「事件目标就是容器本身」——命中任何 .tab 都归单标签拖拽
+  // （.tab 是更近的 draggable，浏览器自己就把 dragstart 派给了它，不会冒泡到这里）。
+  strip.draggable = true;
+  strip.addEventListener("dragstart", (e) => {
     if (e.target !== strip) return;
-    beginTabDrag(-1, e, strip, panelId);
+    const n = tabCountOf(strip);
+    // 空标签栏没什么可拖的：挡掉，免得弹出一颗「0 个标签」的药丸
+    if (n === 0) {
+      e.preventDefault();
+      return;
+    }
+    startTabDrag(
+      e,
+      { tabId: -1, groupPanelId: panelId, count: n },
+      createGroupDragImage(strip),
+      GROUP_IMAGE_ANCHOR,
+    );
   });
 
   const ops = document.createElement("div");
@@ -815,8 +551,8 @@ function buildPanel(
   if (panel) panel.append(preview);
 
   panel.addEventListener("mousedown", () => cb.onActivatePanel(panelId));
-  // 注意：外部文件拖入走 WebView2 原生拖放（tauri.conf.json dragDropEnabled: true
-  // + main.ts 的 onDragDropEvent），页面内不再处理 drop——标签拖拽已改为指针事件。
+  // 注意：外部文件拖入由页面级监听统一收（filedrop.ts 的 installFileDropTarget，
+  // B91 起 tauri.conf.json 里 dragDropEnabled: false），面板自己不处理 drop。
 
   panel.append(head, host);
   return panel;

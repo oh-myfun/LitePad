@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { EditorView } from "@codemirror/view";
+import { fireDrag, makeDataTransfer } from "./dnd";
 
 // ---- 注入真实 index.html 的 DOM 结构（启动前必须存在）----
 beforeAll(() => {
@@ -198,7 +199,7 @@ vi.mock("../src/ipc/api", () => ({
   discardOrphanBackups: () => Promise.resolve(0),
 }));
 
-// 指针事件序列（标签拖拽已从 HTML5 DnD 改为 mousedown/mousemove/mouseup 编排）
+// 指针事件构造（点击、分隔条缩放等仍走指针序列）
 function mouse(type: string, x: number, y: number, ctrlKey = false): MouseEvent {
   return new MouseEvent(type, {
     bubbles: true,
@@ -246,7 +247,14 @@ function installRectStubs(): () => void {
   };
 }
 
-/** 模拟一次标签拖拽：mousedown(标签) → mousemove(落点) → mouseup(落点)。 */
+/**
+ * 模拟一次标签拖拽：dragstart(标签) → dragover(落点) → drop(落点) → dragend(标签)。
+ *
+ * B91-2：标签拖拽从指针编排换回 HTML5 DnD，所以这里是拖放事件序列而不是鼠标序列。
+ * ⚠️ 全程必须用**同一个 dataTransfer**：载荷（含 dragId）在 dragstart 里写进去、drop
+ * 时再读出来。换一个实例，`from` 就对不上，drop 会被当成「别的窗口拖来的」，
+ * 于是本地什么都不发生 —— 表现出来就是「拖了没反应」。
+ */
 function dragTab(
   tab: HTMLElement,
   fromX: number,
@@ -255,12 +263,17 @@ function dragTab(
   toY: number,
   ctrlKey = false,
 ): void {
-  tab.dispatchEvent(mouse("mousedown", fromX, fromY));
-  document.dispatchEvent(
-    mouse("mousemove", Math.round((fromX + toX) / 2), Math.round((fromY + toY) / 2), ctrlKey),
-  );
-  document.dispatchEvent(mouse("mousemove", toX, toY, ctrlKey));
-  document.dispatchEvent(mouse("mouseup", toX, toY, ctrlKey));
+  const dt = makeDataTransfer();
+  fireDrag("dragstart", tab, dt, { clientX: fromX, clientY: fromY });
+  // dragover 中途一次再直接落点一次：与真实拖拽的形状一致（也顺带压过 40ms 节流）
+  fireDrag("dragover", document, dt, {
+    clientX: Math.round((fromX + toX) / 2),
+    clientY: Math.round((fromY + toY) / 2),
+    ctrlKey,
+  });
+  fireDrag("dragover", document, dt, { clientX: toX, clientY: toY, ctrlKey });
+  fireDrag("drop", document, dt, { clientX: toX, clientY: toY, ctrlKey });
+  fireDrag("dragend", tab, dt, { clientX: toX, clientY: toY, ctrlKey });
 }
 
 /** 真实点击 = mousedown + click（mousedown 会重置拖拽吞击标记）。 */
@@ -328,15 +341,15 @@ describe("bootstrap + drag-split smoke", () => {
 
     // 面板横向排布桩：panel1 左缘在 210，落点 (215,100) → 面板1 左侧区域
     const restoreRects = installRectStubs();
-    // 拖拽光标：进入拖拽态后 body 必须带 tab-drag-active（grabbing 光标），松手移除
-    tab0.dispatchEvent(mouse("mousedown", 10, 12));
-    document.dispatchEvent(mouse("mousemove", 100, 60));
-    expect(document.body.classList.contains("tab-drag-active"), "拖拽中应有 grabbing 光标类").toBe(
-      true,
-    );
-    document.dispatchEvent(mouse("mousemove", 215, 100));
-    document.dispatchEvent(mouse("mouseup", 215, 100));
-    expect(document.body.classList.contains("tab-drag-active"), "松手后光标类应移除").toBe(false);
+    // 拖拽态标记：dragstart 起 body 带 tab-drag-active（CSS 据此禁文本选区），dragend
+    // 移除。B91-2 起这一段的指针形状由系统按 dropEffect 决定，不再是页面的 grabbing。
+    const dt0 = makeDataTransfer();
+    fireDrag("dragstart", tab0, dt0, { clientX: 10, clientY: 12 });
+    expect(document.body.classList.contains("tab-drag-active"), "拖拽中应有拖拽态类").toBe(true);
+    fireDrag("dragover", document, dt0, { clientX: 215, clientY: 100 });
+    fireDrag("drop", document, dt0, { clientX: 215, clientY: 100 });
+    fireDrag("dragend", tab0, dt0, { clientX: 215, clientY: 100 });
+    expect(document.body.classList.contains("tab-drag-active"), "松手后拖拽态类应移除").toBe(false);
     restoreRects();
 
     await new Promise((r) => setTimeout(r, 50));
@@ -806,9 +819,12 @@ describe("bootstrap + drag-split smoke", () => {
       const firstTab = target!.querySelector(".tab") as HTMLElement;
       const firstName = firstTab.dataset.tip;
       const stripLeft = target!.querySelector(".panel-tabstrip")!.getBoundingClientRect().left;
-      firstTab.dispatchEvent(mouse("mousedown", 5, 5));
-      document.dispatchEvent(mouse("mousemove", Math.round(stripLeft) + 150, 12));
-      document.dispatchEvent(mouse("mouseup", Math.round(stripLeft) + 150, 12));
+      const dt1 = makeDataTransfer();
+      const dropX = Math.round(stripLeft) + 150;
+      fireDrag("dragstart", firstTab, dt1, { clientX: 5, clientY: 5 });
+      fireDrag("dragover", document, dt1, { clientX: dropX, clientY: 12 });
+      fireDrag("drop", document, dt1, { clientX: dropX, clientY: 12 });
+      fireDrag("dragend", firstTab, dt1, { clientX: dropX, clientY: 12 });
       await new Promise((r) => setTimeout(r, 60));
 
       expect(

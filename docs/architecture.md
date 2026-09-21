@@ -32,8 +32,10 @@
   `state/doc` 的字符串。
 - **布局树与分割条**：`splitview.build()` 传给 `onRatioChange` 的 path 是分割节点自身树路径；
   最大化 = 只改比例不动结构；关面板要做比例补偿。
-- **拖拽体系**：标签/大纲拖拽用指针编排（mousedown/move/up），因为 Tauri 的 `dragDropEnabled`
-  会禁用页面内 HTML5 DnD；文件拖入经 `onDragDropEvent` 拿真实路径。
+- **拖拽体系**：标签/大纲拖拽用指针编排（mousedown/move/up）—— 跨窗口协议按「全程坐标 + 定向
+  投递」设计，指针序列才拿得到窗口外的坐标；文件拖入走页面内 HTML5 拖放 + 路径桥（关掉 wry 的
+  原生拖放处理器后，用 WebView2 的 `postMessageWithAdditionalObjects` 换回真实路径，见
+  `src-tauri/src/dropbridge.rs`），拿到路径之后仍由 `onDragDropEvent` 的 drop 分支接管。
 - **视图刷新红线**：mousedown 链路上绝不做 DOM 重建（否则「切换面板要点两下」）。
 - **样式与主题**：组件统一用 CSS 变量；`hidden` 属性必须配 `display:none`。
 - **查找/大纲/缩放/设置/快捷键/菜单/标签栏/分屏/提示/保存/图标**：见 `src/shell/` 与各 `ref` 详情。

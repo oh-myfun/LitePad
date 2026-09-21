@@ -4,6 +4,7 @@
 mod backup;
 mod commands;
 mod core;
+mod dropbridge;
 mod session;
 mod windows;
 
@@ -73,6 +74,11 @@ fn main() {
             if let Some(win) = app.get_webview_window("main") {
                 let _ = win.set_background_color(Some(boot_background(&win)));
             }
+
+            // B91：关掉 wry 的原生拖放处理器（`dragDropEnabled: false`）之后，文件拖入的
+            // 真实路径由这条桥补回来（原理见 `dropbridge` 模块头）。每个窗口都要装 ——
+            // 文件落在哪个窗口上，就是那个窗口的 webview 收到 drop。
+            dropbridge::install(app.handle(), windows::MAIN_LABEL);
 
             // B72 启动自检：记一行「实际生效的 WebView2 附加浏览器参数」。
             // 这组参数必须被**所有**窗口照抄 —— 共用同一用户数据目录时 EnvironmentOptions

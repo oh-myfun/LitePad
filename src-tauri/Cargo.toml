@@ -22,6 +22,13 @@ chardetng = "0.1"
 notify = "6"
 base64 = "0.22"
 
+# B91 文件拖入路径桥：直接操作 WebView2 取回真实路径（见 `src/dropbridge.rs`）。
+# ⚠️ 版本必须与 wry 0.55 用的**同一版**（0.38 / 0.61）：`ICoreWebView2*` 是 windows 类型，
+# 版本不一致时来自不同的 crate 实例，`cast()` 直接编不过。
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows = "0.61"
+
 [profile.release]
 opt-level = "s"
 lto = "fat"

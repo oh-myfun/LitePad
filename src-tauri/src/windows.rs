@@ -248,8 +248,9 @@ fn build_satellite(
         .inner_size(SAT_WIDTH, SAT_HEIGHT)
         .min_inner_size(SAT_MIN_WIDTH, SAT_MIN_HEIGHT)
         .background_color(SAT_BG)
-        // 文件拖入走的是 WebView2 原生拖放（与主窗口一致），关掉会让「拖文件进窗口打开」失效
-        .drag_and_drop(true);
+        // B91：与主窗口一致关掉 wry 的原生拖放处理器（两处劫持会废掉页面内 HTML5 拖放，
+        // 详见 `dropbridge` 模块头）；文件拖入的真实路径由 `dropbridge` 补回来。
+        .drag_and_drop(false);
     // ⚠️ 必须与主窗口逐字一致，否则 WebView2 拒绝创建（原因见 `pick_browser_args`）。
     // 这一段缺失就是 B72「卫星窗口打不开」的根因，别删。
     if let Some(args) = shared_browser_args(app) {
@@ -261,6 +262,8 @@ fn build_satellite(
         builder = builder.position(x, y);
     }
     builder.build()?;
+    // B91：卫星窗口同样要装文件拖入路径桥（文件可以落在任何一个窗口上）。
+    crate::dropbridge::install(app, label);
     Ok(())
 }
 

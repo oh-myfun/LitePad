@@ -186,30 +186,60 @@ describe("用户报告过的 bug 回归（静态配置断言）", () => {
     expect(perms, "必须包含 core:window:allow-destroy").toContain("core:window:allow-destroy");
   });
 
-  it("文件拖入窗口必须能拿到路径打开：dragDropEnabled 必须为 true", () => {
+  it("拖文件进窗口仍要拿得到真实路径：关掉原生拖放必须与路径桥成对出现（B91）", () => {
     // 用户报告：拖文件进窗口应打开文件而不是把内容插进当前文档。
-    // 拿到拖入文件真实路径的唯一方式是 WebView2 原生拖放（dragDropEnabled: true
-    // + onDragDropEvent 的 drop.paths）。代价是页面内 HTML5 DnD 失效——
-    // 因此标签拖拽已改为 mousedown/mousemove/mouseup 指针编排（见 splitview.ts）。
+    //
+    // B91 起改走「页面内 HTML5 拖放 + 路径桥」：wry 的原生处理器（dragDropEnabled: true）
+    // 在 Windows 上会 `SetAllowExternalDrop(false)` 并覆盖子窗口的 drop target，把页面内
+    // HTML5 拖放一起废掉（源码位置与原文注释见 `src-tauri/src/dropbridge.rs` 模块头）。
+    // 关掉它之后路径由 WebView2 官方出口补回：页面 postMessageWithAdditionalObjects →
+    // 宿主从 `ICoreWebView2File::Path` 取真实路径。
+    //
+    // ⚠️ 这条断言是**成对**的，拆开任一半都是静默故障：
+    //   · 只改配置不装桥 → 拖文件进来毫无反应；
+    //   · 只留桥不改配置 → 页面内收不到 drop，桥永远等不到消息。
     const conf = readJson("src-tauri/tauri.conf.json");
     const win = (conf.app?.windows ?? []).find((w: { label?: string }) => w.label === "main");
     expect(win, "tauri.conf.json 应有 main 窗口配置").toBeTruthy();
-    expect(win.dragDropEnabled, "dragDropEnabled 必须为 true").toBe(true);
+    expect(win.dragDropEnabled, "必须关掉 wry 原生拖放（否则页面内 HTML5 拖放全废）").toBe(false);
+
+    const bridge = readFileSync("src-tauri/src/dropbridge.rs", "utf-8");
+    expect(bridge, "必须用 ICoreWebView2File 取真实路径").toContain("ICoreWebView2File");
+    expect(bridge, "必须发与 Tauri 逐字同名的事件（前端因此零改动）").toContain(
+      '"tauri://drag-drop"',
+    );
+    const main = readFileSync("src-tauri/src/main.rs", "utf-8");
+    expect(main, "主窗口必须装桥").toMatch(
+      /dropbridge::install\(app\.handle\(\), windows::MAIN_LABEL\)/,
+    );
+    const wins = readFileSync("src-tauri/src/windows.rs", "utf-8");
+    expect(wins, "卫星窗口建窗时必须一起关掉原生拖放").toContain(".drag_and_drop(false)");
+    expect(wins, "卫星窗口必须装桥（文件也可以落在它上面）").toMatch(
+      /dropbridge::install\(app, label\)/,
+    );
   });
 
-  it("标签拖拽必须是指针事件编排：tabstrip 不得再依赖 HTML5 draggable", () => {
-    // dragDropEnabled: true 后页面内 HTML5 DnD 全部失效，
-    // tabstrip 若残留 draggable=true / dragstart 依赖，标签拖拽会静默死亡。
+  it("标签拖拽必须走 HTML5 DnD：影像才能跟出窗口（B91-2）", () => {
+    // 历史链：`dragDropEnabled: true` 时 wry 会 `SetAllowExternalDrop(false)` 并覆盖
+    // 子窗口的 drop target，把页面内 HTML5 拖放一起废掉 —— 于是标签拖拽只能退化成指针
+    // 编排，代价是影像是本窗口的一个 DOM 浮层：**指针一移出窗口就看不见了**（用户报的
+    // 诉求）。B91 关掉那个开关（文件拖入改走路径桥），B91-2 顺势把标签拖拽换回
+    // HTML5 DnD —— 影像交给系统绘制，跟出窗口、压在别的应用上都在。
     const ts = readFileSync("src/shell/tabstrip.ts", "utf-8");
-    expect(ts.includes("draggable = true"), "不得设置 el.draggable").toBe(false);
-    expect(ts.includes('addEventListener("dragstart"'), "不得监听 dragstart").toBe(false);
-    expect(ts.includes("beginTabDrag"), "必须走指针拖拽（beginTabDrag）").toBe(true);
+    expect(ts.includes("draggable = true"), "标签必须可拖（HTML5 DnD 的入口）").toBe(true);
+    expect(ts.includes('addEventListener("dragstart"'), "必须监听 dragstart").toBe(true);
+    expect(ts.includes("startTabDrag("), "起拖必须走传输层（写载荷 + 交影像）").toBe(true);
+    // 旧指针编排那套入口必须彻底消失，否则两套运输会互相打架
+    expect(ts.includes("beginTabDrag"), "指针编排的入口不得残留").toBe(false);
     const sv = readFileSync("src/shell/splitview.ts", "utf-8");
     expect(
       sv.includes("getCurrentWebview"),
       "splitview 不得处理文件拖放（归 main.ts 原生通道）",
     ).toBe(false);
-    expect(sv.includes('addEventListener("drop"'), "面板不得再挂 HTML5 drop 处理器").toBe(false);
+    // B91-2 之前这里断言「面板不得挂 drop 处理器」；现在由 tabdnd 挂**一份**页面级的，
+    // 面板自己仍然不挂 —— 判定落在几何命中（panelAt / stripUnder）上，与事件目标无关。
+    expect(sv.includes('addEventListener("drop"'), "面板仍不得自己挂 drop 处理器").toBe(false);
+    expect(sv.includes("export function commitTabDrop"), "落点提交必须留在 splitview").toBe(true);
   });
 
   it("编辑器必须可滚动：.panel-editor 须 min-height:0 且 cm-scroller 双轴 overflow（回归：源码无法滚动）", () => {
@@ -1055,63 +1085,70 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(status, "状态表要指向 B63 改语义后的说明").toMatch(/B63|第十节/);
   });
 
-  it("B64 标签拖拽要有跟随光标的浮动影像（静态契约）", () => {
+  it("B64 标签拖拽影像交给系统绘制，能跟出窗口（静态契约）", () => {
     // 用户反馈：「标签拖动时，要像 vscode 那样有一个 tab 随光标移动的效果。」
     // VS Code 出处：`multiEditorTabsControl.ts:1295` —— 拖单个标签且 tabSizing 非
     // shrink 时 `e.dataTransfer.setDragImage(tab, 0, 0)`（注释：把被拖标签的左上角
     // 放到光标处，好给落点边框反馈让位）。本项目标签是 tabSizing: fixed（B56 起
-    // 不收缩、不裁剪），正落在那一档；但拖拽是指针事件自编排的（WebView2 原生拖放
-    // 钩子禁用了页面内 HTML5 DnD），拿不到浏览器影像 → 自己造浮层。
+    // 不收缩、不裁剪），正落在那一档。
+    //
+    // ⚠️ B91-2 起改用 **HTML5 DnD**：影像由 `setDragImage` 交**系统**绘制，指针移出
+    // 窗口、压到别的应用上照样跟着走。B64–B90 那套指针编排的 DOM 浮层做不到这一点
+    // （指针越过窗口边界就看不见了），那整套实现已删除。
     const css = readFileSync("src/styles/global.css", "utf-8");
-    const sv = readFileSync("src/shell/splitview.ts", "utf-8");
     const ts = readFileSync("src/shell/tabstrip.ts", "utf-8");
-    const stripComments = (s: string): string => s.replace(/\/\*[\s\S]*?\*\//g, "");
-    const svCode = stripComments(sv);
+    const dnd = readFileSync("src/shell/tabdnd.ts", "utf-8");
+    const stripComments = (s: string): string =>
+      s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+    const tsCode = stripComments(ts);
+    const dndCode = stripComments(dnd);
 
-    // ① tabstrip 必须把标签元素交出去（只测 splitview 入参会漏掉这层接线）
-    expect(ts, "tabstrip 传标签元素给 beginTabDrag").toMatch(/beginTabDrag\(t\.tabId, e, el\)/);
-    // B71 起多了 groupPanelId（拖整组）：签名断言放宽到「四参、后两个可空」
-    expect(sv, "beginTabDrag 接受标签元素与整组面板").toMatch(
-      /export function beginTabDrag\(\s*\n\s*tabId: number,\s*\n\s*e: MouseEvent,\s*\n\s*tabEl: HTMLElement \| null = null,\s*\n\s*groupPanelId: number \| null = null,\s*\n\)/,
+    // ① 标签元素必须可拖（`draggable = true`），起手写载荷 + 交影像 —— 只测 tabdnd 的
+    //    setDragImage 会漏掉这层接线（没人调它照样「测试通过」）
+    expect(tsCode, "标签元素可拖").toMatch(/el\.draggable = true;/);
+    expect(tsCode, "起手写载荷并交出影像").toMatch(
+      /startTabDrag\([\s\S]{0,200}?createTabDragImage\(el\),\s*\n\s*TAB_IMAGE_ANCHOR,/,
     );
-    // 事件目标可能是图标/文件名等子元素 → 必须反查
-    expect(svCode, "从事件目标反查所在标签").toMatch(/target\.closest<HTMLElement>\("\.tab"\)/);
-
-    // ② 越过阈值才亮出影像（纯点击不该闪副本）；必须克隆而非搬走原标签
-    // B72：分岔成两种影像 —— 整组走「聚合药丸」，单标签才克隆标签元素
-    expect(svCode, "进入拖拽时造副本").toMatch(
-      /dragGhost = group \? createGroupDragGhost\(tabDrag\.tabEl\) : createDragGhost\(tabDrag\.tabEl\)/,
-    );
-    expect(svCode, "影像是原标签的克隆（原地不动的原标签才是参照物）").toMatch(
-      /const copy = \w+\.cloneNode\(true\) as HTMLElement;/,
-    );
-    expect(svCode, "副本去掉 tabId（否则按 tabId 查元素会命中副本）").toMatch(
-      /copy\.removeAttribute\("data-tab-id"\)/,
+    // 影像里的 × 是按钮：从它上面起拖会让用户「点关闭却拖走了标签」，显式挡掉
+    expect(tsCode, "挡掉从关闭按钮起拖").toMatch(
+      /closest\("\.tab-close"\)[\s\S]{0,140}?preventDefault\(\)/,
     );
 
-    // ③ 跟随光标：锚点 = 左上角（setDragImage(tab, 0, 0) 的语义），且要放在
-    //    「离开面板就 return」之前 —— 拖到面板之外影像同样得跟着走
-    // B89 起第三个参数是「出界时贴边」的开关，跟随本身没变
-    expect(svCode, "拖拽中持续跟随光标").toMatch(/moveDragGhost\(e\.clientX, e\.clientY/);
-    const moveIdx = svCode.indexOf("moveDragGhost(e.clientX, e.clientY");
-    expect(moveIdx, "应能定位跟随调用").toBeGreaterThan(-1);
-    expect(moveIdx, "跟随必须在落点判定之前，否则拖到面板外影像会僵住").toBeLessThan(
-      svCode.indexOf("previewDropAt(e.clientX, e.clientY, e.altKey)"),
+    // ② 影像是原标签的**克隆**（原地不动的原标签才是参照物），且副本去掉 tabId
+    //    （否则「按 tabId 查元素」会命中副本而非真标签）
+    const imageFn = tsCode.match(/function createTabDragImage[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(imageFn, "影像工厂必须存在").not.toBe("");
+    expect(imageFn, "影像是原标签的克隆").toMatch(/cloneNode\(true\) as HTMLElement/);
+    expect(imageFn, "副本去掉 tabId").toMatch(/removeAttribute\("data-tab-id"\)/);
+
+    // ③ 影像是「离屏挂进 body → 交快照 → 立刻摘掉」：detached 元素在部分 Chromium
+    //    版本上会拍成空图，所以必须先渲染；setDragImage 是同步快照，拍完就能摘。
+    expect(dndCode, "影像离屏挂进 body").toMatch(/document\.body\.appendChild\(image\)/);
+    expect(dndCode, "交给系统绘制（带锚点）").toMatch(
+      /dt\.setDragImage\(image, anchor\.x, anchor\.y\)/,
+    );
+    expect(dndCode, "快照后立刻摘掉").toMatch(
+      /setDragImage\(image, anchor\.x, anchor\.y\);[\s\S]{0,40}?image\.remove\(\)/,
     );
 
-    // ④ 收尾必须清理（松手 / 重复进入 / 拖出窗口失焦三条路径）
-    expect(svCode, "收尾移除影像").toMatch(
-      /function finishTabDrag[\s\S]{0,420}?removeDragGhost\(\)/,
-    );
-    expect(svCode, "拖到窗口外失焦即取消（mouseup 收不到）").toMatch(
-      /window\.addEventListener\("blur", finishTabDrag\)/,
-    );
+    // ④ 拖拽期间挂 body 类（禁文本选区）；收尾会摘掉（拖拽循环结束 / drop 就地收尾）
+    expect(dndCode, "拖拽期间挂类").toMatch(/document\.body\.classList\.add\(TAB_DRAG_CLASS\)/);
+    expect(dndCode, "收尾摘类").toMatch(/document\.body\.classList\.remove\(TAB_DRAG_CLASS\)/);
 
-    // ⑤ 样式：浮层 + 不拦截指针（否则会掐断下方元素的 :hover，自绘提示层也会误判）
-    expect(css, "影像浮层").toMatch(/\.tab-drag-ghost\s*\{[^}]*position:\s*fixed/);
-    expect(css, "影像不得拦截指针").toMatch(/\.tab-drag-ghost\s*\{[^}]*pointer-events:\s*none/);
-    expect(css, "层级与弹出菜单同档（VS Code .monaco-drag-image 也是 1000）").toMatch(
-      /\.tab-drag-ghost\s*\{[^}]*z-index:\s*1000/,
+    // ⑤ 样式：快照源要**离屏但可渲染**（fixed + left/top 挪出屏），绝不能用
+    //    display:none / visibility:hidden —— 不渲染就拍出一张空图。
+    const imageRule = css.match(/\.tab-drag-image\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(imageRule, "快照容器规则必须存在").not.toBe("");
+    expect(imageRule, "离屏摆放（fixed + 挪出屏）").toMatch(
+      /position:\s*fixed[\s\S]*?left:\s*-10000px/,
+    );
+    expect(imageRule, "拍快照的容器绝不能隐藏（否则拍出空图）").not.toMatch(
+      /display:\s*none|visibility:\s*hidden/,
+    );
+    // 不再是指针编排的常驻浮层：`pointer-events` / `z-index: 1000` 那套随之退场
+    const ghostRule = css.match(/\.tab-drag-ghost\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(ghostRule, "影像不再是常驻浮层（交系统后无需拦截指针）").not.toMatch(
+      /pointer-events:\s*none/,
     );
   });
 
@@ -1125,7 +1162,11 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     // 单行、max-width + 省略号）。
     const css = readFileSync("src/styles/global.css", "utf-8");
     const sv = readFileSync("src/shell/splitview.ts", "utf-8");
-    const svCode = sv.replace(/\/\*[\s\S]*?\*\//g, "");
+    const ts = readFileSync("src/shell/tabstrip.ts", "utf-8");
+    const stripComments = (s: string): string =>
+      s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+    const svCode = stripComments(sv);
+    const tsCode = stripComments(ts);
     const pill = css.match(/\.tab-drag-ghost-group\s*\{([^}]*)\}/)?.[1] ?? "";
     const nameRule =
       css.match(/\.tab-drag-ghost-group \.tab-drag-ghost-name\s*\{([^}]*)\}/)?.[1] ?? "";
@@ -1149,31 +1190,33 @@ describe("行号 gutter 主题化与折叠图标（用户反馈：随深浅色�
     expect(countRule, "计数不得被压缩").toMatch(/flex:\s*0 0 auto/);
 
     // ④ 文案 = 活动标签名 (+其余数量)；计数只在多标签时出现
-    expect(sv, "整组文案取活动标签名").toMatch(/querySelector<HTMLElement>\("\.tab\.tab-active"\)/);
-    expect(sv, "文案形态 name (+N)").toMatch(/\(\+\$\{tabs\.length - 1\}\)/);
-    expect(sv, "计数判据 tabs.length > 1").toMatch(/if \(tabs\.length > 1\)/);
-    expect(sv, "名字读不出来时不出现空药丸").toMatch(/`\$\{tabs\.length\} 个标签`/);
+    //    （B91-2 起药丸工厂从 splitview 搬到 tabstrip，与标签副本影像同处一模块）
+    expect(tsCode, "整组文案取活动标签名").toMatch(
+      /querySelector<HTMLElement>\("\.tab\.tab-active"\)/,
+    );
+    expect(tsCode, "文案形态 name (+N)").toMatch(/\(\+\$\{tabs\.length - 1\}\)/);
+    expect(tsCode, "计数判据 tabs.length > 1").toMatch(/if \(tabs\.length > 1\)/);
+    expect(tsCode, "名字读不出来时不出现空药丸").toMatch(/`\$\{tabs\.length\} 个标签`/);
     // ⑤ 药丸是**纯文字**：不能再往里塞标签 DOM 副本（那正是旧实现的病根）；
     //    名字与计数必须是**两个** span（合成一个字符串的话 max-width 会把计数一起吃掉）
-    const pillFn = sv.match(/function createGroupDragGhost[\s\S]*?\n\}/)?.[0] ?? "";
+    const pillFn = tsCode.match(/function createGroupDragImage[\s\S]*?\n\}/)?.[0] ?? "";
     expect(pillFn, "药丸工厂必须存在").not.toBe("");
     expect(pillFn, "不得克隆标签栏").not.toMatch(/cloneNode/);
     expect(pillFn, "名字 span").toMatch(/className = "tab-drag-ghost-name"/);
     expect(pillFn, "计数 span").toMatch(/className = "tab-drag-ghost-count"/);
 
-    // ⑤ 锚点分档：药丸 = setDragImage(pill, -10, -10)（指针落在药丸内部），
+    // ⑤ 锚点分档：药丸 = setDragImage(pill, 10, 10)（指针落在药丸内部，「捏着它」），
     //    单标签 = setDragImage(tab, 0, 0)（左上角顶到指针）
-    expect(svCode, "药丸锚点 -10,-10").toMatch(/GHOST_ANCHOR_PILL = \{ x: 10, y: 10 \}/);
-    expect(svCode, "单标签锚点 0,0").toMatch(/GHOST_ANCHOR_TAB = \{ x: 0, y: 0 \}/);
-    expect(svCode, "跟随光标时应用锚点").toMatch(
-      /dragGhost\.style\.left = `\$\{x - dragGhostAnchor\.x\}px`/,
+    expect(tsCode, "药丸锚点 10,10").toMatch(
+      /GROUP_IMAGE_ANCHOR: DragImageAnchor = \{ x: 10, y: 10 \}/,
     );
-    expect(svCode, "整组挂药丸锚点").toMatch(
-      /dragGhostAnchor = group \? GHOST_ANCHOR_PILL : GHOST_ANCHOR_TAB/,
+    expect(tsCode, "单标签锚点 0,0").toMatch(
+      /TAB_IMAGE_ANCHOR: DragImageAnchor = \{ x: 0, y: 0 \}/,
     );
-    // 影像收尾要把锚点复位，否则下一次单标签拖拽会带着药丸的 10px 偏移
-    expect(svCode, "收尾复位锚点").toMatch(
-      /function removeDragGhost[\s\S]{0,160}?dragGhostAnchor = GHOST_ANCHOR_TAB/,
+    // ⚠️ 「定义了常量却没人用」是最常见的漏网形态：起手处必须真把药丸影像与药丸锚点
+    //    交给 startTabDrag（单标签侧由 tabstrip 自己交，见 B64）。
+    expect(svCode, "整组起手交药丸影像 + 药丸锚点").toMatch(
+      /createGroupDragImage\(strip\),\s*\n\s*GROUP_IMAGE_ANCHOR,/,
     );
   });
 
@@ -2830,13 +2873,19 @@ describe("B71 面板操作补齐（移动标签 / 切焦点 / 右键分屏 / 最
   it("拖标签栏空白处 = 拖整组：起手判据与落点语义都锁在 splitview", () => {
     // VS Code `editorTabsControl.ts:455`：只有 `e.target === tabsContainer` 才算整组。
     // 写成「点在 strip 上就算」（用 closest 之类）会连点标签都变成整组拖拽。
+    // B91-2 起起手事件是 HTML5 的 `dragstart`（.tab 是更近的 draggable，浏览器自己
+    // 就把 dragstart 派给了它，不会冒泡到 strip）。
     expect(sv, "起手必须是事件目标就是容器本身").toMatch(
-      /strip\.addEventListener\("mousedown"[\s\S]{0,200}if \(e\.target !== strip\) return;/,
+      /strip\.addEventListener\("dragstart"[\s\S]{0,220}?if \(e\.target !== strip\) return;/,
     );
+    // 空标签栏没什么可拖的：挡掉，免得弹出一颗「0 个标签」的药丸
+    expect(sv, "标签栏必须可拖（HTML5 DnD 的入口）").toMatch(/strip\.draggable = true;/);
+    expect(sv, "空栏不起拖").toMatch(/if \(n === 0\) \{[\s\S]{0,90}?preventDefault\(\)/);
+    // 落点提交统一走 commitTabDrop（传输层不认识 drop 语义，只把载荷与坐标交进来）
     expect(sv, "整组落点优先于单标签分支").toMatch(
-      /if \(drag\.groupPanelId !== null\)[\s\S]{0,900}onMergeGroup\?\.\(drag\.groupPanelId, panelId\)/,
+      /if \(groupPanelId !== null\)[\s\S]{0,900}?onMergeGroup\?\.\(groupPanelId, panelId\)/,
     );
-    expect(sv, "拖回自己 = 无操作").toMatch(/if \(drag\.groupPanelId === panelId\) return;/);
+    expect(sv, "拖回自己 = 无操作").toMatch(/if \(groupPanelId === panelId\) return false;/);
     expect(src, "并入 = 关掉这个分屏但指定并入目标").toMatch(
       /onMergeGroup: \(srcId, targetId\) => closePanelById\(srcId, targetId\)/,
     );
@@ -2854,7 +2903,6 @@ describe("B71 面板操作补齐（移动标签 / 切焦点 / 右键分屏 / 最
 
 describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是复制一份）", () => {
   const src = readFileSync("src/main.ts", "utf-8");
-  const sv = readFileSync("src/shell/splitview.ts", "utf-8");
   const rust = readFileSync("src-tauri/src/windows.rs", "utf-8");
   const api = readFileSync("src/ipc/api.ts", "utf-8");
   const caps = readJson("src-tauri/capabilities/default.json");
@@ -2870,32 +2918,35 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
     expect(caps.windows, "windows 必须用通配覆盖 sat-*").toContain("sat-*");
     expect(caps.windows, "主窗口也要留在授权名单里").toContain("main");
     expect(rust, "Rust 侧前缀常量必须与 capabilities 一致").toMatch(/SAT_PREFIX: &str = "sat-"/);
-    // 跨窗口定位用的全是**只读**窗口命令，都落在 core:window:default 里、被 core:default 覆盖。
-    // 这条断言不依赖任何生成物：源码一旦用上需要额外授权的写接口，就在**这里**红掉，
-    // 而不是等到卫星窗口静默失灵（dropSpotOf 的 catch 会把 ACL 拒绝咽下去变成 null）。
-    const dropSpot = fnBody("async function dropSpotOf");
-    expect(dropSpot, "落点换算只用只读接口").toMatch(/outerPosition\(\)/);
-    expect(dropSpot, "不得出现需要额外授权的窗口写接口").not.toMatch(
-      /setPosition|setSize|setFullscreen|setAlwaysOnTop/,
-    );
     expect(caps.permissions, "core:default 必须在授权里（它内含 core:window:default）").toContain(
       "core:default",
     );
-    // ⚠️ 更深一层的核对要读 Tauri **生成**的 ACL 清单，而 `src-tauri/gen/` 不入库 ——
-    // CI 的干净检出上根本没有这个文件（B71 ④ 首次推送就是在 CI 上炸在这里）。
-    // 所以这一层只在有清单的本机跑：**跳过 ≠ 通过**，只是没有更深的信息可核。
-    const manifestPath = "src-tauri/gen/schemas/acl-manifests.json";
-    if (existsSync(manifestPath)) {
-      const winDefault: string[] =
-        readJson(manifestPath)["core:window"].default_permission.permissions;
-      for (const p of [
-        "allow-outer-position",
-        "allow-outer-size",
-        "allow-inner-size",
-        "allow-scale-factor",
-      ]) {
-        expect(winDefault, `core:window:default 少了 ${p}，新窗口落点会失效`).toContain(p);
-      }
+
+    // B91-2 起跨窗口落点**不再读窗口几何**：`dragend` 直接带回屏幕坐标，源窗口不需要
+    // `outerPosition/outerSize/innerSize/scaleFactor` 这套（B89 的 `dropSpotOf` 因此被删）。
+    // 这条守卫把「不依赖窗口几何」钉住 —— 一旦有人重新引入，就得同时补 ACL，
+    // 否则在卫星窗口上会被 ACL 静默拒掉（catch 咽成 null，落点悄悄退回系统摆放）。
+    const spotFn = fnBody("function desktopSpotOf");
+    expect(spotFn, "落点只由屏幕坐标算出，不读窗口几何").not.toMatch(
+      /outerPosition|outerSize|innerSize|scaleFactor/,
+    );
+
+    // 窗口 API 使用面必须落在已授权清单内：源码一旦用上需要额外授权的窗口接口，就在
+    // **这里**红掉，而不是等到卫星窗口静默失灵。当前窗口调用只有标题/关闭/销毁三条。
+    for (const p of ["core:window:allow-set-title", "core:window:allow-close"]) {
+      expect(caps.permissions, `窗口接口 ${p} 必须显式授权`).toContain(p);
+    }
+    for (const f of [
+      "src/main.ts",
+      "src/shell/splitview.ts",
+      "src/shell/tabstrip.ts",
+      "src/shell/tabdnd.ts",
+      "src/shell/filedrop.ts",
+    ]) {
+      const code = readFileSync(f, "utf-8");
+      expect(code, `${f} 不得使用需要额外授权的窗口接口`).not.toMatch(
+        /setPosition|setSize|setFullscreen|setAlwaysOnTop|outerPosition|outerSize|innerSize|scaleFactor/,
+      );
     }
   });
 
@@ -2944,88 +2995,159 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
     expect(body, "整段替换要经过 setState").toMatch(/setState\(whole\)/);
   });
 
-  it("拖出窗口：拖拽途中只通知，松手才提交（B89）", () => {
-    // 判据必须带余量：最大化窗口贴边拖动会擦出去，无余量就会莫名弹新窗口
-    expect(sv, "出界判据要留余量").toMatch(/DRAG_OUT_MARGIN/);
-    // ⚠️ 拖拽层的函数本体在 splitview.ts，main.ts 的宿主函数才走 fnBody
-    const mv = topLevelFnBody(sv, "function onTabDragMove");
-    // ⚠️ 这两条是 B89 的核心：旧实现在这里 finishTabDrag + 上报，副作用发生在拖拽途中，
-    // 表现为「指针擦过另一个窗口的一块面板就被合入」（用户报的毛病）。
-    expect(mv, "出界不得收尾：影像要继续跟着光标走").not.toContain("finishTabDrag()");
-    expect(mv, "出界只通知宿主（让它广播指针位置）").toMatch(
-      /outsideWindow\(e\.clientX, e\.clientY\)[\s\S]{0,500}onDragOutside\?\.\(/,
+  it("拖拽途中只预览、松手才提交；正文只在有人认领时定向发出（B89/B91-2）", () => {
+    // B89 定下的语义一字未改，B91-2 只把「谁被指着」的判据从**广播指针坐标**换成
+    // **系统拖放事件**：
+    //   · dragover 阶段只画落点（`preview`），源窗口零副作用；
+    //   · drop 才提交（本窗口直接消化，跨窗口先定向认领）。
+    const dnd = readFileSync("src/shell/tabdnd.ts", "utf-8");
+    const dndCode = dnd.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+    /** 截取某个处理器（`from` 起点到 `to` 起点之间），避免跨处理器误判。 */
+    const seg = (from: string, to: string): string => {
+      const a = dndCode.indexOf(from);
+      const b = dndCode.indexOf(to);
+      return a >= 0 && b > a ? dndCode.slice(a, b) : "";
+    };
+
+    // ① dragover 只预览，绝不提交（也绝不碰源窗口的标签）
+    const overBody = seg("const onOver", "const onLeave");
+    expect(overBody, "dragover 画落点预览").toMatch(
+      /cfg\.preview\(e\.clientX, e\.clientY, e\.altKey\)/,
     );
-    // B90：影像**始终**精确跟随光标，出界也不夹取（夹取会让「指针在哪」与「影像在哪」对不上）
-    expect(mv, "影像原样跟随光标").toMatch(/moveDragGhost\(e\.clientX, e\.clientY\)/);
-    expect(mv, "跟随不得夹取坐标").not.toMatch(/clampToWindow/);
-    expect(mv, "出界要记状态，供松手时判定走哪条路").toMatch(/tabDrag\.outOfWindow = true/);
-    expect(mv, "拖回窗口内要清掉出界状态").toMatch(/tabDrag\.outOfWindow = false/);
-    expect(mv, "刚出界时要收掉本窗口的落点痕迹").toMatch(
-      /if \(!tabDrag\.outOfWindow\) \{[\s\S]{0,200}clearAllPreviews\(\)/,
+    expect(overBody, "dragover 阶段绝不提交").not.toMatch(/commitLocal|relinquish|onFallback/);
+    // ⚠️ 必须 preventDefault：不拦的话光标是禁止态，drop 根本不触发
+    expect(overBody, "dragover 要 preventDefault").toMatch(/e\.preventDefault\(\)/);
+
+    // ② drop 才提交：本窗口直接消化；别的窗口先认领
+    const dropBody = seg("const onDrop", "const onDragEnd");
+    expect(dropBody, "drop 才 commitLocal").toMatch(/cfg\.commitLocal\(\{/);
+    expect(dropBody, "跨窗口先定向认领（emitTo 源窗口）").toMatch(
+      /emitTo\(payload\.from, EVT_TAB_CLAIM, \{[\s\S]{0,140}?dragId: payload\.dragId/,
     );
-    const end = topLevelFnBody(sv, "function onTabDragEnd");
-    expect(end, "松手时才上报一次，且带松手坐标").toMatch(
-      /if \(drag\.outOfWindow\)[\s\S]{0,220}onDropOutOfWindow\?\.\([\s\S]{0,160}clientX: e\.clientX/,
+    // ⚠️ 本窗口落点必须**就地收尾，不等 dragend**：落点常会重建面板 DOM，源标签元素
+    // 随之脱离文档，而 dragend 是派发到源元素上的（脱离文档就不再冒泡到 document）——
+    // 等它的后果是 `body.tab-drag-active` 一直挂着。这是实现里踩出来的真 bug。
+    expect(dropBody, "本窗口落点就地清拖拽态").toMatch(
+      /payload\.from === cfg\.selfLabel[\s\S]{0,600}?classList\.remove\(TAB_DRAG_CLASS\)/,
     );
-    const body = fnBody("async function dropTabsOutOfWindow");
-    expect(body, "整组拖出取该面板全部标签").toMatch(
-      /drag\.groupPanelId !== null[\s\S]{0,160}panels\.get\(drag\.groupPanelId\)\?\.tabs/,
+
+    // ③ 整组拖出 = 该面板的全部标签（以松手那一刻的实际状态为准，不随拖拽携带 id 表）
+    const ids = fnBody("function dragTabIds");
+    expect(ids, "整组取该面板全部标签").toMatch(
+      /groupPanelId === null[\s\S]{0,90}?return \[payload\.tabId\];[\s\S]{0,130}?panels\.get\(payload\.groupPanelId\)\?\.tabs/,
     );
-    expect(body, "先问有没有别的窗口愿意接手").toMatch(/await session\.release\(\)/);
-    expect(body, "有人接手时正文只发给它").toMatch(/session\.deliver\(target, snapshots\)/);
-    expect(body, "没人接手才回落：卫星窗口交回主窗口").toMatch(
-      /windowKind === "satellite"[\s\S]{0,200}returnTabsToMain\(ids\)/,
+
+    // ④ 正文只在有人认领时定向发（绝不广播）
+    const snap = fnBody("function snapshotDrag");
+    expect(snap, "快照按这次拖拽涉及的标签摊平（正文一起带走）").toMatch(/dragTabIds\(payload\)/);
+    const claimBody = seg("const onClaim", "const onPayload");
+    expect(claimBody, "认领要配对 dragId（防跨拖拽串台）").toMatch(/takeForClaim\(dragId\)/);
+    expect(claimBody, "正文定向投递（emitTo 认领方）").toMatch(
+      /emitTo\(from, EVT_TAB_PAYLOAD, \{[\s\S]{0,180}?tabs: snapshots/,
     );
-    expect(body, "没人接手才回落：主窗口开新窗").toMatch(/openTabsInNewWindow\(ids, spot\)/);
+    expect(claimBody, "交出去后本地立刻收尾").toMatch(/cfg\.relinquish\(payload, from\)/);
+
+    // ⑤ 没人认领才回落：卫星窗口交回主窗口；主窗口在落点开新窗
+    const body = fnBody("async function dropOnDesktop");
+    expect(body, "卫星窗口交回主窗口").toMatch(
+      /windowKind === "satellite"[\s\S]{0,180}?returnTabsToMain\(ids\)/,
+    );
+    expect(body, "主窗口在落点开新窗").toMatch(
+      /openTabsInNewWindow\(ids, desktopSpotOf\(screenX, screenY\)\)/,
+    );
+    // ⚠️ 回落只在「过了宽限期还没人认领」时触发 —— 认领是 IPC 往返，必然晚于 dragend。
+    // 没有这段宽限，每一次成功的跨窗口拖拽都会同时被当成「扔在桌面上」→ 标签被复制成两份。
+    const endBody = seg("const onDragEnd", "const onClaim");
+    expect(endBody, "回落要等认领宽限").toMatch(
+      /setTimeout\([\s\S]{0,240}?if \(s\.taken\) return;[\s\S]{0,90}?onFallback/,
+    );
   });
 
-  it("跨窗口拖拽协议：正文绝不广播（B89）", () => {
-    const wd = readFileSync("src/shell/windowdrag.ts", "utf-8");
-    // hover/release 只带坐标：广播一次 = 每个窗口都收到一份，正文跟着广播就是
-    // 「几十 MB × 窗口数」。
-    expect(wd, "hover 只带坐标，不得夹带正文").toMatch(
-      /EVT_HOVER, \{\s*\n\s*from: selfLabel,\s*\n\s*screen: clientToScreen\(g, lastClient\.x, lastClient\.y\),\s*\n\s*\}\)/,
+  it("跨窗口拖拽协议：正文绝不广播，只在认领时定向投递（B91-2）", () => {
+    // hover/release 只带坐标、正文走定向投递（B89）的规矩没变，只是事件从
+    // 「广播坐标 + 200ms 抢单」换成「目标窗口定向 claim → 源窗口定向 payload」：
+    // 广播一次 = 每个窗口都收到一份，正文跟着广播就是「几十 MB × 窗口数」。
+    const dnd = readFileSync("src/shell/tabdnd.ts", "utf-8");
+    const dndCode = dnd.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+
+    expect(dndCode, "claim 定向投递").toMatch(/emitTo\(payload\.from, EVT_TAB_CLAIM/);
+    expect(dndCode, "payload 定向投递").toMatch(/emitTo\(from, EVT_TAB_PAYLOAD/);
+    expect(dndCode, "正文绝不广播（不得出现 emit(EVT_TAB_PAYLOAD）").not.toMatch(
+      /emit\(EVT_TAB_PAYLOAD/,
     );
-    expect(wd, "release 也只广播坐标").toMatch(/EVT_RELEASE, \{ from: selfLabel, screen \}/);
-    expect(wd, "正文走定向投递").toMatch(/emitTo\(target, EVT_PAYLOAD/);
-    // 顺序是刻意的：先挂 claim 监听再广播 release，反过来的话接手方的回答可能早于
-    // 监听就位，这一次拖拽就只能等到超时再回落成「开新窗口」。
-    expect(wd, "必须先挂 claim 监听再广播 release").toMatch(
-      /listen<ClaimPayload>\(EVT_CLAIM[\s\S]{0,600}emit\(EVT_RELEASE/,
-    );
-    expect(wd, "坐标口径要除以缩放（高 DPI 屏否则整体偏一倍）").toMatch(/scaleFactor\(\)/);
-    expect(src, "两个窗口都要装接收侧（谁都可能成为落点）").toMatch(
-      /^ {2}void installWindowDropTarget\(windowLabel, \{/m,
+    expect(dndCode, "claim 也不得广播").not.toMatch(/emit\(EVT_TAB_CLAIM/);
+    // 两个窗口都要装接收侧（谁都可能成为落点）
+    expect(src, "两个窗口都装接收侧").toMatch(
+      /void installTabDnd\(\{\s*\n\s*selfLabel: windowLabel,/,
     );
     expect(src, "落点用**本窗口**算出来的那块（预览在哪就落哪）").toMatch(
-      /preview: \(x, y\) => previewDropAt\(x, y\)/,
+      /preview: \(x, y, altKey\) => previewDropAt\(x, y, altKey\)/,
+    );
+    // ⚠️ 上游接线：「函数写对了但没人这么调」是最常见的漏网形态 —— 每个回调都得真的
+    //    接到宿主的实现上，漏一个就是「某条路径静默不工作」。
+    expect(src, "落点提交接到 commitTabDrop").toMatch(
+      /commitLocal: \(req\) => commitTabDrop\(req\)/,
+    );
+    expect(src, "快照取本地标签").toMatch(/snapshot: \(payload\) => snapshotDrag\(payload\)/);
+    expect(src, "交出去之后本地收尾").toMatch(
+      /relinquish: \(payload, toLabel\) => relinquishDrag\(payload, toLabel\)/,
+    );
+    expect(src, "接住别的窗口送来的标签").toMatch(
+      /adopt: \(tabs, spot\) => acceptDroppedTabs\(tabs, spot as DropSpot \| null\)/,
+    );
+    expect(src, "没人接手才回落").toMatch(
+      /onFallback: \(payload, sx, sy\) => void dropOnDesktop\(payload, sx, sy\)/,
+    );
+    expect(src, "载荷读不出来要留一行日志（否则静默无效排不动）").toMatch(
+      /onWarn: \(what\) => logEvent\("drop", what\)/,
     );
   });
 
-  it("拖拽收尾必须通知宿主，且 END 不得吃掉落点（B90）", () => {
-    const fin = topLevelFnBody(sv, "function finishTabDrag");
-    expect(fin, "任何收尾路径都要通知（松手 / 失焦 / 强制清场）").toMatch(/onDragEnd\?\.\(\)/);
-    expect(src, "宿主接线：收尾广播「结束」，让别的窗口收掉预览").toMatch(
-      /onDragEnd: \(\) => endWindowDrag\(\)/,
+  it("拖拽收尾：源窗口只清自己的痕迹，目标窗口的落点要留到正文到达（B90/B91-2）", () => {
+    // B90 的病根：发起窗口的收尾**早于**落点提交，目标窗口若跟着清掉落点，正文到达时
+    // 就不知道放哪儿了（表现为「预览在这、落下在那」）。B91-2 起落点根本不经过 IPC：
+    // 目标窗口把 drop 时算好的 spot 攒着，只由它的 `adopt` 消费。
+    const dnd = readFileSync("src/shell/tabdnd.ts", "utf-8");
+    const dndCode = dnd.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+    const seg = (from: string, to: string): string => {
+      const a = dndCode.indexOf(from);
+      const b = dndCode.indexOf(to);
+      return a >= 0 && b > a ? dndCode.slice(a, b) : "";
+    };
+
+    // ① 源窗口的收尾只清本窗口的痕迹（拖拽态类 + 落点预览）
+    const endBody = seg("const onDragEnd", "const onClaim");
+    expect(endBody, "收尾清掉拖拽态类").toMatch(/classList\.remove\(TAB_DRAG_CLASS\)/);
+    expect(endBody, "收尾清掉本窗口的落点痕迹").toMatch(/config\?\.clear\(\)/);
+
+    // ② 目标窗口必须**留住落点**：drop 时攒下来，等正文（payload）到达才落地
+    const dropBody = seg("const onDrop", "const onDragEnd");
+    expect(dropBody, "drop 时把落点攒下来等正文").toMatch(
+      /pendingForeign = \{ dragId: payload\.dragId, spot \}/,
     );
-    // ⚠️ 发起窗口是「先广播 END 收尾（finishTabDrag 早于落点提交）、再定向投递正文」，
-    // 所以接手方收到 END 只能清视觉、**必须留住落点** —— 否则正文到达时已经不知道
-    // 该放哪儿，只能退回活动面板（预览在这、落下在那）。
-    const wd2 = readFileSync("src/shell/windowdrag.ts", "utf-8");
-    expect(wd2, "END 只收视觉，留住落点").toMatch(/clearReceiver\(false\)/);
-    expect(wd2, "指针不在本窗口才作废落点").toMatch(/function clearReceiver\(forgetSpot = true\)/);
+    const payloadBody = seg("const onPayload", "document.addEventListener");
+    expect(payloadBody, "正文到达才用掉落点").toMatch(/cfg\.adopt\(p\.tabs, pend\.spot\)/);
+    // 同一次拖拽只落地一次（避免重复 adopt 把标签插两遍）
+    expect(payloadBody, "消费后立即作废落点").toMatch(/pendingForeign = null;/);
   });
 
   it("移空的面板要摘掉，不留空框（B90）", () => {
     const prune = fnBody("function pruneEmptyPanels");
     expect(prune, "唯一面板不摘（摘了就没地方放标签）").toMatch(/countLeaves\(layout\) <= 1/);
     expect(prune, "摘之前先还原最大化").toMatch(/exitMaximize\(\)/);
-    const drop = fnBody("async function dropTabsOutOfWindow");
-    expect(drop, "拖到别的窗口后要清理空面板（主窗口侧）").toMatch(
-      /remoteTabLocally\(id, target\);[\s\S]{0,220}pruneEmptyPanels\(\)/,
+    // 标签被别的窗口要走后必须清理空面板：两条路径都在 relinquishDrag 里 ——
+    // 主窗口侧走 remoteTabLocally（留隐藏实例），卫星侧走 detachLocally（直接摘）。
+    const rel = fnBody("function relinquishDrag");
+    expect(rel, "卫星侧：摘本地视图后清空面板").toMatch(
+      /detachLocally\(ids\);[\s\S]{0,160}?pruneEmptyPanels\(\)/,
     );
-    expect(drop, "拖到别的窗口后要清理空面板（卫星侧 / 交回主窗口）").toMatch(
-      /detachLocally\(ids\);[\s\S]{0,140}pruneEmptyPanels\(\)/,
+    expect(rel, "主窗口侧：登记隐藏实例后清空面板").toMatch(
+      /remoteTabLocally\(id, toLabel\);[\s\S]{0,200}?pruneEmptyPanels\(\)/,
+    );
+    // 交回主窗口（窗口外松手的回落路径）同样不留空面板
+    const back = fnBody("async function dropOnDesktop");
+    expect(back, "交回主窗口后也清空面板").toMatch(
+      /detachLocally\(ids\);[\s\S]{0,160}?pruneEmptyPanels\(\)/,
     );
     const split = fnBody("function splitPanelWithTab");
     expect(split, "同面板分屏挪走唯一标签后也要摘（以前这里留空框）").toMatch(
@@ -3034,12 +3156,14 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
   });
 
   it("新窗口落点：拿得到就落在松手处，拿不到退回系统摆放", () => {
-    const body = fnBody("async function dropSpotOf");
-    expect(body, "要靠窗口外框位置换算（screenX 在多显示器下口径不对）").toMatch(
-      /outerPosition\(\)/,
+    // B91-2 起落点直接用 `dragend` 的 screenX/screenY（整段拖拽手势交给了系统拖放循环，
+    // 期间页面收不到任何指针事件，dragend 是唯一还带最后位置的时机），不再读窗口几何。
+    const body = fnBody("function desktopSpotOf");
+    expect(body, "非有限值挡掉").toMatch(/!Number\.isFinite\(screenX\)[\s\S]{0,60}?return null;/);
+    expect(body, "（0,0）视为不可用（多显示器折算偏了会落到角落）").toMatch(
+      /screenX === 0 && screenY === 0/,
     );
-    expect(body, "外框→客户区要扣掉边框").toMatch(/borderX/);
-    expect(body, "拿不到坐标返回 null").toMatch(/catch \{\s*\n\s*return null;/);
+    expect(body, "落点就是屏幕坐标本身").toMatch(/return \{ x: screenX, y: screenY \};/);
     expect(api, "落点随建窗命令一起交给 Rust").toMatch(/x: spot\?\.x \?\? null/);
     expect(rust, "Rust 侧只接受「两个都合法」的落点").toMatch(/fn spot_of/);
     expect(rust, "建窗时应用落点").toMatch(/builder = builder\.position\(x, y\)/);
