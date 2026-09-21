@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 // M4 命令面板（src/shell/commandpalette.ts）：模糊匹配、键盘导航、执行与关闭。
 import { afterEach, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { topLevelFnBody } from "./static";
 import {
   PALETTE_OPEN_CLASS,
   PALETTE_OVERLAY_CLASS,
@@ -257,4 +259,66 @@ describe("B70 C 档：悬停不重建列表 / 呼出面板顶掉菜单", () => {
     expect(paletteOpen()).toBe(true);
     closePopupMenu();
   });
+});
+
+describe("C 档：命令面板两处修复", () => {
+  const paletteSrc = readFileSync("src/shell/commandpalette.ts", "utf-8");
+  it("悬停只切选中态，绝不重建列表（重建会把滚动位置归零 → 弹回顶端）", () => {
+    const show = topLevelFnBody(paletteSrc, "function showCommandPalette");
+    expect(show, "取不到 showCommandPalette").toBeTruthy();
+
+    expect(paletteSrc, "必须有独立的 paint（只切 is-active，不碰 DOM 结构）").toMatch(
+      /const paint = \(\): void => \{/,
+    );
+    expect(paletteSrc, "必须有 revealActive（滚动只在键盘导航时发生）").toMatch(
+      /const revealActive = \(\): void => \{/,
+    );
+    expect(paletteSrc, "select 的第二个参数决定是否滚动").toMatch(
+      /const select = \(i: number, reveal: boolean\): void => \{/,
+    );
+
+    // 鼠标路径：只 select(i, false) —— 不重建、不滚动
+    const box = show.slice(show.indexOf('"mousemove"'));
+    const handler = box.slice(0, box.indexOf("});"));
+    expect(handler, "悬停必须走静默路径 select(i, false)").toMatch(/select\(i, false\);/);
+    expect(handler, "悬停不得调 render()（那是重建列表）").not.toMatch(/render\(\)/);
+
+    // 键盘路径：select(..., true) 才滚动
+    expect(show, "↓ 必须滚动选中行").toMatch(/select\(\(active \+ 1\) % rows\.length, true\)/);
+    expect(show, "↑ 必须滚动选中行").toMatch(
+      /select\(\(active - 1 \+ rows\.length\) % rows\.length, true\)/,
+    );
+
+    // 渲染路径里不得再出现 scrollIntoView 调用：它曾经就在这里「重建完再补一次滚动」，
+    // 而重建本身已经把滚动位置清零 —— 补不回来的那一次就是用户看到的「弹回顶端」。
+    const renderBody = paletteSrc.slice(
+      paletteSrc.indexOf("const render = ()"),
+      paletteSrc.indexOf("const run = (id"),
+    );
+    expect(renderBody.length, "必须能截出渲染函数体").toBeGreaterThan(0);
+    expect(renderBody, "渲染里不得再调 scrollIntoView").not.toMatch(/scrollIntoView\(/);
+  });
+
+  it("呼出面板先把打开着的菜单收掉（菜单只认 Esc / 外部 pointerdown，不认键盘呼出）", () => {
+    expect(paletteSrc, "必须引入 closePopupMenu").toMatch(
+      /import \{ closePopupMenu \} from "\.\/menu";/,
+    );
+    const show = topLevelFnBody(paletteSrc, "function showCommandPalette");
+    const guard = show.indexOf("if (paletteOpen()) return;");
+    const close = show.indexOf("closePopupMenu();");
+    expect(guard, "取不到「已有面板就不叠第二层」的守卫").toBeGreaterThan(-1);
+    expect(close, "必须调用 closePopupMenu").toBeGreaterThan(-1);
+    expect(close, "收菜单必须在守卫之后（面板没开才需要收）").toBeGreaterThan(guard);
+  });
+});
+
+it("命令面板：模块存在、命令已登记、main 已分发", () => {
+  const km = readFileSync("src/shell/keymap.ts", "utf-8");
+  expect(km, "必须登记 palette.open 命令").toMatch(/id: "palette\.open"/);
+
+  const main = readFileSync("src/main.ts", "utf-8");
+  expect(main).toMatch(/case "palette\.open":/);
+  expect(main).toMatch(/showCommandPalette\(/);
+  // 面板打开期间全局快捷键必须让路，否则输入框里的按键会触发命令
+  expect(main).toMatch(/if \(paletteOpen\(\)\) return;/);
 });

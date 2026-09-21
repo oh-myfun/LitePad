@@ -2,6 +2,7 @@
 // 快捷键对话框（B42）：浏览 + 编辑的交互回归。
 // 覆盖录制改键、冲突拦截、Esc 只取消录制、Backspace 解绑、恢复默认、搜索过滤。
 import { describe, it, expect, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
 import { KEYMAP_RECORDING_CLASS, showKeymapDialog } from "../src/shell/keymapdialog";
 import { DEFAULT_PRESET_ID, setKeymapPreset, type KeymapOverrides } from "../src/shell/keymap";
 
@@ -236,4 +237,10 @@ describe("M4 快捷键对话框：键位预设下拉", () => {
     openDialog({}, "no-such-preset");
     expect(presetSelect().value).toBe(DEFAULT_PRESET_ID);
   });
+});
+
+it("快捷键对话框必须能切预设", () => {
+  const dlg = readFileSync("src/shell/keymapdialog.ts", "utf-8");
+  expect(dlg).toMatch(/onPresetChange/);
+  expect(dlg).toContain("keymap-preset");
 });

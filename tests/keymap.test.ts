@@ -3,6 +3,7 @@
 // 覆盖：键位串解析/格式化、事件匹配、冲突检测、用户覆盖与解绑、
 // 以及 B42 新增的「大纲 / 折叠展开 / 移除分屏」默认键位。
 import { afterEach, describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   COMMANDS,
   DEFAULT_PRESET_ID,
@@ -369,4 +370,18 @@ describe("M4 键位预设：优先级 = 用户覆盖 > 预设 > 默认", () => {
     expect(setKeymapPreset("vscode")).toBe(false);
     expect(setKeymapPreset("unknown")).toBe(false);
   });
+});
+
+it("键位预设：注册表有预设表，设置里有持久化字段", () => {
+  const km = readFileSync("src/shell/keymap.ts", "utf-8");
+  expect(km).toMatch(/export const KEYMAP_PRESETS/);
+  // 优先级：用户覆盖 > 预设 > 默认，effectiveKeys 必须同时看两层
+  expect(km).toMatch(/currentPreset\.overrides\[id\]/);
+
+  const rs = readFileSync("src-tauri/src/session/mod.rs", "utf-8");
+  expect(rs).toMatch(/pub keymap_preset: String/);
+
+  const main = readFileSync("src/main.ts", "utf-8");
+  // 预设必须在任何 effectiveKeys/resolveCommand 之前落地
+  expect(main).toMatch(/setKeymapPreset\(normalizePresetId\(settings\?\.keymap_preset\)\)/);
 });

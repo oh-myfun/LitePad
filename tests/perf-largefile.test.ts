@@ -5,6 +5,7 @@
 // 挂到真实 DOM 上数 gutter、或用 languageDataAt 判断语言扩展是否注入，
 // 而不是去猜内部字段名。这样 CM6 升级时测试不会因内部重构而假失败。
 import { afterEach, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { javascript } from "@codemirror/lang-javascript";
 import { undo } from "@codemirror/commands";
 import { createEditor, makeTabState } from "../src/editor/editor";
@@ -160,5 +161,52 @@ describe("M4 编辑器：真实 DOM 上的降级效果", () => {
     for (const cls of CLASSES) {
       expect(mount(cls, "line1\nline2", javascript()).text()).toBe("line1\nline2");
     }
+  });
+});
+
+describe("M4 大文件分级：降级而不是拒绝（原先 20 MB 直接打不开）", () => {
+  // M0 起 open_file 对 >20MB 一律返回 Err，提示「大文件分级模式将在 M4 提供」。
+  // M4 的做法是先定档再降级：只有超过硬上限（64MB）才拒绝。
+  it("doc.rs 必须是阈值表，不再用单一 MAX_OPEN_BYTES", () => {
+    const src = readFileSync("src-tauri/src/core/doc.rs", "utf-8");
+    expect(src).toMatch(/pub const SIZE_NORMAL_MAX: u64/);
+    expect(src).toMatch(/pub const SIZE_LARGE_MAX: u64/);
+    expect(src).toMatch(/pub const SIZE_HUGE_MAX: u64/);
+    expect(src, "单一上限已被阈值表取代").not.toContain("MAX_OPEN_BYTES");
+    expect(src, "必须有 size_class 定档函数").toMatch(/pub fn size_class\(/);
+  });
+
+  it("open_file 按档位放行，超限才报错（错误信息不再提 M4 未提供）", () => {
+    const src = readFileSync("src-tauri/src/commands/mod.rs", "utf-8");
+    expect(src).toMatch(/doc::size_class\(/);
+    expect(src, "不该再写「大文件分级模式将在 M4 提供」").not.toContain("将在 M4 提供");
+    // 定档结果要随文件内容回传前端
+    expect(src).toMatch(/size_class: class\.as_str\(\)\.into\(\)/);
+  });
+
+  it("OpenedFile 必须带上 size_class / size_hint 给前端", () => {
+    const src = readFileSync("src-tauri/src/commands/mod.rs", "utf-8");
+    expect(src).toMatch(/pub size_class: String/);
+    expect(src).toMatch(/pub size_hint: String/);
+  });
+
+  it("前端必须有 perf 档位表，且编辑器真的按档裁剪", () => {
+    const perf = readFileSync("src/editor/perf.ts", "utf-8");
+    expect(perf).toMatch(/export type SizeClass/);
+    expect(perf).toMatch(/export function perfProfileFor/);
+    expect(perf).toMatch(/export function normalizeSizeClass/);
+
+    const ed = readFileSync("src/editor/editor.ts", "utf-8");
+    expect(ed, "基础扩展必须接受档位参数").toMatch(/function baseExtensions\(perf/);
+    expect(ed, "语法高亮必须受档位控制").toMatch(/perf\.syntax/);
+    expect(ed, "折叠必须受档位控制").toMatch(/perf\.folding/);
+  });
+
+  it("大文件停用自动预览，但手动切预览仍可渲染（降级不是禁用）", () => {
+    const src = readFileSync("src/main.ts", "utf-8");
+    expect(src).toMatch(/function renderMarkdownFor\(panel: Panel, force = false\)/);
+    expect(src).toMatch(/perfProfileFor\(doc\.sizeClass\)\.autoPreview/);
+    // 用户主动切模式时必须传 force=true
+    expect(src).toMatch(/renderMarkdownFor\(panel, true\)/);
   });
 });

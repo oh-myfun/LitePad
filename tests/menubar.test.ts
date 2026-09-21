@@ -6,6 +6,7 @@
 // 3) 静态断言入口唯一（不再有设置窗口；分屏只留快捷键）。
 import { describe, it, expect, afterEach } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
+import { topLevelFnBody } from "./static";
 import { createMenuBar, type MenuBarCallbacks } from "../src/shell/menubar";
 import { closePopupMenu } from "../src/shell/menu";
 import { keyHint as realKeyHint } from "../src/shell/keymap";
@@ -428,5 +429,52 @@ describe("查找入口统一（悬浮查找栏）", () => {
     const html = readFileSync("index.html", "utf-8");
     expect(html, "工具栏只保留一个查找按钮").not.toContain("btn-find-files");
     expect(html).toContain('id="btn-find"');
+  });
+});
+
+describe("B 档：删掉菜单项提示（写了也永远不显示 = 死代码）", () => {
+  const menuSrc = readFileSync("src/shell/menu.ts", "utf-8");
+  const tabstripSrc = readFileSync("src/shell/tabstrip.ts", "utf-8");
+  const filedropSrc = readFileSync("src/shell/filedrop.ts", "utf-8");
+  const mainSrc = readFileSync("src/main.ts", "utf-8");
+  it("MenuItem 不再有 title 字段，fillMenu 也不再挂提示", () => {
+    expect(menuSrc, "MenuItem 不该再留 title 字段").not.toMatch(/^\s*title\?: string;/m);
+    const fill = topLevelFnBody(menuSrc, "function fillMenu");
+    expect(fill, "取不到 fillMenu").toBeTruthy();
+    expect(fill, "菜单项不得再调 setTip").not.toMatch(/setTip\(/);
+  });
+
+  it("标签右键菜单的高频项不带 title（复制标签 / 在新窗口打开）", () => {
+    for (const label of ["复制标签", "在新窗口打开"]) {
+      const i = tabstripSrc.indexOf(`label: "${label}"`);
+      expect(i, `找不到菜单项 ${label}`).toBeGreaterThan(-1);
+      // 该项到下一个 } 之间不得出现 title
+      const chunk = tabstripSrc.slice(i, tabstripSrc.indexOf("}", i));
+      expect(chunk, `${label} 不该再挂提示`).not.toMatch(/title/);
+    }
+  });
+
+  it("拖放选择菜单两项也不再挂 title", () => {
+    const choice = topLevelFnBody(filedropSrc, "function showFileDropChoice");
+    expect(choice, "取不到 showFileDropChoice").toBeTruthy();
+    expect(choice, "两项都不该有 title").not.toMatch(/title/);
+  });
+
+  it("触发判据改成「落点面板的活动文档是 Markdown」，而不是「拖进来的是 .md」", () => {
+    expect(filedropSrc, "needsChoice 必须接收落点文档是否为 Markdown").toMatch(
+      /export function needsChoice\(paths: string\[\], targetIsMarkdown: boolean\): boolean/,
+    );
+    expect(filedropSrc, "单个文件 + 落点是 Markdown 才问").toMatch(
+      /return paths\.length === 1 && targetIsMarkdown;/,
+    );
+    expect(filedropSrc, "isMarkdownPath 这条旧判据应已删除").not.toMatch(/isMarkdownPath/);
+
+    // main.ts 接线：落点面板的活动文档是不是 md 由 panelDocIsMarkdown 回答
+    expect(mainSrc, "落点判定必须问「落点面板的活动文档」").toMatch(
+      /needsChoice\(p\.paths, target !== null && panelDocIsMarkdown\(target\.panelId\)\)/,
+    );
+    const helper = topLevelFnBody(mainSrc, "function panelDocIsMarkdown");
+    expect(helper, "取不到 panelDocIsMarkdown").toBeTruthy();
+    expect(helper, "必须取该面板的活动标签再判 isMdTab").toMatch(/isMdTab\(t\)/);
   });
 });
