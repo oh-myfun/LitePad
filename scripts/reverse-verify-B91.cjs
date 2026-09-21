@@ -29,6 +29,7 @@
 //      → 还原 `text/plain`（落点编辑器把标签名当「拖入文本」插进正文）判红
 //      → 监听退回冒泡阶段（编辑器比我们先收到 drop，正文被改）判红
 //      → drop 不先 claim（读不出载荷就放行默认动作 = 浏览器自己往文档里插东西）判红
+//      → 文件拖入的监听退回冒泡阶段（CM6 用 FileReader 把文件内容读出来插进文档）判红
 //
 // 反向对照（应**不**判红）：改与契约无关的注释 / 文案 → 必须仍然绿。
 //
@@ -340,6 +341,17 @@ const probes = [
     expectRed: true,
     from: "    if (!claim(e)) return;\n    hopDepth = 0;",
     to: "    if (!isTabDragData(e.dataTransfer)) return;\n    hopDepth = 0;",
+  },
+  {
+    name: "③-5 文件拖入的监听退回冒泡阶段（CM6 先把文件内容读出来插进文档）",
+    target: FILEDROP,
+    filters: [
+      "tests/filedrop.test.ts:文件落到编辑器上",
+      "tests/filedrop.test.ts:页面级监听必须挂捕获阶段",
+    ],
+    expectRed: true,
+    from: "  const CAPTURE = { capture: true } as const;",
+    to: "  const CAPTURE = { capture: false } as const;",
   },
   // ---- 反向对照：改无关的东西必须仍然绿 ----
   {
