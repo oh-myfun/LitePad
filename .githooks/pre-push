@@ -84,9 +84,22 @@ node node_modules/vitest/vitest.mjs run || {
   exit 1
 }
 
+# ⚠️ 09-23：工具链切到 MSVC 后，cargo test **不再需要 windres**（资源编译改由 Windows SDK 的
+#   rc.exe 承担）。原来「找不到 windres ⇒ 跳过 cargo test」的分支，会让 Rust 侧完全不校验
+#   而钩子退出码仍是 0 —— 典型的静默假绿（本项目第 N 次栽在「退出码 0 ≠ 真校验」上）。
+#   改成按工具链分流：msvc 直接跑，gnu 才需要 windres。
+TOOLCHAIN_IS_MSVC=0
+if [ -f rust-toolchain.toml ] && grep -q 'windows-msvc' rust-toolchain.toml 2>/dev/null; then
+  TOOLCHAIN_IS_MSVC=1
+fi
+
 if [ -x "$HOME/.cargo/bin/cargo.exe" ] || command -v cargo >/dev/null 2>&1; then
-  if [ -n "$WINDRES_DIR" ]; then
-    echo "▸ cargo test --release（windres: $WINDRES_DIR）"
+  if [ "$TOOLCHAIN_IS_MSVC" = "1" ] || [ -n "$WINDRES_DIR" ]; then
+    if [ "$TOOLCHAIN_IS_MSVC" = "1" ]; then
+      echo "▸ cargo test --release（toolchain: msvc，无需 windres）"
+    else
+      echo "▸ cargo test --release（windres: $WINDRES_DIR）"
+    fi
     (cd src-tauri && cargo test --release) || {
       echo "✗ pre-push 失败：cargo test 未通过" >&2
       exit 1

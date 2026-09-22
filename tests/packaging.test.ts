@@ -44,36 +44,6 @@ describe("B52 安装程序自身必须有 LitePad 图标（否则显示 NSIS 默
   });
 });
 
-describe("B48 安装包必须自带 WebView2Loader.dll（缺了应用起不来）", () => {
-  // 用户报告：装好的应用双击无反应。根因是 NSIS 包里只有 litepad.exe，
-  // 而它的导入表依赖 WebView2Loader.dll（Tauri 的 WebView2 加载器，必须与 exe 同目录）；
-  // 该 dll 由构建生成到 target/release/，但 bundler 不会自动收进包。
-  it("bundle.resources 必须把 WebView2Loader.dll 打到安装目录根", () => {
-    const conf = readJson("src-tauri/tauri.conf.json");
-    const res = conf.bundle?.resources;
-    expect(res, "bundle.resources 必须存在（否则 WebView2Loader.dll 不会进包）").toBeTruthy();
-
-    // 两种写法都要认：["路径"] 与 { "源": "目标" }
-    const pairs: [string, string][] = Array.isArray(res)
-      ? (res as string[]).map((p) => [p, p])
-      : Object.entries(res as Record<string, string>);
-
-    const hit = pairs.find(([, target]) => /WebView2Loader\.dll$/i.test(target));
-    expect(hit, "必须把 WebView2Loader.dll 打进安装包").toBeTruthy();
-    // 目标若带子路径（如 target/release/...），exe 仍会在同目录找不到它
-    expect(hit![1], "目标必须是安装目录根下的文件名，不能带子路径").toBe("WebView2Loader.dll");
-
-    // 源路径**不能**指向构建产物：Tauri 的 codegen 在**编译前**就校验 resources 路径存在，
-    // 而 target/release/ 下的 dll 是链接阶段才生成的 —— 冷构建（CI）必然报
-    // "resource path ... doesn't exist"。本地能过只是因为 target 里有上次构建的残留。
-    expect(hit![0], "源路径不得指向 target/（构建产物在校验时还不存在）").not.toContain("target/");
-    expect(
-      existsSync(`src-tauri/${hit![0]}`),
-      `源文件 src-tauri/${hit![0]} 必须存在于仓库（随包分发的运行时依赖）`,
-    ).toBe(true);
-  });
-});
-
 describe("发布：版本号必须四处同步", () => {
   it("版本号必须四处同步（发布流程靠它定 tag，漏改会打出对不上的安装包）", () => {
     // 用户反馈：GitHub 上没有触发编译发布、版本号也不随开发走。

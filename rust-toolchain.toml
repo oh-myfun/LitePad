@@ -1,16 +1,27 @@
 # LitePad 工具链锁定
 #
-# 为什么不是常规的 stable-x86_64-pc-windows-msvc：
-#   本机没有 MSVC 生成工具（无 link.exe），而 build script / proc-macro 必须
-#   编译到宿主平台。因此宿主工具链必须选 GNU，由 MSYS2 MinGW-w64 提供链接器。
+# 为什么必须是 MSVC、不能是 GNU：
+#   `webview2-com-sys` 对 WebView2 loader 的链接方式按 target_env 二选一
+#   （`webview2-com-sys-0.38.2/src/lib.rs:15-22`）：
+#     target_env = "msvc"      → link(name = "WebView2LoaderStatic", kind = "static")
+#     target_env != "msvc"     → link(name = "WebView2Loader.dll")
+#   即：MSVC 把 loader **静态编进 exe**；GNU 则是**加载期动态导入**，exe 旁边没有
+#   `WebView2Loader.dll` 就会 `0xC0000135`(STATUS_DLL_NOT_FOUND) 直接起不来
+#   —— v0.11.0 的安装器就是栽在这里（payload 只有 litepad.exe）。
+#
+#   ⚠️ 这不是删掉 `src/dropbridge.rs` 能绕开的：`wry` / `tauri` / `tauri-runtime-wry`
+#   本身都依赖 `webview2-com`，GNU 下任何 Tauri 应用都会静态导入该 dll。
 #
 # 前置条件（一次性）：
-#   rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
-#   并把 MSYS2 的 MinGW 加入 PATH（见 scripts/dev.sh）：
-#     /c/msys64/mingw64/bin
+#   rustup toolchain install stable-x86_64-pc-windows-msvc --profile minimal
+#   + VS 2022 生成工具的「使用 C++ 的桌面开发」工作负载（提供 cl.exe / link.exe）
 #
-# 若日后安装了 VS2022 生成工具想切回 MSVC：
-#   把下面 channel 改回 "stable"，或直接删除本文件，然后重新 cargo build。
+# 本机 MSVC 装在**非默认路径** `D:\Program Files\MicrosoftVisualStudio`
+# （注意目录名无空格）。rustc 的 MSVC 目标能自动找到它，**不需要** vcvars 环境，
+# 也不需要在 PATH 里手工加 —— 已实测 `rustc -msvc` 可直接链出 exe（产物导入
+# vcruntime140.dll + api-ms-win-crt-*，确认是 MSVC 链接）。
+#
+# ⚠️ 改回 GNU 前请先读完上面第一段：那会让发布版重新依赖外带的 WebView2Loader.dll。
 [toolchain]
-channel = "stable-x86_64-pc-windows-gnu"
+channel = "stable-x86_64-pc-windows-msvc"
 profile = "minimal"
