@@ -32,6 +32,7 @@ LitePad（B34 更名，LiteMD 已 B36 清理）Tauri 2（Rust 持状态）+ Vite
 - ⚠️ `docs/*.md` 是说明不是契约，改语义须同步改清单/状态表（B67 守卫）。
 - **pre-push 会本地构建并产出 release exe**（构建失败阻断推送，缺工具链才跳过）：`npm run build` → `tauri build` → `src-tauri/target/release/litepad.exe`。⚠️ 这也是**截图能拍的前提**（`capture-screenshots.py` 驱动的就是这个 exe；`release.sh --ci` 跳过本地构建会让 exe 停在旧代码，曾连着漏刷两个版本的 `main.png`）。跑截图脚本必须 `export CODEBUDDY_SAFE_DELETE_ENABLED=0`（清 WebView2 用户数据会被 safe-delete 钩子拦）。
 - 每次编译产出发布版本：tsc→vite→vitest→cargo build+test→tauri build（门 = `.githooks` + GitHub `CI`）。
+⚠️ **开发机尽量只编 release**（09-22 用户清掉 `target/debug`，13G→1.7G 仅 release）：但 `scripts/build-all.sh:37` 与 `.githooks/pre-push:90` 的 `cargo build`/`cargo test` **默认 debug**，会再生 ~11G debug；要贯彻只 release 需加 `--release`。`scripts/dev.sh` 的 `tauri dev` 设计上必为 debug、无法改——想彻底避免 debug 只能弃用 `tauri dev` 改用 `tauri build`。
 - **README 使用者向**：顶部一张 `main.png`，无快捷键/安装/构建/明确不做，避开库名与内部机制。
 - 发布版本只通过 `v*` tag 发布（`git push origin main --follow-tags`）；CI 经 `.githooks` + GitHub Actions。
 - 🚦 **完成功能 = 自动「提交 + 打包」，但绝不自动推送**（09-21 提出、09-22 收紧）：
