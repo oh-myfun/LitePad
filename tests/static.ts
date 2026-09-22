@@ -178,3 +178,29 @@ export function collectTextFiles(dir: string, acc: string[] = []): string[] {
   }
   return acc;
 }
+
+// ------------------------------------------------------------------ B98 构建脚本判据
+
+/**
+ * `scripts/build-all.sh` 是否在**打包前**点数 `dist/assets`，不足就 exit 1。
+ *
+ * 事故（09-23）：`tauri build` 的 vite 阶段被中断，`dist` 只剩一个 `index.html`、
+ * `assets/` 全丢。后续打包**退出码 0、日志正常**，但产出的 exe 打开是一片空白 ——
+ * 前端根本没被嵌进去。所以判据必须同时含「点数动作」和「不合格就阻断」两半：
+ * 少了后者就只是打印一行日志，照样会带着空壳打下去。
+ */
+export function hasDistIntegrityGuard(src: string): boolean {
+  return src.includes("find dist/assets -type f") && /dist 前端产物不完整[\s\S]*?exit 1/.test(src);
+}
+
+/**
+ * `scripts/build-all.sh` 是否把第 3 步 `cargo build --release` 的产物标注成**不可交付**。
+ *
+ * 同一轮事故的另一半：把第 3 步的 exe 直接给了用户，打开显示「127.0.0.1 拒绝连接」。
+ * 原因是 tauri 的 `dev = !custom-protocol`，而 `custom-protocol` 只在 `tauri build` 时注入 ——
+ * 那一步的产物是 dev 模式，会去连 `build.devUrl`。判据同时要求「标注」与「失败指纹」
+ * （`127.0.0.1`），保证后来人删掉这段说明时测试会红。
+ */
+export function hasStep3NotDeliverableWarning(src: string): boolean {
+  return /\[3\/4\][^\n]*不可交付/.test(src) && src.includes("127.0.0.1");
+}

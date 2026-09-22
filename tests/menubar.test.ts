@@ -6,7 +6,12 @@
 // 3) 静态断言入口唯一（不再有设置窗口；分屏只留快捷键）。
 import { describe, it, expect, afterEach } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
-import { stripLineComments, topLevelFnBody } from "./static";
+import {
+  hasDistIntegrityGuard,
+  hasStep3NotDeliverableWarning,
+  stripLineComments,
+  topLevelFnBody,
+} from "./static";
 import { createMenuBar, type MenuBarCallbacks } from "../src/shell/menubar";
 import { closePopupMenu } from "../src/shell/menu";
 import { keyHint as realKeyHint } from "../src/shell/keymap";
@@ -719,6 +724,26 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     expect(buildAll, "build-all.sh 的前端构建同样必须剥离 MSYS2 条目").toContain(
       'PATH="$FE_PATH" npm run build',
     );
+  });
+
+  it("B98 build-all.sh 必须拦住空壳 dist，并写明第 3 步产物不可交付", () => {
+    // 09-23 一轮里连踩两个「退出码 0 ≠ 生效」的坑，都是交付物层面的静默失效：
+    //   ① `tauri build` 的 vite 阶段被中断 → `dist` 只剩 `index.html`、`assets/` 全丢，
+    //      但打包**照样 exit 0、日志全绿**，打出来的 exe 打开是一片空白；
+    //   ② 把第 3 步 `cargo build --release` 的 exe 当交付物给了用户，打开显示
+    //      「127.0.0.1 拒绝连接」—— 那个 exe 没注入 `custom-protocol`（tauri 里
+    //      `dev = !custom-protocol`），是 dev 模式，会去连 `build.devUrl`。
+    //      ⚠️ 因此「交付 exe」只能取第 4 步覆盖写的同名文件，中间产物必须被显式标注。
+    // 判据放在 `tests/static.ts`，反向对照在 `tests/reverse-verify.test.ts`。
+    const src = readFileSync("scripts/build-all.sh", "utf-8");
+    expect(
+      hasDistIntegrityGuard(src),
+      "打包前必须点数 dist/assets，不合格就 exit 1（少了阻断那一半 = 只打印日志照样放行）",
+    ).toBe(true);
+    expect(
+      hasStep3NotDeliverableWarning(src),
+      "第 3 步必须标注「不可交付」，并点出 dev 模式的失败指纹（127.0.0.1）",
+    ).toBe(true);
   });
 
   it("B86 三种查找范围共用同一套触发与计数逻辑（不再靠回车触发搜索）", () => {

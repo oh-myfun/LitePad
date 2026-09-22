@@ -24,9 +24,11 @@
 // 新增反向对照时按域加 describe：文件拖入 → `pitfalls/0096`；标签拖拽 → `0094`。
 
 import { describe, it, expect, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
 import { restrictToRange, preserveCase } from "../src/editor/find";
 import { installFileDropTarget, isFileDrag } from "../src/shell/filedrop";
 import { TAB_MIME } from "../src/shell/tabdnd";
+import { hasDistIntegrityGuard, hasStep3NotDeliverableWarning } from "./static";
 import { fireDrag, makeDataTransfer, type FakeDataTransfer } from "./dnd";
 
 const teardowns: (() => void)[] = [];
@@ -203,5 +205,46 @@ describe("反向验证：查找的范围过滤与保留大小写（退化实现�
     expect(degenerate("Foo", "baz"), "与基准对照：不迁移 ⇒ 迁移用例不是恒真").not.toBe(
       preserveCase("Foo", "baz"),
     );
+  });
+});
+
+// ------------------------------------------------- 构建脚本的两条交付物守卫（B98）
+
+describe("反向验证：build-all.sh 的交付物守卫咬得住（空壳 dist / dev 模式中间产物）", () => {
+  const real = readFileSync("scripts/build-all.sh", "utf-8");
+
+  it("基准：真实脚本两条判据都成立", () => {
+    expect(hasDistIntegrityGuard(real), "打包前点数 dist/assets 并阻断").toBe(true);
+    expect(hasStep3NotDeliverableWarning(real), "第 3 步标注不可交付").toBe(true);
+  });
+
+  it("退化：只有『点数』没有『阻断』→ 空壳 dist 照样放行（判据的后半截不是装饰）", () => {
+    // 事故形状：断言只看「有没有自检」时，把 exit 1 删掉也照样绿 —— 而脚本此时
+    // 只会打印一行日志就继续 `tauri build`，打出来的仍是一片空白的 exe。
+    const degenerate = [
+      "ASSET_N=$(find dist/assets -type f 2>/dev/null | wc -l | tr -d ' ')",
+      'echo "    dist/assets: $ASSET_N 个文件"', // 退化点：不判断、不阻断
+      'echo "==> [4/4] release 发布构建"',
+    ].join("\n");
+    // ⚠️ 先自证「点数」这一半确实在 —— 否则这条用例只是证明了字符串不相等，等于恒真。
+    expect(degenerate, "退化脚本确实保留了点数动作").toContain("find dist/assets -type f");
+    expect(
+      hasDistIntegrityGuard(degenerate),
+      "少了 exit 1 就只打印日志、照样带着空壳打包 ⇒ 正向用例不是恒真",
+    ).toBe(false);
+  });
+
+  it("退化：删掉第 3 步的警示 → 判据为假（且 127.0.0.1 指纹同样会丢）", () => {
+    const degenerate = real
+      .split("\n")
+      .filter((l) => !l.includes("不可交付") && !l.includes("127.0.0.1"))
+      .join("\n");
+    // 先自证退化脚本**确实少了那几行**：原文里有，退化后没有。
+    expect(real.includes("127.0.0.1"), "原文本来就有这条指纹").toBe(true);
+    expect(degenerate.includes("127.0.0.1"), "退化脚本里已经没有了").toBe(false);
+    expect(
+      hasStep3NotDeliverableWarning(degenerate),
+      "缺了警示 ⇒ 后来人又会把第 3 步的 dev 模式 exe 当交付物发出去",
+    ).toBe(false);
   });
 });

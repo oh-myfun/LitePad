@@ -20,6 +20,7 @@
 | 0094 | dnd-textplain-leaks-into-editor | 标签拖拽写了 `text/plain` + 监听挂冒泡阶段 → 落点编辑器把文件名插进正文（内部协议不给可读正文 + 捕获阶段 `stopPropagation`） |
 | 0095 | reverse-verify-killed-leaves-patch | 反向验证脚本被超时硬杀 → 源文件停在探针补丁状态，伪装成「自己写的代码有 bug」（管道 + `tail` 还会截断输出掩盖真相） |
 | 0096 | dnd-filedrop-cm6-reads-content | 文件拖入监听挂冒泡阶段 → CM6 用 `FileReader.readAsText` 把**文件内容**读出来插进文档（捕获阶段 + `stopPropagation` 才拦得住） |
+| 0098 | release-artifact-traps | 打包「退出码 0」≠ 产物可用：空壳 `dist` 会无声打进包（exe 3.76MB vs 8.12MB），第 3 步 `cargo build` 的 exe 是 dev 模式会连 `127.0.0.1` |
 
 新增踩坑时：在对应 `ref/<domain>.md` 的原文处替换为指向本目录某记录的指针，并新建一条
 `<NNNN>-<slug>.md`（序号取 B 编号，slug 用 kebab-case 概括根因）。

@@ -149,12 +149,23 @@
 - 同一批症状还有 **coreutils 缺失**：本会话 PATH 只含 Git 的 `cmd/`，不含 `usr/bin`，于是
   `ls`/`grep`/`cp`/`tail`/`dirname` 全部 `command not found`。替代：文件复制交给 PowerShell
   （`Copy-Item`），看日志用 Grep/Read 工具，不要在 Bash 里 `| tail`（会截断，见 `pitfalls/0095`）。
-- 📦 **沙箱内本地打包配方**（`scripts/build-all.sh` 的等价四步，前两步剥 MSYS2 PATH、
-  后两步要 msys64 提供 windres，全程 `CODEBUDDY_SAFE_DELETE_ENABLED=0`）：
-  `tsc --noEmit` → `vite build` → `run-vitest.cjs --run` → `cargo build && cargo test` →
+- 📦 **沙箱内本地打包配方**（`scripts/build-all.sh` 的等价四步，全程
+  `CODEBUDDY_SAFE_DELETE_ENABLED=0`）：
+  `tsc --noEmit` → `vite build` → `run-vitest.cjs` → `cargo build --release && cargo test --release` →
   `tauri.js build --config '{"build":{"beforeBuildCommand":""}}'`。
   长任务一律后台 + 重定向日志；打包前先确认没有残留的 `litepad.exe` 进程（§6）。
-  ⚠️ **别漏了 vite 的 `timeout -k 10 300` + 重试一次**（§5）：漏了它，一次挂死就是
-  「日志停在 `✓ N modules transformed` 之后再无输出」的无限等待 —— 09-22 实测白等 11 分钟
-  才被发现。`timeout` 不在会话 PATH 里，用绝对路径
-  `/d/Program Files/Git/usr/bin/timeout.exe -k 10 300 …`。
+  - ⚠️ **切 MSVC 之后（09-23）**：前端那一步**不再需要**剥 MSYS2 条目（PATH 里已没有 msys64），
+    Rust 侧也**不需要** windres —— 保留剥离只是为了少一个变量，脚本里仍留着。
+  - ⚠️ **绝不要给 MSVC 手工设 `LIB` / `INCLUDE` / `TMP`**，也不要 vcvars / `cmd` / PowerShell 包装：
+    MSYS 会改写 `LIB` 的 `;` 路径与 `TMP`，`link.exe` 于是报 `LNK1181 无法打开输入文件"kernel32.lib"`
+    / `LNK1104 无法打开 C:\WINDOWS\lnk{…}.tmp`。**默认 env 直接跑就行** ——
+    实测 `cargo build --release` 1m29s、`tauri build` 1m56s（均 exit 0），
+    rustc 自带 msvc SDK 探测（会自己往 link 命令行挂 `/LIBPATH:`）。详见 `pitfalls/0098`。
+  - ⚠️ **`tauri build` 退出 0 也要点数产物**：`dist/assets` 为空壳时 exe 只有 3.76MB（正常 8.12MB），
+    打出来是一片空白。别把第 3 步 `cargo build` 的 exe 当交付物（那是 dev 模式，会连 devUrl）。
+  - ⚠️ **本沙箱拍不到界面**（BitBlt 只能抓到 `backgroundColor` 的底色，与 0.10.x 已装版表现一致），
+    「产物可用」要靠导入表 / 嵌入资源 / 体积 / `cargo:dev` 判断，不要靠截图（`pitfalls/0098`）。
+  - ⚠️ **别漏了 vite 的 `timeout -k 10 300` + 重试一次**（§5）：漏了它，一次挂死就是
+    「日志停在 `✓ N modules transformed` 之后再无输出」的无限等待 —— 09-22 实测白等 11 分钟
+    才被发现。`timeout` 不在会话 PATH 里，用绝对路径
+    `/d/Program Files/Git/usr/bin/timeout.exe -k 10 300 …`。
