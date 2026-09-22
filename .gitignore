@@ -28,3 +28,12 @@ docs/vscode-reference/codicons/
 docs/vscode-reference/file-icons/
 docs/vscode-reference/theme-icons/
 docs/vscode-reference/product/
+
+# Python 截图 / 探针脚本产物（scripts/capture-screenshots.py 等运行期生成，不入库）
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 工具链崩溃转储（cargo / MinGW 偶发）
+*.stackdump
+
