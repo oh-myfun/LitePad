@@ -86,8 +86,8 @@ node node_modules/vitest/vitest.mjs run || {
 
 if [ -x "$HOME/.cargo/bin/cargo.exe" ] || command -v cargo >/dev/null 2>&1; then
   if [ -n "$WINDRES_DIR" ]; then
-    echo "▸ cargo test（windres: $WINDRES_DIR）"
-    (cd src-tauri && cargo test) || {
+    echo "▸ cargo test --release（windres: $WINDRES_DIR）"
+    (cd src-tauri && cargo test --release) || {
       echo "✗ pre-push 失败：cargo test 未通过" >&2
       exit 1
     }

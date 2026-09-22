@@ -33,8 +33,8 @@ PATH="$FE_PATH" npm run build
 echo "==> [2/4] 前端单元测试（vitest）"
 node scripts/run-vitest.cjs
 
-echo "==> [3/4] Rust debug 构建 + 单元测试"
-(cd src-tauri && cargo build && cargo test)
+echo "==> [3/4] Rust release 构建 + 单元测试"
+(cd src-tauri && cargo build --release && cargo test --release)
 
 echo "==> [4/4] release 发布构建（嵌入前端 + NSIS 安装包）"
 # 覆盖 beforeBuildCommand：第 1 步已产出 dist，直接嵌入，避免重复构建
@@ -42,6 +42,5 @@ npm run tauri -- build --config '{"build":{"beforeBuildCommand":""}}'
 
 echo
 echo "构建完成，产物："
-ls -lh src-tauri/target/debug/litepad.exe 2>/dev/null || true
 ls -lh src-tauri/target/release/litepad.exe
 ls -lh src-tauri/target/release/bundle/nsis/*.exe
