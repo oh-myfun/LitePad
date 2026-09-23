@@ -45,65 +45,48 @@
   </head>
   <body>
     <div id="app">
-      <!-- 单行顶栏（参考 Win11 记事本）：左侧菜单、右侧快捷图标（文件名只出现在窗口标题与标签页） -->
-      <header class="top-bar">
+      <!-- 自定义标题栏（参考 VS Code）：左侧菜单、中间文档名、右侧窗口控制。
+           tauri.conf.json 里 decorations:false 去掉了原生边框，所以拖动、双击最大化、
+           最小化/最大化/关闭都必须自建：
+             · data-tauri-drag-region="deep" = 本元素整棵子树都是拖动区（Tauri 内置 drag.js），
+               而按钮等可点击元素会自动被排除，所以菜单按钮与右侧窗口键照常可点；
+               双击同一区域等同「最大化/还原」。
+             · 原生标题栏原来显示「LitePad - 文件名 ●」，现在由中间的 #title-text 承担，
+               内容仍走 window.setTitle（任务栏/Alt+Tab 读的是它），两处同源。
+           顶栏右侧那排快捷图标按钮已整体移除：新建/打开/保存/另存/查找/大纲本就在菜单里，
+           导出补进「文件 → 导出」，主题仍在「设置 → 首选项 → 主题」。 -->
+      <header class="title-bar" data-tauri-drag-region="deep">
         <nav id="menu-bar" class="menu-bar" data-tip-group="menubar"></nav>
+        <!-- data-tauri-drag-region 加在 header 上且为 deep：这里只管居中与裁切，
+             测试与样式可据此定位文档名（文本由 main.ts 的 refreshTitle 写入）。 -->
+        <div id="title-center" class="title-center">
+          <span id="title-text" class="title-text"></span>
+        </div>
         <!-- 提示走自绘层（B58，src/shell/tooltip.ts）：data-tip 文案 + data-tip-key 快捷键。
              不再用原生 title —— 它由系统绘制，配色/圆角/键帽都改不了，深色界面下很突兀。
              图标按钮没有文本，必须显式给 aria-label，否则去掉 title 后就「失名」了。 -->
-        <div class="toolbar-actions" data-tip-group="toolbar">
+        <div class="window-controls" data-tip-group="window">
           <button
-            id="btn-new"
-            class="tool-btn"
-            data-tip="新建"
-            data-tip-key="Ctrl+N"
-            aria-label="新建 (Ctrl+N)"
+            id="win-minimize"
+            class="win-btn"
+            type="button"
+            data-tip="最小化"
+            aria-label="最小化"
           ></button>
           <button
-            id="btn-open"
-            class="tool-btn"
-            data-tip="打开"
-            data-tip-key="Ctrl+O"
-            aria-label="打开 (Ctrl+O)"
+            id="win-maximize"
+            class="win-btn"
+            type="button"
+            data-tip="最大化"
+            aria-label="最大化"
           ></button>
           <button
-            id="btn-save"
-            class="tool-btn"
-            data-tip="保存"
-            data-tip-key="Ctrl+S"
-            aria-label="保存 (Ctrl+S)"
+            id="win-close"
+            class="win-btn win-btn-close"
+            type="button"
+            data-tip="关闭窗口"
+            aria-label="关闭窗口"
           ></button>
-          <button
-            id="btn-save-as"
-            class="tool-btn"
-            data-tip="另存为"
-            data-tip-key="Ctrl+Shift+S"
-            aria-label="另存为 (Ctrl+Shift+S)"
-          ></button>
-          <span class="sep" aria-hidden="true"></span>
-          <button
-            id="btn-find"
-            class="tool-btn"
-            data-tip="查找 / 替换"
-            data-tip-key="Ctrl+F"
-            aria-label="查找 / 替换 (Ctrl+F)"
-          ></button>
-          <span class="sep" aria-hidden="true"></span>
-          <button
-            id="btn-outline"
-            class="tool-btn"
-            data-tip="大纲 TOC"
-            aria-label="大纲 TOC"
-          ></button>
-          <button
-            id="btn-export"
-            class="tool-btn"
-            data-tip="导出 HTML / PDF"
-            aria-label="导出 HTML / PDF"
-          ></button>
-          <span class="sep" aria-hidden="true"></span>
-          <!-- 文案随主题三态变化，由 main.ts 的 refreshThemeButton() 动态写入 -->
-          <button id="btn-theme" class="tool-btn" aria-label="主题"></button>
         </div>
       </header>
 

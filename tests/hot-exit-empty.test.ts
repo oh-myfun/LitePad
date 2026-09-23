@@ -25,6 +25,9 @@ beforeAll(() => {
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     setTitle: () => Promise.resolve(),
+    // B97 自建标题栏：最大化键的图标要跟着窗口状态走，桩必须补这两个 API
+    isMaximized: () => Promise.resolve(false),
+    onResized: () => Promise.resolve(() => {}),
     onCloseRequested: () => Promise.resolve({ catch: () => {} }),
     close: () => Promise.resolve(),
   }),

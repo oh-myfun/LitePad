@@ -231,18 +231,80 @@ body {
   height: 100vh;
 }
 
-/* ---------- 顶栏（菜单 + 文档名 + 图标，参考 Win11 记事本单行布局） ---------- */
+/* ---------- 标题栏（自定义，参考 VS Code） ----------
+   tauri.conf.json 里 decorations:false，原生边框已去掉，这一条就是窗口的标题栏：
+   左侧菜单、中间文档名、右侧窗口控制。整条带 data-tauri-drag-region="deep"
+   （Tauri 内置 drag.js），拖动与双击最大化交给内核；按钮等可点击元素自动豁免拖动。 */
 
-.top-bar {
+.title-bar {
   display: flex;
   align-items: center;
   gap: 8px;
   height: 34px;
   flex: 0 0 34px;
-  padding: 0 8px;
+  /* 左留 4px 与菜单按钮的内边距视觉对齐；右不留 —— 关闭键要贴到窗口边缘 */
+  padding-left: 4px;
   background: var(--bg-toolbar);
   border-bottom: 1px solid var(--border);
   user-select: none;
+}
+
+/* 中间文档名：吃掉剩余宽度并居中，窄窗口下省略号收尾。
+   拖动区靠 header 上那个 drag-region 属性，这里不需要再声明。 */
+.title-center {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.title-text {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- 窗口控制（标题栏右侧） ----------
+   三颗键等宽、等高、无缝贴边，观感对齐 Windows / VS Code：
+   普通键悬停只是淡底，关闭键悬停换成系统约定的红底白字。 */
+
+.window-controls {
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+  margin-left: auto;
+}
+
+.win-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--fg-muted);
+  background: transparent;
+}
+
+.win-btn:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.win-btn-close:hover {
+  background: #e81123;
+  color: #ffffff;
+}
+
+.win-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .menu-bar {
@@ -296,56 +358,10 @@ body {
   color: var(--fg);
 }
 
-/* ---------- 图标按钮组（顶栏右侧） ---------- */
-
-.toolbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  margin-left: auto;
-}
-
-.toolbar-actions .sep {
-  width: 1px;
-  height: 16px;
-  margin: 0 5px;
-  background: var(--border);
-}
-
-.tool-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 26px;
-  padding: 0;
-  color: var(--fg-muted);
-}
-
-.tool-btn:hover {
-  background: var(--bg-hover);
-  color: var(--fg);
-}
-
-.tool-btn.tool-btn-active {
-  background: var(--accent);
-  color: var(--accent-fg);
-}
-
-.tool-btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
-.tool-btn:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-
-.tool-btn:disabled:hover {
-  background: transparent;
-  color: var(--fg-muted);
-}
+/* ---------- 图标按钮组样式已随顶栏快捷按钮一并移除 ----------
+   原先 .toolbar-actions / .tool-btn 一套规则只服务于那 8 颗按钮；按钮搬走后
+   新建/打开/保存/另存/查找/大纲回到菜单，导出回到「文件 → 导出」，
+   主题回到「设置 → 首选项」，整套类名不再有消费者，直接删掉。 */
 
 button {
   font-family: inherit;
@@ -2196,6 +2212,17 @@ body.tab-drag-active * {
   width: 16px;
   flex: 0 0 16px;
   color: var(--accent);
+}
+
+/* 置灰的菜单项（B97）：不可点，也不该有悬停高亮 ——
+   「文件 → 导出」在非 Markdown 文档上是置灰的。 */
+.popup-menu button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.popup-menu button:disabled:hover {
+  background: transparent;
 }
 
 /* B47「当前项」：与标签栏里活动标签同一套观感（背景/前景 + 左侧色条），

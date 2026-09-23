@@ -13,7 +13,7 @@
  *
  * 🚩 **红线**：应用内所有按钮图标一律取 `CODICONS.<name>`，**不得手绘 SVG**；codicon 里确无
  *    合适字形时先与用户商量是否引入别的图标集（见 docs/conventions.md「图标」节）。
- *    当前唯一豁免：主题的 sun / moon 两颗 —— 官方 639 颗清单里没有日/月字形，经用户确认保留手绘。
+ *    B97 之后**没有豁免项**了：唯一还手绘的 sun / moon 随主题按钮一起退役（见下方 ICONS 说明）。
  *
  * ⚠️ 版本是**钉死**的：字体/图标在不同 codicon 版本间会改字形。升级要连版本号一起改，
  *    并重跑 + 目视核对 `generated-images` 里的对照页（见 docs/vscode-reference/INDEX.md 的 J 段）。
@@ -46,7 +46,10 @@ const PRINT_WIDTH = 100;
  * ⚠️ `findSelection` 取的是 `list-selection.svg`：官方把 `selection` 与 `list-selection`
  *    合并到同一码位（\eb85，见上游 codiconsLibrary.ts 的 `selection: 0xeb85`），
  *    包内已不存在 selection.svg。VS Code 查找栏的「在选区中查找」用的正是它。
- * ⚠️ 主题的浅/深两颗（sun/moon）官方**没有**字形，经用户确认豁免，仍在 `src/shell/icons.ts` 手绘。
+ * ⚠️ 只收**当前有消费方**的字形：B97 把顶栏那排快捷按钮搬进菜单后，
+ *    new-file / folder-opened / save / save-as / search / list-tree / export 七颗失去调用方；
+ *    主题改由「设置 → 首选项」的下拉承担后，color-mode 与手绘的 sun / moon 也一并退役
+ *    （`src/shell/icons.ts` 已删）。要重新引入就改回这里再跑一遍。
  */
 const ICONS = {
   // —— 查找栏 ——
@@ -63,16 +66,12 @@ const ICONS = {
   preserveCase: "preserve-case",
   close: "close",
   files: "files",
-  // —— 工具栏 ——
-  newFile: "new-file",
-  folderOpened: "folder-opened",
-  save: "save",
-  saveAs: "save-as",
-  search: "search",
-  listTree: "list-tree",
-  export: "export",
-  // —— 主题（sun/moon 无官方字形，见文件头豁免说明）——
-  colorMode: "color-mode",
+  // —— 自定义标题栏的窗口控制（B97）——
+  // chrome-close 比查找栏用的 close 画得更满（同样 16 网格，笔画覆盖到 13.35 而非 12.5），
+  // 正是 VS Code 标题栏关闭键那一颗，所以两者并存、各用各的场景。
+  chromeMinimize: "chrome-minimize",
+  chromeMaximize: "chrome-maximize",
+  chromeClose: "chrome-close",
   // —— 面板 / 标签 ——
   chromeRestore: "chrome-restore",
   circleFilled: "circle-filled",
@@ -92,7 +91,7 @@ const ICONS = {
 /**
  * 标签上的**文件类型字形**：家族 → codicon 名（与 `src/shell/fileicons.ts` 的 FAM_ICON 一致）。
  *
- * ⚠️ 10 个家族必须是 10 颗**互不相同**的 codicon —— `regressions.test.ts` 有
+ * ⚠️ 10 个家族必须是 10 颗**互不相同**的 codicon —— `tests/fileicons.test.ts` 有
  *    「十个家族应有十个不同字形」的断言（`new Set(svgs).size === 10`）。
  *    早先 brace 与 brk 都想用 `symbol-class`，一撞车这条断言就红（且视觉上也分不出
  *    「结构化配置」和「编译型语言」），所以：brace 走 `json`（花括号）、brk 走 `symbol-class`。
@@ -265,8 +264,7 @@ scripts/fetch-codicons-all.mjs 负责。不要在这里改 —— 重跑这两�
  * 分组（消费方）：
  *   查找栏：chevronRight/Down、arrowUp/Down、replace、replaceAll、findSelection、
  *           caseSensitive、wholeWord、regex、preserveCase、close、files
- *   工具栏：newFile、folderOpened、save、saveAs、search、listTree、export
- *   主题：  colorMode（「跟随系统」；浅/深两颗官方无字形，仍在 src/shell/icons.ts 手绘）
+ *   标题栏：chromeMinimize、chromeMaximize、chromeClose（窗口控制三颗键；最大化态换 chromeRestore）
  *   面板 / 标签：chromeRestore、close、circleFilled
  *   文件类型字形（标签）：10 个家族 ↔ 10 颗不同字形 —— ${famLine}
  *

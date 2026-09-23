@@ -493,12 +493,13 @@ describe("B58 应用级 tooltip（取代原生 title，外观对齐 VS Code hove
     expect(main, "bootstrap 必须装配 tooltip 委托").toMatch(/initTooltips\(\)/);
 
     const html = readFileSync("index.html", "utf-8");
-    expect(html, "顶栏按钮必须改用 data-tip").toContain('data-tip="新建"');
-    expect(html, "不得再用原生 title 给工具栏按钮做提示").not.toMatch(
-      /class="tool-btn"[^>]*\stitle=/,
+    // B97：顶栏那排快捷按钮已整体移除，现在带 data-tip 的是标题栏右侧的窗口控制键。
+    expect(html, "窗口控制键必须用 data-tip").toContain('data-tip="最小化"');
+    expect(html, "不得再用原生 title 给图标按钮做提示").not.toMatch(/class="win-btn"[^>]*\stitle=/);
+    expect(html, "顶栏不得再有快捷按钮组").not.toContain("toolbar-actions");
+    expect(html, "菜单栏必须继续标 data-tip-group（同组秒开）").toContain(
+      'data-tip-group="menubar"',
     );
-    expect(html, "工具栏容器必须标 data-tip-group（同组秒开）").toContain(
-      'data-tip-group="toolbar"',
-    );
+    expect(html, "窗口控制键自成一组").toContain('data-tip-group="window"');
   });
 });

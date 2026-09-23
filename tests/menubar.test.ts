@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import {
   hasDistIntegrityGuard,
   hasStep3NotDeliverableWarning,
+  stripCssComments,
   stripLineComments,
   topLevelFnBody,
 } from "./static";
@@ -72,6 +73,10 @@ function makeCb(): MenuBarCallbacks {
     onSave: noop,
     onSaveAs: noop,
     onSaveAll: noop,
+    // B97：导出从顶栏搬进「文件 → 导出 ▸」
+    onExportHtml: noop,
+    onExportPdf: noop,
+    exportable: () => true,
     onCloseTab: noop,
     onExit: noop,
     onUndo: noop,
@@ -103,19 +108,6 @@ function makeCb(): MenuBarCallbacks {
     autosaveChecked: () => true,
     onToggleHotExit: noop,
     hotExitChecked: () => true,
-    // 设置 → 首选项
-    themeChecked: (mode) => mode === "system",
-    onSetTheme: noop,
-    lineHeightChecked: (v) => v === 1.7,
-    onSetLineHeight: noop,
-    tocWidthChecked: (w) => w === 240,
-    onSetTocWidth: noop,
-    defaultEol: () => "CRLF",
-    eolOptions: () => ["CRLF", "LF", "CR"],
-    onSetDefaultEol: noop,
-    defaultEncoding: () => "UTF-8",
-    encodingOptions: () => ["UTF-8", "GB18030"],
-    onSetDefaultEncoding: noop,
     // 设置 → 快捷键
     onKeymap: noop,
     onAbout: noop,
@@ -286,9 +278,12 @@ describe("设置项归属与接线（B42/B46）", () => {
     expect(html, "工具栏不再有设置齿轮").not.toContain("btn-settings");
     const menu = readFileSync("src/shell/menubar.ts", "utf-8");
     expect(menu, "菜单栏不得再保留设置项回调").not.toContain("onSettings");
-    expect(menu, "设置菜单必须有首选项入口").toContain('label: "首选项…"');
-    expect(menu, "B46 后首选项不再是子菜单").not.toContain("submenu:");
-    expect(menu, "设置菜单必须有快捷键入口").toContain('label: "快捷键…"');
+    // ⚠️ 判据只截「设置」那一段：B97 给「文件」加回了「导出」子菜单，
+    //    在全文件里搜 submenu: 会把那条误判成设置项回归。
+    const setBlock = menu.slice(menu.indexOf('label: "设置"'), menu.indexOf('label: "帮助"'));
+    expect(setBlock, "设置菜单必须有首选项入口").toContain('label: "首选项…"');
+    expect(setBlock, "B46 后首选项不再是子菜单").not.toContain("submenu:");
+    expect(setBlock, "设置菜单必须有快捷键入口").toContain('label: "快捷键…"');
   });
 
   it("B46：首选项弹窗必须存在并接线到 main.ts", () => {
@@ -432,8 +427,9 @@ describe("查找入口统一（悬浮查找栏）", () => {
     expect(ed, "必须挂载自持的查找高亮").toContain("findHighlight()");
 
     const html = readFileSync("index.html", "utf-8");
-    expect(html, "工具栏只保留一个查找按钮").not.toContain("btn-find-files");
-    expect(html).toContain('id="btn-find"');
+    // B97：顶栏那排快捷按钮（含查找）整体移除，查找入口只剩「编辑」菜单与 Ctrl+F。
+    expect(html, "不得再有第二个查找按钮").not.toContain("btn-find-files");
+    expect(html, "顶栏不得再有查找按钮").not.toContain('id="btn-find"');
   });
 });
 
@@ -575,20 +571,26 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     expect(setBlock, "「设置」菜单必须保留快捷键入口").toContain('label: "快捷键…"');
   });
 
-  it("B51：主题按钮三态循环，导出图标改语义", () => {
+  it("B97：主题只从「设置 → 首选项」进出，顶栏不再有主题/导出按钮", () => {
     const main = readFileSync("src/main.ts", "utf-8");
-    expect(main, "主题必须按档位循环（三态）").toContain("nextThemeMode()");
+    // 档位仍要有个可读的落点（它是跨模块状态：换档要联动 CodeMirror 的明暗）
     expect(main, "档位要写进 data 属性供测试/样式用").toContain("dataset.themeMode");
-    expect(main, "「跟随系统」档须照搬官方 color-mode（半明半暗的圆）").toContain(
-      "CODICONS.colorMode",
-    );
+    expect(main, "换档必须联动面板明暗").toContain("applyDarkToTabs");
     expect(main, "不得再退回明暗二选一的旧写法").not.toContain('isDark ? "light" : "dark"');
+    // 三态循环按钮与它的三颗图标（sun / moon / color-mode）随顶栏按钮一起退役
+    expect(main, "主题循环按钮必须已移除").not.toContain("cycleTheme");
+    expect(main, "主题三态图标表必须已移除").not.toContain("THEME_STATES");
 
-    // 导出图标（B51 本来改过一次语义：下载托盘 → 文档 + 出向箭头）现在直接照搬官方
-    // `export`，手绘版已删 —— 字形由上游版本钉住（scripts/fetch-codicons.mjs 的 VERSION），
-    // 这里只守「确实来自 codicon」。
-    const codicons = readFileSync("src/shell/codicons.ts", "utf-8");
-    expect(codicons, "导出图标必须来自官方 export").toContain("export:");
+    const html = readFileSync("index.html", "utf-8");
+    for (const gone of ["btn-theme", "btn-export", "btn-new", "toolbar-actions"]) {
+      expect(html, `顶栏不得再有 ${gone}`).not.toContain(gone);
+    }
+    // 「移除」必须配「仍在别处可达」：导出在「文件 → 导出 ▸」，主题在「设置 → 首选项」
+    const menu = readFileSync("src/shell/menubar.ts", "utf-8");
+    expect(menu, "导出必须有菜单入口").toContain('label: "导出"');
+    expect(menu, "导出菜单项要带回调").toContain("onExportHtml");
+    const dlg = readFileSync("src/shell/preferencesdialog.ts", "utf-8");
+    expect(dlg, "主题必须有首选项入口").toContain('selectRow("主题"');
   });
 
   it("B81 图标红线：按钮图标一律走 codicon，手绘只剩 sun/moon（用户确认豁免）", () => {
@@ -611,33 +613,27 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
       );
     }
 
-    // ---- ② 工具栏整张表都得是 codicon 名（旧的自绘名 new/open/find/outline 已废） ----
+    // ---- ② 标题栏的窗口控制键也必须按「名字」取图（B97 起唯一的图标按钮组） ----
     const main = readFileSync("src/main.ts", "utf-8");
     for (const pair of [
-      '[btnNew, "newFile"]',
-      '[btnOpen, "folderOpened"]',
-      '[btnSave, "save"]',
-      '[btnSaveAs, "saveAs"]',
-      '[btnFind, "search"]',
-      '[btnOutline, "listTree"]',
-      '[btnExport, "export"]',
+      '[winMinimize, "chromeMinimize"]',
+      '[winMaximize, "chromeMaximize"]',
+      '[winClose, "chromeClose"]',
     ]) {
-      expect(main, `工具栏缺 ${pair}`).toContain(pair);
+      expect(main, `标题栏缺 ${pair}`).toContain(pair);
     }
-    expect(main, "工具栏必须从 CODICONS 取名取图").toContain("btn.innerHTML = CODICONS[name]");
+    expect(main, "窗口控制键必须从 CODICONS 取名取图").toContain("btn.innerHTML = CODICONS[name]");
 
     // ---- ③ 文件类型字形也必须走 codicon（不得再自建手绘字形表） ----
     const fi = readFileSync("src/shell/fileicons.ts", "utf-8");
     expect(fi, "家族字形必须从 CODICONS 取").toContain("CODICONS[");
     expect(fi, "不得再自建 GLYPHS 手绘表").not.toContain("GLYPHS");
 
-    // ---- ④ 手绘豁免只有 icons.ts 的 sun / moon 两颗 ----
-    // 官方 639 颗 codicon 里没有日/月字形（最接近的 color-mode 已用于「跟随系统」），
-    // 经用户确认这两颗保留手绘；其余任何键冒出来都说明有人又手绘了图标。
-    const icons = readFileSync("src/shell/icons.ts", "utf-8");
-    const body = icons.slice(icons.indexOf("export const ICONS = {"), icons.indexOf("} as const;"));
-    const keys = [...body.matchAll(/\n {2}(\w+):/g)].map((m) => m[1]);
-    expect(keys, "icons.ts 只应剩 sun / moon（其余一律 codicon）").toEqual(["sun", "moon"]);
+    // ---- ④ 手绘豁免已全部收回（B97）----
+    // 原先唯一的豁免是主题按钮的 sun / moon（官方 639 颗里没有日/月字形）。
+    // 主题按钮随顶栏快捷按钮组一起移除后它们失去调用方，整个 icons.ts 被删 ——
+    // 从此应用内**没有任何手绘图标**，codicon 是唯一来源。
+    expect(existsSync("src/shell/icons.ts"), "手绘图标文件必须已删除").toBe(false);
   });
 
   it("B82 CHANGELOG 生成器不得吞掉区间内最后一个提交（git log 无尾换行）", () => {
@@ -781,7 +777,7 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     expect(step, "跨文档步进不得再自己写状态行").not.toContain("setStatus");
   });
 
-  it("B79 主题：档位必须写回 settings 才存得下；三态按钮一律不点亮", () => {
+  it("B79 主题：档位必须写回 settings 才存得下（B97 起入口只剩首选项）", () => {
     // ⚠️ 断言必须落在**代码**上，不能落在整份文件上：上面这段说明性的注释里就写着
     // `persistSettings()` 和 `themeMode = normalizeMode(settings?.theme)`，
     // 反向验证实测——挖掉真正的调用后，只要还比对整份文件，断言照样通过（假绿）。
@@ -803,17 +799,15 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
       "normalizeMode(settings?.theme)",
     );
 
-    // ---- ② 激活态：循环按钮三档外观必须一致 ----
-    // 用户实测「深色模式按钮带激活状态，其它模式没有」。旧代码是
-    // `btnTheme.classList.toggle("tool-btn-active", themeMode === "dark")`：
-    // 它是**循环按钮**不是开关，「激活」没有语义，且只有深色档点亮 = 三档观感各不相同。
-    expect(main, "⚠️ 主题按钮不得再按深色档点亮（循环按钮没有「激活」语义）").not.toMatch(
-      /btnTheme[\s\S]{0,160}?tool-btn-active/,
+    // ---- ② 档位的可读落点：`<html data-theme-mode>` ----
+    // 原先这里是「三态一律不点亮」——那条契约随循环按钮本身一起消失了（B97 移除了
+    // 顶栏那颗主题按钮）。现在要守的是两件事：档位仍有个可读落点，且按钮的痕迹清干净。
+    expect(main, "当前档位仍要写进 data 属性供测试/样式用").toContain(
+      "document.documentElement.dataset.themeMode",
     );
-    expect(main, "当前档位仍要写进 data 属性供测试/样式用").toContain("btnTheme.dataset.themeMode");
-    // .tool-btn-active 本身还要留着（自动换行等开关按钮在用），别整条删掉
-    const css = readFileSync("src/styles/global.css", "utf-8");
-    expect(css, "开关按钮的激活态样式必须保留").toContain(".tool-btn.tool-btn-active");
+    expect(main, "主题按钮的引用必须已清干净").not.toContain("btnTheme");
+    const css = stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
+    expect(css, "顶栏快捷按钮那套样式必须已移除").not.toContain(".tool-btn");
   });
 
   it("菜单显示的键位必须来自快捷键注册表（不能写死）", () => {

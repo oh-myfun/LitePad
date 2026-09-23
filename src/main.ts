@@ -83,7 +83,6 @@ import {
   type FindBarQuery,
   type FindHit,
 } from "./shell/findbar";
-import { ICONS } from "./shell/icons";
 import { showExternalConflictDialog, showSaveConflictDialog } from "./shell/conflictdialog";
 import { CODICONS, type CodiconName } from "./shell/codicons";
 import { clearTip, initTooltips, setTip } from "./shell/tooltip";
@@ -204,15 +203,14 @@ function el<T extends HTMLElement>(id: string): T {
 }
 
 const layoutArea = el("layout-area");
-const btnNew = el<HTMLButtonElement>("btn-new");
-const btnOpen = el<HTMLButtonElement>("btn-open");
-const btnSave = el<HTMLButtonElement>("btn-save");
-const btnSaveAs = el<HTMLButtonElement>("btn-save-as");
-const btnFind = el<HTMLButtonElement>("btn-find");
-const btnOutline = el<HTMLButtonElement>("btn-outline");
-const btnExport = el<HTMLButtonElement>("btn-export");
-const btnTheme = el<HTMLButtonElement>("btn-theme");
 const menuBar = el("menu-bar");
+// 自定义标题栏（B97）：中间显示文档名，右侧三颗窗口控制键。
+// 原来那 8 颗快捷键按钮（新建/打开/保存/另存/查找/大纲/导出/主题）已移除，
+// 前六个本就在菜单里，导出与主题分别回到「文件 → 导出」「设置 → 首选项」。
+const titleText = el("title-text");
+const winMinimize = el<HTMLButtonElement>("win-minimize");
+const winMaximize = el<HTMLButtonElement>("win-maximize");
+const winClose = el<HTMLButtonElement>("win-close");
 const tocPanel = el("toc-panel");
 const tocResizer = el("toc-resizer");
 const sbMessage = el("sb-message");
@@ -451,6 +449,9 @@ function refreshTitle(): void {
   const suffix = doc?.readonly ? " [只读]" : "";
   // 软件名在前，文件名在后：无文档时只有 LitePad
   const title = doc ? `LitePad - ${doc.name}${mark}${suffix}` : "LitePad";
+  // 自建标题栏（B97）中间那一行只放文档名：应用名已由窗口/任务栏承担，再写一遍是噪声
+  // （VS Code 同款取舍）。无文档时留空，而不是回落到「LitePad」。
+  titleText.textContent = doc ? `${doc.name}${mark}${suffix}` : "";
   void getCurrentWindow()
     .setTitle(title)
     .then(() => {
@@ -3410,7 +3411,6 @@ function toggleViewMode(): void {
 function refreshViewModeButton(): void {
   const tab = activeTab();
   const md = !!tab && isMdTab(tab);
-  btnExport.disabled = !md;
   sbLang.classList.toggle("sb-btn", md);
   sbLang.classList.toggle("sb-btn-active", md && tab!.viewMode === "preview");
   if (md) {
@@ -3425,57 +3425,15 @@ function refreshViewModeButton(): void {
 }
 
 /**
- * 主题按钮的三态循环顺序（浅色 / 深色 / 跟随系统）。
+ * 把当前主题档位写到 `<html data-theme-mode>`（light / dark / system）。
  *
- * 顺序**跟着系统偏好走**：默认档是 system，若固定成 system→浅色→深色，
- * 在浅色系统上第一下点击（system→浅色）外观毫无变化——正是之前的
- * 「深浅色按钮要点两下才生效」。让 system 的下一档取「与当前生效相反」的显式档，
- * 保证从默认档出发的第一次点击必定翻转明暗；浅色⇄深色之间也必定翻转。
- * 唯一可能不翻转的一条边是「显式档 → system」（当二者恰好一致），这是三态的固有限制，
- * 此时按钮图标与状态栏提示仍会变化，不会出现「点了没反应」。
+ * B97 之前这里刷的是顶栏那颗主题按钮的图标（三态循环：sun / moon / color-mode）。
+ * 顶栏快捷按钮整排移除后，主题只从「设置 → 首选项 → 主题」这个下拉进出，
+ * 循环按钮与那三颗图标一并退役。留下这个 data 属性是因为档位仍是**跨模块状态**：
+ * 换档要联动 CodeMirror 的明暗，样式与回归测试也都靠它读当前档位。
  */
-function themeCycle(): ThemeMode[] {
-  const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-  return systemDark ? ["system", "light", "dark"] : ["system", "dark", "light"];
-}
-
-/**
- * 三态各自的图标与名称。
- *
- * ⚠️ icon 直接存**画好的 SVG 字符串**，三档可以来自不同源：浅/深是 `icons.ts` 里唯二
- * 手绘的（官方 codicon 没有 sun / moon 字形，经用户确认豁免），跟随系统取官方的
- * `color-mode`（半明半暗的圆）。存字符串比存「图标名」少一层转发。
- */
-const THEME_STATES: Record<ThemeMode, { icon: string; label: string }> = {
-  light: { icon: ICONS.sun, label: "浅色" },
-  dark: { icon: ICONS.moon, label: "深色" },
-  system: { icon: CODICONS.colorMode, label: "跟随系统" },
-};
-
-/** 当前档位的下一档（循环闭合）。 */
-function nextThemeMode(): ThemeMode {
-  const cycle = themeCycle();
-  const idx = cycle.indexOf(themeMode);
-  return cycle[(idx + 1) % cycle.length];
-}
-
-/**
- * 主题按钮：图标随三态变化（太阳 / 月亮 / 半明半暗的圆）。
- *
- * ⚠️ **三档一律不点亮**（B79）：它是**循环按钮**，不是开关 —— 「激活态」在这里没有语义，
- * 而旧代码写的是 `themeMode === "dark"` 才点亮，于是深色档顶着一块实蓝底、浅色与
- * 跟随系统却是平的，三档观感各不相同（用户实测反馈）。当前档位由图标 + 悬停提示
- * 「主题：X」表达，底色三档统一。
- */
-function refreshThemeButton(): void {
-  const state = THEME_STATES[themeMode];
-  const next = THEME_STATES[nextThemeMode()].label;
-  btnTheme.innerHTML = state.icon;
-  // B58：提示走自绘层，文案随三态变化
-  setTip(btnTheme, `主题：${state.label}`, { detail: `点击切换为${next}` });
-  btnTheme.setAttribute("aria-label", `主题：${state.label}，点击切换为${next}`);
-  // 测试与样式钩子：当前处于哪一档
-  btnTheme.dataset.themeMode = themeMode;
+function publishThemeMode(): void {
+  document.documentElement.dataset.themeMode = themeMode;
 }
 
 // ---------------------------------------------------------------- 大纲 TOC（M3）
@@ -3733,17 +3691,6 @@ function applyEditorLineHeight(value: number): void {
   for (const p of panels.values()) p.view?.view.requestMeasure();
 }
 
-/**
- * 工具栏主题按钮：三态循环 跟随系统 / 浅色 / 深色（顺序见 `themeCycle`）。
- *
- * 与老实现的区别：老版只在明暗之间二选一，system 只能去首选项里选；
- * 现在三档都能从按钮点到，且每次点击都会在状态栏给出「主题：X」的回执，
- * 不会出现「点了不知道有没有生效」。
- */
-async function cycleTheme(): Promise<void> {
-  await setThemeMode(nextThemeMode());
-}
-
 // ---------------------------------------------------------------- 偏好（设置 → 首选项）
 
 /**
@@ -3791,24 +3738,19 @@ function keyHint(id: string): string {
     .join(" / ");
 }
 
-/** 主题三态（设置 → 首选项）：立即生效 + 持久化。 */
+/** 主题档位（设置 → 首选项的自定义下拉）：立即生效 + 持久化。 */
 async function setThemeMode(mode: ThemeMode): Promise<void> {
   themeMode = mode;
   // ⚠️ **必须写回 settings，否则根本存不下来**（B79 用户实测：每次打开都是深色）。
   // 根因：persistSettings() 存的是整个 settings 对象，而启动时读的是 `settings.theme`
-  // （main 里 `themeMode = normalizeMode(settings?.theme)`）。其它每一项设置都会在这里写回自己的字段，
-  // 唯独主题漏了 —— 于是落盘永远是启动时的初始值 "system"，深色系统上解析成深色，表现为「设了重启就丢」。
+  // （main 里 `themeMode = normalizeMode(settings?.theme)`）。其它每一项设置都会在这里写回
+  // 自己的字段，唯独主题漏了 —— 于是落盘永远是启动时那个 "system"，深色系统上解析成深色，
+  // 表现为「主题设了、重启就丢」。写回之后紧跟的 persistSettings() 才真正把它存下去。
   if (settings) settings.theme = mode;
-  // ⚠️ 写回之后必须落盘（下面这行 persistSettings 存的是整个 settings 对象，含刚改的 theme）。
-  // 根因：`persistSettings()` 存的是这整个 settings 对象，而启动时读的是
-  // `settings.theme`（main 里 `themeMode = normalizeMode(settings?.theme)`）。
-  // 其它每一项设置（`word_wrap` / `font_size` / `keymap`…）都会在这里写回自己的字段，
-  // 唯独主题漏了 —— 于是落盘的永远是启动时的初始值 "system"，
-  // 而 system 在深色系统的机器上解析成深色，表现为「主题设了、重启就丢」。
   const dark = applyTheme(mode);
   if (dark !== isDark) applyDarkToTabs(dark);
   isDark = dark;
-  refreshThemeButton();
+  publishThemeMode();
   await persistSettings();
   showMessage(mode === "system" ? "主题：跟随系统" : mode === "dark" ? "主题：深色" : "主题：浅色");
 }
@@ -4002,14 +3944,11 @@ async function persistSettings(): Promise<void> {
 // ---------------------------------------------------------------- 事件绑定
 
 function bindEvents(): void {
-  btnNew.addEventListener("click", () => void newUntitled());
-  btnOpen.addEventListener("click", () => void doOpen());
-  btnSave.addEventListener("click", () => void doSave(false));
-  btnSaveAs.addEventListener("click", () => void doSave(true));
-  btnFind.addEventListener("click", () => openFindReplace());
-  btnOutline.addEventListener("click", () => toggleToc());
-  btnExport.addEventListener("click", () => showExportMenu());
-  btnTheme.addEventListener("click", () => void cycleTheme());
+  // 自建标题栏（B97）右侧三颗窗口控制键。关闭键走 close() 而不是 destroy()：
+  // 前者会先过 onCloseRequested 的「脏文档确认 / 热退出」流程，后者直接销毁窗口。
+  winMinimize.addEventListener("click", () => void getCurrentWindow().minimize());
+  winMaximize.addEventListener("click", () => void getCurrentWindow().toggleMaximize());
+  winClose.addEventListener("click", () => void getCurrentWindow().close());
 
   sbLang.addEventListener("click", () => {
     if (isMdActive()) toggleViewMode();
@@ -4214,13 +4153,8 @@ function openCommandPalette(): void {
   });
 }
 
-function showExportMenu(): void {
-  if (!isMdActive()) return;
-  showPopupMenu(btnExport, [
-    { label: "导出 HTML（自包含单文件）", onSelect: () => void exportHtml() },
-    { label: "导出 PDF（系统打印对话框）", onSelect: () => exportPdf() },
-  ]);
-}
+// 导出（HTML / PDF）原先挂在顶栏那颗导出按钮上，锚点是按钮本身。B97 移走顶栏后
+// 改成「文件 → 导出 ▸」的子菜单，锚点由菜单系统自己管，这里不再需要 showExportMenu。
 
 /** 打开悬浮查找栏（Ctrl+F / 工具栏「查找」）。 */
 function openFindReplace(): void {
@@ -4449,21 +4383,45 @@ function toggleStatusbar(): void {
   document.querySelector(".statusbar")?.classList.toggle("statusbar-hidden", !statusbarVisible);
 }
 
-/** 工具栏图标填充（一律来自 official codicon，见 docs/conventions.md「图标」节）。 */
-function setupToolbar(): void {
+/**
+ * 自建标题栏（B97）的图标与状态。
+ *
+ * 窗口控制三颗键一律取 codicon（见 docs/conventions.md「图标」节）。最大化键是**双态**的：
+ * 普通态画 chrome-maximize（空心方框），已最大化时换 chrome-restore（叠两层），与原生
+ * 标题栏、VS Code 的观感一致。
+ *
+ * 拖动与双击最大化不在这里接线 —— header 上那个 `data-tauri-drag-region="deep"` 由
+ * Tauri 内置的 drag.js 接管（见 src-tauri/capabilities/default.json 的说明）。
+ */
+function setupTitleBar(): void {
   const icons: [HTMLButtonElement, CodiconName][] = [
-    [btnNew, "newFile"],
-    [btnOpen, "folderOpened"],
-    [btnSave, "save"],
-    [btnSaveAs, "saveAs"],
-    [btnFind, "search"],
-    [btnOutline, "listTree"],
-    [btnExport, "export"],
+    [winMinimize, "chromeMinimize"],
+    [winMaximize, "chromeMaximize"],
+    [winClose, "chromeClose"],
   ];
   for (const [btn, name] of icons) btn.innerHTML = CODICONS[name];
+  // 窗口的最大化态可能在别处变化（双击拖动区、Win+↑、右键系统菜单），统一靠 resize 回读。
+  void getCurrentWindow()
+    .onResized(() => void refreshMaximizeButton())
+    .catch(() => {});
+  void refreshMaximizeButton();
+  // 状态栏的语言/格式项按活动标签刷新（原先顺带在这条启动链上初始化）
   refreshViewModeButton();
-  // 主题按钮的图标由 refreshThemeButton 按当前档位（浅色/深色/跟随系统）决定
-  refreshThemeButton();
+}
+
+/** 最大化键的双态图标与提示（已最大化时是「向下还原」）。 */
+async function refreshMaximizeButton(): Promise<void> {
+  // 初值不必给：拿到之前就 return 了，赋值只可能发生在 try 里。
+  let maximized: boolean;
+  try {
+    maximized = await getCurrentWindow().isMaximized();
+  } catch {
+    // 窗口已销毁 / IPC 不可用：保持现有图标，不打断其它流程
+    return;
+  }
+  winMaximize.innerHTML = maximized ? CODICONS.chromeRestore : CODICONS.chromeMaximize;
+  winMaximize.setAttribute("aria-label", maximized ? "向下还原" : "最大化");
+  setTip(winMaximize, maximized ? "向下还原" : "最大化");
 }
 
 /** 菜单栏初始化（文件 / 编辑 / 查看 / 设置 / 帮助，结构参考 Win11 记事本）。 */
@@ -4474,6 +4432,11 @@ function setupMenuBar(): void {
     onSave: () => void doSave(false),
     onSaveAs: () => void doSave(true),
     onSaveAll: () => void doSaveAll(),
+    // 导出原先只有顶栏那颗按钮一个入口（B97 移走后补进「文件 → 导出 ▸」）。
+    // 菜单每次展开都重新求值，所以「当前文档能不能导出」取的是**展开那一刻**的状态。
+    onExportHtml: () => void exportHtml(),
+    onExportPdf: () => exportPdf(),
+    exportable: () => isMdActive(),
     onCloseTab: () => {
       const tab = activeTab();
       if (tab) void closeTabById(tab.tabId);
@@ -5369,6 +5332,8 @@ async function setupShell(): Promise<void> {
 
   themeMode = normalizeMode(settings?.theme);
   isDark = applyTheme(themeMode);
+  // 档位写进 <html data-theme-mode>（B97 前由顶栏那颗主题按钮承担）
+  publishThemeMode();
   isWrap = settings?.word_wrap ?? true;
   applyFontSize(settings?.font_size ?? 14);
   applyFontFamily(settings?.font_family ?? "");
@@ -5378,7 +5343,7 @@ async function setupShell(): Promise<void> {
   // B58：装配自绘提示层。必须**早于任何控件创建**地委托一次——
   // 它靠全局事件委托工作，控件只需带 data-tip，不需要逐个挂钩子。
   initTooltips();
-  setupToolbar();
+  setupTitleBar();
   setupMenuBar();
   // Ctrl + 滚轮缩放字号（Ctrl+= / Ctrl+- 走同一条 changeFontSize 链路）
   attachWheelZoom((dir) => void changeFontSize(dir));

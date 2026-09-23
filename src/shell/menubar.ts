@@ -16,6 +16,14 @@ export interface MenuBarCallbacks {
   onSave: () => void;
   onSaveAs: () => void;
   onSaveAll: () => void;
+  /**
+   * 导出（B97）：原来只有顶栏那颗导出按钮有入口，按钮移除后搬进「文件 → 导出 ▸」。
+   * 两项都是叶子项，`exportable()` 为假时整组置灰。
+   */
+  onExportHtml: () => void;
+  onExportPdf: () => void;
+  /** 菜单展开时求值：当前文档能不能导出（非 Markdown 时为假）。 */
+  exportable: () => boolean;
   onCloseTab: () => void;
   onExit: () => void;
   onUndo: () => void;
@@ -76,6 +84,23 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
       { label: withKey("保存", cb.keyHint("file.save")), onSelect: cb.onSave },
       { label: withKey("另存为…", cb.keyHint("file.saveAs")), onSelect: cb.onSaveAs },
       { label: withKey("全部保存", cb.keyHint("file.saveAll")), onSelect: cb.onSaveAll },
+      {
+        // B97：顶栏那颗导出按钮搬到了这里。子菜单每次展开时重新求值，
+        // 所以「当前文档是不是 Markdown」取的是展开那一刻的状态。
+        label: "导出",
+        submenu: [
+          {
+            label: "导出 HTML（自包含单文件）",
+            disabled: !cb.exportable(),
+            onSelect: cb.onExportHtml,
+          },
+          {
+            label: "导出 PDF（系统打印对话框）",
+            disabled: !cb.exportable(),
+            onSelect: cb.onExportPdf,
+          },
+        ],
+      },
       { separator: true },
       { label: "自动保存", checked: cb.autosaveChecked(), onSelect: cb.onToggleAutosave },
       {

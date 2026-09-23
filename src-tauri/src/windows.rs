@@ -247,6 +247,12 @@ fn build_satellite(
         .title(title)
         .inner_size(SAT_WIDTH, SAT_HEIGHT)
         .min_inner_size(SAT_MIN_WIDTH, SAT_MIN_HEIGHT)
+        // B97：与主窗口一致去掉原生边框（tauri.conf.json 的 decorations:false）。
+        // 卫星窗口加载的是同一个 index.html，自建标题栏（菜单 + 文档名 + 窗口键）本来就
+        // 会一起画出来；这里若继续留着原生标题栏，会出现「两条标题栏叠着」的错位观感。
+        // ⚠️ WebviewWindowBuilder **不会**继承 tauri.conf.json 里主窗口的 decorations，
+        //    必须在建窗时显式写明（同 additional_browser_args，见 pick_browser_args）。
+        .decorations(false)
         .background_color(SAT_BG)
         // B91：与主窗口一致关掉 wry 的原生拖放处理器（两处劫持会废掉页面内 HTML5 拖放，
         // 详见 `dropbridge` 模块头）；文件拖入的真实路径由 `dropbridge` 补回来。

@@ -2,7 +2,7 @@
 // 反向验证：**静态断言工具自身**不得失真。
 //
 // 为什么单独一个文件：`tests/static.ts` 里的 themeBlock / ruleBlock / cssDecls /
-// stripLineComments / topLevelFnBody 是**所有静态契约用例的地基**。地基一旦失真，
+// stripLineComments / stripCssComments / topLevelFnBody 是**所有静态契约用例的地基**。地基一旦失真，
 // 上面几十条用例会集体变成假绿或假红 —— 而它们自己看起来还是「正常的断言」。
 // 所以这里锁的不是业务，是**工具本身**：
 //   · 退化写法（`\{[^}]*\}` 一类）在什么输入下会失真；
@@ -15,7 +15,14 @@
 // 随 `npm test` 一起跑，零副作用。
 
 import { describe, it, expect } from "vitest";
-import { themeBlock, ruleBlock, cssDecls, stripLineComments, topLevelFnBody } from "./static";
+import {
+  themeBlock,
+  ruleBlock,
+  cssDecls,
+  stripLineComments,
+  stripCssComments,
+  topLevelFnBody,
+} from "./static";
 
 // 变量块里塞一条**含花括号的注释**：旧写法 `\{[^}]*\}` 会从注释里的 `}` 处截断。
 // ⚠️ 注释必须用 CSS 的 `/* */` —— themeBlock / cssDecls 只剥这一种；
@@ -116,5 +123,32 @@ describe("反向验证：stripLineComments / topLevelFnBody 的截断点", () =>
     const body = topLevelFnBody(src, "function f()");
     expect(body, "函数体里的返回语句要取到").toContain("return { a: 1 }");
     expect(body, "不得在类型字面量处就收尾").not.toMatch(/^\s*a: number;\s*\}\s*$/);
+  });
+});
+
+describe("反向验证：stripCssComments 不得被「删除说明」注释误伤", () => {
+  it("基准：块注释剥掉，规则文本留着（注释里提过的选择器不再出现）", () => {
+    const css = [".title-bar {", "  height: 34px;", "}", "", "/* 原来的 .tool-btn 已删 */"].join(
+      "\n",
+    );
+    const stripped = stripCssComments(css);
+    expect(stripped, "规则要留着").toContain(".title-bar {");
+    expect(stripped, "注释里提到的旧类名必须随注释一起消失").not.toContain(".tool-btn");
+  });
+
+  it("退化：不剥注释时，「旧类名必须已删除」会被自己的说明注释判成假红", () => {
+    // B97 的真实坑：删掉顶栏快捷按钮那套样式后，交付里**留了一行注释**交代去向
+    // （「原先 .toolbar-actions / .tool-btn 一套规则只服务于那 8 颗按钮……直接删掉」）。
+    // 规则确实删干净了（只剩这一处提及），但断言比对原文 → 报红，指向一行无害的注释。
+    const css =
+      "button { color: red; }\n/* 原先 .tool-btn 一套规则只服务于那 8 颗按钮，直接删掉 */\n";
+    expect(css, "退化写法：原文里仍搜得到那个类名（其实只是注释）").toContain(".tool-btn");
+    expect(stripCssComments(css), "过一层剥离后才如实反映「规则已删」").not.toContain(".tool-btn");
+    expect(stripCssComments(css), "真规则不能一起剥掉").toContain("color: red");
+  });
+
+  it("退化对照：规则真的还在时，剥离后必须仍搜得到（否则 not.toContain 是恒真）", () => {
+    const css = "/* 说明 */\n.tool-btn { width: 28px; }\n";
+    expect(stripCssComments(css), "规则尚存时断言必须咬得住").toContain(".tool-btn");
   });
 });

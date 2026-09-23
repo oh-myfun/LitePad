@@ -35,6 +35,9 @@ beforeAll(() => {
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     setTitle: () => Promise.resolve(),
+    // B97 自建标题栏：最大化键的图标要跟着窗口状态走，桩必须补这两个 API
+    isMaximized: () => Promise.resolve(false),
+    onResized: () => Promise.resolve(() => {}),
     onCloseRequested: () => Promise.resolve({ catch: () => {} }),
     close: () => Promise.resolve(),
   }),
@@ -145,6 +148,29 @@ function activatePanel(panel: HTMLElement): void {
   );
 }
 
+/**
+ * B97：顶栏那颗「大纲 TOC」按钮已随快捷按钮组一并移除，改走「查看 → 大纲 TOC」菜单 ——
+ * 那也是它现在唯一（也是真实）的入口。
+ */
+async function toggleTocViaMenu(): Promise<void> {
+  const host = document.getElementById("menu-bar") as HTMLElement;
+  const view = [...host.querySelectorAll("button.menu-btn")].find((b) => b.textContent === "查看");
+  expect(view, "菜单栏应有「查看」").toBeTruthy();
+  view!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await wait(0);
+  for (const menu of document.querySelectorAll(".popup-menu")) {
+    const item = [...menu.querySelectorAll(":scope > button")].find((b) =>
+      (b.querySelector(".menu-label")?.textContent ?? "").includes("大纲 TOC"),
+    );
+    if (item) {
+      item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await wait(0);
+      return;
+    }
+  }
+  throw new Error("菜单项「大纲 TOC」未找到");
+}
+
 describe("大纲必须跟随活动面板的当前文档", () => {
   it("分屏下在 md 与纯文本之间切换面板，大纲随之切换/清空", async () => {
     await import("../src/main");
@@ -153,9 +179,7 @@ describe("大纲必须跟随活动面板的当前文档", () => {
     const panels = Array.from(document.querySelectorAll(".layout-panel")) as HTMLElement[];
     expect(panels.length, "应恢复两个面板").toBe(2);
 
-    const outline = document.getElementById("btn-outline") as HTMLButtonElement | null;
-    expect(outline, "btn-outline 应存在").toBeTruthy();
-    outline!.click();
+    await toggleTocViaMenu();
     await wait(50);
 
     const tocTexts = () =>
@@ -187,10 +211,9 @@ describe("大纲必须跟随活动面板的当前文档", () => {
     await import("../src/main");
     await wait(300);
 
-    const outline = document.getElementById("btn-outline") as HTMLButtonElement;
     const tocPanelEl = document.getElementById("toc-panel") as HTMLElement;
     // 用例间共享模块状态：前一个用例可能已把抽屉打开/关闭，这里确保打开
-    if (tocPanelEl.hidden) outline.click();
+    if (tocPanelEl.hidden) await toggleTocViaMenu();
     await wait(50);
     const tocItems = () =>
       Array.from(document.querySelectorAll("#toc-panel .toc-item")).map((e) => e.textContent ?? "");

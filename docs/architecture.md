@@ -19,7 +19,7 @@
 |---|---|---|
 | 文档模型 | `src-tauri/src/doc.rs`、`tab.rs`、`session.rs`、`backup/` | 文档/实例/会话/热退出副本 |
 | 编辑器 | `src/editor/`（CodeMirror 6 封装）、`src/shell/find.ts`、`outline` | 编辑、查找、大纲 |
-| 外壳/UI | `src/shell/`（main / menubar / tooltip / zoom / preferencesdialog / keymap / keymapdialog / splitview / tabstrip） | 菜单、提示、缩放、设置、快捷键、布局、标签栏 |
+| 外壳/UI | `src/shell/`（main / menubar / tooltip / zoom / preferencesdialog / keymap / keymapdialog / splitview / tabstrip） | 菜单、标题栏与窗口控制、提示、缩放、设置、快捷键、布局、标签栏 |
 | 预览 | `src/editor/preview/` | Markdown 渲染与预览内查找 |
 | 窗口 | `src-tauri/src/windows.rs` | 主窗口 + 卫星窗口（多窗口） |
 | 构建/打包 | `src-tauri/tauri.conf.json`、`build.rs`、`scripts/release.sh` | 版本、图标、NSIS |
@@ -45,6 +45,11 @@
   `preventDefault()` 已经拦不住那次插入。本项目对外只提供「插入**文件路径**」，从来没有
   「插入文件内容」这一项。
 - **视图刷新红线**：mousedown 链路上绝不做 DOM 重建（否则「切换面板要点两下」）。
+- **窗口边框自建**（B97）：`decorations:false` 去掉原生标题栏，菜单栏画进自建标题栏，右侧是最小化 /
+  最大化 / 关闭。拖动区用 Tauri 内置 `data-tauri-drag-region="deep"`（子树里可点击元素自动豁免拖动，
+  双击即最大化）；窗口控制走 `core:window` 对应命令 —— 注意 `start_dragging` **不在**
+  `core:window:default` 权限集里，必须显式授权，漏了的表现是「标题栏按住拖不动」（ACL 静默拒绝）。
+  ⚠️ 卫星窗口不继承 `tauri.conf.json` 的主窗口配置，必须各自显式设 `decorations(false)`。
 - **样式与主题**：组件统一用 CSS 变量；`hidden` 属性必须配 `display:none`。
 - **查找/大纲/缩放/设置/快捷键/菜单/标签栏/分屏/提示/保存/图标**：见 `src/shell/` 与各 `ref` 详情。
 - **多窗口（卫星窗口）**：新窗口与主窗口共享文档状态、标签可来回拖；「文档只有一个真相」跨 WebView 成立。

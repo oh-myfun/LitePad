@@ -37,6 +37,9 @@ const closeRequestedHandlers: Array<(e: { preventDefault: () => void }) => void>
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     setTitle: () => Promise.resolve(),
+    // B97 自建标题栏：最大化键的图标要跟着窗口状态走，桩必须补这两个 API
+    isMaximized: () => Promise.resolve(false),
+    onResized: () => Promise.resolve(() => {}),
     onCloseRequested: (cb: (e: { preventDefault: () => void }) => void) => {
       closeRequestedHandlers.push(cb);
       return Promise.resolve({ catch: () => {} });
@@ -283,21 +286,71 @@ function clickTab(tab: HTMLElement): void {
 }
 
 describe("bootstrap + drag-split smoke", () => {
-  /**
-   * 把主题按钮点回默认档「跟随系统」。
-   *
-   * B51 起主题按钮是三态循环，档位是跨用例共享的模块状态：
-   * 上一个用例把档位留在「显式浅色」时，下一个用例里第一次点击会走到
-   * 「跟随系统」（jsdom 偏好浅色 → 外观不变），断言就会无辜失败。
-   * 因此凡是依赖「点一下必然翻转」的用例，都必须先把档位归位。
-   */
-  async function resetThemeToSystem(): Promise<void> {
-    const btn = document.getElementById("btn-theme") as HTMLButtonElement | null;
-    if (!btn) return;
-    for (let i = 0; i < 3 && btn.dataset.themeMode !== "system"; i++) {
-      btn.click();
-      await new Promise((r) => setTimeout(r, 20));
+  const tick = (ms = 20): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+  /** 点开菜单栏里的某个顶层菜单（文件 / 编辑 / 查看 / 设置 / 帮助）。 */
+  async function openMenu(label: string): Promise<void> {
+    const host = document.getElementById("menu-bar") as HTMLElement;
+    const btn = [...host.querySelectorAll("button.menu-btn")].find((b) => b.textContent === label);
+    expect(btn, `菜单栏应有「${label}」`).toBeTruthy();
+    btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await tick();
+  }
+
+  /** 点已展开菜单里的项（按标签包含匹配）。 */
+  async function clickMenuItem(needle: string): Promise<void> {
+    for (const menu of document.querySelectorAll(".popup-menu")) {
+      const item = [...menu.querySelectorAll(":scope > button")].find((b) =>
+        (b.querySelector(".menu-label")?.textContent ?? "").includes(needle),
+      );
+      if (item) {
+        item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        await tick();
+        return;
+      }
     }
+    throw new Error(`菜单项「${needle}」未找到`);
+  }
+
+  /**
+   * 走「文件 → 打开…」驱动 doOpen。
+   *
+   * B97 把顶栏那排快捷按钮整体移除后，原先靠 `#btn-open.click()` 驱动的路径改走菜单 ——
+   * 菜单是这条动作现在唯一（也是真实）的入口。
+   */
+  async function openViaMenu(): Promise<void> {
+    await openMenu("文件");
+    await clickMenuItem("打开…");
+  }
+
+  /**
+   * 走「设置 → 首选项…」换主题档位。
+   *
+   * B97 起顶栏那颗三态循环的主题按钮已移除，主题只从首选项的下拉进出，所以凡是验证
+   * 「换档立即生效 / 写回 settings / 编辑器跟随」的用例都走这条真实链路。
+   */
+  async function setThemeViaPreferences(mode: "light" | "dark" | "system"): Promise<void> {
+    await openMenu("设置");
+    await clickMenuItem("首选项…");
+    const rows = [...document.querySelectorAll(".preferences-dialog .settings-row")];
+    const row = rows.find((r) => r.querySelector(".settings-label")?.textContent === "主题");
+    const sel = row?.querySelector("select") as HTMLSelectElement | null;
+    expect(sel, "首选项里应有「主题」下拉").toBeTruthy();
+    sel!.value = mode;
+    sel!.dispatchEvent(new Event("change", { bubbles: true }));
+    await tick(30);
+    // 关掉模态弹窗，别影响后续用例
+    (document.querySelector(".preferences-dialog .settings-ok") as HTMLButtonElement)?.click();
+    await tick(0);
+  }
+
+  /** 当前主题档位（main 写在 `<html data-theme-mode>` 上，取代已移除的主题按钮）。 */
+  const themeModeOf = (): string | undefined => document.documentElement.dataset.themeMode;
+
+  /** 把档位归位到「跟随系统」，免得上一个用例留下的显式档影响本次断言。 */
+  async function resetThemeToSystem(): Promise<void> {
+    if (themeModeOf() === "system") return;
+    await setThemeViaPreferences("system");
   }
 
   it("启动正常、内容渲染、拖拽分屏后状态仍有效", async () => {
@@ -397,70 +450,26 @@ describe("bootstrap + drag-split smoke", () => {
     ).toBe(false);
   });
 
-  it("主题按钮每次点击都必须切换明暗（回归：深色切浅色要点两下才生效）", async () => {
-    // 用户报告：深浅色按钮有时候要点两下才生效。
-    // 根因是旧的 system→light→dark 循环在系统偏好与当前态一致时视觉无变化；
-    // 回归断言：任意连续两次点击，dataset.theme 都必须翻转。
+  it("B97：主题从「设置 → 首选项 → 主题」换档，立即生效且明暗必定翻转", async () => {
+    // B97 把顶栏那颗三态循环的主题按钮移除了，主题只剩首选项这一个入口。
+    // 这条盖住最要紧的一点：换档之后**外观当场就变**。
+    // （旧实现有「点了没反应」，根因是 cycle 顺序在系统偏好与当前档一致时不翻转；
+    //  现在是从下拉里直接选档，那条边根本不存在。）
     await resetThemeToSystem();
-    const btn = document.getElementById("btn-theme") as HTMLButtonElement | null;
-    expect(btn, "btn-theme 应存在").toBeTruthy();
     const themeOf = () => document.documentElement.dataset.theme;
-    const first = themeOf();
-    expect(first, "初始应有明暗状态").toBeTruthy();
-
-    btn!.click();
-    await new Promise((r) => setTimeout(r, 20));
-    const second = themeOf();
-    expect(second, "第一次点击必须改变明暗").not.toBe(first);
-
-    btn!.click();
-    await new Promise((r) => setTimeout(r, 20));
-    expect(themeOf(), "第二次点击必须切回").not.toBe(second);
-  });
-
-  it("B51：主题按钮三态循环（浅色 / 深色 / 跟随系统），图标每次都变", async () => {
-    // 需求：深浅色按钮改成三态切换。可行的契约：
-    //   ① 每点一次都进入下一档，按钮图标/提示必然变化（不会「点了像没反应」）；
-    //   ② 从默认档（跟随系统）出发的第一下点击必定翻转明暗——正好覆盖老 bug
-    //      「浅色系统下点一下没变化」；
-    //   ③ 连续四次点击走遍三档并回到起点，三档图标互不相同。
-    // 注意：「显式档 → 跟随系统」这条边是否翻转取决于系统偏好，是明暗翻转无法
-    // 三条边全保的固有限制，所以「每次都翻转」不再作为契约。
-    const btn = document.getElementById("btn-theme") as HTMLButtonElement | null;
-    expect(btn, "btn-theme 应存在").toBeTruthy();
-    const b = btn!;
-    const mode = () => b.dataset.themeMode;
-    const themeOf = () => document.documentElement.dataset.theme;
-    const tick = () => new Promise((r) => setTimeout(r, 20));
-    expect(["light", "dark", "system"], "初始档位应合法").toContain(mode());
-
-    // 先回到默认档「跟随系统」（此前的用例可能点过按钮）
-    await resetThemeToSystem();
-    expect(mode(), "应能回到跟随系统档").toBe("system");
-
-    // ② 默认档点一下，明暗必须翻转
     const systemTheme = themeOf();
-    b.click();
-    await tick();
-    expect(themeOf(), "从「跟随系统」点一下必须改变明暗").not.toBe(systemTheme);
-    const startMode = mode();
+    expect(systemTheme, "初始应有明暗状态").toBeTruthy();
 
-    // ①③ 连续点击走遍三档，图标每次都变，第四次回到起点
-    const seen = [startMode];
-    const icons = [b.innerHTML];
-    for (let i = 0; i < 3; i++) {
-      const prev = mode();
-      const prevIcon = b.innerHTML;
-      b.click();
-      await tick();
-      expect(mode(), "每次点击都应进入下一档").not.toBe(prev);
-      expect(b.innerHTML, "图标必须随档位变化").not.toBe(prevIcon);
-      seen.push(mode());
-      icons.push(b.innerHTML);
-    }
-    expect(new Set(seen).size, "三档都应被访问到").toBe(3);
-    expect(seen[3], "第四次点击回到起点").toBe(startMode);
-    expect(new Set(icons).size, "三档图标互不相同").toBe(3);
+    await setThemeViaPreferences("dark");
+    expect(themeModeOf(), "档位应切到深色").toBe("dark");
+    expect(themeOf(), "选深色后外观必须真的变深").not.toBe(systemTheme);
+
+    await setThemeViaPreferences("light");
+    expect(themeModeOf(), "档位应切到浅色").toBe("light");
+    expect(themeOf(), "浅 ⇄ 深之间必须翻转").toBe(systemTheme);
+
+    await setThemeViaPreferences("system");
+    expect(themeModeOf(), "应能切回跟随系统").toBe("system");
   });
 
   it("B79：主题档位必须写进 settings 才能存盘（回归：重启后变回深色）", async () => {
@@ -469,63 +478,12 @@ describe("bootstrap + drag-split smoke", () => {
     // 一直停在启动时的 "system"，深色系统下解析出来就是深色。
     // ⚠️ 判据必须落在**落盘内容**上：只断言「调用了 saveSettings」会假绿（存了一直存，
     // 只是存的是旧值）。
-    const btn = document.getElementById("btn-theme") as HTMLButtonElement | null;
-    expect(btn, "btn-theme 应存在").toBeTruthy();
-    const b = btn!;
     await resetThemeToSystem();
-    const saved: (string | undefined)[] = [];
-    for (let i = 0; i < 3; i++) {
-      b.click();
-      await new Promise((r) => setTimeout(r, 20));
-      const mode = b.dataset.themeMode;
-      expect(savedSettings.last, "切换主题必须落一次盘").toBeTruthy();
+    for (const mode of ["light", "dark", "system"] as const) {
+      await setThemeViaPreferences(mode);
+      expect(savedSettings.last, `切到 ${mode} 必须落一次盘`).toBeTruthy();
       expect(savedSettings.last!.theme, `落盘的 theme 必须等于当前档位（${mode}）`).toBe(mode);
-      saved.push(savedSettings.last!.theme as string | undefined);
     }
-    // 三档里至少两档是显式档：它们必须真的写进去了（这就是旧代码做不到的事）
-    expect(saved.filter((t) => t === "light" || t === "dark").length, "显式档必须落盘").toBe(2);
-  });
-
-  it("B79：主题按钮三档一律不点亮（回归：深色档顶着一块实蓝底）", async () => {
-    // 用户实测：深色模式按钮的样式和其它模式不同，带激活状态。
-    // 根因是 refreshThemeButton 里写死 `themeMode === "dark"` 才加 .tool-btn-active。
-    // 它是**循环按钮**不是开关，「激活」没有语义 —— 三档外观必须完全一致。
-    const btn = document.getElementById("btn-theme") as HTMLButtonElement | null;
-    expect(btn, "btn-theme 应存在").toBeTruthy();
-    const b = btn!;
-    await resetThemeToSystem();
-    const seen = new Set<string>();
-    for (let i = 0; i < 4; i++) {
-      expect(
-        b.classList.contains("tool-btn-active"),
-        `第 ${i + 1} 档（${b.dataset.themeMode}）不该有点亮态`,
-      ).toBe(false);
-      seen.add(b.dataset.themeMode ?? "");
-      b.click();
-      await new Promise((r) => setTimeout(r, 20));
-    }
-    expect(seen.size, "应走遍三档").toBe(3);
-  });
-
-  it("B51：浅色 ⇄ 深色 之间的切换必须翻转明暗", async () => {
-    // 一轮三档循环里，「跟随系统」只占一格，两个显式档必然相邻；
-    // 相邻即浅→深或深→浅，明暗必须翻转。
-    const btn = document.getElementById("btn-theme") as HTMLButtonElement | null;
-    expect(btn, "btn-theme 应存在").toBeTruthy();
-    const b = btn!;
-    const themeOf = () => document.documentElement.dataset.theme;
-    await resetThemeToSystem();
-    const trace: { mode: string; theme: string | undefined }[] = [
-      { mode: b.dataset.themeMode ?? "", theme: themeOf() },
-    ];
-    for (let i = 0; i < 3; i++) {
-      b.click();
-      await new Promise((r) => setTimeout(r, 20));
-      trace.push({ mode: b.dataset.themeMode ?? "", theme: themeOf() });
-    }
-    const explicit = trace.filter((t) => t.mode !== "system");
-    expect(explicit.length, "一轮里应恰好出现两档显式主题").toBe(2);
-    expect(explicit[0].theme, "浅⇄深之间必须翻转明暗").not.toBe(explicit[1].theme);
   });
 
   it("B54：面板操作栏只剩「移除分屏」一个矢量图标按钮，标签栏不再有折叠按钮", async () => {
@@ -569,11 +527,9 @@ describe("bootstrap + drag-split smoke", () => {
 
   it("打开文件必须立即显示内容（回归：打开后内容空白）", async () => {
     // 用户报告：打开文件内容全空白，重启会话恢复后同一文件却正常。
-    // 通过“打开”按钮驱动 doOpen（对话框 mock 返回路径），断言挂载视图立即有内容。
+    // 走「文件 → 打开…」驱动 doOpen（对话框 mock 返回路径），断言挂载视图立即有内容。
     openDialogResult.value = "c.md";
-    const btn = document.getElementById("btn-open") as HTMLButtonElement | null;
-    expect(btn, "btn-open 应存在").toBeTruthy();
-    btn!.click();
+    await openViaMenu();
     await new Promise((r) => setTimeout(r, 120));
     openDialogResult.value = null;
 
@@ -592,7 +548,7 @@ describe("bootstrap + drag-split smoke", () => {
     // 会话恢复按路径重读磁盘，因此该现象说明前端内存中的标签状态被污染。
     // 本用例覆盖最常见链路：打开 → 切走 → 切回，内容必须原样保留。
     openDialogResult.value = "d.md";
-    (document.getElementById("btn-open") as HTMLButtonElement).click();
+    await openViaMenu();
     await new Promise((r) => setTimeout(r, 120));
     openDialogResult.value = null;
 
@@ -640,7 +596,7 @@ describe("bootstrap + drag-split smoke", () => {
         .filter((v) => v.state.doc.toString().includes("fourth document from D"));
 
     openDialogResult.value = "d.md";
-    (document.getElementById("btn-open") as HTMLButtonElement).click();
+    await openViaMenu();
     await new Promise((r) => setTimeout(r, 120));
     openDialogResult.value = null;
 
@@ -658,7 +614,7 @@ describe("bootstrap + drag-split smoke", () => {
         .filter((v): v is EditorView => !!v);
 
     openDialogResult.value = "c.md";
-    (document.getElementById("btn-open") as HTMLButtonElement).click();
+    await openViaMenu();
     await new Promise((r) => setTimeout(r, 120));
     openDialogResult.value = null;
 
@@ -879,10 +835,9 @@ describe("bootstrap + drag-split smoke", () => {
 
   it("深浅色切换时所有面板的编辑器必须一起变（回归：部分面板不跟随）", async () => {
     // 用户报告：深浅色切换，所有面板要一起跟着变。
-    // 断言：点击主题按钮后，每一个已挂载面板的 CodeMirror 明暗状态都同步翻转。
+    // 断言：换档之后每一个已挂载面板的 CodeMirror 明暗状态都同步翻转。
+    // B97 起换档入口是「设置 → 首选项 → 主题」，不再是顶栏那颗循环按钮。
     await resetThemeToSystem();
-    const btn = document.getElementById("btn-theme") as HTMLButtonElement | null;
-    expect(btn, "btn-theme 应存在").toBeTruthy();
     const viewsOf = () =>
       Array.from(document.querySelectorAll(".cm-editor"))
         .map((dom) => EditorView.findFromDOM(dom as HTMLElement))
@@ -891,18 +846,18 @@ describe("bootstrap + drag-split smoke", () => {
 
     const before = darkFlags();
     expect(before.length, "应存在已挂载的编辑器视图").toBeGreaterThan(0);
-    const target = !before[0];
+    // 显式选一个与当前相反的档（下拉是「直接选档」，不再有「切下一档」的循环语义）
+    const want: "light" | "dark" = before[0] ? "light" : "dark";
+    const wantDark = want === "dark";
 
-    btn!.click();
-    await new Promise((r) => setTimeout(r, 30));
+    await setThemeViaPreferences(want);
     const mid = darkFlags();
     expect(
-      mid.every((d) => d === target),
-      `所有面板编辑器都应切到${target ? "深色" : "浅色"}，实际：${String(mid)}`,
+      mid.every((d) => d === wantDark),
+      `所有面板编辑器都应切到${wantDark ? "深色" : "浅色"}，实际：${String(mid)}`,
     ).toBe(true);
 
-    btn!.click();
-    await new Promise((r) => setTimeout(r, 30));
+    await setThemeViaPreferences(wantDark ? "light" : "dark");
     expect(
       darkFlags().every((d) => d === before[0]),
       "切回应同步还原所有面板",
@@ -969,10 +924,9 @@ describe("bootstrap + drag-split smoke", () => {
       await new Promise((r) => setTimeout(r, 30));
       expect(amdViewsBefore[1].state.doc.toString(), "第二实例应同步到新内容").toBe(md);
 
-      // 打开大纲
-      const btnOutline = document.getElementById("btn-outline") as HTMLButtonElement;
-      expect(btnOutline, "btn-outline 应存在").toBeTruthy();
-      btnOutline.click();
+      // 打开大纲（B97 起走「查看 → 大纲 TOC」菜单，顶栏那颗按钮已移除）
+      await openMenu("查看");
+      await clickMenuItem("大纲 TOC");
       await new Promise((r) => setTimeout(r, 20));
       const itemOf = () =>
         Array.from(document.querySelectorAll("#toc-panel .toc-item")) as HTMLElement[];
@@ -1019,8 +973,9 @@ describe("bootstrap + drag-split smoke", () => {
       expect(activeItems.length, "应有活动高亮项").toBe(1);
       expect(activeItems[0].textContent, "高亮应落在「## 第二题」").toContain("第二题");
 
-      // 收起大纲，避免影响其他状态
-      btnOutline.click();
+      // 收起大纲，避免影响其他状态（同样走菜单，B97 后没有顶栏按钮可点）
+      await openMenu("查看");
+      await clickMenuItem("大纲 TOC");
     } finally {
       restoreRects();
     }
@@ -1093,7 +1048,7 @@ describe("bootstrap + drag-split smoke", () => {
     if (!panel) {
       // 前置用例可能把标签都拆成单标签面板：补开一个文件凑出多标签面板
       openDialogResult.value = "c.md";
-      (document.getElementById("btn-open") as HTMLButtonElement).click();
+      await openViaMenu();
       await new Promise((r) => setTimeout(r, 150));
       openDialogResult.value = null;
       panel = panelWithTwo();

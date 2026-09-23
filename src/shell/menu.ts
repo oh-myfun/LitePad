@@ -17,6 +17,11 @@ export interface MenuItem {
    * **不打 ✓**——✓ 用于「可开关的开关项」，当前项不是开关。
    */
   active?: boolean;
+  /**
+   * 置灰不可点（B97，「文件 → 导出」在非 Markdown 文档上无意义）。
+   * 仅置灰不够——`onSelect` 那边仍要自己兜住，因为 disabled 只是 UI 约束。
+   */
+  disabled?: boolean;
 }
 
 export interface PopupMenuOptions {
@@ -197,6 +202,8 @@ function fillMenu(menu: HTMLElement, items: MenuItem[], opts?: PopupMenuOptions)
 
     const btn = document.createElement("button");
     btn.type = "button";
+    // 置灰项（B97）：点击事件一并掐掉，不让「点了没反应」变成静默失败。
+    if (item.disabled) btn.disabled = true;
 
     // 当前项（B47）：不打 ✓，改整行观感（与活动标签一致），见 .menu-item-current
     const check = document.createElement("span");

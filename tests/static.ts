@@ -49,6 +49,17 @@ export function stripLineComments(src: string): string {
     .join("\n");
 }
 
+// 剥掉 CSS 的块注释，只留规则文本。
+// ⚠️ 与 stripLineComments 是同一类陷阱在样式上的翻版：本项目在**删掉一套样式**时习惯留一行
+// 注释交代去向（B97 删顶栏快捷按钮后就有「原先 .toolbar-actions / .tool-btn 一套规则只服务于
+// 那 8 颗按钮……直接删掉」）。那是变更史，不是样式。断言「类名必须已删除」时若比对原文，
+// 会被这行注释误伤报**假红**；反之，若断言写成 `toContain` 而规则已删、只剩注释提到它，
+// 又会**假绿**。所以凡对整份样式做「有没有某类名/属性」的判断，都先过这一层。
+// 顺带去掉 `@media` 之类嵌套里残留的空白行，断言里不会用到，无须关心。
+export function stripCssComments(css: string): string {
+  return css.replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
 // 取某条规则的**声明块体**（同样剥注释 + 数花括号）。selector 直接当字面量用。
 // 支持三种写法：
 //   · 单选择器 `.find-bar { }`
