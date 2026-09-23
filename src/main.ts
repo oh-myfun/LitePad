@@ -50,6 +50,7 @@ import {
   newTab as ipcNewTab,
   openFile,
   openSatelliteWindow,
+  takePendingFiles,
   reloadFile,
   restoreBackup,
   saveFile,
@@ -5437,6 +5438,18 @@ async function setupShell(): Promise<void> {
       for (const path of p.paths) void openDroppedAt(path, target);
     })
     .catch(() => {});
+
+  // 文件关联（单实例）：应用已运行时双击 .md/.markdown → Rust 转发 open-file 事件到主窗口。
+  // 事件只作「来活了」的信号，真正要开的路径在 Rust 待打开队列里，这里取走打开。
+  // ⚠️ 仅主窗口处理：事件经全局 listen 会广播到所有窗口，卫星窗口必须跳过。
+  void listen("open-file", () => {
+    if (windowKind !== "main") return;
+    void takePendingFiles()
+      .then((ps) => {
+        for (const p of ps) void doOpen(p);
+      })
+      .catch(() => {});
+  }).catch(() => {});
 }
 
 async function bootstrap(): Promise<void> {
@@ -5534,6 +5547,15 @@ async function bootstrap(): Promise<void> {
       "session",
       `restored ${docs.size} docs / ${tabs.size} instances / ${panels.size} panels`,
     );
+  }
+
+  // 文件关联：首次启动带 .md/.markdown 参数时，Rust 已把路径放进待打开队列，
+  // 此处（外壳与会话都就绪后）取走打开。应用已运行时的实时路径走 open-file 事件监听。
+  try {
+    const pending = await takePendingFiles();
+    for (const p of pending) void doOpen(p);
+  } catch {
+    /* 取队列失败不影响主流程 */
   }
 
   // 备份区孤儿清理：副本文件本身不含「属于哪个标签」的索引，认领全靠会话，

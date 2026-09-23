@@ -130,6 +130,11 @@ export function openFile(path: string, encoding?: string | null): Promise<Opened
   return invoke<OpenedFile>("open_file", { path, encoding: encoding ?? null });
 }
 
+/** 取走并清空 Rust 侧「文件关联待打开队列」（首次启动带参 / 收到 open-file 事件时各调一次）。 */
+export function takePendingFiles(): Promise<string[]> {
+  return invoke<string[]>("take_pending_files");
+}
+
 /** 以指定编码重新载入某标签（覆盖状态栏切换编码的场景）。 */
 export function reloadFile(tabId: number, encoding?: string | null): Promise<OpenedFile> {
   return invoke<OpenedFile>("reload_file", { tabId, encoding: encoding ?? null });

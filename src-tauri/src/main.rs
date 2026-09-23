@@ -40,6 +40,21 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            // 双击关联文件时，Windows 以 `"litepad.exe" "<path>"` 启动应用；
+            // 这里挑出应接管的 .md/.markdown 路径，入队并通知已运行的主窗口。
+            let files = commands::assoc_args_to_open(&argv, &cwd);
+            if files.is_empty() {
+                return;
+            }
+            commands::push_pending_files(files.clone());
+            // 应用已运行时：拉起主窗口并转发事件（前端据此开新标签）
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+            let _ = app.emit("open-file", serde_json::json!({ "paths": files }));
+        }))
         .manage(commands::AppState::default())
         // B71 ④ 多窗口：label → 待投递载荷（见 windows 模块头部）
         .manage(windows::WindowRegistry::default())
@@ -165,6 +180,7 @@ fn main() {
             commands::discard_orphan_backups,
             commands::export_file,
             commands::save_paste_image,
+            commands::take_pending_files,
             windows::window_payload,
             windows::open_satellite_window,
         ])

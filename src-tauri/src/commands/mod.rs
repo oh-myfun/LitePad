@@ -78,6 +78,54 @@ pub fn disk_version(path: &Path) -> (i64, u64) {
     }
 }
 
+// ---------------------------------------------------------------- 文件关联（双击 .md/.markdown 打开）
+
+/// 待打开队列：双击关联文件时 Windows 以 `"litepad.exe" "<path>"` 启动应用，单实例插件的
+/// `on_args` 回调把路径塞进来，前端就绪后通过 `take_pending_files` 取走打开。
+///
+/// 之所以要队列而不是直接 emit 事件：首次启动带参时前端监听器可能还没挂上，事件会丢；
+/// 队列由前端「就绪时取一次 + 收到 open-file 事件时再取一次」兜底，保证不漏文件。
+static PENDING_OPEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// 仅判断扩展名是否属于 LitePad 接管的文档类型（纯函数，可单测）。
+pub fn is_assoc_ext(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.ends_with(".md") || lower.ends_with(".markdown")
+}
+
+/// 从命令行参数里挑出「应被 LitePad 接管的文档」：扩展名匹配且确实是存在的文件，
+/// 相对路径按 cwd 展开为绝对路径。纯函数，便于单测。
+pub fn assoc_args_to_open(argv: &[String], cwd: &str) -> Vec<String> {
+    argv.iter()
+        .filter(|a| is_assoc_ext(a) && std::path::Path::new(a.as_str()).is_file())
+        .map(|a| {
+            let p = std::path::Path::new(a.as_str());
+            if p.is_absolute() {
+                a.clone()
+            } else {
+                std::path::Path::new(cwd)
+                    .join(a.as_str())
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        })
+        .collect()
+}
+
+/// 把外部传入的文件路径加入待打开队列（单实例回调调用）。
+pub fn push_pending_files(paths: Vec<String>) {
+    if let Ok(mut q) = PENDING_OPEN.lock() {
+        q.extend(paths);
+    }
+}
+
+/// 前端取走并清空待打开队列（首次就绪 / 收到 open-file 事件时各调一次；先到先得，空手而归一）。
+#[tauri::command]
+pub fn take_pending_files() -> Vec<String> {
+    let mut q = PENDING_OPEN.lock().unwrap_or_else(|e| e.into_inner());
+    std::mem::take(&mut *q)
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TabInfo {
@@ -745,6 +793,24 @@ mod tests {
     #[test]
     fn not_stale_without_expectation() {
         assert!(!is_stale(None, (111, 10)));
+    }
+
+    // —— 文件关联：扩展名识别（纯函数，独立于文件系统） ——
+
+    #[test]
+    fn assoc_ext_recognizes_md_and_markdown() {
+        assert!(is_assoc_ext("readme.md"));
+        assert!(is_assoc_ext("readme.MD"));
+        assert!(is_assoc_ext("a/b/c.markdown"));
+        assert!(is_assoc_ext("A.MARKDOWN"));
+    }
+
+    #[test]
+    fn assoc_ext_rejects_other_types() {
+        assert!(!is_assoc_ext("notes.txt"));
+        assert!(!is_assoc_ext("image.png"));
+        assert!(!is_assoc_ext("noext"));
+        assert!(!is_assoc_ext("x.markdown.bak"));
     }
 
     /** 半份基线不算基线：缺 mtime 或缺 size 都得退回「不检查」。 */

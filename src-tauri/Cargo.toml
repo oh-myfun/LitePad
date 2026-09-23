@@ -12,6 +12,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["devtools", "protocol-asset"] }
 tauri-plugin-dialog = "2"
+# 文件关联（双击 .md/.markdown 打开）：应用已运行时把路径转发给主窗口，避免多开。
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # 编码识别与转换：GB18030/GBK/Big5/Shift-JIS/EUC-KR/UTF-16/Windows-1252
