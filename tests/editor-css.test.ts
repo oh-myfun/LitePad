@@ -33,7 +33,7 @@ describe("编辑器 DOM / CSS 静态契约", () => {
     expect(block![0], "gutter 背景必须引用主题变量").toMatch(/var\(--/);
     expect(block![0], "gutter 文字色必须引用主题变量").toMatch(/color:\s*var\(--/);
   });
-  it("折叠图标必须是自定义 SVG 标记（open/closed 形态不同，颜色走 CSS 变量）", async () => {
+  it("折叠图标必须是 codicon 字形标记（open/closed 形态不同，颜色走 CSS 变量）", async () => {
     const { foldMarkerDOM } = await import("../src/editor/editor");
     const open = foldMarkerDOM(true);
     const closed = foldMarkerDOM(false);
@@ -42,7 +42,8 @@ describe("编辑器 DOM / CSS 静态契约", () => {
       ["closed", closed],
     ] as const) {
       expect(el.className, `${name} 应带 cm-fold-marker 类`).toContain("cm-fold-marker");
-      expect(el.querySelector("svg"), `${name} 应为内联 SVG 图标`).toBeTruthy();
+      // B102 起字形由官方图标字体绘制：`<i class="codicon codicon-…">`
+      expect(el.querySelector("i.codicon"), `${name} 应为 codicon 字形`).toBeTruthy();
     }
     expect(open.innerHTML, "展开/折叠两种形态的图标应不同").not.toBe(closed.innerHTML);
   });

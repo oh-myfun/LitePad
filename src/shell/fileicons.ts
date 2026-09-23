@@ -9,10 +9,10 @@ import { CODICONS, type CodiconName } from "./codicons";
  * 差别在于图标从哪来：VS Code 有一整套「文件图标主题」（Seti 等，按文件名匹配几千个后缀），
  * LitePad 没有图标主题，于是按**语言家族**给 10 个字形。
  *
- * 字形一律取 VS Code codicon（`./codicons`，生成物）。🚩 红线：消费方**禁止手绘 SVG**
- * （docs/conventions.md「图标」节）。10 个家族必须对 10 颗**互不相同**的 codicon ——
- * 抽取脚本 scripts/fetch-codicons.mjs 的 assertFamilies() 与 regressions 的
- * 「十个家族应有十个不同字形」双重守着撞车。
+ * 字形一律取 VS Code codicon（`./codicons`：短名 → 官方 `codicon-<id>` 的映射层）。
+ * 🚩 红线：消费方**禁止手绘 SVG**（docs/conventions.md「图标」节）。
+ * 10 个家族必须对 10 颗**互不相同**的 codicon ——
+ * `tests/fileicons.test.ts` 的「十个家族应有十个不同字形」守着撞车。
  *
  * ⚠️ 家族仍按**语义最近**挑字形：codicon 没有「Python」「Rust」这类语言字形（那是文件图标
  *    主题的活），只有通用符号字形，所以映射是「家族 → 最像的通用符号」，不追求一一对应。
@@ -124,18 +124,16 @@ export function familyOf(langLabel: string | null | undefined): FileFamily {
 }
 
 /**
- * 家族 → 16px 内联 SVG。
+ * 家族 → 16px 的字形元素（`<i class="codicon codicon-…">` 的 HTML）。
  *
- * 颜色不由这里管：codicon 统一带 `fill="currentColor"`，配色仍走 `.tab-icon[data-fam]`
+ * 颜色不由这里管：codicon 字形的 `::before` 继承 `color`，配色仍走 `.tab-icon[data-fam]`
  * 的 CSS 变量（浅深两套）。
  *
- * ⚠️ 生成的 codicon 固定 `width/height="16"`（抽取时已归一，见 fetch-codicons.mjs）；
- *    只有显式传别的尺寸时才改写那两个属性，默认路径零字符串处理。
+ * ⚠️ 尺寸也不由这里管：codicon.css 统一给 16px（`font: 16px/1 codicon`），
+ *    要别的尺寸就在 CSS 里覆盖字号（B102 之前是给内联 SVG 改 width/height，已成历史）。
  */
-export function fileIconSvg(fam: FileFamily, size = 16): string {
-  const svg = CODICONS[FAM_ICON[fam]];
-  if (size === 16) return svg;
-  return svg.replace('width="16" height="16"', `width="${size}" height="${size}"`);
+export function fileIconHtml(fam: FileFamily): string {
+  return CODICONS[FAM_ICON[fam]];
 }
 
 /** 供测试断言「家族覆盖了多少种语言」用 */

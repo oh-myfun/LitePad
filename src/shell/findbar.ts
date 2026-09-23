@@ -14,9 +14,9 @@
  * - **样式逐条对齐 VS Code 的查找组件**：盒模型 / 工具按钮 / 计数 / 开关三态都照抄参考源码
  *   （见 `global.css` 该节的注释头），有意偏离处均已就地注明原因。
  * - **图标全部照搬 VS Code 的 codicon**（B80）：不再自绘、也不再用 `Aa`/`ab`/`.*`/`AB`
- *   这类文字字形。轮廓由 `scripts/fetch-codicons.mjs` 从官方包 `@vscode/codicons` 抽出
- *   并内联成 `codicons.ts`，与 VS Code 查找栏的注册图标一一对应（含「在选区中查找」
- *   用的 `find-selection`，官方码位 \eb85）。16×16 视图框 → 与 16px 图标位**零缩放**。
+ *   这类文字字形。字形取自官方 npm 包 `@vscode/codicons` 的图标字体（映射见 `./codicons`），
+ *   与 VS Code 查找栏的注册图标一一对应（含「在选区中查找」用的 `find-selection`，
+ *   官方码位 \eb85）。尺寸由官方样式统一给 16px，与 16px 图标位**零缩放**。
  * - **左侧宽度调节手柄**：VS Code 的 `.find-widget .monaco-sash`（findWidget.ts 的 `_resizeSash`），
  *   拖左缘改宽度、双击复原/最大化；宽度不写回磁盘（与 VS Code 一致，只活在本次会话）。
  * - ⚠️ **没有底部结果区**（B80 删）：VS Code 的查找浮层里也没有结果列表 —— 多文档搜索结果

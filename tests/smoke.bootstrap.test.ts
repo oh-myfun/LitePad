@@ -396,7 +396,10 @@ describe("bootstrap + drag-split smoke", () => {
     // 所以脏状态只能看 tab-dirty 类，不能再看 .tab-mark 的文本。
     const dirtyTabs = Array.from(document.querySelectorAll(".tab.tab-dirty"));
     expect(dirtyTabs.length, "脏标记应出现在标签上").toBeGreaterThan(0);
-    expect(dirtyTabs[0].querySelector(".tab-mark svg"), "脏标记槽位里应有矢量圆点").toBeTruthy();
+    expect(
+      dirtyTabs[0].querySelector(".tab-mark i.codicon"),
+      "脏标记槽位里应有矢量圆点",
+    ).toBeTruthy();
 
     // ---- 模拟把面板0的标签拖到面板1的左侧区域（应触发 splitPanelWithTab）----
     const panels = Array.from(layoutArea!.querySelectorAll(".layout-panel")) as HTMLElement[];
@@ -507,7 +510,7 @@ describe("bootstrap + drag-split smoke", () => {
     const ops = Array.from(panel.querySelectorAll<HTMLButtonElement>(".panel-op"));
     expect(ops.length, "应只剩 移除分屏 共 1 个操作按钮").toBe(1);
     for (const op of ops) {
-      expect(op.querySelector("svg"), `「${op.dataset.tip}」必须是矢量图标`).toBeTruthy();
+      expect(op.querySelector("i.codicon"), `「${op.dataset.tip}」必须是矢量图标`).toBeTruthy();
     }
     expect(ops[0].dataset.tip, "唯一按钮是移除分屏").toContain("移除");
 

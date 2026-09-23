@@ -5,8 +5,8 @@
 // ④钉在右上角、不再可拖动；⑤替换行可折叠；⑥匹配选项是图标开关（B80 起全部照搬 codicon）；
 // ⑦紧凑计数、无匹配变红。
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { themeBlock, ruleBlock } from "./static";
+import { readFileSync, existsSync } from "node:fs";
+import { themeBlock, ruleBlock, stripCssComments } from "./static";
 import { createFindBar, type FindBarQuery } from "../src/shell/findbar";
 import { CODICONS } from "../src/shell/codicons";
 import { preserveCase, restrictToRange } from "../src/editor/find";
@@ -524,12 +524,10 @@ describe("B78：左侧手柄 / 折叠按钮变高 / 选区与跨文档互斥 / �
   it("图标全部照搬 VS Code 的 codicon（不再自绘、也不用 Aa/ab/.*/AB 文字字形）", () => {
     const m = mount();
     m.bar.open("", true);
-    // 与官方包逐字一致（codicons.ts 由 scripts/fetch-codicons.mjs 从 @vscode/codicons 抽取）
-    // ⚠️ 不能直接比字符串：DOM 会把 svg 里的自闭合 `<path … />` 规整成 `<path …></path>`，
-    //    所以先把官方串按同一规则归一，再逐字节比 —— 这样仍能证明「与官方轮廓逐字一致」。
-    const norm = (s: string): string => s.replace(/<(\w+)([^>]*)\/>/g, "<$1$2></$1>");
-    const same = (el: Element, svg: string, msg: string): void => {
-      expect(el.innerHTML, msg).toBe(norm(svg));
+    // 字形来自官方 npm 包 @vscode/codicons 的图标字体（B102）：`CODICONS.x` 就是
+    // `<i class="codicon codicon-x">`，直接比 innerHTML 即能证明「没写死、没自绘」。
+    const same = (el: Element, html: string, msg: string): void => {
+      expect(el.innerHTML, msg).toBe(html);
     };
     same(m.q(".find-prev"), CODICONS.arrowUp, "上一个 = arrow-up");
     same(m.q(".find-next"), CODICONS.arrowDown, "下一个 = arrow-down");
@@ -542,11 +540,9 @@ describe("B78：左侧手柄 / 折叠按钮变高 / 选区与跨文档互斥 / �
     same(m.tgl("正则"), CODICONS.regex, "正则");
     same(m.tgl("保留大小写"), CODICONS.preserveCase, "保留大小写");
     // 文档图标按钮里还挂着徽标（<i class="find-badge">），故用 toContain
-    expect(m.q<HTMLElement>(".find-docs").innerHTML, "文档图标 = files").toContain(
-      norm(CODICONS.files),
-    );
+    expect(m.q<HTMLElement>(".find-docs").innerHTML, "文档图标 = files").toContain(CODICONS.files);
 
-    // 每个图标按钮/开关都必须渲染出 svg，且不含任何文字字形
+    // 每个图标按钮/开关都必须渲染出 codicon 字形元素，且不含任何文字字形
     const iconEls = [
       ...m.dom.querySelectorAll<HTMLElement>(
         ".find-chevron, .find-nav, .find-x, .find-replace-one, .find-replace-all, .find-toggle, .find-docs",
@@ -554,14 +550,21 @@ describe("B78：左侧手柄 / 折叠按钮变高 / 选区与跨文档互斥 / �
     ];
     expect(iconEls.length).toBeGreaterThan(10);
     for (const el of iconEls) {
-      expect(el.querySelector("svg"), `${el.className} 必须是 svg 图标`).toBeTruthy();
+      // ⚠️ 徽标本身也是 <i>，但它不带 codicon 类 —— 用 `.codicon` 选才不会误判
+      expect(
+        el.querySelector("i.codicon"),
+        `${el.className} 必须是 codicon 字形（<i class="codicon …">）`,
+      ).toBeTruthy();
       // 徽标是挂在文档图标里的数字，不算「文字字形」，先摘掉再判
       el.querySelector(".find-badge")?.remove();
       expect(el.textContent?.trim(), `${el.className} 不得再有文字字形`).toBe("");
     }
-    // 16×16 视图框 + currentColor：落到 16px 图标位零缩放，颜色随主题
-    expect(CODICONS.replace).toContain('viewBox="0 0 16 16"');
-    expect(CODICONS.replaceAll).toContain('fill="currentColor"');
+    // 颜色随主题：字形的 ::before 继承 color，所以本体不能自带颜色
+    for (const name of ["replace", "replaceAll", "close"] as const) {
+      expect(CODICONS[name], `${name} 必须是 codicon 字形元素`).toMatch(
+        /^<i class="codicon codicon-[a-z0-9-]+" aria-hidden="true"><\/i>$/,
+      );
+    }
   });
 });
 
@@ -779,6 +782,8 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     // findWidget.css / findInput.css / toggle.css / inputBox.css 逐条对齐，
     // 拿不到出处的地方（跨文档文档图标、min-width 防抖）都在 CSS 注释里注明了。
     const css = readFileSync("src/styles/global.css", "utf-8");
+    // 官方图标字体样式（B102）：图标的 16px 出自这里，不在本项目里另写一遍。
+    const codiconCss = readFileSync("node_modules/@vscode/codicons/dist/codicon.css", "utf-8");
 
     // ---- ① 浮层盒模型 = `.find-widget`（34px 高由 JS 写死，我们改由内边距自然量到）----
     const bar = ruleBlock(css, ".find-bar");
@@ -824,7 +829,12 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       /box-sizing:\s*border-box/,
     );
     expect(toggle, "左间距 2px").toMatch(/margin-left:\s*2px/);
-    expect(ruleBlock(css, ".find-toggle svg"), "开关图标 16px").toMatch(/width:\s*16px/);
+    // 图标尺寸不再由本项目按 svg 归：官方 codicon.css 统一给 `font: 16px/1 codicon`，
+    // 字形元素继承它（B102 之前那条 `.find-toggle svg { width/height: 16px }` 已退役）。
+    expect(css, "开关不得再有 svg 尺寸规则").not.toMatch(/\.find-toggle\s+svg/);
+    expect(codiconCss, "16px 由官方 codicon.css 给（不是本项目猜的）").toMatch(
+      /\.codicon\[class\*='codicon-'\][^{]*\{[^}]*16px\/1 codicon/,
+    );
 
     // 激活三态 = inputOption.active{Background,Border,Foreground} 三件套一起换
     const toggleOn = ruleBlock(css, ".find-toggle.on");
@@ -850,8 +860,11 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     expect(btn, "圆角 5px（= VS Code `.button`）").toMatch(/border-radius:\s*5px/);
     expect(btn, "平常无底色（扁平式，不像工具栏按钮那样自带填充）").toMatch(/background:\s*none/);
     expect(btn, "平常无描边").toMatch(/border:\s*none/);
-    expect(css, "按钮图标 16px").toMatch(
-      /\.find-nav svg,[\s\S]{0,240}?\{\s*width:\s*16px;\s*height:\s*16px;/,
+    // 图标 16px 同上：由官方 codicon.css 给。本项目只在**要改字号**的地方写规则，
+    // 且只能改 .codicon 的 font-size（见 .panel-op .codicon = 15px）。
+    expect(css, "按钮不得再有 svg 尺寸规则").not.toMatch(/\.find-nav\s+svg/);
+    expect(css, "要改尺寸就改 .codicon 的字号").toMatch(
+      /\.panel-op\s+\.codicon\s*\{[^}]*font-size:\s*15px/,
     );
     expect(css, "禁用态必须弱化而不是消失").toMatch(
       /\.find-nav:disabled,[\s\S]{0,200}?opacity:\s*0?\.\d+/,
@@ -1061,26 +1074,25 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     // jsdom（测试）没有布局，量出来是 0 —— 写死 0px 会让替换框彻底消失
     expect(bar, "⚠️ 无布局时必须不下手，别写死 0px").toMatch(/if \(w <= 0\) return;/);
 
-    // ---- ⑦ 图标全部照搬 VS Code 的 codicon（B80）----
-    // 用户要求「按钮图标可以直接照搬 vscode 的，如果参考源码里没有就先下载到参考源码」。
-    // codicon 只以字体（codicon.ttf）+ 码位发布，参考仓库里拿不到轮廓 —— 于是
-    // scripts/fetch-codicons.mjs 从官方包 `@vscode/codicons` 的 src/icons/*.svg 抽取，
-    // 生成 src/shell/codicons.ts（生成物，勿手改），参考副本落在 docs/vscode-reference/codicons/。
+    // ---- ⑦ 图标全部照搬 VS Code 的 codicon（B80 / B102）----
+    // 用户要求「按钮图标可以直接照搬 vscode 的」。B102 起**直接用官方 npm 包**：
+    // 依赖 @vscode/codicons（package.json，版本钉死）+ main.ts 引入 dist/codicon.css，
+    // 字形就是 `<i class="codicon codicon-x">`，不再把上游 svg 抽出来内联。
     const icons = readFileSync("src/shell/codicons.ts", "utf-8");
-    expect(icons, "codicons.ts 必须写明上游来源与版本").toContain("@vscode/codicons@");
-    expect(icons, "必须声明是生成物（防手改）").toContain("不要手改");
-    const fetchScript = readFileSync("scripts/fetch-codicons.mjs", "utf-8");
-    expect(fetchScript, "必须有可重跑的上游抽取脚本").toContain("@vscode/codicons");
-    expect(fetchScript, "必须把「图标名 → 官方文件名」逐条列出").toContain("ICONS");
-    // 每一颗都得是 currentColor 填充（否则不跟主题变色）；视图框尺寸不做统一要求
-    // （官方那里 files 就是 24 视图框，抽取时已把 width/height 归一到 16）。
-    const svgTags = [...icons.matchAll(/<svg[^>]*>/g)].map((m) => m[0]);
-    expect(svgTags.length, "至少 13 颗图标").toBeGreaterThanOrEqual(13);
-    for (const tag of svgTags) {
-      expect(tag, "必须有 viewBox").toContain("viewBox=");
-      expect(tag, "必须是 currentColor 填充（跟随主题）").toContain('fill="currentColor"');
-      expect(tag, "落到 16px 图标位：width/height 必须是 16").toContain('width="16"');
-    }
+    expect(icons, "codicons.ts 必须写明上游来源").toContain("@vscode/codicons");
+    // 反面：抽取脚本与内联 svg 都必须已经退场。
+    // ⚠️ 用 stripCssComments 先剥注释：本文件自己的说明里就写着「不得写死 content: "\e…」，
+    //    不剥会把注释里的反例判成违规（B102 当天这条先把自己判红了一次）。
+    const code = stripCssComments(icons);
+    expect(code, "字形必须由官方字体绘制，不得再内联 svg").not.toContain("<svg");
+    expect(code, "不得写死字形码位（码位只属于官方 codicon.css）").not.toMatch(
+      /content:\s*["']\\e/,
+    );
+    expect(existsSync("scripts/fetch-codicons.mjs"), "上游抽取脚本必须已退役").toBe(false);
+    // 每一颗都得是 `codicon codicon-<id>` 的元素串（id 全小写、连字符）
+    const clsTags = [...icons.matchAll(/codicon-\$\{id\}|"codicon codicon-/g)].map((m) => m[0]);
+    expect(icons, "必须把「短名 → codicon id」逐条列出").toContain("const IDS");
+    expect(clsTags.length, "必须走 codicon 类名").toBeGreaterThan(0);
     expect(icons, "必须含「在选区中查找」用的 find-selection").toContain("findSelection");
     // 查找栏侧：所有图标一律来自 CODICONS，不得再有文字字形或自绘 svg
     expect(bar, "必须从 codicons.ts 取图标").toContain('from "./codicons"');

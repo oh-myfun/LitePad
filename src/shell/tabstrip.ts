@@ -1,6 +1,6 @@
 import { showPopupMenu } from "./menu";
 import { startTabDrag, type DragImageAnchor } from "./tabdnd";
-import { fileIconSvg, familyOf } from "./fileicons";
+import { fileIconHtml, familyOf } from "./fileicons";
 import { CODICONS } from "./codicons";
 import { setTip } from "./tooltip";
 
@@ -271,7 +271,7 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   icon.className = "tab-icon";
   icon.dataset.fam = fam;
   icon.dataset.lang = t.lang ?? "";
-  icon.innerHTML = fileIconSvg(fam);
+  icon.innerHTML = fileIconHtml(fam);
   icon.setAttribute("aria-hidden", "true");
 
   const name = document.createElement("span");

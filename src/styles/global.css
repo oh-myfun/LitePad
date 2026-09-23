@@ -772,10 +772,9 @@ button:focus-visible {
   background: var(--find-btn-hover);
   color: var(--fg);
 }
-.find-chevron svg {
-  width: 16px;
-  height: 16px;
-}
+/* B102 起图标改用官方 codicon **字体**（`<i class="codicon …">`）：尺寸由 codicon.css
+   统一给 16px（`font: 16px/1 codicon`），原来「按容器把 svg 归到 16×16」这批规则作废。
+   只有要改字号的地方才需要写规则（见 `.panel-op .codicon`）。 */
 
 /* 左侧宽度调节手柄 = VS Code 的 `.find-widget .monaco-sash`
    （sash.css 的 vertical 变体 + findWidget.css 的 `left: 0 !important`）：
@@ -912,10 +911,6 @@ button:focus-visible {
   background: var(--find-opt-hover);
   color: var(--fg);
 }
-.find-toggle svg {
-  width: 16px;
-  height: 16px;
-}
 /* VS Code 给开关的焦点环是**虚线边框**（`.monaco-custom-toggle:focus-visible { border: 1px
    dashed focusBorder }`），换的是那条本来透明的 1px 边框 —— 外框尺寸不变。
    ⚠️ 别用 outline：outline 画在边框**外面**，会让开关视觉上胀 1px，
@@ -1023,14 +1018,6 @@ button:focus-visible {
   opacity: 0.4;
   cursor: default;
 }
-.find-nav svg,
-.find-sel svg,
-.find-replace-one svg,
-.find-replace-all svg,
-.find-x svg {
-  width: 16px;
-  height: 16px;
-}
 /* 关闭按钮：VS Code `.button.codicon-widget-close { position:absolute; top:5px; right:4px }`
    —— 脱离行流钉在浮层右上角（查找行右侧那 25px 沟槽就是给它让的）。 */
 .find-x {
@@ -1065,10 +1052,6 @@ button:focus-visible {
 .find-docs:hover {
   background: var(--find-opt-hover);
   color: var(--fg);
-}
-.find-docs svg {
-  width: 16px;
-  height: 16px;
 }
 /* .find-docs:focus-visible 与 .find-toggle 合并声明（见上） */
 .find-docs.on {
@@ -1924,10 +1907,11 @@ button:focus-visible {
     border-color 0.12s;
 }
 
-/* 图标是 24×24 viewBox 的 18px 默认尺寸，22px 按钮里略大 */
-.panel-op svg {
-  width: 15px;
-  height: 15px;
+/* 22px 按钮里 16px 图标略挤，收到 15px（B102 之前是给 svg 写 width/height）。
+   ⚠️ 字号覆盖要排在与 `.codicon[class*='codicon-']` 同特异性之后才生效 ——
+      main.ts 把 codicon.css 引在 global.css 前面，就是为了这一条。 */
+.panel-op .codicon {
+  font-size: 15px;
 }
 
 .panel-op:hover {

@@ -1,3 +1,8 @@
+// ⚠️ 官方 codicon 图标字体必须**排在本项目样式之前**：codicon.css 的
+//    `.codicon[class*='codicon-']` 与本项目的 `.xxx .codicon` 特异性相同（都是 0-2-0），
+//    谁在后谁生效 —— 先引它，才能让 global.css 里的字号覆盖说了算（如 `.panel-op .codicon`）。
+//    字体文件（codicon.ttf）由 vite 打进 dist/assets，取用层见 src/shell/codicons.ts。
+import "@vscode/codicons/dist/codicon.css";
 import "./styles/global.css";
 
 // ChangeSet 既要当类型又要用运行时的 `ChangeSet.fromJSON`（跨窗口同步要还原对端的
@@ -4413,9 +4418,11 @@ function setupTitleBar(): void {
     [winMinimize, "chromeMinimize"],
     [winMaximize, "chromeMaximize"],
     [winClose, "chromeClose"],
-    [winPin, "pin"],
   ];
   for (const [btn, name] of icons) btn.innerHTML = CODICONS[name];
+  // 置顶键不在这批里：它的字形要随置顶态在 pinned / unpin 之间切换（见 refreshPinButton）。
+  // 这里先给「未置顶」那颗兜底，免得回读失败时按钮是个空块。
+  winPin.innerHTML = CODICONS.unpin;
   // 窗口的最大化态可能在别处变化（双击拖动区、Win+↑、右键系统菜单），统一靠 resize 回读。
   void getCurrentWindow()
     .onResized(() => void refreshMaximizeButton())
@@ -4453,6 +4460,10 @@ async function refreshPinButton(): Promise<void> {
   } catch {
     return;
   }
+  // 字形直接反映**当前状态**：已置顶 = pinned（斜图钉），未置顶 = unpin（带斜杠）。
+  // （B102 之前只用一颗 pin、靠 .is-on 配色表达状态；现在两颗字形切换，
+  //   .is-on 仍保留 —— 它给的是「激活」的视觉底，与字形是两层信息。）
+  winPin.innerHTML = pinned ? CODICONS.pinned : CODICONS.unpin;
   winPin.classList.toggle("is-on", pinned);
   // 开关型控件的状态要用 aria-pressed 报给读屏器，光靠配色等于没报。
   winPin.setAttribute("aria-pressed", pinned ? "true" : "false");

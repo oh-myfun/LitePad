@@ -254,15 +254,23 @@ describe("B97 自建标题栏", () => {
     expect(toggle, "置顶状态不得写回 settings").not.toMatch(/settings\.\w+\s*=/);
   });
 
-  it("B99：置顶用 pin 字形，且字形不带状态（开关态靠配色）", () => {
-    const gen = readFileSync("scripts/fetch-codicons.mjs", "utf-8");
-    expect(gen, "ICONS 必须收 pin").toMatch(/pin:\s*"pin"/);
-    // 不用 pinned / unpin：pin 是横放图钉（笔画最简），另两颗一个带斜杠、一个斜 45°，
-    // 都会让读者去猜「哪边是开」。开关态由 .is-on 的配色表达。
-    expect(gen, "不得改用带状态语义的字形").not.toMatch(/pin:\s*"(pinned|unpin)"/);
+  it("B102：置顶键用 pinned / unpin 两颗字形切换，不靠按钮配色表达状态", () => {
+    const main = mainSrc();
+    // ⚠️ B99 原本只挂一颗 `pin`、状态交给 .is-on 配色；用户要求改成**两颗字形**切换，
+    //    字形直接反映当前状态（已置顶 = pinned，未置顶 = unpin），别再退回单字形。
+    expect(main, "不得再只用单颗 pin").not.toMatch(/\[winPin,\s*"pin"\]/);
+    const refresh = topLevelFnBody(main, "async function refreshPinButton");
+    expect(refresh, "取不到 refreshPinButton").toBeTruthy();
+    expect(refresh, "字形必须由回读值决定").toMatch(
+      /winPin\.innerHTML = pinned \? CODICONS\.pinned : CODICONS\.unpin/,
+    );
+    // 启动链要先给一颗兜底字形，否则回读失败时按钮是空的
+    const setup = topLevelFnBody(main, "function setupTitleBar");
+    expect(setup, "未置顶时的兜底字形").toContain("winPin.innerHTML = CODICONS.unpin");
+    // 两颗字形都必须真的存在（写错名 = 空图标，界面上只有一个方块）
     const codicons = readFileSync("src/shell/codicons.ts", "utf-8");
-    expect(codicons, "生成物里必须有 pin 条目").toMatch(/^\s*pin:/m);
-    expect(mainSrc(), "置顶键必须取 CODICONS.pin").toMatch(/\[winPin,\s*"pin"\]/);
+    expect(codicons, "codicons 必须有 pinned").toMatch(/^\s*pinned:\s*"pinned"/m);
+    expect(codicons, "codicons 必须有 unpin").toMatch(/^\s*unpin:\s*"unpin"/m);
   });
 
   it("B101：标题栏左侧留足内边距，左上角图标不顶到窗口左缘", () => {

@@ -636,6 +636,46 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     expect(existsSync("src/shell/icons.ts"), "手绘图标文件必须已删除").toBe(false);
   });
 
+  it("B102 图标来源：直接用官方 npm 包 @vscode/codicons（依赖 + 官方图标字体）", () => {
+    // B102 之前是把官方包里的 `src/icons/*.svg` 抽出来内联成 codicons.ts（生成物），
+    // 那条路要维护「npm pack / unpkg curl / 本地参考副本」三条降级路径。现在依赖装上即用。
+    const pkg = JSON.parse(readFileSync("package.json", "utf-8")) as {
+      dependencies: Record<string, string>;
+    };
+    const ver = pkg.dependencies["@vscode/codicons"];
+    expect(ver, "package.json 必须依赖 @vscode/codicons（图标唯一来源）").toBeTruthy();
+    // 版本**钉死**：codicon 的字形/码位跨版本会变，^ 会让某次 npm i 悄悄换掉全部图标。
+    expect(ver, "版本必须钉死（字形跨版本会变，不能给 ^）").not.toMatch(/^[\^~]/);
+
+    // 官方样式必须由应用入口引入，且**排在本项目样式之前**：
+    // `.codicon[class*='codicon-']` 与 `.panel-op .codicon` 特异性相同（0-2-0），
+    // 谁在后谁生效 —— 引反了字号覆盖就静默失效（B102 当天就在这一条上踩过推理）。
+    const main = readFileSync("src/main.ts", "utf-8");
+    const codiconAt = main.indexOf("@vscode/codicons/dist/codicon.css");
+    const globalAt = main.indexOf('"./styles/global.css"');
+    expect(codiconAt, "main.ts 必须引入官方 codicon.css（否则图标全是豆腐块）").toBeGreaterThan(-1);
+    expect(globalAt, "取不到 global.css 的引入位置").toBeGreaterThan(-1);
+    expect(codiconAt, "codicon.css 必须排在 global.css 之前").toBeLessThan(globalAt);
+    // 退化对照：把两行顺序调换，同一把尺子必须判出来（否则这条对「日后被换序」是瞎的）
+    const swapped = main
+      .replace('import "@vscode/codicons/dist/codicon.css";\n', "")
+      .replace(
+        'import "./styles/global.css";',
+        'import "./styles/global.css";\nimport "@vscode/codicons/dist/codicon.css";',
+      );
+    expect(
+      swapped.indexOf("@vscode/codicons/dist/codicon.css"),
+      "退化对照要真的换序",
+    ).toBeGreaterThan(swapped.indexOf('"./styles/global.css"'));
+
+    // 反面：抽取脚本与内联 svg 都必须已经退场。
+    expect(existsSync("scripts/fetch-codicons.mjs"), "上游 svg 抽取脚本必须已退役").toBe(false);
+    // ⚠️ 先剥注释再判「不得写死码位」：codicons.ts 的说明里就举了 `content: "\e…"` 这个反例。
+    const icons = stripCssComments(readFileSync("src/shell/codicons.ts", "utf-8"));
+    expect(icons, "字形必须由官方字体绘制，不得再内联 svg").not.toContain("<svg");
+    expect(icons, "不得写死码位（码位只属于官方 codicon.css）").not.toMatch(/content:\s*["']\\e/);
+  });
+
   it("B82 CHANGELOG 生成器不得吞掉区间内最后一个提交（git log 无尾换行）", () => {
     // 事故：v0.8.0 的 CHANGELOG 少了本版唯一的 feat 条目（a3bc51f）。
     // 根因：`git log --pretty=format:'%h%x1f%s'` 的最后一条记录**不带尾换行**，而

@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
 const REF = join(REPO, "docs/vscode-reference");
-/** 与 REVISION.txt / fetch-codicons.mjs 同代钉死。 */
+/** 与 REVISION.txt 同代钉死（codicon 那一路的版本现钉在 package.json 的依赖上）。 */
 const COMMIT = "632abec535785c5fd76dec5b8ceb2f4c53d8cfc3";
 const RAW = `https://raw.githubusercontent.com/microsoft/vscode/${COMMIT}`;
 const API = `https://api.github.com/repos/microsoft/vscode/git/trees/${COMMIT}?recursive=1`;

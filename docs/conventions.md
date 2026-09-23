@@ -76,11 +76,17 @@
 
 ## 图标
 
-- **所有按钮图标一律用 VS Code codicon**（`src/shell/codicons.ts`，由 `scripts/fetch-codicons.mjs`
-  从官方包 `@vscode/codicons@0.0.46-24`（MIT）逐字抽取；生成物**勿手改**，改脚本里的 `ICONS`
-  映射后重跑即可复现）。取用一律 `CODICONS.<name>` / `CODICONS[name]`，不得把字形写死在消费方。
+- **所有按钮图标一律用 VS Code codicon**：依赖官方 npm 包 `@vscode/codicons`（版本在
+  `package.json` 里**钉死**，字形跨版本会变），样式由 `src/main.ts` 引入
+  `@vscode/codicons/dist/codicon.css`（必须排在本项目样式之前，详见那里注释）。
+- 取用一律走 `src/shell/codicons.ts` 的 `CODICONS.<name>` / `CODICONS[name]`
+  （给出 `<i class="codicon codicon-<id>"></i>`），**不得在消费方写死字形或码位**。
+  加一颗图标就在 `codicons.ts` 的 `IDS` 里加一条，并给它一个真实调用点。
+- 尺寸默认由官方样式统一给 16px；要别的尺寸就在 CSS 里改 `.codicon` 的 `font-size`
+  （例：`.panel-op .codicon { font-size: 15px }`），不要给 svg 写 width/height——已经没有 svg 了。
 - **禁止手绘 SVG 充当图标**。codicon 里确无合适字形时，**先与用户商量**是否引入别的图标集，
   不得自行绘制、临时拼一个或改字号凑数。
+- 想浏览全部 639 颗字形：打开 `node_modules/@vscode/codicons/dist/codicon.html`。
 
 ## 范围（明确不做）
 
