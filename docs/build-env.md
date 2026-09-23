@@ -29,6 +29,11 @@ cd src-tauri && cargo build && cargo test
 node node_modules/@tauri-apps/cli/tauri.js build
 ```
 
+- ⚠️ **分步只用于排查，不要拿它替代 `npm run build:all`**：完整流程里已经修好的几处
+  （safe-delete 开关、前端那步必须剥掉 MSYS2 的 PATH 条目、打包前 `dist/assets` 点数自检、
+  Rust 侧只编 release）在分步手敲时全靠人记 —— 漏一条就是「构建 exit 0、产物却是空壳」
+  这类最难查的故障。环境缺什么、该用哪条命令，先跑 `bash scripts/doctor.sh`。
+
 - ⚠️ **`cargo build --release` 产出的 exe 不能直接跑**：`custom-protocol` feature 只有 `tauri build`
   才打开，否则 exe 去连 dev server（`ERR_CONNECTION_REFUSED`）。要跑/打包一律 `tauri build`。
 - 链接前杀掉运行中的 `litepad.exe`（被占用会 `os error 32`）。

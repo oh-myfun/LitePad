@@ -7,7 +7,39 @@
 #   MSVC 走 webview2-com 的静态链接分支，单个 exe 即可运行（B92）。
 set -e
 
+# ---------------------------------------------------------------- 工具链自举
+#
+# ⚠️ 这一节是「必须存在」的，不是为了好看：曾经因为会话里 PATH 被剥空
+# （node / cargo 都不在 PATH，npm 又撞 WSL 黑名单），我在会话里手抄了一份等价命令，
+# 之后每次都绕开本脚本手敲 —— 而脚本里**已经修过的坑**（safe-delete 开关、MSYS2 剥离、
+# dist/assets 点数自检）在手抄版里全靠现场记起，于是反复踩。
+# ⇒ 结论：环境差异一律在**脚本内**兜住。脚本跑不动就**修脚本**，绝不在会话里另起一套命令。
+#
+# node：PATH 里没有就用 managed node；npm：先探测它能不能真的跑起来（某些沙箱里 npm 是
+# bash 脚本，会撞 WSL 黑名单报「拒绝访问」），跑不起来就直调 node_modules 里的入口。
+
 export PATH="/c/msys64/mingw64/bin:$HOME/.cargo/bin:$PATH"
+
+if ! command -v node >/dev/null 2>&1; then
+  for c in \
+    "$HOME/.workbuddy/binaries/node/versions/22.22.2-3/node.exe" \
+    "/c/Users/maoyu/.workbuddy/binaries/node/versions/22.22.2-3/node.exe"; do
+    if [ -x "$c" ]; then
+      export PATH="$(dirname "$c"):$PATH"
+      echo "    （PATH 里没有 node，自举：$(dirname "$c")）"
+      break
+    fi
+  done
+  command -v node >/dev/null 2>&1 || { echo "✗ 找不到 node，先装或把 node 目录加进 PATH" >&2; exit 1; }
+fi
+command -v cargo >/dev/null 2>&1 || export PATH="$HOME/.cargo/bin:$PATH"
+
+NPM_OK=0
+if command -v npm >/dev/null 2>&1 && npm --version >/dev/null 2>&1; then
+  NPM_OK=1
+else
+  echo "    （npm 不可用，改直调 node_modules 入口）"
+fi
 
 # WorkBuddy 会话的 safe-delete 钩子会拦截 vite 清空 dist/assets（>50 个文件），
 # 导致会话内构建失败；此开关在本脚本进程树内禁用该钩子（用户桌面环境无钩子，无副作用）
@@ -30,7 +62,13 @@ for d in $PATH; do
   esac
 done
 IFS="$OLDIFS"
-PATH="$FE_PATH" npm run build
+if [ "$NPM_OK" = 1 ]; then
+  PATH="$FE_PATH" npm run build
+else
+  # 直调 node_modules 入口（等价于 `npm run build` = tsc --noEmit && vite build）
+  PATH="$FE_PATH" node node_modules/typescript/bin/tsc --noEmit
+  PATH="$FE_PATH" node node_modules/vite/bin/vite.js build
+fi
 
 # ⚠️ 前端产物完整性自检（B98）：vite 挂在写盘阶段被 kill／手滑 Ctrl-C 时，`dist` 会只剩
 # 一个 `index.html`、`assets/` 全丢；此时后面的 `tauri build` **照样成功退出 0**，但打出来的
@@ -54,7 +92,11 @@ echo "==> [3/4] Rust release 构建 + 单元测试（**仅作编译校验，产�
 
 echo "==> [4/4] release 发布构建（嵌入前端 + NSIS 安装包）"
 # 覆盖 beforeBuildCommand：第 1 步已产出 dist，直接嵌入，避免重复构建
-npm run tauri -- build --config '{"build":{"beforeBuildCommand":""}}'
+if [ "$NPM_OK" = 1 ]; then
+  npm run tauri -- build --config '{"build":{"beforeBuildCommand":""}}'
+else
+  node node_modules/@tauri-apps/cli/tauri.js build --config '{"build":{"beforeBuildCommand":""}}'
+fi
 
 echo
 echo "构建完成，产物："
