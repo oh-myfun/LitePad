@@ -10,7 +10,7 @@
 // 所以这里逐条钉住：配置、HTML 结构、样式、权限、接线，缺一根都算红。
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { stripCssComments } from "./static";
+import { stripCssComments, ruleBlock, topLevelFnBody } from "./static";
 
 const tauriConf = (): string => readFileSync("src-tauri/tauri.conf.json", "utf-8");
 const indexHtml = (): string => readFileSync("index.html", "utf-8");
@@ -166,5 +166,102 @@ describe("B97 自建标题栏", () => {
     expect(s, "置灰项必须有样式，且不该有悬停高亮").toMatch(
       /\.popup-menu button:disabled\s*\{[^}]*opacity/,
     );
+  });
+
+  it("B99：置顶开关自成一个容器，且排在窗口控制键左侧", () => {
+    const html = indexHtml();
+    const bar = html.slice(html.indexOf('class="title-bar"'), html.indexOf("</header>"));
+    // 结构上必须收在 .title-actions 里，而不是混进 .window-controls：
+    // 后者那套 .win-btn 规则是「等高贴边 / 悬停淡底 / 关闭键红底」的系统约定，
+    // 混进去会被连带影响（宽度、圆角、hover 底色全不对）。
+    // ⚠️ 收尾的 `</div>` 必须从 .title-actions **之后**找起：
+    //    标题栏里更靠前的 #app-mark 也是 <div></div>，直接用 indexOf("</div>") 会切出空串。
+    const start = bar.indexOf('class="title-actions"');
+    const actions = bar.slice(start, bar.indexOf("</div>", start));
+    expect(start, "标题栏里应有 .title-actions").toBeGreaterThan(-1);
+    expect(actions, "置顶键必须落在 .title-actions 容器里").toContain('id="win-pin"');
+    expect(
+      bar.indexOf('id="win-pin"'),
+      "工具键必须排在窗口控制三键之前（Control 键永远贴最右）",
+    ).toBeLessThan(bar.indexOf('class="window-controls"'));
+    // 开关型控件必须给 aria-pressed，否则读屏器只知道「一个按钮」
+    expect(actions, "开关状态要用 aria-pressed 上报").toContain('aria-pressed="false"');
+    expect(actions, "图标按钮不能失名").toContain('aria-label="钉在顶部"');
+  });
+
+  it("B99：左上角软件图标必须是纯标识（不挂按钮、不响应点击）", () => {
+    const html = indexHtml();
+    const bar = html.slice(html.indexOf('class="title-bar"'), html.indexOf("</header>"));
+    expect(bar, "标题栏应有 #app-mark").toContain('id="app-mark"');
+    // 顺序：图标 → 菜单 → 中间文档名 → 工具键 → 窗口控制
+    expect(bar.indexOf('id="app-mark"'), "图标必须在最左（菜单之前）").toBeLessThan(
+      bar.indexOf('id="menu-bar"'),
+    );
+    // 纯标识：不做成 <button>，于是它仍属于拖动区（可拖窗口），也不需要 aria-label
+    expect(bar, "图标只是装饰，对读屏器隐藏").toMatch(/id="app-mark"[^>]*aria-hidden="true"/);
+    expect(bar, "图标不得做成按钮（否则既失拖动又要求可点语义）").not.toMatch(
+      /<button[^>]*id="app-mark"/,
+    );
+    expect(
+      ruleBlock(css(), ".app-mark"),
+      "图标必须显式声明不可点，免得日后被当成按钮挂事件",
+    ).toContain("pointer-events: none");
+  });
+
+  it("B99：图标与 exe / 任务栏用同一份源图，不往前端目录另存副本", () => {
+    const main = mainSrc();
+    expect(main, "必须引入 src-tauri 下的应用图标").toMatch(
+      /import\s+appMarkUrl\s+from\s+"\.\.\/src-tauri\/icons\/32x32\.png"/,
+    );
+    // 同源的另一半证据：bundle.icon 里也有这张图（换成别的尺寸会让两处观感不一致）
+    const conf = JSON.parse(tauriConf()) as { bundle: { icon: string[] } };
+    expect(conf.bundle.icon.join(","), "bundle.icon 必须包含被引入的那张").toContain("32x32.png");
+    expect(main, "位图要真的挂到元素上").toContain("appMark.style.backgroundImage");
+  });
+
+  it("B99：置顶开关的样式沿用「开关点亮」那一套，且不挤图标", () => {
+    const s = css();
+    for (const sel of [".title-actions", ".title-btn", ".title-btn.is-on"]) {
+      expect(ruleBlock(s, sel), `${sel} 必须有规则`).not.toBe("");
+    }
+    const on = ruleBlock(s, ".title-btn.is-on");
+    // 全应用「开关点亮」只有一套语言（查找栏那几个开关的 inputOption.active 三件套）
+    expect(on, "点亮态应与查找栏开关同源").toContain("--find-opt-active");
+    // ⚠️ 全局是 border-box，真 border 会把 16px 图标挤小（.find-sel.on 同一个坑）
+    expect(on, "1px 环必须用 inset 阴影画，不能加真 border").toContain("box-shadow: inset");
+    expect(on, "不得用真 border").not.toMatch(/^\s*border:\s*1px/m);
+  });
+
+  it("B99：置顶开关按**回读值**刷新，且状态不落盘", () => {
+    const main = mainSrc();
+    expect(main, "置顶键要有接线").toMatch(/winPin\.addEventListener\("click"/);
+    // ⚠️ 用 topLevelFnBody 取函数体：手写 indexOf("function ") 会命中 "async function" 里的
+    //    那半截，切出一个空切片 —— 断言立刻变成「expected 'async ' to contain ...」。
+    const toggle = topLevelFnBody(main, "async function togglePin");
+    expect(toggle, "取不到 togglePin").toBeTruthy();
+    expect(toggle, "必须真的调 setAlwaysOnTop").toContain("setAlwaysOnTop(");
+    // ⚠️ 回读是这条修复的要害：set 可能在「ACL 拒了 / 系统没接受」时静默不生效，
+    //    拿目标值当新状态就会在界面上留一个假的点亮态。
+    expect(toggle, "必须回读窗口真实置顶态").toContain("isAlwaysOnTop()");
+    const refresh = topLevelFnBody(main, "async function refreshPinButton");
+    expect(refresh, "开关状态要用 aria-pressed 报给读屏器").toContain(
+      'setAttribute("aria-pressed"',
+    );
+    expect(refresh, "点亮类名必须由回读值决定").toContain('classList.toggle("is-on"');
+    // 置顶是窗口的瞬时状态：settings 只存偏好（窗口几何/最大化态都没存过），
+    // 这里跟着同一口径走 —— 一旦落盘就成了「重启后窗口莫名置顶」。
+    expect(toggle, "置顶状态不得写回 settings").not.toContain("persistSettings");
+    expect(toggle, "置顶状态不得写回 settings").not.toMatch(/settings\.\w+\s*=/);
+  });
+
+  it("B99：置顶用 pin 字形，且字形不带状态（开关态靠配色）", () => {
+    const gen = readFileSync("scripts/fetch-codicons.mjs", "utf-8");
+    expect(gen, "ICONS 必须收 pin").toMatch(/pin:\s*"pin"/);
+    // 不用 pinned / unpin：pin 是横放图钉（笔画最简），另两颗一个带斜杠、一个斜 45°，
+    // 都会让读者去猜「哪边是开」。开关态由 .is-on 的配色表达。
+    expect(gen, "不得改用带状态语义的字形").not.toMatch(/pin:\s*"(pinned|unpin)"/);
+    const codicons = readFileSync("src/shell/codicons.ts", "utf-8");
+    expect(codicons, "生成物里必须有 pin 条目").toMatch(/^\s*pin:/m);
+    expect(mainSrc(), "置顶键必须取 CODICONS.pin").toMatch(/\[winPin,\s*"pin"\]/);
   });
 });

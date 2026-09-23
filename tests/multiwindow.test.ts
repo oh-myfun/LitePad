@@ -39,8 +39,18 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
     );
 
     // 窗口 API 使用面必须落在已授权清单内：源码一旦用上需要额外授权的窗口接口，就在
-    // **这里**红掉，而不是等到卫星窗口静默失灵。当前窗口调用只有标题/关闭/销毁三条。
-    for (const p of ["core:window:allow-set-title", "core:window:allow-close"]) {
+    // **这里**红掉，而不是等到卫星窗口静默失灵。
+    //
+    // 所以这份清单分两半，**成对维护**：用到的接口列进 caps.permissions、
+    // 没授权的接口列进下面的禁用正则。B99 的置顶开关是「用到了、也授权了」的例子 ——
+    // 它从禁用正则挪到授权清单，而不是把守卫删掉：撤掉权限却留着调用照样要红。
+    for (const p of [
+      "core:window:allow-set-title",
+      "core:window:allow-close",
+      // B99「钉在顶部」：set 与 is 都要，漏了 is 就回读不到真实状态（ACL 静默拒绝）
+      "core:window:allow-set-always-on-top",
+      "core:window:allow-is-always-on-top",
+    ]) {
       expect(caps.permissions, `窗口接口 ${p} 必须显式授权`).toContain(p);
     }
     for (const f of [
@@ -52,7 +62,7 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
     ]) {
       const code = readFileSync(f, "utf-8");
       expect(code, `${f} 不得使用需要额外授权的窗口接口`).not.toMatch(
-        /setPosition|setSize|setFullscreen|setAlwaysOnTop|outerPosition|outerSize|innerSize|scaleFactor/,
+        /setPosition|setSize|setFullscreen|outerPosition|outerSize|innerSize|scaleFactor/,
       );
     }
   });

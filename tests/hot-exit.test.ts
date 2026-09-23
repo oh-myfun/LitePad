@@ -33,6 +33,10 @@ vi.mock("@tauri-apps/api/window", () => ({
     // B97 自建标题栏：最大化键的图标要跟着窗口状态走，桩必须补这两个 API
     isMaximized: () => Promise.resolve(false),
     onResized: () => Promise.resolve(() => {}),
+    // B99「钉在顶部」：给「未置顶」的最小实现。缺了这两条，isAlwaysOnTop 会抛错并被
+    // refreshPinButton 的 catch 吞掉 —— 用例照样绿，但那是**静默降级**，不是健康。
+    isAlwaysOnTop: () => Promise.resolve(false),
+    setAlwaysOnTop: () => Promise.resolve(),
     onCloseRequested: (cb: (e: { preventDefault: () => void }) => void) => {
       closeHandlers.push(cb);
       return Promise.resolve({ catch: () => {} });

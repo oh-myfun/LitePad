@@ -17,6 +17,12 @@ import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-
 import "katex/dist/katex.min.css";
 import "./styles/preview.css";
 
+// 标题栏左上角的软件图标（B99）：**直接引 exe 用的那份源图**，不往前端目录另存副本 ——
+// 应用图标只有一个真相（scripts/gen_icons.py → src-tauri/icons/，bundle.icon 也取它），
+// 复制一份出来迟早走样，而且没人会记得同步。Vite 会把它作为资源打进 dist 并给出 URL。
+// 取 32×32（四张里最小，1.2KB）：标题栏显示 16px，正好 2× 覆盖 HiDPI 缩放。
+import appMarkUrl from "../src-tauri/icons/32x32.png";
+
 import {
   createEditor,
   makeTabState,
@@ -204,13 +210,18 @@ function el<T extends HTMLElement>(id: string): T {
 
 const layoutArea = el("layout-area");
 const menuBar = el("menu-bar");
-// 自定义标题栏（B97）：中间显示文档名，右侧三颗窗口控制键。
+// 自定义标题栏（B97）：左侧软件图标 + 菜单，中间显示文档名，右侧工具键 + 三颗窗口控制键。
 // 原来那 8 颗快捷键按钮（新建/打开/保存/另存/查找/大纲/导出/主题）已移除，
 // 前六个本就在菜单里，导出与主题分别回到「文件 → 导出」「设置 → 首选项」。
+const appMark = el("app-mark");
 const titleText = el("title-text");
 const winMinimize = el<HTMLButtonElement>("win-minimize");
 const winMaximize = el<HTMLButtonElement>("win-maximize");
 const winClose = el<HTMLButtonElement>("win-close");
+// 「钉在顶部」（B99）：切换当前窗口的置顶态。**不落盘** —— 置顶是窗口的瞬时状态，
+// 而 settings.json 存的全是偏好（主题/字号/行距/键位…），窗口几何与最大化态都没存过，
+// 这里跟着同一口径走：重启后回到不置顶。
+const winPin = el<HTMLButtonElement>("win-pin");
 const tocPanel = el("toc-panel");
 const tocResizer = el("toc-resizer");
 const sbMessage = el("sb-message");
@@ -3949,6 +3960,8 @@ function bindEvents(): void {
   winMinimize.addEventListener("click", () => void getCurrentWindow().minimize());
   winMaximize.addEventListener("click", () => void getCurrentWindow().toggleMaximize());
   winClose.addEventListener("click", () => void getCurrentWindow().close());
+  // 「钉在顶部」开关（B99）：都是「切换 + 回读」，逻辑见 togglePin。
+  winPin.addEventListener("click", () => void togglePin());
 
   sbLang.addEventListener("click", () => {
     if (isMdActive()) toggleViewMode();
@@ -4384,7 +4397,7 @@ function toggleStatusbar(): void {
 }
 
 /**
- * 自建标题栏（B97）的图标与状态。
+ * 自建标题栏（B97）的图标与状态；B99 起左侧还多一颗软件图标、右侧多一个置顶开关。
  *
  * 窗口控制三颗键一律取 codicon（见 docs/conventions.md「图标」节）。最大化键是**双态**的：
  * 普通态画 chrome-maximize（空心方框），已最大化时换 chrome-restore（叠两层），与原生
@@ -4394,10 +4407,13 @@ function toggleStatusbar(): void {
  * Tauri 内置的 drag.js 接管（见 src-tauri/capabilities/default.json 的说明）。
  */
 function setupTitleBar(): void {
+  // 左上角软件图标：纯标识，位图来自打包进 dist 的应用图标源（见文件头的 import 说明）。
+  appMark.style.backgroundImage = `url("${appMarkUrl}")`;
   const icons: [HTMLButtonElement, CodiconName][] = [
     [winMinimize, "chromeMinimize"],
     [winMaximize, "chromeMaximize"],
     [winClose, "chromeClose"],
+    [winPin, "pin"],
   ];
   for (const [btn, name] of icons) btn.innerHTML = CODICONS[name];
   // 窗口的最大化态可能在别处变化（双击拖动区、Win+↑、右键系统菜单），统一靠 resize 回读。
@@ -4405,8 +4421,44 @@ function setupTitleBar(): void {
     .onResized(() => void refreshMaximizeButton())
     .catch(() => {});
   void refreshMaximizeButton();
+  void refreshPinButton();
   // 状态栏的语言/格式项按活动标签刷新（原先顺带在这条启动链上初始化）
   refreshViewModeButton();
+}
+
+/**
+ * 置顶开关的点击处理：set → **回读** → 按回读值刷新按钮。
+ *
+ * ⚠️ 必须回读（`isAlwaysOnTop`）而不是把目标值直接当成新状态：ACL 拒了、窗口刚销毁、
+ * 系统侧没接受，这几种情况下 `setAlwaysOnTop` 都可能「没生效但不报错」，自己记一份
+ * 乐观状态就会和界面长期不一致。回读拿到的是**窗口真实的置顶态**，与最大化键靠
+ * `isMaximized()` 回读是同一个道理。
+ */
+async function togglePin(): Promise<void> {
+  const win = getCurrentWindow();
+  try {
+    await win.setAlwaysOnTop(!(await win.isAlwaysOnTop()));
+  } catch {
+    // 窗口已销毁 / IPC 不可用：下面照旧回读一次，读不到就保持原样
+  }
+  await refreshPinButton();
+}
+
+/** 置顶开关的双态呈现（点亮 = 当前已置顶）。 */
+async function refreshPinButton(): Promise<void> {
+  // 初值不必给：读失败就直接 return，赋值只可能发生在 try 里。
+  let pinned: boolean;
+  try {
+    pinned = await getCurrentWindow().isAlwaysOnTop();
+  } catch {
+    return;
+  }
+  winPin.classList.toggle("is-on", pinned);
+  // 开关型控件的状态要用 aria-pressed 报给读屏器，光靠配色等于没报。
+  winPin.setAttribute("aria-pressed", pinned ? "true" : "false");
+  const label = pinned ? "取消钉在顶部" : "钉在顶部";
+  winPin.setAttribute("aria-label", label);
+  setTip(winPin, label);
 }
 
 /** 最大化键的双态图标与提示（已最大化时是「向下还原」）。 */

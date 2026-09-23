@@ -45,7 +45,7 @@
   </head>
   <body>
     <div id="app">
-      <!-- 自定义标题栏（参考 VS Code）：左侧菜单、中间文档名、右侧窗口控制。
+      <!-- 自定义标题栏（参考 VS Code）：左侧软件图标 + 菜单、中间文档名、右侧工具键 + 窗口控制。
            tauri.conf.json 里 decorations:false 去掉了原生边框，所以拖动、双击最大化、
            最小化/最大化/关闭都必须自建：
              · data-tauri-drag-region="deep" = 本元素整棵子树都是拖动区（Tauri 内置 drag.js），
@@ -53,14 +53,31 @@
                双击同一区域等同「最大化/还原」。
              · 原生标题栏原来显示「LitePad - 文件名 ●」，现在由中间的 #title-text 承担，
                内容仍走 window.setTitle（任务栏/Alt+Tab 读的是它），两处同源。
+             · #app-mark 是**纯标识**（不走 <button>，所以它跟着标题栏一起可拖），
+               位图由 main.ts 从 src-tauri/icons 引进来 —— 与 exe/任务栏图标同一份源，
+               不另存一份到前端目录。
            顶栏右侧那排快捷图标按钮已整体移除：新建/打开/保存/另存/查找/大纲本就在菜单里，
            导出补进「文件 → 导出」，主题仍在「设置 → 首选项 → 主题」。 -->
       <header class="title-bar" data-tauri-drag-region="deep">
+        <div id="app-mark" class="app-mark" aria-hidden="true"></div>
         <nav id="menu-bar" class="menu-bar" data-tip-group="menubar"></nav>
         <!-- data-tauri-drag-region 加在 header 上且为 deep：这里只管居中与裁切，
              测试与样式可据此定位文档名（文本由 main.ts 的 refreshTitle 写入）。 -->
         <div id="title-center" class="title-center">
           <span id="title-text" class="title-text"></span>
+        </div>
+        <!-- 标题栏工具键（在窗口控制键左侧，不随窗口控制那组的高亮/悬停规则走）：
+             置顶是**开关**，所以用 aria-pressed 表达状态、字形不换（见 global.css 的
+             .title-btn.is-on）。提示同样走自绘层，图标按钮必须给 aria-label 否则「失名」。 -->
+        <div class="title-actions" data-tip-group="title">
+          <button
+            id="win-pin"
+            class="title-btn"
+            type="button"
+            data-tip="钉在顶部"
+            aria-label="钉在顶部"
+            aria-pressed="false"
+          ></button>
         </div>
         <!-- 提示走自绘层（B58，src/shell/tooltip.ts）：data-tip 文案 + data-tip-key 快捷键。
              不再用原生 title —— 它由系统绘制，配色/圆角/键帽都改不了，深色界面下很突兀。

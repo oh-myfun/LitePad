@@ -249,6 +249,21 @@ body {
   user-select: none;
 }
 
+/* 左上角软件图标（B99）：**纯标识**，不响应点击 —— 点它等同点标题栏空白，可以拖窗口
+   （所以它不走 <button>，drag.js 的「可点击元素豁免」根本不适用）。
+   位图不在 CSS 里：由 main.ts 从 src-tauri/icons 引入后写成内联 background-image，
+   保证与 exe / 任务栏图标是同一份源文件，而不是往前端目录再存一份会走样的副本。
+   pointer-events:none 只是把「不可点」写明，免得日后被当成可点区域往上挂事件。 */
+.app-mark {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  pointer-events: none;
+}
+
 /* 中间文档名：吃掉剩余宽度并居中，窄窗口下省略号收尾。
    拖动区靠 header 上那个 drag-region 属性，这里不需要再声明。 */
 .title-center {
@@ -266,6 +281,54 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ---------- 标题栏工具键（B99） ----------
+   只放**开关型**工具键（现在一个：钉在顶部）。与窗口控制三键**刻意分组**：三键是
+   「等高贴边 / 悬停淡底 / 关闭键红底」的系统约定，混进同一容器会被 .win-btn 那套规则
+   连带影响（宽度、圆角、hover 底色全不一样），所以各占一个容器、各写各的。 */
+
+.title-actions {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  gap: 2px;
+}
+
+/* 普通小方钮：16px 图标 + 圆角 + 悬停淡底，与状态栏/查找栏那批图标按钮同款尺寸语言。 */
+.title-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  color: var(--fg-muted);
+  background: transparent;
+}
+
+.title-btn:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+/* 已点亮（当前窗口已置顶）：沿用查找栏那几个开关的激活三件套
+   （VS Code inputOption.active{Background,Border,Foreground}，见 --find-opt-* 的定义）——
+   「开关点亮」在全应用只有这一套语言，不再各写一个色调。
+   ⚠️ 用 `inset` 阴影当 1px 环而不是真 border：全局是 border-box，加真 border 会把
+   16px 的图标挤成 14px（`.find-sel.on` 同一个坑，同一种解）。
+   这条规则写在 :hover **之后**，同特异度下后写者胜，所以点亮时悬停不会掉回淡底。 */
+.title-btn.is-on {
+  background: var(--find-opt-active);
+  color: var(--find-opt-active-fg);
+  box-shadow: inset 0 0 0 1px var(--find-opt-active-border);
+}
+
+.title-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 /* ---------- 窗口控制（标题栏右侧） ----------

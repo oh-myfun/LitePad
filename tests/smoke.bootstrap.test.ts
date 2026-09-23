@@ -34,12 +34,25 @@ beforeAll(() => {
 
 // ---- 桩：Tauri 运行时 ----
 const closeRequestedHandlers: Array<(e: { preventDefault: () => void }) => void> = [];
+// B99「钉在顶部」的桩必须**有状态**：记住置顶值供回读，并记录每次 set 的入参。
+// 无状态桩（恒 false / 空实现）只能验出「调了 API」，验不出「按钮状态真的跟着窗口状态走」——
+// 而后者才是这条回归要守的：真机上 ACL 漏授权时 set 不生效、回读还是旧值，
+// 无状态桩两种情况都照样绿。用 vi.hoisted 是因为 vi.mock 的工厂会被提升到 import 之前。
+// `swallowSet` 用来复现「set 调了但没生效」——只有它能把「按回读值点亮」和
+// 「把目标值当新状态写界面」这两种实现区分开（前者保持熄灯、后者会留下一个假的点亮态）。
+const pinState = vi.hoisted(() => ({ on: false, sets: [] as boolean[], swallowSet: false }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     setTitle: () => Promise.resolve(),
     // B97 自建标题栏：最大化键的图标要跟着窗口状态走，桩必须补这两个 API
     isMaximized: () => Promise.resolve(false),
     onResized: () => Promise.resolve(() => {}),
+    isAlwaysOnTop: () => Promise.resolve(pinState.on),
+    setAlwaysOnTop: (v: boolean) => {
+      pinState.sets.push(v);
+      if (!pinState.swallowSet) pinState.on = v;
+      return Promise.resolve();
+    },
     onCloseRequested: (cb: (e: { preventDefault: () => void }) => void) => {
       closeRequestedHandlers.push(cb);
       return Promise.resolve({ catch: () => {} });
@@ -1095,5 +1108,54 @@ describe("bootstrap + drag-split smoke", () => {
     const names = Array.from(strip.querySelectorAll(".tab")).map((t) => t.dataset.tip);
     expect(names, `${victimName} 应已被关闭`).not.toContain(victimName);
     expect(capturedError, `关闭标签不应抛错：${String(capturedError)}`).toBeNull();
+  });
+
+  it("B99：标题栏「钉在顶部」开关必须切换真实窗口状态并按回读值点亮", async () => {
+    const pin = document.getElementById("win-pin") as HTMLButtonElement;
+    expect(pin, "标题栏应有置顶开关").toBeTruthy();
+    // 桩的初值是「未置顶」，所以按钮必须先处于熄灯态 —— 否则下面的点亮断言恒真
+    expect(pin.getAttribute("aria-pressed"), "初始应为未置顶").toBe("false");
+    expect(pin.classList.contains("is-on"), "初始不应点亮").toBe(false);
+
+    // ---- 第一次点击：开 ----
+    const before = pinState.sets.length;
+    pin.click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(pinState.sets.length, "点击应调用 setAlwaysOnTop").toBe(before + 1);
+    expect(pinState.sets.at(-1), "应把置顶设为 true（初值是 false）").toBe(true);
+    // ⚠️ 关键：断言的是**回读后的呈现**。若实现把「目标值」当新状态直接写界面，
+    // 这里会因为桩改了值而照样通过；真机上 ACL 漏授权时 set 不生效、回读仍是 false，
+    // 那时只有「按回读值点亮」的实现才会把按钮保持熄灯 —— 这条断言守的就是这个差别。
+    expect(pin.getAttribute("aria-pressed"), "点亮状态应写在 aria-pressed 上").toBe("true");
+    expect(pin.classList.contains("is-on"), "置顶后应点亮").toBe(true);
+    expect(pin.dataset.tip, "提示应换成取消语义").toBe("取消钉在顶部");
+    expect(pin.getAttribute("aria-label"), "图标按钮不能失名").toBe("取消钉在顶部");
+
+    // ---- 第二次点击：关 ----
+    pin.click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(pinState.sets.at(-1), "再点一次应取消置顶").toBe(false);
+    expect(pinState.on, "窗口置顶态应已还原").toBe(false);
+    expect(pin.getAttribute("aria-pressed"), "取消后应熄灯").toBe("false");
+    expect(pin.classList.contains("is-on"), "取消后不应再点亮").toBe(false);
+    expect(pin.dataset.tip, "提示应还原").toBe("钉在顶部");
+
+    // ---- 判别式：set 调了但**没生效**时，界面必须按回读值走 ----
+    // 真机上 ACL 漏授权就是这副样子：调用不报错、窗口态没变。此时「把目标值当新状态写界面」
+    // 的实现在这里会留下一个**假的点亮态**（界面说已置顶、窗口其实没有），
+    // 而按回读值刷新的实现会老老实实保持熄灯。这才是这条用例真正区分的东西 ——
+    // 上面两次点击只证明「开关会切换」，区分不出这两种实现。
+    pinState.swallowSet = true;
+    pin.click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(pinState.sets.at(-1), "即使不生效也应先尝试置顶").toBe(true);
+    expect(
+      pin.getAttribute("aria-pressed"),
+      "set 未生效时必须保持熄灯（按回读值，而非乐观目标值）",
+    ).toBe("false");
+    expect(pin.classList.contains("is-on"), "不得留下假的点亮态").toBe(false);
+    pinState.swallowSet = false;
+    pinState.sets.length = 0;
+    expect(capturedError, `置顶开关不应抛错：${String(capturedError)}`).toBeNull();
   });
 });

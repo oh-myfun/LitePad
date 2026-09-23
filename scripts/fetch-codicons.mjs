@@ -18,13 +18,24 @@
  * ⚠️ 版本是**钉死**的：字体/图标在不同 codicon 版本间会改字形。升级要连版本号一起改，
  *    并重跑 + 目视核对 `generated-images` 里的对照页（见 docs/vscode-reference/INDEX.md 的 J 段）。
  *
- * ⚠️ 取图有两条路：默认走 `npm pack`（本机 npm 配的是 npmmirror 镜像，且 node 的全局 fetch
- *    不读代理）；npm 不可用时（如受限沙箱把 npm 拦了）**回退到直连 unpkg 逐颗 curl**。
+ * ⚠️ 取图有三条路，优先级从高到低：
+ *    ① **本地参考副本**（`docs/vscode-reference/codicons/`）：版本一致且 ICONS 齐全时直接用，
+ *       不联网、完全离线幂等 —— 受限环境里 node 连 `curl` 都 spawn 不出来（EBUSY），只有这条通；
+ *    ② `npm pack`（本机 npm 配的是 npmmirror 镜像，且 node 的全局 fetch 不读代理）；
+ *    ③ npm 不可用时回退**直连 unpkg 逐颗 curl**（受限沙箱把 npm 拦了时走这条）。
  *
  * 用法：node scripts/fetch-codicons.mjs        （需要能访问 npm registry 或 unpkg）
  */
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  rmSync,
+  readdirSync,
+} from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -72,6 +83,12 @@ const ICONS = {
   chromeMinimize: "chrome-minimize",
   chromeMaximize: "chrome-maximize",
   chromeClose: "chrome-close",
+  // —— 标题栏右侧的工具键（B99）——
+  // 「钉在顶部」用 `pin`（横放的图钉，16 网格里笔画最简）而不是 `pinned`（斜 45° 的图钉）
+  // 或 `unpin`（斜图钉 + 斜杠）：置顶是**开关**，字形本身不该带状态 —— 开/关由按钮的
+  // 激活态（`--find-opt-active` 三件套）表达，与查找栏那几个开关同一套语言。
+  // 用 `unpin` 当「已置顶」还会和它的真实语义（取消钉住）打架，读者要先猜哪边是开。
+  pin: "pin",
   // —— 面板 / 标签 ——
   chromeRestore: "chrome-restore",
   circleFilled: "circle-filled",
@@ -206,16 +223,51 @@ async function prettierFormat(code) {
   }
 }
 
+/**
+ * 本地参考副本能不能直接用。
+ *
+ * 判据两条，缺一不可：
+ *   ① `REVISION.txt` 里记的版本与本脚本的 VERSION 一致（否则副本是上一版字形，会静默生成旧图）；
+ *   ② ICONS 要用的每一颗 `.svg` 都在。
+ * 满足就用它，**完全不联网**。这不是「优化」而是可用性：参考副本是本脚本自己
+ * 逐字节写出的 `docs/vscode-reference/codicons/`，但受限环境里 node 可能**连 curl 都
+ * spawn 不出来**（实测 `spawnSync curl EBUSY`，`npm pack` 也 EBUSY，沙箱内外一样），
+ * 那条联网路径整条走不通。加这条以后重跑是**离线、幂等**的，字形仍与上游逐字一致 ——
+ * 想强制重新对齐上游，删掉 `docs/vscode-reference/codicons/` 再跑即可。
+ */
+function localRefReady() {
+  const escaped = VERSION.replace(/\./g, "\\.");
+  let rev;
+  try {
+    rev = readFileSync(join(REF_DIR, "REVISION.txt"), "utf8");
+  } catch {
+    return false;
+  }
+  if (!new RegExp(`^version:\\s*${escaped}\\s*$`, "m").test(rev)) return false;
+  return Object.values(ICONS).every((file) => existsSync(join(REF_DIR, `${file}.svg`)));
+}
+
 assertFamilies();
 
 try {
-  downloadPkg(work);
+  // 上游图标的来源目录：优先本地参考副本，不齐/版本不符才联网取。
+  let srcDir;
+  if (localRefReady()) {
+    console.log(`✓ 本地参考副本可用（${REF_DIR}），跳过联网`);
+    srcDir = REF_DIR;
+  } else {
+    downloadPkg(work);
+    srcDir = join(work, "package/src/icons");
+  }
+
   mkdirSync(REF_DIR, { recursive: true });
   const entries = [];
   for (const [name, file] of Object.entries(ICONS)) {
-    const src = join(work, "package/src/icons", `${file}.svg`);
-    const { svg, viewBox } = normalize(readFileSync(src, "utf8"), `${file}.svg`);
-    writeFileSync(join(REF_DIR, `${file}.svg`), readFileSync(src));
+    const src = join(srcDir, `${file}.svg`);
+    const raw = readFileSync(src);
+    const { svg, viewBox } = normalize(raw.toString("utf8"), `${file}.svg`);
+    // 来源就是参考副本时不必自己抄自己（同字节写回只会白跑 IO）
+    if (srcDir !== REF_DIR) writeFileSync(join(REF_DIR, `${file}.svg`), raw);
     entries.push({ name, file, svg, viewBox });
   }
 
@@ -264,7 +316,8 @@ scripts/fetch-codicons-all.mjs 负责。不要在这里改 —— 重跑这两�
  * 分组（消费方）：
  *   查找栏：chevronRight/Down、arrowUp/Down、replace、replaceAll、findSelection、
  *           caseSensitive、wholeWord、regex、preserveCase、close、files
- *   标题栏：chromeMinimize、chromeMaximize、chromeClose（窗口控制三颗键；最大化态换 chromeRestore）
+ *   标题栏：chromeMinimize、chromeMaximize、chromeClose（窗口控制三颗键；最大化态换 chromeRestore）、
+ *           pin（右侧「钉在顶部」开关，激活态靠按钮配色而非换字形）
  *   面板 / 标签：chromeRestore、close、circleFilled
  *   文件类型字形（标签）：10 个家族 ↔ 10 颗不同字形 —— ${famLine}
  *
