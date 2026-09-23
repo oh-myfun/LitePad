@@ -16,18 +16,12 @@ generated-images/
 #    规则见 .workbuddy/memory/MEMORY.md「临时文件一律落在本项目内」。
 .tmp/
 
-# VS Code 参考源码的**批量副本**不入库（第三方 MIT 代码，只读、不参与构建）。
-# 理由：① 70 份上游 CSS/TS 会被 pre-commit 的 prettier/eslint 扫到，得往格式链里塞例外；
-#       ② 它可由 scripts/fetch-vscode-ref.sh 按 REVISION.txt 里钉的 commit 精确复现。
-# 入库的是元数据（INDEX.md / REVISION.txt / LICENSE.txt）与脚本本身。
-docs/vscode-reference/src/
-# codicon 图标源同理：由 scripts/fetch-codicons.mjs 从 npm 包精确复现，只读、不入库。
-# 构建真正依赖的是生成物 src/shell/codicons.ts（那个入库）。
-docs/vscode-reference/codicons/
-# VS Code 其它图标集（seti 文件图标 / 主题图标 / 产品 logo），由 scripts/fetch-vscode-icons.mjs 复现，只读、不入库。
-docs/vscode-reference/file-icons/
-docs/vscode-reference/theme-icons/
-docs/vscode-reference/product/
+# VS Code 参考源码（第三方 MIT 只读副本）—— 整个目录不入库。
+# 含上游 src/、codicons/、file-icons/、theme-icons/、product/ 等批量副本，
+# 以及顶层元数据 INDEX.md / LICENSE.txt / REVISION*.txt。
+# 全部可由 scripts/ 下的抓取脚本按脚本内**钉死的版本**精确复现（REVISION*.txt 是脚本产出的记录，非输入）；
+# 真正入库的是抓取脚本本身（scripts/）与其生成物 src/shell/codicons.ts。
+docs/vscode-reference/
 
 # Python 截图 / 探针脚本产物（scripts/capture-screenshots.py 等运行期生成，不入库）
 __pycache__/
