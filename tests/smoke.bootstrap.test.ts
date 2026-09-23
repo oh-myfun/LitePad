@@ -1163,4 +1163,31 @@ describe("bootstrap + drag-split smoke", () => {
     pinState.sets.length = 0;
     expect(capturedError, `置顶开关不应抛错：${String(capturedError)}`).toBeNull();
   });
+
+  it("B104：状态栏不挂快捷键提示，默认网页右键菜单被屏蔽", async () => {
+    await import("../src/main");
+    await new Promise((r) => setTimeout(r, 300));
+
+    // ---- ① 状态栏左侧消息：只报状态，不带 Ctrl+… 教程 ----
+    // ⚠️ 只能静态钉「启动消息」：前面的用例已经把消息换成「主题：浅色」之类了，
+    //    运行时此刻的文本不一定是启动那句。
+    const msg = document.getElementById("sb-message")?.textContent ?? "";
+    expect(msg, "不得再挂快捷键提示").not.toContain("Ctrl+");
+    const main = readFileSync("src/main.ts", "utf-8");
+    expect(main, "启动消息不得再是快捷键教程").not.toContain("Ctrl+N 新建");
+    expect(main, "启动消息只报状态").toMatch(/已恢复上次会话" : "就绪"/);
+
+    // ---- ② 右键不再弹默认网页菜单 ----
+    // 挂在 document 冒泡阶段的全局屏蔽（bindEvents）。标签条的自定义右键菜单
+    // 在目标元素上 stopPropagation，到不了 document —— 这里用 body 验证「其它区域」。
+    for (const target of [document.body, document.querySelector(".cm-content") as Element]) {
+      const ev = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+      target.dispatchEvent(ev);
+      expect(ev.defaultPrevented, `${target.className || "body"} 右键必须被屏蔽`).toBe(true);
+    }
+    // 静态另一面：WebView2 默认菜单的入口就是没拦 —— 源码里必须有全局屏蔽这一条
+    expect(main, "必须有 document 级 contextmenu 屏蔽").toMatch(
+      /document\.addEventListener\("contextmenu",\s*\(e\)\s*=>\s*e\.preventDefault\(\)\)/,
+    );
+  });
 });

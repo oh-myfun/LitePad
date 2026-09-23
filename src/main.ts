@@ -3977,6 +3977,12 @@ function bindEvents(): void {
   // 全局快捷键：统一走 keymap 注册表（设置 → 快捷键 里可浏览 / 改键）。
   // 见 onGlobalKeydown 的注释：必须挂捕获阶段。
   window.addEventListener("keydown", onGlobalKeydown, true);
+
+  // 屏蔽 WebView2 的**默认网页右键菜单**（B104）：编辑器应用里右键弹「刷新 / 检查」
+  // 既出戏又危险（刷新会丢掉整个会话外观）。暂不做自定义右键菜单 —— 有需求再立项；
+  // ⚠️ 挂 document 冒泡阶段即可：标签条的自定义右键菜单在目标元素上就 preventDefault +
+  //    stopPropagation 了，根本到不了这里；就算到了，重复 preventDefault 也无害。
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
 }
 
 /**
@@ -5610,11 +5616,9 @@ async function bootstrap(): Promise<void> {
     refreshAll();
     const p = activePanel();
     p?.view?.focus();
-    showMessage(
-      restored
-        ? "已恢复上次会话 · Ctrl+N 新建，Ctrl+O 打开，Ctrl+F 查找"
-        : "就绪 · Ctrl+N 新建，Ctrl+O 打开，Ctrl+S 保存，Ctrl+F 查找",
-    );
+    // B104：状态栏不再挂快捷键提示 —— 快捷键有自己的入口（菜单、设置 → 快捷键），
+    // 状态栏的本职是「当前状态」；一长串 Ctrl+… 是记不住的人才看的装饰，还占掉整条左栏。
+    showMessage(restored ? "已恢复上次会话" : "就绪");
     bootMark("render", t);
     void persistSession();
 
