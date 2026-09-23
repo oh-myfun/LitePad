@@ -96,14 +96,22 @@ def find_window(keyword: str = "", pids: set[int] | None = None):
         user32.GetWindowTextW(hwnd, buf, length + 1)
         if keyword and keyword not in buf.value:
             return True
-        result.append((hwnd, buf.value, length))
+        rect = RECT()
+        area = 0
+        if user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            area = max(0, rect.right - rect.left) * max(0, rect.bottom - rect.top)
+        result.append((hwnd, buf.value, length, area))
         return True
 
     user32.EnumWindows(callback, 0)
     if not result:
         return (None, None)
-    # 优先取标题最长的那个：Tauri 主窗口标题最长，托盘/隐藏壳窗口更短
-    result.sort(key=lambda r: -r[2])
+    # ⚠️ 按**可见面积最大**选，不再按标题最长（B100 实测翻车）：
+    #    进程里有个 WebView2 的 `com.litepad.app-siw` 窗口，只有 22x22，标题却有 19 字符 ——
+    #    比 `LitePad - todo.md`（17 字符）还长。于是「取最长标题」会抓到那个小窗口：
+    #    抓图区域变成 22x22，且永远等不到演示文件名（表现是「会话没恢复」的假象）。
+    #    面积是稳定的判据（主窗口 ~1700x1100），标题长度会随文档名长短漂移。
+    result.sort(key=lambda r: (-r[3], -r[2]))
     return result[0][0], result[0][1]
 
 

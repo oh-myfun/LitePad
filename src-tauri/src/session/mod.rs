@@ -70,9 +70,37 @@ impl Default for Settings {
     }
 }
 
-/// 配置文件路径。当前构建仅面向 Windows，直接使用 APPDATA。
+/// 配置根目录：默认 `%APPDATA%\LitePad`，可用 **`LITEPAD_CONFIG_DIR`** 整体覆盖。
+///
+/// ## 为什么必须能覆盖（不是"顺手加个 env"）
+///
+/// 补拍 `docs/screenshots/` 时应用必须跑**演示会话**，否则会拍到用户真实打开的文档。
+/// 以前的做法是脚本把真实 `session.json` / `settings.json` 备份出来、覆盖成演示内容、
+/// 拍完再还原 —— 每轮两次文件往返（含两处 `os.remove`），而且**进程被硬杀时真实会话会
+/// 停在演示状态**（`finally` 兜不住 SIGKILL）。有了覆盖点，脚本只要把子进程的环境指向
+/// 项目内 `.tmp/shot/config`，就**完全不碰用户目录**。
+pub fn config_dir() -> Option<PathBuf> {
+    pick_config_dir(
+        std::env::var_os("LITEPAD_CONFIG_DIR"),
+        std::env::var_os("APPDATA"),
+    )
+}
+
+/// 纯函数版（不读全局环境，便于断言）：覆盖优先，且**空串不算覆盖**
+/// （环境变量被设成空是很常见的手滑，静默当成"指向当前目录"会写得到处都是）。
+fn pick_config_dir(
+    override_dir: Option<std::ffi::OsString>,
+    appdata: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    match override_dir {
+        Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
+        _ => appdata.map(|d| PathBuf::from(d).join("LitePad")),
+    }
+}
+
+/// 配置文件路径。当前构建仅面向 Windows，默认落在 APPDATA。
 pub fn settings_path() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|d| PathBuf::from(d).join("LitePad").join("settings.json"))
+    config_dir().map(|d| d.join("settings.json"))
 }
 
 /// 读取配置；任何异常都静默回落默认值，绝不让配置损坏导致启动失败。
@@ -88,7 +116,9 @@ pub fn load() -> Settings {
 }
 
 pub fn save(settings: &Settings) -> Result<(), String> {
-    let path = settings_path().ok_or_else(|| "无法定位 %APPDATA% 目录".to_string())?;
+    let path = settings_path().ok_or_else(|| {
+        "无法定位配置目录（需要 %APPDATA%，或显式给 LITEPAD_CONFIG_DIR）".to_string()
+    })?;
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
@@ -192,7 +222,7 @@ impl Default for SessionState {
 }
 
 pub fn session_path() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|d| PathBuf::from(d).join("LitePad").join("session.json"))
+    config_dir().map(|d| d.join("session.json"))
 }
 
 /// 读取会话；异常静默返回 None（坏会话绝不阻塞启动）。
@@ -203,7 +233,9 @@ pub fn load_session() -> Option<SessionState> {
 }
 
 pub fn save_session(state: &SessionState) -> Result<(), String> {
-    let path = session_path().ok_or_else(|| "无法定位 %APPDATA% 目录".to_string())?;
+    let path = session_path().ok_or_else(|| {
+        "无法定位配置目录（需要 %APPDATA%，或显式给 LITEPAD_CONFIG_DIR）".to_string()
+    })?;
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
@@ -216,6 +248,33 @@ use crate::core::atomic_write;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 配置目录覆盖（截图隔离用）。断言走纯函数 `pick_config_dir`，
+    // **不去改进程级环境变量** —— 测试并行跑，改 env 会互相干扰。
+    #[test]
+    fn config_dir_override_wins_over_appdata() {
+        assert_eq!(
+            pick_config_dir(
+                Some(r"E:\p\.tmp\shot\config".into()),
+                Some(r"C:\Roaming".into())
+            ),
+            Some(PathBuf::from(r"E:\p\.tmp\shot\config"))
+        );
+    }
+
+    #[test]
+    fn config_dir_empty_override_is_not_an_override() {
+        // 环境变量被设成空串是常见手滑，静默当成「指向当前目录」会写得到处都是。
+        assert_eq!(
+            pick_config_dir(Some("".into()), Some(r"C:\Roaming".into())),
+            Some(PathBuf::from(r"C:\Roaming").join("LitePad"))
+        );
+    }
+
+    #[test]
+    fn config_dir_without_appdata_is_none() {
+        assert_eq!(pick_config_dir(None, None), None);
+    }
 
     /// B49：会话线上格式必须是 camelCase（与前端 `src/ipc/api.ts` 对齐）。
     /// 之前漏了 `rename_all`，导致光标/预览模式/活动面板跨会话恢复全部失效。

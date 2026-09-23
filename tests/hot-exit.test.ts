@@ -263,9 +263,13 @@ describe("B68 热退出：关窗不询问，下次启动还原未保存内容", 
 
   it("副本是独立文件，格式自带魔数与头部，且从不写原文件", () => {
     expect(rustBackup, "必须有版本化魔数").toContain('MAGIC: &str = "LitePadBackup/1"');
-    expect(rustBackup, "副本落在 %APPDATA%\\LitePad\\backups").toContain(
-      '.join("LitePad").join("backups")',
+    // B100：备份区改为**派生自** `session::config_dir()`（默认才是 %APPDATA%\LitePad\backups，
+    // 可用 LITEPAD_CONFIG_DIR 整体迁移）—— 必须跟着配置目录走，否则截图隔离时副本
+    // 仍会写回用户目录。这里的断言同步改成「派生自 config_dir」而不是「直连 APPDATA」。
+    expect(rustBackup, "副本目录必须派生自 config_dir()（随 LITEPAD_CONFIG_DIR 迁移）").toMatch(
+      /config_dir\(\)\s*\.map\(\|d\|\s*d\.join\("backups"\)\)/,
     );
+    expect(rustBackup, "不得再自己拼一遍 APPDATA（会漏掉覆盖）").not.toMatch(/var_os\("APPDATA"\)/);
     // write_backup 命令只收内容与元数据，没有任何「写到 path」的动作
     const wb = rustCommands.slice(rustCommands.indexOf("pub fn write_backup"));
     expect(wb.slice(0, 900), "write_backup 只应交给 backup::write").toContain("backup::write(");

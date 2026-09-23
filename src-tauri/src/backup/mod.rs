@@ -1,4 +1,7 @@
-//! 热退出（Hot Exit）备份：把未保存的工作副本写进 `%APPDATA%\LitePad\backups`。
+//! 热退出（Hot Exit）备份：把未保存的工作副本写进「备份区」。
+//!
+//! 备份区 = `session::config_dir()` 下的 `backups/`，默认 `%APPDATA%\LitePad\backups`；
+//! 设了 `LITEPAD_CONFIG_DIR` 就整体迁移（截图脚本靠它把一切写进项目内 `.tmp/shot/config`）。
 //!
 //! 对应 VS Code 的 `WorkingCopyBackupService` + `WorkingCopyBackupTracker`。
 //! 与「自动保存」的区别是本质的，别把两者混为一谈：
@@ -44,9 +47,13 @@ use crate::core::atomic_write;
 /// 副本头部魔数 + 格式版本。改格式必须同时改这里与回归测试的期望。
 pub const MAGIC: &str = "LitePadBackup/1";
 
-/// 备份区根目录：`%APPDATA%\LitePad\backups`。
+/// 备份区根目录：`%APPDATA%\LitePad\backups`（随 `LITEPAD_CONFIG_DIR` 一起迁移）。
+///
+/// ⚠️ 必须跟着 `session::config_dir()` 走，不能自己再拼一遍 APPDATA：
+/// 截图脚本把配置目录指向项目内时，热退出副本若仍写回用户目录，就等于
+/// 「不碰用户目录」这件事只做了一半（副本会留下真实的会话残留）。
 pub fn backup_root() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|d| PathBuf::from(d).join("LitePad").join("backups"))
+    crate::session::config_dir().map(|d| d.join("backups"))
 }
 
 /// 备份 ID 白名单校验：ASCII 字母数字与连字符，长度 1–64。

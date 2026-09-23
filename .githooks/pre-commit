@@ -56,6 +56,16 @@ fail() {
 command -v grep >/dev/null 2>&1 ||
   fail "找不到 grep（Git 自带的 usr/bin 也没有）—— 无法按类型过滤 staged 文件，拒绝静默跳过"
 
+# 0) 构建产物 / 临时目录不得进提交：现在只靠 .gitignore 兜着，而 `git add -f dist`
+#    这类手滑能绕过它，把 435 个 dist 文件或整棵 .tmp 塞进历史（且删掉同样脏）。
+#    ⚠️ 用 `--diff-filter=ACMRD`：删除也要拦，不能沿用上面 STAGED 的 ACMR。
+DIRTY=$(git diff --cached --name-only --diff-filter=ACMRD |
+  grep -E '^(dist/|target/|src-tauri/target/|\.tmp/)' || true)
+if [ -n "$DIRTY" ]; then
+  printf '%s\n' "$DIRTY"
+  fail "提交里混进了构建产物/临时目录（dist/ target/ .tmp/）。先 git reset HEAD <路径> 再提交"
+fi
+
 # 1) prettier：staged 的前端文件（排除产物目录与编码样例）
 FRONT=$(printf '%s\n' "$STAGED" | grep -E '\.(ts|css|html|json)$' |
   grep -v -E '^(dist/|src-tauri/|generated-images/|test-data/|package-lock\.json)' || true)

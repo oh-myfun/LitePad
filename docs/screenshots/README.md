@@ -31,12 +31,19 @@
 ## 怎么拍
 
 ```sh
-python scripts/capture-screenshots.py          # 拍 main
-python scripts/capture-screenshots.py --list   # 看有哪些配方
-python scripts/capture-screenshots.py --size 1440x900
-python scripts/capture-screenshots.py --keep   # 保留演示会话不还原（排查用）
-python scripts/capture-screenshots.py --inset 1  # 圆角混进桌面时四边各切 1px
+bash scripts/shot.sh                 # 拍 main（唯一入口，自带所需环境）
+bash scripts/shot.sh --list          # 看有哪些配方
+bash scripts/shot.sh --size 1440x900
+bash scripts/shot.sh --inset 1       # 圆角混进桌面时四边各切 1px
 ```
+
+> 为什么不直接调 `python scripts/capture-screenshots.py`：那一层要自带
+> `CODEBUDDY_SAFE_DELETE_ENABLED=0` 与正确的 python 路径，两件都在会话里手敲过，
+> 漏一件不会报错、只会让截图停在旧图。入口统一到 `scripts/shot.sh`。
+
+**演示会话是隔离的**：脚本通过 `LITEPAD_CONFIG_DIR` 把应用指向项目内的
+`.tmp/shot/config`，你自己的配置（`%APPDATA%\LitePad`）**一次都不会被写**——
+只读取其中的字号/字体当底稿。拍完也不需要「还原」这一步。
 
 前提：`src-tauri/target/release/litepad.exe` 要存在（先 `npm run tauri -- build`）。
 

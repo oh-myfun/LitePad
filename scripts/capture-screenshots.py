@@ -38,13 +38,22 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import screenshot as sc  # noqa: E402
 
-APPDATA = os.environ["APPDATA"]
-CFG_DIR = os.path.join(APPDATA, "LitePad")
+# ⚠️ 演示会话一律写在**项目内** `SHOT_DIR/config`，靠 `LITEPAD_CONFIG_DIR` 告诉应用。
+#    以前这里直接指向真实的 `%APPDATA%\LitePad`，于是脚本得「备份真实配置 → 覆盖成演示 →
+#    拍完还原」：每轮两次文件往返、含两处 `os.remove`，而且**进程被硬杀时 `finally` 兜不住**，
+#    真实会话会停在演示状态。现在真实配置**一次都不写**，只读一份设置当底稿（字号/字体
+#    与用户保持一致，那不产生任何修改）。热退出副本也跟着走（见 `backup::backup_root`）。
+SHOT_DIR = os.path.join(ROOT, ".tmp", "shot")
+CFG_DIR = os.path.join(SHOT_DIR, "config")
+os.environ["LITEPAD_CONFIG_DIR"] = CFG_DIR  # 子进程（exe）继承这份环境
+REAL_CFG_DIR = os.path.join(os.environ["APPDATA"], "LitePad")
+REAL_SETTINGS = os.path.join(REAL_CFG_DIR, "settings.json")
 SESSION = os.path.join(CFG_DIR, "session.json")
 SETTINGS = os.path.join(CFG_DIR, "settings.json")
-BACKUP = os.path.join(ROOT, ".tmp", "screenshot-backup")
 OUT_DIR = os.path.join(ROOT, "docs", "screenshots")
 EXE = os.path.join(ROOT, "src-tauri", "target", "release", "litepad.exe")
+# 仍指向用户目录，但**只在首轮抓图失败时才移开**（见 `capture_recipe` 的重试分支），
+# 不再每轮无条件清 —— 那一清就是删掉上一轮 stash 的 326 个文件。
 WEBVIEW_UDD = os.path.join(os.environ["LOCALAPPDATA"], "com.litepad.app", "EBWebView")
 
 user32 = ctypes.windll.user32
@@ -165,33 +174,19 @@ def clear_webview_profile():
         say("  ! WebView2 用户数据没移开: %s" % e)
 
 
-def backup_config():
-    os.makedirs(BACKUP, exist_ok=True)
-    for f, tag in ((SESSION, "session.json"), (SETTINGS, "settings.json")):
-        dst = os.path.join(BACKUP, tag)
-        if os.path.exists(f):
-            shutil.copyfile(f, dst)
-        elif os.path.exists(dst):
-            os.remove(dst)
-
-
-def restore_config():
-    for f, tag in ((SESSION, "session.json"), (SETTINGS, "settings.json")):
-        src = os.path.join(BACKUP, tag)
-        if os.path.exists(src):
-            shutil.copyfile(src, f)
-        elif os.path.exists(f):
-            os.remove(f)
-
-
 def write_demo_config(recipe):
-    """写演示会话；设置以真实设置打底（字号/字体等保持一致），只覆盖主题。"""
+    r"""把演示会话写进**隔离**配置目录；设置以真实设置打底（**只读**），只覆盖主题。
+
+    隔离靠 `LITEPAD_CONFIG_DIR`（见文件头常量）：应用会把 settings / session /
+    热退出副本全部写到 `.tmp/shot/config`，真实 `%APPDATA%\LitePad` **一次都不会被写**。
+    真实设置只是读来当底稿（字号/字体与用户一致），不产生任何修改。
+    """
     os.makedirs(CFG_DIR, exist_ok=True)
     base = {}
-    real = os.path.join(BACKUP, "settings.json")
-    if os.path.exists(real):
+    if os.path.exists(REAL_SETTINGS):
         try:
-            base = json.load(open(real, encoding="utf-8"))
+            with open(REAL_SETTINGS, encoding="utf-8") as f:
+                base = json.load(f)
         except Exception:
             base = {}
     base["theme"] = recipe["theme"]
@@ -302,12 +297,42 @@ def shoot(recipe, size, settle, inset, shot_each=None):
     return png, dim
 
 
+def capture_recipe(recipe, size, settle, inset, shot_each):
+    """抓一张；**只有首轮没拿到内容时**才移开 WebView2 用户数据再试一次。
+
+    ⚠️ 为什么改成「按需」：以前无条件调 `clear_webview_profile()`，而它第一件事就是
+    `rmtree` 上一轮的 stash —— 实测 326 个文件，而且发生在**用户目录**
+    `%LOCALAPPDATA%` 里，每刷一次截图就删一遍。真正需要移开 profile 的只有
+    「硬杀留下的残留让新 webview 起不来」这一种情况，正常路径根本用不到。
+    """
+    for attempt in (1, 2):
+        # 顺序要紧：先杀干净再写演示配置——否则退出中的旧实例会把自己的会话写回来，
+        # 把演示配置覆盖掉（表现就是新实例「启动了但一直没内容」）。
+        stop_app()
+        write_demo_config(recipe)
+        got = shoot(recipe, size, settle, inset, shot_each)
+        if got:
+            png, dim = got
+            # 空白自检：webview 没渲染内容时整片同色，PNG 会被压得极小。
+            # 实测 1600x1000 全黑图 ~18KB（0.011 字节/像素），正常界面 ~200KB（0.13）。
+            ratio = len(png) / (dim[0] * dim[1])
+            if ratio >= 0.04:
+                return png, dim
+            say("  ✗ 疑似空白图（%d 字节 / %dx%d，%.3f 字节每像素）—— 重试"
+                % (len(png), dim[0], dim[1], ratio))
+        else:
+            say("  ✗ 没拍到")
+        if attempt == 1:
+            say("  首轮没拿到内容 —— 移开 WebView2 用户数据后重试一次（残留会让新 webview 起不来）")
+            clear_webview_profile()
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="一键补拍 docs/screenshots/ 截图")
     parser.add_argument("--size", default="1600x1000", help="输出尺寸 WxH（物理像素）")
     parser.add_argument("--settle", type=float, default=3.0, help="定尺寸后等布局稳定（秒）")
     parser.add_argument("--inset", type=int, default=0, help="四边各再切掉几像素（圆角用）")
-    parser.add_argument("--keep", action="store_true", help="保留演示会话不还原（排查用）")
     parser.add_argument("--shot-each", default=None, help="每次点击后也存一张，如 .tmp/step-%%d.png")
     parser.add_argument("--list", action="store_true", help="列出配方后退出")
     parser.add_argument("names", nargs="*", help="要拍的配方名（默认全部）")
@@ -333,30 +358,17 @@ def main():
     orig_cursor = (pt.x, pt.y)
 
     say("配方：%s  尺寸 %dx%d" % (", ".join(r["name"] for r in recipes), w, h))
-    backup_config()
+    say("隔离配置目录：%s" % CFG_DIR)
+    say("真实配置目录：%s（**全程只读**，一次都不会被写）" % REAL_CFG_DIR)
     failed = 0
     try:
         for recipe in recipes:
             say("\n【%s】%s" % (recipe["name"], recipe["what"]))
-            # 顺序要紧：先杀干净再写演示配置——否则退出中的旧实例会把自己的会话写回来，
-            # 把演示配置覆盖掉（表现就是新实例「启动了但一直没内容」）。
-            stop_app()
-            clear_webview_profile()
-            write_demo_config(recipe)
-            got = shoot(recipe, (w, h), args.settle, args.inset, args.shot_each)
+            got = capture_recipe(recipe, (w, h), args.settle, args.inset, args.shot_each)
             if not got:
                 failed += 1
-                say("  ✗ 没拍到")
                 continue
             png, dim = got
-            # 空白自检：webview 没渲染内容时整片同色，PNG 会被压得极小。
-            # 实测 1600x1000 全黑图 ~18KB（0.011 字节/像素），正常界面 ~200KB（0.13）。
-            ratio = len(png) / (dim[0] * dim[1])
-            if ratio < 0.04:
-                failed += 1
-                say("  ✗ 疑似空白图（%d 字节 / %dx%d，%.3f 字节每像素）——不写出，请排查"
-                    % (len(png), dim[0], dim[1], ratio))
-                continue
             out = os.path.join(OUT_DIR, "%s.png" % recipe["name"])
             os.makedirs(OUT_DIR, exist_ok=True)
             with open(out, "wb") as f:
@@ -366,11 +378,7 @@ def main():
     finally:
         stop_app()
         user32.SetCursorPos(*orig_cursor)
-        if args.keep:
-            say("\n--keep：保留演示会话；真实配置仍在 %s" % BACKUP)
-        else:
-            restore_config()
-            say("\n已还原真实 session.json / settings.json")
+        say("\n演示配置留在 %s（真实配置从未被改写）" % CFG_DIR)
     say("\n有 %d 张没拍成。" % failed if failed else "\n全部拍完。")
     return 1 if failed else 0
 

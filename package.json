@@ -15,6 +15,9 @@
     "test": "node scripts/run-vitest.cjs",
     "build:all": "bash scripts/build-all.sh",
     "release": "bash scripts/release.sh",
+    "doctor": "bash scripts/doctor.sh",
+    "screenshot": "bash scripts/shot.sh",
+    "clean:tmp": "bash scripts/clean-tmp.sh",
     "tauri": "tauri"
   },
   "dependencies": {
