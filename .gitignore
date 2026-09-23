@@ -16,12 +16,14 @@ generated-images/
 #    规则见 .workbuddy/memory/MEMORY.md「临时文件一律落在本项目内」。
 .tmp/
 
-# VS Code 参考源码（第三方 MIT 只读副本）—— 整个目录不入库。
+# VS Code 参考源码（第三方 MIT 只读副本）—— 整个目录不入库，仅 LICENSE.txt（MIT 署名）留库。
+# 忽略目录内容而非目录本身，才能用 `!` 把 LICENSE.txt 重新纳入（git 不 descent 进被整目录忽略的路径）。
 # 含上游 src/、codicons/、file-icons/、theme-icons/、product/ 等批量副本，
-# 以及顶层元数据 INDEX.md / LICENSE.txt / REVISION*.txt。
-# 全部可由 scripts/ 下的抓取脚本按脚本内**钉死的版本**精确复现（REVISION*.txt 是脚本产出的记录，非输入）；
+# 以及顶层元数据 INDEX.md / REVISION*.txt（REVISION*.txt 是脚本产出记录、可复现，故不入库）。
+# 全部可由 scripts/ 下的抓取脚本按脚本内**钉死的版本**精确复现；
 # 真正入库的是抓取脚本本身（scripts/）与其生成物 src/shell/codicons.ts。
-docs/vscode-reference/
+docs/vscode-reference/*
+!docs/vscode-reference/LICENSE.txt
 
 # Python 截图 / 探针脚本产物（scripts/capture-screenshots.py 等运行期生成，不入库）
 __pycache__/
@@ -30,4 +32,10 @@ __pycache__/
 
 # 工具链崩溃转储（cargo / MinGW 偶发）
 *.stackdump
+
+# 智能体运行时 / 记忆 / 技能目录（.workbuddy）—— 整个不入库，仅留本地磁盘。
+# ⚠️ 操作用 `git rm --cached`（只动索引）；绝不对本目录跑 `git rm`/`rmdir` 或 `rm`，
+#    否则 agent 运行时整棵从磁盘消失（见 .workbuddy/memory 红线）。
+# ⚠️ 入库忽略后，慎用 `git clean -fdx`——它会按忽略规则把 .workbuddy 从磁盘一并删除。
+.workbuddy/
 
