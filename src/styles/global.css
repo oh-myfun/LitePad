@@ -242,8 +242,9 @@ body {
   gap: 8px;
   height: 34px;
   flex: 0 0 34px;
-  /* 左留 4px 与菜单按钮的内边距视觉对齐；右不留 —— 关闭键要贴到窗口边缘 */
-  padding-left: 4px;
+  /* 左留 10px：与菜单项 .menu-btn 的水平内边距（10px）取齐 —— 左上角图标离窗口左缘
+     太近会「顶边」（原先 4px，图标字形几乎贴着边框）。右端不留：关闭键要贴到窗口边缘。 */
+  padding-left: 10px;
   background: var(--bg-toolbar);
   border-bottom: 1px solid var(--border);
   user-select: none;

@@ -264,4 +264,23 @@ describe("B97 自建标题栏", () => {
     expect(codicons, "生成物里必须有 pin 条目").toMatch(/^\s*pin:/m);
     expect(mainSrc(), "置顶键必须取 CODICONS.pin").toMatch(/\[winPin,\s*"pin"\]/);
   });
+
+  it("B101：标题栏左侧留足内边距，左上角图标不顶到窗口左缘", () => {
+    const s = css();
+    // 判据：直接读 .title-bar 的 padding-left 数值。图标是标题栏的第一个子元素，
+    // 这条内边距就是它离窗口左缘的全部距离（图标自身没有 margin 可调）。
+    const readInset = (src: string): number | null => {
+      const m = ruleBlock(src, ".title-bar").match(/padding-left:\s*(\d+(?:\.\d+)?)px/);
+      return m ? Number(m[1]) : null;
+    };
+    const inset = readInset(s);
+    expect(inset, ".title-bar 必须显式给出 padding-left（否则图标贴边）").not.toBeNull();
+    // 8px 是下限：原来 4px 时图标字形几乎挨着边框，观感是「顶在边上」。
+    expect(inset!, "图标离左缘太近（4px 会顶边，至少 8px）").toBeGreaterThanOrEqual(8);
+    // 退化对照：把值改回 4px，同一把尺子必须判它不合格 ——
+    // 否则这条断言对「日后被改小」是瞎的（数值断言最容易写成恒真）。
+    const regressed = s.replace(/(\.title-bar\s*\{[^}]*?padding-left:\s*)\d+(?:\.\d+)?px/, "$14px");
+    expect(readInset(regressed), "退化对照要真把值改成 4px").toBe(4);
+    expect(readInset(regressed)!, "退化到 4px 必须被判为不合格").toBeLessThan(8);
+  });
 });
