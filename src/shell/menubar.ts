@@ -1,5 +1,4 @@
 import { closePopupMenu, showPopupMenu, type MenuItem } from "./menu";
-import { setTip } from "./tooltip";
 
 /**
  * 菜单栏（文件 / 编辑 / 查看 / 设置 / 帮助）。
@@ -168,7 +167,10 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
   },
 ];
 
-/** 菜单栏按钮（含助记符信息），供 Alt 助记符定位。 */
+/**
+ * 菜单栏按钮的助记符字母（Alt+字母定位），与 MENUS 顺序一一对应。
+ * 渲染成 VS Code 中文版的「标签(字母)」：`文件(F)` / `编辑(E)` / `查看(V)` / `设置(S)` / `帮助(H)`。
+ */
 const MENU_KEYS = ["F", "E", "V", "S", "H"] as const;
 
 /** 设置菜单在菜单栏中的索引（Alt+S 用）。 */
@@ -191,10 +193,10 @@ export function createMenuBar(host: HTMLElement, cb: MenuBarCallbacks): void {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "menu-btn";
-    // B58：走自绘提示层。Alt+字母是**助记符**（不是组合键），单独放详情行更清楚。
-    setTip(btn, `${m.label}菜单`, { key: `Alt+${MENU_KEYS[idx]}` });
-    // 助记符下划线首字（Alt+字母定位）
-    btn.innerHTML = `<span class="mnemonic">${m.label[0]}</span>${m.label.slice(1)}`;
+    // 助记符按 VS Code 中文版的样子直接拼在标签后面：`文件(F)`。
+    // ⚠️ 不再给首字加下划线、也不再往提示里挂「Alt+F」键帽：中文标签靠下划线标助记符
+    //    本来就难认（「文」字下面一道线看不出指的是 F），用户明确要求换成括号 + 字母。
+    btn.textContent = `${m.label}(${MENU_KEYS[idx]})`;
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       if (openBtn === btn) {

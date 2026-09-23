@@ -304,7 +304,9 @@ describe("bootstrap + drag-split smoke", () => {
   /** 点开菜单栏里的某个顶层菜单（文件 / 编辑 / 查看 / 设置 / 帮助）。 */
   async function openMenu(label: string): Promise<void> {
     const host = document.getElementById("menu-bar") as HTMLElement;
-    const btn = [...host.querySelectorAll("button.menu-btn")].find((b) => b.textContent === label);
+    const btn = [...host.querySelectorAll("button.menu-btn")].find((b) =>
+      b.textContent?.startsWith(label),
+    );
     expect(btn, `菜单栏应有「${label}」`).toBeTruthy();
     btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await tick();

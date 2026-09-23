@@ -43,7 +43,10 @@ function rootTexts(): string[] {
 }
 
 async function clickMenuBtn(host: HTMLElement, label: string): Promise<void> {
-  const btn = [...host.querySelectorAll("button.menu-btn")].find((b) => b.textContent === label);
+  // 按钮文本是「标签(助记字母)」（B103 起，如「文件(F)」），所以按前缀匹配
+  const btn = [...host.querySelectorAll("button.menu-btn")].find((b) =>
+    b.textContent?.startsWith(label),
+  );
   expect(btn, `菜单栏按钮「${label}」应存在`).toBeTruthy();
   btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await flush();
@@ -122,6 +125,27 @@ afterEach(() => {
 });
 
 describe("菜单栏（文件 / 编辑 / 查看 / 设置 / 帮助）", () => {
+  it("B103：菜单按钮是「标签(字母)」写法，不再有首字下划线和 Alt 键帽提示", () => {
+    const host = document.createElement("nav");
+    document.body.appendChild(host);
+    createMenuBar(host, makeCb());
+    // 五个按钮的文本：VS Code 中文版的助记符写法
+    const texts = [...host.querySelectorAll("button.menu-btn")].map((b) => b.textContent);
+    expect(texts, "五个菜单按钮都要带括号助记符").toEqual([
+      "文件(F)",
+      "编辑(E)",
+      "查看(V)",
+      "设置(S)",
+      "帮助(H)",
+    ]);
+    // 反面：下划线（.mnemonic）与提示里的 Alt+字母 键帽都必须退场
+    const src = readFileSync("src/shell/menubar.ts", "utf-8");
+    expect(src, "按钮不得再包 mnemonic 下划线").not.toContain("mnemonic");
+    expect(src, "不得再往提示里挂 Alt+字母 键帽").not.toMatch(/setTip\([\s\S]{0,120}Alt\+/);
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    expect(css, ".mnemonic 规则必须已删除").not.toMatch(/\.mnemonic\s*\{/);
+  });
+
   it("文件菜单：保留 新建/打开/保存三兄弟/自动保存/热退出/关闭标签/退出", async () => {
     const host = document.createElement("nav");
     document.body.appendChild(host);

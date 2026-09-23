@@ -158,7 +158,9 @@ function activatePanel(panel: HTMLElement): void {
  */
 async function toggleTocViaMenu(): Promise<void> {
   const host = document.getElementById("menu-bar") as HTMLElement;
-  const view = [...host.querySelectorAll("button.menu-btn")].find((b) => b.textContent === "查看");
+  const view = [...host.querySelectorAll("button.menu-btn")].find((b) =>
+    b.textContent?.startsWith("查看"),
+  );
   expect(view, "菜单栏应有「查看」").toBeTruthy();
   view!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await wait(0);

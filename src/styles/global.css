@@ -284,35 +284,18 @@ body {
   text-overflow: ellipsis;
 }
 
-/* ---------- 标题栏工具键（B99） ----------
-   只放**开关型**工具键（现在一个：钉在顶部）。与窗口控制三键**刻意分组**：三键是
-   「等高贴边 / 悬停淡底 / 关闭键红底」的系统约定，混进同一容器会被 .win-btn 那套规则
-   连带影响（宽度、圆角、hover 底色全不一样），所以各占一个容器、各写各的。 */
+/* ---------- 标题栏工具键（B99 / B103） ----------
+   只放**开关型**工具键（现在一个：钉在顶部）。
+   ⚠️ B103 起它的**尺寸 / 悬停 / 焦点环与窗口控制三键是同一条声明**（见下方
+   `.win-btn, .title-btn`）—— 用户要求「钉在顶部按钮风格和窗口控制三键一致」，
+   共用声明才不会改了一边忘另一边。
+   容器仍与三键分开：三键里关闭键有「悬停红底」的系统约定，混进同一容器会被连带影响；
+   而置顶键自己还多一层「已点亮」状态（见窗口控制那节的 `.title-btn.is-on`）。 */
 
 .title-actions {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   align-self: stretch;
-  gap: 2px;
-}
-
-/* 普通小方钮：16px 图标 + 圆角 + 悬停淡底，与状态栏/查找栏那批图标按钮同款尺寸语言。 */
-.title-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius);
-  color: var(--fg-muted);
-  background: transparent;
-}
-
-.title-btn:hover {
-  background: var(--bg-hover);
-  color: var(--fg);
 }
 
 /* 已点亮（当前窗口已置顶）：沿用查找栏那几个开关的激活三件套
@@ -320,21 +303,17 @@ body {
    「开关点亮」在全应用只有这一套语言，不再各写一个色调。
    ⚠️ 用 `inset` 阴影当 1px 环而不是真 border：全局是 border-box，加真 border 会把
    16px 的图标挤成 14px（`.find-sel.on` 同一个坑，同一种解）。
-   这条规则写在 :hover **之后**，同特异度下后写者胜，所以点亮时悬停不会掉回淡底。 */
-.title-btn.is-on {
-  background: var(--find-opt-active);
-  color: var(--find-opt-active-fg);
-  box-shadow: inset 0 0 0 1px var(--find-opt-active-border);
-}
-
-.title-btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
+   ⚠️ 本条必须写在 `:hover` **之后**（同特异度下后写者胜），否则悬停会盖掉点亮态 ——
+      所以它跟 `.win-btn` 那批一起放在下面「窗口控制」那节的末尾。 */
 
 /* ---------- 窗口控制（标题栏右侧） ----------
    三颗键等宽、等高、无缝贴边，观感对齐 Windows / VS Code：
-   普通键悬停只是淡底，关闭键悬停换成系统约定的红底白字。 */
+   普通键悬停只是淡底，关闭键悬停换成系统约定的红底白字。
+
+   ⚠️ B103 起「钉在顶部」工具键（`.title-btn`）与三键**共用同一条声明**：
+   用户要求它的风格与窗口控制三键一致（同为 46px 宽、满标题栏高、无圆角、同一 hover
+   与焦点环）。拆成两条规则就会各自漂移 —— 宽度 / 圆角 / hover 底色只要有一处忘了同步，
+   标题栏右侧就会出现「两种按钮」。 */
 
 .window-controls {
   display: flex;
@@ -343,7 +322,8 @@ body {
   margin-left: auto;
 }
 
-.win-btn {
+.win-btn,
+.title-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -356,7 +336,8 @@ body {
   background: transparent;
 }
 
-.win-btn:hover {
+.win-btn:hover,
+.title-btn:hover {
   background: var(--bg-hover);
   color: var(--fg);
 }
@@ -366,9 +347,18 @@ body {
   color: #ffffff;
 }
 
-.win-btn:focus-visible {
+.win-btn:focus-visible,
+.title-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
+}
+
+/* 「已点亮」必须排在 hover 之后（同特异度下后写者胜），否则悬停会把点亮态盖掉。
+   见上方「标题栏工具键」那节的说明。 */
+.title-btn.is-on {
+  background: var(--find-opt-active);
+  color: var(--find-opt-active-fg);
+  box-shadow: inset 0 0 0 1px var(--find-opt-active-border);
 }
 
 .menu-bar {
@@ -392,10 +382,8 @@ body {
   color: var(--fg);
 }
 
-.mnemonic {
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
+/* （B103 已删：菜单按钮曾用 .mnemonic 给首字加下划线标助记符。
+    现改为 VS Code 的「标签(字母)」写法，如 `文件(F)`，不再需要这条规则。） */
 
 .menu-sep {
   height: 1px;

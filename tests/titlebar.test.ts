@@ -99,9 +99,17 @@ describe("B97 自建标题栏", () => {
     const s = css();
     expect(s, "必须有标题栏规则").toMatch(/\.title-bar\s*\{/);
     expect(s, "必须有窗口控制容器规则").toMatch(/\.window-controls\s*\{/);
-    expect(s, "必须有窗口控制键规则").toMatch(/\.win-btn\s*\{/);
+    // B103 起窗口控制键与「钉在顶部」共用**同一条声明**，所以选择器是一对。
+    // ⚠️ 判据要写成「一对选择器后紧跟 {」：只判 `.win-btn {` 会在合并成
+    //    `.win-btn, .title-btn {` 之后永远为真/假得莫名其妙（这次就是先红的）。
+    expect(s, "必须有窗口控制键规则").toMatch(/\.win-btn,\s*\.title-btn\s*\{/);
     // 关闭键悬停的红底是 Windows 的系统约定，不是随手挑的颜色
     expect(s, "关闭键悬停必须是系统约定的红底").toMatch(/\.win-btn-close:hover\s*\{[^}]*#e81123/);
+    // 「已点亮」必须排在共享的 :hover 之后，否则悬停会盖掉点亮态
+    expect(
+      s.indexOf(".win-btn:hover"),
+      ".title-btn.is-on 必须写在 hover 之后（同特异度后写者胜）",
+    ).toBeLessThan(s.indexOf(".title-btn.is-on"));
     expect(s, "旧快捷按钮样式必须整段删掉").not.toContain(".toolbar-actions");
     expect(s, "旧快捷按钮样式必须整段删掉").not.toContain(".tool-btn");
   });
@@ -271,6 +279,26 @@ describe("B97 自建标题栏", () => {
     const codicons = readFileSync("src/shell/codicons.ts", "utf-8");
     expect(codicons, "codicons 必须有 pinned").toMatch(/^\s*pinned:\s*"pinned"/m);
     expect(codicons, "codicons 必须有 unpin").toMatch(/^\s*unpin:\s*"unpin"/m);
+  });
+
+  it("B103：钉在顶部与窗口控制三键共用同一条声明（同宽 / 同高 / 同圆角）", () => {
+    const s = css();
+    // ⚠️ 必须**同一条声明**：拆成两条规则就会各自漂移（宽度 / 圆角 / hover 底色），
+    //    标题栏右侧会出现「两种按钮」—— 用户就是看到这个才提的要求。
+    expect(s, "必须与 .title-btn 共用一条声明").toMatch(/\.win-btn,\s*\.title-btn\s*\{/);
+    const shared = ruleBlock(s, ".win-btn");
+    expect(shared, "取不到共享规则").toBeTruthy();
+    expect(shared, "宽度与三键一致（46px）").toMatch(/width:\s*46px/);
+    expect(shared, "高度撑满标题栏").toMatch(/height:\s*100%/);
+    expect(shared, "无圆角（与窗口控制键同款）").toMatch(/border-radius:\s*0/);
+    // 悬停也得共用，否则三键亮、置顶键不亮
+    expect(s, "悬停底色必须共用").toMatch(/\.win-btn:hover,\s*\.title-btn:hover\s*\{/);
+    // 退化对照：把共享宽度改回旧的 30px，判据必须判出来（防止写成恒真）
+    const regressed = s.replace(/(\.win-btn,\s*\.title-btn\s*\{[^}]*?width:\s*)46px/, "$130px");
+    expect(ruleBlock(regressed, ".win-btn"), "退化对照要真的改成 30px").toMatch(/width:\s*30px/);
+    expect(ruleBlock(regressed, ".win-btn"), "退化到 30px 后不该再是 46px").not.toMatch(
+      /width:\s*46px/,
+    );
   });
 
   it("B101：标题栏左侧留足内边距，左上角图标不顶到窗口左缘", () => {
