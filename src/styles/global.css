@@ -296,6 +296,10 @@ body {
   display: flex;
   align-items: stretch;
   align-self: stretch;
+  /* Request N：钉在顶部键与右侧窗口控制三键**之间不加额外空隙**，四键视觉上连成一组。
+     这里用 -8px 正好抵消 .title-bar 的 gap:8px（B103 曾刻意留这 8px 当分组留白，现取消）。
+     二者仍是**独立容器**（见上方说明）：关闭键的悬停红底、置顶键的点亮态都不会互相牵连。 */
+  margin-right: -8px;
 }
 
 /* 已点亮（当前窗口已置顶）：沿用查找栏那几个开关的激活三件套

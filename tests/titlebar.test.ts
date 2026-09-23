@@ -240,6 +240,17 @@ describe("B97 自建标题栏", () => {
     expect(on, "不得用真 border").not.toMatch(/^\s*border:\s*1px/m);
   });
 
+  it("Request N：钉在顶部键与窗口控制三键之间不加额外空隙，四键贴成一组", () => {
+    const s = css();
+    const actions = ruleBlock(s, ".title-actions");
+    // .title-bar 的 gap:8px 会在这两群之间插出 8px 留白；用 -8px 正好抵消，让置顶键紧贴
+    // 右侧三键（视觉上四键连成一组）。这条断言同时是回归守卫：删掉负边距就会回归到「分组留白」。
+    expect(actions, "置顶键必须用 -8px 抵消与三键之间的 gap").toMatch(/margin-right:\s*-8px/);
+    // .title-bar 的 gap 必须仍是 8px（其余分组：图标↔菜单↔标题 仍靠它分隔），
+    // 不能为了「贴齐」去把整条 gap 抹平，否则会连图标与菜单的间距也吃掉。
+    expect(ruleBlock(s, ".title-bar"), ".title-bar 的 gap 必须保持 8px").toMatch(/gap:\s*8px/);
+  });
+
   it("B99：置顶开关按**回读值**刷新，且状态不落盘", () => {
     const main = mainSrc();
     expect(main, "置顶键要有接线").toMatch(/winPin\.addEventListener\("click"/);
