@@ -129,6 +129,7 @@ import {
 import { KEYMAP_RECORDING_CLASS } from "./shell/keymapdialog";
 import { showSettingsDialog } from "./shell/settingsdialog";
 import { initUpdater, type UpdaterHandle } from "./shell/updater";
+import { showAbout } from "./shell/about";
 import {
   renderSplitview,
   panelAt,
@@ -4560,15 +4561,7 @@ function setupMenuBar(): void {
     // B107：手动检查更新（结果走状态栏；静默检查失败不打扰，见 src/shell/updater.ts）
     onCheckUpdate: () => void updaterHandle?.checkNow(),
     onAbout: () => {
-      void ask(
-        "LitePad v0.1.0\n轻量级 Markdown / 文本编辑器（Tauri 2 + CodeMirror 6）\n\n仅 Windows 平台。",
-        {
-          title: "关于 LitePad",
-          kind: "info",
-          okLabel: "确定",
-          cancelLabel: "关闭",
-        },
-      );
+      void showAbout();
     },
     keyHint,
   });
