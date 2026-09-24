@@ -301,7 +301,7 @@ function clickTab(tab: HTMLElement): void {
 describe("bootstrap + drag-split smoke", () => {
   const tick = (ms = 20): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-  /** 点开菜单栏里的某个顶层菜单（文件 / 编辑 / 查看 / 设置 / 帮助）。 */
+  /** 点开菜单栏里的某个顶层菜单（文件 / 编辑 / 查看 / 帮助）。 */
   async function openMenu(label: string): Promise<void> {
     const host = document.getElementById("menu-bar") as HTMLElement;
     const btn = [...host.querySelectorAll("button.menu-btn")].find((b) =>
@@ -339,23 +339,24 @@ describe("bootstrap + drag-split smoke", () => {
   }
 
   /**
-   * 走「设置 → 首选项…」换主题档位。
+   * 走「文件 → 设置… → 外观 → 主题」换主题档位。
    *
-   * B97 起顶栏那颗三态循环的主题按钮已移除，主题只从首选项的下拉进出，所以凡是验证
-   * 「换档立即生效 / 写回 settings / 编辑器跟随」的用例都走这条真实链路。
+   * B106 起设置收编为「文件 → 设置…」打开的统一三栏设置页，「主题」是「外观」分类里的
+   * 一个下拉。凡是验证「换档立即生效 / 写回 settings / 编辑器跟随」的用例都走这条真实链路。
    */
   async function setThemeViaPreferences(mode: "light" | "dark" | "system"): Promise<void> {
-    await openMenu("设置");
-    await clickMenuItem("首选项…");
-    const rows = [...document.querySelectorAll(".preferences-dialog .settings-row")];
-    const row = rows.find((r) => r.querySelector(".settings-label")?.textContent === "主题");
-    const sel = row?.querySelector("select") as HTMLSelectElement | null;
-    expect(sel, "首选项里应有「主题」下拉").toBeTruthy();
+    await openMenu("文件");
+    await clickMenuItem("设置…");
+    // 统一设置页默认停在「外观」分类，「主题」下拉直接可见
+    const items = [...document.querySelectorAll(".settings-panel .settings-item")];
+    const item = items.find((r) => r.querySelector(".settings-item-label")?.textContent === "主题");
+    const sel = item?.querySelector("select") as HTMLSelectElement | null;
+    expect(sel, "设置页里应有「主题」下拉").toBeTruthy();
     sel!.value = mode;
     sel!.dispatchEvent(new Event("change", { bubbles: true }));
     await tick(30);
     // 关掉模态弹窗，别影响后续用例
-    (document.querySelector(".preferences-dialog .settings-ok") as HTMLButtonElement)?.click();
+    (document.querySelector(".settings-close") as HTMLButtonElement)?.click();
     await tick(0);
   }
 
@@ -468,8 +469,8 @@ describe("bootstrap + drag-split smoke", () => {
     ).toBe(false);
   });
 
-  it("B97：主题从「设置 → 首选项 → 主题」换档，立即生效且明暗必定翻转", async () => {
-    // B97 把顶栏那颗三态循环的主题按钮移除了，主题只剩首选项这一个入口。
+  it("B97/B106：主题从「文件 → 设置… → 外观 → 主题」换档，立即生效且明暗必定翻转", async () => {
+    // B106 把主题收进「文件 → 设置…」打开的统一设置页，「外观」分类里的「主题」下拉是它唯一入口。
     // 这条盖住最要紧的一点：换档之后**外观当场就变**。
     // （旧实现有「点了没反应」，根因是 cycle 顺序在系统偏好与当前档一致时不翻转；
     //  现在是从下拉里直接选档，那条边根本不存在。）
@@ -854,7 +855,7 @@ describe("bootstrap + drag-split smoke", () => {
   it("深浅色切换时所有面板的编辑器必须一起变（回归：部分面板不跟随）", async () => {
     // 用户报告：深浅色切换，所有面板要一起跟着变。
     // 断言：换档之后每一个已挂载面板的 CodeMirror 明暗状态都同步翻转。
-    // B97 起换档入口是「设置 → 首选项 → 主题」，不再是顶栏那颗循环按钮。
+    // B106 起换档入口是「文件 → 设置… → 外观 → 主题」，不再是顶栏那颗循环按钮。
     await resetThemeToSystem();
     const viewsOf = () =>
       Array.from(document.querySelectorAll(".cm-editor"))
@@ -1031,7 +1032,7 @@ describe("bootstrap + drag-split smoke", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(capturedError, `折叠快捷键不应抛错：${String(capturedError)}`).toBeNull();
 
-    // 设置 → 快捷键：对话框打开时全局快捷键必须整体让路
+    // 快捷键（设置页内一个分类，也可独立弹窗）：打开时全局快捷键必须整体让路
     const { showKeymapDialog } = await import("../src/shell/keymapdialog");
     showKeymapDialog({ overrides: {}, onChange: () => {} });
     expect(document.querySelector(".settings-overlay"), "对话框应已打开").toBeTruthy();

@@ -401,7 +401,7 @@ body {
   color: var(--fg-muted);
 }
 
-/* 子菜单父项（设置 → 首选项 ▸）：文字左、箭头贴右 */
+/* 子菜单父项（如「文件 → 导出 ▸」）：文字左、箭头贴右 */
 .menu-arrow {
   margin-left: auto;
   padding-left: 18px;
@@ -417,7 +417,7 @@ body {
 /* ---------- 图标按钮组样式已随顶栏快捷按钮一并移除 ----------
    原先 .toolbar-actions / .tool-btn 一套规则只服务于那 8 颗按钮；按钮搬走后
    新建/打开/保存/另存/查找/大纲回到菜单，导出回到「文件 → 导出」，
-   主题回到「设置 → 首选项」，整套类名不再有消费者，直接删掉。 */
+   主题回到「设置」页，整套类名不再有消费者，直接删掉。 */
 
 button {
   font-family: inherit;
@@ -1440,29 +1440,224 @@ button:focus-visible {
   cursor: pointer;
 }
 
-/* ---------- 首选项弹窗（B46） ---------- */
+/* ---------- 统一设置页（B106：原「设置 → 首选项 / 快捷键」合并为三栏设置页） ---------- */
 
-.preferences-dialog {
-  width: 460px;
-}
-
-.preferences-body {
-  max-height: 60vh;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-
-/* 分组标题（外观 / 字体与行距 / 编辑器 / 预览 / 新建文件） */
-.preferences-group {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding: 6px 0 4px;
-  margin-top: 4px;
+.settings-panel {
+  width: min(880px, 94vw);
+  height: min(640px, 88vh);
+  display: flex;
+  flex-direction: column;
   background: var(--bg-elevated);
-  font-size: 11px;
-  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.settings-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.settings-search-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 10px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.settings-search-wrap:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.settings-search-icon {
   color: var(--fg-muted);
+  flex-shrink: 0;
+}
+
+.settings-search {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font-size: 13px;
+  font-family: var(--font-ui);
+  outline: none;
+}
+
+.settings-search::placeholder {
+  color: var(--fg-muted);
+}
+
+.settings-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: default;
+}
+
+.settings-close:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.settings-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 8px;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  overflow-y: auto;
+}
+
+.settings-nav-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 13px;
+  font-family: var(--font-ui);
+  text-align: left;
+  cursor: default;
+}
+
+.settings-nav-item:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.settings-nav-item.active {
+  background: var(--bg-hover);
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.settings-content {
+  overflow-y: auto;
+  padding: 20px 26px 28px;
+}
+
+.settings-empty {
+  padding: 40px 0;
+  text-align: center;
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+
+.settings-page-title {
+  margin: 0 0 18px;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.settings-page-desc {
+  margin: -8px 0 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+
+.settings-page-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 24px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-item:last-child {
+  border-bottom: none;
+}
+
+.settings-item-info {
+  min-width: 0;
+}
+
+.settings-item-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fg);
+  line-height: 1.4;
+}
+
+.settings-item-desc {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--fg-muted);
+}
+
+.settings-item-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+.settings-item-control select {
+  min-width: 150px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+  font-family: var(--font-ui);
+}
+
+.settings-shortcuts-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.settings-shortcut-error {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--danger) 12%, var(--bg));
+  color: var(--danger);
+  font-size: 12px;
 }
 
 /* 勾选框比下拉稍大，便于点击 */

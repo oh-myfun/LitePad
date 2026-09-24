@@ -153,16 +153,16 @@ describe("B97 自建标题栏", () => {
     expect(body, "标题栏不得重复写应用名").not.toMatch(/titleText\.textContent\s*=[^;]*LitePad/);
   });
 
-  it("搬走的功能必须仍有入口：导出进「文件 → 导出 ▸」，主题留在首选项", () => {
+  it("搬走的功能必须仍有入口：导出进「文件 → 导出 ▸」，主题在「文件 → 设置…」", () => {
     const m = menuSrc();
     const fileBlock = m.slice(m.indexOf('label: "文件"'), m.indexOf('label: "编辑"'));
     expect(fileBlock, "「文件」菜单必须有导出入口").toContain('label: "导出"');
     expect(fileBlock, "导出项要能按当前文档置灰").toContain("disabled: !cb.exportable()");
     expect(m, "导出必须有 HTML / PDF 两项").toContain("导出 HTML（自包含单文件）");
     expect(m, "导出必须有 HTML / PDF 两项").toContain("导出 PDF（系统打印对话框）");
-    // 主题：B42/B46 已定「只收在设置 → 首选项」，本次不再新增菜单入口
-    const dlg = readFileSync("src/shell/preferencesdialog.ts", "utf-8");
-    expect(dlg, "主题必须仍有首选项入口").toContain('selectRow("主题"');
+    // 主题：B106 收进「文件 → 设置…」打开的统一设置页「外观」分类
+    const dlg = readFileSync("src/shell/settingsdialog.ts", "utf-8");
+    expect(dlg, "主题必须仍有统一设置页入口").toMatch(/selectRow\(\s*"主题"/);
   });
 
   it("菜单项支持置灰（导出在非 Markdown 文档上不可点）", () => {

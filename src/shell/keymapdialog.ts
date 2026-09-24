@@ -6,6 +6,9 @@
  * - `editable: false` 的命令由 CodeMirror / 系统原生处理，只展示不可改。
  * - 冲突会当场拦下并提示占用者，避免两个命令抢同一个键。
  * - 改动即时交给 `onChange`（由 main 负责持久化），不需要「保存」按钮。
+ *
+ * 内部渲染逻辑抽成 `mountKeymapPage`，供统一设置页的「快捷键」分类页复用
+ * （设置页不再单独弹一个快捷键对话框，而是把它作为其中一个分类）。
  */
 
 import {
@@ -37,19 +40,22 @@ export interface KeymapDialogOptions {
 /** 录制态 body class，供全局快捷键分发器让路（否则 Ctrl+N 会被当成「新建」）。 */
 export const KEYMAP_RECORDING_CLASS = "keymap-recording";
 
-export function showKeymapDialog(opts: KeymapDialogOptions): void {
+export interface KeymapPageHandle {
+  /** 清理录制态并摘除监听器（宿主卸载前调用）。 */
+  destroy: () => void;
+  /** 由外部（如设置页顶部搜索）注入过滤词，复用内部搜索框。 */
+  setFilter: (query: string) => void;
+  /** 当前是否处于录制态（宿主的 Esc 处理据此决定是否让路）。 */
+  isRecording: () => boolean;
+}
+
+/**
+ * 把快捷键浏览 / 编辑界面渲染进 `host`（不含模态层与「确定」按钮）。
+ * 返回句柄供宿主控制（设置页用它做搜索转发与卸载）。
+ */
+export function mountKeymapPage(host: HTMLElement, opts: KeymapDialogOptions): KeymapPageHandle {
   // 对话框持有副本，每次改动同步外抛（main 负责持久化）
   const overrides: KeymapOverrides = { ...opts.overrides };
-
-  const overlay = document.createElement("div");
-  overlay.className = "settings-overlay";
-
-  const dialog = document.createElement("div");
-  dialog.className = "settings-dialog keymap-dialog";
-
-  const title = document.createElement("div");
-  title.className = "settings-title";
-  title.textContent = "快捷键";
 
   const toolbar = document.createElement("div");
   toolbar.className = "keymap-toolbar";
@@ -74,10 +80,12 @@ export function showKeymapDialog(opts: KeymapDialogOptions): void {
   search.className = "keymap-search";
   search.type = "search";
   search.placeholder = "搜索命令或键位…";
+
   const reset = document.createElement("button");
   reset.type = "button";
   reset.className = "keymap-reset";
   reset.textContent = "恢复全部默认";
+
   toolbar.append(presetSel, search, reset);
 
   const hint = document.createElement("div");
@@ -86,16 +94,7 @@ export function showKeymapDialog(opts: KeymapDialogOptions): void {
   const list = document.createElement("div");
   list.className = "keymap-list";
 
-  const actions = document.createElement("div");
-  actions.className = "settings-actions";
-  const ok = document.createElement("button");
-  ok.className = "settings-ok";
-  ok.textContent = "确定";
-  actions.append(ok);
-
-  dialog.append(title, toolbar, hint, list, actions);
-  overlay.appendChild(dialog);
-  document.body.appendChild(overlay);
+  host.append(toolbar, hint, list);
 
   // 录制态：同一时刻只允许一个键位按钮处于录制中
   let recording: HTMLButtonElement | null = null;
@@ -279,15 +278,53 @@ export function showKeymapDialog(opts: KeymapDialogOptions): void {
   render();
   search.focus();
 
-  const onDocKeyDown = (e: KeyboardEvent): void => {
-    // 录制中的按键由 recordHandler 专管，不能顺带把对话框关掉
-    if (e.key === "Escape" && !recording) close();
+  return {
+    destroy: () => stopRecording(),
+    setFilter: (q: string) => {
+      search.value = q;
+      render();
+    },
+    isRecording: () => recording !== null,
   };
+}
+
+/** 独立的快捷键对话框（弹窗形态）；设置页的「快捷键」分类直接复用其渲染逻辑。 */
+export function showKeymapDialog(opts: KeymapDialogOptions): void {
+  const overlay = document.createElement("div");
+  overlay.className = "settings-overlay";
+
+  const dialog = document.createElement("div");
+  dialog.className = "settings-dialog keymap-dialog";
+
+  const title = document.createElement("div");
+  title.className = "settings-title";
+  title.textContent = "快捷键";
+
+  const body = document.createElement("div");
+  body.className = "keymap-body";
+
+  const actions = document.createElement("div");
+  actions.className = "settings-actions";
+  const ok = document.createElement("button");
+  ok.className = "settings-ok";
+  ok.textContent = "确定";
+  actions.append(ok);
+
+  dialog.append(title, body, actions);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  const handle = mountKeymapPage(body, opts);
 
   const close = (): void => {
-    stopRecording();
+    handle.destroy();
     document.removeEventListener("keydown", onDocKeyDown, true);
     overlay.remove();
+  };
+
+  const onDocKeyDown = (e: KeyboardEvent): void => {
+    // 录制中的按键由 recordHandler 专管，不能顺带把对话框关掉
+    if (e.key === "Escape" && !handle.isRecording()) close();
   };
 
   ok.addEventListener("click", close);

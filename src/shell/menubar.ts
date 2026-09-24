@@ -1,11 +1,11 @@
 import { closePopupMenu, showPopupMenu, type MenuItem } from "./menu";
 
 /**
- * 菜单栏（文件 / 编辑 / 查看 / 设置 / 帮助）。
+ * 菜单栏（文件 / 编辑 / 查看 / 帮助）。
  *
  * 结构参考 Win11 记事本：点击展开下拉，hover 自动切换已打开的菜单。
- * 「设置 → 首选项…」打开弹窗设置窗口（B46，含字体/行距等精细选项）；
- * 「设置 → 快捷键…」打开可浏览、可编辑的快捷键对话框。
+ * 「文件 → 设置…」打开统一设置页（B106：把原「设置 → 首选项 / 快捷键」合并为
+ *   一个三栏设置页，快捷键作为其中一个分类）。
  * 分屏不占菜单项，只保留快捷键。
  */
 
@@ -58,10 +58,8 @@ export interface MenuBarCallbacks {
   onToggleHotExit: () => void;
   hotExitChecked: () => boolean;
   // ---- 设置 ----
-  /** 打开首选项弹窗（原二级子菜单已升级为设置窗口） */
-  onPreferences: () => void;
-  /** 打开快捷键对话框 */
-  onKeymap: () => void;
+  /** 打开统一设置页（含外观 / 编辑器 / 预览 / 新建文件 / 快捷键各分类） */
+  onSettings: () => void;
   // ---- 帮助 ----
   onAbout: () => void;
   /** 当前生效键位（菜单右侧提示），空串则不显示 */
@@ -107,6 +105,7 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
         checked: cb.hotExitChecked(),
         onSelect: cb.onToggleHotExit,
       },
+      { label: "设置…", onSelect: cb.onSettings },
       { separator: true },
       { label: withKey("关闭标签", cb.keyHint("file.close")), onSelect: cb.onCloseTab },
       { label: "退出", onSelect: cb.onExit },
@@ -155,13 +154,6 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
     ],
   },
   {
-    label: "设置",
-    items: (cb) => [
-      { label: "首选项…", onSelect: cb.onPreferences },
-      { label: "快捷键…", onSelect: cb.onKeymap },
-    ],
-  },
-  {
     label: "帮助",
     items: (cb) => [{ label: "关于 LitePad", onSelect: cb.onAbout }],
   },
@@ -171,10 +163,7 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
  * 菜单栏按钮的助记符字母（Alt+字母定位），与 MENUS 顺序一一对应。
  * 渲染成 VS Code 中文版的「标签(字母)」：`文件(F)` / `编辑(E)` / `查看(V)` / `设置(S)` / `帮助(H)`。
  */
-const MENU_KEYS = ["F", "E", "V", "S", "H"] as const;
-
-/** 设置菜单在菜单栏中的索引（Alt+S 用）。 */
-export const SETTINGS_MENU_INDEX = 3;
+const MENU_KEYS = ["F", "E", "V", "H"] as const;
 
 export function createMenuBar(host: HTMLElement, cb: MenuBarCallbacks): void {
   host.textContent = "";

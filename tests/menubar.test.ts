@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-// 菜单栏回归测试（B42 结构）：
-// 1) 运行时断言五份菜单的结构——主题/预览行距/大纲宽度/分屏已从「查看」移出，
-//    新建默认行尾/编码已从「文件」移出，统一收进「设置 → 首选项」；帮助只剩「关于」；
-// 2) 首选项子菜单可展开、点击即回调、点击叶子节点收起整棵弹层树；
-// 3) 静态断言入口唯一（不再有设置窗口；分屏只留快捷键）。
+// 菜单栏回归测试（B42 结构 + B106 统一设置页）：
+// 1) 运行时断言四份菜单的结构——主题/预览行距/大纲宽度/分屏已从「查看」移出，
+//    新建默认行尾/编码已从「文件」移出，统一收进「文件 → 设置…」；帮助只剩「关于」；
+// 2) 设置入口在「文件」菜单里，点击即回调、打开统一设置页；
+// 3) 静态断言入口唯一（不再有设置窗口/独立「设置」菜单；分屏只留快捷键）。
 import { describe, it, expect, afterEach } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import {
@@ -111,8 +111,8 @@ function makeCb(): MenuBarCallbacks {
     autosaveChecked: () => true,
     onToggleHotExit: noop,
     hotExitChecked: () => true,
-    // 设置 → 快捷键
-    onKeymap: noop,
+    // 文件 → 设置…
+    onSettings: noop,
     onAbout: noop,
     // 用真实注册表，顺带断言菜单显示的键位与生效键位一致
     keyHint: (id) => realKeyHint(id, {}),
@@ -124,18 +124,17 @@ afterEach(() => {
   document.body.textContent = "";
 });
 
-describe("菜单栏（文件 / 编辑 / 查看 / 设置 / 帮助）", () => {
+describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
   it("B103：菜单按钮是「标签(字母)」写法，不再有首字下划线和 Alt 键帽提示", () => {
     const host = document.createElement("nav");
     document.body.appendChild(host);
     createMenuBar(host, makeCb());
     // 五个按钮的文本：VS Code 中文版的助记符写法
     const texts = [...host.querySelectorAll("button.menu-btn")].map((b) => b.textContent);
-    expect(texts, "五个菜单按钮都要带括号助记符").toEqual([
+    expect(texts, "四个菜单按钮都要带括号助记符").toEqual([
       "文件(F)",
       "编辑(E)",
       "查看(V)",
-      "设置(S)",
       "帮助(H)",
     ]);
     // 反面：下划线（.mnemonic）与提示里的 Alt+字母 键帽都必须退场
@@ -251,28 +250,24 @@ describe("菜单栏（文件 / 编辑 / 查看 / 设置 / 帮助）", () => {
     expect(wrap2?.querySelector(".check")?.textContent).toBe("");
   });
 
-  it("B46：设置菜单 = 首选项… + 快捷键…，都是叶子（不再有子菜单）", async () => {
+  it("B106：设置入口在「文件」菜单，不再有独立的「设置」菜单", async () => {
     const host = document.createElement("nav");
     document.body.appendChild(host);
     const cb = makeCb();
     const calls: string[] = [];
-    cb.onPreferences = () => calls.push("preferences");
-    cb.onKeymap = () => calls.push("keymap");
+    cb.onSettings = () => calls.push("settings");
     createMenuBar(host, cb);
-    await clickMenuBtn(host, "设置");
-    expect(rootTexts()).toEqual(["首选项…", "快捷键…"]);
 
-    // 弹窗化后设置菜单不得再有任何子菜单父项
-    const submenuParents = [...document.querySelectorAll(".popup-menu .has-submenu")];
-    expect(submenuParents, "设置菜单不得再有子菜单父项").toHaveLength(0);
+    // 没有独立的「设置」顶层菜单
+    const btnLabels = [...host.querySelectorAll("button.menu-btn")].map((b) => b.textContent ?? "");
+    expect(btnLabels, "不得再出现独立的「设置」菜单").not.toContain("设置(S)");
 
-    await clickAny("首选项…");
-    expect(calls).toEqual(["preferences"]);
+    // 「文件」菜单里能找到「设置…」
+    await clickMenuBtn(host, "文件");
+    expect(rootTexts().join("\n"), "文件菜单应包含「设置…」").toContain("设置…");
+    await clickAny("设置…");
+    expect(calls).toEqual(["settings"]);
     expect(document.querySelector(".popup-menu"), "点击叶子项后弹层应收起").toBeNull();
-
-    await clickMenuBtn(host, "设置");
-    await clickAny("快捷键…");
-    expect(calls).toEqual(["preferences", "keymap"]);
   });
 
   it("帮助菜单：只剩「关于 LitePad」（快捷键已移入设置）", async () => {
@@ -291,48 +286,46 @@ describe("菜单栏（文件 / 编辑 / 查看 / 设置 / 帮助）", () => {
 });
 
 describe("设置项归属与接线（B42/B46）", () => {
-  it("原设置对话框必须已删除，且不再有任何入口", () => {
-    expect(existsSync("src/shell/settingsdialog.ts"), "设置对话框文件必须删除").toBe(false);
-    expect(existsSync("src/shell/keymapdialog.ts"), "快捷键对话框应存在").toBe(true);
+  it("B106：统一设置页必须存在并接线，旧的首选项弹窗已删除", () => {
+    expect(existsSync("src/shell/settingsdialog.ts"), "统一设置页文件必须存在").toBe(true);
+    expect(existsSync("src/shell/preferencesdialog.ts"), "旧首选项弹窗必须删除").toBe(false);
+    expect(existsSync("src/shell/keymapdialog.ts"), "快捷键逻辑文件应存在").toBe(true);
     const src = readFileSync("src/main.ts", "utf-8");
-    expect(src).not.toContain("showSettingsDialog");
-    expect(src).not.toContain("openSettings");
-    expect(src).not.toContain("./shell/settingsdialog");
+    expect(src, "main 必须引入 showSettingsDialog").toContain("showSettingsDialog(");
+    expect(src, "main 必须有打开设置页函数").toContain("function openSettingsDialog(");
+    expect(src, "main 不得再残留 preferencesdialog").not.toContain("preferencesdialog");
     const html = readFileSync("index.html", "utf-8");
     expect(html, "工具栏不再有设置齿轮").not.toContain("btn-settings");
     const menu = readFileSync("src/shell/menubar.ts", "utf-8");
-    expect(menu, "菜单栏不得再保留设置项回调").not.toContain("onSettings");
-    // ⚠️ 判据只截「设置」那一段：B97 给「文件」加回了「导出」子菜单，
-    //    在全文件里搜 submenu: 会把那条误判成设置项回归。
-    const setBlock = menu.slice(menu.indexOf('label: "设置"'), menu.indexOf('label: "帮助"'));
-    expect(setBlock, "设置菜单必须有首选项入口").toContain('label: "首选项…"');
-    expect(setBlock, "B46 后首选项不再是子菜单").not.toContain("submenu:");
-    expect(setBlock, "设置菜单必须有快捷键入口").toContain('label: "快捷键…"');
+    expect(menu, "菜单栏必须有 onSettings 回调").toContain("onSettings:");
+    expect(menu, "菜单栏不得再残留 onPreferences").not.toContain("onPreferences");
+    expect(menu, "菜单栏不得再残留 onKeymap").not.toContain("onKeymap");
+    expect(menu, "不得再有独立的「设置」顶层菜单").not.toContain('label: "设置"');
+    expect(menu, "文件菜单必须含「设置…」入口").toContain('label: "设置…"');
   });
 
-  it("B46：首选项弹窗必须存在并接线到 main.ts", () => {
-    expect(existsSync("src/shell/preferencesdialog.ts"), "首选项弹窗文件应存在").toBe(true);
-    const dlg = readFileSync("src/shell/preferencesdialog.ts", "utf-8");
-    // 收拢原子菜单的全部预设值 + 新增精细选项
+  it("B106：统一设置页必须含全部设置项并接线到 main.ts", () => {
+    expect(existsSync("src/shell/settingsdialog.ts"), "统一设置页文件应存在").toBe(true);
+    const dlg = readFileSync("src/shell/settingsdialog.ts", "utf-8");
+    // 收拢原首选项的全部精细选项
     for (const item of [
       "主题",
       "编辑器字体",
       "字号",
       "编辑器行距",
-      "自动换行",
-      "自动保存",
       "预览行距",
       "大纲宽度",
       "默认行尾",
       "默认编码",
+      "快捷键",
     ]) {
-      expect(dlg, `首选项弹窗必须含「${item}」`).toContain(item);
+      expect(dlg, `设置页必须含「${item}」`).toContain(item);
     }
     const src = readFileSync("src/main.ts", "utf-8");
-    expect(src, "main 必须引入 showPreferencesDialog").toContain("showPreferencesDialog(");
-    expect(src, "main 必须有弹窗入口函数").toContain("function openPreferencesDialog(");
+    expect(src, "main 必须引入 showSettingsDialog").toContain("showSettingsDialog(");
+    expect(src, "main 必须有打开设置页函数").toContain("function openSettingsDialog(");
     const menu = readFileSync("src/shell/menubar.ts", "utf-8");
-    expect(menu, "菜单必须回调 onPreferences").toContain("onPreferences");
+    expect(menu, "菜单必须回调 onSettings").toContain("onSettings:");
   });
 
   it("每个被移出的设置项都在首选项里接线到 main.ts", () => {
@@ -509,9 +502,9 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
   const main = (): string => readFileSync("src/main.ts", "utf-8");
 
   it("「查看」不得再有主题 / 预览行距 / 大纲宽度 / 分屏", () => {
-    // 只看「查看」菜单那一段，避免把「设置 → 首选项」里的同名词条误判为残留
+    // 只看「查看」菜单那一段，避免把「文件 → 设置…」里的同名词条误判为残留
     const src = menu();
-    const viewBlock = src.slice(src.indexOf('label: "查看"'), src.indexOf('label: "设置"'));
+    const viewBlock = src.slice(src.indexOf('label: "查看"'), src.indexOf('label: "帮助"'));
     expect(viewBlock, "查看菜单不得再有主题三态").not.toContain("主题：");
     expect(viewBlock, "查看菜单不得再有预览行距").not.toContain("预览行距");
     expect(viewBlock, "查看菜单不得再有大纲宽度").not.toContain("大纲宽度");
@@ -536,19 +529,19 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     expect(helpBlock, "帮助菜单不得再有快捷键入口").not.toContain("快捷键");
   });
 
-  it("「设置」菜单 = 首选项弹窗入口 + 快捷键；预设值收进弹窗（B46）", () => {
+  it("B106：「文件 → 设置…」是统一设置页入口，原「设置」菜单与首选项弹窗已移除", () => {
     const src = menu();
-    const setBlock = src.slice(src.indexOf('label: "设置"'), src.indexOf('label: "帮助"'));
-    expect(setBlock, "设置菜单必须有首选项入口").toContain('label: "首选项…"');
-    expect(setBlock, "B46 后首选项不再是子菜单").not.toContain("submenu:");
-    expect(setBlock, "设置菜单必须有快捷键入口").toContain('label: "快捷键…"');
+    // 不再有独立的「设置」顶层菜单
+    expect(src, "不得再有独立的「设置」顶层菜单").not.toContain('label: "设置"');
+    // 设置入口在「文件」菜单里
+    const fileBlock = src.slice(src.indexOf('label: "文件"'), src.indexOf('label: "编辑"'));
+    expect(fileBlock, "「文件」菜单必须有「设置…」入口").toContain('label: "设置…"');
 
-    // 原子菜单的预设值全部收进首选项弹窗（按分组标签断言）
-    const dlg = readFileSync("src/shell/preferencesdialog.ts", "utf-8");
+    // 原先散落在原子菜单里的预设值全部收进统一设置页（按分组标签断言）
+    const dlg = readFileSync("src/shell/settingsdialog.ts", "utf-8");
     for (const item of [
       "外观",
       "主题",
-      "字体与行距",
       "编辑器字体",
       "字号",
       "编辑器行距",
@@ -558,8 +551,9 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
       "新建文件",
       "默认行尾",
       "默认编码",
+      "快捷键",
     ]) {
-      expect(dlg, `首选项弹窗必须含「${item}」`).toContain(item);
+      expect(dlg, `统一设置页必须含「${item}」`).toContain(item);
     }
     // 新增精细设置的字段必须持久化（前后端成对）
     const api = readFileSync("src/ipc/api.ts", "utf-8");
@@ -570,32 +564,27 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     }
   });
 
-  it("B51：首选项弹窗移除自动换行 / 自动保存 / 快捷键（功能留在菜单里）", () => {
-    // 需求：这三项从首选项弹窗里去掉——它们是高频开关，菜单里一点即达，
-    // 塞进弹窗只会让「改一个开关」变成三层点击。
-    const dlg = readFileSync("src/shell/preferencesdialog.ts", "utf-8");
-    for (const gone of [
-      '"自动换行"',
-      '"自动保存"',
-      '"快捷键…"',
-      "onWordWrap",
-      "onAutosave",
-      "onKeymap",
-      "checkRow",
-    ]) {
-      expect(dlg, `首选项弹窗不得再出现 ${gone}`).not.toContain(gone);
+  it("B51/B106：设置页不重复承载菜单高频开关；快捷键改为设置页内一个分类", () => {
+    // 需求：自动换行 / 自动保存是高频开关，菜单里一点即达，不应放进设置页。
+    // 快捷键则相反——它从独立弹窗收编为「设置」页里的一个分类。
+    const dlg = readFileSync("src/shell/settingsdialog.ts", "utf-8");
+    for (const gone of ['"自动换行"', '"自动保存"', "onWordWrap", "onAutosave"]) {
+      expect(dlg, `设置页不得再出现 ${gone}`).not.toContain(gone);
     }
+    // 快捷键现在是设置页的一个分类（不是独立弹窗入口）
+    expect(dlg, "设置页必须含「快捷键」分类").toContain("快捷键");
+
     // 只是搬家，不是砍功能：菜单入口必须都还在
-    // （自动换行在「查看」，自动保存在「文件」，快捷键在「设置」）
+    // （自动换行在「查看」，自动保存在「文件」，快捷键入口在「文件 → 设置…」）
     const src = menu();
-    const viewBlock = src.slice(src.indexOf('label: "查看"'), src.indexOf('label: "设置"'));
-    const setBlock = src.slice(src.indexOf('label: "设置"'), src.indexOf('label: "帮助"'));
+    const viewBlock = src.slice(src.indexOf('label: "查看"'), src.indexOf('label: "帮助"'));
+    const fileBlock = src.slice(src.indexOf('label: "文件"'), src.indexOf('label: "编辑"'));
     expect(viewBlock, "「查看」菜单必须保留自动换行").toContain("自动换行");
-    expect(src, "「文件」菜单必须保留自动保存").toContain("自动保存");
-    expect(setBlock, "「设置」菜单必须保留快捷键入口").toContain('label: "快捷键…"');
+    expect(fileBlock, "「文件」菜单必须保留自动保存").toContain("自动保存");
+    expect(fileBlock, "「文件」菜单的设置入口即快捷键去向").toContain('label: "设置…"');
   });
 
-  it("B97：主题只从「设置 → 首选项」进出，顶栏不再有主题/导出按钮", () => {
+  it("B97/B106：主题只从「文件 → 设置…」进出，顶栏不再有主题/导出按钮", () => {
     const main = readFileSync("src/main.ts", "utf-8");
     // 档位仍要有个可读的落点（它是跨模块状态：换档要联动 CodeMirror 的明暗）
     expect(main, "档位要写进 data 属性供测试/样式用").toContain("dataset.themeMode");
@@ -609,12 +598,12 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     for (const gone of ["btn-theme", "btn-export", "btn-new", "toolbar-actions"]) {
       expect(html, `顶栏不得再有 ${gone}`).not.toContain(gone);
     }
-    // 「移除」必须配「仍在别处可达」：导出在「文件 → 导出 ▸」，主题在「设置 → 首选项」
+    // 「移除」必须配「仍在别处可达」：导出在「文件 → 导出 ▸」，主题在「文件 → 设置… → 外观」
     const menu = readFileSync("src/shell/menubar.ts", "utf-8");
     expect(menu, "导出必须有菜单入口").toContain('label: "导出"');
     expect(menu, "导出菜单项要带回调").toContain("onExportHtml");
-    const dlg = readFileSync("src/shell/preferencesdialog.ts", "utf-8");
-    expect(dlg, "主题必须有首选项入口").toContain('selectRow("主题"');
+    const dlg = readFileSync("src/shell/settingsdialog.ts", "utf-8");
+    expect(dlg, "主题必须有设置页入口").toMatch(/selectRow\(\s*"主题"/);
   });
 
   it("B81 图标红线：按钮图标一律走 codicon，手绘只剩 sun/moon（用户确认豁免）", () => {

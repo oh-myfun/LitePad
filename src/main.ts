@@ -126,8 +126,8 @@ import {
   setKeymapPreset,
   type KeymapOverrides,
 } from "./shell/keymap";
-import { KEYMAP_RECORDING_CLASS, showKeymapDialog } from "./shell/keymapdialog";
-import { showPreferencesDialog } from "./shell/preferencesdialog";
+import { KEYMAP_RECORDING_CLASS } from "./shell/keymapdialog";
+import { showSettingsDialog } from "./shell/settingsdialog";
 import {
   renderSplitview,
   panelAt,
@@ -3444,7 +3444,7 @@ function refreshViewModeButton(): void {
  * 把当前主题档位写到 `<html data-theme-mode>`（light / dark / system）。
  *
  * B97 之前这里刷的是顶栏那颗主题按钮的图标（三态循环：sun / moon / color-mode）。
- * 顶栏快捷按钮整排移除后，主题只从「设置 → 首选项 → 主题」这个下拉进出，
+ * 顶栏快捷按钮整排移除后，主题只从「设置」页「外观」分类的下拉进出，
  * 循环按钮与那三颗图标一并退役。留下这个 data 属性是因为档位仍是**跨模块状态**：
  * 换档要联动 CodeMirror 的明暗，样式与回归测试也都靠它读当前档位。
  */
@@ -3707,7 +3707,7 @@ function applyEditorLineHeight(value: number): void {
   for (const p of panels.values()) p.view?.view.requestMeasure();
 }
 
-// ---------------------------------------------------------------- 偏好（设置 → 首选项）
+// ---------------------------------------------------------------- 偏好（文件 → 设置）
 
 /**
  * 过滤从磁盘读回的快捷键覆盖表：
@@ -3729,7 +3729,7 @@ function sanitizeKeymap(raw: Record<string, string>): KeymapOverrides {
   return out;
 }
 
-/** 预取行尾/编码候选，供「首选项」子菜单同步渲染（IPC 失败则用内置兜底）。 */
+/** 预取行尾/编码候选，供「设置」页同步渲染（IPC 失败则用内置兜底）。 */
 async function loadPreferenceOptions(): Promise<void> {
   try {
     const list = await listEols();
@@ -3754,7 +3754,7 @@ function keyHint(id: string): string {
     .join(" / ");
 }
 
-/** 主题档位（设置 → 首选项的自定义下拉）：立即生效 + 持久化。 */
+/** 主题档位（设置页「外观」分类的下拉）：立即生效 + 持久化。 */
 async function setThemeMode(mode: ThemeMode): Promise<void> {
   themeMode = mode;
   // ⚠️ **必须写回 settings，否则根本存不下来**（B79 用户实测：每次打开都是深色）。
@@ -3771,7 +3771,7 @@ async function setThemeMode(mode: ThemeMode): Promise<void> {
   showMessage(mode === "system" ? "主题：跟随系统" : mode === "dark" ? "主题：深色" : "主题：浅色");
 }
 
-/** 新建文件的默认行尾（设置 → 首选项）。 */
+/** 新建文件的默认行尾（设置页「新建文件」分类）。 */
 async function setDefaultEol(value: string): Promise<void> {
   if (!settings) return;
   settings.default_eol = value;
@@ -3779,7 +3779,7 @@ async function setDefaultEol(value: string): Promise<void> {
   showMessage(`新建文件默认行尾：${value}`);
 }
 
-/** 新建文件的默认编码（设置 → 首选项）。 */
+/** 新建文件的默认编码（设置页「新建文件」分类）。 */
 async function setDefaultEncoding(value: string): Promise<void> {
   if (!settings) return;
   settings.default_encoding = value;
@@ -3809,15 +3809,7 @@ async function applyKeymapPreset(id: string): Promise<void> {
   showMessage(`键位预设：${getKeymapPreset().label}`);
 }
 
-/** 打开快捷键对话框（设置 → 快捷键）。 */
-function openKeymapDialog(): void {
-  showKeymapDialog({
-    overrides: keymapOverrides,
-    onChange: (next) => void applyKeymapOverrides(next),
-    preset: getKeymapPreset().id,
-    onPresetChange: (id) => void applyKeymapPreset(id),
-  });
-}
+// 快捷键不再单独弹窗：它作为「设置」页里的一个分类（见 src/shell/settingsdialog.ts）。
 
 /**
  * 自动保存开关（绝对值；由「文件」菜单的勾选项切换）。
@@ -3876,7 +3868,7 @@ async function setTocWidthValue(width: number): Promise<void> {
   showMessage(`大纲宽度 ${tocWidth}px`);
 }
 
-/** 编辑器字体族（首选项弹窗；空串 = 内置默认栈）。 */
+/** 编辑器字体族（设置页；空串 = 内置默认栈）。 */
 async function setFontFamily(family: string): Promise<void> {
   applyFontFamily(family);
   if (settings) {
@@ -3886,7 +3878,7 @@ async function setFontFamily(family: string): Promise<void> {
   showMessage(family.trim() ? `编辑器字体 ${family.trim()}` : "编辑器字体：默认");
 }
 
-/** 编辑器行距（首选项弹窗，1.0–2.5 倍）。 */
+/** 编辑器行距（设置页，1.0–2.5 倍）。 */
 async function setEditorLineHeight(value: number): Promise<void> {
   applyEditorLineHeight(value);
   if (settings) {
@@ -3901,7 +3893,7 @@ function applyClamp(value: number): number {
   return Math.min(2.5, Math.max(1, Number(value) || 1.5));
 }
 
-/** 字号绝对值设置（首选项弹窗；快捷键缩放走 changeFontSize 增量链路）。 */
+/** 字号绝对值设置（设置页；快捷键缩放走 changeFontSize 增量链路）。 */
 async function setFontSizeValue(px: number): Promise<void> {
   const next = Math.min(28, Math.max(10, Math.round(px)));
   if (next === currentFontSize()) return;
@@ -3924,9 +3916,9 @@ async function setWordWrap(on: boolean): Promise<void> {
   }
 }
 
-/** 打开首选项弹窗（设置 → 首选项…）。 */
-function openPreferencesDialog(): void {
-  showPreferencesDialog({
+/** 打开统一设置页（文件 → 设置…）。 */
+function openSettingsDialog(): void {
+  showSettingsDialog({
     theme: () => themeMode,
     onTheme: (mode) => void setThemeMode(mode),
     fontFamily: () => settings?.font_family ?? "",
@@ -3945,6 +3937,12 @@ function openPreferencesDialog(): void {
     defaultEncoding: () => settings?.default_encoding ?? "UTF-8",
     encodingOptions: () => encodingOptions,
     onDefaultEncoding: (v) => void setDefaultEncoding(v),
+    keymap: {
+      overrides: keymapOverrides,
+      onChange: (next) => void applyKeymapOverrides(next),
+      preset: getKeymapPreset().id,
+      onPresetChange: (id) => void applyKeymapPreset(id),
+    },
   });
 }
 
@@ -4052,8 +4050,7 @@ const ALT_MENU_INDEX: Record<string, number> = {
   KeyF: 0,
   KeyE: 1,
   KeyV: 2,
-  KeyS: 3,
-  KeyH: 4,
+  KeyH: 3,
 };
 
 /** 快捷键命令 → 动作。id 与 keymap.ts 的 COMMANDS 一一对应。 */
@@ -4540,9 +4537,8 @@ function setupMenuBar(): void {
     autosaveChecked: () => settings?.autosave ?? false,
     onToggleHotExit: () => void toggleHotExit(),
     hotExitChecked: () => settings?.hot_exit ?? true,
-    // ---- 设置（B46：首选项弹窗化，子菜单的偏好回调全部移入弹窗 setter） ----
-    onPreferences: () => openPreferencesDialog(),
-    onKeymap: () => openKeymapDialog(),
+    // ---- 设置（B106：统一设置页，含原首选项与快捷键分类） ----
+    onSettings: () => openSettingsDialog(),
     // ---- 帮助 ----
     onAbout: () => {
       void ask(
