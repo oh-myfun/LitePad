@@ -99,10 +99,10 @@ describe("B97 自建标题栏", () => {
     const s = css();
     expect(s, "必须有标题栏规则").toMatch(/\.title-bar\s*\{/);
     expect(s, "必须有窗口控制容器规则").toMatch(/\.window-controls\s*\{/);
-    // B103 起窗口控制键与「钉在顶部」共用**同一条声明**，所以选择器是一对。
-    // ⚠️ 判据要写成「一对选择器后紧跟 {」：只判 `.win-btn {` 会在合并成
+    // B103 起窗口控制键、B110 起菜单按钮与「钉在顶部」共用**同一条声明**，所以选择器是一组。
+    // ⚠️ 判据要写成「一组选择器后紧跟 {」：只判 `.win-btn {` 会在合并成
     //    `.win-btn, .title-btn {` 之后永远为真/假得莫名其妙（这次就是先红的）。
-    expect(s, "必须有窗口控制键规则").toMatch(/\.win-btn,\s*\.title-btn\s*\{/);
+    expect(s, "必须有窗口控制键规则").toMatch(/\.win-btn,\s*\.title-btn,\s*\.menu-btn\s*\{/);
     // 关闭键悬停的红底是 Windows 的系统约定，不是随手挑的颜色
     expect(s, "关闭键悬停必须是系统约定的红底").toMatch(/\.win-btn-close:hover\s*\{[^}]*#e81123/);
     // 钉住态只高亮图标（.codicon），整按钮不点亮；图标规则必须排在 hover 之后
@@ -305,19 +305,45 @@ describe("B97 自建标题栏", () => {
     const s = css();
     // ⚠️ 必须**同一条声明**：拆成两条规则就会各自漂移（宽度 / 圆角 / hover 底色），
     //    标题栏右侧会出现「两种按钮」—— 用户就是看到这个才提的要求。
-    expect(s, "必须与 .title-btn 共用一条声明").toMatch(/\.win-btn,\s*\.title-btn\s*\{/);
+    expect(s, "必须与 .title-btn 共用一条声明").toMatch(
+      /\.win-btn,\s*\.title-btn,\s*\.menu-btn\s*\{/,
+    );
     const shared = ruleBlock(s, ".win-btn");
     expect(shared, "取不到共享规则").toBeTruthy();
     expect(shared, "宽度与三键一致（46px）").toMatch(/width:\s*46px/);
     expect(shared, "高度撑满标题栏").toMatch(/height:\s*100%/);
     expect(shared, "无圆角（与窗口控制键同款）").toMatch(/border-radius:\s*0/);
-    // 悬停也得共用，否则三键亮、置顶键不亮
-    expect(s, "悬停底色必须共用").toMatch(/\.win-btn:hover,\s*\.title-btn:hover\s*\{/);
+    // 悬停也得共用，否则三键亮、置顶键 / 菜单键不亮
+    expect(s, "悬停底色必须共用").toMatch(
+      /\.win-btn:hover,\s*\.title-btn:hover,\s*\.menu-btn:hover/,
+    );
     // 退化对照：把共享宽度改回旧的 30px，判据必须判出来（防止写成恒真）
-    const regressed = s.replace(/(\.win-btn,\s*\.title-btn\s*\{[^}]*?width:\s*)46px/, "$130px");
+    const regressed = s.replace(
+      /(\.win-btn,\s*\.title-btn,\s*\.menu-btn\s*\{[^}]*?width:\s*)46px/,
+      "$130px",
+    );
     expect(ruleBlock(regressed, ".win-btn"), "退化对照要真的改成 30px").toMatch(/width:\s*30px/);
     expect(ruleBlock(regressed, ".win-btn"), "退化到 30px 后不该再是 46px").not.toMatch(
       /width:\s*46px/,
+    );
+  });
+
+  it("B110：菜单按钮与窗口三键同一条声明（无圆角 / 满高 / 同悬停）", () => {
+    const s = css();
+    // 菜单按钮必须并进 .win-btn / .title-btn 的共用声明，否则三处各自漂移
+    expect(s, "菜单按钮必须并入共用声明").toMatch(/\.win-btn,\s*\.title-btn,\s*\.menu-btn\s*\{/);
+    expect(s, "悬停与展开态共用同一底色").toMatch(/\.menu-btn:hover,\s*\.menu-btn\.menu-open/);
+    // 菜单是文字标签：宽度随文本走，不能套 46px 的图标方键宽度
+    expect(s, "菜单按钮宽度随文本").toMatch(/\.menu-btn\s*\{[^}]*width:\s*auto/);
+    // 容器撑满标题栏，按键才会像三键一样满高（否则 height:100% 无从解析）
+    expect(ruleBlock(s, ".menu-bar"), "菜单容器必须撑满标题栏").toMatch(/align-self:\s*stretch/);
+    // 退化对照：把菜单按钮从共用声明里摘出来，守卫必须判出来（防恒真）
+    const regressed = s.replace(
+      /\.win-btn,\s*\.title-btn,\s*\.menu-btn\s*\{/,
+      ".win-btn,\n.title-btn {",
+    );
+    expect(regressed, "摘掉 .menu-btn 后守卫必须不再匹配").not.toMatch(
+      /\.win-btn,\s*\.title-btn,\s*\.menu-btn\s*\{/,
     );
   });
 
