@@ -39,6 +39,8 @@ function makeOpts(): SettingsDialogOptions {
     onHotExit: noop,
     tabStyle: () => "connected",
     onTabStyle: noop,
+    tabActionReserveSpace: () => true,
+    onTabActionReserveSpace: noop,
     keymap: {
       overrides: {} as KeymapOverrides,
       onChange: noop,

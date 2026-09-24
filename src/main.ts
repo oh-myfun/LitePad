@@ -3842,6 +3842,21 @@ async function setTabStyle(style: string): Promise<void> {
   showMessage(style === "pill" ? "标签样式：药丸" : "标签样式：相连");
 }
 
+/** 标签操作槽位空位（设置页「外观」开关）：立即生效。 */
+function applyTabActionReserve(on: boolean): void {
+  document.documentElement.dataset.tabReserve = on ? "on" : "off";
+}
+
+/** 标签操作槽位空位切换（设置页）：立即生效 + 持久化。 */
+async function setTabActionReserve(on: boolean): Promise<void> {
+  applyTabActionReserve(on);
+  if (settings) {
+    settings.tab_action_reserve_space = on;
+    await persistSettings();
+  }
+  showMessage(on ? "标签按钮：预留空位" : "标签按钮：紧凑");
+}
+
 /** 主题档位（设置页「外观」分类的下拉）：立即生效 + 持久化。 */
 async function setThemeMode(mode: ThemeMode): Promise<void> {
   themeMode = mode;
@@ -4024,6 +4039,8 @@ function openSettingsDialog(): void {
     onHotExit: (v) => void setHotExit(v),
     tabStyle: () => settings?.tab_style ?? "connected",
     onTabStyle: (v) => void setTabStyle(v),
+    tabActionReserveSpace: () => settings?.tab_action_reserve_space ?? true,
+    onTabActionReserveSpace: (v) => void setTabActionReserve(v),
     keymap: {
       overrides: keymapOverrides,
       onChange: (next) => void applyKeymapOverrides(next),
@@ -5508,6 +5525,8 @@ async function setupShell(): Promise<void> {
   publishThemeMode();
   // 标签样式写进 <html data-tab-style>（B114；必须在任何标签渲染前落地）
   applyTabStyle(settings?.tab_style ?? "connected");
+  // 标签操作槽位空位写进 <html data-tab-reserve>（B115，同上）
+  applyTabActionReserve(settings?.tab_action_reserve_space ?? true);
   isWrap = settings?.word_wrap ?? true;
   applyFontSize(settings?.font_size ?? 14);
   applyFontFamily(settings?.font_family ?? "");

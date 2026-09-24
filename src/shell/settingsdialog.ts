@@ -48,6 +48,9 @@ export interface SettingsDialogOptions {
   /** 标签样式（B114）："connected" | "pill"。「外观」分类里的下拉。 */
   tabStyle: () => string;
   onTabStyle: (style: string) => void;
+  /** 标签操作槽位恒预留空位（B115，VS Code tabActionReserveSpace，默认 true）。 */
+  tabActionReserveSpace: () => boolean;
+  onTabActionReserveSpace: (on: boolean) => void;
   /** 快捷键分类页所需的改键逻辑（复用 keymapdialog） */
   keymap: KeymapDialogOptions;
 }
@@ -86,7 +89,20 @@ const CATEGORIES: Category[] = [
   {
     id: "appearance",
     label: "外观",
-    keywords: ["外观", "主题", "浅色", "深色", "跟随系统", "标签样式", "相连", "药丸", "tab"],
+    keywords: [
+      "外观",
+      "主题",
+      "浅色",
+      "深色",
+      "跟随系统",
+      "标签样式",
+      "相连",
+      "药丸",
+      "tab",
+      "预留",
+      "空位",
+      "标签按钮",
+    ],
   },
   {
     id: "editor",
@@ -421,6 +437,14 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
         ],
         opts.tabStyle(),
         (v) => opts.onTabStyle(v),
+      ),
+    );
+    body.appendChild(
+      toggleRow(
+        "标签按钮预留空位",
+        "开启：每个标签右侧固定预留 ●/× 槽位，已保存的活动标签常驻关闭按钮（VS Code 默认）；关闭：已保存标签收紧文字，悬停时按钮浮出。",
+        opts.tabActionReserveSpace(),
+        (v) => opts.onTabActionReserveSpace(v),
       ),
     );
   } else if (id === "editor") {

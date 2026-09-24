@@ -47,6 +47,10 @@ pub struct Settings {
     /// 标签样式（"connected" | "pill"）。前端不识别的值按 "connected" 处理，
     /// 后端不校验——理由同 keymap_preset。
     pub tab_style: String,
+    /// 标签右侧 ●/× 操作槽位是否**恒定预留空位**（B115，对齐 VS Code 1.139
+    /// `workbench.editor.tabActionReserveSpace`，默认 true）。false = 紧凑档：
+    /// 已保存标签收紧文字，悬停时按钮浮出；未保存标签的 ● 指示器恒预留。
+    pub tab_action_reserve_space: bool,
 }
 
 impl Default for Settings {
@@ -70,6 +74,7 @@ impl Default for Settings {
             keymap: HashMap::new(),
             keymap_preset: "default".into(),
             tab_style: "connected".into(),
+            tab_action_reserve_space: true,
         }
     }
 }
@@ -396,6 +401,21 @@ mod tests {
             out.contains("\"tab_style\":\"pill\""),
             "落盘字段应为 snake_case tab_style：{out}"
         );
+    }
+
+    /// B115：Settings 新增 `tab_action_reserve_space`。老配置缺字段必须回落
+    /// true（对齐 VS Code 默认），否则 load() 整体失败、用户偏好一起丢。
+    #[test]
+    fn settings_without_tab_action_reserve_space_falls_back_to_true() {
+        let json = r#"{ "theme": "dark" }"#;
+
+        let s: Settings =
+            serde_json::from_str(json).expect("缺 tab_action_reserve_space 也应能读入");
+        assert!(
+            s.tab_action_reserve_space,
+            "缺失应回落 true（VS Code 默认）"
+        );
+        assert!(Settings::default().tab_action_reserve_space);
     }
 
     /// B68：会话必须带上热退出副本 ID。

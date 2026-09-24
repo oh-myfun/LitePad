@@ -417,3 +417,85 @@ describe("标签样式切换（B114：connected | pill）", () => {
     );
   });
 });
+
+describe("标签操作槽位空位（B115：预留 | 紧凑，对齐 VS Code tabActionReserveSpace）", () => {
+  // 同 B114 的反向验证模式：契约集中成判定函数，正向断言真实样式零违规，
+  // 反向验证喂退化替身断言被咬住（证明断言不是恒真假绿）。
+  function reserveViolations(css: string): string[] {
+    const v: string[] = [];
+    const get = (sel: string, filter?: string) => cssDecls(ruleBlock(css, sel, filter));
+    const compactAction = get(':root[data-tab-reserve="off"] .tab:not(.tab-dirty) .tab-action');
+    // 紧凑档：干净标签的槽位必须脱流（文字收紧、悬停浮出不引起布局跳动）
+    if (!compactAction.includes("position: absolute"))
+      v.push("紧凑档干净标签的槽位必须脱流（position: absolute）");
+    if (!compactAction.includes("top: 2px") || !compactAction.includes("right: 2px"))
+      v.push("紧凑档浮层槽位必须钉在标签右上（top/right 2px）");
+    // 紧凑档：活动干净标签常驻 × 必须收回（预留档的 20px 空位没了，常驻会压文字）
+    if (
+      !get(':root[data-tab-reserve="off"] .tab-active:not(.tab-dirty) .tab-close').includes(
+        "opacity: 0",
+      )
+    )
+      v.push("紧凑档活动干净标签不得常驻 ×（悬停才显示）");
+    if (
+      !get(':root[data-tab-reserve="off"] .tab-active:not(.tab-dirty):hover .tab-close').includes(
+        "opacity: 1",
+      )
+    )
+      v.push("紧凑档悬停干净的活动标签仍要能显示 ×");
+    // 常驻指示器恒预留：● 的槽位规则不得被紧凑档波及（选择器必须带 :not(.tab-dirty)）
+    // ⚠️ filter="width"：紧凑覆盖块的选择器尾段也是 .tab-action 且在文件更前面，
+    //   不加 filter 会抓到覆盖块（0075 尾段命中坑，B115 自己踩了一回）。
+    const action = cssDecls(ruleBlock(css, ".tab-action", "width"));
+    if (!action.includes("width: 20px"))
+      v.push("预留档（默认）槽位必须恒定 20px（B57 红线：显隐不得改变标签宽度）");
+    return v;
+  }
+
+  it("紧凑档 CSS 契约：干净标签槽位脱流 + 常驻 × 收回（真实样式零违规）", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    expect(reserveViolations(css), "真实样式违反紧凑档契约的条目").toEqual([]);
+  });
+
+  it("反向验证：退化替身（删光紧凑档覆盖 / 波及脏标签）必须被咬住（防恒真）", () => {
+    // 替身 A = 紧凑档覆盖块整体缺失（等于「设了开关没效果」的退化实现）
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const withoutCompact = css.replace(/:root\[data-tab-reserve="off"\][^{]*\{[^}]*\}/g, "");
+    const vA = reserveViolations(withoutCompact);
+    expect(vA.length, "替身 A（覆盖块缺失）必须至少被咬住一条").toBeGreaterThan(0);
+    expect(vA, "替身 A 必须咬住「槽位脱流」与「常驻 × 收回」两条").toContain(
+      "紧凑档干净标签的槽位必须脱流（position: absolute）",
+    );
+    expect(vA).toContain("紧凑档活动干净标签不得常驻 ×（悬停才显示）");
+
+    // 替身 B = 紧凑档选择器漏掉 :not(.tab-dirty)（波及 ● 常驻指示器的退化实现）
+    const leakingToDirty = css.replace(
+      ':root[data-tab-reserve="off"] .tab:not(.tab-dirty) .tab-action',
+      ':root[data-tab-reserve="off"] .tab .tab-action',
+    );
+    expect(
+      reserveViolations(leakingToDirty),
+      "替身 B（波及脏标签）不该触发槽位脱流的断言 —— 该断言锚定的是干净标签",
+    ).toContain("紧凑档干净标签的槽位必须脱流（position: absolute）");
+  });
+
+  it("设置页与主流程接线：外观分类有「标签按钮预留空位」开关，切换立即生效并持久化", () => {
+    const dlg = readFileSync("src/shell/settingsdialog.ts", "utf-8");
+    expect(dlg, "选项接口必须有 tabActionReserveSpace/onTabActionReserveSpace").toContain(
+      "tabActionReserveSpace: () => boolean",
+    );
+    expect(dlg, "外观页必须有「标签按钮预留空位」开关").toContain('"标签按钮预留空位"');
+
+    const src = stripLineComments(readFileSync("src/main.ts", "utf-8"));
+    expect(src, "档位必须写进 html[data-tab-reserve]").toContain("dataset.tabReserve");
+    expect(src, "切换必须写回 settings 才能存盘（B79 同款教训）").toMatch(
+      /settings\.tab_action_reserve_space\s*=/,
+    );
+    expect(src, "启动时必须应用，否则重启回退").toContain(
+      "applyTabActionReserve(settings?.tab_action_reserve_space ?? true)",
+    );
+    expect(src, "设置对话框必须接线 onTabActionReserveSpace").toContain(
+      "onTabActionReserveSpace: (v) => void setTabActionReserve(v)",
+    );
+  });
+});

@@ -695,6 +695,30 @@ button:focus-visible {
   padding: 4px 4px 0;
 }
 
+/* ==================================================================
+   标签操作槽位空位（B115，设置页「外观 → 标签按钮预留空位」开关；
+   对齐 VS Code 1.139 `workbench.editor.tabActionReserveSpace`，默认预留）。
+   `data-tab-reserve="off"`（紧凑档）：**已保存**（干净）标签不再固定预留
+   右侧 20px 槽位 —— 槽位脱流成浮层（absolute），文字收紧；
+   悬停 / 键盘聚焦时 × 浮在文字尾部（VS Code 紧凑档同款，不引起布局跳动）。
+   ⚠️ 未保存标签的 ● 是常驻指示器，无论哪档都预留整列（VS Code：
+   "Persistent dirty/pin indicators always reserve their overlay column"），
+   所以选择器全部带 :not(.tab-dirty)。
+   ⚠️ 预留档里「已保存的活动标签常驻 ×」（B57）依赖那 20px 空位；
+   紧凑档没有空位，常驻 × 会压在文字上 —— 必须收回到「悬停才显示」。
+   ================================================================== */
+:root[data-tab-reserve="off"] .tab:not(.tab-dirty) .tab-action {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+}
+:root[data-tab-reserve="off"] .tab-active:not(.tab-dirty) .tab-close {
+  opacity: 0;
+}
+:root[data-tab-reserve="off"] .tab-active:not(.tab-dirty):hover .tab-close {
+  opacity: 1;
+}
+
 .tab-name {
   /* B113：底色层 .tab-fill 是 absolute，会盖住普通流内容 —— 必须提上来
      （同 VS Code 给 .tab-label 的 relative + z-index: 1），否则文件名被底色糊住。
