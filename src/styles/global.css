@@ -1520,7 +1520,8 @@ button:focus-visible {
   border-radius: 6px;
   background: transparent;
   color: var(--fg-muted);
-  cursor: default;
+  /* B111：可点击 ⇒ 一律手型（原本写的是 default，与「有点击效果就该是 hand」相悖）。 */
+  cursor: pointer;
 }
 
 .settings-close:hover {
@@ -1556,7 +1557,8 @@ button:focus-visible {
   font-size: 13px;
   font-family: var(--font-ui);
   text-align: left;
-  cursor: default;
+  /* B111：左栏分类是按钮、有 hover 与选中态 ⇒ 手型（原本写的 default 与点击效果不符）。 */
+  cursor: pointer;
 }
 
 .settings-nav-item:hover {
