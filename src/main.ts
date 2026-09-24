@@ -3814,7 +3814,7 @@ async function applyKeymapPreset(id: string): Promise<void> {
 // 快捷键不再单独弹窗：它作为「设置」页里的一个分类（见 src/shell/settingsdialog.ts）。
 
 /**
- * 自动保存开关（绝对值；由「文件」菜单的勾选项切换）。
+ * 自动保存开关（绝对值；由设置页「通用」分类的开关切换）。
  *
  * 写的是**原文件**——这正是它与热退出的分野，提示语必须说清，
  * 否则用户以为开了自动保存就不会有未保存状态（B68 把默认值改成了关）。
@@ -3824,10 +3824,6 @@ async function setAutosave(on: boolean): Promise<void> {
   settings.autosave = on;
   await persistSettings();
   showMessage(on ? "已启用自动保存（修改会直接写入原文件）" : "已停用自动保存");
-}
-
-async function toggleAutosave(): Promise<void> {
-  await setAutosave(!(settings?.autosave ?? false));
 }
 
 /**
@@ -3843,10 +3839,6 @@ async function setHotExit(on: boolean): Promise<void> {
   if (!on) discardAllBackups();
   await persistSettings();
   showMessage(on ? "已启用热退出（关窗不再询问，未保存内容下次启动还原）" : "已停用热退出");
-}
-
-async function toggleHotExit(): Promise<void> {
-  await setHotExit(!(settings?.hot_exit ?? true));
 }
 
 /** Markdown 预览行距（查看菜单三档）。 */
@@ -3939,6 +3931,11 @@ function openSettingsDialog(): void {
     defaultEncoding: () => settings?.default_encoding ?? "UTF-8",
     encodingOptions: () => encodingOptions,
     onDefaultEncoding: (v) => void setDefaultEncoding(v),
+    // 「通用」分类：自动保存 / 热退出（原「文件」菜单的勾选项，B108 搬进设置页）
+    autosave: () => settings?.autosave ?? false,
+    onAutosave: (v) => void setAutosave(v),
+    hotExit: () => settings?.hot_exit ?? true,
+    onHotExit: (v) => void setHotExit(v),
     keymap: {
       overrides: keymapOverrides,
       onChange: (next) => void applyKeymapOverrides(next),
@@ -4551,10 +4548,6 @@ function setupMenuBar(): void {
     wrapChecked: () => isWrap,
     onToggleStatusbar: () => toggleStatusbar(),
     statusbarChecked: () => statusbarVisible,
-    onToggleAutosave: () => void toggleAutosave(),
-    autosaveChecked: () => settings?.autosave ?? false,
-    onToggleHotExit: () => void toggleHotExit(),
-    hotExitChecked: () => settings?.hot_exit ?? true,
     // ---- 设置（B106：统一设置页，含原首选项与快捷键分类） ----
     onSettings: () => openSettingsDialog(),
     // ---- 帮助 ----

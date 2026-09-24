@@ -1684,6 +1684,16 @@ button:focus-visible {
   cursor: pointer;
 }
 
+/* 「通用」分类里的开关（B108：自动保存 / 热退出搬进设置页后新增的勾选框）。
+   统一设置页的容器是 .settings-overlay / .settings-panel，不是旧的 .settings-dialog，
+   所以这里按 .settings-toggle 类单独给一份同款尺寸。 */
+.settings-item-control .settings-toggle {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 .settings-ok {
   background: var(--accent);
   border-color: var(--accent);

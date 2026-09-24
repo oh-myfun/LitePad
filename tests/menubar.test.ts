@@ -107,10 +107,6 @@ function makeCb(): MenuBarCallbacks {
     wrapChecked: () => true,
     onToggleStatusbar: noop,
     statusbarChecked: () => false,
-    onToggleAutosave: noop,
-    autosaveChecked: () => true,
-    onToggleHotExit: noop,
-    hotExitChecked: () => true,
     // 文件 → 设置…
     onSettings: noop,
     // 帮助 → 检查更新…
@@ -147,7 +143,7 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
     expect(css, ".mnemonic 规则必须已删除").not.toMatch(/\.mnemonic\s*\{/);
   });
 
-  it("文件菜单：保留 新建/打开/保存三兄弟/自动保存/热退出/关闭标签/退出", async () => {
+  it("文件菜单：保留 新建/打开/保存三兄弟/设置…/关闭标签/退出（自动保存与热退出已迁入设置页）", async () => {
     const host = document.createElement("nav");
     document.body.appendChild(host);
     createMenuBar(host, makeCb());
@@ -158,9 +154,10 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
     expect(texts).toContain("保存\tCtrl+S");
     expect(texts).toContain("另存为…\tCtrl+Shift+S");
     expect(texts).toContain("全部保存\tCtrl+Alt+S");
-    expect(texts).toContain("自动保存");
-    // B68：热退出与自动保存并列，但语义完全不同（一个写原文件、一个写副本）
-    expect(texts).toContain("热退出（关窗不询问）");
+    // B108：自动保存 / 热退出已搬到设置页「通用」分类，菜单不再承载
+    expect(texts, "文件菜单不再有自动保存").not.toContain("自动保存");
+    expect(texts, "文件菜单不再有热退出").not.toContain("热退出（关窗不询问）");
+    expect(texts).toContain("设置…");
     expect(texts).toContain("关闭标签\tCtrl+W");
     expect(texts).toContain("退出");
     expect(
@@ -333,15 +330,17 @@ describe("设置项归属与接线（B42/B46）", () => {
     expect(menu, "菜单必须回调 onSettings").toContain("onSettings:");
   });
 
-  it("每个被移出的设置项都在首选项里接线到 main.ts", () => {
+  it("每个被移出的设置项都在设置页里接线到 main.ts", () => {
     const src = readFileSync("src/main.ts", "utf-8");
-    const menu = readFileSync("src/shell/menubar.ts", "utf-8");
-    expect(menu).toContain("onToggleAutosave");
+    // B108：自动保存 / 热退出从菜单搬进设置页，靠 onAutosave / onHotExit 接线
+    expect(src, "自动保存由设置页接线").toContain("onAutosave:");
+    expect(src, "热退出由设置页接线").toContain("onHotExit:");
     for (const fn of [
       "function setDefaultEol(",
       "function setDefaultEncoding(",
       "function setThemeMode(",
-      "function toggleAutosave(",
+      "function setAutosave(",
+      "function setHotExit(",
       "function setPreviewLineHeight(",
       "function setTocWidthValue(",
       "function loadPreferenceOptions(",
@@ -527,7 +526,7 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     const fileBlock = src.slice(src.indexOf('label: "文件"'), src.indexOf('label: "编辑"'));
     expect(fileBlock, "文件菜单不得再有新建默认行尾入口").not.toContain("新建文件默认行尾");
     expect(fileBlock, "文件菜单不得再有新建默认编码入口").not.toContain("新建文件默认编码");
-    expect(fileBlock, "文件菜单应保留自动保存").toContain("自动保存");
+    expect(fileBlock, "文件菜单不得再有自动保存（已迁到设置页「通用」）").not.toContain("自动保存");
 
     const helpBlock = src.slice(src.indexOf('label: "帮助"'));
     expect(helpBlock, "帮助菜单只留关于").toContain("关于 LitePad");
@@ -569,23 +568,22 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     }
   });
 
-  it("B51/B106：设置页不重复承载菜单高频开关；快捷键改为设置页内一个分类", () => {
-    // 需求：自动换行 / 自动保存是高频开关，菜单里一点即达，不应放进设置页。
-    // 快捷键则相反——它从独立弹窗收编为「设置」页里的一个分类。
+  it("B51/B106/B108：高频开关的去向（自动换行留菜单，自动保存/热退出迁入设置页「通用」）", () => {
     const dlg = readFileSync("src/shell/settingsdialog.ts", "utf-8");
-    for (const gone of ['"自动换行"', '"自动保存"', "onWordWrap", "onAutosave"]) {
-      expect(dlg, `设置页不得再出现 ${gone}`).not.toContain(gone);
-    }
-    // 快捷键现在是设置页的一个分类（不是独立弹窗入口）
+    // 自动换行是高频开关，仍留在「查看」菜单，不进设置页
+    expect(dlg, "设置页不得再出现自动换行").not.toContain("自动换行");
+    // B108：自动保存 / 热退出反过来 —— 从「文件」菜单搬进设置页「通用」分类
+    expect(dlg, "设置页「通用」分类要有自动保存").toContain("自动保存");
+    expect(dlg, "设置页「通用」分类要有热退出").toContain("热退出");
+    // 快捷键是设置页的一个分类（不是独立弹窗入口）
     expect(dlg, "设置页必须含「快捷键」分类").toContain("快捷键");
 
-    // 只是搬家，不是砍功能：菜单入口必须都还在
-    // （自动换行在「查看」，自动保存在「文件」，快捷键入口在「文件 → 设置…」）
     const src = menu();
     const viewBlock = src.slice(src.indexOf('label: "查看"'), src.indexOf('label: "帮助"'));
     const fileBlock = src.slice(src.indexOf('label: "文件"'), src.indexOf('label: "编辑"'));
     expect(viewBlock, "「查看」菜单必须保留自动换行").toContain("自动换行");
-    expect(fileBlock, "「文件」菜单必须保留自动保存").toContain("自动保存");
+    expect(fileBlock, "「文件」菜单不再有自动保存").not.toContain("自动保存");
+    expect(fileBlock, "「文件」菜单不再有热退出").not.toContain("热退出（关窗不询问）");
     expect(fileBlock, "「文件」菜单的设置入口即快捷键去向").toContain('label: "设置…"');
   });
 

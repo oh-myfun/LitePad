@@ -32,6 +32,10 @@ function makeOpts(): SettingsDialogOptions {
     defaultEncoding: () => "UTF-8",
     encodingOptions: () => ["UTF-8", "GB18030"],
     onDefaultEncoding: noop,
+    autosave: () => false,
+    onAutosave: noop,
+    hotExit: () => true,
+    onHotExit: noop,
     keymap: {
       overrides: {} as KeymapOverrides,
       onChange: noop,
@@ -94,9 +98,9 @@ describe("B106 统一设置页：三栏结构", () => {
     expect(document.querySelector(".settings-content"), "应有右侧内容区").toBeTruthy();
   });
 
-  it("左侧分类导航含 5 个分类，默认停在「外观」", () => {
+  it("左侧分类导航含 6 个分类（通用在前），默认停在「外观」", () => {
     showSettingsDialog(makeOpts());
-    expect(navItems()).toEqual(["外观", "编辑器", "Markdown 预览", "新建文件", "快捷键"]);
+    expect(navItems()).toEqual(["通用", "外观", "编辑器", "Markdown 预览", "新建文件", "快捷键"]);
     const appearance = [...document.querySelectorAll(".settings-page")].find(
       (p) => p.querySelector(".settings-page-title")?.textContent === "外观",
     ) as HTMLElement | undefined;
@@ -176,6 +180,37 @@ describe("B106 设置项：初值 + 即时回调", () => {
     ]);
     // 即时生效模式：弹窗不因修改而关闭
     expect(document.querySelector(".settings-panel")).toBeTruthy();
+  });
+
+  it("B108：「通用」分类承载自动保存 / 热退出，初值取自 getter，勾选立即回调", () => {
+    const opts = makeOpts();
+    const calls: string[] = [];
+    opts.autosave = () => false;
+    opts.onAutosave = (v) => calls.push(`autosave:${v}`);
+    opts.hotExit = () => true;
+    opts.onHotExit = (v) => calls.push(`hotExit:${v}`);
+    showSettingsDialog(opts);
+
+    // 切到「通用」分类（默认停在「外观」）
+    const generalNav = [...document.querySelectorAll(".settings-nav-item")].find(
+      (b) => b.textContent === "通用",
+    ) as HTMLButtonElement;
+    generalNav.click();
+
+    const find = (label: string): HTMLInputElement => {
+      const item = [...document.querySelectorAll(".settings-item")].find(
+        (r) => r.querySelector(".settings-item-label")?.textContent === label,
+      );
+      expect(item, `「通用」分类应有「${label}」`).toBeTruthy();
+      return item!.querySelector(".settings-toggle") as HTMLInputElement;
+    };
+    expect(find("自动保存").checked, "自动保存默认关").toBe(false);
+    expect(find("热退出").checked, "热退出默认开").toBe(true);
+
+    find("自动保存").click();
+    find("热退出").click();
+
+    expect(calls).toEqual(["autosave:true", "hotExit:false"]);
   });
 });
 

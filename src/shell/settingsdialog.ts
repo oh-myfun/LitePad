@@ -38,6 +38,12 @@ export interface SettingsDialogOptions {
   defaultEncoding: () => string;
   encodingOptions: () => string[];
   onDefaultEncoding: (value: string) => void;
+  /** 自动保存：把脏文档写回**原文件**（B68 起默认关）。「通用」分类里的开关。 */
+  autosave: () => boolean;
+  onAutosave: (on: boolean) => void;
+  /** 热退出：关窗时把未保存内容写进独立副本（B68 起默认开）。「通用」分类里的开关。 */
+  hotExit: () => boolean;
+  onHotExit: (on: boolean) => void;
   /** 快捷键分类页所需的改键逻辑（复用 keymapdialog） */
   keymap: KeymapDialogOptions;
 }
@@ -68,6 +74,11 @@ interface Category {
 }
 
 const CATEGORIES: Category[] = [
+  {
+    id: "general",
+    label: "通用",
+    keywords: ["通用", "首选项", "自动保存", "热退出", "保存", "备份", "autosave", "hot exit"],
+  },
   {
     id: "appearance",
     label: "外观",
@@ -177,7 +188,9 @@ export function showSettingsDialog(opts: SettingsDialogOptions): void {
   const pages: Record<string, HTMLElement> = {};
   let keymapFilter: ((q: string) => void) | null = null;
   let keymapHandle: KeymapPageHandle | null = null;
-  let active = CATEGORIES[0].id;
+  // 默认停在「外观」——显式写死，避免分类顺序调整（如把「通用」提到首位）时
+  // 默认页跟着漂移；主题仍是最常改的一项。
+  let active = "appearance";
 
   function visibleCategories(q: string): string[] {
     const query = q.trim().toLowerCase();
@@ -306,6 +319,22 @@ function settingsItem(label: string, desc: string, control: HTMLElement): HTMLEl
   return item;
 }
 
+/** 一行开关项：左侧文案 + 右侧复选框（B108：「自动保存 / 热退出」搬进「通用」分类）。 */
+function toggleRow(
+  label: string,
+  desc: string,
+  checked: boolean,
+  onToggle: (v: boolean) => void,
+): HTMLElement {
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.className = "settings-toggle";
+  box.checked = checked;
+  box.setAttribute("aria-label", label);
+  box.addEventListener("change", () => onToggle(box.checked));
+  return settingsItem(label, desc, box);
+}
+
 function selectControl(
   options: { label: string; value: string }[],
   current: string,
@@ -348,7 +377,24 @@ function numberSelectRow(
 }
 
 function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): void {
-  if (id === "appearance") {
+  if (id === "general") {
+    body.appendChild(
+      toggleRow(
+        "自动保存",
+        "修改后自动写回原文件（1.5 秒防抖）；开启后不再有「未保存」状态。",
+        opts.autosave(),
+        (v) => opts.onAutosave(v),
+      ),
+    );
+    body.appendChild(
+      toggleRow(
+        "热退出",
+        "关窗时把未保存内容写进独立副本（原文件不动），下次启动还原成未保存标签，且关窗不再询问。",
+        opts.hotExit(),
+        (v) => opts.onHotExit(v),
+      ),
+    );
+  } else if (id === "appearance") {
     body.appendChild(
       selectRow(
         "主题",

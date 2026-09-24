@@ -325,11 +325,14 @@ describe("B68 热退出：关窗不询问，下次启动还原未保存内容", 
   });
 
   it("两个开关是独立的，且默认值对齐 VS Code 桌面版", () => {
-    const menubar = readFileSync("src/shell/menubar.ts", "utf-8");
-    expect(menubar, "文件菜单要有热退出项").toContain("热退出（关窗不询问）");
-    expect(menubar, "热退出走独立回调").toContain("onToggleHotExit");
+    // B108：两个开关从「文件」菜单搬到设置页「通用」分类
+    const dlg = readFileSync("src/shell/settingsdialog.ts", "utf-8");
+    expect(dlg, "设置页「通用」分类要有热退出开关").toContain("热退出");
+    expect(dlg, "设置页「通用」分类要有自动保存开关").toContain("自动保存");
     expect(src, "热退出默认开（?? true）").toContain("settings?.hot_exit ?? true");
     expect(src, "自动保存默认关（?? false）").toContain("settings?.autosave ?? false");
+    expect(src, "热退出由设置页回调").toContain("onHotExit:");
+    expect(src, "自动保存由设置页回调").toContain("onAutosave:");
     // 关掉热退出时必须把现存副本一并丢掉，否则「关了还生效」
     const off = fnBody("async function setHotExit");
     expect(off, "关掉热退出要丢弃现存副本").toMatch(/if \(!on\) discardAllBackups\(\);/);
