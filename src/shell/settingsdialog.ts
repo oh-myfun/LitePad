@@ -15,6 +15,7 @@
 
 import { mountKeymapPage, type KeymapDialogOptions, type KeymapPageHandle } from "./keymapdialog";
 import { createDropdown } from "./dropdown";
+import { createSwitch } from "./switch";
 
 export type ThemeChoice = "system" | "light" | "dark";
 
@@ -277,6 +278,10 @@ export function showSettingsDialog(opts: SettingsDialogOptions): void {
     if (e.key === "Escape") {
       // 快捷键录制态时 Esc 只取消录制，不关掉整个设置页
       if (keymapHandle && keymapHandle.isRecording()) return;
+      // B111：停在快捷键分类、搜索框里有内容时，第一次 Esc 只清空。
+      // ⚠️ 必须由宿主在关窗前主动问一次：本监听是**捕获阶段**挂在 document 上的，
+      // 等事件冒泡到输入框自己的 keydown 时窗已经关了。
+      if (active === "shortcuts" && keymapHandle?.clearSearch()) return;
       close();
     }
   };
@@ -319,20 +324,15 @@ function settingsItem(label: string, desc: string, control: HTMLElement): HTMLEl
   return item;
 }
 
-/** 一行开关项：左侧文案 + 右侧复选框（B108：「自动保存 / 热退出」搬进「通用」分类）。 */
+/** 一行开关项：左侧文案 + 右侧 switch（B111：原生 checkbox → 自绘 switch）。 */
 function toggleRow(
   label: string,
   desc: string,
   checked: boolean,
   onToggle: (v: boolean) => void,
 ): HTMLElement {
-  const box = document.createElement("input");
-  box.type = "checkbox";
-  box.className = "settings-toggle";
-  box.checked = checked;
-  box.setAttribute("aria-label", label);
-  box.addEventListener("change", () => onToggle(box.checked));
-  return settingsItem(label, desc, box);
+  const sw = createSwitch({ checked, onToggle, ariaLabel: label });
+  return settingsItem(label, desc, sw.root);
 }
 
 function selectControl(

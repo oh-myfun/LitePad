@@ -9,6 +9,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { showSettingsDialog, type SettingsDialogOptions } from "../src/shell/settingsdialog";
 import { DEFAULT_PRESET_ID, type KeymapOverrides } from "../src/shell/keymap";
+import { ruleBlock, cssDecls, stripCssComments, stripLineComments } from "./static";
 
 const noop = (): void => {};
 
@@ -182,7 +183,7 @@ describe("B106 设置项：初值 + 即时回调", () => {
     expect(document.querySelector(".settings-panel")).toBeTruthy();
   });
 
-  it("B108：「通用」分类承载自动保存 / 热退出，初值取自 getter，勾选立即回调", () => {
+  it("B108：「通用」分类承载自动保存 / 热退出，初值取自 getter，切换立即回调", () => {
     const opts = makeOpts();
     const calls: string[] = [];
     opts.autosave = () => false;
@@ -197,20 +198,29 @@ describe("B106 设置项：初值 + 即时回调", () => {
     ) as HTMLButtonElement;
     generalNav.click();
 
-    const find = (label: string): HTMLInputElement => {
+    // B111：开关是自绘 switch（role=switch + aria-checked），不再是原生 checkbox
+    const find = (label: string): HTMLElement => {
       const item = [...document.querySelectorAll(".settings-item")].find(
         (r) => r.querySelector(".settings-item-label")?.textContent === label,
       );
       expect(item, `「通用」分类应有「${label}」`).toBeTruthy();
-      return item!.querySelector(".settings-toggle") as HTMLInputElement;
+      const sw = item!.querySelector(".switch") as HTMLElement | null;
+      expect(sw, `「${label}」应是自绘 .switch`).toBeTruthy();
+      expect(sw!.tagName, "switch 外壳应是 button（白拿键盘与焦点环）").toBe("BUTTON");
+      expect(sw!.getAttribute("role"), "switch 必须声明 role=switch").toBe("switch");
+      return sw!;
     };
-    expect(find("自动保存").checked, "自动保存默认关").toBe(false);
-    expect(find("热退出").checked, "热退出默认开").toBe(true);
+    expect(find("自动保存").getAttribute("aria-checked"), "自动保存默认关").toBe("false");
+    expect(find("热退出").getAttribute("aria-checked"), "热退出默认开").toBe("true");
 
     find("自动保存").click();
     find("热退出").click();
 
     expect(calls).toEqual(["autosave:true", "hotExit:false"]);
+    // 状态与 aria-checked 同步 —— 样式只认 aria-checked（.switch[aria-checked="true"]），
+    // 不同步就会出现「点了没反应」的观感。
+    expect(find("自动保存").getAttribute("aria-checked"), "点后应变开").toBe("true");
+    expect(find("热退出").getAttribute("aria-checked"), "点后应变关").toBe("false");
   });
 });
 
@@ -279,5 +289,109 @@ describe("B106 设置页：接线守卫", () => {
     expect(menu, "不得再残留 onKeymap").not.toContain("onKeymap");
     expect(menu, "不得再有「设置」顶层菜单").not.toContain('label: "设置"');
     expect(menu, "文件菜单必须含「设置…」入口").toContain('label: "设置…"');
+  });
+});
+
+describe("B111 设置页：switch 组件 + 快捷键搜索框 Esc", () => {
+  /** 切到「快捷键」分类（默认停在「外观」）。 */
+  function gotoShortcuts(): HTMLInputElement {
+    const shortcutNav = [...document.querySelectorAll(".settings-nav-item")].find(
+      (b) => b.textContent === "快捷键",
+    ) as HTMLButtonElement;
+    shortcutNav.click();
+    const input = document.querySelector<HTMLInputElement>(".keymap-search");
+    expect(input, "快捷键分类应有搜索框").toBeTruthy();
+    return input!;
+  }
+
+  function pressEscape(): void {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  }
+
+  it("快捷键分类下 Esc 先清空搜索框，再按一次才关窗", () => {
+    showSettingsDialog(makeOpts());
+    const input = gotoShortcuts();
+
+    input.value = "大纲";
+    input.dispatchEvent(new Event("input"));
+    expect([...document.querySelectorAll(".keymap-cmd")].map((e) => e.textContent)).toEqual([
+      "显示/隐藏大纲 TOC",
+    ]);
+
+    // 第一次 Esc：只清空，窗还在
+    pressEscape();
+    expect(document.querySelector(".settings-panel"), "有内容时 Esc 不应关窗").toBeTruthy();
+    expect(input.value, "Esc 应清空搜索框").toBe("");
+    expect(
+      document.querySelectorAll(".keymap-cmd").length,
+      "清空后应重新筛选（列表恢复全量）",
+    ).toBeGreaterThan(1);
+
+    // 第二次 Esc：关窗
+    pressEscape();
+    expect(document.querySelector(".settings-panel"), "空框时 Esc 应关窗").toBeNull();
+  });
+
+  it("搜索框为空时 Esc 直接关窗（不会白吃一次按键）", () => {
+    showSettingsDialog(makeOpts());
+    gotoShortcuts();
+    pressEscape();
+    expect(document.querySelector(".settings-panel")).toBeNull();
+  });
+
+  it("不在快捷键分类时 Esc 直接关窗（不被隐藏的搜索框吃掉）", () => {
+    showSettingsDialog(makeOpts());
+    const input = document.querySelector<HTMLInputElement>(".keymap-search")!;
+    input.value = "大纲";
+    input.dispatchEvent(new Event("input"));
+    pressEscape();
+    expect(document.querySelector(".settings-panel")).toBeNull();
+  });
+
+  it("守卫：设置页不再生成原生 checkbox，改用 src/shell/switch.ts", () => {
+    expect(existsSync("src/shell/switch.ts"), "switch 组件文件应存在").toBe(true);
+
+    const code = stripLineComments(readFileSync("src/shell/settingsdialog.ts", "utf-8"));
+    expect(code, "设置页应引入 createSwitch").toContain('from "./switch"');
+    expect(code, "设置页不应再有原生 checkbox").not.toContain('type = "checkbox"');
+    expect(code, "不应再残留 .settings-toggle").not.toContain("settings-toggle");
+    expect(code, "Esc 处理必须先问 clearSearch").toContain("clearSearch()");
+
+    const sw = stripLineComments(readFileSync("src/shell/switch.ts", "utf-8"));
+    expect(sw, "switch 必须声明 role=switch").toContain('"switch"');
+    expect(sw, "状态必须落在 aria-checked（样式只认它）").toContain("aria-checked");
+  });
+
+  it("守卫：.switch 样式由 aria-checked 驱动（轨道 + 滑块）", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    expect(
+      cssDecls(ruleBlock(css, ".switch")),
+      "轨道应声明 position: relative（滑块的定位基准）",
+    ).toContain("position: relative");
+    expect(cssDecls(ruleBlock(css, ".switch-knob")), "滑块应是圆点").toContain(
+      "border-radius: 50%",
+    );
+    expect(
+      cssDecls(ruleBlock(css, '.switch[aria-checked="true"]')),
+      "开启态轨道应填 accent",
+    ).toContain("background: var(--accent)");
+    expect(
+      cssDecls(ruleBlock(css, '.switch[aria-checked="true"] .switch-knob')),
+      "滑块位移应走 transform（合成层，不触发重排）",
+    ).toContain("transform: translateX(");
+    expect(stripCssComments(css), "不应再残留 .settings-toggle 复选框规则").not.toContain(
+      ".settings-toggle",
+    );
+  });
+
+  it("守卫：快捷键搜索框聚焦高光与设置页顶部搜索框同款", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const focus = cssDecls(ruleBlock(css, ".keymap-search:focus"));
+    expect(focus, "应有 accent 边框").toContain("border-color: var(--accent)");
+    expect(focus, "应有 1px accent 外环").toContain("box-shadow: 0 0 0 1px var(--accent)");
+
+    const wrap = cssDecls(ruleBlock(css, ".settings-search-wrap:focus-within"));
+    expect(wrap, "顶部搜索框同样是 accent 边框").toContain("border-color: var(--accent)");
+    expect(wrap, "顶部搜索框同样是 1px accent 环").toContain("box-shadow: 0 0 0 1px var(--accent)");
   });
 });

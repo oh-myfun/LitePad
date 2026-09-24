@@ -1320,6 +1320,16 @@ button:focus-visible {
   font-size: 12px;
 }
 
+/* 聚焦高光与设置页顶部搜索框（.settings-search-wrap:focus-within）用同一套：
+   accent 边框 + 1px 外环。
+   ⚠️ 别改回 outline：输入框类组件（设置搜索 / 查找输入框）都走 border + box-shadow，
+   换 outline 会与它们不一致，且 outline 画在边框外、让输入框视觉上胀 1px。 */
+.keymap-search:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  outline: none;
+}
+
 .keymap-reset {
   flex: 0 0 auto;
   padding: 5px 12px;
@@ -1683,22 +1693,49 @@ button:focus-visible {
   transition: width 0.15s linear;
 }
 
-/* 勾选框比下拉稍大，便于点击 */
-.settings-dialog input[type="checkbox"] {
-  width: 14px;
-  height: 14px;
-  accent-color: var(--accent);
+/* ---------- 开关（B111：设置页布尔项用自绘 switch 取代原生 checkbox） ----------
+   轨道 + 滑块两件套：轨道 36×20 圆角 10（border-box），滑块 14×14 圆点贴内边距 2，
+   开启态整条轨道填 accent、滑块换 accent-fg 色并右移 16px（34 = 2 + 14 + 2 + 16）。
+   状态**只有 [aria-checked] 一处真相**（见 src/shell/switch.ts），样式不必另同步一个 class。
+   位移走 transform（合成层，不触发重排），不是 left。
+   焦点环沿用全局 `button:focus-visible`，不另设 —— 与下拉/按键同一套观感。 */
+.switch {
+  position: relative;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 36px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
   cursor: pointer;
+  transition:
+    background var(--transition),
+    border-color var(--transition);
 }
 
-/* 「通用」分类里的开关（B108：自动保存 / 热退出搬进设置页后新增的勾选框）。
-   统一设置页的容器是 .settings-overlay / .settings-panel，不是旧的 .settings-dialog，
-   所以这里按 .settings-toggle 类单独给一份同款尺寸。 */
-.settings-item-control .settings-toggle {
+.switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
   width: 14px;
   height: 14px;
-  accent-color: var(--accent);
-  cursor: pointer;
+  border-radius: 50%;
+  background: var(--fg-muted);
+  transition:
+    transform var(--transition),
+    background var(--transition);
+}
+
+.switch[aria-checked="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.switch[aria-checked="true"] .switch-knob {
+  background: var(--accent-fg);
+  transform: translateX(16px);
 }
 
 .settings-ok {

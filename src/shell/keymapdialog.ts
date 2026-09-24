@@ -46,6 +46,15 @@ export interface KeymapPageHandle {
   destroy: () => void;
   /** 由外部（如设置页顶部搜索）注入过滤词，复用内部搜索框。 */
   setFilter: (query: string) => void;
+  /**
+   * Esc 的「先清空、再关窗」语义（B111）：有内容就清空并重新筛选，返回 true
+   * 表示**这次 Esc 已被吃掉**，宿主不要再关窗；空框返回 false，宿主照常关闭。
+   *
+   * ⚠️ 必须由宿主在自己的 Esc 处理里**主动问一次**，不能指望输入框自己挂 keydown：
+   * 设置页的 Esc 是**捕获阶段**挂在 document 上关窗（settingsdialog.ts），
+   * 事件轮到输入框的监听时窗已经没了。
+   */
+  clearSearch: () => boolean;
   /** 当前是否处于录制态（宿主的 Esc 处理据此决定是否让路）。 */
   isRecording: () => boolean;
 }
@@ -281,6 +290,12 @@ export function mountKeymapPage(host: HTMLElement, opts: KeymapDialogOptions): K
       search.value = q;
       render();
     },
+    clearSearch: (): boolean => {
+      if (!search.value) return false;
+      search.value = "";
+      render();
+      return true;
+    },
     isRecording: () => recording !== null,
   };
 }
@@ -321,7 +336,10 @@ export function showKeymapDialog(opts: KeymapDialogOptions): void {
 
   const onDocKeyDown = (e: KeyboardEvent): void => {
     // 录制中的按键由 recordHandler 专管，不能顺带把对话框关掉
-    if (e.key === "Escape" && !handle.isRecording()) close();
+    if (e.key !== "Escape" || handle.isRecording()) return;
+    // B111：搜索框里有内容时，第一次 Esc 只清空（见 KeymapPageHandle.clearSearch 的说明）
+    if (handle.clearSearch()) return;
+    close();
   };
 
   ok.addEventListener("click", close);

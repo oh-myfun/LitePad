@@ -108,6 +108,28 @@ describe("快捷键对话框：浏览", () => {
     input.dispatchEvent(new Event("input"));
     expect(document.querySelector(".keymap-empty")).toBeTruthy();
   });
+
+  it("B111：搜索框有内容时 Esc 先清空，再按一次才关窗", () => {
+    openDialog();
+    const input = document.querySelector<HTMLInputElement>(".keymap-search")!;
+
+    input.value = "大纲";
+    input.dispatchEvent(new Event("input"));
+    expect([...document.querySelectorAll(".keymap-cmd")].map((e) => e.textContent)).toEqual([
+      "显示/隐藏大纲 TOC",
+    ]);
+
+    pressDoc({ code: "Escape", key: "Escape" });
+    expect(document.querySelector(".settings-overlay"), "有内容时 Esc 不应关窗").toBeTruthy();
+    expect(input.value, "Esc 应清空搜索框").toBe("");
+    expect(
+      document.querySelectorAll(".keymap-cmd").length,
+      "清空后应重新筛选（列表恢复全量）",
+    ).toBeGreaterThan(1);
+
+    pressDoc({ code: "Escape", key: "Escape" });
+    expect(document.querySelector(".settings-overlay"), "空框时 Esc 应关窗").toBeNull();
+  });
 });
 
 describe("快捷键对话框：编辑", () => {
