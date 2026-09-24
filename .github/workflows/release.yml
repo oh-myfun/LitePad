@@ -80,16 +80,28 @@ jobs:
           fi
           node node_modules/@tauri-apps/cli/tauri.js build --config "$CFG"
 
-      # B107：生成 updater feed（latest.json）并收敛发布资产；无签名产物时只带 exe
+      # B107：在 tauri 构建目录内就地生成 updater feed（latest.json），不另拷贝第二份产物
       - name: Generate updater feed (latest.json)
         shell: bash
         run: bash scripts/gen-latest-json.sh
+
+      # 直接从构建目录收集发布资产（exe / .sig / latest.json，缺哪项跳哪项），不复制副本
+      - name: Collect release assets
+        id: assets
+        shell: bash
+        run: |
+          VER="${{ inputs.tag || github.ref_name }}"
+          VER="${VER#v}"
+          SRC=src-tauri/target/release/bundle/nsis
+          mapfile -t FILES < <(ls "$SRC/LitePad_${VER}_x64-setup.exe" "$SRC/LitePad_${VER}_x64-setup.exe.sig" "$SRC/latest.json" 2>/dev/null)
+          if [ ${#FILES[@]} -eq 0 ]; then echo "✗ 未找到任何发布资产" >&2; exit 1; fi
+          { echo "files<<EOF"; printf '%s\n' "${FILES[@]}"; echo "EOF"; } >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           name: LitePad ${{ inputs.tag || github.ref_name }}
-          files: release-assets/*
+          files: ${{ steps.assets.outputs.files }}
           generate_release_notes: true
           draft: false

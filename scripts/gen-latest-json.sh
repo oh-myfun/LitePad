@@ -2,10 +2,10 @@
 # B107：从构建产物生成 tauri updater 的发布 feed（latest.json）。
 #
 # updater 的 endpoint 指向 GitHub Releases 的 `latest/download/latest.json`（静态文件）。
-# tauri-action 会自动生成它，而本项目的 release.yml 是手写步骤 —— 本脚本补上这一步：
-#   1. 把当前版本的安装包 exe 拷进 release-assets/（未配置签名私钥时这就是全部发布产物）；
-#   2. 发现同名 `.exe.sig` 时拼出 latest.json（version / pub_date / signature / url），
-#      连同 `.exe.sig` 与 `latest.json` 一起拷进 release-assets/，由 release 步骤一并上传。
+# tauri-action 会自动生成它，而本项目的 release.yml 是手写步骤 —— 本脚本补上这一步。
+# 它**只生成 latest.json**，直接写在 tauri 构建目录（target/release/bundle/nsis/）内、
+# 与 setup.exe / .exe.sig 同处；exe 与 .sig 本就由 `tauri build` 产出，这里**不另拷贝第二份**。
+# release 步骤直接从该构建目录上传这三件。
 #
 # ⚠️ tauri v2 的 NSIS 更新器产物 = 安装包 exe + 同名 `.exe.sig`（没有 .nsis.zip 封装）。
 #    `.sig` 文件本身是「对 minisign 明文签名再包一层 base64」的单行文件；latest.json 的
@@ -17,20 +17,16 @@ cd "$(git rev-parse --show-toplevel)"
 
 VER=$(node -p "require('./package.json').version")
 SRC=src-tauri/target/release/bundle/nsis
-OUT=release-assets
 EXE="LitePad_${VER}_x64-setup.exe"
 
-rm -rf "$OUT"
-mkdir -p "$OUT"
 if [ ! -f "$SRC/$EXE" ]; then
   echo "✗ 未发现 $SRC/$EXE：请先跑 tauri build 产出当前版本安装包" >&2
   exit 1
 fi
-cp "$SRC/$EXE" "$OUT/"
 
 SIG="$SRC/$EXE.sig"
 if [ ! -f "$SIG" ]; then
-  echo "⚠ 未发现 $SIG：本次发布不含更新器产物（未配置签名私钥？）"
+  echo "⚠ 未发现 $SIG：本次发布不含更新器产物（未配置签名私钥？只带 exe 发布）"
   exit 0
 fi
 
@@ -38,6 +34,7 @@ REPO="${GITHUB_REPOSITORY:-oh-myfun/LitePad}"
 URL="https://github.com/$REPO/releases/download/v$VER/$EXE"
 
 # 用 node 拼装：signature 是含换行的多行明文，必须走 JSON.stringify 安全转义。
+# 直接写在 tauri 构建目录内（与 exe / .sig 同处），release 步骤从这里上传，不复制第二份。
 node -e '
   const fs = require("fs");
   const [sigPath, ver, url, outPath] = process.argv.slice(1);
@@ -54,5 +51,4 @@ node -e '
   fs.writeFileSync(outPath, JSON.stringify(json, null, 2) + "\n");
 ' "$SIG" "$VER" "$URL" "$SRC/latest.json"
 
-cp "$SIG" "$SRC/latest.json" "$OUT/"
-echo "✓ latest.json 已生成（v$VER → $URL）"
+echo "✓ latest.json 已生成（v$VER → $URL），位于 $SRC/latest.json"

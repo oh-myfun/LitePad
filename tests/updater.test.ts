@@ -261,7 +261,9 @@ describe("B107 更新链路静态守卫", () => {
     expect(yml, "无密钥时必须降级关闭 createUpdaterArtifacts（CI 不因缺密钥炸掉）").toContain(
       '"createUpdaterArtifacts":false',
     );
-    expect(yml, "发布资产必须改为收敛后的 release-assets/").toContain("files: release-assets/*");
+    expect(yml, "发布资产必须直接从 tauri 构建目录上传，不得另拷贝第二份到项目根").toContain(
+      "release/bundle/nsis",
+    );
 
     const gen = readSrc("scripts/gen-latest-json.sh");
     expect(gen, "signature 必须放 base64 解码后的 minisign 明文（tauri 按行解析）").toContain(
@@ -293,8 +295,9 @@ describe("B107 更新链路静态守卫", () => {
     expect(keyFiles, `发现疑似私钥入库：${keyFiles.join(", ")}`).toEqual([]);
     // 兜底：就算有人把密钥拷进项目，.gitignore 的 *.key 也必须拦住它进 git
     expect(readSrc(".gitignore"), ".gitignore 必须忽略 *.key").toContain("*.key");
-    expect(readSrc(".gitignore"), ".gitignore 必须忽略 release-assets/").toContain(
-      "release-assets/",
-    );
+    expect(
+      readSrc(".gitignore"),
+      ".gitignore 必须忽略 .tmp/（构建期临时文件统一收口，不在仓库留产物）",
+    ).toContain(".tmp/");
   });
 });
