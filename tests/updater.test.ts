@@ -109,7 +109,7 @@ describe("B107 更新状态机", () => {
     await vi.waitFor(() => expect(vi.mocked(relaunch)).toHaveBeenCalledTimes(2));
   });
 
-  it("下载中：loading 字形 + 百分比写进 aria-label", async () => {
+  it("下载中：进度条 + 百分比写进 aria-label", async () => {
     let captured: DownloadCb | undefined;
     const update = fakeUpdate("0.14.0");
     (update.downloadAndInstall as ReturnType<typeof vi.fn>).mockImplementation(
@@ -126,7 +126,7 @@ describe("B107 更新状态机", () => {
     await vi.waitFor(() => expect(captured).toBeTruthy());
     captured?.({ event: "Started", data: { contentLength: 100 } });
     captured?.({ event: "Progress", data: { chunkLength: 40 } });
-    expect(updBtn().innerHTML).toContain("codicon-loading");
+    expect(updBtn().innerHTML, "下载中 = 进度条（替代转圈）").toContain("upd-bar-fill");
     expect(updBtn().getAttribute("aria-label")).toContain("40%");
   });
 

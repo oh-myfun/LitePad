@@ -61,9 +61,9 @@ const IDS = {
   unpin: "unpin",
   // —— 右上角更新键（B107）——
   // 三态共用一颗按钮、字形即状态：发现新版本 = cloud-download（点击下载安装），
-  // 下载中 = loading（配 .is-busy 的旋转动画），就绪待重启 = refresh（点击 relaunch）。
+  // 下载中 = 小进度条（track + accent 填充，见 updater.ts 的 .upd-bar / .upd-bar-fill，
+  //   替代原先的 loading 旋转动画），就绪待重启 = refresh（点击 relaunch）。
   cloudDownload: "cloud-download",
-  loading: "loading",
   refresh: "refresh",
   // —— 面板 / 标签 ——
   circleFilled: "circle-filled",

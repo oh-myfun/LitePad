@@ -1681,15 +1681,21 @@ button:focus-visible {
   background: var(--accent);
 }
 
-/* 下载中：loading 字形自旋（codicon.css 只给字形，动画归本项目） */
-.title-btn.upd-btn.is-busy .codicon {
-  animation: upd-spin 1.2s linear infinite;
+/* 下载中：小进度条（替代转圈动画）—— track + accent 填充，宽度由 JS 按 percent 设 */
+.title-btn.upd-btn .upd-bar {
+  display: block;
+  width: 26px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-hover);
+  overflow: hidden;
 }
-
-@keyframes upd-spin {
-  to {
-    transform: rotate(360deg);
-  }
+.title-btn.upd-btn .upd-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.15s linear;
 }
 
 /* 勾选框比下拉稍大，便于点击 */

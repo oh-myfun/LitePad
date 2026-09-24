@@ -4,7 +4,7 @@
  * 链路：启动后延迟静默检查一次 → 之后按间隔静默轮询；「帮助 → 检查更新…」走手动检查。
  * 发现新版本后标题栏右上角出现更新键（插在置顶键左侧，无更新时不可见）：
  *   available   = cloud-download，点击开始下载安装；
- *   downloading = loading（旋转），tip 里带百分比；
+ *   downloading = 小进度条（替代转圈动画），tip/aria 带百分比；
  *   ready       = refresh，点击保存现场后 relaunch（NSIS passive 安装由 updater 触发）。
  *
  * 与 InkNote 同款的关键纪律：
@@ -72,7 +72,14 @@ export function initUpdater(opts: UpdaterOptions): UpdaterHandle {
       setTip(btn, `发现新版本 v${version}`, { detail: "点击下载并安装" });
       btn.setAttribute("aria-label", `发现新版本 v${version}，点击下载安装`);
     } else if (phase === "downloading") {
-      btn.innerHTML = CODICONS.loading;
+      // 小进度条（替代转圈动画）：track + accent 填充，宽度随 percent 走。
+      // 进度条只建一次，后续只更新填充宽度（配合 CSS transition 平滑增长）。
+      const fill = btn.querySelector<HTMLElement>(".upd-bar-fill");
+      if (!fill) {
+        btn.innerHTML = `<span class="upd-bar"><span class="upd-bar-fill" style="width:${percent}%"></span></span>`;
+      } else {
+        fill.style.width = `${percent}%`;
+      }
       setTip(btn, `正在下载 v${version}…`, { detail: `${percent}%` });
       btn.setAttribute("aria-label", `正在下载更新 v${version}，已完成 ${percent}%`);
     } else {
