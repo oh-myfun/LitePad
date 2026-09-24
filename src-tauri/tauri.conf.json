@@ -37,6 +37,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -56,6 +57,17 @@
       "nsis": {
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJGRjBGOTFFRkE3REE3QUEKUldTcXAzMzZIdm53TDY2MnJhTzA4azhiVnBWLzFXRzhlOUVJcHpPanZhYVVLZWRrS1FOSW5aYWIK",
+      "endpoints": [
+        "https://github.com/oh-myfun/LitePad/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

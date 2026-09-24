@@ -47,6 +47,9 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // B107 应用内自动更新：updater 负责「检查/下载/验签/安装」，process 提供 relaunch。
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             // 双击关联文件且**应用已在运行**时，Windows 以 `"litepad.exe" "<path>"`
             // 启动新进程；单实例插件把它探测到后转发到这里，挑出应接管的 .md/.markdown

@@ -61,6 +61,8 @@ export interface MenuBarCallbacks {
   /** 打开统一设置页（含外观 / 编辑器 / 预览 / 新建文件 / 快捷键各分类） */
   onSettings: () => void;
   // ---- 帮助 ----
+  /** 手动检查应用内更新（B107；结果走状态栏提示，自动检查静默） */
+  onCheckUpdate: () => void;
   onAbout: () => void;
   /** 当前生效键位（菜单右侧提示），空串则不显示 */
   keyHint: (id: string) => string;
@@ -155,7 +157,11 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
   },
   {
     label: "帮助",
-    items: (cb) => [{ label: "关于 LitePad", onSelect: cb.onAbout }],
+    items: (cb) => [
+      { label: "检查更新…", onSelect: cb.onCheckUpdate },
+      { separator: true },
+      { label: "关于 LitePad", onSelect: cb.onAbout },
+    ],
   },
 ];
 

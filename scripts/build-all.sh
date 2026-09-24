@@ -92,10 +92,22 @@ echo "==> [3/4] Rust release 构建 + 单元测试（**仅作编译校验，产�
 
 echo "==> [4/4] release 发布构建（嵌入前端 + NSIS 安装包）"
 # 覆盖 beforeBuildCommand：第 1 步已产出 dist，直接嵌入，避免重复构建
-if [ "$NPM_OK" = 1 ]; then
-  npm run tauri -- build --config '{"build":{"beforeBuildCommand":""}}'
+# B107 更新器签名：私钥在项目外 ~/.tauri/litepad.key，只经环境变量传给 tauri CLI、
+# **绝不入库**；没有密钥时降级关闭 createUpdaterArtifacts —— 本机/CI 没配密钥也照常出 exe。
+UPD_CFG='{"build":{"beforeBuildCommand":""}}'
+if [ -f "$HOME/.tauri/litepad.key" ]; then
+  TAURI_SIGNING_PRIVATE_KEY="$(cat "$HOME/.tauri/litepad.key")"
+  export TAURI_SIGNING_PRIVATE_KEY
+  : "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:=}"
+  export TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 else
-  node node_modules/@tauri-apps/cli/tauri.js build --config '{"build":{"beforeBuildCommand":""}}'
+  UPD_CFG='{"build":{"beforeBuildCommand":""},"bundle":{"createUpdaterArtifacts":false}}'
+  echo "    （未发现 ~/.tauri/litepad.key：本次不产出更新器签名产物）"
+fi
+if [ "$NPM_OK" = 1 ]; then
+  npm run tauri -- build --config "$UPD_CFG"
+else
+  node node_modules/@tauri-apps/cli/tauri.js build --config "$UPD_CFG"
 fi
 
 echo

@@ -1660,6 +1660,36 @@ button:focus-visible {
   font-size: 12px;
 }
 
+/* ---------- 右上角更新键（B107：src/shell/updater.ts） ---------- */
+
+.title-btn.upd-btn {
+  position: relative;
+}
+
+/* 有更新时的提示点：accent 小圆点钉在按钮右上角（VS Code 的 badge 语言，
+   但按 LitePad 的单色 accent 出，不引入新色） */
+.title-btn.upd-btn.has-update::after {
+  content: "";
+  position: absolute;
+  top: 5px;
+  right: 7px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* 下载中：loading 字形自旋（codicon.css 只给字形，动画归本项目） */
+.title-btn.upd-btn.is-busy .codicon {
+  animation: upd-spin 1.2s linear infinite;
+}
+
+@keyframes upd-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* 勾选框比下拉稍大，便于点击 */
 .settings-dialog input[type="checkbox"] {
   width: 14px;

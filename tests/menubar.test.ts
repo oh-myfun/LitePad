@@ -113,6 +113,8 @@ function makeCb(): MenuBarCallbacks {
     hotExitChecked: () => true,
     // 文件 → 设置…
     onSettings: noop,
+    // 帮助 → 检查更新…
+    onCheckUpdate: noop,
     onAbout: noop,
     // 用真实注册表，顺带断言菜单显示的键位与生效键位一致
     keyHint: (id) => realKeyHint(id, {}),
@@ -270,18 +272,21 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
     expect(document.querySelector(".popup-menu"), "点击叶子项后弹层应收起").toBeNull();
   });
 
-  it("帮助菜单：只剩「关于 LitePad」（快捷键已移入设置）", async () => {
+  it("B107：帮助菜单 = 检查更新… + 关于 LitePad（快捷键已移入设置）", async () => {
     const host = document.createElement("nav");
     document.body.appendChild(host);
     const cb = makeCb();
     const calls: string[] = [];
+    cb.onCheckUpdate = () => calls.push("check-update");
     cb.onAbout = () => calls.push("about");
     createMenuBar(host, cb);
     await clickMenuBtn(host, "帮助");
-    expect(rootTexts()).toEqual(["关于 LitePad"]);
+    expect(rootTexts()).toEqual(["检查更新…", "关于 LitePad"]);
     expect(rootTexts().join(""), "帮助里不得再有快捷键入口").not.toContain("快捷键");
+    await clickAny("检查更新…");
+    await clickMenuBtn(host, "帮助");
     await clickAny("关于 LitePad");
-    expect(calls).toEqual(["about"]);
+    expect(calls).toEqual(["check-update", "about"]);
   });
 });
 

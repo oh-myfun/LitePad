@@ -63,17 +63,33 @@ jobs:
           npx tsc -b
           npx vite build
 
+      # B107：配置了签名私钥（Secrets: TAURI_SIGNING_PRIVATE_KEY）→ 产出更新器两件套
+      # （.exe / .exe.sig，latest.json 由下一步生成）；没配置 → 降级关闭
+      # createUpdaterArtifacts，发布照常出 exe（更新器产物缺席，应用端静默无感）。
       - name: Build Tauri app + NSIS bundle
         shell: bash
-        run: >
-          node node_modules/@tauri-apps/cli/tauri.js build
-          --config '{"build":{"beforeBuildCommand":""}}'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::warning::未配置 TAURI_SIGNING_PRIVATE_KEY，本次发布不含更新器产物"
+            CFG='{"build":{"beforeBuildCommand":""},"bundle":{"createUpdaterArtifacts":false}}'
+          else
+            CFG='{"build":{"beforeBuildCommand":""}}'
+          fi
+          node node_modules/@tauri-apps/cli/tauri.js build --config "$CFG"
+
+      # B107：生成 updater feed（latest.json）并收敛发布资产；无签名产物时只带 exe
+      - name: Generate updater feed (latest.json)
+        shell: bash
+        run: bash scripts/gen-latest-json.sh
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           name: LitePad ${{ inputs.tag || github.ref_name }}
-          files: src-tauri/target/release/bundle/nsis/*.exe
+          files: release-assets/*
           generate_release_notes: true
           draft: false

@@ -12,6 +12,10 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["devtools", "protocol-asset"] }
 tauri-plugin-dialog = "2"
+# B107 应用内自动更新：检查/下载/验签（tauri-plugin-updater）+ relaunch（tauri-plugin-process）。
+# 签名私钥在项目外 `~/.tauri/litepad.key`（或 CI 的 GitHub Secret），**绝不入库**。
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 # 文件关联（双击 .md/.markdown 打开）：应用已运行时把路径转发给主窗口，避免多开。
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }

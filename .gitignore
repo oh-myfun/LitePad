@@ -33,6 +33,11 @@ __pycache__/
 # 工具链崩溃转储（cargo / MinGW 偶发）
 *.stackdump
 
+# B107 自动更新：签名私钥（正本在项目外 ~/.tauri/litepad.key）与 CI 产物暂存目录。
+# 私钥一旦入库即泄露（全员可伪造更新包），这里双保险——就算有人把密钥拷进项目也进不了 git。
+*.key
+release-assets/
+
 # 智能体运行时 / 记忆 / 技能目录（.workbuddy）—— 整个不入库，仅留本地磁盘。
 # ⚠️ 操作用 `git rm --cached`（只动索引）；绝不对本目录跑 `git rm`/`rmdir` 或 `rm`，
 #    否则 agent 运行时整棵从磁盘消失（见 .workbuddy/memory 红线）。

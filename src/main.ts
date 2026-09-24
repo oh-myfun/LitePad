@@ -128,6 +128,7 @@ import {
 } from "./shell/keymap";
 import { KEYMAP_RECORDING_CLASS } from "./shell/keymapdialog";
 import { showSettingsDialog } from "./shell/settingsdialog";
+import { initUpdater, type UpdaterHandle } from "./shell/updater";
 import {
   renderSplitview,
   panelAt,
@@ -4414,6 +4415,10 @@ function toggleStatusbar(): void {
  * 拖动与双击最大化不在这里接线 —— header 上那个 `data-tauri-drag-region="deep"` 由
  * Tauri 内置的 drag.js 接管（见 src-tauri/capabilities/default.json 的说明）。
  */
+
+/** 右上角更新键句柄（setupTitleBar 初始化；帮助菜单「检查更新…」经它手动检查）。 */
+let updaterHandle: UpdaterHandle | null = null;
+
 function setupTitleBar(): void {
   // 左上角软件图标：纯标识，位图来自打包进 dist 的应用图标源（见文件头的 import 说明）。
   appMark.style.backgroundImage = `url("${appMarkUrl}")`;
@@ -4432,6 +4437,18 @@ function setupTitleBar(): void {
     .catch(() => {});
   void refreshMaximizeButton();
   void refreshPinButton();
+  // B107：右上角更新键（无更新时不可见；静默检查失败不打扰，见 src/shell/updater.ts）。
+  // 安装会杀进程，persist 走热退出同款 persistSession，重启后靠会话恢复回到原样。
+  const titleActions = document.querySelector(".title-actions");
+  if (titleActions) {
+    updaterHandle = initUpdater({
+      host: titleActions as HTMLElement,
+      showMessage,
+      persist: () => persistSession(),
+      initialDelayMs: 8000,
+      intervalMs: 6 * 60 * 60 * 1000,
+    });
+  }
   // 状态栏的语言/格式项按活动标签刷新（原先顺带在这条启动链上初始化）
   refreshViewModeButton();
 }
@@ -4540,6 +4557,8 @@ function setupMenuBar(): void {
     // ---- 设置（B106：统一设置页，含原首选项与快捷键分类） ----
     onSettings: () => openSettingsDialog(),
     // ---- 帮助 ----
+    // B107：手动检查更新（结果走状态栏；静默检查失败不打扰，见 src/shell/updater.ts）
+    onCheckUpdate: () => void updaterHandle?.checkNow(),
     onAbout: () => {
       void ask(
         "LitePad v0.1.0\n轻量级 Markdown / 文本编辑器（Tauri 2 + CodeMirror 6）\n\n仅 Windows 平台。",

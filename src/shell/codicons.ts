@@ -59,6 +59,12 @@ const IDS = {
   // （B102 之前只用一颗 `pin` + 按钮配色表达状态，用户要求改成两颗字形切换。）
   pinned: "pinned",
   unpin: "unpin",
+  // —— 右上角更新键（B107）——
+  // 三态共用一颗按钮、字形即状态：发现新版本 = cloud-download（点击下载安装），
+  // 下载中 = loading（配 .is-busy 的旋转动画），就绪待重启 = refresh（点击 relaunch）。
+  cloudDownload: "cloud-download",
+  loading: "loading",
+  refresh: "refresh",
   // —— 面板 / 标签 ——
   circleFilled: "circle-filled",
   // —— 标签上的文件类型字形（10 个家族，见 src/shell/fileicons.ts）——

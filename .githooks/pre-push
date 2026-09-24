@@ -167,7 +167,19 @@ if command -v npm >/dev/null 2>&1 && { [ -x "$HOME/.cargo/bin/cargo.exe" ] || co
     echo "⚠ 找不到 makensis（NSIS），改用 --no-bundle：只生成 exe，不出安装包" >&2
     BUNDLE_FLAG="--no-bundle"
   fi
-  npm run tauri -- build $BUNDLE_FLAG --config '{"build":{"beforeBuildCommand":""}}' || {
+  # B107 更新器签名：与 build-all.sh 同一条规则——私钥在项目外 ~/.tauri/litepad.key，
+  # 只经环境变量传给 tauri CLI、绝不入库；没有密钥就降级关闭 createUpdaterArtifacts。
+  UPD_CFG='{"build":{"beforeBuildCommand":""}}'
+  if [ -f "$HOME/.tauri/litepad.key" ]; then
+    TAURI_SIGNING_PRIVATE_KEY="$(cat "$HOME/.tauri/litepad.key")"
+    export TAURI_SIGNING_PRIVATE_KEY
+    : "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:=}"
+    export TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+  else
+    UPD_CFG='{"build":{"beforeBuildCommand":""},"bundle":{"createUpdaterArtifacts":false}}'
+    echo "⚠ 未发现 ~/.tauri/litepad.key：本次构建不产出更新器签名产物" >&2
+  fi
+  npm run tauri -- build $BUNDLE_FLAG --config "$UPD_CFG" || {
     echo "✗ pre-push 失败：release 构建未通过（未产出 exe）" >&2
     exit 1
   }
