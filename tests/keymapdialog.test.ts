@@ -20,10 +20,21 @@ function openDialog(
   return { changes };
 }
 
-function presetSelect(): HTMLSelectElement {
-  const sel = document.querySelector<HTMLSelectElement>(".keymap-preset");
-  expect(sel, "对话框应有键位预设下拉").toBeTruthy();
-  return sel!;
+function presetDropdown(): HTMLElement {
+  const trigger = document.querySelector(".keymap-preset");
+  expect(trigger, "对话框应有键位预设下拉").toBeTruthy();
+  const root = trigger!.closest(".dropdown");
+  expect(root, "预设下拉应有 .dropdown 容器").toBeTruthy();
+  return root!;
+}
+
+/** 切换预设：直接点对应选项（模拟用户操作，触发 onPick）。 */
+function pickPreset(id: string): void {
+  const opt = [...presetDropdown().querySelectorAll(".dropdown-option")].find(
+    (o) => o.dataset.value === id,
+  ) as HTMLButtonElement | undefined;
+  expect(opt, `预设下拉应有「${id}」选项`).toBeTruthy();
+  opt!.click();
 }
 
 function rowOf(label: string): Element {
@@ -193,18 +204,19 @@ describe("M4 快捷键对话框：键位预设下拉", () => {
 
   it("下拉列出全部预设，并选中当前预设", () => {
     openDialog({}, "vscode");
-    const sel = presetSelect();
-    expect([...sel.options].map((o) => o.textContent)).toContain("Notepad++");
-    expect(sel.value).toBe("vscode");
+    const sel = presetDropdown();
+    const labels = [...sel.querySelectorAll(".dropdown-option .dd-label")].map(
+      (e) => e.textContent,
+    );
+    expect(labels).toContain("Notepad++");
+    expect(sel.dataset.value).toBe("vscode");
   });
 
   it("切换预设立即改变列表里显示的键位", () => {
     openDialog({});
     expect(keyButton("另存为…").textContent).toBe("Ctrl+Shift+S");
 
-    const sel = presetSelect();
-    sel.value = "notepadpp";
-    sel.dispatchEvent(new Event("change"));
+    pickPreset("notepadpp");
 
     // Notepad++ 预设下另存为是 Ctrl+Alt+S
     expect(keyButton("另存为…").textContent).toBe("Ctrl+Alt+S");
@@ -214,9 +226,7 @@ describe("M4 快捷键对话框：键位预设下拉", () => {
     const { changes } = openDialog({ "file.save": "Ctrl+Q" });
     changes.length = 0;
 
-    const sel = presetSelect();
-    sel.value = "vscode";
-    sel.dispatchEvent(new Event("change"));
+    pickPreset("vscode");
 
     expect(changes.length).toBeGreaterThan(0);
     expect(changes[changes.length - 1], "覆盖表应已被清空").toEqual({});
@@ -226,16 +236,14 @@ describe("M4 快捷键对话框：键位预设下拉", () => {
     const picked: string[] = [];
     openDialog({}, DEFAULT_PRESET_ID, (id) => picked.push(id));
 
-    const sel = presetSelect();
-    sel.value = "notepadpp";
-    sel.dispatchEvent(new Event("change"));
+    pickPreset("notepadpp");
 
     expect(picked).toEqual(["notepadpp"]);
   });
 
   it("预设 id 非法时下拉回落默认，不崩也不改状态", () => {
     openDialog({}, "no-such-preset");
-    expect(presetSelect().value).toBe(DEFAULT_PRESET_ID);
+    expect(presetDropdown().dataset.value).toBe(DEFAULT_PRESET_ID);
   });
 });
 

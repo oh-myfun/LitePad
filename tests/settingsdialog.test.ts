@@ -41,15 +41,36 @@ function makeOpts(): SettingsDialogOptions {
   };
 }
 
-/** 在所有分类页里按标签文本找到行内 select 控件。 */
-function rowControl(label: string): HTMLSelectElement {
+/** 在所有分类页里按标签文本找到行内自定义下拉控件（B108 起为 .dropdown）。 */
+function rowControl(label: string): HTMLElement {
   const item = [...document.querySelectorAll(".settings-item")].find(
     (r) => r.querySelector(".settings-item-label")?.textContent === label,
   );
   expect(item, `行「${label}」应存在`).toBeTruthy();
-  const ctl = item!.querySelector("select");
-  expect(ctl, `行「${label}」应有 select 控件`).toBeTruthy();
-  return ctl as HTMLSelectElement;
+  const ctl = item!.querySelector(".dropdown");
+  expect(ctl, `行「${label}」应有下拉控件`).toBeTruthy();
+  return ctl as HTMLElement;
+}
+
+/** 下拉当前值（写在容器的 data-value 上）。 */
+function rowValue(label: string): string {
+  return rowControl(label).dataset.value ?? "";
+}
+
+/** 下拉选项值列表。 */
+function rowValues(label: string): string[] {
+  return [...rowControl(label).querySelectorAll(".dropdown-option")].map(
+    (o) => o.dataset.value ?? "",
+  );
+}
+
+/** 选中某一下拉项的某个值（模拟点击选项，触发 onPick）。 */
+function pickRow(label: string, value: string): void {
+  const opt = [...rowControl(label).querySelectorAll(".dropdown-option")].find(
+    (o) => o.dataset.value === value,
+  ) as HTMLButtonElement | undefined;
+  expect(opt, `下拉「${label}」应有值「${value}」的选项`).toBeTruthy();
+  opt!.click();
 }
 
 function navItems(): string[] {
@@ -81,7 +102,7 @@ describe("B106 统一设置页：三栏结构", () => {
     ) as HTMLElement | undefined;
     expect(appearance, "应有外观分类页").toBeTruthy();
     expect(appearance!.hidden, "外观分类默认应可见").toBe(false);
-    expect(rowControl("主题").value, "默认主题应为 system").toBe("system");
+    expect(rowValue("主题"), "默认主题应为 system").toBe("system");
   });
 
   it("点击左侧分类切到对应页（快捷键分类复用 keymapdialog）", () => {
@@ -112,10 +133,9 @@ describe("B106 设置项：初值 + 即时回调", () => {
       ["默认行尾", "CRLF"],
       ["默认编码", "UTF-8"],
     ] as const) {
-      expect(rowControl(label).value, `「${label}」初值应为 ${val}`).toBe(val);
+      expect(rowValue(label), `「${label}」初值应为 ${val}`).toBe(val);
     }
-    const eolOpts = [...rowControl("默认行尾").options].map((o) => o.value);
-    expect(eolOpts).toEqual(["CRLF", "LF", "CR"]);
+    expect(rowValues("默认行尾")).toEqual(["CRLF", "LF", "CR"]);
   });
 
   it("任何控件 change 立即回调对应 setter", () => {
@@ -132,9 +152,7 @@ describe("B106 设置项：初值 + 即时回调", () => {
     showSettingsDialog(opts);
 
     const fire = (label: string, value: string): void => {
-      const ctl = rowControl(label);
-      ctl.value = value;
-      ctl.dispatchEvent(new Event("change"));
+      pickRow(label, value);
     };
 
     fire("主题", "dark");

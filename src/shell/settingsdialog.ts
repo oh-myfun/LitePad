@@ -14,6 +14,7 @@
  */
 
 import { mountKeymapPage, type KeymapDialogOptions, type KeymapPageHandle } from "./keymapdialog";
+import { createDropdown } from "./dropdown";
 
 export type ThemeChoice = "system" | "light" | "dark";
 
@@ -309,17 +310,15 @@ function selectControl(
   options: { label: string; value: string }[],
   current: string,
   onPick: (v: string) => void,
-): HTMLSelectElement {
-  const sel = document.createElement("select");
-  for (const o of options) {
-    const opt = document.createElement("option");
-    opt.value = o.value;
-    opt.textContent = o.label;
-    opt.selected = o.value === current;
-    sel.appendChild(opt);
-  }
-  sel.addEventListener("change", () => onPick(sel.value));
-  return sel;
+): HTMLElement {
+  // B108：用自定义下拉替代原生 <select>，展开列表复用 .popup-menu 视觉
+  const dd = createDropdown({
+    options: options.map((o) => ({ label: o.label, value: o.value })),
+    current,
+    onPick,
+    ariaLabel: options.find((o) => o.value === current)?.label,
+  });
+  return dd.root;
 }
 
 function selectRow(

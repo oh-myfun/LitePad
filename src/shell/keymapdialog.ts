@@ -26,6 +26,7 @@ import {
   type KeymapOverrides,
 } from "./keymap";
 import { setTip } from "./tooltip";
+import { createDropdown } from "./dropdown";
 
 export interface KeymapDialogOptions {
   overrides: KeymapOverrides;
@@ -60,21 +61,32 @@ export function mountKeymapPage(host: HTMLElement, opts: KeymapDialogOptions): K
   const toolbar = document.createElement("div");
   toolbar.className = "keymap-toolbar";
 
-  // 预设下拉（M4）：换的是「基线」，下拉右边跟一句说明
-  const presetSel = document.createElement("select");
-  presetSel.className = "keymap-preset";
+  // 预设下拉（M4，B108 改为自定义下拉）：换的是「基线」。
+  // 触发器保留 .keymap-preset 类以维持工具栏内的尺寸/对齐；展开列表复用 .popup-menu。
+  const presetDd = createDropdown({
+    options: KEYMAP_PRESETS.map((p) => ({ label: p.label, value: p.id, note: p.note })),
+    current: presetById(opts.preset)?.id ?? KEYMAP_PRESETS[0].id,
+    className: "keymap-preset",
+    ariaLabel: "键位预设",
+    onPick: (id) => {
+      const p = presetById(id);
+      if (!p) return;
+      if (setKeymapPreset(p.id)) {
+        // 预设换的是基线，旧的自定义覆盖语义已失效（它们原本是相对上一套预设的
+        // 差异），一并清空，否则会出现「换回默认却仍带着旧键位」的错觉。
+        for (const key of Object.keys(overrides)) delete overrides[key];
+        opts.onPresetChange(p.id);
+        applyChange();
+        render();
+      }
+      hint.textContent = `${p.label} · ${p.note}`;
+      hint.classList.remove("warn");
+    },
+  });
+  const presetSel = presetDd.root.querySelector<HTMLButtonElement>(".keymap-preset")!;
   setTip(presetSel, "键位预设", {
     detail: "决定各命令的默认键位；在此之上的单独改动仍可继续自定义",
   });
-  for (const p of KEYMAP_PRESETS) {
-    const opt = document.createElement("option");
-    opt.value = p.id;
-    opt.textContent = p.label;
-    // 原生下拉里的 <option> 由系统绘制，提示只能用原生 title（自绘层盖不到原生弹层）
-    opt.title = p.note;
-    presetSel.appendChild(opt);
-  }
-  presetSel.value = presetById(opts.preset)?.id ?? KEYMAP_PRESETS[0].id;
 
   const search = document.createElement("input");
   search.className = "keymap-search";
@@ -86,7 +98,7 @@ export function mountKeymapPage(host: HTMLElement, opts: KeymapDialogOptions): K
   reset.className = "keymap-reset";
   reset.textContent = "恢复全部默认";
 
-  toolbar.append(presetSel, search, reset);
+  toolbar.append(presetDd.root, search, reset);
 
   const hint = document.createElement("div");
   hint.className = "keymap-hint";
@@ -250,21 +262,6 @@ export function mountKeymapPage(host: HTMLElement, opts: KeymapDialogOptions): K
   };
 
   search.addEventListener("input", render);
-
-  presetSel.addEventListener("change", () => {
-    const p = presetById(presetSel.value);
-    if (!p) return;
-    if (setKeymapPreset(p.id)) {
-      // 预设换的是基线，旧的自定义覆盖语义已失效（它们原本是相对上一套预设的
-      // 差异），一并清空，否则会出现「换回默认却仍带着旧键位」的错觉。
-      for (const key of Object.keys(overrides)) delete overrides[key];
-      opts.onPresetChange(p.id);
-      applyChange();
-      render();
-    }
-    hint.textContent = `${p.label} · ${p.note}`;
-    hint.classList.remove("warn");
-  });
 
   reset.addEventListener("click", () => {
     for (const key of Object.keys(overrides)) delete overrides[key];

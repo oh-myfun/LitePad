@@ -1243,7 +1243,6 @@ button:focus-visible {
   color: var(--fg-muted);
 }
 
-.settings-dialog select,
 .settings-dialog input[type="number"] {
   flex: 1;
   padding: 4px 8px;
@@ -1292,25 +1291,16 @@ button:focus-visible {
   margin-bottom: 8px;
 }
 
-/* 键位预设下拉（M4）：与搜索框同高，宽度只够放下预设名 */
-.keymap-preset {
+/* 键位预设下拉（M4，B108 改为自定义下拉）：在工具栏内只调尺寸/对齐，
+   外观由 .dropdown-trigger 统一给出（border / radius / bg / hover / focus 环）。
+   特异性 .keymap-toolbar .keymap-preset（0-2-0）高过 .dropdown-trigger（0-1-0），
+   故这里的 height/padding/font 能覆盖。 */
+.keymap-toolbar .keymap-preset {
   flex: 0 0 auto;
+  min-width: 0;
+  height: auto;
   padding: 5px 6px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  color: var(--fg);
   font-size: 12px;
-  cursor: pointer;
-}
-
-.keymap-preset:hover {
-  background: var(--bg-hover);
-}
-
-.keymap-preset:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
 }
 
 .keymap-search {
@@ -1630,18 +1620,6 @@ button:focus-visible {
   align-items: center;
   justify-content: flex-end;
   flex-shrink: 0;
-}
-
-.settings-item-control select {
-  min-width: 150px;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--fg);
-  font-size: 13px;
-  font-family: var(--font-ui);
 }
 
 .settings-shortcuts-header {
@@ -2504,6 +2482,79 @@ body.tab-drag-active * {
   background: var(--bg);
   color: var(--fg);
   box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* ---------- 自定义下拉（B108：替代原生 select，列表复用 .popup-menu 视觉） ---------- */
+
+.dropdown {
+  position: relative;
+  display: inline-flex;
+}
+
+/* 触发器：与设置页输入框 / 工具栏按键同一组 border / radius / bg / hover / focus 环 */
+.dropdown-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  min-width: 150px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+  font-family: var(--font-ui);
+  cursor: pointer;
+}
+
+.dropdown-trigger:hover {
+  background: var(--bg-hover);
+}
+
+.dropdown-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.dropdown-trigger .dd-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropdown-trigger .dd-caret {
+  flex: 0 0 auto;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+/* 列表默认隐藏；展开时跟随 .popup-menu 的 fixed 定位由 JS 设 left/top */
+.dropdown-list {
+  display: none;
+}
+
+.dropdown.open .dropdown-list {
+  display: block;
+}
+
+/* 选项行：标签靠左、note 靠右（与原生 <option> 的「主文本 + 说明」对齐） */
+.dropdown-option {
+  justify-content: space-between !important;
+  gap: 12px;
+}
+
+.dropdown-option .dd-note {
+  margin-left: auto;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+/* 键盘 / 悬停高亮：与 .popup-menu 同款 hover 底色（应用菜单的高亮也走 JS 加的 active 类） */
+.dropdown-option.dd-active {
+  background: var(--bg-hover);
 }
 
 /* ---------- tooltip（B58：应用级提示层，取代原生 title） ----------

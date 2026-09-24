@@ -350,10 +350,13 @@ describe("bootstrap + drag-split smoke", () => {
     // 统一设置页默认停在「外观」分类，「主题」下拉直接可见
     const items = [...document.querySelectorAll(".settings-panel .settings-item")];
     const item = items.find((r) => r.querySelector(".settings-item-label")?.textContent === "主题");
-    const sel = item?.querySelector("select") as HTMLSelectElement | null;
-    expect(sel, "设置页里应有「主题」下拉").toBeTruthy();
-    sel!.value = mode;
-    sel!.dispatchEvent(new Event("change", { bubbles: true }));
+    const dd = item?.querySelector(".dropdown") as HTMLElement | null;
+    expect(dd, "设置页里应有「主题」下拉").toBeTruthy();
+    const opt = [...dd!.querySelectorAll(".dropdown-option")].find(
+      (o) => o.dataset.value === mode,
+    ) as HTMLButtonElement | undefined;
+    expect(opt, `主题下拉应有「${mode}」选项`).toBeTruthy();
+    opt!.click();
     await tick(30);
     // 关掉模态弹窗，别影响后续用例
     (document.querySelector(".settings-close") as HTMLButtonElement)?.click();
