@@ -8,9 +8,11 @@
 # release 步骤直接从该构建目录上传这三件。
 #
 # ⚠️ tauri v2 的 NSIS 更新器产物 = 安装包 exe + 同名 `.exe.sig`（没有 .nsis.zip 封装）。
-#    `.sig` 文件本身是「对 minisign 明文签名再包一层 base64」的单行文件；latest.json 的
-#    `signature` 字段必须放 **base64 解码后的明文签名**（tauri 用 minisign-verify 按
-#    「untrusted comment 行 + base64 签名体」逐行解析，直接喂 base64 原文会验签失败）。
+# ⚠️ latest.json 的 `signature` 字段必须是 **`.sig` 文件的原文（base64 字符串）**——
+#    tauri-plugin-updater 会先对它做 base64 解码、再按 minisign 明文解析+验签
+#    （见 tauri-plugin-updater-2.12.0 src/updater.rs:1540 + error.rs:60 的报错文案）。
+#    直接把 base64 解码后的明文塞进去会让解码器在换行符处报
+#    `Invalid symbol 10`（即本次 v0.13.0 更新安装失败的根因）。所以这里**原样**取 .sig 内容。
 #    `url` 必须与实际上传的 Release 附件名一致，否则下载 404（应用退回 available 态）。
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
@@ -33,22 +35,25 @@ fi
 REPO="${GITHUB_REPOSITORY:-oh-myfun/LitePad}"
 URL="https://github.com/$REPO/releases/download/v$VER/$EXE"
 
-# 用 node 拼装：signature 是含换行的多行明文，必须走 JSON.stringify 安全转义。
-# 直接写在 tauri 构建目录内（与 exe / .sig 同处），release 步骤从这里上传，不复制第二份。
+# 用 node 拼装：signature 直接取 .sig 原文（base64 字符串），tauri 会自行 base64 解码。
+# 自检：该 base64 解码后必须是 minisign 明文（以 untrusted comment: 开头），否则说明拿错文件。
 node -e '
   const fs = require("fs");
   const [sigPath, ver, url, outPath] = process.argv.slice(1);
-  const sigText = Buffer.from(fs.readFileSync(sigPath, "utf8").trim(), "base64").toString("utf8");
+  const sigB64 = fs.readFileSync(sigPath, "utf8").trim();
+  let sigText;
+  try { sigText = Buffer.from(sigB64, "base64").toString("utf8"); }
+  catch { console.error("✗ .sig 不是合法 base64，中止"); process.exit(1); }
   if (!sigText.startsWith("untrusted comment:")) {
-    console.error("✗ 签名解码结果不是 minisign 明文格式，中止"); process.exit(1);
+    console.error("✗ .sig 解码后不是 minisign 明文（应以 untrusted comment: 开头），中止"); process.exit(1);
   }
   const json = {
     version: ver,
     notes: `LitePad v${ver}`,
     pub_date: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
-    platforms: { "windows-x86_64": { signature: sigText, url } },
+    platforms: { "windows-x86_64": { signature: sigB64, url } },
   };
   fs.writeFileSync(outPath, JSON.stringify(json, null, 2) + "\n");
 ' "$SIG" "$VER" "$URL" "$SRC/latest.json"
 
-echo "✓ latest.json 已生成（v$VER → $URL），位于 $SRC/latest.json"
+echo "✓ latest.json 已生成（v$VER → $URL），signature 为 .sig 原文 base64"

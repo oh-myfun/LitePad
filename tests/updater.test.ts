@@ -266,9 +266,10 @@ describe("B107 更新链路静态守卫", () => {
     );
 
     const gen = readSrc("scripts/gen-latest-json.sh");
-    expect(gen, "signature 必须放 base64 解码后的 minisign 明文（tauri 按行解析）").toContain(
-      'startsWith("untrusted comment:")',
-    );
+    expect(
+      gen,
+      "signature 必须是 .sig 原文 base64（tauri 先 base64 解码再按 minisign 解析；直接喂明文会报 Invalid symbol 10）",
+    ).toContain('startsWith("untrusted comment:")');
     expect(gen, "平台键必须是 windows-x86_64").toContain('"windows-x86_64"');
     expect(gen, "url 必须指向该版本 Release 的 .exe 安装包附件").toContain("releases/download/");
   });
