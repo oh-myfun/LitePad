@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { themeBlock, cssDecls, ruleBlock } from "./static";
+import { themeBlock, cssDecls, ruleBlock, stripLineComments } from "./static";
 
 describe("标签栏静态契约（从 regressions 拆出）", () => {
   it("B53 标签区改为横向滚动（折叠机制已整体移除，用户要求）", () => {
@@ -9,7 +9,10 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
     // 旧实现是「不显示滚动条 + 溢出的标签折叠进下拉按钮」——那套机制已删除，
     // 连同它需要的 ResizeObserver 重算 / tabId 重对齐 / 预算铺满三条不变量。
     const css = readFileSync("src/styles/global.css", "utf-8");
-    const strip = css.match(/\.panel-tabstrip\s*\{[^}]*\}/)?.[0] ?? "";
+    // ⚠️ 必须 \n 锚定行首：pill 覆盖块（B114）的选择器是
+    //   :root[data-tab-style="pill"] .panel-tabstrip
+    // 无锚定时 \.panel-tabstrip\s*\{ 会命中它的尾段，抓回来的是 pill 块的块体。
+    const strip = css.match(/\n\.panel-tabstrip\s*\{[^}]*\}/)?.[0] ?? "";
     expect(strip, "应有 .panel-tabstrip 规则").toBeTruthy();
     expect(strip, "标签区必须可横向滚动").toContain("overflow-x: auto");
     // 细滚动条由 ::-webkit-scrollbar 自绘。⚠️ B54 踩坑：元素上写了 scrollbar-width /
@@ -324,5 +327,93 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     const insert = css.match(/\.tab-insert\s*\{[^}]*\}/)?.[0] ?? "";
     expect(insert, "拖拽插入线必须与药丸行等高").toMatch(/top:\s*4px/);
     expect(insert, "拖拽插入线必须让开滚动条").toMatch(/bottom:\s*4px/);
+  });
+});
+
+describe("标签样式切换（B114：connected | pill）", () => {
+  // 契约集中成一个判定函数：正向用例断言真实样式零违规；
+  // 反向验证把「退化替身 CSS」（照抄 connected 的错误写法）喂给同一个函数，
+  // 断言它被咬住 —— 证明这些断言不是「怎么写都能过」的恒真假绿。
+  function pillViolations(css: string): string[] {
+    const v: string[] = [];
+    const get = (sel: string, filter?: string) => cssDecls(ruleBlock(css, sel, filter));
+    if (!get(':root[data-tab-style="pill"]').includes("--tab-bg-active: #2b2f34"))
+      v.push("深色档必须覆盖活动底色（#2b2f34，不再是编辑器背景）");
+    if (
+      !get(':root[data-tab-style="pill"][data-theme="light"]').includes("--tab-bg-active: #ffffff")
+    )
+      v.push("浅色档必须另设活动底色（纯白）");
+    const fill = get(':root[data-tab-style="pill"] .tab-fill');
+    if (!fill.includes("inset: 0")) v.push("pill 的 fill 必须收回标签框内（inset: 0）");
+    if (!fill.includes("border-radius: 4px")) v.push("pill 四角都是圆的（border-radius: 4px）");
+    if (!get(':root[data-tab-style="pill"] .tab-active .tab-fill').includes("border: none"))
+      v.push("pill 活动标签必须无边框（B55：只靠底色区分）");
+    if (
+      !get(':root[data-tab-style="pill"] .tab-active .tab-fill::before').includes("content: none")
+    )
+      v.push("pill 必须撤掉肩部（胶囊没有舌片）");
+    const strip = get(':root[data-tab-style="pill"] .panel-tabstrip');
+    if (!strip.includes("gap: 4px")) v.push("pill 恢复胶囊之间的 4px 缝隙");
+    // ⚠️ 断言到分号为止：connected 的 padding 值是 "4px 4px 0 0"，它是
+    //   "4px 4px 0" 的超集 —— 只 includes 前缀的话，替身写 connected 值也混得过去。
+    if (!/padding:\s*4px 4px 0\s*;/.test(strip)) v.push("pill 恢复条带 4px 左留白");
+    return v;
+  }
+
+  it("pill 档 CSS 契约：胶囊化 + 撤肩部描边 + 恢复缝隙（真实样式零违规）", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    expect(pillViolations(css), "真实样式违反 pill 契约的条目").toEqual([]);
+  });
+
+  it("反向验证：退化替身（connected 写法混进 pill 块）必须被咬住（防恒真）", () => {
+    // 替身 = 照抄 connected 的值冒充 pill 覆盖块：fill 外扩、只有上角圆、带描边、
+    // 无缝、不撤肩部、活动底色不变。退化用例先自证「替身确实跑了」（咬住的条目非空
+    // 且点名具体条目），再证明正向用例不恒真 —— 两者结果必须不同。
+    const BAD_PILL = `
+:root[data-tab-style="pill"] { --tab-bg-active: var(--bg); }
+:root[data-tab-style="pill"] .tab-fill { inset: -4px 0 -4px; border-radius: 5px 5px 0 0; }
+:root[data-tab-style="pill"] .tab-active .tab-fill { border: 1px solid var(--border); }
+:root[data-tab-style="pill"] .panel-tabstrip { gap: 0; padding: 4px 4px 0 0; }
+`;
+    const v = pillViolations(BAD_PILL);
+    expect(v.length, "退化替身必须至少被咬住一条").toBeGreaterThan(0);
+    expect(v, "替身的具体违规要被点名（自证判定函数真的在比对）").toEqual([
+      "深色档必须覆盖活动底色（#2b2f34，不再是编辑器背景）",
+      "浅色档必须另设活动底色（纯白）",
+      "pill 的 fill 必须收回标签框内（inset: 0）",
+      "pill 四角都是圆的（border-radius: 4px）",
+      "pill 活动标签必须无边框（B55：只靠底色区分）",
+      "pill 必须撤掉肩部（胶囊没有舌片）",
+      "pill 恢复胶囊之间的 4px 缝隙",
+      "pill 恢复条带 4px 左留白",
+    ]);
+  });
+
+  it("设置页与主流程接线：外观分类有「标签样式」下拉，切换立即生效并持久化", () => {
+    const dlg = readFileSync("src/shell/settingsdialog.ts", "utf-8");
+    expect(dlg, "选项接口必须有 tabStyle/onTabStyle").toContain("tabStyle: () => string");
+    expect(dlg).toContain("onTabStyle: (style: string) => void");
+    expect(dlg, "外观页必须有「标签样式」下拉").toContain('"标签样式"');
+    expect(dlg, "必须提供 connected 档").toContain('value: "connected"');
+    expect(dlg, "必须提供 pill 档").toContain('value: "pill"');
+
+    // main.ts：断言必须落在代码上（说明性注释里会复述这些标识符 —— B79 的教训）
+    const src = stripLineComments(readFileSync("src/main.ts", "utf-8"));
+    expect(src, "档位必须写进 html[data-tab-style]").toContain("dataset.tabStyle");
+    expect(src, "未知值必须回落 connected（与 Rust 回落一致）").toContain(
+      'style === "pill" ? "pill" : "connected"',
+    );
+    expect(src, "切换必须写回 settings 才能存盘（B79 同款教训）").toMatch(
+      /settings\.tab_style\s*=/,
+    );
+    expect(src, "启动时必须应用，否则重启样式回退").toContain(
+      'applyTabStyle(settings?.tab_style ?? "connected")',
+    );
+    expect(src, "设置对话框必须接线 onTabStyle").toContain(
+      "onTabStyle: (v) => void setTabStyle(v)",
+    );
+    expect(src, "设置对话框必须接线 tabStyle 取值").toContain(
+      'tabStyle: () => settings?.tab_style ?? "connected"',
+    );
   });
 });

@@ -657,6 +657,44 @@ button:focus-visible {
   }
 }
 
+/* ==================================================================
+   标签样式第二档：药丸（B114，设置页「外观 → 标签样式」切换）。
+   `data-tab-style` 由 main.ts 的 applyTabStyle 写进 <html>；
+   缺省 / 未知值 = "connected"（上面的 B113 相连标签）。
+   药丸观感回到 B55 的 Modern UI 胶囊：透明底、**无描边**、四角圆（4px）、
+   活动只靠底色区分；肩部与描边整体撤掉（胶囊没有「舌片」概念）；
+   条带重新出现 4px gap 与 4px 左留白 —— 那是胶囊之间的缝隙。
+   ⚠️ 几何（标签 24px / 条带 32px / 滚动条 4px）与相连档**完全共用**，
+   只换底色与圆角 —— 切换档位时条带高度不变，编辑器不会抖。
+   ================================================================== */
+:root[data-tab-style="pill"] {
+  /* B55 的活动药丸底色（深色）：明显抬一档，但不再是编辑器背景 ——
+     药丸是「浮在条带上的一颗胶囊」，与相连档「活动标签 = 编辑器底色」相反。 */
+  --tab-bg-active: #2b2f34;
+}
+:root[data-tab-style="pill"][data-theme="light"] {
+  /* 浅色档：活动药丸取纯白（B55），hover 反而压暗 —— 浅色里「变亮」没有感知空间 */
+  --tab-bg-active: #ffffff;
+}
+:root[data-tab-style="pill"] .tab-fill {
+  /* fill 从「上下外扩的舌片」收回标签框内：四角圆的独立胶囊 */
+  inset: 0;
+  border-radius: 4px;
+}
+:root[data-tab-style="pill"] .tab-active .tab-fill {
+  /* 药丸无边框（B55）：活动/非活动的差异 = 底色 + 文字明度两档 */
+  border: none;
+}
+:root[data-tab-style="pill"] .tab-active .tab-fill::before,
+:root[data-tab-style="pill"] .tab-active .tab-fill::after {
+  /* 胶囊四角自带圆角，没有肩部 */
+  content: none;
+}
+:root[data-tab-style="pill"] .panel-tabstrip {
+  gap: 4px;
+  padding: 4px 4px 0;
+}
+
 .tab-name {
   /* B113：底色层 .tab-fill 是 absolute，会盖住普通流内容 —— 必须提上来
      （同 VS Code 给 .tab-label 的 relative + z-index: 1），否则文件名被底色糊住。

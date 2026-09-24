@@ -44,6 +44,9 @@ pub struct Settings {
     /// 优先级：keymap 覆盖 > keymap_preset > 命令默认值。未知值由前端回落默认，
     /// 后端不校验——预设是前端概念，放到后端枚举反而要跟着前端改。
     pub keymap_preset: String,
+    /// 标签样式（"connected" | "pill"）。前端不识别的值按 "connected" 处理，
+    /// 后端不校验——理由同 keymap_preset。
+    pub tab_style: String,
 }
 
 impl Default for Settings {
@@ -66,6 +69,7 @@ impl Default for Settings {
             toc_width: 240.0,
             keymap: HashMap::new(),
             keymap_preset: "default".into(),
+            tab_style: "connected".into(),
         }
     }
 }
@@ -365,6 +369,32 @@ mod tests {
         assert!(
             out.contains("\"keymap_preset\":\"notepadpp\""),
             "落盘字段应为 snake_case keymap_preset：{out}"
+        );
+    }
+
+    /// B114：Settings 新增 `tab_style`。
+    /// 老配置文件里没有这个字段——`#[serde(default)]` 必须让它回落 "connected"，
+    /// 否则 `load()` 会因为缺字段直接整体失败、用户所有偏好一起丢。
+    #[test]
+    fn settings_without_tab_style_falls_back_to_connected() {
+        let json = r#"{ "theme": "dark" }"#;
+
+        let s: Settings = serde_json::from_str(json).expect("缺 tab_style 也应能读入");
+        assert_eq!(s.tab_style, "connected", "未知/缺失应回落 connected");
+        assert_eq!(Settings::default().tab_style, "connected");
+    }
+
+    /// 落盘的字段名必须是 tab_style（前端按同名读取，理由同 keymap_preset）。
+    #[test]
+    fn settings_tab_style_round_trip() {
+        let s = Settings {
+            tab_style: "pill".into(),
+            ..Settings::default()
+        };
+        let out = serde_json::to_string(&s).unwrap();
+        assert!(
+            out.contains("\"tab_style\":\"pill\""),
+            "落盘字段应为 snake_case tab_style：{out}"
         );
     }
 

@@ -3826,6 +3826,22 @@ function keyHint(id: string): string {
     .join(" / ");
 }
 
+/** 标签样式（设置页「外观 → 标签样式」的下拉）：立即生效。 */
+function applyTabStyle(style: string): void {
+  // 写进 <html data-tab-style>；未知值一律按 "connected" 处理（与 Rust 回落一致）。
+  document.documentElement.dataset.tabStyle = style === "pill" ? "pill" : "connected";
+}
+
+/** 标签样式切换（设置页）：立即生效 + 持久化。 */
+async function setTabStyle(style: string): Promise<void> {
+  applyTabStyle(style);
+  if (settings) {
+    settings.tab_style = style === "pill" ? "pill" : "connected";
+    await persistSettings();
+  }
+  showMessage(style === "pill" ? "标签样式：药丸" : "标签样式：相连");
+}
+
 /** 主题档位（设置页「外观」分类的下拉）：立即生效 + 持久化。 */
 async function setThemeMode(mode: ThemeMode): Promise<void> {
   themeMode = mode;
@@ -4006,6 +4022,8 @@ function openSettingsDialog(): void {
     onAutosave: (v) => void setAutosave(v),
     hotExit: () => settings?.hot_exit ?? true,
     onHotExit: (v) => void setHotExit(v),
+    tabStyle: () => settings?.tab_style ?? "connected",
+    onTabStyle: (v) => void setTabStyle(v),
     keymap: {
       overrides: keymapOverrides,
       onChange: (next) => void applyKeymapOverrides(next),
@@ -5488,6 +5506,8 @@ async function setupShell(): Promise<void> {
   isDark = applyTheme(themeMode);
   // 档位写进 <html data-theme-mode>（B97 前由顶栏那颗主题按钮承担）
   publishThemeMode();
+  // 标签样式写进 <html data-tab-style>（B114；必须在任何标签渲染前落地）
+  applyTabStyle(settings?.tab_style ?? "connected");
   isWrap = settings?.word_wrap ?? true;
   applyFontSize(settings?.font_size ?? 14);
   applyFontFamily(settings?.font_family ?? "");

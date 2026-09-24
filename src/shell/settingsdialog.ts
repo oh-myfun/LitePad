@@ -45,6 +45,9 @@ export interface SettingsDialogOptions {
   /** 热退出：关窗时把未保存内容写进独立副本（B68 起默认开）。「通用」分类里的开关。 */
   hotExit: () => boolean;
   onHotExit: (on: boolean) => void;
+  /** 标签样式（B114）："connected" | "pill"。「外观」分类里的下拉。 */
+  tabStyle: () => string;
+  onTabStyle: (style: string) => void;
   /** 快捷键分类页所需的改键逻辑（复用 keymapdialog） */
   keymap: KeymapDialogOptions;
 }
@@ -83,7 +86,7 @@ const CATEGORIES: Category[] = [
   {
     id: "appearance",
     label: "外观",
-    keywords: ["外观", "主题", "浅色", "深色", "跟随系统"],
+    keywords: ["外观", "主题", "浅色", "深色", "跟随系统", "标签样式", "相连", "药丸", "tab"],
   },
   {
     id: "editor",
@@ -406,6 +409,18 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
         ],
         opts.theme(),
         (v) => opts.onTheme(v as ThemeChoice),
+      ),
+    );
+    body.appendChild(
+      selectRow(
+        "标签样式",
+        "「相连」= 标签连成一条带、活动标签与编辑区一体（VS Code 1.139 默认）；「药丸」= 独立圆角胶囊（经典样式）。",
+        [
+          { label: "相连（默认）", value: "connected" },
+          { label: "药丸", value: "pill" },
+        ],
+        opts.tabStyle(),
+        (v) => opts.onTabStyle(v),
       ),
     );
   } else if (id === "editor") {
