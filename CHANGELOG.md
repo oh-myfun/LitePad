@@ -3,6 +3,27 @@
 > 本文件由 `scripts/gen-changelog.sh` 从 Conventional Commit 自动生成，
 > `scripts/release.sh` 发布时自动刷新；版本口径见 `docs/conventions.md`「版本号规则」。
 
+## v0.14.0 — 2026-09-24
+
+本版距 `v0.13.0` 共 6 个提交。
+
+### 新功能
+
+- 新增「通用」分类，自动保存/热退出从文件菜单迁入 `44df4f0`
+- 用自定义下拉替代原生 select，列表与菜单风格一致 `f6bc2fa`
+
+### 修复
+
+- 下载更新用进度条替代转圈动画 `b1cbdb8`
+- 钉住态只高亮图标，整按钮不再点亮 `dc0229e`
+- latest.json 的 signature 改回 .sig 原文 base64 `8f32242`
+
+### 重构
+
+- updater 发布资产不再另拷贝副本 `d9aa4df`
+
+---
+
 ## v0.13.0 — 2026-09-24
 
 本版距 `v0.12.0` 共 2 个提交。
