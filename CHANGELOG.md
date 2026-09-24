@@ -3,6 +3,63 @@
 > 本文件由 `scripts/gen-changelog.sh` 从 Conventional Commit 自动生成，
 > `scripts/release.sh` 发布时自动刷新；版本口径见 `docs/conventions.md`「版本号规则」。
 
+## v0.12.0 — 2026-09-24
+
+本版距 `v0.11.0` 共 42 个提交。
+
+### 新功能
+
+- 统一设置页——「文件 → 设置…」三栏布局，快捷键并入分类 `c8474cc`
+- 状态栏只报状态；屏蔽 WebView2 默认网页右键菜单 `af903d9`
+- 置顶键并入窗口控制键的样式；菜单按钮改「标签(字母)」 `6ff588b`
+- 图标改用官方 npm 包 @vscode/codicons，置顶键改 pinned/unpin 双字形 `556e7ba`
+- 截图隔离到项目内，消灭每轮 326 个文件的删除与手敲命令 `322a0ce`
+- 标题栏左上显示软件图标，右侧新增「钉在顶部」开关 `9e2f36f`
+- 参考 VS Code 自建标题栏，菜单并入标题栏并移除顶栏快捷按钮 `a0b8f15`
+- 关联 .md/.markdown，双击走单实例新标签打开 `9cfba7c`
+
+### 修复
+
+- 双击关联文件在应用未运行时也打开该文件 `bec8521`
+- 置顶键与窗口控制三键贴成一组，去掉其间空隙 `63115ea`
+- 左上角图标不再顶到窗口左缘（左内边距 4px→10px） `80c89a1`
+- 交付物只认 tauri build 产物，并拦住空壳 dist `72c71b9`
+- 文件拖入改在捕获阶段拦截，不再被 CM6 当文本插进文档 `ca983d2`
+- 修复拖标签无影像与文件名插入文档两处回归（B91-2） `e991fcb`
+
+### 其他
+
+- 单一入口——构建/测试/打包只走 build-all.sh `893d9a4`
+- 增加 scripts/backup-workbuddy.sh 把 .workbuddy 快照进本地分支 workbuddy-local（不切分支、不删盘） `7bea71b`
+- 整个忽略 .workbuddy/，docs/vscode-reference/LICENSE.txt 加回跟踪 `ede4cef`
+- 整个忽略 docs/vscode-reference/ `bc5e60e`
+- 删除陈旧设计文档与临时产物目录 `c9841ba`
+- 切到 MSVC，让 exe 不再依赖 WebView2Loader.dll `d3d000a`
+- compile release only; stop regenerating target/debug `2f468e2`
+- remove unused WebView2Loader.dll source `caf09f7`
+- drop redundant WebView2Loader.dll resource `e86e30d`
+- ignore Python screenshot artifacts and cargo/MinGW crash dumps `d3797bc`
+- 记 tests/ 不进 tsc 的缺口（pitfalls/0097）+ 测试整理收尾 `dc76b6f`
+- 删掉重复的「版本号四处同步」用例（repo-hygiene 与 packaging 各一份） `2754a8d`
+- 反向验证脚本退役，可表达的一半搬进 tests/ `01156ac`
+- regressions 第三批按模块拆出，regressions.test.ts 退役 `8b1a1b6`
+- regressions 第二批按模块拆出（B71/B50/B68/B69/B42） `be60fd7`
+- regressions 第一批按模块拆出（B88/B87/B70/B58/M4/B52/B48） `1210f04`
+- 静态断言工具抽到 tests/static.ts（为按模块拆分 regressions 做准备） `568427e`
+- 沙箱打包配方补上 vite 超时重试（漏了会白等 11 分钟） `467d149`
+- 把「反向验证也是一种测试用例」写进约定，并记今日反向验证落地 `fd3892a`
+- 反向验证搬进 tests/ —— 用「退化实现替身」证明守卫咬得住 `13b4e29`
+- 收紧交付流程为「完成即提交+打包、不推送」，并记沙箱 bash/npm 撞 wsl 黑名单的坑 `8d2bb7e`
+- 记文件拖入被 CM6 读出内容插进文档的根因与修复（pitfalls/0096） `59f6954`
+- B91-2 反向验证脚本补「文件拖入监听退回冒泡」探针（③-5） `eb6600d`
+- 反向验证脚本补 B91-2 回归探针，并加固「被硬杀留补丁」的坑 `3ac98a9`
+- 记 B91-2 两处回归的根因与修复，并同步拖拽域内部文档 `db1148a`
+- 记构建产物文件锁坑与「不自动推送」流程调整 `3e1f0ef`
+- 记 v0.11.0 发布（CI/Release 全绿）与两处 PATH 踩坑 `214a895`
+- 记 B91-2 交付与 release.sh 的 PATH 细节补正 `3fbe683`
+
+---
+
 ## v0.11.0 — 2026-09-21
 
 本版距 `v0.10.1` 共 2 个提交。
