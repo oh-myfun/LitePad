@@ -247,7 +247,22 @@ interface Doc {
   eol: string;
   mixedEol: boolean;
   readonly: boolean;
+  /**
+   * 有未保存的修改（标签上那个 ●）。
+   *
+   * B112 起它是**算出来的**（见 `isDirtyVsBaseline`），而不是「一改过就永远脏」：
+   * 编辑后撤销回原样、或者改了又手动改回来，都会自然转回不脏 —— 用户要的正是
+   * 「内容回到修改前状态就不该显示待保存」。
+   */
   dirty: boolean;
+  /**
+   * 判脏的基线：正文与它完全一致、且编码/行尾也没动过 ⇒ 干净。
+   * `null` = 基线未知（热退出副本还原、跨窗口认领一类「只知道它脏、不知道原样是啥」
+   * 的情形），此时只能靠保存 / 重新载入显式转干净。
+   */
+  baseline: string | null;
+  baselineEncoding: string;
+  baselineEol: string;
   /** 磁盘文件在会话期间被外部修改（状态栏提示，标记被保存动作清除） */
   external: boolean;
   langLabel: string;
@@ -392,21 +407,28 @@ function handleUpdate(view: EditorView, update: ViewUpdate): void {
   // 关键：md 预览重渲染**只**在文本真变化时才排程。若按「任意 update」排程，
   // 大纲跳转的 dispatch（仅改选区）也会在 120ms 后全量重渲染预览 →
   // replaceChildren 把 scrollTop 清零，跳转落点被冲掉（B23「跳转位置不准」）。
-  const textChanged =
-    update.docChanged && update.startState.doc.toString() !== update.state.doc.toString();
+  const before = update.startState.doc.toString();
+  const now = update.state.doc.toString();
+  const textChanged = update.docChanged && before !== now;
   if (textChanged && isMdTab(tab)) scheduleMdRender(panel.panelId);
   if (update.docChanged && syncingDocId !== tab.docId) {
     // 只有**文本内容真的变了**才算用户修改。
     // 切换 源码/预览（编辑器被隐藏再显示）、点击内容区、重新测量等场景，
     // CM6 可能产生 docChanged 但前后文本完全一致的事务——那不是编辑，
     // 据此置脏会自动保存改写磁盘文件（用户没改过却被写盘）。
-    if (textChanged && !suppressDirty && !doc.dirty) {
-      doc.dirty = true;
-      refreshTitle();
-      renderPanelTabs();
-    }
-    // 自动保存只在内容真的变化时才排程：单纯点一下/移动光标不写盘
     if (textChanged && !suppressDirty) {
+      // B112：脏不脏由「内容是否偏离基线」**算**出来（见 isDirtyVsBaseline），
+      // 而不是「一改过就永远脏」——撤销回原样、改了又手动改回来，都会自然转干净。
+      const shouldDirty = isDirtyVsBaseline(doc, now);
+      if (shouldDirty !== doc.dirty) {
+        doc.dirty = shouldDirty;
+        // 刚转干净：备份区那份副本现在存的是「与磁盘一致的内容」，留着会让下次启动
+        // 拿它冒充未保存修改（与保存成功后丢弃副本是同一个道理）。
+        if (!shouldDirty) discardBackupFor(doc);
+        refreshTitle();
+        renderPanelTabs();
+      }
+      // 自动保存只在内容真的变化时才排程：单纯点一下/移动光标不写盘
       scheduleAutosave();
       // 热退出同理：内容一变就防抖写一次副本，不等关窗。
       // 这样强杀进程也能捞回未保存内容。
@@ -836,6 +858,10 @@ function makeDoc(
     mixedEol: false,
     readonly,
     dirty: false,
+    // 刚打开 / 刚新建：正文就是基线（B112），此时不脏
+    baseline: text,
+    baselineEncoding: encoding,
+    baselineEol: eol,
     external: false,
     langLabel: lang.label,
     sizeClass,
@@ -868,6 +894,40 @@ function makeInstance(doc: Doc, panelId: number, text: string): Tab {
     state,
     viewMode: "source",
   };
+}
+
+/**
+ * 文档当前**应当**是脏的吗（B112）。
+ *
+ * 「改过就永远脏」是错的：用户改了几个字又撤销回去、或者手动改回原文，内容已经
+ * 和磁盘上一模一样，却一直挂着 ●、关窗还要弹确认框、自动保存还要再写一次盘。
+ * 所以脏不脏由**比较**得出：正文偏离基线 ⇒ 脏；正好等于基线 ⇒ 干净。
+ *
+ * 编码 / 行尾也算进判据：切换行尾本身不改内存正文（保存时才落盘），
+ * 若只看正文，切了行尾再编辑又撤销就会把「行尾还没写盘」这件事悄悄抹掉。
+ *
+ * ⚠️ 先比长度再比内容：绝大多数编辑都会改变长度，长度不同可以直接判脏，
+ * 免去大文件上每次按键都做一次 O(n) 全文比较。
+ */
+function isDirtyVsBaseline(doc: Doc, text: string | null): boolean {
+  const base = doc.baseline;
+  if (base === null || text === null) return true;
+  if (text.length !== base.length) return true;
+  if (text !== base) return true;
+  return doc.encoding !== doc.baselineEncoding || doc.eol !== doc.baselineEol;
+}
+
+/**
+ * 把「当前正文 + 当前编码/行尾」钉成新的基线，文档随之转干净。
+ *
+ * 保存成功、重新载入、以磁盘版本为准 —— 凡是「内容已经与磁盘一致」的时刻都走它，
+ * 不要单独写 `doc.dirty = false`：那会让 dirty 与基线脱节，下一次编辑就再也判不准。
+ */
+function markClean(doc: Doc, text: string): void {
+  doc.baseline = text;
+  doc.baselineEncoding = doc.encoding;
+  doc.baselineEol = doc.eol;
+  doc.dirty = false;
 }
 
 /**
@@ -1827,7 +1887,8 @@ async function saveDocCore(doc: Doc, inst: Tab, forceDialog: boolean): Promise<b
     doc.name = saved.name;
     doc.encoding = saved.encoding;
     doc.mixedEol = false;
-    doc.dirty = false;
+    // 已落盘 → 这份正文（连同当前编码/行尾）就是新的基线
+    markClean(doc, text);
     doc.external = false;
     // 写盘之后磁盘版本变了：记下来，否则这次保存自己激起的 file-changed 会被当成外部修改
     markDiskVersion(doc, saved.mtimeMs, saved.size);
@@ -2004,7 +2065,8 @@ async function switchEncoding(label: string): Promise<void> {
     doc.mixedEol = file.mixedEol;
     doc.readonly = file.readonly;
     doc.name = file.name;
-    doc.dirty = false;
+    // 重新载入 = 内容以磁盘为准：正文、编码、行尾一起钉成新基线
+    markClean(doc, file.text);
     markDiskVersion(doc, file.mtimeMs, file.size);
     // 重新载入 = 内容以磁盘为准，此前的未保存副本必须作废
     discardBackupFor(doc);
@@ -2379,6 +2441,9 @@ async function restoreSession(): Promise<boolean> {
             // 脏 + 已知副本存在，于是关窗依旧不需要确认框。
             doc.dirty = true;
             doc.backedUp = true;
+            // 副本里只有「改过之后」的正文，**原文件长什么样并不知道** ⇒ 没有基线，
+            // 只能等用户保存时重新钉（在此之前撤销多少次都不会自己转干净）。
+            doc.baseline = null;
             // 已知版本无从得知（副本里不存 mtime），留 0：于是接下来的第一个
             // file-changed 一定被判成外部改动 —— 这份本来就脏，正是要弹冲突框的情形。
           } else if (hit.kind === "file") {
@@ -2451,7 +2516,8 @@ function scheduleAutosave(): void {
           // 弹模态框，也不能替他盖掉外部的新版本。文档保持脏，手动保存时会再问一次。
           if (outcome.kind === "conflict") continue;
           const saved = outcome.value;
-          doc.dirty = false;
+          // 写出去的就是新的基线（正文 + 编码 + 行尾）
+          markClean(doc, text);
           doc.external = false;
           markDiskVersion(doc, saved.mtimeMs, saved.size);
           // 内容已经落盘，备份区里的副本就成了「过期快照」——留着会让下次启动
@@ -2747,7 +2813,9 @@ function applyDiskContent(doc: Doc, file: OpenedFile, mtimeMs: number, size: num
   doc.sizeClass = normalizeSizeClass(file.sizeClass);
   doc.eol = eol;
   markDiskVersion(doc, mtimeMs, size);
-  doc.dirty = false;
+  // 内容以磁盘为准 → 磁盘这份就是新基线（不只是「清掉脏标记」，
+  // 否则下一次编辑就无从判断「是否已经回到和磁盘一致」）
+  markClean(doc, file.text);
   doc.external = false;
   // 内容以磁盘为准 → 此前那份未保存副本作废（留着会让下次启动拿它顶掉刚载入的内容）
   discardBackupFor(doc);
@@ -3183,7 +3251,9 @@ function replaceAllInScope(q: FindBarQuery): void {
       visible.state = p.view!.view.state;
     } else {
       for (const t of insts) t.state = t.state.update({ changes }).state;
-      if (!doc.dirty) {
+      // 离屏实例改完快照后同样按「是否偏离基线」判（B112）：替换词与被替换词恰好
+      // 相同时内容一字未变，不该挂上 ●。
+      if (!doc.dirty && isDirtyVsBaseline(doc, freshTextOfDoc(doc))) {
         doc.dirty = true;
         refreshTitle();
         renderPanelTabs();
@@ -4821,6 +4891,15 @@ function adoptTransferredTabs(incoming: SatelliteTab[], panelId = activePanelId)
       registerDoc(doc);
     }
     doc.dirty = st.dirty;
+    // 认领来的文档里，脏的那份**没有基线** —— 只继承到「它脏」，不知道原样是啥，
+    // 所以不能拿 st.text 当基线（那是改过之后的内容）；干净的那份正文即基线
+    // （makeDoc 已按 st.text 设好）。
+    if (st.dirty) doc.baseline = null;
+    else {
+      doc.baseline = st.text;
+      doc.baselineEncoding = st.encoding;
+      doc.baselineEol = st.eol;
+    }
     doc.backedUp = st.backedUp;
     const inst = makeInstance(doc, panel.panelId, st.text);
     if (isMdTab(inst) && st.viewMode === "preview") inst.viewMode = "preview";
@@ -5161,9 +5240,14 @@ function applyRemoteDocChange(payload: DocChangePayload | null): void {
   // 同一个文件只会互相触发 file-changed。
   const doc = docs.get(docId);
   if (doc && !doc.dirty) {
-    doc.dirty = true;
-    refreshTitle();
-    renderPanelTabs();
+    // 同样按「是否偏离基线」判（B112）：远端恰好把内容改回原样时就不该变脏。
+    // ⚠️ 保留 `doc.dirty = true` 直写——这里只是补上被 syncingDocId 抑制的置脏，
+    // 不是内容回到基线的场景，用不着走 refreshTitle/renderPanelTabs 之外的逻辑。
+    if (isDirtyVsBaseline(doc, freshTextOfDoc(doc))) {
+      doc.dirty = true;
+      refreshTitle();
+      renderPanelTabs();
+    }
   }
   scheduleSessionSave();
 }

@@ -192,7 +192,13 @@ describe("B87 文件监听：外部修改要真的刷新内容（VS Code 三态 
 
     it("载入磁盘版本 = 内容以磁盘为准：清脏 + 作废热退出副本", () => {
       expect(applyDisk, "取不到 applyDiskContent").toBeTruthy();
-      expect(applyDisk, "必须清脏").toContain("doc.dirty = false;");
+      // ⚠️ 只断言 `doc.dirty = false` 是不够的（B112 起脏标记由「内容 vs 基线」算出）：
+      // 清脏的同时必须把磁盘这份**钉成新基线**，否则下一次编辑无从判断
+      // 「是否已经回到与磁盘一致」，撤销回原样也转不回不脏。
+      expect(applyDisk, "必须钉基线并随之清脏").toContain("markClean(doc, file.text);");
+      expect(applyDisk, "不得再单独写 doc.dirty = false（那样会与基线脱节）").not.toContain(
+        "doc.dirty = false;",
+      );
       expect(applyDisk, "必须清 external").toContain("doc.external = false;");
       // ⚠️ 不清副本的话，下次启动会拿这份「已被放弃的未保存内容」顶掉刚载入的磁盘版本
       expect(applyDisk, "必须丢弃热退出副本").toContain("discardBackupFor(doc);");
