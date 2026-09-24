@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { themeBlock, cssDecls } from "./static";
+import { themeBlock, cssDecls, ruleBlock } from "./static";
 
 describe("标签栏静态契约（从 regressions 拆出）", () => {
   it("B53 标签区改为横向滚动（折叠机制已整体移除，用户要求）", () => {
@@ -48,8 +48,11 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
     // 用户反馈：标签变多后标签被压窄，文件名被裁剪成「…」。
     // 根因 = .tab 上的 flex-shrink:1（B53 的「先收缩再滚动」）+ .tab-name 的
     // text-overflow: ellipsis。B56 反过来：宽度 = 内容宽度，溢出交给横向滚动。
+    // ⚠️ 用 ruleBlock 而不是「取到第一个右花括号为止」的旧写法：后者会被**块内注释里的
+    //   右花括号**截断（B113 这次就在注释里引过 VS Code 的选择器，一截断 flex 声明全丢，
+    //   报的是「文件名不得收缩」这种八竿子打不着的错）——见 pitfalls/0075。
     const css = readFileSync("src/styles/global.css", "utf-8");
-    const tab = cssDecls(css.match(/\n\.tab\s*\{[^}]*\}/)?.[0] ?? "");
+    const tab = cssDecls(ruleBlock(css, ".tab"));
     expect(tab, "应有 .tab 规则").toBeTruthy();
     expect(tab, "标签必须不可收缩（flex-shrink:0），否则标签变多时宽度被压窄").toMatch(
       /flex:\s*0 0 auto/,
@@ -60,7 +63,7 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
     expect(tab, "不得再给标签设宽度上限，否则超长文件名仍会被截断").not.toMatch(/max-width/);
     expect(tab, "保留收缩下限当最小宽度（短名标签不至于窄成一条）").toMatch(/min-width:\s*\d+px/);
 
-    const name = cssDecls(css.match(/\n\.tab-name\s*\{[^}]*\}/)?.[0] ?? "");
+    const name = cssDecls(ruleBlock(css, ".tab-name"));
     expect(name, "应有 .tab-name 规则").toBeTruthy();
     expect(name, "文件名不得收缩").toMatch(/flex:\s*1 0 auto/);
     expect(name, "不得再用省略号裁剪文件名").not.toContain("text-overflow: ellipsis");
@@ -183,44 +186,105 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
   });
 });
 
-describe("标签药丸与标签栏滚动条（B55）", () => {
-  it("B55：标签改成 Modern UI 药丸（无描边、圆角 4px、非活动文字 50%）", () => {
+describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
+  it("底色由 .tab-fill 承载：相邻相连、活动标签与编辑器同色、底边不封口", () => {
+    // B113 的关键翻转：底色从 .tab 搬到内层 .tab-fill。
+    // 旧药丸方案 =「每颗标签自己上色 + 彼此留 4px 缝」；VS Code 1.139 的 connected =
+    // 「一条连续表面 + 活动标签取编辑器背景色、只有上方两角圆、底边敞开与编辑区相连」。
     const css = readFileSync("src/styles/global.css", "utf-8");
-    const tab = css.match(/\n\.tab\s*\{[^}]*\}/)?.[0] ?? "";
+    const tab = cssDecls(ruleBlock(css, ".tab"));
     expect(tab, "应有 .tab 规则").toBeTruthy();
     const h = tab.match(/height:\s*(\d+)px/);
     expect(h, "标签高度必须显式给出（字号档位变化时栏高才恒定）").toBeTruthy();
-    expect(Number(h![1]), "药丸高 24px（VS Code Modern UI 常规档）").toBeLessThanOrEqual(26);
-    expect(tab, "药丸必须无描边（B54 的 1px 描边是旧观感）").toMatch(/border:\s*none/);
-    expect(tab, "药丸圆角 4px").toMatch(/border-radius:\s*4px/);
-    expect(tab, "不得退回上圆角方标签").not.toContain("6px 6px 0 0");
+    expect(Number(h![1]), "标签高 24px（VS Code 常规档 --editor-group-tab-height）").toBe(24);
+    expect(tab, ".tab 必须是底色层的定位基准").toContain("position: relative");
+    // 底色一旦还留在 .tab 上就会盖住 fill 的圆角与描边，connected 的观感直接没了
+    expect(tab, "标签自身不得再上底色（底色归 .tab-fill）").not.toMatch(
+      /background:\s*var\(--tab-bg/,
+    );
     expect(tab, "非活动文字降到 50% 前景（VS Code color-mix 写法）").toMatch(
       /color:\s*color-mix\(in srgb, var\(--fg\) 50%, transparent\)/,
     );
 
-    const active = css.match(/\n\.tab-active\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(active, "活动标签只靠药丸底色区分").toContain("var(--tab-bg-active)");
-    expect(active, "活动标签不得再有描边").not.toContain("border");
+    const fill = cssDecls(ruleBlock(css, ".tab-fill"));
+    expect(fill, "应有 .tab-fill 底色层").toBeTruthy();
+    expect(fill, "底色层必须绝对定位（才能上下外扩出标签行）").toContain("position: absolute");
+    expect(fill, "左右不得内缩：相邻标签必须相连（connected 而非独立药丸）").toMatch(
+      /inset:\s*-4px 0 -4px/,
+    );
+    expect(fill, "只有上方两角是圆的（下方要与编辑器相接）").toMatch(
+      /border-radius:\s*\d+px \d+px 0 0/,
+    );
+    expect(fill, "底色层不吃鼠标事件（否则点不到标签）").toContain("pointer-events: none");
 
-    const hover = css.match(/\.tab:hover:not\(\.tab-active\)\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(hover, "悬停要有独立一档底色").toContain("var(--tab-bg-hover)");
+    const activeFill = cssDecls(ruleBlock(css, ".tab-active .tab-fill"));
+    expect(
+      activeFill,
+      "活动标签底色必须收进 --tab-fill-bg 变量（肩部补色与它同源，B113-2 方案 A）",
+    ).toMatch(/--tab-fill-bg:\s*var\(--tab-bg-active\)/);
+    expect(activeFill, "底色必须引用该变量（而不是直接写死）").toContain(
+      "background: var(--tab-fill-bg)",
+    );
+    expect(activeFill, "活动标签要描一圈边").toMatch(/border:\s*1px solid var\(--border\)/);
+    expect(activeFill, "底边不得封口（否则标签与编辑器之间多一条横线，就「连」不起来）").toContain(
+      "border-bottom-color: transparent",
+    );
 
-    // 三档底色两套主题都要齐：缺一个就是某个主题下某状态完全没有反馈
+    const hoverFill = cssDecls(ruleBlock(css, ".tab:hover:not(.tab-active) .tab-fill"));
+    expect(hoverFill, "悬停要有独立一档底色").toContain("var(--tab-bg-hover)");
+
+    // 肩部：把侧边描边顺圆角弯到条带底边，否则活动标签像一块硬贴上去的方砖
+    expect(css, "活动标签左侧要有肩部圆角").toMatch(/\.tab-active \.tab-fill::before/);
+    expect(css, "活动标签右侧要有肩部圆角").toMatch(/\.tab-active \.tab-fill::after/);
+    expect(css, "首尾标签的外侧不画肩（那里没有邻居可接）").toMatch(
+      /:first-child \.tab-fill::before/,
+    );
+
+    // 三档底色 + 条带表面色，两套主题都要齐：缺一个就是某主题下某状态完全没反馈
     for (const [name, block] of [
       ["深色", themeBlock(css, "dark")],
       ["浅色", themeBlock(css, "light")],
     ] as const) {
+      expect(block, `${name}主题必须定义 --tab-strip-bg（标签条表面）`).toContain(
+        "--tab-strip-bg:",
+      );
       for (const v of ["--tab-bg-hover:", "--tab-bg-active:", "--tab-bg-active-hover:"]) {
         expect(block, `${name}主题必须定义 ${v}`).toContain(v);
       }
     }
 
-    // tab-flash 结束态必须回到药丸底色。写 var(--bg) 会「闪完变回旧配色」——
-    // 一帧的视觉 bug，运行时测不出来，只能静态锁死。
+    // tab-flash 结束态必须回到标签底色。B113-2（方案 A）：动画**只驱动 --tab-fill-bg**
+    // —— fill 底色与肩部补色共用这个变量，变量一动三者同步变色；
+    // 若关键帧里直接写 background，肩部就会在闪烁时被甩在旧色上。
     const flash = css.match(/@keyframes tab-flash\s*\{[\s\S]*?\n\}/)?.[0] ?? "";
     expect(flash, "应有 tab-flash 关键帧").toBeTruthy();
-    expect(flash, "结束态必须回到药丸底色").toContain("background: var(--tab-bg-active)");
+    expect(flash, "闪烁必须驱动 --tab-fill-bg（肩部与底色共用它）").toContain("--tab-fill-bg:");
+    expect(flash, "结束态必须回到标签底色").toContain("--tab-fill-bg: var(--tab-bg-active)");
     expect(flash, "关键帧不得再引用旧配色 var(--bg)").not.toContain("var(--bg))");
+    expect(flash, "关键帧不得直接写 background（必须走变量，否则肩部跟不上）").not.toMatch(
+      /^\s*background:/m,
+    );
+    // 自定义属性动画要有平滑插值，必须先注册成 <color>（否则是离散跳变）
+    expect(css, "--tab-fill-bg 必须注册成 color 类型").toMatch(
+      /@property --tab-fill-bg\s*\{[^}]*syntax:\s*"<color>"/,
+    );
+    // B113：底色搬到 fill 后动画也必须跟着搬 —— 挂在 .tab 上等于打在透明底上
+    expect(css, "闪一下必须作用在 .tab-fill 上").toMatch(/\.tab-flash \.tab-fill/);
+    // B113-2 核心：肩部补色与标签底色**同源**（同一个变量），悬停/闪烁才不会再对不上色
+    // ⚠️ ::before 有两条规则（公共占位 + 定位/补色），用 filter 取含 box-shadow 的那条
+    const shoulder = cssDecls(ruleBlock(css, ".tab-active .tab-fill::before", "box-shadow"));
+    expect(shoulder, "肩部补色必须引用 --tab-fill-bg").toContain("var(--tab-fill-bg");
+    const activeHover = cssDecls(ruleBlock(css, ".tab-active:hover .tab-fill"));
+    expect(activeHover, "悬停提亮必须只改变量（底色与肩部一起变）").toMatch(
+      /--tab-fill-bg:\s*var\(--tab-bg-active-hover\)/,
+    );
+
+    // DOM 侧：CSS 写了但没渲染这个元素，标签就是全透明一片
+    const ts = readFileSync("src/shell/tabstrip.ts", "utf-8");
+    expect(ts, "必须渲染 .tab-fill 元素").toContain('className = "tab-fill"');
+    expect(ts, "fill 必须排在内容之前（内容靠 z-index 浮在它上面）").toContain(
+      "el.append(fill, icon, name, action)",
+    );
   });
   it("B55：标签栏滚动条 4px，正好塞进药丸行下方那 4px 间隙", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
@@ -230,8 +294,16 @@ describe("标签药丸与标签栏滚动条（B55）", () => {
     // 标签栏就拿回系统滚动条（两端带箭头、压不细）。必须复位成 auto。
     expect(strip, "scrollbar-width 必须复位为 auto").toMatch(/scrollbar-width:\s*auto/);
     expect(strip, "scrollbar-color 必须复位为 auto").toMatch(/scrollbar-color:\s*auto/);
-    expect(strip, "药丸之间要有 4px 间距").toMatch(/gap:\s*4px/);
-    expect(strip, "下内边距为 0（下方 4px 让给滚动条）").toMatch(/padding:\s*4px 4px 0/);
+    // B113：connected 标签**相连**，不再靠 gap 撑缝（缝会让 fill 接不上，
+    // 活动标签与编辑器之间就出现断口）；分隔感改由活动标签的凸起 + 描边给出。
+    expect(strip, "标签必须相连（gap 0），不能留缝隙").toMatch(/gap:\s*0/);
+    expect(strip, "标签条要有表面底色（活动标签取编辑器色，两者差一档才有对比）").toContain(
+      "background: var(--tab-strip-bg)",
+    );
+    expect(
+      strip,
+      "内边距：上 4 / 右 4 / 下 0 / 左 0（B113-2：左侧不留白，下方让给滚动条）",
+    ).toMatch(/padding:\s*4px 4px 0 0/);
 
     const thin = css.match(/\.panel-tabstrip::-webkit-scrollbar\s*\{[^}]*\}/)?.[0] ?? "";
     expect(thin, "必须有 webkit 滚动条规则").toBeTruthy();
@@ -242,9 +314,9 @@ describe("标签药丸与标签栏滚动条（B55）", () => {
     expect(btn, "必须显式去掉两端箭头按钮").toBeTruthy();
     expect(btn, "箭头按钮必须 display:none").toMatch(/display:\s*none/);
 
-    // 几何自洽：32 = 4(上间距) + 24(药丸) + 4(滚动条)。三个数绑在一起，
-    // 改一个必须改全部，否则滚动条会压到药丸上（或药丸行被挤下去）。
-    const tabH = Number(css.match(/\n\.tab\s*\{[^}]*\}/)![0].match(/height:\s*(\d+)px/)![1]);
+    // 几何自洽：32 = 4(上间距) + 24(标签) + 4(滚动条)。三个数绑在一起，
+    // 改一个必须改全部，否则滚动条会压到标签上（或标签行被挤下去）。
+    const tabH = Number(cssDecls(ruleBlock(css, ".tab")).match(/height:\s*(\d+)px/)![1]);
     const stripH = Number(strip.match(/height:\s*(\d+)px/)![1]);
     expect(stripH - tabH, "药丸行上下各留 4px，滚动条正好吃下面那 4px").toBe(bar * 2);
 

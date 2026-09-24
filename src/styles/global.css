@@ -24,11 +24,18 @@
   --accent-fg: #ffffff;
   --danger: #f47067;
   --warn: #e2b341;
-  /* 标签药丸底色（B55，对应 VS Code Modern UI 的 modernEditorTab-* 三档）：
-     非活动 = 全透明；hover 只比标签栏抬一点点；活动明显抬一档；活动+hover 再亮。
+  /* 标签（B113 起对齐 VS Code 1.139 的 **Connected 相连标签**，不再是独立药丸）：
+     标签条是一条**连续的表面**，活动标签取**编辑器背景色**、上探下沉与下方编辑区
+     连成一体（像文件夹的舌片），非活动标签只是这条表面上的一块轻微高亮。
+     依据 `workbench/contrib/modernUI/browser/media/connectedEditorTabs.css`：
+       · --modern-ui-connected-tab-surface = editorBackground
+       · --modern-ui-connected-tab-strip-background = editorGroupHeader.tabsBackground
+     即「条带比编辑器差一档、活动标签与编辑器同色」——深 #252526 / 浅 #F3F3F3 那一档。 */
+  --tab-strip-bg: #242629;
+  /* 非活动标签：透明（露出条带）；hover 只比条带抬一点点；活动 = --bg（编辑器背景）。
      ⚠️ 三档必须拉开可感知的差距 —— hover 若与 active 同色就分不出「选中」和「划过」。 */
   --tab-bg-hover: rgba(255, 255, 255, 0.05);
-  --tab-bg-active: #2b2f34;
+  --tab-bg-active: var(--bg);
   --tab-bg-active-hover: #343940;
   /* 标签文件类型图标的家族配色（B57）：十个家族各一色。
      同一族内用同一个色相（形状负责细分），浅深两套取各自的中调，
@@ -112,10 +119,12 @@
   --accent-fg: #ffffff;
   --danger: #cf222e;
   --warn: #9a6700;
-  /* 标签药丸底色（B55）：浅色下活动药丸取纯白（浮在 #eef0f2 的标签栏上），
-     悬停反而压暗一档 —— 浅色主题里「变亮」没有感知空间 */
+  /* 标签（B113 Connected 相连标签，同深色档的说明）：条带取 VS Code 浅色档的
+     editorGroupHeader.tabsBackground（#F3F3F3），活动标签 = 编辑器背景（纯白）。
+     非活动 = 透明；hover 压暗一档（浅色主题里「变亮」没有感知空间）。 */
+  --tab-strip-bg: #f3f3f3;
   --tab-bg-hover: rgba(0, 0, 0, 0.05);
-  --tab-bg-active: #ffffff;
+  --tab-bg-active: var(--bg);
   --tab-bg-active-hover: #e6e8eb;
   /* 标签文件类型图标的家族配色（B57）：浅色底上要更深一档，否则发飘。 */
   --ficon-md: #0969da;
@@ -464,21 +473,28 @@ button:focus-visible {
    于是现在：标签栏 32px = 4px 上间距 + 24px 药丸 + 4px 下间隙（4px 滚动条坐在下间隙里）。
    B53 保留下来的只有**溢出改为横向滚动**（见 .panel-tabstrip），不再折叠。 */
 
+/* B113：改走 VS Code 1.139 的 **Connected 相连标签** —— 标签不再是各自独立的药丸，
+   而是「一条连续表面上的一块高亮」。要点（依据 connectedEditorTabs.css 的
+   `.tab.active > .tab-fill`）：
+     · 底色全部交给内层 `.tab-fill` 画，`.tab` 自身**永不上色**；
+     · fill 左右**不内缩**（相邻标签相连成一条带），上下各外扩到标签栏的边；
+     · 活动标签的 fill 取**编辑器背景色**、只有**上方两角是圆的**、底边不封口
+       ⇒ 与下方编辑区连成一体（像文件夹的舌片），而不是浮在条带上的一颗胶囊。 */
 .tab {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  /* 24px 药丸 = VS Code Modern UI 常规档的 --editor-group-tab-height。
+  /* 24px = VS Code 的 --editor-group-tab-height（常规档）。
      固定高度而非靠 padding 撑：字号档位变化时标签栏高度仍恒定，不挤压编辑器。 */
   height: 24px;
   /* 左 6px = VS Code 的 `padding-left: size60`；有图标时正是这一档
      （VS Code 在 `:not(.show-file-icons)` 时才放宽到 8px —— 图标自己撑出视觉留白）。
-     右 4px：配合 .tab-action 槽位（20px、字形 16px 居中）凑出「字形到药丸右缘 6px」，
+     右 4px：配合 .tab-action 槽位（20px、字形 16px 居中）凑出「字形到标签右缘 6px」，
      与左侧的 6px 对称。 */
   padding: 0 4px 0 6px;
   min-width: 60px;
   border: none;
-  border-radius: 4px;
   /* 非活动：文字降到 50% 前景（VS Code 的 color-mix 写法），底色全透明 */
   color: color-mix(in srgb, var(--fg) 50%, transparent);
   cursor: pointer;
@@ -489,68 +505,165 @@ button:focus-visible {
      ⚠️ 这是一次反向翻转：B53 曾是「先收缩再滚动」（flex: 0 1 auto + 收缩下限），
      用户反馈收缩导致文本被裁剪，故改回不可收缩。改回去之前先读 ARCHITECTURE.md 标签栏一节。 */
   flex: 0 0 auto;
-  transition:
-    background 0.12s ease,
-    color 0.12s ease;
+  transition: color 0.12s ease;
+}
+
+/* 底色层（VS Code 的 `.tab > .tab-fill`）：
+   `inset-inline: 0` ⇒ 相邻标签的 fill **连成一条带**，不是彼此留缝的独立药丸；
+   上下各外扩 4px ⇒ 活动标签能顶到标签条的上沿、又盖过下沿与编辑器无缝相接。
+   ⚠️ 它是 positioned 元素（absolute），会盖住同层的普通流内容 —— 所以图标 /
+   文件名 / ●× 槽位必须各自 `position: relative; z-index: 1`（同 VS Code 的 .tab-label）。 */
+.tab-fill {
+  position: absolute;
+  inset: -4px 0 -4px;
+  z-index: 0;
+  border-radius: 5px 5px 0 0;
+  background: transparent;
+  pointer-events: none;
+  transition: background 0.12s ease;
 }
 
 .tab:hover:not(.tab-active) {
-  background: var(--tab-bg-hover);
   color: var(--fg);
 }
 
-/* 活动标签：只靠药丸底色区分，不再描边（新版 VS Code 的药丸是无边框的）。
-   活动/非活动的差异 = 底色 + 文字明度两档，比原来「描边 + 底色」更干净。 */
+.tab:hover:not(.tab-active) .tab-fill {
+  background: var(--tab-bg-hover);
+}
+
+/* 活动标签：fill 抬到**编辑器背景色**（--tab-bg-active 即 var(--bg)），
+   描一圈 --border 但**不封底边** —— 底边敞开才能与下面的编辑区连成一体。 */
 .tab-active {
-  background: var(--tab-bg-active);
   color: var(--fg);
 }
 
-/* 悬停在活动标签上再亮一档，否则 hover 完全没有反馈（底色已经是最亮那档了） */
-.tab-active:hover {
-  background: var(--tab-bg-active-hover);
+/* B113-2（方案 A「修色保反馈」）：fill 的底色收进局部变量 --tab-fill-bg，
+   肩部的 box-shadow **也用它** —— 悬停提亮、闪烁变色时只改这一个变量，
+   标签和两侧肩部就永远同色（修复「肩部两块颜色和标签对不上」）。
+   ⚠️ 必须配合下面的 @property 注册：不注册的话自定义属性动画是**离散跳变**，
+   注册成 <color> 后 keyframes 改它才有平滑插值（肩部也跟着平滑过渡）。 */
+@property --tab-fill-bg {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #0000;
 }
 
-/* 非活动分屏里，活动标签的药丸整体降一档（底色降到 hover 档 + 文字变灰）：
-   分屏时一眼看出焦点在哪块面板。
-   ⚠️ 必须连 :hover 一起覆盖，否则鼠标划过非焦点面板时药丸会「亮回来」。
+.tab-active .tab-fill {
+  --tab-fill-bg: var(--tab-bg-active);
+  background: var(--tab-fill-bg);
+  border: 1px solid var(--border);
+  border-bottom-color: transparent;
+}
+
+/* 悬停在活动标签上再亮一档：只改变量，底色与肩部一起平滑提亮 */
+.tab-active:hover .tab-fill {
+  --tab-fill-bg: var(--tab-bg-active-hover);
+}
+
+/* 非活动分屏里，活动标签整体降一档：fill 退回「比条带亮一点」的 hover 档、
+   连边框一起去掉（不再与编辑器连成一体），文字变灰 —— 分屏时一眼看出焦点在哪块面板。
+   ⚠️ 必须连 :hover 一起覆盖，否则鼠标划过非焦点面板时标签会「亮回来」。
    依赖 .layout-panel-active 实时正确 —— 由 main.ts 的 markActivePanel 同步。 */
-.layout-panel:not(.layout-panel-active) .tab-active,
-.layout-panel:not(.layout-panel-active) .tab-active:hover {
-  background: var(--tab-bg-hover);
+.layout-panel:not(.layout-panel-active) .tab-active {
   color: var(--fg-muted);
+}
+.layout-panel:not(.layout-panel-active) .tab-active .tab-fill,
+.layout-panel:not(.layout-panel-active) .tab-active:hover .tab-fill {
+  background: var(--tab-bg-hover);
+  border-color: transparent;
+}
+
+/* 活动标签左右两侧的「肩部」：把 fill 的侧边描边顺着圆角**弯到条带的底边**上，
+   否则活动标签就是一块硬贴上去的方砖，看不到「从条带里长出来」的感觉。
+   做法照抄 connectedEditorTabs.css 的 `.tab.active > .tab-fill::before/::after`：
+   在 fill 外侧的下角贴一个 shoulder 见方的盒子，只画**外边 + 底边**两条 1px、
+   外侧下角圆到 shoulder，再用 box-shadow 把这块补成标签底色 ——
+   于是「条带底边 → 活动标签侧边」是一条连续的圆角曲线，而不是直角折线。
+   shoulder = cap-radius = 圆角(4) + 描边(1) = 5px；阴影偏移/扩散取它的一半（2.5px）。 */
+.tab-active .tab-fill::before,
+.tab-active .tab-fill::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: 5px;
+  height: 5px;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.tab-active .tab-fill::before {
+  right: 100%;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-bottom-right-radius: 5px;
+  /* B113-2：补色用 --tab-fill-bg（与标签底色同一变量），悬停/闪烁时肩部跟着一起变 */
+  box-shadow: 2.5px 2.5px 0 2.5px var(--tab-fill-bg, var(--tab-bg-active));
+  transition: box-shadow 0.12s ease;
+}
+
+.tab-active .tab-fill::after {
+  left: 100%;
+  border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-bottom-left-radius: 5px;
+  box-shadow: -2.5px 2.5px 0 2.5px var(--tab-fill-bg, var(--tab-bg-active));
+  transition: box-shadow 0.12s ease;
+}
+
+/* 首尾标签的外侧没有邻居，肩部会悬在标签条的留白上变成一条多余的短线 */
+.tab-active:first-child .tab-fill::before,
+.tab-active:last-child .tab-fill::after {
+  content: none;
+}
+
+/* 降级态（非焦点面板）连描边一起撤掉：边框都没了，肩部的曲线自然也不该留 */
+.layout-panel:not(.layout-panel-active) .tab-active .tab-fill::before,
+.layout-panel:not(.layout-panel-active) .tab-active .tab-fill::after {
+  border-color: transparent;
+  box-shadow: none;
 }
 
 /* B47：活动标签切换后闪一次（从折叠列表点选、Ctrl+Tab 时定位用）。
    动画结束回到常态，不保留结束态，避免遮住 .tab-active 的配色。
-   ⚠️ B55：结束态必须用 --tab-bg-active（药丸底色），不能再写 var(--bg) ——
-   否则闪完会回到旧配色。这是一帧的视觉 bug，脚本测不出来，只能靠回归断言锁住。 */
+   ⚠️ B55：结束态必须用 --tab-bg-active（标签底色），不能再写 var(--bg) ——
+   否则闪完会回到旧配色。这是一帧的视觉 bug，脚本测不出来，只能靠回归断言锁住。
+   ⚠️ B113：底色已搬到 .tab-fill，动画必须**作用在 fill 上** —— 继续挂在 .tab 上
+   会整块盖住 fill 的圆角与边框（且 .tab 本身现在永不上色，动画等于打在透明底上）。 */
 @keyframes tab-flash {
+  /* B113-2（方案 A）：动画**只驱动 --tab-fill-bg 与内描边**，不再直接写 background ——
+     fill 的底色和两侧肩部的补色都引用这个变量，变量一动三者同步变色，
+     不会出现「标签闪蓝了、肩部还是编辑器底色」的割裂。 */
   0% {
-    background: color-mix(in srgb, var(--accent) 34%, var(--tab-bg-active));
+    --tab-fill-bg: color-mix(in srgb, var(--accent) 34%, var(--tab-bg-active));
     box-shadow: inset 0 0 0 1px var(--accent);
   }
   70% {
-    background: color-mix(in srgb, var(--accent) 18%, var(--tab-bg-active));
+    --tab-fill-bg: color-mix(in srgb, var(--accent) 18%, var(--tab-bg-active));
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
   }
   100% {
-    background: var(--tab-bg-active);
+    --tab-fill-bg: var(--tab-bg-active);
     box-shadow: inset 0 0 0 1px transparent;
   }
 }
 
-.tab-flash {
+.tab-flash .tab-fill {
   animation: tab-flash 720ms ease-out 1;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tab-flash {
+  .tab-flash .tab-fill {
     animation: none;
   }
 }
 
 .tab-name {
+  /* B113：底色层 .tab-fill 是 absolute，会盖住普通流内容 —— 必须提上来
+     （同 VS Code 给 .tab-label 的 relative + z-index: 1），否则文件名被底色糊住。
+     ⚠️ 注释里**不要写花括号**：仓库里还有老用例用「一直取到第一个右花括号为止」的笨
+     写法取块体，注释里的右花括号会把它们截断（见 pitfalls/0075）。 */
+  position: relative;
+  z-index: 1;
   /* 吸收 min-width 带来的松弛，让 ●/× 槽位贴住标签右缘。
      **不收缩**（flex-shrink: 0）且**不做省略号裁剪**（B56）——文件名整段显示，
      想要「…」的旧行为请先读 .tab 那段的翻转记录再决定。 */
@@ -561,6 +674,9 @@ button:focus-visible {
    名字左边一个 16px 的家族字形。字形负责「像什么」（见 shell/fileicons.ts），
    颜色负责「哪一类」—— 走 --ficon-* 变量，浅深两套主题各一份。 */
 .tab-icon {
+  /* B113：同 .tab-name —— 必须浮在 .tab-fill 之上（absolute 的 fill 会盖住普通流） */
+  position: relative;
+  z-index: 1;
   flex: 0 0 auto;
   width: 16px;
   height: 16px;
@@ -615,6 +731,8 @@ button:focus-visible {
    12/20/24/28 这四档对应 VS Code Modern UI 的覆盖列宽度，供调参时对齐。 */
 .tab-action {
   position: relative;
+  /* B113：同 .tab-name —— 必须浮在 .tab-fill 之上 */
+  z-index: 1;
   flex: 0 0 auto;
   width: 20px;
   height: 20px;
@@ -2064,9 +2182,17 @@ button:focus-visible {
   /* 标签永不换行：放不下就滚动，不折行 */
   flex-wrap: nowrap;
   align-items: flex-start;
-  /* 药丸之间的视觉间距 4px（对应 VS Code 药丸 `inset: 0 2px` 的效果） */
-  gap: 4px;
-  padding: 4px 4px 0;
+  /* B113 Connected：标签**相连**，不再靠 gap 撑出缝隙 —— 相邻标签的 fill 直接接壤，
+     分隔感由活动标签的凸起 + 描边给出（对应 VS Code 的 `inset-inline: 0`）。
+     原先那 4px gap 是为了模拟「药丸左右各内缩 2px」，药丸取消后它就成了多余的留白。 */
+  gap: 0;
+  /* B113-2：左侧留白归 0（对齐 VS Code connected 的 padding-left: 0）——
+     第一个标签直接贴条带左缘（它的 fill 无左肩，见 :first-child 那条）；
+     右侧 4px 保留给滚动条与末标签的呼吸。 */
+  padding: 4px 4px 0 0;
+  /* 标签条**表面色**（VS Code 的 editorGroupHeader.tabsBackground）：比编辑器背景差一档，
+     活动标签则取编辑器背景色（见 .tab-active .tab-fill）——「哪块与编辑器连着」一眼可辨。 */
+  background: var(--tab-strip-bg);
   min-width: 0;
   /* 拖拽 tab 的插入指示线（.tab-insert）以 strip 为定位基准 */
   position: relative;

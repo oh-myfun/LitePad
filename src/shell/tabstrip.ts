@@ -395,7 +395,15 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
     );
   });
 
-  el.append(icon, name, action);
+  // B113：Connected 相连标签的**底色层** —— 标签的底色全由它画（.tab 自身永不上色），
+  // 它左右不内缩，所以相邻标签的 fill 接壤成一条带；活动标签靠它上探下沉与编辑器连成一体。
+  // 见 global.css 的 .tab-fill。⚠️ 必须是第一个子元素（VS Code 的 .tab-fill 同理）；
+  // 后面的图标 / 文件名 / ●× 槽位靠 `z-index: 1` 浮在它上面。
+  const fill = document.createElement("span");
+  fill.className = "tab-fill";
+  fill.setAttribute("aria-hidden", "true");
+
+  el.append(fill, icon, name, action);
   // HTML5 拖拽结束后浏览器不会补发 click，所以这里不再需要「吞掉拖拽后那次点击」
   el.addEventListener("click", () => cb.onActivate(t.tabId));
   return el;
