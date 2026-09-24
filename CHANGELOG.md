@@ -3,6 +3,20 @@
 > 本文件由 `scripts/gen-changelog.sh` 从 Conventional Commit 自动生成，
 > `scripts/release.sh` 发布时自动刷新；版本口径见 `docs/conventions.md`「版本号规则」。
 
+## v0.13.0 — 2026-09-24
+
+本版距 `v0.12.0` 共 2 个提交。
+
+### 新功能
+
+- 应用内自动更新（B107） `5e03a62`
+
+### 修复
+
+- 关于页版本号改读运行时 getVersion（不再写死 v0.1.0） `60e24d1`
+
+---
+
 ## v0.12.0 — 2026-09-24
 
 本版距 `v0.11.0` 共 42 个提交。
