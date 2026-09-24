@@ -357,12 +357,14 @@ body {
   outline-offset: -2px;
 }
 
-/* 「已点亮」必须排在 hover 之后（同特异度下后写者胜），否则悬停会把点亮态盖掉。
-   见上方「标题栏工具键」那节的说明。 */
+/* 钉住态：只高亮图标，整按钮保持常态（透明背景），避免「整颗键点亮」喧宾夺主。
+   图标用强调色（--accent），与查找栏开关的点亮语言同源。 */
 .title-btn.is-on {
-  background: var(--find-opt-active);
-  color: var(--find-opt-active-fg);
-  box-shadow: inset 0 0 0 1px var(--find-opt-active-border);
+  background: transparent;
+  color: var(--fg-muted);
+}
+.title-btn.is-on .codicon {
+  color: var(--accent);
 }
 
 .menu-bar {

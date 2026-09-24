@@ -105,11 +105,12 @@ describe("B97 自建标题栏", () => {
     expect(s, "必须有窗口控制键规则").toMatch(/\.win-btn,\s*\.title-btn\s*\{/);
     // 关闭键悬停的红底是 Windows 的系统约定，不是随手挑的颜色
     expect(s, "关闭键悬停必须是系统约定的红底").toMatch(/\.win-btn-close:hover\s*\{[^}]*#e81123/);
-    // 「已点亮」必须排在共享的 :hover 之后，否则悬停会盖掉点亮态
+    // 钉住态只高亮图标（.codicon），整按钮不点亮；图标规则必须排在 hover 之后
+    // （同特异度后写者胜），否则悬停的继承色会盖掉图标高亮。
     expect(
       s.indexOf(".win-btn:hover"),
-      ".title-btn.is-on 必须写在 hover 之后（同特异度后写者胜）",
-    ).toBeLessThan(s.indexOf(".title-btn.is-on"));
+      ".title-btn.is-on .codicon 必须写在 hover 之后（同特异度后写者胜）",
+    ).toBeLessThan(s.indexOf(".title-btn.is-on .codicon"));
     expect(s, "旧快捷按钮样式必须整段删掉").not.toContain(".toolbar-actions");
     expect(s, "旧快捷按钮样式必须整段删掉").not.toContain(".tool-btn");
   });
@@ -229,15 +230,23 @@ describe("B97 自建标题栏", () => {
 
   it("B99：置顶开关的样式沿用「开关点亮」那一套，且不挤图标", () => {
     const s = css();
-    for (const sel of [".title-actions", ".title-btn", ".title-btn.is-on"]) {
+    for (const sel of [
+      ".title-actions",
+      ".title-btn",
+      ".title-btn.is-on",
+      ".title-btn.is-on .codicon",
+    ]) {
       expect(ruleBlock(s, sel), `${sel} 必须有规则`).not.toBe("");
     }
-    const on = ruleBlock(s, ".title-btn.is-on");
-    // 全应用「开关点亮」只有一套语言（查找栏那几个开关的 inputOption.active 三件套）
-    expect(on, "点亮态应与查找栏开关同源").toContain("--find-opt-active");
-    // ⚠️ 全局是 border-box，真 border 会把 16px 图标挤小（.find-sel.on 同一个坑）
-    expect(on, "1px 环必须用 inset 阴影画，不能加真 border").toContain("box-shadow: inset");
-    expect(on, "不得用真 border").not.toMatch(/^\s*border:\s*1px/m);
+    // 钉住态只高亮图标，整按钮不得点亮：图标用强调色，整按钮不得再带 --find-opt-active
+    // 背景 / inset 环 / 真 border（避免「整颗键点亮」）。
+    const on = ruleBlock(s, ".title-btn.is-on .codicon");
+    expect(on, "钉住态必须用 .codicon 子选择器单独高亮图标").not.toBe("");
+    expect(on, "图标高亮必须用强调色（--accent）").toContain("--accent");
+    const btn = ruleBlock(s, ".title-btn.is-on");
+    expect(btn, "整按钮不得用 --find-opt-active 点亮背景").not.toContain("--find-opt-active");
+    expect(btn, "整按钮不得画 inset 环").not.toContain("box-shadow: inset");
+    expect(btn, "整按钮不得用真 border").not.toMatch(/^\s*border:\s*1px/m);
   });
 
   it("Request N：钉在顶部键与窗口控制三键之间不加额外空隙，四键贴成一组", () => {
