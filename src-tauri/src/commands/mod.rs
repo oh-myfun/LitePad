@@ -80,8 +80,13 @@ pub fn disk_version(path: &Path) -> (i64, u64) {
 
 // ---------------------------------------------------------------- 文件关联（双击 .md/.markdown 打开）
 
-/// 待打开队列：双击关联文件时 Windows 以 `"litepad.exe" "<path>"` 启动应用，单实例插件的
-/// `on_args` 回调把路径塞进来，前端就绪后通过 `take_pending_files` 取走打开。
+/// 待打开队列：双击关联文件时 Windows 以 `"litepad.exe" "<path>"` 启动应用，路径经两条
+/// 路径之一进队列，前端就绪后通过 `take_pending_files` 取走打开：
+///
+/// 1. **应用已运行**：单实例插件的 `on_args` 回调把路径塞进来（见 `main.rs`）。
+/// 2. **应用未运行（首启）**：`on_args` 回调**不会**触发（它只在「已有实例」时把参数
+///    转发给主实例），所以 `capture_boot_assoc_files` 在 `main` 启动期手动把命令行里的
+///    关联文档塞进来 —— 这正是「双击 .md 但没打开文件」这个 bug 的修复点。
 ///
 /// 之所以要队列而不是直接 emit 事件：首次启动带参时前端监听器可能还没挂上，事件会丢；
 /// 队列由前端「就绪时取一次 + 收到 open-file 事件时再取一次」兜底，保证不漏文件。
@@ -95,18 +100,29 @@ pub fn is_assoc_ext(name: &str) -> bool {
 
 /// 从命令行参数里挑出「应被 LitePad 接管的文档」：扩展名匹配且确实是存在的文件，
 /// 相对路径按 cwd 展开为绝对路径。纯函数，便于单测。
+///
+/// ⚠️ 存在性检查必须对「解析后的真实路径」做，而不是原始参数：相对路径的基准是 `cwd`，
+/// 若直接 `Path::new(a).is_file()` 会按**进程**当前目录判断，与下面用 `cwd` 拼出的输出路径
+/// 不一致，导致「cwd 下存在、进程目录下不存在」的相对文件被误删（反之亦然）。
 pub fn assoc_args_to_open(argv: &[String], cwd: &str) -> Vec<String> {
     argv.iter()
-        .filter(|a| is_assoc_ext(a) && std::path::Path::new(a.as_str()).is_file())
-        .map(|a| {
+        .filter_map(|a| {
+            if !is_assoc_ext(a) {
+                return None;
+            }
             let p = std::path::Path::new(a.as_str());
-            if p.is_absolute() {
+            let candidate = if p.is_absolute() {
                 a.clone()
             } else {
                 std::path::Path::new(cwd)
                     .join(a.as_str())
                     .to_string_lossy()
                     .into_owned()
+            };
+            if std::path::Path::new(&candidate).is_file() {
+                Some(candidate)
+            } else {
+                None
             }
         })
         .collect()
@@ -124,6 +140,28 @@ pub fn push_pending_files(paths: Vec<String>) {
 pub fn take_pending_files() -> Vec<String> {
     let mut q = PENDING_OPEN.lock().unwrap_or_else(|e| e.into_inner());
     std::mem::take(&mut *q)
+}
+
+/// 把启动命令行里的关联文档塞进待打开队列（接受参数，便于单测）。
+/// 空手而归（没有 .md/.markdown 参数）时不写队列。
+pub fn push_boot_assoc_files(argv: &[String], cwd: &str) {
+    let files = assoc_args_to_open(argv, cwd);
+    if !files.is_empty() {
+        push_pending_files(files);
+    }
+}
+
+/// 首次启动（无运行中实例）时补抓命令行里的关联文档。
+///
+/// 单实例插件的 `on_args` 回调只在「已有实例」时触发，首启不会触发，
+/// 这里手动把 `std::env::args()` 里的 `.md/.markdown` 路径塞进队列，
+/// 交给前端在就绪时取走 —— 见本文件 `PENDING_OPEN` 说明里的路径 2。
+pub fn capture_boot_assoc_files() {
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let argv: Vec<String> = std::env::args().collect();
+    push_boot_assoc_files(&argv, &cwd);
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -718,6 +756,10 @@ pub fn list_eols() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // 串行化所有触碰 PENDING_OPEN 全局队列的测试，避免并行下互相抢文件。
+    static PENDING_LOCK: Mutex<()> = Mutex::new(());
 
     /// IPC 线上字段名契约。
     ///
@@ -811,6 +853,75 @@ mod tests {
         assert!(!is_assoc_ext("image.png"));
         assert!(!is_assoc_ext("noext"));
         assert!(!is_assoc_ext("x.markdown.bak"));
+    }
+
+    // —— 文件关联：首启补抓（修复「双击 .md 但没打开」的核心逻辑） ——
+
+    /// `assoc_args_to_open` 的纯逻辑：挑出存在的 .md/.markdown、按 cwd 把相对路径展开成绝对。
+    #[test]
+    fn assoc_args_resolves_relative_md_and_filters() {
+        let dir = std::env::temp_dir().join("litepad_assoc_test_dir");
+        let _ = std::fs::create_dir_all(&dir);
+        let md = dir.join("note.md");
+        std::fs::write(&md, "x").unwrap();
+        let md_abs = md.to_string_lossy().into_owned();
+        let cwd = dir.to_string_lossy().into_owned();
+
+        // 相对写法应被 cwd 展开成绝对路径
+        let got = assoc_args_to_open(&["litepad.exe".into(), "note.md".into()], &cwd);
+        assert_eq!(got, vec![md_abs.clone()], "相对 .md 应按 cwd 展开");
+
+        // 非 .md 与不存在的文件必须被过滤掉
+        let got2 = assoc_args_to_open(
+            &[
+                "litepad.exe".into(),
+                "note.md".into(),
+                "readme.txt".into(),
+                "ghost.markdown".into(),
+            ],
+            &cwd,
+        );
+        assert_eq!(got2, vec![md_abs], "非 md / 不存在的文件应被剔除");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 关键回归：首启时命令行里的 .md 必须进待打开队列（之前只有已运行实例才入队，
+    /// 导致「双击文件启动了应用却没打开文件」）。
+    #[test]
+    fn push_boot_assoc_files_enqueues_existing_md() {
+        let _g = PENDING_LOCK.lock().unwrap();
+        let _ = take_pending_files(); // 清空，避免别的测试遗留干扰
+
+        let dir = std::env::temp_dir();
+        let md = dir.join("litepad_boot_assoc.md");
+        std::fs::write(&md, "hello").unwrap();
+        let abs = md.to_string_lossy().into_owned();
+        let cwd = dir.to_string_lossy().into_owned();
+
+        push_boot_assoc_files(&["litepad.exe".into(), abs.clone()], &cwd);
+        let pending = take_pending_files();
+        let _ = std::fs::remove_file(&md);
+
+        assert_eq!(pending, vec![abs], "首启命令行里的 .md 必须进待打开队列");
+    }
+
+    /// 兜底：没有 .md / 文件不存在时不得往队列塞任何东西（避免打开空白标签）。
+    #[test]
+    fn push_boot_assoc_files_ignores_non_md_and_missing() {
+        let _g = PENDING_LOCK.lock().unwrap();
+        let _ = take_pending_files();
+
+        let cwd = std::env::temp_dir().to_string_lossy().into_owned();
+        push_boot_assoc_files(
+            &[
+                "litepad.exe".into(),
+                "x.txt".into(),
+                "ghost.md".into(), // 不存在
+            ],
+            &cwd,
+        );
+        assert!(take_pending_files().is_empty(), "非 md / 不存在不应入队");
     }
 
     /** 半份基线不算基线：缺 mtime 或缺 size 都得退回「不检查」。 */

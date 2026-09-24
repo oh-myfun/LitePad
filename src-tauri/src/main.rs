@@ -38,11 +38,20 @@ fn main() {
     // 启动计时基准（端到端耗时诊断用）
     let _ = commands::BOOT.set(std::time::Instant::now());
 
+    // 文件关联（首启带参）：双击 .md/.markdown 且当前没有运行中的实例时，单实例插件的
+    // on_args 回调不会触发（它只在「已有实例」时把参数转发给主实例），所以这里手动把
+    // 启动命令行里的文档塞进待打开队列，交给前端在就绪时取走打开。
+    // ⚠️ 已有实例时双击：新进程会探测到主实例后退出，参数经 on_args 转发由主实例处理，
+    //    本进程这里的 push 随退出而丢弃，不会重复打开。
+    commands::capture_boot_assoc_files();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
-            // 双击关联文件时，Windows 以 `"litepad.exe" "<path>"` 启动应用；
-            // 这里挑出应接管的 .md/.markdown 路径，入队并通知已运行的主窗口。
+            // 双击关联文件且**应用已在运行**时，Windows 以 `"litepad.exe" "<path>"`
+            // 启动新进程；单实例插件把它探测到后转发到这里，挑出应接管的 .md/.markdown
+            // 路径入队并通知已运行的主窗口。（首启没有运行中实例、不会走到这里，
+            // 那条路径由 `capture_boot_assoc_files` 在 main 启动期补抓。）
             let files = commands::assoc_args_to_open(&argv, &cwd);
             if files.is_empty() {
                 return;
