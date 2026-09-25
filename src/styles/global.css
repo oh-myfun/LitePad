@@ -683,6 +683,40 @@ button:focus-visible {
   opacity: 1;
 }
 
+/* ==================================================================
+   B118：紧凑档悬浮 × 的渐变垫底（对齐 VS Code 紧凑档的
+   `.tab-actions::before` + `linear-gradient(to right, transparent, tab底色)`）。
+   × 悬浮时压在文字尾部会显得生硬 —— 悬停 / 键盘聚焦时在 × 左侧铺一块
+   「透明 → 标签底色」的软垫，文字尾部渐隐，× 像浮在标签底色上。
+   仅紧凑档需要：预留档有 20px 空位，× 从不压字。
+   ⚠️ 垫底必须**盖得住文字**，分两档写：
+   · 非活动标签的悬停底色 --tab-bg-hover 是半透明（叠在条带色上的），
+     单层渐变盖不住字 → 双层背景：渐变层 + 条带色垫底；
+   · 活动标签的 fill 是不透明底色 → 单层渐变即可（transparent 端露出
+     同色的 fill，视觉无缝）。
+   垫只随 × 一起淡入（opacity），不引起布局跳动（B57 红线不变）。 */
+:root[data-tab-reserve="off"] .tab:not(.tab-dirty) .tab-action::before {
+  content: "";
+  position: absolute;
+  right: 100%;
+  top: 0;
+  bottom: 0;
+  width: 14px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+:root[data-tab-reserve="off"] .tab:not(.tab-dirty):hover .tab-action::before,
+:root[data-tab-reserve="off"] .tab:not(.tab-dirty) .tab-action:focus-within::before {
+  opacity: 1;
+}
+:root[data-tab-reserve="off"] .tab:not(.tab-dirty):not(.tab-active):hover .tab-action::before {
+  background: linear-gradient(to right, transparent, var(--tab-bg-hover)), var(--tab-strip-bg);
+}
+:root[data-tab-reserve="off"] .tab-active:not(.tab-dirty):hover .tab-action::before {
+  background: linear-gradient(to right, transparent, var(--tab-bg-active-hover));
+}
+
 .tab-name {
   /* B113：底色层 .tab-fill 是 absolute，会盖住普通流内容 —— 必须提上来
      （同 VS Code 给 .tab-label 的 relative + z-index: 1），否则文件名被底色糊住。

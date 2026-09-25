@@ -550,3 +550,53 @@ describe("面板头部与标签条同色（B113-4）", () => {
     expect(bad, "退化替身不再满足条带色契约").not.toContain("background: var(--tab-strip-bg)");
   });
 });
+
+describe("紧凑档悬浮 × 的渐变垫底（B118，对齐 VS Code）", () => {
+  it("悬停/聚焦时 × 左侧铺透明→标签底色软垫，文字尾部渐隐不硬叠", () => {
+    // 用户实测：紧凑档（不预留空位）悬停标签时 × 直接叠在文件名上。
+    // VS Code 紧凑档的做法 = .tab-actions::before 铺一块渐变垫
+    // （transparent → 标签底色），文字尾部渐隐后再浮出 ×。
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const pad = cssDecls(ruleBlock(css, ".tab-action::before", "pointer-events"));
+    expect(pad, "应有 × 垫底伪元素").toBeTruthy();
+    expect(pad, "垫必须贴在 × 左侧").toContain("right: 100%");
+    expect(pad, "垫默认隐藏（随 × 一起淡入）").toMatch(/opacity:\s*0/);
+    expect(pad, "不得拦截鼠标（否则挡标签点击）").toContain("pointer-events: none");
+
+    // ⚠️ prettier 会把长选择器折成多行，ruleBlock 的字面量匹配会失配 ——
+    //   一律用 filter（块体特征声明）取目标规则，对折行鲁棒。
+    const show = cssDecls(ruleBlock(css, ".tab-action::before", "opacity: 1"));
+    expect(show, "悬停/聚焦时垫必须淡入").toMatch(/opacity:\s*1/);
+    // 选择器不在块体里，对整份 CSS 断言（B118 块内 hover + focus-within 两个出场口）
+    expect(css, "淡入必须覆盖悬停").toMatch(
+      /:root\[data-tab-reserve="off"\][^{]*\.tab:not\(\.tab-dirty\):hover \.tab-action::before/,
+    );
+    expect(css, "淡入必须覆盖键盘聚焦").toContain(".tab-action:focus-within::before");
+
+    // 非活动标签的悬停底色是半透明，单层渐变盖不住字 → 必须双层（渐变 + 条带色垫底）
+    const dimPad = cssDecls(ruleBlock(css, ".tab-action::before", "var(--tab-strip-bg)"));
+    expect(dimPad, "非活动垫必须双层：渐变 + 条带色").toContain(
+      "linear-gradient(to right, transparent, var(--tab-bg-hover))",
+    );
+    expect(dimPad, "非活动垫必须有实色垫底").toContain("var(--tab-strip-bg)");
+    // 活动标签 fill 不透明 → 单层渐变即可
+    const activePad = cssDecls(ruleBlock(css, ".tab-action::before", "var(--tab-bg-active-hover)"));
+    expect(activePad, "活动垫用单层渐变到活动悬停色").toContain(
+      "linear-gradient(to right, transparent, var(--tab-bg-active-hover))",
+    );
+
+    // 反向验证：删光垫块后契约必须咬住（防恒真）
+    const withoutPad = css.replace(
+      /:root\[data-tab-reserve="off"\][^{]*\.tab-action::before[^{]*\{[^}]*\}/g,
+      "",
+    );
+    expect(
+      cssDecls(ruleBlock(withoutPad, ".tab-action::before", "pointer-events")),
+      "删光垫块后应提取不到垫规则",
+    ).toBe("");
+    expect(
+      cssDecls(ruleBlock(withoutPad, ".panel-tabstrip")),
+      "替身自证：无关规则不受影响",
+    ).toBeTruthy();
+  });
+});
