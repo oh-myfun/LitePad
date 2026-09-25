@@ -243,17 +243,30 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     const hoverFill = cssDecls(ruleBlock(css, ".tab:hover:not(.tab-active) .tab-fill"));
     expect(hoverFill, "悬停要有独立一档底色").toContain("var(--tab-bg-hover)");
 
-    // B120（用户裁决）：肩部整体移除 —— 用户 VS Code 实拍（connected 样式）的
-    // 活动标签是「深色凹槽、侧边直线到底、几乎看不到肩弧」（底部外扩 ≤1 物理像素，
-    // 属抗锯齿残影）。B119 的实色四分之一圆观感远强于 VS Code，随「深色凹槽」
-    // 裁决一并删除；connected 档不得再有任何肩部绘制构造（上底色或阴影都算）。
-    // pill 档的 content:none 占位保留，作「connected 肩部不得回潮」的守卫（见 pillViolations）。
+    // B123（用户裁决，反转 B120）：肩部回归 —— 用户点名「标签下沿要有反向圆弧
+    // 肩部（参考vscode）」。实拍用户 VS Code + 源码 connectedEditorTabs.css 双重
+    // 确认：肩部 = fill 底部两外侧伪元素的反弧（box-shadow 技巧，R=4px），
+    // 构造细节见 global.css 的 B123 注释。仍然禁止的只有「上底色的圆盘构造」
+    // （B119 老做法，观感过重）。
     const cssNoComments = stripCssComments(css);
-    expect(cssNoComments, "connected 不得再画肩（肩部伪元素上底色 = 回潮）").not.toMatch(
-      /\.tab-active \.tab-fill::(?:before|after)\s*\{[^}]*background/,
+    // ⚠️ 不用 ruleBlock：肩部首条规则是群组选择器，ruleBlock 会在逗号处提前命中
+    // 共享块；这里直接按独立规则块取。
+    const shoulderBefore = css.match(/\.tab-active \.tab-fill::before\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(shoulderBefore, "左肩必须是 border-bottom-right-radius + box-shadow 反弧").toContain(
+      "box-shadow: 2px 2px 0 2px var(--tab-fill-bg)",
     );
-    expect(cssNoComments, "connected 不得再用 box-shadow 补色画肩").not.toMatch(
-      /\.tab-active \.tab-fill::(?:before|after)\s*\{[^}]*box-shadow/,
+    expect(shoulderBefore, "左肩反弧半径 4px（VS Code cornerRadius-small）").toContain(
+      "border-bottom-right-radius: 4px",
+    );
+    // ⚠️ ::after 在群组选择器里恰好后跟 `{`，会先命中共享块 —— 正则里要求
+    // 块内含 box-shadow 值，保证抓到的是独立规则。
+    const shoulderAfter =
+      css.match(/\.tab-active \.tab-fill::after\s*\{[^}]*box-shadow: -2px[^}]*\}/)?.[0] ?? "";
+    expect(shoulderAfter, "右肩必须是镜像的 box-shadow 反弧").toContain(
+      "box-shadow: -2px 2px 0 2px var(--tab-fill-bg)",
+    );
+    expect(cssNoComments, "肩部不得用上底色的圆盘构造（B119 老做法）").not.toMatch(
+      /\.tab-active \.tab-fill::(?:before|after)\s*\{[^}]*background/,
     );
 
     // 三档底色 + 条带表面色，两套主题都要齐：缺一个就是某主题下某状态完全没反馈
@@ -284,8 +297,8 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     // B122：ops 段同样无线（B121 的补线随条带细线一并退场）
     const ops = cssDecls(ruleBlock(css, ".panel-ops"));
     expect(ops, "ops 段不得再有 border-bottom（B122 细线整体退场）").not.toContain("border-bottom");
-    // B122：分屏分隔条静息透明、外框改由卡片边框承担 —— 契约见
-    // 「编辑区圆角卡片外框（B122）」一节（--sep-line 仅剩大纲分隔条沿用）。
+    // B123：分屏分隔条静息恢复 --sep-line 细线、外框上移为大卡片 —— 契约见
+    // 「编辑区大卡片外框（B123）」一节。
 
     // B116：闪烁效果整体移除（用户要求）——CSS 与 TS 两侧都不得再有 tab-flash 痕迹
     // （stripCssComments 剥掉说明性注释后断言，避免被「移除记录」误伤）
@@ -386,12 +399,16 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
       );
     }).toThrow();
 
-    // ② box-shadow 补色回潮（B119 之前的旧构造，B117 起会被条带 overflow 裁掉）
-    const BAD_SHADOW =
-      cssCode + "\n.tab-active .tab-fill::after {\n  box-shadow: -2.5px 2.5px 0 2.5px red;\n}\n";
+    // ② B123 反转：box-shadow 反弧从「禁止」变为「必须存在」——退化替身把
+    //    肩部阴影整个摘掉（回到 B120 的直线侧边），正向契约必须咬住
+    const BAD_NO_SHOULDER = cssCode.replace(
+      /box-shadow: -?2px 2px 0 2px var\(--tab-fill-bg\);/g,
+      "",
+    );
+    expect(BAD_NO_SHOULDER, "替身必须真的摘掉了肩部阴影").not.toBe(cssCode);
     expect(() => {
-      expect(stripCssComments(BAD_SHADOW), "替身的 box-shadow 肩部必须被抓到").not.toMatch(
-        /\.tab-active \.tab-fill::(?:before|after)\s*\{[^}]*box-shadow/,
+      expect(stripCssComments(BAD_NO_SHOULDER), "摘掉肩部的替身必须被咬住").toMatch(
+        /\.tab-active \.tab-fill::before\s*\{[^}]*box-shadow/,
       );
     }).toThrow();
 
@@ -662,27 +679,35 @@ describe("紧凑档悬浮 × 的渐变垫底（B118，对齐 VS Code）", () => 
   });
 });
 
-describe("编辑区圆角卡片外框（B122，对标 VS Code Modern UI editorBorder.css）", () => {
-  it("面板 = 圆角卡片：外框 1px hover 同色、8px 圆角；条带/状态栏/分屏静息线全部退场", () => {
-    // 用户裁决：标签非活动区下沿、状态栏上沿都不再有细线；整个标签+编辑区
-    // 外面只有一圈圆角边框，颜色 ≈ 非活动标签的 hover 底色。
+describe("编辑区大卡片外框（B123，修正 B122：卡片上移到整个标签+编辑区）", () => {
+  it("layout-area = 一张大卡片（1px hover 同色 + 8px 圆角）；面板无框；分屏边界恢复细线；状态栏上沿仍无线", () => {
+    // 用户裁决：不是每个分屏一张卡，而是整个「标签+编辑区」一张大卡片，
+    // 分屏边界落在卡片内部（无圆角、恢复 1px 细线）；边框颜色仍 ≈
+    // 非活动标签 hover 底色（实拍 VS Code #2a2b2c 同档）。
     const css = readFileSync("src/styles/global.css", "utf-8");
 
-    // 卡片外框：VS Code 的 .part.editor 同款三件套（border + radius + overflow）
-    const panel = cssDecls(ruleBlock(css, ".layout-panel"));
-    expect(panel, "面板外框必须是 1px 卡片边框（颜色=非活动 hover 色）").toContain(
+    // 大卡片三件套落在 .layout-area（VS Code 的 .part.editor 同款）
+    const area = cssDecls(ruleBlock(css, ".layout-area"));
+    expect(area, "大卡片外框必须是 1px 卡片边框（颜色=非活动 hover 色）").toContain(
       "border: 1px solid var(--tab-bg-hover)",
     );
-    expect(panel, "卡片圆角 8px（VS Code cornerRadius-large）").toContain("border-radius: 8px");
-    expect(panel, "overflow hidden 裁出圆角（VS Code 同款）").toContain("overflow: hidden");
+    expect(area, "卡片圆角 8px（VS Code cornerRadius-large）").toContain("border-radius: 8px");
+    expect(area, "overflow hidden 裁出圆角（VS Code 同款）").toContain("overflow: hidden");
 
-    // 状态栏上沿无线
+    // 面板本身退回无修饰容器（B122 的每面板卡片已上移）
+    const panel = cssDecls(ruleBlock(css, ".layout-panel"));
+    expect(panel, "面板不得再画卡片边框（B123 卡片上移）").not.toMatch(/border/);
+    expect(panel, "面板不得再有圆角").not.toContain("border-radius");
+
+    // 状态栏上沿无线（状态栏在卡片外面）
     const statusbar = cssDecls(ruleBlock(css, ".statusbar"));
-    expect(statusbar, "状态栏不得再画 border-top（B122）").not.toContain("border-top");
+    expect(statusbar, "状态栏不得再画 border-top").not.toContain("border-top");
 
-    // 分屏分隔条静息隐形（VS Code sash 行为）：相邻卡片边框天然构成分界
+    // 分屏边界恢复静息细线（大卡片内部，实拍 VS Code #272829 ≈ --sep-line）
     const sep = css.match(/\.layout-sep::after\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(sep, "分屏分隔条静息必须透明（B122）").toContain("background: transparent");
+    expect(sep, "分屏分隔条静息必须画 --sep-line 细线（B123）").toContain(
+      "background: var(--sep-line)",
+    );
     // 悬停/拖拽高亮不受影响（B59/B60）：accent + 加宽
     const hl = css.match(/\.layout-sep:hover::after,[\s\S]{0,80}?\{[^}]*\}/)?.[0] ?? "";
     expect(hl, "分隔条悬停高亮仍为 accent").toMatch(/var\(--accent/);
@@ -693,19 +718,31 @@ describe("编辑区圆角卡片外框（B122，对标 VS Code Modern UI editorBo
       /\.toc-resizer::after\s*\{[^}]*background:\s*var\(--sep-line\)/,
     );
 
-    // 反向验证①：分屏分隔条静息回潮（透明改回实色线）必须被咬住
+    // 反向验证①：分屏分隔条静息透明化回潮（B122 旧契约）必须被咬住
     const sepBlock = (src: string) => src.match(/\.layout-sep::after\s*\{[^}]*\}/)?.[0] ?? "";
     const BAD_SEP = css.replace(
       /\.layout-sep::after\s*\{[^}]*\}/,
-      '.layout-sep::after {\n  content: "";\n  position: absolute;\n  background: var(--sep-line);\n}',
+      '.layout-sep::after {\n  content: "";\n  position: absolute;\n  background: transparent;\n}',
     );
     expect(BAD_SEP, "替身必须真的替换过").not.toBe(css);
-    expect(sepBlock(BAD_SEP), "替身自证：静息实色线已被塞回").toContain("var(--sep-line)");
+    expect(sepBlock(BAD_SEP), "替身自证：静息透明已被塞回").toContain("background: transparent");
     expect(() => {
-      expect(sepBlock(BAD_SEP), "替身的静息实色线必须被抓到").toContain("background: transparent");
+      expect(sepBlock(BAD_SEP), "替身的静息透明必须被抓到").toContain(
+        "background: var(--sep-line)",
+      );
     }).toThrow();
 
-    // 反向验证②：状态栏 border-top 回潮必须被咬住
+    // 反向验证②：大卡片边框退潮（layout-area 丢边框）必须被咬住
+    const BAD_AREA = css.replace("border: 1px solid var(--tab-bg-hover);", "border: none;");
+    expect(BAD_AREA, "替身必须真的摘掉了大卡片边框").not.toBe(css);
+    expect(() => {
+      expect(
+        cssDecls(ruleBlock(BAD_AREA, ".layout-area")),
+        "替身缺失的大卡片边框必须被抓到",
+      ).toContain("border: 1px solid var(--tab-bg-hover)");
+    }).toThrow();
+
+    // 反向验证③：状态栏 border-top 回潮必须被咬住
     const BAD_SB = css.replace(
       "background: var(--bg-status);",
       "background: var(--bg-status);\n  border-top: 1px solid var(--border);",

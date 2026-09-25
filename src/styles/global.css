@@ -598,7 +598,42 @@ button:focus-visible {
    属抗锯齿残影）。B119 按 VS Code 肩部 CSS 结构做的实色四分之一圆，实际观感
    比 VS Code 明显得多，且与「深色凹槽」方向冲突 —— 连同更早的 box-shadow
    旧构造与 :first-child/:last-child 抑制规则一并删除，侧边回归直线。
-   pill 档的 content:none（见下）保留，作为「connected 肩部不得回潮」的守卫。 */
+   ⚠️ B123（用户裁决，再次反转）：肩部**回归** —— 用户看到自己 VS Code
+   的标签下沿有反向圆弧肩部，点名要回来。实拍确认（.tmp/vscode-live.png
+   像素扫描）：标签右下角有 4-5 物理像素（≈3px CSS）的外扩反弧，且源码
+   connectedEditorTabs.css 里就是这套构造（此前 B120 的「几乎看不到」结论
+   受 150% 缩放抗锯齿影响，把「小」看成了「没有」）。
+   pill 档的 content:none（见下）继续生效，胶囊档仍然没有肩部。 */
+
+/* B123：反向圆弧肩部 —— 构造逐条对标 connectedEditorTabs.css 的
+   `.tab.active > .tab-fill::before/::after`：
+   伪元素坐在 fill 底部两外侧（R = cornerRadius-small = 4px），
+   border-bottom-*-radius + `box-shadow: R/2 R/2 0 R/2 面色` 的**反弧技巧**——
+   阴影矩形恰好盖住伪元素自身盒再外扩 R/2，圆角把内侧角抠成凹弧，
+   露出的阴影就是贴着标签底部的反向圆弧肩部；阴影溢出伪元素盒的部分
+   落在标签 fill 内侧与条带下方的编辑区里，与面色同色，天然无害，
+   因此不需要 VS Code 的 clip-path: inset(0)。
+   颜色走 --tab-fill-bg：非焦点降档 / pill 提亮改这一个变量时肩部自动跟随。 */
+.tab-active .tab-fill::before,
+.tab-active .tab-fill::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: 4px;
+  height: 4px;
+  pointer-events: none;
+  transition: box-shadow 0.12s ease;
+}
+.tab-active .tab-fill::before {
+  right: 100%;
+  border-bottom-right-radius: 4px;
+  box-shadow: 2px 2px 0 2px var(--tab-fill-bg);
+}
+.tab-active .tab-fill::after {
+  left: 100%;
+  border-bottom-left-radius: 4px;
+  box-shadow: -2px 2px 0 2px var(--tab-fill-bg);
+}
 
 /* ==================================================================
    B116：标签闪烁效果整体移除（用户要求）。原 B47「切换后闪一次」的
@@ -1971,6 +2006,13 @@ button:focus-visible {
   min-width: 0;
   display: flex;
   overflow: hidden;
+  /* B123（用户裁决，修正 B122）：**整个「标签 + 编辑区」一张大卡片** ——
+     卡片从每个分屏面板（B122）上移到全部分屏共用的容器上；分屏边界落在
+     卡片**内部**，边界处自然没有任何圆角（用户点名）。实拍用户 VS Code：
+     卡片边框 1px #2a2b2c（= 非活动标签 hover 色，用户 B122 点名的判据不变）、
+     外圆角约 6px、状态栏在卡片外面。overflow: hidden 原本就有，正好裁圆角。 */
+  border: 1px solid var(--tab-bg-hover);
+  border-radius: 8px;
 }
 
 .layout-split {
@@ -2011,12 +2053,12 @@ button:focus-visible {
 .layout-sep::after {
   content: "";
   position: absolute;
-  /* B122：静息**透明** —— 每个面板自己就是一张带边框的圆角卡片（见
-     .layout-panel 的 B122 注释），相邻两张卡的边框天然构成面板分界，
-     再画一条线就是三线叠粗；对齐 VS Code sash 的行为：平时隐形、
-     悬停/拖拽才显形（下面的 accent 高亮规则不受影响，B59/B60 照旧）。
-     --sep-line 仍由大纲分隔条（preview.css 的 .toc-resizer）沿用。 */
-  background: transparent;
+  /* B123：静息细线恢复（B122 曾透明）—— 卡片上移到 .layout-area（一张大卡）
+     之后，分屏边界落在卡片内部，不再有「相邻卡片边框」当分界，实拍用户
+     VS Code 的分屏边界就是一条 1px #272829 细线（≈ --sep-line #2e3034，
+     B121 用户已认可的降对比档），贯穿条带与编辑区全程。
+     悬停/拖拽的 accent 高亮规则不受影响（B59/B60 照旧）。 */
+  background: var(--sep-line);
   transition:
     background var(--transition),
     width var(--transition),
@@ -2147,17 +2189,9 @@ button:focus-visible {
   flex: 1 1 auto;
   min-width: 120px;
   min-height: 80px;
-  /* B122（用户裁决，对标 VS Code Modern UI 的 editorBorder.css）：
-     每个面板 = 一张**圆角卡片** —— 整个「标签条 + 编辑区」外面包一圈
-     1px 边框 + 大圆角（VS Code：editorGroup.border + cornerRadius-large=8px +
-     overflow hidden 裁出圆角，box-sizing border-box 不引起重排）。
-     边框颜色用户点名「和非活动 tab 的 hover 颜色一样」→ 直接复用 --tab-bg-hover
-     （深 ≈#2b2d30 / 浅 ≈#e8e9ea，与实拍 VS Code 的 #2a2b2c 同档）。
-     1px 边框原本就占位（transparent），改色零布局位移；卡片内所有内部分割线
-     （条带下沿、状态栏上沿、分屏 sep 静息线）全部退场（见各自 B122 注释）。 */
-  border: 1px solid var(--tab-bg-hover);
-  border-radius: 8px;
-  overflow: hidden;
+  /* B123：B122 曾把圆角卡片画在**每个面板**上，用户指出应上移 ——
+     整个标签+编辑区是**一张**大卡片（见 .layout-area 的 B123 注释），
+     面板本身退回无修饰容器；分屏边界线由 .layout-sep::after 恢复静息细线。 */
   /* 拖拽落点预览层（.split-preview）的定位基准：
      必须锚定到面板自身，否则嵌套分屏时高亮画在整个布局区的一半上 */
   position: relative;
@@ -2174,7 +2208,6 @@ button:focus-visible {
   flex-grow: 0;
   flex-shrink: 0;
   overflow: hidden;
-  border-width: 0;
   pointer-events: none;
 }
 
