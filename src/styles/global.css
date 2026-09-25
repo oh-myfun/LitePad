@@ -643,6 +643,24 @@ button:focus-visible {
     var(--tab-fill-bg);
 }
 
+/* B123-3（用户裁决）：相连标签**贴边顶角不圆** —— 左右分屏时右侧区域最左
+   标签的左上角没有圆角。connected 档条带 padding-left 为 0（B113-2），
+   首标签直接贴分屏边界 / 卡片左缘，顶角做圆反而突兀；左肩也一并免掉
+   （反弧不冲着边界/卡片边框画，VS Code 的 :first-child / connected-tab-left-edge
+   同款 content:none）。卡片**外**缘处，方角会被大卡片圆角 + overflow hidden
+   裁出同样的弧，两种贴边场景形态一致。
+   右侧不对称是有意的：条带 padding-right 4px（B113-2 末标签呼吸位），
+   末标签顶角不在边界上，圆角保留。
+   标签条 host 的子元素只有 .tab（滚动条在 wrap 层、插入线拖拽时才临时入列），
+   :first-child 选择器可靠。⚠️ 特异性 (0,3,1) 高于肩部群组规则 (0,2,1)，
+   无需担心顺序。 */
+.tab:first-child .tab-fill {
+  border-top-left-radius: 0;
+}
+.tab:first-child .tab-fill::before {
+  content: none;
+}
+
 /* ==================================================================
    B116：标签闪烁效果整体移除（用户要求）。原 B47「切换后闪一次」的
    tab-flash 动画（含 B113-3 的肩部闪烁关键帧）与 tabstrip.ts 的

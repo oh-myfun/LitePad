@@ -190,6 +190,11 @@ def write_demo_config(recipe):
         except Exception:
             base = {}
     base["theme"] = recipe["theme"]
+    # B123-3 修正：标签样式**强制缺省档（connected）** —— 此前从真实设置打底，
+    # 用户配置是 pill，导致 main.png 一直是胶囊档：connected 档的界面改动
+    # （B113+ 舌片/肩部/贴边顶角）从未真正进过截图验收，像素结论全是假阳性
+    # （条带底部的自绘滚动条 thumb 被误认成肩部反弧）。pill 档自有设置页预览。
+    base["tab_style"] = "connected"
     with open(SETTINGS, "w", encoding="utf-8") as f:
         json.dump(base, f, ensure_ascii=False, indent=2)
     with open(SESSION, "w", encoding="utf-8") as f:

@@ -291,6 +291,31 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
       /\.tab-active \.tab-fill::(?:before|after)\s*\{[^}]*background/,
     );
 
+    // B123-3（用户裁决）：贴边顶角不圆 —— 分屏边界处（右侧区域最左标签）
+    // 左上角没有圆角，左肩也免（反弧不冲着边界画）。右侧 4px 呼吸位
+    // （B113-2）是有意不对称：末标签顶角不在边界上，圆角保留。
+    const firstFill = cssDecls(ruleBlock(css, ".tab:first-child .tab-fill"));
+    expect(firstFill, "首标签（贴边界侧）顶角必须不圆").toContain("border-top-left-radius: 0");
+    const firstShoulder = cssDecls(ruleBlock(css, ".tab:first-child .tab-fill::before"));
+    expect(firstShoulder, "首标签左肩必须免画（VS Code :first-child 同款）").toContain(
+      "content: none",
+    );
+    // 反向验证：贴边顶角回潮（0 改回圆角）必须被咬住
+    const strippedCss = stripCssComments(css);
+    const BAD_EDGE = strippedCss.replace(
+      ".tab:first-child .tab-fill {\n  border-top-left-radius: 0;\n}",
+      ".tab:first-child .tab-fill {\n  border-top-left-radius: var(--tab-radius);\n}",
+    );
+    expect(BAD_EDGE, "替身必须真的把贴边顶角改回了圆角").toContain(
+      "border-top-left-radius: var(--tab-radius)",
+    );
+    expect(() => {
+      expect(
+        cssDecls(ruleBlock(BAD_EDGE, ".tab:first-child .tab-fill")),
+        "替身的贴边圆角必须被抓到",
+      ).toContain("border-top-left-radius: 0");
+    }).toThrow();
+
     // 三档底色 + 条带表面色，两套主题都要齐：缺一个就是某主题下某状态完全没反馈
     for (const [name, block] of [
       ["深色", themeBlock(css, "dark")],
