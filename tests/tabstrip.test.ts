@@ -33,7 +33,17 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
     const tsCode = stripLineComments(ts);
     expect(tsCode, "折叠机制必须整体删除（含下拉列表构造）").not.toContain("tab-more");
     expect(tsCode, "不应再按 tabId 重对齐可见窗口").not.toContain("reanchorStart");
-    expect(tsCode, "不应再手写 ResizeObserver 重算可见区间").not.toContain("new ResizeObserver");
+    // ⚠️ B125 起**允许**手写 ResizeObserver，但只准一种用途：跟随面板宽度改 thumb 几何
+    //    （拖分屏条不改窗口尺寸，window.resize 兜不住）。B53 禁的是「重算可见区间」——
+    //    那个已经被原生滚动取代；这里禁止的是用它记账（reanchorStart / 折叠残留）。
+    //    判据：RO 回调里只能调 syncOverlayScrollbar，不得出现其它记账动作。
+    expect(tsCode, "ResizeObserver 只能用于同步 thumb 几何（B125），不得拿去重算可见区间").toMatch(
+      /new ResizeObserver\(\(\) => syncOverlayScrollbar\(host\)\)/,
+    );
+    expect(
+      (tsCode.match(/new ResizeObserver/g) ?? []).length,
+      "只允许这一处 ResizeObserver（多一处就要问是不是又在记账）",
+    ).toBe(1);
     expect(tsCode, "必须挂载滚轮滚动").toContain('addEventListener("wheel"');
     expect(tsCode, "滚轮需用 passive:false 才能 preventDefault").toContain("passive: false");
     expect(tsCode, "Ctrl+滚轮要让位给字号缩放").toContain("if (e.ctrlKey) return;");
@@ -49,6 +59,41 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
     expect(tsCode, "必须有 thumb 几何同步").toContain("syncOverlayScrollbar");
     expect(tsCode, "scroll 事件驱动同步（程序滚动也覆盖）").toContain('addEventListener("scroll"');
     expect(tsCode, "thumb 必须可拖拽").toContain("bindThumbDrag");
+
+    // B125：默认隐藏（VS Code 标签条走 ScrollbarVisibility.Auto）
+    const barRule = css.match(/^\.panel-tabstrip-scrollbar \{[\s\S]*?\}/m)?.[0] ?? "";
+    expect(barRule, "轨道默认必须透明（不悬停就不画）").toMatch(/opacity:\s*0/);
+    expect(barRule, "淡出必须有过渡（对齐 VS Code .invisible.fade = 800ms linear）").toMatch(
+      /transition:\s*opacity\s+800ms/,
+    );
+    const shown = css.match(/\.panel-tabstrip-scrollbar\.is-visible \{[^}]*\}/)?.[0] ?? "";
+    expect(shown, "可见态必须不透明").toMatch(/opacity:\s*1/);
+    expect(shown, "出现要即时（过渡只留给淡出）").toMatch(/transition:\s*none/);
+    const thumbRule = css.match(/\.panel-tabstrip-scrollbar-thumb \{[^}]*\}/)?.[0] ?? "";
+    expect(thumbRule, "隐藏时 thumb 必须让出点击（否则一条看不见的条挡住标签底部）").toContain(
+      "pointer-events: none",
+    );
+    expect(css, "只有可见态才让 thumb 吃事件").toMatch(
+      /\.panel-tabstrip-scrollbar\.is-visible \.panel-tabstrip-scrollbar-thumb \{[^}]*pointer-events:\s*auto/,
+    );
+    expect(tsCode, "悬停即现").toContain('addEventListener("pointerenter"');
+    expect(tsCode, "离开即收").toContain('addEventListener("pointerleave"');
+    expect(tsCode, "淡出延时要等于 VS Code 的 HIDE_TIMEOUT（500）").toContain(
+      "SCROLLBAR_HIDE_DELAY = 500",
+    );
+    expect(tsCode, "必须有显隐两个助手").toContain("function revealScrollbar");
+    expect(tsCode).toContain("function hideScrollbar");
+
+    // 反向验证：滚动条改回「常显」（默认不透明）必须被咬住
+    const ALWAYS = css.replace(
+      /(\.panel-tabstrip-scrollbar \{[\s\S]*?)opacity: 0;/,
+      "$1opacity: 1;",
+    );
+    expect(ALWAYS, "替身必须真的改成常显").not.toBe(css);
+    expect(
+      ALWAYS.match(/^\.panel-tabstrip-scrollbar \{[\s\S]*?\}/m)?.[0],
+      "替身的常显必须被抓到",
+    ).toMatch(/opacity:\s*1/);
 
     // 条带高度：悬浮条不占布局 → 30px = 3px 上间距 + 24px 标签 + 3px 下间隙
     // （B123-6 两档统一，上下对称，下间隙 = thumb 高度）

@@ -6,8 +6,18 @@
 // 用法要点：jsdom 没有排版，所以这里把几何量做成语义化桩 ——
 //   标签固定宽 100px、间距 2px、标签栏可视宽 VIEW_W；
 //   scrollLeft 按真实浏览器语义**钳制**在 [0, scrollWidth-clientWidth]。
-import { describe, it, expect, afterAll, beforeAll, afterEach } from "vitest";
+import { describe, it, expect, afterAll, beforeAll, afterEach, vi } from "vitest";
 import { renderTabstrip, type TabViewData, type TabstripCallbacks } from "../src/shell/tabstrip";
+
+/** B125：jsdom 没有 ResizeObserver，这里记下回调供用例手动触发（模拟面板宽度变化）。 */
+const roCallbacks: Array<() => void> = [];
+class FakeResizeObserver {
+  constructor(private cb: () => void) {
+    roCallbacks.push(cb);
+  }
+  observe(): void {}
+  disconnect(): void {}
+}
 
 const TAB_W = 100;
 const GAP = 2;
@@ -27,9 +37,17 @@ beforeAll(() => {
   const def = (prop: string, desc: PropertyDescriptor): void =>
     Object.defineProperty(proto, prop, { configurable: true, ...desc });
 
+  // B125：装在渲染之前，tabstrip 里 `typeof ResizeObserver !== "undefined"` 才成立
+  (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = FakeResizeObserver;
+
+  // ⚠️ B125：轨道（.panel-tabstrip-scrollbar）也要有宽度，否则 syncOverlayScrollbar
+  //    里 track=0 会让 thumb 恒为最小宽 24px —— 「跟随面板宽度变化」这条就验不出来。
   def("clientWidth", {
     get(this: HTMLElement) {
-      return this.classList.contains("panel-tabstrip") ? VIEW_W : 0;
+      return this.classList.contains("panel-tabstrip") ||
+        this.classList.contains("panel-tabstrip-scrollbar")
+        ? VIEW_W
+        : 0;
     },
   });
   def("scrollWidth", {
@@ -65,6 +83,7 @@ beforeAll(() => {
     for (const p of ["clientWidth", "scrollWidth", "offsetLeft", "offsetWidth", "scrollLeft"]) {
       delete (proto as unknown as Record<string, unknown>)[p];
     }
+    delete (globalThis as unknown as Record<string, unknown>).ResizeObserver;
   };
 });
 
@@ -72,6 +91,7 @@ afterAll(() => restore?.());
 afterEach(() => {
   document.body.textContent = "";
   VIEW_W = 250;
+  roCallbacks.length = 0;
 });
 
 function tabs(n: number, active = 0): TabViewData[] {
@@ -339,5 +359,103 @@ describe("B123-4 标签 tooltip 只留一行完整路径（文件名不重复）
     );
     const tab = host.querySelector<HTMLElement>(".tab")!;
     expect(tab.dataset.tip, "无路径时退回文件名").toBe("未命名");
+  });
+});
+
+describe("B125 标签区滚动条：自动隐藏 + 跟随面板宽度自适应（对标 VS Code）", () => {
+  const wrapOf = (host: HTMLElement): HTMLElement => host.parentElement!;
+  const barOf = (host: HTMLElement): HTMLElement =>
+    wrapOf(host).querySelector<HTMLElement>(".panel-tabstrip-scrollbar")!;
+  const thumbOf = (host: HTMLElement): HTMLElement => barOf(host).firstElementChild as HTMLElement;
+  const visible = (host: HTMLElement): boolean => barOf(host).classList.contains("is-visible");
+  const fire = (el: HTMLElement, type: string): void => el.dispatchEvent(new Event(type));
+  const px = (v: string): number => Number.parseInt(v, 10);
+
+  it("默认隐藏：溢出也只是把 thumb 备好，不画出来", () => {
+    const { host } = mount(6);
+    expect(barOf(host), "溢出时滚动条元素要在").toBeTruthy();
+    expect(barOf(host).style.display, "溢出时元素可见性打开").not.toBe("none");
+    expect(visible(host), "不悬停就不该显示（VS Code 的 ScrollbarVisibility.Auto）").toBe(false);
+  });
+
+  it("放得下时连元素一起收起，且不残留可见态", () => {
+    const { host } = mount(2); // 202 ≤ 250
+    fire(wrapOf(host), "pointerenter");
+    expect(barOf(host).style.display, "放得下就完全不显示").toBe("none");
+    expect(visible(host), "不溢出时不得留可见类（下次溢出才不会闪一下）").toBe(false);
+  });
+
+  it("悬停条带即出现，离开即收起", () => {
+    const { host } = mount(6);
+    fire(wrapOf(host), "pointerenter");
+    expect(visible(host), "悬停要立刻看得见").toBe(true);
+    fire(wrapOf(host), "pointerleave");
+    expect(visible(host), "离开要收起").toBe(false);
+  });
+
+  it("滚动唤起后 500ms 自动淡出（= VS Code HIDE_TIMEOUT）", () => {
+    vi.useFakeTimers();
+    try {
+      const { host } = mount(6);
+      wheelOn(host, 100);
+      expect(visible(host), "滚动时要出现").toBe(true);
+      vi.advanceTimersByTime(499);
+      expect(visible(host), "不到 500ms 不该消失").toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(visible(host), "停手 500ms 后淡出").toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("悬停期间不会被自动淡出计时器收走（计时器只看「是否在用」）", () => {
+    vi.useFakeTimers();
+    try {
+      const { host } = mount(6);
+      fire(wrapOf(host), "pointerenter");
+      wheelOn(host, 100);
+      vi.advanceTimersByTime(2000);
+      expect(visible(host), "指针还在条带上就不能消失").toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("面板宽度变化（拖分屏条，不改窗口尺寸）时 thumb 几何跟着变", () => {
+    const { host } = mount(6); // 内容 610
+    const w1 = thumbOf(host).style.width;
+    expect(px(w1), "250 视宽下 thumb 应已算出宽度").toBeGreaterThan(0);
+
+    // 拖窄 → 可视占比变小 → thumb 更短
+    VIEW_W = 150;
+    expect(
+      roCallbacks.length,
+      "必须挂了 ResizeObserver：拖分屏条不触发 window.resize，光靠它兜不住",
+    ).toBeGreaterThan(0);
+    for (const cb of roCallbacks) cb();
+    const w2 = thumbOf(host).style.width;
+    expect(px(w2), `面板变窄后 thumb 必须变短（${w1} → ${w2}）`).toBeLessThan(px(w1));
+
+    // 拖宽回去 → thumb 变长
+    VIEW_W = 600;
+    for (const cb of roCallbacks) cb();
+    const w3 = thumbOf(host).style.width;
+    expect(px(w3), `面板变宽后 thumb 必须变长（${w2} → ${w3}）`).toBeGreaterThan(px(w2));
+  });
+
+  it("拖 thumb 期间常显：手拖出条带也不消失，松手后才开始计时", () => {
+    vi.useFakeTimers();
+    try {
+      const { host } = mount(6);
+      fire(wrapOf(host), "pointerenter");
+      thumbOf(host).dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 0 }));
+      fire(wrapOf(host), "pointerleave"); // 拖出条带
+      expect(visible(host), "拖拽中必须保持可见").toBe(true);
+      window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+      vi.advanceTimersByTime(500);
+      expect(visible(host), "松手且指针不在条带上 → 淡出").toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

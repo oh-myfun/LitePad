@@ -2435,6 +2435,18 @@ button:focus-visible {
   bottom: 0;
   height: 6px;
   pointer-events: none;
+  /* B125：默认隐藏（对齐 VS Code 标签条的 ScrollbarVisibility.Auto）。
+     淡出走 800ms linear —— 与 VS Code `.invisible.fade` 同一条曲线；
+     出现是即时的（.is-visible 不带过渡）：手一放上去立刻能看到，收起来才慢慢淡。
+     ⚠️ 两个类必须成对维护：改一处忘了另一处，滚动条就变成「永远看不见」或「永远不消失」。 */
+  opacity: 0;
+  transition: opacity 800ms linear;
+}
+
+/* 出现态（由 tabstrip.ts 的 revealScrollbar 挂上 / 摘掉） */
+.panel-tabstrip-scrollbar.is-visible {
+  opacity: 1;
+  transition: none;
 }
 
 .panel-tabstrip-scrollbar-thumb {
@@ -2444,12 +2456,18 @@ button:focus-visible {
   height: 3px;
   border-radius: 2px;
   background: color-mix(in srgb, var(--fg) 22%, transparent);
-  pointer-events: auto;
+  /* B125：隐藏时**必须**连点击一起让出 —— 否则一条看不见的 thumb 会挡住
+     标签条底部的点击（用户按不到最下面那几个像素的标签）。只有可见态才吃事件。 */
+  pointer-events: none;
   /* 拖拽把手保留语义光标（B111 光标规则的「拖拽把手」例外项），不用 hand */
   cursor: grab;
   transition:
     background 0.12s ease,
     height 0.12s ease;
+}
+
+.panel-tabstrip-scrollbar.is-visible .panel-tabstrip-scrollbar-thumb {
+  pointer-events: auto;
 }
 
 .panel-tabstrip-scrollbar-thumb:active {

@@ -433,17 +433,65 @@ function bindWheel(host: HTMLElement): void {
 // 做不出 VS Code 那种「悬浮在内容上、不用时不占高度」的形态 —— 所以自绘：
 // 溢出时在标签条底部叠一条半透明细 thumb（悬浮、不占布局），拖 thumb /
 // 滚轮 / ensureVisible 都只是改 host.scrollLeft，由 scroll 事件反向同步 thumb。
+// B125：thumb 默认**隐藏**（VS Code 标签条走 ScrollbarVisibility.Auto）：
+//   悬停条带 / 滚动 / 拖 thumb 才出现，离开或停手 500ms 后淡出（见下方 B125 段）；
+//   几何由 ResizeObserver 跟随面板宽度变化 —— 拖分屏条不改窗口尺寸，
+//   光靠 window.resize 会让 thumb 停在旧宽度上。
 // 结构：strip 外面包一层 .panel-tabstrip-wrap（position:relative），bar 是
 // wrap 的兄弟绝对定位 —— 不能放进 strip 里：滚动容器的 absolute 子元素会
 // 随内容滚走，钉不住在可视区边缘。
 
-/** B117：溢出状态变化时同步 thumb 几何（scroll / resize / 重绘都调它）。 */
+/** 自绘滚动条「可见」类（B125：默认隐藏，用时才挂 —— 见下方 B125 段）。 */
+const SCROLLBAR_VISIBLE = "is-visible";
+/** B125：出现后多久淡出 = VS Code `scrollableElement.ts` 的 HIDE_TIMEOUT（500ms）。 */
+const SCROLLBAR_HIDE_DELAY = 500;
+
+interface ScrollbarState {
+  bar: HTMLElement;
+  timer: number;
+  hovering: boolean;
+  dragging: boolean;
+}
+const scrollbars = new WeakMap<HTMLElement, ScrollbarState>();
+
+/** 让滚动条出现；`transient` = 由滚动/程序定位唤起（非悬停），到点自动淡出。 */
+function revealScrollbar(host: HTMLElement, transient = false): void {
+  const st = scrollbars.get(host);
+  // 不溢出（放得下）时连「出现」都不该发生 —— 对应 VS Code 的 setIsNeeded(false)：
+  // 没有滚动条可用，唤起了也是一条没意义的空轨道。
+  if (!st || st.bar.style.display === "none") return;
+  if (st.timer) {
+    window.clearTimeout(st.timer);
+    st.timer = 0;
+  }
+  st.bar.classList.add(SCROLLBAR_VISIBLE);
+  if (!transient || st.hovering || st.dragging) return;
+  st.timer = window.setTimeout(() => {
+    st.timer = 0;
+    if (!st.hovering && !st.dragging) st.bar.classList.remove(SCROLLBAR_VISIBLE);
+  }, SCROLLBAR_HIDE_DELAY);
+}
+
+/** 收起（指针离开 / 拖完手）；悬停或拖拽中不动 —— 与 VS Code 的 _hide 同判据。 */
+function hideScrollbar(host: HTMLElement): void {
+  const st = scrollbars.get(host);
+  if (!st) return;
+  if (st.timer) {
+    window.clearTimeout(st.timer);
+    st.timer = 0;
+  }
+  if (!st.hovering && !st.dragging) st.bar.classList.remove(SCROLLBAR_VISIBLE);
+}
+
+/** B117：溢出状态变化时同步 thumb 几何（scroll / resize / 重绘都调它）。
+ *  B125：不溢出时连「可见」类一起摘 —— 免得下次溢出时带着上一次的可见态闪一下。 */
 function syncOverlayScrollbar(host: HTMLElement): void {
   const bar = host.parentElement?.querySelector<HTMLElement>(":scope > .panel-tabstrip-scrollbar");
   if (!bar) return; // 尚未包裹（首帧前），renderTabstrip 末尾会再同步一次
   const max = host.scrollWidth - host.clientWidth;
   if (max <= 0) {
     bar.style.display = "none";
+    bar.classList.remove(SCROLLBAR_VISIBLE);
     return;
   }
   bar.style.display = "";
@@ -477,10 +525,32 @@ function ensureOverlayScrollbar(host: HTMLElement): void {
     thumb.className = "panel-tabstrip-scrollbar-thumb";
     bar.append(thumb);
     wrap.append(bar);
+    scrollbars.set(host, { bar, timer: 0, hovering: false, dragging: false });
     // 程序滚动（ensureVisible / 滚轮 / 重绘恢复）也会触发 scroll 事件，
     // 一处监听覆盖全部来源；拖拽 thumb 与 resize 时再手动同步。
-    host.addEventListener("scroll", () => syncOverlayScrollbar(host));
+    host.addEventListener("scroll", () => {
+      syncOverlayScrollbar(host);
+      revealScrollbar(host, true); // B125：滚动唤起，停手 500ms 后淡出
+    });
     window.addEventListener("resize", () => syncOverlayScrollbar(host));
+    // B125：面板宽度变化（拖分屏条 / 面板最大化 / 布局切换）**不触发 window.resize**
+    // —— 只有 ResizeObserver 兜得住，否则 thumb 宽度/位置会停在旧面板尺寸上。
+    // ⚠️ B53 那句「不再手写 ResizeObserver」说的是**可见窗口记账**（已被原生滚动
+    //    取代）；这里是另一种用途：只改 thumb 几何，不自己算「滚到哪」。
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(() => syncOverlayScrollbar(host)).observe(host);
+    }
+    // 悬停即现 / 离开即收（VS Code 的 _onMouseOver / _onMouseLeave）
+    wrap.addEventListener("pointerenter", () => {
+      const st = scrollbars.get(host);
+      if (st) st.hovering = true;
+      revealScrollbar(host);
+    });
+    wrap.addEventListener("pointerleave", () => {
+      const st = scrollbars.get(host);
+      if (st) st.hovering = false;
+      hideScrollbar(host);
+    });
     bindThumbDrag(host, bar, thumb);
   }
 }
@@ -495,6 +565,9 @@ function bindThumbDrag(host: HTMLElement, bar: HTMLElement, thumb: HTMLElement):
     const w = thumb.offsetWidth;
     const startX = e.clientX;
     const startScroll = host.scrollLeft;
+    const st = scrollbars.get(host);
+    if (st) st.dragging = true;
+    revealScrollbar(host); // 拖拽期间常显（VS Code 的 _isDragging 同判据）
     const move = (ev: PointerEvent): void => {
       const dx = ev.clientX - startX;
       host.scrollLeft = Math.max(0, Math.min(max, startScroll + (dx / (track - w)) * max));
@@ -502,6 +575,8 @@ function bindThumbDrag(host: HTMLElement, bar: HTMLElement, thumb: HTMLElement):
     const up = (): void => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      if (st) st.dragging = false;
+      revealScrollbar(host, true); // 松手后 500ms 淡出（指针若还在条带上则保持）
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -523,4 +598,7 @@ function onWheel(host: HTMLElement, e: WheelEvent): void {
   // 已经贴到边界、同方向再也滚不动 → 不吞事件，留给页面
   if (host.scrollLeft === before) return;
   e.preventDefault();
+  // B125：滚动即现（这里显式调一次，不依赖 scroll 事件的时序；
+  // 程序化滚动（ensureVisible）走 host 的 scroll 监听那条路）
+  revealScrollbar(host, true);
 }
