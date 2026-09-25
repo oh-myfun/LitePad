@@ -4,48 +4,58 @@ import { readFileSync } from "node:fs";
 import { themeBlock, cssDecls, ruleBlock, stripLineComments, stripCssComments } from "./static";
 
 describe("标签栏静态契约（从 regressions 拆出）", () => {
-  it("B53 标签区改为横向滚动（折叠机制已整体移除，用户要求）", () => {
-    // 用户要求：去掉 tab 折叠功能，保留滚动能力，参考 VS Code 优化。
-    // 旧实现是「不显示滚动条 + 溢出的标签折叠进下拉按钮」——那套机制已删除，
-    // 连同它需要的 ResizeObserver 重算 / tabId 重对齐 / 预算铺满三条不变量。
+  it("B53/B117 标签区横向滚动改自绘悬浮滚动条（折叠机制已整体移除）", () => {
+    // 用户要求：去掉 tab 折叠功能（B53）→ 滚动条改 VS Code 式悬浮不占高度（B117）。
+    // 原生横向滚动条在 Chromium 里永远占布局空间，做不出悬浮形态 —— 改自绘：
+    // strip 只负责被程序滚动（overflow hidden 下 scrollLeft 可编程设置），
+    // 可见 thumb 由 tabstrip.ts 的 syncOverlayScrollbar 叠在底部。
     const css = readFileSync("src/styles/global.css", "utf-8");
     // ⚠️ 必须 \n 锚定行首：pill 覆盖块（B114）的选择器是
     //   :root[data-tab-style="pill"] .panel-tabstrip
     // 无锚定时 \.panel-tabstrip\s*\{ 会命中它的尾段，抓回来的是 pill 块的块体。
     const strip = css.match(/\n\.panel-tabstrip\s*\{[^}]*\}/)?.[0] ?? "";
     expect(strip, "应有 .panel-tabstrip 规则").toBeTruthy();
-    expect(strip, "标签区必须可横向滚动").toContain("overflow-x: auto");
-    // 细滚动条由 ::-webkit-scrollbar 自绘。⚠️ B54 踩坑：元素上写了 scrollbar-width /
-    // scrollbar-color（标准属性）后 Chromium 会**忽略** ::-webkit-scrollbar，标签栏
-    // 会拿回系统滚动条（两端带箭头、也压不细）→ 必须复位成 auto，见下面 B54 用例。
-    expect(css, "标签栏滚动条必须自绘且很细").toMatch(
-      /\.panel-tabstrip::-webkit-scrollbar\s*\{[^}]*height:\s*[1-4]px/,
+    expect(strip, "标签区不再吃原生滚动条（B117 悬浮化）").toContain("overflow-x: hidden");
+    expect(css, "原生 webkit 滚动条规则必须整体删除").not.toMatch(
+      /\.panel-tabstrip::-webkit-scrollbar/,
+    );
+    expect(css, "悬浮条轨道必须存在").toMatch(/\.panel-tabstrip-scrollbar\s*\{/);
+    expect(css, "悬浮条必须悬浮（absolute，不占布局）").toMatch(
+      /\.panel-tabstrip-scrollbar\s*\{[^}]*position:\s*absolute/,
+    );
+    expect(css, "thumb 要比 B55 的 4px 更细").toMatch(
+      /\.panel-tabstrip-scrollbar-thumb\s*\{[^}]*height:\s*[1-3]px/,
     );
     expect(strip, "标签永不换行（VS Code）").toContain("flex-wrap: nowrap");
     expect(css, "折叠按钮的样式必须整体删除").not.toContain("tab-more");
 
     const ts = readFileSync("src/shell/tabstrip.ts", "utf-8");
-    expect(ts, "折叠机制必须整体删除（含下拉列表构造）").not.toContain("tab-more");
-    expect(ts, "不应再按 tabId 重对齐可见窗口（原生滚动不需要）").not.toContain("reanchorStart");
-    expect(ts, "不应再手写 ResizeObserver 重算可见区间").not.toContain("new ResizeObserver");
-    expect(ts, "必须挂载滚轮滚动").toContain('addEventListener("wheel"');
-    expect(ts, "滚轮需用 passive:false 才能 preventDefault").toContain("passive: false");
-    expect(ts, "Ctrl+滚轮要让位给字号缩放").toContain("if (e.ctrlKey) return;");
-    expect(ts, "全量重绘必须存取滚动位置，否则每次重绘都跳回最左").toContain(
+    const tsCode = stripLineComments(ts);
+    expect(tsCode, "折叠机制必须整体删除（含下拉列表构造）").not.toContain("tab-more");
+    expect(tsCode, "不应再按 tabId 重对齐可见窗口").not.toContain("reanchorStart");
+    expect(tsCode, "不应再手写 ResizeObserver 重算可见区间").not.toContain("new ResizeObserver");
+    expect(tsCode, "必须挂载滚轮滚动").toContain('addEventListener("wheel"');
+    expect(tsCode, "滚轮需用 passive:false 才能 preventDefault").toContain("passive: false");
+    expect(tsCode, "Ctrl+滚轮要让位给字号缩放").toContain("if (e.ctrlKey) return;");
+    expect(tsCode, "全量重绘必须存取滚动位置，否则每次重绘都跳回最左").toContain(
       "const prevScroll = host.scrollLeft",
     );
-    expect(ts, "必须把活动标签滚进可见区").toContain("ensureVisible(host");
+    expect(tsCode, "必须把活动标签滚进可见区").toContain("ensureVisible(host");
     // 用 scrollIntoView 会连带滚动所有祖先容器（分屏/嵌套布局下整页跳），且 jsdom 没有它。
     // 只禁止**调用**（注释里提到它没关系），故匹配带接收者的调用式。
-    expect(ts, "定位用自身几何而不是 scrollIntoView").not.toMatch(/\.scrollIntoView\(/);
+    expect(tsCode, "定位用自身几何而不是 scrollIntoView").not.toMatch(/\.scrollIntoView\(/);
+    // B117：自绘悬浮条三件套 —— 包裹、同步、拖拽
+    expect(tsCode, "必须包裹 wrap 并挂自绘条").toContain("ensureOverlayScrollbar");
+    expect(tsCode, "必须有 thumb 几何同步").toContain("syncOverlayScrollbar");
+    expect(tsCode, "scroll 事件驱动同步（程序滚动也覆盖）").toContain('addEventListener("scroll"');
+    expect(tsCode, "thumb 必须可拖拽").toContain("bindThumbDrag");
 
-    // 滚动条余量必须**恒定预留**：原生横向滚动条从内容区里切高度，
-    // 不预留则「溢出↔不溢出」切换时标签栏 26↔28px 跳变，编辑器内容跟着抖
-    expect(strip, "标签栏高度必须固定（含滚动条余量）").toMatch(/height:\s*\d+px/);
+    // 条带高度：悬浮条不占布局 → 28px = 4px 上间距 + 24px 标签，无底部预留
+    expect(strip, "标签栏高度必须固定（无溢出↔有溢出恒定，不抖）").toMatch(/height:\s*\d+px/);
     const tabRule = css.match(/\n\.tab\s*\{[^}]*\}/)?.[0] ?? "";
     const stripH = Number(strip.match(/height:\s*(\d+)px/)![1]);
     const tabH = Number(tabRule.match(/height:\s*(\d+)px/)![1]);
-    expect(stripH, "标签栏高度必须大于标签高度（差值即滚动条余量）").toBeGreaterThan(tabH);
+    expect(stripH - tabH, "标签栏只留顶部 4px 上间距，底部不再预留").toBe(4);
   });
   it("B56 标签不收缩：宽度跟内容走，放不下就横向滚动（文件名不裁剪成「…」）", () => {
     // 用户反馈：标签变多后标签被压窄，文件名被裁剪成「…」。
@@ -283,44 +293,35 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
       "el.append(fill, icon, name, action)",
     );
   });
-  it("B55：标签栏滚动条 4px，正好塞进药丸行下方那 4px 间隙", () => {
+  it("B117：底部不再预留滚动条空间（32 → 28px），插入线直达条带底", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
     const strip = css.match(/\n\.panel-tabstrip\s*\{[^}]*\}/)?.[0] ?? "";
     expect(strip, "应有 .panel-tabstrip 规则").toBeTruthy();
-    // 关键坑：元素上指定 scrollbar-width/color 后 Chromium 会忽略 ::-webkit-scrollbar，
-    // 标签栏就拿回系统滚动条（两端带箭头、压不细）。必须复位成 auto。
-    expect(strip, "scrollbar-width 必须复位为 auto").toMatch(/scrollbar-width:\s*auto/);
-    expect(strip, "scrollbar-color 必须复位为 auto").toMatch(/scrollbar-color:\s*auto/);
     // B113：connected 标签**相连**，不再靠 gap 撑缝（缝会让 fill 接不上，
-    // 活动标签与编辑器之间就出现断口）；分隔感改由活动标签的凸起 + 描边给出。
+    // 活动标签与编辑器之间就出现断口）；分隔感改由活动标签的凸起给出。
     expect(strip, "标签必须相连（gap 0），不能留缝隙").toMatch(/gap:\s*0/);
     expect(strip, "标签条要有表面底色（活动标签取编辑器色，两者差一档才有对比）").toContain(
       "background: var(--tab-strip-bg)",
     );
     expect(
       strip,
-      "内边距：上 4 / 右 4 / 下 0 / 左 0（B113-2：左侧不留白，下方让给滚动条）",
+      "内边距：上 4 / 右 4 / 下 0 / 左 0（B113-2：左侧不留白，下方让给编辑区）",
     ).toMatch(/padding:\s*4px 4px 0 0/);
 
-    const thin = css.match(/\.panel-tabstrip::-webkit-scrollbar\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(thin, "必须有 webkit 滚动条规则").toBeTruthy();
-    const bar = Number(thin.match(/height:\s*(\d+)px/)?.[1]);
-    expect(bar, "滚动条 4px").toBe(4);
-
-    const btn = css.match(/\.panel-tabstrip::-webkit-scrollbar-button\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(btn, "必须显式去掉两端箭头按钮").toBeTruthy();
-    expect(btn, "箭头按钮必须 display:none").toMatch(/display:\s*none/);
-
-    // 几何自洽：32 = 4(上间距) + 24(标签) + 4(滚动条)。三个数绑在一起，
-    // 改一个必须改全部，否则滚动条会压到标签上（或标签行被挤下去）。
+    // B55 时代「滚动条 4px 坐在下间隙里」的整套预留随 B117 悬浮化一起退场：
+    // 条带 28 = 4(上间距) + 24(标签)，底部 0 预留 —— 溢出与否高度恒定不抖。
     const tabH = Number(cssDecls(ruleBlock(css, ".tab")).match(/height:\s*(\d+)px/)![1]);
     const stripH = Number(strip.match(/height:\s*(\d+)px/)![1]);
-    expect(stripH - tabH, "药丸行上下各留 4px，滚动条正好吃下面那 4px").toBe(bar * 2);
+    expect(stripH, "条带收窄到 28px").toBe(28);
+    expect(stripH - tabH, "底部不再有滚动条预留").toBe(4);
+    expect(css, "原生 webkit 滚动条规则必须整体删除").not.toMatch(
+      /\.panel-tabstrip::-webkit-scrollbar/,
+    );
 
-    // 拖拽插入线必须跟着药丸行走，且让开滚动条那 4px（B55 计划的头号雷点）
+    // 拖拽插入线必须跟着标签行走；底部间隙取消后直达条带底（B117）
     const insert = css.match(/\.tab-insert\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(insert, "拖拽插入线必须与药丸行等高").toMatch(/top:\s*4px/);
-    expect(insert, "拖拽插入线必须让开滚动条").toMatch(/bottom:\s*4px/);
+    expect(insert, "拖拽插入线必须与标签行等高").toMatch(/top:\s*4px/);
+    expect(insert, "插入线必须直达条带底（无下间隙）").toMatch(/bottom:\s*0/);
   });
   it("B116 闪烁效果整体移除：CSS 无 tab-flash 规则、TS 无 flashTab（含反向验证）", () => {
     // B47 引入的「切换后闪一次」被用户要求整体移除（B116）。

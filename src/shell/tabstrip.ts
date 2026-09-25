@@ -212,6 +212,9 @@ export function renderTabstrip(
     ensureVisible(host, els[activeIdx]);
   }
   entry.lastActiveId = activeId;
+
+  ensureOverlayScrollbar(host);
+  syncOverlayScrollbar(host);
 }
 
 /**
@@ -400,6 +403,86 @@ function bindWheel(host: HTMLElement): void {
   wheelBound.add(host);
   // passive:false 才能 preventDefault；非 passive 下滚轮才不会被页面抢走
   host.addEventListener("wheel", (e) => onWheel(host, e), { passive: false });
+}
+
+// ---------------------------------------------------------------- B117 自绘悬浮滚动条
+// 原生横向滚动条在 Chromium 里**永远占布局空间**（哪怕 1px 也把内容区压矮），
+// 做不出 VS Code 那种「悬浮在内容上、不用时不占高度」的形态 —— 所以自绘：
+// 溢出时在标签条底部叠一条半透明细 thumb（悬浮、不占布局），拖 thumb /
+// 滚轮 / ensureVisible 都只是改 host.scrollLeft，由 scroll 事件反向同步 thumb。
+// 结构：strip 外面包一层 .panel-tabstrip-wrap（position:relative），bar 是
+// wrap 的兄弟绝对定位 —— 不能放进 strip 里：滚动容器的 absolute 子元素会
+// 随内容滚走，钉不住在可视区边缘。
+
+/** B117：溢出状态变化时同步 thumb 几何（scroll / resize / 重绘都调它）。 */
+function syncOverlayScrollbar(host: HTMLElement): void {
+  const bar = host.parentElement?.querySelector<HTMLElement>(":scope > .panel-tabstrip-scrollbar");
+  if (!bar) return; // 尚未包裹（首帧前），renderTabstrip 末尾会再同步一次
+  const max = host.scrollWidth - host.clientWidth;
+  if (max <= 0) {
+    bar.style.display = "none";
+    return;
+  }
+  bar.style.display = "";
+  const thumb = bar.firstElementChild as HTMLElement | null;
+  if (!thumb) return;
+  const track = bar.clientWidth;
+  const ratio = host.clientWidth / host.scrollWidth; // thumb 占轨道比例 = 可视占比
+  const w = Math.max(24, Math.round(track * ratio));
+  const x = Math.round((host.scrollLeft / max) * (track - w));
+  thumb.style.width = `${w}px`;
+  thumb.style.transform = `translateX(${x}px)`;
+}
+
+/**
+ * B117：确保 host 被包在 .panel-tabstrip-wrap 里并挂上自绘滚动条。
+ * 幂等：重复 renderTabstrip 只建一次；wrap 包裹一次后 host 的兄弟关系不再变。
+ */
+function ensureOverlayScrollbar(host: HTMLElement): void {
+  let wrap = host.parentElement;
+  if (!wrap || !wrap.classList.contains("panel-tabstrip-wrap")) {
+    wrap = document.createElement("div");
+    wrap.className = "panel-tabstrip-wrap";
+    host.replaceWith(wrap);
+    wrap.append(host);
+  }
+  let bar = wrap.querySelector<HTMLElement>(":scope > .panel-tabstrip-scrollbar");
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.className = "panel-tabstrip-scrollbar";
+    const thumb = document.createElement("div");
+    thumb.className = "panel-tabstrip-scrollbar-thumb";
+    bar.append(thumb);
+    wrap.append(bar);
+    // 程序滚动（ensureVisible / 滚轮 / 重绘恢复）也会触发 scroll 事件，
+    // 一处监听覆盖全部来源；拖拽 thumb 与 resize 时再手动同步。
+    host.addEventListener("scroll", () => syncOverlayScrollbar(host));
+    window.addEventListener("resize", () => syncOverlayScrollbar(host));
+    bindThumbDrag(host, bar, thumb);
+  }
+}
+
+/** B117：thumb 拖拽 —— pointer 换算成 scrollLeft，与原生滚动条手感一致。 */
+function bindThumbDrag(host: HTMLElement, bar: HTMLElement, thumb: HTMLElement): void {
+  thumb.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    const max = host.scrollWidth - host.clientWidth;
+    if (max <= 0) return;
+    const track = bar.clientWidth;
+    const w = thumb.offsetWidth;
+    const startX = e.clientX;
+    const startScroll = host.scrollLeft;
+    const move = (ev: PointerEvent): void => {
+      const dx = ev.clientX - startX;
+      host.scrollLeft = Math.max(0, Math.min(max, startScroll + (dx / (track - w)) * max));
+    };
+    const up = (): void => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  });
 }
 
 /** 滚轮：横向滚动标签栏（Ctrl+滚轮让位给字号缩放）。 */

@@ -2226,55 +2226,62 @@ button:focus-visible {
   min-width: 0;
   /* 拖拽 tab 的插入指示线（.tab-insert）以 strip 为定位基准 */
   position: relative;
-  /* 溢出 = 横向滚动，不再折叠进下拉按钮。
-     滚动位置由 scrollLeft 持有，浏览器负责裁剪与边界收敛。 */
-  overflow-x: auto;
+  /* B117：滚动条改自绘悬浮（见 .panel-tabstrip-scrollbar）—— 原生横向滚动条
+     在 Chromium 里永远占布局空间（哪怕 1px 也把内容区压矮，B55 因此预留过
+     4px 底间隙），做不出「悬浮、不占高度」的 VS Code 形态。
+     改 overflow-x: hidden 后 scrollLeft 仍可编程设置：滚轮 / 自绘 thumb 拖拽 /
+     ensureVisible 都走程序滚动，原生滚动条彻底退场（也就没有了 B54 那套
+     scrollbar-width 复位与 ::-webkit-scrollbar 自绘规则）。
+     ⚠️ 高度是硬约束：28px = 4px 上间距 + 24px 标签，**没有**底部预留 ——
+     悬浮条不占布局，溢出与否高度恒定，编辑器不会抖（B53 的预留使命终结）。 */
+  overflow-x: hidden;
   overflow-y: hidden;
-  /* ⚠️ 必须把全局 `*` 设的 scrollbar-width / scrollbar-color 复位成 auto：
-     Chromium 在元素上指定了这两个标准属性后会**忽略 ::-webkit-scrollbar**，
-     于是标签栏拿到的是系统滚动条 —— 两端带箭头、也压不细（用户实测反馈）。
-     复位后才轮到下面的 ::-webkit-scrollbar 自绘规则生效。 */
-  scrollbar-width: auto;
-  scrollbar-color: auto;
-  /* ⚠️ 高度是硬约束，不是三行加起来「约等于」：
-     32px = 4px 上间距 + **24px 药丸** + 4px 下间隙（B57 从 20px 药丸升到常规档）。
-     标签靠 align-items: flex-start 钉在顶部 → 滚动条出现/消失都不会挪动标签行，
-     「溢出 ↔ 不溢出」高度恒定 32px，编辑器不会跟着抖（B53 就踩过 26↔28px 抖动）。 */
-  height: 32px;
+  height: 28px;
 }
 
-/* 标签栏滚动条：**4px**，正好吃掉下面那 4px 间隙（不额外占高度、不挤压药丸行），
-   且**不要两端的箭头**。overflow-x:auto 决定了它只在真正溢出时出现。 */
-.panel-tabstrip::-webkit-scrollbar {
-  height: 4px;
+/* B117 自绘悬浮滚动条：轨道叠在标签条底部（悬浮、不占布局、透明轨道），
+   thumb 3px 半透明，hover 轨道时加宽加深 —— 可见时也只有一条细线压在
+   标签底缘上，不再有 B55 那种恒定 4px 的「空底」。 */
+.panel-tabstrip-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  /* 悬浮条热区（6px）叠在标签底缘上：pointer-events 只在 thumb 上开启，
+     轨道保持穿透，不挡标签点击 */
+  min-width: 0;
 }
 
-.panel-tabstrip::-webkit-scrollbar-track,
-.panel-tabstrip::-webkit-scrollbar-corner {
-  background: transparent;
+.panel-tabstrip-scrollbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 6px;
+  pointer-events: none;
 }
 
-.panel-tabstrip::-webkit-scrollbar-thumb {
-  background: var(--sb-thumb);
+.panel-tabstrip-scrollbar-thumb {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
   border-radius: 2px;
+  background: color-mix(in srgb, var(--fg) 22%, transparent);
+  pointer-events: auto;
+  /* 拖拽把手保留语义光标（B111 光标规则的「拖拽把手」例外项），不用 hand */
+  cursor: grab;
+  transition:
+    background 0.12s ease,
+    height 0.12s ease;
 }
 
-/* 去掉滚动条两端的箭头按钮（Chromium 自绘滚动条默认会渲染 button，
-   全局那条 `::-webkit-scrollbar-button { display: none }` 在这里被
-   scrollbar-width 覆盖过，所以显式再声明一次，并顺手清零占位尺寸）。 */
-.panel-tabstrip::-webkit-scrollbar-button {
-  display: none;
-  width: 0;
-  height: 0;
+.panel-tabstrip-scrollbar-thumb:active {
+  cursor: grabbing;
 }
 
-/* 去掉滚动条两端的箭头按钮（Chromium 自绘滚动条默认会渲染 button，
-   全局那条 `::-webkit-scrollbar-button { display: none }` 在这里被
-   scrollbar-width 覆盖过，所以显式再声明一次，并顺手清零占位尺寸）。 */
-.panel-tabstrip::-webkit-scrollbar-button {
-  display: none;
-  width: 0;
-  height: 0;
+.panel-tabstrip-scrollbar:hover .panel-tabstrip-scrollbar-thumb,
+.panel-tabstrip-scrollbar-thumb:hover {
+  height: 5px;
+  background: color-mix(in srgb, var(--fg) 40%, transparent);
 }
 
 /* 拖拽 tab 落在 tab 区时的插入位置指示（区别于面板区的分屏预览层，B27）。
@@ -2282,9 +2289,9 @@ button:focus-visible {
    绝对定位子元素会随内容一起滚 —— splitview 计算偏移时必须补上 scrollLeft。 */
 .tab-insert {
   position: absolute;
-  /* 对齐 24px 药丸行：4px 上间距起、4px 下间隙止（滚动条就在这 4px 里） */
+  /* 对齐 24px 标签行：4px 上间距起、直达条带底（B117 悬浮条不占高度，无下间隙） */
   top: 4px;
-  bottom: 4px;
+  bottom: 0;
   width: 2px;
   border-radius: 1px;
   background: var(--accent);
