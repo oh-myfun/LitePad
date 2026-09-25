@@ -231,10 +231,9 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     expect(fill, "底色层不吃鼠标事件（否则点不到标签）").toContain("pointer-events: none");
 
     const activeFill = cssDecls(ruleBlock(css, ".tab-active .tab-fill"));
-    expect(
-      activeFill,
-      "活动标签底色必须收进 --tab-fill-bg 变量（肩部补色与它同源，B113-2 方案 A）",
-    ).toMatch(/--tab-fill-bg:\s*var\(--tab-bg-active\)/);
+    expect(activeFill, "活动标签底色必须收进 --tab-fill-bg 变量（B113-2 变量收口）").toMatch(
+      /--tab-fill-bg:\s*var\(--tab-bg-active\)/,
+    );
     expect(activeFill, "底色必须引用该变量（而不是直接写死）").toContain(
       "background: var(--tab-fill-bg)",
     );
@@ -244,33 +243,17 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     const hoverFill = cssDecls(ruleBlock(css, ".tab:hover:not(.tab-active) .tab-fill"));
     expect(hoverFill, "悬停要有独立一档底色").toContain("var(--tab-bg-hover)");
 
-    // 肩部：fill 外侧下角的**实色四分之一圆**，让「条带底边 → 标签侧边」是
-    // 圆角曲线而非直角（B116 去描边；B119 构造从 box-shadow 补色改为实色圆盘 ——
-    // B117 后标签底 = 条带底，阴影向下外扩的旧构造整块落在条带盒外被裁掉）。
-    expect(css, "活动标签左侧要有肩部圆角").toMatch(/\.tab-active \.tab-fill::before/);
-    expect(css, "活动标签右侧要有肩部圆角").toMatch(/\.tab-active \.tab-fill::after/);
-    expect(css, "首尾标签的外侧不画肩（那里没有邻居可接）").toMatch(
-      /:first-child \.tab-fill::before/,
+    // B120（用户裁决）：肩部整体移除 —— 用户 VS Code 实拍（connected 样式）的
+    // 活动标签是「深色凹槽、侧边直线到底、几乎看不到肩弧」（底部外扩 ≤1 物理像素，
+    // 属抗锯齿残影）。B119 的实色四分之一圆观感远强于 VS Code，随「深色凹槽」
+    // 裁决一并删除；connected 档不得再有任何肩部绘制构造（上底色或阴影都算）。
+    // pill 档的 content:none 占位保留，作「connected 肩部不得回潮」的守卫（见 pillViolations）。
+    const cssNoComments = stripCssComments(css);
+    expect(cssNoComments, "connected 不得再画肩（肩部伪元素上底色 = 回潮）").not.toMatch(
+      /\.tab-active \.tab-fill::(?:before|after)\s*\{[^}]*background/,
     );
-    // 第 1 条命中 = 公共规则（占位 + 底色），第 2 条 = 定位/圆角规则
-    const shoulderShared = cssDecls(ruleBlock(css, ".tab-active .tab-fill::before"));
-    expect(shoulderShared, "肩部必须实色且引用 --tab-fill-bg（与标签底色同源）").toContain(
-      "background: var(--tab-fill-bg",
-    );
-    expect(
-      shoulderShared,
-      "肩部不得再用 box-shadow 补色（旧构造会被 overflow 裁掉）",
-    ).not.toContain("box-shadow");
-    const shoulderBefore = cssDecls(ruleBlock(css, ".tab-active .tab-fill::before", 2));
-    expect(shoulderBefore, "左肩只圆外侧上角（border-top-left-radius）").toContain(
-      "border-top-left-radius: 5px",
-    );
-    const shoulderAfter = cssDecls(ruleBlock(css, ".tab-active .tab-fill::after", 2));
-    expect(shoulderAfter, "右肩只圆外侧上角（border-top-right-radius）").toContain(
-      "border-top-right-radius: 5px",
-    );
-    expect(shoulderAfter, "肩部不得再画线（描边已整体移除）").not.toMatch(
-      /border-(left|bottom):\s*1px/,
+    expect(cssNoComments, "connected 不得再用 box-shadow 补色画肩").not.toMatch(
+      /\.tab-active \.tab-fill::(?:before|after)\s*\{[^}]*box-shadow/,
     );
 
     // 三档底色 + 条带表面色，两套主题都要齐：缺一个就是某主题下某状态完全没反馈
@@ -289,12 +272,13 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
         "--tab-bg-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-strip-bg));",
       );
     }
-    // B119：深色活动标签 = oneDark 编辑器内容区底色（editor.ts 挂 oneDark，
-    // 内容区实际是 #282c34 而非 --bg #1b1d1f —— 旧值让舌片比条带还暗）
-    expect(themeBlock(css, "dark"), "深色活动标签必须对齐 oneDark 底色").toContain(
-      "--tab-bg-active: #282c34;",
+    // B120：深浅两套主题的活动标签都取 --bg —— 深色 #1b1d1f 比条带 #242629
+    // 暗一档 = 「深色凹槽」（对齐用户 VS Code 实拍；VS Code 语义的「活动=编辑器
+    // 底色」在 LitePad 会让舌片亮过条带 —— oneDark #282c34，与凹槽观感相反）
+    expect(themeBlock(css, "dark"), "深色活动标签必须是深色凹槽（--bg，暗于条带）").toContain(
+      "--tab-bg-active: var(--bg);",
     );
-    expect(themeBlock(css, "light"), "浅色活动标签仍取 --bg（无 oneDark）").toContain(
+    expect(themeBlock(css, "light"), "浅色活动标签仍取 --bg（纯白）").toContain(
       "--tab-bg-active: var(--bg);",
     );
 
@@ -380,39 +364,35 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
       expect(stripCssComments(BAD_CSS), "替身里 tab-flash 必须被抓到").not.toContain("tab-flash");
     }).toThrow();
   });
-  it("B119 反向验证：肩部旧构造（box-shadow 补色 / 提亮回潮 / 圆角朝向回退）必须被咬住", () => {
-    // 退化替身把 B119 之前的三种错误写法塞回去，证明 B119 的契约断言不是恒真假绿。
+  it("B120 反向验证：肩部回潮（实色圆盘 / box-shadow 补色）与提亮回潮必须被咬住", () => {
+    // 退化替身把 B120 删除的两种肩部构造与提亮规则塞回去，证明契约不是恒真假绿。
     const css = readFileSync("src/styles/global.css", "utf-8");
     const cssCode = stripCssComments(css);
 
-    // ① 旧构造：box-shadow 补色（B117 起会被条带 overflow 裁掉，肩部直接消失）
-    const BAD_SHADOW =
-      cssCode + "\n.tab-active .tab-fill::before {\n  box-shadow: 2.5px 2.5px 0 2.5px red;\n}\n";
+    // ① 实色四分之一圆回潮（B119 构造，观感强于 VS Code，随 B120 删除）
+    const BAD_DISC =
+      cssCode + "\n.tab-active .tab-fill::before {\n  background: var(--tab-fill-bg);\n}\n";
     expect(() => {
-      expect(stripCssComments(BAD_SHADOW), "替身的 box-shadow 必须被抓到").not.toContain(
-        "box-shadow",
+      expect(stripCssComments(BAD_DISC), "替身的实色肩部必须被抓到").not.toMatch(
+        /\.tab-active \.tab-fill::(?:before|after)\s*\{[^}]*background/,
       );
     }).toThrow();
 
-    // ② 悬停提亮回潮：connected 档出现独立的活动标签悬停提亮规则
+    // ② box-shadow 补色回潮（B119 之前的旧构造，B117 起会被条带 overflow 裁掉）
+    const BAD_SHADOW =
+      cssCode + "\n.tab-active .tab-fill::after {\n  box-shadow: -2.5px 2.5px 0 2.5px red;\n}\n";
+    expect(() => {
+      expect(stripCssComments(BAD_SHADOW), "替身的 box-shadow 肩部必须被抓到").not.toMatch(
+        /\.tab-active \.tab-fill::(?:before|after)\s*\{[^}]*box-shadow/,
+      );
+    }).toThrow();
+
+    // ③ 悬停提亮回潮：connected 档出现独立的活动标签悬停提亮规则
     const BAD_HOVER = cssCode + "\n.tab-active:hover .tab-fill { --tab-fill-bg: red; }\n";
     expect(() => {
       expect(stripCssComments(BAD_HOVER), "替身的提亮规则必须被抓到").not.toMatch(
         /\}\s*\.tab-active:hover \.tab-fill\s*\{/,
       );
-    }).toThrow();
-
-    // ③ 圆角朝向回退：左肩写回旧构造的 border-bottom-right-radius（弧形凸向错误）
-    const BAD_RADIUS = css.replace(
-      "border-top-left-radius: 5px",
-      "border-bottom-right-radius: 5px",
-    );
-    expect(BAD_RADIUS, "替身必须真的替换过（否则反向验证空转）").not.toBe(css);
-    expect(() => {
-      expect(
-        cssDecls(ruleBlock(BAD_RADIUS, ".tab-active .tab-fill::before", 2)),
-        "左肩半径必须仍要求 border-top-left-radius",
-      ).toContain("border-top-left-radius: 5px");
     }).toThrow();
   });
 });

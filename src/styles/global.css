@@ -25,24 +25,25 @@
   --danger: #f47067;
   --warn: #e2b341;
   /* 标签（B113 起对齐 VS Code 1.139 的 **Connected 相连标签**，不再是独立药丸）：
-     标签条是一条**连续的表面**，活动标签取**编辑器背景色**、上探下沉与下方编辑区
-     连成一体（像文件夹的舌片），非活动标签只是这条表面上的一块轻微高亮。
+     标签条是一条**连续的表面**，活动标签是这条表面上的一块「凹槽」高亮
+     （B120：比条带暗一档，对齐用户 VS Code 的实拍观感），非活动标签透明。
      依据 `workbench/contrib/modernUI/browser/media/connectedEditorTabs.css`：
-       · --modern-ui-connected-tab-surface = editorBackground
+       · 活动标签底色引用编辑器背景（VS Code 语义）；LitePad 取舍见下一条注释
        · --modern-ui-connected-tab-strip-background = editorGroupHeader.tabsBackground
-     即「条带比编辑器差一档、活动标签与编辑器同色」——深 #252526 / 浅 #F3F3F3 那一档。 */
+     条带取深 #242629 / 浅 #F3F3F3 那一档。 */
   --tab-strip-bg: #242629;
-  /* 非活动标签：透明（露出条带）；hover 只比条带抬一点点；活动 = 编辑器内容区底色。
+  /* 非活动标签：透明（露出条带）；hover 只比条带抬一点点；活动 = 深色凹槽。
      ⚠️ 三档必须拉开可感知的差距 —— hover 若与 active 同色就分不出「选中」和「划过」。
      B119：hover 改用 VS Code connected 的口径（connectedEditorTabs.css:77）
      color-mix(fg 6%, 条带色)——与旧写法 rgba(255,255,255,.05) 观感几乎一致，
      但「混底色」比「叠半透明」确定性强（不依赖下面垫的是什么）。
-     B119：--tab-bg-active 从 var(--bg)（#1b1d1f，应用铬色）改为 **#282c34** ——
-     深色下编辑器挂 oneDark（editor.ts:152），内容区实际底色是 oneDark 的
-     #282c34 而非 --bg；沿用旧值会让活动舌片比条带还暗一档（凹陷感），
-     与 VS Code「舌片亮于条带」正好相反。浅色下编辑器无 oneDark，仍是 var(--bg)。 */
+     B120（用户裁决）：活动标签要「深色凹槽」观感（同用户 VS Code 的实拍：
+     舌片比条带暗一档、内嵌在条带里）。按 VS Code 的规则「活动=编辑器底色」
+     本应取 oneDark 的 #282c34，但它比条带亮（凸舌观感），与用户要的相反 ——
+     故深色取 --bg（#1b1d1f，比条带暗），浅色仍 var(--bg)（纯白，浅色下无
+     凹槽可挖，白舌片是 B55 以来的观感且用户未提异议）。 */
   --tab-bg-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-strip-bg));
-  --tab-bg-active: #282c34;
+  --tab-bg-active: var(--bg);
   --tab-bg-active-hover: #343940;
   /* 标签文件类型图标的家族配色（B57）：十个家族各一色。
      同一族内用同一个色相（形状负责细分），浅深两套取各自的中调，
@@ -487,7 +488,7 @@ button:focus-visible {
      · 底色全部交给内层 `.tab-fill` 画，`.tab` 自身**永不上色**；
      · fill 左右**不内缩**（相邻标签相连成一条带），上下各外扩到标签栏的边；
      · 活动标签的 fill 取**编辑器背景色**、只有**上方两角是圆的**、底边不封口
-       ⇒ 与下方编辑区连成一体（像文件夹的舌片），而不是浮在条带上的一颗胶囊。 */
+       ⇒ 活动标签像「从条带里长出来的一块」，而不是浮在条带上的一颗胶囊。 */
 .tab {
   position: relative;
   display: inline-flex;
@@ -521,7 +522,7 @@ button:focus-visible {
    上方外扩 4px ⇒ 活动标签能顶到标签条的上沿。
    B119：底边从外扩 -4px 收回为 0 —— B117 后条带 28px = 4px 上间距 + 24px 标签，
    标签底就是条带底，再往下外扩的部分整体落在条带盒外，会被 overflow 裁掉
-   （B117 后肩部消失的根因）；肩部相应改为贴条带底的实色四分之一圆（见下）。
+   （B117 后肩部消失的根因）；B120 起侧边直线落到条带底、不再有任何肩部构造。
    ⚠️ 它是 positioned 元素（absolute），会盖住同层的普通流内容 —— 所以图标 /
    文件名 / ●× 槽位必须各自 `position: relative; z-index: 1`（同 VS Code 的 .tab-label）。 */
 .tab-fill {
@@ -542,26 +543,25 @@ button:focus-visible {
   background: var(--tab-bg-hover);
 }
 
-/* 活动标签：fill 抬到**编辑器内容区底色**（--tab-bg-active，深色 = oneDark 的
-   #282c34，浅色 = var(--bg)），无边框、底边不封口 —— 与下面的编辑区连成一体。 */
+/* 活动标签：fill 抬到凹槽底色（--tab-bg-active，深浅两套主题都取 var(--bg)，
+   深色下比条带暗一档 = 「深色凹槽」，见主题变量处的 B120 注释），
+   无边框、只有上方两角圆、侧边直线落到条带底。 */
 .tab-active {
   color: var(--fg);
 }
 
-/* B113-2：fill 的底色收进局部变量 --tab-fill-bg，肩部的底色**也用它** ——
-   非焦点降档时只改这一个变量，标签和两侧肩部就永远同色
-   （修复「肩部两块颜色和标签对不上」）。
+/* B113-2：fill 的底色收进局部变量 --tab-fill-bg —— 非焦点降档（下方
+   .layout-panel 规则）与 pill 档悬停提亮都只改这一个变量，标签底色随之平滑过渡。
    ⚠️ 必须配合下面的 @property 注册：不注册的话自定义属性变化是**离散跳变**，
-   注册成 <color> 后改变量才有平滑过渡（肩部也跟着平滑过渡）。 */
+   注册成 <color> 后改变量才有平滑过渡。 */
 @property --tab-fill-bg {
   syntax: "<color>";
   inherits: true;
   initial-value: #0000;
 }
 
-/* B116 去描边 + B119 实色肩部：活动标签只靠底色区分 —— fill 取编辑器内容区底色、
-   只有上方两角圆、底边不封口，与编辑区连成一体；「舌片」的根部过渡由
-   肩部的实色四分之一圆完成（见下方肩部注释）。 */
+/* B116 去描边 + B120 去肩部：活动标签只靠底色区分 —— fill 取深色凹槽底色、
+   只有上方两角圆、侧边直线落到条带底（对齐用户 VS Code 的实拍形态）。 */
 .tab-active .tab-fill {
   --tab-fill-bg: var(--tab-bg-active);
   background: var(--tab-fill-bg);
@@ -577,8 +577,8 @@ button:focus-visible {
    文字变灰 —— 分屏时一眼看出焦点在哪块面板。
    ⚠️ 必须连 :hover 一起覆盖，否则鼠标划过非焦点面板时标签会「亮回来」。
    依赖 .layout-panel-active 实时正确 —— 由 main.ts 的 markActivePanel 同步。
-   ⚠️ 必须覆盖的是 --tab-fill-bg 而不是 background —— 肩部的底色
-   引用这个变量，只改 background 的话标签降了档、肩部还停在编辑器底色上。 */
+   ⚠️ 必须覆盖的是 --tab-fill-bg 而不是 background —— 降档只改背景的话，
+   引用该变量的其他规则（pill 悬停提亮等）会与标签底色脱节。 */
 .layout-panel:not(.layout-panel-active) .tab-active {
   color: var(--fg-muted);
 }
@@ -588,43 +588,12 @@ button:focus-visible {
   background: var(--tab-bg-hover);
 }
 
-/* 活动标签左右两侧的「肩部」：贴在 fill 外侧下角的 5px 见方实色块，
-   只圆**外侧上角**（border-top-left/right-radius）—— 于是留下的是一块
-   以「标签侧边 × 条带底边」为直角边、以圆弧为斜边的四分之一圆盘：
-   「条带底边 → 活动标签侧边」是一条连续的凹圆曲线，舌片看得出「从条带里长出来」。
-   B119：构造从 box-shadow 补色改为**实色圆盘** —— B117 把条带压到 28px 后
-   标签底 = 条带底，旧构造（阴影向下外扩）整块落在条带盒外被 overflow 裁掉，
-   肩部因此消失；实色圆盘完全在条带盒内，与裁切无关。
-   底色引用 --tab-fill-bg（同源变量），非焦点降档时肩部跟着标签一起变。
-   曲线朝向（左肩）：圆盘的直角边贴着标签左缘与条带底，弧从「标签缘上 5px」
-   扫到「条带底左 5px」，弧外仍露条带色 —— 与 VS Code 肩部同形。 */
-.tab-active .tab-fill::before,
-.tab-active .tab-fill::after {
-  content: "";
-  position: absolute;
-  bottom: 0;
-  width: 5px;
-  height: 5px;
-  background: var(--tab-fill-bg, var(--tab-bg-active));
-  pointer-events: none;
-  transition: background 0.12s ease;
-}
-
-.tab-active .tab-fill::before {
-  right: 100%;
-  border-top-left-radius: 5px;
-}
-
-.tab-active .tab-fill::after {
-  left: 100%;
-  border-top-right-radius: 5px;
-}
-
-/* 首尾标签的外侧没有邻居，肩部会悬在标签条的留白上变成一条多余的短线 */
-.tab-active:first-child .tab-fill::before,
-.tab-active:last-child .tab-fill::after {
-  content: none;
-}
+/* B120（用户裁决）：肩部整体移除 —— 用户 VS Code（connected 样式实拍像素扫描）
+   的活动标签是「深色凹槽、侧边直线到底、几乎看不到肩弧」（底部外扩 ≤1 物理像素，
+   属抗锯齿残影）。B119 按 VS Code 肩部 CSS 结构做的实色四分之一圆，实际观感
+   比 VS Code 明显得多，且与「深色凹槽」方向冲突 —— 连同更早的 box-shadow
+   旧构造与 :first-child/:last-child 抑制规则一并删除，侧边回归直线。
+   pill 档的 content:none（见下）保留，作为「connected 肩部不得回潮」的守卫。 */
 
 /* ==================================================================
    B116：标签闪烁效果整体移除（用户要求）。原 B47「切换后闪一次」的
@@ -2275,7 +2244,7 @@ button:focus-visible {
      原先那 4px gap 是为了模拟「药丸左右各内缩 2px」，药丸取消后它就成了多余的留白。 */
   gap: 0;
   /* B113-2：左侧留白归 0（对齐 VS Code connected 的 padding-left: 0）——
-     第一个标签直接贴条带左缘（它的 fill 无左肩，见 :first-child 那条）；
+     第一个标签直接贴条带左缘（B113-2：左侧不留白）；
      右侧 4px 保留给滚动条与末标签的呼吸。 */
   padding: 4px 4px 0 0;
   /* 标签条**表面色**（VS Code 的 editorGroupHeader.tabsBackground）：比编辑器背景差一档，
