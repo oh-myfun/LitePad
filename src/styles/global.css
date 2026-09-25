@@ -782,16 +782,20 @@ button:focus-visible {
   opacity: 1;
 }
 :root[data-tab-reserve="off"] .tab:not(.tab-dirty):not(.tab-active):hover .tab-action::before {
-  background: linear-gradient(to right, transparent, var(--tab-bg-hover));
+  /* B124-2：渐变必须在**坡道末端就到实色**（<色> 14px），此后一路实色铺到槽位右缘。
+     旧写法没有这个停靠点，渐变把 34px 整段铺满 —— 于是槽位左半区只有 ~40% 不透明，
+     文字还能从字形左侧透出来。规则：透明只出现在槽位**左侧**的 14px 坡道里，
+     × 槽位（20px）必须全程实色，否则字形就是「浮在半透明底上」而不是「浮在标签底色上」。 */
+  background: linear-gradient(to right, transparent, var(--tab-bg-hover) 14px);
 }
 :root[data-tab-reserve="off"] .tab-active:not(.tab-dirty):hover .tab-action::before {
-  background: linear-gradient(to right, transparent, var(--tab-bg-active));
+  background: linear-gradient(to right, transparent, var(--tab-bg-active) 14px);
 }
 :root[data-tab-style="pill"][data-tab-reserve="off"]
   .tab-active:not(.tab-dirty):hover
   .tab-action::before {
   /* pill 档悬停时活动 fill 提亮一档（见 pill 块 B119 注释），垫色跟着提 */
-  background: linear-gradient(to right, transparent, var(--tab-bg-active-hover));
+  background: linear-gradient(to right, transparent, var(--tab-bg-active-hover) 14px);
 }
 
 .tab-name {

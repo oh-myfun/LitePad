@@ -715,22 +715,47 @@ describe("紧凑档悬浮 × 的渐变垫底（B118，对齐 VS Code）", () => 
     );
     expect(css, "淡入必须覆盖键盘聚焦").toContain(".tab-action:focus-within::before");
 
-    // B119 起 --tab-bg-hover 是 color-mix 不透明色：单层渐变即可盖住文字尾部
+    // B119 起 --tab-bg-hover 是 color-mix 不透明色：单层渐变即可盖住文字尾部。
+    // B124-2：渐变必须在**坡道末端就到实色**（<色> <坡道宽>px）—— 没有这个停靠点时
+    // 渐变会把整段（含 × 槽位）铺满，槽位左半只有 ~40% 不透明，文字照样透出来。
+    const rampStop = (s: string, color: string) =>
+      Number(
+        s.match(
+          new RegExp(
+            `linear-gradient\\(to right, transparent, ${color.replace(/[().-]/g, "\\$&")}\\s+(\\d+(?:\\.\\d+)?)px\\)`,
+          ),
+        )?.[1] ?? -1,
+      );
     const dimPad = cssDecls(ruleBlock(css, ".tab-action::before", "var(--tab-bg-hover)"));
-    expect(dimPad, "非活动垫 = 渐变到悬停底色（单层，B119 起悬停色不透明）").toContain(
-      "linear-gradient(to right, transparent, var(--tab-bg-hover))",
+    expect(dimPad, "非活动垫 = 渐变到悬停底色（单层，B119 起悬停色不透明）").toMatch(
+      /linear-gradient\(to right, transparent, var\(--tab-bg-hover\)/,
     );
     // 活动垫 = 渐变到活动 fill 同色（B119 对齐 VS Code action-active-hover-background = surface；
-    // ⚠️ filter 用带收尾括号的 var(--tab-bg-active))，否则会被 pill 垫的 active-hover 超集混过）
-    const activePad = cssDecls(ruleBlock(css, ".tab-action::before", "var(--tab-bg-active))"));
-    expect(activePad, "活动垫用单层渐变到活动 fill 同色（connected 悬停不提亮）").toContain(
-      "linear-gradient(to right, transparent, var(--tab-bg-active))",
+    // ⚠️ filter 用带停靠点的 var(--tab-bg-active) 14px)，否则会被 pill 垫的
+    //    active-hover 超集混过（它同样是 var(--tab-bg-active…) 的前缀）
+    const activePad = cssDecls(ruleBlock(css, ".tab-action::before", "var(--tab-bg-active) 14px"));
+    expect(activePad, "活动垫用单层渐变到活动 fill 同色（connected 悬停不提亮）").toMatch(
+      /linear-gradient\(to right, transparent, var\(--tab-bg-active\)/,
     );
     // pill 档悬停仍提亮一档 → 垫色跟着提（覆盖块）
     const pillPad = cssDecls(ruleBlock(css, ".tab-action::before", "var(--tab-bg-active-hover)"));
-    expect(pillPad, "pill 档活动垫跟随提亮后的 fill").toContain(
-      "linear-gradient(to right, transparent, var(--tab-bg-active-hover))",
+    expect(pillPad, "pill 档活动垫跟随提亮后的 fill").toMatch(
+      /linear-gradient\(to right, transparent, var\(--tab-bg-active-hover\)/,
     );
+
+    // 三条垫的**实色停靠点**必须落在坡道末端、不得侵入 × 槽位（槽内全程实色）
+    const ramp = padW - slotW;
+    for (const [name, block, color] of [
+      ["非活动垫", dimPad, "var(--tab-bg-hover)"],
+      ["活动垫", activePad, "var(--tab-bg-active)"],
+      ["pill 活动垫", pillPad, "var(--tab-bg-active-hover)"],
+    ] as const) {
+      const stop = rampStop(block, color);
+      expect(stop, `${name} 必须有「坡道末端到实色」的停靠点（槽内全不透明）`).toBeGreaterThan(0);
+      expect(stop, `${name} 的坡道末端不得越过槽位左缘（坡道 ${ramp}px）`).toBeLessThanOrEqual(
+        ramp,
+      );
+    }
 
     // 反向验证：删光垫块后契约必须咬住（防恒真）
     const withoutPad = css.replace(
@@ -756,6 +781,18 @@ describe("紧凑档悬浮 × 的渐变垫底（B118，对齐 VS Code）", () => 
       cssDecls(ruleBlock(OLD_PAD, ".tab-action::before", "pointer-events")),
       "替身的垫必须被判为没盖住槽位",
     ).not.toContain("right: 0");
+
+    // 反向验证：去掉「坡道末端到实色」的停靠点（B124-2 的病：渐变铺满整段、
+    // 槽位左半只有 ~40% 不透明）必须被咬住
+    const NO_STOP = css.replace(/ 14px\)/g, ")");
+    expect(NO_STOP, "替身必须真的去掉了停靠点").not.toBe(css);
+    expect(NO_STOP, "替身自证：渐变退回老写法（无停靠点）").toContain(
+      "linear-gradient(to right, transparent, var(--tab-bg-hover))",
+    );
+    const badBlock = cssDecls(ruleBlock(NO_STOP, ".tab-action::before", "var(--tab-bg-hover)"));
+    expect(/var\(--tab-bg-hover\)\s+\d+px\)/.test(badBlock), "替身缺失的实色停靠点必须被抓到").toBe(
+      false,
+    );
   });
 });
 
