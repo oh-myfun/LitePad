@@ -20,6 +20,15 @@
  *   默认 **500ms**（注释原话：Windows/Linux 上 500ms 最接近原生提示）。
  * - `src/vs/platform/hover/browser/hoverService.ts`——`groupId` 规则：**同一组内的相邻
  *   目标秒开，且跳过淡入动画**（所以顺着工具栏滑过去时提示跟手、不闪）。
+ * - `src/vs/platform/hover/browser/hover.ts`——`WorkbenchHoverDelegate.timeLimit = 200`：
+ *   收起提示后 **200ms 内**再悬停任何目标，`delay` 归 0 且不放淡入
+ *   （`isInstantlyHovering()`）。⚠️ VS Code **没有**「延迟收起」——鼠标一离开就收，
+ *   跟手感靠的是这个秒开窗口。
+ * - `src/vs/base/browser/ui/iconLabel/iconLabel.ts` + `.../actionbar/actionbar.ts`——
+ *   `placement` 决定两件事：`'mouse'`（标签走这条）气泡跟鼠标（`e.x + 10`）且
+ *   **不画指针**（`ManagedHoverWidget` 里 `showPointer: placement === 'element'`）；
+ *   `'element'`（工具栏 / 动作按钮走这条）按元素下方居中并带指针。两者的
+ *   `showHover` 都写死 `appearance.compact: true` ⇒ 12px 字号、`2px 8px` 内边距。
  * - `src/vs/base/browser/ui/keybindingLabel/keybindingLabel.css` + `inputColors.ts`——
  *   快捷键渲染成**键帽**（11px、`padding: 3px 5px`、`border-radius: 3px`、
  *   `min-width: 12px`），配色取 `keybindingLabel.background/foreground/border/bottomBorder`。
@@ -51,12 +60,57 @@ export interface TipOptions {
   placement?: TipPlacement;
   /** 同组标识；也可改在容器上写 `data-tip-group` */
   group?: string;
+  /**
+   * 开「刚收起过就秒开」的窗口（VS Code `createInstantHoverDelegate()`）。
+   *
+   * `WorkbenchHoverDelegate.isInstantlyHovering()` 只有在 `instantHover` 打开时才
+   * 生效，而 VS Code 只给 **ActionBar 那一类**按钮开它
+   * （`actionbar.ts:123`：`options.hoverDelegate ?? createInstantHoverDelegate()`）。
+   * 标签本体走的是 managed hover（`enableInstantHover: false`），跨过去要重新计时。
+   */
+  instant?: boolean;
+  /**
+   * 鼠标定位模式（VS Code `IHoverDelegate.placement === 'mouse'`）：
+   * 气泡左缘 = 鼠标 x + 10，且**不画 caret**。
+   *
+   * 出处：`ManagedHoverWidget.show()` 里
+   * `showPointer: this.hoverDelegate.placement === 'element'` —— 只有按元素定位
+   * 的提示（工具栏按钮这类）才带指针；标签走的是 `getDefaultHoverDelegate('mouse')`
+   * （`iconLabel.ts:126`），所以 VS Code 的标签提示是**没有小箭头**的。
+   */
+  follow?: boolean;
+  /**
+   * 紧凑外观（VS Code `appearance.compact`）：12px 字号 + `2px 8px` 内边距。
+   *
+   * `WorkbenchHoverDelegate.showHover()` 给所有经 hoverDelegate 的提示写死了
+   * `compact: true`（`hover.css` 里 `.compact { font-size: 12px }`、
+   * `.compact .hover-contents { padding: 2px 8px }`），比编辑器里那种长文本提示
+   * （13px / 4px 8px）矮一圈。
+   */
+  compact?: boolean;
 }
 
 /** VS Code `workbench.hover.delay` 的 Windows 默认值（本项目仅 Windows） */
 const SHOW_DELAY = 500;
-/** 离开目标后的宽限：给「顺着工具栏滑到下一条」留出秒开的窗口（配合 groupId 规则） */
-const HIDE_GRACE = 220;
+/**
+ * VS Code `WorkbenchHoverDelegate.timeLimit`：**刚收起提示后的秒开窗口**。
+ *
+ * 在这个窗口内再悬停任何目标 → 延迟归 0 且不放淡入动画
+ * （`isInstantlyHovering()` 为真 ⇒ `delay = 0`、`skipFadeInAnimation = true`）。
+ *
+ * ⚠️ 这是 VS Code 让「顺着工具栏 / 标签栏滑过去」跟手的**真正机制** —— 它
+ * **没有**「延迟收起」这回事（`MOUSE_LEAVE` 立刻收），而是「收掉之后 200ms 内
+ * 再触发就直接给」。早先这里自创过一个 220ms 的收起宽限，那会把提示黏在屏幕上
+ * 不走（鼠标已经离开、提示还挂着），与 VS Code 的观感正好相反。
+ */
+const INSTANT_WINDOW = 200;
+/**
+ * VS Code 鼠标定位模式（`placement: 'mouse'`）的水平偏移。
+ *
+ * `hoverService.ts` 的 `onMouseMove` 里写死 `target.x = e.x + 10`：气泡左缘落在
+ * 鼠标右侧 10px，而不是对齐元素中心。
+ */
+const MOUSE_OFFSET = 10;
 /** VS Code `Constants.PointerSize`：caret 是 6px 方块，一半是 3px */
 const POINTER = 3;
 /** 目标与提示框之间的间隙，正好由 caret 那 4.24px 的对角线填满并轻触目标 */
@@ -127,6 +181,38 @@ export function computeTipGeometry(
   return { x, y, placement, caretLeft };
 }
 
+/**
+ * 鼠标定位模式的定位（VS Code `placement: 'mouse'`）。
+ *
+ * 与按元素定位的三点差别，都来自 VS Code：
+ *  1. **水平**：气泡左缘 = 鼠标 x + `MOUSE_OFFSET`（10），不是对齐元素中心；
+ *     右侧放不下就翻到鼠标左侧，最后夹进视口。
+ *  2. **垂直**：`ManagedHoverWidget.show()` 写死 `hoverPosition: BELOW`，
+ *     只有下方真的放不下才翻到上方（不做「首选方位」这件事）。
+ *  3. **不画 caret**：`showPointer` 只在 `placement === 'element'` 时为真。
+ *
+ * 同样是纯函数，理由同 `computeTipGeometry`：jsdom 里量不出任何几何。
+ */
+export function computeTipGeometryAtMouse(
+  target: TipRect,
+  tip: TipSize,
+  viewport: TipSize,
+  mouseX: number,
+): { x: number; y: number; placement: TipPlacement } {
+  const maxX = Math.max(EDGE, viewport.width - tip.width - EDGE);
+  // 先试鼠标右侧，放不下退到鼠标左侧，两端都放不下就交给夹取
+  const right = mouseX + MOUSE_OFFSET;
+  const x =
+    right + tip.width > viewport.width - EDGE
+      ? clamp(mouseX - MOUSE_OFFSET - tip.width, EDGE, maxX)
+      : clamp(right, EDGE, maxX);
+
+  const below = target.bottom + GAP;
+  const placement: TipPlacement = below + tip.height > viewport.height - EDGE ? "top" : "bottom";
+  const y = placement === "bottom" ? below : Math.max(EDGE, target.top - GAP - tip.height);
+  return { x, y, placement };
+}
+
 // ---------- 单例状态 ----------
 
 let layer: HTMLDivElement | null = null;
@@ -136,7 +222,6 @@ let detailEl: HTMLSpanElement | null = null;
 let keyEl: HTMLSpanElement | null = null;
 
 let showTimer: number | undefined;
-let hideTimer: number | undefined;
 /** 已经显示出来的目标 */
 let shownTarget: HTMLElement | null = null;
 /** 正在等延迟、还没显示的目标（离开时要能取消） */
@@ -144,6 +229,22 @@ let pendingTarget: HTMLElement | null = null;
 let shownGroup: string | undefined;
 let mouseDown = false;
 let bound = false;
+/** 上次收起提示的时刻（VS Code `lastHoverHideTime`）：用于 200ms 秒开窗口。
+ *  ⚠️ 初值必须是「很久以前」而不是 0 —— 假计时器下 `Date.now()` 也从 0 起步，
+ *  初值取 0 会让「从未收起过」被误判成「刚刚收起」，于是所有提示都秒开。 */
+let lastHideAt = Number.NEGATIVE_INFINITY;
+/** 上次收起时提示所属的同组标识：收起后仍要留着，下一个目标才能判出「接着看」 */
+let lastGroup: string | undefined;
+/** 最近一次鼠标位置：鼠标定位模式（`follow`）要用它算气泡左缘 */
+let lastMouseX = 0;
+/**
+ * 本次提示是**鼠标**带来的还是**键盘聚焦**带来的。
+ *
+ * 只有鼠标带来的才走 `follow`（鼠标定位）；键盘 focus 时鼠标可能压根没动过，
+ * `lastMouseX` 是陈年的坐标，照它摆气泡会飞到屏幕另一头 —— 此时退回按元素定位
+ * （VS Code 的 `onFocus` 分支给的 `target` 同样不带鼠标坐标）。
+ */
+let pointerDriven = false;
 
 function build(): void {
   if (layer) return;
@@ -226,35 +327,58 @@ function showFor(el: HTMLElement, immediate: boolean): void {
   keyEl!.hidden = key === "";
   if (key) renderKey(key);
 
-  // 秒开（同组内切换）时不放淡入动画，否则顺着工具栏滑过去会一路闪
+  // 秒开（同组内切换 / 刚收起过）时不放淡入动画，否则顺着工具栏滑过去会一路闪
   l.classList.toggle("fade-in", !immediate);
+  // VS Code `appearance.compact`：走 hoverDelegate 的提示都是紧凑档（12px / 2px 8px）
+  l.classList.toggle("tooltip-compact", el.dataset.tipCompact === "1");
 
   // 先亮出来量尺寸，但用 visibility 挡住这一帧的 (0,0) 位置；同一帧内就摆好，不会闪
   l.style.visibility = "hidden";
   l.hidden = false;
   const rect = el.getBoundingClientRect();
-  const geo = computeTipGeometry(
-    { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom },
-    { width: l.offsetWidth, height: l.offsetHeight },
-    { width: window.innerWidth, height: window.innerHeight },
-    (el.dataset.tipPlacement as TipPlacement | undefined) ?? "bottom",
-  );
-  l.dataset.placement = geo.placement;
-  l.style.left = `${geo.x}px`;
-  l.style.top = `${geo.y}px`;
-  caretEl!.style.left = `${geo.caretLeft}px`;
+  const size = { width: l.offsetWidth, height: l.offsetHeight };
+  const viewport = { width: window.innerWidth, height: window.innerHeight };
+  const follow = el.dataset.tipFollow === "1" && pointerDriven;
+  // 鼠标定位 = VS Code 的 `placement:'mouse'` ⇒ `showPointer` 为 false：不画 caret
+  caretEl!.hidden = follow;
+  if (follow) {
+    const g = computeTipGeometryAtMouse(
+      { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom },
+      size,
+      viewport,
+      lastMouseX,
+    );
+    l.dataset.placement = g.placement;
+    l.style.left = `${g.x}px`;
+    l.style.top = `${g.y}px`;
+  } else {
+    const geo = computeTipGeometry(
+      { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom },
+      size,
+      viewport,
+      (el.dataset.tipPlacement as TipPlacement | undefined) ?? "bottom",
+    );
+    l.dataset.placement = geo.placement;
+    l.style.left = `${geo.x}px`;
+    l.style.top = `${geo.y}px`;
+    caretEl!.style.left = `${geo.caretLeft}px`;
+  }
   l.style.visibility = "";
 }
 
 /** 收起提示（主动调用也安全：没显示时是空操作） */
 export function hideTip(): void {
   if (showTimer !== undefined) window.clearTimeout(showTimer);
-  if (hideTimer !== undefined) window.clearTimeout(hideTimer);
   showTimer = undefined;
-  hideTimer = undefined;
   if (layer) {
     layer.hidden = true;
     layer.classList.remove("fade-in");
+  }
+  // 收起的**时刻与组别要留着**：VS Code 靠 `lastHoverHideTime` 在 200ms 内
+  // 直接给下一条提示（`isInstantlyHovering()`），否则顺着标签栏滑过去会一路重新计时。
+  if (shownTarget !== null) {
+    lastHideAt = Date.now();
+    lastGroup = shownGroup;
   }
   shownTarget = null;
   pendingTarget = null;
@@ -275,8 +399,7 @@ function groupOf(el: HTMLElement): string | null {
 
 function scheduleShow(el: HTMLElement, immediate: boolean): void {
   if (showTimer !== undefined) window.clearTimeout(showTimer);
-  if (hideTimer !== undefined) window.clearTimeout(hideTimer);
-  hideTimer = undefined;
+  showTimer = undefined;
   if (immediate) {
     showFor(el, true);
     return;
@@ -294,11 +417,12 @@ function scheduleHide(from: HTMLElement): void {
     showTimer = undefined;
   }
   if (pendingTarget === from) pendingTarget = null;
-  if (shownTarget !== from && pendingTarget !== from) return;
-  if (hideTimer !== undefined) window.clearTimeout(hideTimer);
-  // 延迟收起：给同组的下一个目标留出「秒开且不闪」的机会，
-  // 否则鼠标离开的一瞬间提示就没了，groupId 规则永远触发不了。
-  hideTimer = window.setTimeout(() => hideTip(), HIDE_GRACE);
+  if (shownTarget !== from) return;
+  // VS Code 的 `MOUSE_LEAVE` 就是**立刻收**（`hideHover`），没有延迟收起这一层：
+  // 提示跟着鼠标走才跟手，「鼠标已经离开、提示还挂 200ms」看着像黏住了。
+  // 「顺着一组控件滑过去」的连贯感由收起后的秒开窗口（INSTANT_WINDOW）负责，
+  // 那才是 VS Code 的做法（见 INSTANT_WINDOW 的注释）。
+  hideTip();
 }
 
 /**
@@ -316,9 +440,22 @@ export function initTooltips(doc: Document = document): void {
     (e) => {
       const el = targetOf(e.target);
       if (!el || el === shownTarget) return;
-      // VS Code 的 groupId 规则：同组内已有提示在显示 → 秒开且不放淡入
+      pointerDriven = true;
+      // 两种秒开，都来自 VS Code：
+      //  ① groupId 规则：同组内已有提示在显示 → 秒开且不放淡入
+      //     （`showDelayedHover` 里 groupId 相同 → `showInstantHover` + skipFadeIn）；
+      //  ② `WorkbenchHoverDelegate.isInstantlyHovering()`：距上次收起不到 200ms
+      //     → 延迟归 0。这条才是「顺着标签栏滑过去」跟手的原因。
       const group = groupOf(el);
-      const instant = shownTarget !== null && shownGroup !== undefined && group === shownGroup;
+      const sameGroup = group !== null && (group === shownGroup || group === lastGroup);
+      const justHidden = Date.now() - lastHideAt < INSTANT_WINDOW;
+      const instant =
+        // ① groupId 规则：上一个提示还在显示且同组 → 秒开且不淡入
+        (shownTarget !== null && group !== null && group === shownGroup) ||
+        // ② 刚收起（200ms 内）且同组 → 接着看，不重新计时
+        (justHidden && sameGroup) ||
+        // ③ ActionBar 那一类（instant）：不管组别，刚收起过就秒开
+        (justHidden && el.dataset.tipInstant === "1");
       scheduleShow(el, instant);
     },
     true,
@@ -336,6 +473,20 @@ export function initTooltips(doc: Document = document): void {
     true,
   );
 
+  // 记录鼠标位置（follow 模式要用）+ 补一条「鼠标已经不在目标上就立刻收起」。
+  //
+  // VS Code 只在 placement 为 'mouse' 时跟踪 mousemove，一旦事件不再属于目标就
+  // `hideHover`。这里对所有提示都记位置（鼠标定位要用），并顺带补上这条守卫：
+  // 鼠标从目标内部直接滑出窗口、`mouseout` 没派发到 document 的场合也能收掉。
+  doc.addEventListener(
+    "mousemove",
+    (e) => {
+      lastMouseX = e.clientX;
+      if (shownTarget && !shownTarget.contains(e.target as Node)) hideTip();
+    },
+    true,
+  );
+
   doc.addEventListener(
     "focusin",
     (e) => {
@@ -343,6 +494,7 @@ export function initTooltips(doc: Document = document): void {
       if (!el || el === shownTarget) return;
       // 鼠标点击会先 mousedown 再 focus：这时候不该弹提示（对应 VS Code 的 isMouseDown 守卫）
       if (mouseDown) return;
+      pointerDriven = false; // 键盘聚焦没有鼠标坐标 → 退回按元素定位
       scheduleShow(el, false);
     },
     true,
@@ -384,6 +536,12 @@ export function initTooltips(doc: Document = document): void {
  */
 export function setTip(el: HTMLElement, text: string, opts: TipOptions = {}): void {
   el.dataset.tip = text;
+  if (opts.follow) el.dataset.tipFollow = "1";
+  else delete el.dataset.tipFollow;
+  if (opts.instant) el.dataset.tipInstant = "1";
+  else delete el.dataset.tipInstant;
+  if (opts.compact) el.dataset.tipCompact = "1";
+  else delete el.dataset.tipCompact;
   if (opts.key) el.dataset.tipKey = opts.key;
   else delete el.dataset.tipKey;
   if (opts.detail) el.dataset.tipDetail = opts.detail;
@@ -401,6 +559,9 @@ export function setTip(el: HTMLElement, text: string, opts: TipOptions = {}): vo
 /** 摘掉提示（控件变成「无可提示」状态时用，如状态栏语言按钮切回纯文本名） */
 export function clearTip(el: HTMLElement): void {
   delete el.dataset.tip;
+  delete el.dataset.tipFollow;
+  delete el.dataset.tipInstant;
+  delete el.dataset.tipCompact;
   delete el.dataset.tipKey;
   delete el.dataset.tipDetail;
   delete el.dataset.tipPlacement;
@@ -426,4 +587,9 @@ export function resetTooltipsForTest(): void {
   detailEl = null;
   keyEl = null;
   mouseDown = false;
+  // 秒开窗口是跨用例的隐藏状态，不清的话上一个用例「刚收起」会把下一个用例带成秒开
+  lastHideAt = Number.NEGATIVE_INFINITY;
+  lastGroup = undefined;
+  lastMouseX = 0;
+  pointerDriven = false;
 }

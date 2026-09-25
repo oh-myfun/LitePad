@@ -251,9 +251,16 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   // 区分也靠它）。只读标记跟在路径后，同行显示。
   // ⚠️ path 可选（未命名/无路径文件缺省）—— 此时退回文件名，不能渲染出 "undefined"。
   // group 让「顺着标签滑过去」时提示秒开、不忽明忽暗（VS Code 的 groupId 行为）。
+  //
+  // follow + compact 都取自 VS Code 的标签提示（B127）：
+  //   · `iconLabel.ts` 用 `getDefaultHoverDelegate('mouse')` ⇒ 气泡跟鼠标（x + 10），
+  //     且 `showPointer` 为 false —— **VS Code 的标签提示没有小箭头**；
+  //   · `WorkbenchHoverDelegate.showHover()` 写死 `compact: true` ⇒ 12px / 2px 8px。
   const tip = t.path ?? t.name;
   setTip(el, t.readonly ? `${tip} [只读]` : tip, {
     group: "tabstrip",
+    follow: true,
+    compact: true,
   });
 
   // 文件类型图标（B57，参考 VS Code 的 .tab.has-icon）：
@@ -287,7 +294,17 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   const close = document.createElement("button");
   close.className = "tab-close";
   close.innerHTML = CODICONS.close;
-  setTip(close, "关闭", { key: "Ctrl+W", group: "tabstrip" });
+  // 关闭按钮走 VS Code 的**按元素定位**那一路（actionbar.ts 的
+  // `createInstantHoverDelegate()` ⇒ `placement: 'element'`）：气泡在按钮下方居中、
+  // **带 caret**，同样是 compact 档。
+  //   · 关闭按钮属于 ActionBar 那一类 ⇒ VS Code 给它 `createInstantHoverDelegate()`
+  //     （收起后 200ms 内再悬停直接给，见 TipOptions.instant 的注释）。
+  setTip(close, "关闭", {
+    key: "Ctrl+W",
+    group: "tabstrip",
+    compact: true,
+    instant: true,
+  });
   close.setAttribute("aria-label", `关闭 ${t.name}`);
   close.addEventListener("click", (e) => {
     e.stopPropagation();

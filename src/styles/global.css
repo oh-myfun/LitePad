@@ -3016,6 +3016,22 @@ body.tab-drag-active * {
   display: none;
 }
 
+/* VS Code `appearance.compact`（`WorkbenchHoverDelegate.showHover()` 给所有走
+   hoverDelegate 的提示写死 `compact: true`）：字号降到 12px、内边距收成 2px 8px
+   （`hover.css` 的 `.monaco-hover.workbench-hover.compact`）。
+   标签与标签上的关闭按钮都走这一档，比编辑器里那种长文本提示矮一圈。 */
+.tooltip.tooltip-compact {
+  font-size: 12px;
+  padding: 2px 8px;
+}
+
+/* 鼠标定位模式（VS Code `placement:'mouse'` ⇒ `showPointer: false`）不画 caret。
+   ⚠️ 必须显式写：`.tooltip-caret` 是 absolute，`hidden` 属性只有在没有 display
+   声明覆盖时才生效，写死更稳。 */
+.tooltip-caret[hidden] {
+  display: none;
+}
+
 .tooltip-body {
   display: flex;
   flex-direction: column;

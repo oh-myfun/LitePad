@@ -11,6 +11,7 @@ import { readFileSync } from "node:fs";
 import { cssDecls, themeBlock, topLevelFnBody } from "./static";
 import {
   computeTipGeometry,
+  computeTipGeometryAtMouse,
   initTooltips,
   setTip,
   clearTip,
@@ -82,6 +83,40 @@ describe("computeTipGeometry（纯函数定位）", () => {
   });
 });
 
+describe("computeTipGeometryAtMouse（VS Code placement:'mouse'）", () => {
+  const tip = { width: 120, height: 27 };
+  const rect = (left: number, top: number, w = 40, h = 24) => ({
+    left,
+    right: left + w,
+    top,
+    bottom: top + h,
+  });
+
+  it("气泡左缘 = 鼠标 x + 10（不是对齐元素中心）", () => {
+    const g = computeTipGeometryAtMouse(rect(480, 40), tip, VIEWPORT, 200);
+    expect(g.x, "hoverService.ts 里写死 target.x = e.x + 10").toBe(210);
+    expect(g.y, "ManagedHoverWidget 固定 hoverPosition: BELOW").toBe(68);
+    expect(g.placement).toBe("bottom");
+  });
+
+  it("右侧放不下就翻到鼠标左侧", () => {
+    const g = computeTipGeometryAtMouse(rect(480, 40), tip, VIEWPORT, 950);
+    expect(g.x, "950 + 10 + 120 越界 → 退到 950 - 10 - 120").toBe(820);
+  });
+
+  it("下方放不下时翻到上方（BELOW 是硬规则，只有越界才翻）", () => {
+    const g = computeTipGeometryAtMouse(rect(480, 570), tip, VIEWPORT, 200);
+    expect(g.placement).toBe("top");
+    expect(g.y, "570 - 4 - 27").toBe(539);
+  });
+
+  it("左右两端都被夹进视口（各留 2px）", () => {
+    expect(computeTipGeometryAtMouse(rect(0, 40), tip, VIEWPORT, -50).x).toBe(2);
+    // 999 右侧放不下 → 退到鼠标左侧 999 - 10 - 120 = 869（此时不再贴右边缘 878）
+    expect(computeTipGeometryAtMouse(rect(0, 40), tip, VIEWPORT, 999).x).toBe(869);
+  });
+});
+
 describe("tooltip 层行为（jsdom）", () => {
   const TARGET = { left: 480, top: 40, width: 40, height: 24 };
   const stubRect = (): DOMRect =>
@@ -139,10 +174,15 @@ describe("tooltip 层行为（jsdom）", () => {
     vi.useRealTimers();
   });
 
-  function mkTip(text: string, group: string, key?: string): HTMLButtonElement {
+  function mkTip(
+    text: string,
+    group: string,
+    key?: string,
+    extra: { instant?: boolean; follow?: boolean; compact?: boolean } = {},
+  ): HTMLButtonElement {
     const b = document.createElement("button");
     b.textContent = text;
-    setTip(b, text, { key, group });
+    setTip(b, text, { key, group, ...extra });
     document.body.appendChild(b);
     return b;
   }
@@ -234,15 +274,81 @@ describe("tooltip 层行为（jsdom）", () => {
     expect(tipEl().querySelector(".tooltip-text")!.textContent, "仍是旧提示").toBe("新建");
   });
 
-  it("离开目标后延迟收起（给同组切换留窗口）", () => {
+  it("离开目标立刻收起（VS Code 没有延迟收起）", () => {
     const a = mkTip("新建", "toolbar");
     hover(a);
     vi.advanceTimersByTime(600);
+    expect(isTipVisible(), "前置：提示已显示").toBe(true);
     leave(a);
-    vi.advanceTimersByTime(219);
-    expect(isTipVisible(), "宽限期内先留着").toBe(true);
-    vi.advanceTimersByTime(2);
-    expect(isTipVisible()).toBe(false);
+    expect(isTipVisible(), "鼠标一离开就该收：延迟收起会让提示黏在屏幕上不走").toBe(false);
+  });
+
+  it("ActionBar 类（instant）：收起后 200ms 内再悬停秒开、且不播淡入", () => {
+    const a = mkTip("新建", "toolbar", undefined, { instant: true });
+    const b = mkTip("打开", "toolbar", undefined, { instant: true });
+    hover(a);
+    vi.advanceTimersByTime(600);
+    leave(a);
+    hover(b);
+    expect(isTipVisible(), "200ms 窗口内应立即可见（VS Code isInstantlyHovering）").toBe(true);
+    expect(tipEl().classList.contains("fade-in"), "秒开不播淡入").toBe(false);
+    expect(tipEl().querySelector(".tooltip-text")!.textContent).toBe("打开");
+  });
+
+  it("instant 窗口过期（>200ms）后重新计时 500ms", () => {
+    const a = mkTip("新建", "toolbar", undefined, { instant: true });
+    const b = mkTip("打开", "toolbar", undefined, { instant: true });
+    hover(a);
+    vi.advanceTimersByTime(600);
+    leave(a);
+    vi.advanceTimersByTime(250);
+    hover(b);
+    expect(isTipVisible(), "过了 200ms 窗口就不该秒开").toBe(false);
+    vi.advanceTimersByTime(500);
+    expect(isTipVisible()).toBe(true);
+  });
+
+  it("同组也要落在 200ms 窗口内（过期照样重新计时）", () => {
+    const a = mkTip("新建", "toolbar");
+    const b = mkTip("打开", "toolbar");
+    hover(a);
+    vi.advanceTimersByTime(600);
+    leave(a);
+    vi.advanceTimersByTime(250);
+    hover(b);
+    expect(isTipVisible(), "同组但过了 200ms 也不该秒开").toBe(false);
+    vi.advanceTimersByTime(500);
+    expect(isTipVisible()).toBe(true);
+  });
+
+  it("follow（鼠标定位）不画 caret，compact 走紧凑档", () => {
+    const a = mkTip("E:\\demo\\a.md", "tabstrip", undefined, { follow: true, compact: true });
+    hover(a);
+    vi.advanceTimersByTime(600);
+    const caret = tipEl().querySelector<HTMLElement>(".tooltip-caret")!;
+    expect(caret.hidden, "鼠标定位 = VS Code 的 placement:'mouse' ⇒ showPointer 为 false").toBe(
+      true,
+    );
+    expect(
+      tipEl().classList.contains("tooltip-compact"),
+      "走 hoverDelegate 的提示都是 compact",
+    ).toBe(true);
+  });
+
+  it("按元素定位（默认）仍然带 caret", () => {
+    const a = mkTip("关闭", "tabstrip", "Ctrl+W", { compact: true });
+    hover(a);
+    vi.advanceTimersByTime(600);
+    const caret = tipEl().querySelector<HTMLElement>(".tooltip-caret")!;
+    expect(caret.hidden, "placement:'element' ⇒ showPointer 为 true").toBe(false);
+  });
+
+  it("键盘聚焦触发的 follow 目标退回按元素定位（鼠标坐标是陈年的）", () => {
+    const a = mkTip("E:\\demo\\a.md", "tabstrip", undefined, { follow: true, compact: true });
+    a.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    vi.advanceTimersByTime(600);
+    const caret = tipEl().querySelector<HTMLElement>(".tooltip-caret")!;
+    expect(caret.hidden, "没有鼠标坐标就按元素定位 → 仍带 caret").toBe(false);
   });
 
   it("在目标内部移动（图标 svg ↔ 按钮）不算离开", () => {
@@ -501,5 +607,55 @@ describe("B58 应用级 tooltip（取代原生 title，外观对齐 VS Code hove
       'data-tip-group="menubar"',
     );
     expect(html, "窗口控制键自成一组").toContain('data-tip-group="window"');
+  });
+});
+
+describe("B127 标签 / 关闭按钮的提示对齐 VS Code", () => {
+  const ts = readFileSync("src/shell/tooltip.ts", "utf-8");
+  const strip = readFileSync("src/shell/tabstrip.ts", "utf-8");
+  const css = readFileSync("src/styles/global.css", "utf-8");
+
+  it("延迟与窗口都取 VS Code 的数值：500ms 显示 / 200ms 秒开 / +10 鼠标偏移", () => {
+    expect(ts, "显示延迟 = workbench.hover.delay 的 Windows 默认值").toMatch(
+      /SHOW_DELAY\s*=\s*500/,
+    );
+    expect(ts, "秒开窗口 = WorkbenchHoverDelegate.timeLimit").toMatch(/INSTANT_WINDOW\s*=\s*200/);
+    expect(ts, "鼠标定位偏移 = hoverService 的 e.x + 10").toMatch(/MOUSE_OFFSET\s*=\s*10/);
+    // ⚠️ 延迟收起是早先自创的，VS Code 的 MOUSE_LEAVE 就是收 —— 不许复活
+    expect(ts, "VS Code 没有延迟收起，HIDE_GRACE 不能回来").not.toContain("HIDE_GRACE");
+  });
+
+  it("反向：把秒开窗口改回「延迟收起」（复活 HIDE_GRACE）要被抓到", () => {
+    const degraded = ts.replace("const INSTANT_WINDOW = 200", "const HIDE_GRACE = 220");
+    expect(degraded, "退化后不该再有 200ms 窗口").not.toMatch(/INSTANT_WINDOW\s*=\s*200/);
+    expect(degraded, "退化后应出现被禁的 HIDE_GRACE").toContain("HIDE_GRACE");
+  });
+
+  it("标签走鼠标定位（follow，无 caret）；关闭按钮走元素定位 + 秒开窗口", () => {
+    // iconLabel.ts：`getDefaultHoverDelegate('mouse')` ⇒ 气泡跟鼠标、`showPointer` 为 false
+    expect(strip, "标签提示必须开 follow").toMatch(/setTip\(el,[\s\S]*?follow: true/);
+    // actionbar.ts：`createInstantHoverDelegate()` ⇒ placement 'element' + isInstantlyHovering
+    expect(strip, "关闭按钮属于 ActionBar 那一类，必须开 instant").toMatch(
+      /setTip\(close,[\s\S]*?instant: true/,
+    );
+  });
+
+  it("两者都是 compact 档（WorkbenchHoverDelegate.showHover 写死 compact: true）", () => {
+    const tabCall = /setTip\(el,[\s\S]*?\}\);/.exec(strip)?.[0] ?? "";
+    expect(tabCall, "标签：compact: true").toContain("compact: true");
+    const closeCall = /setTip\(close,[\s\S]*?\}\);/.exec(strip)?.[0] ?? "";
+    expect(closeCall, "关闭按钮：compact: true").toContain("compact: true");
+  });
+
+  it("CSS 必须备齐 compact 档与「caret 可以整块不画」两条", () => {
+    expect(css, "compact = 12px / 2px 8px（hover.css 的 .compact）").toMatch(
+      /\.tooltip\.tooltip-compact \{[^}]*font-size: 12px[^}]*padding: 2px 8px/s,
+    );
+    expect(css, "鼠标定位模式不画 caret").toMatch(/\.tooltip-caret\[hidden\] \{[^}]*display: none/);
+  });
+
+  it("反向：删掉 compact 规则，上一条断言必须失败", () => {
+    const degraded = css.replace(/\.tooltip\.tooltip-compact \{[^}]*\}\n?/s, "");
+    expect(degraded, "退化后不该再有 compact 规则").not.toMatch(/\.tooltip\.tooltip-compact \{/);
   });
 });
