@@ -272,15 +272,25 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
         "--tab-bg-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-strip-bg));",
       );
     }
-    // B120：深浅两套主题的活动标签都取 --bg —— 深色 #1b1d1f 比条带 #242629
-    // 暗一档 = 「深色凹槽」（对齐用户 VS Code 实拍；VS Code 语义的「活动=编辑器
-    // 底色」在 LitePad 会让舌片亮过条带 —— oneDark #282c34，与凹槽观感相反）
-    expect(themeBlock(css, "dark"), "深色活动标签必须是深色凹槽（--bg，暗于条带）").toContain(
-      "--tab-bg-active: var(--bg);",
+    // B121（最终形态）：活动标签 = 编辑器底色，与编辑区融为一体 —— 深色取
+    // oneDark 的 #282c34（editor.ts 挂 oneDark，内容区实际底色），浅色 = var(--bg)。
+    // （B120 曾按「深色凹槽」取 var(--bg)，融合裁决后回正。）
+    expect(themeBlock(css, "dark"), "深色活动标签必须同编辑器底色（oneDark #282c34）").toContain(
+      "--tab-bg-active: #282c34;",
     );
     expect(themeBlock(css, "light"), "浅色活动标签仍取 --bg（纯白）").toContain(
       "--tab-bg-active: var(--bg);",
     );
+    // B121：ops 段用自身 border-bottom 补齐头部细线的右半段
+    const ops = cssDecls(ruleBlock(css, ".panel-ops"));
+    expect(ops, "ops 段必须有 border-bottom 补齐细线（B121）").toContain(
+      "border-bottom: 1px solid var(--border)",
+    );
+    // B121：分屏分割线降对比（150% 下高对比色被抗锯齿糊成粗线）
+    expect(
+      themeBlock(css, "dark"),
+      "深色分割线必须低调（对齐 VS Code editorGroup.border 观感，B121）",
+    ).toContain("--sep-line: #2e3034;");
 
     // B116：闪烁效果整体移除（用户要求）——CSS 与 TS 两侧都不得再有 tab-flash 痕迹
     // （stripCssComments 剥掉说明性注释后断言，避免被「移除记录」误伤）
@@ -313,8 +323,10 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     // B113：connected 标签**相连**，不再靠 gap 撑缝（缝会让 fill 接不上，
     // 活动标签与编辑器之间就出现断口）；分隔感改由活动标签的凸起给出。
     expect(strip, "标签必须相连（gap 0），不能留缝隙").toMatch(/gap:\s*0/);
-    expect(strip, "标签条要有表面底色（活动标签取编辑器色，两者差一档才有对比）").toContain(
-      "background: var(--tab-strip-bg)",
+    // B121：条带表面 = 底色 + 最底部 1px 分割细线（背景渐变画法）——
+    // 细线画在条带内部才能被舌片盖住，「活动标签下方无边框」靠它实现
+    expect(strip, "条带表面 = 底色 + 最底部 1px 细线（渐变画法，B121）").toMatch(
+      /background:\s*linear-gradient\(\s*to bottom,\s*var\(--tab-strip-bg\) calc\(100% - 1px\),\s*var\(--border\) calc\(100% - 1px\)\s*\)/,
     );
     expect(
       strip,
@@ -581,12 +593,16 @@ describe("面板头部与标签条同色（B113-4）", () => {
     expect(head, "不得再回退到 --bg-status（那是色差的来源）").not.toContain(
       "background: var(--bg-status)",
     );
-    expect(head, "底边描边保留").toContain("border-bottom: 1px solid var(--border)");
+    // B121：头部不再自带 border-bottom —— 细线移进条带背景（可被舌片盖住），
+    // head 的 border 会在条带下方再画一根盖不掉的线，破坏「活动标签下无边框」
+    expect(head, "头部不得再画 border-bottom（细线已移入条带背景，B121）").not.toContain(
+      "border-bottom",
+    );
 
     // 反向验证：把 head 改回旧色（复刻色差的退化实现），断言必须转红
     const regressed = css.replace(
-      "background: var(--tab-strip-bg);\n  border-bottom: 1px solid var(--border);\n}\n\n.panel-tabstrip",
-      "background: var(--bg-status);\n  border-bottom: 1px solid var(--border);\n}\n\n.panel-tabstrip",
+      "background: var(--tab-strip-bg);",
+      "background: var(--bg-status);",
     );
     expect(regressed, "替身必须真的替换过（否则反向验证空转）").not.toBe(css);
     const bad = cssDecls(ruleBlock(regressed, ".panel-head"));

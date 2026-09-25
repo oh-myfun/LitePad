@@ -25,25 +25,26 @@
   --danger: #f47067;
   --warn: #e2b341;
   /* 标签（B113 起对齐 VS Code 1.139 的 **Connected 相连标签**，不再是独立药丸）：
-     标签条是一条**连续的表面**，活动标签是这条表面上的一块「凹槽」高亮
-     （B120：比条带暗一档，对齐用户 VS Code 的实拍观感），非活动标签透明。
+     标签条是一条**连续的表面**，活动标签取**编辑器底色**、与下方编辑区融为一体
+     （B121 最终形态：舌片同色 + 舌片下方无分割线），非活动标签透明。
      依据 `workbench/contrib/modernUI/browser/media/connectedEditorTabs.css`：
        · 活动标签底色引用编辑器背景（VS Code 语义）；LitePad 取舍见下一条注释
        · --modern-ui-connected-tab-strip-background = editorGroupHeader.tabsBackground
      条带取深 #242629 / 浅 #F3F3F3 那一档。 */
   --tab-strip-bg: #242629;
-  /* 非活动标签：透明（露出条带）；hover 只比条带抬一点点；活动 = 深色凹槽。
+  /* 非活动标签：透明（露出条带）；hover 只比条带抬一点点；活动 = 编辑器底色。
      ⚠️ 三档必须拉开可感知的差距 —— hover 若与 active 同色就分不出「选中」和「划过」。
      B119：hover 改用 VS Code connected 的口径（connectedEditorTabs.css:77）
      color-mix(fg 6%, 条带色)——与旧写法 rgba(255,255,255,.05) 观感几乎一致，
      但「混底色」比「叠半透明」确定性强（不依赖下面垫的是什么）。
-     B120（用户裁决）：活动标签要「深色凹槽」观感（同用户 VS Code 的实拍：
-     舌片比条带暗一档、内嵌在条带里）。按 VS Code 的规则「活动=编辑器底色」
-     本应取 oneDark 的 #282c34，但它比条带亮（凸舌观感），与用户要的相反 ——
-     故深色取 --bg（#1b1d1f，比条带暗），浅色仍 var(--bg)（纯白，浅色下无
-     凹槽可挖，白舌片是 B55 以来的观感且用户未提异议）。 */
+     B121（用户裁决，最终形态）：「标签激活时标签和编辑区颜色融为一体」——
+     深色活动标签取 oneDark 的 **#282c34**（editor.ts 挂 oneDark，内容区实际
+     底色就是它），舌片与编辑区同色连成一体；配合条带底部细线被舌片覆盖
+     （见 .panel-tabstrip 的 B121 注释），活动标签下方不再有边框。
+     （B120 曾按用户「深色凹槽」裁决取 var(--bg)，看到融合效果后定为 B121。）
+     浅色下编辑器无 oneDark，底色即 var(--bg) 纯白，同样融为一体。 */
   --tab-bg-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-strip-bg));
-  --tab-bg-active: var(--bg);
+  --tab-bg-active: #282c34;
   --tab-bg-active-hover: #343940;
   /* 标签文件类型图标的家族配色（B57）：十个家族各一色。
      同一族内用同一个色相（形状负责细分），浅深两套取各自的中调，
@@ -104,7 +105,11 @@
   /* 分隔条线色（B59，S5）：从通用 --border 里抽出来单独可调（分屏 .layout-sep 与
      大纲 .toc-resizer 共用，B28 要求两者同款）。深色取 VS Code editorGroup.border
      的 #444444 档 —— 比通用边框略清晰，分屏边界更明确。 */
-  --sep-line: #444444;
+  /* B121：#444444 → #2e3034。宽度本就是 1px CSS，但 150% 缩放下高对比色会被
+     抗锯齿糊成 ~2-3 物理像素的「粗线」；降对比后与两侧面板底色（#282c34 /
+     #1e2227）只差一档，观感对齐 VS Code editorGroup.border（#2b2b2b，几乎
+     隐形，拖拽悬停时另有高亮，B59）。 */
+  --sep-line: #2e3034;
   /* 拖拽落点高亮的填充色（B60 回退为**浅蓝**）：B59 照搬 VS Code 的
      editorGroup.dropBackground（深灰 @0.5 / 浅蓝 @0.18），实测在 LitePad 上落点
      边界几乎看不出来，用户明确要求换回 B59 之前的浅蓝。取 accent @0.22 —— 填充与
@@ -543,9 +548,9 @@ button:focus-visible {
   background: var(--tab-bg-hover);
 }
 
-/* 活动标签：fill 抬到凹槽底色（--tab-bg-active，深浅两套主题都取 var(--bg)，
-   深色下比条带暗一档 = 「深色凹槽」，见主题变量处的 B120 注释），
-   无边框、只有上方两角圆、侧边直线落到条带底。 */
+/* 活动标签：fill 抬到**编辑器底色**（--tab-bg-active：深色 = oneDark 的
+   #282c34，浅色 = var(--bg) 纯白 —— 都与下方编辑区同色），无边框、
+   只有上方两角圆、侧边直线落到条带底。 */
 .tab-active {
   color: var(--fg);
 }
@@ -560,7 +565,7 @@ button:focus-visible {
   initial-value: #0000;
 }
 
-/* B116 去描边 + B120 去肩部：活动标签只靠底色区分 —— fill 取深色凹槽底色、
+/* B116 去描边 + B120 去肩部：活动标签只靠底色区分 —— fill 取编辑器底色、
    只有上方两角圆、侧边直线落到条带底（对齐用户 VS Code 的实拍形态）。 */
 .tab-active .tab-fill {
   --tab-fill-bg: var(--tab-bg-active);
@@ -2230,7 +2235,10 @@ button:focus-visible {
      透出的还是这层旧色 —— 结果「标签条一条色、关闭按钮区另一条色」。
      头部整体跟随条带色，ops 不必再单独声明，将来加邻居也不会再错开。 */
   background: var(--tab-strip-bg);
-  border-bottom: 1px solid var(--border);
+  /* B121：border-bottom 移除 —— 头部与编辑区之间的细线改画进 .panel-tabstrip
+     的背景（见该处 B121 注释）：border 在条带盒外，被 overflow 裁掉的舌片
+     够不着它，「活动标签下方无边框」做不出来；画在条带内部就能被舌片盖住。
+     ops 段没有标签，用自身 border-bottom 补齐同一根线（见 .panel-ops）。 */
 }
 
 .panel-tabstrip {
@@ -2248,8 +2256,17 @@ button:focus-visible {
      右侧 4px 保留给滚动条与末标签的呼吸。 */
   padding: 4px 4px 0 0;
   /* 标签条**表面色**（VS Code 的 editorGroupHeader.tabsBackground）：比编辑器背景差一档，
-     活动标签则取编辑器背景色（见 .tab-active .tab-fill）——「哪块与编辑器连着」一眼可辨。 */
-  background: var(--tab-strip-bg);
+     活动标签则取编辑器背景色（见 .tab-active .tab-fill）——「哪块与编辑器连着」一眼可辨。
+     B121：头尾之间的 1px 分割细线从 .panel-head 的 border-bottom 改为**背景渐变**
+     画在条带自己的最底部 —— ① 舌片（子元素）天然画在宿主背景之上，走过后细线
+     自动消失，「活动标签下方无边框、与编辑区融为一体」；② background-attachment
+     默认 scroll = 固定在条带可见盒上，横向滚动时细线不会跟着内容跑掉；③ 只有
+     gradient 一层，比 ::after 伪元素少一层层叠纠纷。 */
+  background: linear-gradient(
+    to bottom,
+    var(--tab-strip-bg) calc(100% - 1px),
+    var(--border) calc(100% - 1px)
+  );
   min-width: 0;
   /* 拖拽 tab 的插入指示线（.tab-insert）以 strip 为定位基准 */
   position: relative;
@@ -2334,6 +2351,10 @@ button:focus-visible {
   padding: 0 4px;
   /* 不被标签栏挤扁：标签栏滚动，操作按钮恒定可见 */
   flex: 0 0 auto;
+  /* B121：头部细线的 ops 段 —— 条带那半段画在 .panel-tabstrip 背景里
+     （会被舌片盖住），ops 段没有标签、用自身 border-bottom 补齐同一根线。
+     align-items: stretch 下 ops 与条带等高（28px），border-box 内缩不破布局。 */
+  border-bottom: 1px solid var(--border);
 }
 
 /* 面板操作按钮：B54 起只剩「移除分屏」⨯（左右/上下分屏按钮已去掉，
