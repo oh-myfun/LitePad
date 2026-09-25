@@ -66,6 +66,9 @@ node -e "
   edit('src-tauri/tauri.conf.json', /(\"version\":\s*\")[^\"]+(\")/, '\$1$VER\$2');
   edit('src-tauri/Cargo.toml', /^(version\s*=\s*\")[^\"]+(\")/m, '\$1$VER\$2');
 "
+# ⚠️ 与 build-all.sh:35 同款自举：本脚本自己也会直接调 cargo（同步 Cargo.lock），
+# 而 cargo 未必在会话 PATH 里 —— 少了这一行会 "cargo: command not found" 后静默失败。
+command -v cargo >/dev/null 2>&1 || export PATH="$HOME/.cargo/bin:$PATH"
 (cd src-tauri && cargo update -p litepad -q)   # 同步 Cargo.lock
 echo "✓ 版本号已同步到 v$VER（package.json / tauri.conf.json / Cargo.toml / Cargo.lock）"
 
