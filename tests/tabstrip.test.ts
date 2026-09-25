@@ -221,10 +221,10 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
 
     const fill = cssDecls(ruleBlock(css, ".tab-fill"));
     expect(fill, "应有 .tab-fill 底色层").toBeTruthy();
-    expect(fill, "底色层必须绝对定位（才能上下外扩出标签行）").toContain("position: absolute");
-    expect(fill, "左右不得内缩：相邻标签必须相连（connected 而非独立药丸）").toMatch(
-      /inset:\s*-4px 0 -4px/,
-    );
+    expect(fill, "底色层必须绝对定位（才能向上外扩出标签行）").toContain("position: absolute");
+    // B119：底部外扩收回（-4px→0）—— B117 后标签底 = 条带底，外扩部分会被 overflow 裁掉；
+    // ⚠️ 断言到分号：`-4px 0 0` 是 `-4px 0 -4px` 的前缀，不锚定分号会被旧值混过
+    expect(fill, "左右相连（connected）且底部不再外扩（B119）").toMatch(/inset:\s*-4px 0 0\s*;/);
     expect(fill, "只有上方两角是圆的（下方要与编辑器相接）").toMatch(
       /border-radius:\s*\d+px \d+px 0 0/,
     );
@@ -244,14 +244,31 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     const hoverFill = cssDecls(ruleBlock(css, ".tab:hover:not(.tab-active) .tab-fill"));
     expect(hoverFill, "悬停要有独立一档底色").toContain("var(--tab-bg-hover)");
 
-    // 肩部：fill 外侧下角的纯色圆角补色，让「条带底边 → 标签侧边」是圆角曲线而非直角
-    // （B116：描边删除后肩部只剩 box-shadow 补色 + radius，不再画线）
+    // 肩部：fill 外侧下角的**实色四分之一圆**，让「条带底边 → 标签侧边」是
+    // 圆角曲线而非直角（B116 去描边；B119 构造从 box-shadow 补色改为实色圆盘 ——
+    // B117 后标签底 = 条带底，阴影向下外扩的旧构造整块落在条带盒外被裁掉）。
     expect(css, "活动标签左侧要有肩部圆角").toMatch(/\.tab-active \.tab-fill::before/);
     expect(css, "活动标签右侧要有肩部圆角").toMatch(/\.tab-active \.tab-fill::after/);
     expect(css, "首尾标签的外侧不画肩（那里没有邻居可接）").toMatch(
       /:first-child \.tab-fill::before/,
     );
-    const shoulderAfter = cssDecls(ruleBlock(css, ".tab-active .tab-fill::after"));
+    // 第 1 条命中 = 公共规则（占位 + 底色），第 2 条 = 定位/圆角规则
+    const shoulderShared = cssDecls(ruleBlock(css, ".tab-active .tab-fill::before"));
+    expect(shoulderShared, "肩部必须实色且引用 --tab-fill-bg（与标签底色同源）").toContain(
+      "background: var(--tab-fill-bg",
+    );
+    expect(
+      shoulderShared,
+      "肩部不得再用 box-shadow 补色（旧构造会被 overflow 裁掉）",
+    ).not.toContain("box-shadow");
+    const shoulderBefore = cssDecls(ruleBlock(css, ".tab-active .tab-fill::before", 2));
+    expect(shoulderBefore, "左肩只圆外侧上角（border-top-left-radius）").toContain(
+      "border-top-left-radius: 5px",
+    );
+    const shoulderAfter = cssDecls(ruleBlock(css, ".tab-active .tab-fill::after", 2));
+    expect(shoulderAfter, "右肩只圆外侧上角（border-top-right-radius）").toContain(
+      "border-top-right-radius: 5px",
+    );
     expect(shoulderAfter, "肩部不得再画线（描边已整体移除）").not.toMatch(
       /border-(left|bottom):\s*1px/,
     );
@@ -267,7 +284,19 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
       for (const v of ["--tab-bg-hover:", "--tab-bg-active:", "--tab-bg-active-hover:"]) {
         expect(block, `${name}主题必须定义 ${v}`).toContain(v);
       }
+      // B119：hover 用 VS Code connected 的口径（connectedEditorTabs.css:77）
+      expect(block, `${name} hover 必须 color-mix(fg 6%, 条带色)（B119 对齐 VS Code）`).toContain(
+        "--tab-bg-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-strip-bg));",
+      );
     }
+    // B119：深色活动标签 = oneDark 编辑器内容区底色（editor.ts 挂 oneDark，
+    // 内容区实际是 #282c34 而非 --bg #1b1d1f —— 旧值让舌片比条带还暗）
+    expect(themeBlock(css, "dark"), "深色活动标签必须对齐 oneDark 底色").toContain(
+      "--tab-bg-active: #282c34;",
+    );
+    expect(themeBlock(css, "light"), "浅色活动标签仍取 --bg（无 oneDark）").toContain(
+      "--tab-bg-active: var(--bg);",
+    );
 
     // B116：闪烁效果整体移除（用户要求）——CSS 与 TS 两侧都不得再有 tab-flash 痕迹
     // （stripCssComments 剥掉说明性注释后断言，避免被「移除记录」误伤）
@@ -277,13 +306,13 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     expect(css, "--tab-fill-bg 必须注册成 color 类型").toMatch(
       /@property --tab-fill-bg\s*\{[^}]*syntax:\s*"<color>"/,
     );
-    // B113-2 核心：肩部补色与标签底色**同源**（同一个变量），悬停提亮才不会再对不上色
-    // ⚠️ ::before 有两条规则（公共占位 + 定位/补色），用 filter 取含 box-shadow 的那条
-    const shoulder = cssDecls(ruleBlock(css, ".tab-active .tab-fill::before", "box-shadow"));
-    expect(shoulder, "肩部补色必须引用 --tab-fill-bg").toContain("var(--tab-fill-bg");
-    const activeHover = cssDecls(ruleBlock(css, ".tab-active:hover .tab-fill"));
-    expect(activeHover, "悬停提亮必须只改变量（底色与肩部一起变）").toMatch(
-      /--tab-fill-bg:\s*var\(--tab-bg-active-hover\)/,
+    // B119：connected 档活动标签悬停**不再提亮**（VS Code 的 hover fill 规则全带
+    // :not(.active)，活动标签悬停只亮关闭按钮）；pill 档保留提亮（activeHoverBackground）
+    expect(cssCode, "connected 档不得再有独立的活动标签悬停提亮规则").not.toMatch(
+      /\}\s*\.tab-active:hover \.tab-fill\s*\{/,
+    );
+    expect(cssCode, "pill 档保留悬停提亮（VS Code activeHoverBackground 同款）").toContain(
+      ':root[data-tab-style="pill"] .tab-active:hover .tab-fill',
     );
 
     // DOM 侧：CSS 写了但没渲染这个元素，标签就是全透明一片
@@ -349,6 +378,41 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     const BAD_CSS = cssCode + "\n@keyframes tab-flash {\n  0% { --tab-fill-bg: red; }\n}\n";
     expect(() => {
       expect(stripCssComments(BAD_CSS), "替身里 tab-flash 必须被抓到").not.toContain("tab-flash");
+    }).toThrow();
+  });
+  it("B119 反向验证：肩部旧构造（box-shadow 补色 / 提亮回潮 / 圆角朝向回退）必须被咬住", () => {
+    // 退化替身把 B119 之前的三种错误写法塞回去，证明 B119 的契约断言不是恒真假绿。
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const cssCode = stripCssComments(css);
+
+    // ① 旧构造：box-shadow 补色（B117 起会被条带 overflow 裁掉，肩部直接消失）
+    const BAD_SHADOW =
+      cssCode + "\n.tab-active .tab-fill::before {\n  box-shadow: 2.5px 2.5px 0 2.5px red;\n}\n";
+    expect(() => {
+      expect(stripCssComments(BAD_SHADOW), "替身的 box-shadow 必须被抓到").not.toContain(
+        "box-shadow",
+      );
+    }).toThrow();
+
+    // ② 悬停提亮回潮：connected 档出现独立的活动标签悬停提亮规则
+    const BAD_HOVER = cssCode + "\n.tab-active:hover .tab-fill { --tab-fill-bg: red; }\n";
+    expect(() => {
+      expect(stripCssComments(BAD_HOVER), "替身的提亮规则必须被抓到").not.toMatch(
+        /\}\s*\.tab-active:hover \.tab-fill\s*\{/,
+      );
+    }).toThrow();
+
+    // ③ 圆角朝向回退：左肩写回旧构造的 border-bottom-right-radius（弧形凸向错误）
+    const BAD_RADIUS = css.replace(
+      "border-top-left-radius: 5px",
+      "border-bottom-right-radius: 5px",
+    );
+    expect(BAD_RADIUS, "替身必须真的替换过（否则反向验证空转）").not.toBe(css);
+    expect(() => {
+      expect(
+        cssDecls(ruleBlock(BAD_RADIUS, ".tab-active .tab-fill::before", 2)),
+        "左肩半径必须仍要求 border-top-left-radius",
+      ).toContain("border-top-left-radius: 5px");
     }).toThrow();
   });
 });
@@ -573,15 +637,20 @@ describe("紧凑档悬浮 × 的渐变垫底（B118，对齐 VS Code）", () => 
     );
     expect(css, "淡入必须覆盖键盘聚焦").toContain(".tab-action:focus-within::before");
 
-    // 非活动标签的悬停底色是半透明，单层渐变盖不住字 → 必须双层（渐变 + 条带色垫底）
-    const dimPad = cssDecls(ruleBlock(css, ".tab-action::before", "var(--tab-strip-bg)"));
-    expect(dimPad, "非活动垫必须双层：渐变 + 条带色").toContain(
+    // B119 起 --tab-bg-hover 是 color-mix 不透明色：单层渐变即可盖住文字尾部
+    const dimPad = cssDecls(ruleBlock(css, ".tab-action::before", "var(--tab-bg-hover)"));
+    expect(dimPad, "非活动垫 = 渐变到悬停底色（单层，B119 起悬停色不透明）").toContain(
       "linear-gradient(to right, transparent, var(--tab-bg-hover))",
     );
-    expect(dimPad, "非活动垫必须有实色垫底").toContain("var(--tab-strip-bg)");
-    // 活动标签 fill 不透明 → 单层渐变即可
-    const activePad = cssDecls(ruleBlock(css, ".tab-action::before", "var(--tab-bg-active-hover)"));
-    expect(activePad, "活动垫用单层渐变到活动悬停色").toContain(
+    // 活动垫 = 渐变到活动 fill 同色（B119 对齐 VS Code action-active-hover-background = surface；
+    // ⚠️ filter 用带收尾括号的 var(--tab-bg-active))，否则会被 pill 垫的 active-hover 超集混过）
+    const activePad = cssDecls(ruleBlock(css, ".tab-action::before", "var(--tab-bg-active))"));
+    expect(activePad, "活动垫用单层渐变到活动 fill 同色（connected 悬停不提亮）").toContain(
+      "linear-gradient(to right, transparent, var(--tab-bg-active))",
+    );
+    // pill 档悬停仍提亮一档 → 垫色跟着提（覆盖块）
+    const pillPad = cssDecls(ruleBlock(css, ".tab-action::before", "var(--tab-bg-active-hover)"));
+    expect(pillPad, "pill 档活动垫跟随提亮后的 fill").toContain(
       "linear-gradient(to right, transparent, var(--tab-bg-active-hover))",
     );
 
