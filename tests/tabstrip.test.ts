@@ -560,3 +560,31 @@ describe("标签操作槽位空位（B115：预留 | 紧凑，对齐 VS Code tab
     );
   });
 });
+
+describe("面板头部与标签条同色（B113-4）", () => {
+  it("panel-head 必须跟随条带色，右侧关闭按钮区不得再透出旧色", () => {
+    // 用户实测：tab 条右边 .panel-ops（移除分屏 ⨯）背景色与标签条不一致。
+    // 根因 = B113 给 .panel-tabstrip 换了条带色（--tab-strip-bg），
+    // 外层 .panel-head 还停在旧的 --bg-status，ops 无背景声明就透出旧色。
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const head = cssDecls(ruleBlock(css, ".panel-head"));
+    expect(head, "应有 .panel-head 规则").toBeTruthy();
+    expect(head, "头部必须整体用条带色（ops 透出它即与标签条同色）").toContain(
+      "background: var(--tab-strip-bg)",
+    );
+    expect(head, "不得再回退到 --bg-status（那是色差的来源）").not.toContain(
+      "background: var(--bg-status)",
+    );
+    expect(head, "底边描边保留").toContain("border-bottom: 1px solid var(--border)");
+
+    // 反向验证：把 head 改回旧色（复刻色差的退化实现），断言必须转红
+    const regressed = css.replace(
+      "background: var(--tab-strip-bg);\n  border-bottom: 1px solid var(--border);\n}\n\n.panel-tabstrip",
+      "background: var(--bg-status);\n  border-bottom: 1px solid var(--border);\n}\n\n.panel-tabstrip",
+    );
+    expect(regressed, "替身必须真的替换过（否则反向验证空转）").not.toBe(css);
+    const bad = cssDecls(ruleBlock(regressed, ".panel-head"));
+    expect(bad, "退化替身应含旧色").toContain("background: var(--bg-status)");
+    expect(bad, "退化替身不再满足条带色契约").not.toContain("background: var(--tab-strip-bg)");
+  });
+});

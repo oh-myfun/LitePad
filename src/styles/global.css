@@ -2286,7 +2286,11 @@ button:focus-visible {
   display: flex;
   align-items: stretch;
   flex: 0 0 auto;
-  background: var(--bg-status);
+  /* B113-4：原为 --bg-status。B113 给 .panel-tabstrip 单独换了条带色
+     （--tab-strip-bg）后，右侧 .panel-ops（移除分屏 ⨯）没有背景声明，
+     透出的还是这层旧色 —— 结果「标签条一条色、关闭按钮区另一条色」。
+     头部整体跟随条带色，ops 不必再单独声明，将来加邻居也不会再错开。 */
+  background: var(--tab-strip-bg);
   border-bottom: 1px solid var(--border);
 }
 
