@@ -529,15 +529,20 @@ button:focus-visible {
 
 /* 底色层（VS Code 的 `.tab > .tab-fill`）：
    `inset-inline: 0` ⇒ 相邻标签的 fill **连成一条带**，不是彼此留缝的独立药丸；
-   上方外扩 4px ⇒ 活动标签能顶到标签条的上沿。
-   B119：底边从外扩 -4px 收回为 0 —— B117 后条带 28px = 4px 上间距 + 24px 标签，
+   上方外扩 ⇒ 活动标签能顶到标签条的上沿。
+   B119：底边从外扩 -4px 收回为 0 —— 当时条带 28px = 4px 上间距 + 24px 标签，
    标签底就是条带底，再往下外扩的部分整体落在条带盒外，会被 overflow 裁掉
-   （B117 后肩部消失的根因）；B120 起侧边直线落到条带底、不再有任何肩部构造。
+   （B117 后肩部消失的根因）。
+   B123-6：条带统一 30px（3px 上 + 24px 标签 + 3px 下间隙），外扩重新成为
+   可能 —— inset: -3px 0 -3px 上下各伸进间隙、直达条带上下沿，活动标签与
+   编辑区的融合不因下间隙出现断线（对齐 VS Code connectedEditorTabs.css 的
+   fill bottom: -gutter 做法：fill 向下伸进 gutter）。肩部锚在 fill 底 =
+   条带底，位置不变。
    ⚠️ 它是 positioned 元素（absolute），会盖住同层的普通流内容 —— 所以图标 /
    文件名 / ●× 槽位必须各自 `position: relative; z-index: 1`（同 VS Code 的 .tab-label）。 */
 .tab-fill {
   position: absolute;
-  inset: -4px 0 0;
+  inset: -3px 0 -3px;
   z-index: 0;
   border-radius: var(--tab-radius) var(--tab-radius) 0 0;
   background: transparent;
@@ -708,16 +713,13 @@ button:focus-visible {
 }
 :root[data-tab-style="pill"] .panel-tabstrip {
   gap: 4px;
-  /* B123-5（用户裁决）：药丸档恢复 B55 时代的 4px **下间隙** ——
-     32px = 4px 上间距 + 24px 胶囊 + 4px 下间隙，胶囊与编辑区之间有呼吸位，
-     自绘悬浮滚动条的 thumb 正好坐在间隙里（不再压在胶囊底缘上）。
-     connected 档维持 28px 不变（舌片要直通编辑区，B117 几何照旧）。 */
-  padding: 4px;
-  height: 32px;
+  /* B123-6：条带高度已统一 30px（基础规则），上下间隙 3px 对称（= thumb 高度），
+     胶囊浮在正中；左右留白 4px 不变（B55 的胶囊呼吸位）。不再覆盖 height。 */
+  padding: 3px 4px;
 }
 :root[data-tab-style="pill"] .tab-insert {
   /* 插入线只贯穿胶囊行，不吃掉下间隙 */
-  bottom: 4px;
+  bottom: 3px;
 }
 
 /* ==================================================================
@@ -2337,7 +2339,13 @@ button:focus-visible {
   /* B113-2：左侧留白归 0（对齐 VS Code connected 的 padding-left: 0）——
      第一个标签直接贴条带左缘（B113-2：左侧不留白）；
      右侧 4px 保留给滚动条与末标签的呼吸。 */
-  padding: 4px 4px 0 0;
+  /* B123-6（用户裁决）：两档条带高度**统一 30px** = 3px 上间距 + 24px 标签/
+     胶囊 + 3px 下间隙 —— 上下间隙相等，下间隙正好等于自绘滚动条 thumb 的高度
+     （thumb 完整坐在间隙里）。connected 档的 fill 由 inset: -3px 0 -3px 上下
+     延伸补齐（对齐 VS Code 的 fill bottom 伸进 gutter 的做法）：活动标签仍与
+     编辑区融合，非活动区下沿仍无线；pill 档胶囊浮在 3/3 对称的间隙里。
+     切换标签样式时编辑区不再上下跳。 */
+  padding: 3px 4px 0 0;
   /* 标签条**表面色**（VS Code 的 editorGroupHeader.tabsBackground）：比编辑器背景差一档，
      活动标签则取编辑器背景色（见 .tab-active .tab-fill）——「哪块与编辑器连着」一眼可辨。
      B122：条带下沿**不再画线**（B121 的渐变细线移除）——用户裁决「标签非活动区
@@ -2354,13 +2362,11 @@ button:focus-visible {
      改 overflow-x: hidden 后 scrollLeft 仍可编程设置：滚轮 / 自绘 thumb 拖拽 /
      ensureVisible 都走程序滚动，原生滚动条彻底退场（也就没有了 B54 那套
      scrollbar-width 复位与 ::-webkit-scrollbar 自绘规则）。
-     ⚠️ 高度是硬约束：28px = 4px 上间距 + 24px 标签，**没有**底部预留 ——
-     悬浮条不占布局，溢出与否高度恒定，编辑器不会抖（B53 的预留使命终结）。
-     （B123-5：药丸档在下方覆盖块里恢复 32px 含 4px 下间隙，胶囊与编辑区
-     之间留出呼吸位，thumb 坐进间隙 —— 两档高度各自恒定，切档不抖。） */
+     ⚠️ 高度是硬约束：30px = 3px 上间距 + 24px 标签 + 3px 下间隙（B123-6 两档
+     统一，上下对称），悬浮条不占布局，溢出与否高度恒定，编辑器不会抖。 */
   overflow-x: hidden;
   overflow-y: hidden;
-  height: 28px;
+  height: 30px;
 }
 
 /* B117 自绘悬浮滚动条：轨道叠在标签条底部（悬浮、不占布局、透明轨道），
@@ -2413,8 +2419,9 @@ button:focus-visible {
    绝对定位子元素会随内容一起滚 —— splitview 计算偏移时必须补上 scrollLeft。 */
 .tab-insert {
   position: absolute;
-  /* 对齐 24px 标签行：4px 上间距起、直达条带底（B117 悬浮条不占高度，无下间隙） */
-  top: 4px;
+  /* 对齐 24px 标签行：3px 上间距起、直达条带底（B123-6 统一 30px 后，
+     connected 的下间隙被 fill 补齐、视觉上仍直达；pill 档覆盖 bottom: 3px） */
+  top: 3px;
   bottom: 0;
   width: 2px;
   border-radius: 1px;

@@ -50,12 +50,13 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
     expect(tsCode, "scroll 事件驱动同步（程序滚动也覆盖）").toContain('addEventListener("scroll"');
     expect(tsCode, "thumb 必须可拖拽").toContain("bindThumbDrag");
 
-    // 条带高度：悬浮条不占布局 → 28px = 4px 上间距 + 24px 标签，无底部预留
+    // 条带高度：悬浮条不占布局 → 30px = 3px 上间距 + 24px 标签 + 3px 下间隙
+    // （B123-6 两档统一，上下对称，下间隙 = thumb 高度）
     expect(strip, "标签栏高度必须固定（无溢出↔有溢出恒定，不抖）").toMatch(/height:\s*\d+px/);
     const tabRule = css.match(/\n\.tab\s*\{[^}]*\}/)?.[0] ?? "";
     const stripH = Number(strip.match(/height:\s*(\d+)px/)![1]);
     const tabH = Number(tabRule.match(/height:\s*(\d+)px/)![1]);
-    expect(stripH - tabH, "标签栏只留顶部 4px 上间距，底部不再预留").toBe(4);
+    expect(stripH - tabH, "上下间隙共 6px（3+3 对称，B123-6）").toBe(6);
   });
   it("B56 标签不收缩：宽度跟内容走，放不下就横向滚动（文件名不裁剪成「…」）", () => {
     // 用户反馈：标签变多后标签被压窄，文件名被裁剪成「…」。
@@ -222,9 +223,10 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     const fill = cssDecls(ruleBlock(css, ".tab-fill"));
     expect(fill, "应有 .tab-fill 底色层").toBeTruthy();
     expect(fill, "底色层必须绝对定位（才能向上外扩出标签行）").toContain("position: absolute");
-    // B119：底部外扩收回（-4px→0）—— B117 后标签底 = 条带底，外扩部分会被 overflow 裁掉；
-    // ⚠️ 断言到分号：`-4px 0 0` 是 `-4px 0 -4px` 的前缀，不锚定分号会被旧值混过
-    expect(fill, "左右相连（connected）且底部不再外扩（B119）").toMatch(/inset:\s*-4px 0 0\s*;/);
+    // B123-6：条带 30px（3+24+3），fill 上下各伸 3px 进间隙、直达条带两沿 ——
+    // 活动标签与编辑区融合不因下间隙断线（VS Code fill bottom: -gutter 同款）；
+    // ⚠️ 断言到分号，防旧值前缀混过
+    expect(fill, "左右相连且上下外扩补齐间隙（B123-6）").toMatch(/inset:\s*-3px 0 -3px\s*;/);
     expect(fill, "只有上方两角是圆的（B123-2 起走 --tab-radius 单一来源）").toMatch(
       /border-radius:\s*var\(--tab-radius\) var\(--tab-radius\) 0 0/,
     );
@@ -386,24 +388,24 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     expect(strip, "条带不得再画底部细线（B122）").not.toContain("linear-gradient");
     expect(
       strip,
-      "内边距：上 4 / 右 4 / 下 0 / 左 0（B113-2：左侧不留白，下方让给编辑区）",
-    ).toMatch(/padding:\s*4px 4px 0 0/);
+      "内边距：上 3 / 右 4 / 下 0 / 左 0（B113-2：左侧不留白；B123-6 上间距 3px）",
+    ).toMatch(/padding:\s*3px 4px 0 0/);
 
-    // B55 时代「滚动条 4px 坐在下间隙里」的整套预留随 B117 悬浮化一起退场：
-    // 条带 28 = 4(上间距) + 24(标签)，底部 0 预留 —— 溢出与否高度恒定不抖。
+    // B123-6：条带统一 30px = 3(上) + 24(标签) + 3(下间隙=thumb 高度)，
+    // 两档同高切档不抖；connected 的 fill 用 inset -3px 0 -3px 伸进上下间隙。
     const tabH = Number(cssDecls(ruleBlock(css, ".tab")).match(/height:\s*(\d+)px/)![1]);
     const stripH = Number(strip.match(/height:\s*(\d+)px/)![1]);
-    expect(stripH, "条带收窄到 28px").toBe(28);
-    expect(stripH - tabH, "底部不再有滚动条预留").toBe(4);
+    expect(stripH, "条带统一 30px（B123-6）").toBe(30);
+    expect(stripH - tabH, "上下间隙共 6px（3+3 对称）").toBe(6);
     expect(css, "原生 webkit 滚动条规则必须整体删除").not.toMatch(
       /\.panel-tabstrip::-webkit-scrollbar/,
     );
 
     // 拖拽插入线必须跟着标签行走；底部间隙取消后直达条带底（B117）。
-    // ⚠️ B123-5 起 pill 档有自己的 .tab-insert 覆盖块（bottom: 4px）且在文件里
-    //   更靠前 —— 锚定基础块必须带 top: 4px 特征，否则会命中 pill 块。
-    const insert = css.match(/\.tab-insert\s*\{[^}]*top:\s*4px[^}]*\}/)?.[0] ?? "";
-    expect(insert, "拖拽插入线必须与标签行等高").toMatch(/top:\s*4px/);
+    // ⚠️ B123-5 起 pill 档有自己的 .tab-insert 覆盖块（bottom: 3px）且在文件里
+    //   更靠前 —— 锚定基础块必须带 top: 3px 特征，否则会命中 pill 块。
+    const insert = css.match(/\.tab-insert\s*\{[^}]*top:\s*3px[^}]*\}/)?.[0] ?? "";
+    expect(insert, "拖拽插入线必须与标签行等高").toMatch(/top:\s*3px/);
     expect(insert, "插入线必须直达条带底（无下间隙）").toMatch(/bottom:\s*0/);
   });
   it("B116 闪烁效果整体移除：CSS 无 tab-flash 规则、TS 无 flashTab（含反向验证）", () => {
@@ -492,14 +494,14 @@ describe("标签样式切换（B114：connected | pill）", () => {
       v.push("pill 必须撤掉肩部（胶囊没有舌片）");
     const strip = get(':root[data-tab-style="pill"] .panel-tabstrip');
     if (!strip.includes("gap: 4px")) v.push("pill 恢复胶囊之间的 4px 缝隙");
-    // B123-5：32px = 4px 上间距 + 24px 胶囊 + 4px 下间隙 —— 胶囊与编辑区之间
-    // 有呼吸位，自绘滚动条 thumb 坐进间隙（B55 时代几何回归）。
-    // ⚠️ padding 断言到分号：connected 的 "4px 4px 0 0" 是 "4px 4px 0" 的超集，
-    //   前缀 includes 会混过去；四边 4px 必须精确匹配。
-    if (!/padding:\s*4px\s*;/.test(strip)) v.push("pill 条带四边 4px 留白（含下间隙）");
-    if (!/height:\s*32px\s*;/.test(strip)) v.push("pill 条带高 32px（4+24+4，B123-5）");
-    if (!get(':root[data-tab-style="pill"] .tab-insert').includes("bottom: 4px"))
-      v.push("pill 插入线只贯穿胶囊行（bottom: 4px）");
+    // B123-6：条带高度统一 30px（基础规则），pill 只覆盖 padding —— 上下 3px
+    // 对称（= thumb 高度），左右 4px（B55 胶囊呼吸位）。
+    // ⚠️ padding 断言到分号：connected 的 "3px 4px 0 0" 是 "3px 4px" 的超集，
+    //   前缀 includes 会混过去；必须精确匹配两值形态。
+    if (!/padding:\s*3px 4px\s*;/.test(strip)) v.push("pill 条带留白上下 3px / 左右 4px");
+    if (/height:\s*\d+px/.test(strip)) v.push("pill 不得覆盖条带高度（统一 30px，B123-6）");
+    if (!get(':root[data-tab-style="pill"] .tab-insert').includes("bottom: 3px"))
+      v.push("pill 插入线只贯穿胶囊行（bottom: 3px）");
     return v;
   }
 
@@ -528,9 +530,8 @@ describe("标签样式切换（B114：connected | pill）", () => {
       "pill 活动标签必须无边框（B55：只靠底色区分）",
       "pill 必须撤掉肩部（胶囊没有舌片）",
       "pill 恢复胶囊之间的 4px 缝隙",
-      "pill 条带四边 4px 留白（含下间隙）",
-      "pill 条带高 32px（4+24+4，B123-5）",
-      "pill 插入线只贯穿胶囊行（bottom: 4px）",
+      "pill 条带留白上下 3px / 左右 4px",
+      "pill 插入线只贯穿胶囊行（bottom: 3px）",
     ]);
   });
 
