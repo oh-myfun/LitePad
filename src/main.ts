@@ -600,6 +600,12 @@ function tabstripCallbacks(p: Panel): TabstripCallbacks {
         showMessage(`已复制路径：${doc.path}`);
       }
     },
+    // B123-7：在资源管理器中打开文件所在目录并选中该文件
+    onRevealInFolder: (tabId) => {
+      const t = tabs.get(tabId);
+      const doc = t && docs.get(t.docId);
+      if (doc?.path) void invoke("reveal_in_folder", { path: doc.path });
+    },
     onDuplicateTab: (tabId) => duplicateTabToPanel(tabId, p.panelId),
     onDuplicateToSibling: (tabId) => duplicateTabToSibling(tabId),
     // 左右 / 上下分屏：**复制**而非移动（与 VS Code 一致 —— Split 是同一文档开两份，

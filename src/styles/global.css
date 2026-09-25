@@ -274,7 +274,8 @@ body {
      太近会「顶边」（原先 4px，图标字形几乎贴着边框）。右端不留：关闭键要贴到窗口边缘。 */
   padding-left: 10px;
   background: var(--bg-toolbar);
-  border-bottom: 1px solid var(--border);
+  /* B123-7：去掉下沿边框线 —— 编辑区大卡片（.layout-area）自带外框，
+     标题栏再画一条会形成双线，视觉上显得框上加框。 */
   user-select: none;
 }
 

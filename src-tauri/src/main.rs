@@ -139,8 +139,12 @@ fn main() {
                         continue;
                     }
                     for path in event.paths {
-                        // 事件路径也要规范化：它与监听时登记的那条必须是同一种写法才比得出来
-                        let norm = std::fs::canonicalize(&path).unwrap_or(path.clone());
+                        // 事件路径也要规范化：它与监听时登记的那条必须是同一种写法才比得出来。
+                        // B123-7：canonicalize 结果统一过 normalize_path（剥 \\?\ verbatim 前缀），
+                        // 与文档登记的 d.path 保持同一种写法，比对才不丢。
+                        let norm = commands::normalize_path(
+                            std::fs::canonicalize(&path).unwrap_or(path.clone()),
+                        );
                         let Some(state) = handle.try_state::<commands::AppState>() else {
                             continue;
                         };
@@ -193,6 +197,7 @@ fn main() {
             commands::export_file,
             commands::save_paste_image,
             commands::take_pending_files,
+            commands::reveal_in_folder,
             windows::window_payload,
             windows::open_satellite_window,
         ])

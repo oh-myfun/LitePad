@@ -809,3 +809,124 @@ describe("编辑区大卡片外框（B123，修正 B122：卡片上移到整个�
     }).toThrow();
   });
 });
+
+describe("标签右键菜单分组与「打开文件所在目录」（B123-7）", () => {
+  const at = (s: string, needle: string) => s.indexOf(needle);
+
+  it("菜单分组与顺序：关闭类 / 复制与分屏 / 窗口 / 路径，组分隔线隔开", () => {
+    const ts = stripLineComments(readFileSync("src/shell/tabstrip.ts", "utf-8"));
+    const labels = [
+      "关闭",
+      "关闭其他标签",
+      "关闭右侧标签",
+      "复制标签",
+      "复制到相邻面板",
+      "左右分屏",
+      "上下分屏",
+      "在新窗口打开",
+      "移回主窗口",
+      "打开文件所在目录",
+      "复制文件路径",
+    ];
+    let prev = -1;
+    for (const label of labels) {
+      const pos = at(ts, `label: "${label}"`);
+      expect(pos, `菜单项「${label}」必须存在`).toBeGreaterThan(-1);
+      expect(pos, `「${label}」必须保持分组顺序`).toBeGreaterThan(prev);
+      prev = pos;
+    }
+    // 三组分隔线，且各自落在组与组之间
+    expect((ts.match(/\{ separator: true \}/g) ?? []).length, "应有三组分隔线").toBe(3);
+    const sep1 = at(ts, "{ separator: true }");
+    const sep2 = ts.indexOf("{ separator: true }", sep1 + 1);
+    const sep3 = ts.indexOf("{ separator: true }", sep2 + 1);
+    expect(sep1, "第一组分隔线在关闭类之后").toBeGreaterThan(at(ts, 'label: "关闭右侧标签"'));
+    expect(sep1, "且在复制类之前").toBeLessThan(at(ts, 'label: "复制标签"'));
+    expect(sep2, "第二组分隔线在复制/分屏之后").toBeGreaterThan(at(ts, 'label: "上下分屏"'));
+    expect(sep2, "且在窗口类之前").toBeLessThan(at(ts, 'label: "在新窗口打开"'));
+    expect(sep3, "第三组分隔线在窗口类之后").toBeGreaterThan(at(ts, 'label: "在新窗口打开"'));
+    expect(sep3, "且在路径类之前").toBeLessThan(at(ts, 'label: "打开文件所在目录"'));
+
+    // fillMenu 不清洗分隔线，tabstrip 侧必须自带清洗（条件项缺席时防首/连续/尾分隔线）
+    expect(ts, "必须有分隔线清洗（头部/连续判定）").toContain(
+      "it.separator && (out.length === 0 || out[out.length - 1].separator)",
+    );
+    expect(ts, "必须有分隔线清洗（尾部裁剪）").toMatch(
+      /while \(out\.length > 0 && out\[out\.length - 1\]\.separator\) out\.pop\(\)/,
+    );
+  });
+
+  it("「打开文件所在目录」接线：回调接口 → 菜单项 → main.ts invoke → Rust 命令", () => {
+    const ts = stripLineComments(readFileSync("src/shell/tabstrip.ts", "utf-8"));
+    expect(ts, "回调接口必须有 onRevealInFolder").toContain(
+      "onRevealInFolder?: (tabId: number) => void",
+    );
+    // 只在「有路径 + 有回调」时显示：未命名文档不出这项
+    expect(ts, "菜单项必须以 t.path && cb.onRevealInFolder 为显示条件").toContain(
+      "t.path && cb.onRevealInFolder",
+    );
+
+    const mainTs = stripLineComments(readFileSync("src/main.ts", "utf-8"));
+    expect(mainTs, "main.ts 必须实现 onRevealInFolder 并 invoke 命令").toContain(
+      'invoke("reveal_in_folder"',
+    );
+
+    const rs = readFileSync("src-tauri/src/commands/mod.rs", "utf-8");
+    expect(rs, "Rust 必须有 reveal_in_folder 命令").toContain("pub fn reveal_in_folder");
+    expect(rs, "空路径必须被拒绝").toContain("文件没有路径");
+    expect(rs, "必须走 explorer /select,（免 opener 插件）").toContain("/select,");
+    const mainRs = readFileSync("src-tauri/src/main.rs", "utf-8");
+    expect(mainRs, "命令必须注册进 generate_handler").toContain("commands::reveal_in_folder");
+
+    // 反向验证：菜单项标签被误删必须被咬住（replaceAll：注释里也有同字样）
+    const BAD = ts.replaceAll("打开文件所在目录", "打开目录");
+    expect(BAD, "替身必须真的改过标签").not.toBe(ts);
+    expect(at(BAD, 'label: "打开文件所在目录"')).toBe(-1);
+    expect(() => {
+      expect(BAD, "替身缺失的「打开文件所在目录」必须被抓到").toContain("打开文件所在目录");
+    }).toThrow();
+  });
+
+  it("tooltip / 路径通道不再泄漏 \\?\\ verbatim 前缀（normalize_path 全覆盖）", () => {
+    const rs = readFileSync("src-tauri/src/commands/mod.rs", "utf-8");
+    expect(rs, "normalize_path 助手必须存在").toContain("pub fn normalize_path");
+    // 三处 canonicalize 全部过 normalize_path：裸 fs::canonicalize( 赋值不允许再出现
+    const bare = (rs.match(/=\s*fs::canonicalize\(/g) ?? []).length;
+    expect(bare, `还有 ${bare} 处 canonicalize 结果未过 normalize_path`).toBe(0);
+    // 监听那头的比对路径必须同一写法（否则文件监听失联）
+    const mainRs = readFileSync("src-tauri/src/main.rs", "utf-8");
+    expect(mainRs, "watcher 事件路径也必须过 normalize_path").toMatch(
+      /commands::normalize_path\(\s*std::fs::canonicalize/,
+    );
+
+    // 反向验证：摘掉某一处的 normalize_path 包装必须被咬住
+    const BAD = rs.replace(
+      "normalize_path(fs::canonicalize(&target).unwrap_or(target.clone()))",
+      "fs::canonicalize(&target).unwrap_or(target.clone())",
+    );
+    expect(BAD, "替身必须真的摘掉了包装").not.toBe(rs);
+    expect(() => {
+      const bareBad = (BAD.match(/=\s*fs::canonicalize\(/g) ?? []).length;
+      expect(bareBad, "替身的裸 canonicalize 必须被抓到").toBe(0);
+    }).toThrow();
+  });
+
+  it("标题栏下沿边框线移除（B123-7：编辑区大卡片自带外框，标题栏不再画线）", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    expect(ruleBlock(css, ".title-bar"), ".title-bar 不得再画 border-bottom").not.toContain(
+      "border-bottom",
+    );
+
+    // 反向验证：边框回潮必须被咬住
+    const BAD = css.replace(
+      ".title-bar {",
+      ".title-bar {\n  border-bottom: 1px solid var(--border);",
+    );
+    expect(BAD, "替身必须真的塞回了边框").not.toBe(css);
+    expect(() => {
+      expect(ruleBlock(BAD, ".title-bar"), "替身的标题栏边框必须被抓到").not.toContain(
+        "border-bottom",
+      );
+    }).toThrow();
+  });
+});

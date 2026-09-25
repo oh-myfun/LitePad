@@ -47,6 +47,8 @@ export interface TabstripCallbacks {
   onCloseOther?: (tabId: number) => void;
   onCloseRight?: (tabId: number) => void;
   onCopyPath?: (tabId: number) => void;
+  /** B123-7：在资源管理器中打开文件所在目录并选中该文件（explorer /select,） */
+  onRevealInFolder?: (tabId: number) => void;
   /** 同源复制：在本面板内复制一个标签实例（同文档多实例，内容同步） */
   onDuplicateTab?: (tabId: number) => void;
   /** 同源复制到视觉相邻面板（左右分屏对照源码/预览的快捷入口） */
@@ -304,12 +306,21 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
     }
   });
 
-  // 右键菜单
+  // 右键菜单（B123-7 分组整理：关闭类 / 复制与分屏 / 窗口 / 路径）
   el.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     e.stopPropagation();
     const items = [
       { label: "关闭", onSelect: () => cb.onClose(t.tabId) },
+      {
+        label: "关闭其他标签",
+        onSelect: () => cb.onCloseOther?.(t.tabId),
+      },
+      {
+        label: "关闭右侧标签",
+        onSelect: () => cb.onCloseRight?.(t.tabId),
+      },
+      { separator: true },
       {
         label: "复制标签",
         onSelect: () => cb.onDuplicateTab?.(t.tabId),
@@ -324,6 +335,7 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
         : []),
       ...(cb.onSplitH ? [{ label: "左右分屏", onSelect: () => cb.onSplitH?.(t.tabId) }] : []),
       ...(cb.onSplitV ? [{ label: "上下分屏", onSelect: () => cb.onSplitV?.(t.tabId) }] : []),
+      { separator: true },
       ...(cb.onOpenInNewWindow
         ? [
             {
@@ -335,14 +347,15 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
       ...(cb.onReturnToMain
         ? [{ label: "移回主窗口", onSelect: () => cb.onReturnToMain?.(t.tabId) }]
         : []),
-      {
-        label: "关闭其他标签",
-        onSelect: () => cb.onCloseOther?.(t.tabId),
-      },
-      {
-        label: "关闭右侧标签",
-        onSelect: () => cb.onCloseRight?.(t.tabId),
-      },
+      { separator: true },
+      ...(t.path && cb.onRevealInFolder
+        ? [
+            {
+              label: "打开文件所在目录",
+              onSelect: () => cb.onRevealInFolder?.(t.tabId),
+            },
+          ]
+        : []),
       ...(t.path
         ? [
             {
@@ -352,7 +365,15 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
           ]
         : []),
     ];
-    showPopupMenu(el, items);
+    // fillMenu 对分隔线不做清洗，这里自己保证：不出现首部 / 连续 / 尾部分隔线
+    // （条件项按上下文缺席时，分组边界可能整组消失，剩下的分隔线要收掉）。
+    const out: typeof items = [];
+    for (const it of items) {
+      if (it.separator && (out.length === 0 || out[out.length - 1].separator)) continue;
+      out.push(it);
+    }
+    while (out.length > 0 && out[out.length - 1].separator) out.pop();
+    showPopupMenu(el, out);
   });
 
   // B71：双击标签 = 最大化 / 还原本面板。

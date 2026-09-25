@@ -55,6 +55,22 @@ fn unwatch_file(state: &AppState, path: &Path) {
     }
 }
 
+/// 剥掉 Windows `fs::canonicalize` 返回的 verbatim 前缀（B123-7）：
+/// `\\?\C:\a\b.md` → `C:\a\b.md`，`\\?\UNC\server\share` → `\\server\share`。
+/// verbatim 路径只有 Rust std 认识，一旦透传给前端（tooltip / 复制路径 /
+/// explorer /select）就会多出 `\\?\`。所有 canonicalize 的结果都必须过这一道；
+/// ⚠️ 文件监听那头（main.rs）比对 `d.path == 事件路径` 也必须用同一写法，否则失联。
+pub fn normalize_path(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy().into_owned();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        return PathBuf::from(rest);
+    }
+    p
+}
+
 /// 取文件的「修改时刻（毫秒）+ 字节数」，用作**磁盘版本号**。
 ///
 /// 前端据此判断一次 `file-changed` 是不是自己刚写盘激起的回声：
@@ -359,7 +375,7 @@ pub async fn open_file(
     let info = eol::analyze(&decoded.text);
     let text = eol::to_lf(&decoded.text);
     let readonly = doc::is_readonly(&target);
-    let abs = fs::canonicalize(&target).unwrap_or(target.clone());
+    let abs = normalize_path(fs::canonicalize(&target).unwrap_or(target.clone()));
     // 读完之后再取版本号：这样「已知磁盘版本」与装进编辑器的内容严格对应
     let (mtime_ms, _) = disk_version(&target);
 
@@ -525,7 +541,7 @@ pub async fn save_file(
 
     atomic_write::atomic_write(&target, &bytes).map_err(|e| format!("保存失败：{}", e))?;
 
-    let abs = fs::canonicalize(&target).unwrap_or(target.clone());
+    let abs = normalize_path(fs::canonicalize(&target).unwrap_or(target.clone()));
     let readonly = doc::is_readonly(&abs);
 
     {
@@ -672,7 +688,7 @@ pub fn restore_backup(
     let abs = if raw.as_os_str().is_empty() {
         PathBuf::new()
     } else {
-        fs::canonicalize(&raw).unwrap_or(raw)
+        normalize_path(fs::canonicalize(&raw).unwrap_or(raw))
     };
     let readonly = !abs.as_os_str().is_empty() && doc::is_readonly(&abs);
 
@@ -760,6 +776,29 @@ mod tests {
 
     // 串行化所有触碰 PENDING_OPEN 全局队列的测试，避免并行下互相抢文件。
     static PENDING_LOCK: Mutex<()> = Mutex::new(());
+
+    /// B123-7：canonicalize 结果必须剥掉 verbatim 前缀，否则 tooltip / 复制路径 /
+    /// explorer /select 都会看到 `\\?\`。纯字符串手术，普通路径必须原样返回
+    /// （canonicalize 失败时的 fallback 不能被动过）。
+    #[test]
+    fn normalize_path_strips_verbatim_prefix() {
+        assert_eq!(
+            normalize_path(PathBuf::from(r"\\?\C:\a\b.md")),
+            PathBuf::from(r"C:\a\b.md")
+        );
+        assert_eq!(
+            normalize_path(PathBuf::from(r"\\?\UNC\server\share\a.md")),
+            PathBuf::from(r"\\server\share\a.md")
+        );
+        assert_eq!(
+            normalize_path(PathBuf::from(r"C:\a\b.md")),
+            PathBuf::from(r"C:\a\b.md")
+        );
+        assert_eq!(
+            normalize_path(PathBuf::from("rel/path.md")),
+            PathBuf::from("rel/path.md")
+        );
+    }
 
     /// IPC 线上字段名契约。
     ///
@@ -1109,4 +1148,20 @@ pub async fn save_paste_image(
         path: full.to_string_lossy().into_owned(),
         rel: format!("assets/{}", name),
     })
+}
+
+/// 在资源管理器中打开文件所在目录并选中该文件（B123-7，标签右键菜单）。
+/// 用系统自带 `explorer /select,`，不引 opener 插件；路径来自前端 doc.path，
+/// 已是 normalize_path 过的普通写法，explorer 直接认。
+#[tauri::command]
+pub fn reveal_in_folder(path: String) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("文件没有路径".into());
+    }
+    std::process::Command::new("explorer")
+        .arg("/select,")
+        .arg(&path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("打开文件所在目录失败：{e}"))
 }
