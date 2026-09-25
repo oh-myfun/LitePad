@@ -548,11 +548,12 @@ button:focus-visible {
   initial-value: #0000;
 }
 
+/* B116：去掉描边（用户要求）。活动标签只靠底色区分 —— fill 取编辑器背景色、
+   只有上方两角圆、底边不封口，与编辑区连成一体；侧边描边去掉后「舌片」的
+   根部过渡由肩部的纯色圆角补色完成（见下方肩部注释）。 */
 .tab-active .tab-fill {
   --tab-fill-bg: var(--tab-bg-active);
   background: var(--tab-fill-bg);
-  border: 1px solid var(--border);
-  border-bottom-color: transparent;
 }
 
 /* 悬停在活动标签上再亮一档：只改变量，底色与肩部一起平滑提亮 */
@@ -561,25 +562,28 @@ button:focus-visible {
 }
 
 /* 非活动分屏里，活动标签整体降一档：fill 退回「比条带亮一点」的 hover 档、
-   连边框一起去掉（不再与编辑器连成一体），文字变灰 —— 分屏时一眼看出焦点在哪块面板。
+   文字变灰 —— 分屏时一眼看出焦点在哪块面板。
    ⚠️ 必须连 :hover 一起覆盖，否则鼠标划过非焦点面板时标签会「亮回来」。
-   依赖 .layout-panel-active 实时正确 —— 由 main.ts 的 markActivePanel 同步。 */
+   依赖 .layout-panel-active 实时正确 —— 由 main.ts 的 markActivePanel 同步。
+   ⚠️ B116：必须覆盖的是 --tab-fill-bg 而不是 background —— 肩部的补色
+   box-shadow 引用这个变量，只改 background 的话标签降了档、肩部还停在
+   编辑器底色上（描边时代靠 border-color: transparent 掩盖，现在没边框了）。 */
 .layout-panel:not(.layout-panel-active) .tab-active {
   color: var(--fg-muted);
 }
 .layout-panel:not(.layout-panel-active) .tab-active .tab-fill,
 .layout-panel:not(.layout-panel-active) .tab-active:hover .tab-fill {
+  --tab-fill-bg: var(--tab-bg-hover);
   background: var(--tab-bg-hover);
-  border-color: transparent;
 }
 
-/* 活动标签左右两侧的「肩部」：把 fill 的侧边描边顺着圆角**弯到条带的底边**上，
-   否则活动标签就是一块硬贴上去的方砖，看不到「从条带里长出来」的感觉。
-   做法照抄 connectedEditorTabs.css 的 `.tab.active > .tab-fill::before/::after`：
-   在 fill 外侧的下角贴一个 shoulder 见方的盒子，只画**外边 + 底边**两条 1px、
-   外侧下角圆到 shoulder，再用 box-shadow 把这块补成标签底色 ——
-   于是「条带底边 → 活动标签侧边」是一条连续的圆角曲线，而不是直角折线。
-   shoulder = cap-radius = 圆角(4) + 描边(1) = 5px；阴影偏移/扩散取它的一半（2.5px）。 */
+/* 活动标签左右两侧的「肩部」：一个 shoulder 见方的小盒子贴在 fill 外侧下角，
+   用 box-shadow 把它补成标签底色、外侧下角圆到 shoulder ——
+   于是「条带底边 → 活动标签侧边」是一条连续的圆角曲线，而不是直角折线，
+   舌片才看得出「从条带里长出来」。
+   B116：描边整体去掉后，肩部只剩**纯色补色圆角**（原方案的 border 画线删除）；
+   补色引用 --tab-fill-bg，悬停提亮 / 非焦点降档时肩部跟着标签一起变。
+   shoulder 与 fill 顶部圆角同为 5px，阴影偏移/扩散取它的一半（2.5px）。 */
 .tab-active .tab-fill::before,
 .tab-active .tab-fill::after {
   content: "";
@@ -587,24 +591,18 @@ button:focus-visible {
   bottom: 0;
   width: 5px;
   height: 5px;
-  box-sizing: border-box;
   pointer-events: none;
 }
 
 .tab-active .tab-fill::before {
   right: 100%;
-  border-right: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
   border-bottom-right-radius: 5px;
-  /* B113-2：补色用 --tab-fill-bg（与标签底色同一变量），悬停/闪烁时肩部跟着一起变 */
   box-shadow: 2.5px 2.5px 0 2.5px var(--tab-fill-bg, var(--tab-bg-active));
   transition: box-shadow 0.12s ease;
 }
 
 .tab-active .tab-fill::after {
   left: 100%;
-  border-left: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
   border-bottom-left-radius: 5px;
   box-shadow: -2.5px 2.5px 0 2.5px var(--tab-fill-bg, var(--tab-bg-active));
   transition: box-shadow 0.12s ease;
@@ -616,98 +614,12 @@ button:focus-visible {
   content: none;
 }
 
-/* 降级态（非焦点面板）连描边一起撤掉：边框都没了，肩部的曲线自然也不该留。
-   ⚠️ B113-3：闪烁动画直接驱动伪元素 box-shadow，优先级高于这里的静态
-   box-shadow: none —— 必须连动画一起禁，否则非焦点面板闪烁时肩部会亮出来。 */
-.layout-panel:not(.layout-panel-active) .tab-active .tab-fill::before,
-.layout-panel:not(.layout-panel-active) .tab-active .tab-fill::after {
-  border-color: transparent;
-  box-shadow: none;
-  animation: none;
-}
-
-/* B47：活动标签切换后闪一次（从折叠列表点选、Ctrl+Tab 时定位用）。
-   动画结束回到常态，不保留结束态，避免遮住 .tab-active 的配色。
-   ⚠️ B55：结束态必须用 --tab-bg-active（标签底色），不能再写 var(--bg) ——
-   否则闪完会回到旧配色。这是一帧的视觉 bug，脚本测不出来，只能靠回归断言锁住。
-   ⚠️ B113：底色已搬到 .tab-fill，动画必须**作用在 fill 上** —— 继续挂在 .tab 上
-   会整块盖住 fill 的圆角与边框（且 .tab 本身现在永不上色，动画等于打在透明底上）。 */
-@keyframes tab-flash {
-  /* B113-2（方案 A）：动画**只驱动 --tab-fill-bg 与内描边**，不再直接写 background ——
-     fill 的底色每帧跟随这个变量。
-     ⚠️ B113-3：**别再指望肩部跟着这个变量走**。肩部补色虽然是同一个 var()
-     的 box-shadow，但那是「动画驱动自定义属性 → 继承到伪元素 → 间接更新
-     box-shadow」的链路，宿主的 background 与伪元素的 box-shadow 又各叠了一层
-     0.12s transition —— Chromium 对「动画帧间接变化」在两条路径上是否触发
-     transition 的行为并不一致，实测闪烁时肩部与标签对不上色。
-     ⇒ 肩部改由下方 tab-flash-shoulder-l/r **直接驱动 box-shadow**（同帧同色
-     公式、同时长同时序），闪烁期间两者 transition: none，逐帧必然同色。 */
-  0% {
-    --tab-fill-bg: color-mix(in srgb, var(--accent) 34%, var(--tab-bg-active));
-    box-shadow: inset 0 0 0 1px var(--accent);
-  }
-  70% {
-    --tab-fill-bg: color-mix(in srgb, var(--accent) 18%, var(--tab-bg-active));
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
-  }
-  100% {
-    --tab-fill-bg: var(--tab-bg-active);
-    box-shadow: inset 0 0 0 1px transparent;
-  }
-}
-
-/* 肩部闪烁（B113-3）：三帧颜色公式与 tab-flash 的 --tab-fill-bg 帧一一对应
-   （color-mix 同参数），左肩 offset 2.5px / 右肩 -2.5px，故拆两个 keyframes。
-   ⚠️ 与 fill 的动画必须**同时长同时序**（720ms ease-out 1）—— 一旦改时长，
-   两处必须一起改，否则又会出现「标签还没闪完肩部先变回去了」。 */
-@keyframes tab-flash-shoulder-l {
-  0% {
-    box-shadow: 2.5px 2.5px 0 2.5px color-mix(in srgb, var(--accent) 34%, var(--tab-bg-active));
-  }
-  70% {
-    box-shadow: 2.5px 2.5px 0 2.5px color-mix(in srgb, var(--accent) 18%, var(--tab-bg-active));
-  }
-  100% {
-    box-shadow: 2.5px 2.5px 0 2.5px var(--tab-bg-active);
-  }
-}
-
-@keyframes tab-flash-shoulder-r {
-  0% {
-    box-shadow: -2.5px 2.5px 0 2.5px color-mix(in srgb, var(--accent) 34%, var(--tab-bg-active));
-  }
-  70% {
-    box-shadow: -2.5px 2.5px 0 2.5px color-mix(in srgb, var(--accent) 18%, var(--tab-bg-active));
-  }
-  100% {
-    box-shadow: -2.5px 2.5px 0 2.5px var(--tab-bg-active);
-  }
-}
-
-.tab-flash .tab-fill {
-  animation: tab-flash 720ms ease-out 1;
-  /* 闪烁期间关掉静态 transition：它是为「悬停提亮」准备的平滑，
-     在闪烁里只会把动画帧值再拖慢一拍（肩部走的是直接驱动的动画，不等它） */
-  transition: none;
-}
-
-.tab-flash .tab-fill::before {
-  animation: tab-flash-shoulder-l 720ms ease-out 1;
-  transition: none;
-}
-
-.tab-flash .tab-fill::after {
-  animation: tab-flash-shoulder-r 720ms ease-out 1;
-  transition: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .tab-flash .tab-fill,
-  .tab-flash .tab-fill::before,
-  .tab-flash .tab-fill::after {
-    animation: none;
-  }
-}
+/* ==================================================================
+   B116：标签闪烁效果整体移除（用户要求）。原 B47「切换后闪一次」的
+   tab-flash 动画（含 B113-3 的肩部闪烁关键帧）与 tabstrip.ts 的
+   flashTab() 一并删除 —— 活动标签的定位靠 ensureVisible 滚动即可，
+   不再需要颜色闪动。守卫测试断言仓库里不得再有 tab-flash 痕迹。
+   ================================================================== */
 
 /* ==================================================================
    标签样式第二档：药丸（B114，设置页「外观 → 标签样式」切换）。

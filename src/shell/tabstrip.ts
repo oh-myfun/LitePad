@@ -210,8 +210,6 @@ export function renderTabstrip(
   // 无条件拽回来——活动标签在可视区外的右侧（新开文件的常态）时表现为「滚不动」。
   if (activeIdx >= 0 && activeId !== entry.lastActiveId) {
     ensureVisible(host, els[activeIdx]);
-    // 首次渲染（lastActiveId=-1）不闪，免得启动就跳一下
-    if (entry.lastActiveId >= 0) flashTab(els[activeIdx]);
   }
   entry.lastActiveId = activeId;
 }
@@ -235,19 +233,6 @@ function ensureVisible(host: HTMLElement, el: HTMLElement): void {
   } else if (right > host.scrollLeft + view) {
     host.scrollLeft = right - view;
   }
-}
-
-/**
- * 新激活的标签闪一次高亮。切换标签（含 Ctrl+Tab、跨面板拖入）时标签栏可能
- * 刚滚动过，闪一下便于定位。动画结束回到常态，不保留结束态。
- */
-function flashTab(el: HTMLElement | undefined): void {
-  if (!el || !el.isConnected) return;
-  el.classList.add("tab-flash");
-  const done = (): void => el.classList.remove("tab-flash");
-  el.addEventListener("animationend", done, { once: true });
-  // 动画被系统禁用 / jsdom 无动画时的兜底，避免 class 常驻
-  setTimeout(done, 1200);
 }
 
 function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {

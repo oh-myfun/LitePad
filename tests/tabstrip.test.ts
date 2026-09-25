@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { themeBlock, cssDecls, ruleBlock, stripLineComments } from "./static";
+import { themeBlock, cssDecls, ruleBlock, stripLineComments, stripCssComments } from "./static";
 
 describe("标签栏静态契约（从 regressions 拆出）", () => {
   it("B53 标签区改为横向滚动（折叠机制已整体移除，用户要求）", () => {
@@ -228,19 +228,22 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     expect(activeFill, "底色必须引用该变量（而不是直接写死）").toContain(
       "background: var(--tab-fill-bg)",
     );
-    expect(activeFill, "活动标签要描一圈边").toMatch(/border:\s*1px solid var\(--border\)/);
-    expect(activeFill, "底边不得封口（否则标签与编辑器之间多一条横线，就「连」不起来）").toContain(
-      "border-bottom-color: transparent",
-    );
+    // B116：描边整体去掉（用户要求），活动标签只靠底色区分
+    expect(activeFill, "活动标签不得再描边（用户要求去边框）").not.toMatch(/border/);
 
     const hoverFill = cssDecls(ruleBlock(css, ".tab:hover:not(.tab-active) .tab-fill"));
     expect(hoverFill, "悬停要有独立一档底色").toContain("var(--tab-bg-hover)");
 
-    // 肩部：把侧边描边顺圆角弯到条带底边，否则活动标签像一块硬贴上去的方砖
+    // 肩部：fill 外侧下角的纯色圆角补色，让「条带底边 → 标签侧边」是圆角曲线而非直角
+    // （B116：描边删除后肩部只剩 box-shadow 补色 + radius，不再画线）
     expect(css, "活动标签左侧要有肩部圆角").toMatch(/\.tab-active \.tab-fill::before/);
     expect(css, "活动标签右侧要有肩部圆角").toMatch(/\.tab-active \.tab-fill::after/);
     expect(css, "首尾标签的外侧不画肩（那里没有邻居可接）").toMatch(
       /:first-child \.tab-fill::before/,
+    );
+    const shoulderAfter = cssDecls(ruleBlock(css, ".tab-active .tab-fill::after"));
+    expect(shoulderAfter, "肩部不得再画线（描边已整体移除）").not.toMatch(
+      /border-(left|bottom):\s*1px/,
     );
 
     // 三档底色 + 条带表面色，两套主题都要齐：缺一个就是某主题下某状态完全没反馈
@@ -256,24 +259,15 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
       }
     }
 
-    // tab-flash 结束态必须回到标签底色。B113-2（方案 A）：动画**只驱动 --tab-fill-bg**
-    // —— fill 底色与肩部补色共用这个变量，变量一动三者同步变色；
-    // 若关键帧里直接写 background，肩部就会在闪烁时被甩在旧色上。
-    const flash = css.match(/@keyframes tab-flash\s*\{[\s\S]*?\n\}/)?.[0] ?? "";
-    expect(flash, "应有 tab-flash 关键帧").toBeTruthy();
-    expect(flash, "闪烁必须驱动 --tab-fill-bg（肩部与底色共用它）").toContain("--tab-fill-bg:");
-    expect(flash, "结束态必须回到标签底色").toContain("--tab-fill-bg: var(--tab-bg-active)");
-    expect(flash, "关键帧不得再引用旧配色 var(--bg)").not.toContain("var(--bg))");
-    expect(flash, "关键帧不得直接写 background（必须走变量，否则肩部跟不上）").not.toMatch(
-      /^\s*background:/m,
-    );
-    // 自定义属性动画要有平滑插值，必须先注册成 <color>（否则是离散跳变）
+    // B116：闪烁效果整体移除（用户要求）——CSS 与 TS 两侧都不得再有 tab-flash 痕迹
+    // （stripCssComments 剥掉说明性注释后断言，避免被「移除记录」误伤）
+    const cssCode = stripCssComments(css);
+    expect(cssCode, "CSS 不得再有任何 tab-flash 规则或关键帧").not.toContain("tab-flash");
+    // 自定义属性动画要有平滑插值，必须先注册成 <color>（悬停提亮仍依赖它）
     expect(css, "--tab-fill-bg 必须注册成 color 类型").toMatch(
       /@property --tab-fill-bg\s*\{[^}]*syntax:\s*"<color>"/,
     );
-    // B113：底色搬到 fill 后动画也必须跟着搬 —— 挂在 .tab 上等于打在透明底上
-    expect(css, "闪一下必须作用在 .tab-fill 上").toMatch(/\.tab-flash \.tab-fill/);
-    // B113-2 核心：肩部补色与标签底色**同源**（同一个变量），悬停/闪烁才不会再对不上色
+    // B113-2 核心：肩部补色与标签底色**同源**（同一个变量），悬停提亮才不会再对不上色
     // ⚠️ ::before 有两条规则（公共占位 + 定位/补色），用 filter 取含 box-shadow 的那条
     const shoulder = cssDecls(ruleBlock(css, ".tab-active .tab-fill::before", "box-shadow"));
     expect(shoulder, "肩部补色必须引用 --tab-fill-bg").toContain("var(--tab-fill-bg");
@@ -328,66 +322,33 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     expect(insert, "拖拽插入线必须与药丸行等高").toMatch(/top:\s*4px/);
     expect(insert, "拖拽插入线必须让开滚动条").toMatch(/bottom:\s*4px/);
   });
-  it("B113-3 闪烁时肩部直接驱动：同帧同色公式 + 同时长同时序 + 闪烁期禁 transition", () => {
-    // 用户实测：闪烁时肩部与标签仍有色差。B113-2 依赖「动画驱动 --tab-fill-bg →
-    // 继承到伪元素 → 间接更新 box-shadow」，宿主与伪元素又各叠一层 0.12s transition
-    // —— Chromium 对动画帧间接变化在两条路径上是否触发 transition 行为不一致。
-    // 修法 = 肩部由独立 keyframes **直接驱动 box-shadow**，不再依赖继承传播。
+  it("B116 闪烁效果整体移除：CSS 无 tab-flash 规则、TS 无 flashTab（含反向验证）", () => {
+    // B47 引入的「切换后闪一次」被用户要求整体移除（B116）。
+    // 守卫断言两侧源码都不得再有 tab-flash / flashTab 痕迹：
+    // CSS 侧剥块注释（移除记录里提到它没关系），TS 侧剥整行注释（B79 教训）。
     const css = readFileSync("src/styles/global.css", "utf-8");
-
-    const frames = (name: string): string =>
-      css.match(new RegExp(`@keyframes ${name}\\s*\\{[\\s\\S]*?\\n\\}`))?.[0] ?? "";
-    for (const side of ["l", "r"] as const) {
-      const kf = frames(`tab-flash-shoulder-${side}`);
-      expect(kf, `应有肩部闪烁关键帧 tab-flash-shoulder-${side}`).toBeTruthy();
-      // 三帧颜色公式必须与 tab-flash 的 --tab-fill-bg 帧一一对应（color-mix 同参数），
-      // 否则同一时刻标签与肩部是两个颜色 —— 这正是用户报的差异。
-      expect(kf, "0% 帧 = accent 34% 混合").toContain(
-        "color-mix(in srgb, var(--accent) 34%, var(--tab-bg-active))",
-      );
-      expect(kf, "70% 帧 = accent 18% 混合").toContain(
-        "color-mix(in srgb, var(--accent) 18%, var(--tab-bg-active))",
-      );
-      expect(kf, "100% 帧回到标签底色").toContain(
-        `box-shadow: ${side === "l" ? "" : "-"}2.5px 2.5px 0 2.5px var(--tab-bg-active)`,
-      );
-    }
-    // 左右肩的 offset 方向不同：before 向右(2.5px) / after 向左(-2.5px)，各用各的关键帧
-    expect(css).toMatch(
-      /\.tab-flash \.tab-fill::before\s*\{[^}]*animation:\s*tab-flash-shoulder-l/,
-    );
-    expect(css).toMatch(/\.tab-flash \.tab-fill::after\s*\{[^}]*animation:\s*tab-flash-shoulder-r/);
-
-    // 与 fill 的动画同时长同时序：改了一处不改另一处 = 肩部先/后变回去，又是色差
-    const fillAnim = cssDecls(ruleBlock(css, ".tab-flash .tab-fill", "animation"));
-    expect(fillAnim, "fill 动画 720ms ease-out").toContain("animation: tab-flash 720ms ease-out 1");
-    expect(css, "肩部动画必须同为 720ms ease-out 1").toMatch(
-      /animation:\s*tab-flash-shoulder-l 720ms ease-out 1[\s\S]*?animation:\s*tab-flash-shoulder-r 720ms ease-out 1/,
+    const cssCode = stripCssComments(css);
+    expect(cssCode, "CSS 不得再有 tab-flash 关键帧或规则").not.toContain("tab-flash");
+    expect(cssCode, "不得残留 animation: 挂载（tab-flash 系动画全删）").not.toMatch(
+      /animation:\s*tab-flash/,
     );
 
-    // 闪烁期间禁静态 transition：它是为悬停平滑准备的，会把动画帧值再拖慢一拍
-    const flashFill = cssDecls(ruleBlock(css, ".tab-flash .tab-fill"));
-    expect(flashFill, "闪烁期间 fill 关 transition").toContain("transition: none");
-    for (const side of ["l", "r"] as const) {
-      const block = cssDecls(
-        ruleBlock(css, `.tab-flash .tab-fill::${side === "l" ? "before" : "after"}`),
-      );
-      expect(block, `闪烁期间肩部(${side})关 transition`).toContain("transition: none");
-    }
+    const ts = readFileSync("src/shell/tabstrip.ts", "utf-8");
+    const tsCode = stripLineComments(ts);
+    expect(tsCode, "tabstrip.ts 不得再有 flashTab 函数/调用").not.toContain("flashTab");
+    expect(tsCode, "不得再给标签挂 tab-flash 类").not.toContain('classList.add("tab-flash")');
 
-    // reduced-motion 与非焦点面板降级都必须连肩部动画一起禁，否则会闪出孤零零的肩部
-    const reduced =
-      css.match(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\n\}/)?.[0] ?? "";
-    expect(reduced, "reduced-motion 必须禁肩部闪烁").toContain(".tab-flash .tab-fill::before");
-    expect(reduced).toContain(".tab-flash .tab-fill::after");
-    const dimmed = cssDecls(
-      ruleBlock(
-        css,
-        ".layout-panel:not(.layout-panel-active) .tab-active .tab-fill::before",
-        "animation",
-      ),
-    );
-    expect(dimmed, "非焦点面板降级必须禁肩部闪烁动画").toContain("animation: none");
+    // 反向验证：退化替身（把 flashTab 调用与 tab-flash keyframes 塞回去）必须被咬住，
+    // 证明这些 not 断言不是「怎么写都能过」的恒真假绿。
+    const BAD_TS = tsCode + "\n  if (entry.lastActiveId >= 0) flashTab(els[activeIdx]);\n";
+    expect(BAD_TS, "退化替身必须含 flashTab").toContain("flashTab");
+    expect(() => {
+      expect(stripLineComments(BAD_TS), "替身里 flashTab 必须被抓到").not.toContain("flashTab");
+    }).toThrow();
+    const BAD_CSS = cssCode + "\n@keyframes tab-flash {\n  0% { --tab-fill-bg: red; }\n}\n";
+    expect(() => {
+      expect(stripCssComments(BAD_CSS), "替身里 tab-flash 必须被抓到").not.toContain("tab-flash");
+    }).toThrow();
   });
 });
 

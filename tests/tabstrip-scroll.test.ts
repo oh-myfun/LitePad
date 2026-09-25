@@ -272,14 +272,12 @@ describe("B53 脏标记与关闭按钮共用槽位（VS Code 行为）", () => {
   });
 });
 
-describe("B53 活动标签切换后闪一下（沿用 B47 的定位提示）", () => {
-  it("首次渲染不闪，切换后闪新活动标签", () => {
+describe("B116 闪烁效果移除（原 B47/B53「切换后闪一下」）", () => {
+  it("首次渲染不闪，切换后也不闪（tab-flash 已整体移除）", () => {
     const { host } = mount(6, 0);
-    expect(host.querySelector(".tab-flash"), "首次渲染不该闪").toBeNull();
+    expect(host.querySelector(".tab-flash"), "首次渲染不该有 tab-flash").toBeNull();
 
     renderTabstrip(host, tabs(6, 5), cb());
-    const flashed = host.querySelector<HTMLElement>(".tab-flash");
-    expect(flashed, "新活动标签必须带闪烁提示").toBeTruthy();
-    expect(flashed!.textContent).toContain("tab6");
+    expect(host.querySelector(".tab-flash"), "切换后也不得再挂 tab-flash 类").toBeNull();
   });
 });
