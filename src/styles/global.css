@@ -2011,7 +2011,12 @@ button:focus-visible {
 .layout-sep::after {
   content: "";
   position: absolute;
-  background: var(--sep-line);
+  /* B122：静息**透明** —— 每个面板自己就是一张带边框的圆角卡片（见
+     .layout-panel 的 B122 注释），相邻两张卡的边框天然构成面板分界，
+     再画一条线就是三线叠粗；对齐 VS Code sash 的行为：平时隐形、
+     悬停/拖拽才显形（下面的 accent 高亮规则不受影响，B59/B60 照旧）。
+     --sep-line 仍由大纲分隔条（preview.css 的 .toc-resizer）沿用。 */
+  background: transparent;
   transition:
     background var(--transition),
     width var(--transition),
@@ -2142,7 +2147,17 @@ button:focus-visible {
   flex: 1 1 auto;
   min-width: 120px;
   min-height: 80px;
-  border: 1px solid transparent;
+  /* B122（用户裁决，对标 VS Code Modern UI 的 editorBorder.css）：
+     每个面板 = 一张**圆角卡片** —— 整个「标签条 + 编辑区」外面包一圈
+     1px 边框 + 大圆角（VS Code：editorGroup.border + cornerRadius-large=8px +
+     overflow hidden 裁出圆角，box-sizing border-box 不引起重排）。
+     边框颜色用户点名「和非活动 tab 的 hover 颜色一样」→ 直接复用 --tab-bg-hover
+     （深 ≈#2b2d30 / 浅 ≈#e8e9ea，与实拍 VS Code 的 #2a2b2c 同档）。
+     1px 边框原本就占位（transparent），改色零布局位移；卡片内所有内部分割线
+     （条带下沿、状态栏上沿、分屏 sep 静息线）全部退场（见各自 B122 注释）。 */
+  border: 1px solid var(--tab-bg-hover);
+  border-radius: 8px;
+  overflow: hidden;
   /* 拖拽落点预览层（.split-preview）的定位基准：
      必须锚定到面板自身，否则嵌套分屏时高亮画在整个布局区的一半上 */
   position: relative;
@@ -2257,16 +2272,11 @@ button:focus-visible {
   padding: 4px 4px 0 0;
   /* 标签条**表面色**（VS Code 的 editorGroupHeader.tabsBackground）：比编辑器背景差一档，
      活动标签则取编辑器背景色（见 .tab-active .tab-fill）——「哪块与编辑器连着」一眼可辨。
-     B121：头尾之间的 1px 分割细线从 .panel-head 的 border-bottom 改为**背景渐变**
-     画在条带自己的最底部 —— ① 舌片（子元素）天然画在宿主背景之上，走过后细线
-     自动消失，「活动标签下方无边框、与编辑区融为一体」；② background-attachment
-     默认 scroll = 固定在条带可见盒上，横向滚动时细线不会跟着内容跑掉；③ 只有
-     gradient 一层，比 ::after 伪元素少一层层叠纠纷。 */
-  background: linear-gradient(
-    to bottom,
-    var(--tab-strip-bg) calc(100% - 1px),
-    var(--border) calc(100% - 1px)
-  );
+     B122：条带下沿**不再画线**（B121 的渐变细线移除）——用户裁决「标签非活动区
+     下沿也没有边框」：条带与下方内容的分界就是两块底色的交界本身（VS Code 同款，
+     其条带 #202122 直接接内容 #121314，无中间线）；面板的整体轮廓交给
+     .layout-panel 的圆角卡片边框（见该处 B122 注释）。 */
+  background: var(--tab-strip-bg);
   min-width: 0;
   /* 拖拽 tab 的插入指示线（.tab-insert）以 strip 为定位基准 */
   position: relative;
@@ -2351,10 +2361,8 @@ button:focus-visible {
   padding: 0 4px;
   /* 不被标签栏挤扁：标签栏滚动，操作按钮恒定可见 */
   flex: 0 0 auto;
-  /* B121：头部细线的 ops 段 —— 条带那半段画在 .panel-tabstrip 背景里
-     （会被舌片盖住），ops 段没有标签、用自身 border-bottom 补齐同一根线。
-     align-items: stretch 下 ops 与条带等高（28px），border-box 内缩不破布局。 */
-  border-bottom: 1px solid var(--border);
+  /* B122：B121 的 border-bottom 补线随条带细线一并移除 —— 条带与内容之间
+     不再有任何线（见 .panel-tabstrip 的 B122 注释）。 */
 }
 
 /* 面板操作按钮：B54 起只剩「移除分屏」⨯（左右/上下分屏按钮已去掉，
@@ -2597,7 +2605,9 @@ body.tab-drag-active * {
   flex: 0 0 26px;
   padding: 0 8px;
   background: var(--bg-status);
-  border-top: 1px solid var(--border);
+  /* B122：border-top 移除（用户裁决「状态栏上面没有细线」）—— 与上方内容的
+     分界就是底色交界本身；VS Code 实拍同款（其状态栏上沿 #373737 ≈ 自身
+     #383838，肉眼无形）。卡片下边框（.layout-panel）承担轮廓职责。 */
   font-size: 12px;
   color: var(--fg-muted);
   user-select: none;

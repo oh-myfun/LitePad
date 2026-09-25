@@ -790,9 +790,13 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     const line = previewCss.match(/\.toc-resizer::after\s*\{[^}]*\}/)?.[0] ?? "";
     expect(line, "大纲分隔条细线必须由伪元素画").toContain("background: var(--sep-line)");
     // 分屏分隔条：颜色在共享的 .layout-sep::after，几何按方向类定位
-    // （B59 S5：线色从通用 --border 抽成 --sep-line，两条分隔条同步改并共用）
+    // （B59 S5：线色从通用 --border 抽成 --sep-line；B122 起分屏侧静息透明 ——
+    //   面板本身是带边框的圆角卡片，相邻卡片边框即分界，静息再画线就是三线叠粗；
+    //   --sep-line 只剩大纲分隔条（.toc-resizer）沿用）
     const sepLine = globalCss.match(/\.layout-sep::after\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(sepLine, "分屏分隔条细线必须由伪元素画").toContain("background: var(--sep-line)");
+    expect(sepLine, "分屏分隔条静息必须透明（B122 卡片边框替代细线）").toContain(
+      "background: transparent",
+    );
     expect(globalCss, "横向分隔条的细线几何").toMatch(/\.layout-sep-h::after\s*\{/);
     expect(globalCss, "纵向分隔条的细线几何").toMatch(/\.layout-sep-v::after\s*\{/);
 
@@ -846,9 +850,10 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     // S4 缩放期间抑制面板内过渡（拖动不发飘）
     expect(css, "缩放期间抑制过渡").toMatch(/body\.layout-dragging \.layout-panel \*/);
 
-    // S5 线色抽成 --sep-line，分屏与大纲两条分隔条共用（B28 要求同款），两套主题齐补
-    expect(css, "分屏分隔条线色走 --sep-line").toMatch(
-      /\.layout-sep::after\s*\{[^}]*background:\s*var\(--sep-line\)/,
+    // S5 线色抽成 --sep-line（B59）；B122 起分屏侧静息透明（卡片边框替代细线），
+    // --sep-line 只剩大纲分隔条沿用，两套主题仍须保留定义
+    expect(css, "分屏分隔条静息必须透明（B122 卡片边框替代细线）").toMatch(
+      /\.layout-sep::after\s*\{[^}]*background:\s*transparent/,
     );
     expect(previewCss, "大纲分隔条线色同款").toMatch(
       /\.toc-resizer::after\s*\{[^}]*background:\s*var\(--sep-line\)/,

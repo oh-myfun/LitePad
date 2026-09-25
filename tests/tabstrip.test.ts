@@ -281,16 +281,11 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     expect(themeBlock(css, "light"), "浅色活动标签仍取 --bg（纯白）").toContain(
       "--tab-bg-active: var(--bg);",
     );
-    // B121：ops 段用自身 border-bottom 补齐头部细线的右半段
+    // B122：ops 段同样无线（B121 的补线随条带细线一并退场）
     const ops = cssDecls(ruleBlock(css, ".panel-ops"));
-    expect(ops, "ops 段必须有 border-bottom 补齐细线（B121）").toContain(
-      "border-bottom: 1px solid var(--border)",
-    );
-    // B121：分屏分割线降对比（150% 下高对比色被抗锯齿糊成粗线）
-    expect(
-      themeBlock(css, "dark"),
-      "深色分割线必须低调（对齐 VS Code editorGroup.border 观感，B121）",
-    ).toContain("--sep-line: #2e3034;");
+    expect(ops, "ops 段不得再有 border-bottom（B122 细线整体退场）").not.toContain("border-bottom");
+    // B122：分屏分隔条静息透明、外框改由卡片边框承担 —— 契约见
+    // 「编辑区圆角卡片外框（B122）」一节（--sep-line 仅剩大纲分隔条沿用）。
 
     // B116：闪烁效果整体移除（用户要求）——CSS 与 TS 两侧都不得再有 tab-flash 痕迹
     // （stripCssComments 剥掉说明性注释后断言，避免被「移除记录」误伤）
@@ -323,11 +318,12 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     // B113：connected 标签**相连**，不再靠 gap 撑缝（缝会让 fill 接不上，
     // 活动标签与编辑器之间就出现断口）；分隔感改由活动标签的凸起给出。
     expect(strip, "标签必须相连（gap 0），不能留缝隙").toMatch(/gap:\s*0/);
-    // B121：条带表面 = 底色 + 最底部 1px 分割细线（背景渐变画法）——
-    // 细线画在条带内部才能被舌片盖住，「活动标签下方无边框」靠它实现
-    expect(strip, "条带表面 = 底色 + 最底部 1px 细线（渐变画法，B121）").toMatch(
-      /background:\s*linear-gradient\(\s*to bottom,\s*var\(--tab-strip-bg\) calc\(100% - 1px\),\s*var\(--border\) calc\(100% - 1px\)\s*\)/,
+    // B122：条带下沿不再画线（B121 的渐变细线移除）——条带与内容的分界就是
+    // 两块底色的交界本身；面板整体轮廓交给 .layout-panel 的圆角卡片边框
+    expect(strip, "条带表面必须是纯底色（下沿无线，B122）").toContain(
+      "background: var(--tab-strip-bg)",
     );
+    expect(strip, "条带不得再画底部细线（B122）").not.toContain("linear-gradient");
     expect(
       strip,
       "内边距：上 4 / 右 4 / 下 0 / 左 0（B113-2：左侧不留白，下方让给编辑区）",
@@ -663,5 +659,62 @@ describe("紧凑档悬浮 × 的渐变垫底（B118，对齐 VS Code）", () => 
       cssDecls(ruleBlock(withoutPad, ".panel-tabstrip")),
       "替身自证：无关规则不受影响",
     ).toBeTruthy();
+  });
+});
+
+describe("编辑区圆角卡片外框（B122，对标 VS Code Modern UI editorBorder.css）", () => {
+  it("面板 = 圆角卡片：外框 1px hover 同色、8px 圆角；条带/状态栏/分屏静息线全部退场", () => {
+    // 用户裁决：标签非活动区下沿、状态栏上沿都不再有细线；整个标签+编辑区
+    // 外面只有一圈圆角边框，颜色 ≈ 非活动标签的 hover 底色。
+    const css = readFileSync("src/styles/global.css", "utf-8");
+
+    // 卡片外框：VS Code 的 .part.editor 同款三件套（border + radius + overflow）
+    const panel = cssDecls(ruleBlock(css, ".layout-panel"));
+    expect(panel, "面板外框必须是 1px 卡片边框（颜色=非活动 hover 色）").toContain(
+      "border: 1px solid var(--tab-bg-hover)",
+    );
+    expect(panel, "卡片圆角 8px（VS Code cornerRadius-large）").toContain("border-radius: 8px");
+    expect(panel, "overflow hidden 裁出圆角（VS Code 同款）").toContain("overflow: hidden");
+
+    // 状态栏上沿无线
+    const statusbar = cssDecls(ruleBlock(css, ".statusbar"));
+    expect(statusbar, "状态栏不得再画 border-top（B122）").not.toContain("border-top");
+
+    // 分屏分隔条静息隐形（VS Code sash 行为）：相邻卡片边框天然构成分界
+    const sep = css.match(/\.layout-sep::after\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(sep, "分屏分隔条静息必须透明（B122）").toContain("background: transparent");
+    // 悬停/拖拽高亮不受影响（B59/B60）：accent + 加宽
+    const hl = css.match(/\.layout-sep:hover::after,[\s\S]{0,80}?\{[^}]*\}/)?.[0] ?? "";
+    expect(hl, "分隔条悬停高亮仍为 accent").toMatch(/var\(--accent/);
+
+    // 大纲分隔条（preview.css .toc-resizer）不受影响，仍走 --sep-line
+    const previewCss = readFileSync("src/styles/preview.css", "utf-8");
+    expect(previewCss, "大纲分隔条线色仍走 --sep-line").toMatch(
+      /\.toc-resizer::after\s*\{[^}]*background:\s*var\(--sep-line\)/,
+    );
+
+    // 反向验证①：分屏分隔条静息回潮（透明改回实色线）必须被咬住
+    const sepBlock = (src: string) => src.match(/\.layout-sep::after\s*\{[^}]*\}/)?.[0] ?? "";
+    const BAD_SEP = css.replace(
+      /\.layout-sep::after\s*\{[^}]*\}/,
+      '.layout-sep::after {\n  content: "";\n  position: absolute;\n  background: var(--sep-line);\n}',
+    );
+    expect(BAD_SEP, "替身必须真的替换过").not.toBe(css);
+    expect(sepBlock(BAD_SEP), "替身自证：静息实色线已被塞回").toContain("var(--sep-line)");
+    expect(() => {
+      expect(sepBlock(BAD_SEP), "替身的静息实色线必须被抓到").toContain("background: transparent");
+    }).toThrow();
+
+    // 反向验证②：状态栏 border-top 回潮必须被咬住
+    const BAD_SB = css.replace(
+      "background: var(--bg-status);",
+      "background: var(--bg-status);\n  border-top: 1px solid var(--border);",
+    );
+    expect(() => {
+      expect(
+        cssDecls(ruleBlock(BAD_SB, ".statusbar")),
+        "替身的状态栏上边线必须被抓到",
+      ).not.toContain("border-top");
+    }).toThrow();
   });
 });
