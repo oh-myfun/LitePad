@@ -797,6 +797,22 @@ button:focus-visible {
   /* pill 档悬停时活动 fill 提亮一档（见 pill 块 B119 注释），垫色跟着提 */
   background: linear-gradient(to right, transparent, var(--tab-bg-active-hover) 14px);
 }
+/* B124-3：非焦点面板里的活动标签，fill 已被降档（见上面
+   .layout-panel:not(.layout-panel-active) .tab-active .tab-fill → --tab-bg-hover），
+   垫色必须跟着降 —— 否则垫是一块比标签底色亮的补丁，× 像浮在异物上。
+   ⚠️ pill 档悬停仍提亮一档（fill 走 --tab-bg-active-hover），单列一条覆盖。 */
+:root[data-tab-reserve="off"]
+  .layout-panel:not(.layout-panel-active)
+  .tab-active:not(.tab-dirty):hover
+  .tab-action::before {
+  background: linear-gradient(to right, transparent, var(--tab-bg-hover) 14px);
+}
+:root[data-tab-reserve="off"][data-tab-style="pill"]
+  .layout-panel:not(.layout-panel-active)
+  .tab-active:not(.tab-dirty):hover
+  .tab-action::before {
+  background: linear-gradient(to right, transparent, var(--tab-bg-active-hover) 14px);
+}
 
 .tab-name {
   /* B113：底色层 .tab-fill 是 absolute，会盖住普通流内容 —— 必须提上来
@@ -955,6 +971,27 @@ button:focus-visible {
 .layout-panel:not(.layout-panel-active) .tab-action:focus-within .tab-close,
 .layout-panel:not(.layout-panel-active) .tab:hover:not(.tab-dirty) .tab-close,
 .layout-panel:not(.layout-panel-active) .tab-active:not(.tab-dirty) .tab-close {
+  opacity: 0.5;
+}
+
+/* B124-3：紧凑档要把上面第四条「非焦点面板的活动标签**常驻** ×」收回去。
+   ⚠️ 它和紧凑档的「活动标签 × 只在悬停出现」特异度**完全相同**（都是 0,5,0），
+      靠源码顺序取胜（它排在后面）⇒ 非焦点面板里活动标签常驻一个 50% 的 ×，
+      而垫底只在悬停/聚焦时淡入 —— 不悬停时 × 就是裸压在文件名上，B124 同款病。
+   ⚠️ 收回条件排除 :hover 与 :focus-within 两个口（与垫底的出场口逐条对齐）：
+      漏了 :focus-within，键盘 Tab 到关闭键时 × 会变成隐形按钮。 */
+:root[data-tab-reserve="off"]
+  .layout-panel:not(.layout-panel-active)
+  .tab-active:not(.tab-dirty):not(:hover):not(:focus-within)
+  .tab-close {
+  opacity: 0;
+}
+/* 悬停/聚焦时仍要**暗一档**（0.5）而不是满亮：紧凑档那条 hover 规则特异度更高
+   （0,6,0）会把降档压掉，焦点感就没了 —— 这里补回来，与「焦点在哪」的表达一致。 */
+:root[data-tab-reserve="off"]
+  .layout-panel:not(.layout-panel-active)
+  .tab-active:not(.tab-dirty):hover
+  .tab-close {
   opacity: 0.5;
 }
 

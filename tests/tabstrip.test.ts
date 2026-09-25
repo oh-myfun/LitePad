@@ -796,6 +796,77 @@ describe("紧凑档悬浮 × 的渐变垫底（B118，对齐 VS Code）", () => 
   });
 });
 
+describe("非焦点面板里活动标签的 × 与垫色（B124-3）", () => {
+  it("紧凑档必须收回「非焦点面板活动标签常驻 ×」，且悬停/聚焦两个口都留着", () => {
+    // 病：`.layout-panel:not(.layout-panel-active) .tab-active .tab-close{opacity:.5}`
+    //     与紧凑档「活动标签 × 只在悬停出现」特异度相同（都是 0,5,0）、排在后面 ⇒ 赢。
+    //     于是非焦点面板的活动标签常驻一个 50% 的 ×，而垫底只在悬停/聚焦淡入 ——
+    //     不悬停时 × 就是裸压在文件名上（B124 同款）。
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const retractRule = (src: string) =>
+      src.match(
+        /:root\[data-tab-reserve="off"\][\s\S]{0,200}?\.layout-panel:not\(\.layout-panel-active\)[\s\S]{0,200}?\.tab-close\s*\{[^}]*\}/,
+      )?.[0] ?? null;
+    const r = retractRule(css);
+    expect(r, "紧凑档必须有收回非焦点常驻 × 的规则").toBeTruthy();
+    expect(r, "收回必须带 opacity: 0").toMatch(/opacity:\s*0/);
+    // ⚠️ 两个出场口都要留：漏 :focus-within 会让键盘 Tab 到关闭键时 × 隐形
+    expect(r, "收回必须豁免悬停").toContain(":not(:hover)");
+    expect(r, "收回必须豁免键盘聚焦").toContain(":not(:focus-within)");
+
+    // 悬停/聚焦时仍要暗一档（0.5）：紧凑档那条 hover 规则特异度更高会把它压掉
+    const dim = css.match(
+      /:root\[data-tab-reserve="off"\][\s\S]{0,200}?\.layout-panel:not\(\.layout-panel-active\)[\s\S]{0,200}?\.tab-active:not\(\.tab-dirty\):hover\s+\.tab-close\s*\{[^}]*\}/,
+    )?.[0];
+    expect(dim, "非焦点面板的活动标签悬停时 × 必须暗一档").toBeTruthy();
+    expect(dim, "降档值仍是 0.5（与焦点面板的 1 形成对比）").toMatch(/opacity:\s*0\.5/);
+
+    // 反向验证：去掉悬停/聚焦豁免（收回变成无条件）必须被咬住
+    const BAD = css.replace(/:not\(:hover\):not\(:focus-within\)/g, "");
+    expect(BAD, "替身必须真的去掉了豁免").not.toBe(css);
+    const bad = retractRule(BAD);
+    expect(bad, "替身仍能取到收回规则（内容变了，不是取不到）").toBeTruthy();
+    expect(bad, "替身缺失的悬停/聚焦豁免必须被抓到（否则键盘够不到 ×）").not.toContain(
+      ":not(:hover)",
+    );
+  });
+
+  it("非焦点面板活动标签的垫色跟随 fill 降档（connected=hover 档，pill=悬停提亮档）", () => {
+    // 非焦点面板里活动标签的 fill 已被降到 --tab-bg-hover（见
+    // .layout-panel:not(.layout-panel-active) .tab-active .tab-fill），
+    // 垫色必须跟着降，否则垫是一块比标签底色亮的补丁。
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const pads = [
+      ...css.matchAll(
+        /\.layout-panel:not\(\.layout-panel-active\)[\s\S]{0,200}?\.tab-action::before\s*\{[^}]*\}/g,
+      ),
+    ].map((m) => m[0]);
+    expect(pads.length, "非焦点面板的活动垫应有 connected / pill 两条").toBe(2);
+    expect(pads[0], "connected 非焦点垫跟随降档后的 fill（--tab-bg-hover）").toContain(
+      "var(--tab-bg-hover) 14px",
+    );
+    expect(pads[1], "pill 非焦点垫仍是悬停提亮档（--tab-bg-active-hover）").toContain(
+      "var(--tab-bg-active-hover) 14px",
+    );
+    for (const p of pads) {
+      expect(p, "非焦点垫同样要有实色停靠点（槽内全不透明）").toMatch(/\)\s+14px\)/);
+    }
+
+    // 反向验证：垫色退回 --tab-bg-active（不跟随降档）必须被咬住
+    const BAD = css.replace(
+      /(\.layout-panel:not\(\.layout-panel-active\)[\s\S]{0,200}?\.tab-action::before\s*\{[^}]*?)var\(--tab-bg-hover\) 14px/,
+      "$1var(--tab-bg-active) 14px",
+    );
+    expect(BAD, "替身必须真的改了垫色").not.toBe(css);
+    expect(
+      BAD.match(
+        /\.layout-panel:not\(\.layout-panel-active\)[\s\S]{0,200}?\.tab-action::before\s*\{[^}]*\}/,
+      )?.[0],
+      "替身不跟随降档的垫色必须被抓到",
+    ).not.toContain("var(--tab-bg-hover) 14px");
+  });
+});
+
 describe("编辑区大卡片外框（B123，修正 B122：卡片上移到整个标签+编辑区）", () => {
   it("layout-area = 一张大卡片（1px hover 同色 + 8px 圆角）；面板无框；分屏边界恢复细线；状态栏上沿仍无线", () => {
     // 用户裁决：不是每个分屏一张卡，而是整个「标签+编辑区」一张大卡片，
