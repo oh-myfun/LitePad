@@ -328,6 +328,67 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     expect(insert, "拖拽插入线必须与药丸行等高").toMatch(/top:\s*4px/);
     expect(insert, "拖拽插入线必须让开滚动条").toMatch(/bottom:\s*4px/);
   });
+  it("B113-3 闪烁时肩部直接驱动：同帧同色公式 + 同时长同时序 + 闪烁期禁 transition", () => {
+    // 用户实测：闪烁时肩部与标签仍有色差。B113-2 依赖「动画驱动 --tab-fill-bg →
+    // 继承到伪元素 → 间接更新 box-shadow」，宿主与伪元素又各叠一层 0.12s transition
+    // —— Chromium 对动画帧间接变化在两条路径上是否触发 transition 行为不一致。
+    // 修法 = 肩部由独立 keyframes **直接驱动 box-shadow**，不再依赖继承传播。
+    const css = readFileSync("src/styles/global.css", "utf-8");
+
+    const frames = (name: string): string =>
+      css.match(new RegExp(`@keyframes ${name}\\s*\\{[\\s\\S]*?\\n\\}`))?.[0] ?? "";
+    for (const side of ["l", "r"] as const) {
+      const kf = frames(`tab-flash-shoulder-${side}`);
+      expect(kf, `应有肩部闪烁关键帧 tab-flash-shoulder-${side}`).toBeTruthy();
+      // 三帧颜色公式必须与 tab-flash 的 --tab-fill-bg 帧一一对应（color-mix 同参数），
+      // 否则同一时刻标签与肩部是两个颜色 —— 这正是用户报的差异。
+      expect(kf, "0% 帧 = accent 34% 混合").toContain(
+        "color-mix(in srgb, var(--accent) 34%, var(--tab-bg-active))",
+      );
+      expect(kf, "70% 帧 = accent 18% 混合").toContain(
+        "color-mix(in srgb, var(--accent) 18%, var(--tab-bg-active))",
+      );
+      expect(kf, "100% 帧回到标签底色").toContain(
+        `box-shadow: ${side === "l" ? "" : "-"}2.5px 2.5px 0 2.5px var(--tab-bg-active)`,
+      );
+    }
+    // 左右肩的 offset 方向不同：before 向右(2.5px) / after 向左(-2.5px)，各用各的关键帧
+    expect(css).toMatch(
+      /\.tab-flash \.tab-fill::before\s*\{[^}]*animation:\s*tab-flash-shoulder-l/,
+    );
+    expect(css).toMatch(/\.tab-flash \.tab-fill::after\s*\{[^}]*animation:\s*tab-flash-shoulder-r/);
+
+    // 与 fill 的动画同时长同时序：改了一处不改另一处 = 肩部先/后变回去，又是色差
+    const fillAnim = cssDecls(ruleBlock(css, ".tab-flash .tab-fill", "animation"));
+    expect(fillAnim, "fill 动画 720ms ease-out").toContain("animation: tab-flash 720ms ease-out 1");
+    expect(css, "肩部动画必须同为 720ms ease-out 1").toMatch(
+      /animation:\s*tab-flash-shoulder-l 720ms ease-out 1[\s\S]*?animation:\s*tab-flash-shoulder-r 720ms ease-out 1/,
+    );
+
+    // 闪烁期间禁静态 transition：它是为悬停平滑准备的，会把动画帧值再拖慢一拍
+    const flashFill = cssDecls(ruleBlock(css, ".tab-flash .tab-fill"));
+    expect(flashFill, "闪烁期间 fill 关 transition").toContain("transition: none");
+    for (const side of ["l", "r"] as const) {
+      const block = cssDecls(
+        ruleBlock(css, `.tab-flash .tab-fill::${side === "l" ? "before" : "after"}`),
+      );
+      expect(block, `闪烁期间肩部(${side})关 transition`).toContain("transition: none");
+    }
+
+    // reduced-motion 与非焦点面板降级都必须连肩部动画一起禁，否则会闪出孤零零的肩部
+    const reduced =
+      css.match(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(reduced, "reduced-motion 必须禁肩部闪烁").toContain(".tab-flash .tab-fill::before");
+    expect(reduced).toContain(".tab-flash .tab-fill::after");
+    const dimmed = cssDecls(
+      ruleBlock(
+        css,
+        ".layout-panel:not(.layout-panel-active) .tab-active .tab-fill::before",
+        "animation",
+      ),
+    );
+    expect(dimmed, "非焦点面板降级必须禁肩部闪烁动画").toContain("animation: none");
+  });
 });
 
 describe("标签样式切换（B114：connected | pill）", () => {

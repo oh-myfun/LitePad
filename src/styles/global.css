@@ -616,11 +616,14 @@ button:focus-visible {
   content: none;
 }
 
-/* 降级态（非焦点面板）连描边一起撤掉：边框都没了，肩部的曲线自然也不该留 */
+/* 降级态（非焦点面板）连描边一起撤掉：边框都没了，肩部的曲线自然也不该留。
+   ⚠️ B113-3：闪烁动画直接驱动伪元素 box-shadow，优先级高于这里的静态
+   box-shadow: none —— 必须连动画一起禁，否则非焦点面板闪烁时肩部会亮出来。 */
 .layout-panel:not(.layout-panel-active) .tab-active .tab-fill::before,
 .layout-panel:not(.layout-panel-active) .tab-active .tab-fill::after {
   border-color: transparent;
   box-shadow: none;
+  animation: none;
 }
 
 /* B47：活动标签切换后闪一次（从折叠列表点选、Ctrl+Tab 时定位用）。
@@ -631,8 +634,14 @@ button:focus-visible {
    会整块盖住 fill 的圆角与边框（且 .tab 本身现在永不上色，动画等于打在透明底上）。 */
 @keyframes tab-flash {
   /* B113-2（方案 A）：动画**只驱动 --tab-fill-bg 与内描边**，不再直接写 background ——
-     fill 的底色和两侧肩部的补色都引用这个变量，变量一动三者同步变色，
-     不会出现「标签闪蓝了、肩部还是编辑器底色」的割裂。 */
+     fill 的底色每帧跟随这个变量。
+     ⚠️ B113-3：**别再指望肩部跟着这个变量走**。肩部补色虽然是同一个 var()
+     的 box-shadow，但那是「动画驱动自定义属性 → 继承到伪元素 → 间接更新
+     box-shadow」的链路，宿主的 background 与伪元素的 box-shadow 又各叠了一层
+     0.12s transition —— Chromium 对「动画帧间接变化」在两条路径上是否触发
+     transition 的行为并不一致，实测闪烁时肩部与标签对不上色。
+     ⇒ 肩部改由下方 tab-flash-shoulder-l/r **直接驱动 box-shadow**（同帧同色
+     公式、同时长同时序），闪烁期间两者 transition: none，逐帧必然同色。 */
   0% {
     --tab-fill-bg: color-mix(in srgb, var(--accent) 34%, var(--tab-bg-active));
     box-shadow: inset 0 0 0 1px var(--accent);
@@ -647,12 +656,55 @@ button:focus-visible {
   }
 }
 
+/* 肩部闪烁（B113-3）：三帧颜色公式与 tab-flash 的 --tab-fill-bg 帧一一对应
+   （color-mix 同参数），左肩 offset 2.5px / 右肩 -2.5px，故拆两个 keyframes。
+   ⚠️ 与 fill 的动画必须**同时长同时序**（720ms ease-out 1）—— 一旦改时长，
+   两处必须一起改，否则又会出现「标签还没闪完肩部先变回去了」。 */
+@keyframes tab-flash-shoulder-l {
+  0% {
+    box-shadow: 2.5px 2.5px 0 2.5px color-mix(in srgb, var(--accent) 34%, var(--tab-bg-active));
+  }
+  70% {
+    box-shadow: 2.5px 2.5px 0 2.5px color-mix(in srgb, var(--accent) 18%, var(--tab-bg-active));
+  }
+  100% {
+    box-shadow: 2.5px 2.5px 0 2.5px var(--tab-bg-active);
+  }
+}
+
+@keyframes tab-flash-shoulder-r {
+  0% {
+    box-shadow: -2.5px 2.5px 0 2.5px color-mix(in srgb, var(--accent) 34%, var(--tab-bg-active));
+  }
+  70% {
+    box-shadow: -2.5px 2.5px 0 2.5px color-mix(in srgb, var(--accent) 18%, var(--tab-bg-active));
+  }
+  100% {
+    box-shadow: -2.5px 2.5px 0 2.5px var(--tab-bg-active);
+  }
+}
+
 .tab-flash .tab-fill {
   animation: tab-flash 720ms ease-out 1;
+  /* 闪烁期间关掉静态 transition：它是为「悬停提亮」准备的平滑，
+     在闪烁里只会把动画帧值再拖慢一拍（肩部走的是直接驱动的动画，不等它） */
+  transition: none;
+}
+
+.tab-flash .tab-fill::before {
+  animation: tab-flash-shoulder-l 720ms ease-out 1;
+  transition: none;
+}
+
+.tab-flash .tab-fill::after {
+  animation: tab-flash-shoulder-r 720ms ease-out 1;
+  transition: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tab-flash .tab-fill {
+  .tab-flash .tab-fill,
+  .tab-flash .tab-fill::before,
+  .tab-flash .tab-fill::after {
     animation: none;
   }
 }
