@@ -708,7 +708,16 @@ button:focus-visible {
 }
 :root[data-tab-style="pill"] .panel-tabstrip {
   gap: 4px;
-  padding: 4px 4px 0;
+  /* B123-5（用户裁决）：药丸档恢复 B55 时代的 4px **下间隙** ——
+     32px = 4px 上间距 + 24px 胶囊 + 4px 下间隙，胶囊与编辑区之间有呼吸位，
+     自绘悬浮滚动条的 thumb 正好坐在间隙里（不再压在胶囊底缘上）。
+     connected 档维持 28px 不变（舌片要直通编辑区，B117 几何照旧）。 */
+  padding: 4px;
+  height: 32px;
+}
+:root[data-tab-style="pill"] .tab-insert {
+  /* 插入线只贯穿胶囊行，不吃掉下间隙 */
+  bottom: 4px;
 }
 
 /* ==================================================================
@@ -2346,7 +2355,9 @@ button:focus-visible {
      ensureVisible 都走程序滚动，原生滚动条彻底退场（也就没有了 B54 那套
      scrollbar-width 复位与 ::-webkit-scrollbar 自绘规则）。
      ⚠️ 高度是硬约束：28px = 4px 上间距 + 24px 标签，**没有**底部预留 ——
-     悬浮条不占布局，溢出与否高度恒定，编辑器不会抖（B53 的预留使命终结）。 */
+     悬浮条不占布局，溢出与否高度恒定，编辑器不会抖（B53 的预留使命终结）。
+     （B123-5：药丸档在下方覆盖块里恢复 32px 含 4px 下间隙，胶囊与编辑区
+     之间留出呼吸位，thumb 坐进间隙 —— 两档高度各自恒定，切档不抖。） */
   overflow-x: hidden;
   overflow-y: hidden;
   height: 28px;

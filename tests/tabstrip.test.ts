@@ -399,8 +399,10 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
       /\.panel-tabstrip::-webkit-scrollbar/,
     );
 
-    // 拖拽插入线必须跟着标签行走；底部间隙取消后直达条带底（B117）
-    const insert = css.match(/\.tab-insert\s*\{[^}]*\}/)?.[0] ?? "";
+    // 拖拽插入线必须跟着标签行走；底部间隙取消后直达条带底（B117）。
+    // ⚠️ B123-5 起 pill 档有自己的 .tab-insert 覆盖块（bottom: 4px）且在文件里
+    //   更靠前 —— 锚定基础块必须带 top: 4px 特征，否则会命中 pill 块。
+    const insert = css.match(/\.tab-insert\s*\{[^}]*top:\s*4px[^}]*\}/)?.[0] ?? "";
     expect(insert, "拖拽插入线必须与标签行等高").toMatch(/top:\s*4px/);
     expect(insert, "插入线必须直达条带底（无下间隙）").toMatch(/bottom:\s*0/);
   });
@@ -490,9 +492,14 @@ describe("标签样式切换（B114：connected | pill）", () => {
       v.push("pill 必须撤掉肩部（胶囊没有舌片）");
     const strip = get(':root[data-tab-style="pill"] .panel-tabstrip');
     if (!strip.includes("gap: 4px")) v.push("pill 恢复胶囊之间的 4px 缝隙");
-    // ⚠️ 断言到分号为止：connected 的 padding 值是 "4px 4px 0 0"，它是
-    //   "4px 4px 0" 的超集 —— 只 includes 前缀的话，替身写 connected 值也混得过去。
-    if (!/padding:\s*4px 4px 0\s*;/.test(strip)) v.push("pill 恢复条带 4px 左留白");
+    // B123-5：32px = 4px 上间距 + 24px 胶囊 + 4px 下间隙 —— 胶囊与编辑区之间
+    // 有呼吸位，自绘滚动条 thumb 坐进间隙（B55 时代几何回归）。
+    // ⚠️ padding 断言到分号：connected 的 "4px 4px 0 0" 是 "4px 4px 0" 的超集，
+    //   前缀 includes 会混过去；四边 4px 必须精确匹配。
+    if (!/padding:\s*4px\s*;/.test(strip)) v.push("pill 条带四边 4px 留白（含下间隙）");
+    if (!/height:\s*32px\s*;/.test(strip)) v.push("pill 条带高 32px（4+24+4，B123-5）");
+    if (!get(':root[data-tab-style="pill"] .tab-insert').includes("bottom: 4px"))
+      v.push("pill 插入线只贯穿胶囊行（bottom: 4px）");
     return v;
   }
 
@@ -521,7 +528,9 @@ describe("标签样式切换（B114：connected | pill）", () => {
       "pill 活动标签必须无边框（B55：只靠底色区分）",
       "pill 必须撤掉肩部（胶囊没有舌片）",
       "pill 恢复胶囊之间的 4px 缝隙",
-      "pill 恢复条带 4px 左留白",
+      "pill 条带四边 4px 留白（含下间隙）",
+      "pill 条带高 32px（4+24+4，B123-5）",
+      "pill 插入线只贯穿胶囊行（bottom: 4px）",
     ]);
   });
 
