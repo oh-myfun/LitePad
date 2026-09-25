@@ -225,8 +225,8 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     // B119：底部外扩收回（-4px→0）—— B117 后标签底 = 条带底，外扩部分会被 overflow 裁掉；
     // ⚠️ 断言到分号：`-4px 0 0` 是 `-4px 0 -4px` 的前缀，不锚定分号会被旧值混过
     expect(fill, "左右相连（connected）且底部不再外扩（B119）").toMatch(/inset:\s*-4px 0 0\s*;/);
-    expect(fill, "只有上方两角是圆的（下方要与编辑器相接）").toMatch(
-      /border-radius:\s*\d+px \d+px 0 0/,
+    expect(fill, "只有上方两角是圆的（B123-2 起走 --tab-radius 单一来源）").toMatch(
+      /border-radius:\s*var\(--tab-radius\) var\(--tab-radius\) 0 0/,
     );
     expect(fill, "底色层不吃鼠标事件（否则点不到标签）").toContain("pointer-events: none");
 
@@ -245,25 +245,47 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
 
     // B123（用户裁决，反转 B120）：肩部回归 —— 用户点名「标签下沿要有反向圆弧
     // 肩部（参考vscode）」。实拍用户 VS Code + 源码 connectedEditorTabs.css 双重
-    // 确认：肩部 = fill 底部两外侧伪元素的反弧（box-shadow 技巧，R=4px），
+    // 确认：肩部 = fill 底部两外侧伪元素的反弧（box-shadow 技巧，半径与顶部
+    // 圆角同源 --tab-radius，见下方 B123-2 契约），
     // 构造细节见 global.css 的 B123 注释。仍然禁止的只有「上底色的圆盘构造」
     // （B119 老做法，观感过重）。
     const cssNoComments = stripCssComments(css);
-    // ⚠️ 不用 ruleBlock：肩部首条规则是群组选择器，ruleBlock 会在逗号处提前命中
-    // 共享块；这里直接按独立规则块取。
-    const shoulderBefore = css.match(/\.tab-active \.tab-fill::before\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(shoulderBefore, "左肩必须是 border-bottom-right-radius + box-shadow 反弧").toContain(
-      "box-shadow: 2px 2px 0 2px var(--tab-fill-bg)",
+    // B123-2（用户裁决）：肩部反弧半径必须与顶部圆角**同源同值** —— VS Code
+    // connectedEditorTabs.css 的变量链 shoulder-radius = cap-radius（同源自
+    // cornerRadius-small）。LitePad 用 --tab-radius 单一来源，顶部圆角与肩部
+    // 的 width/height/radius/阴影偏移全部引用它，改圆角只动一处。
+    const rootBlock = css.match(/:root\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(rootBlock, "标签圆角单一来源变量必须在 :root 定义").toContain("--tab-radius: 5px");
+    // ⚠️ 不用 ruleBlock 取肩部：首条规则是群组选择器，`::after` 后恰好跟 `{`
+    // 会提前命中共享块 —— 直接正则 + 块内特征（left: 100%）锚定独立规则。
+    const fillBlock = cssDecls(ruleBlock(css, ".tab-fill"));
+    expect(fillBlock, "活动标签顶部圆角走 --tab-radius").toContain(
+      "border-radius: var(--tab-radius) var(--tab-radius) 0 0",
     );
-    expect(shoulderBefore, "左肩反弧半径 4px（VS Code cornerRadius-small）").toContain(
-      "border-bottom-right-radius: 4px",
+    const shoulderGroup =
+      css.match(
+        /\.tab-active \.tab-fill::before,\s*\.tab-active \.tab-fill::after\s*\{[^}]*\}/,
+      )?.[0] ?? "";
+    expect(shoulderGroup.replace(/\s+/g, " "), "两肩尺寸走 --tab-radius（与顶部同半径）").toContain(
+      "width: var(--tab-radius)",
     );
-    // ⚠️ ::after 在群组选择器里恰好后跟 `{`，会先命中共享块 —— 正则里要求
-    // 块内含 box-shadow 值，保证抓到的是独立规则。
-    const shoulderAfter =
-      css.match(/\.tab-active \.tab-fill::after\s*\{[^}]*box-shadow: -2px[^}]*\}/)?.[0] ?? "";
-    expect(shoulderAfter, "右肩必须是镜像的 box-shadow 反弧").toContain(
-      "box-shadow: -2px 2px 0 2px var(--tab-fill-bg)",
+    const shoulderBefore = (
+      css.match(/\.tab-active \.tab-fill::before\s*\{[^}]*\}/)?.[0] ?? ""
+    ).replace(/\s+/g, " ");
+    expect(shoulderBefore, "左肩反弧半径 = 顶部圆角半径").toContain(
+      "border-bottom-right-radius: var(--tab-radius)",
+    );
+    expect(shoulderBefore, "左肩阴影偏移 = 半径一半（VS Code R/2 R/2 0 R/2 构造）").toContain(
+      "box-shadow: calc(var(--tab-radius) / 2)",
+    );
+    const shoulderAfter = (
+      css.match(/\.tab-active \.tab-fill::after\s*\{[^}]*left: 100%[^}]*\}/)?.[0] ?? ""
+    ).replace(/\s+/g, " ");
+    expect(shoulderAfter, "右肩反弧半径 = 顶部圆角半径（镜像）").toContain(
+      "border-bottom-left-radius: var(--tab-radius)",
+    );
+    expect(shoulderAfter, "右肩阴影偏移镜像为负").toContain(
+      "box-shadow: calc(var(--tab-radius) / -2)",
     );
     expect(cssNoComments, "肩部不得用上底色的圆盘构造（B119 老做法）").not.toMatch(
       /\.tab-active \.tab-fill::(?:before|after)\s*\{[^}]*background/,
@@ -401,10 +423,7 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
 
     // ② B123 反转：box-shadow 反弧从「禁止」变为「必须存在」——退化替身把
     //    肩部阴影整个摘掉（回到 B120 的直线侧边），正向契约必须咬住
-    const BAD_NO_SHOULDER = cssCode.replace(
-      /box-shadow: -?2px 2px 0 2px var\(--tab-fill-bg\);/g,
-      "",
-    );
+    const BAD_NO_SHOULDER = cssCode.replace(/box-shadow: calc\(var\(--tab-radius\)[^;]*;/g, "");
     expect(BAD_NO_SHOULDER, "替身必须真的摘掉了肩部阴影").not.toBe(cssCode);
     expect(() => {
       expect(stripCssComments(BAD_NO_SHOULDER), "摘掉肩部的替身必须被咬住").toMatch(
