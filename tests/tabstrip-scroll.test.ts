@@ -281,3 +281,63 @@ describe("B116 闪烁效果移除（原 B47/B53「切换后闪一下」）", () 
     expect(host.querySelector(".tab-flash"), "切换后也不得再挂 tab-flash 类").toBeNull();
   });
 });
+
+describe("B123-4 标签 tooltip 只留一行完整路径（文件名不重复）", () => {
+  it("有路径：提示主行就是路径，无第二行 detail", () => {
+    const host = document.createElement("div");
+    host.className = "panel-tabstrip";
+    document.body.appendChild(host);
+    renderTabstrip(
+      host,
+      [
+        {
+          tabId: 1,
+          name: "example.md",
+          dirty: false,
+          readonly: false,
+          active: true,
+          path: "E:/docs/example.md",
+        },
+      ],
+      cb(),
+    );
+    const tab = host.querySelector<HTMLElement>(".tab")!;
+    expect(tab.dataset.tip, "提示必须是完整路径本身").toBe("E:/docs/example.md");
+    expect(tab.dataset.tipDetail, "不得再挂第二行 detail（路径已 monopoly 主行）").toBeUndefined();
+  });
+
+  it("只读文件：路径后跟 [只读] 标记，同行显示", () => {
+    const host = document.createElement("div");
+    host.className = "panel-tabstrip";
+    document.body.appendChild(host);
+    renderTabstrip(
+      host,
+      [
+        {
+          tabId: 1,
+          name: "ro.md",
+          dirty: false,
+          readonly: true,
+          active: true,
+          path: "E:/docs/ro.md",
+        },
+      ],
+      cb(),
+    );
+    const tab = host.querySelector<HTMLElement>(".tab")!;
+    expect(tab.dataset.tip, "只读标记跟在路径后").toBe("E:/docs/ro.md [只读]");
+  });
+
+  it("无路径（未命名文件）：退回文件名，不得渲染出 undefined", () => {
+    const host = document.createElement("div");
+    host.className = "panel-tabstrip";
+    document.body.appendChild(host);
+    renderTabstrip(
+      host,
+      [{ tabId: 1, name: "未命名", dirty: false, readonly: false, active: true }],
+      cb(),
+    );
+    const tab = host.querySelector<HTMLElement>(".tab")!;
+    expect(tab.dataset.tip, "无路径时退回文件名").toBe("未命名");
+  });
+});

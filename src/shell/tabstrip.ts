@@ -244,11 +244,13 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   // 未保存 → 平时 ●，指针进到关闭区才换 ×；已保存 → 平时留空，悬停标签 / 活动标签给 ×。
   el.className = "tab" + (t.active ? " tab-active" : "") + (t.dirty ? " tab-dirty" : "");
   el.dataset.tabId = String(t.tabId);
-  // B58：标签提示 = 文件名（+ 只读标记），第二行给完整路径 —— 标签会被横向滚动
-  // 推出视野、文件名也可能与同目录的其他同名文件混淆，路径这一行才是真正有用的信息。
+  // B123-4（用户裁决）：标签提示只留**一行完整路径** —— 文件名在标签上本来就
+  // 看得见，提示里再重复一遍是冗余；路径才是唯一增量信息（同目录同名文件的
+  // 区分也靠它）。只读标记跟在路径后，同行显示。
+  // ⚠️ path 可选（未命名/无路径文件缺省）—— 此时退回文件名，不能渲染出 "undefined"。
   // group 让「顺着标签滑过去」时提示秒开、不忽明忽暗（VS Code 的 groupId 行为）。
-  setTip(el, t.readonly ? `${t.name} [只读]` : t.name, {
-    detail: t.path,
+  const tip = t.path ?? t.name;
+  setTip(el, t.readonly ? `${tip} [只读]` : tip, {
     group: "tabstrip",
   });
 
