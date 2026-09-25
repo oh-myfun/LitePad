@@ -763,10 +763,16 @@ button:focus-visible {
 :root[data-tab-reserve="off"] .tab:not(.tab-dirty) .tab-action::before {
   content: "";
   position: absolute;
-  right: 100%;
+  /* B124：垫必须**盖住 × 槽位本身**（右缘贴槽位右缘 + 左侧留渐隐坡道），
+     不能只垫在槽位左边（旧写法 right:100% + 14px）—— 紧凑档 .tab 只有 4px
+     右内边距，× 的 20px 槽位整个压在文件名上，只垫左边时字形底下仍是透的，
+     文字从左下角透出来和 × 叠成一团。VS Code 也是把 .tab-actions::before
+     铺到槽位**底下**（transparent → 底色），盖不住就换不出干净的 ×。
+     ⚠️ 两个值都不能改小：右缘对齐槽位右缘，34px = 槽位 20px + 坡道 14px。 */
+  right: 0;
   top: 0;
   bottom: 0;
-  width: 14px;
+  width: 34px;
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.12s ease;

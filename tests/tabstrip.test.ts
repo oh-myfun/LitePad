@@ -686,9 +686,24 @@ describe("紧凑档悬浮 × 的渐变垫底（B118，对齐 VS Code）", () => 
     const css = readFileSync("src/styles/global.css", "utf-8");
     const pad = cssDecls(ruleBlock(css, ".tab-action::before", "pointer-events"));
     expect(pad, "应有 × 垫底伪元素").toBeTruthy();
-    expect(pad, "垫必须贴在 × 左侧").toContain("right: 100%");
+    // B124：垫必须盖住 × 槽位本身（旧写法只垫左侧 → 字形底下透出文字）
+    expect(pad, "垫的右缘必须贴住 × 槽位右缘").toContain("right: 0");
     expect(pad, "垫默认隐藏（随 × 一起淡入）").toMatch(/opacity:\s*0/);
     expect(pad, "不得拦截鼠标（否则挡标签点击）").toContain("pointer-events: none");
+    // 垫必须比槽位宽：多出来的部分才是左侧渐隐坡道，窄了文字就压在 × 底下
+    const px = (s: string, re: RegExp) => Number(s.match(re)?.[1] ?? 0);
+    const padW = px(pad, /width:\s*(\d+(?:\.\d+)?)px/);
+    // ⚠️ 必须带 "width" 过滤：文件里还有
+    //    `:root[data-tab-reserve="off"] … .tab-action {` 那条脱流规则，
+    //    它同字符串且排在前面，不过滤会读到它（里面没有 width）
+    const slotW = px(
+      cssDecls(ruleBlock(css, ".tab-action", "width: 20px")),
+      /width:\s*(\d+(?:\.\d+)?)px/,
+    );
+    expect(slotW, ".tab-action 槽位宽度必须读到").toBeGreaterThan(0);
+    expect(padW, `垫宽 ${padW}px 必须盖得住 ${slotW}px 槽位 + 坡道`).toBeGreaterThanOrEqual(
+      slotW + 14,
+    );
 
     // ⚠️ prettier 会把长选择器折成多行，ruleBlock 的字面量匹配会失配 ——
     //   一律用 filter（块体特征声明）取目标规则，对折行鲁棒。
@@ -730,6 +745,17 @@ describe("紧凑档悬浮 × 的渐变垫底（B118，对齐 VS Code）", () => 
       cssDecls(ruleBlock(withoutPad, ".panel-tabstrip")),
       "替身自证：无关规则不受影响",
     ).toBeTruthy();
+
+    // 反向验证：垫退回「只垫槽位左边」（B124 的病）必须被咬住
+    const OLD_PAD = css.replace(
+      /:root\[data-tab-reserve="off"\][^{]*\.tab-action::before[^{]*\{[^}]*\}/,
+      (m) => m.replace("right: 0;", "right: 100%;").replace("width: 34px;", "width: 14px;"),
+    );
+    expect(OLD_PAD, "替身必须真的退回旧写法").not.toBe(css);
+    expect(
+      cssDecls(ruleBlock(OLD_PAD, ".tab-action::before", "pointer-events")),
+      "替身的垫必须被判为没盖住槽位",
+    ).not.toContain("right: 0");
   });
 });
 
