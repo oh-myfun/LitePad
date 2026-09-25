@@ -237,6 +237,14 @@ export interface TabSession {
   eol: string;
   cursorLine: number;
   cursorCol: number;
+  /**
+   * 编辑器视口的滚动位置（px，B126）。
+   *
+   * 只记光标行列是不够的：恢复后文件停在开头、光标却在第 N 行（屏幕外），
+   * 看上去就跟「光标复位了」一样。`null` = 从没显示过（旧会话也没有这个字段），
+   * 此时由前端保证光标可见。
+   */
+  scrollTop?: number | null;
   /** Markdown 视图模式（source/split/preview） */
   viewMode?: string | null;
   /**
@@ -394,6 +402,8 @@ export interface SatelliteTab {
   viewMode: string;
   cursorLine: number;
   cursorCol: number;
+  /** 视口滚动位置（px，B126）；`null` = 从没显示过，接手方自行保证光标可见 */
+  scrollTop: number | null;
   sizeClass: "normal" | "large" | "huge";
   /** 热退出副本 id / 是否已备份，随标签一起带走，避免新窗口重复写一份副本 */
   backupId: string | null;

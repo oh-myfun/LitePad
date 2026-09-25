@@ -154,6 +154,12 @@ pub struct TabSession {
     pub cursor_line: u32,
     #[serde(alias = "cursor_col")]
     pub cursor_col: u32,
+    /// 编辑器视口的滚动位置（px，B126）。
+    ///
+    /// 光标只记到行列，视口不记的话恢复后文件停在开头、光标却在屏幕外，
+    /// 看上去就跟「光标复位了」一样。`None` = 这份标签从没显示过（旧会话也没有
+    /// 这个字段），由前端按光标位置自行定位。
+    pub scroll_top: Option<u32>,
     /// Markdown 视图模式（source/split/preview），仅 md 文件有意义
     #[serde(alias = "view_mode")]
     pub view_mode: Option<String>,
@@ -184,6 +190,7 @@ impl Default for TabSession {
             eol: "CRLF".into(),
             cursor_line: 1,
             cursor_col: 1,
+            scroll_top: None,
             view_mode: None,
             backup_id: None,
             doc_id: None,
@@ -319,6 +326,47 @@ mod tests {
             "落盘应为 activePanel：{out}"
         );
         assert!(!out.contains("cursor_line"), "不应再落盘 snake_case：{out}");
+    }
+
+    /// B126：视口滚动位置要跟着会话走。
+    ///
+    /// 只记光标行列是不够的：恢复后文件停在开头、光标却在第 N 行（屏幕外），
+    /// 用户看到的就是「光标丢了」。`scrollTop` 必须原样往返，缺字段时回落 None
+    /// （旧会话没有它，前端按光标位置自行定位）。
+    #[test]
+    fn session_carries_scroll_top() {
+        let json = r#"{
+          "panels": [
+            { "tabs": [
+                { "path": "a.md", "encoding": "UTF-8", "eol": "LF",
+                  "cursorLine": 12, "cursorCol": 5, "scrollTop": 842 }
+              ], "active": 0 }
+          ],
+          "layout": { "kind": "leaf", "panelId": 0 },
+          "activePanel": 0
+        }"#;
+
+        let state: SessionState = serde_json::from_str(json).expect("应能读入带 scrollTop 的会话");
+        assert_eq!(state.panels[0].tabs[0].scroll_top, Some(842));
+        let out = serde_json::to_string(&state).unwrap();
+        assert!(
+            out.contains("\"scrollTop\":842"),
+            "落盘应为 scrollTop：{out}"
+        );
+
+        // 旧会话没有这个字段 → None，不能因为缺字段把整份会话判死
+        let old = r#"{
+          "panels": [
+            { "tabs": [
+                { "path": "a.md", "encoding": "UTF-8", "eol": "LF",
+                  "cursorLine": 3, "cursorCol": 1 }
+              ], "active": 0 }
+          ],
+          "layout": { "kind": "leaf", "panelId": 0 },
+          "activePanel": 0
+        }"#;
+        let old_state: SessionState = serde_json::from_str(old).expect("旧会话应照旧可读");
+        assert_eq!(old_state.panels[0].tabs[0].scroll_top, None);
     }
 
     /// 旧版本（B48 及更早）落盘的是 snake_case，升级后仍要能读出来。

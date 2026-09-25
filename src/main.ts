@@ -302,6 +302,18 @@ interface Tab {
   state: EditorState;
   /** Markdown 视图（仅 .md 有效）：源码 / 预览（实例独立，可左源码右预览对照） */
   viewMode: "source" | "preview";
+  /**
+   * 该标签上次显示时的视口滚动位置（px，B126）。
+   *
+   * 滚动位置只活在 DOM（`scrollDOM.scrollTop`）上，**不进 EditorState** ——
+   * 切标签（setState 重建 ViewState）、重建布局（视图销毁重建）都会把它清零。
+   * 所以要自己记一份：切走之前存、切回之后还。
+   *
+   * `null` = 这份实例还从没显示过（新建 / 会话恢复后还没切到过）。此时不能硬钉 0：
+   * 会话只带了 cursorLine/cursorCol，光标可能在屏幕外，钉 0 看着就是「光标丢了」，
+   * 于是退化为「保证光标可见」（见 restoreViewScroll）。
+   */
+  scrollTop: number | null;
 }
 
 /** 面板：布局树叶子，持有独立 EditorView 与自己的标签列表。 */
@@ -651,6 +663,7 @@ function rebuildLayout(): void {
     if (p.view) {
       const shown = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
       if (shown) shown.state = p.view.view.state;
+      rememberViewScroll(p);
       p.view.view.destroy();
       p.view = null;
       p.viewTabId = null;
@@ -759,6 +772,8 @@ function rebuildLayout(): void {
         p.view = createEditor(editorEl, tab.state);
         suppressDirty = false;
         p.viewTabId = tab.tabId;
+        // B126：视图是新建的，滚动位置只活在标签快照里 → 显式还给 DOM
+        restoreViewScroll(p);
       }
 
       const preview = new PreviewPane();
@@ -779,8 +794,12 @@ function rebuildLayout(): void {
         lineCount: () => p.view?.view.state.doc.lines ?? 0,
       });
       if (p.view) {
-        p.view.view.scrollDOM.addEventListener("scroll", () => {
+        const shownView = p.view.view;
+        shownView.scrollDOM.addEventListener("scroll", () => {
           const t = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
+          // B126：滚动位置只活在 DOM 上，随滚动即时记进标签快照（赋值极廉价，
+          // 不排程）。这样「滚过但没切走就重建布局」也不会丢。
+          if (t) t.scrollTop = shownView.scrollDOM.scrollTop;
           // 预览→编辑器方向程序滚动期间忽略，防止回环抖动
           if (!t || !isMdTab(t) || t.viewMode !== "preview") return;
           if (preview.isSyncing()) return;
@@ -818,6 +837,8 @@ function switchTab(panelId: number, tabId: number): void {
   // 会把视图当前内容写进错误的标签（内容串档/被覆写为空白的同源缺陷）。
   const shownTab = tabs.get(panel.viewTabId ?? panel.activeTabId);
   if (shownTab) shownTab.state = panel.view.view.state;
+  // B126：滚动位置只活在 DOM 上，切走前必须自己记一份
+  rememberViewScroll(panel);
   const tab = tabs.get(tabId);
   if (!tab) return;
   panel.activeTabId = tabId;
@@ -825,6 +846,9 @@ function switchTab(panelId: number, tabId: number): void {
   panel.view.setState(tab.state);
   suppressDirty = false;
   panel.viewTabId = tabId;
+  // B126：setState 重建了 ViewState 并把视口拉回开头，这里把滚动位置还回去。
+  // 必须排在 applyPanelMode 之前——它要按当前顶行把预览对齐到同一区域。
+  restoreViewScroll(panel);
   panel.view.focus();
   applyPanelMode(panel);
   if (panelId === activePanelId) {
@@ -899,6 +923,7 @@ function makeInstance(doc: Doc, panelId: number, text: string): Tab {
     comps,
     state,
     viewMode: "source",
+    scrollTop: null,
   };
 }
 
@@ -1073,6 +1098,8 @@ async function closeTabById(tabId: number): Promise<void> {
     panel.view.setState(nextTab.state);
     suppressDirty = false;
     panel.viewTabId = nextId;
+    // B126：接班的标签沿用**它自己**上次的位置（光标随 state，视口随 scrollTop）
+    restoreViewScroll(panel);
   }
   applyPanelMode(panel);
   if (panel.panelId === activePanelId) {
@@ -1097,6 +1124,7 @@ function disposePanel(panelId: number): void {
   if (panel.view) {
     const t = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
     if (t) t.state = panel.view.view.state;
+    rememberViewScroll(panel);
     panel.view.view.destroy();
   }
   panel.view = null;
@@ -1196,6 +1224,8 @@ function splitActivePanel(panelId: number, dir: "h" | "v"): void {
         panel.view.setState(prev.state);
         suppressDirty = false;
         panel.viewTabId = prev.tabId;
+        // B126：原位剩下的标签也要拿回自己的视口位置
+        restoreViewScroll(panel);
       }
     } else {
       // 原面板空了：清悬挂引用，同步一个新标签过去（异步完成后重建挂载视图）
@@ -1637,6 +1667,8 @@ function rebuildDocInstances(doc: Doc, text: string, keepCursor = false): void {
       panel.view.setState(inst.state);
       suppressDirty = false;
       panel.viewTabId = inst.tabId;
+      // B126：整态重建把视口清零；保光标的场合（外部刷新）顺带把视口也保住
+      if (keepCursor) restoreViewScroll(panel);
     }
   }
 }
@@ -2136,6 +2168,7 @@ function sessionTabRecordOf(t: Tab): {
   eol: string;
   cursorLine: number;
   cursorCol: number;
+  scrollTop: number | null;
   viewMode: string | null;
   backupId: string | null;
   docId: number;
@@ -2149,6 +2182,9 @@ function sessionTabRecordOf(t: Tab): {
     eol: d.eol,
     cursorLine: line.number,
     cursorCol: pos - line.from + 1,
+    // B126：视口位置一起进会话。只记行列的话，重启后文件停在开头、光标却在第 N
+    // 行（屏幕外），看上去就跟「光标复位了」一样。
+    scrollTop: scrollTopOfTab(t),
     viewMode: isMdTab(t) ? t.viewMode : null,
     backupId: d.backupId,
     // B69：空未命名文档的认领凭据（见 TabSession.docId 注释）
@@ -2470,6 +2506,8 @@ async function restoreSession(): Promise<boolean> {
         const line = inst.state.doc.line(lineNo);
         const pos = line.from + Math.min(Math.max(0, (st.cursorCol || 1) - 1), line.length);
         inst.state = inst.state.update({ selection: { anchor: pos } }).state;
+        // B126：视口位置一并带回（null = 旧会话没有这个字段 → 切过去时保证光标可见）
+        inst.scrollTop = st.scrollTop ?? null;
         opened++;
       } catch {
         // 文件已被删除/无法读取 → 跳过该标签
@@ -3414,6 +3452,54 @@ function isMdActive(): boolean {
 function topVisibleLineOf(view: EditorView): number {
   const block = view.lineBlockAtHeight(view.scrollDOM.scrollTop + 1);
   return view.state.doc.lineAt(block.from).number;
+}
+
+/**
+ * 标签当前的视口滚动位置（B126）。
+ *
+ * 正显示在面板上的实例要取视图的**实时值**（用户刚滚过但还没切走，快照还没更新）；
+ * 离屏实例只能取上次记下的快照。
+ */
+function scrollTopOfTab(t: Tab): number | null {
+  const p = panels.get(t.panelId);
+  if (p?.view && p.viewTabId === t.tabId) return p.view.view.scrollDOM.scrollTop;
+  return t.scrollTop;
+}
+
+/**
+ * 把面板视图当前的滚动位置记进标签快照（B126）。
+ *
+ * 必须在「切走 / 销毁视图」**之前**调：滚动位置只活在 `scrollDOM` 上，不进
+ * EditorState，setState（重建 ViewState）与销毁重建都会把它清零。少了这一步，
+ * 切回来永远停在文档开头。
+ */
+function rememberViewScroll(panel: Panel): void {
+  if (!panel.view || panel.viewTabId === null) return;
+  const t = tabs.get(panel.viewTabId);
+  if (t) t.scrollTop = panel.view.view.scrollDOM.scrollTop;
+}
+
+/**
+ * 把标签快照里的滚动位置还给视图（B126）。
+ *
+ * 必须在 setState / 新建视图**之后**调：先有对的内容，滚动位置才有意义（浏览器
+ * 会按新内容长度自动裁剪）。
+ *
+ * `scrollTop === null`（这份实例从没显示过）时退化为「保证光标可见」——
+ * 会话恢复只带了 cursorLine/cursorCol，没有视口信息，硬钉 0 会让光标停在屏幕外。
+ */
+function restoreViewScroll(panel: Panel): void {
+  if (!panel.view || panel.viewTabId === null) return;
+  const t = tabs.get(panel.viewTabId);
+  if (!t) return;
+  const view = panel.view.view;
+  if (t.scrollTop !== null) {
+    view.scrollDOM.scrollTop = t.scrollTop;
+    return;
+  }
+  const head = view.state.selection.main.head;
+  if (head <= 0) return;
+  view.dispatch({ effects: EditorView.scrollIntoView(head, { y: "nearest" }) });
 }
 
 /** 应用面板视图模式：源码 / 分屏 / 纯预览（非 md 标签强制源码）。 */
@@ -4777,6 +4863,8 @@ function transferSnapshotOf(tabId: number): SatelliteTab | null {
     viewMode: isMdTab(tab) ? tab.viewMode : "source",
     cursorLine: line.number,
     cursorCol: pos - line.from + 1,
+    // B126：视口位置一起带走，接手的窗口才是「接着看」而不是「从头看」
+    scrollTop: scrollTopOfTab(tab),
     sizeClass: doc.sizeClass,
     backupId: doc.backupId,
     backedUp: doc.backedUp,
@@ -4948,6 +5036,7 @@ function adoptTransferredTabs(incoming: SatelliteTab[], panelId = activePanelId)
     const line = inst.state.doc.line(lineNo);
     const pos = line.from + Math.min(Math.max(0, (st.cursorCol || 1) - 1), line.length);
     inst.state = inst.state.update({ selection: { anchor: pos } }).state;
+    inst.scrollTop = st.scrollTop ?? null;
     attachTabToPanel(inst, panel);
     adopted.push(inst.tabId);
   }
@@ -5350,6 +5439,8 @@ function applyDocResyncFull(
       // 整态重建：只 dispatch changes 的话 tab.state 与视图会不同步（后续切标签立刻串档）
       if (view) view.setState(whole);
       inst.state = whole;
+      // B126：整段替换后视图被拉回开头，按旧视口位置还回去（浏览器自动裁剪）
+      if (view && p) restoreViewScroll(p);
     }
   } finally {
     syncingDocId = null;
