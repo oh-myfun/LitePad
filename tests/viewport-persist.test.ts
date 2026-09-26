@@ -26,8 +26,7 @@ beforeAll(() => {
 const wired = vi.hoisted(() => ({
   close: null as ((ev: { preventDefault(): void }) => void) | null,
   events: [] as string[],
-  // B136：编辑器侧的位置字段是 topLine（顶行行号）—— 存 px 会随文档长度漂
-  saved: [] as { panels: { tabs: { path: string; topLine: number | null }[] }[] }[],
+  saved: [] as { panels: { tabs: { path: string; scrollTop: number | null }[] }[] }[],
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -165,23 +164,13 @@ function editorView(): EditorView {
 }
 /** 滚到某个位置并派发一次真 scroll 事件（监听器就挂在 scrollDOM 上）。 */
 function scrollTo(px: number): void {
-  const view = editorView();
-  const sc = view.scrollDOM;
+  const sc = editorView().scrollDOM;
   sc.scrollTop = px;
-  // B136：位置按**行号**存，所以来回换算一次，看行高换算是不是通的
-  atLine = view.state.doc.lineAt(view.lineBlockAtHeight(px + 1).from).number;
   sc.dispatchEvent(new Event("scroll", { bubbles: false }));
 }
-/** 滚动位置期望落在第几行（由 scrollTo 记下，供落盘断言比对）。 */
-let atLine = 0;
 function lastSaved(): number | null {
   const last = wired.saved[wired.saved.length - 1];
-  return last?.panels[0]?.tabs[0]?.topLine ?? null;
-}
-/** 视口此刻的顶行行号。 */
-function topLineNow(): number {
-  const view = editorView();
-  return view.state.doc.lineAt(view.lineBlockAtHeight(view.scrollDOM.scrollTop + 1).from).number;
+  return last?.panels[0]?.tabs[0]?.scrollTop ?? null;
 }
 
 describe("B132 视口位置：滚动要能自己排程落盘，关窗要兜底存一次", () => {
@@ -197,10 +186,7 @@ describe("B132 视口位置：滚动要能自己排程落盘，关窗要兜底�
     expect(wired.saved.length, "滚动应自己排程落盘（否则关窗前那一刻=没存）").toBeGreaterThan(
       before,
     );
-    expect(lastSaved(), `落盘的视口应是滚动后的第 ${atLine} 行（而不是会话里那份的位置）`).toBe(
-      atLine,
-    );
-    expect(topLineNow(), "前置：滚动确实落到了第 " + atLine + " 行").toBe(atLine);
+    expect(lastSaved(), "落盘的视口应是滚动后的 500，而不是会话里的 0").toBe(500);
   });
 
   it("② 无脏文档关窗：先拦下窗口、存完再关（Rust 侧没有关窗钩子，不等就白存）", async () => {
@@ -218,7 +204,7 @@ describe("B132 视口位置：滚动要能自己排程落盘，关窗要兜底�
     expect(wired.saved.length, "无脏文档关窗也要存现场").toBeGreaterThan(before);
     // 关键：顺序。'close' 一旦排在 'save' 前面，存就赶不上窗口关闭了
     expect(wired.events, "必须先落盘（save）、再关窗（close）").toEqual(["save", "close"]);
-    expect(lastSaved(), `关窗时存的应是当前位置第 ${atLine} 行`).toBe(atLine);
+    expect(lastSaved(), "关窗时存的应是当前视口 500").toBe(500);
   });
 });
 
@@ -261,9 +247,8 @@ describe("B132 静态契约：滚动排程 + 关窗兜底", () => {
   const src = readFileSync("src/main.ts", "utf-8");
 
   it("滚动监听里要排程会话保存，关窗的放行支要走「拦下 → 存完 → 再关」", () => {
-    // B136：滚动时记的是**顶行行号**（不是 px —— px 与文档长度/行高绑定，恢复后会漂）
     expect(src, "滚动后要排程落盘").toMatch(
-      /if \(t\) t\.topLine = topVisibleLineOf\(shownView\);[\s\S]{0,220}?scheduleSessionSave\(\);/,
+      /if \(t\) t\.scrollTop = shownView\.scrollDOM\.scrollTop;[\s\S]{0,220}?scheduleSessionSave\(\);/,
     );
     expect(src, "关窗回调要『先拦下 → 再丢一条没人 await 的收尾』").toMatch(CLOSE_CALLBACK);
     expect(src, "无脏文档那支要先等会话落盘，光排队等于没存").toMatch(CLEAN_BRANCH);
@@ -279,10 +264,10 @@ describe("B132 静态契约：滚动排程 + 关窗兜底", () => {
     // ⚠️ 拆卸与断言必须用**同一条精确串**（老规矩）：按缩进猜字符串这次又没对上，
     // 结果「没拆掉」却被判成「拆掉了」—— 一条假绿。改成同一个正则做替换。
     const SCROLL_ANCHOR =
-      /if \(t\) t\.topLine = topVisibleLineOf\(shownView\);[\s\S]{0,220}?scheduleSessionSave\(\);/;
+      /if \(t\) t\.scrollTop = shownView\.scrollDOM\.scrollTop;[\s\S]{0,220}?scheduleSessionSave\(\);/;
     const degradedScroll = src.replace(
       SCROLL_ANCHOR,
-      "if (t) t.topLine = shownView.scrollDOM.scrollTop; // 退化：拿 px 当行号",
+      "if (t) t.scrollTop = shownView.scrollDOM.scrollTop;",
     );
     expect(degradedScroll, "退化后滚动分支不应再有排程").not.toMatch(SCROLL_ANCHOR);
 

@@ -9,10 +9,8 @@ import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { EditorView } from "@codemirror/view";
 import { fireDrag, makeDataTransfer } from "./dnd";
-import { installViewportSpy, takeViewportTargets } from "./viewport-target";
 
 beforeAll(() => {
-  installViewportSpy(); // 要在 src/main 之前装：启动时的恢复也是一次定位
   const html = readFileSync("index.html", "utf-8");
   const body = (html.match(/<body>([\s\S]*)<\/body>/)?.[1] ?? "").replace(
     /<script[\s\S]*?<\/script>/g,
@@ -189,18 +187,6 @@ function views(): EditorView[] {
     .filter((v): v is EditorView => !!v);
 }
 
-/**
- * CM6 的「可视区顶行」换算（与 main.ts 的 `topVisibleLineOf` 同一套 API）。
- * B136：位置记的就是这个行号 —— 顺便说明 jsdom 里行高换算（14px/行）是能用的。
- */
-function topLineOf(view: EditorView): number {
-  return view.state.doc.lineAt(view.lineBlockAtHeight(view.scrollDOM.scrollTop + 1).from).number;
-}
-/** 一个文档偏移落在第几行。 */
-function lineOfPos(view: EditorView, pos: number): number {
-  return view.state.doc.lineAt(Math.min(Math.max(pos, 0), view.state.doc.length)).number;
-}
-
 describe("B126 编辑器光标 / 视口不得复位", () => {
   it("切换标签再切回：光标位置不变", async () => {
     await import("../src/main");
@@ -216,13 +202,12 @@ describe("B126 编辑器光标 / 视口不得复位", () => {
     expect(view, "面板1 应挂载编辑器").toBeTruthy();
     expect(view.state.doc.toString()).toContain("gamma");
 
-    // 光标摆到第 3 行第 3 列（"gamma" 里），并滚到 60px（顶行落到第 5 行）
+    // 光标摆到第 3 行第 3 列（"gamma" 里），并滚到 60px
     const CARET = view.state.doc.line(3).from + 2;
     const SCROLL = 60;
     view.dispatch({ selection: { anchor: CARET } });
     view.scrollDOM.scrollTop = SCROLL;
     await wait(40);
-    const topLineBefore = topLineOf(view);
 
     // 切到 b.md 再切回 a.md
     clickTab(strip[1]);
@@ -236,20 +221,12 @@ describe("B126 编辑器光标 / 视口不得复位", () => {
     const now = views()[1];
     expect(now.state.doc.toString(), "应切回 a.md").toContain("gamma");
     expect(now.state.selection.main.head, "光标必须还在原处").toBe(CARET);
-    // B136：位置记的是**顶行行号**，所以还原的是「原来那一行」—— 不是原来那个像素。
-    // jsdom 不做布局，最终 px 无从落地，但「定位到哪一行」是真实投递出来的效果。
-    const targets = takeViewportTargets();
-    expect(targets.length, "切回时至少要排一次定位").toBeGreaterThan(0);
-    expect(
-      targets.some((t) => lineOfPos(now, t.pos) === topLineBefore),
-      `应定位回切走前那一行（${topLineBefore}），实际收到：${JSON.stringify(targets)}`,
-    ).toBe(true);
+    expect(now.scrollDOM.scrollTop, "视口必须还在原处").toBe(SCROLL);
   });
 
   it("重建布局（标签拖去分屏）：光标与视口都跟着走", async () => {
     const CARET_LINE = 4;
-    // 顶行落在第 3 行（与光标所在的第 4 行错开，才能看出「记的是视口不是光标」）
-    const SCROLL = 40;
+    const SCROLL = 120;
     const panels = Array.from(document.querySelectorAll(".layout-panel")) as HTMLElement[];
 
     // 面板0 的 a.md 上摆好光标与视口
@@ -259,8 +236,6 @@ describe("B126 编辑器光标 / 视口不得复位", () => {
     v0.scrollDOM.scrollTop = SCROLL;
     await wait(40);
     expect(v0.state.selection.main.head, "前置：面板0 光标已就位").toBe(CARET);
-    const scrolledTo = topLineOf(v0);
-    expect(scrolledTo, "前置：顶行应停在第 3 行").toBe(3);
 
     // 把面板0 的标签拖到面板1 的左侧区域 → splitPanelWithTab → rebuildLayout
     // （视图销毁重建：新的 scrollDOM，滚动位置天然是 0，只能靠显式还原）
@@ -278,13 +253,7 @@ describe("B126 编辑器光标 / 视口不得复位", () => {
       (v) => v.state.doc.toString().includes("gamma") && v.state.selection.main.head === CARET,
     );
     expect(carried, "被搬走的标签应带着自己的光标出现在新面板").toBeTruthy();
-    // B136：重建后按记下来的**顶行行号**还原，而不是把 px 写回一个新的 scrollDOM
-    // （新 scrollDOM 的 px 一旦跟文档长度对不上，位置就漂了）。
-    const targets = takeViewportTargets();
-    expect(
-      targets.some((t) => carried && lineOfPos(carried, t.pos) === scrolledTo),
-      `重建后应定位回原来那一行（${scrolledTo}），实际收到：${JSON.stringify(targets)}`,
-    ).toBe(true);
+    expect(carried!.scrollDOM.scrollTop, "重建视图后视口必须还原，不能停在开头").toBe(SCROLL);
   });
 
   it("关闭窗口：会话要带上光标行列与视口位置", async () => {
@@ -301,11 +270,13 @@ describe("B126 编辑器光标 / 视口不得复位", () => {
     expect(allTabs.length, "会话里应有标签").toBeGreaterThan(0);
     for (const t of allTabs) {
       expect(typeof t.cursorLine, "每个标签都要记光标行").toBe("number");
-      expect("topLine" in t, "标签记录必须带 topLine 字段（B136）").toBe(true);
-      // B136：编辑器侧的位置只准落在 topLine 上
-      expect(t.scrollTop, "编辑器侧的 px 槽必须留空（混用会把顶行污染成 0）").toBeNull();
-      expect(typeof t.topLine, "编辑器侧必须带顶行行号").toBe("number");
+      expect("scrollTop" in t, "标签记录必须带 scrollTop 字段").toBe(true);
     }
+    // 至少有一个标签带着非 0 的视口位置（上面刚滚过）
+    expect(
+      allTabs.some((t) => typeof t.scrollTop === "number" && t.scrollTop > 0),
+      "滚过的标签进会话时必须带上视口位置",
+    ).toBe(true);
     // 光标行列必须是**此刻**的：a.md 上摆的是第 4 行
     expect(
       allTabs.some((t) => t.path === "a.md" && t.cursorLine === 4),
@@ -337,25 +308,28 @@ describe("B126 编辑器光标 / 视口不得复位", () => {
 describe("B126 静态契约：滚动位置必须自己存取", () => {
   const src = readFileSync("src/main.ts", "utf-8");
 
-  it("必须有成对的「记住 / 还原」两个helper，且还原按**行号**定位", () => {
+  it("必须有成对的「记住 / 还原」两个helper，且还原真的写回 scrollTop", () => {
     expect(src, "切走前要记住滚动位置").toContain("function rememberViewScroll");
     expect(src, "切回后要还原滚动位置").toContain("function restoreViewScroll");
-    // B136：还原是「把快照里的顶行行号顶到视口顶部」，用 CM6 自己的滚动机制 ——
-    // 写回 px 的做法在文档变长/行高变化后会整体漂（实测偏 10 行）。
-    expect(src, "还原必须按行号定位（顶行对齐）").toMatch(
-      /const line = view\.state\.doc\.line\(Math\.min\(t\.topLine[^)]*\)\);[\s\S]{0,160}?EditorView\.scrollIntoView\(line\.from, \{ y: "start" \}\)/,
+    // B134：写回要经 `pinScrollTop` —— 裸写会被「容器还没布局」裁成 0，
+    // 值看着写上了、其实没进去。pinScrollTop 内部最终还是会写 scrollDOM，
+    // 所以这里同时认两种写法，但**必须**经由写回函数。
+    expect(src, "还原必须把快照里的值写回 scrollDOM（光调 helper 名不算）").toMatch(
+      /pinScrollTop\(view\.scrollDOM, t\.scrollTop\)|view\.scrollDOM\.scrollTop = t\.scrollTop/,
     );
   });
 
-  it("反向验证：退化成写回 px，上一条必须失败", () => {
-    const LINE_ANCHOR =
-      /view\.dispatch\(\{ effects: EditorView\.scrollIntoView\(line\.from, \{ y: "start" \}\) \}\);/;
-    const degraded = src.replace(
-      LINE_ANCHOR,
-      "pinScrollTop(view.scrollDOM, t.scrollTop!); // B136 退化：写回 px",
+  it("反向验证：删掉写回那一行，上一条断言必须失败", () => {
+    const degraded = src
+      .replace(
+        /pinScrollTop\(view\.scrollDOM, t\.scrollTop\);/g,
+        "view.scrollDOM.scrollTop = t.scrollTop!;",
+      )
+      .replace(/view\.scrollDOM\.scrollTop = t\.scrollTop!(;)?/g, "// 已删除");
+    expect(degraded).not.toBe(src);
+    expect(degraded, "退化后不应再匹配到写回语句（否则这条断言形同虚设）").not.toMatch(
+      /view\.scrollDOM\.scrollTop = t\.scrollTop/,
     );
-    expect(degraded, "退化实现应真的换了写法").not.toBe(src);
-    expect(degraded, "退化后不应再有按行定位（否则这条断言形同虚设）").not.toMatch(LINE_ANCHOR);
   });
 
   it("销毁视图的每一处现场都必须先记住滚动位置", () => {
@@ -383,28 +357,13 @@ describe("B126 静态契约：滚动位置必须自己存取", () => {
   });
 
   it("会话与跨窗口载荷都要带 scrollTop", () => {
-    // B136：编辑器侧的位置在 `topLine`，预览侧的在 `scrollTop` —— 两个字段各管一段
-    expect(src, "会话记录要带视口位置").toMatch(/\.\.\.viewportOfTab\(/);
-    expect(src, "恢复会话时要接住 topLine").toMatch(/inst\.topLine = st\.topLine \?\? null;/);
-    expect(
-      src,
-      "纯预览侧的位置归 scrollTop（编辑器 display:none 时它的 scrollTop 恒为 0）",
-    ).toMatch(
-      // 两侧字段是分行写的，正则里得给换行留位置（B137 把这一支展开成了多行）
-      /if \(t\.viewMode === "preview"\) \{[\s\S]{0,240}?topLine: null,[\s\S]{0,120}?scrollTop:/,
-    );
-    expect(src, "编辑器侧绝不把 px 塞进同一个槽（混用会把「顶行」污染成 0，B129 那个坑）").toMatch(
-      /return \{ topLine: topVisibleLineOf\(p\.view\.view\), scrollTop: null \};/,
-    );
+    expect(src, "会话记录要带 scrollTop").toMatch(/scrollTop: viewportOfTab\(/);
+    expect(src, "恢复会话时要接住 scrollTop").toMatch(/inst\.scrollTop = st\.scrollTop/);
     const api = readFileSync("src/ipc/api.ts", "utf-8");
-    expect(api, "TabSession 要有 topLine").toContain("topLine?: number | null");
-    expect(api, "TabSession 仍要留 scrollTop（纯预览侧用）").toContain("scrollTop?: number | null");
-    expect(api, "SatelliteTab 要有 topLine").toContain("topLine: number | null");
+    expect(api, "TabSession 要有 scrollTop").toContain("scrollTop?: number | null");
+    expect(api, "SatelliteTab 要有 scrollTop").toContain("scrollTop: number | null");
     const rust = readFileSync("src-tauri/src/session/mod.rs", "utf-8");
-    expect(rust, "Rust 会话结构要有 top_line，否则落盘时被丢掉").toContain(
-      "pub top_line: Option<u32>",
-    );
-    expect(rust, "Rust 会话结构要留 scroll_top（纯预览侧）").toContain(
+    expect(rust, "Rust 会话结构要有 scroll_top，否则落盘时被丢掉").toContain(
       "pub scroll_top: Option<u32>",
     );
   });

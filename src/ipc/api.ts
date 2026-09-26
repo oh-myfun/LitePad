@@ -238,19 +238,12 @@ export interface TabSession {
   cursorLine: number;
   cursorCol: number;
   /**
-   * 编辑器可视区**顶行行号**（1-based，B136）。
+   * 视口滚动位置（px）。只记光标行列是不够的：恢复后文件停在开头、光标却在第 N
+   * 行（屏幕外），看上去就跟「光标复位了」一样（B126）。
    *
-   * 只记光标行列是不够的：恢复后文件停在开头、光标却在第 N 行（屏幕外），
-   * 看上去就跟「光标复位了」一样。
-   *
-   * ⚠️ 存行号而不是 `scrollTop`（px）：px 与行高、文档长度强绑定 —— 编辑后没保存的
-   * 内容比磁盘文件长，同一个 px 会落在后面的行上，重启后位置「往后偏」
-   * （B136 实测偏 10 行）。行号是逻辑坐标，与渲染无关。
-   */
-  topLine?: number | null;
-  /**
-   * **纯预览侧**的滚动位置（px，B129）。预览是 HTML 块流，没有稳定行坐标，只能给像素。
-   * 编辑器侧的位置请读 `topLine`；两者不要混在一个槽里。
+   * ⚠️ **纯预览态（B129）下这个槽是预览容器的滚动位置**：编辑器此时 `display:none`，
+   * `scrollTop` 被浏览器清零，真正承载视图位置的是预览容器。
+   * `null` = 这份实例从没显示过 → 接手方自行保证光标可见。
    */
   scrollTop?: number | null;
   /** Markdown 视图模式（source/split/preview） */
@@ -410,9 +403,7 @@ export interface SatelliteTab {
   viewMode: string;
   cursorLine: number;
   cursorCol: number;
-  /** 编辑器可视区顶行行号（B136，逻辑坐标）；纯预览侧为 null、位置在 scrollTop */
-  topLine: number | null;
-  /** 纯预览侧的视口滚动位置（px，B129）；`null` = 从没显示过，接手方自行保证光标可见 */
+  /** 视口滚动位置（px）；纯预览侧是预览容器的位置（B129），`null` = 从没显示过 */
   scrollTop: number | null;
   sizeClass: "normal" | "large" | "huge";
   /** 热退出副本 id / 是否已备份，随标签一起带走，避免新窗口重复写一份副本 */

@@ -154,22 +154,16 @@ pub struct TabSession {
     pub cursor_line: u32,
     #[serde(alias = "cursor_col")]
     pub cursor_col: u32,
-    /// 编辑器可视区**顶行行号**（1-based，B136）。
-    ///
-    /// ⚠️ 之前这里存的是 px（`scroll_top` 字段），会因文档长度/行高变化而漂移：
-    /// 编辑后没保存的内容比磁盘文件长，同一个 px 会落到后面的行上 —— 实测
-    /// 「滚到第 123 行，重启后变成第 133 行」。行号是逻辑坐标，与渲染无关，
-    /// 所以编辑器侧的视图位置统一记行号。
-    ///
-    /// `None` = 这份标签从没显示过（旧会话也没有这个字段），由前端退化成
-    /// 「保证光标可见」。
-    #[serde(alias = "top_line")]
-    pub top_line: Option<u32>,
-    /// **纯预览侧**的滚动位置（px，B129）。预览是 HTML 块流，没有稳定行坐标。
+    /// 视口滚动位置（px）。
     ///
     /// 光标只记到行列，视口不记的话恢复后文件停在开头、光标却在屏幕外，
-    /// 看上去就跟「光标复位了」一样。`None` = 这份标签从没显示过（旧会话也没有
-    /// 这个字段），由前端按光标位置自行定位。
+    /// 看上去就跟「光标复位了」一样（B126）。
+    ///
+    /// ⚠️ **纯预览态（B129）下这个槽是预览容器的滚动位置**：编辑器此时是
+    /// `display:none`，`scrollTop` 被浏览器清零，真正承载视图位置的是预览容器。
+    /// 所以前端存取两端都按 `view_mode` 分流，别死盯编辑器。
+    ///
+    /// `None` = 这份标签从没显示过，由前端按光标位置自行定位。
     pub scroll_top: Option<u32>,
     /// Markdown 视图模式（source/split/preview），仅 md 文件有意义
     #[serde(alias = "view_mode")]
@@ -201,7 +195,6 @@ impl Default for TabSession {
             eol: "CRLF".into(),
             cursor_line: 1,
             cursor_col: 1,
-            top_line: None,
             scroll_top: None,
             view_mode: None,
             backup_id: None,
@@ -340,11 +333,12 @@ mod tests {
         assert!(!out.contains("cursor_line"), "不应再落盘 snake_case：{out}");
     }
 
-    /// B126 / B129 / B136：视图位置要跟着会话走，且**两个字段各管一段**。
+    /// B126 / B129：视图位置要跟着会话走。
     ///
-    /// · 编辑器侧 = `topLine`（可视区顶行**行号**）。存 px 会漂移：编辑后没保存的
-    ///   内容比磁盘文件长，同一个 px 落到后面的行上（B136 实测偏 10 行）。
-    /// · 纯预览侧 = `scrollTop`（预览容器**像素**）。预览是 HTML 块流，没有行坐标。
+    /// 编辑器侧与纯预览侧**共用 `scrollTop` 这一个槽**（B136 试过拆成 `topLine` +
+    /// `scrollTop` 两个字段各管一段，结果两端都得靠 `view_mode` 猜是谁的，又绕回
+    /// B129 那个「编辑器顶行被污染成 0」的坑 —— 已回退），由前端按 `view_mode`
+    /// 决定它眼下记的是编辑器还是预览容器的位置。
     ///
     /// 只记光标行列是不够的：恢复后文件停在开头、光标却在第 N 行（屏幕外），
     /// 用户看到的就是「光标丢了」。缺字段时回落 None，前端按光标位置自行定位。
@@ -355,26 +349,27 @@ mod tests {
             { "tabs": [
                 { "path": "a.md", "encoding": "UTF-8", "eol": "LF",
                   "cursorLine": 12, "cursorCol": 5,
-                  "topLine": 123, "scrollTop": 842 }
+                  "scrollTop": 842 }
               ], "active": 0 }
           ],
           "layout": { "kind": "leaf", "panelId": 0 },
           "activePanel": 0
         }"#;
 
-        let state: SessionState =
-            serde_json::from_str(json).expect("应能读入带 topLine/scrollTop 的会话");
+        let state: SessionState = serde_json::from_str(json).expect("应能读入带 scrollTop 的会话");
         let tab = &state.panels[0].tabs[0];
-        assert_eq!(tab.top_line, Some(123), "编辑器侧应读到顶行行号");
-        assert_eq!(tab.scroll_top, Some(842), "预览侧应读到像素");
+        assert_eq!(tab.scroll_top, Some(842), "视口位置应原样读到");
         let out = serde_json::to_string(&state).unwrap();
-        assert!(out.contains("\"topLine\":123"), "落盘应为 topLine：{out}");
         assert!(
             out.contains("\"scrollTop\":842"),
             "落盘应为 scrollTop：{out}"
         );
+        assert!(
+            !out.contains("topLine"),
+            "不应再落盘已回退的 topLine：{out}"
+        );
 
-        // 旧会话没有这两个字段 → None，不能因为缺字段把整份会话判死
+        // 旧会话没有这个字段 → None，不能因为缺字段把整份会话判死
         let old = r#"{
           "panels": [
             { "tabs": [
@@ -387,7 +382,6 @@ mod tests {
         }"#;
         let old_state: SessionState = serde_json::from_str(old).expect("旧会话应照旧可读");
         let old_tab = &old_state.panels[0].tabs[0];
-        assert_eq!(old_tab.top_line, None);
         assert_eq!(old_tab.scroll_top, None);
     }
 
