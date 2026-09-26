@@ -331,7 +331,11 @@ describe("B129 静态契约：三样都要进出会话", () => {
     // 把它们刷进去 —— 所以断言一半盯 store 的序列化，一半盯刷新。
     const store = readFileSync("src/session/store.ts", "utf-8");
     expect(store, "每个标签都要记光标行").toMatch(/cursorLine: r\.cursorLine,/);
-    expect(store, "每个标签都要记视口位置").toMatch(/scrollTop: r\.scrollTop,/);
+    // B143：出口会顺手取整（小数会让 Rust 侧整份会话反序列化失败），所以这里
+    // 认「scrollTop 字段来自 r.scrollTop」这回事，不咬死是否包了 `Math.round`。
+    expect(store, "每个标签都要记视口位置").toMatch(
+      /scrollTop: r\.scrollTop === null \? null : Math\.round\(r\.scrollTop\),/,
+    );
     expect(store, "面板记录要带激活下标").toMatch(/active: Math\.max\(/);
     expect(src, "刷新要把视口刷进会话记录").toMatch(/sessionStore\.setScroll\(/);
   });

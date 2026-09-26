@@ -137,6 +137,25 @@ pub fn save(settings: &Settings) -> Result<(), String> {
 
 // ---------------------------------------------------------------- 会话状态（M2）
 
+/// 视口位置按**浮点**收下再取整（B143）。
+///
+/// 浏览器里 `scrollTop` 是 double：系统缩放不是 100% 时，「滚到底」正好等于
+/// `scrollHeight - clientHeight`，几乎必然带小数（125% / 150% 缩放是重灾区）。
+/// 而本字段是 `Option<u32>` —— 一个小数会让**整份** `SessionState` 反序列化失败
+/// ⇒ `save_session` 直接报错 ⇒ 前端那个 catch 静默吞掉 ⇒ 会话从此一次也写不进去，
+/// 表现就是「滚到底之后再滚，位置再也不刷新」（往回滚的增量是整数，可基数还带着
+/// 那个小数，于是连续失败）。
+///
+/// 宁可差 1px，也不能让整份会话落不下去。已经写了小数的历史文件也能被读回来。
+fn de_scroll_top<'de, D>(d: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = Option::<f64>::deserialize(d)?;
+    Ok(v.filter(|n| n.is_finite() && *n >= 0.0)
+        .map(|n| n.round() as u32))
+}
+
 /// 单个会话标签：按路径恢复（未命名文档不参与会话）。
 ///
 /// 线上格式是 **camelCase**（`cursorLine` / `viewMode`），与前端
@@ -164,6 +183,10 @@ pub struct TabSession {
     /// 所以前端存取两端都按 `view_mode` 分流，别死盯编辑器。
     ///
     /// `None` = 这份标签从没显示过，由前端按光标位置自行定位。
+    ///
+    /// ⚠️ 反序列化走 `de_scroll_top`：浏览器给的是 double（见该函数注释，
+    /// B143），裸 `u32` 会让整份会话读不出来。
+    #[serde(alias = "scroll_top", deserialize_with = "de_scroll_top")]
     pub scroll_top: Option<u32>,
     /// Markdown 视图模式（source/split/preview），仅 md 文件有意义
     #[serde(alias = "view_mode")]
@@ -383,6 +406,62 @@ mod tests {
         let old_state: SessionState = serde_json::from_str(old).expect("旧会话应照旧可读");
         let old_tab = &old_state.panels[0].tabs[0];
         assert_eq!(old_tab.scroll_top, None);
+    }
+
+    /// B143：视口位置**带小数**时也必须能读进来。
+    ///
+    /// 浏览器 `scrollTop` 是 double：系统缩放不是 100% 时，「滚到底」= `scrollHeight
+    /// - clientHeight` 几乎必然是小数（125% 缩放尤其）。以前这个字段是裸 `u32`：
+    /// 一个 `842.4` 就让**整份** `SessionState` 反序列化失败 ⇒ `save_session` 报错 ⇒
+    /// 前端静默吞掉 ⇒ 会话从此一次也写不进去，用户只看到「位置不再刷新」。
+    ///
+    /// 所以：整数照旧、小数四舍五入、`null` 仍是 None。
+    #[test]
+    fn scroll_top_accepts_fractional_pixels() {
+        let mk = |scroll: &str| -> String {
+            format!(
+                r#"{{
+                  "panels": [
+                    {{ "tabs": [
+                        {{ "path": "a.md", "encoding": "UTF-8", "eol": "LF",
+                          "cursorLine": 12, "cursorCol": 5,
+                          "scrollTop": {scroll} }}
+                      ], "active": 0 }}
+                  ],
+                  "layout": {{ "kind": "leaf", "panelId": 0 }},
+                  "activePanel": 0
+                }}"#
+            )
+        };
+
+        // 反向印证：裸 `u32` 确实接不住小数 —— 这正是「整份会话读不出来」的原因，
+        // 也是必须挂 `de_scroll_top` 的理由（修法不是拍脑袋来的）。
+        assert!(
+            serde_json::from_str::<Option<u32>>("842.4").is_err(),
+            "裸 u32 应拒绝小数（否则本用例就没有意义）"
+        );
+
+        let frac: SessionState =
+            serde_json::from_str(&mk("842.4")).expect("小数 scrollTop 不能让整份会话读不出来");
+        assert_eq!(frac.panels[0].tabs[0].scroll_top, Some(842));
+
+        let frac_up: SessionState = serde_json::from_str(&mk("842.6")).unwrap();
+        assert_eq!(
+            frac_up.panels[0].tabs[0].scroll_top,
+            Some(843),
+            "四舍五入，不是截断"
+        );
+
+        // 整数那条老路径不能因为改了反序列化就走样
+        let int: SessionState = serde_json::from_str(&mk("842")).unwrap();
+        assert_eq!(int.panels[0].tabs[0].scroll_top, Some(842));
+
+        let none: SessionState = serde_json::from_str(&mk("null")).unwrap();
+        assert_eq!(none.panels[0].tabs[0].scroll_top, None);
+
+        // 负数（异常值）按「没位置」处理，不许把整份会话判死
+        let neg: SessionState = serde_json::from_str(&mk("-3.5")).unwrap();
+        assert_eq!(neg.panels[0].tabs[0].scroll_top, None);
     }
 
     /// 旧版本（B48 及更早）落盘的是 snake_case，升级后仍要能读出来。

@@ -66,7 +66,14 @@ function toDisk(r: SessionTabRecord): TabSession {
     eol: r.eol,
     cursorLine: r.cursorLine,
     cursorCol: r.cursorCol,
-    scrollTop: r.scrollTop,
+    // B143：浏览器里 `scrollTop` 是 **double** —— 缩放下「滚到底」正好是
+    // `scrollHeight - clientHeight`，几乎必然带小数（125% 缩放是重灾区）。
+    // 而 Rust 侧 `scroll_top` 是 `Option<u32>`：一个小数就让**整份** SessionState
+    // 反序列化失败 ⇒ `save_session` 报错 ⇒ `persistSession` 的 catch 把它吞掉 ⇒
+    // 会话从此**一次也写不进去**，表现就是「滚到底之后再滚，位置就不刷新了」
+    // （往回滚的增量是整数，可基数还带着那个小数，于是连续失败）。
+    // 出口统一取整：1px 的误差对还原无感，能落下去才要紧。
+    scrollTop: r.scrollTop === null ? null : Math.round(r.scrollTop),
     viewMode: r.viewMode,
     backupId: r.backupId,
     docId: r.docId,

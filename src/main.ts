@@ -2346,8 +2346,11 @@ function convertLayoutForSession(node: LayoutNode, panelIndex: Map<number, numbe
 async function persistSession(): Promise<void> {
   try {
     await saveSession(snapshotSession());
-  } catch {
-    // 会话保存失败不影响使用
+  } catch (e) {
+    // B143：这里原来是**静默**吞掉的。整份会话写不进去时界面上一点迹象都没有
+    // （只表现为「位置/光标不再刷新」），排查只能靠猜 —— 小数 scrollTop 让 Rust 侧
+    // 反序列化失败那次就是这么被藏起来的。至少留一条日志。
+    logEvent("session-save-failed", String(e), "warn");
   }
 }
 
@@ -5807,8 +5810,9 @@ async function finishAndDestroy(dirty: Doc[]): Promise<void> {
       if (unbacked.length === 0) {
         try {
           await saveSession(snapshotSession());
-        } catch {
-          // 会话写失败不阻塞退出
+        } catch (e) {
+          // 会话写失败不阻塞退出；但别静默（B143：静默会让「会话写不进去」无从察觉）
+          logEvent("session-save-failed", String(e), "warn");
         }
         await destroySelf();
         return;
@@ -5828,8 +5832,9 @@ async function finishAndDestroy(dirty: Doc[]): Promise<void> {
     }
     try {
       await saveSession(snapshotSession());
-    } catch {
-      // 会话写失败不阻塞退出
+    } catch (e) {
+      // 会话写失败不阻塞退出；但别静默（B143：静默会让「会话写不进去」无从察觉）
+      logEvent("session-save-failed", String(e), "warn");
     }
   }
   await destroySelf();
