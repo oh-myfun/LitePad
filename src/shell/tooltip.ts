@@ -228,10 +228,17 @@ let keyEl: HTMLSpanElement | null = null;
 let showTimer: number | undefined;
 /** 收起宽限的定时器（鼠标离开后 `HIDE_GRACE` 才真的收） */
 let hideTimer: number | undefined;
-/** 已经显示出来的目标 */
-let shownTarget: HTMLElement | null = null;
-/** 正在等延迟、还没显示的目标（离开时要能取消） */
-let pendingTarget: HTMLElement | null = null;
+/**
+ * 当前跟踪的目标：它要么在**等 500ms**、要么**已经显示**，两者互斥。
+ *
+ * 这就是 VS Code `ManagedHover` 的两个阶段（hoverService.ts 里的 `hoverPreparation`
+ * 与 `hoverWidget`）—— 每个目标自己管自己，这里用一个变量等价表达，少一份耦合。
+ * 早先拆成 `pendingTarget` + `shownTarget` 两份，主动收起（点击/滚动/菜单）只要
+ * 顺手清一个，就会出现「提示再也弹不出来」（B128）。
+ */
+let tracked: HTMLElement | null = null;
+/** 提示层当前是不是"已经显示"状态（只有它才需要走收起宽限） */
+const isShown = (): boolean => !!layer && !layer.hidden;
 let mouseDown = false;
 let bound = false;
 /** 最近一次鼠标位置：鼠标定位模式（`follow`）要用它算气泡左缘 */
@@ -314,7 +321,7 @@ function showFor(el: HTMLElement): void {
   build();
   const l = layer!;
 
-  shownTarget = el;
+  tracked = el;
 
   textEl!.textContent = text;
   const detail = el.dataset.tipDetail ?? "";
@@ -371,16 +378,17 @@ function showFor(el: HTMLElement): void {
 
 /** 收起提示（主动调用也安全：没显示时是空操作） */
 export function hideTip(): void {
-  if (showTimer !== undefined) window.clearTimeout(showTimer);
-  showTimer = undefined;
   if (hideTimer !== undefined) window.clearTimeout(hideTimer);
   hideTimer = undefined;
   if (layer) {
     layer.hidden = true;
     layer.classList.remove("fade-in");
   }
-  shownTarget = null;
-  pendingTarget = null;
+  // ⚠️ **故意不动 `tracked` 与 `showTimer`**（B128 血的教训）：点击标签、滚动编辑区、
+  // 开菜单、按 Esc 都会走到这里，而鼠标往往还压在原来的目标上不动 —— 一旦把那条
+  // 等待中的计时也清掉，这次提示就**永远不来了**，要等用户把鼠标移开再移回。
+  // 收起只影响"已经显示出来的那一条"，等待中的照旧到点显示（VS Code 的
+  // `MOUSE_LEAVE` 才负责取消等待，`MOUSE_DOWN` 只管收）。
 }
 
 /** 从事件目标回溯到「带提示的元素」（图标内部的 svg 会被归到按钮上） */
@@ -390,33 +398,50 @@ function targetOf(node: EventTarget | null): HTMLElement | null {
   return el && el.dataset.tip ? el : null;
 }
 
+/** 整条规则就三条，改之前先读（B127 / B128 都是没守住这三条）：
+ * 1. **进入目标** → 排 `SHOW_DELAY`，到点显示（不秒开）；
+ * 2. **鼠标离开目标** → 取消等待；只有"已经显示"的那条才走 `HIDE_GRACE` 宽限收起；
+ * 3. **主动收起**（点击 / 滚动 / Esc / 菜单 …）→ 只收"已经显示的那一条"，
+ *    不动等待中的那条 —— 否则鼠标压在目标上不动，提示就再也弹不出来。
+ * 目标在「等待 ↔ 已显示」之间**只有第 2 条**能切换，没有第二条路径。 */
+
+function clearShowTimer(): void {
+  if (showTimer === undefined) return;
+  window.clearTimeout(showTimer);
+  showTimer = undefined;
+}
+
+/** `HIDE_GRACE` 宽限后收起（只用于"鼠标真的离开了目标"） */
+function graceHide(from: HTMLElement): void {
+  if (hideTimer !== undefined) window.clearTimeout(hideTimer);
+  hideTimer = window.setTimeout(() => {
+    hideTimer = undefined;
+    if (tracked === from) return; // 宽限期间鼠标又回去了（回去会走 scheduleShow 清掉宽限）
+    hideTip();
+  }, HIDE_GRACE);
+}
+
 /**
  * 排一次「`SHOW_DELAY` 后显示」。
  *
  * 没有任何秒开分支（B127 前那套 `instant` / group 秒开已停用）：挪到任何目标都得
  * 重新走满延迟，用户要的就是这个。
  */
-/** 取消待执行的收起宽限（提示重新有了归属） */
-function cancelHideGrace(): void {
-  if (hideTimer === undefined) return;
-  window.clearTimeout(hideTimer);
-  hideTimer = undefined;
-}
-
 function scheduleShow(el: HTMLElement): void {
-  if (showTimer !== undefined) {
-    window.clearTimeout(showTimer);
-    showTimer = undefined;
-  }
+  clearShowTimer();
   // ⚠️ 进了新目标就**取消上一次的收起宽限**。否则宽限到点会把刚排上的等待一起清掉
   // —— 表现是「移到隔壁标签，旧提示收了、新提示也不来，要等鼠标再动一下」。
-  cancelHideGrace();
-  // 已经在等同一目标显示（鼠标在它内部来回顾了 svg 之类）→ 别把计时白重启一遍
-  if (pendingTarget === el) return;
-  pendingTarget = el;
+  if (hideTimer !== undefined) window.clearTimeout(hideTimer);
+  hideTimer = undefined;
+  // 已经在等这个目标（鼠标在它内部来回顾了 svg / 文本）→ 别把计时白重启一遍。
+  // 对应 VS Code ManagedHover 里 `if (hoverPreparation) return` 那一行；
+  // 但**必须带上 `showTimer` 还在**，否则"等待已经作废、只是层还没显示"（比如上一次
+  // 被菜单开着拦下）就再也补不回来了。
+  if (tracked === el && showTimer !== undefined) return;
+  tracked = el;
   showTimer = window.setTimeout(() => {
     showTimer = undefined;
-    if (pendingTarget === el) showFor(el);
+    showFor(el);
   }, SHOW_DELAY);
 }
 
@@ -428,19 +453,12 @@ function scheduleShow(el: HTMLElement): void {
  *   ⇒ 旧提示继续挂着，直到新提示按自己的 500ms 亮起来。
  */
 function scheduleHide(from: HTMLElement): void {
-  if (showTimer !== undefined) {
-    window.clearTimeout(showTimer);
-    showTimer = undefined;
-  }
-  if (pendingTarget === from) pendingTarget = null;
-  if (shownTarget !== from) return;
-  cancelHideGrace();
-  hideTimer = window.setTimeout(() => {
-    hideTimer = undefined;
-    // 宽限期里鼠标又回来了（同一目标被重新悬停会走 scheduleShow 清掉 hideTimer，
-    // 能走到这里的只可能是「鼠标已经不在任何提示目标上」）
-    if (shownTarget === from) hideTip();
-  }, HIDE_GRACE);
+  clearShowTimer(); // 离开 ⇒ 等待作废（VS Code `MOUSE_LEAVE` 里 `disposePreparation`）
+  // 只认自己跟踪的那个目标：已经换到别的元素了，或者这次压根没在跟踪它，就别插手
+  if (tracked !== from) return;
+  tracked = null;
+  // 只有"已经显示出来"的那条才需要宽限收起；还在等的到此为止（等都没了，没什么可宽限）
+  if (isShown()) graceHide(from);
 }
 
 /**
@@ -458,11 +476,12 @@ export function initTooltips(doc: Document = document): void {
     (e) => {
       const el = targetOf(e.target);
       if (!el) return;
-      // ⚠️ 要在 `el === shownTarget` 这个提前 return **之前**取消宽限：鼠标又碰到提示
-      // 了（哪怕还是同一个目标），上一次「收起」的决定就作废，否则宽限到点照样收，
+      // 鼠标又碰到提示了（哪怕还是同一个目标）⇒ 上一次「离开」的决定作废。
+      // ⚠️ 要在 `tracked === el` 的提前 return **之前**清宽限，否则宽限到点照样收，
       // 表现为「移开一点点又移回来，提示照样消失」。
-      cancelHideGrace();
-      if (el === shownTarget) return;
+      if (hideTimer !== undefined) window.clearTimeout(hideTimer);
+      hideTimer = undefined;
+      if (tracked === el) return;
       pointerDriven = true;
       // 目标换了就重新计时：不秒开、不跳过淡入（用户 09-26 反馈，见文件头「偏离」第 3 条）。
       // 顺带把上一次的收起宽限取消掉 —— 收起宽限不该吃掉新目标这 500ms 的等待。
@@ -483,17 +502,20 @@ export function initTooltips(doc: Document = document): void {
     true,
   );
 
-  // 记录鼠标位置（follow 模式要用）+ 补一条「鼠标已经不在目标上就立刻收起」。
-  //
-  // VS Code 只在 placement 为 'mouse' 时跟踪 mousemove，一旦事件不再属于目标就
-  // `hideHover`。这里对所有提示都记位置（鼠标定位要用），并顺带补上这条守卫：
-  // 鼠标从目标内部直接滑出窗口、`mouseout` 没派发到 document 的场合也能收掉。
+  // 记录鼠标位置（follow 模式要用）+ 两条自愈守卫：
+  //   ① 鼠标已经不在跟踪的目标上（从目标内部滑出窗口、`mouseout` 没派发到 document 等
+  //      场合）⇒ 按"离开"处理，走宽限收起 —— 对应 VS Code `MOUSE_MOVE` 里的
+  //      `if (!eventIsRelatedToTarget(e, targetElement)) hideHover(true, true)`；
+  //   ② 跟踪着的目标却还没显示出来（上一次显示被菜单开着之类的原因拦下）⇒ 重新排一次，
+  //      否则鼠标一动不动就永远补不上。
   doc.addEventListener(
     "mousemove",
     (e) => {
       lastMouseX = e.clientX;
-      // 走宽限而不是立刻收：鼠标在目标外抖动几下不该把提示闪掉
-      if (shownTarget && !shownTarget.contains(e.target as Node)) scheduleHide(shownTarget);
+      if (!tracked) return;
+      const el = targetOf(e.target);
+      if (el !== tracked) scheduleHide(tracked);
+      else if (!isShown()) scheduleShow(tracked);
     },
     true,
   );
@@ -502,7 +524,7 @@ export function initTooltips(doc: Document = document): void {
     "focusin",
     (e) => {
       const el = targetOf(e.target);
-      if (!el || el === shownTarget) return;
+      if (!el || tracked === el) return;
       // 鼠标点击会先 mousedown 再 focus：这时候不该弹提示（对应 VS Code 的 isMouseDown 守卫）
       if (mouseDown) return;
       pointerDriven = false; // 键盘聚焦没有鼠标坐标 → 退回按元素定位

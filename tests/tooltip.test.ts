@@ -394,6 +394,39 @@ describe("tooltip 层行为（jsdom）", () => {
     expect(isTipVisible()).toBe(true);
   });
 
+  it("点击标签后鼠标不动，提示照样按 500ms 出现（B128 回归）", () => {
+    const a = mkTip("E:\\demo\\a.md", "tabstrip", undefined, { follow: true });
+    hover(a);
+    a.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    a.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    // ⚠️ 鼠标没动 ⇒ 不会再有任何 mouseover。点一下就把这条提示"打死"是 B128 之前的
+    // 症状，用户反馈「很多时候不触发显示了」——  LitePad 里点标签/按钮太频繁了。
+    vi.advanceTimersByTime(600);
+    expect(isTipVisible(), "点击不该让这条提示永远消失").toBe(true);
+  });
+
+  it("滚动之后鼠标仍停在标签上，提示照样出现（B128 回归）", () => {
+    const a = mkTip("E:\\demo\\a.md", "tabstrip", undefined, { follow: true });
+    hover(a);
+    window.dispatchEvent(new Event("scroll"));
+    vi.advanceTimersByTime(600);
+    expect(isTipVisible(), "滚动只是收起，不该取消等待").toBe(true);
+  });
+
+  it("菜单关掉后鼠标不动也能补上提示（B128 回归）", () => {
+    const menu = document.createElement("div");
+    menu.className = "popup-menu";
+    document.body.appendChild(menu);
+    const a = mkTip("新建", "toolbar");
+    hover(a);
+    vi.advanceTimersByTime(600);
+    expect(isTipVisible(), "前置：菜单开着时不弹").toBe(false);
+    menu.remove();
+    a.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 42 }));
+    vi.advanceTimersByTime(600);
+    expect(isTipVisible(), "菜单关掉后该补上").toBe(true);
+  });
+
   it("滚轮滚动 / 按下鼠标 / Esc 一律立刻收起", () => {
     const a = mkTip("新建", "toolbar");
     hover(a);
