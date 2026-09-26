@@ -2213,6 +2213,26 @@ function scheduleSessionSave(): void {
 
 let sessionTimer: number | null = null;
 
+/**
+ * 落盘前把**当前视图**的最新状态回写进标签快照（B140）。
+ *
+ * 光标与视口都只活在视图 / DOM 上，而 `t.state` 只在切标签、重建布局、拖标签那几处
+ * 被回写过（`switchTab` / `rebuildLayout` / `disposePanel`…）。于是「打开 → 编辑 → 移
+ * 光标 → 滚动 → 直接关窗」落下去的还是**打开时**那份 —— 重启后光标与位置都回到开头。
+ *
+ * 放在 `snapshotSession` 开头而不是关窗那一处：防抖的 800ms 落盘、热退出、装更新前的
+ * persist 走的都是这条出口，一次同步全照顾到。回写是幂等的（值就来自当下这个视图）。
+ */
+function syncShownViewToTab(): void {
+  for (const p of panels.values()) {
+    if (!p.view || p.viewTabId === null) continue;
+    const t = tabs.get(p.viewTabId);
+    if (!t) continue;
+    t.state = p.view.view.state;
+    rememberViewScroll(p);
+  }
+}
+
 /** 一个标签的会话记录（面板内标签与 `satelliteTabs` 共用同一形状）。 */
 function sessionTabRecordOf(t: Tab): {
   path: string;
@@ -2261,6 +2281,7 @@ function sessionWorthy(t: Tab): boolean {
 }
 
 function snapshotSession(): Parameters<typeof saveSession>[0] {
+  syncShownViewToTab();
   const panelIndex = new Map<number, number>();
   const ordered = [...panels.keys()];
   ordered.forEach((id, i) => panelIndex.set(id, i));

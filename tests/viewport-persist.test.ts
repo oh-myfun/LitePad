@@ -26,7 +26,9 @@ beforeAll(() => {
 const wired = vi.hoisted(() => ({
   close: null as ((ev: { preventDefault(): void }) => void) | null,
   events: [] as string[],
-  saved: [] as { panels: { tabs: { path: string; scrollTop: number | null }[] }[] }[],
+  saved: [] as {
+    panels: { tabs: { path: string; scrollTop: number | null; cursorLine?: number }[] }[];
+  }[],
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -202,9 +204,29 @@ describe("B132 视口位置：滚动要能自己排程落盘，关窗要兜底�
     await wait(150);
     expect(prevented, "无脏文档也要先拦住默认关闭，否则进程收尾、IPC 白发").toBe(true);
     expect(wired.saved.length, "无脏文档关窗也要存现场").toBeGreaterThan(before);
-    // 关键：顺序。'close' 一旦排在 'save' 前面，存就赶不上窗口关闭了
+    // 关键：顺序。'close' 一旦排在 'save' 前面，存就赶不上窗口关闭了。
+    // 设置不进这条序列：它在设置窗口里改动时就存了，关窗不重复写（B140）。
     expect(wired.events, "必须先落盘（save）、再关窗（close）").toEqual(["save", "close"]);
     expect(lastSaved(), "关窗时存的应是当前视口 500").toBe(500);
+  });
+
+  it("③ 移光标 + 滚动后直接关窗：落盘的就是此刻的（B140）", async () => {
+    // `t.state` 只在切标签 / 重建 / 拖标签那几处回写，所以「打开 → 改 → 直接关窗」
+    // 落下去的是打开时那份。这里刻意**不派发 scroll 事件**（jsdom 裸写就是不派发），
+    // 也正是「最后一次变化没有事件」那条最刁钻的路径。
+    const v = editorView();
+    v.dispatch({ selection: { anchor: v.state.doc.line(8).from } });
+    v.scrollDOM.scrollTop = 300;
+    await wait(50);
+
+    wired.events.length = 0;
+    wired.close!({ preventDefault: () => {} });
+    await wait(150);
+
+    const last = wired.saved[wired.saved.length - 1];
+    const tab = last?.panels[0]?.tabs.find((t) => t.path === "a.md");
+    expect(tab?.cursorLine, "落盘的光标应是此刻的第 8 行，不是打开时的第 1 行").toBe(8);
+    expect(tab?.scrollTop, "落盘的视口应是此刻的 300").toBe(300);
   });
 });
 
@@ -260,6 +282,16 @@ describe("B132 静态契约：滚动排程 + 关窗兜底", () => {
     );
   });
 
+  it("B140 落盘前要把当前视图的最新状态回写进标签（光标 / 视口）", () => {
+    // `t.state` 只在切标签 / 重建 / 拖标签那几处回写过，直接关窗落的是打开时那份。
+    expect(src, "快照出口要先同步一次").toMatch(
+      /function snapshotSession\(\): Parameters<typeof saveSession>\[0\] \{\s*\n\s*syncShownViewToTab\(\);/,
+    );
+    expect(src, "同步要同时回写 state 与视口").toMatch(
+      /function syncShownViewToTab\(\): void \{[\s\S]{0,200}?t\.state = p\.view\.view\.state;[\s\S]{0,120}?rememberViewScroll\(p\);/,
+    );
+  });
+
   it("反向验证：两条退化都要被上一条抓住", () => {
     // ⚠️ 拆卸与断言必须用**同一条精确串**（老规矩）：按缩进猜字符串这次又没对上，
     // 结果「没拆掉」却被判成「拆掉了」—— 一条假绿。改成同一个正则做替换。
@@ -288,6 +320,16 @@ describe("B132 静态契约：滚动排程 + 关窗兜底", () => {
       "await getCurrentWindow().close();",
     );
     expect(degradedCloseCall, "收尾退回 close() 会二次触发关窗流程").not.toMatch(CLOSE_TAIL);
+
+    // 退化 4：快照出口不做同步（B140 前状）—— 编辑 / 移光标 / 滚动后直接关窗，
+    // 落下去的还是打开时那份
+    const degradedNoSync = src.replace(
+      "function snapshotSession(): Parameters<typeof saveSession>[0] {\n  syncShownViewToTab();",
+      "function snapshotSession(): Parameters<typeof saveSession>[0] {",
+    );
+    expect(degradedNoSync, "少了同步就该被 B140 契约抓住").not.toMatch(
+      /function snapshotSession\(\): Parameters<typeof saveSession>\[0\] \{\s*\n\s*syncShownViewToTab\(\);/,
+    );
   });
 
   // ⚠️ B135 最狠的一条：流转成代码「看着对」、静态正则也 full-match，真机却永久死锁。
