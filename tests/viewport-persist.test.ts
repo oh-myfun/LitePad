@@ -46,6 +46,12 @@ vi.mock("@tauri-apps/api/window", () => ({
       wired.events.push("close");
       return Promise.resolve();
     },
+    // B135：收尾现在走 destroy()（close() 会再发一次 CloseRequested，容易绕回来）。
+    // 同样记成 "close"，好让顺序断言继续盯住「存 → 关」这一件事。
+    destroy: () => {
+      wired.events.push("close");
+      return Promise.resolve();
+    },
   }),
 }));
 vi.mock("@tauri-apps/api/core", () => ({
@@ -202,9 +208,40 @@ describe("B132 视口位置：滚动要能自己排程落盘，关窗要兜底�
   });
 });
 
-/** 「无脏文档」这支的完整流程：拦下 → 存完 → 自己关。缺任意一环都算没做。 */
-const CLOSE_FLOW =
-  /if \(dirty\.length === 0\) \{[\s\S]{0,200}?event\.preventDefault\(\);[\s\S]{0,240}?await persistSession\(\);[\s\S]{0,200}?await getCurrentWindow\(\)\.close\(\);/g;
+/**
+ * B135 关窗死锁（回调里 await IPC ⇒ 永久卡死）之后的关窗契约，三条缺一不可：
+ *   ① 回调只做「拦窗 + 丢一条没人 await 的收尾」：`event.preventDefault()` 必须排在
+ *      `void finishAndDestroy(dirty)` **之前**，且收尾**不带 await**。
+ *   ② 收尾内部，无脏文档那支要先 `await persistSession()`。
+ *   ③ 收尾以 `destroySelf()` 收场 —— `destroy()` 不发 CloseRequested，不会绕回来；
+ *      `close()` 会再发一次。
+ */
+const CLOSE_CALLBACK =
+  /onCloseRequested\(\(event\) => \{[\s\S]{0,900}?event\.preventDefault\(\);[\s\S]{0,200}?void finishAndDestroy\(dirty\);/;
+const CLEAN_BRANCH = /if \(dirty\.length === 0\) \{[\s\S]{0,200}?await persistSession\(\);/;
+const CLOSE_TAIL = /async function finishAndDestroy[\s\S]{0,4000}?await destroySelf\(\);/;
+
+/** 取出某个函数的完整函数体（花括号配对）。用来对整段做「不许有 await」这类更强契约。 */
+function functionBody(src: string, header: string): string {
+  const at = src.indexOf(header);
+  if (at < 0) throw new Error(`找不到 ${header}`);
+  const open = src.indexOf("{", at + header.length - 1);
+  if (open < 0) throw new Error(`${header} 没有左花括号`);
+  let depth = 0;
+  for (let i = open; i < src.length; i += 1) {
+    if (src[i] === "{") depth += 1;
+    else if (src[i] === "}") {
+      depth -= 1;
+      if (depth === 0) return src.slice(open, i + 1);
+    }
+  }
+  throw new Error(`${header} 的花括号没配平`);
+}
+
+/** 去掉注释（块注释 + 行注释），免得注释里的字样被当成代码。`:` 后跟 `//` 的算协议，不算注释。 */
+function stripComments(code: string): string {
+  return code.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+}
 
 describe("B132 静态契约：滚动排程 + 关窗兜底", () => {
   const src = readFileSync("src/main.ts", "utf-8");
@@ -213,7 +250,14 @@ describe("B132 静态契约：滚动排程 + 关窗兜底", () => {
     expect(src, "滚动后要排程落盘").toMatch(
       /if \(t\) t\.scrollTop = shownView\.scrollDOM\.scrollTop;[\s\S]{0,220}?scheduleSessionSave\(\);/,
     );
-    expect(src, "无脏文档关窗要『拦下→存完→再关』，光存不等等于没存").toMatch(CLOSE_FLOW);
+    expect(src, "关窗回调要『先拦下 → 再丢一条没人 await 的收尾』").toMatch(CLOSE_CALLBACK);
+    expect(src, "无脏文档那支要先等会话落盘，光排队等于没存").toMatch(CLEAN_BRANCH);
+    expect(src, "收尾要以 destroy() 收场（close() 会再发一次 CloseRequested）").toMatch(CLOSE_TAIL);
+    // 收尾一律 destroy()：退回 close() 就会二次触发关窗流程
+    const tailFrom = src.indexOf("async function finishAndDestroy");
+    expect(src.slice(tailFrom), "收尾里出现 close() 是退回会绕回来的写法").not.toMatch(
+      /getCurrentWindow\(\)\s*\.\s*close\(\)/,
+    );
   });
 
   it("反向验证：两条退化都要被上一条抓住", () => {
@@ -227,7 +271,49 @@ describe("B132 静态契约：滚动排程 + 关窗兜底", () => {
     );
     expect(degradedScroll, "退化后滚动分支不应再有排程").not.toMatch(SCROLL_ANCHOR);
 
-    const degradedClose = src.replaceAll(CLOSE_FLOW, "if (dirty.length === 0) {}");
-    expect(degradedClose, "退化后放行支不应再有『存完再关』").not.toMatch(CLOSE_FLOW);
+    // 退化 1：回调里 `await` 收尾 —— 这就是 B135 实测永久死锁的写法，契约必须抓住
+    const degradedAwait = src.replace(
+      "void finishAndDestroy(dirty);",
+      "await finishAndDestroy(dirty);",
+    );
+    expect(degradedAwait, "关窗回调里 await 任何 IPC 都会死锁，契约必须拦下").not.toMatch(
+      CLOSE_CALLBACK,
+    );
+    // 退化 2：不等落盘就关
+    const degradedNoWait = src.replace("await persistSession();", "persistSession();");
+    expect(degradedNoWait, "不等会话落盘就关窗等于没存").not.toMatch(CLEAN_BRANCH);
+    // 退化 3：退回 close()
+    const degradedCloseCall = src.replaceAll(
+      "await destroySelf();",
+      "await getCurrentWindow().close();",
+    );
+    expect(degradedCloseCall, "收尾退回 close() 会二次触发关窗流程").not.toMatch(CLOSE_TAIL);
+  });
+
+  // ⚠️ B135 最狠的一条：流转成代码「看着对」、静态正则也 full-match，真机却永久死锁。
+  // 光匹配片段不够 —— 得整段扫：关窗回调体内**一个 await 都不许有**。
+  it("B135：两个关窗回调体内不许出现任何 await（整段扫描）", () => {
+    const mainBody = functionBody(src, "function registerWindowClose(): void {");
+    // 注释里满篇都是「await」这个词，先剥掉再扫真代码
+    const mainCode = stripComments(mainBody);
+    expect(mainCode, "主窗口关窗回调体内不许 await 任何东西（含收尾）").not.toMatch(/await\b/);
+    expect(mainCode, "主窗口关窗回调要『先拦下 → 再丢一条没人 await 的收尾』").toMatch(
+      /event\.preventDefault\(\);[\s\S]{0,200}?void finishAndDestroy\(dirty\);/,
+    );
+
+    const satCode = stripComments(functionBody(src, "function registerSatelliteClose(): void {"));
+    expect(satCode, "卫星窗口关窗回调体内同样不许 await（卫星关窗曾一起死锁）").not.toMatch(
+      /await\b/,
+    );
+    expect(satCode, "卫星窗口关窗回调要以 destroySelf() 收场").toMatch(
+      /void finishSatelliteClose\(\);/,
+    );
+    expect(satCode, "卫星窗口关窗回调要拦窗").toMatch(/event\.preventDefault\(\);/);
+
+    // 反证：把退化写法（回调里 await 收尾）塞回去，整段扫描必须报警
+    const degraded = stripComments(
+      mainBody.replace("void finishAndDestroy(dirty);", "await finishAndDestroy(dirty);"),
+    );
+    expect(degraded, "退化后整段扫描应抓到 await").toMatch(/await\b/);
   });
 });

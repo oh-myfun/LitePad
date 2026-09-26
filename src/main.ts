@@ -5601,86 +5601,115 @@ async function initSatelliteWindow(me: WindowPayload | null): Promise<void> {
 
 /** 卫星窗口的关窗流程：先把标签与副本号交还主窗口，再销毁自己。 */
 function registerSatelliteClose(): void {
-  let confirmed = false;
-  void getCurrentWindow().onCloseRequested(async (event) => {
-    if (confirmed) return;
-    confirmed = true;
-    event.preventDefault();
-    // 交还优先于关窗：主窗口会把标签重新变成可见标签，用户不会觉得东西丢了
-    returnTabsToMain([...tabs.values()].map((t) => t.tabId));
-    try {
-      cancelPendingBackup();
-      await flushBackups();
-    } catch {
-      // 备份失败也照关：标签已经交回主窗口，内容在那边还活着
-    }
-    await getCurrentWindow().destroy();
-  });
+  void getCurrentWindow()
+    .onCloseRequested((event) => {
+      // 同 B135：这条回调是同步等 promise 的，里面 await IPC 会永久死锁。
+      // 只拦窗 + 同步交还，备份与销毁挂到没人 await 的链上（见 finishAndDestroy 注释）。
+      event.preventDefault();
+      // 交还优先于关窗：主窗口会把标签重新变成可见标签，用户不会觉得东西丢了
+      returnTabsToMain([...tabs.values()].map((t) => t.tabId));
+      void finishSatelliteClose();
+    })
+    .catch(() => {});
 }
 
 function registerWindowClose(): void {
-  let windowCloseConfirmed = false;
   void getCurrentWindow()
-    .onCloseRequested(async (event) => {
-      // 已确认退出：放行默认关闭，避免 close() 二次触发本事件导致死循环
-      if (windowCloseConfirmed) return;
-      const dirty = [...docs.values()].filter((d) => d.dirty);
-      // 无脏文档同样要「先存再关」，只是省掉备份那一段。Rust 侧**没有**关窗钩子，
-      // 会话的唯一写入口就是这一次 IPC：直接放行的话窗口当场关闭、进程收尾，
-      // 请求还在半路就白发了（B133）。所以也必须拦下来、await 完再自己关。
-      if (dirty.length === 0) {
-        event.preventDefault();
-        await persistSession();
-        windowCloseConfirmed = true;
-        await getCurrentWindow().close();
-        return;
-      }
+    .onCloseRequested((event) => {
+      // ⚠️⚠️ 这个回调里**绝不能 await 任何 IPC**（B135 死锁，实测 60s 窗口纹丝不动）：
+      // `tauri::manager::window::on_window_event` 收到 CloseRequested 后，只要 WebView
+      // 上挂了 JS 监听就会先 `api.prevent_close()`，再把事件同步投递给这条回调，
+      // 并**等它的 promise 完成**。于是回调里一 `await` 某个 invoke，main thread 就被
+      // 占住 —— 而那个 invoke 的回包要靠同一个 main thread 泵消息才能收到 ⇒ 死锁。
+      // 保存、热退出备份、确认框三条都走的是同一个通道，一起卡死（所以确认框也不弹）。
+      //
+      // 正确姿势：回调只负责「拦住窗口」，真正的收尾挂在一条**没人 await 的链**上
+      // （`finishAndDestroy`）—— 它会在本回调返回、main thread 重新泵消息后才继续跑。
       event.preventDefault();
-
-      // ---- 快路径：热退出 ----
-      // 排程中的备份作废，改成此刻同步写完（防抖窗口里关窗是最常见的丢数据场景）
-      cancelPendingBackup();
-      if (settings?.hot_exit) {
-        try {
-          await flushBackups();
-        } catch {
-          // 备份整体抛错按「没备成」处理，落到下面的确认框
-        }
-        // 判定必须逐个文档查 backedUp，不能只看 flushBackups 的返回值：
-        // 万一某个文档被中途改动/关闭，返回值就不可靠了。
-        const unbacked = [...docs.values()].filter((d) => d.dirty && !d.backedUp);
-        if (unbacked.length === 0) {
-          try {
-            await saveSession(snapshotSession());
-          } catch {
-            // 会话写失败不阻塞退出
-          }
-          windowCloseConfirmed = true;
-          await getCurrentWindow().close();
-          return;
-        }
-      }
-
-      // ---- 兜底：确认框（B67 及更早的行为） ----
-      const names = dirty.map((d) => d.name).join("、");
-      const quit = await ask(
-        `${dirty.length} 个文档有未保存的修改（${names}），未保存的内容将丢失。\n确定退出吗？`,
-        { title: "退出 LitePad", kind: "warning" },
-      );
-      if (!quit) {
-        // 用户取消退出：把刚才为了 flush 而取消的排程还回去（内容还是脏的）
-        scheduleBackup();
-        return;
-      }
-      try {
-        await saveSession(snapshotSession());
-      } catch {
-        // 会话写失败不阻塞退出
-      }
-      windowCloseConfirmed = true;
-      await getCurrentWindow().close();
+      const dirty = [...docs.values()].filter((d) => d.dirty);
+      void finishAndDestroy(dirty);
     })
     .catch(() => {});
+}
+
+/** 卫星窗口的关窗收尾：交还已完成，这里只剩备份 + 销毁。 */
+async function finishSatelliteClose(): Promise<void> {
+  try {
+    cancelPendingBackup();
+    await flushBackups();
+  } catch {
+    // 备份失败也照关：标签已经交回主窗口，内容在那边还活着
+  }
+  await destroySelf();
+}
+
+/**
+ * 关窗收尾（保存 / 备份 / 确认）→ 销毁窗口。
+ *
+ * ⚠️ 调用方**不能 await 它**（会一起卡死，见 `registerWindowClose` 的注释）。
+ * 它自己内部 await 是安全的：那时 CloseRequested 的回调早已返回，main thread 空闲。
+ *
+ * 收尾一律用 `destroy()` 而不是 `close()`：close() 会再发一次 CloseRequested，
+ * 而 `preventDefault()` 那次的标记还挂着，容易绕回来。destroy() 不发事件，干净收场。
+ */
+async function finishAndDestroy(dirty: Doc[]): Promise<void> {
+  if (dirty.length === 0) {
+    try {
+      await persistSession();
+    } catch {
+      // 会话保存失败不影响退出
+    }
+  } else {
+    // ---- 有脏文档：热退出先试一把 ----
+    // 排程中的备份作废，改成此刻同步写完（防抖窗口里关窗是最常见的丢数据场景）
+    cancelPendingBackup();
+    if (settings?.hot_exit) {
+      try {
+        await flushBackups();
+      } catch {
+        // 备份整体抛错按「没备成」处理，落到下面的确认框
+      }
+      // 判定必须逐个文档查 backedUp，不能只看 flushBackups 的返回值：
+      // 万一某个文档被中途改动/关闭，返回值就不可靠了。
+      const unbacked = [...docs.values()].filter((d) => d.dirty && !d.backedUp);
+      if (unbacked.length === 0) {
+        try {
+          await saveSession(snapshotSession());
+        } catch {
+          // 会话写失败不阻塞退出
+        }
+        await destroySelf();
+        return;
+      }
+    }
+
+    // ---- 兜底：确认框（B67 及更早的行为） ----
+    const names = dirty.map((d) => d.name).join("、");
+    const quit = await ask(
+      `${dirty.length} 个文档有未保存的修改（${names}），未保存的内容将丢失。\n确定退出吗？`,
+      { title: "退出 LitePad", kind: "warning" },
+    );
+    if (!quit) {
+      // 用户取消退出：把刚才为了 flush 而取消的排程还回去（内容还是脏的）
+      scheduleBackup();
+      return;
+    }
+    try {
+      await saveSession(snapshotSession());
+    } catch {
+      // 会话写失败不阻塞退出
+    }
+  }
+  await destroySelf();
+}
+
+/** 销毁当前窗口。destroy() 不发 CloseRequested，不会绕回来。 */
+async function destroySelf(): Promise<void> {
+  try {
+    await getCurrentWindow().destroy();
+  } catch {
+    // 已经销毁 / 参数异常都按「关了」处理
+  }
 }
 
 /**

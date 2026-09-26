@@ -45,6 +45,11 @@ vi.mock("@tauri-apps/api/window", () => ({
       closeCalls++;
       return Promise.resolve();
     },
+    // B135：收尾走 destroy()（close() 会再发一次 CloseRequested，容易绕回来）
+    destroy: () => {
+      closeCalls++; // 一样算「关掉了」，好让顺序断言继续盯住一件事
+      return Promise.resolve();
+    },
   }),
 }));
 vi.mock("@tauri-apps/api/core", () => ({
@@ -224,7 +229,13 @@ describe("B68 热退出：关窗不询问，下次启动还原未保存内容", 
   }
 
   it("关窗流程：先 flush 副本，逐文档确认后才跳过确认框，否则仍要问", () => {
-    const body = fnBody("function registerWindowClose");
+    // B135：收尾主体搬到 finishAndDestroy —— 回调里 await 任何 IPC 都会永久死锁。
+    // 注释里全是「await」这个词的说明，扫之前先剥掉，否则咬不住。
+    const stripComments = (code: string): string =>
+      code.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+    const cbBody = stripComments(fnBody("function registerWindowClose"));
+    expect(cbBody, "关窗回调体内绝不能 await").not.toMatch(/await\b/);
+    const body = fnBody("async function finishAndDestroy");
     // 排程中的备份（1s 防抖）必须在关窗时立刻兑现——防抖窗口里关窗是最常见的丢数据场景
     expect(body, "关窗前必须取消防抖排程").toMatch(
       /cancelPendingBackup\(\);[\s\S]*?settings\?\.hot_exit/,
@@ -239,7 +250,7 @@ describe("B68 热退出：关窗不询问，下次启动还原未保存内容", 
     // 跳过确认框之前必须先把会话写下来，否则重启后没人认领那些副本
     const fast = body.slice(body.indexOf("if (settings?.hot_exit)"));
     expect(fast, "快路径必须先存会话再关窗").toMatch(
-      /const unbacked[\s\S]*?saveSession\(snapshotSession\(\)\)[\s\S]*?\.close\(\)/,
+      /const unbacked[\s\S]*?saveSession\(snapshotSession\(\)\)[\s\S]*?(?:\.close\(\)|destroySelf\(\));/,
     );
   });
 
