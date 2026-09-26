@@ -8,9 +8,11 @@
 //     一旦切走的那个标签也是预览，`applyPanelMode` 重渲染（setBlocks →
 //     replaceChildren）就把 scrollTop 清零，关窗落盘读到 0 ⇒ 重开切回来必跳顶部。
 //
-// 编辑器侧那半边早就修好了（切走时把实时值写回快照、落盘时按「是不是正显示」分流）。
-// 这里盯的是预览侧 —— 会话里两边共用同一个 `scrollTop` 槽（B136 试过拆两个字段各管
-// 一段，最后又合回来了），槽污染的风险反而全压在读哪一份上：读错人就等于位置被别人顶掉。
+// B139 换了思路：快照是按 tabId 索引的**全局记录**，与视图生命周期解耦 —— 切标签的
+// setState、重渲染的 replaceChildren、销毁重建都只清 DOM、碰不到它。于是既不需要
+// 抢记，也**不该**回头读容器（读容器等于把「谁最后摆过它」混进来）。两边仍然共用
+// 同一个 `scrollTop` 槽（B136 试过拆两个字段各管一段，最后又合回来了），风险全压在
+// 「这份值是谁写的」：用户滚的才记，程序摆的不记。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 
@@ -209,7 +211,8 @@ describe("B137 预览位置要记在标签自己那份快照里", () => {
     root.dispatchEvent(new Event("scroll", { bubbles: false }));
     await wait(60);
 
-    // 切到 b.md（源码态）—— rememberViewScroll 必须在重渲染之前把 960 记下
+    // 切到 b.md（源码态）—— 下面故意把容器清零，模拟「切走后渲染器把预览冲掉」：
+    // B139 的快照是全局记录，这一步不该带走 a.md 记下的 960。
     clickTab(1);
     await wait(60);
 
@@ -242,50 +245,70 @@ describe("B137 预览位置要记在标签自己那份快照里", () => {
       "切回 a.md 应回到它自己滚到的位置（960 附近），而不是顶部",
     ).toBeGreaterThan(500);
   });
+
+  it("④ 钉稳之后用户自己的滚动照旧记进快照（抑制区间不许泄漏）", async () => {
+    // 抑制区间的唯一真实风险：计数器忘了降回来，于是**用户**的滚动也被当成程序滚动
+    // 吞掉 —— 表现是「重启后位置永远停在第一份」。③ 里 a.md 刚被切回来、预览刚被
+    // 钉稳，抑制区间就落在那几帧里，这里等它解除后再滚。
+    const root = previewRoot();
+    await wait(120);
+
+    root.scrollTop = 777;
+    root.dispatchEvent(new Event("scroll", { bubbles: false }));
+    await wait(900); // 越过 800ms 防抖
+
+    expect(lastSaved().a, "钉稳之后用户的滚动仍须记进快照，不能被抑制区间吞掉").toBe(777);
+  });
 });
 
-describe("B137 静态契约：预览侧不许再「只读容器」", () => {
+describe("B139 静态契约：快照按 tabId 索引，不许回头读容器", () => {
   const src = readFileSync("src/main.ts", "utf-8");
 
-  it("切走时记预览位置，落盘时按「是不是正显示」分流", () => {
-    expect(src, "rememberViewScroll 必须管预览那一侧").toMatch(
-      /if \(t\.viewMode === "preview"\) \{[\s\S]{0,400}?t\.scrollTop = panel\.preview\?\.root\.scrollTop/,
+  it("落盘只读标签自己的快照，不读面板上的容器", () => {
+    expect(src, "取快照时只认标签字段").toMatch(
+      /function viewportOfTab\(t: Tab\): number \| null \{\s*\n\s*return t\.scrollTop;/,
     );
-    expect(src, "落盘时只有正显示在面板上的才读实时值").toMatch(
-      /const shown = p\?\.viewTabId === t\.tabId;/,
-    );
-    expect(src, "后台预览标签只能读自己的快照").toMatch(
-      /return shown \? \(p\?\.preview\?\.root\.scrollTop \?\? null\) : t\.scrollTop;/,
-    );
-    // 这条是上一条的**另一半**：裸 `return p?...`（结尾分号）就是「只读容器」写法
-    // （B137 原状），上一条的三元写法抓不到它，得单独盯。
-    // 分号是必需的：不加的话，上面那条三元写法自己的内层 `?? null)` 也会命中，
-    // 这条契约就成了永远为真的摆设（退化/不退化都一样绿）。
+    // 这条与上一条互为表里：裸 `return p?...`（结尾分号）就是「落盘时只读容器」
+    // 的写法（B137 原状），上一条的函数体写法抓不到它，得单独盯。
+    // 分号是必需的：不加的话上一条自己的 `return t.scrollTop;` 内层也可能命中，
+    // 这条契约就成永远为真的摆设（退化/不退化都一样绿）。
     expect(src, "不许再退回只读容器").not.toMatch(
       /return p\?\.preview\?\.root\.scrollTop \?\? null;/,
     );
+    // 同理：不许出现「按是不是正显示分流」那套判据（B137 的 shown）
+    expect(src, "不再需要「正显示在面板上的那个」判据").not.toMatch(
+      /const shown = p\?\.viewTabId === t\.tabId;/,
+    );
   });
 
-  it("反向验证：退化成「切走不管预览 / 落盘只读容器」，上一条必须失败", () => {
-    // 退化两步：切走时对预览那一侧不管（B137 原状：直接 return），落盘时只看容器。
-    // 用**字面量**替换（不用整段正则）—— 整段正则一改动源码的排版就失配，退化会
+  it("预览只由「用户滚过」来记录，程序摆的落点要挡住", () => {
+    expect(src, "滚预览必须写进它自己那份快照").toMatch(/t\.scrollTop = preview\.root\.scrollTop;/);
+    expect(src, "增强后的二次定位要置抑制位").toMatch(
+      /viewportWriteDepth > 0 \|\| preview\.isSuppressingScrollWrite\(\)/,
+    );
+  });
+
+  it("反向验证：退化成「落盘只读容器 / 不挡程序滚动」，上二条必须失败", () => {
+    // 退化两步：取快照时改读容器（B137 原状），以及去掉二次定位的抑制。
+    // 用**字面量**替换（不用整段正则）—— 整段正则一改动源码排版就失配，退化会
     // 悄悄变成「什么都没改」，用例跟着假绿。
     const degrade = (s: string): string =>
       s
-        .replace("t.scrollTop = panel.preview?.root.scrollTop ?? null;", "t.scrollTop = null;")
         .replace(
-          "return shown ? (p?.preview?.root.scrollTop ?? null) : t.scrollTop;",
-          "return p?.preview?.root.scrollTop ?? null;",
-        );
+          "function viewportOfTab(t: Tab): number | null {\n  return t.scrollTop;\n}",
+          "function viewportOfTab(t: Tab): number | null {\n  const p = panels.get(t.panelId);\n  return p?.preview?.root.scrollTop ?? null;\n}",
+        )
+        .replace("viewportWriteDepth > 0 || preview.isSuppressingScrollWrite()", "false");
     const degraded = degrade(src);
     expect(degraded, "退化实现应真的换了写法").not.toBe(src);
 
-    // 两步退化各自生效 ⇒ 上一条契约的两条断言都该变红：
-    expect(degraded, "退化后 rememberViewScroll 不再记预览").not.toMatch(
-      /t\.scrollTop = panel\.preview\?\.root\.scrollTop/,
-    );
-    expect(degraded, "退化后退回「只读容器」写法（上一条的 not.toMatch 此时必须命中）").toMatch(
+    expect(degraded, "退化后退回「只读容器」写法（第一条的 not.toMatch 必须命中）").toMatch(
       /return p\?\.preview\?\.root\.scrollTop \?\? null;/,
+    );
+    // 方向：「源码必须有这个判据」⇒ 退化后它该**消失** ⇒ 这里用 not.toMatch。
+    // （写成 toMatch 就永远为真，退化用例会假绿 —— B137 那条踩过同一个坑）
+    expect(degraded, "退化后程序滚动不再被挡（第二条 toMatch 此时必须落空）").not.toMatch(
+      /viewportWriteDepth > 0 \|\| preview\.isSuppressingScrollWrite\(\)/,
     );
   });
 });

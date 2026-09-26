@@ -37,6 +37,7 @@ export class PreviewPane {
   /** 程序设定的滚动位置：scroll 事件是异步的，同步锁过期后仍要能识别出自家滚动
    *  （重渲染把 scrollTop 清零再改回也会冒出一次 scroll 事件） */
   private programmaticTop: number | null = null;
+  private suppressScrollWrite = false;
   private mermaidSeq = 0;
   /** 活动文档目录（相对路径图片解析基准） */
   private baseDir: string | null = null;
@@ -450,8 +451,22 @@ export class PreviewPane {
     if (this.pendingSyncLine === null) return;
     const line = this.pendingSyncLine;
     requestAnimationFrame(() => {
-      if (this.pendingSyncLine === line) this.applySyncToLine(line);
+      if (this.pendingSyncLine !== line) return;
+      // B139：这一发是**异步补刀**（图片 / 公式增强后布局变了，再定位一次）。
+      // 落点和上一次往往不同，而 DOM 上滚容器的那条监听一收到事件就会把位置
+      // 写进快照 —— 于是「位置还没稳就先记了一半」，这就是 960 / 952 抖动的根。
+      // 同步那一次（`syncToLine`，用户主动切模式）**照常写**：那是所见即所得。
+      this.suppressScrollWrite = true;
+      this.applySyncToLine(line);
+      requestAnimationFrame(() => {
+        this.suppressScrollWrite = false;
+      });
     });
+  }
+
+  /** 是否正处于「增强后的二次定位」——此刻的 scroll 事件不该写进快照。 */
+  isSuppressingScrollWrite(): boolean {
+    return this.suppressScrollWrite;
   }
 
   private onPreviewScroll(): void {

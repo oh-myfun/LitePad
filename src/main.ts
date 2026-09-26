@@ -801,8 +801,12 @@ function rebuildLayout(): void {
         const shownView = p.view.view;
         shownView.scrollDOM.addEventListener("scroll", () => {
           const t = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
+          // B139：程序滚动期间（还原钉位置）别写 —— 那时容器里摆的是**还原的目标值**，
+          // 顺着事件写回去就是把「我们要去的地方」当成「用户停过的位置」。
+          if (viewportWriteDepth > 0) return;
           // B126：滚动位置只活在 DOM 上，随滚动即时记进标签快照（赋值极廉价，
-          // 不排程）。这样「滚过但没切走就重建布局」也不会丢。
+          // 不排程）。快照是与视图生命周期解耦的全局记录，所以「滚过但没切走就
+          // 重建布局 / 销毁面板」也不会丢。
           if (t) t.scrollTop = shownView.scrollDOM.scrollTop;
           // B132：写进快照还不算数 —— 得落盘。滚动本身**不触发**任何排程，用户
           // 滚到中段、没干别的事就关窗，会话里留下的还是上一次（滚之前那份），
@@ -816,12 +820,18 @@ function rebuildLayout(): void {
         attachPasteHandler(p);
       }
       // B137：预览滚动和编辑器滚动是同一件事 —— 位置只活在 DOM 上，随滚动即时
-      // 记进它**自己那份**快照（后台预览标签没有滚动事件，全靠这里和
-      // rememberViewScroll 补记）。同 B132：写完还得排程落盘，否则「滚过预览
-      // 就关窗」留下的还是滚之前那份。
+      // 记进它**自己那份**快照（后台预览标签没有滚动事件，全靠这里补记）。
+      // 同 B132：写完还得排程落盘，否则「滚过预览就关窗」留下的还是滚之前那份。
       preview.root.addEventListener("scroll", () => {
         const t = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
         if (!t || t.viewMode !== "preview") return;
+        // B139：程序滚动期间（还原钉回 / 图片·公式增强后的二次定位）不写快照 ——
+        // 这两种落点都是**程序算出来的**，不是这个标签停过的位置；照写回去就是
+        // 「预览落点在 960 / 952 之间抖」的根。落盘排程照旧：位置本身没变。
+        if (viewportWriteDepth > 0 || preview.isSuppressingScrollWrite()) {
+          scheduleSessionSave();
+          return;
+        }
         // ⚠️ 这里**不要**用 `preview.isSyncing()` 当守卫：`isSyncing()` 认的是
         // `syncLock === "preview"`，即**预览→编辑器**方向（用户正在翻预览）；而
         // 预览容器自己的监听器（构造函数里注册、比这里先跑）一收到滚动就会
@@ -864,7 +874,7 @@ function switchTab(panelId: number, tabId: number): void {
   // 会把视图当前内容写进错误的标签（内容串档/被覆写为空白的同源缺陷）。
   const shownTab = tabs.get(panel.viewTabId ?? panel.activeTabId);
   if (shownTab) shownTab.state = panel.view.view.state;
-  // B126：滚动位置只活在 DOM 上，切走前必须自己记一份
+  // B126：setState 会重建 ViewState 并把视口拉回开头，采完这一眼再切换
   rememberViewScroll(panel);
   const tab = tabs.get(tabId);
   if (!tab) return;
@@ -3506,27 +3516,47 @@ function topVisibleLineOf(view: EditorView): number {
  * 浏览器清零，记下来只会把「视图位置」写成 0 —— 于是重启后预览每次都弹回开头。
  */
 function viewportOfTab(t: Tab): number | null {
-  const p = panels.get(t.panelId);
-  // ⚠️「实时值」只属于**正显示在面板上**的那个标签（B137）。预览容器是面板级的、
-  // 所有标签共用：后台预览标签读它的 scrollTop，读到的是**别人**、甚至已被重渲染
-  // 清零成 0 的值 —— 于是「切走的那一刻没人记」，`applyPanelMode` 的重渲染一清
-  // 就把这份快照抹平了，重启后切回来必定跳到顶部。
-  const shown = p?.viewTabId === t.tabId;
-  if (t.viewMode === "preview") {
-    return shown ? (p?.preview?.root.scrollTop ?? null) : t.scrollTop;
-  }
-  if (shown && p?.view) {
-    return p.view.view.scrollDOM.scrollTop;
-  }
+  // 快照就是 `Tab.scrollTop` 这一处全局记录（B139）：按 tabId 索引、与视图生命周期
+  // 解耦，**绝不回头读容器**。读容器等于把「谁最后摆过它」混进来 —— 预览容器是
+  // 面板级的、所有标签共用，编辑器里摆的还可能是刚被清零的 0。
   return t.scrollTop;
 }
 
 /**
- * 把面板视图当前的滚动位置记进标签快照（B126）。
+ * 程序滚动期间禁止写快照（B139）。
  *
- * 必须在「切走 / 销毁视图」**之前**调：滚动位置只活在 `scrollDOM` 上，不进
- * EditorState，setState（重建 ViewState）与销毁重建都会把它清零。少了这一步，
- * 切回来永远停在文档开头。
+ * 滚动位置只活在 DOM 上，但**快照不跟着 DOM 走**（见 `viewportOfTab` 的语义）。
+ * 于是会出现一类情况：我们自己的还原赋值（`pinScrollTop` 钉位置、`applyPending`
+ * 的二次定位）会派发 scroll 事件，而那时容器里摆的是**程序算出来的中间态或落点**，
+ * 不是这个标签真正的位置 —— 顺着事件写回去就把快照覆盖掉。
+ * 典型症状：预览落点在 960 / 952 之间抖（jsdom 里肉眼可见，真机上就是
+ * 「重启后位置差几行」）。
+ *
+ * 区间覆盖「赋值本身 + 它引发的下一帧补钉」：浏览器的 scroll 事件在下一帧的
+ * scroll steps 才派发，所以到那时计数器才会降下来，正好把补钉那一发也挡住。
+ */
+let viewportWriteDepth = 0;
+
+/** 在「程序滚动」区间内跑一段代码：区间内派发的 scroll 事件不许写快照。 */
+function suppressViewportWrite(run: () => void): void {
+  viewportWriteDepth++;
+  run();
+  requestAnimationFrame(() => {
+    viewportWriteDepth = Math.max(0, viewportWriteDepth - 1);
+  });
+}
+
+/**
+ * 在视图消失**之前**把此刻的位置采进快照（B126，B139 保留但换了理由）。
+ *
+ * 快照是与 DOM 解耦的全局记录（见 `viewportOfTab`），`setState` / `view.destroy()`
+ * 清不掉它 —— 但**读不到**：位置变化不一定派发 scroll 事件，最典型的是程序里的裸写
+ * （预览→编辑器同步的 `host.scrollToLine()`、用例里的直接赋值）。最后一次变化若不采，
+ * 这份快照就一直停在更早的位置上。
+ *
+ * 所以这里不是「随 DOM 刷新」，而是「DOM 消失前看最后一眼」：读的是清零**之前**
+ * 的容器，采完立刻就销毁。两件事各管一段 —— 滚动采样覆盖「用户滚过」，这里覆盖
+ * 「最后的落点是程序摆的、且没发过事件」。
  */
 function rememberViewScroll(panel: Panel): void {
   if (!panel.view || panel.viewTabId === null) return;
@@ -3534,11 +3564,6 @@ function rememberViewScroll(panel: Panel): void {
   if (!t) return;
   // 纯预览实例：编辑器是 display:none、scrollDOM.scrollTop 恒为 0，照常写回来
   // 就等于「切走的一刻把上次的位置抹平」（B130）。这类实例的位置归预览那一侧。
-  //
-  // ⚠️ 必须在**切走/重渲染之前**把它自己的实时值写进快照（B137）：预览容器是
-  // 面板级的，切走的那一刻若没人记，随后 `applyPanelMode` 的重渲染（`setBlocks`
-  // → `replaceChildren`）就会把 scrollTop 清零 —— 快照留空、落盘读到 0，
-  // 于是「后台预览标签」重启后切回来必定跳到顶部。
   if (t.viewMode === "preview") {
     const mode = panel.bodyEl?.classList;
     if (mode?.contains("mode-preview") || mode?.contains("mode-split")) {
@@ -3570,10 +3595,13 @@ function rememberViewScroll(panel: Panel): void {
  * 布局稳定后再钉一次。
  */
 function pinScrollTop(el: HTMLElement, px: number): void {
-  el.scrollTop = px;
-  if (el.scrollTop === px) return;
-  requestAnimationFrame(() => {
+  // 整段都在「程序滚动」区间里：赋值派发的那次事件不该把位置写回快照（B139）
+  suppressViewportWrite(() => {
     el.scrollTop = px;
+    if (el.scrollTop === px) return;
+    requestAnimationFrame(() => {
+      el.scrollTop = px;
+    });
   });
 }
 
@@ -3609,13 +3637,9 @@ function restorePreviewScroll(panel: Panel): void {
   const t = tabs.get(panel.viewTabId);
   if (!t || t.viewMode !== "preview" || t.scrollTop === null) return;
   // 预览那一次 `setBlocks` 刚把内容撑开，同一帧内赋值会被裁成 0（B134），
-  // 所以走同一套「钉稳」：写不进去就下一帧再钉。
-  const root = panel.preview.root as HTMLElement;
-  const px = t.scrollTop;
-  pinScrollTop(root, px);
-  requestAnimationFrame(() => {
-    if (root.scrollTop !== px) root.scrollTop = px;
-  });
+  // 所以走同一套「钉稳」：写不进去就下一帧再钉。（钉的两发都在「程序滚动」
+  // 区间内，不会反过来写脏这份快照 —— B139）
+  pinScrollTop(panel.preview.root as HTMLElement, t.scrollTop);
 }
 
 /** 应用面板视图模式：源码 / 分屏 / 纯预览（非 md 标签强制源码）。 */

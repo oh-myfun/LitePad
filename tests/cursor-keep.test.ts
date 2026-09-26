@@ -308,8 +308,8 @@ describe("B126 编辑器光标 / 视口不得复位", () => {
 describe("B126 静态契约：滚动位置必须自己存取", () => {
   const src = readFileSync("src/main.ts", "utf-8");
 
-  it("必须有成对的「记住 / 还原」两个helper，且还原真的写回 scrollTop", () => {
-    expect(src, "切走前要记住滚动位置").toContain("function rememberViewScroll");
+  it("必须有「取快照 / 还原」两个helper，且还原真的写回 scrollTop", () => {
+    expect(src, "落盘前要取快照").toContain("function viewportOfTab");
     expect(src, "切回后要还原滚动位置").toContain("function restoreViewScroll");
     // B134：写回要经 `pinScrollTop` —— 裸写会被「容器还没布局」裁成 0，
     // 值看着写上了、其实没进去。pinScrollTop 内部最终还是会写 scrollDOM，
@@ -332,20 +332,34 @@ describe("B126 静态契约：滚动位置必须自己存取", () => {
     );
   });
 
-  it("销毁视图的每一处现场都必须先记住滚动位置", () => {
-    // 两处：rebuildLayout 的循环、disposePanel。少了任何一处，
-    // 「重建布局后视口归零」就会复活。
+  it("销毁视图的每一处现场都必须先采一次位置", () => {
+    // B139 拎清了这两件事：快照是**全局记录**（DOM 清不掉它），但**读不到** ——
+    // 位置变化不一定派发 scroll 事件（预览→编辑器同步的 `host.scrollToLine()` 就是
+    // 裸写）。所以「消失前看最后一眼」仍然必需：采的是清零前的容器，不是刷新快照。
     const destroySites = src.match(/\.view\.destroy\(\)/g) ?? [];
     expect(destroySites.length, "视图销毁现场应恰好两处").toBe(2);
     const rememberSites = src.match(/rememberViewScroll\(/g) ?? [];
-    // 定义 1 处 + 调用 ≥ 2 处（两处销毁 + 切标签）
-    expect(rememberSites.length, "记住滚动的调用点应覆盖所有销毁现场").toBeGreaterThanOrEqual(3);
+    expect(rememberSites.length, "每处销毁现场都要先采一次").toBeGreaterThanOrEqual(3);
     for (const site of ["rebuildLayout", "disposePanel"]) {
       const start = src.indexOf(`function ${site}`);
       expect(start, `应能定位 ${site}`).toBeGreaterThan(-1);
       const body = src.slice(start, start + 1200);
-      expect(body, `${site} 销毁视图前必须记住滚动位置`).toContain("rememberViewScroll(");
+      expect(body, `${site} 销毁视图前必须采一次滚动位置`).toContain("rememberViewScroll(");
     }
+  });
+
+  it("程序滚动（还原钉位置 / 增强后二次定位）不许写回快照", () => {
+    // 快照不随 DOM，于是会被**我们自己的赋值**改写：钉位置那一下派发的事件、
+    // 图片公式增强后二次定位那一下派发的事件 —— 落点是程序算的，不是用户停过的。
+    expect(src, "pinScrollTop 整段要包在抑制区间里").toMatch(
+      /function pinScrollTop\(el: HTMLElement, px: number\): void \{[\s\S]{0,120}?suppressViewportWrite\(/,
+    );
+    expect(src, "编辑器滚动监听要挡住程序滚动").toMatch(/if \(viewportWriteDepth > 0\) return;/);
+    expect(src, "预览滚动监听要同时挡住程序滚动与二次定位").toMatch(
+      /viewportWriteDepth > 0 \|\| preview\.isSuppressingScrollWrite\(\)/,
+    );
+    const preview = readFileSync("src/markdown/preview.ts", "utf-8");
+    expect(preview, "二次定位要置抑制位").toMatch(/this\.suppressScrollWrite = true;/);
   });
 
   it("切标签 / 接管标签的每一处 setState 之后都必须还原滚动", () => {
