@@ -804,6 +804,10 @@ function rebuildLayout(): void {
           // B126：滚动位置只活在 DOM 上，随滚动即时记进标签快照（赋值极廉价，
           // 不排程）。这样「滚过但没切走就重建布局」也不会丢。
           if (t) t.scrollTop = shownView.scrollDOM.scrollTop;
+          // B132：写进快照还不算数 —— 得落盘。滚动本身**不触发**任何排程，用户
+          // 滚到中段、没干别的事就关窗，会话里留下的还是上一次（滚之前那份），
+          // 重启就回到老位置（B132）。防抖 800ms：滚动停下才写，不会每帧落盘。
+          scheduleSessionSave();
           // 预览→编辑器方向程序滚动期间忽略，防止回环抖动
           if (!t || !isMdTab(t) || t.viewMode !== "preview") return;
           if (preview.isSyncing()) return;
@@ -5595,7 +5599,13 @@ function registerWindowClose(): void {
       // 已确认退出：放行默认关闭，避免 close() 二次触发本事件导致死循环
       if (windowCloseConfirmed) return;
       const dirty = [...docs.values()].filter((d) => d.dirty);
-      if (dirty.length === 0) return; // 无脏文档：允许默认关闭
+      if (dirty.length === 0) {
+        // 无脏文档：允许默认关闭。但**现场**（各标签的视口位置）只活在内存里，
+        // 也还没落盘 —— 用户滚到中段就关窗，正是最常卡在防抖窗口里的情形（B132）。
+        // 这里补一次快照，别让「什么都没改所以不用存」变成「丢了现场」。
+        void persistSession();
+        return;
+      }
       event.preventDefault();
 
       // ---- 快路径：热退出 ----
