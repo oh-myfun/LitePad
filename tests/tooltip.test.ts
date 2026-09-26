@@ -351,6 +351,32 @@ describe("tooltip 层行为（jsdom）", () => {
     expect(caret.hidden, "placement:'element' ⇒ showPointer 为 true").toBe(false);
   });
 
+  it("VS Code 的 with-pointer 规则：只有带指针那支降到 3px", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    // 基础档必须是 5px：标签这类不画 caret 的提示（placement:'mouse'）走常规档
+    expect(css, "带指针那支必须单独存在（= `.monaco-hover.workbench-hover.with-pointer`）").toMatch(
+      /\.tooltip\[data-pointer="true"\]\s*\{[^}]*border-radius:\s*3px/,
+    );
+    expect(
+      cssDecls(css.match(/\n\.tooltip\s*\{[^}]*\}/)?.[0] ?? ""),
+      "基础档不许再写成 3px —— 那样所有提示都会是方角",
+    ).not.toMatch(/border-radius:\s*3px/);
+  });
+
+  it("圆角跟着「这次画不画 caret」走：标签 5px、关闭按钮 3px", () => {
+    const tab = mkTip("E:\\demo\\a.md", "tabstrip", undefined, { follow: true, compact: true });
+    hover(tab);
+    vi.advanceTimersByTime(600);
+    // VS Code：`.monaco-hover.workbench-hover` 5px，`.with-pointer` 才 3px ——
+    // 标签不画指针，所以必须留在 5px（用户 09-26 反馈「标签路径提示要更圆润」）。
+    expect(tipEl().dataset.pointer, "不画 caret ⇒ 常规档圆角").toBe("false");
+
+    const close = mkTip("关闭", "tabstrip", "Ctrl+W", { compact: true });
+    hover(close);
+    vi.advanceTimersByTime(600);
+    expect(tipEl().dataset.pointer, "带 caret ⇒ with-pointer 圆角").toBe("true");
+  });
+
   it("键盘聚焦触发的 follow 目标退回按元素定位（鼠标坐标是陈年的）", () => {
     const a = mkTip("E:\\demo\\a.md", "tabstrip", undefined, { follow: true, compact: true });
     a.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
@@ -507,7 +533,7 @@ describe("A 档：菜单开着就绝不弹提示", () => {
 // B58：原生 `title` 由操作系统绘制，配色/圆角/键帽/延迟全不可控（深色界面里会突然弹出
 // 一个浅色系统气泡）。改为全局单例自绘层，外观对齐 VS Code hover。
 describe("B58 应用级 tooltip（取代原生 title，外观对齐 VS Code hover）", () => {
-  it("提示层外观取自 VS Code：fixed / 13px / 19px / 4px 8px / 3px 圆角 / 不参与命中", () => {
+  it("提示层外观取自 VS Code：fixed / 13px / 19px / 4px 8px / 5px 圆角 / 不参与命中", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
     const tip = cssDecls(css.match(/\n\.tooltip\s*\{[^}]*\}/)?.[0] ?? "");
     expect(tip, "应有 .tooltip 规则").toBeTruthy();
@@ -517,9 +543,9 @@ describe("B58 应用级 tooltip（取代原生 title，外观对齐 VS Code hove
     expect(tip, "13px 字号（= VS Code .hover-contents）").toMatch(/font-size:\s*13px/);
     expect(tip, "19px 行高（= VS Code .hover-contents）").toMatch(/line-height:\s*19px/);
     expect(tip, "padding 4px 8px（= VS Code .hover-contents）").toMatch(/padding:\s*4px 8px/);
-    expect(tip, "恒带指针 → 用 VS Code 的 with-pointer 圆角 3px（不是常规档 5px）").toMatch(
-      /border-radius:\s*3px/,
-    );
+    // ⚠️ 5px 是 VS Code 常规档（`.monaco-hover.workbench-hover`）；3px 那条只属于
+    // `.with-pointer`（带指针）。本项目提示**不一定**带指针，所以基础档必须是 5px。
+    expect(tip, "基础圆角 = VS Code 常规档 5px").toMatch(/border-radius:\s*5px/);
     expect(tip, "420px 是相对 VS Code 700px 的有意收窄（见 tooltip.ts 顶部说明）").toMatch(
       /max-width:\s*420px/,
     );

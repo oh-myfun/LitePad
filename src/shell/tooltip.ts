@@ -340,6 +340,10 @@ function showFor(el: HTMLElement): void {
   const follow = el.dataset.tipFollow === "1" && pointerDriven;
   // 鼠标定位 = VS Code 的 `placement:'mouse'` ⇒ `showPointer` 为 false：不画 caret
   caretEl!.hidden = follow;
+  // 圆角跟着变：VS Code 的 `.with-pointer` 会把 5px 收到 3px（hover.css），
+  // 本项目不画 caret 的提示（标签这类）没有这一层，必须留在 5px —— 标签提示路径
+  // 又长又窄，3px 看着发"方"，用户 09-26 反馈「应该更圆润、参考 VS Code」。
+  l.dataset.pointer = follow ? "false" : "true";
   if (follow) {
     const g = computeTipGeometryAtMouse(
       { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom },

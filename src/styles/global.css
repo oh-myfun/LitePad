@@ -2982,7 +2982,9 @@ body.tab-drag-active * {
    docs/vscode-reference/src/vs/platform/hover/browser/hover.css），数值出处
    逐条写在 src/shell/tooltip.ts 的模块注释里。要点：
    - 13px / 行高 19px，内边距 4px 8px（= VS Code `.hover-contents`）；
-   - 圆角 **3px**：VS Code 常规是 5px，**带指针时降到 3px**（本项目提示恒带指针）；
+   - 圆角 **5px**（VS Code 常规档），**只有带指针时才降到 3px**
+     （`.monaco-hover.workbench-hover.with-pointer`）—— 标签走鼠标定位、不画 caret，
+     所以是 5px； tooltip.ts 会在 showFor 里把 `data-pointer` 写到提示层上；
    - caret 是 6px 方块旋转 45°，**只画朝外的两条边**，颜色 = 底色 + 边框色；
    - `pointer-events: none`：提示紧贴目标，可交互的话鼠标滑上去会掐断目标的 :hover。 */
 
@@ -3003,7 +3005,10 @@ body.tab-drag-active * {
   color: var(--fg);
   background: var(--tip-bg);
   border: 1px solid var(--tip-border);
-  border-radius: 3px;
+  /* VS Code 常规档 5px（hover.css：`.monaco-hover.workbench-hover`）。
+     ⚠️ 下面那条 with-pointer 降到 3px 只属于**带指针**的提示；标签这类不画
+     caret 的（placement:'mouse'）必须留在 5px，早先一刀切 3px 就是"不够圆润"的来源。 */
+  border-radius: 5px;
   box-shadow: var(--tip-shadow);
   /* caret 要露在框外，所以不能裁剪 */
   overflow: visible;
@@ -3030,6 +3035,13 @@ body.tab-drag-active * {
    声明覆盖时才生效，写死更稳。 */
 .tooltip-caret[hidden] {
   display: none;
+}
+
+/* 带指针（VS Code 的 `.with-pointer`）：圆角从常规 5px 收到 3px —— 指针是 6px
+   方块旋转 45° 后贴着框角，圆角大了角上会露缝/啃掉指针的一条边。
+   `data-pointer` 由 tooltip.ts 的 `showFor` 按「这次到底画不画 caret」写死。 */
+.tooltip[data-pointer="true"] {
+  border-radius: 3px;
 }
 
 .tooltip-body {
