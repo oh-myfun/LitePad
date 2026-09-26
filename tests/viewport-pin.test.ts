@@ -216,8 +216,9 @@ describe("B134 静态契约：两条恢复路径都要走「钉稳」", () => {
     expect(src, "编辑器侧要走 pinScrollTop").toMatch(
       /if \(t\.scrollTop !== null\) \{\s*\n\s*pinScrollTop\(view\.scrollDOM, t\.scrollTop\);/,
     );
+    // B142：预览侧先取局部量再进还原守卫，所以盯 `pinScrollTop(root, px)` 这一对
     expect(src, "预览侧要走 pinScrollTop（同一帧 setBlocks 会把高度撑开）").toMatch(
-      /pinScrollTop\(panel\.preview\.root as HTMLElement, t\.scrollTop\);/,
+      /const px = t\.scrollTop;[\s\S]{0,140}?pinScrollTop\(root, px\);/,
     );
   });
 
@@ -227,11 +228,8 @@ describe("B134 静态契约：两条恢复路径都要走「钉稳」", () => {
     expect(degradedEditor, "退化后编辑器侧不应再有钉稳").not.toMatch(PIN);
     expect(degradedEditor, "退化后仍应是裸写").toMatch(/view\.scrollDOM\.scrollTop = t\.scrollTop/);
 
-    const PIN_PREVIEW = /pinScrollTop\(panel\.preview\.root as HTMLElement, t\.scrollTop\);/g;
-    const degradedPreview = src.replaceAll(
-      PIN_PREVIEW,
-      "(panel.preview.root as HTMLElement).scrollTop = t.scrollTop!;",
-    );
+    const PIN_PREVIEW = /pinScrollTop\(root, px\);/g;
+    const degradedPreview = src.replaceAll(PIN_PREVIEW, "root.scrollTop = px;");
     expect(degradedPreview, "退化后预览侧不应再有钉稳").not.toMatch(PIN_PREVIEW);
   });
 });

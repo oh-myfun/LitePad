@@ -259,6 +259,23 @@ describe("B137 预览位置要记在标签自己那份快照里", () => {
 
     expect(lastSaved().a, "钉稳之后用户的滚动仍须记进快照，不能被抑制区间吞掉").toBe(777);
   });
+
+  it("⑤ 还原位置期间这发 scroll 不该排程落盘（B142）", async () => {
+    // 真机上：预览刚 `setBlocks`、高度还没撑开，浏览器把我们赋的位置裁成 0 并派发
+    // 一发 scroll，真正的位置要等 `restorePreviewScroll` 钉回去。那发事件若照常处理，
+    // 就会把 0 写进会话记录**并排程一次落盘** —— 用户若在这 800ms 内关窗，盘上就是 0。
+    //
+    // ⚠️ jsdom 复现不了这个时序（它的 rAF 与事件派发顺序跟浏览器不同：派发时守卫已解锁），
+    // 所以这里只做**端到端兜底**：还原完成、位置立住之后，落盘里不能再是 0。
+    // 真正的守卫由下面那条静态契约盯住。
+    clickTab(1); // 先切到 b.md，保证下面切回 a.md 是真的切换
+    await wait(60);
+    await wait(900); // 让路上的落盘先落定
+    clickTab(0); // 切回 a.md（预览态）→ 触发一次预览位置还原
+    await wait(900); // 越过 800ms 防抖
+
+    expect(lastSaved().a, "还原完成后落盘里不该是 0").not.toBe(0);
+  });
 });
 
 describe("B139 静态契约：快照按 tabId 索引，不许回头读容器", () => {
@@ -290,6 +307,26 @@ describe("B139 静态契约：快照按 tabId 索引，不许回头读容器", (
     );
   });
 
+  it("B142 还原位置期间要挡住它自己派发的 scroll", () => {
+    // 编辑器那半边有 `pinScrollTop` 的抑制窗口挡着（B139），但预览的 `setBlocks`
+    // 不在那个窗口里 —— 它把容器冲成 0 并发一发事件，位置要等补钉才立住。
+    // 所以还原要另有一道「按标签」的窗口，两条路径的监听都得认它。
+    expect(src, "要有按标签的还原窗口").toMatch(/const restoringViewports = new Set<number>\(\);/);
+    expect(src, "还原函数要开窗口").toMatch(
+      /function restoringViewport\(tabId: number, run: \(\) => void\): void \{[\s\S]{0,120}?restoringViewports\.add\(tabId\);/,
+    );
+    // 解锁要等两帧：补钉在下一帧、补钉派发的事件再下一帧
+    expect(src, "解锁要等两帧，别把补钉那一发漏在外面").toMatch(
+      /requestAnimationFrame\(\(\) => \{\s*\n\s*requestAnimationFrame\(\(\) => \{\s*\n\s*restoringViewports\.delete\(tabId\);/,
+    );
+    // 两条监听都要认它
+    expect(src, "编辑器监听要认还原窗口").toMatch(/restoringViewports\.has\(t\.tabId\)/);
+    // 精确串（带 8 空格缩进）区分预览那句与编辑器那句（后者是 `if (t && …)`）
+    expect(src, "预览监听要认还原窗口").toMatch(
+      /if \(viewportWriteDepth > 0 \|\| preview\.isSuppressingScrollWrite\(\)\) \{[\s\S]{0,160}?if \(restoringViewports\.has\(t\.tabId\)\) return;/,
+    );
+  });
+
   it("反向验证：退化成「落盘只读容器 / 不挡程序滚动」，上二条必须失败", () => {
     // 退化两步：取快照时改读容器（B137 原状），以及去掉二次定位的抑制。
     // 这里**刻意**用整段正则而不是字面量：viewportOfTab 的函数体上方挂着说明注释，
@@ -312,5 +349,15 @@ describe("B139 静态契约：快照按 tabId 索引，不许回头读容器", (
     expect(degraded, "退化后程序滚动不再被挡（第二条 toMatch 此时必须落空）").not.toMatch(
       /viewportWriteDepth > 0 \|\| preview\.isSuppressingScrollWrite\(\)/,
     );
+
+    // 退化 5：去掉**预览**那句还原守卫（B142 前状）—— `setBlocks` 那发 0 值事件没人挡。
+    // 用带缩进的精确串：编辑器那句是 `if (t && …)`，不会被误伤。
+    const PREVIEW_GUARD = "        if (restoringViewports.has(t.tabId)) return;";
+    const degradedNoRestoreGuard = src.replace(PREVIEW_GUARD, "        // 已被删除");
+    expect(degradedNoRestoreGuard, "退化实现应真的换了写法").not.toBe(src);
+    expect(
+      degradedNoRestoreGuard,
+      "退化后预览监听不再认还原窗口（B142 的断言此时必须落空）",
+    ).not.toMatch(/if \(restoringViewports\.has\(t\.tabId\)\) return;/);
   });
 });

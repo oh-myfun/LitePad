@@ -810,6 +810,9 @@ function rebuildLayout(): void {
           // B139：程序滚动期间（还原钉位置）别写 —— 那时容器里摆的是**还原的目标值**，
           // 顺着事件写回去就是把「我们要去的地方」当成「用户停过的位置」。
           if (viewportWriteDepth > 0) return;
+          // B142：位置还原还没立住（补钉在下一帧）—— 这期间容器里是被裁过的 0，
+          // 写进去就是把「还原前的空窗期」当成用户停过的位置，还会顺带排程落盘。
+          if (t && restoringViewports.has(t.tabId)) return;
           // B126：滚动位置只活在 DOM 上，随滚动即时记进标签快照（赋值极廉价，
           // 不排程）。快照是与视图生命周期解耦的全局记录，所以「滚过但没切走就
           // 重建布局 / 销毁面板」也不会丢。
@@ -841,6 +844,7 @@ function rebuildLayout(): void {
           scheduleSessionSave();
           return;
         }
+        if (restoringViewports.has(t.tabId)) return;
         // ⚠️ 这里**不要**用 `preview.isSyncing()` 当守卫：`isSyncing()` 认的是
         // `syncLock === "preview"`，即**预览→编辑器**方向（用户正在翻预览）；而
         // 预览容器自己的监听器（构造函数里注册、比这里先跑）一收到滚动就会
@@ -3608,6 +3612,32 @@ function rememberViewScroll(panel: Panel): void {
 }
 
 /**
+/**
+ * 正在还原视图位置的标签（B142）。
+ *
+ * 视图刚建好、内容还没撑开的那一会儿，浏览器会按「当前可滚动范围」把我们赋的值
+ * 裁成 0，并派发一发值为 0 的 scroll；真正的位置要靠下一帧补钉才立住。于是：
+ *   · 那发 0 值事件会把 0 写进会话记录**并排程落盘**；
+ *   · 补钉那一下又在 `pinScrollTop` 的抑制区间里（按 B139 不该写）；
+ *   ⇒ 盘上留下的是 0，重启回到顶部（用户报的症状）。
+ *
+ * 所以还原期间把这个标签自己发的所有 scroll 一并挡掉：等位置真正立住再解锁。
+ */
+const restoringViewports = new Set<number>();
+
+/** 在「还原这一个标签的位置」期间跑一段代码：期间它派发的 scroll 一律不写快照。 */
+function restoringViewport(tabId: number, run: () => void): void {
+  restoringViewports.add(tabId);
+  run();
+  // 解锁要等两帧：补钉在下一帧、补钉派发的事件再下一帧。
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      restoringViewports.delete(tabId);
+    });
+  });
+}
+
+/**
  * 把标签快照里的滚动位置还给视图（B126）。
  *
  * 必须在 setState / 新建视图**之后**调：先有对的内容，滚动位置才有意义（浏览器
@@ -3646,13 +3676,16 @@ function restoreViewScroll(panel: Panel): void {
   // display:none，把像素值塞给它只会污染「编辑器顶行」，预览那边反而没人管。
   if (t.viewMode === "preview") return;
   const view = panel.view.view;
-  if (t.scrollTop !== null) {
-    pinScrollTop(view.scrollDOM, t.scrollTop);
-    return;
-  }
-  const head = view.state.selection.main.head;
-  if (head <= 0) return;
-  view.dispatch({ effects: EditorView.scrollIntoView(head, { y: "nearest" }) });
+  restoringViewport(t.tabId, () => {
+    if (t.scrollTop !== null) {
+      pinScrollTop(view.scrollDOM, t.scrollTop);
+      return;
+    }
+    // 快照里没有位置（这份实例从没显示过）：退化为「保证光标可见」
+    const head = view.state.selection.main.head;
+    if (head <= 0) return;
+    view.dispatch({ effects: EditorView.scrollIntoView(head, { y: "nearest" }) });
+  });
 }
 
 /**
@@ -3672,7 +3705,12 @@ function restorePreviewScroll(panel: Panel): void {
   // 预览那一次 `setBlocks` 刚把内容撑开，同一帧内赋值会被裁成 0（B134），
   // 所以走同一套「钉稳」：写不进去就下一帧再钉。（钉的两发都在「程序滚动」
   // 区间内，不会反过来写脏这份快照 —— B139）
-  pinScrollTop(panel.preview.root as HTMLElement, t.scrollTop);
+  // 先取局部变量：闭包里 TS 不保留对 `panel.preview` / `t.scrollTop` 的收窄
+  const root = panel.preview.root as HTMLElement;
+  const px = t.scrollTop;
+  restoringViewport(t.tabId, () => {
+    pinScrollTop(root, px);
+  });
 }
 
 /** 应用面板视图模式：源码 / 分屏 / 纯预览（非 md 标签强制源码）。 */

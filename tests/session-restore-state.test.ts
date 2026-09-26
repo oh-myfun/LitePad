@@ -19,6 +19,11 @@ beforeAll(() => {
   document.body.innerHTML = body;
 });
 
+/** 最后一次落盘的会话（B142 用它盯「空窗期的 0 有没有被写下去」）。 */
+const wired = vi.hoisted(() => ({
+  saved: [] as { panels: { tabs: { path: string; scrollTop: number | null }[] }[] }[],
+}));
+
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     setTitle: () => Promise.resolve(),
@@ -143,7 +148,10 @@ vi.mock("../src/ipc/api", () => ({
     }),
   saveFile: () => Promise.resolve({ lossy: [], path: "" }),
   savePasteImage: () => Promise.resolve(""),
-  saveSession: () => Promise.resolve(),
+  saveSession: (state: { panels: { tabs: { path: string; scrollTop: number | null }[] }[] }) => {
+    wired.saved.push(state);
+    return Promise.resolve();
+  },
   saveSettings: () => Promise.resolve(),
   writeBackup: () => Promise.resolve(),
   restoreBackup: () => Promise.resolve(null),
@@ -293,6 +301,25 @@ describe("B129 会话恢复：面板激活标签 + 每标签光标 + 每标签�
       col: 4,
       scroll: 60,
     });
+  });
+
+  it("⑤ 还原空窗期的 0 值 scroll 不该排程落盘（B142）", async () => {
+    // 真机上：视图刚 setState、内容还没撑开，浏览器把我们的赋值裁成 0 并派发一发
+    // scroll；位置要等下一帧补钉才立住。那发事件若照常处理，就会把 0 写进会话记录
+    // **并排程一次落盘** —— 用户若在这 800ms 内关窗，盘上就是 0，重启回到顶部。
+    // （之后位置补钉成功又会刷新回来，所以症状是「闪一下」，盘上的中间态才是真问题。）
+    clickTab(tabEls(0)[0]);
+    await wait(60);
+    await wait(900); // 先让路上的落盘都落定，拿到干净的基线
+    const before = wired.saved.length;
+
+    clickTab(tabEls(0)[1]); // 切到 b.md：触发一次位置还原
+    const sc = panels()[0].querySelector(".cm-scroller") as HTMLElement;
+    sc.scrollTop = 0; // 模拟「被浏览器裁掉」
+    sc.dispatchEvent(new Event("scroll", { bubbles: false }));
+    await wait(900); // 越过 800ms 防抖
+
+    expect(wired.saved.length, "空窗期的 0 不该再排一次落盘").toBe(before);
   });
 });
 
