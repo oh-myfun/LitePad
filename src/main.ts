@@ -5599,11 +5599,14 @@ function registerWindowClose(): void {
       // 已确认退出：放行默认关闭，避免 close() 二次触发本事件导致死循环
       if (windowCloseConfirmed) return;
       const dirty = [...docs.values()].filter((d) => d.dirty);
+      // 无脏文档同样要「先存再关」，只是省掉备份那一段。Rust 侧**没有**关窗钩子，
+      // 会话的唯一写入口就是这一次 IPC：直接放行的话窗口当场关闭、进程收尾，
+      // 请求还在半路就白发了（B133）。所以也必须拦下来、await 完再自己关。
       if (dirty.length === 0) {
-        // 无脏文档：允许默认关闭。但**现场**（各标签的视口位置）只活在内存里，
-        // 也还没落盘 —— 用户滚到中段就关窗，正是最常卡在防抖窗口里的情形（B132）。
-        // 这里补一次快照，别让「什么都没改所以不用存」变成「丢了现场」。
-        void persistSession();
+        event.preventDefault();
+        await persistSession();
+        windowCloseConfirmed = true;
+        await getCurrentWindow().close();
         return;
       }
       event.preventDefault();

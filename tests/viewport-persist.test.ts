@@ -18,9 +18,14 @@ beforeAll(() => {
   document.body.innerHTML = body;
 });
 
-/** 截获 `onCloseRequested` 与落盘载荷：用例直接喂关窗事件，不看源码文本。 */
+/**
+ * 截获 `onCloseRequested`、落盘载荷，外加一路**调用序列**：
+ * 「先存再关」这条契约靠 `events` 的顺序断言，光看 saveSession 被调用过抓不住
+ * —— 上一版正是「调了但没等它返回」，用例全绿而真机照样丢。
+ */
 const wired = vi.hoisted(() => ({
   close: null as ((ev: { preventDefault(): void }) => void) | null,
+  events: [] as string[],
   saved: [] as { panels: { tabs: { path: string; scrollTop: number | null }[] }[] }[],
 }));
 
@@ -36,7 +41,11 @@ vi.mock("@tauri-apps/api/window", () => ({
       wired.close = cb;
       return Promise.resolve({ catch: () => {} });
     },
-    close: () => Promise.resolve(),
+    // 关窗动作也要记进序列：用来证明「存」确实排在「关」前面
+    close: () => {
+      wired.events.push("close");
+      return Promise.resolve();
+    },
   }),
 }));
 vi.mock("@tauri-apps/api/core", () => ({
@@ -130,6 +139,7 @@ vi.mock("../src/ipc/api", () => ({
   savePasteImage: () => Promise.resolve(""),
   // 落盘载荷留档：用例要断言「存下来的那份视口是滚之后的」
   saveSession: (state: { panels: { tabs: { path: string; scrollTop: number | null }[] }[] }) => {
+    wired.events.push("save");
     wired.saved.push(state);
     return Promise.resolve();
   },
@@ -173,26 +183,37 @@ describe("B132 视口位置：滚动要能自己排程落盘，关窗要兜底�
     expect(lastSaved(), "落盘的视口应是滚动后的 500，而不是会话里的 0").toBe(500);
   });
 
-  it("② 无脏文档关窗：放行之前也要拍一次快照（现场还在内存里）", async () => {
+  it("② 无脏文档关窗：先拦下窗口、存完再关（Rust 侧没有关窗钩子，不等就白存）", async () => {
     expect(wired.close, "应已装上关窗收接").toBeTruthy();
     const before = wired.saved.length;
-    wired.close!({ preventDefault: () => {} });
-    await wait(120);
+    let prevented = false;
+    wired.events.length = 0; // 只看这一次关窗的先后顺序
+    wired.close!({
+      preventDefault: () => {
+        prevented = true;
+      },
+    });
+    await wait(150);
+    expect(prevented, "无脏文档也要先拦住默认关闭，否则进程收尾、IPC 白发").toBe(true);
     expect(wired.saved.length, "无脏文档关窗也要存现场").toBeGreaterThan(before);
+    // 关键：顺序。'close' 一旦排在 'save' 前面，存就赶不上窗口关闭了
+    expect(wired.events, "必须先落盘（save）、再关窗（close）").toEqual(["save", "close"]);
     expect(lastSaved(), "关窗时存的应是当前视口 500").toBe(500);
   });
 });
 
+/** 「无脏文档」这支的完整流程：拦下 → 存完 → 自己关。缺任意一环都算没做。 */
+const CLOSE_FLOW =
+  /if \(dirty\.length === 0\) \{[\s\S]{0,200}?event\.preventDefault\(\);[\s\S]{0,240}?await persistSession\(\);[\s\S]{0,200}?await getCurrentWindow\(\)\.close\(\);/g;
+
 describe("B132 静态契约：滚动排程 + 关窗兜底", () => {
   const src = readFileSync("src/main.ts", "utf-8");
 
-  it("滚动监听里要排程会话保存，关窗的放行支要兜底存一次", () => {
+  it("滚动监听里要排程会话保存，关窗的放行支要走「拦下 → 存完 → 再关」", () => {
     expect(src, "滚动后要排程落盘").toMatch(
       /if \(t\) t\.scrollTop = shownView\.scrollDOM\.scrollTop;[\s\S]{0,220}?scheduleSessionSave\(\);/,
     );
-    expect(src, "无脏文档关窗要存现场").toMatch(
-      /if \(dirty\.length === 0\) \{[\s\S]{0,420}?void persistSession\(\);/,
-    );
+    expect(src, "无脏文档关窗要『拦下→存完→再关』，光存不等等于没存").toMatch(CLOSE_FLOW);
   });
 
   it("反向验证：两条退化都要被上一条抓住", () => {
@@ -206,8 +227,7 @@ describe("B132 静态契约：滚动排程 + 关窗兜底", () => {
     );
     expect(degradedScroll, "退化后滚动分支不应再有排程").not.toMatch(SCROLL_ANCHOR);
 
-    const CLOSE_ANCHOR = /if \(dirty\.length === 0\) \{[\s\S]{0,420}?void persistSession\(\);/g;
-    const degradedClose = src.replaceAll(CLOSE_ANCHOR, "if (dirty.length === 0) {");
-    expect(degradedClose, "退化后放行支不应再有兜底").not.toMatch(CLOSE_ANCHOR);
+    const degradedClose = src.replaceAll(CLOSE_FLOW, "if (dirty.length === 0) {}");
+    expect(degradedClose, "退化后放行支不应再有『存完再关』").not.toMatch(CLOSE_FLOW);
   });
 });
