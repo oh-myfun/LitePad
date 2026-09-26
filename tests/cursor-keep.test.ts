@@ -311,13 +311,21 @@ describe("B126 静态契约：滚动位置必须自己存取", () => {
   it("必须有成对的「记住 / 还原」两个helper，且还原真的写回 scrollTop", () => {
     expect(src, "切走前要记住滚动位置").toContain("function rememberViewScroll");
     expect(src, "切回后要还原滚动位置").toContain("function restoreViewScroll");
+    // B134：写回要经 `pinScrollTop` —— 裸写会被「容器还没布局」裁成 0，
+    // 值看着写上了、其实没进去。pinScrollTop 内部最终还是会写 scrollDOM，
+    // 所以这里同时认两种写法，但**必须**经由写回函数。
     expect(src, "还原必须把快照里的值写回 scrollDOM（光调 helper 名不算）").toMatch(
-      /view\.scrollDOM\.scrollTop = t\.scrollTop/,
+      /pinScrollTop\(view\.scrollDOM, t\.scrollTop\)|view\.scrollDOM\.scrollTop = t\.scrollTop/,
     );
   });
 
   it("反向验证：删掉写回那一行，上一条断言必须失败", () => {
-    const degraded = src.replace(/view\.scrollDOM\.scrollTop = t\.scrollTop;/, "// 已删除");
+    const degraded = src
+      .replace(
+        /pinScrollTop\(view\.scrollDOM, t\.scrollTop\);/g,
+        "view.scrollDOM.scrollTop = t.scrollTop!;",
+      )
+      .replace(/view\.scrollDOM\.scrollTop = t\.scrollTop!(;)?/g, "// 已删除");
     expect(degraded).not.toBe(src);
     expect(degraded, "退化后不应再匹配到写回语句（否则这条断言形同虚设）").not.toMatch(
       /view\.scrollDOM\.scrollTop = t\.scrollTop/,

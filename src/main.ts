@@ -3521,6 +3521,25 @@ function rememberViewScroll(panel: Panel): void {
  * `scrollTop === null`（这份实例从没显示过）时退化为「保证光标可见」——
  * 会话恢复只带了 cursorLine/cursorCol，没有视口信息，硬钉 0 会让光标停在屏幕外。
  */
+/**
+ * 把滚动位置**钉稳**（B134）。
+ *
+ * 赋值那一刻容器往往还没布局完（编辑器刚从 `display:none` 出来、预览刚 `setBlocks`），
+ * 浏览器按规范会把超出可滚动范围的赋值**裁掉** —— 内容高度还没撑开时裁成 0，
+ * 位置就等于没设。更糟的是这次赋值会派发 scroll 事件，把「0」写回标签快照，
+ * 于是下一次保存下来的也是 0（B134：重启后每次都回到顶部）。
+ *
+ * 所以：先按老办法写；写进去的值没被裁（读回来对得上）就收工，被裁了就在下一帧
+ * 布局稳定后再钉一次。
+ */
+function pinScrollTop(el: HTMLElement, px: number): void {
+  el.scrollTop = px;
+  if (el.scrollTop === px) return;
+  requestAnimationFrame(() => {
+    el.scrollTop = px;
+  });
+}
+
 function restoreViewScroll(panel: Panel): void {
   if (!panel.view || panel.viewTabId === null) return;
   const t = tabs.get(panel.viewTabId);
@@ -3530,7 +3549,7 @@ function restoreViewScroll(panel: Panel): void {
   if (t.viewMode === "preview") return;
   const view = panel.view.view;
   if (t.scrollTop !== null) {
-    view.scrollDOM.scrollTop = t.scrollTop;
+    pinScrollTop(view.scrollDOM, t.scrollTop);
     return;
   }
   const head = view.state.selection.main.head;
@@ -3552,7 +3571,14 @@ function restorePreviewScroll(panel: Panel): void {
   if (panel.viewTabId === null || !panel.preview) return;
   const t = tabs.get(panel.viewTabId);
   if (!t || t.viewMode !== "preview" || t.scrollTop === null) return;
-  panel.preview.setScrollTop(t.scrollTop);
+  // 预览那一次 `setBlocks` 刚把内容撑开，同一帧内赋值会被裁成 0（B134），
+  // 所以走同一套「钉稳」：写不进去就下一帧再钉。
+  const root = panel.preview.root as HTMLElement;
+  const px = t.scrollTop;
+  pinScrollTop(root, px);
+  requestAnimationFrame(() => {
+    if (root.scrollTop !== px) root.scrollTop = px;
+  });
 }
 
 /** 应用面板视图模式：源码 / 分屏 / 纯预览（非 md 标签强制源码）。 */
