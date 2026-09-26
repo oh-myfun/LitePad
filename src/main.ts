@@ -813,12 +813,8 @@ function rebuildLayout(): void {
       }
 
       applyPanelMode(p);
-      // B129：纯预览态的视图位置记在预览那一侧，得等**渲染完**（applyPanelMode
-      // 里才第一次 setBlocks）再按快照摆正 —— 提前设会被后面那次 syncToLine 覆盖，
-      // 晚一步设则内容还没撑开、浏览器会把 scrollTop 裁成 0。
-      if (tab?.viewMode === "preview" && tab.scrollTop !== null) {
-        preview.setScrollTop(tab.scrollTop);
-      }
+      // 纯预览实例的视图位置在预览那一侧，渲染完再钉回去（B129）
+      restorePreviewScroll(p);
       if (panelId === activePanelId && p.view) {
         p.view.focus();
         updatePositionOf(panelId, p.view.view);
@@ -861,6 +857,9 @@ function switchTab(panelId: number, tabId: number): void {
   restoreViewScroll(panel);
   panel.view.focus();
   applyPanelMode(panel);
+  // applyPanelMode 里的 syncToLine 会把预览按「编辑器顶行」重新定位一次，
+  // 纯预览实例的位置得在它之后再钉回来（B130）
+  restorePreviewScroll(panel);
   if (panelId === activePanelId) {
     refreshTitle();
     refreshStatus();
@@ -3492,7 +3491,12 @@ function scrollTopOfTab(t: Tab): number | null {
 function rememberViewScroll(panel: Panel): void {
   if (!panel.view || panel.viewTabId === null) return;
   const t = tabs.get(panel.viewTabId);
-  if (t) t.scrollTop = panel.view.view.scrollDOM.scrollTop;
+  if (!t) return;
+  // 纯预览实例：编辑器是 display:none、scrollDOM.scrollTop 恒为 0，照常写回来
+  // 就等于「切走的一刻把上次的位置抹平」（B130）。这类实例的位置归预览那一侧，
+  // 落盘时由 scrollTopOfTab 直接读实时值。
+  if (t.viewMode === "preview") return;
+  t.scrollTop = panel.view.view.scrollDOM.scrollTop;
 }
 
 /**
@@ -3508,6 +3512,9 @@ function restoreViewScroll(panel: Panel): void {
   if (!panel.view || panel.viewTabId === null) return;
   const t = tabs.get(panel.viewTabId);
   if (!t) return;
+  // 纯预览实例：这个槽位里记的是**预览**的滚动位置（B129），编辑器此时是
+  // display:none，把像素值塞给它只会污染「编辑器顶行」，预览那边反而没人管。
+  if (t.viewMode === "preview") return;
   const view = panel.view.view;
   if (t.scrollTop !== null) {
     view.scrollDOM.scrollTop = t.scrollTop;
@@ -3516,6 +3523,23 @@ function restoreViewScroll(panel: Panel): void {
   const head = view.state.selection.main.head;
   if (head <= 0) return;
   view.dispatch({ effects: EditorView.scrollIntoView(head, { y: "nearest" }) });
+}
+
+/**
+ * 把「纯预览实例」的视图位置还给预览容器（B129）。
+ *
+ * 与 `restoreViewScroll` 是一对、但要**单独调**：纯预览下值记在预览那一侧，
+ * 而 `applyPanelMode` 会按编辑器顶行把预览 `syncToLine` 一次，不补这一下，
+ * 用户上次翻到的位置就被行定位顶掉了（B130 实测：存 300、回来变成 284）。
+ *
+ * 必须在 `applyPanelMode` **之后**：预览那一次 `setBlocks` 才把内容撑开，
+ * 早一步设浏览器会裁成 0。
+ */
+function restorePreviewScroll(panel: Panel): void {
+  if (panel.viewTabId === null || !panel.preview) return;
+  const t = tabs.get(panel.viewTabId);
+  if (!t || t.viewMode !== "preview" || t.scrollTop === null) return;
+  panel.preview.setScrollTop(t.scrollTop);
 }
 
 /** 应用面板视图模式：源码 / 分屏 / 纯预览（非 md 标签强制源码）。 */

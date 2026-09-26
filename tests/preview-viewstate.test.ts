@@ -155,9 +155,7 @@ describe("B129 纯预览态的视图位置要进会话并还原", () => {
       src,
       "纯预览态的视图位置必须从预览容器取（编辑器是 display:none，scrollTop 恒为 0）",
     ).toMatch(/t\.viewMode === "preview"/);
-    expect(src, "还原的落点必须落在预览容器上（PreviewPane.setScrollTop）").toMatch(
-      /preview\.setScroll\(?/,
-    );
+    expect(src, "还原的落点必须落在预览容器上").toMatch(/function restorePreviewScroll/);
     const preview = readFileSync("src/markdown/preview.ts", "utf-8");
     expect(preview, "PreviewPane 要提供按像素定位的入口").toContain("setScrollTop(px: number)");
   });
@@ -165,17 +163,17 @@ describe("B129 纯预览态的视图位置要进会话并还原", () => {
   it("反向验证：拆掉任一端，上面两条断言都会失效", () => {
     const src = readFileSync("src/main.ts", "utf-8");
     // 退化 A：存的时候只看编辑器那一侧
+    // 拆卸与断言都钉到**整行**：main.ts 里另有 `if (t.viewMode === "preview") return;`
+    // （rememberViewScroll 的早退），只按前缀拆会把别人的代码也算成「已删除」。
     const degradedSave = src.replace(
       /if \(t\.viewMode === "preview"\) return p\.preview\?\.root\.scrollTop \?\? null;/,
       "",
     );
     expect(degradedSave, "退化后不应再有预览侧的取值分支").not.toMatch(
-      /if \(t\.viewMode === "preview"\) return/,
+      /return p\.preview\?\.root\.scrollTop/,
     );
-    // 退化 B：还原的时候只动编辑器
-    const degradedRestore = src.replace(/preview\.setScrollTop\(tab\.scrollTop\);/, "");
-    expect(degradedRestore, "退化后不应再有写回预览容器的调用").not.toMatch(
-      /preview\.setScrollTop\(/,
-    );
+    // 退化 B：还原的时候只动编辑器（纯预览实例不还原，位置就丢）
+    const degradedRestore = src.replaceAll(/restorePreviewScroll/g, "");
+    expect(degradedRestore, "退化后不应再有写回预览容器的调用").not.toMatch(/restorePreviewScroll/);
   });
 });
