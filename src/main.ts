@@ -86,6 +86,7 @@ import { buildExportHtml, printToPdf } from "./markdown/exporter";
 import { renderBlocks, renderFull, type TocEntry } from "./markdown/pipeline";
 import { extractOutline } from "./markdown/outline";
 import { PreviewPane } from "./markdown/preview";
+import { sessionStore } from "./session/store";
 import { renderToc, attachTocResizer, clampTocWidth, type TocResizerHandle } from "./markdown/toc";
 import { attachWheelZoom } from "./shell/zoom";
 import {
@@ -417,6 +418,11 @@ function handleUpdate(view: EditorView, update: ViewUpdate): void {
   const doc = docs.get(tab.docId);
   if (!doc) return;
   tab.state = view.state;
+  // B141：光标即时进会话记录（不等落盘那一刻才采集）。这里只记行列 —— EditorState
+  // 不可序列化，进不了会话，也不需要。
+  const caretPos = view.state.selection.main.head;
+  const caretLine = view.state.doc.lineAt(caretPos);
+  sessionStore.setCursor(tab.tabId, caretLine.number, caretPos - caretLine.from + 1);
   updatePositionOf(panel.panelId, view);
   // 文本是否真的变了：点击内容区、移动光标、切换视图、重新测量都会产生
   // update 但前后文本完全一致——那不是编辑。
@@ -807,7 +813,10 @@ function rebuildLayout(): void {
           // B126：滚动位置只活在 DOM 上，随滚动即时记进标签快照（赋值极廉价，
           // 不排程）。快照是与视图生命周期解耦的全局记录，所以「滚过但没切走就
           // 重建布局 / 销毁面板」也不会丢。
-          if (t) t.scrollTop = shownView.scrollDOM.scrollTop;
+          if (t) {
+            t.scrollTop = shownView.scrollDOM.scrollTop;
+            sessionStore.setScroll(t.tabId, t.scrollTop);
+          }
           // B132：写进快照还不算数 —— 得落盘。滚动本身**不触发**任何排程，用户
           // 滚到中段、没干别的事就关窗，会话里留下的还是上一次（滚之前那份），
           // 重启就回到老位置（B132）。防抖 800ms：滚动停下才写，不会每帧落盘。
@@ -840,6 +849,7 @@ function rebuildLayout(): void {
         // 的同步滚动反而不会命中这里：那种标签是源码态（`viewMode === "source"`），
         // 早在上一行 return 了；真到了纯预览态，预览本来就该跟着编辑器走。
         t.scrollTop = preview.root.scrollTop;
+        sessionStore.setScroll(t.tabId, t.scrollTop);
         scheduleSessionSave();
       });
 
@@ -2223,46 +2233,72 @@ let sessionTimer: number | null = null;
  * 放在 `snapshotSession` 开头而不是关窗那一处：防抖的 800ms 落盘、热退出、装更新前的
  * persist 走的都是这条出口，一次同步全照顾到。回写是幂等的（值就来自当下这个视图）。
  */
-function syncShownViewToTab(): void {
+/**
+ * 把活动态的**全部**会话信息刷进 store（B141）。
+ *
+ * 分两段：
+ *  ① 结构 —— 面板的标签顺序 / 活动标签 / 布局 / 活动面板 / 跨窗口标签。这些变化集中在
+ *     少数函数里，但落点分散（拖拽、分屏、关闭…），逐个挂 setter 容易漏，所以落盘前
+ *     统一同步一次，保证**绝不**拿旧结构写盘。
+ *  ② 标签记录 —— 文档字段（path / encoding / eol / backupId）从 `Doc` 取；光标与视口
+ *     只活在视图 / DOM 上，从**当前正显示**的那个视图采集（同 `syncShownViewToTab`）。
+ *
+ * 高频又最容易丢的光标 / 视口 / 视图模式另有即时写入口（`sessionStore.setCursor` 等，
+ * 挂在 `handleUpdate` 与滚动监听上）；这里是兜底，两者不冲突 —— setter 写的是同一份记录。
+ */
+function refreshSession(): void {
+  const panelIndex = new Map<number, number>();
+  [...panels.keys()].forEach((id, i) => panelIndex.set(id, i));
+
+  // 清理上一轮留下、这轮已经不存在的面板与跨窗口登记
+  for (const id of sessionStore.panelIds()) {
+    if (!panels.has(id)) sessionStore.dropPanel(id);
+  }
   for (const p of panels.values()) {
-    if (!p.view || p.viewTabId === null) continue;
-    const t = tabs.get(p.viewTabId);
-    if (!t) continue;
-    t.state = p.view.view.state;
-    rememberViewScroll(p);
+    sessionStore.setPanel(p.panelId, p.tabs, p.activeTabId);
+  }
+  sessionStore.setLayout(convertLayoutForSession(layoutForSession(), panelIndex));
+  sessionStore.setActivePanel(activePanelId);
+
+  // 跨窗口标签：卫星窗口不写会话，这些由主窗口代登记
+  const liveRemoted = new Set<number>();
+  for (const [docId, r] of remotedTabs) {
+    if (!tabs.has(r.tabId)) continue;
+    sessionStore.setSatellite(docId, r.tabId, r.owner);
+    liveRemoted.add(docId);
+  }
+  for (const docId of sessionStore.satelliteDocIds()) {
+    if (!liveRemoted.has(docId)) sessionStore.dropSatellite(docId);
+  }
+
+  for (const t of tabs.values()) {
+    const d = docs.get(t.docId);
+    if (!d) continue;
+    if (!sessionStore.get(t.tabId)) sessionStore.register(t.tabId, t.docId);
+    sessionStore.setDoc(t.tabId, {
+      path: d.path ?? "",
+      encoding: d.encoding,
+      eol: d.eol,
+      backupId: d.backupId,
+    });
+    sessionStore.setViewMode(t.tabId, isMdTab(t) ? t.viewMode : null);
+    // 正显示在面板上的那个：光标与视口都在视图 / DOM 上，先采一次再写进记录
+    // （同 B140 的「消失前看最后一眼」，只不过现在写的是 store 而不是 Tab）。
+    // 其余标签的光标在 `handleUpdate` 里就已经即时写进来了，这里不动它。
+    const p = panels.get(t.panelId);
+    if (p?.view && p.viewTabId === t.tabId) {
+      t.state = p.view.view.state;
+      const pos = t.state.selection.main.head;
+      const line = t.state.doc.lineAt(pos);
+      sessionStore.setCursor(t.tabId, line.number, pos - line.from + 1);
+      rememberViewScroll(p);
+    }
+    sessionStore.setScroll(t.tabId, viewportOfTab(t));
   }
 }
 
-/** 一个标签的会话记录（面板内标签与 `satelliteTabs` 共用同一形状）。 */
-function sessionTabRecordOf(t: Tab): {
-  path: string;
-  encoding: string;
-  eol: string;
-  cursorLine: number;
-  cursorCol: number;
-  scrollTop: number | null;
-  viewMode: string | null;
-  backupId: string | null;
-  docId: number;
-} {
-  const d = docs.get(t.docId)!;
-  const pos = t.state.selection.main.head;
-  const line = t.state.doc.lineAt(pos);
-  return {
-    path: d.path ?? "",
-    encoding: d.encoding,
-    eol: d.eol,
-    cursorLine: line.number,
-    cursorCol: pos - line.from + 1,
-    // B126：视口位置一起进会话。只记行列的话，重启后文件停在开头、光标却在第 N
-    // 行（屏幕外），看上去就跟「光标复位了」一样。
-    scrollTop: viewportOfTab(t),
-    viewMode: isMdTab(t) ? t.viewMode : null,
-    backupId: d.backupId,
-    // B69：空未命名文档的认领凭据（见 TabSession.docId 注释）
-    docId: d.tabId,
-  };
-}
+// B141：`sessionTabRecordOf` 已删除 —— 标签的会话记录现在由 `sessionStore`（`src/session/store.ts`
+// 的 `toDisk`）产出，会话只有一个出口。面板标签与跨窗口标签共用同一份记录，不再各拼一次。
 
 /** 该文档值不值得进会话（B68/B69 的判据；面板标签与隐藏实例共用）。 */
 function sessionWorthy(t: Tab): boolean {
@@ -2281,36 +2317,12 @@ function sessionWorthy(t: Tab): boolean {
 }
 
 function snapshotSession(): Parameters<typeof saveSession>[0] {
-  syncShownViewToTab();
-  const panelIndex = new Map<number, number>();
-  const ordered = [...panels.keys()];
-  ordered.forEach((id, i) => panelIndex.set(id, i));
-
-  return {
-    panels: ordered.map((id) => {
-      const p = panels.get(id)!;
-      const tabList = p.tabs
-        .map((tid) => tabs.get(tid))
-        .filter((t): t is Tab => !!t && sessionWorthy(t));
-      return {
-        tabs: tabList.map((t) => sessionTabRecordOf(t)),
-        active: Math.max(
-          0,
-          tabList.findIndex((t) => t.tabId === p.activeTabId),
-        ),
-      };
-    }),
-    // B71 ④：搬到其他窗口的标签也要进会话（它们在本窗口是隐藏实例，见 remoteTabLocally）。
-    // 卫星窗口自己不写会话，这里是这些标签唯一的兜底——不然「拖到新窗口 + 强杀进程」
-    // 会让未保存内容变成没人认领的孤儿副本。
-    satelliteTabs: [...remotedTabs.values()]
-      .map((r) => tabs.get(r.tabId))
-      .filter((t): t is Tab => !!t && sessionWorthy(t))
-      .map((t) => sessionTabRecordOf(t)),
-    // 最大化不进会话：0/1 的比例存下来会让下次启动只剩一块面板（见 layoutForSession）
-    layout: convertLayoutForSession(layoutForSession(), panelIndex),
-    activePanel: panelIndex.get(activePanelId) ?? 0,
-  };
+  // B141：会话不再现场拼装 —— 先把活动态刷进 store，再把那份记录序列化出去。
+  refreshSession();
+  return sessionStore.toSessionState((tabId) => {
+    const t = tabs.get(tabId);
+    return !!t && sessionWorthy(t);
+  });
 }
 
 /** 布局树叶子 panelId → 会话面板索引（JSON 深拷贝）。 */

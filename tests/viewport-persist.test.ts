@@ -270,7 +270,7 @@ describe("B132 静态契约：滚动排程 + 关窗兜底", () => {
 
   it("滚动监听里要排程会话保存，关窗的放行支要走「拦下 → 存完 → 再关」", () => {
     expect(src, "滚动后要排程落盘").toMatch(
-      /if \(t\) t\.scrollTop = shownView\.scrollDOM\.scrollTop;[\s\S]{0,220}?scheduleSessionSave\(\);/,
+      /t\.scrollTop = shownView\.scrollDOM\.scrollTop;[\s\S]{0,260}?scheduleSessionSave\(\);/,
     );
     expect(src, "关窗回调要『先拦下 → 再丢一条没人 await 的收尾』").toMatch(CLOSE_CALLBACK);
     expect(src, "无脏文档那支要先等会话落盘，光排队等于没存").toMatch(CLEAN_BRANCH);
@@ -282,24 +282,31 @@ describe("B132 静态契约：滚动排程 + 关窗兜底", () => {
     );
   });
 
-  it("B140 落盘前要把当前视图的最新状态回写进标签（光标 / 视口）", () => {
-    // `t.state` 只在切标签 / 重建 / 拖标签那几处回写过，直接关窗落的是打开时那份。
-    expect(src, "快照出口要先同步一次").toMatch(
-      /function snapshotSession\(\): Parameters<typeof saveSession>\[0\] \{\s*\n\s*syncShownViewToTab\(\);/,
+  it("B140/B141 落盘前要把当前视图的最新状态刷进会话记录", () => {
+    // 间隔用「到调用为止的任意内容」而不是「紧跟 `{`」：函数开头挂着说明注释，
+    // 咬死开括号的写法一加注释就红（B139 踩过一次）。
+    expect(src, "快照出口要先刷新一次").toMatch(
+      /function snapshotSession\(\): Parameters<typeof saveSession>\[0\] \{[\s\S]{0,200}?refreshSession\(\);/,
     );
-    expect(src, "同步要同时回写 state 与视口").toMatch(
-      /function syncShownViewToTab\(\): void \{[\s\S]{0,200}?t\.state = p\.view\.view\.state;[\s\S]{0,120}?rememberViewScroll\(p\);/,
+    // B141：现在写的是 store 而不是 Tab —— 光标与视口都要进那份记录
+    // 分别盯两个写入（而不是「同一段里先后出现」）：间距一变正则就失配，
+    // 而这两句各自都是契约本身。
+    expect(src, "刷新要把光标写进 store").toMatch(/sessionStore\.setCursor\(t\.tabId,/);
+    expect(src, "刷新要把视口写进 store").toMatch(
+      /sessionStore\.setScroll\(t\.tabId, viewportOfTab\(t\)\);/,
     );
+    // B141：会话只有一个出口 —— 不再有「面板标签一份、卫星标签一份」的就地拼装
+    expect(src, "不该再有就地拼装的标签记录").not.toMatch(/function sessionTabRecordOf/);
   });
 
   it("反向验证：两条退化都要被上一条抓住", () => {
     // ⚠️ 拆卸与断言必须用**同一条精确串**（老规矩）：按缩进猜字符串这次又没对上，
     // 结果「没拆掉」却被判成「拆掉了」—— 一条假绿。改成同一个正则做替换。
     const SCROLL_ANCHOR =
-      /if \(t\) t\.scrollTop = shownView\.scrollDOM\.scrollTop;[\s\S]{0,220}?scheduleSessionSave\(\);/;
+      /t\.scrollTop = shownView\.scrollDOM\.scrollTop;[\s\S]{0,260}?scheduleSessionSave\(\);/;
     const degradedScroll = src.replace(
       SCROLL_ANCHOR,
-      "if (t) t.scrollTop = shownView.scrollDOM.scrollTop;",
+      "t.scrollTop = shownView.scrollDOM.scrollTop;",
     );
     expect(degradedScroll, "退化后滚动分支不应再有排程").not.toMatch(SCROLL_ANCHOR);
 
@@ -321,15 +328,15 @@ describe("B132 静态契约：滚动排程 + 关窗兜底", () => {
     );
     expect(degradedCloseCall, "收尾退回 close() 会二次触发关窗流程").not.toMatch(CLOSE_TAIL);
 
-    // 退化 4：快照出口不做同步（B140 前状）—— 编辑 / 移光标 / 滚动后直接关窗，
-    // 落下去的还是打开时那份
+    // 退化 4：快照出口不做刷新（B140 前状）—— 编辑 / 移光标 / 滚动后直接关窗，
+    // 落下去的还是打开时那份。用正则替换：字面量一撞注释就失配（同 B139 的坑）。
+    const NO_SYNC =
+      /function snapshotSession\(\): Parameters<typeof saveSession>\[0\] \{[\s\S]{0,200}?refreshSession\(\);/;
     const degradedNoSync = src.replace(
-      "function snapshotSession(): Parameters<typeof saveSession>[0] {\n  syncShownViewToTab();",
+      NO_SYNC,
       "function snapshotSession(): Parameters<typeof saveSession>[0] {",
     );
-    expect(degradedNoSync, "少了同步就该被 B140 契约抓住").not.toMatch(
-      /function snapshotSession\(\): Parameters<typeof saveSession>\[0\] \{\s*\n\s*syncShownViewToTab\(\);/,
-    );
+    expect(degradedNoSync, "少了刷新就该被 B140 契约抓住").not.toMatch(NO_SYNC);
   });
 
   // ⚠️ B135 最狠的一条：流转成代码「看着对」、静态正则也 full-match，真机却永久死锁。

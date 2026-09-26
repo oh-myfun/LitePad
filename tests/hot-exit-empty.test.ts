@@ -176,6 +176,7 @@ describe("B69 空的新建文档也要跨重启回来", () => {
   const src = readFileSync("src/main.ts", "utf-8");
   const api = readFileSync("src/ipc/api.ts", "utf-8");
   const rustSession = readFileSync("src-tauri/src/session/mod.rs", "utf-8");
+  const storeSrc = readFileSync("src/session/store.ts", "utf-8");
 
   /** 截取某个顶层函数的源码体（见顶层 topLevelFnBody 的说明）。 */
   function fnBody(name: string): string {
@@ -208,8 +209,9 @@ describe("B69 空的新建文档也要跨重启回来", () => {
       /#\[serde\(alias = "doc_id"\)\]/,
     );
     expect(api, "前端 TabSession 必须有 docId").toMatch(/docId\?: number \| null;/);
-    // 标签记录构造抽到了 sessionTabRecordOf（面板标签与卫星标签共用），断言跟过去
-    expect(fnBody("function sessionTabRecordOf"), "快照必须写入 docId").toMatch(/docId: d\.tabId,/);
+    // B141：标签的会话记录改由 sessionStore 产出（`toDisk`），断言跟着挪过去 ——
+    // 会话现在只有一个出口，面板标签与卫星标签共用同一份记录。
+    expect(storeSrc, "序列化要带上 docId（空未命名文档的认领凭据）").toMatch(/docId: r\.docId,/);
   });
 
   it("恢复时按 docId 认身份：同一个空文档在多个面板只造一份", () => {
