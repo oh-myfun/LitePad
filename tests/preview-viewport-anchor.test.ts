@@ -265,8 +265,10 @@ describe("B139 静态契约：快照按 tabId 索引，不许回头读容器", (
   const src = readFileSync("src/main.ts", "utf-8");
 
   it("落盘只读标签自己的快照，不读面板上的容器", () => {
+    // 用「到 return 为止」的间隔而不是「紧跟函数体开头」：函数上面要挂说明注释，
+    // 咬死开头的写法一加注释就红（踩过：B139 给 viewportOfTab 补了一句注释就挂了）。
     expect(src, "取快照时只认标签字段").toMatch(
-      /function viewportOfTab\(t: Tab\): number \| null \{\s*\n\s*return t\.scrollTop;/,
+      /function viewportOfTab\(t: Tab\): number \| null \{[\s\S]{0,160}?return t\.scrollTop;/,
     );
     // 这条与上一条互为表里：裸 `return p?...`（结尾分号）就是「落盘时只读容器」
     // 的写法（B137 原状），上一条的函数体写法抓不到它，得单独盯。
@@ -290,12 +292,12 @@ describe("B139 静态契约：快照按 tabId 索引，不许回头读容器", (
 
   it("反向验证：退化成「落盘只读容器 / 不挡程序滚动」，上二条必须失败", () => {
     // 退化两步：取快照时改读容器（B137 原状），以及去掉二次定位的抑制。
-    // 用**字面量**替换（不用整段正则）—— 整段正则一改动源码排版就失配，退化会
-    // 悄悄变成「什么都没改」，用例跟着假绿。
+    // 这里**刻意**用整段正则而不是字面量：viewportOfTab 的函数体上方挂着说明注释，
+    // 字面量一撞注释就失配，退化会悄悄变成「什么都没改」、用例跟着假绿。
     const degrade = (s: string): string =>
       s
         .replace(
-          "function viewportOfTab(t: Tab): number | null {\n  return t.scrollTop;\n}",
+          /function viewportOfTab\(t: Tab\): number \| null \{[\s\S]*?return t\.scrollTop;/,
           "function viewportOfTab(t: Tab): number | null {\n  const p = panels.get(t.panelId);\n  return p?.preview?.root.scrollTop ?? null;\n}",
         )
         .replace("viewportWriteDepth > 0 || preview.isSuppressingScrollWrite()", "false");
