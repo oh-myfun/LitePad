@@ -312,6 +312,10 @@ interface Tab {
    * `null` = 这份实例还从没显示过（新建 / 会话恢复后还没切到过）。此时不能硬钉 0：
    * 会话只带了 cursorLine/cursorCol，光标可能在屏幕外，钉 0 看着就是「光标丢了」，
    * 于是退化为「保证光标可见」（见 restoreViewScroll）。
+   *
+   * ⚠️ **纯预览态（B129）下这个槽位记的是预览那一侧的滚动位置**：编辑器此时是
+   * `display:none`，浏览器会把它的 scrollTop 清零，真正承载「视图位置」的是
+   * 预览容器。所以存取两端都按 `viewMode === "preview"` 分流，别死盯编辑器。
    */
   scrollTop: number | null;
 }
@@ -809,6 +813,12 @@ function rebuildLayout(): void {
       }
 
       applyPanelMode(p);
+      // B129：纯预览态的视图位置记在预览那一侧，得等**渲染完**（applyPanelMode
+      // 里才第一次 setBlocks）再按快照摆正 —— 提前设会被后面那次 syncToLine 覆盖，
+      // 晚一步设则内容还没撑开、浏览器会把 scrollTop 裁成 0。
+      if (tab?.viewMode === "preview" && tab.scrollTop !== null) {
+        preview.setScrollTop(tab.scrollTop);
+      }
       if (panelId === activePanelId && p.view) {
         p.view.focus();
         updatePositionOf(panelId, p.view.view);
@@ -3455,14 +3465,20 @@ function topVisibleLineOf(view: EditorView): number {
 }
 
 /**
- * 标签当前的视口滚动位置（B126）。
+ * 标签当前的视口滚动位置（B126 + B129）。
  *
  * 正显示在面板上的实例要取视图的**实时值**（用户刚滚过但还没切走，快照还没更新）；
  * 离屏实例只能取上次记下的快照。
+ *
+ * 纯预览态取**预览那一侧**（B129）：编辑器是 `display:none`，它的 scrollTop 被
+ * 浏览器清零，记下来只会把「视图位置」写成 0 —— 于是重启后预览每次都弹回开头。
  */
 function scrollTopOfTab(t: Tab): number | null {
   const p = panels.get(t.panelId);
-  if (p?.view && p.viewTabId === t.tabId) return p.view.view.scrollDOM.scrollTop;
+  if (p?.view && p.viewTabId === t.tabId) {
+    if (t.viewMode === "preview") return p.preview?.root.scrollTop ?? null;
+    return p.view.view.scrollDOM.scrollTop;
+  }
   return t.scrollTop;
 }
 

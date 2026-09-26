@@ -401,6 +401,21 @@ export class PreviewPane {
     this.applySyncToLine(line);
   }
 
+  /**
+   * 直接摆到指定像素位置（B129：会话恢复）。
+   *
+   * 与 `syncToLine` 的区别是**不认行、只认位置**：恢复会话时编辑器是 `display:none`，
+   * 没法像切视图那样按「编辑器顶行」反推预览该停在哪。落点同时写进 `programmaticTop`
+   * —— 否则紧随其后的 scroll 事件会被当成用户手动滚动，反过来去动编辑器。
+   */
+  setScrollTop(px: number): void {
+    const nextTop = Math.max(0, px);
+    this.root.scrollTop = nextTop;
+    this.programmaticTop = nextTop;
+    // 位置已定，别再被异步重排（图片/公式增强）拽回行定位
+    this.pendingSyncLine = null;
+  }
+
   private applySyncToLine(line: number): void {
     const target = this.blockAtLine(line);
     if (!target) return;
