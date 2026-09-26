@@ -250,7 +250,7 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   // 看得见，提示里再重复一遍是冗余；路径才是唯一增量信息（同目录同名文件的
   // 区分也靠它）。只读标记跟在路径后，同行显示。
   // ⚠️ path 可选（未命名/无路径文件缺省）—— 此时退回文件名，不能渲染出 "undefined"。
-  // group 让「顺着标签滑过去」时提示秒开、不忽明忽暗（VS Code 的 groupId 行为）。
+  // group 现在只用来标识「这批标签属于同一条栏」，不参与秒开（B127 后秒开已停用）。
   //
   // follow + compact 都取自 VS Code 的标签提示（B127）：
   //   · `iconLabel.ts` 用 `getDefaultHoverDelegate('mouse')` ⇒ 气泡跟鼠标（x + 10），
@@ -294,16 +294,16 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   const close = document.createElement("button");
   close.className = "tab-close";
   close.innerHTML = CODICONS.close;
-  // 关闭按钮走 VS Code 的**按元素定位**那一路（actionbar.ts 的
-  // `createInstantHoverDelegate()` ⇒ `placement: 'element'`）：气泡在按钮下方居中、
-  // **带 caret**，同样是 compact 档。
-  //   · 关闭按钮属于 ActionBar 那一类 ⇒ VS Code 给它 `createInstantHoverDelegate()`
-  //     （收起后 200ms 内再悬停直接给，见 TipOptions.instant 的注释）。
+  // 关闭按钮走 VS Code 的**按元素定位**那一路（`placement: 'element'`）：气泡在按钮
+  // 下方居中、**带 caret**，同样是 compact 档。
+  //   · 它对应的 VS Code 实现是 `actionbar.ts` 给动作按钮配的 hover delegate，
+  //     那种委托带 `instantHover`，会「收起后 200ms 内秒开」—— LitePad 实测不要这个
+  //     （紧贴排布的标签栏上秒开＝没等就弹），所以这里**不**开 instant，与其它目标一样
+  //     重新走满 500ms（见 tooltip.ts 文件头「有向偏离」第 3 条）。
   setTip(close, "关闭", {
     key: "Ctrl+W",
     group: "tabstrip",
     compact: true,
-    instant: true,
   });
   close.setAttribute("aria-label", `关闭 ${t.name}`);
   close.addEventListener("click", (e) => {

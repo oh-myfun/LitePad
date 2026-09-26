@@ -178,7 +178,7 @@ describe("tooltip 层行为（jsdom）", () => {
     text: string,
     group: string,
     key?: string,
-    extra: { instant?: boolean; follow?: boolean; compact?: boolean } = {},
+    extra: { follow?: boolean; compact?: boolean } = {},
   ): HTMLButtonElement {
     const b = document.createElement("button");
     b.textContent = text;
@@ -244,16 +244,20 @@ describe("tooltip 层行为（jsdom）", () => {
     expect(d.textContent).toBe("E:\\demo\\a.md");
   });
 
-  it("同组内切换目标秒开、且不放淡入动画", () => {
-    const a = mkTip("新建", "toolbar");
-    const c = mkTip("打开", "toolbar");
+  it("同组内切换到另一个目标：不秒开，重新走满 500ms", () => {
+    const a = mkTip("新建", "tabstrip");
+    const c = mkTip("打开", "tabstrip");
     hover(a);
     vi.advanceTimersByTime(600);
     expect(isTipVisible()).toBe(true);
     leave(a, c);
     hover(c, a);
-    expect(isTipVisible(), "同组内应立即可见（不等 500ms）").toBe(true);
-    expect(tipEl().classList.contains("fade-in"), "秒开不播淡入").toBe(false);
+    // 旧提示继续挂着（收起只发生在「离开提示区域」的 220ms 之后），但内容不会变 ——
+    // 新目标那一条要老老实实走满 500ms，这才是用户要的「不能马上显示」。
+    expect(isTipVisible(), "旧提示还在，但不会立刻换成新目标的内容").toBe(true);
+    expect(tipEl().querySelector(".tooltip-text")!.textContent, "仍是旧提示").toBe("新建");
+    vi.advanceTimersByTime(500);
+    expect(isTipVisible()).toBe(true);
     expect(tipEl().querySelector(".tooltip-text")!.textContent).toBe("打开");
   });
 
@@ -264,7 +268,7 @@ describe("tooltip 层行为（jsdom）", () => {
     expect(tipEl().classList.contains("fade-in")).toBe(true);
   });
 
-  it("不同组之间不秒开", () => {
+  it("不同组之间同样不秒开（只换内容、不换时机）", () => {
     const a = mkTip("新建", "toolbar");
     const c = mkTip("第 3 行", "toc");
     hover(a);
@@ -274,51 +278,55 @@ describe("tooltip 层行为（jsdom）", () => {
     expect(tipEl().querySelector(".tooltip-text")!.textContent, "仍是旧提示").toBe("新建");
   });
 
-  it("离开目标立刻收起（VS Code 没有延迟收起）", () => {
+  it("离开目标不立刻收：留 220ms 宽限才收起", () => {
     const a = mkTip("新建", "toolbar");
     hover(a);
     vi.advanceTimersByTime(600);
     expect(isTipVisible(), "前置：提示已显示").toBe(true);
     leave(a);
-    expect(isTipVisible(), "鼠标一离开就该收：延迟收起会让提示黏在屏幕上不走").toBe(false);
+    expect(isTipVisible(), "鼠标刚离开就收 = 一路闪（用户明确否掉了）").toBe(true);
+    vi.advanceTimersByTime(219);
+    expect(isTipVisible(), "宽限还没到").toBe(true);
+    vi.advanceTimersByTime(2);
+    expect(isTipVisible(), "宽限到点就该收").toBe(false);
   });
 
-  it("ActionBar 类（instant）：收起后 200ms 内再悬停秒开、且不播淡入", () => {
-    const a = mkTip("新建", "toolbar", undefined, { instant: true });
-    const b = mkTip("打开", "toolbar", undefined, { instant: true });
-    hover(a);
-    vi.advanceTimersByTime(600);
-    leave(a);
-    hover(b);
-    expect(isTipVisible(), "200ms 窗口内应立即可见（VS Code isInstantlyHovering）").toBe(true);
-    expect(tipEl().classList.contains("fade-in"), "秒开不播淡入").toBe(false);
-    expect(tipEl().querySelector(".tooltip-text")!.textContent).toBe("打开");
-  });
-
-  it("instant 窗口过期（>200ms）后重新计时 500ms", () => {
-    const a = mkTip("新建", "toolbar", undefined, { instant: true });
-    const b = mkTip("打开", "toolbar", undefined, { instant: true });
-    hover(a);
-    vi.advanceTimersByTime(600);
-    leave(a);
-    vi.advanceTimersByTime(250);
-    hover(b);
-    expect(isTipVisible(), "过了 200ms 窗口就不该秒开").toBe(false);
-    vi.advanceTimersByTime(500);
-    expect(isTipVisible()).toBe(true);
-  });
-
-  it("同组也要落在 200ms 窗口内（过期照样重新计时）", () => {
+  it("宽限期内鼠标回到同一目标 → 保住提示，也不重启计时", () => {
     const a = mkTip("新建", "toolbar");
+    hover(a);
+    vi.advanceTimersByTime(600);
+    leave(a);
+    hover(a); // 又回来了（宽限已挂起）
+    vi.advanceTimersByTime(400);
+    expect(isTipVisible(), "回到目标上就该保住，不能被上一次的宽限收掉").toBe(true);
+  });
+
+  it("宽限期内进入另一个目标 → 旧提示继续挂着，新提示按 500ms 来", () => {
+    const a = mkTip("E:\\demo\\a.md", "tabstrip", undefined, { follow: true });
+    const c = mkTip("E:\\demo\\c.md", "tabstrip", undefined, { follow: true });
+    hover(a);
+    vi.advanceTimersByTime(600);
+    leave(a, c);
+    hover(c, a);
+    vi.advanceTimersByTime(400); // 已过 220ms 宽限，但不足 500ms
+    expect(isTipVisible(), "旧提示不该被宽限误收").toBe(true);
+    expect(tipEl().querySelector(".tooltip-text")!.textContent).toBe("E:\\demo\\a.md");
+    vi.advanceTimersByTime(150);
+    expect(tipEl().querySelector(".tooltip-text")!.textContent).toBe("E:\\demo\\c.md");
+  });
+
+  it("instant 已停用：手写 data-tip-instant 也不再秒开", () => {
+    const a = mkTip("新建", "toolbar");
+    a.dataset.tipInstant = "1"; // 旧版本留下的脏属性（DOM 缓存 / 手改）
     const b = mkTip("打开", "toolbar");
     hover(a);
     vi.advanceTimersByTime(600);
-    leave(a);
-    vi.advanceTimersByTime(250);
-    hover(b);
-    expect(isTipVisible(), "同组但过了 200ms 也不该秒开").toBe(false);
+    leave(a, b);
+    hover(b, a);
+    // 秒开整体停用后，脏属性不该有任何效果（开头就断言过 isInstantlyHovering 的旧逻辑没了）
+    expect(tipEl().querySelector(".tooltip-text")!.textContent, "不会立刻换成新目标").toBe("新建");
     vi.advanceTimersByTime(500);
-    expect(isTipVisible()).toBe(true);
+    expect(tipEl().querySelector(".tooltip-text")!.textContent).toBe("打开");
   });
 
   it("follow（鼠标定位）不画 caret，compact 走紧凑档", () => {
@@ -603,7 +611,7 @@ describe("B58 应用级 tooltip（取代原生 title，外观对齐 VS Code hove
     expect(html, "窗口控制键必须用 data-tip").toContain('data-tip="最小化"');
     expect(html, "不得再用原生 title 给图标按钮做提示").not.toMatch(/class="win-btn"[^>]*\stitle=/);
     expect(html, "顶栏不得再有快捷按钮组").not.toContain("toolbar-actions");
-    expect(html, "菜单栏必须继续标 data-tip-group（同组秒开）").toContain(
+    expect(html, "菜单栏必须继续标 data-tip-group（分组只作为无障碍/结构标记）").toContain(
       'data-tip-group="menubar"',
     );
     expect(html, "窗口控制键自成一组").toContain('data-tip-group="window"');
@@ -615,27 +623,31 @@ describe("B127 标签 / 关闭按钮的提示对齐 VS Code", () => {
   const strip = readFileSync("src/shell/tabstrip.ts", "utf-8");
   const css = readFileSync("src/styles/global.css", "utf-8");
 
-  it("延迟与窗口都取 VS Code 的数值：500ms 显示 / 200ms 秒开 / +10 鼠标偏移", () => {
+  it("时序常量：500ms 显示 / 220ms 收起宽限 / +10 鼠标偏移", () => {
     expect(ts, "显示延迟 = workbench.hover.delay 的 Windows 默认值").toMatch(
       /SHOW_DELAY\s*=\s*500/,
     );
-    expect(ts, "秒开窗口 = WorkbenchHoverDelegate.timeLimit").toMatch(/INSTANT_WINDOW\s*=\s*200/);
+    expect(ts, "收起宽限 = 用户要的「隐藏不是立马消失」").toMatch(/HIDE_GRACE\s*=\s*220/);
     expect(ts, "鼠标定位偏移 = hoverService 的 e.x + 10").toMatch(/MOUSE_OFFSET\s*=\s*10/);
-    // ⚠️ 延迟收起是早先自创的，VS Code 的 MOUSE_LEAVE 就是收 —— 不许复活
-    expect(ts, "VS Code 没有延迟收起，HIDE_GRACE 不能回来").not.toContain("HIDE_GRACE");
+    // ⚠️ 秒开（INSTANT_WINDOW / tip-instant）是 B127 那套，实测不符预期，整体停用 —— 不许复活
+    expect(ts, "秒开窗口已停用").not.toMatch(/INSTANT_WINDOW/);
+    expect(ts, "instant 选项已停用").not.toMatch(/instant\?:/);
   });
 
-  it("反向：把秒开窗口改回「延迟收起」（复活 HIDE_GRACE）要被抓到", () => {
-    const degraded = ts.replace("const INSTANT_WINDOW = 200", "const HIDE_GRACE = 220");
-    expect(degraded, "退化后不该再有 200ms 窗口").not.toMatch(/INSTANT_WINDOW\s*=\s*200/);
-    expect(degraded, "退化后应出现被禁的 HIDE_GRACE").toContain("HIDE_GRACE");
+  it("反向：把收起宽限改掉（复活秒开 / 删掉宽限）要被抓到", () => {
+    // ① 把宽限删掉 ⇒ 立刻收起那条老 bug 回来
+    const noGrace = ts.replace("const HIDE_GRACE = 220", "const HIDE_GRACE = 0");
+    expect(noGrace, "宽限归零 = 鼠标一离开就收").not.toMatch(/HIDE_GRACE\s*=\s*220/);
+    // ② 秒开复活：把已停用的窗口写回去，上一条的 .not.toMatch 就该红
+    const revived = ts.replace("const HIDE_GRACE = 220", "const INSTANT_WINDOW = 200");
+    expect(revived, "退化后应重新出现被禁的秒开窗口").toMatch(/INSTANT_WINDOW/);
   });
 
-  it("标签走鼠标定位（follow，无 caret）；关闭按钮走元素定位 + 秒开窗口", () => {
+  it("标签走鼠标定位（follow，无 caret）；关闭按钮走元素定位且不开 instant", () => {
     // iconLabel.ts：`getDefaultHoverDelegate('mouse')` ⇒ 气泡跟鼠标、`showPointer` 为 false
     expect(strip, "标签提示必须开 follow").toMatch(/setTip\(el,[\s\S]*?follow: true/);
-    // actionbar.ts：`createInstantHoverDelegate()` ⇒ placement 'element' + isInstantlyHovering
-    expect(strip, "关闭按钮属于 ActionBar 那一类，必须开 instant").toMatch(
+    // actionbar.ts 那套 `createInstantHoverDelegate()` 的 instantHover 在 LitePad 实测不要
+    expect(strip, "关闭按钮不开 instant：与其它目标一样重新计时").not.toMatch(
       /setTip\(close,[\s\S]*?instant: true/,
     );
   });

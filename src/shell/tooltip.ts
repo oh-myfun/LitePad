@@ -18,12 +18,11 @@
  *   目标横向范围就改为对准目标中心**。
  * - `src/vs/workbench/browser/workbench.contribution.ts`——`workbench.hover.delay`
  *   默认 **500ms**（注释原话：Windows/Linux 上 500ms 最接近原生提示）。
- * - `src/vs/platform/hover/browser/hoverService.ts`——`groupId` 规则：**同一组内的相邻
- *   目标秒开，且跳过淡入动画**（所以顺着工具栏滑过去时提示跟手、不闪）。
+ * - `src/vs/platform/hover/browser/hoverService.ts`——managed hover 的 `MOUSE_OVER`
+ *   触发 `triggerShowHover`、`MOUSE_LEAVE` 触发 `hideHover`。
  * - `src/vs/platform/hover/browser/hover.ts`——`WorkbenchHoverDelegate.timeLimit = 200`：
  *   收起提示后 **200ms 内**再悬停任何目标，`delay` 归 0 且不放淡入
- *   （`isInstantlyHovering()`）。⚠️ VS Code **没有**「延迟收起」——鼠标一离开就收，
- *   跟手感靠的是这个秒开窗口。
+ *   （`isInstantlyHovering()`）。
  * - `src/vs/base/browser/ui/iconLabel/iconLabel.ts` + `.../actionbar/actionbar.ts`——
  *   `placement` 决定两件事：`'mouse'`（标签走这条）气泡跟鼠标（`e.x + 10`）且
  *   **不画指针**（`ManagedHoverWidget` 里 `showPointer: placement === 'element'`）；
@@ -33,11 +32,20 @@
  *   快捷键渲染成**键帽**（11px、`padding: 3px 5px`、`border-radius: 3px`、
  *   `min-width: 12px`），配色取 `keybindingLabel.background/foreground/border/bottomBorder`。
  *
- * ⚠️ 与 VS Code 的**两处有意偏离**（改之前先读这里）：
+ * ⚠️ 与 VS Code 的**有向偏离**（改之前先读这里，B127 后共三处）：
  * 1. `max-width` 取 **420px**（VS Code 是 700px）—— 700px 是给树视图里的长文本留的，
  *    LitePad 的提示都是短标签或一条路径，窄一点更不挡视线。
  * 2. 提示层 `pointer-events: none` —— 我们的提示紧贴目标，若可交互，鼠标从目标滑到
  *    提示上会让目标的 `:hover` 断掉、提示闪烁。代价是不能选中提示文字（不需要）。
+ * 3. **显示一律重新计时、收起走宽限**（VS Code 刚好相反）：
+ *    VS Code managed hover 是「`MOUSE_LEAVE` 立刻收 + 收起后 200ms 内秒开下一条」，
+ *    那套手感建立在「提示层浮在目标上方 4px、移开瞬间就换」的布局上。LitePad 的标签
+ *    与关闭按钮是**紧贴排布、整条同属一个 group**，套过来实测是坏的：
+ *    移到隔壁标签的瞬间提示就跟着换内容 ⇒ 看起来像"没等就弹"，而收起又太干脆，
+ *    鼠标快速扫过整条标签栏时提示一路闪。所以这里改成
+ *    「任何目标都重新走满 `SHOW_DELAY`，鼠标离开后留 `HIDE_GRACE` 才收」
+ *    （用户 09-26 反馈：`「移到别的标签或按钮不能马上显示，应该重新判断触发延迟；
+ *    隐藏也不是鼠标离开后立马消失」`）。group / instant 那套秒开机制因此**整体不用**。
  *
  * 用法：
  * ```ts
@@ -46,7 +54,9 @@
  * ```html
  * <button data-tip="新建" data-tip-key="Ctrl+N" aria-label="新建 (Ctrl+N)"></button>
  * ```
- * 同一容器内的提示要「秒开」就在容器上标 `data-tip-group="xxx"`（见 `groupOf`）。
+ * 同一条控件栏的提示共享一个分组（容器上标 `data-tip-group="xxx"`）：这组标记现在
+ * 只作为**结构性/无障碍**信息留在 DOM 上（窗口控制键、菜单栏各有自己的组），
+ * 提示的时序**不再**参考它 —— 秒开已停用，见「有向偏离」第 3 条。
  */
 
 export type TipPlacement = "top" | "bottom";
@@ -60,15 +70,9 @@ export interface TipOptions {
   placement?: TipPlacement;
   /** 同组标识；也可改在容器上写 `data-tip-group` */
   group?: string;
-  /**
-   * 开「刚收起过就秒开」的窗口（VS Code `createInstantHoverDelegate()`）。
-   *
-   * `WorkbenchHoverDelegate.isInstantlyHovering()` 只有在 `instantHover` 打开时才
-   * 生效，而 VS Code 只给 **ActionBar 那一类**按钮开它
-   * （`actionbar.ts:123`：`options.hoverDelegate ?? createInstantHoverDelegate()`）。
-   * 标签本体走的是 managed hover（`enableInstantHover: false`），跨过去要重新计时。
-   */
-  instant?: boolean;
+  // ⚠️ `instant`（VS Code `createInstantHoverDelegate()` 的 `instantHover`）已**停用**：
+  // 它带来的「收起后 200ms 内秒开下一条」在紧贴排布的标签栏上观感是「没等就弹」，
+  // 用户 09-26 明确要求移到别的目标要重新计时。选项与 `data-tip-instant` 一并移除。
   /**
    * 鼠标定位模式（VS Code `IHoverDelegate.placement === 'mouse'`）：
    * 气泡左缘 = 鼠标 x + 10，且**不画 caret**。
@@ -93,17 +97,17 @@ export interface TipOptions {
 /** VS Code `workbench.hover.delay` 的 Windows 默认值（本项目仅 Windows） */
 const SHOW_DELAY = 500;
 /**
- * VS Code `WorkbenchHoverDelegate.timeLimit`：**刚收起提示后的秒开窗口**。
+ * 鼠标离开目标后，**提示还能留在原地多久**（B127 后启用，见文件头「有向偏离」第 3 条）。
  *
- * 在这个窗口内再悬停任何目标 → 延迟归 0 且不放淡入动画
- * （`isInstantlyHovering()` 为真 ⇒ `delay = 0`、`skipFadeInAnimation = true`）。
+ * VS Code 这一层是反过来的（`MOUSE_LEAVE` 立刻收 + 200ms 秒开），但那套依赖提示浮在
+ * 目标上方、移开瞬间就换的布局；我们的标签栏紧贴排布，实测「立马消失 + 秒开」= 一路闪。
+ * 宽限的作用有两个：① 鼠标从标签扫到关闭按钮这种**跨元素但没走远**的动作不闪；
+ * ② 鼠标移出窗口/移出标签栏那一瞬间，提示不会原地卡死。
  *
- * ⚠️ 这是 VS Code 让「顺着工具栏 / 标签栏滑过去」跟手的**真正机制** —— 它
- * **没有**「延迟收起」这回事（`MOUSE_LEAVE` 立刻收），而是「收掉之后 200ms 内
- * 再触发就直接给」。早先这里自创过一个 220ms 的收起宽限，那会把提示黏在屏幕上
- * 不走（鼠标已经离开、提示还挂着），与 VS Code 的观感正好相反。
+ * ⚠️ 宽限期内只要鼠标进了**另一个**提示目标，`scheduleShow` 会把它取消掉 ——
+ * 收起宽限永远不该吃掉新目标那 500ms 的等待。
  */
-const INSTANT_WINDOW = 200;
+const HIDE_GRACE = 220;
 /**
  * VS Code 鼠标定位模式（`placement: 'mouse'`）的水平偏移。
  *
@@ -222,19 +226,14 @@ let detailEl: HTMLSpanElement | null = null;
 let keyEl: HTMLSpanElement | null = null;
 
 let showTimer: number | undefined;
+/** 收起宽限的定时器（鼠标离开后 `HIDE_GRACE` 才真的收） */
+let hideTimer: number | undefined;
 /** 已经显示出来的目标 */
 let shownTarget: HTMLElement | null = null;
 /** 正在等延迟、还没显示的目标（离开时要能取消） */
 let pendingTarget: HTMLElement | null = null;
-let shownGroup: string | undefined;
 let mouseDown = false;
 let bound = false;
-/** 上次收起提示的时刻（VS Code `lastHoverHideTime`）：用于 200ms 秒开窗口。
- *  ⚠️ 初值必须是「很久以前」而不是 0 —— 假计时器下 `Date.now()` 也从 0 起步，
- *  初值取 0 会让「从未收起过」被误判成「刚刚收起」，于是所有提示都秒开。 */
-let lastHideAt = Number.NEGATIVE_INFINITY;
-/** 上次收起时提示所属的同组标识：收起后仍要留着，下一个目标才能判出「接着看」 */
-let lastGroup: string | undefined;
 /** 最近一次鼠标位置：鼠标定位模式（`follow`）要用它算气泡左缘 */
 let lastMouseX = 0;
 /**
@@ -303,7 +302,7 @@ function menuOpen(doc: Document): boolean {
   return !!doc.querySelector(".popup-menu");
 }
 
-function showFor(el: HTMLElement, immediate: boolean): void {
+function showFor(el: HTMLElement): void {
   // B70 A 档：**菜单开着就绝不弹**。提示层 z-index 2000 是刻意高于菜单 1000 的
   // （好让菜单项也能弹提示），代价就是菜单一开，划过工具栏/状态栏/菜单栏的提示
   // 会浮到菜单之上、正对着下拉展开的位置 —— 用户看到的正是这个重叠。
@@ -316,7 +315,6 @@ function showFor(el: HTMLElement, immediate: boolean): void {
   const l = layer!;
 
   shownTarget = el;
-  shownGroup = groupOf(el) ?? undefined;
 
   textEl!.textContent = text;
   const detail = el.dataset.tipDetail ?? "";
@@ -327,8 +325,9 @@ function showFor(el: HTMLElement, immediate: boolean): void {
   keyEl!.hidden = key === "";
   if (key) renderKey(key);
 
-  // 秒开（同组内切换 / 刚收起过）时不放淡入动画，否则顺着工具栏滑过去会一路闪
-  l.classList.toggle("fade-in", !immediate);
+  // VS Code 的跳过淡入（`skipFadeInAnimation`）只留给「秒开」，而我们不秒开了 ——
+  // 每条提示都老老实实淡入，顺着标签栏滑过去也就看不到那种一路闪的连贯感（B127）。
+  l.classList.add("fade-in");
   // VS Code `appearance.compact`：走 hoverDelegate 的提示都是紧凑档（12px / 2px 8px）
   l.classList.toggle("tooltip-compact", el.dataset.tipCompact === "1");
 
@@ -370,19 +369,14 @@ function showFor(el: HTMLElement, immediate: boolean): void {
 export function hideTip(): void {
   if (showTimer !== undefined) window.clearTimeout(showTimer);
   showTimer = undefined;
+  if (hideTimer !== undefined) window.clearTimeout(hideTimer);
+  hideTimer = undefined;
   if (layer) {
     layer.hidden = true;
     layer.classList.remove("fade-in");
   }
-  // 收起的**时刻与组别要留着**：VS Code 靠 `lastHoverHideTime` 在 200ms 内
-  // 直接给下一条提示（`isInstantlyHovering()`），否则顺着标签栏滑过去会一路重新计时。
-  if (shownTarget !== null) {
-    lastHideAt = Date.now();
-    lastGroup = shownGroup;
-  }
   shownTarget = null;
   pendingTarget = null;
-  shownGroup = undefined;
 }
 
 /** 从事件目标回溯到「带提示的元素」（图标内部的 svg 会被归到按钮上） */
@@ -392,25 +386,43 @@ function targetOf(node: EventTarget | null): HTMLElement | null {
   return el && el.dataset.tip ? el : null;
 }
 
-/** 同组判定：元素自身或其祖先带 `data-tip-group`（`closest` 会先命中最内层） */
-function groupOf(el: HTMLElement): string | null {
-  return el.closest<HTMLElement>("[data-tip-group]")?.dataset.tipGroup ?? null;
+/**
+ * 排一次「`SHOW_DELAY` 后显示」。
+ *
+ * 没有任何秒开分支（B127 前那套 `instant` / group 秒开已停用）：挪到任何目标都得
+ * 重新走满延迟，用户要的就是这个。
+ */
+/** 取消待执行的收起宽限（提示重新有了归属） */
+function cancelHideGrace(): void {
+  if (hideTimer === undefined) return;
+  window.clearTimeout(hideTimer);
+  hideTimer = undefined;
 }
 
-function scheduleShow(el: HTMLElement, immediate: boolean): void {
-  if (showTimer !== undefined) window.clearTimeout(showTimer);
-  showTimer = undefined;
-  if (immediate) {
-    showFor(el, true);
-    return;
+function scheduleShow(el: HTMLElement): void {
+  if (showTimer !== undefined) {
+    window.clearTimeout(showTimer);
+    showTimer = undefined;
   }
+  // ⚠️ 进了新目标就**取消上一次的收起宽限**。否则宽限到点会把刚排上的等待一起清掉
+  // —— 表现是「移到隔壁标签，旧提示收了、新提示也不来，要等鼠标再动一下」。
+  cancelHideGrace();
+  // 已经在等同一目标显示（鼠标在它内部来回顾了 svg 之类）→ 别把计时白重启一遍
+  if (pendingTarget === el) return;
   pendingTarget = el;
   showTimer = window.setTimeout(() => {
     showTimer = undefined;
-    if (pendingTarget === el) showFor(el, false);
+    if (pendingTarget === el) showFor(el);
   }, SHOW_DELAY);
 }
 
+/**
+ * 鼠标离开目标：不立刻收，先挂一个 `HIDE_GRACE` 的宽限（见 `HIDE_GRACE` 的注释）。
+ *
+ * - 宽限期内重新悬停同一目标（`mouseover` → `scheduleShow`）会取消宽限 ⇒ 不闪；
+ * - 宽限期内悬停**另一**个目标同理（同一个 `scheduleShow` 里清掉 `hideTimer`）
+ *   ⇒ 旧提示继续挂着，直到新提示按自己的 500ms 亮起来。
+ */
 function scheduleHide(from: HTMLElement): void {
   if (showTimer !== undefined) {
     window.clearTimeout(showTimer);
@@ -418,11 +430,13 @@ function scheduleHide(from: HTMLElement): void {
   }
   if (pendingTarget === from) pendingTarget = null;
   if (shownTarget !== from) return;
-  // VS Code 的 `MOUSE_LEAVE` 就是**立刻收**（`hideHover`），没有延迟收起这一层：
-  // 提示跟着鼠标走才跟手，「鼠标已经离开、提示还挂 200ms」看着像黏住了。
-  // 「顺着一组控件滑过去」的连贯感由收起后的秒开窗口（INSTANT_WINDOW）负责，
-  // 那才是 VS Code 的做法（见 INSTANT_WINDOW 的注释）。
-  hideTip();
+  cancelHideGrace();
+  hideTimer = window.setTimeout(() => {
+    hideTimer = undefined;
+    // 宽限期里鼠标又回来了（同一目标被重新悬停会走 scheduleShow 清掉 hideTimer，
+    // 能走到这里的只可能是「鼠标已经不在任何提示目标上」）
+    if (shownTarget === from) hideTip();
+  }, HIDE_GRACE);
 }
 
 /**
@@ -439,24 +453,16 @@ export function initTooltips(doc: Document = document): void {
     "mouseover",
     (e) => {
       const el = targetOf(e.target);
-      if (!el || el === shownTarget) return;
+      if (!el) return;
+      // ⚠️ 要在 `el === shownTarget` 这个提前 return **之前**取消宽限：鼠标又碰到提示
+      // 了（哪怕还是同一个目标），上一次「收起」的决定就作废，否则宽限到点照样收，
+      // 表现为「移开一点点又移回来，提示照样消失」。
+      cancelHideGrace();
+      if (el === shownTarget) return;
       pointerDriven = true;
-      // 两种秒开，都来自 VS Code：
-      //  ① groupId 规则：同组内已有提示在显示 → 秒开且不放淡入
-      //     （`showDelayedHover` 里 groupId 相同 → `showInstantHover` + skipFadeIn）；
-      //  ② `WorkbenchHoverDelegate.isInstantlyHovering()`：距上次收起不到 200ms
-      //     → 延迟归 0。这条才是「顺着标签栏滑过去」跟手的原因。
-      const group = groupOf(el);
-      const sameGroup = group !== null && (group === shownGroup || group === lastGroup);
-      const justHidden = Date.now() - lastHideAt < INSTANT_WINDOW;
-      const instant =
-        // ① groupId 规则：上一个提示还在显示且同组 → 秒开且不淡入
-        (shownTarget !== null && group !== null && group === shownGroup) ||
-        // ② 刚收起（200ms 内）且同组 → 接着看，不重新计时
-        (justHidden && sameGroup) ||
-        // ③ ActionBar 那一类（instant）：不管组别，刚收起过就秒开
-        (justHidden && el.dataset.tipInstant === "1");
-      scheduleShow(el, instant);
+      // 目标换了就重新计时：不秒开、不跳过淡入（用户 09-26 反馈，见文件头「偏离」第 3 条）。
+      // 顺带把上一次的收起宽限取消掉 —— 收起宽限不该吃掉新目标这 500ms 的等待。
+      scheduleShow(el);
     },
     true,
   );
@@ -482,7 +488,8 @@ export function initTooltips(doc: Document = document): void {
     "mousemove",
     (e) => {
       lastMouseX = e.clientX;
-      if (shownTarget && !shownTarget.contains(e.target as Node)) hideTip();
+      // 走宽限而不是立刻收：鼠标在目标外抖动几下不该把提示闪掉
+      if (shownTarget && !shownTarget.contains(e.target as Node)) scheduleHide(shownTarget);
     },
     true,
   );
@@ -495,7 +502,7 @@ export function initTooltips(doc: Document = document): void {
       // 鼠标点击会先 mousedown 再 focus：这时候不该弹提示（对应 VS Code 的 isMouseDown 守卫）
       if (mouseDown) return;
       pointerDriven = false; // 键盘聚焦没有鼠标坐标 → 退回按元素定位
-      scheduleShow(el, false);
+      scheduleShow(el);
     },
     true,
   );
@@ -538,8 +545,6 @@ export function setTip(el: HTMLElement, text: string, opts: TipOptions = {}): vo
   el.dataset.tip = text;
   if (opts.follow) el.dataset.tipFollow = "1";
   else delete el.dataset.tipFollow;
-  if (opts.instant) el.dataset.tipInstant = "1";
-  else delete el.dataset.tipInstant;
   if (opts.compact) el.dataset.tipCompact = "1";
   else delete el.dataset.tipCompact;
   if (opts.key) el.dataset.tipKey = opts.key;
@@ -560,7 +565,6 @@ export function setTip(el: HTMLElement, text: string, opts: TipOptions = {}): vo
 export function clearTip(el: HTMLElement): void {
   delete el.dataset.tip;
   delete el.dataset.tipFollow;
-  delete el.dataset.tipInstant;
   delete el.dataset.tipCompact;
   delete el.dataset.tipKey;
   delete el.dataset.tipDetail;
@@ -587,9 +591,6 @@ export function resetTooltipsForTest(): void {
   detailEl = null;
   keyEl = null;
   mouseDown = false;
-  // 秒开窗口是跨用例的隐藏状态，不清的话上一个用例「刚收起」会把下一个用例带成秒开
-  lastHideAt = Number.NEGATIVE_INFINITY;
-  lastGroup = undefined;
   lastMouseX = 0;
   pointerDriven = false;
 }
