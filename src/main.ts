@@ -303,19 +303,23 @@ interface Tab {
   /** Markdown 视图（仅 .md 有效）：源码 / 预览（实例独立，可左源码右预览对照） */
   viewMode: "source" | "preview";
   /**
-   * 该标签上次显示时的视口滚动位置（px，B126）。
+   * 该标签上次显示时**编辑器可视区的顶行行号**（1-based，B136）。
    *
-   * 滚动位置只活在 DOM（`scrollDOM.scrollTop`）上，**不进 EditorState** ——
-   * 切标签（setState 重建 ViewState）、重建布局（视图销毁重建）都会把它清零。
-   * 所以要自己记一份：切走之前存、切回之后还。
+   * ⚠️ 存行号而不是 `scrollDOM.scrollTop`（px）：像素值和行高、文档长度强绑定 ——
+   * 编辑后没保存的内容比磁盘文件长，同样的 px 落在不同行上，重启后位置就「往后偏」
+   * （B136 实测：滚到第 123 行 → 重开变成第 133 行）。行号是逻辑坐标，与渲染无关。
    *
    * `null` = 这份实例还从没显示过（新建 / 会话恢复后还没切到过）。此时不能硬钉 0：
    * 会话只带了 cursorLine/cursorCol，光标可能在屏幕外，钉 0 看着就是「光标丢了」，
    * 于是退化为「保证光标可见」（见 restoreViewScroll）。
+   */
+  topLine: number | null;
+  /**
+   * 纯预览态（B129）下**预览容器**的滚动位置（px）。
    *
-   * ⚠️ **纯预览态（B129）下这个槽位记的是预览那一侧的滚动位置**：编辑器此时是
-   * `display:none`，浏览器会把它的 scrollTop 清零，真正承载「视图位置」的是
-   * 预览容器。所以存取两端都按 `viewMode === "preview"` 分流，别死盯编辑器。
+   * 此时编辑器是 `display:none`，浏览器会把它的 scrollTop 清零，真正承载「视图位置」
+   * 的是预览容器。所以预览侧只能给像素 —— 预览是 HTML 块流，没有稳定的行坐标。
+   * 存取两端都按 `viewMode === "preview"` 分流，别死盯编辑器。
    */
   scrollTop: number | null;
 }
@@ -803,7 +807,8 @@ function rebuildLayout(): void {
           const t = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
           // B126：滚动位置只活在 DOM 上，随滚动即时记进标签快照（赋值极廉价，
           // 不排程）。这样「滚过但没切走就重建布局」也不会丢。
-          if (t) t.scrollTop = shownView.scrollDOM.scrollTop;
+          // B136：记**顶行行号**而非 px —— 恢复后文档长度/行高可能变，px 会漂。
+          if (t) t.topLine = topVisibleLineOf(shownView);
           // B132：写进快照还不算数 —— 得落盘。滚动本身**不触发**任何排程，用户
           // 滚到中段、没干别的事就关窗，会话里留下的还是上一次（滚之前那份），
           // 重启就回到老位置（B132）。防抖 800ms：滚动停下才写，不会每帧落盘。
@@ -936,6 +941,7 @@ function makeInstance(doc: Doc, panelId: number, text: string): Tab {
     comps,
     state,
     viewMode: "source",
+    topLine: null,
     scrollTop: null,
   };
 }
@@ -2190,6 +2196,8 @@ function sessionTabRecordOf(t: Tab): {
   eol: string;
   cursorLine: number;
   cursorCol: number;
+  /** 编辑器可视区顶行行号（B136）。纯预览侧为 null，位置记在 scrollTop 里 */
+  topLine: number | null;
   scrollTop: number | null;
   viewMode: string | null;
   backupId: string | null;
@@ -2206,7 +2214,8 @@ function sessionTabRecordOf(t: Tab): {
     cursorCol: pos - line.from + 1,
     // B126：视口位置一起进会话。只记行列的话，重启后文件停在开头、光标却在第 N
     // 行（屏幕外），看上去就跟「光标复位了」一样。
-    scrollTop: scrollTopOfTab(t),
+    // B136：编辑器侧记顶行行号（逻辑坐标），预览侧记 px —— 见 viewportOfTab。
+    ...viewportOfTab(t),
     viewMode: isMdTab(t) ? t.viewMode : null,
     backupId: d.backupId,
     // B69：空未命名文档的认领凭据（见 TabSession.docId 注释）
@@ -2528,7 +2537,10 @@ async function restoreSession(): Promise<boolean> {
         const line = inst.state.doc.line(lineNo);
         const pos = line.from + Math.min(Math.max(0, (st.cursorCol || 1) - 1), line.length);
         inst.state = inst.state.update({ selection: { anchor: pos } }).state;
-        // B126：视口位置一并带回（null = 旧会话没有这个字段 → 切过去时保证光标可见）
+        // B126：视图位置一并带回。编辑器侧用 topLine（行号）—— px 在文档长度
+        // 变化后会把位置带到别的行上（B136）；纯预览侧用 scrollTop（预览容器像素）。
+        // null = 这份标签从没显示过 → 切过去时退化成「保证光标可见」。
+        inst.topLine = st.topLine ?? null;
         inst.scrollTop = st.scrollTop ?? null;
         opened++;
       } catch {
@@ -3477,21 +3489,22 @@ function topVisibleLineOf(view: EditorView): number {
 }
 
 /**
- * 标签当前的视口滚动位置（B126 + B129）。
+ * 标签当前的视图位置（B136）：编辑器侧给**顶行行号**，纯预览侧给**预览像素**。
  *
- * 正显示在面板上的实例要取视图的**实时值**（用户刚滚过但还没切走，快照还没更新）；
- * 离屏实例只能取上次记下的快照。
- *
- * 纯预览态取**预览那一侧**（B129）：编辑器是 `display:none`，它的 scrollTop 被
- * 浏览器清零，记下来只会把「视图位置」写成 0 —— 于是重启后预览每次都弹回开头。
+ * 会话记录里 `topLine` 与 `scrollTop` 是两个字段、各管一段 —— 混在一个槽里靠
+ * `viewMode` 猜是谁的，正是 B129 那个「编辑器顶行被污染成 0」的坑。
  */
-function scrollTopOfTab(t: Tab): number | null {
+function viewportOfTab(t: Tab): { topLine: number | null; scrollTop: number | null } {
   const p = panels.get(t.panelId);
-  if (p?.view && p.viewTabId === t.tabId) {
-    if (t.viewMode === "preview") return p.preview?.root.scrollTop ?? null;
-    return p.view.view.scrollDOM.scrollTop;
+  if (t.viewMode === "preview") {
+    // 编辑器 display:none、滚动位置恒 0，记下来只会把「视图位置」写成 0
+    return { topLine: null, scrollTop: p?.preview?.root.scrollTop ?? null };
   }
-  return t.scrollTop;
+  if (p?.view && p.viewTabId === t.tabId) {
+    // 正显示在面板上：取实时顶行（用户刚滚过、还没切走/还没落盘）
+    return { topLine: topVisibleLineOf(p.view.view), scrollTop: null };
+  }
+  return { topLine: t.topLine, scrollTop: null };
 }
 
 /**
@@ -3507,9 +3520,9 @@ function rememberViewScroll(panel: Panel): void {
   if (!t) return;
   // 纯预览实例：编辑器是 display:none、scrollDOM.scrollTop 恒为 0，照常写回来
   // 就等于「切走的一刻把上次的位置抹平」（B130）。这类实例的位置归预览那一侧，
-  // 落盘时由 scrollTopOfTab 直接读实时值。
+  // 落盘时由 viewportOfTab 直接读实时值。
   if (t.viewMode === "preview") return;
-  t.scrollTop = panel.view.view.scrollDOM.scrollTop;
+  t.topLine = topVisibleLineOf(panel.view.view);
 }
 
 /**
@@ -3548,8 +3561,11 @@ function restoreViewScroll(panel: Panel): void {
   // display:none，把像素值塞给它只会污染「编辑器顶行」，预览那边反而没人管。
   if (t.viewMode === "preview") return;
   const view = panel.view.view;
-  if (t.scrollTop !== null) {
-    pinScrollTop(view.scrollDOM, t.scrollTop);
+  if (t.topLine !== null) {
+    // B136：按**行号**定位（逻辑坐标，不受文档长度/行高变化影响），
+    // 而不是写回 px —— 那样一旦内容变了就会漂（实测偏 10 行）。
+    const line = view.state.doc.line(Math.min(t.topLine, view.state.doc.lines));
+    view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: "start" }) });
     return;
   }
   const head = view.state.selection.main.head;
@@ -4943,7 +4959,8 @@ function transferSnapshotOf(tabId: number): SatelliteTab | null {
     cursorLine: line.number,
     cursorCol: pos - line.from + 1,
     // B126：视口位置一起带走，接手的窗口才是「接着看」而不是「从头看」
-    scrollTop: scrollTopOfTab(tab),
+    // B136：编辑器侧给顶行行号，接手时用行号定位，px 在跨窗口后更靠不住
+    ...viewportOfTab(tab),
     sizeClass: doc.sizeClass,
     backupId: doc.backupId,
     backedUp: doc.backedUp,
@@ -5115,6 +5132,7 @@ function adoptTransferredTabs(incoming: SatelliteTab[], panelId = activePanelId)
     const line = inst.state.doc.line(lineNo);
     const pos = line.from + Math.min(Math.max(0, (st.cursorCol || 1) - 1), line.length);
     inst.state = inst.state.update({ selection: { anchor: pos } }).state;
+    inst.topLine = st.topLine ?? null;
     inst.scrollTop = st.scrollTop ?? null;
     attachTabToPanel(inst, panel);
     adopted.push(inst.tabId);
