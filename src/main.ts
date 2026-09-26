@@ -820,6 +820,23 @@ function rebuildLayout(): void {
         });
         attachPasteHandler(p);
       }
+      // B137：预览滚动和编辑器滚动是同一件事 —— 位置只活在 DOM 上，随滚动即时
+      // 记进它**自己那份**快照（后台预览标签没有滚动事件，全靠这里和
+      // rememberViewScroll 补记）。同 B132：写完还得排程落盘，否则「滚过预览
+      // 就关窗」留下的还是滚之前那份。
+      preview.root.addEventListener("scroll", () => {
+        const t = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
+        if (!t || t.viewMode !== "preview") return;
+        // ⚠️ 这里**不要**用 `preview.isSyncing()` 当守卫：`isSyncing()` 认的是
+        // `syncLock === "preview"`，即**预览→编辑器**方向（用户正在翻预览）；而
+        // 预览容器自己的监听器（构造函数里注册、比这里先跑）一收到滚动就会
+        // `acquireLock("preview")` —— 照它挡下去，等于把**用户自己的滚动**全吞了
+        // （B137：滚过的预览既不记位置也不排程落盘，重启必回顶部）。编辑器带过来
+        // 的同步滚动反而不会命中这里：那种标签是源码态（`viewMode === "source"`），
+        // 早在上一行 return 了；真到了纯预览态，预览本来就该跟着编辑器走。
+        t.scrollTop = preview.root.scrollTop;
+        scheduleSessionSave();
+      });
 
       applyPanelMode(p);
       // 纯预览实例的视图位置在预览那一侧，渲染完再钉回去（B129）
@@ -1121,6 +1138,9 @@ async function closeTabById(tabId: number): Promise<void> {
     restoreViewScroll(panel);
   }
   applyPanelMode(panel);
+  // 同上：接班的是纯预览实例时，位置在预览那侧，applyPanelMode 的 syncToLine
+  // 会把预览按编辑器顶行顶掉一次，得在它之后钉回来（B129 同款）
+  restorePreviewScroll(panel);
   if (panel.panelId === activePanelId) {
     refreshTitle();
     refreshStatus();
@@ -3496,11 +3516,17 @@ function topVisibleLineOf(view: EditorView): number {
  */
 function viewportOfTab(t: Tab): { topLine: number | null; scrollTop: number | null } {
   const p = panels.get(t.panelId);
+  // ⚠️「实时值」只属于**正显示在面板上**的那个标签。预览容器是面板级的、所有
+  // 标签共用：后台预览标签读它的 scrollTop，读到的是**别人**（甚至已被重渲染
+  // 清零成 0）的位置 —— B136 修了编辑器侧，预览侧漏了这条（B137）。
+  const shown = p?.viewTabId === t.tabId;
   if (t.viewMode === "preview") {
-    // 编辑器 display:none、滚动位置恒 0，记下来只会把「视图位置」写成 0
-    return { topLine: null, scrollTop: p?.preview?.root.scrollTop ?? null };
+    return {
+      topLine: null,
+      scrollTop: shown ? (p?.preview?.root.scrollTop ?? null) : t.scrollTop,
+    };
   }
-  if (p?.view && p.viewTabId === t.tabId) {
+  if (shown && p?.view) {
     // 正显示在面板上：取实时顶行（用户刚滚过、还没切走/还没落盘）
     return { topLine: topVisibleLineOf(p.view.view), scrollTop: null };
   }
@@ -3519,9 +3545,19 @@ function rememberViewScroll(panel: Panel): void {
   const t = tabs.get(panel.viewTabId);
   if (!t) return;
   // 纯预览实例：编辑器是 display:none、scrollDOM.scrollTop 恒为 0，照常写回来
-  // 就等于「切走的一刻把上次的位置抹平」（B130）。这类实例的位置归预览那一侧，
-  // 落盘时由 viewportOfTab 直接读实时值。
-  if (t.viewMode === "preview") return;
+  // 就等于「切走的一刻把上次的位置抹平」（B130）。这类实例的位置归预览那一侧。
+  //
+  // ⚠️ 必须在**切走/重渲染之前**把它自己的实时值写进快照（B137）：预览容器是
+  // 面板级的，切走的那一刻若没人记，随后 `applyPanelMode` 的重渲染（`setBlocks`
+  // → `replaceChildren`）就会把 scrollTop 清零 —— 快照留空、落盘读到 0，
+  // 于是「后台预览标签」重启后切回来必定跳到顶部。
+  if (t.viewMode === "preview") {
+    const mode = panel.bodyEl?.classList;
+    if (mode?.contains("mode-preview") || mode?.contains("mode-split")) {
+      t.scrollTop = panel.preview?.root.scrollTop ?? null;
+    }
+    return;
+  }
   t.topLine = topVisibleLineOf(panel.view.view);
 }
 

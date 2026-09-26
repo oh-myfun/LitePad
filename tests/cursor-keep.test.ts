@@ -390,7 +390,8 @@ describe("B126 静态契约：滚动位置必须自己存取", () => {
       src,
       "纯预览侧的位置归 scrollTop（编辑器 display:none 时它的 scrollTop 恒为 0）",
     ).toMatch(
-      /if \(t\.viewMode === "preview"\) \{[\s\S]{0,200}?return \{ topLine: null, scrollTop: /,
+      // 两侧字段是分行写的，正则里得给换行留位置（B137 把这一支展开成了多行）
+      /if \(t\.viewMode === "preview"\) \{[\s\S]{0,240}?topLine: null,[\s\S]{0,120}?scrollTop:/,
     );
     expect(src, "编辑器侧绝不把 px 塞进同一个槽（混用会把「顶行」污染成 0，B129 那个坑）").toMatch(
       /return \{ topLine: topVisibleLineOf\(p\.view\.view\), scrollTop: null \};/,
