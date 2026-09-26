@@ -1704,10 +1704,19 @@ async function doOpen(
     const existingDoc = docs.get(file.tabId);
 
     if (file.reused && existingDoc) {
-      // 已在标签中：切到其实例所在面板并激活（保留编辑状态）
-      const inst = instancesOfDoc(existingDoc.tabId)[0];
+      // 已在标签中：默认切到其实例所在面板并激活（保留编辑状态）。
+      //
+      // ⚠️ 但**指定了落点面板、而这份文件原本并不开在那儿**时不能这么干（B131）：
+      //    那样等于把用户拖到 B 区的文件硬拽回 A 区，看起来就是「拖了没反应」，
+      //    而且原来那个标签会被顺手切走。这种情形改为在落点**另开一个同源实例**，
+      //    原有的照旧留在原地（内容仍然实时同步，关掉一个也不影响另一个）。
+      const all = instancesOfDoc(existingDoc.tabId);
+      const inTarget =
+        targetPanelId !== undefined ? all.find((t) => t.panelId === targetPanelId) : undefined;
+      const inst = inTarget ?? all[0];
       const instPanel = inst ? panelOfTab(inst.tabId) : undefined;
-      if (inst && instPanel) {
+      // 只有「本来就开在这个面板」或「压根没指定落点」才算复用成功
+      if (inst && instPanel && (inTarget !== undefined || targetPanelId === undefined)) {
         activePanelId = instPanel.panelId;
         switchTab(instPanel.panelId, inst.tabId);
         rebuildLayout();
