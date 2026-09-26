@@ -57,7 +57,6 @@ import {
   listEols,
   loadSession,
   loadSettings,
-  logEvent,
   newTab as ipcNewTab,
   openFile,
   openSatelliteWindow,
@@ -86,6 +85,7 @@ import { buildExportHtml, printToPdf } from "./markdown/exporter";
 import { renderBlocks, renderFull, type TocEntry } from "./markdown/pipeline";
 import { extractOutline } from "./markdown/outline";
 import { PreviewPane } from "./markdown/preview";
+import { logger, syncLevel } from "./core/logger";
 import { sessionStore } from "./session/store";
 import { renderToc, attachTocResizer, clampTocWidth, type TocResizerHandle } from "./markdown/toc";
 import { attachWheelZoom } from "./shell/zoom";
@@ -1825,7 +1825,7 @@ async function doOpen(
           : `已打开 ${file.name}`),
       file.lossy,
     );
-    logEvent(
+    logger.info(
       "open",
       `${file.name} ${file.size}B ${file.encoding}${file.lossy ? " lossy" : ""} size=${doc.sizeClass}`,
     );
@@ -2018,7 +2018,7 @@ async function saveDocCore(doc: Doc, inst: Tab, forceDialog: boolean): Promise<b
 
     refreshAll();
     showMessage(`已保存 ${saved.name}（${saved.size} 字节）`);
-    logEvent("save", `${saved.name} ${saved.size}B ${saved.encoding}/${saved.eol}`);
+    logger.info("save", `${saved.name} ${saved.size}B ${saved.encoding}/${saved.eol}`);
     return true;
   } catch (err) {
     if (err === LOSSY_ABORT) {
@@ -2102,7 +2102,7 @@ async function doSaveAll(): Promise<void> {
       if (await saveDocCore(doc, inst, false)) ok++;
       else failed.push(doc.name);
     } catch (err) {
-      if (err !== LOSSY_ABORT) logEvent("save-all", `fail ${doc.name}: ${String(err)}`);
+      if (err !== LOSSY_ABORT) logger.error("save-all", `fail ${doc.name}: ${String(err)}`);
       failed.push(doc.name);
     }
   }
@@ -2350,7 +2350,7 @@ async function persistSession(): Promise<void> {
     // B143：这里原来是**静默**吞掉的。整份会话写不进去时界面上一点迹象都没有
     // （只表现为「位置/光标不再刷新」），排查只能靠猜 —— 小数 scrollTop 让 Rust 侧
     // 反序列化失败那次就是这么被藏起来的。至少留一条日志。
-    logEvent("session-save-failed", String(e), "warn");
+    logger.warn("session", `save failed: ${String(e)}`);
   }
 }
 
@@ -3752,6 +3752,9 @@ function renderMarkdownFor(panel: Panel, force = false): void {
   preview.setBaseDir(doc.path ? dirname(doc.path) : null);
 
   if (!force && !perfProfileFor(doc.sizeClass).autoPreview) {
+    // 「预览怎么不跟着更新」是最常被问的一类问题。这里留一条（info 而非 debug：
+    // 触发条件是大文件，不是每次敲键），下次看日志就知道是档位把渲染挡住了。
+    logger.info("preview", `auto preview off for ${doc.sizeClass} (${doc.name})`);
     preview.setBlocks([]);
     preview.setNotice(
       doc.sizeClass === "huge"
@@ -3937,7 +3940,7 @@ async function exportHtml(): Promise<void> {
     const html = buildExportHtml(doc.name, renderFull(tab.state.doc.toString()));
     await exportFile(picked, html);
     showMessage(`已导出 ${picked}`);
-    logEvent("export", `html ${doc.name}`);
+    logger.info("export", `html ${doc.name}`);
   } catch (err) {
     showMessage(String(err), true);
   }
@@ -3961,7 +3964,7 @@ function exportPdf(): void {
   }
   const wrapped = docEl.body.innerHTML;
   printToPdf(doc.name, wrapped);
-  logEvent("export", `pdf ${doc.name}`);
+  logger.info("export", `pdf ${doc.name}`);
 }
 
 // ---------------------------------------------------------------- 图片粘贴（M3）
@@ -4005,7 +4008,7 @@ async function pasteImageToAssets(panel: Panel, tab: Tab, file: File): Promise<v
     });
     tab.state = view.state;
     showMessage(`图片已保存到 ${img.rel}`);
-    logEvent("paste", `image ${img.rel} ${file.size}B`);
+    logger.info("paste", `image ${img.rel} ${file.size}B`);
   } catch (err) {
     showMessage(String(err), true);
   }
@@ -5174,7 +5177,7 @@ async function openTabsInNewWindow(tabIds: number[], spot?: WindowSpot | null): 
     if (!ok) {
       const why = failedLabels.get(label);
       const detail = why ? `：${why}` : "：等待新窗口就绪超时";
-      logEvent("window", `satellite ${label} failed${detail}`);
+      logger.error("window", `satellite ${label} failed${detail}`);
       showMessage(`新窗口没能打开${detail}，标签保留在原窗口`, true);
       return;
     }
@@ -5812,7 +5815,7 @@ async function finishAndDestroy(dirty: Doc[]): Promise<void> {
           await saveSession(snapshotSession());
         } catch (e) {
           // 会话写失败不阻塞退出；但别静默（B143：静默会让「会话写不进去」无从察觉）
-          logEvent("session-save-failed", String(e), "warn");
+          logger.warn("session", `save failed: ${String(e)}`);
         }
         await destroySelf();
         return;
@@ -5834,7 +5837,7 @@ async function finishAndDestroy(dirty: Doc[]): Promise<void> {
       await saveSession(snapshotSession());
     } catch (e) {
       // 会话写失败不阻塞退出；但别静默（B143：静默会让「会话写不进去」无从察觉）
-      logEvent("session-save-failed", String(e), "warn");
+      logger.warn("session", `save failed: ${String(e)}`);
     }
   }
   await destroySelf();
@@ -5922,7 +5925,7 @@ async function setupShell(): Promise<void> {
     preview: (x, y) => showFileDropPreview(x, y),
     clear: () => clearAllDropPreviews(),
   });
-  if (!hasFileDropBridge()) logEvent("drop", "path bridge unavailable");
+  if (!hasFileDropBridge()) logger.warn("drop", "path bridge unavailable");
 
   // B24：落地按分区打开（中央=该面板，边缘=分屏）；单个 Markdown 弹菜单选「打开文档 /
   // 插入文件路径」。这里只处理 drop —— enter/over/leave 已由上面的页面内监听接管。
@@ -5988,7 +5991,7 @@ async function bootstrap(): Promise<void> {
     adopt: (tabs, spot) => acceptDroppedTabs(tabs, spot as DropSpot | null),
     onFallback: (payload, sx, sy) => void dropOnDesktop(payload, sx, sy),
     // 自定义 MIME 没能跨过进程边界时记一行：否则跨窗口拖拽会「静默无效」，无从排查
-    onWarn: (what) => logEvent("drop", what),
+    onWarn: (what) => logger.warn("drop", what),
   }).catch(() => {});
 
   if (windowKind === "satellite") {
@@ -6048,11 +6051,13 @@ async function bootstrap(): Promise<void> {
       attachTabToPanel(tab, panels.get(0)!);
       activePanelId = 0;
     } catch (err) {
+      // 起不来 = 后面全白搭，这里必须留一条（B144）。
+      logger.error("new-tab", String(err));
       showMessage(String(err), true);
       return;
     }
   } else {
-    logEvent(
+    logger.info(
       "session",
       `restored ${docs.size} docs / ${tabs.size} instances / ${panels.size} panels`,
     );
@@ -6063,8 +6068,10 @@ async function bootstrap(): Promise<void> {
   try {
     const pending = await takePendingFiles();
     for (const p of pending) void doOpen(p);
-  } catch {
-    /* 取队列失败不影响主流程 */
+  } catch (e) {
+    // B144：以前是空的。取队列失败不影响主流程，但「双击 .md 没反应」这类
+    // 报告靠它是唯一线索（Rust 侧已经把入队记下来了）。
+    logger.warn("pending", `take failed: ${String(e)}`);
   }
 
   // 备份区孤儿清理：副本文件本身不含「属于哪个标签」的索引，认领全靠会话，
@@ -6078,10 +6085,12 @@ async function bootstrap(): Promise<void> {
     const keep = [...docs.values()].filter((d) => d.backedUp && d.backupId).map((d) => d.backupId!);
     void discardOrphanBackups(keep)
       .then((n) => {
-        if (n > 0) logEvent("hot-exit", `discarded ${n} orphan backups`);
+        if (n > 0) logger.info("hot-exit", `discarded ${n} orphan backups`);
       })
-      .catch(() => {
-        // 清理失败不影响使用
+      .catch((e) => {
+        // ⚠️ 这里静默过：漏删会让副本无限堆积，但至少要保证「下次启动接着清」——
+        // 所以除了记一条，什么也不改（别在这里顺手兜底删文件）。
+        logger.warn("hot-exit", `orphan cleanup failed: ${String(e)}`);
       });
   }
 
@@ -6096,6 +6105,10 @@ async function bootstrap(): Promise<void> {
     showMessage(restored ? "已恢复上次会话" : "就绪");
     bootMark("render", t);
     void persistSession();
+
+    // B144：级别以后端为准（它决定要不要落盘）。不 await —— 这是启动收尾，
+    // 日志拿不到就按默认 info 继续，绝不能反过来卡住启动。
+    void syncLevel();
 
     reportBoot(`ready set_title=${diagSetTitle} tabs=${tabs.size} panels=${panels.size}`);
   } catch (err) {

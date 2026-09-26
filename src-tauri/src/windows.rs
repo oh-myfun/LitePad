@@ -31,6 +31,8 @@ use tauri::utils::config::WindowConfig;
 use tauri::window::Color;
 use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
+use crate::core::logging::{self, Level};
+
 /// 主窗口标签。`capabilities` 与前端身份判定都依赖它。
 pub const MAIN_LABEL: &str = "main";
 
@@ -213,6 +215,13 @@ pub async fn open_satellite_window(
             if let Some(reg) = build_app.try_state::<WindowRegistry>() {
                 reg.forget(&build_label);
             }
+            // B144：建窗失败的表现是「拖出去的标签凭空消失」，前端只能收到事件。
+            // 后端再记一条 error，才能把「是 WebView 起不来还是坐标非法」分开看。
+            logging::log(
+                Level::Error,
+                "window",
+                &format!("卫星窗口创建失败：{e} [{build_label}]"),
+            );
             let _ = tauri::Emitter::emit(
                 &build_app,
                 "satellite-failed",

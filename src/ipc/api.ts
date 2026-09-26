@@ -229,6 +229,21 @@ export function logEvent(event: string, detail?: string, level = "info"): void {
   void invoke("log_event", { level, event, detail: detail ?? null }).catch(() => {});
 }
 
+/**
+ * 后端当前生效的日志级别（B144），启动时拉一次。
+ *
+ * 前端也要拿它做**发前过滤**：级别是「前端决定发不发」还是「后端决定记不记」必须一致，
+ * 否则要么白发一串注定被丢的行，要么用户临时开了 trace 而前端一直在挡。
+ */
+export function logLevel(): Promise<string> {
+  return invoke<string>("log_level");
+}
+
+/** 运行时改级别并持久化（B144：出问题设 debug 复现，不用换包）。 */
+export function setLogLevel(level: string): Promise<void> {
+  return invoke<void>("set_log_level", { level });
+}
+
 // ---------------------------------------------------------------- 会话（M2）
 
 export interface TabSession {

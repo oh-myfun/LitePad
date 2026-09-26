@@ -221,8 +221,10 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
     expect(src, "没人接手才回落").toMatch(
       /onFallback: \(payload, sx, sy\) => void dropOnDesktop\(payload, sx, sy\)/,
     );
+    // ⚠️ B144 起走 `logger.warn`（target = 模块名）。这里盯的是「留一行日志」这回事：
+    //  拖不动标签却一声不吭，用户只会觉得「拖了没反应」，查无可查。
     expect(src, "载荷读不出来要留一行日志（否则静默无效排不动）").toMatch(
-      /onWarn: \(what\) => logEvent\("drop", what\)/,
+      /onWarn: \(what\) => logger\.warn\("drop", what\)/,
     );
   });
 

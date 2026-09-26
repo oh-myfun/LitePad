@@ -65,7 +65,9 @@ describe("B143 静态契约", () => {
 
   it("会话写失败不许静默吞掉（静默 = 这类问题永远查不到）", () => {
     // 三处：防抖落盘的 `persistSession` + 关窗两条路径。
-    const hits = main.match(/logEvent\("session-save-failed", String\(e\), "warn"\);/g) ?? [];
+    // ⚠️ B144 起统一走 `logger.warn`（target = 模块名），字符串形状跟着变了 ——
+    // 但「不许静默」这条契约不变，所以盯的是这条 warn 本身。
+    const hits = main.match(/logger\.warn\("session", `save failed: \$\{String\(e\)\}`\);/g) ?? [];
     expect(hits.length, "三处 catch 都要留日志").toBe(3);
   });
 
@@ -88,12 +90,12 @@ describe("B143 静态契约", () => {
     );
 
     const degradedMain = main.replace(
-      /logEvent\("session-save-failed", String\(e\), "warn"\);/g,
+      /logger\.warn\("session", `save failed: \$\{String\(e\)\}`\);/g,
       "// 已删除",
     );
     expect(degradedMain, "退化实现应真的换了写法").not.toBe(main);
     expect(degradedMain, "退化后又变成静默吞掉（第二条此时必须落空）").not.toMatch(
-      /session-save-failed/,
+      /logger\.warn\("session", `save failed:/,
     );
   });
 });

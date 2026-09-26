@@ -60,6 +60,23 @@
   且视觉类问题默认**交给用户本人验证**，不写像素级判图脚本。
   取证踩过的坑写进 `.workbuddy/memory/open-items/`，别重复踩。
 
+## 运行日志（B144）
+
+- **只有一份日志**：`<配置目录>/logs/litepad.log`（`%APPDATA%\LitePad\logs\`；设了
+  `LITEPAD_CONFIG_DIR` 就整体迁移，截图/测试隔离照旧生效），超过 2 MB 滚动，留 3 份。
+  旧的那份 `%TEMP%\litepad-app.log` 与 `%TEMP%\litepad-smoke.log` 已停写（`smoke_log`
+  改为转发进日志系统）；再新加日志通道等于重犯「出问题不知道翻哪个文件」。
+- **级别五档**：`error` < `warn` < `info` < `debug` < `trace`（数值越小越严重）。
+  发布版默认 `info`，`debug` 构建默认 `debug`；可在控制台 `await setLogLevel("debug")`
+  临时打开（会写进 `settings.json`，重启后仍生效）。**不提供界面入口**。
+- **前端调用一律走 `src/core/logger.ts` 的 `logger.<level>(target, detail)`**，
+  `target` 是模块名（`session` / `save` / `preview` / `window` …）。
+  ⚠️ 两条硬约束：① `log()` **不许 await**（关窗回调里 await 任何 IPC 会死锁，B135）；
+  ② 级别以后端为准，`syncLevel()` 抓不到就按默认 info，绝不能反过来卡住启动。
+- **失败不许静默**：任何 `catch` / `let _ =` 直接吞掉的分支，都要留一条日志
+  （后端 `logging::log`，前端 `logger.*`）。「静默吞掉」是 B143、B144 反复复现的坑 ——
+  它让「会话一次都没落下去」这类问题只能靠猜。
+
 ## README 与文档
 
 - **README 使用者向**：开头只放一张 `main.png`；不写快捷键/安装/构建/明确不做，避开库名与内部机制；

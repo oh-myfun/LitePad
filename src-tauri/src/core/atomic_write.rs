@@ -7,7 +7,13 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
 
+use crate::core::logging::{self, Level};
+
 /// 写入 `path`，保证原子性。失败时清理临时文件并返回错误。
+///
+/// ⚠️ 这里是**所有**落盘路径的公共底座（设置 / 会话 / 备份 / 保存文件都走它），
+/// 所以失败必须留下一条：调用方大多会把错误转成给前端的提示，但「磁盘满了」
+/// 「文件被占用」这类原因只有记在这里才查得到（B144）。
 pub fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
     // 临时文件必须与目标同卷，否则 rename 会退化成拷贝、失去原子性
     let dir = match path.parent() {
@@ -21,13 +27,29 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
     let tmp = dir.join(format!(".{}.{}.tmp", file_name, std::process::id()));
 
     let result = write_and_swap(&tmp, path, data);
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
+    if let Err(ref e) = result {
+        logging::log(
+            Level::Error,
+            "atomic_write",
+            &format!("写入失败：{e} ← {}", path.display()),
+        );
+        // 临时文件清理不掉不算致命，但值得记一笔：反复看得到说明目标目录不可写。
+        if let Err(rm) = fs::remove_file(&tmp) {
+            logging::log(
+                Level::Debug,
+                "atomic_write",
+                &format!("临时文件残留：{rm} ← {}", tmp.display()),
+            );
+        }
     }
     result
 }
 
 fn write_and_swap(tmp: &Path, target: &Path, data: &[u8]) -> io::Result<()> {
+    write_and_swap_inner(tmp, target, data)
+}
+
+fn write_and_swap_inner(tmp: &Path, target: &Path, data: &[u8]) -> io::Result<()> {
     let mut f = File::create(tmp)?;
     f.write_all(data)?;
     // 先落盘数据，再改名，保证 rename 后内容已持久
@@ -38,13 +60,18 @@ fn write_and_swap(tmp: &Path, target: &Path, data: &[u8]) -> io::Result<()> {
         Ok(()) => Ok(()),
         Err(e) => {
             // Windows：目标被占用或跨卷时 rename 可能失败，退化为先删后改。
-            // 这一步会短暂失去原子性，属于兜底路径。
+            // 这一步会短暂失去原子性，属于兜底路径，得留下「为什么没走上 rename」。
             match fs::remove_file(target) {
                 Ok(()) => fs::rename(tmp, target).map_err(|_| e),
-                Err(remove_err) => Err(io::Error::new(
-                    remove_err.kind(),
-                    format!("覆盖失败：{}", e),
-                )),
+                Err(remove_err) => {
+                    let err = io::Error::new(remove_err.kind(), format!("覆盖失败：{}", e));
+                    logging::log(
+                        Level::Warn,
+                        "atomic_write",
+                        &format!("{err} ← {}", target.display()),
+                    );
+                    Err(err)
+                }
             }
         }
     }

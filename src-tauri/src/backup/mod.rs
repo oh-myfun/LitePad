@@ -42,7 +42,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::atomic_write;
+use crate::core::{
+    atomic_write,
+    logging::{self, Level},
+};
 
 /// 副本头部魔数 + 格式版本。改格式必须同时改这里与回归测试的期望。
 pub const MAGIC: &str = "LitePadBackup/1";
@@ -118,21 +121,62 @@ pub fn encode(meta: &BackupMeta, text: &str) -> Vec<u8> {
 /// 路径打开原文件。一个坏副本绝不能让整个会话恢复失败。
 pub fn decode(bytes: &[u8]) -> Option<Backup> {
     // 严格 UTF-8：头部是 ASCII，正文是我们自己按 UTF-8 写进去的。
-    let all = std::str::from_utf8(bytes).ok()?;
+    let all = match std::str::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(_) => {
+            // 副本不是 UTF-8 = 磁盘上那份已经半截了（强杀 / 磁盘故障）。
+            // 这里记一条是因为「恢复出来的是旧内容、看起来像文档凭空倒退」很难查。
+            logging::log(Level::Warn, "backup", "副本不是合法 UTF-8，已跳过");
+            return None;
+        }
+    };
     let rest = all.strip_prefix(MAGIC)?.strip_prefix('\n')?;
     let (head, body) = rest.split_once('\n')?;
-    let meta: BackupMeta = serde_json::from_str(head).ok()?;
+    let meta: BackupMeta = match serde_json::from_str(head) {
+        Ok(m) => m,
+        Err(e) => {
+            // 头部坏了 ⇒ 副本已无法识别，这份未保存内容事实上丢了。必须留一条。
+            logging::log(
+                Level::Warn,
+                "backup",
+                &format!("副本头部损坏，已跳过：{e} ← {}", id_of(bytes)),
+            );
+            return None;
+        }
+    };
     Some(Backup {
         meta,
         text: body.to_string(),
     })
 }
 
+/// 副本字节里带的那份 `path`（只为了日志好看；取不到就给个占位）。
+fn id_of(bytes: &[u8]) -> String {
+    std::str::from_utf8(bytes)
+        .ok()
+        .and_then(|s| s.split('\n').nth(1))
+        .and_then(|h| serde_json::from_str::<BackupMeta>(h).ok())
+        .map(|m| m.path)
+        .unwrap_or_else(|| "<未知>".to_string())
+}
+
 /// 写入指定备份区目录；目录不存在则创建。
 pub fn write_to(root: &Path, meta: &BackupMeta, text: &str) -> Result<(), String> {
     let path = backup_path_in(root, &meta.id).ok_or_else(|| format!("非法备份 ID：{}", meta.id))?;
     fs::create_dir_all(root).map_err(|e| e.to_string())?;
-    atomic_write::atomic_write(&path, &encode(meta, text)).map_err(|e| e.to_string())
+    match atomic_write::atomic_write(&path, &encode(meta, text)) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // ⚠️ 副本 = 用户还没保存的字。写失败必须自己喊一嗓子：
+            // 前端的 catch 收得到错误，但「哪一步、往哪写、写了多大」只有这里有。
+            logging::log(
+                Level::Error,
+                "backup",
+                &format!("副本写入失败，未保存内容有丢失风险：{e} ← {}", meta.path),
+            );
+            Err(e.to_string())
+        }
+    }
 }
 
 /// 从指定备份区目录读取。
@@ -202,7 +246,14 @@ pub fn discard_orphans_in(root: &Path, keep: &[String]) -> Result<usize, String>
         match fs::remove_file(&path) {
             Ok(()) => removed += 1,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.to_string()),
+            Err(e) => {
+                logging::log(
+                    Level::Warn,
+                    "backup",
+                    &format!("孤儿副本没删掉：{e} ← {}", path.display()),
+                );
+                return Err(e.to_string());
+            }
         }
     }
     Ok(removed)

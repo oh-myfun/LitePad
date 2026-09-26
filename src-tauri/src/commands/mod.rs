@@ -12,7 +12,10 @@ use notify::{RecommendedWatcher, Watcher};
 use tauri::State;
 
 use crate::backup;
-use crate::core::{atomic_write, codec, doc, eol};
+use crate::core::{
+    atomic_write, codec, doc, eol,
+    logging::{self, Level},
+};
 use crate::session;
 
 /// 进程启动时刻（在 `main()` 第一行写入），用于计算「点击图标 → 界面出现」的端到端耗时。
@@ -41,7 +44,19 @@ fn watch_file(state: &AppState, path: &Path) {
     if let Ok(mut bag) = guard {
         if let Some(w) = bag.as_mut() {
             // 重复 watch 同一路径会报错，忽略即可
-            let _ = w.watch(path, notify::RecursiveMode::NonRecursive);
+            match w.watch(path, notify::RecursiveMode::NonRecursive) {
+                Ok(()) => {}
+                // 文件被外部删了 / 没在监听 = 监听器本来就该跟着失效，不吵。
+                // ⚠️ `notify::Error` 的 kind 是**公开字段 + 枚举**（不是 `ErrorKind::NotFound`
+                // 那种 std 风格），写成 `e.kind()` 编译不过。
+                Err(e) if matches!(e.kind, notify::ErrorKind::PathNotFound) => {}
+                Err(e) if matches!(e.kind, notify::ErrorKind::WatchNotFound) => {}
+                Err(e) => logging::log(
+                    Level::Debug,
+                    "watcher",
+                    &format!("监听失败：{e} ← {}", path.display()),
+                ),
+            }
         }
     }
 }
@@ -50,7 +65,13 @@ fn unwatch_file(state: &AppState, path: &Path) {
     let guard = state.watcher.lock();
     if let Ok(mut bag) = guard {
         if let Some(w) = bag.as_mut() {
-            let _ = w.unwatch(path);
+            if let Err(e) = w.unwatch(path) {
+                logging::log(
+                    Level::Trace,
+                    "watcher",
+                    &format!("取消监听失败：{e} ← {}", path.display()),
+                );
+            }
         }
     }
 }
@@ -539,7 +560,16 @@ pub async fn save_file(
         Vec::new()
     };
 
-    atomic_write::atomic_write(&target, &bytes).map_err(|e| format!("保存失败：{}", e))?;
+    if let Err(e) = atomic_write::atomic_write(&target, &bytes) {
+        // 前端只会看到一个「保存失败」的提示，但「写到哪个文件、为什么失败」
+        // （磁盘满 / 只读 / 被占用）只有这里记得到 —— 不要让它停在静默里。
+        logging::log(
+            Level::Error,
+            "save",
+            &format!("保存失败：{e} ← {}", target.display()),
+        );
+        return Err(format!("保存失败：{e}"));
+    }
 
     let abs = normalize_path(fs::canonicalize(&target).unwrap_or(target.clone()));
     let readonly = doc::is_readonly(&abs);
@@ -673,6 +703,9 @@ pub fn restore_backup(
     state: State<'_, AppState>,
 ) -> Result<Option<RestoredBackup>, String> {
     let Some(b) = backup::read(&id) else {
+        // 副本不存在是正常分支（保存过 / 已被清理）；但「存在却读不满」也是这条路上来的。
+        // 记 debug 而不是 error：这里没有明确的失败语义，别把恢复流程染红。
+        logging::log(Level::Debug, "backup", &format!("副本不可用：{id}"));
         return Ok(None);
     };
 
@@ -1000,26 +1033,22 @@ pub fn load_settings() -> session::Settings {
     session::load()
 }
 
-/// 冒烟诊断：写入 %TEMP%\litepad-smoke.log。
-/// 用文件而不是 stdout，是因为 GUI 子系统下 stdout 未必有接收端。
+/// 冒烟诊断（B144 前：单写 `%TEMP%\litepad-smoke.log`）。
+///
+/// ⚠️ 现在**只转发**到 `core::logging`，不再另开一份文件 —— 本模块的历史就是
+/// 「日志散在若干个地方、出问题不知道该翻哪个」，再来一份就白做了。
+/// 副作用：这些行也吃级别过滤（默认 info 下「IPC OK」这类会被挡掉）。
+/// 想看就把级别临时开到 debug。
 pub(crate) fn smoke_log(msg: &str) {
-    use std::io::Write;
-    let path = std::env::temp_dir().join("litepad-smoke.log");
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
-        let _ = writeln!(f, "{}", msg);
-    }
+    logging::log(Level::Info, "smoke", msg);
 }
 
 /// 前端界面就绪后回报：显示主窗口 + 记录端到端启动耗时。
 ///
-/// 前端启动阶段回报（B50：纯诊断用）。
+/// 前端启动阶段回报（B50：纯诊断用，B144 起落进统一的 `logs/litepad.log`）。
 ///
 /// 前端在「外壳就绪」和「全部就绪」各调一次，detail 里带上各阶段耗时，
-/// 写进 `%TEMP%\litepad-smoke.log`，用来定位启动慢在哪一段。
+/// 用来定位启动慢在哪一段。
 /// 注意：这里**不负责显示窗口**——主窗口一直是可见的，白屏靠
 /// `main.rs` 里 `set_background_color` 刷主题底色解决。
 #[tauri::command]
@@ -1031,22 +1060,41 @@ pub fn frontend_ready(detail: Option<String>) {
     ));
 }
 
-/// 运行日志（方案 M1「日志与埋点」）：追加写 %TEMP%\litepad-app.log。
+/// 运行日志（B144：分级 + 落配置目录 + 滚动）。
+///
+/// 级别过滤**前端先做一层**（被挡掉的连 IPC 都不发，见 `src/core/logger.ts`），
+/// 这里再兜一层：认不出的级别回落 info —— 错误路径上那几条最有价值，
+/// 不能因为级别字符串拼错就整条丢掉。
 #[tauri::command]
 pub fn log_event(level: String, event: String, detail: Option<String>) {
-    use std::io::Write;
-    let path = std::env::temp_dir().join("litepad-app.log");
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let _ = writeln!(f, "{ts} [{level}] {event} {}", detail.unwrap_or_default());
+    let lv = logging::Level::parse(&level);
+    if !logging::should_log(lv) {
+        return;
     }
+    let msg = match detail {
+        Some(d) if !d.trim().is_empty() => format!("{event} {d}"),
+        _ => event,
+    };
+    logging::log(lv, "frontend", &msg);
+}
+
+/// 运行时切换日志级别（B144）。
+///
+/// 「出问题了临时开 debug 复现」：不必换包重启就生效；同时写进 settings 持久化，
+/// 否则一重启就回到默认，而复现窗口期往往就这一次。
+#[tauri::command]
+pub fn set_log_level(level: String) -> Result<(), String> {
+    let lv = logging::Level::parse(&level);
+    logging::set_level(lv);
+    let mut s = session::load();
+    s.log_level = lv.as_key().to_string();
+    session::save(&s)
+}
+
+/// 当前生效的日志级别（前端启动时拉一次，用来决定哪些级别根本不用发过来）。
+#[tauri::command]
+pub fn log_level() -> String {
+    logging::level().as_key().to_string()
 }
 
 #[tauri::command]

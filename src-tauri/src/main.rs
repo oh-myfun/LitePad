@@ -38,6 +38,18 @@ fn main() {
     // 启动计时基准（端到端耗时诊断用）
     let _ = commands::BOOT.set(std::time::Instant::now());
 
+    // B144 日志：级别取自 settings（没配过就走内置默认 —— 发布版 info、debug 构建 debug），
+    // 目录是 `<配置目录>/logs`（尊重 LITEPAD_CONFIG_DIR）。放在最前面：后面启动流程里
+    // 任何一步都能记了，包括「起不来」的那几步。
+    core::logging::init(core::logging::Level::parse_or_default(
+        &session::load().log_level,
+    ));
+    core::logging::log(
+        core::logging::Level::Info,
+        "app",
+        &format!("LitePad 启动 v{}", env!("CARGO_PKG_VERSION")),
+    );
+
     // 文件关联（首启带参）：双击 .md/.markdown 且当前没有运行中的实例时，单实例插件的
     // on_args 回调不会触发（它只在「已有实例」时把参数转发给主实例），所以这里手动把
     // 启动命令行里的文档塞进待打开队列，交给前端在就绪时取走打开。
@@ -187,6 +199,8 @@ fn main() {
             commands::load_settings,
             commands::save_settings,
             commands::log_event,
+            commands::log_level,
+            commands::set_log_level,
             commands::frontend_ready,
             commands::load_session,
             commands::save_session,

@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -51,6 +51,10 @@ pub struct Settings {
     /// `workbench.editor.tabActionReserveSpace`，默认 true）。false = 紧凑档：
     /// 已保存标签收紧文字，悬停时按钮浮出；未保存标签的 ● 指示器恒预留。
     pub tab_action_reserve_space: bool,
+    /// 日志级别（B144）：`"error" | "warn" | "info" | "debug" | "trace"`。
+    /// **空串 = 走内置默认**（发布版 info、debug 构建 debug），旧配置文件没有这个
+    /// 字段时反序列化为空串，行为与加字段之前一致。
+    pub log_level: String,
 }
 
 impl Default for Settings {
@@ -75,6 +79,7 @@ impl Default for Settings {
             keymap_preset: "default".into(),
             tab_style: "connected".into(),
             tab_action_reserve_space: true,
+            log_level: String::new(),
         }
     }
 }
@@ -113,12 +118,25 @@ pub fn settings_path() -> Option<PathBuf> {
 }
 
 /// 读取配置；任何异常都静默回落默认值，绝不让配置损坏导致启动失败。
+///
+/// ⚠️ 「静默」只针对调用方：这里仍然记一条 warn（B144）。之前是连日志都没有的 ——
+/// 用户抱怨「设置怎么老是被重置」，查了半天才发现是 `settings.json` 被人手改坏了。
 pub fn load() -> Settings {
     if let Some(path) = settings_path() {
-        if let Ok(content) = fs::read_to_string(&path) {
-            if let Ok(settings) = serde_json::from_str::<Settings>(&content) {
-                return settings;
-            }
+        match fs::read_to_string(&path) {
+            Ok(content) => match serde_json::from_str::<Settings>(&content) {
+                Ok(settings) => return settings,
+                Err(e) => logging::log(
+                    Level::Warn,
+                    "settings",
+                    &format!("配置反序列化失败，回落默认值：{e} ← {}", path.display()),
+                ),
+            },
+            Err(e) => logging::log(
+                Level::Debug,
+                "settings",
+                &format!("读不到配置（按首次启动处理）：{e}"),
+            ),
         }
     }
     Settings::default()
@@ -128,11 +146,23 @@ pub fn save(settings: &Settings) -> Result<(), String> {
     let path = settings_path().ok_or_else(|| {
         "无法定位配置目录（需要 %APPDATA%，或显式给 LITEPAD_CONFIG_DIR）".to_string()
     })?;
+    if let Err(e) = save_at(&path, settings) {
+        logging::log(
+            Level::Error,
+            "settings",
+            &format!("保存失败：{e} ← {}", path.display()),
+        );
+        return Err(e);
+    }
+    Ok(())
+}
+
+fn save_at<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
-    atomic_write::atomic_write(&path, json.as_bytes()).map_err(|e| e.to_string())
+    let json = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    atomic_write::atomic_write(path, json.as_bytes()).map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------- 会话状态（M2）
@@ -270,24 +300,49 @@ pub fn session_path() -> Option<PathBuf> {
 }
 
 /// 读取会话；异常静默返回 None（坏会话绝不阻塞启动）。
+///
+/// ⚠️ 静默是对调用方而言，日志照样记（B144）：B143 那个坑（小数 `scrollTop` 让整份
+/// 会话反序列化失败）就是靠这条才看得见 —— 以前前端只看到「会话没保存」，
+/// 后端这边连「读出来过、但解析失败了」都无从判断。
 pub fn load_session() -> Option<SessionState> {
     let path = session_path()?;
-    let content = fs::read_to_string(path).ok()?;
-    serde_json::from_str::<SessionState>(&content).ok()
+    let Ok(content) = fs::read_to_string(&path) else {
+        return None; // 首次启动：没有会话文件，很正常
+    };
+    match serde_json::from_str::<SessionState>(&content) {
+        Ok(state) => Some(state),
+        Err(e) => {
+            logging::log(
+                Level::Warn,
+                "session",
+                &format!("会话反序列化失败，按空会话启动：{e} ← {}", path.display()),
+            );
+            None
+        }
+    }
 }
 
 pub fn save_session(state: &SessionState) -> Result<(), String> {
     let path = session_path().ok_or_else(|| {
         "无法定位配置目录（需要 %APPDATA%，或显式给 LITEPAD_CONFIG_DIR）".to_string()
     })?;
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    if let Err(e) = save_at(&path, state) {
+        // 前端 `persistSession` 的 catch 会把它吞掉，所以后端这里必须自己留一条，
+        // 否则「会话一次都没落下去」只能靠猜（B143 / B144）。
+        logging::log(
+            Level::Error,
+            "session",
+            &format!("会话保存失败：{e} ← {}", path.display()),
+        );
+        return Err(e);
     }
-    let json = serde_json::to_string_pretty(state).map_err(|e| e.to_string())?;
-    atomic_write::atomic_write(&path, json.as_bytes()).map_err(|e| e.to_string())
+    Ok(())
 }
 
-use crate::core::atomic_write;
+use crate::core::{
+    atomic_write,
+    logging::{self, Level},
+};
 
 #[cfg(test)]
 mod tests {
@@ -318,6 +373,25 @@ mod tests {
     #[test]
     fn config_dir_without_appdata_is_none() {
         assert_eq!(pick_config_dir(None, None), None);
+    }
+
+    /// B144：`log_level` 是**后加**的设置项，旧配置文件里没有这个字段。
+    /// 反序列化出来是空串，直接 `Level::parse("")` 会拿到 info —— 那会把
+    /// debug 构建默认的 debug 也抹掉，于是「开发版该有的日志凭空少了一档」。
+    #[test]
+    fn log_level_defaults_to_the_builtin_one_when_unset() {
+        assert_eq!(
+            Settings::default().log_level,
+            "",
+            "默认必须是空串：它代表「没配过，走内置默认」"
+        );
+        assert_eq!(
+            Level::parse_or_default(&Settings::default().log_level),
+            logging::default_level()
+        );
+        // 配了就得认：用户/manual 手动下调的级别不能被内置默认盖掉
+        assert_eq!(Level::parse_or_default("trace"), Level::Trace);
+        assert_eq!(Level::parse_or_default("debug"), Level::Debug);
     }
 
     /// B49：会话线上格式必须是 camelCase（与前端 `src/ipc/api.ts` 对齐）。
