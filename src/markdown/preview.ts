@@ -457,6 +457,22 @@ export class PreviewPane {
     return el.getBoundingClientRect().top - base.top + this.root.scrollTop;
   }
 
+  /**
+   * 预览此刻停在哪一行（md 源码行号），定不出来返回 `null`（B148）。
+   *
+   * 纯预览态切回源码时用得上：编辑器那一路位置在 `display:none` 期间被浏览器清零
+   * （CM6 的 `inputState.lastScrollTop` 也会被那发 0 值 scroll 改写），**无从恢复**；
+   * 唯一说得通的落点是「用户正在看的那一行」。取法与 `onPreviewScroll` 完全一样
+   * （同一个 `blockAtOffset`、同一个 `+8` 偏移），免得两边对「顶行」的定义分叉。
+   */
+  topVisibleLine(): number | null {
+    if (!this.host) return null;
+    const target = this.blockAtOffset(this.root.scrollTop + 8);
+    if (!target) return null;
+    const line = Number(target.el.dataset.lineStart);
+    return Number.isFinite(line) && line > 0 ? line : null;
+  }
+
   /** 布局稳定后按 pending 行再定位一次（异步增强 / 图片加载后调用）。 */
   private applyPending(): void {
     if (this.pendingSyncLine === null) return;

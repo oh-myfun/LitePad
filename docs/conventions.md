@@ -136,10 +136,12 @@
   真机出现「重启回到顶部」先看这条日志。
 - **换文档（`setState`）期间的自动滚动是**主因**（B146 二轮修订，用户拍板）**：
   CM6 的 `setState` 实现末尾是
+
   ```js
-  if (hadFocus) this.focus();   // 换完文档自己再滚一次，把光标滚进视野
+  if (hadFocus) this.focus(); // 换完文档自己再滚一次，把光标滚进视野
   this.requestMeasure();
   ```
+
   再加上浏览器按**新内容长度**裁剪 `scrollTop` —— 这两下都不是用户造成的。而它们
   派发的 scroll 那一刻，滚动监听会把「换文档的副作用」当成「用户停过的位置」写进
   记录：**这就是「切换标签，md 文档的滚动位置会不断往下移」的直接原因**
@@ -162,6 +164,7 @@
   那一刻的写入是我们自己的钉位置，本来就归 B139 那条「程序滚动不许写快照」管，
   照样被挡 —— 等于什么都没模拟（B146 实测踩过）。要模拟就钩住 `EditorView.prototype.setState`，
   在它**之后**改一次容器值并派发事件，见 `tests/viewport-anchor.test.ts`。
+
 - **CM6 测量会把视口往下推，`requestMeasure()` 不能裸调**（B146）：`@codemirror/view`
   在 measure 收尾时做「滚动锚点补偿」——拿视口顶行高度与上次记的锚点比，差 >1px
   就 `scrollTop += diff`。`setState` 换文档后 heightMap 是拿 `HeightOracle` 按**估算
@@ -173,6 +176,30 @@
 - **预览按像素钉完之后要 `clearPendingSync()`**：`applySyncToLine` 只写 `pendingSyncLine`
   不消费它，而 `applyPending` 会被任意一次图片 / 公式增强的 `load` 唤醒，留着旧行号
   就会把预览从刚钉好的落点拽走。
+- ⚠️⚠️ **源码 / 预览共用一个 px 槽，切换模式是一次「交接」，不是各认各的**（B148）：
+  `t.scrollTop` 只有一个字段，装的是「**当前这一侧**」的像素。纯预览态下编辑器是
+  `display:none`，它的 `scrollDOM.scrollTop` 被浏览器清零，CM6 的
+  `inputState.lastScrollTop`（`observers.scroll` 记的那个，focus 时才回读）也被那发
+  0 值 scroll 改写 ⇒ **编辑器的位置无从恢复**；而预览的滚动监听照常把**预览的像素**
+  写进同一个槽。切回源码时 `measureAndKeepScroll` 下一帧的 `reassertViewScroll` 认的
+  判据是 `t.viewMode !== "preview"`（此刻已是源码）⇒ 就把预览的像素钉到了编辑器上。
+  于是 `editor@E → preview@syncToLine(E) → 用户滚预览到 P' → source@P'` —— 每绕一圈
+  偏一次，这就是「反复切换源码 / 预览，滚动位置持续偏移」。
+
+  修法（**不加第二个字段**，B138 已拍板不再为位置加字段）：切回源码之前，先把
+  「预览此刻停在哪一行」换成**编辑器侧**的像素（`PreviewPane.topVisibleLine()` →
+  `view.lineBlockAt(doc.line(n).from).top`），**走 `recordScroll` 写进同一个槽**，
+  再 `restoreViewScroll` 钉回去。三处顺序都是契约：
+
+  1. 问顶行必须在改 `tab.viewMode` **之前**（切换后编辑器已是 `display:none`，问不出）；
+  2. 走 `recordScroll` 唯一闸口，别直连 `sessionStore.setScroll`；
+  3. 拿到落点才 `restoreViewScroll`，否则下一帧的测量收尾会拿旧值动手。
+
+  ⚠️ 预览一份都没渲染出来（`topVisibleLine()` 返回 `null`，大文件降级就是这种）时，
+  **宁可不动编辑器**，也别把预览的像素原样钉过去 —— 后者跳到的位置没有任何依据，
+  比停在开头更像 bug。
+  ⚠️ 这条链路在 jsdom 里能真复现（B148 的 `tests/view-mode-scroll.test.ts`：退化实现
+  报 `expected 3000 not to be 3000`），因为要的只是「写进去的值 ≠ 另一侧的像素」。
 
 ## 图标
 

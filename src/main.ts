@@ -4172,11 +4172,35 @@ function toggleViewMode(): void {
   const panel = activePanel();
   const tab = activeTab();
   if (!panel || !tab || !isMdTab(tab)) return;
-  tab.viewMode = tab.viewMode === "source" ? "preview" : "source";
+  const toPreview = tab.viewMode !== "preview";
+  // 纯预览 → 源码是一次**交接**，不是各认各的：`t.scrollTop` 只有一个槽，装的是
+  // 「当前这一侧」的像素（B139）。纯预览期间编辑器被 `display:none` 清零，它那份
+  // 位置已经没了，而预览的滚动监听把**预览的像素**写进了同一个槽 —— 直接拿去钉
+  // 编辑器，就是「反复切换源码/预览，位置持续偏移」（B148）。
+  // 所以先把「预览此刻停在哪一行」换成**编辑器侧**的像素写进这个槽，之后这一侧认的就是它。
+  let handoff: number | null = null;
+  if (!toPreview && panel.view) {
+    // ⚠️ 必须在改 viewMode **之前**问：切换后编辑器是 display:none，问不出顶行
+    const line = panel.preview?.topVisibleLine() ?? null;
+    const view = panel.view.view;
+    if (line !== null) {
+      const n = Math.min(Math.max(1, line), view.state.doc.lines);
+      handoff = Math.max(0, view.lineBlockAt(view.state.doc.line(n).from).top);
+    } else {
+      // 预览一份都没渲染出来（大文件降级就是这样）：拿不到顶行，也就**无从**反推
+      // 编辑器该停在哪。这时宁可不动编辑器（让它按 CM6 自己的还原来），也别把预览的
+      // 像素原样钉过去 —— 后者跳到的位置没有任何依据，比停在开头更像 bug。
+      logger.debug("viewport", `切回源码但预览没内容，无从交接位置（${tab.docId}）`);
+    }
+  }
+  if (handoff !== null) recordScroll(tab.tabId, handoff);
+  tab.viewMode = toPreview ? "preview" : "source";
   // 切换视图本身不是编辑：隐藏/恢复编辑器可能让 CM6 产生事务，这里一律不置脏
   suppressDirty = true;
   try {
     applyPanelMode(panel);
+    // 刚从纯预览回来：编辑器刚从 display:none 出来、被清零了，把交接过来的那份钉回去
+    if (handoff !== null) restoreViewScroll(panel);
   } finally {
     suppressDirty = false;
   }
