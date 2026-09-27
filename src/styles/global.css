@@ -3028,7 +3028,11 @@ body.tab-drag-active * {
    外观照抄 VS Code 的 `.monaco-hover.workbench-hover`（见
    docs/vscode-reference/src/vs/platform/hover/browser/hover.css），数值出处
    逐条写在 src/shell/tooltip.ts 的模块注释里。要点：
-   - 13px / 行高 19px，内边距 4px 8px（= VS Code `.hover-contents`）；
+   - 13px / 行高 19px，内边距 2px 8px —— 见下面 `.tooltip.tooltip-compact` 的说明：
+     按钮 / 工具栏那类提示在 VS Code 里走的都是 `actionbar` 的 `showHover`，而它
+     把 `appearance.compact` 写死为 `true` ⇒ 真正对得上号的是 `2px 8px` 那一档
+     （`hover.css` 的 `.compact .hover-contents`）；4px「厚」那一档只属于编辑器里
+     承载长文本内容的 hover，本项目没有。
    - 圆角 **5px**（VS Code 常规档），**只有带指针时才降到 3px**
      （`.monaco-hover.workbench-hover.with-pointer`）—— 标签走鼠标定位、不画 caret，
      所以是 5px； tooltip.ts 会在 showFor 里把 `data-pointer` 写到提示层上；
@@ -3046,7 +3050,7 @@ body.tab-drag-active * {
      详见 tooltip.ts 顶部说明；改宽之前先想清楚会不会挡住编辑器。 */
   max-width: 420px;
   max-height: calc(100vh - 16px);
-  padding: 4px 8px;
+  padding: 2px 8px;
   font-size: 13px;
   line-height: 19px;
   color: var(--fg);
@@ -3071,7 +3075,9 @@ body.tab-drag-active * {
 /* VS Code `appearance.compact`（`WorkbenchHoverDelegate.showHover()` 给所有走
    hoverDelegate 的提示写死 `compact: true`）：字号降到 12px、内边距收成 2px 8px
    （`hover.css` 的 `.monaco-hover.workbench-hover.compact`）。
-   标签与标签上的关闭按钮都走这一档，比编辑器里那种长文本提示矮一圈。 */
+   ⚠️ 内边距这一档**就是上面基础档的值**，两者现在只差字号 —— 留着这条重复声明是
+   有意的：将来若有人给基础档加回厚内边距，标签档不会被一起带跑。
+   标签与标签上的关闭按钮走这一档。 */
 .tooltip.tooltip-compact {
   font-size: 12px;
   padding: 2px 8px;

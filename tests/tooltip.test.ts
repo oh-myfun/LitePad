@@ -566,7 +566,7 @@ describe("A 档：菜单开着就绝不弹提示", () => {
 // B58：原生 `title` 由操作系统绘制，配色/圆角/键帽/延迟全不可控（深色界面里会突然弹出
 // 一个浅色系统气泡）。改为全局单例自绘层，外观对齐 VS Code hover。
 describe("B58 应用级 tooltip（取代原生 title，外观对齐 VS Code hover）", () => {
-  it("提示层外观取自 VS Code：fixed / 13px / 19px / 4px 8px / 5px 圆角 / 不参与命中", () => {
+  it("提示层外观取自 VS Code：fixed / 13px / 19px / 2px 8px / 5px 圆角 / 不参与命中", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
     const tip = cssDecls(css.match(/\n\.tooltip\s*\{[^}]*\}/)?.[0] ?? "");
     expect(tip, "应有 .tooltip 规则").toBeTruthy();
@@ -575,7 +575,14 @@ describe("B58 应用级 tooltip（取代原生 title，外观对齐 VS Code hove
     expect(tip, "必须浮在菜单之上").toMatch(/z-index:\s*2000/);
     expect(tip, "13px 字号（= VS Code .hover-contents）").toMatch(/font-size:\s*13px/);
     expect(tip, "19px 行高（= VS Code .hover-contents）").toMatch(/line-height:\s*19px/);
-    expect(tip, "padding 4px 8px（= VS Code .hover-contents）").toMatch(/padding:\s*4px 8px/);
+    // B156：按钮类提示照 VS Code 走 `actionbar.showHover()` 那套 —— `appearance.compact`
+    //   被写死为 true ⇒ 内边距只有 `2px 8px` 一档。原先这里给的是 4px 8px（抄的是编辑器
+    //   里承载长文本的 hover，本项目没有那种场景），按钮 tips 看着"厚"，09-27 让用户收窄。
+    expect(tip, "padding 2px 8px（= VS Code .compact .hover-contents）").toMatch(
+      /padding:\s*2px 8px;/,
+    );
+    // ⚠️ 反向自证：这一档不许再出现厚版，否则上面那条会被"另写一份"蒙过去。
+    expect(tip, "提示层不再有 4px 那一档厚内边距").not.toMatch(/padding:\s*4px 8px/);
     // ⚠️ 5px 是 VS Code 常规档（`.monaco-hover.workbench-hover`）；3px 那条只属于
     // `.with-pointer`（带指针）。本项目提示**不一定**带指针，所以基础档必须是 5px。
     expect(tip, "基础圆角 = VS Code 常规档 5px").toMatch(/border-radius:\s*5px/);

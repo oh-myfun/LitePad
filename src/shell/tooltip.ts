@@ -11,8 +11,12 @@
  *   `font-size: 13px` / `line-height: 19px`、`max-width`、`editorHoverWidget.background`
  *   与 `.border` 取色、圆角 5px（**带指针时 3px**）、`box-shadow: var(--vscode-shadow-lg)`；
  *   指针（caret）是 6px 方块旋转 45°，**只画朝外的两条边**，`pointer-events: none`。
- * - `src/vs/base/browser/ui/hover/hoverWidget.css`——`.hover-contents { padding: 4px 8px }`、
- *   `cursor: default`、`user-select: text`、`fade-in 100ms linear`。
+ * - `src/vs/platform/hover/browser/hover.css`——`.monaco-hover.workbench-hover.compact
+ *   .hover-contents { padding: 2px 8px }`、`.compact { font-size: 12px }`，即**提示的
+ *   内边距只有这一档**。动作条那类（工具栏按钮 / 动作按钮）走 `actionbar` 的
+ *   `showHover()`，它把 `appearance.compact` 写死为 `true`（见下条），所以 VS Code 里
+ *   泛泛的「按钮提示」本来就是 2px 8px，13px 那档只属于内容更长的 hover。
+ *   本项目的提示层因此统一 `2px 8px`（`global.css` 的 `.tooltip`）。
  * - `src/vs/platform/hover/browser/hoverWidget.ts`——`PointerSize = 3`、
  *   `HoverWindowEdgeMargin = 2`，以及指针定位规则：**默认居中于提示框，若中心点跑出
  *   目标横向范围就改为对准目标中心**。
@@ -88,8 +92,10 @@ export interface TipOptions {
    *
    * `WorkbenchHoverDelegate.showHover()` 给所有经 hoverDelegate 的提示写死了
    * `compact: true`（`hover.css` 里 `.compact { font-size: 12px }`、
-   * `.compact .hover-contents { padding: 2px 8px }`），比编辑器里那种长文本提示
-   * （13px / 4px 8px）矮一圈。
+   * `.compact .hover-contents { padding: 2px 8px }`）。
+   *
+   * ⚠️ 该档的**内边距就是提示层的默认内边距**，传与不传现在只差字号 —— 传的场合是
+   * 标签这类短提示（`tabstrip.ts` 的两处），想压的是「字大了一圈显得重」。
    */
   compact?: boolean;
 }
