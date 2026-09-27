@@ -63,11 +63,9 @@ describe("B152 同步滚动模式：按钮与状态", () => {
     expect(html, "必须有 aria-pressed").toMatch(/id="sync-scroll"[\s\S]{0,300}?aria-pressed/);
   });
 
-  it("显隐判据是「当前激活文档开着多份」", () => {
+  it("显隐判据是「当前激活文档开着多份（含别的窗口那份）」", () => {
     // 只看「有没有文档」⇒ 单开也露脸，用户点下去什么也不会发生。
-    expect(main, "显隐要按实例个数判").toMatch(
-      /const multi = !!tab && instancesOfDoc\(tab\.docId\)\.length > 1;/,
-    );
+    expect(main, "显隐要按实例个数判").toMatch(/instancesOfDoc\(tab\.docId\)\.length > 1/);
     expect(main, "无文档时要藏").toMatch(/syncScrollBtn\.hidden = !multi;/);
   });
 
@@ -488,15 +486,68 @@ describe("B154 字形：link（链条），常量，启动时给一次", () => {
   });
 });
 
+// ------------------------------------------------------- B164：子窗口的同步滚动
+describe("B164 子窗口也要有同步滚动（按钮显隐 + 跨窗口广播）", () => {
+  it("卫星窗口采纳的标签要记进 sharedDocIds（主窗口还攥着隐藏实例）", () => {
+    // 子窗口里 `instancesOfDoc` 只有 1 份 —— 不认「这份文档在别的窗口也有」，
+    // 同步滚动键在子窗口永远 hidden，用户没法在子窗口开启同步。
+    expect(main, "采纳标签时（且只在卫星侧）要记共享文档").toMatch(
+      /if \(windowKind === "satellite"\) sharedDocIds\.add\(st\.docId\);/,
+    );
+  });
+
+  it("显隐判据要认 sharedDocIds（不能只数本地实例）", () => {
+    expect(BTN_BODY, "「开着多份」要算上别的窗口那份").toMatch(/sharedDocIds\.has\(tab\.docId\)/);
+    // 本地实例数那一半仍是判据的主体（主窗口靠隐藏实例计数，不靠 sharedDocIds）
+    expect(BTN_BODY, "本地实例数那一半不许丢").toMatch(/instancesOfDoc\(tab\.docId\)\.length > 1/);
+  });
+
+  it("没有本地兄弟也要广播（否则子窗口滚动带不动主窗口）", () => {
+    // 卫星窗口里同文档只有一份本地实例，旧写法 `if (sibs.length === 0) return;`
+    // 会把末尾的 `broadcastSyncPos` 一并跳过 —— 位置广播根本出不了子窗口。
+    expect(PUSH_BODY, "提前 return 必须给广播让路").toMatch(
+      /if \(sibs\.length === 0 && !crossWindow\) return;/,
+    );
+    expect(PUSH_BODY, "不许退回无条件 return").not.toMatch(/if \(sibs\.length === 0\) return;/);
+    expect(PUSH_BODY, "广播那半段还在函数末尾").toMatch(/if \(crossWindow\) broadcastSyncPos\(/);
+  });
+
+  it("B164 反向验证：退回两处旧写法，上面三条必须落空", () => {
+    // ① 显隐只数本地实例
+    const i = main.indexOf("const multi =");
+    expect(i, "要能定位显隐判据").toBeGreaterThan(-1);
+    const degradedBtn =
+      main.slice(0, i) +
+      "const multi = !!tab && instancesOfDoc(tab.docId).length > 1;" +
+      main.slice(main.indexOf(";", i) + 1);
+    const btnBody = slice(degradedBtn, "function refreshSyncButton(", "function refreshStatus(");
+    expect(btnBody, "退化后「要认共享文档」必须落空").not.toMatch(
+      /sharedDocIds\.has\(tab\.docId\)/,
+    );
+    // ② 提前 return 不给广播让路
+    const ORIG = "if (sibs.length === 0 && !crossWindow) return;";
+    expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
+    const degradedPush = main.replace(ORIG, "if (sibs.length === 0) return;");
+    const pushBody = slice(degradedPush, "function pushSyncToSiblings(", "function showMessage(");
+    expect(pushBody, "退化后「不许无条件 return」必须命中").toMatch(
+      /if \(sibs\.length === 0\) return;/,
+    );
+  });
+});
+
 describe("B152 反向验证：退回旧写法，上面那几条必须变红", () => {
   it("退回「单开一份也露脸」→ 显隐那两条必须落空", () => {
-    const ORIG = "const multi = !!tab && instancesOfDoc(tab.docId).length > 1;";
-    expect(main, "退化串要先自证原句还在").toContain(ORIG);
-    // 只留「有没有文档」这一半 —— 判据里那个实例数比较被删掉了。
-    const degraded = main.replace(ORIG, "const multi = !!tab;");
-    expect(degraded, "退化后不该再有实例数判据").not.toContain(ORIG);
+    // ⚠️ B164 起判据折成了两行（多出 `sharedDocIds` 那一半），退化串要按位置取：
+    //    只按老单行字面量 replace 会静默空转（B163 踩过同一坑）。
+    const i = main.indexOf("const multi =");
+    expect(i, "要能定位显隐判据").toBeGreaterThan(-1);
+    const degraded =
+      main.slice(0, i) + "const multi = !!tab;" + main.slice(main.indexOf(";", i) + 1);
+    expect(degraded, "退化后不该再有实例数判据").not.toMatch(
+      /instancesOfDoc\(tab\.docId\)\.length > 1/,
+    );
     expect(degraded, "「显隐要按实例个数判」此时必须落空").not.toMatch(
-      /const multi = !!tab && instancesOfDoc\(tab\.docId\)\.length > 1;/,
+      /instancesOfDoc\(tab\.docId\)\.length > 1/,
     );
   });
 

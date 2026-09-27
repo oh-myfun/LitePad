@@ -512,6 +512,19 @@ function syncDocInstances(src: Tab, changes: ChangeSet): void {
 const docSyncModes = new Map<number, boolean>();
 
 /**
+ * B164：这份文档在**别的窗口**还有实例（进程级同源，docId 全窗口一致）。
+ *
+ * 卫星窗口收下的每份标签，主窗口手上都还攥着隐藏实例（B157 起「谁关的谁负责」，
+ * 那份不会被回收）——卫星里 `instancesOfDoc` 只有 1 份，「开着多份」的显隐判据
+ * 必须认这条，否则子窗口永远看不到同步滚动键。主窗口不用它：借出后本地留的
+ * 隐藏实例本身就计进 `instancesOfDoc`。
+ *
+ * 只在卫星窗口采纳标签时 add、从不删 —— 与 `loanedDocIds` 同一取舍：持有关系
+ * 会一直成立到窗口销毁，多记不会错，漏记就是按钮该出现时没出现。
+ */
+const sharedDocIds = new Set<number>();
+
+/**
  * 这个实例此刻是不是它那个文档在同步模式下的**源**。
  *
  * 只有**激活面板里激活的那一份**算 —— 这正是「切换激活文档时按新的激活文档同步」
@@ -649,7 +662,11 @@ function broadcastSyncPos(src: Tab, px: number | null, line: number | null): voi
 function pushSyncToSiblings(src: Tab, crossWindow = false): void {
   if (docSyncModes.get(src.docId) !== true) return;
   const sibs = instancesOfDoc(src.docId).filter((t) => t.tabId !== src.tabId);
-  if (sibs.length === 0) return;
+  // B164：本地没有兄弟**不代表**没人跟着 —— 卫星窗口里那份是「主窗口还攥着一份」的
+  // 唯一本地实例，从这里 return 会把末尾的跨窗口广播一并跳过（用户报：子窗口滚动
+  // 带不动主窗口同一文件的其他标签）。光标那一路（`crossWindow=false`）没有广播可发，
+  // 维持原判；广播那半段见函数末尾的 `if (crossWindow)`。
+  if (sibs.length === 0 && !crossWindow) return;
   // 光标位置取源的 `head`。同源内容一致，但离线那一份可能还没追上最新正文
   // （`syncDocInstances` 对它是离线更新），所以要夹回它自己的行数再落。
   const head = src.state.selection.main.head;
@@ -725,6 +742,10 @@ function refreshTitle(): void {
  * 显隐条件是「**当前激活文档开着多份**」—— 只有一份时根本无从「同步」，摆一颗点不动
  * 的键，用户只会以为坏了。
  *
+ * B164：「多份」要算上**别的窗口** —— 卫星窗口里那份是唯一的本地实例，但主窗口
+ * 还攥着隐藏实例（`sharedDocIds`，采纳标签时记下）。只数本地 ⇒ 子窗口永远看不到
+ * 这颗键，也就没法在子窗口开启同步滚动。
+ *
  * ⚠️ 状态读的是 `docSyncModes`（按**文档**记），所以切换激活文档时这里读出来的仍是
  *    那份文档自己的开关值 —— 按钮不复位，这正是「一个文档有一个同步滚动状态」。
  */
@@ -733,7 +754,7 @@ function refreshSyncButton(tab: Tab | undefined): void {
   // 无文档 ⇒ 藏；数量是一个便宜的循环（实例数很小），不用缓存。
   // ⚠️ 先算出布尔量：直接写 `hidden = !tab || …` 是收窄不了 `tab` 的，后面那句
   //    `if (hidden) return` 挡不住「tab 可能是 undefined」这条报错。
-  const multi = !!tab && instancesOfDoc(tab.docId).length > 1;
+  const multi = !!tab && (instancesOfDoc(tab.docId).length > 1 || sharedDocIds.has(tab.docId));
   syncScrollBtn.hidden = !multi;
   if (!multi) return;
   const on = docSyncModes.get(tab.docId) === true;
@@ -5998,6 +6019,11 @@ function adoptTransferredTabs(incoming: SatelliteTab[], panelId = activePanelId)
   if (!panel) return [];
   const adopted: number[] = [];
   for (const st of incoming) {
+    // B164：卫星窗口收下的每份文档，主窗口手上都还攥着隐藏实例（B157 起「谁关的谁
+    // 负责」，那份不会被回收）—— 记进 `sharedDocIds`，同步滚动键的显隐判据才认它。
+    // ⚠️ 只在卫星侧记：主窗口那条 `adoptTransferredTabs`（卫星交还标签）收的是
+    //    自己的文档，本地不见得还有第二份，记了就会挂一颗点不动的键。
+    if (windowKind === "satellite") sharedDocIds.add(st.docId);
     // 该文档在本地还留着隐藏实例（刚从别的窗口交回来）→ 先把它摘掉，避免出现
     // 「两份实例同源但互不同步」——同源多实例的前提是同一窗口内共用一个 docs 条目，
     // 而隐藏实例的正文可能与交回来的最新正文不一致。
@@ -6634,9 +6660,9 @@ function applyDocResyncFull(
  *
  * ⚠️ 不落盘也不改写 `docSyncModes` 的所有权：开关仍然「一个文档一份」，只是这份
  *    状态在两个窗口里保持一致（否则主窗口按下后子窗口压根不知道自己该跟着动）。
- * ⚠️ 这里**不**刷新按钮的显隐：显隐判据是「本窗口同源实例 > 1」，而标签被拎到别的
- *    窗口后本窗口会留一个隐藏实例（`remoteTabLocally`），所以按钮仍在；按钮被隐藏
- *    的场景（子窗口那份是唯一的实例）用户本来就按不到，点亮给谁看。
+ * ⚠️ 这里**要**刷新按钮的显隐与点亮态（B164 起子窗口也看得到这颗键）：主窗口按下后
+ *    子窗口的按钮要跟着点亮；反过来子窗口按下时主窗口也一样。显隐判据已含
+ *    `sharedDocIds`（B164），收到开关事件的窗口只要持有这份文档，按钮就在该在的状态。
  */
 function applySyncMode(payload: SyncModePayload | null): void {
   const { from, docId, on } = payload ?? {};
