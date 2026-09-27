@@ -115,15 +115,23 @@
 - 取舍：外部（别的编辑器）改了 `session.json` 也不会再提示，下次会话保存仍会覆盖它。
   这是有意的 —— 它是 LitePad 的私有数据，不是用户文档。
 
-## 同源多实例（B149）
+## 同源多实例（B149 + B152）
 
-- **同一文件打开多份时，光标与滚动位置不互相关联**（用户拍板，`tests/multi-instance-scope.test.ts`
+- **同一文件打开多份时，光标与滚动位置默认不互相关联**（用户拍板，`tests/multi-instance-scope.test.ts`
   把这条基线钉住）：`syncDocInstances` 只派发 `{ changes }`（纯文本），光标 / 视口 / 视图模式
-  各实例各归各的。正在做的「同步滚动模式」是**后面单独的独立需求**，现在不做。
-- ⚠️ 想做同步滚动模式时，改的是**这一整条基线**，不是在这里开个洞：把
-  `tests/multi-instance-scope.test.ts` 整段换成新口径（哪些跟着动、哪些不跟着动），
-  再回头清掉 `syncDocInstances` 里那几条「不许碰视口 / 不许带 selection」的契约。
-  在这里打补丁，等于把「只同步文本」这条不变量悄悄拆了，之后没人知道哪块能删。
+  各实例各归各的。
+- **同步滚动模式（B152）是这条基线的显式例外，但它走独立通道**：默认依旧不关联，只有用户按下
+  标题栏文档名后面那颗键才联动。实现落在 `docSyncModes` / `isSyncSource` / `pushSyncToSiblings`，
+  **不进 `syncDocInstances`** —— 文本同步那条链路一个字节都没动（「哪份正文更新、怎么合并」和
+  「位置跟不跟」是两件事，别混进同一处）。
+  ⚠️ 想改联动行为时**，改的是 `pushSyncToSiblings` 这一处，**不是往 `syncDocInstances` 里塞 ——
+  那等于把「只同步文本」这条不变量悄悄拆了，之后没人知道哪块能删。
+- 同步滚动的口径（写死在 `tests/sync-scroll-mode.test.ts`）：
+  ① **状态粒度 = 文档**（`Map<docId, boolean>`）—— 一个文档一份开关，切激活文档按钮不复位；
+  ② 方向**单向**（永远「激活文档 → 其它实例」），`isSyncSource` 同时是回环闸门，别再叠守卫；
+  ③ 兄弟的位置只写 `recordScroll`，钉 DOM 要套 `restoringViewport` + `pinScrollTop`，且先派发
+  选区再钉位置；④ 纯预览实例那个槽装的是**预览侧像素**，只跟光标、不跟编辑器的 px；
+  ⑤ 触发点四处：`handleUpdate` / 编辑器 scroll / `switchTab` 末尾 / `refreshAll` 末尾。
 - 「同源」只到文本这一层就够：两份实例的光标互不干涉，用户完全可以一边看代码一边
   对照预览翻到不同位置 —— 那正是同文件多实例的用途（B130 的恢复口径同源）。
 

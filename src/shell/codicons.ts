@@ -65,6 +65,11 @@ const IDS = {
   //   替代原先的 loading 旋转动画），就绪待重启 = refresh（点击 relaunch）。
   cloudDownload: "cloud-download",
   refresh: "refresh",
+  // —— 标题栏文档名后的同步滚动键（B152）——
+  // 取 `sync`（圆箭头穿竖线）**而不是 `refresh`**：后者跟右上角更新键那颗撞形，同在
+  // 标题栏里两颗一样的圆箭头，用户分不清哪个管滚动、哪个管升级。
+  // 字形是**常量**（开合只靠 `.is-on` 上色），启动时给一次，不随标题刷新重设。
+  sync: "sync",
   // —— 面板 / 标签 ——
   circleFilled: "circle-filled",
   // —— 标签上的文件类型字形（10 个家族，见 src/shell/fileicons.ts）——

@@ -313,6 +313,19 @@ body {
   text-overflow: ellipsis;
 }
 
+/* B152：同步滚动开关，贴在文档名后面（同一文档开着多份时才由 refreshTitle 显隐）。
+   ⚠️ `[hidden]` 必须显式给一条：`.win-btn, .title-btn, .menu-btn` 那条共用声明写死了
+   `display:inline-flex`，作者样式压过 UA 的 `[hidden]{display:none}` —— 不加这条，
+   单开一份时标题栏里就会留下一块空的 46px 方键。 */
+.sync-btn {
+  flex: 0 0 auto;
+  margin-left: 6px;
+}
+
+.sync-btn[hidden] {
+  display: none;
+}
+
 /* ---------- 标题栏工具键（B99 / B103） ----------
    只放**开关型**工具键（现在一个：钉在顶部）。
    ⚠️ B103 起它的**尺寸 / 悬停 / 焦点环与窗口控制三键是同一条声明**（见下方

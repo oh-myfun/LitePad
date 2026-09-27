@@ -223,6 +223,9 @@ const menuBar = el("menu-bar");
 // 前六个本就在菜单里，导出与主题分别回到「文件 → 导出」「设置 → 首选项」。
 const appMark = el("app-mark");
 const titleText = el("title-text");
+// B152：同步滚动开关（同一文档开着多份时才出现，显隐与点亮态见 refreshSyncButton）。
+// 初值由 index.html 给成 hidden —— 单次打开时不该有一颗点不动的键占着标题栏。
+const syncScrollBtn = el<HTMLButtonElement>("sync-scroll");
 const winMinimize = el<HTMLButtonElement>("win-minimize");
 const winMaximize = el<HTMLButtonElement>("win-maximize");
 const winClose = el<HTMLButtonElement>("win-close");
@@ -424,6 +427,10 @@ function handleUpdate(view: EditorView, update: ViewUpdate): void {
   const caretLine = view.state.doc.lineAt(caretPos);
   sessionStore.setCursor(tab.tabId, caretLine.number, caretPos - caretLine.from + 1);
   updatePositionOf(panel.panelId, view);
+  // B152：同步滚动模式下，激活文档这边一动光标（移动、输入都是 update）就带着
+  // 兄弟一起走。`isSyncSource` 保证只有「激活的那份」当源，兄弟自己被推时不会
+  // 反过来再推一次（见它的注释）。
+  if (isSyncSource(tab, panel)) pushSyncToSiblings(tab);
   // 文本是否真的变了：点击内容区、移动光标、切换视图、重新测量都会产生
   // update 但前后文本完全一致——那不是编辑。
   // 关键：md 预览重渲染**只**在文本真变化时才排程。若按「任意 update」排程，
@@ -488,6 +495,91 @@ function syncDocInstances(src: Tab, changes: ChangeSet): void {
   }
 }
 
+// ------------------------------------------------------- B152 同步滚动模式
+/**
+ * 按**文档**记的同步滚动开关（`docId → 是否开启`）。
+ *
+ * 默认一律关闭 —— B149 定的基线照旧：同源多实例各记各的光标与滚动位置。只有用户
+ * 按下标题栏那颗键才联动，并且**一个文档一份状态**：在几份之间切来切去，按钮**不
+ * 复位** —— 联动方向跟着激活态走，开关本身属于这个文档。
+ *
+ * 方向是**单向**的：永远「激活文档 → 其它实例」。反向同步（兄弟抢着当源）会让两份
+ * 滚动互相拉扯，用户看到的就是抖。
+ *
+ * ⚠️ 不落盘：会话结构动一次代价不小（B141 那批 `Tab` 字段还没迁进 session store），
+ *    而「默认不关联」本来就是保守口径 —— 重启回到关闭，按一下即可。
+ */
+const docSyncModes = new Map<number, boolean>();
+
+/**
+ * 这个实例此刻是不是它那个文档在同步模式下的**源**。
+ *
+ * 只有**激活面板里激活的那一份**算 —— 这正是「切换激活文档时按新的激活文档同步」
+ * 的实现方式：源换人，兄弟跟着新源走，而开关状态不动。
+ *
+ * ⚠️ 它同时是**回环闸门**：把值推给兄弟时，兄弟自己也会派发 update（光标）与 scroll，
+ *    若那时又推一次就成了 A→B→A 来回拉。兄弟恰好是激活标签的情况不存在（源才是），
+ *    所以这一句就掐断了回环 —— 别再叠一层多余的守卫去挡（B146 删过 `swappingView`，
+ *    挡掉的并不只是程序滚动）。
+ */
+function isSyncSource(tab: Tab, panel: Panel): boolean {
+  return (
+    docSyncModes.get(tab.docId) === true &&
+    panel.panelId === activePanelId &&
+    panel.activeTabId === tab.tabId
+  );
+}
+
+/** 这个实例此刻是否被某个面板的视图**正显示着**（不是「它的标签挂在那儿」）。 */
+function displayedPanelOfTab(tabId: number): Panel | undefined {
+  for (const p of panels.values()) {
+    if (p.view && p.viewTabId === tabId) return p;
+  }
+  return undefined;
+}
+
+/**
+ * 把源实例的**光标 + 滚动位置**推给同文档的其它实例（B152）。
+ *
+ * 兄弟分两种处理：
+ *   · 正挂在某个面板视图上的 —— 直接派发选区 / 钉滚动，用户才看得见「跟着动了」；
+ *   · 离屏的 —— 只改它自己的快照（`state` 的选区 + 位置），等切过去时自然生效。
+ *
+ * ⚠️ 位置这一路有三条纪律，踩任一条都会污染兄弟自己的记录：
+ *   1. 写快照只能走 `recordScroll`（B145 定的唯一闸口，还原期还会拒）；
+ *   2. 纯预览实例那个槽装的是**预览**侧的像素（B129），把编辑器侧的 px 塞进去只会
+ *      污染它 —— 那类实例只跟光标；
+ *   3. 钉 DOM 要套在 `restoringViewport` 里、并复用 `pinScrollTop` 的抑制区间，
+ *      否则兄弟那一发 scroll 会被记成「用户停过的位置」，再顺着它的滚动监听推回源。
+ */
+function pushSyncToSiblings(src: Tab): void {
+  if (docSyncModes.get(src.docId) !== true) return;
+  const sibs = instancesOfDoc(src.docId).filter((t) => t.tabId !== src.tabId);
+  if (sibs.length === 0) return;
+  const px = src.scrollTop;
+  // 光标位置取源的 `head`。同源内容一致，但离线那一份可能还没追上最新正文
+  // （`syncDocInstances` 对它是离线更新），所以要夹回它自己的行数再落。
+  const head = src.state.selection.main.head;
+  for (const other of sibs) {
+    const line = other.state.doc.lineAt(Math.min(head, other.state.doc.length));
+    const pos = Math.min(head, line.to);
+    const shown = displayedPanelOfTab(other.tabId);
+    // 先取局部变量：回调里 TS 不保留对 `panel.view` / `panel.viewTabId` 的收窄。
+    const shownView = shown?.view?.view;
+    if (shownView) {
+      shownView.dispatch({ selection: { anchor: pos } });
+    } else {
+      other.state = other.state.update({ selection: { anchor: pos } }).state;
+    }
+    if (px === null || other.viewMode === "preview") continue;
+    recordScroll(other.tabId, px);
+    if (!shown || !shownView) continue;
+    // 派发选区**在先**、钉位置在后：CM6 为了让光标可见可能自己滚一下，钉在后面
+    // 才能把它盖掉 —— 顺序反了就变成「位置被光标拽走」。
+    restoringViewport(other.tabId, () => pinScrollTop(shownView.scrollDOM, px));
+  }
+}
+
 // ---------------------------------------------------------------- 状态呈现
 
 function showMessage(text: string, isError = false): void {
@@ -523,6 +615,34 @@ function refreshTitle(): void {
     .catch((err) => {
       diagSetTitle = String(err);
     });
+  // B152：按钮的显隐与点亮态跟文档名一起刷新（切标签、脏态变化都走这里）。
+  refreshSyncButton(tab);
+}
+
+/**
+ * B152：同步滚动按钮的显隐与点亮态。
+ *
+ * 显隐条件是「**当前激活文档开着多份**」—— 只有一份时根本无从「同步」，摆一颗点不动
+ * 的键，用户只会以为坏了。
+ *
+ * ⚠️ 状态读的是 `docSyncModes`（按**文档**记），所以切换激活文档时这里读出来的仍是
+ *    那份文档自己的开关值 —— 按钮不复位，这正是「一个文档有一个同步滚动状态」。
+ */
+function refreshSyncButton(tab: Tab | undefined): void {
+  // 图标在启动时给过一次（见图标初始化那批），这里只管显隐与点亮态。
+  // 无文档 ⇒ 藏；数量是一个便宜的循环（实例数很小），不用缓存。
+  // ⚠️ 先算出布尔量：直接写 `hidden = !tab || …` 是收窄不了 `tab` 的，后面那句
+  //    `if (hidden) return` 挡不住「tab 可能是 undefined」这条报错。
+  const multi = !!tab && instancesOfDoc(tab.docId).length > 1;
+  syncScrollBtn.hidden = !multi;
+  if (!multi) return;
+  const on = docSyncModes.get(tab.docId) === true;
+  syncScrollBtn.classList.toggle("is-on", on);
+  // 开关的状态要用 aria-pressed 报给读屏器，光靠配色等于没报。
+  syncScrollBtn.setAttribute("aria-pressed", String(on));
+  const label = on ? "取消同步滚动" : "同步滚动";
+  syncScrollBtn.setAttribute("aria-label", label);
+  setTip(syncScrollBtn, on ? "同步滚动（已开启，其它份跟着这份走）" : "同步滚动（点击开启）");
 }
 
 function refreshStatus(): void {
@@ -549,6 +669,11 @@ function refreshAll(): void {
   refreshViewModeButton();
   updateTocDrawer();
   renderPanelTabs();
+  // B152：任何一次全局刷新（复制标签 / 分裂面板 / 认领标签 / 会话恢复…）之后，兄弟
+  // 实例都要对齐到当前激活文档 —— 新出现的那一份不该停在「还没同步过」的老位置上。
+  // 放在最后：这一轮该重建的 DOM 都落定了，钉下去不会被随后而来的还原盖掉。
+  const act = activeTab();
+  if (act) pushSyncToSiblings(act);
 }
 
 /**
@@ -827,6 +952,9 @@ function rebuildLayout(): void {
           // 滚到中段、没干别的事就关窗，会话里留下的还是上一次（滚之前那份），
           // 重启就回到老位置（B132）。防抖 800ms：滚动停下才写，不会每帧落盘。
           scheduleSessionSave();
+          // B152：滚的是激活的那份 ⇒ 兄弟跟着同一个位置走（单向，源永远是激活态）。
+          // 排在排程之后：本条监听的活儿跟它是两件事，别为 B132 那条契约挤在一起。
+          if (t && isSyncSource(t, p)) pushSyncToSiblings(t);
           // 预览→编辑器方向程序滚动期间忽略，防止回环抖动
           if (!t || !isMdTab(t) || t.viewMode !== "preview") return;
           if (preview.isSyncing()) return;
@@ -938,6 +1066,10 @@ function switchTab(panelId: number, tabId: number): void {
     refreshTitle();
     refreshStatus();
     updateTocDrawer();
+    // B152：切到新激活的那份之后，兄弟立刻按**新的源**对齐一次 —— 用户说得很明确：
+    // 「切换激活文档时则根据新的激活文档进行同步」。同步状态本身不动（按钮不复位）。
+    // 排在 refreshTitle 之后：显隐与点亮态在这一帧已经就绪。
+    if (tab) pushSyncToSiblings(tab);
   }
   renderPanelTabs(panelId);
   // 悬浮查找栏不随标签切换关闭——只把查询重新应用到新的活动视图
@@ -4812,6 +4944,17 @@ function bindEvents(): void {
   winClose.addEventListener("click", () => void getCurrentWindow().close());
   // 「钉在顶部」开关（B99）：都是「切换 + 回读」，逻辑见 togglePin。
   winPin.addEventListener("click", () => void togglePin());
+  // B152：同步滚动开关。按下就**立刻**推一次 —— 不用等用户再滚一下才看到「跟着动了」。
+  // 关闭则什么都不做（各回各的，与 B149 的基线一致）。
+  syncScrollBtn.addEventListener("click", () => {
+    const tab = activeTab();
+    if (!tab) return;
+    const on = docSyncModes.get(tab.docId) !== true;
+    docSyncModes.set(tab.docId, on);
+    logger.debug("sync", `同步滚动 → ${on ? "开" : "关"} docId=${tab.docId}`);
+    refreshSyncButton(tab);
+    if (on) pushSyncToSiblings(tab);
+  });
 
   sbLang.addEventListener("click", () => {
     if (isMdActive()) toggleViewMode();
@@ -5277,6 +5420,10 @@ function setupTitleBar(): void {
   // 置顶键不在这批里：它的字形要随置顶态在 pinned / unpin 之间切换（见 refreshPinButton）。
   // 这里先给「未置顶」那颗兜底，免得回读失败时按钮是个空块。
   winPin.innerHTML = CODICONS.unpin;
+  // B152：同步滚动键的字形是常量（开关只靠 `.is-on` 上色），启动时给一次就成了，
+  // 不必每次刷新标题都重设 innerHTML。（取 `sync` 而非 `refresh`：后者跟右上角更新键
+  // 撞形，见 codicons.ts 里那句说明。）
+  syncScrollBtn.innerHTML = CODICONS.sync;
   // 窗口的最大化态可能在别处变化（双击拖动区、Win+↑、右键系统菜单），统一靠 resize 回读。
   void getCurrentWindow()
     .onResized(() => void refreshMaximizeButton())
