@@ -346,6 +346,27 @@ body {
   display: none;
 }
 
+/* B166：自定义「unlink」字形 —— codicon 官方没有这颗，实现 = 官方 link 字形
+   （`<i class="codicon codicon-link codicon-unlink">`）+ 这里用**标题栏底色**的小杠
+   把 link 中间那根连接杆（官方路径 y=7..8 的横杠，x=5..11）抹掉。
+   用户在「去杠 / 叠斜线」两个方案里挑了去杠；斜线方案（unpin 的路数）被否。
+   ⚠️ 抹杠色必须是标题栏的底色（--bg-toolbar）：这颗键只活在标题栏里，
+      跟着主题走；别用 currentColor —— 那会把链环一起「擦」不出来。
+   ⚠️ 补丁范围（x 4.4→11.6）两端都收在链环之内：y=7..8 这一行链环的笔画只出现在
+      x≈2..3 与 x≈13..14（C 口朝内，中段是空的），补丁盖不到它们。 */
+.codicon-unlink {
+  position: relative;
+}
+.codicon-unlink::after {
+  content: "";
+  position: absolute;
+  left: 4.4px;
+  top: 6.9px;
+  width: 7.2px;
+  height: 2.2px;
+  background: var(--bg-toolbar);
+}
+
 /* ---------- 标题栏工具键（B99 / B103） ----------
    只放**开关型**工具键（现在一个：钉在顶部）。
    ⚠️ B103 起它的**尺寸 / 悬停 / 焦点环与窗口控制三键是同一条声明**（见下方
@@ -429,8 +450,9 @@ body {
   outline-offset: -2px;
 }
 
-/* 钉住态：只高亮图标，整按钮保持常态（透明背景），避免「整颗键点亮」喧宾夺主。
-   图标用强调色（--accent），与查找栏开关的点亮语言同源。 */
+/* 钉住态（B102 / B166）：字形直接反映状态（pinned / pin 切换），`.is-on` 的
+   强调色**保留** —— 用户最终拍板「还是保留 .is-on 配色」，字形与配色是两层信息。
+   图标规则必须排在 hover 之后（同特异度后写者胜），否则悬停色盖掉点亮色。 */
 .title-btn.is-on {
   background: transparent;
   color: var(--fg-muted);

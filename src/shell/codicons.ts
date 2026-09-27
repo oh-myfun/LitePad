@@ -52,25 +52,33 @@ const IDS = {
   chromeMaximize: "chrome-maximize",
   chromeClose: "chrome-close",
   chromeRestore: "chrome-restore",
-  // —— 标题栏右侧的工具键（B99 / B102）——
+  // —— 标题栏右侧的工具键（B99 / B102 / B166）——
   // 「钉在顶部」是**双字形开关**：已置顶画 `pinned`（斜图钉，钉住的状态），
-  // 未置顶画 `unpin`（斜图钉 + 斜杠）。字形直接反映**当前状态**，与按钮的 aria-pressed
+  // 未置顶画 `pin`（空心图钉）。字形直接反映**当前状态**，与按钮的 aria-pressed
   // 和 tooltip 文案（取消钉在顶部 / 钉在顶部）同一口径，读者不必猜哪边是开。
-  // （B102 之前只用一颗 `pin` + 按钮配色表达状态，用户要求改成两颗字形切换。）
+  // B166：不再用 `unpin`（斜杠那颗）当未置顶态 —— 用户点名「pinned 和 pin 图标切换」；
+  //   同时**不再靠 `.is-on` 配色**表达状态，全落在字形上。
   pinned: "pinned",
-  unpin: "unpin",
+  pin: "pin",
   // —— 右上角更新键（B107）——
   // 三态共用一颗按钮、字形即状态：发现新版本 = cloud-download（点击下载安装），
   // 下载中 = 小进度条（track + accent 填充，见 updater.ts 的 .upd-bar / .upd-bar-fill，
   //   替代原先的 loading 旋转动画），就绪待重启 = refresh（点击 relaunch）。
   cloudDownload: "cloud-download",
   refresh: "refresh",
-  // —— 标题栏文档名后的同步滚动键（B152 / B154）——
+  // —— 标题栏文档名后的同步滚动键（B152 / B154 / B166）——
   // 取 `link`（链条）而不是 B152 原来那颗 `sync`（圆箭头穿竖线）：链条画的正是
   // 「这几份被连在一起」，而 `sync` 那颗跟右上角更新键（`cloud-download` / `refresh`
   // 那一族）撞形 —— 同在标题栏里两颗都像「转圈」，用户分不清哪个管滚动、哪个管升级。
-  // 字形是**常量**（开合只靠 `.is-on` 上色），启动时给一次，不随标题刷新重设。
+  // B166：改成与置顶键同款的**双字形开关** —— 开 = `link`（连着），关 = `unlink`；
+  //   状态全落在字形上，不再靠 `.is-on` 配色。
+  // `unlink` 是**自定义字形**：codicon 官方没有 unlink（只有 link / link-external），
+  //   用户点名自己造一颗，并在「去杠 / 叠斜线」两个方案里挑了**去杠** —— 实现 =
+  //   官方 `link` 字形 + `.codicon-unlink` 的 CSS 抹掉中间那根连接杆（y=7..8 的横杠），
+  //   官方路径一个字节都不改（「不得手绘 SVG」红线的满足方式：裁剪而非绘制）。
+  //   抹杠的规则在 global.css（`.codicon-unlink::after`），这里只负责挂上修饰类。
   link: "link",
+  unlink: "link codicon-unlink",
   // —— 面板 / 标签 ——
   circleFilled: "circle-filled",
   // —— 标签上的文件类型字形（10 个家族，见 src/shell/fileicons.ts）——

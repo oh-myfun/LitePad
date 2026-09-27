@@ -107,6 +107,7 @@ describe("B97 自建标题栏", () => {
     expect(s, "关闭键悬停必须是系统约定的红底").toMatch(/\.win-btn-close:hover\s*\{[^}]*#e81123/);
     // 钉住态只高亮图标（.codicon），整按钮不点亮；图标规则必须排在 hover 之后
     // （同特异度后写者胜），否则悬停的继承色会盖掉图标高亮。
+    // B166：字形改成 pinned / pin 切换，但这层配色**保留**（用户拍板）。
     expect(
       s.indexOf(".win-btn:hover"),
       ".title-btn.is-on .codicon 必须写在 hover 之后（同特异度后写者胜）",
@@ -243,6 +244,7 @@ describe("B97 自建标题栏", () => {
     }
     // 钉住态只高亮图标，整按钮不得点亮：图标用强调色，整按钮不得再带 --find-opt-active
     // 背景 / inset 环 / 真 border（避免「整颗键点亮」）。
+    // B166：字形改成 pinned / pin 切换，但这层图标配色**保留**（用户拍板）。
     const on = ruleBlock(s, ".title-btn.is-on .codicon");
     expect(on, "钉住态必须用 .codicon 子选择器单独高亮图标").not.toBe("");
     expect(on, "图标高亮必须用强调色（--accent）").toContain("--accent");
@@ -342,23 +344,24 @@ describe("B97 自建标题栏", () => {
     expect(toggle, "置顶状态不得写回 settings").not.toMatch(/settings\.\w+\s*=/);
   });
 
-  it("B102：置顶键用 pinned / unpin 两颗字形切换，不靠按钮配色表达状态", () => {
+  it("B102：置顶键用 pinned / pin 两颗字形切换（.is-on 配色保留）", () => {
     const main = mainSrc();
     // ⚠️ B99 原本只挂一颗 `pin`、状态交给 .is-on 配色；用户要求改成**两颗字形**切换，
-    //    字形直接反映当前状态（已置顶 = pinned，未置顶 = unpin），别再退回单字形。
+    //    字形直接反映当前状态（已置顶 = pinned，未置顶 = pin），别再退回单字形。
+    //    B166：未置顶那颗从 unpin（斜杠）换成 pin（空心）—— 用户点名这两颗。
     expect(main, "不得再只用单颗 pin").not.toMatch(/\[winPin,\s*"pin"\]/);
     const refresh = topLevelFnBody(main, "async function refreshPinButton");
     expect(refresh, "取不到 refreshPinButton").toBeTruthy();
     expect(refresh, "字形必须由回读值决定").toMatch(
-      /winPin\.innerHTML = pinned \? CODICONS\.pinned : CODICONS\.unpin/,
+      /winPin\.innerHTML = pinned \? CODICONS\.pinned : CODICONS\.pin/,
     );
     // 启动链要先给一颗兜底字形，否则回读失败时按钮是空的
     const setup = topLevelFnBody(main, "function setupTitleBar");
-    expect(setup, "未置顶时的兜底字形").toContain("winPin.innerHTML = CODICONS.unpin");
+    expect(setup, "未置顶时的兜底字形").toContain("winPin.innerHTML = CODICONS.pin");
     // 两颗字形都必须真的存在（写错名 = 空图标，界面上只有一个方块）
     const codicons = readFileSync("src/shell/codicons.ts", "utf-8");
     expect(codicons, "codicons 必须有 pinned").toMatch(/^\s*pinned:\s*"pinned"/m);
-    expect(codicons, "codicons 必须有 unpin").toMatch(/^\s*unpin:\s*"unpin"/m);
+    expect(codicons, "codicons 必须有 pin").toMatch(/^\s*pin:\s*"pin"/m);
   });
 
   it("B103：钉在顶部与窗口控制三键共用同一条声明（同宽 / 同高 / 同圆角）", () => {

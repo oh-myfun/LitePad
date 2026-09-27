@@ -449,7 +449,8 @@ describe("B154 / B157 样式：方形图标键，状态只靠图标颜色", () =
     expect(hover, "要能定位共享 hover 规则").toContain("color: var(--fg)");
     expect(hover, "hover 不许铺底").not.toMatch(/background:\s*var\(--bg-hover\)/);
     expect(hover, "这一族三个成员都要覆盖到").toContain(".title-btn.upd-btn:hover");
-    // 开启态仍走那条全局规则（特异度 0-2-0，盖得住 hover 的 color）—— 别另起一套。
+    // B166：字形改成 link / unlink 切换，但开态强调色**保留**（用户拍板）——
+    // 仍走那条全局规则（特异度 0-2-0，盖得住 hover 的 color），别另起一套。
     expect(css, "点亮态只上色图标").toMatch(
       /\.title-btn\.is-on \.codicon \{[\s\S]*?color: var\(--accent\);/,
     );
@@ -468,9 +469,8 @@ describe("B152 样式：hidden 必须显式生效", () => {
 // ------------------------------------------------------- 反向验证
 // 把上面的实现退回两种错的写法，对应用例必须变红 —— 否则「改了等于没改」，
 // 静态契约就会变成假绿（viewport-restore / session-scroll-integral 各自栽过一次）。
-describe("B154 字形：link（链条），常量，启动时给一次", () => {
+describe("B154 / B166 字形：link（链条），随开关在 link / unlink 间切换", () => {
   it("字形取 link —— 链条画的正是「这几份连在一起」，且不跟更新键那族撞形", () => {
-    expect(main, "字形要取 link").toMatch(/syncScrollBtn\.innerHTML = CODICONS\.link;/);
     const cod = readFileSync("src/shell/codicons.ts", "utf-8");
     expect(cod, "link 字形要在取用层登记").toMatch(/^\s*link: "link",/m);
     // 短名要真的能在 codicon 字体里取到字 —— 写个名字不存在的字形就是一枚空白方块。
@@ -478,11 +478,16 @@ describe("B154 字形：link（链条），常量，启动时给一次", () => {
     expect(codiconCss, "codicon 字体里要有 link 这一码位").toMatch(/\.codicon-link:before/);
   });
 
-  it("refreshSyncButton 只管显隐，字形不跟着标题刷新重设", () => {
-    // 图标是常量，每次刷新标题都重设 innerHTML 是白费功夫，还白打断一次重排。
-    expect(BTN_BODY, "refreshSyncButton 不许碰 innerHTML").not.toContain("innerHTML");
+  it("B166：refreshSyncButton 要按开关切换字形（link / unlink）", () => {
+    // B166 起状态落在**字形**上（开 = link 连着、关 = unlink 链环分开），
+    // 与置顶键的 pinned / pin 同一口径；启动兜底给「未开启」那颗。
+    expect(BTN_BODY, "字形要由开关值决定").toMatch(
+      /syncScrollBtn\.innerHTML = on \? CODICONS\.link : CODICONS\.unlink;/,
+    );
     const setup = slice(main, "function setupTitleBar(", "\nfunction ");
-    expect(setup, "字形要落在启动那批里").toContain("syncScrollBtn.innerHTML = CODICONS.link;");
+    expect(setup, "启动兜底要给未开启态的字形").toContain(
+      "syncScrollBtn.innerHTML = CODICONS.unlink;",
+    );
   });
 });
 
@@ -591,29 +596,57 @@ describe("B152 反向验证：退回旧写法，上面那几条必须变红", ()
   });
 
   it("退回「用 sync 字形」→「链条」那条必须落空", () => {
-    const ORIG = "syncScrollBtn.innerHTML = CODICONS.link;";
+    const ORIG = "syncScrollBtn.innerHTML = on ? CODICONS.link : CODICONS.unlink;";
     expect(main, "退化串要先自证原句还在").toContain(ORIG);
     const degraded = main.replace(ORIG, "syncScrollBtn.innerHTML = CODICONS.sync;");
     expect(degraded, "退回 sync 就退回圆箭头、跟右上角更新键族撞形了").not.toMatch(
-      /syncScrollBtn\.innerHTML = CODICONS\.link;/,
+      /syncScrollBtn\.innerHTML = on \? CODICONS\.link : CODICONS\.unlink;/,
     );
   });
 
-  it("把字形挪回 refreshSyncButton → 「只管显隐」那条必须落空", () => {
-    const ORIG = "  syncScrollBtn.innerHTML = CODICONS.link;";
+  it("B166 反向验证：把字形切换从 refreshSyncButton 摘掉 → 上一条必须落空", () => {
+    const ORIG = "  syncScrollBtn.innerHTML = on ? CODICONS.link : CODICONS.unlink;";
     expect(main, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main
-      .replace(ORIG, "")
-      .replace(
-        "function refreshSyncButton(tab: Tab | undefined): void {",
-        "function refreshSyncButton(tab: Tab | undefined): void {\n  syncScrollBtn.innerHTML = CODICONS.link;",
-      );
+    const degraded = main.replace(ORIG, "");
     const body = slice(degraded, "function refreshSyncButton(", "function refreshStatus(");
-    expect(body, "挪过去后它就碰 innerHTML 了").toContain("innerHTML");
-    expect(
-      slice(degraded, "function setupTitleBar(", "\nfunction "),
-      "启动那批里就没这条了",
-    ).not.toContain(ORIG.trim());
+    expect(body, "摘掉后「字形要由开关值决定」必须落空").not.toMatch(
+      /syncScrollBtn\.innerHTML = on \? CODICONS\.link : CODICONS\.unlink;/,
+    );
+  });
+
+  it("B166：codicons 要有 pin / unlink 两颗新字形（unpin 退场）", () => {
+    const codicons = readFileSync("src/shell/codicons.ts", "utf-8");
+    expect(codicons, "codicons 必须有 pin（未置顶态）").toMatch(/^\s*pin:\s*"pin"/m);
+    expect(codicons, "codicons 必须有 unlink（自定义去杠字形）").toMatch(
+      /^\s*unlink:\s*"link codicon-unlink"/m,
+    );
+    expect(codicons, "unpin 已无消费方，不许再留在 IDS 里").not.toMatch(/^\s*unpin:/m);
+  });
+
+  it("B166：unlink 的抹杠规则要用标题栏底色（官方 link 字形 + CSS 裁剪）", () => {
+    expect(css, "抹杠规则要挂在 .codicon-unlink 上").toMatch(/\.codicon-unlink\s*\{/);
+    const patch = slice(css, ".codicon-unlink::after {", "}");
+    expect(patch, "要能定位抹杠补丁").not.toBe("");
+    expect(patch, "补丁必须是标题栏底色（跟着主题走）").toContain("var(--bg-toolbar)");
+    expect(patch, "补丁要盖住 y=7..8 的连接杆").toMatch(/top:\s*6(\.\d+)?px/);
+  });
+
+  it("B166 反向验证：把 unlink 退化成官方 link（不抹杠）→ 上一条必须落空", () => {
+    const ORIG = 'unlink: "link codicon-unlink",';
+    expect(readFileSync("src/shell/codicons.ts", "utf-8"), "退化串要先自证原句还在").toContain(
+      ORIG,
+    );
+    // 退化后 codicons.ts 里不再有 codicon-unlink 修饰类 ⇒「抹杠规则」的判定落空
+    const degraded = readFileSync("src/shell/codicons.ts", "utf-8").replace(
+      ORIG,
+      'unlink: "link",',
+    );
+    // ⚠️ 别用 `not.toContain("codicon-unlink")` 自证：IDS 那一段的**注释**里也写着
+    //    codicon-unlink，整文件判 contains 永远为真 ⇒ 退化用例自己假绿。按行判。
+    expect(degraded, "退化实现应真的换了写法（按行判）").toMatch(/^\s*unlink:\s*"link",/m);
+    expect(degraded, "「必须有 unlink（自定义去杠字形）」此时必须落空").not.toMatch(
+      /^\s*unlink:\s*"link codicon-unlink"/m,
+    );
   });
 
   it("删掉 .sync-btn[hidden] → 样式那条必须落空", () => {

@@ -758,6 +758,10 @@ function refreshSyncButton(tab: Tab | undefined): void {
   syncScrollBtn.hidden = !multi;
   if (!multi) return;
   const on = docSyncModes.get(tab.docId) === true;
+  // B166：字形随开关切换 —— 开 = link（连着）、关 = unlink（链环分开的那颗）。
+  // 状态全落在字形上（与置顶键同口径），不再靠配色；`.is-on` 只留给 aria /
+  // tooltip 那层语义，视觉上与常态无差。
+  syncScrollBtn.innerHTML = on ? CODICONS.link : CODICONS.unlink;
   syncScrollBtn.classList.toggle("is-on", on);
   // 开关的状态要用 aria-pressed 报给读屏器，光靠配色等于没报。
   syncScrollBtn.setAttribute("aria-pressed", String(on));
@@ -5618,13 +5622,13 @@ function setupTitleBar(): void {
     [winClose, "chromeClose"],
   ];
   for (const [btn, name] of icons) btn.innerHTML = CODICONS[name];
-  // 置顶键不在这批里：它的字形要随置顶态在 pinned / unpin 之间切换（见 refreshPinButton）。
+  // 置顶键的字形随置顶态在 pinned / pin 之间切换（见 refreshPinButton）。
   // 这里先给「未置顶」那颗兜底，免得回读失败时按钮是个空块。
-  winPin.innerHTML = CODICONS.unpin;
-  // B152 / B154：同步滚动键的字形是常量（开关只靠 `.is-on` 上色），启动时给一次就成了，
-  // 不必每次刷新标题都重设 innerHTML。（取 `link` 而非 `sync`：后者跟右上角更新键
-  // 撞形，见 codicons.ts 里那句说明。）
-  syncScrollBtn.innerHTML = CODICONS.link;
+  winPin.innerHTML = CODICONS.pin;
+  // B152 / B154 / B166：同步滚动键是双字形开关 —— 开 = link（连着）、关 = unlink
+  // （官方 link 字形 + CSS 抹掉中间连接杆，见 global.css 的 .codicon-unlink）。
+  // 启动先给「未开启」那颗兜底；refreshSyncButton 每次显形都会按状态重设。
+  syncScrollBtn.innerHTML = CODICONS.unlink;
   // 窗口的最大化态可能在别处变化（双击拖动区、Win+↑、右键系统菜单），统一靠 resize 回读。
   void getCurrentWindow()
     .onResized(() => void refreshMaximizeButton())
@@ -5674,10 +5678,10 @@ async function refreshPinButton(): Promise<void> {
   } catch {
     return;
   }
-  // 字形直接反映**当前状态**：已置顶 = pinned（斜图钉），未置顶 = unpin（带斜杠）。
-  // （B102 之前只用一颗 pin、靠 .is-on 配色表达状态；现在两颗字形切换，
-  //   .is-on 仍保留 —— 它给的是「激活」的视觉底，与字形是两层信息。）
-  winPin.innerHTML = pinned ? CODICONS.pinned : CODICONS.unpin;
+  // 字形直接反映**当前状态**：已置顶 = pinned（斜图钉），未置顶 = pin（空心图钉）。
+  // B166：未置顶那颗从 unpin（斜杠）换成 pin —— 用户点名「pinned 和 pin 图标切换」；
+  //   同时不再靠 `.is-on` 配色（那套强调色已从 CSS 删掉），状态全落在字形上。
+  winPin.innerHTML = pinned ? CODICONS.pinned : CODICONS.pin;
   winPin.classList.toggle("is-on", pinned);
   // 开关型控件的状态要用 aria-pressed 报给读屏器，光靠配色等于没报。
   winPin.setAttribute("aria-pressed", pinned ? "true" : "false");
