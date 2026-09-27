@@ -3,8 +3,17 @@
 // 该文件的光标和滚动位置会自动随激活文档的值进行同步变化（切换激活文档时则根据新的
 // 激活文档进行同步，且同步按钮状态不变，也就是一个文档有一个同步滚动状态）」
 //
-// B149 定的基线不变：**默认不关联**。联动是显式按下的结果，并且方向永远单向
-// （激活文档 → 其它实例）—— 反向同步会让两份滚动互相拉扯，用户看到的就是抖。
+// B149 定的基线不变：**默认不关联**。联动是显式按下的结果。
+//
+// B154 起触发面又放宽了两处（用户原话：「窗口没有激活时鼠标放在一个视口中也能进行
+// 滚动，这时同步滚动也要能生效」「就算一个预览一个源码，同步滚动也要生效」）：
+//   · **位置**同步不再要求「源是激活面板的激活标签」—— 谁滚谁当源，鼠标没点过的
+//     视口也能带着兄弟走；回环改由 `viewportWriteDepth` + `restoringViewport`
+//     的两帧窗口自限（B142 那套），不再靠「只有激活的那份能当源」。
+//   · **光标**那一半仍是单源（`isSyncSource`）—— 选区互推会互相抢，而移动鼠标
+//     并不改变激活面板。
+//   · **跨视图模式**（一个源码 / 一个预览）也要联动：坐标按「源显示在哪一侧」取、
+//     按「兄弟显示在哪一侧」落，中间那次顶行⇄行号换算是唯一允许的两种坐标系。
 //
 // 全部盯在源码契约上（`src/main.ts` / `index.html` / `global.css`），与
 // `tests/viewport-restore.test.ts` 同一路数：这套代码跑在 Tauri 里，jsdom 复现不了
@@ -15,6 +24,11 @@ import { readFileSync } from "node:fs";
 const main = readFileSync("src/main.ts", "utf-8");
 const html = readFileSync("index.html", "utf-8");
 const css = readFileSync("src/styles/global.css", "utf-8");
+
+/** 编辑器滚动监听那条（含它前面那几行自限守卫）—— 与下面几条同一段切片。 */
+function scrollBodyOf(src: string): string {
+  return slice(src, 'shownView.scrollDOM.addEventListener("scroll"', "attachPasteHandler(p);");
+}
 
 /** 抠出一段源码（按首尾标记切片）—— 段落格式会随排版变，标记要挑稳的。 */
 function slice(src: string, from: string, to: string): string {
@@ -65,11 +79,90 @@ describe("B152 同步滚动模式：按钮与状态", () => {
     expect(BTN_BODY, "刷新按钮只许读状态").not.toMatch(/docSyncModes\.set\(/);
   });
 
-  it("方向是单向的：只有激活面板里激活的那一份才是源", () => {
+  it("光标那一半仍是单向的：只有激活面板里激活的那一份才是源", () => {
+    // ⚠️ B154 只在**位置**那一半放宽了「谁当源」，光标这半边不动：选区互推会互相抢，
+    //    而移动鼠标并不改变激活面板，非激活那份的光标本来就是被同步推过去的结果。
     expect(SRC_BODY, "必须先确认同步已开启").toMatch(/docSyncModes\.get\(tab\.docId\) === true/);
     // 少认一条就会「非激活的那份也当源」，兄弟之间开始互相拉扯。
     expect(SRC_BODY, "要认激活面板").toMatch(/panel\.panelId === activePanelId/);
     expect(SRC_BODY, "要认激活标签").toMatch(/panel\.activeTabId === tab\.tabId/);
+    // 它只剩光标这一半的闸门：位置那两条滚动监听不许再挂这个前置。
+    // ⚠️ 判据里带括号 —— 源码那段的注释里也提到这个名字，只认字面会连注释一起命中。
+    const scroll = slice(
+      main,
+      'shownView.scrollDOM.addEventListener("scroll"',
+      "attachPasteHandler(p);",
+    );
+    expect(scroll, "编辑器滚动监听不许再要求源是激活的").not.toMatch(/isSyncSource\(/);
+  });
+});
+
+// ------------------------------------------------------- B154：同步的触发面
+describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
+  it("预览态兄弟按**行**定位，不把编辑器像素塞进预览槽", () => {
+    const guard = '    if (other.viewMode === "preview") {';
+    expect(PUSH_BODY, "预览态要走专门的分支").toContain(guard);
+    // 换算出来的这一笔也必须走唯一闸口，且值取的是**预览容器**自己的像素。
+    expect(PUSH_BODY, "预览兄弟的位置也要走记录闸口").toMatch(
+      /recordScroll\(other\.tabId, shown\.preview\.root\.scrollTop\);/,
+    );
+    // ⚠️ 顺序：换算分支必须排在「px 直推」那条之前，否则编辑器 px 会先落到预览槽里。
+    const g = PUSH_BODY.indexOf(guard);
+    const r = PUSH_BODY.indexOf("recordScroll(other.tabId, px)");
+    expect(g).toBeGreaterThan(-1);
+    expect(r, "px 直推那笔也要在（源码→源码那条老路径）").toBeGreaterThan(-1);
+    expect(g, "预览分支要写在 px 直推之前").toBeLessThan(r);
+  });
+
+  it("预览态的槽是预览像素，不能被当成编辑器像素拿去推源码兄弟", () => {
+    // 这是「一个预览一个源码」原先不生效的根因之一：源在预览里时 `src.scrollTop`
+    // 装的是预览像素，直接拿去 pin 兄弟的编辑器，落点必然是错的。
+    expect(PUSH_BODY, "源是预览态时不许取 px").toMatch(
+      /const px = srcPreview \? null : src\.scrollTop;/,
+    );
+    expect(PUSH_BODY, "源那侧要先认出预览容器").toMatch(
+      /src\.viewMode === "preview" \? srcPanel\?\.preview/,
+    );
+    // 坐标从源显示的那一侧取：预览侧取顶行，源码侧取编辑器可视区顶行。
+    expect(PUSH_BODY, "预览侧坐标走 topVisibleLine").toMatch(/srcPreview\.topVisibleLine\(\)/);
+    expect(PUSH_BODY, "源码侧坐标走 topVisibleLineOf").toMatch(/topVisibleLineOf\(srcView\)/);
+  });
+
+  it("两条滚动监听都是「谁滚谁当源」，不再要求源是激活的那份", () => {
+    const scroll = slice(
+      main,
+      'shownView.scrollDOM.addEventListener("scroll"',
+      "attachPasteHandler(p);",
+    );
+    expect(scroll, "编辑器里滚要推兄弟").toMatch(/\n\s*if \(t\) pushSyncToSiblings\(t\);\n/);
+    // ⚠️ 判据里带括号：那段的注释也提到这个名字，只认字面会连注释一起命中（假绿）。
+    expect(scroll, "这条不许再挂 isSyncSource 前置").not.toMatch(/isSyncSource\(/);
+    // 预览容器那条：挂在 `restoringViewports` 自检之后（兄弟被定位的两帧里不许回推）。
+    const prev = slice(main, 'preview.root.addEventListener("scroll"', "applyPanelMode(p);");
+    expect(prev, "预览里滚也要推兄弟").toMatch(/^\s*pushSyncToSiblings\(t\);/m);
+    const atGuard = prev.indexOf("restoringViewports.has(t.tabId)");
+    const atPush = prev.indexOf("pushSyncToSiblings(t);");
+    expect(atGuard, "要能定位那道自限守卫").toBeGreaterThan(-1);
+    expect(atPush, "要能定位推同步那句").toBeGreaterThan(-1);
+    expect(atPush, "推同步要排在守卫之后（否则回环闸门形同虚设）").toBeGreaterThan(atGuard);
+  });
+
+  it("位置同步的回环闸门：自限守卫仍在两条监听的首段", () => {
+    // 「谁滚谁当源」的代价是少了一道天然闸门，回环全靠这两条自限 —— 少一条就是抖动。
+    expect(scrollBodyOf(main), "程序滚动期间不许推").toMatch(
+      /if \(viewportWriteDepth > 0\) return;/,
+    );
+    const scroll = scrollBodyOf(main);
+    expect(scroll, "还原窗口里不许推").toMatch(/if \(t && restoringViewports\.has/);
+    // 两道守卫都要排在「推兄弟」之前，反了就挡不住下一帧才到的那发 scroll。
+    const atDepth = scroll.indexOf("viewportWriteDepth > 0");
+    const atRestore = scroll.indexOf("restoringViewports.has(t.tabId)");
+    const atPush = scroll.indexOf("pushSyncToSiblings(t)");
+    expect(atDepth, "要能定位抑制区间那行").toBeGreaterThan(-1);
+    expect(atRestore, "要能定位还原窗口那行").toBeGreaterThan(-1);
+    expect(atPush, "要能定位推同步那句").toBeGreaterThan(-1);
+    expect(atPush, "推同步要排在两道守卫之后").toBeGreaterThan(atDepth);
+    expect(atPush, "推同步也要排在还原窗口守卫之后").toBeGreaterThan(atRestore);
   });
 });
 
@@ -85,14 +178,14 @@ describe("B152 同步滚动模式：推进与触发点", () => {
     expect(PUSH_BODY, "位置要走唯一闸口").toMatch(/recordScroll\(other\.tabId, px\);/);
   });
 
-  it("纯预览实例只跟光标，不把编辑器像素塞进预览槽", () => {
-    const guard = `if (px === null || other.viewMode === "preview") continue;`;
-    expect(PUSH_BODY, "预览态要跳过位置同步").toContain(guard);
+  it("离屏的预览实例不写任何位置（否则就是拿编辑器像素污染预览槽）", () => {
+    const guard = "if (line === null || !shown?.preview) continue;";
+    expect(PUSH_BODY, "离屏预览兄弟要跳过").toContain(guard);
     // ⚠️ 顺序也要盯：这条 continue 必须排在 recordScroll 之前 —— 反了就把编辑器侧的
     //    px 写进「预览那一侧」的槽（B129 的语义），切回源码时位置就错了。
     //    两个下标都要先自证存在，否则「找不到 = -1」会让顺序比较永远成立（假绿）。
     const g = PUSH_BODY.indexOf(guard);
-    const r = PUSH_BODY.indexOf("recordScroll(other.tabId");
+    const r = PUSH_BODY.indexOf("recordScroll(other.tabId, px)");
     expect(g).toBeGreaterThan(-1);
     expect(r).toBeGreaterThan(-1);
     expect(g, "跳过要写在写记录之前").toBeLessThan(r);
@@ -114,9 +207,7 @@ describe("B152 同步滚动模式：推进与触发点", () => {
     expect(main, "光标与编辑之后要推").toMatch(
       /if \(isSyncSource\(tab, panel\)\) pushSyncToSiblings\(tab\);/,
     );
-    expect(main, "用户滚动之后要推").toMatch(
-      /if \(t && isSyncSource\(t, p\)\) pushSyncToSiblings\(t\);/,
-    );
+    expect(main, "用户滚动之后要推：谁滚谁当源").toMatch(/if \(t\) pushSyncToSiblings\(t\);/);
     // 「切换激活文档时则根据新的激活文档进行同步」—— 这一句就落在 switchTab 末尾。
     expect(main, "切激活文档后要按新源推").toMatch(/if \(tab\) pushSyncToSiblings\(tab\);/);
     expect(main, "全局刷新兜底（新出现的那一份要对齐）").toMatch(/const act = activeTab\(\);/);
@@ -126,6 +217,32 @@ describe("B152 同步滚动模式：推进与触发点", () => {
     expect(CLICK_BODY, "点击要先改状态").toMatch(/docSyncModes\.set\(tab\.docId, on\);/);
     expect(CLICK_BODY, "开启后立刻推").toMatch(/if \(on\) pushSyncToSiblings\(tab\);/);
     expect(CLICK_BODY, "要顺手刷新按钮（点亮态 + 提示）").toMatch(/refreshSyncButton\(tab\);/);
+  });
+});
+
+describe("B154 样式：方形图标键，状态只靠图标颜色", () => {
+  it("覆盖 .title-btn 那批的尺寸与铺底（写在它们之后才压得住）", () => {
+    // 46px 满高 + 悬停淡底都是共用声明给的，这颗键不要它们。
+    const shared = css.indexOf(".win-btn,\n.title-btn,\n.menu-btn {");
+    const btn = css.indexOf(".sync-btn {");
+    expect(shared, "要能定位共用声明").toBeGreaterThan(-1);
+    expect(btn, "要能定位 .sync-btn").toBeGreaterThan(-1);
+    expect(btn, ".sync-btn 必须写在共用声明之后").toBeGreaterThan(shared);
+    // 方形：宽高都给死，别再吃 width:46px / height:100%。
+    const block = slice(css, ".sync-btn {", "}");
+    expect(block, "要给方形尺寸").toMatch(/width:\s*24px;/);
+    expect(block, "要给方形尺寸").toMatch(/height:\s*24px;/);
+    expect(block, "常态背景必须是透明的（没有按钮背景）").toMatch(/background:\s*transparent;/);
+  });
+
+  it("hover 也不铺底：状态一律只落在图标颜色上", () => {
+    const hover = slice(css, ".sync-btn:hover {", "}");
+    expect(hover, "要能定位 .sync-btn:hover").toContain("color: var(--fg)");
+    expect(hover, "hover 不许铺底").not.toMatch(/background:\s*var\(--bg-hover\)/);
+    // 开启态仍走那条全局规则（特异度 0-2-0，盖得住 hover 的 color）—— 别另起一套。
+    expect(css, "点亮态只上色图标").toMatch(
+      /\.title-btn\.is-on \.codicon \{[\s\S]*?color: var\(--accent\);/,
+    );
   });
 });
 
@@ -141,19 +258,21 @@ describe("B152 样式：hidden 必须显式生效", () => {
 // ------------------------------------------------------- 反向验证
 // 把上面的实现退回两种错的写法，对应用例必须变红 —— 否则「改了等于没改」，
 // 静态契约就会变成假绿（viewport-restore / session-scroll-integral 各自栽过一次）。
-describe("B152 字形：常量，启动时给一次", () => {
-  it("字形取 sync，别跟右上角更新键的 refresh 撞形", () => {
-    // 标题栏里两颗一样的圆箭头，用户分不清哪个管滚动、哪个管升级。
-    expect(main, "字形要取 sync").toMatch(/syncScrollBtn\.innerHTML = CODICONS\.sync;/);
+describe("B154 字形：link（链条），常量，启动时给一次", () => {
+  it("字形取 link —— 链条画的正是「这几份连在一起」，且不跟更新键那族撞形", () => {
+    expect(main, "字形要取 link").toMatch(/syncScrollBtn\.innerHTML = CODICONS\.link;/);
     const cod = readFileSync("src/shell/codicons.ts", "utf-8");
-    expect(cod, "sync 字形要在取用层登记").toMatch(/^\s*sync: "sync",/m);
+    expect(cod, "link 字形要在取用层登记").toMatch(/^\s*link: "link",/m);
+    // 短名要真的能在 codicon 字体里取到字 —— 写个名字不存在的字形就是一枚空白方块。
+    const codiconCss = readFileSync("node_modules/@vscode/codicons/dist/codicon.css", "utf-8");
+    expect(codiconCss, "codicon 字体里要有 link 这一码位").toMatch(/\.codicon-link:before/);
   });
 
   it("refreshSyncButton 只管显隐，字形不跟着标题刷新重设", () => {
     // 图标是常量，每次刷新标题都重设 innerHTML 是白费功夫，还白打断一次重排。
     expect(BTN_BODY, "refreshSyncButton 不许碰 innerHTML").not.toContain("innerHTML");
     const setup = slice(main, "function setupTitleBar(", "\nfunction ");
-    expect(setup, "字形要落在启动那批里").toContain("syncScrollBtn.innerHTML = CODICONS.sync;");
+    expect(setup, "字形要落在启动那批里").toContain("syncScrollBtn.innerHTML = CODICONS.link;");
   });
 });
 
@@ -180,15 +299,19 @@ describe("B152 反向验证：退回旧写法，上面那几条必须变红", ()
   });
 
   it("退回「直接写兄弟的 scrollTop，绕过唯一闸口」→ 位置那条必须落空", () => {
+    // ⚠️ 退化串要连着那行的缩进：函数里有两笔 `recordScroll(other.tabId, …)`，只按
+    //    短句 replace 的话替换掉的未必是这笔，断言就会落在另一笔上（假绿）。
     const ORIG = "recordScroll(other.tabId, px);";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
     const degraded = main.replace(ORIG, "other.scrollTop = px;");
     const body = slice(degraded, "function pushSyncToSiblings(", "function showMessage(");
-    expect(body, "绕过 recordScroll 的写法要被抓到").not.toMatch(/recordScroll\(other\.tabId/);
+    expect(body, "绕过 recordScroll 的写法要被抓到").not.toMatch(
+      /recordScroll\(other\.tabId, px\)/,
+    );
   });
 
-  it("删掉「预览态跳过位置」那句 → 顺序那条必须落空", () => {
-    const ORIG = `if (px === null || other.viewMode === "preview") continue;`;
+  it("删掉「离屏预览兄弟跳过位置」那句 → 顺序那条必须落空", () => {
+    const ORIG = "if (line === null || !shown?.preview) continue;";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
     const degraded = main.replace(ORIG, "");
     const body = slice(degraded, "function pushSyncToSiblings(", "function showMessage(");
@@ -203,23 +326,23 @@ describe("B152 反向验证：退回旧写法，上面那几条必须变红", ()
     expect(body, "裸钉的写法要被抓到").not.toMatch(/restoringViewport\(other\.tabId/);
   });
 
-  it("退回「用 refresh 字形」→ 撞形那条必须落空", () => {
-    const ORIG = "syncScrollBtn.innerHTML = CODICONS.sync;";
+  it("退回「用 sync 字形」→「链条」那条必须落空", () => {
+    const ORIG = "syncScrollBtn.innerHTML = CODICONS.link;";
     expect(main, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "syncScrollBtn.innerHTML = CODICONS.refresh;");
-    expect(degraded, "退回 refresh 就跟更新键撞形了").not.toMatch(
-      /syncScrollBtn\.innerHTML = CODICONS\.sync;/,
+    const degraded = main.replace(ORIG, "syncScrollBtn.innerHTML = CODICONS.sync;");
+    expect(degraded, "退回 sync 就退回圆箭头、跟右上角更新键族撞形了").not.toMatch(
+      /syncScrollBtn\.innerHTML = CODICONS\.link;/,
     );
   });
 
   it("把字形挪回 refreshSyncButton → 「只管显隐」那条必须落空", () => {
-    const ORIG = "  syncScrollBtn.innerHTML = CODICONS.sync;";
+    const ORIG = "  syncScrollBtn.innerHTML = CODICONS.link;";
     expect(main, "退化串要先自证原句还在").toContain(ORIG);
     const degraded = main
       .replace(ORIG, "")
       .replace(
         "function refreshSyncButton(tab: Tab | undefined): void {",
-        "function refreshSyncButton(tab: Tab | undefined): void {\n  syncScrollBtn.innerHTML = CODICONS.sync;",
+        "function refreshSyncButton(tab: Tab | undefined): void {\n  syncScrollBtn.innerHTML = CODICONS.link;",
       );
     const body = slice(degraded, "function refreshSyncButton(", "function refreshStatus(");
     expect(body, "挪过去后它就碰 innerHTML 了").toContain("innerHTML");
@@ -232,5 +355,67 @@ describe("B152 反向验证：退回旧写法，上面那几条必须变红", ()
   it("删掉 .sync-btn[hidden] → 样式那条必须落空", () => {
     const degraded = css.replace(/\.sync-btn\[hidden\]\s*\{\s*display:\s*none;\s*\}/, "");
     expect(degraded, "删掉后不该还有这条规则").not.toMatch(/\.sync-btn\[hidden\]/);
+  });
+});
+
+// ------------------------------------------------------- B154 反向验证
+describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须变红", () => {
+  it("把位置同步退回「只认激活的那份」→ 「谁滚谁当源」必须落空", () => {
+    const ORIG = "if (t) pushSyncToSiblings(t);";
+    expect(main, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = main.replace(ORIG, "if (t && isSyncSource(t, p)) pushSyncToSiblings(t);");
+    // 退回后编辑器那一侧又要求「源是激活的」，鼠标没点过的视口就带不动兄弟了。
+    expect(degraded, "退回后编辑器监听又挂回激活判定").toMatch(
+      /if \(t && isSyncSource\(t, p\)\) pushSyncToSiblings\(t\);/,
+    );
+    const scroll = slice(
+      degraded,
+      'shownView.scrollDOM.addEventListener("scroll"',
+      "attachPasteHandler(p);",
+    );
+    expect(scroll, "退回后编辑器监听就不再是「谁滚谁当源」了").not.toMatch(
+      /\n\s*if \(t\) pushSyncToSiblings\(t\);\n/,
+    );
+  });
+
+  it("从预览监听里删掉推兄弟那句 → 「两条滚动监听」那条必须落空", () => {
+    const ORIG = "pushSyncToSiblings(t);";
+    const at = main.lastIndexOf(ORIG);
+    expect(at, "退化串要先自证原句还在").toBeGreaterThan(-1);
+    // ⚠️ 按位置切：编辑器那侧也有一笔同形，整串 replace 会删到错的那笔（假绿）。
+    const degraded = main.slice(0, at) + main.slice(at + ORIG.length);
+    const prev = slice(degraded, 'preview.root.addEventListener("scroll"', "applyPanelMode(p);");
+    // ⚠️ 判据要认**调用**形态（`pushSyncToSiblings(t);`）—— 那段的注释里也提名了这
+    //    个函数，只认字面会命中注释，退化看着「没生效」（跟 isSyncSource 那次同坑）。
+    expect(prev, "预览监听退回后就不再推兄弟了").not.toMatch(/pushSyncToSiblings\(t\);/);
+  });
+
+  it("退回「源在预览里也拿 src.scrollTop 当编辑器像素」→ 坐标系那条必须落空", () => {
+    const ORIG = "const px = srcPreview ? null : src.scrollTop;";
+    expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = main.replace(ORIG, "const px = src.scrollTop;");
+    const body = slice(degraded, "function pushSyncToSiblings(", "function showMessage(");
+    expect(body, "退回后就不认「预览那侧不产 px」这条纪律了").not.toMatch(ORIG);
+  });
+
+  it("退回「预览兄弟只跟光标、不跟位置」→ 行定位那条必须落空", () => {
+    const ORIG = "recordScroll(other.tabId, shown.preview.root.scrollTop);";
+    expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = main.replace(ORIG, "");
+    const body = slice(degraded, "function pushSyncToSiblings(", "function showMessage(");
+    expect(body, "删掉这笔记录后，预览兄弟就没位置可落了").not.toMatch(
+      /recordScroll\(other\.tabId, shown/,
+    );
+  });
+
+  it("把状态颜色退回「整颗键铺底」→ 外观那条必须落空", () => {
+    // 用户要的是「干脆没有按钮背景」，hover 与同步都靠图标颜色 —— 铺底等于退回 B152。
+    const ORIG = ".sync-btn:hover {\n  background: transparent;\n  color: var(--fg);\n}";
+    expect(css, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = css.replace(ORIG, ".sync-btn:hover {\n  background: var(--bg-hover);\n}");
+    expect(degraded, "退回铺底后就不是「没有按钮背景」了").not.toContain(ORIG);
+    expect(degraded, "方形尺寸那几条也还得在，别顺手一起删了").toMatch(
+      /\.sync-btn \{[\s\S]*?height: 24px;/,
+    );
   });
 });

@@ -316,11 +316,9 @@ body {
 /* B152：同步滚动开关，贴在文档名后面（同一文档开着多份时才由 refreshTitle 显隐）。
    ⚠️ `[hidden]` 必须显式给一条：`.win-btn, .title-btn, .menu-btn` 那条共用声明写死了
    `display:inline-flex`，作者样式压过 UA 的 `[hidden]{display:none}` —— 不加这条，
-   单开一份时标题栏里就会留下一块空的 46px 方键。 */
-.sync-btn {
-  flex: 0 0 auto;
-  margin-left: 6px;
-}
+   单开一份时标题栏里就会留下一块空的 46px 方键。
+   ⚠️ 尺寸 / 背景那几条**不在这儿**：它们要压过共用声明，收起的判据不会冲突
+      （`[hidden]` 那条是 0-2-0，赢面与位置无关），所以留在下面「窗口控制」那节末尾。 */
 
 .sync-btn[hidden] {
   display: none;
@@ -444,6 +442,33 @@ html[data-window-kind="satellite"] .menu-bar {
   width: auto;
   padding: 0 10px;
   font-size: 12.5px;
+}
+
+/* ---------- 同步滚动键（B152 / B154）----------
+   同一个文档开着多份时贴在文档名后面（显隐见 refreshTitle）。
+
+   ⚠️ 这颗键的观感**刻意不跟** `.win-btn, .title-btn, .menu-btn` 那批走 —— 用户要
+      「方形、干脆没有按钮背景，hover 与同步状态全靠图标颜色提示」。于是：
+        · 常态与悬停**都不铺底**（逐条覆盖 `.title-btn:hover` 的 `--bg-hover`）；
+        · 颜色照样变，只是落在**图标**上：常态 `--fg-muted` → hover `--fg`
+          （按钮上那条 `color` 被 `.codicon` 继承下去）→ 开启态由
+          `.title-btn.is-on .codicon` 取 `--accent`（那条特异度 0-2-0，盖得住 hover）。
+        · 尺寸从「46px 满高方键」改成 24×24 的方形图标键 —— 三键那边保持满高不变
+          （B103 的口径），这里要的是「一枚方形图标」，不是「一颗占半截标题栏的按钮」。
+   ⚠️ 本块必须留在共用声明与 `:hover` **之后**：`.sync-btn` / `.sync-btn:hover` 都是
+      0-1-0，同特异度下写在前头就会被 46px 与悬停底色压回去。 */
+.sync-btn {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  margin-left: 6px;
+  border-radius: 3px;
+  background: transparent;
+}
+
+.sync-btn:hover {
+  background: transparent;
+  color: var(--fg);
 }
 
 /* （B103 已删：菜单按钮曾用 .mnemonic 给首字加下划线标助记符。

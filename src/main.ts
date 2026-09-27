@@ -521,6 +521,11 @@ const docSyncModes = new Map<number, boolean>();
  *    若那时又推一次就成了 A→B→A 来回拉。兄弟恰好是激活标签的情况不存在（源才是），
  *    所以这一句就掐断了回环 —— 别再叠一层多余的守卫去挡（B146 删过 `swappingView`，
  *    挡掉的并不只是程序滚动）。
+ *
+ * ⚠️ B154 起它**只守光标那一半**：两条滚动监听已经改成「谁滚谁当源」（用户要求窗口
+ *    没激活、面板没点过时也能同步），位置同步的回环由 `viewportWriteDepth` 与
+ *    `restoringViewport` 的两帧窗口自限。选区不同 —— 移动鼠标不改变激活面板，非激活
+ *    那份的光标本来就是被同步推过去的结果，让它也能当源就会跟「谁在编辑」打起来。
  */
 function isSyncSource(tab: Tab, panel: Panel): boolean {
   return (
@@ -545,24 +550,45 @@ function displayedPanelOfTab(tabId: number): Panel | undefined {
  *   · 正挂在某个面板视图上的 —— 直接派发选区 / 钉滚动，用户才看得见「跟着动了」；
  *   · 离屏的 —— 只改它自己的快照（`state` 的选区 + 位置），等切过去时自然生效。
  *
- * ⚠️ 位置这一路有三条纪律，踩任一条都会污染兄弟自己的记录：
+ * ⚠️ 位置这一路有四条纪律，踩任一条都会污染兄弟自己的记录：
  *   1. 写快照只能走 `recordScroll`（B145 定的唯一闸口，还原期还会拒）；
  *   2. 纯预览实例那个槽装的是**预览**侧的像素（B129），把编辑器侧的 px 塞进去只会
- *      污染它 —— 那类实例只跟光标；
+ *      污染它 —— 那类实例只跟光标；反过来，**预览态那份的槽里是预览像素，也不能被
+ *      当成编辑器像素拿去推源码兄弟**（B154：这正是「一个预览一个源码」原先不生效的
+ *      根因之一）；
  *   3. 钉 DOM 要套在 `restoringViewport` 里、并复用 `pinScrollTop` 的抑制区间，
- *      否则兄弟那一发 scroll 会被记成「用户停过的位置」，再顺着它的滚动监听推回源。
+ *      否则兄弟那一发 scroll 会被记成「用户停过的位置」，再顺着它的滚动监听推回源；
+ *   4. **跨视图模式只能换算，不能直倒**（B154）：预览那侧只认**行号**，编辑器那侧才
+ *      认像素。所以坐标要从**源**当前显示的那一侧取、按**兄弟**那一侧的意义落 ——
+ *      中间那次换算（顶行 ⇄ 行号）是唯一允许出现的两种坐标系。
+ *
+ * B154 起「谁滚谁当源」：位置同步不再要求源是激活面板的激活标签 —— **窗口没激活、
+ * 面板没点过、鼠标直接放上去滚的那一份也能带着兄弟走**（两条滚动监听直接调这里，
+ * 不带 `isSyncSource` 前置）。但**光标**那一半仍然单源（只看 `isSyncSource`）：
+ * 选区互推会互相抢，而移动鼠标并不改变激活面板，非激活那份的光标本来就是被同步
+ * 推过去的结果 —— 让它也能当源，等于给「谁推谁」多留一个不确定的入口。
  */
 function pushSyncToSiblings(src: Tab): void {
   if (docSyncModes.get(src.docId) !== true) return;
   const sibs = instancesOfDoc(src.docId).filter((t) => t.tabId !== src.tabId);
   if (sibs.length === 0) return;
-  const px = src.scrollTop;
   // 光标位置取源的 `head`。同源内容一致，但离线那一份可能还没追上最新正文
   // （`syncDocInstances` 对它是离线更新），所以要夹回它自己的行数再落。
   const head = src.state.selection.main.head;
+  // 源此刻显示在哪一侧，就取那一侧的坐标（纪律 2 / 4）。先取局部变量：后面是同步
+  // 代码块，收窄不跨块保留。
+  const srcPanel = panelOfTab(src.tabId);
+  const srcPreview = src.viewMode === "preview" ? srcPanel?.preview : undefined;
+  const srcView = srcPreview ? undefined : srcPanel?.view?.view;
+  const line = srcPreview
+    ? srcPreview.topVisibleLine()
+    : srcView
+      ? topVisibleLineOf(srcView)
+      : null;
+  const px = srcPreview ? null : src.scrollTop;
   for (const other of sibs) {
-    const line = other.state.doc.lineAt(Math.min(head, other.state.doc.length));
-    const pos = Math.min(head, line.to);
+    const line2 = other.state.doc.lineAt(Math.min(head, other.state.doc.length));
+    const pos = Math.min(head, line2.to);
     const shown = displayedPanelOfTab(other.tabId);
     // 先取局部变量：回调里 TS 不保留对 `panel.view` / `panel.viewTabId` 的收窄。
     const shownView = shown?.view?.view;
@@ -571,9 +597,19 @@ function pushSyncToSiblings(src: Tab): void {
     } else {
       other.state = other.state.update({ selection: { anchor: pos } }).state;
     }
-    if (px === null || other.viewMode === "preview") continue;
+    // 兄弟是预览态 ⇒ 它只认行：编辑器像素塞不进它的槽（纪律 2）。换算只能从源那侧
+    // 的**顶行**来，所以跨视图模式这一路必须走 `line`；离屏的预览兄弟没有容器可算，
+    // 只能靠它的槽自己那份记录，这里不写任何东西（写了就是污染）。
+    if (other.viewMode === "preview") {
+      if (line === null || !shown?.preview) continue;
+      shown.preview.syncToLine(line);
+      // `syncToLine` 是同步落地的，容器里的值可以直接读；这一笔由预览自己那次
+      // scroll 拦下来（`isSuppressingScrollWrite`），所以这里显式补记一次。
+      recordScroll(other.tabId, shown.preview.root.scrollTop);
+      continue;
+    }
+    if (px === null || !shownView) continue;
     recordScroll(other.tabId, px);
-    if (!shown || !shownView) continue;
     // 派发选区**在先**、钉位置在后：CM6 为了让光标可见可能自己滚一下，钉在后面
     // 才能把它盖掉 —— 顺序反了就变成「位置被光标拽走」。
     restoringViewport(other.tabId, () => pinScrollTop(shownView.scrollDOM, px));
@@ -952,9 +988,16 @@ function rebuildLayout(): void {
           // 滚到中段、没干别的事就关窗，会话里留下的还是上一次（滚之前那份），
           // 重启就回到老位置（B132）。防抖 800ms：滚动停下才写，不会每帧落盘。
           scheduleSessionSave();
-          // B152：滚的是激活的那份 ⇒ 兄弟跟着同一个位置走（单向，源永远是激活态）。
+          // B152 / B154：滚的是谁，谁就是源 —— 兄弟跟着同一个位置走。
+          // ⚠️ 这里**不再**前置 `isSyncSource`：用户明确要求「窗口没有激活时，鼠标放在
+          //    一个视口中也能滚动，这时同步滚动也要生效」（B154）。回环不是靠「只有
+          //    激活的那份能当源」挡的，而是靠下面两条前置守卫：
+          //      · `viewportWriteDepth > 0` —— 这一发 scroll 是程序钉位置派发的；
+          //      · `restoringViewports.has(t.tabId)` —— 被推动的兄弟在那两帧里不许回推
+          //        （`restoringViewport` 是两帧窗口，盖得住下一帧才到的 scroll）。
+          //    光标那一半仍走 `handleUpdate` 里那条单源判定，理由见 pushSyncToSiblings。
           // 排在排程之后：本条监听的活儿跟它是两件事，别为 B132 那条契约挤在一起。
-          if (t && isSyncSource(t, p)) pushSyncToSiblings(t);
+          if (t) pushSyncToSiblings(t);
           // 预览→编辑器方向程序滚动期间忽略，防止回环抖动
           if (!t || !isMdTab(t) || t.viewMode !== "preview") return;
           if (preview.isSyncing()) return;
@@ -976,6 +1019,10 @@ function rebuildLayout(): void {
           return;
         }
         if (restoringViewports.has(t.tabId)) return;
+        // B154：与编辑器那侧同口径 —— **谁滚谁当源**，用户手指还在预览上、窗口也没
+        //   激活，源码那份也要跟着走。同样挂在 `restoringViewports` 之后：兄弟被
+        //   定位后那两帧里不许回推（与 `pushSyncToSiblings` 里那对守卫同源）。
+        pushSyncToSiblings(t);
         // ⚠️ 这里**不要**用 `preview.isSyncing()` 当守卫：`isSyncing()` 认的是
         // `syncLock === "preview"`，即**预览→编辑器**方向（用户正在翻预览）；而
         // 预览容器自己的监听器（构造函数里注册、比这里先跑）一收到滚动就会
@@ -5434,10 +5481,10 @@ function setupTitleBar(): void {
   // 置顶键不在这批里：它的字形要随置顶态在 pinned / unpin 之间切换（见 refreshPinButton）。
   // 这里先给「未置顶」那颗兜底，免得回读失败时按钮是个空块。
   winPin.innerHTML = CODICONS.unpin;
-  // B152：同步滚动键的字形是常量（开关只靠 `.is-on` 上色），启动时给一次就成了，
-  // 不必每次刷新标题都重设 innerHTML。（取 `sync` 而非 `refresh`：后者跟右上角更新键
+  // B152 / B154：同步滚动键的字形是常量（开关只靠 `.is-on` 上色），启动时给一次就成了，
+  // 不必每次刷新标题都重设 innerHTML。（取 `link` 而非 `sync`：后者跟右上角更新键
   // 撞形，见 codicons.ts 里那句说明。）
-  syncScrollBtn.innerHTML = CODICONS.sync;
+  syncScrollBtn.innerHTML = CODICONS.link;
   // 窗口的最大化态可能在别处变化（双击拖动区、Win+↑、右键系统菜单），统一靠 resize 回读。
   void getCurrentWindow()
     .onResized(() => void refreshMaximizeButton())
