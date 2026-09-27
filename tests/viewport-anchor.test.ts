@@ -13,6 +13,7 @@
 // 所以修复是「测量之后再确认一次」，本文件的行为用例就把这一手复刻出来。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
+import { sessionStore } from "../src/session/store";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -197,6 +198,50 @@ describe("B146 滚动锚点补偿：测量把位置往下推之后要收回来",
   });
 });
 
+describe("B146 换文档：setState 期间自动派发的滚动不许记进任何一张标签", () => {
+  it("两张标签的记录都要原封不动（换文档那两下自动滚动不算用户停过的位置）", async () => {
+    // 标签条里两张的 tabId 是 1 / 2（a.md / b.md，由 `loadSession` 那份载荷决定 ——
+    // 视口日志里「切换 · 采旧位置后 tab=1 → 还原窗口内 tab=2」就是这两张）。
+    const sc = document.querySelector(".layout-panel .cm-scroller") as HTMLElement | null;
+    if (!sc) throw new Error("找不到 .cm-scroller");
+    let real = 777;
+    Object.defineProperty(sc, "scrollTop", {
+      configurable: true,
+      get: () => real,
+      set: (v: number) => {
+        real = Math.max(0, v);
+      },
+    });
+    sessionStore.reset();
+    sessionStore.register(1, 1, { path: "a.md" });
+    sessionStore.register(2, 2, { path: "b.md" });
+    sessionStore.setScroll(1, 777); // 出去的那张（= 容器当前值，切走时照旧记一遍）
+    sessionStore.setScroll(2, 120); // 进来的那张
+
+    // ⚠️ 不能在 setter 里派发 scroll：那一刻的写入是**我们自己的钉位置**，本来就归
+    // 「程序滚动不许写快照」管（B139），派发了也照样被挡 —— 等于什么都没模拟。
+    // 要模拟的是 CM6 换完文档自己动的那一下：钩住 `setState`，在它**之后**把容器
+    // 挪一个值（真机上就是浏览器按新内容长度裁剪 scrollTop）并派发一发 scroll。
+    const CM = await import("@codemirror/view");
+    const setState = CM.EditorView.prototype.setState;
+    let swapped = false;
+    CM.EditorView.prototype.setState = function patched(this: unknown, s: unknown): void {
+      setState.call(this, s);
+      if (swapped) return;
+      swapped = true;
+      real = 999;
+      sc.dispatchEvent(new Event("scroll"));
+    };
+
+    clickTab(1); // → 第二张
+    await wait(120); // 越过还原窗口与那一帧的释放
+    CM.EditorView.prototype.setState = setState;
+
+    expect(sessionStore.get(1)?.scrollTop, "出去那张的记录不许被换文档的滚动污染").toBe(777);
+    expect(sessionStore.get(2)?.scrollTop, "进来的那张的记录不许被动过").toBe(120);
+  });
+});
+
 const src = readFileSync("src/main.ts", "utf-8");
 
 /** 取出某个函数 / 回调的**函数体**（从 header 处起做花括号配平）。 */
@@ -252,6 +297,29 @@ describe("B146 静态契约：测量统一走收尾，别在各处裸调 request
 });
 
 describe("B146 反向验证：把收尾摘掉，上面那几条必须变红", () => {
+  it("退回「viewTabId 在 setState 之后才改」后，罩住换文档的契约必须抓住", () => {
+    // 这正是修复前的样子：换完文档才认新标签，中间那几下自动滚动没人管
+    const VID = "  panel.viewTabId = tabId;\n";
+    const SETSTATE = "  view.setState(tab.state);\n";
+    const at = src.indexOf(VID, src.indexOf("function switchTab("));
+    expect(at, "退化用的原句必须还在").toBeGreaterThan(-1);
+    const ss = src.indexOf(SETSTATE, at);
+    expect(ss, "退化用的 setState 行必须还在").toBeGreaterThan(at);
+    // 干净地搬：先把整行摘掉（连带后面那行一起左移，别把 `restoringViewport` 留在上面），
+    // 再插到 setState 之后 —— 只摘不插的话原处还会留一份，顺序照旧判不出来
+    const noVid = src.slice(0, at) + src.slice(at + VID.length);
+    const ss2 = noVid.indexOf(SETSTATE, noVid.indexOf("function switchTab("));
+    expect(ss2, "摘掉那一行后仍要能找到 setState").toBeGreaterThan(-1);
+    const degraded =
+      noVid.slice(0, ss2 + SETSTATE.length) + VID + noVid.slice(ss2 + SETSTATE.length);
+
+    const body = bodyOf("function switchTab(", degraded);
+    const vid = body.indexOf("viewTabId = ");
+    const setState = body.indexOf("setState(");
+    expect(vid, "退化版里 viewTabId 赋值仍在").toBeGreaterThan(-1);
+    expect(vid, "退化版里 viewTabId 应排在 setState 之后").toBeGreaterThan(setState);
+  });
+
   it("退回「各处裸调 requestMeasure、没有收尾」后，契约必须抓住", () => {
     // ⚠️ 字面量替换（老规矩）：正则一改排版就失配，退化会变成「什么都没改」
     const CALLS = ["  measureAndKeepScroll(panel);\n", "  measureAndKeepScroll(p);\n"];

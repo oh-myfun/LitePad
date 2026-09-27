@@ -112,12 +112,40 @@
   排在钉位置之后等于白钉 —— 这就是「切换标签位置会变」。
 - 补钉始终没立住时会留一条 `logger.warn("viewport", …)`（含目标值与实际值）。
   真机出现「重启回到顶部」先看这条日志。
+- **换文档（`setState`）期间的自动滚动是**主因**（B146 二轮修订，用户拍板）**：
+  CM6 的 `setState` 实现末尾是
+  ```js
+  if (hadFocus) this.focus();   // 换完文档自己再滚一次，把光标滚进视野
+  this.requestMeasure();
+  ```
+  再加上浏览器按**新内容长度**裁剪 `scrollTop` —— 这两下都不是用户造成的。而它们
+  派发的 scroll 那一刻，滚动监听会把「换文档的副作用」当成「用户停过的位置」写进
+  记录：**这就是「切换标签，md 文档的滚动位置会不断往下移」的直接原因**
+  （源码 / 预览都中）。次要成因是下面那条 CM6 测量补偿。
+
+  两条硬规矩：
+  1. `panel.viewTabId` 要**先于** `setState` 改掉 —— 滚动监听靠它寻址，晚一步那几下
+     滚动就记到**旧**标签头上了。
+  2. 整个「换文档 → 还原」要罩进 `restoringViewport(tabId, …)`，还原窗口要从
+     `setState` **之前**就开着，不能只罩住还原那一下。两帧后才解锁，而浏览器 scroll
+     事件是**下一帧**才派发的，正好落在窗口里。
+
+  ⚠️ 别再给这段叠「也算程序滚动」的计数器（试过 `swappingView`，已删）：它挡掉的并不
+  只有换文档那两下自动滚动，**切完标签同一帧内的用户滚动也一并丢了**
+  （`session-restore-state` 的 B129 用例因此变红）。`restoringViewport` 的两帧窗口
+  已经够用，行为用例实测退回修复前后照样精确变红。加保险前先能说清「丢掉的那一下
+  一定是程序造成的」。
+
+  ⚠️ 修这个 bug 时注意：**别在 `setState` 的 scrollTop setter 里派发 scroll 来模拟**。
+  那一刻的写入是我们自己的钉位置，本来就归 B139 那条「程序滚动不许写快照」管，
+  照样被挡 —— 等于什么都没模拟（B146 实测踩过）。要模拟就钩住 `EditorView.prototype.setState`，
+  在它**之后**改一次容器值并派发事件，见 `tests/viewport-anchor.test.ts`。
 - **CM6 测量会把视口往下推，`requestMeasure()` 不能裸调**（B146）：`@codemirror/view`
   在 measure 收尾时做「滚动锚点补偿」——拿视口顶行高度与上次记的锚点比，差 >1px
   就 `scrollTop += diff`。`setState` 换文档后 heightMap 是拿 `HeightOracle` 按**估算
   行高**建的，measure 换成实测行高，软换行 / 中英文混排下 `diff` 恒为正 ⇒ 每切一次
-  标签视口往下挪一点（用户报的「切换标签，md 滚动位置不断往下移」，源码 / 预览都中）。
-  测量统一走 `measureAndKeepScroll(panel)`，它在补偿之后把位置收回来。
+  标签视口再多挪一点。测量统一走 `measureAndKeepScroll(panel)`，它在补偿之后把位置
+  收回来。这是**次要**成因，别拿它当主修复。
   ⚠️ 时序是躲不掉的：`requestMeasure()` 排的是**下一帧** rAF，而 `pinScrollTop` 第一次
   就判定「立住」、不再补钉，中间无人把关 —— 这正是这个 bug 藏了这么久的原因。
 - **预览按像素钉完之后要 `clearPendingSync()`**：`applySyncToLine` 只写 `pendingSyncLine`

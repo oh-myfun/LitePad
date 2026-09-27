@@ -464,6 +464,7 @@ function handleUpdate(view: EditorView, update: ViewUpdate): void {
   if (!suppressDirty) {
     scheduleSessionSave();
   }
+  logViewport("更新 · handleUpdate 后", panel);
 }
 
 /** 把某实例的内容变更广播到同文档的其他实例（内容同源，内存一份）。 */
@@ -893,26 +894,46 @@ function switchTab(panelId: number, tabId: number): void {
   if (shownTab) shownTab.state = panel.view.view.state;
   // B126：setState 会重建 ViewState 并把视口拉回开头，采完这一眼再切换
   rememberViewScroll(panel);
+  logViewport("切换 · 采旧位置后", panel);
   const tab = tabs.get(tabId);
   if (!tab) return;
   panel.activeTabId = tabId;
-  suppressDirty = true;
-  panel.view.setState(tab.state);
-  suppressDirty = false;
+  // ⚠️ 下面这三步（改 `viewTabId` → 换文档 → 还原）的顺序是 B146 二轮改出来的，
+  // 别再随手调回去。CM6 的 `setState` 末尾是：
+  //     if (hadFocus) this.focus();   // 换完文档自己把光标滚进视野
+  //     this.requestMeasure();
+  // 加上浏览器按**新内容长度**裁剪 scrollTop —— 换文档必然自己动一下 scrollTop 并
+  // 派发 scroll。用户报的「切换标签，md 文档的滚动位置会不断往下移」就是这个：
+  // 那几下滚动既不是用户造成的，`viewTabId` 当时还指着旧标签（守卫按它寻址），
+  // 一不留神就被记成「用户停过的位置」。
+  //   ① `viewTabId` **先于** setState 改：滚动监听靠它寻址，晚一步就记到旧标签头上；
+  //   ② 整个换文档罩进 `restoringViewport`：还原窗口从 setState 之前就开着，两帧后才
+  //      解锁 —— 浏览器 scroll 事件下一帧才派发，那一下正落在窗口里。（试过再叠一层
+  //      「换文档也算程序滚动」的计数器，结果把切完标签同一帧内的**用户滚动**也丢了，
+  //      见下方 `viewportWriteDepth` 的说明。）
   panel.viewTabId = tabId;
-  // ⚠️ 焦点必须排在钉位置**之前**（B145）：`focus()` 会把光标滚进视野，而光标往往
-  // 不在刚还原出来的可视区里 —— 排在后面等于把刚钉好的位置顶掉，这就是「切换标签
-  // 位置会变」。focus 产生的滚动落在还原窗口内，还会顺带污染记录，一并被挡住。
-  panel.view.focus();
-  // B126：setState 重建了 ViewState 并把视口拉回开头，这里把滚动位置还回去。
-  // 必须排在 applyPanelMode 之前——它要按当前顶行把预览对齐到同一区域。
-  restoreViewScroll(panel);
+  const view = panel.view; // 闭包里不保留对 `panel.view` 的收窄，先取一份
+  restoringViewport(tabId, () => {
+    suppressDirty = true;
+    view.setState(tab.state);
+    suppressDirty = false;
+    // ⚠️ 焦点必须排在钉位置**之前**（B145）：`focus()` 会把光标滚进视野，而光标往往
+    // 不在刚还原出来的可视区里 —— 排在后面等于把刚钉好的位置顶掉。
+    view.focus();
+    logViewport("切换 · 还原窗口内", panel);
+    // B126：setState 重建了 ViewState 并把视口拉回开头，这里把滚动位置还回去。
+    // 必须排在 applyPanelMode 之前——它要按当前顶行把预览对齐到同一区域。
+    restoreViewScroll(panel);
+  });
+  logViewport("切换 · 还原后", panel);
   applyPanelMode(panel);
   // applyPanelMode 里的 syncToLine 会把预览按「编辑器顶行」重新定位一次，
   // 纯预览实例的位置得在它之后再钉回来（B130）
   restorePreviewScroll(panel);
+  logViewport("切换 · 预览还原后", panel);
   // CM6 测量（含它的滚动锚点补偿）排在下一帧，位置得在补偿之后收回来（B146）
   measureAndKeepScroll(panel);
+  logViewport("切换 · 测量收尾后", panel);
   if (panelId === activePanelId) {
     refreshTitle();
     refreshStatus();
@@ -1156,12 +1177,18 @@ async function closeTabById(tabId: number): Promise<void> {
   panel.activeTabId = nextId;
   const nextTab = tabs.get(nextId);
   if (panel.view && nextTab) {
-    suppressDirty = true;
-    panel.view.setState(nextTab.state);
-    suppressDirty = false;
+    const view = panel.view; // 闭包里不保留对 `panel.view` 的收窄，先取一份
+    // 同 switchTab：CM6 的 setState 自己会再 focus 一次（把光标滚进视野），加上浏览器
+    // 按新内容裁剪 scrollTop —— 还原窗口要从 setState 之前就开着，否则这几下滚动会被
+    // 当成「用户停过的位置」写进接班标签的记录（B146）
     panel.viewTabId = nextId;
-    // B126：接班的标签沿用**它自己**上次的位置（光标随 state，视口随 scrollTop）
-    restoreViewScroll(panel);
+    restoringViewport(nextId, () => {
+      suppressDirty = true;
+      view.setState(nextTab.state);
+      suppressDirty = false;
+      // B126：接班的标签沿用**它自己**上次的位置（光标随 state，视口随 scrollTop）
+      restoreViewScroll(panel);
+    });
   }
   applyPanelMode(panel);
   // 同上：接班的是纯预览实例时，位置在预览那侧，applyPanelMode 的 syncToLine
@@ -1287,12 +1314,18 @@ function splitActivePanel(panelId: number, dir: "h" | "v"): void {
       panel.activeTabId = panel.tabs[panel.tabs.length - 1];
       const prev = tabs.get(panel.activeTabId);
       if (panel.view && prev) {
-        suppressDirty = true;
-        panel.view.setState(prev.state);
-        suppressDirty = false;
+        // 同 switchTab（B146）：CM6 的 setState 自己会再 focus / 测量、并派发滚动。
+        // `viewTabId` 得先认下接班标签（否则那几下滚动记到**被移走的那张**头上），
+        // 整段换文档也要罩进还原窗口，否则那几下滚动会当成「用户停过的位置」落进记录。
         panel.viewTabId = prev.tabId;
-        // B126：原位剩下的标签也要拿回自己的视口位置
-        restoreViewScroll(panel);
+        const view = panel.view; // 闭包里不保留对 `panel.view` 的收窄，先取一份
+        restoringViewport(prev.tabId, () => {
+          suppressDirty = true;
+          view.setState(prev.state);
+          suppressDirty = false;
+          // B126：原位剩下的标签也要拿回自己的视口位置
+          restoreViewScroll(panel);
+        });
       }
     } else {
       // 原面板空了：清悬挂引用，同步一个新标签过去（异步完成后重建挂载视图）
@@ -1840,6 +1873,7 @@ async function doOpen(
       `${file.name} ${file.size}B ${file.encoding}${file.lossy ? " lossy" : ""} size=${doc.sizeClass}`,
     );
     scheduleSessionSave();
+    logViewport("加载 · 打开文件后", getPanel(panel.panelId) ?? undefined);
     return tab.tabId;
   } catch (err) {
     showMessage(String(err), true);
@@ -2365,6 +2399,8 @@ function convertLayoutForSession(node: LayoutNode, panelIndex: Map<number, numbe
 
 async function persistSession(): Promise<void> {
   try {
+    // 落盘前看一眼：写进去的位置是哪一步留下的，下次启动会照这个回来
+    logViewport("保存 · 快照前", activePanel() ?? undefined);
     await saveSession(snapshotSession());
   } catch (e) {
     // B143：这里原来是**静默**吞掉的。整份会话写不进去时界面上一点迹象都没有
@@ -2640,6 +2676,8 @@ async function restoreSession(): Promise<boolean> {
 
   activePanelId = idMap.get(sess.activePanel) ?? [...panels.keys()][0];
   if (!panels.has(activePanelId)) activePanelId = [...panels.keys()][0];
+  // 恢复完看一眼：盘上的位置是怎么落到视图上的（「滚到一半闪回开头」要看这里）
+  logViewport("加载 · 会话恢复后", getPanel(activePanelId) ?? undefined);
   return true;
 }
 
@@ -3600,6 +3638,16 @@ function viewportOfTab(t: Tab): number | null {
 let viewportWriteDepth = 0;
 
 /**
+ * ⚠️ 这里**曾经**另起过一个 `swappingView`：`setState` 前后也把 `viewportWriteDepth`
+ * +1 一帧，想连「浏览器下一帧才派发的那发 scroll」一起挡住。已删（B146 二轮定稿）——
+ * 它挡掉的并不只有换文档那两下自动滚动，**切完标签同一帧内的用户滚动也一并丢了**
+ * （`session-restore-state` 的 B129 用例因此变红），而那本来就该记。
+ * `restoringViewport` 的两帧窗口已经够用：换文档那几下自动滚动落在它是拦得住的，
+ * 实测退回修复前后行为用例照样精确变红。想再加保险，得先能说清「丢掉的那一下
+ * 一定是程序造成的」，现在说不清。
+ */
+
+/**
  * 在视图消失**之前**把此刻的位置采进快照（B126，B139 保留但换了理由）。
  *
  * 快照是与 DOM 解耦的全局记录（见 `viewportOfTab`），`setState` / `view.destroy()`
@@ -3674,6 +3722,30 @@ function pinInFlight(el: HTMLElement): boolean {
 }
 
 /**
+ * 视口调试日志（B146）。
+ *
+ * 用户报「切换标签时 md 文档的滚动位置会不断往下移」，而位置只在 DOM 上、写进记录的
+ * 路径有好几条（切标签、滚动采样、刷新会话、预览二次定位…）。想知道**哪一步**把手
+ * 放歪了，就得在每一步都留一条：快照值 / 编辑器实际值 / 预览实际值 / 视图模式。
+ *
+ * 默认级别是 info，这一条打开看不到 —— 要看就把设置里的日志级别调到 debug（或 trace）。
+ * 别为了「always on」把它提到 info：滚动采样一秒能打几十条，会把 2MB 的日志冲掉。
+ */
+function logViewport(where: string, panel?: Panel): void {
+  const p = panel ?? activePanel();
+  if (!p) return;
+  const view = p.view?.view;
+  const t = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
+  const mode = t?.viewMode ?? "-";
+  const root = p.preview?.root;
+  const shown = mode === "preview" ? root?.scrollTop : view?.scrollDOM.scrollTop;
+  logger.debug(
+    "viewport",
+    `${where} tab=${t?.tabId ?? "-"} 模式=${mode} 快照=${t?.scrollTop ?? "null"} 视图=${shown ?? "-"}`,
+  );
+}
+
+/**
  * 写标签的滚动位置到会话记录 —— **唯一闸口**（B145）。
  *
  * `restoringViewports` 原来只被两个 scroll 监听认，于是还有几条旁路能绕过去：
@@ -3694,6 +3766,9 @@ function recordScroll(tabId: number, px: number | null): void {
     const t = tabs.get(tabId);
     if (t) t.scrollTop = px;
   }
+  // 记录被写进去的那一条（trace）：滚一下就有几十条，所以级别压到 trace 而不是 debug。
+  // 「哪一步把手放歪了」要看的就是这一串 —— 相邻两条之间差了多少，就是那一步改的量。
+  logger.trace("viewport", `写入位置 tab=${tabId} px=${px}`);
   sessionStore.setScroll(tabId, px);
 }
 
@@ -3837,9 +3912,14 @@ function applyPanelMode(panel: Panel): void {
  * 它拿视口顶行那块的高度和上次记下的锚点比，差超过 1px 就 `scrollTop += diff`，
  * 目的是编辑时内容别乱跳。而 `setState` 换文档后 heightMap 是拿 `HeightOracle`
  * 按**估算行高**建的，measure 一跑换成**实测行高** —— 软换行、中英文混排下实测
- * 普遍比估算高，`diff` 就恒为正 ⇒ 于是「切一次标签，视口往下挪一点」，切十次
- * 偏出好几屏。这就是用户报的「切换标签，md 文档的滚动位置会不断往下移」，
- * 源码 / 预览（分屏）都中 —— 三条还原路径最终都落到这一手测量上。
+ * 普遍比估算高，`diff` 就恒为正 ⇒ 于是「切一次标签，视口再多挪一点」，切十次
+ * 偏出好几屏。源码 / 预览（分屏）都中。
+ *
+ * ⚠️ 不过这只是**次要**成因（B146 二轮修订）：`setState` 末尾那句
+ * `if (hadFocus) this.focus(); this.requestMeasure();` 换完文档会自己再滚一次，
+ * 才是「位置不断往下移」的主因。真正的修法在 `switchTab` —— 把 `viewTabId` 提前到
+ * `setState` 之前、整个换文档过程罩进还原窗口，让那几下自动滚动进不了记录。
+ * 这一手只是把测量顺带挪走的量收回来，别拿它当主修复。
  *
  * 时序上很难躲开：`requestMeasure()` 排的是**下一帧**的 rAF，而 `pinScrollTop`
  * 第一次就「立住」了、不再补钉，中间没人把关 —— 补偿改完位置就永久生效。

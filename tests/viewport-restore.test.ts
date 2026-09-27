@@ -208,24 +208,25 @@ describe("B145 恢复位置：布局晚几帧稳定时也必须钉回（而不�
   });
 });
 
-describe("B145 静态契约：还原写路径只有一个出口，焦点要让位", () => {
-  const src = readFileSync("src/main.ts", "utf-8");
+const src = readFileSync("src/main.ts", "utf-8");
 
-  const bodyOf = (header: string): string => {
-    const at = src.indexOf(header);
-    if (at < 0) throw new Error(`找不到 ${header}`);
-    const open = src.indexOf("{", at + header.length - 1);
-    let depth = 0;
-    for (let i = open; i < src.length; i += 1) {
-      if (src[i] === "{") depth += 1;
-      else if (src[i] === "}") {
-        depth -= 1;
-        if (depth === 0) return src.slice(open, i + 1);
-      }
+/** 取出某个函数 / 回调的**函数体**（从 header 处起做花括号配平）。 */
+function bodyOf(header: string, from: string = src): string {
+  const at = from.indexOf(header);
+  if (at < 0) throw new Error(`找不到 ${header}`);
+  const open = from.indexOf("{", at + header.length - 1);
+  let depth = 0;
+  for (let i = open; i < from.length; i += 1) {
+    if (from[i] === "{") depth += 1;
+    else if (from[i] === "}") {
+      depth -= 1;
+      if (depth === 0) return from.slice(open, i + 1);
     }
-    throw new Error(`${header} 的花括号没配平`);
-  };
+  }
+  throw new Error(`${header} 的花括号没配平`);
+}
 
+describe("B145 静态契约：还原写路径只有一个出口，焦点要让位", () => {
   it("滚动位置写入只准走 recordScroll 这一个闸口", () => {
     const gate = bodyOf("function recordScroll(");
     expect(gate, "闸口要挡住还原期").toMatch(/restoringViewports\.has\(tabId\)/);
@@ -267,9 +268,35 @@ describe("B145 静态契约：还原写路径只有一个出口，焦点要让�
   });
 });
 
-describe("B145 反向验证：退回旧写法，上面那几条必须变红", () => {
-  const src = readFileSync("src/main.ts", "utf-8");
+describe("B146 静态契约：换文档的整段都要罩在还原窗口里", () => {
+  const code = (s: string): string =>
+    s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
+  it("切标签 / 关闭后接班：还原窗口与 viewTabId 都要先于 setState", () => {
+    // CM6 的 setState 末尾是 `if (hadFocus) this.focus(); this.requestMeasure();` ——
+    // 换完文档它会**自己再滚一次**，加上浏览器按新内容裁剪 scrollTop。这些滚动派发
+    // 的那一刻要是没在还原窗口里，就会被当成「用户停过的位置」写进记录。
+    for (const [site, header, setState] of [
+      ["切标签", "function switchTab(", "setState(tab.state)"],
+      ["关闭后接班", "async function closeTabById(", "setState(nextTab.state)"],
+      ["分屏搬出后原位接班", "function splitActivePanel(", "setState(prev.state)"],
+    ] as const) {
+      const body = code(bodyOf(header));
+      const at = body.indexOf(setState);
+      expect(at, `${site} 处应能看到换文档那一行`).toBeGreaterThan(-1);
+      // 窗口要**罩住** setState：起点在它之前
+      const win = body.indexOf("restoringViewport(");
+      expect(win, `${site} 应有还原窗口`).toBeGreaterThan(-1);
+      expect(win, `${site} 的还原窗口必须罩住 setState（不能只罩住还原那一下）`).toBeLessThan(at);
+      // 而 `viewTabId` 也得先改：滚动监听靠它寻址，晚一步就会算到旧标签头上
+      const vid = body.indexOf("viewTabId = ");
+      expect(vid, `${site} 应能找到 viewTabId 赋值`).toBeGreaterThan(-1);
+      expect(vid, `${site} 的 viewTabId 必须先于 setState 改掉`).toBeLessThan(at);
+    }
+  });
+});
+
+describe("B145 反向验证：退回旧写法，上面那几条必须变红", () => {
   it("退回「只补钉一帧」后，逐帧补钉的契约必须抓住", () => {
     // ⚠️ 用**字面量**替换（老规矩）：正则一改排版就失配，退化就会变成「什么都没改」。
     const OLD_RETRY =
@@ -283,9 +310,12 @@ describe("B145 反向验证：退回旧写法，上面那几条必须变红", ()
 
   it("退回「focus 排在还原之后」后，顺序契约必须抓住", () => {
     // 把 switchTab 里 focus 那一行搬到 `restoreViewScroll` 之后 —— 正是修复前的顺序
-    // ⚠️ 锚点要在 switchTab **这一段里**找：整份源码里 `panel.view.focus();` 有好几处
-    const FOCUS = "  panel.view.focus();\n";
-    const RESTORE = "  restoreViewScroll(panel);";
+    // ⚠️ 锚点要在 switchTab **这一段里**找：整份源码里 focus 那一行有好几处
+    // ⚠️ 不匹配前导缩进：focus / restore 现在落在 restoringViewport 的闭包里，缩进
+    //    从 2 空格变 4 空格，带上就一个都找不到了
+    // ⚠️ 也不带 `panel.` 前缀：还原段用的是局部变量 `view.focus()`（收窄能过编译）
+    const FOCUS = "view.focus();\n";
+    const RESTORE = "restoreViewScroll(panel);";
     const at = src.indexOf(FOCUS, src.indexOf("function switchTab("));
     expect(at, "退化用的原句必须还在").toBeGreaterThan(-1);
     const restoreAt = src.indexOf(RESTORE, at);
@@ -296,8 +326,9 @@ describe("B145 反向验证：退回旧写法，上面那几条必须变红", ()
     const inTail = tail.indexOf(RESTORE);
     const degraded =
       head + tail.slice(0, inTail) + RESTORE + "\n" + FOCUS + tail.slice(inTail + RESTORE.length);
+    // 搬过去时不带缩进（原句前面是 4 空格的闭包体，插回来时缩进没跟着走）
     expect(degraded, "退化后 focus 应排在还原之后").toContain(
-      "restoreViewScroll(panel);\n  panel.view.focus();\n",
+      `restoreViewScroll(panel);\n${FOCUS}`,
     );
 
     const body = degraded

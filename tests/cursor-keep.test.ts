@@ -368,10 +368,20 @@ describe("B126 静态契约：滚动位置必须自己存取", () => {
   });
 
   it("切标签 / 接管标签的每一处 setState 之后都必须还原滚动", () => {
-    const setStateSites = src.match(/panel\.view\.setState\(/g) ?? [];
-    expect(setStateSites.length, "面板视图的整态切换应至少三处").toBeGreaterThanOrEqual(3);
+    // ⚠️ 不能只数 `panel.view.setState(` 的个数：切标签 / 关标签两处为了把 `view`
+    // 收窄带进还原窗口的闭包，用的是局部变量 `view.setState(`，数少了就假绿。
+    // 逐点看：**每一处**整态切换之后都得有还原，否则视口就停在 setState 停下的地方。
+    const setStateSites = [...src.matchAll(/(\bview|panel\.view)\.setState\(/g)];
+    expect(setStateSites.length, "应能定位到全部整态切换").toBeGreaterThanOrEqual(4);
+    for (const m of setStateSites) {
+      const after = src.slice(m.index! + m[0].length, m.index! + m[0].length + 600);
+      expect(
+        after,
+        `第 ${m.index! + 1} 行的 setState 之后必须还原滚动（离得太远等于没有）`,
+      ).toContain("restoreViewScroll(");
+    }
     const restoreSites = src.match(/restoreViewScroll\(/g) ?? [];
-    // 定义 1 处 + 调用点（切标签 / 关标签 / 挂载 / 搬标签 / 重建实例 …）
+    // 定义 1 处 + 调用点（切标签 / 关标签 / 搬标签 / 挂载 / 重建实例 …）
     expect(restoreSites.length, "还原滚动的调用点必须覆盖所有整态切换").toBeGreaterThanOrEqual(6);
   });
 
