@@ -426,6 +426,15 @@ body {
   background: transparent;
 }
 
+/* B153：菜单条只属于主窗口 —— 卫星窗口要比它简洁（用户明确：子窗口不用菜单栏）。
+   两条一起兜：这里按窗口身份彻底收掉，JS 侧 `setupMenuBar` 也 early return（否则菜单
+   按钮、快捷键、那批回调照样会被挂上去）。
+   ⚠️ 属性由 `publishWindowKind` 在身份问出来后**立刻**写、早于外壳装配 —— 卫星窗口冷
+   启动要先问 Rust，晚一步用户就会看到「菜单条闪一下再消失」。 */
+html[data-window-kind="satellite"] .menu-bar {
+  display: none;
+}
+
 /* B110：菜单按钮与窗口三键同一条声明（见上方 `.win-btn, .title-btn, .menu-btn`）——
    无边框 / 无圆角 / 满高 / 同一悬停淡底 / 同一焦点环。
    这里只留**文字标签**不得不不同的两项：三键是 46px 的图标方键，而菜单是

@@ -4399,6 +4399,20 @@ function publishThemeMode(): void {
   document.documentElement.dataset.themeMode = themeMode;
 }
 
+/**
+ * 把本窗口的身份写到 `<html data-window-kind>`（main / satellite）。
+ *
+ * 卫星窗口要**比主窗口简洁**：菜单条这类只属于主窗口的部件，由这条属性在 CSS 里收掉。
+ *
+ * ⚠️ 必须在 `setupShell()` 之前落 —— 卫星窗口冷启动要先问 Rust 拿身份，这段时间里外壳
+ *    已经画出来了，晚一步就会看到「菜单条闪一下再消失」。
+ * 其余按窗口身份分流的行为（会话读写、关窗收尾、事件监听）读的是 `windowKind` 变量
+ * 本身，不靠这个属性 —— 属性只管"长什么样"，语义判断仍然走代码里的那个值。
+ */
+function publishWindowKind(): void {
+  document.documentElement.dataset.windowKind = windowKind;
+}
+
 // ---------------------------------------------------------------- 大纲 TOC（M3）
 
 let tocEntries: TocEntry[] = [];
@@ -5500,8 +5514,19 @@ async function refreshMaximizeButton(): Promise<void> {
   setTip(winMaximize, maximized ? "向下还原" : "最大化");
 }
 
-/** 菜单栏初始化（文件 / 编辑 / 查看 / 设置 / 帮助，结构参考 Win11 记事本）。 */
+/**
+ * 菜单栏初始化（文件 / 编辑 / 查看 / 设置 / 帮助，结构参考 Win11 记事本）。
+ *
+ * ⚠️ 卫星窗口**不建**菜单栏（用户要求子窗口比主窗口简洁）：那五个顶层里没有一项是
+ *    「卫星窗口用不上」，全都是好选项 —— 但子窗口的入口是标签右键与命令面板，
+ *    摆一排菜单既不简洁，又会让人以为关不掉。
+ *    不画由**两道**兜住：`setupShell` 两个窗口共用，所以这里在入口 early return；
+ *    外加 CSS 的 `html[data-window-kind="satellite"] .menu-bar`（见 global.css）。
+ */
 function setupMenuBar(): void {
+  // 卫星窗口装配外壳时也会走到这儿（见 initSatelliteWindow → setupShell），入口先挡掉，
+  // 免得菜单按钮、快捷键与那批主窗口专属回调一起被挂上去。
+  if (windowKind !== "main") return;
   createMenuBar(menuBar, {
     onNew: () => void newUntitled(),
     onOpen: () => void doOpen(),
@@ -6321,7 +6346,15 @@ async function initSatelliteWindow(me: WindowPayload | null): Promise<void> {
   void emit("satellite-ready", { label: windowLabel }).catch(() => {});
 }
 
-/** 卫星窗口的关窗流程：先把标签与副本号交还主窗口，再销毁自己。 */
+/**
+ * 卫星窗口的关窗流程：先把标签与副本号交还主窗口，再销毁自己。
+ *
+ * 🔒 这条是卫星窗口**唯一**的关窗处理器。主窗口那套（`registerWindowClose` →
+ *    `finishAndDestroy`）在 `bootstrap` 里只属于主窗口那条分支，卫星窗口一条都装不上 ——
+ *    所以关掉子窗口永远不会写 `session.json`、不会跑热退出备份、也不会弹「确定退出吗？」。
+ *    ⚠️ 要加收尾只要往这条链上挂；千万别把 `registerWindowClose` / `finishAndDestroy`
+ *    挪进来，那等于把整个应用退出流程塞进子窗口的关闭键里（B153）。
+ */
 function registerSatelliteClose(): void {
   void getCurrentWindow()
     .onCloseRequested((event) => {
@@ -6354,7 +6387,15 @@ function registerWindowClose(): void {
     .catch(() => {});
 }
 
-/** 卫星窗口的关窗收尾：交还已完成，这里只剩备份 + 销毁。 */
+/**
+ * 卫星窗口的关窗收尾：交还已完成，这里只剩备份 + 销毁。
+ *
+ * ⚠️ **不许**在这里调 `finishAndDestroy`（写会话 / 热退出备份 / 未保存确认框）——
+ *    那是主窗口的关停逻辑，归 `registerWindowClose` 那条链。这里的内容靠「标签交还」保住：
+ *    主窗口拿到副本后，未保存的编辑随主窗口自己的自动保存落地。
+ * 顺序也有讲究：先 `cancelPendingBackup()` 收掉本窗口那支排程（否则定时器会追着已销毁的
+ * WebView 跑），再 `flushBackups()` 把手上已有的副本补齐。
+ */
 async function finishSatelliteClose(): Promise<void> {
   try {
     cancelPendingBackup();
@@ -6564,6 +6605,10 @@ async function bootstrap(): Promise<void> {
     // 老版本后端 / 单窗口环境下拿不到身份应答：按主窗口走（退回 B71 之前的行为）
     windowKind = "main";
   }
+  // 身份一确定就落 CSS，赶在外壳绘制之前（见 publishWindowKind 的注释）。
+  // ⚠️ 这条 fallback 意味着「拿不到身份的卫星窗口会按主窗口行事」——关窗时也会装上
+  //    `registerWindowClose`。那是刻意退回 B71 之前的行为，不是新口径。
+  publishWindowKind();
 
   // B91-2：标签拖拽走 HTML5 DnD（影像是系统绘制的，能跟出窗口）。**两个窗口都要装**
   // —— 谁都可能成为落点（主窗口能接卫星窗口的，卫星窗口之间也能互拖）。

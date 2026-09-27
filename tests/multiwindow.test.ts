@@ -387,3 +387,135 @@ describe("卫星窗口静态契约", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------- B153 卫星窗口：简洁 + 关窗口径
+// 「子窗口需要比主窗口更加简洁，不用菜单栏，也不要在关闭时触发主窗口关闭的逻辑。」
+//
+// 关窗那一条**不动行为**，只把既有口径钉住：`registerWindowClose` 只在主窗口的 bootstrap
+// 分支里注册，卫星窗口装的是 `registerSatelliteClose`。这里要防的是**以后有人把主窗口的
+// 收尾塞进卫星那条链**（写 session.json / 热退出备份 / 「确定退出吗？」）。
+describe("B153 卫星窗口：比主窗口简洁，关窗不碰主窗口的收尾", () => {
+  const src = readFileSync("src/main.ts", "utf-8");
+  const css = readFileSync("src/styles/global.css", "utf-8");
+
+  function fnBody(name: string): string {
+    const body = topLevelFnBody(src, name);
+    expect(body, `必须能定位 ${name}`).not.toBe("");
+    return body;
+  }
+
+  it("卫星窗口不建菜单栏：setupMenuBar 入口就挡（不是画完再藏）", () => {
+    // 画完再藏等于白建一遍按钮、白挂一遍快捷键与回调；卫星窗口装配外壳时也会调到这儿。
+    const sig = "function setupMenuBar(): void {";
+    const guard = '  if (windowKind !== "main") return;';
+    const at = src.indexOf(sig);
+    expect(at, "要能定位 setupMenuBar").toBeGreaterThan(-1);
+    expect(src, "入口必须按窗口身份拦").toContain(guard);
+    const atGuard = src.indexOf(guard, at);
+    expect(atGuard, "守卫就在函数体内").toBeGreaterThan(-1);
+    // 必须紧贴函数入口 —— 挪到函数末尾就变成「先画完再藏」，守卫形同虚设。
+    expect(atGuard - at, "守卫必须紧贴函数签名").toBeLessThan(400);
+    expect(src.indexOf("createMenuBar(", at), "画菜单要排在守卫之后").toBeGreaterThan(atGuard);
+  });
+
+  it("CSS 兜底：按窗口身份彻底收掉菜单条（万一有别的路径往里塞按钮）", () => {
+    expect(css, "必须使用窗口身份属性收掉菜单条").toMatch(
+      /html\[data-window-kind="satellite"\]\s*\.menu-bar\s*\{[^}]*display:\s*none;/,
+    );
+  });
+
+  it("身份属性必须早于外壳装配写下，否则卫星窗口会「菜单条闪一下再消失」", () => {
+    // 冷启动要先问 Rust 拿身份，这段时间外壳已经画出来了 —— 晚一步就看得见。
+    const boot = fnBody("function bootstrap");
+    expect(boot, "bootstrap 里要写一次窗口身份").toMatch(/^\s*publishWindowKind\(\);/m);
+    // 用下标而不是「相隔多少字符」：中间隔着一整段 DnD 装配，卡字符数会随排版漂移。
+    expect(boot.indexOf("publishWindowKind();"), "必须赶在装配外壳之前").toBeLessThan(
+      boot.indexOf("await setupShell()"),
+    );
+    // 写的是同一个值：`windowKind` 拿不准时 fallback 成 main，属性也得跟着是 main。
+    const pub = fnBody("function publishWindowKind");
+    expect(pub, "属性取自 windowKind 本身").toContain(
+      "document.documentElement.dataset.windowKind = windowKind;",
+    );
+  });
+
+  it("关窗处理器只装一份：卫星窗口拿的是 registerSatelliteClose，主窗口那份装不进来", () => {
+    const sat = fnBody("function initSatelliteWindow");
+    expect(sat, "卫星窗口装的是自己那条关窗链").toContain("registerSatelliteClose();");
+    expect(sat, "卫星窗口不许去装主窗口的关窗处理器").not.toContain("registerWindowClose()");
+    const main = fnBody("function bootstrap");
+    expect(main, "主窗口那条分支才注册 registerWindowClose").toContain("registerWindowClose();");
+  });
+
+  it("卫星窗口的关窗收尾不许回头调主窗口的 finishAndDestroy", () => {
+    const tail = fnBody("async function finishSatelliteClose");
+    expect(tail, "收尾只交还标签与销毁自己").not.toContain("finishAndDestroy");
+    // 交还在关窗回调里同步做（回调里 await IPC 会死锁，见 B135），收尾只管备份 + 销毁。
+    const reg = fnBody("function registerSatelliteClose");
+    expect(reg, "回调内同步交还").toContain("returnTabsToMain([...tabs.values()].map(");
+  });
+});
+
+// ------------------------------------------------------- 反向验证
+describe("B153 反向验证：退回旧写法，上面那几条必须变红", () => {
+  const src = readFileSync("src/main.ts", "utf-8");
+  const css = readFileSync("src/styles/global.css", "utf-8");
+
+  function fnBody(name: string, from: string): string {
+    const body = topLevelFnBody(from, name);
+    expect(body, `必须能定位 ${name}`).not.toBe("");
+    return body;
+  }
+
+  it("去掉 setupMenuBar 的入口守卫 → 「不建菜单栏」那条必须落空", () => {
+    // ⚠️ 两个坑，踩过一次：
+    //    · 光用 `if (windowKind !== "main") return;` 当退化串是**假绿** —— 它在文件里有
+    //      5 处同形，replace 掉的是第一处、未必是这里这一处，于是「删别处」也让这条变红；
+    //    · 签名与守卫之间还夹着一行注释，整段当锚点又太脆。
+    //    所以按位置取：先定位函数签名，再从它往后找那一行，只删这一段里的。
+    const sig = "function setupMenuBar(): void {";
+    const guard = '  if (windowKind !== "main") return;';
+    const at = src.indexOf(sig);
+    const atGuard = src.indexOf(guard, at);
+    expect(at, "要能定位 setupMenuBar").toBeGreaterThan(-1);
+    expect(atGuard, "退化串要先自证原句还在").toBeGreaterThan(-1);
+    const degraded = src.slice(0, atGuard) + src.slice(atGuard + guard.length);
+    const body = fnBody("function setupMenuBar", degraded);
+    expect(body, "去掉守卫后入口不再拦").not.toContain(guard);
+  });
+
+  it("把 publishWindowKind 挪到 setupShell 之后 → 顺序那条必须落空", () => {
+    const ORIG = "  publishWindowKind();";
+    expect(src, "退化串要先自证原句还在").toContain(ORIG);
+    // 挪到 bootstrap 尾部：比 setupShell 晚，冷启动时菜单条会先闪出来再消失。
+    const degraded = src
+      .replace(ORIG, "")
+      .replace(
+        "  // B71 ④：接住卫星窗口交回来的标签 / 副本 ID；卫星窗口异常消失时兜底恢复",
+        "  publishWindowKind();\n  // B71 ④：接住卫星窗口交回来的标签 / 副本 ID；卫星窗口异常消失时兜底恢复",
+      );
+    const boot = fnBody("function bootstrap", degraded);
+    expect(boot.indexOf("publishWindowKind();"), "挪过去后就在 setupShell 之后了").toBeGreaterThan(
+      boot.indexOf("await setupShell()"),
+    );
+  });
+
+  it("把 finishAndDestroy 塞进卫星关窗收尾 → 「不碰主窗口收尾」那条必须落空", () => {
+    const ORIG = "  await destroySelf();";
+    expect(src, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = src.replace(
+      "async function finishSatelliteClose(): Promise<void> {\n",
+      "async function finishSatelliteClose(): Promise<void> {\n  void finishAndDestroy([]);\n",
+    );
+    const tail = fnBody("async function finishSatelliteClose", degraded);
+    expect(tail, "塞进去后它就调了主窗口收尾").toContain("finishAndDestroy");
+  });
+
+  it("删掉 CSS 那条窗口身份规则 → 兜底那条必须落空", () => {
+    const degraded = css.replace(
+      /html\[data-window-kind="satellite"\]\s*\.menu-bar\s*\{[^}]*display:\s*none;\s*}/,
+      "",
+    );
+    expect(degraded, "删掉后不该还有这条规则").not.toMatch(/data-window-kind="satellite"/);
+  });
+});
