@@ -5558,7 +5558,9 @@ async function refreshPinButton(): Promise<void> {
   winPin.classList.toggle("is-on", pinned);
   // 开关型控件的状态要用 aria-pressed 报给读屏器，光靠配色等于没报。
   winPin.setAttribute("aria-pressed", pinned ? "true" : "false");
-  const label = pinned ? "取消钉在顶部" : "钉在顶部";
+  // B157：改名叫「始终在最前」（旧称「钉在顶部」，措辞与窗口置顶的实际语义更贴）。
+  // 开与关两句都要改，tooltip / aria-label / 读屏器读的是同一个 label。
+  const label = pinned ? "取消始终在最前" : "始终在最前";
   winPin.setAttribute("aria-label", label);
   setTip(winPin, label);
 }

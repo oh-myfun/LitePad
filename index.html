@@ -82,15 +82,17 @@
           ></button>
         </div>
         <!-- 标题栏工具键（在窗口控制键左侧，不随窗口控制那组的高亮/悬停规则走）：
-             置顶是**开关**，所以用 aria-pressed 表达状态、字形不换（见 global.css 的
-             .title-btn.is-on）。提示同样走自绘层，图标按钮必须给 aria-label 否则「失名」。 -->
+             「始终在最前」是**开关**，所以用 aria-pressed 表达状态、字形不换（见
+             .title-btn.is-on）。提示同样走自绘层，图标按钮必须给 aria-label 否则「失名」。
+             B157 起它的观感与同步滚动键同款：24×24 方形图标键、常态与悬停都不铺底，
+             状态全落在图标颜色上（见 global.css 那一条共享规则）。 -->
         <div class="title-actions" data-tip-group="title">
           <button
             id="win-pin"
-            class="title-btn"
+            class="title-btn pin-btn"
             type="button"
-            data-tip="钉在顶部"
-            aria-label="钉在顶部"
+            data-tip="始终在最前"
+            aria-label="始终在最前"
             aria-pressed="false"
           ></button>
         </div>

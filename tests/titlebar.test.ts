@@ -195,7 +195,10 @@ describe("B97 自建标题栏", () => {
     ).toBeLessThan(bar.indexOf('class="window-controls"'));
     // 开关型控件必须给 aria-pressed，否则读屏器只知道「一个按钮」
     expect(actions, "开关状态要用 aria-pressed 上报").toContain('aria-pressed="false"');
-    expect(actions, "图标按钮不能失名").toContain('aria-label="钉在顶部"');
+    // B157：改名叫「始终在最前」（旧称「钉在顶部」，tooltip / aria-label 同一口径）
+    expect(actions, "图标按钮不能失名").toContain('aria-label="始终在最前"');
+    // 与同步滚动键同款 ⇒ 必须自带 `pin-btn`，才有那一条共享规则可压住 46px 方键
+    expect(actions, "外观要跟着同步滚动键走").toContain('class="title-btn pin-btn"');
   });
 
   it("B99：左上角软件图标必须是纯标识（不挂按钮、不响应点击）", () => {

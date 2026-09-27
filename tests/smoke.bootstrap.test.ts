@@ -1119,7 +1119,7 @@ describe("bootstrap + drag-split smoke", () => {
     expect(capturedError, `关闭标签不应抛错：${String(capturedError)}`).toBeNull();
   });
 
-  it("B99：标题栏「钉在顶部」开关必须切换真实窗口状态并按回读值点亮", async () => {
+  it("B99：标题栏「始终在最前」开关必须切换真实窗口状态并按回读值点亮", async () => {
     const pin = document.getElementById("win-pin") as HTMLButtonElement;
     expect(pin, "标题栏应有置顶开关").toBeTruthy();
     // 桩的初值是「未置顶」，所以按钮必须先处于熄灯态 —— 否则下面的点亮断言恒真
@@ -1137,8 +1137,9 @@ describe("bootstrap + drag-split smoke", () => {
     // 那时只有「按回读值点亮」的实现才会把按钮保持熄灯 —— 这条断言守的就是这个差别。
     expect(pin.getAttribute("aria-pressed"), "点亮状态应写在 aria-pressed 上").toBe("true");
     expect(pin.classList.contains("is-on"), "置顶后应点亮").toBe(true);
-    expect(pin.dataset.tip, "提示应换成取消语义").toBe("取消钉在顶部");
-    expect(pin.getAttribute("aria-label"), "图标按钮不能失名").toBe("取消钉在顶部");
+    // B157：改名叫「始终在最前」（旧称「钉在顶部」，tooltip 与 aria-label 同一口径）
+    expect(pin.dataset.tip, "提示应换成取消语义").toBe("取消始终在最前");
+    expect(pin.getAttribute("aria-label"), "图标按钮不能失名").toBe("取消始终在最前");
 
     // ---- 第二次点击：关 ----
     pin.click();
@@ -1147,7 +1148,7 @@ describe("bootstrap + drag-split smoke", () => {
     expect(pinState.on, "窗口置顶态应已还原").toBe(false);
     expect(pin.getAttribute("aria-pressed"), "取消后应熄灯").toBe("false");
     expect(pin.classList.contains("is-on"), "取消后不应再点亮").toBe(false);
-    expect(pin.dataset.tip, "提示应还原").toBe("钉在顶部");
+    expect(pin.dataset.tip, "提示应还原").toBe("始终在最前");
 
     // ---- 判别式：set 调了但**没生效**时，界面必须按回读值走 ----
     // 真机上 ACL 漏授权就是这副样子：调用不报错、窗口态没变。此时「把目标值当新状态写界面」

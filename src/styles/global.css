@@ -444,10 +444,14 @@ html[data-window-kind="satellite"] .menu-bar {
   font-size: 12.5px;
 }
 
-/* ---------- 同步滚动键（B152 / B154）----------
-   同一个文档开着多份时贴在文档名后面（显隐见 refreshTitle）。
+/* ---------- 标题栏的方形图标键（B152 / B154 / B157 / B158）----------
+   三颗同款，一条规则管到底：**同步滚动**（贴在文档名后面）、**始终在最前**
+   （`#win-pin`，旧称「钉在顶部」）、**在线更新**（B107，动态创建于 updater.ts）。
+   B157 用户原话：「始终在最前按钮样式和在线更新按钮修改成和同步滚动按钮样式一样」
+   —— 拆成三条规则必然各自漂移（圆角 / hover 底色 / 尺寸只要有一处忘了同步，
+   标题栏里就会出现「两种按钮」），所以这里只留一条。
 
-   ⚠️ 这颗键的观感**刻意不跟** `.win-btn, .title-btn, .menu-btn` 那批走 —— 用户要
+   ⚠️ 这族的观感**刻意不跟** `.win-btn, .title-btn, .menu-btn` 那批走 —— 用户要
       「方形、干脆没有按钮背景，hover 与同步状态全靠图标颜色提示」。于是：
         · 常态与悬停**都不铺底**（逐条覆盖 `.title-btn:hover` 的 `--bg-hover`）；
         · 颜色照样变，只是落在**图标**上：常态 `--fg-muted` → hover `--fg`
@@ -455,9 +459,11 @@ html[data-window-kind="satellite"] .menu-bar {
           `.title-btn.is-on .codicon` 取 `--accent`（那条特异度 0-2-0，盖得住 hover）。
         · 尺寸从「46px 满高方键」改成 24×24 的方形图标键 —— 三键那边保持满高不变
           （B103 的口径），这里要的是「一枚方形图标」，不是「一颗占半截标题栏的按钮」。
-   ⚠️ 本块必须留在共用声明与 `:hover` **之后**：`.sync-btn` / `.sync-btn:hover` 都是
-      0-1-0，同特异度下写在前头就会被 46px 与悬停底色压回去。 */
-.sync-btn {
+   ⚠️ 本块必须留在共用声明与 `:hover` **之后**：下面这些选择器都是 0-1-0 或 0-2-0，
+      同特异度下写在前头就会被 46px 与悬停底色压回去。 */
+.sync-btn,
+.title-btn.pin-btn,
+.title-btn.upd-btn {
   flex: 0 0 auto;
   width: 24px;
   height: 24px;
@@ -466,7 +472,9 @@ html[data-window-kind="satellite"] .menu-bar {
   background: transparent;
 }
 
-.sync-btn:hover {
+.sync-btn:hover,
+.title-btn.pin-btn:hover,
+.title-btn.upd-btn:hover {
   background: transparent;
   color: var(--fg);
 }
@@ -2002,29 +2010,34 @@ button:focus-visible {
   font-size: 12px;
 }
 
-/* ---------- 右上角更新键（B107：src/shell/updater.ts） ---------- */
+/* ---------- 右上角更新键（B107：src/shell/updater.ts） ----------
+   ⚠️ B158 起它的**尺寸 / 悬停 / 铺底都跟着上面那一族走**（`.title-btn.upd-btn` 就在
+      那条共享规则里），所以这里只留这颗键自己的三样：定位上下文、提示点、进度条。
+      下面两个数值也是**按 24×24 重算**的：46px 方键上的 26px 进度条与
+      top/right: 5/7 的提示点，直接搬过来会把键撑破、点还会掉到角外。 */
 
 .title-btn.upd-btn {
   position: relative;
 }
 
 /* 有更新时的提示点：accent 小圆点钉在按钮右上角（VS Code 的 badge 语言，
-   但按 LitePad 的单色 accent 出，不引入新色） */
+   但按 LitePad 的单色 accent 出，不引入新色）。24px 键上贴角放：6px 点 → 2px 边距。 */
 .title-btn.upd-btn.has-update::after {
   content: "";
   position: absolute;
-  top: 5px;
-  right: 7px;
+  top: 2px;
+  right: 2px;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--accent);
 }
 
-/* 下载中：小进度条（替代转圈动画）—— track + accent 填充，宽度由 JS 按 percent 设 */
+/* 下载中：小进度条（替代转圈动画）—— track + accent 填充，宽度由 JS 按 percent 设。
+   18px 是「塞进 24px 键还左右各留 3px」的宽（46px 键上的 26px 直接搬会顶到边）。 */
 .title-btn.upd-btn .upd-bar {
   display: block;
-  width: 26px;
+  width: 18px;
   height: 4px;
   border-radius: 2px;
   background: var(--bg-hover);

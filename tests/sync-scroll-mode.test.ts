@@ -220,25 +220,54 @@ describe("B152 同步滚动模式：推进与触发点", () => {
   });
 });
 
-describe("B154 样式：方形图标键，状态只靠图标颜色", () => {
+describe("B154 / B157 样式：方形图标键，状态只靠图标颜色", () => {
+  /** 这一族的三个成员（B157 起同款，写在同一条规则里，不许各写一份）。 */
+  const FAMILY = [".sync-btn", ".title-btn.pin-btn", ".title-btn.upd-btn"];
+
   it("覆盖 .title-btn 那批的尺寸与铺底（写在它们之后才压得住）", () => {
-    // 46px 满高 + 悬停淡底都是共用声明给的，这颗键不要它们。
+    // 46px 满高 + 悬停淡底都是共用声明给的，这一族不要它们。
     const shared = css.indexOf(".win-btn,\n.title-btn,\n.menu-btn {");
-    const btn = css.indexOf(".sync-btn {");
+    // ⚠️ 锚点取选择器列表的第一个成员 + 逗号：规则已扩成「同步滚动 / 始终在最前 /
+    //    在线更新」一条（B157），再写死 `.sync-btn {` 就定位不到了。
+    const btn = css.indexOf(".sync-btn,");
     expect(shared, "要能定位共用声明").toBeGreaterThan(-1);
-    expect(btn, "要能定位 .sync-btn").toBeGreaterThan(-1);
-    expect(btn, ".sync-btn 必须写在共用声明之后").toBeGreaterThan(shared);
+    expect(btn, "要能定位方形图标键那族").toBeGreaterThan(-1);
+    expect(btn, "必须写在共用声明之后").toBeGreaterThan(shared);
     // 方形：宽高都给死，别再吃 width:46px / height:100%。
-    const block = slice(css, ".sync-btn {", "}");
+    const block = slice(css, ".sync-btn,", "}");
     expect(block, "要给方形尺寸").toMatch(/width:\s*24px;/);
     expect(block, "要给方形尺寸").toMatch(/height:\s*24px;/);
     expect(block, "常态背景必须是透明的（没有按钮背景）").toMatch(/background:\s*transparent;/);
   });
 
+  it("「始终在最前」与「在线更新」必须跟同步滚动同款（B157 用户原话）", () => {
+    // 判据落在**同一条规则**上：拆成三条各自漂移，标题栏里就会出现「两种按钮」。
+    const block = slice(css, ".sync-btn,", "}");
+    for (const sel of FAMILY.slice(1)) {
+      expect(block, `${sel} 必须在这条共享规则里`).toContain(sel);
+    }
+    expect(block, "三者同一个圆角/尺寸，不许各自再写一份").not.toMatch(/pin-btn \{/);
+    // 反向自证：不是因为压根没写 pin/upd 才通过（这个断言查的是 index.html，不是 css）
+    expect(html, "pin-btn 类确实用在 #win-pin 上").toMatch(/class="title-btn pin-btn"/);
+    expect(readFileSync("src/shell/updater.ts", "utf-8"), "在线更新那颗键也走同一族").toMatch(
+      /className = "title-btn upd-btn"/,
+    );
+  });
+
+  it("更新键自己的尺寸要按 24px 重算（46px 方键那两个数值搬不过来）", () => {
+    // 26px 的进度条塞進 24px 键会顶边；提示点贴角放。
+    const bar = slice(css, ".title-btn.upd-btn .upd-bar {", "}");
+    expect(bar, "要能定位进度条").toMatch(/width:\s*18px;/);
+    const dot = slice(css, ".title-btn.upd-btn.has-update::after {", "}");
+    expect(dot, "提示点要贴在 24px 键的角上").toMatch(/top:\s*2px;/);
+    expect(dot, "提示点不许掉出键外").toMatch(/right:\s*2px;/);
+  });
+
   it("hover 也不铺底：状态一律只落在图标颜色上", () => {
-    const hover = slice(css, ".sync-btn:hover {", "}");
-    expect(hover, "要能定位 .sync-btn:hover").toContain("color: var(--fg)");
+    const hover = slice(css, ".sync-btn:hover,", "}");
+    expect(hover, "要能定位共享 hover 规则").toContain("color: var(--fg)");
     expect(hover, "hover 不许铺底").not.toMatch(/background:\s*var\(--bg-hover\)/);
+    expect(hover, "这一族三个成员都要覆盖到").toContain(".title-btn.upd-btn:hover");
     // 开启态仍走那条全局规则（特异度 0-2-0，盖得住 hover 的 color）—— 别另起一套。
     expect(css, "点亮态只上色图标").toMatch(
       /\.title-btn\.is-on \.codicon \{[\s\S]*?color: var\(--accent\);/,
@@ -251,7 +280,7 @@ describe("B152 样式：hidden 必须显式生效", () => {
     expect(css, "必须有 .sync-btn[hidden]").toMatch(
       /\.sync-btn\[hidden\]\s*\{\s*display:\s*none;\s*\}/,
     );
-    expect(css, "按钮不许被 .title-btn 的 inline-flex 撑开占位").toMatch(/\.sync-btn \{/);
+    expect(css, "按钮不许被 .title-btn 的 inline-flex 撑开占位").toMatch(/\.sync-btn,/);
   });
 });
 
@@ -410,12 +439,18 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
 
   it("把状态颜色退回「整颗键铺底」→ 外观那条必须落空", () => {
     // 用户要的是「干脆没有按钮背景」，hover 与同步都靠图标颜色 —— 铺底等于退回 B152。
-    const ORIG = ".sync-btn:hover {\n  background: transparent;\n  color: var(--fg);\n}";
+    // ⚠️ ORIG 必须是**排版后的原样**（B157 起是三成员的选择器列表），写错就等于
+    //    退化版「什么都没改」⇒ 这条反向验证静默失效（sync-scroll 那批栽过一次）。
+    const ORIG =
+      ".sync-btn:hover,\n.title-btn.pin-btn:hover,\n.title-btn.upd-btn:hover {\n  background: transparent;\n  color: var(--fg);\n}";
     expect(css, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = css.replace(ORIG, ".sync-btn:hover {\n  background: var(--bg-hover);\n}");
+    const degraded = css.replace(
+      ORIG,
+      ".sync-btn:hover {\n  background: var(--bg-hover);\n  color: var(--fg);\n}",
+    );
     expect(degraded, "退回铺底后就不是「没有按钮背景」了").not.toContain(ORIG);
     expect(degraded, "方形尺寸那几条也还得在，别顺手一起删了").toMatch(
-      /\.sync-btn \{[\s\S]*?height: 24px;/,
+      /\.sync-btn,[\s\S]*?height: 24px;/,
     );
   });
 });
