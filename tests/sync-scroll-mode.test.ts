@@ -324,6 +324,72 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
   });
 });
 
+// ------------------------------------------------- B160：双向同步的两个空洞
+describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚预览源码不动）", () => {
+  /** 预览侧的行首对齐写法 —— 用来对表源码分支换算出来的那套坐标。 */
+  const HOST = slice(main, "scrollToLine: (line: number) => {", "lineCount: () =>");
+
+  it("源码兄弟要认行号：源是预览侧时 px 恒为 null，不能因此就不动", () => {
+    // 用户报「滚动预览，源码文档没有同步滚动」。`pushSyncToSiblings` 对预览态的源
+    // 只交得出 `line`（纪律 2：预览侧交不出编辑器像素），旧写法在 `px === null` 时
+    // 直接 return ⇒ 源码兄弟一动不动，而那个行号早就算好了，只是没人用。
+    expect(PUSH_BODY, "源码分支不许再只看 px 就 return").not.toMatch(
+      /if \(px === null \|\| !shownView\) return;/,
+    );
+    expect(PUSH_BODY, "换算出来的行号要真的用上").toMatch(
+      /Math\.max\(1, line\), shownView\.state\.doc\.lines/,
+    );
+    expect(PUSH_BODY, "落点要按行首对齐的像素算").toMatch(
+      /pinScrollTop\(shownView\.scrollDOM, shownView\.lineBlockAt\(target\.from\)\.top\)/,
+    );
+    // ⚠️ 与预览那侧的 `SyncHost.scrollToLine` 必须是**同一套**坐标，否则两个方向
+    //    各自算一套，来回同步一次就偏一次（B160 这次抖动的另一半原因）。
+    expect(HOST, "预览侧的行首对齐写法").toMatch(
+      /v\.scrollDOM\.scrollTop = v\.lineBlockAt\(l\.from\)\.top;/,
+    );
+  });
+
+  it("换算之后也要钉进还原窗口，并把落点补记一次", () => {
+    // 与 px 那个分支同一条纪律 3：不套窗口，兄弟那一发 scroll 就会被记成「用户停过
+    // 的位置」，再顺着它的滚动监听推回源 —— 两个面板互相拉。
+    expect(PUSH_BODY, "换算那路也要套还原窗口").toMatch(
+      /restoringViewport\(other\.tabId, \(\) => \{\s*\n\s*pinScrollTop\(shownView\.scrollDOM/,
+    );
+    // ⚠️ 落点必须记：位置只活在 DOM 上，钉完不补记，这份实例的位置等于从没被记过。
+    //    也不许把 `null` 倒进源码兄弟的槽 —— 那等于把它的位置抹成「从没显示过」。
+    expect(PUSH_BODY, "换算后要补记落点").toMatch(
+      /recordScroll\(other\.tabId, shownView\.scrollDOM\.scrollTop\);/,
+    );
+  });
+
+  it("同步定位不留「待重定位」的尾巴（否则预览被异步重排反复拽回去）", () => {
+    // 用户报「滚动源码，预览文档位置会抖动」。`syncToLine` 记 `pendingSyncLine` 是给
+    // 大纲跳转这类**一次性**目标用的（增强 / 图片 load 后按目标行再定位一次）。同步
+    // 滚动的目标行每帧都在变，把它记下来，等于给每一次重排留一个「把预览拽回某行」
+    // 的钩子 ⇒ 图片 / KaTeX / Shiki 一增强完，预览就自己跳一下。
+    expect(PUSH_BODY, "程序定位之后要抹掉待重定位行号").toMatch(/preview\.clearPendingSync\(\);/);
+    const atSync = PUSH_BODY.indexOf("preview.syncToLine(line)");
+    const atClear = PUSH_BODY.indexOf("preview.clearPendingSync()");
+    expect(atSync, "要能定位同步那句").toBeGreaterThan(-1);
+    expect(atClear, "要能定位抹尾巴那句").toBeGreaterThan(-1);
+    expect(atClear, "抹尾巴必须紧跟定位（中间不许插别的定位）").toBeGreaterThan(atSync);
+  });
+
+  it("预览的程序定位也要套进按标签的还原窗口", () => {
+    expect(PUSH_BODY, "预览分支同样要套还原窗口").toMatch(
+      /restoringViewport\(other\.tabId, \(\) => preview\.syncToLine\(line\)\);/,
+    );
+    // ⚠️ 补记那笔必须留在窗口**外**：窗口期内 `recordScroll` 是拒写的（B145 唯一闸口）。
+    const atRestore = PUSH_BODY.indexOf(
+      "restoringViewport(other.tabId, () => preview.syncToLine(line));",
+    );
+    const atRecord = PUSH_BODY.indexOf("recordScroll(other.tabId, shown.preview.root.scrollTop)");
+    expect(atRestore, "要能定位还原窗口那句").toBeGreaterThan(-1);
+    expect(atRecord, "要能定位补记那笔").toBeGreaterThan(-1);
+    expect(atRecord, "补记要排在窗口关闭之后").toBeGreaterThan(atRestore);
+  });
+});
+
 describe("B154 / B157 样式：方形图标键，状态只靠图标颜色", () => {
   /** 这一族的三个成员（B157 起同款，写在同一条规则里，不许各写一份）。 */
   const FAMILY = [".sync-btn", ".title-btn.pin-btn", ".title-btn.upd-btn"];
@@ -558,6 +624,61 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
     expect(degraded, "退回铺底后就不是「没有按钮背景」了").not.toContain(ORIG);
     expect(degraded, "方形尺寸那几条也还得在，别顺手一起删了").toMatch(
       /\.sync-btn,[\s\S]*?height: 24px;/,
+    );
+  });
+});
+
+// ------------------------------------------------------- B160 反向验证
+describe("B160 反向验证：退回旧写法，上面那四条必须变红", () => {
+  it("退回「源码兄弟只认 px」→ 行号那条必须落空", () => {
+    // 退回 B160 前状：在 `px === null`（源是预览侧）时直接 return，于是源码兄弟
+    // 一动不动 —— 用户报的「滚动预览，源码文档没有同步滚动」。
+    const ORIG = "  if (!shownView) return;\n  if (px !== null) {";
+    expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = main.replace(
+      ORIG,
+      "  if (!shownView) return;\n  if (px === null || !shownView) return;\n  if (px !== null) {",
+    );
+    const body = slice(degraded, "function applySyncToSibling(", "function showMessage(");
+    // 退化后「只看 px 就 return」那句回来了 ⇒ 「源码兄弟要认行号」必须落空。
+    expect(body, "退回后源码分支又只看 px 了").toMatch(
+      /if \(px === null \|\| !shownView\) return;/,
+    );
+  });
+
+  it("删掉抹尾巴那句 → 「不留待重定位尾巴」那条必须落空", () => {
+    // 删了 `clearPendingSync`，`syncToLine` 留下的 `pendingSyncLine` 就留在预览里 ——
+    // 等于给每次图片 / KaTeX / Shiki 增强留一个「把预览拽回某一行」的钩子。
+    const ORIG = "    preview.clearPendingSync();";
+    expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = main.replace(ORIG, "");
+    const body = slice(degraded, "function applySyncToSibling(", "function showMessage(");
+    expect(body, "删掉后尾巴就留在预览里了").not.toContain(ORIG);
+  });
+
+  it("把预览的程序定位裸放出来 → 「套还原窗口」那条必须落空", () => {
+    const ORIG = "restoringViewport(other.tabId, () => preview.syncToLine(line));";
+    expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = main.replace(ORIG, "preview.syncToLine(line);");
+    const body = slice(degraded, "function applySyncToSibling(", "function showMessage(");
+    expect(body, "裸放出来后预览的落点就不再受还原窗口保护了").not.toContain(ORIG);
+  });
+
+  it("把换算那笔的记录挪进窗口内 → 「补记留在外」那条必须落空", () => {
+    // 窗口期内 `recordScroll` 是拒写的（B145 唯一闸口挪进还原窗口就永远写不进去），
+    // 所以补记必须留在窗口外。挪进去 ⇒ 源码兄弟的位置永远记不上。
+    const ORIG =
+      "  restoringViewport(other.tabId, () => {\n    pinScrollTop(shownView.scrollDOM, shownView.lineBlockAt(target.from).top);\n  });\n  // 落点得记，否则兄弟这份的位置只活在 DOM 上：离屏前没人补记，重启就丢了。\n  recordScroll(other.tabId, shownView.scrollDOM.scrollTop);";
+    expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = main.replace(
+      ORIG,
+      "  restoringViewport(other.tabId, () => {\n    pinScrollTop(shownView.scrollDOM, shownView.lineBlockAt(target.from).top);\n    recordScroll(other.tabId, shownView.scrollDOM.scrollTop);\n  });",
+    );
+    const body = slice(degraded, "function applySyncToSibling(", "function showMessage(");
+    // ⚠️ 盯**缩进**：补记被挪进窗口后缩进从 2 格变 4 格，这里看的就是「它还站在窗口外」。
+    //    只按短句判会让退化版照样命中（那句还躺在窗口里）。
+    expect(body, "补记挪进还原窗口后就永远写不进去了（缩进该是 2 格）").not.toMatch(
+      /^ {2}recordScroll\(other\.tabId, shownView\.scrollDOM\.scrollTop\);$/m,
     );
   });
 });

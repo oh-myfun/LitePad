@@ -155,6 +155,48 @@ describe("异步重定位（pending）", () => {
   });
 });
 
+// B160：跨面板同步滚动（源码面板 → 预览面板）定位时**不许**留下 `pendingSyncLine`。
+// 尾巴是给大纲跳转这类一次性目标用的：留着它，之后任意一次图片 / KaTeX / Shiki 增强
+// 完成（`applyPending`）或一次重渲染，都会把预览按那个早已过期的行号再拽一次 ——
+// 同步滚动每帧都定位，等于每帧往预览里塞一个「待重定位」钩子，抖的就是这个。
+describe("B160 程序定位（同步滚动）不留待重定位的尾巴", () => {
+  it("尾巴在 ⇒ 异步增强会把预览按目标行拽回去（对照）", async () => {
+    const { pane, root, els } = paneWithBlocks();
+    pane.syncToLine(12); // 与 `applySyncToSibling` 只差最后那句 clearPendingSync
+    expect(root.scrollTop).toBe(300 - 8);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((pane as any).pendingSyncLine, "对照：尾巴确实留下了").toBe(12);
+    moveBlock(els[2], 380);
+    const img = document.createElement("img");
+    els[0].appendChild(img);
+    img.dispatchEvent(new Event("load"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(root.scrollTop, "留着尾巴 ⇒ 增强后重新定位").toBe(380 - 8);
+  });
+
+  it("抹掉尾巴 ⇒ 同样的增强不再动预览（同步滚动的落点只算一次）", async () => {
+    const { pane, root, els } = paneWithBlocks();
+    pane.syncToLine(12);
+    pane.clearPendingSync(); // main.ts 的 `applySyncToSibling` 紧跟这一句
+    moveBlock(els[2], 380);
+    const img = document.createElement("img");
+    els[0].appendChild(img);
+    img.dispatchEvent(new Event("load"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(root.scrollTop, "同步定位不许被异步增强重新定位").toBe(300 - 8);
+  });
+
+  it("抹掉尾巴 ⇒ 内容未变的重渲染保持像素，不按行重定位", () => {
+    const { pane, root } = paneWithBlocks();
+    pane.syncToLine(12);
+    root.scrollTop = 305; // 定位之后用户（或同步链路）又挪了一点
+    pane.clearPendingSync();
+    // 有尾巴时这里会走 `applySyncToLine(pendingSyncLine)` 把位置拽回 292
+    pane.setBlocks(mdBlocks(), { enhanced: false });
+    expect(root.scrollTop, "重渲染要保持像素，别按旧行号重定位").toBe(305);
+  });
+});
+
 describe("重渲染不丢失滚动位置（B23）", () => {
   it("内容未变的重渲染保持 scrollTop，不弹回文档开头", () => {
     const { pane, root } = paneWithBlocks();

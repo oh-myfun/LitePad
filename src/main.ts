@@ -556,18 +556,48 @@ function applySyncToSibling(other: Tab, px: number | null, line: number | null):
   // 只能靠它的槽自己那份记录，这里不写任何东西（写了就是污染）。
   if (other.viewMode === "preview") {
     if (line === null || !shown?.preview) return;
-    shown.preview.syncToLine(line);
-    // `syncToLine` 是同步落地的，容器里的值可以直接读；这一笔由预览自己那次
-    // scroll 拦下来（`isSuppressingScrollWrite`），所以这里显式补记一次。
+    // ⚠️ 立刻摘成局部：`restoringViewport` 那几笔要进闭包，属性上的收窄在闭包里会丢。
+    const preview = shown.preview;
+    // B160：程序落点要套进按标签的还原窗口（纪律 3 的同一条），与源码分支同源。
+    // 少了这层，B 容器那一发 scroll 会被 main 的预览监听当成「用户停过的位置」，
+    // 顺手再 `pushSyncToSiblings` 推回来一轮 —— 落点是程序算的，不是用户停的。
+    restoringViewport(other.tabId, () => preview.syncToLine(line));
+    // ⚠️ `clearPendingSync` 必须紧跟：`syncToLine` 会把目标行记成 `pendingSyncLine`
+    //    （那是给「大纲跳转」这类一次性目标用的，见它的注释）。同步滚动的目标行
+    //    **每帧都在变**，记下来等于给每次重排留一个「把预览拽回某一行」的钩子：
+    //    之后任意一次图片 / KaTeX / Shiki 增强完成（`applyPending`）或一次重渲染，
+    //    预览都会被按那个早已过期的行号再定位一次 —— 这就是用户报的「滚源码，
+    //    预览位置会抖」。跟位置同步无关的一次性尾巴，不要留在预览里。
+    preview.clearPendingSync();
+    // `syncToLine` 是同步落地的，容器里的值可以直接读；这一发 scroll 拦不住
+    // （还原窗口挡的是 main 那条监听，不是 preview 自己的回执判定），所以显式补记。
+    // ⚠️ 必须留在还原窗口**外**：窗口期内 `recordScroll` 是拒写的。
+    //    这笔不用局部 `preview`：它不在闭包里，属性收窄还在，原样读更直白。
     recordScroll(other.tabId, shown.preview.root.scrollTop);
     return;
   }
   const shownView = shown?.view?.view;
-  if (px === null || !shownView) return;
-  recordScroll(other.tabId, px);
-  // 派发选区**在先**、钉位置在后：CM6 为了让光标可见可能自己滚一下，钉在后面
-  // 才能把它盖掉 —— 顺序反了就变成「位置被光标拽走」。
-  restoringViewport(other.tabId, () => pinScrollTop(shownView.scrollDOM, px));
+  if (!shownView) return;
+  if (px !== null) {
+    recordScroll(other.tabId, px);
+    // 派发选区**在先**、钉位置在后：CM6 为了让光标可见可能自己滚一下，钉在后面
+    // 才能把它盖掉 —— 顺序反了就变成「位置被光标拽走」。
+    restoringViewport(other.tabId, () => pinScrollTop(shownView.scrollDOM, px));
+    return;
+  }
+  // B160：源是**预览**侧 ⇒ 按纪律 2 它交不出编辑器像素，`px` 恒为 `null`。旧写法是
+  //    在 `px === null` 时直接 return —— 而 `line` 早就算好了，只是没人用，于是
+  //    「滚预览，源码兄弟一动不动」。换算只能从行号来：行首对齐的像素坐标与
+  //    `SyncHost.scrollToLine` 是同一套（纪律 4：中间只许出现「行号」这一种换算）。
+  if (line === null) return;
+  const target = shownView.state.doc.line(Math.min(Math.max(1, line), shownView.state.doc.lines));
+  // 纪律 3：钉 DOM 要套在还原窗口里、并复用 `pinScrollTop` 的抑制区间 ——
+  // 否则兄弟那一发 scroll 会被记成「用户停过的位置」，再顺着它的监听推回源。
+  restoringViewport(other.tabId, () => {
+    pinScrollTop(shownView.scrollDOM, shownView.lineBlockAt(target.from).top);
+  });
+  // 落点得记，否则兄弟这份的位置只活在 DOM 上：离屏前没人补记，重启就丢了。
+  recordScroll(other.tabId, shownView.scrollDOM.scrollTop);
 }
 
 /**
