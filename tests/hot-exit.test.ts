@@ -311,10 +311,11 @@ describe("B68 热退出：关窗不询问，下次启动还原未保存内容", 
     expect(src, "会话快照必须写 backupId").toContain("backupId: d.backupId");
     // 没有路径的未命名文档，只有在备份区里确实有副本时才该进会话
     // （B69 起拆成两步 return：先认 path/副本，再补「热退出 + 空的未命名」，
-    //  后半条的判定与守卫见下面 B69 块）
-    expect(src, "有路径或有副本的立即入会话").toMatch(
-      /if \(d\.path \|\| d\.backedUp\) return true;/,
-    );
+    //  B147 又把「挡下它 + 为什么挡」挪进 sessionRejectReason —— 断言跟着挪过去，
+    //  判据本身没变）
+    const worthy = fnBody("function sessionRejectReason");
+    expect(worthy, "有路径或有副本的立即入会话").toMatch(/if \(d\.path\) return null;/);
+    expect(worthy, "有副本的立即入会话").toMatch(/if \(d\.backedUp\) return null;/);
   });
 
   it("孤儿副本清理必须以「会话读成功」为前提（防会话坏掉时误删全部副本）", () => {

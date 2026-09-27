@@ -50,6 +50,10 @@ describe("B143 视口位置要按整数落盘", () => {
   });
 });
 
+/** 会话写失败那几处 warn。正则不认死措辞，只在意「到底留没留一条」。 */
+const SAVE_FAIL_LOG = /logger\.warn\("session", `(?:保存失败|会话写失败)/g;
+const SAVE_FAIL_LOG_NO_G = /logger\.warn\("session", `(?:保存失败|会话写失败)/;
+
 describe("B143 静态契约", () => {
   const main = readFileSync("src/main.ts", "utf-8");
   const store = readFileSync("src/session/store.ts", "utf-8");
@@ -64,10 +68,11 @@ describe("B143 静态契约", () => {
   });
 
   it("会话写失败不许静默吞掉（静默 = 这类问题永远查不到）", () => {
-    // 三处：防抖落盘的 `persistSession` + 关窗两条路径。
-    // ⚠️ B144 起统一走 `logger.warn`（target = 模块名），字符串形状跟着变了 ——
-    // 但「不许静默」这条契约不变，所以盯的是这条 warn 本身。
-    const hits = main.match(/logger\.warn\("session", `save failed: \$\{String\(e\)\}`\);/g) ?? [];
+    // 三处：防抖落盘的 `persistSession` + 关窗的两条路径。
+    // ⚠️ B144 起统一走 `logger.warn`（target = 模块名），B147 又把文案改成了中文
+    // （「保存失败：…」「会话写失败（热退出收尾）：…」）—— 但「不许静默」这条
+    // 契约不变，所以盯的是**这几处 warn 本身**，不去认具体措辞。
+    const hits = main.match(SAVE_FAIL_LOG) ?? [];
     expect(hits.length, "三处 catch 都要留日志").toBe(3);
   });
 
@@ -89,13 +94,10 @@ describe("B143 静态契约", () => {
       /deserialize_with = "de_scroll_top"/,
     );
 
-    const degradedMain = main.replace(
-      /logger\.warn\("session", `save failed: \$\{String\(e\)\}`\);/g,
-      "// 已删除",
-    );
+    const degradedMain = main.replace(SAVE_FAIL_LOG, "// 已删除");
     expect(degradedMain, "退化实现应真的换了写法").not.toBe(main);
     expect(degradedMain, "退化后又变成静默吞掉（第二条此时必须落空）").not.toMatch(
-      /logger\.warn\("session", `save failed:/,
+      SAVE_FAIL_LOG_NO_G,
     );
   });
 });

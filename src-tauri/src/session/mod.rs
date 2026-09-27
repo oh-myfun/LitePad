@@ -310,7 +310,25 @@ pub fn load_session() -> Option<SessionState> {
         return None; // 首次启动：没有会话文件，很正常
     };
     match serde_json::from_str::<SessionState>(&content) {
-        Ok(state) => Some(state),
+        Ok(state) => {
+            // B147：读成功了也要留一条。前端只能看到「恢复出几个标签」，看不出
+            // 「盘上其实有 20 个、只恢复了 3 个」是解析时丢的，还是有意的（空未命名
+            // 不进会话）。前端只能看到结果，看不到这个差别。
+            let tabs: usize = state.panels.iter().map(|p| p.tabs.len()).sum();
+            logging::log(
+                Level::Debug,
+                "session",
+                &format!(
+                    "会话读盘成功：面板={} 标签={} 卫星={} 活动面板={} ← {}",
+                    state.panels.len(),
+                    tabs,
+                    state.satellite_tabs.len(),
+                    state.active_panel,
+                    path.display()
+                ),
+            );
+            Some(state)
+        }
         Err(e) => {
             logging::log(
                 Level::Warn,
@@ -336,6 +354,22 @@ pub fn save_session(state: &SessionState) -> Result<(), String> {
         );
         return Err(e);
     }
+    // B147：成功也留一条。**成功不留痕**是这个模块以前最难查的地方 —— 前端那边
+    // 只看到「save 没抛错」，可 `session_path()` 拿不到时这里直接 Err 出去、
+    // 一行字都不写，界面上和「写成功了」一模一样。留下这条就能对上时间线。
+    let tabs: usize = state.panels.iter().map(|p| p.tabs.len()).sum();
+    logging::log(
+        Level::Debug,
+        "session",
+        &format!(
+            "会话已落盘：面板={} 标签={} 卫星={} 活动面板={} ← {}",
+            state.panels.len(),
+            tabs,
+            state.satellite_tabs.len(),
+            state.active_panel,
+            path.display()
+        ),
+    );
     Ok(())
 }
 

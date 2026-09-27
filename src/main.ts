@@ -2261,10 +2261,22 @@ function showEolMenu(): void {
 function scheduleSessionSave(): void {
   // 卫星窗口不碰 session.json：会话只有一份，两个窗口都写就是互相覆盖
   // （表现为「另一个窗口的标签时有时无」）。卫星窗口承载的标签由主窗口兜底持有。
-  if (windowKind !== "main") return;
-  if (sessionTimer !== null) clearTimeout(sessionTimer);
+  if (windowKind !== "main") {
+    // 卫星窗口每次打字 / 滚动都会走到这儿，所以压到 trace（B147）。
+    // 「卫星窗口怎么不写会话」要看的就是这一条 —— 它一直在跳，但主窗口的日志里
+    // 一条都不该出现。
+    logger.trace("session", "排程落盘 · 卫星窗口不写会话");
+    return;
+  }
+  if (sessionTimer !== null) {
+    // B147：连打十几个字就是十几次重排。没有这条，日志上只剩「800ms 后落了一次」，
+    // 看着像丢了数据，其实是防抖在正常工作 —— 反而更容易误判。
+    logger.trace("session", "排程落盘 · 取消并重排");
+    clearTimeout(sessionTimer);
+  }
   sessionTimer = setTimeout(() => {
     sessionTimer = null;
+    logger.debug("session", "排程落盘 · 800ms 到，开始写");
     void persistSession();
   }, 800) as unknown as number;
 }
@@ -2299,8 +2311,12 @@ function refreshSession(): void {
   [...panels.keys()].forEach((id, i) => panelIndex.set(id, i));
 
   // 清理上一轮留下、这轮已经不存在的面板与跨窗口登记
+  const gonePanels: string[] = [];
   for (const id of sessionStore.panelIds()) {
-    if (!panels.has(id)) sessionStore.dropPanel(id);
+    if (!panels.has(id)) {
+      sessionStore.dropPanel(id);
+      gonePanels.push(String(id));
+    }
   }
   for (const p of panels.values()) {
     sessionStore.setPanel(p.panelId, p.tabs, p.activeTabId);
@@ -2315,8 +2331,20 @@ function refreshSession(): void {
     sessionStore.setSatellite(docId, r.tabId, r.owner);
     liveRemoted.add(docId);
   }
+  const goneSats: string[] = [];
   for (const docId of sessionStore.satelliteDocIds()) {
-    if (!liveRemoted.has(docId)) sessionStore.dropSatellite(docId);
+    if (!liveRemoted.has(docId)) {
+      sessionStore.dropSatellite(docId);
+      goneSats.push(String(docId));
+    }
+  }
+  // B147：摘掉登记是正常的（面板被合并 / 标签被别的窗口收走），但「上一次的登记
+  // 这轮一个都没对上」值得看一眼 —— 那往往说明有地方改了结构却忘了同步 store。
+  if (gonePanels.length > 0 || goneSats.length > 0) {
+    logger.trace(
+      "session",
+      `同步结构 · 摘掉面板 ${gonePanels.join(",") || "无"} / 跨窗口 ${goneSats.join(",") || "无"}`,
+    );
   }
 
   for (const t of tabs.values()) {
@@ -2358,29 +2386,95 @@ function refreshSession(): void {
 // B141：`sessionTabRecordOf` 已删除 —— 标签的会话记录现在由 `sessionStore`（`src/session/store.ts`
 // 的 `toDisk`）产出，会话只有一个出口。面板标签与跨窗口标签共用同一份记录，不再各拼一次。
 
-/** 该文档值不值得进会话（B68/B69 的判据；面板标签与隐藏实例共用）。 */
-function sessionWorthy(t: Tab): boolean {
+/**
+ * 这个标签**为什么**没进会话（进了返回 null）（B147）。
+ *
+ * 「我的标签怎么重启后没了」只有一种答案：这里的某一条判据拦下了它。以前这个判定
+ * 是纯布尔的、一个字都不留 —— 于是文件被删了、热退出没开、文档正脏着，三种情况
+ * 全都是「消失了」，查起来只能靠猜。现在判断与**理由**分开，理由进日志。
+ */
+function sessionRejectReason(t: Tab): string | null {
   const d = docs.get(t.docId);
-  if (!d) return false;
+  if (!d) return "文档已不存在";
   // B68：有磁盘路径的照旧入会话；没有路径的未命名文档，只有在
   // 备份区里确实存着副本时才值得留住（否则恢复时无据可依，只会白占一行）。
-  if (d.path || d.backedUp) return true;
+  if (d.path) return null;
+  if (d.backedUp) return null;
   // B69：热退出开着时，**空的**未命名文档也要留住。它没有内容要救，
   // 但标签本身该原样回来——「新建了还没开始打字」不该重启后凭空消失。
   //
   // ⚠️ 判定必须是「无路径 **且 不脏**」：脏、却又没备份成功的未命名文档
   // 绝不能按空文档恢复，那会把用户打的字真的丢掉。那种情况只能走
   // 关窗确认框（快照里没有它 → 恢复时也不会被当成空文档）。
-  return settings?.hot_exit === true && !d.dirty;
+  if (settings?.hot_exit !== true) return "无路径且无副本（热退出未开）";
+  if (d.dirty) return "无路径且脏（不进会话，避免被当成空文档丢掉内容）";
+  return null;
+}
+
+/** 该文档值不值得进会话（B68/B69 的判据；面板标签与隐藏实例共用）。 */
+function sessionWorthy(t: Tab): boolean {
+  return sessionRejectReason(t) === null;
+}
+
+/**
+ * 会话摘要（B147，一行装完）。
+ *
+ * 「会话写不进去」「会话里少了标签」这两类问题最难查的地方在于：日志上只留一句
+ * `save failed: …`，要写的是什么、少了谁全看不出来。所以落盘前后各记一次 ——
+ * 前后一比就知道内容压根有没有进去。标签多的会话只打前 8 个：一行几十 KB
+ * 会把 2MB 的日志冲掉。
+ */
+function sessionSummary(s: SessionState, skipped: string[] = []): string {
+  const all = s.panels.flatMap((p) => p.tabs);
+  const total = all.length + (s.satelliteTabs?.length ?? 0);
+  const shown = all.slice(0, 8);
+  const body = shown
+    .map(
+      (t) =>
+        `${t.path || "(未命名)"}|行${t.cursorLine}:${t.cursorCol}|位${t.scrollTop ?? "-"}${
+          t.viewMode ? `|${t.viewMode}` : ""
+        }`,
+    )
+    .join("  ");
+  const rest = total - shown.length;
+  return [
+    `面板=${s.panels.length} 标签=${total}`,
+    `活动面板=${s.activePanel}`,
+    body,
+    rest > 0 ? `…另 ${rest} 个` : "",
+    skipped.length > 0
+      ? `未入会话 ${skipped.length}：${skipped.slice(0, 4).join("，")}${
+          skipped.length > 4 ? "…" : ""
+        }`
+      : "",
+  ]
+    .filter((x) => x !== "")
+    .join(" ");
 }
 
 function snapshotSession(): Parameters<typeof saveSession>[0] {
   // B141：会话不再现场拼装 —— 先把活动态刷进 store，再把那份记录序列化出去。
   refreshSession();
-  return sessionStore.toSessionState((tabId) => {
+  const skipped: string[] = [];
+  const s = sessionStore.toSessionState((tabId) => {
     const t = tabs.get(tabId);
-    return !!t && sessionWorthy(t);
+    if (!t) return false;
+    if (sessionWorthy(t)) return true;
+    const why = sessionRejectReason(t);
+    skipped.push(`${docs.get(t.docId)?.name ?? `#${t.docId}`}${why ? `（${why}）` : ""}`);
+    return false;
   });
+  // 「标签一个都没进会话」是「重启后全没了」的唯一成因，以前完全静默（B147）。
+  if (skipped.length > 0 && s.panels.every((p) => p.tabs.length === 0)) {
+    logger.warn(
+      "session",
+      `快照里一个标签都留不下（${skipped.length} 个被拦下：${skipped
+        .slice(0, 4)
+        .join("；")}）→ 下次启动会回到空白窗口`,
+    );
+  }
+  logger.debug("session", `快照 · ${sessionSummary(s, skipped)}`);
+  return s;
 }
 
 /** 布局树叶子 panelId → 会话面板索引（JSON 深拷贝）。 */
@@ -2401,12 +2495,16 @@ async function persistSession(): Promise<void> {
   try {
     // 落盘前看一眼：写进去的位置是哪一步留下的，下次启动会照这个回来
     logViewport("保存 · 快照前", activePanel() ?? undefined);
-    await saveSession(snapshotSession());
+    const s = snapshotSession();
+    // 写出前先记一份：失败时才有「本来要写的是什么」可对（B147）。
+    logger.debug("session", `保存 · 写出 ${sessionSummary(s)}`);
+    await saveSession(s);
+    logger.trace("session", "保存 · 已交给后端");
   } catch (e) {
     // B143：这里原来是**静默**吞掉的。整份会话写不进去时界面上一点迹象都没有
     // （只表现为「位置/光标不再刷新」），排查只能靠猜 —— 小数 scrollTop 让 Rust 侧
     // 反序列化失败那次就是这么被藏起来的。至少留一条日志。
-    logger.warn("session", `save failed: ${String(e)}`);
+    logger.warn("session", `保存失败：${String(e)}`);
   }
 }
 
@@ -2415,11 +2513,28 @@ async function restoreSession(): Promise<boolean> {
   let sess: SessionState | null;
   try {
     sess = await loadSession();
-  } catch {
+  } catch (e) {
+    // B147：这里是整条恢复链的第一道口子，以前却是纯静默 —— 「重启后什么都没恢复」
+    // 只能靠猜到底是盘坏了还是路径不对。
+    logger.warn("session", `读盘失败 · 按空会话启动：${String(e)}`);
     return false;
   }
   const sp = sess?.panels;
-  if (!sess || !sp || sp.length === 0) return false;
+  if (!sess || !sp || sp.length === 0) {
+    // 「没恢复」有两种完全不同的成因，日志上必须分得开（B147）：盘上压根没有
+    // 会话文件（首次启动，或上次关窗时会话本来就是空的），和读得到但解析不出来。
+    logger.info(
+      "session",
+      sp?.length ? "会话里没有标签 · 按空白标签启动" : "没有会话文件 · 按空白标签启动",
+    );
+    return false;
+  }
+  logger.debug(
+    "session",
+    `读盘 · 面板=${sp.length} 标签=${sp.reduce((n, p) => n + p.tabs.length, 0)} 卫星=${
+      sess.satelliteTabs?.length ?? 0
+    } 活动面板=${sess.activePanel}`,
+  );
   // B71 ④：被搬到其他窗口的标签并回主窗口（v1 不回放多窗口布局）。
   // 追加到**第一个面板**而不是新建分屏：这些标签本来就不属于本窗口的某块分屏，
   // 让它们和主窗口的标签待在一起，比凭空多出一块空面板好理解。
@@ -2490,7 +2605,10 @@ async function restoreSession(): Promise<boolean> {
 
   try {
     layout = buildTree(sess.layout);
-  } catch {
+  } catch (e) {
+    // 布局树解析失败 = 整个会话没法照原样摆回去，此时继续恢复标签只会得到一堆
+    // 位置错乱的面板 —— 退回空白标签。但「为什么整份都不要了」必须留下来（B147）。
+    logger.warn("session", `布局树解析失败 · 整份会话作废：${String(e)}`);
     return false;
   }
   // 会话面板没全部落到布局树（索引越界等）→ 追加水平分屏兜底
@@ -2548,6 +2666,8 @@ async function restoreSession(): Promise<boolean> {
     }
   }
   const restoredCache = new Map<string, Restored>();
+  /** 被跳过的标签（带上原因），收尾时一次打出来（B147）。 */
+  const dropped: string[] = [];
   await Promise.all(
     pending.map(async (p) => {
       if (p.backupId) {
@@ -2557,8 +2677,9 @@ async function restoreSession(): Promise<boolean> {
             restoredCache.set(p.key, { kind: "backup", data: backup });
             return;
           }
-        } catch {
-          /* 副本读不了 / 格式坏了 → 退回按路径打开原文件 */
+          dropped.push(`${p.path || "未命名"}：副本读出来是空的，改按路径打开`);
+        } catch (e) {
+          dropped.push(`${p.path || "未命名"}：副本读不了（${String(e)}），改按路径打开`);
         }
       }
       // B69：既没有路径、又没有副本 ⇒ 上次关窗时这是一个**空的**未命名文档。
@@ -2588,18 +2709,23 @@ async function restoreSession(): Promise<boolean> {
               mtimeMs: 0,
             },
           });
-        } catch {
-          /* 建不出来就跳过该标签 */
+        } catch (e) {
+          dropped.push(`未命名#${p.key}：建不出空白文档（${String(e)}）`);
         }
         return;
       }
       try {
         restoredCache.set(p.key, { kind: "file", data: await openFile(p.path, p.encoding) });
-      } catch {
-        /* 文件已删除 / 读不了 → 该标签跳过 */
+      } catch (e) {
+        dropped.push(`${p.path}：文件读不了（${String(e)}）`);
       }
     }),
   );
+  if (dropped.length > 0) {
+    // 预取阶段的失败**不致命**（会退回按路径打开），所以只是 debug（B147）。
+    // 但「副本没生效 / 文件被删了」这种正是用户报症状的起点，不能一句话不留。
+    logger.debug("session", `预取跳过 ${dropped.length} 项：${dropped.slice(0, 4).join("；")}`);
+  }
 
   // 逐面板恢复标签
   let opened = 0;
@@ -2657,8 +2783,10 @@ async function restoreSession(): Promise<boolean> {
         // B126：视口位置一并带回（null = 旧会话没有这个字段 → 切过去时保证光标可见）
         inst.scrollTop = st.scrollTop ?? null;
         opened++;
-      } catch {
-        // 文件已被删除/无法读取 → 跳过该标签
+      } catch (e) {
+        // 文件已被删除/无法读取 → 跳过该标签。静默过（B143 那类帮凶）：跳了几个、
+        // 为什么跳，日志上完全看不出来，重启后就只剩「我的文件没了」。
+        dropped.push(`${st.path || "未命名"}：恢复实例失败（${String(e)}）`);
       }
     }
     if (panel.tabs.length > 0) {
@@ -2668,6 +2796,14 @@ async function restoreSession(): Promise<boolean> {
   }
 
   if (opened === 0) {
+    // B147：一个都没恢复出来时，前面攒下的 every 条跳过原因全在这一刻才有意义 ——
+    // 「文件全被删了」和「会话格式不对」看起来都是空白窗口，只有这一条分得开。
+    logger.warn(
+      "session",
+      `一个标签都没恢复 · 退回空白窗口（跳过 ${dropped.length} 项：${
+        dropped.slice(0, 4).join("；") || "无"
+      }）`,
+    );
     panels.clear();
     tabs = new Map();
     docs = new Map();
@@ -2678,6 +2814,14 @@ async function restoreSession(): Promise<boolean> {
   if (!panels.has(activePanelId)) activePanelId = [...panels.keys()][0];
   // 恢复完看一眼：盘上的位置是怎么落到视图上的（「滚到一半闪回开头」要看这里）
   logViewport("加载 · 会话恢复后", getPanel(activePanelId) ?? undefined);
+  // B147：这里给出「恢复了什么、丢了什么」的整体结论。上游 bootstrap 那一条 info
+  // 只报数量，报不出「丢了哪个文件」—— 而那正是用户报症状时唯一想知道的。
+  logger.debug(
+    "session",
+    `恢复完成 · 打开 ${opened} 个标签 / ${panels.size} 个面板，跳过 ${dropped.length} 项：${
+      dropped.slice(0, 4).join("；") || "无"
+    }`,
+  );
   return true;
 }
 
@@ -2718,8 +2862,10 @@ function scheduleAutosave(): void {
           // 拿旧内容顶掉用户的已保存版本。必须在转干净的同时丢弃。
           discardBackupFor(doc);
           savedAny = true;
-        } catch {
-          // 单个文档保存失败不打断其余
+        } catch (e) {
+          // 单个文档保存失败不打断其余。⚠️ 静默过（B147）：自动保存是**用户以为存了**
+          // 的那条路径，写失败却一声不响，等于把「没存上」伪装成「存好了」。
+          logger.warn("save", `自动保存失败（${doc.name}）：${String(e)}`);
         }
       }
       if (savedAny) {
@@ -2807,6 +2953,14 @@ async function flushBackups(): Promise<number> {
     const text = freshTextOfDoc(doc);
     if (text === null || text.length > BACKUP_MAX_CHARS) {
       failed++;
+      // ⚠️ 这里静默过（B147）：撑爆体积上限 / 正文取不到，都是「这份内容这次没兜住」，
+      // 归到 failed 里行为是对的（关窗会弹确认框），但没留痕就等于让排查的人去猜。
+      logger.warn(
+        "hot-exit",
+        text === null
+          ? `副本未写：取不到正文（${doc.name}）`
+          : `副本未写：超过 ${BACKUP_MAX_CHARS} 字符上限（${doc.name}，${text.length} 字）`,
+      );
       continue;
     }
     if (!doc.backupId) {
@@ -2827,8 +2981,11 @@ async function flushBackups(): Promise<number> {
         .then(() => {
           doc.backedUp = true;
         })
-        .catch(() => {
+        .catch((e) => {
           failed++;
+          // B147：副本写失败 = 这份未保存内容**一点兜底都没有**。上面 `failed++`
+          // 让关窗时该弹的确认框照弹（行为是对的），可「为什么没备上」一个字都留不下。
+          logger.warn("hot-exit", `副本写入失败（${doc.name}）：${String(e)}`);
         }),
     );
   }
@@ -2845,7 +3002,11 @@ async function flushBackups(): Promise<number> {
         .filter((d) => d.backupId)
         .map((d) => ({ docId: d.tabId, backupId: d.backupId, backedUp: d.backedUp }));
       void emitTo(MAIN_WINDOW_LABEL, "backup-ids", { from: windowLabel, docs: assigned }).catch(
-        () => {},
+        (e: unknown) => {
+          // 交不出去不影响安全（副本已经写好了，下次启动靠会话认领），
+          // 但主窗口的会话会记着旧的 backupId —— 这条值得留痕（B147）。
+          logger.debug("hot-exit", `副本 ID 没交给主窗口：${String(e)}`);
+        },
       );
     }
   }
@@ -5496,8 +5657,11 @@ function returnTabsToMain(tabIds: number[]): void {
   void emitTo(MAIN_WINDOW_LABEL, "tabs-return", {
     from: windowLabel,
     tabs: snapshots,
-  }).catch(() => {
-    // 主窗口没在（正在退出）→ 未保存内容仍由热退出副本兜底
+  }).catch((e: unknown) => {
+    // 主窗口没在（正在退出）→ 未保存内容仍由热退出副本兜底。
+    // 兜底是好的，但「标签没交回去」本身要留痕（B147）：下次启动它会以「隐藏实例」
+    // 的形式出现在主窗口，用户看到的是「标签回来了、却不能编辑」。
+    logger.debug("window", `标签没交回主窗口：${String(e)}`);
   });
 }
 
@@ -6015,10 +6179,12 @@ async function finishSatelliteClose(): Promise<void> {
  */
 async function finishAndDestroy(dirty: Doc[]): Promise<void> {
   if (dirty.length === 0) {
+    logger.debug("session", "收尾 · 没有脏文档，直接落会话");
     try {
       await persistSession();
-    } catch {
+    } catch (e) {
       // 会话保存失败不影响退出
+      logger.debug("session", `收尾时落会话失败（不阻塞退出）：${String(e)}`);
     }
   } else {
     // ---- 有脏文档：热退出先试一把 ----
@@ -6027,8 +6193,9 @@ async function finishAndDestroy(dirty: Doc[]): Promise<void> {
     if (settings?.hot_exit) {
       try {
         await flushBackups();
-      } catch {
+      } catch (e) {
         // 备份整体抛错按「没备成」处理，落到下面的确认框
+        logger.warn("hot-exit", `备份队列整体失败，落到确认框：${String(e)}`);
       }
       // 判定必须逐个文档查 backedUp，不能只看 flushBackups 的返回值：
       // 万一某个文档被中途改动/关闭，返回值就不可靠了。
@@ -6038,7 +6205,7 @@ async function finishAndDestroy(dirty: Doc[]): Promise<void> {
           await saveSession(snapshotSession());
         } catch (e) {
           // 会话写失败不阻塞退出；但别静默（B143：静默会让「会话写不进去」无从察觉）
-          logger.warn("session", `save failed: ${String(e)}`);
+          logger.warn("session", `会话写失败（热退出收尾）：${String(e)}`);
         }
         await destroySelf();
         return;
@@ -6060,7 +6227,7 @@ async function finishAndDestroy(dirty: Doc[]): Promise<void> {
       await saveSession(snapshotSession());
     } catch (e) {
       // 会话写失败不阻塞退出；但别静默（B143：静默会让「会话写不进去」无从察觉）
-      logger.warn("session", `save failed: ${String(e)}`);
+      logger.warn("session", `会话写失败（用户放弃退出后收尾）：${String(e)}`);
     }
   }
   await destroySelf();
@@ -6070,8 +6237,9 @@ async function finishAndDestroy(dirty: Doc[]): Promise<void> {
 async function destroySelf(): Promise<void> {
   try {
     await getCurrentWindow().destroy();
-  } catch {
+  } catch (e) {
     // 已经销毁 / 参数异常都按「关了」处理
+    logger.debug("window", `destroy 报错（按已关处理）：${String(e)}`);
   }
 }
 

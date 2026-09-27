@@ -187,20 +187,27 @@ describe("B69 空的新建文档也要跨重启回来", () => {
 
   it("快照接纳空的未命名文档，但**绝不**接纳「脏却没备份成功」的", () => {
     // B71 ④ 起「值不值得进会话」抽到了 sessionWorthy（卫星窗口与隐藏实例共用同一判据），
-    // 所以断言跟着挪到那个函数体上 —— 判据本身没变。
-    const body = fnBody("function sessionWorthy");
+    // B147 又把「挡下它 + 为什么挡」拆成 sessionRejectReason —— 断言跟着挪到那里，
+    // 判据本身没变。
+    const body = fnBody("function sessionRejectReason");
     // 空文档（无 path、不脏）必须进会话，否则重启后凭空消失
     expect(body, "热退出开着时要接纳「无路径且不脏」的文档").toMatch(
-      /settings\?\.hot_exit === true && !d\.dirty/,
+      /settings\?\.hot_exit !== true/,
     );
-    // ⚠️ 反向约束：判定必须带 !d.dirty。若退化成「无路径就收」，
+    // ⚠️ 反向约束：无路径的文档还要再过一道「不脏」。若退化成「无路径就收」，
     // 「脏、但备份失败」的未命名文档也会被收进去，恢复时按空文档处理
     // ——那会真的把用户打的字丢掉。那种情况只能走关窗确认框。
-    expect(body, "判定必须同时约束 dirty，不能只看有没有路径").toMatch(/!d\.dirty/);
+    expect(body, "判定必须同时约束 dirty，不能只看有没有路径").toMatch(/if \(d\.dirty\) return/);
     // 有路径或有副本的立即放行（B68 的原判据）
-    expect(body, "有路径或有副本的立即入会话").toMatch(
-      /if \(d\.path \|\| d\.backedUp\) return true;/,
-    );
+    expect(body, "有路径或有副本的立即入会话").toMatch(/if \(d\.path\) return null;/);
+    expect(body, "有副本的立即入会话").toMatch(/if \(d\.backedUp\) return null;/);
+    // 顺序也是契约：先认热退出开关（关着就直接拒），再判脏。反过来不只是逻辑等价 ——
+    // 热退出关着时脏文档会给出的「理由」会变成「无路径且脏」，把开关没开这件事
+    // 藏起来，读日志的人就会照着错的成因去查。
+    expect(
+      body.indexOf("settings?.hot_exit"),
+      "热退出那道闸要排在 dirty 判据之前（顺序错了理由就会误导排查）",
+    ).toBeLessThan(body.indexOf("if (d.dirty)"));
   });
 
   it("空文档靠 docId 认领：会话 schema 与快照都要带上", () => {
