@@ -278,6 +278,31 @@ describe("B97 自建标题栏", () => {
     expect(actions, "容器自身也不必再撑满标题栏高").not.toMatch(/align-self:\s*stretch/);
   });
 
+  it("B167：.title-actions 要自己撑开并右对齐（B165 后靠它把工具键顶回右边）", () => {
+    // B165 把 .title-center 改成绝对定位后，「flex:1 子项把右侧两组顶到右端」的推力没了；
+    // 这一族从来没写过 margin-left:auto。只补 auto 也不行 —— `.window-controls` 自己
+    // 也有一条，两个 auto 会把剩余空间**平分**，置顶键与三键之间裂开一条缝。
+    const actions = ruleBlock(css(), ".title-actions");
+    expect(actions, "要吸满剩余空间").toMatch(/flex:\s*1 1 auto/);
+    expect(actions, "内容要右对齐").toMatch(/justify-content:\s*flex-end/);
+    expect(actions, "不许只给 margin-left:auto（会与三键平分留白）").not.toMatch(
+      /margin-left:\s*auto/,
+    );
+    // 三键那一条仍在（B103 的口径：右端贴边）
+    expect(ruleBlock(css(), ".window-controls"), "三键仍靠自己那条").toMatch(/margin-left:\s*auto/);
+  });
+
+  it("B167 反向验证：把 .title-actions 退回「只给 margin-left:auto」，上一条必须落空", () => {
+    const orig = ruleBlock(css(), ".title-actions");
+    expect(orig, "要能取到 .title-actions 规则块").not.toBe("");
+    const degraded = orig
+      .replace("flex: 1 1 auto;", "margin-left: auto;")
+      .replace("justify-content: flex-end;", "");
+    expect(degraded, "退化实现应真的换了写法").not.toBe(orig);
+    expect(degraded, "退化后「不许只给 margin-left:auto」必须命中").toMatch(/margin-left:\s*auto/);
+    expect(degraded, "退化后「要吸满剩余空间」必须落空").not.toMatch(/flex:\s*1 1 auto/);
+  });
+
   it("B165：文件名要绝对居中（不许只是剩余空位内居中）", () => {
     // 用户报：左侧菜单一长，原来 flex:1 + justify-content:center 的「居中」整体被挤偏。
     // 正解是 .title-center 盖在整条标题栏正中（absolute + left:50% + translateX 回半）。

@@ -562,8 +562,42 @@ function displayedPanelOfTab(tabId: number): Panel | undefined {
  * 本窗口那一路和跨窗口那一路调用的是**同一个**函数 —— 纪律只有一份，抄成两份
  * 迟早有一份漏掉「跨视图模式只能换算」那一条（B154 就栽在复制粘贴上）。
  */
+/**
+ * B167：同步滚动抖动的**诊断**记录 —— 我们最近一次给某份实例钉位置的时刻与落点。
+ *
+ * 抖动的样子是「A 推 B，B 那一发 scroll 又被当成用户滚动推回 A」。现成的守卫
+ * （`viewportWriteDepth` / `restoringViewport` / 程序定位窗口）都是**两帧**窗口，
+ * 而 CM6 的光标滚进视野、图片加载后的重排都会把那一发 scroll 拖到窗口之外。
+ * 光靠读代码说不清「到底哪一条漏了」，所以这里留一份账：滚动事件到达时若发现
+ * 「这份实例刚被我们推过、守卫却没拦住」，就打一条 debug 日志点名它。
+ *
+ * ⚠️ 只用于日志，不参与任何判定（判定仍由那三条守卫负责）—— 免得诊断代码自己
+ *    变成新的行为分支。
+ */
+const lastSyncApply = new Map<number, { at: number; px: number }>();
+
+/** 记下「我们刚把这份实例钉到了 px」。 */
+function markSyncApplied(tabId: number, px: number): void {
+  lastSyncApply.set(tabId, { at: Date.now(), px });
+}
+
+/** 这一发 scroll 是不是「刚被我们推过、却没被守卫挡下」——是就返回要点名的一句话。 */
+function echoSuspicion(tabId: number, px: number): string {
+  const rec = lastSyncApply.get(tabId);
+  if (!rec) return "";
+  const dt = Date.now() - rec.at;
+  if (dt > 500) return "";
+  return `｜疑似回推：${dt}ms 前刚被钉到 ${rec.px}，此刻 ${px}（守卫漏了这一发）`;
+}
+
 function applySyncToSibling(other: Tab, px: number | null, line: number | null): void {
   const shown = displayedPanelOfTab(other.tabId);
+  // B167：落点也留一条 —— 「谁被推、推到哪儿」与上面那条「谁在推」配对看，
+  //   拉锯的表现就是同一个 docId 上 A→B、B→A 交替出现，且 px 在几个值之间来回跳。
+  logger.debug(
+    "sync",
+    `落 other=${other.tabId} doc=${other.docId} mode=${other.viewMode} px=${px} line=${line} shown=${!!shown}`,
+  );
   // 兄弟是预览态 ⇒ 它只认行：编辑器像素塞不进它的槽（纪律 2）。换算只能从源那侧
   // 的**顶行**来，所以跨视图模式这一路必须走 `line`；离屏的预览兄弟没有容器可算，
   // 只能靠它的槽自己那份记录，这里不写任何东西（写了就是污染）。
@@ -585,6 +619,7 @@ function applySyncToSibling(other: Tab, px: number | null, line: number | null):
     // ⚠️ 必须留在还原窗口**外**：窗口期内 `recordScroll` 是拒写的。
     //    这笔不用局部 `preview`：它不在闭包里，属性收窄还在，原样读更直白。
     recordScroll(other.tabId, shown.preview.root.scrollTop);
+    markSyncApplied(other.tabId, shown.preview.root.scrollTop);
     return;
   }
   const shownView = shown?.view?.view;
@@ -594,6 +629,7 @@ function applySyncToSibling(other: Tab, px: number | null, line: number | null):
     // 派发选区**在先**、钉位置在后：CM6 为了让光标可见可能自己滚一下，钉在后面
     // 才能把它盖掉 —— 顺序反了就变成「位置被光标拽走」。
     restoringViewport(other.tabId, () => pinScrollTop(shownView.scrollDOM, px));
+    markSyncApplied(other.tabId, shownView.scrollDOM.scrollTop);
     return;
   }
   // B160：源是**预览**侧 ⇒ 按纪律 2 它交不出编辑器像素，`px` 恒为 `null`。旧写法是
@@ -609,6 +645,7 @@ function applySyncToSibling(other: Tab, px: number | null, line: number | null):
   });
   // 落点得记，否则兄弟这份的位置只活在 DOM 上：离屏前没人补记，重启就丢了。
   recordScroll(other.tabId, shownView.scrollDOM.scrollTop);
+  markSyncApplied(other.tabId, shownView.scrollDOM.scrollTop);
 }
 
 /**
@@ -681,12 +718,24 @@ function pushSyncToSiblings(src: Tab, crossWindow = false): void {
       ? topVisibleLineOf(srcView)
       : null;
   const px = srcPreview ? null : src.scrollTop;
+  // B167 定位用：同步滚动是「每秒几十次」的高频链路，抖起来只能靠日志看是谁在推谁。
+  //   这几条全是 debug（默认 info 看不到，需在设置里把 log_level 调到 debug），
+  //   排查时按 docId 过滤即可看出是不是「A 推 B、B 又推回 A」的拉锯。
+  logger.debug(
+    "sync",
+    `推 src=${src.tabId} doc=${src.docId} px=${px} line=${line} sibs=${sibs.length} cross=${crossWindow}`,
+  );
   for (const other of sibs) {
     const line2 = other.state.doc.lineAt(Math.min(head, other.state.doc.length));
     const pos = Math.min(head, line2.to);
     const shownView = displayedPanelOfTab(other.tabId)?.view?.view;
     if (shownView) {
-      shownView.dispatch({ selection: { anchor: pos } });
+      // B167：必须带 `scrollIntoView: false` —— CM6 为了让光标可见会**自己滚一下**，
+      //   而它排的是**下一帧的 measure**：等它落地，包裹这次同步的两帧还原窗口早已
+      //   关上，那一发 scroll 于是被当成「用户在滚」、反过来推回源 ⇒ 两边来回拉
+      //   （用户反复报的同步滚动抖动）。位置由下面 `applySyncToSibling` 统一钉，
+      //   这一下自动滚动纯属多余。
+      shownView.dispatch({ selection: { anchor: pos }, scrollIntoView: false });
     } else {
       other.state = other.state.update({ selection: { anchor: pos } }).state;
     }
@@ -1093,6 +1142,15 @@ function rebuildLayout(): void {
           //    光标那一半仍走 `handleUpdate` 里那条单源判定，理由见 pushSyncToSiblings。
           // 排在排程之后：本条监听的活儿跟它是两件事，别为 B132 那条契约挤在一起。
           // B159：跨窗口那一路也在这里开 —— 「谁滚谁当源」在别的窗口同样算数。
+          // B167：守卫都过了才推 —— 若这一发其实是「我们刚推过去的回执」，
+          //   说明有守卫漏了它（抖动现场），打一条 debug 点名。
+          //   ⚠️ 别把下面那句推同步的 `if (t) …` 包进新块里：好几条老契约认的就是
+          //   它这一行的原样写法（B154 / B159），也别在注释里抄它的完整字面量 ——
+          //   反向验证那条退化用的是字面量 replace，注释里出现同串会被先替换掉。
+          const suspicion = t ? echoSuspicion(t.tabId, shownView.scrollDOM.scrollTop) : "";
+          if (suspicion) {
+            logger.debug("sync", `编辑器 scroll tab=${t?.tabId} 未被拦下${suspicion}`);
+          }
           if (t) pushSyncToSiblings(t, true);
           // 预览→编辑器方向程序滚动期间忽略，防止回环抖动
           if (!t || !isMdTab(t) || t.viewMode !== "preview") return;
@@ -1126,6 +1184,11 @@ function rebuildLayout(): void {
         //   激活，源码那份也要跟着走。同样挂在 `restoringViewports` 之后：兄弟被
         //   定位后那两帧里不许回推（与 `pushSyncToSiblings` 里那对守卫同源）。
         // B159：预览侧这一路同样往外广播 —— 纯预览态那份就是它的源，别的窗口也该跟上。
+        // B167：同上 —— 这里若出现「疑似回推」，就是预览那侧的守卫漏了这一发。
+        const suspicion = echoSuspicion(t.tabId, preview.root.scrollTop);
+        if (suspicion) {
+          logger.debug("sync", `预览 scroll tab=${t.tabId} 未被拦下${suspicion}`);
+        }
         pushSyncToSiblings(t, true);
         // ⚠️ 这里**不要**用 `preview.isSyncing()` 当守卫：`isSyncing()` 认的是
         // `syncLock === "preview"`，即**预览→编辑器**方向（用户正在翻预览）；而
@@ -6695,6 +6758,7 @@ function applyRemoteSyncPos(payload: SyncPosPayload | null): void {
   }
   // 本窗口没开这份文档的同步滚动（开关那一条还没轮到，或用户在这边关过）⇒ 不动。
   if (docSyncModes.get(docId) !== true) return;
+  logger.debug("sync", `收 ← ${from} doc=${docId} px=${px} line=${line} srcTab=${srcTabId}`);
   for (const other of instancesOfDoc(docId)) {
     if (other.tabId === srcTabId) continue;
     applySyncToSibling(

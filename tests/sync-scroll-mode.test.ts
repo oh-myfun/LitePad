@@ -169,8 +169,10 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
 
 describe("B152 同步滚动模式：推进与触发点", () => {
   it("推给兄弟的是光标 + 滚动位置（在线派发、离线改快照）", () => {
-    expect(PUSH_BODY, "在线那份要派发选区").toMatch(
-      /shownView\.dispatch\(\{ selection: \{ anchor: pos \} \}\)/,
+    // ⚠️ B167 起这里多了 `scrollIntoView: false` —— CM6 的自动滚动会晚一帧落地，
+    //    那发 scroll 落在还原窗口之外，会被当成用户滚动推回源（抖动根因）。
+    expect(PUSH_BODY, "在线那份要派发选区（且不许自带滚动）").toMatch(
+      /shownView\.dispatch\(\{ selection: \{ anchor: pos \}, scrollIntoView: false \}\)/,
     );
     expect(PUSH_BODY, "离线那份要改自己的快照").toMatch(
       /other\.state = other\.state\.update\(\{ selection: \{ anchor: pos \} \}\)\.state;/,
@@ -536,6 +538,53 @@ describe("B164 子窗口也要有同步滚动（按钮显隐 + 跨窗口广播�
     const pushBody = slice(degradedPush, "function pushSyncToSiblings(", "function showMessage(");
     expect(pushBody, "退化后「不许无条件 return」必须命中").toMatch(
       /if \(sibs\.length === 0\) return;/,
+    );
+  });
+});
+
+// ------------------------------------------------------- B167：同步滚动抖动的根因
+describe("B167 同步滚动抖动：选区派发不许自带滚动 + 回推要能被日志点名", () => {
+  it("给兄弟派发选区必须带 scrollIntoView: false（CM6 的自动滚动会晚一帧落地）", () => {
+    // CM6 为了让光标可见会自己滚一下，而它排的是**下一帧的 measure** —— 等它落地，
+    // 包住这次同步的两帧还原窗口早关上了，那一发 scroll 就被当成「用户在滚」推回源，
+    // 两边来回拉（用户反复报的抖动）。位置由 applySyncToSibling 统一钉，这下是多余的。
+    expect(PUSH_BODY, "派发选区必须关掉自动滚动").toMatch(
+      /shownView\.dispatch\(\{ selection: \{ anchor: pos \}, scrollIntoView: false \}\);/,
+    );
+  });
+
+  it("两条滚动监听都要挂「疑似回推」的诊断钩子（守卫漏了能被日志点名）", () => {
+    // 抖动现场靠日志定位：落点记在 lastSyncApply，滚动事件到达时若发现「这份刚被
+    // 我们推过、守卫却没拦住」，就打一条 debug。两条监听（编辑器 / 预览）都要有。
+    expect(scrollBodyOf(main), "编辑器监听要认回推").toContain("echoSuspicion(t.tabId");
+    const previewScroll = slice(
+      main,
+      'preview.root.addEventListener("scroll"',
+      "applyPanelMode(p);",
+    );
+    expect(previewScroll, "预览监听也要认回推").toContain("echoSuspicion(t.tabId");
+    expect(PUSH_BODY, "落点要记账（三处定位都要 markSyncApplied）").toMatch(
+      /markSyncApplied\(other\.tabId,/,
+    );
+  });
+
+  it("B167 反向验证：退回两处旧写法，上面两条必须落空", () => {
+    const ORIG = "shownView.dispatch({ selection: { anchor: pos }, scrollIntoView: false });";
+    expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
+    const degradedPush = main.replace(ORIG, "shownView.dispatch({ selection: { anchor: pos } });");
+    const pushBody = slice(degradedPush, "function pushSyncToSiblings(", "function showMessage(");
+    // ⚠️ 判据要盯**调用**（`dispatch({…scrollIntoView: false}`）：源码注释里也提到这个
+    //    选项名，只判 `scrollIntoView: false` 会连注释一起命中 ⇒ 退化用例假绿。
+    expect(pushBody, "退化后「必须关掉自动滚动」必须落空").not.toMatch(
+      /dispatch\(\{[^}]*scrollIntoView: false/,
+    );
+
+    const GUARD =
+      'const suspicion = t ? echoSuspicion(t.tabId, shownView.scrollDOM.scrollTop) : "";';
+    expect(main, "退化串要先自证原句还在").toContain(GUARD);
+    const degradedGuard = main.replace(GUARD, "const suspicion = '';");
+    expect(scrollBodyOf(degradedGuard), "退化后编辑器监听不再认回推").not.toContain(
+      "echoSuspicion(t.tabId",
     );
   });
 });
