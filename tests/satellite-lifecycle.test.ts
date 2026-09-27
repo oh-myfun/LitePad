@@ -1,9 +1,17 @@
 // @vitest-environment jsdom
-// B155：**卫星窗口的生命周期**（「关闭」到底意味着什么，三条口径一次钉死）。
+// B155 / B157：**卫星窗口的生命周期**（「关闭」到底意味着什么，口径逐条钉死）。
 //
-//   ① 关掉子窗口 = 真关：关掉的文档不许再回到主窗口；
-//   ② 关掉子窗口里的文件 = 真关：本窗口摘掉的那一份，别的窗口那份也要跟着摘；
+//   B155 三条：
+//   ① 关掉子窗口 = 真关：不再把标签交还主窗口（交回去的那批可都没关）；
+//   ② 关掉子窗口里的文件 = 真的关掉本窗口这一份（Rust 侧也跟着删）；
 //   ③ 关掉子窗口里的最后一个文件 / 最后一个面板 = 关掉子窗口（没有「再来一个未命名」的兜底）。
+//
+//   B157 补正（用户逐条钉的口径，**覆盖了 B155 的「对端跟着摘」那条**）：
+//   ④ 子窗口里关标签时，**主窗口中同一个文件的那份不许被关掉** —— 所以 B155 那套
+//      「文档关掉了」广播整个作废（`doc-disposed` / `applyDocDisposed` 都不许再出现）；
+//   ⑤ 但「关掉最后一个文件 / 面板 → 子窗口**自己**关」这一档不一样：手上**没关闭**的
+//      标签照旧交回主窗口（窗口是它自己关空的，不是用户点的 X）。
+//      两档的区别就是 `requestSatelliteClose(returnTabs)` 那个参数。
 //
 // 外加一条：主窗口关掉时，在场的卫星窗口跟着收场（否则桌面上会留下孤儿窗口）。
 //
@@ -37,46 +45,55 @@ describe("B155 卫星窗口：关闭 = 真关闭（不再把标签交还主窗�
   it("卫星窗口的关窗处理器里不许再有「交还主窗口」（B153 那套已经作废）", () => {
     const body = bare("function registerSatelliteClose");
     expect(body, "关窗处理器确实存在").toMatch(/onCloseRequested/);
+    // ⚠️ 判据带括号收口：只写 /returnTabsToMain/ 会连注释里提到它的那句一起命中
+    //    （本文件注释大量提函数名，所以走的是剥过注释的 `bare()`，这里加括号是为了
+    //     挡住「换个写法又交回去」）。
     expect(body, "交还是「关掉的文档又冒回来」的直接原因").not.toMatch(/returnTabsToMain\(/);
-    // 「交给主窗口」这张通路本身还在（标签右键「移回主窗口」要用），只是关窗不再走它。
-    expect(fnBody("function returnTabsToMain"), "定向交还的入口必须保留").not.toBe("");
+    // 「交给主窗口」这张通路本身还在（标签右键「移回主窗口」要用、`requestSatelliteClose`
+    // 的 `returnTabs` 也用它），只是关窗这条路上不再走它。
+    expect(fnBody("function returnTabsToMain"), "定向交还的入口必须保留").toBeTruthy();
   });
 
-  it("关窗前必须广播「这些文档我关掉了」，让别的窗口自己摘", () => {
+  it("关窗处理器里不许再广播「这些文档我关掉了」（B155 那套，B157 作废）", () => {
     const body = bare("function registerSatelliteClose");
-    expect(body, "关窗时要把手上的文档逐个广播").toMatch(
-      /for \(const docId of new Set\(ids\)\) broadcastDocDisposed\(docId\)/,
+    expect(body, "关窗处理器确实存在").toMatch(/onCloseRequested/);
+    expect(body, "B155 那条「广播 + 让对端自己摘」已经废了").not.toMatch(
+      /broadcastDocDisposed|doc-disposed/,
     );
-    // 事件名三处必须一致：常量 / 广播 / 接收侧监听（对不上就是「发出去没人接」）。
-    for (const evt of ["doc-disposed", "app-quit"]) {
-      expect(src, `事件名 ${evt} 必须同时出现在常量、广播与监听里`).toContain(`"${evt}"`);
-    }
-    expect(fnBody("function broadcastDocDisposed"), "广播函数必须存在").not.toBe("");
-    expect(fnBody("function applyDocDisposed"), "接收侧必须存在").not.toBe("");
+    // 事件常量 / 广播函数 / 接收侧三样都不许再存在（留着就是「发出去没人接」的死代码）
+    expect(src, "EVT_DOC_DISPOSED 必须整个删掉").not.toMatch(/EVT_DOC_DISPOSED|doc-disposed/);
+    expect(src, "广播函数必须删掉").not.toMatch(/function broadcastDocDisposed/);
+    expect(src, "接收侧必须删掉").not.toMatch(/function applyDocDisposed/);
+    expect(
+      src.slice(src.indexOf("function bindEvents")),
+      "监听也要拆掉（留着就是空转）",
+    ).not.toMatch(/applyDocDisposed/);
   });
 
-  it("接收侧要认 from：自己发的那份必须被跳过", () => {
-    const body = bare("function applyDocDisposed");
-    expect(body, "全局 emit 连自己一起收，不自滤就会把刚摘掉的又摘一遍").toMatch(
-      /from === windowLabel/,
-    );
-    expect(body, "只对同 docId 的实例动手").toMatch(/t\.docId === docId/);
-    // 删除由发起窗口负责（只有它知道自己是不是最后一个），这里只摘不删。
-    expect(body, "接收侧不许碰 Rust 侧文档").not.toMatch(/ipcCloseTab\(/);
-  });
-
-  it("关标签走真关闭：删 Rust 文档之前先广播（顺序反了就是对端变空壳）", () => {
+  it("关标签只关自己这一份：Rust 侧照删，但不碰主窗口那份", () => {
     const body = bare("function closeTabById");
-    const at = (pat: RegExp): number => body.search(pat);
-    const emitAt = at(/broadcastDocDisposed\(doc\.tabId\)/);
-    const delAt = at(/ipcCloseTab\(doc\.tabId\)/);
-    expect(emitAt, "删除前必须先广播").toBeGreaterThanOrEqual(0);
-    expect(delAt, "删除确实在 closeTabById 里").toBeGreaterThanOrEqual(0);
-    expect(emitAt, "广播必须排在删文档之前").toBeLessThan(delAt);
+    expect(body, "删 Rust 文档这步还在（关标签是真关闭）").toMatch(/ipcCloseTab\(doc\.tabId\)/);
+    expect(body, "不许再广播给别的窗口让它跟着摘").not.toMatch(/broadcastDocDisposed/);
+    // B155 加的「先广播再删」那条顺序契约也随广播一起作废
+    expect(body, "closeTabById 里不该再有广播").not.toMatch(/broadcastDocDisposed\(doc\.tabId\)/);
   });
 });
 
-describe("B155 卫星窗口：关掉最后一个文件 / 面板 = 关掉窗口", () => {
+describe("B157 子窗口关标签：主窗口那份不许跟着关", () => {
+  it("全仓不许再有「对端跟着摘同文档实例」的通道", () => {
+    // 用户原话：「子窗口中关闭文件标签时，主窗口中同一个文件的打开标签不能被关闭」
+    for (const dead of ["broadcastDocDisposed", "applyDocDisposed"]) {
+      expect(src, `${dead} 必须彻底消失`).not.toContain(dead);
+    }
+    // 接收侧（监听挂载）也要一并拆掉：只删函数不拆监听 = 空转的 `e.payload` 解构。
+    // ⚠️ 判据查 `bindEvents` 体而不是 `listen<{ from?: string; docId?` —— 那个形状
+    //    `doc-resync-full` / `tabs-return` 两条监听也在用，全局查会误伤（本文件已踩过）。
+    expect(bare("function bindEvents"), "监听不能留在 bindEvents 里").not.toMatch(/doc-disposed/);
+    expect(src, "EVT_APP_QUIT 那条还在用，别误删").toMatch(/EVT_APP_QUIT/);
+  });
+});
+
+describe("B155 / B157 卫星窗口：关掉最后一个文件 / 面板 = 关掉窗口", () => {
   it("关空面板的分支里，卫星窗口不许再开一个未命名文档兜底", () => {
     const body = bare("function closeTabById");
     const branch = body.slice(body.indexOf("if (panel.tabs.length === 0)"));
@@ -87,7 +104,11 @@ describe("B155 卫星窗口：关掉最后一个文件 / 面板 = 关掉窗口",
     expect(sat, "卫星窗口那段确实被切出来了").toMatch(/if \(windowKind === "satellite"\)/);
     expect(sat, "卫星窗口只许请求关窗，不许 newUntitled").not.toMatch(/newUntitled/);
     expect(sat, "卫星窗口只许请求关窗，不许 disposePanel").not.toMatch(/disposePanel/);
-    expect(sat, "落点必须是关窗请求").toMatch(/requestSatelliteClose\(\);/);
+    // B157：这一档是「窗口自己关空」，手上没关的标签要先交回主窗口
+    expect(sat, "落点必须带 returnTabs = true").toMatch(/requestSatelliteClose\(true\)/);
+    expect(sat, "不能退化成不带参数的默认档（那等于不交还）").not.toMatch(
+      /requestSatelliteClose\(\);/,
+    );
     // 反向自证：主窗口那两条兜底还都在（上面的 not.toMatch 不是因为压根没写）
     expect(branch, "主窗口仍要能新建未命名文档").toMatch(/void newUntitled\(\)/);
     expect(branch, "主窗口仍要能移除空分屏区域").toMatch(/disposePanel\(panel\.panelId\)/);
@@ -101,6 +122,29 @@ describe("B155 卫星窗口：关掉最后一个文件 / 面板 = 关掉窗口",
     expect(body, "直接 destroy 会漏掉 cancelPendingBackup / flushBackups").not.toMatch(
       /\.destroy\(\)/,
     );
+  });
+
+  it("自动关窗那档要交还剩余标签，且排在 close() 之前", () => {
+    // 用户原话：「关闭子窗口和最后一个面板后子窗口关闭，没有关闭的文件标签还是加回主窗口」
+    const body = bare("function requestSatelliteClose");
+    expect(body, "参数要存在（两档口径不一样）").toMatch(/returnTabs\s*=\s*false/);
+    const at = (pat: RegExp): number => body.search(pat);
+    const retAt = at(/returnTabs && windowKind === "satellite"[\s\S]{0,80}?returnTabsToMain/);
+    const closeAt = at(/getCurrentWindow\(\)/);
+    expect(retAt, "交还必须发生在关窗之前（窗口一销毁 emit 就没人收了）").toBeGreaterThanOrEqual(0);
+    expect(closeAt, "close() 调用还在").toBeGreaterThanOrEqual(0);
+    expect(retAt, "交还必须先于 close()").toBeLessThan(closeAt);
+    // 交还是「剩余的全部」—— 此时刚关掉的那个已经从 tabs 里摘了，剩下的都是没关的
+    expect(body, "交还手上剩余的标签").toMatch(/returnTabsToMain\(\[\.\.\.tabs\.keys\(\)\]\)/);
+  });
+
+  it("点 X 那档（默认）不许交还：默认参数必须是 false", () => {
+    // `registerSatelliteClose` 走的就是默认档，默认 true 就等于「点 X 也交还」——
+    // B153 的 bug 会原样复活。
+    const body = bare("function requestSatelliteClose");
+    expect(body, "默认档 = 不交还").toMatch(/returnTabs = false/);
+    const reg = bare("function registerSatelliteClose");
+    expect(reg, "关窗回调里不许出现交还").not.toMatch(/returnTabsToMain\(/);
   });
 
   it("主窗口的兜底（分屏时移除面板）必须原样保留", () => {

@@ -453,12 +453,18 @@ describe("B153 卫星窗口：比主窗口简洁，关窗不碰主窗口的收�
   it("卫星窗口的关窗收尾不许回头调主窗口的 finishAndDestroy", () => {
     const tail = fnBody("async function finishSatelliteClose");
     expect(tail, "收尾只管备份与销毁自己").not.toContain("finishAndDestroy");
-    // B155：交还在关窗回调里同步做（回调里 await IPC 会死锁，见 B135），收尾只管备份 + 销毁。
-    // 交还的对象从「标签」换成了「文档关闭通知」—— 卫星窗口关掉就是真关，
-    // 标签不再回到主窗口（B155），但要广播一次让别的窗口把自己那份摘掉。
+    // B155 / B157：卫星窗口关掉就是真关 —— 关窗回调里**既不交还标签，也不广播
+    // 「文档关掉了」**（后者是 B155 加的，B157 随用户口径一起作废：主窗口那份同文档
+    // 实例该由它自己管，别的窗口跟着摘 =「替别人关文件」）。
+    // 「内容不丢」由热退出副本承担（`finishSatelliteClose` 里那两条），不依赖任何交还。
     const reg = fnBody("function registerSatelliteClose");
-    expect(reg, "回调内同步广播关闭").toContain("for (const docId of new Set(ids))");
     expect(reg, "关窗不再交还标签").not.toContain("returnTabsToMain(");
+    expect(reg, "也不再广播文档关闭").not.toContain("broadcastDocDisposed");
+    // 但交还这条路径本身还在（「移回主窗口」要用，自动关窗那档也调它）—— 否则
+    // 「关掉最后一个文件导致子窗口自己关」会把没关的文件一起吞掉（B157 用户原话）。
+    expect(fnBody("function requestSatelliteClose"), "交还抽屉不能整个被拆掉").toMatch(
+      /returnTabsToMain\(/,
+    );
   });
 });
 
