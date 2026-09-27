@@ -97,6 +97,22 @@
   （`.gitignore` / `.prettierignore` / eslint `ignores` / `tsconfig.include` / 测试里的 `SKIP_DIRS`），
   否则探针会误伤无关守卫。
 
+## 视口位置（B134 / B139 / B142 / B145）
+
+- **还原位置要「钉到立住为止」**：`pinScrollTop` 逐帧补钉（上限 `PIN_MAX_FRAMES` 帧），
+  中间值一个都不信。只补一帧是不够的 —— 窗口刚打开时布局可能连着好几帧都没稳，
+  差一帧位置就永久停在被裁掉的 0 上。补钉期间 `viewportWriteDepth` 不降，
+  「程序滚动不许写快照」的区间必须活到最后一次补钉之后。
+- **写快照只有 `recordScroll` 一个出口**（B145）：`restoringViewports` 原来只被两个
+  scroll 监听认，`rememberViewScroll` / `refreshSession` 那几条旁路照样能把还原期
+  的中间值写进记录。别再直连 `sessionStore.setScroll`。
+- **`pinInFlight` 是容器的 Trust 开关**：钉位置还在重试时，容器里摆的是没立住的值
+  （多半是 0），`rememberViewScroll` 看见了必须一个字都不采。
+- **`focus()` 必须排在还原位置之前**（切标签 / 挂载）：`focus()` 会把光标滚进视野，
+  排在钉位置之后等于白钉 —— 这就是「切换标签位置会变」。
+- 补钉始终没立住时会留一条 `logger.warn("viewport", …)`（含目标值与实际值）。
+  真机出现「重启回到顶部」先看这条日志。
+
 ## 图标
 
 - **所有按钮图标一律用 VS Code codicon**：依赖官方 npm 包 `@vscode/codicons`（版本在

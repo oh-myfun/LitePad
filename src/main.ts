@@ -782,6 +782,8 @@ function rebuildLayout(): void {
         p.view = createEditor(editorEl, tab.state);
         suppressDirty = false;
         p.viewTabId = tab.tabId;
+        // 同 switchTab：焦点先给、还原排在后面（focus 会把光标滚进视野，反过来就白钉了）
+        if (panelId === activePanelId) p.view.focus();
         // B126：视图是新建的，滚动位置只活在标签快照里 → 显式还给 DOM
         restoreViewScroll(p);
       }
@@ -818,7 +820,7 @@ function rebuildLayout(): void {
           // 重建布局 / 销毁面板」也不会丢。
           if (t) {
             t.scrollTop = shownView.scrollDOM.scrollTop;
-            sessionStore.setScroll(t.tabId, t.scrollTop);
+            recordScroll(t.tabId, t.scrollTop);
           }
           // B132：写进快照还不算数 —— 得落盘。滚动本身**不触发**任何排程，用户
           // 滚到中段、没干别的事就关窗，会话里留下的还是上一次（滚之前那份），
@@ -853,7 +855,7 @@ function rebuildLayout(): void {
         // 的同步滚动反而不会命中这里：那种标签是源码态（`viewMode === "source"`），
         // 早在上一行 return 了；真到了纯预览态，预览本来就该跟着编辑器走。
         t.scrollTop = preview.root.scrollTop;
-        sessionStore.setScroll(t.tabId, t.scrollTop);
+        recordScroll(t.tabId, t.scrollTop);
         scheduleSessionSave();
       });
 
@@ -861,7 +863,6 @@ function rebuildLayout(): void {
       // 纯预览实例的视图位置在预览那一侧，渲染完再钉回去（B129）
       restorePreviewScroll(p);
       if (panelId === activePanelId && p.view) {
-        p.view.focus();
         updatePositionOf(panelId, p.view.view);
       }
     },
@@ -897,10 +898,13 @@ function switchTab(panelId: number, tabId: number): void {
   panel.view.setState(tab.state);
   suppressDirty = false;
   panel.viewTabId = tabId;
+  // ⚠️ 焦点必须排在钉位置**之前**（B145）：`focus()` 会把光标滚进视野，而光标往往
+  // 不在刚还原出来的可视区里 —— 排在后面等于把刚钉好的位置顶掉，这就是「切换标签
+  // 位置会变」。focus 产生的滚动落在还原窗口内，还会顺带污染记录，一并被挡住。
+  panel.view.focus();
   // B126：setState 重建了 ViewState 并把视口拉回开头，这里把滚动位置还回去。
   // 必须排在 applyPanelMode 之前——它要按当前顶行把预览对齐到同一区域。
   restoreViewScroll(panel);
-  panel.view.focus();
   applyPanelMode(panel);
   // applyPanelMode 里的 syncToLine 会把预览按「编辑器顶行」重新定位一次，
   // 纯预览实例的位置得在它之后再钉回来（B130）
@@ -2278,7 +2282,12 @@ function refreshSession(): void {
   for (const t of tabs.values()) {
     const d = docs.get(t.docId);
     if (!d) continue;
-    if (!sessionStore.get(t.tabId)) sessionStore.register(t.tabId, t.docId);
+    if (!sessionStore.get(t.tabId)) {
+      // ⚠️ 新登记的记录要**带着** `t` 里已有的视口位置进来（B145）：会话恢复的标签在
+      // `restoreSession` 里已经把位置读进 `t.scrollTop`，登记成空白的话，下面那条写入
+      // 又会被还原期的闸口挡掉 —— 「刚恢复出来的位置」这一轮就白恢复了。
+      sessionStore.register(t.tabId, t.docId, { scrollTop: t.scrollTop });
+    }
     sessionStore.setDoc(t.tabId, {
       path: d.path ?? "",
       encoding: d.encoding,
@@ -2289,6 +2298,9 @@ function refreshSession(): void {
     // 正显示在面板上的那个：光标与视口都在视图 / DOM 上，先采一次再写进记录
     // （同 B140 的「消失前看最后一眼」，只不过现在写的是 store 而不是 Tab）。
     // 其余标签的光标在 `handleUpdate` 里就已经即时写进来了，这里不动它。
+    //
+    // ⚠️ 读容器的那一下由 `rememberViewScroll` 自己把关（B145）：它认 `pinInFlight`，
+    // 钉位置还在重试时一个字都不采；写记录走 `recordScroll`，还原期一律挡掉。
     const p = panels.get(t.panelId);
     if (p?.view && p.viewTabId === t.tabId) {
       t.state = p.view.view.state;
@@ -2297,7 +2309,9 @@ function refreshSession(): void {
       sessionStore.setCursor(t.tabId, line.number, pos - line.from + 1);
       rememberViewScroll(p);
     }
-    sessionStore.setScroll(t.tabId, viewportOfTab(t));
+    // ⚠️ 这一条走 `recordScroll` 而不是直连 store（B145 单一闸口）：落盘前的这次刷新
+    // 读的是 `t`，而 `t` 里的位置可能正好来自「刚钉、还没立住」的容器。
+    recordScroll(t.tabId, viewportOfTab(t));
   }
 }
 
@@ -3572,19 +3586,12 @@ function viewportOfTab(t: Tab): number | null {
  * 典型症状：预览落点在 960 / 952 之间抖（jsdom 里肉眼可见，真机上就是
  * 「重启后位置差几行」）。
  *
- * 区间覆盖「赋值本身 + 它引发的下一帧补钉」：浏览器的 scroll 事件在下一帧的
- * scroll steps 才派发，所以到那时计数器才会降下来，正好把补钉那一发也挡住。
+ * 区间覆盖「赋值本身 + 它派发的那一发 scroll」，以及 `pinScrollTop` **逐帧补钉的
+ * 整段**：浏览器的 scroll 事件在下一帧的 scroll steps 才派发，所以计数器必须活到
+ * 最后一次补钉之后才降，中途降下来的话，补钉途中的中间值就会被当成用户停过的位置。
+ * （B145 起补钉不再只做一帧。）
  */
 let viewportWriteDepth = 0;
-
-/** 在「程序滚动」区间内跑一段代码：区间内派发的 scroll 事件不许写快照。 */
-function suppressViewportWrite(run: () => void): void {
-  viewportWriteDepth++;
-  run();
-  requestAnimationFrame(() => {
-    viewportWriteDepth = Math.max(0, viewportWriteDepth - 1);
-  });
-}
 
 /**
  * 在视图消失**之前**把此刻的位置采进快照（B126，B139 保留但换了理由）。
@@ -3604,14 +3611,21 @@ function rememberViewScroll(panel: Panel): void {
   if (!t) return;
   // 纯预览实例：编辑器是 display:none、scrollDOM.scrollTop 恒为 0，照常写回来
   // 就等于「切走的一刻把上次的位置抹平」（B130）。这类实例的位置归预览那一侧。
+  // B145：钉位置**还在重试**的那一刻，容器里摆的是没立住的值（多半是被裁成的 0）。
+  // 这段空窗期归还原管，「消失前看最后一眼」看出来的会是一份假位置，采进去就等于
+  // 把「还原没成功」记成「用户停在这里」—— 于是落盘成 0、重启回顶部。
+  if (pinInFlight(panel.view.view.scrollDOM)) return;
   if (t.viewMode === "preview") {
     const mode = panel.bodyEl?.classList;
     if (mode?.contains("mode-preview") || mode?.contains("mode-split")) {
-      t.scrollTop = panel.preview?.root.scrollTop ?? null;
+      const root = panel.preview?.root ?? null;
+      if (root === null || !pinInFlight(root)) {
+        recordScroll(t.tabId, root ? root.scrollTop : null);
+      }
     }
     return;
   }
-  t.scrollTop = panel.view.view.scrollDOM.scrollTop;
+  recordScroll(t.tabId, panel.view.view.scrollDOM.scrollTop);
 }
 
 /**
@@ -3641,6 +3655,43 @@ function restoringViewport(tabId: number, run: () => void): void {
 }
 
 /**
+ * 正在重试「钉稳」的容器（B145）。
+ *
+ * 位置还没立住的容器是不可信的：里面的值随时会被下一次补钉改写。所以别的模块
+ * （`rememberViewScroll`）看见这个集合里有它就别采 —— 采一份半路的中间值，等于把
+ * 一个还没生效的落点当成用户停过的位置。
+ */
+const pinningContainers = new WeakSet<HTMLElement>();
+
+function pinInFlight(el: HTMLElement): boolean {
+  return pinningContainers.has(el);
+}
+
+/**
+ * 写标签的滚动位置到会话记录 —— **唯一闸口**（B145）。
+ *
+ * `restoringViewports` 原来只被两个 scroll 监听认，于是还有几条旁路能绕过去：
+ * `rememberViewScroll`（重建布局 / 关面板 / 落盘前刷新时读容器）、`refreshSession`
+ * 的兜底写入。那几条恰好都发生在「还原刚起步、容器还是被裁过的 0」的窗口里 ——
+ * 用户报的「打开窗口后位置刷新并落盘成 0」就是从这儿出去的。
+ *
+ * 把守卫挪到这一个出口上：还原期间，任何来源都不许写这条记录的 scrollTop。
+ */
+function recordScroll(tabId: number, px: number | null): void {
+  if (restoringViewports.has(tabId)) {
+    logger.trace("viewport", `还原期拒绝写位置 tab=${tabId} px=${px}`);
+    return;
+  }
+  // `t.scrollTop` 与记录是同一份东西（`viewportOfTab` 只读它），一并写过去别让两边分叉；
+  // `null` 表示「这份实例从没显示过」，是有意义的空值，不往活动态里倒灌。
+  if (px !== null) {
+    const t = tabs.get(tabId);
+    if (t) t.scrollTop = px;
+  }
+  sessionStore.setScroll(tabId, px);
+}
+
+/**
  * 把标签快照里的滚动位置还给视图（B126）。
  *
  * 必须在 setState / 新建视图**之后**调：先有对的内容，滚动位置才有意义（浏览器
@@ -3657,18 +3708,51 @@ function restoringViewport(tabId: number, run: () => void): void {
  * 位置就等于没设。更糟的是这次赋值会派发 scroll 事件，把「0」写回标签快照，
  * 于是下一次保存下来的也是 0（B134：重启后每次都回到顶部）。
  *
- * 所以：先按老办法写；写进去的值没被裁（读回来对得上）就收工，被裁了就在下一帧
- * 布局稳定后再钉一次。
+ * 所以：先按老办法写；写进去的值没被裁（读回来对得上）就收工，被裁了就**逐帧补钉**，
+ * 一直补到立住为止。
+ *
+ * ⚠️ 只补一帧是不够的（B145）：窗口刚打开时布局可能连着好几帧都没稳 —— 窗口还没
+ * 显示、大文件刚把内容撑开、预览的一次 setBlocks 还没落地。差那么一帧，位置就永久
+ * 停在被裁掉的 0 上，然后被落盘、被下次启动读回来（用户报的「打开恢复位置时落盘成
+ * 0」）。所以这里一直重试到立住，中途的值一个都不信。
  */
+const PIN_MAX_FRAMES = 12;
+
 function pinScrollTop(el: HTMLElement, px: number): void {
-  // 整段都在「程序滚动」区间里：赋值派发的那次事件不该把位置写回快照（B139）
-  suppressViewportWrite(() => {
-    el.scrollTop = px;
-    if (el.scrollTop === px) return;
+  pinningContainers.add(el);
+  // 整段都在「程序滚动」区间里：赋值派发的那次事件不该把位置写回快照（B139）。
+  // ⚠️ 区间要活到**最后一次补钉之后**才降（不能像 `suppressViewportWrite` 那样下一帧
+  // 就还）：布局可能连着好几帧都没稳，中途降下来的话，补钉途中的中间值就会被当成
+  // 「用户停过的位置」写进记录。
+  viewportWriteDepth++;
+  const release = (): void => {
     requestAnimationFrame(() => {
-      el.scrollTop = px;
+      viewportWriteDepth = Math.max(0, viewportWriteDepth - 1);
     });
-  });
+  };
+  const retry = (frame: number): void => {
+    el.scrollTop = px;
+    const landed = el.scrollTop;
+    // 立住了。或者被**文档长度**夹住（短文档，px 本来就超出可滚动范围）也算立住 ——
+    // 那种情况下 0 是合法的落点，不该误判成「没布局」而继续重试。
+    const stuck = landed === px || (px > 0 && landed > 0 && landed < px);
+    if (stuck) {
+      pinningContainers.delete(el);
+      release();
+      return;
+    }
+    if (frame + 1 >= PIN_MAX_FRAMES) {
+      pinningContainers.delete(el);
+      release();
+      // 尺寸早就有、却始终钉不进去 ⇒ 真出问题了（面板还是 0 宽、内容始终没撑开）。
+      // 留一条：这正是「重启后位置回到顶部」那类症状要看的东西。
+      logger.warn("viewport", `pin ${px} 没立住（${frame + 1} 帧后 scrollTop=${landed}）`);
+      return;
+    }
+    logger.trace("viewport", `pin ${px} 被裁（第 ${frame + 1} 帧，scrollTop=${landed}）`);
+    requestAnimationFrame(() => retry(frame + 1));
+  };
+  retry(0);
 }
 
 function restoreViewScroll(panel: Panel): void {

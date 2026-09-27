@@ -292,9 +292,15 @@ describe("B132 静态契约：滚动排程 + 关窗兜底", () => {
     // 分别盯两个写入（而不是「同一段里先后出现」）：间距一变正则就失配，
     // 而这两句各自都是契约本身。
     expect(src, "刷新要把光标写进 store").toMatch(/sessionStore\.setCursor\(t\.tabId,/);
-    expect(src, "刷新要把视口写进 store").toMatch(
-      /sessionStore\.setScroll\(t\.tabId, viewportOfTab\(t\)\);/,
-    );
+    // B145：视口那一条走 `recordScroll`（唯一闸口）—— 还原期不许从容器读回来。
+    expect(src, "刷新要把视口写进 store").toMatch(/recordScroll\(t\.tabId, viewportOfTab\(t\)\);/);
+    // ⚠️ 反过来，落盘前**不许**再直连 store 写视口：那样就绕过了还原期的闸口。
+    // 「唯一出口」按函数体算，而不是整串替换（闸口自己那一行当然就是直连 store 的）。
+    const gate = functionBody(src, "function recordScroll(");
+    const direct =
+      (src.match(/sessionStore\.setScroll\(/g) ?? []).length -
+      (gate.match(/sessionStore\.setScroll\(/g) ?? []).length;
+    expect(direct, "store.setScroll 只准出现在 recordScroll 里").toBe(0);
     // B141：会话只有一个出口 —— 不再有「面板标签一份、卫星标签一份」的就地拼装
     expect(src, "不该再有就地拼装的标签记录").not.toMatch(/function sessionTabRecordOf/);
   });

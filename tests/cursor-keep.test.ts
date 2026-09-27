@@ -351,8 +351,13 @@ describe("B126 静态契约：滚动位置必须自己存取", () => {
   it("程序滚动（还原钉位置 / 增强后二次定位）不许写回快照", () => {
     // 快照不随 DOM，于是会被**我们自己的赋值**改写：钉位置那一下派发的事件、
     // 图片公式增强后二次定位那一下派发的事件 —— 落点是程序算的，不是用户停过的。
+    // B145：钉位置改成**逐帧补钉**，抑制区间也必须跟着活到最后一次补钉之后。
+    // ⚠️ 间距用 `[\s\S]*?` 而不是「紧跟 `{`」：pinScrollTop 开头挂着说明注释。
+    const pin =
+      /function pinScrollTop\(el: HTMLElement, px: number\): void \{[\s\S]*?requestAnimationFrame\(\(\) => retry\(frame \+ 1\)\);/;
+    expect(src, "pinScrollTop 要逐帧补钉到立住为止").toMatch(pin);
     expect(src, "pinScrollTop 整段要包在抑制区间里").toMatch(
-      /function pinScrollTop\(el: HTMLElement, px: number\): void \{[\s\S]{0,120}?suppressViewportWrite\(/,
+      /function pinScrollTop\(el: HTMLElement, px: number\): void \{[\s\S]*?viewportWriteDepth\+\+;/,
     );
     expect(src, "编辑器滚动监听要挡住程序滚动").toMatch(/if \(viewportWriteDepth > 0\) return;/);
     expect(src, "预览滚动监听要同时挡住程序滚动与二次定位").toMatch(
