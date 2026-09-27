@@ -360,8 +360,10 @@ describe("B126 静态契约：滚动位置必须自己存取", () => {
       /function pinScrollTop\(el: HTMLElement, px: number\): void \{[\s\S]*?viewportWriteDepth\+\+;/,
     );
     expect(src, "编辑器滚动监听要挡住程序滚动").toMatch(/if \(viewportWriteDepth > 0\) return;/);
+    // ⚠️ `\s*` 不能省：B162 加了第三个判据之后 prettier 把这段折成了多行，
+    //    判据写成「空格」会失配（退化用例跟着假绿）。
     expect(src, "预览滚动监听要同时挡住程序滚动与二次定位").toMatch(
-      /viewportWriteDepth > 0 \|\| preview\.isSuppressingScrollWrite\(\)/,
+      /viewportWriteDepth > 0 \|\|\s*preview\.isSuppressingScrollWrite\(\)/,
     );
     const preview = readFileSync("src/markdown/preview.ts", "utf-8");
     expect(preview, "二次定位要置抑制位").toMatch(/this\.suppressScrollWrite = true;/);

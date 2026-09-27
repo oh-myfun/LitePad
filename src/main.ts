@@ -561,14 +561,12 @@ function applySyncToSibling(other: Tab, px: number | null, line: number | null):
     // B160：程序落点要套进按标签的还原窗口（纪律 3 的同一条），与源码分支同源。
     // 少了这层，B 容器那一发 scroll 会被 main 的预览监听当成「用户停过的位置」，
     // 顺手再 `pushSyncToSiblings` 推回来一轮 —— 落点是程序算的，不是用户停的。
-    restoringViewport(other.tabId, () => preview.syncToLine(line));
-    // ⚠️ `clearPendingSync` 必须紧跟：`syncToLine` 会把目标行记成 `pendingSyncLine`
-    //    （那是给「大纲跳转」这类一次性目标用的，见它的注释）。同步滚动的目标行
-    //    **每帧都在变**，记下来等于给每次重排留一个「把预览拽回某一行」的钩子：
-    //    之后任意一次图片 / KaTeX / Shiki 增强完成（`applyPending`）或一次重渲染，
-    //    预览都会被按那个早已过期的行号再定位一次 —— 这就是用户报的「滚源码，
-    //    预览位置会抖」。跟位置同步无关的一次性尾巴，不要留在预览里。
-    preview.clearPendingSync();
+    // B162：改走**程序定位**入口（`syncToLineProgrammatic`）—— 它自带两帧的程序定位
+    //    窗口、也不留 `pendingSyncLine` 尾巴。预览的程序定位不走 `pinScrollTop`（跨视图
+    //    只能按行），`viewportWriteDepth` 盖不住它：没有那道窗口，就只剩 120ms 锁赌时序，
+    //    锁一过期连 `programmaticTop` 都被清空，逃过去的那发 scroll 会被当成「用户在滚
+    //    预览」反推编辑器，源码再跟着动 ⇒ A→B→A 来回拉锯（用户报的抖动）。
+    restoringViewport(other.tabId, () => preview.syncToLineProgrammatic(line));
     // `syncToLine` 是同步落地的，容器里的值可以直接读；这一发 scroll 拦不住
     // （还原窗口挡的是 main 那条监听，不是 preview 自己的回执判定），所以显式补记。
     // ⚠️ 必须留在还原窗口**外**：窗口期内 `recordScroll` 是拒写的。
@@ -1087,7 +1085,14 @@ function rebuildLayout(): void {
         // B139：程序滚动期间（还原钉回 / 图片·公式增强后的二次定位）不写快照 ——
         // 这两种落点都是**程序算出来的**，不是这个标签停过的位置；照写回去就是
         // 「预览落点在 960 / 952 之间抖」的根。落盘排程照旧：位置本身没变。
-        if (viewportWriteDepth > 0 || preview.isSuppressingScrollWrite()) {
+        // B162：跨面板同步的程序定位（`syncToLineProgrammatic`）也在这个窗口里 ——
+        //   它不走 `pinScrollTop`，`viewportWriteDepth` 盖不住；漏出去就会推回源、
+        //   源再推回来，闭环成拉锯。
+        if (
+          viewportWriteDepth > 0 ||
+          preview.isSuppressingScrollWrite() ||
+          preview.isProgrammaticScrolling()
+        ) {
           scheduleSessionSave();
           return;
         }

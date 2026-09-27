@@ -367,26 +367,39 @@ describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚�
     // 大纲跳转这类**一次性**目标用的（增强 / 图片 load 后按目标行再定位一次）。同步
     // 滚动的目标行每帧都在变，把它记下来，等于给每一次重排留一个「把预览拽回某行」
     // 的钩子 ⇒ 图片 / KaTeX / Shiki 一增强完，预览就自己跳一下。
-    expect(PUSH_BODY, "程序定位之后要抹掉待重定位行号").toMatch(/preview\.clearPendingSync\(\);/);
-    const atSync = PUSH_BODY.indexOf("preview.syncToLine(line)");
-    const atClear = PUSH_BODY.indexOf("preview.clearPendingSync()");
-    expect(atSync, "要能定位同步那句").toBeGreaterThan(-1);
-    expect(atClear, "要能定位抹尾巴那句").toBeGreaterThan(-1);
-    expect(atClear, "抹尾巴必须紧跟定位（中间不许插别的定位）").toBeGreaterThan(atSync);
+    // B162：纪律收进 `syncToLineProgrammatic`（程序定位入口自带「不留尾巴」+ 程序定位
+    // 窗口），调用点换过去；入口自身「不留尾巴」在 preview-sync 那侧盯。
+    expect(PUSH_BODY, "预览分支要走程序定位入口").toMatch(
+      /preview\.syncToLineProgrammatic\(line\)/,
+    );
+    expect(PUSH_BODY, "不许再走会留尾巴的 syncToLine").not.toMatch(/preview\.syncToLine\(line\)/);
   });
 
   it("预览的程序定位也要套进按标签的还原窗口", () => {
     expect(PUSH_BODY, "预览分支同样要套还原窗口").toMatch(
-      /restoringViewport\(other\.tabId, \(\) => preview\.syncToLine\(line\)\);/,
+      /restoringViewport\(other\.tabId, \(\) => preview\.syncToLineProgrammatic\(line\)\);/,
     );
     // ⚠️ 补记那笔必须留在窗口**外**：窗口期内 `recordScroll` 是拒写的（B145 唯一闸口）。
     const atRestore = PUSH_BODY.indexOf(
-      "restoringViewport(other.tabId, () => preview.syncToLine(line));",
+      "restoringViewport(other.tabId, () => preview.syncToLineProgrammatic(line));",
     );
     const atRecord = PUSH_BODY.indexOf("recordScroll(other.tabId, shown.preview.root.scrollTop)");
     expect(atRestore, "要能定位还原窗口那句").toBeGreaterThan(-1);
     expect(atRecord, "要能定位补记那笔").toBeGreaterThan(-1);
     expect(atRecord, "补记要排在窗口关闭之后").toBeGreaterThan(atRestore);
+  });
+
+  it("B162 预览滚动监听要把「程序定位窗口」一并挡掉（否则回推源码成闭环）", () => {
+    // 预览的程序定位**不走 `pinScrollTop`**（跨视图只能按行）⇒ `viewportWriteDepth`
+    // 盖不住它；同步写回的那一路若漏出去，源会再推回来，A→B→A 拉锯。
+    const listener = slice(
+      main,
+      'preview.root.addEventListener("scroll"',
+      "if (restoringViewports.has(t.tabId)) return;",
+    );
+    expect(listener, "要能定位预览滚动监听的早退守卫").not.toBe("");
+    expect(listener, "守卫里必须有程序定位窗口判据").toContain("preview.isProgrammaticScrolling()");
+    expect(listener, "挡住之后仍要排程落盘").toContain("scheduleSessionSave();");
   });
 });
 
@@ -646,22 +659,18 @@ describe("B160 反向验证：退回旧写法，上面那四条必须变红", ()
     );
   });
 
-  it("删掉抹尾巴那句 → 「不留待重定位尾巴」那条必须落空", () => {
-    // 删了 `clearPendingSync`，`syncToLine` 留下的 `pendingSyncLine` 就留在预览里 ——
-    // 等于给每次图片 / KaTeX / Shiki 增强留一个「把预览拽回某一行」的钩子。
-    const ORIG = "    preview.clearPendingSync();";
+  it("退回「走 syncToLine（留尾巴、无程序定位窗口）」→ 两条必须落空", () => {
+    // B162 前状：预览分支调 `syncToLine` —— 它会留 `pendingSyncLine` 尾巴（每次重排
+    // 都把预览拽回某一行），也没有程序定位窗口（逃过守卫的 scroll 会被反推成用户滚动）。
+    const ORIG = "restoringViewport(other.tabId, () => preview.syncToLineProgrammatic(line));";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "");
+    const degraded = main.replace(
+      ORIG,
+      "restoringViewport(other.tabId, () => preview.syncToLine(line));",
+    );
     const body = slice(degraded, "function applySyncToSibling(", "function showMessage(");
-    expect(body, "删掉后尾巴就留在预览里了").not.toContain(ORIG);
-  });
-
-  it("把预览的程序定位裸放出来 → 「套还原窗口」那条必须落空", () => {
-    const ORIG = "restoringViewport(other.tabId, () => preview.syncToLine(line));";
-    expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "preview.syncToLine(line);");
-    const body = slice(degraded, "function applySyncToSibling(", "function showMessage(");
-    expect(body, "裸放出来后预览的落点就不再受还原窗口保护了").not.toContain(ORIG);
+    expect(body, "退化后预览分支不再走程序定位入口").not.toContain(ORIG);
+    expect(body, "退化后尾巴又留下来了").toMatch(/preview\.syncToLine\(line\)/);
   });
 
   it("把换算那笔的记录挪进窗口内 → 「补记留在外」那条必须落空", () => {

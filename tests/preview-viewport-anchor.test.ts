@@ -303,7 +303,7 @@ describe("B139 静态契约：快照按 tabId 索引，不许回头读容器", (
   it("预览只由「用户滚过」来记录，程序摆的落点要挡住", () => {
     expect(src, "滚预览必须写进它自己那份快照").toMatch(/t\.scrollTop = preview\.root\.scrollTop;/);
     expect(src, "增强后的二次定位要置抑制位").toMatch(
-      /viewportWriteDepth > 0 \|\| preview\.isSuppressingScrollWrite\(\)/,
+      /viewportWriteDepth > 0 \|\|\s*preview\.isSuppressingScrollWrite\(\)/,
     );
   });
 
@@ -323,7 +323,7 @@ describe("B139 静态契约：快照按 tabId 索引，不许回头读容器", (
     expect(src, "编辑器监听要认还原窗口").toMatch(/restoringViewports\.has\(t\.tabId\)/);
     // 精确串（带 8 空格缩进）区分预览那句与编辑器那句（后者是 `if (t && …)`）
     expect(src, "预览监听要认还原窗口").toMatch(
-      /if \(viewportWriteDepth > 0 \|\| preview\.isSuppressingScrollWrite\(\)\) \{[\s\S]{0,160}?if \(restoringViewports\.has\(t\.tabId\)\) return;/,
+      /if \(\s*viewportWriteDepth > 0 \|\|\s*preview\.isSuppressingScrollWrite\(\)[\s\S]{0,400}?if \(restoringViewports\.has\(t\.tabId\)\) return;/,
     );
   });
 
@@ -337,7 +337,12 @@ describe("B139 静态契约：快照按 tabId 索引，不许回头读容器", (
           /function viewportOfTab\(t: Tab\): number \| null \{[\s\S]*?return t\.scrollTop;/,
           "function viewportOfTab(t: Tab): number | null {\n  const p = panels.get(t.panelId);\n  return p?.preview?.root.scrollTop ?? null;\n}",
         )
-        .replace("viewportWriteDepth > 0 || preview.isSuppressingScrollWrite()", "false");
+        .replace(
+          // ⚠️ 字面量要跟着源码的多行排版走（B162 起是三个判据、prettier 折行），
+          //    失配会让退化变成「什么都没改」、整条反向验证假绿。
+          "viewportWriteDepth > 0 ||\n          preview.isSuppressingScrollWrite() ||\n          preview.isProgrammaticScrolling()",
+          "false",
+        );
     const degraded = degrade(src);
     expect(degraded, "退化实现应真的换了写法").not.toBe(src);
 
@@ -347,7 +352,7 @@ describe("B139 静态契约：快照按 tabId 索引，不许回头读容器", (
     // 方向：「源码必须有这个判据」⇒ 退化后它该**消失** ⇒ 这里用 not.toMatch。
     // （写成 toMatch 就永远为真，退化用例会假绿 —— B137 那条踩过同一个坑）
     expect(degraded, "退化后程序滚动不再被挡（第二条 toMatch 此时必须落空）").not.toMatch(
-      /viewportWriteDepth > 0 \|\| preview\.isSuppressingScrollWrite\(\)/,
+      /viewportWriteDepth > 0 \|\|\s*preview\.isSuppressingScrollWrite\(\)/,
     );
 
     // 退化 5：去掉**预览**那句还原守卫（B142 前状）—— `setBlocks` 那发 0 值事件没人挡。

@@ -38,6 +38,16 @@ export class PreviewPane {
    *  （重渲染把 scrollTop 清零再改回也会冒出一次 scroll 事件） */
   private programmaticTop: number | null = null;
   private suppressScrollWrite = false;
+  /**
+   * B162：程序定位窗口的深度（与 main 侧 `restoringViewport` 同构，两帧解锁）。
+   *
+   * 跨面板同步滚动对预览的每一次定位都是**程序摆的**，不是用户停过的位置。它不走
+   * `pinScrollTop`（跨视图只能按行，纪律 2），所以 `viewportWriteDepth` 盖不住它 ——
+   * 只剩 120ms 同步锁赌时序，而锁过期时 `programmaticTop` 也被清空：任何迟到的
+   * scroll 都会被当成「用户手动滚动」反推编辑器，源码那侧再跟着动 ⇒ 来回拉锯
+   * （用户报的「预览位置会抖」就是逃过守卫的那几发在闭环）。
+   */
+  private programmaticDepth = 0;
   private mermaidSeq = 0;
   /** 活动文档目录（相对路径图片解析基准） */
   private baseDir: string | null = null;
@@ -403,6 +413,37 @@ export class PreviewPane {
   }
 
   /**
+   * B162：**程序发起**的按行定位 —— 跨面板同步滚动专用。
+   *
+   * 与 `syncToLine`（大纲跳转：一次性目标，增强后还要按它重定位）的两点区别：
+   *   · **不留 `pendingSyncLine` 尾巴**：同步滚动的目标行每帧都在变，记下来等于给
+   *     每次重排留一个「把预览拽回某一行」的钩子（B160 抖动的根源之一）；
+   *   · **开程序定位窗口**：期间这一侧派发的 scroll 一律不当成用户滚动 —— 预览的
+   *     程序定位不走 `pinScrollTop`（跨视图只能按行），`viewportWriteDepth` 盖不住，
+   *     没这道窗口就只剩 120ms 锁赌时序，逃过去的那发会反推编辑器、闭环成拉锯。
+   *
+   * ⚠️ 解锁等**两帧**（B142 同款）：scroll 事件下一帧才派发，事件引发的回推再下一帧。
+   */
+  syncToLineProgrammatic(line: number): void {
+    this.pendingSyncLine = null;
+    this.programmaticDepth++;
+    try {
+      this.applySyncToLine(line);
+    } finally {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          this.programmaticDepth--;
+        });
+      });
+    }
+  }
+
+  /** 是否正处于程序定位窗口（这一侧的 scroll 事件不该被当成用户滚动）。 */
+  isProgrammaticScrolling(): boolean {
+    return this.programmaticDepth > 0;
+  }
+
+  /**
    * 直接摆到指定像素位置（B129：会话恢复）。
    *
    * 与 `syncToLine` 的区别是**不认行、只认位置**：恢复会话时编辑器是 `display:none`，
@@ -497,7 +538,9 @@ export class PreviewPane {
   }
 
   private onPreviewScroll(): void {
-    if (this.syncLock === "editor") return;
+    // B162：程序定位窗口内的 scroll 一律不当成用户滚动 —— 否则锁一过期（programmaticTop
+    // 也随之清空），逃过还原窗口的那发就会被反推成「用户在滚预览」，源码跟着动，来回拉锯。
+    if (this.syncLock === "editor" || this.programmaticDepth > 0) return;
     // 自家程序滚动的回执：锁（120ms）可能刚好在重渲染清空 scrollTop 后过期，
     // 只靠锁会把这次事件误判成用户手动滚动 → 清掉 pendingSyncLine，跳转落点丢失。
     if (this.programmaticTop !== null && Math.abs(this.root.scrollTop - this.programmaticTop) < 1) {
@@ -538,8 +581,10 @@ export class PreviewPane {
     this.lockTimer = setTimeout(() => {
       this.syncLock = null;
       this.lockTimer = null;
-      // 锁过期后不再认领旧的程序滚动回执，避免误吞之后的用户滚动
-      this.programmaticTop = null;
+      // B162：**不再**在这里清 `programmaticTop`。它是「自家程序滚动落点」的回执判据，
+      // 清了之后，浏览器拖过 120ms 才派发的那发 scroll 就会被当成用户手动滚动、反推
+      // 编辑器 —— 源码再跟着动，来回拉锯（用户报的抖动）。清理由回执判定**失败**那条
+      // 路负责（`onPreviewScroll` 里本来就有）：位置对不上 = 真用户在滚，那时才作废。
     }, 120) as unknown as number;
   }
 }
