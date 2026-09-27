@@ -544,6 +544,52 @@ function displayedPanelOfTab(tabId: number): Panel | undefined {
 }
 
 /**
+ * 把源的**位置**落到一份兄弟上（B152 位置那一路的四条纪律全在这一个函数里）。
+ *
+ * 本窗口那一路和跨窗口那一路调用的是**同一个**函数 —— 纪律只有一份，抄成两份
+ * 迟早有一份漏掉「跨视图模式只能换算」那一条（B154 就栽在复制粘贴上）。
+ */
+function applySyncToSibling(other: Tab, px: number | null, line: number | null): void {
+  const shown = displayedPanelOfTab(other.tabId);
+  // 兄弟是预览态 ⇒ 它只认行：编辑器像素塞不进它的槽（纪律 2）。换算只能从源那侧
+  // 的**顶行**来，所以跨视图模式这一路必须走 `line`；离屏的预览兄弟没有容器可算，
+  // 只能靠它的槽自己那份记录，这里不写任何东西（写了就是污染）。
+  if (other.viewMode === "preview") {
+    if (line === null || !shown?.preview) return;
+    shown.preview.syncToLine(line);
+    // `syncToLine` 是同步落地的，容器里的值可以直接读；这一笔由预览自己那次
+    // scroll 拦下来（`isSuppressingScrollWrite`），所以这里显式补记一次。
+    recordScroll(other.tabId, shown.preview.root.scrollTop);
+    return;
+  }
+  const shownView = shown?.view?.view;
+  if (px === null || !shownView) return;
+  recordScroll(other.tabId, px);
+  // 派发选区**在先**、钉位置在后：CM6 为了让光标可见可能自己滚一下，钉在后面
+  // 才能把它盖掉 —— 顺序反了就变成「位置被光标拽走」。
+  restoringViewport(other.tabId, () => pinScrollTop(shownView.scrollDOM, px));
+}
+
+/**
+ * B159：把源这份位置广播给**别的窗口**（谁滚谁当源，双向 —— 用户拍板）。
+ *
+ * ⚠️ 只对「用户滚动」那几路开（`crossWindow`）：光标 / 输入那一路不广播 —— 在
+ *    主窗口敲一个字就带着子窗口跳，不是「同步滚动」，是「打字干扰」。
+ */
+function broadcastSyncPos(src: Tab, px: number | null, line: number | null): void {
+  const payload: SyncPosPayload = {
+    from: windowLabel,
+    docId: src.docId,
+    srcTabId: src.tabId,
+    px,
+    line,
+  };
+  void emit(EVT_SYNC_POS, payload).catch(() => {
+    // 没有别的窗口（绝大多数时候）不是错误，本窗口照常工作
+  });
+}
+
+/**
  * 把源实例的**光标 + 滚动位置**推给同文档的其它实例（B152）。
  *
  * 兄弟分两种处理：
@@ -567,8 +613,12 @@ function displayedPanelOfTab(tabId: number): Panel | undefined {
  * 不带 `isSyncSource` 前置）。但**光标**那一半仍然单源（只看 `isSyncSource`）：
  * 选区互推会互相抢，而移动鼠标并不改变激活面板，非激活那份的光标本来就是被同步
  * 推过去的结果 —— 让它也能当源，等于给「谁推谁」多留一个不确定的入口。
+ *
+ * B159 加了一个开关 `crossWindow`：只有「用户滚动」那几路会打开它 —— 广播给别的
+ * 窗口。光标 / 输入那一路**不**播：在窗口里敲一个字就带着另一个窗口跳，那不叫
+ * 同步滚动，叫打字干扰。
  */
-function pushSyncToSiblings(src: Tab): void {
+function pushSyncToSiblings(src: Tab, crossWindow = false): void {
   if (docSyncModes.get(src.docId) !== true) return;
   const sibs = instancesOfDoc(src.docId).filter((t) => t.tabId !== src.tabId);
   if (sibs.length === 0) return;
@@ -589,31 +639,17 @@ function pushSyncToSiblings(src: Tab): void {
   for (const other of sibs) {
     const line2 = other.state.doc.lineAt(Math.min(head, other.state.doc.length));
     const pos = Math.min(head, line2.to);
-    const shown = displayedPanelOfTab(other.tabId);
-    // 先取局部变量：回调里 TS 不保留对 `panel.view` / `panel.viewTabId` 的收窄。
-    const shownView = shown?.view?.view;
+    const shownView = displayedPanelOfTab(other.tabId)?.view?.view;
     if (shownView) {
       shownView.dispatch({ selection: { anchor: pos } });
     } else {
       other.state = other.state.update({ selection: { anchor: pos } }).state;
     }
-    // 兄弟是预览态 ⇒ 它只认行：编辑器像素塞不进它的槽（纪律 2）。换算只能从源那侧
-    // 的**顶行**来，所以跨视图模式这一路必须走 `line`；离屏的预览兄弟没有容器可算，
-    // 只能靠它的槽自己那份记录，这里不写任何东西（写了就是污染）。
-    if (other.viewMode === "preview") {
-      if (line === null || !shown?.preview) continue;
-      shown.preview.syncToLine(line);
-      // `syncToLine` 是同步落地的，容器里的值可以直接读；这一笔由预览自己那次
-      // scroll 拦下来（`isSuppressingScrollWrite`），所以这里显式补记一次。
-      recordScroll(other.tabId, shown.preview.root.scrollTop);
-      continue;
-    }
-    if (px === null || !shownView) continue;
-    recordScroll(other.tabId, px);
-    // 派发选区**在先**、钉位置在后：CM6 为了让光标可见可能自己滚一下，钉在后面
-    // 才能把它盖掉 —— 顺序反了就变成「位置被光标拽走」。
-    restoringViewport(other.tabId, () => pinScrollTop(shownView.scrollDOM, px));
+    // 位置那一路（跨视图模式的换算都关在这一函数里）
+    applySyncToSibling(other, px, line);
   }
+  // B159：位置广播排在最后 —— 本地兄弟已经对齐过一次，别人接手时看到的是同一个落点。
+  if (crossWindow) broadcastSyncPos(src, px, line);
 }
 
 // ---------------------------------------------------------------- 状态呈现
@@ -997,7 +1033,8 @@ function rebuildLayout(): void {
           //        （`restoringViewport` 是两帧窗口，盖得住下一帧才到的 scroll）。
           //    光标那一半仍走 `handleUpdate` 里那条单源判定，理由见 pushSyncToSiblings。
           // 排在排程之后：本条监听的活儿跟它是两件事，别为 B132 那条契约挤在一起。
-          if (t) pushSyncToSiblings(t);
+          // B159：跨窗口那一路也在这里开 —— 「谁滚谁当源」在别的窗口同样算数。
+          if (t) pushSyncToSiblings(t, true);
           // 预览→编辑器方向程序滚动期间忽略，防止回环抖动
           if (!t || !isMdTab(t) || t.viewMode !== "preview") return;
           if (preview.isSyncing()) return;
@@ -1022,7 +1059,8 @@ function rebuildLayout(): void {
         // B154：与编辑器那侧同口径 —— **谁滚谁当源**，用户手指还在预览上、窗口也没
         //   激活，源码那份也要跟着走。同样挂在 `restoringViewports` 之后：兄弟被
         //   定位后那两帧里不许回推（与 `pushSyncToSiblings` 里那对守卫同源）。
-        pushSyncToSiblings(t);
+        // B159：预览侧这一路同样往外广播 —— 纯预览态那份就是它的源，别的窗口也该跟上。
+        pushSyncToSiblings(t, true);
         // ⚠️ 这里**不要**用 `preview.isSyncing()` 当守卫：`isSyncing()` 认的是
         // `syncLock === "preview"`，即**预览→编辑器**方向（用户正在翻预览）；而
         // 预览容器自己的监听器（构造函数里注册、比这里先跑）一收到滚动就会
@@ -5031,7 +5069,12 @@ function bindEvents(): void {
     docSyncModes.set(tab.docId, on);
     logger.debug("sync", `同步滚动 → ${on ? "开" : "关"} docId=${tab.docId}`);
     refreshSyncButton(tab);
-    if (on) pushSyncToSiblings(tab);
+    // B159：这两条**一起**发。只发开关，另一窗口的按钮亮着却不动 = 更迷惑；
+    //   只发位置，另一窗口压根不知道这份文档开着同步滚动。
+    void emit<SyncModePayload>(EVT_SYNC_MODE, { from: windowLabel, docId: tab.docId, on }).catch(
+      () => {},
+    );
+    if (on) pushSyncToSiblings(tab, true);
   });
 
   sbLang.addEventListener("click", () => {
@@ -6217,6 +6260,35 @@ const EVT_DOC_CHANGE = "doc-change";
 const EVT_DOC_RESYNC_REQ = "doc-resync-request";
 const EVT_DOC_RESYNC_FULL = "doc-resync-full";
 
+/**
+ * 跨窗口同步滚动的两条（B159：`pushSyncToSiblings` 原来只扫本窗口 `tabs`，
+ * 「新建窗口」拎出去的那份完全收不到通知 —— 用户报的就是这个）。
+ *
+ *   · `sync-scroll-mode` —— 开关状态（`docId → on`）。**必须先于位置到达**：
+ *     对端靠它知道自己该不该跟着动。
+ *   · `sync-scroll-pos` —— 源那份的位置（`px` 与 `line` 一起带，坐标属于**源那一侧**，
+ *     由对端按自己 `viewMode` 挑一个用，跨视图模式的换算从不到网络上）。
+ *
+ * ⚠️ `from` 是**必填**的自证字段：tauri 的广播本机也会收到自己的回声，
+ *    各处一律 `from === windowLabel → return`（与文档同步那三条同口径）。
+ */
+const EVT_SYNC_MODE = "sync-scroll-mode";
+const EVT_SYNC_POS = "sync-scroll-pos";
+
+/** 跨窗口同步滚动的载荷（`px` 为编辑器侧像素，`line` 为源那一侧的顶行）。 */
+interface SyncPosPayload {
+  from?: string;
+  docId?: number;
+  srcTabId?: number;
+  px?: number | null;
+  line?: number | null;
+}
+interface SyncModePayload {
+  from?: string;
+  docId?: number;
+  on?: boolean;
+}
+
 /** 主窗口要销毁了（B155）：在场的卫星窗口收到这条就得自己收场。 */
 // ⚠️ 这里**没有**「谁关了文档就广播给别的窗口」那条事件（B155 加过、B157 删掉）：
 //    标签是每个窗口各持一份，但**关标签只有发起窗口说了算** —— 让对端跟着摘的结果是
@@ -6380,7 +6452,53 @@ function applyDocResyncFull(
   }
 }
 
-/** 注册跨窗口同步的三个事件监听（两种窗口都要装）。 */
+/**
+ * B159：收到别的窗口的同步滚动开关 —— 本窗口那份文档跟着开 / 关。
+ *
+ * ⚠️ 不落盘也不改写 `docSyncModes` 的所有权：开关仍然「一个文档一份」，只是这份
+ *    状态在两个窗口里保持一致（否则主窗口按下后子窗口压根不知道自己该跟着动）。
+ * ⚠️ 这里**不**刷新按钮的显隐：显隐判据是「本窗口同源实例 > 1」，而标签被拎到别的
+ *    窗口后本窗口会留一个隐藏实例（`remoteTabLocally`），所以按钮仍在；按钮被隐藏
+ *    的场景（子窗口那份是唯一的实例）用户本来就按不到，点亮给谁看。
+ */
+function applySyncMode(payload: SyncModePayload | null): void {
+  const { from, docId, on } = payload ?? {};
+  if (!from || from === windowLabel || typeof docId !== "number" || typeof on !== "boolean") {
+    return;
+  }
+  if (docSyncModes.get(docId) === on) return;
+  docSyncModes.set(docId, on);
+  logger.debug("sync", `同步滚动 ← 远端 ${on ? "开" : "关"} docId=${docId} from=${from}`);
+  refreshSyncButton(activeTab());
+}
+
+/**
+ * B159：收到别的窗口滚过来的位置 —— 在本窗口**自己那份**同源实例上落一次。
+ *
+ * ⚠️ 收这边**绝不回推**：`applySyncToSibling` 里钉位置是套在 `restoringViewport`
+ *    里的，它那两帧恰好盖住下一帧才到的 scroll，而两条滚动监听的首行都认这个集合
+ *    （B142）—— 所以「谁滚谁当源」在跨窗口这一侧依然成立，不用另加闸门。
+ * ⚠️ 只扫 `docId` 的全部实例并跳过 `srcTabId`：源那个 tabId 在别的窗口不重复出现，
+ *    跳过它是防御（回声过滤与 `from` 那条是两回事，`from` 只保证不是自己发的）。
+ */
+function applyRemoteSyncPos(payload: SyncPosPayload | null): void {
+  const { from, docId, srcTabId, px, line } = payload ?? {};
+  if (!from || from === windowLabel || typeof docId !== "number" || typeof srcTabId !== "number") {
+    return;
+  }
+  // 本窗口没开这份文档的同步滚动（开关那一条还没轮到，或用户在这边关过）⇒ 不动。
+  if (docSyncModes.get(docId) !== true) return;
+  for (const other of instancesOfDoc(docId)) {
+    if (other.tabId === srcTabId) continue;
+    applySyncToSibling(
+      other,
+      typeof px === "number" ? px : null,
+      typeof line === "number" ? line : null,
+    );
+  }
+}
+
+/** 注册跨窗口同步的监听（两种窗口都要装，见 listenDocSync 的调用点）。 */
 function listenDocSync(): void {
   void listen<DocChangePayload>("doc-change", (e) => applyRemoteDocChange(e.payload ?? null)).catch(
     () => {},
@@ -6391,6 +6509,14 @@ function listenDocSync(): void {
   void listen<{ from?: string; docId?: number; text?: string }>("doc-resync-full", (e) =>
     applyDocResyncFull(e.payload ?? null),
   ).catch(() => {});
+  // B159：同步滚动那两条也挂在这同一个函数里 —— 「两种窗口都要装」这条契约本来就
+  // 由 `listenDocSync();` 那句断言看着，拆到别处就得再写一份同样的断言。
+  void listen<SyncModePayload>(EVT_SYNC_MODE, (e) => applySyncMode(e.payload ?? null)).catch(
+    () => {},
+  );
+  void listen<SyncPosPayload>(EVT_SYNC_POS, (e) => applyRemoteSyncPos(e.payload ?? null)).catch(
+    () => {},
+  );
 }
 
 // ---------------------------------------------------------------- 卫星窗口引导

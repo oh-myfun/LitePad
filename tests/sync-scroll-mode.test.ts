@@ -40,7 +40,10 @@ function slice(src: string, from: string, to: string): string {
 }
 
 const SYNC_STATE = "const docSyncModes = new Map<number, boolean>();";
-const PUSH_BODY = slice(main, "function pushSyncToSiblings(", "function showMessage(");
+// ⚠️ B159 起这段里有三个函数（`applySyncToSibling` / `broadcastSyncPos` /
+//    `pushSyncToSiblings`）—— 位置落兄弟那几条纪律抽进了前两个，切片必须从最上面那个
+//    起头，否则下面那些「预览分支要写在 px 直推之前」的判据会静默失配（切片为空）。
+const PUSH_BODY = slice(main, "function applySyncToSibling(", "function showMessage(");
 const BTN_BODY = slice(main, "function refreshSyncButton(", "function refreshStatus(");
 const SRC_BODY = slice(main, "function isSyncSource(", "/** 这个实例此刻是否被某个面板");
 const CLICK_BODY = slice(main, 'syncScrollBtn.addEventListener("click"', "sbLang.addEventListener");
@@ -100,7 +103,7 @@ describe("B152 同步滚动模式：按钮与状态", () => {
 // ------------------------------------------------------- B154：同步的触发面
 describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
   it("预览态兄弟按**行**定位，不把编辑器像素塞进预览槽", () => {
-    const guard = '    if (other.viewMode === "preview") {';
+    const guard = '  if (other.viewMode === "preview") {';
     expect(PUSH_BODY, "预览态要走专门的分支").toContain(guard);
     // 换算出来的这一笔也必须走唯一闸口，且值取的是**预览容器**自己的像素。
     expect(PUSH_BODY, "预览兄弟的位置也要走记录闸口").toMatch(
@@ -134,14 +137,14 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
       'shownView.scrollDOM.addEventListener("scroll"',
       "attachPasteHandler(p);",
     );
-    expect(scroll, "编辑器里滚要推兄弟").toMatch(/\n\s*if \(t\) pushSyncToSiblings\(t\);\n/);
+    expect(scroll, "编辑器里滚要推兄弟").toMatch(/\n\s*if \(t\) pushSyncToSiblings\(t, true\);\n/);
     // ⚠️ 判据里带括号：那段的注释也提到这个名字，只认字面会连注释一起命中（假绿）。
     expect(scroll, "这条不许再挂 isSyncSource 前置").not.toMatch(/isSyncSource\(/);
     // 预览容器那条：挂在 `restoringViewports` 自检之后（兄弟被定位的两帧里不许回推）。
     const prev = slice(main, 'preview.root.addEventListener("scroll"', "applyPanelMode(p);");
-    expect(prev, "预览里滚也要推兄弟").toMatch(/^\s*pushSyncToSiblings\(t\);/m);
+    expect(prev, "预览里滚也要推兄弟").toMatch(/^\s*pushSyncToSiblings\(t, true\);/m);
     const atGuard = prev.indexOf("restoringViewports.has(t.tabId)");
-    const atPush = prev.indexOf("pushSyncToSiblings(t);");
+    const atPush = prev.indexOf("pushSyncToSiblings(t, true);");
     expect(atGuard, "要能定位那道自限守卫").toBeGreaterThan(-1);
     expect(atPush, "要能定位推同步那句").toBeGreaterThan(-1);
     expect(atPush, "推同步要排在守卫之后（否则回环闸门形同虚设）").toBeGreaterThan(atGuard);
@@ -157,7 +160,7 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
     // 两道守卫都要排在「推兄弟」之前，反了就挡不住下一帧才到的那发 scroll。
     const atDepth = scroll.indexOf("viewportWriteDepth > 0");
     const atRestore = scroll.indexOf("restoringViewports.has(t.tabId)");
-    const atPush = scroll.indexOf("pushSyncToSiblings(t)");
+    const atPush = scroll.indexOf("pushSyncToSiblings(t, true)");
     expect(atDepth, "要能定位抑制区间那行").toBeGreaterThan(-1);
     expect(atRestore, "要能定位还原窗口那行").toBeGreaterThan(-1);
     expect(atPush, "要能定位推同步那句").toBeGreaterThan(-1);
@@ -179,9 +182,9 @@ describe("B152 同步滚动模式：推进与触发点", () => {
   });
 
   it("离屏的预览实例不写任何位置（否则就是拿编辑器像素污染预览槽）", () => {
-    const guard = "if (line === null || !shown?.preview) continue;";
+    const guard = "if (line === null || !shown?.preview) return;";
     expect(PUSH_BODY, "离屏预览兄弟要跳过").toContain(guard);
-    // ⚠️ 顺序也要盯：这条 continue 必须排在 recordScroll 之前 —— 反了就把编辑器侧的
+    // ⚠️ 顺序也要盯：这条跳过必须排在 recordScroll 之前 —— 反了就把编辑器侧的
     //    px 写进「预览那一侧」的槽（B129 的语义），切回源码时位置就错了。
     //    两个下标都要先自证存在，否则「找不到 = -1」会让顺序比较永远成立（假绿）。
     const g = PUSH_BODY.indexOf(guard);
@@ -207,7 +210,7 @@ describe("B152 同步滚动模式：推进与触发点", () => {
     expect(main, "光标与编辑之后要推").toMatch(
       /if \(isSyncSource\(tab, panel\)\) pushSyncToSiblings\(tab\);/,
     );
-    expect(main, "用户滚动之后要推：谁滚谁当源").toMatch(/if \(t\) pushSyncToSiblings\(t\);/);
+    expect(main, "用户滚动之后要推：谁滚谁当源").toMatch(/if \(t\) pushSyncToSiblings\(t, true\);/);
     // 「切换激活文档时则根据新的激活文档进行同步」—— 这一句就落在 switchTab 末尾。
     expect(main, "切激活文档后要按新源推").toMatch(/if \(tab\) pushSyncToSiblings\(tab\);/);
     expect(main, "全局刷新兜底（新出现的那一份要对齐）").toMatch(/const act = activeTab\(\);/);
@@ -215,8 +218,109 @@ describe("B152 同步滚动模式：推进与触发点", () => {
 
   it("点开的那一刻就推一次，不用等用户再滚一下", () => {
     expect(CLICK_BODY, "点击要先改状态").toMatch(/docSyncModes\.set\(tab\.docId, on\);/);
-    expect(CLICK_BODY, "开启后立刻推").toMatch(/if \(on\) pushSyncToSiblings\(tab\);/);
+    expect(CLICK_BODY, "开启后立刻推").toMatch(/if \(on\) pushSyncToSiblings\(tab, true\);/);
     expect(CLICK_BODY, "要顺手刷新按钮（点亮态 + 提示）").toMatch(/refreshSyncButton\(tab\);/);
+  });
+});
+
+// ------------------------------------------------- B159：跨窗口同步滚动
+describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动）", () => {
+  const MSG_BODY = slice(main, "const EVT_DOC_CHANGE = ", "/** 正在套用远端变更");
+  const RECV_BODY = slice(main, "function applySyncMode(", "/** 注册跨窗口同步的监听");
+  const POS_RCV = slice(main, "function applyRemoteSyncPos(", "/** 注册跨窗口同步的监听");
+  const LISTEN = slice(
+    main,
+    "function listenDocSync(",
+    "// ---------------------------------------------------------------- 卫星窗口引导",
+  );
+
+  it("四条事件常量都要在，且从与文档同步那三兄弟里长出来", () => {
+    expect(MSG_BODY, "同步滚动的两条要跟三兄弟放一起").toMatch(/const EVT_SYNC_MODE = /);
+    expect(MSG_BODY, "位置那一条也要").toMatch(/const EVT_SYNC_POS = /);
+    // ⚠️ 判据要收口到分号：注释里提到这两个名字不算数（本项目已经栽过一次「正则命中注释」）。
+    expect(MSG_BODY, "开关状态那条要落地").toMatch(/const EVT_SYNC_MODE = "sync-scroll-mode";/);
+    expect(MSG_BODY, "位置那条要落地").toMatch(/const EVT_SYNC_POS = "sync-scroll-pos";/);
+  });
+
+  it("只有「用户滚动」那几路往外广播，光标/输入那一路不播", () => {
+    // `crossWindow` 的默认值必须是 false：光标那一半（`handleUpdate` 那条）走默认，
+    // 只有编辑器滚动、预览滚动、按下开关三处显式打开 —— 否则在主窗口敲一个字
+    // 就会把另一个窗口拉过来，那不是同步滚动，是打字干扰。
+    expect(PUSH_BODY, "广播函数挂在推送末尾").toMatch(/if \(crossWindow\) broadcastSyncPos\(/);
+    expect(PUSH_BODY, "默认不许播").toMatch(
+      /function pushSyncToSiblings\(src: Tab, crossWindow = false\)/,
+    );
+    // 光标 / 输入那一路：不带第二个实参，走默认。
+    expect(main, "光标那一半不许跨窗口").toMatch(
+      /if \(isSyncSource\(tab, panel\)\) pushSyncToSiblings\(tab\);/,
+    );
+    // 切激活文档 / 全局刷新这两路也不播：那是「本地对齐」，不是用户滚动。
+    expect(main, "切激活文档那路不播").toMatch(/if \(tab\) pushSyncToSiblings\(tab\);\n/);
+    expect(PUSH_BODY, "广播排在最后（本地先对齐，别人接手时落点一致）").toMatch(
+      /broadcastSyncPos\(src, px, line\);/,
+    );
+  });
+
+  it("三个触发点都显式打开了 crossWindow", () => {
+    const scroll = slice(
+      main,
+      'shownView.scrollDOM.addEventListener("scroll"',
+      "attachPasteHandler(p);",
+    );
+    expect(scroll, "编辑器里滚要往外播").toMatch(/if \(t\) pushSyncToSiblings\(t, true\);/);
+    const preview = slice(main, 'preview.root.addEventListener("scroll"', "applyPanelMode(p);");
+    expect(preview, "预览里滚也要往外播").toMatch(/pushSyncToSiblings\(t, true\);/);
+    expect(CLICK_BODY, "按下开关那一刻也要播（先播状态，再播位置）").toMatch(
+      /EVT_SYNC_MODE, \{ from: windowLabel, docId: tab\.docId, on \}/,
+    );
+  });
+
+  it("位置广播要带齐四样：谁发的、哪个文档、哪一份是源、坐标", () => {
+    // `from` 是必填的自证字段（tauri 的广播本机也会收到自己的回声），缺了就分不清。
+    expect(PUSH_BODY, "from 不能少").toMatch(/from: windowLabel,/);
+    expect(PUSH_BODY, "文档 ID 不能少").toMatch(/docId: src\.docId,/);
+    expect(PUSH_BODY, "源那份的 tabId 不能少（对端要跳过它）").toMatch(/srcTabId: src\.tabId,/);
+    // 坐标两个数一起带：源那侧是预览就只有 line、是源码就只有 px，对端按自己那一侧挑。
+    // ⚠️ 签名收口到 "); 免得只命中注释里那句「px 与 line 一起带」。
+    expect(PUSH_BODY, "签名要收口").toMatch(
+      /function broadcastSyncPos\(src: Tab, px: number \| null, line: number \| null\)/,
+    );
+  });
+
+  it("接收端只认别的窗口：自己的回声一律丢", () => {
+    // 与文档同步那三条同口径 —— 少了这条，自己滚一下会把自己再推一遍（抖动来源）。
+    expect(POS_RCV, "from 必须与本窗口比对").toMatch(/from === windowLabel/);
+    expect(POS_RCV, "srcTabId 也要跳过").toMatch(/other\.tabId === srcTabId/);
+    expect(POS_RCV, "开关没开就别动").toMatch(/docSyncModes\.get\(docId\) !== true\) return;/);
+    expect(POS_RCV, "要落在自己那份同源实例上").toMatch(/instancesOfDoc\(docId\)/);
+  });
+
+  it("接收端不许回推：跟本地兄弟用同一个落点函数", () => {
+    // 回环是靠 `restoringViewport` 那两帧挡的（两条滚动监听首行都认它），所以接收端
+    // 也必须走 `applySyncToSibling` —— 那条里钉位置是套在还原窗口里的。
+    // ⚠️ 判据放行号：`applySyncToSibling(other,` 被 prettier 折成了三行。
+    expect(POS_RCV, "复用本地那一份落点逻辑").toMatch(/applySyncToSibling\(\s*other,/);
+    expect(POS_RCV, "不许自己再钉一次").not.toMatch(/pinScrollTop\(/);
+    expect(POS_RCV, "不许自己再开广播").not.toMatch(/broadcastSyncPos\(/);
+  });
+
+  it("开关状态要跨窗口对齐，并且两种窗口都装监听", () => {
+    expect(RECV_BODY, "收到远端开关要写进本窗口的状态").toMatch(/docSyncModes\.set\(docId, on\);/);
+    expect(RECV_BODY, "要顺手刷新按钮点亮态").toMatch(/refreshSyncButton\(activeTab\(\)\)/);
+    expect(RECV_BODY, "自己的回声要丢").toMatch(/from === windowLabel/);
+    // 装监听：主窗口与卫星窗口都要装，`listenDocSync()` 那句调用点就是这条契约。
+    expect(LISTEN, "同步滚动那两条挂在 listenDocSync 里").toMatch(/EVT_SYNC_MODE/);
+    expect(LISTEN, "位置那条也是").toMatch(/EVT_SYNC_POS/);
+    expect(main, "两种窗口都要装同步监听（老契约不能破）").toMatch(/listenDocSync\(\);/);
+  });
+
+  it("位置那一路的落点纪律只有一份（抽出来的函数被两边共用）", () => {
+    // 这是 B159 最容易写错的地方：把接收端另写一份「简化版」，于是跨视图模式那条
+    // 纪律（B154）在网络这一侧悄悄丢掉 —— 表现为「一个预览一个源码时跨窗口不同步」。
+    expect(PUSH_BODY, "抽取后的落点函数要留在推送段里").toContain("function applySyncToSibling(");
+    expect(main, "本地循环要调它").toMatch(/applySyncToSibling\(other, px, line\);/);
+    // ⚠️ 判据放行号：`applySyncToSibling(other,` 被 prettier 折成了三行。
+    expect(main, "接收端也调同一个").toMatch(/applySyncToSibling\(\s*other,/);
   });
 });
 
@@ -340,10 +444,11 @@ describe("B152 反向验证：退回旧写法，上面那几条必须变红", ()
   });
 
   it("删掉「离屏预览兄弟跳过位置」那句 → 顺序那条必须落空", () => {
-    const ORIG = "if (line === null || !shown?.preview) continue;";
+    // ⚠️ B159 起这句挪进了 `applySyncToSibling`（缩进也跟着变了），ORIG 要按新排书写。
+    const ORIG = "    if (line === null || !shown?.preview) return;";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
     const degraded = main.replace(ORIG, "");
-    const body = slice(degraded, "function pushSyncToSiblings(", "function showMessage(");
+    const body = slice(degraded, "function applySyncToSibling(", "function showMessage(");
     expect(body, "删掉后就不该再有这句子").not.toContain(ORIG);
   });
 
@@ -390,7 +495,9 @@ describe("B152 反向验证：退回旧写法，上面那几条必须变红", ()
 // ------------------------------------------------------- B154 反向验证
 describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须变红", () => {
   it("把位置同步退回「只认激活的那份」→ 「谁滚谁当源」必须落空", () => {
-    const ORIG = "if (t) pushSyncToSiblings(t);";
+    // ⚠️ B159 起这一笔带第二个实参（`crossWindow`），退化串要跟着写全，
+    //    否则退化版「什么都没改」，整条反向验证静默失效（本文件栽过一次）。
+    const ORIG = "if (t) pushSyncToSiblings(t, true);";
     expect(main, "退化串要先自证原句还在").toContain(ORIG);
     const degraded = main.replace(ORIG, "if (t && isSyncSource(t, p)) pushSyncToSiblings(t);");
     // 退回后编辑器那一侧又要求「源是激活的」，鼠标没点过的视口就带不动兄弟了。
@@ -403,20 +510,20 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
       "attachPasteHandler(p);",
     );
     expect(scroll, "退回后编辑器监听就不再是「谁滚谁当源」了").not.toMatch(
-      /\n\s*if \(t\) pushSyncToSiblings\(t\);\n/,
+      /\n\s*if \(t\) pushSyncToSiblings\(t, true\);\n/,
     );
   });
 
   it("从预览监听里删掉推兄弟那句 → 「两条滚动监听」那条必须落空", () => {
-    const ORIG = "pushSyncToSiblings(t);";
+    const ORIG = "pushSyncToSiblings(t, true);";
     const at = main.lastIndexOf(ORIG);
     expect(at, "退化串要先自证原句还在").toBeGreaterThan(-1);
     // ⚠️ 按位置切：编辑器那侧也有一笔同形，整串 replace 会删到错的那笔（假绿）。
     const degraded = main.slice(0, at) + main.slice(at + ORIG.length);
     const prev = slice(degraded, 'preview.root.addEventListener("scroll"', "applyPanelMode(p);");
-    // ⚠️ 判据要认**调用**形态（`pushSyncToSiblings(t);`）—— 那段的注释里也提名了这
-    //    个函数，只认字面会命中注释，退化看着「没生效」（跟 isSyncSource 那次同坑）。
-    expect(prev, "预览监听退回后就不再推兄弟了").not.toMatch(/pushSyncToSiblings\(t\);/);
+    // ⚠️ 判据要认**调用**形态（`pushSyncToSiblings(t, true);`）—— 那段的注释里也提名了
+    //    这个函数，只认字面会命中注释，退化看着「没生效」（跟 isSyncSource 那次同坑）。
+    expect(prev, "预览监听退回后就不再推兄弟了").not.toMatch(/pushSyncToSiblings\(t, true\);/);
   });
 
   it("退回「源在预览里也拿 src.scrollTop 当编辑器像素」→ 坐标系那条必须落空", () => {
