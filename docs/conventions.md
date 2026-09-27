@@ -97,7 +97,7 @@
   （`.gitignore` / `.prettierignore` / eslint `ignores` / `tsconfig.include` / 测试里的 `SKIP_DIRS`），
   否则探针会误伤无关守卫。
 
-## 视口位置（B134 / B139 / B142 / B145）
+## 视口位置（B134 / B139 / B142 / B145 / B146）
 
 - **还原位置要「钉到立住为止」**：`pinScrollTop` 逐帧补钉（上限 `PIN_MAX_FRAMES` 帧），
   中间值一个都不信。只补一帧是不够的 —— 窗口刚打开时布局可能连着好几帧都没稳，
@@ -112,6 +112,17 @@
   排在钉位置之后等于白钉 —— 这就是「切换标签位置会变」。
 - 补钉始终没立住时会留一条 `logger.warn("viewport", …)`（含目标值与实际值）。
   真机出现「重启回到顶部」先看这条日志。
+- **CM6 测量会把视口往下推，`requestMeasure()` 不能裸调**（B146）：`@codemirror/view`
+  在 measure 收尾时做「滚动锚点补偿」——拿视口顶行高度与上次记的锚点比，差 >1px
+  就 `scrollTop += diff`。`setState` 换文档后 heightMap 是拿 `HeightOracle` 按**估算
+  行高**建的，measure 换成实测行高，软换行 / 中英文混排下 `diff` 恒为正 ⇒ 每切一次
+  标签视口往下挪一点（用户报的「切换标签，md 滚动位置不断往下移」，源码 / 预览都中）。
+  测量统一走 `measureAndKeepScroll(panel)`，它在补偿之后把位置收回来。
+  ⚠️ 时序是躲不掉的：`requestMeasure()` 排的是**下一帧** rAF，而 `pinScrollTop` 第一次
+  就判定「立住」、不再补钉，中间无人把关 —— 这正是这个 bug 藏了这么久的原因。
+- **预览按像素钉完之后要 `clearPendingSync()`**：`applySyncToLine` 只写 `pendingSyncLine`
+  不消费它，而 `applyPending` 会被任意一次图片 / 公式增强的 `load` 唤醒，留着旧行号
+  就会把预览从刚钉好的落点拽走。
 
 ## 图标
 

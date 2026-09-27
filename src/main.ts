@@ -862,6 +862,8 @@ function rebuildLayout(): void {
       applyPanelMode(p);
       // 纯预览实例的视图位置在预览那一侧，渲染完再钉回去（B129）
       restorePreviewScroll(p);
+      // CM6 测量（含它的滚动锚点补偿）排在下一帧，位置得在补偿之后收回来（B146）
+      measureAndKeepScroll(p);
       if (panelId === activePanelId && p.view) {
         updatePositionOf(panelId, p.view.view);
       }
@@ -909,6 +911,8 @@ function switchTab(panelId: number, tabId: number): void {
   // applyPanelMode 里的 syncToLine 会把预览按「编辑器顶行」重新定位一次，
   // 纯预览实例的位置得在它之后再钉回来（B130）
   restorePreviewScroll(panel);
+  // CM6 测量（含它的滚动锚点补偿）排在下一帧，位置得在补偿之后收回来（B146）
+  measureAndKeepScroll(panel);
   if (panelId === activePanelId) {
     refreshTitle();
     refreshStatus();
@@ -1163,6 +1167,8 @@ async function closeTabById(tabId: number): Promise<void> {
   // 同上：接班的是纯预览实例时，位置在预览那侧，applyPanelMode 的 syncToLine
   // 会把预览按编辑器顶行顶掉一次，得在它之后钉回来（B129 同款）
   restorePreviewScroll(panel);
+  // CM6 测量（含它的滚动锚点补偿）排在下一帧，位置得在补偿之后收回来（B146）
+  measureAndKeepScroll(panel);
   if (panel.panelId === activePanelId) {
     refreshTitle();
     refreshStatus();
@@ -3798,6 +3804,9 @@ function restorePreviewScroll(panel: Panel): void {
   restoringViewport(t.tabId, () => {
     pinScrollTop(root, px);
   });
+  // 位置已按像素钉死，待重定位行号就是过期的了：留着它，下一次图片/公式增强的
+  // 二次定位（`applyPending`）会把预览从我们钉的落点拽回那一行（B146）。
+  panel.preview.clearPendingSync();
 }
 
 /** 应用面板视图模式：源码 / 分屏 / 纯预览（非 md 标签强制源码）。 */
@@ -3816,8 +3825,55 @@ function applyPanelMode(panel: Panel): void {
     // 否则切到预览/切标签时永远停在文档开头。
     if (anchorLine > 1) panel.preview?.syncToLine(anchorLine);
   }
-  // 从 display:none 恢复后 CM6 需要重新测量，否则编辑区空白
-  panel.view?.view.requestMeasure();
+  // ⚠️ 这里**不要**直接 `requestMeasure()`：测量排在下一帧，而 CM6 在测量结束时会
+  // 做「滚动锚点补偿」把位置往下推（见 `measureAndKeepScroll`）。测量统一走那里，
+  // 顺便在补偿之后把位置收回来。
+}
+
+/**
+ * 切换标签 / 切换源码↔预览之后让 CM6 重新测量，并把视口位置**收回来**（B146）。
+ *
+ * ⚠️ CM6 在 measure 结束时会做「滚动锚点补偿」（`@codemirror/view` 内部逻辑）：
+ * 它拿视口顶行那块的高度和上次记下的锚点比，差超过 1px 就 `scrollTop += diff`，
+ * 目的是编辑时内容别乱跳。而 `setState` 换文档后 heightMap 是拿 `HeightOracle`
+ * 按**估算行高**建的，measure 一跑换成**实测行高** —— 软换行、中英文混排下实测
+ * 普遍比估算高，`diff` 就恒为正 ⇒ 于是「切一次标签，视口往下挪一点」，切十次
+ * 偏出好几屏。这就是用户报的「切换标签，md 文档的滚动位置会不断往下移」，
+ * 源码 / 预览（分屏）都中 —— 三条还原路径最终都落到这一手测量上。
+ *
+ * 时序上很难躲开：`requestMeasure()` 排的是**下一帧**的 rAF，而 `pinScrollTop`
+ * 第一次就「立住」了、不再补钉，中间没人把关 —— 补偿改完位置就永久生效。
+ *
+ * 所以在这里补一道：测量（同帧、rAF 队列靠后）跑完再确认一次，位置被挪走了就
+ * 钉回来。`pinScrollTop` 的逐帧补钉是第二道保险 —— 补偿若拖到更后面的帧，
+ * 它的 `stuck` 判定会认出「值不是我们设的那个」并继续补钉。
+ */
+function measureAndKeepScroll(panel: Panel): void {
+  if (!panel.view) return;
+  panel.view.view.requestMeasure();
+  requestAnimationFrame(() => {
+    reassertViewScroll(panel);
+  });
+}
+
+/** 测量后的滚动锚点补偿把位置挪走了 → 钉回标签自己那份快照（B146）。 */
+function reassertViewScroll(panel: Panel): void {
+  if (!panel.view || panel.viewTabId === null) return;
+  const t = tabs.get(panel.viewTabId);
+  if (!t || t.viewMode === "preview") return;
+  const px = t.scrollTop;
+  if (px === null) return;
+  const view = panel.view.view;
+  // 没被动过就别碰：钉一次会占用 `pinningContainers` / 抑制区间，白白干扰
+  // 随后可能发生的「视图消失前看最后一眼」。
+  if (view.scrollDOM.scrollTop === px) return;
+  logger.trace(
+    "viewport",
+    `锚点补偿挪走了位置 tab=${t.tabId} 实际 ${view.scrollDOM.scrollTop} → 钉回 ${px}`,
+  );
+  restoringViewport(t.tabId, () => {
+    pinScrollTop(view.scrollDOM, px);
+  });
 }
 
 /**
@@ -3883,6 +3939,9 @@ function toggleViewMode(): void {
   } finally {
     suppressDirty = false;
   }
+  // 隐藏 / 恢复编辑器会改变尺寸，CM6 随之测量，而它的滚动锚点补偿会把视口往下
+  // 推一点 —— 位置得在补偿之后收回来（B146）
+  measureAndKeepScroll(panel);
   refreshViewModeButton();
   scheduleSessionSave();
 }

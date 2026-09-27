@@ -417,6 +417,17 @@ export class PreviewPane {
     this.pendingSyncLine = null;
   }
 
+  /**
+   * 位置已由调用方按**像素**钉死，抹掉待重定位的行号（B146）。
+   *
+   * `applySyncToLine` 只写 `pendingSyncLine`、不消费它，而 `applyPending` 会被任意
+   * 一次图片 / 公式增强的 `load` 唤醒 —— 留着旧行号，预览就会从刚钉好的落点被拽回
+   * 那一行。切标签后位置是**按像素**还原的（不是按行），这一行必须清掉。
+   */
+  clearPendingSync(): void {
+    this.pendingSyncLine = null;
+  }
+
   private applySyncToLine(line: number): void {
     const target = this.blockAtLine(line);
     if (!target) return;
