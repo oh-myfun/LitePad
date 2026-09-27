@@ -276,6 +276,37 @@ describe("B97 自建标题栏", () => {
     expect(actions, "容器自身也不必再撑满标题栏高").not.toMatch(/align-self:\s*stretch/);
   });
 
+  it("B165：文件名要绝对居中（不许只是剩余空位内居中）", () => {
+    // 用户报：左侧菜单一长，原来 flex:1 + justify-content:center 的「居中」整体被挤偏。
+    // 正解是 .title-center 盖在整条标题栏正中（absolute + left:50% + translateX 回半）。
+    const bar = ruleBlock(css(), ".title-bar");
+    expect(bar, ".title-bar 要当定位基准").toMatch(/position:\s*relative/);
+    const center = ruleBlock(css(), ".title-center");
+    expect(center, "文档名容器要绝对定位").toMatch(/position:\s*absolute/);
+    expect(center, "要钉在水平正中（left 50% + translateX 回自身一半）").toMatch(/left:\s*50%/);
+    expect(center, "要 translateX(-50%) 回自身一半").toMatch(/translateX\(-50%\)/);
+    expect(center, "不许再吃 flex:1（那是「空位内居中」的写法）").not.toMatch(/flex:\s*1/);
+    expect(center, "绝对定位后会压住底下元素，pointer-events 必须关掉").toMatch(
+      /pointer-events:\s*none/,
+    );
+    // 容器关了事件，里面的可点元素（同步滚动键）要显式拿回来
+    expect(ruleBlock(css(), ".title-center > button"), "可点元素要开回 pointer-events").toMatch(
+      /pointer-events:\s*auto/,
+    );
+  });
+
+  it("B165 反向验证：把 .title-center 退回 flex 子项，上一条必须落空", () => {
+    const orig = ruleBlock(css(), ".title-center");
+    expect(orig, "要能取到 .title-center 规则块").not.toBe("");
+    const degraded = orig
+      .replace("position: absolute;", "flex: 1 1 auto;")
+      .replace(/left:\s*50%;/, "")
+      .replace(/transform:\s*translateX\(-50%\);/, "");
+    expect(degraded, "退化实现应真的换了写法").not.toBe(orig);
+    expect(degraded, "退化后「要绝对定位」必须落空").not.toMatch(/position:\s*absolute/);
+    expect(degraded, "退化后「要 left 50%」必须落空").not.toMatch(/left:\s*50%/);
+  });
+
   it("B163 反向验证：把 .title-actions 退回 stretch，上一条必须落空", () => {
     const orig = ruleBlock(css(), ".title-actions");
     expect(orig, "要能取到 .title-actions 规则块").not.toBe("");

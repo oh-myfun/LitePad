@@ -270,6 +270,9 @@ body {
   gap: 8px;
   height: 34px;
   flex: 0 0 34px;
+  /* B165：给绝对居中的 .title-center 当定位基准（文档名要钉在整条标题栏正中，
+     不再是「剩余空位内居中」—— 左侧菜单一长，原来那个居中就会整体被挤偏）。 */
+  position: relative;
   /* 左留 10px：与菜单项 .menu-btn 的水平内边距（10px）取齐 —— 左上角图标离窗口左缘
      太近会「顶边」（原先 4px，图标字形几乎贴着边框）。右端不留：关闭键要贴到窗口边缘。 */
   padding-left: 10px;
@@ -297,12 +300,31 @@ body {
 /* 中间文档名：吃掉剩余宽度并居中，窄窗口下省略号收尾。
    拖动区靠 header 上那个 drag-region 属性，这里不需要再声明。 */
 .title-center {
-  flex: 1 1 auto;
-  min-width: 0;
+  /* B165：**绝对居中**。原来是 flex 子项（flex: 1 1 auto + justify-content: center），
+     实际效果是「剩余空位内居中」—— 图标 / 菜单 / 右侧工具键都占宽度，文件名整体
+     被挤向一侧。改为盖在整条标题栏正中：left 50% + translateX 回自身一半，
+     超长文件名由 max-width + 省略号兜住（.title-text 自带 text-overflow）。
+     ⚠️ pointer-events 必须关掉：绝对定位后它会真实压在菜单 / 工具键上方，照收事件
+     就会挡住底下元素的点击；关掉后 mousedown 落回 header，拖拽照常（drag-region
+     在 header 上）。只有里面的**可点元素**（同步滚动键）要显式开回来 —— 见下一条。 */
+  position: absolute;
+  left: 50%;
+  top: 0;
+  height: 100%;
+  transform: translateX(-50%);
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  /* 最多吃一半宽：再长就往两侧压菜单 / 工具键了（超出部分走省略号）。 */
+  max-width: 50%;
+  pointer-events: none;
+}
+
+/* B165：绝对居中的容器上 pointer-events:none，里面的可点元素要显式拿回事件 ——
+   目前只有同步滚动键（.title-text 是纯文本，留在 none 反而让拖拽更顺）。 */
+.title-center > button {
+  pointer-events: auto;
 }
 
 .title-text {
