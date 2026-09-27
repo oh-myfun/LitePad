@@ -36,8 +36,13 @@ export interface PanelRenderData {
   panelId: number;
   active: boolean;
   tabs: TabViewData[];
-  /** 是否可关闭该分屏（唯一面板时 ⨯ 禁用，退出只走窗口关闭/菜单） */
+  /** 是否可关闭该分屏（主窗口的唯一面板 ⨯ 禁用，退出只走窗口关闭/菜单） */
   canClose?: boolean;
+  /**
+   * B161：⨯ 的副标题。不给时走默认文案「标签并入相邻面板」。
+   * 卫星窗口唯一的面板也能关（= 关窗 + 标签交回主窗口），那时副标题必须说清。
+   */
+  closeDetail?: string;
   /** B71：该面板正处于最大化（操作栏多一个「还原」⨯，其余面板 collapsed） */
   maximized?: boolean;
   /** B71：被最大化挤成 0 的那一侧（仍留在 DOM 里，只是不占地方） */
@@ -519,7 +524,7 @@ function buildPanel(
   const closeP = mkOp(
     CODICONS.close,
     "移除该分屏",
-    data.canClose === false ? undefined : "标签并入相邻面板",
+    data.closeDetail ?? (data.canClose === false ? undefined : "标签并入相邻面板"),
     () => cb.onClosePanel(panelId),
   );
   closeP.disabled = data.canClose === false;

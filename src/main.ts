@@ -914,7 +914,13 @@ function rebuildLayout(): void {
       panelId: p.panelId,
       active: p.panelId === activePanelId,
       tabs: tabViewDataOf(p),
-      canClose: countLeaves(layout) > 1,
+      // B161：卫星窗口唯一的面板**可以**关 —— 关面板 = 关窗 + 标签交回主窗口。
+      // 主窗口仍然不许关唯一面板（关了就没地方放标签）。
+      canClose: countLeaves(layout) > 1 || windowKind === "satellite",
+      closeDetail:
+        windowKind === "satellite" && countLeaves(layout) <= 1
+          ? "关闭该子窗口，标签交回主窗口"
+          : undefined,
       // B71：被最大化挤扁的一侧要真的收成 0（CSS 里 .layout-panel 有 min-width）
       maximized: maximizedPanelId === p.panelId,
       collapsed: maximizedPanelId !== null && maximizedPanelId !== p.panelId,
@@ -1388,17 +1394,20 @@ async function closeTabById(tabId: number): Promise<void> {
     // 备份区里的副本都不该再留着——热退出的承诺是「关窗才还原」，不是
     // 「关标签也还原」。用户明确丢弃的内容必须真的丢弃。
     discardBackupFor(doc);
-    // B157：**这里不广播、不改主窗口**。Rust 侧的文档是进程级的，而标签每个窗口各持
-    // 一份（主窗口会留下一个隐藏实例兜底）——「在子窗口关掉文件」只该关掉**子窗口**
-    // 这一份，主窗口那份原样留着（B155 曾让对端跟着摘，用户明确否掉：
-    // 「主窗口中同一个文件的打开标签不能被关闭」）。
-    // 所以「关掉的文档又冒回来」的防线也不在这里，而在**关窗不再交还**（见
-    // `requestSatelliteClose`）—— 那条才是 B155 真正修掉的根因。
-    try {
-      await ipcCloseTab(doc.tabId);
-    } catch (err) {
-      showMessage(String(err), true);
-      return;
+    // B161：**Rust 那侧的文档是进程级的**（`state.docs` 只有一份），本窗口这是最后一个
+    // 实例，不等于别的窗口没有 —— 主窗口那份隐藏实例、另一个卫星窗口的可见标签都算
+    // 有人拿着。直接 `close_tab` 会把别人手上那份一起废掉（正是对端保存时报「文档不
+    // 存在」、看起来像「同文件的标签被一起关掉」的原因）。所以先问一圈，有人应答就
+    // 只摘本地。单窗口（没有外借、自己也不是卫星）不必问，省掉这 150ms。
+    const maybeShared = windowKind === "satellite" || loanedDocIds.has(doc.tabId);
+    const held = maybeShared ? await docHeldElsewhere(doc.tabId) : false;
+    if (!held) {
+      try {
+        await ipcCloseTab(doc.tabId);
+      } catch (err) {
+        showMessage(String(err), true);
+        return;
+      }
     }
     docs.delete(doc.tabId);
   }
@@ -1409,6 +1418,13 @@ async function closeTabById(tabId: number): Promise<void> {
 
   if (panel.tabs.length === 0) {
     if (windowKind === "satellite") {
+      if (countLeaves(layout) > 1) {
+        // B161：还有别的面板，就只摘这一块（与主窗口同款）—— 原来这里会整窗关掉、
+        // 顺手把其它面板的标签一并交回主窗口 ⇒ 用户关的明明是一个标签，看到的却是
+        // 别的标签跑去了主窗口。
+        disposePanel(panel.panelId);
+        return;
+      }
       // B155：卫星窗口没有「再开一个未命名文档」这条退路 —— 它存在的意义就是
       // 承载从主窗口分出去的那几个文件，关空了就该关掉自己（用户原话：
       // 「子窗口支持关闭最后一个文件和面板，此时相当于关闭子窗口」）。
@@ -1530,7 +1546,15 @@ function pruneEmptyPanels(): boolean {
  *  `hostId` 指定并入目标（B71 整组拖拽落到哪个面板就并入哪个），缺省按视觉相邻。 */
 function closePanelById(panelId: number, hostId?: number): void {
   const panel = getPanel(panelId);
-  if (!panel || countLeaves(layout) <= 1) return;
+  if (!panel) return;
+  if (windowKind === "satellite" && countLeaves(layout) <= 1) {
+    // B161：子窗口**唯一的面板也能关** —— 它没有「并入相邻面板」这条退路，关掉这块
+    // 就等于关掉这个窗口；里面还开着的标签交回主窗口（主窗口关面板是把标签并入相邻
+    // 面板，子窗口那个「相邻面板」就是主窗口本身）。
+    requestSatelliteClose(true);
+    return;
+  }
+  if (countLeaves(layout) <= 1) return;
   exitMaximize(); // 最大化态下关面板会留下「0 宽但还在树里」的怪布局
   const sibId = hostId ?? siblingLeafOf(layout, panelId);
   const host = sibId !== null ? getPanel(sibId) : null;
@@ -5804,6 +5828,16 @@ const SATELLITE_READY_TIMEOUT_MS = 6000;
  */
 const remotedTabs = new Map<number, { tabId: number; owner: string }>();
 
+/**
+ * B161：**曾经借出去过**的文档 id（只在 `remoteTabLocally` 里加，从不删）。
+ *
+ * 与 `remotedTabs` 的区别：那份隐藏实例被「在本窗口重新打开同一文件」回收后就从
+ * `remotedTabs` 里消失了，可**别的窗口手上那份还在** —— 只认 `remotedTabs` 会在这种
+ * 情况下误判成「没人拿着」，主窗口关标签时又把别人那份一起关掉。
+ * 判据宁粗勿细：多问一圈只是多 150ms，漏问就是别人的文档变成空壳。
+ */
+const loanedDocIds = new Set<number>();
+
 /** 把某实例摊平成可跨窗口传输的快照（正文取实例状态，不需要回写磁盘）。 */
 function transferSnapshotOf(tabId: number): SatelliteTab | null {
   const tab = tabs.get(tabId);
@@ -5858,6 +5892,8 @@ function remoteTabLocally(tabId: number, owner: string): void {
   }
   tab.panelId = -1;
   remotedTabs.set(tab.docId, { tabId, owner });
+  // B161：记一笔「这份文档借出去过」—— 隐藏实例被回收后仍要当作「可能在别人手上」
+  loanedDocIds.add(tab.docId);
 }
 
 /** 把隐藏实例恢复成可见标签（卫星窗口消失、或用户点「移回主窗口」时用）。 */
@@ -6255,6 +6291,91 @@ function reclaimFromVanished(label: string): void {
   showMessage(`另一个窗口已关闭，接回 ${orphans.length} 个标签`);
 }
 
+// --------------------------------------------- B161 关标签：只关自己这一份
+
+/** 本窗口还**看得见**这份文档吗（隐藏实例不算 —— 它只是借出去那一份的副本）。 */
+function hasVisibleInstanceOf(docId: number): boolean {
+  for (const t of tabs.values()) {
+    if (t.docId === docId && t.panelId !== -1) return true;
+  }
+  return false;
+}
+
+/**
+ * 主窗口：把「借给卫星窗口那份的隐藏实例」作废旧账。
+ *
+ * 人家已经把标签关掉了，这份副本再留着就是 B155 那个「关了又冒回来」—— 等卫星窗口
+ * 一关，`reclaimFromVanished` 会把它恢复成可见标签，用户看到的就是「我在子窗口关掉的
+ * 文件跑到主窗口来了」。
+ */
+function dropRemotedDoc(docId: number): void {
+  const v = remotedTabs.get(docId);
+  if (!v) return;
+  remotedTabs.delete(docId);
+  tabs.delete(v.tabId);
+  if (instancesOfDoc(docId).length === 0) docs.delete(docId);
+  scheduleSessionSave();
+}
+
+/**
+ * 收到别人的「我要关这份文档了，还有人拿着吗」。
+ *
+ * 两种答法：
+ *   · 本窗口还有**可见**标签 → 回一条 `doc-close-held`，让对方别动 Rust 那一侧；
+ *   · 没有可见标签 → 主窗口顺手把那份隐藏实例摘掉，并且**不吭声**：那只是一份副本，
+ *     不算「有人拿着」（留着它才是「关了又冒回来」的根）。
+ */
+function handleDocCloseQuery(docId: number, from: string): void {
+  if (hasVisibleInstanceOf(docId)) {
+    void emitTo<DocClosePayload>(from, EVT_DOC_CLOSE_HELD, { from: windowLabel, docId }).catch(
+      (e: unknown) => {
+        logger.debug("window", `未能回告「仍持有文档」：${String(e)}`);
+      },
+    );
+    return;
+  }
+  if (windowKind === "main" && remotedTabs.has(docId)) dropRemotedDoc(docId);
+}
+
+/**
+ * 广播问一圈「这份文档还有没有别人拿着」，等一小会儿；有人应答就算有。
+ *
+ * ⚠️ 先装监听**再**广播：反过来的话，回得快的一方会在监听就位之前就把应答发出来，
+ *    发起方一条都收不到 ⇒ 判定成「没人拿着」⇒ 又把别人的那份一起关掉（假绿）。
+ * ⚠️ 应答要认 `from !== windowLabel`：广播本机也收得到自己的回声（B159 同款）。
+ */
+function docHeldElsewhere(docId: number, waitMs = 150): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let unlisten: (() => void) | null = null;
+    const finish = (held: boolean): void => {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) clearTimeout(timer);
+      unlisten?.();
+      resolve(held);
+    };
+    void listen<DocClosePayload>(EVT_DOC_CLOSE_HELD, (e) => {
+      const p = e.payload;
+      if (p?.docId === docId && p.from !== undefined && p.from !== windowLabel) finish(true);
+    })
+      .then((un) => {
+        if (settled) {
+          un();
+          return;
+        }
+        unlisten = un;
+        void emit<DocClosePayload>(EVT_DOC_CLOSE_QUERY, { from: windowLabel, docId }).catch(
+          () => {},
+        );
+        // 没人应答也算数：等过了这阵就当「没人拿着」。
+        timer = setTimeout(() => finish(false), waitMs);
+      })
+      .catch(() => finish(false));
+  });
+}
+
 // ------------------------------------------------------------ 跨窗口同源同步
 
 /**
@@ -6317,6 +6438,27 @@ interface SyncModePayload {
   from?: string;
   docId?: number;
   on?: boolean;
+}
+
+/**
+ * B161：关标签之前先问一圈「这份文档还有没有人拿着」。
+ *
+ * Rust 侧的文档是**进程级**的（`state.docs` 一份），而标签是每个窗口各持一份 ——
+ * 本窗口这是最后一个实例，不等于别的窗口没有：主窗口那份**隐藏实例**（借给卫星
+ * 窗口的副本）、另一个卫星窗口的可见标签，都算「有人拿着」。直接 `close_tab` 会把
+ * 别人手上那份一起废掉（保存时报「文档不存在」）—— 用户看到的正是「在子窗口关一个
+ * 文件，主窗口同文件的标签也被关了」。
+ *
+ * 所以关之前广播一次 `doc-close-query`；还在拿着的窗口回一条 `doc-close-held`，
+ * 发起方等一小会儿，有人应答就只摘本地、不动 Rust 那一侧。
+ *
+ * ⚠️ `from` 同样是自证字段：tauri 的广播本机也会收到自己的回声（与上面几条同口径）。
+ */
+const EVT_DOC_CLOSE_QUERY = "doc-close-query";
+const EVT_DOC_CLOSE_HELD = "doc-close-held";
+interface DocClosePayload {
+  from?: string;
+  docId?: number;
 }
 
 /** 主窗口要销毁了（B155）：在场的卫星窗口收到这条就得自己收场。 */
@@ -6547,6 +6689,14 @@ function listenDocSync(): void {
   void listen<SyncPosPayload>(EVT_SYNC_POS, (e) => applyRemoteSyncPos(e.payload ?? null)).catch(
     () => {},
   );
+  // B161：关标签前那句「还有人拿着这份文档吗」—— 两种窗口都要接。
+  // 应答由 `handleDocCloseQuery` 直接 emitTo 给发起方，所以这里只装监听、不回包。
+  void listen<DocClosePayload>(EVT_DOC_CLOSE_QUERY, (e) => {
+    const p = e.payload;
+    // 自己的回声：广播本机也收得到（与上面几条同口径）
+    if (!p?.docId || !p.from || p.from === windowLabel) return;
+    handleDocCloseQuery(p.docId, p.from);
+  }).catch(() => {});
 }
 
 // ---------------------------------------------------------------- 卫星窗口引导
