@@ -101,3 +101,45 @@ describe("B143 静态契约", () => {
     );
   });
 });
+
+/**
+ * B151 · 用户质疑「日志里 `viewport pin 没立住` 这条警告不太合理，滚动位置应该不需要
+ * 考虑小数」。他是对的：容差。**钉上去的目标值**与**读回来的落点**差零点几 px 是
+ * 缩放（125% / 150%）下的正常结果，拿精确相等判「立住了没」，小数永远对不上 ⇒
+ * 每次补钉都一路重试到 `PIN_MAX_FRAMES`，甩一条 WARN；满屏都是这条，真出问题时反而看不见。
+ */
+describe("B151 pin 的「立住」判定要留小数容差", () => {
+  const main = readFileSync("src/main.ts", "utf-8");
+
+  it("容差要同时用在「钉上了」和「被文档夹住」两支上", () => {
+    expect(main, "容差常量要有定义").toMatch(/const PIN_EPSILON_PX = 1;/);
+    expect(main, "「钉上了」那支要用容差").toMatch(/Math\.abs\(diff\) <= PIN_EPSILON_PX/);
+    // 只给第一支加容差不够：落点比目标小一点（缩放）同样落在第二支之外，
+    // 于是「被夹住」被误判成「钉不进去」，照样重试到帧数用尽。
+    expect(main, "「被文档夹住」那支也要留容差").toMatch(/diff < -PIN_EPSILON_PX/);
+  });
+
+  it("WARN 只在容差没兜住时出现，且带上差值（差个零点几 px 不该走到这行）", () => {
+    expect(main, "失败日志要报差值").toMatch(/差 \$\{fmtPx\(diff\)\}px/);
+    expect(main, "落点别把 493.3333435058594 整串塞进日志").toMatch(
+      /scrollTop=\$\{fmtPx\(landed\)\}/,
+    );
+  });
+
+  it("反向验证：退回精确相等的旧判据，上面几条必须全部落空", () => {
+    const CURRENT =
+      "      Math.abs(diff) <= PIN_EPSILON_PX || (px > 0 && landed > 0 && diff < -PIN_EPSILON_PX);";
+    expect(main, "退化串要先自证原句还在").toContain(CURRENT);
+
+    const degraded = main
+      .replace(CURRENT, "      landed === px || (px > 0 && landed > 0 && landed < px);")
+      .replace("    const diff = landed - px;\n", "");
+    expect(degraded, "退化实现应真的换了写法").not.toBe(main);
+    expect(degraded, "退化后不再有容差比较（第一条此时必须落空）").not.toMatch(
+      /Math\.abs\(diff\) <= PIN_EPSILON_PX/,
+    );
+    expect(degraded, "退化后「被夹住」又变回精确比较（第二条此时必须落空）").not.toMatch(
+      /diff < -PIN_EPSILON_PX/,
+    );
+  });
+});

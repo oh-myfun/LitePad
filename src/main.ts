@@ -3960,6 +3960,22 @@ function recordScroll(tabId: number, px: number | null): void {
  */
 const PIN_MAX_FRAMES = 12;
 
+/**
+ * 判定「立住」的位置容差（px）。
+ *
+ * ⚠️ 必须留容差：浏览器 `scrollTop` 是 **double**，缩放不是 100% 时（125% / 150%）
+ * 它天然带小数 —— 「钉上去的目标值」与「读回来的落点」差零点几 px 是**正常结果**
+ * （B143 那条线索就是从这类小数开始的）。拿精确相等判「钉上了没」，小数永远对不上，
+ * 结果就是每次补钉都一路重试到 `PIN_MAX_FRAMES`、甩一条「没立住」出来（满屏都是
+ * 这条 WARN，真出问题时反而看不见）。只有差距**明显**才算钉不进去。
+ */
+const PIN_EPSILON_PX = 1;
+
+/** 落点打印：493.3333435058594 这种没必要整串塞进日志。 */
+function fmtPx(v: number): string {
+  return v.toFixed(2);
+}
+
 function pinScrollTop(el: HTMLElement, px: number): void {
   pinningContainers.add(el);
   // 整段都在「程序滚动」区间里：赋值派发的那次事件不该把位置写回快照（B139）。
@@ -3977,7 +3993,13 @@ function pinScrollTop(el: HTMLElement, px: number): void {
     const landed = el.scrollTop;
     // 立住了。或者被**文档长度**夹住（短文档，px 本来就超出可滚动范围）也算立住 ——
     // 那种情况下 0 是合法的落点，不该误判成「没布局」而继续重试。
-    const stuck = landed === px || (px > 0 && landed > 0 && landed < px);
+    //
+    // ⚠️ 两支都留容差（用户反馈）：落点与目标**差一点**（缩放下的小数，甚至反超一点）
+    // 就是钉上了，别再重试；只有落后**明显**超过容差，才是「文档短、被夹住」。
+    // 原来写 `landed === px || landed < px`，小数落点两边都落空 ⇒ 每回都报「没立住」。
+    const diff = landed - px;
+    const stuck =
+      Math.abs(diff) <= PIN_EPSILON_PX || (px > 0 && landed > 0 && diff < -PIN_EPSILON_PX);
     if (stuck) {
       pinningContainers.delete(el);
       release();
@@ -3988,10 +4010,14 @@ function pinScrollTop(el: HTMLElement, px: number): void {
       release();
       // 尺寸早就有、却始终钉不进去 ⇒ 真出问题了（面板还是 0 宽、内容始终没撑开）。
       // 留一条：这正是「重启后位置回到顶部」那类症状要看的东西。
-      logger.warn("viewport", `pin ${px} 没立住（${frame + 1} 帧后 scrollTop=${landed}）`);
+      // ⚠️ 这里出现才说明容差没兜住 —— 差个零点几 px 的缩放小数不该走到这行。
+      logger.warn(
+        "viewport",
+        `pin ${px} 没立住（${frame + 1} 帧后 scrollTop=${fmtPx(landed)}，差 ${fmtPx(diff)}px）`,
+      );
       return;
     }
-    logger.trace("viewport", `pin ${px} 被裁（第 ${frame + 1} 帧，scrollTop=${landed}）`);
+    logger.trace("viewport", `pin ${px} 被裁（第 ${frame + 1} 帧，scrollTop=${fmtPx(landed)}）`);
     requestAnimationFrame(() => retry(frame + 1));
   };
   retry(0);

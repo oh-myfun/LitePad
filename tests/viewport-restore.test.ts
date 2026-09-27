@@ -299,8 +299,10 @@ describe("B146 静态契约：换文档的整段都要罩在还原窗口里", ()
 describe("B145 反向验证：退回旧写法，上面那几条必须变红", () => {
   it("退回「只补钉一帧」后，逐帧补钉的契约必须抓住", () => {
     // ⚠️ 用**字面量**替换（老规矩）：正则一改排版就失配，退化就会变成「什么都没改」。
+    // ⚠️ 这段格局会随排版变（B151 把落点改成 `fmtPx(landed)` 后 prettier 又合并回单行）：
+    // 换任何写法都得回来改这一串，否则「退化」会变成「什么都没改」⇒ 这条用例假绿。
     const OLD_RETRY =
-      '    logger.trace("viewport", `pin ${px} 被裁（第 ${frame + 1} 帧，scrollTop=${landed}）`);\n    requestAnimationFrame(() => retry(frame + 1));';
+      '    logger.trace("viewport", `pin ${px} 被裁（第 ${frame + 1} 帧，scrollTop=${fmtPx(landed)}）`);\n    requestAnimationFrame(() => retry(frame + 1));';
     expect(src, "退化用的原句必须还在").toContain(OLD_RETRY);
     const degraded = src.replace(OLD_RETRY, "    void frame;");
     expect(degraded, "退化后应不再有补钉").not.toContain(
