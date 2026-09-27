@@ -99,6 +99,22 @@
 - ⚠️ 载荷摘要要限长（`sessionSummary` 只打前 8 个标签）：一行几十 KB 会把 2MB 的
   日志冲掉，反而更难查。
 
+## 自家数据文件不参与「外部修改」（B150）
+
+- **配置目录内的文件（`session.json` / `settings.json` / `backups` / `logs`）一律不监听**
+  （`commands::watch_file` 里按 `session::config_dir()` 过滤，判断逻辑在 `is_self_owned_path`）。
+- ⚠️ 起因：`session.json` 同时是「LitePad 的数据文件」和「可以被当标签打开的普通文件」。
+  一旦被监听，我们**自己写会话**就会激起 `file-changed`，前端把它当成「外部修改了用户打开的
+  文件」—— 启动收尾那句 `persistSession()` 足以让「打开 `session.json` 后每次启动都弹
+  「`session.json` 已在外部被修改，已自动载入最新内容」，顺手把编辑器里那份覆盖成会话快照」。
+  数据文件被自己的写入误判成外部修改，根源就是监听了它 ⇒ 在源头掐断（前端收不到事件），
+  比在前端逐个加例外干净。
+- 判定用 `Path::starts_with`（**组件级**前缀，不是字符串前缀）：`…\LitePadPlus\session.json`
+  不会被算成 `…\LitePad` 的自家文件。⚠️ 别拿 `cfg.join("..")…` 拼路径来断言这条 ——
+  `starts_with` 不做 `..` 归一化，那样会写出假绿的用例。
+- 取舍：外部（别的编辑器）改了 `session.json` 也不会再提示，下次会话保存仍会覆盖它。
+  这是有意的 —— 它是 LitePad 的私有数据，不是用户文档。
+
 ## 同源多实例（B149）
 
 - **同一文件打开多份时，光标与滚动位置不互相关联**（用户拍板，`tests/multi-instance-scope.test.ts`

@@ -39,7 +39,34 @@ fn alloc_id(state: &AppState) -> Result<u64, String> {
     Ok(*guard)
 }
 
+/// 这个路径是不是「LitePad 自己的地盘」（配置目录内的 `session.json` / `settings.json` /
+/// `backups` / `logs`，目录本身可能被 `LITEPAD_CONFIG_DIR` 搬到别处）。
+///
+/// B150：数据文件被自己的写入误判成「外部修改」，根源就是监听了它 —— 详见
+/// `watch_file` 里的过滤。抽成纯函数（配置目录作为参数）是为了能被单测直接断言。
+pub fn is_self_owned_path(path: &Path, config_dir: &Path) -> bool {
+    // `starts_with` 是**组件级**前缀：以组件比较，不是字符串前缀，
+    // 所以 `…\LitePadPlus\session.json` 不会被算成 `…\LitePad` 的自家文件。
+    path.starts_with(config_dir)
+}
+
 fn watch_file(state: &AppState, path: &Path) {
+    // ⚠️ 自家数据文件一律**不监听**（B150）。`session.json` 是 LitePad 自己写的，
+    // 可它同样能作为一个标签被打开 —— 一旦被监听，我们每次写会话都会激起
+    // `file-changed`，前端把它当成「外部修改了用户打开的文件」：提示
+    // 「session.json 已在外部被修改」，并把编辑器里那份覆盖成会话快照
+    // （启动收尾那句 `persistSession()` 就足以让它每次启动都来一遍）。
+    // 这里在源头掐断：前端压根收不到事件，比在前端逐个加例外干净得多。
+    if let Some(cfg) = session::config_dir() {
+        if is_self_owned_path(path, &cfg) {
+            logging::log(
+                Level::Trace,
+                "watcher",
+                &format!("跳过自家数据文件，不监听：{}", path.display()),
+            );
+            return;
+        }
+    }
     let guard = state.watcher.lock();
     if let Ok(mut bag) = guard {
         if let Some(w) = bag.as_mut() {
@@ -809,6 +836,64 @@ mod tests {
 
     // 串行化所有触碰 PENDING_OPEN 全局队列的测试，避免并行下互相抢文件。
     static PENDING_LOCK: Mutex<()> = Mutex::new(());
+
+    /// B150：`watch_file` 必须真的带上了自家路径过滤。
+    ///
+    /// 为什么连源码守卫都要：上面那条只测到 `is_self_owned_path` 这个**纯函数**，
+    /// 它绿了不代表 `watch_file` 调了它 —— 哪天有人重排 `watch_file` 把那段删了，
+    /// 两条测试照样全绿，而 bug 又回来了。这条守住「调用方确实用了」。
+    #[test]
+    fn watch_file_filters_self_owned_paths() {
+        let src = std::fs::read_to_string("src/commands/mod.rs").expect("读不到源码");
+        let body = src
+            .split("fn watch_file(state: &AppState")
+            .nth(1)
+            .and_then(|rest| rest.split("fn ").next())
+            .expect("找不到 watch_file 函数体");
+        assert!(
+            body.contains("session::config_dir()"),
+            "watch_file 里必须有 config_dir 过滤，否则自家的 session.json 又会被监听（B150）"
+        );
+        assert!(
+            body.contains("return;"),
+            "过滤后要直接 return，不能「watch 了再不管」"
+        );
+    }
+
+    /// B150：配置目录内的文件（自家数据文件）不监听；普通文档照旧监听。
+    ///
+    /// 前两条正是用户报的那个场景（在 LitePad 里打开 `session.json`，每次启动都被提示
+    /// 「已在外部被修改」）—— 这类回归只有纯函数断言盯得住，真机看提示太晚了。
+    #[test]
+    fn self_owned_paths_are_not_watched() {
+        let cfg = PathBuf::from(r"C:\Users\x\AppData\Roaming\LitePad");
+        assert!(
+            is_self_owned_path(&cfg.join("session.json"), &cfg),
+            "session.json 属于自家文件"
+        );
+        assert!(
+            is_self_owned_path(&cfg.join("settings.json"), &cfg),
+            "settings.json 属于自家文件"
+        );
+        assert!(
+            is_self_owned_path(&cfg.join("backups").join("a.json"), &cfg),
+            "备份目录里的也算子家"
+        );
+        assert!(
+            !is_self_owned_path(Path::new(r"D:\notes\b.md"), &cfg),
+            "普通文档要照旧监听"
+        );
+        // 组件级前缀，不是字符串前缀：隔壁叫「LitePadPlus」的不能跟着躺枪。
+        // ⚠️ 得写真实路径来断言 —— `starts_with` 不做 `..` 归一化，
+        // 拿 `cfg.join("..").join("LitePadPlus")` 拼出来的第一组件还是 `LitePad`，会假绿。
+        assert!(
+            !is_self_owned_path(
+                Path::new(r"C:\Users\x\AppData\Roaming\LitePadPlus\session.json"),
+                &cfg
+            ),
+            "只认组件级前缀"
+        );
+    }
 
     /// B123-7：canonicalize 结果必须剥掉 verbatim 前缀，否则 tooltip / 复制路径 /
     /// explorer /select 都会看到 `\\?\`。纯字符串手术，普通路径必须原样返回
