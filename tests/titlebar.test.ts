@@ -263,6 +263,32 @@ describe("B97 自建标题栏", () => {
     expect(ruleBlock(s, ".title-bar"), ".title-bar 的 gap 必须保持 8px").toMatch(/gap:\s*8px/);
   });
 
+  it("B163：.title-actions 里的 24px 方键要纵向居中（不许吃满高键时代的 stretch）", () => {
+    // B157 起置顶 / 更新键是 24×24 方形图标键，但容器还留着 B103 满高键时代的
+    // `align-items: stretch; align-self: stretch` —— 定高的键被顶到标题栏**上沿**，
+    // 用户报「钉在最前图标没有纵向居中（同步键是正的），下载更新键也一样」。
+    // 同步键在 .title-center（align-items: center）里所以没事，这两颗在 .title-actions 里。
+    const actions = ruleBlock(css(), ".title-actions");
+    expect(actions, "容器要纵向居中").toMatch(/align-items:\s*center/);
+    expect(actions, "不许再拉伸子项（stretch 会把定高键顶到上沿）").not.toMatch(
+      /align-items:\s*stretch/,
+    );
+    expect(actions, "容器自身也不必再撑满标题栏高").not.toMatch(/align-self:\s*stretch/);
+  });
+
+  it("B163 反向验证：把 .title-actions 退回 stretch，上一条必须落空", () => {
+    const orig = ruleBlock(css(), ".title-actions");
+    expect(orig, "要能取到 .title-actions 规则块").not.toBe("");
+    const degraded = orig.replace(
+      "align-items: center;",
+      "align-items: stretch;\n  align-self: stretch;",
+    );
+    expect(degraded, "退化实现应真的换了写法").not.toBe(orig);
+    expect(degraded, "退化后「容器要纵向居中」必须落空").not.toMatch(/align-items:\s*center/);
+    expect(degraded, "退化后「不许 stretch」的两条断言必须命中").toMatch(/align-items:\s*stretch/);
+    expect(degraded, "退化后「不许 align-self: stretch」必须命中").toMatch(/align-self:\s*stretch/);
+  });
+
   it("B99：置顶开关按**回读值**刷新，且状态不落盘", () => {
     const main = mainSrc();
     expect(main, "置顶键要有接线").toMatch(/winPin\.addEventListener\("click"/);

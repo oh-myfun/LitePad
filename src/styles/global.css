@@ -334,8 +334,12 @@ body {
 
 .title-actions {
   display: flex;
-  align-items: stretch;
-  align-self: stretch;
+  /* ⚠️ 不能用 stretch（B103 满高键时代的遗产）：B157 起这一族是 24×24 方形图标键
+     （`.title-btn.pin-btn` / `.title-btn.upd-btn`），stretch 会把定高的键顶到标题栏
+     **上沿** —— 用户报的「钉在最前 / 下载更新图标不在纵向居中」。改成 center 与
+     `.title-center` 里的同步键同口径；容器自身也不必再撑满 34px（键没有铺底，
+     满高拉伸只剩副作用）。 */
+  align-items: center;
   /* Request N：钉在顶部键与右侧窗口控制三键**之间不加额外空隙**，四键视觉上连成一组。
      这里用 -8px 正好抵消 .title-bar 的 gap:8px（B103 曾刻意留这 8px 当分组留白，现取消）。
      二者仍是**独立容器**（见上方说明）：关闭键的悬停红底、置顶键的点亮态都不会互相牵连。 */
