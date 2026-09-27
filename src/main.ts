@@ -1320,6 +1320,11 @@ async function closeTabById(tabId: number): Promise<void> {
     // 备份区里的副本都不该再留着——热退出的承诺是「关窗才还原」，不是
     // 「关标签也还原」。用户明确丢弃的内容必须真的丢弃。
     discardBackupFor(doc);
+    // B155：**先广播再删**。Rust 侧的文档是进程级的，而标签是每个窗口各持一份
+    // （主窗口还会留下一个隐藏实例兜底）。只删自己这份，主窗口那份就会一直挂在
+    // 它的会话里 —— 用户看到的就是「在子窗口关掉的文件，关掉子窗口后又回来了」。
+    // 顺序上先发后删，把「对端还挂着」的窗口压在这条删命令之前。
+    broadcastDocDisposed(doc.tabId);
     try {
       await ipcCloseTab(doc.tabId);
     } catch (err) {
@@ -1334,6 +1339,15 @@ async function closeTabById(tabId: number): Promise<void> {
   tabs.delete(tabId);
 
   if (panel.tabs.length === 0) {
+    if (windowKind === "satellite") {
+      // B155：卫星窗口没有「再开一个未命名文档」这条退路 —— 它存在的意义就是
+      // 承载从主窗口分出去的那几个文件，关空了就该关掉自己（用户原话：
+      // 「子窗口支持关闭最后一个文件和面板，此时相当于关闭子窗口」）。
+      // 走 `close()` 而不是直接 destroy：与用户点 X 完全同一条链
+      // （CloseRequested → registerSatelliteClose → finishSatelliteClose）。
+      requestSatelliteClose();
+      return;
+    }
     if (countLeaves(layout) <= 1) {
       // 最后一个面板：新建未命名标签，保持窗口不空
       void newUntitled();
@@ -5962,12 +5976,60 @@ function detachLocally(tabIds: number[]): void {
   }
   // 空了的卫星窗口自己关掉：留一个没有标签的窗口没有意义
   if (windowKind === "satellite" && tabs.size === 0) {
-    void getCurrentWindow().close();
+    requestSatelliteClose();
     return;
   }
   rebuildLayout();
   refreshAll();
   scheduleSessionSave();
+}
+
+// ------------------------------------------------- 跨窗口的「文档关掉了」（B155）
+
+/**
+ * 广播「这个文档在我这儿关掉了」，别的窗口请把自己那份也摘掉（B155）。
+ *
+ * 只发通知、不等应答 —— 对端挂不挂这份文档**不影响本窗口的删除决定**，等应答反而
+ * 会拖住关标签。漏掉一次广播的代价是「对端多留一个标签」，不会改坏任何内容。
+ * 反过来（漏了广播就去删）才会真的出问题：对端那份会变成 Rust 侧已经不存在的空壳。
+ */
+function broadcastDocDisposed(docId: number): void {
+  void emit(EVT_DOC_DISPOSED, { from: windowLabel, docId }).catch((e: unknown) => {
+    logger.debug("window", `文档关闭没广播出去：${String(e)}`);
+  });
+}
+
+/**
+ * 收到对端「关掉了这份文档」：本窗口把同 docId 的实例一并摘掉（B155）。
+ *
+ * 摘掉但不碰 Rust —— 删除由发起窗口负责（它才知道自己是不是最后一个），
+ * 这里跟着摘只是为了让「这个标签还在我这儿」的错觉消失。
+ */
+function applyDocDisposed(payload: { from?: string; docId?: number } | null): void {
+  const { from, docId } = payload ?? {};
+  if (!from || from === windowLabel || typeof docId !== "number") return;
+  const mine = [...tabs.values()].filter((t) => t.docId === docId).map((t) => t.tabId);
+  if (mine.length === 0) return;
+  detachLocally(mine);
+  pruneEmptyPanels(); // 对端关掉的是整组时，本窗口不该留一个空框
+  rebuildLayout();
+  refreshAll();
+  scheduleSessionSave();
+}
+
+/**
+ * 请求关掉卫星窗口（关掉最后一个标签 / 面板时走这条）。
+ *
+ * 刻意的「绕一圈」：走 `close()` 而**不是**直接 `destroy()`，为的是与用户点 X 走同一条
+ * 链（CloseRequested → `registerSatelliteClose` → `finishSatelliteClose`）—— 热退出
+ * 副本的收尾（cancelPendingBackup / flushBackups）就在那条链上，跳过去会漏掉。
+ */
+function requestSatelliteClose(): void {
+  void getCurrentWindow()
+    .close()
+    .catch((e: unknown) => {
+      logger.debug("window", `请求关子窗口失败：${String(e)}`);
+    });
 }
 
 /**
@@ -6170,6 +6232,18 @@ const EVT_DOC_CHANGE = "doc-change";
 const EVT_DOC_RESYNC_REQ = "doc-resync-request";
 const EVT_DOC_RESYNC_FULL = "doc-resync-full";
 
+/**
+ * 「这份文档我在自己这儿关掉了」—— B155 的跨窗口关闭广播。
+ *
+ * 与上面那三兄弟是**另一件事**：那三条管「内容怎么同步」，这条管「标签怎么消失」。
+ * Rust 侧只有一份进程级的文档表，而标签是每个窗口各持一份（主窗口还会留下隐藏
+ * 实例兜底），少了这条同步就会留下「对端还挂着一个早已关掉的标签」。
+ */
+const EVT_DOC_DISPOSED = "doc-disposed";
+
+/** 主窗口要销毁了（B155）：在场的卫星窗口收到这条就得自己收场。 */
+const EVT_APP_QUIT = "app-quit";
+
 /** 正在套用远端变更：期间本窗口产生的 update 不再广播。 */
 let applyingRemote = false;
 /** 已发出、还没等到应答的重同步请求（同一文档不重复发）。 */
@@ -6346,11 +6420,20 @@ function listenDocSync(): void {
  *
  * 与主窗口的三处**刻意不同**：
  *   1. 不读也不写 session.json（会话归主窗口，两个窗口写同一份就是互相覆盖）；
- *   2. 关窗不问「是否保存」—— 标签会交回主窗口，内容并没有消失；
- *   3. 没有「恢复上次会话」这一步，内容全部来自载荷。
+ *   2. 关窗不问「是否保存」—— B155 起也不再把标签交回主窗口（那样「关掉的文件」
+ *      会以隐藏实例的形式原地复活），内容改由热退出副本兜住（见 `finishSatelliteClose`）；
+ *   3. 没有任何「保持窗口不空」的兜底 —— 关掉最后一个标签就等于关掉这个窗口。
  */
 async function initSatelliteWindow(me: WindowPayload | null): Promise<void> {
   registerSatelliteClose();
+
+  // B155：主窗口关了（点了退出 / 关了窗口 / 崩了）就跟着走。
+  // 监听只装在卫星窗口这一侧 —— 发出广播的是主窗口，收的却是别人。
+  // 这里与「点 X 关卫星窗口」刻意不同：不做备份收尾（`finishSatelliteClose`），
+  // 只销毁。主窗口都走了，本窗口的未保存内容本来也随它一起进热退出副本。
+  void listen(EVT_APP_QUIT, () => {
+    void destroySelf().catch(() => {});
+  }).catch(() => {});
 
   const payload = me?.payload;
   const incoming = payload?.tabs ?? [];
@@ -6387,14 +6470,14 @@ async function initSatelliteWindow(me: WindowPayload | null): Promise<void> {
   refreshAll();
   panels.get(0)?.view?.focus();
   const only = incoming.length === 1 ? incoming[0].name : `${incoming.length} 个标签`;
-  showMessage(`${only} · 已在新窗口打开（关闭本窗口会把它交回主窗口）`);
+  showMessage(`${only} · 已在新窗口打开（关闭本窗口会连同这些文件一起关掉）`);
 
   // 告诉源窗口「载荷已到手」——它据此才敢把原标签摘掉（见 openTabsInNewWindow）
   void emit("satellite-ready", { label: windowLabel }).catch(() => {});
 }
 
 /**
- * 卫星窗口的关窗流程：先把标签与副本号交还主窗口，再销毁自己。
+ * 卫星窗口的关窗流程：先把未保存内容落进热退出副本，再销毁自己。
  *
  * 🔒 这条是卫星窗口**唯一**的关窗处理器。主窗口那套（`registerWindowClose` →
  *    `finishAndDestroy`）在 `bootstrap` 里只属于主窗口那条分支，卫星窗口一条都装不上 ——
@@ -6406,10 +6489,20 @@ function registerSatelliteClose(): void {
   void getCurrentWindow()
     .onCloseRequested((event) => {
       // 同 B135：这条回调是同步等 promise 的，里面 await IPC 会永久死锁。
-      // 只拦窗 + 同步交还，备份与销毁挂到没人 await 的链上（见 finishAndDestroy 注释）。
+      // 只拦窗 + 同步广播，备份与销毁挂到没人 await 的链上（见 finishSatelliteClose 注释）。
       event.preventDefault();
-      // 交还优先于关窗：主窗口会把标签重新变成可见标签，用户不会觉得东西丢了
-      returnTabsToMain([...tabs.values()].map((t) => t.tabId));
+      // B155：**不再把标签交还主窗口** —— 子窗口关掉就是真关。
+      //
+      // 之前这里会把手上全部标签交回主窗口，于是「在子窗口关掉的文件」会以
+      // 「主窗口里那个隐藏实例」的形式原样回来，用户看到的就是「关了又冒出来」。
+      // 内容不丢的承诺改由热退出副本承担：`finishSatelliteClose` 里的
+      // `cancelPendingBackup` + `flushBackups` 把未保存的那份写下来，副本号随后
+      // 经 `backup-ids` 交给主窗口（主窗口下次启动照它认领）。
+      // 但**其它窗口**挂着的同文档实例（主窗口的隐藏实例、另一个卫星窗口）得
+      // 跟着消失，否则它们会变成「谁也没关、却再也打不开」的残留标签 ——
+      // 所以这里广播一次「这些文档我关掉了」，别的窗口自己摘。
+      const ids = [...tabs.values()].map((t) => t.docId);
+      for (const docId of new Set(ids)) broadcastDocDisposed(docId);
       void finishSatelliteClose();
     })
     .catch(() => {});
@@ -6448,7 +6541,8 @@ async function finishSatelliteClose(): Promise<void> {
     cancelPendingBackup();
     await flushBackups();
   } catch {
-    // 备份失败也照关：标签已经交回主窗口，内容在那边还活着
+    // 备份失败也照关：内容没能进副本就只能丢，把窗口吊在这儿更糟
+    // （以前这里写的是「标签已经交回主窗口」，B155 起那条路没有了，注释一并改掉）
   }
   await destroySelf();
 }
@@ -6463,6 +6557,13 @@ async function finishSatelliteClose(): Promise<void> {
  * 而 `preventDefault()` 那次的标记还挂着，容易绕回来。destroy() 不发事件，干净收场。
  */
 async function finishAndDestroy(dirty: Doc[]): Promise<void> {
+  // B155：主窗口要走了 —— 通知还在的卫星窗口自己收场。
+  // 卫星窗口没有独立生命周期（它承载的就是主窗口分出去的那几个文件），主窗口一没
+  // 它就变成「打不开也关不掉」的孤儿窗口。这里只广播不等回话：后面还有会话落盘，
+  // 等子窗口回一条 destroy 的应答反而会把主窗口的退出拖住。
+  void emit(EVT_APP_QUIT, { from: windowLabel }).catch((e: unknown) => {
+    logger.debug("window", `退出广播没发出去：${String(e)}`);
+  });
   if (dirty.length === 0) {
     logger.debug("session", "收尾 · 没有脏文档，直接落会话");
     try {
@@ -6589,6 +6690,13 @@ async function setupShell(): Promise<void> {
 
   // B71 ④：跨窗口同源正文同步（主窗口与卫星窗口都要装，见 listenDocSync）
   listenDocSync();
+
+  // B155：跨窗口的「文档关掉了」—— 同样两个窗口都要装。
+  // 缺了这个监听，主窗口就永远不知道卫星窗口把自己的文件关掉了（B153 那套「关窗
+  // 交还标签」被拿掉之后，这里就是唯一的知情渠道）。
+  void listen<{ from?: string; docId?: number }>(EVT_DOC_DISPOSED, (e) =>
+    applyDocDisposed(e.payload ?? null),
+  ).catch(() => {});
 
   // 从资源管理器拖入文件（B91 改造）：wry 的原生拖放处理器已关闭（它做的两处劫持会把
   // 页面内 HTML5 拖放一起废掉，详见 `src-tauri/src/dropbridge.rs` 模块头），改由两层拼：

@@ -90,6 +90,13 @@ fn main() {
                 return;
             }
             if win.label() == windows::MAIN_LABEL {
+                // 主窗口没了：让还挂着的卫星窗口一起收场（B155）。
+                //
+                // 前端 `finishAndDestroy` 已经广播过一次 `app-quit`，但那条路只在
+                // 「主窗口被正常关闭」时成立 —— 任务管理器结束、崩溃、装完更新重启
+                // 都够不到那串 await。这里是进程级的最后一道保险，与下面那条
+                // `satellite-closed` 同一个路数：事件是唯一还能跨过死亡边界的东西。
+                let _ = win.app_handle().emit("app-quit", serde_json::json!({}));
                 return;
             }
             let app = win.app_handle();

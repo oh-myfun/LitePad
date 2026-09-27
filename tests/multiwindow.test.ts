@@ -312,9 +312,12 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
     expect(body, "只动内存视图").toMatch(/tabs\.delete\(tabId\)/);
     expect(body).not.toContain("ipcCloseTab");
     expect(body).not.toContain("closeTabById");
-    // 卫星窗口被交空 → 自己关掉，别留一个空窗口
+    // 卫星窗口被交空 → 自己关掉，别留一个空窗口。
+    // ⚠️ B155 起落点是 `requestSatelliteClose()`（走 close() → CloseRequested 那条链），
+    //    直接写 `getCurrentWindow().close()` 是 B153 的旧写法 —— 少了 finishSatelliteClose，
+    //    热退出副本的收尾会被整个跳过。
     expect(body, "交空后自动关窗").toMatch(
-      /tabs\.size === 0[\s\S]{0,120}getCurrentWindow\(\)\.close\(\)/,
+      /tabs\.size === 0[\s\S]{0,120}requestSatelliteClose\(\)/,
     );
     // 摘标签会改变面板构成 → 最大化态必须先还原（与分屏/关面板同一不变量）
     const open = fnBody("async function openTabsInNewWindow");
@@ -449,10 +452,13 @@ describe("B153 卫星窗口：比主窗口简洁，关窗不碰主窗口的收�
 
   it("卫星窗口的关窗收尾不许回头调主窗口的 finishAndDestroy", () => {
     const tail = fnBody("async function finishSatelliteClose");
-    expect(tail, "收尾只交还标签与销毁自己").not.toContain("finishAndDestroy");
-    // 交还在关窗回调里同步做（回调里 await IPC 会死锁，见 B135），收尾只管备份 + 销毁。
+    expect(tail, "收尾只管备份与销毁自己").not.toContain("finishAndDestroy");
+    // B155：交还在关窗回调里同步做（回调里 await IPC 会死锁，见 B135），收尾只管备份 + 销毁。
+    // 交还的对象从「标签」换成了「文档关闭通知」—— 卫星窗口关掉就是真关，
+    // 标签不再回到主窗口（B155），但要广播一次让别的窗口把自己那份摘掉。
     const reg = fnBody("function registerSatelliteClose");
-    expect(reg, "回调内同步交还").toContain("returnTabsToMain([...tabs.values()].map(");
+    expect(reg, "回调内同步广播关闭").toContain("for (const docId of new Set(ids))");
+    expect(reg, "关窗不再交还标签").not.toContain("returnTabsToMain(");
   });
 });
 
