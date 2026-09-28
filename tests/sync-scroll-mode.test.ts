@@ -68,13 +68,19 @@ describe("B152 同步滚动模式：按钮与状态", () => {
     expect(html, "必须有 aria-pressed").toMatch(/id="sync-scroll"[\s\S]{0,300}?aria-pressed/);
   });
 
-  it("显隐判据是「当前激活文档开着多份」—— 两个窗口同口径，只数本窗口实例（B171）", () => {
+  it("显隐判据是「当前激活文档开着多份」—— 两个窗口同口径，只数本窗口**可见**实例（B171/B173）", () => {
     // 只看「有没有文档」⇒ 单开也露脸，用户点下去什么也不会发生。
-    expect(main, "显隐要按实例个数判").toMatch(/instancesOfDoc\(tab\.docId\)\.length > 1/);
+    expect(main, "显隐要按可见实例个数判").toMatch(
+      /visibleInstancesOfDoc\(tab\.docId\)\.length > 1/,
+    );
     expect(main, "无文档时要藏").toMatch(/syncScrollBtn\.hidden = !multi;/);
     // B171：B164 曾给子窗口开后门（额外认「这份文档在别的窗口也有」），于是同文件
     // 只开一份时子窗口露脸、主窗口却藏着 —— 口径不一致。现在一律只数本窗口实例。
     expect(BTN_BODY, "显隐不许再掺跨窗口的共享集合").not.toMatch(/sharedDocIds/);
+    // B173：连本窗口的隐藏实例（`panelId < 0`）也不许算一份。
+    expect(main, "隐藏实例要被滤掉").toMatch(
+      /function visibleInstancesOfDoc\(docId: number\): Tab\[\] \{\s*\n\s*return instancesOfDoc\(docId\)\.filter\(\(t\) => t\.panelId >= 0\);/,
+    );
   });
 
   it("开关状态按**文档**记，切换激活文档时不复位", () => {
@@ -506,7 +512,12 @@ describe("B164 子窗口也要能同步滚动（跨窗口广播）", () => {
     // 于是子窗口里单开一份也露脸 —— 可主窗口数那份也只算 1 份、同场景是**藏**着的，
     // 两边对不上；何况同步到一个看不见的实例没有意义。现在一律只看 `instancesOfDoc`。
     expect(BTN_BODY, "判据里不许再有共享文档集合").not.toMatch(/sharedDocIds/);
-    expect(BTN_BODY, "只按本窗口实例数判").toMatch(
+    // B173：连本窗口的**隐藏**实例（`panelId < 0`，搬到别的窗口后留下的那份）也不算 ——
+    // 它进不了任何面板，按它凑出「第 2 份」就会让「只开了一份」的窗口露出这颗键。
+    expect(BTN_BODY, "只按本窗口**可见**实例数判").toMatch(
+      /const multi = !!tab && visibleInstancesOfDoc\(tab\.docId\)\.length > 1;/,
+    );
+    expect(BTN_BODY, "不许再把隐藏实例算进份数").not.toMatch(
       /const multi = !!tab && instancesOfDoc\(tab\.docId\)\.length > 1;/,
     );
     // 也不许拿窗口身份再给子窗口开口子（开了就绕回「子窗口单开也露脸」）
@@ -533,6 +544,20 @@ describe("B164 子窗口也要能同步滚动（跨窗口广播）", () => {
       main.slice(main.indexOf(";", i) + 1);
     const btnBody = slice(degradedBtn, "function refreshSyncButton(", "function refreshStatus(");
     expect(btnBody, "退化后「不许有共享文档集合」必须命中").toMatch(/sharedDocIds/);
+    // ①b B173：退回「把隐藏实例也算一份」⇒ 只开了一份的窗口照样露脸
+    const degradedHidden =
+      main.slice(0, i) +
+      "const multi = !!tab && instancesOfDoc(tab.docId).length > 1;" +
+      main.slice(main.indexOf(";", i) + 1);
+    const hiddenBody = slice(
+      degradedHidden,
+      "function refreshSyncButton(",
+      "function refreshStatus(",
+    );
+    expect(hiddenBody, "退化后「隐藏实例不算数」必须落空").toMatch(
+      /const multi = !!tab && instancesOfDoc\(tab\.docId\)\.length > 1;/,
+    );
+    expect(hiddenBody, "退化后就不认可见实例了").not.toMatch(/visibleInstancesOfDoc/);
     // ② 提前 return 不给广播让路
     const ORIG = "if (sibs.length === 0 && !crossWindow) return;";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
@@ -726,11 +751,11 @@ describe("B152 反向验证：退回旧写法，上面那几条必须变红", ()
     expect(i, "要能定位显隐判据").toBeGreaterThan(-1);
     const degraded =
       main.slice(0, i) + "const multi = !!tab;" + main.slice(main.indexOf(";", i) + 1);
-    expect(degraded, "退化后不该再有实例数判据").not.toMatch(
-      /instancesOfDoc\(tab\.docId\)\.length > 1/,
+    expect(degraded, "退化后不该再有可见实例数判据").not.toMatch(
+      /visibleInstancesOfDoc\(tab\.docId\)\.length > 1/,
     );
-    expect(degraded, "「显隐要按实例个数判」此时必须落空").not.toMatch(
-      /instancesOfDoc\(tab\.docId\)\.length > 1/,
+    expect(degraded, "「显隐要按可见实例个数判」此时必须落空").not.toMatch(
+      /visibleInstancesOfDoc\(tab\.docId\)\.length > 1/,
     );
   });
 

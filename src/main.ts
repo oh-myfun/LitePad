@@ -403,6 +403,22 @@ function instancesOfDoc(docId: number): Tab[] {
   return out;
 }
 
+/**
+ * 文档在本窗口的**可见**实例（B173）。
+ *
+ * 与 `instancesOfDoc` 只差一条：滤掉 `panelId < 0` 的隐藏实例（标签搬到别的窗口后本地
+ * 留的那份，见 `remoteTabLocally` —— 它不进任何面板、用户在窗口里看不见，只为会话与
+ * 热退出兜底而活着）。
+ *
+ * 「同步滚动」对它没有意义（同步到一个看不见的实例，用户看不到任何效果），可它是
+ * `tabs` 里的正式成员，按 `instancesOfDoc` 数会被算成第 2 份 ⇒ 窗口里明明只开了一份，
+ * 同步键却露脸。子窗口尤其容易撞上：接过标签 → 交还 → 再打开，本地可能残留一份隐藏
+ * 实例。显隐一律按**可见**实例数判。
+ */
+function visibleInstancesOfDoc(docId: number): Tab[] {
+  return instancesOfDoc(docId).filter((t) => t.panelId >= 0);
+}
+
 /** 由编辑器视图反查所属面板（不依赖创建期闭包，实例跨面板移动后依然正确）。 */
 function panelOfView(view: EditorView): Panel | undefined {
   for (const p of panels.values()) {
@@ -751,6 +767,9 @@ function refreshTitle(): void {
  * B164 曾让子窗口额外认「这份文档在别的窗口也有」（`sharedDocIds`），结果是同文件
  * 只开一份时子窗口也露出这颗键 —— 而它对应的那份是主窗口的**隐藏实例**，主窗口
  * 自己数也只算 1 份、同样不显示。口径不一致，且同步到一个看不见的实例没有意义。
+ * B173：再多滤一层 —— 本窗口内**隐藏**实例（`panelId < 0`，标签搬到别的窗口后留下的
+ * 那份）也不算数。它进不了任何面板，用户看不见，按它凑出「第 2 份」就会让「只开了
+ * 一份」的窗口露出这颗键。
  *
  * ⚠️ 状态读的是 `docSyncModes`（按**文档**记），所以切换激活文档时这里读出来的仍是
  *    那份文档自己的开关值 —— 按钮不复位，这正是「一个文档有一个同步滚动状态」。
@@ -760,7 +779,7 @@ function refreshSyncButton(tab: Tab | undefined): void {
   // 无文档 ⇒ 藏；数量是一个便宜的循环（实例数很小），不用缓存。
   // ⚠️ 先算出布尔量：直接写 `hidden = !tab || …` 是收窄不了 `tab` 的，后面那句
   //    `if (hidden) return` 挡不住「tab 可能是 undefined」这条报错。
-  const multi = !!tab && instancesOfDoc(tab.docId).length > 1;
+  const multi = !!tab && visibleInstancesOfDoc(tab.docId).length > 1;
   syncScrollBtn.hidden = !multi;
   if (!multi) return;
   const on = docSyncModes.get(tab.docId) === true;
