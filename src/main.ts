@@ -1156,7 +1156,13 @@ function rebuildLayout(): void {
           const v = p.view?.view;
           if (!v) return;
           const l = v.state.doc.line(Math.min(Math.max(1, line), v.state.doc.lines));
-          v.scrollDOM.scrollTop = v.lineBlockAt(l.from).top;
+          const top = v.lineBlockAt(l.from).top;
+          v.scrollDOM.scrollTop = top;
+          // B169：预览驱动编辑器滚动属程序摆位（点 block 跳转 / 预览→编辑器跟随），
+          // 其回执 scroll 必须被编辑器监听当成自家人吞掉 —— 否则这份没标记的位置会被
+          // 当作用户滚动反推预览，预览再被推回编辑器，闭环成拉锯 / 抖动
+          // （用户报的「非激活文档滚动抖」「预览跟随整文档重渲染」同源）。
+          markSelfScroll(v.scrollDOM, top);
         },
         lineCount: () => p.view?.view.state.doc.lines ?? 0,
       });
@@ -6025,6 +6031,9 @@ function transferSnapshotOf(tabId: number): SatelliteTab | null {
     cursorCol: pos - line.from + 1,
     // B126：视口位置一起带走，接手的窗口才是「接着看」而不是「从头看」
     scrollTop: viewportOfTab(tab),
+    // B169：同步滚动开关一起带走——否则主窗口开着同步、子窗口收下后按钮还是灭的，
+    // 两边状态对不上（用户报「子窗口的同步按钮状态和主窗口的要一致」）。
+    syncMode: docSyncModes.get(tab.docId) === true,
     sizeClass: doc.sizeClass,
     backupId: doc.backupId,
     backedUp: doc.backedUp,
@@ -6162,6 +6171,10 @@ function adoptTransferredTabs(incoming: SatelliteTab[], panelId = activePanelId)
     // ⚠️ 只在卫星侧记：主窗口那条 `adoptTransferredTabs`（卫星交还标签）收的是
     //    自己的文档，本地不见得还有第二份，记了就会挂一颗点不动的键。
     if (windowKind === "satellite") sharedDocIds.add(st.docId);
+    // B169：主窗口那份文档若开着同步滚动，接手的卫星窗口也得认这个状态 —— 否则
+    // 卫星窗口的同步键灭着、主窗口亮着，状态对不上。这里只改本地 `docSyncModes`
+    // （单向，不落盘），跨窗口那一笔仍走 `EVT_SYNC_MODE` 保双方一致。
+    if (st.syncMode) docSyncModes.set(st.docId, true);
     // 该文档在本地还留着隐藏实例（刚从别的窗口交回来）→ 先把它摘掉，避免出现
     // 「两份实例同源但互不同步」——同源多实例的前提是同一窗口内共用一个 docs 条目，
     // 而隐藏实例的正文可能与交回来的最新正文不一致。

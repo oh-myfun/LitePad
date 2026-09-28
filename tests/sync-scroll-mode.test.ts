@@ -346,9 +346,8 @@ describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚�
     );
     // ⚠️ 与预览那侧的 `SyncHost.scrollToLine` 必须是**同一套**坐标，否则两个方向
     //    各自算一套，来回同步一次就偏一次（B160 这次抖动的另一半原因）。
-    expect(HOST, "预览侧的行首对齐写法").toMatch(
-      /v\.scrollDOM\.scrollTop = v\.lineBlockAt\(l\.from\)\.top;/,
-    );
+    expect(HOST, "预览侧要先算出顶行像素").toMatch(/const top = v\.lineBlockAt\(l\.from\)\.top;/);
+    expect(HOST, "预览侧把顶行像素落进编辑器滚动槽").toMatch(/v\.scrollDOM\.scrollTop = top;/);
   });
 
   it("换算之后也要钉进还原窗口，并把落点补记一次", () => {
@@ -653,6 +652,72 @@ describe("B168 同步滚动抖动：彻底屏蔽「自家滚动回执」被当�
     expect(PIN_BODY, "退化串要先自证原句还在").toContain(ORIG);
     const degraded = PIN_BODY.replace(ORIG, "");
     expect(degraded, "退化后钉稳不再记账").not.toContain("markSelfScroll(el, landed)");
+  });
+});
+
+// ------------------------------------------------------- B169：预览驱动编辑器滚动要被当成自家回执
+// 预览的 onPreviewScroll 通过 host.scrollToLine 把编辑器滚到对应行；这一发编辑器滚动若不
+// 标记成「自家摆位」，编辑器监听会把它当作用户滚动 → 反推预览 → 预览又被推回 → 拉锯 /
+// 抖动（用户报的「非激活文档滚动抖」「预览跟随整文档重渲染」同源）。修法：scrollToLine
+// 摆位时把落点记进自家人白名单（B168 那套 markSelfScroll / isSelfScroll）。
+describe("B169 同步滚动抖动：预览驱动编辑器滚动要被当成自家回执吞掉", () => {
+  const HOST = slice(main, "scrollToLine: (line: number) => {", "lineCount: () =>");
+
+  it("host.scrollToLine 摆位时要 markSelfScroll（落点记进自家人白名单）", () => {
+    expect(HOST, "要能定位 scrollToLine 回调").toContain("scrollToLine: (line: number) => {");
+    expect(HOST, "预览驱动编辑器滚动要标记成自家回执").toMatch(
+      /markSelfScroll\(v\.scrollDOM, top\);/,
+    );
+    expect(HOST, "算出的顶行要先收进局部变量 top").toMatch(
+      /const top = v\.lineBlockAt\(l\.from\)\.top;/,
+    );
+    expect(HOST, "要把 top 落进编辑器滚动槽").toMatch(/v\.scrollDOM\.scrollTop = top;/);
+  });
+
+  it("B169 反向验证：摘掉 markSelfScroll → 上面那条必须落空", () => {
+    const ORIG = "      markSelfScroll(v.scrollDOM, top);";
+    expect(HOST, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = HOST.replace(ORIG, "");
+    expect(degraded, "退化后 scrollToLine 不再标记自家回执").not.toMatch(
+      /markSelfScroll\(v\.scrollDOM, top\)/,
+    );
+  });
+});
+
+// ------------------------------------------------------- B169：卫星窗口采纳标签要带上同步滚动开关
+// docSyncModes 按窗口记、不落盘；主窗口把文档拖进卫星窗口时，载荷（SatelliteTab）若不带上
+// 同步滚动开关，子窗口那份就永远是 off，跟主窗口点亮态对不上（用户报「子窗口的同步按钮
+// 状态和主窗口的要一致」）。修法：载荷加 syncMode 字段，子窗口采纳时接进本窗口状态。
+describe("B169 卫星窗口同步键状态要与主窗口一致", () => {
+  it("SatelliteTab 载荷要带 syncMode 字段", () => {
+    const api = readFileSync("src/ipc/api.ts", "utf-8");
+    expect(api, "同步滚动开关要随标签一起走（可选字段）").toMatch(/\bsyncMode\??:\s*boolean/);
+  });
+
+  it("transferSnapshotOf 要把本窗口的开关值写进载荷", () => {
+    const BODY = slice(main, "function transferSnapshotOf(", "function remoteTabLocally(");
+    expect(BODY, "要能定位 transferSnapshotOf").toContain("function transferSnapshotOf(");
+    expect(BODY, "载荷里要写 syncMode").toMatch(
+      /syncMode:\s*docSyncModes\.get\(tab\.docId\) === true/,
+    );
+  });
+
+  it("adoptTransferredTabs 要把收到的 syncMode 接进本窗口状态", () => {
+    const BODY = slice(main, "function adoptTransferredTabs(", "function returnTabsToMain(");
+    expect(BODY, "要能定位 adoptTransferredTabs").toContain("function adoptTransferredTabs(");
+    expect(BODY, "收到 on 要把 docSyncModes 置真").toMatch(
+      /if \(st\.syncMode\) docSyncModes\.set\(st\.docId, true\);/,
+    );
+  });
+
+  it("B169 反向验证：摘掉采纳时接状态 → 上面那条必须落空", () => {
+    const ORIG = "    if (st.syncMode) docSyncModes.set(st.docId, true);";
+    expect(main, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = main.replace(ORIG, "");
+    const BODY = slice(degraded, "function adoptTransferredTabs(", "function returnTabsToMain(");
+    expect(BODY, "退化后不再接 syncMode 进本窗口状态").not.toMatch(
+      /if \(st\.syncMode\) docSyncModes\.set\(st\.docId, true\);/,
+    );
   });
 });
 

@@ -420,6 +420,8 @@ export interface SatelliteTab {
   cursorCol: number;
   /** 视口滚动位置（px）；纯预览侧是预览容器的位置（B129），`null` = 从没显示过 */
   scrollTop: number | null;
+  /** B169：同步滚动开关（按文档记）——让接手窗口的同步键点亮态与主窗口一致 */
+  syncMode?: boolean;
   sizeClass: "normal" | "large" | "huge";
   /** 热退出副本 id / 是否已备份，随标签一起带走，避免新窗口重复写一份副本 */
   backupId: string | null;
