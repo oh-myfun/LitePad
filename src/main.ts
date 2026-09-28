@@ -612,9 +612,14 @@ function applySyncToSibling(other: Tab, px: number | null, line: number | null):
   // B160：源是**预览**侧 ⇒ 按纪律 2 它交不出编辑器像素，`px` 恒为 `null`。换算只能从行号来：
   // 行首对齐的像素坐标与 `SyncHost.scrollToLine` 是同一套（纪律 4：中间只许出现「行号」这一种换算）。
   if (line === null) return;
-  const target = shownView.state.doc.line(Math.min(Math.max(1, line), shownView.state.doc.lines));
-  // B170：钉 DOM 由 pinScrollTop 标记来源、回执被吞，不再套还原窗口。
-  pinScrollTop(shownView.scrollDOM, shownView.lineBlockAt(target.from).top);
+  const maxLine = shownView.state.doc.lines;
+  const clamped = Math.min(Math.max(1, line), maxLine);
+  // B174：`line` 带行内比例（同步坐标不再取整），落点也要按同一个比例在**这一行自己占的
+  // 高度**里插值 —— 只钉行首的话，源在行内滚动时兄弟不动、跨行才跳一格，同样变阶梯。
+  const idx = Math.min(Math.floor(clamped), maxLine);
+  const frac = clamped - idx;
+  const block = shownView.lineBlockAt(shownView.state.doc.line(idx).from);
+  pinScrollTop(shownView.scrollDOM, block.top + block.height * frac);
   // 落点得记，否则兄弟这份的位置只活在 DOM 上：离屏前没人补记，重启就丢了。
   recordScroll(other.tabId, shownView.scrollDOM.scrollTop);
 }
@@ -687,7 +692,7 @@ function pushSyncToSiblings(src: Tab, crossWindow = false): void {
   const line = srcPreview
     ? srcPreview.topVisibleLine()
     : srcView
-      ? topVisibleLineOf(srcView)
+      ? topVisibleLineFrac(srcView)
       : null;
   const px = srcPreview ? null : src.scrollTop;
   // B167 定位用：同步滚动是「每秒几十次」的高频链路，抖起来只能靠日志看是谁在推谁。
@@ -4088,6 +4093,22 @@ function isMdActive(): boolean {
 
 /** 编辑器可视区顶行（1-based）。预览态编辑器是 display:none，scrollTop 会被重置，
  *  所以必须在隐藏**之前**取值（切视图时据此把预览定位到同一区域）。 */
+/**
+ * 编辑器可视区顶行 —— **带行内比例的小数**（B174）。
+ *
+ * `topVisibleLineOf` 取整，用于「切视图模式交接」这类一次性定位正好；同步滚动不能取整：
+ * 源在一行内滚动时行号不变 ⇒ 目标一动不动，跨行瞬间跳一格，连起来就是「卡一下、跳
+ * 一下」的阶梯（用户报：预览跟随同步时跳动，而 TOC 一次性大跳反而没问题 —— 一次大跳
+ * 人眼接受，持续小跳很扎眼）。带上行内比例后坐标连续，落点也就连续。
+ */
+function topVisibleLineFrac(view: EditorView): number {
+  const scrollTop = view.scrollDOM.scrollTop;
+  const block = view.lineBlockAtHeight(scrollTop + 1);
+  const h = block.height || 1;
+  const ratio = Math.min(1, Math.max(0, (scrollTop + 1 - block.top) / h));
+  return view.state.doc.lineAt(block.from).number + ratio;
+}
+
 function topVisibleLineOf(view: EditorView): number {
   const block = view.lineBlockAtHeight(view.scrollDOM.scrollTop + 1);
   return view.state.doc.lineAt(block.from).number;

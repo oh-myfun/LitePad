@@ -484,12 +484,32 @@ export class PreviewPane {
    * 唯一说得通的落点是「用户正在看的那一行」。取法与 `onPreviewScroll` 完全一样
    * （同一个 `blockAtOffset`、同一个 `+8` 偏移），免得两边对「顶行」的定义分叉。
    */
+  /**
+   * 预览此刻停在哪一行 —— **带行内比例的小数**（B174）。
+   *
+   * 同步滚动的坐标若是整数：源在一行内滚动时行号不变 ⇒ 目标一动不动，跨行瞬间跳一格，
+   * 连起来就是「卡一下、跳一下」（用户报：跟随同步时预览跳动，而 TOC 一次性大跳反而没
+   * 问题 —— 一次大跳人眼接受，持续小跳很扎眼）。
+   *
+   * ⚠️ 映射必须与 `applySyncToLine` **互逆**（同一个 `+8`、同一个「到下一块顶边」的比例），
+   * 否则「读出来的行」与「按行摆下去的位置」对不上，跟随会自带一个来回偏的量。
+   */
   topVisibleLine(): number | null {
     if (!this.host) return null;
-    const target = this.blockAtOffset(this.root.scrollTop + 8);
-    if (!target) return null;
-    const line = Number(target.el.dataset.lineStart);
-    return Number.isFinite(line) && line > 0 ? line : null;
+    const offset = this.root.scrollTop + 8;
+    const idx = this.indexOfBlockAtOffset(offset);
+    if (idx < 0) return null;
+    const el = this.blocks[idx].el;
+    const start = Number(el.dataset.lineStart);
+    if (!Number.isFinite(start) || start <= 0) return null;
+    const next = this.blocks[idx + 1];
+    if (!next) return start;
+    const top = this.blockTop(el);
+    const nextTop = this.blockTop(next.el);
+    const range = Number(next.el.dataset.lineStart) - start;
+    if (!(nextTop > top) || !(range > 0)) return start;
+    const ratio = Math.min(1, Math.max(0, (offset - top) / (nextTop - top)));
+    return start + ratio * range;
   }
 
   /**
@@ -541,9 +561,9 @@ export class PreviewPane {
    * 几百个节点、上千次 `getBoundingClientRect`；二分只需 log₂N 次，且基准 rect 提到循环
    * 外只算一次。语义与线性版一致（都取最后一个 ≤ offset 的，一个都不满足则退回首个）。
    */
-  private blockAtOffset(offset: number): BlockNode | null {
+  private indexOfBlockAtOffset(offset: number): number {
     const n = this.blocks.length;
-    if (n === 0) return null;
+    if (n === 0) return -1;
     const base = this.root.getBoundingClientRect().top;
     const scroll = this.root.scrollTop;
     const topAt = (i: number): number =>
@@ -560,6 +580,11 @@ export class PreviewPane {
         hi = mid - 1;
       }
     }
-    return this.blocks[hit >= 0 ? hit : 0] ?? null;
+    return hit >= 0 ? hit : 0;
+  }
+
+  private blockAtOffset(offset: number): BlockNode | null {
+    const i = this.indexOfBlockAtOffset(offset);
+    return i < 0 ? null : (this.blocks[i] ?? null);
   }
 }

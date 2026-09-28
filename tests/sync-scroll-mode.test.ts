@@ -140,7 +140,9 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
     );
     // 坐标从源显示的那一侧取：预览侧取顶行，源码侧取编辑器可视区顶行。
     expect(PUSH_BODY, "预览侧坐标走 topVisibleLine").toMatch(/srcPreview\.topVisibleLine\(\)/);
-    expect(PUSH_BODY, "源码侧坐标走 topVisibleLineOf").toMatch(/topVisibleLineOf\(srcView\)/);
+    expect(PUSH_BODY, "源码侧坐标走带行内比例的小数（B174：取整会让跟随变阶梯）").toMatch(
+      /topVisibleLineFrac\(srcView\)/,
+    );
   });
 
   it("两条滚动监听都是「谁滚谁当源」，不再要求源是激活的那份", () => {
@@ -351,11 +353,11 @@ describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚�
     expect(PUSH_BODY, "源码分支不许再只看 px 就 return").not.toMatch(
       /if \(px === null \|\| !shownView\) return;/,
     );
-    expect(PUSH_BODY, "换算出来的行号要真的用上").toMatch(
-      /Math\.max\(1, line\), shownView\.state\.doc\.lines/,
-    );
-    expect(PUSH_BODY, "落点要按行首对齐的像素算").toMatch(
-      /pinScrollTop\(shownView\.scrollDOM, shownView\.lineBlockAt\(target\.from\)\.top\)/,
+    expect(PUSH_BODY, "换算出来的行号要真的用上").toMatch(/Math\.max\(1, line\), maxLine/);
+    // B174：行号带行内比例 ⇒ 落点要在**这一行自己占的高度**里按同一比例插值，
+    // 只钉行首的话源在行内滚动时兄弟不动、跨行才跳一格（跟随变阶梯）。
+    expect(PUSH_BODY, "落点要按行内比例插值，不是只钉行首").toMatch(
+      /pinScrollTop\(shownView\.scrollDOM, block\.top \+ block\.height \* frac\)/,
     );
     // ⚠️ 与预览那侧的 `SyncHost.scrollToLine` 必须是**同一套**坐标，否则两个方向
     //    各自算一套，来回同步一次就偏一次（B160 这次抖动的另一半原因）。
@@ -367,7 +369,7 @@ describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚�
     // 与 px 那个分支同一条纪律 3：不套窗口，兄弟那一发 scroll 就会被记成「用户停过
     // 的位置」，再顺着它的滚动监听推回源 —— 两个面板互相拉。
     expect(PUSH_BODY, "换算那路也要走 pinScrollTop（标程序来源、回执被吞）").toMatch(
-      /pinScrollTop\(shownView\.scrollDOM, shownView\.lineBlockAt\(target\.from\)\.top\);/,
+      /pinScrollTop\(shownView\.scrollDOM, block\.top \+ block\.height \* frac\);/,
     );
     // ⚠️ 落点必须记：位置只活在 DOM 上，钉完不补记，这份实例的位置等于从没被记过。
     //    也不许把 `null` 倒进源码兄弟的槽 —— 那等于把它的位置抹成「从没显示过」。

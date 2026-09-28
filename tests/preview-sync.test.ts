@@ -372,21 +372,53 @@ describe("B172 预览侧顶行（topVisibleLine / blockAtOffset）", () => {
     curRoot = pane.root;
     pane.setHost({ topVisibleLine: () => 1, scrollToLine: () => {}, lineCount: () => 100 });
     pane.root.scrollTop = 0;
-    expect(pane.topVisibleLine()).toBe(1);
+    // B174 起返回**带行内比例的小数**：+8 的偏移落在第 1 块（0..100）里占 8%，
+    // 该块跨 1..3 行（下一块从第 4 行起，range=3）⇒ 1 + 0.08*3 ≈ 1.24
+    expect(pane.topVisibleLine()).toBeCloseTo(1.24, 1);
     pane.root.scrollTop = 300; // +8 = 308 ⇒ 命中顶边 300 那块（line 10），不是 520 那块
-    expect(pane.topVisibleLine()).toBe(10);
+    expect(pane.topVisibleLine()).toBeCloseTo(10.29, 1);
     pane.root.scrollTop = 899; // 907 ⇒ 命中顶边 900 那块（line 30）
-    expect(pane.topVisibleLine()).toBe(30);
-    pane.root.scrollTop = 5000; // 滚过末尾 ⇒ 最后一块
+    expect(pane.topVisibleLine()).toBeCloseTo(30.2, 1);
+    pane.root.scrollTop = 5000; // 滚过末尾 ⇒ 最后一块（没有下一块，返回行首）
     expect(pane.topVisibleLine()).toBe(80);
+  });
+
+  it("顶行映射与按行定位互逆：读出来的行摆回去还落在同一处（B174）", () => {
+    const pane = new PreviewPane();
+    const tops = [0, 100, 300, 520, 900, 1400, 2100, 3000];
+    const lines = [1, 4, 10, 18, 30, 44, 60, 80];
+    // 行号区间要**连续**（真实 block 就是首尾相接的）：留空隙的话 line 落在缝里，
+    // `blockAtLine` 会退回最后一块，互逆性无从谈起。
+    const els = tops.map((t, i) => fakeBlock(lines[i], (lines[i + 1] ?? 101) - 1, t));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (pane as any).blocks = els.map((el, i) => ({ html: `b${i}`, el }));
+    pane.root.replaceChildren(...els);
+    curRoot = pane.root;
+    const hostLine = { v: 1 };
+    pane.setHost({
+      topVisibleLine: () => hostLine.v,
+      scrollToLine: () => {},
+      lineCount: () => 100,
+    });
+    for (const px of [0, 120, 307, 900, 2500]) {
+      pane.root.scrollTop = px;
+      const line = pane.topVisibleLine();
+      expect(line, `scrollTop=${px} 要问得出顶行`).not.toBeNull();
+      pane.syncToLineProgrammatic(line as number);
+      // 互逆：读出的行摆回去，落点回到同一个像素（±1px）
+      expect(pane.root.scrollTop, `scrollTop=${px} 读出行 ${line} 摆回去要落在原处`).toBeCloseTo(
+        px,
+        0,
+      );
+    }
   });
 
   it("跟随路径每帧都走它：不许线性扫全表（改二分）", async () => {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync("src/markdown/preview.ts", "utf-8").replace(/\r\n/g, "\n");
-    const at = src.indexOf("private blockAtOffset(");
+    const at = src.indexOf("private indexOfBlockAtOffset(");
     const body = at >= 0 ? src.slice(at, src.indexOf("\n  }", at)) : "";
-    expect(body, "要切到 blockAtOffset 的函数体").toContain("private blockAtOffset(");
+    expect(body, "要切到二分查找的函数体").toContain("private indexOfBlockAtOffset(");
     expect(body, "二分取中点").toMatch(/const mid = \(lo \+ hi\) >> 1;/);
     expect(body, "不再逐个 block 摸一遍布局").not.toMatch(/for \(const b of this\.blocks\)/);
   });
