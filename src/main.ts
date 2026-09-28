@@ -590,6 +590,52 @@ function echoSuspicion(tabId: number, px: number): string {
   return `｜疑似回推：${dt}ms 前刚被钉到 ${rec.px}，此刻 ${px}（守卫漏了这一发）`;
 }
 
+/**
+ * B168：彻底屏蔽「我们主动摆的位置，其回执 scroll 被当成用户滚动去推兄弟」这一抖动根因。
+ *
+ * 旧机制靠 `viewportWriteDepth` / `restoringViewport` 的**两帧窗口**赌时序 —— 而图片异步
+ * 加载、字体/行高测量补偿（CM6 `measureAndKeepScroll`）、大文档重排都会把那一发 scroll
+ * 拖到窗口之外，于是「A 推 B、B 那发回执漏过窗口 → 反推 A → A 再推 B」成了拉锯。
+ *
+ * 新机制不赌时序，而是**认落点**：每次我们主动把一份实例的滚动位置钉到某值，都把
+ * 「这个容器 + 我们钉到的真实落点 + 时刻」记进白名单。scroll 事件到达时，只要「这一发的
+ * 滚动位置和我们刚钉的落点几乎一致、且没过期」，就判定是自家回执、直接吞掉（不写兄弟快照、
+ * 不推兄弟），彻底掐断回环。落点取 `pinScrollTop` 读回来的**真实 landed 值**（缩放的小数、
+ * 被文档长度夹住的差值都算进去了），所以连「下一帧才到」还是「300ms 后图片加载重排才到」
+ * 都能认出来 —— 关键是不再假设「它一定在两帧之内到」。
+ *
+ * ⚠️ 与 `viewportWriteDepth` / `restoringViewports` 是**互补**而非替代：后两者还负责挡住
+ *    「还原期间把被裁成 0 的中间值写进快照」，白名单只负责挡「推兄弟」那一步的回环。
+ */
+const SELF_SCROLL_TTL = 600;
+const SELF_SCROLL_EPS = 1;
+const selfScrollMarks = new WeakMap<HTMLElement, { top: number; at: number }>();
+
+/** 记下「这个容器刚被我们钉到了 top」—— 后面那一发 scroll 会被认作自家回执。 */
+function markSelfScroll(el: HTMLElement, top: number): void {
+  selfScrollMarks.set(el, { top, at: Date.now() });
+}
+
+/**
+ * 这一发 scroll 是不是「我们刚钉过的落点」的回执。
+ * ⚠️ 返回 true 时**不**清标记 —— 连续几发自家回执只认第一发的话，后面几发又会被当成
+ *   用户滚动。真正的清理由「位置对不上」那一支负责：用户一旦滚到不同位置，旧标记作废、
+ *   这一下发正常传出去。过期也作废，免得长期滞留把用户之后滚到的「几乎同位置」误吞。
+ */
+function isSelfScroll(el: HTMLElement, top: number): boolean {
+  const m = selfScrollMarks.get(el);
+  if (!m) return false;
+  if (Math.abs(top - m.top) > SELF_SCROLL_EPS) {
+    selfScrollMarks.delete(el);
+    return false;
+  }
+  if (Date.now() - m.at > SELF_SCROLL_TTL) {
+    selfScrollMarks.delete(el);
+    return false;
+  }
+  return true;
+}
+
 function applySyncToSibling(other: Tab, px: number | null, line: number | null): void {
   const shown = displayedPanelOfTab(other.tabId);
   // B167：落点也留一条 —— 「谁被推、推到哪儿」与上面那条「谁在推」配对看，
@@ -620,6 +666,9 @@ function applySyncToSibling(other: Tab, px: number | null, line: number | null):
     //    这笔不用局部 `preview`：它不在闭包里，属性收窄还在，原样读更直白。
     recordScroll(other.tabId, shown.preview.root.scrollTop);
     markSyncApplied(other.tabId, shown.preview.root.scrollTop);
+    // B168：预览被我们按行定位后，那一发 scroll 也记进自家人白名单 —— 预览容器那条监听
+    //   据此判定回执、不再推兄弟（否则又闭环成拉锯）。
+    markSelfScroll(shown.preview.root, shown.preview.root.scrollTop);
     return;
   }
   const shownView = shown?.view?.view;
@@ -1121,6 +1170,16 @@ function rebuildLayout(): void {
           // B142：位置还原还没立住（补钉在下一帧）—— 这期间容器里是被裁过的 0，
           // 写进去就是把「还原前的空窗期」当成用户停过的位置，还会顺带排程落盘。
           if (t && restoringViewports.has(t.tabId)) return;
+          // B168：自家钉位置的回执直接吞（认落点，不赌时序）—— 彻底掐断同步回环。
+          //   图片异步加载 / 字体测量补偿（CM6 measureAndKeepScroll）/ 大文档重排会把那一发
+          //   scroll 拖到两帧窗口之外，落点对不上就被当成用户滚动反推源 ⇒ A→B→A 拉锯。
+          if (t && isSelfScroll(shownView.scrollDOM, shownView.scrollDOM.scrollTop)) {
+            logger.debug(
+              "sync",
+              `编辑器 self-echo 吞掉 tab=${t.tabId} top=${shownView.scrollDOM.scrollTop.toFixed(1)}`,
+            );
+            return;
+          }
           // B126：滚动位置只活在 DOM 上，随滚动即时记进标签快照（赋值极廉价，
           // 不排程）。快照是与视图生命周期解耦的全局记录，所以「滚过但没切走就
           // 重建布局 / 销毁面板」也不会丢。
@@ -1180,6 +1239,15 @@ function rebuildLayout(): void {
           return;
         }
         if (restoringViewports.has(t.tabId)) return;
+        // B168：自家钉位置的回执直接吞（跨面板同步把预览钉到某行后，那一发 scroll 不该被
+        //   当成用户滚动反推兄弟）。认落点而非赌时序。
+        if (isSelfScroll(preview.root, preview.root.scrollTop)) {
+          logger.debug(
+            "sync",
+            `预览 self-echo 吞掉 tab=${t.tabId} top=${preview.root.scrollTop.toFixed(1)}`,
+          );
+          return;
+        }
         // B154：与编辑器那侧同口径 —— **谁滚谁当源**，用户手指还在预览上、窗口也没
         //   激活，源码那份也要跟着走。同样挂在 `restoringViewports` 之后：兄弟被
         //   定位后那两帧里不许回推（与 `pushSyncToSiblings` 里那对守卫同源）。
@@ -4382,6 +4450,9 @@ function pinScrollTop(el: HTMLElement, px: number): void {
     const stuck =
       Math.abs(diff) <= PIN_EPSILON_PX || (px > 0 && landed > 0 && diff < -PIN_EPSILON_PX);
     if (stuck) {
+      // B168：钉稳的这一下是「我们主动摆的位置」，把落点记进自家人白名单 —— 后面这一发
+      //   scroll 才会被认出是回执、直接吞掉，不再靠两帧窗口赌它是不是在两帧内到。
+      markSelfScroll(el, landed);
       pinningContainers.delete(el);
       release();
       return;

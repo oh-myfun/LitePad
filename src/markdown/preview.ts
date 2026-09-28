@@ -11,6 +11,11 @@ import type { MdBlock } from "./pipeline";
 
 const LAZY_THRESHOLD_LINES = 5000; // 大文档：关闭 Mermaid/Shiki 自动渲染
 
+/** B168：程序滚动回执的有效期（ms）。落点和我们刚钉的一致、且没过期 ⇒ 当作自家回执吞掉，
+ *  不靠 120ms 同步锁赌时序（图片加载重排会把那一发 scroll 拖过锁的有效期，逃过去就被
+ *  当成用户滚动反推编辑器 ⇒ 闭环成拉锯）。过期才作废，免得长期滞留误吞用户之后滚到的相近位置。 */
+const SELF_SCROLL_TTL = 600;
+
 export interface SyncHost {
   /** 编辑器可视区顶行（1-based） */
   topVisibleLine(): number;
@@ -37,6 +42,8 @@ export class PreviewPane {
   /** 程序设定的滚动位置：scroll 事件是异步的，同步锁过期后仍要能识别出自家滚动
    *  （重渲染把 scrollTop 清零再改回也会冒出一次 scroll 事件） */
   private programmaticTop: number | null = null;
+  /** B168：上一次程序定位的时刻 —— 与 `programmaticTop` 配对，判断回执是否还在有效期内。 */
+  private selfAt = 0;
   private suppressScrollWrite = false;
   /**
    * B162：程序定位窗口的深度（与 main 侧 `restoringViewport` 同构，两帧解锁）。
@@ -454,6 +461,7 @@ export class PreviewPane {
     const nextTop = Math.max(0, px);
     this.root.scrollTop = nextTop;
     this.programmaticTop = nextTop;
+    this.selfAt = Date.now();
     // 位置已定，别再被异步重排（图片/公式增强）拽回行定位
     this.pendingSyncLine = null;
   }
@@ -490,6 +498,7 @@ export class PreviewPane {
     const nextTop = Math.max(0, top - 8);
     this.root.scrollTop = nextTop;
     this.programmaticTop = nextTop;
+    this.selfAt = Date.now();
   }
 
   /** block 相对预览内容区的偏移（不受 offsetParent 与当前滚动影响）。 */
@@ -544,6 +553,9 @@ export class PreviewPane {
     // 自家程序滚动的回执：锁（120ms）可能刚好在重渲染清空 scrollTop 后过期，
     // 只靠锁会把这次事件误判成用户手动滚动 → 清掉 pendingSyncLine，跳转落点丢失。
     if (this.programmaticTop !== null && Math.abs(this.root.scrollTop - this.programmaticTop) < 1) {
+      // 自家程序滚动回执：落点和我们刚钉的一致 ⇒ 直接吞（B168：不再只靠 120ms 锁赌时序，
+      // 而是认落点；过期才作废，避免长期滞留误吞真实用户滚动）。锁本身仍保留，作第二道闸。
+      if (Date.now() - this.selfAt > SELF_SCROLL_TTL) this.programmaticTop = null;
       return;
     }
     this.programmaticTop = null;

@@ -24,6 +24,7 @@ import { readFileSync } from "node:fs";
 const main = readFileSync("src/main.ts", "utf-8");
 const html = readFileSync("index.html", "utf-8");
 const css = readFileSync("src/styles/global.css", "utf-8");
+const PREVIEW_TS = readFileSync("src/markdown/preview.ts", "utf-8");
 
 /** 编辑器滚动监听那条（含它前面那几行自限守卫）—— 与下面几条同一段切片。 */
 function scrollBodyOf(src: string): string {
@@ -47,6 +48,7 @@ const PUSH_BODY = slice(main, "function applySyncToSibling(", "function showMess
 const BTN_BODY = slice(main, "function refreshSyncButton(", "function refreshStatus(");
 const SRC_BODY = slice(main, "function isSyncSource(", "/** 这个实例此刻是否被某个面板");
 const CLICK_BODY = slice(main, 'syncScrollBtn.addEventListener("click"', "sbLang.addEventListener");
+const PIN_BODY = slice(main, "function pinScrollTop(", "function restoreViewScroll(");
 
 describe("B152 同步滚动模式：按钮与状态", () => {
   it("按钮挂在标题栏的文档名后面，默认收起", () => {
@@ -586,6 +588,71 @@ describe("B167 同步滚动抖动：选区派发不许自带滚动 + 回推要�
     expect(scrollBodyOf(degradedGuard), "退化后编辑器监听不再认回推").not.toContain(
       "echoSuspicion(t.tabId",
     );
+  });
+});
+
+// ------------------------------------------------------- B168：彻底屏蔽「自家滚动回执」
+// 旧的拉锯根因：回环闸门靠 `viewportWriteDepth` / `restoringViewport` 的**两帧窗口**赌时序，
+// 而图片异步加载 / 字体测量补偿 / 大文档重排会把那一发 scroll 拖到窗口之外 ⇒ A↔B 来回推。
+// 新机制不赌时序，而是**认落点**：每次我们主动钉位置都把「容器 + 真实 landed 值 + 时刻」
+// 记进白名单，scroll 事件落点一致且未过期就当自家回执吞掉（不推兄弟）。
+describe("B168 同步滚动抖动：彻底屏蔽「自家滚动回执」被当成用户滚动", () => {
+  it("两条滚动监听在推兄弟之前认「自家落点回执」并直接吞掉（不赌时序）", () => {
+    const editor = scrollBodyOf(main);
+    // 编辑器那侧：落点对得上就是自家回执，不再指望两帧窗口盖得住下一帧才到的 scroll。
+    expect(editor, "编辑器监听要认自家落点回执").toContain(
+      "isSelfScroll(shownView.scrollDOM, shownView.scrollDOM.scrollTop)",
+    );
+    const previewScroll = slice(
+      main,
+      'preview.root.addEventListener("scroll"',
+      "applyPanelMode(p);",
+    );
+    expect(previewScroll, "预览监听也要认自家落点回执").toContain(
+      "isSelfScroll(preview.root, preview.root.scrollTop)",
+    );
+    // 两道都要排在「推兄弟」之前，否则回环闸门形同虚设（与 B154 那一条同口径）。
+    const atSelf = editor.indexOf("isSelfScroll(shownView.scrollDOM");
+    const atPush = editor.indexOf("pushSyncToSiblings(t, true)");
+    expect(atSelf, "要能定位自家落点判定").toBeGreaterThan(-1);
+    expect(atPush, "要能定位推同步那句").toBeGreaterThan(-1);
+    expect(atPush, "推同步要排在自家落点判定之后").toBeGreaterThan(atSelf);
+  });
+
+  it("pinScrollTop 钉稳后把落点记进「自家人」白名单", () => {
+    // 只有记下落点，scroll 事件到达时才能认出这是「我们刚摆的位置」的回执。
+    expect(PIN_BODY, "钉稳那一下要记账").toContain("markSelfScroll(el, landed)");
+  });
+
+  it("预览的程序定位回执判定带过期窗口（不再只靠 120ms 锁赌时序）", () => {
+    // B162 只靠 120ms 同步锁 + programmaticDepth 两帧，异步重排会把回执拖过锁有效期
+    // ⇒ 逃过去被当作用户滚动反推编辑器。B168 改成「认落点 + 过期才作废」。
+    const onScroll = slice(PREVIEW_TS, "private onPreviewScroll(", "private blockAtLine(");
+    expect(onScroll, "回执判定要认过期窗口").toContain("SELF_SCROLL_TTL");
+  });
+
+  it("B168 反向验证：摘掉自家落点判定 → 上面「两条监听认回执」必须落空", () => {
+    // ⚠️ 退化串要连着缩进：那段的注释里也提到 isSelfScroll 这个名字，只按裸名 replace
+    //   会把注释里那句也换掉，退化版「什么都没改」⇒ 反向验证静默失效。
+    const ORIG =
+      "          if (t && isSelfScroll(shownView.scrollDOM, shownView.scrollDOM.scrollTop)) {";
+    expect(main, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = main.replace(ORIG, "          // (B168 退化：摘掉自家落点判定)");
+    const editor = slice(
+      degraded,
+      'shownView.scrollDOM.addEventListener("scroll"',
+      "attachPasteHandler(p);",
+    );
+    expect(editor, "退化后编辑器监听不再认自家落点回执").not.toContain(
+      "isSelfScroll(shownView.scrollDOM",
+    );
+  });
+
+  it("B168 反向验证：摘掉 pinScrollTop 的记账 → 上面「钉稳记账」必须落空", () => {
+    const ORIG = "      markSelfScroll(el, landed);";
+    expect(PIN_BODY, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = PIN_BODY.replace(ORIG, "");
+    expect(degraded, "退化后钉稳不再记账").not.toContain("markSelfScroll(el, landed)");
   });
 });
 
