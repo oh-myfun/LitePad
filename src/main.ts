@@ -4157,6 +4157,19 @@ function pinInFlight(el: HTMLElement): boolean {
 }
 
 /**
+ * 同一容器「最新一条补钉链」的令牌（B172）。
+ *
+ * 同步滚动时源每派发一次 scroll 就调一次 `pinScrollTop`，而一条链要跑到
+ * `PIN_MAX_FRAMES`（12 帧）才收工 —— 连续滚动下十几条链会**同时**往同一个 `scrollTop`
+ * 上钉不同的 px：这一帧钉 100、下一帧被上一条链拉回 200、再下一帧又被更新的那条拉回
+ * 300 ⇒ 目标那份来回拉锯，正是「同步滚动抖动」。典型触发是**滚的不是激活文档**（源在
+ * 非激活面板上连续滚，激活那份被反复钉）。
+ *
+ * 新链一起来，旧链就此作废：只有最新那条有资格写值。
+ */
+const pinTokens = new WeakMap<HTMLElement, number>();
+
+/**
  * 视口调试日志（B146）。
  *
  * 用户报「切换标签时 md 文档的滚动位置会不断往下移」，而位置只在 DOM 上、写进记录的
@@ -4245,12 +4258,19 @@ function fmtPx(v: number): string {
 }
 
 function pinScrollTop(el: HTMLElement, px: number): void {
+  // B172：领一个新令牌，把还在飞的那条链作废（注释见 `pinTokens`）。
+  const token = (pinTokens.get(el) ?? 0) + 1;
+  pinTokens.set(el, token);
   pinningContainers.add(el);
   // B170：整段「逐帧补钉」期间都标程序来源 —— 赋值派发的 scroll 由监听经 scroll-guard
   // 直接吞掉（不写快照、不推兄弟），不再靠 `viewportWriteDepth` 那种时间窗赌时序。
   // 标记是**黏性的**：钉完之后一直留在容器上，直到用户真正接管滚动（wheel/键/触/拖条）
   // 才清 —— 这样「钉完那一刻」与「几百 ms 后迟到回执」都被认成自家回执，闭环拉锯根除。
   const retry = (frame: number): void => {
+    // B172：已被更新的调用取代 ⇒ 这一条作废，一个字节都不许再写。
+    // ⚠️ 别在这里 `pinningContainers.delete` —— 接手的新链还在跑，删了会让
+    //    `pinInFlight` 误判「没人在钉」，把半路那个中间值采进快照（B145 的读闸口）。
+    if (pinTokens.get(el) !== token) return;
     // 每次赋值前都标：重试途中（被浏览器裁成 0 后下一帧再钉）每一发都被认领。
     markProgrammatic(el);
     el.scrollTop = px;

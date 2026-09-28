@@ -949,3 +949,27 @@ describe("B160 反向验证：退回旧写法，上面那四条必须变红", ()
     expect(body, "删掉补记后「换算分支补记在钉位之后」就站不住了").not.toContain(ORIG_REC);
   });
 });
+
+describe("B172 同一容器只认最新一条补钉链（连续同步不再互相拉锯）", () => {
+  it("pinScrollTop 领令牌，作废的旧链不许再写 scrollTop", () => {
+    // 同步滚动时源每派发一次 scroll 就调一次这里，而一条链要跑到 PIN_MAX_FRAMES 才收工。
+    // 没有令牌 ⇒ 十几条链同时钉不同的 px ⇒ 目标那份来回抖（滚非激活文档时最明显）。
+    expect(PIN_BODY, "每次调用都要领一个新令牌").toMatch(
+      /const token = \(pinTokens\.get\(el\) \?\? 0\) \+ 1;/,
+    );
+    expect(PIN_BODY, "旧链见到令牌变了就退出").toMatch(
+      /if \(pinTokens\.get\(el\) !== token\) return;/,
+    );
+    expect(PIN_BODY, "新链起来时容器仍在钉（pinInFlight 要拦中间值）").toMatch(
+      /pinningContainers\.add\(el\)/,
+    );
+  });
+});
+
+describe("B172 反向验证：摘掉作废判定，上面那条必须落空", () => {
+  it("退化：旧链不再退出", () => {
+    const GUARD = "if (pinTokens.get(el) !== token) return;";
+    expect(PIN_BODY, "退化串要先自证原句还在").toContain(GUARD);
+    expect(PIN_BODY.replace(GUARD, ""), "摘掉后就没有『旧链作废』这回事了").not.toContain(GUARD);
+  });
+});

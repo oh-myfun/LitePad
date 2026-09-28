@@ -359,3 +359,35 @@ describe("预览同步接线（静态断言）", () => {
     expect(src, "应有 pending 重定位").toContain("pendingSyncLine");
   });
 });
+
+describe("B172 预览侧顶行（topVisibleLine / blockAtOffset）", () => {
+  it("滚到文档中部：取最后一个顶边不超过 scrollTop+8 的 block", () => {
+    const pane = new PreviewPane();
+    const tops = [0, 100, 300, 520, 900, 1400, 2100, 3000];
+    const lines = [1, 4, 10, 18, 30, 44, 60, 80];
+    const els = tops.map((t, i) => fakeBlock(lines[i], lines[i] + 3, t));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (pane as any).blocks = els.map((el, i) => ({ html: `b${i}`, el }));
+    pane.root.replaceChildren(...els);
+    curRoot = pane.root;
+    pane.setHost({ topVisibleLine: () => 1, scrollToLine: () => {}, lineCount: () => 100 });
+    pane.root.scrollTop = 0;
+    expect(pane.topVisibleLine()).toBe(1);
+    pane.root.scrollTop = 300; // +8 = 308 ⇒ 命中顶边 300 那块（line 10），不是 520 那块
+    expect(pane.topVisibleLine()).toBe(10);
+    pane.root.scrollTop = 899; // 907 ⇒ 命中顶边 900 那块（line 30）
+    expect(pane.topVisibleLine()).toBe(30);
+    pane.root.scrollTop = 5000; // 滚过末尾 ⇒ 最后一块
+    expect(pane.topVisibleLine()).toBe(80);
+  });
+
+  it("跟随路径每帧都走它：不许线性扫全表（改二分）", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("src/markdown/preview.ts", "utf-8").replace(/\r\n/g, "\n");
+    const at = src.indexOf("private blockAtOffset(");
+    const body = at >= 0 ? src.slice(at, src.indexOf("\n  }", at)) : "";
+    expect(body, "要切到 blockAtOffset 的函数体").toContain("private blockAtOffset(");
+    expect(body, "二分取中点").toMatch(/const mid = \(lo \+ hi\) >> 1;/);
+    expect(body, "不再逐个 block 摸一遍布局").not.toMatch(/for \(const b of this\.blocks\)/);
+  });
+});

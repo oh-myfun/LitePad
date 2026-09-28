@@ -533,12 +533,33 @@ export class PreviewPane {
     return this.blocks[this.blocks.length - 1] ?? null;
   }
 
+  /**
+   * 命中「最后一个顶边不超过 offset 的 block」。
+   *
+   * B172：跟随路径（用户滚预览、预览当源做同步）**每个 scroll 事件**都走这里。block 的
+   * 顶边在文档里单调递增，所以可以二分 —— 线性版要从头摸到命中位置，滚到文档中部就是
+   * 几百个节点、上千次 `getBoundingClientRect`；二分只需 log₂N 次，且基准 rect 提到循环
+   * 外只算一次。语义与线性版一致（都取最后一个 ≤ offset 的，一个都不满足则退回首个）。
+   */
   private blockAtOffset(offset: number): BlockNode | null {
-    let result: BlockNode | null = null;
-    for (const b of this.blocks) {
-      if (this.blockTop(b.el) <= offset) result = b;
-      else break;
+    const n = this.blocks.length;
+    if (n === 0) return null;
+    const base = this.root.getBoundingClientRect().top;
+    const scroll = this.root.scrollTop;
+    const topAt = (i: number): number =>
+      this.blocks[i].el.getBoundingClientRect().top - base + scroll;
+    let lo = 0;
+    let hi = n - 1;
+    let hit = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (topAt(mid) <= offset) {
+        hit = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
     }
-    return result ?? this.blocks[0] ?? null;
+    return this.blocks[hit >= 0 ? hit : 0] ?? null;
   }
 }
