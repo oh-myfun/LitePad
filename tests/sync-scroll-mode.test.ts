@@ -68,10 +68,13 @@ describe("B152 同步滚动模式：按钮与状态", () => {
     expect(html, "必须有 aria-pressed").toMatch(/id="sync-scroll"[\s\S]{0,300}?aria-pressed/);
   });
 
-  it("显隐判据是「当前激活文档开着多份（含别的窗口那份）」", () => {
+  it("显隐判据是「当前激活文档开着多份」—— 两个窗口同口径，只数本窗口实例（B171）", () => {
     // 只看「有没有文档」⇒ 单开也露脸，用户点下去什么也不会发生。
     expect(main, "显隐要按实例个数判").toMatch(/instancesOfDoc\(tab\.docId\)\.length > 1/);
     expect(main, "无文档时要藏").toMatch(/syncScrollBtn\.hidden = !multi;/);
+    // B171：B164 曾给子窗口开后门（额外认「这份文档在别的窗口也有」），于是同文件
+    // 只开一份时子窗口露脸、主窗口却藏着 —— 口径不一致。现在一律只数本窗口实例。
+    expect(BTN_BODY, "显隐不许再掺跨窗口的共享集合").not.toMatch(/sharedDocIds/);
   });
 
   it("开关状态按**文档**记，切换激活文档时不复位", () => {
@@ -497,19 +500,17 @@ describe("B154 / B166 字形：link（链条），随开关在 link / unlink 间
 });
 
 // ------------------------------------------------------- B164：子窗口的同步滚动
-describe("B164 子窗口也要有同步滚动（按钮显隐 + 跨窗口广播）", () => {
-  it("卫星窗口采纳的标签要记进 sharedDocIds（主窗口还攥着隐藏实例）", () => {
-    // 子窗口里 `instancesOfDoc` 只有 1 份 —— 不认「这份文档在别的窗口也有」，
-    // 同步滚动键在子窗口永远 hidden，用户没法在子窗口开启同步。
-    expect(main, "采纳标签时（且只在卫星侧）要记共享文档").toMatch(
-      /if \(windowKind === "satellite"\) sharedDocIds\.add\(st\.docId\);/,
+describe("B164 子窗口也要能同步滚动（跨窗口广播）", () => {
+  it("显隐不按窗口身份分叉：子窗口与主窗口同口径，只数本窗口实例（B171）", () => {
+    // B164 曾用 `sharedDocIds` 给子窗口开后门：卫星收下的文档主窗口还攥着（隐藏实例），
+    // 于是子窗口里单开一份也露脸 —— 可主窗口数那份也只算 1 份、同场景是**藏**着的，
+    // 两边对不上；何况同步到一个看不见的实例没有意义。现在一律只看 `instancesOfDoc`。
+    expect(BTN_BODY, "判据里不许再有共享文档集合").not.toMatch(/sharedDocIds/);
+    expect(BTN_BODY, "只按本窗口实例数判").toMatch(
+      /const multi = !!tab && instancesOfDoc\(tab\.docId\)\.length > 1;/,
     );
-  });
-
-  it("显隐判据要认 sharedDocIds（不能只数本地实例）", () => {
-    expect(BTN_BODY, "「开着多份」要算上别的窗口那份").toMatch(/sharedDocIds\.has\(tab\.docId\)/);
-    // 本地实例数那一半仍是判据的主体（主窗口靠隐藏实例计数，不靠 sharedDocIds）
-    expect(BTN_BODY, "本地实例数那一半不许丢").toMatch(/instancesOfDoc\(tab\.docId\)\.length > 1/);
+    // 也不许拿窗口身份再给子窗口开口子（开了就绕回「子窗口单开也露脸」）
+    expect(BTN_BODY, "显隐不许看窗口身份").not.toMatch(/windowKind/);
   });
 
   it("没有本地兄弟也要广播（否则子窗口滚动带不动主窗口）", () => {
@@ -522,18 +523,16 @@ describe("B164 子窗口也要有同步滚动（按钮显隐 + 跨窗口广播�
     expect(PUSH_BODY, "广播那半段还在函数末尾").toMatch(/if \(crossWindow\) broadcastSyncPos\(/);
   });
 
-  it("B164 反向验证：退回两处旧写法，上面三条必须落空", () => {
-    // ① 显隐只数本地实例
+  it("反向验证：退回旧写法，上面两条必须落空", () => {
+    // ① 显隐再掺进「别的窗口也有一份」（B164 的 `sharedDocIds`）⇒ 子窗口单开也露脸
     const i = main.indexOf("const multi =");
     expect(i, "要能定位显隐判据").toBeGreaterThan(-1);
     const degradedBtn =
       main.slice(0, i) +
-      "const multi = !!tab && instancesOfDoc(tab.docId).length > 1;" +
+      "const multi = !!tab && (instancesOfDoc(tab.docId).length > 1 || sharedDocIds.has(tab.docId));" +
       main.slice(main.indexOf(";", i) + 1);
     const btnBody = slice(degradedBtn, "function refreshSyncButton(", "function refreshStatus(");
-    expect(btnBody, "退化后「要认共享文档」必须落空").not.toMatch(
-      /sharedDocIds\.has\(tab\.docId\)/,
-    );
+    expect(btnBody, "退化后「不许有共享文档集合」必须命中").toMatch(/sharedDocIds/);
     // ② 提前 return 不给广播让路
     const ORIG = "if (sibs.length === 0 && !crossWindow) return;";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
@@ -721,8 +720,8 @@ describe("B169 卫星窗口同步键状态要与主窗口一致", () => {
 
 describe("B152 反向验证：退回旧写法，上面那几条必须变红", () => {
   it("退回「单开一份也露脸」→ 显隐那两条必须落空", () => {
-    // ⚠️ B164 起判据折成了两行（多出 `sharedDocIds` 那一半），退化串要按位置取：
-    //    只按老单行字面量 replace 会静默空转（B163 踩过同一坑）。
+    // ⚠️ 退化串按位置取，不按字面量 replace：判据的排版变过好几轮（B164 折成两行、
+    //    B171 又回到单行），只认老单行字面量会静默空转（B163 踩过同一坑）。
     const i = main.indexOf("const multi =");
     expect(i, "要能定位显隐判据").toBeGreaterThan(-1);
     const degraded =
