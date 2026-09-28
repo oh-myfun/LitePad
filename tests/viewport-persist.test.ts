@@ -167,6 +167,10 @@ function editorView(): EditorView {
 /** 滚到某个位置并派发一次真 scroll 事件（监听器就挂在 scrollDOM 上）。 */
 function scrollTo(px: number): void {
   const sc = editorView().scrollDOM;
+  // B170：程序定位的标记是「黏性」的，只靠用户接管滚动的真实输入（wheel / 拖滚动条）清除，
+  // 不靠时间窗 —— 启动还原那一下已经把编辑器标成了程序来源，直接派发 scroll 会被监听
+  // 当成自家回执吞掉（连 save 都排不上）。所以先派发 wheel 表示用户接管，再滚。
+  sc.dispatchEvent(new Event("wheel"));
   sc.scrollTop = px;
   sc.dispatchEvent(new Event("scroll", { bubbles: false }));
 }

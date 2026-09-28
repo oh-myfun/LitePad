@@ -300,69 +300,39 @@ describe("B139 静态契约：快照按 tabId 索引，不许回头读容器", (
     );
   });
 
-  it("预览只由「用户滚过」来记录，程序摆的落点要挡住", () => {
+  it("预览只由「用户滚过」来记录，程序摆的落点要被 scroll-guard 吞掉", () => {
     expect(src, "滚预览必须写进它自己那份快照").toMatch(/t\.scrollTop = preview\.root\.scrollTop;/);
-    expect(src, "增强后的二次定位要置抑制位").toMatch(
-      /viewportWriteDepth > 0 \|\|\s*preview\.isSuppressingScrollWrite\(\)/,
-    );
+    // B170：预览程序摆位（setBlocks 恢复 / setScrollTop / 跨面板同步）都标 `markProgrammatic`，
+    // 回执由预览监听经 scroll-guard 吞掉，不写快照、不反推；真用户滚动才落到写快照那路。
+    const previewTs = readFileSync("src/markdown/preview.ts", "utf-8");
+    expect(previewTs, "预览程序摆位要标来源").toMatch(/markProgrammatic\(this\.root\);/);
+    expect(src, "预览监听要认程序来源标记并吞掉").toMatch(/if \(isProgrammatic\(preview\.root\)\)/);
   });
 
-  it("B142 还原位置期间要挡住它自己派发的 scroll", () => {
-    // 编辑器那半边有 `pinScrollTop` 的抑制窗口挡着（B139），但预览的 `setBlocks`
-    // 不在那个窗口里 —— 它把容器冲成 0 并发一发事件，位置要等补钉才立住。
-    // 所以还原要另有一道「按标签」的窗口，两条路径的监听都得认它。
-    expect(src, "要有按标签的还原窗口").toMatch(/const restoringViewports = new Set<number>\(\);/);
-    expect(src, "还原函数要开窗口").toMatch(
-      /function restoringViewport\(tabId: number, run: \(\) => void\): void \{[\s\S]{0,120}?restoringViewports\.add\(tabId\);/,
+  it("B170 还原位置期间要挡住它自己派发的 scroll（黏性程序标记）", () => {
+    // 编辑器那半边由 `restoreViewScroll` 先 `markProgrammatic(view.scrollDOM)`、再 `pinScrollTop`
+    // （内部继续标）挡着；预览那半边由 `restorePreviewScroll` 走 `pinScrollTop(root, px)` 标来源。
+    // 两路各自的 scroll 监听见标记即吞，不再靠 `restoringViewport` 两帧窗口赌时序。
+    expect(src, "编辑器还原要先标程序来源").toMatch(/markProgrammatic\(view\.scrollDOM\);/);
+    expect(src, "预览还原要走 pinScrollTop（标来源）").toMatch(/pinScrollTop\(root, px\);/);
+    // 两条监听都要认程序来源标记
+    expect(src, "编辑器监听要认程序来源标记").toMatch(
+      /if \(isProgrammatic\(shownView\.scrollDOM\)\) return;/,
     );
-    // 解锁要等两帧：补钉在下一帧、补钉派发的事件再下一帧
-    expect(src, "解锁要等两帧，别把补钉那一发漏在外面").toMatch(
-      /requestAnimationFrame\(\(\) => \{\s*\n\s*requestAnimationFrame\(\(\) => \{\s*\n\s*restoringViewports\.delete\(tabId\);/,
-    );
-    // 两条监听都要认它
-    expect(src, "编辑器监听要认还原窗口").toMatch(/restoringViewports\.has\(t\.tabId\)/);
-    // 精确串（带 8 空格缩进）区分预览那句与编辑器那句（后者是 `if (t && …)`）
-    expect(src, "预览监听要认还原窗口").toMatch(
-      /if \(\s*viewportWriteDepth > 0 \|\|\s*preview\.isSuppressingScrollWrite\(\)[\s\S]{0,400}?if \(restoringViewports\.has\(t\.tabId\)\) return;/,
-    );
+    expect(src, "预览监听要认程序来源标记").toMatch(/if \(isProgrammatic\(preview\.root\)\)/);
   });
 
-  it("反向验证：退化成「落盘只读容器 / 不挡程序滚动」，上二条必须失败", () => {
-    // 退化两步：取快照时改读容器（B137 原状），以及去掉二次定位的抑制。
-    // 这里**刻意**用整段正则而不是字面量：viewportOfTab 的函数体上方挂着说明注释，
-    // 字面量一撞注释就失配，退化会悄悄变成「什么都没改」、用例跟着假绿。
-    const degrade = (s: string): string =>
-      s
-        .replace(
-          /function viewportOfTab\(t: Tab\): number \| null \{[\s\S]*?return t\.scrollTop;/,
-          "function viewportOfTab(t: Tab): number | null {\n  const p = panels.get(t.panelId);\n  return p?.preview?.root.scrollTop ?? null;\n}",
-        )
-        .replace(
-          // ⚠️ 字面量要跟着源码的多行排版走（B162 起是三个判据、prettier 折行），
-          //    失配会让退化变成「什么都没改」、整条反向验证假绿。
-          "viewportWriteDepth > 0 ||\n          preview.isSuppressingScrollWrite() ||\n          preview.isProgrammaticScrolling()",
-          "false",
-        );
-    const degraded = degrade(src);
+  it("反向验证：退化成「预览监听不吞程序回执」，B170 两条必须失败", () => {
+    // 退化：去掉预览监听里的程序来源守卫（B170 前状：程序钉位的回执会被当作用户滚动，
+    // 写进快照并反推编辑器 → 拉锯）。
+    expect(src, "退化串要先自证原句还在").toContain("if (isProgrammatic(preview.root))");
+    const degraded = src.replace(
+      /if \(isProgrammatic\(preview\.root\)\) \{[\s\S]*?return;\s*\}/,
+      "        // (B170 退化：去掉程序来源守卫)",
+    );
     expect(degraded, "退化实现应真的换了写法").not.toBe(src);
-
-    expect(degraded, "退化后退回「只读容器」写法（第一条的 not.toMatch 必须命中）").toMatch(
-      /return p\?\.preview\?\.root\.scrollTop \?\? null;/,
+    expect(degraded, "退化后预览监听不再认程序来源标记（B170 的断言此时必须落空）").not.toMatch(
+      /if \(isProgrammatic\(preview\.root\)\)/,
     );
-    // 方向：「源码必须有这个判据」⇒ 退化后它该**消失** ⇒ 这里用 not.toMatch。
-    // （写成 toMatch 就永远为真，退化用例会假绿 —— B137 那条踩过同一个坑）
-    expect(degraded, "退化后程序滚动不再被挡（第二条 toMatch 此时必须落空）").not.toMatch(
-      /viewportWriteDepth > 0 \|\|\s*preview\.isSuppressingScrollWrite\(\)/,
-    );
-
-    // 退化 5：去掉**预览**那句还原守卫（B142 前状）—— `setBlocks` 那发 0 值事件没人挡。
-    // 用带缩进的精确串：编辑器那句是 `if (t && …)`，不会被误伤。
-    const PREVIEW_GUARD = "        if (restoringViewports.has(t.tabId)) return;";
-    const degradedNoRestoreGuard = src.replace(PREVIEW_GUARD, "        // 已被删除");
-    expect(degradedNoRestoreGuard, "退化实现应真的换了写法").not.toBe(src);
-    expect(
-      degradedNoRestoreGuard,
-      "退化后预览监听不再认还原窗口（B142 的断言此时必须落空）",
-    ).not.toMatch(/if \(restoringViewports\.has\(t\.tabId\)\) return;/);
   });
 });

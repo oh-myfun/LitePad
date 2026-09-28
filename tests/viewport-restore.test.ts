@@ -208,7 +208,8 @@ describe("B145 恢复位置：布局晚几帧稳定时也必须钉回（而不�
   });
 });
 
-const src = readFileSync("src/main.ts", "utf-8");
+// 归一换行：字面量按 LF 写；工作副本若被翻成 CRLF，`;\r\n` 中间的 `\r` 会坑掉带 `\n` 的判据。
+const src = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
 
 /** 取出某个函数 / 回调的**函数体**（从 header 处起做花括号配平）。 */
 function bodyOf(header: string, from: string = src): string {
@@ -229,7 +230,6 @@ function bodyOf(header: string, from: string = src): string {
 describe("B145 静态契约：还原写路径只有一个出口，焦点要让位", () => {
   it("滚动位置写入只准走 recordScroll 这一个闸口", () => {
     const gate = bodyOf("function recordScroll(");
-    expect(gate, "闸口要挡住还原期").toMatch(/restoringViewports\.has\(tabId\)/);
     expect(gate, "被挡时要留一条 trace，方便看日志定位").toMatch(/logger\.trace\("viewport"/);
     // 整份源码里直连 store 写视口的那几行，只可能落在闸口内部
     const stray =
@@ -268,14 +268,14 @@ describe("B145 静态契约：还原写路径只有一个出口，焦点要让�
   });
 });
 
-describe("B146 静态契约：换文档的整段都要罩在还原窗口里", () => {
+describe("B146 静态契约：换文档前要先标程序来源（监听见标记即吞）", () => {
   const code = (s: string): string =>
     s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
-  it("切标签 / 关闭后接班：还原窗口与 viewTabId 都要先于 setState", () => {
+  it("切标签 / 关闭后接班：程序来源标记与 viewTabId 都要先于 setState", () => {
     // CM6 的 setState 末尾是 `if (hadFocus) this.focus(); this.requestMeasure();` ——
     // 换完文档它会**自己再滚一次**，加上浏览器按新内容裁剪 scrollTop。这些滚动派发
-    // 的那一刻要是没在还原窗口里，就会被当成「用户停过的位置」写进记录。
+    // 的那一刻要是没被程序来源标记覆盖，就会被当成「用户停过的位置」写进记录。
     for (const [site, header, setState] of [
       ["切标签", "function switchTab(", "setState(tab.state)"],
       ["关闭后接班", "async function closeTabById(", "setState(nextTab.state)"],
@@ -284,10 +284,10 @@ describe("B146 静态契约：换文档的整段都要罩在还原窗口里", ()
       const body = code(bodyOf(header));
       const at = body.indexOf(setState);
       expect(at, `${site} 处应能看到换文档那一行`).toBeGreaterThan(-1);
-      // 窗口要**罩住** setState：起点在它之前
-      const win = body.indexOf("restoringViewport(");
-      expect(win, `${site} 应有还原窗口`).toBeGreaterThan(-1);
-      expect(win, `${site} 的还原窗口必须罩住 setState（不能只罩住还原那一下）`).toBeLessThan(at);
+      // 程序来源标记要**罩住** setState：起点在它之前（换文档那几下自动滚动被监听认领吞掉）
+      const win = body.indexOf("markProgrammatic(");
+      expect(win, `${site} 应有程序来源标记`).toBeGreaterThan(-1);
+      expect(win, `${site} 的程序来源标记必须罩住 setState（先于换文档）`).toBeLessThan(at);
       // 而 `viewTabId` 也得先改：滚动监听靠它寻址，晚一步就会算到旧标签头上
       const vid = body.indexOf("viewTabId = ");
       expect(vid, `${site} 应能找到 viewTabId 赋值`).toBeGreaterThan(-1);
@@ -313,8 +313,7 @@ describe("B145 反向验证：退回旧写法，上面那几条必须变红", ()
   it("退回「focus 排在还原之后」后，顺序契约必须抓住", () => {
     // 把 switchTab 里 focus 那一行搬到 `restoreViewScroll` 之后 —— 正是修复前的顺序
     // ⚠️ 锚点要在 switchTab **这一段里**找：整份源码里 focus 那一行有好几处
-    // ⚠️ 不匹配前导缩进：focus / restore 现在落在 restoringViewport 的闭包里，缩进
-    //    从 2 空格变 4 空格，带上就一个都找不到了
+    // ⚠️ 不匹配前导缩进：focus / restore 位置不同，带上缩进就一个都找不到了
     // ⚠️ 也不带 `panel.` 前缀：还原段用的是局部变量 `view.focus()`（收窄能过编译）
     const FOCUS = "view.focus();\n";
     const RESTORE = "restoreViewScroll(panel);";

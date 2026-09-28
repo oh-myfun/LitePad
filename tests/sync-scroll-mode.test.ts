@@ -8,8 +8,8 @@
 // B154 起触发面又放宽了两处（用户原话：「窗口没有激活时鼠标放在一个视口中也能进行
 // 滚动，这时同步滚动也要能生效」「就算一个预览一个源码，同步滚动也要生效」）：
 //   · **位置**同步不再要求「源是激活面板的激活标签」—— 谁滚谁当源，鼠标没点过的
-//     视口也能带着兄弟走；回环改由 `viewportWriteDepth` + `restoringViewport`
-//     的两帧窗口自限（B142 那套），不再靠「只有激活的那份能当源」。
+//     视口也能带着兄弟走；回环改由 scroll-guard 的 `isProgrammatic` 标记自限
+//     （B170 那套，不赌时序、不靠还原窗口），不再靠「只有激活的那份能当源」。
 //   · **光标**那一半仍是单源（`isSyncSource`）—— 选区互推会互相抢，而移动鼠标
 //     并不改变激活面板。
 //   · **跨视图模式**（一个源码 / 一个预览）也要联动：坐标按「源显示在哪一侧」取、
@@ -21,10 +21,13 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 
-const main = readFileSync("src/main.ts", "utf-8");
-const html = readFileSync("index.html", "utf-8");
-const css = readFileSync("src/styles/global.css", "utf-8");
-const PREVIEW_TS = readFileSync("src/markdown/preview.ts", "utf-8");
+// ⚠️ 归一换行：下面的契约字面量 / 正则都按 LF 写。仓库里存的是 LF，但**工作副本被翻成
+// CRLF** 会一次性打掉一大片断言（`topLevelFnBody` 认 `\n}` 后的那个字符是 `\n`，CRLF 下
+// 是 `\r`，函数体直接抠成空串）。这里先归一，是防那类「改一个字节红一大片」的复发。
+const main = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
+const html = readFileSync("index.html", "utf-8").replace(/\r\n/g, "\n");
+const css = readFileSync("src/styles/global.css", "utf-8").replace(/\r\n/g, "\n");
+const PREVIEW_TS = readFileSync("src/markdown/preview.ts", "utf-8").replace(/\r\n/g, "\n");
 
 /** 编辑器滚动监听那条（含它前面那几行自限守卫）—— 与下面几条同一段切片。 */
 function scrollBodyOf(src: string): string {
@@ -140,32 +143,29 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
     expect(scroll, "编辑器里滚要推兄弟").toMatch(/\n\s*if \(t\) pushSyncToSiblings\(t, true\);\n/);
     // ⚠️ 判据里带括号：那段的注释也提到这个名字，只认字面会连注释一起命中（假绿）。
     expect(scroll, "这条不许再挂 isSyncSource 前置").not.toMatch(/isSyncSource\(/);
-    // 预览容器那条：挂在 `restoringViewports` 自检之后（兄弟被定位的两帧里不许回推）。
+    // 预览容器那条：程序摆位的回执由 `isProgrammatic(preview.root)` 吞掉（不推兄弟），
+    // 真用户滚动才到推兄弟那一句——守卫必须排在推同步之前。
     const prev = slice(main, 'preview.root.addEventListener("scroll"', "applyPanelMode(p);");
     expect(prev, "预览里滚也要推兄弟").toMatch(/^\s*pushSyncToSiblings\(t, true\);/m);
-    const atGuard = prev.indexOf("restoringViewports.has(t.tabId)");
-    const atPush = prev.indexOf("pushSyncToSiblings(t, true);");
-    expect(atGuard, "要能定位那道自限守卫").toBeGreaterThan(-1);
+    const atGuard = prev.indexOf("if (isProgrammatic(preview.root))");
+    const atPush = prev.indexOf("pushSyncToSiblings(t, true)");
+    expect(atGuard, "要能定位程序回执守卫").toBeGreaterThan(-1);
     expect(atPush, "要能定位推同步那句").toBeGreaterThan(-1);
     expect(atPush, "推同步要排在守卫之后（否则回环闸门形同虚设）").toBeGreaterThan(atGuard);
   });
 
-  it("位置同步的回环闸门：自限守卫仍在两条监听的首段", () => {
-    // 「谁滚谁当源」的代价是少了一道天然闸门，回环全靠这两条自限 —— 少一条就是抖动。
-    expect(scrollBodyOf(main), "程序滚动期间不许推").toMatch(
-      /if \(viewportWriteDepth > 0\) return;/,
-    );
+  it("位置同步的回环闸门：程序回执守卫仍在编辑器监听首段，且排在推兄弟之前", () => {
+    // 「谁滚谁当源」的代价是少了一道天然闸门，回环全靠 scroll-guard 的 `isProgrammatic`
+    // 标记 —— 程序钉位置的回执在更前面就被吞掉，到不了推兄弟那一路。少这一道就是抖动。
     const scroll = scrollBodyOf(main);
-    expect(scroll, "还原窗口里不许推").toMatch(/if \(t && restoringViewports\.has/);
-    // 两道守卫都要排在「推兄弟」之前，反了就挡不住下一帧才到的那发 scroll。
-    const atDepth = scroll.indexOf("viewportWriteDepth > 0");
-    const atRestore = scroll.indexOf("restoringViewports.has(t.tabId)");
+    expect(scroll, "程序滚动期间不许推").toMatch(
+      /if \(isProgrammatic\(shownView\.scrollDOM\)\) return;/,
+    );
+    const atGuard = scroll.indexOf("if (isProgrammatic(shownView.scrollDOM)) return;");
     const atPush = scroll.indexOf("pushSyncToSiblings(t, true)");
-    expect(atDepth, "要能定位抑制区间那行").toBeGreaterThan(-1);
-    expect(atRestore, "要能定位还原窗口那行").toBeGreaterThan(-1);
+    expect(atGuard, "要能定位程序回执守卫").toBeGreaterThan(-1);
     expect(atPush, "要能定位推同步那句").toBeGreaterThan(-1);
-    expect(atPush, "推同步要排在两道守卫之后").toBeGreaterThan(atDepth);
-    expect(atPush, "推同步也要排在还原窗口守卫之后").toBeGreaterThan(atRestore);
+    expect(atPush, "推同步要排在守卫之后（否则回环闸门形同虚设）").toBeGreaterThan(atGuard);
   });
 });
 
@@ -196,9 +196,13 @@ describe("B152 同步滚动模式：推进与触发点", () => {
     expect(g, "跳过要写在写记录之前").toBeLessThan(r);
   });
 
-  it("钉兄弟的 DOM 要套还原窗口（否则那发 scroll 会被记成用户停过的位置）", () => {
-    expect(PUSH_BODY, "要套 restoringViewport").toMatch(
-      /restoringViewport\(other\.tabId, \(\) => pinScrollTop\(/,
+  it("钉兄弟的 DOM 要走 pinScrollTop（内部标程序来源，回执被吞）而非裸写 scrollTop", () => {
+    // B170：程序钉位置若直接写 `scrollDOM.scrollTop` 而不经 `pinScrollTop`，那一下不会被
+    // 标成程序来源，回执落到编辑器监听就被记成「用户停过的位置」再反推回源 —— 拉锯。
+    // `pinScrollTop` 内部 `markProgrammatic` 把来源标好，回执由监听经 scroll-guard 吞掉，
+    // 不再套 `restoringViewport` 还原窗口（B170 删了那套时间窗）。
+    expect(PUSH_BODY, "px 分支要走 pinScrollTop").toMatch(
+      /pinScrollTop\(shownView\.scrollDOM, px\);/,
     );
   });
 
@@ -298,8 +302,8 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
   });
 
   it("接收端不许回推：跟本地兄弟用同一个落点函数", () => {
-    // 回环是靠 `restoringViewport` 那两帧挡的（两条滚动监听首行都认它），所以接收端
-    // 也必须走 `applySyncToSibling` —— 那条里钉位置是套在还原窗口里的。
+    // 回环是靠 scroll-guard 的 `isProgrammatic` 标记挡的（两条滚动监听首行都认它），
+    // 所以接收端也必须走 `applySyncToSibling` —— 那条里钉位置由 `pinScrollTop` 标程序来源。
     // ⚠️ 判据放行号：`applySyncToSibling(other,` 被 prettier 折成了三行。
     expect(POS_RCV, "复用本地那一份落点逻辑").toMatch(/applySyncToSibling\(\s*other,/);
     expect(POS_RCV, "不许自己再钉一次").not.toMatch(/pinScrollTop\(/);
@@ -353,8 +357,8 @@ describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚�
   it("换算之后也要钉进还原窗口，并把落点补记一次", () => {
     // 与 px 那个分支同一条纪律 3：不套窗口，兄弟那一发 scroll 就会被记成「用户停过
     // 的位置」，再顺着它的滚动监听推回源 —— 两个面板互相拉。
-    expect(PUSH_BODY, "换算那路也要套还原窗口").toMatch(
-      /restoringViewport\(other\.tabId, \(\) => \{\s*\n\s*pinScrollTop\(shownView\.scrollDOM/,
+    expect(PUSH_BODY, "换算那路也要走 pinScrollTop（标程序来源、回执被吞）").toMatch(
+      /pinScrollTop\(shownView\.scrollDOM, shownView\.lineBlockAt\(target\.from\)\.top\);/,
     );
     // ⚠️ 落点必须记：位置只活在 DOM 上，钉完不补记，这份实例的位置等于从没被记过。
     //    也不许把 `null` 倒进源码兄弟的槽 —— 那等于把它的位置抹成「从没显示过」。
@@ -376,30 +380,28 @@ describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚�
     expect(PUSH_BODY, "不许再走会留尾巴的 syncToLine").not.toMatch(/preview\.syncToLine\(line\)/);
   });
 
-  it("预览的程序定位也要套进按标签的还原窗口", () => {
-    expect(PUSH_BODY, "预览分支同样要套还原窗口").toMatch(
-      /restoringViewport\(other\.tabId, \(\) => preview\.syncToLineProgrammatic\(line\)\);/,
+  it("预览的程序定位走 syncToLineProgrammatic（标来源、不留尾巴），且落点补记在其后", () => {
+    // B170：预览跨面板同步走 `syncToLineProgrammatic` —— 它内部 `markProgrammatic` 标来源，
+    // 回执由预览监听经 scroll-guard 吞掉；且不留 `pendingSyncLine` 尾巴（B162）。不再套
+    // `restoringViewport` 还原窗口（B170 删了那套时间窗）。
+    expect(PUSH_BODY, "预览分支要走程序定位入口").toMatch(
+      /preview\.syncToLineProgrammatic\(line\);/,
     );
-    // ⚠️ 补记那笔必须留在窗口**外**：窗口期内 `recordScroll` 是拒写的（B145 唯一闸口）。
-    const atRestore = PUSH_BODY.indexOf(
-      "restoringViewport(other.tabId, () => preview.syncToLineProgrammatic(line));",
-    );
+    // 落点显式补记（程序定位不写快照）：必须排在 syncToLineProgrammatic 之后。
+    const atSync = PUSH_BODY.indexOf("preview.syncToLineProgrammatic(line);");
     const atRecord = PUSH_BODY.indexOf("recordScroll(other.tabId, shown.preview.root.scrollTop)");
-    expect(atRestore, "要能定位还原窗口那句").toBeGreaterThan(-1);
+    expect(atSync, "要能定位程序定位入口那句").toBeGreaterThan(-1);
     expect(atRecord, "要能定位补记那笔").toBeGreaterThan(-1);
-    expect(atRecord, "补记要排在窗口关闭之后").toBeGreaterThan(atRestore);
+    expect(atRecord, "补记要排在程序定位之后").toBeGreaterThan(atSync);
   });
 
-  it("B162 预览滚动监听要把「程序定位窗口」一并挡掉（否则回推源码成闭环）", () => {
-    // 预览的程序定位**不走 `pinScrollTop`**（跨视图只能按行）⇒ `viewportWriteDepth`
-    // 盖不住它；同步写回的那一路若漏出去，源会再推回来，A→B→A 拉锯。
-    const listener = slice(
-      main,
-      'preview.root.addEventListener("scroll"',
-      "if (restoringViewports.has(t.tabId)) return;",
-    );
-    expect(listener, "要能定位预览滚动监听的早退守卫").not.toBe("");
-    expect(listener, "守卫里必须有程序定位窗口判据").toContain("preview.isProgrammaticScrolling()");
+  it("B170 预览滚动监听要把程序回执吞掉（否则回推源码成闭环）", () => {
+    // 预览监听首行认 `isProgrammatic(preview.root)`：程序钉位的回执（跨面板同步钉位、
+    // 会话恢复、setBlocks 恢复、异步二次定位）一律被吞（不写快照、不推兄弟），只排程落盘；
+    // 真用户滚动时标记已被清，才会落到推兄弟那一路。
+    const listener = slice(main, 'preview.root.addEventListener("scroll"', "applyPanelMode(p);");
+    expect(listener, "要能定位预览滚动监听体").not.toBe("");
+    expect(listener, "守卫里必须有程序回执判据").toContain("if (isProgrammatic(preview.root))");
     expect(listener, "挡住之后仍要排程落盘").toContain("scheduleSessionSave();");
   });
 });
@@ -554,19 +556,18 @@ describe("B167 同步滚动抖动：选区派发不许自带滚动 + 回推要�
     );
   });
 
-  it("两条滚动监听都要挂「疑似回推」的诊断钩子（守卫漏了能被日志点名）", () => {
-    // 抖动现场靠日志定位：落点记在 lastSyncApply，滚动事件到达时若发现「这份刚被
-    // 我们推过、守卫却没拦住」，就打一条 debug。两条监听（编辑器 / 预览）都要有。
-    expect(scrollBodyOf(main), "编辑器监听要认回推").toContain("echoSuspicion(t.tabId");
+  it("两条滚动监听都要用 isProgrammatic 吞掉自家程序回执（否则回推成闭环）", () => {
+    // B170：程序钉位的回执由 scroll-guard 标记认领、直接吞掉——这是抖动根除的关键，
+    // 两条监听（编辑器 / 预览）都必须有这道守卫，且排在推兄弟之前。
+    expect(scrollBodyOf(main), "编辑器监听要吞程序回执").toContain(
+      "if (isProgrammatic(shownView.scrollDOM)) return;",
+    );
     const previewScroll = slice(
       main,
       'preview.root.addEventListener("scroll"',
       "applyPanelMode(p);",
     );
-    expect(previewScroll, "预览监听也要认回推").toContain("echoSuspicion(t.tabId");
-    expect(PUSH_BODY, "落点要记账（三处定位都要 markSyncApplied）").toMatch(
-      /markSyncApplied\(other\.tabId,/,
-    );
+    expect(previewScroll, "预览监听也要吞程序回执").toContain("if (isProgrammatic(preview.root))");
   });
 
   it("B167 反向验证：退回两处旧写法，上面两条必须落空", () => {
@@ -580,106 +581,103 @@ describe("B167 同步滚动抖动：选区派发不许自带滚动 + 回推要�
       /dispatch\(\{[^}]*scrollIntoView: false/,
     );
 
-    const GUARD =
-      'const suspicion = t ? echoSuspicion(t.tabId, shownView.scrollDOM.scrollTop) : "";';
+    const GUARD = "if (isProgrammatic(shownView.scrollDOM)) return;";
     expect(main, "退化串要先自证原句还在").toContain(GUARD);
-    const degradedGuard = main.replace(GUARD, "const suspicion = '';");
-    expect(scrollBodyOf(degradedGuard), "退化后编辑器监听不再认回推").not.toContain(
-      "echoSuspicion(t.tabId",
+    const degradedGuard = main.replace(
+      /if \(isProgrammatic\(shownView\.scrollDOM\)\) return;/,
+      "// (B170 退化：摘掉程序回执判定)",
+    );
+    expect(scrollBodyOf(degradedGuard), "退化后编辑器监听不再吞程序回执").not.toContain(
+      "if (isProgrammatic(shownView.scrollDOM)) return;",
     );
   });
 });
 
-// ------------------------------------------------------- B168：彻底屏蔽「自家滚动回执」
+// ------------------------------------------------------- B170：彻底屏蔽「自家滚动回执」
 // 旧的拉锯根因：回环闸门靠 `viewportWriteDepth` / `restoringViewport` 的**两帧窗口**赌时序，
 // 而图片异步加载 / 字体测量补偿 / 大文档重排会把那一发 scroll 拖到窗口之外 ⇒ A↔B 来回推。
-// 新机制不赌时序，而是**认落点**：每次我们主动钉位置都把「容器 + 真实 landed 值 + 时刻」
-// 记进白名单，scroll 事件落点一致且未过期就当自家回执吞掉（不推兄弟）。
-describe("B168 同步滚动抖动：彻底屏蔽「自家滚动回执」被当成用户滚动", () => {
-  it("两条滚动监听在推兄弟之前认「自家落点回执」并直接吞掉（不赌时序）", () => {
+// 新机制不赌时序、也不比位置：每次程序定位赋值前对目标 `markProgrammatic(el)`（合成 VS Code
+// `scrollType`），目标自己的 scroll 监听见标记即吞（见 src/scroll-guard.ts）；标记靠用户
+// 接管滚动的真实输入清除，**黏性**保留到那一刻，对几百 ms 后的迟到回执也免疫。
+describe("B170 同步滚动抖动：彻底屏蔽「自家滚动回执」被当成用户滚动", () => {
+  it("两条滚动监听在推兄弟之前认「程序来源标记」并直接吞掉（不赌时序、不比位置）", () => {
     const editor = scrollBodyOf(main);
-    // 编辑器那侧：落点对得上就是自家回执，不再指望两帧窗口盖得住下一帧才到的 scroll。
-    expect(editor, "编辑器监听要认自家落点回执").toContain(
-      "isSelfScroll(shownView.scrollDOM, shownView.scrollDOM.scrollTop)",
+    expect(editor, "编辑器监听要认程序来源标记").toContain(
+      "if (isProgrammatic(shownView.scrollDOM)) return;",
     );
     const previewScroll = slice(
       main,
       'preview.root.addEventListener("scroll"',
       "applyPanelMode(p);",
     );
-    expect(previewScroll, "预览监听也要认自家落点回执").toContain(
-      "isSelfScroll(preview.root, preview.root.scrollTop)",
+    expect(previewScroll, "预览监听也要认程序来源标记").toContain(
+      "if (isProgrammatic(preview.root))",
     );
     // 两道都要排在「推兄弟」之前，否则回环闸门形同虚设（与 B154 那一条同口径）。
-    const atSelf = editor.indexOf("isSelfScroll(shownView.scrollDOM");
+    const atSelf = editor.indexOf("if (isProgrammatic(shownView.scrollDOM)) return;");
     const atPush = editor.indexOf("pushSyncToSiblings(t, true)");
-    expect(atSelf, "要能定位自家落点判定").toBeGreaterThan(-1);
+    expect(atSelf, "要能定位程序回执判定").toBeGreaterThan(-1);
     expect(atPush, "要能定位推同步那句").toBeGreaterThan(-1);
-    expect(atPush, "推同步要排在自家落点判定之后").toBeGreaterThan(atSelf);
+    expect(atPush, "推同步要排在程序回执判定之后").toBeGreaterThan(atSelf);
   });
 
-  it("pinScrollTop 钉稳后把落点记进「自家人」白名单", () => {
-    // 只有记下落点，scroll 事件到达时才能认出这是「我们刚摆的位置」的回执。
-    expect(PIN_BODY, "钉稳那一下要记账").toContain("markSelfScroll(el, landed)");
+  it("pinScrollTop 每次钉位前都标程序来源（黏性标记，回执被吞）", () => {
+    // 只有标了来源，scroll 事件到达时滚动监听才能认出这是「我们刚摆的位置」的回执。
+    expect(PIN_BODY, "逐帧补钉每次赋值前都要标").toContain("markProgrammatic(el);");
   });
 
-  it("预览的程序定位回执判定带过期窗口（不再只靠 120ms 锁赌时序）", () => {
-    // B162 只靠 120ms 同步锁 + programmaticDepth 两帧，异步重排会把回执拖过锁有效期
-    // ⇒ 逃过去被当作用户滚动反推编辑器。B168 改成「认落点 + 过期才作废」。
+  it("预览的程序定位回执判定认程序来源标记（不再靠 120ms 锁赌时序）", () => {
     const onScroll = slice(PREVIEW_TS, "private onPreviewScroll(", "private blockAtLine(");
-    expect(onScroll, "回执判定要认过期窗口").toContain("SELF_SCROLL_TTL");
+    expect(onScroll, "回执判定要认程序来源标记").toContain(
+      "if (isProgrammatic(this.root)) return;",
+    );
   });
 
-  it("B168 反向验证：摘掉自家落点判定 → 上面「两条监听认回执」必须落空", () => {
-    // ⚠️ 退化串要连着缩进：那段的注释里也提到 isSelfScroll 这个名字，只按裸名 replace
+  it("B170 反向验证：摘掉程序回执判定 → 上面「两条监听认回执」必须落空", () => {
+    // ⚠️ 退化串要连着缩进：那段的注释里也提到 isProgrammatic 这个名字，只按裸名 replace
     //   会把注释里那句也换掉，退化版「什么都没改」⇒ 反向验证静默失效。
-    const ORIG =
-      "          if (t && isSelfScroll(shownView.scrollDOM, shownView.scrollDOM.scrollTop)) {";
+    const ORIG = "          if (isProgrammatic(shownView.scrollDOM)) return;";
     expect(main, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "          // (B168 退化：摘掉自家落点判定)");
+    const degraded = main.replace(ORIG, "          // (B170 退化：摘掉程序回执判定)");
     const editor = slice(
       degraded,
       'shownView.scrollDOM.addEventListener("scroll"',
       "attachPasteHandler(p);",
     );
-    expect(editor, "退化后编辑器监听不再认自家落点回执").not.toContain(
-      "isSelfScroll(shownView.scrollDOM",
+    expect(editor, "退化后编辑器监听不再认程序回执").not.toContain(
+      "if (isProgrammatic(shownView.scrollDOM)) return;",
     );
   });
 
-  it("B168 反向验证：摘掉 pinScrollTop 的记账 → 上面「钉稳记账」必须落空", () => {
-    const ORIG = "      markSelfScroll(el, landed);";
-    expect(PIN_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = PIN_BODY.replace(ORIG, "");
-    expect(degraded, "退化后钉稳不再记账").not.toContain("markSelfScroll(el, landed)");
+  it("B170 反向验证：摘掉 pinScrollTop 的标记 → 上面「钉位前标来源」必须落空", () => {
+    expect(PIN_BODY, "退化串要先自证原句还在").toContain("markProgrammatic(el);");
+    const degraded = PIN_BODY.replace(/markProgrammatic\(el\);/, "");
+    expect(degraded, "退化后钉位不再标来源").not.toContain("markProgrammatic(el)");
   });
 });
 
 // ------------------------------------------------------- B169：预览驱动编辑器滚动要被当成自家回执
 // 预览的 onPreviewScroll 通过 host.scrollToLine 把编辑器滚到对应行；这一发编辑器滚动若不
-// 标记成「自家摆位」，编辑器监听会把它当作用户滚动 → 反推预览 → 预览又被推回 → 拉锯 /
+// 标记成「程序摆位」，编辑器监听会把它当作用户滚动 → 反推预览 → 预览又被推回 → 拉锯 /
 // 抖动（用户报的「非激活文档滚动抖」「预览跟随整文档重渲染」同源）。修法：scrollToLine
-// 摆位时把落点记进自家人白名单（B168 那套 markSelfScroll / isSelfScroll）。
+// 摆位时 `markProgrammatic(v.scrollDOM)`（B170 的 scroll-guard 合成来源标记）。
 describe("B169 同步滚动抖动：预览驱动编辑器滚动要被当成自家回执吞掉", () => {
   const HOST = slice(main, "scrollToLine: (line: number) => {", "lineCount: () =>");
 
-  it("host.scrollToLine 摆位时要 markSelfScroll（落点记进自家人白名单）", () => {
+  it("host.scrollToLine 摆位时要 markProgrammatic（预览驱动编辑器滚动标成程序回执）", () => {
     expect(HOST, "要能定位 scrollToLine 回调").toContain("scrollToLine: (line: number) => {");
-    expect(HOST, "预览驱动编辑器滚动要标记成自家回执").toMatch(
-      /markSelfScroll\(v\.scrollDOM, top\);/,
-    );
+    expect(HOST, "预览驱动编辑器滚动要标记成程序回执").toMatch(/markProgrammatic\(v\.scrollDOM\);/);
     expect(HOST, "算出的顶行要先收进局部变量 top").toMatch(
       /const top = v\.lineBlockAt\(l\.from\)\.top;/,
     );
     expect(HOST, "要把 top 落进编辑器滚动槽").toMatch(/v\.scrollDOM\.scrollTop = top;/);
   });
 
-  it("B169 反向验证：摘掉 markSelfScroll → 上面那条必须落空", () => {
-    const ORIG = "      markSelfScroll(v.scrollDOM, top);";
-    expect(HOST, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = HOST.replace(ORIG, "");
-    expect(degraded, "退化后 scrollToLine 不再标记自家回执").not.toMatch(
-      /markSelfScroll\(v\.scrollDOM, top\)/,
+  it("B169 反向验证：摘掉 markProgrammatic → 上面那条必须落空", () => {
+    expect(HOST, "退化串要先自证原句还在").toContain("markProgrammatic(v.scrollDOM);");
+    const degraded = HOST.replace(/markProgrammatic\(v\.scrollDOM\);/, "");
+    expect(degraded, "退化后 scrollToLine 不再标记程序回执").not.toMatch(
+      /markProgrammatic\(v\.scrollDOM\)/,
     );
   });
 });
@@ -768,12 +766,16 @@ describe("B152 反向验证：退回旧写法，上面那几条必须变红", ()
     expect(body, "删掉后就不该再有这句子").not.toContain(ORIG);
   });
 
-  it("退回「钉兄弟的 DOM 不套还原窗口」→ 那条必须落空", () => {
-    const ORIG = "restoringViewport(other.tabId, () => pinScrollTop(shownView.scrollDOM, px));";
+  it("退回「钉兄弟 DOM 不标程序来源（裸写 scrollTop）」→ px 分支那条必须落空", () => {
+    // px 分支必须走 `pinScrollTop`（它内部 markProgrammatic 标来源、回执被吞）；
+    // 退化成裸写 scrollTop 后，那条「走 pinScrollTop」的契约必须落空。
+    const ORIG = "pinScrollTop(shownView.scrollDOM, px);";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "pinScrollTop(shownView.scrollDOM, px);");
-    const body = slice(degraded, "function pushSyncToSiblings(", "function showMessage(");
-    expect(body, "裸钉的写法要被抓到").not.toMatch(/restoringViewport\(other\.tabId/);
+    const degraded = main.replace(ORIG, "shownView.scrollDOM.scrollTop = px;");
+    const body = slice(degraded, "function applySyncToSibling(", "function showMessage(");
+    expect(body, "裸写 scrollTop 的写法要被抓到（没经 pinScrollTop 标来源）").not.toMatch(
+      /pinScrollTop\(shownView\.scrollDOM, px\);/,
+    );
   });
 
   it("退回「用 sync 字形」→「链条」那条必须落空", () => {
@@ -927,32 +929,24 @@ describe("B160 反向验证：退回旧写法，上面那四条必须变红", ()
   it("退回「走 syncToLine（留尾巴、无程序定位窗口）」→ 两条必须落空", () => {
     // B162 前状：预览分支调 `syncToLine` —— 它会留 `pendingSyncLine` 尾巴（每次重排
     // 都把预览拽回某一行），也没有程序定位窗口（逃过守卫的 scroll 会被反推成用户滚动）。
-    const ORIG = "restoringViewport(other.tabId, () => preview.syncToLineProgrammatic(line));";
+    const ORIG = "preview.syncToLineProgrammatic(line);";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(
-      ORIG,
-      "restoringViewport(other.tabId, () => preview.syncToLine(line));",
-    );
+    const degraded = main.replace(ORIG, "preview.syncToLine(line);");
     const body = slice(degraded, "function applySyncToSibling(", "function showMessage(");
-    expect(body, "退化后预览分支不再走程序定位入口").not.toContain(ORIG);
+    expect(body, "退化后预览分支不再走程序定位入口").not.toContain(
+      /preview\.syncToLineProgrammatic\(line\)/,
+    );
     expect(body, "退化后尾巴又留下来了").toMatch(/preview\.syncToLine\(line\)/);
   });
 
-  it("把换算那笔的记录挪进窗口内 → 「补记留在外」那条必须落空", () => {
-    // 窗口期内 `recordScroll` 是拒写的（B145 唯一闸口挪进还原窗口就永远写不进去），
-    // 所以补记必须留在窗口外。挪进去 ⇒ 源码兄弟的位置永远记不上。
-    const ORIG =
-      "  restoringViewport(other.tabId, () => {\n    pinScrollTop(shownView.scrollDOM, shownView.lineBlockAt(target.from).top);\n  });\n  // 落点得记，否则兄弟这份的位置只活在 DOM 上：离屏前没人补记，重启就丢了。\n  recordScroll(other.tabId, shownView.scrollDOM.scrollTop);";
-    expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(
-      ORIG,
-      "  restoringViewport(other.tabId, () => {\n    pinScrollTop(shownView.scrollDOM, shownView.lineBlockAt(target.from).top);\n    recordScroll(other.tabId, shownView.scrollDOM.scrollTop);\n  });",
-    );
+  it("把换算那笔的补记删掉 → 「补记在钉位之后」那条必须落空", () => {
+    // 行号换算分支：先 `pinScrollTop`（内部 markProgrammatic 标来源）钉稳，再 `recordScroll`
+    // 把落点写进兄弟自己的记录（B145 唯一闸口）。删掉这一笔，兄弟这份的位置就只活在 DOM
+    // 上，离屏前没人补记，重启就丢了 —— 那条「换算后要补记落点」的契约必须落空。
+    const ORIG_REC = "  recordScroll(other.tabId, shownView.scrollDOM.scrollTop);";
+    expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG_REC);
+    const degraded = main.replace(ORIG_REC, "");
     const body = slice(degraded, "function applySyncToSibling(", "function showMessage(");
-    // ⚠️ 盯**缩进**：补记被挪进窗口后缩进从 2 格变 4 格，这里看的就是「它还站在窗口外」。
-    //    只按短句判会让退化版照样命中（那句还躺在窗口里）。
-    expect(body, "补记挪进还原窗口后就永远写不进去了（缩进该是 2 格）").not.toMatch(
-      /^ {2}recordScroll\(other\.tabId, shownView\.scrollDOM\.scrollTop\);$/m,
-    );
+    expect(body, "删掉补记后「换算分支补记在钉位之后」就站不住了").not.toContain(ORIG_REC);
   });
 });

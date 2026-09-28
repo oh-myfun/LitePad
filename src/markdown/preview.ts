@@ -1,20 +1,16 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 
 import type { MdBlock } from "./pipeline";
+import { attachUserScrollClear, isProgrammatic, markProgrammatic } from "../scroll-guard";
 
 /**
  * Markdown 预览面板（M3）：
  * - 增量 patch：按顶层 block 复用 DOM（html 不变的 block 不动节点）
  * - 懒加载增强：KaTeX / Mermaid / Shiki 均动态 import，首次用到才加载
- * - 双向同步滚动：block 锚点对齐 + 回环锁
+ * - 双向同步滚动：block 锚点对齐 + 来源标记（src/scroll-guard 合成 VS Code `scrollType`）
  */
 
 const LAZY_THRESHOLD_LINES = 5000; // 大文档：关闭 Mermaid/Shiki 自动渲染
-
-/** B168：程序滚动回执的有效期（ms）。落点和我们刚钉的一致、且没过期 ⇒ 当作自家回执吞掉，
- *  不靠 120ms 同步锁赌时序（图片加载重排会把那一发 scroll 拖过锁的有效期，逃过去就被
- *  当成用户滚动反推编辑器 ⇒ 闭环成拉锯）。过期才作废，免得长期滞留误吞用户之后滚到的相近位置。 */
-const SELF_SCROLL_TTL = 600;
 
 export interface SyncHost {
   /** 编辑器可视区顶行（1-based） */
@@ -34,27 +30,8 @@ export class PreviewPane {
   readonly root: HTMLElement;
   private blocks: BlockNode[] = [];
   private host: SyncHost | null = null;
-  /** 同步回环锁：editor→preview 滚动期间丢弃 preview 的 scroll 事件，反之亦然 */
-  private syncLock: "editor" | "preview" | null = null;
-  private lockTimer: number | null = null;
   /** 程序定位（大纲跳转/转到行）的目标行：异步增强或图片加载重排后据此重定位 */
   private pendingSyncLine: number | null = null;
-  /** 程序设定的滚动位置：scroll 事件是异步的，同步锁过期后仍要能识别出自家滚动
-   *  （重渲染把 scrollTop 清零再改回也会冒出一次 scroll 事件） */
-  private programmaticTop: number | null = null;
-  /** B168：上一次程序定位的时刻 —— 与 `programmaticTop` 配对，判断回执是否还在有效期内。 */
-  private selfAt = 0;
-  private suppressScrollWrite = false;
-  /**
-   * B162：程序定位窗口的深度（与 main 侧 `restoringViewport` 同构，两帧解锁）。
-   *
-   * 跨面板同步滚动对预览的每一次定位都是**程序摆的**，不是用户停过的位置。它不走
-   * `pinScrollTop`（跨视图只能按行，纪律 2），所以 `viewportWriteDepth` 盖不住它 ——
-   * 只剩 120ms 同步锁赌时序，而锁过期时 `programmaticTop` 也被清空：任何迟到的
-   * scroll 都会被当成「用户手动滚动」反推编辑器，源码那侧再跟着动 ⇒ 来回拉锯
-   * （用户报的「预览位置会抖」就是逃过守卫的那几发在闭环）。
-   */
-  private programmaticDepth = 0;
   private mermaidSeq = 0;
   /** 活动文档目录（相对路径图片解析基准） */
   private baseDir: string | null = null;
@@ -63,6 +40,10 @@ export class PreviewPane {
     this.root = document.createElement("div");
     this.root.className = "md-preview";
     this.root.addEventListener("scroll", () => this.onPreviewScroll());
+    // B170：给预览滚动容器挂「用户接管即清程序标记」的监听 —— 标记靠真实输入清除、
+    // 不靠时间窗（见 src/scroll-guard.ts）。这样渲染扰动（setBlocks 归零再拉回、图片加载
+    // 重排）导致的 actual≠expect 不会被误判成用户滚动反推编辑器。
+    attachUserScrollClear(this.root);
     // 图片/iframe 的 load 不冒泡，用捕获阶段监听——布局变化后按 pending 行重定位
     this.root.addEventListener("load", () => this.applyPending(), true);
     this.root.addEventListener("click", (e) => {
@@ -89,11 +70,6 @@ export class PreviewPane {
 
   setBaseDir(dir: string | null): void {
     this.baseDir = dir;
-  }
-
-  /** 编辑器→预览方向正在同步（预览→编辑器的程序滚动引发的事件应忽略）。 */
-  isSyncing(): boolean {
-    return this.syncLock === "preview";
   }
 
   // ------------------------------------------------ 渲染
@@ -142,7 +118,9 @@ export class PreviewPane {
       this.applySyncToLine(this.pendingSyncLine);
     } else {
       this.root.scrollTop = prevScroll;
-      this.programmaticTop = prevScroll;
+      // B170：这次恢复是程序摆位（replaceChildren 把 scrollTop 清零后我们拉回），回执由
+      // 预览 scroll 监听经 scroll-guard 标记吞掉，不当成用户滚动。
+      markProgrammatic(this.root);
     }
     if (options.enhanced !== false) void this.enhance();
     // 重排后布局可能变化（图片/公式占位），按 pending 行再定位一次
@@ -420,48 +398,32 @@ export class PreviewPane {
   }
 
   /**
-   * B162：**程序发起**的按行定位 —— 跨面板同步滚动专用。
+   * B170：**程序发起**的按行定位 —— 跨面板同步滚动专用。
    *
-   * 与 `syncToLine`（大纲跳转：一次性目标，增强后还要按它重定位）的两点区别：
+   * 与 `syncToLine`（大纲跳转：一次性目标，增强后还要按它重定位）的区别：
    *   · **不留 `pendingSyncLine` 尾巴**：同步滚动的目标行每帧都在变，记下来等于给
    *     每次重排留一个「把预览拽回某一行」的钩子（B160 抖动的根源之一）；
-   *   · **开程序定位窗口**：期间这一侧派发的 scroll 一律不当成用户滚动 —— 预览的
-   *     程序定位不走 `pinScrollTop`（跨视图只能按行），`viewportWriteDepth` 盖不住，
-   *     没这道窗口就只剩 120ms 锁赌时序，逃过去的那发会反推编辑器、闭环成拉锯。
-   *
-   * ⚠️ 解锁等**两帧**（B142 同款）：scroll 事件下一帧才派发，事件引发的回推再下一帧。
+   *   · **标程序来源**：定位前 `markProgrammatic(this.root)`，回执 scroll 被监听见标记
+   *     即吞（见 src/scroll-guard.ts，合成 VS Code 的 `scrollType`）。标记靠用户接管
+   *     滚动的真实输入清除，**不靠时间窗** —— 渲染扰动（setBlocks 归零再拉回、图片加载
+   *     重排）把 actual 拖离 expect 也不会被误判成用户滚动反推编辑器，闭环拉锯根除。
    */
   syncToLineProgrammatic(line: number): void {
     this.pendingSyncLine = null;
-    this.programmaticDepth++;
-    try {
-      this.applySyncToLine(line);
-    } finally {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          this.programmaticDepth--;
-        });
-      });
-    }
-  }
-
-  /** 是否正处于程序定位窗口（这一侧的 scroll 事件不该被当成用户滚动）。 */
-  isProgrammaticScrolling(): boolean {
-    return this.programmaticDepth > 0;
+    this.applySyncToLine(line); // 内部 markProgrammatic(this.root)，覆盖本次定位回执
   }
 
   /**
    * 直接摆到指定像素位置（B129：会话恢复）。
    *
    * 与 `syncToLine` 的区别是**不认行、只认位置**：恢复会话时编辑器是 `display:none`，
-   * 没法像切视图那样按「编辑器顶行」反推预览该停在哪。落点同时写进 `programmaticTop`
-   * —— 否则紧随其后的 scroll 事件会被当成用户手动滚动，反过来去动编辑器。
+   * 没法像切视图那样按「编辑器顶行」反推预览该停在哪。本次摆位 `markProgrammatic`——
+   * 否则紧随其后的 scroll 事件会被当成用户手动滚动，反过来去动编辑器（B170）。
    */
   setScrollTop(px: number): void {
     const nextTop = Math.max(0, px);
     this.root.scrollTop = nextTop;
-    this.programmaticTop = nextTop;
-    this.selfAt = Date.now();
+    markProgrammatic(this.root);
     // 位置已定，别再被异步重排（图片/公式增强）拽回行定位
     this.pendingSyncLine = null;
   }
@@ -480,7 +442,6 @@ export class PreviewPane {
   private applySyncToLine(line: number): void {
     const target = this.blockAtLine(line);
     if (!target) return;
-    this.acquireLock("editor");
     const idx = this.blocks.indexOf(target);
     const next = this.blocks[idx + 1];
     const el = target.el;
@@ -496,9 +457,9 @@ export class PreviewPane {
       top += ((this.blockTop(next.el) - top) * into) / range;
     }
     const nextTop = Math.max(0, top - 8);
+    // B170：程序摆位，先标来源再赋值，回执由 scroll 监听经 scroll-guard 吞掉。
+    markProgrammatic(this.root);
     this.root.scrollTop = nextTop;
-    this.programmaticTop = nextTop;
-    this.selfAt = Date.now();
   }
 
   /** block 相对预览内容区的偏移（不受 offsetParent 与当前滚动影响）。 */
@@ -523,46 +484,32 @@ export class PreviewPane {
     return Number.isFinite(line) && line > 0 ? line : null;
   }
 
-  /** 布局稳定后按 pending 行再定位一次（异步增强 / 图片加载后调用）。 */
+  /**
+   * 布局稳定后按 pending 行再定位一次（异步增强 / 图片加载后调用）。
+   *
+   * B170：这一发是**异步补刀**（图片 / 公式增强后布局变了，再定位一次）。它走
+   * `applySyncToLine`，内部 `markProgrammatic` 已把来源标好，回执由滚动监听直接吞掉
+   * —— 不再需要 `suppressScrollWrite` 那种「先压位再解位」的时序补丁（异步补刀落点
+   * 和上一次不同，旧方案里它会被当成用户滚动写进快照，正是 960/952 抖动的根）。
+   */
   private applyPending(): void {
     if (this.pendingSyncLine === null) return;
     const line = this.pendingSyncLine;
     requestAnimationFrame(() => {
       if (this.pendingSyncLine !== line) return;
-      // B139：这一发是**异步补刀**（图片 / 公式增强后布局变了，再定位一次）。
-      // 落点和上一次往往不同，而 DOM 上滚容器的那条监听一收到事件就会把位置
-      // 写进快照 —— 于是「位置还没稳就先记了一半」，这就是 960 / 952 抖动的根。
-      // 同步那一次（`syncToLine`，用户主动切模式）**照常写**：那是所见即所得。
-      this.suppressScrollWrite = true;
       this.applySyncToLine(line);
-      requestAnimationFrame(() => {
-        this.suppressScrollWrite = false;
-      });
     });
   }
 
-  /** 是否正处于「增强后的二次定位」——此刻的 scroll 事件不该写进快照。 */
-  isSuppressingScrollWrite(): boolean {
-    return this.suppressScrollWrite;
-  }
-
   private onPreviewScroll(): void {
-    // B162：程序定位窗口内的 scroll 一律不当成用户滚动 —— 否则锁一过期（programmaticTop
-    // 也随之清空），逃过还原窗口的那发就会被反推成「用户在滚预览」，源码跟着动，来回拉锯。
-    if (this.syncLock === "editor" || this.programmaticDepth > 0) return;
-    // 自家程序滚动的回执：锁（120ms）可能刚好在重渲染清空 scrollTop 后过期，
-    // 只靠锁会把这次事件误判成用户手动滚动 → 清掉 pendingSyncLine，跳转落点丢失。
-    if (this.programmaticTop !== null && Math.abs(this.root.scrollTop - this.programmaticTop) < 1) {
-      // 自家程序滚动回执：落点和我们刚钉的一致 ⇒ 直接吞（B168：不再只靠 120ms 锁赌时序，
-      // 而是认落点；过期才作废，避免长期滞留误吞真实用户滚动）。锁本身仍保留，作第二道闸。
-      if (Date.now() - this.selfAt > SELF_SCROLL_TTL) this.programmaticTop = null;
-      return;
-    }
-    this.programmaticTop = null;
+    // B170：程序摆位的回执（跨面板同步钉位、会话恢复、setBlocks 恢复、异步二次定位）
+    // 一律由 scroll-guard 标记认领、直接吞（不写快照、不推兄弟）。标记靠用户接管滚动的
+    // 真实输入清除，**不比位置、不赌时序、无时间窗** —— 渲染扰动（setBlocks 归零再拉回、
+    // 图片加载重排位移）把 actual 拖离 expect 也不会被误判成用户滚动反推编辑器，闭环拉锯根除。
+    if (isProgrammatic(this.root)) return;
     if (!this.host) return;
     // 用户手动滚动预览：取消待重定位（避免异步重排后又把视图拉回）
     this.pendingSyncLine = null;
-    this.acquireLock("preview");
     const top = this.root.scrollTop;
     const target = this.blockAtOffset(top + 8);
     if (!target) return;
@@ -585,18 +532,5 @@ export class PreviewPane {
       else break;
     }
     return result ?? this.blocks[0] ?? null;
-  }
-
-  private acquireLock(who: "editor" | "preview"): void {
-    this.syncLock = who;
-    if (this.lockTimer !== null) clearTimeout(this.lockTimer);
-    this.lockTimer = setTimeout(() => {
-      this.syncLock = null;
-      this.lockTimer = null;
-      // B162：**不再**在这里清 `programmaticTop`。它是「自家程序滚动落点」的回执判据，
-      // 清了之后，浏览器拖过 120ms 才派发的那发 scroll 就会被当成用户手动滚动、反推
-      // 编辑器 —— 源码再跟着动，来回拉锯（用户报的抖动）。清理由回执判定**失败**那条
-      // 路负责（`onPreviewScroll` 里本来就有）：位置对不上 = 真用户在滚，那时才作废。
-    }, 120) as unknown as number;
   }
 }

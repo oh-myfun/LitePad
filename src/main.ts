@@ -28,6 +28,8 @@ import "./styles/preview.css";
 // 取 32×32（四张里最小，1.2KB）：标题栏显示 16px，正好 2× 覆盖 HiDPI 缩放。
 import appMarkUrl from "../src-tauri/icons/32x32.png";
 
+import { attachUserScrollClear, isProgrammatic, markProgrammatic } from "./scroll-guard";
+
 import {
   createEditor,
   makeTabState,
@@ -536,9 +538,10 @@ const sharedDocIds = new Set<number>();
  *    挡掉的并不只是程序滚动）。
  *
  * ⚠️ B154 起它**只守光标那一半**：两条滚动监听已经改成「谁滚谁当源」（用户要求窗口
- *    没激活、面板没点过时也能同步），位置同步的回环由 `viewportWriteDepth` 与
- *    `restoringViewport` 的两帧窗口自限。选区不同 —— 移动鼠标不改变激活面板，非激活
- *    那份的光标本来就是被同步推过去的结果，让它也能当源就会跟「谁在编辑」打起来。
+ *    没激活、面板没点过时也能同步），位置同步的回环由 `scroll-guard` 的来源标记自限
+ *    （程序钉位的回执被监听见 `markProgrammatic` 即吞，不赌时序、不靠窗口）。选区不同 ——
+ *    移动鼠标不改变激活面板，非激活那份的光标本来就是被同步推过去的结果，让它也能当源
+ *    就会跟「谁在编辑」打起来。
  */
 function isSyncSource(tab: Tab, panel: Panel): boolean {
   return (
@@ -562,79 +565,9 @@ function displayedPanelOfTab(tabId: number): Panel | undefined {
  * 本窗口那一路和跨窗口那一路调用的是**同一个**函数 —— 纪律只有一份，抄成两份
  * 迟早有一份漏掉「跨视图模式只能换算」那一条（B154 就栽在复制粘贴上）。
  */
-/**
- * B167：同步滚动抖动的**诊断**记录 —— 我们最近一次给某份实例钉位置的时刻与落点。
- *
- * 抖动的样子是「A 推 B，B 那一发 scroll 又被当成用户滚动推回 A」。现成的守卫
- * （`viewportWriteDepth` / `restoringViewport` / 程序定位窗口）都是**两帧**窗口，
- * 而 CM6 的光标滚进视野、图片加载后的重排都会把那一发 scroll 拖到窗口之外。
- * 光靠读代码说不清「到底哪一条漏了」，所以这里留一份账：滚动事件到达时若发现
- * 「这份实例刚被我们推过、守卫却没拦住」，就打一条 debug 日志点名它。
- *
- * ⚠️ 只用于日志，不参与任何判定（判定仍由那三条守卫负责）—— 免得诊断代码自己
- *    变成新的行为分支。
- */
-const lastSyncApply = new Map<number, { at: number; px: number }>();
-
-/** 记下「我们刚把这份实例钉到了 px」。 */
-function markSyncApplied(tabId: number, px: number): void {
-  lastSyncApply.set(tabId, { at: Date.now(), px });
-}
-
-/** 这一发 scroll 是不是「刚被我们推过、却没被守卫挡下」——是就返回要点名的一句话。 */
-function echoSuspicion(tabId: number, px: number): string {
-  const rec = lastSyncApply.get(tabId);
-  if (!rec) return "";
-  const dt = Date.now() - rec.at;
-  if (dt > 500) return "";
-  return `｜疑似回推：${dt}ms 前刚被钉到 ${rec.px}，此刻 ${px}（守卫漏了这一发）`;
-}
-
-/**
- * B168：彻底屏蔽「我们主动摆的位置，其回执 scroll 被当成用户滚动去推兄弟」这一抖动根因。
- *
- * 旧机制靠 `viewportWriteDepth` / `restoringViewport` 的**两帧窗口**赌时序 —— 而图片异步
- * 加载、字体/行高测量补偿（CM6 `measureAndKeepScroll`）、大文档重排都会把那一发 scroll
- * 拖到窗口之外，于是「A 推 B、B 那发回执漏过窗口 → 反推 A → A 再推 B」成了拉锯。
- *
- * 新机制不赌时序，而是**认落点**：每次我们主动把一份实例的滚动位置钉到某值，都把
- * 「这个容器 + 我们钉到的真实落点 + 时刻」记进白名单。scroll 事件到达时，只要「这一发的
- * 滚动位置和我们刚钉的落点几乎一致、且没过期」，就判定是自家回执、直接吞掉（不写兄弟快照、
- * 不推兄弟），彻底掐断回环。落点取 `pinScrollTop` 读回来的**真实 landed 值**（缩放的小数、
- * 被文档长度夹住的差值都算进去了），所以连「下一帧才到」还是「300ms 后图片加载重排才到」
- * 都能认出来 —— 关键是不再假设「它一定在两帧之内到」。
- *
- * ⚠️ 与 `viewportWriteDepth` / `restoringViewports` 是**互补**而非替代：后两者还负责挡住
- *    「还原期间把被裁成 0 的中间值写进快照」，白名单只负责挡「推兄弟」那一步的回环。
- */
-const SELF_SCROLL_TTL = 600;
-const SELF_SCROLL_EPS = 1;
-const selfScrollMarks = new WeakMap<HTMLElement, { top: number; at: number }>();
-
-/** 记下「这个容器刚被我们钉到了 top」—— 后面那一发 scroll 会被认作自家回执。 */
-function markSelfScroll(el: HTMLElement, top: number): void {
-  selfScrollMarks.set(el, { top, at: Date.now() });
-}
-
-/**
- * 这一发 scroll 是不是「我们刚钉过的落点」的回执。
- * ⚠️ 返回 true 时**不**清标记 —— 连续几发自家回执只认第一发的话，后面几发又会被当成
- *   用户滚动。真正的清理由「位置对不上」那一支负责：用户一旦滚到不同位置，旧标记作废、
- *   这一下发正常传出去。过期也作废，免得长期滞留把用户之后滚到的「几乎同位置」误吞。
- */
-function isSelfScroll(el: HTMLElement, top: number): boolean {
-  const m = selfScrollMarks.get(el);
-  if (!m) return false;
-  if (Math.abs(top - m.top) > SELF_SCROLL_EPS) {
-    selfScrollMarks.delete(el);
-    return false;
-  }
-  if (Date.now() - m.at > SELF_SCROLL_TTL) {
-    selfScrollMarks.delete(el);
-    return false;
-  }
-  return true;
-}
+// B170：滚动来源标记改走 `src/scroll-guard.ts`（合成 VS Code 的 `scrollType`）—— 程序定位
+// 前 `markProgrammatic(el)`，scroll 监听见标记即吞，标记靠「用户接管滚动」的真实输入清除，
+// 不比位置、不赌时序、无时间窗。下面 `applySyncToSibling` 的落点日志保留为 debug 诊断。
 
 function applySyncToSibling(other: Tab, px: number | null, line: number | null): void {
   const shown = displayedPanelOfTab(other.tabId);
@@ -649,26 +582,12 @@ function applySyncToSibling(other: Tab, px: number | null, line: number | null):
   // 只能靠它的槽自己那份记录，这里不写任何东西（写了就是污染）。
   if (other.viewMode === "preview") {
     if (line === null || !shown?.preview) return;
-    // ⚠️ 立刻摘成局部：`restoringViewport` 那几笔要进闭包，属性上的收窄在闭包里会丢。
     const preview = shown.preview;
-    // B160：程序落点要套进按标签的还原窗口（纪律 3 的同一条），与源码分支同源。
-    // 少了这层，B 容器那一发 scroll 会被 main 的预览监听当成「用户停过的位置」，
-    // 顺手再 `pushSyncToSiblings` 推回来一轮 —— 落点是程序算的，不是用户停的。
-    // B162：改走**程序定位**入口（`syncToLineProgrammatic`）—— 它自带两帧的程序定位
-    //    窗口、也不留 `pendingSyncLine` 尾巴。预览的程序定位不走 `pinScrollTop`（跨视图
-    //    只能按行），`viewportWriteDepth` 盖不住它：没有那道窗口，就只剩 120ms 锁赌时序，
-    //    锁一过期连 `programmaticTop` 都被清空，逃过去的那发 scroll 会被当成「用户在滚
-    //    预览」反推编辑器，源码再跟着动 ⇒ A→B→A 来回拉锯（用户报的抖动）。
-    restoringViewport(other.tabId, () => preview.syncToLineProgrammatic(line));
-    // `syncToLine` 是同步落地的，容器里的值可以直接读；这一发 scroll 拦不住
-    // （还原窗口挡的是 main 那条监听，不是 preview 自己的回执判定），所以显式补记。
-    // ⚠️ 必须留在还原窗口**外**：窗口期内 `recordScroll` 是拒写的。
-    //    这笔不用局部 `preview`：它不在闭包里，属性收窄还在，原样读更直白。
+    // B170：跨面板同步把预览按行定位 —— 程序摆位，回执由预览的 scroll 监听经 scroll-guard
+    // 标记吞掉（不比位置、不赌时序、不靠还原窗口，渲染扰动也免疫）。
+    preview.syncToLineProgrammatic(line);
+    // `syncToLine` 同步落地，容器里的值可直接读；落点显式补记（程序定位不写快照）。
     recordScroll(other.tabId, shown.preview.root.scrollTop);
-    markSyncApplied(other.tabId, shown.preview.root.scrollTop);
-    // B168：预览被我们按行定位后，那一发 scroll 也记进自家人白名单 —— 预览容器那条监听
-    //   据此判定回执、不再推兄弟（否则又闭环成拉锯）。
-    markSelfScroll(shown.preview.root, shown.preview.root.scrollTop);
     return;
   }
   const shownView = shown?.view?.view;
@@ -677,24 +596,18 @@ function applySyncToSibling(other: Tab, px: number | null, line: number | null):
     recordScroll(other.tabId, px);
     // 派发选区**在先**、钉位置在后：CM6 为了让光标可见可能自己滚一下，钉在后面
     // 才能把它盖掉 —— 顺序反了就变成「位置被光标拽走」。
-    restoringViewport(other.tabId, () => pinScrollTop(shownView.scrollDOM, px));
-    markSyncApplied(other.tabId, shownView.scrollDOM.scrollTop);
+    // B170：pinScrollTop 会标记来源，回执由编辑器 scroll 监听吞掉，不必套还原窗口。
+    pinScrollTop(shownView.scrollDOM, px);
     return;
   }
-  // B160：源是**预览**侧 ⇒ 按纪律 2 它交不出编辑器像素，`px` 恒为 `null`。旧写法是
-  //    在 `px === null` 时直接 return —— 而 `line` 早就算好了，只是没人用，于是
-  //    「滚预览，源码兄弟一动不动」。换算只能从行号来：行首对齐的像素坐标与
-  //    `SyncHost.scrollToLine` 是同一套（纪律 4：中间只许出现「行号」这一种换算）。
+  // B160：源是**预览**侧 ⇒ 按纪律 2 它交不出编辑器像素，`px` 恒为 `null`。换算只能从行号来：
+  // 行首对齐的像素坐标与 `SyncHost.scrollToLine` 是同一套（纪律 4：中间只许出现「行号」这一种换算）。
   if (line === null) return;
   const target = shownView.state.doc.line(Math.min(Math.max(1, line), shownView.state.doc.lines));
-  // 纪律 3：钉 DOM 要套在还原窗口里、并复用 `pinScrollTop` 的抑制区间 ——
-  // 否则兄弟那一发 scroll 会被记成「用户停过的位置」，再顺着它的监听推回源。
-  restoringViewport(other.tabId, () => {
-    pinScrollTop(shownView.scrollDOM, shownView.lineBlockAt(target.from).top);
-  });
+  // B170：钉 DOM 由 pinScrollTop 标记来源、回执被吞，不再套还原窗口。
+  pinScrollTop(shownView.scrollDOM, shownView.lineBlockAt(target.from).top);
   // 落点得记，否则兄弟这份的位置只活在 DOM 上：离屏前没人补记，重启就丢了。
   recordScroll(other.tabId, shownView.scrollDOM.scrollTop);
-  markSyncApplied(other.tabId, shownView.scrollDOM.scrollTop);
 }
 
 /**
@@ -729,8 +642,9 @@ function broadcastSyncPos(src: Tab, px: number | null, line: number | null): voi
  *      污染它 —— 那类实例只跟光标；反过来，**预览态那份的槽里是预览像素，也不能被
  *      当成编辑器像素拿去推源码兄弟**（B154：这正是「一个预览一个源码」原先不生效的
  *      根因之一）；
- *   3. 钉 DOM 要套在 `restoringViewport` 里、并复用 `pinScrollTop` 的抑制区间，
- *      否则兄弟那一发 scroll 会被记成「用户停过的位置」，再顺着它的滚动监听推回源；
+ *   3. 钉 DOM 走 `pinScrollTop`（`B170` 起它内部 `markProgrammatic` 标来源，回执由兄弟
+ *      的滚动监听经 scroll-guard 吞掉），否则兄弟那一发 scroll 会被记成「用户停过的位置」，
+ *      再顺着它的滚动监听推回源；
  *   4. **跨视图模式只能换算，不能直倒**（B154）：预览那侧只认**行号**，编辑器那侧才
  *      认像素。所以坐标要从**源**当前显示的那一侧取、按**兄弟**那一侧的意义落 ——
  *      中间那次换算（顶行 ⇄ 行号）是唯一允许出现的两种坐标系。
@@ -1158,11 +1072,11 @@ function rebuildLayout(): void {
           const l = v.state.doc.line(Math.min(Math.max(1, line), v.state.doc.lines));
           const top = v.lineBlockAt(l.from).top;
           v.scrollDOM.scrollTop = top;
-          // B169：预览驱动编辑器滚动属程序摆位（点 block 跳转 / 预览→编辑器跟随），
-          // 其回执 scroll 必须被编辑器监听当成自家人吞掉 —— 否则这份没标记的位置会被
-          // 当作用户滚动反推预览，预览再被推回编辑器，闭环成拉锯 / 抖动
+          // B169/B170：预览驱动编辑器滚动属程序摆位（点 block 跳转 / 预览→编辑器跟随），
+          // 其回执 scroll 必须被编辑器监听经 scroll-guard 标记吞掉 —— 否则这份没标记的位置
+          // 会被当作用户滚动反推预览，预览再被推回编辑器，闭环成拉锯 / 抖动
           // （用户报的「非激活文档滚动抖」「预览跟随整文档重渲染」同源）。
-          markSelfScroll(v.scrollDOM, top);
+          markProgrammatic(v.scrollDOM);
         },
         lineCount: () => p.view?.view.state.doc.lines ?? 0,
       });
@@ -1170,22 +1084,10 @@ function rebuildLayout(): void {
         const shownView = p.view.view;
         shownView.scrollDOM.addEventListener("scroll", () => {
           const t = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
-          // B139：程序滚动期间（还原钉位置）别写 —— 那时容器里摆的是**还原的目标值**，
-          // 顺着事件写回去就是把「我们要去的地方」当成「用户停过的位置」。
-          if (viewportWriteDepth > 0) return;
-          // B142：位置还原还没立住（补钉在下一帧）—— 这期间容器里是被裁过的 0，
-          // 写进去就是把「还原前的空窗期」当成用户停过的位置，还会顺带排程落盘。
-          if (t && restoringViewports.has(t.tabId)) return;
-          // B168：自家钉位置的回执直接吞（认落点，不赌时序）—— 彻底掐断同步回环。
-          //   图片异步加载 / 字体测量补偿（CM6 measureAndKeepScroll）/ 大文档重排会把那一发
-          //   scroll 拖到两帧窗口之外，落点对不上就被当成用户滚动反推源 ⇒ A→B→A 拉锯。
-          if (t && isSelfScroll(shownView.scrollDOM, shownView.scrollDOM.scrollTop)) {
-            logger.debug(
-              "sync",
-              `编辑器 self-echo 吞掉 tab=${t.tabId} top=${shownView.scrollDOM.scrollTop.toFixed(1)}`,
-            );
-            return;
-          }
+          // B170：程序钉位置的回执由 scroll-guard 标记认领、直接吞（见 src/scroll-guard.ts）：
+          // 不比位置、不赌时序、不靠还原窗口，渲染扰动（setBlocks 归零再拉回、图片加载重排）
+          // 也免疫。用户接管滚动时标记被清，随后的 scroll 才是真用户。
+          if (isProgrammatic(shownView.scrollDOM)) return;
           // B126：滚动位置只活在 DOM 上，随滚动即时记进标签快照（赋值极廉价，
           // 不排程）。快照是与视图生命周期解耦的全局记录，所以「滚过但没切走就
           // 重建布局 / 销毁面板」也不会丢。
@@ -1200,28 +1102,19 @@ function rebuildLayout(): void {
           // B152 / B154：滚的是谁，谁就是源 —— 兄弟跟着同一个位置走。
           // ⚠️ 这里**不再**前置 `isSyncSource`：用户明确要求「窗口没有激活时，鼠标放在
           //    一个视口中也能滚动，这时同步滚动也要生效」（B154）。回环不是靠「只有
-          //    激活的那份能当源」挡的，而是靠下面两条前置守卫：
-          //      · `viewportWriteDepth > 0` —— 这一发 scroll 是程序钉位置派发的；
-          //      · `restoringViewports.has(t.tabId)` —— 被推动的兄弟在那两帧里不许回推
-          //        （`restoringViewport` 是两帧窗口，盖得住下一帧才到的 scroll）。
-          //    光标那一半仍走 `handleUpdate` 里那条单源判定，理由见 pushSyncToSiblings。
+          //    激活的那份能当源」挡的，而是靠 scroll-guard 的 `isProgrammatic` 标记：
+          //    程序钉位置的回执在更前面就被吞掉了，到不了这一路。
           // 排在排程之后：本条监听的活儿跟它是两件事，别为 B132 那条契约挤在一起。
           // B159：跨窗口那一路也在这里开 —— 「谁滚谁当源」在别的窗口同样算数。
-          // B167：守卫都过了才推 —— 若这一发其实是「我们刚推过去的回执」，
-          //   说明有守卫漏了它（抖动现场），打一条 debug 点名。
-          //   ⚠️ 别把下面那句推同步的 `if (t) …` 包进新块里：好几条老契约认的就是
+          // ⚠️ 别把下面那句推同步的 `if (t) …` 包进新块里：好几条老契约认的就是
           //   它这一行的原样写法（B154 / B159），也别在注释里抄它的完整字面量 ——
           //   反向验证那条退化用的是字面量 replace，注释里出现同串会被先替换掉。
-          const suspicion = t ? echoSuspicion(t.tabId, shownView.scrollDOM.scrollTop) : "";
-          if (suspicion) {
-            logger.debug("sync", `编辑器 scroll tab=${t?.tabId} 未被拦下${suspicion}`);
-          }
           if (t) pushSyncToSiblings(t, true);
-          // 预览→编辑器方向程序滚动期间忽略，防止回环抖动
+          // 编辑器（源）滚动时让预览跟随；程序钉位置的那发已被上面的标记吞掉，不会到这。
           if (!t || !isMdTab(t) || t.viewMode !== "preview") return;
-          if (preview.isSyncing()) return;
           preview.syncFromEditor();
         });
+        attachUserScrollClear(shownView.scrollDOM);
         attachPasteHandler(p);
       }
       // B137：预览滚动和编辑器滚动是同一件事 —— 位置只活在 DOM 上，随滚动即时
@@ -1230,47 +1123,18 @@ function rebuildLayout(): void {
       preview.root.addEventListener("scroll", () => {
         const t = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
         if (!t || t.viewMode !== "preview") return;
-        // B139：程序滚动期间（还原钉回 / 图片·公式增强后的二次定位）不写快照 ——
-        // 这两种落点都是**程序算出来的**，不是这个标签停过的位置；照写回去就是
-        // 「预览落点在 960 / 952 之间抖」的根。落盘排程照旧：位置本身没变。
-        // B162：跨面板同步的程序定位（`syncToLineProgrammatic`）也在这个窗口里 ——
-        //   它不走 `pinScrollTop`，`viewportWriteDepth` 盖不住；漏出去就会推回源、
-        //   源再推回来，闭环成拉锯。
-        if (
-          viewportWriteDepth > 0 ||
-          preview.isSuppressingScrollWrite() ||
-          preview.isProgrammaticScrolling()
-        ) {
+        // B170：程序钉位置的回执由 scroll-guard 标记认领、直接吞（见 src/scroll-guard.ts），
+        // 不写快照、不推兄弟；落盘排程照旧（位置本身没变）。渲染扰动（图片·公式增强二次
+        // 定位、setBlocks 重排）也一并免疫。用户接管时标记被清。
+        if (isProgrammatic(preview.root)) {
           scheduleSessionSave();
           return;
         }
-        if (restoringViewports.has(t.tabId)) return;
-        // B168：自家钉位置的回执直接吞（跨面板同步把预览钉到某行后，那一发 scroll 不该被
-        //   当成用户滚动反推兄弟）。认落点而非赌时序。
-        if (isSelfScroll(preview.root, preview.root.scrollTop)) {
-          logger.debug(
-            "sync",
-            `预览 self-echo 吞掉 tab=${t.tabId} top=${preview.root.scrollTop.toFixed(1)}`,
-          );
-          return;
-        }
         // B154：与编辑器那侧同口径 —— **谁滚谁当源**，用户手指还在预览上、窗口也没
-        //   激活，源码那份也要跟着走。同样挂在 `restoringViewports` 之后：兄弟被
-        //   定位后那两帧里不许回推（与 `pushSyncToSiblings` 里那对守卫同源）。
+        //   激活，源码那份也要跟着走。
         // B159：预览侧这一路同样往外广播 —— 纯预览态那份就是它的源，别的窗口也该跟上。
-        // B167：同上 —— 这里若出现「疑似回推」，就是预览那侧的守卫漏了这一发。
-        const suspicion = echoSuspicion(t.tabId, preview.root.scrollTop);
-        if (suspicion) {
-          logger.debug("sync", `预览 scroll tab=${t.tabId} 未被拦下${suspicion}`);
-        }
         pushSyncToSiblings(t, true);
-        // ⚠️ 这里**不要**用 `preview.isSyncing()` 当守卫：`isSyncing()` 认的是
-        // `syncLock === "preview"`，即**预览→编辑器**方向（用户正在翻预览）；而
-        // 预览容器自己的监听器（构造函数里注册、比这里先跑）一收到滚动就会
-        // `acquireLock("preview")` —— 照它挡下去，等于把**用户自己的滚动**全吞了
-        // （B137：滚过的预览既不记位置也不排程落盘，重启必回顶部）。编辑器带过来
-        // 的同步滚动反而不会命中这里：那种标签是源码态（`viewMode === "source"`），
-        // 早在上一行 return 了；真到了纯预览态，预览本来就该跟着编辑器走。
+        // 用户滚动预览：位置写进自己的快照，再排程落盘（B137）。
         t.scrollTop = preview.root.scrollTop;
         recordScroll(t.tabId, t.scrollTop);
         scheduleSessionSave();
@@ -1323,24 +1187,22 @@ function switchTab(panelId: number, tabId: number): void {
   // 那几下滚动既不是用户造成的，`viewTabId` 当时还指着旧标签（守卫按它寻址），
   // 一不留神就被记成「用户停过的位置」。
   //   ① `viewTabId` **先于** setState 改：滚动监听靠它寻址，晚一步就记到旧标签头上；
-  //   ② 整个换文档罩进 `restoringViewport`：还原窗口从 setState 之前就开着，两帧后才
-  //      解锁 —— 浏览器 scroll 事件下一帧才派发，那一下正落在窗口里。（试过再叠一层
-  //      「换文档也算程序滚动」的计数器，结果把切完标签同一帧内的**用户滚动**也丢了，
-  //      见下方 `viewportWriteDepth` 的说明。）
+  //   ② 换文档前先给编辑器标「程序来源」：CM6 的 `setState` 会把 scrollTop 归零再
+  //      重排，那一发 scroll 若不标记就会被当成用户滚动、写进接班标签的记录（B134/B146）。
+  //      `restoreViewScroll` 里的 `pinScrollTop` 也会继续标，覆盖随后的补钉回执。
   panel.viewTabId = tabId;
   const view = panel.view; // 闭包里不保留对 `panel.view` 的收窄，先取一份
-  restoringViewport(tabId, () => {
-    suppressDirty = true;
-    view.setState(tab.state);
-    suppressDirty = false;
-    // ⚠️ 焦点必须排在钉位置**之前**（B145）：`focus()` 会把光标滚进视野，而光标往往
-    // 不在刚还原出来的可视区里 —— 排在后面等于把刚钉好的位置顶掉。
-    view.focus();
-    logViewport("切换 · 还原窗口内", panel);
-    // B126：setState 重建了 ViewState 并把视口拉回开头，这里把滚动位置还回去。
-    // 必须排在 applyPanelMode 之前——它要按当前顶行把预览对齐到同一区域。
-    restoreViewScroll(panel);
-  });
+  markProgrammatic(view.view.scrollDOM);
+  suppressDirty = true;
+  view.setState(tab.state);
+  suppressDirty = false;
+  // ⚠️ 焦点必须排在钉位置**之前**（B145）：`focus()` 会把光标滚进视野，而光标往往
+  // 不在刚还原出来的可视区里 —— 排在后面等于把刚钉好的位置顶掉。
+  view.focus();
+  logViewport("切换 · 还原窗口内", panel);
+  // B126：setState 重建了 ViewState 并把视口拉回开头，这里把滚动位置还回去。
+  // 必须排在 applyPanelMode 之前——它要按当前顶行把预览对齐到同一区域。
+  restoreViewScroll(panel);
   logViewport("切换 · 还原后", panel);
   applyPanelMode(panel);
   // applyPanelMode 里的 syncToLine 会把预览按「编辑器顶行」重新定位一次，
@@ -1625,17 +1487,16 @@ async function closeTabById(tabId: number): Promise<void> {
   const nextTab = tabs.get(nextId);
   if (panel.view && nextTab) {
     const view = panel.view; // 闭包里不保留对 `panel.view` 的收窄，先取一份
-    // 同 switchTab：CM6 的 setState 自己会再 focus 一次（把光标滚进视野），加上浏览器
-    // 按新内容裁剪 scrollTop —— 还原窗口要从 setState 之前就开着，否则这几下滚动会被
-    // 当成「用户停过的位置」写进接班标签的记录（B146）
+    // 同 switchTab（B146）：CM6 的 setState 自己会再 focus / 重排，把 scrollTop 归零
+    // 那一发若不标记就会被当成用户滚动写进接班标签记录。换文档前先标程序来源，
+    // `restoreViewScroll` 的 `pinScrollTop` 继续标，覆盖补钉回执。
     panel.viewTabId = nextId;
-    restoringViewport(nextId, () => {
-      suppressDirty = true;
-      view.setState(nextTab.state);
-      suppressDirty = false;
-      // B126：接班的标签沿用**它自己**上次的位置（光标随 state，视口随 scrollTop）
-      restoreViewScroll(panel);
-    });
+    markProgrammatic(view.view.scrollDOM);
+    suppressDirty = true;
+    view.setState(nextTab.state);
+    suppressDirty = false;
+    // B126：接班的标签沿用**它自己**上次的位置（光标随 state，视口随 scrollTop）
+    restoreViewScroll(panel);
   }
   applyPanelMode(panel);
   // 同上：接班的是纯预览实例时，位置在预览那侧，applyPanelMode 的 syncToLine
@@ -1769,18 +1630,17 @@ function splitActivePanel(panelId: number, dir: "h" | "v"): void {
       panel.activeTabId = panel.tabs[panel.tabs.length - 1];
       const prev = tabs.get(panel.activeTabId);
       if (panel.view && prev) {
-        // 同 switchTab（B146）：CM6 的 setState 自己会再 focus / 测量、并派发滚动。
-        // `viewTabId` 得先认下接班标签（否则那几下滚动记到**被移走的那张**头上），
-        // 整段换文档也要罩进还原窗口，否则那几下滚动会当成「用户停过的位置」落进记录。
+        // 同 switchTab（B146）：CM6 的 setState 会归零 / 重排 scrollTop，那一发若不标记
+        // 会被当成用户滚动落进记录。`viewTabId` 先认下接班标签（否则记到被移走那张头上），
+        // 换文档前先标程序来源，`restoreViewScroll` 的 `pinScrollTop` 继续标覆盖补钉回执。
         panel.viewTabId = prev.tabId;
         const view = panel.view; // 闭包里不保留对 `panel.view` 的收窄，先取一份
-        restoringViewport(prev.tabId, () => {
-          suppressDirty = true;
-          view.setState(prev.state);
-          suppressDirty = false;
-          // B126：原位剩下的标签也要拿回自己的视口位置
-          restoreViewScroll(panel);
-        });
+        markProgrammatic(view.view.scrollDOM);
+        suppressDirty = true;
+        view.setState(prev.state);
+        suppressDirty = false;
+        // B126：原位剩下的标签也要拿回自己的视口位置
+        restoreViewScroll(panel);
       }
     } else {
       // 原面板空了：清悬挂引用，同步一个新标签过去（异步完成后重建挂载视图）
@@ -4237,30 +4097,21 @@ function viewportOfTab(t: Tab): number | null {
 }
 
 /**
- * 程序滚动期间禁止写快照（B139）。
+ * 程序滚动期间禁止写快照（B139）：已由 `src/scroll-guard.ts` 的来源标记取代。
  *
- * 滚动位置只活在 DOM 上，但**快照不跟着 DOM 走**（见 `viewportOfTab` 的语义）。
- * 于是会出现一类情况：我们自己的还原赋值（`pinScrollTop` 钉位置、`applyPending`
- * 的二次定位）会派发 scroll 事件，而那时容器里摆的是**程序算出来的中间态或落点**，
- * 不是这个标签真正的位置 —— 顺着事件写回去就把快照覆盖掉。
- * 典型症状：预览落点在 960 / 952 之间抖（jsdom 里肉眼可见，真机上就是
- * 「重启后位置差几行」）。
- *
- * 区间覆盖「赋值本身 + 它派发的那一发 scroll」，以及 `pinScrollTop` **逐帧补钉的
- * 整段**：浏览器的 scroll 事件在下一帧的 scroll steps 才派发，所以计数器必须活到
- * 最后一次补钉之后才降，中途降下来的话，补钉途中的中间值就会被当成用户停过的位置。
- * （B145 起补钉不再只做一帧。）
+ * 现在每次程序摆位（`pinScrollTop` / 预览钉位 / `host.scrollToLine`）都先
+ * `markProgrammatic(el)`，目标容器的 scroll 监听一见标记即吞（不写快照、不推兄弟），
+ * 标记靠用户接管滚动的真实输入清除 —— 不比位置、不赌时序、无时间窗。旧的
+ * `viewportWriteDepth` 计数与 `restoringViewport` 两帧窗口已删除；`pinScrollTop` 的
+ * 逐帧补钉只负责「钉稳」，不再兼任「抑制写快照」的计时器。
  */
-let viewportWriteDepth = 0;
 
 /**
- * ⚠️ 这里**曾经**另起过一个 `swappingView`：`setState` 前后也把 `viewportWriteDepth`
- * +1 一帧，想连「浏览器下一帧才派发的那发 scroll」一起挡住。已删（B146 二轮定稿）——
- * 它挡掉的并不只有换文档那两下自动滚动，**切完标签同一帧内的用户滚动也一并丢了**
- * （`session-restore-state` 的 B129 用例因此变红），而那本来就该记。
- * `restoringViewport` 的两帧窗口已经够用：换文档那几下自动滚动落在它是拦得住的，
- * 实测退回修复前后行为用例照样精确变红。想再加保险，得先能说清「丢掉的那一下
- * 一定是程序造成的」，现在说不清。
+ * ⚠️ 这里**曾经**另起过一个 `swappingView`：`setState` 前后把 `viewportWriteDepth` +1 一帧，
+ * 想连「浏览器下一帧才派发的那发 scroll」一起挡住。已删（B146 二轮定稿）—— 它挡掉的
+ * 并不只有换文档那两下自动滚动，**切完标签同一帧内的用户滚动也一并丢了**，而那本来就该记。
+ * 如今换文档那几下自动滚动改由「`markProgrammatic(view.scrollDOM)` + 监听见标记即吞」认领
+ * （见 `switchTab` / `restoreViewScroll`），不再靠时间窗赌时序。
  */
 
 /**
@@ -4296,32 +4147,6 @@ function rememberViewScroll(panel: Panel): void {
     return;
   }
   recordScroll(t.tabId, panel.view.view.scrollDOM.scrollTop);
-}
-
-/**
-/**
- * 正在还原视图位置的标签（B142）。
- *
- * 视图刚建好、内容还没撑开的那一会儿，浏览器会按「当前可滚动范围」把我们赋的值
- * 裁成 0，并派发一发值为 0 的 scroll；真正的位置要靠下一帧补钉才立住。于是：
- *   · 那发 0 值事件会把 0 写进会话记录**并排程落盘**；
- *   · 补钉那一下又在 `pinScrollTop` 的抑制区间里（按 B139 不该写）；
- *   ⇒ 盘上留下的是 0，重启回到顶部（用户报的症状）。
- *
- * 所以还原期间把这个标签自己发的所有 scroll 一并挡掉：等位置真正立住再解锁。
- */
-const restoringViewports = new Set<number>();
-
-/** 在「还原这一个标签的位置」期间跑一段代码：期间它派发的 scroll 一律不写快照。 */
-function restoringViewport(tabId: number, run: () => void): void {
-  restoringViewports.add(tabId);
-  run();
-  // 解锁要等两帧：补钉在下一帧、补钉派发的事件再下一帧。
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      restoringViewports.delete(tabId);
-    });
-  });
 }
 
 /**
@@ -4364,18 +4189,12 @@ function logViewport(where: string, panel?: Panel): void {
 /**
  * 写标签的滚动位置到会话记录 —— **唯一闸口**（B145）。
  *
- * `restoringViewports` 原来只被两个 scroll 监听认，于是还有几条旁路能绕过去：
- * `rememberViewScroll`（重建布局 / 关面板 / 落盘前刷新时读容器）、`refreshSession`
- * 的兜底写入。那几条恰好都发生在「还原刚起步、容器还是被裁过的 0」的窗口里 ——
- * 用户报的「打开窗口后位置刷新并落盘成 0」就是从这儿出去的。
- *
- * 把守卫挪到这一个出口上：还原期间，任何来源都不许写这条记录的 scrollTop。
+ * ⚠️ B170：还原期不再靠「`restoringViewports` 两帧窗口」在出口拦（那是赌时序的时间窗，
+ * 异步重排会把回执拖出去、漏判成用户滚动）。现在程序摆位（`pinScrollTop` / 预览钉位 /
+ * `host.scrollToLine`）都先 `markProgrammatic`，目标滚动监听**见标记即吞**，根本不会走到
+ * 这个出口 —— 守卫从「时间窗」上移到了「来源标记」上，且对迟到回执免疫。
  */
 function recordScroll(tabId: number, px: number | null): void {
-  if (restoringViewports.has(tabId)) {
-    logger.trace("viewport", `还原期拒绝写位置 tab=${tabId} px=${px}`);
-    return;
-  }
   // `t.scrollTop` 与记录是同一份东西（`viewportOfTab` 只读它），一并写过去别让两边分叉；
   // `null` 表示「这份实例从没显示过」，是有意义的空值，不往活动态里倒灌。
   if (px !== null) {
@@ -4433,17 +4252,13 @@ function fmtPx(v: number): string {
 
 function pinScrollTop(el: HTMLElement, px: number): void {
   pinningContainers.add(el);
-  // 整段都在「程序滚动」区间里：赋值派发的那次事件不该把位置写回快照（B139）。
-  // ⚠️ 区间要活到**最后一次补钉之后**才降（不能像 `suppressViewportWrite` 那样下一帧
-  // 就还）：布局可能连着好几帧都没稳，中途降下来的话，补钉途中的中间值就会被当成
-  // 「用户停过的位置」写进记录。
-  viewportWriteDepth++;
-  const release = (): void => {
-    requestAnimationFrame(() => {
-      viewportWriteDepth = Math.max(0, viewportWriteDepth - 1);
-    });
-  };
+  // B170：整段「逐帧补钉」期间都标程序来源 —— 赋值派发的 scroll 由监听经 scroll-guard
+  // 直接吞掉（不写快照、不推兄弟），不再靠 `viewportWriteDepth` 那种时间窗赌时序。
+  // 标记是**黏性的**：钉完之后一直留在容器上，直到用户真正接管滚动（wheel/键/触/拖条）
+  // 才清 —— 这样「钉完那一刻」与「几百 ms 后迟到回执」都被认成自家回执，闭环拉锯根除。
   const retry = (frame: number): void => {
+    // 每次赋值前都标：重试途中（被浏览器裁成 0 后下一帧再钉）每一发都被认领。
+    markProgrammatic(el);
     el.scrollTop = px;
     const landed = el.scrollTop;
     // 立住了。或者被**文档长度**夹住（短文档，px 本来就超出可滚动范围）也算立住 ——
@@ -4456,16 +4271,13 @@ function pinScrollTop(el: HTMLElement, px: number): void {
     const stuck =
       Math.abs(diff) <= PIN_EPSILON_PX || (px > 0 && landed > 0 && diff < -PIN_EPSILON_PX);
     if (stuck) {
-      // B168：钉稳的这一下是「我们主动摆的位置」，把落点记进自家人白名单 —— 后面这一发
-      //   scroll 才会被认出是回执、直接吞掉，不再靠两帧窗口赌它是不是在两帧内到。
-      markSelfScroll(el, landed);
+      // B139/B145：钉稳的这下发已经被标记吞掉，无需再记「白名单」；只退出补钉循环。
+      // 标记仍留在容器上（黏性），等用户接管才清。
       pinningContainers.delete(el);
-      release();
       return;
     }
     if (frame + 1 >= PIN_MAX_FRAMES) {
       pinningContainers.delete(el);
-      release();
       // 尺寸早就有、却始终钉不进去 ⇒ 真出问题了（面板还是 0 宽、内容始终没撑开）。
       // 留一条：这正是「重启后位置回到顶部」那类症状要看的东西。
       // ⚠️ 这里出现才说明容差没兜住 —— 差个零点几 px 的缩放小数不该走到这行。
@@ -4489,16 +4301,17 @@ function restoreViewScroll(panel: Panel): void {
   // display:none，把像素值塞给它只会污染「编辑器顶行」，预览那边反而没人管。
   if (t.viewMode === "preview") return;
   const view = panel.view.view;
-  restoringViewport(t.tabId, () => {
-    if (t.scrollTop !== null) {
-      pinScrollTop(view.scrollDOM, t.scrollTop);
-      return;
-    }
-    // 快照里没有位置（这份实例从没显示过）：退化为「保证光标可见」
-    const head = view.state.selection.main.head;
-    if (head <= 0) return;
-    view.dispatch({ effects: EditorView.scrollIntoView(head, { y: "nearest" }) });
-  });
+  // B170：整段还原都是程序摆位 —— 先标来源，赋值派发的 scroll 由监听经 scroll-guard 吞掉，
+  // 不会被当成用户滚动反推 / 落盘成 0。`pinScrollTop` 内部也会继续标、覆盖补钉回执。
+  markProgrammatic(view.scrollDOM);
+  if (t.scrollTop !== null) {
+    pinScrollTop(view.scrollDOM, t.scrollTop);
+    return;
+  }
+  // 快照里没有位置（这份实例从没显示过）：退化为「保证光标可见」
+  const head = view.state.selection.main.head;
+  if (head <= 0) return;
+  view.dispatch({ effects: EditorView.scrollIntoView(head, { y: "nearest" }) });
 }
 
 /**
@@ -4516,14 +4329,12 @@ function restorePreviewScroll(panel: Panel): void {
   const t = tabs.get(panel.viewTabId);
   if (!t || t.viewMode !== "preview" || t.scrollTop === null) return;
   // 预览那一次 `setBlocks` 刚把内容撑开，同一帧内赋值会被裁成 0（B134），
-  // 所以走同一套「钉稳」：写不进去就下一帧再钉。（钉的两发都在「程序滚动」
-  // 区间内，不会反过来写脏这份快照 —— B139）
+  // 所以走同一套「钉稳」：写不进去就下一帧再钉。`pinScrollTop` 内部标程序来源，
+  // 回执被预览滚动监听经 scroll-guard 吞掉，不会写脏这份快照（B170）。
   // 先取局部变量：闭包里 TS 不保留对 `panel.preview` / `t.scrollTop` 的收窄
   const root = panel.preview.root as HTMLElement;
   const px = t.scrollTop;
-  restoringViewport(t.tabId, () => {
-    pinScrollTop(root, px);
-  });
+  pinScrollTop(root, px);
   // 位置已按像素钉死，待重定位行号就是过期的了：留着它，下一次图片/公式增强的
   // 二次定位（`applyPending`）会把预览从我们钉的落点拽回那一行（B146）。
   panel.preview.clearPendingSync();
@@ -4563,7 +4374,8 @@ function applyPanelMode(panel: Panel): void {
  * ⚠️ 不过这只是**次要**成因（B146 二轮修订）：`setState` 末尾那句
  * `if (hadFocus) this.focus(); this.requestMeasure();` 换完文档会自己再滚一次，
  * 才是「位置不断往下移」的主因。真正的修法在 `switchTab` —— 把 `viewTabId` 提前到
- * `setState` 之前、整个换文档过程罩进还原窗口，让那几下自动滚动进不了记录。
+ * `setState` 之前、换文档前先 `markProgrammatic(view.scrollDOM)`，那几下自动滚动被监听
+ * 经 scroll-guard 认领吞掉、进不了记录（B170，不再靠还原窗口赌时序）。
  * 这一手只是把测量顺带挪走的量收回来，别拿它当主修复。
  *
  * 时序上很难躲开：`requestMeasure()` 排的是**下一帧**的 rAF，而 `pinScrollTop`
@@ -4589,16 +4401,15 @@ function reassertViewScroll(panel: Panel): void {
   const px = t.scrollTop;
   if (px === null) return;
   const view = panel.view.view;
-  // 没被动过就别碰：钉一次会占用 `pinningContainers` / 抑制区间，白白干扰
-  // 随后可能发生的「视图消失前看最后一眼」。
+  // 没被动过就别碰：钉一次会占用 `pinningContainers`，白白干扰随后可能发生的
+  // 「视图消失前看最后一眼」（B145 的读闸口见 `pinInFlight` 会跳过它）。
   if (view.scrollDOM.scrollTop === px) return;
   logger.trace(
     "viewport",
     `锚点补偿挪走了位置 tab=${t.tabId} 实际 ${view.scrollDOM.scrollTop} → 钉回 ${px}`,
   );
-  restoringViewport(t.tabId, () => {
-    pinScrollTop(view.scrollDOM, px);
-  });
+  // B170：`pinScrollTop` 标程序来源，回执被监听吞掉，不再罩还原窗口。
+  pinScrollTop(view.scrollDOM, px);
 }
 
 /**
@@ -6829,9 +6640,9 @@ function applySyncMode(payload: SyncModePayload | null): void {
 /**
  * B159：收到别的窗口滚过来的位置 —— 在本窗口**自己那份**同源实例上落一次。
  *
- * ⚠️ 收这边**绝不回推**：`applySyncToSibling` 里钉位置是套在 `restoringViewport`
- *    里的，它那两帧恰好盖住下一帧才到的 scroll，而两条滚动监听的首行都认这个集合
- *    （B142）—— 所以「谁滚谁当源」在跨窗口这一侧依然成立，不用另加闸门。
+ * ⚠️ 收这边**绝不回推**：`applySyncToSibling` 里钉位置走 `pinScrollTop`（B170 起内部
+ *    `markProgrammatic`），那发 scroll 被监听经 scroll-guard 标认识破、直接吞掉 ——
+ *    所以「谁滚谁当源」在跨窗口这一侧依然成立，不用另加闸门。
  * ⚠️ 只扫 `docId` 的全部实例并跳过 `srcTabId`：源那个 tabId 在别的窗口不重复出现，
  *    跳过它是防御（回声过滤与 `from` 那条是两回事，`from` 只保证不是自己发的）。
  */

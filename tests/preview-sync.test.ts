@@ -143,7 +143,10 @@ describe("异步重定位（pending）", () => {
     const { pane, root, els } = paneWithBlocks();
     pane.setHost({ topVisibleLine: () => 4, scrollToLine: () => {}, lineCount: () => 20 });
     pane.syncToLine(12);
-    await new Promise((r) => setTimeout(r, 150)); // 等同步锁过期
+    await new Promise((r) => setTimeout(r, 20)); // 让这一次定位落定（新方案无时间窗锁）
+    // B170：程序定位的标记是「黏性」的，只靠用户接管滚动的真实输入（wheel / 拖滚动条）
+    // 清除，不靠时间窗。这里模拟用户接管：先派发 wheel 清掉标记，再手动滚到 10。
+    root.dispatchEvent(new Event("wheel"));
     root.scrollTop = 10;
     root.dispatchEvent(new Event("scroll"));
     moveBlock(els[2], 900);
@@ -197,12 +200,12 @@ describe("B160 程序定位（同步滚动）不留待重定位的尾巴", () =>
   });
 });
 
-// B162：同步滚动的程序定位必须与「大纲跳转」分家 ——
+// B170：同步滚动的程序定位必须与「大纲跳转」分家，且靠显式来源标记挡回执 ——
 // ① 不留 pendingSyncLine 尾巴（同步滚动每帧都定位，尾巴＝每帧一个拽回钩子）；
-// ② 开程序定位窗口：这一侧的 scroll 在窗口内不当用户滚动（预览的程序定位不走
-//    pinScrollTop，viewportWriteDepth 盖不住，逃过去的一发会反推编辑器 → A→B→A 拉锯）；
-// ③ acquireLock 过期不再清 programmaticTop：锁过期后的迟到回执仍能被认领为自家滚动。
-describe("B162 同步滚动的程序定位窗口", () => {
+// ② 程序定位前 `markProgrammatic(this.root)`（合成 VS Code 的 `scrollType`）：这一侧的
+//    scroll 回执见标记即吞（不比位置、不赌时序、不靠还原窗口，对迟到回执免疫）；
+// ③ 标记靠用户接管滚动的真实输入（wheel / 键 / 触 / 拖条）清除，黏性保留到那一刻。
+describe("B170 同步滚动的程序定位回执屏蔽", () => {
   it("syncToLineProgrammatic 不留尾巴（落点只算一次，重排不拽回）", async () => {
     const { pane, root, els } = paneWithBlocks();
     pane.syncToLineProgrammatic(12);
@@ -218,47 +221,28 @@ describe("B162 同步滚动的程序定位窗口", () => {
     expect(root.scrollTop, "重排不许按行重定位").toBe(300 - 8);
   });
 
-  it("程序定位窗口：期间 isProgrammaticScrolling() 为真，两帧后解锁", async () => {
-    const { pane } = paneWithBlocks();
-    pane.syncToLineProgrammatic(12);
-    expect(pane.isProgrammaticScrolling(), "窗口期内必须为真").toBe(true);
-    await new Promise((r) => setTimeout(r, 20)); // 两帧（rAF×2 由 setTimeout 模拟）
-    expect(pane.isProgrammaticScrolling(), "两帧后必须解锁（计数器不许泄漏）").toBe(false);
-  });
-
-  it("窗口内的 scroll 事件不被当成用户滚动（锁已过期、位置也对不上时仍要挡）", async () => {
-    const { pane, root } = paneWithBlocks();
-    let pushed = 0;
-    pane.setHost({ topVisibleLine: () => 4, scrollToLine: () => pushed++, lineCount: () => 20 });
-    // 窗口靠 **rAF** 解锁 —— 隐藏 / 繁忙的窗口里 rAF 会被饿死，而 120ms 的锁照旧过期；
-    // 那时只剩程序定位窗口挡着，缺了它这一发就会被当成用户滚动、反推编辑器。
-    const origRaf = window.requestAnimationFrame;
-    // @ts-expect-error 测试环境补丁：钉住程序定位窗口（rAF 永不回调）
-    window.requestAnimationFrame = () => 0;
-    try {
-      pane.syncToLineProgrammatic(12);
-      await new Promise((r) => setTimeout(r, 150)); // 锁过期，窗口仍开着
-      expect(pane.isProgrammaticScrolling(), "rAF 被饿死时窗口不许提前解锁").toBe(true);
-      root.scrollTop = 150; // 位置与程序设定值对不上（内容被裁短 / 中途一发）
-      root.dispatchEvent(new Event("scroll"));
-      expect(pushed, "程序定位期间派发的 scroll 不许同步回编辑器").toBe(0);
-    } finally {
-      window.requestAnimationFrame = origRaf;
-    }
-  });
-
-  it("锁过期后的迟到回执仍被认领为自家滚动（acquireLock 过期不清 programmaticTop）", async () => {
+  it("程序定位后那发 scroll 被吞（黏性标记，回执不当用户滚动）", async () => {
     const { pane, root } = paneWithBlocks();
     let pushed = 0;
     pane.setHost({ topVisibleLine: () => 4, scrollToLine: () => pushed++, lineCount: () => 20 });
     pane.syncToLineProgrammatic(12);
-    await new Promise((r) => setTimeout(r, 150)); // 同步锁（120ms）已过期、窗口已解锁
+    // 程序钉位的回执：标记是黏性的（不靠计时器 / rAF），监听见标记即吞。
     root.dispatchEvent(new Event("scroll"));
-    expect(pushed, "落在程序设定值上的回执不许反推编辑器").toBe(0);
-    // 对照：真正挪到别处的滚动才是用户滚动
+    expect(pushed, "程序定位的 scroll 必须被吞（不反推编辑器）").toBe(0);
+  });
+
+  it("标记靠用户接管清除：wheel 之后才允许反推编辑器", async () => {
+    const { pane, root } = paneWithBlocks();
+    let pushed = 0;
+    pane.setHost({ topVisibleLine: () => 4, scrollToLine: () => pushed++, lineCount: () => 20 });
+    pane.syncToLineProgrammatic(12);
+    // 黏性标记：不靠 rAF / 计时器，只靠真实用户输入清除。
+    root.dispatchEvent(new Event("scroll"));
+    expect(pushed, "未接管前程序回执仍被吞").toBe(0);
+    root.dispatchEvent(new Event("wheel")); // 用户接管滚动 → 清标记
     root.scrollTop = 50;
     root.dispatchEvent(new Event("scroll"));
-    expect(pushed, "用户滚动必须照常同步回编辑器").toBe(1);
+    expect(pushed, "用户接管后的滚动必须照常同步回编辑器").toBe(1);
   });
 });
 

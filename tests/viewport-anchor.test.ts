@@ -242,7 +242,8 @@ describe("B146 换文档：setState 期间自动派发的滚动不许记进任�
   });
 });
 
-const src = readFileSync("src/main.ts", "utf-8");
+// 归一换行：字面量按 LF 写；工作副本若被翻成 CRLF，`;\r\n` 中间的 `\r` 会坑掉带 `\n` 的判据。
+const src = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
 
 /** 取出某个函数 / 回调的**函数体**（从 header 处起做花括号配平）。 */
 function bodyOf(header: string, from: string = src): string {
@@ -284,10 +285,14 @@ describe("B146 静态契约：测量统一走收尾，别在各处裸调 request
 
   it("收尾只在位置真的被动过时才补钉", () => {
     const body = bodyOf("function reassertViewScroll(");
-    // 没被动过就别钉：白钉会占用 pinningContainers / 抑制区间，干扰随后的采样
+    // 没被动过就别钉：白钉会占用 pinningContainers，干扰随后的采样
     expect(body).toMatch(/scrollTop === px/);
-    expect(body, "补钉要过唯一闸口").toMatch(/pinScrollTop\(/);
-    expect(body, "补钉期间派发的 scroll 不能写回记录").toMatch(/restoringViewport\(/);
+    expect(body, "补钉要过唯一闸口 pinScrollTop").toMatch(/pinScrollTop\(/);
+    // pinScrollTop 内部每帧标程序来源，回执被监听经 scroll-guard 吞掉（不写回记录）
+    const pin = bodyOf("function pinScrollTop(");
+    expect(pin, "补钉期间派发的 scroll 不能写回记录（要标程序来源）").toMatch(
+      /markProgrammatic\(el\);/,
+    );
   });
 
   it("预览按像素钉完之后要抹掉待重定位行号（否则会被二次定位拽走）", () => {
@@ -305,7 +310,7 @@ describe("B146 反向验证：把收尾摘掉，上面那几条必须变红", ()
     expect(at, "退化用的原句必须还在").toBeGreaterThan(-1);
     const ss = src.indexOf(SETSTATE, at);
     expect(ss, "退化用的 setState 行必须还在").toBeGreaterThan(at);
-    // 干净地搬：先把整行摘掉（连带后面那行一起左移，别把 `restoringViewport` 留在上面），
+    // 干净地搬：先把整行摘掉（连带后面那行一起左移，别把残余守卫留在上面），
     // 再插到 setState 之后 —— 只摘不插的话原处还会留一份，顺序照旧判不出来
     const noVid = src.slice(0, at) + src.slice(at + VID.length);
     const ss2 = noVid.indexOf(SETSTATE, noVid.indexOf("function switchTab("));
