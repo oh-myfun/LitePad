@@ -380,10 +380,17 @@ export class PreviewPane {
 
   // ------------------------------------------------ 同步滚动
 
-  /** 编辑器 → 预览：把编辑器可视区顶行对应的 block 滚到预览顶部附近。 */
+  /**
+   * 编辑器 → 预览：把编辑器可视区顶行对应的 block 滚到预览顶部附近（跟随）。
+   *
+   * B171：这一路是**跟随**（编辑器每滚一次就走一次），必须走「不留尾巴」那支 ——
+   * 用 `syncToLine` 会记下 `pendingSyncLine`，之后任意一次图片 / 公式增强
+   * （`applyPending`）或重渲染都会把预览按那个**早已过期**的行号再拽一次，
+   * 表现为同步滚动时预览反复跳（用户反复报的抖动）。
+   */
   syncFromEditor(): void {
     if (!this.host) return;
-    this.syncToLine(this.host.topVisibleLine());
+    this.syncToLineProgrammatic(this.host.topVisibleLine());
   }
 
   /**
@@ -398,10 +405,11 @@ export class PreviewPane {
   }
 
   /**
-   * B170：**程序发起**的按行定位 —— 跨面板同步滚动专用。
+   * B170：**程序发起**的按行定位 —— 凡「跟随」类定位都走它：跨面板同步滚动，
+   * 以及编辑器滚动时让预览跟随的 `syncFromEditor`（B171 起也改走这里）。
    *
    * 与 `syncToLine`（大纲跳转：一次性目标，增强后还要按它重定位）的区别：
-   *   · **不留 `pendingSyncLine` 尾巴**：同步滚动的目标行每帧都在变，记下来等于给
+   *   · **不留 `pendingSyncLine` 尾巴**：跟随的目标行每帧都在变，记下来等于给
    *     每次重排留一个「把预览拽回某一行」的钩子（B160 抖动的根源之一）；
    *   · **标程序来源**：定位前 `markProgrammatic(this.root)`，回执 scroll 被监听见标记
    *     即吞（见 src/scroll-guard.ts，合成 VS Code 的 `scrollType`）。标记靠用户接管

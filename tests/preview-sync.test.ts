@@ -297,6 +297,35 @@ describe("重渲染不丢失滚动位置（B23）", () => {
   });
 });
 
+// B171：编辑器滚动 → 预览跟随（`syncFromEditor`）也必须走「不留尾巴」那支。
+// 它是**跟随**路径 —— 编辑器每滚一次就走一次；用留尾巴的 `syncToLine`，等于每次都给
+// 后续任意一次图片 / 公式增强或重渲染塞一个「把预览拽回那一行」的钩子。
+// 症状：同步滚动时预览被反复拽回（用户报的「抖动还有」）。此前这条路径无任何用例覆盖。
+describe("B171 编辑器→预览的跟随也不许留尾巴", () => {
+  it("syncFromEditor 定位到位，且不留 pendingSyncLine", () => {
+    const { pane, root } = paneWithBlocks();
+    pane.setHost({ topVisibleLine: () => 12, scrollToLine: () => {}, lineCount: () => 20 });
+    pane.syncFromEditor();
+    expect(root.scrollTop, "跟随要真的定位过去").toBe(300 - 8);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((pane as any).pendingSyncLine, "跟随定位不许留尾巴").toBeNull();
+  });
+
+  it("跟随之后的异步增强不许再把预览拽回那一行", async () => {
+    const { pane, root, els } = paneWithBlocks();
+    pane.setHost({ topVisibleLine: () => 12, scrollToLine: () => {}, lineCount: () => 20 });
+    pane.syncFromEditor();
+    expect(root.scrollTop).toBe(300 - 8);
+    // 与 B160 对照组同构：异步布局位移 + 一次图片 load ⇒ 留着尾巴就会被拽到 892
+    moveBlock(els[2], 900);
+    const img = document.createElement("img");
+    els[0].appendChild(img);
+    img.dispatchEvent(new Event("load"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(root.scrollTop, "跟随之后不许被增强重新定位").toBe(300 - 8);
+  });
+});
+
 describe("预览同步接线（静态断言）", () => {
   it("main.ts 的大纲跳转/转到行必须对预览态实例显式 syncToLine", async () => {
     const { readFileSync } = await import("node:fs");
