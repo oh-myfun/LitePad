@@ -8,6 +8,14 @@ rust-version = "1.77.2"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# ⚠️ 这一行不是我们的代码要用 indexmap，是**替 tauri-build → schemars 0.8.22 补 feature**：
+#   schemars 声明 `indexmap = { version = "1.2", features = ["serde-1"] }`，没带 `std`；
+#   而 indexmap 1.9.x 的 `[features]` 里**没有 default**，`std` 不开时
+#   `IndexMap<K, V, S>` 没有默认参数，schemars 那句 `type Map<K,V> = IndexMap<K,V>` 就编不过
+#   （E0107）。平时看不见是因为 target 里缓存着老产物；一旦 profile 变动触发全量重编
+#   （或 clean 构建）就浮出来。放在 `[build-dependencies]` 是为了和 tauri-build/schemars
+#   落在同一棵 feature 解析树里，unification 打开 `std` ⇒ schemars 编得过。
+indexmap = { version = "1", features = ["std"] }
 
 [dependencies]
 tauri = { version = "2", features = ["devtools", "protocol-asset"] }
@@ -35,9 +43,31 @@ base64 = "0.22"
 webview2-com = "0.38"
 windows = "0.61"
 
+# 发布档位（日常交付：`scripts/build-all.sh` 走这一档）。
+#
+# ⚠️ 这里的值直接决定打包时长，`fat` LTO + `codegen-units = 1` 是最慢组合：
+#    LTO 在**链接期**跑，每链接一次就要全量重来一遍（脚本里 tauri 那一步必然重链），
+#    单 codegen-unit 又把优化全部压到一个线程上。日常交付没必要为几十 KB 多等几分钟。
+#   · `lto = "thin"`：跨模块优化基本保留，链接时间通常是 fat 的几分之一；
+#   · `codegen-units = 8`：并行 codegen（1 是单线程）。
+# 要最小体积的正式发布档用下面的 `publish`（`LITEPAD_PROFILE=publish bash scripts/build-all.sh`）。
 [profile.release]
 opt-level = "s"
-lto = "fat"
-codegen-units = 1
+lto = "thin"
+codegen-units = 8
 panic = "abort"
 strip = true
+
+# 正式发布档（打 tag / 出安装包给用户时）：换回最慢但最小的组合。
+# ⚠️ 与 release 分开是刻意的 —— 发布档会全量重编（profile 一换 fingerprint 就变），
+#    日常构建不该被它拖累。
+# ⚠️ 档名不能用 `publish` / `doc` / `test` / `bench` —— 那是 cargo 的保留名（会直接报错）。
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+
+# 日常 `cargo test` / `tauri dev` 走的档：不生成调试信息（Windows 上 PDB 又大又慢），
+# 编译与链接都快一截。要看栈回溯时临时注掉这两行即可。
+[profile.dev]
+debug = false

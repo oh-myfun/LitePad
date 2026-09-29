@@ -81,19 +81,47 @@ fi
 echo "    dist/assets: $ASSET_N 个文件"
 
 echo "==> [2/4] 前端单元测试（vitest）"
-node scripts/run-vitest.cjs
+# 打包前跑一遍全量用例是交付纪律；只想快速出包时用 LITEPAD_SKIP_TESTS=1 跳过后两段测试。
+if [ "${LITEPAD_SKIP_TESTS:-0}" = "1" ]; then
+  echo "    （LITEPAD_SKIP_TESTS=1：跳过前端 + Rust 测试）"
+else
+  # ⚠️ 直调 vitest 入口，**不要**走 scripts/run-vitest.cjs：那个脚本是 execSync 里再 spawn
+  #    `npx vitest`，嵌套进程下会假红（用例全过却报 status 1，把整条构建打断）。
+  node node_modules/vitest/vitest.mjs run
+fi
 
-echo "==> [3/4] Rust release 构建 + 单元测试（**仅作编译校验，产物不可交付**）"
-# ⚠️ 这一行产出的 `target/release/litepad.exe` 是 **dev 模式**：tauri 的判定是
-# `dev = !custom-protocol`，而 `custom-protocol` 由 tauri CLI 在 `tauri build` 时才注入。
-# 结果就是这个 exe 会去连 `build.devUrl`（http://127.0.0.1:1420）→ 打开显示「127.0.0.1 拒绝连接」。
-# **只有第 4 步覆盖写的同名文件才是能交付的生产产物**，别把这个中间产物拿给用户/截图（B98）。
-(cd src-tauri && cargo build --release && cargo test --release)
+echo "==> [3/4] Rust 编译校验 + 单元测试（只校验，产物不可交付 —— 原因见下）"
+# ⚠️ 这一步**不要** `cargo build --release`，两个原因：
+#   ① 那样产出的 `target/release/litepad.exe` 是 **dev 模式**：tauri 的判定是
+#      `dev = !custom-protocol`，而 `custom-protocol` 由 tauri CLI 在**第 4 步**才注入。
+#      结果就是这个 exe 会去连 `build.devUrl`（http://127.0.0.1:1420）→ 打开显示
+#      「127.0.0.1 拒绝连接」。**不可交付** —— 只有第 4 步覆盖写的同名文件才是能拿给
+#      用户 / 截图的生产产物（B98）。
+#   ② 两边 feature 不一致 ⇒ 第 4 步会把 tauri 那棵依赖树整棵重编一遍、再跑一次 LTO，
+#      等于每次打包付两次全量 release 编译的钱。
+#   所以这里只做**校验**（`cargo check` 不产 rlib，不会污染第 4 步的缓存），
+#   测试走 dev 档（不带 `--release` ⇒ 也不碰 release 目录）。
+#   ⚠️ 别给这两句加 `--all-targets`，也别把测试改成 dev 档（不带 --release）：
+#      那会激活 dev-dependencies 的 feature，schemars 0.8.22 于是走 `indexmap` v1 那条路，
+#      而它自己的代码写的是 indexmap 2 的三参数签名 ⇒ `cargo test` 直接编不过（E0107）。
+#      release 这条 feature 组合是能编过的，别动它。
+if [ "${LITEPAD_SKIP_TESTS:-0}" = "1" ]; then
+  (cd src-tauri && cargo check --release)
+else
+  (cd src-tauri && cargo check --release && cargo test --release)
+fi
 
 echo "==> [4/4] release 发布构建（嵌入前端 + NSIS 安装包）"
 # 覆盖 beforeBuildCommand：第 1 步已产出 dist，直接嵌入，避免重复构建
 # B107 更新器签名：私钥在项目外 ~/.tauri/litepad.key，只经环境变量传给 tauri CLI、
 # **绝不入库**；没有密钥时降级关闭 createUpdaterArtifacts —— 本机/CI 没配密钥也照常出 exe。
+#
+# ⚠️ 这是全流程**唯一**一次 release 编译（第 3 步只 check），别再往前面加 `cargo build --release`。
+# 档位可选：`LITEPAD_PROFILE=dist`（Cargo.toml 的 `[profile.dist]`，fat LTO、最小体积，
+# 打 tag 出正式包时用；注意换档会全量重编，日常别用）。
+LITEPAD_PROFILE="${LITEPAD_PROFILE:-release}"
+TAURI_ARGS=(build --config "$UPD_CFG")
+[ "$LITEPAD_PROFILE" = "release" ] || TAURI_ARGS+=(--profile "$LITEPAD_PROFILE")
 UPD_CFG='{"build":{"beforeBuildCommand":""}}'
 if [ -f "$HOME/.tauri/litepad.key" ]; then
   TAURI_SIGNING_PRIVATE_KEY="$(cat "$HOME/.tauri/litepad.key")"
@@ -105,12 +133,12 @@ else
   echo "    （未发现 ~/.tauri/litepad.key：本次不产出更新器签名产物）"
 fi
 if [ "$NPM_OK" = 1 ]; then
-  npm run tauri -- build --config "$UPD_CFG"
+  npm run tauri -- "${TAURI_ARGS[@]}"
 else
-  node node_modules/@tauri-apps/cli/tauri.js build --config "$UPD_CFG"
+  node node_modules/@tauri-apps/cli/tauri.js "${TAURI_ARGS[@]}"
 fi
 
 echo
-echo "构建完成，产物："
-ls -lh src-tauri/target/release/litepad.exe
-ls -lh src-tauri/target/release/bundle/nsis/*.exe
+echo "构建完成，产物（profile=$LITEPAD_PROFILE）："
+ls -lh "src-tauri/target/$LITEPAD_PROFILE/litepad.exe"
+ls -lh "src-tauri/target/$LITEPAD_PROFILE/bundle/nsis/"*.exe
