@@ -172,6 +172,26 @@ export function createEditor(parent: HTMLElement, initialState: EditorState): Ed
     view,
     getText: () => view.state.doc.toString(),
     setState: (state) => view.setState(state),
-    focus: () => view.focus(),
+    // B182：程序化聚焦的唯一出口（切标签 / 切面板 / 挂载 / 关浮层…都走这里）。
+    //
+    // ⚠️ 光 `focus()` 还不够 —— 它只做 `focusPreventScroll(contentDOM)` +
+    //    `docView.updateSelection()`，**不刷新 `cm-focused` 类**；那个类只在
+    //    `updateAttrs()` 里按实时 `hasFocus` 重算（`"cm-editor" + (hasFocus?"
+    //    cm-focused ":" ")`），而 `updateAttrs()` 只在构造 / 整态切换 / 事务更新时跑。
+    //    切标签恰好把这几件事串成一漏拍：点标签 → 编辑器失焦 → 换文档（整态切换的
+    //    `updateAttrs()` 是在**还没聚焦**时跑的 ⇒ 类被剥掉）→ 立刻重新聚焦（焦点
+    //    回来了却不重算类）。唯一会补类的兜底是 CM6 那个 10ms 的
+    //    `updateForFocusChange`，可它判的是 `hasFocus != notifiedFocused` ——
+    //    焦点早在它跑之前就回来了，两边都真 ⇒ 判定「焦点没变」直接跳过 ⇒ 类永久缺失。
+    //    而 `.cm-cursor` 默认 `display:none`，只有 `&.cm-focused` 才 `display:block`
+    //    并挂上闪烁动画 ⇒ 焦点其实在编辑器里（能输入、方向键有反应），光标却不显示
+    //    也不闪 —— 就是「切完标签看不到跳动的光标，得点一下编辑区才出来」。
+    //    这里补一次**空更新**：它正是 CM6 自己那条兜底路径（`view.update([])`）
+    //    会做的事，同步把 `updateAttrs()` 跑一遍 —— 类的权威判据仍是 `hasFocus`，
+    //    我们只是把「等 10ms 才补」提前到现在。类本来就对时它是个空操作。
+    focus: () => {
+      view.focus();
+      view.update([]);
+    },
   };
 }

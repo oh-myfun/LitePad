@@ -10,6 +10,8 @@ import { readFileSync } from "node:fs";
 import { EditorView } from "@codemirror/view";
 import { fireDrag, makeDataTransfer } from "./dnd";
 import { topLevelFnBody } from "./static";
+import { createEditor, makeTabState } from "../src/editor/editor";
+import { perfProfileFor } from "../src/editor/perf";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -481,5 +483,123 @@ describe("B181 静态契约：切标签后编辑器必须拿到焦点", () => {
       degraded.indexOf(FOCUS, degraded.indexOf("applyPanelMode(panel);")),
       "退化后 applyPanelMode 之后不再有 focus",
     ).toBe(-1);
+  });
+});
+
+// B182：切完标签「看不到跳动的光标」。
+//
+// ⚠️ 根因不是「没聚焦」——B181 之后焦点确实拿到了（能输入、方向键有反应），缺的是
+//    `.cm-focused` 类：CM6 的 `focus()` 只做 `focusPreventScroll` + `updateSelection`，
+//    **不刷新那个类**（它只在 `updateAttrs()` 里按实时 `hasFocus` 重算）。切标签那一串
+//    是「失焦 → 整态切换（此刻 hasFocus 还是假 ⇒ 类被剥掉）→ 立刻重新聚焦」，焦点虽
+//    回来了却没人重算类；CM6 那个 10ms 的 `updateForFocusChange` 兜底又正好撞上
+//    「hasFocus 与 notifiedFocused 两边都真」⇒ 判定焦点没变直接跳过 ⇒ 类永久缺失。
+//    而 `.cm-cursor` 默认 `display:none`，只有 `&.cm-focused` 才 `display:block` 并挂上
+//    闪烁动画 ⇒ 光标看不见也不闪；点一下编辑区派发事务才会把类算回来。
+describe("B182 光标可见性：程序化聚焦后必须有 cm-focused", () => {
+  function mount(): { handle: ReturnType<typeof createEditor>; host: HTMLElement } {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const { state } = makeTabState(
+      "alpha\nbeta\ngamma",
+      null,
+      { dark: false, wrap: true, perf: perfProfileFor("normal") },
+      () => {},
+    );
+    return { handle: createEditor(host, state), host };
+  }
+  const otherState = (): ReturnType<typeof makeTabState>["state"] =>
+    makeTabState(
+      "second document",
+      null,
+      { dark: false, wrap: true, perf: perfProfileFor("normal") },
+      () => {},
+    ).state;
+
+  it("focus() 之后必须带上 cm-focused（光标靠它才显示、才闪）", () => {
+    const { handle, host } = mount();
+    handle.focus();
+    expect(handle.view.hasFocus, "前置：编辑器拿到了焦点").toBe(true);
+    expect(
+      handle.view.dom.classList.contains("cm-focused"),
+      "焦点在编辑器里就得有 cm-focused，否则 .cm-cursor 是 display:none",
+    ).toBe(true);
+    handle.view.destroy();
+    host.remove();
+  });
+
+  it("整态切换（切标签换文档）剥掉类之后，重新聚焦要把它补回来", async () => {
+    const { handle, host } = mount();
+    // ① 编辑器本来有焦点（用户正在打字）；等一拍让 CM6 自己那条 10ms 兜底也落定，
+    //    类与它内部的属性副本（updateAttrs 的缓存）都归位 —— 这才是真机的稳态。
+    handle.focus();
+    await wait(20);
+    expect(handle.view.hasFocus, "前置：编辑器有焦点").toBe(true);
+    expect(handle.view.dom.classList.contains("cm-focused"), "前置：有焦点就有类").toBe(true);
+
+    // ② 点标签：真机是 mousedown 把焦点带走的（jsdom 不自动做，手动 blur）。
+    //    刻意**不等**那 10ms —— 真机上换文档也是紧接着发生的。
+    handle.view.contentDOM.blur();
+    expect(handle.view.hasFocus, "前置：编辑器已失焦").toBe(false);
+
+    // ③ 换文档：CM6 在 updateAttrs() 里按**当时**的 hasFocus 重算类 ⇒ 剥掉
+    handle.setState(otherState());
+    expect(
+      handle.view.dom.classList.contains("cm-focused"),
+      "前置：整态切换在失焦态下把类剥掉了",
+    ).toBe(false);
+
+    // ④ switchTab 紧接着重新聚焦 —— 焦点回来了，类也必须跟着回来
+    handle.focus();
+    expect(handle.view.hasFocus, "前置：焦点已回到编辑器").toBe(true);
+    expect(
+      handle.view.dom.classList.contains("cm-focused"),
+      "光标看不见的真因：焦点在、类没了 ⇒ .cm-cursor 依旧 display:none",
+    ).toBe(true);
+    handle.view.destroy();
+    host.remove();
+  });
+
+  it("反向验证：退化实现（focus() 只调 CM6 的 focus）拿不到 cm-focused", () => {
+    // 这条用例回答「上面两条是不是恒真」：CM6 的 `focus()` 自己并不会刷类，
+    //   所以「focus() 之后类就在」只有显式对齐才成立 —— 这里真的退化着跑一遍。
+    const { handle, host } = mount();
+    handle.view.contentDOM.blur();
+    handle.setState(otherState());
+    handle.view.focus(); // 退化：只调 CM6 的 focus()，不做类对齐
+    expect(handle.view.hasFocus, "退化实现里焦点依然拿到了（B181 之后）").toBe(true);
+    expect(
+      handle.view.dom.classList.contains("cm-focused"),
+      "退化实现必须拿不到类（否则这个修复就是多余的）",
+    ).toBe(false);
+    handle.view.destroy();
+    host.remove();
+  });
+});
+
+describe("B182 静态契约：聚焦出口必须重算 cm-focused", () => {
+  const raw = readFileSync("src/editor/editor.ts", "utf-8").replace(/\r\n/g, "\n");
+  const code = (s: string): string =>
+    s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const createBody = code(topLevelFnBody(raw, "export function createEditor("));
+  const focusBody = createBody.slice(createBody.indexOf("focus:"));
+
+  it("createEditor 的 focus 出口：focus() 之后必须补一次空更新", () => {
+    expect(focusBody, "应能定位 focus 出口").not.toBe("");
+    const f = focusBody.indexOf("view.focus();");
+    expect(f, "必须真的聚焦").toBeGreaterThan(-1);
+    // `updateAttrs()`（cm-focused 唯一会被重算的地方）只在构造 / 整态切换 / 事务
+    // 更新时跑；空更新就是 CM6 自己那条 10ms 兜底用的同一条路，只是提前到现在。
+    const u = focusBody.indexOf("view.update([]);");
+    expect(u, "聚焦之后必须补一次空更新，否则 cm-focused 不会重算").toBeGreaterThan(f);
+  });
+
+  it("反向验证：删掉那次空更新，B182 契约必须抓住", () => {
+    const UPDATE = "view.update([]);";
+    const at = focusBody.indexOf(UPDATE);
+    expect(at, "退化用的空更新必须还在").toBeGreaterThan(-1);
+    // 真的删掉（只改判据不改源码 = 假绿）
+    const degraded = focusBody.slice(0, at) + focusBody.slice(at + UPDATE.length);
+    expect(degraded, "退化后不再有空更新").not.toContain(UPDATE);
   });
 });
