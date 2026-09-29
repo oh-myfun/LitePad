@@ -516,8 +516,8 @@ describe("B164 子窗口也要能同步滚动（跨窗口广播）", () => {
     expect(BTN_BODY, "判据里不许再有共享文档集合").not.toMatch(/sharedDocIds/);
     // B173：连本窗口的**隐藏**实例（`panelId < 0`，搬到别的窗口后留下的那份）也不算 ——
     // 它进不了任何面板，按它凑出「第 2 份」就会让「只开了一份」的窗口露出这颗键。
-    expect(BTN_BODY, "只按本窗口**可见**实例数判").toMatch(
-      /const multi = !!tab && visibleInstancesOfDoc\(tab\.docId\)\.length > 1;/,
+    expect(BTN_BODY, "判据 = 本窗口可见实例 > 1 或 远端窗口也开着这份（B178 跨窗口）").toMatch(
+      /visibleInstancesOfDoc\(tab\.docId\)\.length > 1 \|\| remoteHasDoc\(tab\.docId\)/,
     );
     expect(BTN_BODY, "不许再把隐藏实例算进份数").not.toMatch(
       /const multi = !!tab && instancesOfDoc\(tab\.docId\)\.length > 1;/,
@@ -1070,6 +1070,103 @@ describe("B176 非激活源滚动不再被兄弟反推成 A↔B 拉锯", () => {
     expect(body, "退回后又是无条件 isSyncSource 推").toMatch(
       /if \(isSyncSource\(tab, panel\)\) pushSyncToSiblings\(tab\);/,
     );
+  });
+});
+
+// ------------------------------------------------------- B178：跨窗口多开检测
+// 用户原话：「子窗口中的多开文件（只要主窗口和子窗口中同一个文件打开多次，就算多开）
+// 也要有同步滚动按钮，且状态和主窗口中的一致」。状态已由 `EVT_SYNC_MODE`（B169）保一致，
+// 这里只补**可见性**：`visibleInstancesOfDoc` 只数本窗口实例，于是同文件跨窗口各开一份时
+// 两边各自只数到 1，同步键都不露脸。修法：各窗口广播自己「有可见实例的 docId 集合」，
+// 对端按窗口标签记进 `remoteOpenByWindow`，按钮显隐的「多份」判据 = 本窗口可见实例数 +
+// （任一远端窗口也开着就算 1）。窗口干净关掉就整条删掉。
+describe("B178 跨窗口多开检测：主/子窗口同步键显隐一致", () => {
+  it("要有存在性登记：按窗口标签记别的窗口开着哪些可见文档", () => {
+    expect(main, "要有跨窗口可见文档登记 Map").toMatch(
+      /const remoteOpenByWindow = new Map<string, Set<number>>\(\);/,
+    );
+    // 广播出去的「本窗口可见 docId 集合」要留底以便算 diff，只在变化时发事件。
+    expect(main, "要有上次广播集合").toMatch(/let lastBroadcastDocIds = new Set<number>\(\);/);
+    // 四个事件常量
+    expect(main, "open 事件要在").toMatch(/const EVT_DOC_OPEN = "doc-open";/);
+    expect(main, "close 事件要在").toMatch(/const EVT_DOC_CLOSE_NOTIFY = "doc-close-notify";/);
+    expect(main, "resync 请求事件要在").toMatch(/const EVT_DOC_OPEN_RESYNC = "doc-open-resync";/);
+    expect(main, "窗口关闭通知事件要在").toMatch(/const EVT_WINDOW_CLOSED = "window-closed";/);
+  });
+
+  it("broadcastDocPresence 按可见集合 diff，只在变化时广播 open/close", () => {
+    const FN = slice(main, "function broadcastDocPresence(", "function refreshAll(");
+    expect(FN, "要能定位").toContain("function broadcastDocPresence(");
+    // 可见实例才广播（panelId >= 0 滤掉隐藏实例，与 B173 同口径）
+    expect(FN, "只数可见实例").toMatch(/t\.panelId >= 0/);
+    // 新增 → 广播 open；消失 → 广播 close
+    expect(FN, "新增广播 open").toMatch(/emit\(EVT_DOC_OPEN, \{ from: windowLabel, docId \}\)/);
+    expect(FN, "消失广播 close").toMatch(
+      /emit\(EVT_DOC_CLOSE_NOTIFY, \{ from: windowLabel, docId \}\)/,
+    );
+    // 收口：把本次集合存为 lastBroadcast
+    expect(FN, "diff 基准要更新").toMatch(/lastBroadcastDocIds = now;/);
+  });
+
+  it("refreshAll 与 closeTabById 都要触发存在性广播", () => {
+    expect(main, "全局刷新要广播存在性").toMatch(/broadcastDocPresence\(\);/);
+    // 关标签不进 refreshAll（closeTabById 自己收尾），所以这里也要单独广播。
+    const CLOSE = slice(main, "async function closeTabById(", "function disposePanel(");
+    expect(CLOSE, "关标签要广播存在性").toMatch(/broadcastDocPresence\(\);/);
+  });
+
+  it("listenDocSync 要装齐四条存在性监听（open/close/resync/window-closed），且回声要丢", () => {
+    const LISTEN = slice(
+      main,
+      "function listenDocSync(",
+      "// ---------------------------------------------------------------- 卫星窗口引导",
+    );
+    expect(LISTEN, "open 监听").toMatch(/listen<DocPresencePayload>\(EVT_DOC_OPEN/);
+    expect(LISTEN, "close 监听").toMatch(/listen<DocPresencePayload>\(EVT_DOC_CLOSE_NOTIFY/);
+    expect(LISTEN, "resync 监听").toMatch(/listen<\{ from\?: string \}>\(EVT_DOC_OPEN_RESYNC/);
+    expect(LISTEN, "window-closed 监听").toMatch(/listen<\{ from\?: string \}>\(EVT_WINDOW_CLOSED/);
+    // 自己的回声要丢（与上面几条同口径）
+    expect(LISTEN, "回声要丢").toMatch(/p\.from === windowLabel/);
+  });
+
+  it("新窗口上线要问一圈重播（resync 请求），上线方据此补齐", () => {
+    // setupShell 里 `listenDocSync();` 之后、本函数内 `installFileDropTarget({` 之前要发一次。
+    const SHELL = slice(main, "async function setupShell(", "installFileDropTarget({");
+    expect(SHELL, "引导里要发 resync 请求").toMatch(
+      /emit\(EVT_DOC_OPEN_RESYNC, \{ from: windowLabel \}\)/,
+    );
+  });
+
+  it("卫星窗口干净关窗要通知对端清掉它那一条", () => {
+    const FIN = slice(
+      main,
+      "async function finishSatelliteClose(",
+      "async function finishAndDestroy(",
+    );
+    expect(FIN, "卫星关窗要通知对端").toMatch(/emit\(EVT_WINDOW_CLOSED, \{ from: windowLabel \}\)/);
+  });
+
+  it("刷新按钮的「多份」判据要包含跨窗口：本窗口可见 > 1 或 远端也开着这份", () => {
+    expect(BTN_BODY, "多份判据含跨窗口").toMatch(
+      /visibleInstancesOfDoc\(tab\.docId\)\.length > 1 \|\| remoteHasDoc\(tab\.docId\)/,
+    );
+    // B171/B173 口径保留：不掺共享集合、不看窗口身份。
+    expect(BTN_BODY, "仍不掺 sharedDocIds").not.toMatch(/sharedDocIds/);
+    expect(BTN_BODY, "仍不看窗口身份").not.toMatch(/windowKind/);
+  });
+
+  it("B178 反向验证：退回「只数本窗口」→ 跨窗口那条必须落空", () => {
+    // 退化成 B178 前的口径：只数本窗口可见实例，跨窗口的那一半没了。
+    const i = main.indexOf("const multi =");
+    expect(i, "要能定位显隐判据").toBeGreaterThan(-1);
+    const degraded =
+      main.slice(0, i) +
+      "const multi = !!tab && visibleInstancesOfDoc(tab.docId).length > 1;" +
+      main.slice(main.indexOf(";", i) + 1);
+    // 只查按钮函数体：模块级的 `remoteHasDoc` 定义本身留着（它仍是给其它判据用的工具
+    // 函数），要落空的是「按钮显隐判据里跨窗口那一半」。
+    const btn = slice(degraded, "function refreshSyncButton(", "function refreshStatus(");
+    expect(btn, "退化后跨窗口判据必须落空").not.toMatch(/remoteHasDoc/);
   });
 });
 

@@ -419,6 +419,19 @@ function visibleInstancesOfDoc(docId: number): Tab[] {
   return instancesOfDoc(docId).filter((t) => t.panelId >= 0);
 }
 
+/**
+ * B178：某个**别的窗口**也开着这份文档（可见实例）吗？
+ *
+ * 跨窗口「多开」的判据只认「别的窗口可见地开着」—— 隐藏实例（`panelId < 0`）不算，
+ * 与 `visibleInstancesOfDoc` 同口径。任一远端窗口开着就算 1（不关心具体开了几份）。
+ */
+function remoteHasDoc(docId: number): boolean {
+  for (const set of remoteOpenByWindow.values()) {
+    if (set.has(docId)) return true;
+  }
+  return false;
+}
+
 /** 由编辑器视图反查所属面板（不依赖创建期闭包，实例跨面板移动后依然正确）。 */
 function panelOfView(view: EditorView): Panel | undefined {
   for (const p of panels.values()) {
@@ -814,7 +827,10 @@ function refreshSyncButton(tab: Tab | undefined): void {
   // 无文档 ⇒ 藏；数量是一个便宜的循环（实例数很小），不用缓存。
   // ⚠️ 先算出布尔量：直接写 `hidden = !tab || …` 是收窄不了 `tab` 的，后面那句
   //    `if (hidden) return` 挡不住「tab 可能是 undefined」这条报错。
-  const multi = !!tab && visibleInstancesOfDoc(tab.docId).length > 1;
+  // B178：跨窗口多开也算「多份」—— 本窗口可见实例 > 1，或任一别的窗口也可见地开着这份。
+  // 状态一致性已由 `EVT_SYNC_MODE` 保（主/子窗口读同一份 docSyncModes 的镜像），这里只补
+  // 显隐：两个窗口都数到 ≥2 份，同步键就都露脸。仍只数**可见**实例（B171/B173 口径不变）。
+  const multi = !!tab && (visibleInstancesOfDoc(tab.docId).length > 1 || remoteHasDoc(tab.docId));
   syncScrollBtn.hidden = !multi;
   if (!multi) return;
   const on = docSyncModes.get(tab.docId) === true;
@@ -848,6 +864,35 @@ function refreshStatus(): void {
   refreshViewModeButton();
 }
 
+/**
+ * B178：把本窗口「有可见实例的 docId 集合」广播给别的窗口，并维护回声过滤的 diff 基准。
+ *
+ * 只数 `panelId >= 0` 的实例（隐藏实例不算，B171/B173 同口径）。与上次的集合 diff：
+ * 新增的文档广播 `EVT_DOC_OPEN`，消失的广播 `EVT_DOC_CLOSE_NOTIFY`；没变就不发，避免
+ * `refreshAll` 每轮都刷屏。对端收到后写进 `remoteOpenByWindow`，按钮显隐据此对齐。
+ *
+ * ⚠️ 这是「本窗口文档集合变了」的唯一广播点：开标签走 `refreshAll`、关标签走
+ *     `closeTabById`，两条路径都调它，覆盖全（含标签搬到别的窗口后本地留隐藏实例那种
+ *     「可见集合缩水」的情况）。
+ */
+function broadcastDocPresence(): void {
+  const now = new Set<number>();
+  for (const t of tabs.values()) {
+    if (t.panelId >= 0) now.add(t.docId);
+  }
+  for (const docId of now) {
+    if (!lastBroadcastDocIds.has(docId)) {
+      void emit(EVT_DOC_OPEN, { from: windowLabel, docId }).catch(() => {});
+    }
+  }
+  for (const docId of lastBroadcastDocIds) {
+    if (!now.has(docId)) {
+      void emit(EVT_DOC_CLOSE_NOTIFY, { from: windowLabel, docId }).catch(() => {});
+    }
+  }
+  lastBroadcastDocIds = now;
+}
+
 function refreshAll(): void {
   refreshTitle();
   refreshStatus();
@@ -859,6 +904,8 @@ function refreshAll(): void {
   // 放在最后：这一轮该重建的 DOM 都落定了，钉下去不会被随后而来的还原盖掉。
   const act = activeTab();
   if (act) pushSyncToSiblings(act);
+  // B178：本窗口可见文档集合变了，通知别的窗口（开/关标签、认领、搬移都进这里）。
+  broadcastDocPresence();
 }
 
 /**
@@ -1497,6 +1544,9 @@ async function closeTabById(tabId: number): Promise<void> {
   const idx = panel.tabs.indexOf(tabId);
   panel.tabs = panel.tabs.filter((id) => id !== tabId);
   tabs.delete(tabId);
+  // B178：本地这份没了（可能是该文档在本窗口的最后一个可见实例），别的窗口要能据此
+  // 把自己的同步键收起。放在 tab 真正摘除之后，diff 才能算出「这份文档不再可见」。
+  broadcastDocPresence();
 
   if (panel.tabs.length === 0) {
     if (windowKind === "satellite") {
@@ -6555,6 +6605,42 @@ interface DocClosePayload {
 //    `requestSatelliteClose` 里那两档 `returnTabs` 的取舍。
 const EVT_APP_QUIT = "app-quit";
 
+/**
+ * B178：跨窗口「这份文档在别的窗口还开着（且可见）吗」的存在性登记。
+ *
+ * `visibleInstancesOfDoc` 只数**本窗口**的可见实例，于是「主窗口开一份 X、卫星窗口也
+ * 开一份 X」时两边各自只数到 1，同步键都不露脸 —— 用户要的是「只要同一个文件跨窗口
+ * 开了 ≥2 份，两个窗口都要有这颗键，且状态一致」（状态已由 `EVT_SYNC_MODE` 保一致，
+ * 这里只补**可见性**）。
+ *
+ * 做法：每个窗口广播自己「有 ≥1 个可见实例的 docId 集合」，对端按 `from`（窗口标签）
+ * 记进 `remoteOpenByWindow`。按钮显隐的「多份」判据 = 本窗口可见实例数 +
+ * （任一远端窗口也开着就算 1）。窗口干净关掉就从对应 `from` 条目整条删掉，清得干净。
+ *
+ * ⚠️ 只数**可见**实例（`panelId >= 0`）—— 与 B173 同口径：搬到别的窗口后在本地的那份
+ *    隐藏实例（`panelId < 0`）不广播，否则会出现「主窗口只开了一份却因为卫星的隐藏
+ *    副本而露脸」的错位（B171 已否掉这种口径）。
+ */
+const EVT_DOC_OPEN = "doc-open";
+const EVT_DOC_CLOSE_NOTIFY = "doc-close-notify";
+/**
+ * 新窗口上线时问一圈「你们都开着哪些可见文档」—— 对端把当前可见集合重播一遍，
+ * 上线方据此补齐自己的 `remoteOpenByWindow`（否则它只知道自己开的，收不到老窗口
+ * 已经开着的那些）。只发一次（引导末尾），不进刷新循环，不会形成回声环。
+ */
+const EVT_DOC_OPEN_RESYNC = "doc-open-resync";
+/** 卫星窗口干净关窗时通知对端「本窗口没了」，对端清掉它那一条。 */
+const EVT_WINDOW_CLOSED = "window-closed";
+
+/** 别的窗口各自「开着哪些可见文档」：键 = 窗口标签，值 = 可见 docId 集合。 */
+const remoteOpenByWindow = new Map<string, Set<number>>();
+/** 本窗口上一次广播出去的「可见 docId 集合」—— 用来算 diff，只在变化时发事件。 */
+let lastBroadcastDocIds = new Set<number>();
+interface DocPresencePayload {
+  from?: string;
+  docId?: number;
+}
+
 /** 正在套用远端变更：期间本窗口产生的 update 不再广播。 */
 let applyingRemote = false;
 /** 已发出、还没等到应答的重同步请求（同一文档不重复发）。 */
@@ -6779,6 +6865,42 @@ function listenDocSync(): void {
   void listen<SyncPosPayload>(EVT_SYNC_POS, (e) => applyRemoteSyncPos(e.payload ?? null)).catch(
     () => {},
   );
+  // B178：跨窗口「这份文档在别的窗口还开着吗」的存在性登记（让同步键在主/子窗口同显隐）。
+  // 按 `from`（窗口标签）记进 `remoteOpenByWindow`，自己的回声一律丢（与上面几条同口径）。
+  void listen<DocPresencePayload>(EVT_DOC_OPEN, (e) => {
+    const p = e.payload;
+    if (!p?.docId || !p.from || p.from === windowLabel) return;
+    let s = remoteOpenByWindow.get(p.from);
+    if (!s) {
+      s = new Set<number>();
+      remoteOpenByWindow.set(p.from, s);
+    }
+    s.add(p.docId);
+    refreshSyncButton(activeTab());
+  }).catch(() => {});
+  void listen<DocPresencePayload>(EVT_DOC_CLOSE_NOTIFY, (e) => {
+    const p = e.payload;
+    if (!p?.docId || !p.from || p.from === windowLabel) return;
+    remoteOpenByWindow.get(p.from)?.delete(p.docId);
+    refreshSyncButton(activeTab());
+  }).catch(() => {});
+  // 新窗口上线问了一圈，这里把本窗口当前可见集合重播一遍（idempotent，重复加无害）。
+  void listen<{ from?: string }>(EVT_DOC_OPEN_RESYNC, (e) => {
+    const p = e.payload;
+    if (!p?.from || p.from === windowLabel) return;
+    for (const t of tabs.values()) {
+      if (t.panelId >= 0) {
+        void emit(EVT_DOC_OPEN, { from: windowLabel, docId: t.docId }).catch(() => {});
+      }
+    }
+  }).catch(() => {});
+  // 卫星窗口干净关窗通知：清掉它那条，主窗口那份同文档的同步键随之收起。
+  void listen<{ from?: string }>(EVT_WINDOW_CLOSED, (e) => {
+    const p = e.payload;
+    if (!p?.from || p.from === windowLabel) return;
+    remoteOpenByWindow.delete(p.from);
+    refreshSyncButton(activeTab());
+  }).catch(() => {});
   // B161：关标签前那句「还有人拿着这份文档吗」—— 两种窗口都要接。
   // 应答由 `handleDocCloseQuery` 直接 emitTo 给发起方，所以这里只装监听、不回包。
   void listen<DocClosePayload>(EVT_DOC_CLOSE_QUERY, (e) => {
@@ -6921,6 +7043,10 @@ async function finishSatelliteClose(): Promise<void> {
     // 备份失败也照关：内容没能进副本就只能丢，把窗口吊在这儿更糟
     // （以前这里写的是「标签已经交回主窗口」，B155 起那条路没有了，注释一并改掉）
   }
+  // B178：卫星干净关窗要告诉对端「本窗口没了」，对端据此把 `remoteOpenByWindow`
+  // 里这条清掉 —— 否则主窗口那份同文档的同步键会一直亮着（其实卫星早就关了）。
+  // 这一句只广播、不等回话；广播失败（已无对端）按「本来就该清」处理，不阻塞关窗。
+  void emit(EVT_WINDOW_CLOSED, { from: windowLabel }).catch(() => {});
   await destroySelf();
 }
 
@@ -7067,6 +7193,10 @@ async function setupShell(): Promise<void> {
 
   // B71 ④：跨窗口同源正文同步（主窗口与卫星窗口都要装，见 listenDocSync）
   listenDocSync();
+  // B178：引导末尾问一圈「你们都开着哪些可见文档」—— 老窗口把当前集合重播一遍，
+  // 新上线的窗口据此补齐 `remoteOpenByWindow`（否则它只知道自己开的，收不到老窗口
+  // 已经开着的那些）。只发一次，不进刷新循环，不会形成回声环。
+  void emit(EVT_DOC_OPEN_RESYNC, { from: windowLabel }).catch(() => {});
 
   // 从资源管理器拖入文件（B91 改造）：wry 的原生拖放处理器已关闭（它做的两处劫持会把
   // 页面内 HTML5 拖放一起废掉，详见 `src-tauri/src/dropbridge.rs` 模块头），改由两层拼：
