@@ -977,6 +977,49 @@ describe("B160 反向验证：退回旧写法，上面那四条必须变红", ()
   });
 });
 
+// ------------------------------------------------------- B175：跟随坐标按整条逻辑行算行内比例
+// isWrap=true 下一条逻辑行会被 CM6 拆成多个视觉块（每块一行高），这些块的
+// `lineAt(block.from).number` 都是同一个逻辑行号、块 height 只是一条视觉行高。旧
+// `topVisibleLineFrac` 只用「当前视觉块内比例」拼行号 ⇒ 滚过折行段落时行号卡在 N±1 上下
+// 跳，推给预览的坐标跟着抖（用户反复报的「预览跟随整页重渲染 / 跳动」，而 TOC 一次性大跳
+// 反而没问题 —— 一次性定位不走分数坐标）。修法：比例算在**整条逻辑行**的高度上。
+describe("B175 同步跟随坐标按整条逻辑行算行内比例（折行段落不抖）", () => {
+  const FRAC = slice(main, "function topVisibleLineFrac(", "function topVisibleLineOf(");
+  it("topVisibleLineFrac 取整条逻辑行的顶与下一行顶之差当总高，再算进入比例", () => {
+    // 单行视觉块高度（block.height）当总高 ⇒ 折行段落里行号卡死。必须取这一行的首视觉块
+    // 顶（lineTop）与下一行顶（nextTop）之差当整条逻辑行的高度。
+    expect(FRAC, "要取这一行的顶（首视觉块 top）").toMatch(/view\.lineBlockAt\(line\.from\)\.top/);
+    expect(FRAC, "要取下一行的顶").toMatch(/view\.lineBlockAt\(nextLine\.from\)\.top/);
+    expect(FRAC, "总高 = 下一行顶 - 本行顶").toMatch(/nextTop - lineTop/);
+    // 旧写法：const h = block.height || 1; ratio = (scrollTop+1 - block.top)/h
+    expect(FRAC, "不许再用单视觉块高度当总高").not.toMatch(/const h = block\.height \|\| 1;/);
+    expect(FRAC, "不许再拿单块内比例拼行号（折行段落会卡在 N±1 跳）").not.toMatch(
+      /\(\s*scrollTop \+ 1 - block\.top\s*\)\s*\/\s*block\.height/,
+    );
+  });
+
+  it("编辑器→预览跟随（syncFromEditor）用的顶行坐标也走带比例的小数", () => {
+    // `host.topVisibleLine` 喂给 `syncFromEditor`；原来返回整数 `topVisibleLineOf` ⇒
+    // 源面板自己的预览也跟着阶梯跳（同一份抖动症状）。必须走 `topVisibleLineFrac`。
+    const host = slice(main, "preview.setHost({", "lineCount: () =>");
+    expect(host, "topVisibleLine 要返回带比例的小数").toMatch(/return topVisibleLineFrac\(v\);/);
+    expect(host, "不许再返回整数行号").not.toMatch(/return topVisibleLineOf\(v\);/);
+  });
+
+  it("B175 反向验证：退回单视觉块比例 → 「整条逻辑行高度」那条必须落空", () => {
+    const ORIG_LINE = "const lineHeight = nextTop - lineTop || block.height || 1;";
+    expect(main, "退化串要先自证原句还在").toContain(ORIG_LINE);
+    const degradedMain = main.replace(ORIG_LINE, "const h = block.height || 1;");
+    const degradedFrac = slice(
+      degradedMain,
+      "function topVisibleLineFrac(",
+      "function topVisibleLineOf(",
+    );
+    expect(degradedFrac, "退化后不再按整条逻辑行算高").not.toMatch(/nextTop - lineTop/);
+    expect(degradedFrac, "退化后单块高度又回来了").toMatch(/const h = block\.height \|\| 1;/);
+  });
+});
+
 describe("B172 同一容器只认最新一条补钉链（连续同步不再互相拉锯）", () => {
   it("pinScrollTop 领令牌，作废的旧链不许再写 scrollTop", () => {
     // 同步滚动时源每派发一次 scroll 就调一次这里，而一条链要跑到 PIN_MAX_FRAMES 才收工。

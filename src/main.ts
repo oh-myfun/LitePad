@@ -1082,7 +1082,12 @@ function rebuildLayout(): void {
         topVisibleLine: () => {
           const v = p.view?.view;
           if (!v) return 1;
-          return topVisibleLineOf(v);
+          // B175：跟随用**带行内比例的小数**（与 `pushSyncToSiblings` 推兄弟时取的坐标同口径，
+          // 见 `topVisibleLineFrac`）。原来返回的 `topVisibleLineOf` 是**整数**行号 ⇒ 编辑器
+          // 在一行内滚动时预览那份不动、跨行才跳一格，连续跟随就成了「卡一下、跳一下」的阶梯，
+          // 看着就像「预览整页重渲染」（用户反复报的同步抖动）。一次性定位（切视图交接、
+          // 预览还原锚点）仍走整数 `topVisibleLineOf`，那类场景不需要行内比例。
+          return topVisibleLineFrac(v);
         },
         scrollToLine: (line: number) => {
           const v = p.view?.view;
@@ -4104,9 +4109,19 @@ function isMdActive(): boolean {
 function topVisibleLineFrac(view: EditorView): number {
   const scrollTop = view.scrollDOM.scrollTop;
   const block = view.lineBlockAtHeight(scrollTop + 1);
-  const h = block.height || 1;
-  const ratio = Math.min(1, Math.max(0, (scrollTop + 1 - block.top) / h));
-  return view.state.doc.lineAt(block.from).number + ratio;
+  const line = view.state.doc.lineAt(block.from);
+  // B175：换行（isWrap=true）下一条逻辑行会被 CM6 拆成**多个视觉块**（每块一行高），
+  // 这些块的 `lineAt(block.from).number` 都是同一个逻辑行号、块 `height` 只是一条视觉行高。
+  // 若只用「当前视觉块内比例」拼行号，滚过一段折行段落时行号会卡在 N±1 上下跳 ⇒ 推给预览
+  // 的坐标跟着抖，预览那份看起来就是「整页重渲染 / 跳动」（用户反复报的同步抖动）。
+  // 必须把比例算在**整条逻辑行**的高度上：取这一行的顶（首视觉块 top）与下一行顶之差当
+  // 总高，再算「滚动进入这一行的比例」—— 折行段落里行号随滚动平滑推进 N→N+1，预览落点才连续。
+  const lineTop = view.lineBlockAt(line.from).top;
+  const nextLine = line.number < view.state.doc.lines ? view.state.doc.line(line.number + 1) : null;
+  const nextTop = nextLine ? view.lineBlockAt(nextLine.from).top : lineTop + (block.height || 1);
+  const lineHeight = nextTop - lineTop || block.height || 1;
+  const ratio = Math.min(1, Math.max(0, (scrollTop + 1 - lineTop) / lineHeight));
+  return line.number + ratio;
 }
 
 function topVisibleLineOf(view: EditorView): number {
