@@ -3,6 +3,57 @@
 > 本文件由 `scripts/gen-changelog.sh` 从 Conventional Commit 自动生成，
 > `scripts/release.sh` 发布时自动刷新；版本口径见 `docs/conventions.md`「版本号规则」。
 
+## v0.14.5 — 2026-09-30
+
+本版距 `v0.14.4` 共 33 个提交。
+
+### 新功能
+
+- pin toggle uses pinned/pin glyphs, sync toggle uses link/unlink (B166) `18003b8`
+- sync-scroll toggle and cross-window sync in satellite windows (B164) `a0e0ced`
+- 卫星窗口的关闭改为真关闭（B155） `e448ad0`
+- B154 同步滚动 —— link 图标方形键，跨视图模式与「谁滚谁当源」 `759f4ea`
+- B153 卫星窗口比主窗口简洁 —— 不建菜单栏，关窗口径钉死 `0efcb63`
+- B152 标题栏同步滚动开关 —— 默认不关联，按文档单独开，切激活文档时按新源对齐 `ed19017`
+
+### 修复
+
+- 切换激活文件时刷新底部状态栏光标位置 (B180) `a8b2b8c`
+- 跨窗口标签拖拽用广播 dragId 兜底 MIME 丢失，子窗口能接住标签 (B179) `066a9f9`
+- 跨窗口多开时主/子窗口同步滚动按钮显隐一致 (B178) `640c6df`
+- 跟随坐标带小数时预览不再坠到底部 `9ed7d77`
+- 抑制非激活源滚动的 A<->B 同步拉锯 (B176) `a622db3`
+- 同步跟随坐标按整条逻辑行算行内比例，修折行段落抖动 `1f77e33`
+- 同步坐标改带行内比例的小数，跟随不再阶梯跳 `1e0a134`
+- 隐藏实例不计入同步滚动按钮显隐份数（子窗口单开不该露脸） `887caff`
+- 同步滚动只认最新补钉链、预览顶行改二分（B172） `5691a44`
+- 编辑器→预览跟随不留待重定位尾巴（同步滚动还在抖） `aeb4e2c`
+- 子窗口关联按钮与主窗口同口径（同文件没多开时不显示） `0a169d7`
+- 同步滚动改用显式来源标记（scroll-guard） `6e3f26d`
+- 同步滚动三类遗留抖动/状态不一致 `25795de`
+- 同步滚动彻底屏蔽「自家滚动回执」被当成用户滚动 `7593c7f`
+- sync-scroll jitter (drop CM6 auto scroll-into-view) + pin button back to the right (B167) `99348e1`
+- absolutely center the filename in the title bar (B165) `be341c7`
+- vertically center the 24px title-bar tool buttons (B163) `56a3614`
+- break the sync-scroll feedback loop (B162) `ea2dcae`
+- B161 标签关闭只关自己这一份，子窗口可关唯一面板 `da998df`
+- B160 同步滚动双向打通 —— 滚预览源码不动、滚源码预览抖 `2c592b7`
+- 跨窗口同步滚动 —— 子窗口文档没跟着动 `9169b64`
+- 子窗口关标签不牵连主窗口，自动关窗时交还剩余标签 `fa95435`
+- B151 「pin 没立住」的判据要留小数容差，别把缩放下的正常落点当失败 `fea5e10`
+- B150 配置目录内的文件不监听，自写会话不再被当成外部修改 `91c420c`
+
+### 性能
+
+- 编译/打包提速（thin LTO + check 替代 build + 跳过测试开关） `71c8197`
+
+### 其他
+
+- 标题栏三颗工具键统一为同款方形图标键 `66268fb`
+- tooltip 纵向内边距 4px → 2px（对齐 VS Code 动作条那档） `362dfa8`
+
+---
+
 ## v0.14.4 — 2026-09-27
 
 本版距 `v0.14.3` 共 25 个提交。
