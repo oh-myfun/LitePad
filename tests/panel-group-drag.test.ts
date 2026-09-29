@@ -13,6 +13,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 vi.mock("@tauri-apps/api/event", () => ({
+  emit: () => Promise.resolve(),
   emitTo: () => Promise.resolve(),
   listen: () => Promise.resolve(() => {}),
 }));

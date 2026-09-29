@@ -24,7 +24,7 @@
 // ⚠️ 落点（spot）只在目标窗口内算一次，**不经过 IPC** —— 源窗口不需要知道对方打算
 //   放在哪块面板；它只负责把正文发过去、然后把自己这边收干净。
 
-import { emitTo, listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { emit, emitTo, listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 /** 标签拖拽的私有 MIME：用来把「标签拖拽」与「文件拖入」（`Files`）分开。 */
 export const TAB_MIME = "application/x-litepad-tab";
@@ -176,6 +176,23 @@ interface SourceDrag {
 }
 let source: SourceDrag | null = null;
 
+/**
+ * 当前有没有「别的窗口」正在拖标签过来（B179）。
+ *
+ * 仅靠 `TAB_MIME` 跨窗口会失效（见 `EVT_TAB_DRAG_ANNOUNCE` 注释），所以落点窗口靠广播
+ * 把这次拖拽的元数据记下来，拖拽期间用来画落点预览、松手时用来认领正文。`at` 记时间戳，
+ * 防止「广播丢了 end」导致的陈旧标记一直赖着（超过 5s 的标记不再当真）。
+ */
+interface ForeignDrag {
+  from: string;
+  dragId: string;
+  tabId: number;
+  groupPanelId: number | null;
+  count: number;
+  at: number;
+}
+let foreign: ForeignDrag | null = null;
+
 let dragSeq = 0;
 function nextDragId(): string {
   dragSeq += 1;
@@ -236,6 +253,16 @@ export function startTabDrag(
   }
   source = { payload: full, taken: false };
   document.body.classList.add(TAB_DRAG_CLASS);
+  // B179：广播「我在拖哪个 dragId」，让别的窗口（尤其是卫星窗口）在自定义 MIME
+  // 跨不过进程边界时仍能认领这次拖拽。自己的回声由 `onAnnounce` 的 `from === selfLabel`
+  // 判据挡掉，不会自伤。
+  void emit(EVT_TAB_DRAG_ANNOUNCE, {
+    from: cfg.selfLabel,
+    dragId,
+    tabId: payload.tabId,
+    groupPanelId: payload.groupPanelId,
+    count: payload.count,
+  }).catch(() => {});
   return dragId;
 }
 
@@ -251,6 +278,20 @@ function takeForClaim(dragId: string): TabDragPayload | null {
 export const EVT_TAB_CLAIM = "tab-dnd-claim";
 export const EVT_TAB_PAYLOAD = "tab-dnd-payload";
 
+/**
+ * 起拖时广播「我在拖哪个 dragId」（B179）。
+ *
+ * 为什么需要它：WebView2 跨进程拖放时自定义 MIME（`TAB_MIME`）常常**整个被吃掉**——
+ * 落点窗口的 `dataTransfer.types` 里压根没有它，于是 `readTabDragPayload` 读不出来、
+ * 目标窗口无从认领、跨窗口拖拽静默失效（卫星窗口接不住主窗口拖来的标签就是典型场景）。
+ * 这里在 `dragstart` 把 `dragId` + 发起窗口广播给所有窗口，落点窗口据此知道「有外部标签
+ * 拖拽在进行」，用广播里的 `dragId` 去认领正文，绕开被吃掉的 MIME。落点窗口只认
+ * `from !== 自己` 的广播，自己的回声不理。
+ */
+export const EVT_TAB_DRAG_ANNOUNCE = "tab-dnd-announce";
+/** 拖拽结束时广播（让对端清掉滞留的外部拖拽标记）。 */
+export const EVT_TAB_DRAG_END = "tab-dnd-end";
+
 interface ClaimMsg {
   from?: string;
   dragId?: string;
@@ -259,6 +300,17 @@ interface PayloadMsg {
   from?: string;
   dragId?: string;
   tabs?: unknown;
+}
+interface AnnounceMsg {
+  from?: string;
+  dragId?: string;
+  tabId?: number;
+  groupPanelId?: number | null;
+  count?: number;
+}
+interface EndMsg {
+  from?: string;
+  dragId?: string;
 }
 
 let hopDepth = 0;
@@ -280,16 +332,27 @@ export async function installTabDnd(cfg: TabDndConfig): Promise<() => void> {
   hopDepth = 0;
   lastPreviewAt = 0;
   pendingForeign = null;
+  foreign = null;
+
+  /** 当前是否有「别的窗口」正在拖标签过来（B179：自定义 MIME 跨不过进程边界时的兜底）。 */
+  const isForeignTabDrag = (): boolean =>
+    foreign !== null && foreign.from !== cfg.selfLabel && Date.now() - foreign.at < 5000;
 
   /**
    * 认领一个标签拖拽事件：preventDefault（拦默认动作）+ stopPropagation（拦住页面内组件）。
    * 不是标签拖拽（例如文件拖入）则原样放行，绝不干扰 `filedrop.ts`。
+   *
+   * ⚠️ B179：除了认自己的 `TAB_MIME`，也要认「别的窗口正在拖标签过来」—— 这时落点窗口
+   *    的 `dataTransfer.types` 里可能没有 `TAB_MIME`（被 WebView2 进程边界吃掉），只能靠
+   *    广播里的 `foreign` 判断。认领后照常 preventDefault + 拦住编辑器，否则松手会插正文。
    */
   const claim = (e: DragEvent): boolean => {
-    if (!isTabDragData(e.dataTransfer)) return false;
-    e.preventDefault();
-    e.stopPropagation();
-    return true;
+    if (isTabDragData(e.dataTransfer) || isForeignTabDrag()) {
+      e.preventDefault();
+      e.stopPropagation();
+      return true;
+    }
+    return false;
   };
 
   const onEnter = (e: DragEvent): void => {
@@ -322,16 +385,32 @@ export async function installTabDnd(cfg: TabDndConfig): Promise<() => void> {
     if (!claim(e)) return;
     hopDepth = 0;
     lastPreviewAt = 0;
-    const payload = readTabDragPayload(e.dataTransfer);
-    if (!payload) {
-      // types 说是标签拖拽、data 却读不出来 = 自定义 MIME 没能跨过进程边界。
-      // 后果是「跨窗口拖拽静默无效」，必须留一行日志才排得动。
-      cfg.onWarn?.("tab drag payload unreadable");
-      return;
-    }
     // 松手坐标可能比最后一次 dragover 精确一帧：按它重算一次落点再收痕迹
     const spot = cfg.preview(e.clientX, e.clientY, e.altKey);
     cfg.clear();
+
+    let payload = readTabDragPayload(e.dataTransfer);
+    if (!payload && foreign && foreign.from !== cfg.selfLabel) {
+      // B179：跨窗口拖拽时自定义 MIME 可能整个被 WebView2 进程边界吃掉，落点窗口读不出
+      // 载荷。改用广播里记下的外部拖拽元数据（dragId 等）来认领 —— 这样卫星窗口也能接住
+      // 主窗口拖来的标签。`foreign` 在认领后即清掉，避免滞留成陈旧标记。
+      payload = {
+        v: 1,
+        from: foreign.from,
+        tabId: foreign.tabId,
+        groupPanelId: foreign.groupPanelId,
+        count: foreign.count,
+        dragId: foreign.dragId,
+      };
+    }
+    if (!payload) {
+      // types 说是标签拖拽、data 却读不出来、也没有外部拖拽广播 = 自定义 MIME 没能跨过
+      // 进程边界且无从认领。后果是「跨窗口拖拽静默无效」，必须留一行日志才排得动。
+      cfg.onWarn?.("tab drag payload unreadable");
+      return;
+    }
+    // 本次拖拽已用外部广播认领过，清掉避免滞留（同窗口拖拽不会走到这里，foreign 本就为 null）
+    if (foreign && foreign.dragId === payload.dragId) foreign = null;
 
     if (payload.from === cfg.selfLabel) {
       // 自己拖的：窗口内落点，宿主自己消化（返回 false 也不得回落）。
@@ -370,6 +449,9 @@ export async function installTabDnd(cfg: TabDndConfig): Promise<() => void> {
     if (!s) return;
     const sx = e.screenX;
     const sy = e.screenY;
+    // B179：告诉对端「这次拖拽结束了」，让它清掉可能滞留的外部拖拽标记。自己的回声
+    // 由 `onEnd` 的 `from === selfLabel` 判据挡掉。
+    void emit(EVT_TAB_DRAG_END, { from: cfg.selfLabel, dragId: s.payload.dragId }).catch(() => {});
     // ⚠️ `source` 要**等宽限期过去**才清掉：对方来认领时靠 dragId 配对，而认领是 IPC
     // 往返、一定晚于 dragend。这里提前清的话认领会配不上、被当成过期事件丢掉 ——
     // 结果是标签既没交出去（宿主不会 relinquish）又多开了一个窗口。
@@ -378,6 +460,26 @@ export async function installTabDnd(cfg: TabDndConfig): Promise<() => void> {
       if (s.taken) return;
       config?.onFallback(s.payload, sx, sy);
     }, CLAIM_GRACE_MS);
+  };
+
+  const onAnnounce = (e: { payload: AnnounceMsg }): void => {
+    const p = e.payload;
+    if (!p || !p.from || p.from === cfg.selfLabel) return;
+    if (typeof p.dragId !== "string" || p.dragId === "") return;
+    foreign = {
+      from: p.from,
+      dragId: p.dragId,
+      tabId: typeof p.tabId === "number" ? p.tabId : -1,
+      groupPanelId: typeof p.groupPanelId === "number" ? p.groupPanelId : null,
+      count: typeof p.count === "number" && p.count > 0 ? p.count : 1,
+      at: Date.now(),
+    };
+  };
+
+  const onEnd = (e: { payload: EndMsg }): void => {
+    const p = e.payload;
+    if (!p || !p.from || p.from === cfg.selfLabel) return;
+    if (foreign && foreign.from === p.from && foreign.dragId === p.dragId) foreign = null;
   };
 
   const onClaim = (e: { payload: ClaimMsg }): void => {
@@ -416,6 +518,8 @@ export async function installTabDnd(cfg: TabDndConfig): Promise<() => void> {
     unlisten = await Promise.all([
       listen<ClaimMsg>(EVT_TAB_CLAIM, onClaim),
       listen<PayloadMsg>(EVT_TAB_PAYLOAD, onPayload),
+      listen<AnnounceMsg>(EVT_TAB_DRAG_ANNOUNCE, onAnnounce),
+      listen<EndMsg>(EVT_TAB_DRAG_END, onEnd),
     ]);
   } catch {
     /* 拿不到事件通道：窗口内拖拽照常，跨窗口交接退化为「扔桌面」回落 */
@@ -431,6 +535,7 @@ export async function installTabDnd(cfg: TabDndConfig): Promise<() => void> {
     unlisten = [];
     pendingForeign = null;
     source = null;
+    foreign = null;
     config = null;
   };
 }

@@ -10,6 +10,7 @@ import { themeBlock, cssDecls, ruleBlock } from "./static";
 // 本文件要验「tabstrip 确实造了影像并交给了系统」，因此需要一个装着传输层的环境；
 // 事件通道给个空壳即可（jsdom 里没有 Tauri，真 `listen` 会抛）。
 vi.mock("@tauri-apps/api/event", () => ({
+  emit: () => Promise.resolve(),
   emitTo: () => Promise.resolve(),
   listen: () => Promise.resolve(() => {}),
 }));

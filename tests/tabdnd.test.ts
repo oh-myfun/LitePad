@@ -23,6 +23,10 @@ const bus = vi.hoisted(() => ({
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
+  emit: (event: string, payload: unknown) => {
+    bus.sent.push({ target: "*", event, payload });
+    return Promise.resolve();
+  },
   emitTo: (target: string, event: string, payload: unknown) => {
     bus.sent.push({ target, event, payload });
     return Promise.resolve();
@@ -35,6 +39,8 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 import {
   EVT_TAB_CLAIM,
+  EVT_TAB_DRAG_ANNOUNCE,
+  EVT_TAB_DRAG_END,
   EVT_TAB_PAYLOAD,
   TAB_MIME,
   decodeTabDrag,
@@ -519,6 +525,110 @@ describe("跨窗口交接：认领 → 定向投递正文 → 落地", () => {
     uninstall = await installTabDnd(cfg);
     fromPeers(EVT_TAB_PAYLOAD, { from: "x1", dragId: "peer-9", tabs: [] });
     expect(calls.adopt).not.toHaveBeenCalled();
+  });
+});
+
+// ------------------------------------------------------------ 6. 跨窗口兜底（B179）
+//
+// 为什么单独成块：B91-2 的传输层依赖自定义 MIME（TAB_MIME）跨窗口，但 WebView2 跨进程
+// 拖放时常常把它整个吃掉 —— 落点窗口的 dataTransfer.types 里没有 TAB_MIME，读不出载荷就
+// 认领不了。典型症状：卫星窗口接不住主窗口拖来的标签。B179 起拖时广播 dragId，落点窗口
+// 靠广播认领，绕过被吃掉的 MIME。
+
+describe("跨窗口兜底：广播 dragId 认领（B179）", () => {
+  it("起拖广播 announce、拖完广播 end", async () => {
+    const { cfg } = makeConfig();
+    uninstall = await installTabDnd(cfg);
+    beginDrag();
+    expect(sentOf(EVT_TAB_DRAG_ANNOUNCE), "dragstart 广播 dragId").toHaveLength(1);
+    expect(sentOf(EVT_TAB_DRAG_ANNOUNCE)[0].payload).toMatchObject({ from: "main" });
+    fireDrag("dragend", document, makeDataTransfer([TAB_MIME]), { screenX: 1, screenY: 1 });
+    expect(sentOf(EVT_TAB_DRAG_END), "dragend 广播结束，让对端清标记").toHaveLength(1);
+  });
+
+  it("收到自己的 announce 要忽略（from === selfLabel，不污染本地）", async () => {
+    const { cfg, calls } = makeConfig();
+    uninstall = await installTabDnd(cfg);
+    fromPeers(EVT_TAB_DRAG_ANNOUNCE, { from: "main", dragId: "self", tabId: 11 });
+    // 没有 TAB_MIME 也没有外部标记 → 不该认领
+    const dt = makeDataTransfer([]);
+    const e = fireDrag("drop", document, dt, { clientX: 300, clientY: 120 });
+    expect(e.defaultPrevented, "自己的回声不能当成外部拖拽").toBe(false);
+    expect(calls.commitLocal).not.toHaveBeenCalled();
+    expect(sentOf(EVT_TAB_CLAIM)).toHaveLength(0);
+  });
+
+  it("跨窗口：TAB_MIME 被进程边界吃掉 → 靠广播认领（卫星窗口接住主窗口拖来的标签）", async () => {
+    const { cfg, calls } = makeConfig({ selfLabel: "sat-1" });
+    uninstall = await installTabDnd(cfg);
+    // 主窗口起拖时广播了 announce（落点窗口收不到 TAB_MIME）
+    fromPeers(EVT_TAB_DRAG_ANNOUNCE, {
+      from: "main",
+      dragId: "peer-1",
+      tabId: 11,
+      groupPanelId: null,
+      count: 1,
+    });
+    const dt = makeDataTransfer([]); // 关键：dataTransfer 里压根没有 TAB_MIME
+    fireDrag("dragover", document, dt, { clientX: 300, clientY: 120, timeStamp: 1000 });
+    expect(calls.preview, "靠广播知道有外部拖拽，要画落点预览").toHaveBeenCalled();
+    fireDrag("drop", document, dt, { clientX: 300, clientY: 120 });
+    expect(calls.commitLocal, "不是自己的拖拽，本地不得提交").not.toHaveBeenCalled();
+    const claims = sentOf(EVT_TAB_CLAIM);
+    expect(claims, "用广播里的 dragId 认领正文").toHaveLength(1);
+    expect(claims[0].target, "认领发回发起窗口").toBe("main");
+    expect(claims[0].payload, "dragId 取自广播而非被吃掉的 MIME").toMatchObject({
+      from: "sat-1",
+      dragId: "peer-1",
+    });
+    expect(calls.onWarn, "这次能认领，不该告警").not.toHaveBeenCalled();
+  });
+
+  it("整组拖拽（groupPanelId）跨窗口 → 广播带着 dragId，认领用整组", async () => {
+    const { cfg } = makeConfig({ selfLabel: "sat-2" });
+    uninstall = await installTabDnd(cfg);
+    fromPeers(EVT_TAB_DRAG_ANNOUNCE, {
+      from: "main",
+      dragId: "peer-g",
+      tabId: -1,
+      groupPanelId: 4,
+      count: 3,
+    });
+    const dt = makeDataTransfer([]);
+    fireDrag("drop", document, dt, { clientX: 300, clientY: 120 });
+    const claims = sentOf(EVT_TAB_CLAIM);
+    expect(claims, "整组拖拽的 dragId 经广播保留，认领照样发出").toHaveLength(1);
+    expect(claims[0].target).toBe("main");
+    expect(claims[0].payload).toMatchObject({ dragId: "peer-g" });
+    // groupPanelId 走源窗口自己的 source.payload 复原（不在认领线上），源侧快照逻辑
+    // 已由「跨窗口交接」块里的 groupPanelId 用例覆盖；这里只验证 dragId 这一环不被吃掉。
+  });
+
+  it("end 广播清掉外部拖拽标记：之后再收到无 MIME 的 drop 不再认领", async () => {
+    const { cfg, calls } = makeConfig({ selfLabel: "sat-1" });
+    uninstall = await installTabDnd(cfg);
+    fromPeers(EVT_TAB_DRAG_ANNOUNCE, { from: "main", dragId: "peer-1", tabId: 11 });
+    fromPeers(EVT_TAB_DRAG_END, { from: "main", dragId: "peer-1" });
+    const dt = makeDataTransfer([]);
+    const e = fireDrag("drop", document, dt, { clientX: 300, clientY: 120 });
+    expect(e.defaultPrevented, "标记已清，不该再当外部拖拽认领（事件原样放行）").toBe(false);
+    expect(sentOf(EVT_TAB_CLAIM), "标记清掉后不再发认领").toHaveLength(0);
+    expect(calls.commitLocal, "也不在本地提交").not.toHaveBeenCalled();
+  });
+
+  it("反向验证：去掉广播兜底，跨窗口无 MIME 的 drop 会静默失效（静态契约锁行为）", () => {
+    // 这条例证「B179 之前的行为」：drop 处理里没有任何从广播恢复载荷的分支时，
+    // 无 TAB_MIME 的 drop 既没拦默认动作也没认领。用源码静态锁住「现在有兜底分支」。
+    const dnd = readFileSync("src/shell/tabdnd.ts", "utf-8");
+    const stripComments = (s: string): string =>
+      s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+    const code = stripComments(dnd);
+    expect(code, "onDrop 必须读 foreign 广播来恢复跨窗口载荷").toMatch(
+      /if \(!payload && foreign && foreign\.from !== cfg\.selfLabel\)/,
+    );
+    expect(code, "认领后必须清掉 foreign 防止滞留").toMatch(
+      /if \(foreign && foreign\.dragId === payload\.dragId\) foreign = null;/,
+    );
   });
 });
 
