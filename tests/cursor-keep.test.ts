@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { EditorView } from "@codemirror/view";
 import { fireDrag, makeDataTransfer } from "./dnd";
+import { topLevelFnBody } from "./static";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -434,5 +435,51 @@ describe("B126 静态契约：滚动位置必须自己存取", () => {
     expect(rust, "Rust 会话结构要有 scroll_top，否则落盘时被丢掉").toContain(
       "pub scroll_top: Option<u32>",
     );
+  });
+});
+
+// B181：切完标签编辑器必须有焦点。
+//
+// ⚠️ 这一条**只能用静态契约锁**：jsdom 不计算 CSS，隐藏元素照样 `focus()` 得上，
+//    真机那个「对 display:none 元素 focus 静默失败」的行为在这里复现不出来。
+//    所以这里锁的是**顺序不变量** —— 类切完之后必须再补一次焦点。
+describe("B181 静态契约：切标签后编辑器必须拿到焦点", () => {
+  const raw = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
+  const code = (s: string): string =>
+    s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const body = code(topLevelFnBody(raw, "function switchTab("));
+
+  it("模式类切完之后必须再补一次 view.focus()", () => {
+    expect(body, "应能定位 switchTab 函数体").not.toBe("");
+    const apply = body.indexOf("applyPanelMode(panel);");
+    const restore = body.indexOf("restoreViewScroll(p");
+    expect(restore, "应能看到钉位置").toBeGreaterThan(-1);
+    expect(apply, "应能看到模式类切换").toBeGreaterThan(-1);
+    // ① B145 那一次仍要在钉位置之前（不能因为补焦点就把它挪走）
+    expect(body.indexOf("view.focus();"), "B145：第一次 focus 仍在钉位置之前").toBeLessThan(
+      restore,
+    );
+    // ② B181：`mode-preview` 会把 `.panel-editor` 设成 display:none（preview.css），
+    //    而 `mode-*` 类是在 applyPanelMode 里才切的 —— 若只有它之前那一次 focus，
+    //    上一份标签是预览态时焦点正打在隐藏元素上、**静默失败**；等类切回
+    //    mode-source 编辑器可见了却没人聚焦 ⇒ 「切完标签光标消失了，按方向键没反应，
+    //    得先点一下编辑区才能输入」。所以类切完必须**再补一次**。
+    const focus2 = body.indexOf("view.focus();", apply);
+    expect(focus2, "applyPanelMode 之后必须再补一次 view.focus()").toBeGreaterThan(apply);
+    // ③ 补的那次要紧跟在类切完之后、预览还原之前（别漂到测量之后去）
+    expect(focus2, "补焦点要排在预览还原之前").toBeLessThan(body.indexOf("restorePreviewScroll(p"));
+  });
+
+  it("反向验证：删掉补的那次 focus，B181 契约必须抓住", () => {
+    const FOCUS = "view.focus();";
+    const apply = body.indexOf("applyPanelMode(panel);");
+    const focus2 = body.indexOf(FOCUS, apply);
+    expect(focus2, "退化用的补焦点必须还在").toBeGreaterThan(apply);
+    // 真的删掉（只改判据不改源码 = 假绿）
+    const degraded = body.slice(0, focus2) + body.slice(focus2 + FOCUS.length);
+    expect(
+      degraded.indexOf(FOCUS, degraded.indexOf("applyPanelMode(panel);")),
+      "退化后 applyPanelMode 之后不再有 focus",
+    ).toBe(-1);
   });
 });

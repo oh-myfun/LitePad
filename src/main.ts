@@ -1323,6 +1323,20 @@ function switchTab(panelId: number, tabId: number): void {
   restoreViewScroll(panel);
   logViewport("切换 · 还原后", panel);
   applyPanelMode(panel);
+  // B181：类切完**再补一次焦点** —— 否则「从预览态的标签切走」之后编辑器没有焦点。
+  //
+  // ⚠️ 上面那次 `view.focus()` 排在 `applyPanelMode` **之前**，而 `mode-preview` 会把
+  //    `.panel-editor` 设成 `display:none`（preview.css）—— 上一份标签是预览态时，
+  //    那一刻编辑器还是隐藏的，对隐藏元素调 `contentDOM.focus()` **静默失败**：
+  //    不报错、也不聚焦。等 `applyPanelMode` 把类切回 `mode-source`，编辑器可见了
+  //    却没人聚焦 ⇒ 用户看到「光标消失了、按方向键没反应、得先点一下编辑区才能输入」。
+  //
+  // ⚠️ 那第一次 focus **不能删也不能挪**：它排在 `restoreViewScroll` 之前是 B145 的要求
+  //    （焦点先把光标滚进视野，随后的钉位置才盖得住）。所以这里是**补第二次** ——
+  //    此刻类已切好、编辑器可见，`focus()` 才真能拿到焦点。
+  //    `focus()` 内部走 `focusPreventScroll`（`preventScroll: true`，拿不到就回滚滚动栈），
+  //    不会把刚钉好的视口位置顶掉；已经聚焦过时它就是个空操作。
+  view.focus();
   // applyPanelMode 里的 syncToLine 会把预览按「编辑器顶行」重新定位一次，
   // 纯预览实例的位置得在它之后再钉回来（B130）
   restorePreviewScroll(panel);
