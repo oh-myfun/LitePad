@@ -224,8 +224,8 @@ describe("B152 同步滚动模式：推进与触发点", () => {
   });
 
   it("四个触发点都在：光标/编辑、用户滚动、切激活文档、全局刷新", () => {
-    expect(main, "光标与编辑之后要推").toMatch(
-      /if \(isSyncSource\(tab, panel\)\) pushSyncToSiblings\(tab\);/,
+    expect(main, "光标与编辑之后要推（被同源光标同步触发的不反推）").toMatch(
+      /if \(isSyncSource\(tab, panel\) && syncingCursorDocId !== tab\.docId\) pushSyncToSiblings\(tab\);/,
     );
     expect(main, "用户滚动之后要推：谁滚谁当源").toMatch(/if \(t\) pushSyncToSiblings\(t, true\);/);
     // 「切换激活文档时则根据新的激活文档进行同步」—— 这一句就落在 switchTab 末尾。
@@ -268,8 +268,8 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
       /function pushSyncToSiblings\(src: Tab, crossWindow = false\)/,
     );
     // 光标 / 输入那一路：不带第二个实参，走默认。
-    expect(main, "光标那一半不许跨窗口").toMatch(
-      /if \(isSyncSource\(tab, panel\)\) pushSyncToSiblings\(tab\);/,
+    expect(main, "光标那一半不许跨窗口（且不反推同步触发的那轮）").toMatch(
+      /if \(isSyncSource\(tab, panel\) && syncingCursorDocId !== tab\.docId\) pushSyncToSiblings\(tab\);/,
     );
     // 切激活文档 / 全局刷新这两路也不播：那是「本地对齐」，不是用户滚动。
     expect(main, "切激活文档那路不播").toMatch(/if \(tab\) pushSyncToSiblings\(tab\);\n/);
@@ -1017,6 +1017,59 @@ describe("B175 同步跟随坐标按整条逻辑行算行内比例（折行段�
     );
     expect(degradedFrac, "退化后不再按整条逻辑行算高").not.toMatch(/nextTop - lineTop/);
     expect(degradedFrac, "退化后单块高度又回来了").toMatch(/const h = block\.height \|\| 1;/);
+  });
+});
+
+// ------------------------------------------------------- B176：非激活源滚动的 A↔B 拉锯
+// B154「谁滚谁当源」让滚动监听直接调 `pushSyncToSiblings`，源可以是非激活面板；而
+// `pushSyncToSiblings` 给兄弟 dispatch 光标会**同步**触发兄弟的 `handleUpdate`，若兄弟
+// 正好是激活标签（`isSyncSource` 为真）就会把位置**反推回源** —— 源此刻还是上一帧旧值
+// （用户还在连续滚），于是被拽回旧位置、下一帧又被用户推新、再被拽回…… 连续滚动下就是
+// A↔B 拉锯（用户反复报的「非激活文档滚动抖」）。B167 那条注释仍写着「兄弟恰好是激活标签
+// 的情况不存在（源才是）」，已被 B154 打破。修法：dispatch 光标期间打 `syncingCursorDocId`
+// 标，`handleUpdate` 的 `isSyncSource` 分支见标跳过这一轮反推（光标仍落到兄弟，只是不再反推源）。
+describe("B176 非激活源滚动不再被兄弟反推成 A↔B 拉锯", () => {
+  const HANDLE_BODY = slice(main, "function handleUpdate(", "function syncDocInstances(");
+
+  it("给兄弟 dispatch 光标的那一路要打「同源光标同步」标，并清在 finally 里", () => {
+    // 标记要让兄弟那一轮 `handleUpdate` 看得见：必须在 dispatch **之前**设；且不论
+    // dispatch 是否抛错都要清掉（否则标记黏在容器上，之后真用户滚动会被误判成同步回执）。
+    expect(PUSH_BODY, "dispatch 前打标").toMatch(/syncingCursorDocId = src\.docId;/);
+    expect(PUSH_BODY, "dispatch 后要清标").toMatch(/syncingCursorDocId = null;/);
+    // 标 / dispatch / 清 三句必须按这个次序（清标不漏）。
+    const atSet = PUSH_BODY.indexOf("syncingCursorDocId = src.docId;");
+    const atDispatch = PUSH_BODY.indexOf(
+      "shownView.dispatch({ selection: { anchor: pos }, scrollIntoView: false });",
+    );
+    const atClear = PUSH_BODY.indexOf("syncingCursorDocId = null;");
+    expect(atSet, "要能定位打标那句").toBeGreaterThan(-1);
+    expect(atDispatch, "要能定位光标 dispatch").toBeGreaterThan(-1);
+    expect(atClear, "要能定位清标那句").toBeGreaterThan(-1);
+    expect(atSet, "打标必须在 dispatch 之前").toBeLessThan(atDispatch);
+    expect(atDispatch, "dispatch 必须在清标之前").toBeLessThan(atClear);
+  });
+
+  it("handleUpdate 的 isSyncSource 分支要跳过「被同源光标同步触发」的那一轮", () => {
+    // 否则兄弟（激活标签）会反推回源，非激活源被拽回旧位置 → 拉锯 / 抖。
+    expect(HANDLE_BODY, "光标同步触发的那轮不许反推").toMatch(
+      /if \(isSyncSource\(tab, panel\) && syncingCursorDocId !== tab\.docId\) pushSyncToSiblings\(tab\);/,
+    );
+    // 反向自证：旧写法（无标检查）不该还在。
+    expect(HANDLE_BODY, "不许再是无条件的 isSyncSource 推").not.toMatch(
+      /if \(isSyncSource\(tab, panel\)\) pushSyncToSiblings\(tab\);/,
+    );
+  });
+
+  it("B176 反向验证：退回无条件 isSyncSource 推 → 上面「跳过反推」必须落空", () => {
+    const ORIG =
+      "if (isSyncSource(tab, panel) && syncingCursorDocId !== tab.docId) pushSyncToSiblings(tab);";
+    expect(HANDLE_BODY, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = main.replace(ORIG, "if (isSyncSource(tab, panel)) pushSyncToSiblings(tab);");
+    const body = slice(degraded, "function handleUpdate(", "function syncDocInstances(");
+    expect(body, "退回后不再跳过反推").not.toMatch(/syncingCursorDocId !== tab\.docId/);
+    expect(body, "退回后又是无条件 isSyncSource 推").toMatch(
+      /if \(isSyncSource\(tab, panel\)\) pushSyncToSiblings\(tab\);/,
+    );
   });
 });
 

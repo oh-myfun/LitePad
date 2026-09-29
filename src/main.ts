@@ -430,6 +430,26 @@ function panelOfView(view: EditorView): Panel | undefined {
 /** 同源同步回环抑制：向兄弟实例分发变更期间，其 updateListener 不再二次广播。 */
 let syncingDocId: number | null = null;
 
+/**
+ * 同源**光标**同步回环抑制（B176）。
+ *
+ * `pushSyncToSiblings` 把源位置推给兄弟时，会顺手把光标也 dispatch 到兄弟那一侧。
+ * 那发 dispatch **同步**触发兄弟的 `handleUpdate`；若兄弟恰好是「激活面板的激活标签」
+ * （`isSyncSource` 为真），它又会 `pushSyncToSiblings` 把位置**反推回源** —— 而源此刻
+ * 的位置还是上一帧的旧值（用户还在连续滚），于是源被拽回旧位置、下一帧又被用户推新、
+ * 再被拽回…… 非激活文件滚动就是这种 A↔B 拉锯（用户反复报的「非激活文档滚动抖」）。
+ *
+ * ⚠️ 这个回环是 B154「谁滚谁当源」引入的：此前 `pushSyncToSiblings` 只从 `isSyncSource`
+ * （激活源）调用，兄弟永不是激活标签、`isSyncSource` 必假，不会反推；B154 起滚动监听
+ * 直接调它，源可以是非激活面板，兄弟就可能正好是激活那份 ⇒ 旧假设被打破（B167 那条
+ * 注释仍写着「兄弟恰好是激活标签的情况不存在（源才是）」，已不成立）。
+ *
+ * 修法：dispatch 光标期间给 `syncingCursorDocId` 打标，`handleUpdate` 的 `isSyncSource`
+ * 分支见标即跳过这一轮 `pushSyncToSiblings`（光标仍照常落到兄弟，只是不再反推回源）。
+ * 仅覆盖「活视图」那一路 —— 离线快照走 `other.state.update`、不触发 updateListener。
+ */
+let syncingCursorDocId: number | null = null;
+
 /** 编辑事务（来自任意面板的 view）：快照写回 + 脏标记 + 同源实例同步。 */
 function handleUpdate(view: EditorView, update: ViewUpdate): void {
   const panel = panelOfView(view);
@@ -448,7 +468,9 @@ function handleUpdate(view: EditorView, update: ViewUpdate): void {
   // B152：同步滚动模式下，激活文档这边一动光标（移动、输入都是 update）就带着
   // 兄弟一起走。`isSyncSource` 保证只有「激活的那份」当源，兄弟自己被推时不会
   // 反过来再推一次（见它的注释）。
-  if (isSyncSource(tab, panel)) pushSyncToSiblings(tab);
+  // B176：被同源光标同步 dispatch 触发的一轮 `handleUpdate` 不反推 —— 否则非激活源会被
+  //   拽回旧位置（A↔B 拉锯 / 非激活文档滚动抖）。光标仍由上面那发 dispatch 落到兄弟。
+  if (isSyncSource(tab, panel) && syncingCursorDocId !== tab.docId) pushSyncToSiblings(tab);
   // 文本是否真的变了：点击内容区、移动光标、切换视图、重新测量都会产生
   // update 但前后文本完全一致——那不是编辑。
   // 关键：md 预览重渲染**只**在文本真变化时才排程。若按「任意 update」排程，
@@ -712,7 +734,15 @@ function pushSyncToSiblings(src: Tab, crossWindow = false): void {
       //   关上，那一发 scroll 于是被当成「用户在滚」、反过来推回源 ⇒ 两边来回拉
       //   （用户反复报的同步滚动抖动）。位置由下面 `applySyncToSibling` 统一钉，
       //   这一下自动滚动纯属多余。
-      shownView.dispatch({ selection: { anchor: pos }, scrollIntoView: false });
+      // B176：这一发光标 dispatch 会**同步**触发兄弟的 `handleUpdate`；若兄弟正好是激活
+      //   标签（`isSyncSource` 为真），它会在那一轮反推回源 ⇒ A↔B 拉锯（非激活源滚动抖）。
+      //   打标让兄弟那一轮跳过反推，光标仍照常落到兄弟。离线快照不走 dispatch，无需标。
+      syncingCursorDocId = src.docId;
+      try {
+        shownView.dispatch({ selection: { anchor: pos }, scrollIntoView: false });
+      } finally {
+        syncingCursorDocId = null;
+      }
     } else {
       other.state = other.state.update({ selection: { anchor: pos } }).state;
     }

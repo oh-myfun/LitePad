@@ -120,8 +120,7 @@ echo "==> [4/4] release 发布构建（嵌入前端 + NSIS 安装包）"
 # 档位可选：`LITEPAD_PROFILE=dist`（Cargo.toml 的 `[profile.dist]`，fat LTO、最小体积，
 # 打 tag 出正式包时用；注意换档会全量重编，日常别用）。
 LITEPAD_PROFILE="${LITEPAD_PROFILE:-release}"
-TAURI_ARGS=(build --config "$UPD_CFG")
-[ "$LITEPAD_PROFILE" = "release" ] || TAURI_ARGS+=(--profile "$LITEPAD_PROFILE")
+# ⚠️ UPD_CFG 必须先赋值再被 TAURI_ARGS 引用（本轮重构曾把数组提前到赋值前，导致 --config '' 报错）
 UPD_CFG='{"build":{"beforeBuildCommand":""}}'
 if [ -f "$HOME/.tauri/litepad.key" ]; then
   TAURI_SIGNING_PRIVATE_KEY="$(cat "$HOME/.tauri/litepad.key")"
@@ -132,6 +131,8 @@ else
   UPD_CFG='{"build":{"beforeBuildCommand":""},"bundle":{"createUpdaterArtifacts":false}}'
   echo "    （未发现 ~/.tauri/litepad.key：本次不产出更新器签名产物）"
 fi
+TAURI_ARGS=(build --config "$UPD_CFG")
+[ "$LITEPAD_PROFILE" = "release" ] || TAURI_ARGS+=(--profile "$LITEPAD_PROFILE")
 if [ "$NPM_OK" = 1 ]; then
   npm run tauri -- "${TAURI_ARGS[@]}"
 else
