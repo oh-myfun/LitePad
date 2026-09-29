@@ -224,6 +224,41 @@ describe("B126 编辑器光标 / 视口不得复位", () => {
     expect(now.scrollDOM.scrollTop, "视口必须还在原处").toBe(SCROLL);
   });
 
+  // B180：切换激活文件时，底部状态栏的「行/列」必须跟着刷新。
+  //
+  // ⚠️ 根因不是「忘了写更新」，而是**没人会触发它**：CM6 的 `view.setState()` 不触发
+  //    updateListener（它 `destroy` 掉插件再整个重建，不走 `update()` 循环 —— 见
+  //    `EditorView.setState`），而切标签换文档走的正是 setState。于是 `handleUpdate`
+  //    里那句 `updatePositionOf` 根本跑不到，状态栏会一直挂着**上一个文件**的行号，
+  //    看着就像「光标位置没恢复」。修法是把光标位置也归到 `refreshStatus()` 里刷。
+  it("切换激活文件：底部状态栏的「行/列」要跟着刷新（B180）", async () => {
+    const sbPos = document.getElementById("sb-pos");
+    expect(sbPos, "状态栏要有光标位置槽位").toBeTruthy();
+
+    const panels = Array.from(document.querySelectorAll(".layout-panel")) as HTMLElement[];
+    // 面板1 是活动面板（上面刚点过它的标签）：先把 a.md 的光标摆到第 3 行第 3 列
+    clickTab(panels[1].querySelectorAll(".tab")[0] as HTMLElement);
+    await wait(60);
+    const v = views()[1];
+    expect(v.state.doc.toString(), "前置：面板1 显示 a.md").toContain("gamma");
+    v.dispatch({ selection: { anchor: v.state.doc.line(3).from + 2 } });
+    await wait(40);
+    expect(sbPos!.textContent, "移动光标后状态栏跟着走").toBe("行 3, 列 3");
+
+    // 切到 b.md（单行文档）→ 光标落在第 1 行第 1 列
+    clickTab(panels[1].querySelectorAll(".tab")[1] as HTMLElement);
+    await wait(60);
+    expect(views()[1].state.doc.toString(), "应切到 b.md").toContain("second document");
+    expect(
+      sbPos!.textContent,
+      "切标签走的是 setState（不触发 updateListener），必须由 refreshStatus 补刷这一眼",
+    ).toBe("行 1, 列 1");
+
+    // 还原现场，别影响后面的用例
+    clickTab(panels[1].querySelectorAll(".tab")[0] as HTMLElement);
+    await wait(60);
+  });
+
   it("重建布局（标签拖去分屏）：光标与视口都跟着走", async () => {
     const CARET_LINE = 4;
     const SCROLL = 120;

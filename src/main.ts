@@ -860,6 +860,24 @@ function refreshStatus(): void {
   sbCount.textContent = `${tab?.state.doc.length ?? 0} 个字符`;
   sbEncoding.disabled = !tab;
   sbEol.disabled = !tab;
+  // B180：光标位置（行/列）也必须归这里刷 —— 否则「切换激活文件时底部光标位置不刷新」。
+  //
+  // ⚠️ 千万别指望 `handleUpdate` 里那句 `updatePositionOf` 顺带覆盖到：整态切换
+  //    （`EditorView` 的那个同名方法）**不触发 updateListener** —— 它把插件 `destroy`
+  //    掉再整个重建，压根不走 `update()` 循环，而切标签 / 换文档走的正是这条路。
+  //    于是切换之后没人更新 `sbPos`，状态栏会一直挂着**上一个文件**的行号，
+  //    看着就像「光标位置没恢复」。
+  //
+  // ⚠️ 取「活动面板的活视图」而不是标签快照：视图才是当前真正显示的那一眼；取不到
+  //    （面板未挂载 / 还没建视图）再回落到标签快照，至少别留在上一个文件的行号上。
+  const activePanel = getPanel(activePanelId);
+  if (activePanel?.view) {
+    updatePositionOf(activePanel.panelId, activePanel.view.view);
+  } else if (tab) {
+    const head = tab.state.selection.main.head;
+    const line = tab.state.doc.lineAt(head);
+    sbPos.textContent = `行 ${line.number}, 列 ${head - line.from + 1}`;
+  }
   // 状态栏视图切换按钮跟随活动标签（切面板/切标签都经过这里）
   refreshViewModeButton();
 }
