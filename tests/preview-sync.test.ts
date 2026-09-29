@@ -326,6 +326,46 @@ describe("B171 编辑器→预览的跟随也不许留尾巴", () => {
   });
 });
 
+// B177：跟随坐标带行内比例小数时，预览不许坠到最底部。
+// B175 让 `host.topVisibleLine()`（编辑器那侧 `topVisibleLineFrac`）返回带小数行号，经
+// `syncFromEditor → syncToLineProgrammatic → applySyncToLine → blockAtLine` 落到预览。
+// 旧 `blockAtLine` 的 `line >= s && line <= e` 不匹配小数行号：单/多行块里 `12.3` 既被
+// `12.3 <= 12` 判否、又够不到下一块 ⇒ 退回最后一块 ⇒ 预览钉到底（B176 修抖动前被掩盖）。
+describe("B177 跟随坐标带小数时预览不许坠底", () => {
+  it("单/多行块 + 小数行号命中对应块并按比例插值（不坠底）", () => {
+    const pane = new PreviewPane();
+    const els = [12, 13, 14, 15].map((ln) => fakeBlock(ln, ln, (ln - 12) * 100));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (pane as any).blocks = els.map((el, i) => ({ html: `b${i}`, el }));
+    pane.root.replaceChildren(...els);
+    curRoot = pane.root;
+    // 模拟真实跟随：编辑器那侧带比例的小数行号
+    pane.setHost({ topVisibleLine: () => 12.3, scrollToLine: () => {}, lineCount: () => 20 });
+    pane.syncFromEditor();
+    // 12.3 → 第 12 行块（内容偏移 0），下一块第 13 行（偏移 100），跨 1 行插 0.3
+    // top ≈ 30 ⇒ scrollTop = 22（坠底应为 300-8 = 292）
+    expect(pane.root.scrollTop, "小数行号要落到对应块、按比例插值，不能坠底").toBeCloseTo(22, 0);
+    expect(pane.root.scrollTop, "绝不能是最后一块的底部").toBeLessThan(100);
+  });
+
+  it("滚过块尾的带小数行号也落到当前块，不坠到最后一个块", () => {
+    const pane = new PreviewPane();
+    // 真实段落：块 [4,9] 顶 0 → 块 [10,17] 顶 200 → 块 [18,29] 顶 500（多行块）
+    const els = [fakeBlock(4, 9, 0), fakeBlock(10, 17, 200), fakeBlock(18, 29, 500)];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (pane as any).blocks = els.map((el, i) => ({ html: `b${i}`, el }));
+    pane.root.replaceChildren(...els);
+    curRoot = pane.root;
+    // 编辑器顶行落在第 9 行 50% ⇒ 小数 9.5，已超过块 [4,9] 的 lineEnd
+    pane.setHost({ topVisibleLine: () => 9.5, scrollToLine: () => {}, lineCount: () => 40 });
+    pane.syncFromEditor();
+    // 9.5 → 段落块 [4,9]（顶 0），下一块 [10,17] 顶 200，跨 6 行插 5.5/6
+    // top ≈ 183.3 ⇒ scrollTop ≈ 175（坠底应为 500-8 = 492）
+    expect(pane.root.scrollTop, "小数行号坠过块尾必须落到当前块，不坠底").toBeCloseTo(175, 0);
+    expect(pane.root.scrollTop, "绝不能是最后一块的底部").toBeLessThan(200);
+  });
+});
+
 describe("预览同步接线（静态断言）", () => {
   it("main.ts 的大纲跳转/转到行必须对预览态实例显式 syncToLine", async () => {
     const { readFileSync } = await import("node:fs");

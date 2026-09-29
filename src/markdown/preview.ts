@@ -545,12 +545,22 @@ export class PreviewPane {
   }
 
   private blockAtLine(line: number): BlockNode | null {
+    // ⚠️ `line` 可能带行内比例小数（B174/B175：同步跟随用 `topVisibleLineFrac` 的
+    //   小数坐标，让预览跟随连续而非阶梯跳）。旧写法 `line >= s && line <= e` 兜不住小数：
+    //   12.3 落在 `[12,12]` 块里却被 `12.3 <= 12` 判否、又够不到 `[13,13]` ⇒ 落到「最后
+    //   一个块」⇒ 预览被钉到最底部（用户：滚源码预览直接到底）。空行造成的区间缝隙
+    //   （段落 [12,14] 与 [16,18] 之间缺 15）也会把小数行号挤到缝里、同样误坠底部。
+    //   改按「行号有序」线性找：取 `lineStart <= line` 的最后一块；若该块已含 line 直接命中，
+    //   缝隙 / 单块小数则稳定落到缝隙前那块，不再误坠底部。
+    let hit: BlockNode | null = null;
     for (const b of this.blocks) {
       const s = Number(b.el.dataset.lineStart);
+      if (line < s) break;
+      hit = b;
       const e = Number(b.el.dataset.lineEnd);
-      if (line >= s && line <= e) return b;
+      if (line <= e) return b;
     }
-    return this.blocks[this.blocks.length - 1] ?? null;
+    return hit ?? this.blocks[this.blocks.length - 1] ?? null;
   }
 
   /**
