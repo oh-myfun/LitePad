@@ -589,6 +589,22 @@ describe("B58 应用级 tooltip（取代原生 title，外观对齐 VS Code hove
     expect(tip, "420px 是相对 VS Code 700px 的有意收窄（见 tooltip.ts 顶部说明）").toMatch(
       /max-width:\s*420px/,
     );
+    // 提示文本必须可换行：长路径超过 420px 时变多行，而不是 nowrap 顶成一行溢出气泡
+    const textRule = css.match(/\n\.tooltip-text\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(textRule, "应有 .tooltip-text 规则").toBeTruthy();
+    expect(textRule, "超过 max-width 必须换行（white-space: normal）").toMatch(
+      /white-space:\s*normal/,
+    );
+    expect(textRule, "无空格长路径也要能在任意处断开").toMatch(/overflow-wrap:\s*anywhere/);
+    // 反向验证：退回 nowrap 必须被咬住，防止回归成「长路径溢出气泡」
+    const degraded = css.replace(
+      /\n\.tooltip-text\s*\{[^}]*\}/,
+      "\n.tooltip-text {\n  white-space: nowrap;\n}",
+    );
+    const deg = degraded.match(/\n\.tooltip-text\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(deg, "退化版必须真的改回 nowrap").toMatch(/white-space:\s*nowrap/);
+    expect(deg, "退化版不得再含换行声明").not.toMatch(/white-space:\s*normal/);
+    expect(deg, "退化版不得再含 overflow-wrap").not.toMatch(/overflow-wrap/);
     expect(tip, "不得裁剪：caret 要露在框外").toMatch(/overflow:\s*visible/);
     // 提示紧贴目标：可交互的话鼠标滑上去会掐断目标的 :hover，提示闪烁
     expect(tip, "不参与命中").toMatch(/pointer-events:\s*none/);

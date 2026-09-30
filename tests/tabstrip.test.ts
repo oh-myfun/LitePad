@@ -103,10 +103,12 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
     const tabH = Number(tabRule.match(/height:\s*(\d+)px/)![1]);
     expect(stripH - tabH, "上下间隙共 6px（3+3 对称，B123-6）").toBe(6);
   });
-  it("B56 标签不收缩：宽度跟内容走，放不下就横向滚动（文件名不裁剪成「…」）", () => {
-    // 用户反馈：标签变多后标签被压窄，文件名被裁剪成「…」。
-    // 根因 = .tab 上的 flex-shrink:1（B53 的「先收缩再滚动」）+ .tab-name 的
-    // text-overflow: ellipsis。B56 反过来：宽度 = 内容宽度，溢出交给横向滚动。
+  it("B56 标签不收缩 + 单标签名超长按 max-width 截断（标签栏横向滚动，不互相挤压）", () => {
+    // 用户反馈（B56 原）：标签变多后标签被压窄，文件名被裁剪成「…」——根因是 .tab 上的
+    // flex-shrink:1（B53「先收缩再滚动」）。B56 保留：.tab 自身 flex: 0 0 auto，标签栏
+    // 标签多时它们溢出并走自绘横向滚动条，**不互相挤压**。
+    // 本次新增：单个标签名超长时按 .tab 的 max-width（220px）截断成「…」（.tab-name 可收缩
+    // + 溢出省略号），而不是无上限地撑宽 —— 这是用户明确要的「标签支持最大宽度」。
     // ⚠️ 用 ruleBlock 而不是「取到第一个右花括号为止」的旧写法：后者会被**块内注释里的
     //   右花括号**截断（B113 这次就在注释里引过 VS Code 的选择器，一截断 flex 声明全丢，
     //   报的是「文件名不得收缩」这种八竿子打不着的错）——见 pitfalls/0075。
@@ -119,14 +121,32 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
     expect(tab, "不得再写 flex: 0 1 auto（那是会裁剪文本的可收缩行为）").not.toMatch(
       /flex:\s*0 1 auto/,
     );
-    expect(tab, "不得再给标签设宽度上限，否则超长文件名仍会被截断").not.toMatch(/max-width/);
+    expect(tab, "单标签名超长必须按 max-width 截断（用户需求）").toMatch(/max-width:\s*\d+px/);
     expect(tab, "保留收缩下限当最小宽度（短名标签不至于窄成一条）").toMatch(/min-width:\s*\d+px/);
 
     const name = cssDecls(ruleBlock(css, ".tab-name"));
     expect(name, "应有 .tab-name 规则").toBeTruthy();
-    expect(name, "文件名不得收缩").toMatch(/flex:\s*1 0 auto/);
-    expect(name, "不得再用省略号裁剪文件名").not.toContain("text-overflow: ellipsis");
-    expect(name, "不得再裁剪溢出（文件名必须整段可见）").not.toContain("overflow: hidden");
+    expect(name, "文件名可收缩以在 max-width 内截断").toMatch(/flex:\s*1 1 auto/);
+    expect(name, "必须能截断溢出（超长名变「…」）").toContain("text-overflow: ellipsis");
+    expect(name, "必须裁剪溢出才能出省略号").toContain("overflow: hidden");
+    expect(name, "截断需要 min-width: 0 让 flex 子项能收缩").toContain("min-width: 0");
+    expect(name, "省略号需要单行（nowrap）").toContain("white-space: nowrap");
+
+    // 反向验证：删掉 max-width / 省略号必须被咬住，防止回归回「无上限撑宽」
+    const noMax = css.replace(
+      /(\n\.tab\s*\{[^}]*?)max-width:\s*\d+px;/,
+      "$1/* max-width 已移除 */",
+    );
+    expect(noMax, "退化：max-width 必须真的被删").not.toMatch(
+      /\n\.tab\s*\{[^}]*max-width:\s*\d+px/,
+    );
+    const noEll = css.replace(
+      /(\n\.tab-name\s*\{[^}]*?)text-overflow:\s*ellipsis;/,
+      "$1/* ell 已移除 */",
+    );
+    expect(noEll, "退化：省略号必须真的被删").not.toMatch(
+      /\n\.tab-name\s*\{[^}]*text-overflow:\s*ellipsis/,
+    );
   });
   it("B57 ● 与 × 共用固定尺寸槽位，显隐走 opacity（对齐 VS Code 标签操作列）", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");

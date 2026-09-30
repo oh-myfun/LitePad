@@ -625,6 +625,9 @@ button:focus-visible {
      与左侧的 6px 对称。 */
   padding: 0 4px 0 6px;
   min-width: 60px;
+  /* 单标签名超长时按此上限截断（与拖拽浮影 .tab-drag-ghost-name 同宽），标签栏标签多时
+     仍靠横向滚动，不互相挤压（B56 原意保留）。截断效果见 .tab-name。 */
+  max-width: 220px;
   border: none;
   /* 非活动：文字降到 50% 前景（VS Code 的 color-mix 写法），底色全透明 */
   color: color-mix(in srgb, var(--fg) 50%, transparent);
@@ -933,9 +936,14 @@ button:focus-visible {
   position: relative;
   z-index: 1;
   /* 吸收 min-width 带来的松弛，让 ●/× 槽位贴住标签右缘。
-     **不收缩**（flex-shrink: 0）且**不做省略号裁剪**（B56）——文件名整段显示，
-     想要「…」的旧行为请先读 .tab 那段的翻转记录再决定。 */
-  flex: 1 0 auto;
+     可收缩（flex-shrink: 1）+ min-width: 0 + 溢出省略号：单标签名超过 .tab 的
+     max-width（220px）时截成「…」；标签栏标签多时 .tab 自身 flex: 0 0 auto 不收缩，
+     依旧靠横向滚动，不互相挤压（B56 的原意保留）。 */
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 文件类型图标（B57，对应 VS Code 的 `.tab.has-icon`）：
@@ -3173,7 +3181,10 @@ body.tab-drag-active * {
 }
 
 .tooltip-text {
-  white-space: nowrap;
+  /* 超过 .tooltip 的 max-width（420px）时换行成多行（长路径不再溢出气泡）。
+     用 overflow-wrap: anywhere 让没有空格的长路径也能在任意处断开。 */
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* 第二行补充说明（完整路径 / 行列号）：小字弱色，允许折行 */
