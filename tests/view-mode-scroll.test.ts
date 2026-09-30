@@ -16,6 +16,7 @@
 // 先把「预览此刻停在哪一行」换成**编辑器侧的像素**写进同一个槽，之后这一侧认的就是它。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
+import { EditorView } from "@codemirror/view";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -305,5 +306,85 @@ describe("B148 反向验证：把交接摘掉，上面几条必须变红", () =>
       body.indexOf("topVisibleLine("),
       "退化后取顶行应排在改 viewMode 之后（顺序契约此时必须落空）",
     ).toBeGreaterThan(body.indexOf("tab.viewMode ="));
+  });
+});
+
+// B190：切换源码 / 预览之后，光标要恢复到源码编辑区。
+//
+// ⚠️ 真机坑：预览态下编辑器是 `display:none`，焦点早就留不住（预览期间焦点在预览/按钮上），
+// 切回源码后没人聚焦 ⇒ 「看不见光标、方向键没反应、得先点一下编辑区」（同 B181，只是触发点
+// 从切标签换成切模式）。另外状态栏 / 菜单 / 工具栏切换都是鼠标手势，WebView2 在手势结束时会
+// 把焦点重新定到 body，只 focus 一次会被偷走、`cm-focused` 被摘掉、光标一闪而过（同 B183）。
+describe("B190 切换视图模式：光标要恢复到源码编辑区", () => {
+  function hostEl(): HTMLElement {
+    const el = document.querySelector(".layout-panel .panel-host") as HTMLElement | null;
+    if (!el) throw new Error("面板宿主没挂载");
+    return el;
+  }
+  /** 当前是不是纯预览态（mode 类由 applyPanelMode 加在 .panel-host 上）。 */
+  function isPreview(): boolean {
+    return hostEl().classList.contains("mode-preview");
+  }
+  function editor(): EditorView {
+    const dom = document.querySelector(".layout-panel .cm-editor") as HTMLElement | null;
+    if (!dom) throw new Error("编辑器没挂载");
+    const v = EditorView.findFromDOM(dom);
+    if (!v) throw new Error("取不到 EditorView");
+    return v;
+  }
+
+  it("预览切回源码 → 编辑器拿到焦点且 cm-focused（光标看得见）", async () => {
+    await import("../src/main");
+    await wait(300);
+
+    // 归一化到源码态（前面的用例可能把模式停在任意一侧）
+    if (isPreview()) {
+      toggleViewModeByClick();
+      await wait(60);
+    }
+    expect(isPreview(), "前置：归一化到源码态").toBe(false);
+
+    // ① 切到预览（编辑器 display:none —— jsdom 不算 CSS 所以元素还在）
+    toggleViewModeByClick();
+    await wait(60);
+    expect(isPreview(), "前置：已切到预览").toBe(true);
+    // 真机预览态编辑器是 display:none，焦点留不住；jsdom 不计算 CSS，这里手动模拟失焦，
+    // 否则「编辑器本来就有焦点」会让下面那条断言恒真（假绿）。
+    editor().contentDOM.blur();
+    await wait(20);
+    expect(editor().hasFocus, "前置：预览态编辑器没有焦点").toBe(false);
+
+    // ② 切回源码 → 编辑器必须重新拿到焦点，否则光标不显示
+    toggleViewModeByClick();
+    await wait(60);
+    expect(isPreview(), "应切回源码").toBe(false);
+
+    const v = editor();
+    expect(v.hasFocus, "切回源码后编辑器必须拿到焦点，否则看不见光标").toBe(true);
+    expect(
+      v.dom.classList.contains("cm-focused"),
+      "有焦点就该有 cm-focused，否则 .cm-cursor 是 display:none",
+    ).toBe(true);
+  });
+
+  it("静态契约：聚焦必须在 applyPanelMode 之后、restoreViewScroll 之前", () => {
+    const body = bodyOf("function toggleViewMode(");
+    const apply = body.indexOf("applyPanelMode(panel)");
+    const focus = body.indexOf("sourceEditor?.focus()");
+    const restore = body.indexOf("restoreViewScroll(panel)");
+    expect(apply, "应能定位模式切换").toBeGreaterThan(-1);
+    expect(focus, "切回源码要聚焦编辑器").toBeGreaterThan(-1);
+    expect(restore, "应能定位钉位置").toBeGreaterThan(-1);
+    // ① applyPanelMode 之后（之前编辑器是 display:none，focus 静默失败 —— B181 同款）
+    expect(focus, "聚焦必须在模式类切换之后").toBeGreaterThan(apply);
+    // ② restoreViewScroll 之前（focus 会把光标滚进视野，钉位置才盖得住 —— B145 同款）
+    expect(focus, "聚焦必须排在钉位置之前").toBeLessThan(restore);
+  });
+
+  it("静态契约：切回源码要延迟一拍再补一次焦点（对抗 WebView2 手势结束回焦）", () => {
+    const body = bodyOf("function toggleViewMode(");
+    expect(body, "必须延迟补焦点（B183 同款）").toMatch(
+      /setTimeout\(\s*\(\)\s*=>\s*\w+\.focus\(\),\s*0\s*\)/,
+    );
   });
 });

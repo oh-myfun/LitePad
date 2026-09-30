@@ -4688,8 +4688,18 @@ function toggleViewMode(): void {
   tab.viewMode = toPreview ? "preview" : "source";
   // 切换视图本身不是编辑：隐藏/恢复编辑器可能让 CM6 产生事务，这里一律不置脏
   suppressDirty = true;
+  // B190：切回源码后要把焦点给回编辑器（预览态期间它是 `display:none`，拿不住焦点，
+  // 焦点早已不在它身上）。先取一份局部引用，避免闭包里再去读 `panel.view`。
+  const sourceEditor = panel.view;
   try {
     applyPanelMode(panel);
+    // ⚠️ 这一下 focus 的两处顺序都有讲究：
+    //   ① 必须排在 `applyPanelMode` **之后**：之前编辑器还是 display:none，对隐藏元素
+    //      focus 会静默失败（同 B181 那条）；
+    //   ② 必须排在 `restoreViewScroll` **之前**：focus 会把光标滚进视野，钉位置才盖得住
+    //      （同 B145 那条）。
+    // 切到预览不用聚焦 —— 编辑器是隐藏的，focus 无意义且必然失败。
+    if (!toPreview) sourceEditor?.focus();
     // 刚从纯预览回来：编辑器刚从 display:none 出来、被清零了，把交接过来的那份钉回去
     if (handoff !== null) restoreViewScroll(panel);
   } finally {
@@ -4698,6 +4708,14 @@ function toggleViewMode(): void {
   // 隐藏 / 恢复编辑器会改变尺寸，CM6 随之测量，而它的滚动锚点补偿会把视口往下
   // 推一点 —— 位置得在补偿之后收回来（B146）
   measureAndKeepScroll(panel);
+  // B190（续）：与 B183 同款 —— 状态栏按钮 / 菜单 / 工具栏切换视图都是一次鼠标手势，
+  // WebView2 在手势结束时会把焦点重新定到 body，只 focus 一次会被偷走、`cm-focused`
+  // 被失焦兜底摘掉、光标一闪而过。延迟一拍再补一次即可；已聚焦时 CM6 的 focus 是空操作，
+  // 不会把上面钉好的视口位置顶掉。
+  if (!toPreview && sourceEditor) {
+    const handle = sourceEditor;
+    setTimeout(() => handle.focus(), 0);
+  }
   refreshViewModeButton();
   scheduleSessionSave();
 }
