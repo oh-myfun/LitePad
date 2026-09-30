@@ -4802,21 +4802,26 @@ function updateTocDrawer(): void {
       });
       tab2.state = panel.view.view.state;
       if (tab2.viewMode === "preview") panel.preview?.syncToLine(line);
-      // 同文件的其他实例：选区同步写进快照（内容经 ChangeSet 广播保持一致，
-      // 位置对全部实例有效）；可见实例同时滚动定位
-      for (const inst of instancesOfDoc(doc.tabId)) {
-        if (inst.tabId === tab2.tabId) continue;
-        const p = panels.get(inst.panelId);
-        if (p?.view && p.viewTabId === inst.tabId) {
-          p.view.view.dispatch({
-            selection: { anchor: pos },
-            effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: 0 }),
-          });
-          inst.state = p.view.view.state;
-          // 预览态面板编辑器是隐藏的，收不到滚动事件——显式按行定位预览
-          if (inst.viewMode === "preview") p.preview?.syncToLine(line);
-        } else {
-          inst.state = inst.state.update({ selection: { anchor: pos } }).state;
+      // 仅当该文档开启了同步滚动（docSyncModes）才把大纲跳转广播给同文档其它实例；
+      // 未关联同步滚动时大纲只影响激活实例（用户诉求：多开不同步则各自独立滚动）。
+      // 守卫口径与 pushSyncToSiblings 保持一致（tab2.docId）。
+      if (docSyncModes.get(tab2.docId) === true) {
+        // 同文件的其他实例：选区同步写进快照（内容经 ChangeSet 广播保持一致，
+        // 位置对全部实例有效）；可见实例同时滚动定位
+        for (const inst of instancesOfDoc(doc.tabId)) {
+          if (inst.tabId === tab2.tabId) continue;
+          const p = panels.get(inst.panelId);
+          if (p?.view && p.viewTabId === inst.tabId) {
+            p.view.view.dispatch({
+              selection: { anchor: pos },
+              effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: 0 }),
+            });
+            inst.state = p.view.view.state;
+            // 预览态面板编辑器是隐藏的，收不到滚动事件——显式按行定位预览
+            if (inst.viewMode === "preview") p.preview?.syncToLine(line);
+          } else {
+            inst.state = inst.state.update({ selection: { anchor: pos } }).state;
+          }
         }
       }
       panel.view.focus();

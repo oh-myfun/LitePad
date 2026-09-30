@@ -967,6 +967,8 @@ describe("bootstrap + drag-split smoke", () => {
         };
         return v;
       });
+      // 点击前记录各实例选区，用于验证「未同步时只有激活实例被拖动」
+      const headsBefore = amdViewsBefore.map((v) => v.state.selection.main.head);
       itemOf()[1].click();
       await new Promise((r) => setTimeout(r, 20));
       wrapped.forEach((v) => {
@@ -986,10 +988,18 @@ describe("bootstrap + drag-split smoke", () => {
         "不得再用最小滚动的 scrollIntoView:true",
       ).toBe(false);
 
-      // 断言：每一个 a.md 实例选区都跳到该标题行首
-      for (const [i, v] of amdViewsBefore.entries()) {
-        expect(v.state.selection.main.head, `实例${i} 应跳到「## 第二题」行首`).toBe(h2Pos);
-      }
+      // 用户诉求：未开启同步滚动（默认）时大纲跳转只影响激活实例，不得把同文档
+      // 其它实例也拖动。因此恰好一个实例跳到「## 第二题」行首，其余保持点击前位置。
+      const jumped = amdViewsBefore.filter((v) => v.state.selection.main.head === h2Pos).length;
+      expect(jumped, "未开启同步滚动时大纲只应定位激活实例（恰好一份）").toBe(1);
+      amdViewsBefore.forEach((v, i) => {
+        if (v.state.selection.main.head !== h2Pos) {
+          expect(
+            v.state.selection.main.head,
+            `非激活实例 ${i} 不应被大纲拖动（保持点击前位置）`,
+          ).toBe(headsBefore[i]);
+        }
+      });
       // 大纲活动项高亮应更新到点击的标题
       const activeItems = document.querySelectorAll("#toc-panel .toc-active");
       expect(activeItems.length, "应有活动高亮项").toBe(1);

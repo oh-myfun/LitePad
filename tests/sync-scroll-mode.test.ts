@@ -52,6 +52,12 @@ const BTN_BODY = slice(main, "function refreshSyncButton(", "function refreshSta
 const SRC_BODY = slice(main, "function isSyncSource(", "/** 这个实例此刻是否被某个面板");
 const CLICK_BODY = slice(main, 'syncScrollBtn.addEventListener("click"', "sbLang.addEventListener");
 const PIN_BODY = slice(main, "function pinScrollTop(", "function restoreViewScroll(");
+// 大纲 onJump：跳转定位逻辑（受同步滚动状态约束的那一段）—— 与 B152 同路数，盯静态契约。
+const ONJUMP_BODY = slice(
+  main,
+  "onJump: (entry) => {",
+  "// ---------------------------------------------------------------- 导出（M3）",
+);
 
 describe("B152 同步滚动模式：按钮与状态", () => {
   it("按钮挂在标题栏的文档名后面，默认收起", () => {
@@ -1191,5 +1197,34 @@ describe("B172 反向验证：摘掉作废判定，上面那条必须落空", ()
     const GUARD = "if (pinTokens.get(el) !== token) return;";
     expect(PIN_BODY, "退化串要先自证原句还在").toContain(GUARD);
     expect(PIN_BODY.replace(GUARD, ""), "摘掉后就没有『旧链作废』这回事了").not.toContain(GUARD);
+  });
+});
+
+describe("B186 大纲跳转受同步滚动状态约束（多开不同步则只动激活实例）", () => {
+  it("未开启同步滚动时，大纲跳转不得广播给同文档其它实例", () => {
+    // 用户诉求：文件多开且未关联同步滚动时，大纲只能影响激活文档的滚动位置。
+    // 激活实例自身的定位（含预览 syncToLine）在守卫之外，永远生效；
+    // 守卫只包住「遍历 instancesOfDoc 广播选区 + 滚动」那段。
+    const GUARD = "if (docSyncModes.get(tab2.docId) === true) {";
+    const FOR = "for (const inst of instancesOfDoc(doc.tabId))";
+    const ACTIVE = "tab2.state = panel.view.view.state;";
+    expect(ONJUMP_BODY, "onJump 必须显式用 docSyncModes 守卫广播段").toContain(GUARD);
+    expect(ONJUMP_BODY, "onJump 仍存在遍历同文档实例的广播段").toContain(FOR);
+    expect(ONJUMP_BODY.indexOf(ACTIVE), "激活实例定位必须在守卫之外（永远生效）").toBeLessThan(
+      ONJUMP_BODY.indexOf(GUARD),
+    );
+    expect(ONJUMP_BODY.indexOf(GUARD), "守卫必须包在广播循环之前（循环才受约束）").toBeLessThan(
+      ONJUMP_BODY.indexOf(FOR),
+    );
+  });
+
+  it("反向验证：退回「无条件广播」→ 上面那道守卫必须落空", () => {
+    const GUARD = "if (docSyncModes.get(tab2.docId) === true) {";
+    expect(ONJUMP_BODY, "退化串要先自证原句还在").toContain(GUARD);
+    const degraded = ONJUMP_BODY.replace(GUARD, "");
+    expect(degraded, "摘掉守卫后 onJump 不再受同步滚动约束").not.toContain(GUARD);
+    expect(degraded, "摘掉后广播循环仍在（即恢复成无条件广播）").toContain(
+      "for (const inst of instancesOfDoc(doc.tabId))",
+    );
   });
 });
