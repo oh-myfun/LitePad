@@ -484,6 +484,21 @@ describe("B181 静态契约：切标签后编辑器必须拿到焦点", () => {
       "退化后 applyPanelMode 之后不再有 focus",
     ).toBe(-1);
   });
+
+  it("B182（续）：切完标签要延迟一拍再补一次焦点，盖过 WebView2 手势结束回焦", () => {
+    // 左键 mousedown 不再拦默认焦点（那会废掉原生拖拽，标签拖不动），焦点被偷到 body 的
+    // 副作用靠 switchTab 末尾这拍延迟补焦点化解：WebView2 手势结束后会把焦点归 body，
+    // 若没有这拍延迟，CM6 的 10ms 失焦兜底会把 `cm-focused` 摘掉，光标一闪而过。
+    const reFocus = /setTimeout\(\s*\(\)\s*=>\s*view\.focus\(\),\s*0\s*\)/;
+    expect(body, "switchTab 末尾必须延迟一拍再 focus 一次").toMatch(reFocus);
+  });
+
+  it("反向验证：删掉延迟补焦点，B182 续契约必须抓住", () => {
+    const reFocus = /setTimeout\(\s*\(\)\s*=>\s*view\.focus\(\),\s*0\s*\)/;
+    expect(body, "退化用的延迟补焦点必须还在").toMatch(reFocus);
+    const degraded = body.replace(reFocus, "/* 已删除延迟补焦点 */");
+    expect(degraded, "退化后不应再匹配到延迟补焦点（否则这条断言形同虚设）").not.toMatch(reFocus);
+  });
 });
 
 // B182：切完标签「看不到跳动的光标」。

@@ -14,15 +14,23 @@ function build() {
 
 // B182：切标签时「光标一闪而过」的根因是标签 mousedown 把编辑器焦点抢到了 body，
 // 我们虽然在 click 里把焦点还回编辑器，但 WebView2 在整次手势结束后把焦点重新定到
-// body，于是 `cm-focused` 被 CM6 的失焦兜底摘掉 —— 光标闪一下就没了。修法：左键
-// mousedown 拦掉默认的焦点挪动（不影响 click 触发切标签，也不影响 HTML5 拖拽）。
-describe("B182 标签 mousedown 不能抢编辑器焦点", () => {
-  it("左键按下要 preventDefault（否则切完标签光标一闪而过）", () => {
+// body，于是 `cm-focused` 被 CM6 的失焦兜底摘掉 —— 光标闪一下就没了。
+//
+// ⚠️ 但「拦掉左键 mousedown 的默认焦点挪动」这个修法**不能要**：Chromium 桌面端（含
+// WebView2）一旦取消 mousedown 的默认动作，**原生 HTML5 拖拽也会被一并取消**（拖拽由
+// mousedown→mousemove 阈值触发，默认动作被取消即起不来）—— 结果是标签完全拖不动，连
+// 「拖到卫星窗口」都失效。所以这里只锁「左键 mousedown 不得 preventDefault」（保拖拽），
+// 焦点副作用改由 `main.ts` 的 `switchTab` 延迟一拍补焦点来化解（见 cursor-keep.test.ts
+// 的 B182 续契约）。
+describe("B182 标签 mousedown 必须保住原生拖拽", () => {
+  it("左键按下不能 preventDefault（否则标签完全拖不动，含拖到卫星窗口）", () => {
     const { host } = build();
     const tab = host.querySelector(".tab") as HTMLElement;
     const ev = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 });
     tab.dispatchEvent(ev);
-    expect(ev.defaultPrevented, "左键 mousedown 必须拦掉默认焦点挪动").toBe(true);
+    expect(ev.defaultPrevented, "左键 mousedown 不得拦默认动作，否则原生拖拽被一并取消").toBe(
+      false,
+    );
   });
 
   it("preventDefault 不挡 click：点击仍触发 onActivate", () => {

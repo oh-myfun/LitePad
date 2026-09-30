@@ -317,23 +317,17 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   // 中键关闭
   el.addEventListener("mousedown", (e) => {
     if (e.button === 1) {
+      // 中键的默认动作与焦点无关，拦掉不影响拖拽
       e.preventDefault();
       e.stopPropagation();
       cb.onClose(t.tabId);
-      return;
     }
-    // B182：左键按下不要去抢编辑器的焦点。标签是 `draggable` 的普通 div（无 tabindex），
-    // 浏览器默认会在 mousedown 时把焦点从编辑器（contentDOM）挪到 body；切标签在 `click`
-    // 里才把焦点还回去 —— 但 WebView2 在整次手势结束后会把焦点重新定到 body，于是
-    // `cm-focused` 被 CM6 的失焦兜底摘掉，光标「一闪而过」就消失。这里拦掉默认的焦点
-    // 挪动（不影响 click 触发切标签，也不影响 HTML5 拖拽：dragstart 由 mousemove 阈值
-    // 触发，与 mousedown 默认动作无关）。关闭按钮自己 stopPropagation，不会被这里拦到。
-    if (
-      e.button === 0 &&
-      !(e.target instanceof Element && e.target.closest(".tab-close") !== null)
-    ) {
-      e.preventDefault();
-    }
+    // ⚠️ 左键**不再**在这里调 `preventDefault()`。Chromium 桌面端（含 WebView2）一旦取消
+    // mousedown 的默认动作，**原生 HTML5 拖拽也会被一并取消** —— 拖拽由
+    // mousedown→mousemove 阈值触发，默认动作被取消即起不来。后果就是标签完全拖不动，
+    // 连「拖到卫星窗口」都失效（用户报的正是这条，源自 B182 二轮修复的回归）。焦点被偷到
+    // body 的副作用改由 `main.ts` 的 `switchTab` 在切完标签后**延迟一拍补焦点**来化解：
+    // 既保住拖拽，又让光标不闪。关闭按钮自己 stopPropagation，不走这里的逻辑。
   });
 
   // 右键菜单（B123-7 分组整理：关闭类 / 复制与分屏 / 窗口 / 路径）

@@ -1356,6 +1356,12 @@ function switchTab(panelId: number, tabId: number): void {
   renderPanelTabs(panelId);
   // 悬浮查找栏不随标签切换关闭——只把查询重新应用到新的活动视图
   retargetFindBar();
+  // B182（续）：左键 mousedown 不再拦默认焦点（那会连带废掉原生拖拽，标签拖不动），
+  // 改为切完标签后**延迟一拍**再补一次焦点。WebView2 在整次手势结束后会把焦点重新定到
+  // body（CM6 的 10ms 失焦兜底随之摘掉 `cm-focused`，光标一闪而过）；这里在切标签的焦点
+  // 之后排一个 macrotask 再 focus 一次，既赶在 10ms 兜底生效前把焦点钉回编辑器，又能盖过
+  // 任意时机的手势结束回焦，光标不再闪。
+  setTimeout(() => view.focus(), 0);
 }
 
 function makeDoc(
