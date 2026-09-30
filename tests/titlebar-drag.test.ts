@@ -136,17 +136,18 @@ function mouse(el: EventTarget, type: string, x: number, y: number): void {
 }
 
 describe("B192 标题栏拖动：纯点击不起拖，真移动才交给系统", () => {
-  it("点一下标题栏（含手抖 1px）完全不起拖", async () => {
+  it("纯点击（零位移）完全不起拖", async () => {
     await import("../src/main");
     await wait(300);
     const bar = document.getElementById("title-bar");
     expect(bar, "index.html 里必须有 #title-bar").toBeTruthy();
 
     drags.count = 0;
-    // 按下 → 手抖 1px → 松手：这是「只想点一下」的典型轨迹
+    // 按下 → 原地抖动（位移为 0，浏览器仍会发 mousemove）→ 松手：
+    // 这是「只想点一下」的典型轨迹，绝不能进系统移动循环。
     mouse(bar!, "mousedown", 100, 10);
-    mouse(window, "mousemove", 101, 10);
-    mouse(window, "mouseup", 101, 10);
+    mouse(window, "mousemove", 100, 10);
+    mouse(window, "mouseup", 100, 10);
     await wait(50);
     expect(drags.count, "纯点击不得进系统移动循环（Tauri #10767 的触发条件）").toBe(0);
 
@@ -156,13 +157,13 @@ describe("B192 标题栏拖动：纯点击不起拖，真移动才交给系统",
     expect(drags.count, "松手后不得再起拖（临时监听要摘掉）").toBe(0);
   });
 
-  it("越过阈值就起拖，且只起一次（后续移动不再重复 startDragging）", async () => {
+  it("只要真的动了（哪怕 1px）就起拖，且只起一次", async () => {
     const bar = document.getElementById("title-bar")!;
     drags.count = 0;
     mouse(bar, "mousedown", 100, 10);
-    mouse(window, "mousemove", 103, 10); // 刚好越过 3px 阈值
+    mouse(window, "mousemove", 101, 10); // B192 阈值 0：1px 就算「开始拖」
     await wait(50);
-    expect(drags.count, "越过阈值必须立刻交给系统移动循环").toBe(1);
+    expect(drags.count, "有位移必须立刻交给系统移动循环").toBe(1);
     // 系统接管后本窗口不再处理：后续 mousemove / mouseup 都不得再起一次
     mouse(window, "mousemove", 180, 90);
     mouse(window, "mouseup", 180, 90);

@@ -5833,9 +5833,11 @@ function setupTitleBar(): void {
   //     检测到移动才把拖动交给窗口、首次还有跨进程开销 ⇒ 体感是「第一下移动发涩」。
   // 于是取两家之长：**纯点击完全不碰拖拽**（绕开 #10767 的触发条件），
   // **而一旦移动就立刻 startDragging**（系统接管，与 B191 之前一样跟手）。
-  // ⚠️ 阈值取 3px：鼠标一次正常拖动远大于它，体感无延迟；又能吃掉按下时的手抖，
-  //    免得「点一下把窗口挪了 1px」。
-  const DRAG_THRESHOLD_PX = 3;
+  // ⚠️ 阈值取 **0**：只要有真实位移（哪怕 1px）就交权 —— 起手比 Chromium 的
+  //    `app-region: drag` 还早（它要等自己判定「这是一次拖动」）。
+  //    纯点击**不产生 mousemove**，所以依旧一次都不碰拖拽 ⇒ 不会进 #10767 那个循环。
+  //    （代价：按下后手抖出 1px 也会起拖 —— 真机若重现「粘鼠标」就把阈值调回 3px。）
+  const DRAG_THRESHOLD_PX = 0;
   titleBar.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return; // 只认左键
     // 按钮 / 可点元素自己有语义，不能顺带把窗口拖走
@@ -5849,9 +5851,10 @@ function setupTitleBar(): void {
     };
     const onMove = (ev: MouseEvent): void => {
       if (started) return;
+      // 「位移 ≤ 阈值」= 还没真的开始拖；阈值 0 ⇒ 只要动了哪怕 1px 就往下走。
       if (
-        Math.abs(ev.clientX - startX) < DRAG_THRESHOLD_PX &&
-        Math.abs(ev.clientY - startY) < DRAG_THRESHOLD_PX
+        Math.abs(ev.clientX - startX) <= DRAG_THRESHOLD_PX &&
+        Math.abs(ev.clientY - startY) <= DRAG_THRESHOLD_PX
       )
         return;
       started = true;

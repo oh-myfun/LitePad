@@ -47,9 +47,9 @@
 - **视图刷新红线**：mousedown 链路上绝不做 DOM 重建（否则「切换面板要点两下」）。
 - **窗口边框自建**（B97）：`decorations:false` 去掉原生标题栏，菜单栏画进自建标题栏，右侧是最小化 /
   最大化 / 关闭。
-  ⚠️ **拖动由 `setupTitleBar` 自己接管**（B192）：左键按下在标题栏（非按钮）后，等第一个
-  mousemove 越过 3px 阈值就调 `startDragging()` 交给系统移动循环 —— **纯点击一次都不碰拖拽**，
-  **真移动则由系统接管（最跟手）**。这样绕开了两条平台方案的坑：
+  ⚠️ **拖动由 `setupTitleBar` 自己接管**（B192）：左键按下在标题栏（非按钮）后，只要有**真实位移**
+  （阈值 `DRAG_THRESHOLD_PX = 0`，即动了 1px 就算）就立刻调 `startDragging()` 交给系统移动循环 ——
+  **纯点击一次都不产生 mousemove ⇒ 一次都不碰拖拽**，**真移动则由系统接管（最跟手）**。这样绕开了两条平台方案的坑：
   · Tauri 的 `data-tauri-drag-region` 在 mousedown 当刻就起拖，但它向顶层 Win32 窗口模拟一次
   标题栏点击（`WM_NCLBUTTONDOWN`）来进入移动循环，mouseup 因此到不了 webview；mousedown→起拖
   是异步 IPC，模拟的那次可能晚于真实松手 ⇒ 窗口卡在循环里跟着鼠标走（Tauri #10767，官方未修）；
