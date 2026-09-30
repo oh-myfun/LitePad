@@ -6449,9 +6449,12 @@ function applyBackupIds(
 /**
  * 主窗口：卫星窗口**异常消失**（崩溃 / 被任务管理器结束）时的兜底。
  *
- * 正常关闭走的是「先交还标签再 destroy」，到这里 remotedTabs 里已经空了，本函数
- * 自然成为空操作。真正命中只有异常路径 —— 那时把隐藏实例恢复成可见标签，
- * 至少让用户看得见、能继续编辑（代价是最后一次未交还的编辑不在，副本仍能兜住）。
+ * 命中条件：卫星窗口死了、却没走过 `finishSatelliteClose` 那条干净关窗链（所以
+ * `satellite-clean-close` 没发、`remotedTabs` 里还留着这份 owner 的条目）。正常关窗
+ * 走 `finishSatelliteClose` → 发 `satellite-clean-close` → 主窗口 `dropRemotedForOwner`
+ * 已把 `remotedTabs` 清空，这里落到时就是空操作，不会把用户「关掉」的子窗口标签又接回来
+ * （B188）。真正命中只有崩溃 / 被杀这类够不到前端收尾的路径 —— 那时把隐藏实例恢复成
+ * 可见标签，至少让用户看得见、能继续编辑（代价是最后一次未交还的编辑不在，副本仍能兜住）。
  */
 function reclaimFromVanished(label: string): void {
   if (windowKind !== "main") return;
@@ -6491,6 +6494,20 @@ function dropRemotedDoc(docId: number): void {
   tabs.delete(v.tabId);
   if (instancesOfDoc(docId).length === 0) docs.delete(docId);
   scheduleSessionSave();
+}
+
+/**
+ * 主窗口：卫星窗口**干净关窗**时，把借给它那份隐藏实例作废旧账（B188）。
+ *
+ * 与 `dropRemotedDoc` 同口径（删标签 + 清 `remotedTabs` + 必要时删 Rust 文档），
+ * 但按 owner 批量摘 —— 这样 `reclaimFromVanished`（崩溃兜底，只在 `satellite-closed`
+ * 上触发）落到时，`remotedTabs` 里已经没有这份 owner 的条目，自然成为空操作，
+ * 不会把用户「关掉」的子窗口标签又恢复回主窗口。
+ */
+function dropRemotedForOwner(label: string): void {
+  if (windowKind !== "main") return;
+  const owned = [...remotedTabs.entries()].filter(([, v]) => v.owner === label);
+  for (const [docId] of owned) dropRemotedDoc(docId);
 }
 
 /**
@@ -7086,6 +7103,12 @@ async function finishSatelliteClose(): Promise<void> {
   // 里这条清掉 —— 否则主窗口那份同文档的同步键会一直亮着（其实卫星早就关了）。
   // 这一句只广播、不等回话；广播失败（已无对端）按「本来就该清」处理，不阻塞关窗。
   void emit(EVT_WINDOW_CLOSED, { from: windowLabel }).catch(() => {});
+  // B188：干净关窗要**显式**告诉主窗口「别把借出去的隐藏实例接回来」—— 用户明确不要交还。
+  // 主窗口据此把 `remotedTabs` 里 owner=本窗口 的条目作废旧账（dropRemotedForOwner），
+  // 而不是走崩溃兜底把它们恢复成可见标签。这条必须先于 `destroySelf()` 发：主窗口的
+  // clean-close 处理落定后，Rust 的 `satellite-closed`(Destroyed) 才到，`reclaimFromVanished`
+  // 那时已是空操作，不会把「关掉」的子窗口标签又接回主窗口。
+  void emit("satellite-clean-close", { label: windowLabel }).catch(() => {});
   await destroySelf();
 }
 
@@ -7341,6 +7364,15 @@ async function bootstrap(): Promise<void> {
   ).catch(() => {});
   void listen<{ label?: string }>("satellite-closed", (e) => {
     if (e.payload?.label) reclaimFromVanished(e.payload.label);
+  }).catch(() => {});
+  // B188：卫星窗口**干净关窗**时，主窗口把借给它那份隐藏实例作废旧账（而不是恢复成
+  // 可见标签）。这条先于 Rust 的 `satellite-closed`(Destroyed) 到达，使崩溃兜底
+  // `reclaimFromVanished` 落在已清空的 remotedTabs 上、成为空操作。卫星窗口自己的 label
+  // 不会收到（事件跨窗口广播、自己那份被 `from === windowLabel` 过滤），故这里只挡回声。
+  void listen<{ label?: string }>("satellite-clean-close", (e) => {
+    const lbl = e.payload?.label;
+    if (!lbl || lbl === windowLabel) return;
+    dropRemotedForOwner(lbl);
   }).catch(() => {});
 
   // 主题、菜单、工具栏全部就绪。此刻 DOM 已是正确配色的界面外壳，后面的会话

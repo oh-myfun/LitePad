@@ -330,6 +330,53 @@ describe("B155 主窗口关窗时，卫星窗口跟随关闭", () => {
   });
 });
 
+describe("B188 干净关窗：隐藏实例作废旧账，不接回主窗口", () => {
+  it("finishSatelliteClose 发 satellite-clean-close（在 destroySelf 之前）", () => {
+    const body = bare("async function finishSatelliteClose");
+    // 必须先发 clean-close，主窗口的「作废旧账」才能排在 Rust 的 `satellite-closed`
+    // (Destroyed) 之前 —— 否则崩溃兜底 reclaimFromVanished 会把刚关的子窗口标签又接回。
+    const atClean = body.search(/emit\("satellite-clean-close"/);
+    const atDestroy = body.search(/await destroySelf\(\)/);
+    expect(atClean, "要能定位 clean-close 广播").toBeGreaterThan(-1);
+    expect(atDestroy, "要能定位 destroySelf").toBeGreaterThan(-1);
+    expect(atClean, "clean-close 必须排在销毁之前").toBeLessThan(atDestroy);
+    // ⚠️ 顺序：EVT_WINDOW_CLOSED 与 clean-close 都在 destroy 前即可，二者先后不敏感，
+    //     但 clean-close 一定在 destroy 前（主窗口才有机会先清空 remotedTabs）。
+    expect(body, "clean-close 携带本窗口 label").toMatch(
+      /satellite-clean-close",\s*\{\s*label:\s*windowLabel\s*\}/,
+    );
+  });
+
+  it("主窗口引导装 satellite-clean-close 监听，且调用 dropRemotedForOwner（不是 reclaim）", () => {
+    const boot = bare("async function bootstrap");
+    const at = boot.indexOf('void listen<{ label?: string }>("satellite-clean-close"');
+    expect(at, "必须装 satellite-clean-close 监听").toBeGreaterThan(-1);
+    const seg = boot.slice(at, at + 260);
+    expect(seg, "监听里要调 dropRemotedForOwner").toMatch(/dropRemotedForOwner\(/);
+    expect(seg, "干净关窗不许走崩溃兜底 reclaim").not.toMatch(/reclaimFromVanished\(/);
+  });
+
+  it("dropRemotedForOwner：按 owner 批量摘掉隐藏实例", () => {
+    const body = bare("function dropRemotedForOwner");
+    expect(body, "只主窗口处理").toMatch(/windowKind !== "main"\) return;/);
+    // 按 owner 过滤 remotedTabs 后逐条 dropRemotedDoc
+    expect(body, "按 owner 过滤").toMatch(/remotedTabs\.entries\(\)\]/);
+    expect(body, "过滤条件看 owner").toMatch(/v\.owner === label/);
+    expect(body, "逐条作废旧账").toMatch(/dropRemotedDoc\(docId\)/);
+  });
+
+  it("崩溃兜底 reclaimFromVanished 仍只在 satellite-closed 上触发（未被 clean-close 替代）", () => {
+    // 这条是异常路径的保险：卫星崩溃 / 被杀时够不到前端收尾，clean-close 发不出，
+    // remotedTabs 仍有条目 → satellite-closed → reclaimFromVanished 把它们恢复回来。
+    const boot = bare("async function bootstrap");
+    expect(boot, "satellite-closed 监听仍在（崩溃兜底）").toMatch(
+      /listen<\{ label\?:\s*string \}>\("satellite-closed"/,
+    );
+    const reg = bare("function reclaimFromVanished");
+    expect(reg, "崩溃兜底仍调 reclaimRemoted").toMatch(/reclaimRemoted\(/);
+  });
+});
+
 describe("B161 反向验证：退回旧写法，上面那几条必须变红", () => {
   it("退回「不管有没有人拿着都 close_tab」→「有人应答就不删」那条必须落空", () => {
     const ORIG = "if (!held) {";
