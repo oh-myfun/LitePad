@@ -1062,12 +1062,13 @@ function rebuildLayout(): void {
       panelId: p.panelId,
       active: p.panelId === activePanelId,
       tabs: tabViewDataOf(p),
-      // B161：卫星窗口唯一的面板**可以**关 —— 关面板 = 关窗 + 标签交回主窗口。
-      // 主窗口仍然不许关唯一面板（关了就没地方放标签）。
+      // B161：卫星窗口唯一的面板**可以**关 —— 关面板 = 关窗（B188 起不再把标签交回主窗口，
+      // 文档由主窗口那份隐藏实例接着管，未保存内容靠热退出副本兜住）。主窗口仍然不许关唯一
+      // 面板（关了就没地方放标签）。
       canClose: countLeaves(layout) > 1 || windowKind === "satellite",
       closeDetail:
         windowKind === "satellite" && countLeaves(layout) <= 1
-          ? "关闭该子窗口，标签交回主窗口"
+          ? "关闭该子窗口（其中的文件不会交回主窗口）"
           : undefined,
       // B71：被最大化挤扁的一侧要真的收成 0（CSS 里 .layout-panel 有 min-width）
       maximized: maximizedPanelId === p.panelId,
@@ -1600,9 +1601,9 @@ async function closeTabById(tabId: number): Promise<void> {
       // 「子窗口支持关闭最后一个文件和面板，此时相当于关闭子窗口」）。
       // 走 `close()` 而不是直接 destroy：与用户点 X 完全同一条链
       // （CloseRequested → registerSatelliteClose → finishSatelliteClose）。
-      // B157：**这是「窗口自己关空」那一档，手上没关的标签要先交回主窗口**
-      // （`returnTabs = true`）—— 与点 X 那档的区别就在这个参数。
-      requestSatelliteClose(true);
+      // B188：关窗即真关，**不把标签交回主窗口**（与点 X 同款口径，见 `requestSatelliteClose`
+      // 注释）。没关的文件标签由主窗口那份隐藏实例接着管，未保存内容靠热退出副本兜住。
+      requestSatelliteClose();
       return;
     }
     if (countLeaves(layout) <= 1) {
@@ -1718,9 +1719,9 @@ function closePanelById(panelId: number, hostId?: number): void {
   if (!panel) return;
   if (windowKind === "satellite" && countLeaves(layout) <= 1) {
     // B161：子窗口**唯一的面板也能关** —— 它没有「并入相邻面板」这条退路，关掉这块
-    // 就等于关掉这个窗口；里面还开着的标签交回主窗口（主窗口关面板是把标签并入相邻
-    // 面板，子窗口那个「相邻面板」就是主窗口本身）。
-    requestSatelliteClose(true);
+    // 就等于关掉这个窗口。里面还开着的标签**不交回主窗口**（B188：关窗即真关，与点 X
+    // 同款口径；文档由主窗口那份隐藏实例接着管，未保存内容靠热退出副本兜住）。
+    requestSatelliteClose();
     return;
   }
   if (countLeaves(layout) <= 1) return;
@@ -6268,8 +6269,7 @@ function detachLocally(tabIds: number[]): void {
     }
     if (![...tabs.values()].some((t) => t.docId === tab.docId)) docs.delete(tab.docId);
   }
-  // 空了的卫星窗口自己关掉：留一个没有标签的窗口没有意义。
-  // 摘空了自然没得交还，所以这里不需要 `returnTabs`（B157 交还是给「还剩几个」那档用的）。
+  // 空了的卫星窗口自己关掉：留一个没有标签的窗口没有意义（关窗即真关，不交还，见 B188）。
   if (windowKind === "satellite" && tabs.size === 0) {
     requestSatelliteClose();
     return;
@@ -6288,17 +6288,13 @@ function detachLocally(tabIds: number[]): void {
  * 链（CloseRequested → `registerSatelliteClose` → `finishSatelliteClose`）—— 热退出
  * 副本的收尾（cancelPendingBackup / flushBackups）就在那条链上，跳过去会漏掉。
  *
- * ⚠️ `returnTabs` 这两档**不是**同一个意思，别合并（B157 用户逐条钉死的口径）：
- *   · `false`（用户点 X / 主窗口退出带走的那个）：**不交还**。子窗口关掉就是真关，
- *     主窗口手里那份（隐藏实例）本来就没动过，不会「关了又冒回来」；反过来把标签
- *     交回去才是坏味道 —— 交回去的这批在子窗口里可都是没关的。
- *   · `true`（本窗口因为「最后一个文件 / 最后一个面板被关掉」而**自己**要关）：
- *     先把手上**剩的**交回主窗口再关。这是用户明确要的：「没有关闭的文件标签还是
- *     加回主窗口」—— 窗口是它自己关空的，那些文件本来就从主窗口分出去的，不留。
- * 交还必须先于 `close()`：`emitTo` 是 fire-and-forget，窗口一旦销毁回包就没了。
+ * ⚠️ 关窗即**真关**：既不把标签交回主窗口，也不广播「文档关掉了」。没关的文件标签本就
+ * 在主窗口留着一份隐藏实例（从主窗口分出去时没摘），由它接着管；未保存内容改由热退出
+ * 副本兜住（`finishSatelliteClose` 里那两条），不依赖任何交还。这是 B188 起钉死的口径：
+ * 用户明确「子窗口关闭时不需要将其中的标签接回」，与 B155 点 X 那档同款（见
+ * `registerSatelliteClose` 注释）。
  */
-function requestSatelliteClose(returnTabs = false): void {
-  if (returnTabs && windowKind === "satellite") returnTabsToMain([...tabs.keys()]);
+function requestSatelliteClose(): void {
   void getCurrentWindow()
     .close()
     .catch((e: unknown) => {
@@ -6644,8 +6640,8 @@ interface DocClosePayload {
 /** 主窗口要销毁了（B155）：在场的卫星窗口收到这条就得自己收场。 */
 // ⚠️ 这里**没有**「谁关了文档就广播给别的窗口」那条事件（B155 加过、B157 删掉）：
 //    标签是每个窗口各持一份，但**关标签只有发起窗口说了算** —— 让对端跟着摘的结果是
-//    「在子窗口关个文件，主窗口的同名标签也被关掉」，用户明确否掉。参见
-//    `requestSatelliteClose` 里那两档 `returnTabs` 的取舍。
+//    「在子窗口关个文件，主窗口的同名标签也被关掉」，用户明确否掉。卫星窗口无论怎么关
+//    （点 X / 关空 / 关唯一面板）都不再把标签交回主窗口（B188，见 `requestSatelliteClose`）。
 const EVT_APP_QUIT = "app-quit";
 
 /**

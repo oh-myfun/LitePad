@@ -40,7 +40,7 @@ export interface PanelRenderData {
   canClose?: boolean;
   /**
    * B161：⨯ 的副标题。不给时走默认文案「标签并入相邻面板」。
-   * 卫星窗口唯一的面板也能关（= 关窗 + 标签交回主窗口），那时副标题必须说清。
+   * 卫星窗口唯一的面板也能关（= 关窗，B188 起不再交回主窗口），那时副标题必须说清。
    */
   closeDetail?: string;
   /** B71：该面板正处于最大化（操作栏多一个「还原」⨯，其余面板 collapsed） */

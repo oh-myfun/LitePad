@@ -460,11 +460,11 @@ describe("B153 卫星窗口：比主窗口简洁，关窗不碰主窗口的收�
     const reg = fnBody("function registerSatelliteClose");
     expect(reg, "关窗不再交还标签").not.toContain("returnTabsToMain(");
     expect(reg, "也不再广播文档关闭").not.toContain("broadcastDocDisposed");
-    // 但交还这条路径本身还在（「移回主窗口」要用，自动关窗那档也调它）—— 否则
-    // 「关掉最后一个文件导致子窗口自己关」会把没关的文件一起吞掉（B157 用户原话）。
-    expect(fnBody("function requestSatelliteClose"), "交还抽屉不能整个被拆掉").toMatch(
-      /returnTabsToMain\(/,
-    );
+    // B188：自动关窗那档不再调交还抽屉；但「移回主窗口」（右键 returnTabToMain）和卫星
+    // 扔桌面回落（dropOnDesktop）仍要走它 —— 所以 returnTabsToMain 自己必须保留，不能
+    // 被整个拆掉（否则那两条路径会编译/运行期崩）。
+    const ret = fnBody("function returnTabsToMain");
+    expect(ret, "交还抽屉的定义不能被拆掉").toMatch(/emitTo\(MAIN_WINDOW_LABEL, "tabs-return"/);
   });
 });
 

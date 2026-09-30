@@ -133,11 +133,11 @@ describe("B155 / B157 卫星窗口：关掉最后一个文件 / 面板 = 关掉�
     // 一并交回主窗口，用户关的是一个标签，看到的却是别的标签跑去了主窗口。
     expect(sat, "多面板卫星窗口要认「还有别的面板」").toMatch(/countLeaves\(layout\) > 1/);
     expect(sat, "多面板分支只摘这一块（与主窗口同款）").toMatch(/disposePanel\(panel\.panelId\)/);
-    // B157：唯一面板被关空 = 「窗口自己关空」那一档，手上没关的标签要先交回主窗口
-    expect(sat, "落点必须带 returnTabs = true").toMatch(/requestSatelliteClose\(true\)/);
-    expect(sat, "不能退化成不带参数的默认档（那等于不交还）").not.toMatch(
-      /requestSatelliteClose\(\);/,
+    // B188：唯一面板被关空 = 「窗口自己关空」那一档，关窗即真关，不交还标签
+    expect(sat, "落点不许交还（returnTabs = true 已废）").not.toMatch(
+      /requestSatelliteClose\(true\)/,
     );
+    expect(sat, "落点走不交还的默认档").toMatch(/requestSatelliteClose\(\)/);
     // 反向自证：主窗口那两条兜底还都在（上面的 not.toMatch 不是因为压根没写）
     expect(branch, "主窗口仍要能新建未命名文档").toMatch(/void newUntitled\(\)/);
     expect(branch, "主窗口仍要能移除空分屏区域").toMatch(/disposePanel\(panel\.panelId\)/);
@@ -153,25 +153,23 @@ describe("B155 / B157 卫星窗口：关掉最后一个文件 / 面板 = 关掉�
     );
   });
 
-  it("自动关窗那档要交还剩余标签，且排在 close() 之前", () => {
-    // 用户原话：「关闭子窗口和最后一个面板后子窗口关闭，没有关闭的文件标签还是加回主窗口」
+  it("自动关窗那档也不交还标签（B188：关窗即真关）", () => {
     const body = bare("function requestSatelliteClose");
-    expect(body, "参数要存在（两档口径不一样）").toMatch(/returnTabs\s*=\s*false/);
-    const at = (pat: RegExp): number => body.search(pat);
-    const retAt = at(/returnTabs && windowKind === "satellite"[\s\S]{0,80}?returnTabsToMain/);
-    const closeAt = at(/getCurrentWindow\(\)/);
-    expect(retAt, "交还必须发生在关窗之前（窗口一销毁 emit 就没人收了）").toBeGreaterThanOrEqual(0);
-    expect(closeAt, "close() 调用还在").toBeGreaterThanOrEqual(0);
-    expect(retAt, "交还必须先于 close()").toBeLessThan(closeAt);
-    // 交还是「剩余的全部」—— 此时刚关掉的那个已经从 tabs 里摘了，剩下的都是没关的
-    expect(body, "交还手上剩余的标签").toMatch(/returnTabsToMain\(\[\.\.\.tabs\.keys\(\)\]\)/);
+    expect(body, "走 close：与点 X 同一条 CloseRequested 链").toMatch(
+      /getCurrentWindow\(\)\s*\n?\s*\.close\(\)/,
+    );
+    // B188：不再有「先交还再关」那一套 —— returnTabs 参数与 returnTabsToMain 分支一并移除
+    expect(body, "没有交还分支").not.toMatch(/returnTabsToMain/);
+    expect(body, "直接 destroy 会漏掉 cancelPendingBackup / flushBackups").not.toMatch(
+      /\.destroy\(\)/,
+    );
   });
 
-  it("点 X 那档（默认）不许交还：默认参数必须是 false", () => {
-    // `registerSatelliteClose` 走的就是默认档，默认 true 就等于「点 X 也交还」——
-    // B153 的 bug 会原样复活。
+  it("点 X 那档（默认）不许交还：函数不再带 returnTabs 参数", () => {
+    // B188 之前靠 `returnTabs = false` 默认参数保证点 X 不交还；现在参数整个删掉，
+    // 函数里再没有「交还」这回事 —— 点 X 默认档（`requestSatelliteClose()`）必然不交还。
     const body = bare("function requestSatelliteClose");
-    expect(body, "默认档 = 不交还").toMatch(/returnTabs = false/);
+    expect(body, "函数不带 returnTabs 参数（默认即不交还）").not.toMatch(/returnTabs/);
     const reg = bare("function registerSatelliteClose");
     expect(reg, "关窗回调里不许出现交还").not.toMatch(/returnTabsToMain\(/);
   });
@@ -259,14 +257,17 @@ describe("B161 关标签只关自己这一份：先问一圈，再决定动不�
   });
 });
 
-describe("B161 子窗口可以关掉唯一的面板（= 关窗 + 标签交回主窗口）", () => {
+describe("B161 子窗口可以关掉唯一的面板（= 关窗，不交回主窗口）", () => {
   it("closePanelById：卫星窗口唯一的面板走「关窗」而不是「什么都不做」", () => {
     const body = bare("function closePanelById");
     expect(body, "卫星窗口那一段要有专门的分支").toMatch(
       /windowKind === "satellite" && countLeaves\(layout\) <= 1/,
     );
-    // 与主窗口「关面板 → 并入相邻面板」对齐：子窗口没有相邻面板，主窗口就是那个「相邻」
-    expect(body, "落点是关窗 + 交还").toMatch(/requestSatelliteClose\(true\)/);
+    // B188：落点是「真关窗、不交还」——点 X 与关空时的语义统一了，卫星关窗就是关窗
+    expect(body, "落点不许交还（returnTabs = true 已废）").not.toMatch(
+      /requestSatelliteClose\(true\)/,
+    );
+    expect(body, "落点走不交还的默认档").toMatch(/requestSatelliteClose\(\)/);
     // ⚠️ 顺序：卫星那一档必须排在「唯一面板 → 直接 return」之前，反了就永远够不到
     const atSat = body.search(/windowKind === "satellite"/);
     const atBail = body.search(/if \(countLeaves\(layout\) <= 1\) return;/);
@@ -285,7 +286,9 @@ describe("B161 子窗口可以关掉唯一的面板（= 关窗 + 标签交回主
     expect(block, "卫星唯一面板要换个副标题（不是「并入相邻面板」）").toMatch(
       /closeDetail:\s*\n\s*windowKind === "satellite"/,
     );
-    expect(block, "副标题要说清是关窗 + 交回主窗口").toMatch(/关闭该子窗口，标签交回主窗口/);
+    expect(block, "副标题要说清是关窗、不交回主窗口").toMatch(
+      /关闭该子窗口（其中的文件不会交回主窗口）/,
+    );
     // 渲染侧真要用上这个字段，否则只是摆设
     const view = readFileSync("src/shell/splitview.ts", "utf-8");
     expect(view, "渲染侧要认 closeDetail").toMatch(/data\.closeDetail \?\?/);
