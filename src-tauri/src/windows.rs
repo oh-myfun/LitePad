@@ -263,9 +263,13 @@ fn build_satellite(
         //    必须在建窗时显式写明（同 additional_browser_args，见 pick_browser_args）。
         .decorations(false)
         .background_color(SAT_BG)
-        // B91：与主窗口一致关掉 wry 的原生拖放处理器（两处劫持会废掉页面内 HTML5 拖放，
+        // B91/B187：与主窗口一致关掉 wry 的原生拖放处理器（两处劫持会废掉页面内 HTML5 拖放，
         // 详见 `dropbridge` 模块头）；文件拖入的真实路径由 `dropbridge` 补回来。
-        .drag_and_drop(false);
+        // ⚠️ 必须走 `disable_drag_drop_handler()`（置 webview 级 `drag_drop_handler_enabled=false`），
+        // 不能走 `.drag_and_drop(false)` —— 后者只改 tao 窗口级 `with_drag_and_drop` 标志，**完全碰不到**
+        // webview 的拖放处理器。本窗口此前一直用错的 API，导致卫星窗口内 HTML5 拖放被 wry 接管、
+        // 标签拖拽/接收全部失效（B187）。正确的等价就是主窗口 `tauri.conf.json` 的 `dragDropEnabled:false`。
+        .disable_drag_drop_handler();
     // ⚠️ 必须与主窗口逐字一致，否则 WebView2 拒绝创建（原因见 `pick_browser_args`）。
     // 这一段缺失就是 B72「卫星窗口打不开」的根因，别删。
     if let Some(args) = shared_browser_args(app) {
