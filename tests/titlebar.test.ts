@@ -61,10 +61,15 @@ describe("B97 自建标题栏", () => {
   it("index.html：标题栏结构 = 左侧菜单 + 中间文档名 + 右侧窗口控制", () => {
     const html = indexHtml();
     expect(html, "必须是自建标题栏").toContain('class="title-bar"');
-    // 整条都能拖：deep 让子树里的非可点击元素也触发拖动，按钮会自动豁免
-    expect(html, '拖动区必须用 data-tauri-drag-region="deep"').toContain(
-      'data-tauri-drag-region="deep"',
-    );
+    // B191：拖动改走 WebView2 原生 app-region（见下面那条样式契约），
+    // **不许**再挂 data-tauri-drag-region —— 它会模拟系统标题栏点击、吞掉 mouseup、
+    // 让窗口卡在移动循环里跟着鼠标走（Tauri #10767）。
+    // ⚠️ 先剥 HTML 注释再判：说明「为什么不用它」的注释里必然提到这个属性名，
+    //    不剥就会被自己写的注释绊倒（与「注释别照抄被契约扫描的字面量」同一个坑）。
+    const markup = html.replace(/<!--[\s\S]*?-->/g, "");
+    expect(markup, "不得再用 data-tauri-drag-region").not.toContain("data-tauri-drag-region");
+    // 双击最大化要自己接，所以标题栏必须有 id 可取（原来靠 drag.js，没 id 也行）
+    expect(markup, "标题栏要有 id 供接线").toContain('id="title-bar"');
     expect(html, "菜单必须搬进标题栏内部").toMatch(
       /class="title-bar"[\s\S]*?id="menu-bar"[\s\S]*?class="window-controls"/,
     );
@@ -452,5 +457,46 @@ describe("B97 自建标题栏", () => {
     const regressed = s.replace(/(\.title-bar\s*\{[^}]*?padding-left:\s*)\d+(?:\.\d+)?px/, "$14px");
     expect(readInset(regressed), "退化对照要真把值改成 4px").toBe(4);
     expect(readInset(regressed)!, "退化到 4px 必须被判为不合格").toBeLessThan(8);
+  });
+
+  // ------------------------------------------------------------------ B191
+  // 用户报「在 A 窗口编辑区点一下，再点 B 窗口标题栏，B 就跟着鼠标走，像按住不放」。
+  // 根因是 Tauri 的 data-tauri-drag-region：它向顶层 Win32 窗口模拟一次标题栏点击
+  // （WM_NCLBUTTONDOWN）来起拖，mouseup 永远到不了 webview；mousedown→起拖是异步 IPC，
+  // 模拟的那次可能晚于真实松手 ⇒ 窗口卡在移动循环里（Tauri #10767，官方未修）。
+  // 修法：改用 WebView2 原生 app-region: drag（仅 Windows，LitePad 只面向 Windows），
+  // 由 WebView2 自己处理拖拽，不走模拟标题点击那条路。
+  it("B191：拖动走 WebView2 原生 app-region，不再用 data-tauri-drag-region", () => {
+    const bar = ruleBlock(css(), ".title-bar");
+    expect(bar, "取不到 .title-bar 规则块").not.toBe("");
+    // 带 -webkit- 前缀那条是 Chromium 的实际实现名，两条都给最稳
+    expect(bar, "标题栏必须声明可拖").toMatch(/app-region:\s*drag/);
+    expect(bar, "要带上 -webkit- 前缀那一条").toMatch(/-webkit-app-region:\s*drag/);
+    // 反向验证：退化成「没有 app-region」必须落空
+    const degraded = bar.replace(/[\w-]*app-region:\s*drag;?/g, "");
+    expect(degraded, "退化后不应再匹配到 drag").not.toMatch(/app-region:\s*drag/);
+  });
+
+  it("B191：标题栏内的按钮必须 no-drag 豁免（否则按了没反应还把窗口拖走）", () => {
+    const s = css();
+    // app-region 会往子元素继承，不显式豁免的话菜单键 / 置顶键 / 同步键 / 窗口三键
+    // 都会被当成拖动区。这份豁免原先是 Tauri drag.js 自动做的，改原生后必须自己写。
+    const btn = ruleBlock(s, ".title-bar button");
+    expect(btn, "必须有 .title-bar button 的豁免规则").not.toBe("");
+    expect(btn, "按钮要声明 no-drag").toMatch(/app-region:\s*no-drag/);
+    expect(btn, "要带上 -webkit- 前缀那一条").toMatch(/-webkit-app-region:\s*no-drag/);
+  });
+
+  it("B191：双击标题栏空白处 = 最大化 / 还原（原来由 drag.js 提供，改原生后自己接）", () => {
+    const main = mainSrc();
+    const setup = topLevelFnBody(main, "function setupTitleBar");
+    expect(setup, "取不到 setupTitleBar").toBeTruthy();
+    expect(setup, "必须接 dblclick").toMatch(/titleBar\.addEventListener\("dblclick"/);
+    expect(setup, "双击要调 toggleMaximize").toContain("toggleMaximize()");
+    // ⚠️ 落在按钮上的双击不算 —— 否则「点菜单顺带把窗口最大化了」
+    expect(setup, "按钮上的双击必须跳过").toMatch(/closest\("button"\)/);
+    // 反向验证：把跳过判据摘掉，这条必须落空
+    const degraded = setup.replace(/closest\("button"\)/, "closest('button') && false");
+    expect(degraded, "退化实现要真的换了写法").not.toBe(setup);
   });
 });

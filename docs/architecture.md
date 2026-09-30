@@ -46,9 +46,12 @@
   「插入文件内容」这一项。
 - **视图刷新红线**：mousedown 链路上绝不做 DOM 重建（否则「切换面板要点两下」）。
 - **窗口边框自建**（B97）：`decorations:false` 去掉原生标题栏，菜单栏画进自建标题栏，右侧是最小化 /
-  最大化 / 关闭。拖动区用 Tauri 内置 `data-tauri-drag-region="deep"`（子树里可点击元素自动豁免拖动，
-  双击即最大化）；窗口控制走 `core:window` 对应命令 —— 注意 `start_dragging` **不在**
-  `core:window:default` 权限集里，必须显式授权，漏了的表现是「标题栏按住拖不动」（ACL 静默拒绝）。
+  最大化 / 关闭。⚠️ 拖动**不用** Tauri 的 `data-tauri-drag-region`（B191）：它会向顶层 Win32 窗口
+  模拟一次标题栏点击（`WM_NCLBUTTONDOWN`）来起拖，mouseup 因此到不了 webview，异步下还会让窗口
+  卡在移动循环里跟着鼠标走（Tauri #10767，官方未修）。改走 WebView2 原生 `app-region: drag`
+  （写在 `.title-bar` 上，仅 Windows —— 本项目只面向 Windows），标题栏内 button 由
+  `app-region: no-drag` 豁免；双击最大化随之回到 `setupTitleBar` 自己接。
+  窗口控制走 `core:window` 对应命令。
   ⚠️ 卫星窗口不继承 `tauri.conf.json` 的主窗口配置，必须各自显式设 `decorations(false)`。
 - **标题栏两端**（B99）：最左是**软件图标**——纯标识，点击穿透到拖动区，行为等同点标题栏空白；
   图源就是打包用的那份应用图标，不另存副本。右侧窗口控制键之前是**「钉在顶部」**开关

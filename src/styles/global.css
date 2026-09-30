@@ -261,8 +261,11 @@ body {
 
 /* ---------- 标题栏（自定义，参考 VS Code） ----------
    tauri.conf.json 里 decorations:false，原生边框已去掉，这一条就是窗口的标题栏：
-   左侧菜单、中间文档名、右侧窗口控制。整条带 data-tauri-drag-region="deep"
-   （Tauri 内置 drag.js），拖动与双击最大化交给内核；按钮等可点击元素自动豁免拖动。 */
+   左侧菜单、中间文档名、右侧窗口控制。
+   B191：拖动走 WebView2 原生 `app-region: drag`（仅 Windows），**不用** Tauri 的
+   data-tauri-drag-region —— 后者向顶层 Win32 窗口模拟一次标题栏点击（WM_NCLBUTTONDOWN）
+   来起拖，mouseup 永远到不了 webview，异步下还会卡在移动循环里跟着鼠标走（Tauri #10767）。
+   原生 app-region 由 WebView2 自己处理；按钮用 `no-drag` 豁免（见下一条）。 */
 
 .title-bar {
   display: flex;
@@ -270,6 +273,10 @@ body {
   gap: 8px;
   height: 34px;
   flex: 0 0 34px;
+  /* B191：整条标题栏可拖。带 -webkit- 前缀那条是 Chromium 的实际实现名，
+     无前缀那条按标准写；两条都给，免得只认其中一种。 */
+  -webkit-app-region: drag;
+  app-region: drag;
   /* B165：给绝对居中的 .title-center 当定位基准（文档名要钉在整条标题栏正中，
      不再是「剩余空位内居中」—— 左侧菜单一长，原来那个居中就会整体被挤偏）。 */
   position: relative;
@@ -282,8 +289,17 @@ body {
   user-select: none;
 }
 
+/* B191：标题栏整条可拖，但里面的**按钮必须豁免** —— app-region 会往子元素继承，
+   不显式 no-drag 的话菜单键 / 置顶键 / 同步键 / 窗口三键都会被当成拖动区，
+   表现为「按下去没反应、还把窗口拖走了」。原来这份豁免是 Tauri drag.js 自动做的，
+   改走原生后必须自己写。 */
+.title-bar button {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
 /* 左上角软件图标（B99）：**纯标识**，不响应点击 —— 点它等同点标题栏空白，可以拖窗口
-   （所以它不走 <button>，drag.js 的「可点击元素豁免」根本不适用）。
+   （所以它不走 <button>，上面 `.title-bar button` 那条 no-drag 豁免也不适用于它）。
    位图不在 CSS 里：由 main.ts 从 src-tauri/icons 引入后写成内联 background-image，
    保证与 exe / 任务栏图标是同一份源文件，而不是往前端目录再存一份会走样的副本。
    pointer-events:none 只是把「不可点」写明，免得日后被当成可点区域往上挂事件。 */

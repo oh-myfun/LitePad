@@ -223,6 +223,9 @@ const menuBar = el("menu-bar");
 // 自定义标题栏（B97）：左侧软件图标 + 菜单，中间显示文档名，右侧工具键 + 三颗窗口控制键。
 // 原来那 8 颗快捷键按钮（新建/打开/保存/另存/查找/大纲/导出/主题）已移除，
 // 前六个本就在菜单里，导出与主题分别回到「文件 → 导出」「设置 → 首选项」。
+// B191：标题栏本体 —— 拖动改走 WebView2 原生 `app-region: drag`（见 global.css），
+// 双击最大化原先由 Tauri 的 drag.js 提供，改走原生后由这里自己接（见 setupTitleBar）。
+const titleBar = el("title-bar");
 const appMark = el("app-mark");
 const titleText = el("title-text");
 // B152：同步滚动开关（同一文档开着多份时才出现，显隐与点亮态见 refreshSyncButton）。
@@ -5776,8 +5779,10 @@ function toggleStatusbar(): void {
  * 普通态画 chrome-maximize（空心方框），已最大化时换 chrome-restore（叠两层），与原生
  * 标题栏、VS Code 的观感一致。
  *
- * 拖动与双击最大化不在这里接线 —— header 上那个 `data-tauri-drag-region="deep"` 由
- * Tauri 内置的 drag.js 接管（见 src-tauri/capabilities/default.json 的说明）。
+ * B191：拖动**不**走 Tauri 的 `data-tauri-drag-region`（它会向顶层 Win32 窗口模拟一次
+ * 标题栏点击、吞掉 mouseup，异步下还会让窗口卡在移动循环里跟着鼠标走 —— Tauri #10767），
+ * 改由 `.title-bar` 上的 WebView2 原生 `app-region: drag` 承担（见 global.css）。
+ * 双击最大化因此也回到本函数自己接（原来那份是 drag.js 顺带做的）。
  */
 
 /** 右上角更新键句柄（setupTitleBar 初始化；帮助菜单「检查更新…」经它手动检查）。 */
@@ -5817,6 +5822,16 @@ function setupTitleBar(): void {
       intervalMs: 6 * 60 * 60 * 1000,
     });
   }
+  // B191：双击标题栏空白处 = 最大化 / 还原。
+  //
+  // 这条原先是 Tauri 的 drag.js 顺带做的（`data-tauri-drag-region` 那套），拖动改走
+  // WebView2 原生 `app-region: drag` 之后没人管了，必须自己接。
+  // ⚠️ 落在**按钮上**的双击不算：菜单键 / 置顶键 / 同步键 / 窗口三键自己有 click 语义，
+  //    跟着最大化一次就变成「点菜单顺带把窗口最大化了」。
+  titleBar.addEventListener("dblclick", (e) => {
+    if ((e.target as HTMLElement | null)?.closest("button")) return;
+    void getCurrentWindow().toggleMaximize();
+  });
   // 状态栏的语言/格式项按活动标签刷新（原先顺带在这条启动链上初始化）
   refreshViewModeButton();
 }
