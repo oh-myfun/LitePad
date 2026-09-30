@@ -61,7 +61,7 @@ describe("B97 自建标题栏", () => {
   it("index.html：标题栏结构 = 左侧菜单 + 中间文档名 + 右侧窗口控制", () => {
     const html = indexHtml();
     expect(html, "必须是自建标题栏").toContain('class="title-bar"');
-    // B191：拖动改走 WebView2 原生 app-region（见下面那条样式契约），
+    // B192：拖动改由 main.ts 自己接管（mousedown + 越过阈值的 mousemove → startDragging），
     // **不许**再挂 data-tauri-drag-region —— 它会模拟系统标题栏点击、吞掉 mouseup、
     // 让窗口卡在移动循环里跟着鼠标走（Tauri #10767）。
     // ⚠️ 先剥 HTML 注释再判：说明「为什么不用它」的注释里必然提到这个属性名，
@@ -459,35 +459,67 @@ describe("B97 自建标题栏", () => {
     expect(readInset(regressed)!, "退化到 4px 必须被判为不合格").toBeLessThan(8);
   });
 
-  // ------------------------------------------------------------------ B191
-  // 用户报「在 A 窗口编辑区点一下，再点 B 窗口标题栏，B 就跟着鼠标走，像按住不放」。
+  // ------------------------------------------------------------------ B191 / B192
+  // B191 用户报「在 A 窗口编辑区点一下，再点 B 窗口标题栏，B 就跟着鼠标走，像按住不放」。
   // 根因是 Tauri 的 data-tauri-drag-region：它向顶层 Win32 窗口模拟一次标题栏点击
   // （WM_NCLBUTTONDOWN）来起拖，mouseup 永远到不了 webview；mousedown→起拖是异步 IPC，
   // 模拟的那次可能晚于真实松手 ⇒ 窗口卡在移动循环里（Tauri #10767，官方未修）。
-  // 修法：改用 WebView2 原生 app-region: drag（仅 Windows，LitePad 只面向 Windows），
-  // 由 WebView2 自己处理拖拽，不走模拟标题点击那条路。
-  it("B191：拖动走 WebView2 原生 app-region，不再用 data-tauri-drag-region", () => {
-    const bar = ruleBlock(css(), ".title-bar");
-    expect(bar, "取不到 .title-bar 规则块").not.toBe("");
-    // 带 -webkit- 前缀那条是 Chromium 的实际实现名，两条都给最稳
-    expect(bar, "标题栏必须声明可拖").toMatch(/app-region:\s*drag/);
-    expect(bar, "要带上 -webkit- 前缀那一条").toMatch(/-webkit-app-region:\s*drag/);
-    // 反向验证：退化成「没有 app-region」必须落空
-    const degraded = bar.replace(/[\w-]*app-region:\s*drag;?/g, "");
-    expect(degraded, "退化后不应再匹配到 drag").not.toMatch(/app-region:\s*drag/);
-  });
+  //
+  // B192 改 app-region: drag 之后又报「第一下移动发涩」：Chromium 要**先确认这是一次拖动**
+  // 才把拖拽交给窗口，首次还有跨进程开销。于是最终方案 = **自己接管**：
+  // mousedown 只记起点，第一个越过阈值（3px）的 mousemove 立刻 startDragging() 交给系统
+  // 移动循环（最跟手），**纯点击一次都不碰拖拽**（也就绕开了 #10767 的触发条件）。
 
-  it("B191：标题栏内的按钮必须 no-drag 豁免（否则按了没反应还把窗口拖走）", () => {
+  it("B192：样式里不许再留 app-region（与 startDragging 双重起拖会抖）", () => {
     const s = css();
-    // app-region 会往子元素继承，不显式豁免的话菜单键 / 置顶键 / 同步键 / 窗口三键
-    // 都会被当成拖动区。这份豁免原先是 Tauri drag.js 自动做的，改原生后必须自己写。
-    const btn = ruleBlock(s, ".title-bar button");
-    expect(btn, "必须有 .title-bar button 的豁免规则").not.toBe("");
-    expect(btn, "按钮要声明 no-drag").toMatch(/app-region:\s*no-drag/);
-    expect(btn, "要带上 -webkit- 前缀那一条").toMatch(/-webkit-app-region:\s*no-drag/);
+    // B191 那版是 WebView2 自己拖（app-region: drag）。改自管之后若还留着，就变成
+    // 「Chromium 起一次 + startDragging 起一次」两条 WM_NCLBUTTONDOWN，窗口反而抖。
+    expect(s, "不得再声明 app-region: drag").not.toMatch(/app-region:\s*drag/);
+    expect(s, "不得再声明 app-region: no-drag").not.toMatch(/app-region:\s*no-drag/);
+    // 反向验证：把声明加回 .title-bar，上面那条「不许」必须落空（防恒真）
+    const degraded = s.replace(/\.title-bar\s*\{/, ".title-bar {\n  app-region: drag;");
+    expect(degraded, "退化实现要真的加了声明").toMatch(/app-region:\s*drag/);
   });
 
-  it("B191：双击标题栏空白处 = 最大化 / 还原（原来由 drag.js 提供，改原生后自己接）", () => {
+  it("B192：拖动自管 —— 越过阈值才 startDragging（纯点击不起拖）", () => {
+    const setup = topLevelFnBody(mainSrc(), "function setupTitleBar");
+    expect(setup, "取不到 setupTitleBar").toBeTruthy();
+    // ① 起点记在 mousedown 上
+    expect(setup, "必须接 mousedown").toMatch(/titleBar\.addEventListener\("mousedown"/);
+    const fromDown = setup.slice(setup.indexOf('titleBar.addEventListener("mousedown"'));
+    // ② 起拖必须挂在 mousemove 上、且**先过阈值** —— 这是「纯点击不进系统移动循环」的
+    //    唯一保证（#10767 就是「点一下也送进移动循环」触发的）。
+    //    ⚠️ 判据按位置取：看的是「mousedown 之后 → startDragging 之前」这段里有没有阈值，
+    //       写成全函数 `toContain` 会在「阈值常量挪到别处」时假绿。
+    const beforeDrag = fromDown.slice(0, fromDown.indexOf("startDragging"));
+    expect(beforeDrag, "startDragging 必须出现在 mousedown 接线之后").not.toBe("");
+    expect(beforeDrag, "起拖前必须先判阈值").toContain("DRAG_THRESHOLD_PX");
+    expect(setup, "阈值要有显式常量").toMatch(/const DRAG_THRESHOLD_PX\s*=\s*\d+/);
+    expect(setup, "必须真的调 startDragging").toContain("startDragging()");
+    // ③ 临时监听必须摘得干净：起拖后 / 松手后都要 removeEventListener，
+    //    否则每按一次标题栏就往 window 上叠一层监听（下一次点击会重复起拖）。
+    expect(setup, "mousemove 监听必须能摘").toMatch(/removeEventListener\("mousemove"/);
+    expect(setup, "mouseup 监听必须能摘").toMatch(/removeEventListener\("mouseup"/);
+    // ④ 按钮上的按下不算拖动（与下面双击最大化的豁免同一口径）。
+    //    ⚠️ 判据只在「mousedown → startDragging」这段里找：整段 setupTitleBar 里还有
+    //       双击最大化的那句 closest("button")，放宽到全函数就永远为真（反向验证已证明）。
+    expect(beforeDrag, "按钮上的 mousedown 必须跳过").toContain('closest("button")');
+    // 反向验证：把阈值判据摘掉（= 一按下就起拖，退回 #10767 的老路），
+    // 「起拖前必须先判阈值」必须落空。
+    //    ⚠️ 判据要跨行（`\s*`）：prettier 会把这个两条件 `if` 折成四行，
+    //       写死 `if (Math.abs(...` 会在格式化之后悄悄失配（反向验证变成恒真）。
+    const degraded = fromDown.replace(
+      /if\s*\(\s*Math\.abs\(ev\.clientX[\s\S]*?DRAG_THRESHOLD_PX\s*\)\s*return;/,
+      "",
+    );
+    expect(degraded, "退化实现要真的换了写法").not.toBe(fromDown);
+    expect(
+      degraded.slice(0, degraded.indexOf("startDragging")),
+      "退化后「起拖前必须先判阈值」必须落空",
+    ).not.toContain("DRAG_THRESHOLD_PX");
+  });
+
+  it("B191：双击标题栏空白处 = 最大化 / 还原（原来由 drag.js 提供，改自管后自己接）", () => {
     const main = mainSrc();
     const setup = topLevelFnBody(main, "function setupTitleBar");
     expect(setup, "取不到 setupTitleBar").toBeTruthy();

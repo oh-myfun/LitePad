@@ -48,14 +48,12 @@
       <!-- 自定义标题栏（参考 VS Code）：左侧软件图标 + 菜单、中间文档名、右侧工具键 + 窗口控制。
            tauri.conf.json 里 decorations:false 去掉了原生边框，所以拖动、双击最大化、
            最小化/最大化/关闭都必须自建：
-             · 拖动走 WebView2 原生 `app-region: drag`（仅 Windows —— LitePad 只面向 Windows），
-               写在 .title-bar 上；标题栏内的 button 由 `app-region: no-drag` 豁免，照常可点。
-               ⚠️ 这里**刻意不用** Tauri 的 `data-tauri-drag-region`：它是向顶层 Win32 窗口
-                  模拟一次标题栏点击（tao 发 WM_NCLBUTTONDOWN）来起拖，mouseup 因此永远到
-                  不了 webview；而 mousedown→起拖是异步 IPC，那次模拟可能晚于真实松手，
-                  窗口就卡在移动循环里跟着鼠标走（Tauri #10767，官方未修）。原生 app-region
-                  由 WebView2 自己处理，不走这条路径。
-             · 双击最大化原先由 drag.js 提供，改走原生后由 main.ts 自己接（见 setupTitleBar）。
+             · 拖动由 main.ts 自己接管：标题栏 mousedown 后一旦真的移动（>3px）就调
+               startDragging 交给系统移动循环 —— 跟手，且**纯点击完全不碰拖拽**。
+               ⚠️ 这里**不用** Tauri 的 `data-tauri-drag-region`（它吞 mouseup，连「点一下」
+                  也送进系统移动循环，异步下窗口会卡在循环里跟着鼠标走 —— Tauri #10767）；
+                  也**不用** WebView2 原生 `app-region: drag`（B191 试过：第一下移动发涩）。
+             · 双击最大化原先由 drag.js 提供，改自接管后由 main.ts 自己接（见 setupTitleBar）。
              · 原生标题栏原来显示「LitePad - 文件名 ●」，现在由中间的 #title-text 承担，
                内容仍走 window.setTitle（任务栏/Alt+Tab 读的是它），两处同源。
              · #app-mark 是**纯标识**（不走 <button>，所以它跟着标题栏一起可拖），

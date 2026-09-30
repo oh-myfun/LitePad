@@ -223,8 +223,9 @@ const menuBar = el("menu-bar");
 // 自定义标题栏（B97）：左侧软件图标 + 菜单，中间显示文档名，右侧工具键 + 三颗窗口控制键。
 // 原来那 8 颗快捷键按钮（新建/打开/保存/另存/查找/大纲/导出/主题）已移除，
 // 前六个本就在菜单里，导出与主题分别回到「文件 → 导出」「设置 → 首选项」。
-// B191：标题栏本体 —— 拖动改走 WebView2 原生 `app-region: drag`（见 global.css），
-// 双击最大化原先由 Tauri 的 drag.js 提供，改走原生后由这里自己接（见 setupTitleBar）。
+// B192：标题栏本体 —— 拖动与双击最大化都由 setupTitleBar 自己接（见那里）：
+// ⚠️ 不用 Tauri 的 `data-tauri-drag-region`（吞 mouseup、会卡在移动循环，Tauri #10767），
+//    也不用 WebView2 原生 `app-region: drag`（第一下移动发涩，B191 试过已否掉）。
 const titleBar = el("title-bar");
 const appMark = el("app-mark");
 const titleText = el("title-text");
@@ -5779,10 +5780,10 @@ function toggleStatusbar(): void {
  * 普通态画 chrome-maximize（空心方框），已最大化时换 chrome-restore（叠两层），与原生
  * 标题栏、VS Code 的观感一致。
  *
- * B191：拖动**不**走 Tauri 的 `data-tauri-drag-region`（它会向顶层 Win32 窗口模拟一次
- * 标题栏点击、吞掉 mouseup，异步下还会让窗口卡在移动循环里跟着鼠标走 —— Tauri #10767），
- * 改由 `.title-bar` 上的 WebView2 原生 `app-region: drag` 承担（见 global.css）。
- * 双击最大化因此也回到本函数自己接（原来那份是 drag.js 顺带做的）。
+ * B192：拖动由 `setupTitleBar` 自己接管（mousedown + 首个 mousemove → `startDragging`），
+ * **不**走 Tauri 的 `data-tauri-drag-region`（吞 mouseup ⇒ 窗口卡在移动循环，Tauri #10767），
+ * 也**不**走 WebView2 的 `app-region: drag`（第一下移动发涩 —— B191 试过，已否掉）。
+ * 双击最大化随之由本文件自己接（原来那份是 drag.js 顺带做的）。
  */
 
 /** 右上角更新键句柄（setupTitleBar 初始化；帮助菜单「检查更新…」经它手动检查）。 */
@@ -5822,10 +5823,54 @@ function setupTitleBar(): void {
       intervalMs: 6 * 60 * 60 * 1000,
     });
   }
+  // B192：拖动窗口 —— **自己接管**，按下后一旦真的移动就交给系统模态循环。
+  //
+  // 为什么不等平台方案，而是自己接：
+  //   · Tauri 的 `data-tauri-drag-region` 在 mousedown 当刻就调 startDragging，虽然跟手，
+  //     但它会吞掉 mouseup、并把「点一下」也送进系统移动循环 —— 异步下窗口会卡在循环里
+  //     跟着鼠标走（Tauri #10767，用户实测复现）；
+  //   · WebView2 原生 `app-region: drag`（B191 那版）倒是没这条问题，可 Chromium 要等
+  //     检测到移动才把拖动交给窗口、首次还有跨进程开销 ⇒ 体感是「第一下移动发涩」。
+  // 于是取两家之长：**纯点击完全不碰拖拽**（绕开 #10767 的触发条件），
+  // **而一旦移动就立刻 startDragging**（系统接管，与 B191 之前一样跟手）。
+  // ⚠️ 阈值取 3px：鼠标一次正常拖动远大于它，体感无延迟；又能吃掉按下时的手抖，
+  //    免得「点一下把窗口挪了 1px」。
+  const DRAG_THRESHOLD_PX = 3;
+  titleBar.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return; // 只认左键
+    // 按钮 / 可点元素自己有语义，不能顺带把窗口拖走
+    if ((e.target as HTMLElement | null)?.closest("button")) return;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    let started = false;
+    const cleanup = (): void => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    const onMove = (ev: MouseEvent): void => {
+      if (started) return;
+      if (
+        Math.abs(ev.clientX - startX) < DRAG_THRESHOLD_PX &&
+        Math.abs(ev.clientY - startY) < DRAG_THRESHOLD_PX
+      )
+        return;
+      started = true;
+      cleanup();
+      // 交给系统：此后由 Windows 自己的移动循环接管（最跟手），本窗口不再处理。
+      void getCurrentWindow()
+        .startDragging()
+        .catch((err: unknown) => {
+          logger.debug("window", `开始拖动窗口失败：${String(err)}`);
+        });
+    };
+    const onUp = (): void => cleanup();
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  });
   // B191：双击标题栏空白处 = 最大化 / 还原。
   //
-  // 这条原先是 Tauri 的 drag.js 顺带做的（`data-tauri-drag-region` 那套），拖动改走
-  // WebView2 原生 `app-region: drag` 之后没人管了，必须自己接。
+  // 这条原先是 Tauri 的 drag.js 顺带做的（`data-tauri-drag-region` 那套），拖动改由
+  // 上面的 mousedown 自己接管之后没人管了，必须自己接。
   // ⚠️ 落在**按钮上**的双击不算：菜单键 / 置顶键 / 同步键 / 窗口三键自己有 click 语义，
   //    跟着最大化一次就变成「点菜单顺带把窗口最大化了」。
   titleBar.addEventListener("dblclick", (e) => {
