@@ -1096,7 +1096,15 @@ function rebuildLayout(): void {
       // 大纲跟随**活动面板**的活动文档：分屏下点另一块面板（文本 ↔ md）若不刷新，
       // 大纲会一直停在上一份 md 的大纲上（B23）。这里不重绘标签条（会吞掉 click）。
       updateTocDrawer();
-      getPanel(panelId)?.view?.focus();
+      // B189：跨面板激活要把焦点给到目标面板的编辑区（用户原话「切激活标签只要把焦点
+      // 给到对应编辑区就行」）。只 focus 一次不够：WebView2 在整次鼠标手势结束时会把焦点
+      // 重新定到 body（同 B183 切标签那条），不延迟一拍补回、`cm-focused` 就被失焦兜底摘掉、
+      // 光标一闪而过。这里与 switchTab 末尾同款处理，对抗同一类焦点被偷。
+      const activatedView = getPanel(panelId)?.view;
+      if (activatedView) {
+        activatedView.focus();
+        setTimeout(() => activatedView.focus(), 0);
+      }
       retargetFindBar();
     },
     onActivateTab: (panelId, tabId) => switchTab(panelId, tabId),

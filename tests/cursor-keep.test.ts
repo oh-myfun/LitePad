@@ -190,6 +190,61 @@ function views(): EditorView[] {
     .filter((v): v is EditorView => !!v);
 }
 
+// B189：跨面板激活（在分屏里点另一块面板的编辑区 / 标签）时，光标要正常恢复到那块面板的
+// 编辑区里 —— 即「激活标签只需要把焦点给到对应编辑区」。
+//
+// ⚠️ 真机坑（jsdom 测不出来，下面用静态契约锁）：WebView2 在整次鼠标手势结束时会把焦点重新
+// 定到 body，只 focus 一次会被它偷走、`cm-focused` 被失焦兜底摘掉、光标一闪而过（同 B183）。
+// 所以 onActivatePanel 必须和 switchTab 末尾一样延迟一拍再补一次焦点。
+describe("B189 跨面板激活：焦点给到目标编辑区（光标恢复）", () => {
+  it("点非激活面板的编辑区 → 该面板拿到焦点且 cm-focused", async () => {
+    await import("../src/main");
+    await wait(300);
+    const panels = Array.from(document.querySelectorAll(".layout-panel")) as HTMLElement[];
+    expect(panels.length, "前置：应有两个面板").toBe(2);
+
+    // 先让面板1 成为激活面板（点它的标签）
+    clickTab(panels[1].querySelectorAll(".tab")[0] as HTMLElement);
+    await wait(40);
+    expect(panels[1].classList.contains("layout-panel-active"), "前置：面板1 应为激活面板").toBe(
+      true,
+    );
+
+    // 在面板0 的编辑区里 mousedown（模拟点进去激活它）→ onActivatePanel(0)
+    const editor0 = panels[0].querySelector(".cm-editor") as HTMLElement;
+    expect(editor0, "面板0 应挂载编辑器").toBeTruthy();
+    editor0.dispatchEvent(mouse("mousedown", 20, 100));
+    await wait(30);
+
+    expect(panels[0].classList.contains("layout-panel-active"), "点面板0 后应切换为激活面板").toBe(
+      true,
+    );
+    const v0 = EditorView.findFromDOM(editor0) as EditorView;
+    expect(v0, "应能取到面板0 的视图").toBeTruthy();
+    expect(v0.hasFocus, "面板0 编辑区应拿到焦点").toBe(true);
+    expect(
+      v0.dom.classList.contains("cm-focused"),
+      "焦点在就得有 cm-focused，否则光标（.cm-cursor）是 display:none 看不见",
+    ).toBe(true);
+  });
+
+  it("静态契约：onActivatePanel 必须有延迟补焦点（对抗 WebView2 手势结束回焦）", () => {
+    const src = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
+    const start = src.indexOf("onActivatePanel: (panelId) => {");
+    const end = src.indexOf("onActivateTab:", start);
+    expect(start, "应能定位 onActivatePanel 回调").toBeGreaterThan(-1);
+    expect(end, "应能定位回调结尾").toBeGreaterThan(start);
+    const block = src
+      .slice(start, end)
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    expect(block, "激活时要给目标编辑区焦点").toMatch(/\.focus\(\)/);
+    expect(block, "必须延迟一拍再补一次焦点（B183 同款）").toMatch(
+      /setTimeout\(\s*\(\)\s*=>\s*activatedView\.focus\(\),\s*0\s*\)/,
+    );
+  });
+});
+
 describe("B126 编辑器光标 / 视口不得复位", () => {
   it("切换标签再切回：光标位置不变", async () => {
     await import("../src/main");
