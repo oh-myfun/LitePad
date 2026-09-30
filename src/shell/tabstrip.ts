@@ -320,6 +320,19 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
       e.preventDefault();
       e.stopPropagation();
       cb.onClose(t.tabId);
+      return;
+    }
+    // B182：左键按下不要去抢编辑器的焦点。标签是 `draggable` 的普通 div（无 tabindex），
+    // 浏览器默认会在 mousedown 时把焦点从编辑器（contentDOM）挪到 body；切标签在 `click`
+    // 里才把焦点还回去 —— 但 WebView2 在整次手势结束后会把焦点重新定到 body，于是
+    // `cm-focused` 被 CM6 的失焦兜底摘掉，光标「一闪而过」就消失。这里拦掉默认的焦点
+    // 挪动（不影响 click 触发切标签，也不影响 HTML5 拖拽：dragstart 由 mousemove 阈值
+    // 触发，与 mousedown 默认动作无关）。关闭按钮自己 stopPropagation，不会被这里拦到。
+    if (
+      e.button === 0 &&
+      !(e.target instanceof Element && e.target.closest(".tab-close") !== null)
+    ) {
+      e.preventDefault();
     }
   });
 
