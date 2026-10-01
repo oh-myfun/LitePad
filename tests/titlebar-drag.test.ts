@@ -157,17 +157,20 @@ describe("B192 标题栏拖动：纯点击不起拖，真移动才交给系统",
     expect(drags.count, "松手后不得再起拖（临时监听要摘掉）").toBe(0);
   });
 
-  it("只要真的动了（哪怕 1px）就起拖，且只起一次", async () => {
+  it("手抖 1px 不起拖，越过 3px 阈值才起拖，且只起一次", async () => {
     const bar = document.getElementById("title-bar")!;
     drags.count = 0;
     mouse(bar, "mousedown", 100, 10);
-    mouse(window, "mousemove", 101, 10); // B192 阈值 0：1px 就算「开始拖」
-    await wait(50);
-    expect(drags.count, "有位移必须立刻交给系统移动循环").toBe(1);
+    mouse(window, "mousemove", 101, 10); // 1px < 阈值 3 ⇒ 必须忽略
+    await wait(30);
+    expect(drags.count, "手抖 1px 不得起拖（否则又回到「窗口粘鼠标」）").toBe(0);
+    mouse(window, "mousemove", 104, 10); // 越过 3px 阈值
+    await wait(30);
+    expect(drags.count, "越过阈值必须立刻交给系统移动循环").toBe(1);
     // 系统接管后本窗口不再处理：后续 mousemove / mouseup 都不得再起一次
     mouse(window, "mousemove", 180, 90);
     mouse(window, "mouseup", 180, 90);
-    await wait(50);
+    await wait(30);
     expect(drags.count, "一次手势只许起拖一次（重复起拖 = 窗口抖）").toBe(1);
   });
 

@@ -5780,7 +5780,8 @@ function toggleStatusbar(): void {
  * 普通态画 chrome-maximize（空心方框），已最大化时换 chrome-restore（叠两层），与原生
  * 标题栏、VS Code 的观感一致。
  *
- * B192：拖动由 `setupTitleBar` 自己接管（mousedown + 首个 mousemove → `startDragging`），
+ * B192：拖动由 `setupTitleBar` 自己接管（mousedown 记起点 + 首个越过 3px 阈值的 mousemove
+ * → `startDragging` 交给系统移动循环），
  * **不**走 Tauri 的 `data-tauri-drag-region`（吞 mouseup ⇒ 窗口卡在移动循环，Tauri #10767），
  * 也**不**走 WebView2 的 `app-region: drag`（第一下移动发涩 —— B191 试过，已否掉）。
  * 双击最大化随之由本文件自己接（原来那份是 drag.js 顺带做的）。
@@ -5833,11 +5834,10 @@ function setupTitleBar(): void {
   //     检测到移动才把拖动交给窗口、首次还有跨进程开销 ⇒ 体感是「第一下移动发涩」。
   // 于是取两家之长：**纯点击完全不碰拖拽**（绕开 #10767 的触发条件），
   // **而一旦移动就立刻 startDragging**（系统接管，与 B191 之前一样跟手）。
-  // ⚠️ 阈值取 **0**：只要有真实位移（哪怕 1px）就交权 —— 起手比 Chromium 的
-  //    `app-region: drag` 还早（它要等自己判定「这是一次拖动」）。
-  //    纯点击**不产生 mousemove**，所以依旧一次都不碰拖拽 ⇒ 不会进 #10767 那个循环。
-  //    （代价：按下后手抖出 1px 也会起拖 —— 真机若重现「粘鼠标」就把阈值调回 3px。）
-  const DRAG_THRESHOLD_PX = 0;
+  // ⚠️ 阈值取 3px：鼠标一次正常拖动远大于它，体感无延迟；又能吃掉按下时的手抖，
+  //    免得「点一下把窗口挪了 1px」。阈值 0 在真机复现过「窗口粘鼠标」（手抖 1px 就起拖，
+  //    而这一次按下的松开早于起拖请求被处理 ⇒ 进移动循环后等不到 WM_LBUTTONUP），故回到 3px。
+  const DRAG_THRESHOLD_PX = 3;
   titleBar.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return; // 只认左键
     // 按钮 / 可点元素自己有语义，不能顺带把窗口拖走
