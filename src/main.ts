@@ -5859,12 +5859,13 @@ function setupTitleBar(): void {
         return;
       started = true;
       cleanup();
-      // 交给系统：此后由 Windows 自己的移动循环接管（最跟手），本窗口不再处理。
-      void getCurrentWindow()
-        .startDragging()
-        .catch((err: unknown) => {
-          logger.debug("window", `开始拖动窗口失败：${String(err)}`);
-        });
+      // 交给系统：调 Rust 看门狗命令 `watchdog_start_drag` —— 它内部启动系统拖动，
+      // 并起一条线程兜底：一旦左键抬起而 OS 模态循环仍卡在「跟随鼠标」状态
+      // （Tauri #10767 的残余竞态，3px 阈值封不住的快速移动+抬起场景），就主动
+      // 给窗口投 WM_LBUTTONUP 把循环打断。3px 阈值仍是决策门，纯点击零位移不进这里。
+      void invoke("watchdog_start_drag").catch((err: unknown) => {
+        logger.debug("window", `开始拖动窗口失败：${String(err)}`);
+      });
     };
     const onUp = (): void => cleanup();
     window.addEventListener("mousemove", onMove);

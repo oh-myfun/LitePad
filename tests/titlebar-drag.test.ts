@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // B192：标题栏拖动**自己接管**（mousedown 记起点 → 第一个越过阈值的 mousemove 就
-// startDragging 交给系统移动循环）。
+// 调 Rust 看门狗命令 `watchdog_start_drag` 交给系统移动循环，Rust 侧再兜 #10767 残余竞态）。
 //
 // 为什么要有运行时用例（光有静态契约不够）：
 //   · 「纯点击一次都不碰拖拽」是绕开 Tauri #10767 的唯一保证 —— 少了它，点一下标题栏
@@ -43,7 +43,14 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: (p: string) => `asset://${p}`,
-  invoke: () => Promise.resolve(),
+  invoke: (cmd: string) => {
+    // B192：标题栏拖动的唯一出口是 `watchdog_start_drag`，记次数即可
+    // （不真进系统移动循环，jsdom 里也没有那个循环可进）。
+    if (cmd === "watchdog_start_drag") {
+      drags.count += 1;
+    }
+    return Promise.resolve();
+  },
 }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: () => Promise.resolve({ unlisten: () => {} }),

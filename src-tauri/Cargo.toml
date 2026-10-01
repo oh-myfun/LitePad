@@ -41,7 +41,9 @@ base64 = "0.22"
 # 版本不一致时来自不同的 crate 实例，`cast()` 直接编不过。
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38"
-windows = "0.61"
+# B192：标题栏拖动看门狗（Rust 侧，绕开 Tauri #10767 残余竞态）需要 Win32 消息 /
+# 键盘状态 API。这两个 feature 与 webview2-com/wry 已启用的模块取并集，不会重复编译。
+windows = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse"] }
 
 # 发布档位（日常交付：`scripts/build-all.sh` 走这一档）。
 #

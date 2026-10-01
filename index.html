@@ -49,9 +49,12 @@
            tauri.conf.json 里 decorations:false 去掉了原生边框，所以拖动、双击最大化、
            最小化/最大化/关闭都必须自建：
              · 拖动由 main.ts 自己接管：标题栏 mousedown 记起点，等第一个越过 3px 阈值
-               （常量 DRAG_THRESHOLD_PX）的 mousemove 才调 startDragging 交给系统移动循环
-               —— 拿 mousemove 判据挡掉「点一下激活窗口」时丢失 WM_LBUTTONUP 导致窗口粘
-               鼠标（Tauri #10767），且**纯点击（零位移）完全不碰拖拽**。
+               （常量 DRAG_THRESHOLD_PX）的 mousemove 才调 Rust 看门狗命令
+               `watchdog_start_drag` 交给系统移动循环 —— 拿 mousemove 判据挡掉「点一下激活
+               窗口」时丢失 WM_LBUTTONUP 导致窗口粘鼠标（Tauri #10767），且**纯点击（零位移）
+               完全不碰拖拽**。看门狗命令内部启动系统拖动后还会起一条线程轮询左键状态，
+               一旦「左键已抬起而 OS 模态循环仍卡住」就主动投 WM_LBUTTONUP 把循环打断，
+               补上 3px 阈值仍封不住的快速移动+抬起竞态（#10767 残余）。
                ⚠️ 这里**不用** Tauri 的 `data-tauri-drag-region`（它吞 mouseup，连「点一下」
                   也送进系统移动循环，异步下窗口会卡在循环里跟着鼠标走 —— Tauri #10767）；
                   也**不用** WebView2 原生 `app-region: drag`（B191 试过：第一下移动发涩）。

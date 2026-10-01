@@ -467,13 +467,13 @@ describe("B97 自建标题栏", () => {
   //
   // B192 改 app-region: drag 之后又报「第一下移动发涩」：Chromium 要**先确认这是一次拖动**
   // 才把拖拽交给窗口，首次还有跨进程开销。于是最终方案 = **自己接管**：
-  // mousedown 只记起点，第一个越过阈值（3px）的 mousemove 立刻 startDragging() 交给系统
-  // 移动循环（最跟手），**纯点击一次都不碰拖拽**（也就绕开了 #10767 的触发条件）。
+  // mousedown 只记起点，第一个越过阈值（3px）的 mousemove 立刻调 `watchdog_start_drag`
+  // 交给系统移动循环（最跟手），**纯点击一次都不碰拖拽**（也就绕开了 #10767 的触发条件）。
 
-  it("B192：样式里不许再留 app-region（与 startDragging 双重起拖会抖）", () => {
+  it("B192：样式里不许再留 app-region（与 watchdog_start_drag 双重起拖会抖）", () => {
     const s = css();
     // B191 那版是 WebView2 自己拖（app-region: drag）。改自管之后若还留着，就变成
-    // 「Chromium 起一次 + startDragging 起一次」两条 WM_NCLBUTTONDOWN，窗口反而抖。
+    // 「Chromium 起一次 + watchdog_start_drag 起一次」两条 WM_NCLBUTTONDOWN，窗口反而抖。
     expect(s, "不得再声明 app-region: drag").not.toMatch(/app-region:\s*drag/);
     expect(s, "不得再声明 app-region: no-drag").not.toMatch(/app-region:\s*no-drag/);
     // 反向验证：把声明加回 .title-bar，上面那条「不许」必须落空（防恒真）
@@ -481,7 +481,7 @@ describe("B97 自建标题栏", () => {
     expect(degraded, "退化实现要真的加了声明").toMatch(/app-region:\s*drag/);
   });
 
-  it("B192：拖动自管 —— 越过阈值才 startDragging（纯点击不起拖）", () => {
+  it("B192：拖动自管 —— 越过阈值才调 watchdog_start_drag（纯点击不起拖）", () => {
     const setup = topLevelFnBody(mainSrc(), "function setupTitleBar");
     expect(setup, "取不到 setupTitleBar").toBeTruthy();
     // ① 起点记在 mousedown 上
@@ -489,19 +489,19 @@ describe("B97 自建标题栏", () => {
     const fromDown = setup.slice(setup.indexOf('titleBar.addEventListener("mousedown"'));
     // ② 起拖必须挂在 mousemove 上、且**先过阈值** —— 这是「纯点击不进系统移动循环」的
     //    唯一保证（#10767 就是「点一下也送进移动循环」触发的）。
-    //    ⚠️ 判据按位置取：看的是「mousedown 之后 → startDragging 之前」这段里有没有阈值，
+    //    ⚠️ 判据按位置取：看的是「mousedown 之后 → watchdog_start_drag 之前」这段里有没有阈值，
     //       写成全函数 `toContain` 会在「阈值常量挪到别处」时假绿。
-    const beforeDrag = fromDown.slice(0, fromDown.indexOf("startDragging"));
+    const beforeDrag = fromDown.slice(0, fromDown.indexOf("watchdog_start_drag"));
     expect(beforeDrag, "startDragging 必须出现在 mousedown 接线之后").not.toBe("");
     expect(beforeDrag, "起拖前必须先判阈值").toContain("DRAG_THRESHOLD_PX");
     expect(setup, "阈值要有显式常量").toMatch(/const DRAG_THRESHOLD_PX\s*=\s*\d+/);
-    expect(setup, "必须真的调 startDragging").toContain("startDragging()");
+    expect(setup, "必须真的调 watchdog_start_drag").toContain("watchdog_start_drag");
     // ③ 临时监听必须摘得干净：起拖后 / 松手后都要 removeEventListener，
     //    否则每按一次标题栏就往 window 上叠一层监听（下一次点击会重复起拖）。
     expect(setup, "mousemove 监听必须能摘").toMatch(/removeEventListener\("mousemove"/);
     expect(setup, "mouseup 监听必须能摘").toMatch(/removeEventListener\("mouseup"/);
     // ④ 按钮上的按下不算拖动（与下面双击最大化的豁免同一口径）。
-    //    ⚠️ 判据只在「mousedown → startDragging」这段里找：整段 setupTitleBar 里还有
+    //    ⚠️ 判据只在「mousedown → watchdog_start_drag」这段里找：整段 setupTitleBar 里还有
     //       双击最大化的那句 closest("button")，放宽到全函数就永远为真（反向验证已证明）。
     expect(beforeDrag, "按钮上的 mousedown 必须跳过").toContain('closest("button")');
     // 反向验证：把阈值判据摘掉（= 一按下就起拖，退回 #10767 的老路），
@@ -514,7 +514,7 @@ describe("B97 自建标题栏", () => {
     );
     expect(degraded, "退化实现要真的换了写法").not.toBe(fromDown);
     expect(
-      degraded.slice(0, degraded.indexOf("startDragging")),
+      degraded.slice(0, degraded.indexOf("watchdog_start_drag")),
       "退化后「起拖前必须先判阈值」必须落空",
     ).not.toContain("DRAG_THRESHOLD_PX");
   });

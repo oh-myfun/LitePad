@@ -1298,3 +1298,84 @@ pub fn reveal_in_folder(path: String) -> Result<(), String> {
         .map(|_| ())
         .map_err(|e| format!("打开文件所在目录失败：{e}"))
 }
+
+// ---------------------------------------------------------------- 标题栏拖动看门狗（B192）
+
+/// B192：标题栏拖动看门狗（Rust 侧安全网，补上 3px 阈值仍封不住的 Tauri #10767 残余竞态）。
+///
+/// 前端只在「首个越过 3px 阈值的 mousemove」时调本命令（决策门仍在 JS 层，纯点击零位移
+/// 完全不碰拖拽）。本命令：
+///   1. 启动系统拖动（等价于 `win.start_dragging()`：tao 会 `ReleaseCapture()` +
+///      `PostMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, …)`，把窗口交给 OS 的模态标题栏
+///      拖动循环）；
+///   2. 起一条独立线程轮询 `GetAsyncKeyState(VK_LBUTTON)`：一旦检测到左键已经抬起、而 OS 模态
+///      循环却仍卡在「跟随鼠标」状态（#10767 —— WebView2 吞掉了真正的 WM_LBUTTONUP，主线程
+///      模态循环永远等不到结束信号），就主动 `PostMessageW(hwnd, WM_LBUTTONUP, …)` 把那个
+///      循环强行打断。
+///
+/// 为什么必须走 Rust：JS 拿不到 HWND、也无法跨进程给父窗口投 WM_LBUTTONUP（WebView2 是独立
+/// 进程，没暴露 HWND 的 API）。Rust 侧既有 HWND 又能直接调 Win32，没有异步 IPC 竞态 —— 这正是
+/// #10767 官方「给 webview 投 mouseup 不可行」结论下唯一完整的修法。
+///
+/// 为什么不会误伤正常拖动：看门狗只在「左键已抬起」时投 WM_LBUTTONUP；正常拖动中左键一直按着，
+/// `GetAsyncKeyState < 0` 为真，永不投。抬起即结束，本就是拖动的终止条件，投一次 WM_LBUTTONUP
+/// 永远正确（多余那次只是队列里多一条消息，没有模态循环可打断时无害）。
+#[cfg(windows)]
+#[tauri::command]
+pub fn watchdog_start_drag(win: tauri::WebviewWindow) -> Result<(), String> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+    use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_LBUTTONUP};
+
+    let hwnd = win.hwnd().map_err(|e| e.to_string())?;
+    // HWND 内是裸指针、不满足 `Send`，不能直接 move 进线程闭包；
+    // 把地址当 usize 传进去，线程里再拼回 HWND。
+    let hwnd_addr = hwnd.0 as usize;
+
+    // `start_dragging()` 会阻塞命令线程直到拖动真正结束；看门狗必须并发跑。
+    // `done` 由主线程在 `start_dragging()` 返回后置位，通知看门狗可以收尾。
+    let done = Arc::new(AtomicBool::new(false));
+    let done_watch = done.clone();
+    std::thread::spawn(move || {
+        // 先让 OS 模态拖动循环有时间建立（否则过早判定「没按下」会误投）。
+        std::thread::sleep(Duration::from_millis(20));
+        while !done_watch.load(Ordering::Relaxed) {
+            // SAFETY: GetAsyncKeyState 是全局、线程安全的查询，无副作用。
+            let button_down = unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } < 0;
+            if !button_down {
+                // 左键已抬起但 OS 模态循环可能仍卡住（#10767）：强行打断。
+                // SAFETY: 给本窗口投 WM_LBUTTONUP，参数无关紧要，仅用于结束模态循环。
+                let _ = unsafe {
+                    PostMessageW(
+                        Some(HWND(hwnd_addr as *mut std::ffi::c_void)),
+                        WM_LBUTTONUP,
+                        WPARAM(0),
+                        LPARAM(0),
+                    )
+                };
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // 主线程已结束：再补几发，确保模态循环在收尾前确实被打破（防竞态尾巴）。
+        for _ in 0..10 {
+            let _ = unsafe {
+                PostMessageW(
+                    Some(HWND(hwnd_addr as *mut std::ffi::c_void)),
+                    WM_LBUTTONUP,
+                    WPARAM(0),
+                    LPARAM(0),
+                )
+            };
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    });
+
+    let result = win.start_dragging().map_err(|e| e.to_string());
+    // 给看门狗一点时间把打断投递出去，再让它收尾。
+    std::thread::sleep(Duration::from_millis(120));
+    done.store(true, Ordering::Relaxed);
+    result
+}
