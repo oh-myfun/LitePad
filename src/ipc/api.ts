@@ -111,6 +111,14 @@ export interface Settings {
   /** 大纲抽屉宽度（px，160–640） */
   toc_width: number;
   /**
+   * B194：大纲（左侧栏）是否**展开**。默认 false（与 index.html 的 `hidden` 初值一致）。
+   *
+   * 和 `toc_width` 一样放在设置里，而不是会话文件：它是**窗口级外观状态**
+   * （关掉再开应该保持原样），不属于某份文档的状态 —— 会话是按文档组织的，放进去
+   * 会变成「换了个文件，侧栏开合就跟着变」。
+   */
+  toc_open: boolean;
+  /**
    * 快捷键覆盖表：命令 id → 键位串（如 `file.save: "Ctrl+S"`）。
    * 空串表示显式解绑；缺项表示用 COMMANDS 里的默认键位。
    */

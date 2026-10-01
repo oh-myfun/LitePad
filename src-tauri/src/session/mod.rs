@@ -37,6 +37,11 @@ pub struct Settings {
     pub preview_line_height: f64,
     /// 大纲（TOC）抽屉宽度（px，160–640，默认 240）。前端拖拽分隔条后回写。
     pub toc_width: f64,
+    /// B194：大纲（左侧栏）是否展开（默认 false，与前端 index.html 的 `hidden` 初值一致）。
+    ///
+    /// 与 `toc_width` 同属设置而非会话：它是**窗口级外观状态**（关掉再开应保持原样），
+    /// 不跟着某份文档走。
+    pub toc_open: bool,
     /// 快捷键覆盖表：命令 id → 键位串（空串 = 显式解绑）。
     /// 后端不解释内容，只负责存取；合法性由前端 keymap 模块过滤。
     pub keymap: HashMap<String, String>,
@@ -75,6 +80,7 @@ impl Default for Settings {
             hot_exit: true,
             preview_line_height: 1.7,
             toc_width: 240.0,
+            toc_open: false,
             keymap: HashMap::new(),
             keymap_preset: "default".into(),
             tab_style: "connected".into(),

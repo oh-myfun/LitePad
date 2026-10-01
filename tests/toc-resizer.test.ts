@@ -148,8 +148,12 @@ describe("大纲（TOC）静态契约", () => {
     const src = readFileSync("src/main.ts", "utf-8");
     expect(src, "bootstrap 必须挂载大纲分隔条").toContain("setupTocResizer()");
     expect(src, "挂载必须走 attachTocResizer").toContain("attachTocResizer(");
-    expect(src, "收起/展开大纲时分隔条必须与面板同步显隐，否则留下 4px 死区").toContain(
-      "tocResizer.hidden = tocPanel.hidden",
+    // B194：显隐已收敛进 `setTocOpen`（开合 + 回写设置一处收口）—— 断言盯
+    // 「同一个函数里面板与分隔条的 hidden 一起写」，而不是盯某一行的字面量。
+    const setOpen = src.match(/function setTocOpen\([\s\S]*?\n\}/)?.[0] ?? "";
+    expect(setOpen, "应有 setTocOpen 收口大纲显隐").toBeTruthy();
+    expect(setOpen, "收起/展开时分隔条必须与面板同步显隐，否则留下 4px 死区").toMatch(
+      /tocPanel\.hidden = !open;[\s\S]{0,120}tocResizer\.hidden = !open;/,
     );
 
     const css = readFileSync("src/styles/preview.css", "utf-8");
@@ -167,5 +171,53 @@ describe("大纲（TOC）静态契约", () => {
     const rs = readFileSync("src-tauri/src/session/mod.rs", "utf-8");
     expect(rs, "Rust Settings 需要 toc_width 字段并给默认值").toContain("pub toc_width: f64");
     expect(rs, "默认宽度应为 240").toContain("toc_width: 240.0");
+  });
+});
+
+// ------------------------------------------------------- B194：大纲开合状态存设置并恢复
+// 用户诉求：「大纲打开状态也要支持恢复」。存 settings.json（与 toc_width 同处）——
+// 它是窗口级外观状态，不属于某份文档，所以不进会话文件。
+describe("B194 大纲开合状态：切一次要落盘、启动要回放", () => {
+  const src = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
+  const api = readFileSync("src/ipc/api.ts", "utf-8").replace(/\r\n/g, "\n");
+  const rs = readFileSync("src-tauri/src/session/mod.rs", "utf-8").replace(/\r\n/g, "\n");
+
+  function bodyOf(fnHead: string): string {
+    const i = src.indexOf(fnHead);
+    expect(i, `找不到函数：${fnHead}`).toBeGreaterThan(-1);
+    const j = src.indexOf("\n}", i);
+    return src.slice(i, j);
+  }
+
+  it("设置里要有 toc_open（前端类型 + Rust 结构 + 默认值）", () => {
+    expect(api, "Settings 类型需要 toc_open 字段").toContain("toc_open: boolean");
+    expect(rs, "Rust Settings 需要 toc_open 字段").toContain("pub toc_open: bool");
+    expect(rs, "默认应为关闭（与 index.html 的 hidden 初值一致）").toContain("toc_open: false");
+  });
+
+  it("切换大纲要把开合状态写进设置并落盘", () => {
+    const body = bodyOf("function setTocOpen(");
+    expect(body, "要把开合写进 settings.toc_open").toMatch(/settings\.toc_open = open;/);
+    expect(body, "写完要落盘").toMatch(/saveSettings\(settings\)/);
+    // 唯一入口：命令与顶部按钮都走 toggleToc → setTocOpen
+    expect(src, "toggleToc 必须走 setTocOpen（唯一收口）").toMatch(
+      /function toggleToc\(\)[\s\S]{0,200}setTocOpen\(tocPanel\.hidden\)/,
+    );
+  });
+
+  it("启动时要回放上次的开合，且回放本身不写盘", () => {
+    expect(src, "启动要按 settings.toc_open 回放").toMatch(
+      /setTocOpen\(settings\?\.toc_open \?\? false, false\)/,
+    );
+    // persist=false：否则「加载失败 → 用默认值」会把默认值固化成用户设置
+    const body = bodyOf("function setTocOpen(");
+    expect(body, "persist=false 时不得回写设置").toMatch(/if \(!persist \|\| !settings\) return;/);
+  });
+
+  it("B194 反向验证：摘掉落盘 → 上面那条必须落空", () => {
+    const ORIG = "  settings.toc_open = open;";
+    expect(src, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = src.replace(ORIG, "");
+    expect(degraded, "退化后不再写 toc_open").not.toMatch(/settings\.toc_open = open;/);
   });
 });

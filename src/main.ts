@@ -4872,10 +4872,26 @@ function setupTocResizer(): void {
   });
 }
 
+/**
+ * B194：开/关左侧栏（大纲），并把状态写进设置。
+ *
+ * `persist = false` 用于**启动时回放**：那时只是把盘上的值搬到 DOM，不该反过来再写一次盘
+ * （写回去会把「加载失败 → 用默认值」那次的值固化成用户设置）。
+ */
+function setTocOpen(open: boolean, persist = true): void {
+  tocPanel.hidden = !open;
+  tocResizer.hidden = !open;
+  if (open) updateTocDrawer();
+  if (!persist || !settings) return;
+  settings.toc_open = open;
+  void saveSettings(settings).catch(() => {
+    // 持久化失败不影响本次生效（与分隔条回写宽度同一口径）
+  });
+}
+
 function toggleToc(): void {
-  tocPanel.hidden = !tocPanel.hidden;
-  tocResizer.hidden = tocPanel.hidden;
-  if (!tocPanel.hidden) updateTocDrawer();
+  // 当前 hidden 取反即「接下来是否展开」
+  setTocOpen(tocPanel.hidden);
 }
 
 function updateTocDrawer(): void {
@@ -7399,6 +7415,8 @@ async function setupShell(): Promise<void> {
   applyPreviewLineHeight(settings?.preview_line_height ?? 1.7);
   applyEditorLineHeight(settings?.editor_line_height ?? 1.5);
   setupTocResizer();
+  // B194：回放上次的侧栏开合（`persist = false` —— 只是把盘上的值搬到 DOM）
+  setTocOpen(settings?.toc_open ?? false, false);
   // B58：装配自绘提示层。必须**早于任何控件创建**地委托一次——
   // 它靠全局事件委托工作，控件只需带 data-tip，不需要逐个挂钩子。
   initTooltips();
