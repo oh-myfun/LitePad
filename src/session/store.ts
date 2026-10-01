@@ -28,6 +28,8 @@ export interface SessionTabRecord {
   scrollTop: number | null;
   viewMode: string | null;
   backupId: string | null;
+  /** B169：同步滚动开关（按文档记，B152）。恢复时写回前端 `docSyncModes`。 */
+  syncMode: boolean;
 }
 
 /** 一个面板的会话记录：标签顺序 + 活动标签。 */
@@ -56,6 +58,7 @@ function blankRecord(tabId: number, docId: number): SessionTabRecord {
     scrollTop: null,
     viewMode: null,
     backupId: null,
+    syncMode: false,
   };
 }
 
@@ -77,6 +80,7 @@ function toDisk(r: SessionTabRecord): TabSession {
     viewMode: r.viewMode,
     backupId: r.backupId,
     docId: r.docId,
+    syncMode: r.syncMode,
   };
 }
 
@@ -155,6 +159,12 @@ class SessionStore {
   setViewMode(tabId: number, mode: string | null): void {
     const r = this.recs.get(tabId);
     if (r) r.viewMode = mode;
+  }
+
+  /** B169：同步滚动开关（按文档记）。`docSyncModes` 是前端权威，退出前刷进记录即可落盘。 */
+  setSyncMode(tabId: number, on: boolean): void {
+    const r = this.recs.get(tabId);
+    if (r) r.syncMode = on;
   }
 
   // ---------------------------------------------------------------- 结构（面板 / 布局）

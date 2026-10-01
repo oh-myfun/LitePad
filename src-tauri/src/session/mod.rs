@@ -238,6 +238,10 @@ pub struct TabSession {
     /// 旧版本落盘的会话没有这个字段，反序列化为 `None`，行为与 B69 之前一致。
     #[serde(alias = "doc_id")]
     pub doc_id: Option<u64>,
+    /// B169：同步滚动开关（按文档记，B152）。落盘后重新打开时写回前端 `docSyncModes`，
+    /// 让同步键点亮态与退出前一致。`false` = 没开过同步（旧会话没有这个字段也走默认）。
+    #[serde(alias = "sync_mode")]
+    pub sync_mode: bool,
 }
 
 impl Default for TabSession {
@@ -252,6 +256,7 @@ impl Default for TabSession {
             view_mode: None,
             backup_id: None,
             doc_id: None,
+            sync_mode: false,
         }
     }
 }

@@ -2832,6 +2832,9 @@ function refreshSession(): void {
       backupId: d.backupId,
     });
     sessionStore.setViewMode(t.tabId, isMdTab(t) ? t.viewMode : null);
+    // B169：同步滚动开关是 `docSyncModes`（按文档记，B152）里的值，退出前刷进记录，
+    // 落盘后重开时由 `restoreSession` 写回，让同步键点亮态与退出前一致。
+    sessionStore.setSyncMode(t.tabId, docSyncModes.get(t.docId) === true);
     // 正显示在面板上的那个：光标与视口都在视图 / DOM 上，先采一次再写进记录
     // （同 B140 的「消失前看最后一眼」，只不过现在写的是 store 而不是 Tab）。
     // 其余标签的光标在 `handleUpdate` 里就已经即时写进来了，这里不动它。
@@ -3251,6 +3254,8 @@ async function restoreSession(): Promise<boolean> {
         inst.state = inst.state.update({ selection: { anchor: pos } }).state;
         // B126：视口位置一并带回（null = 旧会话没有这个字段 → 切过去时保证光标可见）
         inst.scrollTop = st.scrollTop ?? null;
+        // B169：同步滚动开关（按文档记）→ 写回 `docSyncModes`，同步键点亮态与退出前一致
+        if (st.syncMode) docSyncModes.set(inst.docId, true);
         opened++;
       } catch (e) {
         // 文件已被删除/无法读取 → 跳过该标签。静默过（B143 那类帮凶）：跳了几个、

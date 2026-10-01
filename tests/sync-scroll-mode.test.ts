@@ -751,6 +751,52 @@ describe("B169 卫星窗口同步键状态要与主窗口一致", () => {
   });
 });
 
+// ------------------------------------------------------- B169：同步滚动开关落盘到会话并恢复
+// 用户诉求：「同步滚动开关状态也保存到 session 文件中，应用重新打开时进行恢复」。
+// 落盘链路：refreshSession 把 docSyncModes（按文档记）刷进会话记录 → toDisk 序列化 →
+// Rust TabSession 落盘；恢复链路：restoreSession 读回 syncMode → 写回 docSyncModes。
+describe("B169 同步滚动开关落入会话文件并恢复", () => {
+  const STORE = readFileSync("src/session/store.ts", "utf-8").replace(/\r\n/g, "\n");
+  const API = readFileSync("src/ipc/api.ts", "utf-8").replace(/\r\n/g, "\n");
+
+  it("TabSession 落盘结构要带 syncMode 可选字段", () => {
+    // 与 SatelliteTab 的 syncMode 同源（B169 跨窗口那一支），这里保证「落盘那份」也有。
+    expect(API, "TabSession 要带 syncMode").toMatch(/syncMode\??:\s*boolean/);
+  });
+
+  it("toDisk 要把记录的 syncMode 写进落盘结构", () => {
+    expect(STORE, "落盘要带 syncMode").toMatch(/syncMode: r\.syncMode,/);
+  });
+
+  it("refreshSession 退出前把 docSyncModes 的开关刷进会话记录", () => {
+    expect(main, "刷新要把同步开关刷进记录").toMatch(
+      /sessionStore\.setSyncMode\(t\.tabId, docSyncModes\.get\(t\.docId\) === true\)/,
+    );
+  });
+
+  it("restoreSession 要把读到的 syncMode 写回 docSyncModes", () => {
+    expect(main, "恢复要把 syncMode 写回 docSyncModes").toMatch(
+      /if \(st\.syncMode\) docSyncModes\.set\(inst\.docId, true\);/,
+    );
+  });
+
+  it("B169 反向验证：摘掉 toDisk 的 syncMode 写 → 上面那条必须落空", () => {
+    const ORIG = "    syncMode: r.syncMode,";
+    expect(STORE, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = STORE.replace(ORIG, "");
+    expect(degraded, "退化后落盘不再带 syncMode").not.toMatch(/syncMode: r\.syncMode,/);
+  });
+
+  it("B169 反向验证：摘掉恢复写回 → 上面那条必须落空", () => {
+    const ORIG = "        if (st.syncMode) docSyncModes.set(inst.docId, true);";
+    expect(main, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = main.replace(ORIG, "");
+    expect(degraded, "退化后不再把 syncMode 写回 docSyncModes").not.toMatch(
+      /if \(st\.syncMode\) docSyncModes\.set\(inst\.docId, true\);/,
+    );
+  });
+});
+
 describe("B152 反向验证：退回旧写法，上面那几条必须变红", () => {
   it("退回「单开一份也露脸」→ 显隐那两条必须落空", () => {
     // ⚠️ 退化串按位置取，不按字面量 replace：判据的排版变过好几轮（B164 折成两行、

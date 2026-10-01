@@ -280,6 +280,11 @@ export interface TabSession {
    * 两个实例时，不能恢复成两份互不相干的文档。
    */
   docId?: number | null;
+  /**
+   * B169：同步滚动开关（按文档记，B152）。落盘后重新打开时写回前端 `docSyncModes`，
+   * 让同步键点亮态与退出前一致。`undefined` = 旧会话没有这个字段 → 当作没开过。
+   */
+  syncMode?: boolean;
 }
 
 export interface PanelSession {
