@@ -79,6 +79,8 @@ import {
   type SatellitePayload,
   type SatelliteTab,
   type SessionState,
+  // B193：会话记录类型 —— 卫星标签要按 `owner` 分组还原成独立窗口，得拿到这份类型
+  type TabSession,
   type Settings,
   type WindowPayload,
   type WindowSpot,
@@ -3007,16 +3009,12 @@ async function restoreSession(): Promise<boolean> {
       sess.satelliteTabs?.length ?? 0
     } 活动面板=${sess.activePanel}`,
   );
-  // B71 ④：被搬到其他窗口的标签并回主窗口（v1 不回放多窗口布局）。
-  // 追加到**第一个面板**而不是新建分屏：这些标签本来就不属于本窗口的某块分屏，
-  // 让它们和主窗口的标签待在一起，比凭空多出一块空面板好理解。
-  //
-  // 插在这里（而不是在恢复流程末尾单独走一遍）是为了复用同一条恢复链路：
-  // 副本优先/文件兜底、按文档身份去重、光标与视图模式恢复都在下面那套里。
-  if (sess.satelliteTabs?.length) {
-    sp[0].tabs = [...sp[0].tabs, ...sess.satelliteTabs];
-  }
-  if (!sp.some((p) => p.tabs.length > 0)) return false;
+  // B193：卫星标签**不再并回主窗口** —— 按 `owner` 分组，各组还原成一个**真实的卫星
+  // 窗口**（分组与开窗见下方 `restoreSatellites`）。v1 把它们 append 进 `sp[0].tabs`，
+  // 于是「拖到子窗口的标签」重启后全跑回主窗口，多窗口布局丢得干干净净 —— 那正是
+  // 用户报的「satelliteTabs 没有按照卫星窗口方式进行恢复」。
+  const satTabs = sess.satelliteTabs ?? [];
+  if (!sp.some((p) => p.tabs.length > 0) && satTabs.length === 0) return false;
   const panels0 = sp;
 
   panels.clear();
@@ -3121,20 +3119,20 @@ async function restoreSession(): Promise<boolean> {
     eol: string | null;
     backupId: string | null;
   }> = [];
-  for (const spanel of panels0) {
-    for (const st of spanel.tabs) {
-      const backupId = st.backupId ?? null;
-      const key = identityOf(st);
-      if (!key) continue; // 认不出身份 → 跳过（见 identityOf 注释）
-      if (!pending.some((p) => p.key === key)) {
-        pending.push({
-          key,
-          path: st.path,
-          encoding: st.encoding ?? null,
-          eol: st.eol ?? null,
-          backupId,
-        });
-      }
+  // 主窗口各面板的标签 **+ B193 卫星标签**：按身份去重后统一下去预取，两边共用同一份
+  // 缓存（同一个文件同时开在主窗口和卫星窗口时只读一次盘）。
+  for (const st of [...panels0.flatMap((p) => p.tabs), ...satTabs]) {
+    const backupId = st.backupId ?? null;
+    const key = identityOf(st);
+    if (!key) continue; // 认不出身份 → 跳过（见 identityOf 注释）
+    if (!pending.some((p) => p.key === key)) {
+      pending.push({
+        key,
+        path: st.path,
+        encoding: st.encoding ?? null,
+        eol: st.eol ?? null,
+        backupId,
+      });
     }
   }
   const restoredCache = new Map<string, Restored>();
@@ -3199,6 +3197,67 @@ async function restoreSession(): Promise<boolean> {
     logger.debug("session", `预取跳过 ${dropped.length} 项：${dropped.slice(0, 4).join("；")}`);
   }
 
+  /**
+   * 按一条会话记录建实例（文档按需创建、同源复用），并把光标 / 视图模式 / 视口 /
+   * 同步开关一并带回去。主窗口面板与 B193 卫星标签**共用这一条** —— 副本优先、
+   * 按身份去重、光标恢复这些口径必须完全一致，写两遍就会悄悄分叉。
+   *
+   * `panelId = -1` = **隐藏实例**：不进任何面板（标签条上看不见），是卫星标签
+   * 交给窗口前的暂存态；等 `openTabsInNewWindow` 接手后经 `remoteTabLocally`
+   * 登记成「已借出」，才会进会话的 `satelliteTabs` 段。
+   */
+  function buildInstance(st: TabSession, panelId: number): Tab | null {
+    const hit = restoredCache.get(identityOf(st));
+    if (!hit) return null;
+    const src = hit.data;
+    let doc = docs.get(src.tabId);
+    if (!doc) {
+      doc = makeDoc(
+        src.tabId,
+        src.text,
+        src.name,
+        src.path || null,
+        src.encoding,
+        src.eol,
+        src.readonly,
+        normalizeSizeClass(src.sizeClass),
+        st.backupId ?? null,
+      );
+      doc.mixedEol = src.mixedEol;
+      if (hit.kind === "backup") {
+        // 副本还原 = 原样回到「有未保存修改」的状态：
+        // 脏 + 已知副本存在，于是关窗依旧不需要确认框。
+        doc.dirty = true;
+        doc.backedUp = true;
+        // 副本里只有「改过之后」的正文，**原文件长什么样并不知道** ⇒ 没有基线，
+        // 只能等用户保存时重新钉（在此之前撤销多少次都不会自己转干净）。
+        doc.baseline = null;
+        // 已知版本无从得知（副本里不存 mtime），留 0：于是接下来的第一个
+        // file-changed 一定被判成外部改动 —— 这份本来就脏，正是要弹冲突框的情形。
+      } else if (hit.kind === "file") {
+        markDiskVersion(doc, hit.data.mtimeMs, hit.data.size);
+      }
+      registerDoc(doc);
+    }
+    // 同一路径出现在多个面板：各建一个同源实例（内容自动同步）
+    const inst = makeInstance(doc, panelId, src.text);
+    tabs.set(inst.tabId, inst);
+    // 恢复 Markdown 视图模式（旧版 "split" 映射回 source）
+    if (isMdTab(inst) && (st.viewMode === "source" || st.viewMode === "preview")) {
+      inst.viewMode = st.viewMode;
+    }
+    // 恢复光标（实例独立）
+    const lineNo = Math.min(Math.max(1, st.cursorLine || 1), inst.state.doc.lines);
+    const line = inst.state.doc.line(lineNo);
+    const pos = line.from + Math.min(Math.max(0, (st.cursorCol || 1) - 1), line.length);
+    inst.state = inst.state.update({ selection: { anchor: pos } }).state;
+    // B126：视口位置一并带回（null = 旧会话没有这个字段 → 切过去时保证光标可见）
+    inst.scrollTop = st.scrollTop ?? null;
+    // B169：同步滚动开关（按文档记）→ 写回 `docSyncModes`，同步键点亮态与退出前一致
+    if (st.syncMode) docSyncModes.set(inst.docId, true);
+    return inst;
+  }
+
   // 逐面板恢复标签
   let opened = 0;
   for (let i = 0; i < panels0.length; i++) {
@@ -3206,56 +3265,10 @@ async function restoreSession(): Promise<boolean> {
     const panel = panels.get(idMap.get(i)!);
     if (!panel) continue;
     for (const st of spanel.tabs) {
-      const hit = restoredCache.get(identityOf(st));
-      if (!hit) continue;
       try {
-        const src = hit.data;
-        let doc = docs.get(src.tabId);
-        if (!doc) {
-          doc = makeDoc(
-            src.tabId,
-            src.text,
-            src.name,
-            src.path || null,
-            src.encoding,
-            src.eol,
-            src.readonly,
-            normalizeSizeClass(src.sizeClass),
-            st.backupId ?? null,
-          );
-          doc.mixedEol = src.mixedEol;
-          if (hit.kind === "backup") {
-            // 副本还原 = 原样回到「有未保存修改」的状态：
-            // 脏 + 已知副本存在，于是关窗依旧不需要确认框。
-            doc.dirty = true;
-            doc.backedUp = true;
-            // 副本里只有「改过之后」的正文，**原文件长什么样并不知道** ⇒ 没有基线，
-            // 只能等用户保存时重新钉（在此之前撤销多少次都不会自己转干净）。
-            doc.baseline = null;
-            // 已知版本无从得知（副本里不存 mtime），留 0：于是接下来的第一个
-            // file-changed 一定被判成外部改动 —— 这份本来就脏，正是要弹冲突框的情形。
-          } else if (hit.kind === "file") {
-            markDiskVersion(doc, hit.data.mtimeMs, hit.data.size);
-          }
-          registerDoc(doc);
-        }
-        // 同一路径出现在多个面板：各建一个同源实例（内容自动同步）
-        const inst = makeInstance(doc, panel.panelId, src.text);
-        tabs.set(inst.tabId, inst);
+        const inst = buildInstance(st, panel.panelId);
+        if (!inst) continue;
         panel.tabs.push(inst.tabId);
-        // 恢复 Markdown 视图模式（旧版 "split" 映射回 source）
-        if (isMdTab(inst) && (st.viewMode === "source" || st.viewMode === "preview")) {
-          inst.viewMode = st.viewMode;
-        }
-        // 恢复光标（实例独立）
-        const lineNo = Math.min(Math.max(1, st.cursorLine || 1), inst.state.doc.lines);
-        const line = inst.state.doc.line(lineNo);
-        const pos = line.from + Math.min(Math.max(0, (st.cursorCol || 1) - 1), line.length);
-        inst.state = inst.state.update({ selection: { anchor: pos } }).state;
-        // B126：视口位置一并带回（null = 旧会话没有这个字段 → 切过去时保证光标可见）
-        inst.scrollTop = st.scrollTop ?? null;
-        // B169：同步滚动开关（按文档记）→ 写回 `docSyncModes`，同步键点亮态与退出前一致
-        if (st.syncMode) docSyncModes.set(inst.docId, true);
         opened++;
       } catch (e) {
         // 文件已被删除/无法读取 → 跳过该标签。静默过（B143 那类帮凶）：跳了几个、
@@ -3267,6 +3280,27 @@ async function restoreSession(): Promise<boolean> {
       const active = Math.min(Math.max(0, spanel.active), panel.tabs.length - 1);
       panel.activeTabId = panel.tabs[active];
     }
+  }
+
+  // B193：卫星标签 → 按 `owner` 分组，各组先落成隐藏实例（下一步交给一个真实卫星窗口）
+  const satGroups: Array<{ owner: string; tabIds: number[] }> = [];
+  {
+    const byOwner = new Map<string, number[]>();
+    for (const st of satTabs) {
+      // 旧会话没有 `owner` 字段 → 整批归到同一组（退回「一个卫星窗口」的口径）
+      const key = st.owner ?? "";
+      try {
+        const inst = buildInstance(st, -1);
+        if (!inst) continue;
+        const g = byOwner.get(key);
+        if (g) g.push(inst.tabId);
+        else byOwner.set(key, [inst.tabId]);
+        opened++;
+      } catch (e) {
+        dropped.push(`${st.path || "未命名"}：恢复卫星实例失败（${String(e)}）`);
+      }
+    }
+    for (const [owner, tabIds] of byOwner) satGroups.push({ owner, tabIds });
   }
 
   if (opened === 0) {
@@ -3296,7 +3330,48 @@ async function restoreSession(): Promise<boolean> {
       dropped.slice(0, 4).join("；") || "无"
     }`,
   );
+  // B193：卫星标签交给真实卫星窗口（一组一个）。**不 await** —— 开窗要等新窗口就绪
+  // 应答（每个最长 6s），串行等下去会把主窗口一起拖住；异步起跑，主窗口立即可用。
+  if (satGroups.length > 0) {
+    logger.info("session", `恢复 ${satGroups.length} 个卫星窗口（${satTabs.length} 个标签）`);
+    void restoreSatelliteWindows(satGroups);
+  }
   return true;
+}
+
+/**
+ * B193：把会话里的卫星标签交给**真实的卫星窗口**（一个 owner 组 → 一个窗口）。
+ *
+ * 标签在 `restoreSession` 里已先落成隐藏实例（`panelId = -1`），这里只负责把它们
+ * 送进窗口 —— 走的是和用户手动「拖到新窗口」完全相同的 `openTabsInNewWindow`，
+ * 于是快照、跨窗口交接、`remotedTabs` 登记、会话回写这些口径天然一致。
+ *
+ * ⚠️ **兜底是必须的**：`openTabsInNewWindow` 失败时（建窗被拒 / 就绪超时）它**不会**
+ * 摘掉本地标签 —— 那些实例此刻仍是隐藏态（panelId = -1 且没进 `remotedTabs`）：
+ * 既不在任何面板里、也写不进会话 ⇒ 用户的字会凭空消失。所以每批跑完必须把
+ * 「没被接走」的隐藏实例收回主窗口（退回 v1 的并回口径，至少不丢内容）。
+ */
+async function restoreSatelliteWindows(
+  groups: Array<{ owner: string; tabIds: number[] }>,
+): Promise<void> {
+  for (const g of groups) {
+    try {
+      await openTabsInNewWindow(g.tabIds);
+    } catch (e) {
+      // ⚠️ 必须兜住：这条链上任何一处抛异常都会跳过 `remoteTabLocally`，若不接住，
+      // 整批标签就停在隐藏态（不进面板、也不写会话）⇒ 用户的字凭空消失，
+      // 而且一组失败会连带拖死后面所有分组。
+      logger.error("window", `恢复卫星窗口失败（${g.tabIds.length} 个标签）：${String(e)}`);
+    }
+    for (const tabId of g.tabIds) {
+      const t = tabs.get(tabId);
+      // 还挂在 -1 且没被登记成「已借出」⇒ 窗口没接走 → 收回主窗口
+      if (t && t.panelId === -1 && !remotedTabs.has(t.docId)) reclaimRemoted(tabId);
+    }
+  }
+  rebuildLayout();
+  refreshAll();
+  scheduleSessionSave();
 }
 
 let autosaveTimer: number | null = null;

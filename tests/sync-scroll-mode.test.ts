@@ -788,9 +788,14 @@ describe("B169 同步滚动开关落入会话文件并恢复", () => {
   });
 
   it("B169 反向验证：摘掉恢复写回 → 上面那条必须落空", () => {
-    const ORIG = "        if (st.syncMode) docSyncModes.set(inst.docId, true);";
-    expect(main, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "");
+    // ⚠️ 不写死缩进：这行住在 `buildInstance` 里，抽函数/改嵌套会改变它的缩进，
+    // 写死的字面量会「找不着原句」而红（B193 抽 buildInstance 时就红过一次）。
+    // 改成先按行匹配取出原句再删 —— 既是自证（取不到就红），也不受排版影响。
+    const found = main.match(
+      /^[ \t]*if \(st\.syncMode\) docSyncModes\.set\(inst\.docId, true\);$/m,
+    );
+    expect(found, "退化串要先自证原句还在").not.toBeNull();
+    const degraded = main.replace(found![0], "");
     expect(degraded, "退化后不再把 syncMode 写回 docSyncModes").not.toMatch(
       /if \(st\.syncMode\) docSyncModes\.set\(inst\.docId, true\);/,
     );

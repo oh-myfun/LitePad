@@ -242,6 +242,10 @@ pub struct TabSession {
     /// 让同步键点亮态与退出前一致。`false` = 没开过同步（旧会话没有这个字段也走默认）。
     #[serde(alias = "sync_mode")]
     pub sync_mode: bool,
+    /// B193：仅 `satellite_tabs` 段使用 —— 该标签当时属于哪个卫星窗口（label 作分组键）。
+    /// `None` = 旧会话没写过这个字段，整批当作同一组。
+    #[serde(alias = "owner")]
+    pub owner: Option<String>,
 }
 
 impl Default for TabSession {
@@ -257,6 +261,7 @@ impl Default for TabSession {
             backup_id: None,
             doc_id: None,
             sync_mode: false,
+            owner: None,
         }
     }
 }

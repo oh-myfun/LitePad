@@ -285,6 +285,14 @@ export interface TabSession {
    * 让同步键点亮态与退出前一致。`undefined` = 旧会话没有这个字段 → 当作没开过。
    */
   syncMode?: boolean;
+  /**
+   * B193：**仅 `satelliteTabs` 段使用** —— 这个标签当时属于哪个卫星窗口（窗口 label 作分组键）。
+   *
+   * 会话里卫星标签是一份扁平列表，少了它就只能「全部并回主窗口」（v1 行为），
+   * 多个卫星窗口会被坍缩成一份。带上 owner 才能按窗口分组、各自还原成一个卫星窗口。
+   * 旧会话没有这个字段 → `undefined`，整批当作同一组。
+   */
+  owner?: string | null;
 }
 
 export interface PanelSession {

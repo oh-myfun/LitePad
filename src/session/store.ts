@@ -230,10 +230,14 @@ class SessionStore {
       }),
       layout: this.layout,
       activePanel: indexOf.get(this.activePanelId) ?? 0,
+      // B193：卫星标签要**带窗口归属**落盘 —— 少了它，多个卫星窗口在恢复时会被坍缩成
+      // 一份（只能一并并回主窗口）。`owner` 只是分组键，恢复时窗口 label 会重新分配。
       satelliteTabs: [...this.satellites.values()]
-        .map((s) => this.recs.get(s.tabId))
-        .filter((r): r is SessionTabRecord => !!r && worthy(r.tabId))
-        .map(toDisk),
+        .map((s): TabSession | null => {
+          const r = this.recs.get(s.tabId);
+          return r && worthy(r.tabId) ? { ...toDisk(r), owner: s.owner } : null;
+        })
+        .filter((x): x is TabSession => !!x),
     };
   }
 }
