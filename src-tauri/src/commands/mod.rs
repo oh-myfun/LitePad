@@ -1323,8 +1323,6 @@ pub fn reveal_in_folder(path: String) -> Result<(), String> {
 #[cfg(windows)]
 #[tauri::command]
 pub fn watchdog_start_drag(win: tauri::WebviewWindow) -> Result<(), String> {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
     use std::time::Duration;
     use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
@@ -1335,47 +1333,40 @@ pub fn watchdog_start_drag(win: tauri::WebviewWindow) -> Result<(), String> {
     // 把地址当 usize 传进去，线程里再拼回 HWND。
     let hwnd_addr = hwnd.0 as usize;
 
-    // `start_dragging()` 会阻塞命令线程直到拖动真正结束；看门狗必须并发跑。
-    // `done` 由主线程在 `start_dragging()` 返回后置位，通知看门狗可以收尾。
-    let done = Arc::new(AtomicBool::new(false));
-    let done_watch = done.clone();
+    // 看门狗线程与 `start_dragging()` 并发跑（后者在命令线程上发起 OS 拖拽循环、很快返回，
+    // 真实拖拽循环跑在主线程 —— 所以不能靠它返回来判定拖拽何时结束，也不再补发尾巴）。
+    //
+    // 只在「左键确实已抬起」时给窗口补发 WM_LBUTTONUP：正常拖拽全程左键按着，永不投；
+    // 抬起即终止条件，投一次永远正确（无模态循环可打断时多余那发只是无害消息）。
+    // 用「连续两次采样都为抬起」做去抖：上一版在 `start_dragging` 返回后补发一通 WM_LBUTTONUP，
+    // 恰好打进还在进行的真实拖拽、把它掐断 —— 这里彻底去掉尾部补发，且拖拽中（按键按着）
+    // 一律不投，根治「拖一下就被停」的问题。
     std::thread::spawn(move || {
-        // 先让 OS 模态拖动循环有时间建立（否则过早判定「没按下」会误投）。
+        let h = HWND(hwnd_addr as *mut std::ffi::c_void);
+        // 先让 OS 模态拖动循环有时间建立。
         std::thread::sleep(Duration::from_millis(20));
-        while !done_watch.load(Ordering::Relaxed) {
+        let mut up_streak = 0u32;
+        for _ in 0..3000 {
             // SAFETY: GetAsyncKeyState 是全局、线程安全的查询，无副作用。
             let button_down = unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } < 0;
-            if !button_down {
-                // 左键已抬起但 OS 模态循环可能仍卡住（#10767）：强行打断。
-                // SAFETY: 给本窗口投 WM_LBUTTONUP，参数无关紧要，仅用于结束模态循环。
-                let _ = unsafe {
-                    PostMessageW(
-                        Some(HWND(hwnd_addr as *mut std::ffi::c_void)),
-                        WM_LBUTTONUP,
-                        WPARAM(0),
-                        LPARAM(0),
-                    )
-                };
+            if button_down {
+                up_streak = 0;
+            } else {
+                up_streak += 1;
+                // 连续两次采样都为「已抬起」才认定真松手（去抖），避免单次采样抖动误杀正常拖拽。
+                if up_streak >= 2 {
+                    // 左键已抬起：补发 WM_LBUTTONUP 结束可能卡住的 OS 模态循环（#10767 残余）。
+                    // SAFETY: 给本窗口投 WM_LBUTTONUP，参数无关紧要，仅用于结束模态循环。
+                    let _ = unsafe { PostMessageW(Some(h), WM_LBUTTONUP, WPARAM(0), LPARAM(0)) };
+                    // 连发约 220ms 确保 OS 循环收到并退出，再收尾。
+                    if up_streak >= 22 {
+                        break;
+                    }
+                }
             }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        // 主线程已结束：再补几发，确保模态循环在收尾前确实被打破（防竞态尾巴）。
-        for _ in 0..10 {
-            let _ = unsafe {
-                PostMessageW(
-                    Some(HWND(hwnd_addr as *mut std::ffi::c_void)),
-                    WM_LBUTTONUP,
-                    WPARAM(0),
-                    LPARAM(0),
-                )
-            };
             std::thread::sleep(Duration::from_millis(10));
         }
     });
 
-    let result = win.start_dragging().map_err(|e| e.to_string());
-    // 给看门狗一点时间把打断投递出去，再让它收尾。
-    std::thread::sleep(Duration::from_millis(120));
-    done.store(true, Ordering::Relaxed);
-    result
+    win.start_dragging().map_err(|e| e.to_string())
 }
