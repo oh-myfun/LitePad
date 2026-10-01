@@ -1063,6 +1063,49 @@ describe("bootstrap + drag-split smoke", () => {
     window.dispatchEvent(hotkey({ code: "KeyO", key: "O", ctrlKey: true, shiftKey: true }));
   });
 
+  it("B195：侧栏按钮列的「大纲」键与菜单/快捷键同一入口，且点亮态与面板同步", async () => {
+    // 静态契约（tests/sidebar.test.ts）只能证明「装上了」，这里用真 bootstrap 证明
+    // 「点了真的动」：字形填进去了、点击走 toggleToc、三处状态（面板 / 键 / 空隙）同翻转。
+    capturedError = null;
+    const toc = document.getElementById("toc-panel") as HTMLElement;
+    const resizer = document.getElementById("toc-resizer") as HTMLElement;
+    const btn = document.getElementById("side-outline") as HTMLButtonElement;
+    expect(btn.querySelector("i.codicon"), "大纲键要装上字形").toBeTruthy();
+    expect(
+      document.querySelector("#toc-grip i.codicon"),
+      "空隙里的三点把手要装上字形",
+    ).toBeTruthy();
+    expect(btn.parentElement?.id, "键必须在按钮列里（收起时列仍常驻）").toBe("side-bar");
+
+    // 先把状态归一到「收起」，读起来就不用在脑子里翻转 hidden / open 两次
+    const before = toc.hidden;
+    if (!before) btn.click();
+    expect(toc.hidden, "归一后应是收起态").toBe(true);
+    expect(btn.classList.contains("is-on"), "收起时键不亮").toBe(false);
+    expect(btn.getAttribute("aria-pressed"), "收起时 aria-pressed=false").toBe("false");
+    expect(resizer.classList.contains("is-off"), "收起时空隙转 is-off").toBe(true);
+
+    // ① 点一下 → 展开：面板显形 + 键点亮 + 空隙把手复活（三处同翻转）
+    btn.click();
+    expect(toc.hidden, "点按钮应展开大纲").toBe(false);
+    expect(btn.classList.contains("is-on"), "开着时键要点亮").toBe(true);
+    expect(btn.getAttribute("aria-pressed"), "aria-pressed 与点亮态同源").toBe("true");
+    // 空隙**不再 hidden**（两张卡片的间距不跟着开合跳变），只转 is-off
+    expect(resizer.hidden, "空隙任何时候都不隐藏").toBe(false);
+    expect(resizer.classList.contains("is-off"), "展开时空隙不是 is-off").toBe(false);
+
+    // ② 再点一下 → 收起
+    btn.click();
+    expect(toc.hidden, "再点一次回到收起").toBe(true);
+    expect(btn.classList.contains("is-on"), "收起后键熄灭").toBe(false);
+    expect(resizer.classList.contains("is-off"), "is-off 与面板显隐反着走").toBe(true);
+
+    // 还原到进入本用例前的开合态，免得影响后面的用例
+    if (!before) btn.click();
+    expect(toc.hidden, "收尾要还原").toBe(before);
+    expect(capturedError, `点侧栏键不应抛错：${String(capturedError)}`).toBeNull();
+  });
+
   it("B45 关闭非活动标签不得切换视图（回归：切到待关文件→关掉→切回来，闪一下）", async () => {
     // 用户报告：关掉的标签不是当前文件时会闪一下。
     // 根因两处（都在 closeTabById）：

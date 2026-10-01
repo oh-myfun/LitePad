@@ -2213,7 +2213,63 @@ button:focus-visible {
 
 #toc-panel {
   height: 100%;
+  min-height: 0;
   /* 面板配色统一在 preview.css 的 .toc-panel（走全局主题变量）；这里不再重复定义背景 */
+}
+
+/* ---------- 侧栏卡片（B195，对齐 VS Code 的 activity bar + side bar）----------
+   #main-row 三段：侧栏卡片 → 空隙（三点把手）→ 编辑区卡片。
+   「整体一张卡片」是用户点名的口径：**按钮列与展开区同属一张卡片** —— 收起大纲时
+   卡片不消失，只缩成按钮列那一列（VS Code 隐藏侧栏后活动栏仍在，同一件事）。
+   ⚠️ 边框与圆角必须与 .layout-area **逐字同步**：两张卡片同处一行、同是卡片，
+      半径或线色差一点就会看成两种东西 —— 改一处就要改另一处。
+   ⚠️ 空隙由 .toc-resizer 自己撑开（preview.css），这里**不要**再给 #main-row 加 gap，
+      否则空隙会翻倍、且收起大纲时（分隔条隐藏）间距还会跳变。 */
+.side-shell {
+  flex: 0 0 auto;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--tab-bg-hover);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+/* 按钮列：常驻。底色比展开区暗一档（--bg-toolbar，与标题栏同源），
+   VS Code 的 activityBar 与 sideBar 也是这个明暗关系（不靠描边分界）。 */
+.side-bar {
+  flex: 0 0 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding-top: 6px;
+  background: var(--bg-toolbar);
+}
+
+/* 与标题栏那批方形图标键（B157）同一观感：**不铺底**，常态/悬停/点亮全靠字形颜色。
+   一条规则管到底（同款控件一条规则）—— 后续侧栏再加按钮，只需往这里加选择器。
+   ⚠️ 必须排在 `button` 与 `button:hover` 之后才能盖掉通用按钮的内边距与悬停底色。 */
+.side-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-muted);
+}
+
+/* 悬停 =「这颗可点」，点亮（展开区开着）=「当前视图」，两者都只转亮字形颜色 ——
+   VS Code 的活动栏就是这个口径（不铺底、不换色相；视图开着本身已经是状态反馈）。
+   一条规则管到底（同款控件一条规则），后续侧栏再加按钮只需往这里加选择器。 */
+.side-btn:hover,
+.side-btn.is-on {
+  background: transparent;
+  color: var(--fg);
 }
 
 .layout-area {

@@ -766,11 +766,12 @@ describe("B64/B91-2 拖拽影像：造出来交给系统绘制", () => {
 });
 
 describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
-  it("B28 大纲分隔条必须与分屏分割条同款（细线 + 宽命中区 + hover accent，无双线）", () => {
-    // 用户要求：大纲区分隔条样式与面板分割条保持一致。
-    // 旧样式是 4px 透明细条，与 .layout-sep 不统一；
-    // 且 .toc-panel 自带 border-right 会与分隔条叠成双线。
-    // B53 起两者统一升级为「透明命中区 + ::after 细线」——改一处必须改另一处。
+  it("B28/B195 分隔条分两档：卡片**内部**画细线，卡片**之间**留空隙 + 三点把手", () => {
+    // B28 原约定「大纲分隔条与分屏分隔条同款」——那时两者都是「两块内容之间的一条线」。
+    // B123 把卡片上移到 .layout-area 之后，分屏边界落进**卡片内部**：那里不能有缝，
+    // 只能是细线（.layout-sep）。B195 把侧栏也做成卡片后，侧栏/编辑区变成**两张卡片
+    // 之间**：用户点名要空隙 + 三点把手（VS Code 的 sash grip），再画 1px 竖线就成了
+    // 「有线的缝」，两头不靠 ⇒ 「同款」到此为止，两条各管一个场景，这里按新口径锁死。
     const previewCss = readFileSync("src/styles/preview.css", "utf-8");
     const resizer = previewCss.match(/\.toc-resizer\s*\{[^}]*\}/)?.[0] ?? "";
     expect(resizer, "应有 .toc-resizer 规则块").toBeTruthy();
@@ -778,18 +779,8 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     const sep = globalCss.match(/\.layout-sep\s*\{[^}]*\}/)?.[0] ?? "";
     expect(sep, "分屏分割条基准样式应存在").toBeTruthy();
 
-    // B60：两条分隔条都改为**不占布局**（flex 基准 0），命中区改由 ::before 向两侧溢出。
-    // 原先 7px 的透明占位会把两侧内容撑开、中间露出祖先底色 —— 用户看到的就是「粗带」。
-    expect(resizer, "大纲分隔条不得占布局宽度").toMatch(/flex:\s*0 0 0/);
+    // ① 分屏边界（卡片内部，B60 起）：不占布局，静息细线由 ::after 画
     expect(sep, "分屏分隔条不得占布局宽度").toMatch(/flex:\s*0 0 0/);
-
-    // 命中区宽度必须一致（B53 起的「细线 + 宽命中区」约定；宽度从元素搬到 ::before）
-    const hitResizer = previewCss.match(/\.toc-resizer::before\s*\{[^}]*width:\s*(\d+)px/)?.[1];
-    const hitSep = globalCss.match(/\.layout-sep-h::before\s*\{[^}]*width:\s*(\d+)px/)?.[1];
-    expect(hitResizer, "大纲分隔条命中区宽度必须显式给出").toBeTruthy();
-    expect(hitResizer, "大纲与分屏分隔条命中区宽度必须一致").toBe(hitSep);
-    const line = previewCss.match(/\.toc-resizer::after\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(line, "大纲分隔条细线必须由伪元素画").toContain("background: var(--sep-line)");
     // 分屏分隔条：颜色在共享的 .layout-sep::after，几何按方向类定位
     // （B59 S5：线色从通用 --border 抽成 --sep-line；B122 曾短暂透明，
     //   B123 卡片上移到 .layout-area 后分屏边界回到卡片内部，静息细线恢复）
@@ -798,20 +789,52 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     expect(globalCss, "横向分隔条的细线几何").toMatch(/\.layout-sep-h::after\s*\{/);
     expect(globalCss, "纵向分隔条的细线几何").toMatch(/\.layout-sep-v::after\s*\{/);
 
-    const highlight =
-      previewCss.match(
-        /\.toc-resizer:hover::after,\s*body\.layout-dragging \.toc-resizer::after\s*\{[^}]*\}/,
-      )?.[0] ?? "";
-    expect(highlight, "悬停/拖拽高亮必须是 accent（允许带回退值）").toMatch(/var\(--accent[,)]/);
+    // ② 侧栏/编辑区（两张卡片之间，B195）：**占布局**的空隙，且不再画细线
+    expect(resizer, "卡片之间必须是空隙（占布局宽度）").toMatch(/flex:\s*0 0 10px/);
+    expect(previewCss, "B195 起侧栏空隙里不再画 1px 竖线（改由三点把手承担）").not.toMatch(
+      /\.toc-resizer::after/,
+    );
+    // 命中区比空隙本身宽：元素 10px，::before 向两侧各溢出 3px = 16px 可拖
+    const hit = previewCss.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(hit, "命中区向左溢出").toMatch(/left:\s*-3px/);
+    expect(hit, "命中区向右溢出").toMatch(/right:\s*-3px/);
+    // 三点把手：静息淡（--fg-muted）→ 悬停/拖拽转亮（--fg）
+    // ⚠️ `\.toc-grip` 会先撞上前面的 `.toc-resizer.is-off .toc-grip`（那条只有
+    //    visibility），所以这里用 `\n` 锚到行首、只取**基准**那条规则。
+    const grip = previewCss.match(/\n\.toc-grip\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(grip, "三点把手静息走 --fg-muted").toMatch(/color:\s*var\(--fg-muted[,)]/);
+    const gripHL =
+      previewCss.match(/\.toc-resizer:hover \.toc-grip,[\s\S]{0,140}?\{[^}]*\}/)?.[0] ?? "";
+    expect(gripHL, "悬停/拖拽把手要转亮（--fg）").toMatch(/color:\s*var\(--fg[,)]/);
+    // 收起展开区：空隙**留着**（两张卡片的间距不该跟着开合跳变），只收把手与指针
+    const off = previewCss.match(/\.toc-resizer\.is-off\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(off, "收起时空隙不吃指针（否则悬停出提示、拖了没反应）").toContain(
+      "pointer-events: none",
+    );
+    expect(previewCss, "收起时把手消失").toMatch(
+      /\.toc-resizer\.is-off \.toc-grip\s*\{[^}]*visibility:\s*hidden/,
+    );
 
     const panel = previewCss.match(/\.toc-panel\s*\{[^}]*\}/)?.[0] ?? "";
     expect(panel, ".toc-panel 不得自带 border-right（与分隔条叠成双线）").not.toContain(
       "border-right",
     );
+
+    // 反向验证：把空隙退回 B28 的「不占布局」形态必须被咬住
+    const BAD = previewCss.replace(
+      /\.toc-resizer\s*\{[^}]*\}/,
+      ".toc-resizer {\n  flex: 0 0 0;\n}",
+    );
+    expect(BAD, "替身必须真的替换过").not.toBe(previewCss);
+    expect(() => {
+      expect(
+        BAD.match(/\.toc-resizer\s*\{[^}]*\}/)?.[0] ?? "",
+        "替身退回「不占布局」必须被抓到",
+      ).toMatch(/flex:\s*0 0 10px/);
+    }).toThrow();
   });
   it("B59 分屏对齐 VS Code：复位/极限光标/方向光标/角手柄/落点高亮（静态契约）", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
-    const previewCss = readFileSync("src/styles/preview.css", "utf-8");
     const sv = readFileSync("src/shell/splitview.ts", "utf-8");
 
     // S1 拖拽中必须与 hover 同色（只写 :hover 时鼠标滑出 7px 细线就失色）
@@ -861,9 +884,8 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     expect(area, "大卡片圆角 8px").toContain("border-radius: 8px");
     const panelCard = cssDecls(ruleBlock(css, ".layout-panel"));
     expect(panelCard, "面板本身不得再画卡片边框（B123 卡片上移）").not.toMatch(/border/);
-    expect(previewCss, "大纲分隔条线色同款").toMatch(
-      /\.toc-resizer::after\s*\{[^}]*background:\s*var\(--sep-line\)/,
-    );
+    // B195：大纲这一档已改走「空隙 + 三点把手」（见上一用例的 B28/B195 说明），
+    // 不再引用 --sep-line；分屏细线（卡片内部）继续用它，两套主题照补。
     const darkTheme = themeBlock(css, "dark");
     const lightTheme = themeBlock(css, "light");
     expect(darkTheme, "深色主题块必须找到").toBeTruthy();
@@ -905,12 +927,19 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     // ① 分隔条不占布局（对齐 VS Code sash 的浮层做法）。
     // B59 的 flex:0 0 7px 透明占位会撑开两侧内容、露出祖先底色 = 视觉上的粗带。
     expect(css, "分屏分隔条不占布局").toMatch(/\.layout-sep\s*\{[^}]*flex:\s*0 0 0/);
-    expect(previewCss, "大纲分隔条同款（B28）").toMatch(/\.toc-resizer\s*\{[^}]*flex:\s*0 0 0/);
+    expect(previewCss, "侧栏空隙占 10px（B195，不再是 B28 的不占布局）").toMatch(
+      /\.toc-resizer\s*\{[^}]*flex:\s*0 0 10px/,
+    );
     // 命中区搬到 ::before，向两侧各溢出 3.5px（共 7px）
     expect(css, "竖线命中区 7px 宽").toMatch(/\.layout-sep-h::before\s*\{[^}]*width:\s*7px/);
     expect(css, "横线命中区 7px 高").toMatch(/\.layout-sep-v::before\s*\{[^}]*height:\s*7px/);
-    expect(previewCss, "大纲命中区 7px 宽（同款）").toMatch(
-      /\.toc-resizer::before\s*\{[^}]*width:\s*7px/,
+    // B195：侧栏那一档不再是「细线 + 命中区」，而是 10px 空隙 + 三点把手，
+    // 命中区只向两侧各溢出 3px 让拖拽好按（元素本体已经够宽，不再需要 7px 溢出）。
+    expect(previewCss, "侧栏把手命中区向左溢出 3px").toMatch(
+      /\.toc-resizer::before\s*\{[^}]*left:\s*-3px/,
+    );
+    expect(previewCss, "侧栏把手命中区向右溢出 3px").toMatch(
+      /\.toc-resizer::before\s*\{[^}]*right:\s*-3px/,
     );
     // 视觉线：静息 1px（VS Code editorGroup.border），激活 4px（--vscode-sash-size）
     expect(css, "静息线 1px").toMatch(/\.layout-sep-h::after\s*\{[^}]*width:\s*1px/);
@@ -921,8 +950,9 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     expect(css, "激活涨到 4px（横线）").toMatch(
       /\.layout-sep-v:hover::after,[\s\S]{0,160}?\{\s*height:\s*4px/,
     );
-    expect(previewCss, "大纲分隔条同款涨到 4px").toMatch(
-      /\.toc-resizer:hover::after,[\s\S]{0,120}?width:\s*4px/,
+    // B195：侧栏那一档不涨线，改「三点把手转亮」（悬停 / 拖拽中同一口径）
+    expect(previewCss, "侧栏三点把手悬停转亮（--fg）").toMatch(
+      /\.toc-resizer:hover \.toc-grip,[\s\S]{0,140}?color:\s*var\(--fg[,)]/,
     );
     // 角手柄改为骑在界线上（分隔条主轴尺寸已为 0，原先 top:0/left:0 会偏到一侧）
     expect(css, "横线上的角手柄骑线").toMatch(

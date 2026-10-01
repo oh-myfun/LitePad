@@ -243,6 +243,9 @@ const winClose = el<HTMLButtonElement>("win-close");
 const winPin = el<HTMLButtonElement>("win-pin");
 const tocPanel = el("toc-panel");
 const tocResizer = el("toc-resizer");
+// B195：侧栏按钮列里的「大纲」键（常驻，收起展开区时列本身还在）与空隙里的三点把手。
+const sideOutline = el<HTMLButtonElement>("side-outline");
+const tocGrip = el("toc-grip");
 const sbMessage = el("sb-message");
 const sbPos = el("sb-pos");
 const sbCount = el("sb-count");
@@ -4873,14 +4876,33 @@ function setupTocResizer(): void {
 }
 
 /**
+ * B195：装配侧栏按钮列（字形 + 点击）+ 空隙里的三点把手。
+ *
+ * 与 `setTocOpen` 的分工：这里只管「装上」，开合态一律由 `setTocOpen` 收口
+ * （按钮的 `is-on` / `aria-pressed` 也在那儿写，免得两处各写一半不同步）。
+ */
+function setupSideBar(): void {
+  sideOutline.innerHTML = CODICONS.outline;
+  tocGrip.innerHTML = CODICONS.grip;
+  sideOutline.addEventListener("click", () => toggleToc());
+}
+
+/**
  * B194：开/关左侧栏（大纲），并把状态写进设置。
  *
  * `persist = false` 用于**启动时回放**：那时只是把盘上的值搬到 DOM，不该反过来再写一次盘
  * （写回去会把「加载失败 → 用默认值」那次的值固化成用户设置）。
+ *
+ * B195：这里同时是**按钮列点亮态的唯一出口** —— 面板显隐、空隙把手、按钮 `is-on` /
+ * `aria-pressed` 四件事一处收口，避免「面板开了但键没亮」这类半同步。
  */
 function setTocOpen(open: boolean, persist = true): void {
   tocPanel.hidden = !open;
-  tocResizer.hidden = !open;
+  // 空隙（分隔条）**不跟着隐藏**：它是侧栏卡片与编辑区卡片之间的固定间距，
+  // 收起时只是把手消失、不再吃指针（CSS 的 .toc-resizer.is-off）。
+  tocResizer.classList.toggle("is-off", !open);
+  sideOutline.classList.toggle("is-on", open);
+  sideOutline.setAttribute("aria-pressed", String(open));
   if (open) updateTocDrawer();
   if (!persist || !settings) return;
   settings.toc_open = open;
@@ -7414,6 +7436,7 @@ async function setupShell(): Promise<void> {
   applyFontFamily(settings?.font_family ?? "");
   applyPreviewLineHeight(settings?.preview_line_height ?? 1.7);
   applyEditorLineHeight(settings?.editor_line_height ?? 1.5);
+  setupSideBar();
   setupTocResizer();
   // B194：回放上次的侧栏开合（`persist = false` —— 只是把盘上的值搬到 DOM）
   setTocOpen(settings?.toc_open ?? false, false);

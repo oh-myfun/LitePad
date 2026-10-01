@@ -224,43 +224,64 @@
   background: var(--bg-elevated, #fafafa);
 }
 
-/* 大纲宽度分隔条：与分屏分割条 .layout-sep 同款（B28 要求改一处必须改另一处）。
-   B60 随 .layout-sep 一起改为**不占布局**：元素 flex 基准 0，7px 命中区由 ::before
-   向两侧各溢出 3.5px，视觉线由 ::after 画（静息 1px，悬停/拖拽 4px）。
-   原先 `flex: 0 0 7px` 的透明占位会把大纲面板与编辑区撑开 7px、露出祖先底色。 */
+/* 大纲宽度分隔条（B195 改版）：**不再是贴着面板的一条细线** ——
+   B123 之后编辑区整块是一张卡片，侧栏（B195）也做成卡片，两者之间是**空隙**；
+   VS Code 在这一档给的是 sash（可拖），这里按用户点名再补一颗**三点把手**摆在
+   空隙正中，让「这里能拖」是看得见的，而不是靠 1px 线猜。
+   ⚠️ 与分屏分隔条 .layout-sep **不再同款**（B28 那条约定到此为止）：
+      分屏边界落在**卡片内部**（细线，不该有缝），而侧栏/编辑区是**两张卡片之间**
+      （要缝，还要把手）—— 场景在 B123/B195 之后已经分成两类，硬套同款反而错。*/
 .toc-resizer {
-  flex: 0 0 0;
-  /* B61：竖线光标对齐 VS Code 非 mac 档的 `ew-resize`（原 `col-resize` 是 mac 档，
-     Windows 上渲染成「箭头中间多一根竖杠」）。与分屏分隔条保持一致（B28 同款约定）。 */
+  flex: 0 0 10px;
+  /* B61：竖线光标取 VS Code **非 mac** 档的 ew-resize（col-resize 是 mac 档，
+     Windows 上会渲染成「箭头中间多一根竖杠」） */
   cursor: ew-resize;
   position: relative;
   z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
+
+/* 命中区向两侧各溢出 3px（元素本体只有 10px，实际可拖 16px） */
 .toc-resizer::before {
   content: "";
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -3.5px;
-  width: 7px;
+  left: -3px;
+  right: -3px;
 }
-.toc-resizer::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 1px;
-  transform: translateX(-50%);
-  background: var(--sep-line);
+
+/* 收起展开区：**空隙留着**（两张卡片的间距不该跟着开合跳变），
+   只让把手消失 + 不吃指针 —— 否则悬停会冒提示、光标变成可拖，拖了却没反应。 */
+.toc-resizer.is-off {
+  cursor: default;
+  pointer-events: none;
+}
+
+.toc-resizer.is-off .toc-grip {
+  visibility: hidden;
+}
+
+/* 三点把手（字形由 main.ts 填 CODICONS.grip = codicon kebab-vertical） */
+.toc-grip {
+  display: flex;
+  color: var(--fg-muted);
+  opacity: 0.55;
   transition:
-    background var(--transition, 0.12s),
-    width var(--transition, 0.12s);
+    color var(--transition, 0.12s),
+    opacity var(--transition, 0.12s);
 }
-.toc-resizer:hover::after,
-body.layout-dragging .toc-resizer::after {
-  background: var(--accent, #06c);
-  width: 4px;
+
+.toc-grip .codicon {
+  font-size: 16px;
+}
+
+.toc-resizer:hover .toc-grip,
+body.layout-dragging .toc-grip {
+  color: var(--fg);
+  opacity: 1;
 }
 .toc-item {
   display: block;

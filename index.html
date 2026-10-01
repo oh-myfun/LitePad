@@ -132,16 +132,35 @@
         </div>
       </header>
 
+      <!-- B195（对齐 VS Code 的 activity bar + side bar）：侧栏是**一整张卡片** ——
+           最左侧是**常驻按钮列**（收起大纲时也留着，列本身不消失），右边是展开区；
+           卡片与右侧编辑区卡片之间是**空隙**，空隙正中放三点拖拽把手。
+           ⚠️ 空隙（#toc-resizer）**不再随大纲收起而隐藏**：它是两张卡片之间的固定间距，
+              收起时只是把手消失、不再吃指针（见 preview.css 的 .toc-resizer.is-off）。 -->
       <div id="main-row">
-        <aside id="toc-panel" class="toc-panel" hidden></aside>
+        <div id="side-shell" class="side-shell">
+          <div id="side-bar" class="side-bar">
+            <button
+              id="side-outline"
+              class="side-btn"
+              type="button"
+              data-tip="大纲"
+              aria-label="大纲"
+              aria-pressed="false"
+            ></button>
+          </div>
+          <aside id="toc-panel" class="toc-panel" hidden></aside>
+        </div>
         <div
           id="toc-resizer"
-          class="toc-resizer"
+          class="toc-resizer is-off"
           data-tip="拖动调整大纲宽度"
           data-tip-detail="双击恢复默认 240px"
           aria-label="拖动调整大纲宽度，双击恢复默认"
-          hidden
-        ></div>
+        >
+          <!-- 三点把手：字形由 main.ts 的 setupSideBar 用 CODICONS.grip 填入 -->
+          <span id="toc-grip" class="toc-grip" aria-hidden="true"></span>
+        </div>
         <div id="layout-area" class="layout-area"></div>
       </div>
 

@@ -152,8 +152,14 @@ describe("大纲（TOC）静态契约", () => {
     // 「同一个函数里面板与分隔条的 hidden 一起写」，而不是盯某一行的字面量。
     const setOpen = src.match(/function setTocOpen\([\s\S]*?\n\}/)?.[0] ?? "";
     expect(setOpen, "应有 setTocOpen 收口大纲显隐").toBeTruthy();
-    expect(setOpen, "收起/展开时分隔条必须与面板同步显隐，否则留下 4px 死区").toMatch(
-      /tocPanel\.hidden = !open;[\s\S]{0,120}tocResizer\.hidden = !open;/,
+    expect(setOpen, "展开区的显隐仍由面板自己承担").toContain("tocPanel.hidden = !open;");
+    // B195：空隙（分隔条）**不再 hidden** —— 它是两张卡片之间的固定间距，
+    // 跟着 hidden 会让间距在开合时跳变；收起时只转 is-off（把手消失 + 不吃指针）。
+    expect(setOpen, "收起时空隙转 is-off（不是 hidden）").toContain(
+      'tocResizer.classList.toggle("is-off", !open)',
+    );
+    expect(setOpen, "按钮列的点亮态必须在同一处收口（面板开了键就要亮）").toContain(
+      'sideOutline.classList.toggle("is-on", open)',
     );
 
     const css = readFileSync("src/styles/preview.css", "utf-8");

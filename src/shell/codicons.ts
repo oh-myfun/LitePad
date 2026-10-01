@@ -79,6 +79,14 @@ const IDS = {
   //   抹杠的规则在 global.css（`.codicon-unlink::after`），这里只负责挂上修饰类。
   link: "link",
   unlink: "link codicon-unlink",
+  // —— 侧栏（B195）——
+  // ① 大纲：VS Code 侧栏「大纲」视图用的就是 `list-tree`（层级树），
+  //    比 three-bars / symbol-class 更贴「标题按层级缩进」这层语义。
+  outline: "list-tree",
+  // ② 空隙里的拖拽把手：用户点名「三个点」⇒ `kebab-vertical`（竖排三点）。
+  //    `gripper`（六点两列）是 VS Code 拖动手柄那一族，点更多、更密，在 10px 宽的
+  //    空隙里会糊成一团，且与 kebab 那颗同为「点阵」，所以只留三点的这颗。
+  grip: "kebab-vertical",
   // —— 面板 / 标签 ——
   circleFilled: "circle-filled",
   // —— 标签上的文件类型字形（10 个家族，见 src/shell/fileicons.ts）——

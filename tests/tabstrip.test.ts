@@ -965,10 +965,11 @@ describe("编辑区大卡片外框（B123，修正 B122：卡片上移到整个�
     const hl = css.match(/\.layout-sep:hover::after,[\s\S]{0,80}?\{[^}]*\}/)?.[0] ?? "";
     expect(hl, "分隔条悬停高亮仍为 accent").toMatch(/var\(--accent/);
 
-    // 大纲分隔条（preview.css .toc-resizer）不受影响，仍走 --sep-line
+    // 大纲那一档（preview.css）：B195 起改走「空隙 + 三点把手」，
+    // 不再画 --sep-line 竖线 —— 把手走的是 --fg-muted（静息）→ --fg（悬停）
     const previewCss = readFileSync("src/styles/preview.css", "utf-8");
-    expect(previewCss, "大纲分隔条线色仍走 --sep-line").toMatch(
-      /\.toc-resizer::after\s*\{[^}]*background:\s*var\(--sep-line\)/,
+    expect(previewCss, "侧栏三点把手静息走 --fg-muted（B195）").toMatch(
+      /\.toc-grip\s*\{[^}]*color:\s*var\(--fg-muted[,)]/,
     );
 
     // 反向验证①：分屏分隔条静息透明化回潮（B122 旧契约）必须被咬住
@@ -986,7 +987,12 @@ describe("编辑区大卡片外框（B123，修正 B122：卡片上移到整个�
     }).toThrow();
 
     // 反向验证②：大卡片边框退潮（layout-area 丢边框）必须被咬住
-    const BAD_AREA = css.replace("border: 1px solid var(--tab-bg-hover);", "border: none;");
+    // ⚠️ 必须**只在 .layout-area 块内**替换：B195 起 .side-shell 用同一条边框声明
+    //    （两张卡片必须逐字同步），全局首处替换会打在侧栏卡片上、这条就假绿了。
+    const BAD_AREA = css.replace(
+      /(\.layout-area\s*\{[^}]*)border: 1px solid var\(--tab-bg-hover\);/,
+      "$1border: none;",
+    );
     expect(BAD_AREA, "替身必须真的摘掉了大卡片边框").not.toBe(css);
     expect(() => {
       expect(
