@@ -955,6 +955,10 @@ describe("编辑区大卡片外框（B123，修正 B122：卡片上移到整个�
     // 状态栏上沿无线（状态栏在卡片外面）
     const statusbar = cssDecls(ruleBlock(css, ".statusbar"));
     expect(statusbar, "状态栏不得再画 border-top").not.toContain("border-top");
+    // B204：状态栏底色 = 标题栏那颗（用户点名「两边同色」），不是自己那颗旧变量
+    expect(statusbar, "状态栏底色必须引用 --bg-toolbar（与标题栏同源）").toContain(
+      "background: var(--bg-toolbar)",
+    );
 
     // 分屏边界恢复静息细线（大卡片内部，实拍 VS Code #272829 ≈ --sep-line）
     const sep = css.match(/\.layout-sep::after\s*\{[^}]*\}/)?.[0] ?? "";
@@ -1002,10 +1006,17 @@ describe("编辑区大卡片外框（B123，修正 B122：卡片上移到整个�
     }).toThrow();
 
     // 反向验证③：状态栏 border-top 回潮必须被咬住
+    // ⚠️ B204 顺带修的两个坑（都是「替身空转 ⇒ 反验证假绿」）：
+    //    ① 锚点从 `background: var(--bg-status);` 换成了 `var(--bg-toolbar)` —— 旧那颗
+    //       变量已随「状态栏/标题栏同色」删掉，锚在它上面 replace 就是空转；
+    //    ② **不能用字符串锚 `background: var(--bg-toolbar);`** —— 那串在 .title-bar
+    //       先出现，String.replace 只中第一处 ⇒ 改到的是标题栏，.statusbar 还是干净的
+    //       ⇒ 下面的 not.toContain 照样通过 ⇒ toThrow 落空。必须按选择器锚。
     const BAD_SB = css.replace(
-      "background: var(--bg-status);",
-      "background: var(--bg-status);\n  border-top: 1px solid var(--border);",
+      /(\.statusbar\s*\{[^}]*)background:\s*var\(--bg-toolbar\);/,
+      "$1background: var(--bg-toolbar);\n  border-top: 1px solid var(--border);",
     );
+    expect(BAD_SB, "替身必须真的给状态栏塞上边线").not.toBe(css);
     expect(() => {
       expect(
         cssDecls(ruleBlock(BAD_SB, ".statusbar")),
@@ -1132,6 +1143,57 @@ describe("标签右键菜单分组与「打开文件所在目录」（B123-7）"
       expect(ruleBlock(BAD, ".title-bar"), "替身的标题栏边框必须被抓到").not.toContain(
         "border-bottom",
       );
+    }).toThrow();
+  });
+});
+
+// ------------------------------------------------------- B204：状态栏与标题栏同底色
+// 用户原话：「状态栏颜色和标题栏背景色一致，或者统一为没有背景色」⇒ 选了「一致」。
+// 两条窗口 chrome 原来各刷各的：标题栏 --bg-toolbar（深 #1b1d1f / 浅 #f6f7f8）、
+// 状态栏 --bg-status（深 #17191b / 浅 #eef0f2），状态栏一律比标题栏**暗一档** ——
+// 就为了这点差色，用户看着像「两条 chrome 调子不一致」。
+// 收敛方式：**删掉 --bg-status 这颗变量**，状态栏直接引用 --bg-toolbar。
+// 比「把 --bg-status 的值改成 var(--bg-toolbar)」更彻底 —— 那还留着两颗名字不同的
+// 同源变量，日后有人改了 `--bg-status:` 那一行还以为在改状态栏，其实改的是别名。
+describe("状态栏与标题栏同源（B204）", () => {
+  it("状态栏与标题栏共用 --bg-toolbar，独立的 --bg-status 已删", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const statusbar = cssDecls(ruleBlock(css, ".statusbar"));
+    expect(statusbar, "状态栏底色 = 标题栏那颗").toContain("background: var(--bg-toolbar)");
+    expect(cssDecls(ruleBlock(css, ".title-bar")), "标题栏底色还是同一颗").toContain(
+      "background: var(--bg-toolbar)",
+    );
+    // ⚠️ 判「不许有 --bg-status」而不是「不许有这个色值」：
+    //    旧值 #17191b / #eef0f2 换颗别的名头照样会漂回来，变量名才是源头。
+    expect(css, "不得再定义 --bg-status（两条 chrome 同源，第二颗就是日后色差的种子）").not.toMatch(
+      /--bg-status\s*:/,
+    );
+    // 且不许出现「另一颗同义变量指向它」的写法（别名会让改的人以为改的是另一处）
+    expect(css, "不许留 --xxx: var(--bg-status) 这种别名懒政").not.toMatch(
+      /--[\w-]+\s*:\s*var\(--bg-status\)/,
+    );
+  });
+
+  it("反向验证①：状态栏刷回自己那颗独立底色必须被咬住", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const BAD = css.replace(
+      /(\.statusbar\s*\{[^}]*)background:\s*var\(--bg-toolbar\);/,
+      "$1background: var(--bg-status);",
+    );
+    expect(BAD, "替身必须真的刷回独立底色").not.toBe(css);
+    expect(() => {
+      expect(cssDecls(ruleBlock(BAD, ".statusbar")), "替身必须不再与标题栏同源").toContain(
+        "background: var(--bg-toolbar)",
+      );
+    }).toThrow();
+  });
+
+  it("反向验证②：把 --bg-status 当新变量加回来必须被咬住", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const BAD = css.replace(/(--bg-toolbar:\s*#f6f7f8;)/, "$1\n  --bg-status: #eef0f2;");
+    expect(BAD, "替身必须真的补回那颗变量").not.toBe(css);
+    expect(() => {
+      expect(BAD, "独立的状态栏底色必须被抓到").not.toMatch(/--bg-status\s*:/);
     }).toThrow();
   });
 });

@@ -41,10 +41,17 @@
   color-scheme: dark;
   --bg: #1b1d1f;
   --bg-toolbar: #1b1d1f;
-  --bg-status: #17191b;
+  /* B204（用户点名「状态栏颜色和标题栏背景色一致」）：原来那颗独立的
+     `--bg-status`（#17191b，比 --bg-toolbar 暗一档）**删了**；状态栏与标题栏现在同认
+     `--bg-toolbar` 这一颗。深浅两档各定义一次，规则里只写变量名 —— 主题切换只动这一处。
+     ⚠️ 别再补回一颗独立的状态栏底色：两条 chrome 各刷各的，正是这次要消掉的色差。 */
   --bg-elevated: #26292d;
   --bg-hover: #2f3338;
   --border: #34383d;
+  /* B204：原来的 `--bg-status`（状态栏那颗，比 --bg-toolbar 暗一档 #17191b）**删掉了**
+     —— 用户点名「状态栏颜色和标题栏背景色一致」。两条窗口 chrome 现在只认
+     `--bg-toolbar` 这一颗：深浅两档各定义一次，状态栏直接引用它，不存在第二颗同源变量。
+     ⚠️ 别再补回一颗独立的状态栏底色：两条 chrome 各刷各的，正是这次要消掉的色差。 */
   /* B202：左栏按钮（.side-btn）的**点亮**与**按下**两档底色（悬停直接用上面的
      --bg-hover）。深浅各定义一次，规则里只写变量名 —— 主题切换时这一处就够。 */
   --side-btn-on: color-mix(in srgb, var(--accent) 18%, transparent);
@@ -152,8 +159,9 @@
 :root[data-theme="light"] {
   color-scheme: light;
   --bg: #ffffff;
+  /* 浅色档 chrome 沉一档（#f6f7f8 压在纯白内容区上），标题栏与状态栏共用这一颗 ——
+     与深色档同一判据（B204）。 */
   --bg-toolbar: #f6f7f8;
-  --bg-status: #eef0f2;
   --bg-elevated: #ffffff;
   --bg-hover: #e6e8eb;
   --border: #dcdfe3;
@@ -2435,7 +2443,7 @@ button:focus-visible {
 
 /* 分隔条（B60：**不占布局**的浮层，对齐 VS Code sash）。
    B59 之前是 `flex: 0 0 7px` 的透明占位 —— 它本身看不见，却把两侧内容**撑开** 7px，
-   中间露出祖先底色（标签栏是 --bg-status、编辑区是 --bg），于是在标签栏那一横排
+   中间露出祖先底色（标签栏与两条 chrome 同走 --bg-toolbar、编辑区是 --bg），于是在标签栏那一横排
    看起来就是一条 7px 粗带。VS Code 的 sash 是 absolute 浮层、完全不占位
    （sash.css，--vscode-sash-size: 4px），所以边界永远只是一条细线。
    这里两者兼得：元素本身 flex 基准 0（不占位），7px 命中区由 ::before 向两侧各溢出
@@ -2681,10 +2689,12 @@ button:focus-visible {
   display: flex;
   align-items: stretch;
   flex: 0 0 auto;
-  /* B113-4：原为 --bg-status。B113 给 .panel-tabstrip 单独换了条带色
+  /* B113-4：B204 之前这里曾是 `--bg-status`（状态栏那颗，已随「状态栏/标题栏同色」
+     一起删掉）。B113 给 .panel-tabstrip 单独换了条带色
      （--tab-strip-bg）后，右侧 .panel-ops（移除分屏 ⨯）没有背景声明，
      透出的还是这层旧色 —— 结果「标签条一条色、关闭按钮区另一条色」。
-     头部整体跟随条带色，ops 不必再单独声明，将来加邻居也不会再错开。 */
+     头部整体跟随条带色，ops 不必再单独声明，将来加邻居也不会再错开。
+     ⚠️ 别把 `--bg-status` 当「已删的历史变量」去复活：它现在已经不存在了。 */
   background: var(--tab-strip-bg);
   /* B121：border-bottom 移除 —— 头部与编辑区之间的细线改画进 .panel-tabstrip
      的背景（见该处 B121 注释）：border 在条带盒外，被 overflow 裁掉的舌片
@@ -3065,10 +3075,17 @@ body.tab-drag-active * {
   height: 26px;
   flex: 0 0 26px;
   padding: 0 8px;
-  background: var(--bg-status);
+  /* B204：底色**不是**自己那颗（已删），直接引用标题栏那颗 `--bg-toolbar` ——
+     用户点名「状态栏颜色和标题栏背景色一致」。两条窗口 chrome 同源 ⇒ 以后改主题
+     只动 `--bg-toolbar` 一处，不会又分裂成两种底色。
+     ⚠️ 别退回 `background: var(--bg-status)`（那颗不存在 = 空值失效，状态栏会整个
+        透明、露 body 底；也别自己新写一颗色值）。 */
+  background: var(--bg-toolbar);
   /* B122：border-top 移除（用户裁决「状态栏上面没有细线」）—— 与上方内容的
      分界就是底色交界本身；VS Code 实拍同款（其状态栏上沿 #373737 ≈ 自身
-     #383838，肉眼无形）。卡片下边框（.layout-panel）承担轮廓职责。 */
+     #383838，肉眼无形）。卡片下边框（.layout-panel）承担轮廓职责。
+     ⚠️ B204 之后两条 chrome 同色，这条「底色交界」在状态栏上沿已经**不再有对比** ——
+        上下分界改由卡片下边框（.layout-area 的下沿）承担，这正是当初就写在旁边的依据。 */
   font-size: 12px;
   color: var(--fg-muted);
   user-select: none;
