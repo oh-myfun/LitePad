@@ -91,7 +91,13 @@ import { extractOutline } from "./markdown/outline";
 import { PreviewPane } from "./markdown/preview";
 import { logger, syncLevel } from "./core/logger";
 import { sessionStore } from "./session/store";
-import { renderToc, attachTocResizer, clampTocWidth, type TocResizerHandle } from "./markdown/toc";
+import {
+  createTocList,
+  attachTocResizer,
+  clampTocWidth,
+  type TocListHandle,
+  type TocResizerHandle,
+} from "./markdown/toc";
 import { attachWheelZoom } from "./shell/zoom";
 import {
   createFindBar,
@@ -242,6 +248,11 @@ const winClose = el<HTMLButtonElement>("win-close");
 // 这里跟着同一口径走：重启后回到不置顶。
 const winPin = el<HTMLButtonElement>("win-pin");
 const tocPanel = el("toc-panel");
+// B205：展开区拆成「标题栏 + 列表」两条 —— 重绘只清列表，标题栏是静态结构
+// （renderToc 时代清的是整个 #toc-panel，标题栏会被一起抹掉）。
+const tocList = el("toc-list");
+const tocCollapseAll = el<HTMLButtonElement>("toc-collapse-all");
+const tocExpandAll = el<HTMLButtonElement>("toc-expand-all");
 const tocResizer = el("toc-resizer");
 // B201：左栏**卡片**（按钮列 + 展开区），展开区折起时它挂 `is-collapsed`
 // —— 那条内部竖线（按钮列 ↔ 展开区）要跟着收，见 preview.css / global.css 的同款说明。
@@ -4861,6 +4872,15 @@ function publishWindowKind(): void {
 
 let tocEntries: TocEntry[] = [];
 
+/**
+ * B205：大纲列表控制器（**只建这一次**）。
+ *
+ * 折叠态在它里面，所以 `updateTocDrawer` 每次重绘都不能重新建一个 —— 光标一动就重绘，
+ * 重建会把用户折的节冲回全展开。index.html 那两颗全量键（全部折叠 / 全部展开）也直接
+ * 调它，不用再绕一层。
+ */
+const tocListView: TocListHandle = createTocList(tocList);
+
 /** 大纲宽度（由设置载入、拖拽后回写设置；160–640px） */
 let tocWidth = 240;
 let tocResizerHandle: TocResizerHandle | null = null;
@@ -4882,16 +4902,23 @@ function setupTocResizer(): void {
 }
 
 /**
- * B195：装配侧栏按钮列（字形 + 点击）+ 空隙里的三点把手。
+ * B195：装配侧栏按钮列（字形 + 点击）+ 空隙里的三点把手 + B205 展开区那两颗全量键。
  *
  * 与 `setTocOpen` 的分工：这里只管「装上」，开合态一律由 `setTocOpen` 收口
  * （按钮的 `is-on` / `aria-pressed` 也在那儿写，免得两处各写一半不同步）。
+ *
+ * ⚠️ 两颗全量键**不落盘**（折叠状态不写设置）：大纲是「当前这份文档」的一次性视图，
+ *    跟置顶（窗口瞬时态）、大纲宽度（偏好）不是一个层级的东西。
  */
 function setupSideBar(): void {
   sideOutline.innerHTML = CODICONS.outline;
   tocGrip.innerHTML = CODICONS.grip;
+  tocCollapseAll.innerHTML = CODICONS.collapseAll;
+  tocExpandAll.innerHTML = CODICONS.expandAll;
   sideOutline.addEventListener("click", () => toggleToc());
   sidebarToggle.addEventListener("click", () => toggleSidebar());
+  tocCollapseAll.addEventListener("click", () => tocListView.collapseAll());
+  tocExpandAll.addEventListener("click", () => tocListView.expandAll());
 }
 
 /**
@@ -4979,7 +5006,7 @@ function updateTocDrawer(): void {
   const tab = activeTab();
   if (!tab) {
     tocEntries = [];
-    renderToc(tocPanel, null, -1, { onJump: () => {} });
+    tocListView.render(null, -1, { onJump: () => {} });
     return;
   }
   // 多格式大纲（B33）：md 之外 toml/ini/yaml/json/py 也有大纲；
@@ -4988,12 +5015,16 @@ function updateTocDrawer(): void {
   const result = doc ? extractOutline(doc.name, tab.state.doc.toString()) : null;
   if (result === null) {
     tocEntries = [];
-    renderToc(tocPanel, null, -1, { onJump: () => {} });
+    tocListView.render(null, -1, { onJump: () => {} });
     return;
   }
   tocEntries = result;
   const cursorLine = tab.state.doc.lineAt(tab.state.selection.main.head).number;
-  renderToc(tocPanel, tocEntries, cursorLine, {
+  // B205：`createTocList` **只建一次**（建表那一刻它记下折叠态的容器），重绘只走
+  //       render —— 光标一动就重绘，每次重建控制器会把用户折的节冲回全展开。
+  //       ⚠️ `onJump` 保持内联在 render 的这一份参数里：`tests/sync-scroll-mode.test.ts`
+  //          的静态契约按 `onJump: (entry) => {` 这句原文切片，提成具名函数会整段失配。
+  tocListView.render(tocEntries, cursorLine, {
     onJump: (entry) => {
       const panel = activePanel();
       const tab2 = activeTab();

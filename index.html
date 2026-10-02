@@ -167,7 +167,35 @@
               aria-pressed="false"
             ></button>
           </div>
-          <aside id="toc-panel" class="toc-panel" hidden></aside>
+          <!-- B205（用户点名「顶部有大纲字样 + 全部展开/折叠按钮」，列表支持折叠展开）：
+               展开区拆成**两条**：上边一条常驻的标题栏（「大纲」字样 + 两颗全量键），
+               下边一条会重绘的列表。
+
+               ⚠️ 重绘只清 `#toc-list` —— B205 之前 `renderToc` 清的是整个 `#toc-panel`，
+                  标题栏被一起抹掉（现在改由 JS 侧只填列表）。所以这两条**谁也不能替谁**：
+                  标题栏是静态结构，列表是动态内容。
+               ⚠️ 两颗全量键的顺序照 VS Code `outlineActions.ts`（Collapse All → Expand All）。
+                  它们**不带** `data-tip` 之外的文字：图标只用 codicon，读屏器走 aria-label。 -->
+          <aside id="toc-panel" class="toc-panel" hidden>
+            <div id="toc-head" class="toc-head">
+              <span id="toc-title" class="toc-title">大纲</span>
+              <button
+                id="toc-collapse-all"
+                class="toc-head-btn"
+                type="button"
+                data-tip="全部折叠"
+                aria-label="全部折叠"
+              ></button>
+              <button
+                id="toc-expand-all"
+                class="toc-head-btn"
+                type="button"
+                data-tip="全部展开"
+                aria-label="全部展开"
+              ></button>
+            </div>
+            <div id="toc-list" class="toc-list"></div>
+          </aside>
         </div>
         <div
           id="toc-resizer"

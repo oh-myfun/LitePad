@@ -223,9 +223,14 @@
   width: 240px;
   min-width: 160px;
   flex: 0 0 auto;
+  /* B205：面板改成**上下两条**（标题栏固着 + 列表滚动），滚动条从面板挪到列表 ——
+     标题栏常驻才叫「顶部有大纲字样 + 全量键」，跟着列表一起滚就没意义了。 */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   /* 分隔线由右侧 .toc-resizer 提供（与分屏 .layout-sep 同款），面板不再自带右侧边框线免得叠成双线 */
-  overflow-y: auto;
-  padding: 8px 0;
+  overflow: hidden;
+  padding: 0;
   background: transparent;
 }
 
@@ -375,8 +380,73 @@ body.layout-dragging .toc-resizer::before {
 body.layout-dragging .toc-grip {
   opacity: 0;
 }
+/* B205：标题栏（「大纲」字样 + 全部折叠 / 全部展开两颗键）——
+   常驻在列表上方、不随列表滚动。字号比列表小一档、取 --fg-muted，是「区块标题」
+   而不是「可点的东西」的读法（VS Code 视图标题栏也是这一档：11px 左右、 muted）。 */
+.toc-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 4px 0 10px;
+  font-size: 11px;
+  line-height: 1;
+}
+.toc-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted, #656d76);
+}
+/* 两颗全量键：小一号的方键，与标题栏 28px 等高条里的其余元素对齐。
+   ⚠️ 与 `.side-btn` 不同款 —— 那颗 32px 是左栏**主**入口、占了整条按钮列的宽；
+      这两颗是标题栏里的小动作，20px 正好塞进一行，铺 32px 会把标题挤没。 */
+.toc-head-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--fg-muted, #656d76);
+}
+.toc-head-btn:hover {
+  background: var(--bg-hover, #eee);
+  color: var(--fg, #24292f);
+}
+.toc-head-btn:active {
+  background: var(--side-btn-active, #d6d9dc);
+}
+.toc-head-btn:focus-visible {
+  outline: 2px solid var(--accent, #06c);
+  outline-offset: -2px;
+}
+.toc-head-btn .codicon {
+  font-size: 14px;
+}
+
+/* 列表本体：B205 之后滚动归它 —— 标题栏固定、只有列表在滚。
+   上下留 8px 是原来 `padding: 8px 0` 那一档的呼吸（标题栏已经顶上来了，
+   顶部那 8px 归标题栏，这里只留底部）。 */
+.toc-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* 顶上留 4px：标题栏那条 28px 是实底，第一行标题贴着它下沿会显得挤 */
+  padding: 4px 0 8px;
+}
 .toc-item {
-  display: block;
+  display: flex;
+  align-items: center;
   width: 100%;
   text-align: left;
   border: none;
@@ -384,7 +454,14 @@ body.layout-dragging .toc-grip {
   cursor: pointer;
   font-size: 12.5px;
   color: inherit;
-  padding: 4px 12px;
+  padding: 4px 12px 4px 8px;
+  overflow: hidden;
+}
+/* 标题文本独占剩下那一截：省略号必须挂在它身上 —— `text-overflow` 对 flex 容器本身
+   不生效，挂在 .toc-item 上等于没写（B205 之前 .toc-item 是 block，挂得着）。 */
+.toc-text {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -396,19 +473,29 @@ body.layout-dragging .toc-grip {
   color: var(--accent, #06c);
   font-weight: 600;
 }
-.toc-h1 {
-  padding-left: 12px;
+/* 扭角（chevron）：只有**有子节点**的标题才挂这一颗 —— 叶子不给（VS Code 的 twisty
+   只挂在有子的节点上，给叶子留一颗空扭角只会把每行往右顶一格、还点不动）。
+   ⚠️ 缩进靠**嵌套**（`.toc-children` 的左外边距），不靠 level 分档：
+      h1/h2/... 的 padding-left 那一套（12/24/36/48）已经删了 —— 那版没有扭角列，
+      子层缩进只能拿 padding 去凑，凑出来的间距与扭角宽度对不上（扭角 14px vs 档距 12px）。 */
+.toc-caret {
+  flex: 0 0 14px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--fg-muted, #656d76);
 }
-.toc-h2 {
-  padding-left: 24px;
+.toc-caret + .toc-text {
+  /* 拐角下面那截标题贴着扭角走，别再空一格 */
+  padding-left: 2px;
 }
-.toc-h3 {
-  padding-left: 36px;
+.toc-node > .toc-children {
+  /* 子层缩进 = 扭角列宽：子节点的扭角正好接在父节点扭角**后面**那格起头，
+     VS Code 的树就是这么对齐的（一排扭角竖着排下去，看着像一条缩进标尺）。 */
+  margin-left: 14px;
 }
-.toc-h4,
-.toc-h5,
-.toc-h6 {
-  padding-left: 48px;
+.toc-children.is-collapsed {
+  /* 折叠态：只切这一个容器的显隐，不重绘 —— 重绘会把列表滚回顶部（B205 注释在 toc.ts）。 */
+  display: none;
 }
 .toc-empty {
   padding: 16px 12px;

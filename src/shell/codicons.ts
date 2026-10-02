@@ -96,6 +96,13 @@ const IDS = {
   //    `gripper`（六点两列）是 VS Code 拖动手柄那一族，点更多、更密，在 4px 宽的
   //    缝里会糊成一团，且与 kebab 那颗同为「点阵」，所以只留三点的这颗。
   grip: "kebab-vertical",
+  // —— 侧栏展开区的全量折叠 / 展开（B205）——
+  // 字形照 VS Code `outlineActions.ts`：Collapse All 用 `collapse-all`（两道相向的
+  // 折角，把整棵树收起来），Expand All 用 `expand-all`（反向）。那两颗按钮的 `when`
+  // 是「还没全折 / 还没全开」，本软件**两颗常驻**（与置顶 / 同步滚动同口径：
+  // 状态全落在字形上，读者不必猜哪边是开），所以不需要为它们准备反相字形。
+  collapseAll: "collapse-all",
+  expandAll: "expand-all",
   // —— 面板 / 标签 ——
   circleFilled: "circle-filled",
   // —— 标签上的文件类型字形（10 个家族，见 src/shell/fileicons.ts）——
