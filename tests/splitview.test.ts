@@ -945,12 +945,13 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     expect(css, "横线命中区 7px 高").toMatch(/\.layout-sep-v::before\s*\{[^}]*height:\s*7px/);
     // B195 / B196：侧栏那一档不再是「细线 + 命中区」，而是 4px 空隙 + 三点把手，
     // 抓取区就是这条缝本身（3 颗点把手已经把「这里能拖」标出来了，不需要外溢命中区）。
-    // B201：缝里那条发丝线改成 hover 才亮（平时无线），::before 只当视觉反馈。
+    // B201：缝里那条线改成 VS Code sash 的口径 —— 平时什么都不画（本体透明），
+    // ::before 悬停/拖拽才整条 4px 点亮，只当视觉反馈。
     expect(previewCss, "侧栏抓取区不外溢（抓取 = 缝 = 4px）").not.toMatch(
       /\.toc-resizer::before\s*\{[^}]*(?:\s|;)\s*left:\s*-|right:\s*-/,
     );
     expect(previewCss, "seam 平时不常驻（B201：对齐 VS Code sash 默认态）").toMatch(
-      /\.toc-resizer::before\s*\{[^}]*opacity:\s*0/,
+      /\.toc-resizer::before\s*\{[^}]*background:\s*transparent/,
     );
     // 视觉线：静息 1px（VS Code editorGroup.border），激活 4px（--vscode-sash-size）
     expect(css, "静息线 1px").toMatch(/\.layout-sep-h::after\s*\{[^}]*width:\s*1px/);

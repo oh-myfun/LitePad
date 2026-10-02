@@ -21,59 +21,110 @@ function declOf(cssText: string, selector: string, prop: string): string {
   return block.match(new RegExp(`${prop}:\\s*[^;]*`))?.[0] ?? "";
 }
 
-describe("B201 左右两张卡片的面对面边让位：缝里平时不再有分割线", () => {
-  it("对标 VS Code seam 口径：朝缝的那两条边各让一条边框（左卡让右、右卡让左）", () => {
-    // VS Code floatingPanels.css：面对面的边 *gives up its border*，
-    // 由中间那条 rail 只画一条 single hairline seam；compact 档干脆全透明。
-    // LitePad 走「平时就是纯空隙」那一档 ⇒ 两边各让一条，缝里不常驻任何线。
-    expect(
-      declOf(css, ".side-shell", "border-right-color"),
-      "左栏卡片（.side-shell）朝缝的右边框必须让位",
-    ).toContain("transparent");
-    expect(
-      declOf(css, ".layout-area", "border-left-color"),
-      "编辑区卡片（.layout-area）朝缝的左边框必须让位",
-    ).toContain("transparent");
-    // 卡片轮廓本身还在（上下/外缘那几边照旧 1px），别让位让没了
+describe("B201 左栏几何：卡片画完整一圈 + 按钮列内部分割线 + sash 同款拖拽带", () => {
+  it("① 两张卡片**四边完整**：朝缝的那两条边（左卡 right / 右卡 left）照旧 1px", () => {
+    // VS Code floatingPanels.css 那句 *gives up its border* 说的是**活动栏 ↔ 侧栏**
+    // 那条 rail 的接缝（一张卡压在另一张上、由中间那条轨只画一条缝）；而这里是两张
+    // **并列**的独立卡片，各自的外框要画完整 —— 用户第二轮点名「边框不见了」就是这条。
+    expect(css, "左卡不得让出朝缝的右边框").not.toMatch(/\.side-shell\s*\{[^}]*border-right-color/);
+    expect(css, "右卡不得让出朝缝的左边框").not.toMatch(/\.layout-area\s*\{[^}]*border-left-color/);
+    // 卡片轮廓本身还在（上下/外缘那几边照旧 1px），别让完就没了
     expect(declOf(css, ".side-shell", "border")).toBe(declOf(css, ".layout-area", "border"));
     expect(declOf(css, ".side-shell", "border-radius")).toBe(
       declOf(css, ".layout-area", "border-radius"),
     );
   });
 
-  it("缝里的发丝线平时 opacity: 0，只有 hover / 拖拽才亮（对齐 VS Code sash hover）", () => {
-    const seam = preview.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(seam, "应有 .toc-resizer::before 这条 seam 规则").toBeTruthy();
-    expect(seam, "平时必须看不见（不常驻分割线）").toMatch(/opacity:\s*0/);
-    // 纯视觉反馈：不能借伪元素把 4px 的热区撑开（B196：命中区就是本体那 4px）
-    expect(seam, "seam 不吃指针，别把它变成热区").toContain("pointer-events: none");
-    const lit = preview.match(/\.toc-resizer:hover::before[\s\S]*?\{[^}]*\}/)?.[0] ?? "";
-    expect(lit, "hover 时要亮").toBeTruthy();
-    expect(lit, "hover 亮的是不透明").toMatch(/opacity:\s*1/);
-    expect(preview, "拖拽中也要亮（body.layout-dragging 那条）").toMatch(
-      /body\.layout-dragging\s+\.toc-resizer::before\s*\{[\s\S]*?opacity:\s*1/,
+  it("② 按钮列 ↔ 展开区之间这条内部分割线必须画（VS Code 活动栏同款）", () => {
+    expect(declOf(css, ".side-bar", "border-right"), "按钮列右缘的内部竖线").toBe(
+      "border-right: 1px solid var(--sep-line)",
+    );
+    // 收起展开区时它得收掉：那时按钮列右缘正好贴着卡片右缘，
+    // 两条 1px 边紧挨着 = 一条 2px 粗的线。
+    const collapsed = css.match(/\.side-shell\.is-collapsed > \.side-bar\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(collapsed, "必须有一条收起态的抑制规则").toBeTruthy();
+    expect(collapsed, "收起时那条内部竖线要收掉").toMatch(/border-right-color:\s*transparent/);
+  });
+
+  it("③ 显隐由 setTocOpen 一处收口：卡片挂同类名，别在 CSS 里翻显隐", () => {
+    expect(src, "side-shell 要先 el() 取出来").toMatch(/const sideShell = el\("side-shell"\)/);
+    expect(src, "setTocOpen 里必须给卡片挂 is-collapsed（第 5 件事）").toMatch(
+      /sideShell\.classList\.toggle\("is-collapsed",\s*!open\)/,
+    );
+    // 首屏（HTML 里 #toc-panel 本来就是 hidden）也要带这个类：否则那条内部竖线会先画
+    // 出来、再被启动回放收掉 —— 开屏闪一帧 2px 粗线。
+    expect(html, "首屏收起态：卡片先带 is-collapsed，与 #toc-panel 的 hidden 同源").toMatch(
+      /<div id="side-shell" class="side-shell is-collapsed">/,
     );
   });
 
-  it("反向验证：把左栏卡片的朝缝边框画回来（退回两条平行线）必须被咬住", () => {
-    const BAD = css.replace(
-      /(\.side-shell\s*\{[^}]*)border-right-color:\s*transparent;/,
-      "$1border-right-color: var(--tab-bg-hover);",
+  it("④ 拖拽带对齐 VS Code sash：平时透明、悬停/拖拽整条 4px 点亮", () => {
+    // sash.css 三层：本体 4px + `:before` 换 background-color + 0.1s ease-out 过渡。
+    // 关键是**平时什么都不画**（本体是 editorWidget.border 那层透明），反馈全在悬停那一下。
+    const seam = preview.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(seam, "应有 .toc-resizer::before 这条 sash 反馈").toBeTruthy();
+    expect(seam, "平时必须透明（sash 默认态就是看不见）").toMatch(/background:\s*transparent/);
+    expect(seam, "亮度必须是渐变（sash.css 的 transition: background-color .1s ease-out）").toMatch(
+      /transition:\s*background-color 0\.1s ease-out/,
     );
-    expect(BAD, "替身必须真的改过边框色").not.toBe(css);
+    // 拖拽区 = 卡片缝 = 同一档宽度（B196：改缝宽时这条跟着走，不写死像素）
+    expect(seam, "点亮宽度就是缝本身那 4px").toMatch(/width:\s*var\(--card-gap\)/);
+    expect(seam, "纯视觉反馈：不吃指针，别变成热区").toContain("pointer-events: none");
+    expect(preview, "抓取区不得外溢（缝是 4px 就是 4px）").not.toMatch(
+      /\.toc-resizer::before\s*\{[^}]*(?:\s|;)\s*left:\s*-|right:\s*-/,
+    );
+    // 点亮 = sash.hoverBorder → focusBorder，即我们的 --accent
+    const lit = preview.match(/\.toc-resizer:hover::before[\s\S]{0,200}?\{[^}]*\}/)?.[0] ?? "";
+    expect(lit, "hover 时点亮").toBeTruthy();
+    expect(lit, "点亮走 --accent（= focusBorder 那一档）").toMatch(/background:\s*var\(--accent\)/);
+    expect(preview, "拖拽中也要亮（指针滑出窄带时不能看着像没抓住）").toMatch(
+      /body\.layout-dragging\s+\.toc-resizer::before\s*\{[\s\S]*?background:\s*var\(--accent\)/,
+    );
+    // 三点把手必须压在亮条之上：亮条是绝对定位的兄弟，不抬层就糊掉三点
+    const grip = preview.match(/\n\.toc-grip\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(grip, "三点把手要抬到亮条之上").toMatch(/position:\s*relative/);
+    expect(grip, "抬层靠 z-index").toMatch(/z-index:\s*1/);
+  });
+
+  it("⑤ 反向验证：摘掉按钮列那条内部竖线必须被咬住", () => {
+    const BAD = css.replace(/\.side-shell\.is-collapsed > \.side-bar\s*\{[^}]*\}\n/, "");
+    const BAD2 = css.replace(/(\.side-bar\s*\{[^}]*)border-right:[^;]*;/, "$1");
+    expect(BAD2, "替身必须真的删掉那条线").not.toBe(css);
     expect(() => {
-      expect(declOf(BAD, ".side-shell", "border-right-color"), "两边的让位必须成对").toContain(
-        "transparent",
+      expect(declOf(BAD2, ".side-bar", "border-right"), "内部竖线必须存在").toBe(
+        "border-right: 1px solid var(--sep-line)",
+      );
+    }).toThrow();
+    expect(BAD, "替身必须真的删掉收起态那条").not.toBe(css);
+    expect(() => {
+      expect(BAD, "收起态的抑制规则必须还在").toMatch(
+        /\.side-shell\.is-collapsed > \.side-bar\s*\{[^}]*border-right-color/,
       );
     }).toThrow();
   });
 
-  it("反向验证：发丝线改成常驻（平时 opacity: 1）必须被咬住", () => {
-    const BAD = preview.replace(/(\.toc-resizer::before\s*\{[^}]*)opacity:\s*0;/, "$1opacity: 1;");
-    expect(BAD, "替身必须真的改过 opacity").not.toBe(preview);
+  it("⑥ 反向验证：缝里的反馈退回常驻发丝线（缝里多画一条）必须被咬住", () => {
+    const BAD = preview.replace(
+      /(\.toc-resizer::before\s*\{[^}]*)background:\s*transparent;/,
+      "$1background: var(--sep-line);",
+    );
+    expect(BAD, "替身必须真的改成常驻线").not.toBe(preview);
     expect(() => {
-      expect(BAD.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0], "常驻分割线必须被抓到").toMatch(
-        /opacity:\s*0/,
+      const block = BAD.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+      expect(block, "sash 默认态必须透明").toMatch(/background:\s*transparent/);
+    }).toThrow();
+  });
+
+  it("⑦ 反向验证：摘掉变色过渡（生硬跳变）必须被咬住", () => {
+    const BAD = preview.replace(
+      /(\.toc-resizer::before\s*\{[^}]*)transition:\s*background-color 0\.1s ease-out;/,
+      "$1transition: none;",
+    );
+    expect(BAD, "替身必须真的摘掉过渡").not.toBe(preview);
+    expect(() => {
+      const block = BAD.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+      expect(block, "sash 的变色过渡必须还在").toMatch(
+        /transition:\s*background-color 0\.1s ease-out/,
       );
     }).toThrow();
   });
@@ -335,7 +386,14 @@ describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘�
     );
     expect(BAD, "替身必须真的把命中区加回来").not.toBe(preview);
     expect(() => {
-      expect(BAD, "替身的外溢命中区必须被抓到").not.toMatch(/\.toc-resizer::before/);
+      // ⚠️ 只判「没有 ::before」是假绿：替身插的是**另一条** ::before 规则，选择器
+      //    一直都在 ⇒ `not.toMatch(/\.toc-resizer::before/)` 照样通过。
+      //    判据要盯住**外溢的取值**，而且要把所有 ::before 块一起翻（只取第一条抓不到
+      //    替身后插的那条）。
+      const all = [...BAD.matchAll(/\.toc-resizer::before\s*\{[^}]*\}/g)]
+        .map((m) => m[0])
+        .join("\n");
+      expect(all, "替身的外溢命中区必须被抓到").not.toMatch(/left:\s*-3px/);
     }).toThrow();
   });
 });

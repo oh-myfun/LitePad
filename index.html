@@ -153,7 +153,10 @@
            ⚠️ 空隙（#toc-resizer）**不再随大纲收起而隐藏**：它是两张卡片之间的固定间距，
               收起时只是把手消失、不再吃指针（见 preview.css 的 .toc-resizer.is-off）。 -->
       <div id="main-row">
-        <div id="side-shell" class="side-shell">
+        <!-- B201：首屏就是「展开区折着」这一态（下面 #toc-panel 已 hidden），卡片先带上
+             is-collapsed —— 否则那条按钮列内部竖线会先画出来、再被 main.ts 的启动回放
+             收掉，开屏闪一帧 2px 粗线。运行时唯一出口仍是 setTocOpen。 -->
+        <div id="side-shell" class="side-shell is-collapsed">
           <div id="side-bar" class="side-bar">
             <button
               id="side-outline"

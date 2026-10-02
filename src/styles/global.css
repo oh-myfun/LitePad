@@ -2277,9 +2277,14 @@ button:focus-visible {
   border: 1px solid var(--tab-bg-hover);
   border-radius: 8px;
   background: var(--bg);
-  /* B201（对标 VS Code floatingPanels.css 的 seam 口径）：这张卡是**左**边那张，
-     朝缝的那条边（右）让位 —— 见 .layout-area 内的同款说明。 */
-  border-right-color: transparent;
+  /* B201（用户第二轮裁决）：这张卡**四条边照旧画完整一圈** —— 朝缝的那条右边框
+     （border-right）是卡片轮廓的一部分，不能让位。原先跟着 VS Code floatingPanels.css
+     那句 *gives up its border* 一起抹掉是**用错了场景**：那句话说的是活动栏 ↔ 侧栏
+     之间那条 rail 的接缝，而这里要的是**两张独立卡片各自的外框**。
+     ⚠️ 于是缝里平时是「左卡右边框 + 右卡左边框」两条平行 1px 线 —— 这两条线是**两个
+        物体的边**，不是「为了分割而画的一条线」，别再当多余的一条抹掉。
+     ⚠️ 收起展开区时（.side-shell.is-collapsed）按钮列与卡片右缘之间那条内部竖线会收掉，
+        见 global.css 里 .side-bar 的同款说明。 */
 }
 
 /* B198：整栏收起 —— 侧栏卡片**直接消失**（连带中间那道缝一起，见 preview.css 里
@@ -2303,6 +2308,23 @@ button:focus-visible {
   align-items: center;
   gap: 4px;
   padding-top: 6px;
+  /* B201（用户第一轮点名、第二轮复核）：**按钮列 ↔ 展开区之间这条内部竖线必须画**。
+     这是活动栏那个场景里本来就有的一条：VS Code 的活动栏（48px 按钮列）右侧一直有一条
+     竖线把它和侧栏内容分开，收起侧栏只是让内容消失，那条线本身还在。
+     ⚠️ 两条线别搞混，它们是**两个位置的两条线**：
+        · 这里这条在卡片**内部** 40px 处，把按钮列与展开区分开；
+        · .side-shell 的 border-right 在卡片**右缘**，那是卡片自己的外框（上面那一段）。
+     ⚠️ 收起展开区时（main.ts 的 setTocOpen 挂上 .side-shell.is-collapsed）这条要收掉：
+        那时按钮列右缘正好贴着卡片右缘，两条 1px 边会**紧挨着变成 2px 粗的一条线**。
+        用 is-collapsed 而不是 `#toc-panel[hidden]` 选择器，是为了让显隐继续由
+        setTocOpen 一处收口（B195 的口径：开合态不许散在 CSS 里）。 */
+  border-right: 1px solid var(--sep-line);
+}
+
+/* 展开区折着：按钮列右缘那条内部竖线收掉（理由见上面 .side-bar 的 B201 注释）。
+   ⚠️ 同类名只挂这一个元素上（main.ts 的 setTocOpen），别在别处再翻一次显隐。 */
+.side-shell.is-collapsed > .side-bar {
+  border-right-color: transparent;
 }
 
 /* 与标题栏那批方形图标键（B157）同一观感：**不铺底**，常态/悬停/点亮全靠字形颜色。
@@ -2342,18 +2364,15 @@ button:focus-visible {
      卡片边框 1px #2a2b2c（= 非活动标签 hover 色，用户 B122 点名的判据不变）、
      外圆角约 6px、状态栏在卡片外面。overflow: hidden 原本就有，正好裁圆角。
 
-     B201：这张卡是**右**边那张，朝缝的那条边（左）让位。原先左右两张卡片面对面
-     各画一条 1px 边框 ⇒ 4px 缝里是**两条平行竖线**，看着就是一道分割线（用户反馈）。
-     VS Code 的规矩正好相反（floatingPanels.css 原文：面对面的边
-     *gives up its border* so the rail's own facing border is the **single hairline seam**，
-     compact 档干脆 `border-color: transparent`）：**面对面的边不各画一条**，
-     中间那条缝平时就是纯空隙，能拖这件事交给三点把手说，只在指针落到窄带上
-     才亮一条发丝线（对齐 VS Code sash 的 hover 反馈，见 preview.css 的 .toc-resizer）。
-     ⚠️ 让位的是**朝缝那一侧**：左栏卡（.side-shell）让 right、这张让 left，
-     两处是对称的一半，改的时候别对调、也别只改一处（漏一处就又变回两条线）。 */
+     B201（用户第二轮裁决）：这张卡**四条边照旧画完整一圈**，朝缝的左边框（border-left）
+     是卡片轮廓的一部分，**不让位**（与 .side-shell 的 border-right 对称，两处缺一不可）。
+     ⚠️ 缝里于是平时就摆着「左卡右边框 + 右卡左边框」两条平行 1px 线 —— 那是两张卡
+        各自的**边**，不是「为了分割而画的一条线」，别再当多余的一条抹掉。
+     ⚠️ 想改卡片轮廓：改这一处就要同时改 .side-shell 那一处，两个要**成对**改
+        （border 与 border-radius 已逐字同步，见 .side-shell 上方的注释）。
+     缝中央那条 hover 才亮的亮条 = VS Code sash 的 hover 反馈（见 preview.css 的 .toc-resizer）。 */
   border: 1px solid var(--tab-bg-hover);
   border-radius: 8px;
-  border-left-color: transparent;
 }
 
 .layout-split {

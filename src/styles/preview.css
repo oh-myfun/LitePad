@@ -261,34 +261,43 @@
   position: relative;
 }
 
-/* B201：缝里的分割线**平时不画** —— 对齐 VS Code compact 档
-   （`--modern-ui-floating-card-border-color: transparent`）与 sash 的默认态：
-   两张卡片面对面就是一条**纯空隙**，边界不靠线、靠留白。
-   ⚠️ 现在两张卡已经各让出一条边框（.side-shell 的 border-right / .layout-area 的
-      border-left 都改 transparent，见 global.css），这里再不画线 ⇒ 左栏与编辑区
-      之间彻底没有分割线，只剩 4px 缝 + 缝中央那颗三点把手（B195）标「能拖」。
-   只在指针落到这条窄带上 / 正在拖的时候亮一条 1px 发丝线 —— 这就是 VS Code 里
-   sash 的 hover 反馈（sash.css 用 hover 状态换颜色，不是常驻线）。
-   用 ::before 画、且 **pointer-events: none**：它纯是视觉反馈，命中区仍是本元素
-   本体那 4px（B196：不许向两侧溢出，缝是 4px 就是 4px，别借伪元素撑热区）。 */
+/* B201（第二轮）：这条窄带的**悬停/拖拽反馈照 VS Code sash.css 抄一遍**，缺一样就不像。
+   sash.css 的三层：
+     ① 本体 4px 宽（--vscode-sash-size），cursor: ew-resize；
+     ② `:before` 平时 `transparent`、hover / `.active` 时换成 `sash.hoverBorder`
+        （→ focusBorder，即我们的 --accent）—— **换的是 background-color，不是冒出一条线**；
+     ③ `.monaco-enable-motion .monaco-sash:before { transition: background-color .1s ease-out }`
+        —— 变色是渐变，不是瞬间跳（用户实测「很生硬」）。
+   ⚠️ 关键差别：**sash 平时就是「什么都看不见」**（本体是 editorWidget.border 那层透明），
+      反馈全在悬停那一下。所以这里平时 `background: transparent`，缝里平时只留两张卡片
+      各自的边框（左卡 border-right + 右卡 border-left，见 global.css）；指针落到窄带上
+      才把这条 4px 缝整条点亮 —— 与 VS Code 拖分屏时的那条亮带是同一件事。
+   ⚠️ 用 ::before 画 + **pointer-events: none**：它纯是视觉反馈，命中区仍是本元素
+      本体那 4px（B196：不许向两侧溢出，缝是 4px 就是 4px，别借伪元素撑热区）。
+      ⚠️ 别再改回「常驻 1px 发丝线」：那会在两张卡片各自的边框之外**多画一条**，
+         四条线挤在 4px 缝里。 */
 .toc-resizer::before {
   content: "";
   position: absolute;
   top: 0;
   bottom: 0;
   left: 50%;
-  width: 1px;
+  /* --card-gap 就是 sash 的 hover 宽度（--vscode-sash-hover-size 同档）：B196 已定死
+     「拖拽区 = 卡片缝隙 = 同一个宽度」，这里借同一个变量，改缝宽时这条跟着走。 */
+  width: var(--card-gap);
   transform: translateX(-50%);
-  background: var(--sep-line);
-  opacity: 0;
+  background: transparent;
   pointer-events: none;
-  transition: opacity var(--transition, 0.12s);
+  transition: background-color 0.1s ease-out;
 }
 
-/* 亮一条（hover 拖拽反馈；is-off 那条已经 pointer-events: none，收起态自然不亮） */
+/* 悬停 / 拖拽中整条 4px 点亮（对齐 sash.css 的 `:hover:before , .active:before`）。
+   `body.layout-dragging` 那条：只写 :hover 时，指针一旦滑出这条窄带高亮就消失，
+   看着像「没抓住」—— 拖大纲宽度的那几帧正是这种情况。
+   ⚠️ `.toc-resizer.is-off` 整条已经 `pointer-events: none`，收起态自然不亮。 */
 .toc-resizer:hover::before,
 body.layout-dragging .toc-resizer::before {
-  opacity: 1;
+  background: var(--accent);
 }
 
 /* 收起展开区：**空隙留着**（两张卡片的间距不该跟着开合跳变），
@@ -312,8 +321,13 @@ body.layout-dragging .toc-resizer::before {
   display: none;
 }
 
-/* 三点把手（字形由 main.ts 填 CODICONS.grip = codicon kebab-vertical） */
+/* 三点把手（字形由 main.ts 填 CODICONS.grip = codicon kebab-vertical）
+   ⚠️ `position: relative` + `z-index: 1` 是 B201 补的：悬停时那条 4px 亮条画在
+      `.toc-resizer::before` 上（绝对定位、z-index auto），按绘制顺序它会**盖在**把手
+      上面 —— 三点会被亮条糊掉。把手是 absolute 的兄弟，抬一层就压回去了。 */
 .toc-grip {
+  position: relative;
+  z-index: 1;
   display: flex;
   color: var(--fg-muted);
   opacity: 0.55;

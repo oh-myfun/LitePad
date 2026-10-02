@@ -243,6 +243,9 @@ const winClose = el<HTMLButtonElement>("win-close");
 const winPin = el<HTMLButtonElement>("win-pin");
 const tocPanel = el("toc-panel");
 const tocResizer = el("toc-resizer");
+// B201：左栏**卡片**（按钮列 + 展开区），展开区折起时它挂 `is-collapsed`
+// —— 那条内部竖线（按钮列 ↔ 展开区）要跟着收，见 preview.css / global.css 的同款说明。
+const sideShell = el("side-shell");
 // B195：侧栏按钮列里的「大纲」键（常驻，收起展开区时列本身还在）与空隙里的三点把手。
 const sideOutline = el<HTMLButtonElement>("side-outline");
 const tocGrip = el("toc-grip");
@@ -4942,12 +4945,17 @@ function toggleSidebar(): void {
  *
  * B195：这里同时是**按钮列点亮态的唯一出口** —— 面板显隐、空隙把手、按钮 `is-on` /
  * `aria-pressed` 四件事一处收口，避免「面板开了但键没亮」这类半同步。
+ *
+ * B201 补第五件：卡片自身的 `is-collapsed`（按钮列 ↔ 展开区那条内部竖线的显隐）。
+ * 收着时按钮列右缘那条线与卡片自己的右缘线会挨在一起变成 2px 粗的一条，所以得一起收。
  */
 function setTocOpen(open: boolean, persist = true): void {
   tocPanel.hidden = !open;
   // 空隙（分隔条）**不跟着隐藏**：它是侧栏卡片与编辑区卡片之间的固定间距，
   // 收起时只是把手消失、不再吃指针（CSS 的 .toc-resizer.is-off）。
   tocResizer.classList.toggle("is-off", !open);
+  // 卡片上的这条同类名：内部那条竖线只在「展开区确实摊开着」时才值得画。
+  sideShell.classList.toggle("is-collapsed", !open);
   sideOutline.classList.toggle("is-on", open);
   sideOutline.setAttribute("aria-pressed", String(open));
   if (open) updateTocDrawer();
