@@ -417,6 +417,36 @@ describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘�
     }).toThrow();
   });
 
+  it("B210 亮条**两头圆角**（抄 VS Code roundedCorners.css 的 sash 那一条）", () => {
+    // VS Code 原文（modernUI/browser/media/roundedCorners.css）：
+    //   /* Sashes — round the hover/drag affordance ends */
+    //   .modern-ui .monaco-sash:before {
+    //     border-radius: calc(var(--vscode-sash-hover-size) / 2);
+    //   }
+    // ⚠️ 它是加在 `:before` **本体**上的：平时 background 是 transparent，圆角看不见，
+    //    只有 hover / 拖拽上色那一刻才显形 ⇒ 效果就是「亮带两头是圆的」。
+    //    所以判据盯 `.toc-resizer::before` 那一条，不是 hover 那一条。
+    const seamRule = preview.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(seamRule, "要能定位 seam 的 ::before").toBeTruthy();
+    expect(seamRule, "圆角取值要跟着缝宽走（--card-gap = VS Code 的 hover-size）").toMatch(
+      /border-radius:\s*calc\(var\(--card-gap\)\s*\/\s*2\)/,
+    );
+  });
+
+  it("反向验证：圆角写死成 2px（脱钩回硬编码）必须被咬住", () => {
+    const BAD = preview.replace(
+      /(\.toc-resizer::before\s*\{[^}]*)border-radius:\s*calc\(var\(--card-gap\)\s*\/\s*2\);/,
+      "$1border-radius: 2px;",
+    );
+    expect(BAD, "替身必须真的换过圆角取值").not.toBe(preview);
+    expect(() => {
+      const seamRule = BAD.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+      expect(seamRule, "替身的写死圆角必须被抓到").toMatch(
+        /border-radius:\s*calc\(var\(--card-gap\)\s*\/\s*2\)/,
+      );
+    }).toThrow();
+  });
+
   it("卡片到窗口左右/下边缘留白走 --card-edge，且留白只在这一处源头", () => {
     const row = cssDecls(ruleBlock(css, "#main-row"));
     expect(row, "左栏/编辑区到窗口边缘要有留白").toMatch(

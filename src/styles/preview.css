@@ -320,6 +320,20 @@
      「拖拽区 = 卡片缝隙 = 同一个宽度」，这里借同一个变量，改缝宽时这条跟着走。 */
   width: var(--card-gap);
   transform: translateX(-50%);
+  /* B210：**亮条两头改圆角** —— 抄 VS Code `modernUI/browser/media/roundedCorners.css`
+     里 sash 那一条（它自己的注释原话就写着 "Sashes — round the hover/drag
+     affordance ends"）：给 sash 的伪元素加
+     `border-radius: calc(var(--vscode-sash-hover-size) / 2)`。
+     ⚠️ 它是加在伪元素**本体**上、不是只在 hover 那条里写：伪元素平时是
+     transparent，圆角看不出来，只有 hover / 拖拽上色那一刻才显形 —— 效果就是
+     「悬停时那条亮带两头是圆的」，而不是「只有悬停时才算出圆角」。
+     取值同样借 `--card-gap`（= VS Code 的 `--vscode-sash-hover-size`，两者都是 4px）
+     ⇒ 缝宽改了圆角跟着走，不写死 2px。
+     ⚠️ 注释里**不许出现花括号**：有契约用「不剥注释」的方式取这条规则块，
+        注释里一个闭花括号就会把块截断 ⇒ 「平时必须 transparent」假红（B210 连踩两次）。
+     ⚠️ VS Code 还额外给 diff editor 那条 sash 减了高度（免得圆角被裁），
+        这里没有那种容器，不需要照抄那条补偿。 */
+  border-radius: calc(var(--card-gap) / 2);
   background: transparent;
   pointer-events: none;
   transition: background-color 0.1s ease-out;
