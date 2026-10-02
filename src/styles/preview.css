@@ -324,16 +324,27 @@ body.layout-dragging .toc-resizer::before {
 /* 三点把手（字形由 main.ts 填 CODICONS.grip = codicon kebab-vertical）
    ⚠️ `position: relative` + `z-index: 1` 是 B201 补的：悬停时那条 4px 亮条画在
       `.toc-resizer::before` 上（绝对定位、z-index auto），按绘制顺序它会**盖在**把手
-      上面 —— 三点会被亮条糊掉。把手是 absolute 的兄弟，抬一层就压回去了。 */
+      上面 —— 三点会被亮条糊掉。把手是 absolute 的兄弟，抬一层就压回去了。
+      （B203 起亮条亮起时把手会让位、不再需要抬着看，但两层关系照旧留着：VS Code 的
+       grip 也是 sash 的兄弟浮层。）
+
+   B203（用户点名「完全复制 VS Code 的左右栏间距、外框边距、拖拽条样式」）两处改动：
+     ① `transition` 只留 opacity —— 对齐
+        `workbench/contrib/modernUI/browser/media/sashHandles.css` 那一条
+        `.monaco-enable-motion .modern-ui .monaco-sash:not(.disabled)::after { transition: opacity .1s ease-out }`。
+        它手上只有「让位 / 淡回来」这一件事要过渡，没有 color 可过渡；留着 color 那条
+        就是把一个永不发生的变换也挂上时间轴。
+     ② `pointer-events: none` —— 同一份文件里 grip 那条的基础属性就是它。把手是
+        「这里能拖」的**标记**，命中区始终是 sash 本体那 4px（B196）。16px 的字形比
+        4px 的缝宽，不吃指针才不会在缝**两侧**各多出两小片带 ew-resize 的地方。 */
 .toc-grip {
   position: relative;
   z-index: 1;
   display: flex;
   color: var(--fg-muted);
   opacity: 0.55;
-  transition:
-    color var(--transition, 0.12s),
-    opacity var(--transition, 0.12s);
+  transition: opacity 0.1s ease-out;
+  pointer-events: none;
 }
 
 /* B196 → B199：把手尺寸。B196 那版因为缝从 10px 收到 4px，怕「钉不进缝」把把手缩到
@@ -347,10 +358,22 @@ body.layout-dragging .toc-resizer::before {
   font-size: 16px;
 }
 
+/* **悬停 / 拖拽时把手让位给 sash 高亮** —— 抄 sashHandles.css 这条：
+     `.modern-ui .monaco-sash.hover:not(.disabled)::after,
+      .modern-ui .monaco-sash.active:not(.disabled)::after { opacity: 0 }`
+   那份文件开头那句原话就是这么说的：*"On hover/active the grip fades out in favour of
+   the existing full-length highlight"* —— 把手是**静息态**的标记，一旦这条缝整条亮起来，
+   把手就该退场把画面让给那条亮条。
+   ⚠️ 别写回「悬停把手转亮（color: --fg / opacity: 1）」：那是 B201 那版的口径，与
+      VS Code 正好相反 —— 16px 字形压在 4px 亮条上两边都糊：亮条看不出是整条缝，
+      三点也看不出是三点。让位反而两边都清爽，看完自然淡回来。
+   ⚠️ 与 B199 不冲突：B199 管的是**静息**那颗点（用户裁决 16px、缝仍是 4px，「看不见
+      哪儿能拖」靠的是这颗点而不是加宽缝）；这里管的是悬停那一瞬谁让位给谁。
+   ⚠️ `body.layout-dragging` 那条不能省：拖拽中指针常滑出这条 4px 窄带，
+      只看 :hover 会让把手在起手那几帧闪回来，与上面那条亮条打架。 */
 .toc-resizer:hover .toc-grip,
 body.layout-dragging .toc-grip {
-  color: var(--fg);
-  opacity: 1;
+  opacity: 0;
 }
 .toc-item {
   display: block;

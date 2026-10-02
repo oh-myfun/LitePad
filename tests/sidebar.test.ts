@@ -452,6 +452,85 @@ describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘�
   });
 });
 
+// ------------------------------------------------------- B203：完全复制 VS Code 的间距 / 外框 / 拖拽条
+// 用户点名：「完全复制 vscode 的左右栏间距、外框边距，拖拽条样式」。
+// 三项逐条回 VS Code 源码核对过（出处都写在注释里，代码里只锁「还必须成立」的那几条）：
+//   · 左右栏间距：sash.css 的 --vscode-sash-size 4px = floatingPanels.css 的
+//     --modern-ui-floating-card-margin（= spacing-size40 4px）—— 本软件 --card-gap 已经是它
+//     （B196 锁死），且缝里那条 sash 三层的悬停反馈 B201 也锁死了。
+//   · 外框边距：--modern-ui-floating-card-outer-margin 同样落在 spacing-size40（4px），
+//     **且只有 .top-window-edge（无标题栏 / 全屏）那一档才补顶留白** —— LitePad 有自绘
+//     标题栏 ⇒ padding-top: 0 是照抄判据，不是漏写，所以顶部那条不在这里重复锁。
+//   · 拖拽条样式：B203 补的是**三点把手让位** —— sashHandles.css 里
+//     `.monaco-sash.hover:not(.disabled)::after, .monaco-sash.active:not(.disabled)::after
+//     { opacity: 0 }`，同文件 README 那句原话就是 "On hover/active the grip fades out in
+//     favour of the existing full-length highlight"。
+describe("B203 完全复制 VS Code 的左右栏间距 / 外框边距 / 拖拽条样式", () => {
+  it("① 几何同源：缝 4px · 外框 4px · 圆角 8px · 顶部贴标题栏", () => {
+    const root = cssDecls(ruleBlock(css, ":root"));
+    const gap = root.match(/--card-gap:\s*(\d+)px/)?.[1];
+    const edge = root.match(/--card-edge:\s*(\d+)px/)?.[1];
+    expect(gap, "左右栏间距 = VS Code sash.css 的 --vscode-sash-size 4px").toBe("4");
+    // 外框与缝在 VS Code 里本来就是**同一档**（card-outer-margin 与 card-margin
+    // 都取 spacing-size40），两颗变量取值相同是刻意的，不是抄重了
+    expect(edge, "外框边距 = floatingPanels.css 的 card-outer-margin 同档").toBe(gap);
+    // 圆角 8px = --vscode-cornerRadius-large，两张卡片逐字同步（B201 那条契约）
+    for (const sel of [".side-shell", ".layout-area"]) {
+      expect(cssDecls(ruleBlock(css, sel)), `${sel} 圆角 = cornerRadius-large 8px`).toContain(
+        "border-radius: 8px",
+      );
+    }
+    // 顶部 0：VS Code 只在 .top-window-edge（无标题栏）给 margin-top，LitePad 有标题栏
+    expect(cssDecls(ruleBlock(css, "#main-row")), "有标题栏 ⇒ 不给顶留白").toMatch(
+      /padding:\s*0\s+var\(--card-edge\)/,
+    );
+  });
+
+  it("② 三点把手在悬停 / 拖拽时**让位**给 sash 高亮（不是转亮）", () => {
+    const yields = preview.match(/\.toc-resizer:hover \.toc-grip,[\s\S]{0,160}?\{[^}]*\}/)?.[0];
+    expect(yields, "悬停/拖拽时把手必须让位（sashHandles.css 的 opacity: 0）").toBeTruthy();
+    expect(yields, "让位 = 淡出到 0").toMatch(/opacity:\s*0/);
+    expect(yields, "让位只能淡出，不能把元素拿掉（脱离文档流 / display:none 都不对）").not.toMatch(
+      /display\s*:|visibility\s*:|position:\s*absolute/,
+    );
+    // ⚠️ VS Code 那版是「悬停让位」；B201 那版写的是「悬停把手转亮（color: --fg / opacity: 1）」
+    //    —— 正好相反：16px 字形压在 4px 亮条上两边都糊。这里不许退回去。
+    expect(yields, "不许退回「悬停把手转亮」那版").not.toMatch(
+      /color:\s*var\(--fg[,)]|opacity:\s*1/,
+    );
+    // 让位要**淡得回来**：过渡只留 opacity，对齐 sashHandles.css 的 transition .1s ease-out
+    const grip = preview.match(/\n\.toc-grip\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(grip, "把手只在 opacity 这一件事上做过渡").toMatch(
+      /transition:\s*opacity 0\.1s ease-out/,
+    );
+    // 静息态把手仍是看得见的 —— B199 用户裁决「三个点是「这儿能拖」的标记」
+    expect(grip, "静息态把手是亮的（B199：靠这颗点标可拖）").toMatch(/opacity:\s*0?\.\d+/);
+    // grip 只做标记，命中区始终是缝本体那 4px（B196 用户裁决）
+    expect(grip, "把手不吃指针（VS Code grip 同款）").toMatch(/pointer-events:\s*none/);
+  });
+
+  it("③ 反向验证：把手退回「悬停转亮」（与 VS Code 相反）必须被咬住", () => {
+    const BAD = preview.replace(
+      /(\.toc-resizer:hover \.toc-grip,\nbody\.layout-dragging \.toc-grip\s*\{)[\s\S]*?\}/,
+      "$1\n  color: var(--fg);\n  opacity: 1;\n}",
+    );
+    expect(BAD, "替身必须真的把让位改回悬停转亮").not.toBe(preview);
+    expect(() => {
+      const rule = BAD.match(/\.toc-resizer:hover \.toc-grip,[\s\S]{0,160}?\{[^}]*\}/)?.[0];
+      expect(rule, "替身必须真的失去让位（回到悬停转亮）").toMatch(/opacity:\s*0/);
+    }).toThrow();
+  });
+
+  it("④ 反向验证：把手吃回指针（缝外多出两小片热区）必须被咬住", () => {
+    const BAD = preview.replace(/(\n\.toc-grip\s*\{[^}]*)pointer-events:\s*none;/, "$1");
+    expect(BAD, "替身必须真的把 pointer-events 摘掉").not.toBe(preview);
+    expect(() => {
+      const grip = BAD.match(/\n\.toc-grip\s*\{[^}]*\}/)?.[0] ?? "";
+      expect(grip, "替身必须真的不再声明 pointer-events: none").toMatch(/pointer-events:\s*none/);
+    }).toThrow();
+  });
+});
+
 // ------------------------------------------------------- B199：卡片底色一致 + 三点把手调大
 // 用户点名两件事：①「左边栏展开区（目前只有大纲列表）背景和其他区域一致，参考 vscode」；
 // ②「拖拽区三个点调大」。

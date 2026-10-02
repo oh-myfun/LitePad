@@ -20,8 +20,18 @@
        · --card-edge = 卡片到窗口左右 / 下边缘的留白，对齐
          browser/media/floatingPanels.css 的 --modern-ui-floating-card-outer-margin。
          那一档两种密度（默认 / compact）取的是同一个值，所以它也是「不跟密度变」的量。
-     ⚠️ 两个量必须成对存在：**只调其中一个会变成「卡片挤在一起」或「卡片漂在中间」**
-        —— 改一处就要顺手核对另一处。 */
+   ⚠️ 两个量必须成对存在：**只调其中一个会变成「卡片挤在一起」或「卡片漂在中间」**
+      —— 改一处就要顺手核对另一处。
+
+   B203（用户点名「完全复制 VS Code 的左右栏间距、外框边距、拖拽条样式」）：把这两个
+   数字与 VS Code 的**原档**对上号，以后改之前先去那边数一遍
+   （`vscode-spacing-size40` 与 `vscode-cornerRadius-large` 的取值都是从 VS Code 源码里
+   抄出来的，见下面三处注释各自的出处）：
+     · 缝 = `--vscode-sash-size` 4px（base/browser/ui/sash/sash.css 的 :root）
+       = `--modern-ui-floating-card-margin`（floatingPanels.css）。
+     · 外框 = `--modern-ui-floating-card-outer-margin`（floatingPanels.css）
+       = 同一个 4px 档 —— 所以**两颗变量的取值相同是刻意的**，不是抄重了。
+     · 圆角 = `--vscode-cornerRadius-large` 8px（`.side-shell` / `.layout-area` 两处）。 */
   --card-gap: 4px;
   --card-edge: 4px;
 }
@@ -2269,6 +2279,8 @@ button:focus-visible {
    卡片不消失，只缩成按钮列那一列（VS Code 隐藏侧栏后活动栏仍在，同一件事）。
    ⚠️ 边框与圆角必须与 .layout-area **逐字同步**：两张卡片同处一行、同是卡片，
       半径或线色差一点就会看成两种东西 —— 改一处就要改另一处。
+      （B203 对上号：**8px 圆角 = VS Code 的 `--vscode-cornerRadius-large`**；
+      改半径只动这一条规则里的数值，且**两处要一起改**。）
    ⚠️ 空隙由 .toc-resizer 自己撑开（preview.css），这里**不要**再给 #main-row 加 gap，
       否则空隙会翻倍、且收起大纲时（分隔条隐藏）间距还会跳变。
 

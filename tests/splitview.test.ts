@@ -808,14 +808,21 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     expect(previewCss, "侧栏抓取区不得外溢（= 缝本身 4px）").not.toMatch(
       /\.toc-resizer::before\s*\{[^}]*(?:\s|;)\s*left:\s*-|right:\s*-/,
     );
-    // 三点把手：静息淡（--fg-muted）→ 悬停/拖拽转亮（--fg）
+    // 三点把手：静息淡（--fg-muted）→ **悬停/拖拽让位给 sash 高亮**（opacity: 0）
     // ⚠️ `\.toc-grip` 会先撞上前面的 `.toc-resizer.is-off .toc-grip`（那条只有
     //    visibility），所以这里用 `\n` 锚到行首、只取**基准**那条规则。
+    // ⚠️ B203：这里是「让位」不是「转亮」—— 抄 sashHandles.css 的
+    //    `.monaco-sash.hover:not(.disabled)::after { opacity: 0 }`（同文件 README：
+    //    "On hover/active the grip fades out in favour of the existing full-length highlight"）。
+    //    转亮那版（--fg）是 B201 的口径，与 VS Code 相反：16px 字形压在 4px 亮条上两边都糊。
     const grip = previewCss.match(/\n\.toc-grip\s*\{[^}]*\}/)?.[0] ?? "";
     expect(grip, "三点把手静息走 --fg-muted").toMatch(/color:\s*var\(--fg-muted[,)]/);
     const gripHL =
       previewCss.match(/\.toc-resizer:hover \.toc-grip,[\s\S]{0,140}?\{[^}]*\}/)?.[0] ?? "";
-    expect(gripHL, "悬停/拖拽把手要转亮（--fg）").toMatch(/color:\s*var\(--fg[,)]/);
+    expect(gripHL, "悬停/拖拽把手要**让位**（淡出，把画面让给那条 4px 亮条）").toMatch(
+      /opacity:\s*0/,
+    );
+    expect(gripHL, "不是「悬停把手转亮」那版").not.toMatch(/color:\s*var\(--fg[,)]/);
     // 收起展开区：空隙**留着**（两张卡片的间距不该跟着开合跳变），只收把手与指针
     const off = previewCss.match(/\.toc-resizer\.is-off\s*\{[^}]*\}/)?.[0] ?? "";
     expect(off, "收起时空隙不吃指针（否则悬停出提示、拖了没反应）").toContain(
@@ -962,9 +969,11 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     expect(css, "激活涨到 4px（横线）").toMatch(
       /\.layout-sep-v:hover::after,[\s\S]{0,160}?\{\s*height:\s*4px/,
     );
-    // B195：侧栏那一档不涨线，改「三点把手转亮」（悬停 / 拖拽中同一口径）
-    expect(previewCss, "侧栏三点把手悬停转亮（--fg）").toMatch(
-      /\.toc-resizer:hover \.toc-grip,[\s\S]{0,140}?color:\s*var\(--fg[,)]/,
+    // B195：侧栏那一档不涨线，改「三点把手让位」（悬停 / 拖拽中同一口径 ——
+    // B203 从 VS Code sashHandles.css 对到号的：hover / active 时 grip 淡出，
+    // 让整条 sash 高亮接管，而不是把手自己转亮）
+    expect(previewCss, "侧栏三点把手在悬停/拖拽时让位（opacity: 0）").toMatch(
+      /\.toc-resizer:hover \.toc-grip,[\s\S]{0,140}?opacity:\s*0/,
     );
     // 角手柄改为骑在界线上（分隔条主轴尺寸已为 0，原先 top:0/left:0 会偏到一侧）
     expect(css, "横线上的角手柄骑线").toMatch(
