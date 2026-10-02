@@ -2039,6 +2039,18 @@ button:focus-visible {
   cursor: pointer;
 }
 
+/* ⚠️ 隐藏属性兜底 —— 与 find-bar / find-status / sync-btn / tooltip 那几处是**同一类坑**：
+   上面这条 `display: block` 是作者样式表，CSS 级联里作者样式表优先于 UA 样式表
+   （**与选择器权重无关**）⇒ UA 对隐藏属性的那条规则被压掉，
+   `settingsdialog.ts` 里给分类按钮写的隐藏属性就只是改了个属性，
+   那些被搜索过滤掉的分类**照旧排在左栏里**。
+   症状：在设置对话框里搜「快捷键」，别的分类不消失，看着像过滤没生效。
+   ⚠️ 注释里刻意不写那些同类选择器的字面量：有契约会对整份样式做「整文件 not 匹配」
+      的反向验证，它不剥注释，写上去就会把那条验证顶成假红（B207 踩过）。 */
+.settings-nav-item[hidden] {
+  display: none;
+}
+
 .settings-nav-item:hover {
   background: var(--bg-hover);
   color: var(--fg);

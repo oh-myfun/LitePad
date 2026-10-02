@@ -877,3 +877,59 @@ describe("B198 整栏去留：切一次要落盘、启动要回放", () => {
     }).toThrow();
   });
 });
+
+// ------------------------------------------------------------------ B207（真机回归）
+// 用户真机报「左栏没法折叠起来了，分割线区域空隙太大」。
+// 根因不在 JS：`setTocOpen(false)` 写的 `tocPanel.hidden = true` 一直是对的，
+// 但 `.toc-panel { display: flex }`（B205 加的）是**作者样式表**，CSS 级联里作者样式表
+// 优先于 UA 样式表 —— **与选择器权重无关** ⇒ UA 的 `[hidden] { display: none }` 被压掉，
+// 属性改了、面板照旧占着 160px 显示。所以：
+//   · 「折叠不起来」= 拖到最小再往左拖，展开区纹丝不动；
+//   · 「空隙太大」   = 同一件事的另一半：`.side-shell.is-collapsed` 已经把按钮列右缘那条
+//     内部竖线抹成透明了，而面板还在 ⇒ 按钮列右边凭空多出一大片空白。
+// ⚠️ jsdom 不做 CSS 级联 ⇒ 断言 `tocPanel.hidden === true` / 断言 class **全是假绿**，
+//    这条只能靠静态契约盯住。仓库里同类兜底已有 7 处（find-bar / find-row-replace /
+//    find-status / sync-btn / tooltip×3），`.toc-panel` 是漏掉的那一个。
+describe("B207 `display` 压过 UA 的 `[hidden]`：凡写 display 又靠 hidden 收起的都得补一条", () => {
+  // ⚠️ 两处都记在同一个表里：仓库里同类兜底已有 8 处（find-bar / find-row-replace /
+  //    find-status / sync-btn / tooltip×3 / 这两条），它们是**同一个坑的多个实例** ——
+  //    后来人给任何一个元素补 `display` 时都得顺手配一条，这里把「哪几个元素」列出来，
+  //    免得每次都要重新踩一遍。
+  const cases = [
+    {
+      sel: ".toc-panel",
+      file: "preview.css",
+      css: preview,
+      why: "收起展开区（B207）：漏了就是「左栏折叠不起来」+「分割线区域空隙太大」",
+    },
+    {
+      sel: ".settings-nav-item",
+      file: "global.css",
+      css,
+      why: "设置对话框搜索过滤分类：漏了被过滤掉的分类按钮不会消失",
+    },
+  ];
+
+  for (const c of cases) {
+    it(`${c.sel}（${c.file}）写了 display ⇒ 必须有 ${c.sel}[hidden] { display: none }`, () => {
+      // 前提：该元素本体确实写了 display —— 正是它压过 UA 的 [hidden]
+      expect(cssDecls(ruleBlock(c.css, c.sel)), `${c.sel} 本体要有 display`).toMatch(/display:/);
+      const esc = c.sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const hidden = c.css.match(new RegExp(`${esc}\\[hidden\\]\\s*\\{[^}]*\\}`))?.[0] ?? "";
+      expect(hidden, `必须有 ${c.sel}[hidden] 兜底 —— ${c.why}`).toBeTruthy();
+      expect(hidden, "兜底要真的 display: none").toMatch(/display:\s*none/);
+      // ⚠️ 兜底**不靠书写顺序**：`.x[hidden]`(0-2-0) 权重本就高于 `.x`(0-1-0)，
+      //    与位置无关。记下来，免得后来人以为要挪到本体之后。
+    });
+
+    it(`反向验证：摘掉 ${c.sel}[hidden] ⇒ 契约必须落空`, () => {
+      const esc = c.sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(`${esc}\\[hidden\\]\\s*\\{[^}]*\\}`);
+      const BAD = c.css.replace(re, "");
+      expect(BAD, "替身必须真的摘掉过兜底").not.toBe(c.css);
+      expect(() => {
+        expect(BAD.match(re)?.[0] ?? "", "替身摘掉后必须落空").toBeTruthy();
+      }).toThrow();
+    });
+  }
+});
