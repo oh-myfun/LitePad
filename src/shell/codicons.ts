@@ -80,12 +80,13 @@ const IDS = {
   link: "link",
   unlink: "link codicon-unlink",
   // —— 侧栏（B195）——
-  // ① 大纲：VS Code 侧栏「大纲」视图用的就是 `list-tree`（层级树），
-  //    比 three-bars / symbol-class 更贴「标题按层级缩进」这层语义。
-  outline: "list-tree",
+  // ① 大纲：用户裁决取 `symbol-class`（那对花括号 `{ }`，即 VS Code outline 的符号图标）。
+  //    ⚠️ 别改回 `list-tree`：那是层级树，管的是「大纲树长什么样」，而这一档要表达的
+  //       是「这是代码符号列表」—— 与 symbolClass（fileicons 那一族）同一套语义。
+  outline: "symbol-class",
   // ② 空隙里的拖拽把手：用户点名「三个点」⇒ `kebab-vertical`（竖排三点）。
-  //    `gripper`（六点两列）是 VS Code 拖动手柄那一族，点更多、更密，在 10px 宽的
-  //    空隙里会糊成一团，且与 kebab 那颗同为「点阵」，所以只留三点的这颗。
+  //    `gripper`（六点两列）是 VS Code 拖动手柄那一族，点更多、更密，在 4px 宽的
+  //    缝里会糊成一团，且与 kebab 那颗同为「点阵」，所以只留三点的这颗。
   grip: "kebab-vertical",
   // —— 面板 / 标签 ——
   circleFilled: "circle-filled",

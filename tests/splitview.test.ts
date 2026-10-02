@@ -796,10 +796,9 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     expect(previewCss, "B195 起侧栏空隙里不再画 1px 竖线（改由三点把手承担）").not.toMatch(
       /\.toc-resizer::after/,
     );
-    // 命中区比空隙本身宽：元素 4px（B196），::before 向两侧各溢出 3px = 10px 可拖
-    const hit = previewCss.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(hit, "命中区向左溢出").toMatch(/left:\s*-3px/);
-    expect(hit, "命中区向右溢出").toMatch(/right:\s*-3px/);
+    // 命中区 = 元素本体（用户裁决「缝 4px + 抓取正好 4px」）：B195 那个向两侧各溢出
+    // 3px 的 ::before 命中区已删 —— 可抓范围做到 10px 比 VS Code 的 sash 宽了一倍。
+    expect(previewCss, "侧栏抓取区不得外溢（= 缝本身 4px）").not.toMatch(/\.toc-resizer::before/);
     // 三点把手：静息淡（--fg-muted）→ 悬停/拖拽转亮（--fg）
     // ⚠️ `\.toc-grip` 会先撞上前面的 `.toc-resizer.is-off .toc-grip`（那条只有
     //    visibility），所以这里用 `\n` 锚到行首、只取**基准**那条规则。
@@ -935,14 +934,9 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     // 命中区搬到 ::before，向两侧各溢出 3.5px（共 7px）
     expect(css, "竖线命中区 7px 宽").toMatch(/\.layout-sep-h::before\s*\{[^}]*width:\s*7px/);
     expect(css, "横线命中区 7px 高").toMatch(/\.layout-sep-v::before\s*\{[^}]*height:\s*7px/);
-    // B195：侧栏那一档不再是「细线 + 命中区」，而是 4px 空隙 + 三点把手，
-    // 命中区只向两侧各溢出 3px 让拖拽好按（元素本体已经够宽，不再需要 7px 溢出）。
-    expect(previewCss, "侧栏把手命中区向左溢出 3px").toMatch(
-      /\.toc-resizer::before\s*\{[^}]*left:\s*-3px/,
-    );
-    expect(previewCss, "侧栏把手命中区向右溢出 3px").toMatch(
-      /\.toc-resizer::before\s*\{[^}]*right:\s*-3px/,
-    );
+    // B195 / B196：侧栏那一档不再是「细线 + 命中区」，而是 4px 空隙 + 三点把手，
+    // 抓取区就是这条缝本身（3 颗点把手已经把「这里能拖」标出来了，不需要外溢命中区）。
+    expect(previewCss, "侧栏抓取区不外溢（抓取 = 缝 = 4px）").not.toMatch(/\.toc-resizer::before/);
     // 视觉线：静息 1px（VS Code editorGroup.border），激活 4px（--vscode-sash-size）
     expect(css, "静息线 1px").toMatch(/\.layout-sep-h::after\s*\{[^}]*width:\s*1px/);
     expect(css, "静息线 1px（横线）").toMatch(/\.layout-sep-v::after\s*\{[^}]*height:\s*1px/);

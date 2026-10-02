@@ -141,7 +141,9 @@ describe("B195 空隙与三点把手", () => {
   });
 
   it("字形必须来自 codicons.ts（不许手绘 SVG / 写死码位），且三点那颗是竖排三点", () => {
-    expect(icons, "大纲字形 = list-tree（VS Code 侧栏大纲同款）").toMatch(/outline:\s*"list-tree"/);
+    expect(icons, "大纲字形 = symbol-class（用户裁决，那对花括号）").toMatch(
+      /outline:\s*"symbol-class"/,
+    );
     expect(icons, "把手 = kebab-vertical（竖排三点）").toMatch(/grip:\s*"kebab-vertical"/);
     expect(src, "大纲键的字形走 CODICONS").toContain("CODICONS.outline");
     expect(src, "把手的字形走 CODICONS").toContain("CODICONS.grip");
@@ -154,6 +156,14 @@ describe("B195 空隙与三点把手", () => {
     expect(BAD, "替身必须真的换过字形").not.toBe(icons);
     expect(() => {
       expect(BAD, "替身的非三点字形必须被抓到").toMatch(/grip:\s*"kebab-vertical"/);
+    }).toThrow();
+  });
+
+  it("反向验证：大纲字形退回 list-tree（花括号被换掉）必须被咬住", () => {
+    const BAD = icons.replace('outline: "symbol-class"', 'outline: "list-tree"');
+    expect(BAD, "替身必须真的换过字形").not.toBe(icons);
+    expect(() => {
+      expect(BAD, "替身的树形字形必须被抓到").toMatch(/outline:\s*"symbol-class"/);
     }).toThrow();
   });
 });
@@ -183,10 +193,11 @@ describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘�
     expect(resizer, "宽度必须取 --card-gap（与 :root 同源，不写死）").toMatch(
       /flex:\s*0 0 var\(--card-gap\)/,
     );
-    // 缝收窄到 4px 后手感不能跟着窄：命中区跨到两侧卡片上，实际可拖 4 + 3*2 = 10px
-    const hit = preview.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(hit, "命中区向左溢出（可拖范围不随缝变窄）").toMatch(/left:\s*-3px/);
-    expect(hit, "命中区向右溢出").toMatch(/right:\s*-3px/);
+    // 用户裁决「缝 4px + 抓取正好 4px」：命中区就是元素本体，不许再向两侧溢出。
+    // B195 那版靠 ::before 左右各撑 3px 把可抓范围做到 10px —— 比 VS Code 宽一倍。
+    expect(preview, "抓取区不得外溢（= 缝本身 4px，对齐 VS Code sash）").not.toMatch(
+      /\.toc-resizer::before/,
+    );
   });
 
   it("卡片到窗口左右/下边缘留白走 --card-edge，且留白只在这一处源头", () => {
@@ -241,6 +252,18 @@ describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘�
         BAD.match(/\.toc-grip \.codicon\s*\{[^}]*\}/)?.[0] ?? "",
         "替身的放大把手必须被抓到",
       ).toMatch(/font-size:\s*12px/);
+    }).toThrow();
+  });
+
+  it("反向验证④：抓取区又长回外溢的 10px 必须被咬住", () => {
+    // 退化 = 把 B195 那个 ::before 命中区加回来（两侧各 3px）
+    const BAD = preview.replace(
+      /(\.toc-resizer\.is-off\s*\{)/,
+      '.toc-resizer::before{\n  content: "";\n  position: absolute;\n  left: -3px;\n  right: -3px;\n}\n$1',
+    );
+    expect(BAD, "替身必须真的把命中区加回来").not.toBe(preview);
+    expect(() => {
+      expect(BAD, "替身的外溢命中区必须被抓到").not.toMatch(/\.toc-resizer::before/);
     }).toThrow();
   });
 });

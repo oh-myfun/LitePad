@@ -234,31 +234,24 @@
 
    B196（用户点名「拖拽区宽度参考 VS Code」）：**空隙 = 拖拽区，两者就是同一个宽度** ——
    VS Code 里 sash 本体 4px 与卡片之间的缝 4px 也是同一档（sash.css 的 --vscode-sash-size
-   与 layoutService.ts 的 FLOATING_PANEL_MARGIN 都是 4）；B195 那版写成 10px 偏宽，
-   卡片之间像「断开了两截」而不是紧邻。这里走 --card-gap 一份量，改宽度只动一个变量。
-   ⚠️ 缝收窄后**手感不能跟着窄**：下面的 ::before 命中区仍向两侧各溢出 3px，
-      实际可拖范围还是 10px（元素 4px + 两侧各 3px），与 VS Code sash + 端头把手的总覆盖相当。*/
+   与 layoutService.ts 的 FLOATING_PANEL_MARGIN 都是 4）。B195 那版写成 10px 偏宽，
+   卡片之间像「断开了两截」而不是紧邻；这里走 --card-gap 一份量，改宽度只动一个变量。
+
+   ⚠️ 用户裁决「缝 4px + 抓取正好 4px」：命中区**就是元素本体**，不许再向两侧溢出。
+      B195 那版用 ::before 向左右各溢出 3px（把可抓范围撑到 10px）是「怕不好按」，
+      但那已经比 VS Code 宽一倍 —— 该细的地方细回来。三点把手本身已经把「这里能拖」
+      标清楚了，4px 的条按 VS Code 的默认手感就够（sash.size 可配，默认就是 4）。
+      拖拽用的是 document 级 mousemove（attachTocResizer），指针移出这条窄带也不丢。 */
 .toc-resizer {
   flex: 0 0 var(--card-gap);
   /* B61：竖线光标取 VS Code **非 mac** 档的 ew-resize（col-resize 是 mac 档，
-     Windows 上会渲染成「箭头中间多一根竖杠」） */
+     Windows 上会渲染成「箭头中间多一根竖杠」）。
+     ⚠️ 不再需要 position / z-index：那两条只为锚定上面那个外溢的伪元素，
+        伪元素删掉后它们就是死声明，留着反而误导后来人。 */
   cursor: ew-resize;
-  position: relative;
-  z-index: 5;
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-/* 命中区向两侧各溢出 3px（元素本体只有 4px 的缝，实际可拖 10px）—— 缝收窄后
-   手感不缩水的唯一保障：悬停区跨到卡片边缘上，但那里本来也没有别的可点东西。 */
-.toc-resizer::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -3px;
-  right: -3px;
 }
 
 /* 收起展开区：**空隙留着**（两张卡片的间距不该跟着开合跳变），
