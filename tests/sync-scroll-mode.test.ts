@@ -424,8 +424,12 @@ describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚�
 });
 
 describe("B154 / B157 样式：方形图标键，状态只靠图标颜色", () => {
-  /** 这一族的三个成员（B157 起同款，写在同一条规则里，不许各写一份）。 */
-  const FAMILY = [".sync-btn", ".title-btn.pin-btn", ".title-btn.upd-btn"];
+  /**
+   * 这一族的全体成员（B157 起同款，写在同一条规则里，不许各写一份）。
+   * ⚠️ **要加就得加列这儿**：标题栏每添一颗同款键（B198 那颗 layout-btn 就是），
+   *    成员少了这条「同款」判定就漏看一颗，新键会悄悄退回 46px 方键那一批。
+   */
+  const FAMILY = [".sync-btn", ".title-btn.pin-btn", ".title-btn.upd-btn", ".title-btn.layout-btn"];
 
   it("覆盖 .title-btn 那批的尺寸与铺底（写在它们之后才压得住）", () => {
     // 46px 满高 + 悬停淡底都是共用声明给的，这一族不要它们。
@@ -470,7 +474,10 @@ describe("B154 / B157 样式：方形图标键，状态只靠图标颜色", () =
     const hover = slice(css, ".sync-btn:hover,", "}");
     expect(hover, "要能定位共享 hover 规则").toContain("color: var(--fg)");
     expect(hover, "hover 不许铺底").not.toMatch(/background:\s*var\(--bg-hover\)/);
-    expect(hover, "这一族三个成员都要覆盖到").toContain(".title-btn.upd-btn:hover");
+    // `.sync-btn` 是这条列表的**头**，后面那几颗各自补 `:hover`
+    for (const sel of FAMILY.slice(1)) {
+      expect(hover, `这一族「${sel}:hover」都要覆盖到`).toContain(`${sel}:hover`);
+    }
     // B166：字形改成 link / unlink 切换，但开态强调色**保留**（用户拍板）——
     // 仍走那条全局规则（特异度 0-2-0，盖得住 hover 的 color），别另起一套。
     expect(css, "点亮态只上色图标").toMatch(
@@ -975,16 +982,14 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
 
   it("把状态颜色退回「整颗键铺底」→ 外观那条必须落空", () => {
     // 用户要的是「干脆没有按钮背景」，hover 与同步都靠图标颜色 —— 铺底等于退回 B152。
-    // ⚠️ ORIG 必须是**排版后的原样**（B157 起是三成员的选择器列表），写错就等于
-    //    退化版「什么都没改」⇒ 这条反向验证静默失效（sync-scroll 那批栽过一次）。
-    const ORIG =
-      ".sync-btn:hover,\n.title-btn.pin-btn:hover,\n.title-btn.upd-btn:hover {\n  background: transparent;\n  color: var(--fg);\n}";
+    // ⚠️ 退化**不能**写死整段选择器列表：这一族的成员会随标题栏加键而变（B198 那颗
+    //    layout-btn 就是后来加的），写死成员数一到加键这条反向验证就整条失效。
+    //    只盯「hover 那一条里的 background」这一件事本身，成员增减都不影响。
+    const ORIG = ".title-btn.layout-btn:hover {\n  background: transparent;";
     expect(css, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = css.replace(
-      ORIG,
-      ".sync-btn:hover {\n  background: var(--bg-hover);\n  color: var(--fg);\n}",
-    );
-    expect(degraded, "退回铺底后就不是「没有按钮背景」了").not.toContain(ORIG);
+    const BAD = ".title-btn.layout-btn:hover {\n  background: var(--bg-hover);";
+    const degraded = css.replace(ORIG, BAD);
+    expect(degraded, "退回铺底后就不是「没有按钮背景」了").toContain(BAD);
     expect(degraded, "方形尺寸那几条也还得在，别顺手一起删了").toMatch(
       /\.sync-btn,[\s\S]*?height: 24px;/,
     );

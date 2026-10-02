@@ -42,6 +42,12 @@ pub struct Settings {
     /// 与 `toc_width` 同属设置而非会话：它是**窗口级外观状态**（关掉再开应保持原样），
     /// 不跟着某份文档走。
     pub toc_open: bool,
+    /// B198：整个左栏（按钮列 + 展开区 + 中间缝）是否**收起**（默认 false = 左栏在）。
+    ///
+    /// 与 `toc_open` 是两层、互不撤销：`sidebar_off` 管「左栏在不在」，
+    /// `toc_open` 管「卡片里的展开区开没开」—— 整栏收起时展开区的开合值照旧留着，
+    /// 重新露出时回到用户上次的样子。
+    pub sidebar_off: bool,
     /// 快捷键覆盖表：命令 id → 键位串（空串 = 显式解绑）。
     /// 后端不解释内容，只负责存取；合法性由前端 keymap 模块过滤。
     pub keymap: HashMap<String, String>,
@@ -81,6 +87,7 @@ impl Default for Settings {
             preview_line_height: 1.7,
             toc_width: 240.0,
             toc_open: false,
+            sidebar_off: false,
             keymap: HashMap::new(),
             keymap_preset: "default".into(),
             tab_style: "connected".into(),

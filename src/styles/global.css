@@ -519,9 +519,12 @@ html[data-window-kind="satellite"] .menu-bar {
   font-size: 12.5px;
 }
 
-/* ---------- 标题栏的方形图标键（B152 / B154 / B157 / B158）----------
-   三颗同款，一条规则管到底：**同步滚动**（贴在文档名后面）、**始终在最前**
-   （`#win-pin`，旧称「钉在顶部」）、**在线更新**（B107，动态创建于 updater.ts）。
+/* ---------- 标题栏的方形图标键（B152 / B154 / B157 / B158 / B198）----------
+   四颗同款，一条规则管到底：**同步滚动**（贴在文档名后面）、**始终在最前**
+   （`#win-pin`，旧称「钉在顶部」）、**在线更新**（B107，动态创建于 updater.ts）、
+   **左栏显隐**（B198，`.title-btn.layout-btn` = `#sidebar-toggle`）。
+   ⚠️ B198 那颗也是**双字形开关**（layout-sidebar-left / -off），状态全落在字形上，
+      与置顶键（pinned / pin）、同步键（link / unlink）是同一套路数。
    B157 用户原话：「始终在最前按钮样式和在线更新按钮修改成和同步滚动按钮样式一样」
    —— 拆成三条规则必然各自漂移（圆角 / hover 底色 / 尺寸只要有一处忘了同步，
    标题栏里就会出现「两种按钮」），所以这里只留一条。
@@ -532,13 +535,14 @@ html[data-window-kind="satellite"] .menu-bar {
         · 颜色照样变，只是落在**图标**上：常态 `--fg-muted` → hover `--fg`
           （按钮上那条 `color` 被 `.codicon` 继承下去）→ 开启态由
           `.title-btn.is-on .codicon` 取 `--accent`（那条特异度 0-2-0，盖得住 hover）。
-        · 尺寸从「46px 满高方键」改成 24×24 的方形图标键 —— 三键那边保持满高不变
+        · 尺寸从「46px 满高方键」改成 24×24 的方形图标键 —— 四键那边保持满高不变
           （B103 的口径），这里要的是「一枚方形图标」，不是「一颗占半截标题栏的按钮」。
    ⚠️ 本块必须留在共用声明与 `:hover` **之后**：下面这些选择器都是 0-1-0 或 0-2-0，
       同特异度下写在前头就会被 46px 与悬停底色压回去。 */
 .sync-btn,
 .title-btn.pin-btn,
-.title-btn.upd-btn {
+.title-btn.upd-btn,
+.title-btn.layout-btn {
   flex: 0 0 auto;
   width: 24px;
   height: 24px;
@@ -549,7 +553,8 @@ html[data-window-kind="satellite"] .menu-bar {
 
 .sync-btn:hover,
 .title-btn.pin-btn:hover,
-.title-btn.upd-btn:hover {
+.title-btn.upd-btn:hover,
+.title-btn.layout-btn:hover {
   background: transparent;
   color: var(--fg);
 }
@@ -2244,7 +2249,14 @@ button:focus-visible {
    ⚠️ 边框与圆角必须与 .layout-area **逐字同步**：两张卡片同处一行、同是卡片，
       半径或线色差一点就会看成两种东西 —— 改一处就要改另一处。
    ⚠️ 空隙由 .toc-resizer 自己撑开（preview.css），这里**不要**再给 #main-row 加 gap，
-      否则空隙会翻倍、且收起大纲时（分隔条隐藏）间距还会跳变。 */
+      否则空隙会翻倍、且收起大纲时（分隔条隐藏）间距还会跳变。
+
+   B199（用户裁决「左边栏展开区背景和其他区域一致」）：底色从 --bg-elevated 换成
+   **--bg = 与编辑区完全同色**。编辑区卡片（.layout-area）没有自己的背景，露的是
+   body 的 --bg，所以「同色」在这里是**同一颗变量**，不是「相近」—— 两张卡片于是只有
+   1px 边框 + 圆角分界，左栏不再是一块浮在窗口上的浅色面板。
+   ⚠️ 别顺手又改回 --bg-elevated：那会让展开区比编辑区亮一档（那档在 VS Code 是侧栏
+      #252526 vs 编辑器 #1E1E1E，方向对，但 LitePad 这里用户点名要「一致」）。 */
 .side-shell {
   flex: 0 0 auto;
   display: flex;
@@ -2252,11 +2264,23 @@ button:focus-visible {
   overflow: hidden;
   border: 1px solid var(--tab-bg-hover);
   border-radius: 8px;
-  background: var(--bg-elevated);
+  background: var(--bg);
 }
 
-/* 按钮列：常驻。底色比展开区暗一档（--bg-toolbar，与标题栏同源），
-   VS Code 的 activityBar 与 sideBar 也是这个明暗关系（不靠描边分界）。 */
+/* B198：整栏收起 —— 侧栏卡片**直接消失**（连带中间那道缝一起，见 preview.css 里
+   同名的 `#main-row.is-sidebar-off > #toc-resizer`）。
+   ⚠️ 与下面 `.toc-resizer.is-off` 那一条分清它俩的境界差：那条是「只折展开区」，
+      卡片缩成按钮列、缝留着当间距；这一条是「整个左栏不在了」—— 缝左边没有卡片了，
+      留着就是一道悬空的空隙，所以必须一起收。
+   ⚠️ 本条专属 `.side-shell`（它在 global.css）；缝那一条在 preview.css，两处是**同一件事
+      的两个半**，改类名要一起改。 */
+#main-row.is-sidebar-off > .side-shell {
+  display: none;
+}
+
+/* 按钮列：常驻，也**不再自己铺底色** —— B199 起整张左栏卡片（按钮列 + 展开区）与编辑区
+   同色，一块面的内部不靠描边分界。想调这一列的底色，改 .side-shell 那一处就够
+   （它会透过来）；单独给按钮列刷一档，就会又变回「浮起的浅色面板」。 */
 .side-bar {
   flex: 0 0 40px;
   display: flex;
@@ -2264,7 +2288,6 @@ button:focus-visible {
   align-items: center;
   gap: 4px;
   padding-top: 6px;
-  background: var(--bg-toolbar);
 }
 
 /* 与标题栏那批方形图标键（B157）同一观感：**不铺底**，常态/悬停/点亮全靠字形颜色。

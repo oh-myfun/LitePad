@@ -246,6 +246,9 @@ const tocResizer = el("toc-resizer");
 // B195：侧栏按钮列里的「大纲」键（常驻，收起展开区时列本身还在）与空隙里的三点把手。
 const sideOutline = el<HTMLButtonElement>("side-outline");
 const tocGrip = el("toc-grip");
+// B198：标题栏那颗整栏显隐键，与它收放的是 #main-row 这一整行（侧栏卡片 → 缝 → 编辑区）。
+const sidebarToggle = el<HTMLButtonElement>("sidebar-toggle");
+const mainRow = el("main-row");
 const sbMessage = el("sb-message");
 const sbPos = el("sb-pos");
 const sbCount = el("sb-count");
@@ -4885,6 +4888,50 @@ function setupSideBar(): void {
   sideOutline.innerHTML = CODICONS.outline;
   tocGrip.innerHTML = CODICONS.grip;
   sideOutline.addEventListener("click", () => toggleToc());
+  sidebarToggle.addEventListener("click", () => toggleSidebar());
+}
+
+/**
+ * B198：左栏**整栏**显隐（标题栏那颗 layout-sidebar-left / -off）。
+ *
+ * 与 `setTocOpen` 是**两层、互不撤销**：
+ *   · 这一处管「左栏在不在」—— 侧栏卡片、中间缝一起收光（用户点名「直接隐藏整个左边栏」）；
+ *   · `setTocOpen` 管「卡片里的展开区开没开」。
+ * 整栏收着时展开区的开合值照旧留在设置里，重新露出时回到用户上次的样子 —— 谁也不替
+ * 对方清状态。
+ *
+ * ⚠️ 与 VS Code 的差别只在**生效范围**：那边折的只是展开区、活动栏仍在（按钮一直显示），
+ *   本软件收的是整张卡片；但**这颗键本身**两边都一样始终显示 —— 它是左栏唯一的开关入口，
+ *   跟着一起收就没法再点回来了。
+ *
+ * `persist = false` 用于**启动时回放**（口径同 `setTocOpen`）。
+ */
+function applySidebarVisible(off: boolean, persist = true): void {
+  mainRow.classList.toggle("is-sidebar-off", off);
+  // 双字形：左栏在画 layout-sidebar-left，收起画 layout-sidebar-left-off —— 与置顶键
+  // （pinned / pin）、同步滚动键（link / unlink）同款，状态全落在字形上，不靠配色。
+  sidebarToggle.innerHTML = off ? CODICONS.layoutSidebarLeftOff : CODICONS.layoutSidebarLeft;
+  sidebarToggle.classList.toggle("is-on", !off);
+  sidebarToggle.setAttribute("aria-pressed", String(!off));
+  // 开与关两句都要改：tooltip / aria-label / 读屏器读的是同一个 label。
+  const label = off ? "显示左栏" : "隐藏左栏";
+  sidebarToggle.setAttribute("aria-label", label);
+  setTip(sidebarToggle, label);
+  if (!persist || !settings) return;
+  settings.sidebar_off = off;
+  void saveSettings(settings).catch(() => {
+    // 持久化失败不影响本次生效（与分隔条回写宽度同一口径）
+  });
+}
+
+/** 左栏当前是不是整栏收着（判据只有一处：#main-row 上的那个类）。 */
+function isSidebarOff(): boolean {
+  return mainRow.classList.contains("is-sidebar-off");
+}
+
+function toggleSidebar(): void {
+  // 当前「整栏收着」取反 =「接下来是否该收」。
+  applySidebarVisible(!isSidebarOff());
 }
 
 /**
@@ -4912,6 +4959,9 @@ function setTocOpen(open: boolean, persist = true): void {
 }
 
 function toggleToc(): void {
+  // B198：整栏收着时，「大纲」这条命令（菜单 / 快捷键入口）先把它整栏放出来 ——
+  // 展开区藏在 display:none 的容器里，光切开合等于点了没反应（死键）。
+  if (isSidebarOff()) applySidebarVisible(false);
   // 当前 hidden 取反即「接下来是否展开」
   setTocOpen(tocPanel.hidden);
 }
@@ -7440,6 +7490,9 @@ async function setupShell(): Promise<void> {
   setupTocResizer();
   // B194：回放上次的侧栏开合（`persist = false` —— 只是把盘上的值搬到 DOM）
   setTocOpen(settings?.toc_open ?? false, false);
+  // B198：回放整栏去留（同一口径，persist = false 免得把默认值固化成设置）。
+  //   排在 setupSideBar 之后：那颗键的字形由 applySidebarVisible 写，先装才装得上。
+  applySidebarVisible(settings?.sidebar_off ?? false, false);
   // B58：装配自绘提示层。必须**早于任何控件创建**地委托一次——
   // 它靠全局事件委托工作，控件只需带 data-tip，不需要逐个挂钩子。
   initTooltips();

@@ -95,6 +95,21 @@
              B157 起它的观感与同步滚动键同款：24×24 方形图标键、常态与悬停都不铺底，
              状态全落在图标颜色上（见 global.css 那一条共享规则）。 -->
         <div class="title-actions" data-tip-group="title">
+          <!-- B198：整栏显隐开关（标题栏那颗 layout-sidebar-left / -off）。
+               ⚠️ 它**始终显示**：它是左栏唯一的开关入口，自己跟着收就没法再点回来
+               （VS Code 那边折的只是展开区、活动栏仍在，按钮一样一直显示；本软件按
+               用户点名「直接隐藏整个左边栏」—— 收的是整张卡片 + 中间缝，不是这颗键）。
+               字形是**双态**（在 = layout-sidebar-left / 收 = layout-sidebar-left-off），
+               与置顶、同步滚动那两颗同款：状态全落在字形上，tooltip 与 aria-label 跟着换。
+               初值由 main.ts 的 applySidebarVisible 在启动回放时写入，HTML 里不写死字形。 -->
+          <button
+            id="sidebar-toggle"
+            class="title-btn layout-btn"
+            type="button"
+            data-tip="隐藏左栏"
+            aria-label="隐藏左栏"
+            aria-pressed="true"
+          ></button>
           <button
             id="win-pin"
             class="title-btn pin-btn"

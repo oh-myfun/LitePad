@@ -124,9 +124,14 @@ describe("大纲（TOC）静态契约", () => {
     // --panel-bg/--md-code-bg/--md-link/--md-muted 在该作用域全部未定义，
     // var() 永远落到浅色 fallback → 深色主题下大纲仍是浅色。
     const preview = readFileSync("src/styles/preview.css", "utf-8");
-    const panel = preview.match(/\/\* 大纲 TOC[^*]*\*\/\s*\.toc-panel\s*\{[^}]*\}/)?.[0] ?? "";
+    // ⚠️ 注释里现在出现了 `**` 强调符（「面板**不再自带底色**」）—— 用 `[^*]*\*\/` 匹配
+    //    会在强调符处截断 ⇒ 永远找不着规则块（假红）。非贪婪跨行匹配到第一个 `*/` 为止。
+    const panel = preview.match(/\/\* 大纲 TOC[\s\S]*?\*\/\s*\.toc-panel\s*\{[^}]*\}/)?.[0] ?? "";
     expect(panel, "应有 .toc-panel 规则块").toBeTruthy();
-    expect(panel, "TOC 面板背景必须用全局变量 --bg-elevated").toContain("var(--bg-elevated");
+    // B199（用户裁决「左边栏展开区背景和其他区域一致」）：面板**不再自带底色**，
+    // 透明露出父卡片 .side-shell 的 --bg（= 编辑区同色）。原来写 var(--bg-elevated)
+    // 会让展开区比编辑区亮一档，看着像浮在窗口上的另一块东西。
+    expect(panel, "TOC 面板背景透明（露出父卡片的 --bg）").toMatch(/background:\s*transparent/);
     expect(panel, "不得再引用未定义的 --panel-bg").not.toContain("--panel-bg");
     const hover = preview.match(/\.toc-item:hover\s*\{[^}]*\}/)?.[0] ?? "";
     expect(hover, "TOC hover 必须用 --bg-hover").toContain("var(--bg-hover");

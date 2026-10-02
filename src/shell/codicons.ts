@@ -79,6 +79,14 @@ const IDS = {
   //   抹杠的规则在 global.css（`.codicon-unlink::after`），这里只负责挂上修饰类。
   link: "link",
   unlink: "link codicon-unlink",
+  // —— 标题栏左栏显隐开关（B198）——
+  // 与置顶 / 同步滚动那两颗同款**双字形开关**：左栏在 = `layout-sidebar-left`（画的是
+  // 「左栏已经展开」），左栏收 = `layout-sidebar-left-off`（画的是「左栏不在了」）。
+  // ⚠️ 与 VS Code 的差别在**生效范围**：那边只折展开区、活动栏仍留 ⇒ 按钮一直显示；
+  //   本软件按用户点名「直接隐藏整个左边栏」（按钮列 + 展开区 + 中间缝一起收光）。
+  //   两边都不靠 `.is-on` 配色表达状态，全落在字形上，tooltip / aria-label 跟着换。
+  layoutSidebarLeft: "layout-sidebar-left",
+  layoutSidebarLeftOff: "layout-sidebar-left-off",
   // —— 侧栏（B195）——
   // ① 大纲：用户裁决取 `symbol-class`（那对花括号 `{ }`，即 VS Code outline 的符号图标）。
   //    ⚠️ 别改回 `list-tree`：那是层级树，管的是「大纲树长什么样」，而这一档要表达的
