@@ -31,17 +31,28 @@ describe("滚动条：全应用统一且随深浅色联动", () => {
     expect(lightThumb).toBeTruthy();
     expect(darkThumb, "深浅色的滚动条滑块颜色必须不同").not.toBe(lightThumb);
 
-    // 全局生效：标准属性 + Chromium 的 webkit 伪元素双写
-    expect(g, "必须有全局 scrollbar-width: thin").toMatch(/\*\s*\{[^}]*scrollbar-width:\s*thin/);
-    expect(g, "scrollbar-color 必须走变量（不能写死颜色）").toContain(
-      "scrollbar-color: var(--sb-thumb) transparent",
-    );
+    // 全局生效：**只走 Chromium 的 webkit 伪元素这一条路**（B200）
+    // —— 双写 scrollbar-width / scrollbar-color 时渲染路径由 Chromium 挑，
+    //    挑到系统那一路伪元素就管不着 ⇒ 曾经冒出 Windows 的三角箭头。
+    //    本软件只跑 Windows + WebView2，标准属性本就没收益，不再双写。
+    const bar = g.match(/::-webkit-scrollbar\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(bar, "应有 ::-webkit-scrollbar 规则").toBeTruthy();
+    expect(bar, "滚动条宽度必须显式声明（伪元素路径唯一的证据）").toMatch(/width:\s*\d+px/);
+    expect(g, "不得双写标准属性 scrollbar-width（会抢渲染路径）").not.toMatch(/scrollbar-width:/);
+    expect(g, "不得双写标准属性 scrollbar-color（会抢渲染路径）").not.toMatch(/scrollbar-color:/);
     const thumb = g.match(/::-webkit-scrollbar-thumb\s*\{[^}]*\}/)?.[0] ?? "";
     expect(thumb, "应有 ::-webkit-scrollbar-thumb 规则").toBeTruthy();
     expect(thumb, "滑块颜色必须引用 --sb-thumb 变量").toContain("var(--sb-thumb");
     expect(thumb, "滑块不得写死十六进制颜色").not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
-    expect(g, "必须去掉滚动条两端箭头按钮").toMatch(
-      /::-webkit-scrollbar-button\s*\{[^}]*display:\s*none/,
-    );
+    // 箭头：裸的那一条 + 按方向细分的 increment / decrement，三条都得 hide
+    for (const [name, sel] of [
+      ["裸 button", "::-webkit-scrollbar-button\\s*\\{"],
+      ["increment", "::-webkit-scrollbar-button:increment\\s*\\{"],
+      ["decrement", "::-webkit-scrollbar-button:decrement\\s*\\{"],
+    ] as const) {
+      expect(g, `必须隐藏滚动条两端箭头按钮（${name}）`).toMatch(
+        new RegExp(`${sel}[^}]*display:\\s*none`),
+      );
+    }
   });
 });

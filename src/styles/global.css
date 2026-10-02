@@ -209,18 +209,21 @@
 }
 
 /* ---------- 滚动条：全应用统一 + 随深浅色联动 ----------
-   WebView2 默认滚动条是 Windows 系统样式，深色界面里会出现一条浅色亮条。
-   这里统一成细窄、圆角、无箭头的 overlapped 风格：轨道透明（露出区域背景），
-   thumb 走 --sb-* 变量随主题切换。标准属性（scrollbar-width/color）与
-   Chromium 的 ::-webkit-scrollbar 双写，任一生效都能保持一致的观感。 */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--sb-thumb) transparent;
-}
-
+   WebView2 默认滚动条是 Windows 系统样式，深色界面里会出现一条浅色亮条；
+   Windows 10 那档还带**上下两端的三角形箭头**（VS Code 一律没有 —— 它自绘
+   滚动条，压根没有 button 这回事）。
+   统一成细窄、圆角、**无箭头** overlapped 风格：轨道透明（露出区域背景），
+   thumb 走 --sb-* 变量随主题切换。
+   ⚠️ 这里**只留 Chromium 伪元素这一条路，不再双写标准属性**
+   （`scrollbar-width` / `scrollbar-color` 那两条已删）：两边同时声明时，
+   滚动条的渲染路径由 Chromium 挑，挑到系统那一路的话按钮伪元素就管不着了
+   —— 两条路各写一半，等于留了个「系统滚动条 + 三角箭头」的口子。
+   标准属性本来是给 Firefox 的，本软件只跑 Windows + WebView2（Chromium），
+   留着没有收益。 */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
+  background: transparent;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -228,8 +231,17 @@
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
-/* 去掉两端的箭头/按钮，只留滑块 */
+/* 去掉两端的箭头/按钮，只留滑块（VS Code 同款：一条滚动条上只有一条滑块）。
+   ⚠️ 要三条写全：Chromium 除了裸的 `::-webkit-scrollbar-button`，还按「方向」
+   细分成 `:increment` / `:decrement` 两个伪元素，只 hide 裸的那一条的话，
+   上下两个三角照样画得出来（同一个 display 值，三条共用一段注释说明）。 */
 ::-webkit-scrollbar-button {
+  display: none;
+}
+::-webkit-scrollbar-button:increment {
+  display: none;
+}
+::-webkit-scrollbar-button:decrement {
   display: none;
 }
 ::-webkit-scrollbar-thumb {
