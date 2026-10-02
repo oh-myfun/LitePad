@@ -798,7 +798,16 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     );
     // 命中区 = 元素本体（用户裁决「缝 4px + 抓取正好 4px」）：B195 那个向两侧各溢出
     // 3px 的 ::before 命中区已删 —— 可抓范围做到 10px 比 VS Code 的 sash 宽了一倍。
-    expect(previewCss, "侧栏抓取区不得外溢（= 缝本身 4px）").not.toMatch(/\.toc-resizer::before/);
+    // ⚠️ B201：::before 以「hover 才亮的发丝线（pointer-events: none）」的身份回来了，
+    //    所以它**可以**存在，判据是「不许外溢」+「必须不吃指针」。
+    const seam = previewCss.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(seam, "seam 的 ::before 应存在（B201）").toBeTruthy();
+    expect(seam, "seam 只是视觉反馈，不吃指针（命中区 = 本体 4px）").toContain(
+      "pointer-events: none",
+    );
+    expect(previewCss, "侧栏抓取区不得外溢（= 缝本身 4px）").not.toMatch(
+      /\.toc-resizer::before\s*\{[^}]*(?:\s|;)\s*left:\s*-|right:\s*-/,
+    );
     // 三点把手：静息淡（--fg-muted）→ 悬停/拖拽转亮（--fg）
     // ⚠️ `\.toc-grip` 会先撞上前面的 `.toc-resizer.is-off .toc-grip`（那条只有
     //    visibility），所以这里用 `\n` 锚到行首、只取**基准**那条规则。
@@ -936,7 +945,13 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     expect(css, "横线命中区 7px 高").toMatch(/\.layout-sep-v::before\s*\{[^}]*height:\s*7px/);
     // B195 / B196：侧栏那一档不再是「细线 + 命中区」，而是 4px 空隙 + 三点把手，
     // 抓取区就是这条缝本身（3 颗点把手已经把「这里能拖」标出来了，不需要外溢命中区）。
-    expect(previewCss, "侧栏抓取区不外溢（抓取 = 缝 = 4px）").not.toMatch(/\.toc-resizer::before/);
+    // B201：缝里那条发丝线改成 hover 才亮（平时无线），::before 只当视觉反馈。
+    expect(previewCss, "侧栏抓取区不外溢（抓取 = 缝 = 4px）").not.toMatch(
+      /\.toc-resizer::before\s*\{[^}]*(?:\s|;)\s*left:\s*-|right:\s*-/,
+    );
+    expect(previewCss, "seam 平时不常驻（B201：对齐 VS Code sash 默认态）").toMatch(
+      /\.toc-resizer::before\s*\{[^}]*opacity:\s*0/,
+    );
     // 视觉线：静息 1px（VS Code editorGroup.border），激活 4px（--vscode-sash-size）
     expect(css, "静息线 1px").toMatch(/\.layout-sep-h::after\s*\{[^}]*width:\s*1px/);
     expect(css, "静息线 1px（横线）").toMatch(/\.layout-sep-v::after\s*\{[^}]*height:\s*1px/);

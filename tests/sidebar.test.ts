@@ -21,6 +21,64 @@ function declOf(cssText: string, selector: string, prop: string): string {
   return block.match(new RegExp(`${prop}:\\s*[^;]*`))?.[0] ?? "";
 }
 
+describe("B201 左右两张卡片的面对面边让位：缝里平时不再有分割线", () => {
+  it("对标 VS Code seam 口径：朝缝的那两条边各让一条边框（左卡让右、右卡让左）", () => {
+    // VS Code floatingPanels.css：面对面的边 *gives up its border*，
+    // 由中间那条 rail 只画一条 single hairline seam；compact 档干脆全透明。
+    // LitePad 走「平时就是纯空隙」那一档 ⇒ 两边各让一条，缝里不常驻任何线。
+    expect(
+      declOf(css, ".side-shell", "border-right-color"),
+      "左栏卡片（.side-shell）朝缝的右边框必须让位",
+    ).toContain("transparent");
+    expect(
+      declOf(css, ".layout-area", "border-left-color"),
+      "编辑区卡片（.layout-area）朝缝的左边框必须让位",
+    ).toContain("transparent");
+    // 卡片轮廓本身还在（上下/外缘那几边照旧 1px），别让位让没了
+    expect(declOf(css, ".side-shell", "border")).toBe(declOf(css, ".layout-area", "border"));
+    expect(declOf(css, ".side-shell", "border-radius")).toBe(
+      declOf(css, ".layout-area", "border-radius"),
+    );
+  });
+
+  it("缝里的发丝线平时 opacity: 0，只有 hover / 拖拽才亮（对齐 VS Code sash hover）", () => {
+    const seam = preview.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(seam, "应有 .toc-resizer::before 这条 seam 规则").toBeTruthy();
+    expect(seam, "平时必须看不见（不常驻分割线）").toMatch(/opacity:\s*0/);
+    // 纯视觉反馈：不能借伪元素把 4px 的热区撑开（B196：命中区就是本体那 4px）
+    expect(seam, "seam 不吃指针，别把它变成热区").toContain("pointer-events: none");
+    const lit = preview.match(/\.toc-resizer:hover::before[\s\S]*?\{[^}]*\}/)?.[0] ?? "";
+    expect(lit, "hover 时要亮").toBeTruthy();
+    expect(lit, "hover 亮的是不透明").toMatch(/opacity:\s*1/);
+    expect(preview, "拖拽中也要亮（body.layout-dragging 那条）").toMatch(
+      /body\.layout-dragging\s+\.toc-resizer::before\s*\{[\s\S]*?opacity:\s*1/,
+    );
+  });
+
+  it("反向验证：把左栏卡片的朝缝边框画回来（退回两条平行线）必须被咬住", () => {
+    const BAD = css.replace(
+      /(\.side-shell\s*\{[^}]*)border-right-color:\s*transparent;/,
+      "$1border-right-color: var(--tab-bg-hover);",
+    );
+    expect(BAD, "替身必须真的改过边框色").not.toBe(css);
+    expect(() => {
+      expect(declOf(BAD, ".side-shell", "border-right-color"), "两边的让位必须成对").toContain(
+        "transparent",
+      );
+    }).toThrow();
+  });
+
+  it("反向验证：发丝线改成常驻（平时 opacity: 1）必须被咬住", () => {
+    const BAD = preview.replace(/(\.toc-resizer::before\s*\{[^}]*)opacity:\s*0;/, "$1opacity: 1;");
+    expect(BAD, "替身必须真的改过 opacity").not.toBe(preview);
+    expect(() => {
+      expect(BAD.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0], "常驻分割线必须被抓到").toMatch(
+        /opacity:\s*0/,
+      );
+    }).toThrow();
+  });
+});
+
 describe("B195 侧栏结构：按钮列 → 展开区 → 空隙 → 编辑区", () => {
   it("index.html 里四段的先后顺序与嵌套关系正确", () => {
     const at = (id: string) => html.indexOf(`id="${id}"`);
@@ -197,8 +255,17 @@ describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘�
     );
     // 用户裁决「缝 4px + 抓取正好 4px」：命中区就是元素本体，不许再向两侧溢出。
     // B195 那版靠 ::before 左右各撑 3px 把可抓范围做到 10px —— 比 VS Code 宽一倍。
-    expect(preview, "抓取区不得外溢（= 缝本身 4px，对齐 VS Code sash）").not.toMatch(
-      /\.toc-resizer::before/,
+    // ⚠️ B201：::before 又回来了（缝里那条 hover 才亮的发丝线），但**性质变了** ——
+    //    它带 `pointer-events: none`，纯视觉反馈，命中区仍是本体那 4px。所以判据不再是
+    //    「不许出现 ::before」（那会把 hover 反馈一起禁掉，B201 就做不出来了），
+    //    而是「不许出现**带外溢定位**的 ::before」+「::before 必须不吃指针」。
+    const seamRule = preview.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(seamRule, "seam 的 ::before 必须存在（B201 的 hover 反馈）").toBeTruthy();
+    expect(seamRule, "seam 必须是纯视觉反馈：不吃指针（命中区仍是本体 4px）").toContain(
+      "pointer-events: none",
+    );
+    expect(preview, "不得再出现外溢式抓取热区（左右各撑 3px 那版，比 VS Code 宽一倍）").not.toMatch(
+      /\.toc-resizer::before\s*\{[^}]*(?:\s|;)\s*left:\s*-|right:\s*-/,
     );
   });
 

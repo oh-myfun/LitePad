@@ -2277,6 +2277,9 @@ button:focus-visible {
   border: 1px solid var(--tab-bg-hover);
   border-radius: 8px;
   background: var(--bg);
+  /* B201（对标 VS Code floatingPanels.css 的 seam 口径）：这张卡是**左**边那张，
+     朝缝的那条边（右）让位 —— 见 .layout-area 内的同款说明。 */
+  border-right-color: transparent;
 }
 
 /* B198：整栏收起 —— 侧栏卡片**直接消失**（连带中间那道缝一起，见 preview.css 里
@@ -2337,9 +2340,20 @@ button:focus-visible {
      卡片从每个分屏面板（B122）上移到全部分屏共用的容器上；分屏边界落在
      卡片**内部**，边界处自然没有任何圆角（用户点名）。实拍用户 VS Code：
      卡片边框 1px #2a2b2c（= 非活动标签 hover 色，用户 B122 点名的判据不变）、
-     外圆角约 6px、状态栏在卡片外面。overflow: hidden 原本就有，正好裁圆角。 */
+     外圆角约 6px、状态栏在卡片外面。overflow: hidden 原本就有，正好裁圆角。
+
+     B201：这张卡是**右**边那张，朝缝的那条边（左）让位。原先左右两张卡片面对面
+     各画一条 1px 边框 ⇒ 4px 缝里是**两条平行竖线**，看着就是一道分割线（用户反馈）。
+     VS Code 的规矩正好相反（floatingPanels.css 原文：面对面的边
+     *gives up its border* so the rail's own facing border is the **single hairline seam**，
+     compact 档干脆 `border-color: transparent`）：**面对面的边不各画一条**，
+     中间那条缝平时就是纯空隙，能拖这件事交给三点把手说，只在指针落到窄带上
+     才亮一条发丝线（对齐 VS Code sash 的 hover 反馈，见 preview.css 的 .toc-resizer）。
+     ⚠️ 让位的是**朝缝那一侧**：左栏卡（.side-shell）让 right、这张让 left，
+     两处是对称的一半，改的时候别对调、也别只改一处（漏一处就又变回两条线）。 */
   border: 1px solid var(--tab-bg-hover);
   border-radius: 8px;
+  border-left-color: transparent;
 }
 
 .layout-split {

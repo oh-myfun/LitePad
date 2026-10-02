@@ -251,12 +251,44 @@
   flex: 0 0 var(--card-gap);
   /* B61：竖线光标取 VS Code **非 mac** 档的 ew-resize（col-resize 是 mac 档，
      Windows 上会渲染成「箭头中间多一根竖杠」）。
-     ⚠️ 不再需要 position / z-index：那两条只为锚定上面那个外溢的伪元素，
-        伪元素删掉后它们就是死声明，留着反而误导后来人。 */
+     ⚠️ B61 那句「不再需要 position」到此为止：B201 给这条窄带补回了 seam 反馈的
+        ::before，它要以本元素为定位基准 —— 相对定位又得回来（这次是给它用，
+        不是给 B61 那个外溢的抓取热区）。 */
   cursor: ew-resize;
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
+}
+
+/* B201：缝里的分割线**平时不画** —— 对齐 VS Code compact 档
+   （`--modern-ui-floating-card-border-color: transparent`）与 sash 的默认态：
+   两张卡片面对面就是一条**纯空隙**，边界不靠线、靠留白。
+   ⚠️ 现在两张卡已经各让出一条边框（.side-shell 的 border-right / .layout-area 的
+      border-left 都改 transparent，见 global.css），这里再不画线 ⇒ 左栏与编辑区
+      之间彻底没有分割线，只剩 4px 缝 + 缝中央那颗三点把手（B195）标「能拖」。
+   只在指针落到这条窄带上 / 正在拖的时候亮一条 1px 发丝线 —— 这就是 VS Code 里
+   sash 的 hover 反馈（sash.css 用 hover 状态换颜色，不是常驻线）。
+   用 ::before 画、且 **pointer-events: none**：它纯是视觉反馈，命中区仍是本元素
+   本体那 4px（B196：不许向两侧溢出，缝是 4px 就是 4px，别借伪元素撑热区）。 */
+.toc-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--sep-line);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition, 0.12s);
+}
+
+/* 亮一条（hover 拖拽反馈；is-off 那条已经 pointer-events: none，收起态自然不亮） */
+.toc-resizer:hover::before,
+body.layout-dragging .toc-resizer::before {
+  opacity: 1;
 }
 
 /* 收起展开区：**空隙留着**（两张卡片的间距不该跟着开合跳变），
