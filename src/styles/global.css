@@ -35,6 +35,10 @@
   --bg-elevated: #26292d;
   --bg-hover: #2f3338;
   --border: #34383d;
+  /* B202：左栏按钮（.side-btn）的**点亮**与**按下**两档底色（悬停直接用上面的
+     --bg-hover）。深浅各定义一次，规则里只写变量名 —— 主题切换时这一处就够。 */
+  --side-btn-on: color-mix(in srgb, var(--accent) 18%, transparent);
+  --side-btn-active: #3a3f45;
   --fg: #d8dbe0;
   --fg-muted: #8b9299;
   --accent: #4c9ffe;
@@ -143,6 +147,11 @@
   --bg-elevated: #ffffff;
   --bg-hover: #e6e8eb;
   --border: #dcdfe3;
+  /* B202：左栏按钮（.side-btn）悬停 / 按下 / 点亮三档 —— 见那条规则里的同款说明。
+     分成两颗变量而不是把色写死在规则里：深浅两档要各自跟着底色调，
+     写死在规则里就要改两处，改漏一处就又变回「同一颗按钮两种底色」。 */
+  --side-btn-on: color-mix(in srgb, var(--accent) 14%, transparent);
+  --side-btn-active: #d5d9de;
   --fg: #24292f;
   --fg-muted: #6a737d;
   --accent: #0969da;
@@ -2343,13 +2352,35 @@ button:focus-visible {
   color: var(--fg-muted);
 }
 
-/* 悬停 =「这颗可点」，点亮（展开区开着）=「当前视图」，两者都只转亮字形颜色 ——
-   VS Code 的活动栏就是这个口径（不铺底、不换色相；视图开着本身已经是状态反馈）。
-   一条规则管到底（同款控件一条规则），后续侧栏再加按钮只需往这里加选择器。 */
-.side-btn:hover,
-.side-btn.is-on {
-  background: transparent;
+/* B202（用户点名「左栏按钮 hover、按下时也应该有不同背景色，参考 VS Code」）：
+   三档反馈，对齐 VS Code activity bar 那套（hoverBackground → 按下更沉一档 /
+   打开这个视图时 activeBackground 给一档淡 accent）：
+     · 常态 = 不铺底（点着的按钮不该在卡片面上多出一块方块）；
+     · **悬停** =「这颗可点」：淡底 --bg-hover + 字形转 --fg；
+     · **按下**（`:active`）= 更沉一档 --side-btn-active —— VS Code 的列表项 / 活动栏
+       按下也是比悬停更实的一档，不然按住鼠标毫无反馈，看着像按不动；
+     · **点亮**（展开区开着 = 当前视图）= 一档淡 accent 底 + accent 字形
+       （视图开着本身已经是最强的状态反馈，强调色比灰色更指向「这一项在用」）。
+   一条规则管到底（同款控件一条规则），后续侧栏再加按钮只需往这里加选择器。
+
+   ⚠️ **顺序 = hover → is-on → active**（同特异度后写者胜），两处都不能调：
+      · is-on 压过 hover —— 点亮时（鼠标恰好停在这颗上）不该被灰色悬停底盖掉 accent；
+      · active 压过前两者 —— 按下这一瞬**总是**该更沉，不管这颗点没点亮。
+   ⚠️ 这不是推翻 B195「按钮列不铺底」：B195 说的是**整列**（.side-bar）不自己刷底色、
+      卡片是一块面；这里说的是**可点控件**该有的反馈。标题栏那批方形键
+      （.title-btn.pin-btn 等）刻意不铺底是另一码事（B157 用户点名），两者别合并。 */
+.side-btn:hover {
+  background: var(--bg-hover);
   color: var(--fg);
+}
+
+.side-btn.is-on {
+  background: var(--side-btn-on);
+  color: var(--accent);
+}
+
+.side-btn:active {
+  background: var(--side-btn-active);
 }
 
 .layout-area {

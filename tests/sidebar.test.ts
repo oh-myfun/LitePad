@@ -6,7 +6,7 @@
 // 免得契约只是把现状抄一遍（假绿）。
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { cssDecls, ruleBlock } from "./static";
+import { cssDecls, ruleBlock, themeBlock } from "./static";
 
 // CRLF 归一：工作副本被翻成 CRLF 时，靠 `\n` 锚行的判据会一起失真（见 MEMORY）。
 const html = readFileSync("index.html", "utf-8").replace(/\r\n/g, "\n");
@@ -193,7 +193,7 @@ describe("B195 侧栏卡片样式", () => {
     }
   });
 
-  it("按钮列定宽常驻；键不铺底，悬停/点亮只转亮字形（与标题栏图标键同款观感）", () => {
+  it("按钮列定宽常驻；常态不铺底，悬停/按下/点亮三档各有一色（B202）", () => {
     const bar = cssDecls(ruleBlock(css, ".side-bar"));
     expect(bar, "按钮列定宽（不随展开区宽度变化）").toMatch(/flex:\s*0 0 \d+px/);
     // B199：按钮列**不再自己刷一档底色**（原先 --bg-toolbar，比展开区暗一档）。
@@ -203,10 +203,62 @@ describe("B195 侧栏卡片样式", () => {
     const btn = cssDecls(ruleBlock(css, ".side-btn"));
     expect(btn, "常态不铺底").toContain("background: transparent");
     expect(btn, "常态字形取 muted").toContain("color: var(--fg-muted)");
-    const hl = css.match(/\.side-btn:hover,\s*\.side-btn\.is-on\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(hl, "悬停/点亮共用一条规则（同款控件一条规则）").toBeTruthy();
-    expect(hl, "悬停/点亮也不铺底").toContain("background: transparent");
-    expect(hl, "悬停/点亮只转亮字形").toContain("color: var(--fg)");
+
+    // 三档反馈：悬停淡底 / 按下更沉 / 点亮 accent —— 缺一档就成了「按下去没反应」
+    const hover = css.match(/\.side-btn:hover\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(hover, "悬停要铺底 =「这颗可点」").toMatch(/background:\s*var\(--bg-hover\)/);
+    expect(hover, "悬停同时把字形转亮").toMatch(/color:\s*var\(--fg\)/);
+    const on = css.match(/\.side-btn\.is-on\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(on, "点亮 = 当前视图，给一档 accent 底").toMatch(/background:\s*var\(--side-btn-on\)/);
+    expect(on, "点亮时字形走 accent（比悬停那档纯白更有指向）").toMatch(/color:\s*var\(--accent\)/);
+    expect(css, "按下要更沉一档（VS Code 列表项 / 活动栏同款）").toMatch(
+      /\.side-btn:active\s*\{[^}]*background:\s*var\(--side-btn-active\)/,
+    );
+    // ⚠️ 顺序就是语义（同特异度后写者胜）：is-on 压住 hover、active 压住前两者。
+    expect(css.indexOf(".side-btn.is-on {"), "is-on 必须排在 hover 之后").toBeGreaterThan(
+      css.indexOf(".side-btn:hover {"),
+    );
+    expect(css.indexOf(".side-btn:active {"), "active 必须压过 is-on").toBeGreaterThan(
+      css.indexOf(".side-btn.is-on {"),
+    );
+
+    // 两颗新变量深浅各定义一次，且取值真的不同（别复制粘贴漏改）
+    const dark = themeBlock(css, "dark");
+    const light = themeBlock(css, "light");
+    const val = (t: string, name: string) =>
+      t.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1]?.trim() ?? "";
+    expect(dark, "深色档要给 --side-btn-on / --side-btn-active 各一档").toMatch(/--side-btn-on:/);
+    expect(dark, "深色档的按下色").toMatch(/--side-btn-active:/);
+    for (const name of ["--side-btn-on", "--side-btn-active"]) {
+      expect(val(light, name), `浅色档也要定义 ${name}`).not.toBe("");
+      expect(val(dark, name), `${name} 深浅取值必须不同`).not.toBe(val(light, name));
+    }
+  });
+
+  it("反向验证：按钮键退回「只转亮字形」（悬停/按下没底色）必须被咬住", () => {
+    const BAD = css.replace(
+      /(\.side-btn:hover\s*\{[^}]*)background:\s*var\(--bg-hover\);/,
+      "$1background: transparent;",
+    );
+    expect(BAD, "替身必须真的摘掉悬停底色").not.toBe(css);
+    expect(() => {
+      expect(BAD.match(/\.side-btn:hover\s*\{[^}]*\}/)?.[0], "悬停底色必须还在").toMatch(
+        /background:\s*var\(--bg-hover\)/,
+      );
+    }).toThrow();
+  });
+
+  it("反向验证：按下那一档退掉（按住没反馈）必须被咬住", () => {
+    const BAD = css.replace(
+      /(\.side-btn:active\s*\{[^}]*)background:\s*var\(--side-btn-active\);/,
+      "$1background: transparent;",
+    );
+    expect(BAD, "替身必须真的退掉按下色").not.toBe(css);
+    expect(() => {
+      expect(BAD.match(/\.side-btn:active\s*\{[^}]*\}/)?.[0], "按下那一档必须还在").toMatch(
+        /background:\s*var\(--side-btn-active\)/,
+      );
+    }).toThrow();
   });
 
   it("反向验证：侧栏卡片圆角与编辑区不同步必须被咬住", () => {
@@ -222,14 +274,16 @@ describe("B195 侧栏卡片样式", () => {
     }).toThrow();
   });
 
-  it("反向验证：按钮键铺回底色（退回通用按钮观感）必须被咬住", () => {
+  it("反向验证：常态退回铺底（按钮一直亮着块）必须被咬住", () => {
     const BAD = css.replace(
       /(\.side-btn\s*\{[^}]*)background:\s*transparent;/,
       "$1background: var(--bg-hover);",
     );
     expect(BAD, "替身必须真的铺上底色").not.toBe(css);
     expect(() => {
-      expect(cssDecls(ruleBlock(BAD, ".side-btn")), "替身的底色必须被抓到").toContain(
+      // 咬法：替身已经违反「常态不铺底」，所以**正向**断言在 BAD 上必须落空。
+      // ⚠️ 别写成 `not.toContain(...)` —— 那样替身后刚好不命中，反而不抛 = 假绿。
+      expect(cssDecls(ruleBlock(BAD, ".side-btn")), "常态不铺底（替身已违反）").toContain(
         "background: transparent",
       );
     }).toThrow();
