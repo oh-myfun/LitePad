@@ -11,6 +11,7 @@ import {
   TOC_HIDE_OVERDRAG_PX,
   TOC_MAX_WIDTH,
   TOC_MIN_WIDTH,
+  TOC_RESTORE_OVERDRAG_PX,
 } from "../src/markdown/toc";
 
 function mount(initial = TOC_DEFAULT_WIDTH) {
@@ -164,23 +165,33 @@ describe("B207 拖到最小再往左拖：收起 / 拉回展开区", () => {
     expect(changes, "松手照旧回写当前宽度").toEqual([TOC_DEFAULT_WIDTH]);
   });
 
-  it("收起态往右拖：立刻展开，且宽度跟着指针走（不是弹回上次那个数）", () => {
+  it("收起态往右拖：越过阈值才展开，宽度按**超出阈值那一段**起算", () => {
     const { panel, resizer, opened, changes } = mountOpen(TOC_MIN_WIDTH);
-    drag(resizer, 200, 240); // 往右挪 40px
+    // B209：越过阈值那一刻展开区是最小宽，再往右拖多少就加多少 —— 不是「弹回上次那个数」
+    drag(resizer, 200, 200 + TOC_RESTORE_OVERDRAG_PX + 40);
     expect(opened, "往右拖必须把展开区放回来").toEqual([true]);
-    expect(panel.style.width, "缺的那一块由这次拖拽补上（160 + 40）").toBe("200px");
-    expect(changes[changes.length - 1], "松手回写摊开后的宽度").toBe(200);
+    expect(panel.style.width, "展开后 = 最小宽 + 超出阈值的那一段").toBe(`${TOC_MIN_WIDTH + 40}px`);
+    expect(changes[changes.length - 1], "松手回写摊开后的宽度").toBe(TOC_MIN_WIDTH + 40);
+  });
+
+  it("B209：收起态往右拖**没过阈值**不展开（旧行为 dx>0 就弹，太容易误触）", () => {
+    const { panel, resizer, opened } = mountOpen(TOC_MIN_WIDTH);
+    drag(resizer, 200, 200 + TOC_RESTORE_OVERDRAG_PX - 1);
+    expect(opened, "差一像素也不该展开").toEqual([]);
+    expect(panel.style.width, "面板宽度不动").toBe(`${TOC_MIN_WIDTH}px`);
   });
 
   it("收起态按下先往左（无反应）再往右（展开），左拖不会被当成收起", () => {
     const { panel, resizer, opened, changes } = mountOpen(TOC_MIN_WIDTH);
     mouse(resizer, "mousedown", 200);
     mouse(document, "mousemove", 160); // 往左：收起态那一边不动
-    mouse(document, "mousemove", 220); // 往右：这才展开
-    mouse(document, "mouseup", 220);
+    mouse(document, "mousemove", 200 + TOC_RESTORE_OVERDRAG_PX + 20); // 往右：过阈值才展开
+    mouse(document, "mouseup", 200 + TOC_RESTORE_OVERDRAG_PX + 20);
     expect(opened, "只有往右那一下算展开").toEqual([true]);
-    expect(panel.style.width, "宽度按按下那一点算起的净位移").toBe("180px");
-    expect(changes[changes.length - 1], "回写摊开后的宽度").toBe(180);
+    expect(panel.style.width, "宽度按超出阈值那一段算，不是按下起的总位移").toBe(
+      `${TOC_MIN_WIDTH + 20}px`,
+    );
+    expect(changes[changes.length - 1], "回写摊开后的宽度").toBe(TOC_MIN_WIDTH + 20);
   });
 
   it("展开态拖到最小：还没过阈值**就不收**（「就想拖窄一点」不能被误判成收起）", () => {

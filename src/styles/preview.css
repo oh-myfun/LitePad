@@ -273,6 +273,16 @@
       拖拽用的是 document 级 mousemove（attachTocResizer），指针移出这条窄带也不丢。 */
 .toc-resizer {
   flex: 0 0 var(--card-gap);
+  /* ⚠️⚠️ `min-width: 0` **不能省**（B209 真机实测）：本元素是 `#main-row` 的 flex 子项，
+     flex 子项的 `min-width` 初始值是 `auto`，也就是 automatic minimum size —— 会被内容的
+     min-content 宽度**顶开**。里面那颗 16px 字形的三点把手 ⇒ min-content ≈ 16px ⇒
+     上面那条 `flex-basis: 4px` 根本挡不住（basis 只参与分配，撑不住下限），
+     **实测缝被撑到 16px**（用户原话「那条缝绝对不止 4px」）。
+     ⇒ 只有显式写 `min-width: 0` 才能把下限解除，缝才真的是 `--card-gap` 那一档。
+     ⚠️ jsdom 不做布局 ⇒ 这类错误**测不出来**，只能靠静态契约 + 真机/headless 量。
+        取证方法（B209 用过）：headless Edge 渲染复刻 DOM + 项目 CSS，把
+        `getBoundingClientRect().width` 塞进 `document.title` 再 `--dump-dom` 抓出来。 */
+  min-width: 0;
   /* B61：竖线光标取 VS Code **非 mac** 档的 ew-resize（col-resize 是 mac 档，
      Windows 上会渲染成「箭头中间多一根竖杠」）。
      ⚠️ B61 那句「不再需要 position」到此为止：B201 给这条窄带补回了 seam 反馈的
@@ -518,6 +528,15 @@ body.layout-dragging .toc-grip {
   color: var(--fg-muted, #656d76);
   transition: color 0.1s ease-out;
 }
+/* B209（用户点名「同一层级最好左侧能对齐」）：**叶子也要占这一格**。
+   只给分支挂扭角列 ⇒ 同层里「有子的」被顶右 14px、「叶子」贴左，一层的标题看着错开。
+   与 VS Code 的 tree 同口径：每行都有 twisty 那一列，叶子只是那一格里**没有字形**。
+   ⚠️ 类名与 `.toc-caret` 分开是硬要求 —— 折叠逻辑靠「有没有 `.toc-caret`」判分支
+      （`applyFold` 里查不到就是叶子），共用同一个类会把叶子也当成可折叠的分支。
+   ⚠️ 列宽必须与 `.toc-caret` 逐字一致，改一处就要改另一处（否则对齐又没了）。 */
+.toc-caret-slot {
+  flex: 0 0 14px;
+}
 /* B208：字号写到**内层 .codicon** 上 —— `.toc-caret` 现在只是**占位列**（外层 <i>），
    字形是它里面那一颗；codicon.css 用 `font: 16px/1 codicon` 这个**简写**画字，写在占位
    列上的 font-size 会被那条简写重置掉（写在 day 档 12px、字体渲染出来却是 16px）。
@@ -530,7 +549,8 @@ body.layout-dragging .toc-grip {
 .toc-item:hover .toc-caret {
   color: var(--fg, #24292f);
 }
-.toc-caret + .toc-text {
+.toc-caret + .toc-text,
+.toc-caret-slot + .toc-text {
   /* 拐角下面那截标题贴着扭角走，别再空一格 */
   padding-left: 2px;
 }

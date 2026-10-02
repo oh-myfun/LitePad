@@ -22,38 +22,48 @@ function mount(): HTMLElement {
 }
 
 const items = (list: HTMLElement) => Array.from(list.querySelectorAll<HTMLElement>(".toc-item"));
-describe("B205 大纲标题栏：顶部「大纲」字样 + 全部折叠/展开两颗键", () => {
-  it("index.html 里标题栏在列表**之前**，两颗键各自带 aria-label", () => {
+describe("B205/B209 大纲标题栏：顶部「大纲」字样 + 全量折叠/展开**合并成一颗**键", () => {
+  it("index.html 里标题栏在列表**之前**，只有一颗合并键（不是两颗）", () => {
     const html = readFileSync("index.html", "utf-8");
     const head = html.indexOf('id="toc-head"');
     const list = html.indexOf('id="toc-list"');
-    const collapse = html.indexOf('id="toc-collapse-all"');
-    const expand = html.indexOf('id="toc-expand-all"');
+    const toggle = html.indexOf('id="toc-toggle-all"');
     expect(head, "index.html 要有 #toc-head").toBeGreaterThan(-1);
     expect(list, "index.html 要有 #toc-list").toBeGreaterThan(-1);
-    expect(collapse, "index.html 要有 #toc-collapse-all").toBeGreaterThan(-1);
-    expect(expand, "index.html 要有 #toc-expand-all").toBeGreaterThan(-1);
+    expect(toggle, "index.html 要有合并后的那颗 #toc-toggle-all").toBeGreaterThan(-1);
     expect(head, "标题栏必须排在列表之前（不然不是「顶部」）").toBeLessThan(list);
     expect(html, "标题栏要有「大纲」字样").toMatch(/id="toc-title"[^>]*>大纲</);
-    expect(html, "全部折叠键要有 aria-label").toMatch(
-      /id="toc-collapse-all"[\s\S]{0,240}?aria-label="全部折叠"/,
-    );
-    expect(html, "全部展开键要有 aria-label").toMatch(
-      /id="toc-expand-all"[\s\S]{0,240}?aria-label="全部展开"/,
+    // B209（用户点名「合并到一个按钮」）：两颗各自独立的键必须已经**删干净** ——
+    // 留着就是「一颗合并键 + 两颗旧键」三个按钮并排。
+    expect(html, "不许再留 #toc-collapse-all").not.toMatch(/id="toc-collapse-all"/);
+    expect(html, "不许再留 #toc-expand-all").not.toMatch(/id="toc-expand-all"/);
+    // 初始文案走「折叠」那一支（首屏还没内容 ⇒ 没有已折叠的分支）
+    expect(html, "合并键首屏是「全部折叠」那一支").toMatch(
+      /id="toc-toggle-all"[\s\S]{0,240}?aria-label="全部折叠"/,
     );
   });
 
-  it("两颗键的字形走 CODICONS.collapseAll / expandAll（不写死 codicon id，不手绘）", () => {
+  it("合并键的字形/文案/按下态四处同源，切换走 CODICONS（不写死 codicon id）", () => {
     const main = readFileSync("src/main.ts", "utf-8");
-    const at = (needle: string): number => main.indexOf(needle);
-    expect(
-      at("tocCollapseAll.innerHTML = CODICONS.collapseAll;"),
-      "全部折叠键要装 collapse-all 字形",
-    ).toBeGreaterThan(-1);
-    expect(
-      at("tocExpandAll.innerHTML = CODICONS.expandAll;"),
-      "全部展开键要装 expand-all 字形",
-    ).toBeGreaterThan(-1);
+    const refresh = main.match(/function refreshTocToggleAll\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(refresh, "要能定位 refreshTocToggleAll（四处同源的收口）").toBeTruthy();
+    // 字形按当前态在两颗之间切，且都从 CODICONS 取
+    expect(refresh, "字形要在 collapse-all / expand-all 之间切").toMatch(
+      /CODICONS\.collapseAll[\s\S]{0,80}CODICONS\.expandAll/,
+    );
+    expect(refresh, "aria-label 要跟着翻").toMatch(/setAttribute\("aria-label",\s*label\)/);
+    expect(refresh, "提示要跟着翻（图标换了、悬停还念旧的就是错位）").toMatch(
+      /setAttribute\("data-tip",\s*label\)/,
+    );
+    expect(refresh, "按下态要落在 aria-pressed 上").toMatch(/aria-pressed/);
+    // 判据问控制器（`allCollapsed()`），不在按钮上另存一份布尔 —— 存了迟早与折叠态错开
+    expect(refresh, "态要问 tocListView.allCollapsed()").toContain("tocListView.allCollapsed()");
+    // 点击：已是全折 ⇒ 展开，否则折叠；每支走完都要刷新按钮
+    const click = main.match(/tocToggleAll\.addEventListener\("click"[\s\S]*?\n {2}\}/)?.[0] ?? "";
+    expect(click, "要能定位合并键的点击").toBeTruthy();
+    expect(click, "全折着时点下去是展开").toMatch(/allCollapsed\(\)\)\s*tocListView\.expandAll/);
+    expect(click, "否则是折叠").toMatch(/else\s*tocListView\.collapseAll/);
+    expect(click, "两支走完都要刷新按钮").toContain("refreshTocToggleAll()");
     // 反向：不许内联写死 `.codicon-collapse-all` 这种字符串（字形只能从 IDS 取）
     expect(main, "不许写死 codicon id").not.toMatch(/codicon-(collapse|expand)-all/);
     const icons = readFileSync("src/shell/codicons.ts", "utf-8");
@@ -61,6 +71,17 @@ describe("B205 大纲标题栏：顶部「大纲」字样 + 全部折叠/展开�
       /collapseAll:\s*"collapse-all"/,
     );
     expect(icons, "IDS 要收 expand-all").toMatch(/expandAll:\s*"expand-all"/);
+  });
+
+  it("反向验证：合并键退化回「两颗独立键」必须被咬住", () => {
+    const BAD = readFileSync("index.html", "utf-8").replace(
+      'id="toc-toggle-all"',
+      'id="toc-collapse-all"',
+    );
+    expect(BAD, "替身必须真的换过 id").not.toBe(readFileSync("index.html", "utf-8"));
+    expect(() => {
+      expect(BAD, "替身不该再有合并键").toMatch(/id="toc-toggle-all"/);
+    }).toThrow();
   });
 
   it("CSS：面板上下两条（标题栏固着 + 列表滚动），缩进改由嵌套承担", () => {
@@ -87,6 +108,58 @@ describe("B205 大纲标题栏：顶部「大纲」字样 + 全部折叠/展开�
     expect(css, "子层缩进要跟扭角列宽对齐").toMatch(
       /\.toc-node > \.toc-children\s*\{[^}]*margin-left/,
     );
+    // B209（用户点名「同一层级最好左侧能对齐」）：只给分支挂扭角列 ⇒ 同层里「有子的」
+    // 被顶右 14px、「叶子」贴左，一层的标题看着错开 ⇒ 叶子也要占一格等宽的槽。
+    const caretW = css.match(/\.toc-caret\s*\{[^}]*flex:\s*0 0 (\d+)px/)?.[1];
+    const slotW = css.match(/\.toc-caret-slot\s*\{[^}]*flex:\s*0 0 (\d+)px/)?.[1];
+    expect(slotW, "叶子要有等宽的占位槽").toBeTruthy();
+    expect(slotW, "槽宽必须与扭角列宽逐字一致（差一点对齐就没了）").toBe(caretW);
+    // 文本与槽之间的那截间距两种行都要有，否则叶子的文字会贴着槽
+    expect(css, "两种行的文本间距都要给").toMatch(
+      /\.toc-caret-slot \+ \.toc-text\s*\{[^}]*padding-left/,
+    );
+  });
+
+  it("B209 同层对齐：叶子那一行也占一格（有槽无扭角），文字与同层分支行左对齐", () => {
+    const list = mount();
+    const h = createTocList(list);
+    // 一（有子）与二（叶子）是**同一层**的两条顶层标题
+    h.render([e(1, 1, "一"), e(2, 5, "一·子"), e(1, 9, "二")], -1, { onJump: () => {} });
+    const tops = Array.from(list.querySelectorAll<HTMLElement>(":scope > .toc-node"));
+    expect(tops.length, "两条顶层标题").toBe(2);
+    const branchRow = tops[0].querySelector<HTMLElement>(".toc-item");
+    const leafRow = tops[1].querySelector<HTMLElement>(".toc-item");
+    // 分支行：有扭角；叶子行：有槽、且**没有**扭角（不然折叠逻辑会把它当分支）
+    expect(branchRow?.querySelector(".toc-caret"), "分支要有扭角").toBeTruthy();
+    expect(leafRow?.querySelector(".toc-caret"), "叶子不许有扭角").toBeNull();
+    expect(leafRow?.querySelector(".toc-caret-slot"), "叶子要有占位槽").toBeTruthy();
+    // ⚠️ jsdom 不做布局，量不出像素 ⇒ 判据盯**结构**：两行的第一个子元素都是
+    //    14px 那一格（分支是 .toc-caret、叶子是 .toc-caret-slot），文字排在第二位
+    //    ⇒ CSS 那一列同宽 ⇒ 两行的 .toc-text 必然左对齐。
+    expect(branchRow?.firstElementChild?.className, "分支行第一格是扭角").toBe("toc-caret");
+    expect(leafRow?.firstElementChild?.className, "叶子行第一格是占位槽").toBe("toc-caret-slot");
+    for (const row of [branchRow, leafRow]) {
+      expect(row?.children[1]?.className, "第二格是标题文本（两行一致 ⇒ 左对齐）").toBe("toc-text");
+    }
+  });
+
+  it("反向验证：叶子不给槽（回退成「只有分支有那一格」）⇒ 对齐判据必须落空", () => {
+    const list = mount();
+    const h = createTocList(list);
+    h.render([e(1, 1, "一"), e(1, 9, "二")], -1, { onJump: () => {} });
+    // 退化：把叶子那格从 DOM 里摘掉（等价于「只给分支挂列」的旧行为）
+    for (const slot of Array.from(list.querySelectorAll(".toc-caret-slot"))) {
+      slot.replaceWith("" as unknown as Node);
+    }
+    const leafRow = list
+      .querySelectorAll<HTMLElement>(":scope > .toc-node")[1]
+      ?.querySelector(".toc-item");
+    expect(leafRow?.querySelector(".toc-caret-slot"), "替身必须真的摘掉过槽").toBeNull();
+    expect(() => {
+      expect(leafRow?.firstElementChild?.className, "替身缺槽 ⇒ 第一格不再是占位槽").toBe(
+        "toc-caret-slot",
+      );
+    }).toThrow();
   });
 });
 

@@ -396,6 +396,27 @@ describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘�
     );
   });
 
+  it("⚠️ 缝**真的**是 4px：`.toc-resizer` 必须有 `min-width: 0`（B209 真机实测回归）", () => {
+    // 事故：本元素是 `#main-row` 的 flex 子项，flex 子项的 `min-width` 初始值是 `auto`
+    // （automatic minimum size）⇒ 会被内容的 min-content 顶开。里面那颗 16px 字形的
+    // 三点把手 ⇒ min-content ≈ 16px ⇒ **实测缝被撑到 16px**（用户原话「那条缝绝对不止
+    // 4px」）。`flex-basis: 4px` 只参与分配，挡不住这个下限 ⇒ 必须显式写 0 才解除。
+    // ⚠️ jsdom 不做布局 ⇒ 这类错误跑测试全绿，只能靠这条静态契约 + 真机/headless 量。
+    const resizer = cssDecls(ruleBlock(preview, ".toc-resizer"));
+    expect(resizer, "宽度仍取 --card-gap").toMatch(/flex:\s*0 0 var\(--card-gap\)/);
+    expect(resizer, "必须显式写 min-width: 0，否则缝被把手撑开").toMatch(/min-width:\s*0/);
+  });
+
+  it("反向验证：摘掉 `min-width: 0` ⇒ 上面那条必须落空（缝会悄悄变回 16px）", () => {
+    const BAD = preview.replace(/(\.toc-resizer\s*\{[^}]*)min-width:\s*0;/, "$1");
+    expect(BAD, "替身必须真的摘掉过这条声明").not.toBe(preview);
+    expect(() => {
+      expect(cssDecls(ruleBlock(BAD, ".toc-resizer")), "替身缺 min-width 必须被抓到").toMatch(
+        /min-width:\s*0/,
+      );
+    }).toThrow();
+  });
+
   it("卡片到窗口左右/下边缘留白走 --card-edge，且留白只在这一处源头", () => {
     const row = cssDecls(ruleBlock(css, "#main-row"));
     expect(row, "左栏/编辑区到窗口边缘要有留白").toMatch(

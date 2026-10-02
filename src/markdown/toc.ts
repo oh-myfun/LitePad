@@ -35,10 +35,26 @@ export function clampTocWidth(width: number): number {
  * `TOC_MIN_WIDTH`** 之后，还要**再**往左拖这么多 px 才收起展开区。
  *
  * 留这一段而不是「一贴到最小就收」：「把宽拖窄到 160」这个动作本身就带一两像素的过冲，
- * 「就想拖窄一点」和「收起来」是两件事，中间必须有缓冲；这段取 VS Code sash 折叠阈值
- * 的同一量级（十几像素），手感对得上。
+ * 「只想拖窄一点」和「收起来」是两件事，中间必须有缓冲。
+ *
+ * ⚠️⚠️ B209（用户真机反馈「太容易触发折叠和展开了」）：原值 12 太小 —— 缝本身只有 4px，
+ *     指针在缝上按下之后，一次手抖/一次稍快的拖动就轻松越过 12px ⇒ 想调宽度却把展开区
+ *     收了（反之亦然）。取到 **40**：比一次「拖窄」的自然过冲（个位数 px）大一个量级，
+ *     又还在「同一个手势之内」够得着（不用松手重来）。
+ * ⚠️ 收起与展开两档阈值**不对称**是故意的：收起是「把内容藏掉」，误触代价高（要拖回来），
+ *     所以更严；展开是「把内容放出来」，误触代价低，所以松一档。
  */
-export const TOC_HIDE_OVERDRAG_PX = 12;
+export const TOC_HIDE_OVERDRAG_PX = 40;
+
+/**
+ * B209：收起态往右拖这么多 px 才把展开区放回来。
+ *
+ * 旧行为是 `dx > 0` 就展开 —— 按下之后随便往右动一个像素就整块弹出，同样「太容易」。
+ * ⚠️ 展开后的宽度从 `TOC_MIN_WIDTH` 起算、按**超出阈值的那一段**增长：拖出阈值那一刻
+ *     展开区是最小宽，再往右拖多少就加多少 —— 与「拖多宽就多宽」的手感一致，
+ *     不会一展开就跳到上次那个宽度。
+ */
+export const TOC_RESTORE_OVERDRAG_PX = 24;
 
 export interface TocResizerOptions {
   /** 初始宽度（一般由设置载入，非法值自动收敛） */
@@ -118,11 +134,12 @@ export function attachTocResizer(
     const onMove = (ev: MouseEvent): void => {
       const dx = ev.clientX - startX;
       if (!isOpen()) {
-        // B207：收起态往右拖 = 把展开区拖回来。缺的那一块由这次拖拽补上，所以
-        // 「往右挪多少、展开区就有多宽」，不是「弹回上次那个数再让你重拖」。
-        if (dx <= 0) return; // 往左拖不动：已经在收起的那一侧了
+        // B207：收起态往右拖 = 把展开区拖回来。
+        // ⚠️ B209：必须越过 `TOC_RESTORE_OVERDRAG_PX` 才展开（旧行为 dx>0 就弹，太容易误触）；
+        //    展开后宽度从最小宽起算、按超出阈值的那一段增长 ⇒ 拖多宽就是多宽。
+        if (dx < TOC_RESTORE_OVERDRAG_PX) return;
         notifyOpen(true);
-        width = clampTocWidth(startWidth + dx);
+        width = clampTocWidth(TOC_MIN_WIDTH + (dx - TOC_RESTORE_OVERDRAG_PX));
         apply(width);
         return;
       }
@@ -214,6 +231,12 @@ export interface TocListHandle {
   collapseAll(): void;
   /** 全部展开 */
   expandAll(): void;
+  /**
+   * B209：所有分支都折着吗 —— 合并后的那颗全量键靠它决定「这一下是折还是展」。
+   * ⚠️ 没有分支时返回 `false`（全是叶子，没什么可折）：那颗键于是走「折叠」那一支，
+   *    点了没有任何变化，比「点了却切成展开态、再点才折」直观。
+   */
+  allCollapsed(): boolean;
 }
 
 /**
@@ -306,6 +329,17 @@ export function createTocList(list: HTMLElement): TocListHandle {
             applyFold();
           });
           item.appendChild(caret);
+        } else {
+          // B209（用户点名「同一层级最好左侧能对齐」）：叶子**也要占一格**等宽的槽。
+          // 只给分支挂 14px 的扭角列 ⇒ 同层里「有子的」文字被顶右 14px、「叶子」贴左，
+          // 两条同一层的标题看着是错开的。VS Code 的 tree 每行都有 twisty 那一列，
+          // 叶子只是那一格为空 —— 这里同口径：**
+          // ⚠️ 类名必须**不是** `.toc-caret`：折叠逻辑靠「有没有扭角」判分支
+          //    （`applyFold` 里 `caret` 为 null ⇒ 叶子），混用同一个类会把叶子也当分支。
+          const slot = document.createElement("i");
+          slot.className = "toc-caret-slot";
+          slot.setAttribute("aria-hidden", "true");
+          item.appendChild(slot);
         }
 
         const text = document.createElement("span");
@@ -340,5 +374,6 @@ export function createTocList(list: HTMLElement): TocListHandle {
       for (const id of branchIds) collapsed.delete(id);
       applyFold();
     },
+    allCollapsed: () => branchIds.length > 0 && branchIds.every((id) => collapsed.has(id)),
   };
 }

@@ -251,8 +251,8 @@ const tocPanel = el("toc-panel");
 // B205：展开区拆成「标题栏 + 列表」两条 —— 重绘只清列表，标题栏是静态结构
 // （renderToc 时代清的是整个 #toc-panel，标题栏会被一起抹掉）。
 const tocList = el("toc-list");
-const tocCollapseAll = el<HTMLButtonElement>("toc-collapse-all");
-const tocExpandAll = el<HTMLButtonElement>("toc-expand-all");
+// B209：全量折叠/展开合并成**一颗**键（原 #toc-collapse-all / #toc-expand-all 两颗）。
+const tocToggleAll = el<HTMLButtonElement>("toc-toggle-all");
 const tocResizer = el("toc-resizer");
 // B201：左栏**卡片**（按钮列 + 展开区），展开区折起时它挂 `is-collapsed`
 // —— 那条内部竖线（按钮列 ↔ 展开区）要跟着收，见 preview.css / global.css 的同款说明。
@@ -4916,18 +4916,39 @@ function setupTocResizer(): void {
  * 与 `setTocOpen` 的分工：这里只管「装上」，开合态一律由 `setTocOpen` 收口
  * （按钮的 `is-on` / `aria-pressed` 也在那儿写，免得两处各写一半不同步）。
  *
- * ⚠️ 两颗全量键**不落盘**（折叠状态不写设置）：大纲是「当前这份文档」的一次性视图，
+ * ⚠️ 全量键**不落盘**（折叠状态不写设置）：大纲是「当前这份文档」的一次性视图，
  *    跟置顶（窗口瞬时态）、大纲宽度（偏好）不是一个层级的东西。
  */
 function setupSideBar(): void {
   sideOutline.innerHTML = CODICONS.outline;
   tocGrip.innerHTML = CODICONS.grip;
-  tocCollapseAll.innerHTML = CODICONS.collapseAll;
-  tocExpandAll.innerHTML = CODICONS.expandAll;
   sideOutline.addEventListener("click", () => toggleToc());
   sidebarToggle.addEventListener("click", () => toggleSidebar());
-  tocCollapseAll.addEventListener("click", () => tocListView.collapseAll());
-  tocExpandAll.addEventListener("click", () => tocListView.expandAll());
+  // B209：一颗键在「全部折叠 ⇄ 全部展开」之间切换。字形 / aria-label / 提示 / 按下态
+  // **四处同源**（都在下面这一个函数里），免得出现「图标已经是展开、读屏器还念折叠」。
+  tocToggleAll.addEventListener("click", () => {
+    if (tocListView.allCollapsed()) tocListView.expandAll();
+    else tocListView.collapseAll();
+    refreshTocToggleAll();
+  });
+  refreshTocToggleAll();
+}
+
+/**
+ * B209：把那颗合并键刷成「当前这一下会做什么」的样子 —— 还没全折 ⇒ 显示折叠，
+ * 已经全折 ⇒ 显示展开。
+ *
+ * ⚠️ 每次重绘列表都要跟着刷：`branchIds` 是随文档变的（换了一份没有子标题的文档，
+ *    分支数变 0），只看按钮自己的点击会停在过期状态上。
+ */
+function refreshTocToggleAll(): void {
+  const willCollapse = !tocListView.allCollapsed();
+  tocToggleAll.innerHTML = willCollapse ? CODICONS.collapseAll : CODICONS.expandAll;
+  const label = willCollapse ? "全部折叠" : "全部展开";
+  tocToggleAll.setAttribute("aria-label", label);
+  tocToggleAll.setAttribute("data-tip", label);
+  // 按下态 = 「当前是全折着」，与置顶 / 同步那两颗同口径（状态落在 aria-pressed 上）
+  tocToggleAll.setAttribute("aria-pressed", String(!willCollapse));
 }
 
 /**
@@ -5018,6 +5039,8 @@ function updateTocDrawer(): void {
   if (!tab) {
     tocEntries = [];
     tocListView.render(null, -1, { onJump: () => {} });
+    // B209：分支列表随文档变，那颗合并键要跟着刷（换到没有标题的文档 ⇒ 回到「折叠」那一支）
+    refreshTocToggleAll();
     return;
   }
   // 多格式大纲（B33）：md 之外 toml/ini/yaml/json/py 也有大纲；
@@ -5027,6 +5050,7 @@ function updateTocDrawer(): void {
   if (result === null) {
     tocEntries = [];
     tocListView.render(null, -1, { onJump: () => {} });
+    refreshTocToggleAll();
     return;
   }
   tocEntries = result;
@@ -5077,6 +5101,9 @@ function updateTocDrawer(): void {
       updateTocDrawer();
     },
   });
+  // B209：重绘后 `branchIds` 是新的（换文档/改标题都会变），合并键要按新分支表刷一次，
+  // 否则它会停在上一份文档的「已全折」状态上（图标显示展开，点下去却还是折叠）。
+  refreshTocToggleAll();
 }
 
 // ---------------------------------------------------------------- 导出（M3）

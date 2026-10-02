@@ -179,19 +179,19 @@
           <aside id="toc-panel" class="toc-panel" hidden>
             <div id="toc-head" class="toc-head">
               <span id="toc-title" class="toc-title">大纲</span>
+              <!-- B209（用户点名「全部折叠和全部展开合并到一个按钮」）：只有**一颗**键，
+                   按一下在「全部折叠 ⇄ 全部展开」之间切换 —— 字形 / aria-label / 提示
+                   三处跟着当前态一起翻（接线见 main.ts 的 `refreshTocToggleAll`）。
+                   ⚠️ HTML 里**不写死**字形与文案：首屏还没有大纲内容，该显示哪一支
+                      由 `refreshTocToggleAll()` 第一次调用时按 `allCollapsed()` 决定，
+                      写死就会出现「首屏写着全部折叠、点一下却也是折叠」的错位。 -->
               <button
-                id="toc-collapse-all"
+                id="toc-toggle-all"
                 class="toc-head-btn"
                 type="button"
                 data-tip="全部折叠"
                 aria-label="全部折叠"
-              ></button>
-              <button
-                id="toc-expand-all"
-                class="toc-head-btn"
-                type="button"
-                data-tip="全部展开"
-                aria-label="全部展开"
+                aria-pressed="false"
               ></button>
             </div>
             <div id="toc-list" class="toc-list"></div>
