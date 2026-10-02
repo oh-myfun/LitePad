@@ -302,7 +302,29 @@ describe("B195 空隙与三点把手", () => {
     const grip = preview.match(/\n\.toc-grip\s*\{[^}]*\}/)?.[0] ?? "";
     expect(grip, "三点把手静息取 --fg-muted").toMatch(/color:\s*var\(--fg-muted[,)]/);
     const off = cssDecls(ruleBlock(preview, ".toc-resizer.is-off"));
-    expect(off, "收起时空隙不吃指针").toContain("pointer-events: none");
+    // B207（用户点名「隐藏展开区后分割线仍然能看到和操作」）：收起态**照样可抓** ——
+    // 旧口径在这条上写 pointer-events: none，等于把这道缝做成死带（往右拖也拖不回来）。
+    expect(off, "收起时空隙照样吃指针（拖回来就靠它）").toContain("pointer-events: auto");
+    expect(off, "收起时空隙仍是左右调整光标").toContain("cursor: ew-resize");
+  });
+
+  it("收起态把手**比展开态更醒目**（它是唯一能把展开区拖回来的提示），但让位次序不能翻", () => {
+    const base = cssDecls(ruleBlock(preview, ".toc-grip"));
+    expect(base, "静息那颗点的基础透明度").toMatch(/opacity:\s*0\.55/);
+    const offGrip = preview.match(/\.toc-resizer\.is-off \.toc-grip\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(offGrip, "收起态要有把手提亮这一档").toBeTruthy();
+    expect(offGrip, "收起态把手要顶到不透明（展开区不在了，它是唯一入口）").toMatch(
+      /opacity:\s*1(;|\})/,
+    );
+    // ⚠️ 让位（hover / 拖拽时把手淡给那条亮条）必须**写在后面**：三条选择器优先级
+    //    完全相同，靠书写顺序决胜。写反了收起态 hover 时三点压在亮条上两边都糊。
+    const offAt = preview.indexOf(".toc-resizer.is-off .toc-grip");
+    const yieldAt = preview.indexOf(".toc-resizer:hover .toc-grip");
+    const dragAt = preview.indexOf("body.layout-dragging .toc-grip");
+    expect(offAt, "要能定位到收起态提亮那条").toBeGreaterThan(-1);
+    expect(yieldAt, "要能定位到悬停让位那条").toBeGreaterThan(-1);
+    expect(offAt, "提亮那条必须写在让位之前（同优先级靠顺序决胜）").toBeLessThan(yieldAt);
+    expect(offAt, "提亮那条也必须写在拖拽让位之前").toBeLessThan(dragAt);
   });
 
   it("字形必须来自 codicons.ts（不许手绘 SVG / 写死码位），且三点那颗是竖排三点", () => {
@@ -770,7 +792,12 @@ describe("B198 标题栏整栏显隐：双字形开关 + 整栏一起收", () =>
     );
     // 与「只折展开区」那条分清：那一条是留缝的（间距不跳变），这里必须相反
     const offRule = preview.match(/\.toc-resizer\.is-off\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(offRule, "收起展开区仍留缝（只收把手 + 不吃指针）").toContain("pointer-events: none");
+    // B207：收起展开区 = 只折展开区 —— 缝留着**并且还抓得住**（旧口径把把手隐身 + 掐指针，
+    // 结果拖到底就再也拖不回来），把手也照旧在（它现在真是「这里能拖」的标记了）。
+    expect(offRule, "收起展开区仍留缝、且照样可抓").toContain("pointer-events: auto");
+    expect(preview, "收起时把手不许再隐身（要看得见这条缝在哪）").not.toMatch(
+      /\.toc-resizer\.is-off \.toc-grip\s*\{[^}]*visibility:\s*hidden/,
+    );
   });
 
   it("⑦ 那颗键自己**始终显示**（它是左栏唯一的开关入口）", () => {

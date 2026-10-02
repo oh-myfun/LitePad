@@ -30,16 +30,39 @@ export function clampTocWidth(width: number): number {
   return Math.min(TOC_MAX_WIDTH, Math.max(TOC_MIN_WIDTH, Math.round(width)));
 }
 
+/**
+ * B207（用户点名「拖到最小后再往左拖就把左栏展开区隐藏」）：宽度**已经贴到
+ * `TOC_MIN_WIDTH`** 之后，还要**再**往左拖这么多 px 才收起展开区。
+ *
+ * 留这一段而不是「一贴到最小就收」：「把宽拖窄到 160」这个动作本身就带一两像素的过冲，
+ * 「就想拖窄一点」和「收起来」是两件事，中间必须有缓冲；这段取 VS Code sash 折叠阈值
+ * 的同一量级（十几像素），手感对得上。
+ */
+export const TOC_HIDE_OVERDRAG_PX = 12;
+
 export interface TocResizerOptions {
   /** 初始宽度（一般由设置载入，非法值自动收敛） */
   initial: number;
   /** 拖拽结束 / 双击重置后回调，供调用方持久化 */
   onChange: (width: number) => void;
+  /**
+   * B207：展开区此刻是不是摊开着。收起态往右拖要能**拖回来**，而开关状态只有调用方那
+   * 一份（`setTocOpen` 是显隐的唯一出口），这里问它，不自己另记一份。
+   */
+  isOpen?: () => boolean;
+  /**
+   * B207：拖拽 / 双击把展开区收起（false）或拖回来（true）时回调。
+   *
+   * 缺省 = 这个实例只管宽度、不管收放（不用收放的用法不用补两份胶水）。
+   */
+  onOpenChange?: (open: boolean) => void;
 }
 
 export interface TocResizerHandle {
   getWidth(): number;
   setWidth(width: number): void;
+  /** B207：展开区当前是不是摊开着（与 `opts.isOpen` 同一个来源，别各记一份）。 */
+  isOpen(): boolean;
 }
 
 /**
@@ -49,6 +72,14 @@ export interface TocResizerHandle {
  * 指针事件序列（mousedown → document mousemove/mouseup）自行编排 ——
  * 历史原因是 WebView2 的拖放钩子会禁用页面内 HTML5 拖放（B91 已关掉该钩子），
  * 现在依旧用指针序列：拖分隔条是「按住并移动」，与 HTML5 DnD 的搬运语义无关。
+ *
+ * B207（用户点名「拖到最小后再往左拖 → 隐藏左栏展开区；隐藏后分割线仍看得见、仍可操作，
+ * 往右拖把它展开」）补的是**收放**这一半：
+ *   · `isOpen()` / `onOpenChange(open)` 两个口子 —— 收放状态仍然只有调用方那一处
+ *     （`#toc-panel` 的 hidden），这里只负责报「该收了 / 该放了」；
+ *   · 收起态**照样吃指针**（CSS 的 `.is-off` 不再 `pointer-events: none`、把手也不再
+ *     `visibility: hidden`），往右一拖就回来。
+ *   ⚠️ 收起后 `width` 原样留着：拖回来时它是「上次拖到底那个宽度」，不是默认值。
  */
 export function attachTocResizer(
   resizer: HTMLElement,
@@ -56,6 +87,19 @@ export function attachTocResizer(
   opts: TocResizerOptions,
 ): TocResizerHandle {
   let width = clampTocWidth(opts.initial);
+  /** 展开区开合：调用方没给就恒为「摊开着」（只调宽度、不管收放的用法）。 */
+  const isOpen = opts.isOpen ?? (() => true);
+
+  /**
+   * B207：只在该变的时候报一次 —— 拖到底会连发几十个 mousemove，每个都去切一次
+   * `setTocOpen` 会把落盘与重绘打十遍。
+   * ⚠️ 判据问 `isOpen()` 而不是自己缓存布尔：显隐的唯一出口在调用方那边，缓存一份迟早
+   *    跟它错开（用户这时候顺手点了那颗「大纲」键，两边就对不上了）。
+   */
+  const notifyOpen = (open: boolean): void => {
+    if (!opts.onOpenChange || isOpen() === open) return;
+    opts.onOpenChange(open);
+  };
 
   const apply = (w: number): void => {
     // 同时写 width 与 min-width：父容器是 flex 行，min-width 才能挡住被挤压
@@ -72,9 +116,25 @@ export function attachTocResizer(
     document.body.classList.add("layout-dragging");
 
     const onMove = (ev: MouseEvent): void => {
+      const dx = ev.clientX - startX;
+      if (!isOpen()) {
+        // B207：收起态往右拖 = 把展开区拖回来。缺的那一块由这次拖拽补上，所以
+        // 「往右挪多少、展开区就有多宽」，不是「弹回上次那个数再让你重拖」。
+        if (dx <= 0) return; // 往左拖不动：已经在收起的那一侧了
+        notifyOpen(true);
+        width = clampTocWidth(startWidth + dx);
+        apply(width);
+        return;
+      }
       // 大纲在左侧，向右拖 = 变宽
-      width = clampTocWidth(startWidth + (ev.clientX - startX));
+      width = clampTocWidth(startWidth + dx);
       apply(width);
+      // B207：贴到最小之后**还继续**往左拖过阈值 = 收起。拿 `startWidth + dx` 直接比
+      // 就够，不用累加位移：dx 是按下那一点算起的总位移，越过「最小线再往左
+      // TOC_HIDE_OVERDRAG_PX」那一点就行（累加会把每次 move 的位移重复算成一大截）。
+      if (dx < 0 && startWidth + dx <= TOC_MIN_WIDTH - TOC_HIDE_OVERDRAG_PX) {
+        notifyOpen(false);
+      }
     };
     const onUp = (): void => {
       document.removeEventListener("mousemove", onMove);
@@ -88,9 +148,13 @@ export function attachTocResizer(
 
   // 双击分隔条恢复默认宽度
   resizer.addEventListener("dblclick", () => {
+    const wasOpen = isOpen();
     width = TOC_DEFAULT_WIDTH;
     apply(width);
     opts.onChange(width);
+    // B207：收起态双击顺手把展开区放回来 —— 双击本来就带「回到默认」的意思，收着的时候
+    // 双击却什么都不放出来，等于这条捷径是坏的，还得去找那颗大纲键。
+    if (!wasOpen) notifyOpen(true);
   });
 
   return {
@@ -99,6 +163,7 @@ export function attachTocResizer(
       width = clampTocWidth(w);
       apply(width);
     },
+    isOpen: () => isOpen(),
   };
 }
 
@@ -174,11 +239,15 @@ export function createTocList(list: HTMLElement): TocListHandle {
       const on = collapsed.has(id);
       wrap.querySelector(".toc-children")?.classList.toggle("is-collapsed", on);
       const item = wrap.querySelector(".toc-item");
-      item?.setAttribute("aria-expanded", String(!on));
+      // ⚠️ 只给**分支**报 aria-expanded —— 旧写法扫到叶子也写，读屏器会把「一行没有
+      //    子标题的标题」念成「可折叠、已展开」，而它其实什么也折不了。叶子没有扭角 ⇒
+      //    `caret` 为 null，顺带就把这一档排除了，不必再单独判 children 存不存在。
       const caret = item?.querySelector(".toc-caret");
       if (caret) {
-        caret.className =
-          "toc-caret codicon codicon-" + (on ? CODICONS.chevronRight : CODICONS.chevronDown);
+        item?.setAttribute("aria-expanded", String(!on));
+        // B208：与上面 render 那处同一口径 —— 换字形是换 innerHTML，不是换 className
+        //        （把 CODICONS 那整个元素串拼进 className 会让箭头彻底画不出来）。
+        caret.innerHTML = on ? CODICONS.chevronRight : CODICONS.chevronDown;
       }
     }
   };
@@ -214,11 +283,18 @@ export function createTocList(list: HTMLElement): TocListHandle {
 
         if (node.branch) {
           const caret = document.createElement("i");
+          // ⚠️ B208：字形走 **`innerHTML` + `CODICS` 那层**（`CODICONS.<name>` 给的是
+          //    可直接塞进 innerHTML 的 `<i class="codicon codicon-x">`）。旧写法把它拼进
+          //    `className` ⇒ 属性字符串里嵌了 HTML，实际 DOM 是
+          //    `<i class="toc-caret codicon codicon-<i class="codicon codicon-chevron-…">">`
+          //    —— `codicon-chevron-*` 落不到任何元素上 ⇒ **箭头从来就没画出来过**。
+          //    与空隙里那颗把手（.toc-grip）完全同款：外层占位 <i> + 内层 .codicon。
           // 折叠态直接画在字形上 —— 与置顶 / 同步滚动 / 左栏显隐那几颗同口径：状态落在
           // 字形，不靠配色，也就不必为「折着」再造一颗反相图标。
-          caret.className =
-            "toc-caret codicon codicon-" +
-            (collapsed.has(node.entry.id) ? CODICONS.chevronRight : CODICONS.chevronDown);
+          caret.className = "toc-caret";
+          caret.innerHTML = collapsed.has(node.entry.id)
+            ? CODICONS.chevronRight
+            : CODICONS.chevronDown;
           caret.setAttribute("aria-hidden", "true");
           // 扭角只管这一节的折/展：必须掐住冒泡 —— 它长在标题按钮**里面**，不掐的话
           // 同一下点击会顺带跳到标题行（「点扭角＝折叠」变成「折叠＋跳转」）。

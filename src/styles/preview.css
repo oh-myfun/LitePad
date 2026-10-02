@@ -299,21 +299,25 @@
 /* 悬停 / 拖拽中整条 4px 点亮（对齐 sash.css 的 `:hover:before , .active:before`）。
    `body.layout-dragging` 那条：只写 :hover 时，指针一旦滑出这条窄带高亮就消失，
    看着像「没抓住」—— 拖大纲宽度的那几帧正是这种情况。
-   ⚠️ `.toc-resizer.is-off` 整条已经 `pointer-events: none`，收起态自然不亮。 */
+   ⚠️ 收起态（`.is-off`）照样吃指针、照样能 hover 亮（B207：收起只折展开区，
+   这道缝得能抓回来），所以这里没有「收起就不亮」的特例，别照着旧口径去加。 */
 .toc-resizer:hover::before,
 body.layout-dragging .toc-resizer::before {
   background: var(--accent);
 }
 
-/* 收起展开区：**空隙留着**（两张卡片的间距不该跟着开合跳变），
-   只让把手消失 + 不吃指针 —— 否则悬停会冒提示、光标变成可拖，拖了却没反应。 */
+/* B207（用户点名「隐藏左侧栏展开区后，分割线仍然能看到和操作」）：
+   收起展开区现在是**只折展开区** —— 缝与把手都**留着、照样能抓**。
+   旧口径（整条 `pointer-events: none` + 把手 `visibility: hidden`）是把它做成了
+   「这条缝变死带」：往左拖到底就再也拖不动，往右拖也拖不回来（只能去点那颗大纲键）。
+   ⚠️ 这条必须显式写 `pointer-events: auto`：基础那条 .toc-resizer 没声明，而收起态要
+      表达的是「这条 4px 缝仍然吃指针、仍然 ew-resize」，白纸黑字写比靠继承清楚。
+   ⚠️ 与整栏收起（`#main-row.is-sidebar-off > #toc-resizer { display: none }`）别抄错：
+      那条是「整个左栏不在了」，这一条只是「展开区折起来」，缝是**同一道缝**，
+      间距不跳变 ⇒ 缝留着、可拖回来。 */
 .toc-resizer.is-off {
-  cursor: default;
-  pointer-events: none;
-}
-
-.toc-resizer.is-off .toc-grip {
-  visibility: hidden;
+  cursor: ew-resize;
+  pointer-events: auto;
 }
 
 /* B198：整栏收起 —— 缝**跟着卡片一起消失**。
@@ -361,6 +365,17 @@ body.layout-dragging .toc-resizer::before {
    ⚠️ 别再往回调回 12px「怕顶出卡片」：卡片的上下沿在整屏高度上，点高 16px 也远远够不着。 */
 .toc-grip .codicon {
   font-size: 16px;
+}
+
+/* B207 复核（收起后要能自己找回这道缝）：收起展开区之后，三点把手是**唯一**的
+   「往右拖就能展开」提示 —— 展开区里那两颗全量键跟着一起不在了，大纲内容也没了，
+   只剩这道 4px 缝。展开态它还只是个辅助标记（旁边明明摊着大纲），收起态它得扛起
+   全部提示责任，所以这一档要**比展开态更醒目**（opacity 从 .55 提到 1）。
+   ⚠️ 位置必须落在下面两条让位规则**之前**：三条同是「两个类 + 一个元素」的优先级，
+   靠书写顺序决胜 —— 收起态 hover / 拖拽时，仍然是让位那条赢（淡成 0 把画面让给
+   那条亮条），收起态只是「静息更醒目」，别让这条把让位盖掉。 */
+.toc-resizer.is-off .toc-grip {
+  opacity: 1;
 }
 
 /* **悬停 / 拖拽时把手让位给 sash 高亮** —— 抄 sashHandles.css 这条：
@@ -480,9 +495,21 @@ body.layout-dragging .toc-grip {
       子层缩进只能拿 padding 去凑，凑出来的间距与扭角宽度对不上（扭角 14px vs 档距 12px）。 */
 .toc-caret {
   flex: 0 0 14px;
-  font-size: 12px;
   line-height: 1;
   color: var(--fg-muted, #656d76);
+  transition: color 0.1s ease-out;
+}
+/* B208：字号写到**内层 .codicon** 上 —— `.toc-caret` 现在只是**占位列**（外层 <i>），
+   字形是它里面那一颗；codicon.css 用 `font: 16px/1 codicon` 这个**简写**画字，写在占位
+   列上的 font-size 会被那条简写重置掉（写在 day 档 12px、字体渲染出来却是 16px）。
+   与空隙里那颗把手（.toc-grip .codicon）完全同款。 */
+.toc-caret .codicon {
+  font-size: 12px;
+}
+/* 悬停时扭角提一档：VS Code 树的 twisty 就是「静息淡、指上去才醒目」，
+   与 .toc-item:hover 铺底同一时刻发生，指针落哪一眼就知道。 */
+.toc-item:hover .toc-caret {
+  color: var(--fg, #24292f);
 }
 .toc-caret + .toc-text {
   /* 拐角下面那截标题贴着扭角走，别再空一格 */

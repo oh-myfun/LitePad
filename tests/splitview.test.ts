@@ -823,12 +823,11 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
       /opacity:\s*0/,
     );
     expect(gripHL, "不是「悬停把手转亮」那版").not.toMatch(/color:\s*var\(--fg[,)]/);
-    // 收起展开区：空隙**留着**（两张卡片的间距不该跟着开合跳变），只收把手与指针
+    // B207：收起展开区 = 只折展开区 —— 缝留着（间距不跳变）**并且照样可抓**，
+    // 把手也留着（它现在是「这条缝能拖回来」的唯一可见标记）。
     const off = previewCss.match(/\.toc-resizer\.is-off\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(off, "收起时空隙不吃指针（否则悬停出提示、拖了没反应）").toContain(
-      "pointer-events: none",
-    );
-    expect(previewCss, "收起时把手消失").toMatch(
+    expect(off, "收起时空隙照样吃指针（往右拖回来就靠它）").toContain("pointer-events: auto");
+    expect(previewCss, "收起时把手不许消失（要看得见这条缝在哪）").not.toMatch(
       /\.toc-resizer\.is-off \.toc-grip\s*\{[^}]*visibility:\s*hidden/,
     );
 

@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { createTocList } from "../src/markdown/toc";
 import type { TocEntry } from "../src/markdown/pipeline";
+import { CODICONS } from "../src/shell/codicons";
 
 /** 造一条大纲条目（id 与 level/line 绑定，正好当折叠态的键）。 */
 function e(level: number, line: number, text: string): TocEntry {
@@ -139,9 +140,23 @@ describe("B205 大纲层级树：扭角只给有子的节点，缩进靠嵌套",
     const all = Array.from(list.querySelectorAll<HTMLElement>(".toc-item"));
     expect(all.length, "两行标题两个按钮").toBe(2);
     expect(all[0].querySelector(".toc-caret"), "有子的 h1 要有扭角").toBeTruthy();
-    expect(all[0].querySelector(".toc-caret")?.className, "展开态画 chevron-down").toContain(
-      "codicon-chevron-down",
+    // ⚠️ B208：字形在**内层 .codicon** 上，`.toc-caret` 只是占位列的容器 ——
+    //    盯 `.className` 会假绿（旧 bug 就是「把 CODICONS 那个元素串拼进 className」，
+    //    畸形属性里照样含 `codicon-chevron-down` 这个子串，箭头却一个都没画出来）。
+    // ⚠️ 所以判据用**与 CODICONS 元素串严格相等**，再用结构判据钉死「字形落在子元素上」：
+    //    只要哪天有人把 CODICONS 那串塞回 className，这里两个判据一起咬。
+    const caret0 = all[0].querySelector(".toc-caret");
+    expect(caret0?.innerHTML, "展开态.inner 就是 CODICONS.chevronDown 那串").toBe(
+      CODICONS.chevronDown,
     );
+    expect(
+      caret0?.querySelector(".codicon")?.getAttribute("class"),
+      "字形必须落在内层 .codicon 元素上",
+    ).toContain("codicon-chevron-down");
+    expect(
+      caret0?.classList.contains("codicon"),
+      "占位列自己不许带字形类（那就画在错的地方）",
+    ).toBe(false);
     expect(all[1].querySelector(".toc-caret"), "叶子不给扭角").toBeNull();
     expect(all[0].getAttribute("aria-expanded"), "分支要报可展开").toBe("true");
     expect(all[1].getAttribute("aria-expanded"), "叶子不许报 aria-expanded").toBeNull();
@@ -175,9 +190,9 @@ describe("B205 折叠交互：扭角只折叠不跳转，全量键管全部", ()
       "折着不代表删了，节点还在（只是 display:none）",
     ).toBe(1);
     expect(
-      list.querySelectorAll(".toc-item")[0].querySelector(".toc-caret")?.className,
-      "折起后扭角翻成 chevron-right",
-    ).toContain("codicon-chevron-right");
+      list.querySelectorAll(".toc-item")[0].querySelector(".toc-caret")?.innerHTML,
+      "折起后扭角翻成 chevron-right（与 CODICONS 元素串严格相等）",
+    ).toBe(CODICONS.chevronRight);
 
     // 再点一次展开：还是不跳转
     (list.querySelector(".toc-caret") as HTMLElement).click();
@@ -204,11 +219,25 @@ describe("B205 折叠交互：扭角只折叠不跳转，全量键管全部", ()
       "全部折起",
     ).toBe(true);
     expect(
-      Array.from(list.querySelectorAll(".toc-caret")).every((c) =>
-        c.className.includes("codicon-chevron-right"),
+      Array.from(list.querySelectorAll(".toc-caret")).every(
+        (c) => c.innerHTML === CODICONS.chevronRight,
       ),
       "全部折起后扭角都朝右",
     ).toBe(true);
+    // B208（用户点名「全部折叠后还能看到二级项」）：只断言 `is-collapsed` 那个类是假绿
+    // —— jsdom 不算 CSS。真正要盯的是「除顶层外**没有一行**还站在可见层次上」：任何非
+    // 顶层行都必须躺在某个 `is-collapsed` 容器里，CSS 那条 display:none 才会顺着父链命中
+    // 它。这样「折了但二级项还露着」这类偏差会被咬住。
+    const visibleRows = (): string[] =>
+      Array.from(list.querySelectorAll<HTMLElement>(".toc-item"))
+        .filter((it) => {
+          for (let p: HTMLElement | null = it.parentElement; p; p = p.parentElement) {
+            if (p.classList.contains("is-collapsed")) return false;
+          }
+          return true;
+        })
+        .map((it) => it.textContent ?? "");
+    expect(visibleRows(), "折完只剩两条顶层标题（二级项必须一起收掉）").toEqual(["一", "二"]);
 
     h.expandAll();
     expect(
@@ -218,11 +247,12 @@ describe("B205 折叠交互：扭角只折叠不跳转，全量键管全部", ()
       "全部展开",
     ).toBe(true);
     expect(
-      Array.from(list.querySelectorAll(".toc-caret")).every((c) =>
-        c.className.includes("codicon-chevron-down"),
+      Array.from(list.querySelectorAll(".toc-caret")).every(
+        (c) => c.innerHTML === CODICONS.chevronDown,
       ),
       "全部展开后扭角都朝下",
     ).toBe(true);
+    expect(visibleRows(), "展开后二级项回来").toEqual(["一", "一·子", "二"]);
 
     // 全量键只折「分支」；折完单条展开不影响别的
     h.collapseAll();

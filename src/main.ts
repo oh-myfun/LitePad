@@ -4890,6 +4890,15 @@ function setupTocResizer(): void {
   tocWidth = clampTocWidth(settings?.toc_width ?? 240);
   tocResizerHandle = attachTocResizer(tocResizer, tocPanel, {
     initial: tocWidth,
+    // B207（用户点名「拖到最小后再往左拖就隐藏展开区，隐藏后分割线仍可拖回来」）：把
+    // 收放的两个口子接到 `setTocOpen` —— 拖分隔条和点那颗「大纲」键走**同一条**路，
+    // 键的点亮态 / 落盘都在 `setTocOpen` 一处收着，这里只当传声筒。
+    // ⚠️ `isOpen` 问的是面板自己（`tocPanel.hidden`）而不是另存一个布尔：显隐的唯一
+    //    出口是 `setTocOpen`，复制一份状态迟早跟它错开。
+    isOpen: () => !tocPanel.hidden,
+    onOpenChange: (open) => {
+      setTocOpen(open);
+    },
     onChange: (w) => {
       tocWidth = w;
       if (!settings) return;
@@ -4979,7 +4988,9 @@ function toggleSidebar(): void {
 function setTocOpen(open: boolean, persist = true): void {
   tocPanel.hidden = !open;
   // 空隙（分隔条）**不跟着隐藏**：它是侧栏卡片与编辑区卡片之间的固定间距，
-  // 收起时只是把手消失、不再吃指针（CSS 的 .toc-resizer.is-off）。
+  // 收起时只是展开区折起来 —— 这条缝本身**照样能抓**（B207：旧口径在这里连缝一起掐了
+  // 指针、把手也隐身，往左拖到底就成了一条死带，往右拖也拖不回来），收起态唯一的意义
+  // 就是「缝还在、间距不跳变」。收**整张卡片**那一档才连缝一起不占位。
   tocResizer.classList.toggle("is-off", !open);
   // 卡片上的这条同类名：内部那条竖线只在「展开区确实摊开着」时才值得画。
   sideShell.classList.toggle("is-collapsed", !open);
