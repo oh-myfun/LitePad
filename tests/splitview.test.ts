@@ -789,12 +789,14 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     expect(globalCss, "横向分隔条的细线几何").toMatch(/\.layout-sep-h::after\s*\{/);
     expect(globalCss, "纵向分隔条的细线几何").toMatch(/\.layout-sep-v::after\s*\{/);
 
-    // ② 侧栏/编辑区（两张卡片之间，B195）：**占布局**的空隙，且不再画细线
-    expect(resizer, "卡片之间必须是空隙（占布局宽度）").toMatch(/flex:\s*0 0 10px/);
+    // ② 侧栏/编辑区（两张卡片之间，B195 + B196）：**占布局**的空隙，且不再画细线。
+    //    宽度走 --card-gap（B196 对齐 VS Code 的 sash 尺寸 4px），不写死像素 ——
+    //    写死会与 global.css 的留白变量脱钩，改一处另一处就对不上。
+    expect(resizer, "卡片之间必须是空隙（占布局宽度）").toMatch(/flex:\s*0 0 var\(--card-gap\)/);
     expect(previewCss, "B195 起侧栏空隙里不再画 1px 竖线（改由三点把手承担）").not.toMatch(
       /\.toc-resizer::after/,
     );
-    // 命中区比空隙本身宽：元素 10px，::before 向两侧各溢出 3px = 16px 可拖
+    // 命中区比空隙本身宽：元素 4px（B196），::before 向两侧各溢出 3px = 10px 可拖
     const hit = previewCss.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
     expect(hit, "命中区向左溢出").toMatch(/left:\s*-3px/);
     expect(hit, "命中区向右溢出").toMatch(/right:\s*-3px/);
@@ -830,7 +832,7 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
       expect(
         BAD.match(/\.toc-resizer\s*\{[^}]*\}/)?.[0] ?? "",
         "替身退回「不占布局」必须被抓到",
-      ).toMatch(/flex:\s*0 0 10px/);
+      ).toMatch(/flex:\s*0 0 var\(--card-gap\)/);
     }).toThrow();
   });
   it("B59 分屏对齐 VS Code：复位/极限光标/方向光标/角手柄/落点高亮（静态契约）", () => {
@@ -927,13 +929,13 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     // ① 分隔条不占布局（对齐 VS Code sash 的浮层做法）。
     // B59 的 flex:0 0 7px 透明占位会撑开两侧内容、露出祖先底色 = 视觉上的粗带。
     expect(css, "分屏分隔条不占布局").toMatch(/\.layout-sep\s*\{[^}]*flex:\s*0 0 0/);
-    expect(previewCss, "侧栏空隙占 10px（B195，不再是 B28 的不占布局）").toMatch(
-      /\.toc-resizer\s*\{[^}]*flex:\s*0 0 10px/,
+    expect(previewCss, "侧栏空隙 = 拖拽区，宽度对齐 VS Code 的 4px（B196）").toMatch(
+      /\.toc-resizer\s*\{[^}]*flex:\s*0 0 var\(--card-gap\)/,
     );
     // 命中区搬到 ::before，向两侧各溢出 3.5px（共 7px）
     expect(css, "竖线命中区 7px 宽").toMatch(/\.layout-sep-h::before\s*\{[^}]*width:\s*7px/);
     expect(css, "横线命中区 7px 高").toMatch(/\.layout-sep-v::before\s*\{[^}]*height:\s*7px/);
-    // B195：侧栏那一档不再是「细线 + 命中区」，而是 10px 空隙 + 三点把手，
+    // B195：侧栏那一档不再是「细线 + 命中区」，而是 4px 空隙 + 三点把手，
     // 命中区只向两侧各溢出 3px 让拖拽好按（元素本体已经够宽，不再需要 7px 溢出）。
     expect(previewCss, "侧栏把手命中区向左溢出 3px").toMatch(
       /\.toc-resizer::before\s*\{[^}]*left:\s*-3px/,

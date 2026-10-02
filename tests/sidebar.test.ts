@@ -128,7 +128,9 @@ describe("B195 侧栏卡片样式", () => {
 describe("B195 空隙与三点把手", () => {
   it("空隙占布局宽度，把手静息淡、悬停/拖拽转亮；收起时留空隙只收把手", () => {
     const resizer = cssDecls(ruleBlock(preview, ".toc-resizer"));
-    expect(resizer, "空隙必须**占**布局宽度（不是零宽细线）").toMatch(/flex:\s*0 0 \d+px/);
+    // 宽度走 --card-gap（B196，对齐 VS Code 的 sash 尺寸）：这里**不比数值**，
+    // 具体几像素由 :root 那一处定（另一条用例盯「同档 4px」）。
+    expect(resizer, "空隙必须**占**布局宽度（不是零宽细线）").toMatch(/flex:\s*0 0 [^;]+/);
     expect(resizer, "仍是左右调整光标（B61：非 mac 档 ew-resize）").toContain("ew-resize");
     expect(resizer, "把手要在空隙里居中").toContain("align-items: center");
 
@@ -152,6 +154,93 @@ describe("B195 空隙与三点把手", () => {
     expect(BAD, "替身必须真的换过字形").not.toBe(icons);
     expect(() => {
       expect(BAD, "替身的非三点字形必须被抓到").toMatch(/grip:\s*"kebab-vertical"/);
+    }).toThrow();
+  });
+});
+
+// ------------------------------------------------------- B196：卡片几何对齐 VS Code
+// 用户点名：「左栏区和编辑区的拖拽区宽度，左栏以及编辑区和窗口边缘的宽度，也都参考 vscode
+// 进行优化」。VS Code 源码里的口径（已逐条核实）：
+//   · sash 本体 sash.css 的 --vscode-sash-size = 4px；
+//   · 卡片之间 layoutService.ts 的 FLOATING_PANEL_MARGIN = 4（token spacing-size40）；
+//   · 卡片到窗口边缘 floatingPanels.css 的 floating-card-outer-margin = 4（两种密度同档）。
+// B195 那版拖拽区写成 10px、卡片贴窗口边缘 0px，正差在这一档上 ⇒ 收口成两个变量。
+describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘各留一档（都取 VS Code 的 4px）", () => {
+  it("两档量只收在 :root 一处（改宽度动这两行就够）", () => {
+    const root = cssDecls(ruleBlock(css, ":root"));
+    expect(root, ":root 要有 --card-gap（卡片之间 = 拖拽区）").toMatch(/--card-gap:\s*\d+px/);
+    expect(root, ":root 要有 --card-edge（卡片到窗口边缘）").toMatch(/--card-edge:\s*\d+px/);
+    // 用户点名的就是**两个**宽度，其中「拖拽区 = 缝隙」在 VS Code 里本来就是同一个数
+    const gap = root.match(/--card-gap:\s*(\d+)px/)?.[1];
+    const edge = root.match(/--card-edge:\s*(\d+)px/)?.[1];
+    expect(gap, "拖拽区宽度取 VS Code 的 4px 那一档").toBe("4");
+    expect(edge, "外留白与拖拽区同档（VS Code 两种密度同值）").toBe(gap);
+  });
+
+  it("拖拽区**就是**卡片缝隙：宽度取 --card-gap，不写死像素", () => {
+    const resizer = cssDecls(ruleBlock(preview, ".toc-resizer"));
+    expect(resizer, "空隙必须仍占布局宽度（不能退回零宽细线）").toMatch(/flex:\s*0 0 [^;]+/);
+    expect(resizer, "宽度必须取 --card-gap（与 :root 同源，不写死）").toMatch(
+      /flex:\s*0 0 var\(--card-gap\)/,
+    );
+    // 缝收窄到 4px 后手感不能跟着窄：命中区跨到两侧卡片上，实际可拖 4 + 3*2 = 10px
+    const hit = preview.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(hit, "命中区向左溢出（可拖范围不随缝变窄）").toMatch(/left:\s*-3px/);
+    expect(hit, "命中区向右溢出").toMatch(/right:\s*-3px/);
+  });
+
+  it("卡片到窗口左右/下边缘留白走 --card-edge，且留白只在这一处源头", () => {
+    const row = cssDecls(ruleBlock(css, "#main-row"));
+    expect(row, "左栏/编辑区到窗口边缘要有留白").toMatch(
+      /padding:\s*0 var\(--card-edge\) var\(--card-edge\)/,
+    );
+    // ⚠️ 顶部**故意**是 0：LitePad 有自定义标题栏，VS Code 也只在 .top-window-edge
+    // （无标题栏 / 全屏）那一档才补顶留白 —— 这里照抄那个判据。
+    expect(row, "顶部贴住标题栏（不给顶留白）").toMatch(/padding:\s*0\s+var\(--card-edge\)/);
+    // 留白只放在 #main-row：两张卡片各写 margin 迟早漏一张，间距就会在开合时跳变
+    for (const sel of [".side-shell", ".layout-area"]) {
+      expect(cssDecls(ruleBlock(css, sel)), `${sel} 不得自己写 margin`).not.toMatch(/margin/);
+    }
+  });
+
+  it("把手缩到装得进 4px 缝（VS Code 三点把手总高约 12px）", () => {
+    const gripSize = preview.match(/\.toc-grip \.codicon\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(gripSize, "把手字号必须跟着缝收（原 16px 在 4px 缝里会顶出卡片）").toMatch(
+      /font-size:\s*12px/,
+    );
+  });
+
+  it("反向验证①：拖拽区退回写死 10px（脱钩回旧观感）必须被咬住", () => {
+    const BAD = preview.replace(
+      /(\.toc-resizer\s*\{[^}]*)flex:\s*0 0 var\(--card-gap\)/,
+      "$1flex: 0 0 10px",
+    );
+    expect(BAD, "替身必须真的换回写死宽度").not.toBe(preview);
+    expect(() => {
+      expect(cssDecls(ruleBlock(BAD, ".toc-resizer")), "替身的写死宽度必须被抓到").toMatch(
+        /flex:\s*0 0 var\(--card-gap\)/,
+      );
+    }).toThrow();
+  });
+
+  it("反向验证②：卡片贴回窗口边缘（留白被摘掉）必须被咬住", () => {
+    const BAD = css.replace(/padding:\s*0 var\(--card-edge\) var\(--card-edge\);/, "padding: 0;");
+    expect(BAD, "替身必须真的摘掉留白").not.toBe(css);
+    expect(() => {
+      expect(cssDecls(ruleBlock(BAD, "#main-row")), "替身的无留白必须被抓到").toMatch(
+        /padding:\s*0 var\(--card-edge\) var\(--card-edge\)/,
+      );
+    }).toThrow();
+  });
+
+  it("反向验证③：把手退回 16px（又顶出卡片）必须被咬住", () => {
+    const BAD = preview.replace(/font-size:\s*12px/, "font-size: 16px");
+    expect(BAD, "替身必须真的放大把手").not.toBe(preview);
+    expect(() => {
+      expect(
+        BAD.match(/\.toc-grip \.codicon\s*\{[^}]*\}/)?.[0] ?? "",
+        "替身的放大把手必须被抓到",
+      ).toMatch(/font-size:\s*12px/);
     }).toThrow();
   });
 });

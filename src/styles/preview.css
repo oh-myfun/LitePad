@@ -230,9 +230,16 @@
    空隙正中，让「这里能拖」是看得见的，而不是靠 1px 线猜。
    ⚠️ 与分屏分隔条 .layout-sep **不再同款**（B28 那条约定到此为止）：
       分屏边界落在**卡片内部**（细线，不该有缝），而侧栏/编辑区是**两张卡片之间**
-      （要缝，还要把手）—— 场景在 B123/B195 之后已经分成两类，硬套同款反而错。*/
+      （要缝，还要把手）—— 场景在 B123/B195 之后已经分成两类，硬套同款反而错。
+
+   B196（用户点名「拖拽区宽度参考 VS Code」）：**空隙 = 拖拽区，两者就是同一个宽度** ——
+   VS Code 里 sash 本体 4px 与卡片之间的缝 4px 也是同一档（sash.css 的 --vscode-sash-size
+   与 layoutService.ts 的 FLOATING_PANEL_MARGIN 都是 4）；B195 那版写成 10px 偏宽，
+   卡片之间像「断开了两截」而不是紧邻。这里走 --card-gap 一份量，改宽度只动一个变量。
+   ⚠️ 缝收窄后**手感不能跟着窄**：下面的 ::before 命中区仍向两侧各溢出 3px，
+      实际可拖范围还是 10px（元素 4px + 两侧各 3px），与 VS Code sash + 端头把手的总覆盖相当。*/
 .toc-resizer {
-  flex: 0 0 10px;
+  flex: 0 0 var(--card-gap);
   /* B61：竖线光标取 VS Code **非 mac** 档的 ew-resize（col-resize 是 mac 档，
      Windows 上会渲染成「箭头中间多一根竖杠」） */
   cursor: ew-resize;
@@ -243,7 +250,8 @@
   justify-content: center;
 }
 
-/* 命中区向两侧各溢出 3px（元素本体只有 10px，实际可拖 16px） */
+/* 命中区向两侧各溢出 3px（元素本体只有 4px 的缝，实际可拖 10px）—— 缝收窄后
+   手感不缩水的唯一保障：悬停区跨到卡片边缘上，但那里本来也没有别的可点东西。 */
 .toc-resizer::before {
   content: "";
   position: absolute;
@@ -274,8 +282,11 @@
     opacity var(--transition, 0.12s);
 }
 
+/* B196：缝从 10px 收到 4px，把手也得跟着缩 —— VS Code 那个三点把手是「2px 的点 + 上下
+   各 5px 偏移」= 总高约 12px、总宽约 2px，是**钉在 4px 的缝里**的。原先 16px 在 4px 缝里
+   会两头顶出卡片外面，看着像贴在卡片上的三个麻点。 */
 .toc-grip .codicon {
-  font-size: 16px;
+  font-size: 12px;
 }
 
 .toc-resizer:hover .toc-grip,

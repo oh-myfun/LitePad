@@ -12,6 +12,18 @@
      改标签圆角只动这一个变量；pill 胶囊档的四角 4px 不走它（独立观感）。 */
   --tab-radius: 5px;
   --transition: 120ms ease;
+  /* B196：卡片几何的两档量，取值对齐 VS Code 的 floating panel 那一档
+     （用户点名「拖拽区宽度、卡片与窗口边缘的宽度都参考 VS Code」）：
+       · --card-gap = 两张卡片之间的空隙，同时也是**拖拽区**的宽度。
+         对齐 base/browser/ui/sash/sash.css 的 sash 尺寸与
+         services/layout/browser/layoutService.ts 的 FLOATING_PANEL_MARGIN（4px）。
+       · --card-edge = 卡片到窗口左右 / 下边缘的留白，对齐
+         browser/media/floatingPanels.css 的 --modern-ui-floating-card-outer-margin。
+         那一档两种密度（默认 / compact）取的是同一个值，所以它也是「不跟密度变」的量。
+     ⚠️ 两个量必须成对存在：**只调其中一个会变成「卡片挤在一起」或「卡片漂在中间」**
+        —— 改一处就要顺手核对另一处。 */
+  --card-gap: 4px;
+  --card-edge: 4px;
 }
 
 :root[data-theme="dark"] {
@@ -2209,6 +2221,14 @@ button:focus-visible {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
+  /* B196：卡片到窗口的**外留白**（左栏卡左缘 / 编辑区卡右缘 / 卡片下缘到状态栏）。
+     取值 --card-edge（VS Code 的 floating-card-outer-margin 那一档 = 4px）。
+     ⚠️ **顶部故意不给**（padding-top: 0）—— LitePad 有自定义标题栏，VS Code 的卡片
+        也只在 `.top-window-edge`（无标题栏 / 全屏）那一档才补顶留白（floatingPanels.css），
+        有标题栏时卡片上沿就是压着标题栏的。这里照抄那个判据：上沿贴住，别的三面留白。
+     ⚠️ 留白放在 #main-row 上而不是各卡片自己的 margin：两张卡片同处一行，
+        各写 margin 迟早有一张漏写，间距就会在收起大纲时跳变；这里只有一处源头。 */
+  padding: 0 var(--card-edge) var(--card-edge);
 }
 
 #toc-panel {
