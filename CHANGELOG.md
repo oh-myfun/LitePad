@@ -3,6 +3,16 @@
 > 本文件由 `scripts/gen-changelog.sh` 从 Conventional Commit 自动生成，
 > `scripts/release.sh` 发布时自动刷新；版本口径见 `docs/conventions.md`「版本号规则」。
 
+## v0.17.1 — 2026-10-03
+
+本版距 `v0.17.0` 共 1 个提交。
+
+### 修复
+
+- 解码/转换菜单去掉重复选项，语言归类改走子菜单（B218） `49a7dfe`
+
+---
+
 ## v0.17.0 — 2026-10-03
 
 本版距 `v0.16.0` 共 4 个提交。
