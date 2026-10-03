@@ -87,7 +87,12 @@ if [ "${LITEPAD_SKIP_TESTS:-0}" = "1" ]; then
 else
   # ⚠️ 直调 vitest 入口，**不要**走 scripts/run-vitest.cjs：那个脚本是 execSync 里再 spawn
   #    `npx vitest`，嵌套进程下会假红（用例全过却报 status 1，把整条构建打断）。
-  node node_modules/vitest/vitest.mjs run
+  # ⚠️ `--maxWorkers=2` 是**必须的**，不是调优：默认并发（按核数开满）下，20 来个测试文件
+  #    同时 `await import("../src/main")`（CM6 + 整个前端树，冷缓存 transform 三四十秒），
+  #    互相抢 CPU ⇒ 随机 3~6 个文件报 `Hook timed out in 10000ms`，**一条用例都没红**
+  #    却把整条构建打断（B223 连着两次卡在第 2 步）。限到 2 个 worker 后 71/71 文件全绿，
+  #    总时长几乎不变（81s vs 65s）—— 全量用例的瓶颈是那个大 import，不是并行度。
+  node node_modules/vitest/vitest.mjs run --maxWorkers=2
 fi
 
 echo "==> [3/4] Rust 编译校验 + 单元测试（只校验，产物不可交付 —— 原因见下）"
