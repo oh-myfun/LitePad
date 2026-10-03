@@ -305,6 +305,50 @@ describe("B97 自建标题栏", () => {
     expect(refs(actions), ".title-actions 至少要引用一次").toBeGreaterThan(0);
   });
 
+  it("B223：图标左右留白同取一颗变量（右侧靠 calc 抵消 gap，净宽与左侧一致）", () => {
+    const root = ruleBlock(css(), ":root");
+    // ⚠️ 反例一律排在正向断言之前（B219 定式）：反例被正向抢先报错，这条闸等于没验过。
+    expect(root, "不许把留白写成 gap 那颗（那是四键之间的间距，不是图标留白）").not.toMatch(
+      /--title-mark-pad:\s*16px/,
+    );
+    expect(root, "留白量只在 :root 里定义一次").toMatch(/--title-mark-pad:\s*10px/);
+
+    const bar = ruleBlock(css(), ".title-bar");
+    expect(bar, "左侧留白必须引用变量").toContain("padding-left: var(--title-mark-pad)");
+    expect(bar, "不许写死左留白（改了右边跟不上）").not.toMatch(/padding-left:\s*\d+px/);
+
+    const mark = ruleBlock(css(), ".app-mark");
+    expect(mark, "右侧必须做差抵消容器那道 gap").toContain(
+      "margin-right: calc(var(--title-mark-pad) - var(--title-gap))",
+    );
+    // 两条反向闸：写正像素会与 gap **叠加**（右侧反而比左侧更宽），写负字面量则 gap 一改就失联
+    expect(mark, "不许写正的像素（会与 gap 叠成 26px）").not.toMatch(/margin-right:\s*\d+px/);
+    expect(mark, "不许写死负像素（gap 一变就失联）").not.toMatch(/margin-right:\s*-\d+px/);
+
+    // 代入验算：右侧净留白 = 容器 gap + 这条 margin，必须正好等于左侧那颗变量的值。
+    // 🎯 这条尺子**天生恒真**（gap + (pad - gap) 恒等于 pad），所以光有它等于没验 ——
+    // 必须配对照组：同一把尺子去量「做差两项对调」的替身，必须量出**不一样**的数。
+    const netInset = (src: string): number => {
+      const r = ruleBlock(src, ":root");
+      const m = ruleBlock(src, ".app-mark").match(/margin-right:\s*calc\(([^;]+)\);/);
+      if (!m) return NaN;
+      // ⚠️ 按变量名抠，别用 split("-") —— 变量名自己带连字符（title-mark-pad），
+      // 按减号切会碎成四段，这条断言就成了恒假。
+      const names = [...m[1].matchAll(/var\(--([\w-]+)\)/g)].map((x) => x[1]);
+      if (names.length !== 2) return NaN;
+      const val = (v: string) => Number(r.match(new RegExp(`--${v}:\\s*(\\d+)px`))?.[1] ?? NaN);
+      return val("title-gap") + (val(names[0]) - val(names[1]));
+    };
+    const pad = Number(root.match(/--title-mark-pad:\s*(\d+)px/)![1]);
+    expect(netInset(css()), "右侧净留白必须与左侧留白同宽").toBe(pad);
+    const swapped = css().replace(
+      "margin-right: calc(var(--title-mark-pad) - var(--title-gap))",
+      "margin-right: calc(var(--title-gap) - var(--title-mark-pad))",
+    );
+    expect(swapped, "对照组的替身必须真的换掉表达式").not.toBe(css());
+    expect(netInset(swapped), "对照组必须量出不同的净宽（否则这把尺子是恒真的）").not.toBe(pad);
+  });
+
   it("B99：置顶开关的样式沿用「开关点亮」那一套，且不挤图标", () => {
     const s = css();
     for (const sel of [
@@ -516,11 +560,18 @@ describe("B97 自建标题栏", () => {
 
   it("B101：标题栏左侧留足内边距，左上角图标不顶到窗口左缘", () => {
     const s = css();
-    // 判据：直接读 .title-bar 的 padding-left 数值。图标是标题栏的第一个子元素，
-    // 这条内边距就是它离窗口左缘的全部距离（图标自身没有 margin 可调）。
     const readInset = (src: string): number | null => {
-      const m = ruleBlock(src, ".title-bar").match(/padding-left:\s*(\d+(?:\.\d+)?)px/);
-      return m ? Number(m[1]) : null;
+      // 判据：直接读 .title-bar 的 padding-left 数值。图标是标题栏的第一个子元素，
+      // 这条内边距就是它离窗口左缘的全部距离（图标自身没有 margin 可调）。
+      // B223 起这个值可能挂在变量上（与图标右侧留白共用 `--title-mark-pad`），
+      // 所以要不就取字面量、要不就回 :root 把变量值解出来 —— 只认字面量会在换成变量后恒 null。
+      const decl = ruleBlock(src, ".title-bar").match(
+        /padding-left:\s*(?:(\d+(?:\.\d+)?)px|var\(--([\w-]+)\))/,
+      );
+      if (!decl) return null;
+      if (decl[1] !== undefined) return Number(decl[1]);
+      const v = ruleBlock(src, ":root").match(new RegExp(`--${decl[2]}:\\s*(\\d+(?:\\.\\d+)?)px`));
+      return v ? Number(v[1]) : null;
     };
     const inset = readInset(s);
     expect(inset, ".title-bar 必须显式给出 padding-left（否则图标贴边）").not.toBeNull();
@@ -528,7 +579,10 @@ describe("B97 自建标题栏", () => {
     expect(inset!, "图标离左缘太近（4px 会顶边，至少 8px）").toBeGreaterThanOrEqual(8);
     // 退化对照：把值改回 4px，同一把尺子必须判它不合格 ——
     // 否则这条断言对「日后被改小」是瞎的（数值断言最容易写成恒真）。
-    const regressed = s.replace(/(\.title-bar\s*\{[^}]*?padding-left:\s*)\d+(?:\.\d+)?px/, "$14px");
+    const regressed = s.replace(
+      /(\.title-bar\s*\{[^}]*?padding-left:\s*)(?:\d+(?:\.\d+)?px|var\(--[\w-]+\))/,
+      "$14px",
+    );
     expect(readInset(regressed), "退化对照要真把值改成 4px").toBe(4);
     expect(readInset(regressed)!, "退化到 4px 必须被判为不合格").toBeLessThan(8);
   });

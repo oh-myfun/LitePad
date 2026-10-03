@@ -40,6 +40,13 @@
      两处**必须同取这一颗变量** —— 谁改成字面量，四键之间就会突然裂开一条缝
      （gap 8→16 那次就是这个耦合没跟上，差 8px）。 */
   --title-gap: 16px;
+  /* 左上角图标（.app-mark）**左右两侧**的留白（B223）：左 = .title-bar 的 padding-left，
+     右 = .title-bar 的 gap 加上 .app-mark 那条负 margin-right，二者合起来正好等于这一颗。
+     ⚠️ 两侧必须同取这一颗 —— 图标左边贴窗口边缘、右边贴菜单，只改一边就成了
+     「左疏右密」（原来左 10px、右 16px，用户点名要拉平）。
+     右侧那条写成 `calc(本颗 - gap)` 而不是写死像素：gap 一变，净留白仍旧跟着这一颗走。
+     取值 10px 是跟菜单项 .menu-btn 的水平内边距取齐 —— 图标离窗口左缘太近会「顶边」。 */
+  --title-mark-pad: 10px;
 }
 
 :root[data-theme="dark"] {
@@ -339,9 +346,12 @@ body {
   /* B165：给绝对居中的 .title-center 当定位基准（文档名要钉在整条标题栏正中，
      不再是「剩余空位内居中」—— 左侧菜单一长，原来那个居中就会整体被挤偏）。 */
   position: relative;
-  /* 左留 10px：与菜单项 .menu-btn 的水平内边距（10px）取齐 —— 左上角图标离窗口左缘
-     太近会「顶边」（原先 4px，图标字形几乎贴着边框）。右端不留：关闭键要贴到窗口边缘。 */
-  padding-left: 10px;
+  /* 左留白取 --title-mark-pad（10px，与菜单项 .menu-btn 的水平内边距取齐 —— 左上角图标
+     离窗口左缘太近会「顶边」，原先 4px 时图标字形几乎贴着边框）。
+     ⚠️ 不许写回字面量：这 10px 有第二个人 —— .app-mark 那条 margin-right 要跟它算出
+     同样的右侧净留白（B223 用户点名「logo 右侧空白与左侧一致」）；两侧各写一个 10px，
+     改了一边就是「左疏右密」。右端不留：关闭键要贴到窗口边缘。 */
+  padding-left: var(--title-mark-pad);
   background: var(--bg-toolbar);
   /* B123-7：去掉下沿边框线 —— 编辑区大卡片（.layout-area）自带外框，
      标题栏再画一条会形成双线，视觉上显得框上加框。 */
@@ -354,14 +364,20 @@ body {
    保证与 exe / 任务栏图标是同一份源文件，而不是往前端目录再存一份会走样的副本。
    pointer-events:none 只是把「不可点」写明，免得日后被当成可点区域往上挂事件。
    ⚠️ 显示尺寸（B220）定在 24px（比对面的 24×24 方键再小一档，作为纯标识的份量）：
-   标题栏 34px 高仍留 5px 上下余量，比 30px 那版松快；与菜单的间距走 .title-bar 的
-   --title-gap（16px），左边距维持 10px 不动。源图是**无背景**的（见 main.ts），
-   background-size:contain 只负责等比缩，别改成 cover：底图一撑就会切掉文档边角。
+   标题栏 34px 高仍留 5px 上下余量，比 30px 那版松快。左右留白同取 --title-mark-pad
+   （B223 用户点名「logo 右侧空白与左侧一致」，原先左 10px / 右 16px 已拉平）。
+   源图**带底**（B222 起换羽毛图，见 main.ts），background-size:contain 只负责等比缩，
+   别改成 cover：底图一撑就会切掉文档边角。
    浅色主题下纸面偏白（--bg-toolbar #f6f7f8），靠纸面那道淡描边撑对比，观感请实机复核。 */
 .app-mark {
   flex: 0 0 auto;
   width: 24px;
   height: 24px;
+  /* B223：右侧净留白 = 父级的 gap + 这一条，正好落到 --title-mark-pad，
+     与左端的 padding-left 同一个值 ⇒ 图标左右两侧的空白一样宽。
+     ⚠️ 必须引用变量做差：写成正的像素会与容器那道 gap **叠加**（比左边更宽），
+     写成负的字面量则 gap 一改就失联 —— 两种都是「左疏右密」的老毛病。 */
+  margin-right: calc(var(--title-mark-pad) - var(--title-gap));
   background-repeat: no-repeat;
   background-position: center;
   background-size: contain;
