@@ -32,7 +32,13 @@
 触发时机（满足任一即 bump）：
 
 - 距最近 tag 出现**任一 `feat`** → `npm run release minor`
-- 或有效提交（feat/fix/perf/refactor/revert）累计 **≥10** → `npm run release patch`
+- 或距最近 tag 出现**任一 `fix`** → `npm run release patch`
+- 或有效提交（feat/perf/refactor/revert，fix 不计入）累计 **≥10** → `npm run release patch`
+
+⚠️ **同一个 bug 反复修复只算一个版本号**：一次真修之后再跟着两次真机回归，也只认那一个
+patch 额度。判据是**去重后的 bug 键**（subject 里的 `B\d+` ticket 号；没有 ticket 号的
+fix 各自算一个）。例：修 B213 时来回改三轮 ⇒ 只值一次 patch；若期间还夹过一个 feat，
+那次 bump 直接进 minor，patch 额度被一起吃掉，不必再补。
 
 **牙齿**：pre-push 先跑 `scripts/check-version-bump.sh`（排在 vitest 之前，失败得快）——
 未达阈值只告警，达阈值**直接阻断推送**并打印该执行的命令；同时校验

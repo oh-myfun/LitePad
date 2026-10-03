@@ -18,6 +18,7 @@ cd "$(git rev-parse --show-toplevel)" || exit 1
 
 # —— 阈值 ——
 FEAT_BLOCK=1        # 有 feat 却未 bump → 阻断
+FIX_BLOCK=1         # 有 fix（去重后）却未 bump → 阻断
 EFFECTIVE_BLOCK=10  # 有效提交累计 ≥10 未 bump → 阻断
 EFFECTIVE_WARN=5    # ≥5 → 告警
 ALL_WARN=20         # 总提交 ≥20 → 告警
@@ -63,13 +64,23 @@ fi
 # —— 3) 统计 tag 以来的提交类型 ——
 LOG="$(git log "${TAG}..HEAD" --no-merges --pretty=format:'%s' || true)"
 FEAT="$(printf '%s\n' "$LOG" | grep -cE '^feat(\(|\!|:)' || true)"
-EFFECTIVE="$(printf '%s\n' "$LOG" | grep -cE '^(feat|fix|perf|refactor|revert)(\(|\!|:)' || true)"
+# ⚠️ fix 的额度**按 bug 键去重**，不是按提交条数（用户口径：同一个 bug 反复修复只算一个
+#    版本号）。真修完再跟两轮真机回归，patch 额度不该被刷成三条。
+#    键 = subject 里的 `B\d+`（ticket 号）；没带 ticket 号的 fix 无法归类，各算一个。
+FIX_SUBJ="$(printf '%s\n' "$LOG" | grep -E '^fix(\(|\!|:)' || true)"
+FIX_KEYS="$(printf '%s\n' "$FIX_SUBJ" | sed -E 's/^fix(\([^)]*\))?:[[:space:]]*//' | grep -oE 'B[0-9]+' | sort -u || true)"
+if [ -z "$FIX_KEYS" ]; then
+  FIX_KEYS="$FIX_SUBJ"
+fi
+FIX="$(printf '%s\n' "$FIX_KEYS" | grep -cE '.' || true)"
+# ⚠️ fix 不重复计入 EFFECTIVE（上面已按 bug 键给了它一份额度，两边都算会让阈值翻倍）
+EFFECTIVE="$(printf '%s\n' "$LOG" | grep -cE '^(feat|perf|refactor|revert)(\(|\!|:)' || true)"
 ALL="$(printf '%s\n' "$LOG" | grep -cE '.' || true)"
 
 verdict() {
   # $1 = 建议 minor | patch
   echo "" >&2
-  echo "✗ 版本号守卫：距 $TAG 已 $ALL 个提交（feat $FEAT / 有效 $EFFECTIVE），版本号仍是 $PKG" >&2
+  echo "✗ 版本号守卫：距 $TAG 已 $ALL 个提交（feat $FEAT / fix 去重 $FIX / 有效 $EFFECTIVE），版本号仍是 $PKG" >&2
   echo "  按 docs/conventions.md 的口径，应 bump $1。" >&2
   echo "  执行其一：" >&2
   echo "      npm run release $1            # 本地全量构建（tsc/vitest/cargo/NSIS）后打 tag" >&2
@@ -79,11 +90,11 @@ verdict() {
 }
 
 if [ "$FEAT" -ge "$FEAT_BLOCK" ]; then verdict minor; fi
-if [ "$EFFECTIVE" -ge "$EFFECTIVE_BLOCK" ]; then verdict patch; fi
+if [ "$FIX" -ge "$FIX_BLOCK" ] || [ "$EFFECTIVE" -ge "$EFFECTIVE_BLOCK" ]; then verdict patch; fi
 
 if [ "$EFFECTIVE" -ge "$EFFECTIVE_WARN" ] || [ "$ALL" -ge "$ALL_WARN" ]; then
-  echo "⚠ 版本号仍是 $PKG：$TAG 以来 $ALL 个提交（feat $FEAT / 有效 $EFFECTIVE），接近 bump 阈值" >&2
-  echo "  （feat ≥$FEAT_BLOCK 或有效提交 ≥$EFFECTIVE_BLOCK 会强制阻断；先 npm run release <patch|minor>）" >&2
+  echo "⚠ 版本号仍是 $PKG：$TAG 以来 $ALL 个提交（feat $FEAT / fix 去重 $FIX / 有效 $EFFECTIVE），接近 bump 阈值" >&2
+  echo "  （feat ≥$FEAT_BLOCK 或 fix（去重后）≥$FIX_BLOCK 或有效提交 ≥$EFFECTIVE_BLOCK 会强制阻断；先 npm run release <patch|minor>）" >&2
   exit 0
 fi
 
