@@ -239,15 +239,15 @@ describe("B97 自建标题栏", () => {
     expect(main, "位图要真的挂到元素上").toContain("appMark.style.backgroundImage");
   });
 
-  it("B220：标题栏那颗是无底版（透明画布），且显示尺寸 30px", () => {
+  it("B220：标题栏那颗是无底版（透明画布），且显示尺寸 24px", () => {
     const s = ruleBlock(css(), ".app-mark");
     // ⚠️ 反例一律排在正向断言之前：B219 的教训 —— 反例一旦被正向抢先报错，
     // 这条反向闸等于根本没验过（退化照样能「通过反向验证」）。
     expect(s, "不许悄悄缩回原先那个 16px").not.toMatch(/(^|[^-])width:\s*16px/);
     expect(s, "不许悄悄缩回原先那个 16px").not.toMatch(/(^|[^-])height:\s*16px/);
-    expect(s, "也不许停在上次那个 32px").not.toMatch(/(^|[^-])width:\s*32px/);
-    expect(s, "必须显式声明宽度").toContain("width: 30px");
-    expect(s, "必须显式声明高度").toContain("height: 30px");
+    expect(s, "也不许停在上次那个 30px").not.toMatch(/(^|[^-])width:\s*30px/);
+    expect(s, "必须显式声明宽度").toContain("width: 24px");
+    expect(s, "必须显式声明高度").toContain("height: 24px");
     expect(s, "无底版靠 contain 等比缩，不许拉伸").toContain("background-size: contain");
 
     // 无底版的唯一真相源是图标脚本，不许手画一张丢进来
@@ -285,6 +285,28 @@ describe("B97 自建标题栏", () => {
     expect(packed.at(2, mid2(0, packed.height - 1)), "对照组左边中点应当不透明").toBeGreaterThan(0);
   });
 
+  it("B220：标题栏 gap 16px，且四键之间的抵消量必须同取这一颗变量", () => {
+    const root = ruleBlock(css(), ":root");
+    expect(root, "几何量只认 :root 里那一颗").toMatch(/--title-gap:\s*16px/);
+    // 反例放最前：写死 gap 就等于把「抵消量」甩下了车（gap 8→16 那次差的正是这一处）
+    expect(root, "不许再写死 8px 的老间距").not.toMatch(/--title-gap:\s*8px/);
+
+    const bar = ruleBlock(css(), ".title-bar");
+    expect(bar, "子项间距必须引用变量").toContain("gap: var(--title-gap)");
+    expect(bar, "不许写死 gap 像素（改 gap 要连抵消量一起改）").not.toMatch(/gap:\s*\d+px/);
+
+    // 置顶键 ↔ 窗口控制三键：这两颗要连成一组，靠负 margin 把 gap 吃掉
+    const actions = ruleBlock(css(), ".title-actions");
+    expect(actions, "抵消量必须跟着变量走").toContain("margin-right: calc(-1 * var(--title-gap))");
+    expect(actions, "不许写死 -8px（gap 一变这条就漏，四键会裂开）").not.toMatch(
+      /margin-right:\s*-8px/,
+    );
+    // 耦合的另一半：两条都得是「引用」，任一侧漏成字面量就失联 —— 从 ref 反查两边
+    const refs = (text: string) => text.match(/var\(--title-gap\)/g)?.length ?? 0;
+    expect(refs(bar), ".title-bar 至少要引用一次").toBeGreaterThan(0);
+    expect(refs(actions), ".title-actions 至少要引用一次").toBeGreaterThan(0);
+  });
+
   it("B99：置顶开关的样式沿用「开关点亮」那一套，且不挤图标", () => {
     const s = css();
     for (const sel of [
@@ -310,12 +332,18 @@ describe("B97 自建标题栏", () => {
   it("Request N：钉在顶部键与窗口控制三键之间不加额外空隙，四键贴成一组", () => {
     const s = css();
     const actions = ruleBlock(s, ".title-actions");
-    // .title-bar 的 gap:8px 会在这两群之间插出 8px 留白；用 -8px 正好抵消，让置顶键紧贴
+    // .title-bar 的 gap 会在这两群之间插出一段留白；用等量负 margin 正好抵消，让置顶键紧贴
     // 右侧三键（视觉上四键连成一组）。这条断言同时是回归守卫：删掉负边距就会回归到「分组留白」。
-    expect(actions, "置顶键必须用 -8px 抵消与三键之间的 gap").toMatch(/margin-right:\s*-8px/);
-    // .title-bar 的 gap 必须仍是 8px（其余分组：图标↔菜单↔标题 仍靠它分隔），
+    // ⚠️ 抵消量取 --title-gap 的**变量**而非字面：B220 把 gap 8→16 时，只改 gap 不改这条
+    //    就会在四键之间凭空多出 8px —— 两者是同一件事的两半。
+    expect(actions, "置顶键要抵消与三键之间的 gap").toContain(
+      "margin-right: calc(-1 * var(--title-gap))",
+    );
+    // 其余分组（图标↔菜单↔标题）的间距仍由同一颗 gap 撑着，
     // 不能为了「贴齐」去把整条 gap 抹平，否则会连图标与菜单的间距也吃掉。
-    expect(ruleBlock(s, ".title-bar"), ".title-bar 的 gap 必须保持 8px").toMatch(/gap:\s*8px/);
+    expect(ruleBlock(s, ".title-bar"), "子项间距仍须走 --title-gap").toContain(
+      "gap: var(--title-gap)",
+    );
   });
 
   it("B163：.title-actions 里的 24px 方键要纵向居中（不许吃满高键时代的 stretch）", () => {

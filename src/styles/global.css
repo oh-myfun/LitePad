@@ -34,6 +34,12 @@
      · 圆角 = `--vscode-cornerRadius-large` 8px（`.side-shell` / `.layout-area` 两处）。 */
   --card-gap: 4px;
   --card-edge: 4px;
+  /* 标题栏里**所有** flex 子项之间的间距（B220 第三遍：8px → 16px）。
+     ⚠️ 这一颗有第二个人：`.title-actions` 的那条 `margin-right: calc(-1 * var(--title-gap))`
+     靠它把「置顶键 ↔ 窗口控制三键」之间那道 gap 抵消掉，四键才连成一组。
+     两处**必须同取这一颗变量** —— 谁改成字面量，四键之间就会突然裂开一条缝
+     （gap 8→16 那次就是这个耦合没跟上，差 8px）。 */
+  --title-gap: 16px;
 }
 
 :root[data-theme="dark"] {
@@ -323,7 +329,9 @@ body {
 .title-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  /* 子项间距：一律取 --title-gap（有第二个人在 `.title-actions` 抵消它，见 :root 的说明）。
+     ⚠️ 这里**不许写死像素**：改 gap 是要同步改抵消量，写死必然一边忘改。 */
+  gap: var(--title-gap);
   height: 34px;
   flex: 0 0 34px;
   /* ⚠️ B192：**不要**给 .title-bar 加 app-region: drag —— 那会让 Chromium 也来处理拖动，
@@ -345,14 +353,15 @@ body {
    位图不在 CSS 里：由 main.ts 从 src-tauri/icons 引入后写成内联 background-image，
    保证与 exe / 任务栏图标是同一份源文件，而不是往前端目录再存一份会走样的副本。
    pointer-events:none 只是把「不可点」写明，免得日后被当成可点区域往上挂事件。
-   ⚠️ 显示尺寸（B220）改到 30px 后，标题栏 34px 高基本被它顶满（上下各剩 2px）——
-   放大后左边距维持 10px、与菜单的间距维持 8px 不动；源图是**无背景**的（见 main.ts），
+   ⚠️ 显示尺寸（B220）定在 24px（比对面的 24×24 方键再小一档，作为纯标识的份量）：
+   标题栏 34px 高仍留 5px 上下余量，比 30px 那版松快；与菜单的间距走 .title-bar 的
+   --title-gap（16px），左边距维持 10px 不动。源图是**无背景**的（见 main.ts），
    background-size:contain 只负责等比缩，别改成 cover：底图一撑就会切掉文档边角。
    浅色主题下纸面偏白（--bg-toolbar #f6f7f8），靠纸面那道淡描边撑对比，观感请实机复核。 */
 .app-mark {
   flex: 0 0 auto;
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 24px;
   background-repeat: no-repeat;
   background-position: center;
   background-size: contain;
@@ -454,9 +463,11 @@ body {
   flex: 1 1 auto;
   justify-content: flex-end;
   /* Request N：钉在顶部键与右侧窗口控制三键**之间不加额外空隙**，四键视觉上连成一组。
-     这里用 -8px 正好抵消 .title-bar 的 gap:8px（B103 曾刻意留这 8px 当分组留白，现取消）。
+     这里用负 margin 正好抵消 .title-bar 的 gap（B103 曾刻意留这 8px 当分组留白，现取消）
+     —— ⚠️ 抵消量必须**跟着 --title-gap 走**，不许写死：gap 8→16 时若只改一边，
+     置顶键与窗口三键之间就会凭空多出一条缝（B220 第三遍踩到）。
      二者仍是**独立容器**（见上方说明）：关闭键的悬停红底、置顶键的点亮态都不会互相牵连。 */
-  margin-right: -8px;
+  margin-right: calc(-1 * var(--title-gap));
 }
 
 /* 已点亮（当前窗口已置顶）：沿用查找栏那几个开关的激活三件套
