@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { edgeEnergy, icoEntries, pngAlpha, pyFnBody, readJson } from "./static";
 
 describe("应用图标（矢量自绘，四角一致）", () => {
@@ -92,6 +92,72 @@ describe("应用图标（矢量自绘，四角一致）", () => {
     // 主图必须是母版本身：Pillow 的 ICO _save 拿 `im.size` 当尺寸上限，
     // 主图要是 16 那档，所有 >16 的档会被整条跳过（静默少档、不报错）。
     expect(iconsBody, "传给 ICO 的主图必须是母版 img").toMatch(/^ {4}img\.save\(/m);
+  });
+
+  it("B221 真根因：ico 第一档必须给窗口图标用，不能是小尺寸", () => {
+    // ⚠️ 这才是「任务栏图标糊」的真正来源，前面两条都只是把图本身画实：
+    // Tauri 在 Windows 上把窗口图标嵌进二进制时**只取 ICO 的第一档**
+    // （tauri-codegen/src/image.rs 的 new_ico：`&icon_dir.entries()[0]`），
+    // 解码成 RGBA 交给 tao 生成一个 HICON（WM_SETICON）。
+    // **任务栏 / Alt+Tab 显示的是这个 HICON** —— 第一档是 16 的话，任务栏要 32/40/48
+    // 就只能把 16 放大 2~3 倍。所以改其他档的锐度，任务栏**毫无反应**（用户实测如此）。
+    // 实测指纹：构建 out 目录里被 include_bytes 的那份图标是 1024 字节 = 16×16×4。
+    const gen = readFileSync("scripts/gen_icons.py", "utf-8");
+    const iconsBody = pyFnBody(gen, "write_icons");
+
+    // ⚠️ 反例前置：Pillow 的 ICO 目录恒按尺寸升序写，第一档天然是 16 ——
+    //    不重排就等于把 16 交给任务栏去放大。
+    expect(iconsBody, "write_icons 必须调用目录重排（Pillow 写完第一档是 16）").toMatch(
+      /reorder_ico_first\(/,
+    );
+    expect(gen, "第一档要定在 64（任务栏最大物理尺寸）").toMatch(/ICO_FIRST_ENTRY\s*=\s*64/);
+
+    const entries = icoEntries(readFileSync("src-tauri/icons/icon.ico"));
+    expect(
+      entries[0].size,
+      "产物第一档不能是小尺寸：Tauri 只取它做窗口图标，小了任务栏就是放大显示",
+    ).not.toBeLessThan(64);
+    expect(entries[0].size, "第一档应正好是 ICO_FIRST_ENTRY").toBe(64);
+    // 重排只许换顺序，不许弄丢档位（目录项 16 字节，载荷偏移不动）
+    expect(new Set(entries.map((e) => e.size)).size, "重排后档位不许重复/丢失").toBe(
+      entries.length,
+    );
+  });
+
+  it("B221：窗口图标按显示缩放挑档（不赌某一个缩放）", () => {
+    // 单靠 ICO 只能给 Windows 一个 HICON，任何缩放都基于它缩放 —— 做不到「各种缩放都最优」。
+    // 所以运行时按 scale_factor 挑：100%/125%/150%/200% 分别要 32/40/48/64，
+    // 取**不小于目标的最小档** ⇒ 系统只会缩小、绝不放大。
+    const gen = readFileSync("scripts/gen_icons.py", "utf-8");
+    const rs = readFileSync("src-tauri/src/window_icon.rs", "utf-8");
+    const main = readFileSync("src-tauri/src/main.rs", "utf-8");
+    const sat = readFileSync("src-tauri/src/windows.rs", "utf-8");
+
+    // ⚠️ 反例前置：只生成一档 / 只 include 一档 ⇒ 又退化成「一张图打天下」
+    expect(rs, "四档都要 include，缺一档就没得挑").toMatch(
+      /include_bytes!\("\.\.\/icons\/icon-32\.rgba"\)[\s\S]*include_bytes!\("\.\.\/icons\/icon-48\.rgba"\)[\s\S]*include_bytes!\("\.\.\/icons\/icon-64\.rgba"\)[\s\S]*include_bytes!\("\.\.\/icons\/icon-128\.rgba"\)/,
+    );
+    for (const size of [32, 48, 64, 128]) {
+      expect(
+        statSync(`src-tauri/icons/icon-${size}.rgba`).size,
+        `icon-${size}.rgba 必须是裸 RGBA（边长²×4）`,
+      ).toBe(size * size * 4);
+    }
+    // 选档必须是「不小于目标的最小档」—— 写成 < 32 就会拿小图去放大
+    expect(rs, "选档判据要落在目标尺寸上").toMatch(/target\s*<=\s*32\.0/);
+    expect(rs, "48 那档也要有判据").toMatch(/target\s*<=\s*48\.0/);
+    expect(rs, "64 那档也要有判据（200% 缩放要 64）").toMatch(/target\s*<=\s*64\.0/);
+    expect(gen, "档位由 gen_icons 出，不许手抄").toMatch(/WINDOW_ICON_SIZES/);
+    expect(gen).toMatch(/write_window_icon_frames/);
+
+    // 三个调用点：主窗口启动、缩放变化、卫星窗口
+    expect(main, "主窗口启动时按当前缩放设一次").toMatch(/set_icon\(window_icon::pick\(/);
+    expect(main, "缩放变化要重挑（否则任务栏继续用旧倍率那档）").toMatch(
+      /ScaleFactorChanged[\s\S]{0,160}?window_icon::pick\(\*scale_factor\)/,
+    );
+    expect(sat, "卫星窗口也要设（它同样占任务栏一格）").toMatch(
+      /set_icon\(crate::window_icon::pick\(/,
+    );
   });
 
   it("B221 产物侧：已出包的 icon.ico 小档锐度必须高于二次缩放那版", () => {

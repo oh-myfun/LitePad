@@ -129,6 +129,11 @@ export function cssDecls(block: string): string {
  * ⚠️ 不能拿 topLevelFnBody 凑合：Python 函数靠缩退结束，源码里压根没有 `}`，
  *    那个工具在 TS 上找的第一个 `\n}` 恒为 -1，返回空串 —— 函数体里所有断言
  *    都会变成「找不到」，退化了也照样绿（B221 首次写这条时直接踩了）。
+ *
+ * ⚠️ 收尾判定必须**先判后 push**：下一个函数/顶层语句那一行（行首非空白）不属于
+ *    本函数，带上它就是假绿 —— B221 的 d4 退化实测：挖掉 write_icons 里的
+ *    `reorder_ico_first(...)` 调用后，紧跟其后的 `def reorder_ico_first(...)`
+ *    被算进了函数体，于是「必须调用重排」这条照样命中，退化全绿。
  */
 export function pyFnBody(src: string, name: string): string {
   const lines = src.split("\n");
@@ -137,8 +142,10 @@ export function pyFnBody(src: string, name: string): string {
   if (start < 0) return "";
   const out: string[] = [];
   for (let i = start; i < lines.length; i++) {
-    out.push(lines[i]);
-    if (i > start && lines[i] !== "" && !lines[i].startsWith(" ")) break; // 回到行首 = 本函数收尾
+    const line = lines[i];
+    // 回到行首 = 本函数已结束；这一行是**下一个**定义，不能算进来
+    if (i > start && line !== "" && !line.startsWith(" ")) break;
+    out.push(line);
   }
   return out.join("\n");
 }

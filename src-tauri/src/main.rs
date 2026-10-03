@@ -6,6 +6,7 @@ mod commands;
 mod core;
 mod dropbridge;
 mod session;
+mod window_icon;
 mod windows;
 
 use tauri::window::Color;
@@ -86,6 +87,12 @@ fn main() {
         // 主窗口据此收尾（把它承载的标签接回来）——只靠前端的 onCloseRequested 不够：
         // 进程退出、崩溃、被任务管理器结束都拿不到那个回调，事件是最后一道保险。
         .on_window_event(|win, event| {
+            // B221：显示缩放变了（拖到另一块屏 / 系统里改缩放）就重挑一档窗口图标。
+            // 不重挑的话，任务栏会继续拿着旧倍率那一档去缩放 —— 又变回糊的。
+            if let tauri::WindowEvent::ScaleFactorChanged { scale_factor, .. } = event {
+                let _ = win.set_icon(window_icon::pick(*scale_factor));
+                return;
+            }
             if !matches!(event, tauri::WindowEvent::Destroyed) {
                 return;
             }
@@ -119,6 +126,11 @@ fn main() {
             // 比白屏严重得多。底色方案窗口永远在、永远不是白板。
             if let Some(win) = app.get_webview_window("main") {
                 let _ = win.set_background_color(Some(boot_background(&win)));
+                // B221：任务栏 / Alt+Tab 的图标按**当前显示缩放**挑档（原理见 window_icon）。
+                // Tauri 自己那张（ICO 第一档）在这里被覆盖掉；万一这次调用失败，
+                // 退回的就是它 —— 第一档已定在 64，最多是被缩小一档，不会放大。
+                let scale = win.scale_factor().unwrap_or(1.0);
+                let _ = win.set_icon(window_icon::pick(scale));
             }
 
             // B91：关掉 wry 的原生拖放处理器（`dragDropEnabled: false`）之后，文件拖入的

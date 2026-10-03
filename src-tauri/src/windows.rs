@@ -280,7 +280,12 @@ fn build_satellite(
     if let Some((x, y)) = spot {
         builder = builder.position(x, y);
     }
-    builder.build()?;
+    let window = builder.build()?;
+    // B221：卫星窗口也会在任务栏上占一格，同样按当前缩放挑一档图标
+    // （它可能被拖到另一块缩放不同的屏上，所以要用**这个**窗口自己的倍率）。
+    let _ = window.set_icon(crate::window_icon::pick(
+        window.scale_factor().unwrap_or(1.0),
+    ));
     // B91：卫星窗口同样要装文件拖入路径桥（文件可以落在任何一个窗口上）。
     crate::dropbridge::install(app, label);
     Ok(())

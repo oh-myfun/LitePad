@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import struct
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
@@ -45,6 +46,16 @@ ICO_SHARPEN_MAX = 64              # 只给 ≤64 的档做锐化，大档本身�
 ICO_SHARPEN_RADIUS = 1.2          # UnsharpMask(radius, percent, threshold)
 ICO_SHARPEN_PERCENT = 70
 ICO_SHARPEN_THRESHOLD = 2
+
+# ICO 目录里**排第一**的那一档 —— 见下面 reorder_ico_first 的说明。
+# 取 64：它是下面 WINDOW_ICON_SIZES 里最大的一档，万一 Rust 侧的运行时换档没生效，
+# 退回 Tauri 自己的（= 第一档）时也不会被放大。
+ICO_FIRST_ENTRY = 64
+
+# 运行时按 DPI 挑的窗口图标档位（见 write_window_icon_frames）。
+# 任务栏在 100% 下要 32px，125%/150%/200%/300% 分别要 40/48/64/96 ——
+# 这四档能把 100%~400% 的缩放都覆盖成「缩小或 1:1」；再往上（500%）才没得挑。
+WINDOW_ICON_SIZES = [32, 48, 64, 128]
 
 # ---- 调色板 ----
 BRAND_TOP = (37, 99, 235)      # #2563EB
@@ -545,6 +556,28 @@ def ico_frames(img):
     return frames
 
 
+def write_window_icon_frames(img):
+    """给 Rust 侧「按 DPI 换图标」用的**裸 RGBA** 档位（B221）。
+
+    为什么不能直接靠 ICO：Tauri 把窗口图标嵌进二进制时只取 ICO 的**第一档**
+    （tauri-codegen 的 new_ico：`&icon_dir.entries()[0]`）生成一个 HICON 交给
+    WM_SETICON，Windows 只能缩放这一张图 —— 单一尺寸没法在所有缩放下都清晰。
+    实测：拿 64 当第一档，100% 缩放（任务栏要 32）时锐度只剩 70%；
+    拿 256 更只有 62%。所以运行时按 scale_factor 挑档（见 window_icon.rs）。
+
+    落 `icon-<n>.rgba`（行优先 RGBA）而不是 png：Rust 侧 include_bytes 直接喂给
+    tauri::image::Image::new，**运行时不做任何解码**。
+    """
+    for size in WINDOW_ICON_SIZES:
+        frame = img.resize((size, size), Image.LANCZOS)
+        if size <= ICO_SHARPEN_MAX:
+            frame = sharpen_small(frame)
+        raw = frame.convert("RGBA").tobytes()
+        with open(os.path.join(OUT_DIR, f"icon-{size}.rgba"), "wb") as fp:
+            fp.write(raw)
+        print(f"  icon-{size}.rgba  ({size}x{size} RGBA {len(raw)}B)  ← 运行时按 DPI 选")
+
+
 def write_icons(img):
     os.makedirs(OUT_DIR, exist_ok=True)
     for name, size in SIZES:
@@ -559,7 +592,36 @@ def write_icons(img):
         sizes=[(v, v) for v in ICO_SIZES],
         append_images=ico_frames(img),
     )
+    reorder_ico_first(os.path.join(OUT_DIR, "icon.ico"))
     print(f"  icon.ico  ({', '.join(str(v) for v in ICO_SIZES)})")
+    write_window_icon_frames(img)
+
+
+def reorder_ico_first(path, first=ICO_FIRST_ENTRY):
+    """把 ICO 目录的**第一条**换成指定尺寸那一档（只重排 16 字节的目录项，载荷不动）。
+
+    ⚠️ 为什么非要折腾这个顺序（B221 真正的根因，改别的地方都没用）：
+      · Tauri 在 Windows 上把**窗口图标**嵌进二进制时，取的是 ICO 的 **entries()[0】**
+        —— 也就是目录里第一档，解码成 RGBA 再交给 tao 生成一个 HICON（WM_SETICON）
+        （tauri-codegen/src/image.rs 的 `new_ico`，就一行 `&icon_dir.entries()[0]`）；
+      · **任务栏 / Alt+Tab 显示的是这个 HICON**，不是 exe 资源里的 ICO。
+        第一档是 16 的话，任务栏要 32/40/48 就只能把 16 放大 2~3 倍 —— 糊的就是它。
+        这也是「改了 ICO 小档锐度，任务栏却毫无变化」的答案：它压根没读那些档；
+      · 实测证据：构建产物 out 目录里那个被 include_bytes 的图标缓存恒为
+        1024 字节 = 16×16×4（RGBA）。改成 64 后应为 16384 字节；
+      · Windows 自己选档是按**尺寸**匹配、不看目录顺序，所以重排不会影响
+        资源管理器 / 快捷方式 / 安装程序那几处（它们各自取自己需要的档）。
+    """
+    data = open(path, "rb").read()
+    count = struct.unpack("<H", data[4:6])[0]
+    entries = [data[6 + i * 16 : 6 + (i + 1) * 16] for i in range(count)]
+    sizes = [e[0] or 256 for e in entries]  # bWidth 记 0 表示 256
+    idx = sizes.index(first)
+    if idx == 0:
+        return
+    entries.insert(0, entries.pop(idx))
+    with open(path, "wb") as fp:
+        fp.write(data[:6] + b"".join(entries) + data[6 + count * 16 :])
 
 
 APP_MARK_SIZE = 256     # 标题栏那颗的源图边长（显示 30 CSS px，3× 屏也够用）
