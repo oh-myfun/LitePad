@@ -208,6 +208,43 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
     expect(block).toContain("ellipsis");
   });
 
+  it("B218：编码 / 转换两路都按语言分组铺开（分组标题只认后端下发的 group）", () => {
+    const body = topLevelFnBody(main, "encodingMenuModel");
+    // 解读编码与转换为… 两路都要走同一个铺开出口，别各写一遍（两遍就必差一处）
+    expect(body.split("withLanguageHeadings").length - 1).toBe(2);
+    expect(body).toContain("const groups = encodingOptions.map");
+
+    const helper = topLevelFnBody(main, "withLanguageHeadings");
+    expect(helper, "换组处要插语言小标题").toContain("heading: true");
+    expect(helper, "换组处还要插一条分隔线").toContain("separator: true");
+    // 判据按 group 逐条对齐取，不许「数到第几项就当第几组」那样糊过去
+    expect(helper).toContain("groups[i]");
+    // 反例：分组只能来自后端下发，前端再抄一张「编码 → 语言」对照表就必漂
+    expect(main, "不许在前端另抄一份编码→语言对照表").not.toMatch(/GB2312\s*[:=]/);
+  });
+
+  it("B218：中文字符集包含 GB2312 等 Windows 常用字符集", () => {
+    // label 与它背后那张 encoding_rs 表要成对盯住：只盯 label，把映射落到别的常量上照样绿
+    const pairs: [string, string][] = [
+      ['Encoding::Gb2312 => "GB2312"', "Encoding::Gb2312 => encoding_rs::GB18030"],
+      ['Encoding::Gbk => "GBK"', "Encoding::Gbk => encoding_rs::GBK"],
+      [
+        'Encoding::Big5Hkscs => "Big5-HKSCS"',
+        "Encoding::Big5 | Encoding::Big5Hkscs => encoding_rs::BIG5",
+      ],
+    ];
+    for (const [label, table] of pairs) {
+      expect(codec, `菜单条目${label}`).toContain(label);
+      expect(codec, `落点${table}`).toContain(table);
+    }
+    // 中文那几条的组标题要认得出（菜单里那行小标题就取这个值）
+    expect(codec).toContain('=> "中文（简体 / 繁体）"');
+    // 老别名收口：cp936 / cp950 / chinese 这些系统 API 给出的名字照样落得下
+    for (const alias of ['"gb2312"', '"cp936"', '"cp950"', '"chinese"']) {
+      expect(codec, `别名 ${alias} 应从 from_label 收进来`).toContain(alias);
+    }
+  });
+
   it("Rust 侧 ISO-2022-JP 从 label 到 encoding_rs 常量一路打通", () => {
     expect(codec).toContain('Encoding::Iso2022Jp => "ISO-2022-JP"');
     expect(codec).toContain("Encoding::Iso2022Jp => encoding_rs::ISO_2022_JP");

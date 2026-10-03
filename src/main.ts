@@ -57,6 +57,8 @@ import {
   isUnicodeEncoding,
   listEncodings,
   listEols,
+  // B218：编码候选带上语言分组（「中文（简体 / 繁体）」这类小标题由后端那份列表带出）
+  type EncodingItem,
   loadSession,
   loadSettings,
   newTab as ipcNewTab,
@@ -382,7 +384,12 @@ let settings: Settings | null = null;
 let keymapOverrides: KeymapOverrides = {};
 /** 「首选项 → 新建默认行尾/编码」的候选：启动预取，供子菜单同步渲染。 */
 let eolOptions: string[] = ["CRLF", "LF", "CR"];
-let encodingOptions: string[] = ["UTF-8"];
+/**
+ * 编码候选（B218）：`label` 原样传回后端，`group` 是菜单里那行语言小标题。
+ * 启动预取之前是空列表 —— 空着就空着，绝不在前端手抄一份兜底清单
+ * （那份迟早和后端差一条，而差的那一条表现就是「菜单里有、功能没接上」）。
+ */
+let encodingOptions: EncodingItem[] = [];
 let themeMode: ThemeMode = "system";
 let isDark = false;
 let isWrap = true;
@@ -2724,6 +2731,29 @@ function bomTarget(current: string, wantBom: boolean): string | null {
 }
 
 /**
+ * 把一组编码条目按语言分组铺开（B218）：换组时先插一条分隔线、再插那行语言小标题。
+ *
+ * ⚠️ 分组只认后端下发的 `group` —— Rust 那份 `all()` 已经按组排好，这里只负责
+ *    「相邻两条 group 变了 ⇒ 插标题」。千万别在前端另维护一张「编码 → 语言」的
+ *    对照表：两张表迟早差一条，而差的那一条就是这个函数的全部意义所在。
+ */
+function withLanguageHeadings(items: MenuItem[], groups: string[]): MenuItem[] {
+  const out: MenuItem[] = [];
+  let lastGroup = "";
+  items.forEach((item, i) => {
+    const group = groups[i] ?? "";
+    if (group && group !== lastGroup) {
+      // 第一组之前没有上一组，不插分隔线
+      if (out.length > 0) out.push({ separator: true });
+      out.push({ heading: true, label: group });
+    }
+    lastGroup = group;
+    out.push(item);
+  });
+  return out;
+}
+
+/**
  * 主菜单「编码」与状态栏那颗键**共用**的一份菜单模型（B215）。
  *
  * ⚠️ 两边都从这里取，不接受第二份手抄的列表 —— 两份迟早差一项，而差的那一项
@@ -2737,16 +2767,24 @@ function encodingMenuModel(): EncodingMenuModel {
   // 没有活动文档时只有「解读编码」那一组还能操作，其余全置灰
   const canWrite = !!doc && !!doc.path;
 
-  const encodedIn = encodingOptions.map((label) => ({
-    label,
-    checked: label === current,
-    onSelect: () => void switchEncoding(label),
-  }));
-  const convertTo = encodingOptions.map((label) => ({
-    label,
-    disabled: !canWrite,
-    onSelect: () => void convertDoc({ encoding: label }),
-  }));
+  // 语言小标题按条目顺序对齐（后端那份列表里 group 排在 label 旁边，同序）
+  const groups = encodingOptions.map((it) => it.group);
+  const encodedIn = withLanguageHeadings(
+    encodingOptions.map((it) => ({
+      label: it.label,
+      checked: it.label === current,
+      onSelect: () => void switchEncoding(it.label),
+    })),
+    groups,
+  );
+  const convertTo = withLanguageHeadings(
+    encodingOptions.map((it) => ({
+      label: it.label,
+      disabled: !canWrite,
+      onSelect: () => void convertDoc({ encoding: it.label }),
+    })),
+    groups,
+  );
   const addTarget = bomTarget(current, true);
   const removeTarget = bomTarget(current, false);
   const bom: MenuItem[] = [
@@ -5428,7 +5466,7 @@ async function loadPreferenceOptions(): Promise<void> {
     const list = await listEncodings();
     if (list.length > 0) encodingOptions = list;
   } catch {
-    // 保持 UTF-8 兜底
+    // 保持空列表：宁可这一刻菜单里一条不列，也不塞一份自造的兜底清单
   }
 }
 
@@ -5645,7 +5683,8 @@ function openSettingsDialog(): void {
     eolOptions: () => eolOptions,
     onDefaultEol: (v) => void setDefaultEol(v),
     defaultEncoding: () => settings?.default_encoding ?? "UTF-8",
-    encodingOptions: () => encodingOptions,
+    // 设置页那颗下拉只要 label（它是扁平一屏，不需要语言分组）
+    encodingOptions: () => encodingOptions.map((e) => e.label),
     onDefaultEncoding: (v) => void setDefaultEncoding(v),
     // 「通用」分类：自动保存 / 热退出（原「文件」菜单的勾选项，B108 搬进设置页）
     autosave: () => settings?.autosave ?? false,

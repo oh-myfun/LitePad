@@ -70,7 +70,7 @@ vi.mock("../src/ipc/api", () => ({
   closeTab: () => Promise.resolve(),
   exportFile: () => Promise.resolve(),
   isUnicodeEncoding: () => true,
-  listEncodings: () => Promise.resolve(["UTF-8"]),
+  listEncodings: () => Promise.resolve([{ label: "UTF-8", group: "Unicode（统一码）" }]),
   listEols: () => Promise.resolve(["CRLF", "LF"]),
   // 左右两块面板：a.txt 开在**左**边，右边空着 —— 这样「落点=原位置」和
   // 「落点≠原位置」才有区别（单面板下拖到哪儿都落在同一块，测不出判据）。

@@ -82,7 +82,7 @@ vi.mock("../src/ipc/api", () => ({
   closeTab: () => Promise.resolve(),
   exportFile: () => Promise.resolve(),
   isUnicodeEncoding: () => true,
-  listEncodings: () => Promise.resolve(["UTF-8"]),
+  listEncodings: () => Promise.resolve([{ label: "UTF-8", group: "Unicode（统一码）" }]),
   listEols: () => Promise.resolve(["CRLF", "LF"]),
   // 会话里 scrollTop 落 0：说明「恢复前」那份；用例要证明它会被**后来的滚动**顶掉
   loadSession: () =>

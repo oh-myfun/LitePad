@@ -69,7 +69,7 @@ vi.mock("../src/ipc/api", () => ({
   closeTab: () => Promise.resolve(),
   exportFile: () => Promise.resolve(),
   isUnicodeEncoding: () => true,
-  listEncodings: () => Promise.resolve(["UTF-8"]),
+  listEncodings: () => Promise.resolve([{ label: "UTF-8", group: "Unicode（统一码）" }]),
   listEols: () => Promise.resolve(["CRLF", "LF"]),
   // tab0 = a.md（预览态，后台），tab1 = b.md（源码态，激活）。
   // 两边都先给一份**不一样**的 px 初值：读错人的话一眼看得出。

@@ -62,8 +62,26 @@ pub enum Encoding {
     Macintosh,
     Ibm866,
     // —— 东亚 ——
+    /// GB2312（B218）：**Windows 中文环境的默认旧码页**（CP936 的 GB2312 区）。
+    /// ⚠️ `encoding_rs` 没有独立的 GB2312 编码器 —— `gb2312` 只是它的一个 **label**，
+    ///     `for_label("gb2312")` 直接返回 GB18030。所以下面 `rs()` 复用 `GB18030`：
+    ///     GB2312 的字符集是 GB18030 的真子集，字节层面完全兼容（能解出来的都一样，
+    ///     能写回去的也一样），把它列成一条只影响**名字**，不影响正确性。
+    ///     Notepad++ 也是 GB2312 / GBK / GB18030 三条并排，背后各自带字符集校验。
+    Gb2312,
+    /// GBK（B218）：CP936，Windows 简体中文的实际实现。
+    /// ⚠️ 它与 GB18030 是 encoding_rs 的**两个不同常量**（不是别名）：GBK 的表里
+    ///    有一批落在私有区、另外它不吃 GB18030 的四字节扩展区。所以「转换为 GBK」
+    ///    真的会提示「这些字符 GBK 表示不了」（Notepad++ 也是这么分开的），
+    ///    不是一句空话 —— 这条现在会被不可逆保护对话框抓到，别顺手改回 GB18030。
+    Gbk,
     Gb18030,
     Big5,
+    /// Big5-HKSCS（B218）：繁体中文 + 香港增补字符集（CP950 的 HKSCS 扩展区）。
+    /// `encoding_rs` 的 `BIG5` 常量**本身就是「带 HKSCS 映射的 Big5」**（它的文档明说
+    ///     「This is Big5 with HKSCS with mappings to more recent Unicode assignments」），
+    ///     所以这一条也复用 `BIG5`：HKSCS 区本来就在表里，不是另起一套。
+    Big5Hkscs,
     ShiftJis,
     EucJp,
     /// ISO-2022-JP：靠**转义序列**切换 ASCII / 日文片假名 / 漢字段，
@@ -71,6 +89,17 @@ pub enum Encoding {
     /// 所以它的往返测试不能只丢一句短文本。
     Iso2022Jp,
     EucKr,
+}
+
+/// 菜单里的一条编码（B218）：`label` 是**原样传回后端的标识**（`Encoding::from_label`
+/// 认它），`group` 是菜单里那行语言小标题。
+///
+/// ⚠️ 前端拿这份扁平列表自己按 `group` 拼标题，**不要**再手抄一份编码清单去分组
+///    —— 两份迟早差一条，而差的那一条表现就是「菜单里有、功能没接上」。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EncodingItem {
+    pub label: &'static str,
+    pub group: &'static str,
 }
 
 impl Encoding {
@@ -108,8 +137,11 @@ impl Encoding {
             Encoding::Koi8U => "KOI8-U",
             Encoding::Macintosh => "macintosh",
             Encoding::Ibm866 => "IBM866",
+            Encoding::Gb2312 => "GB2312",
+            Encoding::Gbk => "GBK",
             Encoding::Gb18030 => "GB18030",
             Encoding::Big5 => "Big5",
+            Encoding::Big5Hkscs => "Big5-HKSCS",
             Encoding::ShiftJis => "Shift-JIS",
             Encoding::EucJp => "EUC-JP",
             Encoding::Iso2022Jp => "ISO-2022-JP",
@@ -134,8 +166,15 @@ impl Encoding {
             "utf16be" | "unicodefffe" => Encoding::Utf16Be,
             "utf16lewithoutbom" | "utf16lenobom" => Encoding::Utf16LeNoBom,
             "utf16bewithoutbom" | "utf16benobom" => Encoding::Utf16BeNoBom,
-            "gb18030" | "gbk" | "gb2312" | "cp936" | "chinese" | "ansigb2312" => Encoding::Gb18030,
-            "big5" | "cp950" | "chinesetrad" => Encoding::Big5,
+            // 中文（B218）：三条名字各自成条，但落到同一套字节上（见各变体说明）。
+            //   别名按 WHATWG 的 label 表收录 —— `gb2312`/`gbk` 在 encoding_rs 里
+            //   本来就是 gb18030 的 label，并列出来只是让「中文常用字符集」找得到。
+            "gb2312" | "gb231280" | "csiso58gb231280" | "csgb2312" | "hzgb2312" | "chinese"
+            | "ansigb2312" => Encoding::Gb2312,
+            "gbk" | "xgbk" | "cp936" => Encoding::Gbk,
+            "gb18030" => Encoding::Gb18030,
+            "big5" | "csbig5" | "cp950" | "chinesetrad" => Encoding::Big5,
+            "big5hkscs" => Encoding::Big5Hkscs,
             "shiftjis" | "sjis" | "cp932" | "japanese" => Encoding::ShiftJis,
             "eucjp" => Encoding::EucJp,
             "iso2022jp" | "iso2022japanese" => Encoding::Iso2022Jp,
@@ -174,53 +213,124 @@ impl Encoding {
         }
     }
 
-    /// 菜单与下拉的展示顺序：Unicode → 西欧 ISO → Windows-125x → 其他单字节 → 东亚。
-    /// ⚠️ 顺序是**契约**：前端「编码」菜单、设置页「默认编码」下拉、状态栏菜单
-    ///    全都按这个顺序渲染（B215）。新增条目请就近插入，别追加到末尾。
+    /// 菜单与下拉的展示顺序（B218 起按**语言分组**排列，同组必须连续）：
+    ///   Unicode → 拉丁 → 西里尔 → 希腊 → 希伯来 → 阿拉伯 → 中文 → 日文 → 韩文。
+    /// ⚠️ 顺序与分组都是**契约**：前端「编码」菜单、设置页「默认编码」下拉、
+    ///    状态栏菜单全都按这个顺序渲染（B215），分组小标题由 `group()` 现取。
+    ///    新增条目请插进它该属的那一组里，别追加到末尾（那会把它顶到别的组底下）。
     pub fn all() -> &'static [Encoding] {
         &[
             Encoding::Utf8,
             Encoding::Utf8Bom,
             Encoding::Utf16Le,
             Encoding::Utf16LeNoBom,
+            // —— Unicode ——
+            Encoding::Utf8,
+            Encoding::Utf8Bom,
+            Encoding::Utf16Le,
+            Encoding::Utf16LeNoBom,
             Encoding::Utf16Be,
             Encoding::Utf16BeNoBom,
-            // 西欧：Windows-1252（= WHATWG 语义下的 ISO-8859-1）打头，紧接 ISO-8859-2 起
+            // —— 拉丁字母：西欧 / 中欧 / 北欧 / 土耳其 / 越南 + macintosh 旧罗马 ——
             Encoding::Windows1252,
             Encoding::Iso88592,
             Encoding::Iso88593,
             Encoding::Iso88594,
-            Encoding::Iso88595,
-            Encoding::Iso88596,
-            Encoding::Iso88597,
-            Encoding::Iso88598,
             Encoding::Iso885910,
             Encoding::Iso885913,
             Encoding::Iso885914,
             Encoding::Iso885915,
             Encoding::Iso885916,
-            // Windows-125x
             Encoding::Windows1250,
-            Encoding::Windows1251,
-            Encoding::Windows1253,
             Encoding::Windows1254,
-            Encoding::Windows1255,
-            Encoding::Windows1256,
             Encoding::Windows1257,
             Encoding::Windows1258,
-            // 其他单字节
+            Encoding::Macintosh,
+            // —— 西里尔字母（含 IBM866 那套 OEM 西里尔）——
+            Encoding::Windows1251,
+            Encoding::Iso88595,
             Encoding::Koi8R,
             Encoding::Koi8U,
-            Encoding::Macintosh,
             Encoding::Ibm866,
-            // 东亚
+            // —— 希腊字母 ——
+            Encoding::Windows1253,
+            Encoding::Iso88597,
+            // —— 希伯来字母 ——
+            Encoding::Windows1255,
+            Encoding::Iso88598,
+            // —— 阿拉伯字母 ——
+            Encoding::Windows1256,
+            Encoding::Iso88596,
+            // —— 中文：先简体（GB2312/GBK/GB18030），再繁体（Big5 / Big5-HKSCS）——
+            Encoding::Gb2312,
+            Encoding::Gbk,
             Encoding::Gb18030,
             Encoding::Big5,
+            Encoding::Big5Hkscs,
+            // —— 日文 ——
             Encoding::ShiftJis,
             Encoding::EucJp,
             Encoding::Iso2022Jp,
+            // —— 韩文 ——
             Encoding::EucKr,
         ]
+    }
+
+    /// 所属语言 / 文字体系（B218）:菜单里那行小标题就取这个值。
+    ///
+    /// ⚠️ 返回的是**直接能显示给用户的中文**，而不是 `Unicode`/`Chinese` 这种
+    ///    内部标识：前端拿它只做「与上一条相不相同」的判断，不需要再维护一张
+    ///    名字 → 标题的对照表（两张表迟早差一项）。
+    pub fn group(&self) -> &'static str {
+        match self {
+            Encoding::Utf8
+            | Encoding::Utf8Bom
+            | Encoding::Utf16Le
+            | Encoding::Utf16LeNoBom
+            | Encoding::Utf16Be
+            | Encoding::Utf16BeNoBom => "Unicode（统一码）",
+            Encoding::Windows1252
+            | Encoding::Iso88592
+            | Encoding::Iso88593
+            | Encoding::Iso88594
+            | Encoding::Iso885910
+            | Encoding::Iso885913
+            | Encoding::Iso885914
+            | Encoding::Iso885915
+            | Encoding::Iso885916
+            | Encoding::Windows1250
+            | Encoding::Windows1254
+            | Encoding::Windows1257
+            | Encoding::Windows1258
+            | Encoding::Macintosh => "拉丁字母",
+            Encoding::Windows1251
+            | Encoding::Iso88595
+            | Encoding::Koi8R
+            | Encoding::Koi8U
+            | Encoding::Ibm866 => "西里尔字母",
+            Encoding::Windows1253 | Encoding::Iso88597 => "希腊字母",
+            Encoding::Windows1255 | Encoding::Iso88598 => "希伯来字母",
+            Encoding::Windows1256 | Encoding::Iso88596 => "阿拉伯字母",
+            Encoding::Gb2312
+            | Encoding::Gbk
+            | Encoding::Gb18030
+            | Encoding::Big5
+            | Encoding::Big5Hkscs => "中文（简体 / 繁体）",
+            Encoding::ShiftJis | Encoding::EucJp | Encoding::Iso2022Jp => "日文",
+            Encoding::EucKr => "韩文",
+        }
+    }
+
+    /// 全部菜单条目（label + 分组），供 `list_encodings` 一次性下发。
+    /// 顺序 == `all()`，所以前端只要按 `group` 变化插标题就行。
+    pub fn items() -> Vec<EncodingItem> {
+        Self::all()
+            .iter()
+            .map(|e| EncodingItem {
+                label: e.label(),
+                group: e.group(),
+            })
+            .collect()
     }
 
     fn rs(&self) -> &'static encoding_rs::Encoding {
@@ -254,8 +364,13 @@ impl Encoding {
             Encoding::Koi8U => encoding_rs::KOI8_U,
             Encoding::Macintosh => encoding_rs::MACINTOSH,
             Encoding::Ibm866 => encoding_rs::IBM866,
+            // B218：GB2312 没有独立常量（它是 GB18030 的 label），复用 GB18030 那张表；
+            //       GBK 则是 encoding_rs 的**真常量**（见 `Gbk` 变体说明），两张表不同；
+            //       Big5-HKSCS 走 BIG5（HKSCS 区本来就在它表里）。
+            Encoding::Gb2312 => encoding_rs::GB18030,
+            Encoding::Gbk => encoding_rs::GBK,
             Encoding::Gb18030 => encoding_rs::GB18030,
-            Encoding::Big5 => encoding_rs::BIG5,
+            Encoding::Big5 | Encoding::Big5Hkscs => encoding_rs::BIG5,
             Encoding::ShiftJis => encoding_rs::SHIFT_JIS,
             Encoding::EucJp => encoding_rs::EUC_JP,
             Encoding::Iso2022Jp => encoding_rs::ISO_2022_JP,
@@ -653,6 +768,118 @@ mod tests {
         }
     }
 
+    /// 中文（B218）：Windows 中文环境真正常用的几条必须在菜单里 —— 用户点开
+    ///    「编码 → 转换为…」第一件事就是找它，少一条就变成「菜单里没有」。
+    #[test]
+    fn chinese_group_lists_the_familiar_windows_charsets() {
+        const NAMES: [&str; 5] = ["GB2312", "GBK", "GB18030", "Big5", "Big5-HKSCS"];
+        let labels: Vec<&str> = Encoding::all().iter().map(|e| e.label()).collect();
+        for want in NAMES {
+            assert!(labels.contains(&want), "菜单缺少 {want}");
+        }
+        // 三条中文名字各有一条可点，且 from_label 认得它们（状态栏/会话都靠这条回来）
+        assert_eq!(Encoding::from_label("GB2312"), Encoding::Gb2312);
+        assert_eq!(Encoding::from_label("GBK"), Encoding::Gbk);
+        assert_eq!(Encoding::from_label("Big5-HKSCS"), Encoding::Big5Hkscs);
+        // 老别名不能因此掉队（系统 API / Notepad++ 回过来的名字）
+        assert_eq!(Encoding::from_label("gb2312"), Encoding::Gb2312);
+        assert_eq!(Encoding::from_label("cp936"), Encoding::Gbk);
+        assert_eq!(Encoding::from_label("cp950"), Encoding::Big5);
+        assert_eq!(Encoding::from_label("chinese"), Encoding::Gb2312);
+    }
+
+    /// 五条中文字符集必须**同组**，且组标题认得出是中文 —— 菜单那行小标题就取
+    ///    这个值，写歪了用户看到的就是一串没头没尾的字。
+    #[test]
+    fn the_chinese_charsets_share_one_group() {
+        const NAMES: [&str; 5] = ["GB2312", "GBK", "GB18030", "Big5", "Big5-HKSCS"];
+        let items = Encoding::items();
+        let labels: Vec<&str> = items.iter().map(|i| i.label).collect();
+        let groups: Vec<&str> = items.iter().map(|i| i.group).collect();
+
+        let at = |name: &str| -> usize {
+            labels
+                .iter()
+                .position(|l| *l == name)
+                .unwrap_or_else(|| panic!("菜单缺少 {name}"))
+        };
+        let group = groups[at("GB2312")];
+        // 简体三条在前、繁体两条在后，而且五条连成一截（不然菜单里的标题会插错位置）
+        assert!(labels[..at("GB2312")].iter().all(|l| !NAMES.contains(l)));
+        assert_eq!(labels[at("GB2312")..=at("Big5-HKSCS")], NAMES);
+        for name in NAMES {
+            assert_eq!(groups[at(name)], group, "{name} 必须与 GB2312 同组");
+        }
+        assert!(
+            group.contains("中文"),
+            "中文那几条的组标题得认得出是中文：{group}"
+        );
+    }
+
+    /// 分组（B218）：菜单是按「上一条 group 变了就插一个标题」拼的，所以同一组
+    ///    必须**连续**。一旦有人把新条目追加到 all() 末尾，这条会先炸。
+    #[test]
+    fn items_are_grouped_contiguously() {
+        let items = Encoding::items();
+        // started 记的是「已经开过头」的分组；换组时若新组在 started 里，
+        // 说明它前面已经出现过一次 —— 也就是这一组被拆成了两截。
+        let mut started: Vec<&str> = Vec::new();
+        let mut prev: Option<&str> = None;
+        for (i, item) in items.iter().enumerate() {
+            let group = item.group;
+            if let Some(p) = prev {
+                if p != group {
+                    assert!(
+                        !started.contains(&group),
+                        "分组「{group}」被拆成两截（第 {i} 条 {}）",
+                        item.label
+                    );
+                }
+            }
+            if started.last() != Some(&group) {
+                started.push(group);
+            }
+            prev = Some(group);
+        }
+        // 组数（B218 定的 9 个语言/文字体系）也一并锁住，别让分组悄悄合并掉
+        assert_eq!(started.len(), 9, "语言分组数量变了：{started:?}");
+    }
+
+    /// 三条中文条目的落点必须是**各自那张表**：GB2312 与 GB18030 共用一张、GBK 独占、
+    /// Big5-HKSCS 与 Big5 共用一张。判据取常量本身 —— 只断言「往返相等」的话，
+    /// 把 GB2312 落到 BIG5 上照样绿（往返会一起变，假绿一块）。
+    #[test]
+    fn chinese_variants_maps_to_the_right_tables() {
+        assert_eq!(Encoding::Gb2312.rs(), encoding_rs::GB18030);
+        assert_eq!(Encoding::Gbk.rs(), encoding_rs::GBK);
+        assert_eq!(Encoding::Gb18030.rs(), encoding_rs::GB18030);
+        assert_eq!(Encoding::Big5.rs(), encoding_rs::BIG5);
+        assert_eq!(Encoding::Big5Hkscs.rs(), encoding_rs::BIG5);
+        // 光「是 encoding_rs 的某个常量」还不够：GBK 那条如果落回 GB18030，
+        // 就无法真的报出「这字儿 GBK 写不了」，用户会以为编辑器在骗他。
+        assert_ne!(Encoding::Gbk.rs(), Encoding::Gb18030.rs());
+    }
+
+    /// 往返：简体走三张简体表、繁体走 Big5 —— 顺带证明「复用同一张表」不是空话。
+    #[test]
+    fn chinese_charsets_roundtrip_on_their_own_tables() {
+        let zh = "这是一段中文内容，用来证明中文条目各自都能原样回来。";
+        for enc in [Encoding::Gb2312, Encoding::Gbk, Encoding::Gb18030] {
+            let (bytes, replaced) = encode(zh, enc);
+            assert_eq!(replaced, 0, "{} 不该替换字符", enc.label());
+            assert_eq!(decode(&bytes, enc).text, zh);
+        }
+        // 繁体样本（「这」「内」这类简写体 Big5 根本没有，塞进去只会得到豆腐块，
+        // 所以这条只能用繁体文本，否则测的就不是往返而是 Big5 的缺失）
+        let tw = "繁體中文測試：證明 Big5 與 Big5-HKSCS 是同一套字節。";
+        for enc in [Encoding::Big5, Encoding::Big5Hkscs] {
+            let (bytes, replaced) = encode(tw, enc);
+            assert_eq!(replaced, 0, "{} 不该替换字符", enc.label());
+            assert_eq!(decode(&bytes, enc).text, tw);
+            assert_eq!(decode(&bytes, Encoding::Big5Hkscs).text, tw);
+        }
+    }
+
     #[test]
     fn gbk_roundtrip() {
         let (bytes, replaced) = encode("中文测试", Encoding::Gb18030);
@@ -668,7 +895,11 @@ mod tests {
             Encoding::Gb18030,
         );
         assert_eq!(replaced, 0);
-        assert_eq!(detect(&bytes), Encoding::Gb18030);
+        // 猜出来是 GBK 而不是 GB18030：chardetng 自己就是用 encoding_rs::GBK 给中文
+        // 打分的（它的 EUC_KR 扣分基准直接取 GBK_PUA_PENALTY）。之前 "gbk" 这个
+        // 别名被并进 GB18030，于是识别结果报 GB18030、实际解码器却是 GBK；现在
+        // 两条分开，状态栏报的名字和真正用来解码的那张表对得上了。
+        assert_eq!(detect(&bytes), Encoding::Gbk);
         // 内容必须能原样还原
         assert_eq!(
             decode(&bytes, Encoding::Gb18030).text,

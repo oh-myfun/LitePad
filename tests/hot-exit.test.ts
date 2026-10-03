@@ -90,7 +90,7 @@ vi.mock("../src/ipc/api", () => ({
   closeTab: () => Promise.resolve(),
   exportFile: () => Promise.resolve(),
   isUnicodeEncoding: () => true,
-  listEncodings: () => Promise.resolve(["UTF-8"]),
+  listEncodings: () => Promise.resolve([{ label: "UTF-8", group: "Unicode（统一码）" }]),
   listEols: () => Promise.resolve(["CRLF", "LF"]),
   // 无会话 → 冷启动出一个未命名标签；未命名文档没有磁盘路径，
   // 恰好是最能体现热退出价值（也最容易丢）的场景。

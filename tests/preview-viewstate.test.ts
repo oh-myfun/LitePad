@@ -57,7 +57,7 @@ vi.mock("../src/ipc/api", () => ({
   closeTab: () => Promise.resolve(),
   exportFile: () => Promise.resolve(),
   isUnicodeEncoding: () => true,
-  listEncodings: () => Promise.resolve(["UTF-8"]),
+  listEncodings: () => Promise.resolve([{ label: "UTF-8", group: "Unicode（统一码）" }]),
   listEols: () => Promise.resolve(["CRLF", "LF"]),
   // 上次是个**纯预览**的 md 标签，翻到了文档中段
   loadSession: () =>

@@ -814,13 +814,13 @@ pub fn check_encodable(text: String, encoding: String) -> Vec<LossyChar> {
         .collect()
 }
 
-/// 列出可用编码，供状态栏菜单渲染。
+/// 列出可用编码（含语言分组），供编码菜单渲染（B218）。
+///
+/// ⚠️ 下发的是「label + 分组标题」这一份**单一来源**：前端不许再自己维护一份
+///    编码清单去分组，两份迟早差一条，而差的那一条表现就是「菜单里有、功能没接上」。
 #[tauri::command]
-pub fn list_encodings() -> Vec<String> {
-    codec::Encoding::all()
-        .iter()
-        .map(|e| e.label().into())
-        .collect()
+pub fn list_encodings() -> Vec<codec::EncodingItem> {
+    codec::Encoding::items()
 }
 
 /// 列出可选行尾，供状态栏菜单渲染（与 list_encodings 保持同一数据源）。

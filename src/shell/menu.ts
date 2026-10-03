@@ -7,6 +7,13 @@ export interface MenuItem {
   /** 显示为分隔线（忽略其他字段） */
   separator?: boolean;
   /**
+   * 分组标题（B218）：「中文」「日文」这类语言小标题。
+   * 只认 `label`，**不渲染成按钮**——它不可点、不进 hover 高亮、也不带 ✓/箭头。
+   * 与 `separator` 不同：分隔线是纯横线，标题是那行字，两者可以叠着用
+   * （常见排法是「上一组最后一条 → 分隔线 → 标题 → 本组条目」）。
+   */
+  heading?: boolean;
+  /**
    * 子菜单：本项渲染为父项（标签靠左、行末挂一枚右向 chevron 表示还能往里走），
    * 悬停或点击向右展开。
    * 传函数则每次展开时求值，供动态列表使用。
@@ -199,6 +206,15 @@ function fillMenu(menu: HTMLElement, items: MenuItem[], opts?: PopupMenuOptions)
       const sep = document.createElement("div");
       sep.className = "menu-sep";
       menu.appendChild(sep);
+      continue;
+    }
+    // 分组标题（B218）：不做成按钮 —— 它不是一条能点的菜单项，
+    // 塞进 <button> 会让它默认获得 hover 高亮和键盘焦点，看着像能点的地方。
+    if (item.heading) {
+      const head = document.createElement("div");
+      head.className = "menu-heading";
+      head.textContent = item.label ?? "";
+      menu.appendChild(head);
       continue;
     }
 

@@ -980,3 +980,34 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     closePopupMenu();
   });
 });
+
+describe("B218：语言分组小标题（中文 / 日文这类行首分类）", () => {
+  it("分组标题渲染成 div 而不是 button —— 能做 hover 高亮的就是菜单项", () => {
+    showPopupMenu(null, [
+      { label: "GB2312", onSelect: () => {} },
+      { heading: true, label: "中文（简体 / 繁体）" },
+      { label: "Big5", onSelect: () => {} },
+    ]);
+    const menu = document.querySelector(".popup-menu")!;
+
+    const heading = menu.querySelector(":scope > .menu-heading");
+    expect(heading, "换组处必须渲染出 .menu-heading").toBeTruthy();
+    expect(heading!.tagName, "标题不是一条菜单项，不该是按钮").toBe("DIV");
+    expect(heading!.textContent).toBe("中文（简体 / 繁体）");
+    // 按钮列表里只剩真条目：标题不许混进去被当成一条能点的项
+    expect(
+      [...menu.querySelectorAll(":scope > button")].map((b) => b.textContent),
+      "标题不能被算成菜单项",
+    ).toEqual(["GB2312", "Big5"]);
+    closePopupMenu();
+  });
+
+  it("标题那行画成淡一档的小字，且左缘与条目文字对齐", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const block = ruleBlock(css, ".menu-heading", 0);
+    expect(block, "必须有 .menu-heading 的样式").toContain("color: var(--fg-muted)");
+    // 条目 = button 内边距 9px + .check 那 16px 的 ✓ 列；标题没有 ✓，得自己让出 16px，
+    // 否则标题比条目文字往左拱一截（B209 那类「看着就歪」的问题）。
+    expect(block).toMatch(/padding-left:\s*16px/);
+  });
+});

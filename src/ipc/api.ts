@@ -225,8 +225,20 @@ export function checkEncodable(text: string, encoding: string): Promise<LossyCha
   return invoke<LossyChar[]>("check_encodable", { text, encoding });
 }
 
-export function listEncodings(): Promise<string[]> {
-  return invoke<string[]>("list_encodings");
+/**
+ * 菜单里的一条编码（B218）：`label` 原样传回后端，`group` 是菜单里那行语言小标题。
+ *
+ * ⚠️ 分组**由后端那份扁平列表自己带出来**，前端不许再维护一份「编码 → 语言」的
+ *    对照表去分组 —— 两份迟早差一条，而差的那一条表现就是「菜单里有、功能没接上」。
+ *    这里只按相邻两条的 `group` 是否变化来插标题。
+ */
+export interface EncodingItem {
+  label: string;
+  group: string;
+}
+
+export function listEncodings(): Promise<EncodingItem[]> {
+  return invoke<EncodingItem[]>("list_encodings");
 }
 
 export function listEols(): Promise<string[]> {
