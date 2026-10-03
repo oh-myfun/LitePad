@@ -187,8 +187,46 @@ describe("应用图标（矢量自绘，四角一致）", () => {
     expect(energy.get(128)!, "对照组：128 是平滑大图，锐度必然低于小档").toBeLessThan(
       energy.get(32)!,
     );
-    expect(energy.get(32)!, "32px 锐度（二次缩放那版只有 14.5）").toBeGreaterThan(17);
-    expect(energy.get(48)!, "48px 锐度（二次缩放那版只有 10.0）").toBeGreaterThan(12.5);
-    expect(energy.get(64)!, "64px 锐度（二次缩放那版只有 8.0）").toBeGreaterThan(9.5);
+    // ⚠️ 锐度阈值是**跟着源图走的**，换源图必须重测重定（换完跑 .tmp 里的实测脚本）：
+    //   · 自绘折角文档时代（石墨底白纸，锐化过）：32/48/64 = 18.9/13.6/10.5，阈值 17/12.5/9.5；
+    //   · B222 换羽毛图后实测 12.01/9.74/8.73（LANCZOS 直出，不锐化），阈值整体下移。
+    // 还要注意：羽毛图对「二次缩放」几乎不敏感（直出 12.01 vs 256 中转 12.00），
+    // 这组阈值**防不了**二次缩放退化 —— 那条判据改锁 make_icons.py 的源码（见 B222 用例）。
+    expect(energy.get(32)!, "32px 锐度（羽毛图直出 12.01）").toBeGreaterThan(11);
+    expect(energy.get(48)!, "48px 锐度（羽毛图直出 9.74）").toBeGreaterThan(9);
+    expect(energy.get(64)!, "64px 锐度（羽毛图直出 8.73）").toBeGreaterThan(8);
+  });
+
+  it("B222：图标源 = docs/LitePad.png，make_icons.py 只做缩放与格式转换", () => {
+    // 用户拍定：图标内容以 docs/LitePad.png（512×512 深色圆角方块底 + 白色羽毛）为准，
+    // **不改内容** —— 不重绘、不锐化、不加底。gen_icons.py（矢量自绘）保留但不再是产物来源。
+    const make = readFileSync("scripts/make_icons.py", "utf-8");
+
+    // ⚠️ 反例前置：脚本里只要出现绘制类调用，就说明有人开始「改内容」了 ——
+    // 那是 gen_icons.py 的职责，这条链要永远保持「像素搬运工」。
+    expect(make, "不许出现绘制调用（改内容就走样了）").not.toMatch(
+      /ImageDraw|rounded_rectangle|UnsharpMask|sharpen_small|ImageChops/,
+    );
+    // 每档都必须从源图直出：中途缩到 256 再往下缩就是二次缩放（B221 的老毛病）
+    expect(make, "不许出现中间尺寸缩放").not.toMatch(/resize\(\(\s*256\s*,/);
+    // 逐档从 src 一次 LANCZOS 到位（ICO / rgba / png 三条产物线都是）
+    expect(make, "必须从源图直出各档").toMatch(/src\.resize\(/);
+    expect(make, "ICO 目录要重排（第一档 64，Tauri 只取第一档当窗口图标）").toMatch(
+      /reorder_ico_first\(/,
+    );
+    expect(make, "必须复用 gen_icons 的档位定义（单一真相源）").toMatch(
+      /from\s+gen_icons\s+import/,
+    );
+    expect(make, "rgba 档位也要出（运行时按 DPI 挑）").toMatch(/WINDOW_ICON_SIZES/);
+    expect(make, "标题栏那颗也要出（B222 带底版）").toMatch(/app-mark\.png/);
+
+    // 源图本体必须入库（脚本可复现的前提）
+    expect(statSync("docs/LitePad.png").size, "源图必须入库，否则脚本跑不起来").toBeGreaterThan(0);
+
+    // 产物侧：标题栏那颗必须真的是源图缩出来的（带底），而不是旧自绘图残留在盘上。
+    // 判据：app-mark 与 128x128.png 同为源图直出 —— 四边中点都应落在深色底内（非透明）。
+    // （结构性的七档 / 第一档断言在上面 B221 两条里，这里不重复。）
+    const mark = pngAlpha(readFileSync("src-tauri/icons/app-mark.png"));
+    expect(mark.at(2, Math.floor(mark.height / 2)), "app-mark 左边中点应是带底的").toBe(255);
   });
 });

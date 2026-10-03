@@ -25,14 +25,12 @@ import "./styles/preview.css";
 // 标题栏左上角的软件图标（B99）：**直接引 exe 用的那份源图**，不往前端目录另存副本 ——
 // 应用图标只有一个真相（scripts/gen_icons.py → src-tauri/icons/，bundle.icon 也取它），
 // 复制一份出来迟早走样，而且没人会记得同步。Vite 会把它作为资源打进 dist 并给出 URL。
-// ⚠️ B220：显示尺寸 16px → 24px（B220 定档 24px，标题栏 34px 上下各余 5px），
-// 位图换成**不带背景**的那张（B220 用户口径）。
-// 为什么不是 exe / 任务栏那张：那张是变体 D（石墨圆角方底 + 文档 + 钢笔），
-// 方底是给白色图标底 / 任务栏用的；标题栏贴在 --bg-toolbar 上，垫一块方底
-// 三条边都会露脏边 ⇒ 这里取变体 B（透明画布，只有折角文档 + 钢笔）。
-// 无底版的唯一真相源是 scripts/gen_icons.py 的 write_app_mark（--app-mark 出图），
-// 落在 src-tauri/icons/app-mark.png —— 不进 bundle.icon，它只喂前端这一处。
-// 几何与配色仍与打包图标共用 _doc_and_pen，换石墨档不会影响这里。
+// ⚠️ B220 定档 24px（标题栏 34px 高，上下各余 5px）。
+// B222：位图换成 docs/LitePad.png 的羽毛图（带深色圆角方底），由 scripts/make_icons.py 出图 ——
+// 用户拍定标题栏也用带底版，任务栏 / 标题栏风格统一。gen_icons.py 的无底版那条链
+// （write_app_mark / --app-mark）按用户要求保留，但不再是当前产物的来源。
+// 为什么不用再分带底/无底两版：旧图标（折角文档+钢笔）方底三条边在标题栏上露脏边，
+// 才拆出无底版；羽毛图自带圆角方块底且羽身为白色，深底在浅/深两种标题栏上都成立。
 import appMarkUrl from "../src-tauri/icons/app-mark.png";
 
 import { attachUserScrollClear, isProgrammatic, markProgrammatic } from "./scroll-guard";

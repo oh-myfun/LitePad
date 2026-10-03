@@ -233,13 +233,13 @@ describe("B97 自建标题栏", () => {
     );
     // 只喂前端这一张 ⇒ 不该被塞进打包清单（那是 exe / 任务栏 / installer 的活）
     const conf = JSON.parse(tauriConf()) as { bundle: { icon: string[] } };
-    expect(conf.bundle.icon, "无底版不进 bundle.icon").not.toContain("app-mark.png");
-    // 打包图本身没被顶掉：变体 D 那张仍在清单里
+    expect(conf.bundle.icon, "标题栏那颗不进 bundle.icon").not.toContain("app-mark.png");
+    // 打包图本身没被顶掉：B222 的羽毛源图产物仍在清单里
     expect(conf.bundle.icon.join(","), "bundle.icon 必须仍含打包图").toContain("128x128.png");
     expect(main, "位图要真的挂到元素上").toContain("appMark.style.backgroundImage");
   });
 
-  it("B220：标题栏那颗是无底版（透明画布），且显示尺寸 24px", () => {
+  it("B222：标题栏那颗与打包图标同源（带底版），显示尺寸 24px", () => {
     const s = ruleBlock(css(), ".app-mark");
     // ⚠️ 反例一律排在正向断言之前：B219 的教训 —— 反例一旦被正向抢先报错，
     // 这条反向闸等于根本没验过（退化照样能「通过反向验证」）。
@@ -248,23 +248,21 @@ describe("B97 自建标题栏", () => {
     expect(s, "也不许停在上次那个 30px").not.toMatch(/(^|[^-])width:\s*30px/);
     expect(s, "必须显式声明宽度").toContain("width: 24px");
     expect(s, "必须显式声明高度").toContain("height: 24px");
-    expect(s, "无底版靠 contain 等比缩，不许拉伸").toContain("background-size: contain");
+    expect(s, "带底版靠 contain 等比缩，不许拉伸").toContain("background-size: contain");
 
-    // 无底版的唯一真相源是图标脚本，不许手画一张丢进来
-    const gen = readFileSync("scripts/gen_icons.py", "utf-8");
-    expect(gen, "标题栏那张要有脚本出口").toContain("def write_app_mark");
-    expect(gen, "要有单独刷这一张的入口").toContain('"--app-mark"');
-    // 无底版与打包图共用同一份几何（variant_b 就是「不加圆角底」那一版）
-    expect(gen, "无底版几何必须共用，不许另抄一份").toContain("variant_b(MASTER)");
+    // 带底版的唯一真相源是 make_icons.py（B222 换源图后由它出全套），不许手画一张丢进来
+    const make = readFileSync("scripts/make_icons.py", "utf-8");
+    expect(make, "标题栏那张要有脚本出口").toContain("app-mark.png");
 
     // ⚠️ 像素判据的图必须**跟着 import 走**，不能写死文件名 ——
-    // B220 第二遍真退化就踩过：d2 把 import 换成带底那张，可判据读的仍是 app-mark.png，
+    // B220 第二遍真退化就踩过：d2 把 import 换成另一张，可判据读的仍是 app-mark.png，
     // 两条断言各说各话 ⇒ 退化照样全绿。这里从 import 里抠出文件名，两处才咬在一起。
     const src = mainSrc().match(/import\s+appMarkUrl\s+from\s+"\.\.\/src-tauri\/icons\/([^"]+)"/);
     expect(src, "标题栏那颗必须有 import 落点").toBeTruthy();
-    expect(src![1], "标题栏那颗必须挂无底版").toBe("app-mark.png");
+    expect(src![1], "标题栏那颗必须挂 app-mark.png").toBe("app-mark.png");
 
-    // 像素判据：四边中点必须透明（有石墨方底的话，这四点在底内 = alpha 255）
+    // B222 用户拍定标题栏也用带底版（羽毛图自带深色圆角方底）：
+    // 四边中点必须**不透明**（无底版时代这里断言的是 alpha=0，方向整个反过来）
     const alpha = pngAlpha(readFileSync(`src-tauri/icons/${src![1]}`));
     const mid = (a: number, b: number) => Math.floor((a + b) / 2);
     for (const [x, y, where] of [
@@ -273,12 +271,12 @@ describe("B97 自建标题栏", () => {
       [2, mid(0, alpha.height - 1), "左边中点"],
       [alpha.width - 3, mid(0, alpha.height - 1), "右边中点"],
     ] as [number, number, string][]) {
-      expect(alpha.at(x, y), `${where}必须透明（否则就是垫了背景）`).toBe(0);
+      expect(alpha.at(x, y), `${where}必须不透明（带底版；全透明说明退回了无底版）`).toBe(255);
     }
     expect(alpha.hasInk, "全透明就是图没画上 / 脚本没出图").toBe(true);
-    // 对照组：打包图（变体 D，带石墨方底）同四个点必须**不透明** ——
-    // 这条是解码器自己的反向闸：万一 pngAlpha 恒返回 0，上面的透明断言永远绿，
-    // 有这一条才炸得出来。
+    // 对照组：打包图同四个点也必须不透明 —— 这条是解码器自己的反向闸：
+    // 万一 pngAlpha 恒返回 255，上面的断言永远绿，有这一条才炸得出来。
+    // （两版都带底，方向一致；恒 255 的假解码器靠 hasInk 与七档断言兜底。）
     const packed = pngAlpha(readFileSync("src-tauri/icons/128x128.png"));
     const mid2 = (a: number, b: number) => Math.floor((a + b) / 2);
     expect(packed.at(mid2(0, packed.width - 1), 2), "对照组上边中点应当不透明").toBeGreaterThan(0);
