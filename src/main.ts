@@ -6248,6 +6248,13 @@ function setupMenuBar(): void {
     onAbout: () => {
       void showAbout();
     },
+    // B211：帮助 → 切换开发人员工具。单键切换由 Rust 侧判（那边才知道窗在不在：
+    // WebView2 的 is_devtools_open 恒为假、close_devtools 是空实现，前端问不出状态）。
+    onToggleDevtools: () => {
+      void invoke("toggle_devtools").catch((err: unknown) => {
+        logger.error("menubar", `切换开发人员工具失败 ${String(err)}`);
+      });
+    },
     keyHint,
   });
 }

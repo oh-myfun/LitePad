@@ -58,6 +58,14 @@ export interface MenuBarCallbacks {
   // ---- 帮助 ----
   /** 手动检查应用内更新（B107；结果走状态栏提示，自动检查静默） */
   onCheckUpdate: () => void;
+  /**
+   * 切换 WebView2 开发者工具（B211；帮助 → 切换开发人员工具）。
+   *
+   * 单键切换：已开则关、未开则开，对齐 VS Code 的「Toggle Developer Tools」。
+   * 按用户决定**不配快捷键** —— 键位表是要进设置页、会被三套预设改写的公开配置，
+   * 一个纯调试用途的入口不值得占用一个 id。
+   */
+  onToggleDevtools: () => void;
   onAbout: () => void;
   /** 当前生效键位（菜单右侧提示），空串则不显示 */
   keyHint: (id: string) => string;
@@ -149,6 +157,8 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
     items: (cb) => [
       { label: "检查更新…", onSelect: cb.onCheckUpdate },
       { separator: true },
+      // B211：与 VS Code 一样挂在「检查更新」与「关于」之间，顺序照 VS Code 中文版。
+      { label: "切换开发人员工具", onSelect: cb.onToggleDevtools },
       { label: "关于 LitePad", onSelect: cb.onAbout },
     ],
   },

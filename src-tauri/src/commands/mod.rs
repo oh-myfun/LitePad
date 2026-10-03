@@ -1370,3 +1370,113 @@ pub fn watchdog_start_drag(win: tauri::WebviewWindow) -> Result<(), String> {
 
     win.start_dragging().map_err(|e| e.to_string())
 }
+
+// ------------------------------------------------------- 开发者工具（B211）
+
+/// WebView2 开发者工具窗的候选标题。
+///
+/// 标题由 WebView2 按系统 locale 生成：zh-CN 下是「开发者工具」，en-US 下是
+/// 「Developer Tools」。两边都要认 —— 只认中文的话，英文环境里这条菜单就只会开、关不掉。
+#[cfg(windows)]
+const DEVTOOLS_TITLES: &[&str] = &["开发者工具", "Developer Tools"];
+
+/// 扫描时的共享结果位（回调是函数指针、没法捕获局部变量，只能走静态）。
+#[cfg(windows)]
+struct DevtoolsScan {
+    found: std::sync::atomic::AtomicBool,
+    /// 真：只认宿主窗口自己的 owner 级弹出窗；假：放宽成只看标题。
+    check_owner: std::sync::atomic::AtomicBool,
+}
+
+#[cfg(windows)]
+static DEVTOOLS_SCAN: DevtoolsScan = DevtoolsScan {
+    found: std::sync::atomic::AtomicBool::new(false),
+    check_owner: std::sync::atomic::AtomicBool::new(true),
+};
+
+/// 遍历桌面顶层窗口，认出开发者工具窗并给它发 WM_CLOSE，关掉过返回真。
+///
+/// ## 为什么不直接用 wry 的那一对开/关方法
+///
+/// wry 0.55 的 **WebView2** 后端里「开发者工具是否已开」那个查询**恒返回假**、
+/// 「关」那个方法是**空实现**（只有 mac 与 gtk 后端才有真实现）。
+/// 所以照着 tauri 文档那句「先查状态、再决定开还是关」写，在 Windows 上
+/// 永远查到「没开」⇒ 菜单点了只会开、永远关不掉，菜单项名不副实。
+///
+/// ⚠️ `tests/menubar.test.ts` 里用静态契约盯住了这两条路，改这个文件前先去看一眼。
+///
+/// 判据换成「桌面上有没有这扇窗」——开发者工具是一个**宿主窗口的 owner 级弹出窗**，
+/// 按标题认出来再发 WM_CLOSE 即可。
+///
+/// ## 为什么扫两遍
+///
+/// 卫星窗口也能各自开工具，所以先按 owner 精确匹配，避免把别人那份顺手关掉；
+/// 但 owner 关系万一不是预期形态（WebView2 版本差异等），精确那遍会一无所获 ——
+/// 于是再放宽成只看标题跑一遍。**两遍都找不到时返回假，命令侧才去开** ——
+/// 也就是「认不准就当它没开」，最坏退化成「只会开」，但绝不会误关别的应用的窗口。
+#[cfg(windows)]
+fn close_devtools_window(owner: isize) -> bool {
+    use std::sync::atomic::Ordering;
+
+    // ⚠️ 这三个类型的落点反直觉，照抄 Foundation 那一路会编不过：
+    //   · BOOL 在 0.61 里是 `windows_core::BOOL`（别名 i32），不在 Win32::Foundation；
+    //   · WM_CLOSE 是**窗口消息常量**，在 Win32::UI::WindowsAndMessaging 下。
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindow, GetWindowTextW, SendMessageW, GW_OWNER, WM_CLOSE,
+    };
+
+    unsafe extern "system" fn probe(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let owner = lparam.0 as isize;
+        if hwnd.0 as isize == owner || hwnd.0 as isize == 0 {
+            return BOOL(1);
+        }
+        if DEVTOOLS_SCAN.check_owner.load(Ordering::SeqCst) {
+            let owned = GetWindow(hwnd, GW_OWNER);
+            if owned.is_err() || owned.ok().map(|h| h.0 as isize) != Some(owner) {
+                return BOOL(1);
+            }
+        }
+        let mut buf = [0u16; 256];
+        let len = GetWindowTextW(hwnd, &mut buf) as usize;
+        let title = String::from_utf16_lossy(&buf[..len.min(buf.len())]);
+        if DEVTOOLS_TITLES.contains(&title.as_str()) {
+            let _ = SendMessageW(hwnd, WM_CLOSE, Some(WPARAM(0)), Some(LPARAM(0)));
+            DEVTOOLS_SCAN.found.store(true, Ordering::SeqCst);
+        }
+        BOOL(1)
+    }
+
+    let owner_handle = HWND(owner as *mut std::ffi::c_void);
+    for check_owner in [true, false] {
+        DEVTOOLS_SCAN.found.store(false, Ordering::SeqCst);
+        DEVTOOLS_SCAN
+            .check_owner
+            .store(check_owner, Ordering::SeqCst);
+        // WNDENUMPROC 是 Option 包着的 fn 指针，裸传 fn item 过不去，得包一层 Some
+        let _ = unsafe { EnumWindows(Some(probe), LPARAM(owner_handle.0 as isize)) };
+        if DEVTOOLS_SCAN.found.load(Ordering::SeqCst) {
+            return true;
+        }
+    }
+    false
+}
+
+/// 切换当前窗口的开发者工具（B211；帮助 → 切换开发人员工具）。
+///
+/// `win` 由 Tauri 注入为**调用方所在窗口**，从哪个窗口点就开哪个窗口的。
+/// 不出返回值：开或关本身自明（窗一出现 / 一消失就看得见），
+/// 而「用户可能自己点了 X 或按 F12」让任何返回值都会过期。
+#[cfg(windows)]
+#[tauri::command]
+pub fn toggle_devtools(win: tauri::WebviewWindow) -> Result<(), String> {
+    let hwnd = win.hwnd().map_err(|e| e.to_string())?;
+    if close_devtools_window(hwnd.0 as isize) {
+        smoke_log("devtools: closed");
+    } else {
+        win.open_devtools();
+        smoke_log("devtools: opened");
+    }
+    Ok(())
+}

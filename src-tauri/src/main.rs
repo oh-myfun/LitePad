@@ -222,6 +222,7 @@ fn main() {
             windows::window_payload,
             windows::open_satellite_window,
             commands::watchdog_start_drag,
+            commands::toggle_devtools,
         ])
         .run(tauri::generate_context!())
         .expect("LitePad 启动失败");

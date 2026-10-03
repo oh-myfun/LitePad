@@ -111,6 +111,8 @@ function makeCb(): MenuBarCallbacks {
     onSettings: noop,
     // 帮助 → 检查更新…
     onCheckUpdate: noop,
+    // 帮助 → 切换开发人员工具（B211）
+    onToggleDevtools: noop,
     onAbout: noop,
     // 用真实注册表，顺带断言菜单显示的键位与生效键位一致
     keyHint: (id) => realKeyHint(id, {}),
@@ -269,7 +271,7 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
     expect(document.querySelector(".popup-menu"), "点击叶子项后弹层应收起").toBeNull();
   });
 
-  it("B107：帮助菜单 = 检查更新… + 关于 LitePad（快捷键已移入设置）", async () => {
+  it("B107：帮助菜单 = 检查更新… + 切换开发人员工具 + 关于 LitePad（快捷键已移入设置）", async () => {
     const host = document.createElement("nav");
     document.body.appendChild(host);
     const cb = makeCb();
@@ -278,12 +280,70 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
     cb.onAbout = () => calls.push("about");
     createMenuBar(host, cb);
     await clickMenuBtn(host, "帮助");
-    expect(rootTexts()).toEqual(["检查更新…", "关于 LitePad"]);
+    expect(rootTexts()).toEqual(["检查更新…", "切换开发人员工具", "关于 LitePad"]);
     expect(rootTexts().join(""), "帮助里不得再有快捷键入口").not.toContain("快捷键");
     await clickAny("检查更新…");
     await clickMenuBtn(host, "帮助");
     await clickAny("关于 LitePad");
     expect(calls).toEqual(["check-update", "about"]);
+  });
+
+  it("B211：帮助 → 切换开发人员工具 是单键切换，且不挂快捷键", async () => {
+    // 菜单结构：必须夹在「检查更新…」与「关于」之间，与 VS Code 中文版的次序一致。
+    const src = readFileSync("src/shell/menubar.ts", "utf-8");
+    const helpBlock = src.slice(src.indexOf('label: "帮助"'));
+    expect(helpBlock, "帮助菜单里必须有切换开发人员工具").toContain("切换开发人员工具");
+
+    // 运行时：点它只回调一次，且**回调里不带任何键帽**（不加快捷键是用户定的）
+    const host = document.createElement("nav");
+    document.body.appendChild(host);
+    const cb = makeCb();
+    let hits = 0;
+    cb.onToggleDevtools = () => {
+      hits += 1;
+    };
+    createMenuBar(host, cb);
+    await clickMenuBtn(host, "帮助");
+    const item = [...rootMenu().querySelectorAll(":scope > button")].find((b) =>
+      (b.querySelector(".menu-label")?.textContent ?? "").includes("切换开发人员工具"),
+    );
+    expect(item, "「切换开发人员工具」必须是菜单里的一行").toBeTruthy();
+    expect(item!.querySelector(".menu-kbd"), "该项不得挂键帽").toBeNull();
+    item!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(hits, "点击必须触发一次切换").toBe(1);
+
+    // 静态契约：回调落到 Rust 的 toggle_devtools，且不顺手往键位表塞一个 id
+    const main = readFileSync("src/main.ts", "utf-8");
+    expect(main, "帮助菜单必须真的调 IPC 去切开发者工具").toContain('"toggle_devtools"');
+    expect(src, "切换开发人员工具不得再走 keyHint").not.toContain('keyHint("help.');
+    const keymap = readFileSync("src/shell/keymap.ts", "utf-8");
+    expect(keymap, "键位表不得为开发者工具新增条目").not.toContain("toggle_devtools");
+  });
+});
+
+describe("B211：开发者工具的切换判据在 Rust 侧，前端只负责开口", () => {
+  it("Rust 命令必须存在并注册，且必须启用 devtools feature（release 也要能开）", () => {
+    const rust = readFileSync("src-tauri/src/commands/mod.rs", "utf-8");
+    const rustMain = readFileSync("src-tauri/src/main.rs", "utf-8");
+    const cargo = readFileSync("src-tauri/Cargo.toml", "utf-8");
+    expect(rust, "必须提供切换开发者工具的命令").toContain("pub fn toggle_devtools");
+    expect(rustMain, "必须注册该命令").toContain("commands::toggle_devtools");
+    // release 构建的 devtools 靠这个 feature 开口；漏了就得重新编译才能调试。
+    expect(cargo, "devtools feature 必须开着").toMatch(
+      /features\s*=\s*\[[^\]]*\bdevtools\b[^\]]*\]/,
+    );
+  });
+
+  it("不许照抄 Tauri 文档的 is_devtools_open 判据（Webview2 后端恒为假）", () => {
+    // wry 0.55 的 WebView2 后端里 is_devtools_open 恒 false、close_devtools 是空实现，
+    // 拿它当 toggle 判据 ⇒ 菜单点了永远只开、关不掉。这里把这份坑钉死，
+    // 免得有人（或将来的升级）把文档那套抄回来。
+    const rust = readFileSync("src-tauri/src/commands/mod.rs", "utf-8");
+    expect(rust, "不得用恒假的 is_devtools_open 当判据").not.toContain("is_devtools_open");
+    expect(rust, "不得用空实现的 close_devtools 去关窗").not.toContain("win.close_devtools");
+    // 真关窗靠 Win32 找窗 + 发 WM_CLOSE
+    expect(rust, "必须真的去关那扇窗").toContain("WM_CLOSE");
   });
 });
 
