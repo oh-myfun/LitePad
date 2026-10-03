@@ -344,11 +344,14 @@ body {
    （所以它不走 <button>，拖动判据里的 button 豁免自然不适用于它）。
    位图不在 CSS 里：由 main.ts 从 src-tauri/icons 引入后写成内联 background-image，
    保证与 exe / 任务栏图标是同一份源文件，而不是往前端目录再存一份会走样的副本。
-   pointer-events:none 只是把「不可点」写明，免得日后被当成可点区域往上挂事件。 */
+   pointer-events:none 只是把「不可点」写明，免得日后被当成可点区域往上挂事件。
+   ⚠️ 显示尺寸（B220）改到 32px 后，标题栏 34px 高基本被它顶满（上下各剩 1px），
+   于是图标整体比原先重一截：左边距维持 10px、与菜单的间距维持 8px 不动，
+   靠 background-size:contain 让位图等比缩到 32px 框里，免得源图被拉扁。 */
 .app-mark {
   flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
+  width: 32px;
+  height: 32px;
   background-repeat: no-repeat;
   background-position: center;
   background-size: contain;

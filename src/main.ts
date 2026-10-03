@@ -25,8 +25,11 @@ import "./styles/preview.css";
 // 标题栏左上角的软件图标（B99）：**直接引 exe 用的那份源图**，不往前端目录另存副本 ——
 // 应用图标只有一个真相（scripts/gen_icons.py → src-tauri/icons/，bundle.icon 也取它），
 // 复制一份出来迟早走样，而且没人会记得同步。Vite 会把它作为资源打进 dist 并给出 URL。
-// 取 32×32（四张里最小，1.2KB）：标题栏显示 16px，正好 2× 覆盖 HiDPI 缩放。
-import appMarkUrl from "../src-tauri/icons/32x32.png";
+// ⚠️ B220：显示尺寸从 16px 放大到 32px —— 32×32 那张是「按 16px 显示」挑的，
+// 32 CSS px 在 HiDPI 上要撑到 64 设备像素，正好等于把 32px 源拉糊一遍；
+// 改取 128×128（同在 bundle.icon 里，与 exe / 任务栏仍是同一份源图），
+// 由 background-size:contain 等比缩到 32px 框，缩放是缩不是拉，边缘才立得住。
+import appMarkUrl from "../src-tauri/icons/128x128.png";
 
 import { attachUserScrollClear, isProgrammatic, markProgrammatic } from "./scroll-guard";
 

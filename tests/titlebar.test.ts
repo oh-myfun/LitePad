@@ -229,12 +229,36 @@ describe("B97 自建标题栏", () => {
   it("B99：图标与 exe / 任务栏用同一份源图，不往前端目录另存副本", () => {
     const main = mainSrc();
     expect(main, "必须引入 src-tauri 下的应用图标").toMatch(
-      /import\s+appMarkUrl\s+from\s+"\.\.\/src-tauri\/icons\/32x32\.png"/,
+      /import\s+appMarkUrl\s+from\s+"\.\.\/src-tauri\/icons\/128x128\.png"/,
     );
     // 同源的另一半证据：bundle.icon 里也有这张图（换成别的尺寸会让两处观感不一致）
     const conf = JSON.parse(tauriConf()) as { bundle: { icon: string[] } };
-    expect(conf.bundle.icon.join(","), "bundle.icon 必须包含被引入的那张").toContain("32x32.png");
+    expect(conf.bundle.icon.join(","), "bundle.icon 必须包含被引入的那张").toContain("128x128.png");
     expect(main, "位图要真的挂到元素上").toContain("appMark.style.backgroundImage");
+  });
+
+  it("B220：图标显示尺寸放大到 32px，源图必须够大才不糊", () => {
+    const s = ruleBlock(css(), ".app-mark");
+    // ⚠️ 反例一律排在正向断言之前：B219 的教训 —— 反例一旦被正向抢先报错，
+    // 这条反向闸等于根本没验过（退化照样能「通过反向验证」）。
+    expect(s, "不许悄悄缩回原先那个 16px").not.toMatch(/(^|[^-])width:\s*16px/);
+    expect(s, "不许悄悄缩回原先那个 16px").not.toMatch(/(^|[^-])height:\s*16px/);
+    expect(s, "必须显式声明宽度（放大是改尺寸，不是换图）").toContain("width: 32px");
+    expect(s, "必须显式声明高度").toContain("height: 32px");
+    // 位图靠 contain 等比缩，源图小了就只剩「放大拉糊」这一条路
+    expect(s, "放大后仍要走等比缩，不许拉伸").toContain("background-size: contain");
+    // 源图不能退回 32×32：32 CSS px 在 HiDPI 上要撑到 64 设备像素
+    const source = mainSrc().match(/icons\/(\d+x\d+\.png)/);
+    expect(source, "取不到被引用的那张源图").toBeTruthy();
+    const dim = (name: string): number => {
+      const file = readFileSync(`src-tauri/icons/${name}`);
+      // PNG 前 8 字节签名 + 4 字节块长 + 4 字节 "IHDR" ⇒ 第 16 字节起才是宽（4 字节大端）
+      return file.readUInt32BE(16);
+    };
+    expect(
+      dim(source![1]),
+      "被引入的源图至少要放大到显示尺寸的 2 倍（HiDPI 才不糊）",
+    ).toBeGreaterThanOrEqual(32 * 2);
   });
 
   it("B99：置顶开关的样式沿用「开关点亮」那一套，且不挤图标", () => {
