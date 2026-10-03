@@ -129,12 +129,13 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
     const host = document.createElement("nav");
     document.body.appendChild(host);
     createMenuBar(host, makeCb());
-    // 五个按钮的文本：VS Code 中文版的助记符写法
+    // 五个按钮的文本：VS Code 中文版的助记符写法（B215 起多了「编码(C)」这一栏）
     const texts = [...host.querySelectorAll("button.menu-btn")].map((b) => b.textContent);
-    expect(texts, "四个菜单按钮都要带括号助记符").toEqual([
+    expect(texts, "每个菜单按钮都要带括号助记符").toEqual([
       "文件(F)",
       "编辑(E)",
       "查看(V)",
+      "编码(C)",
       "帮助(H)",
     ]);
     // 反面：下划线（.mnemonic）与提示里的 Alt+字母 键帽都必须退场

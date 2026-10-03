@@ -9,6 +9,23 @@ import { closePopupMenu, showPopupMenu, type MenuItem } from "./menu";
  * 分屏不占菜单项，只保留快捷键。
  */
 
+/**
+ * 主菜单「编码」四组条目（B215）。
+ *
+ * 由 `main.ts` 的 `encodingMenuModel()` 一处生成，主菜单与状态栏那颗键同取这份——
+ * 两边各抄一份列表的话，迟早差一项，而差的那一项表现就是「菜单里有、功能没接上」。
+ */
+export interface EncodingMenuModel {
+  /** 解读方式：重新载入以该编码解读，不碰磁盘。 */
+  encodedIn: MenuItem[];
+  /** 转换为…：立即按该编码写盘（Notepad++ 的 Convert 语义）。 */
+  convertTo: MenuItem[];
+  /** 添加 / 移除 BOM（就地切 UTF-8 的 BOM 位，不适用时置灰）。 */
+  bom: MenuItem[];
+  /** 行尾符（立即按该行尾写盘）。 */
+  eol: MenuItem[];
+}
+
 export interface MenuBarCallbacks {
   onNew: () => void;
   onOpen: () => void;
@@ -51,6 +68,13 @@ export interface MenuBarCallbacks {
   /** 菜单展开时实时求值，决定 ✓ 勾选态 */
   wrapChecked: () => boolean;
   onToggleStatusbar: () => void;
+  /**
+   * 「编码 → 解读 / 转换 / BOM / 行尾」四组（B215）。
+   *
+   * 每次展开重新求值：菜单点开那一刻的文档（活动标签换了、文档改过编码了）才是
+   * 要显示的那一组 ✓ —— 像 `exportable()` 那样在求值里现取，别缓存。
+   */
+  encodingMenu: () => EncodingMenuModel;
   statusbarChecked: () => boolean;
   // ---- 设置 ----
   /** 打开统一设置页（含外观 / 编辑器 / 预览 / 新建文件 / 快捷键各分类） */
@@ -153,6 +177,22 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
     ],
   },
   {
+    label: "编码",
+    items: (cb) => {
+      // 一次取回四组，省得四遍回调；每组的项在展开时才求值（cb.encodingMenu() 内部）。
+      const model = cb.encodingMenu();
+      return [
+        { label: "解读编码", submenu: () => model.encodedIn },
+        { label: "转换为…", submenu: () => model.convertTo },
+        { separator: true },
+        // BOM 两项是叶子，直接摊开（就两条，不值得再套一层子菜单）
+        ...model.bom,
+        { separator: true },
+        { label: "转换行尾符", submenu: () => model.eol },
+      ];
+    },
+  },
+  {
     label: "帮助",
     items: (cb) => [
       { label: "检查更新…", onSelect: cb.onCheckUpdate },
@@ -166,9 +206,10 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
 
 /**
  * 菜单栏按钮的助记符字母（Alt+字母定位），与 MENUS 顺序一一对应。
- * 渲染成 VS Code 中文版的「标签(字母)」：`文件(F)` / `编辑(E)` / `查看(V)` / `设置(S)` / `帮助(H)`。
+ * 渲染成 VS Code 中文版的「标签(字母)」：`文件(F)` / `编辑(E)` / `查看(V)` / `编码(C)` / `帮助(H)`。
+ * ⚠️ 字母互不重复：助记符是定位用的，撞了就成了「按哪个都能开菜单」。
  */
-const MENU_KEYS = ["F", "E", "V", "H"] as const;
+const MENU_KEYS = ["F", "E", "V", "C", "H"] as const;
 
 export function createMenuBar(host: HTMLElement, cb: MenuBarCallbacks): void {
   host.textContent = "";

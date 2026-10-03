@@ -3170,6 +3170,17 @@ body.tab-drag-active * {
   padding: 1px 7px;
 }
 
+/* B215：编码清单扩到全量后，最长的一条是「UTF-16BE without BOM」——
+   而 .sb-item 是 nowrap，不限宽就会把状态栏挤窄、把别的项推出去。
+   ⚠️ flex 子项的 min-width 初始值是 auto（B209）：只写 max-width 压不住，
+   必须显式 `min-width: 0` 才真的能收缩；少了这一行，视觉上会被内容顶开。 */
+#sb-encoding {
+  min-width: 0;
+  max-width: 15ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .sb-btn:hover {
   background: var(--bg-hover);
   color: var(--fg);

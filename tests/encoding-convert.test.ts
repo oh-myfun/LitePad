@@ -1,0 +1,218 @@
+// @vitest-environment jsdom
+// 编码完善与转换（B215）：
+// 1) 运行时：菜单栏多出「编码」一栏，四组条目（解读编码 / 转换为… / BOM / 行尾符）
+//    都从 main 传进来的同一份模型渲染；
+// 2) 静态：转换出口只有一个 `convertDoc`，它**先改 doc.encoding 再走保存**
+//    （顺序反了就等于绕过不可逆保护），状态栏那颗键不再自己取编码列表，
+//    也不再有「四项硬编码兜底」这种跟后端对不上的清单。
+import { describe, it, expect, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { ruleBlock, topLevelFnBody } from "./static";
+import { createMenuBar, type EncodingMenuModel, type MenuBarCallbacks } from "../src/shell/menubar";
+import { closePopupMenu } from "../src/shell/menu";
+
+afterEach(() => {
+  closePopupMenu();
+});
+
+const main = readFileSync("src/main.ts", "utf-8");
+const menubar = readFileSync("src/shell/menubar.ts", "utf-8");
+const codec = readFileSync("src-tauri/src/core/codec.rs", "utf-8");
+
+/** 取模型里某一组的项数（判据按组取，避免被「第几项」这种位移骗过去）。 */
+function group(model: EncodingMenuModel, key: keyof EncodingMenuModel): string[] {
+  return model[key].map((i) => i.label ?? "");
+}
+
+function modelOf(pick: (m: EncodingMenuModel) => EncodingMenuModel): EncodingMenuModel {
+  const full: EncodingMenuModel = {
+    encodedIn: [
+      { label: "UTF-8", onSelect: () => {} },
+      { label: "UTF-8 with BOM", onSelect: () => {} },
+      { label: "ISO-2022-JP", onSelect: () => {} },
+    ],
+    convertTo: [{ label: "Shift-JIS", onSelect: () => {} }],
+    bom: [
+      { label: "添加 BOM", disabled: true, onSelect: () => {} },
+      { label: "移除 BOM", disabled: true, onSelect: () => {} },
+    ],
+    eol: [
+      { label: "CRLF", checked: true, onSelect: () => {} },
+      { label: "LF", onSelect: () => {} },
+    ],
+  };
+  return pick(full);
+}
+
+function callbackWith(model: EncodingMenuModel): MenuBarCallbacks {
+  const host = document.createElement("div");
+  host.id = "menu-bar";
+  document.body.appendChild(host);
+  // 只填本次用得上的字段，其余留空（回调是必填的，所以补 no-op）
+  const cb = {
+    encodingMenu: () => model,
+    encodingOptions: () => [],
+    eolOptions: () => [],
+    exportable: () => false,
+    tocChecked: () => false,
+    wrapChecked: () => false,
+    statusbarChecked: () => false,
+    keyHint: () => "",
+  } as unknown as MenuBarCallbacks;
+  createMenuBar(host, cb);
+  return cb;
+}
+
+/** 点开某一栏（按钮文本是「标签(字母)」，按前缀匹配）。 */
+async function openMenu(label: string): Promise<void> {
+  const btn = [...document.querySelectorAll("button.menu-btn")].find((b) =>
+    b.textContent?.startsWith(label),
+  );
+  expect(btn, `菜单栏按钮「${label}」应存在`).toBeTruthy();
+  btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+}
+
+/** 点开某个带子菜单的项，返回新展开的那一层。（锚点是**第一层**，不是上一次展开的） */
+async function openSubmenu(itemLabel: string): Promise<Element> {
+  const scope = document.querySelector(".popup-menu")!;
+  const target = [...scope.querySelectorAll(":scope > button")].find(
+    (b) => (b.querySelector(".menu-label")?.textContent ?? "") === itemLabel,
+  );
+  expect(target, `菜单项「${itemLabel}」应存在`).toBeTruthy();
+  target!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  return [...document.querySelectorAll(".popup-menu")].at(-1)!;
+}
+
+function labelsOf(menu: Element): string[] {
+  return [...menu.querySelectorAll(":scope > button")].map(
+    (b) => b.querySelector(".menu-label")?.textContent ?? "",
+  );
+}
+
+describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
+  it("菜单栏顶上多出「编码」一栏，位置在「查看」与「帮助」之间", () => {
+    // 判据按出现次序取，不看「有没有这个词」—— 免得有人换个顺序加进去照样绿
+    const order = [...menubar.matchAll(/^\s{4}label: "(.+?)",$/gm)].map((m) => m[1]);
+    const atView = order.indexOf("查看");
+    const atHelp = order.indexOf("帮助");
+    expect(order[atView + 1], "「编码」应紧跟在「查看」后面").toBe("编码");
+    expect(order[atHelp], "「帮助」应在「编码」之后").toBe("帮助");
+  });
+
+  it("五个助记字母互不重复（撞了就是按哪个都能开菜单）", () => {
+    const head = menubar.indexOf("const MENU_KEYS = [");
+    const keys = menubar.slice(head);
+    const payload = keys.slice(keys.indexOf("[") + 1, keys.indexOf("]"));
+    const letters = payload.split(",").map((s) => s.trim().replaceAll('"', ""));
+    expect(letters).toContain("F");
+    expect(letters).toContain("V");
+    expect(letters).toContain("C");
+    expect(new Set(letters).size, "助记符重复").toBe(letters.length);
+    expect(letters.length, "助记符数量应与菜单栏数一致").toBe(5);
+  });
+
+  it("编码菜单渲染出四组：解读编码 / 转换为… / BOM / 行尾符", async () => {
+    callbackWith(modelOf((m) => m));
+    await openMenu("编码");
+    expect(labelsOf([...document.querySelectorAll(".popup-menu")].at(-1)!)).toEqual([
+      "解读编码",
+      "转换为…",
+      "添加 BOM",
+      "移除 BOM",
+      "转换行尾符",
+    ]);
+  });
+
+  it("四组内容都从传入的模型来（改模型就改菜单，不存在第二份手抄列表）", async () => {
+    callbackWith(modelOf((m) => m));
+    await openMenu("编码");
+    expect(labelsOf(await openSubmenu("解读编码"))).toEqual([
+      "UTF-8",
+      "UTF-8 with BOM",
+      "ISO-2022-JP",
+    ]);
+    expect(labelsOf(await openSubmenu("转换为…"))).toEqual(["Shift-JIS"]);
+    expect(labelsOf(await openSubmenu("转换行尾符"))).toEqual(["CRLF", "LF"]);
+  });
+
+  it("编码清单由「转换」那一组承载，条目数不写死", () => {
+    const model = modelOf((m) => m);
+    // 判据看的是**来源**：两组都从 encodingOptions 的下发结果里 map 出来
+    const body = topLevelFnBody(main, "encodingMenuModel");
+    expect(body).toContain("encodingOptions.map");
+    expect(body).toContain("eolOptions.map");
+    expect(group(model, "convertTo").length, "转换组条目数应与下发清单一致").toBe(1);
+  });
+
+  it("转换只有一个出口 convertDoc，编码 / BOM / 行尾三条路都汇到它", () => {
+    const body = topLevelFnBody(main, "encodingMenuModel");
+    // BOM 两项与行尾各项都写成 convertDoc({ encoding: … }) / convertDoc({ eol: … })
+    expect(body).toContain("convertDoc({ encoding:");
+    expect(body).toContain("convertDoc({ eol:");
+    expect(main).toContain("async function convertDoc(");
+    // 不许再冒出第二套转换函数（两套 = 写盘保护抄两遍，必有一遍漏）
+    expect(main).not.toContain("function convertEncoding(");
+    expect(main).not.toContain("function convertEol(");
+  });
+
+  it("convertDoc 先写 doc.encoding 再走保存（顺序反了就绕过不可逆保护）", () => {
+    const body = topLevelFnBody(main, "convertDoc");
+    const atAssign = body.indexOf("doc.encoding = enc");
+    const atSave = body.indexOf("saveDocCore");
+    expect(atAssign, "应先赋目标编码").toBeGreaterThan(-1);
+    expect(atSave, "再走保存").toBeGreaterThan(-1);
+    expect(atAssign).toBeLessThan(atSave);
+  });
+
+  it("保存被拒时把编码/行尾字段退回（否则状态栏会对不上磁盘）", () => {
+    const body = topLevelFnBody(main, "convertDoc");
+    const atRollback = body.indexOf("doc.encoding = prevEnc");
+    const atSave = body.indexOf("saveDocCore");
+    expect(atRollback).toBeGreaterThan(atSave);
+    expect(body).toContain("const prevEnc = doc.encoding");
+  });
+
+  it("BOM 只认 UTF-8 两档：UTF-16 的带/不带 BOM 是独立条目，不走这项", () => {
+    const body = topLevelFnBody(main, "bomTarget");
+    expect(body).toContain("ENC_UTF8_BOM");
+    expect(body).toContain("return null");
+    // 反例：不要把 UTF-16LE without BOM 也算成「可去 BOM」
+    expect(body).not.toContain("UTF-16LE without BOM");
+  });
+
+  it("状态栏那颗键的菜单不再自己取 IPC 列表（与主菜单同取一份模型）", () => {
+    const body = topLevelFnBody(main, "showEncodingMenu");
+    expect(body).toContain("encodingMenuModel()");
+    // 旧的「点开才 await listEncodings() + 四项兜底」实现应已删除：
+    // 那是**启动时就取好**的一份清单，点开菜单再取一次只会多一次 IPC 往返。
+    expect(body).not.toContain("listEncodings");
+    expect(body).not.toContain("GB18030");
+  });
+
+  it("旧的四项硬编码兜底清单从 main 里抹掉了（跟后端全量对不上就是坑）", () => {
+    // 这行字面量是旧 showEncodingMenu 的 catch 兜底，留着就会在 IPC 一挂时
+    // 悄悄把菜单缩回四条 —— 而那时用户看得见的是「编码变少了」，不会有任何报错。
+    const stale = '["UTF-8", "UTF-8 with BOM", "UTF-16LE", "GB18030"]';
+    expect(main, "旧兜底清单应删除").not.toContain(stale);
+  });
+
+  it("状态栏那颗编码键限宽且能收缩（全量编码里最长的一条有二十个字符）", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const block = ruleBlock(css, "#sb-encoding");
+    expect(block, "必须有 #sb-encoding 的限宽规则").toContain("max-width");
+    // B209：flex 子项 min-width 的初始值是 auto，只写 max-width 会被内容顶开
+    expect(block, "不写 min-width: 0 就压不住").toContain("min-width: 0");
+    // 截断后必须看得出来是截断了，否则用户以为编码就叫 UTF-16BE wit…
+    expect(block).toContain("ellipsis");
+  });
+
+  it("Rust 侧 ISO-2022-JP 从 label 到 encoding_rs 常量一路打通", () => {
+    expect(codec).toContain('Encoding::Iso2022Jp => "ISO-2022-JP"');
+    expect(codec).toContain("Encoding::Iso2022Jp => encoding_rs::ISO_2022_JP");
+    // 同一条链上别漏掉 EUC-JP（易被顺手写成 EUC_KR 那一路）
+    expect(codec).toContain('Encoding::EucJp => "EUC-JP"');
+    expect(codec).toContain("Encoding::EucJp => encoding_rs::EUC_JP");
+  });
+});

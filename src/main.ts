@@ -109,8 +109,8 @@ import { showExternalConflictDialog, showSaveConflictDialog } from "./shell/conf
 import { CODICONS, type CodiconName } from "./shell/codicons";
 import { clearTip, initTooltips, setTip } from "./shell/tooltip";
 import { paletteOpen, showCommandPalette } from "./shell/commandpalette";
-import { createMenuBar, openMenuByIndex } from "./shell/menubar";
-import { showPopupMenu } from "./shell/menu";
+import { createMenuBar, openMenuByIndex, type EncodingMenuModel } from "./shell/menubar";
+import { showPopupMenu, type MenuItem } from "./shell/menu";
 import {
   countLeaves,
   eachLeaf,
@@ -2652,27 +2652,144 @@ async function doSaveAll(): Promise<void> {
   showMessage(parts.length > 0 ? parts.join("；") : "没有需要保存的修改");
 }
 
+// ---------------------------------------------------------------- 编码转换（B215）
+
+/** UTF-8 两档 —— 只有这两档之间才需要「添加 / 移除 BOM」这种就地操作。 */
+const ENC_UTF8 = "UTF-8";
+const ENC_UTF8_BOM = "UTF-8 with BOM";
+
+/**
+ * 「转换为…」「添加/移除 BOM」「行尾符转换」三类的共同出口：把目标编码/行尾写进
+ * doc，然后走**一次原位保存**。
+ *
+ * 为什么复用保存、而不是另开一组转换命令：
+ *   · 原子写、只读兜底、脏写检查（外部改过就不盖）、保存回声抑制，这些都已经在
+ *     `save_file` 里兜住了；转换再自起一套就是把它们抄一遍，抄一次漏一次；
+ *   · 不可逆保护同样是保存路径自带的 —— legacy 编码里无法映射的字符，
+ *     `saveDocCore` 会自己去 `checkEncodable` 拦下并弹确认。
+ *     ⚠️ 所以**必须先写 `doc.encoding` 再调它**：顺序反了等于绕过不可逆保护。
+ *
+ * @param next 只写要变的那一侧（都不传 = 空操作，调用方不该这么调）。
+ * @returns 是否真的启动了保存（false = 被前置条件/用户拒绝挡回，字段没动）。
+ */
+async function convertDoc(next: { encoding?: string; eol?: string }): Promise<boolean> {
+  const tab = activeTab();
+  const doc = tab ? docOf(tab) : undefined;
+  if (!doc || !tab) return false;
+
+  const enc = next.encoding ?? doc.encoding;
+  const eol = next.eol ?? doc.eol;
+  if (enc === doc.encoding && eol === doc.eol) return false;
+
+  // 转换 = 写盘，未命名文档没有落点可写
+  if (!doc.path) {
+    showMessage("该文件还没有关联磁盘路径，请先「另存为」保存一次再转换", true);
+    return false;
+  }
+  // 转换会盖掉没保存的修改：先问一句，别替用户做这个决定
+  if (isDirtyVsBaseline(doc, null)) {
+    const ok = await ask(
+      `有未保存的修改，转换为 ${enc} / ${eol} 会立即写盘并覆盖这些修改。继续吗？`,
+      { title: "转换将写入磁盘", kind: "warning" },
+    );
+    if (!ok) return false;
+  }
+
+  const prevEnc = doc.encoding;
+  const prevEol = doc.eol;
+  doc.encoding = enc;
+  doc.eol = eol;
+  const ok = await saveDocCore(doc, tab, false);
+  if (!ok) {
+    // 保存被拒 / 冲突未覆盖 / lossy 取消：字段必须退回，否则状态栏会显示一个
+    // 跟磁盘对不上的编码，下一次保存才悄悄写错字节。
+    doc.encoding = prevEnc;
+    doc.eol = prevEol;
+    refreshAll();
+    return false;
+  }
+  showMessage(`已转换为 ${doc.encoding} / ${doc.eol}`);
+  logger.info("convert", `${doc.name} ${doc.encoding}/${doc.eol}`);
+  return true;
+}
+
+/**
+ * BOM 的目标编码。`null` = 当前编码不存在「就地加/去 BOM」这回事
+ * （UTF-16 的带/不带 BOM 是两条独立条目，不走这里）。
+ */
+function bomTarget(current: string, wantBom: boolean): string | null {
+  if (current === ENC_UTF8) return wantBom ? ENC_UTF8_BOM : null;
+  if (current === ENC_UTF8_BOM) return wantBom ? null : ENC_UTF8;
+  return null;
+}
+
+/**
+ * 主菜单「编码」与状态栏那颗键**共用**的一份菜单模型（B215）。
+ *
+ * ⚠️ 两边都从这里取，不接受第二份手抄的列表 —— 两份迟早差一项，而差的那一项
+ *    表现就是「菜单里有、功能没接上」。
+ */
+function encodingMenuModel(): EncodingMenuModel {
+  const tab = activeTab();
+  const doc = tab ? docOf(tab) : undefined;
+  const current = doc?.encoding ?? "";
+  const currentEol = doc?.eol ?? "";
+  // 没有活动文档时只有「解读编码」那一组还能操作，其余全置灰
+  const canWrite = !!doc && !!doc.path;
+
+  const encodedIn = encodingOptions.map((label) => ({
+    label,
+    checked: label === current,
+    onSelect: () => void switchEncoding(label),
+  }));
+  const convertTo = encodingOptions.map((label) => ({
+    label,
+    disabled: !canWrite,
+    onSelect: () => void convertDoc({ encoding: label }),
+  }));
+  const addTarget = bomTarget(current, true);
+  const removeTarget = bomTarget(current, false);
+  const bom: MenuItem[] = [
+    {
+      label: "添加 BOM",
+      disabled: !canWrite || addTarget === null,
+      onSelect: () => void convertDoc({ encoding: addTarget ?? current }),
+    },
+    {
+      label: "移除 BOM",
+      disabled: !canWrite || removeTarget === null,
+      onSelect: () => void convertDoc({ encoding: removeTarget ?? current }),
+    },
+  ];
+  const eol = eolOptions.map((value) => ({
+    label: value,
+    checked: value === currentEol,
+    disabled: !canWrite,
+    onSelect: () => void convertDoc({ eol: value }),
+  }));
+  return { encodedIn, convertTo, bom, eol };
+}
+
 // ---------------------------------------------------------------- 状态栏菜单
 
-async function showEncodingMenu(): Promise<void> {
-  let encodings: string[];
-  try {
-    encodings = await listEncodings();
-  } catch {
-    encodings = ["UTF-8", "UTF-8 with BOM", "UTF-16LE", "GB18030"];
-  }
+/**
+ * 状态栏那颗「编码」键的菜单（B215）：解码方式 → 转换为… → BOM → 行尾符。
+ * 与主菜单「编码」是同一份模型（`encodingMenuModel`），这里只是把它摊平成一屏。
+ */
+function showEncodingMenu(): void {
   const tab = activeTab();
   const doc = tab ? docOf(tab) : undefined;
   if (!doc) return;
 
-  showPopupMenu(
-    sbEncoding,
-    encodings.map((label) => ({
-      label,
-      checked: label === doc.encoding,
-      onSelect: () => void switchEncoding(label),
-    })),
-  );
+  const model = encodingMenuModel();
+  showPopupMenu(sbEncoding, [
+    ...model.encodedIn,
+    { separator: true },
+    { label: "转换为…", submenu: model.convertTo },
+    ...model.bom,
+    { separator: true },
+    ...model.eol,
+  ]);
 }
 
 async function switchEncoding(label: string): Promise<void> {
@@ -6244,6 +6361,8 @@ function setupMenuBar(): void {
     wrapChecked: () => isWrap,
     onToggleStatusbar: () => toggleStatusbar(),
     statusbarChecked: () => statusbarVisible,
+    // ---- 编码（B215：主菜单「编码」四组 + 状态栏那颗键同取这一份） ----
+    encodingMenu: () => encodingMenuModel(),
     // ---- 设置（B106：统一设置页，含原首选项与快捷键分类） ----
     onSettings: () => openSettingsDialog(),
     // ---- 帮助 ----
