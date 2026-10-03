@@ -31,30 +31,26 @@ export function clampTocWidth(width: number): number {
 }
 
 /**
- * B207（用户点名「拖到最小后再往左拖就把左栏展开区隐藏」）：宽度**已经贴到
- * `TOC_MIN_WIDTH`** 之后，还要**再**往左拖这么多 px 才收起展开区。
+ * B212（用户点名）：收起与展开**共用同一个**过冲阈值，取**最小宽度的一半**
+ * （`TOC_MIN_WIDTH / 2` = 80）。
  *
- * 留这一段而不是「一贴到最小就收」：「把宽拖窄到 160」这个动作本身就带一两像素的过冲，
- * 「只想拖窄一点」和「收起来」是两件事，中间必须有缓冲。
+ * 「过冲」是什么：宽度**已经贴到 `TOC_MIN_WIDTH`** 之后，还要**再**往左拖这么多 px
+ * 才收起展开区（反之，收起态往右拖这么多 px 才放回来）。留这一段而不是「一贴到最小
+ * 就收/就放」：「把宽拖窄到 160」这个动作本身就带一两像素的过冲，「只想拖窄一点」和
+ * 「收起来」是两件事，中间必须有缓冲。
  *
- * ⚠️⚠️ B209（用户真机反馈「太容易触发折叠和展开了」）：原值 12 太小 —— 缝本身只有 4px，
- *     指针在缝上按下之后，一次手抖/一次稍快的拖动就轻松越过 12px ⇒ 想调宽度却把展开区
- *     收了（反之亦然）。取到 **40**：比一次「拖窄」的自然过冲（个位数 px）大一个量级，
- *     又还在「同一个手势之内」够得着（不用松手重来）。
- * ⚠️ 收起与展开两档阈值**不对称**是故意的：收起是「把内容藏掉」，误触代价高（要拖回来），
- *     所以更严；展开是「把内容放出来」，误触代价低，所以松一档。
- */
-export const TOC_HIDE_OVERDRAG_PX = 40;
-
-/**
- * B209：收起态往右拖这么多 px 才把展开区放回来。
+ * ⚠️⚠️ 为什么原来是两档（40 / 24）、现在合成一档：B209 那次把 12 提到 40 是因为
+ *      「太容易触发折叠展开了」，但**不对称本身又带来新的别扭** —— 收起要比展开多拖
+ *      16px，用户的肌肉记忆（「拖过这条线就该放出来了」）在两个方向上不一致。
+ *      所以 B212 不再分方向，统一按「最小宽度的一半」走：收起线 = 展开线 = 80。
+ *      80 这个量级也比「一次拖窄」的自然过冲（个位数 px）大一个数量级，
+ *      同时还在「同一个手势之内」够得着（不用松手重来）。
  *
- * 旧行为是 `dx > 0` 就展开 —— 按下之后随便往右动一个像素就整块弹出，同样「太容易」。
  * ⚠️ 展开后的宽度从 `TOC_MIN_WIDTH` 起算、按**超出阈值的那一段**增长：拖出阈值那一刻
- *     展开区是最小宽，再往右拖多少就加多少 —— 与「拖多宽就多宽」的手感一致，
+ *     展开区**先落在最小宽**，再往右拖多少才加多少 —— 与「拖多宽就多宽」的手感一致，
  *     不会一展开就跳到上次那个宽度。
  */
-export const TOC_RESTORE_OVERDRAG_PX = 24;
+export const TOC_OVERDRAG_PX = TOC_MIN_WIDTH / 2;
 
 export interface TocResizerOptions {
   /** 初始宽度（一般由设置载入，非法值自动收敛） */
@@ -129,17 +125,29 @@ export function attachTocResizer(
     e.preventDefault();
     const startX = e.clientX;
     const startWidth = width;
+    /**
+     * B212：这一**手势**是从「收着」开始的，就整段都按「收起态恢复」那一套算宽度 —— 不
+     * 看实时 `isOpen()`。
+     *
+     * ⚠️ 为什么必须记手势起始态：展开是过阈值那一刻才发生的（`notifyOpen(true)` 之后
+     *     实时 `isOpen()` 立刻为真），若按实时状态选分支，过阈值的**下一帧**就会切回
+     *     「已展开」分支、宽度瞬间跳到 `startWidth + dx` —— 一次跳掉**整条阈值**（阈值
+     *     从 24 提到 80 之后这个跳变肉眼可见：面板先出 180、再“啪”一下变 260）。
+     *     记住起始态 ⇒ 整段手势宽度连续：刚过阈值是最小宽，继续拖才一段段加。
+     */
+    const startOpen = isOpen();
     document.body.classList.add("layout-dragging");
 
     const onMove = (ev: MouseEvent): void => {
       const dx = ev.clientX - startX;
-      if (!isOpen()) {
+      if (!startOpen) {
         // B207：收起态往右拖 = 把展开区拖回来。
-        // ⚠️ B209：必须越过 `TOC_RESTORE_OVERDRAG_PX` 才展开（旧行为 dx>0 就弹，太容易误触）；
-        //    展开后宽度从最小宽起算、按超出阈值的那一段增长 ⇒ 拖多宽就是多宽。
-        if (dx < TOC_RESTORE_OVERDRAG_PX) return;
+        // ⚠️ B209：必须越过 `TOC_OVERDRAG_PX` 才展开（旧行为 dx>0 就弹，太容易误触）；
+        //    B212：展开后宽度**先落回最小宽**，按超出阈值的那一段增长 ⇒ 拖多宽就是多宽，
+        //    不会一展开就跳到上次那个宽度。
+        if (dx < TOC_OVERDRAG_PX) return;
         notifyOpen(true);
-        width = clampTocWidth(TOC_MIN_WIDTH + (dx - TOC_RESTORE_OVERDRAG_PX));
+        width = clampTocWidth(TOC_MIN_WIDTH + (dx - TOC_OVERDRAG_PX));
         apply(width);
         return;
       }
@@ -148,8 +156,8 @@ export function attachTocResizer(
       apply(width);
       // B207：贴到最小之后**还继续**往左拖过阈值 = 收起。拿 `startWidth + dx` 直接比
       // 就够，不用累加位移：dx 是按下那一点算起的总位移，越过「最小线再往左
-      // TOC_HIDE_OVERDRAG_PX」那一点就行（累加会把每次 move 的位移重复算成一大截）。
-      if (dx < 0 && startWidth + dx <= TOC_MIN_WIDTH - TOC_HIDE_OVERDRAG_PX) {
+      // `TOC_OVERDRAG_PX`」那一点就行（累加会把每次 move 的位移重复算成一大截）。
+      if (dx < 0 && startWidth + dx <= TOC_MIN_WIDTH - TOC_OVERDRAG_PX) {
         notifyOpen(false);
       }
     };
