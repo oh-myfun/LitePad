@@ -46,9 +46,9 @@ describe("B201 左栏几何：卡片画完整一圈 + 按钮列内部分割线 +
     expect(collapsed, "收起时那条内部竖线要收掉").toMatch(/border-right-color:\s*transparent/);
   });
 
-  it("③ 显隐由 setTocOpen 一处收口：卡片挂同类名，别在 CSS 里翻显隐", () => {
+  it("③ 显隐由 setSideOpen 一处收口：卡片挂同类名，别在 CSS 里翻显隐", () => {
     expect(src, "side-shell 要先 el() 取出来").toMatch(/const sideShell = el\("side-shell"\)/);
-    expect(src, "setTocOpen 里必须给卡片挂 is-collapsed（第 5 件事）").toMatch(
+    expect(src, "setSideOpen 里必须给卡片挂 is-collapsed（第 5 件事）").toMatch(
       /sideShell\.classList\.toggle\("is-collapsed",\s*!open\)/,
     );
     // 首屏（HTML 里 #toc-panel 本来就是 hidden）也要带这个类：否则那条内部竖线会先画
@@ -61,8 +61,8 @@ describe("B201 左栏几何：卡片画完整一圈 + 按钮列内部分割线 +
   it("④ 拖拽带对齐 VS Code sash：平时透明、悬停/拖拽整条 4px 点亮", () => {
     // sash.css 三层：本体 4px + `:before` 换 background-color + 0.1s ease-out 过渡。
     // 关键是**平时什么都不画**（本体是 editorWidget.border 那层透明），反馈全在悬停那一下。
-    const seam = preview.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(seam, "应有 .toc-resizer::before 这条 sash 反馈").toBeTruthy();
+    const seam = preview.match(/\.side-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(seam, "应有 .side-resizer::before 这条 sash 反馈").toBeTruthy();
     expect(seam, "平时必须透明（sash 默认态就是看不见）").toMatch(/background:\s*transparent/);
     expect(seam, "亮度必须是渐变（sash.css 的 transition: background-color .1s ease-out）").toMatch(
       /transition:\s*background-color 0\.1s ease-out/,
@@ -71,14 +71,14 @@ describe("B201 左栏几何：卡片画完整一圈 + 按钮列内部分割线 +
     expect(seam, "点亮宽度就是缝本身那 4px").toMatch(/width:\s*var\(--card-gap\)/);
     expect(seam, "纯视觉反馈：不吃指针，别变成热区").toContain("pointer-events: none");
     expect(preview, "抓取区不得外溢（缝是 4px 就是 4px）").not.toMatch(
-      /\.toc-resizer::before\s*\{[^}]*(?:\s|;)\s*left:\s*-|right:\s*-/,
+      /\.side-resizer::before\s*\{[^}]*(?:\s|;)\s*left:\s*-|right:\s*-/,
     );
     // 点亮 = sash.hoverBorder → focusBorder，即我们的 --accent
-    const lit = preview.match(/\.toc-resizer:hover::before[\s\S]{0,200}?\{[^}]*\}/)?.[0] ?? "";
+    const lit = preview.match(/\.side-resizer:hover::before[\s\S]{0,200}?\{[^}]*\}/)?.[0] ?? "";
     expect(lit, "hover 时点亮").toBeTruthy();
     expect(lit, "点亮走 --accent（= focusBorder 那一档）").toMatch(/background:\s*var\(--accent\)/);
     expect(preview, "拖拽中也要亮（指针滑出窄带时不能看着像没抓住）").toMatch(
-      /body\.layout-dragging\s+\.toc-resizer::before\s*\{[\s\S]*?background:\s*var\(--accent\)/,
+      /body\.layout-dragging\s+\.side-resizer::before\s*\{[\s\S]*?background:\s*var\(--accent\)/,
     );
     // 三点把手必须压在亮条之上：亮条是绝对定位的兄弟，不抬层就糊掉三点
     const grip = preview.match(/\n\.toc-grip\s*\{[^}]*\}/)?.[0] ?? "";
@@ -105,24 +105,24 @@ describe("B201 左栏几何：卡片画完整一圈 + 按钮列内部分割线 +
 
   it("⑥ 反向验证：缝里的反馈退回常驻发丝线（缝里多画一条）必须被咬住", () => {
     const BAD = preview.replace(
-      /(\.toc-resizer::before\s*\{[^}]*)background:\s*transparent;/,
+      /(\.side-resizer::before\s*\{[^}]*)background:\s*transparent;/,
       "$1background: var(--sep-line);",
     );
     expect(BAD, "替身必须真的改成常驻线").not.toBe(preview);
     expect(() => {
-      const block = BAD.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+      const block = BAD.match(/\.side-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
       expect(block, "sash 默认态必须透明").toMatch(/background:\s*transparent/);
     }).toThrow();
   });
 
   it("⑦ 反向验证：摘掉变色过渡（生硬跳变）必须被咬住", () => {
     const BAD = preview.replace(
-      /(\.toc-resizer::before\s*\{[^}]*)transition:\s*background-color 0\.1s ease-out;/,
+      /(\.side-resizer::before\s*\{[^}]*)transition:\s*background-color 0\.1s ease-out;/,
       "$1transition: none;",
     );
     expect(BAD, "替身必须真的摘掉过渡").not.toBe(preview);
     expect(() => {
-      const block = BAD.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+      const block = BAD.match(/\.side-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
       expect(block, "sash 的变色过渡必须还在").toMatch(
         /transition:\s*background-color 0\.1s ease-out/,
       );
@@ -137,14 +137,14 @@ describe("B195 侧栏结构：按钮列 → 展开区 → 空隙 → 编辑区",
     const iBar = at("side-bar");
     const iOutline = at("side-outline");
     const iPanel = at("toc-panel");
-    const iResizer = at("toc-resizer");
+    const iResizer = at("side-resizer");
     const iArea = at("layout-area");
     for (const [name, i] of [
       ["side-shell", iShell],
       ["side-bar", iBar],
       ["side-outline", iOutline],
       ["toc-panel", iPanel],
-      ["toc-resizer", iResizer],
+      ["side-resizer", iResizer],
       ["layout-area", iArea],
     ] as const) {
       expect(i, `index.html 必须有 #${name}`).toBeGreaterThan(-1);
@@ -167,10 +167,10 @@ describe("B195 侧栏结构：按钮列 → 展开区 → 空隙 → 编辑区",
     expect(grip, "空隙里要有三点把手（#toc-grip；缺 id 则 main.ts 的 el() 启动即抛）").toBeTruthy();
     expect(grip, "把手是纯装饰，对读屏器隐藏").toContain('aria-hidden="true"');
 
-    const resizer = html.match(/<div\s+id="toc-resizer"[\s\S]*?>/)?.[0] ?? "";
-    expect(resizer, "应能取到 #toc-resizer 开标签").toBeTruthy();
+    const resizer = html.match(/<div\s+id="side-resizer"[\s\S]*?>/)?.[0] ?? "";
+    expect(resizer, "应能取到 #side-resizer 开标签").toBeTruthy();
     // 空隙是两张卡片之间的**固定**间距：不再随大纲收起而消失（否则间距会跳变），
-    // 收起只是把手隐身 + 不吃指针（preview.css 的 .toc-resizer.is-off）。
+    // 收起只是把手隐身 + 不吃指针（preview.css 的 .side-resizer.is-off）。
     expect(resizer, "空隙不再 hidden").not.toContain("hidden");
     expect(resizer, "首屏（大纲收起）分隔条就是 is-off").toContain("is-off");
   });
@@ -292,7 +292,7 @@ describe("B195 侧栏卡片样式", () => {
 
 describe("B195 空隙与三点把手", () => {
   it("空隙占布局宽度，把手静息淡、悬停/拖拽转亮；收起时留空隙只收把手", () => {
-    const resizer = cssDecls(ruleBlock(preview, ".toc-resizer"));
+    const resizer = cssDecls(ruleBlock(preview, ".side-resizer"));
     // 宽度走 --card-gap（B196，对齐 VS Code 的 sash 尺寸）：这里**不比数值**，
     // 具体几像素由 :root 那一处定（另一条用例盯「同档 4px」）。
     expect(resizer, "空隙必须**占**布局宽度（不是零宽细线）").toMatch(/flex:\s*0 0 [^;]+/);
@@ -301,7 +301,7 @@ describe("B195 空隙与三点把手", () => {
 
     const grip = preview.match(/\n\.toc-grip\s*\{[^}]*\}/)?.[0] ?? "";
     expect(grip, "三点把手静息取 --fg-muted").toMatch(/color:\s*var\(--fg-muted[,)]/);
-    const off = cssDecls(ruleBlock(preview, ".toc-resizer.is-off"));
+    const off = cssDecls(ruleBlock(preview, ".side-resizer.is-off"));
     // B207（用户点名「隐藏展开区后分割线仍然能看到和操作」）：收起态**照样可抓** ——
     // 旧口径在这条上写 pointer-events: none，等于把这道缝做成死带（往右拖也拖不回来）。
     expect(off, "收起时空隙照样吃指针（拖回来就靠它）").toContain("pointer-events: auto");
@@ -311,15 +311,15 @@ describe("B195 空隙与三点把手", () => {
   it("收起态把手**比展开态更醒目**（它是唯一能把展开区拖回来的提示），但让位次序不能翻", () => {
     const base = cssDecls(ruleBlock(preview, ".toc-grip"));
     expect(base, "静息那颗点的基础透明度").toMatch(/opacity:\s*0\.55/);
-    const offGrip = preview.match(/\.toc-resizer\.is-off \.toc-grip\s*\{[^}]*\}/)?.[0] ?? "";
+    const offGrip = preview.match(/\.side-resizer\.is-off \.toc-grip\s*\{[^}]*\}/)?.[0] ?? "";
     expect(offGrip, "收起态要有把手提亮这一档").toBeTruthy();
     expect(offGrip, "收起态把手要顶到不透明（展开区不在了，它是唯一入口）").toMatch(
       /opacity:\s*1(;|\})/,
     );
     // ⚠️ 让位（hover / 拖拽时把手淡给那条亮条）必须**写在后面**：三条选择器优先级
     //    完全相同，靠书写顺序决胜。写反了收起态 hover 时三点压在亮条上两边都糊。
-    const offAt = preview.indexOf(".toc-resizer.is-off .toc-grip");
-    const yieldAt = preview.indexOf(".toc-resizer:hover .toc-grip");
+    const offAt = preview.indexOf(".side-resizer.is-off .toc-grip");
+    const yieldAt = preview.indexOf(".side-resizer:hover .toc-grip");
     const dragAt = preview.indexOf("body.layout-dragging .toc-grip");
     expect(offAt, "要能定位到收起态提亮那条").toBeGreaterThan(-1);
     expect(yieldAt, "要能定位到悬停让位那条").toBeGreaterThan(-1);
@@ -375,7 +375,7 @@ describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘�
   });
 
   it("拖拽区**就是**卡片缝隙：宽度取 --card-gap，不写死像素", () => {
-    const resizer = cssDecls(ruleBlock(preview, ".toc-resizer"));
+    const resizer = cssDecls(ruleBlock(preview, ".side-resizer"));
     expect(resizer, "空隙必须仍占布局宽度（不能退回零宽细线）").toMatch(/flex:\s*0 0 [^;]+/);
     expect(resizer, "宽度必须取 --card-gap（与 :root 同源，不写死）").toMatch(
       /flex:\s*0 0 var\(--card-gap\)/,
@@ -386,32 +386,32 @@ describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘�
     //    它带 `pointer-events: none`，纯视觉反馈，命中区仍是本体那 4px。所以判据不再是
     //    「不许出现 ::before」（那会把 hover 反馈一起禁掉，B201 就做不出来了），
     //    而是「不许出现**带外溢定位**的 ::before」+「::before 必须不吃指针」。
-    const seamRule = preview.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+    const seamRule = preview.match(/\.side-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
     expect(seamRule, "seam 的 ::before 必须存在（B201 的 hover 反馈）").toBeTruthy();
     expect(seamRule, "seam 必须是纯视觉反馈：不吃指针（命中区仍是本体 4px）").toContain(
       "pointer-events: none",
     );
     expect(preview, "不得再出现外溢式抓取热区（左右各撑 3px 那版，比 VS Code 宽一倍）").not.toMatch(
-      /\.toc-resizer::before\s*\{[^}]*(?:\s|;)\s*left:\s*-|right:\s*-/,
+      /\.side-resizer::before\s*\{[^}]*(?:\s|;)\s*left:\s*-|right:\s*-/,
     );
   });
 
-  it("⚠️ 缝**真的**是 4px：`.toc-resizer` 必须有 `min-width: 0`（B209 真机实测回归）", () => {
+  it("⚠️ 缝**真的**是 4px：`.side-resizer` 必须有 `min-width: 0`（B209 真机实测回归）", () => {
     // 事故：本元素是 `#main-row` 的 flex 子项，flex 子项的 `min-width` 初始值是 `auto`
     // （automatic minimum size）⇒ 会被内容的 min-content 顶开。里面那颗 16px 字形的
     // 三点把手 ⇒ min-content ≈ 16px ⇒ **实测缝被撑到 16px**（用户原话「那条缝绝对不止
     // 4px」）。`flex-basis: 4px` 只参与分配，挡不住这个下限 ⇒ 必须显式写 0 才解除。
     // ⚠️ jsdom 不做布局 ⇒ 这类错误跑测试全绿，只能靠这条静态契约 + 真机/headless 量。
-    const resizer = cssDecls(ruleBlock(preview, ".toc-resizer"));
+    const resizer = cssDecls(ruleBlock(preview, ".side-resizer"));
     expect(resizer, "宽度仍取 --card-gap").toMatch(/flex:\s*0 0 var\(--card-gap\)/);
     expect(resizer, "必须显式写 min-width: 0，否则缝被把手撑开").toMatch(/min-width:\s*0/);
   });
 
   it("反向验证：摘掉 `min-width: 0` ⇒ 上面那条必须落空（缝会悄悄变回 16px）", () => {
-    const BAD = preview.replace(/(\.toc-resizer\s*\{[^}]*)min-width:\s*0;/, "$1");
+    const BAD = preview.replace(/(\.side-resizer\s*\{[^}]*)min-width:\s*0;/, "$1");
     expect(BAD, "替身必须真的摘掉过这条声明").not.toBe(preview);
     expect(() => {
-      expect(cssDecls(ruleBlock(BAD, ".toc-resizer")), "替身缺 min-width 必须被抓到").toMatch(
+      expect(cssDecls(ruleBlock(BAD, ".side-resizer")), "替身缺 min-width 必须被抓到").toMatch(
         /min-width:\s*0/,
       );
     }).toThrow();
@@ -425,8 +425,8 @@ describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘�
     //   }
     // ⚠️ 它是加在 `:before` **本体**上的：平时 background 是 transparent，圆角看不见，
     //    只有 hover / 拖拽上色那一刻才显形 ⇒ 效果就是「亮带两头是圆的」。
-    //    所以判据盯 `.toc-resizer::before` 那一条，不是 hover 那一条。
-    const seamRule = preview.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+    //    所以判据盯 `.side-resizer::before` 那一条，不是 hover 那一条。
+    const seamRule = preview.match(/\.side-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
     expect(seamRule, "要能定位 seam 的 ::before").toBeTruthy();
     expect(seamRule, "圆角取值要跟着缝宽走（--card-gap = VS Code 的 hover-size）").toMatch(
       /border-radius:\s*calc\(var\(--card-gap\)\s*\/\s*2\)/,
@@ -435,12 +435,12 @@ describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘�
 
   it("反向验证：圆角写死成 2px（脱钩回硬编码）必须被咬住", () => {
     const BAD = preview.replace(
-      /(\.toc-resizer::before\s*\{[^}]*)border-radius:\s*calc\(var\(--card-gap\)\s*\/\s*2\);/,
+      /(\.side-resizer::before\s*\{[^}]*)border-radius:\s*calc\(var\(--card-gap\)\s*\/\s*2\);/,
       "$1border-radius: 2px;",
     );
     expect(BAD, "替身必须真的换过圆角取值").not.toBe(preview);
     expect(() => {
-      const seamRule = BAD.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+      const seamRule = BAD.match(/\.side-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
       expect(seamRule, "替身的写死圆角必须被抓到").toMatch(
         /border-radius:\s*calc\(var\(--card-gap\)\s*\/\s*2\)/,
       );
@@ -464,21 +464,21 @@ describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘�
   it("把手是 16px 的三点（B199 用户裁决调大），缝仍是 4px 不动", () => {
     const gripSize = preview.match(/\.toc-grip \.codicon\s*\{[^}]*\}/)?.[0] ?? "";
     expect(gripSize, "把手要够大才看得清「这儿能拖」").toMatch(/font-size:\s*16px/);
-    // 竖排三点在整行高度里垂直居中（.toc-resizer 撑满卡片高度），16px 上下都够不着卡片边
+    // 竖排三点在整行高度里垂直居中（.side-resizer 撑满卡片高度），16px 上下都够不着卡片边
     expect(
-      cssDecls(ruleBlock(preview, ".toc-resizer")),
+      cssDecls(ruleBlock(preview, ".side-resizer")),
       "把手所在的缝仍撑满高度，点才能居中而不顶边",
     ).toContain("align-items: center");
   });
 
   it("反向验证①：拖拽区退回写死 10px（脱钩回旧观感）必须被咬住", () => {
     const BAD = preview.replace(
-      /(\.toc-resizer\s*\{[^}]*)flex:\s*0 0 var\(--card-gap\)/,
+      /(\.side-resizer\s*\{[^}]*)flex:\s*0 0 var\(--card-gap\)/,
       "$1flex: 0 0 10px",
     );
     expect(BAD, "替身必须真的换回写死宽度").not.toBe(preview);
     expect(() => {
-      expect(cssDecls(ruleBlock(BAD, ".toc-resizer")), "替身的写死宽度必须被抓到").toMatch(
+      expect(cssDecls(ruleBlock(BAD, ".side-resizer")), "替身的写死宽度必须被抓到").toMatch(
         /flex:\s*0 0 var\(--card-gap\)/,
       );
     }).toThrow();
@@ -508,16 +508,16 @@ describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘�
   it("反向验证④：抓取区又长回外溢的 10px 必须被咬住", () => {
     // 退化 = 把 B195 那个 ::before 命中区加回来（两侧各 3px）
     const BAD = preview.replace(
-      /(\.toc-resizer\.is-off\s*\{)/,
-      '.toc-resizer::before{\n  content: "";\n  position: absolute;\n  left: -3px;\n  right: -3px;\n}\n$1',
+      /(\.side-resizer\.is-off\s*\{)/,
+      '.side-resizer::before{\n  content: "";\n  position: absolute;\n  left: -3px;\n  right: -3px;\n}\n$1',
     );
     expect(BAD, "替身必须真的把命中区加回来").not.toBe(preview);
     expect(() => {
       // ⚠️ 只判「没有 ::before」是假绿：替身插的是**另一条** ::before 规则，选择器
-      //    一直都在 ⇒ `not.toMatch(/\.toc-resizer::before/)` 照样通过。
+      //    一直都在 ⇒ `not.toMatch(/\.side-resizer::before/)` 照样通过。
       //    判据要盯住**外溢的取值**，而且要把所有 ::before 块一起翻（只取第一条抓不到
       //    替身后插的那条）。
-      const all = [...BAD.matchAll(/\.toc-resizer::before\s*\{[^}]*\}/g)]
+      const all = [...BAD.matchAll(/\.side-resizer::before\s*\{[^}]*\}/g)]
         .map((m) => m[0])
         .join("\n");
       expect(all, "替身的外溢命中区必须被抓到").not.toMatch(/left:\s*-3px/);
@@ -560,7 +560,7 @@ describe("B203 完全复制 VS Code 的左右栏间距 / 外框边距 / 拖拽�
   });
 
   it("② 三点把手在悬停 / 拖拽时**让位**给 sash 高亮（不是转亮）", () => {
-    const yields = preview.match(/\.toc-resizer:hover \.toc-grip,[\s\S]{0,160}?\{[^}]*\}/)?.[0];
+    const yields = preview.match(/\.side-resizer:hover \.toc-grip,[\s\S]{0,160}?\{[^}]*\}/)?.[0];
     expect(yields, "悬停/拖拽时把手必须让位（sashHandles.css 的 opacity: 0）").toBeTruthy();
     expect(yields, "让位 = 淡出到 0").toMatch(/opacity:\s*0/);
     expect(yields, "让位只能淡出，不能把元素拿掉（脱离文档流 / display:none 都不对）").not.toMatch(
@@ -584,12 +584,12 @@ describe("B203 完全复制 VS Code 的左右栏间距 / 外框边距 / 拖拽�
 
   it("③ 反向验证：把手退回「悬停转亮」（与 VS Code 相反）必须被咬住", () => {
     const BAD = preview.replace(
-      /(\.toc-resizer:hover \.toc-grip,\nbody\.layout-dragging \.toc-grip\s*\{)[\s\S]*?\}/,
+      /(\.side-resizer:hover \.toc-grip,\nbody\.layout-dragging \.toc-grip\s*\{)[\s\S]*?\}/,
       "$1\n  color: var(--fg);\n  opacity: 1;\n}",
     );
     expect(BAD, "替身必须真的把让位改回悬停转亮").not.toBe(preview);
     expect(() => {
-      const rule = BAD.match(/\.toc-resizer:hover \.toc-grip,[\s\S]{0,160}?\{[^}]*\}/)?.[0];
+      const rule = BAD.match(/\.side-resizer:hover \.toc-grip,[\s\S]{0,160}?\{[^}]*\}/)?.[0];
       expect(rule, "替身必须真的失去让位（回到悬停转亮）").toMatch(/opacity:\s*0/);
     }).toThrow();
   });
@@ -674,14 +674,14 @@ describe("B199 卡片底色一致：左栏与编辑区同一颗变量，三点�
   it("⑤ 三点把手 16px（用户裁决调大），缝仍是 4px", () => {
     const gripSize = preview.match(/\.toc-grip \.codicon\s*\{[^}]*\}/)?.[0] ?? "";
     expect(gripSize, "把手要够大才看得清「这儿能拖」").toMatch(/font-size:\s*16px/);
-    // 竖排三点在整行高度里垂直居中（.toc-resizer 撑满卡片高度），16px 上下都够不着卡片边
+    // 竖排三点在整行高度里垂直居中（.side-resizer 撑满卡片高度），16px 上下都够不着卡片边
     expect(
-      cssDecls(ruleBlock(preview, ".toc-resizer")),
+      cssDecls(ruleBlock(preview, ".side-resizer")),
       "把手所在的缝撑满高度，点才居中而不顶边",
     ).toContain("align-items: center");
     // 缝本身不动：用户裁决「点 16px，缝仍 4px」
     expect(
-      cssDecls(ruleBlock(preview, ".toc-resizer")),
+      cssDecls(ruleBlock(preview, ".side-resizer")),
       "拖拽缝不许跟着加宽（B197 的 4px 裁决保留）",
     ).toMatch(/flex:\s*0 0 var\(--card-gap\)/);
   });
@@ -694,17 +694,17 @@ describe("B195 接线：按钮列点亮态与面板开合一处收口", () => {
     expect(setup, "大纲键要填字形").toContain("sideOutline.innerHTML = CODICONS.outline");
     expect(setup, "把手要填字形").toContain("tocGrip.innerHTML = CODICONS.grip");
     expect(setup, "点击走 toggleToc（与命令、菜单同一入口）").toContain("toggleToc()");
-    // 回放（setTocOpen）会写 is-on / aria-pressed，先装配再回放才不会装到空元素上
+    // 回放（setSideOpen）会写 is-on / aria-pressed，先装配再回放才不会装到空元素上
     const iCall = src.indexOf("setupSideBar();");
-    const iReplay = src.indexOf("setTocOpen(settings?.toc_open ?? false, false)");
+    const iReplay = src.indexOf("setSideOpen(settings?.toc_open ?? false, false)");
     expect(iCall, "bootstrap 必须调用 setupSideBar").toBeGreaterThan(-1);
     expect(iReplay, "bootstrap 必须回放开合").toBeGreaterThan(-1);
     expect(iCall, "先装按钮列、再回放开合").toBeLessThan(iReplay);
   });
 
-  it("setTocOpen 一处写完：面板显隐 + 空隙 is-off + 键 is-on/aria-pressed", () => {
-    const body = src.match(/function setTocOpen\([\s\S]*?\n\}/)?.[0] ?? "";
-    expect(body, "应有 setTocOpen").toBeTruthy();
+  it("setSideOpen 一处写完：面板显隐 + 空隙 is-off + 键 is-on/aria-pressed", () => {
+    const body = src.match(/function setSideOpen\([\s\S]*?\n\}/)?.[0] ?? "";
+    expect(body, "应有 setSideOpen").toBeTruthy();
     expect(body, "展开区显隐").toContain("tocPanel.hidden = !open;");
     expect(body, "空隙转 is-off（不 hidden：间距不跳变）").toContain(
       'tocResizer.classList.toggle("is-off", !open)',
@@ -724,7 +724,7 @@ describe("B195 接线：按钮列点亮态与面板开合一处收口", () => {
     expect(BAD, "退化后不再点亮").not.toContain('sideOutline.classList.toggle("is-on", open)');
     expect(() => {
       expect(
-        BAD.match(/function setTocOpen\([\s\S]*?\n\}/)?.[0] ?? "",
+        BAD.match(/function setSideOpen\([\s\S]*?\n\}/)?.[0] ?? "",
         "退化后的缺失必须被抓到",
       ).toContain('sideOutline.classList.toggle("is-on", open)');
     }).toThrow();
@@ -735,7 +735,7 @@ describe("B195 接线：按钮列点亮态与面板开合一处收口", () => {
 // 用户点名：「标题栏上增加 layout-sidebar-left / layout-sidebar-left-off 按钮，参考 vscode，
 // 但是 vscode 应该只对左边栏的展开区做了折叠，按钮还是会显示，本软件直接隐藏整个左边栏」。
 // 于是这里分两层：`applySidebarVisible` 管「左栏在不在」（整张卡片 + 中间缝一起收），
-// `setTocOpen` 管「卡片里的展开区开没开」—— 两层互不撤销，谁也不替对方清状态。
+// `setSideOpen` 管「卡片里的展开区开没开」—— 两层互不撤销，谁也不替对方清状态。
 // 与 VS Code 的差别只在**生效范围**：那边折的只是展开区、活动栏仍在（按钮一直显示），
 // 本软件收的是整张卡片；但**这颗键自己**两边都始终显示 —— 它是左栏唯一的开关入口。
 describe("B198 标题栏整栏显隐：双字形开关 + 整栏一起收", () => {
@@ -798,7 +798,7 @@ describe("B198 标题栏整栏显隐：双字形开关 + 整栏一起收", () =>
     expect(body, "文案要跟着换（关）").toContain('"显示左栏"');
     expect(body, "文案要跟着换（开）").toContain('"隐藏左栏"');
     expect(body, "提示走 setTip（与 refreshPinButton 同一口径）").toContain("setTip(sidebarToggle");
-    // 与 setTocOpen 同一口径：只有 persist 为真且设置已就绪才落盘
+    // 与 setSideOpen 同一口径：只有 persist 为真且设置已就绪才落盘
     expect(body, "落盘前要先过 persist 门槛").toContain("if (!persist || !settings) return;");
     expect(body, "写进设置里的字段是 sidebar_off").toMatch(/settings\.sidebar_off = off;/);
   });
@@ -817,37 +817,37 @@ describe("B198 标题栏整栏显隐：双字形开关 + 整栏一起收", () =>
     );
   });
 
-  it("⑤ 与 setTocOpen 正交：整栏收着不动展开区，反之亦然", () => {
-    const toc = src.match(/function setTocOpen\([\s\S]*?\n\}/)?.[0] ?? "";
+  it("⑤ 与 setSideOpen 正交：整栏收着不动展开区，反之亦然", () => {
+    const toc = src.match(/function setSideOpen\([\s\S]*?\n\}/)?.[0] ?? "";
     const bar = src.match(/function applySidebarVisible\([\s\S]*?\n\}/)?.[0] ?? "";
     // 整栏收放不许顺手改展开区（不然「收起左栏 = 大纲也关了」就是半同步）
     expect(bar, "整栏收放不得碰展开区显隐").not.toMatch(/tocPanel\.(hidden|style)/);
     expect(bar, "整栏收放不得碰展开区的开合字段（互不撤销）").not.toMatch(/toc_open/);
-    // 反过来也不许：按钮列的点亮态仍归 setTocOpen 管
+    // 反过来也不许：按钮列的点亮态仍归 setSideOpen 管
     expect(toc, "展开区开合不得顺手收放整栏").not.toMatch(/is-sidebar-off/);
     expect(toc, "整栏收起时展开区值照旧留着 ⇒ 这里不许出现 sidebar_off").not.toMatch(/sidebar_off/);
     // 双击/拖拽无关，但「整栏收着时点大纲」这条命令要先放栏 —— 否则是死键
     expect(src, "大纲命令在整栏收着时先把它放出来（display:none 里切展开区＝没反应）").toMatch(
-      /function toggleToc\(\)[\s\S]{0,200}?if \(isSidebarOff\(\)\) applySidebarVisible\(false\);[\s\S]{0,120}?setTocOpen\(tocPanel\.hidden\)/,
+      /function toggleToc\(\)[\s\S]{0,200}?if \(isSidebarOff\(\)\) applySidebarVisible\(false\);[\s\S]{0,120}?setSideOpen\(tocPanel\.hidden\)/,
     );
   });
 
   it("⑥ 整栏收起时卡片与缝**一起**消失（不是只折展开区）", () => {
-    // 缝（#toc-resizer）那条在 preview.css，卡片（.side-shell）那条在 global.css ——
+    // 缝（#side-resizer）那条在 preview.css，卡片（.side-shell）那条在 global.css ——
     // 同一件事的两个半，两处都得有，缺一个就留下一道悬空的空隙。
     expect(css, "侧栏卡片要跟着整栏收起").toMatch(
       /#main-row\.is-sidebar-off > \.side-shell\s*\{\s*display:\s*none;/,
     );
     expect(preview, "中间那道缝也要跟着收起（左栏没了，缝就是悬空间距）").toMatch(
-      /#main-row\.is-sidebar-off > #toc-resizer\s*\{\s*display:\s*none;/,
+      /#main-row\.is-sidebar-off > #side-resizer\s*\{\s*display:\s*none;/,
     );
     // 与「只折展开区」那条分清：那一条是留缝的（间距不跳变），这里必须相反
-    const offRule = preview.match(/\.toc-resizer\.is-off\s*\{[^}]*\}/)?.[0] ?? "";
+    const offRule = preview.match(/\.side-resizer\.is-off\s*\{[^}]*\}/)?.[0] ?? "";
     // B207：收起展开区 = 只折展开区 —— 缝留着**并且还抓得住**（旧口径把把手隐身 + 掐指针，
     // 结果拖到底就再也拖不回来），把手也照旧在（它现在真是「这里能拖」的标记了）。
     expect(offRule, "收起展开区仍留缝、且照样可抓").toContain("pointer-events: auto");
     expect(preview, "收起时把手不许再隐身（要看得见这条缝在哪）").not.toMatch(
-      /\.toc-resizer\.is-off \.toc-grip\s*\{[^}]*visibility:\s*hidden/,
+      /\.side-resizer\.is-off \.toc-grip\s*\{[^}]*visibility:\s*hidden/,
     );
   });
 
@@ -906,13 +906,13 @@ describe("B198 整栏去留：切一次要落盘、启动要回放", () => {
 
   it("⑨ 反向验证：整栏收起只收卡片、把那道缝落下（退回悬空间距）必须被咬住", () => {
     const BAD = preview.replace(
-      /#main-row\.is-sidebar-off > #toc-resizer\s*\{[^}]*display:\s*none;/,
-      "#main-row.is-sidebar-off > #toc-resizer { display: flex; }",
+      /#main-row\.is-sidebar-off > #side-resizer\s*\{[^}]*display:\s*none;/,
+      "#main-row.is-sidebar-off > #side-resizer { display: flex; }",
     );
     expect(BAD, "替身必须真的把缝留下").not.toBe(preview);
     expect(() => {
       expect(BAD, "替身的悬空缝必须被抓到").toMatch(
-        /#main-row\.is-sidebar-off > #toc-resizer\s*\{\s*display:\s*none;/,
+        /#main-row\.is-sidebar-off > #side-resizer\s*\{\s*display:\s*none;/,
       );
     }).toThrow();
   });
@@ -931,7 +931,7 @@ describe("B198 整栏去留：切一次要落盘、启动要回放", () => {
 
 // ------------------------------------------------------------------ B207（真机回归）
 // 用户真机报「左栏没法折叠起来了，分割线区域空隙太大」。
-// 根因不在 JS：`setTocOpen(false)` 写的 `tocPanel.hidden = true` 一直是对的，
+// 根因不在 JS：`setSideOpen(false)` 写的 `tocPanel.hidden = true` 一直是对的，
 // 但 `.toc-panel { display: flex }`（B205 加的）是**作者样式表**，CSS 级联里作者样式表
 // 优先于 UA 样式表 —— **与选择器权重无关** ⇒ UA 的 `[hidden] { display: none }` 被压掉，
 // 属性改了、面板照旧占着 160px 显示。所以：

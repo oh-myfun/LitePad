@@ -773,8 +773,8 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     // 之间**：用户点名要空隙 + 三点把手（VS Code 的 sash grip），再画 1px 竖线就成了
     // 「有线的缝」，两头不靠 ⇒ 「同款」到此为止，两条各管一个场景，这里按新口径锁死。
     const previewCss = readFileSync("src/styles/preview.css", "utf-8");
-    const resizer = previewCss.match(/\.toc-resizer\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(resizer, "应有 .toc-resizer 规则块").toBeTruthy();
+    const resizer = previewCss.match(/\.side-resizer\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(resizer, "应有 .side-resizer 规则块").toBeTruthy();
     const globalCss = readFileSync("src/styles/global.css", "utf-8");
     const sep = globalCss.match(/\.layout-sep\s*\{[^}]*\}/)?.[0] ?? "";
     expect(sep, "分屏分割条基准样式应存在").toBeTruthy();
@@ -794,22 +794,22 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     //    写死会与 global.css 的留白变量脱钩，改一处另一处就对不上。
     expect(resizer, "卡片之间必须是空隙（占布局宽度）").toMatch(/flex:\s*0 0 var\(--card-gap\)/);
     expect(previewCss, "B195 起侧栏空隙里不再画 1px 竖线（改由三点把手承担）").not.toMatch(
-      /\.toc-resizer::after/,
+      /\.side-resizer::after/,
     );
     // 命中区 = 元素本体（用户裁决「缝 4px + 抓取正好 4px」）：B195 那个向两侧各溢出
     // 3px 的 ::before 命中区已删 —— 可抓范围做到 10px 比 VS Code 的 sash 宽了一倍。
     // ⚠️ B201：::before 以「hover 才亮的发丝线（pointer-events: none）」的身份回来了，
     //    所以它**可以**存在，判据是「不许外溢」+「必须不吃指针」。
-    const seam = previewCss.match(/\.toc-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+    const seam = previewCss.match(/\.side-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
     expect(seam, "seam 的 ::before 应存在（B201）").toBeTruthy();
     expect(seam, "seam 只是视觉反馈，不吃指针（命中区 = 本体 4px）").toContain(
       "pointer-events: none",
     );
     expect(previewCss, "侧栏抓取区不得外溢（= 缝本身 4px）").not.toMatch(
-      /\.toc-resizer::before\s*\{[^}]*(?:\s|;)\s*left:\s*-|right:\s*-/,
+      /\.side-resizer::before\s*\{[^}]*(?:\s|;)\s*left:\s*-|right:\s*-/,
     );
     // 三点把手：静息淡（--fg-muted）→ **悬停/拖拽让位给 sash 高亮**（opacity: 0）
-    // ⚠️ `\.toc-grip` 会先撞上前面的 `.toc-resizer.is-off .toc-grip`（那条只有
+    // ⚠️ `\.toc-grip` 会先撞上前面的 `.side-resizer.is-off .toc-grip`（那条只有
     //    visibility），所以这里用 `\n` 锚到行首、只取**基准**那条规则。
     // ⚠️ B203：这里是「让位」不是「转亮」—— 抄 sashHandles.css 的
     //    `.monaco-sash.hover:not(.disabled)::after { opacity: 0 }`（同文件 README：
@@ -818,17 +818,17 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     const grip = previewCss.match(/\n\.toc-grip\s*\{[^}]*\}/)?.[0] ?? "";
     expect(grip, "三点把手静息走 --fg-muted").toMatch(/color:\s*var\(--fg-muted[,)]/);
     const gripHL =
-      previewCss.match(/\.toc-resizer:hover \.toc-grip,[\s\S]{0,140}?\{[^}]*\}/)?.[0] ?? "";
+      previewCss.match(/\.side-resizer:hover \.toc-grip,[\s\S]{0,140}?\{[^}]*\}/)?.[0] ?? "";
     expect(gripHL, "悬停/拖拽把手要**让位**（淡出，把画面让给那条 4px 亮条）").toMatch(
       /opacity:\s*0/,
     );
     expect(gripHL, "不是「悬停把手转亮」那版").not.toMatch(/color:\s*var\(--fg[,)]/);
     // B207：收起展开区 = 只折展开区 —— 缝留着（间距不跳变）**并且照样可抓**，
     // 把手也留着（它现在是「这条缝能拖回来」的唯一可见标记）。
-    const off = previewCss.match(/\.toc-resizer\.is-off\s*\{[^}]*\}/)?.[0] ?? "";
+    const off = previewCss.match(/\.side-resizer\.is-off\s*\{[^}]*\}/)?.[0] ?? "";
     expect(off, "收起时空隙照样吃指针（往右拖回来就靠它）").toContain("pointer-events: auto");
     expect(previewCss, "收起时把手不许消失（要看得见这条缝在哪）").not.toMatch(
-      /\.toc-resizer\.is-off \.toc-grip\s*\{[^}]*visibility:\s*hidden/,
+      /\.side-resizer\.is-off \.toc-grip\s*\{[^}]*visibility:\s*hidden/,
     );
 
     const panel = previewCss.match(/\.toc-panel\s*\{[^}]*\}/)?.[0] ?? "";
@@ -838,13 +838,13 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
 
     // 反向验证：把空隙退回 B28 的「不占布局」形态必须被咬住
     const BAD = previewCss.replace(
-      /\.toc-resizer\s*\{[^}]*\}/,
-      ".toc-resizer {\n  flex: 0 0 0;\n}",
+      /\.side-resizer\s*\{[^}]*\}/,
+      ".side-resizer {\n  flex: 0 0 0;\n}",
     );
     expect(BAD, "替身必须真的替换过").not.toBe(previewCss);
     expect(() => {
       expect(
-        BAD.match(/\.toc-resizer\s*\{[^}]*\}/)?.[0] ?? "",
+        BAD.match(/\.side-resizer\s*\{[^}]*\}/)?.[0] ?? "",
         "替身退回「不占布局」必须被抓到",
       ).toMatch(/flex:\s*0 0 var\(--card-gap\)/);
     }).toThrow();
@@ -944,7 +944,7 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     // B59 的 flex:0 0 7px 透明占位会撑开两侧内容、露出祖先底色 = 视觉上的粗带。
     expect(css, "分屏分隔条不占布局").toMatch(/\.layout-sep\s*\{[^}]*flex:\s*0 0 0/);
     expect(previewCss, "侧栏空隙 = 拖拽区，宽度对齐 VS Code 的 4px（B196）").toMatch(
-      /\.toc-resizer\s*\{[^}]*flex:\s*0 0 var\(--card-gap\)/,
+      /\.side-resizer\s*\{[^}]*flex:\s*0 0 var\(--card-gap\)/,
     );
     // 命中区搬到 ::before，向两侧各溢出 3.5px（共 7px）
     expect(css, "竖线命中区 7px 宽").toMatch(/\.layout-sep-h::before\s*\{[^}]*width:\s*7px/);
@@ -954,10 +954,10 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     // B201：缝里那条线改成 VS Code sash 的口径 —— 平时什么都不画（本体透明），
     // ::before 悬停/拖拽才整条 4px 点亮，只当视觉反馈。
     expect(previewCss, "侧栏抓取区不外溢（抓取 = 缝 = 4px）").not.toMatch(
-      /\.toc-resizer::before\s*\{[^}]*(?:\s|;)\s*left:\s*-|right:\s*-/,
+      /\.side-resizer::before\s*\{[^}]*(?:\s|;)\s*left:\s*-|right:\s*-/,
     );
     expect(previewCss, "seam 平时不常驻（B201：对齐 VS Code sash 默认态）").toMatch(
-      /\.toc-resizer::before\s*\{[^}]*background:\s*transparent/,
+      /\.side-resizer::before\s*\{[^}]*background:\s*transparent/,
     );
     // 视觉线：静息 1px（VS Code editorGroup.border），激活 4px（--vscode-sash-size）
     expect(css, "静息线 1px").toMatch(/\.layout-sep-h::after\s*\{[^}]*width:\s*1px/);
@@ -972,7 +972,7 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     // B203 从 VS Code sashHandles.css 对到号的：hover / active 时 grip 淡出，
     // 让整条 sash 高亮接管，而不是把手自己转亮）
     expect(previewCss, "侧栏三点把手在悬停/拖拽时让位（opacity: 0）").toMatch(
-      /\.toc-resizer:hover \.toc-grip,[\s\S]{0,140}?opacity:\s*0/,
+      /\.side-resizer:hover \.toc-grip,[\s\S]{0,140}?opacity:\s*0/,
     );
     // 角手柄改为骑在界线上（分隔条主轴尺寸已为 0，原先 top:0/left:0 会偏到一侧）
     expect(css, "横线上的角手柄骑线").toMatch(
@@ -1126,7 +1126,7 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
       /\.layout-corner\s*\{[^}]*cursor:\s*all-scroll/,
     );
     // 大纲分隔条与分屏分隔条同款（B28 约定）
-    expect(previewCss, "大纲分隔条光标同款").toMatch(/\.toc-resizer\s*\{[^}]*cursor:\s*ew-resize/);
+    expect(previewCss, "大纲分隔条光标同款").toMatch(/\.side-resizer\s*\{[^}]*cursor:\s*ew-resize/);
   });
 });
 

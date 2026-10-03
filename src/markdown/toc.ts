@@ -20,21 +20,21 @@ export interface TocCallbacks {
 }
 
 /** 大纲抽屉宽度（px）：拖拽可调，双击分隔条恢复默认。 */
-export const TOC_DEFAULT_WIDTH = 240;
-export const TOC_MIN_WIDTH = 160;
-export const TOC_MAX_WIDTH = 640;
+export const SIDE_DEFAULT_WIDTH = 240;
+export const SIDE_MIN_WIDTH = 160;
+export const SIDE_MAX_WIDTH = 640;
 
 /** 把任意输入收敛到合法宽度（NaN/非法值回落默认，取整避免亚像素抖动）。 */
-export function clampTocWidth(width: number): number {
-  if (!Number.isFinite(width)) return TOC_DEFAULT_WIDTH;
-  return Math.min(TOC_MAX_WIDTH, Math.max(TOC_MIN_WIDTH, Math.round(width)));
+export function clampSideWidth(width: number): number {
+  if (!Number.isFinite(width)) return SIDE_DEFAULT_WIDTH;
+  return Math.min(SIDE_MAX_WIDTH, Math.max(SIDE_MIN_WIDTH, Math.round(width)));
 }
 
 /**
  * B212（用户点名）：收起与展开**共用同一个**过冲阈值，取**最小宽度的一半**
- * （`TOC_MIN_WIDTH / 2` = 80）。
+ * （`SIDE_MIN_WIDTH / 2` = 80）。
  *
- * 「过冲」是什么：宽度**已经贴到 `TOC_MIN_WIDTH`** 之后，还要**再**往左拖这么多 px
+ * 「过冲」是什么：宽度**已经贴到 `SIDE_MIN_WIDTH`** 之后，还要**再**往左拖这么多 px
  * 才收起展开区（反之，收起态往右拖这么多 px 才放回来）。留这一段而不是「一贴到最小
  * 就收/就放」：「把宽拖窄到 160」这个动作本身就带一两像素的过冲，「只想拖窄一点」和
  * 「收起来」是两件事，中间必须有缓冲。
@@ -46,20 +46,20 @@ export function clampTocWidth(width: number): number {
  *      80 这个量级也比「一次拖窄」的自然过冲（个位数 px）大一个数量级，
  *      同时还在「同一个手势之内」够得着（不用松手重来）。
  *
- * ⚠️ 展开后的宽度从 `TOC_MIN_WIDTH` 起算、按**超出阈值的那一段**增长：拖出阈值那一刻
+ * ⚠️ 展开后的宽度从 `SIDE_MIN_WIDTH` 起算、按**超出阈值的那一段**增长：拖出阈值那一刻
  *     展开区**先落在最小宽**，再往右拖多少才加多少 —— 与「拖多宽就多宽」的手感一致，
  *     不会一展开就跳到上次那个宽度。
  */
-export const TOC_OVERDRAG_PX = TOC_MIN_WIDTH / 2;
+export const SIDE_OVERDRAG_PX = SIDE_MIN_WIDTH / 2;
 
-export interface TocResizerOptions {
+export interface SideResizerOptions {
   /** 初始宽度（一般由设置载入，非法值自动收敛） */
   initial: number;
   /** 拖拽结束 / 双击重置后回调，供调用方持久化 */
   onChange: (width: number) => void;
   /**
    * B207：展开区此刻是不是摊开着。收起态往右拖要能**拖回来**，而开关状态只有调用方那
-   * 一份（`setTocOpen` 是显隐的唯一出口），这里问它，不自己另记一份。
+   * 一份（`setSideOpen` 是显隐的唯一出口），这里问它，不自己另记一份。
    */
   isOpen?: () => boolean;
   /**
@@ -70,7 +70,7 @@ export interface TocResizerOptions {
   onOpenChange?: (open: boolean) => void;
 }
 
-export interface TocResizerHandle {
+export interface SideResizerHandle {
   getWidth(): number;
   setWidth(width: number): void;
   /** B207：展开区当前是不是摊开着（与 `opts.isOpen` 同一个来源，别各记一份）。 */
@@ -78,9 +78,10 @@ export interface TocResizerHandle {
 }
 
 /**
- * 给大纲抽屉挂上可拖拽的宽度分隔条。
+ * 给**左栏**挂上可拖拽的宽度分隔条（B212 起与大纲同名前缀 `TOC_` 全部撒手 —— 左栏
+ * 以后不只有大纲，宽度与收放这两件事不该挂在大纲的名下）。
  *
- * 说明：分隔条是独立元素（#toc-resizer）而非面板边框，且沿用与分屏一致的
+ * 说明：分隔条是独立元素（#side-resizer）而非面板边框，且沿用与分屏一致的
  * 指针事件序列（mousedown → document mousemove/mouseup）自行编排 ——
  * 历史原因是 WebView2 的拖放钩子会禁用页面内 HTML5 拖放（B91 已关掉该钩子），
  * 现在依旧用指针序列：拖分隔条是「按住并移动」，与 HTML5 DnD 的搬运语义无关。
@@ -93,18 +94,18 @@ export interface TocResizerHandle {
  *     `visibility: hidden`），往右一拖就回来。
  *   ⚠️ 收起后 `width` 原样留着：拖回来时它是「上次拖到底那个宽度」，不是默认值。
  */
-export function attachTocResizer(
+export function attachSideResizer(
   resizer: HTMLElement,
   panel: HTMLElement,
-  opts: TocResizerOptions,
-): TocResizerHandle {
-  let width = clampTocWidth(opts.initial);
+  opts: SideResizerOptions,
+): SideResizerHandle {
+  let width = clampSideWidth(opts.initial);
   /** 展开区开合：调用方没给就恒为「摊开着」（只调宽度、不管收放的用法）。 */
   const isOpen = opts.isOpen ?? (() => true);
 
   /**
    * B207：只在该变的时候报一次 —— 拖到底会连发几十个 mousemove，每个都去切一次
-   * `setTocOpen` 会把落盘与重绘打十遍。
+   * `setSideOpen` 会把落盘与重绘打十遍。
    * ⚠️ 判据问 `isOpen()` 而不是自己缓存布尔：显隐的唯一出口在调用方那边，缓存一份迟早
    *    跟它错开（用户这时候顺手点了那颗「大纲」键，两边就对不上了）。
    */
@@ -142,22 +143,22 @@ export function attachTocResizer(
       const dx = ev.clientX - startX;
       if (!startOpen) {
         // B207：收起态往右拖 = 把展开区拖回来。
-        // ⚠️ B209：必须越过 `TOC_OVERDRAG_PX` 才展开（旧行为 dx>0 就弹，太容易误触）；
+        // ⚠️ B209：必须越过 `SIDE_OVERDRAG_PX` 才展开（旧行为 dx>0 就弹，太容易误触）；
         //    B212：展开后宽度**先落回最小宽**，按超出阈值的那一段增长 ⇒ 拖多宽就是多宽，
         //    不会一展开就跳到上次那个宽度。
-        if (dx < TOC_OVERDRAG_PX) return;
+        if (dx < SIDE_OVERDRAG_PX) return;
         notifyOpen(true);
-        width = clampTocWidth(TOC_MIN_WIDTH + (dx - TOC_OVERDRAG_PX));
+        width = clampSideWidth(SIDE_MIN_WIDTH + (dx - SIDE_OVERDRAG_PX));
         apply(width);
         return;
       }
       // 大纲在左侧，向右拖 = 变宽
-      width = clampTocWidth(startWidth + dx);
+      width = clampSideWidth(startWidth + dx);
       apply(width);
       // B207：贴到最小之后**还继续**往左拖过阈值 = 收起。拿 `startWidth + dx` 直接比
       // 就够，不用累加位移：dx 是按下那一点算起的总位移，越过「最小线再往左
-      // `TOC_OVERDRAG_PX`」那一点就行（累加会把每次 move 的位移重复算成一大截）。
-      if (dx < 0 && startWidth + dx <= TOC_MIN_WIDTH - TOC_OVERDRAG_PX) {
+      // `SIDE_OVERDRAG_PX`」那一点就行（累加会把每次 move 的位移重复算成一大截）。
+      if (dx < 0 && startWidth + dx <= SIDE_MIN_WIDTH - SIDE_OVERDRAG_PX) {
         notifyOpen(false);
       }
     };
@@ -174,7 +175,7 @@ export function attachTocResizer(
   // 双击分隔条恢复默认宽度
   resizer.addEventListener("dblclick", () => {
     const wasOpen = isOpen();
-    width = TOC_DEFAULT_WIDTH;
+    width = SIDE_DEFAULT_WIDTH;
     apply(width);
     opts.onChange(width);
     // B207：收起态双击顺手把展开区放回来 —— 双击本来就带「回到默认」的意思，收着的时候
@@ -185,7 +186,7 @@ export function attachTocResizer(
   return {
     getWidth: () => width,
     setWidth: (w: number) => {
-      width = clampTocWidth(w);
+      width = clampSideWidth(w);
       apply(width);
     },
     isOpen: () => isOpen(),

@@ -150,12 +150,12 @@
       <!-- B195（对齐 VS Code 的 activity bar + side bar）：侧栏是**一整张卡片** ——
            最左侧是**常驻按钮列**（收起大纲时也留着，列本身不消失），右边是展开区；
            卡片与右侧编辑区卡片之间是**空隙**，空隙正中放三点拖拽把手。
-           ⚠️ 空隙（#toc-resizer）**不再随大纲收起而隐藏**：它是两张卡片之间的固定间距，
-              收起时只是把手消失、不再吃指针（见 preview.css 的 .toc-resizer.is-off）。 -->
+           ⚠️ 空隙（#side-resizer）**不再随左栏收起而隐藏**：它是两张卡片之间的固定间距，
+              收起时只是把手消失（左栏）、不再吃指针（见 preview.css 的 .side-resizer.is-off）。 -->
       <div id="main-row">
         <!-- B201：首屏就是「展开区折着」这一态（下面 #toc-panel 已 hidden），卡片先带上
              is-collapsed —— 否则那条按钮列内部竖线会先画出来、再被 main.ts 的启动回放
-             收掉，开屏闪一帧 2px 粗线。运行时唯一出口仍是 setTocOpen。 -->
+             收掉，开屏闪一帧 2px 粗线。运行时唯一出口仍是 setSideOpen。 -->
         <div id="side-shell" class="side-shell is-collapsed">
           <div id="side-bar" class="side-bar">
             <button
@@ -198,8 +198,8 @@
           </aside>
         </div>
         <div
-          id="toc-resizer"
-          class="toc-resizer is-off"
+          id="side-resizer"
+          class="side-resizer is-off"
           data-tip="拖动调整大纲宽度"
           data-tip-detail="双击恢复默认 240px"
           aria-label="拖动调整大纲宽度，双击恢复默认"

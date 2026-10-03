@@ -93,10 +93,10 @@ import { logger, syncLevel } from "./core/logger";
 import { sessionStore } from "./session/store";
 import {
   createTocList,
-  attachTocResizer,
-  clampTocWidth,
+  attachSideResizer,
+  clampSideWidth,
   type TocListHandle,
-  type TocResizerHandle,
+  type SideResizerHandle,
 } from "./markdown/toc";
 import { attachWheelZoom } from "./shell/zoom";
 import {
@@ -253,7 +253,7 @@ const tocPanel = el("toc-panel");
 const tocList = el("toc-list");
 // B209：全量折叠/展开合并成**一颗**键（原 #toc-collapse-all / #toc-expand-all 两颗）。
 const tocToggleAll = el<HTMLButtonElement>("toc-toggle-all");
-const tocResizer = el("toc-resizer");
+const tocResizer = el("side-resizer");
 // B201：左栏**卡片**（按钮列 + 展开区），展开区折起时它挂 `is-collapsed`
 // —— 那条内部竖线（按钮列 ↔ 展开区）要跟着收，见 preview.css / global.css 的同款说明。
 const sideShell = el("side-shell");
@@ -4882,25 +4882,25 @@ let tocEntries: TocEntry[] = [];
 const tocListView: TocListHandle = createTocList(tocList);
 
 /** 大纲宽度（由设置载入、拖拽后回写设置；160–640px） */
-let tocWidth = 240;
-let tocResizerHandle: TocResizerHandle | null = null;
+let sideWidth = 240;
+let sideResizerHandle: SideResizerHandle | null = null;
 
 /** 挂载大纲宽度分隔条。设置未就绪（settings 为 null）时只生效不持久化。 */
-function setupTocResizer(): void {
-  tocWidth = clampTocWidth(settings?.toc_width ?? 240);
-  tocResizerHandle = attachTocResizer(tocResizer, tocPanel, {
-    initial: tocWidth,
+function setupSideResizer(): void {
+  sideWidth = clampSideWidth(settings?.toc_width ?? 240);
+  sideResizerHandle = attachSideResizer(tocResizer, tocPanel, {
+    initial: sideWidth,
     // B207（用户点名「拖到最小后再往左拖就隐藏展开区，隐藏后分割线仍可拖回来」）：把
-    // 收放的两个口子接到 `setTocOpen` —— 拖分隔条和点那颗「大纲」键走**同一条**路，
-    // 键的点亮态 / 落盘都在 `setTocOpen` 一处收着，这里只当传声筒。
+    // 收放的两个口子接到 `setSideOpen` —— 拖分隔条和点那颗「大纲」键走**同一条**路，
+    // 键的点亮态 / 落盘都在 `setSideOpen` 一处收着，这里只当传声筒。
     // ⚠️ `isOpen` 问的是面板自己（`tocPanel.hidden`）而不是另存一个布尔：显隐的唯一
-    //    出口是 `setTocOpen`，复制一份状态迟早跟它错开。
+    //    出口是 `setSideOpen`，复制一份状态迟早跟它错开。
     isOpen: () => !tocPanel.hidden,
     onOpenChange: (open) => {
-      setTocOpen(open);
+      setSideOpen(open);
     },
     onChange: (w) => {
-      tocWidth = w;
+      sideWidth = w;
       if (!settings) return;
       settings.toc_width = w;
       void saveSettings(settings).catch(() => {
@@ -4913,7 +4913,7 @@ function setupTocResizer(): void {
 /**
  * B195：装配侧栏按钮列（字形 + 点击）+ 空隙里的三点把手 + B205 展开区那两颗全量键。
  *
- * 与 `setTocOpen` 的分工：这里只管「装上」，开合态一律由 `setTocOpen` 收口
+ * 与 `setSideOpen` 的分工：这里只管「装上」，开合态一律由 `setSideOpen` 收口
  * （按钮的 `is-on` / `aria-pressed` 也在那儿写，免得两处各写一半不同步）。
  *
  * ⚠️ 全量键**不落盘**（折叠状态不写设置）：大纲是「当前这份文档」的一次性视图，
@@ -4954,9 +4954,9 @@ function refreshTocToggleAll(): void {
 /**
  * B198：左栏**整栏**显隐（标题栏那颗 layout-sidebar-left / -off）。
  *
- * 与 `setTocOpen` 是**两层、互不撤销**：
+ * 与 `setSideOpen` 是**两层、互不撤销**：
  *   · 这一处管「左栏在不在」—— 侧栏卡片、中间缝一起收光（用户点名「直接隐藏整个左边栏」）；
- *   · `setTocOpen` 管「卡片里的展开区开没开」。
+ *   · `setSideOpen` 管「卡片里的展开区开没开」。
  * 整栏收着时展开区的开合值照旧留在设置里，重新露出时回到用户上次的样子 —— 谁也不替
  * 对方清状态。
  *
@@ -4964,7 +4964,7 @@ function refreshTocToggleAll(): void {
  *   本软件收的是整张卡片；但**这颗键本身**两边都一样始终显示 —— 它是左栏唯一的开关入口，
  *   跟着一起收就没法再点回来了。
  *
- * `persist = false` 用于**启动时回放**（口径同 `setTocOpen`）。
+ * `persist = false` 用于**启动时回放**（口径同 `setSideOpen`）。
  */
 function applySidebarVisible(off: boolean, persist = true): void {
   mainRow.classList.toggle("is-sidebar-off", off);
@@ -5006,7 +5006,7 @@ function toggleSidebar(): void {
  * B201 补第五件：卡片自身的 `is-collapsed`（按钮列 ↔ 展开区那条内部竖线的显隐）。
  * 收着时按钮列右缘那条线与卡片自己的右缘线会挨在一起变成 2px 粗的一条，所以得一起收。
  */
-function setTocOpen(open: boolean, persist = true): void {
+function setSideOpen(open: boolean, persist = true): void {
   tocPanel.hidden = !open;
   // 空隙（分隔条）**不跟着隐藏**：它是侧栏卡片与编辑区卡片之间的固定间距，
   // 收起时只是展开区折起来 —— 这条缝本身**照样能抓**（B207：旧口径在这里连缝一起掐了
@@ -5030,7 +5030,7 @@ function toggleToc(): void {
   // 展开区藏在 display:none 的容器里，光切开合等于点了没反应（死键）。
   if (isSidebarOff()) applySidebarVisible(false);
   // 当前 hidden 取反即「接下来是否展开」
-  setTocOpen(tocPanel.hidden);
+  setSideOpen(tocPanel.hidden);
 }
 
 function updateTocDrawer(): void {
@@ -5448,13 +5448,13 @@ async function setPreviewLineHeight(value: number): Promise<void> {
 
 /** 大纲宽度（查看菜单三档；也可直接拖动大纲右侧分隔条）。 */
 async function setTocWidthValue(width: number): Promise<void> {
-  tocWidth = clampTocWidth(width);
-  tocResizerHandle?.setWidth(tocWidth);
+  sideWidth = clampSideWidth(width);
+  sideResizerHandle?.setWidth(sideWidth);
   if (settings) {
-    settings.toc_width = tocWidth;
+    settings.toc_width = sideWidth;
     await persistSettings();
   }
-  showMessage(`大纲宽度 ${tocWidth}px`);
+  showMessage(`大纲宽度 ${sideWidth}px`);
 }
 
 /** 编辑器字体族（设置页；空串 = 内置默认栈）。 */
@@ -5518,7 +5518,7 @@ function openSettingsDialog(): void {
     onEditorLineHeight: (v) => void setEditorLineHeight(v),
     previewLineHeight: () => settings?.preview_line_height ?? 1.7,
     onPreviewLineHeight: (v) => void setPreviewLineHeight(v),
-    tocWidth: () => tocWidth,
+    sideWidth: () => sideWidth,
     onTocWidth: (px) => void setTocWidthValue(px),
     defaultEol: () => settings?.default_eol ?? "CRLF",
     eolOptions: () => eolOptions,
@@ -7571,9 +7571,9 @@ async function setupShell(): Promise<void> {
   applyPreviewLineHeight(settings?.preview_line_height ?? 1.7);
   applyEditorLineHeight(settings?.editor_line_height ?? 1.5);
   setupSideBar();
-  setupTocResizer();
+  setupSideResizer();
   // B194：回放上次的侧栏开合（`persist = false` —— 只是把盘上的值搬到 DOM）
-  setTocOpen(settings?.toc_open ?? false, false);
+  setSideOpen(settings?.toc_open ?? false, false);
   // B198：回放整栏去留（同一口径，persist = false 免得把默认值固化成设置）。
   //   排在 setupSideBar 之后：那颗键的字形由 applySidebarVisible 写，先装才装得上。
   applySidebarVisible(settings?.sidebar_off ?? false, false);

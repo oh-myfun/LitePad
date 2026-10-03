@@ -31,7 +31,7 @@ export interface SettingsDialogOptions {
   onEditorLineHeight: (value: number) => void;
   previewLineHeight: () => number;
   onPreviewLineHeight: (value: number) => void;
-  tocWidth: () => number;
+  sideWidth: () => number;
   onTocWidth: (px: number) => void;
   defaultEol: () => string;
   eolOptions: () => string[];
@@ -485,7 +485,7 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
       numberSelectRow(
         "大纲宽度",
         TOC_WIDTH_OPTIONS,
-        opts.tocWidth(),
+        opts.sideWidth(),
         (v) => `${v}px`,
         (v) => opts.onTocWidth(v),
       ),

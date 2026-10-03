@@ -141,7 +141,7 @@
   --tip-key-border: rgba(51, 51, 51, 0.6);
   --tip-key-bottom: rgba(68, 68, 68, 0.6);
   /* 分隔条线色（B59，S5）：从通用 --border 里抽出来单独可调（分屏 .layout-sep 与
-     大纲 .toc-resizer 共用，B28 要求两者同款）。深色取 VS Code editorGroup.border
+     左栏 .side-resizer 共用，B28 要求两者同款）。深色取 VS Code editorGroup.border
      的 #444444 档 —— 比通用边框略清晰，分屏边界更明确。 */
   /* B121：#444444 → #2e3034。宽度本就是 1px CSS，但 150% 缩放下高对比色会被
      抗锯齿糊成 ~2-3 物理像素的「粗线」；降对比后与两侧面板底色（#282c34 /
@@ -2283,7 +2283,7 @@ button:focus-visible {
         也只在 `.top-window-edge`（无标题栏 / 全屏）那一档才补顶留白（floatingPanels.css），
         有标题栏时卡片上沿就是压着标题栏的。这里照抄那个判据：上沿贴住，别的三面留白。
      ⚠️ 留白放在 #main-row 上而不是各卡片自己的 margin：两张卡片同处一行，
-        各写 margin 迟早有一张漏写，间距就会在收起大纲时跳变；这里只有一处源头。 */
+        各写 margin 迟早有一张漏写，间距就会在收起左栏时跳变；这里只有一处源头。 */
   padding: 0 var(--card-edge) var(--card-edge);
 }
 
@@ -2295,14 +2295,14 @@ button:focus-visible {
 
 /* ---------- 侧栏卡片（B195，对齐 VS Code 的 activity bar + side bar）----------
    #main-row 三段：侧栏卡片 → 空隙（三点把手）→ 编辑区卡片。
-   「整体一张卡片」是用户点名的口径：**按钮列与展开区同属一张卡片** —— 收起大纲时
+   「整体一张卡片」是用户点名的口径：**按钮列与展开区同属一张卡片** —— 收起左栏时
    卡片不消失，只缩成按钮列那一列（VS Code 隐藏侧栏后活动栏仍在，同一件事）。
    ⚠️ 边框与圆角必须与 .layout-area **逐字同步**：两张卡片同处一行、同是卡片，
       半径或线色差一点就会看成两种东西 —— 改一处就要改另一处。
       （B203 对上号：**8px 圆角 = VS Code 的 `--vscode-cornerRadius-large`**；
       改半径只动这一条规则里的数值，且**两处要一起改**。）
-   ⚠️ 空隙由 .toc-resizer 自己撑开（preview.css），这里**不要**再给 #main-row 加 gap，
-      否则空隙会翻倍、且收起大纲时（分隔条隐藏）间距还会跳变。
+   ⚠️ 空隙由 .side-resizer 自己撑开（preview.css），这里**不要**再给 #main-row 加 gap，
+      否则空隙会翻倍、且收起左栏时（分隔条隐藏）间距还会跳变。
 
    B199（用户裁决「左边栏展开区背景和其他区域一致」）：底色从 --bg-elevated 换成
    **--bg = 与编辑区完全同色**。编辑区卡片（.layout-area）没有自己的背景，露的是
@@ -2329,8 +2329,8 @@ button:focus-visible {
 }
 
 /* B198：整栏收起 —— 侧栏卡片**直接消失**（连带中间那道缝一起，见 preview.css 里
-   同名的 `#main-row.is-sidebar-off > #toc-resizer`）。
-   ⚠️ 与下面 `.toc-resizer.is-off` 那一条分清它俩的境界差：那条是「只折展开区」，
+   同名的 `#main-row.is-sidebar-off > #side-resizer`）。
+   ⚠️ 与下面 `.side-resizer.is-off` 那一条分清它俩的境界差：那条是「只折展开区」，
       卡片缩成按钮列、缝留着当间距；这一条是「整个左栏不在了」—— 缝左边没有卡片了，
       留着就是一道悬空的空隙，所以必须一起收。
    ⚠️ 本条专属 `.side-shell`（它在 global.css）；缝那一条在 preview.css，两处是**同一件事
@@ -2355,15 +2355,15 @@ button:focus-visible {
      ⚠️ 两条线别搞混，它们是**两个位置的两条线**：
         · 这里这条在卡片**内部** 40px 处，把按钮列与展开区分开；
         · .side-shell 的 border-right 在卡片**右缘**，那是卡片自己的外框（上面那一段）。
-     ⚠️ 收起展开区时（main.ts 的 setTocOpen 挂上 .side-shell.is-collapsed）这条要收掉：
+     ⚠️ 收起展开区时（main.ts 的 setSideOpen 挂上 .side-shell.is-collapsed）这条要收掉：
         那时按钮列右缘正好贴着卡片右缘，两条 1px 边会**紧挨着变成 2px 粗的一条线**。
         用 is-collapsed 而不是 `#toc-panel[hidden]` 选择器，是为了让显隐继续由
-        setTocOpen 一处收口（B195 的口径：开合态不许散在 CSS 里）。 */
+        setSideOpen 一处收口（B195 的口径：开合态不许散在 CSS 里）。 */
   border-right: 1px solid var(--sep-line);
 }
 
 /* 展开区折着：按钮列右缘那条内部竖线收掉（理由见上面 .side-bar 的 B201 注释）。
-   ⚠️ 同类名只挂这一个元素上（main.ts 的 setTocOpen），别在别处再翻一次显隐。 */
+   ⚠️ 同类名只挂这一个元素上（main.ts 的 setSideOpen），别在别处再翻一次显隐。 */
 .side-shell.is-collapsed > .side-bar {
   border-right-color: transparent;
 }
@@ -2433,7 +2433,7 @@ button:focus-visible {
         各自的**边**，不是「为了分割而画的一条线」，别再当多余的一条抹掉。
      ⚠️ 想改卡片轮廓：改这一处就要同时改 .side-shell 那一处，两个要**成对**改
         （border 与 border-radius 已逐字同步，见 .side-shell 上方的注释）。
-     缝中央那条 hover 才亮的亮条 = VS Code sash 的 hover 反馈（见 preview.css 的 .toc-resizer）。 */
+     缝中央那条 hover 才亮的亮条 = VS Code sash 的 hover 反馈（见 preview.css 的 .side-resizer）。 */
   border: 1px solid var(--tab-bg-hover);
   border-radius: 8px;
 }

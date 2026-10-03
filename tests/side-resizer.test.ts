@@ -5,20 +5,20 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
-  attachTocResizer,
-  clampTocWidth,
-  TOC_DEFAULT_WIDTH,
-  TOC_MAX_WIDTH,
-  TOC_MIN_WIDTH,
-  TOC_OVERDRAG_PX,
+  attachSideResizer,
+  clampSideWidth,
+  SIDE_DEFAULT_WIDTH,
+  SIDE_MAX_WIDTH,
+  SIDE_MIN_WIDTH,
+  SIDE_OVERDRAG_PX,
 } from "../src/markdown/toc";
 
-function mount(initial = TOC_DEFAULT_WIDTH) {
+function mount(initial = SIDE_DEFAULT_WIDTH) {
   const panel = document.createElement("aside");
   const resizer = document.createElement("div");
   document.body.append(panel, resizer);
   const changes: number[] = [];
-  const handle = attachTocResizer(resizer, panel, {
+  const handle = attachSideResizer(resizer, panel, {
     initial,
     onChange: (w) => changes.push(w),
   });
@@ -36,14 +36,14 @@ function drag(resizer: EventTarget, from: number, to: number): void {
   mouse(document, "mouseup", to);
 }
 
-describe("clampTocWidth 边界收敛", () => {
+describe("clampSideWidth 边界收敛", () => {
   it("非法值回落默认，超界值收敛到 [160, 640]", () => {
-    expect(clampTocWidth(Number.NaN)).toBe(TOC_DEFAULT_WIDTH);
-    expect(clampTocWidth(Number.POSITIVE_INFINITY)).toBe(TOC_DEFAULT_WIDTH);
-    expect(clampTocWidth(10)).toBe(TOC_MIN_WIDTH);
-    expect(clampTocWidth(9999)).toBe(TOC_MAX_WIDTH);
-    expect(clampTocWidth(237.6)).toBe(238);
-    expect(clampTocWidth(TOC_DEFAULT_WIDTH)).toBe(TOC_DEFAULT_WIDTH);
+    expect(clampSideWidth(Number.NaN)).toBe(SIDE_DEFAULT_WIDTH);
+    expect(clampSideWidth(Number.POSITIVE_INFINITY)).toBe(SIDE_DEFAULT_WIDTH);
+    expect(clampSideWidth(10)).toBe(SIDE_MIN_WIDTH);
+    expect(clampSideWidth(9999)).toBe(SIDE_MAX_WIDTH);
+    expect(clampSideWidth(237.6)).toBe(238);
+    expect(clampSideWidth(SIDE_DEFAULT_WIDTH)).toBe(SIDE_DEFAULT_WIDTH);
   });
 });
 
@@ -68,10 +68,10 @@ describe("大纲分隔条拖拽", () => {
   it("拖拽越界被收敛，松手后回写的是收敛后的值", () => {
     const { panel, resizer, changes } = mount();
     drag(resizer, 240, -2000);
-    expect(panel.style.width).toBe(`${TOC_MIN_WIDTH}px`);
-    drag(resizer, TOC_MIN_WIDTH, 5000);
-    expect(panel.style.width).toBe(`${TOC_MAX_WIDTH}px`);
-    expect(changes).toEqual([TOC_MIN_WIDTH, TOC_MAX_WIDTH]);
+    expect(panel.style.width).toBe(`${SIDE_MIN_WIDTH}px`);
+    drag(resizer, SIDE_MIN_WIDTH, 5000);
+    expect(panel.style.width).toBe(`${SIDE_MAX_WIDTH}px`);
+    expect(changes).toEqual([SIDE_MIN_WIDTH, SIDE_MAX_WIDTH]);
   });
 
   it("拖拽中为 body 加 layout-dragging 光标类，松手移除", () => {
@@ -96,18 +96,18 @@ describe("大纲分隔条拖拽", () => {
     drag(resizer, 240, 480);
     expect(panel.style.width).toBe("480px");
     resizer.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-    expect(panel.style.width).toBe(`${TOC_DEFAULT_WIDTH}px`);
-    expect(handle.getWidth()).toBe(TOC_DEFAULT_WIDTH);
-    expect(changes[changes.length - 1]).toBe(TOC_DEFAULT_WIDTH);
+    expect(panel.style.width).toBe(`${SIDE_DEFAULT_WIDTH}px`);
+    expect(handle.getWidth()).toBe(SIDE_DEFAULT_WIDTH);
+    expect(changes[changes.length - 1]).toBe(SIDE_DEFAULT_WIDTH);
   });
 
   it("setWidth 供设置对话框回写，同样收敛到合法区间", () => {
     const { panel, handle } = mount();
     handle.setWidth(9999);
-    expect(panel.style.width).toBe(`${TOC_MAX_WIDTH}px`);
-    expect(handle.getWidth()).toBe(TOC_MAX_WIDTH);
+    expect(panel.style.width).toBe(`${SIDE_MAX_WIDTH}px`);
+    expect(handle.getWidth()).toBe(SIDE_MAX_WIDTH);
     handle.setWidth(20);
-    expect(handle.getWidth()).toBe(TOC_MIN_WIDTH);
+    expect(handle.getWidth()).toBe(SIDE_MIN_WIDTH);
   });
 
   it("非左键按下不启动拖拽（避免右键菜单误触）", () => {
@@ -115,7 +115,7 @@ describe("大纲分隔条拖拽", () => {
     resizer.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: 240, button: 2 }));
     mouse(document, "mousemove", 400);
     mouse(document, "mouseup", 400);
-    expect(panel.style.width).toBe(`${TOC_DEFAULT_WIDTH}px`);
+    expect(panel.style.width).toBe(`${SIDE_DEFAULT_WIDTH}px`);
   });
 });
 
@@ -130,14 +130,14 @@ describe("B207 拖到最小再往左拖：收起 / 拉回展开区", () => {
    * `isOpen` 读自己的开关（不问 DOM），`onOpenChange` 只记账 —— 这样「收了 / 放了报
    * 几次、什么时候报」是这条用例真正要看的东西，不掺 DOM 状态。
    */
-  function mountOpen(initial = TOC_DEFAULT_WIDTH, open = false) {
+  function mountOpen(initial = SIDE_DEFAULT_WIDTH, open = false) {
     const panel = document.createElement("aside");
     const resizer = document.createElement("div");
     document.body.append(panel, resizer);
     // 首屏默认收着（与 index.html 上那条 is-off 同态）；要测「展开态那一半」显式传 true
     const changes: number[] = [];
     const opened: boolean[] = [];
-    const handle = attachTocResizer(resizer, panel, {
+    const handle = attachSideResizer(resizer, panel, {
       initial,
       isOpen: () => open,
       onOpenChange: (o) => {
@@ -160,94 +160,96 @@ describe("B207 拖到最小再往左拖：收起 / 拉回展开区", () => {
     const { panel, resizer, opened, changes } = mountOpen();
     drag(resizer, 200, 120);
     expect(opened, "往左拖不展开").toEqual([]);
-    expect(panel.style.width, "宽度原样留着").toBe(`${TOC_DEFAULT_WIDTH}px`);
-    expect(changes, "松手照旧回写当前宽度").toEqual([TOC_DEFAULT_WIDTH]);
+    expect(panel.style.width, "宽度原样留着").toBe(`${SIDE_DEFAULT_WIDTH}px`);
+    expect(changes, "松手照旧回写当前宽度").toEqual([SIDE_DEFAULT_WIDTH]);
   });
 
   it("B212：收起与展开共用**最小宽度的一半**这一个阈值（收起线 = 展开线）", () => {
-    expect(TOC_OVERDRAG_PX, "阈值必须是最小宽度的一半").toBe(TOC_MIN_WIDTH / 2);
+    expect(SIDE_OVERDRAG_PX, "阈值必须是最小宽度的一半").toBe(SIDE_MIN_WIDTH / 2);
     const toc = readFileSync("src/markdown/toc.ts", "utf-8");
     // 两处判据（收起 / 展开）都得读同一个常量：合成一档以后不许再各写各的数字
-    const uses = [...toc.matchAll(/TOC_OVERDRAG_PX/g)];
+    const uses = [...toc.matchAll(/SIDE_OVERDRAG_PX/g)];
     expect(uses.length, "收起与展开两处判据都要用这个常量").toBeGreaterThanOrEqual(3);
     expect(toc, "不许再留收起/展开两个分档常量").not.toContain("TOC_HIDE_OVERDRAG_PX");
     expect(toc, "不许再留收起/展开两个分档常量").not.toContain("TOC_RESTORE_OVERDRAG_PX");
   });
 
   it("收起态往右拖：越过阈值才展开，宽度按**超出阈值那一段**起算", () => {
-    const { panel, resizer, opened, changes } = mountOpen(TOC_MIN_WIDTH);
+    const { panel, resizer, opened, changes } = mountOpen(SIDE_MIN_WIDTH);
     // B209：越过阈值那一刻展开区是最小宽，再往右拖多少就加多少 —— 不是「弹回上次那个数」
-    drag(resizer, 200, 200 + TOC_OVERDRAG_PX + 40);
+    drag(resizer, 200, 200 + SIDE_OVERDRAG_PX + 40);
     expect(opened, "往右拖必须把展开区放回来").toEqual([true]);
-    expect(panel.style.width, "展开后 = 最小宽 + 超出阈值的那一段").toBe(`${TOC_MIN_WIDTH + 40}px`);
-    expect(changes[changes.length - 1], "松手回写摊开后的宽度").toBe(TOC_MIN_WIDTH + 40);
+    expect(panel.style.width, "展开后 = 最小宽 + 超出阈值的那一段").toBe(
+      `${SIDE_MIN_WIDTH + 40}px`,
+    );
+    expect(changes[changes.length - 1], "松手回写摊开后的宽度").toBe(SIDE_MIN_WIDTH + 40);
   });
 
-  // ⚠️ 下面两条**故意不引用 `TOC_OVERDRAG_PX`**：那是个导出的常量，拿它当位移去拖，
+  // ⚠️ 下面两条**故意不引用 `SIDE_OVERDRAG_PX`**：那是个导出的常量，拿它当位移去拖，
   //    常量一改用例跟着改 —— 退化时照样绿（自己写出来的假绿，B212 首轮真退化就是这么漏的）。
   //    阈值按需求写成「最小宽度的一半」这个**表达式**，退化成别的数必红。
   it("B212：刚跨过阈值那一刻展开区**正好是最小宽**，继续拖才变宽（整段手势不跳）", () => {
-    const { panel, resizer, opened, changes } = mountOpen(TOC_MIN_WIDTH);
-    const threshold = TOC_MIN_WIDTH / 2; // 阈值 = 最小宽度的一半
+    const { panel, resizer, opened, changes } = mountOpen(SIDE_MIN_WIDTH);
+    const threshold = SIDE_MIN_WIDTH / 2; // 阈值 = 最小宽度的一半
     // ⚠️ 同一个手势里连着走：过阈值 → 再往右 20。中间不能松手，否则就换了起始态，
     //    测不到「整段手势宽度连续」这件事。
     mouse(resizer, "mousedown", 200);
     mouse(document, "mousemove", 200 + threshold); // dx 正好 = 阈值：超出那一段为 0
     expect(opened, "刚好到阈值就该展开").toEqual([true]);
     expect(panel.style.width, "触发展开先落回最小宽，不是弹回上次那个宽度").toBe(
-      `${TOC_MIN_WIDTH}px`,
+      `${SIDE_MIN_WIDTH}px`,
     );
     mouse(document, "mousemove", 200 + threshold + 20); // 继续往右 20
     expect(panel.style.width, "继续拖才再变宽 = 最小宽 + 超出阈值的那一段").toBe(
-      `${TOC_MIN_WIDTH + 20}px`,
+      `${SIDE_MIN_WIDTH + 20}px`,
     );
     mouse(document, "mousemove", 200 + threshold + 21);
     expect(panel.style.width, "再拖一格就加一格，不能整条阈值一起跳").toBe(
-      `${TOC_MIN_WIDTH + 21}px`,
+      `${SIDE_MIN_WIDTH + 21}px`,
     );
     mouse(document, "mouseup", 200 + threshold + 21);
-    expect(changes[changes.length - 1], "松手回写的是摊开后的宽度").toBe(TOC_MIN_WIDTH + 21);
+    expect(changes[changes.length - 1], "松手回写的是摊开后的宽度").toBe(SIDE_MIN_WIDTH + 21);
   });
 
   it("B209：收起态往右拖**没过阈值**不展开（旧行为 dx>0 就弹，太容易误触）", () => {
-    const { panel, resizer, opened } = mountOpen(TOC_MIN_WIDTH);
+    const { panel, resizer, opened } = mountOpen(SIDE_MIN_WIDTH);
     // 阈值**差一像素**：用「最小宽度的一半」算，退化成任何更小的数都会越过 ⇒ 必红
-    drag(resizer, 200, 200 + TOC_MIN_WIDTH / 2 - 1);
+    drag(resizer, 200, 200 + SIDE_MIN_WIDTH / 2 - 1);
     expect(opened, "差一像素也不该展开").toEqual([]);
-    expect(panel.style.width, "面板宽度不动").toBe(`${TOC_MIN_WIDTH}px`);
+    expect(panel.style.width, "面板宽度不动").toBe(`${SIDE_MIN_WIDTH}px`);
   });
 
   it("收起态按下先往左（无反应）再往右（展开），左拖不会被当成收起", () => {
-    const { panel, resizer, opened, changes } = mountOpen(TOC_MIN_WIDTH);
+    const { panel, resizer, opened, changes } = mountOpen(SIDE_MIN_WIDTH);
     mouse(resizer, "mousedown", 200);
     mouse(document, "mousemove", 160); // 往左：收起态那一边不动
-    mouse(document, "mousemove", 200 + TOC_OVERDRAG_PX + 20); // 往右：过阈值才展开
-    mouse(document, "mouseup", 200 + TOC_OVERDRAG_PX + 20);
+    mouse(document, "mousemove", 200 + SIDE_OVERDRAG_PX + 20); // 往右：过阈值才展开
+    mouse(document, "mouseup", 200 + SIDE_OVERDRAG_PX + 20);
     expect(opened, "只有往右那一下算展开").toEqual([true]);
     expect(panel.style.width, "宽度按超出阈值那一段算，不是按下起的总位移").toBe(
-      `${TOC_MIN_WIDTH + 20}px`,
+      `${SIDE_MIN_WIDTH + 20}px`,
     );
-    expect(changes[changes.length - 1], "回写摊开后的宽度").toBe(TOC_MIN_WIDTH + 20);
+    expect(changes[changes.length - 1], "回写摊开后的宽度").toBe(SIDE_MIN_WIDTH + 20);
   });
 
   it("展开态拖到最小：还没过阈值**就不收**（「就想拖窄一点」不能被误判成收起）", () => {
-    const { resizer, opened } = mountOpen(TOC_DEFAULT_WIDTH, true);
+    const { resizer, opened } = mountOpen(SIDE_DEFAULT_WIDTH, true);
     // 起点 400、宽 240 ⇒ 往左 80px（x → 320）正好贴到最小线，还没过阈值
-    drag(resizer, 400, 400 - (TOC_DEFAULT_WIDTH - TOC_MIN_WIDTH));
+    drag(resizer, 400, 400 - (SIDE_DEFAULT_WIDTH - SIDE_MIN_WIDTH));
     expect(opened, "贴到最小不算收起").toEqual([]);
   });
 
   it("展开态拖到最小后**继续**往左拖过阈值：收起展开区", () => {
-    const { panel, resizer, opened } = mountOpen(TOC_DEFAULT_WIDTH, true);
-    // 判据是 startWidth + dx <= 最小线 - TOC_OVERDRAG_PX（不累加位移），越过它 8px：
+    const { panel, resizer, opened } = mountOpen(SIDE_DEFAULT_WIDTH, true);
+    // 判据是 startWidth + dx <= 最小线 - SIDE_OVERDRAG_PX（不累加位移），越过它 8px：
     // 240 + dx = 160 - 80 - 8 ⇒ dx = -188 ⇒ x = 212
-    drag(resizer, 400, 400 - (TOC_DEFAULT_WIDTH - TOC_MIN_WIDTH) - TOC_OVERDRAG_PX - 8);
+    drag(resizer, 400, 400 - (SIDE_DEFAULT_WIDTH - SIDE_MIN_WIDTH) - SIDE_OVERDRAG_PX - 8);
     expect(opened, "过阈值必须报一次收起").toEqual([false]);
-    expect(panel.style.width, "收起后宽度仍留在最小值（拖回来接着用）").toBe(`${TOC_MIN_WIDTH}px`);
+    expect(panel.style.width, "收起后宽度仍留在最小值（拖回来接着用）").toBe(`${SIDE_MIN_WIDTH}px`);
   });
 
-  it("一次拖到底只报一次收起（几十个 mousemove 不能切几十次 setTocOpen）", () => {
-    const { resizer, opened } = mountOpen(TOC_DEFAULT_WIDTH, true);
+  it("一次拖到底只报一次收起（几十个 mousemove 不能切几十次 setSideOpen）", () => {
+    const { resizer, opened } = mountOpen(SIDE_DEFAULT_WIDTH, true);
     mouse(resizer, "mousedown", 400);
     for (let x = 399; x >= 200; x -= 1) mouse(document, "mousemove", x);
     mouse(document, "mouseup", 200);
@@ -255,15 +257,15 @@ describe("B207 拖到最小再往左拖：收起 / 拉回展开区", () => {
   });
 
   it("收起态双击：顺手把展开区放回来，宽度复位默认", () => {
-    const { panel, resizer, opened, changes } = mountOpen(TOC_MIN_WIDTH);
+    const { panel, resizer, opened, changes } = mountOpen(SIDE_MIN_WIDTH);
     resizer.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     expect(opened, "收着的时候双击要把展开区放回来").toEqual([true]);
-    expect(panel.style.width, "双击照旧复位默认宽度").toBe(`${TOC_DEFAULT_WIDTH}px`);
-    expect(changes[changes.length - 1], "回写的仍是默认宽度").toBe(TOC_DEFAULT_WIDTH);
+    expect(panel.style.width, "双击照旧复位默认宽度").toBe(`${SIDE_DEFAULT_WIDTH}px`);
+    expect(changes[changes.length - 1], "回写的仍是默认宽度").toBe(SIDE_DEFAULT_WIDTH);
   });
 
   it("收起态双击连着拖也没事：展开后宽度正常（回调不重复触发）", () => {
-    const { panel, resizer, opened } = mountOpen(TOC_MIN_WIDTH);
+    const { panel, resizer, opened } = mountOpen(SIDE_MIN_WIDTH);
     resizer.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     drag(resizer, 200, 260);
     expect(opened, "已经是展开态了，不再重复报").toEqual([true]);
@@ -297,19 +299,19 @@ describe("大纲（TOC）静态契约", () => {
   });
   it("大纲宽度可调节：分隔条元素、拖拽接线、设置字段三者齐全", () => {
     // 用户要求：大纲区域支持宽度调节。三处缺一即失效：
-    // ① index.html 要有 #toc-resizer（缺则 main.ts 的 el() 直接抛错，启动白屏）
-    // ② main.ts 要挂载 attachTocResizer 且收起大纲时同步隐藏分隔条
+    // ① index.html 要有 #side-resizer（缺则 main.ts 的 el() 直接抛错，启动白屏）
+    // ② main.ts 要挂载 attachSideResizer 且收起大纲时同步隐藏分隔条
     // ③ 设置里要有 toc_width 字段（前端类型 + Rust 结构），否则宽度无法持久化
     const html = readFileSync("index.html", "utf-8");
-    expect(html, "index.html 必须有 #toc-resizer 分隔条").toContain('id="toc-resizer"');
+    expect(html, "index.html 必须有 #side-resizer 分隔条").toContain('id="side-resizer"');
 
     const src = readFileSync("src/main.ts", "utf-8");
-    expect(src, "bootstrap 必须挂载大纲分隔条").toContain("setupTocResizer()");
-    expect(src, "挂载必须走 attachTocResizer").toContain("attachTocResizer(");
-    // B194：显隐已收敛进 `setTocOpen`（开合 + 回写设置一处收口）—— 断言盯
+    expect(src, "bootstrap 必须挂载大纲分隔条").toContain("setupSideResizer()");
+    expect(src, "挂载必须走 attachSideResizer").toContain("attachSideResizer(");
+    // B194：显隐已收敛进 `setSideOpen`（开合 + 回写设置一处收口）—— 断言盯
     // 「同一个函数里面板与分隔条的 hidden 一起写」，而不是盯某一行的字面量。
-    const setOpen = src.match(/function setTocOpen\([\s\S]*?\n\}/)?.[0] ?? "";
-    expect(setOpen, "应有 setTocOpen 收口大纲显隐").toBeTruthy();
+    const setOpen = src.match(/function setSideOpen\([\s\S]*?\n\}/)?.[0] ?? "";
+    expect(setOpen, "应有 setSideOpen 收口大纲显隐").toBeTruthy();
     expect(setOpen, "展开区的显隐仍由面板自己承担").toContain("tocPanel.hidden = !open;");
     // B195：空隙（分隔条）**不再 hidden** —— 它是两张卡片之间的固定间距，
     // 跟着 hidden 会让间距在开合时跳变；收起时只转 is-off（把手消失 + 不吃指针）。
@@ -321,8 +323,8 @@ describe("大纲（TOC）静态契约", () => {
     );
 
     const css = readFileSync("src/styles/preview.css", "utf-8");
-    const resizer = css.match(/\.toc-resizer\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(resizer, "应有 .toc-resizer 规则块").toBeTruthy();
+    const resizer = css.match(/\.side-resizer\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(resizer, "应有 .side-resizer 规则块").toBeTruthy();
     // B61：竖线光标取 VS Code **非 mac** 档的 ew-resize（col-resize 是 mac 档，
     // Windows 上会渲染成「箭头中间多一根竖杠」）
     expect(resizer, "分隔条必须是左右调整光标（非 mac 档 ew-resize）").toContain("ew-resize");
@@ -339,46 +341,46 @@ describe("大纲（TOC）静态契约", () => {
 });
 
 // ------------------------------------------------------- B207：拖到底收起 / 拖回来
-// 逻辑那一半锁在 tests/toc-resizer.test.ts 的「B207 拖到最小再往左拖」；这里锁**接线**
+// 逻辑那一半锁在 tests/side-resizer.test.ts 的「B207 拖到最小再往左拖」；这里锁**接线**
 // 与**可视性** —— 「收起后缝还看得见、还抓得住」是 CSS 那一半，一起才闭环。
 describe("B207 拖到最小再往左拖：接线与可视性契约", () => {
   const src = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
   const preview = readFileSync("src/styles/preview.css", "utf-8").replace(/\r\n/g, "\n");
 
-  it("分隔条要接到 setTocOpen（拖分隔条与点大纲键同一条路）", () => {
-    const body = src.match(/function setupTocResizer\(\)[\s\S]*?\n\}/)?.[0] ?? "";
-    expect(body, "应有 setupTocResizer 收口大纲分隔条").toBeTruthy();
+  it("分隔条要接到 setSideOpen（拖分隔条与点大纲键同一条路）", () => {
+    const body = src.match(/function setupSideResizer\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(body, "应有 setupSideResizer 收口大纲分隔条").toBeTruthy();
     expect(body, "必须把开合问给调用方（isOpen）").toContain("isOpen: () => !tocPanel.hidden");
-    expect(body, "展开区收放必须回 setTocOpen（唯一出口）").toMatch(
-      /onOpenChange:\s*\(open\)\s*=>\s*\{\s*setTocOpen\(open\);/,
+    expect(body, "展开区收放必须回 setSideOpen（唯一出口）").toMatch(
+      /onOpenChange:\s*\(open\)\s*=>\s*\{\s*setSideOpen\(open\);/,
     );
     // ⚠️ 反着来不许：另存一份开合布尔跟面板的 hidden 各走各的，迟早错开
     expect(body, "不许自己另记一份开合状态").not.toMatch(/let tocOpen/);
   });
 
   it("收起态的缝：留着、可抓、把手可见（旧口径掐指针 + 隐身把手已废）", () => {
-    const off = preview.match(/\.toc-resizer\.is-off\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(off, "应有 .toc-resizer.is-off 规则块").toBeTruthy();
+    const off = preview.match(/\.side-resizer\.is-off\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(off, "应有 .side-resizer.is-off 规则块").toBeTruthy();
     expect(off, "收起时空隙照样吃指针（拖回来就靠它）").toContain("pointer-events: auto");
     expect(off, "收起时空隙仍是左右调整光标").toContain("cursor: ew-resize");
     expect(preview, "收起时把手不许隐身 —— 看不见缝在哪，就找不到往右拖的地方").not.toMatch(
-      /\.toc-resizer\.is-off \.toc-grip\s*\{[^}]*visibility:\s*hidden/,
+      /\.side-resizer\.is-off \.toc-grip\s*\{[^}]*visibility:\s*hidden/,
     );
     // 与整栏收起分清：那一档才是连缝一起不占位
     expect(preview, "整栏收起仍要连缝一起收掉").toMatch(
-      /#main-row\.is-sidebar-off > #toc-resizer\s*\{\s*display:\s*none;/,
+      /#main-row\.is-sidebar-off > #side-resizer\s*\{\s*display:\s*none;/,
     );
   });
 
   it("反向验证：收起态退回掐指针（死带）必须被咬住", () => {
     const BAD = preview.replace(
-      /(\.toc-resizer\.is-off\s*\{[^}]*)pointer-events:\s*auto;/,
+      /(\.side-resizer\.is-off\s*\{[^}]*)pointer-events:\s*auto;/,
       "$1pointer-events: none;",
     );
     expect(BAD, "替身必须真的把缝掐了").not.toBe(preview);
     expect(() => {
       expect(
-        BAD.match(/\.toc-resizer\.is-off\s*\{[^}]*\}/)?.[0],
+        BAD.match(/\.side-resizer\.is-off\s*\{[^}]*\}/)?.[0],
         "掐指针的死带必须被抓到",
       ).toContain("pointer-events: auto");
     }).toThrow();
@@ -389,7 +391,7 @@ describe("B207 拖到最小再往左拖：接线与可视性契约", () => {
     expect(BAD, "替身必须真的改成写死").not.toBe(src);
     expect(() => {
       expect(
-        BAD.match(/function setupTocResizer\(\)[\s\S]*?\n\}/)?.[0],
+        BAD.match(/function setupSideResizer\(\)[\s\S]*?\n\}/)?.[0],
         "自存布尔必须被抓到",
       ).toContain("isOpen: () => !tocPanel.hidden");
     }).toThrow();
@@ -418,21 +420,21 @@ describe("B194 大纲开合状态：切一次要落盘、启动要回放", () =>
   });
 
   it("切换大纲要把开合状态写进设置并落盘", () => {
-    const body = bodyOf("function setTocOpen(");
+    const body = bodyOf("function setSideOpen(");
     expect(body, "要把开合写进 settings.toc_open").toMatch(/settings\.toc_open = open;/);
     expect(body, "写完要落盘").toMatch(/saveSettings\(settings\)/);
-    // 唯一入口：命令与顶部按钮都走 toggleToc → setTocOpen
-    expect(src, "toggleToc 必须走 setTocOpen（唯一收口）").toMatch(
-      /function toggleToc\(\)[\s\S]{0,200}setTocOpen\(tocPanel\.hidden\)/,
+    // 唯一入口：命令与顶部按钮都走 toggleToc → setSideOpen
+    expect(src, "toggleToc 必须走 setSideOpen（唯一收口）").toMatch(
+      /function toggleToc\(\)[\s\S]{0,200}setSideOpen\(tocPanel\.hidden\)/,
     );
   });
 
   it("启动时要回放上次的开合，且回放本身不写盘", () => {
     expect(src, "启动要按 settings.toc_open 回放").toMatch(
-      /setTocOpen\(settings\?\.toc_open \?\? false, false\)/,
+      /setSideOpen\(settings\?\.toc_open \?\? false, false\)/,
     );
     // persist=false：否则「加载失败 → 用默认值」会把默认值固化成用户设置
-    const body = bodyOf("function setTocOpen(");
+    const body = bodyOf("function setSideOpen(");
     expect(body, "persist=false 时不得回写设置").toMatch(/if \(!persist \|\| !settings\) return;/);
   });
 
@@ -441,5 +443,41 @@ describe("B194 大纲开合状态：切一次要落盘、启动要回放", () =>
     expect(src, "退化串要先自证原句还在").toContain(ORIG);
     const degraded = src.replace(ORIG, "");
     expect(degraded, "退化后不再写 toc_open").not.toMatch(/settings\.toc_open = open;/);
+  });
+});
+
+// ------------------------------------------------------- 命名：左栏 ≠ 大纲
+// 用户点名：左栏收起/展开这一层的名字不该挂 TOC 前缀 —— 左栏以后不只有大纲。
+// ⚠️ 这里**只用反向断言**。光有正向断言（「CSS 里得有 .side-resizer」）根本锁不住
+// 命名：将来谁把选择器改回 .toc-resizer 时只要顺手把测试里的字符串一起改，
+// 照样一片绿。只有「旧名不许回来」这类反向断言咬得住这次重命名本身。
+describe("B212 命名：左栏的宽度与收放不挂大纲前缀", () => {
+  const html = readFileSync("index.html", "utf-8").replace(/\r\n/g, "\n");
+  const preview = readFileSync("src/styles/preview.css", "utf-8").replace(/\r\n/g, "\n");
+  const globalCss = readFileSync("src/styles/global.css", "utf-8").replace(/\r\n/g, "\n");
+  const src = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
+  const toc = readFileSync("src/markdown/toc.ts", "utf-8").replace(/\r\n/g, "\n");
+
+  it("样式表与 index.html 不许再出现旧的大纲分割线选择器", () => {
+    for (const [name, text] of [
+      ["preview.css", preview],
+      ["global.css", globalCss],
+    ] as const) {
+      expect(text, `${name} 不许残留旧的 toc-resizer 选择器`).not.toContain("toc-resizer");
+    }
+    expect(html, "index.html 不许再是 #toc-resizer").not.toContain('id="toc-resizer"');
+  });
+
+  it("左栏宽度与阈值不许再以 TOC_ 前缀从 toc.ts 导出", () => {
+    expect(toc, "不许再导出 TOC_DEFAULT_WIDTH").not.toContain("TOC_DEFAULT_WIDTH");
+    expect(toc, "不许再导出 TOC_MIN_WIDTH").not.toContain("TOC_MIN_WIDTH");
+    expect(toc, "不许再导出 TOC_MAX_WIDTH").not.toContain("TOC_MAX_WIDTH");
+    expect(toc, "不许再导出 TOC_OVERDRAG_PX").not.toContain("TOC_OVERDRAG_PX");
+  });
+
+  it("挂载与显隐收口不许再叫 TocResizer / setTocOpen", () => {
+    expect(src, "bootstrap 不许再挂 setupTocResizer").not.toContain("setupTocResizer");
+    expect(src, "挂载不许再走 attachTocResizer").not.toContain("attachTocResizer");
+    expect(src, "显隐收口不许再叫 setTocOpen").not.toContain("setTocOpen");
   });
 });

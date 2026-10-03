@@ -25,7 +25,7 @@ function makeOpts(): SettingsDialogOptions {
     onEditorLineHeight: noop,
     previewLineHeight: () => 1.7,
     onPreviewLineHeight: noop,
-    tocWidth: () => 240,
+    sideWidth: () => 240,
     onTocWidth: noop,
     defaultEol: () => "CRLF",
     eolOptions: () => ["CRLF", "LF", "CR"],

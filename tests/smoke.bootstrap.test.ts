@@ -1068,7 +1068,7 @@ describe("bootstrap + drag-split smoke", () => {
     // 「点了真的动」：字形填进去了、点击走 toggleToc、三处状态（面板 / 键 / 空隙）同翻转。
     capturedError = null;
     const toc = document.getElementById("toc-panel") as HTMLElement;
-    const resizer = document.getElementById("toc-resizer") as HTMLElement;
+    const resizer = document.getElementById("side-resizer") as HTMLElement;
     const btn = document.getElementById("side-outline") as HTMLButtonElement;
     expect(btn.querySelector("i.codicon"), "大纲键要装上字形").toBeTruthy();
     expect(

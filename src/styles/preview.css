@@ -219,7 +219,7 @@
    于是展开区比编辑区亮一档，左栏看着像另外一块东西 —— 那正是要修的现象。
    ⚠️ scrollbar 什么的照旧由根上的 color-scheme 管，删掉底色不影响滚动条配色。 */
 .toc-panel {
-  /* 初始宽度：运行期由 attachTocResizer 写 inline width/min-width 覆盖（可拖拽，160–640px） */
+  /* 初始宽度：运行期由 attachSideResizer 写 inline width/min-width 覆盖（可拖拽，160–640px） */
   width: 240px;
   min-width: 160px;
   flex: 0 0 auto;
@@ -228,7 +228,7 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  /* 分隔线由右侧 .toc-resizer 提供（与分屏 .layout-sep 同款），面板不再自带右侧边框线免得叠成双线 */
+  /* 分隔线由右侧 .side-resizer 提供（与分屏 .layout-sep 同款），面板不再自带右侧边框线免得叠成双线 */
   overflow: hidden;
   padding: 0;
   background: transparent;
@@ -238,7 +238,7 @@
    是**同一类坑**，上面这条 `display: flex` 一写就必须配一条：
    UA 样式表那条隐藏规则是**作者样式表压不过的那一方** —— CSS 级联里作者样式表
    优先于 UA 样式表，**与选择器权重无关**（`.toc-panel` 0-1-0 与那条 0-1-0 同权重
-   也照样赢）。于是 `setTocOpen(false)` 写的隐藏属性只改了个属性，
+   也照样赢）。于是 `setSideOpen(false)` 写的隐藏属性只改了个属性，
    展开区**照旧占着 160px 显示**。
    症状（B207 上线后用户真机报的）：
      · 「左栏没法折叠起来了」 —— 拖到最小再往左拖，收起通知照常触发，
@@ -270,8 +270,8 @@
       B195 那版用 ::before 向左右各溢出 3px（把可抓范围撑到 10px）是「怕不好按」，
       但那已经比 VS Code 宽一倍 —— 该细的地方细回来。三点把手本身已经把「这里能拖」
       标清楚了，4px 的条按 VS Code 的默认手感就够（sash.size 可配，默认就是 4）。
-      拖拽用的是 document 级 mousemove（attachTocResizer），指针移出这条窄带也不丢。 */
-.toc-resizer {
+      拖拽用的是 document 级 mousemove（attachSideResizer），指针移出这条窄带也不丢。 */
+.side-resizer {
   flex: 0 0 var(--card-gap);
   /* ⚠️⚠️ `min-width: 0` **不能省**（B209 真机实测）：本元素是 `#main-row` 的 flex 子项，
      flex 子项的 `min-width` 初始值是 `auto`，也就是 automatic minimum size —— 会被内容的
@@ -310,7 +310,7 @@
       本体那 4px（B196：不许向两侧溢出，缝是 4px 就是 4px，别借伪元素撑热区）。
       ⚠️ 别再改回「常驻 1px 发丝线」：那会在两张卡片各自的边框之外**多画一条**，
          四条线挤在 4px 缝里。 */
-.toc-resizer::before {
+.side-resizer::before {
   content: "";
   position: absolute;
   top: 0;
@@ -344,8 +344,8 @@
    看着像「没抓住」—— 拖大纲宽度的那几帧正是这种情况。
    ⚠️ 收起态（`.is-off`）照样吃指针、照样能 hover 亮（B207：收起只折展开区，
    这道缝得能抓回来），所以这里没有「收起就不亮」的特例，别照着旧口径去加。 */
-.toc-resizer:hover::before,
-body.layout-dragging .toc-resizer::before {
+.side-resizer:hover::before,
+body.layout-dragging .side-resizer::before {
   background: var(--accent);
 }
 
@@ -353,12 +353,12 @@ body.layout-dragging .toc-resizer::before {
    收起展开区现在是**只折展开区** —— 缝与把手都**留着、照样能抓**。
    旧口径（整条 `pointer-events: none` + 把手 `visibility: hidden`）是把它做成了
    「这条缝变死带」：往左拖到底就再也拖不动，往右拖也拖不回来（只能去点那颗大纲键）。
-   ⚠️ 这条必须显式写 `pointer-events: auto`：基础那条 .toc-resizer 没声明，而收起态要
+   ⚠️ 这条必须显式写 `pointer-events: auto`：基础那条 .side-resizer 没声明，而收起态要
       表达的是「这条 4px 缝仍然吃指针、仍然 ew-resize」，白纸黑字写比靠继承清楚。
-   ⚠️ 与整栏收起（`#main-row.is-sidebar-off > #toc-resizer { display: none }`）别抄错：
+   ⚠️ 与整栏收起（`#main-row.is-sidebar-off > #side-resizer { display: none }`）别抄错：
       那条是「整个左栏不在了」，这一条只是「展开区折起来」，缝是**同一道缝**，
       间距不跳变 ⇒ 缝留着、可拖回来。 */
-.toc-resizer.is-off {
+.side-resizer.is-off {
   cursor: ew-resize;
   pointer-events: auto;
 }
@@ -367,15 +367,15 @@ body.layout-dragging .toc-resizer::before {
    ⚠️ 与上面 `.is-off` 反着来：那条是「只折展开区」（卡片还在、缩成按钮列 ⇒ 缝仍是两张
       卡片之间的间距，留着才不跳变）；这一条是「整个左栏不在了」，缝左边已经没有卡片，
       留着就是一道悬空的空隙。两条别抄错 —— 收起展开区留缝、收起整栏去缝。
-   本条专属 #toc-resizer（它在 preview.css）；侧栏卡片那半条在 global.css，
+   本条专属 #side-resizer（它在 preview.css）；侧栏卡片那半条在 global.css，
    两处是同一件事的两个半，改类名要一起改。 */
-#main-row.is-sidebar-off > #toc-resizer {
+#main-row.is-sidebar-off > #side-resizer {
   display: none;
 }
 
 /* 三点把手（字形由 main.ts 填 CODICONS.grip = codicon kebab-vertical）
    ⚠️ `position: relative` + `z-index: 1` 是 B201 补的：悬停时那条 4px 亮条画在
-      `.toc-resizer::before` 上（绝对定位、z-index auto），按绘制顺序它会**盖在**把手
+      `.side-resizer::before` 上（绝对定位、z-index auto），按绘制顺序它会**盖在**把手
       上面 —— 三点会被亮条糊掉。把手是 absolute 的兄弟，抬一层就压回去了。
       （B203 起亮条亮起时把手会让位、不再需要抬着看，但两层关系照旧留着：VS Code 的
        grip 也是 sash 的兄弟浮层。）
@@ -402,7 +402,7 @@ body.layout-dragging .toc-resizer::before {
 /* B196 → B199：把手尺寸。B196 那版因为缝从 10px 收到 4px，怕「钉不进缝」把把手缩到
    12px（VS Code 那个三点把手是「2px 的点 + 上下各 5px 偏移」= 总高约 12px、总宽约 2px）。
    但缩完之后用户反馈**三个点太小、看不清哪儿能拖** —— B199 用户裁决**调回 16px、缝仍是
-   4px**：竖排三点在整行高度里垂直居中（.toc-resizer 撑满卡片高度），上下如何都不会顶出
+   4px**：竖排三点在整行高度里垂直居中（.side-resizer 撑满卡片高度），上下如何都不会顶出
    卡片，横向也只有约 2px 宽，不影响 4px 缝的手感。窄缝要「看得见能拖」，靠的是这颗点，
    不是靠把缝加宽。
    ⚠️ 别再往回调回 12px「怕顶出卡片」：卡片的上下沿在整屏高度上，点高 16px 也远远够不着。 */
@@ -417,7 +417,7 @@ body.layout-dragging .toc-resizer::before {
    ⚠️ 位置必须落在下面两条让位规则**之前**：三条同是「两个类 + 一个元素」的优先级，
    靠书写顺序决胜 —— 收起态 hover / 拖拽时，仍然是让位那条赢（淡成 0 把画面让给
    那条亮条），收起态只是「静息更醒目」，别让这条把让位盖掉。 */
-.toc-resizer.is-off .toc-grip {
+.side-resizer.is-off .toc-grip {
   opacity: 1;
 }
 
@@ -434,7 +434,7 @@ body.layout-dragging .toc-resizer::before {
       哪儿能拖」靠的是这颗点而不是加宽缝）；这里管的是悬停那一瞬谁让位给谁。
    ⚠️ `body.layout-dragging` 那条不能省：拖拽中指针常滑出这条 4px 窄带，
       只看 :hover 会让把手在起手那几帧闪回来，与上面那条亮条打架。 */
-.toc-resizer:hover .toc-grip,
+.side-resizer:hover .toc-grip,
 body.layout-dragging .toc-grip {
   opacity: 0;
 }
