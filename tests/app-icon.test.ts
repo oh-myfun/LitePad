@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { readJson } from "./static";
+import { edgeEnergy, icoEntries, pngAlpha, pyFnBody, readJson } from "./static";
 
 describe("应用图标（矢量自绘，四角一致）", () => {
   it("B25/B34 应用图标四角圆角必须一致（矢量自绘，非镜像修角）", () => {
@@ -57,5 +57,72 @@ describe("应用图标（矢量自绘，四角一致）", () => {
     expect(tipY, "笔尖不得再顶到文档下边缘").toBeLessThan(y1 - 0.08);
     expect(tipY, "笔尖应落在文档水平中线以下（中间靠下）").toBeGreaterThan((y0 + y1) / 2);
     expect(Math.abs(tipX - (x0 + x1) / 2), "笔尖不应偏离文档竖直中线过远").toBeLessThan(0.12);
+  });
+
+  it("B221 任务栏发糊的修法：ico 小档不许二次缩放、必须锐化", () => {
+    // 用户报告：Windows 任务栏上 LitePad 那颗图标太模糊。
+    // 定位于 scripts/gen_icons.py 的 ico 生成：原先是 母版(1024) → 缩到 256 → 再缩到
+    // 16/24/32/48/64，两道缩放把边抹平了；而任务栏/资源管理器吃的正是 ≤64 那几档
+    // （exe 图标来自 build.rs 生成的 resource.rc 里的 `32512 ICON ...icon.ico`）。
+    // 改法：每档从母版一次 LANCZOS 到位 + 小档叠轻度 UnsharpMask；
+    // 实测 32px 锐度 14.5 → 18.9（+30%），48px 10.0 → 13.6，64px 8.0 → 10.5。
+    const gen = readFileSync("scripts/gen_icons.py", "utf-8");
+    const framesBody = pyFnBody(gen, "ico_frames");
+    const iconsBody = pyFnBody(gen, "write_icons");
+
+    // ⚠️ 反例必须排在正向断言**之前**：退化时被正向断言抢先报错，这条反向闸等于没验过。
+    expect(
+      framesBody,
+      "ICO 小档不许再从 256 那张中间图二次缩放（B221 任务栏发糊的直接根因）",
+    ).not.toMatch(/resize\(\(\s*256\s*,/);
+    expect(framesBody, "不许让 Pillow 从主图 thumbnail 兜底（那等于又走一遍缩放）").not.toMatch(
+      /thumbnail\(/,
+    );
+    expect(iconsBody, "write_icons 不许再出现「先缩 256，再存 icon.ico」的旧写法").not.toMatch(
+      /resize\(\(\s*256\s*,\s*256\s*\)[\s\S]{0,220}?icon\.ico/,
+    );
+    expect(framesBody, "每一档都要从母版 img 一次到位").toMatch(/img\.resize\(\(size,\s*size\)/);
+    expect(framesBody, "小档要过锐化，且只在小档上做").toMatch(/if\s+size\s*<=\s*ICO_SHARPEN_MAX/);
+    expect(framesBody, "锐化必须落到帧上").toMatch(/sharpen_small\(frame\)/);
+    expect(gen, "锐化开关闭上限在 64").toMatch(/ICO_SHARPEN_MAX\s*=\s*64/);
+    expect(gen, "必须用 UnsharpMask").toMatch(/ImageFilter\.UnsharpMask\(/);
+    expect(iconsBody, "ICO 的 append_images 必须直接喂 ico_frames 的逐档结果").toMatch(
+      /append_images=ico_frames\(img\)/,
+    );
+    // 主图必须是母版本身：Pillow 的 ICO _save 拿 `im.size` 当尺寸上限，
+    // 主图要是 16 那档，所有 >16 的档会被整条跳过（静默少档、不报错）。
+    expect(iconsBody, "传给 ICO 的主图必须是母版 img").toMatch(/^ {4}img\.save\(/m);
+  });
+
+  it("B221 产物侧：已出包的 icon.ico 小档锐度必须高于二次缩放那版", () => {
+    // 源码侧对了、但忘了重跑 gen_icons.py 更新 icon.ico —— 任务栏照样是糊的，
+    // 所以这一半必须落在**实际产物**上（src-tauri/icons/icon.ico 是入库的真身）。
+    const gen = readFileSync("scripts/gen_icons.py", "utf-8");
+    const declared = (gen.match(/ICO_SIZES\s*=\s*\[([^\]]+)\]/)?.[1] ?? "")
+      .split(",")
+      .map((s) => Number(s.trim()))
+      .filter((n) => n > 0)
+      .sort((a, b) => a - b);
+
+    const entries = icoEntries(readFileSync("src-tauri/icons/icon.ico"));
+    expect(entries.length, "ICO 档位必须齐全").toBe(declared.length);
+    expect(entries.map((e) => e.size).sort((a, b) => a - b)).toEqual(declared);
+    expect(
+      entries.every((e) => e.bpp === 32),
+      "每档都必须是 32bpp",
+    ).toBe(true);
+
+    const energy = new Map<number, number>();
+    for (const e of entries) energy.set(e.size, edgeEnergy(pngAlpha(e.payload)));
+
+    // ⚠️ 反例前置：解码器要是恒 0 / 恒返回同一个数，下面几条阈值断言会全绿（假绿）。
+    // 「小档必须比 128 档锐得多」这条恒真关系既当对照组，也顺带证明解码器在动。
+    expect(energy.get(32)!, "32px 档必须有内容（解码器 sanity）").toBeGreaterThan(0);
+    expect(energy.get(128)!, "对照组：128 是平滑大图，锐度必然低于小档").toBeLessThan(
+      energy.get(32)!,
+    );
+    expect(energy.get(32)!, "32px 锐度（二次缩放那版只有 14.5）").toBeGreaterThan(17);
+    expect(energy.get(48)!, "48px 锐度（二次缩放那版只有 10.0）").toBeGreaterThan(12.5);
+    expect(energy.get(64)!, "64px 锐度（二次缩放那版只有 8.0）").toBeGreaterThan(9.5);
   });
 });

@@ -123,6 +123,28 @@ export function cssDecls(block: string): string {
 // ⚠️ 不能只找第一条 `\n}`：多行返回类型字面量也会以 `} {` 出现在行首
 //（如 `function f(): {\n  a: number;\n} {`），那样会在签名处就截断，
 // 于是函数体内所有断言都变成「找不到」——B71 ④ 的 sessionTabRecordOf 就踩过这个坑。
+/**
+ * 截 Python 顶层函数体（按**缩进**收尾，不是花括号）。
+ *
+ * ⚠️ 不能拿 topLevelFnBody 凑合：Python 函数靠缩退结束，源码里压根没有 `}`，
+ *    那个工具在 TS 上找的第一个 `\n}` 恒为 -1，返回空串 —— 函数体里所有断言
+ *    都会变成「找不到」，退化了也照样绿（B221 首次写这条时直接踩了）。
+ */
+export function pyFnBody(src: string, name: string): string {
+  const lines = src.split("\n");
+  const re = new RegExp(`def\\s+${name}\\s*\\(`);
+  const start = lines.findIndex((l) => re.test(l));
+  if (start < 0) return "";
+  const out: string[] = [];
+  for (let i = start; i < lines.length; i++) {
+    out.push(lines[i]);
+    if (i > start && lines[i] !== "" && !lines[i].startsWith(" ")) break; // 回到行首 = 本函数收尾
+  }
+  return out.join("\n");
+}
+
+// ⚠️ 下面是 TS 版的同名工具：两条都要留 —— pyFnBody 服务 Python 脚本（scripts/*.py），
+//    topLevelFnBody 服务 TS 源码（src/**）。混用会静默返回空串（见 pyFnBody 的注释）。
 export function topLevelFnBody(fileText: string, name: string): string {
   const start = fileText.indexOf(name);
   if (start < 0) return "";
@@ -232,8 +254,14 @@ export function hasStep3NotDeliverableWarning(src: string): boolean {
 export interface PngAlpha {
   width: number;
   height: number;
+  /**
+   * 每像素字节数（RGB=3 / RGBA=4）。判据要按它取通道，别写死 4。
+   */
+  bpp: number;
   /** 取某个像素的 alpha（0–255）。 */
   at: (x: number, y: number) => number;
+  /** 取某个像素的 RGBA（alpha 通道在 RGB 时按 255 补）。 */
+  px: (x: number, y: number) => [number, number, number, number];
   /** 全图是否存在不透明像素（= 图不是空的）。 */
   hasInk: boolean;
 }
@@ -300,12 +328,88 @@ export function pngAlpha(file: Buffer): PngAlpha {
       break;
     }
   }
+  const at = (x: number, y: number) => (bpp === 4 ? out[y * stride + x * bpp + 3] : 255);
   return {
     width,
     height,
-    at: (x, y) => out[y * stride + x * bpp + 3],
+    bpp,
+    at,
+    px: (x: number, y: number) => {
+      const i = y * stride + x * bpp;
+      const a = at(x, y);
+      return bpp === 4 ? [out[i], out[i + 1], out[i + 2], a] : [out[i], out[i + 1], out[i + 2], a];
+    },
     hasInk,
   };
+}
+
+// --------------------------------------------------------------------------- #
+// ICO / 锐度（B221 任务栏图标发糊）
+// --------------------------------------------------------------------------- #
+
+/**
+ * 解析一份 ICO 的目录，返回每档的 { 边长, bpp, PNG 载荷 }。
+ *
+ * 任务栏 / 资源管理器图标取的是**这个 ICO**：`src-tauri/build.rs` 里 `tauri_build::build()`
+ * 生成的 resource.rc 写着 `32512 ICON "...icons\icon.ico"`，exe 把这份嵌进去，
+ * 外壳按需要的尺寸选档。所以「任务栏上那颗糊不糊」只能从这份文件判 ——
+ * 光看 `bundle.icon` 判不到，那三张 png 是给 installer / 快捷方式 / 商店用的。
+ *
+ * 载荷只解 PNG（本项目 Pillow 出的恒是 PNG 载荷；换 DIB 载荷这条会直接抛错，
+ * 宁可抛也不给一个恒 0 的假绿）。
+ *
+ * ⚠️ 目录首字节 bWidth 对 256 记 0，读尺寸时 `|| 256` 补回。
+ */
+export interface IcoEntry {
+  size: number;
+  bpp: number;
+  bytesInRes: number;
+  payload: Buffer;
+}
+
+export function icoEntries(file: Buffer): IcoEntry[] {
+  const buf = Buffer.from(file);
+  const type = buf.readUInt16LE(2);
+  const count = buf.readUInt16LE(4);
+  if (type !== 1) throw new Error(`不是 ICO（type=${type}）`);
+  const out: IcoEntry[] = [];
+  for (let i = 0; i < count; i++) {
+    const o = 6 + i * 16;
+    const w = buf[o];
+    const bpp = buf.readUInt16LE(o + 6);
+    const bytes = buf.readUInt32LE(o + 8);
+    const off = buf.readUInt32LE(o + 12);
+    // bWidth/bHeight 记 0 表示 256（ICO 规范），别当成「空档」抛错
+    out.push({
+      size: w || 256,
+      bpp,
+      bytesInRes: bytes,
+      payload: buf.subarray(off, off + bytes),
+    });
+  }
+  return out;
+}
+
+/**
+ * 相邻像素梯度均值（只看不透明区）—— 量化「图标糊不糊」的锐度指标。
+ *
+ * 为什么不用 Pillow 那边的数：这是给测试用的独立实现，图一旦回炉重生成，
+ * 指标必须能跟着产物走（在测试里现算），不能拿外部脚本的一次性测量当判据。
+ * 归一化到 0–255 量纲，方便直接写阈值。
+ */
+export function edgeEnergy(png: PngAlpha): number {
+  let sum = 0;
+  let n = 0;
+  for (let y = 0; y < png.height; y++) {
+    for (let x = 0; x + 1 < png.width; x++) {
+      const a = png.px(x, y);
+      const b = png.px(x + 1, y);
+      if (a[3] < 200 && b[3] < 200) continue; // 两个都透明 → 不算边
+      sum += (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2])) / 3;
+      n++;
+    }
+  }
+  return n ? sum / n : 0;
 }
 
 function paeth(a: number, b: number, c: number): number {

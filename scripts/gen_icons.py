@@ -40,6 +40,12 @@ MASTER = 1024
 SIZES = [("32x32.png", 32), ("128x128.png", 128), ("128x128@2x.png", 256)]
 ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
 
+# icon.ico 里哪几档靠锐化 —— 见下面 sharpen_small / ico_frames 的说明。
+ICO_SHARPEN_MAX = 64              # 只给 ≤64 的档做锐化，大档本身像素够密，锐了只剩噪点
+ICO_SHARPEN_RADIUS = 1.2          # UnsharpMask(radius, percent, threshold)
+ICO_SHARPEN_PERCENT = 70
+ICO_SHARPEN_THRESHOLD = 2
+
 # ---- 调色板 ----
 BRAND_TOP = (37, 99, 235)      # #2563EB
 BRAND_BOTTOM = (6, 182, 212)   # #06B6D4
@@ -504,13 +510,54 @@ def render(letter, size=MASTER, shade=D_DEFAULT_SHADE):
 # --------------------------------------------------------------------------- #
 # 输出
 # --------------------------------------------------------------------------- #
+def sharpen_small(frame):
+    """轻度 USM：只动 RGB，alpha 原样搬回去（锐化会把圆角透明边啃出毛刺）。"""
+    rgb = frame.convert("RGB").filter(
+        ImageFilter.UnsharpMask(
+            radius=ICO_SHARPEN_RADIUS,
+            percent=ICO_SHARPEN_PERCENT,
+            threshold=ICO_SHARPEN_THRESHOLD,
+        )
+    )
+    sharpened = rgb.convert("RGBA")
+    sharpened.putalpha(frame.getchannel("A"))
+    return sharpened
+
+
+def ico_frames(img):
+    """icon.ico 的每一档：**从母版直接 LANCZOS 到位**，小档再叠一层 USM。
+
+    为什么小档要单独照顾（B221：任务栏上那颗图标发糊）：
+      · 任务栏 / 资源管理器取的是 exe 里嵌的**这个 ICO**（build.rs 把 `32512 ICON`
+        指向 icons/icon.ico），按需要的尺寸选档，实际吃的基本都是 ≤64 那几档；
+      · 以前的链是 母版 → 256 → {16/24/32/48/64}，缩放走了两道，边被抹平
+        （实测 32px 锐度 14.5，改完 18.9；48px 10.0 → 13.6，64px 8.0 → 10.5）。
+        注意：仅「换母版直出」几乎没收益（14.51 vs 14.50）——真正的量是下面那层 USM。
+
+    ⚠️ 别再退化成「先缩 256 再往下缩」——那是任务栏发糊的直接原因。
+    """
+    frames = []
+    for size in ICO_SIZES:
+        frame = img.resize((size, size), Image.LANCZOS)
+        if size <= ICO_SHARPEN_MAX:
+            frame = sharpen_small(frame)
+        frames.append(frame)
+    return frames
+
+
 def write_icons(img):
     os.makedirs(OUT_DIR, exist_ok=True)
     for name, size in SIZES:
         img.resize((size, size), Image.LANCZOS).save(os.path.join(OUT_DIR, name))
         print(f"  {name}  ({size}x{size})")
-    img.resize((256, 256), Image.LANCZOS).save(
-        os.path.join(OUT_DIR, "icon.ico"), sizes=[(v, v) for v in ICO_SIZES]
+    # append_images 让 ICO 插件**直接用逐档预渲染好的图**，而不是从第一张再缩。
+    # ⚠️ 传进去做主图的必须是母版 `img` 本身：Pillow 的 ICO _save 有个尺寸守卫
+    #    拿 `im.size` 当上限（`size[0] > width ...: continue`），主图要是 16 那档，
+    #    所有 >16 的档会被整条跳过，ICO 里只剩一张 16 —— 静默少档，不报错。
+    img.save(
+        os.path.join(OUT_DIR, "icon.ico"),
+        sizes=[(v, v) for v in ICO_SIZES],
+        append_images=ico_frames(img),
     )
     print(f"  icon.ico  ({', '.join(str(v) for v in ICO_SIZES)})")
 
