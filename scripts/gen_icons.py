@@ -366,8 +366,8 @@ B_CARD_SHADOW = False                  # B43：去掉文档投影（折角处与
 #   笔尾 (0.869, 0.181)
 
 
-def variant_b(s):
-    """透明画布上直接是「折角文档 + 钢笔」，不加圆角渐变底。
+def _doc_and_pen(s):
+    """透明画布上的「折角文档 + 钢笔」—— B 与 D 共用这一份几何 **和** 配色。
 
     钢笔反放：笔头朝左下、笔尾在右上（局部 +x 是笔尖方向，故旋转 -135°）。
     """
@@ -413,6 +413,48 @@ def variant_b(s):
     return base
 
 
+def variant_b(s):
+    """透明画布上直接是「折角文档 + 钢笔」，不加圆角渐变底。"""
+    return _doc_and_pen(s)
+
+
+# --------------------------------------------------------------------------- #
+# 变体 D：石墨色圆角正方形底 + 折角文档 + 钢笔
+# --------------------------------------------------------------------------- #
+# 与 B 的关系：几何与配色**完全共用** `_doc_and_pen`，D 只是在底下垫一块石墨纯色
+# 圆角方底 —— 一个数都没挪动，B 仍是透明画布（网页 favicon 场景）。
+# 想换石墨深浅，只动 GRAPHITE_SHADES 这张表，不用碰任何几何参数。
+D_RADIUS = 0.2237                       # 圆角半径（与 A/C 瓷砖同一档）
+
+# (键, 色号, 主色, 右下暗角色)
+GRAPHITE_SHADES = (
+    ("d1", "#1E293B", (30, 41, 59), (15, 23, 42)),
+    ("d2", "#2A2D34", (42, 45, 52), (24, 27, 31)),
+    ("d3", "#111827", (17, 24, 39), (9, 13, 24)),
+    ("d4", "#374151", (55, 65, 81), (34, 41, 53)),
+)
+D_DEFAULT_SHADE = "d1"
+
+
+def _tile_graphite(s, fill, edge):
+    """石墨纯色圆角底：主色 + 右下极淡暗角，无对角渐变、无玻璃高光。"""
+    mask = _rounded_mask(s, int(s * D_RADIUS))
+    base = Image.new("RGBA", (s, s), fill + (255,))
+    base = Image.alpha_composite(
+        base, _tint(s, edge, _radial_alpha(s, 1.02, 1.0, int(0.9 * s), 54))
+    )
+    base.putalpha(mask)
+    return base, mask
+
+
+def variant_d(s, key=D_DEFAULT_SHADE):
+    """石墨色圆角正方形底 + 折角文档 + 钢笔（透明角保留，Alpha 通道出图）。"""
+    shade = next((g for g in GRAPHITE_SHADES if g[0] == key), GRAPHITE_SHADES[0])
+    base, mask = _tile_graphite(s, shade[2], shade[3])
+    base.alpha_composite(_doc_and_pen(s))
+    return _finish(base, mask)
+
+
 # --------------------------------------------------------------------------- #
 # 变体 C：字母 L + 光标
 # --------------------------------------------------------------------------- #
@@ -447,11 +489,15 @@ VARIANTS = {
     "A": ("便签纸 + 铅笔（精修）", variant_a),
     "B": ("折角文档 + 钢笔", variant_b),
     "C": ("字母 L + 光标", variant_c),
+    "D": ("石墨圆角底 + 折角文档 + 钢笔", variant_d),
 }
 
 
-def render(letter, size=MASTER):
-    return VARIANTS[letter][1](size)
+def render(letter, size=MASTER, shade=D_DEFAULT_SHADE):
+    fn = VARIANTS[letter][1]
+    if letter == "D":
+        return fn(size, shade)
+    return fn(size)
 
 
 # --------------------------------------------------------------------------- #
@@ -471,7 +517,8 @@ def write_icons(img):
 def write_single_preview(img, letter):
     """预览板：透明底（棋盘格）+ 浅色底 / 深色底 + 尺寸梯队。
 
-    无背景方案必须同时看两种底色，否则「白纸在浅色底上会不会糊掉」判断不了。
+    无背景方案必须同时看两种底色，否则「白纸在浅色底上会不会糊掉」判断不了；
+    垫了底色（D）的方案看的是**小尺寸下石墨底与白纸的对比**。
     """
     os.makedirs(PREVIEW_DIR, exist_ok=True)
     path = os.path.join(PREVIEW_DIR, "litepad_icon_preview.png")
@@ -483,7 +530,7 @@ def write_single_preview(img, letter):
 
     d.text(
         (pad, 18),
-        f"LitePad 图标 · 方案 {letter}（透明画布，无背景）",
+        f"LitePad 图标 · 方案 {letter}（{'石墨圆角底' if letter == 'D' else '透明画布，无背景'}）",
         font=f_title,
         fill=(226, 232, 240, 255),
     )
@@ -590,19 +637,84 @@ def build_sheet():
     print(f"  对比图：{path}")
 
 
+def build_shade_sheet():
+    """石墨圆角底的 4 档候选对比板（只有底板颜色不同，几何完全一致）。"""
+    os.makedirs(PREVIEW_DIR, exist_ok=True)
+    path = os.path.join(PREVIEW_DIR, "icon_graphite_shades.png")
+
+    pad, col_w, gap = 28, 300, 22
+    W = pad * 2 + col_w * len(GRAPHITE_SHADES) + gap * (len(GRAPHITE_SHADES) - 1)
+    H = 470
+    board = Image.new("RGBA", (W, H), (20, 20, 30, 255))
+    d = ImageDraw.Draw(board)
+    f_title, f_name, f_cap = _font(20), _font(19), _font(15)
+
+    d.text(
+        (pad, 16),
+        "LitePad 图标 · 石墨圆角正方形底 4 档候选（几何完全一致，只换底色）",
+        font=f_title,
+        fill=(226, 232, 240, 255),
+    )
+
+    for i, (key, hexv, fill, _edge) in enumerate(GRAPHITE_SHADES):
+        x = pad + i * (col_w + gap)
+        icon = render("D", size=1024, shade=key).resize((200, 200), Image.LANCZOS)
+        d.text((x, 50), f"{key}  {hexv}", font=f_name, fill=(148, 197, 253, 255))
+
+        # 大图落在棋盘格上，顺带看出透明角
+        cb = Image.new("RGBA", (200, 200), (255, 255, 255, 255))
+        cbd = ImageDraw.Draw(cb)
+        step = 20
+        for a in range(0, 200, step):
+            for b in range(0, 200, step):
+                if (a // step + b // step) % 2:
+                    cbd.rectangle([a, b, a + step - 1, b + step - 1], fill=(226, 232, 240, 255))
+        board.alpha_composite(cb, (x, 76))
+        board.alpha_composite(icon, (x, 76))
+        d.text((x, 288), "棋盘格（看透明角）", font=f_cap, fill=(139, 147, 168, 255))
+
+        # 浅底 / 深底 对照
+        for k, (bg, fg, cap) in enumerate(
+            (
+                ((247, 249, 252, 255), (100, 116, 139, 255), "浅色底"),
+                ((30, 32, 48, 255), (148, 163, 184, 255), "深色底"),
+            )
+        ):
+            y0 = 312 + k * 56
+            d.rounded_rectangle((x, y0, x + col_w, y0 + 46), radius=10, fill=bg)
+            board.alpha_composite(icon.resize((46, 46), Image.LANCZOS), (x + 12, y0 + 1))
+            d.text((x + 68, y0 + 14), cap, font=f_cap, fill=fg)
+
+        # 尺寸梯队
+        sx = x
+        for sz in (64, 32, 16):
+            board.alpha_composite(icon.resize((sz, sz), Image.LANCZOS), (sx, 424 + (64 - sz)))
+            sx += sz + 14
+
+    board.convert("RGB").save(path)
+    print(f"  石墨底候选：{path}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--install", choices=list(VARIANTS), help="把选定变体写入 src-tauri/icons")
+    ap.add_argument(
+        "--shade",
+        default=D_DEFAULT_SHADE,
+        choices=[g[0] for g in GRAPHITE_SHADES],
+        help="--install 时用的石墨档位（d1/d2/d3/d4）",
+    )
     args = ap.parse_args()
 
     if args.install:
-        print(f"  安装变体 {args.install} · {VARIANTS[args.install][0]}")
-        img = render(args.install)
+        print(f"  安装变体 {args.install} · {VARIANTS[args.install][0]}（石墨档 {args.shade}）")
+        img = render(args.install, shade=args.shade)
         write_icons(img)
         write_single_preview(img, args.install)
     else:
         print("  生成候选对比图（未写入 src-tauri/icons）")
         build_sheet()
+    build_shade_sheet()
 
 
 if __name__ == "__main__":
