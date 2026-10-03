@@ -9,12 +9,13 @@ import { existsSync, readFileSync } from "node:fs";
 import {
   hasDistIntegrityGuard,
   hasStep3NotDeliverableWarning,
+  ruleBlock,
   stripCssComments,
   stripLineComments,
   topLevelFnBody,
 } from "./static";
 import { createMenuBar, type MenuBarCallbacks } from "../src/shell/menubar";
-import { closePopupMenu } from "../src/shell/menu";
+import { closePopupMenu, showPopupMenu } from "../src/shell/menu";
 import { keyHint as realKeyHint } from "../src/shell/keymap";
 
 /** 让 MutationObserver 微任务跑完：menubar 用它复位内部 openBtn 状态。 */
@@ -943,5 +944,39 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
     expect(css, "子菜单箭头样式").toContain(".menu-arrow");
     expect(css, "长菜单必须自身滚动").toMatch(/\.popup-menu\s*\{[\s\S]*?overflow-y:\s*auto/);
+  });
+
+  it("子菜单父项的箭头是一枚 chevron codicon（不是写死的三角字符）", () => {
+    const m = readFileSync("src/shell/menu.ts", "utf-8");
+    expect(m, "箭头要取 codicon 的字形元素串").toContain("CODICONS.chevronRight");
+    expect(m, "元素串得真的落进 DOM").toMatch(/arrow\.innerHTML\s*=\s*CODICONS\./);
+    // 整份文件（**不剥注释**）都不许再出现那枚三角字符 —— 注释里留着也一样算没换干净
+    expect(m, "写死的三角字符必须清干净").not.toContain("▸");
+
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    // 外层不许自己定字号：codicon.css 用的是 `font` 简写、自带 font-size，
+    // 挂在 `.menu-arrow` 上会被它盖掉（写了等于没写，字形永远 16px）。
+    expect(ruleBlock(css, ".menu-arrow", 0), "箭头外层不许写 font-size").not.toMatch(/font-size/);
+    expect(css, "字号必须挂到内层 codicon 上").toMatch(
+      /\.menu-arrow\s+\.codicon\s*\{[^}]*font-size/,
+    );
+  });
+
+  it("子菜单父项跑起来：行末那格是空的字形位，文字上没有三角", () => {
+    showPopupMenu(null, [{ label: "有一层子菜单", submenu: [{ label: "内层" }] }]);
+    const btn = document.querySelector(".popup-menu > button") as HTMLElement | null;
+    expect(btn, "带 submenu 的项要渲染成按钮").toBeTruthy();
+    expect(btn!.classList.contains("has-submenu"), "父项要挂 has-submenu").toBe(true);
+
+    const arrow = btn!.querySelector(".menu-arrow");
+    expect(arrow, "父项行末必须有箭头格").toBeTruthy();
+    const glyphs = arrow!.querySelectorAll("i.codicon");
+    expect(glyphs.length, "箭头格里必须恰有一枚 codicon 字形").toBe(1);
+    expect(
+      glyphs[0].classList.contains("codicon-chevron-right"),
+      "那枚必须是右向 chevron（类名是 codicon-chevron-right，不是 chevron-right）",
+    ).toBe(true);
+    expect(arrow!.textContent, "字形不承载文字（<i> 是空的，靠字体画）").toBe("");
+    closePopupMenu();
   });
 });

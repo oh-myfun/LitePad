@@ -1,3 +1,4 @@
+import { CODICONS } from "./codicons";
 import { hideTip } from "./tooltip";
 
 export interface MenuItem {
@@ -6,7 +7,8 @@ export interface MenuItem {
   /** 显示为分隔线（忽略其他字段） */
   separator?: boolean;
   /**
-   * 子菜单：本项渲染为父项（右侧 ▸），悬停或点击向右展开。
+   * 子菜单：本项渲染为父项（标签靠左、行末挂一枚右向 chevron 表示还能往里走），
+   * 悬停或点击向右展开。
    * 传函数则每次展开时求值，供动态列表使用。
    * 有子菜单时 `onSelect` 不触发。
    */
@@ -221,7 +223,11 @@ function fillMenu(menu: HTMLElement, items: MenuItem[], opts?: PopupMenuOptions)
     if (sub) {
       const arrow = document.createElement("span");
       arrow.className = "menu-arrow";
-      arrow.textContent = "▸";
+      // 字形走 CODICONS 那套元素串（B208 根因：它是可直接塞 innerHTML 的 `<i>`，
+      // 不是 id —— 拼进 className 里字形彻底画不出来）。字号在 CSS 里挂在
+      // `.menu-arrow .codicon` 内层：codicon.css 用的是 `font` 简写，自带 font-size，
+      // 父级写多少都不算数。
+      arrow.innerHTML = CODICONS.chevronRight;
       btn.append(check, textEl, arrow);
       btn.classList.add("has-submenu");
     } else {

@@ -613,12 +613,19 @@ html[data-window-kind="satellite"] .menu-bar {
   color: var(--fg-muted);
 }
 
-/* 子菜单父项（如「文件 → 导出 ▸」）：文字左、箭头贴右 */
+/* 子菜单父项（如「文件 → 导出」）：文字左、箭头贴右。
+   ⚠️ 这里刻意不写 font-size：箭头是 codicon 字形，codicon.css 用的是 `font` 简写，
+   自带的 font-size 会盖掉本规则 ⇒ 想调大小只能写进下面那条内层选择器。 */
 .menu-arrow {
   margin-left: auto;
   padding-left: 18px;
-  font-size: 10px;
   color: var(--fg-muted);
+}
+
+/* 子菜单那枚 chevron：取 14px —— 比 codicon 默认的 16px 收一点，菜单行只有二十来像素高，
+   满格字形会显得顶行。⚠️ 必须挂在 `.codicon` 内层而不是 `.menu-arrow` 上（见上一条注释）。 */
+.menu-arrow .codicon {
+  font-size: 14px;
 }
 
 .popup-menu button.has-submenu.submenu-open {
