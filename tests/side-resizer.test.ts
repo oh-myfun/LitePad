@@ -174,40 +174,40 @@ describe("B207 拖到最小再往左拖：收起 / 拉回展开区", () => {
     expect(toc, "不许再留收起/展开两个分档常量").not.toContain("TOC_RESTORE_OVERDRAG_PX");
   });
 
-  it("收起态往右拖：越过阈值才展开，宽度按**超出阈值那一段**起算", () => {
+  it("B213：收起态往右拖**长到最小宽**才放开，宽度 = 拖出来的位移（跟手，不扣阈值）", () => {
     const { panel, resizer, opened, changes } = mountOpen(SIDE_MIN_WIDTH);
-    // B209：越过阈值那一刻展开区是最小宽，再往右拖多少就加多少 —— 不是「弹回上次那个数」
-    drag(resizer, 200, 200 + SIDE_OVERDRAG_PX + 40);
+    // ⚠️ 一个手势内连走：差一像素 → 到最小宽 → 再拖 40。中间松手就换了锚，测不到跟手。
+    mouse(resizer, "mousedown", 200);
+    mouse(document, "mousemove", 200 + SIDE_MIN_WIDTH - 1); // 差一像素：还没长到最小宽
+    expect(opened, "没长到最小宽就不放").toEqual([]);
+    mouse(document, "mousemove", 200 + SIDE_MIN_WIDTH); // 正好长到最小宽
     expect(opened, "往右拖必须把展开区放回来").toEqual([true]);
-    expect(panel.style.width, "展开后 = 最小宽 + 超出阈值的那一段").toBe(
+    expect(panel.style.width, "触发展开正好是最小宽，不是弹回上次那个数").toBe(
+      `${SIDE_MIN_WIDTH}px`,
+    );
+    mouse(document, "mousemove", 200 + SIDE_MIN_WIDTH + 40); // 再拖 40
+    expect(panel.style.width, "拖出的位移全给宽度，中间不再扣掉一条阈值").toBe(
       `${SIDE_MIN_WIDTH + 40}px`,
     );
+    mouse(document, "mouseup", 200 + SIDE_MIN_WIDTH + 40);
     expect(changes[changes.length - 1], "松手回写摊开后的宽度").toBe(SIDE_MIN_WIDTH + 40);
   });
 
-  // ⚠️ 下面两条**故意不引用 `SIDE_OVERDRAG_PX`**：那是个导出的常量，拿它当位移去拖，
+  // ⚠️ 这条**故意不引用 `SIDE_OVERDRAG_PX`**：那是个导出的常量，拿它当位移去拖，
   //    常量一改用例跟着改 —— 退化时照样绿（自己写出来的假绿，B212 首轮真退化就是这么漏的）。
-  //    阈值按需求写成「最小宽度的一半」这个**表达式**，退化成别的数必红。
-  it("B212：刚跨过阈值那一刻展开区**正好是最小宽**，继续拖才变宽（整段手势不跳）", () => {
+  //    展开判据按需求写成「最小宽度」这个**表达式**，退化成「最小宽的一半」必红。
+  it("B213：展开那一帧宽度**严格等于**鼠标位移（缝跟手，不许再扣一条阈值）", () => {
     const { panel, resizer, opened, changes } = mountOpen(SIDE_MIN_WIDTH);
-    const threshold = SIDE_MIN_WIDTH / 2; // 阈值 = 最小宽度的一半
-    // ⚠️ 同一个手势里连着走：过阈值 → 再往右 20。中间不能松手，否则就换了起始态，
-    //    测不到「整段手势宽度连续」这件事。
+    // ⚠️ 同一个手势里连着走三帧。中间不能松手，否则就换了锚。
     mouse(resizer, "mousedown", 200);
-    mouse(document, "mousemove", 200 + threshold); // dx 正好 = 阈值：超出那一段为 0
-    expect(opened, "刚好到阈值就该展开").toEqual([true]);
-    expect(panel.style.width, "触发展开先落回最小宽，不是弹回上次那个宽度").toBe(
-      `${SIDE_MIN_WIDTH}px`,
-    );
-    mouse(document, "mousemove", 200 + threshold + 20); // 继续往右 20
-    expect(panel.style.width, "继续拖才再变宽 = 最小宽 + 超出阈值的那一段").toBe(
-      `${SIDE_MIN_WIDTH + 20}px`,
-    );
-    mouse(document, "mousemove", 200 + threshold + 21);
-    expect(panel.style.width, "再拖一格就加一格，不能整条阈值一起跳").toBe(
-      `${SIDE_MIN_WIDTH + 21}px`,
-    );
-    mouse(document, "mouseup", 200 + threshold + 21);
+    mouse(document, "mousemove", 200 + SIDE_MIN_WIDTH);
+    expect(opened, "长到最小宽就该放").toEqual([true]);
+    expect(panel.style.width, "展开正好落在最小宽").toBe(`${SIDE_MIN_WIDTH}px`);
+    mouse(document, "mousemove", 200 + SIDE_MIN_WIDTH + 20);
+    expect(panel.style.width, "跟手：再拖 20 就宽 20").toBe(`${SIDE_MIN_WIDTH + 20}px`);
+    mouse(document, "mousemove", 200 + SIDE_MIN_WIDTH + 21);
+    expect(panel.style.width, "再拖一格加一格，不整条阈值一起跳").toBe(`${SIDE_MIN_WIDTH + 21}px`);
+    mouse(document, "mouseup", 200 + SIDE_MIN_WIDTH + 21);
     expect(changes[changes.length - 1], "松手回写的是摊开后的宽度").toBe(SIDE_MIN_WIDTH + 21);
   });
 
@@ -222,14 +222,12 @@ describe("B207 拖到最小再往左拖：收起 / 拉回展开区", () => {
   it("收起态按下先往左（无反应）再往右（展开），左拖不会被当成收起", () => {
     const { panel, resizer, opened, changes } = mountOpen(SIDE_MIN_WIDTH);
     mouse(resizer, "mousedown", 200);
-    mouse(document, "mousemove", 160); // 往左：收起态那一边不动
-    mouse(document, "mousemove", 200 + SIDE_OVERDRAG_PX + 20); // 往右：过阈值才展开
-    mouse(document, "mouseup", 200 + SIDE_OVERDRAG_PX + 20);
+    mouse(document, "mousemove", 160); // 往左：收起态那一边不动（缝钉在按钮列右缘）
+    mouse(document, "mousemove", 360); // 往右：累计 160 = 最小宽 ⇒ 放开
+    mouse(document, "mouseup", 360);
     expect(opened, "只有往右那一下算展开").toEqual([true]);
-    expect(panel.style.width, "宽度按超出阈值那一段算，不是按下起的总位移").toBe(
-      `${SIDE_MIN_WIDTH + 20}px`,
-    );
-    expect(changes[changes.length - 1], "回写摊开后的宽度").toBe(SIDE_MIN_WIDTH + 20);
+    expect(panel.style.width, "宽度按累计位移算").toBe(`${SIDE_MIN_WIDTH}px`);
+    expect(changes[changes.length - 1], "回写摊开后的宽度").toBe(SIDE_MIN_WIDTH);
   });
 
   it("展开态拖到最小：还没过阈值**就不收**（「就想拖窄一点」不能被误判成收起）", () => {
@@ -246,6 +244,37 @@ describe("B207 拖到最小再往左拖：收起 / 拉回展开区", () => {
     drag(resizer, 400, 400 - (SIDE_DEFAULT_WIDTH - SIDE_MIN_WIDTH) - SIDE_OVERDRAG_PX - 8);
     expect(opened, "过阈值必须报一次收起").toEqual([false]);
     expect(panel.style.width, "收起后宽度仍留在最小值（拖回来接着用）").toBe(`${SIDE_MIN_WIDTH}px`);
+  });
+
+  it("B213：按住拖到收起、**不松手**再往右拖 —— 同一个手势里还能重新展开", () => {
+    const { panel, resizer, opened, handle } = mountOpen(SIDE_DEFAULT_WIDTH, true);
+    mouse(resizer, "mousedown", 460);
+    mouse(document, "mousemove", 200); // 往左过收起线：收起，锚从「当前宽度」换成「0」
+    expect(opened, "过收起线要报一次收起").toEqual([false]);
+    expect(handle.isOpen(), "此刻是收着的").toBe(false);
+    // ⚠️ 关键：不松手直接往右拖回来。收起后缝缩回按钮列右缘、宽度钉在最小宽 ——
+    //    要是还抱着「手势开始时那个 240」当基准，这一整段都是死区，缝纹丝不动。
+    mouse(document, "mousemove", 400);
+    expect(handle.isOpen(), "同一个手势里折了还得能展回来").toBe(true);
+    expect(panel.style.width, "宽度按**新锚**（0）接着走，不是从手势起点倒推").toBe("180px");
+    mouse(document, "mouseup", 400);
+  });
+
+  it("B213：收起态放开之后每一帧，宽度与鼠标位移的差恒为 0（不许再留一条阈值的偏移）", () => {
+    const { panel, resizer, handle } = mountOpen(SIDE_MIN_WIDTH);
+    mouse(resizer, "mousedown", 200); // 收起态按下 → 锚 = 0
+    mouse(document, "mousemove", 200 + SIDE_MIN_WIDTH); // 长到最小宽 ⇒ 放开，缝正好到鼠标下
+    expect(handle.isOpen(), "放开").toBe(true);
+    // 之后每帧：宽度 -（鼠标 - 按下点）必须恒为 0。旧行为这里恒等于 SIDE_MIN_WIDTH / 2
+    // （阈值 80 处就提前放开，缝永久站在鼠标右边 80px）。
+    for (const step of [10, 40, 39, 60]) {
+      mouse(document, "mousemove", 200 + SIDE_MIN_WIDTH + step);
+      expect(
+        parseInt(panel.style.width, 10) - (SIDE_MIN_WIDTH + step),
+        `第 ${step}px 处宽度必须严格跟手`,
+      ).toBe(0);
+    }
+    mouse(document, "mouseup", 200 + SIDE_MIN_WIDTH + 60);
   });
 
   it("一次拖到底只报一次收起（几十个 mousemove 不能切几十次 setSideOpen）", () => {

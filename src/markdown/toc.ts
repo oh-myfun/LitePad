@@ -35,9 +35,16 @@ export function clampSideWidth(width: number): number {
  * （`SIDE_MIN_WIDTH / 2` = 80）。
  *
  * 「过冲」是什么：宽度**已经贴到 `SIDE_MIN_WIDTH`** 之后，还要**再**往左拖这么多 px
- * 才收起展开区（反之，收起态往右拖这么多 px 才放回来）。留这一段而不是「一贴到最小
- * 就收/就放」：「把宽拖窄到 160」这个动作本身就带一两像素的过冲，「只想拖窄一点」和
- * 「收起来」是两件事，中间必须有缓冲。
+ * 才收起展开区。留这一段而不是「一贴到最小就收」：「把宽拖窄到 160」这个动作本身就带
+ * 一两像素的过冲，「只想拖窄一点」和「收起来」是两件事，中间必须有缓冲。
+ *
+ * ⚠️⚠️ B213（用户实测报的两个 bug，一头扎进来才发现这条**只配管收起那一侧**）：
+ *       「往右拖多少 px 才放回来」**不能**用同一个数。收起态面板不占位、缝钉在按钮列
+ *       右缘，要放回来它就得先把面板从 0 撑到 `SIDE_MIN_WIDTH`（= 缝自己往右挪 160）。
+ *       若在这里也压一条 80 的阈值：缝一展开就站在鼠标**右边整整 80px**，而且之后每
+ *       帧都恒差这么多（症状：鼠标还没到最小宽度位置，分割条先往右跑了）。
+ *       所以 —— **收起**用这条迟滞带（最小宽再往左 80 才收），**展开**是「长到最小宽
+ *       就放」，迟滞带只有一半两边都占（另一半让开给跟手）。
  *
  * ⚠️⚠️ 为什么原来是两档（40 / 24）、现在合成一档：B209 那次把 12 提到 40 是因为
  *      「太容易触发折叠展开了」，但**不对称本身又带来新的别扭** —— 收起要比展开多拖
@@ -124,43 +131,53 @@ export function attachSideResizer(
   resizer.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
-    const startX = e.clientX;
-    const startWidth = width;
     /**
-     * B212：这一**手势**是从「收着」开始的，就整段都按「收起态恢复」那一套算宽度 —— 不
-     * 看实时 `isOpen()`。
+     * B213（用户实测报的两个 bug，根因都在这条**锚**上）：锚只能记**按下那一刻**的基准，
+     * 每帧按**增量**往前推 —— 绝不能在切到收起/展开的那一帧还抱着手势最开始那个基准。
      *
-     * ⚠️ 为什么必须记手势起始态：展开是过阈值那一刻才发生的（`notifyOpen(true)` 之后
-     *     实时 `isOpen()` 立刻为真），若按实时状态选分支，过阈值的**下一帧**就会切回
-     *     「已展开」分支、宽度瞬间跳到 `startWidth + dx` —— 一次跳掉**整条阈值**（阈值
-     *     从 24 提到 80 之后这个跳变肉眼可见：面板先出 180、再“啪”一下变 260）。
-     *     记住起始态 ⇒ 整段手势宽度连续：刚过阈值是最小宽，继续拖才一段段加。
+     * 原来错在哪（两个症状一次对上）：
+     *   · 收起态那一路算的是 `SIDE_MIN_WIDTH + (dx - SIDE_OVERDRAG_PX)`，`dx` 从按下点
+     *     起算。80 的阈值把展开触发在 dx=80 那一点，可缝这时已经要长到最小宽 160 ——
+     *     缝**比鼠标右移了整整一条阈值**，而且之后每一帧都恒差这么多 ⇒ 症状 2：
+     *     「鼠标还没到最小宽度位置，分割条就先往右挪了」。
+     *   · 展开态那一路是 `startWidth + dx`，`startWidth` 记的是**手势开始时**的宽度。
+     *     拖到收起那一帧之后面板 hidden、缝缩回按钮列右缘，可 dx 还得先爬回 0 附近才
+     *     推得动它 ⇒ 按住不松手往右拖，缝纹丝不动（症状 1：「折叠后再拖回展不开」）。
+     *
+     * 现在收起态的锚 = 0（面板不占位、缝钉在按钮列右缘）、展开态的锚 = 当前宽度，
+     * 每帧 `target += 本帧位移` ⇒ **缝的位移恒等于鼠标的位移**，两个方向都跟手。
+     * ⚠️ 于是「长到最小宽就放开」而不是「过 80 就放开」：提前 80 触发的话，缝就得在
+     *    鼠标右边凭空多站 80px，症状 2 会原样回来。
      */
-    const startOpen = isOpen();
+    /** 这个实例到底管不管「收放」：没接 `onOpenChange` 的用法只看宽度，收起线对它不成立。 */
+    const canCollapse = typeof opts.onOpenChange === "function";
+    let lastX = e.clientX;
+    let target = isOpen() ? width : 0;
     document.body.classList.add("layout-dragging");
 
     const onMove = (ev: MouseEvent): void => {
-      const dx = ev.clientX - startX;
-      if (!startOpen) {
-        // B207：收起态往右拖 = 把展开区拖回来。
-        // ⚠️ B209：必须越过 `SIDE_OVERDRAG_PX` 才展开（旧行为 dx>0 就弹，太容易误触）；
-        //    B212：展开后宽度**先落回最小宽**，按超出阈值的那一段增长 ⇒ 拖多宽就是多宽，
-        //    不会一展开就跳到上次那个宽度。
-        if (dx < SIDE_OVERDRAG_PX) return;
-        notifyOpen(true);
-        width = clampSideWidth(SIDE_MIN_WIDTH + (dx - SIDE_OVERDRAG_PX));
-        apply(width);
-        return;
+      // ⚠️ 增量累加，不是每帧拿「按下那一点」重算总位移：折叠 / 展开那一下锚会换，
+      //    用总位移算就永久错位（症状 1 就是这么来的）。
+      target += ev.clientX - lastX;
+      lastX = ev.clientX;
+      // 收起态面板不占位、缝钉在按钮列右缘：还没长到最小宽就别动它（否则一碰就弹开）。
+      if (!isOpen() && target < SIDE_MIN_WIDTH) return;
+      if (target <= SIDE_MIN_WIDTH - SIDE_OVERDRAG_PX) {
+        if (canCollapse) {
+          // B207：收起后宽度留在最小宽，拖回来接着用（不是默认值、也不是收起那一刻的值）
+          width = SIDE_MIN_WIDTH;
+          // ⚠️ 先落盘再转 hidden：面板一 hidden 就没人管 inline 宽度了，拖回来时
+          //    「接着用」的那份宽度得先写进去。
+          apply(width);
+          notifyOpen(false);
+          return;
+        }
+      } else {
+        // 同一个手势里折过又拖回来，这一下照样放得开
+        if (!isOpen()) notifyOpen(true);
       }
-      // 大纲在左侧，向右拖 = 变宽
-      width = clampSideWidth(startWidth + dx);
+      width = clampSideWidth(target);
       apply(width);
-      // B207：贴到最小之后**还继续**往左拖过阈值 = 收起。拿 `startWidth + dx` 直接比
-      // 就够，不用累加位移：dx 是按下那一点算起的总位移，越过「最小线再往左
-      // `SIDE_OVERDRAG_PX`」那一点就行（累加会把每次 move 的位移重复算成一大截）。
-      if (dx < 0 && startWidth + dx <= SIDE_MIN_WIDTH - SIDE_OVERDRAG_PX) {
-        notifyOpen(false);
-      }
     };
     const onUp = (): void => {
       document.removeEventListener("mousemove", onMove);
