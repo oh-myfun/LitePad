@@ -25,11 +25,14 @@ import "./styles/preview.css";
 // 标题栏左上角的软件图标（B99）：**直接引 exe 用的那份源图**，不往前端目录另存副本 ——
 // 应用图标只有一个真相（scripts/gen_icons.py → src-tauri/icons/，bundle.icon 也取它），
 // 复制一份出来迟早走样，而且没人会记得同步。Vite 会把它作为资源打进 dist 并给出 URL。
-// ⚠️ B220：显示尺寸从 16px 放大到 32px —— 32×32 那张是「按 16px 显示」挑的，
-// 32 CSS px 在 HiDPI 上要撑到 64 设备像素，正好等于把 32px 源拉糊一遍；
-// 改取 128×128（同在 bundle.icon 里，与 exe / 任务栏仍是同一份源图），
-// 由 background-size:contain 等比缩到 32px 框，缩放是缩不是拉，边缘才立得住。
-import appMarkUrl from "../src-tauri/icons/128x128.png";
+// ⚠️ B220：显示尺寸 16px → 30px，位图换成**不带背景**的那张（B220 用户口径）。
+// 为什么不是 exe / 任务栏那张：那张是变体 D（石墨圆角方底 + 文档 + 钢笔），
+// 方底是给白色图标底 / 任务栏用的；标题栏贴在 --bg-toolbar 上，垫一块方底
+// 三条边都会露脏边 ⇒ 这里取变体 B（透明画布，只有折角文档 + 钢笔）。
+// 无底版的唯一真相源是 scripts/gen_icons.py 的 write_app_mark（--app-mark 出图），
+// 落在 src-tauri/icons/app-mark.png —— 不进 bundle.icon，它只喂前端这一处。
+// 几何与配色仍与打包图标共用 _doc_and_pen，换石墨档不会影响这里。
+import appMarkUrl from "../src-tauri/icons/app-mark.png";
 
 import { attachUserScrollClear, isProgrammatic, markProgrammatic } from "./scroll-guard";
 

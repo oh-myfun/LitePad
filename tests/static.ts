@@ -7,6 +7,7 @@
 
 import { readFileSync, readdirSync } from "node:fs";
 import { extname, join } from "node:path";
+import zlib from "node:zlib";
 
 // JSON 配置结构松散（tauri.conf/package.json 各异），此处刻意放宽：
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -214,4 +215,103 @@ export function hasDistIntegrityGuard(src: string): boolean {
  */
 export function hasStep3NotDeliverableWarning(src: string): boolean {
   return /\[3\/4\][^\n]*不可交付/.test(src) && src.includes("127.0.0.1");
+}
+
+// --------------------------------------------------------------------------- #
+// PNG 像素（B220）
+// --------------------------------------------------------------------------- #
+/**
+ * 读一张非隔行 8bit PNG 的 Alpha 通道 —— 用来静态判定「这张图有没有垫底色」。
+ *
+ * 为什么要在测试里解像素：jsdom 不做布局也不解码图片，光看 CSS / import 只能证明
+ * 「挂了张图」，证明不了「图是透明底的」。而「标题栏要用不带背景的版本」这件事，
+ * 全靠透明底才成立（垫了底就等于把那块石墨方底画进标题栏）。
+ *
+ * Pillow 出图固定是 8bit 非隔行；colorType 6 = RGBA、2 = RGB。
+ */
+export interface PngAlpha {
+  width: number;
+  height: number;
+  /** 取某个像素的 alpha（0–255）。 */
+  at: (x: number, y: number) => number;
+  /** 全图是否存在不透明像素（= 图不是空的）。 */
+  hasInk: boolean;
+}
+
+export function pngAlpha(file: Buffer): PngAlpha {
+  const buf = Buffer.from(file);
+  let width = 0;
+  let height = 0;
+  let bpp = 4;
+  const chunks: Buffer[] = [];
+  for (let off = 8; off + 8 <= buf.length;) {
+    const len = buf.readUInt32BE(off);
+    const type = buf.toString("ascii", off + 4, off + 8);
+    const data = buf.subarray(off + 8, off + 8 + len);
+    if (type === "IHDR") {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      // 第 9 字节 = colorType；调色板/灰阶那几档本项目用不到，直接钉死两种
+      const color = data[9];
+      bpp = color === 6 ? 4 : color === 2 ? 3 : 0;
+    } else if (type === "IDAT") {
+      chunks.push(Buffer.from(data));
+    } else if (type === "IEND") {
+      break;
+    }
+    off += 12 + len;
+  }
+  if (!width || !bpp) throw new Error("PNG 不是 8bit RGB/RGBA，解不了 Alpha");
+
+  // inflate 之后逐行反演 filter（None/Sub/Up/Average/Paeth），拼出原始像素
+  const raw = zlib.inflateSync(Buffer.concat(chunks));
+  const stride = width * bpp;
+  const out = Buffer.alloc(height * stride);
+  let cur = Buffer.alloc(stride);
+  let prev = Buffer.alloc(stride);
+  for (let y = 0; y < height; y++) {
+    const row = y * (stride + 1);
+    const ft = raw[row];
+    for (let i = 0; i < stride; i++) {
+      const x = raw[row + 1 + i];
+      const a = i >= bpp ? cur[i - bpp] : 0;
+      const b = prev[i];
+      const c = i >= bpp ? prev[i - bpp] : 0;
+      cur[i] =
+        (ft === 0
+          ? x
+          : ft === 1
+            ? x + a
+            : ft === 2
+              ? x + b
+              : ft === 3
+                ? x + ((a + b) >> 1)
+                : x + paeth(a, b, c)) & 0xff;
+    }
+    const t = prev;
+    prev = cur;
+    cur = t; // 反转后 prev = 刚算完的这一行
+    prev.copy(out, y * stride);
+  }
+  let hasInk = false;
+  for (let i = 3; i < out.length; i += bpp) {
+    if (out[i] > 0) {
+      hasInk = true;
+      break;
+    }
+  }
+  return {
+    width,
+    height,
+    at: (x, y) => out[y * stride + x * bpp + 3],
+    hasInk,
+  };
+}
+
+function paeth(a: number, b: number, c: number): number {
+  const p = a + b - c;
+  const pa = Math.abs(p - a);
+  const pb = Math.abs(p - b);
+  const pc = Math.abs(p - c);
+  return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
 }

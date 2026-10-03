@@ -345,13 +345,14 @@ body {
    位图不在 CSS 里：由 main.ts 从 src-tauri/icons 引入后写成内联 background-image，
    保证与 exe / 任务栏图标是同一份源文件，而不是往前端目录再存一份会走样的副本。
    pointer-events:none 只是把「不可点」写明，免得日后被当成可点区域往上挂事件。
-   ⚠️ 显示尺寸（B220）改到 32px 后，标题栏 34px 高基本被它顶满（上下各剩 1px），
-   于是图标整体比原先重一截：左边距维持 10px、与菜单的间距维持 8px 不动，
-   靠 background-size:contain 让位图等比缩到 32px 框里，免得源图被拉扁。 */
+   ⚠️ 显示尺寸（B220）改到 30px 后，标题栏 34px 高基本被它顶满（上下各剩 2px）——
+   放大后左边距维持 10px、与菜单的间距维持 8px 不动；源图是**无背景**的（见 main.ts），
+   background-size:contain 只负责等比缩，别改成 cover：底图一撑就会切掉文档边角。
+   浅色主题下纸面偏白（--bg-toolbar #f6f7f8），靠纸面那道淡描边撑对比，观感请实机复核。 */
 .app-mark {
   flex: 0 0 auto;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   background-repeat: no-repeat;
   background-position: center;
   background-size: contain;

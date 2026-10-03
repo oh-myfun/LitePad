@@ -14,6 +14,7 @@ B43 调整（用户反馈）：钢笔缩短、笔尖不再顶到纸面角落（�
   PY=C:/Users/maoyu/.workbuddy/binaries/python/envs/default/Scripts/python.exe
   $PY scripts/gen_icons.py                # 生成候选对比图 generated-images/icon_variants.png
   $PY scripts/gen_icons.py --install B    # 写入 src-tauri/icons 并出预览板（当前采用）
+  $PY scripts/gen_icons.py --app-mark     # 只重写标题栏那颗 app-mark.png（无背景版）
 
 三个变体（B 为选定方案，A/C 保留备查）：
   A  便签纸 + 铅笔（带圆角渐变底，B34 的进化）
@@ -514,6 +515,27 @@ def write_icons(img):
     print(f"  icon.ico  ({', '.join(str(v) for v in ICO_SIZES)})")
 
 
+APP_MARK_SIZE = 256     # 标题栏那颗的源图边长（显示 30 CSS px，3× 屏也够用）
+
+
+def write_app_mark():
+    """标题栏左上角那颗（B220）：**不带背景**的「折角文档 + 钢笔」。
+
+    和打包图标是两回事，别混：
+      · exe / 任务栏 / installer 要的是**带石墨圆角方底**的那张（变体 D，走 write_icons）；
+      · 标题栏那颗贴在工具栏底色上，垫一块方底会显脏（Toolbar 是实色，方底三条边都露），
+        所以取变体 B —— 透明画布，只有文档 + 钢笔。
+    落 `app-mark.png` 而**不进 bundle.icon**：它只喂前端 import（src/main.ts），不参与打包。
+    几何与配色仍共用 `_doc_and_pen`，换 D 的底不会影响这里。
+    """
+    os.makedirs(OUT_DIR, exist_ok=True)
+    img = variant_b(MASTER).resize((APP_MARK_SIZE, APP_MARK_SIZE), Image.LANCZOS)
+    path = os.path.join(OUT_DIR, "app-mark.png")
+    img.save(path)
+    print(f"  app-mark.png  ({APP_MARK_SIZE}x{APP_MARK_SIZE})  ← 标题栏（无背景）")
+    return path
+
+
 def write_single_preview(img, letter):
     """预览板：透明底（棋盘格）+ 浅色底 / 深色底 + 尺寸梯队。
 
@@ -704,12 +726,21 @@ def main():
         choices=[g[0] for g in GRAPHITE_SHADES],
         help="--install 时用的石墨档位（d1/d2/d3/d4）",
     )
+    ap.add_argument(
+        "--app-mark",
+        action="store_true",
+        help="只重写标题栏用的 app-mark.png（无背景版，默认跟着 --install 一起出）",
+    )
     args = ap.parse_args()
 
-    if args.install:
+    if args.app_mark:
+        # 只补标题栏那颗：换石墨档 / 换变体时单独刷这一张，不用重跑整套打包图标
+        write_app_mark()
+    elif args.install:
         print(f"  安装变体 {args.install} · {VARIANTS[args.install][0]}（石墨档 {args.shade}）")
         img = render(args.install, shade=args.shade)
         write_icons(img)
+        write_app_mark()
         write_single_preview(img, args.install)
     else:
         print("  生成候选对比图（未写入 src-tauri/icons）")
