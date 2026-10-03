@@ -160,6 +160,10 @@ export function attachSideResizer(
     let lastX = e.clientX;
     let target = isOpen() ? width : 0;
     document.body.classList.add("layout-dragging");
+    // 点亮只挂**这一条**（对齐分屏那条 `.layout-sep.resizing` 的口径，B217：
+    // 拖哪条就亮哪条 —— 全局的 layout-dragging 会让别的分割条一起亮）。
+    // 与 body 那个类同生命周期：按下加、松手摘，别漏了 remove。
+    resizer.classList.add("resizing");
 
     const onMove = (ev: MouseEvent): void => {
       // ⚠️ 增量累加，不是每帧拿「按下那一点」重算总位移：折叠 / 展开那一下锚会换，
@@ -190,6 +194,7 @@ export function attachSideResizer(
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
       document.body.classList.remove("layout-dragging");
+      resizer.classList.remove("resizing");
       opts.onChange(width);
     };
     document.addEventListener("mousemove", onMove);

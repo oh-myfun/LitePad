@@ -77,8 +77,13 @@ describe("B201 左栏几何：卡片画完整一圈 + 按钮列内部分割线 +
     const lit = preview.match(/\.side-resizer:hover::before[\s\S]{0,200}?\{[^}]*\}/)?.[0] ?? "";
     expect(lit, "hover 时点亮").toBeTruthy();
     expect(lit, "点亮走 --accent（= focusBorder 那一档）").toMatch(/background:\s*var\(--accent\)/);
-    expect(preview, "拖拽中也要亮（指针滑出窄带时不能看着像没抓住）").toMatch(
-      /body\.layout-dragging\s+\.side-resizer::before\s*\{[\s\S]*?background:\s*var\(--accent\)/,
+    // B217：拖拽这一档只认**被拖的那一条**（`.resizing` 由按下那一侧亲手加）
+    expect(preview, "拖拽中这条自己要亮（指针滑出窄带时不能看着像没抓住）").toMatch(
+      /\.side-resizer\.resizing::before\s*\{[\s\S]*?background:\s*var\(--accent\)/,
+    );
+    // 反向：不许再拿全局的 body 类点亮它 —— 那样拖分屏时这条左栏缝会跟着亮
+    expect(preview, "不许用 body 全局类点亮这条缝（拖哪条就亮哪条）").not.toMatch(
+      /body\.layout-dragging\s+\.side-resizer::before/,
     );
     // 三点把手必须压在亮条之上：亮条是绝对定位的兄弟，不抬层就糊掉三点
     const grip = preview.match(/\n\.toc-grip\s*\{[^}]*\}/)?.[0] ?? "";

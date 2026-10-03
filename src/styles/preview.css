@@ -340,12 +340,13 @@
 }
 
 /* 悬停 / 拖拽中整条 4px 点亮（对齐 sash.css 的 `:hover:before , .active:before`）。
-   `body.layout-dragging` 那条：只写 :hover 时，指针一旦滑出这条窄带高亮就消失，
-   看着像「没抓住」—— 拖大纲宽度的那几帧正是这种情况。
+   拖拽这一档**只认被拖的那一条自己**（`.resizing` 由按下那一侧亲手加、松手摘掉），
+   不用 `body.layout-dragging` 这种全局类 —— 那是所有分割条共用的，靠它点亮会出现
+   「拖分屏时这条左栏缝也跟着亮」（用户点名：拖哪条就亮哪条）。
    ⚠️ 收起态（`.is-off`）照样吃指针、照样能 hover 亮（B207：收起只折展开区，
    这道缝得能抓回来），所以这里没有「收起就不亮」的特例，别照着旧口径去加。 */
 .side-resizer:hover::before,
-body.layout-dragging .side-resizer::before {
+.side-resizer.resizing::before {
   background: var(--accent);
 }
 

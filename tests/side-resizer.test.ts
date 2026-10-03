@@ -83,6 +83,16 @@ describe("大纲分隔条拖拽", () => {
     expect(document.body.classList.contains("layout-dragging")).toBe(false);
   });
 
+  it("B217：点亮只挂这条自己，松手必须摘掉（拖别的分割条时它不该跟着亮）", () => {
+    const { resizer } = mount();
+    expect(resizer.classList.contains("resizing"), "静息时这条缝不带高亮类").toBe(false);
+    mouse(resizer, "mousedown", 240);
+    mouse(document, "mousemove", 300);
+    expect(resizer.classList.contains("resizing"), "按下后这条自己亮起来").toBe(true);
+    mouse(document, "mouseup", 300);
+    expect(resizer.classList.contains("resizing"), "松手要摘掉，别留着残影").toBe(false);
+  });
+
   it("松手后再移动鼠标不再改变宽度（监听已解绑）", () => {
     const { panel, resizer } = mount();
     drag(resizer, 200, 300);
