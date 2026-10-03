@@ -9,10 +9,14 @@ import { CODICONS } from "../shell/codicons";
  * **扁平一排**（缩进全靠 `padding-left` 按 level 分四档）改成**可折叠的层级树** ——
  *   · 折叠态跟着列表元素走（闭包里的 `collapsed`），光标一动就重绘也不会把用户折的
  *     状态冲掉；
- *   · 「全部折叠 / 全部展开」两颗键在 index.html 里（静态结构），这里只暴露
+ *   · 顶部那颗「全部折叠 / 全部展开」合并键在 index.html 里（静态结构），这里只暴露
  *     `collapseAll()` / `expandAll()` 让它们按下得动；
  *   · 顶部「大纲」字样同理是静态的 —— 重绘只清 `#toc-list`，不清整个 `#toc-panel`
  *     （B205 之前清的是后者，标题栏会被一起抹掉）。
+ *   · B214（用户点名「手动折叠部分或全部元素时，顶部的按钮也要同步变化」）：按钮不能
+ *     只在**自己被点**时才刷 —— 点扭角折掉一节、或折完最后一节，图标都得跟着翻。
+ *     所以折叠态一变就对外报一声（`createTocList` 第二参），由调用方去刷按钮；
+ *     报的出口只有 `applyFold` 一个，见下面那处 ⚠️。
  */
 
 export interface TocCallbacks {
@@ -275,7 +279,15 @@ export interface TocListHandle {
  * ⚠️ 单条扭角的折叠**不做整表重绘**（只切这个节点的 `is-collapsed` 并翻字形）：重绘
  *    会重置列表滚动位置，长文档里点一下扭角就跳回顶部，很难用。
  */
-export function createTocList(list: HTMLElement): TocListHandle {
+/**
+ * `onFoldChange`：折叠态**每变一次**就报一声（B214）。调用方用它刷新顶部那颗全量键 ——
+ * 按钮显示的是「下一次点下去会折还是会展」，得跟着扭角 / 全量键的每一次折展走。
+ *
+ * ⚠️ 为什么是可选参数、不建表后再挂：`createTocList` 全程只调一次（见文件头），
+ *    参数形态与 `attachSideResizer` 的 `onOpenChange` 同款；不让它收第二份状态，
+ *    免得调用方还得记得「挂了监听没」。
+ */
+export function createTocList(list: HTMLElement, onFoldChange?: () => void): TocListHandle {
   const collapsed = new Set<string>();
   /** 最近一次 render 里所有「有子的节点」的 id —— 全量折叠/展开只认这一类。 */
   let branchIds: string[] = [];
@@ -299,6 +311,11 @@ export function createTocList(list: HTMLElement): TocListHandle {
         caret.innerHTML = on ? CODICONS.chevronRight : CODICONS.chevronDown;
       }
     }
+    // ⚠️ B214：出口**只留这一个**（`applyFold`）。扭角 handler、collapseAll、expandAll
+    //    三处都各自去刷调用方的话，就是三个同步点，迟早错开（「手动折了、按钮没动」就是
+    //    这么来的）。放在这里还有一个好处：通知发出去时 DOM 已经刷完，调用方再问
+    //    `allCollapsed()` 拿到的一定是新状态，不必再等一帧。
+    onFoldChange?.();
   };
 
   const render = (entries: TocEntry[] | null, activeLine: number, cb: TocCallbacks): void => {

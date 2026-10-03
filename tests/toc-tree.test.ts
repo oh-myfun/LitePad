@@ -6,6 +6,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { createTocList } from "../src/markdown/toc";
+import type { TocListHandle } from "../src/markdown/toc";
 import type { TocEntry } from "../src/markdown/pipeline";
 import { CODICONS } from "../src/shell/codicons";
 
@@ -356,5 +357,97 @@ describe("B205 折叠交互：扭角只折叠不跳转，全量键管全部", ()
       list.querySelectorAll(".toc-item")[1].classList.contains("toc-active"),
       "活动项照旧高亮",
     ).toBe(true);
+  });
+});
+
+describe("B214：手动折叠 / 展开后，顶部那颗全量键要跟着变", () => {
+  /**
+   * 装一个「通知记账本」：每一声都当场把**按钮现在会读的那两个数**抄下来 ——
+   * `allCollapsed()`（决定图标往哪翻）与 DOM 里的折叠类（决定通知是不是发早了）。
+   */
+  function mountSpying(): {
+    list: HTMLElement;
+    h: TocListHandle;
+    seen: { allCollapsed: boolean; domCollapsed: boolean }[];
+  } {
+    const list = mount();
+    const seen: { allCollapsed: boolean; domCollapsed: boolean }[] = [];
+    const h: TocListHandle = createTocList(list, () => {
+      const kids = list.querySelector(".toc-children") as HTMLElement;
+      seen.push({
+        allCollapsed: h.allCollapsed(),
+        domCollapsed: kids.classList.contains("is-collapsed"),
+      });
+    });
+    return { list, h, seen };
+  }
+
+  it("点扭角折一节 / 折完最后一节 / 再手动展开：每一声都带着新状态，全折那一下才翻面", () => {
+    const { list, h, seen } = mountSpying();
+    // 两个分支：h1「一」带子、h1「二」带子 —— 部分折叠与全折叠是两件事
+    h.render([e(1, 1, "一"), e(2, 5, "一·子"), e(1, 9, "二"), e(2, 13, "二·子")], -1, {
+      onJump: () => {},
+    });
+    const carets = Array.from(list.querySelectorAll<HTMLElement>(".toc-caret"));
+    expect(carets.length, "两个分支两根扭角").toBe(2);
+
+    carets[0].click();
+    expect(seen.length, "手动折一节要报一声").toBe(1);
+    expect(seen[0].allCollapsed, "还有一节没折 ⇒ 按钮仍是「全部折叠」那一支").toBe(false);
+
+    carets[1].click();
+    expect(seen.length, "折完最后一节再报一声").toBe(2);
+    expect(seen[1].allCollapsed, "全折了 ⇒ 按钮翻成「全部展开」那一支").toBe(true);
+
+    carets[1].click();
+    expect(seen.length, "手动展开也报一声").toBe(3);
+    expect(seen[2].allCollapsed, "放开一节 ⇒ 又回到「全部折叠」那一支").toBe(false);
+  });
+
+  it("通知发出时 DOM 已经刷完（调用方当场问 allCollapsed() 拿到的就是新值，不用等一帧）", () => {
+    const { list, h, seen } = mountSpying();
+    // 单分支文档：`domCollapsed` 与 `allCollapsed` 一一对应，通知早一帧就会被咬住
+    h.render([e(1, 1, "一"), e(2, 5, "一·子")], -1, { onJump: () => {} });
+    const caret = list.querySelector(".toc-caret") as HTMLElement;
+
+    caret.click();
+    expect(seen.length).toBe(1);
+    expect(seen[0].domCollapsed, "折起：通知里 DOM 已经是折着的").toBe(true);
+    expect(seen[0].allCollapsed).toBe(true);
+
+    caret.click();
+    expect(seen.length, "同一根扭角点第二次是展开").toBe(2);
+    expect(seen[1].domCollapsed, "展开：通知里 DOM 已经摊开了").toBe(false);
+    expect(seen[1].allCollapsed).toBe(false);
+  });
+
+  it("全量折叠 / 全量展开报同一声（按钮那条路没比扭角多出一条同步点）", () => {
+    const { h, seen } = mountSpying();
+    h.render([e(1, 1, "一"), e(2, 5, "一·子"), e(1, 9, "二"), e(2, 13, "二·子")], -1, {
+      onJump: () => {},
+    });
+    h.collapseAll();
+    expect(seen.length, "全部折起报一声").toBe(1);
+    expect(seen[0].allCollapsed).toBe(true);
+    h.expandAll();
+    expect(seen.length, "全部展开报一声").toBe(2);
+    expect(seen[1].allCollapsed).toBe(false);
+  });
+
+  it("接线契约：折叠一变就报给刷按钮那个函数，出口只有 applyFold 一处", () => {
+    const main = readFileSync("src/main.ts", "utf-8");
+    expect(main, "建表时就把刷按钮的函数交出去").toMatch(
+      /createTocList\(tocList,\s*refreshTocToggleAll\)/,
+    );
+    const toc = readFileSync("src/markdown/toc.ts", "utf-8");
+    const applyFoldBody = toc.match(/const applyFold = \(\)[\s\S]*?\n {2}\};/)?.[0] ?? "";
+    expect(applyFoldBody, "要能定位 applyFold（折叠的唯一出口）").toBeTruthy();
+    expect(applyFoldBody, "出口收在 applyFold 里，不是三处调用点各刷一遍").toContain(
+      "onFoldChange?.()",
+    );
+    const handler = toc.match(/caret\.addEventListener\("click"[\s\S]*?\n {10}\}\);/)?.[0] ?? "";
+    expect(handler, "要能定位扭角 handler").toBeTruthy();
+    expect(handler, "扭角只管折这一节，不许自己刷调用方").not.toContain("onFoldChange");
+    expect(toc, "toc.ts 不必认识顶部那颗键（同步点只留一个）").not.toContain("tocToggleAll");
   });
 });

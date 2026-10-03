@@ -4878,8 +4878,12 @@ let tocEntries: TocEntry[] = [];
  * 折叠态在它里面，所以 `updateTocDrawer` 每次重绘都不能重新建一个 —— 光标一动就重绘，
  * 重建会把用户折的节冲回全展开。index.html 那两颗全量键（全部折叠 / 全部展开）也直接
  * 调它，不用再绕一层。
+ *
+ * B214（用户点名「手动折叠部分或全部元素时，顶部的按钮也要同步变化」）：把刷按钮的
+ * `refreshTocToggleAll` 交给它当折叠变化通知 —— 于是**点扭角折一节、折完最后一节、
+ * 点全量键**三条路都汇到这一处，按钮不会出现「手动折了、图标还停在旧的样子」。
  */
-const tocListView: TocListHandle = createTocList(tocList);
+const tocListView: TocListHandle = createTocList(tocList, refreshTocToggleAll);
 
 /** 大纲宽度（由设置载入、拖拽后回写设置；160–640px） */
 let sideWidth = 240;
