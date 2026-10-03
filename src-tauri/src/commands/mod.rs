@@ -1441,7 +1441,9 @@ fn close_devtools_window(owner: isize) -> bool {
         let mut buf = [0u16; 256];
         let len = GetWindowTextW(hwnd, &mut buf) as usize;
         let title = String::from_utf16_lossy(&buf[..len.min(buf.len())]);
-        if DEVTOOLS_TITLES.contains(&title.as_str()) {
+        // 包含匹配而不是相等：标题可能被 WebView2 加前后缀，精确相等会一无所获，
+        // 而那条路径的后果是这条菜单退化成「永远只开」—— 宁可认宽、不可认死。
+        if DEVTOOLS_TITLES.iter().any(|t| title.contains(t)) {
             let _ = SendMessageW(hwnd, WM_CLOSE, Some(WPARAM(0)), Some(LPARAM(0)));
             DEVTOOLS_SCAN.found.store(true, Ordering::SeqCst);
         }
