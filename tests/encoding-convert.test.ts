@@ -3,8 +3,8 @@
 // 1) 运行时：菜单栏多出「编码」一栏，四组条目（解读编码 / 转换为… / BOM / 行尾符）
 //    都从 main 传进来的同一份模型渲染；
 // 2) 静态：转换出口只有一个 `convertDoc`，它**先改 doc.encoding 再走保存**
-//    （顺序反了就等于绕过不可逆保护），状态栏那颗键不再自己取编码列表，
-//    也不再有「四项硬编码兜底」这种跟后端对不上的清单。
+//    （顺序反了就等于绕过不可逆保护），状态栏那颗键只铺后端 `common` 标注的
+//    常用几条（B219），也不再有「四项硬编码兜底」这种跟后端对不上的清单。
 import { describe, it, expect, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { ruleBlock, topLevelFnBody } from "./static";
@@ -182,13 +182,16 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
     expect(body).not.toContain("UTF-16LE without BOM");
   });
 
-  it("状态栏那颗键的菜单不再自己取 IPC 列表（与主菜单同取一份模型）", () => {
+  it("状态栏那颗键的菜单只从启动时预取的那份清单取数（点开不再走 IPC）", () => {
     const body = topLevelFnBody(main, "showEncodingMenu");
+    // BOM 两项、行尾符两项仍与主菜单同取一份模型
     expect(body).toContain("encodingMenuModel()");
     // 旧的「点开才 await listEncodings() + 四项兜底」实现应已删除：
     // 那是**启动时就取好**的一份清单，点开菜单再取一次只会多一次 IPC 往返。
     expect(body).not.toContain("listEncodings");
     expect(body).not.toContain("GB18030");
+    // 反向判据：常用集必须是从那份清单里**过滤**出来的，不是临时又取一份
+    expect(body, "常用集只能从预取清单过滤").toContain("encodingOptions");
   });
 
   it("旧的四项硬编码兜底清单从 main 里抹掉了（跟后端全量对不上就是坑）", () => {
@@ -237,14 +240,40 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
     expect(body, "条目只能从后端清单映射").toContain("encodingOptions.map");
   });
 
-  it("状态栏那颗键的菜单也收成两级（跟主菜单是同一份摆法）", () => {
+  it("B219：状态栏那颗键只铺常用几条（常用集来自后端 common，不许手抄白名单）", () => {
     const body = topLevelFnBody(main, "showEncodingMenu");
-    expect(body, "解读编码要收成子菜单入口").toContain("submenu: model.encodedIn");
-    expect(body, "转换为…要收成子菜单入口").toContain("submenu: model.convertTo");
-    expect(body, "转换行尾符也要收成子菜单入口").toContain("submenu: model.eol");
-    // 反例：别再把编码那一组摊平在顶层 —— 摊平了两边摆法就不一致，
-    // 重复项一眼就能看见（那次 bug 就是先在状态栏那颗键上撞见的）
-    expect(body, "不许把编码组摊平在顶层").not.toContain("...model.encodedIn");
+    // 反例一：别把编码那一组原样摊平 —— 全量 40 条平铺就是用户说的「显示完整列表」。
+    //    ⚠️ 这条要排在正向判据前面：反例先红才能证明它咬得住，否则退化时被正向
+    //       断言抢先报错，这条闸等于没验过。
+    expect(body, "不许把全量编码组摊平在顶层").not.toContain("...model.encodedIn");
+    // 正向：过滤出来的常用集要真的铺在顶层
+    expect(body, "常用集要铺在顶层").toContain("...common,");
+    // 收窄的判据只能挂在后端下发的 common 字段上，不能前端另挑一批标签。
+    // ⚠️ 判据要取**整条完整表达式**：只写 `it.common` 的话退化成 `!it.common`
+    //    照样命中子串（假绿），而那会把常用集整个翻成「非常用」。
+    expect(body, "常用集要按后端下发的 common 字段过滤").toContain(".filter((it) => it.common)");
+    // 反例二：别在前端抄一份「常用编码」标签表 —— 又一张表，迟早差一条
+    expect(body, "不许手抄常用编码清单").not.toMatch(/"UTF-8 with BOM"/);
+    expect(body, "不许手抄常用编码清单").not.toMatch(/GB18030/);
+    // 主菜单那条全量两级不受影响：仍从全量清单收成子菜单，不许跟着收窄
+    const model = topLevelFnBody(main, "encodingMenuModel");
+    expect(model, "主菜单仍要全量走两级").toContain("withLanguageGroups");
+    expect(model, "收口出口拿的是全量清单").toContain("encodingOptions.map");
+    expect(model, "主菜单不许跟着收窄成常用集").not.toContain("it.common");
+  });
+
+  it("B219：常用集是后端口径 —— Rust 侧锁住条数，且必须是全量的真子集", () => {
+    // 常用集的值由后端 is_common 一处说了算，前端只过滤；这里盯住后端别乱涨
+    expect(codec, "Rust 侧要有常用集断言").toContain(
+      "fn common_encodings_are_a_subset_of_the_menu",
+    );
+    // api 契约上也要有这个字段，否则前端读 it.common 是读了个不存在的东西
+    const api = readFileSync("src/ipc/api.ts", "utf-8");
+    const block = topLevelFnBody(api, "listEncodings");
+    expect(block, "list_encodings 的下发类型要带 common").toContain("invoke<EncodingItem[]>");
+    expect(api, "EncodingItem 上要有 common 字段").toMatch(
+      /interface EncodingItem \{[\s\S]{0,200}?common: boolean;/,
+    );
   });
 
   it("B218：中文字符集包含 GB2312 等 Windows 常用字符集", () => {

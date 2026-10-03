@@ -93,14 +93,18 @@ pub enum Encoding {
 
 /// 菜单里的一条编码（B218）：`label` 是**原样传回后端的标识**（`Encoding::from_label`
 /// 认它），`group` 是它所属的语言组名（前端就按这个 `group` 切出「首组内联 +
-/// 其余组子菜单」那几级，别再弄一套插在条目中间的小标题，见 `all()`）。
+/// 其余组子菜单」那几级，别再弄一套插在条目中间的小标题，见 `all()`），
+/// `common` 标这条是不是**常用编码** —— 状态栏那颗「编码」键点开只铺常用几条，
+/// 主菜单那条全量两级不受它影响。
 ///
-/// ⚠️ 前端拿这份扁平列表自己按 `group` 排两级菜单，**不要**再手抄一份编码清单
-///    —— 两份迟早差一条，而差的那一条表现就是「菜单里有、功能没接上」。
+/// ⚠️ 前端拿这份扁平列表自己按 `group` 排菜单、按 `common` 收常用那几条，**不要**
+///    再手抄一份编码清单或者标签白名单 —— 两份迟早差一条，而差的那一条表现就是
+///    「菜单里有、功能没接上」，常用集同理。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EncodingItem {
     pub label: &'static str,
     pub group: &'static str,
+    pub common: bool,
 }
 
 impl Encoding {
@@ -276,6 +280,21 @@ impl Encoding {
         ]
     }
 
+    /// 是不是**常用编码**：状态栏那颗「编码」键点开只铺这几条（B219），主菜单那条
+    /// 全量两级不受影响。常用集以这里为唯一口径 —— 前端只按 `common` 过滤，不许
+    /// 在前端另写一份标签白名单（又一张表，迟早差一条）。
+    pub fn is_common(&self) -> bool {
+        matches!(
+            self,
+            Encoding::Utf8
+                | Encoding::Utf8Bom
+                | Encoding::Utf16Le
+                | Encoding::Utf16LeNoBom
+                | Encoding::Gbk
+                | Encoding::Gb18030
+        )
+    }
+
     /// 所属语言 / 文字体系（B218）:菜单上的语言子菜单入口名就取这个值。
     ///
     /// ⚠️ 返回的是**直接能显示给用户的中文**，而不是 `Unicode`/`Chinese` 这种
@@ -321,14 +340,15 @@ impl Encoding {
         }
     }
 
-    /// 全部菜单条目（label + 分组），供 `list_encodings` 一次性下发。
-    /// 顺序 == `all()`，所以前端只要按 `group` 变化插标题就行。
+    /// 全部菜单条目（label + 分组 + 是否常用），供 `list_encodings` 一次性下发。
+    /// 顺序 == `all()`，所以前端按 `group` 变化切两级菜单、按 `common` 收常用那几条。
     pub fn items() -> Vec<EncodingItem> {
         Self::all()
             .iter()
             .map(|e| EncodingItem {
                 label: e.label(),
                 group: e.group(),
+                common: e.is_common(),
             })
             .collect()
     }
@@ -843,6 +863,38 @@ mod tests {
         }
         // 组数（B218 定的 9 个语言/文字体系）也一并锁住，别让分组悄悄合并掉
         assert_eq!(started.len(), 9, "语言分组数量变了：{started:?}");
+    }
+
+    /// 常用集（B219）必须是**全量菜单的真子集**：状态栏那颗「编码」键点开只铺
+    /// `common` 那几条，万一有人给一条压根不在菜单里的编码置了 true，前端就多渲染
+    /// 出一个点了没反应的条目。条数也一并锁死，别让常用集悄悄变多变少。
+    #[test]
+    fn common_encodings_are_a_subset_of_the_menu() {
+        const EXPECTED: [Encoding; 6] = [
+            Encoding::Utf8,
+            Encoding::Utf8Bom,
+            Encoding::Utf16Le,
+            Encoding::Utf16LeNoBom,
+            Encoding::Gbk,
+            Encoding::Gb18030,
+        ];
+        let items = Encoding::items();
+        let all: Vec<&str> = items.iter().map(|i| i.label).collect();
+        let marked: Vec<&str> = items.iter().filter(|i| i.common).map(|i| i.label).collect();
+        assert_eq!(marked.len(), 6, "常用集条数变了：{marked:?}");
+        for label in marked.iter() {
+            assert!(
+                all.contains(label),
+                "常用集里这条不在全量菜单里，点了不会有反应：{label}"
+            );
+        }
+        for e in EXPECTED.iter() {
+            assert!(
+                marked.contains(&e.label()),
+                "这条常用编码没被标上 common：{}",
+                e.label()
+            );
+        }
     }
 
     /// 菜单里同一个编码绝不能出现两次 —— 上一次「解码 / 转换菜单出现重复选项」就是

@@ -227,15 +227,18 @@ export function checkEncodable(text: string, encoding: string): Promise<LossyCha
 
 /**
  * 菜单里的一条编码（B218）：`label` 原样传回后端，`group` 是它所属的语言组名
- * （现在归口是「首组内联 + 其余组子菜单」，菜单那几级就是按 `group` 切出来的）。
+ * （现在归口是「首组内联 + 其余组子菜单」，菜单那几级就是按 `group` 切出来的），
+ * `common` 标这条是不是常用编码 —— 状态栏那颗键只铺常用几条（B219），主菜单那条
+ * 全量不受它影响。
  *
  * ⚠️ 分组**由后端那份扁平列表自己带出来**，前端不许再维护一份「编码 → 语言」的
  *    对照表去分组 —— 两份迟早差一条，而差的那一条表现就是「菜单里有、功能没接上」。
- *    这里只按相邻两条的 `group` 是否变化来插标题。
+ *    常用集同理：只按 `common` 过滤，不许另写一个标签白名单。
  */
 export interface EncodingItem {
   label: string;
   group: string;
+  common: boolean;
 }
 
 export function listEncodings(): Promise<EncodingItem[]> {

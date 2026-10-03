@@ -2832,21 +2832,32 @@ function encodingMenuModel(): EncodingMenuModel {
 // ---------------------------------------------------------------- 状态栏菜单
 
 /**
- * 状态栏那颗「编码」键的菜单（B215）：与主菜单「编码」是**同一份**模型
- * （`encodingMenuModel`），层级也一致 —— 解码编码▸ / 转换为…▸ / BOM / 转换行尾符▸。
+ * 状态栏那颗「编码」键的菜单（B219）：只把**常用那几条**平铺在顶层，后面接 BOM 两项
+ * 与「转换行尾符▸」。状态栏是「顺手看一眼当前编码 + 切到最常用的那几种」的地方，
+ * 摊 40 条全量两级进去反而没人点得到。主菜单「编码」那条**不动**：那里才是全量。
  *
- * ⚠️ 这里**不再**把编码那一组摊平在顶层：两边摆法不一样，迟早有一个是错的
- *    （用户就是先在状态栏那颗键上撞见重复选项的）。
+ * ⚠️ 常用集只认后端下发的 `common` 字段（在 `encodingOptions` 上过滤），**不许**在
+ *    前端另写一份标签白名单 —— 又一张表，迟早差一条，差的表现就是「菜单里没有它」。
+ * ⚠️ 这里也不再复用 `encodingMenuModel().encodedIn / convertTo`：那两路是给主菜单的
+ *    摆法（首组内联 + 其余组子菜单），跟这里要的「常用平铺」不是一回事；BOM 与行尾
+ *    符仍然同取 `encodingMenuModel()` 那一份，别在两边各写一遍。
  */
 function showEncodingMenu(): void {
   const tab = activeTab();
   const doc = tab ? docOf(tab) : undefined;
   if (!doc) return;
 
+  const current = doc.encoding ?? "";
+  const common = encodingOptions
+    .filter((it) => it.common)
+    .map((it) => ({
+      label: it.label,
+      checked: it.label === current,
+      onSelect: () => void switchEncoding(it.label),
+    }));
   const model = encodingMenuModel();
   showPopupMenu(sbEncoding, [
-    { label: "解读编码", submenu: model.encodedIn },
-    { label: "转换为…", submenu: model.convertTo },
+    ...common,
     { separator: true },
     ...model.bom,
     { separator: true },
