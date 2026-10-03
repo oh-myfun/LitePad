@@ -57,7 +57,7 @@ import {
   isUnicodeEncoding,
   listEncodings,
   listEols,
-  // B218：编码候选带上语言分组（「中文（简体 / 繁体）」这类小标题由后端那份列表带出）
+  // B218：编码候选带上语言分组（「中文（简体 / 繁体）」这类组名由后端那份列表带出）
   type EncodingItem,
   loadSession,
   loadSettings,
@@ -385,7 +385,8 @@ let keymapOverrides: KeymapOverrides = {};
 /** 「首选项 → 新建默认行尾/编码」的候选：启动预取，供子菜单同步渲染。 */
 let eolOptions: string[] = ["CRLF", "LF", "CR"];
 /**
- * 编码候选（B218）：`label` 原样传回后端，`group` 是菜单里那行语言小标题。
+ * 编码候选（B218）：`label` 原样传回后端，`group` 是它所属的语言组名
+ * （菜单按这个 `group` 切块：首块内联铺开，之后的每组收成一条子菜单入口）。
  * 启动预取之前是空列表 —— 空着就空着，绝不在前端手抄一份兜底清单
  * （那份迟早和后端差一条，而差的那一条表现就是「菜单里有、功能没接上」）。
  */
@@ -2731,25 +2732,45 @@ function bomTarget(current: string, wantBom: boolean): string | null {
 }
 
 /**
- * 把一组编码条目按语言分组铺开（B218）：换组时先插一条分隔线、再插那行语言小标题。
+ * 把一组编码条目按语言收成**两级**（用户口径：归类用子菜单，别用分组小标题 ——
+ *   B218 早先那版插在条目之间的小标题整份作废了，代价是 `MenuItem.heading` 字段
+ *   和 `.menu-heading` 样式一起删了，别照着重做）：
+ *   第一组的条目**内联平铺**（当前就是统一码那几条，一点即达，不必多点一下）；
+ *   之后每个语言组收成一条带 chevron 的子菜单入口，区块之间用分隔线隔开。
  *
- * ⚠️ 分组只认后端下发的 `group` —— Rust 那份 `all()` 已经按组排好，这里只负责
- *    「相邻两条 group 变了 ⇒ 插标题」。千万别在前端另维护一张「编码 → 语言」的
- *    对照表：两张表迟早差一条，而差的那一条就是这个函数的全部意义所在。
+ * ⚠️ 「哪一组内联」只认后端下发的 `groups[0]`（第一条记录的分组），**不写死某个
+ *    组名** —— 以后 Rust 调组顺序，前端不用跟着改。
+ * ⚠️ 分组只认后端下发的 `group`：Rust 那份 `all()` 已经按组排好，这里只负责切块。
+ *    千万别在前端另维护一张「编码 → 语言」的对照表：两张表迟早差一条，而差的那
+ *    一条就是这个函数的全部意义所在。
  */
-function withLanguageHeadings(items: MenuItem[], groups: string[]): MenuItem[] {
+function withLanguageGroups(items: MenuItem[], groups: string[]): MenuItem[] {
   const out: MenuItem[] = [];
-  let lastGroup = "";
+  let bucket: MenuItem[] = [];
+  let bucketName = "";
+  // 收口一块：前面已经有内容 ⇒ 进子菜单区（补一条分隔线 + 一条组入口）
+  const flushAsGroup = (name: string, entries: MenuItem[]) => {
+    if (out.length > 0) out.push({ separator: true });
+    out.push({ label: name, submenu: entries });
+  };
   items.forEach((item, i) => {
     const group = groups[i] ?? "";
-    if (group && group !== lastGroup) {
-      // 第一组之前没有上一组，不插分隔线
-      if (out.length > 0) out.push({ separator: true });
-      out.push({ heading: true, label: group });
+    if (group !== bucketName) {
+      if (bucket.length > 0) {
+        // 第一块直接铺开；之后的每一块才收成子菜单
+        if (out.length > 0) flushAsGroup(bucketName, bucket);
+        else out.push(...bucket);
+      }
+      bucket = [item];
+      bucketName = group;
+    } else {
+      bucket.push(item);
     }
-    lastGroup = group;
-    out.push(item);
   });
+  if (bucket.length > 0) {
+    if (out.length > 0) flushAsGroup(bucketName, bucket);
+    else out.push(...bucket);
+  }
   return out;
 }
 
@@ -2767,9 +2788,9 @@ function encodingMenuModel(): EncodingMenuModel {
   // 没有活动文档时只有「解读编码」那一组还能操作，其余全置灰
   const canWrite = !!doc && !!doc.path;
 
-  // 语言小标题按条目顺序对齐（后端那份列表里 group 排在 label 旁边，同序）
+  // 分组名按条目顺序对齐（后端那份列表里 group 排在 label 旁边，同序）
   const groups = encodingOptions.map((it) => it.group);
-  const encodedIn = withLanguageHeadings(
+  const encodedIn = withLanguageGroups(
     encodingOptions.map((it) => ({
       label: it.label,
       checked: it.label === current,
@@ -2777,7 +2798,7 @@ function encodingMenuModel(): EncodingMenuModel {
     })),
     groups,
   );
-  const convertTo = withLanguageHeadings(
+  const convertTo = withLanguageGroups(
     encodingOptions.map((it) => ({
       label: it.label,
       disabled: !canWrite,
@@ -2811,8 +2832,11 @@ function encodingMenuModel(): EncodingMenuModel {
 // ---------------------------------------------------------------- 状态栏菜单
 
 /**
- * 状态栏那颗「编码」键的菜单（B215）：解码方式 → 转换为… → BOM → 行尾符。
- * 与主菜单「编码」是同一份模型（`encodingMenuModel`），这里只是把它摊平成一屏。
+ * 状态栏那颗「编码」键的菜单（B215）：与主菜单「编码」是**同一份**模型
+ * （`encodingMenuModel`），层级也一致 —— 解码编码▸ / 转换为…▸ / BOM / 转换行尾符▸。
+ *
+ * ⚠️ 这里**不再**把编码那一组摊平在顶层：两边摆法不一样，迟早有一个是错的
+ *    （用户就是先在状态栏那颗键上撞见重复选项的）。
  */
 function showEncodingMenu(): void {
   const tab = activeTab();
@@ -2821,12 +2845,12 @@ function showEncodingMenu(): void {
 
   const model = encodingMenuModel();
   showPopupMenu(sbEncoding, [
-    ...model.encodedIn,
-    { separator: true },
+    { label: "解读编码", submenu: model.encodedIn },
     { label: "转换为…", submenu: model.convertTo },
+    { separator: true },
     ...model.bom,
     { separator: true },
-    ...model.eol,
+    { label: "转换行尾符", submenu: model.eol },
   ]);
 }
 

@@ -607,25 +607,9 @@ html[data-window-kind="satellite"] .menu-bar {
   background: var(--border);
 }
 
-/* 语言分组小标题（B218）：「Unicode（统一码）」「中文（简体 / 繁体）」「日文」这类。
-   ⚠️ 不写 hover 背景、也不给 pointer —— 它不是一条能点的菜单项（menu.ts 渲染成 div
-   而不是 button），顺手加高亮会做出一个「看着能点其实点不动」的死格子。
-   左内边距 16px 是与条目文字对齐用的：条目是 button(9px) + .check(16px)，
-   标题没有 ✓ 那一列，得自己把 16px 让出来，否则文字比条目往左拱一截。 */
-.menu-heading {
-  margin: 6px 9px 2px;
-  padding-left: 16px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--fg-muted);
-  /* 刻意不写 `cursor: default`：div 默认就是箭头（cursor: auto 在不可选文本上
-     表现为默认箭头），写了反而会被 tests/cursor.test.ts 当成「可点元素被覆盖成
-     default」的违规项 —— 那条守的是「有点击效果必须手型」，标题没有点击效果。 */
-  user-select: none;
-}
-/* ⚠️ 刻意没有 `:first-child { margin-top: 0 }` 这类收边：标题只在**换组处**插，
-   前面必然至少跟着一条上一组的条目，它永远不可能是菜单的第一个子元素 ——
-   写那条等于写一段永远不会生效的规则。Menu 自己靠 populate 顺序保证上沿不留白。 */
+/* 语言分组以前靠「小标题」归（B218，已废）：现在是两级 —— 首组条目内联平铺，
+   其余语言组收成带 chevron 的子菜单（.menu-arrow）。分组名本身由 Rust 的
+   `Encoding::group()` 现取，前端不存第二张表。 */
 
 .menu-kbd {
   margin-left: 24px;

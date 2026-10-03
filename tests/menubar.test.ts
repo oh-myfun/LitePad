@@ -981,33 +981,44 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
   });
 });
 
-describe("B218：语言分组小标题（中文 / 日文这类行首分类）", () => {
-  it("分组标题渲染成 div 而不是 button —— 能做 hover 高亮的就是菜单项", () => {
+describe("B218：语言归组走子菜单（首组内联，其余每组一条入口）", () => {
+  const GROUP = "中文（简体 / 繁体）";
+
+  it("分组条目渲染成带 chevron 的父项，内联条目没有箭头格", () => {
     showPopupMenu(null, [
-      { label: "GB2312", onSelect: () => {} },
-      { heading: true, label: "中文（简体 / 繁体）" },
-      { label: "Big5", onSelect: () => {} },
+      { label: "UTF-8", onSelect: () => {} },
+      { separator: true },
+      {
+        label: GROUP,
+        submenu: [
+          { label: "GB2312", onSelect: () => {} },
+          { label: "Big5", onSelect: () => {} },
+        ],
+      },
     ]);
     const menu = document.querySelector(".popup-menu")!;
-
-    const heading = menu.querySelector(":scope > .menu-heading");
-    expect(heading, "换组处必须渲染出 .menu-heading").toBeTruthy();
-    expect(heading!.tagName, "标题不是一条菜单项，不该是按钮").toBe("DIV");
-    expect(heading!.textContent).toBe("中文（简体 / 繁体）");
-    // 按钮列表里只剩真条目：标题不许混进去被当成一条能点的项
+    const tops = [...menu.querySelectorAll(":scope > button")];
     expect(
-      [...menu.querySelectorAll(":scope > button")].map((b) => b.textContent),
-      "标题不能被算成菜单项",
-    ).toEqual(["GB2312", "Big5"]);
+      tops.map((b) => b.textContent),
+      "顶层只剩内联的那一组 + 分组入口",
+    ).toEqual(["UTF-8", GROUP]);
+    // 首组那条是内联的普通条目（没有箭头格）；分组那条才是带 chevron 的父项
+    expect(tops[0].querySelector(".menu-arrow"), "内联条目不该有箭头格").toBeNull();
+    expect(tops[1].classList.contains("has-submenu"), "分组项要挂 has-submenu").toBe(true);
+    const glyph = tops[1].querySelector(".menu-arrow .codicon");
+    expect(glyph, "分组项行末必须有一枚字形").toBeTruthy();
+    expect(
+      glyph!.classList.contains("codicon-chevron-right"),
+      "那枚是右向 chevron（类名是 codicon-chevron-right，不是 chevron-right）",
+    ).toBe(true);
     closePopupMenu();
   });
 
-  it("标题那行画成淡一档的小字，且左缘与条目文字对齐", () => {
+  it("分组小标题那套已经整份拿掉（div 标题 + .menu-heading 样式）", () => {
+    const menu = readFileSync("src/shell/menu.ts", "utf-8");
+    expect(menu, "MenuItem 上不许再留 heading 字段").not.toContain("heading?: boolean");
+    expect(menu, "fillMenu 里不许再渲染 .menu-heading").not.toContain("menu-heading");
     const css = readFileSync("src/styles/global.css", "utf-8");
-    const block = ruleBlock(css, ".menu-heading", 0);
-    expect(block, "必须有 .menu-heading 的样式").toContain("color: var(--fg-muted)");
-    // 条目 = button 内边距 9px + .check 那 16px 的 ✓ 列；标题没有 ✓，得自己让出 16px，
-    // 否则标题比条目文字往左拱一截（B209 那类「看着就歪」的问题）。
-    expect(block).toMatch(/padding-left:\s*16px/);
+    expect(css, "CSS 里不许再留那套小标题规则").not.toContain("menu-heading");
   });
 });

@@ -208,19 +208,43 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
     expect(block).toContain("ellipsis");
   });
 
-  it("B218：编码 / 转换两路都按语言分组铺开（分组标题只认后端下发的 group）", () => {
+  it("B218：编码 / 转换两路都收成两级（首组内联，其余语言组走子菜单）", () => {
     const body = topLevelFnBody(main, "encodingMenuModel");
-    // 解读编码与转换为… 两路都要走同一个铺开出口，别各写一遍（两遍就必差一处）
-    expect(body.split("withLanguageHeadings").length - 1).toBe(2);
+    // 解读编码与转换为… 两路都要走同一个收口出口，别各写一遍（两遍就必差一处）
+    expect(body.split("withLanguageGroups").length - 1).toBe(2);
     expect(body).toContain("const groups = encodingOptions.map");
 
-    const helper = topLevelFnBody(main, "withLanguageHeadings");
-    expect(helper, "换组处要插语言小标题").toContain("heading: true");
-    expect(helper, "换组处还要插一条分隔线").toContain("separator: true");
+    const helper = topLevelFnBody(main, "withLanguageGroups");
+    expect(helper, "换组处要插一条分隔线").toContain("separator: true");
+    expect(helper, "之后的每一组要收成子菜单入口").toContain("submenu:");
+    // 第一组必须内联平铺：收口时 out 还是空的就说明它是第一组（那条路只铺不收）
+    expect(helper, "第一组要内联，别也收成子菜单").toContain("out.length > 0");
     // 判据按 group 逐条对齐取，不许「数到第几项就当第几组」那样糊过去
     expect(helper).toContain("groups[i]");
     // 反例：分组只能来自后端下发，前端再抄一张「编码 → 语言」对照表就必漂
     expect(main, "不许在前端另抄一份编码→语言对照表").not.toMatch(/GB2312\s*[:=]/);
+  });
+
+  it("B218：菜单条目不许重复 —— 同一个编码显示两遍就是重复选项", () => {
+    // 上一次「解码 / 转换菜单出现重复选项」是 all() 开头残留四条旧头、和下面的
+    // Unicode 组重了一遍。⚠️ 分组连续性两条断言都抓不住：重复项**同组且相邻**，
+    // 「每组连续」「正好 9 组」全绿，用户看到的却是两条一模一样的、各挂一个对勾。
+    expect(codec, "Rust 侧必须有 label 唯一性硬断言").toContain(
+      "fn menu_entries_have_no_duplicate_labels",
+    );
+    // 前端这一侧：两路条目都只从后端清单映射出来，不许第二处拼装把条目再凑一遍
+    const body = topLevelFnBody(main, "encodingMenuModel");
+    expect(body, "条目只能从后端清单映射").toContain("encodingOptions.map");
+  });
+
+  it("状态栏那颗键的菜单也收成两级（跟主菜单是同一份摆法）", () => {
+    const body = topLevelFnBody(main, "showEncodingMenu");
+    expect(body, "解读编码要收成子菜单入口").toContain("submenu: model.encodedIn");
+    expect(body, "转换为…要收成子菜单入口").toContain("submenu: model.convertTo");
+    expect(body, "转换行尾符也要收成子菜单入口").toContain("submenu: model.eol");
+    // 反例：别再把编码那一组摊平在顶层 —— 摊平了两边摆法就不一致，
+    // 重复项一眼就能看见（那次 bug 就是先在状态栏那颗键上撞见的）
+    expect(body, "不许把编码组摊平在顶层").not.toContain("...model.encodedIn");
   });
 
   it("B218：中文字符集包含 GB2312 等 Windows 常用字符集", () => {
@@ -237,7 +261,7 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
       expect(codec, `菜单条目${label}`).toContain(label);
       expect(codec, `落点${table}`).toContain(table);
     }
-    // 中文那几条的组标题要认得出（菜单里那行小标题就取这个值）
+    // 中文那几条的组名要认得出（菜单上那条中文子菜单入口就取这个值）
     expect(codec).toContain('=> "中文（简体 / 繁体）"');
     // 老别名收口：cp936 / cp950 / chinese 这些系统 API 给出的名字照样落得下
     for (const alias of ['"gb2312"', '"cp936"', '"cp950"', '"chinese"']) {

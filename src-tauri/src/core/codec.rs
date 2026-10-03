@@ -92,9 +92,10 @@ pub enum Encoding {
 }
 
 /// 菜单里的一条编码（B218）：`label` 是**原样传回后端的标识**（`Encoding::from_label`
-/// 认它），`group` 是菜单里那行语言小标题。
+/// 认它），`group` 是它所属的语言组名（前端就按这个 `group` 切出「首组内联 +
+/// 其余组子菜单」那几级，别再弄一套插在条目中间的小标题，见 `all()`）。
 ///
-/// ⚠️ 前端拿这份扁平列表自己按 `group` 拼标题，**不要**再手抄一份编码清单去分组
+/// ⚠️ 前端拿这份扁平列表自己按 `group` 排两级菜单，**不要**再手抄一份编码清单
 ///    —— 两份迟早差一条，而差的那一条表现就是「菜单里有、功能没接上」。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EncodingItem {
@@ -216,14 +217,13 @@ impl Encoding {
     /// 菜单与下拉的展示顺序（B218 起按**语言分组**排列，同组必须连续）：
     ///   Unicode → 拉丁 → 西里尔 → 希腊 → 希伯来 → 阿拉伯 → 中文 → 日文 → 韩文。
     /// ⚠️ 顺序与分组都是**契约**：前端「编码」菜单、设置页「默认编码」下拉、
-    ///    状态栏菜单全都按这个顺序渲染（B215），分组小标题由 `group()` 现取。
+    ///    状态栏菜单全都按这个顺序渲染（B215），分组名由 `group()` 现取。
     ///    新增条目请插进它该属的那一组里，别追加到末尾（那会把它顶到别的组底下）。
+    /// ⚠️ **label 必须唯一**：菜单里同一个编码出现两次就是「重复选项」（两个一模一样
+    ///    的条目、各挂一个对勾）。重复项往往同组且相邻，分组连续性断言抓不住，
+    ///    所以另有一条 `menu_entries_have_no_duplicate_labels` 盯着。
     pub fn all() -> &'static [Encoding] {
         &[
-            Encoding::Utf8,
-            Encoding::Utf8Bom,
-            Encoding::Utf16Le,
-            Encoding::Utf16LeNoBom,
             // —— Unicode ——
             Encoding::Utf8,
             Encoding::Utf8Bom,
@@ -276,7 +276,7 @@ impl Encoding {
         ]
     }
 
-    /// 所属语言 / 文字体系（B218）:菜单里那行小标题就取这个值。
+    /// 所属语言 / 文字体系（B218）:菜单上的语言子菜单入口名就取这个值。
     ///
     /// ⚠️ 返回的是**直接能显示给用户的中文**，而不是 `Unicode`/`Chinese` 这种
     ///    内部标识：前端拿它只做「与上一条相不相同」的判断，不需要再维护一张
@@ -788,8 +788,8 @@ mod tests {
         assert_eq!(Encoding::from_label("chinese"), Encoding::Gb2312);
     }
 
-    /// 五条中文字符集必须**同组**，且组标题认得出是中文 —— 菜单那行小标题就取
-    ///    这个值，写歪了用户看到的就是一串没头没尾的字。
+    /// 五条中文字符集必须**同组**，且组名认得出是中文 —— 菜单上那条中文子菜单
+    ///    入口就取这个值，写歪了用户看到的就是一串没头没尾的字。
     #[test]
     fn the_chinese_charsets_share_one_group() {
         const NAMES: [&str; 5] = ["GB2312", "GBK", "GB18030", "Big5", "Big5-HKSCS"];
@@ -843,6 +843,39 @@ mod tests {
         }
         // 组数（B218 定的 9 个语言/文字体系）也一并锁住，别让分组悄悄合并掉
         assert_eq!(started.len(), 9, "语言分组数量变了：{started:?}");
+    }
+
+    /// 菜单里同一个编码绝不能出现两次 —— 上一次「解码 / 转换菜单出现重复选项」就是
+    /// `all()` 开头残留了四条旧头、和下面的 Unicode 组重了一遍。
+    /// ⚠️ 分组连续性断言抓不住这种重复：重复项**同组且相邻**，「每组连续」「正好 9 组」
+    ///    两条全绿，可用户看到的就是两个一模一样的条目、各挂一个对勾。所以这里按
+    ///    label 做唯一性硬断言（`sort` + `dedup` 后长度必须等于原长）。
+    #[test]
+    fn menu_entries_have_no_duplicate_labels() {
+        let items = Encoding::items();
+        assert!(!items.is_empty(), "菜单条目是空的，下面的断言没意义");
+        let mut labels: Vec<&str> = items.iter().map(|i| i.label).collect();
+        let original = labels.len();
+        labels.sort_unstable();
+        let mut seen: Vec<&str> = Vec::new();
+        let mut duplicates: Vec<&str> = Vec::new();
+        for label in labels.iter() {
+            if seen.contains(label) && !duplicates.contains(label) {
+                duplicates.push(label);
+            }
+            seen.push(label);
+        }
+        assert!(
+            duplicates.is_empty(),
+            "同一条编码在菜单里出现了多次：{duplicates:?}"
+        );
+        labels.dedup();
+        assert_eq!(
+            labels.len(),
+            original,
+            "菜单条数被改掉了：{original} -> {}",
+            labels.len()
+        );
     }
 
     /// 三条中文条目的落点必须是**各自那张表**：GB2312 与 GB18030 共用一张、GBK 独占、
