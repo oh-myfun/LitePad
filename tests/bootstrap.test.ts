@@ -132,3 +132,28 @@ describe("窗口标题：软件名在前、文件名在后", () => {
     expect(src, "不得再使用「文件名 - LitePad」格式").not.toContain("${text} - LitePad");
   });
 });
+
+// ⚠️ 这一组是**真机 CDP 实测倒推**来的（jsdom / 脚本 dispatchEvent 都测不出来）：
+// 用 Input.dispatchMouseEvent 发真鼠标点标签区操作键，现状的事件序列是
+// 「MD, MOUSEUP」—— 浏览器合成的 click 根本没派发（按钮在 mousedown 里被
+// replaceWith 换掉、节点脱链），用户看到的就是「点了没反应」。
+describe("B226 标签区操作键「点了没反应」：mousedown 里不许换掉按钮节点", () => {
+  it("活动面板没变时必须早退，不许重建 .panel-ops", () => {
+    const src = readFileSync("src/main.ts", "utf-8");
+    const fn = src.match(/function markActivePanel\([\s\S]*?\n\}/)?.[0] ?? "";
+    expect(fn, "markActivePanel 必须还在").toBeTruthy();
+    expect(fn, "必须判活动面板有没有变").toMatch(/const changed = panelId !== activePanelId;/);
+    // 早退护栏的位置（唯一那次重建 ops 必须在它**之后**）——退化两个方向都要红：
+    // ① 砍掉早退 ⇒ guard = -1；② 把 renderPanelOps 挪到早退前面 ⇒ guard > rebuild。
+    const guard = fn.indexOf("if (!changed) return;");
+    // ⚠️ 必须带分号取：函数注释里也写了 `renderPanelOps()` 这个字面量（不带分号），
+    // 它排在早退之前，不带分号会命中注释、把顺序闸反着算。
+    const rebuild = fn.indexOf("renderPanelOps();");
+    expect(
+      guard,
+      "缺早退护栏：活动面板没变也会重建 ops ⇒ 按钮被 replaceWith 换掉、节点脱链 ⇒ 浏览器合成的 click 派发不到它（真机 CDP 实测已复现）",
+    ).toBeGreaterThanOrEqual(0);
+    expect(rebuild, "变了才重建 ops").toBeGreaterThan(guard);
+    expect(fn, "重建 ops 全函数只许这一处，且落在早退之后").toContain("renderPanelOps();");
+  });
+});

@@ -981,10 +981,18 @@ function refreshAll(): void {
  * 导致点标签「要点两下」（见 onActivatePanel 里的详细注释）。
  */
 function markActivePanel(panelId: number): void {
+  const changed = panelId !== activePanelId;
   activePanelId = panelId;
   for (const el of layoutArea.querySelectorAll<HTMLElement>(".layout-panel")) {
     el.classList.toggle("layout-panel-active", Number(el.dataset.panelId) === panelId);
   }
+  // ⚠️ B226：活动面板**没变**就必须早退、一个字都不重建 —— 这个函数由面板的
+  // `mousedown` 触发，而用户点操作键（md 两颗 / ⨯ / 还原）时，那次 mousedown 的目标
+  // 本身就是 `.panel-op`。若在这里同步 `renderPanelOps()`，按钮被 `replaceWith` 换掉、
+  // 节点脱链 ⇒ 浏览器**合成**的那个 click 派发不到它上（真机 CDP 实测：mousedown /
+  // mouseup 都照常到，click 根本不派发），表现就是「操作键点了完全没反应」。
+  // 而活动面板没变时，ops 本来就是为这个面板建的（最新），重建纯属自伤。
+  if (!changed) return;
   // B224：md 两颗键只挂在活动面板上 —— 活动面板变了键就得搬家。只重建 `.panel-ops`
   // 这一小块，标签条与编辑器都不碰（本函数的红线是「不重建标签条」，ops 不在红线内）。
   renderPanelOps();
