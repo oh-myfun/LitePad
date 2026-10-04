@@ -85,22 +85,23 @@ describe("B225：编辑器字体 / 行距必须真的接到 CSS", () => {
     }
   });
 
-  it("--font-editor 必须有消费方，且带一份内置等宽栈兜底", () => {
+  it("--font-code 必须有消费方（源码区是代码），且带一份内置等宽栈兜底", () => {
     const block = ruleBlock(globalCss(), CHAIN, "font-family");
     expect(block, `应有 ${CHAIN} 的 font-family 规则`).toBeTruthy();
     const decls = cssDecls(block);
-    // 反例前置（退化形态 1：压根不认 --font-editor，写死内置栈）
+    // 反例前置（退化形态 1：压根不认 --font-code，写死内置栈）
     expect(decls, "font-family 不许写死成只取 --font-mono").not.toMatch(
       /font-family:\s*var\(--font-mono\)/,
     );
-    expect(decls, "font-family 必须优先取 --font-editor").toMatch(
-      /font-family:\s*var\(--font-editor/,
-    );
+    expect(decls, "font-family 必须优先取 --font-code").toMatch(/font-family:\s*var\(--font-code/);
     // 退化形态 2：认了变量但没兜底 —— 选中的字体本机没装时，
     // 会掉到浏览器默认的**非等宽**字体上（不是内置等宽栈）。
-    expect(decls, "--font-editor 之后必须再挂一份 --font-mono 兜底").toMatch(
-      /var\(--font-editor[^;]*\)\s*,\s*var\(--font-mono\)/,
+    expect(decls, "--font-code 之后必须再挂一份 --font-mono 兜底").toMatch(
+      /var\(--font-code[^;]*\)\s*,\s*var\(--font-mono\)/,
     );
+    // B231：--font-editor 那层中转已删（正文字体写 --font-body、代码字体写
+    // --font-code，两条语义栈直接对应两个设置项）。留着会让人以为还有第三条栈。
+    expect(decls, "源码区不该再读已作废的 --font-editor").not.toContain("--font-editor");
   });
 
   it("字体必须落到 .cm-scroller 上（正文/行号从它继承，.cm-editor 会被截胡）", () => {
@@ -111,11 +112,11 @@ describe("B225：编辑器字体 / 行距必须真的接到 CSS", () => {
     const body = cssDecls(
       ruleBlock(css, ".panel-host .panel-editor .cm-editor .cm-scroller", "font-family"),
     );
-    expect(body, ".cm-scroller 必须有 font-family 规则（否则正文继承不到 --font-editor）").toMatch(
-      /font-family:\s*var\(--font-editor/,
+    expect(body, ".cm-scroller 必须有 font-family 规则（否则正文继承不到 --font-code）").toMatch(
+      /font-family:\s*var\(--font-code/,
     );
     expect(body, ".cm-scroller 那一份同样要挂 --font-mono 兜底").toMatch(
-      /var\(--font-editor[^;]*\)\s*,\s*var\(--font-mono\)/,
+      /var\(--font-code[^;]*\)\s*,\s*var\(--font-mono\)/,
     );
   });
 
@@ -183,13 +184,23 @@ describe("B225：编辑器字体 / 行距必须真的接到 CSS", () => {
     // 退化形态：回到裸 `view.requestMeasure()` —— CM6 测量结束会做滚动锚点补偿，
     // 把视口顶行往下推一截（B146），改一次设置就飘一次。
     const src = readFileSync("src/main.ts", "utf-8");
-    for (const fn of ["applyFontSize", "applyFontFamily", "applyEditorLineHeight"]) {
+    // B231：真正会改 CM6 布局的三个 —— 字号、编辑器行距、**代码字体**
+    // （源码区改吃 --font-code，换字体即改行宽；B227 时它只落预览、不碰 CM6，
+    //  才不需要重测，那版判断已随口径作废）。
+    for (const fn of ["applyFontSize", "applyEditorLineHeight", "applyCodeFontFamily"]) {
       const body = stripLineComments(topLevelFnBody(src, fn));
       expect(body, `应能截到 ${fn} 的函数体`).toBeTruthy();
       // 反例必须排在正向之前，否则退化时被正向断言抢先报错
       expect(body, `${fn} 不许裸调 requestMeasure`).not.toContain("requestMeasure");
       expect(body, `${fn} 必须走 measureAndKeepScroll`).toContain("measureAndKeepScroll(p)");
     }
+    // 反向：applyFontFamily 只写 --font-body（预览正文），没有 CM6 消费方 ——
+    // 重测是空转。契约钉住「别加」，免得日后又照着旧口径补回来。
+    const bodyFont = stripLineComments(topLevelFnBody(src, "applyFontFamily"));
+    expect(bodyFont, "正文字体只写 --font-body").toContain("--font-body");
+    expect(bodyFont, "正文字体不消费 CM6，不该重测编辑器（空转）").not.toContain(
+      "measureAndKeepScroll",
+    );
   });
 
   it("编辑器字体候选成规模、无重复，「默认」仍在首位", () => {
@@ -243,10 +254,8 @@ describe("B225：编辑器字体 / 行距必须真的接到 CSS", () => {
     expect(page, "应能截到编辑器分类页").toBeTruthy();
     // 反例在前：不能退回那份未打标的手抄清单
     expect(page, "不能退回未打标的静态清单").not.toContain("FONT_FAMILY_OPTIONS");
-    expect(page, "编辑器字体那一行要走动态字体选择器").toMatch(/fontRow\(\s*"编辑器字体"/);
-    expect(page, "代码字体要单列一行（正文 / 代码分开设，对齐 InkNote）").toMatch(
-      /fontRow\(\s*"代码字体"/,
-    );
+    expect(page, "正文字体那一行要走动态字体选择器").toMatch(/fontRow\(\s*"正文字体"/);
+    expect(page, "代码字体要单列一行（源码区 + 预览代码都用它）").toMatch(/fontRow\(\s*"代码字体"/);
     expect(page, "两栏都要把本机枚举喂进去").toContain("opts.systemFonts()");
     expect(
       FONT_FAMILY_NO_DIFF_SUFFIX.trim().length,
@@ -355,26 +364,41 @@ describe("B227 内嵌字体：@font-face、正文/代码两条栈、两处消费
     expect(root, "界面栈 --font-ui 首项是内嵌思源黑体").toMatch(/--font-ui:[^;]*"Noto Sans SC"/);
   });
 
-  it("两个消费点各取各的：编辑区与预览正文走 --font-editor，代码块走 --font-code", () => {
-    // CM6 那条规则：缺省取 --font-body（正文），末尾那份 --font-mono 是第二回落
-    expect(global, "CM6 编辑区要走 var(--font-editor, var(--font-body))").toContain(
-      "font-family: var(--font-editor, var(--font-body)), var(--font-mono);",
+  it("三个消费点各取各的：源码区与预览代码走 --font-code，预览正文走 --font-body", () => {
+    // B231 口径：源码区归**代码字体**（源码是代码），预览正文归**正文字体**。
+    // CM6 那条规则末尾那份 --font-mono 是第二回落
+    expect(global, "CM6 源码区要走 var(--font-code), var(--font-mono)").toContain(
+      "font-family: var(--font-code), var(--font-mono);",
     );
-    // 预览正文：与源码编辑区同一项（用户口径「源码和预览统一到编辑器」）
+    // --font-editor 是 B227 的中转名，B231 已删：正文字体直接写 --font-body
+    expect(global, "--font-editor 那层中转已作废，不该再出现").not.toContain("--font-editor");
+    // 预览正文：正文字体
     const mdBlock = preview.match(/\.md-preview \{[\s\S]*?\n\}/)?.[0] ?? "";
     expect(mdBlock, "应能截到 .md-preview 块").toBeTruthy();
-    expect(mdBlock, "预览正文必须读 --font-editor（与源码区同一项）").toMatch(
-      /font-family: var\(--font-editor,/,
+    expect(mdBlock, "预览正文必须读 --font-body（正文字体）").toMatch(
+      /font-family: var\(--font-body,/,
     );
-    // 代码块：独立那一项
+    // 代码块：与源码区同一项（凡是代码一律等宽）
     const codeBlock = preview.match(/\.md-preview code \{[\s\S]*?\n\}/)?.[0] ?? "";
     expect(codeBlock, "应能截到 .md-preview code 块").toBeTruthy();
-    expect(codeBlock, "代码块必须读 --font-code（正文/代码分开设）").toMatch(
+    expect(codeBlock, "代码块必须读 --font-code（与源码区同一项）").toMatch(
       /font-family: var\(--font-code,/,
     );
     // 退化形态：把代码块写死 Consolas（就是 B227 之前那版）
     expect(preview, "代码块不许写死字体栈").not.toMatch(
       /\.md-preview code \{[^}]*font-family: Consolas/,
     );
+  });
+
+  it("界面文字不跟用户设置走（用户裁决：标签栏/菜单/状态栏保持不可配）", () => {
+    // --font-ui 是 :root 里的写死栈，不接受任何内联覆盖。
+    // 契约盯两处：①全局消费点不许读 --font-body；②applyFontFamily 只写 --font-body。
+    const src = readFileSync("src/main.ts", "utf-8");
+    const body = stripLineComments(topLevelFnBody(src, "applyFontFamily"));
+    // 反向闸在前
+    expect(body, "界面栈 --font-ui 不许被用户设置覆盖").not.toContain("--font-ui");
+    expect(body, "正文字体只写 --font-body 一处").not.toContain("--font-code");
+    // 界面那些规则仍读 --font-ui
+    expect(global, "界面消费点应继续读 --font-ui").toMatch(/font-family: var\(--font-ui\)/);
   });
 });

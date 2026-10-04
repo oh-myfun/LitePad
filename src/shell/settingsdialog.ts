@@ -76,7 +76,7 @@ const PROBE_BOGUS_FONT = "__lite_pad_no_such_font__";
  *
  * B225 扩充成三组：系统自带（Windows 一定在）→ 常见开发者字体 → 中文等宽。
  * ⚠️ 后两组**本机未必装了**，所以 `global.css` 里 `.panel-host .panel-editor
- * .cm-editor` 的 `font-family` 在 `var(--font-editor, …)` 之后**还挂了一份**
+ * .cm-editor` 的 `font-family` 在代码栈变量之后**还挂了一份**
  * `var(--font-mono)` 作第二回落 —— 缺字体时掉回内置等宽栈，而不是浏览器的默认
  * 非等宽字体。但代价是**选了也看不出变化**（回落到的正是默认外观），用户就会
  * 反复报「改了没反应」；`fontFamilyOptions()` 负责把这类候选标出来。
@@ -248,7 +248,7 @@ const CATEGORIES: Category[] = [
       "字体",
       "字号",
       "行距",
-      "编辑器字体",
+      "正文字体",
       "代码字体",
       "编辑器行距",
       "markdown",
@@ -671,15 +671,16 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
       ),
     );
   } else if (id === "editor") {
-    // B227：口径对齐 InkNote 的设置页 —— **正文**与**代码**分开设，而「编辑器字体」
-    // 这一项同时管源码编辑区正文与预览正文（一处设置、两处生效）。候选来自 Rust
-    // `list_fonts` 的本机枚举，等宽/全部两栏切换；枚举没到手时由 fontOptionsFor
-    // 退回 B225 的手抄清单。
+    // B231：口径 —— **正文字体**只管预览模式的正文，**代码字体**管编辑器源码区
+    // （源码是代码）+ 预览里的行内代码/代码块。两者彻底分开，界面文字不跟
+    // （用户裁决：标签栏/菜单/状态栏保持不可配）。候选来自 Rust `list_fonts`
+    // 的本机枚举，等宽/全部两栏切换；枚举没到手时由 fontOptionsFor 退回
+    // B225 的手抄清单。
     const sys = opts.systemFonts();
     body.appendChild(
       fontRow(
-        "编辑器字体",
-        "源码编辑区与预览正文共用这一项（对齐 InkNote 的「正文字体」）；候选是本机真实枚举，可切「全部 / 等宽」。",
+        "正文字体",
+        "预览模式的正文（非等宽）。编辑器源码区与预览里的代码归「代码字体」。",
         opts.fontFamily(),
         (v) => opts.onFontFamily(v),
         sys,
@@ -690,7 +691,7 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
     body.appendChild(
       fontRow(
         "代码字体",
-        "预览里的行内代码与代码块；候选同上，可切「全部 / 等宽」。",
+        "编辑器源码区，以及预览里的行内代码与代码块（凡是代码一律等宽）。",
         opts.codeFontFamily(),
         (v) => opts.onCodeFontFamily(v),
         sys,

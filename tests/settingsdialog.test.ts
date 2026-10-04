@@ -139,7 +139,7 @@ describe("B106 设置项：初值 + 即时回调", () => {
     showSettingsDialog(makeOpts());
     for (const [label, val] of [
       ["主题", "system"],
-      ["编辑器字体", ""],
+      ["正文字体", ""],
       ["字号（px）", "14"],
       ["编辑器行距", "1.5"],
       ["预览行距", "1.7"],
@@ -170,7 +170,7 @@ describe("B106 设置项：初值 + 即时回调", () => {
     };
 
     fire("主题", "dark");
-    fire("编辑器字体", "Consolas");
+    fire("正文字体", "Consolas");
     fire("字号（px）", "18");
     fire("编辑器行距", "1.8");
     fire("预览行距", "2.1");
@@ -405,9 +405,10 @@ describe("B111 设置页：switch 组件 + 快捷键搜索框 Esc", () => {
   });
 });
 
-// B227：字体两栏（对齐 InkNote 设置页口径）——「编辑器字体」同时管源码区与预览正文，
-// 「代码字体」单列；两栏的候选都来自本机枚举，并各带一个 全部/等宽 的小切换。
-describe("B227 字体两栏：编辑器字体 / 代码字体 + 全部·等宽切换", () => {
+// B227 起两栏：B231 调整为「正文字体（**只**预览模式正文）」与
+// 「代码字体（编辑器源码区 + 预览里的行内代码/代码块）」；两栏的候选都来自
+// 本机枚举，并各带一个 全部/等宽 的小切换。
+describe("B231 字体两栏：正文字体 / 代码字体 + 全部·等宽切换", () => {
   const SYS = [
     { name: "Consolas", is_monospace: true },
     { name: "Cascadia Code", is_monospace: true },
@@ -428,15 +429,15 @@ describe("B227 字体两栏：编辑器字体 / 代码字体 + 全部·等宽切
     return btn!;
   }
 
-  it("编辑器分类页下两行都在，编辑器字体那行默认走「全部」", () => {
+  it("编辑器分类页下两行都在，正文字体那行默认走「全部」", () => {
     openWithFonts();
-    rowControl("编辑器字体");
+    rowControl("正文字体");
     rowControl("代码字体");
     // 默认项（value 空串 = 回落默认栈）必须在首位
-    expect(rowValues("编辑器字体")[0], "默认项要在首位").toBe("");
+    expect(rowValues("正文字体")[0], "默认项要在首位").toBe("");
     expect(rowValues("代码字体")[0], "默认项要在首位").toBe("");
     // 「全部」⇒ 非等宽项也在候选里
-    expect(rowValues("编辑器字体")).toContain("Microsoft YaHei UI");
+    expect(rowValues("正文字体")).toContain("Microsoft YaHei UI");
     // 代码字体那行默认落在「等宽」⇒ 非等宽项不出现
     expect(rowValues("代码字体")).not.toContain("Microsoft YaHei UI");
     expect(rowValues("代码字体")).toContain("Consolas");
@@ -444,14 +445,14 @@ describe("B227 字体两栏：编辑器字体 / 代码字体 + 全部·等宽切
 
   it("切到「等宽」后非等宽项消失，切回「全部」又回来（两栏互不影响）", () => {
     openWithFonts();
-    tab("编辑器字体", "等宽").click();
-    expect(rowValues("编辑器字体")).not.toContain("Microsoft YaHei UI");
-    expect(rowValues("编辑器字体"), "系统等宽要留下").toContain("Consolas");
+    tab("正文字体", "等宽").click();
+    expect(rowValues("正文字体")).not.toContain("Microsoft YaHei UI");
+    expect(rowValues("正文字体"), "系统等宽要留下").toContain("Consolas");
     // 另一栏记住自己那一栏的小类，不跟着变
     expect(rowValues("代码字体")).not.toContain("Microsoft YaHei UI");
 
-    tab("编辑器字体", "全部").click();
-    expect(rowValues("编辑器字体"), "切回全部要恢复").toContain("Microsoft YaHei UI");
+    tab("正文字体", "全部").click();
+    expect(rowValues("正文字体"), "切回全部要恢复").toContain("Microsoft YaHei UI");
 
     // 代码字体那行切「全部」只影响自己
     tab("代码字体", "全部").click();
@@ -467,9 +468,9 @@ describe("B227 字体两栏：编辑器字体 / 代码字体 + 全部·等宽切
       onFontFamily: (v) => seen.push(v),
       onCodeFontFamily: (v) => seenCode.push(v),
     });
-    pickRow("编辑器字体", "Consolas");
+    pickRow("正文字体", "Consolas");
     pickRow("代码字体", "Consolas");
-    expect(seen, "编辑器字体要回调 onFontFamily").toEqual(["Consolas"]);
+    expect(seen, "正文字体要回调 onFontFamily").toEqual(["Consolas"]);
     expect(seenCode, "代码字体要回调 onCodeFontFamily").toEqual(["Consolas"]);
   });
 });
@@ -502,7 +503,7 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
     showSettingsDialog(makeOpts());
     const body = pageBody("编辑器");
     expect(rowLabels(body), "编辑器页的项顺序").toEqual([
-      "编辑器字体",
+      "正文字体",
       "代码字体",
       "字号（px）",
       "编辑器行距",

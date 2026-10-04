@@ -18,11 +18,11 @@
   font-size: calc(var(--font-size, 14px) + 1px);
   /* 行距由设置驱动（--md-line-height 设在 :root 上），缺省 1.7 */
   line-height: var(--md-line-height, 1.7);
-  /* B227：预览正文并到「编辑器字体」这一项 —— 与源码编辑区同栈（--font-editor 缺省时
-     走 --font-body ＝ 内嵌思源黑体），一处设置两处生效，与 InkNote 的「正文字体」对齐。
+  /* B231：预览正文走**正文字体**（--font-body，B227 那版是「编辑器字体」那项）。
+     B231 起源码区归代码字体，正文与代码彻底分开。
      显式写一遍（而不只是继承 body）是为了**导出 HTML**：导出只注入本文件、:root 不在
      里面，不给兜底字符串就会掉到浏览器默认衬线体。 */
-  font-family: var(--font-editor, "Noto Sans SC", "Microsoft YaHei UI", sans-serif);
+  font-family: var(--font-body, "Noto Sans SC", "Microsoft YaHei UI", sans-serif);
   word-wrap: break-word;
 }
 

@@ -152,6 +152,13 @@ export function pyFnBody(src: string, name: string): string {
 
 // ⚠️ 下面是 TS 版的同名工具：两条都要留 —— pyFnBody 服务 Python 脚本（scripts/*.py），
 //    topLevelFnBody 服务 TS 源码（src/**）。混用会静默返回空串（见 pyFnBody 的注释）。
+//
+// ⚠️⚠️ `name` 是**裸子串**，`indexOf` 取**首次出现** —— 所以源码注释里只要提了
+//    别的函数名，那条契约就会截到「本函数的注释块」而不是函数体，断言凭空失败。
+//    B231 实测：`applyFontFamily` 的注释里写了一句「见 applyCodeFontFamily」，
+//    于是 `topLevelFnBody(src, "applyCodeFontFamily")` 起点落在前者的注释里。
+//    ⇒ 被 `topLevelFnBody` 盯着的函数，其注释里**别写其它函数名**；要指路就写
+//    「下面那个 XXX setter」这种不含标识符的说法。
 export function topLevelFnBody(fileText: string, name: string): string {
   const start = fileText.indexOf(name);
   if (start < 0) return "";

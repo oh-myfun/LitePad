@@ -5598,24 +5598,28 @@ function applyPreviewLineHeight(value: number): void {
 }
 
 /**
- * 编辑器字体：写 :root 上的 --font-editor，.cm-editor 优先取它；
- * 空串（默认）则移除内联变量，回落到内置等宽栈。状态栏 kbd 等仍用 --font-mono。
+ * 正文字体：写 :root 上的 --font-body，**只**消费在预览正文（`.md-preview`）。
+ * 空串（默认）则移除内联变量，回落到 :root 里那份内嵌思源黑体。
  *
- * ⚠️ B227 起这一项叫「编辑器字体」但**同时管预览正文**（源码与预览统一到编辑器，
- *    对齐 InkNote 的「正文字体」）：CM6 那条规则取 `var(--font-editor, var(--font-body))`，
- *    `.md-preview` 取 `var(--font-editor, …)`。所以这里改一个值，两处一起变。
+ * ⚠️ B231 口径：源码区已划归**代码字体**（见下面的代码字体 setter），所以这一项
+ *    **不再影响编辑器**。改名「正文字体」；B227 时的临时中转变量已删除。
+ *
+ *    这里**不重测编辑器**是刻意的：--font-body 没有任何 CM6 消费方，
+ *    measureAndKeepScroll 纯属空转。真正要重测的是下面那个代码字体 setter。
+ *
+ *    ⚠️ 注释里**别写别的 setter 名**：`tests/static.ts` 的 `topLevelFnBody` 按
+ *    `indexOf(name)` 取首次出现定位函数体，注释里提一句别人的名字就会让那条
+ *    契约截到本函数的注释里、断言凭空失败。
  */
 function applyFontFamily(family: string): void {
   const root = document.documentElement.style;
   const f = family.trim();
   if (!f) {
-    root.removeProperty("--font-editor");
+    root.removeProperty("--font-body");
   } else {
     // 族名带空格时必须加引号，否则 CSS 解析会当成多个族名
-    root.setProperty("--font-editor", f.includes(" ") ? `"${f}"` : f);
+    root.setProperty("--font-body", f.includes(" ") ? `"${f}"` : f);
   }
-  // 同 applyFontSize：B225 起走 measureAndKeepScroll，别裸 requestMeasure()
-  for (const p of panels.values()) measureAndKeepScroll(p);
 }
 
 /** 编辑器行距：写 :root 上的 --editor-line-height，.cm-content 通过 var() 生效。 */
@@ -5627,10 +5631,13 @@ function applyEditorLineHeight(value: number): void {
 }
 
 /**
- * B227：代码字体 —— 写 :root 上的 --font-code，预览的 `code` / `pre` / 数学占位取它。
+ * B231：代码字体 —— 写 :root 上的 --font-code。消费方两处：
+ * ①编辑器源码区（CM6 那条 `.cm-editor, .cm-scroller` 规则）；
+ * ②预览里的 `code` / `pre` / 数学占位。**凡是代码一律等宽**。
  *
- * 与 `applyFontFamily` 不同的是**不用重测编辑器**：代码字体只落在预览里，CM6 那边的
- * 字体是 --font-editor/--font-body，两条栈互不干扰（这是「正文 / 代码分开设」的前提）。
+ * 与上面那个正文字体 setter 不同的是这一项**要重测编辑器**：源码区吃这个值，
+ * 换字体会改行宽，进而影响折行与视口锚点，所以与字号 / 行距同理走
+ * measureAndKeepScroll。（B227 时它只落在预览、不碰 CM6，才不需要重测。）
  */
 function applyCodeFontFamily(family: string): void {
   const root = document.documentElement.style;
@@ -5640,6 +5647,8 @@ function applyCodeFontFamily(family: string): void {
   } else {
     root.setProperty("--font-code", f.includes(" ") ? `"${f}"` : f);
   }
+  // B231：源码区现在吃这个值，换字体同样会改行宽 → 必须重测并保住视口
+  for (const p of panels.values()) measureAndKeepScroll(p);
 }
 
 /**
@@ -5844,17 +5853,20 @@ async function setTocWidthValue(width: number): Promise<void> {
   showMessage(`大纲宽度 ${sideWidth}px`);
 }
 
-/** 编辑器字体族（设置页；空串 = 内置默认栈）。 */
+/** B231：正文字体族（设置页；只作用于预览模式正文，空串 = 内置思源黑体）。 */
 async function setFontFamily(family: string): Promise<void> {
   applyFontFamily(family);
   if (settings) {
     settings.font_family = family.trim();
     await persistSettings();
   }
-  showMessage(family.trim() ? `编辑器字体 ${family.trim()}` : "编辑器字体：默认");
+  showMessage(family.trim() ? `正文字体 ${family.trim()}` : "正文字体：默认");
 }
 
-/** B227：代码字体（设置页「代码字体」那一栏；空串 = 内嵌 Cascadia Mono）。 */
+/**
+ * B231：代码字体（设置页「代码字体」那一栏；空串 = 内嵌 Cascadia Mono）。
+ * 作用于**编辑器源码区 + 预览里的行内代码/代码块**。
+ */
 async function setCodeFontFamily(family: string): Promise<void> {
   applyCodeFontFamily(family);
   if (settings) {
