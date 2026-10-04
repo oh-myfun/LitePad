@@ -100,6 +100,53 @@ describe("B225：编辑器字体 / 行距必须真的接到 CSS", () => {
     );
   });
 
+  it("字体必须落到 .cm-scroller 上（正文/行号从它继承，.cm-editor 会被截胡）", () => {
+    // 第四层根因：CM6 baseTheme 给 `.cm-scroller` 写了 `font-family: monospace`，
+    // 正文 .cm-content 和行号 .cm-gutterElement 都在它里面 ⇒ 只把字体挂在
+    // .cm-editor 上，文字继承到的仍是 monospace，换什么字体界面都不动。
+    const css = globalCss();
+    const body = cssDecls(
+      ruleBlock(css, ".panel-host .panel-editor .cm-editor .cm-scroller", "font-family"),
+    );
+    expect(body, ".cm-scroller 必须有 font-family 规则（否则正文继承不到 --font-editor）").toMatch(
+      /font-family:\s*var\(--font-editor/,
+    );
+    expect(body, ".cm-scroller 那一份同样要挂 --font-mono 兜底").toMatch(
+      /var\(--font-editor[^;]*\)\s*,\s*var\(--font-mono\)/,
+    );
+  });
+
+  it("CM6 的 .cm-scroller 那条 monospace 不许带 !important（我们靠特异性盖它）", () => {
+    const cm = readFileSync("node_modules/@codemirror/view/dist/index.js", "utf-8");
+    const from = cm.indexOf('".cm-scroller"');
+    const to = cm.indexOf('".cm-content"', from);
+    const scroller = from >= 0 && to > from ? cm.slice(from, to) : "";
+    expect(scroller, "应能截到 CM6 的 .cm-scroller 规则").toBeTruthy();
+    expect(scroller, "CM6 必须在 .cm-scroller 上写 font-family（这是继承截胡的源头）").toMatch(
+      /fontFamily:\s*["']monospace/,
+    );
+    // 反例前置：退化形态＝CM6 哪天给 fontFamily 补上 !important ⇒ 本项目 (0,4,0)
+    // 的特异性就盖不住它，正文会永远锁死 monospace，而**没有任何报错**。
+    expect(
+      scroller,
+      "CM6 的 fontFamily 不许带 !important（带了我们这条覆盖就静默失效）",
+    ).not.toMatch(/fontFamily:\s*["'][^"']*!important/);
+    // 正文与行号确实都挂在 .cm-scroller 里（否则上面那条规则挂给谁都没用）：
+    // 正文 = scrollDOM.appendChild(contentDOM)，行号 = gutter 插件
+    // scrollDOM.insertBefore(gutterDOM, contentDOM) —— 都在 scrollDOM 下。
+    const dom = readFileSync("node_modules/@codemirror/view/dist/index.js", "utf-8");
+    expect(
+      /this\.scrollDOM\.appendChild\(this\.contentDOM\)/.test(dom),
+      "正文必须在 scrollDOM 内（.cm-content 的字体从这里继承）",
+    ).toBe(true);
+    // 反例前置：退化＝行号栏哪天被挪出 scrollDOM（挂到 .cm-editor 下），
+    // 那它继承到的就还是 monospace，换字体只有正文动、行号不动。
+    expect(
+      /scrollDOM\.insertBefore\(this\.dom,\s*view\.contentDOM\)/.test(dom),
+      "行号栏必须插进 scrollDOM（.cm-gutterElement 的字体从这里继承）",
+    ).toBe(true);
+  });
+
   it("--editor-line-height 必须有消费方，行号栏要跟着一起走", () => {
     const css = globalCss();
     const body = cssDecls(ruleBlock(css, ".panel-host .panel-editor .cm-content", "line-height"));

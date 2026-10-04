@@ -3118,12 +3118,29 @@ body.tab-drag-active * {
    与 preview.css 的 `.panel-host .panel-editor .cm-scroller` 重复），本次不动，留待单独清理。 */
 .panel-host .panel-editor .cm-editor {
   height: 100%;
-  /* B225：--font-editor 由 main.ts 的 applyFontFamily 写在 :root 上（空串/缺省
-     时整颗 var 走回落）。
-     末尾那份 var(--font-mono) 是**第二回落**：选中的字体若本机没装，
-     没有它就会掉到浏览器默认的非等宽字体上，而不是内置等宽栈。 */
-  font-family: var(--font-editor, var(--font-mono)), var(--font-mono);
+  /* B225：--font-size 由 main.ts 的 applyFontSize 写在 :root 上。字号是继承属性，
+     而 CM6 的 .cm-scroller 只重设了 font-family 与 line-height、**没重设 font-size**
+     ⇒ 这一条能一路传到正文和行号（字体则被 .cm-scroller 截胡，见下面那条规则）。 */
   font-size: var(--font-size);
+}
+
+/* B225：--font-editor 由 main.ts 的 applyFontFamily 写在 :root 上（空串/缺省时
+   整颗 var 走回落）。末尾那份 var(--font-mono) 是**第二回落**：选中的字体若本机
+   没装，没有它就会掉到浏览器默认的非等宽字体上，而不是内置等宽栈。
+
+   ⚠️ 第四层根因（「换本机装着的字体也没反应」）：**必须同时写 .cm-scroller**，
+   只挂 .cm-editor 传不下去 —— CM6 baseTheme 给 `.cm-scroller` 写了
+   `font-family: monospace`（@codemirror/view dist 里那一句），正文 `.cm-content`
+   与行号 `.cm-gutterElement` 都在它里面 ⇒ 它们继承的是 **.cm-scroller 的
+   monospace**，`.cm-editor` 上的值根本到不了文字上。而 font-size / line-height
+   是继承属性、.cm-scroller 没重设 font-size ⇒ 只有字体会被截胡，症状就是
+   「行距字号都生效、唯独字体死活不变」。
+   本选择器 (0,4,0) 强过 CM6 那条单类 (0,1,0)，且它没写 !important ——
+   所以 CM6 源码侧但凡给 fontFamily 补上 !important（tests/editor-css.test.ts 有
+   反向契约盯着），这个覆盖就会失效。 */
+.panel-host .panel-editor .cm-editor,
+.panel-host .panel-editor .cm-editor .cm-scroller {
+  font-family: var(--font-editor, var(--font-mono)), var(--font-mono);
 }
 
 /* B225：编辑器行距，同样由 main.ts 的 applyEditorLineHeight 写在 :root 上。
