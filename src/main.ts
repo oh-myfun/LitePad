@@ -1391,7 +1391,16 @@ function switchTab(panelId: number, tabId: number): void {
     refreshAll();
     return;
   }
-  if (panel.activeTabId === tabId) return;
+  // ⚠️ B232：早退判据必须看**视图实际显示的标签**（`viewTabId`），不是 `activeTabId`。
+  // 下面 1398 行那句注释已经点明了这件事（「调用方可能已改 activeTabId 而视图仍显示
+  // 旧标签」），但这条早退自己却按 `activeTabId` 判 —— 于是**调用方只要先改了
+  // `activeTabId` 就会必然早退**，而早退发生在换文档**之前**。
+  // 用户报的就是这个：右面板已有 json 时点「打开侧边预览」，调用方把 `activeTabId`
+  // 指向新加的 md 标签再调本函数 ⇒ 早退 ⇒ 标签条显示 md、编辑器里还是 json，
+  // 点「切换到源码」看到的就是 json。补 applyPanelMode 只能改 class、改不了内容。
+  //
+  // `viewTabId` 为 null（视图还没挂载）时不能早退 —— 那正是「该换文档」的状态。
+  if (panel.viewTabId === tabId) return;
   // 旧 tab 快照写回：必须按视图实际显示的实例（viewTabId）寻址。
   // 调用方可能已改 activeTabId 而视图仍显示旧标签——按 activeTabId 回写
   // 会把视图当前内容写进错误的标签（内容串档/被覆写为空白的同源缺陷）。
@@ -5154,10 +5163,12 @@ function openPreviewToSide(panelId: number): void {
     }
     tabs.get(targetId)!.viewMode = "preview";
     if (activePanelId !== rightId) markActivePanel(rightId);
+    // 先落 activeTabId（标签条与状态栏按它显示），再让 switchTab 换文档 ——
+    // 它 B232 起的早退判据是 `viewTabId`（视图实际显示的那份），所以这次调用
+    // **不会**因为「activeTabId 已经是目标」而早退，视图会真的换成新标签那份文档。
     rp.activeTabId = targetId;
-    // switchTab 负责换文档 / 还原位置 / applyPanelMode；若那份本来就是右面板的活动
-    // 标签它会早退，所以下面再补一次 applyPanelMode 保证模式一定落上。
     switchTab(rightId, targetId);
+    // switchTab 早退时不会走到 applyPanelMode，这里补一次（走过正常路径时幂等）。
     applyPanelMode(rp);
     renderPanelTabs(rightId);
     renderPanelOps(rightId);

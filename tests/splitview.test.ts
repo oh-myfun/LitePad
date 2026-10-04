@@ -1371,3 +1371,98 @@ describe("B228 侧边预览开出的那一栏：切换键字形与切换落点�
     );
   });
 });
+
+// B232：右面板**已有别的文档**时，从左面板「打开侧边预览」在右面板新增的那份 md，
+// 点「切换到源码」看到的必须是 **md 的源码**，不能是右面板原先那份（json）的。
+//
+// 真根因＝`switchTab` 的早退判据用错了字段：
+//   `if (panel.activeTabId === tabId) return;`
+// 而**调用方（openPreviewToSide 的 else 分支）会先把 `rp.activeTabId` 设成目标标签**
+// 再调它 ⇒ 判等必然成立 ⇒ 早退 ⇒ 而早退发生在 `view.setState(tab.state)` **之前**
+// ⇒ 标签条按 activeTabId 显示成新标签、编辑器里还装着旧标签的文档。
+// 补 `applyPanelMode` 只能改 class（mode-source / mode-preview），改不了内容。
+//
+// 修法＝早退判据换成 `viewTabId`（**视图实际显示的那份**）。这与 switchTab 下方
+// 原有那句注释口径完全一致（「调用方可能已改 activeTabId 而视图仍显示旧标签」）——
+// 判据本来就该这么写，只是早退那行漏了。
+//
+// 行为侧由 tests/preview-side-existing.test.ts 真的把 main.ts 跑起来验证：
+// 静态契约证明不了「编辑器里装的是哪份文档」。
+describe("B232 侧边预览开在已有文档的右面板：切回源码必须是新那份的文档", () => {
+  const main = readFileSync("src/main.ts", "utf-8");
+  const switchFn = main.match(/function switchTab\([\s\S]*?\n\}/)?.[0] ?? "";
+  const openFn = main.match(/function openPreviewToSide\([\s\S]*?\n\}/)?.[0] ?? "";
+  const elseBranch = openFn.slice(openFn.indexOf("} else {"));
+
+  it("两个函数都要能截取", () => {
+    expect(switchFn, "应能截到 switchTab").not.toBe("");
+    expect(openFn, "应能截到 openPreviewToSide").not.toBe("");
+    expect(elseBranch, "应能截到「右侧已有面板」那个 else 分支").not.toBe("");
+  });
+
+  it("switchTab 的早退判据必须是 viewTabId，不能是 activeTabId", () => {
+    // 反向闸在前：这条是整个修复的支点，改回 activeTabId 就复发
+    expect(
+      switchFn,
+      "早退不许再按 activeTabId 判（调用方先赋值 ⇒ 必然早退 ⇒ 视图不换文档）",
+    ).not.toMatch(/if\s*\(\s*panel\.activeTabId\s*===\s*tabId\s*\)\s*return/);
+    expect(switchFn, "必须按 viewTabId 判：视图已显示目标标签才算早退").toMatch(
+      /if\s*\(\s*panel\.viewTabId\s*===\s*tabId\s*\)\s*return/,
+    );
+    // 早退必须在换文档（setState）之前 —— 判据写对了但挪到 setState 之后就失去意义
+    const guardAt = switchFn.indexOf("panel.viewTabId === tabId");
+    const setAt = switchFn.indexOf("setState(tab.state)");
+    expect(guardAt, "应能找到 viewTabId 早退那一行").toBeGreaterThanOrEqual(0);
+    expect(setAt, "应能找到 setState(tab.state)").toBeGreaterThan(guardAt);
+  });
+
+  it("viewTabId 为 null（视图未挂载）时不得早退 —— 那正是该换文档的状态", () => {
+    // 判等写成 `panel.viewTabId === tabId` 时 null !== tabId 天然不早退；
+    // 这条把「不许退回 `viewTabId ?? activeTabId`」钉住：那会让未挂载时又早退。
+    expect(switchFn, "不许拿 viewTabId ?? activeTabId 回落（null 时会早退）").not.toMatch(
+      /viewTabId\s*\?\?\s*panel\.activeTabId\s*===\s*tabId/,
+    );
+  });
+
+  it("else 分支：先落 activeTabId 再调 switchTab，且仍补一次 applyPanelMode", () => {
+    const assignAt = elseBranch.indexOf("rp.activeTabId = targetId;");
+    const switchAt = elseBranch.indexOf("switchTab(rightId, targetId)");
+    expect(
+      assignAt,
+      "else 分支必须给 rp.activeTabId 赋值（标签条/状态栏按它显示）",
+    ).toBeGreaterThanOrEqual(0);
+    expect(switchAt, "else 分支必须调 switchTab 换文档").toBeGreaterThanOrEqual(0);
+    expect(assignAt, "赋值应排在 switchTab 之前").toBeLessThan(switchAt);
+    // switchTab 早退时走不到 applyPanelMode，外面那次不能少
+    expect(elseBranch, "switchTab 早退时不会走到 applyPanelMode，必须在外面补一次").toContain(
+      "applyPanelMode(rp);",
+    );
+  });
+
+  // ⚠️ 真退化：三条分别退回旧写法，上面每条契约都必须转红。
+  it("反向验证：退回按 activeTabId 早退等旧写法，契约必须抓住", () => {
+    // ① 早退判据退回 activeTabId（B232 的原 bug）
+    const oldGuard = switchFn.replace(
+      "if (panel.viewTabId === tabId) return;",
+      "if (panel.activeTabId === tabId) return;",
+    );
+    expect(oldGuard, "退化①：早退改回 activeTabId").not.toBe(switchFn);
+    expect(oldGuard, "① 反向闸必须抓住").toMatch(/if\s*\(\s*panel\.activeTabId\s*===\s*tabId/);
+    expect(oldGuard, "① 正向闸必须落空").not.toMatch(
+      /panel\.viewTabId\s*===\s*tabId\s*\)\s*return/,
+    );
+
+    // ② 拿 viewTabId ?? activeTabId 回落（未挂载时又早退）
+    const nullish = switchFn.replace(
+      "if (panel.viewTabId === tabId) return;",
+      "if ((panel.viewTabId ?? panel.activeTabId) === tabId) return;",
+    );
+    expect(nullish, "退化②：加 ?? 回落").not.toBe(switchFn);
+    expect(nullish, "② 不得回落").toMatch(/viewTabId\s*\?\?\s*panel\.activeTabId/);
+
+    // ③ else 分支不调 switchTab（只改 id 与 class）⇒ 等于没换文档
+    const noSwitch = elseBranch.replace("    switchTab(rightId, targetId);\n", "");
+    expect(noSwitch, "退化③：完全不调 switchTab").not.toBe(elseBranch);
+    expect(noSwitch, "③ 调用闸必须落空").not.toContain("switchTab(rightId, targetId)");
+  });
+});
