@@ -172,12 +172,18 @@ export const EDITOR_LINE_HEIGHT_OPTIONS = [1.2, 1.5, 1.8, 2.1];
 
 // ---------------------------------------------------------------- B227 字体两栏
 
-/** 字体候选的两小类（用户拍定）：只看等宽 / 看全部。 */
-export type FontKind = "mono" | "all";
+/**
+ * 字体候选的两小类：**等宽** 与 **比例**（非等宽）。
+ *
+ * ⚠️ B236：原先是「全部 / 等宽」——「全部」其实只是「不过滤」，等于把等宽混在正文
+ * 那一栏里。用户裁决改成两档互斥（比例 / 等宽），并且**两栏共用同一个列表**：
+ * 两栏的候选集合完全一样，唯一差别是**默认停在哪一档**（正文 → 比例、代码 → 等宽）。
+ */
+export type FontKind = "mono" | "proportional";
 
 /** 两小类的分段标签（顺序即渲染顺序）。 */
 export const FONT_KIND_LABELS: { kind: FontKind; label: string }[] = [
-  { kind: "all", label: "全部" },
+  { kind: "proportional", label: "比例" },
   { kind: "mono", label: "等宽" },
 ];
 
@@ -186,10 +192,16 @@ export const DEFAULT_BODY_FONT_LABEL = "默认（内嵌思源黑体）";
 export const DEFAULT_CODE_FONT_LABEL = "默认（内嵌 Cascadia Mono）";
 
 /**
- * 某一栏的候选：默认项 + 本机枚举（按 等宽/全部 过滤）。
+ * 某一栏的候选：内嵌默认 + 本机枚举里**当前这一档**的字体。
  *
- * ⚠️ 当前值不在枚举结果里（用户选过、后来把字体卸了）要**照样列在首位**并打
- * 未安装标记 —— 悄悄退回默认值会让人以为设置被重置了，而它其实只是「没装」。
+ * ⚠️ 正文与代码两栏调用的是**同一个函数、同一份枚举**，所以候选集合完全一样；
+ * 差别只在调用方传的 `kind`（默认停哪一档）与 `defaultLabel`（内嵌默认那一项的说法）。
+ *
+ * ⚠️ 当前值不在本档里要分两种情况：
+ *   · **本机没装**（选过、后来卸了）⇒ 照样列出来并打未安装标记 —— 悄悄退回默认值
+ *     会让人以为设置被重置了，而它其实只是「没装」。
+ *   · **装了但不在这一档**（当前是等宽、正切在「比例」档）⇒ 也列出来，但**不打标**
+ *     （它装得好好的，打了标是误导），否则下拉触发器显示不出当前值。
  * ⚠️ 枚举为空（非 Windows / IPC 失败）时退回 B225 那份手抄清单，别把这一栏变空。
  */
 export function fontOptionsFor(
@@ -199,15 +211,18 @@ export function fontOptionsFor(
   defaultLabel: string,
 ): { label: string; value: string }[] {
   if (!systemFonts.length) return fontFamilyOptions();
+  // 两档互斥（B236）：等宽那批归 mono，其余归 proportional。
+  const bucket = systemFonts.filter((f) => (kind === "mono" ? f.is_monospace : !f.is_monospace));
   const out: { label: string; value: string }[] = [{ label: defaultLabel, value: "" }];
   const picked = current.trim();
-  if (picked && !systemFonts.some((f) => f.name === picked)) {
-    out.push({ label: `${picked}${FONT_FAMILY_NO_DIFF_SUFFIX}`, value: picked });
+  if (picked && !bucket.some((f) => f.name === picked)) {
+    const installed = systemFonts.some((f) => f.name === picked);
+    out.push({
+      label: installed ? picked : `${picked}${FONT_FAMILY_NO_DIFF_SUFFIX}`,
+      value: picked,
+    });
   }
-  for (const f of systemFonts) {
-    if (kind === "mono" && !f.is_monospace) continue;
-    out.push({ label: f.name, value: f.name });
-  }
+  for (const f of bucket) out.push({ label: f.name, value: f.name });
   return out;
 }
 
@@ -578,7 +593,7 @@ function numberSelectRow(
 }
 
 /**
- * B227：字体选择行 ＝ 分段小切换（全部 / 等宽）＋ 字体下拉。
+ * B227：字体选择行 ＝ 分段小切换（B236 起是 比例 / 等宽）＋ 字体下拉。
  *
  * 切小类时整块重建下拉（`createDropdown` 没有 setOptions，destroy 后再建一个）：
  * 候选集合变了，触发器上「当前项」那几个字也得跟着重算，不能留着上一栏的。
@@ -721,7 +736,9 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
         (v) => opts.onFontFamily(v),
         sys,
         DEFAULT_BODY_FONT_LABEL,
-        "all",
+        // B236：正文默认停在「比例」档（非等宽）。两栏的候选集合是同一份，
+        // 用户切到「等宽」照样能挑等宽字体 —— 只是默认落点不同。
+        "proportional",
       ),
     );
     body.appendChild(
@@ -732,6 +749,7 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
         (v) => opts.onCodeFontFamily(v),
         sys,
         DEFAULT_CODE_FONT_LABEL,
+        // 代码默认停在「等宽」档（与正文同为一份候选，只是默认落点不同，B236）
         "mono",
       ),
     );

@@ -263,22 +263,26 @@ describe("B225：编辑器字体 / 行距必须真的接到 CSS", () => {
     ).toBeGreaterThan(0);
   });
 
-  it("fontOptionsFor：等宽栏只列等宽、缺装的值打标留在首位、枚举空则退回内置清单", () => {
+  it("fontOptionsFor：两档互斥、缺装的值打标、枚举空则退回内置清单（B236）", () => {
     const sys = [
       { name: "Consolas", is_monospace: true },
       { name: "Cascadia Code", is_monospace: true },
       { name: "Microsoft YaHei UI", is_monospace: false },
     ];
-    // 「全部」：默认项 + 全部枚举
-    const all = fontOptionsFor("all", "", sys, DEFAULT_BODY_FONT_LABEL);
-    expect(all[0], "默认项必须在首位（value 空串 = 回落默认栈）").toEqual({
+    // B236：两档是「比例 / 等宽」，**互斥**（原来「全部」只是不过滤）
+    const prop = fontOptionsFor("proportional", "", sys, DEFAULT_BODY_FONT_LABEL);
+    expect(prop[0], "默认项必须在首位（value 空串 = 回落默认栈）").toEqual({
       label: DEFAULT_BODY_FONT_LABEL,
       value: "",
     });
     expect(
-      all.map((o) => o.value),
-      "全部栏要含非等宽项",
+      prop.map((o) => o.value),
+      "比例档要含非等宽项",
     ).toContain("Microsoft YaHei UI");
+    expect(
+      prop.map((o) => o.value),
+      "比例档不许混进等宽字体",
+    ).not.toContain("Consolas");
     // 「等宽」：默认项 + 只留 is_monospace
     const mono = fontOptionsFor("mono", "", sys, DEFAULT_CODE_FONT_LABEL);
     expect(
@@ -290,13 +294,18 @@ describe("B225：编辑器字体 / 行距必须真的接到 CSS", () => {
       "等宽栏要留系统等宽",
     ).toContain("Consolas");
     // 当前值不在枚举里（选了之后把字体卸了）→ 仍要列出 + 打未安装标记
-    const missing = fontOptionsFor("all", "Sarasa Mono SC", sys, DEFAULT_BODY_FONT_LABEL);
+    const missing = fontOptionsFor("proportional", "Sarasa Mono SC", sys, DEFAULT_BODY_FONT_LABEL);
     expect(missing[1], "缺装的值要顶在默认项之后、且带上未安装标记").toEqual({
       label: `Sarasa Mono SC${FONT_FAMILY_NO_DIFF_SUFFIX}`,
       value: "Sarasa Mono SC",
     });
+    // 装了但不在本档 ⇒ 顶上来但**不打标**（B236：打标是「没装」的意思，不能滥用）
+    const offTab = fontOptionsFor("proportional", "Consolas", sys, DEFAULT_BODY_FONT_LABEL);
+    expect(offTab.find((o) => o.value === "Consolas")?.label, "装着的当前值不该打未安装标记").toBe(
+      "Consolas",
+    );
     // 枚举没到手（非 Windows / IPC 失败）→ 退回内置清单，别把这一栏变空
-    const fallback = fontOptionsFor("all", "", [], DEFAULT_BODY_FONT_LABEL);
+    const fallback = fontOptionsFor("proportional", "", [], DEFAULT_BODY_FONT_LABEL);
     expect(fallback.length, "枚举为空时必须退回 B225 的手抄清单").toBe(FONT_FAMILY_OPTIONS.length);
   });
 
@@ -343,6 +352,25 @@ describe("B227 内嵌字体：@font-face、正文/代码两条栈、两处消费
     // 字体-display 取 block：swap 会在首绘后换字体、行高一跳（B225 的行号栏高度是
     // CM6 按实测行高写死的 px），编辑区会跟着跳。
     expect(fontsCss, "内嵌字体不许用 swap（会引发行高跳动）").not.toContain("font-display: swap");
+  });
+
+  it("B236：内嵌等宽那份要有汉字层（unicode-range 指向思源那份），否则中文全靠回落", () => {
+    // 内嵌 Cascadia Mono **一个汉字字形都没有**（源字体本身不含汉字，子集化切不出
+    // 不存在的字形）⇒ 必须再挂一条同名 @font-face 用 unicode-range 把汉字圈给思源。
+    const blocks = fontsCss.match(/@font-face\s*\{[^}]*\}/g) ?? [];
+    const monoBlocks = blocks.filter((b) => /font-family:\s*"Cascadia Mono"/.test(b));
+    expect(monoBlocks.length, "Cascadia Mono 要有两条 @font-face（ASCII 层 + 汉字层）").toBe(2);
+    const cjk = monoBlocks.find((b) => b.includes("unicode-range"));
+    expect(cjk, "其中一条必须带 unicode-range（汉字层）").toBeTruthy();
+    expect(cjk!, "汉字层复用已内嵌的思源那份，零新增字节").toContain("noto-sans-sc-regular.woff2");
+    // unicode-range 必须覆盖中文最常用的三段：CJK 标点 / 汉字基本区 / 全角形式
+    for (const r of ["U+3000-303F", "U+4E00-9FFF", "U+FF00-FFEF"]) {
+      expect(cjk, `unicode-range 要含 ${r}`).toContain(r);
+    }
+    // ⚠️ 反向闸：不许把 ASCII 也圈进汉字层（那样拉丁字母会变成思源黑体，等宽就没了）。
+    // 必须排在正向断言之后。
+    expect(cjk).not.toContain("U+0000-007F");
+    expect(cjk).not.toContain("U+0020-007E");
   });
 
   it(":root 的正文/代码/界面三条栈，首项都是内嵌那款；--font-mono 不挂内嵌", () => {

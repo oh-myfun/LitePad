@@ -11,6 +11,9 @@ import {
   showSettingsDialog,
   fontOptionsFor,
   type SettingsDialogOptions,
+  DEFAULT_BODY_FONT_LABEL,
+  DEFAULT_CODE_FONT_LABEL,
+  FONT_FAMILY_NO_DIFF_SUFFIX,
 } from "../src/shell/settingsdialog";
 import { DEFAULT_PRESET_ID, type KeymapOverrides } from "../src/shell/keymap";
 import { ruleBlock, cssDecls, stripCssComments, stripLineComments } from "./static";
@@ -413,16 +416,17 @@ describe("B111 设置页：switch 组件 + 快捷键搜索框 Esc", () => {
 // B227 起两栏：B231 调整为「正文字体（**只**预览模式正文）」与
 // 「代码字体（编辑器源码区 + 预览里的行内代码/代码块）」；两栏的候选都来自
 // 本机枚举，并各带一个 全部/等宽 的小切换。
-describe("B231 字体两栏：正文字体 / 代码字体 + 全部·等宽切换", () => {
+describe("B236 字体两栏：正文字体 / 代码字体 + 比例·等宽切换（两栏候选同一份）", () => {
   const SYS = [
     { name: "Consolas", is_monospace: true },
     { name: "Cascadia Code", is_monospace: true },
     { name: "Microsoft YaHei UI", is_monospace: false },
+    { name: "Arial", is_monospace: false },
   ];
   function openWithFonts(): void {
     showSettingsDialog({ ...makeOpts(), systemFonts: () => SYS });
   }
-  /** 该行「全部 / 等宽」小切换里的那颗按钮。 */
+  /** 该行「比例 / 等宽」小切换里的那颗按钮（按**文案**定位）。 */
   function tab(label: string, text: string): HTMLElement {
     const item = [...document.querySelectorAll(".settings-item")].find(
       (r) => r.querySelector(".settings-item-label")?.textContent === label,
@@ -434,33 +438,47 @@ describe("B231 字体两栏：正文字体 / 代码字体 + 全部·等宽切换
     return btn!;
   }
 
-  it("编辑器分类页下两行都在，正文字体那行默认走「全部」", () => {
+  it("两行都在：正文默认停「比例」、代码默认停「等宽」", () => {
     openWithFonts();
     rowControl("正文字体");
     rowControl("代码字体");
-    // 默认项（value 空串 = 回落默认栈）必须在首位
+    // 默认项（value 空串 = 回落内嵌栈）必须在首位
     expect(rowValues("正文字体")[0], "默认项要在首位").toBe("");
     expect(rowValues("代码字体")[0], "默认项要在首位").toBe("");
-    // 「全部」⇒ 非等宽项也在候选里
+    // 正文默认「比例」⇒ 比例字体在、等宽不在
     expect(rowValues("正文字体")).toContain("Microsoft YaHei UI");
-    // 代码字体那行默认落在「等宽」⇒ 非等宽项不出现
-    expect(rowValues("代码字体")).not.toContain("Microsoft YaHei UI");
+    expect(rowValues("正文字体"), "比例档不该混进等宽").not.toContain("Consolas");
+    // 代码默认「等宽」⇒ 等宽在、比例不在
     expect(rowValues("代码字体")).toContain("Consolas");
+    expect(rowValues("代码字体"), "等宽档不该混进比例").not.toContain("Microsoft YaHei UI");
   });
 
-  it("切到「等宽」后非等宽项消失，切回「全部」又回来（两栏互不影响）", () => {
+  it("两栏的候选集合完全一样（只差默认停哪一档 + 内嵌默认那一项的说法）", () => {
+    openWithFonts();
+    // 初始：正文停「比例」、代码停「等宽」⇒ 此刻两栏**不同**（这是「默认落点不同」）
+    expect(rowValues("正文字体")).not.toEqual(rowValues("代码字体"));
+    // 把代码那栏也切到「比例」⇒ 两栏逐项相同（value 层面含空串那一项）
+    tab("代码字体", "比例").click();
+    expect(rowValues("代码字体"), "都切到比例后两栏应逐项相同").toEqual(rowValues("正文字体"));
+    // 再都切到「等宽」⇒ 仍然逐项相同
+    tab("正文字体", "等宽").click();
+    tab("代码字体", "等宽").click();
+    expect(rowValues("正文字体"), "都切到等宽后两栏应逐项相同").toEqual(rowValues("代码字体"));
+    expect(rowValues("正文字体").length, "两栏都得有候选").toBeGreaterThan(1);
+  });
+
+  it("切档只影响自己那一栏，另一栏不跟着变", () => {
     openWithFonts();
     tab("正文字体", "等宽").click();
-    expect(rowValues("正文字体")).not.toContain("Microsoft YaHei UI");
     expect(rowValues("正文字体"), "系统等宽要留下").toContain("Consolas");
-    // 另一栏记住自己那一栏的小类，不跟着变
+    expect(rowValues("正文字体")).not.toContain("Microsoft YaHei UI");
+    // 另一栏记住自己那一档
     expect(rowValues("代码字体")).not.toContain("Microsoft YaHei UI");
 
-    tab("正文字体", "全部").click();
-    expect(rowValues("正文字体"), "切回全部要恢复").toContain("Microsoft YaHei UI");
+    tab("正文字体", "比例").click();
+    expect(rowValues("正文字体"), "切回比例要恢复").toContain("Microsoft YaHei UI");
 
-    // 代码字体那行切「全部」只影响自己
-    tab("代码字体", "全部").click();
+    tab("代码字体", "比例").click();
     expect(rowValues("代码字体")).toContain("Microsoft YaHei UI");
   });
 
@@ -473,9 +491,10 @@ describe("B231 字体两栏：正文字体 / 代码字体 + 全部·等宽切换
       onFontFamily: (v) => seen.push(v),
       onCodeFontFamily: (v) => seenCode.push(v),
     });
-    pickRow("正文字体", "Consolas");
+    // 正文默认停在「比例」档 ⇒ 挑一个比例字体；代码栏挑等宽那个
+    pickRow("正文字体", "Arial");
     pickRow("代码字体", "Consolas");
-    expect(seen, "正文字体要回调 onFontFamily").toEqual(["Consolas"]);
+    expect(seen, "正文字体要回调 onFontFamily").toEqual(["Arial"]);
     expect(seenCode, "代码字体要回调 onCodeFontFamily").toEqual(["Consolas"]);
   });
 });
@@ -489,48 +508,71 @@ describe("B234 字体候选：内嵌默认 + 系统全量（等宽判定已修�
     { name: "Microsoft YaHei UI", is_monospace: false },
   ];
 
-  it("内嵌默认项在首位、系统字体全量跟上（两栏都是）", () => {
-    for (const kind of ["all", "mono"] as const) {
+  it("内嵌默认项在首位，两档互斥（比例档不含等宽、等宽档不含比例）", () => {
+    for (const kind of ["proportional", "mono"] as const) {
       const opts = fontOptionsFor(kind, "", SYS, "默认（内嵌思源黑体）");
       // ⚠️ 反向闸排在正向断言之前：默认项的 value 必须是空串（= 移除变量、回落内嵌栈）
       expect(opts[0].value, `${kind} 栏默认项的 value 应为空串`).toBe("");
       expect(opts[0].label, "默认项要在首位").toContain("内嵌");
-      // 两栏都要有系统等宽字体（Consolas / Cascadia Mono）
-      const names = opts.map((o) => o.value);
-      expect(names, `${kind} 栏要有系统等宽字体`).toContain("Consolas");
-      expect(names, `${kind} 栏要有 Cascadia Mono`).toContain("Cascadia Mono");
     }
-    // 「全部」栏两类都在；「等宽」栏只留等宽 —— 分开断言，别放进同一个循环
-    // （第一版就这么写错：mono 栏没有 Arial 却被断言要含它）
-    const all = fontOptionsFor("all", "", SYS, "默认（内嵌思源黑体）").map((o) => o.value);
-    expect(all, "全部栏要有比例字体").toContain("Arial");
-    expect(all, "全部栏要有 Segoe UI").toContain("Segoe UI");
-    expect(all, "全部栏也要有等宽字体").toContain("Consolas");
+    // B236：两档**互斥**（原来是「全部 / 等宽」，等宽混在全部里）—— 分开断言
+    const prop = fontOptionsFor("proportional", "", SYS, "默认（内嵌思源黑体）").map(
+      (o) => o.value,
+    );
+    expect(prop, "比例档要有比例字体").toContain("Arial");
+    expect(prop, "比例档要有 Segoe UI").toContain("Segoe UI");
+    expect(prop, "比例档不该混进等宽").not.toContain("Consolas");
+    expect(prop, "比例档不该混进等宽").not.toContain("Cascadia Mono");
     const mono = fontOptionsFor("mono", "", SYS, "默认（内嵌思源黑体）").map((o) => o.value);
-    expect(mono, "等宽栏不该有 Arial").not.toContain("Arial");
-    expect(mono, "等宽栏不该有 Segoe UI").not.toContain("Segoe UI");
+    expect(mono, "等宽档要有系统等宽字体").toContain("Consolas");
+    expect(mono, "等宽档要有 Cascadia Mono").toContain("Cascadia Mono");
+    expect(mono, "等宽档不该有 Arial").not.toContain("Arial");
+    expect(mono, "等宽档不该有 Segoe UI").not.toContain("Segoe UI");
+  });
+
+  it("B236：两栏（同档下）的候选逐项相同 —— 只有内嵌默认那一项的说法不同", () => {
+    const body = fontOptionsFor("proportional", "", SYS, DEFAULT_BODY_FONT_LABEL);
+    const code = fontOptionsFor("proportional", "", SYS, DEFAULT_CODE_FONT_LABEL);
+    expect(
+      body.map((o) => o.value),
+      "value 层面必须完全一致",
+    ).toEqual(code.map((o) => o.value));
+    expect(body[0].label, "正文的内嵌默认说法").toBe(DEFAULT_BODY_FONT_LABEL);
+    expect(code[0].label, "代码的内嵌默认说法").toBe(DEFAULT_CODE_FONT_LABEL);
+  });
+
+  it("装了但不在本档的当前值：照样列出，但**不打**未安装标记（它装得好好的）", () => {
+    // 当前值是等宽 Consolas，正切在「比例」档 ⇒ 要列出来（否则下拉显示不出当前值），
+    // 但不能打「本机未安装」——那是误导。
+    const opts = fontOptionsFor("proportional", "Consolas", SYS, "默认（内嵌思源黑体）");
+    const hit = opts.find((o) => o.value === "Consolas");
+    expect(hit, "装着的当前值要照样列出").toBeTruthy();
+    expect(hit!.label, "装着的当前值不该打未安装标记").toBe("Consolas");
   });
 
   it("枚举结果不再有字重变体与 @ 副本（B234 前端侧也要干净）", () => {
     // ⚠️ 这条钉的是**前端不再自己加工** —— 后端已经去了重/去变体，
     // 前端若再拼一次就会把变体放回来。
-    const opts = fontOptionsFor("all", "", SYS, "默认（内嵌思源黑体）");
+    const opts = fontOptionsFor("proportional", "", SYS, "默认（内嵌思源黑体）");
     for (const o of opts) {
       expect(o.label, `候选不该以 @ 开头：${o.label}`).not.toMatch(/^@/);
     }
   });
 
   it("当前值不在枚举里（用户装过后卸了）要列在首位并打未安装标记", () => {
-    const opts = fontOptionsFor("all", "已卸载字体", SYS, "默认（内嵌思源黑体）");
+    const opts = fontOptionsFor("proportional", "已卸载字体", SYS, "默认（内嵌思源黑体）");
     expect(opts[0].value, "默认项仍在首位").toBe("");
     expect(
       opts.some((o) => o.value === "已卸载字体"),
       "卸掉的那个当前值要照样列出来（否则用户以为设置被重置了）",
     ).toBe(true);
+    expect(opts.find((o) => o.value === "已卸载字体")!.label, "真没装才打未安装标记").toContain(
+      FONT_FAMILY_NO_DIFF_SUFFIX,
+    );
   });
 
   it("枚举为空（非 Windows / IPC 失败）要退回手抄清单，不能把这一栏列空", () => {
-    const opts = fontOptionsFor("all", "", [], "默认（内嵌思源黑体）");
+    const opts = fontOptionsFor("proportional", "", [], "默认（内嵌思源黑体）");
     expect(opts.length, "空枚举时要有候选可列").toBeGreaterThan(0);
     expect(opts.map((o) => o.value)).toContain("");
   });

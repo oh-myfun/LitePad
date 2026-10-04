@@ -2197,7 +2197,7 @@ button:focus-visible {
   flex-shrink: 0;
 }
 
-/* B227 字体两栏：分段小切换（全部 / 等宽）＋ 字体下拉。
+/* B227 字体两栏：分段小切换（B236 起是 比例 / 等宽）＋ 字体下拉。
    放在 .settings-item-control 里靠右，与其它设置项的控件列对齐；
    下拉宽度给足 —— 族名最长能到「Microsoft YaHei UI / 新細明體」那一档，
    窄了会被 .dd-label 截断。 */
