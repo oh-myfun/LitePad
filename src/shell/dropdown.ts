@@ -11,6 +11,12 @@
  *     应用菜单「当前项」同一个观感。
  *   · 定位用 `position: fixed` + 视口坐标（和 `.popup-menu` 一致，避免被模态
  *     滚动容器裁切）；下方放不下自动翻到上方。
+ *   · B230：**按上下可用空间动态限高**，且只有选项区滚动、搜索框钉在顶部。
+ *     旧版靠 `.popup-menu` 的 `max-height: calc(100vh - 16px)` 兜着，可列表被限到
+ *     接近整屏高时「翻到上方」的判据（`r.top - 4 - listH > 0`）恒为假 ⇒ 永远向下放、
+ *     超出视口底部被裁掉。选项一多（本机字体动辄几十项）就肉眼可见。
+ *   · B230：`searchable` 时列表顶部带一个搜索框，按子串过滤（label + note 都参与匹配，
+ *     所以「未安装」那类标记也能搜到）；输入即过滤，回车选中高亮项。
  *   · 键盘：↑/↓ 移动高亮（跳过 disabled）、Enter/Space 选中、Esc 关闭并归还焦点；
  *     点击外部关闭。
  *   · 与原生 `<select>` 一致：`change` 仅在**值真正改变**时回调 onPick（重选当前项
@@ -33,6 +39,13 @@ export interface DropdownOptions {
   /** 触发器额外 class（如 keymap 预设的 `keymap-preset`）。 */
   className?: string;
   ariaLabel?: string;
+  /**
+   * B230：列表顶部带搜索框。选项数量大到「翻找」不现实时才开（如本机字体枚举）；
+   * 三五项的小下拉开了反而是噪声。
+   */
+  searchable?: boolean;
+  /** 搜索框占位文案，默认「搜索…」。 */
+  searchPlaceholder?: string;
 }
 
 export interface DropdownHandle {
@@ -42,6 +55,11 @@ export interface DropdownHandle {
   setValue(value: string): void;
   destroy(): void;
 }
+
+/** 选项区最小高度：上下都放不下时，至少给这么高，保证还能滚。 */
+const MIN_LIST_H = 120;
+/** 列表与视口边缘的最小间距。 */
+const VIEWPORT_MARGIN = 8;
 
 export function createDropdown(opts: DropdownOptions): DropdownHandle {
   const root = document.createElement("div");
@@ -59,9 +77,54 @@ export function createDropdown(opts: DropdownOptions): DropdownHandle {
   list.className = "popup-menu dropdown-list";
   list.setAttribute("role", "listbox");
 
+  // B230：searchable 时列表结构是「搜索框 + 可滚动选项区」两层；不可搜索时
+  // 选项直接挂在 list 下（少一层 DOM，菜单类小下拉不受影响）。
+  const searchable = opts.searchable === true;
+  let searchInput: HTMLInputElement | null = null;
+  let optionsBox: HTMLElement;
+  if (searchable) {
+    const searchWrap = document.createElement("div");
+    searchWrap.className = "dropdown-search-wrap";
+    searchInput = document.createElement("input");
+    searchInput.type = "text";
+    searchInput.className = "dropdown-search";
+    searchInput.placeholder = opts.searchPlaceholder ?? "搜索…";
+    searchInput.setAttribute("aria-label", searchInput.placeholder);
+    // 列表内的输入不能触发外层的全局快捷键分发
+    searchInput.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        // 让 ↑/↓ 仍然驱动选项高亮，但**不**把按键吃掉到输入框里
+        e.preventDefault();
+        move(e.key === "ArrowDown" ? 1 : -1);
+      }
+    });
+    searchWrap.appendChild(searchInput);
+    optionsBox = document.createElement("div");
+    optionsBox.className = "dropdown-options";
+    optionsBox.setAttribute("role", "presentation");
+    list.append(searchWrap, optionsBox);
+  } else {
+    optionsBox = list;
+  }
+
   let value = opts.current;
   let open = false;
   let activeIndex = -1;
+  /** 当前搜索词（小写）。空串 = 不过滤。 */
+  let query = "";
+
+  /**
+   * 命中项：搜索词非空时按 label + note 子串过滤（大小写不敏感）。
+   * ⚠️ note 也参与匹配 —— 字体下拉的「（未安装）」标记就挂在 note 上，
+   * 只匹配 label 的话这条提示搜不到。
+   */
+  function matched(): DropdownOption[] {
+    const q = query.trim().toLowerCase();
+    if (!q) return opts.options;
+    return opts.options.filter(
+      (o) => o.label.toLowerCase().includes(q) || (o.note ?? "").toLowerCase().includes(q),
+    );
+  }
 
   function currentLabel(): string {
     return opts.options.find((o) => o.value === value)?.label ?? "";
@@ -79,8 +142,22 @@ export function createDropdown(opts: DropdownOptions): DropdownHandle {
   }
 
   function renderList(): void {
-    list.replaceChildren();
-    opts.options.forEach((o, i) => {
+    // ⚠️ 必须先清空 optionsBox 的旧选项 —— B230 之前选项直接挂在 list 上、
+    // 用 replaceChildren 一次清完；拆出「搜索框 + 选项区」两层后只 replaceChildren
+    // 会连搜索框一起清掉，于是改成手动清 optionsBox。漏了这行就是**逐次过滤越滚越多**
+    // （6 → 13 → 16 项）。
+    optionsBox.querySelectorAll(".dropdown-option, .dropdown-empty").forEach((el) => el.remove());
+    const items = matched();
+    // 无命中时给一句提示，别让用户对着空列表发呆
+    if (items.length === 0 && searchable) {
+      const empty = document.createElement("div");
+      empty.className = "dropdown-empty";
+      empty.textContent = `没有匹配「${query.trim()}」的项`;
+      optionsBox.appendChild(empty);
+      activeIndex = -1;
+      return;
+    }
+    items.forEach((o, i) => {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "dropdown-option";
@@ -111,28 +188,47 @@ export function createDropdown(opts: DropdownOptions): DropdownHandle {
         pick(o.value);
       });
       btn.addEventListener("mousemove", () => setActive(i));
-      list.appendChild(btn);
+      optionsBox.appendChild(btn);
     });
   }
 
   function setActive(i: number): void {
-    const btns = [...list.querySelectorAll<HTMLButtonElement>(".dropdown-option")];
+    const btns = [...optionsBox.querySelectorAll<HTMLButtonElement>(".dropdown-option")];
     if (i < 0 || i >= btns.length) return;
     btns.forEach((b, idx) => b.classList.toggle("dd-active", idx === i));
     activeIndex = i;
     btns[i].scrollIntoView({ block: "nearest" });
   }
 
+  /**
+   * B230：按上下**可用空间**限高，而不是靠 `.popup-menu` 的整屏 max-height 兜。
+   * 旧逻辑（下方放不下且上方放得下 → 整块翻上去）在列表被限到接近整屏高时
+   * 判据恒为假，于是永远向下放、超出视口底部被裁掉。现在两侧各取可用空间、
+   * 取较大者作为 maxHeight，并优先往下放（贴触发器更符合直觉）。
+   */
   function positionList(): void {
     const r = trigger.getBoundingClientRect();
+    const gap = 4;
+    const below = window.innerHeight - r.bottom - gap - VIEWPORT_MARGIN;
+    const above = r.top - gap - VIEWPORT_MARGIN;
+    const maxH = Math.max(MIN_LIST_H, Math.max(below, above));
+    // 视口本身太矮（比 MIN_LIST_H 还小）时不能再撑高，否则又顶出去了
+    const cap = Math.max(MIN_LIST_H, window.innerHeight - VIEWPORT_MARGIN * 2);
+    list.style.maxHeight = `${Math.min(maxH, cap)}px`;
+
     list.style.left = `${r.left}px`;
-    list.style.top = `${r.bottom + 4}px`;
     list.style.minWidth = `${Math.max(r.width, 120)}px`;
-    // 下方放不下（含 4px 间距）且上方放得下 → 翻到上方
-    const listH = list.getBoundingClientRect().height;
-    if (r.bottom + 4 + listH > window.innerHeight && r.top - 4 - listH > 0) {
-      list.style.top = `${r.top - 4 - listH}px`;
+    if (below >= above) {
+      list.style.top = `${r.bottom + gap}px`;
+      list.style.transform = "";
+      return;
     }
+    // 翻到上方：top 设在触发器上沿、整体 translateY(-100%)，底边正好贴住。
+    // ⚠️ 这里**不必**再按 above 单独收一道：只有 above > below 才会翻，
+    // 而此时 maxH = max(MIN_LIST_H, above) 已经等于 above（只有视口比
+    // MIN_LIST_H 还矮时才被 cap 兜住）。两种写法同值，别重复收。
+    list.style.top = `${Math.max(VIEWPORT_MARGIN, r.top - gap)}px`;
+    list.style.transform = "translateY(-100%)";
   }
 
   function openList(): void {
@@ -140,9 +236,15 @@ export function createDropdown(opts: DropdownOptions): DropdownHandle {
     open = true;
     trigger.setAttribute("aria-expanded", "true");
     root.classList.add("open");
+    // 每次展开都从干净状态开始（与原生 select 一致：重新打开不留上次搜索词）
+    query = "";
+    if (searchInput) searchInput.value = "";
+    renderList();
     positionList();
-    const idx = opts.options.findIndex((o) => o.value === value);
+    const items = matched();
+    const idx = items.findIndex((o) => o.value === value);
     setActive(idx >= 0 ? idx : 0);
+    if (searchInput) searchInput.focus();
     document.addEventListener("mousedown", onDocMouseDown, true);
     document.addEventListener("keydown", onKeyDown, true);
   }
@@ -186,34 +288,46 @@ export function createDropdown(opts: DropdownOptions): DropdownHandle {
       trigger.focus();
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
-      const next = nextEnabled(activeIndex + 1);
-      if (next >= 0) setActive(next);
+      move(1);
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      const prev = prevEnabled(activeIndex - 1);
-      if (prev >= 0) setActive(prev);
+      move(-1);
     } else if (e.key === "Enter" || e.key === " ") {
+      // ⚠️ 搜索框正在打字时，Space 必须还能打出空格、Enter 才提交高亮项
+      if (e.target === searchInput && e.key === " ") return;
       e.preventDefault();
-      const btns = [...list.querySelectorAll<HTMLButtonElement>(".dropdown-option")];
+      const btns = [...optionsBox.querySelectorAll<HTMLButtonElement>(".dropdown-option")];
       const cur = btns[activeIndex];
       if (cur && !cur.disabled) pick(cur.dataset.value!);
     }
   }
 
+  /** ↑/↓ 在**当前可见**选项里移动高亮（跳过 disabled）。 */
+  function move(delta: number): void {
+    const next = delta > 0 ? nextEnabled(activeIndex + 1) : prevEnabled(activeIndex - 1);
+    if (next >= 0) setActive(next);
+  }
+
+  // ⚠️ 这两个必须走 matched()（过滤后的列表）而不是 opts.options：
+  // 搜索过滤后按下箭头，索引空间是可见列表的，原实现会跳到看不见的项上。
   function nextEnabled(from: number): number {
-    const n = opts.options.length;
+    const items = matched();
+    const n = items.length;
+    if (n === 0) return -1;
     for (let i = 0; i < n; i++) {
       const idx = (from + i) % n;
-      if (!opts.options[idx].disabled) return idx;
+      if (!items[idx].disabled) return idx;
     }
     return -1;
   }
 
   function prevEnabled(from: number): number {
-    const n = opts.options.length;
+    const items = matched();
+    const n = items.length;
+    if (n === 0) return -1;
     for (let i = 0; i < n; i++) {
-      const idx = (from - i + n) % n;
-      if (!opts.options[idx].disabled) return idx;
+      const idx = (((from - i) % n) + n) % n;
+      if (!items[idx].disabled) return idx;
     }
     return -1;
   }
@@ -222,6 +336,16 @@ export function createDropdown(opts: DropdownOptions): DropdownHandle {
     e.stopPropagation();
     toggle();
   });
+
+  if (searchInput) {
+    // 输入即过滤。重画后高亮要回到第一项，否则 activeIndex 指着旧索引空间。
+    searchInput.addEventListener("input", () => {
+      query = searchInput!.value;
+      renderList();
+      setActive(0);
+      positionList();
+    });
+  }
 
   renderTrigger();
   renderList();

@@ -3465,8 +3465,64 @@ body.tab-drag-active * {
   display: none;
 }
 
+/* B230：展开态改成 flex 纵向列 —— 搜索框钉在顶部固定，**只有选项区滚动**。
+   之前是整块 .popup-menu 自己滚（overflow-y: auto），max-height 接近 100vh 时
+   positionList 的「翻到上方」条件恒为假，列表永远向下放、超出视口底部被裁掉。
+   现在滚动下沉到 .dropdown-options，max-height 由 JS 按上下可用空间动态给。 */
 .dropdown.open .dropdown-list {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  /* 覆盖 .popup-menu 的 overflow-y: auto —— 滚动权交给 .dropdown-options，
+     否则本容器会整体滚动、把搜索框一起卷走。 */
+  overflow: hidden;
+  /* 兜底：JS 定位失败时也不至于顶出视口 */
+  max-height: calc(100vh - 24px);
+}
+
+/* 搜索框：钉在列表顶部，不随选项滚动 */
+.dropdown-search-wrap {
+  flex: 0 0 auto;
+  padding: 2px 2px 6px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dropdown-search {
+  width: 100%;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+  font-family: var(--font-ui);
+}
+
+.dropdown-search:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.dropdown-search::placeholder {
+  color: var(--fg-muted);
+}
+
+/* 选项区：唯一可滚动的一层。min-height:0 是 flex 子项的 B209 同类坑
+   （默认 auto 会被内容顶开，导致父容器不滚）。 */
+.dropdown-options {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 搜索无命中时的空态提示 */
+.dropdown-empty {
+  padding: 10px 9px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  text-align: center;
 }
 
 /* 选项行：标签靠左、note 靠右（与原生 <option> 的「主文本 + 说明」对齐） */

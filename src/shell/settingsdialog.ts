@@ -593,6 +593,10 @@ function fontRow(
       current,
       onPick,
       ariaLabel: options.find((o) => o.value === current)?.label,
+      // B230：本机字体枚举动辄几十项，翻找不现实 ⇒ 开搜索框 + 列表限高滚动。
+      // （其它下拉三五项，不开搜索，免得展开时多一行噪声。）
+      searchable: true,
+      searchPlaceholder: "搜索字体…",
     });
     slot.textContent = "";
     slot.appendChild(dd.root);
