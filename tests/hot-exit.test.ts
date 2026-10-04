@@ -245,8 +245,14 @@ describe("B68 热退出：关窗不询问，下次启动还原未保存内容", 
     expect(body, "必须以 backedUp 逐文档判定").toMatch(
       /filter\(\(d\) => d\.dirty && !d\.backedUp\)/,
     );
-    // 兜底确认框必须还在：备份失败 / 关掉热退出时不能静默丢内容
-    expect(body, "备份没成时必须退回确认框").toContain("未保存的内容将丢失");
+    // 兜底确认框必须还在：备份失败 / 关掉热退出时不能静默丢内容。
+    // ⚠️ B236 起这个框换成自绘的三按钮版（原来咬的是原生 ask() 的文案
+    // 「未保存的内容将丢失」，那句已经不存在了）—— 判据改成「用的是确认框」，
+    // 并且它必须落在**热退出快路径之后**，不能在备份成没成之前就弹。
+    const confirmAt = body.indexOf("showSaveConfirmDialog");
+    const unbackedAt = body.indexOf("const unbacked");
+    expect(confirmAt, "备份没成时必须退回确认框").toBeGreaterThanOrEqual(0);
+    expect(confirmAt, "确认框必须是兜底，不能抢在热退出判定之前").toBeGreaterThan(unbackedAt);
     // 跳过确认框之前必须先把会话写下来，否则重启后没人认领那些副本
     const fast = body.slice(body.indexOf("if (settings?.hot_exit)"));
     expect(fast, "快路径必须先存会话再关窗").toMatch(

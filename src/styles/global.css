@@ -2388,6 +2388,65 @@ button:focus-visible {
   flex-wrap: wrap;
 }
 
+/* ---------- 未保存修改确认框（B236：关标签 / 退出共用） ----------
+   文案抄 VS Code 的 confirmBeforeClose，按钮排布按用户口径「保存 | 不保存 | 取消」
+   （保存在左、为主按钮）；框体尺寸与留白对着 InkNote 的 .modal-sm。 */
+
+.save-confirm-dialog {
+  width: 400px;
+  background: var(--bg-elevated);
+}
+
+.save-confirm-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 12px;
+}
+
+.save-confirm-text {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--fg);
+}
+
+.save-confirm-detail {
+  margin: 0 0 16px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg-muted);
+  /* 退出的 detail 第一行是文件名清单，可能很长 —— 允许折行并保留换行。 */
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.save-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.save-confirm-btn {
+  padding: 5px 16px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--bg);
+  cursor: pointer;
+}
+
+.save-confirm-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+.save-confirm-secondary {
+  background: transparent;
+  color: var(--fg);
+}
+
 /* ---------- 分屏布局 ---------- */
 
 #main-row {

@@ -121,6 +121,7 @@ import {
   type FindHit,
 } from "./shell/findbar";
 import { showExternalConflictDialog, showSaveConflictDialog } from "./shell/conflictdialog";
+import { showSaveConfirmDialog } from "./shell/saveconfirm";
 import { CODICONS, type CodiconName } from "./shell/codicons";
 import { clearTip, initTooltips, setTip } from "./shell/tooltip";
 import { paletteOpen, showCommandPalette } from "./shell/commandpalette";
@@ -1670,11 +1671,12 @@ async function closeTabById(tabId: number): Promise<void> {
   // saveDocCore 本身就是按**指定实例**保存（实例正显示在面板上才从视图写回，
   // 否则用标签快照），并不需要先把待关标签激活。同理也不必切 activePanelId。
   if (doc.dirty && siblings.length === 0) {
-    const save = await ask(`${doc.name} 有未保存的修改，保存后关闭吗？`, {
-      title: "关闭标签",
-      kind: "warning",
-    });
-    if (save) {
+    // B236：VS Code 的 confirmBeforeClose 三选一（保存 / 不保存 / 取消），
+    // 不再是原来那个只有「确定 / 取消」的原生 ask() —— 原来那版没法表达
+    // 「不保存直接关」，用户想放弃改动只能先取消、手动去改文件。
+    const choice = await showSaveConfirmDialog({ title: "关闭标签", names: [doc.name] });
+    if (choice === "cancel") return;
+    if (choice === "save") {
       const ok = await saveDocCore(doc, tab, false);
       if (!ok) return;
     }
@@ -7980,16 +7982,33 @@ async function finishAndDestroy(dirty: Doc[]): Promise<void> {
       }
     }
 
-    // ---- 兜底：确认框（B67 及更早的行为） ----
-    const names = dirty.map((d) => d.name).join("、");
-    const quit = await ask(
-      `${dirty.length} 个文档有未保存的修改（${names}），未保存的内容将丢失。\n确定退出吗？`,
-      { title: "退出 LitePad", kind: "warning" },
-    );
-    if (!quit) {
+    // ---- 兜底：确认框（B67 及更早的行为，B236 起与关标签共用同一个三按钮框） ----
+    // ⚠️ 走到这里时备份已经写过一轮（`flushBackups`），选「保存」仍要真写盘 ——
+    // 热退出的承诺是「下次启动还原」，不是「写回磁盘」，两回事。
+    const choice = await showSaveConfirmDialog({
+      title: "退出 LitePad",
+      names: dirty.map((d) => d.name),
+    });
+    if (choice === "cancel") {
       // 用户取消退出：把刚才为了 flush 而取消的排程还回去（内容还是脏的）
       scheduleBackup();
       return;
+    }
+    if (choice === "save") {
+      // 逐个写盘。任何一个失败/被用户在保存冲突框里取消 ⇒ 整体中止退出，
+      // 否则会出现「一半文档存了、一半随窗口一起没了」这种比全丢更难解释的结果。
+      for (const d of dirty) {
+        const inst =
+          instancesOfDoc(d.tabId).find((t) => t.panelId >= 0) ?? instancesOfDoc(d.tabId)[0];
+        if (!inst) {
+          scheduleBackup();
+          return;
+        }
+        if (!(await saveDocCore(d, inst, false))) {
+          scheduleBackup();
+          return;
+        }
+      }
     }
     try {
       await saveSession(snapshotSession());
