@@ -3543,6 +3543,14 @@ body.tab-drag-active * {
   transform: rotate(225deg);
 }
 
+/* B224：提示框在目标**右侧**（左栏按钮那颗）→ caret 挂在左沿、尖朝左。
+   旋转沿用同一条 45° 一档的序列：45=尖朝下、135=尖朝左、225=尖朝上。
+   水平位置给死在框外半颗（-3px），垂直坐标由 JS 写 style.top —— 目标中心在哪它在哪。 */
+.tooltip[data-placement="right"] > .tooltip-caret {
+  left: -3px;
+  transform: rotate(135deg);
+}
+
 /* VS Code 的 `.monaco-hover.fade-in` 是 100ms linear；同组秒开时 JS 不加这个类，
    所以顺着工具栏滑过去不会一路闪。 */
 .tooltip.fade-in {

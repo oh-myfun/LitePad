@@ -753,3 +753,69 @@ describe("B127 标签 / 关闭按钮的提示对齐 VS Code", () => {
     expect(degraded, "退化后不该再有 compact 规则").not.toMatch(/\.tooltip\.tooltip-compact \{/);
   });
 });
+
+// ---------------------------------------------------------------- B224
+// 左栏按钮（#side-outline）贴着窗口左缘，提示摆在图标**右侧**才是顺着视线的
+// （VS Code activity bar 同款）—— 新增 `right` 方位：气泡垂直居中于目标，
+// caret 挂在框的左沿、尖朝左、对准目标中心。
+describe("B224：left 栏按钮的提示显示在图标右侧（right 方位）", () => {
+  const tip = { width: 120, height: 27 };
+
+  it("纯函数：气泡在目标右侧 + 垂直居中，caretTop 对准目标中心", () => {
+    const g = computeTipGeometry(
+      { left: 0, right: 40, top: 100, bottom: 124 },
+      tip,
+      VIEWPORT,
+      "right",
+    );
+    expect(g.placement).toBe("right");
+    expect(g.x, "目标右缘 40 + 4px 间隙").toBe(44);
+    expect(g.y, "目标中心 112 - 提示框高一半 13.5").toBe(98.5);
+    expect(g.caretTop, "caret 中心（+3px）对准目标中心 112").toBe(10.5);
+  });
+
+  it("纯函数：目标顶到窗口上沿时垂直夹取，caret 仍留在框内", () => {
+    const g = computeTipGeometry(
+      { left: 0, right: 40, top: 0, bottom: 24 },
+      tip,
+      VIEWPORT,
+      "right",
+    );
+    expect(g.y, "垂直居中会越界 → 夹到 EDGE=2").toBe(2);
+    expect(g.caretTop, "caret 随目标中心 12 对准").toBe(7);
+  });
+
+  it("纯函数：右侧放不下时退回默认的下方几何（不硬挤）", () => {
+    // 目标右缘 990 + 4 + 120 > 998 —— 放不下
+    const g = computeTipGeometry(
+      { left: 950, right: 990, top: 100, bottom: 124 },
+      tip,
+      VIEWPORT,
+      "right",
+    );
+    expect(g.placement).toBe("bottom");
+    expect(g.y).toBe(128);
+  });
+
+  it("静态契约：HTML 指明 right 方位、CSS 备好左沿 caret、showFor 会写 style.top", () => {
+    const html = readFileSync("index.html", "utf-8");
+    // 反例在前：没标 right 方位，这颗键的提示就还是从底下弹
+    const btn = html.match(/<button[^>]*id="side-outline"[\s\S]*?<\/button>/)?.[0] ?? "";
+    expect(btn, "side-outline 必须存在").not.toBe("");
+    expect(btn, "提示方位必须标成 right").toContain('data-tip-placement="right"');
+
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const rule = css.match(/\.tooltip\[data-placement="right"\] > \.tooltip-caret \{[^}]*\}/);
+    expect(rule, "right 方位的 caret 规则必须有").toBeTruthy();
+    expect(rule![0], "caret 挂在框的左沿").toContain("left: -3px");
+    expect(rule![0], "旋转序列 45=下 135=左 225=上，尖朝左是 135").toContain("rotate(135deg)");
+
+    const ts = readFileSync("src/shell/tooltip.ts", "utf-8");
+    const show = topLevelFnBody(ts, "function showFor");
+    expect(show, "right 方位要把 caretTop 写进 style.top").toContain(
+      "caretEl!.style.top = `${geo.caretTop}px`",
+    );
+    expect(show, "切回水平方位要清掉残留的 top").toContain('caretEl!.style.top = ""');
+    expect(ts, "right 分支必须先判右侧放不放得下").toContain('preferred === "right"');
+  });
+});

@@ -63,7 +63,7 @@
  * 提示的时序**不再**参考它 —— 秒开已停用，见「有向偏离」第 3 条。
  */
 
-export type TipPlacement = "top" | "bottom";
+export type TipPlacement = "top" | "bottom" | "right";
 
 export interface TipOptions {
   /** 右侧的快捷键，如 `"Ctrl+Shift+P"`；按 `+` 拆成键帽 */
@@ -144,8 +144,14 @@ export interface TipGeometry {
   x: number;
   y: number;
   placement: TipPlacement;
-  /** caret 左边距（相对提示框），由调用方写进 `style.left` */
+  /** caret 左边距（相对提示框），由调用方写进 `style.left`；`right` 方位不用它 */
   caretLeft: number;
+  /**
+   * B224：仅 `right` 方位使用 —— caret 的上边距（相对提示框），写进 `style.top`。
+   * `right` 的 caret 挂在框的**左沿**（水平位置由 CSS 给死 `-3px`），垂直要对准
+   * 目标中心，所以给的是纵坐标而不是横坐标。
+   */
+  caretTop?: number;
 }
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v, lo), hi);
@@ -163,9 +169,33 @@ export function computeTipGeometry(
   preferred: TipPlacement,
 ): TipGeometry {
   const centerX = (target.left + target.right) / 2;
+  const centerY = (target.top + target.bottom) / 2;
+
+  // ⓪ B224：右侧方位 —— 左栏按钮贴着窗口左缘，提示摆在图标右侧才是顺着视线的
+  // （VS Code 的 activity bar 同款）。垂直居中于目标，caret 在框的左沿、对准目标中心。
+  // ⚠️ 右侧放不下时必须把首选方位**落回 "bottom"** 再走下面的旧逻辑 —— 翻转判断只认
+  //    bottom/top，"right" 漏进去会两头都不匹配，placement 挂着 "right" 却按 top 算 y。
+  let pref = preferred;
+  if (preferred === "right") {
+    if (target.right + GAP + tip.width <= viewport.width - EDGE) {
+      const y = clamp(
+        centerY - tip.height / 2,
+        EDGE,
+        Math.max(EDGE, viewport.height - tip.height - EDGE),
+      );
+      // caret 中心对准目标中心，再夹进框内避开圆角（与下面水平方向的 caret 同一套规则）
+      const caretTop = clamp(
+        centerY - y - POINTER,
+        CARET_MARGIN - POINTER,
+        tip.height - CARET_MARGIN - POINTER,
+      );
+      return { x: target.right + GAP, y, placement: "right", caretLeft: 0, caretTop };
+    }
+    pref = "bottom"; // 左栏按钮右边是整个编辑区，实际到不了这一步，仅作兜底
+  }
 
   // ① 垂直：先按首选方位算，越界就翻到另一侧（对应 VS Code 的 adjustVerticalHoverPosition）
-  let placement = preferred;
+  let placement = pref;
   if (placement === "bottom" && target.bottom + GAP + tip.height > viewport.height - EDGE) {
     placement = "top";
   } else if (placement === "top" && target.top - GAP - tip.height < EDGE) {
@@ -377,7 +407,16 @@ function showFor(el: HTMLElement): void {
     l.dataset.placement = geo.placement;
     l.style.left = `${geo.x}px`;
     l.style.top = `${geo.y}px`;
-    caretEl!.style.left = `${geo.caretLeft}px`;
+    if (geo.caretTop !== undefined) {
+      // right 方位：caret 挂在框的左沿（left 由 CSS 的 data-placement 规则给死），
+      // 只有纵坐标随目标走 —— 上一次是水平方位的话要把残留的 left 清掉
+      caretEl!.style.left = "";
+      caretEl!.style.top = `${geo.caretTop}px`;
+    } else {
+      // 水平方位：对称地清掉上一次 right 残留的 top
+      caretEl!.style.left = `${geo.caretLeft}px`;
+      caretEl!.style.top = "";
+    }
   }
   l.style.visibility = "";
 }
