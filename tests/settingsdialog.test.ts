@@ -7,7 +7,11 @@
 // 5) 关闭按钮 / Esc / 点蒙层都能关窗。
 import { describe, it, expect, afterEach } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
-import { showSettingsDialog, type SettingsDialogOptions } from "../src/shell/settingsdialog";
+import {
+  showSettingsDialog,
+  fontOptionsFor,
+  type SettingsDialogOptions,
+} from "../src/shell/settingsdialog";
 import { DEFAULT_PRESET_ID, type KeymapOverrides } from "../src/shell/keymap";
 import { ruleBlock, cssDecls, stripCssComments, stripLineComments } from "./static";
 
@@ -472,6 +476,62 @@ describe("B231 字体两栏：正文字体 / 代码字体 + 全部·等宽切换
     pickRow("代码字体", "Consolas");
     expect(seen, "正文字体要回调 onFontFamily").toEqual(["Consolas"]);
     expect(seenCode, "代码字体要回调 onCodeFontFamily").toEqual(["Consolas"]);
+  });
+});
+
+describe("B234 字体候选：内嵌默认 + 系统全量（等宽判定已修）", () => {
+  const SYS = [
+    { name: "Consolas", is_monospace: true },
+    { name: "Cascadia Mono", is_monospace: true },
+    { name: "Arial", is_monospace: false },
+    { name: "Segoe UI", is_monospace: false },
+    { name: "Microsoft YaHei UI", is_monospace: false },
+  ];
+
+  it("内嵌默认项在首位、系统字体全量跟上（两栏都是）", () => {
+    for (const kind of ["all", "mono"] as const) {
+      const opts = fontOptionsFor(kind, "", SYS, "默认（内嵌思源黑体）");
+      // ⚠️ 反向闸排在正向断言之前：默认项的 value 必须是空串（= 移除变量、回落内嵌栈）
+      expect(opts[0].value, `${kind} 栏默认项的 value 应为空串`).toBe("");
+      expect(opts[0].label, "默认项要在首位").toContain("内嵌");
+      // 两栏都要有系统等宽字体（Consolas / Cascadia Mono）
+      const names = opts.map((o) => o.value);
+      expect(names, `${kind} 栏要有系统等宽字体`).toContain("Consolas");
+      expect(names, `${kind} 栏要有 Cascadia Mono`).toContain("Cascadia Mono");
+    }
+    // 「全部」栏两类都在；「等宽」栏只留等宽 —— 分开断言，别放进同一个循环
+    // （第一版就这么写错：mono 栏没有 Arial 却被断言要含它）
+    const all = fontOptionsFor("all", "", SYS, "默认（内嵌思源黑体）").map((o) => o.value);
+    expect(all, "全部栏要有比例字体").toContain("Arial");
+    expect(all, "全部栏要有 Segoe UI").toContain("Segoe UI");
+    expect(all, "全部栏也要有等宽字体").toContain("Consolas");
+    const mono = fontOptionsFor("mono", "", SYS, "默认（内嵌思源黑体）").map((o) => o.value);
+    expect(mono, "等宽栏不该有 Arial").not.toContain("Arial");
+    expect(mono, "等宽栏不该有 Segoe UI").not.toContain("Segoe UI");
+  });
+
+  it("枚举结果不再有字重变体与 @ 副本（B234 前端侧也要干净）", () => {
+    // ⚠️ 这条钉的是**前端不再自己加工** —— 后端已经去了重/去变体，
+    // 前端若再拼一次就会把变体放回来。
+    const opts = fontOptionsFor("all", "", SYS, "默认（内嵌思源黑体）");
+    for (const o of opts) {
+      expect(o.label, `候选不该以 @ 开头：${o.label}`).not.toMatch(/^@/);
+    }
+  });
+
+  it("当前值不在枚举里（用户装过后卸了）要列在首位并打未安装标记", () => {
+    const opts = fontOptionsFor("all", "已卸载字体", SYS, "默认（内嵌思源黑体）");
+    expect(opts[0].value, "默认项仍在首位").toBe("");
+    expect(
+      opts.some((o) => o.value === "已卸载字体"),
+      "卸掉的那个当前值要照样列出来（否则用户以为设置被重置了）",
+    ).toBe(true);
+  });
+
+  it("枚举为空（非 Windows / IPC 失败）要退回手抄清单，不能把这一栏列空", () => {
+    const opts = fontOptionsFor("all", "", [], "默认（内嵌思源黑体）");
+    expect(opts.length, "空枚举时要有候选可列").toBeGreaterThan(0);
+    expect(opts.map((o) => o.value)).toContain("");
   });
 });
 
