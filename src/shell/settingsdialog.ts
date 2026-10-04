@@ -55,16 +55,27 @@ export interface SettingsDialogOptions {
   keymap: KeymapDialogOptions;
 }
 
+/** 「本机没装」候选的标注后缀（选了会静默回落到内置等宽栈，看着像没反应）。 */
+export const FONT_FAMILY_NO_DIFF_SUFFIX = "（本机未安装，会回落默认）";
+
+/** 字体探测用的基线名，取一个必然不存在的字体，别改成一个真名。 */
+const PROBE_BOGUS_FONT = "__lite_pad_no_such_font__";
+
 /**
  * 编辑器等宽字体候选（第一个是「默认」占位，value 为空串）。
  *
  * B225 扩充成三组：系统自带（Windows 一定在）→ 常见开发者字体 → 中文等宽。
- * ⚠️ 后两组**本机未必装了**，所以 `global.css` 里 `.editor-host .cm-editor` 的
- * `font-family` 在 `var(--font-editor, …)` 之后**还挂了一份** `var(--font-mono)`
- * 作第二回落 —— 缺字体时掉回内置等宽栈，而不是浏览器的默认非等宽字体。
+ * ⚠️ 后两组**本机未必装了**，所以 `global.css` 里 `.panel-host .panel-editor
+ * .cm-editor` 的 `font-family` 在 `var(--font-editor, …)` 之后**还挂了一份**
+ * `var(--font-mono)` 作第二回落 —— 缺字体时掉回内置等宽栈，而不是浏览器的默认
+ * 非等宽字体。但代价是**选了也看不出变化**（回落到的正是默认外观），用户就会
+ * 反复报「改了没反应」；`fontFamilyOptions()` 负责把这类候选标出来。
  */
 export const FONT_FAMILY_OPTIONS: { label: string; value: string }[] = [
   { label: "默认（Cascadia Code / Consolas…）", value: "" },
+  // ⚠️ 五项系统自带的排在前面（B225 二次修订）：这台机器上真正装着的等宽字体只有
+  // 它们，选到没装的那批**不会报错**，而是静默回落到内置等宽栈 —— 观感和默认一模
+  // 一样。先把看得见效果的排上来，没用的挪到后面并打标（`fontFamilyOptions`）。
   { label: "Cascadia Code", value: "Cascadia Code" },
   { label: "Cascadia Mono", value: "Cascadia Mono" },
   { label: "Consolas", value: "Consolas" },
@@ -82,6 +93,59 @@ export const FONT_FAMILY_OPTIONS: { label: string; value: string }[] = [
   { label: "更纱黑体 Sarasa Mono SC", value: "Sarasa Mono SC" },
   { label: "霞鹜文楷 LXGW WenKai Mono", value: "LXGW WenKai Mono" },
 ];
+
+/**
+ * 该候选字体本机**装没装**（headless 探针实测口径）。
+ *
+ * 做法：把 `"X", <必然不存在的名>` 与 `<必然不存在的名>` 画同一串字符，逐像素比
+ * alpha。两边一样只有一个解释 —— X 没被用上，也就是本机没装、直接落到默认字体。
+ *
+ * ⚠️ 先比像素，别用 `document.fonts.check()`：它对系统字体**恒返回 true**（实测
+ * 10 款全 true，含没装的 JetBrains Mono / Fira / Sarasa / LXGW），判不出装没装。
+ * ⚠️ 也**不要**拿 `<默认等宽栈>` 当基线去比「选了有没有差别」：实测本机上 Cascadia
+ * Code 与 Cascadia Mono 在 canvas 里逐像素同形，那写法会把装着的 Cascadia Mono
+ * 误判成「选了没差别」，标注就冤枉了好字体。基线只留一个不存在的名，判据唯一。
+ * 判不出来（拿不到 2d 上下文 / 抛异常）一律**当装了**，宁可不标也不误标。
+ */
+function isFontInstalled(family: string): boolean {
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = 128;
+    canvas.height = 48;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return true;
+    const sample = "lLiL0OQMW@#8";
+    const draw = (font: string): Uint8ClampedArray => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.font = `36px ${font}`;
+      ctx.fillText(sample, 2, 6);
+      return ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    };
+    const withFont = draw(`"${family}", ${PROBE_BOGUS_FONT}`);
+    const baseline = draw(PROBE_BOGUS_FONT);
+    for (let i = 3; i < withFont.length; i += 4) {
+      if (withFont[i] !== baseline[i]) return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * 带本机可用性标注的编辑器字体候选（B225 二次修订）。
+ *
+ * 本机没装的那几项加 `FONT_FAMILY_NO_DIFF_SUFFIX` —— 它们**仍然可选**（用户自己
+ * 装上字体后立刻就能用），只是先把「选了会静默回落、看着像没反应」说在前面，
+ * 免得每次都当成 bug 报回来。
+ */
+export function fontFamilyOptions(): { label: string; value: string }[] {
+  return FONT_FAMILY_OPTIONS.map((o) =>
+    o.value.trim() && !isFontInstalled(o.value)
+      ? { label: `${o.label}${FONT_FAMILY_NO_DIFF_SUFFIX}`, value: o.value }
+      : o,
+  );
+}
 
 /** 编辑器行距候选（倍数）。 */
 export const EDITOR_LINE_HEIGHT_OPTIONS = [1.2, 1.5, 1.8, 2.1];
@@ -468,8 +532,12 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
     );
   } else if (id === "editor") {
     body.appendChild(
-      selectRow("编辑器字体", "", FONT_FAMILY_OPTIONS, opts.fontFamily(), (v) =>
-        opts.onFontFamily(v),
+      selectRow(
+        "编辑器字体",
+        "本机没装的会标「未安装」，选了静默回落到内置等宽栈（看着像没反应）。",
+        fontFamilyOptions(),
+        opts.fontFamily(),
+        (v) => opts.onFontFamily(v),
       ),
     );
     body.appendChild(

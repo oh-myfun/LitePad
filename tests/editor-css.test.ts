@@ -2,7 +2,11 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { ruleBlock, cssDecls, stripLineComments, topLevelFnBody } from "./static";
-import { FONT_FAMILY_OPTIONS } from "../src/shell/settingsdialog";
+import {
+  FONT_FAMILY_NO_DIFF_SUFFIX,
+  FONT_FAMILY_OPTIONS,
+  fontFamilyOptions,
+} from "../src/shell/settingsdialog";
 
 describe("编辑器 DOM / CSS 静态契约", () => {
   it("编辑器必须可滚动：.panel-editor 须 min-height:0 且 cm-scroller 双轴 overflow（回归：源码无法滚动）", () => {
@@ -158,5 +162,55 @@ describe("B225：编辑器字体 / 行距必须真的接到 CSS", () => {
       values.some((v) => v.includes("LXGW")),
       "应含霞鹜文楷",
     ).toBe(true);
+  });
+
+  it("本机装得到的字体必须排在候选前列（先给看得见效果的）", () => {
+    // 退化形态：把没装的那批（JetBrains Mono 等）挪到最前 —— 也就是 B225 修之前
+    // 的排法，用户从头往下点、点到没装的那几项，观感就是「改了没反应」。
+    // 这五项是 Windows 自带的等宽字体，任何 Win10/11 都装得上。
+    const installed = [
+      "Cascadia Code",
+      "Cascadia Mono",
+      "Consolas",
+      "Lucida Console",
+      "Courier New",
+    ];
+    const values = FONT_FAMILY_OPTIONS.map((o) => o.value).slice(1);
+    expect(values.slice(0, 5), "前五项必须全部是系统自带的等宽字体").toEqual(installed);
+    for (const name of installed) {
+      expect(values.slice(0, 6), `${name} 是系统自带，必须留在前六项里`).toContain(name);
+    }
+  });
+
+  it("未安装的字体候选要打标说明（否则用户当成「改了没反应」报回来）", () => {
+    // jsdom 里 canvas 拿不到 2d 上下文，isFontInstalled 一律判「装了」⇒ 标注行为
+    // 只能在真浏览器里验（headless 探针），这里钉的是**接线**：编辑器分类页必须走
+    // fontFamilyOptions() 而不是直接用静态清单。
+    const src = stripLineComments(readFileSync("src/shell/settingsdialog.ts", "utf-8"));
+    const page = src.match(/else if \(id === "editor"\) \{([\s\S]*?)\n {2}\} else if/)?.[1] ?? "";
+    expect(page, "应能截到编辑器分类页").toBeTruthy();
+    expect(page, "编辑器字体行必须走 fontFamilyOptions() 打标").toContain("fontFamilyOptions()");
+    expect(page, "不能退回未打标的静态清单").not.toContain("FONT_FAMILY_OPTIONS");
+    expect(
+      FONT_FAMILY_NO_DIFF_SUFFIX.trim().length,
+      "打标文案不能是空串（等于没标）",
+    ).toBeGreaterThan(0);
+  });
+
+  it("canvas 判不出来时必须放行全部候选（宁可不标，也不误杀装着的字体）", () => {
+    // 显式把 getContext 打桩返回 null（jsdom 不装 canvas 包时它本来就返回 null，
+    // 但会往控制台刷 16 行 Not implemented —— 打桩是为了把「判不出来」摆到台面上）
+    const original = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = () => null;
+    try {
+      const marked = fontFamilyOptions();
+      expect(marked.length, "候选数量必须保留").toBe(FONT_FAMILY_OPTIONS.length);
+      for (let i = 0; i < FONT_FAMILY_OPTIONS.length; i++) {
+        expect(marked[i].value, `第 ${i} 项的 value 不该动`).toBe(FONT_FAMILY_OPTIONS[i].value);
+        expect(marked[i].label, `第 ${i} 项不该被误标`).toBe(FONT_FAMILY_OPTIONS[i].label);
+      }
+    } finally {
+      HTMLCanvasElement.prototype.getContext = original;
+    }
   });
 });
