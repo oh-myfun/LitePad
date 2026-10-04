@@ -1,0 +1,27 @@
+/* B227：应用**内嵌**的两款默认字体（编辑器等宽 / 预览与界面非等宽）。
+
+   以前这两条栈里的首选项全靠本机装没装（Cascadia Mono / 思源黑体），换台机器就变样；
+   现在把子集化产物随应用走，默认观感与字宽在任何 Windows 上都一致。
+
+   ⚠️ `font-display` 取 `block` **不取 `swap`**：编辑器挂载时 CM6 会按**实测行高**把行号
+   栏高度写成 px（B225），swap 会让首绘之后才换字体、行高一跳，视口锚点
+   （recordScroll / pinScrollTop）跟着漂。block 的不可见期只到字体就绪为止，
+   等宽那份 65KB、非等宽那份 556KB，都是小文件，等得起。
+   ⚠️ 家族名刻意与系统同名（"Cascadia Mono" / "Noto Sans SC"）：命中 `@font-face` 时
+   浏览器优先用这里的内嵌文件，于是「内嵌」和「本机装了同名字体」走同一条栈，不会分叉。 */
+
+@font-face {
+  font-family: "Cascadia Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("../assets/fonts/cascadia-mono-regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Noto Sans SC";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("../assets/fonts/noto-sans-sc-regular.woff2") format("woff2");
+}

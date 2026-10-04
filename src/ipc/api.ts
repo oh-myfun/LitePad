@@ -93,6 +93,8 @@ export interface Settings {
   font_size: number;
   /** 编辑器等宽字体族名；空串 = 用内置默认栈（Cascadia Code / Consolas…） */
   font_family: string;
+  /** B227：代码字体族名（预览的 code/pre）；空串 = 用内嵌 Cascadia Mono */
+  code_font_family: string;
   /** 编辑器行距（1.0–2.5，默认 1.5） */
   editor_line_height: number;
   word_wrap: boolean;
@@ -247,6 +249,21 @@ export function listEncodings(): Promise<EncodingItem[]> {
 
 export function listEols(): Promise<string[]> {
   return invoke<string[]>("list_eols");
+}
+
+/**
+ * 本机字体清单（B227）：Rust 侧 `EnumFontFamiliesExW` 枚举的真实结果。
+ *
+ * ⚠️ 枚举类字段一律 snake_case（`FontItem` 没加 `rename_all`），与项目其余命令
+ *    负载口径一致；改 Rust 那边字段名要同步这里。
+ */
+export interface FontItem {
+  name: string;
+  is_monospace: boolean;
+}
+
+export function listFonts(): Promise<FontItem[]> {
+  return invoke<FontItem[]>("list_fonts");
 }
 
 export function loadSettings(): Promise<Settings> {

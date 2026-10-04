@@ -1291,3 +1291,83 @@ describe("B224：标签区右侧的 Markdown 操作键", () => {
     expect(main, "预览落定后要刷 ops").toMatch(/renderPanelOps\(rightId\);/);
   });
 });
+
+// B228：开侧边预览之后，那颗切换键必须**已经**是「切换到源码」，而且点它切的是
+// **它自己那一栏的标签**的文档。三个症状同源：
+//   ① 字形停在「打开侧边之前」；② 新预览标签没被激活；③ 点切换切成了别的标签的文档。
+// 根因有两处：ops 的字形/归属**只在 renderPanelOps 里算一次**，而 openPreviewToSide 是
+// 「先 rebuildLayout（那时标签还是 source）→ 后置 preview」，中间没人再刷；回调那边又
+// 把切换落点交给了全局活动面板（`markActivePanel(panelId)` + `toggleViewMode()` 无参）。
+describe("B228 侧边预览开出的那一栏：切换键字形与切换落点都跟着那一栏走", () => {
+  const main = readFileSync("src/main.ts", "utf-8");
+  const body = (anchor: string, src = main): string =>
+    src.match(new RegExp(anchor + "[\\s\\S]*?\\n\\}"))?.[0] ?? "";
+
+  it("视图模式落到 DOM 的唯一出口 applyPanelMode 必须刷操作区", () => {
+    const fn = body("function applyPanelMode\\(");
+    expect(fn, "applyPanelMode 必须还在").toBeTruthy();
+    expect(fn, "出口不刷 ops ⇒ 切换键字形停在打开侧边之前（用户报的那条）").toContain(
+      "renderPanelOps(panel.panelId);",
+    );
+  });
+
+  it("切换回调不许再把落点交给全局活动面板", () => {
+    const cb = main.match(/onTogglePreview:[\s\S]*?\n {4}\},/)?.[0] ?? "";
+    expect(cb, "onTogglePreview 回调必须还在").toBeTruthy();
+    // 反例排在前面：先证明「不再 markActivePanel」，再验正向写法
+    expect(cb, "不许再 markActivePanel —— 那步把落点交给了全局活动态").not.toContain(
+      "markActivePanel",
+    );
+    expect(cb, "必须取这颗键自己那一栏的标签").toMatch(/tabs\.get\(own\.activeTabId\)/);
+    expect(cb, "必须带标签调 toggleViewMode").toMatch(/toggleViewMode\(ownTab\)/);
+  });
+
+  it("toggleViewMode 的落点必须是「这份标签所在的面板」", () => {
+    const fn = body("function toggleViewMode\\(");
+    expect(fn, "toggleViewMode 必须还在").toBeTruthy();
+    expect(fn, "不许拿全局活动面板当落点（就是它把切换送去了别的标签）").not.toContain(
+      "activePanel()",
+    );
+    expect(fn, "要能从标签反查它自己的面板").toMatch(/getPanel\(tab\.panelId\)/);
+    expect(fn, "签名要允许指定要切哪一份").toMatch(/function toggleViewMode\(target\?: Tab\)/);
+  });
+
+  it("侧边预览开出的那一栏要显式激活", () => {
+    const fn = body("function openPreviewToSide\\(");
+    expect(fn, "openPreviewToSide 必须还在").toBeTruthy();
+    expect(
+      fn,
+      "新开的那份必须被标成活动面板（用户报「预览分屏应该激活新打开的预览标签」）",
+    ).toContain("markActivePanel(np.panelId);");
+  });
+
+  // ⚠️ 真退化：三条分别退回旧写法，上面每条契约都必须转红（证明它们不是恒真）。
+  it("反向验证：把三处改回旧写法，契约必须抓住", () => {
+    const noOps = main.replace("  renderPanelOps(panel.panelId);\n", "");
+    expect(noOps, "退化①：applyPanelMode 不刷 ops").not.toBe(main);
+    expect(body("function applyPanelMode\\(", noOps), "① 字形闸必须落空").not.toContain(
+      "renderPanelOps(panel.panelId);",
+    );
+
+    const greedy = main.replace(
+      /toggleViewMode\(ownTab\);/,
+      "if (own.panelId !== activePanelId) markActivePanel(own.panelId);\n      toggleViewMode();",
+    );
+    expect(greedy, "退化②：回调又去 markActivePanel + 无参 toggle").not.toBe(main);
+    const cb2 = greedy.match(/onTogglePreview:[\s\S]*?\n {4}\},/)?.[0] ?? "";
+    expect(cb2, "② 落点闸必须落空").toContain("markActivePanel");
+    expect(body("function toggleViewMode\\(", greedy), "② 签名闸也必须落空").not.toContain(
+      "activePanel()",
+    );
+
+    // ③ 落点退回「全局活动面板」：把按标签反查换成取活动面板
+    const greedyPanel = main.replace(
+      "getPanel(tab.panelId)",
+      "panels.get(activePanelId) || undefined",
+    );
+    expect(greedyPanel, "退化③：落点改回全局活动面板").not.toBe(main);
+    expect(body("function toggleViewMode\\(", greedyPanel), "③ 反查面板闸必须落空").not.toContain(
+      "getPanel(tab.panelId)",
+    );
+  });
+});

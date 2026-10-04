@@ -13,7 +13,7 @@ use tauri::State;
 
 use crate::backup;
 use crate::core::{
-    atomic_write, codec, doc, eol,
+    atomic_write, codec, doc, eol, fonts,
     logging::{self, Level},
 };
 use crate::session;
@@ -204,6 +204,15 @@ pub fn push_pending_files(paths: Vec<String>) {
 pub fn take_pending_files() -> Vec<String> {
     let mut q = PENDING_OPEN.lock().unwrap_or_else(|e| e.into_inner());
     std::mem::take(&mut *q)
+}
+
+/// 本机字体清单（B227）：设置页「编辑器字体 / 代码字体」两栏的候选来源。
+///
+/// 等宽的排在前面（`core::fonts` 负责去重与排序），前端按 `is_monospace` 分栏。
+/// 枚举只读元数据、结果缓存在调用侧，一般只在打开设置页时调一次。
+#[tauri::command]
+pub fn list_fonts() -> Vec<fonts::FontItem> {
+    fonts::list_fonts()
 }
 
 /// 把启动命令行里的关联文档塞进待打开队列（接受参数，便于单测）。

@@ -230,6 +230,7 @@ fn main() {
             commands::export_file,
             commands::save_paste_image,
             commands::take_pending_files,
+            commands::list_fonts,
             commands::reveal_in_folder,
             windows::window_payload,
             windows::open_satellite_window,

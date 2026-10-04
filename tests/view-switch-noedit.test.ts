@@ -198,7 +198,8 @@ describe("非编辑操作不得改动文件（静态契约）", () => {
       "if (!suppressDirty) {\n    scheduleAutosave();",
     );
     // ③ 切换视图隐藏/恢复编辑器时 CM6 可能产生事务——整个切换过程抑制置脏
-    const toggle = src.match(/function toggleViewMode\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+    // ⚠️ B228：签名多了 target 参数（切换落点改成「这份标签所在的面板」），锚点只认函数名
+    const toggle = src.match(/function toggleViewMode\([\s\S]*?\n\}/)?.[0] ?? "";
     expect(toggle, "切换视图必须抑制置脏").toContain("suppressDirty = true;");
   });
 });

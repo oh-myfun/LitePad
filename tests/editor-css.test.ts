@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { ruleBlock, cssDecls, stripLineComments, topLevelFnBody } from "./static";
 import {
+  DEFAULT_BODY_FONT_LABEL,
+  DEFAULT_CODE_FONT_LABEL,
   FONT_FAMILY_NO_DIFF_SUFFIX,
   FONT_FAMILY_OPTIONS,
   fontFamilyOptions,
+  fontOptionsFor,
 } from "../src/shell/settingsdialog";
 
 describe("编辑器 DOM / CSS 静态契约", () => {
@@ -229,19 +232,63 @@ describe("B225：编辑器字体 / 行距必须真的接到 CSS", () => {
     }
   });
 
-  it("未安装的字体候选要打标说明（否则用户当成「改了没反应」报回来）", () => {
-    // jsdom 里 canvas 拿不到 2d 上下文，isFontInstalled 一律判「装了」⇒ 标注行为
-    // 只能在真浏览器里验（headless 探针），这里钉的是**接线**：编辑器分类页必须走
-    // fontFamilyOptions() 而不是直接用静态清单。
+  it("字体两栏（B227）：候选走本机枚举，未安装的值照样列出并打标", () => {
+    // B227 起候选来自 Rust `list_fonts` 的**本机枚举**（用户拍定：其余字体动态列出），
+    // 「本机没装」的标注挪进 `fontOptionsFor`：枚举结果里没有、但当前正选着的那个值
+    // 仍要列在首位并打标 —— 悄悄退回默认值会让人以为设置被重置了。
+    // ⚠️ jsdom 里 canvas 拿不到 2d 上下文，isFontInstalled 一律判「装了」，
+    // 像素判据只能上真浏览器（headless 探针），这里钉的是**接线 + 纯函数行为**。
     const src = stripLineComments(readFileSync("src/shell/settingsdialog.ts", "utf-8"));
     const page = src.match(/else if \(id === "editor"\) \{([\s\S]*?)\n {2}\} else if/)?.[1] ?? "";
     expect(page, "应能截到编辑器分类页").toBeTruthy();
-    expect(page, "编辑器字体行必须走 fontFamilyOptions() 打标").toContain("fontFamilyOptions()");
+    // 反例在前：不能退回那份未打标的手抄清单
     expect(page, "不能退回未打标的静态清单").not.toContain("FONT_FAMILY_OPTIONS");
+    expect(page, "编辑器字体那一行要走动态字体选择器").toMatch(/fontRow\(\s*"编辑器字体"/);
+    expect(page, "代码字体要单列一行（正文 / 代码分开设，对齐 InkNote）").toMatch(
+      /fontRow\(\s*"代码字体"/,
+    );
+    expect(page, "两栏都要把本机枚举喂进去").toContain("opts.systemFonts()");
     expect(
       FONT_FAMILY_NO_DIFF_SUFFIX.trim().length,
       "打标文案不能是空串（等于没标）",
     ).toBeGreaterThan(0);
+  });
+
+  it("fontOptionsFor：等宽栏只列等宽、缺装的值打标留在首位、枚举空则退回内置清单", () => {
+    const sys = [
+      { name: "Consolas", is_monospace: true },
+      { name: "Cascadia Code", is_monospace: true },
+      { name: "Microsoft YaHei UI", is_monospace: false },
+    ];
+    // 「全部」：默认项 + 全部枚举
+    const all = fontOptionsFor("all", "", sys, DEFAULT_BODY_FONT_LABEL);
+    expect(all[0], "默认项必须在首位（value 空串 = 回落默认栈）").toEqual({
+      label: DEFAULT_BODY_FONT_LABEL,
+      value: "",
+    });
+    expect(
+      all.map((o) => o.value),
+      "全部栏要含非等宽项",
+    ).toContain("Microsoft YaHei UI");
+    // 「等宽」：默认项 + 只留 is_monospace
+    const mono = fontOptionsFor("mono", "", sys, DEFAULT_CODE_FONT_LABEL);
+    expect(
+      mono.map((o) => o.value),
+      "等宽栏不许混进非等宽字体",
+    ).not.toContain("Microsoft YaHei UI");
+    expect(
+      mono.map((o) => o.value),
+      "等宽栏要留系统等宽",
+    ).toContain("Consolas");
+    // 当前值不在枚举里（选了之后把字体卸了）→ 仍要列出 + 打未安装标记
+    const missing = fontOptionsFor("all", "Sarasa Mono SC", sys, DEFAULT_BODY_FONT_LABEL);
+    expect(missing[1], "缺装的值要顶在默认项之后、且带上未安装标记").toEqual({
+      label: `Sarasa Mono SC${FONT_FAMILY_NO_DIFF_SUFFIX}`,
+      value: "Sarasa Mono SC",
+    });
+    // 枚举没到手（非 Windows / IPC 失败）→ 退回内置清单，别把这一栏变空
+    const fallback = fontOptionsFor("all", "", [], DEFAULT_BODY_FONT_LABEL);
+    expect(fallback.length, "枚举为空时必须退回 B225 的手抄清单").toBe(FONT_FAMILY_OPTIONS.length);
   });
 
   it("canvas 判不出来时必须放行全部候选（宁可不标，也不误杀装着的字体）", () => {
@@ -259,5 +306,75 @@ describe("B225：编辑器字体 / 行距必须真的接到 CSS", () => {
     } finally {
       HTMLCanvasElement.prototype.getContext = original;
     }
+  });
+});
+
+// B227：默认字体**内嵌**在应用里（不靠本机装没装），且「正文 / 代码」分成两条栈。
+// 三份契约各自盯一个消费点：@font-face 声明、:root 的栈、CM6 与预览的取值。
+describe("B227 内嵌字体：@font-face、正文/代码两条栈、两处消费点", () => {
+  const fontsCss = readFileSync("src/styles/fonts.css", "utf-8");
+  const global = readFileSync("src/styles/global.css", "utf-8");
+  const preview = readFileSync("src/styles/preview.css", "utf-8");
+
+  it("两款内嵌字体都要有 @font-face 声明，且指向真实存在的 woff2", () => {
+    for (const [family, file] of [
+      ["Cascadia Mono", "cascadia-mono-regular.woff2"],
+      ["Noto Sans SC", "noto-sans-sc-regular.woff2"],
+    ]) {
+      const block =
+        fontsCss.match(new RegExp(`@font-face\\s*\\{[^}]*${family}[^}]*\\}`))?.[0] ?? "";
+      expect(block, `${family} 必须有 @font-face 块`).toBeTruthy();
+      expect(block, `${family} 的 src 必须指向子集化产物`).toContain(file);
+      expect(block, `${family} 走 woff2 格式声明`).toContain('format("woff2")');
+    }
+    // 产物文件必须真在仓里（子集化脚本漏跑就会只剩一条 @font-face 指向空气）
+    for (const f of ["cascadia-mono-regular.woff2", "noto-sans-sc-regular.woff2"]) {
+      expect(existsSync(`src/assets/fonts/${f}`), `产物 ${f} 不存在`).toBe(true);
+    }
+    // 字体-display 取 block：swap 会在首绘后换字体、行高一跳（B225 的行号栏高度是
+    // CM6 按实测行高写死的 px），编辑区会跟着跳。
+    expect(fontsCss, "内嵌字体不许用 swap（会引发行高跳动）").not.toContain("font-display: swap");
+  });
+
+  it(":root 的正文/代码/界面三条栈，首项都是内嵌那款；--font-mono 不挂内嵌", () => {
+    const root = global.match(/:root\s*\{[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(root, "应能截到 :root").toBeTruthy();
+    // 反例在前：--font-mono 是第二回落，它的**首项**不该是内嵌那份 ——
+    // 一旦正文/代码两条栈解析不出就立刻落到它，字面会变回等宽观感（正文≠等宽）。
+    // （栈里第三项仍保留 Cascadia Mono：那是 B225 起的系统回落，不动。）
+    const monoDecl = (root.match(/--font-mono:\s*([^;]+);/)?.[1] ?? "").trim();
+    expect(monoDecl.split(",")[0].trim(), "--font-mono 首项不该是内嵌等宽那份").not.toBe(
+      '"Cascadia Mono"',
+    );
+    expect(root, "正文栈 --font-body 要在，且首项是内嵌思源黑体").toMatch(
+      /--font-body:[^;]*"Noto Sans SC"/,
+    );
+    expect(root, "代码栈 --font-code 要在，且首项是内嵌 Cascadia Mono").toMatch(
+      /--font-code:[^;]*"Cascadia Mono"/,
+    );
+    expect(root, "界面栈 --font-ui 首项是内嵌思源黑体").toMatch(/--font-ui:[^;]*"Noto Sans SC"/);
+  });
+
+  it("两个消费点各取各的：编辑区与预览正文走 --font-editor，代码块走 --font-code", () => {
+    // CM6 那条规则：缺省取 --font-body（正文），末尾那份 --font-mono 是第二回落
+    expect(global, "CM6 编辑区要走 var(--font-editor, var(--font-body))").toContain(
+      "font-family: var(--font-editor, var(--font-body)), var(--font-mono);",
+    );
+    // 预览正文：与源码编辑区同一项（用户口径「源码和预览统一到编辑器」）
+    const mdBlock = preview.match(/\.md-preview \{[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(mdBlock, "应能截到 .md-preview 块").toBeTruthy();
+    expect(mdBlock, "预览正文必须读 --font-editor（与源码区同一项）").toMatch(
+      /font-family: var\(--font-editor,/,
+    );
+    // 代码块：独立那一项
+    const codeBlock = preview.match(/\.md-preview code \{[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(codeBlock, "应能截到 .md-preview code 块").toBeTruthy();
+    expect(codeBlock, "代码块必须读 --font-code（正文/代码分开设）").toMatch(
+      /font-family: var\(--font-code,/,
+    );
+    // 退化形态：把代码块写死 Consolas（就是 B227 之前那版）
+    expect(preview, "代码块不许写死字体栈").not.toMatch(
+      /\.md-preview code \{[^}]*font-family: Consolas/,
+    );
   });
 });

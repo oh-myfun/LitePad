@@ -19,6 +19,10 @@ function makeOpts(): SettingsDialogOptions {
     onTheme: noop,
     fontFamily: () => "",
     onFontFamily: noop,
+    // B227：代码字体 + 本机枚举清单（枚举空 ⇒ 退回内置手抄清单那份候选）
+    codeFontFamily: () => "",
+    onCodeFontFamily: noop,
+    systemFonts: () => [],
     fontSize: () => 14,
     onFontSize: noop,
     editorLineHeight: () => 1.5,
@@ -397,5 +401,74 @@ describe("B111 设置页：switch 组件 + 快捷键搜索框 Esc", () => {
     const wrap = cssDecls(ruleBlock(css, ".settings-search-wrap:focus-within"));
     expect(wrap, "顶部搜索框同样是 accent 边框").toContain("border-color: var(--accent)");
     expect(wrap, "顶部搜索框同样是 1px accent 环").toContain("box-shadow: 0 0 0 1px var(--accent)");
+  });
+});
+
+// B227：字体两栏（对齐 InkNote 设置页口径）——「编辑器字体」同时管源码区与预览正文，
+// 「代码字体」单列；两栏的候选都来自本机枚举，并各带一个 全部/等宽 的小切换。
+describe("B227 字体两栏：编辑器字体 / 代码字体 + 全部·等宽切换", () => {
+  const SYS = [
+    { name: "Consolas", is_monospace: true },
+    { name: "Cascadia Code", is_monospace: true },
+    { name: "Microsoft YaHei UI", is_monospace: false },
+  ];
+  function openWithFonts(): void {
+    showSettingsDialog({ ...makeOpts(), systemFonts: () => SYS });
+  }
+  /** 该行「全部 / 等宽」小切换里的那颗按钮。 */
+  function tab(label: string, text: string): HTMLElement {
+    const item = [...document.querySelectorAll(".settings-item")].find(
+      (r) => r.querySelector(".settings-item-label")?.textContent === label,
+    );
+    const btn = [...(item?.querySelectorAll(".font-picker-tab") ?? [])].find(
+      (b) => b.textContent === text,
+    ) as HTMLElement | undefined;
+    expect(btn, `行「${label}」应有「${text}」小切换`).toBeTruthy();
+    return btn!;
+  }
+
+  it("编辑器分类页下两行都在，编辑器字体那行默认走「全部」", () => {
+    openWithFonts();
+    rowControl("编辑器字体");
+    rowControl("代码字体");
+    // 默认项（value 空串 = 回落默认栈）必须在首位
+    expect(rowValues("编辑器字体")[0], "默认项要在首位").toBe("");
+    expect(rowValues("代码字体")[0], "默认项要在首位").toBe("");
+    // 「全部」⇒ 非等宽项也在候选里
+    expect(rowValues("编辑器字体")).toContain("Microsoft YaHei UI");
+    // 代码字体那行默认落在「等宽」⇒ 非等宽项不出现
+    expect(rowValues("代码字体")).not.toContain("Microsoft YaHei UI");
+    expect(rowValues("代码字体")).toContain("Consolas");
+  });
+
+  it("切到「等宽」后非等宽项消失，切回「全部」又回来（两栏互不影响）", () => {
+    openWithFonts();
+    tab("编辑器字体", "等宽").click();
+    expect(rowValues("编辑器字体")).not.toContain("Microsoft YaHei UI");
+    expect(rowValues("编辑器字体"), "系统等宽要留下").toContain("Consolas");
+    // 另一栏记住自己那一栏的小类，不跟着变
+    expect(rowValues("代码字体")).not.toContain("Microsoft YaHei UI");
+
+    tab("编辑器字体", "全部").click();
+    expect(rowValues("编辑器字体"), "切回全部要恢复").toContain("Microsoft YaHei UI");
+
+    // 代码字体那行切「全部」只影响自己
+    tab("代码字体", "全部").click();
+    expect(rowValues("代码字体")).toContain("Microsoft YaHei UI");
+  });
+
+  it("选值会回调对应 setter（正文走 onFontFamily，代码走 onCodeFontFamily）", () => {
+    const seen: string[] = [];
+    const seenCode: string[] = [];
+    showSettingsDialog({
+      ...makeOpts(),
+      systemFonts: () => SYS,
+      onFontFamily: (v) => seen.push(v),
+      onCodeFontFamily: (v) => seenCode.push(v),
+    });
+    pickRow("编辑器字体", "Consolas");
+    pickRow("代码字体", "Consolas");
+    expect(seen, "编辑器字体要回调 onFontFamily").toEqual(["Consolas"]);
+    expect(seenCode, "代码字体要回调 onCodeFontFamily").toEqual(["Consolas"]);
   });
 });

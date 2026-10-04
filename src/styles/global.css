@@ -1,7 +1,19 @@
 /* LitePad 全局样式 —— 全部颜色走 CSS 变量，主题切换只改 data-theme */
 
 :root {
-  --font-ui: "Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif;
+  /* B227：对齐 InkNote 的设置口径 —— **正文**与**代码**分开设，而「编辑器字体」这一项
+     同时管源码编辑区正文与预览正文（一处设置、两处生效，见 styles/preview.css 的
+     `.md-preview`）。所以这里给三条栈，各自首项都是**内嵌的那份**（见 styles/fonts.css）：
+       · --font-body 正文（编辑器源码区 + 预览正文），内嵌思源黑体（非等宽）
+       · --font-code 代码（预览 code / pre），内嵌 Cascadia Mono（等宽）
+       · --font-ui   界面，内嵌思源黑体
+       · --font-mono **不挂内嵌字体**，它是「选中的字体本机没装时」的第二回落（CM6 的
+         .cm-scroller 会截胡继承，见下面那条编辑器规则），保持纯系统等宽栈。
+     回落顺序：本机若装了 Cascadia Code / 微软雅黑，字重观感照旧。 */
+  --font-ui: "Noto Sans SC", "Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-body:
+    "Noto Sans SC", "Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-code: "Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
   --font-mono:
     "Cascadia Code", "JetBrains Mono", "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace;
   --font-size: 14px;
@@ -2173,6 +2185,58 @@ button:focus-visible {
   flex-shrink: 0;
 }
 
+/* B227 字体两栏：分段小切换（全部 / 等宽）＋ 字体下拉。
+   放在 .settings-item-control 里靠右，与其它设置项的控件列对齐；
+   下拉宽度给足 —— 族名最长能到「Microsoft YaHei UI / 新細明體」那一档，
+   窄了会被 .dd-label 截断。 */
+.font-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.font-picker-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.font-picker-tab {
+  padding: 3px 10px;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  background: none;
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.font-picker-tab:hover {
+  color: var(--fg);
+}
+
+.font-picker-tab.is-on {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.font-picker-slot {
+  display: flex;
+  align-items: center;
+  /* ⚠️ B209：flex 子项的 min-width 初始是 auto，会被 min-content 顶开 ——
+     这里显式归零，宽度才由 .dropdown 自己那份 min-width 决定。 */
+  min-width: 0;
+}
+
+.font-picker-slot .dropdown {
+  min-width: 220px;
+  max-width: 320px;
+}
+
 .settings-shortcuts-header {
   display: flex;
   align-items: flex-start;
@@ -3124,9 +3188,10 @@ body.tab-drag-active * {
   font-size: var(--font-size);
 }
 
-/* B225：--font-editor 由 main.ts 的 applyFontFamily 写在 :root 上（空串/缺省时
-   整颗 var 走回落）。末尾那份 var(--font-mono) 是**第二回落**：选中的字体若本机
-   没装，没有它就会掉到浏览器默认的非等宽字体上，而不是内置等宽栈。
+/* B225 + B227：--font-editor 由 main.ts 的 applyFontFamily 写在 :root 上（空串/缺省时
+   整颗 var 走回落，本条默认取 --font-body ＝ 内嵌思源黑体：源码区正文与预览正文同栈）。
+   末尾那份 var(--font-mono) 是**第二回落**：选中的字体若本机没装，没有它就会掉到
+   浏览器默认的非等宽字体上，而不是内置等宽栈。
 
    ⚠️ 第四层根因（「换本机装着的字体也没反应」）：**必须同时写 .cm-scroller**，
    只挂 .cm-editor 传不下去 —— CM6 baseTheme 给 `.cm-scroller` 写了
@@ -3140,7 +3205,7 @@ body.tab-drag-active * {
    反向契约盯着），这个覆盖就会失效。 */
 .panel-host .panel-editor .cm-editor,
 .panel-host .panel-editor .cm-editor .cm-scroller {
-  font-family: var(--font-editor, var(--font-mono)), var(--font-mono);
+  font-family: var(--font-editor, var(--font-body)), var(--font-mono);
 }
 
 /* B225：编辑器行距，同样由 main.ts 的 applyEditorLineHeight 写在 :root 上。

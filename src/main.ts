@@ -3,6 +3,8 @@
 //    谁在后谁生效 —— 先引它，才能让 global.css 里的字号覆盖说了算（如 `.panel-op .codicon`）。
 //    字体文件（codicon.ttf）由 vite 打进 dist/assets，取用层见 src/shell/codicons.ts。
 import "@vscode/codicons/dist/codicon.css";
+// B227：内嵌默认字体的 `@font-face`（家族名 = Cascadia Mono / Noto Sans SC，见 fonts.css 头注）
+import "./styles/fonts.css";
 import "./styles/global.css";
 
 // ChangeSet 既要当类型又要用运行时的 `ChangeSet.fromJSON`（跨窗口同步要还原对端的
@@ -62,8 +64,11 @@ import {
   isUnicodeEncoding,
   listEncodings,
   listEols,
+  listFonts,
   // B218：编码候选带上语言分组（「中文（简体 / 繁体）」这类组名由后端那份列表带出）
   type EncodingItem,
+  // B227：本机字体枚举项（Rust list_fonts 的负载）
+  type FontItem,
   loadSession,
   loadSettings,
   newTab as ipcNewTab,
@@ -1240,10 +1245,15 @@ function rebuildLayout(): void {
     // B224：标签区右侧那两颗 Markdown 键（只在活动面板渲染，见 panelDataOf）
     onOpenPreviewToSide: (panelId) => openPreviewToSide(panelId),
     onTogglePreview: (panelId) => {
-      // 点击的必是活动面板（键只挂在那里）；万一撞上异步窗口期，先把焦点面板切过去，
-      // 保证 toggle 作用在用户看到键的那个面板上 —— toggleViewMode 只认 activePanel。
-      if (panelId !== activePanelId) markActivePanel(panelId);
-      toggleViewMode();
+      // B228：先取**这颗键自己那一栏**的标签再切，别碰全局活动面板。
+      // ⚠️ 以前这里是「面板不是活动的就先把活动面板拽过去，然后无参切换」两步 ——
+      //    那等于把落点交给全局活动态：开侧边预览之后，DOM 里那颗键还带着左面板的
+      //    panelId，一点就把左面板打开的文档切去源码（用户报的那条）。
+      //    md 两颗键本就只挂在活动面板上，能点到 ⇒ 目标面板就是它自己，不需要再拽一次。
+      const own = getPanel(panelId);
+      const ownTab = own ? tabs.get(own.activeTabId) : undefined;
+      if (!own || !ownTab) return;
+      toggleViewMode(ownTab);
     },
     mountView: (panelId, hostEl) => {
       const p = getPanel(panelId);
@@ -4902,6 +4912,14 @@ function applyPanelMode(panel: Panel): void {
     // 否则切到预览/切标签时永远停在文档开头。
     if (anchorLine > 1) panel.preview?.syncToLine(anchorLine);
   }
+  // B228：这里是**视图模式落到 DOM 的唯一出口**，所以操作区也在这里刷。
+  // 那颗切换键是**双字形开关**（预览态画 edit-code），而字形只在 renderPanelOps 里
+  // 算一次 —— 以前 openPreviewToSide 是「先 rebuildLayout（此时标签还是 source）、
+  // 后置 preview」，中间没人再刷操作区，新预览分屏那颗键就一直卡在打开侧边之前的
+  // 字形上（用户报的就是「显示的还是打开侧边前的切换按钮」）。挂在出口上就不会漏。
+  // ⚠️ 别挪到 mousedown 路径上：重建 ops 会把按钮节点换掉，浏览器合成的 click 就
+  //    派发不到它身上（B226）。applyPanelMode 的调用点全在 click / 恢复 / 分屏里，安全。
+  renderPanelOps(panel.panelId);
   // ⚠️ 这里**不要**直接 `requestMeasure()`：测量排在下一帧，而 CM6 在测量结束时会
   // 做「滚动锚点补偿」把位置往下推（见 `measureAndKeepScroll`）。测量统一走那里，
   // 顺便在补偿之后把位置收回来。
@@ -5008,11 +5026,20 @@ function dirname(p: string): string {
   return idx > 0 ? p.slice(0, idx) : p;
 }
 
-/** 切换 Markdown 源码 / 预览（Ctrl+/、工具栏与菜单共用）。 */
-function toggleViewMode(): void {
-  const panel = activePanel();
-  const tab = activeTab();
-  if (!panel || !tab || !isMdTab(tab)) return;
+/**
+ * 切换 Markdown 源码 / 预览（Ctrl+/、工具栏与菜单共用）。
+ *
+ * ⚠️ B228：可以**指定**切哪一份标签，不指定才退回活动标签。切换的落点永远是
+ * 「这份标签**所在的那块面板**」，而不是「全局活动面板」 —— 标签区那颗键点的是它自己
+ * 那一栏的标签，中间那步 `markActivePanel(panelId)` 会把全局活动面板先拽过去，
+ * 于是同一次点击作用到的是**另一份标签**的文档（用户报的就是「切成了别的标签打开的
+ * 文档的源码」）。所以这里从 tab 反查所属面板，不信任全局活动态。
+ */
+function toggleViewMode(target?: Tab): void {
+  const tab = target ?? activeTab();
+  if (!tab || !isMdTab(tab)) return;
+  const panel = getPanel(tab.panelId);
+  if (!panel || !panel.bodyEl) return;
   const toPreview = tab.viewMode !== "preview";
   // 纯预览 → 源码是一次**交接**，不是各认各的：`t.scrollTop` 只有一个槽，装的是
   // 「当前这一侧」的像素（B139）。纯预览期间编辑器被 `display:none` 清零，它那份
@@ -5102,7 +5129,12 @@ function openPreviewToSide(panelId: number): void {
     const nt = np ? tabs.get(np.activeTabId) : undefined;
     if (np && nt && isMdTab(nt)) {
       nt.viewMode = "preview";
-      applyPanelMode(np);
+      // B228：把「预览分屏是活动面板」这件事显式落一次。splitPanelWithTab 里已经
+      // 设过 activePanelId，但那份活动态是**分屏那一刻**的；这里再标一次，用户要的
+      // 「新打开的预览标签被激活」才是重建完成后的事实（markActivePanel 里的 class
+      // 同步在早退之前，代价只有一次 querySelectorAll）。
+      markActivePanel(np.panelId);
+      applyPanelMode(np); // 内部会刷操作区 ⇒ 切换键字形当场翻成 edit-code
     }
   } else {
     const rp = panels.get(rightId);
@@ -5568,6 +5600,10 @@ function applyPreviewLineHeight(value: number): void {
 /**
  * 编辑器字体：写 :root 上的 --font-editor，.cm-editor 优先取它；
  * 空串（默认）则移除内联变量，回落到内置等宽栈。状态栏 kbd 等仍用 --font-mono。
+ *
+ * ⚠️ B227 起这一项叫「编辑器字体」但**同时管预览正文**（源码与预览统一到编辑器，
+ *    对齐 InkNote 的「正文字体」）：CM6 那条规则取 `var(--font-editor, var(--font-body))`，
+ *    `.md-preview` 取 `var(--font-editor, …)`。所以这里改一个值，两处一起变。
  */
 function applyFontFamily(family: string): void {
   const root = document.documentElement.style;
@@ -5588,6 +5624,40 @@ function applyEditorLineHeight(value: number): void {
   document.documentElement.style.setProperty("--editor-line-height", String(v));
   // 行距一改行高就变，CM6 必须重测；同 applyFontSize 走 measureAndKeepScroll
   for (const p of panels.values()) measureAndKeepScroll(p);
+}
+
+/**
+ * B227：代码字体 —— 写 :root 上的 --font-code，预览的 `code` / `pre` / 数学占位取它。
+ *
+ * 与 `applyFontFamily` 不同的是**不用重测编辑器**：代码字体只落在预览里，CM6 那边的
+ * 字体是 --font-editor/--font-body，两条栈互不干扰（这是「正文 / 代码分开设」的前提）。
+ */
+function applyCodeFontFamily(family: string): void {
+  const root = document.documentElement.style;
+  const f = family.trim();
+  if (!f) {
+    root.removeProperty("--font-code");
+  } else {
+    root.setProperty("--font-code", f.includes(" ") ? `"${f}"` : f);
+  }
+}
+
+/**
+ * B227：本机字体清单缓存（Rust `list_fonts`）。
+ *
+ * 枚举要走 GDI、返回上百条，**只在打开设置页时取一次**并留着：设置页里来回切
+ * 等宽/全部两栏是纯前端过滤，不该反复过 IPC。取不到就留空数组，设置页会退回
+ * B225 那份手抄清单（见 `fontOptionsFor`），不会把那一栏变空。
+ */
+let systemFontsCache: FontItem[] = [];
+
+async function ensureSystemFonts(): Promise<void> {
+  if (systemFontsCache.length) return;
+  try {
+    systemFontsCache = await listFonts();
+  } catch (err) {
+    logger.warn("settings", `枚举本机字体失败，设置页退回内置清单 ${String(err)}`);
+  }
 }
 
 // ---------------------------------------------------------------- 偏好（文件 → 设置）
@@ -5784,6 +5854,16 @@ async function setFontFamily(family: string): Promise<void> {
   showMessage(family.trim() ? `编辑器字体 ${family.trim()}` : "编辑器字体：默认");
 }
 
+/** B227：代码字体（设置页「代码字体」那一栏；空串 = 内嵌 Cascadia Mono）。 */
+async function setCodeFontFamily(family: string): Promise<void> {
+  applyCodeFontFamily(family);
+  if (settings) {
+    settings.code_font_family = family.trim();
+    await persistSettings();
+  }
+  showMessage(family.trim() ? `代码字体 ${family.trim()}` : "代码字体：默认");
+}
+
 /** 编辑器行距（设置页，1.0–2.5 倍）。 */
 async function setEditorLineHeight(value: number): Promise<void> {
   applyEditorLineHeight(value);
@@ -5824,11 +5904,18 @@ async function setWordWrap(on: boolean): Promise<void> {
 
 /** 打开统一设置页（文件 → 设置…）。 */
 function openSettingsDialog(): void {
+  // B227：字体两栏的候选来自本机枚举 —— 先取回再开页，免得用户看到空列表
+  void ensureSystemFonts();
   showSettingsDialog({
     theme: () => themeMode,
     onTheme: (mode) => void setThemeMode(mode),
     fontFamily: () => settings?.font_family ?? "",
     onFontFamily: (family) => void setFontFamily(family),
+    // B227：代码字体（预览 code/pre），与正文那条分开设
+    codeFontFamily: () => settings?.code_font_family ?? "",
+    onCodeFontFamily: (family) => void setCodeFontFamily(family),
+    // 本机字体枚举结果（懒取一次，见 ensureSystemFonts）
+    systemFonts: () => systemFontsCache,
     fontSize: () => currentFontSize(),
     onFontSize: (px) => void setFontSizeValue(px),
     editorLineHeight: () => settings?.editor_line_height ?? 1.5,
@@ -7888,6 +7975,7 @@ async function setupShell(): Promise<void> {
   isWrap = settings?.word_wrap ?? true;
   applyFontSize(settings?.font_size ?? 14);
   applyFontFamily(settings?.font_family ?? "");
+  applyCodeFontFamily(settings?.code_font_family ?? "");
   applyPreviewLineHeight(settings?.preview_line_height ?? 1.7);
   applyEditorLineHeight(settings?.editor_line_height ?? 1.5);
   setupSideBar();

@@ -18,6 +18,11 @@
   font-size: calc(var(--font-size, 14px) + 1px);
   /* 行距由设置驱动（--md-line-height 设在 :root 上），缺省 1.7 */
   line-height: var(--md-line-height, 1.7);
+  /* B227：预览正文并到「编辑器字体」这一项 —— 与源码编辑区同栈（--font-editor 缺省时
+     走 --font-body ＝ 内嵌思源黑体），一处设置两处生效，与 InkNote 的「正文字体」对齐。
+     显式写一遍（而不只是继承 body）是为了**导出 HTML**：导出只注入本文件、:root 不在
+     里面，不给兜底字符串就会掉到浏览器默认衬线体。 */
+  font-family: var(--font-editor, "Noto Sans SC", "Microsoft YaHei UI", sans-serif);
   word-wrap: break-word;
 }
 
@@ -119,7 +124,9 @@
 }
 
 .md-preview code {
-  font-family: Consolas, "Courier New", monospace;
+  /* B227：代码段独立成一项（对齐 InkNote 的「代码字体」）—— 默认内嵌 Cascadia Mono，
+     用户可在设置里改；缺省兜底同理给具体族名（导出 HTML 里 :root 不在）。 */
+  font-family: var(--font-code, "Cascadia Mono", Consolas, monospace);
   font-size: 0.88em;
   background: var(--md-code-bg);
   border-radius: 4px;
@@ -188,7 +195,7 @@
 /* 数学公式占位（KaTeX 加载前）与结果 */
 .md-preview .math-inline-src,
 .md-preview .math-display-src {
-  font-family: Consolas, monospace;
+  font-family: var(--font-code, "Cascadia Mono", Consolas, monospace);
   font-size: 0.9em;
   color: var(--md-muted);
 }

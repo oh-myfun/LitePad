@@ -25,6 +25,15 @@ export interface SettingsDialogOptions {
   /** 空串 = 内置默认字体栈 */
   fontFamily: () => string;
   onFontFamily: (family: string) => void;
+  /** B227：代码字体族名（预览 code / pre）；空串 = 用内嵌 Cascadia Mono */
+  codeFontFamily: () => string;
+  onCodeFontFamily: (family: string) => void;
+  /**
+   * B227：本机字体清单（Rust `list_fonts` 的缓存结果，`is_monospace` 判等宽）。
+   * 空数组 = 枚举没到手（非 Windows / IPC 失败），此时退回 `fontFamilyOptions()`
+   * 那份手抄清单，**不许**把这一栏变空。
+   */
+  systemFonts: () => { name: string; is_monospace: boolean }[];
   fontSize: () => number;
   onFontSize: (px: number) => void;
   editorLineHeight: () => number;
@@ -149,6 +158,47 @@ export function fontFamilyOptions(): { label: string; value: string }[] {
 
 /** 编辑器行距候选（倍数）。 */
 export const EDITOR_LINE_HEIGHT_OPTIONS = [1.2, 1.5, 1.8, 2.1];
+
+// ---------------------------------------------------------------- B227 字体两栏
+
+/** 字体候选的两小类（用户拍定）：只看等宽 / 看全部。 */
+export type FontKind = "mono" | "all";
+
+/** 两小类的分段标签（顺序即渲染顺序）。 */
+export const FONT_KIND_LABELS: { kind: FontKind; label: string }[] = [
+  { kind: "all", label: "全部" },
+  { kind: "mono", label: "等宽" },
+];
+
+/** 内嵌默认在候选里的说法（value 是空串 = 移除变量、回落默认栈）。 */
+export const DEFAULT_BODY_FONT_LABEL = "默认（内嵌思源黑体）";
+export const DEFAULT_CODE_FONT_LABEL = "默认（内嵌 Cascadia Mono）";
+
+/**
+ * 某一栏的候选：默认项 + 本机枚举（按 等宽/全部 过滤）。
+ *
+ * ⚠️ 当前值不在枚举结果里（用户选过、后来把字体卸了）要**照样列在首位**并打
+ * 未安装标记 —— 悄悄退回默认值会让人以为设置被重置了，而它其实只是「没装」。
+ * ⚠️ 枚举为空（非 Windows / IPC 失败）时退回 B225 那份手抄清单，别把这一栏变空。
+ */
+export function fontOptionsFor(
+  kind: FontKind,
+  current: string,
+  systemFonts: { name: string; is_monospace: boolean }[],
+  defaultLabel: string,
+): { label: string; value: string }[] {
+  if (!systemFonts.length) return fontFamilyOptions();
+  const out: { label: string; value: string }[] = [{ label: defaultLabel, value: "" }];
+  const picked = current.trim();
+  if (picked && !systemFonts.some((f) => f.name === picked)) {
+    out.push({ label: `${picked}${FONT_FAMILY_NO_DIFF_SUFFIX}`, value: picked });
+  }
+  for (const f of systemFonts) {
+    if (kind === "mono" && !f.is_monospace) continue;
+    out.push({ label: f.name, value: f.name });
+  }
+  return out;
+}
 
 /** 预览行距候选（倍数），沿用原菜单三档。 */
 export const PREVIEW_LINE_HEIGHT_OPTIONS = [1.3, 1.7, 2.1];
@@ -478,6 +528,68 @@ function numberSelectRow(
   );
 }
 
+/**
+ * B227：字体选择行 ＝ 分段小切换（全部 / 等宽）＋ 字体下拉。
+ *
+ * 切小类时整块重建下拉（`createDropdown` 没有 setOptions，destroy 后再建一个）：
+ * 候选集合变了，触发器上「当前项」那几个字也得跟着重算，不能留着上一栏的。
+ * 两行各自记着自己那一栏的小类（闭包里的 `kind`），互不干扰。
+ */
+function fontRow(
+  label: string,
+  desc: string,
+  current: string,
+  onPick: (v: string) => void,
+  systemFonts: { name: string; is_monospace: boolean }[],
+  defaultLabel: string,
+  initialKind: FontKind,
+): HTMLElement {
+  let kind: FontKind = initialKind;
+  const wrap = document.createElement("div");
+  wrap.className = "font-picker";
+  const tabs = document.createElement("div");
+  tabs.className = "font-picker-tabs";
+  tabs.setAttribute("role", "tablist");
+  const slot = document.createElement("div");
+  slot.className = "font-picker-slot";
+  let dd: ReturnType<typeof createDropdown> | null = null;
+
+  function buildTabs(): void {
+    tabs.textContent = "";
+    for (const { kind: k, label: text } of FONT_KIND_LABELS) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "font-picker-tab" + (k === kind ? " is-on" : "");
+      b.textContent = text;
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", String(k === kind));
+      b.addEventListener("click", () => {
+        if (k === kind) return;
+        kind = k;
+        buildTabs();
+        buildDropdown();
+      });
+      tabs.appendChild(b);
+    }
+  }
+  function buildDropdown(): void {
+    dd?.destroy();
+    const options = fontOptionsFor(kind, current, systemFonts, defaultLabel);
+    dd = createDropdown({
+      options,
+      current,
+      onPick,
+      ariaLabel: options.find((o) => o.value === current)?.label,
+    });
+    slot.textContent = "";
+    slot.appendChild(dd.root);
+  }
+  buildTabs();
+  buildDropdown();
+  wrap.append(tabs, slot);
+  return settingsItem(label, desc, wrap);
+}
+
 function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): void {
   if (id === "general") {
     body.appendChild(
@@ -531,13 +643,31 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
       ),
     );
   } else if (id === "editor") {
+    // B227：口径对齐 InkNote 的设置页 —— **正文**与**代码**分开设，而「编辑器字体」
+    // 这一项同时管源码编辑区正文与预览正文（一处设置、两处生效）。候选来自 Rust
+    // `list_fonts` 的本机枚举，等宽/全部两栏切换；枚举没到手时由 fontOptionsFor
+    // 退回 B225 的手抄清单。
+    const sys = opts.systemFonts();
     body.appendChild(
-      selectRow(
+      fontRow(
         "编辑器字体",
-        "本机没装的会标「未安装」，选了静默回落到内置等宽栈（看着像没反应）。",
-        fontFamilyOptions(),
+        "源码编辑区与预览正文共用这一项（对齐 InkNote 的「正文字体」）；候选是本机真实枚举，可切「全部 / 等宽」。",
         opts.fontFamily(),
         (v) => opts.onFontFamily(v),
+        sys,
+        DEFAULT_BODY_FONT_LABEL,
+        "all",
+      ),
+    );
+    body.appendChild(
+      fontRow(
+        "代码字体",
+        "预览里的行内代码与代码块；候选同上，可切「全部 / 等宽」。",
+        opts.codeFontFamily(),
+        (v) => opts.onCodeFontFamily(v),
+        sys,
+        DEFAULT_CODE_FONT_LABEL,
+        "mono",
       ),
     );
     body.appendChild(
