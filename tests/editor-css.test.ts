@@ -56,11 +56,31 @@ describe("编辑器 DOM / CSS 静态契约", () => {
 // 而**全仓没有任何 CSS 消费这两颗变量**（编辑区当时写死 `var(--font-mono)`）⇒
 // 设置项是个空转的壳。下面四条死锁「写入端 ↔ 消费端」这条链。
 describe("B225：编辑器字体 / 行距必须真的接到 CSS", () => {
+  // ⚠️ 真实祖先链：splitview.ts 建 `.panel-host` → main.ts 建 `.panel-editor` → CM6 建 `.cm-editor`。
+  // 这里**曾经**写过 `.editor-host`，而那个类名全仓只有 CSS 在引用、没有任何 JS 创建它
+  // ⇒ 规则一个元素都匹配不到，字体 / 行距 / 字号三样依然是死的（静态看 CSS 完全是绿的）。
+  const CHAIN = ".panel-host .panel-editor .cm-editor";
+
   const globalCss = (): string => readFileSync("src/styles/global.css", "utf-8");
 
+  it("选择器依赖的祖先类必须是 JS 真的建出来的 DOM 类（防「选择器挂空」假绿）", () => {
+    const code =
+      readFileSync("src/shell/splitview.ts", "utf-8") + "\n" + readFileSync("src/main.ts", "utf-8");
+    const classes = [...CHAIN.matchAll(/\.([A-Za-z0-9_-]+)/g)].map((m) => m[1]);
+    expect(classes.length, "选择器里应有多个祖先类").toBeGreaterThan(1);
+    for (const cls of classes) {
+      // cm-editor 由 CM6 自己建（不经过我们的 className 赋值），其余都得是项目自己建的
+      if (cls === "cm-editor") continue;
+      // 反例前置：退化成压根不存在的类名（如 .editor-host）时，JS 里搜不到这个字符串
+      expect(code, `.${cls} 必须在 JS 里被赋给真实元素（否则 CSS 规则匹配不到任何东西）`).toMatch(
+        new RegExp(`["']${cls}["']`),
+      );
+    }
+  });
+
   it("--font-editor 必须有消费方，且带一份内置等宽栈兜底", () => {
-    const block = ruleBlock(globalCss(), ".editor-host .cm-editor", "font-family");
-    expect(block, "应有 .editor-host .cm-editor 的 font-family 规则").toBeTruthy();
+    const block = ruleBlock(globalCss(), CHAIN, "font-family");
+    expect(block, `应有 ${CHAIN} 的 font-family 规则`).toBeTruthy();
     const decls = cssDecls(block);
     // 反例前置（退化形态 1：压根不认 --font-editor，写死内置栈）
     expect(decls, "font-family 不许写死成只取 --font-mono").not.toMatch(
@@ -78,14 +98,14 @@ describe("B225：编辑器字体 / 行距必须真的接到 CSS", () => {
 
   it("--editor-line-height 必须有消费方，行号栏要跟着一起走", () => {
     const css = globalCss();
-    const body = cssDecls(ruleBlock(css, ".editor-host .cm-editor .cm-content", "line-height"));
+    const body = cssDecls(ruleBlock(css, ".panel-host .panel-editor .cm-content", "line-height"));
     expect(body, "正文必须引用 --editor-line-height").toMatch(
       /line-height:\s*var\(--editor-line-height/,
     );
     // ⚠️ `.cm-gutterElement` 的高度是 CM6 按实测行高写死的 px，正文改了行距、
     // 行号栏不跟着改 line-height 的话数字会贴着格子顶边、不与正文对齐。
     const gutter = cssDecls(
-      ruleBlock(css, ".editor-host .cm-editor .cm-gutterElement", "line-height"),
+      ruleBlock(css, ".panel-host .panel-editor .cm-gutterElement", "line-height"),
     );
     // 反例前置：退化形态＝只给 .cm-content 一条
     expect(gutter, "行号栏必须同样引用 --editor-line-height").toMatch(

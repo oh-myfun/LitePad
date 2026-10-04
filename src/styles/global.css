@@ -3110,11 +3110,16 @@ body.tab-drag-active * {
   overflow: hidden;
 }
 
-.editor-host .cm-editor {
+/* ⚠️ 祖先链必须写 .panel-host .panel-editor —— 这是 splitview.ts 建 `.panel-host`、
+   main.ts 建 `.panel-editor`（`editorEl.className = "panel-editor"`）之后的**真实**结构。
+   之前这里写的是 `.editor-host`，而那个类名**全仓只有 CSS 在用、没有任何 JS 创建过它**
+   ⇒ 规则匹配不到元素，B225 那两条设置照样是死代码（字号 / 字体 / 行距全不生效）。
+   同一个坑的 `.editor-host { … }` / `.editor-host .cm-scroller { … }` 两条仍在下面（死规则，
+   与 preview.css 的 `.panel-host .panel-editor .cm-scroller` 重复），本次不动，留待单独清理。 */
+.panel-host .panel-editor .cm-editor {
   height: 100%;
   /* B225：--font-editor 由 main.ts 的 applyFontFamily 写在 :root 上（空串/缺省
-     时整颗 var 走回落）。⚠️ 这里原来写死 var(--font-mono)，而 JS 只往 :root 写
-     变量、没人消费 ⇒ 「设置 → 编辑器字体」改了完全没反应。
+     时整颗 var 走回落）。
      末尾那份 var(--font-mono) 是**第二回落**：选中的字体若本机没装，
      没有它就会掉到浏览器默认的非等宽字体上，而不是内置等宽栈。 */
   font-family: var(--font-editor, var(--font-mono)), var(--font-mono);
@@ -3126,13 +3131,9 @@ body.tab-drag-active * {
    .cm-tooltip / 自动补全面板也在 .cm-editor 里，跟着放大行距会把浮层撑变形。
    ⚠️ 行号栏那条不能省：.cm-gutterElement 的高度由 CM6 按实测行高写死（px），
    不跟着改 line-height 的话数字会贴着格子顶边、不与正文对齐。 */
-.editor-host .cm-editor .cm-content,
-.editor-host .cm-editor .cm-gutterElement {
+.panel-host .panel-editor .cm-content,
+.panel-host .panel-editor .cm-gutterElement {
   line-height: var(--editor-line-height, 1.5);
-}
-
-.editor-host .cm-scroller {
-  overflow: auto;
 }
 
 /* ---------- 状态栏 ---------- */
