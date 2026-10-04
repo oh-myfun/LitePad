@@ -5535,8 +5535,10 @@ function applyWrapToTabs(wrap: boolean): void {
 
 function applyFontSize(px: number): void {
   document.documentElement.style.setProperty("--font-size", `${px}px`);
-  // 字号变化后 CM6 要重新测量，否则行号/光标定位会短暂错位
-  for (const p of panels.values()) p.view?.view.requestMeasure();
+  // 字号变化后 CM6 要重新测量，否则行号/光标定位会短暂错位。
+  // ⚠️ B225：测量统一走 `measureAndKeepScroll`（B146）—— 裸 `requestMeasure()`
+  // 会触发 CM6 的滚动锚点补偿，把视口顶行往下推一截。
+  for (const p of panels.values()) measureAndKeepScroll(p);
 }
 
 /** 字号持久化防抖：Ctrl+滚轮/连续按 Ctrl+= 会触发很多次，攒一起写盘。 */
@@ -5568,14 +5570,16 @@ function applyFontFamily(family: string): void {
     // 族名带空格时必须加引号，否则 CSS 解析会当成多个族名
     root.setProperty("--font-editor", f.includes(" ") ? `"${f}"` : f);
   }
-  for (const p of panels.values()) p.view?.view.requestMeasure();
+  // 同 applyFontSize：B225 起走 measureAndKeepScroll，别裸 requestMeasure()
+  for (const p of panels.values()) measureAndKeepScroll(p);
 }
 
 /** 编辑器行距：写 :root 上的 --editor-line-height，.cm-content 通过 var() 生效。 */
 function applyEditorLineHeight(value: number): void {
   const v = Math.min(2.5, Math.max(1, Number(value) || 1.5));
   document.documentElement.style.setProperty("--editor-line-height", String(v));
-  for (const p of panels.values()) p.view?.view.requestMeasure();
+  // 行距一改行高就变，CM6 必须重测；同 applyFontSize 走 measureAndKeepScroll
+  for (const p of panels.values()) measureAndKeepScroll(p);
 }
 
 // ---------------------------------------------------------------- 偏好（文件 → 设置）

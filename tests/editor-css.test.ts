@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
+import { ruleBlock, cssDecls, stripLineComments, topLevelFnBody } from "./static";
+import { FONT_FAMILY_OPTIONS } from "../src/shell/settingsdialog";
 
 describe("编辑器 DOM / CSS 静态契约", () => {
   it("编辑器必须可滚动：.panel-editor 须 min-height:0 且 cm-scroller 双轴 overflow（回归：源码无法滚动）", () => {
@@ -46,5 +48,95 @@ describe("编辑器 DOM / CSS 静态契约", () => {
       expect(el.querySelector("i.codicon"), `${name} 应为 codicon 字形`).toBeTruthy();
     }
     expect(open.innerHTML, "展开/折叠两种形态的图标应不同").not.toBe(closed.innerHTML);
+  });
+});
+
+// B225：用户报「改了编辑器字体 / 行距没反应」。
+// 根因＝main.ts 只是把值写进 :root 上的 `--font-editor` / `--editor-line-height`，
+// 而**全仓没有任何 CSS 消费这两颗变量**（编辑区当时写死 `var(--font-mono)`）⇒
+// 设置项是个空转的壳。下面四条死锁「写入端 ↔ 消费端」这条链。
+describe("B225：编辑器字体 / 行距必须真的接到 CSS", () => {
+  const globalCss = (): string => readFileSync("src/styles/global.css", "utf-8");
+
+  it("--font-editor 必须有消费方，且带一份内置等宽栈兜底", () => {
+    const block = ruleBlock(globalCss(), ".editor-host .cm-editor", "font-family");
+    expect(block, "应有 .editor-host .cm-editor 的 font-family 规则").toBeTruthy();
+    const decls = cssDecls(block);
+    // 反例前置（退化形态 1：压根不认 --font-editor，写死内置栈）
+    expect(decls, "font-family 不许写死成只取 --font-mono").not.toMatch(
+      /font-family:\s*var\(--font-mono\)/,
+    );
+    expect(decls, "font-family 必须优先取 --font-editor").toMatch(
+      /font-family:\s*var\(--font-editor/,
+    );
+    // 退化形态 2：认了变量但没兜底 —— 选中的字体本机没装时，
+    // 会掉到浏览器默认的**非等宽**字体上（不是内置等宽栈）。
+    expect(decls, "--font-editor 之后必须再挂一份 --font-mono 兜底").toMatch(
+      /var\(--font-editor[^;]*\)\s*,\s*var\(--font-mono\)/,
+    );
+  });
+
+  it("--editor-line-height 必须有消费方，行号栏要跟着一起走", () => {
+    const css = globalCss();
+    const body = cssDecls(ruleBlock(css, ".editor-host .cm-editor .cm-content", "line-height"));
+    expect(body, "正文必须引用 --editor-line-height").toMatch(
+      /line-height:\s*var\(--editor-line-height/,
+    );
+    // ⚠️ `.cm-gutterElement` 的高度是 CM6 按实测行高写死的 px，正文改了行距、
+    // 行号栏不跟着改 line-height 的话数字会贴着格子顶边、不与正文对齐。
+    const gutter = cssDecls(
+      ruleBlock(css, ".editor-host .cm-editor .cm-gutterElement", "line-height"),
+    );
+    // 反例前置：退化形态＝只给 .cm-content 一条
+    expect(gutter, "行号栏必须同样引用 --editor-line-height").toMatch(
+      /line-height:\s*var\(--editor-line-height/,
+    );
+  });
+
+  it("预览行距的链路不能断（--md-line-height 由 .md-preview 消费）", () => {
+    const block = ruleBlock(
+      readFileSync("src/styles/preview.css", "utf-8"),
+      ".md-preview",
+      "line-height",
+    );
+    expect(block, "preview.css 的 .md-preview 应有 line-height 规则").toBeTruthy();
+    expect(cssDecls(block), ".md-preview 必须引用 --md-line-height").toMatch(
+      /line-height:\s*var\(--md-line-height/,
+    );
+  });
+
+  it("改字号 / 字体 / 行距后一律走 measureAndKeepScroll（不许裸 requestMeasure）", () => {
+    // 退化形态：回到裸 `view.requestMeasure()` —— CM6 测量结束会做滚动锚点补偿，
+    // 把视口顶行往下推一截（B146），改一次设置就飘一次。
+    const src = readFileSync("src/main.ts", "utf-8");
+    for (const fn of ["applyFontSize", "applyFontFamily", "applyEditorLineHeight"]) {
+      const body = stripLineComments(topLevelFnBody(src, fn));
+      expect(body, `应能截到 ${fn} 的函数体`).toBeTruthy();
+      // 反例必须排在正向之前，否则退化时被正向断言抢先报错
+      expect(body, `${fn} 不许裸调 requestMeasure`).not.toContain("requestMeasure");
+      expect(body, `${fn} 必须走 measureAndKeepScroll`).toContain("measureAndKeepScroll(p)");
+    }
+  });
+
+  it("编辑器字体候选成规模、无重复，「默认」仍在首位", () => {
+    // 退化形态：缩回 B225 前那份「默认 + 4 项」的老清单
+    expect(FONT_FAMILY_OPTIONS.length, "候选清单应成规模").toBeGreaterThanOrEqual(12);
+    const values = FONT_FAMILY_OPTIONS.map((o) => o.value);
+    expect(new Set(values).size, "value 不得重复（下拉里会出现两个同值项）").toBe(values.length);
+    // 「默认」占位必须在首位：value 空串 = 移除变量、回落内置栈
+    expect(values[0], "第一项必须是「默认」占位").toBe("");
+    expect(
+      values.slice(1).every((v) => v.trim().length > 0),
+      "其余项不得为空串",
+    ).toBe(true);
+    // 中文等宽是这次扩充的主诉求之一
+    expect(
+      values.some((v) => v.includes("Sarasa")),
+      "应含更纱黑体",
+    ).toBe(true);
+    expect(
+      values.some((v) => v.includes("LXGW")),
+      "应含霞鹜文楷",
+    ).toBe(true);
   });
 });

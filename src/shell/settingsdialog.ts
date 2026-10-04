@@ -55,13 +55,32 @@ export interface SettingsDialogOptions {
   keymap: KeymapDialogOptions;
 }
 
-/** 编辑器等宽字体候选（第一个是「默认」占位，value 为空串）。 */
+/**
+ * 编辑器等宽字体候选（第一个是「默认」占位，value 为空串）。
+ *
+ * B225 扩充成三组：系统自带（Windows 一定在）→ 常见开发者字体 → 中文等宽。
+ * ⚠️ 后两组**本机未必装了**，所以 `global.css` 里 `.editor-host .cm-editor` 的
+ * `font-family` 在 `var(--font-editor, …)` 之后**还挂了一份** `var(--font-mono)`
+ * 作第二回落 —— 缺字体时掉回内置等宽栈，而不是浏览器的默认非等宽字体。
+ */
 export const FONT_FAMILY_OPTIONS: { label: string; value: string }[] = [
   { label: "默认（Cascadia Code / Consolas…）", value: "" },
   { label: "Cascadia Code", value: "Cascadia Code" },
-  { label: "JetBrains Mono", value: "JetBrains Mono" },
+  { label: "Cascadia Mono", value: "Cascadia Mono" },
   { label: "Consolas", value: "Consolas" },
+  { label: "Lucida Console", value: "Lucida Console" },
   { label: "Courier New", value: "Courier New" },
+  { label: "JetBrains Mono", value: "JetBrains Mono" },
+  { label: "Fira Code", value: "Fira Code" },
+  { label: "Source Code Pro", value: "Source Code Pro" },
+  { label: "IBM Plex Mono", value: "IBM Plex Mono" },
+  { label: "DejaVu Sans Mono", value: "DejaVu Sans Mono" },
+  { label: "Hack", value: "Hack" },
+  { label: "Ubuntu Mono", value: "Ubuntu Mono" },
+  { label: "Noto Sans Mono", value: "Noto Sans Mono" },
+  { label: "MesloLGS NF", value: "MesloLGS NF" },
+  { label: "更纱黑体 Sarasa Mono SC", value: "Sarasa Mono SC" },
+  { label: "霞鹜文楷 LXGW WenKai Mono", value: "LXGW WenKai Mono" },
 ];
 
 /** 编辑器行距候选（倍数）。 */

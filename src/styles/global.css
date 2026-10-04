@@ -3112,8 +3112,23 @@ body.tab-drag-active * {
 
 .editor-host .cm-editor {
   height: 100%;
-  font-family: var(--font-mono);
+  /* B225：--font-editor 由 main.ts 的 applyFontFamily 写在 :root 上（空串/缺省
+     时整颗 var 走回落）。⚠️ 这里原来写死 var(--font-mono)，而 JS 只往 :root 写
+     变量、没人消费 ⇒ 「设置 → 编辑器字体」改了完全没反应。
+     末尾那份 var(--font-mono) 是**第二回落**：选中的字体若本机没装，
+     没有它就会掉到浏览器默认的非等宽字体上，而不是内置等宽栈。 */
+  font-family: var(--font-editor, var(--font-mono)), var(--font-mono);
   font-size: var(--font-size);
+}
+
+/* B225：编辑器行距，同样由 main.ts 的 applyEditorLineHeight 写在 :root 上。
+   只给 .cm-content 与 .cm-gutterElement 两条，不给 .cm-editor 整棵 ——
+   .cm-tooltip / 自动补全面板也在 .cm-editor 里，跟着放大行距会把浮层撑变形。
+   ⚠️ 行号栏那条不能省：.cm-gutterElement 的高度由 CM6 按实测行高写死（px），
+   不跟着改 line-height 的话数字会贴着格子顶边、不与正文对齐。 */
+.editor-host .cm-editor .cm-content,
+.editor-host .cm-editor .cm-gutterElement {
+  line-height: var(--editor-line-height, 1.5);
 }
 
 .editor-host .cm-scroller {
