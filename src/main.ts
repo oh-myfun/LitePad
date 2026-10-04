@@ -125,6 +125,7 @@ import {
   maximizePanel,
   removePanel,
   restoreRatios,
+  rightNeighborOf,
   siblingLeafOf,
   splitPanel as treeSplitPanel,
   splitPanelAt,
@@ -150,6 +151,7 @@ import { initUpdater, type UpdaterHandle } from "./shell/updater";
 import { showAbout } from "./shell/about";
 import {
   renderSplitview,
+  refreshPanelOps,
   panelAt,
   zoneOf,
   clearAllDropPreviews,
@@ -956,6 +958,9 @@ function refreshAll(): void {
   refreshViewModeButton();
   updateTocDrawer();
   renderPanelTabs();
+  // B224：md 两颗键跟着活动面板 / 活动标签走，任何全局刷新都要同步一遍
+  // （开/关标签、复制实例、会话恢复都可能改变「活动面板的标签是不是 md」）。
+  renderPanelOps();
   // B152：任何一次全局刷新（复制标签 / 分裂面板 / 认领标签 / 会话恢复…）之后，兄弟
   // 实例都要对齐到当前激活文档 —— 新出现的那一份不该停在「还没同步过」的老位置上。
   // 放在最后：这一轮该重建的 DOM 都落定了，钉下去不会被随后而来的还原盖掉。
@@ -980,6 +985,9 @@ function markActivePanel(panelId: number): void {
   for (const el of layoutArea.querySelectorAll<HTMLElement>(".layout-panel")) {
     el.classList.toggle("layout-panel-active", Number(el.dataset.panelId) === panelId);
   }
+  // B224：md 两颗键只挂在活动面板上 —— 活动面板变了键就得搬家。只重建 `.panel-ops`
+  // 这一小块，标签条与编辑器都不碰（本函数的红线是「不重建标签条」，ops 不在红线内）。
+  renderPanelOps();
 }
 
 /** 渲染全部面板标签栏（轻量：不动 EditorView）。 */
@@ -1069,6 +1077,46 @@ function tabstripCallbacks(p: Panel): TabstripCallbacks {
   };
 }
 
+/**
+ * 面板渲染快照（B224 起含 Markdown 键的显隐 / 字形标记）。
+ * `rebuildLayout`（整树重建）与 `renderPanelOps`（只刷操作区）共用这一份口径 ——
+ * 两边各写一遍必然漂移，操作区那两颗键就会跟标签条各说各话。
+ */
+function panelDataOf(p: Panel): PanelRenderData {
+  // md 两颗键只给**活动面板**（用户拍定，对齐 VS Code 的 editor/title 动作只出现在
+  // 活动组）：非活动面板不给 md 标记，splitview 那边就一颗都不建。
+  const act = p.panelId === activePanelId ? activeTab() : undefined;
+  const md = !!act && isMdTab(act);
+  return {
+    panelId: p.panelId,
+    active: p.panelId === activePanelId,
+    tabs: tabViewDataOf(p),
+    // B161：卫星窗口唯一的面板**可以**关 —— 关面板 = 关窗（B188 起不再把标签交回主窗口，
+    // 文档由主窗口那份隐藏实例接着管，未保存内容靠热退出副本兜住）。主窗口仍然不许关唯一
+    // 面板（关了就没地方放标签）。
+    canClose: countLeaves(layout) > 1 || windowKind === "satellite",
+    closeDetail:
+      windowKind === "satellite" && countLeaves(layout) <= 1
+        ? "关闭该子窗口（其中的文件不会交回主窗口）"
+        : undefined,
+    // B71：被最大化挤扁的一侧要真的收成 0（CSS 里 .layout-panel 有 min-width）
+    maximized: maximizedPanelId === p.panelId,
+    collapsed: maximizedPanelId !== null && maximizedPanelId !== p.panelId,
+    // B224：标签区右侧那两颗 Markdown 键。mdPreview 决定切换键的字形与文案。
+    md,
+    mdPreview: md && act!.viewMode === "preview",
+  };
+}
+
+/** 只重建各面板的操作区（B224）：md 两颗键跟着活动面板与视图模式走，
+ *  标签条与编辑器都不动（重建标签条会销毁光标下的 `.tab`，见 markActivePanel）。 */
+function renderPanelOps(onlyPanelId?: number): void {
+  for (const p of panels.values()) {
+    if (onlyPanelId !== undefined && p.panelId !== onlyPanelId) continue;
+    refreshPanelOps(p.panelId, panelDataOf(p));
+  }
+}
+
 /** 顺序关闭一组标签（跳过被用户取消的）。 */
 async function closeTabsSequentially(ids: number[]): Promise<void> {
   for (const id of ids) {
@@ -1097,22 +1145,7 @@ function rebuildLayout(): void {
 
   const data = new Map<number, PanelRenderData>();
   for (const p of panels.values()) {
-    data.set(p.panelId, {
-      panelId: p.panelId,
-      active: p.panelId === activePanelId,
-      tabs: tabViewDataOf(p),
-      // B161：卫星窗口唯一的面板**可以**关 —— 关面板 = 关窗（B188 起不再把标签交回主窗口，
-      // 文档由主窗口那份隐藏实例接着管，未保存内容靠热退出副本兜住）。主窗口仍然不许关唯一
-      // 面板（关了就没地方放标签）。
-      canClose: countLeaves(layout) > 1 || windowKind === "satellite",
-      closeDetail:
-        windowKind === "satellite" && countLeaves(layout) <= 1
-          ? "关闭该子窗口（其中的文件不会交回主窗口）"
-          : undefined,
-      // B71：被最大化挤扁的一侧要真的收成 0（CSS 里 .layout-panel 有 min-width）
-      maximized: maximizedPanelId === p.panelId,
-      collapsed: maximizedPanelId !== null && maximizedPanelId !== p.panelId,
-    });
+    data.set(p.panelId, panelDataOf(p));
   }
 
   renderSplitview(layoutArea, layout, data, {
@@ -1195,6 +1228,14 @@ function rebuildLayout(): void {
     onNewTab: (panelId) => {
       markActivePanel(panelId);
       void newUntitled();
+    },
+    // B224：标签区右侧那两颗 Markdown 键（只在活动面板渲染，见 panelDataOf）
+    onOpenPreviewToSide: (panelId) => openPreviewToSide(panelId),
+    onTogglePreview: (panelId) => {
+      // 点击的必是活动面板（键只挂在那里）；万一撞上异步窗口期，先把焦点面板切过去，
+      // 保证 toggle 作用在用户看到键的那个面板上 —— toggleViewMode 只认 activePanel。
+      if (panelId !== activePanelId) markActivePanel(panelId);
+      toggleViewMode();
     },
     mountView: (panelId, hostEl) => {
       const p = getPanel(panelId);
@@ -1402,6 +1443,8 @@ function switchTab(panelId: number, tabId: number): void {
     if (tab) pushSyncToSiblings(tab);
   }
   renderPanelTabs(panelId);
+  // B224：该面板活动标签 md 与否可能变了（md ↔ 非 md 切换），操作区跟着刷一遍
+  renderPanelOps(panelId);
   // 悬浮查找栏不随标签切换关闭——只把查询重新应用到新的活动视图
   retargetFindBar();
   // B182（续）：左键 mousedown 不再拦默认焦点（那会连带废掉原生拖拽，标签拖不动），
@@ -5016,6 +5059,69 @@ function toggleViewMode(): void {
     setTimeout(() => handle.focus(), 0);
   }
   refreshViewModeButton();
+  // B224：切换键是双字形开关（预览态画 edit-code），字形必须跟着 viewMode 走
+  renderPanelOps();
+  scheduleSessionSave();
+}
+
+/**
+ * 把当前 Markdown 文档的预览开到**右侧分屏**（B224，VS Code `markdown.showPreviewToSide`）。
+ *
+ * 落点（用户拍定）：右侧已有面板就**复用**它 —— 那边已有这份文档就接管那一份，没有就
+ * 复制一份同源实例塞进去；右侧没有面板才在右边新开一个分屏。
+ * 复用/复制都走**同源多实例**（B149 基线：多份只同步文本），预览态跟着**那份标签**走，
+ * 源面板那一份不受影响 —— 关掉预览分屏时源文档原样还在。
+ *
+ * ⚠️ 右邻必须用 `rightNeighborOf`（辨方向的右邻），不能拿 `siblingLeafOf`（视觉相邻，
+ * 不辨左右）凑合 —— 在最右边的面板上点这颗键时，它会给出**左边**那个面板。
+ */
+function openPreviewToSide(panelId: number): void {
+  const p = getPanel(panelId);
+  const tab = p ? tabs.get(p.activeTabId) : undefined;
+  if (!p || !tab || !isMdTab(tab)) return; // 键只在 md 活动标签上出现，这里只是兜底
+  const doc = docs.get(tab.docId);
+  if (!doc) return;
+  // 源实例快照回写（与 splitPanelWithTab 的 copy 分支同口径）：
+  // 复制出的实例从这份状态起步，别把过期的快照带进预览分屏
+  if (p.view && p.viewTabId === tab.tabId) tab.state = p.view.view.state;
+
+  const rightId = rightNeighborOf(layout, panelId);
+  if (rightId === null) {
+    // 右侧没有面板：新建右分屏放一份副本。splitPanelWithTab 的 copy 分支会把
+    // 新面板设为活动面板并 rebuildLayout + refreshAll（副本的 view 在那时挂载）。
+    splitPanelWithTab(panelId, "h", tab.tabId, false, true);
+    const np = panels.get(activePanelId);
+    const nt = np ? tabs.get(np.activeTabId) : undefined;
+    if (np && nt && isMdTab(nt)) {
+      nt.viewMode = "preview";
+      applyPanelMode(np);
+    }
+  } else {
+    const rp = panels.get(rightId);
+    if (!rp) return;
+    const found = rp.tabs.find((id) => tabs.get(id)?.docId === tab.docId);
+    let targetId: number;
+    if (found !== undefined) {
+      targetId = found;
+    } else {
+      const inst = makeInstance(doc, -1, tab.state.doc.toString());
+      const sel = tab.state.selection.main;
+      inst.state = inst.state.update({ selection: { anchor: sel.anchor, head: sel.head } }).state;
+      inst.panelId = rightId;
+      rp.tabs.push(inst.tabId);
+      tabs.set(inst.tabId, inst);
+      targetId = inst.tabId;
+    }
+    tabs.get(targetId)!.viewMode = "preview";
+    if (activePanelId !== rightId) markActivePanel(rightId);
+    rp.activeTabId = targetId;
+    // switchTab 负责换文档 / 还原位置 / applyPanelMode；若那份本来就是右面板的活动
+    // 标签它会早退，所以下面再补一次 applyPanelMode 保证模式一定落上。
+    switchTab(rightId, targetId);
+    applyPanelMode(rp);
+    renderPanelTabs(rightId);
+    renderPanelOps(rightId);
+  }
   scheduleSessionSave();
 }
 

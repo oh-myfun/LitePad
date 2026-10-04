@@ -277,9 +277,11 @@ describe("B161 子窗口可以关掉唯一的面板（= 关窗，不交回主窗
   });
 
   it("⨯ 的显隐：主窗口唯一面板仍禁用，卫星窗口可关；副标题要说清后果", () => {
-    const at = src.indexOf("const data = new Map<number, PanelRenderData>();");
+    // B224：面板渲染数据的组装抽进了 panelDataOf（rebuildLayout 与 renderPanelOps
+    // 共用这一份口径，md 键的标记也在这里），锚点跟着函数走。
+    const at = src.indexOf("function panelDataOf(");
     expect(at, "要能定位面板渲染数据的组装处").toBeGreaterThan(-1);
-    const block = src.slice(at, at + 700);
+    const block = src.slice(at, at + 900);
     expect(block, "卫星窗口唯一的面板也能关").toMatch(
       /canClose: countLeaves\(layout\) > 1 \|\| windowKind === "satellite"/,
     );

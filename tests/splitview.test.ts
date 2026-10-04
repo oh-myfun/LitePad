@@ -17,12 +17,14 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 import {
   commitTabDrop,
+  refreshPanelOps,
   renderSplitview,
   zoneOf,
   type PanelRenderData,
   type SplitviewCallbacks,
 } from "../src/shell/splitview";
 import { eachLeaf, leaf, type LayoutNode } from "../src/shell/layout";
+import { CODICONS } from "../src/shell/codicons";
 import { renderTabstrip } from "../src/shell/tabstrip";
 import { installTabDnd } from "../src/shell/tabdnd";
 import { fireDrag, makeDataTransfer } from "./dnd";
@@ -1159,5 +1161,133 @@ describe("分屏：面板操作栏与分隔条（B54）", () => {
     expect(Number(m![1]), "命中区至少 7px（原先是 5px 兼当视觉条）").toBeGreaterThanOrEqual(7);
     expect(css, "悬停高亮落在伪元素上").toMatch(/\.layout-sep:hover::after/);
     expect(css, "细线由伪元素画").toMatch(/\.layout-sep-h::after\s*\{/);
+  });
+});
+
+// ---------------------------------------------------------------- B224
+// 标签区右侧的 Markdown 操作键（参考 VS Code 的 editor/title 动作）：
+// ① 打开侧边预览（open-preview，落点=右分屏）② 源码/预览切换（preview / edit-code 双字形）。
+// 只挂在**活动面板**的 md 活动标签上；非 md 一颗都不建（用户点名隐藏，不是置灰）。
+describe("B224：标签区右侧的 Markdown 操作键", () => {
+  /** 带自定义面板数据的挂载（mount 的 data 是内部造的，md 标记给不进去）。 */
+  function mountMd(p1: PanelRenderData, p2?: PanelRenderData) {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const cb = {
+      onActivatePanel: () => {},
+      onActivateTab: () => {},
+      onCloseTab: () => {},
+      onClosePanel: () => {},
+      onRatioChange: () => {},
+      onDropTabToPanel: () => {},
+      mountView: () => {},
+      onOpenPreviewToSide: vi.fn(),
+      onTogglePreview: vi.fn(),
+    } as unknown as SplitviewCallbacks;
+    const data = new Map<number, PanelRenderData>();
+    data.set(1, p1);
+    data.set(2, p2 ?? { panelId: 2, active: false, tabs: [], canClose: true });
+    renderSplitview(root, H2, data, cb);
+    return { root, cb };
+  }
+  const opsOf = (root: HTMLElement, panelId: number) =>
+    root.querySelector<HTMLElement>(`.layout-panel[data-panel-id="${panelId}"] .panel-ops`)!;
+  const base: PanelRenderData = { panelId: 1, active: true, tabs: [], canClose: true };
+
+  it("字形三颗都在官方包里（IDS 收录 + codicon.css 有对应类）", () => {
+    // ⚠️ 用类选择器判，别用 includes("codicon-preview") —— 那是 codicon-open-preview
+    // 的子串，永远误命中。
+    expect(CODICONS.openPreview).toMatch(/codicon-open-preview/);
+    expect(CODICONS.preview).toMatch(/codicon-preview/);
+    expect(CODICONS.editCode).toMatch(/codicon-edit-code/);
+  });
+
+  it("md 活动面板：两颗键都在，且排在「移除分屏」之前", () => {
+    const { root } = mountMd({ ...base, md: true });
+    const btns = [...opsOf(root, 1).querySelectorAll("button")];
+    const labels = btns.map((b) => b.getAttribute("aria-label"));
+    expect(labels, JSON.stringify(labels)).toContain("打开侧边预览（在右侧分屏中打开预览）");
+    expect(labels).toContain("切换到预览（Ctrl+/）");
+    expect(btns.some((b) => b.querySelector(".codicon-open-preview"))).toBe(true);
+    // 源码态画 preview（点了进预览）
+    expect(btns.some((b) => b.querySelector(".codicon-preview"))).toBe(true);
+    const idxOpen = labels.indexOf("打开侧边预览（在右侧分屏中打开预览）");
+    const idxToggle = labels.indexOf("切换到预览（Ctrl+/）");
+    const idxClose = labels.findIndex((l) => l?.startsWith("移除该分屏"));
+    expect(idxOpen, "md 键要贴着标签区").toBeLessThan(idxClose);
+    expect(idxToggle).toBeLessThan(idxClose);
+  });
+
+  it("非 md 一颗都不渲染（不是 display:none 藏着）", () => {
+    const { root } = mountMd(base);
+    const btns = [...opsOf(root, 1).querySelectorAll("button")];
+    expect(btns.every((b) => !b.querySelector(".codicon-open-preview"))).toBe(true);
+    expect(btns.every((b) => !b.querySelector(".codicon-preview"))).toBe(true);
+    expect(btns.every((b) => !b.querySelector(".codicon-edit-code"))).toBe(true);
+  });
+
+  it("预览态：切换键换 edit-code 字形、文案换「切换到源码」", () => {
+    const { root } = mountMd({ ...base, md: true, mdPreview: true });
+    const btns = [...opsOf(root, 1).querySelectorAll("button")];
+    expect(btns.some((b) => b.querySelector(".codicon-edit-code"))).toBe(true);
+    expect(btns.some((b) => b.querySelector(".codicon-preview"))).toBe(false);
+    const labels = btns.map((b) => b.getAttribute("aria-label"));
+    expect(labels).toContain("切换到源码（Ctrl+/）");
+    expect(labels).not.toContain("切换到预览（Ctrl+/）");
+  });
+
+  it("点击回调带上 panelId（回调拿它定 toggle 的作用面板）", () => {
+    const { root, cb } = mountMd({ ...base, md: true });
+    const btns = [...opsOf(root, 1).querySelectorAll("button")];
+    const toggle = btns.find((b) => b.getAttribute("aria-label")?.startsWith("切换到预览"))!;
+    toggle.click();
+    expect(cb.onTogglePreview).toHaveBeenCalledWith(1);
+    const open = btns.find((b) => b.getAttribute("aria-label")?.startsWith("打开侧边预览"))!;
+    open.click();
+    expect(cb.onOpenPreviewToSide).toHaveBeenCalledWith(1);
+  });
+
+  it("refreshPanelOps 局部重建：显隐 / 字形都能翻面，且不重建标签条", () => {
+    const { root } = mountMd({ ...base, md: true });
+    // 标签条里塞个探针：ops 重建绝不能把它一起洗掉（那会销毁光标下的 .tab）
+    const marker = document.createElement("div");
+    marker.dataset.probe = "1";
+    root.querySelector(".layout-panel[data-panel-id='1'] .panel-tabstrip")!.appendChild(marker);
+
+    refreshPanelOps(1, base);
+    expect(opsOf(root, 1).querySelector(".codicon-open-preview")).toBeNull();
+    expect(root.querySelector("[data-probe='1']"), "标签条必须原封不动").not.toBeNull();
+
+    refreshPanelOps(1, { ...base, md: true, mdPreview: true });
+    expect(opsOf(root, 1).querySelector(".codicon-edit-code")).not.toBeNull();
+    expect(opsOf(root, 1).querySelector(".codicon-preview")).toBeNull();
+  });
+
+  it("main 侧口径：md 只给活动面板；侧边预览用辨方向的右邻 + 复用分支", () => {
+    const main = readFileSync("src/main.ts", "utf-8");
+    expect(main, "md 标记必须判活动面板（键只挂活动面板，用户拍定）").toMatch(
+      /const md = !!act && isMdTab\(act\)/,
+    );
+    expect(main, "活动标签必须先按面板过滤").toMatch(
+      /const act = p\.panelId === activePanelId \? activeTab\(\) : undefined;/,
+    );
+    const fn = main.match(/function openPreviewToSide\([\s\S]*?\n\}/)?.[0] ?? "";
+    expect(fn, "侧边预览函数必须存在").toBeTruthy();
+    // ⚠️ 反例在前：拿 siblingLeafOf 凑合时它给出的是**左**邻（B224 定案右侧已有就复用）。
+    // ⚠️ 只能锁在函数体内 —— 别处有两处**合法**的 siblingLeafOf（视觉相邻语义），全文
+    // not.toContain 会把无辜者一起抓。
+    expect(fn, "不许用不辨方向的视觉相邻凑合").not.toContain("siblingLeafOf");
+    expect(fn, "落点必须用辨方向的右邻").toContain("rightNeighborOf(layout, panelId)");
+    expect(fn, "复用分支：先找右面板里已有的同文档实例").toMatch(
+      /rp\.tabs\.find\(\(id\) => tabs\.get\(id\)\?\.docId === tab\.docId\)/,
+    );
+    expect(fn, "没有右面板才新建分屏（copy=true，同源实例）").toContain(
+      'splitPanelWithTab(panelId, "h", tab.tabId, false, true)',
+    );
+    expect(fn, "开出的那份必须落成预览态").toMatch(/viewMode = "preview"/);
+    // 刷新点：切面板 / 全局刷新 / 切标签 / 切视图 / 预览落定，缺一处字形就会各说各话
+    expect(main, "活动面板搬家时要刷 ops").toMatch(/renderPanelOps\(\);/);
+    expect(main, "switchTab 后要刷 ops").toMatch(/renderPanelOps\(panelId\);/);
+    expect(main, "预览落定后要刷 ops").toMatch(/renderPanelOps\(rightId\);/);
   });
 });

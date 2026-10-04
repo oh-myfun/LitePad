@@ -10,6 +10,7 @@ import {
   pathToPanel,
   removePanel,
   restoreRatios,
+  rightNeighborOf,
   siblingLeafOf,
   splitPanel,
   splitPanelAt,
@@ -496,3 +497,42 @@ describe("焦点面板：非活动分屏降亮度（class 实时同步）", () =
     );
   });
 });
+
+// B224「打开侧边预览」：右侧已有面板就复用它，所以要一把**辨方向**的邻居尺子。
+describe("rightNeighborOf：正右方的面板（B224 侧边预览落点）", () => {
+  // 基准树见文件头：h(1, v(2, 3)) —— 1 在左，2/3 上下占右侧
+  it("右边是纵向子树时，取那棵子树最左的叶子", () => {
+    expect(rightNeighborOf(tree, 1), "1 的右邻是 v 子树的最左叶子").toBe(2);
+  });
+
+  it("挂在右孩子上 / 只有纵向分割 ⇒ 右侧没有面板", () => {
+    // ⚠️ 反例必须排在正向断言之前：这三条正是区分「右邻」与「视觉相邻」的判据 ——
+    // `siblingLeafOf` 在这两处会返回 1（**左**邻），拿它凑合就会在这里露馅。
+    expect(rightNeighborOf(tree, 2), "2 在右孩子上，不该有右邻").toBeNull();
+    expect(rightNeighborOf(tree, 3), "3 同样在右侧，不该有右邻").toBeNull();
+    expect(rightNeighborOf(v(1, 2), 1), "上下分屏里没有『右』这个概念").toBeNull();
+  });
+
+  it("多层横向：由近及远找第一个「本分支在左」的横向分割", () => {
+    const t: LayoutNode = { kind: "split", dir: "h", ratio: 0.5, a: h(1, 2), b: leaf(3) };
+    expect(rightNeighborOf(t, 1), "1 的直接父就是横向且它在左 ⇒ 2").toBe(2);
+    // 2 的直接父是横向但它在**右**孩子 ⇒ 往上跳一层：那棵子树在左 ⇒ 右邻是 3
+    expect(rightNeighborOf(t, 2), "2 要跳到上一层才找得到右邻").toBe(3);
+    expect(rightNeighborOf(t, 3), "最右没有右邻").toBeNull();
+  });
+
+  it("单面板 / 面板不存在 ⇒ null", () => {
+    expect(rightNeighborOf(leaf(7), 7)).toBeNull();
+    expect(rightNeighborOf(tree, 99)).toBeNull();
+  });
+});
+
+/** 横向分屏的简写（a 在左、b 在右）。 */
+function h(a: number, b: number): LayoutNode {
+  return { kind: "split", dir: "h", ratio: 0.5, a: leaf(a), b: leaf(b) };
+}
+
+/** 纵向分屏的简写（a 在上、b 在下）。 */
+function v(a: number, b: number): LayoutNode {
+  return { kind: "split", dir: "v", ratio: 0.5, a: leaf(a), b: leaf(b) };
+}

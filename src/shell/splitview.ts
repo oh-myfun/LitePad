@@ -47,6 +47,15 @@ export interface PanelRenderData {
   maximized?: boolean;
   /** B71：被最大化挤成 0 的那一侧（仍留在 DOM 里，只是不占地方） */
   collapsed?: boolean;
+  /**
+   * B224：该面板**活动标签**是 Markdown —— 只有它为真，标签区右侧才挂那两颗
+   * Markdown 键（侧边预览 + 源码/预览切换）。非 md 面板一颗都不给（用户点名隐藏）。
+   * ⚠️ 这个标记由调用方**只给活动面板**（VS Code 的 editor/title 动作也只出现在
+   * 活动组），分屏时才不会两排都挂着同样的键。
+   */
+  md?: boolean;
+  /** B224：活动标签当前是**预览态**（决定切换键画 `edit-code` 还是 `preview`） */
+  mdPreview?: boolean;
 }
 
 export interface SplitviewCallbacks {
@@ -95,6 +104,14 @@ export interface SplitviewCallbacks {
   ) => void;
   /** 面板宿主就绪：把该面板的 EditorView DOM 挂载进来 */
   mountView: (panelId: number, hostEl: HTMLElement) => void;
+  /**
+   * B224：把活动文档开成**侧边预览**（VS Code `markdown.showPreviewToSide`）。
+   * 右侧已有面板就复用它，没有才在右边新开一个分屏（用户拍定的落点口径）。
+   * 只有活动面板挂着这颗键，所以 panelId 恒等于当前活动面板。
+   */
+  onOpenPreviewToSide?: (panelId: number) => void;
+  /** B224：活动标签在**源码 / 预览**之间切一次（复用 Ctrl+/ 那条路径）。 */
+  onTogglePreview?: (panelId: number) => void;
 }
 
 export function renderSplitview(
@@ -104,6 +121,9 @@ export function renderSplitview(
   cb: SplitviewCallbacks,
 ): void {
   svCallbacks = cb;
+  // B224：记住布局区根节点 —— 切标签 / 切视图后要**局部**重建某个面板的操作区
+  // （那两颗 Markdown 键跟着活动面板与视图模式走），不必整棵树重绘。
+  svRoot = root;
   root.textContent = "";
   // B60：每次重绘都换一批分隔条元素，注册表必须跟着清 —— 否则会拿已脱离文档的
   // 旧句柄去算对齐（centerOf 恒为 0，误判成「全部对齐」）。
@@ -116,6 +136,9 @@ export function renderSplitview(
 
 /** 当前布局回调（单一布局区；指针拖拽的落点提交需要访问 onDropTabToPanel）。 */
 let svCallbacks: SplitviewCallbacks | null = null;
+
+/** 当前布局区根节点（B224：供 `refreshPanelOps` 定位某个面板的操作区）。 */
+let svRoot: HTMLElement | null = null;
 
 // ---------------------------------------------------------------- 标签拖拽
 // B91-2 起走 **HTML5 DnD**（`draggable` + `dragstart`/`dragover`/`drop`），不再是指针
@@ -500,6 +523,39 @@ function buildPanel(
     );
   });
 
+  // B224：操作区整体抽成 `buildPanelOps`（md 两颗键的显隐挂在 `data.md` 上，
+  // 切标签 / 切视图时由 `refreshPanelOps` 单独重建这一小块，不动标签条与编辑器）。
+  const ops = buildPanelOps(data, cb);
+
+  head.append(strip, ops);
+
+  const host = document.createElement("div");
+  host.className = "panel-host";
+  cb.mountView(panelId, host);
+
+  // 分屏拖拽：悬停预览落点、松手执行（同面板内为排序，跨面板为分屏/移入）
+  const preview = document.createElement("div");
+  preview.className = "split-preview";
+  if (panel) panel.append(preview);
+
+  panel.addEventListener("mousedown", () => cb.onActivatePanel(panelId));
+  // 注意：外部文件拖入由页面级监听统一收（filedrop.ts 的 installFileDropTarget，
+  // B91 起 tauri.conf.json 里 dragDropEnabled: false），面板自己不处理 drop。
+
+  panel.append(head, host);
+  return panel;
+}
+
+/**
+ * 面板操作区（`.panel-ops`）：B224 起最多三颗 ——
+ *   ① 打开侧边预览（`open-preview`）：只有活动面板且活动标签是 Markdown 才有；
+ *   ② 源码 / 预览切换：**双字形开关**，`mdPreview` 决定画 `edit-code`（预览态）还是
+ *      `preview`（源码态），tooltip / aria-label 跟着换 —— 与置顶 / 同步滚动同口径；
+ *   ③ 还原面板（仅最大化中）+ 移除分屏 ⨯（原有）。
+ * ⚠️ 顺序刻意：md 两颗**紧贴标签区**（VS Code 的 editor/title 动作也在那一头），
+ *    ⨯ 仍钉在最右 —— 文档级操作靠标签，系统级操作（关分屏）靠边。
+ */
+function buildPanelOps(data: PanelRenderData, cb: SplitviewCallbacks): HTMLElement {
   const ops = document.createElement("div");
   ops.className = "panel-ops";
   const mkOp = (
@@ -521,11 +577,28 @@ function buildPanel(
     return b;
   };
 
+  // B224：非 md 一颗都不渲染（显隐走「建不建」，不是「建了再 display:none」——
+  // 后者占着 flex 槽位，还会在无障碍树里躺着两颗无意义按钮）。
+  // 活动面板这个条件由调用方给 data.md 时一并决定，这里不再重复判。
+  if (data.md) {
+    ops.append(
+      mkOp(CODICONS.openPreview, "打开侧边预览", "在右侧分屏中打开预览", () =>
+        cb.onOpenPreviewToSide?.(data.panelId),
+      ),
+      mkOp(
+        data.mdPreview ? CODICONS.editCode : CODICONS.preview,
+        data.mdPreview ? "切换到源码" : "切换到预览",
+        "Ctrl+/",
+        () => cb.onTogglePreview?.(data.panelId),
+      ),
+    );
+  }
+
   const closeP = mkOp(
     CODICONS.close,
     "移除该分屏",
     data.closeDetail ?? (data.canClose === false ? undefined : "标签并入相邻面板"),
-    () => cb.onClosePanel(panelId),
+    () => cb.onClosePanel(data.panelId),
   );
   closeP.disabled = data.canClose === false;
   if (data.canClose === false) {
@@ -538,29 +611,29 @@ function buildPanel(
   if (data.maximized) {
     ops.append(
       mkOp(CODICONS.chromeRestore, "还原面板", "恢复最大化前的分屏比例", () =>
-        cb.onToggleMaximizePanel?.(panelId),
+        cb.onToggleMaximizePanel?.(data.panelId),
       ),
     );
   }
   ops.append(closeP);
+  return ops;
+}
 
-  head.append(strip, ops);
-
-  const host = document.createElement("div");
-  host.className = "panel-host";
-  cb.mountView(panelId, host);
-
-  // 分屏拖拽：悬停预览落点、松手执行（同面板内为排序，跨面板为分屏/移入）
-  const preview = document.createElement("div");
-  preview.className = "split-preview";
-  if (panel) panel.append(preview);
-
-  panel.addEventListener("mousedown", () => cb.onActivatePanel(panelId));
-  // 注意：外部文件拖入由页面级监听统一收（filedrop.ts 的 installFileDropTarget，
-  // B91 起 tauri.conf.json 里 dragDropEnabled: false），面板自己不处理 drop。
-
-  panel.append(head, host);
-  return panel;
+/**
+ * 局部重建某个面板的操作区（B224）：切标签 / 切视图后，md 两颗键的显隐与字形都可能
+ * 变，但标签条与编辑器**不能**动（重建会销毁光标下的 `.tab` —— 点标签「要点两下」的
+ * 老坑，见 markActivePanel 的注释），整树重绘又太重 —— 只换这一小块。
+ *
+ * 回调沿用 `renderSplitview` 存下的那一份（svCallbacks）：操作区重建不改任何接线，
+ * 调用方也不必为刷一颗键把整包回调再拼一遍。
+ */
+export function refreshPanelOps(panelId: number, data: PanelRenderData): void {
+  if (!svRoot || !svCallbacks) return;
+  const host = svRoot.querySelector<HTMLElement>(
+    `.layout-panel[data-panel-id="${panelId}"] .panel-ops`,
+  );
+  if (!host) return;
+  host.replaceWith(buildPanelOps(data, svCallbacks));
 }
 
 export type DropZone = "left" | "right" | "top" | "bottom" | "center";

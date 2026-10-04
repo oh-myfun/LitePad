@@ -105,6 +105,16 @@ const IDS = {
   expandAll: "expand-all",
   // —— 面板 / 标签 ——
   circleFilled: "circle-filled",
+  // —— 标签区右侧的 Markdown 操作键（B224，对齐 VS Code 的 editor/title 动作）——
+  // ①「打开侧边预览」：`open-preview` 是 VS Code `markdown.showPreviewToSide` 那一颗
+  //    （文档 + 向右的开口），语义正是「在旁边开一份预览」，不必另挑字形。
+  openPreview: "open-preview",
+  // ②「切换源码 / 预览」是**双字形开关**，与置顶 / 同步滚动 / 左栏那三颗同款：
+  //    字形直接反映**当前状态** —— 源码态画 `preview`（点了进预览），预览态画
+  //    `edit-code`（点了回源码）；tooltip / aria-label 跟着换，读者不必猜哪边是开。
+  //    ⚠️ 别写成「一颗 + .is-on 配色」：状态落在颜色上，暗色主题下几乎分不出来。
+  preview: "preview",
+  editCode: "edit-code",
   // —— 标签上的文件类型字形（10 个家族，见 src/shell/fileicons.ts）——
   markdown: "markdown",
   code: "code",

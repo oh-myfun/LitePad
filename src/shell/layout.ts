@@ -137,6 +137,39 @@ export function siblingLeafOf(n: LayoutNode, panelId: number): number | null {
 }
 
 /**
+ * 某面板**正右方**的那个面板（B224 侧边预览的落点判定：右侧已有面板就复用它）。
+ *
+ * 判据：沿「该叶子 → 根」这条路径**由近及远**找第一个横向分割（dir === "h"）且本分支
+ * 是它的**左**孩子 —— 右邻就是那个分割的右子树里最左的叶子。一路都挂在右孩子上
+ * （或沿途只有纵向分割）⇒ 右侧没有面板，返回 null。
+ *
+ * ⚠️ 不能拿 `siblingLeafOf` 凑合：那个找的是「视觉相邻」而**不辨方向**（本分支在右
+ * 孩子上时它返回的是**左**邻），侧边预览要的是方向明确的右邻。
+ * ⚠️ 只看**横向**分割：上下分屏（dir === "v"）里「右边」这个概念根本不存在。
+ */
+export function rightNeighborOf(root: LayoutNode, panelId: number): number | null {
+  // 递归回程才入栈 ⇒ path[0] 是**最近**的祖先，正好是「由近及远」的顺序
+  const path: { dir: "h" | "v"; side: "a" | "b"; right: LayoutNode }[] = [];
+  const walk = (n: LayoutNode): boolean => {
+    if (n.kind === "leaf") return n.panelId === panelId;
+    if (walk(n.a)) {
+      path.push({ dir: n.dir, side: "a", right: n.b });
+      return true;
+    }
+    if (walk(n.b)) {
+      path.push({ dir: n.dir, side: "b", right: n.b });
+      return true;
+    }
+    return false;
+  };
+  if (!walk(root)) return null;
+  for (const step of path) {
+    if (step.dir === "h" && step.side === "a") return firstLeaf(step.right);
+  }
+  return null;
+}
+
+/**
  * 最大化某面板（B71）：沿「根 → 该叶子」的每一层 split 把比例推到 0/1，
  * 于是它独占整块编辑区，其余面板被挤成 0（仍在树里、标签与编辑器实例都不销毁）。
  *
