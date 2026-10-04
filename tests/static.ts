@@ -153,14 +153,43 @@ export function pyFnBody(src: string, name: string): string {
 // ⚠️ 下面是 TS 版的同名工具：两条都要留 —— pyFnBody 服务 Python 脚本（scripts/*.py），
 //    topLevelFnBody 服务 TS 源码（src/**）。混用会静默返回空串（见 pyFnBody 的注释）。
 //
-// ⚠️⚠️ `name` 是**裸子串**，`indexOf` 取**首次出现** —— 所以源码注释里只要提了
-//    别的函数名，那条契约就会截到「本函数的注释块」而不是函数体，断言凭空失败。
-//    B231 实测：`applyFontFamily` 的注释里写了一句「见 applyCodeFontFamily」，
-//    于是 `topLevelFnBody(src, "applyCodeFontFamily")` 起点落在前者的注释里。
-//    ⇒ 被 `topLevelFnBody` 盯着的函数，其注释里**别写其它函数名**；要指路就写
-//    「下面那个 XXX setter」这种不含标识符的说法。
+// ⚠️⚠️ `name` 是**裸子串**，`indexOf` 取**首次出现** —— 有两种踩法：
+//    ① 源码注释里提了**别的函数名**，那条契约会截到「本函数的注释块」而不是函数体，
+//       断言凭空失败。B231 实测：`applyFontFamily` 的注释里写了一句
+//       「见 applyCodeFontFamily」，于是 `topLevelFnBody(src, "applyCodeFontFamily")`
+//       起点落在前者的注释里。
+//       ⇒ 被 `topLevelFnBody` 盯着的函数，其注释里**别写其它函数名**；要指路就写
+//       「下面那个 XXX setter」这种不含标识符的说法。
+//    ② **调用点排在声明之前**时更隐蔽：截到的是 `fn();\n}` 这种调用片段，
+//       断言表现为「函数体里没有我预期的内容」，看着像代码写错了。
+//       B233 实测：`refreshViewModeButton()` 有三处调用在 928/963/5105 行、声明在
+//       5181 行 ⇒ 直接用下面的 **`fnBody`**（只认 `function <name>(`）。
 export function topLevelFnBody(fileText: string, name: string): string {
   const start = fileText.indexOf(name);
+  if (start < 0) return "";
+  let end = fileText.indexOf("\n}", start);
+  while (end > -1) {
+    const after = fileText[end + 2];
+    if (after === undefined || after === "\n") break;
+    end = fileText.indexOf("\n}", end + 1);
+  }
+  return fileText.slice(start, end + 2);
+}
+
+/**
+ * 同上，但**只认函数声明处**（`function <name>(`），跳过调用点与注释里的提及。
+ *
+ * ⚠️ 什么时候必须用这个：`topLevelFnBody` 的 `indexOf(name)` 取**首次出现**，
+ *    所以只要**调用点排在声明之前**（`main.ts` 里 `refreshViewModeButton()` 有三处
+ *    调用在 928/963/5105 行，声明在 5181 行），它就会截到
+ *    `refreshViewModeButton();\n}` 这种调用片段 —— 断言不是凭空失败，而是
+ *    **静默取到错的东西**。B233 实测栽在这里（第一次跑三条用例全红，报的是
+ *    「取到的函数体里没有 langLabel」，很像代码写错了，其实是工具取歪）。
+ *
+ * ⇒ **默认用这个**；`topLevelFnBody` 只留给「首次出现确实是声明」的老契约。
+ */
+export function fnBody(fileText: string, name: string): string {
+  const start = fileText.indexOf(`function ${name}(`);
   if (start < 0) return "";
   let end = fileText.indexOf("\n}", start);
   while (end > -1) {

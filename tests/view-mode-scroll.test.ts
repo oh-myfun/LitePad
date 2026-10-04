@@ -148,9 +148,19 @@ function previewRoot(): HTMLElement {
   if (!el) throw new Error("预览容器没挂载");
   return el;
 }
+/**
+ * 切一次视图（源码 ⇄ 预览）。
+ *
+ * ⚠️ B233：**不再点状态栏那颗 `#sb-lang`** —— 它已改成纯展示（md 也不再来回切视图），
+ * 点了没反应。这里走标签区面板操作区里那颗切换键（真实入口，aria-label 是
+ * 「切换到源码」/「切换到预览」）。
+ *
+ * 定位用 aria-label 前缀、**不能按下标**：面板操作区最多三颗（打开侧边预览 +
+ * 源码/预览切换 + 移除该分屏），下标会随面板数漂移。
+ */
 function toggleViewModeByClick(): void {
-  const btn = document.querySelector("#sb-lang") as HTMLElement | null;
-  if (!btn) throw new Error("状态栏语言按钮没挂载");
+  const btn = document.querySelector('.panel-ops [aria-label^="切换到"]') as HTMLElement | null;
+  if (!btn) throw new Error("面板操作区里没找到源码/预览切换键");
   btn.click();
 }
 /** 装一个**会记值**的 scrollTop（jsdom 不做布局，顺带顺便记录最后一次写进去的值）。 */

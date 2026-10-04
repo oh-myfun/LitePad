@@ -3339,22 +3339,15 @@ body.tab-drag-active * {
   color: var(--fg);
 }
 
-/* 状态栏视图切换按钮激活态（预览中）+ M↓ 徽标 */
-.sb-btn.sb-btn-active {
-  background: var(--accent);
-  color: var(--accent-fg);
-}
-.sb-md-badge {
-  font-weight: 700;
-  margin-right: 3px;
-}
+/* B233：`.sb-btn-active` 与 `.sb-md-badge` 已随状态栏语言项「纯展示化」删除 ——
+   前者是那颗的预览态点亮底色，后者是「M↓」徽标，两者唯一的使用者都已不在。
+   ⚠️ 别加回来：那颗现在是纯文字，任何「看起来可点」的痕迹都是假 affordance。 */
 
-/* 语言/格式项（sb-lang）：md 文件时带 .sb-btn 可点击；
-   其他类型为纯展示，去掉按钮的 hover 底色与手型指针 */
-.sb-lang:not(.sb-btn) {
+/* 语言/格式项（sb-lang）：纯展示，恒不可点 */
+.sb-lang {
   cursor: default;
 }
-.sb-lang:not(.sb-btn):hover {
+.sb-lang:hover {
   background: transparent;
   color: var(--fg-muted);
 }

@@ -50,7 +50,14 @@ const SYNC_STATE = "const docSyncModes = new Map<number, boolean>();";
 const PUSH_BODY = slice(main, "function applySyncToSibling(", "function showMessage(");
 const BTN_BODY = slice(main, "function refreshSyncButton(", "function refreshStatus(");
 const SRC_BODY = slice(main, "function isSyncSource(", "/** 这个实例此刻是否被某个面板");
-const CLICK_BODY = slice(main, 'syncScrollBtn.addEventListener("click"', "sbLang.addEventListener");
+// ⚠️ B233：终点原本是紧邻的 `sbLang.addEventListener`，而那句已随「状态栏语言项
+//    纯展示化」删除 ⇒ 换成它后面那句 `sbEncoding.addEventListener`（仍是紧邻的下一句）。
+//    锚点失效时 slice 会静默返回空串，判据全绿 —— 换锚点后务必回读确认非空。
+const CLICK_BODY = slice(
+  main,
+  'syncScrollBtn.addEventListener("click"',
+  'sbEncoding.addEventListener("click"',
+);
 const PIN_BODY = slice(main, "function pinScrollTop(", "function restoreViewScroll(");
 // 大纲 onJump：跳转定位逻辑（受同步滚动状态约束的那一段）—— 与 B152 同路数，盯静态契约。
 const ONJUMP_BODY = slice(

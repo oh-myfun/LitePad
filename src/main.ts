@@ -282,7 +282,8 @@ const sbPos = el("sb-pos");
 const sbCount = el("sb-count");
 const sbEncoding = el<HTMLButtonElement>("sb-encoding");
 const sbEol = el<HTMLButtonElement>("sb-eol");
-const sbLang = el<HTMLButtonElement>("sb-lang");
+// B233：状态栏语言项是**纯展示**（md 也不再来回切视图）⇒ HTML 侧已改成 <span>。
+const sbLang = el<HTMLSpanElement>("sb-lang");
 
 /** 文档级记录：与 Rust Doc 一一对应（tabId 唯一）。元数据与脏标记由所有实例共享。 */
 interface Doc {
@@ -5176,22 +5177,22 @@ function openPreviewToSide(panelId: number): void {
   scheduleSessionSave();
 }
 
-/** 状态栏语言/格式项（记事本式，一个元素两用）：
- *  md 文件 → 「M↓ Markdown 语法/预览」可点击切换视图；其他类型 → 仅显示高亮语言名。 */
+/** 状态栏语言/格式项：**纯展示**高亮语言名（记事本式）。
+ *
+ * B233：md 原先在这颗上兼了「视图切换器」——显示「M↓ Markdown 语法/预览」、
+ *  可点击切视图、预览态还点亮 `.sb-btn-active`。现在**一律只显示语言名**
+ *  （md 就是 `langLabel` 的 "Markdown"），与其他格式完全一致：不带 `.sb-btn`、
+ *  不带 `.sb-md-badge`、不随 `viewMode` 变、不挂切换提示、点了也没反应。
+ *  用户明确要的是「和其他格式显示一样」，**预览态也不加任何额外标记**。
+ *
+ *  视图切换入口仍在别处（标签区操作键、Ctrl+/、菜单），这颗不再承担。
+ *  ⚠️ 别再加回 `.sb-btn` / `sb-btn-active` / `sb-md-badge` 任一个 ——
+ *     它们唯一的作用就是让这颗看起来可点，有专门的反向契约钉住。 */
 function refreshViewModeButton(): void {
   const tab = activeTab();
-  const md = !!tab && isMdTab(tab);
-  sbLang.classList.toggle("sb-btn", md);
-  sbLang.classList.toggle("sb-btn-active", md && tab!.viewMode === "preview");
-  if (md) {
-    const preview = tab!.viewMode === "preview";
-    sbLang.innerHTML = `<span class="sb-md-badge">M↓</span> Markdown ${preview ? "预览" : "语法"}`;
-    setTip(sbLang, preview ? "切换到源码" : "切换到预览", { key: "Ctrl+/" });
-  } else {
-    const doc = tab ? docs.get(tab.docId) : undefined;
-    sbLang.textContent = doc?.langLabel ?? "Plain Text";
-    clearTip(sbLang);
-  }
+  const doc = tab ? docs.get(tab.docId) : undefined;
+  sbLang.textContent = doc?.langLabel ?? "Plain Text";
+  clearTip(sbLang);
 }
 
 /**
@@ -6008,9 +6009,8 @@ function bindEvents(): void {
     if (on) pushSyncToSiblings(tab, true);
   });
 
-  sbLang.addEventListener("click", () => {
-    if (isMdActive()) toggleViewMode();
-  });
+  // B233：状态栏语言项不再兼视图切换器（见 refreshViewModeButton 的注释），
+  // 那颗纯展示、不挂 click。切换入口在标签区操作键 / Ctrl+/ / 菜单。
   sbEncoding.addEventListener("click", () => void showEncodingMenu());
   sbEol.addEventListener("click", () => showEolMenu());
 
