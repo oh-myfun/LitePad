@@ -85,6 +85,17 @@ export interface SavedFile {
   mtimeMs: number;
 }
 
+/**
+ * B235：预览**正文内容区**的宽度档位。
+ *
+ * ⚠️ 这是**正文居中宽度**，不是源码与预览两栏的分屏比例（那个由拖拽分隔条管）。
+ * 三档：
+ *   · `standard` 标准 —— 860px（原先硬编码的那个值）
+ *   · `wide`     宽屏 —— 1100px
+ *   · `full`     全宽 —— 不限宽，正文铺满预览区（**默认**，用户 B235 点名要的）
+ */
+export type PreviewWidth = "standard" | "wide" | "full";
+
 export interface Settings {
   theme: string;
   default_eol: string;
@@ -110,6 +121,14 @@ export interface Settings {
   hot_exit: boolean;
   /** Markdown 预览行距（1.0–2.5） */
   preview_line_height: number;
+  /**
+   * B235：预览**正文内容区**的宽度档位（`standard` / `wide` / `full`，默认 `full`）。
+   *
+   * ⚠️ 这是**正文居中宽度**（原先硬编码在 `preview.css` 的 `max-width: 860px`），
+   *    不是源码与预览两栏的分屏比例 —— 那个由拖拽分隔条管。
+   * 存**档位名**而非 px：同一档在不同分辨率/缩放下观感才稳定。
+   */
+  preview_width: PreviewWidth;
   /** 大纲抽屉宽度（px，160–640） */
   toc_width: number;
   /**

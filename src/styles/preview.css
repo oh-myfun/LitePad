@@ -1,6 +1,17 @@
 /* Markdown 预览样式（M3）——应用内预览与 HTML 导出共用 */
 
+/* B235：预览正文内容区宽度改为**三档可配**（原先硬编码 860px）。
+   ⚠️ 这是「正文居中宽度」，**不是**源码与预览两栏的分屏比例 —— 那个由拖拽
+      分隔条管，仍是另一件事。三档：标准 860 / 宽屏 1100 / 全宽不限。
+   ⚠️ 变量写在 `:root` 而不是 `.md-preview` 上：导出 HTML 只注入本文件，
+      `:root` 那份默认值（若导出模板也带上）才兜得住；没有时落到下面的
+      `var(--md-content-max, none)` 兜底 = 不限宽。
+   ⚠️ **全宽档给 `none` 而不是很大的 px** —— 真的不限宽才能铺满；
+      写一个上限数字的话，超过就还是会被截住。 */
 .md-preview {
+  /* B235：三档正文宽度。标准 860 / 宽屏 1100 / 全宽不限。 */
+  --md-content-max: none;
+
   --md-fg: #1f2328;
   --md-bg: #ffffff;
   --md-muted: #656d76;
@@ -48,8 +59,10 @@
   --md-link: #539bf5;
 }
 
+/* B235：宽度档由 main.ts 写在 `.md-preview` 的内联 `--md-content-max` 上。
+   默认 `none`（不限宽）—— 与 B235 用户口径一致（默认全宽）。 */
 .md-preview .md-block {
-  max-width: 860px;
+  max-width: var(--md-content-max, none);
   margin: 0 auto;
 }
 

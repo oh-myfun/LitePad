@@ -69,6 +69,8 @@ import {
   type EncodingItem,
   // B227：本机字体枚举项（Rust list_fonts 的负载）
   type FontItem,
+  // B235：预览正文宽度档（standard / wide / full）
+  type PreviewWidth,
   loadSession,
   loadSettings,
   newTab as ipcNewTab,
@@ -108,7 +110,8 @@ import {
   attachSideResizer,
   clampSideWidth,
   type TocListHandle,
-  type SideResizerHandle,
+  // B235：`SideResizerHandle` 类型随句柄变量一起删（设置页那个「大纲宽度」下拉
+  //   移除后没人持有句柄了；拖拽靠 `attachSideResizer(...)` 的调用本身注册）。
 } from "./markdown/toc";
 import { attachWheelZoom } from "./shell/zoom";
 import {
@@ -151,7 +154,9 @@ import {
   type KeymapOverrides,
 } from "./shell/keymap";
 import { KEYMAP_RECORDING_CLASS } from "./shell/keymapdialog";
-import { showSettingsDialog } from "./shell/settingsdialog";
+// B235：`PREVIEW_WIDTH_LABELS` 是宽度档的中文标签（提示气泡用），
+// 与设置页那份同源 —— 别在手抄第二遍。
+import { showSettingsDialog, PREVIEW_WIDTH_LABELS } from "./shell/settingsdialog";
 import { initUpdater, type UpdaterHandle } from "./shell/updater";
 import { showAbout } from "./shell/about";
 import {
@@ -5240,12 +5245,19 @@ const tocListView: TocListHandle = createTocList(tocList, refreshTocToggleAll);
 
 /** 大纲宽度（由设置载入、拖拽后回写设置；160–640px） */
 let sideWidth = 240;
-let sideResizerHandle: SideResizerHandle | null = null;
+
+/**
+ * B235：`sideResizerHandle` 这个句柄已删 —— 设置页那个「大纲宽度」下拉移除后，
+ * 它唯一的读者（`setTocWidthValue` 里那句 `setWidth`）没了，`tsc` 的
+ * `noUnusedLocals` 会拦这种「只赋值不读取」的变量。
+ * ⚠️ `attachSideResizer(...)` 的调用本身必须留着 —— 它才是真正注册拖拽监听、
+ *    并把 `onChange` 接上「夹取 → 回写设置」的那一步。返回值直接丢弃即可。
+ */
 
 /** 挂载大纲宽度分隔条。设置未就绪（settings 为 null）时只生效不持久化。 */
 function setupSideResizer(): void {
   sideWidth = clampSideWidth(settings?.toc_width ?? 240);
-  sideResizerHandle = attachSideResizer(tocResizer, tocPanel, {
+  attachSideResizer(tocResizer, tocPanel, {
     initial: sideWidth,
     // B207（用户点名「拖到最小后再往左拖就隐藏展开区，隐藏后分割线仍可拖回来」）：把
     // 收放的两个口子接到 `setSideOpen` —— 拖分隔条和点那颗「大纲」键走**同一条**路，
@@ -5609,6 +5621,31 @@ function applyPreviewLineHeight(value: number): void {
   document.documentElement.style.setProperty("--md-line-height", String(v));
 }
 
+/** B235：预览**正文内容区**的宽度档 → 具体 px 值。
+ *
+ * ⚠️ 这一档管的是「正文居中宽度」（原先硬编码在 `preview.css` 的 860px），
+ *    **不是**源码与预览两栏的分屏比例 —— 那个由拖拽分隔条管，是另一件事。
+ * ⚠️ 存**档位名**而不是 px：同一档在不同分辨率/缩放下观感才稳定，以后调值
+ *    也只改这张表，不动用户的设置文件。
+ * ⚠️ 全宽档给 `none`（不限宽）而不是一个很大的数字 —— 写上限的话超过就还是被截住。
+ */
+const PREVIEW_WIDTH_PX: Record<PreviewWidth, string> = {
+  standard: "860px",
+  wide: "1100px",
+  full: "none",
+};
+
+/** 未知档位一律落「全宽」（B235 的默认口径，也是最不容易显得窄的那档）。 */
+function normalizePreviewWidth(v: unknown): PreviewWidth {
+  return v === "standard" || v === "wide" ? v : "full";
+}
+
+/** 预览正文宽度：写 :root 上的 --md-content-max，`.md-preview .md-block` 通过 var() 生效。 */
+function applyPreviewWidth(value: unknown): void {
+  const kind = normalizePreviewWidth(value);
+  document.documentElement.style.setProperty("--md-content-max", PREVIEW_WIDTH_PX[kind]);
+}
+
 /**
  * 正文字体：写 :root 上的 --font-body，**只**消费在预览正文（`.md-preview`）。
  * 空串（默认）则移除内联变量，回落到 :root 里那份内嵌思源黑体。
@@ -5854,16 +5891,23 @@ async function setPreviewLineHeight(value: number): Promise<void> {
   showMessage(`预览行距 ${value}`);
 }
 
-/** 大纲宽度（查看菜单三档；也可直接拖动大纲右侧分隔条）。 */
-async function setTocWidthValue(width: number): Promise<void> {
-  sideWidth = clampSideWidth(width);
-  sideResizerHandle?.setWidth(sideWidth);
+/** B235：预览正文内容区宽度档（设置页三选）。管的是**正文居中宽度**，不是分屏比例。 */
+async function setPreviewWidth(kind: string): Promise<void> {
+  const k = normalizePreviewWidth(kind);
+  applyPreviewWidth(k);
   if (settings) {
-    settings.toc_width = sideWidth;
+    settings.preview_width = k;
     await persistSettings();
   }
-  showMessage(`大纲宽度 ${sideWidth}px`);
+  showMessage(`预览宽度 ${PREVIEW_WIDTH_LABELS[k]}`);
 }
+
+// ⚠️ B235：原先这里有个 `setTocWidthValue()`（大纲宽度的「程序化设置」入口，
+//    设置页那个三选下拉专用）—— 设置项删除后**没有调用方了，已一并删掉**
+//    （`tsc` 的 `noUnusedLocals` 会拦死代码，说明项目不留无主函数）。
+//    调大纲宽度现在只有一条路：左侧栏的拖拽分隔条，其 `onChange` 里已经做完
+//    「夹取 → 同步 sideWidth → 回写 `settings.toc_width`」这三步
+//    （见上面 `setupSideResizer`）。真要加命令入口，从那里复用。
 
 /** B231：正文字体族（设置页；只作用于预览模式正文，空串 = 内置思源黑体）。 */
 async function setFontFamily(family: string): Promise<void> {
@@ -5946,8 +5990,9 @@ function openSettingsDialog(): void {
     onEditorLineHeight: (v) => void setEditorLineHeight(v),
     previewLineHeight: () => settings?.preview_line_height ?? 1.7,
     onPreviewLineHeight: (v) => void setPreviewLineHeight(v),
-    sideWidth: () => sideWidth,
-    onTocWidth: (px) => void setTocWidthValue(px),
+    // B235：预览正文宽度档（顶掉了原先的「大纲宽度」设置项）
+    previewWidth: () => normalizePreviewWidth(settings?.preview_width),
+    onPreviewWidth: (v) => void setPreviewWidth(v),
     defaultEol: () => settings?.default_eol ?? "CRLF",
     eolOptions: () => eolOptions,
     onDefaultEol: (v) => void setDefaultEol(v),
@@ -8000,6 +8045,9 @@ async function setupShell(): Promise<void> {
   applyFontFamily(settings?.font_family ?? "");
   applyCodeFontFamily(settings?.code_font_family ?? "");
   applyPreviewLineHeight(settings?.preview_line_height ?? 1.7);
+  // B235：预览正文宽度档（缺省「全宽」）。改了它不影响任何测量 ——
+  // 宽度只影响换行位置，不动视口锚点，所以不必走 measureAndKeepScroll。
+  applyPreviewWidth(settings?.preview_width ?? "full");
   applyEditorLineHeight(settings?.editor_line_height ?? 1.5);
   setupSideBar();
   setupSideResizer();

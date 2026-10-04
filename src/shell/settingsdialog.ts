@@ -8,7 +8,9 @@
  *     settings-toolbar(搜索 + 关闭) + settings-layout(settings-nav + settings-content)
  * 分类：通用 / 外观 / 编辑器 / 新建文件 / 快捷键（快捷键复用 keymapdialog
  * 的改键逻辑，作为其中一个分类页）。B229 起原先那个独立的预览分类并入「编辑器」，
- * 预览侧两项（预览行距、大纲宽度）在本页末尾的「预览」小分组里。
+ * 预览侧两项（预览行距、预览布局宽度）在本页末尾的「预览」小分组里。
+ * B235：原先在这儿的「大纲宽度」已按用户要求删除 —— 大纲宽度改由左侧栏的
+ * 拖拽分隔条单独控制，设置页不再有那一项。
  *
  * 与旧首选项弹窗一致：每个控件 change 即回调 main 的 setter（即时生效 + 持久化），
  * 不需要「保存」按钮。快捷键的录制态会挂 KEYMAP_RECORDING_CLASS，让全局快捷键分发器让路。
@@ -17,6 +19,8 @@
 import { mountKeymapPage, type KeymapDialogOptions, type KeymapPageHandle } from "./keymapdialog";
 import { createDropdown } from "./dropdown";
 import { createSwitch } from "./switch";
+// B235：`PreviewWidth` 是宽度档的类型（standard / wide / full）。
+import type { PreviewWidth } from "../ipc/api";
 
 export type ThemeChoice = "system" | "light" | "dark";
 
@@ -41,8 +45,14 @@ export interface SettingsDialogOptions {
   onEditorLineHeight: (value: number) => void;
   previewLineHeight: () => number;
   onPreviewLineHeight: (value: number) => void;
-  sideWidth: () => number;
-  onTocWidth: (px: number) => void;
+  /**
+   * B235：预览正文宽度档（`standard` / `wide` / `full`）。
+   *
+   * ⚠️ 顶掉了原先的 `sideWidth` / `onTocWidth`：设置页不再有「大纲宽度」那一项
+   *    （用户点名去掉），大纲宽度改由左侧栏的拖拽分隔条单独控制。
+   */
+  previewWidth: () => PreviewWidth;
+  onPreviewWidth: (value: PreviewWidth) => void;
   defaultEol: () => string;
   eolOptions: () => string[];
   onDefaultEol: (value: string) => void;
@@ -204,8 +214,29 @@ export function fontOptionsFor(
 /** 预览行距候选（倍数），沿用原菜单三档。 */
 export const PREVIEW_LINE_HEIGHT_OPTIONS = [1.3, 1.7, 2.1];
 
-/** 大纲宽度候选（px），沿用原菜单三档。 */
-export const TOC_WIDTH_OPTIONS = [200, 240, 320];
+/**
+ * B235：预览**正文内容区**宽度三档（顺序即渲染顺序）。
+ *
+ * ⚠️ 管的是**正文居中宽度**，不是源码与预览两栏的分屏比例（那个由拖拽分隔条管）。
+ * `value` 是**档位名**而不是 px —— 同一档在不同分辨率/缩放下观感才稳定。
+ */
+export const PREVIEW_WIDTH_OPTIONS: { value: PreviewWidth; label: string }[] = [
+  { value: "standard", label: "标准（860px）" },
+  { value: "wide", label: "宽屏（1100px）" },
+  { value: "full", label: "全宽（不限宽）" },
+];
+
+/** 档位 → 中文标签（提示气泡与设置项共用一份，别手抄第二遍）。 */
+export const PREVIEW_WIDTH_LABELS: Record<PreviewWidth, string> = {
+  standard: "标准",
+  wide: "宽屏",
+  full: "全宽",
+};
+
+// ⚠️ B235：`TOC_WIDTH_OPTIONS`（大纲宽度候选）已连同设置项一起删除 ——
+//    用户点名「去除大纲宽度」。大纲宽度仍由左侧栏的拖拽分隔条控制
+//    （`clampSideWidth`，160–640px，拖完回写 `settings.toc_width`），功能没丢。
+//    这个常量原先只有设置页那一行在用 ⇒ 删干净，别留死代码。
 
 interface Category {
   id: string;
@@ -254,8 +285,13 @@ const CATEGORIES: Category[] = [
       "markdown",
       "预览",
       "预览行距",
+      // B235：设置项换成了「预览布局宽度」⇒ 关键词同步跟着换。
+      // 「宽度」「全宽」「宽屏」都补上，用户按**结果**搜比按设置项名搜更自然。
+      "预览布局宽度",
+      "宽度",
+      "全宽",
+      "宽屏",
       "大纲",
-      "大纲宽度",
       "目录",
       "toc",
     ],
@@ -730,12 +766,14 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
       ),
     );
     body.appendChild(
-      numberSelectRow(
-        "大纲宽度",
-        TOC_WIDTH_OPTIONS,
-        opts.sideWidth(),
-        (v) => `${v}px`,
-        (v) => opts.onTocWidth(v),
+      selectRow(
+        "预览布局宽度",
+        "预览模式下**正文内容区**的宽度。标准居中收窄、宽屏更宽松、全宽铺满整块预览区。注意这是正文宽度，不是源码与预览的分屏比例（那个可直接拖动分隔条）。",
+        PREVIEW_WIDTH_OPTIONS.map((o) => ({ label: o.label, value: o.value })),
+        opts.previewWidth(),
+        // `selectRow` 的回调签名是 `string`（它不认枚举）⇒ 在这里收窄回档位类型，
+        // 别把 `as PreviewWidth` 甩到别处去。
+        (v) => opts.onPreviewWidth(v as PreviewWidth),
       ),
     );
   } else if (id === "file") {

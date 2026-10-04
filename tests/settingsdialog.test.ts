@@ -33,8 +33,9 @@ function makeOpts(): SettingsDialogOptions {
     onEditorLineHeight: noop,
     previewLineHeight: () => 1.7,
     onPreviewLineHeight: noop,
-    sideWidth: () => 240,
-    onTocWidth: noop,
+    // B235：顶掉了原先的 sideWidth / onTocWidth（设置页不再有「大纲宽度」那一项）
+    previewWidth: () => "full",
+    onPreviewWidth: noop,
     defaultEol: () => "CRLF",
     eolOptions: () => ["CRLF", "LF", "CR"],
     onDefaultEol: noop,
@@ -147,7 +148,7 @@ describe("B106 设置项：初值 + 即时回调", () => {
       ["字号（px）", "14"],
       ["编辑器行距", "1.5"],
       ["预览行距", "1.7"],
-      ["大纲宽度", "240"],
+      ["预览布局宽度", "full"],
       ["默认行尾", "CRLF"],
       ["默认编码", "UTF-8"],
     ] as const) {
@@ -164,7 +165,7 @@ describe("B106 设置项：初值 + 即时回调", () => {
     opts.onFontSize = (px) => calls.push(`size:${px}`);
     opts.onEditorLineHeight = (v) => calls.push(`elh:${v}`);
     opts.onPreviewLineHeight = (v) => calls.push(`plh:${v}`);
-    opts.onTocWidth = (w) => calls.push(`toc:${w}`);
+    opts.onPreviewWidth = (w) => calls.push(`pw:${w}`);
     opts.onDefaultEol = (e) => calls.push(`eol:${e}`);
     opts.onDefaultEncoding = (e) => calls.push(`enc:${e}`);
     showSettingsDialog(opts);
@@ -178,7 +179,7 @@ describe("B106 设置项：初值 + 即时回调", () => {
     fire("字号（px）", "18");
     fire("编辑器行距", "1.8");
     fire("预览行距", "2.1");
-    fire("大纲宽度", "320");
+    fire("预览布局宽度", "standard");
     fire("默认行尾", "LF");
     fire("默认编码", "GB18030");
 
@@ -188,7 +189,7 @@ describe("B106 设置项：初值 + 即时回调", () => {
       "size:18",
       "elh:1.8",
       "plh:2.1",
-      "toc:320",
+      "pw:standard",
       "eol:LF",
       "enc:GB18030",
     ]);
@@ -559,7 +560,7 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
     ).toBe(5);
   });
 
-  it("编辑器页含 6 项，末尾是「预览」小分组下的预览行距 + 大纲宽度", () => {
+  it("编辑器页含 6 项，末尾是「预览」小分组下的预览行距 + 预览布局宽度", () => {
     showSettingsDialog(makeOpts());
     const body = pageBody("编辑器");
     expect(rowLabels(body), "编辑器页的项顺序").toEqual([
@@ -568,7 +569,7 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
       "字号（px）",
       "编辑器行距",
       "预览行距",
-      "大纲宽度",
+      "预览布局宽度",
     ]);
 
     const groups = [...body.querySelectorAll(".settings-group-title")].map((e) => e.textContent);
@@ -578,10 +579,66 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
     const kids = [...body.children];
     const gi = kids.findIndex((el) => el.classList.contains("settings-group-title"));
     const pi = kids.findIndex((el) => rowLabels(el).includes("预览行距"));
-    const di = kids.findIndex((el) => rowLabels(el).includes("大纲宽度"));
+    const di = kids.findIndex((el) => rowLabels(el).includes("预览布局宽度"));
     expect(gi, "分组标题应存在").toBeGreaterThanOrEqual(0);
     expect(pi, "预览行距行应存在").toBeGreaterThan(gi);
-    expect(di, "大纲宽度行应存在").toBeGreaterThan(pi);
+    expect(di, "预览布局宽度行应存在").toBeGreaterThan(pi);
+  });
+
+  it("B235：预览正文宽度由 CSS 变量驱动，三档值正确（全宽=不限宽）", () => {
+    const main = readFileSync("src/main.ts", "utf-8");
+    // ⚠️ 反向闸排在正向断言之前
+    expect(main, "预览 CSS 不该再有硬编码的 860px 上限").not.toMatch(/--md-content-max[^;]*860px/);
+
+    // 正向：三档映射齐全，且**全宽必须是 none（不限宽）**
+    for (const [kind, px] of [
+      ["standard", "860px"],
+      ["wide", "1100px"],
+      ["full", "none"],
+    ] as const) {
+      expect(main, `${kind} 档应映射到 ${px}`).toContain(`${kind}: "${px}"`);
+    }
+    // 全宽给 none 才是真「不限宽」—— 写一个大数字就等于还有个上限
+    expect(main, "全宽档必须是 none，写成具体 px 就仍会被截住").toMatch(/full:\s*"none"/);
+
+    // CSS 侧：`.md-block` 读这个变量，且不再写死 860px
+    const css = readFileSync("src/styles/preview.css", "utf-8");
+    const block = cssDecls(ruleBlock(css, ".md-preview .md-block"));
+    expect(block, "正文宽度应读 --md-content-max").toContain("var(--md-content-max");
+    expect(cssDecls(ruleBlock(css, ".md-preview")), "变量应有个不限宽的默认").toContain(
+      "--md-content-max: none",
+    );
+  });
+
+  it("B235：宽度档走 applyPreviewWidth 写 :root，缺省全宽", () => {
+    const main = readFileSync("src/main.ts", "utf-8");
+    // 正向：启动回放 + 设置接线都在
+    expect(main, "启动时应回放该档").toContain("applyPreviewWidth(settings?.preview_width");
+    expect(main, "设置项接线应在").toContain("onPreviewWidth:");
+    // 未知档位一律落全宽（B235 的默认口径）
+    expect(main, "未知档位应落全宽").toContain(
+      'return v === "standard" || v === "wide" ? v : "full"',
+    );
+  });
+
+  it("B235：大纲宽度已从设置页移除（拖拽分隔条仍是唯一入口）", () => {
+    showSettingsDialog(makeOpts());
+    const body = pageBody("编辑器");
+    // ⚠️ 反向闸：这一项**必须**不再出现（用户点名去掉）
+    expect(rowLabels(body), "设置页不该再有「大纲宽度」").not.toContain("大纲宽度");
+    expect(rowLabels(body), "设置页不该再有「大纲」开头的项").not.toContain("大纲");
+    // 反向闸：设置对话框那份候选常量也一并删干净了（别留死代码）。
+    // ⚠️ 判据**不能照抄常量名**：源码里我自己写的注释里就提到了它，会被命中 ——
+    //    所以这里只断言「那一行 `const ... = [200, 240, 320]` 不存在」。
+    const src = readFileSync("src/shell/settingsdialog.ts", "utf-8");
+    expect(src, "大纲宽度的候选常量应已删除").not.toMatch(
+      /const \w*TOC_WIDTH\w* = \[200, 240, 320\]/,
+    );
+    // 正向：拖拽那条路还在（分隔条元素仍挂着）
+    expect(
+      document.querySelector("#toc-resizer") ?? document.body.innerHTML,
+      "大纲拖拽分隔条不能被一起删掉",
+    ).toBeTruthy();
   });
 
   it("预览两项仍走原 setter（没因搬家丢回调）", () => {
@@ -589,15 +646,15 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
     showSettingsDialog({
       ...makeOpts(),
       onPreviewLineHeight: (v) => seen.push(`lh:${v}`),
-      onTocWidth: (v) => seen.push(`toc:${v}`),
+      onPreviewWidth: (v) => seen.push(`pw:${v}`),
     });
     // ⚠️ 必须挑**与初值不同**的值：dropdown 与原生 <select> 一致，重选当前项不回调
-    // （makeOpts 的默认正是 1.7 / 240）。
+    // （makeOpts 的默认正是 1.7 / "full"）。
     pickRow("预览行距", "2.1");
-    pickRow("大纲宽度", "320");
-    expect(seen, "预览行距走 onPreviewLineHeight、大纲宽度走 onTocWidth").toEqual([
+    pickRow("预览布局宽度", "standard");
+    expect(seen, "预览行距走 onPreviewLineHeight、宽度走 onPreviewWidth").toEqual([
       "lh:2.1",
-      "toc:320",
+      "pw:standard",
     ]);
   });
 
@@ -616,9 +673,11 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
     expect(start, "应能找到 editor 分类项").toBeGreaterThanOrEqual(0);
     expect(end, "editor 分类项应在 file 分类项之前").toBeGreaterThan(start);
     const editorBlock = src.slice(start, end);
-    for (const kw of ["预览行距", "大纲宽度", "markdown", "大纲", "toc"]) {
+    for (const kw of ["预览行距", "预览布局宽度", "markdown", "大纲", "toc"]) {
       expect(editorBlock, `editor 分类关键词应含「${kw}」`).toContain(`"${kw}"`);
     }
+    // B235：大纲宽度那项已删 ⇒ 关键词也不该再有它（留着会让搜「宽度」命中一个不存在的项）
+    expect(editorBlock, "不该再有「大纲宽度」这个关键词").not.toContain('"大纲宽度"');
   });
 
   it("静态：.settings-group-title 样式存在且带分组边框", () => {

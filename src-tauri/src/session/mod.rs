@@ -37,6 +37,12 @@ pub struct Settings {
     pub hot_exit: bool,
     /// Markdown 预览行距（1.0–2.5，默认 1.7）
     pub preview_line_height: f64,
+    /// B235：预览**正文内容区**的宽度档位（`standard` / `wide` / `full`，默认 `full`）。
+    ///
+    /// ⚠️ 这是**正文居中宽度**（原先硬编码在 `preview.css` 的 `max-width: 860px`），
+    ///    不是源码与预览两栏的分屏比例 —— 那个由拖拽分隔条管，仍是另一件事。
+    /// 存**档位名**而不是 px：换分辨率/缩放后同一档的观感才稳定，也便于以后调值。
+    pub preview_width: String,
     /// 大纲（TOC）抽屉宽度（px，160–640，默认 240）。前端拖拽分隔条后回写。
     pub toc_width: f64,
     /// B194：大纲（左侧栏）是否展开（默认 false，与前端 index.html 的 `hidden` 初值一致）。
@@ -88,6 +94,8 @@ impl Default for Settings {
             autosave: false,
             hot_exit: true,
             preview_line_height: 1.7,
+            // B235：默认「全宽」—— 用户明确要的是不限宽，正文铺满预览区。
+            preview_width: "full".into(),
             toc_width: 240.0,
             toc_open: false,
             sidebar_off: false,

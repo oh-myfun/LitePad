@@ -404,11 +404,17 @@ describe("设置项归属与接线（B42/B46）", () => {
       "function setAutosave(",
       "function setHotExit(",
       "function setPreviewLineHeight(",
-      "function setTocWidthValue(",
+      // B235：`setTocWidthValue(` 已随设置页那个「大纲宽度」下拉一起删除 ——
+      //   调大纲宽度现在只有左侧栏拖拽分隔条一条路（`setupSideResizer` 的 onChange
+      //   里自带「夹取 → 回写 settings.toc_width」）。反向闸钉住它别被加回来。
       "function loadPreferenceOptions(",
     ]) {
       expect(src, `main.ts 必须实现 ${fn}`).toContain(fn);
     }
+    // B235：死函数不许回来（`tsc` 的 noUnusedLocals 也会拦，这里是双保险）
+    expect(src, "setTocWidthValue 已随设置项删除，不该再有这个死函数").not.toContain(
+      "function setTocWidthValue(",
+    );
     // 旧的「以菜单按钮为锚点弹列表」实现应已删除
     expect(src, "旧的就地弹列表实现应删除").not.toContain("function showDefaultEolMenu(");
     expect(src, "旧的就地弹列表实现应删除").not.toContain("function showDefaultEncodingMenu(");
