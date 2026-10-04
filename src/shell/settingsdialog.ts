@@ -6,8 +6,9 @@
  * 结构与类名参考 InkNote 的 Settings.tsx：
  *   settings-overlay > settings-panel >
  *     settings-toolbar(搜索 + 关闭) + settings-layout(settings-nav + settings-content)
- * 分类：外观 / 编辑器 / Markdown 预览 / 新建文件 / 快捷键（快捷键复用 keymapdialog
- * 的改键逻辑，作为其中一个分类页）。
+ * 分类：通用 / 外观 / 编辑器 / 新建文件 / 快捷键（快捷键复用 keymapdialog
+ * 的改键逻辑，作为其中一个分类页）。B229 起原先那个独立的预览分类并入「编辑器」，
+ * 预览侧两项（预览行距、大纲宽度）在本页末尾的「预览」小分组里。
  *
  * 与旧首选项弹窗一致：每个控件 change 即回调 main 的 setter（即时生效 + 持久化），
  * 不需要「保存」按钮。快捷键的录制态会挂 KEYMAP_RECORDING_CLASS，让全局快捷键分发器让路。
@@ -240,12 +241,24 @@ const CATEGORIES: Category[] = [
   {
     id: "editor",
     label: "编辑器",
-    keywords: ["编辑器", "字体", "字号", "行距", "编辑器字体", "编辑器行距"],
-  },
-  {
-    id: "markdown",
-    label: "Markdown 预览",
-    keywords: ["markdown", "预览", "预览行距", "大纲", "大纲宽度", "目录", "toc"],
+    // B229：原先那个独立的预览分类已并入本页，所以预览侧的关键词也归到这儿
+    // ——否则搜「预览行距」「大纲」会一个分类都命中不了。
+    keywords: [
+      "编辑器",
+      "字体",
+      "字号",
+      "行距",
+      "编辑器字体",
+      "代码字体",
+      "编辑器行距",
+      "markdown",
+      "预览",
+      "预览行距",
+      "大纲",
+      "大纲宽度",
+      "目录",
+      "toc",
+    ],
   },
   {
     id: "file",
@@ -590,6 +603,17 @@ function fontRow(
   return settingsItem(label, desc, wrap);
 }
 
+/**
+ * B229：页内小分组标题（纯装饰）。用于「编辑器」页把源码侧与预览侧隔开。
+ * 上下留白比 `.settings-item` 的 padding 小一档，视觉上从属于它下面那几行。
+ */
+function groupTitle(text: string): HTMLElement {
+  const h = document.createElement("h3");
+  h.className = "settings-group-title";
+  h.textContent = text;
+  return h;
+}
+
 function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): void {
   if (id === "general") {
     body.appendChild(
@@ -688,7 +712,9 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
         (v) => opts.onEditorLineHeight(v),
       ),
     );
-  } else if (id === "markdown") {
+    // B229：预览侧的两项从原预览分类并到本页，末尾加个小分组标题，
+    // 免得 6 行平铺时看不出哪两项只管预览。分组标题是纯装饰，不进搜索关键词。
+    body.appendChild(groupTitle("预览"));
     body.appendChild(
       numberSelectRow(
         "预览行距",

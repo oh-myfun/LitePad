@@ -107,9 +107,10 @@ describe("B106 统一设置页：三栏结构", () => {
     expect(document.querySelector(".settings-content"), "应有右侧内容区").toBeTruthy();
   });
 
-  it("左侧分类导航含 6 个分类（通用在前），默认停在「外观」", () => {
+  it("左侧分类导航含 5 个分类（通用在前），默认停在「外观」", () => {
     showSettingsDialog(makeOpts());
-    expect(navItems()).toEqual(["通用", "外观", "编辑器", "Markdown 预览", "新建文件", "快捷键"]);
+    // B229：原「Markdown 预览」分类已并入「编辑器」，导航少一项。
+    expect(navItems()).toEqual(["通用", "外观", "编辑器", "新建文件", "快捷键"]);
     const appearance = [...document.querySelectorAll(".settings-page")].find(
       (p) => p.querySelector(".settings-page-title")?.textContent === "外观",
     ) as HTMLElement | undefined;
@@ -242,7 +243,7 @@ describe("B106 设置页：搜索过滤 + 关闭", () => {
     const visible = navItems().filter((_, i) => {
       return !(document.querySelectorAll(".settings-nav-item")[i] as HTMLElement).hidden;
     });
-    expect(visible, "搜「预览」应只剩 Markdown 预览分类").toEqual(["Markdown 预览"]);
+    expect(visible, "搜「预览」应命中已并入预览项的编辑器分类").toEqual(["编辑器"]);
 
     // 清空后全部恢复
     search.value = "";
@@ -470,5 +471,101 @@ describe("B227 字体两栏：编辑器字体 / 代码字体 + 全部·等宽切
     pickRow("代码字体", "Consolas");
     expect(seen, "编辑器字体要回调 onFontFamily").toEqual(["Consolas"]);
     expect(seenCode, "代码字体要回调 onCodeFontFamily").toEqual(["Consolas"]);
+  });
+});
+
+describe("B229「Markdown 预览」分类并入「编辑器」", () => {
+  /** 取某一分类页（按 .settings-page-title 文案定位）的 body。 */
+  function pageBody(label: string): HTMLElement {
+    const page = [...document.querySelectorAll(".settings-page")].find(
+      (p) => p.querySelector(".settings-page-title")?.textContent === label,
+    ) as HTMLElement | undefined;
+    if (!page) throw new Error(`没有「${label}」分类页`);
+    return page.querySelector(".settings-page-body") as HTMLElement;
+  }
+
+  function rowLabels(body: HTMLElement): string[] {
+    return [...body.querySelectorAll(".settings-item-label")].map((e) => e.textContent ?? "");
+  }
+
+  it("导航不再有独立的「Markdown 预览」分类，只剩 5 项", () => {
+    showSettingsDialog(makeOpts());
+    expect(navItems()).toEqual(["通用", "外观", "编辑器", "新建文件", "快捷键"]);
+    expect(navItems(), "独立预览分类必须已删除").not.toContain("Markdown 预览");
+    expect(
+      document.querySelectorAll(".settings-page").length,
+      "分类页数应与导航一致（每分类恰好一页）",
+    ).toBe(5);
+  });
+
+  it("编辑器页含 6 项，末尾是「预览」小分组下的预览行距 + 大纲宽度", () => {
+    showSettingsDialog(makeOpts());
+    const body = pageBody("编辑器");
+    expect(rowLabels(body), "编辑器页的项顺序").toEqual([
+      "编辑器字体",
+      "代码字体",
+      "字号（px）",
+      "编辑器行距",
+      "预览行距",
+      "大纲宽度",
+    ]);
+
+    const groups = [...body.querySelectorAll(".settings-group-title")].map((e) => e.textContent);
+    expect(groups, "应有且只有一个「预览」小分组标题").toEqual(["预览"]);
+
+    // 分组标题必须落在两项预览设置**之前**（否则分组等于没分组）
+    const kids = [...body.children];
+    const gi = kids.findIndex((el) => el.classList.contains("settings-group-title"));
+    const pi = kids.findIndex((el) => rowLabels(el).includes("预览行距"));
+    const di = kids.findIndex((el) => rowLabels(el).includes("大纲宽度"));
+    expect(gi, "分组标题应存在").toBeGreaterThanOrEqual(0);
+    expect(pi, "预览行距行应存在").toBeGreaterThan(gi);
+    expect(di, "大纲宽度行应存在").toBeGreaterThan(pi);
+  });
+
+  it("预览两项仍走原 setter（没因搬家丢回调）", () => {
+    const seen: string[] = [];
+    showSettingsDialog({
+      ...makeOpts(),
+      onPreviewLineHeight: (v) => seen.push(`lh:${v}`),
+      onTocWidth: (v) => seen.push(`toc:${v}`),
+    });
+    // ⚠️ 必须挑**与初值不同**的值：dropdown 与原生 <select> 一致，重选当前项不回调
+    // （makeOpts 的默认正是 1.7 / 240）。
+    pickRow("预览行距", "2.1");
+    pickRow("大纲宽度", "320");
+    expect(seen, "预览行距走 onPreviewLineHeight、大纲宽度走 onTocWidth").toEqual([
+      "lh:2.1",
+      "toc:320",
+    ]);
+  });
+
+  it("静态：源码里不再有 markdown 分类与分支，预览关键词已并入 editor", () => {
+    const src = readFileSync("src/shell/settingsdialog.ts", "utf-8");
+    // 反向闸必须排在正向断言之前，否则会被正向抢先报错
+    expect(src, '不得再有 id: "markdown" 的分类项').not.toContain('id: "markdown"');
+    expect(src, "fillPage 不得再有 markdown 分支").not.toContain('id === "markdown"');
+    expect(src, "不得再有「Markdown 预览」这个分类名").not.toContain("Markdown 预览");
+
+    // editor 分类必须收下预览侧全部关键词，否则搜「大纲」会一个分类都命中不了
+    // ⚠️ 锚点只锚 `id: "editor"` 那行：源码里 `{` 与 `id` 之间有换行 + 缩进，
+    // 锚 `{ id: "editor"` 恒 -1（位置闸会因此假红）。
+    const start = src.indexOf('id: "editor"');
+    const end = src.indexOf('id: "file"');
+    expect(start, "应能找到 editor 分类项").toBeGreaterThanOrEqual(0);
+    expect(end, "editor 分类项应在 file 分类项之前").toBeGreaterThan(start);
+    const editorBlock = src.slice(start, end);
+    for (const kw of ["预览行距", "大纲宽度", "markdown", "大纲", "toc"]) {
+      expect(editorBlock, `editor 分类关键词应含「${kw}」`).toContain(`"${kw}"`);
+    }
+  });
+
+  it("静态：.settings-group-title 样式存在且带分组边框", () => {
+    // ⚠️ cssDecls 只是「剥掉注释的声明串」，不解析成对象 —— 按位置/字面量断言即可
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const block = cssDecls(ruleBlock(css, ".settings-group-title"));
+    expect(block, "缺少 .settings-group-title 规则块").not.toBe("");
+    expect(block, "分组标题应更小一号").toContain("font-size: 12px");
+    expect(block, "分组标题下沿应有分隔线").toContain("border-bottom: 1px solid var(--border)");
   });
 });

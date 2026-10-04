@@ -2147,6 +2147,17 @@ button:focus-visible {
   flex-direction: column;
 }
 
+/* B229：页内小分组标题（纯装饰），把「编辑器」页的源码侧与预览侧隔开。 */
+.settings-group-title {
+  margin: 22px 0 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+}
+
 .settings-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
