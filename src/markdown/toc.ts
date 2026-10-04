@@ -397,8 +397,12 @@ export function createTocList(list: HTMLElement, onFoldChange?: () => void): Toc
         text.className = "toc-text";
         text.textContent = node.entry.text || "(无标题)";
         item.appendChild(text);
-        // B58：提示给行号（标题文本本身就在眼前，重复它没意义）；group 让顺着大纲扫过去秒开
-        setTip(item, `第 ${node.entry.line} 行`, { group: "toc" });
+        // B58：提示给行号（标题文本本身就在眼前，重复它没意义）；group 只作结构性标记
+        // （B127 之后它已不参与秒开）。
+        // ⚠️ B236：观感与标签那条**完全同档** —— `follow` 让它像标签那样跟鼠标、不画小箭头
+        //   （提示层的 `data-pointer` 随之变 "false" ⇒ 圆角回到 5px），`compact` 让它走
+        //   12px 紧凑档。缺任一个都会退回「13px + 带箭头 + 3px 圆角」那档，与标签对不上。
+        setTip(item, `第 ${node.entry.line} 行`, { group: "toc", follow: true, compact: true });
         item.addEventListener("click", () => cb.onJump(node.entry));
 
         if (node.branch) {
