@@ -166,8 +166,14 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
     expect(PUSH_BODY, "源那侧要先认出预览容器").toMatch(
       /src\.viewMode === "preview" \? srcPanel\?\.preview/,
     );
-    // 坐标从源显示的那一侧取：预览侧取顶行，源码侧取编辑器可视区顶行。
-    expect(PUSH_BODY, "预览侧坐标走 topVisibleLine").toMatch(/srcPreview\.topVisibleLine\(\)/);
+    // ⚠️ B249：预览这一支从 `topVisibleLine()`（小数）改成 `topBlockStartLine()`（整数）。
+    //    小数跨侧没人真用（源码只认行号、预览只认块首），却让两边各取整各的 ——
+    //    `doc.line(小数)` 上取整 vs `Math.floor` 下取整 ⇒ 用户报「滚预览时两边差一行/差半行」。
+    //    小数只剩一种合法去处：同侧跟随（源是源码那支）。锚点跟着改，判据仍是「预览侧
+    //    交的整数行号」，不是改松。
+    expect(PUSH_BODY, "预览侧交的是整数块起始行（跨侧只许整数）").toMatch(
+      /srcPreview\.topBlockStartLine\(\)/,
+    );
     expect(PUSH_BODY, "源码侧坐标走带行内比例的小数（B174：取整会让跟随变阶梯）").toMatch(
       /topVisibleLineFrac\(srcView\)/,
     );

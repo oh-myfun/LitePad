@@ -925,8 +925,17 @@ function pushSyncToSiblings(src: Tab, crossWindow = false): void {
   //    块首、跟随变阶梯（B174 那条用户报的「卡一下、跳一下」会重来）。
   //    ⚠️ 只有**收口**那一路（`syncSourceSnapshot`）才交整数（`topBlockStartLine()`），
   //      因为 `doc.line(小数)` 会被 CM6 上取整、与预览侧 `floor` 差一档 —— 详见那里。
+  // ⚠️ B249：源是**预览**这一支从 `topVisibleLine()`（小数）改成 `topBlockStartLine()`（整数）。
+  //    旧写法留小数出去，两边各取整各的 —— 源码兄弟走 `editorLineTopPx` ⇒ `doc.line(小数)`
+  //    被 CM6 **上取整**，预览兄弟走 `syncToLineProgrammatic` ⇒ `Math.floor` **下取整**，
+  //    于是「预览顶在块 5 走了 70%（小数 6.4）」这里会推出两个值：源码落行 7、预览落块 6，
+  //    差一行；而那个小数跨侧本来也没人真用（源码只认行号、预览只认块首），丢掉它不会
+  //    少任何连续性 —— 用户报「滚预览时两边总差一行 / 差半行」就是这一路。
+  //    ⚠️ 别顺手把**源是源码**那支（下面 `topVisibleLineFrac`）也改成整数：那条是
+  //    「源码 → 预览」的同侧跟随，小数是让预览**连续跟着走**的关键（B174 那条「卡一下、
+  //    跳一下」的病根），整数会让跟随变阶梯。小数只有一种合法去处：同侧跟随。
   const line = srcPreview
-    ? srcPreview.topVisibleLine()
+    ? srcPreview.topBlockStartLine()
     : srcView
       ? topVisibleLineFrac(srcView)
       : null;
