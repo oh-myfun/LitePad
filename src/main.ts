@@ -811,6 +811,16 @@ function alignShownToSyncSource(
   // ⚠️ B241 曾经在这里加过「跨侧（一源码一预览）不收口」的守卫 —— 那会儿跨侧走的是
   //    「搬行内比例」的换算，往返不等值，只能不重算。B242 把跨侧落点统一成行首对齐
   //    （`editorLineTopPx` / 整数行号，与切源码·预览同一套）⇒ 跨侧也恒等，跨侧照收。
+  //
+  // ⚠️ B247（用户拍板「切回源码要保住自己位置」；真机复现：文档中段「代码 tab ↔ 预览
+  //    tab」来回切，滚动位置会变化）：源是预览（`px === null`）而显示中的是**源码**时，
+  //    **不许按整数块首再推一次**。
+  //    `restoreViewScroll` 刚把这份源码按它自己的槽还原到用户滚出来的**精确**位置（可能
+  //    落在段落块的第 3 行），这里再推 `editorLineTopPx(块首)` 等于把它**覆盖成段首** ⇒
+  //    每切一轮往上掉一趟（桩证据：同一份含跨 3 行段落的文档，warm-up 切一轮回来源码从
+  //    168 被压到 140，四条判据全红）。同标签切模式（Ctrl+/）不经过这次覆盖 ⇒ 它是准的，
+  //    「切 tab 与切模式落点一样」在这条路上才真成立。
+  if (snap.px === null && shown.viewMode !== "preview") return false;
   applySyncToSibling(shown, snap.px, snap.line);
   return true;
 }

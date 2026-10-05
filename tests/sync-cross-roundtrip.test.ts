@@ -234,11 +234,11 @@ describe("B242 跨侧：同步滚动与切源码/预览用同一套位置计算�
     btn.click();
     await wait(80);
 
-    // ⚠️ 首圈会「掉」一下：用户滚出来的行内比例跨侧没法带（源码按行排版、预览按块
-    //   排版，比例搬过来量纲就错），所以照切源码/预览那一路丢掉比例、落到行首/块首。
-    //    那一掉是与切模式一致的既定行为；这里要盯的是**掉完以后不再动**。
+    // ⚠️ B247（用户拍板「切 tab 不许产生自动偏移」，参照系＝切模式）：同步源是预览时
+    //    「预览 tab → 源码 tab」不再按整数块首把源码**再压一次**，源码保住
+    //    `restoreViewScroll` 还原出来的自己那份位置（与切模式同一参照）；随后切回预览，
+    //    预览按源码这一侧的位置对齐。首圈落点因此就是稳定落点，这里盯的是**不再漂**。
     const first = await alignOnce();
-    expect(first.preview, "收口后预览要落在块首（行首对齐那一格）").toBeGreaterThan(0);
 
     const seq: number[] = [first.preview];
     const srcSeq: number[] = [first.src];
@@ -290,6 +290,8 @@ describe("B242 跨侧：同步滚动与切源码/预览用同一套位置计算�
     btn.click();
     await wait(80);
 
+    clickTab(1); // 先切到预览 tab，下面用**切模式**这条同样走 `topBlockStartLine` 的路
+    await wait(200);
     // 滚到一个**块中间**的位置：这样 `topVisibleLine()` 给出来的是带小数的小数行号
     // （例如 6.4），才会把「取整口径」这件事暴露出来 —— 正好落在块首的话两种口径同值。
     userScroll(previewRoot(), 120);
@@ -297,14 +299,16 @@ describe("B242 跨侧：同步滚动与切源码/预览用同一套位置计算�
     const block = previewTopBlockLine();
     expect(block, "前提：预览确实是停在某个块上（否则这条用例测不到取整口径）").toBeGreaterThan(0);
 
-    clickTab(0); // 预览 → 源码（跨侧收口）
+    toggleMode(); // 预览 → 源码（同一份 tab 的 handoff，B243 整数口径）
     await wait(260);
     const top = sourceTopLine();
 
     // ⚠️ CM6 的 `doc.line(小数)` 是**向上取整**（`lineInner` 里判 `line >= target`），
     //    而预览侧 `syncToLineProgrammatic(Math.floor(line))` 是向下取整 —— 两边各差一行
     //    ⇒ 切过去顶上不是预览顶上那一块（用户报的「切过去位置对不上」）。
-    expect(top, `跨侧落点必须落在预览顶上那一块（第 ${block} 块）的行首，不能顺延到下一行`).toBe(
+    // ⚠️ B247：取整口径这条契约改挂在**切模式**上 —— 切 tab 这一路已被要求「保住源码
+    //    自己的块内位置」（对齐参照系是切模式），不再把源码按块首压回去。
+    expect(top, `切模式落点必须落在预览顶上那一块（第 ${block} 块）的行首，不能顺延到下一行`).toBe(
       block,
     );
   });
