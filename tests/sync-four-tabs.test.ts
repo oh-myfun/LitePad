@@ -425,4 +425,29 @@ describe("B243 复核：两面板 / 四标签（a 源码 + b 预览 同栏，c �
     await wait(300);
     expect(scroller(0).scrollTop).toBe(A);
   });
+
+  it("⑤ 滚激活的预览 ⇒ 未显示的代码标签位置跟着走（槽要被推成新值，不是停在老位置）", async () => {
+    // ⚠️ B248：用户报「滚动激活的预览模式文件，未显示的代码模式文件位置没有变化」。
+    //    同步源是预览 ⇒ `applySyncToSibling` 拿不到编辑器像素（`px === null`），
+    //    只能拿预览那一路算出的**行号**；离屏的源码兄弟没有自己的视图，旧写法
+    //    `if (!shownView) return;` 于是整条不写 ⇒ 它的槽永远停在切走前的老位置，
+    //    切过去 `restoreViewScroll` 读出来就是**旧位置**（用户眼里的「没变化」）。
+    //    判据：预览顶在块 12 ⇒ 该推给源码的行号是 12 ⇒ 源码落点 == A（块首）。
+    clickTab(0, 0);
+    await wait(220);
+    expect(scroller(0).scrollTop, "前提：a 在 A").toBe(A);
+
+    clickTab(0, 1); // 激活预览 tab b，源码 a 离屏
+    await wait(240);
+    userScroll(previewOf(0), AP); // 预览顶正好落在块 12（顶 - 8，与 topBlockStartLine 同口径）
+    await wait(240);
+
+    clickTab(0, 0); // 切回源码 a —— 此刻收口被 B247 守卫挡着，位置只能来自它自己的槽
+    await wait(300);
+
+    expect(
+      scroller(0).scrollTop,
+      "未显示的代码标签要落在预览顶上那一块（块 12）的块首 = A，不能停在切走前的老位置",
+    ).toBe(A);
+  });
 });

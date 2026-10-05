@@ -729,7 +729,15 @@ function applySyncToSibling(other: Tab, px: number | null, line: number | null):
   //   ⚠️ 写进去的**必须是换算后的 `top`**，不是 `px`（那一路是「硬塞预览像素」的死，
   //      见上面 `sync-scroll-mode` 的反向闸：预览源那一路不许出现 `recordScroll(…, px)`）。
   //   ⚠️ 真·换不出（同文档一个源码视图都没有）才继续留死格 —— 那是物理限制。
-  let view = shownView;
+  // ⚠️ B248 补第二层兜底：离屏兄弟**自己**没有视图 ⇒ `displayedPanelOfTab` 是 undefined。
+  //    但**面板那个 `EditorView` 一直在**（一个 panel 只挂一个 EditorView，`viewTabId`
+  //    只决定它显示谁、不决定它的存亡）。用户最常见的场景就是「代码 tab 与预览 tab
+  //    同处一个面板」：此刻面板正显示预览 tab、源码 tab 离屏 —— 这里既没有第二个源码
+  //    实例，又非真的换不出。这块 view 里的 `state` 就是这份文档（同 docId、同正文），
+  //    量它的 `lineBlockAt` 得到的就是离屏源码兄弟自己的几何。
+  //    再兜不住（面板压根没视图，例如纯预览面板还没建过编辑器）才去找同文档其它源码
+  //    实例，最后才是真的「换不出 ⇒ 留死格」。
+  let view = shownView ?? panelOfTab(other.tabId)?.view?.view;
   if (!view) {
     for (const t of instancesOfDoc(other.docId)) {
       if (t.tabId === other.tabId || t.viewMode === "preview") continue;
