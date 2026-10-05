@@ -613,12 +613,21 @@ export class PreviewPane {
     const scroll = this.root.scrollTop;
     const topAt = (i: number): number =>
       this.blocks[i].el.getBoundingClientRect().top - base + scroll;
+    // ⚠️ 亚像素容差（B245 后续：切代码/预览 tab 位置每次往上挪）：
+    // 预览的落点是 `块顶 - 8`（`applySyncToLine`），取锚又要 `+8` 还原（`topBlockStartLine`）。
+    // 等宽几何里两者正好抵消、纹丝不动；但真实浏览器 `scrollTop` 常带小数
+    // （实际是 `块顶 - 8 - 0.5`），`+8` 一加仍是 `块顶 - 0.5` < 块顶 ⇒ 下面比较
+    // `topAt <= offset` 失效、二分命中**前一个块** ⇒ 每次「预览→源码」都退回上一块，
+    // 越切越靠顶、越靠近顶部偏移越小（用户实测 symptom）。
+    // 这里给比较加半像素容差，把「差不到 1px 的落点」认成它就是那个块 —— 只放宽命中判据，
+    // 不改动量化口径（跨侧交点仍然交**整数块首**，B243 的「差两行」不会回来）。
+    const EPS = 0.5;
     let lo = 0;
     let hi = n - 1;
     let hit = -1;
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
-      if (topAt(mid) <= offset) {
+      if (topAt(mid) <= offset + EPS) {
         hit = mid;
         lo = mid + 1;
       } else {

@@ -362,4 +362,23 @@ describe("B243 复核：两面板 / 四标签（a 源码 + b 预览 同栏，c �
     expect(scroller(1).scrollTop, "c 切回源码 ⇒ 落在 A").toBe(A);
     expect(scroller(0).scrollTop, "其他标签：a 仍不动").toBe(A);
   });
+
+  it("③ 亚像素取锚：预览停在「块顶-8」再带个小数时，切回源码不许退回上一块", async () => {
+    // 用户实测 symptom：每次切「代码 tab ↔ 预览 tab」都往上挪，越靠顶挪得越少。
+    // 机制：落点 `块顶 - 8` 与取锚 `scrollTop + 8` 在真实里差不到 1px（scrollTop 带小数），
+    // `topAt <= offset` 于是命中**前一个块** ⇒ 源码被钉到上一块的首行 ⇒ 越切越靠顶。
+    // 先切到 b 预览，让它自己落到 A'（160）。
+    clickTab(0, 1);
+    await wait(220);
+    expect(previewOf(0).scrollTop, "前提：b 预览停在 A'").toBe(AP);
+
+    // 故意把预览的 scrollTop 压成「块顶 - 8 - 0.5」——真实浏览器里 scrollTop 常是这个样。
+    previewOf(0).scrollTop = AP - 0.5;
+    await wait(120);
+
+    // 切回源码：取锚必须还是「第 13 块（行 13）」，不许退回第 12 块。
+    clickTab(0, 0);
+    await wait(260);
+    expect(scroller(0).scrollTop, "预览只差半像素 ⇒ 源码仍落在 A（退回上一块就会小于 A）").toBe(A);
+  });
 });
