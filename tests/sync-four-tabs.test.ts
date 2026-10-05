@@ -381,4 +381,31 @@ describe("B243 复核：两面板 / 四标签（a 源码 + b 预览 同栏，c �
     await wait(260);
     expect(scroller(0).scrollTop, "预览只差半像素 ⇒ 源码仍落在 A（退回上一块就会小于 A）").toBe(A);
   });
+
+  it("④ 切到「预览 tab」的落点 == 本标签切「源码/预览模式」的落点", async () => {
+    // 用户诉求：同步滚动下，「切换源码/预览模式的标签」和「同一个标签切源码/预览模式」
+    // 必须得到**同一个**滚动位置 —— 现在同标签切模式是准的，切标签不是。
+    clickTab(0, 0);
+    await wait(220);
+    expect(scroller(0).scrollTop, "前提：a 在 A").toBe(A);
+
+    // 路径一：**切到另一个 tab**（b 预览）⇒ 预览落点 P_tab
+    clickTab(0, 1);
+    await wait(280);
+    const pTab = previewOf(0).scrollTop;
+
+    // 回到源码，再把本标签 a 切模式（source → preview）⇒ 预览落点 P_toggle
+    clickTab(0, 0);
+    await wait(220);
+    toggleMode();
+    await wait(320);
+    const pToggle = previewOf(0).scrollTop;
+
+    expect(pToggle, "切 tab / 切本标签模式 两条路必须落在同一个预览位置").toBe(pTab);
+
+    // 收尾：切回源码
+    toggleMode();
+    await wait(300);
+    expect(scroller(0).scrollTop).toBe(A);
+  });
 });
