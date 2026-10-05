@@ -295,7 +295,10 @@ describe("B106 设置页：接线守卫", () => {
     const main = readFileSync("src/main.ts", "utf-8");
     expect(main, "main 必须引入 showSettingsDialog").toContain("showSettingsDialog(");
     expect(main, "main 必须有打开设置页的函数").toContain("function openSettingsDialog(");
-    expect(main, "菜单回调必须接到 onSettings").toContain("onSettings: () => openSettingsDialog()");
+    // B239：openSettingsDialog 改成 async（开页前要 await 字体枚举），菜单回调包 void
+    expect(main, "菜单回调必须接到 onSettings").toContain(
+      "onSettings: () => void openSettingsDialog()",
+    );
     expect(main, "不得再残留 openPreferencesDialog").not.toContain(
       "function openPreferencesDialog(",
     );
@@ -575,6 +578,102 @@ describe("B234 字体候选：内嵌默认 + 系统全量（等宽判定已修�
     const opts = fontOptionsFor("proportional", "", [], "默认（内嵌思源黑体）");
     expect(opts.length, "空枚举时要有候选可列").toBeGreaterThan(0);
     expect(opts.map((o) => o.value)).toContain("");
+  });
+
+  it("B239：枚举为空时首项换成本档的内嵌默认说法（手抄清单首项写死的是代码字体的默认）", () => {
+    // 退化前：两档都返回手抄清单，首项一律「默认（Cascadia Code / Consolas…）」
+    //⇒ 出现在**正文**那栏等于把话说反了（正文默认明明是内嵌思源黑体）。
+    const prop = fontOptionsFor("proportional", "", [], DEFAULT_BODY_FONT_LABEL);
+    const mono = fontOptionsFor("mono", "", [], DEFAULT_CODE_FONT_LABEL);
+    // ⚠️ 反向闸排在正向断言之前
+    expect(prop[0].label, "正文那栏不许出现代码字体的默认说法").not.toContain("Cascadia Code /");
+    expect(mono[0].label, "代码那栏同理").not.toContain("Cascadia Code /");
+    // 正向：首项就是本档的内嵌默认，且 value 仍是空串（= 移除变量、回落内嵌栈）
+    expect(prop[0].label, "正文兜底首项应是内嵌思源黑体").toBe(DEFAULT_BODY_FONT_LABEL);
+    expect(mono[0].label, "代码兜底首项应是内嵌 Cascadia Mono").toBe(DEFAULT_CODE_FONT_LABEL);
+    expect(prop[0].value, "兜底首项的 value 仍应是空串").toBe("");
+    expect(mono[0].value, "兜底首项的 value 仍应是空串").toBe("");
+    // 其余项照旧退回手抄清单（不能把这一栏列空）
+    expect(prop.length, "兜底仍要有候选可列").toBeGreaterThan(1);
+  });
+});
+
+/**
+ * B239：字体列表退回手抄清单（= 用户报「怎么不是内嵌+系统字体」）。
+ *
+ * 根因不是后端枚举有问题（Rust 侧实测 114 条、等宽判定正确），而是**取数与建页
+ * 之间的竞态**：`openSettingsDialog` 发起枚举但**不等它**（`void`），而设置页是
+ * **同步**建好每一个分类页的 —— 字体行在 `buildPage("editor")` 那一刻读
+ * `systemFonts()` 读到的还是空数组 ⇒ `fontOptionsFor` 走兜底 ⇒ 整轮会话都列不对。
+ *
+ * 这一类假绿的通用教训：**枚举类数据必须在开页前 await 到位**。fire-and-forget
+ * + 同步建页 = 拿兜底数据当正常数据用，且**没有任何重建机制**能救（要关掉设置页
+ * 再开一次才对）。
+ */
+describe("B239 字体列表：开页前必须已拿到本机枚举", () => {
+  /** openSettingsDialog 的函数体（只认 `function <name>(`，见 tests/static.ts）。 */
+  function openSettingsBody(): string {
+    const main = readFileSync("src/main.ts", "utf-8");
+    const start = main.indexOf("async function openSettingsDialog(");
+    expect(start, "main.ts 里应有 async function openSettingsDialog(").toBeGreaterThanOrEqual(0);
+    // 顶层函数收尾 = 行首 `}` 后紧跟换行/EOF
+    let end = main.indexOf("\n}", start);
+    while (end > -1) {
+      const after = main[end + 2];
+      if (after === undefined || after === "\n") break;
+      end = main.indexOf("\n}", end + 1);
+    }
+    return main.slice(start, end + 2);
+  }
+
+  it("枚举要 await 到位才开页（不许 fire-and-forget），且 await 在建页之前", () => {
+    const body = stripLineComments(openSettingsBody());
+    // ⚠️ 反向闸排在正向断言之前：这一条正是 B239 的病根，改回去必须红。
+    //    判据只写调用形态（含 `void ` 前缀与 `;` 收尾），**不写函数名** ——
+    //    源码注释里复述了同一句，剥了行注释才扫，但函数名仍可能出现在别处。
+    expect(body, "开页前不许 fire-and-forget 发起枚举").not.toMatch(/void\s+\w+\(\);/);
+    expect(body, "开页前必须等枚举回来").toContain("await ");
+    // 位置闸：两个下标都要先确认存在（缺一个时 indexOf 是 -1，会「看起来满足 <
+    // ⇒ 必须配 toBeGreaterThanOrEqual(0)，否则是假绿）。
+    const awaitAt = body.indexOf("await ");
+    const openAt = body.indexOf("showSettingsDialog({");
+    expect(awaitAt, "应能找到 await 那一行").toBeGreaterThanOrEqual(0);
+    expect(openAt, "应能找到 showSettingsDialog 调用").toBeGreaterThanOrEqual(0);
+    expect(awaitAt, "枚举必须在建页之前到位（设置页是同步建页的）").toBeLessThan(openAt);
+  });
+
+  it("枚举失败也不阻断开页（ensureSystemFonts 内部已兜住，await 它不会抛）", () => {
+    const main = readFileSync("src/main.ts", "utf-8");
+    const start = main.indexOf("async function ensureSystemFonts(");
+    expect(start, "应有 ensureSystemFonts").toBeGreaterThanOrEqual(0);
+    let end = main.indexOf("\n}", start);
+    while (end > -1) {
+      const after = main[end + 2];
+      if (after === undefined || after === "\n") break;
+      end = main.indexOf("\n}", end + 1);
+    }
+    const body = stripLineComments(main.slice(start, end + 2));
+    // await 之后紧跟建页，所以这里抛出去 = 设置页彻底打不开。必须仍走 catch 兜底。
+    expect(body, "枚举失败要有 try/catch 兜住").toContain("try {");
+    expect(body, "枚举失败要记日志").toContain("logger.warn(");
+  });
+
+  it("兜底路径不再是「整份等宽清单挂在比例档下」（B239 顺手修的语义矛盾）", () => {
+    // 手抄清单（FONT_FAMILY_OPTIONS）整份都是等宽字体。枚举失败时直接返回它，
+    // 等于「比例（非等宽）」档下列出一堆 Consolas/Cascadia —— 用户会以为档位
+    // 筛选没生效。判据：兜底返回的**非首项**仍来自手抄清单（不许把这一栏列空），
+    // 而首项必须是本档的内嵌默认（见上面那条）。
+    const opts = fontOptionsFor("proportional", "", [], DEFAULT_BODY_FONT_LABEL);
+    expect(opts.length, "兜底仍要有候选").toBeGreaterThan(1);
+    // 反向闸：正文兜底里不该再出现手抄清单那句写死的首项
+    expect(opts[0].label, "首项不许是手抄清单写死的那句").not.toBe(
+      "默认（Cascadia Code / Consolas…）",
+    );
+    // 正向：其余项确实是手抄清单里的东西（说明没把这一栏列空）
+    expect(
+      opts.slice(1).some((o) => o.value === "Consolas"),
+      "其余项应仍来自手抄清单",
+    ).toBe(true);
   });
 });
 

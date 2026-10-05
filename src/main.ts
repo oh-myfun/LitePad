@@ -5973,9 +5973,16 @@ async function setWordWrap(on: boolean): Promise<void> {
 }
 
 /** 打开统一设置页（文件 → 设置…）。 */
-function openSettingsDialog(): void {
-  // B227：字体两栏的候选来自本机枚举 —— 先取回再开页，免得用户看到空列表
-  void ensureSystemFonts();
+async function openSettingsDialog(): Promise<void> {
+  // B227：字体两栏的候选来自本机枚举 —— 先取回再开页，免得用户看到空列表。
+  //
+  // B239：这里原先是「发起枚举但不等它」（`void`）就开页，而设置页是**同步**建好
+  // 每一个分类页的（见 settingsdialog 的 buildPage），字体行在那一刻读 `systemFonts()`
+  // 读到的还是空数组 ⇒ `fontOptionsFor` 退回 B225 那份**手抄 17 条全等宽**清单，
+  // 而缓存回来后没有任何重建机制 ⇒ 整轮会话字体列表都是错的（要关掉设置页再开一次
+  // 才对）。**枚举类数据必须在开页前 await 到位**，这一类假绿不会再有第二次。
+  // 实测本机枚举 114 条耗时 10ms，等一下完全无感。
+  await ensureSystemFonts();
   showSettingsDialog({
     theme: () => themeMode,
     onTheme: (mode) => void setThemeMode(mode),
@@ -6718,7 +6725,8 @@ function setupMenuBar(): void {
     // ---- 编码（B215：主菜单「编码」四组 + 状态栏那颗键同取这一份） ----
     encodingMenu: () => encodingMenuModel(),
     // ---- 设置（B106：统一设置页，含原首选项与快捷键分类） ----
-    onSettings: () => openSettingsDialog(),
+    // B239：开页前要 await 字体枚举，所以这里是 async 包 void（menubar 契约仍是无参无返回）
+    onSettings: () => void openSettingsDialog(),
     // ---- 帮助 ----
     // B107：手动检查更新（结果走状态栏；静默检查失败不打扰，见 src/shell/updater.ts）
     onCheckUpdate: () => void updaterHandle?.checkNow(),

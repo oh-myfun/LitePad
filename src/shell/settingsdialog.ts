@@ -202,7 +202,12 @@ export const DEFAULT_CODE_FONT_LABEL = "默认（内嵌 Cascadia Mono）";
  *     会让人以为设置被重置了，而它其实只是「没装」。
  *   · **装了但不在这一档**（当前是等宽、正切在「比例」档）⇒ 也列出来，但**不打标**
  *     （它装得好好的，打了标是误导），否则下拉触发器显示不出当前值。
- * ⚠️ 枚举为空（非 Windows / IPC 失败）时退回 B225 那份手抄清单，别把这一栏变空。
+ *
+ * ⚠️ 枚举为空（非 Windows / IPC 失败）时退回 B225 那份手抄清单，别把这一栏列空。
+ * ⚠️ **B239：那份清单整份都是等宽字体**，直接挂在「比例（非等宽）」档下是自相矛盾
+ *   的（用户会以为档位筛选没生效）。更糟的是它首项写死了「默认（Cascadia Code /
+ *   Consolas…）」—— 那是**代码**字体的默认，出现在正文那栏等于把话说反了。
+ *   ⇒ 兜底时把首项换成本档的 `defaultLabel`，其余项照旧（仍带未安装标记）。
  */
 export function fontOptionsFor(
   kind: FontKind,
@@ -210,7 +215,12 @@ export function fontOptionsFor(
   systemFonts: { name: string; is_monospace: boolean }[],
   defaultLabel: string,
 ): { label: string; value: string }[] {
-  if (!systemFonts.length) return fontFamilyOptions();
+  if (!systemFonts.length) {
+    // B239：兜底时把首项换成本档的内嵌默认说法（手抄清单那份首项写死的是**代码**
+    // 字体的默认，出现在正文那栏等于把话说反了），其余项原样带未安装标记。
+    const fallback = fontFamilyOptions();
+    return [{ label: defaultLabel, value: "" }, ...fallback.slice(1)];
+  }
   // 两档互斥（B236）：等宽那批归 mono，其余归 proportional。
   const bucket = systemFonts.filter((f) => (kind === "mono" ? f.is_monospace : !f.is_monospace));
   const out: { label: string; value: string }[] = [{ label: defaultLabel, value: "" }];
