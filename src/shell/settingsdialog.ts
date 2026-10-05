@@ -786,7 +786,9 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
     body.appendChild(
       selectRow(
         "预览布局宽度",
-        "预览模式下**正文内容区**的宽度。标准居中收窄、宽屏更宽松、全宽铺满整块预览区。注意这是正文宽度，不是源码与预览的分屏比例（那个可直接拖动分隔条）。",
+        // B238：说明压到一句（用户嫌长）。三档的具体宽度在选项标签里已经写着
+        // （标准 860px / 宽屏 1100px / 全宽不限宽），这里只交代**它管的是什么**。
+        "预览模式内容区的宽度",
         PREVIEW_WIDTH_OPTIONS.map((o) => ({ label: o.label, value: o.value })),
         opts.previewWidth(),
         // `selectRow` 的回调签名是 `string`（它不认枚举）⇒ 在这里收窄回档位类型，

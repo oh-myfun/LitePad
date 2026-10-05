@@ -647,8 +647,48 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
     const css = readFileSync("src/styles/preview.css", "utf-8");
     const block = cssDecls(ruleBlock(css, ".md-preview .md-block"));
     expect(block, "正文宽度应读 --md-content-max").toContain("var(--md-content-max");
-    expect(cssDecls(ruleBlock(css, ".md-preview")), "变量应有个不限宽的默认").toContain(
-      "--md-content-max: none",
+    // ⚠️ B238 修正：B235 这里原先断言「`.md-preview` 上要有 `--md-content-max: none`
+    //    作默认」—— **那条断言把 bug 钉成了期望**。元素自身的声明**优先于**从 `:root`
+    //    继承来的值 ⇒ main.ts 写在 `:root` 的档位被整条遮蔽 ⇒ 换档永远没反应。
+    //    「没设过」由 `var()` 的兜底参数负责，不需要那一行（详见下面那条 B238 契约）。
+    expect(
+      cssDecls(ruleBlock(css, ".md-preview")),
+      "变量不许在 .md-preview 上重声明",
+    ).not.toContain("--md-content-max");
+  });
+
+  it("B238：预览布局宽度的说明保持一句（用户嫌原来的太长）", () => {
+    const src = stripLineComments(readFileSync("src/shell/settingsdialog.ts", "utf-8"));
+    const m = /selectRow\(\s*\n?\s*"预览布局宽度",\s*\n?\s*"([^"]*)"/.exec(src);
+    expect(m, "要能抠到预览布局宽度那一项的说明").toBeTruthy();
+    const desc = m![1];
+    // ⚠️ 反向闸在前：不许再把「分屏比例 / 分隔条 / 注意…」那类旁白塞回来
+    expect(desc, "说明里不该再夹带分屏比例的辨析").not.toContain("分屏");
+    expect(desc.length, `说明应保持一句（当前 ${desc.length} 字）`).toBeLessThanOrEqual(20);
+    // 正向：得说清它管的是「预览模式的内容区」
+    expect(desc, "要说明这是预览模式内容区").toContain("预览模式");
+  });
+
+  it("B238：CSS 里不许再声明 --md-content-max（声明即遮蔽 :root ⇒ 换档没反应）", () => {
+    const css = stripCssComments(readFileSync("src/styles/preview.css", "utf-8"));
+    // ⚠️ 反向闸排在正向断言之前
+    const decls = css.split("\n").filter((l) => /--md-content-max\s*:/.test(l));
+    expect(decls, `预览样式里不许声明这个变量，只许读：${decls.join(" / ")}`).toHaveLength(0);
+    // 正向：兜底参数必须在（导出 HTML 只注入本文件、`:root` 不在 ⇒ 靠它落到不限宽）
+    expect(css, "兜底参数要还在").toContain("var(--md-content-max, none)");
+    // 正向：值只能由 main.ts 写在 :root 上，**一处**
+    const main = readFileSync("src/main.ts", "utf-8");
+    // ⚠️ 反向闸在前：不许去挨个改 `.md-preview` 元素 —— 元素自身的声明优先于
+    // :root 继承值，那就等于把档位顶掉（与上面那条是同一个 bug 的另一条路径）。
+    expect(main, "不许直接往 .md-preview 元素上写这个变量").not.toContain(
+      'querySelectorAll(".md-preview")',
+    );
+    expect(
+      main.split('setProperty("--md-content-max"').length - 1,
+      "写这个变量的地方只能有 :root 一处",
+    ).toBe(1);
+    expect(main, "档位必须写在 :root 上才传得到 .md-block").toContain(
+      'document.documentElement.style.setProperty("--md-content-max"',
     );
   });
 
