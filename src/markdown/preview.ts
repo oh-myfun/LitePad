@@ -416,9 +416,10 @@ export class PreviewPane {
    *     滚动的真实输入清除，**不靠时间窗** —— 渲染扰动（setBlocks 归零再拉回、图片加载
    *     重排）把 actual 拖离 expect 也不会被误判成用户滚动反推编辑器，闭环拉锯根除。
    */
-  syncToLineProgrammatic(line: number): void {
+  syncToLineProgrammatic(line: number): number | null {
     this.pendingSyncLine = null;
-    this.applySyncToLine(line); // 内部 markProgrammatic(this.root)，覆盖本次定位回执
+    // 返回**实际落点**（`null` = 没落地）；内部 `markProgrammatic(this.root)` 覆盖本次回执。
+    return this.applySyncToLine(line);
   }
 
   /**
@@ -447,9 +448,17 @@ export class PreviewPane {
     this.pendingSyncLine = null;
   }
 
-  private applySyncToLine(line: number): void {
+  /**
+   * 按行定位预览，**返回实际落点**（`null` = 没落地）。
+   *
+   * ⚠️ 返回值不是摆设：`blockAtLine` 找不到目标 block 时（预览还没渲染 / 行号越界）这里
+   * 是直接 return、容器一动没动的。调用方若不看返回值、照例把容器里的值当落点记进快照，
+   * 「定位没做」就会被记成「它停在顶部」—— 下一次切过去天然回顶（B134 那个病再犯一次：
+   * 没钉住 ≠ 位置是 0，见 `pinScrollTop` 的 `stuck` 判定）。
+   */
+  private applySyncToLine(line: number): number | null {
     const target = this.blockAtLine(line);
-    if (!target) return;
+    if (!target) return null;
     const idx = this.blocks.indexOf(target);
     const next = this.blocks[idx + 1];
     const el = target.el;
@@ -468,6 +477,7 @@ export class PreviewPane {
     // B170：程序摆位，先标来源再赋值，回执由 scroll 监听经 scroll-guard 吞掉。
     markProgrammatic(this.root);
     this.root.scrollTop = nextTop;
+    return nextTop;
   }
 
   /** block 相对预览内容区的偏移（不受 offsetParent 与当前滚动影响）。 */

@@ -130,9 +130,11 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
   it("预览态兄弟按**行**定位，不把编辑器像素塞进预览槽", () => {
     const guard = '  if (other.viewMode === "preview") {';
     expect(PUSH_BODY, "预览态要走专门的分支").toContain(guard);
-    // 换算出来的这一笔也必须走唯一闸口，且值取的是**预览容器**自己的像素。
+    // 换算出来的这一笔也必须走唯一闸口，且值取的是**预览容器自己的实际落点**
+    // （B240 三轮：由 `applySyncToLine` 交回来；值仍是预览那一侧的像素，口径没变 ——
+    //    「没落地就别记」是同一件事的另一种写法：写进去的必须是真落点，不是容器里的 0）。
     expect(PUSH_BODY, "预览兄弟的位置也要走记录闸口").toMatch(
-      /recordScroll\(other\.tabId, shown\.preview\.root\.scrollTop\);/,
+      /if \(landed !== null\) recordScroll\(other\.tabId, landed\);/,
     );
     // ⚠️ 顺序：换算分支必须排在「px 直推」那条之前，否则编辑器 px 会先落到预览槽里。
     const g = PUSH_BODY.indexOf(guard);
@@ -345,6 +347,93 @@ describe("B240 同步滚动：非激活（离屏）标签也要统一滚动位�
   });
 });
 
+// ------------------------------------------------- B240 三轮：切过来那份由**源**收口
+describe("B240 三轮：切过来显示的那一份，由**源**收口（不可见也要算）", () => {
+  // ⚠️ 锚点一律取**带调用形态的单句**：单写函数名会被上方注释拦下来（`indexOf` 撞到
+  //   注释里那句复述就等于定位到注释，位置闸直接假绿）。这样退化掉哪一句都能对得上。
+  const SNAP_BODY = slice(main, "function syncSourceSnapshot(", "function alignShownToSyncSource(");
+  const ALIGN_BODY = slice(
+    main,
+    "function alignShownToSyncSource(",
+    "function pushSyncToSiblings(",
+  );
+  const SWITCH_BODY = slice(main, "  rememberViewScroll(panel);", "measureAndKeepScroll(panel);");
+  const PREVIEW_BRANCH = slice(
+    PUSH_BODY,
+    'if (other.viewMode === "preview") {',
+    "if (px !== null) {",
+  );
+  const LAND_BODY = slice(PREVIEW_TS, "  private applySyncToLine(", "  private blockAtLine(");
+
+  it("源那一格还没离屏就得把坐标采下来 —— 采点排在面板换页之前", () => {
+    const sample = SWITCH_BODY.indexOf("syncSourceSnapshot(shownTab, tabId);");
+    const swap = SWITCH_BODY.indexOf("applyPanelMode(panel);");
+    expect(sample, "切标签时要就地采源坐标").toBeGreaterThanOrEqual(0);
+    expect(swap, "面板换页那一句要切得到").toBeGreaterThanOrEqual(0);
+    expect(
+      sample,
+      "采点必须排在换页之前：离屏后取到的是面板那一个视图，显示的是接班那份",
+    ).toBeLessThan(swap);
+  });
+
+  it("换完页再收口 —— 收口的对象是切过来显示的那一份，不是源", () => {
+    const swap = SWITCH_BODY.indexOf("applyPanelMode(panel);");
+    const align = SWITCH_BODY.indexOf("alignShownToSyncSource(panel, shownTab, syncSrc);");
+    expect(align, "切换末尾要收口").toBeGreaterThanOrEqual(0);
+    expect(swap, "换页那一句要切得到").toBeGreaterThanOrEqual(0);
+    expect(align, "收口排在换页之后（先换出要显示的那一份，再按源对齐它）").toBeGreaterThan(swap);
+    expect(ALIGN_BODY, "收口落到切换后显示的那一份上").toContain("panel.viewTabId");
+  });
+
+  it("收口排在 CM6 测量补偿之前（位置先定死，再让测量去补偿）", () => {
+    const align = main.indexOf("alignShownToSyncSource(panel, shownTab, syncSrc);");
+    const measure = main.indexOf("measureAndKeepScroll(panel);");
+    expect(align, "收口调用要在源码里").toBeGreaterThanOrEqual(0);
+    expect(measure, "测量调用要在源码里").toBeGreaterThanOrEqual(0);
+    expect(align, "收口排在测量补偿之前").toBeLessThan(measure);
+  });
+
+  it("同步没开就谁也别替谁决定位置（B149 基线不变）", () => {
+    expect(SNAP_BODY, "同步关 ⇒ 采都不采").toContain(
+      "if (docSyncModes.get(src.docId) !== true) return null;",
+    );
+  });
+
+  it("坐标口径与推兄弟那一路一致：源停在哪一侧就取哪一侧", () => {
+    expect(SNAP_BODY, "源是预览侧 ⇒ 交的是顶行").toContain("srcPreview.topVisibleLine()");
+    expect(SNAP_BODY, "源是源码侧 ⇒ 交的是顶行比例").toContain("topVisibleLineFrac(srcView)");
+    expect(SNAP_BODY, "px 取源那一格此刻停着的位置").toContain("px: src.scrollTop");
+  });
+
+  it("收口调的就是同一个落点函数，源那套坐标两个一起传（不是只传一个）", () => {
+    expect(ALIGN_BODY, "收口要按源的位置落位").toContain(
+      "applySyncToSibling(shown, snap.px, snap.line);",
+    );
+    expect(ALIGN_BODY.match(/applySyncToSibling\(/g)?.length, "落点调用只有这一处").toBe(1);
+  });
+
+  it("预览定位没落地 ⇒ 不许把容器里的 0 记成「它停在顶部」（B134 同型）", () => {
+    expect(PREVIEW_BRANCH, "落点要按返回值判空再记").toContain(
+      "if (landed !== null) recordScroll(other.tabId, landed);",
+    );
+    expect(PREVIEW_BRANCH, "落点来自程序定位那一路的返回值").toContain(
+      "preview.syncToLineProgrammatic(line)",
+    );
+    // ⚠️ 反向闸必须排在正向断言之后也有效 —— 这里盯的是「补记快照不许绕过判空」。
+    expect(PREVIEW_BRANCH, "不能拿没落地的落点去补记快照").not.toMatch(
+      /recordScroll\(other\.tabId,(?!\s*landed\))/,
+    );
+  });
+
+  it("预览交出去的是**实际落点**：找不到目标块就交 null", () => {
+    expect(LAND_BODY, "块找不到 ⇒ 交空").toContain("if (!target) return null;");
+    expect(LAND_BODY, "兜底交回算出来的落点").toContain("return nextTop;");
+    expect(PREVIEW_TS, "程序定位那一路把落点透出去").toContain(
+      "syncToLineProgrammatic(line: number): number | null",
+    );
+  });
+});
+
 // ------------------------------------------------- B159：跨窗口同步滚动
 describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动）", () => {
   const MSG_BODY = slice(main, "const EVT_DOC_CHANGE = ", "/** 正在套用远端变更");
@@ -505,7 +594,7 @@ describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚�
     );
     // 落点显式补记（程序定位不写快照）：必须排在 syncToLineProgrammatic 之后。
     const atSync = PUSH_BODY.indexOf("preview.syncToLineProgrammatic(line);");
-    const atRecord = PUSH_BODY.indexOf("recordScroll(other.tabId, shown.preview.root.scrollTop)");
+    const atRecord = PUSH_BODY.indexOf("recordScroll(other.tabId, landed);");
     expect(atSync, "要能定位程序定位入口那句").toBeGreaterThan(-1);
     expect(atRecord, "要能定位补记那笔").toBeGreaterThan(-1);
     expect(atRecord, "补记要排在程序定位之后").toBeGreaterThan(atSync);
@@ -1100,12 +1189,15 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
   });
 
   it("退回「预览兄弟只跟光标、不跟位置」→ 行定位那条必须落空", () => {
-    const ORIG = "recordScroll(other.tabId, shown.preview.root.scrollTop);";
+    // ⚠️ 退化串是**单句结构**（带 `if` 判空那一整条），不是只写被扫的字面量 ——
+    //    只写 `recordScroll(other.tabId, landed)` 的话，退化成判恒真照样命中，等于没退化。
+    const ORIG = "if (landed !== null) recordScroll(other.tabId, landed);";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
     const degraded = main.replace(ORIG, "");
     const body = slice(degraded, "function pushSyncToSiblings(", "function showMessage(");
+    // 源码分支那笔是 `…, px)`，盯着 `landed` 才只打预览这一格（盯 `shown` 那套前缀已作废）。
     expect(body, "删掉这笔记录后，预览兄弟就没位置可落了").not.toMatch(
-      /recordScroll\(other\.tabId, shown/,
+      /recordScroll\(other\.tabId,\s*landed\)/,
     );
   });
 

@@ -682,9 +682,13 @@ function applySyncToSibling(other: Tab, px: number | null, line: number | null):
     const preview = shown.preview;
     // B170：跨面板同步把预览按行定位 —— 程序摆位，回执由预览的 scroll 监听经 scroll-guard
     // 标记吞掉（不比位置、不赌时序、不靠还原窗口，渲染扰动也免疫）。
-    preview.syncToLineProgrammatic(line);
+    // B240 三轮：`syncToLineProgrammatic` 返回**实际落点**（`null` = 没落地，
+    //   预览还没渲染 / 行号找不到 block ⇒ 容器一动没动）。
+    //   ⚠️ 没落地就**不许**把容器里的值（多半是 0）补记进这份的槽 —— 那是把
+    //   「定位没做」写成「它停在顶部」，下一次切过去天然回顶（B134 同型）。
+    const landed = preview.syncToLineProgrammatic(line);
     // `syncToLine` 同步落地，容器里的值可直接读；落点显式补记（程序定位不写快照）。
-    recordScroll(other.tabId, shown.preview.root.scrollTop);
+    if (landed !== null) recordScroll(other.tabId, landed);
     return;
   }
   const shownView = shown?.view?.view;
@@ -727,6 +731,60 @@ function applySyncToSibling(other: Tab, px: number | null, line: number | null):
   pinScrollTop(shownView.scrollDOM, block.top + block.height * frac);
   // 落点得记，否则兄弟这份的位置只活在 DOM 上：离屏前没人补记，重启就丢了。
   recordScroll(other.tabId, shownView.scrollDOM.scrollTop);
+}
+
+/**
+ * B240 三轮：切标签那一刻，把**源**（刚显示的那一份，下一刻就要离屏）的坐标就地采下来。
+ *
+ * ⚠️ 必须在它离屏**之前**采。离屏之后 `panelOfTab(src).view?.view` 取到的是面板的那一个
+ * EditorView，而它此刻显示的是**接班的那一份** —— 拿它的 scrollTop 当源的位置，等于
+ * 拿「被同步的那份」去同步「同步者自己」，收口就成了空转。
+ *
+ * 坐标口径与 `pushSyncToSiblings` 同一套（纪律 2 / 4）：源显示在哪一侧就取哪一侧，
+ * 预览侧取预览的顶行（带行内比例的小数），源码侧取 `topVisibleLineFrac`。
+ */
+function syncSourceSnapshot(
+  src: Tab | undefined,
+  nextTabId: number,
+): { px: number | null; line: number | null } | null {
+  if (!src || src.tabId === nextTabId) return null;
+  // 同步没开 ⇒ 各认各的（B149 基线），谁也别替谁决定位置。
+  if (docSyncModes.get(src.docId) !== true) return null;
+  if (src.scrollTop === null) return null;
+  const srcPanel = panelOfTab(src.tabId);
+  const srcPreview = src.viewMode === "preview" ? srcPanel?.preview : undefined;
+  const srcView = srcPreview ? undefined : srcPanel?.view?.view;
+  const line = srcPreview
+    ? srcPreview.topVisibleLine()
+    : srcView
+      ? topVisibleLineFrac(srcView)
+      : null;
+  return { px: src.scrollTop, line };
+}
+
+/**
+ * B240 三轮：同步滚动开着时，**切过来显示的这一份**按**源**的位置收口。
+ *
+ * 为什么不能只靠「新这份自己那份快照」（`restoreViewScroll` 现在做的事）：同文档的
+ * 兄弟各有算不出自己位置的时刻 ——
+ *   · 源是**预览**侧 ⇒ `px` 恒 `null`（纪律 2，预览只认行号），而离屏的源码兄弟换不出
+ *     `lineBlockAt`（视图归面板所有、正显示着别人）⇒ 它的槽一个字节都写不进；
+ *   · 兄弟是**预览**态且离屏 ⇒ 连容器都没有，同样写不进。
+ * 于是「切过去位置不对」。而 B154 白纸黑字要求「一个预览一个源码也要同步」。
+ *
+ * ⚠️ 所以同步开着时，**切换后的位置由源给定**，不由新这份自己的槽给定：源此刻已经离屏，
+ * 但它刚被推过、位置就停在 `src.scrollTop` 上，同文档同排版 ⇒ 同一个值落到源码侧就是
+ * 同一个位置。这一下把上面两个死格一并兜住，比给每个格子都补换算便宜得多。
+ */
+function alignShownToSyncSource(
+  panel: Panel,
+  src: Tab | undefined,
+  snap: { px: number | null; line: number | null } | null,
+): void {
+  if (!snap || !src) return;
+  const shown = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
+  if (!shown || shown.tabId === src.tabId) return;
+  applySyncToSibling(shown, snap.px, snap.line);
 }
 
 /**
@@ -1446,6 +1504,9 @@ function switchTab(panelId: number, tabId: number): void {
   // B126：setState 会重建 ViewState 并把视口拉回开头，采完这一眼再切换
   rememberViewScroll(panel);
   logViewport("切换 · 采旧位置后", panel);
+  // B240 三轮：同步开着时，先把**源（刚显示的这一份）**的坐标就地采下来 —— 它马上要
+  // 离屏，离屏之后就再也读不到它自己的实时 DOM 了（见下面 alignShownToSyncSource）。
+  const syncSrc = syncSourceSnapshot(shownTab, tabId);
   const tab = tabs.get(tabId);
   if (!tab) return;
   panel.activeTabId = tabId;
@@ -1494,6 +1555,10 @@ function switchTab(panelId: number, tabId: number): void {
   // 纯预览实例的位置得在它之后再钉回来（B130）
   restorePreviewScroll(panel);
   logViewport("切换 · 预览还原后", panel);
+  // B240 三轮：同步开着 ⇒ 切过去的位置由**源**给定（离屏那份算不出自己的位置，
+  // 见 alignShownToSyncSource）。排在最后那次补焦点之后 —— 焦点会把光标滚进视野，
+  // 排在它之前会被顶掉（B145 那套顺序纪律）。
+  if (tab) alignShownToSyncSource(panel, shownTab, syncSrc);
   // CM6 测量（含它的滚动锚点补偿）排在下一帧，位置得在补偿之后收回来（B146）
   measureAndKeepScroll(panel);
   logViewport("切换 · 测量收尾后", panel);
