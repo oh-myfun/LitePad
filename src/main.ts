@@ -721,7 +721,26 @@ function applySyncToSibling(other: Tab, px: number | null, line: number | null):
   // B240：离屏的源码兄弟换不出编辑器像素 —— 行号→像素要按它**自己那份文档**的
   //   `lineBlockAt` 算，而它此刻没有视图（`view` 归面板所有，正在显示别的标签）。
   //   硬写就是污染（B154 踩过：把预览像素当编辑器像素塞进去，切回源码时位置全错）。
-  if (!shownView) return;
+  // ⚠️ B248：但**「没有视图」不等于「换不出」** —— 同文档的**源码态**实例（分屏另一半 /
+  //   另一个面板正显示着的那一格）排版与这份文档完全一致，拿它的 view 量 `lineBlockAt`
+  //   就等于量离屏兄弟自己的几何 ⇒ 换算出来的编辑器像素写进它自己的槽，
+  //   `restoreViewScroll` 切过去直接读到新值（用户报：滚激活的预览时，未显示的那份
+  //   代码标签位置纹丝不动 ⇒ 切过去/显示出来还是老位置）。
+  //   ⚠️ 写进去的**必须是换算后的 `top`**，不是 `px`（那一路是「硬塞预览像素」的死，
+  //      见上面 `sync-scroll-mode` 的反向闸：预览源那一路不许出现 `recordScroll(…, px)`）。
+  //   ⚠️ 真·换不出（同文档一个源码视图都没有）才继续留死格 —— 那是物理限制。
+  let view = shownView;
+  if (!view) {
+    for (const t of instancesOfDoc(other.docId)) {
+      if (t.tabId === other.tabId || t.viewMode === "preview") continue;
+      const v = displayedPanelOfTab(t.tabId)?.view?.view;
+      if (v) {
+        view = v;
+        break;
+      }
+    }
+  }
+  if (!view) return;
   // B160：源是**预览**侧 ⇒ 按纪律 2 它交不出编辑器像素，`px` 恒为 `null`。换算只能从行号来：
   // 行首对齐的像素坐标与 `SyncHost.scrollToLine` 是同一套（纪律 4：中间只许出现「行号」这一种换算）。
   if (line === null) return;
@@ -731,9 +750,12 @@ function applySyncToSibling(other: Tab, px: number | null, line: number | null):
   //   往返不等值，每切一轮吃掉一点，来回切表现成「位置越来越歪」。
   //   （B174 那条行内比例只服务于**同侧跟随**：源码→源码走 px 直通，源码→预览那条跟随链
   //    本来就在同一坐标系里用；跨坐标系只允许出现「行号」这一种中介。）
-  const top = editorLineTopPx(shownView, line);
+  const top = editorLineTopPx(view, line);
   if (top === null) return;
-  pinScrollTop(shownView.scrollDOM, top);
+  // ⚠️ 只有兄弟**自己**在屏时才钉它自己的 DOM —— `view` 有可能是借来的（同文档另一个
+  //    源码视图），离屏兄弟压根没容器可钉，拿它去 pin 等于把正显示着的那个实例推走。
+  //    位置已经写进槽，切过去 `restoreViewScroll` 会自己读出来。
+  if (shownView) pinScrollTop(shownView.scrollDOM, top);
   // 落点得记，否则兄弟这份的位置只活在 DOM 上：离屏前没人补记，重启就丢了。
   recordScroll(other.tabId, top);
 }

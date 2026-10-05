@@ -316,7 +316,7 @@ describe("B240 同步滚动：非激活（离屏）标签也要统一滚动位�
     );
   });
 
-  it("源是预览侧（px 恒 null）时，离屏源码兄弟仍不写 —— 换不出像素就是不能写", () => {
+  it("源是预览侧（px 恒 null）时，离屏源码兄弟不许写 px —— 但换算得出来的像素它照样要写", () => {
     // 这一条是 B240 **刻意不覆盖**的格子：行号→编辑器像素要按它自己那份文档的
     // `lineBlockAt` 算，而离屏时它没有视图（view 归面板所有，正在显示别的标签）。
     // 硬写就是污染（B154 踩过：把预览像素当编辑器像素塞进源码槽，切回源码位置全错）。
@@ -324,9 +324,13 @@ describe("B240 同步滚动：非激活（离屏）标签也要统一滚动位�
     //    在它里面再找 `function showMessage(` 必然找不到（`slice` 会红，不是静默）。
     const body = PUSH_BODY.slice(PUSH_BODY.indexOf("// 走到这里 = 源是**预览**那一侧"));
     expect(body.length, "要能切到预览源那一路").toBeGreaterThan(0);
-    const guard = body.indexOf("if (!shownView) return;");
+    // ⚠️ B248：守卫从 `if (!shownView) return;` 进化成 `if (!view) return;` ——
+    //    离屏源码兄弟现在**拿同文档的另一个源码视图**换算 `lineBlockAt` 也能写槽了
+    //    （用户报：滚激活的预览时，未显示的那份代码标签位置纹丝不动）。锚点跟着改，
+    //    判据仍是「换不出 ⇒ 不许硬写」，不是改松。
+    const guard = body.indexOf("if (!view) return;");
     const rec = body.indexOf("recordScroll(other.tabId, px);");
-    expect(guard, "预览源那一路要有「没容器就返回」的守卫").toBeGreaterThanOrEqual(0);
+    expect(guard, "预览源那一路要有「换不出就返回」的守卫").toBeGreaterThanOrEqual(0);
     // ⚠️ 那一路上**不许**再出现 recordScroll(…, px) —— 出现了就等于把编辑器像素
     //    硬塞进一个没有视图算不出位置的兄弟的槽。
     expect(rec, "预览源 + 离屏兄弟不该写 px 快照（换算不出来）").toBe(-1);
@@ -655,8 +659,11 @@ describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚�
     expect(PUSH_BODY, "源码分支不许再只看 px 就 return").not.toMatch(
       /if \(px === null \|\| !shownView\) return;/,
     );
+    // ⚠️ B248：第一参从 `shownView` 换成 `view` —— 离屏源码兄弟没视图时，拿同文档的
+    //    **另一个源码态视图**量 `lineBlockAt`（排版一致 ⇒ 等价于量它自己）换算。
+    //    锚点跟着改，判据仍是「行号要真的被用上」。
     expect(PUSH_BODY, "换算出来的行号要真的用上").toContain(
-      "const top = editorLineTopPx(shownView, line);",
+      "const top = editorLineTopPx(view, line);",
     );
     // ⚠️ B242：跨侧落点只给**行首**，不再按行内比例插值 —— 那串 frac 是**编辑器行内**
     //   的比例，从预览侧搬过来量的是「块内」，往返不等值 ⇒ 每切一轮吃掉一点（用户报
