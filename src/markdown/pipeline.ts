@@ -141,7 +141,15 @@ export function renderBlocks(src: string): MdBlock[] {
   const groups: { map: [number, number]; tokens: MdToken[] }[] = [];
   let current: { map: [number, number]; tokens: MdToken[] } | null = null;
   for (const t of tokens) {
-    if (t.level === 0) {
+    // ⚠️ 收尾 token（heading_close / paragraph_close …）**也是 level 0**，但绝不能另起一块：
+    // markdown-it 的标题/段落都是「open(level0) → inline(level1) → close(level0)」三段。
+    // 早先这里按 `t.level === 0` 一律当新块 ⇒ 每个标题被切成两块（开标签块 + 闭标签块），
+    // 实测 24 行标题文档交出 48 块、闭标签块 `lineStart` 恒为 1；这些空壳块混进预览的
+    // `this.blocks` 后，`indexOfBlockAtOffset`（取「最后一个顶边 ≤ offset」）永远命中
+    // 顶边与真块相同、却 `lineStart=1` 的伪块 ⇒ `topBlockStartLine()` 恒返回 1，跨侧
+    // 收口把源码钉回第 1 行（滚动位置清零，来回切标签就看见位置乱跳，见 B244 四标签复核）。
+    // 收尾 token 必须并入当前块（它们本来就属于同一个 block 的边界）。
+    if (t.level === 0 && !t.type.endsWith("_close")) {
       if (t.hidden && current && t.type !== "heading_open") {
         // 隐藏的顶层 token（如 text 特例）并入当前 block
         current.tokens.push(t);

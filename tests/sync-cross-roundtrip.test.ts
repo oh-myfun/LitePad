@@ -2,14 +2,14 @@
 // B241：跨侧（预览 ⇄ 源码）切换的**往返闭合性**。
 // jsdom 默认没有布局（getBoundingClientRect 全 0 ⇒ blockTop 退化成恒等于 scrollTop，
 // 每轮换算固定掉 8px，看起来的「越切越歪」其实是退化假象）。
-// 这里给预览造一个**确定性的布局**（每个块一行 20px、块顶 = 行号 × 20），
+// 这里给预览造一个**确定性的布局**（每个块一行 14px、块顶 = 行号 × 14），
 //   于是「滚预览 → 切源码 → 切预览」的往返闭合与否才判得出来 —— 这层布局是这条
 //   用例的全部价值：没有它（jsdom 默认 rect 全 0）预览换算会退化，测出来的是假象。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 
 // 行高（px）。预览的往返换算全靠这个数对得上。
-const ROW = 20;
+const ROW = 14;
 
 /**
  * 一个预览块的「块顶」在桩里的排法：**按 DOM 序 × 行高**。
@@ -17,7 +17,7 @@ const ROW = 20;
  * ⚠️ 真实布局里块是**连续排开**的（第 i 个块的顶边 = 前 i 个块的高度之和），跟它内部的
  *    `data-line-start` 是多少没有必然关系 —— 同一个 `md-block` 里可能带好几个
  *    `data-line-start`（渲染器按元素写：标题 1、空块 1、正文 3…）。若按 lineStart 排，
- *    桩里的块顶会**不单调**（实测 20,20,60,20,100…），而 `indexOfBlockAtOffset` 的二分
+ *    桩里的块顶会**不单调**（实测外层/内层同顶），而 `indexOfBlockAtOffset` 的二分
  *    只在单调布局上成立 ⇒ 不单调就查错块，量出来的是假象。
  */
 function blockTopOf(el: Element): number {
@@ -45,7 +45,7 @@ beforeAll(() => {
     //    heightMap 退化成「每行 0 高」⇒ 量不出「编辑器落在哪一行」。
     const isLine = el.classList.contains("cm-line");
     // ⚠️ 预览块会**套一层内层容器**，两个节点都带 `data-line-start`（内层恒写 1）。
-    //    桩里若各按自己的 lineStart 排，块顶就**不单调**（内层恒 20），
+    //    桩里若各按自己的 lineStart 排，块顶就**不单调**（内层恒同顶），
     //    `indexOfBlockAtOffset` 的二分会查错块、量出来的是假象。真实布局里块的顶边由
     //    **最外层那个块**决定 ⇒ 这里取「自身 + 所有祖先里最大的 lineStart」当块顶。
     const top = isRoot

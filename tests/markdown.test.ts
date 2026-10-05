@@ -16,6 +16,25 @@ describe("markdown pipeline", () => {
     }
   });
 
+  it("B244：收尾 token（*_close）不算新块 —— 每个标题/段落只交一块", () => {
+    // 退化锚点：早先这里按 `t.level === 0` 一律另起 block，而 markdown-it 的
+    // heading/paragraph 都是「open(level0) → inline(level1) → close(level0)」三段 ⇒
+    // 每个标题被切成「开标签块 + 闭标签块」两块：24 行标题交出 48 块、闭标签块
+    // `lineStart` 恒为 1、html 只有 `</h1>`。这些空壳块混进预览的 `this.blocks` 后，
+    // `indexOfBlockAtOffset` 永远命中顶边相同却 lineStart=1 的伪块 ⇒
+    // `topBlockStartLine()` 恒返回 1 ⇒ 跨侧收口把源码钉回第 1 行（B244 四标签复核）。
+    const src = Array.from({ length: 24 }, (_, i) => `# 标题 ${i + 1}`).join("\n");
+    const blocks = renderBlocks(src);
+    expect(blocks).toHaveLength(24); // 不是一个块对两段 token
+    blocks.forEach((b, i) => {
+      expect(b.lineStart, `第 ${i + 1} 块的行号`).toBe(i + 1); // 行号严格一一对应
+      expect(b.html, `第 ${i + 1} 块要含正文`).toContain(`标题 ${i + 1}`);
+      expect(b.html, `第 ${i + 1} 块必须是完整闭合（不许只有开标签/只有闭标签）`).toContain(
+        "</h1>",
+      );
+    });
+  });
+
   it("GFM 表格与任务列表", () => {
     const html = renderFull("| a | b |\n| --- | --- |\n| 1 | 2 |\n");
     expect(html).toContain("<table>");
