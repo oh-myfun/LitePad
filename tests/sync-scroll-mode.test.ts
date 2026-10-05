@@ -253,6 +253,85 @@ describe("B152 同步滚动模式：推进与触发点", () => {
   });
 });
 
+/**
+ * B240 同步滚动：非激活的标签也要统一滚动位置。
+ *
+ * 一个 panel 只挂**一个** `EditorView`（`viewTabId` 决定它此刻显示哪份），所以同一
+ * 文档的「其它标签」分两类：
+ *   · **挂在别的面板上**（分屏 / 卫星窗口）—— 有容器，原路径 `pinScrollTop` 就钉到了；
+ *   · **离屏**（同文档另一份标签排在标签栏里没被选中）—— **没有容器**，但它的快照槽
+ *     `t.scrollTop` 是能写的，而 `restoreViewScroll` 切过去时正是拿这个槽钉位置。
+ *
+ * B240 之前 `applySyncToSibling` 对离屏兄弟**直接 return，位置一个字都没写**（注释说
+ * 「离屏的只改它自己的快照（选区 + 位置）」，代码只写了选区）⇒ 用户报「非激活的标签
+ * 也要统一滚动位置」。
+ *
+ * ⚠️ 判据盯的是**「写快照」排在「钉 DOM」之前**这个顺序：钉不钉得上取决于有没有容器，
+ *   快照该写一定要写 —— 顺序反了就退回「离屏就不写」的原 bug，且从断言上看不出来。
+ */
+describe("B240 同步滚动：非激活（离屏）标签也要统一滚动位置", () => {
+  /** 源码态分支（`px` 直推那一路）的函数体 —— 从 px 判据切到函数收尾。 */
+  function pxBranch(): string {
+    return slice(PUSH_BODY, "if (px !== null) {", "// 走到这里 = 源是**预览**那一侧");
+  }
+
+  it("离屏的源码兄弟也要写位置快照（recordScroll 不许被 !shownView 挡住）", () => {
+    const body = pxBranch();
+    // ⚠️ 反向闸排在正向断言之前：B240 前那句 `if (!shownView) return;` 在 px 分支**之前**，
+    //    命中就直接返回、快照一个字都不写。判据只认调用形态（含实参 `px`），
+    //    **不写函数名** —— 源码注释里复述过同一句，写函数名容易误判。
+    const guard = body.indexOf("if (!shownView) return;");
+    const rec = body.indexOf("recordScroll(other.tabId, px);");
+    expect(guard, "px 分支里应有「没容器就不钉位」那道守卫").toBeGreaterThanOrEqual(0);
+    expect(rec, "px 分支里应写位置快照").toBeGreaterThanOrEqual(0);
+    expect(rec, "写快照必须排在「没容器就返回」之前（离屏标签的位置就靠它）").toBeLessThan(guard);
+  });
+
+  it("钉 DOM 仍走 pinScrollTop（离屏那份跳过钉位，但快照已经写了）", () => {
+    const body = pxBranch();
+    // 正向：在屏的兄弟照旧钉 DOM，且走 pinScrollTop（B170 的来源标记）。
+    expect(body, "在屏的兄弟要钉 DOM").toContain("pinScrollTop(shownView.scrollDOM, px);");
+    // 快照在前、钉位在后 —— 两行的先后本身就是判据（上面那条已钉，这里钉住配套关系）。
+    expect(body.indexOf("recordScroll(other.tabId, px);")).toBeLessThan(
+      body.indexOf("pinScrollTop(shownView.scrollDOM, px);"),
+    );
+  });
+
+  it("源是预览侧（px 恒 null）时，离屏源码兄弟仍不写 —— 换不出像素就是不能写", () => {
+    // 这一条是 B240 **刻意不覆盖**的格子：行号→编辑器像素要按它自己那份文档的
+    // `lineBlockAt` 算，而离屏时它没有视图（view 归面板所有，正在显示别的标签）。
+    // 硬写就是污染（B154 踩过：把预览像素当编辑器像素塞进源码槽，切回源码位置全错）。
+    // ⚠️ 切片终点要用**同函数内**的标记：`PUSH_BODY` 已经切到 `showMessage` 之前了，
+    //    在它里面再找 `function showMessage(` 必然找不到（`slice` 会红，不是静默）。
+    const body = PUSH_BODY.slice(PUSH_BODY.indexOf("// 走到这里 = 源是**预览**那一侧"));
+    expect(body.length, "要能切到预览源那一路").toBeGreaterThan(0);
+    const guard = body.indexOf("if (!shownView) return;");
+    const rec = body.indexOf("recordScroll(other.tabId, px);");
+    expect(guard, "预览源那一路要有「没容器就返回」的守卫").toBeGreaterThanOrEqual(0);
+    // ⚠️ 那一路上**不许**再出现 recordScroll(…, px) —— 出现了就等于把编辑器像素
+    //    硬塞进一个没有视图算不出位置的兄弟的槽。
+    expect(rec, "预览源 + 离屏兄弟不该写 px 快照（换算不出来）").toBe(-1);
+  });
+
+  it("预览态兄弟那一路保持原样：B129 的「别把编辑器像素当预览像素」不能被破坏", () => {
+    // 反向闸：离屏的预览兄弟**依然**什么都不写（预览像素没有容器可换算）。
+    // 这条是 B154 的既有判据，B240 不许为了「非激活也要统一」把它改松。
+    expect(PUSH_BODY, "离屏预览兄弟要跳过").toContain(
+      "if (line === null || !shown?.preview) return;",
+    );
+  });
+
+  it("离屏兄弟的位置有处可去：切标签时 restoreViewScroll 拿的正是这个快照槽", () => {
+    // 写快照之所以有用，靠的是切过去时有人读它。判据钉住那个读取点。
+    // ⚠️ 终点用 `applyPanelMode`（`pinScrollTop` 排在 `restoreViewScroll` **之前**，
+    //    拿它当终点会切出空串 —— `slice` 会红，不是静默放行）。
+    const restore = slice(main, "function restoreViewScroll(", "function applyPanelMode(");
+    expect(restore, "切标签时要把快照槽还给视图").toContain("t.scrollTop");
+    // 位置闸：读取必须发生在 pinScrollTop 之前（先读到值再钉）。
+    expect(restore.indexOf("t.scrollTop")).toBeLessThan(restore.indexOf("pinScrollTop("));
+  });
+});
+
 // ------------------------------------------------- B159：跨窗口同步滚动
 describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动）", () => {
   const MSG_BODY = slice(main, "const EVT_DOC_CHANGE = ", "/** 正在套用远端变更");
@@ -1008,17 +1087,18 @@ describe("B160 反向验证：退回旧写法，上面那四条必须变红", ()
   it("退回「源码兄弟只认 px」→ 行号那条必须落空", () => {
     // 退回 B160 前状：在 `px === null`（源是预览侧）时直接 return，于是源码兄弟
     // 一动不动 —— 用户报的「滚动预览，源码文档没有同步滚动」。
-    const ORIG = "  if (!shownView) return;\n  if (px !== null) {";
+    //
+    // ⚠️ B240：这里的退化串原先取的是 `if (!shownView) return;` 与 `if (px !== null) {`
+    //    **相邻两行**的精确文本，而 B240 把源码分支重排了（`if (px !== null) {` 提到前头，
+    //    `!shownView` 的守卫挪进分支内部）⇒ 那条串整个散掉，判据变成「找不到原文」的红，
+    //    跟它要验证的行为无关。**退化串不许锚在源码的排布上**（同 B233 那条
+    //    「拿某行代码当 slice 锚点」）：改成只认「px 为 null 就落空」这一条语义。
+    const ORIG = "if (px !== null) {";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(
-      ORIG,
-      "  if (!shownView) return;\n  if (px === null || !shownView) return;\n  if (px !== null) {",
-    );
+    const degraded = main.replace(ORIG, "if (px === null) return;\n  if (px !== null) {");
     const body = slice(degraded, "function applySyncToSibling(", "function showMessage(");
     // 退化后「只看 px 就 return」那句回来了 ⇒ 「源码兄弟要认行号」必须落空。
-    expect(body, "退回后源码分支又只看 px 了").toMatch(
-      /if \(px === null \|\| !shownView\) return;/,
-    );
+    expect(body, "退回后源码分支又只看 px 了").toMatch(/if \(px === null\) return;/);
   });
 
   it("退回「走 syncToLine（留尾巴、无程序定位窗口）」→ 两条必须落空", () => {

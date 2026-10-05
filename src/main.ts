@@ -688,15 +688,32 @@ function applySyncToSibling(other: Tab, px: number | null, line: number | null):
     return;
   }
   const shownView = shown?.view?.view;
-  if (!shownView) return;
   if (px !== null) {
+    // B240：落点**先记**，且**离屏的兄弟也要记**。
+    //   一个 panel 只挂一个 `EditorView`（`viewTabId` 决定它此刻显示谁），所以「非激活
+    //   标签」没有自己的容器可钉 —— 但它的快照槽 `t.scrollTop` 是能写的，而
+    //   `restoreViewScroll` 切过去时正是拿这个槽钉位置。原先这里对离屏兄弟直接
+    //   `return`，等于「同文档的其它标签切过去永远停在老位置」⇒ 用户报「非激活的标签
+    //   也要统一滚动位置」。
+    //   ⚠️ 快照是**兄弟那一侧**的像素，而 `px` 正是编辑器像素 —— 两边同为源码态，
+    //   同一份文档同一套排版，同一个 px 含义相同（纪律 2 的「别把预览像素当编辑器
+    //   像素」在这里不成立，因为源也是编辑器那一侧）。
     recordScroll(other.tabId, px);
+    // 离屏的兄弟没有容器可钉，跳过钉位即可。⚠️ 隐藏实例（`panelId < 0`，标签已搬到
+    // 别的窗口）也走这一条 —— 它同样不在任何面板里；它那一侧的位置由跨窗口的
+    // EVT_SYNC_POS 负责推给真正在显示它的窗口，本地只把快照记进会话（取回时生效）。
+    if (!shownView) return;
     // 派发选区**在先**、钉位置在后：CM6 为了让光标可见可能自己滚一下，钉在后面
     // 才能把它盖掉 —— 顺序反了就变成「位置被光标拽走」。
     // B170：pinScrollTop 会标记来源，回执由编辑器 scroll 监听吞掉，不必套还原窗口。
     pinScrollTop(shownView.scrollDOM, px);
     return;
   }
+  // 走到这里 = 源是**预览**那一侧（`px` 恒为 null，B160），手上只有行号。
+  // B240：离屏的源码兄弟换不出编辑器像素 —— 行号→像素要按它**自己那份文档**的
+  //   `lineBlockAt` 算，而它此刻没有视图（`view` 归面板所有，正在显示别的标签）。
+  //   硬写就是污染（B154 踩过：把预览像素当编辑器像素塞进去，切回源码时位置全错）。
+  if (!shownView) return;
   // B160：源是**预览**侧 ⇒ 按纪律 2 它交不出编辑器像素，`px` 恒为 `null`。换算只能从行号来：
   // 行首对齐的像素坐标与 `SyncHost.scrollToLine` 是同一套（纪律 4：中间只许出现「行号」这一种换算）。
   if (line === null) return;
