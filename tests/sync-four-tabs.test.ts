@@ -24,17 +24,32 @@ import { readFileSync } from "node:fs";
 const ROW = 14;
 
 /**
- * 预览块顶：与 `sync-cross-roundtrip.test.ts` 同一族，但口径是「DOM 下标 × 行高」。
+ * 预览块顶：**真实几何**——块高不等宽（模拟 h1 / 段落块高参差），块顶 = 前面各块高度累加。
  *
- * ⚠️ 预览的 DOM：B244 修掉 `renderBlocks` 把 open/close 切成两块之后，每个 block 就是
- *    一个 `.md-block`，**DOM 下标即块序** ⇒ **块顶 = DOM 下标 × 行高**。
- *    （曾经踩过：pipeline 把「开标签块 + 闭标签块」交替塞进来，两层顶边同高、内层
- *    `data-line-start` 恒 1；按 DOM 下标算会让 `applySyncToLine` 的每块多算一整档，
- *    落点飞走。现在 24 行标题 ⇒ 24 块，下标即块序。）
+ * ⚠️ 曾经这里写成 `idx * ROW`（等宽），并且把 `A' = A - 8` **写死**成 168/160。
+ *    那在等宽假设下自洽，但真实里块高参差时「预览第 13 块的顶」根本不是 168 ——
+ *    非等宽一上，先炸的是**桩自己的期望值**（`warm-up`、`前提：b 预览停在 A'`），
+ *    根本走不到产品逻辑 ⇒ 测的是桩不是产品（B246 踩过）。
+ *    所以：① 块顶按真实累加算；② `A'`/`A` **从块几何推导**（见 `topOfBlock`），不写死。
+ *    （B244 修掉 `renderBlocks` 的 open/close 双块后，DOM 下标即块序，不再有内层伪块。）
  */
+function blockHeight(idx: number): number {
+  // 块高不等宽：第 idx 块比基准行高多出 (idx%3) 档，正好模拟真实里标题/段落高度参差
+  return ROW + (idx % 3) * 11;
+}
+
+/** 第 k 块的顶边（前面 k 块高度之和）。`A'` 就是 `topOfBlock(12) - 8`，不再写死。 */
+function topOfBlock(k: number): number {
+  let s = 0;
+  for (let i = 0; i < k; i++) s += blockHeight(i);
+  return s;
+}
+
 function blockTopOf(el: Element): number {
   const idx = Math.max(0, Array.prototype.indexOf.call(el.parentElement?.children ?? [], el));
-  return idx * ROW;
+  let s = 0;
+  for (let i = 0; i < idx; i++) s += blockHeight(i);
+  return s;
 }
 
 beforeAll(() => {
@@ -250,14 +265,16 @@ function toggleMode(): void {
   );
 }
 
-// 源码侧的位置 A：第 13 行的行首（下标 12 ⇒ 顶 = 240）。
+// 源码侧的位置 A：第 13 行的行首（下标 12 ⇒ 顶 = 12 × 行高）。
 const A = 12 * ROW;
-// 预览侧对应位置 A'：**同一个块**（行 13）。
-// ⚠️ 不是 240 而是 240 - 8：`applySyncToLine` 落点是 `块顶 - 8`（给 `topVisibleLine()`
-//    的「+8 偏移」留口径），而 `topBlockStartLine()` 又用 `scrollTop + 8` 反算回同一个块
-//    ⇒ 两个方向自洽 ⇒ 预览停在 232 就正对行 13 的行首。别把这 8 写成 0，否则这条用例
-//    量的是「落点漂 8px」而不是「四格稳不稳」。
-const AP = A - 8;
+// 预览侧对应位置 A'：**同一个块**（行 13）的顶边 - 8。
+//
+// ⚠️ 这两个值**从块几何推导，绝不写死**：
+//    `applySyncToLine` 落点是 `块顶 - 8`（给 `topVisibleLine()` 的「+8 偏移」留口径），
+//    而 `topBlockStartLine()` 又用 `scrollTop + 8` 反算回同一个块 ⇒ 两个方向自洽。
+//    块高不等宽时「第 13 块的顶」≠ 168，写死就会先炸桩的前提断言（B246 教训）。
+//    别把这 8 写成 0，否则量的是「落点漂 8px」而不是「四格稳不稳」。
+const AP = topOfBlock(12) - 8;
 
 describe("B243 复核：两面板 / 四标签（a 源码 + b 预览 同栏，c 源码 + d 预览 异栏）", () => {
   beforeAll(async () => {
