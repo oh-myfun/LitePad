@@ -257,7 +257,11 @@ describe("B152 同步滚动模式：推进与触发点", () => {
     );
     expect(main, "用户滚动之后要推：谁滚谁当源").toMatch(/if \(t\) pushSyncToSiblings\(t, true\);/);
     // 「切换激活文档时则根据新的激活文档进行同步」—— 这一句就落在 switchTab 末尾。
-    expect(main, "切激活文档后要按新源推").toMatch(/if \(tab\) pushSyncToSiblings\(tab\);/);
+    // ⚠️ B241：这一趟现在带闸门 —— 收口已经让两边对齐时不许再推（回推会把换算值
+    //    刷回源那一格）。判据要认全带闸门那一整条，别再盯旧的无闸门写法。
+    expect(main, "切激活文档后要按新源推").toMatch(
+      /if \(tab && !aligned\) pushSyncToSiblings\(tab\);/,
+    );
     expect(main, "全局刷新兜底（新出现的那一份要对齐）").toMatch(/const act = activeTab\(\);/);
   });
 
@@ -378,7 +382,7 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
 
   it("换完页再收口 —— 收口的对象是切过来显示的那一份，不是源", () => {
     const swap = SWITCH_BODY.indexOf("applyPanelMode(panel);");
-    const align = SWITCH_BODY.indexOf("alignShownToSyncSource(panel, shownTab, syncSrc);");
+    const align = SWITCH_BODY.indexOf("const aligned = tab ? alignShownToSyncSource(");
     expect(align, "切换末尾要收口").toBeGreaterThanOrEqual(0);
     expect(swap, "换页那一句要切得到").toBeGreaterThanOrEqual(0);
     expect(align, "收口排在换页之后（先换出要显示的那一份，再按源对齐它）").toBeGreaterThan(swap);
@@ -386,7 +390,7 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
   });
 
   it("收口排在 CM6 测量补偿之前（位置先定死，再让测量去补偿）", () => {
-    const align = main.indexOf("alignShownToSyncSource(panel, shownTab, syncSrc);");
+    const align = main.indexOf("const aligned = tab ? alignShownToSyncSource(");
     const measure = main.indexOf("measureAndKeepScroll(panel);");
     expect(align, "收口调用要在源码里").toBeGreaterThanOrEqual(0);
     expect(measure, "测量调用要在源码里").toBeGreaterThanOrEqual(0);
@@ -402,7 +406,9 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
   it("坐标口径与推兄弟那一路一致：源停在哪一侧就取哪一侧", () => {
     expect(SNAP_BODY, "源是预览侧 ⇒ 交的是顶行").toContain("srcPreview.topVisibleLine()");
     expect(SNAP_BODY, "源是源码侧 ⇒ 交的是顶行比例").toContain("topVisibleLineFrac(srcView)");
-    expect(SNAP_BODY, "px 取源那一格此刻停着的位置").toContain("px: src.scrollTop");
+    expect(SNAP_BODY, "px 取源那一格此刻停着的位置（源在预览侧则只交行号）").toContain(
+      "px: srcPreview ? null : src.scrollTop",
+    );
   });
 
   it("收口调的就是同一个落点函数，源那套坐标两个一起传（不是只传一个）", () => {
@@ -410,6 +416,35 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
       "applySyncToSibling(shown, snap.px, snap.line);",
     );
     expect(ALIGN_BODY.match(/applySyncToSibling\(/g)?.length, "落点调用只有这一处").toBe(1);
+  });
+
+  it("采样给的 px 必须与推兄弟那一路同一口径：源在预览侧就只交行号", () => {
+    // ⚠️ `src.scrollTop` 是双语义槽（源码侧存编辑器像素、预览侧存预览像素）。
+    //    `applySyncToSibling` 的源码分支只认 px、无视 line ⇒ 源是预览时交 px 就是拿
+    //    预览像素去钉编辑器（用户报「切过去位置乱跳」的一路成因）。
+    expect(SNAP_BODY, "预览侧源 ⇒ px 交空").toContain("px: srcPreview ? null : src.scrollTop");
+  });
+
+  it("收口只在本侧内部做：跨侧（一个预览一个源码）不重算，免得每切一轮爬一格", () => {
+    // 源码侧的「带比例小数逻辑行」与预览侧的「md 行号（块 data-line-start）」是两套
+    // 编号，标题/空行处必然错开 ⇒ 跨侧每轮重算都不闭合，来回切就一圈圈爬。
+    expect(ALIGN_BODY, "跨侧直接交还，不落位").toContain(
+      "if (src.viewMode !== shown.viewMode) return false;",
+    );
+    expect(ALIGN_BODY, "本侧收口成功要交回 true（调用方据此跳过回推）").toContain("return true;");
+  });
+
+  it("收口生效后不许再回推一次 —— 回推会把换算值刷回源那一格", () => {
+    // 切完那趟 `pushSyncToSiblings` 是把「接班这份的落位值」写回兄弟（此刻正是源），
+    // 跨侧换算每轮不等值 ⇒ 照推就是把源也带歪。闸门只在「没收口」时才放行。
+    const guard = main.indexOf("if (tab && !aligned) pushSyncToSiblings(tab);");
+    expect(guard, "切完那趟回推要留给没收口的情形").toBeGreaterThanOrEqual(0);
+    expect(ALIGN_BODY, "收口路径要有交回 true 的那一瞬").toContain("return true;");
+    // 位置闸：闸门必须紧跟着收口调用出现（顺序本身是判据：先判 aligned 再决定推不推）。
+    const call = main.indexOf("if (tab && !aligned) pushSyncToSiblings(tab);");
+    const src = main.indexOf("const aligned = tab ? alignShownToSyncSource(");
+    expect(src, "收口结果要接住，供下面的闸门用").toBeGreaterThanOrEqual(0);
+    expect(src, "闸门排在收口调用之后（拿到结果才谈得上跳过）").toBeLessThan(call);
   });
 
   it("预览定位没落地 ⇒ 不许把容器里的 0 记成「它停在顶部」（B134 同型）", () => {
@@ -466,7 +501,9 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
       /if \(isSyncSource\(tab, panel\) && syncingCursorDocId !== tab\.docId\) pushSyncToSiblings\(tab\);/,
     );
     // 切激活文档 / 全局刷新这两路也不播：那是「本地对齐」，不是用户滚动。
-    expect(main, "切激活文档那路不播").toMatch(/if \(tab\) pushSyncToSiblings\(tab\);\n/);
+    expect(main, "切激活文档那路不播").toMatch(
+      /if \(tab && !aligned\) pushSyncToSiblings\(tab\);\n/,
+    );
     expect(PUSH_BODY, "广播排在最后（本地先对齐，别人接手时落点一致）").toMatch(
       /broadcastSyncPos\(src, px, line\);/,
     );

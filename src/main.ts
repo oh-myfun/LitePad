@@ -759,7 +759,11 @@ function syncSourceSnapshot(
     : srcView
       ? topVisibleLineFrac(srcView)
       : null;
-  return { px: src.scrollTop, line };
+  // ⚠️ B241：`px` 这个槽是**双语义**的（源码侧存编辑器像素、预览侧存预览像素，B129/B154）。
+  //    `applySyncToSibling` 的源码分支只认 `px`、无视 `line` ⇒ 源是预览时交 px 就是拿预览
+  //    像素去钉编辑器（这就是「切过去掉 0 / 位置乱跳」）。口径必须与 `pushSyncToSiblings`
+  //    一致：源在哪一侧，就只交那一侧认得的东西 —— 预览侧 ⇒ px 恒 null，只交行号。
+  return { px: srcPreview ? null : src.scrollTop, line };
 }
 
 /**
@@ -775,16 +779,32 @@ function syncSourceSnapshot(
  * ⚠️ 所以同步开着时，**切换后的位置由源给定**，不由新这份自己的槽给定：源此刻已经离屏，
  * 但它刚被推过、位置就停在 `src.scrollTop` 上，同文档同排版 ⇒ 同一个值落到源码侧就是
  * 同一个位置。这一下把上面两个死格一并兜住，比给每个格子都补换算便宜得多。
+ *
+ * ⚠️ B241 返回值不是摆设：**收口生效 ⇒ 调用方不许再 `pushSyncToSiblings`**。那一次推播
+ *   会把「刚按源换算落位的接班值」回写给兄弟 —— 而兄弟正是源，等于**切换动作把源的位置
+ *    也改了** ⇒ 跨侧（行号⇄像素）每切一轮误差就吸收进源那一格，来回切表现为「位置越来越
+ *    歪」（用户报：两个同文件 tab 来回切换位置会变化）。收口已经让两边对齐，再推一次是
+ *    纯副作用。
+ *
+ * @returns 本次切换是否真的收口了（同步没开 / 源没位置 ⇒ 没收口，调用方照旧推播）
  */
 function alignShownToSyncSource(
   panel: Panel,
   src: Tab | undefined,
   snap: { px: number | null; line: number | null } | null,
-): void {
-  if (!snap || !src) return;
+): boolean {
+  if (!snap || !src) return false;
   const shown = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
-  if (!shown || shown.tabId === src.tabId) return;
+  if (!shown || shown.tabId === src.tabId) return false;
+  // ⚠️ B241：**只在本侧内部收口**（两个都源码 / 两个都预览）。
+  //    跨侧（一个预览一个源码）时**不收口**：接班这份停的是「上一次切过来时从源换算
+  //    落下的那个值」，它本来就对应着源那一侧的那一行（同步推播 + 上一轮落点），
+  //    视觉上照样对齐；而若每轮都重算一遍，源码行的带比例小数 ↔ 预览 md 行号是
+  //    两套口径（编辑器逻辑行 vs 预览块的 data-line-start，标题/空行处必然错开），
+  //    换算不闭合 ⇒ 每切一轮两边各爬一格误差，来回切就表现为「位置越来越歪」。
+  if (src.viewMode !== shown.viewMode) return false;
   applySyncToSibling(shown, snap.px, snap.line);
+  return true;
 }
 
 /**
@@ -1558,7 +1578,7 @@ function switchTab(panelId: number, tabId: number): void {
   // B240 三轮：同步开着 ⇒ 切过去的位置由**源**给定（离屏那份算不出自己的位置，
   // 见 alignShownToSyncSource）。排在最后那次补焦点之后 —— 焦点会把光标滚进视野，
   // 排在它之前会被顶掉（B145 那套顺序纪律）。
-  if (tab) alignShownToSyncSource(panel, shownTab, syncSrc);
+  const aligned = tab ? alignShownToSyncSource(panel, shownTab, syncSrc) : false;
   // CM6 测量（含它的滚动锚点补偿）排在下一帧，位置得在补偿之后收回来（B146）
   measureAndKeepScroll(panel);
   logViewport("切换 · 测量收尾后", panel);
@@ -1569,7 +1589,11 @@ function switchTab(panelId: number, tabId: number): void {
     // B152：切到新激活的那份之后，兄弟立刻按**新的源**对齐一次 —— 用户说得很明确：
     // 「切换激活文档时则根据新的激活文档进行同步」。同步状态本身不动（按钮不复位）。
     // 排在 refreshTitle 之后：显隐与点亮态在这一帧已经就绪。
-    if (tab) pushSyncToSiblings(tab);
+    //
+    // ⚠️ B241：收口已经让两边对齐 ⇒ 这一趟推播必须跳过。推播是把「接班这份的落位值」
+    //    写进兄弟（此刻正是源）的槽，跨侧换算每轮都不等值，照推就是把源也带歪
+    //    （来回切换位置会变化）。没收口（同步关 / 源没位置）时才需要它补一次对齐。
+    if (tab && !aligned) pushSyncToSiblings(tab);
   }
   renderPanelTabs(panelId);
   // B224：该面板活动标签 md 与否可能变了（md ↔ 非 md 切换），操作区跟着刷一遍
