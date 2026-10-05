@@ -799,7 +799,15 @@ function pushSyncToSiblings(src: Tab, crossWindow = false): void {
     : srcView
       ? topVisibleLineFrac(srcView)
       : null;
-  const px = srcPreview ? null : src.scrollTop;
+  // ⚠️ B240 二轮：px 必须取**源容器的实时 scrollTop**，不能读 `src.scrollTop` 那个
+  //   快照槽。快照只在各条滚动监听里「写」，而两条监听一条是「先写后推」、另一条
+  //   （预览侧）曾是「先推后写」⇒ 推给兄弟的可能是**上一次**的位置。
+  //   实测（复现脚本）：真实位置 260 时，编辑器侧推出 260、预览侧只推出 100 ——
+  //   而离屏兄弟的槽位被写进这个过期值，切过去当然对不上（用户报的
+  //   「未激活标签切过去位置和其它同名文件不一样」）。
+  //   `line` 那条本来就取的是实时值（`topVisibleLineFrac(srcView)` 直接量 DOM），
+  //   两边口径这才一致。
+  const px = srcPreview ? null : (srcView?.scrollDOM.scrollTop ?? src.scrollTop);
   // B167 定位用：同步滚动是「每秒几十次」的高频链路，抖起来只能靠日志看是谁在推谁。
   //   这几条全是 debug（默认 info 看不到，需在设置里把 log_level 调到 debug），
   //   排查时按 docId 过滤即可看出是不是「A 推 B、B 又推回 A」的拉锯。
@@ -1382,10 +1390,15 @@ function rebuildLayout(): void {
         // B154：与编辑器那侧同口径 —— **谁滚谁当源**，用户手指还在预览上、窗口也没
         //   激活，源码那份也要跟着走。
         // B159：预览侧这一路同样往外广播 —— 纯预览态那份就是它的源，别的窗口也该跟上。
-        pushSyncToSiblings(t, true);
-        // 用户滚动预览：位置写进自己的快照，再排程落盘（B137）。
+        //
+        // ⚠️ B240 二轮：**顺序与编辑器侧对齐（先写快照、后推兄弟）**。原先是反的
+        //   （先 push 再 recordScroll），而 `pushSyncToSiblings` 取 px 读的是快照槽
+        //   ⇒ 推给兄弟的是**上一次**的位置（实测真实 260 时只推出 100）。离屏兄弟
+        //   的槽位被写进这个过期值，切过去就对不上（用户报的位置不一致）。
+        //   编辑器侧那条监听一直是「先写后推」（见 mountView 里那段），别把它也翻过来。
         t.scrollTop = preview.root.scrollTop;
         recordScroll(t.tabId, t.scrollTop);
+        pushSyncToSiblings(t, true);
         scheduleSessionSave();
       });
 

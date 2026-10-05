@@ -145,9 +145,22 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
   it("预览态的槽是预览像素，不能被当成编辑器像素拿去推源码兄弟", () => {
     // 这是「一个预览一个源码」原先不生效的根因之一：源在预览里时 `src.scrollTop`
     // 装的是预览像素，直接拿去 pin 兄弟的编辑器，落点必然是错的。
-    expect(PUSH_BODY, "源是预览态时不许取 px").toMatch(
-      /const px = srcPreview \? null : src\.scrollTop;/,
+    //
+    // ⚠️ B240 二轮：三元后面的取值从 `src.scrollTop`（快照槽，滞后一帧）改成了
+    //    `srcView?.scrollDOM.scrollTop ?? src.scrollTop`（实时值）。**红线本身没动** ——
+    //    「源是预览态 ⇒ px 恒为 null」这个结构与意图都原样保留，只是源码侧那一支
+    //    取实时值。判据随之改成盯结构（`srcPreview ? null :`）而不是钉整行字面量。
+    expect(PUSH_BODY, "源是预览态时 px 必须是 null（预览像素不许当编辑器像素）").toMatch(
+      /const px = srcPreview \? null : /,
     );
+    // 正向：源码侧那一支取的是**源容器的实时 scrollTop**，不是快照槽。
+    // 反面判据：直接读 `src.scrollTop` 当主取值 ⇒ 推给兄弟的是上一次的位置
+    // （B240 二轮实测：真实 260 时只推出 100，离屏兄弟的槽被写脏）。
+    expect(PUSH_BODY, "源码侧 px 要取源容器的实时 scrollTop").toMatch(
+      /srcView\?\.scrollDOM\.scrollTop \?\? src\.scrollTop/,
+    );
+    // 兜底那一支仍保留（视图还没挂上时至少有个值，不至于把 px 变成 undefined）。
+    expect(PUSH_BODY, "视图不可用时要退回快照槽").toContain("?? src.scrollTop");
     expect(PUSH_BODY, "源那侧要先认出预览容器").toMatch(
       /src\.viewMode === "preview" \? srcPanel\?\.preview/,
     );
@@ -1049,11 +1062,41 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
   });
 
   it("退回「源在预览里也拿 src.scrollTop 当编辑器像素」→ 坐标系那条必须落空", () => {
-    const ORIG = "const px = srcPreview ? null : src.scrollTop;";
+    // ⚠️ B240 二轮：退化串原先锚的是整行 `const px = srcPreview ? null : src.scrollTop;`，
+    //    而那一行后半截已改成「取源容器实时 scrollTop」⇒ 整行锚点失效、判据变成
+    //    「找不到原文」的红（与 `pitfalls/0112` 同族）。改锚**三元结构**那一段
+    //    （`const px = srcPreview ? null : `），它才是这条纪律的载体。
+    const ORIG = "const px = srcPreview ? null : ";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "const px = src.scrollTop;");
+    const degraded = main.replace(ORIG, "const px = ");
     const body = slice(degraded, "function pushSyncToSiblings(", "function showMessage(");
     expect(body, "退回后就不认「预览那侧不产 px」这条纪律了").not.toMatch(ORIG);
+  });
+
+  it("退回「px 读快照槽（滞后一帧）」→ 实时取值那条必须落空", () => {
+    // B240 二轮新增：源码侧 px 必须取源容器的实时 scrollTop。退回成读快照槽 ⇒
+    // 推给兄弟的是上一次的位置（实测真实 260 时只推出 100）。
+    const ORIG = "srcView?.scrollDOM.scrollTop ?? src.scrollTop";
+    expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = main.replace(ORIG, "src.scrollTop");
+    const body = slice(degraded, "function pushSyncToSiblings(", "function showMessage(");
+    expect(body, "退回后 px 又变成滞后一帧的快照槽").not.toContain(ORIG);
+  });
+
+  it("退回「预览侧先推后写快照」→ 顺序那条必须落空", () => {
+    // B240 二轮：预览侧那条滚动监听曾是「先 pushSyncToSiblings 再 recordScroll」，
+    // 而 px 读的是快照槽 ⇒ 推给兄弟的是上一次的位置。与编辑器侧口径不一致。
+    // 判据：预览监听里 `recordScroll` 必须排在 `pushSyncToSiblings` **之前**。
+    const previewScroll = slice(
+      main,
+      'preview.root.addEventListener("scroll"',
+      "applyPanelMode(p);",
+    );
+    const rec = previewScroll.indexOf("recordScroll(t.tabId, t.scrollTop);");
+    const push = previewScroll.indexOf("pushSyncToSiblings(t, true);");
+    expect(rec, "预览监听里应写快照").toBeGreaterThanOrEqual(0);
+    expect(push, "预览监听里应推兄弟").toBeGreaterThanOrEqual(0);
+    expect(rec, "先写快照、后推兄弟（否则推出去的是上一次的位置）").toBeLessThan(push);
   });
 
   it("退回「预览兄弟只跟光标、不跟位置」→ 行定位那条必须落空", () => {
