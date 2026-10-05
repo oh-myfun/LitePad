@@ -266,8 +266,15 @@ describe("B148 静态契约：切模式是一次明确的交接，不是各认�
 
   it("交接过去的必须是**编辑器侧**的像素，且走唯一闸口", () => {
     const body = bodyOf("function toggleViewMode(");
-    // 按行反推出的像素：靠 lineBlockAt 定位，不是把预览的像素原样搬过去
-    expect(body, "要按文档行反推编辑器像素").toMatch(/lineBlockAt\(/);
+    // B242：换算抽成 `editorLineTopPx`（与**跨侧同步落点**共用同一个函数），所以这里
+    //   盯的是「切模式走了那个同源换算」，而不是 toggleViewMode 体内那行 lineBlockAt。
+    expect(body, "要按文档行反推编辑器像素（并且用的是同源换算）").toContain(
+      "handoff = editorLineTopPx(view, line);",
+    );
+    // 换算函数本身：按文档行反推，靠 lineBlockAt 定位，不是把预览的像素原样搬过去
+    expect(src, "行首换算用 lineBlockAt 按文档行定位").toMatch(
+      /lineBlockAt\(view\.state\.doc\.line\(n\)\.from\)\.top/,
+    );
     expect(body, "换了这一侧的像素就得走唯一闸口").toMatch(/recordScroll\(/);
     // 之后还有还原与测量收尾两步，缺一个都会让交接落空
     expect(body, "交接之后要立刻钉回去，否则下一帧的测量收尾会拿旧值动手").toMatch(
@@ -282,8 +289,7 @@ describe("B148 反向验证：把交接摘掉，上面几条必须变红", () =>
     // 退化：拿掉取顶行、按行反推、写闸口三步，只留 `tab.viewMode =` 与后续的还原。
     // ⚠️ 整块按原样搬（缩进也算）：只摘不插的话原处还会留一份，退化会悄悄变成「没改」。
     const ASK = "    const line = panel.preview?.topVisibleLine() ?? null;\n";
-    const CONVERT =
-      "      handoff = Math.max(0, view.lineBlockAt(view.state.doc.line(n).from).top);\n";
+    const CONVERT = "      handoff = editorLineTopPx(view, line);\n";
     const WRITE = "  if (handoff !== null) recordScroll(tab.tabId, handoff);\n";
     let degraded = src;
     let removed = 0;

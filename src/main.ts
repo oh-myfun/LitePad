@@ -686,7 +686,11 @@ function applySyncToSibling(other: Tab, px: number | null, line: number | null):
     //   预览还没渲染 / 行号找不到 block ⇒ 容器一动没动）。
     //   ⚠️ 没落地就**不许**把容器里的值（多半是 0）补记进这份的槽 —— 那是把
     //   「定位没做」写成「它停在顶部」，下一次切过去天然回顶（B134 同型）。
-    const landed = preview.syncToLineProgrammatic(line);
+    // B242：只给**整数行号**（块首对齐），与 `applyPanelMode` 那次 `syncToLine(anchorLine)`
+    //   同口径 —— 跨侧同步与切模式于是落在预览的同一个位置。
+    //   ⚠️ 别把 `line` 的小数部分带进来：`applySyncToLine` 会把小数当「块内比例」插值，
+    //      而那个小数是**编辑器行内**的比例（两边排版不同、高度不同），搬过来量纲就错。
+    const landed = preview.syncToLineProgrammatic(Math.floor(line));
     // `syncToLine` 同步落地，容器里的值可直接读；落点显式补记（程序定位不写快照）。
     if (landed !== null) recordScroll(other.tabId, landed);
     return;
@@ -721,16 +725,17 @@ function applySyncToSibling(other: Tab, px: number | null, line: number | null):
   // B160：源是**预览**侧 ⇒ 按纪律 2 它交不出编辑器像素，`px` 恒为 `null`。换算只能从行号来：
   // 行首对齐的像素坐标与 `SyncHost.scrollToLine` 是同一套（纪律 4：中间只许出现「行号」这一种换算）。
   if (line === null) return;
-  const maxLine = shownView.state.doc.lines;
-  const clamped = Math.min(Math.max(1, line), maxLine);
-  // B174：`line` 带行内比例（同步坐标不再取整），落点也要按同一个比例在**这一行自己占的
-  // 高度**里插值 —— 只钉行首的话，源在行内滚动时兄弟不动、跨行才跳一格，同样变阶梯。
-  const idx = Math.min(Math.floor(clamped), maxLine);
-  const frac = clamped - idx;
-  const block = shownView.lineBlockAt(shownView.state.doc.line(idx).from);
-  pinScrollTop(shownView.scrollDOM, block.top + block.height * frac);
+  // ⚠️ B242：落点走 `editorLineTopPx` —— 与切源码/预览那一路（toggleViewMode 的 handoff）
+  //   **同一个函数**，只给「**行首**」。这里**不**再自己补行内比例插值：那串比例是
+  //   **编辑器行内**的，源是预览侧时它其实量的是「块内」，搬到另一侧量纲就不对 ⇒
+  //   往返不等值，每切一轮吃掉一点，来回切表现成「位置越来越歪」。
+  //   （B174 那条行内比例只服务于**同侧跟随**：源码→源码走 px 直通，源码→预览那条跟随链
+  //    本来就在同一坐标系里用；跨坐标系只允许出现「行号」这一种中介。）
+  const top = editorLineTopPx(shownView, line);
+  if (top === null) return;
+  pinScrollTop(shownView.scrollDOM, top);
   // 落点得记，否则兄弟这份的位置只活在 DOM 上：离屏前没人补记，重启就丢了。
-  recordScroll(other.tabId, shownView.scrollDOM.scrollTop);
+  recordScroll(other.tabId, top);
 }
 
 /**
@@ -796,13 +801,9 @@ function alignShownToSyncSource(
   if (!snap || !src) return false;
   const shown = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
   if (!shown || shown.tabId === src.tabId) return false;
-  // ⚠️ B241：**只在本侧内部收口**（两个都源码 / 两个都预览）。
-  //    跨侧（一个预览一个源码）时**不收口**：接班这份停的是「上一次切过来时从源换算
-  //    落下的那个值」，它本来就对应着源那一侧的那一行（同步推播 + 上一轮落点），
-  //    视觉上照样对齐；而若每轮都重算一遍，源码行的带比例小数 ↔ 预览 md 行号是
-  //    两套口径（编辑器逻辑行 vs 预览块的 data-line-start，标题/空行处必然错开），
-  //    换算不闭合 ⇒ 每切一轮两边各爬一格误差，来回切就表现为「位置越来越歪」。
-  if (src.viewMode !== shown.viewMode) return false;
+  // ⚠️ B241 曾经在这里加过「跨侧（一源码一预览）不收口」的守卫 —— 那会儿跨侧走的是
+  //    「搬行内比例」的换算，往返不等值，只能不重算。B242 把跨侧落点统一成行首对齐
+  //    （`editorLineTopPx` / 整数行号，与切源码·预览同一套）⇒ 跨侧也恒等，跨侧照收。
   applySyncToSibling(shown, snap.px, snap.line);
   return true;
 }
@@ -4753,6 +4754,27 @@ function topVisibleLineOf(view: EditorView): number {
 }
 
 /**
+ * B242：把「md 逻辑行号」换成**这一行的行首**在编辑器里的像素。
+ *
+ * ⚠️ 口径是**行首**，不是「行内某个比例的位置」——两边只有这个口径是闭合的：
+ *    源码按**行**排版、预览按**块**排版，「行内 40%」在两边量的是完全不一样的高度，
+ *    把这一路的行内比例搬到另一侧，往返就不等值，每切一轮吃掉一点，来回切表现为
+ *    「位置越来越歪」。而「行首」两边都有确定对应（编辑器 = 这一行顶部，预览 =
+ *    这个块顶部），同一个行号 ⇒ 同一个像素，来回切恒等。
+ *
+ * ⚠️「同步滚动与代码/预览切换用同一套位置计算」这句话就落在这个函数上：
+ *    切源码/预览（toggleViewMode 的 handoff）与**跨侧**同步落点（applySyncToSibling）
+ *    都只调它，别各写一份带比例的换算。行内比例只留给**同侧跟随**
+ *    （源码→源码走 px 直通、源码→预览那条跟随链），那条路根本不做跨坐标系搬运。
+ *
+ * @returns 行号越界返回 `null`（文档比行号短 / 还没同步完正文）
+ */
+function editorLineTopPx(view: EditorView, line: number): number | null {
+  const n = Math.min(Math.max(1, line), view.state.doc.lines);
+  return Math.max(0, view.lineBlockAt(view.state.doc.line(n).from).top);
+}
+
+/**
  * 标签当前的视口滚动位置（B126 + B129）。
  *
  * 正显示在面板上的实例要取视图的**实时值**（用户刚滚过但还没切走，快照还没更新）；
@@ -5188,8 +5210,9 @@ function toggleViewMode(target?: Tab): void {
     const line = panel.preview?.topVisibleLine() ?? null;
     const view = panel.view.view;
     if (line !== null) {
-      const n = Math.min(Math.max(1, line), view.state.doc.lines);
-      handoff = Math.max(0, view.lineBlockAt(view.state.doc.line(n).from).top);
+      // B242：与**跨侧同步落点**共用同一个换算（editorLineTopPx），两条路径的位置
+      //   算法从此是同一份 —— 于是「同步后切模式 / 切不同模式的标签」也不会有偏差。
+      handoff = editorLineTopPx(view, line);
     } else {
       // 预览一份都没渲染出来（大文件降级就是这样）：拿不到顶行，也就**无从**反推
       // 编辑器该停在哪。这时宁可不动编辑器（让它按 CM6 自己的还原来），也别把预览的
