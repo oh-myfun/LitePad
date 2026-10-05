@@ -759,8 +759,15 @@ function syncSourceSnapshot(
   const srcPanel = panelOfTab(src.tabId);
   const srcPreview = src.viewMode === "preview" ? srcPanel?.preview : undefined;
   const srcView = srcPreview ? undefined : srcPanel?.view?.view;
+  // ⚠️ B243：预览侧交**整数块起始行**，绝不交带小数的小数行号 ——
+  //    `topVisibleLine()` 掺了「块内比例」，给小数出去两边会各取整各的：
+  //    编辑器侧 `doc.line(小数)` 被 CM6 **上取整**（`lineInner` 判 `line >= target`），
+  //    预览侧 `Math.floor(小数)` **下取整** ⇒ 各越一档、都跑到用户正看着那一块的后面
+  //    （实测：预览顶在块 5 走了 70% ⇒ 交 6.4 ⇒ 编辑器落行 7、预览落块 7，差两行）。
+  //    「同一个行号 ⇒ 同一处」只在整数上成立；小数是**跟随**专用的（`pushSyncToSiblings`
+  //    那条路要它连续走，否则预览变阶梯），收口这里必须收整数。
   const line = srcPreview
-    ? srcPreview.topVisibleLine()
+    ? srcPreview.topBlockStartLine()
     : srcView
       ? topVisibleLineFrac(srcView)
       : null;
@@ -873,6 +880,11 @@ function pushSyncToSiblings(src: Tab, crossWindow = false): void {
   const srcPanel = panelOfTab(src.tabId);
   const srcPreview = src.viewMode === "preview" ? srcPanel?.preview : undefined;
   const srcView = srcPreview ? undefined : srcPanel?.view?.view;
+  // ⚠️ B243：这里**仍取小数** `topVisibleLine()` —— 这一路是**跟随**（源每滚一点就推一次），
+  //    小数是让预览「跟着连续走」的关键；换成 `topBlockStartLine()` 那种块起始行会一步跳到
+  //    块首、跟随变阶梯（B174 那条用户报的「卡一下、跳一下」会重来）。
+  //    ⚠️ 只有**收口**那一路（`syncSourceSnapshot`）才交整数（`topBlockStartLine()`），
+  //      因为 `doc.line(小数)` 会被 CM6 上取整、与预览侧 `floor` 差一档 —— 详见那里。
   const line = srcPreview
     ? srcPreview.topVisibleLine()
     : srcView
@@ -1554,10 +1566,13 @@ function switchTab(panelId: number, tabId: number): void {
   view.focus();
   logViewport("切换 · 还原窗口内", panel);
   // B126：setState 重建了 ViewState 并把视口拉回开头，这里把滚动位置还回去。
-  // 必须排在 applyPanelMode 之前——它要按当前顶行把预览对齐到同一区域。
+  // ⚠️ 必须排在 applyPanelMode **之后**：applyPanelMode 才把 `mode-preview` 摘掉，而
+  //   `.panel-host.mode-preview .panel-editor { display: none }`（styles/preview.css）
+  //   ⇒ display:none 期间写 scrollTop 浏览器不认、class 一切还清零。
+  applyPanelMode(panel);
+  // applyPanelMode 已经让编辑器重新可见 ⇒ 这一趟还原**现在才钉得进去**。
   restoreViewScroll(panel);
   logViewport("切换 · 还原后", panel);
-  applyPanelMode(panel);
   // B181：类切完**再补一次焦点** —— 否则「从预览态的标签切走」之后编辑器没有焦点。
   //
   // ⚠️ 上面那次 `view.focus()` 排在 `applyPanelMode` **之前**，而 `mode-preview` 会把
@@ -5206,8 +5221,11 @@ function toggleViewMode(target?: Tab): void {
   // 所以先把「预览此刻停在哪一行」换成**编辑器侧**的像素写进这个槽，之后这一侧认的就是它。
   let handoff: number | null = null;
   if (!toPreview && panel.view) {
-    // ⚠️ 必须在改 viewMode **之前**问：切换后编辑器是 display:none，问不出顶行
-    const line = panel.preview?.topVisibleLine() ?? null;
+    // ⚠️ 必须在改 viewMode **之前**问：切换后编辑器是 display:none，问不出顶行。
+    //    ⚠️ B243：取**块起始行**（整数）而不是带小数的 `topVisibleLine()` —— 跨侧收口
+    //      （`syncSourceSnapshot`）交的是同一个整数，两条路径才真是「同一套计算」；
+    //      小数这会儿会被 CM6 上取整越过一块，与预览侧 `floor` 的落点错开两行。
+    const line = panel.preview?.topBlockStartLine() ?? null;
     const view = panel.view.view;
     if (line !== null) {
       // B242：与**跨侧同步落点**共用同一个换算（editorLineTopPx），两条路径的位置

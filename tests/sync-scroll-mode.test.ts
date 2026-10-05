@@ -382,6 +382,18 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
     ).toBeLessThan(swap);
   });
 
+  it("还原必须排在换页之后 —— 预览态下编辑器是 display:none，隐藏期间钉不进 scrollTop", () => {
+    // ⚠️ B243：`applyPanelMode` 给面板套上 `mode-preview` 时 CSS 直接把
+    //    `.panel-host.mode-preview .panel-editor{display:none}`（`preview.css:635`）；
+    //    jsdom 不做 CSS 级联 ⇒ 这条**只能**静态盯。顺序反了 ⇒ 源码侧切到预览态时先写了
+    //    一个看不见的 scrollTop，等编辑器重新可见，位置并没落进去（切过去视觉上回顶）。
+    const restore = SWITCH_BODY.indexOf("restoreViewScroll(panel);");
+    const swap = SWITCH_BODY.indexOf("applyPanelMode(panel);");
+    expect(restore, "还原那一句要切得到").toBeGreaterThanOrEqual(0);
+    expect(swap, "换页那一句要切得到").toBeGreaterThanOrEqual(0);
+    expect(restore, "还原排在换页之后（编辑器可见了才钉得进位置）").toBeGreaterThan(swap);
+  });
+
   it("换完页再收口 —— 收口的对象是切过来显示的那一份，不是源", () => {
     const swap = SWITCH_BODY.indexOf("applyPanelMode(panel);");
     const align = SWITCH_BODY.indexOf("const aligned = tab ? alignShownToSyncSource(");
@@ -406,10 +418,38 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
   });
 
   it("坐标口径与推兄弟那一路一致：源停在哪一侧就取哪一侧", () => {
-    expect(SNAP_BODY, "源是预览侧 ⇒ 交的是顶行").toContain("srcPreview.topVisibleLine()");
+    // ⚠️ B243 同语义换锚：顶行的**取值口径**没变（源在哪一侧就取哪一侧），只是预览侧
+    //   那一格换成了「块起始行」—— 收口不许交小数，小数只归跟随那条路。
+    expect(SNAP_BODY, "源是预览侧 ⇒ 交的是顶行").toContain("srcPreview.topBlockStartLine()");
     expect(SNAP_BODY, "源是源码侧 ⇒ 交的是顶行比例").toContain("topVisibleLineFrac(srcView)");
     expect(SNAP_BODY, "px 取源那一格此刻停着的位置（源在预览侧则只交行号）").toContain(
       "px: srcPreview ? null : src.scrollTop",
+    );
+  });
+
+  it("跨侧交点必须是**整数行号**：收口交 `topBlockStartLine()`，不许交带小数的小数行号", () => {
+    // ⚠️ B243：预览侧 `topVisibleLine()` 给的是 `start + ratio * range` 那种小数（给
+    //   **跟随**用的，要的是连续）。收口这一路若跟着交小数，编辑器那侧 `doc.line(小数)`
+    //   会被 CM6 **向上取整**（`lineInner` 判 `line >= target`）取到**下一行**，而预览那侧
+    //   `Math.floor` 落到**这一块** ⇒ 两侧各差一档，切过去看到的行不是预览顶上那一行。
+    //   所以收口 / 切模式统一交「块起始行」这个整数。
+    expect(SNAP_BODY, "收口：预览侧交点走块起始行").toContain("srcPreview.topBlockStartLine()");
+    // ⚠️ 反向闸：退回 `topVisibleLine()`（小数）必须立刻被认出来。
+    expect(SNAP_BODY, "不许退回带小数的顶行坐标").not.toContain("srcPreview.topVisibleLine()");
+  });
+
+  it("切源码/预览那一路（toggleViewMode）交的是同一个整数交点（两条路径同一口径）", () => {
+    const body = slice(main, "function toggleViewMode(", "function openPreviewToSide(");
+    expect(body, "切模式那条路径也交块起始行").toContain("panel.preview?.topBlockStartLine()");
+    // ⚠️ 反向闸：退回小数坐标后，两条路径仍会彼此相等（都错成同一处）⇒ 只有认住
+    //   「必须是整数」这一层，才拦得住「切过去落点差一行」这个病重来一次。
+    expect(body, "不许退回带小数的顶行坐标").not.toContain("panel.preview?.topVisibleLine()");
+  });
+
+  it("预览侧的块起始行与顶行坐标取的是同一格（同一 +8 口径，别两套定义分叉）", () => {
+    const BODY = slice(PREVIEW_TS, "  topBlockStartLine(", "  private applyPending(");
+    expect(BODY, "块起始行与顶行同一个取法（同一个 +8、同一个二分）").toContain(
+      "this.indexOfBlockAtOffset(this.root.scrollTop + 8)",
     );
   });
 

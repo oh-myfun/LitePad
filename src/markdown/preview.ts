@@ -523,6 +523,31 @@ export class PreviewPane {
   }
 
   /**
+   * 预览此刻**顶上那一块的起始行**（整数，B243）。
+   *
+   * ⚠️ 与 `topVisibleLine()` 的区别是**绝不掺小数**：跨侧同步（源是预览 ⇄ 目标源码 /
+   * 目标预览）用的就是「行首 / 块首」这一档口径（B242 定的），交点必须是**整数行号**。
+   *    · 交小数会两边各取整各的、还各差一档：预览侧 `Math.floor(6.4)` 经 `blockAtLine`
+   *      越到**下下块**，编辑器侧 `doc.line(6.4)` 被 CM6 **向上取整**取到**下一行**
+   *      ⇒ 两边虽然彼此相等（跨侧两条路径都错成同一处），却都**越过了用户正看着的那一块**
+   *      （实测：预览顶在块 5 走了 70%，切过去落到第 7 行，差两行 —— 用户报的
+   *      「切过去位置对不上」）。
+   *    · 而 `topVisibleLine()` 那个小数是给**跟随**用的（源在一块内滚动时行号要连续），
+   *      收口这一路用不上，跟着它取整才会错。
+   *
+   * ⚠️ 偏移口径与 `topVisibleLine()` 完全一致（同一个 `+8`、同一个 `indexOfBlockAtOffset`）
+   *    ⇒ 停在某块正中时它俩给出同一个值（`ratio = 0`），不会两套定义分叉。
+   */
+  topBlockStartLine(): number | null {
+    if (!this.host) return null;
+    const idx = this.indexOfBlockAtOffset(this.root.scrollTop + 8);
+    if (idx < 0) return null;
+    const start = Number(this.blocks[idx].el.dataset.lineStart);
+    if (!Number.isFinite(start) || start <= 0) return null;
+    return start;
+  }
+
+  /**
    * 布局稳定后按 pending 行再定位一次（异步增强 / 图片加载后调用）。
    *
    * B170：这一发是**异步补刀**（图片 / 公式增强后布局变了，再定位一次）。它走

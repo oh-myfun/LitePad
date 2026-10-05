@@ -11,6 +11,20 @@ import { readFileSync } from "node:fs";
 // 行高（px）。预览的往返换算全靠这个数对得上。
 const ROW = 20;
 
+/**
+ * 一个预览块的「块顶」在桩里的排法：**按 DOM 序 × 行高**。
+ *
+ * ⚠️ 真实布局里块是**连续排开**的（第 i 个块的顶边 = 前 i 个块的高度之和），跟它内部的
+ *    `data-line-start` 是多少没有必然关系 —— 同一个 `md-block` 里可能带好几个
+ *    `data-line-start`（渲染器按元素写：标题 1、空块 1、正文 3…）。若按 lineStart 排，
+ *    桩里的块顶会**不单调**（实测 20,20,60,20,100…），而 `indexOfBlockAtOffset` 的二分
+ *    只在单调布局上成立 ⇒ 不单调就查错块，量出来的是假象。
+ */
+function blockTopOf(el: Element): number {
+  const idx = Array.prototype.indexOf.call(el.parentElement?.children ?? [], el);
+  return Math.max(0, idx) * ROW;
+}
+
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
   const body = (html.match(/<body>([\s\S]*)<\/body>/)?.[1] ?? "").replace(
@@ -27,8 +41,20 @@ beforeAll(() => {
   proto.getBoundingClientRect = function (this: Element): DOMRect {
     const el = this as HTMLElement;
     const isRoot = el.classList.contains("md-preview");
-    const top = isRoot ? el.scrollTop : Number(el.dataset?.lineStart ?? 0) * ROW;
-    const height = isRoot ? el.clientHeight || 0 : ROW;
+    // ⚠️ B243：编辑器那几行也得**排开**（`.cm-line` 的 top = 下标 × 行高），否则 CM6 的
+    //    heightMap 退化成「每行 0 高」⇒ 量不出「编辑器落在哪一行」。
+    const isLine = el.classList.contains("cm-line");
+    // ⚠️ 预览块会**套一层内层容器**，两个节点都带 `data-line-start`（内层恒写 1）。
+    //    桩里若各按自己的 lineStart 排，块顶就**不单调**（内层恒 20），
+    //    `indexOfBlockAtOffset` 的二分会查错块、量出来的是假象。真实布局里块的顶边由
+    //    **最外层那个块**决定 ⇒ 这里取「自身 + 所有祖先里最大的 lineStart」当块顶。
+    const top = isRoot
+      ? el.scrollTop
+      : isLine
+        ? Math.max(0, Array.prototype.indexOf.call(el.parentElement?.children ?? [], el)) * ROW
+        : blockTopOf(el);
+    // 预览块内层高度按 0 算（内层容器不撑高），编辑器行与预览根按整行高。
+    const height = isRoot || isLine ? el.clientHeight || 0 || ROW : ROW * 0;
     const r: Record<string, number> = {
       top,
       left: 0,
@@ -73,11 +99,10 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   save: () => Promise.resolve(null),
 }));
 
-// 多标题 ⇒ preview 渲染出多个块（有 data-line-start，往返换算才Multiple有意义）
-const MD = Array.from(
-  { length: 12 },
-  (_, i) => `## 标题 ${i + 1}\n\n这是第 ${i + 1} 段正文，用来把预览撑出高度。\n`,
-).join("\n");
+// ⚠️ B243：每个 md 块只占**一行**（纯标题）⇒ 预览的块与源码行一一对应、块顶 = 行号×行高，
+//    于是「预览顶上停的是哪一块」才能换算成「对应哪一行的行首」—— 取整口径对错才量得出来。
+//    （混排段落时一个块跨好几行，小数行号会被块内比例吃掉，这条用例就判不出东西了。）
+const MD = Array.from({ length: 24 }, (_, i) => `# 标题 ${i + 1}`).join("\n");
 
 vi.mock("../src/ipc/api", () => ({
   checkEncodable: () => Promise.resolve([]),
@@ -233,6 +258,55 @@ describe("B242 跨侧：同步滚动与切源码/预览用同一套位置计算�
       srcSeq.every((v) => v === srcSeq[0]),
       "源码侧每圈落点也要一模一样",
     ).toBe(true);
+  });
+
+  /** 预览此刻顶上那一块的**起始行**（`data-line-start` 那一格）。 */
+  function previewTopBlockLine(): number {
+    const s = previewRoot().scrollTop + 8; // 与 `topVisibleLine()` 的 +8 同一口径
+    const els = Array.from(previewRoot().querySelectorAll("[data-line-start]")) as HTMLElement[];
+    let best = -1;
+    // 块顶沿 DOM 序单调 ⇒ 取「块顶不越过视口顶」这批里的最后一个（起始行最大的那一块）
+    for (const el of els) {
+      const start = Number(el.dataset.lineStart);
+      if (!Number.isFinite(start) || start <= best) continue;
+      if (blockTopOf(el) <= s) best = start;
+    }
+    return best;
+  }
+
+  /** 编辑器此刻顶上那一条**逻辑行**（几何：第一个行顶不高于滚动位置的那一行）。 */
+  function sourceTopLine(): number {
+    const s = scroller().scrollTop;
+    const lines = Array.from(scroller().querySelectorAll(".cm-line")) as HTMLElement[];
+    for (let i = 0; i < lines.length; i++) {
+      if (i * ROW >= s) return i + 1;
+    }
+    return lines.length;
+  }
+
+  it("跨侧切过去，落到的是预览顶上那一块的行首（不许差一行）", async () => {
+    const btn = document.getElementById("sync-scroll") as HTMLElement | null;
+    if (!btn) throw new Error("同步键没出现");
+    btn.click();
+    await wait(80);
+
+    // 滚到一个**块中间**的位置：这样 `topVisibleLine()` 给出来的是带小数的小数行号
+    // （例如 6.4），才会把「取整口径」这件事暴露出来 —— 正好落在块首的话两种口径同值。
+    userScroll(previewRoot(), 120);
+    await wait(120);
+    const block = previewTopBlockLine();
+    expect(block, "前提：预览确实是停在某个块上（否则这条用例测不到取整口径）").toBeGreaterThan(0);
+
+    clickTab(0); // 预览 → 源码（跨侧收口）
+    await wait(260);
+    const top = sourceTopLine();
+
+    // ⚠️ CM6 的 `doc.line(小数)` 是**向上取整**（`lineInner` 里判 `line >= target`），
+    //    而预览侧 `syncToLineProgrammatic(Math.floor(line))` 是向下取整 —— 两边各差一行
+    //    ⇒ 切过去顶上不是预览顶上那一块（用户报的「切过去位置对不上」）。
+    expect(top, `跨侧落点必须落在预览顶上那一块（第 ${block} 块）的行首，不能顺延到下一行`).toBe(
+      block,
+    );
   });
 
   it("跨侧收口落点 == 切源码/预览那一路的落点（两条路径同一套计算）", async () => {

@@ -288,7 +288,9 @@ describe("B148 反向验证：把交接摘掉，上面几条必须变红", () =>
   it("退回「切回源码时直接沿用预览的像素」，契约必须抓住", () => {
     // 退化：拿掉取顶行、按行反推、写闸口三步，只留 `tab.viewMode =` 与后续的还原。
     // ⚠️ 整块按原样搬（缩进也算）：只摘不插的话原处还会留一份，退化会悄悄变成「没改」。
-    const ASK = "    const line = panel.preview?.topVisibleLine() ?? null;\n";
+    // ⚠️ B243 同语义换锚：切模式这一路交的是「块起始行」（整数）—— 跨侧收口（`syncSourceSnapshot`）
+    //   也是同一个值，两条路径才咬得住同一处；带小数的小数行号只归跟随那条路。
+    const ASK = "    const line = panel.preview?.topBlockStartLine() ?? null;\n";
     const CONVERT = "      handoff = editorLineTopPx(view, line);\n";
     const WRITE = "  if (handoff !== null) recordScroll(tab.tabId, handoff);\n";
     let degraded = src;
@@ -302,13 +304,17 @@ describe("B148 反向验证：把交接摘掉，上面几条必须变红", () =>
     expect(degraded, "退化版要真的换了写法").not.toBe(src);
 
     const body = bodyOf("function toggleViewMode(", degraded);
-    expect(body, "退化后不再问预览的顶行").not.toMatch(/topVisibleLine\(\)/);
+    // ⚠️ B243：扫的必须是**当前交的那个函数名**（`topBlockStartLine`）—— 扫旧名 `topVisibleLine`
+    //    的话，退化成旧名反而扫不到 ⇒ 恒绿、判据白写。
+    expect(body, "退化后不再问预览的顶行").not.toMatch(/topBlockStartLine\(\)/);
     expect(body, "退化后不再按行反推编辑器像素").not.toMatch(/lineBlockAt\(/);
     expect(body, "退化后不再交接像素").not.toMatch(/recordScroll\(/);
   });
 
   it("退化成「先切 mode 再问顶行」，顺序契约必须抓住", () => {
-    const ASK = "    const line = panel.preview?.topVisibleLine() ?? null;\n";
+    // ⚠️ B243 同语义换锚：切模式这一路交的是「块起始行」（整数）—— 跨侧收口（`syncSourceSnapshot`）
+    //   也是同一个值，两条路径才咬得住同一处；带小数的小数行号只归跟随那条路。
+    const ASK = "    const line = panel.preview?.topBlockStartLine() ?? null;\n";
     const FLIP = '  tab.viewMode = toPreview ? "preview" : "source";\n';
     expect(src).toContain(ASK);
     expect(src).toContain(FLIP);
@@ -319,7 +325,7 @@ describe("B148 反向验证：把交接摘掉，上面几条必须变红", () =>
     const body = bodyOf("function toggleViewMode(", moved);
     expect(body.indexOf("tab.viewMode =")).toBeGreaterThan(-1);
     expect(
-      body.indexOf("topVisibleLine("),
+      body.indexOf("topBlockStartLine("),
       "退化后取顶行应排在改 viewMode 之后（顺序契约此时必须落空）",
     ).toBeGreaterThan(body.indexOf("tab.viewMode ="));
   });
