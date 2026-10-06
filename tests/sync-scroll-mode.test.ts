@@ -244,15 +244,21 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
     // ⚠️ 源码这一侧的 `cross` 是**本轮补的**（上一轮只修了预览那一侧）：源码的小数归一在
     //    **行高**、`applySyncToLine` 的块内插值按**块高**走 ⇒ 跨侧交小数会恒偏下（用户报：
     //    切源码/预览标签时另一个预览标签始终对不上）。跨侧取整、同侧才交小数。
-    //    ⚠️ 反向闸排前面：无条件 `return view ? topVisibleLineFrac(view) : null;` 是漏修那一版。
-    expect(SYNC_V, "源码侧不许无条件交小数（跨侧那一路要交整数顶行）").not.toMatch(
-      /(return cross \?)?return view \? topVisibleLineFrac\(view\) : null;/,
+    //    ⚠️ 反向闸排前面：直接读实时 DOM（`topVisibleLineFrac(view, view.scrollDOM.scrollTop)`
+    //    —— 既不走 `sourceCursorPx` 也不看 cross）是漏修那一版：真机上还原刚写完、被浏览器
+    //    裁小那一帧，补推拿到的是偏小的像素 ⇒ 同文档预览兄弟被往上拖（B256，真机 1421→1043）。
+    expect(SYNC_V, "源码侧不许直接读实时 DOM（还原没立住那一帧会把游标带歪）").not.toMatch(
+      /topVisibleLineFrac\(view, view\.scrollDOM\.scrollTop\)/,
     );
+    expect(
+      SYNC_V,
+      "源码侧取像素必须走 sourceCursorPx（DOM 与这份标签自己的槽不一致时按槽算）",
+    ).toContain("sourceCursorPx(t, view)");
     expect(SYNC_V, "源是源码且同侧 ⇒ 交 `topVisibleLineFrac`（小数 = 行内比例）").toContain(
-      ": topVisibleLineFrac(view);",
+      ": topVisibleLineFrac(view, px);",
     );
-    expect(SYNC_V, "源是源码且跨侧（推预览兄弟 / 收口 / 交接）⇒ 只交整数顶行").toContain(
-      "return cross ? Math.floor(topVisibleLineFrac(view)) : topVisibleLineFrac(view);",
+    expect(SYNC_V, "源是源码且跨侧（推预览兄弟 / 收口 / 交接）⇒ 只交整数顶行").toMatch(
+      /return cross \? Math\.floor\(topVisibleLineFrac\(view, px\)\)/,
     );
     // ⚠️ 反向闸排在正向之后也有效：B240 二轮实测「读快照槽 ⇒ 真实 260 只推出 100」，
     //    离屏兄弟的槽被写脏 ⇒ 用户报「未激活标签切过去对不上」。
@@ -1499,9 +1505,14 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
     //    （实测真实 260 时只推出 100）。统一 `v` 之后这一格在 `syncSourceV` 的源码分支上
     //    —— 退化串改锚到那一句，退回成读快照槽 `t.scrollTop` ⇒ 滞后一帧、且槽里存的
     //    还是上一次的编辑器像素。两条退化各打各的那半边。
-    // ⚠️ 本轮换锚：源码分支现在整条是 `return cross ? Math.floor(...) : ...`，跨侧那一格
-    //    才是「按行内比例交小数」。退化要打**跨侧那一格**（打同侧那半边退不掉跨侧契约）。
-    const ORIG = "return cross ? Math.floor(topVisibleLineFrac(view)) : topVisibleLineFrac(view);";
+    // ⚠️ 本轮换锚：源码分支现在整条是
+    //    `return cross ? Math.floor(topVisibleLineFrac(view, px)) : topVisibleLineFrac(view, px);`
+    //    而 `px` 出自 `sourceCursorPx`（DOM 与槽不一致 ⇒ 用槽）。退化打**整条 return**：
+    //    退回读槽 `t.scrollTop` 会把 `topVisibleLineFrac(view, px)` 一起抹掉 ⇒ 上面
+    //    「不许直接读实时 DOM」「跨侧那一半要取整」两条契约随之落空 ⇒ 不许靠它们兜（假绿），
+    //    下面这条 `not.toContain("topVisibleLineFrac(view)")` 才是自证。
+    const ORIG =
+      "return cross ? Math.floor(topVisibleLineFrac(view, px)) : topVisibleLineFrac(view, px);";
     expect(SYNC_V, "退化串要先自证原句还在").toContain(ORIG);
     const degraded = main.replace(ORIG, "  return t.scrollTop;");
     const body = slice(degraded, "function syncSourceV(", "function viewportOfTab(");

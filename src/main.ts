@@ -723,13 +723,6 @@ function applySyncToSibling(other: Tab, v: number | null): void {
     //      就出在这里。所以跨侧一律只交整数块首（`topBlockStartLine`），别把带比例的
     //      量从一侧甩给另一侧。
     const landed = preview.syncToLineProgrammatic(v);
-    // ⚠️⚠️ B255 临时取证：预览落点是**裸写**（`applySyncToLine` 直接赋值、返回「想写的
-    //   值」）。真机上若容器此刻没撑到那么高，浏览器会裁小 ⇒ 请求值与实际值分家，而这一
-    //   次赋值连同落点被塞进兄弟的槽。下面这行就是为了让「请求 ≠ 实际」当场露形。
-    logger.trace(
-      "sync",
-      `落点校验 other=${other.tabId} v=${v} 返回=${landed} 容器实际=${preview.root.scrollTop}`,
-    );
     // `syncToLine` 同步落地，容器里的值可直接读；落点显式补记（程序定位不写快照）。
     if (landed !== null) recordScroll(other.tabId, landed);
     return;
@@ -951,6 +944,12 @@ function pushSyncToSiblings(src: Tab, crossWindow = false): void {
   //      只交整数块首；兄弟是预览时两边同侧、照交完整 `v`（跟随才连续）。
   //    ⚠️ 跨窗广播那一路用 `cross = true` 的那份（整数块首）—— 跨窗两边同源同排版，
   //      整数最稳，免得把带偏的量甩给别的窗口。
+  //
+  // ⚠️⚠️ **B256（真机日志钉死）**：源码这一侧读的是**实时 DOM**，而 DOM 在「还原刚写完」
+  //    那一帧可能是**被浏览器裁小**的余量（见 `sourceCursorPx`）—— `switchTab` 的收尾补
+  //    推就排在这个窗口里，拿它当源 ⇒ 同文档的预览兄弟被往**上**拖一整段（真机 1421→1043），
+  //    且因为每轮切回来都复现同一条路径，歪值冻在那里「之后怎么切都不动」。所以像素走
+  //    `sourceCursorPx`（DOM 与槽不一致 ⇒ 用槽），别再直接 `view.scrollDOM.scrollTop`。
   const v = syncSourceV(src, true);
   // B167 定位用：同步滚动是「每秒几十次」的高频链路，抖起来只能靠日志看是谁在推谁。
   //   这几条全是 debug（默认 info 看不到，需在设置里把 log_level 调到 debug），
@@ -4825,8 +4824,11 @@ function isMdActive(): boolean {
  */
 const TOP_PROBE = 0.5;
 
-function topVisibleLineFrac(view: EditorView): number {
-  const scrollTop = view.scrollDOM.scrollTop;
+function topVisibleLineFrac(view: EditorView, px = view.scrollDOM.scrollTop): number {
+  // ⚠️ B256：`px` **可以显式指定**（见 `sourceCursorPx`：还原刚写完、浏览器还没接过那一刻
+  //    要按「这份标签**该**停在哪」取游标，而不是按 DOM 里那个被裁小的余量）。不传就照旧
+  //    读实时 DOM —— 函数体其余部分一个字没动。
+  const scrollTop = px;
   // ⚠️ B251（ANCHOR = 0）：探测点只是「问 CM6 视口顶上那一块是哪一块」时的**内缩量**，
   //    **不是**坐标平移 —— 比例下面按**真·scrollTop** 算。旧写法把 `+1` 一起算进比例
   //    （`(scrollTop + 1 - lineTop) / lineHeight`），而落点 `sourceTopOfV` 写的是
@@ -4924,6 +4926,40 @@ function sourceTopOfV(view: EditorView, v: number): number | null {
  *   （小数 0，跨侧零偏差、闭合）；`cross = false`（**同侧**：两份都是源码 / 都是预览）
  *   才交带比例的 `v` —— 同几何下比例才有闭合意义，跟随也才连续。
  */
+
+/**
+ * ⚠️ B256：「DOM 里的位置 ≠ 这份标签记的位置」到多少 px 才算「DOM 还没接过我们写的值」。
+ *
+ * 与 `pinScrollTop` 那条「同一处就算立住」的容差同值（那边的 `PIN_EPSILON_PX`）——
+ * 两边判的都是同一个问题：**这两个数是不是同一处**。
+ */
+const LAND_STALE_PX = 1;
+
+/**
+ * B256：源码侧「取游标」时以**哪个像素**为准 —— 只有这一处会决定源码侧的 `v`。
+ *
+ * ⚠️⚠️ 默认读**实时 DOM**，但 DOM 里的值可能是**还没被浏览器接过**的：刚 `setState` 换完
+ *    文档，CM6 用的还是**估算行高**建的 heightMap，可滚余量比最终短 —— 那一帧往里写 `px`
+ *    会被浏览器按当时的余量**裁小**，下一帧 measure 跑完余量长回来、补钉才真正到位
+ *    （真机日志 B255：写 1222.67，当帧只落 **858.67**；下一帧的「锚点补偿」才把它钉回
+ *    1222.67）。这种窗口里 DOM **说的不是**这份标签该停的位置，而槽里那份 `t.scrollTop`
+ *    正是 `restoreViewScroll` 刚按它钉过一次的值。
+ *
+ *    而 `switchTab` 的收尾补推**就排在还原之后、锚点补偿之前**（同帧）：它读的就是这个
+ *    被裁小的 DOM ⇒ 算出 v=41（同几何真值 59）⇒ 把同文档的预览兄弟从 1421 钉到 **1043**，
+ *    用户报的「另一个预览向上偏移、之后怎么切都不动」；第二轮切回来一模一样复现，歪值
+ *    于是被冻在那儿。差超过一个像素就认定「DOM 还没立住」，改按槽里那份算。
+ *
+ *    ⚠️ 只在**真的不一致**时才回退：跟随那一路（用户滚、DOM 与槽本来就该相等）一个字节
+ *       都不变；真有程序摆位让两者分家（`pinScrollTop` + 回执被吞）时，槽里记的也是
+ *      「我们最后决定的位置」，比一个半路的中间值更接近用户看到的东西。
+ */
+function sourceCursorPx(t: Tab, view: EditorView): number {
+  const dom = view.scrollDOM.scrollTop;
+  if (t.scrollTop !== null && Math.abs(dom - t.scrollTop) > LAND_STALE_PX) return t.scrollTop;
+  return dom;
+}
+
 function syncSourceV(t: Tab | undefined, cross = false): number | null {
   if (!t) return null;
   const p = panelOfTab(t.tabId);
@@ -4940,7 +4976,10 @@ function syncSourceV(t: Tab | undefined, cross = false): number | null {
   //    最常走的跨侧路径，于是把「行高比例」当成「块高比例」用，落点直接偏
   //    `ratio × 块高`，块高比行高大 ⇒ **恒偏下**（用户报：切源码/预览标签时另一个预览
   //    标签的位置始终对不上）。跨侧一律交**整数顶行**，与预览侧交整数块首对称。
-  return cross ? Math.floor(topVisibleLineFrac(view)) : topVisibleLineFrac(view);
+  // ⚠️ B256：像素过 `sourceCursorPx`（DOM 与槽不一致 ⇒ 用槽）—— 别再直接读
+  //    `view.scrollDOM.scrollTop`：那一路会把「还原刚写完、被浏览器裁小的那一帧」当成源。
+  const px = sourceCursorPx(t, view);
+  return cross ? Math.floor(topVisibleLineFrac(view, px)) : topVisibleLineFrac(view, px);
 }
 
 /**
