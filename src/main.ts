@@ -965,6 +965,11 @@ function pushSyncToSiblings(
   //    还没排，从它往外推出去的就是「文档开头」，会把源与其余兄弟一起拽到顶。
   //    （B254 那条通用律的同型：`view.setState` / 重建视图这类「位置归零」的瞬间，
   //     产生的那趟推播不能拿它当源坐标。）
+  //    ⚠️ **B261 是这条通用律的另一条支线**，别只记这一处：DOM 被摘除时浏览器同样会把
+  //      `scrollTop` 归零，那一发 **scroll 事件**也是归零的产物 —— 而它是**异步**到的，
+  //      到的时候面板早换过 view 了，于是「旧容器的 0」被当成用户位置写进**正显示那份**
+  //      的快照（另见编辑器滚动监听那句 `isConnected` 早退）。归零有几条通道，
+  //      就候在那几条通道的出口上各放一道闸，别指望一处守全。
   //    ⚠️ 这里挡在**函数入口**（而不是改调用方的那行判据）—— `switchTab` 尾那句的
   //      写法被 `sync-scroll-mode` 好几条契约钉着，去改它会整片翻红，而语义本来就
   //      是「这一趟推播不许发生」，压在推播自身最贴切。
@@ -1558,6 +1563,15 @@ function rebuildLayout(): void {
       if (p.view) {
         const shownView = p.view.view;
         shownView.scrollDOM.addEventListener("scroll", () => {
+          // ⚠️⚠️ **B261**：这一发 scroll 若来自**已经不在文档里**的容器 —— 它是「DOM 被
+          //    摘除 ⇒ 浏览器把 `scrollTop` 归零」的**产物**，不是用户滚的。
+          //    `rebuildLayout()` 重建面板时旧 view 会被摘掉（开侧边预览 / 新建分屏都走
+          //    它），而这一发回执是**异步**到的：等它到这儿，`p.viewTabId` 已经指向
+          //    **此刻正显示的那一份**，闭包里那个 `shownView` 却是被摘掉的那个 ⇒ 于是
+          //    把「旧容器的 0」当成用户位置写进**正显示这份**的快照，再顺着下面那句
+          //    `pushSyncToSiblings` 把兄弟（刚按源落好的那份新预览）也抹到开头。
+          //    （用户报的两条症状同一根因：预览停在文档开头 / 新建分屏后原标签位置变化。）
+          if (!shownView.scrollDOM.isConnected) return;
           const t = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
           // B170：程序钉位置的回执由 scroll-guard 标记认领、直接吞（见 src/scroll-guard.ts）：
           // 不比位置、不赌时序、不靠还原窗口，渲染扰动（setBlocks 归零再拉回、图片加载重排）

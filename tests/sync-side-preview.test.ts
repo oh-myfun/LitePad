@@ -261,6 +261,42 @@ function syncOn(): boolean {
   return btn.getAttribute("aria-pressed") === "true";
 }
 
+/**
+ * **真浏览器建模**：DOM 节点被摘除 ⇒ `scrollTop` 归零 ⇒ **派发一发 scroll**（B261）。
+ *
+ * jsdom **不建模这一条**（`scrollTop` 是普通属性，摘与不摘都还在）⇒ 不加这条建模，
+ * 「重建面板时旧 view 被摘掉」那一发回执在桩上**根本不存在**，下面那些判据永远绿。
+ *
+ * ⚠️ 两个坑（都踩过）：
+ *   · 别用 `el instanceof HTMLElement` —— 这个 vitest 的 jsdom 环境没注入该全局，
+ *     抛 ReferenceError 会把「清零」那一半整个吞掉（建模名存实亡，还看不出错）。
+ *   · 事件构造器要在**测试主体这个 realm** 里取（`const Ev = Event`）：MutationObserver
+ *     回调试在微任务里，那儿摸到的 `Event` 是 Node 那个 ⇒ `dispatchEvent` 报
+ *     `parameter 1 is not of type 'Event'`（清零照做、scroll 那半被吞 ⇒ 只测到半条）。
+ */
+function installDetachZeroesScroll(): void {
+  const Ev = Event;
+  // 鸭子类型取滚动容器：`.cm-scroller` 自己或被摘掉的那个子树里的编辑器
+  const zero = (el: Node): void => {
+    const host = el as unknown as {
+      classList?: { contains(n: string): boolean };
+      querySelector?(s: string): { scrollTop: number } | null;
+      scrollTop?: number;
+      dispatchEvent?(e: Event): boolean;
+    };
+    const sc = host.classList?.contains("cm-scroller")
+      ? host
+      : (host.querySelector?.(".cm-scroller") ?? null);
+    if (!sc) return;
+    const before = sc.scrollTop;
+    sc.scrollTop = 0;
+    if (before !== 0) sc.dispatchEvent(new Ev("scroll"));
+  };
+  new MutationObserver((recs) => {
+    for (const r of recs) for (const n of Array.from(r.removedNodes)) zero(n);
+  }).observe(document.body, { childList: true, subtree: true });
+}
+
 describe("B259：开侧边预览 ⇒ 新那份预览要落在「源此刻那一格」", () => {
   beforeAll(async () => {
     await import("../src/main");
@@ -272,6 +308,7 @@ describe("B259：开侧边预览 ⇒ 新那份预览要落在「源此刻那一�
     installClamp(scroller(), () => editorMax);
     const root = document.querySelector(".layout-panel .md-preview");
     if (root) installClamp(root, () => previewMax);
+    installDetachZeroesScroll();
   });
 
   it("① 新建分屏：新开的右分屏预览要落在 LANDED，源不许被带跑", async () => {
@@ -289,6 +326,16 @@ describe("B259：开侧边预览 ⇒ 新那份预览要落在「源此刻那一�
     ).toBe(LANDED);
     // ⚠️ 防假绿：光把新预览碰巧推对不算，源自己不许被这一下带走。
     expect(scroller().scrollTop, "开侧边预览把源带跑了").toBe(srcBefore);
+    // ⚠️⚠️ B261 症状② 的闸（用户报「新建分屏时原标签内滚动位置出现变化」）：
+    //    「开侧边预览」这一支会 rebuildLayout ⇒ 真机上源面板的 .cm-scroller 被摘一次
+    //    ⇒ 归零那一发 scroll 是**异步**到的；到的时候 p.viewTabId 已指向此刻正显示的
+    //    那一份，而闭包里的 shownView 是被摘掉的那个 ⇒ 旧容器的 0 会被写进这份的
+    //    快照、再把兄弟（上面那个刚落好的新预览）一起抹到开头。断言写**绝对值**
+    //    （不只是 `srcBefore`）＝这一拍重建之后原标签到底停在哪。
+    expect(
+      scroller().scrollTop,
+      `新建分屏之后，左栏（原标签）自己停的位置变了（应 ${SRC_PX}，实际 ${scroller().scrollTop}）`,
+    ).toBe(SRC_PX);
   });
 
   it("② 分屏已存在（右栏挂着同源预览）：再点一次不许把任何一份带跑", async () => {
