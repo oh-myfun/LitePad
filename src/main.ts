@@ -791,6 +791,27 @@ function applySyncToSibling(other: Tab, v: number | null): void {
 }
 
 /**
+ * B259：**一次性落位** —— 把**源**的游标 `v` 落到某一（刚建的）预览实例上。
+ *
+ * 落点走的是 `applySyncToSibling` 的**同一个出口**（同一个 `v`、同一套 `recordScroll`
+ * 与程序标记），差别只有一个：**不看 `docSyncModes` 闸口**。
+ *
+ * ⚠️ 为什么必须不看同步开关（用户拍定：「不管是否开启同步滚动都应该生效」）：下面两条
+ *    路径都会**新建一份实例**（无右邻居 ⇒ `splitPanelWithTab` 的 copy 分支；右邻居存在
+ *    但它挂着别份文档 ⇒ 现场 `makeInstance`），而新实例那一份编辑器视口是**空档**
+ *    （scrollTop 恒 0），`applyPanelMode` 里那句 `if (anchorLine > 1) syncToLine(...)`
+ *    读到的就永远是 0 ⇒ 新预览从**文档开头**起。同步关掉时这条推播本来就不存在，
+ *    于是「关了同步之后再开侧边预览」反而更容易看出病（自测台两条用例都是 0 而不是 861）。
+ *
+ * ⚠️ 与「跟随」的区别：跟随是**每帧**都按当前源更正一次，漏一帧下一帧就补上；这里是
+ *    一次性动作，得当场落下去 —— 所以走 `landPreviewAtSource` 而不指望后续跟随。
+ */
+function landPreviewAtSource(other: Tab, v: number | null): void {
+  if (v === null) return;
+  applySyncToSibling(other, v);
+}
+
+/**
  * B240 三轮：切标签那一刻，把**源**（刚显示的那一份，下一刻就要离屏）的坐标就地采下来。
  *
  * ⚠️ 必须在它离屏**之前**采。离屏之后 `panelOfTab(src).view?.view` 取到的是面板的那一个
@@ -936,6 +957,18 @@ function pushSyncToSiblings(
   opts: { v?: number | null; skipTabIds?: number[] } = {},
 ): void {
   if (docSyncModes.get(src.docId) !== true) return;
+  // ⚠️ B259：`suppressSyncPush` 这一层**原来只挡光标那一路的调用点**（`handleUpdate`
+  //    里那句），挡不住下面这两处「从别的函数内部发起的推播」——
+  //    · `switchTab` 尾那趟（`if (tab && !aligned) pushSyncToSiblings(tab);`）；
+  //    · 离屏实例挂载那一路。
+  //    开侧边预览那一支要夹住的正是**第一处**：接班那一份是**刚建的空档实例**，位置
+  //    还没排，从它往外推出去的就是「文档开头」，会把源与其余兄弟一起拽到顶。
+  //    （B254 那条通用律的同型：`view.setState` / 重建视图这类「位置归零」的瞬间，
+  //     产生的那趟推播不能拿它当源坐标。）
+  //    ⚠️ 这里挡在**函数入口**（而不是改调用方的那行判据）—— `switchTab` 尾那句的
+  //      写法被 `sync-scroll-mode` 好几条契约钉着，去改它会整片翻红，而语义本来就
+  //      是「这一趟推播不许发生」，压在推播自身最贴切。
+  if (suppressSyncPush) return;
   const skip = opts.skipTabIds ?? [];
   const sibs = instancesOfDoc(src.docId).filter(
     (t) => t.tabId !== src.tabId && !skip.includes(t.tabId),
@@ -5541,6 +5574,21 @@ function openPreviewToSide(panelId: number): void {
   if (!p || !tab || !isMdTab(tab)) return; // 键只在 md 活动标签上出现，这里只是兜底
   const doc = docs.get(tab.docId);
   if (!doc) return;
+  // ⚠️⚠️ B259：**源的位置先采下来**，两个分支都用得上它。
+  //
+  // 下面两支不管走哪一支，落成的那一份预览都是**刚建的**（copy 分支复制出来的实例 /
+  // 现场 `makeInstance` 新开的实例），而新实例那一份编辑器视口是**空档**（scrollTop
+  // 恒 0）⇒ `applyPanelMode` 里那句 `if (anchorLine > 1) preview.syncToLine(...)`
+  // 读到的 `anchorLine` 永远是 0 ⇒ 新预览从**文档开头**起。
+  // （用户报：「开着同步滚动打开侧边预览，新打开的标签内滚动位置没有同步」。）
+  //
+  // ⚠️⚠️ **不看 `docSyncModes` 闸口** —— 这是用户拍定的口径：「不管是否开启同步滚动
+  //     都应该生效」。同步那一套是**跟随**（每帧），这里是一次性落位；关掉同步只是
+  //     取消跟随，不该顺手把「开个预览分屏时按当前位置摆好」这件本来就该做的事也撤了。
+  //
+  // ⚠️ 必须在**任何**改动之前采：下面的 `switchTab` / `rebuildLayout` 都会换文档（CM6
+  //    `setState` 把视口拉回 0），采晚了就只剩「文档开头」这一个值可交。
+  const v = syncSourceV(tab);
   // 源实例快照回写（与 splitPanelWithTab 的 copy 分支同口径）：
   // 复制出的实例从这份状态起步，别把过期的快照带进预览分屏
   if (p.view && p.viewTabId === tab.tabId) tab.state = p.view.view.state;
@@ -5549,7 +5597,16 @@ function openPreviewToSide(panelId: number): void {
   if (rightId === null) {
     // 右侧没有面板：新建右分屏放一份副本。splitPanelWithTab 的 copy 分支会把
     // 新面板设为活动面板并 rebuildLayout + refreshAll（副本的 view 在那时挂载）。
+    //
+    // ⚠️⚠️ B259：`refreshAll()` 收尾那句 `pushSyncToSiblings(activeTab())` 会以**此刻的
+    //    活动文档**为源 —— 而此刻活动文档正是**刚复制出来的那份空档副本**（预览还没
+    //    排、编辑器视口 scrollTop 恒 0）⇒ 推出的 `v` 是「文档开头」，直接把左栏那份
+    //    源码钉到顶（自测台实测 287 ⇒ 0；比「新那份没同步」更糟）。
+    //    与 B254 同型：位置归零的那个瞬间产生的推播不能当源坐标。夹住这一趟，
+    //    落位交给下面那行 `landPreviewAtSource`。
+    suppressSyncPush = true;
     splitPanelWithTab(panelId, "h", tab.tabId, false, true);
+    suppressSyncPush = false;
     const np = panels.get(activePanelId);
     const nt = np ? tabs.get(np.activeTabId) : undefined;
     if (np && nt && isMdTab(nt)) {
@@ -5560,6 +5617,11 @@ function openPreviewToSide(panelId: number): void {
       // 同步在早退之前，代价只有一次 querySelectorAll）。
       markActivePanel(np.panelId);
       applyPanelMode(np); // 内部会刷操作区 ⇒ 切换键字形当场翻成 edit-code
+      // ⚠️ B259：applyPanelMode 那一个 `anchorLine` 读的是**这份新实例自己的空档视口**
+      //    （上面 copy 分支给的是全新 CM state，scrollTop 恒 0）⇒ 它壮不了这一格，
+      //    只能由源交过来的 `v` 补。这一步排 applyPanelMode 之后：预览容器要先建、
+      //    块要先排（renderMarkdownFor 是同步的），`syncToLineProgrammatic` 才量得到落点。
+      landPreviewAtSource(nt, v);
     }
   } else {
     const rp = panels.get(rightId);
@@ -5583,7 +5645,25 @@ function openPreviewToSide(panelId: number): void {
     // 它 B232 起的早退判据是 `viewTabId`（视图实际显示的那份），所以这次调用
     // **不会**因为「activeTabId 已经是目标」而早退，视图会真的换成新标签那份文档。
     rp.activeTabId = targetId;
+    // ⚠️⚠️ B259：夹住 `switchTab` 这一趟推播 —— 它尾那趟是**从接班这一份**往外推的
+    //    （`pushSyncToSiblings(tab)` 里的 `tab` 就是新开的这份），而此刻它**还没有
+    //    位置**（`viewMode` 刚翻、预览刚建、DOM 还没排）⇒ 推出去的是「文档开头」，
+    //    于是源（左栏那份）和同文档其余兄弟一起被拽到顶 —— 比「新那份没同步」更糟。
+    //    落位交给下面那行，且用同一个 `v`，落点严格一致。
+    //    ⚠️ 夹的是**这一趟**（不是永久规则）：`pushSyncToSiblings` 入口加了
+    //    `suppressSyncPush` 早退，见那边的注释。
+    suppressSyncPush = true;
     switchTab(rightId, targetId);
+    suppressSyncPush = false;
+    // B259：按源落位。必须排在 applyPanelMode 之后 —— `anchorLine` 读的是这份新实例
+    //    的空档视口（恒 0），`if (anchorLine > 1)` 那句补不上这一格。
+    landPreviewAtSource(tabs.get(targetId)!, v);
+    // ⚠️ 落完这一份，同文档**其余**兄弟也得跟上同一个 `v`（B258 那个补推同型）：
+    //    以左栏那一份（就是上面采 `v` 的那份）为源推其余兄弟，接班这一份已经落好、
+    //    不许再动。同步关着时不必推（各认各的，B149 基线）。
+    if (docSyncModes.get(doc.tabId) === true) {
+      pushSyncToSiblings(tab, false, { v, skipTabIds: [targetId] });
+    }
     // switchTab 早退时不会走到 applyPanelMode，这里补一次（走过正常路径时幂等）。
     applyPanelMode(rp);
     renderPanelTabs(rightId);
