@@ -787,9 +787,12 @@ function syncSourceSnapshot(src: Tab | undefined, nextTabId: number): number | n
   // ⚠️ B251：交的是**规范游标 `v`**（实数行号），不再是 `{px, line}` 双字段。
   //    那两样本来就是同一份编号的两半：源显示在哪一侧就取那一侧的「行号 + 比例」，
   //    而统一坐标之后预览侧的「块内比例」与源码侧的「行内比例」都是**归一化比例**。
-  //    过去这里交「整数块首」是为了躲 CM6 的上取整（B243）／给 B247 守卫让路 ——
-  //    而那两个补丁正是「切 tab 越切越靠顶」的直接原因：守卫本身把收口值定死在块首。
-  return syncSourceV(src);
+  //    ⚠️⚠️ 这里必须按**跨侧**取值（上一轮漏了 cross，收口整条还在交小数）：
+  //    收口是「源 ⇄ 接班显示的那一份」对齐，它俩分处两侧时小数在两边量的是两种高度
+  //    （行高 / 块高）⇒ 直接传过去就是偏差；只有**同侧**（两份都是源码 / 都是预览）才
+  //    交完整 `v`（同几何，小数有闭合意义，跟随才连续）。
+  const nextTab = tabs.get(nextTabId);
+  return syncSourceV(src, nextTab !== undefined && nextTab.viewMode !== src.viewMode);
 }
 
 /**
@@ -929,8 +932,10 @@ function pushSyncToSiblings(src: Tab, crossWindow = false): void {
     `推 src=${src.tabId} doc=${src.docId} v=${v} sibs=${sibs.length} cross=${crossWindow}`,
   );
   for (const other of sibs) {
-    // ⚠️ B251 后复验：逐个兄弟按「源与目标是否同侧」取值 —— 同侧交完整 `v`、跨侧交
-    //    整数块首（理由见 `syncSourceV` 的 `cross` 那一段）。
+    // ⚠️ 逐个兄弟按「源与目标是否同侧」取值 —— 同侧交完整 `v`、跨侧交整数（理由见
+    //    `syncSourceV` 的 `cross` 那一段）。⚠️「同侧」判的是**源**与**兄弟**这两个 viewMode：
+    //    源是源码、兄弟是预览 ⇒ 跨侧 ⇒ 交整数顶行（上一轮这里注释写着「两边同侧照交完整
+    //    v」，是判反了：那个组合正是恒偏下的那条路径）。
     const v = syncSourceV(src, other.viewMode !== "preview");
     const line2 = other.state.doc.lineAt(Math.min(head, other.state.doc.length));
     const pos = Math.min(head, line2.to);
@@ -4876,8 +4881,9 @@ function sourceTopOfV(view: EditorView, v: number): number | null {
  * 大一段，而预览渲染普遍比源码松（块高偏大）⇒ 偏差方向**恒为往上**，正是用户看到的
  * 「切 tab 越切越靠顶」。B242/B243 定的「跨侧只交整数块首」不是病根（那是被误传的因果）：
  * 真病根是**跨侧拿带比例的量去覆盖**（`B247` 那条守卫管的就是它），不是「交整数」本身。
- * ⇒ `cross = true` 时预览侧只交**整数块首**（小数 0，跨侧零偏差、闭合）；`cross = false`
- *   （同侧跟随 / 收口推给预览兄弟）才交带块内比例的完整 `v`。
+ * ⇒ **两侧对称**：`cross = true` 时预览侧只交**整数块首**、源码侧只交**整数顶行**
+ *   （小数 0，跨侧零偏差、闭合）；`cross = false`（**同侧**：两份都是源码 / 都是预览）
+ *   才交带比例的 `v` —— 同几何下比例才有闭合意义，跟随也才连续。
  */
 function syncSourceV(t: Tab | undefined, cross = false): number | null {
   if (!t) return null;
@@ -4888,7 +4894,14 @@ function syncSourceV(t: Tab | undefined, cross = false): number | null {
       : (p?.preview?.topVisibleLine() ?? null);
   }
   const view = p?.view?.view;
-  return view ? topVisibleLineFrac(view) : null;
+  if (!view) return null;
+  // ⚠️⚠️ `cross` 对**源码这一侧同样要生效**（上一轮只修了预览那一侧，漏了这一半）：
+  //    `applySyncToLine` 的小数会被按**块高**插值（`top += (块高) * into / range`），而
+  //    这里的 `topVisibleLineFrac` 小数是按**行高**走出来的 —— 源是源码、兄弟是预览这条
+  //    最常走的跨侧路径，于是把「行高比例」当成「块高比例」用，落点直接偏
+  //    `ratio × 块高`，块高比行高大 ⇒ **恒偏下**（用户报：切源码/预览标签时另一个预览
+  //    标签的位置始终对不上）。跨侧一律交**整数顶行**，与预览侧交整数块首对称。
+  return cross ? Math.floor(topVisibleLineFrac(view)) : topVisibleLineFrac(view);
 }
 
 /**

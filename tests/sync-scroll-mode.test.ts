@@ -226,8 +226,18 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
       "? (p?.preview?.topBlockStartLine() ?? null)",
     );
     expect(SYNC_V, "两条分支都由 cross 这一个对象分出来").toMatch(/return cross\b/);
-    expect(SYNC_V, "源是源码 ⇒ 取 `topVisibleLineFrac`（小数 = 行内比例）").toContain(
-      "return view ? topVisibleLineFrac(view) : null;",
+    // ⚠️ 源码这一侧的 `cross` 是**本轮补的**（上一轮只修了预览那一侧）：源码的小数归一在
+    //    **行高**、`applySyncToLine` 的块内插值按**块高**走 ⇒ 跨侧交小数会恒偏下（用户报：
+    //    切源码/预览标签时另一个预览标签始终对不上）。跨侧取整、同侧才交小数。
+    //    ⚠️ 反向闸排前面：无条件 `return view ? topVisibleLineFrac(view) : null;` 是漏修那一版。
+    expect(SYNC_V, "源码侧不许无条件交小数（跨侧那一路要交整数顶行）").not.toMatch(
+      /(return cross \?)?return view \? topVisibleLineFrac\(view\) : null;/,
+    );
+    expect(SYNC_V, "源是源码且同侧 ⇒ 交 `topVisibleLineFrac`（小数 = 行内比例）").toContain(
+      ": topVisibleLineFrac(view);",
+    );
+    expect(SYNC_V, "源是源码且跨侧（推预览兄弟 / 收口 / 交接）⇒ 只交整数顶行").toContain(
+      "return cross ? Math.floor(topVisibleLineFrac(view)) : topVisibleLineFrac(view);",
     );
     // ⚠️ 反向闸排在正向之后也有效：B240 二轮实测「读快照槽 ⇒ 真实 260 只推出 100」，
     //    离屏兄弟的槽被写脏 ⇒ 用户报「未激活标签切过去对不上」。
@@ -510,9 +520,18 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
   });
 
   it("坐标口径与推兄弟那一路一致：源停在哪一侧就取哪一侧（都从唯一取值口取）", () => {
-    // ⚠️ B251 之后本轮复验：取值口**还是那一个**（`syncSourceV`），只是多了 `cross` 这一档
-    //    —— 源停在哪一侧照旧由取值口自己认，跟随 / 收口 / 交接都不许再各取各的。
-    expect(SNAP_BODY, "收口只经唯一取值口").toContain("return syncSourceV(src);");
+    // ⚠️ 取值口**还是那一个**（`syncSourceV`），只是多了 `cross` 这一档 —— 源停在哪一侧
+    //    照旧由取值口自己认，跟随 / 收口 / 交接都不许再各取各的。
+    // ⚠️ 本轮补：收口**必须按跨侧取值**（上一版漏传 cross ⇒ 收口整条交小数 ⇒ 切 tab 时
+    //    源码的行内比例被预览当块内比例用，恒偏下）。判据要带 `viewMode` 那个跨侧判定，
+    //    只写 `syncSourceV(src)` 会被退化打不掉（退化成无参调用照样命中）。
+    expect(SNAP_BODY, "收口且源与接班这份跨侧 ⇒ 按跨侧取值").toContain(
+      "return syncSourceV(src, nextTab !== undefined && nextTab.viewMode !== src.viewMode);",
+    );
+    // ⚠️ 反向闸排前面：漏传 cross 那一版（无参调用）不许回来。
+    expect(SNAP_BODY, "收口不许退回无参调用（那就等于跨侧也交小数）").not.toMatch(
+      /return syncSourceV\(src\);/,
+    );
     expect(pushBody(), "跟随也只经唯一取值口（逐个兄弟按同侧/跨侧取）").toContain(
       'const v = syncSourceV(src, other.viewMode !== "preview");',
     );
@@ -1457,11 +1476,13 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
   });
 
   it("退回「px 读快照槽（滞后一帧）」→ 实时取值那条必须落空", () => {
-    // ⚠️ B251 换锚：源码侧那一格旧的写法是 `srcView?.scrollDOM.scrollTop ?? src.scrollTop`
+    // ⚠️ 源码侧那一格旧的写法是 `srcView?.scrollDOM.scrollTop ?? src.scrollTop`
     //    （实测真实 260 时只推出 100）。统一 `v` 之后这一格在 `syncSourceV` 的源码分支上
     //    —— 退化串改锚到那一句，退回成读快照槽 `t.scrollTop` ⇒ 滞后一帧、且槽里存的
     //    还是上一次的编辑器像素。两条退化各打各的那半边。
-    const ORIG = "  return view ? topVisibleLineFrac(view) : null;";
+    // ⚠️ 本轮换锚：源码分支现在整条是 `return cross ? Math.floor(...) : ...`，跨侧那一格
+    //    才是「按行内比例交小数」。退化要打**跨侧那一格**（打同侧那半边退不掉跨侧契约）。
+    const ORIG = "return cross ? Math.floor(topVisibleLineFrac(view)) : topVisibleLineFrac(view);";
     expect(SYNC_V, "退化串要先自证原句还在").toContain(ORIG);
     const degraded = main.replace(ORIG, "  return t.scrollTop;");
     const body = slice(degraded, "function syncSourceV(", "function viewportOfTab(");
