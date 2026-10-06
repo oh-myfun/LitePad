@@ -818,17 +818,24 @@ function alignShownToSyncSource(panel: Panel, src: Tab | undefined, snap: number
   //    「搬行内比例」的换算，往返不等值，只能不重算。B242 把跨侧落点统一成行首对齐
   //    （`editorLineTopPx` / 整数行号，与切源码·预览同一套）⇒ 跨侧也恒等，跨侧照收。
   //
-  // ⚠️ B247 那条守卫（`snap.px === null && shown.viewMode !== "preview" ⇒ return false`）
-  //    **已随 B251 撤掉**。它是「跨侧只交**整数块首**」这个前提下的补丁：收口把落点定死
-  //    在块首，`restoreViewScroll` 刚按槽把这份源码还原到**块内第 3 行**的精确位置，再推
-  //    块首等于把它盖回段首 ⇒ 每切一轮往上掉一趟（桩证据：跨 3 行段落的文档，warm-up
-  //    切一轮回来源码 168 → 140）。B251 起收口交**完整 `v`**（含块内结构比例），落点由
-  //    `sourceTopOfV` 在**自己那一侧**按同一份几何插值 ⇒ 跨侧往返恒等，「压成块首」的
-  //    病根本身消失了。⚠️ 撤不撤由退化说了算：把那一行补回去跑同一批用例若全绿，说明
-  //    守卫只是冗余、删了无险；若红，说明还有另一条没补上的路径（见 memory 2026-10-06）。
-  //
-  //    （历史：B247 的原始症状是「文档中段代码 tab ↔ 预览 tab 来回切，滚动位置会变化」
-  //     —— 用户拍板切回源码要保住自己位置；同标签切模式 Ctrl+/ 不经过覆盖 ⇒ 它一直准的）。
+  // ⚠️⚠️ **B247 那道旧守卫（判「旧双字段里 px 那格是空 ⇒ 源在预览侧」⇒ 早退）**
+  //    B251 撤它是**撤错了**，本轮（用户报：切换 tab 往上偏移又出现）按**新语义**请回来：
+  //      · B251 撤它的理由写的是「退化里只有 1 条静态契约红、其余 1289 全绿 ⇒ 拦不到真实
+  //        路径」。那条退化验是**假绿**：补回去的是旧那道守卫的判空串，而 `snap` 早被 B251
+  //        改成 `number` ⇒ 那道守卫恒不命中**任何**路径，行为一点没变，全绿只证明
+  //        「补了个寂寞」，证明不了「删了无险」。
+  //      · 真病根是：**跨侧拿带比例的量去覆盖** `restoreViewScroll` 刚还原的精确位置。
+  //        B242 把「跨侧只交整数块首」判成病根是**因果倒置** —— 整数块首只是让病看起来像
+  //        它的那层皮，皮底下是「覆盖」，而 B247 守卫管的正是「不覆盖」。
+  //      · 于是连根修：跨侧（预览⇄源码）一律只交整数块首（`syncSourceV` 的 `cross` 档）
+  //        ⇒ 落点零偏差；再把守卫请回来 ⇒ 源是**预览**、显示中是**源码**时**彻底不推**，
+  //        这份源码保住 `restoreViewScroll` 还原出来的**块内第 3 行**那个精确位置，
+  //        谁也别拿块首把它盖回段首（B247 原始症状：跨 3 行段落的文档 warm-up 切一轮，
+  //        回来源码从 168 被压到 140 ⇒ 每切一轮往上掉一趟 —— 用户拍板「切回源码要保住
+  //        自己位置」，那句拍板到现在仍然有效）。
+  //      （历史：B247 原始症状是「文档中段代码 tab ↔ 预览 tab 来回切，滚动位置会变化」。
+  //        同标签切模式 Ctrl+/ 不走这里，它受 `cross` 那一档管 —— 同样只交整数块首。）
+  if (src.viewMode === "preview" && shown.viewMode !== "preview") return false;
   applySyncToSibling(shown, snap);
   return true;
 }
@@ -903,10 +910,13 @@ function pushSyncToSiblings(src: Tab, crossWindow = false): void {
   //    · 源是源码 ⇒ 就是 `topVisibleLineFrac` 那个小数（行内比例）；
   //    · 源是预览 ⇒ 就是 `topVisibleLine()` 那个小数（已按**块内/行内**折成行号+比例）。
   //    两条本来就是同一个公式，只是此前没人认；现在谁也不许再自己取坐标。
-  //    ⚠️ 小数**不是**可以丢掉的零头：跟随要它才能「连续走」（B174 那条「卡一下、跳一下」），
-  //    跨侧收口要它才能「切回去不掉位置」（B247 那条）。B249 当初丢它，两边各取整各的
-  //    —— 源码侧 CM6 上取整、预览侧 `Math.floor` 下取整 —— 直接就是「差一行 / 差半行」。
-  const v = syncSourceV(src);
+  //    ⚠️ 小数**不是**可以随便丢的零头：跟随要它才能「连续走」（B174 那条「卡一下、跳一下」）。
+  //    ⚠️ 但**跨侧那一半不行**（B251 后复验）：兄弟是源码时，源预览的块内比例喂给
+  //      `sourceTopOfV` 会按 `ratio × (块高 − 块行数×行高)` 偏出去且**恒偏上**，所以跨侧
+  //      只交整数块首；兄弟是预览时两边同侧、照交完整 `v`（跟随才连续）。
+  //    ⚠️ 跨窗广播那一路用 `cross = true` 的那份（整数块首）—— 跨窗两边同源同排版，
+  //      整数最稳，免得把带偏的量甩给别的窗口。
+  const v = syncSourceV(src, true);
   // B167 定位用：同步滚动是「每秒几十次」的高频链路，抖起来只能靠日志看是谁在推谁。
   //   这几条全是 debug（默认 info 看不到，需在设置里把 log_level 调到 debug），
   //   排查时按 docId 过滤即可看出是不是「A 推 B、B 又推回 A」的拉锯。
@@ -915,6 +925,9 @@ function pushSyncToSiblings(src: Tab, crossWindow = false): void {
     `推 src=${src.tabId} doc=${src.docId} v=${v} sibs=${sibs.length} cross=${crossWindow}`,
   );
   for (const other of sibs) {
+    // ⚠️ B251 后复验：逐个兄弟按「源与目标是否同侧」取值 —— 同侧交完整 `v`、跨侧交
+    //    整数块首（理由见 `syncSourceV` 的 `cross` 那一段）。
+    const v = syncSourceV(src, other.viewMode !== "preview");
     const line2 = other.state.doc.lineAt(Math.min(head, other.state.doc.length));
     const pos = Math.min(head, line2.to);
     const shownView = displayedPanelOfTab(other.tabId)?.view?.view;
@@ -4851,11 +4864,25 @@ function sourceTopOfV(view: EditorView, v: number): number | null {
  * 每换一次手就吃一次差（B247 守卫 / B249 改整数 / B240 二轮读实时值，全是在这三层不一致上
  * 打的补丁）。现在只有 `v` 一种东西：源码侧就是 `topVisibleLineFrac` 那个小数，
  * 预览侧就是 `topVisibleLine()` 那个小数 —— **两边本来就是同一个公式**，只是此前没人认。
+ *
+ * ⚠️⚠️ `cross`（**跨侧**）这一档是 B251 之后**又验回来的**（用户报：切换 tab 往上偏移又
+ * 出现）。B251 曾让预览侧一律交**完整 `v`**（含块内比例），那是错的 —— 两个「归一化比例」
+ * 归一在**不同的东西**上：源码侧小数归一在**行高**上，预览侧小数归一在**块高**上。跨侧把
+ * 后者直接喂给 `sourceTopOfV`（它按**行高**插）⇒ 落点差 `ratio × (块高 − 块行数×行高)` 这么
+ * 大一段，而预览渲染普遍比源码松（块高偏大）⇒ 偏差方向**恒为往上**，正是用户看到的
+ * 「切 tab 越切越靠顶」。B242/B243 定的「跨侧只交整数块首」不是病根（那是被误传的因果）：
+ * 真病根是**跨侧拿带比例的量去覆盖**（`B247` 那条守卫管的就是它），不是「交整数」本身。
+ * ⇒ `cross = true` 时预览侧只交**整数块首**（小数 0，跨侧零偏差、闭合）；`cross = false`
+ *   （同侧跟随 / 收口推给预览兄弟）才交带块内比例的完整 `v`。
  */
-function syncSourceV(t: Tab | undefined): number | null {
+function syncSourceV(t: Tab | undefined, cross = false): number | null {
   if (!t) return null;
   const p = panelOfTab(t.tabId);
-  if (t.viewMode === "preview") return p?.preview?.topVisibleLine() ?? null;
+  if (t.viewMode === "preview") {
+    return cross
+      ? (p?.preview?.topBlockStartLine() ?? null)
+      : (p?.preview?.topVisibleLine() ?? null);
+  }
   const view = p?.view?.view;
   return view ? topVisibleLineFrac(view) : null;
 }
@@ -5295,11 +5322,12 @@ function toggleViewMode(target?: Tab): void {
     // ⚠️ 必须在改 viewMode **之前**问：切换后编辑器是 display:none，问不出顶行。
     //    ⚠️ B251：坐标只从 `syncSourceV` 一个口取（与跟随 / 切标签收口同一条），再交给
     //      **同一个** `sourceTopOfV` 换算 —— 三条路径真·同一套计算。
-    //      B243 那会儿这里取的是**块起始行**（整数）—— 那是「跨侧只交整数」前提下的
-    //      补丁，代价是丢掉预览在块内走了多少（B247 的「每切一轮往上掉」就长在这）。
-    //      现在交**完整 `v`**：预览那侧的块内比例由 `sourceTopOfV` 按**它自己那份
-    //      几何**（源码行顶之间的差）显式插回来，不再靠 CM6 的取整猜。
-    const v = syncSourceV(tab);
+    //      ⚠️ 但**跨侧要带 `cross = true`**（B251 后复验）：预览 ⇄ 源码这一路是跨坐标系，
+    //      预览的比例归一在**块高**上、`sourceTopOfV` 按**行高**插 ⇒ 直接喂完整 `v` 会按
+    //      `ratio × (块高 − 块行数×行高)` 偏出去，方向恒为**往上**（用户报：切换 tab 往上
+    //      偏移又出现）。交整数块首 ⇒ 小数 0、两侧零偏差，与 B243 之前的行为一致；换来的
+    //      是丢掉「预览停在块内第几行」的精细度 —— 跨侧本来也给不出这个精度的闭合口径。
+    const v = syncSourceV(tab, true);
     const view = panel.view.view;
     if (v !== null) {
       handoff = sourceTopOfV(view, v);

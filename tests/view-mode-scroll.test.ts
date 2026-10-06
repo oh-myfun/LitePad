@@ -262,7 +262,7 @@ describe("B148 静态契约：切模式是一次明确的交接，不是各认�
     //    **同步坐标的唯一取值口** `syncSourceV` —— 这里盯的是「问在改 viewMode 之前」这条
     //    顺序纪律（切换后编辑器已 display:none，顶行无从反推），取值口径本身由
     //    `sync-cursor` 那一路的合同盯着。
-    const ask = body.indexOf("syncSourceV(tab)");
+    const ask = body.indexOf("syncSourceV(tab, true)");
     const flip = body.indexOf("tab.viewMode =");
     expect(ask, "取顶行的那一行得还在").toBeGreaterThan(-1);
     expect(flip, "改 viewMode 的那一行得还在").toBeGreaterThan(-1);
@@ -299,7 +299,7 @@ describe("B148 反向验证：把交接摘掉，上面几条必须变红", () =>
     // ⚠️ B251 同语义换锚：切模式这一路交的是**规范游标 `v`**（与跨侧收口 `syncSourceSnapshot`
     //   同一个值、同一条取值口），落点由 `sourceTopOfV` 换算；带小数的小数行号不再是
     //   「只归跟随」—— 跨侧也交小数，只是各自按自己那侧的几何插值。
-    const ASK = "    const v = syncSourceV(tab);\n";
+    const ASK = "    const v = syncSourceV(tab, true);\n";
     const CONVERT = "      handoff = sourceTopOfV(view, v);\n";
     const WRITE = "  if (handoff !== null) recordScroll(tab.tabId, handoff);\n";
     let degraded = src;
@@ -322,7 +322,7 @@ describe("B148 反向验证：把交接摘掉，上面几条必须变红", () =>
 
   it("退化成「先切 mode 再问顶行」，顺序契约必须抓住", () => {
     // ⚠️ B251 同语义换锚：切模式与跨侧收口都从 `syncSourceV` 取同一个 `v`。
-    const ASK = "    const v = syncSourceV(tab);\n";
+    const ASK = "    const v = syncSourceV(tab, true);\n";
     const FLIP = '  tab.viewMode = toPreview ? "preview" : "source";\n';
     expect(src).toContain(ASK);
     expect(src).toContain(FLIP);
