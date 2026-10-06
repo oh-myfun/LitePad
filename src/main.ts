@@ -415,6 +415,26 @@ let isDark = false;
 let isWrap = true;
 /** 载入文件时抑制脏标记（setState/dispatch 会触发 updateListener） */
 let suppressDirty = false;
+/**
+ * ⚠️ B254：切换标签那一刻，抑制 `handleUpdate` 里那句「推兄弟」。
+ *
+ * `switchTab` 里整态换文档那一次（`setState`）是**同步**派发 update 的，而 CM6 按
+ * `setState` 的语义会把编辑器 scrollTop 归零再重排 ⇒ 那一轮 `handleUpdate` 读到的
+ * 源位置是「刚被归零的 0」，不是用户停的地方。而此刻 `activeTabId` 已经改成新标签、
+ * `isSyncSource` 已经为真 ⇒ 539 那句会拿 0 当源 `pushSyncToSiblings`：
+ *    · 源是刚切过去的源码 ⇒ 跨侧交整数顶行 1 ⇒ 所有**同文档兄弟的预览**（分屏另一半、
+ *      另一个面板那份）被 `syncToLineProgrammatic(1)` 拉回**文档开头**，落点还被
+ *      `recordScroll` 写进它们自己的槽；
+ *    · 源是刚切过去的预览（另一端）⇒ `topVisibleLine()` 在隐藏容器上读回 0 ⇒ 同一个病。
+ * 收尾时 `switchTab` 因为「收口已对齐」跳过推播（B241）⇒ **没人把兄弟救回来**。
+ * 用户报的就是这两半连起来：「切标签后另一个预览向上偏移，且之后切换标签不再变化」
+ * —— 每次切都推同一发 0，看起来就是位置被钉死在顶上。
+ *
+ * 切标签本身有自己的收口（`syncSourceSnapshot` 在 setState 之前就采下了源的真实位置），
+ * 这一发推播**不携带任何有效信息**，只留害处 ⇒ 与 `suppressDirty` 同一路数，置位包住
+ * `setState` 即可（B145 那条顺序纪律不受影响：还原 `restoreViewScroll` 排在后面）。
+ */
+let suppressSyncPush = false;
 
 const LOSSY_ABORT = Symbol("lossy-abort");
 
@@ -536,7 +556,8 @@ function handleUpdate(view: EditorView, update: ViewUpdate): void {
   // 反过来再推一次（见它的注释）。
   // B176：被同源光标同步 dispatch 触发的一轮 `handleUpdate` 不反推 —— 否则非激活源会被
   //   拽回旧位置（A↔B 拉锯 / 非激活文档滚动抖）。光标仍由上面那发 dispatch 落到兄弟。
-  if (isSyncSource(tab, panel) && syncingCursorDocId !== tab.docId) pushSyncToSiblings(tab);
+  if (!suppressSyncPush && isSyncSource(tab, panel) && syncingCursorDocId !== tab.docId)
+    pushSyncToSiblings(tab);
   // 文本是否真的变了：点击内容区、移动光标、切换视图、重新测量都会产生
   // update 但前后文本完全一致——那不是编辑。
   // 关键：md 预览重渲染**只**在文本真变化时才排程。若按「任意 update」排程，
@@ -1594,7 +1615,13 @@ function switchTab(panelId: number, tabId: number): void {
   const view = panel.view; // 闭包里不保留对 `panel.view` 的收窄，先取一份
   markProgrammatic(view.view.scrollDOM);
   suppressDirty = true;
+  // ⚠️ B254：这一发 `setState` 把编辑器 scrollTop 归零并**同步**派发 update ⇒
+  //    `handleUpdate` 那一轮拿到的源位置是 0，推兄弟等于把所有同文档预览钉回开头
+  //    （「切标签后另一个预览向上偏移、之后永远不动」）。切标签的收口已经在上面
+  //    `syncSourceSnapshot` 里采下源的真实位置，这一发推播没信息、只有害处。
+  suppressSyncPush = true;
   view.setState(tab.state);
+  suppressSyncPush = false;
   suppressDirty = false;
   // ⚠️ 焦点必须排在钉位置**之前**（B145）：`focus()` 会把光标滚进视野，而光标往往
   // 不在刚还原出来的可视区里 —— 排在后面等于把刚钉好的位置顶掉。

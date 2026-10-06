@@ -342,7 +342,9 @@ describe("B152 同步滚动模式：推进与触发点", () => {
 
   it("四个触发点都在：光标/编辑、用户滚动、切激活文档、全局刷新", () => {
     expect(main, "光标与编辑之后要推（被同源光标同步触发的不反推）").toMatch(
-      /if \(isSyncSource\(tab, panel\) && syncingCursorDocId !== tab\.docId\) pushSyncToSiblings\(tab\);/,
+      // ⚠️ B254 换锚：那句现在多了一道抑制标志，且 prettier 把 `pushSyncToSiblings`
+      //    折到了下一行 —— 判据得认「条件 + 换行 + 调用」这一整块，别只认半句。
+      /if \(!suppressSyncPush && isSyncSource\(tab, panel\) && syncingCursorDocId !== tab\.docId\)\n\s*pushSyncToSiblings\(tab\);/,
     );
     expect(main, "用户滚动之后要推：谁滚谁当源").toMatch(/if \(t\) pushSyncToSiblings\(t, true\);/);
     // 「切换激活文档时则根据新的激活文档进行同步」—— 这一句就落在 switchTab 末尾。
@@ -763,7 +765,9 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
     );
     // 光标 / 输入那一路：不带第二个实参，走默认。
     expect(main, "光标那一半不许跨窗口（且不反推同步触发的那轮）").toMatch(
-      /if \(isSyncSource\(tab, panel\) && syncingCursorDocId !== tab\.docId\) pushSyncToSiblings\(tab\);/,
+      // ⚠️ B254 换锚：那句现在多了一道抑制标志，且 prettier 把 `pushSyncToSiblings`
+      //    折到了下一行 —— 判据得认「条件 + 换行 + 调用」这一整块，别只认半句。
+      /if \(!suppressSyncPush && isSyncSource\(tab, panel\) && syncingCursorDocId !== tab\.docId\)\n\s*pushSyncToSiblings\(tab\);/,
     );
     // 切激活文档 / 全局刷新这两路也不播：那是「本地对齐」，不是用户滚动。
     expect(main, "切激活文档那路不播").toMatch(
@@ -1680,7 +1684,9 @@ describe("B176 非激活源滚动不再被兄弟反推成 A↔B 拉锯", () => {
   it("handleUpdate 的 isSyncSource 分支要跳过「被同源光标同步触发」的那一轮", () => {
     // 否则兄弟（激活标签）会反推回源，非激活源被拽回旧位置 → 拉锯 / 抖。
     expect(HANDLE_BODY, "光标同步触发的那轮不许反推").toMatch(
-      /if \(isSyncSource\(tab, panel\) && syncingCursorDocId !== tab\.docId\) pushSyncToSiblings\(tab\);/,
+      // ⚠️ B254 换锚：那句现在多了一道抑制标志，且 prettier 把 `pushSyncToSiblings`
+      //    折到了下一行 —— 判据得认「条件 + 换行 + 调用」这一整块，别只认半句。
+      /if \(!suppressSyncPush && isSyncSource\(tab, panel\) && syncingCursorDocId !== tab\.docId\)\n\s*pushSyncToSiblings\(tab\);/,
     );
     // 反向自证：旧写法（无标检查）不该还在。
     expect(HANDLE_BODY, "不许再是无条件的 isSyncSource 推").not.toMatch(
@@ -1689,14 +1695,17 @@ describe("B176 非激活源滚动不再被兄弟反推成 A↔B 拉锯", () => {
   });
 
   it("B176 反向验证：退回无条件 isSyncSource 推 → 上面「跳过反推」必须落空", () => {
-    const ORIG =
-      "if (isSyncSource(tab, panel) && syncingCursorDocId !== tab.docId) pushSyncToSiblings(tab);";
-    expect(HANDLE_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "if (isSyncSource(tab, panel)) pushSyncToSiblings(tab);");
+    // ⚠️ B254 换锚：那句多了一道「切标签不推」的抑制标志（锚点必须随改动同步换，
+    //    否则退化串自证那一条就挂在这儿，红的是判据不是产品行为）。
+    //    ⚠️ 调用被 prettier 折到下一行，`degraded` 那边按整块替换，别只换半句。
+    const ORIG = "isSyncSource(tab, panel) && syncingCursorDocId !== tab.docId";
+    const FULL = `if (!suppressSyncPush && ${ORIG})\n    pushSyncToSiblings(tab);`;
+    expect(HANDLE_BODY, "退化串要先自证原句还在").toContain(FULL);
+    const degraded = main.replace(FULL, `if (${ORIG}) pushSyncToSiblings(tab);`);
     const body = slice(degraded, "function handleUpdate(", "function syncDocInstances(");
-    expect(body, "退回后不再跳过反推").not.toMatch(/syncingCursorDocId !== tab\.docId/);
-    expect(body, "退回后又是无条件 isSyncSource 推").toMatch(
-      /if \(isSyncSource\(tab, panel\)\) pushSyncToSiblings\(tab\);/,
+    expect(body, "退回后不再跳过反推（抑制标志被摘掉了）").not.toMatch(/!suppressSyncPush/);
+    expect(body, "退回后又退回无条件 isSyncSource 推").toMatch(
+      /if \(isSyncSource\(tab, panel\) && syncingCursorDocId !== tab\.docId\) pushSyncToSiblings\(tab\);/,
     );
   });
 });
@@ -1847,6 +1856,89 @@ describe("B186 大纲跳转受同步滚动状态约束（多开不同步则只�
     expect(degraded, "摘掉守卫后 onJump 不再受同步滚动约束").not.toContain(GUARD);
     expect(degraded, "摘掉后广播循环仍在（即恢复成无条件广播）").toContain(
       "for (const inst of instancesOfDoc(doc.tabId))",
+    );
+  });
+});
+
+// ---------------------------------------------------------------- B254 切标签那一刻
+// 用户原话（第五轮）：「左分屏一个源码一个预览，右分屏一个预览，开启同步滚动，滚左分屏
+// 源码到底部，切到左分屏预览标签、再切回左分屏源码标签，**第二次切换时右分屏的预览文件
+// 滚动位置出现了向上偏移，且后续切换标签不再变化滚动位置**」。
+//
+// 两半症状是同一发推播造成的：
+//   · **向上偏移** —— `switchTab` 里那句 `view.setState(tab.state)` 是**同步**派发
+//     update 的，而 `setState` 按 CM6 的行为把编辑器 scrollTop 归零 ⇒ 那一轮
+//     `handleUpdate` 读到的「源位置」是 0，且此刻 `activeTabId` 已改新标签、
+//     `isSyncSource` 已为真 ⇒ 都会去 `pushSyncToSiblings`：同文档的**预览**兄弟被
+//     `syncToLineProgrammatic(1)` 钉回文档开头，落点还被 `recordScroll` 写进它自己
+//     的槽 ⇒ 位置记录与实际同步变成「都停在顶上」（向上偏移）。
+//   · **之后不再变化** —— 收尾那句「收口已对齐就跳过推播」（B241）于是再没人把它
+//     救回来，而**每次**切标签都会重推同一发 0 ⇒ 位置恒定不变（看着就是被钉死）。
+//
+// ⚠️ 这一条用静态契约盯：`switchTab` 的 `setState` 必须被抑制标志**裹住**，
+//    `handleUpdate` 那句推送必须**读**这个标志。退化（删写 / 删读 / 挪到 setState
+//    之后）三条都要红 —— 见下面那个反向验证块。
+const SWITCH_BODY = slice(main, "function switchTab(", "function makeDoc(");
+const UPDATE_BODY = slice(main, "function handleUpdate(", "function isSyncSource(");
+
+describe("B254 切标签那一刻不许拿「刚被归零的位置」推兄弟", () => {
+  it("抑制标志必须夹住 switchTab 里的 setState（不能挪前挪后、不能只写不读）", () => {
+    const ON = "suppressSyncPush = true;";
+    const OFF = "suppressSyncPush = false;";
+    const SET = "view.setState(tab.state);";
+    expect(SWITCH_BODY, "三条锚点都要能找到").toContain(ON);
+    expect(SWITCH_BODY, "三条锚点都要能找到").toContain(OFF);
+    expect(SWITCH_BODY, "三条锚点都要能找到").toContain(SET);
+    // 位置闸（两个退化方向都红：删掉 ON ⇒ ON 找不到；挪到 setState 后 ⇒ ON 的下标变大）
+    const onAt = SWITCH_BODY.indexOf(ON);
+    const setAt = SWITCH_BODY.indexOf(SET);
+    expect(onAt, "置位那句还在不在").toBeGreaterThanOrEqual(0);
+    expect(setAt, "setState 那句还在不在").toBeGreaterThanOrEqual(0);
+    expect(onAt, "置位必须在 setState **之前**（之后就拦不住那一发同步 update）").toBeLessThan(
+      setAt,
+    );
+    // 单句结构锚：三行连在一起（挪走 / 删掉任意一半都不再命中）
+    expect(SWITCH_BODY).toContain(`${ON}\n  ${SET}\n  ${OFF}`);
+  });
+
+  it("handleUpdate 那句推兄弟必须真的消费这个标志（不许只写不读）", () => {
+    const READ = "!suppressSyncPush &&";
+    expect(UPDATE_BODY, "读的那句还在不在").toContain(READ);
+    // 消费闸：把标志摘掉之后，剩下的那半句还是同一句推兄弟 —— 说明红的就是「没读」
+    const degraded = UPDATE_BODY.replace(READ, "");
+    expect(degraded, "退化串要先自证原句还在").not.toContain(READ);
+    expect(degraded, "退化的仍是同一句推兄弟（红因是没读标志，不是这句没了）").toContain(
+      "isSyncSource(tab, panel) &&",
+    );
+  });
+});
+
+describe("B254 反向验证：退回旧写法，上面那几条必须变红", () => {
+  it("退化：删掉置位 / 挪到 setState 之后 / 摘掉读取，三条判据都要落空", () => {
+    const ON = "suppressSyncPush = true;\n  view.setState(tab.state);\n  suppressSyncPush = false;";
+    expect(SWITCH_BODY, "退化串要先自证原句还在").toContain(ON);
+
+    // ① 删掉抑制：源里再没有「夹住 setState 那一对」（但 `let suppressPush` 声明还在）
+    const off = SWITCH_BODY.replace(ON, "  view.setState(tab.state);");
+    expect(off, "退化①：抑制那一对被摘掉了").not.toContain("suppressSyncPush = true;");
+    expect(off, "退化①：setState 本身还在（红因是没了抑制，不是这句消失）").toContain(
+      "view.setState(tab.state);",
+    );
+
+    // ② 挪到 setState **之后**：标志还在，但那一发同步 update 已经推完了（拦不住）
+    const moved = SWITCH_BODY.replace(
+      ON,
+      "  view.setState(tab.state);\n  suppressSyncPush = true;\n  suppressSyncPush = false;",
+    );
+    expect(moved.indexOf("suppressSyncPush = true;")).toBeGreaterThan(
+      moved.indexOf("view.setState(tab.state);"),
+    );
+
+    // ③ 摘掉读取：`handleUpdate` 那句照推（这正是用户报的那个病）
+    const noRead = UPDATE_BODY.replace("!suppressSyncPush && ", "");
+    expect(noRead).not.toContain("!suppressSyncPush &&");
+    expect(noRead, "退化③：推兄弟那句还在 ⇒ 红因就是没人拦它").toContain(
+      "isSyncSource(tab, panel) &&",
     );
   });
 });
