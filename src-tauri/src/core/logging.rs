@@ -88,11 +88,15 @@ impl Level {
 }
 
 /// 默认级别：`debug` 构建放低一档（开发期直接看得到细节），发布版 info。
+///
+/// ⚠️⚠️ **B255 临时取证**：发布版那一档临时改成 trace —— 切标签同步滚动那一路的
+/// `[viewport] 切换·还原 / 写入位置` 与 `[sync] 推 / 落` 全是 debug / trace，默认 info
+/// 下一次复现什么都拿不到。等真机证据读出来，**必须改回 `Level::Info`** 重新出包。
 pub fn default_level() -> Level {
     if cfg!(debug_assertions) {
         Level::Debug
     } else {
-        Level::Info
+        Level::Trace // ⚠️ B255 临时：取证定案后改回 Level::Info
     }
 }
 

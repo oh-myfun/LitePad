@@ -723,6 +723,13 @@ function applySyncToSibling(other: Tab, v: number | null): void {
     //      就出在这里。所以跨侧一律只交整数块首（`topBlockStartLine`），别把带比例的
     //      量从一侧甩给另一侧。
     const landed = preview.syncToLineProgrammatic(v);
+    // ⚠️⚠️ B255 临时取证：预览落点是**裸写**（`applySyncToLine` 直接赋值、返回「想写的
+    //   值」）。真机上若容器此刻没撑到那么高，浏览器会裁小 ⇒ 请求值与实际值分家，而这一
+    //   次赋值连同落点被塞进兄弟的槽。下面这行就是为了让「请求 ≠ 实际」当场露形。
+    logger.trace(
+      "sync",
+      `落点校验 other=${other.tabId} v=${v} 返回=${landed} 容器实际=${preview.root.scrollTop}`,
+    );
     // `syncToLine` 同步落地，容器里的值可直接读；落点显式补记（程序定位不写快照）。
     if (landed !== null) recordScroll(other.tabId, landed);
     return;
