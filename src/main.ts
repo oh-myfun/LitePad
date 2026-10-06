@@ -932,11 +932,16 @@ function pushSyncToSiblings(src: Tab, crossWindow = false): void {
     `推 src=${src.tabId} doc=${src.docId} v=${v} sibs=${sibs.length} cross=${crossWindow}`,
   );
   for (const other of sibs) {
-    // ⚠️ 逐个兄弟按「源与目标是否同侧」取值 —— 同侧交完整 `v`、跨侧交整数（理由见
-    //    `syncSourceV` 的 `cross` 那一段）。⚠️「同侧」判的是**源**与**兄弟**这两个 viewMode：
-    //    源是源码、兄弟是预览 ⇒ 跨侧 ⇒ 交整数顶行（上一轮这里注释写着「两边同侧照交完整
-    //    v」，是判反了：那个组合正是恒偏下的那条路径）。
-    const v = syncSourceV(src, other.viewMode !== "preview");
+    // ⚠️⚠️ 跨侧判据必须是 **`src` 与 `other` 两个 viewMode 是否不同**（本轮纠的错）。
+    //    上一版写的是 `other.viewMode !== "preview"` —— 那是「目标**是不是**预览」的绝对
+    //    判断，冒充不了「跨不跨侧」：跨侧是**相对**关系（源与目标是否分处两侧），得拿源
+    //    去比。错处的后果（两格都交了错值）：
+    //      · 源源码 + 兄弟预览 ⇒ 判成同侧 ⇒ 交**行内比例**小数 ⇒ 预览按**块高**插值 ⇒
+    //        恒偏下 `ratio × 块高`（用户：滚左分屏源码时右分屏预览偏了）。
+    //      · 源预览 + 兄弟源码 ⇒ 评判成同侧 ⇒ 交**块内比例**小数 ⇒ 源码按**行高**插值 ⇒
+    //        恒偏上（第一轮「切 tab 越切越靠顶」那一半病根，一直没修到这）。
+    //      · 只有「源预览 + 兄弟预览」这一格蒙对了。同侧那一格（都源码 / 都预览）不受影响。
+    const v = syncSourceV(src, src.viewMode !== other.viewMode);
     const line2 = other.state.doc.lineAt(Math.min(head, other.state.doc.length));
     const pos = Math.min(head, line2.to);
     const shownView = displayedPanelOfTab(other.tabId)?.view?.view;

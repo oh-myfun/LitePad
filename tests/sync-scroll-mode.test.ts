@@ -203,8 +203,23 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
     // ⚠️ B251 → 本轮：跟随里 `v` 是**逐个兄弟现取**的（兄弟是源码走跨侧、是预览走同侧），
     //    不再是一个 `v` 推全场；跨窗广播那份用跨侧口径（同源同排版、整数最稳）。
     //    只写 `syncSourceV(` 会连收口 / 交接里那两处一起命中，退化打不掉 ⇒ 必须带调用形态。
+    // ⚠️⚠️ 反向闸（本轮翻案，钉死「跨侧是相对关系」）：跨侧问的是**源与目标是否分处
+    //    两侧**，所以判据必须拿**源**去比。历史错相是 `other.viewMode !== "preview"` ——
+    //    那是「目标**是不是**预览」的绝对判断，冒充不了跨不跨侧，四格里错两格：
+    //      · 源源码 + 兄弟预览 ⇒ 被判成同侧 ⇒ 交**行内比例**小数 ⇒ 预览按**块高**插值 ⇒
+    //        恒偏下（用户复现：滚左分屏源码到底 → 切预览 → 切回源码，第二次切换右分屏
+    //        预览向上偏移）；
+    //      · 源预览 + 兄弟源码 ⇒ 被判成同侧 ⇒ 交**块内比例**小数 ⇒ 源码按**行高**插值 ⇒
+    //        恒偏上（「切 tab 越切越靠顶」那一半病根，一直没修到这）；
+    //      只有「源预览 + 兄弟预览」这格蒙对（目标恰好是预览）。
+    //    退化方向：把这个 absolute 形式写回去 ⇒ 本闸红。
+    expect(pushBody(), "跨侧判据不许退回「目标是不是预览」的绝对判断（跨侧得拿源比）").not.toMatch(
+      /syncSourceV\(src, other\.viewMode !==/,
+    );
+    //    （收口那处不需要同型反向闸：528 行那条正向断言钉的是**完整关系串**，退成绝对
+    //    判断必然落空；再加一条只是恒真的冗余。）
     expect(pushBody(), "跟随逐兄弟取值：源码兄弟走跨侧、预览兄弟走同侧").toContain(
-      'const v = syncSourceV(src, other.viewMode !== "preview");',
+      "const v = syncSourceV(src, src.viewMode !== other.viewMode);",
     );
     expect(pushBody(), "跨窗广播也走跨侧口径").toContain("const v = syncSourceV(src, true);");
     expect(pushBody(), "源码侧坐标走带行内比例的小数（B174：取整会让跟随变阶梯）").toMatch(
@@ -533,7 +548,7 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
       /return syncSourceV\(src\);/,
     );
     expect(pushBody(), "跟随也只经唯一取值口（逐个兄弟按同侧/跨侧取）").toContain(
-      'const v = syncSourceV(src, other.viewMode !== "preview");',
+      "const v = syncSourceV(src, src.viewMode !== other.viewMode);",
     );
     // ⚠️ 反向闸：不许退回「三处各取各的」（收口/跟随/切模式各一套）。
     expect(SYNC_BODY, "落点不许再手拼坐标").not.toMatch(/editorLineTopPx\(view, line\)/);
@@ -555,7 +570,7 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
       /return cross\s*\n\s*\? \(p\?\.preview\?\.topVisibleLine\(\)/,
     );
     expect(pushBody(), "跟随：源码兄弟走跨侧那档").toContain(
-      'const v = syncSourceV(src, other.viewMode !== "preview");',
+      "const v = syncSourceV(src, src.viewMode !== other.viewMode);",
     );
     // 落点那一侧必须**真的按行高插值**，而不是把小数丢给 CM6 让它自己上取整。
     // ⚠️ B251 换锚：这句换算如今只在 `sourceTopOfV` 里出现一次 ⇒ 判据盯它自己的函数体。
