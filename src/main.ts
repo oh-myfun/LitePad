@@ -694,9 +694,13 @@ function applySyncToSibling(other: Tab, v: number | null): void {
     //   「定位没做」写成「它停在顶部」，下一次切过去天然回顶（B134 同型）。
     // B242：只给**整数行号**（块首对齐），与 `applyPanelMode` 那次 `syncToLine(anchorLine)`
     //   同口径 —— 跨侧同步与切模式于是落在预览的同一个位置。
-    //   ⚠️ B251 起小数不再被掐掉：跨侧统一交「规范游标 `v`」，预览侧拿小数当
-    //      **块内结构比例**插值（与 `topVisibleLine` 严格互逆），两侧的比例都是
-    //      归一化的**结构比例**、不再是像素比例 ⇒ 不再有 B242 说的量纲错配。
+    //   ⚠️ 这里收的 `v` 是**同侧**那一档（源与目标都是预览，跟随才连续），小数 =
+    //      块内结构比例，与预览侧 `topVisibleLine` 互逆。
+    //   ⚠️⚠️ 跨侧那一档**小数是 0**（`syncSourceV` 的 `cross`）：源码侧的小数归一在
+    //      **行高**、这里是**块高**，同一个小数在两侧量的是两种高度，跨侧搬运必然偏
+    //      `ratio × (块高 − 行数×行高)` 且方向恒偏上 —— 用户报的「切 tab 越切越靠顶」
+    //      就出在这里。所以跨侧一律只交整数块首（`topBlockStartLine`），别把带比例的
+    //      量从一侧甩给另一侧。
     const landed = preview.syncToLineProgrammatic(v);
     // `syncToLine` 同步落地，容器里的值可直接读；落点显式补记（程序定位不写快照）。
     if (landed !== null) recordScroll(other.tabId, landed);

@@ -296,9 +296,9 @@ describe("B148 反向验证：把交接摘掉，上面几条必须变红", () =>
   it("退回「切回源码时直接沿用预览的像素」，契约必须抓住", () => {
     // 退化：拿掉取顶行、按行反推、写闸口三步，只留 `tab.viewMode =` 与后续的还原。
     // ⚠️ 整块按原样搬（缩进也算）：只摘不插的话原处还会留一份，退化会悄悄变成「没改」。
-    // ⚠️ B251 同语义换锚：切模式这一路交的是**规范游标 `v`**（与跨侧收口 `syncSourceSnapshot`
-    //   同一个值、同一条取值口），落点由 `sourceTopOfV` 换算；带小数的小数行号不再是
-    //   「只归跟随」—— 跨侧也交小数，只是各自按自己那侧的几何插值。
+    // ⚠️ 本轮同语义换锚：切模式这一路交**跨侧档**的 `v`（与跨侧收口同一条取值口
+    //   `syncSourceV`，落点由 `sourceTopOfV` 换算）；跨侧小数恒 0（预览的小数归一在
+    //   **块高**、源码侧按**行高**插，跨侧带比例会恒偏上），只有**同侧跟随**才用带比例的量。
     const ASK = "    const v = syncSourceV(tab, true);\n";
     const CONVERT = "      handoff = sourceTopOfV(view, v);\n";
     const WRITE = "  if (handoff !== null) recordScroll(tab.tabId, handoff);\n";

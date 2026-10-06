@@ -336,7 +336,7 @@ describe("B242 跨侧：同步滚动与切源码/预览用同一套位置计算�
       "前提：预览确实是停在**块内**、不是压在块顶（否则比例无从判）",
     ).toBeGreaterThan(0);
 
-    toggleMode(); // 预览 → 源码（同一份 tab 的 handoff，B251 完整 `v`）
+    toggleMode(); // 预览 → 源码（同一份 tab 的 handoff，跨侧档：交整数块首）
     await wait(260);
     const top = sourceTopLine();
 

@@ -659,8 +659,9 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
     expect(PREVIEW_BRANCH, "落点要按返回值判空再记").toContain(
       "if (landed !== null) recordScroll(other.tabId, landed);",
     );
-    // ⚠️ B251 换锚：小数不再被 `Math.floor` 掐掉 —— 跨侧统一交完整 `v`（含块内比例）。
-    //    判据仍是「补记快照只认程序定位的返回值」，不是改松。
+    // ⚠️ 本轮换锚：这一路收的是**同侧**那份（跟随才连续），小数不再被 `Math.floor` 掐掉
+    //    （含块内比例）；跨侧那一档小数是 0（见 `syncSourceV` 的 `cross`）。判据仍是
+    //    「补记快照只认程序定位的返回值」，不是改松。
     expect(PREVIEW_BRANCH, "落点来自程序定位那一路的返回值").toContain(
       "preview.syncToLineProgrammatic(v);",
     );
@@ -821,9 +822,9 @@ describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚�
     );
     // ⚠️ B248：第一参从 `shownView` 换成 `view` —— 离屏源码兄弟没视图时，拿同文档的
     //    **另一个源码态视图**量 `lineBlockAt`（排版一致 ⇒ 等价于量它自己）换算。
-    //    ⚠️ B251 再换锚：落点出口现在叫 `sourceTopOfV`（`editorLineTopPx` 退化成它的
-    //    「取行顶」内部件），且**交的是完整 `v`**（含行内比例，由它自己按行高插值）。
-    //    判据仍是「换算出来的像素要真的被用上」，不是改松。
+    //    ⚠️ B251 再换锚、本轮复验：落点出口现在叫 `sourceTopOfV`（`editorLineTopPx`
+    //    退化成它的「取行顶」内部件），交的是**同侧**那一档 `v` 的小数（行内比例，由它
+    //    自己按行高插值）；跨侧那一档小数恒 0。判据仍是「换算出来的像素要真的被用上」。
     expect(PUSH_BODY, "换算出来的行号要真的用上").toContain("const top = sourceTopOfV(view, v);");
     // ⚠️ B242：跨侧落点只给**行首**，不再按行内比例插值 —— 那串 frac 是**编辑器行内**
     //   的比例，从预览侧搬过来量的是「块内」，往返不等值 ⇒ 每切一轮吃掉一点（用户报
@@ -856,8 +857,8 @@ describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚�
     // 的钩子 ⇒ 图片 / KaTeX / Shiki 一增强完，预览就自己跳一下。
     // B162：纪律收进 `syncToLineProgrammatic`（程序定位入口自带「不留尾巴」+ 程序定位
     // 窗口），调用点换过去；入口自身「不留尾巴」在 preview-sync 那侧盯。
-    // ⚠️ B251 换锚：小数不再被 `Math.floor` 掐掉 ⇒ 直接交完整 `v`（预览侧按块内比例
-    //    插值）。这条**正向**判据盯的是「不许退回 syncToLine」，锚点跟着实现走。
+    // ⚠️ 本轮换锚：小数不再被 `Math.floor` 掐掉 ⇒ 直接交同侧那份 `v`（预览侧按块内比例
+    //    插值）；跨侧那一档小数是 0。这条**正向**判据盯的是「不许退回 syncToLine」。
     expect(PUSH_BODY, "预览分支要走程序定位入口").toMatch(/preview\.syncToLineProgrammatic\(v\)/);
     expect(PUSH_BODY, "不许再走会留尾巴的 syncToLine").not.toMatch(/preview\.syncToLine\(line\)/);
   });
@@ -868,7 +869,7 @@ describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚�
     // `restoringViewport` 还原窗口（B170 删了那套时间窗）。
     expect(PUSH_BODY, "预览分支要走程序定位入口").toMatch(/preview\.syncToLineProgrammatic\(v\);/);
     // 落点显式补记（程序定位不写快照）：必须排在 syncToLineProgrammatic 之后。
-    // ⚠️ B251 换锚：交的是完整 `v`（旧写法 `Math.floor(line)` 会把块内比例掐掉）。
+    // ⚠️ 本轮换锚：交的是**同侧**那份 `v`（旧写法 `Math.floor(line)` 会把块内比例掐掉）。
     const atSync = PUSH_BODY.indexOf("preview.syncToLineProgrammatic(v);");
     const atRecord = PUSH_BODY.indexOf("recordScroll(other.tabId, landed);");
     expect(atSync, "要能定位程序定位入口那句").toBeGreaterThan(-1);
@@ -1542,8 +1543,8 @@ describe("B160 反向验证：退回旧写法，上面那四条必须变红", ()
   it("退回「走 syncToLine（留尾巴、无程序定位窗口）」→ 两条必须落空", () => {
     // B162 前状：预览分支调 `syncToLine` —— 它会留 `pendingSyncLine` 尾巴（每次重排
     // 都把预览拽回某一行），也没有程序定位窗口（逃过守卫的 scroll 会被反推成用户滚动）。
-    // ⚠️ B251 换锚：交的是完整 `v`（旧写法 `Math.floor(line)` 把块内比例掐掉，而 B247
-    //    那个「每切一轮往上掉」正是从这儿长出来的），退化串跟着换。
+    // ⚠️ 本轮换锚：交的是**同侧**那份 `v`（旧写法 `Math.floor(line)` 把块内比例掐掉），
+    //    退化串跟着换。
     const ORIG = "preview.syncToLineProgrammatic(v);";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
     const degraded = main.replace(ORIG, "preview.syncToLine(v);");
