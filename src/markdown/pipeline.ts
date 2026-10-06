@@ -146,8 +146,9 @@ export function renderBlocks(src: string): MdBlock[] {
     // 早先这里按 `t.level === 0` 一律当新块 ⇒ 每个标题被切成两块（开标签块 + 闭标签块），
     // 实测 24 行标题文档交出 48 块、闭标签块 `lineStart` 恒为 1；这些空壳块混进预览的
     // `this.blocks` 后，`indexOfBlockAtOffset`（取「最后一个顶边 ≤ offset」）永远命中
-    // 顶边与真块相同、却 `lineStart=1` 的伪块 ⇒ `topBlockStartLine()` 恒返回 1，跨侧
-    // 收口把源码钉回第 1 行（滚动位置清零，来回切标签就看见位置乱跳，见 B244 四标签复核）。
+    // 顶边与真块相同、却 `lineStart=1` 的伪块 ⇒ 预览那份游标恒为 1（B257 后 = 块首行 + 0
+    // 比例的 `v`），一收口就把源码钉回第 1 行（滚动位置清零，来回切标签就看见位置乱跳，
+    // 见 B244 四标签复核）。
     // 收尾 token 必须并入当前块（它们本来就属于同一个 block 的边界）。
     if (t.level === 0 && !t.type.endsWith("_close")) {
       if (t.hidden && current && t.type !== "heading_open") {

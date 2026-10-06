@@ -22,7 +22,8 @@ describe("markdown pipeline", () => {
     // 每个标题被切成「开标签块 + 闭标签块」两块：24 行标题交出 48 块、闭标签块
     // `lineStart` 恒为 1、html 只有 `</h1>`。这些空壳块混进预览的 `this.blocks` 后，
     // `indexOfBlockAtOffset` 永远命中顶边相同却 lineStart=1 的伪块 ⇒
-    // `topBlockStartLine()` 恒返回 1 ⇒ 跨侧收口把源码钉回第 1 行（B244 四标签复核）。
+    // 预览那份游标恒为 1（B257 后 = 块首行 + 0 比例的 `v`）⇒ 跨侧收口把源码钉回第 1 行
+    // （B244 四标签复核）。
     const src = Array.from({ length: 24 }, (_, i) => `# 标题 ${i + 1}`).join("\n");
     const blocks = renderBlocks(src);
     expect(blocks).toHaveLength(24); // 不是一个块对两段 token

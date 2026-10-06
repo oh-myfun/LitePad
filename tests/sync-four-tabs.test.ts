@@ -270,8 +270,10 @@ const A = 12 * ROW;
 // 预览侧对应位置 A'：**同一个块**（行 13）的顶边。
 //
 // ⚠️ 这两个值**从块几何推导，绝不写死**：
-//    `applySyncToLine` 落点就是 `块顶`（ANCHOR = 0，不减不增），
-//    而 `topBlockStartLine()` 用 `scrollTop + TOP_PROBE` 反算回同一个块 ⇒ 两个方向自洽。
+//    `applySyncToLine` 落点 = `块顶 + 块内比例 × 块高`（ANCHOR = 0，不减不增；B257 起跨侧
+//    **不丢**小数），而 `topVisibleLine()`（B251 的 `topBlockStartLine()` 已删）用
+//    `scrollTop + TOP_PROBE` 反算回同一个 `v` ⇒ 两个方向自洽 —— 本用例只量「顶」这一档
+//    （AP 压在块顶 ⇒ 比例恒 0），小数那档另由 `sync-push-cross` / `cross-roundtrip` 盯。
 //    块高不等宽时「第 13 块的顶」≠ 168，写死就会先炸桩的前提断言（B246 教训）。
 //    别把这 8 写成 0，否则量的是「落点漂 8px」而不是「四格稳不稳」。
 const AP = topOfBlock(12);
@@ -439,7 +441,7 @@ describe("B243 复核：两面板 / 四标签（a 源码 + b 预览 同栏，c �
 
     clickTab(0, 1); // 激活预览 tab b，源码 a 离屏
     await wait(240);
-    userScroll(previewOf(0), AP); // 预览顶正好落在块 12（顶，与 topBlockStartLine 同口径）
+    userScroll(previewOf(0), AP); // 预览顶正好落在块 12（顶 ⇒ 块内比例 0，B257 起仍照交完整 v）
     await wait(240);
 
     clickTab(0, 0); // 切回源码 a —— 此刻收口被 B247 守卫挡着，位置只能来自它自己的槽

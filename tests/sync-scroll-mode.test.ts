@@ -193,15 +193,31 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
     // ⚠️ 判据带完整结构（判空 + return 一整条）：只写 `t.viewMode === "preview"` 会连
     //    `syncSourceSnapshot` 里那句同形的判空一起命中，退化打不掉就变假绿。
     expect(SYNC_V, "源那侧要先认出预览容器（源是预览就走预览那侧）").toMatch(
-      /if \(t\.viewMode === "preview"\) \{/,
+      /if \(t\.viewMode === "preview"\) return/,
     );
-    // ⚠️ B251 之后跨侧口径**又验回来**（用户报：切换 tab 往上偏移又出现）：预览的比例归一
-    //    在**块高**上、源码侧 `sourceTopOfV` 按**行高**插 ⇒ 跨侧交完整 `v` 会按
-    //    `ratio × (块高 − 块行数×行高)` 偏出去，且预览渲染普遍偏松 ⇒ **恒偏上**。
-    expect(SYNC_V, "跨侧（预览⇄源码）只交整数块首").toContain("p?.preview?.topBlockStartLine()");
-    expect(SYNC_V, "同侧（跟随推给预览兄弟）才交完整 v").toContain("p?.preview?.topVisibleLine()");
-    // ⚠️ B251 → 本轮：跟随里 `v` 是**逐个兄弟现取**的（兄弟是源码走跨侧、是预览走同侧），
-    //    不再是一个 `v` 推全场；跨窗广播那份用跨侧口径（同源同排版、整数最稳）。
+    // ⚠️⚠️ B257 翻案：这两条以前是「跨侧只交整数块首 / 同侧才交完整 `v`」的**跨侧档**
+    //    （B251 立的，本轮撤掉）。撤它的理由（自测台 `tests/sync-stability.test.ts` 实测）：
+    //      源码停 287（走了一行的一半）⇒ 切模式一来一回变成 280（丢了半个行高）；
+    //      预览停 847（走了一块 1/6）⇒ 切标签一轮变成 840（丢了 1/6 块高）。
+    //    每跨一次侧吃掉一格比例，来回切就是「位置越来越歪」—— 用户报的「有些偏移的小问题」。
+    //    ⚠️ 立论本来就站不住：`topVisibleLine()` 读是 `start + ratio × range`（×range 把
+    //      块高折回**行**）、`applySyncToLine` 写是 `into / range`（除回去），**乘除抵消**
+    //      ⇒ 两边小数是同一个「走了一格多少」的量，不是「块高比例 vs 行高比例」两回事。
+    //    ⇒ 现在**只有一档**：一律交完整 `v`；下面三条反向闸就是防它再退回去。
+    expect(SYNC_V, "源是预览 ⇒ 取预览那一行号（带块内比例的小数）").toContain(
+      "return p?.preview?.topVisibleLine() ?? null;",
+    );
+    expect(SYNC_V, "不许退回 cross 档（跨侧丢小数 = 每切一次丢一格比例）").not.toMatch(
+      /syncSourceV\(t: Tab \| undefined, cross/,
+    );
+    expect(SYNC_V, "预览侧不许退回整数块首（旧版跨侧那一档）").not.toMatch(
+      /p\?\.preview\?\.topBlockStartLine\(\)/,
+    );
+    expect(SYNC_V, "源码侧不许退回 Math.floor 成整数顶行（旧版跨侧那一档）").not.toMatch(
+      /Math\.floor\(topVisibleLineFrac/,
+    );
+    // ⚠️ B251 → B257：跟随里 `v` 是**逐个兄弟现取**的（每份兄弟自己问一次源停在哪一侧），
+    //    不再是一个 `v` 推全场（旧的 `cross` 档按「源与目标是否分处两侧」现算要不要丢小数）。
     //    只写 `syncSourceV(` 会连收口 / 交接里那两处一起命中，退化打不掉 ⇒ 必须带调用形态。
     // ⚠️⚠️ 反向闸（本轮翻案，钉死「跨侧是相对关系」）：跨侧问的是**源与目标是否分处
     //    两侧**，所以判据必须拿**源**去比。历史错相是 `other.viewMode !== "preview"` ——
@@ -216,12 +232,16 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
     expect(pushBody(), "跨侧判据不许退回「目标是不是预览」的绝对判断（跨侧得拿源比）").not.toMatch(
       /syncSourceV\(src, other\.viewMode !==/,
     );
-    //    （收口那处不需要同型反向闸：528 行那条正向断言钉的是**完整关系串**，退成绝对
+    //    （收口那处不需要同型反向闸：那条正向断言钉的是**完整关系串**，退成绝对
     //    判断必然落空；再加一条只是恒真的冗余。）
-    expect(pushBody(), "跟随逐兄弟取值：源码兄弟走跨侧、预览兄弟走同侧").toContain(
-      "const v = syncSourceV(src, src.viewMode !== other.viewMode);",
+    // ⚠️ B257：跟随逐兄弟现取，但**不再按跨侧丢小数** ⇒ 每个兄弟拿的都是同一个完整 `v`。
+    //    只写 `syncSourceV(` 会连收口 / 交接里那两处一起命中，退化打不掉 ⇒ 必须带调用形态。
+    expect(pushBody(), "跟随逐兄弟取值：每份兄弟都现取一次完整 `v`").toContain(
+      "const v = syncSourceV(src);",
     );
-    expect(pushBody(), "跨窗广播也走跨侧口径").toContain("const v = syncSourceV(src, true);");
+    expect(pushBody(), "不许退回 cross 档（旧版按跨侧丢整数块首 / 整数顶行）").not.toMatch(
+      /syncSourceV\(src, /,
+    );
     expect(pushBody(), "源码侧坐标走带行内比例的小数（B174：取整会让跟随变阶梯）").toMatch(
       /topVisibleLineFrac/,
     );
@@ -232,19 +252,20 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
     //    「源显示在哪一侧」这个判断在本文件里**只剩这一处** —— 它错一处，三条路同时错。
     //    判据钉住两个分支各自走哪一侧的几何，并锁死「不许拿快照槽当游标」那一面
     //    （`t.scrollTop` 是双语义槽：源码侧存编辑器像素、预览侧存预览像素）。
-    // ⚠️ 两条分支（跨侧 / 同侧）分别钉住 —— 只写 `topVisibleLine()` 会让「跨侧退化成交完整
-    //    v」那一档看不见（B251 之后真机偏上就是这一档失效造成的）。
-    expect(SYNC_V, "源是预览且同侧（跟随）⇒ 取预览那一行号，小数 = 块内比例").toContain(
-      ": (p?.preview?.topVisibleLine() ?? null);",
+    // ⚠️⚠️ B257：这里原本钉的是「跨侧 / 同侧两条分支」(`cross` 一档分出来)，本轮合回一条
+    //    —— 跨侧**照交完整 `v`**（见上一处翻案：读 ×range / 写 /range 抵消，小数是同一个量，
+    //    丢掉就是每切一次丢一格比例）。下面正向钉「两侧各走哪一份几何」，反向闸钉
+    //    「不许再分这两档」。
+    expect(SYNC_V, "源是预览 ⇒ 取预览那一行号（小数 = 走了一块多少）").toContain(
+      "return p?.preview?.topVisibleLine() ?? null;",
     );
-    expect(SYNC_V, "源是预览且跨侧（推源码兄弟 / 交接 / 广播）⇒ 只交整数块首").toContain(
-      "? (p?.preview?.topBlockStartLine() ?? null)",
+    expect(SYNC_V, "源是源码 ⇒ 交 `topVisibleLineFrac`（小数 = 走了一行多少）").toContain(
+      "return topVisibleLineFrac(view, sourceCursorPx(t, view));",
     );
-    expect(SYNC_V, "两条分支都由 cross 这一个对象分出来").toMatch(/return cross\b/);
-    // ⚠️ 源码这一侧的 `cross` 是**本轮补的**（上一轮只修了预览那一侧）：源码的小数归一在
-    //    **行高**、`applySyncToLine` 的块内插值按**块高**走 ⇒ 跨侧交小数会恒偏下（用户报：
-    //    切源码/预览标签时另一个预览标签始终对不上）。跨侧取整、同侧才交小数。
-    //    ⚠️ 反向闸排前面：直接读实时 DOM（`topVisibleLineFrac(view, view.scrollDOM.scrollTop)`
+    expect(SYNC_V, "不许再分跨侧 / 同侧两档（cross 那一个对象已删）").not.toMatch(
+      /return cross \?/,
+    );
+    // ⚠️ 反向闸排前面：直接读实时 DOM（`topVisibleLineFrac(view, view.scrollDOM.scrollTop)`
     //    —— 既不走 `sourceCursorPx` 也不看 cross）是漏修那一版：真机上还原刚写完、被浏览器
     //    裁小那一帧，补推拿到的是偏小的像素 ⇒ 同文档预览兄弟被往上拖（B256，真机 1421→1043）。
     expect(SYNC_V, "源码侧不许直接读实时 DOM（还原没立住那一帧会把游标带歪）").not.toMatch(
@@ -254,12 +275,6 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
       SYNC_V,
       "源码侧取像素必须走 sourceCursorPx（DOM 与这份标签自己的槽不一致时按槽算）",
     ).toContain("sourceCursorPx(t, view)");
-    expect(SYNC_V, "源是源码且同侧 ⇒ 交 `topVisibleLineFrac`（小数 = 行内比例）").toContain(
-      ": topVisibleLineFrac(view, px);",
-    );
-    expect(SYNC_V, "源是源码且跨侧（推预览兄弟 / 收口 / 交接）⇒ 只交整数顶行").toMatch(
-      /return cross \? Math\.floor\(topVisibleLineFrac\(view, px\)\)/,
-    );
     // ⚠️ 反向闸排在正向之后也有效：B240 二轮实测「读快照槽 ⇒ 真实 260 只推出 100」，
     //    离屏兄弟的槽被写脏 ⇒ 用户报「未激活标签切过去对不上」。
     expect(SYNC_V, "双语义槽不许当游标（那会推出上一次的位置）").not.toMatch(
@@ -494,7 +509,9 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
   );
   const LAND_BODY = slice(PREVIEW_TS, "  private applySyncToLine(", "  private blockAtLine(");
   const SYNC_BODY = slice(main, "function applySyncToSibling(", "function syncSourceSnapshot(");
-  const LINE_TOP = slice(main, "function topVisibleLineOf(", "function recordScroll(");
+  // ⚠️ B257 换锚：终点从 `topVisibleLineOf`（那个取整版顶行函数已随「跨侧交完整 v」一起
+  //    删掉）换成紧邻的 `editorLineTopPx` —— 锚点失效时 slice 静默返空串、判据全绿。
+  const LINE_TOP = slice(main, "function editorLineTopPx(", "function sourceTopOfV(");
 
   it("源那一格还没离屏就得把坐标采下来 —— 采点排在面板换页之前", () => {
     const sample = SWITCH_BODY.indexOf("syncSourceSnapshot(shownTab, tabId);");
@@ -543,43 +560,37 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
   });
 
   it("坐标口径与推兄弟那一路一致：源停在哪一侧就取哪一侧（都从唯一取值口取）", () => {
-    // ⚠️ 取值口**还是那一个**（`syncSourceV`），只是多了 `cross` 这一档 —— 源停在哪一侧
-    //    照旧由取值口自己认，跟随 / 收口 / 交接都不许再各取各的。
-    // ⚠️ 本轮补：收口**必须按跨侧取值**（上一版漏传 cross ⇒ 收口整条交小数 ⇒ 切 tab 时
-    //    源码的行内比例被预览当块内比例用，恒偏下）。判据要带 `viewMode` 那个跨侧判定，
-    //    只写 `syncSourceV(src)` 会被退化打不掉（退化成无参调用照样命中）。
-    expect(SNAP_BODY, "收口且源与接班这份跨侧 ⇒ 按跨侧取值").toContain(
-      "return syncSourceV(src, nextTab !== undefined && nextTab.viewMode !== src.viewMode);",
+    // ⚠️ 取值口**还是那一个**（`syncSourceV`），本轮 B257 只是把 `cross` 那一档删了 ——
+    //    源停在哪一侧照旧由取值口自己认，跟随 / 收口 / 交接都不许再各取各的，也不许再
+    //    「按跨侧丢小数」（丢掉的就是切换时那一点偏移：源码 287 ⇒ 280、预览 847 ⇒ 840）。
+    expect(SNAP_BODY, "收口走唯一取值口，交完整 `v`").toContain("return syncSourceV(src);");
+    // ⚠️ 反向闸：不许退回「按跨侧判据现算要不要丢小数」那一版（收口 / 跟随 / 切模式
+    //    三处各传一个 cross 实参）—— 那正是每跨一次侧吃一格比例的入口。
+    expect(SNAP_BODY, "收口不许退回 cross 档（跨侧丢了小数 ⇒ 切 tab 就偏）").not.toMatch(
+      /syncSourceV\(src, /,
     );
-    // ⚠️ 反向闸排前面：漏传 cross 那一版（无参调用）不许回来。
-    expect(SNAP_BODY, "收口不许退回无参调用（那就等于跨侧也交小数）").not.toMatch(
-      /return syncSourceV\(src\);/,
+    expect(pushBody(), "跟随也只经唯一取值口（逐兄弟现取，不按跨侧丢小数）").toContain(
+      "const v = syncSourceV(src);",
     );
-    expect(pushBody(), "跟随也只经唯一取值口（逐个兄弟按同侧/跨侧取）").toContain(
-      "const v = syncSourceV(src, src.viewMode !== other.viewMode);",
-    );
+    expect(pushBody(), "跟随不许退回 cross 档").not.toMatch(/syncSourceV\(src, /);
     // ⚠️ 反向闸：不许退回「三处各取各的」（收口/跟随/切模式各一套）。
     expect(SYNC_BODY, "落点不许再手拼坐标").not.toMatch(/editorLineTopPx\(view, line\)/);
   });
 
-  it("跨侧交整数块首：小数这一档只留给同侧（带过去是另一个量纲，恒偏上）", () => {
-    // ⚠️ 本轮推翻 B251 的那条判据（用户报：切换 tab 往上偏移又出现）：
-    //   B243 时预览侧交「块起始行」是档在 CM6 的上取整上，B251 把因果判反了 —— 真病根是
-    //   **跨侧覆盖**（B247 那条守卫），不是「交整数」。于是跨侧（预览⇄源码）**请回**只交
-    //   整数块首：预览的比例归一在**块高**上、源码侧 `sourceTopOfV` 按**行高**插，直接把
-    //   带块内比例的 `v` 喂过去 ⇒ 落点差 `ratio × (块高 − 块行数×行高)`，而预览渲染普遍比
-    //   源码松 ⇒ 偏差**恒为往上** = 用户看到的「越切越靠顶」。
-    expect(SYNC_V, "跨侧那档只交整数块首（小数 0，跨侧零偏差）").toContain(
-      "? (p?.preview?.topBlockStartLine() ?? null)",
+  it("跨侧交完整 v：小数是「走了一格多少」，跨侧照带（丢了就是每切一次偏一格）", () => {
+    // ⚠️⚠️ 本条是 B257 **把 B251 那条判据翻过来**的地方（自测台 `tests/sync-stability.test.ts`
+    //    实测，不是纸上推演）：B251 立的是「跨侧只交整数块首 / 整数顶行（小数 0），因为两个
+    //    小数归一在不同高度上（行高 vs 块高）」。
+    //    · 事实层面：丢掉的小数正好是「这一格走了多少」—— 源码 287（半行）⇒ 切模式一轮
+    //      变 280（整行顶）；预览 847（块内 1/6）⇒ 切标签一轮变 840。每跨一次侧吃一格比例。
+    //    · 立论层面也不成立：`topVisibleLine()` 读是 `start + ratio × range`（×range 把块高
+    //      折回**行**），`applySyncToLine` 写是 `into / range`（除回去），**乘除抵消** ⇒
+    //      两侧小数是同一个量，不是「行高比例 vs 块高比例」两种东西。
+    //    ⇒ 现在只有一档：跨侧照交完整 `v`。
+    expect(SYNC_V, "跨侧（预览⇄源码）也走完整 v，整数块首那档已删").toContain(
+      "return p?.preview?.topVisibleLine() ?? null;",
     );
-    // ⚠️ 反向闸（两条）：不许退回「跨侧也交完整 v」—— 那正是复发的根因。
-    //    带 `cross` 那一档写出来是三行，只扫 `topVisibleLine` 会连同侧那一档一起命中 ⇒ 假绿。
-    expect(SYNC_V, "不许退回「跨侧也交完整 v」（那是 B247 复发的入口）").not.toMatch(
-      /return cross\s*\n\s*\? \(p\?\.preview\?\.topVisibleLine\(\)/,
-    );
-    expect(pushBody(), "跟随：源码兄弟走跨侧那档").toContain(
-      "const v = syncSourceV(src, src.viewMode !== other.viewMode);",
-    );
+    expect(pushBody(), "跟随逐兄弟现取，不按跨侧丢小数").toContain("const v = syncSourceV(src);");
     // 落点那一侧必须**真的按行高插值**，而不是把小数丢给 CM6 让它自己上取整。
     // ⚠️ B251 换锚：这句换算如今只在 `sourceTopOfV` 里出现一次 ⇒ 判据盯它自己的函数体。
     expect(SOURCE_TOP, "落点要按行高显式插值（不许把小数丢给 CM6 上取整）").toContain(
@@ -589,12 +600,18 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
 
   it("切源码/预览那一路（toggleViewMode）与收口同一个出口（两条路径同一口径）", () => {
     const body = slice(main, "function toggleViewMode(", "function openPreviewToSide(");
-    // ⚠️ 本轮新判据：切源码/预览是**跨侧**（预览 ⇄ 源码）⇒ 取值口必须带 `cross = true`。
-    //    不带就交出带块内比例的完整 `v`，落点会按 `ratio × (块高 − 块行数×行高)` 恒偏上
-    //    （用户报：切换 tab 往上偏移又出现）。只写 `syncSourceV(tab` 会连收口那处一起
-    //    命中，退化打不掉 ⇒ 必须把 `, true` 一起钉住。
-    expect(body, "切模式是跨侧交接 ⇒ 取值口带 cross").toContain(
-      "const v = syncSourceV(tab, true);",
+    // ⚠️ B251 那会儿这里钉的是「跨侧交接 ⇒ 取值口带 `cross = true`」，本轮 B257 翻案删掉
+    //    那一档：切模式是跨侧（预览 ⇄ 源码），但不许丢小数 —— 丢了就是每切一次模式丢半行
+    //    （自测台：源码 287 ⇒ 一来一回变 280）。只写 `syncSourceV(tab` 会连收口那处一起
+    //    命中，退化打不掉 ⇒ 把调用形态整条钉住；判空那句另钉（见下面两条反向闸）。
+    expect(body, "切模式交接走唯一取值口，交完整 `v`").toContain("const v = syncSourceV(tab);");
+    // ⚠️ 反向闸两条，退化方向都是「把 cross 档请回来」（跨侧只交整数块首 / 整数顶行）：
+    //    只写 `, true` 会连收口 / 跟随那两处一起命中 ⇒ 退化打不掉就变假绿。
+    expect(body, "切模式不许退回 cross 档（跨侧只交整数顶行 ⇒ 每切一次丢半行）").not.toMatch(
+      /syncSourceV\(tab, /,
+    );
+    expect(SYNC_V, "取值口不许再分跨侧 / 同侧两档").not.toMatch(
+      /syncSourceV\(t: Tab \| undefined, cross/,
     );
   });
 
@@ -701,9 +718,8 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
     expect(PREVIEW_BRANCH, "落点要按返回值判空再记").toContain(
       "if (landed !== null) recordScroll(other.tabId, landed);",
     );
-    // ⚠️ 本轮换锚：这一路收的是**同侧**那份（跟随才连续），小数不再被 `Math.floor` 掐掉
-    //    （含块内比例）；跨侧那一档小数是 0（见 `syncSourceV` 的 `cross`）。判据仍是
-    //    「补记快照只认程序定位的返回值」，不是改松。
+    // ⚠️ B257 换锚：小数不再被 `Math.floor` 掐掉（跨侧也交完整 `v`，见 `syncSourceV` 翻案）。
+    //    判据仍是「补记快照只认程序定位的返回值」，不是改松。
     expect(PREVIEW_BRANCH, "落点来自程序定位那一路的返回值").toContain(
       "preview.syncToLineProgrammatic(v);",
     );
@@ -901,8 +917,8 @@ describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚�
     // 的钩子 ⇒ 图片 / KaTeX / Shiki 一增强完，预览就自己跳一下。
     // B162：纪律收进 `syncToLineProgrammatic`（程序定位入口自带「不留尾巴」+ 程序定位
     // 窗口），调用点换过去；入口自身「不留尾巴」在 preview-sync 那侧盯。
-    // ⚠️ 本轮换锚：小数不再被 `Math.floor` 掐掉 ⇒ 直接交同侧那份 `v`（预览侧按块内比例
-    //    插值）；跨侧那一档小数是 0。这条**正向**判据盯的是「不许退回 syncToLine」。
+    // ⚠️ 本轮换锚：小数不再被 `Math.floor` 掐掉 ⇒ 直接交完整那份 `v`（预览侧按块内比例
+    //    插值）。这条**正向**判据盯的是「不许退回 syncToLine」。
     expect(PUSH_BODY, "预览分支要走程序定位入口").toMatch(/preview\.syncToLineProgrammatic\(v\)/);
     expect(PUSH_BODY, "不许再走会留尾巴的 syncToLine").not.toMatch(/preview\.syncToLine\(line\)/);
   });
@@ -1483,7 +1499,7 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
     //    锚点留在那儿等于退化做了个寂寞（B163 同型）。现在退化 `syncSourceV` 的**预览
     //    分支**：拿双语义槽 `t.scrollTop`（此刻装的是预览像素）当游标 ⇒ 推给源码兄弟的
     //    是预览像素，两个面板互相拉。（另一半「源码侧读快照槽」见下一条。）
-    const ORIG = ": (p?.preview?.topVisibleLine() ?? null);";
+    const ORIG = "return p?.preview?.topVisibleLine() ?? null;";
     expect(SYNC_V, "退化串要先自证原句还在").toContain(ORIG);
     // ⚠️ 退化成「`: return t.scrollTop;`」而不是「`: t.scrollTop;`」—— 退化后的串要能命中
     //    正向契约那条 `return (t|src).scrollTop`，少了 `return` 两道判据一起落空 ⇒ 假绿
@@ -1494,7 +1510,9 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
     //    「双语义槽不许当游标」也随之红掉，两道判据一起报）。
     expect(body, "退化串确实换了写法（预览侧改读槽）").toContain("return t.scrollTop;");
     // 关键判空：预览侧不再按自己那侧的几何取 v ⇒ 上面那条正向契约必须红。
-    expect(body, "退回后源在预览里不再按预览几何取 v").not.toContain("topVisibleLine()");
+    expect(body, "退回后源在预览里不再按预览几何取 v").not.toContain(
+      "p?.preview?.topVisibleLine()",
+    );
     // 退化落点自证（必须带 `return` —— 少了它「双语义槽不许当游标」那条也扫不中，两道
     //   判据一起落空 ⇒ 假绿。这条退化验上一轮就栽在锚点写死的形态上，B163 同型）。
     expect(body, "退化串里确实出现「读槽当游标」那一笔").toContain("return t.scrollTop;");
@@ -1506,13 +1524,13 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
     //    —— 退化串改锚到那一句，退回成读快照槽 `t.scrollTop` ⇒ 滞后一帧、且槽里存的
     //    还是上一次的编辑器像素。两条退化各打各的那半边。
     // ⚠️ 本轮换锚：源码分支现在整条是
-    //    `return cross ? Math.floor(topVisibleLineFrac(view, px)) : topVisibleLineFrac(view, px);`
-    //    而 `px` 出自 `sourceCursorPx`（DOM 与槽不一致 ⇒ 用槽）。退化打**整条 return**：
-    //    退回读槽 `t.scrollTop` 会把 `topVisibleLineFrac(view, px)` 一起抹掉 ⇒ 上面
-    //    「不许直接读实时 DOM」「跨侧那一半要取整」两条契约随之落空 ⇒ 不许靠它们兜（假绿），
+    //    `return topVisibleLineFrac(view, sourceCursorPx(t, view));`
+    //    而 `sourceCursorPx`（DOM 与槽不一致 ⇒ 用槽）是像素的实时出口。退化打**整条 return**：
+    //    退回读槽 `t.scrollTop` 会把 `topVisibleLineFrac(view, …)` 一起抹掉 ⇒ 上面
+    //    「不许直接读实时 DOM」等几条契约随之落空 ⇒ 不许靠它们兜（假绿），
     //    下面这条 `not.toContain("topVisibleLineFrac(view)")` 才是自证。
-    const ORIG =
-      "return cross ? Math.floor(topVisibleLineFrac(view, px)) : topVisibleLineFrac(view, px);";
+    // ⚠️ B257：这一档不再有 `cross` 分支，所以退化串**只退化这一条 return**，前后各分支都不动。
+    const ORIG = "return topVisibleLineFrac(view, sourceCursorPx(t, view));";
     expect(SYNC_V, "退化串要先自证原句还在").toContain(ORIG);
     const degraded = main.replace(ORIG, "  return t.scrollTop;");
     const body = slice(degraded, "function syncSourceV(", "function viewportOfTab(");
@@ -1627,7 +1645,9 @@ describe("B160 反向验证：退回旧写法，上面那四条必须变红", ()
 // 跳，推给预览的坐标跟着抖（用户反复报的「预览跟随整页重渲染 / 跳动」，而 TOC 一次性大跳
 // 反而没问题 —— 一次性定位不走分数坐标）。修法：比例算在**整条逻辑行**的高度上。
 describe("B175 同步跟随坐标按整条逻辑行算行内比例（折行段落不抖）", () => {
-  const FRAC = slice(main, "function topVisibleLineFrac(", "function topVisibleLineOf(");
+  // ⚠️ B257 换锚：终点 `topVisibleLineOf`（取整版顶行函数）已删 ⇒ 换成紧邻的
+  //    `editorLineTopPx`（锚点失效 slice 会静默返空串、判据全绿，务必回读确认非空）。
+  const FRAC = slice(main, "function topVisibleLineFrac(", "function editorLineTopPx(");
   it("topVisibleLineFrac 取整条逻辑行的顶与下一行顶之差当总高，再算进入比例", () => {
     // 单行视觉块高度（block.height）当总高 ⇒ 折行段落里行号卡死。必须取这一行的首视觉块
     // 顶（lineTop）与下一行顶（nextTop）之差当整条逻辑行的高度。
@@ -1646,7 +1666,15 @@ describe("B175 同步跟随坐标按整条逻辑行算行内比例（折行段�
     // 源面板自己的预览也跟着阶梯跳（同一份抖动症状）。必须走 `topVisibleLineFrac`。
     const host = slice(main, "preview.setHost({", "lineCount: () =>");
     expect(host, "topVisibleLine 要返回带比例的小数").toMatch(/return topVisibleLineFrac\(v\);/);
-    expect(host, "不许再返回整数行号").not.toMatch(/return topVisibleLineOf\(v\);/);
+    // ⚠️ B257：`topVisibleLineOf`（整数顶行）已随「切模式交完整 v」删掉 —— 原来这条反向闸
+    //    扫的是它，现在恒真（假绿），改成扫**代码形态**：交出去之前不许先 `Math.floor`
+    //    把小数掐了（切模式交接那一趟掐掉小数 ⇒ 每切一次丢半行，自测台 287 ⇒ 280）。
+    expect(host, "不许把小数先掐成整数再交出去（切模式交接会丢半行）").not.toMatch(
+      /Math\.floor\(topVisibleLineFrac/,
+    );
+    expect(main, "整数版顶行函数不许再长回来（切模式不许交整数行）").not.toMatch(
+      /function topVisibleLineOf\(/,
+    );
   });
 
   it("B175 反向验证：退回单视觉块比例 → 「整条逻辑行高度」那条必须落空", () => {
@@ -1656,7 +1684,7 @@ describe("B175 同步跟随坐标按整条逻辑行算行内比例（折行段�
     const degradedFrac = slice(
       degradedMain,
       "function topVisibleLineFrac(",
-      "function topVisibleLineOf(",
+      "function editorLineTopPx(",
     );
     expect(degradedFrac, "退化后不再按整条逻辑行算高").not.toMatch(/nextTop - lineTop/);
     expect(degradedFrac, "退化后单块高度又回来了").toMatch(/const h = block\.height \|\| 1;/);

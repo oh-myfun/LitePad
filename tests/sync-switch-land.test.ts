@@ -292,7 +292,15 @@ describe("B256：切回源码时，别的预览不许被「还原没立住的那
     await wait(280);
     const before = right.scrollTop;
     expect(before, "前提：右分屏预览已被正常跟随推过位置（不是压根没跟随）").toBeGreaterThan(0);
-    expect(before % BLOCK, `前提：跟随落点压在块顶（块高 ${BLOCK}px），实际 ${before}`).toBe(0);
+    // ⚠️ B257（旧判据是 `toBe(0)`：跟随落点**压块顶**，那正是 B251 的「跨侧丢小数」口径）。
+    //    现在跨侧照交完整 `v` ⇒ 落点 = 块顶 + 「行内比例 ÷ 该块跨几行」× 块高，**不压块顶**。
+    //    ⇒ 这里的牙翻个方向：退回「跨侧丢小数 ⇒ 只交整数块首」⇒ 余数恒 0 ⇒ 这条红。
+    //    ⚠️ 绝对值（落点到底算不算「对齐源」）由 `sync-stability` 的前提 + `sync-push-cross`
+    //       盯（本用例是相对比较：②/③ 只比切标签前后同不一样，落点本身对不对它判不了）。
+    expect(
+      before % BLOCK,
+      `前提：跟随落点带住块内比例（块高 ${BLOCK}px），实际 ${before}（余数 ${before % BLOCK}）`,
+    ).not.toBe(0);
 
     // ② 切到左分屏的预览标签：收口只落左预览，右预览照旧（真机 09.121 那条）
     clickTab(0, 1);
