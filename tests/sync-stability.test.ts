@@ -35,6 +35,19 @@ const SRC_PX = ROW * 20 + 7; // 280 ⇒ 第 21 行顶；+7 ⇒ 行内走到一�
 const LANDED = BLOCK * 20 + BLOCK / 2;
 /** 「还原刚写完、内容还没撑开」那一帧的可滚上限（px）：把 287 裁成 140。 */
 const CLAMP_PX = ROW * 10;
+/** 视口高（px）：3 行 ⇒ 源码自然上限 = 24×14 − 42 = **294**（≥ SRC_PX 287，留 7px 富余）。 */
+const VIEW_H = ROW * 3;
+/**
+ * ⚠️ 预览的自然上限 = 24 × BLOCK − VIEW_H = 966（≥ LANDED 861，富余 105px）。
+ *
+ * ⚠️⚠️ **B258 取证需要的那一层**：真机上「滚到底」不是「滚到某个固定值」，而是
+ * `scrollTop` 被浏览器按 **内容高 − 视口高** 裁住 —— 源码 24 行×14 = 336，预览 24 块×42 =
+ * 1008，**两侧上限差 3 倍**。于是「预览滚到底」时源码那一格**到底不了**（钉过去的值超上限
+ * 被裁），再切回预览，接班那一份按 `v` 落、兄弟那一份停在上一趟推播被裁后的值 ⇒ 两格错位。
+ * 旧的桩只装了**测试可改的** `editorMax` / `previewMax`（都是 `Infinity`）⇒ 永远不裁 ⇒
+ * 这条路径在桩里**必然全绿**，连根因都照不到。这里再叠一层**自然上限**（更硬，取 min）。
+ */
+const PREVIEW_MAX_PX = 24 * BLOCK - VIEW_H;
 
 /**
  * md 正文：**一行一个标题** ⇒ 预览块 k 与源码行 k+1 一一对应，块顶 = k×BLOCK。
@@ -240,6 +253,9 @@ const clamped = new WeakSet<HTMLElement>();
  *
  * ⚠️ 只在**实例上**覆盖：jsdom 的 `Element.prototype.scrollTop` 只存值、不裁剪 ——
  *    不补，真机上「写入被裁小」那整个窗口在桩里压根不存在，断言就退化成恒绿。
+ *
+ * ⚠️ B258：上限取 **两层 min** —— 测试可控的 `max()`（造「内容还没撑开」那一帧）与
+ *    内容高 − 视口高（真实浏览器那层，永远在）。只留前者 ⇒ 桩永远滚不到底 ⇒ 这条路径绿。
  */
 function installClamp(el: HTMLElement, max: () => number): void {
   if (clamped.has(el)) return;
@@ -249,9 +265,18 @@ function installClamp(el: HTMLElement, max: () => number): void {
     configurable: true,
     get: () => st,
     set: (v: number) => {
-      st = Math.min(Math.max(v, 0), max());
+      st = Math.min(Math.max(v, 0), Math.min(max(), naturalMax(el)));
     },
   });
+}
+
+/** 容器「内容高 − 视口高」的自然上限（每次写入按**当前** DOM 算，内容换过也跟得上）。 */
+function naturalMax(el: HTMLElement): number {
+  const isEditor = el.classList.contains("cm-scroller");
+  const rows = isEditor
+    ? el.querySelectorAll(".cm-line").length
+    : el.querySelectorAll("[data-line-start]").length;
+  return Math.max(0, rows * (isEditor ? ROW : BLOCK) - VIEW_H);
 }
 
 function clickTab(panelIdx: number, i: number): void {
@@ -419,6 +444,41 @@ describe("B257：同步滚动 / 切模式 / 切标签三路往返，落点必须
         )} → 现在 ${JSON.stringify(now)}）；轨迹末 30 条：\n${dumpLogs(30)}`,
       ).toEqual(before);
     }
+  });
+
+  it("B258 取证：预览滚**到底** → 切源码 → 切回预览 ⇒ 兄弟预览（右分屏）要跟着对齐", async () => {
+    // 用户原话：「如果是预览模式标签滚动到底，切换到源码模式标签，…再次切换回同分屏的
+    // 预览模式标签可以看到该标签内的 top 位置同步到了源码 top 行对应的位置，但是**其他
+    // 分屏的预览模式标签 top 位置没有同步**」。
+    //
+    // 机理（桩补上「自然上限裁切」后就能量到）：预览到底 = 966（内容 1008 − 视口 42），
+    // 「块内比例」按 3 行/块折成行号 ⇒ 源码那侧的目标像素 336 **超过源码自然上限 294**
+    // ⇒ 源码被裁到 294（「源码也滚动到底了，但 top 不对应预览 top」）。
+    // 切回预览时收口只写**接班那一份**，B241 让 `switchTab` 尾那趟推播整个跳过 ⇒
+    // 兄弟那一份停在上一趟被裁过的值 ⇒ 两格错位。
+    clickTab(0, 1); // 左分屏切到预览标签（源 = 预览）
+    await wait(320);
+    userScroll(previewOf(0), PREVIEW_MAX_PX + 99); // 故意超上限 ⇒ 真·滚到底
+    await wait(320);
+    const pvTop = previewOf(0).scrollTop;
+    expect(pvTop, "前提：预览确实停在自己的自然上限（滚到底了）").toBe(PREVIEW_MAX_PX);
+
+    clickTab(0, 0); // 源=预览 → 切源码（B247 守卫挡收口 ⇒ aligned=false ⇒ 这趟会推兄弟）
+    await wait(340);
+    clickTab(0, 1); // 切回预览：收口只写这一格 ⇒ 兄弟那趟推播被 B241 跳过
+    await wait(380);
+    const left = previewOf(0).scrollTop;
+    const right = previewOf(1).scrollTop;
+    // ⚠️ 这条就是这一轮要钉的牙：右预览（兄弟）必须与左预览（接班那一份）完全同位。
+    expect(
+      right,
+      `切回预览后兄弟预览没跟上（左 ${left} / 右 ${right}；滚前 ${pvTop}）` +
+        `\n轨迹末 30 条：\n${dumpLogs(30)}`,
+    ).toBe(left);
+    // ⚠️ 取证用完复位：后面那条 B256 用例的前提是「左分屏停在源码 tab」，
+    //    本条把它停在预览 tab ⇒ 不复位会串味（B256 那条会红在「下一帧源必须回到自己那份」）。
+    clickTab(0, 0);
+    await wait(320);
   });
 
   it("还原那一帧被裁小的窗口里切标签，右分屏预览不许被带走（B256 回归 + 多轮）", async () => {

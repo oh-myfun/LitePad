@@ -923,9 +923,23 @@ function broadcastSyncPos(src: Tab, v: number | null): void {
  * 窗口。光标 / 输入那一路**不**播：在窗口里敲一个字就带着另一个窗口跳，那不叫
  * 同步滚动，叫打字干扰。
  */
-function pushSyncToSiblings(src: Tab, crossWindow = false): void {
+/**
+ * @param opts.v        **覆盖取值口**（B258）：调用方手上已经有一个与收口同一个口径的 `v`
+ *                      （离屏前采的那一份）时传进来 —— 收口生效后的那趟补推就靠它保证
+ *                      「兄弟与接班那一份用的是同一个数」。不传则照旧走 `syncSourceV(src)`。
+ * @param opts.skipTabIds 要**排除**的实例（B258）：收口已经把「源」和「接班那一份」写好了，
+ *                      再推一次是把它们自己的位置也改掉（B241 明确禁止），只推其余兄弟。
+ */
+function pushSyncToSiblings(
+  src: Tab,
+  crossWindow = false,
+  opts: { v?: number | null; skipTabIds?: number[] } = {},
+): void {
   if (docSyncModes.get(src.docId) !== true) return;
-  const sibs = instancesOfDoc(src.docId).filter((t) => t.tabId !== src.tabId);
+  const skip = opts.skipTabIds ?? [];
+  const sibs = instancesOfDoc(src.docId).filter(
+    (t) => t.tabId !== src.tabId && !skip.includes(t.tabId),
+  );
   // B164：本地没有兄弟**不代表**没人跟着 —— 卫星窗口里那份是「主窗口还攥着一份」的
   // 唯一本地实例，从这里 return 会把末尾的跨窗口广播一并跳过（用户报：子窗口滚动
   // 带不动主窗口同一文件的其他标签）。光标那一路（`crossWindow=false`）没有广播可发，
@@ -959,7 +973,7 @@ function pushSyncToSiblings(src: Tab, crossWindow = false): void {
   //    推就排在这个窗口里，拿它当源 ⇒ 同文档的预览兄弟被往**上**拖一整段（真机 1421→1043），
   //    且因为每轮切回来都复现同一条路径，歪值冻在那里「之后怎么切都不动」。所以像素走
   //    `sourceCursorPx`（DOM 与槽不一致 ⇒ 用槽），别再直接 `view.scrollDOM.scrollTop`。
-  const v = syncSourceV(src);
+  const v = opts.v !== undefined ? opts.v : syncSourceV(src);
   // B167 定位用：同步滚动是「每秒几十次」的高频链路，抖起来只能靠日志看是谁在推谁。
   //   这几条全是 debug（默认 info 看不到，需在设置里把 log_level 调到 debug），
   //   排查时按 docId 过滤即可看出是不是「A 推 B、B 又推回 A」的拉锯。
@@ -1683,10 +1697,26 @@ function switchTab(panelId: number, tabId: number): void {
     // 「切换激活文档时则根据新的激活文档进行同步」。同步状态本身不动（按钮不复位）。
     // 排在 refreshTitle 之后：显隐与点亮态在这一帧已经就绪。
     //
-    // ⚠️ B241：收口已经让两边对齐 ⇒ 这一趟推播必须跳过。推播是把「接班这份的落位值」
-    //    写进兄弟（此刻正是源）的槽，跨侧换算每轮都不等值，照推就是把源也带歪
-    //    （来回切换位置会变化）。没收口（同步关 / 源没位置）时才需要它补一次对齐。
-    if (tab && !aligned) pushSyncToSiblings(tab);
+    // ⚠️ B241：没收口（同步关 / 源没位置）时才需要它补一次对齐 —— 推播会把「接班这份的
+    //    落位值」写进兄弟（此刻正是源）的槽，跨侧换算每轮都不等值，照推就是把源也带歪
+    //    （来回切换位置会变化）。
+    //
+    // ⚠️⚠️ **B258 补这一格**：收口（aligned）时**也不能整趟跳过**。收口只写**接班那一份**
+    //    一个格子，而同一时刻可能还有其他分屏挂着**同文档的预览**；那一趟跳过的推播正是
+    //    唯一能把兄弟按源坐标对齐的机会 ⇒ 兄弟永远停在「上一次被推到的值」上，与接班那
+    //    份错位（用户报：预览滚到底 → 切源码 → 切回预览，只有这一格跟着走，其他分屏的
+    //    预览没同步）。桩上实测 `左 882 / 右 966`（差 84px = 两个块高，日志里两趟的 `v`
+    //    分别是 24 与 21 —— 源码那一格被自然上限裁过，真值回不来了）。
+    //    ⇒ 收口生效时照样补推，但只推**其余兄弟**，且用 `syncSrc`（收口同一口径的那个
+    //    `v`），保证兄弟与接班那一份落在同一个数上。
+    if (tab && !aligned) {
+      pushSyncToSiblings(tab);
+    } else if (tab && syncSrc !== null && shownTab) {
+      pushSyncToSiblings(tab, false, {
+        v: syncSrc,
+        skipTabIds: [shownTab.tabId, tab.tabId], // 源与接班都已被收口写好，谁也不许再动
+      });
+    }
   }
   renderPanelTabs(panelId);
   // B224：该面板活动标签 md 与否可能变了（md ↔ 非 md 切换），操作区跟着刷一遍

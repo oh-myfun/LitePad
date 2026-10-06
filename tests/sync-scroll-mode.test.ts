@@ -369,10 +369,20 @@ describe("B152 同步滚动模式：推进与触发点", () => {
     );
     expect(main, "用户滚动之后要推：谁滚谁当源").toMatch(/if \(t\) pushSyncToSiblings\(t, true\);/);
     // 「切换激活文档时则根据新的激活文档进行同步」—— 这一句就落在 switchTab 末尾。
-    // ⚠️ B241：这一趟现在带闸门 —— 收口已经让两边对齐时不许再推（回推会把换算值
-    //    刷回源那一格）。判据要认全带闸门那一整条，别再盯旧的无闸门写法。
-    expect(main, "切激活文档后要按新源推").toMatch(
-      /if \(tab && !aligned\) pushSyncToSiblings\(tab\);/,
+    // ⚠️ B241：这一趟带闸门 ——「没收口」才推全部兄弟（回推会把换算值刷回源那一格）。
+    //    判据要认 prettier 折行后的「条件 + 换行 + 调用」整块，别只认半句。
+    expect(main, "切激活文档后要按新源推（没收口那一支）").toMatch(
+      /if \(tab && !aligned\) \{\n\s*pushSyncToSiblings\(tab\);/,
+    );
+    // ⚠️ B258 换锚（新增的一支）：收口**生效**时原本整趟跳过 ⇒ 兄弟那一格永远停在
+    //    上一次被推到的值上（用户报：预览滚到底 → 切源码 → 切回预览，只有这一格跟着走）。
+    //    现在改成照样补推，但只推**其余兄弟**（源与接班都已被收口写好），且沿用收口
+    //    同一个 `v` —— 判据盯这三件事：补推存在、排在不推那支的后面、用了 `syncSrc`。
+    expect(main, "收口生效那一支也要补推兄弟（否则兄弟停在旧值）").toMatch(
+      /\} else if \(tab && syncSrc !== null && shownTab\) \{\n\s*pushSyncToSiblings\(tab, false, \{\n\s*v: syncSrc,\n\s*skipTabIds: \[shownTab\.tabId, tab\.tabId\],/,
+    );
+    expect(main, "补推要排在「不推」那一支后面（两条互斥分支）").toMatch(
+      /\} else if \(tab && syncSrc !== null && shownTab\) \{/,
     );
     expect(main, "全局刷新兜底（新出现的那一份要对齐）").toMatch(/const act = activeTab\(\);/);
   });
@@ -701,14 +711,15 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
     );
   });
 
-  it("收口生效后不许再回推一次 —— 回推会把换算值刷回源那一格", () => {
-    // 切完那趟 `pushSyncToSiblings` 是把「接班这份的落位值」写回兄弟（此刻正是源），
-    // 跨侧换算每轮不等值 ⇒ 照推就是把源也带歪。闸门只在「没收口」时才放行。
-    const guard = main.indexOf("if (tab && !aligned) pushSyncToSiblings(tab);");
-    expect(guard, "切完那趟回推要留给没收口的情形").toBeGreaterThanOrEqual(0);
+  it("收口生效后不许回推源 —— 回推会把换算值刷回源那一格", () => {
+    // ⚠️ B258 换锚：原判据盯 `if (tab && !aligned) pushSyncToSiblings(tab);`（prettier 已折成
+    //    块，且现在多一支「收口生效 ⇒ 补推其余兄弟」）—— 换锚到同一处的**两半**语义：
+    //    「没收口 ⇒ 推全部 / 收口生效 ⇒ 只推其余兄弟且跳过源与接班」。
+    const NOT_ALIGNED = "if (tab && !aligned) {";
+    expect(main.indexOf(NOT_ALIGNED), "切完那趟回推要留给没收口的情形").toBeGreaterThanOrEqual(0);
     expect(ALIGN_BODY, "收口路径要有交回 true 的那一瞬").toContain("return true;");
     // 位置闸：闸门必须紧跟着收口调用出现（顺序本身是判据：先判 aligned 再决定推不推）。
-    const call = main.indexOf("if (tab && !aligned) pushSyncToSiblings(tab);");
+    const call = main.indexOf("if (tab && !aligned) {");
     const src = main.indexOf("const aligned = tab ? alignShownToSyncSource(");
     expect(src, "收口结果要接住，供下面的闸门用").toBeGreaterThanOrEqual(0);
     expect(src, "闸门排在收口调用之后（拿到结果才谈得上跳过）").toBeLessThan(call);
@@ -783,7 +794,10 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
     // 就会把另一个窗口拉过来，那不是同步滚动，是打字干扰。
     expect(PUSH_BODY, "广播函数挂在推送末尾").toMatch(/if \(crossWindow\) broadcastSyncPos\(/);
     expect(PUSH_BODY, "默认不许播").toMatch(
-      /function pushSyncToSiblings\(src: Tab, crossWindow = false\)/,
+      // ⚠️ B258 换锚：第三参 `{ … } = {}` 是收口后补推兄弟那一趟加的（传 `v` / `skipTabIds`
+      //    两个可选字段），prettier 顺势把签名折成多行 —— 判据认「默认不播」这个实义：
+      //    第二参 `crossWindow = false` 且 `broadcastSyncPos` 那道闸挂在它身上。
+      /function pushSyncToSiblings\(\s*src: Tab,\s*crossWindow = false,\s*opts: \{ v\?: number \| null; skipTabIds\?: number\[\] \} = \{\},\s*\): void/,
     );
     // 光标 / 输入那一路：不带第二个实参，走默认。
     expect(main, "光标那一半不许跨窗口（且不反推同步触发的那轮）").toMatch(
@@ -792,8 +806,10 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
       /if \(!suppressSyncPush && isSyncSource\(tab, panel\) && syncingCursorDocId !== tab\.docId\)\n\s*pushSyncToSiblings\(tab\);/,
     );
     // 切激活文档 / 全局刷新这两路也不播：那是「本地对齐」，不是用户滚动。
+    // ⚠️ B258 换锚：签名已折成多行，旧锚 `/function pushSyncToSiblings\(src: Tab, crossWindow = false\)/`
+    //    会静默失配 —— 这里认「默认第二参 false + 第三参省略」这两件事实质，不是放宽。
     expect(main, "切激活文档那路不播").toMatch(
-      /if \(tab && !aligned\) pushSyncToSiblings\(tab\);\n/,
+      /if \(tab && !aligned\) \{\n\s*pushSyncToSiblings\(tab\);\n/,
     );
     // ⚠️ B251 换锚：单参 `v`（旧写法是 `px, line` 两个 —— 「跨侧只交整数块首」那两个
     //    补丁的产物，正是 B247「每切一轮往上掉」的病根）。
