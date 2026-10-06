@@ -100,13 +100,13 @@ describe("PreviewPane.syncToLine 定位精度", () => {
     const { pane, root } = paneWithBlocks();
     // 行 4 → block(4..9)：rectTop 140 - 容器 40 = 100 → scrollTop = 92
     pane.syncToLine(4);
-    expect(root.scrollTop).toBe(100 - 8);
+    expect(root.scrollTop).toBe(100);
     // 行 1 → 第一块：0 → max(0, -8) = 0
     pane.syncToLine(1);
     expect(root.scrollTop).toBe(0);
     // 行 12 → 第三块：340-40=300 → 292
     pane.syncToLine(12);
-    expect(root.scrollTop).toBe(300 - 8);
+    expect(root.scrollTop).toBe(300);
   });
 
   it("block 内按行比例插值", () => {
@@ -114,14 +114,15 @@ describe("PreviewPane.syncToLine 定位精度", () => {
     // 行 5 → block(4..9) 跨度 6 行，下一块相对偏移 300-100=200
     // top = 100 + 200*(5-4)/6 ≈ 133.3 → scrollTop ≈ 125.3
     pane.syncToLine(5);
-    expect(root.scrollTop).toBeCloseTo(100 + (200 * 1) / 6 - 8, 0);
+    // ⚠️ B251（ANCHOR = 0）：不再 `- 8` —— 落点就是块顶 / 块内插值出来的那个 top。
+    expect(root.scrollTop).toBeCloseTo(100 + (200 * 1) / 6, 0);
   });
 
   it("已滚动的容器按内容坐标计算（scrollTop 补偿）", () => {
     const { pane, root } = paneWithBlocks();
     root.scrollTop = 50; // 先滚到中间再跳转
     pane.syncToLine(4);
-    expect(root.scrollTop).toBe(100 - 8);
+    expect(root.scrollTop).toBe(100);
   });
 });
 
@@ -129,14 +130,14 @@ describe("异步重定位（pending）", () => {
   it("图片 load 后按目标行重新定位，不被异步布局变化带走", async () => {
     const { pane, root, els } = paneWithBlocks();
     pane.syncToLine(12);
-    expect(root.scrollTop).toBe(300 - 8);
+    expect(root.scrollTop).toBe(300);
     // 异步：图片加载让前面的块变高（目标块内容偏移下移 80）
     moveBlock(els[2], 380);
     const img = document.createElement("img");
     els[0].appendChild(img);
     img.dispatchEvent(new Event("load"));
     await new Promise((r) => setTimeout(r, 20));
-    expect(root.scrollTop, "load 后应重定位到新的目标块位置").toBe(380 - 8);
+    expect(root.scrollTop, "load 后应重定位到新的目标块位置").toBe(380);
   });
 
   it("用户手动滚动预览后取消待重定位", async () => {
@@ -166,7 +167,7 @@ describe("B160 程序定位（同步滚动）不留待重定位的尾巴", () =>
   it("尾巴在 ⇒ 异步增强会把预览按目标行拽回去（对照）", async () => {
     const { pane, root, els } = paneWithBlocks();
     pane.syncToLine(12); // 与 `applySyncToSibling` 只差最后那句 clearPendingSync
-    expect(root.scrollTop).toBe(300 - 8);
+    expect(root.scrollTop).toBe(300);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((pane as any).pendingSyncLine, "对照：尾巴确实留下了").toBe(12);
     moveBlock(els[2], 380);
@@ -174,7 +175,7 @@ describe("B160 程序定位（同步滚动）不留待重定位的尾巴", () =>
     els[0].appendChild(img);
     img.dispatchEvent(new Event("load"));
     await new Promise((r) => setTimeout(r, 20));
-    expect(root.scrollTop, "留着尾巴 ⇒ 增强后重新定位").toBe(380 - 8);
+    expect(root.scrollTop, "留着尾巴 ⇒ 增强后重新定位").toBe(380);
   });
 
   it("抹掉尾巴 ⇒ 同样的增强不再动预览（同步滚动的落点只算一次）", async () => {
@@ -186,7 +187,7 @@ describe("B160 程序定位（同步滚动）不留待重定位的尾巴", () =>
     els[0].appendChild(img);
     img.dispatchEvent(new Event("load"));
     await new Promise((r) => setTimeout(r, 20));
-    expect(root.scrollTop, "同步定位不许被异步增强重新定位").toBe(300 - 8);
+    expect(root.scrollTop, "同步定位不许被异步增强重新定位").toBe(300);
   });
 
   it("抹掉尾巴 ⇒ 内容未变的重渲染保持像素，不按行重定位", () => {
@@ -209,7 +210,7 @@ describe("B170 同步滚动的程序定位回执屏蔽", () => {
   it("syncToLineProgrammatic 不留尾巴（落点只算一次，重排不拽回）", async () => {
     const { pane, root, els } = paneWithBlocks();
     pane.syncToLineProgrammatic(12);
-    expect(root.scrollTop).toBe(300 - 8);
+    expect(root.scrollTop).toBe(300);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((pane as any).pendingSyncLine, "程序定位不许留尾巴").toBeNull();
     // 同 B160 对照组：增强重排后不许把预览拽回旧行号
@@ -218,7 +219,7 @@ describe("B170 同步滚动的程序定位回执屏蔽", () => {
     els[0].appendChild(img);
     img.dispatchEvent(new Event("load"));
     await new Promise((r) => setTimeout(r, 20));
-    expect(root.scrollTop, "重排不许按行重定位").toBe(300 - 8);
+    expect(root.scrollTop, "重排不许按行重定位").toBe(300);
   });
 
   it("程序定位后那发 scroll 被吞（黏性标记，回执不当用户滚动）", async () => {
@@ -250,23 +251,23 @@ describe("重渲染不丢失滚动位置（B23）", () => {
   it("内容未变的重渲染保持 scrollTop，不弹回文档开头", () => {
     const { pane, root } = paneWithBlocks();
     pane.syncToLine(12);
-    expect(root.scrollTop).toBe(300 - 8);
+    expect(root.scrollTop).toBe(300);
     // 同内容重渲染（replaceChildren 会把 scrollTop 清零）→ 必须原地恢复
     pane.setBlocks(mdBlocks(), { enhanced: false });
-    expect(root.scrollTop, "重渲染后应仍在原位置").toBe(300 - 8);
+    expect(root.scrollTop, "重渲染后应仍在原位置").toBe(300);
   });
 
   it("重渲染时若带待定位行，立即落到目标行（不等 rAF）", () => {
     const { pane, root } = paneWithBlocks();
     pane.syncToLine(12);
     pane.setBlocks(mdBlocks(), { enhanced: false });
-    expect(root.scrollTop, "setBlocks 内应立刻按目标行定位").toBe(300 - 8);
+    expect(root.scrollTop, "setBlocks 内应立刻按目标行定位").toBe(300);
   });
 
   it("内容变化后作废旧的待定位行，不再把视图拽回历史跳转点", () => {
     const { pane, root } = paneWithBlocks();
     pane.syncToLine(12);
-    expect(root.scrollTop).toBe(300 - 8);
+    expect(root.scrollTop).toBe(300);
     // 文本真的变了 → 旧行号失去意义
     const changed = mdBlocks();
     changed[0] = { lineStart: 1, lineEnd: 3, html: "<p>edited</p>" };
@@ -293,7 +294,7 @@ describe("重渲染不丢失滚动位置（B23）", () => {
     root.dispatchEvent(new Event("scroll"));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((pane as any).pendingSyncLine, "自家滚动回执不得清掉 pending").toBe(12);
-    expect(root.scrollTop).toBe(300 - 8);
+    expect(root.scrollTop).toBe(300);
   });
 });
 
@@ -306,7 +307,7 @@ describe("B171 编辑器→预览的跟随也不许留尾巴", () => {
     const { pane, root } = paneWithBlocks();
     pane.setHost({ topVisibleLine: () => 12, scrollToLine: () => {}, lineCount: () => 20 });
     pane.syncFromEditor();
-    expect(root.scrollTop, "跟随要真的定位过去").toBe(300 - 8);
+    expect(root.scrollTop, "跟随要真的定位过去").toBe(300);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((pane as any).pendingSyncLine, "跟随定位不许留尾巴").toBeNull();
   });
@@ -315,14 +316,14 @@ describe("B171 编辑器→预览的跟随也不许留尾巴", () => {
     const { pane, root, els } = paneWithBlocks();
     pane.setHost({ topVisibleLine: () => 12, scrollToLine: () => {}, lineCount: () => 20 });
     pane.syncFromEditor();
-    expect(root.scrollTop).toBe(300 - 8);
+    expect(root.scrollTop).toBe(300);
     // 与 B160 对照组同构：异步布局位移 + 一次图片 load ⇒ 留着尾巴就会被拽到 892
     moveBlock(els[2], 900);
     const img = document.createElement("img");
     els[0].appendChild(img);
     img.dispatchEvent(new Event("load"));
     await new Promise((r) => setTimeout(r, 20));
-    expect(root.scrollTop, "跟随之后不许被增强重新定位").toBe(300 - 8);
+    expect(root.scrollTop, "跟随之后不许被增强重新定位").toBe(300);
   });
 });
 
@@ -343,8 +344,9 @@ describe("B177 跟随坐标带小数时预览不许坠底", () => {
     pane.setHost({ topVisibleLine: () => 12.3, scrollToLine: () => {}, lineCount: () => 20 });
     pane.syncFromEditor();
     // 12.3 → 第 12 行块（内容偏移 0），下一块第 13 行（偏移 100），跨 1 行插 0.3
-    // top ≈ 30 ⇒ scrollTop = 22（坠底应为 300-8 = 292）
-    expect(pane.root.scrollTop, "小数行号要落到对应块、按比例插值，不能坠底").toBeCloseTo(22, 0);
+    // top ≈ 30 ⇒ scrollTop = 30（ANCHOR = 0：落点就是块顶插值出来的那个 top，不减 8）
+    // （坠底的话会落到最后一块的底部：292）
+    expect(pane.root.scrollTop, "小数行号要落到对应块、按比例插值，不能坠底").toBeCloseTo(30, 0);
     expect(pane.root.scrollTop, "绝不能是最后一块的底部").toBeLessThan(100);
   });
 
@@ -360,8 +362,9 @@ describe("B177 跟随坐标带小数时预览不许坠底", () => {
     pane.setHost({ topVisibleLine: () => 9.5, scrollToLine: () => {}, lineCount: () => 40 });
     pane.syncFromEditor();
     // 9.5 → 段落块 [4,9]（顶 0），下一块 [10,17] 顶 200，跨 6 行插 5.5/6
-    // top ≈ 183.3 ⇒ scrollTop ≈ 175（坠底应为 500-8 = 492）
-    expect(pane.root.scrollTop, "小数行号坠过块尾必须落到当前块，不坠底").toBeCloseTo(175, 0);
+    // top ≈ 183.3 ⇒ scrollTop ≈ 183.3（ANCHOR = 0：落点就是块顶本身）
+    // （坠底的话会落到最后一块的底部：492）
+    expect(pane.root.scrollTop, "小数行号坠过块尾必须落到当前块，不坠底").toBeCloseTo(183.3, 0);
     expect(pane.root.scrollTop, "绝不能是最后一块的底部").toBeLessThan(200);
   });
 });
@@ -401,7 +404,7 @@ describe("预览同步接线（静态断言）", () => {
 });
 
 describe("B172 预览侧顶行（topVisibleLine / blockAtOffset）", () => {
-  it("滚到文档中部：取最后一个顶边不超过 scrollTop+8 的 block", () => {
+  it("滚到文档中部：取最后一个顶边不超过「视口顶 + 探测点」的 block", () => {
     const pane = new PreviewPane();
     const tops = [0, 100, 300, 520, 900, 1400, 2100, 3000];
     const lines = [1, 4, 10, 18, 30, 44, 60, 80];
@@ -411,14 +414,16 @@ describe("B172 预览侧顶行（topVisibleLine / blockAtOffset）", () => {
     pane.root.replaceChildren(...els);
     curRoot = pane.root;
     pane.setHost({ topVisibleLine: () => 1, scrollToLine: () => {}, lineCount: () => 100 });
+    // ⚠️ B251（ANCHOR = 0）：`+8` 那套常数平移整体撤掉 —— 探测点（半像素）只用来定
+    //    「视口顶压在哪一块上」，**比例用真·`scrollTop`**：
     pane.root.scrollTop = 0;
-    // B174 起返回**带行内比例的小数**：+8 的偏移落在第 1 块（0..100）里占 8%，
-    // 该块跨 1..3 行（下一块从第 4 行起，range=3）⇒ 1 + 0.08*3 ≈ 1.24
-    expect(pane.topVisibleLine()).toBeCloseTo(1.24, 1);
-    pane.root.scrollTop = 300; // +8 = 308 ⇒ 命中顶边 300 那块（line 10），不是 520 那块
-    expect(pane.topVisibleLine()).toBeCloseTo(10.29, 1);
-    pane.root.scrollTop = 899; // 907 ⇒ 命中顶边 900 那块（line 30）
-    expect(pane.topVisibleLine()).toBeCloseTo(30.2, 1);
+    // 正压块顶 ⇒ 比例 0，v = 1（旧写法把 8px 算成 8%，谎报成 1.24）
+    expect(pane.topVisibleLine()).toBeCloseTo(1, 1);
+    pane.root.scrollTop = 300; // 探测 300.5 ⇒ 命中顶边 300 那块（line 10），不是 520 那块
+    expect(pane.topVisibleLine()).toBeCloseTo(10, 1);
+    pane.root.scrollTop = 899; // 探测 899.5 < 900 ⇒ 命中顶边 520 那块（line 18），
+    // 比例 = (899 − 520) / (900 − 520) ≈ 0.997 ⇒ 18 + 0.997×12 ≈ 30（line 30 那块就到跟前了）
+    expect(pane.topVisibleLine()).toBeCloseTo(30, 0);
     pane.root.scrollTop = 5000; // 滚过末尾 ⇒ 最后一块（没有下一块，返回行首）
     expect(pane.topVisibleLine()).toBe(80);
   });

@@ -48,6 +48,24 @@ const SYNC_STATE = "const docSyncModes = new Map<number, boolean>();";
 //    `pushSyncToSiblings`）—— 位置落兄弟那几条纪律抽进了前两个，切片必须从最上面那个
 //    起头，否则下面那些「预览分支要写在 px 直推之前」的判据会静默失配（切片为空）。
 const PUSH_BODY = slice(main, "function applySyncToSibling(", "function showMessage(");
+// ⚠️ B251：`PUSH_BODY`（落点函数 + 推兄弟 + 广播）与 `pushSyncToSiblings` 现在是**两段**，
+//    契约要看的是各自的落点/取坐标那一处，全段扫会把「谁取坐标」和「往哪落」搅在一起，
+//    于是下面几条判据要么找不到锚点、要么锚在对方身上（退化照样绿）。分开各切一份。
+/** 「往兄弟身上落位置」那一段（`applySyncToSibling` 全函数）。 */
+function applyBody(): string {
+  return slice(main, "function applySyncToSibling(", "function syncSourceSnapshot(");
+}
+/** 「从源身上取坐标再往兄弟落」那一段（`pushSyncToSiblings` 全函数）。 */
+function pushBody(): string {
+  return slice(main, "function pushSyncToSiblings(", "function showMessage(");
+}
+// ⚠️ B251 新增两份切片：统一游标之后，「游标→像素」与「像素→游标」各自只剩一个出口，
+//    判据（尤其是退化串）得能盯到**那一个函数**身上 —— 全段扫会把「谁取坐标」与
+//    「往哪落」搅在一起，退化掉哪一边都照样命中（B163 同型）。
+/** 「游标 → 编辑器像素」的唯一换算出口（`sourceTopOfV`）。 */
+const SOURCE_TOP = slice(main, "function sourceTopOfV(", "function syncSourceV(");
+/** 「同步坐标的唯一取值口」（`syncSourceV`）—— 跟随 / 收口 / 交接三条路都经它。 */
+const SYNC_V = slice(main, "function syncSourceV(", "function viewportOfTab(");
 const BTN_BODY = slice(main, "function refreshSyncButton(", "function refreshStatus(");
 const SRC_BODY = slice(main, "function isSyncSource(", "/** 这个实例此刻是否被某个面板");
 // ⚠️ B233：终点原本是紧邻的 `sbLang.addEventListener`，而那句已随「状态栏语言项
@@ -136,46 +154,73 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
     expect(PUSH_BODY, "预览兄弟的位置也要走记录闸口").toMatch(
       /if \(landed !== null\) recordScroll\(other\.tabId, landed\);/,
     );
-    // ⚠️ 顺序：换算分支必须排在「px 直推」那条之前，否则编辑器 px 会先落到预览槽里。
+    // ⚠️ 顺序：预览分支必须排在**统一落点**那条之前 —— 反了预览那一路就会把编辑器像素
+    //    当成落点写进预览槽（B129 的语义 / B129 那条反向闸锁的正是这层）。
+    //    ⚠️ B251：B240 那会儿的「px 直推」已经并进统一分支（落点一律由 `sourceTopOfV`
+    //    换算出来 ⇒ 不再存在「编辑器 px 直通」这一格），顺序判据随之下移到那一处。
     const g = PUSH_BODY.indexOf(guard);
-    const r = PUSH_BODY.indexOf("recordScroll(other.tabId, px)");
+    const r = PUSH_BODY.indexOf("recordScroll(other.tabId, top);");
     expect(g).toBeGreaterThan(-1);
-    expect(r, "px 直推那笔也要在（源码→源码那条老路径）").toBeGreaterThan(-1);
-    expect(g, "预览分支要写在 px 直推之前").toBeLessThan(r);
+    expect(r, "统一落点那笔也要在（源码→源码那一格）").toBeGreaterThan(-1);
+    expect(g, "预览分支要写在统一落点之前").toBeLessThan(r);
   });
 
   it("预览态的槽是预览像素，不能被当成编辑器像素拿去推源码兄弟", () => {
     // 这是「一个预览一个源码」原先不生效的根因之一：源在预览里时 `src.scrollTop`
     // 装的是预览像素，直接拿去 pin 兄弟的编辑器，落点必然是错的。
     //
-    // ⚠️ B240 二轮：三元后面的取值从 `src.scrollTop`（快照槽，滞后一帧）改成了
-    //    `srcView?.scrollDOM.scrollTop ?? src.scrollTop`（实时值）。**红线本身没动** ——
-    //    「源是预览态 ⇒ px 恒为 null」这个结构与意图都原样保留，只是源码侧那一支
-    //    取实时值。判据随之改成盯结构（`srcPreview ? null :`）而不是钉整行字面量。
-    expect(PUSH_BODY, "源是预览态时 px 必须是 null（预览像素不许当编辑器像素）").toMatch(
-      /const px = srcPreview \? null : /,
+    // ⚠️ B251：红线没动，只换了守的地方 —— 推兄弟那一侧现在**根本不取 px**
+    //    （`pushSyncToSiblings` 只从 `syncSourceV` 拿规范游标 `v`），所以判据从
+    //    「源是预览态 ⇒ px 恒 null」上移到**落点那一条**：预览态兄弟只认行、且 `v` 取不到
+    //    或没有预览容器时不许写槽。
+    expect(applyBody(), "预览态兄弟只认行，v 取不到 / 没容器就不落").toContain(
+      "if (v === null || !shown?.preview) return;",
     );
-    // 正向：源码侧那一支取的是**源容器的实时 scrollTop**，不是快照槽。
-    // 反面判据：直接读 `src.scrollTop` 当主取值 ⇒ 推给兄弟的是上一次的位置
-    // （B240 二轮实测：真实 260 时只推出 100，离屏兄弟的槽被写脏）。
-    expect(PUSH_BODY, "源码侧 px 要取源容器的实时 scrollTop").toMatch(
-      /srcView\?\.scrollDOM\.scrollTop \?\? src\.scrollTop/,
+    // ⚠️ 反向闸：不许再走「编辑器像素直通」那条死路（把预览像素当编辑器像素钉兄弟）。
+    //    判据带调用形态，扫的是**应用函数体里的落点**，不是注释里复述的同一句。
+    expect(applyBody(), "不许再把源那侧的像素当落点").not.toMatch(
+      /recordScroll\(other\.tabId, (px|src\.scrollTop)\)/,
     );
-    // 兜底那一支仍保留（视图还没挂上时至少有个值，不至于把 px 变成 undefined）。
-    expect(PUSH_BODY, "视图不可用时要退回快照槽").toContain("?? src.scrollTop");
-    expect(PUSH_BODY, "源那侧要先认出预览容器").toMatch(
-      /src\.viewMode === "preview" \? srcPanel\?\.preview/,
+    // 正向：源码侧那一支（现在统一在 `applySyncToSibling` 里）落点由 `sourceTopOfV` 换算，
+    //    ⚠️ 反面判据：直接读 `src.scrollTop` 当主取值会让落点成了**上一次**的位置
+    //    （B240 二轮实测：真实 260 时只推出 100，离屏兄弟的槽被写脏）。
+    expect(applyBody(), "源码侧落点要按游标换算，不是拿源那侧的像素").toContain(
+      "sourceTopOfV(view, v);",
     );
-    // ⚠️ B249：预览这一支从 `topVisibleLine()`（小数）改成 `topBlockStartLine()`（整数）。
-    //    小数跨侧没人真用（源码只认行号、预览只认块首），却让两边各取整各的 ——
-    //    `doc.line(小数)` 上取整 vs `Math.floor` 下取整 ⇒ 用户报「滚预览时两边差一行/差半行」。
-    //    小数只剩一种合法去处：同侧跟随（源是源码那支）。锚点跟着改，判据仍是「预览侧
-    //    交的整数行号」，不是改松。
-    expect(PUSH_BODY, "预览侧交的是整数块起始行（跨侧只许整数）").toMatch(
-      /srcPreview\.topBlockStartLine\(\)/,
+    // ⚠️ B251 换锚：这条 RD 现在挂在**唯一取值口** `syncSourceV` 上 —— 「源显示在哪一侧
+    //    就取哪一侧」这个判断在全文件里**只此一处**（跟随 / 收口 / 交接都经它），旧写法
+    //    是散在 `pushSyncToSiblings` 里的局部三元 ⇒ 判据从 `applyBody` 上移到取值口。
+    // ⚠️ 判据带完整结构（判空 + return 一整条）：只写 `t.viewMode === "preview"` 会连
+    //    `syncSourceSnapshot` 里那句同形的判空一起命中，退化打不掉就变假绿。
+    expect(SYNC_V, "源那侧要先认出预览容器（源是预览就走预览那侧）").toMatch(
+      /if \(t\.viewMode === "preview"\) return p\?\.preview\?\.topVisibleLine\(\)/,
     );
-    expect(PUSH_BODY, "源码侧坐标走带行内比例的小数（B174：取整会让跟随变阶梯）").toMatch(
-      /topVisibleLineFrac\(srcView\)/,
+    // ⚠️ B249 → B251：跨侧小数从「只归同侧跟随」翻成了「跨侧也交，各自按自己那侧几何
+    //    插值」—— 当初交整数是为了躲 CM6 的上取整，而 B247 那个「每切一轮往上掉」正是
+    //    这条补丁的代价。现在判据改成「两条路径**同一个取值口**」，不是改松。
+    expect(pushBody(), "跟随 / 收口 / 交接三条路都只从唯一取值口取坐标").toContain(
+      "const v = syncSourceV(src);",
+    );
+    expect(pushBody(), "源码侧坐标走带行内比例的小数（B174：取整会让跟随变阶梯）").toMatch(
+      /topVisibleLineFrac/,
+    );
+  });
+
+  it("唯一取值口只从源**当前显示的那一侧**取（不许拿双语义槽当游标）", () => {
+    // ⚠️ B251 新增：跟随 / 切标签收口 / 切模式交接三条路都经 `syncSourceV` 取 `v`，于是
+    //    「源显示在哪一侧」这个判断在本文件里**只剩这一处** —— 它错一处，三条路同时错。
+    //    判据钉住两个分支各自走哪一侧的几何，并锁死「不许拿快照槽当游标」那一面
+    //    （`t.scrollTop` 是双语义槽：源码侧存编辑器像素、预览侧存预览像素）。
+    expect(SYNC_V, "源是预览 ⇒ 取预览那一侧的行号（小数 = 块内比例）").toContain(
+      'if (t.viewMode === "preview") return p?.preview?.topVisibleLine() ?? null;',
+    );
+    expect(SYNC_V, "源是源码 ⇒ 取 `topVisibleLineFrac`（小数 = 行内比例）").toContain(
+      "return view ? topVisibleLineFrac(view) : null;",
+    );
+    // ⚠️ 反向闸排在正向之后也有效：B240 二轮实测「读快照槽 ⇒ 真实 260 只推出 100」，
+    //    离屏兄弟的槽被写脏 ⇒ 用户报「未激活标签切过去对不上」。
+    expect(SYNC_V, "双语义槽不许当游标（那会推出上一次的位置）").not.toMatch(
+      /return (t|src)\.scrollTop;/,
     );
   });
 
@@ -225,17 +270,18 @@ describe("B152 同步滚动模式：推进与触发点", () => {
       /other\.state = other\.state\.update\(\{ selection: \{ anchor: pos \} \}\)\.state;/,
     );
     // 位置写进兄弟自己的记录必须走 recordScroll（B145 的唯一闸口）。
-    expect(PUSH_BODY, "位置要走唯一闸口").toMatch(/recordScroll\(other\.tabId, px\);/);
+    // ⚠️ B251 换锚：落点现在是 `sourceTopOfV` 换算出来的 `top`，不再是 px 直通。
+    expect(PUSH_BODY, "位置要走唯一闸口").toMatch(/recordScroll\(other\.tabId, top\);/);
   });
 
   it("离屏的预览实例不写任何位置（否则就是拿编辑器像素污染预览槽）", () => {
-    const guard = "if (line === null || !shown?.preview) return;";
+    const guard = "if (v === null || !shown?.preview) return;";
     expect(PUSH_BODY, "离屏预览兄弟要跳过").toContain(guard);
     // ⚠️ 顺序也要盯：这条跳过必须排在 recordScroll 之前 —— 反了就把编辑器侧的
     //    px 写进「预览那一侧」的槽（B129 的语义），切回源码时位置就错了。
     //    两个下标都要先自证存在，否则「找不到 = -1」会让顺序比较永远成立（假绿）。
     const g = PUSH_BODY.indexOf(guard);
-    const r = PUSH_BODY.indexOf("recordScroll(other.tabId, px)");
+    const r = PUSH_BODY.indexOf("recordScroll(other.tabId, top)");
     expect(g).toBeGreaterThan(-1);
     expect(r).toBeGreaterThan(-1);
     expect(g, "跳过要写在写记录之前").toBeLessThan(r);
@@ -246,8 +292,8 @@ describe("B152 同步滚动模式：推进与触发点", () => {
     // 标成程序来源，回执落到编辑器监听就被记成「用户停过的位置」再反推回源 —— 拉锯。
     // `pinScrollTop` 内部 `markProgrammatic` 把来源标好，回执由监听经 scroll-guard 吞掉，
     // 不再套 `restoringViewport` 还原窗口（B170 删了那套时间窗）。
-    expect(PUSH_BODY, "px 分支要走 pinScrollTop").toMatch(
-      /pinScrollTop\(shownView\.scrollDOM, px\);/,
+    expect(PUSH_BODY, "统一分支要走 pinScrollTop").toMatch(
+      /pinScrollTop\(shownView\.scrollDOM, top\);/,
     );
   });
 
@@ -295,59 +341,80 @@ describe("B152 同步滚动模式：推进与触发点", () => {
  *   快照该写一定要写 —— 顺序反了就退回「离屏就不写」的原 bug，且从断言上看不出来。
  */
 describe("B240 同步滚动：非激活（离屏）标签也要统一滚动位置", () => {
-  /** 源码态分支（`px` 直推那一路）的函数体 —— 从 px 判据切到函数收尾。 */
-  function pxBranch(): string {
-    return slice(PUSH_BODY, "if (px !== null) {", "// 走到这里 = 源是**预览**那一侧");
+  /**
+   * **统一分支**（源码态 / 预览态汇成的一条）的函数体 —— 从 `v` 判据切到函数收尾。
+   *
+   * ⚠️ B251 换锚：旧锚点是 `if (px !== null) {`（源码态那一路的 px 直推分支），它已经被
+   *    并进「统一交 `v`」这一条 —— 判据从「px 分支里的顺序」改成「统一分支里的顺序」，
+   *    要盯的东西一个没少（离屏兄弟照样写槽、钉 DOM 走 pinScrollTop、两行谁先谁后）。
+   *    终点用**同函数内**的标记（下面那句「先记槽、再钉 DOM」的注释），不用函数名：
+   *    `PUSH_BODY` 已切到 `showMessage` 之前，在里面找 `function showMessage(` 必然切空。
+   */
+  function unifiedBranch(): string {
+    // ⚠️ 终点是统一分支的**收尾大括号之后**（`\n}\n\n`）—— 只停在「只有兄弟自己在屏时」
+    //    那句注释头上，`if (shownView) pinScrollTop(shownView.scrollDOM, top);` 会落在
+    //    切片外 ⇒「钉 DOM 走 pinScrollTop」那条判据永远全绿（连退化都绿）。
+    return slice(PUSH_BODY, "  if (v === null) return;", "\n}\n\n");
   }
 
-  it("离屏的源码兄弟也要写位置快照（recordScroll 不许被 !shownView 挡住）", () => {
-    const body = pxBranch();
-    // ⚠️ 反向闸排在正向断言之前：B240 前那句 `if (!shownView) return;` 在 px 分支**之前**，
-    //    命中就直接返回、快照一个字都不写。判据只认调用形态（含实参 `px`），
-    //    **不写函数名** —— 源码注释里复述过同一句，写函数名容易误判。
-    const guard = body.indexOf("if (!shownView) return;");
-    const rec = body.indexOf("recordScroll(other.tabId, px);");
-    expect(guard, "px 分支里应有「没容器就不钉位」那道守卫").toBeGreaterThanOrEqual(0);
-    expect(rec, "px 分支里应写位置快照").toBeGreaterThanOrEqual(0);
-    expect(rec, "写快照必须排在「没容器就返回」之前（离屏标签的位置就靠它）").toBeLessThan(guard);
+  it("离屏的源码兄弟也要写位置快照（recordScroll 不许被「在不在屏」挡住）", () => {
+    const body = unifiedBranch();
+    // ⚠️ 反向闸排在正向断言之前：B240 前那句 `if (!shownView) return;` 挡的就是「离屏
+    //    就不写」—— 它现在**不许再出现**。判据只认调用形态（含实参 `top`），
+    //    **不写函数名** —— 源码注释里复述过同类的句，写函数名容易误判。
+    // ⚠️ B251 收紧：只盯 `!shownView` 会被 `if (v === null || !shown) return;` 绕过去
+    //    （同一个「在不在屏就 return」的病，换个变量名就认不出来）⇒ 把两种写法一网打尽。
+    //    它与下面那道「换不出几何 ⇒ 不许硬写」的 `if (!view) return;` 不是一回事，不冲突。
+    expect(body, "不许再出现「没容器/离屏就不写槽」那道守卫").not.toMatch(
+      /if \(!shown(?:View)?\) return;/,
+    );
+    const rec = body.indexOf("recordScroll(other.tabId, top);");
+    expect(rec, "统一分支里应写位置快照（离屏标签的位置就靠它）").toBeGreaterThanOrEqual(0);
+    // 守卫只留「换不出几何 ⇒ 不许硬写」这一道（真·没有 view 才算换不出）。
+    const guard = body.indexOf("if (!view) return;");
+    expect(guard, "换不出落点时要认得出（不许硬写）").toBeGreaterThanOrEqual(0);
+    expect(
+      guard,
+      "「换不出」的守卫必须排在写槽之前（否则离屏兄弟拿旧值/0 值盖掉自己的位置）",
+    ).toBeLessThan(rec);
   });
 
   it("钉 DOM 仍走 pinScrollTop（离屏那份跳过钉位，但快照已经写了）", () => {
-    const body = pxBranch();
+    const body = unifiedBranch();
     // 正向：在屏的兄弟照旧钉 DOM，且走 pinScrollTop（B170 的来源标记）。
-    expect(body, "在屏的兄弟要钉 DOM").toContain("pinScrollTop(shownView.scrollDOM, px);");
+    expect(body, "在屏的兄弟要钉 DOM").toContain("pinScrollTop(shownView.scrollDOM, top);");
     // 快照在前、钉位在后 —— 两行的先后本身就是判据（上面那条已钉，这里钉住配套关系）。
-    expect(body.indexOf("recordScroll(other.tabId, px);")).toBeLessThan(
-      body.indexOf("pinScrollTop(shownView.scrollDOM, px);"),
+    expect(body.indexOf("recordScroll(other.tabId, top);")).toBeLessThan(
+      body.indexOf("pinScrollTop(shownView.scrollDOM, top);"),
     );
   });
 
-  it("源是预览侧（px 恒 null）时，离屏源码兄弟不许写 px —— 但换算得出来的像素它照样要写", () => {
+  it("源是预览侧（只交 `v`）时，离屏源码兄弟不许写「源那侧的 px」—— 但换算得出来的像素它照样要写", () => {
     // 这一条是 B240 **刻意不覆盖**的格子：行号→编辑器像素要按它自己那份文档的
     // `lineBlockAt` 算，而离屏时它没有视图（view 归面板所有，正在显示别的标签）。
     // 硬写就是污染（B154 踩过：把预览像素当编辑器像素塞进源码槽，切回源码位置全错）。
-    // ⚠️ 切片终点要用**同函数内**的标记：`PUSH_BODY` 已经切到 `showMessage` 之前了，
-    //    在它里面再找 `function showMessage(` 必然找不到（`slice` 会红，不是静默）。
-    const body = PUSH_BODY.slice(PUSH_BODY.indexOf("// 走到这里 = 源是**预览**那一侧"));
-    expect(body.length, "要能切到预览源那一路").toBeGreaterThan(0);
-    // ⚠️ B248：守卫从 `if (!shownView) return;` 进化成 `if (!view) return;` ——
-    //    离屏源码兄弟现在**拿同文档的另一个源码视图**换算 `lineBlockAt` 也能写槽了
-    //    （用户报：滚激活的预览时，未显示的那份代码标签位置纹丝不动）。锚点跟着改，
-    //    判据仍是「换不出 ⇒ 不许硬写」，不是改松。
+    // ⚠️ B251 换锚：终点用**统一分支**末尾那句「先记槽、再钉 DOM」的注释当标记 ——
+    //    跨侧的两条（px 直推 / 行号换算）已经并成一条，切「预览源那一路」这段没意义了。
+    const body = unifiedBranch();
+    expect(body.length, "要能切到统一分支").toBeGreaterThan(0);
+    // ⚠️ B248：守卫是 `if (!view) return;`（换不出几何），**不是** `if (!shownView) …` ——
+    //    离屏源码兄弟现在**拿同文档的另一个源码视图**换算也能写槽了（用户报：滚激活的
+    //    预览时，未显示的那份代码标签位置纹丝不动）。判据仍是「换不出 ⇒ 不许硬写」。
     const guard = body.indexOf("if (!view) return;");
-    const rec = body.indexOf("recordScroll(other.tabId, px);");
     expect(guard, "预览源那一路要有「换不出就返回」的守卫").toBeGreaterThanOrEqual(0);
-    // ⚠️ 那一路上**不许**再出现 recordScroll(…, px) —— 出现了就等于把编辑器像素
-    //    硬塞进一个没有视图算不出位置的兄弟的槽。
-    expect(rec, "预览源 + 离屏兄弟不该写 px 快照（换算不出来）").toBe(-1);
+    // ⚠️ 那一路上**不许**再出现「把源那侧的 px 当落点」的写法 —— 出现了就等于把编辑器
+    //    像素硬塞进一个没有视图算不出位置的兄弟的槽。锚点带调用形态，扫整段注释的复述。
+    expect(body, "不许再出现「px 直通」这条死路").not.toMatch(/recordScroll\(other\.tabId, px\)/);
+    // 而换算得出来的那个 `top` 才是唯一允许写进槽的值。
+    expect(body, "换算出来的像素照样写槽").toContain("recordScroll(other.tabId, top);");
   });
 
   it("预览态兄弟那一路保持原样：B129 的「别把编辑器像素当预览像素」不能被破坏", () => {
     // 反向闸：离屏的预览兄弟**依然**什么都不写（预览像素没有容器可换算）。
     // 这条是 B154 的既有判据，B240 不许为了「非激活也要统一」把它改松。
-    expect(PUSH_BODY, "离屏预览兄弟要跳过").toContain(
-      "if (line === null || !shown?.preview) return;",
-    );
+    // ⚠️ B251 换锚：跨侧统一交 `v` 之后，这道跳过守卫的判空条件从 `line` 变成 `v`
+    //    （含义没变：**`v` 取不到或预览兄弟没容器 ⇒ 一样都不写**）。
+    expect(PUSH_BODY, "离屏预览兄弟要跳过").toContain("if (v === null || !shown?.preview) return;");
   });
 
   it("离屏兄弟的位置有处可去：切标签时 restoreViewScroll 拿的正是这个快照槽", () => {
@@ -372,10 +439,13 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
     "function pushSyncToSiblings(",
   );
   const SWITCH_BODY = slice(main, "  rememberViewScroll(panel);", "measureAndKeepScroll(panel);");
+  // ⚠️ B251 换锚：终点从 `if (px !== null) {`（已被并掉的源码态 px 直推分支）换成统一
+  //    分支里那道「`v` 取不到就返回」—— 预览态那一支仍从它自己的判据切起，跨侧两条
+  //    汇成一条之后它们的交叠点就在这儿。
   const PREVIEW_BRANCH = slice(
     PUSH_BODY,
     'if (other.viewMode === "preview") {',
-    "if (px !== null) {",
+    "if (v === null) return;",
   );
   const LAND_BODY = slice(PREVIEW_TS, "  private applySyncToLine(", "  private blockAtLine(");
   const SYNC_BODY = slice(main, "function applySyncToSibling(", "function syncSourceSnapshot(");
@@ -427,92 +497,113 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
     );
   });
 
-  it("坐标口径与推兄弟那一路一致：源停在哪一侧就取哪一侧", () => {
-    // ⚠️ B243 同语义换锚：顶行的**取值口径**没变（源在哪一侧就取哪一侧），只是预览侧
-    //   那一格换成了「块起始行」—— 收口不许交小数，小数只归跟随那条路。
-    expect(SNAP_BODY, "源是预览侧 ⇒ 交的是顶行").toContain("srcPreview.topBlockStartLine()");
-    expect(SNAP_BODY, "源是源码侧 ⇒ 交的是顶行比例").toContain("topVisibleLineFrac(srcView)");
-    expect(SNAP_BODY, "px 取源那一格此刻停着的位置（源在预览侧则只交行号）").toContain(
-      "px: srcPreview ? null : src.scrollTop",
+  it("坐标口径与推兄弟那一路一致：源停在哪一侧就取哪一侧（都从唯一取值口取）", () => {
+    // ⚠️ B251 换锚：取值口径没变（源在哪一侧就取哪一侧），但**取消了「跨侧只交整数」**：
+    //   跟随、切标签收口、切模式交接三条路都从 `syncSourceV` 取同一个 `v`（实数行号），
+    //   预览侧的块内比例与源码侧的行内比例都是归一化比例、各自按自己那侧几何插值。
+    expect(SNAP_BODY, "收口只经唯一取值口").toContain("return syncSourceV(src);");
+    expect(pushBody(), "跟随也只经唯一取值口").toContain("const v = syncSourceV(src);");
+    // ⚠️ 反向闸：不许退回「三处各取各的」（收口/跟随/切模式各一套）。
+    expect(SNAP_BODY, "不许再自己拼第二套坐标").not.toMatch(/topBlockStartLine\(/);
+    expect(SYNC_BODY, "落点不许再手拼坐标").not.toMatch(/editorLineTopPx\(view, line\)/);
+  });
+
+  it("跨侧交的是**完整游标 `v`**：小数不再被掐掉（掐了就退回「每切一轮往上掉」）", () => {
+    // ⚠️ B243 → B251：B243 那会儿预览侧交「块起始行」是为了躲 CM6 的上取整 ——
+    //   而那个整数正是 B247 守卫 / 「切 tab 越切越靠顶」的病根（收口把落点定死在块首，
+    //   `restoreViewScroll` 刚还原的块内第 3 行被盖回段首）。现在小数不再被吞：
+    //   `sourceTopOfV` 显式按行高插值，跨侧往返恒等。
+    expect(SNAP_BODY, "收口：预览侧交点走同一个取值口").not.toMatch(/topBlockStartLine\(/);
+    // ⚠️ 反向闸：退回只交整数块首必须立刻被认出来（B243 那条老写法）。
+    expect(pushBody(), "不许退回「只交整数块首」").not.toMatch(/topBlockStartLine\(\)/);
+    // 落点那一侧必须**真的按行高插值**，而不是把小数丢给 CM6 让它自己上取整。
+    // ⚠️ B251 换锚：这句换算如今只在 `sourceTopOfV` 里出现一次 ⇒ 判据盯它自己的函数体。
+    expect(SOURCE_TOP, "落点要按行高显式插值（不许把小数丢给 CM6 上取整）").toContain(
+      "return h > 0 ? lineTop + (v - base) * h : lineTop;",
     );
   });
 
-  it("跨侧交点必须是**整数行号**：收口交 `topBlockStartLine()`，不许交带小数的小数行号", () => {
-    // ⚠️ B243：预览侧 `topVisibleLine()` 给的是 `start + ratio * range` 那种小数（给
-    //   **跟随**用的，要的是连续）。收口这一路若跟着交小数，编辑器那侧 `doc.line(小数)`
-    //   会被 CM6 **向上取整**（`lineInner` 判 `line >= target`）取到**下一行**，而预览那侧
-    //   `Math.floor` 落到**这一块** ⇒ 两侧各差一档，切过去看到的行不是预览顶上那一行。
-    //   所以收口 / 切模式统一交「块起始行」这个整数。
-    expect(SNAP_BODY, "收口：预览侧交点走块起始行").toContain("srcPreview.topBlockStartLine()");
-    // ⚠️ 反向闸：退回 `topVisibleLine()`（小数）必须立刻被认出来。
-    expect(SNAP_BODY, "不许退回带小数的顶行坐标").not.toContain("srcPreview.topVisibleLine()");
-  });
-
-  it("切源码/预览那一路（toggleViewMode）交的是同一个整数交点（两条路径同一口径）", () => {
+  it("切源码/预览那一路（toggleViewMode）与收口同一个出口（两条路径同一口径）", () => {
     const body = slice(main, "function toggleViewMode(", "function openPreviewToSide(");
-    expect(body, "切模式那条路径也交块起始行").toContain("panel.preview?.topBlockStartLine()");
-    // ⚠️ 反向闸：退回小数坐标后，两条路径仍会彼此相等（都错成同一处）⇒ 只有认住
-    //   「必须是整数」这一层，才拦得住「切过去落点差一行」这个病重来一次。
-    expect(body, "不许退回带小数的顶行坐标").not.toContain("panel.preview?.topVisibleLine()");
+    expect(body, "切模式那条路径也走唯一取值口").toContain("const v = syncSourceV(tab);");
+    // ⚠️ 反向闸：退回 `topBlockStartLine()`（整数块首）后，切模式这一路的落点又会被
+    //   压回块首 ⇒ B247 那个「每切一轮往上掉」原样复发。这里认住「不许退回整数量纲」。
+    expect(body, "不许退回整数块首（那是 B247 病根的入口）").not.toMatch(/topBlockStartLine\(/);
   });
 
-  it("预览侧的块起始行与顶行坐标取的是同一格（同一 +8 口径，别两套定义分叉）", () => {
-    const BODY = slice(PREVIEW_TS, "  topBlockStartLine(", "  private applyPending(");
-    expect(BODY, "块起始行与顶行同一个取法（同一个 +8、同一个二分）").toContain(
-      "this.indexOfBlockAtOffset(this.root.scrollTop + 8)",
-    );
-  });
-
-  it("收口调的就是同一个落点函数，源那套坐标两个一起传（不是只传一个）", () => {
-    expect(ALIGN_BODY, "收口要按源的位置落位").toContain(
-      "applySyncToSibling(shown, snap.px, snap.line);",
-    );
+  it("收口调的就是同一个落点函数，只交一个游标（不是 px + line 两个）", () => {
+    expect(ALIGN_BODY, "收口要按源的位置落位").toContain("applySyncToSibling(shown, snap);");
     expect(ALIGN_BODY.match(/applySyncToSibling\(/g)?.length, "落点调用只有这一处").toBe(1);
   });
 
-  it("采样给的 px 必须与推兄弟那一路同一口径：源在预览侧就只交行号", () => {
+  it("采样只交游标，与推兄弟那一路同一口径：源在预览侧也不交像素", () => {
     // ⚠️ `src.scrollTop` 是双语义槽（源码侧存编辑器像素、预览侧存预览像素）。
-    //    `applySyncToSibling` 的源码分支只认 px、无视 line ⇒ 源是预览时交 px 就是拿
-    //    预览像素去钉编辑器（用户报「切过去位置乱跳」的一路成因）。
-    expect(SNAP_BODY, "预览侧源 ⇒ px 交空").toContain("px: srcPreview ? null : src.scrollTop");
+    //    过去这里交 px（源是源码时的编辑器像素），源是预览时交空 —— 那套「px + line 两
+    //    个一起传」正是「一个预览一个源码」乱跳的成因之一。B251 只交一个 `v`。
+    // ⚠️ B251 换锚：单游标那条判据锚 `alignShownToSyncSource` 的形参 `snap`（
+    //    `syncSourceSnapshot` 的返回类型一直就是 `number | null`）。
+    //    ⚠️ 判据**不写整行**（prettier 会把 `snap: number | null,` 折成两行，整行锚点
+    //    会静默失配）：只在形参类型上判定，正反两面各一条。
+    expect(ALIGN_BODY, "收口交的是单个游标（不是 {px, line} 那种两字段）").not.toMatch(
+      /snap:\s*\{/,
+    );
+    expect(ALIGN_BODY, "收口那一份的类型就是游标本身").toMatch(/snap: number/);
+    expect(SNAP_BODY, "不许再交 px 那一格").not.toMatch(/px:/);
   });
 
   it("跨侧（一个预览一个源码）也要收口 —— 因为跨侧落点与切源码/预览用的是同一套换算", () => {
     // B242：以前跨侧不收口（不重算、接班保留上次落点），因为那会儿跨侧走的是
-    //   「搬行内比例」的换算，往返不等值 ⇒ 只能躲。现在跨侧落点统一成**行首对齐**
-    //   （`editorLineTopPx` / 整数行号，与 `toggleViewMode` 的 handoff、`applyPanelMode`
-    //   的 `syncToLine` 同源）⇒ 同一个行号恒落到同一个像素，跨侧照收也不漂。
+    //   「搬行内比例」的换算，往返不等值 ⇒ 只能躲。B251 起跨侧与切模式、跟随同走一条
+    //   `v` + `sourceTopOfV` ⇒ 同一个游标恒落到同一个像素，跨侧照收也不漂。
     expect(ALIGN_BODY, "不许再出现「跨侧交还不落位」那道守卫").not.toContain(
       "if (src.viewMode !== shown.viewMode) return false;",
     );
     expect(ALIGN_BODY, "收口对两侧一视同仁：都调同一个落点函数").toContain(
-      "applySyncToSibling(shown, snap.px, snap.line);",
+      "applySyncToSibling(shown, snap);",
     );
     expect(ALIGN_BODY, "收口成功要交回 true（调用方据此跳过回推）").toContain("return true;");
   });
 
-  it("跨侧落点与切源码/预览同源：两边都只认「行首」，不许自己按 frac 插值", () => {
+  it("B251 撤掉的 B247 守卫不许回来（收口交完整 `v` 之后，跨侧收口不再掉位置）", () => {
+    // B247 那道守卫是「跨侧只交**整数块首**」前提下的补丁：收口把落点定死在块首，
+    // `restoreViewScroll` 刚按槽还原到**块内第 3 行**的精确位置，再推块首等于把它盖回
+    // 段首 ⇒ 每切一轮往上掉一趟（桩证据：跨 3 行段落的文档，warm-up 切一轮回来源码
+    // 168 → 140）。B251 起收口交**完整 `v`**、落点由 `sourceTopOfV` 在自己那一侧按同一
+    // 份几何插值 ⇒ 跨侧往返恒等，病根消失。
+    //
+    // ⚠️「病根没了」≠「Guard 可以随手删」—— 少了判据，哪天有人又把落点压回整数量纲，
+    //   这道守卫会被当成顺手的安全网加回来，B247 就原样复发。所以这里**反向锁死**它：
+    //   B251 里 `snap` 已经是游标 `v`（不再是 `{px, line}` 双字段），那个「源是预览侧就
+    //   交不出编辑器像素、于是兄弟是源码态时别收口」的等价守卫长这样 —— 不许出现。
+    expect(ALIGN_BODY, "不许再出现「源取不出坐标就别收口」那道 B247 守卫").not.toMatch(
+      /if \(snap === null && shown\.viewMode !== "preview"\) return false;/,
+    );
+    // 收口对**两侧一视同仁**：源是预览态、兄弟是源码态时照样照 `v` 落位（上面那条
+    // 「跨侧也要收口」是正向，这里是它配套的反向闸 —— 不许靠守卫把这条路绕开）。
+    expect(ALIGN_BODY, "跨侧收口靠落点函数落地，不靠守卫短路").toContain(
+      "applySyncToSibling(shown, snap);",
+    );
+    expect(ALIGN_BODY.match(/applySyncToSibling\(/g)?.length, "收口只有这一处落点调用").toBe(1);
+  });
+
+  it("跨侧落点与切源码/预览同源：两边都走同一个换算出口，不许各插各的", () => {
     // 这条是本次诉求的**根判据**：同步滚动与代码/预览切换的位置计算必须是**同一个函数**。
-    const shared = main.indexOf("function editorLineTopPx(");
-    expect(
-      shared,
-      "行首换算要抽成唯一一份，别两处各写一行 lineBlockAt(...).top",
-    ).toBeGreaterThanOrEqual(0);
-    // 调用方两处：切模式那一路的 handoff、以及跨侧落点（都在 main 里、都调它）
-    const calls = (main.match(/editorLineTopPx\(/g) ?? []).length;
-    expect(calls, "editorLineTopPx 至少被切模式 + 跨侧落点两处用上").toBeGreaterThanOrEqual(3);
-    // 反向闸：跨侧源码分支不许再出现「按行内比例插值」那串老写法
-    expect(SYNC_BODY, "跨侧不许搬 frac（编辑器行内比例搬到预览那边量纲就错）").not.toMatch(
+    const shared = main.indexOf("function sourceTopOfV(");
+    expect(shared, "游标→像素的换算要抽成唯一一份，别两处各写一行").toBeGreaterThanOrEqual(0);
+    // 调用方：切模式那一路的 handoff、以及跨侧落点（都在 main 里、都调它）
+    const calls = (main.match(/sourceTopOfV\(/g) ?? []).length;
+    expect(calls, "sourceTopOfV 至少被切模式 + 跨侧落点两处用上").toBeGreaterThanOrEqual(3);
+    // 反向闸：跨侧源码分支不许再出现「按行内比例手动插值」那串老写法
+    expect(applyBody(), "跨侧不许搬 frac（编辑器行内比例搬到预览那边量纲就错）").not.toMatch(
       /block\.top \+ block\.height \* frac/,
     );
-    // 换算函数本身：夹取行号 + 只取行首，不许掺入行高
-    expect(LINE_TOP, "行首换算要夹住行号").toContain(
+    // 换算函数本身：夹取行号 + 落点只由 `editorLineTopPx` 取行顶（行内比例走 `h`）
+    expect(LINE_TOP, "行顶换算要夹住行号").toContain(
       "Math.min(Math.max(1, line), view.state.doc.lines)",
     );
-    expect(LINE_TOP, "落点只取这一行的顶").toContain(
+    expect(LINE_TOP, "行顶换算只取这一行的顶").toContain(
       "lineBlockAt(view.state.doc.line(n).from).top",
     );
-    expect(LINE_TOP, "不许掺入行高（行内比例）").not.toMatch(/block\.height \*/);
   });
 
   it("收口生效后不许再回推一次 —— 回推会把换算值刷回源那一格", () => {
@@ -532,13 +623,35 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
     expect(PREVIEW_BRANCH, "落点要按返回值判空再记").toContain(
       "if (landed !== null) recordScroll(other.tabId, landed);",
     );
+    // ⚠️ B251 换锚：小数不再被 `Math.floor` 掐掉 —— 跨侧统一交完整 `v`（含块内比例）。
+    //    判据仍是「补记快照只认程序定位的返回值」，不是改松。
     expect(PREVIEW_BRANCH, "落点来自程序定位那一路的返回值").toContain(
-      "preview.syncToLineProgrammatic(Math.floor(line))",
+      "preview.syncToLineProgrammatic(v);",
     );
     // ⚠️ 反向闸必须排在正向断言之后也有效 —— 这里盯的是「补记快照不许绕过判空」。
     expect(PREVIEW_BRANCH, "不能拿没落地的落点去补记快照").not.toMatch(
       /recordScroll\(other\.tabId,(?!\s*landed\))/,
     );
+  });
+
+  it("预览侧的常数平移也清干净了（ANCHOR = 0）：探测只问「压在哪一块」", () => {
+    // B251 定案 ANCHOR = 0 时只清了源码侧（`main.ts` 的 `topVisibleLineFrac`），预览侧这
+    // 对常数（`applySyncToLine` 写 `块顶 − 8` / `topVisibleLine` 读 `scrollTop + 8`）是
+    // **连带项** —— 不清掉，预览侧每走一次往返就偏 8px（≈半行），「严格互逆」就只对了
+    // 一半。而正是这一对常数撑起了 B245 那个「越切越靠顶」（真实 `scrollTop` 带小数，
+    // 减 8 加回来仍是 `块顶 − 0.5` < 块顶 ⇒ 二分命中前一块），当时只能拿 EPS 兜。
+    expect(PREVIEW_TS, "探测点是个常量，且只用在块边界上").toMatch(/const TOP_PROBE = 0\.5;/);
+    expect(PREVIEW_TS, "取锚只问「视口顶压在哪一块」").toContain(
+      "this.indexOfBlockAtOffset(this.root.scrollTop + TOP_PROBE)",
+    );
+    // ⚠️ 关键：比例**不许吃探测点**（与源码侧 `topVisibleLineFrac` 同构）。
+    expect(PREVIEW_TS, "比例用真·scrollTop").toContain(
+      "(this.root.scrollTop - top) / (nextTop - top)",
+    );
+    expect(PREVIEW_TS, "落点就是块顶本身").toContain("const nextTop = Math.max(0, top);");
+    // 反向闸（两条）：那对常数一旦回来，这里必须立刻认出来 —— 只拦一条会漏掉另一半。
+    expect(PREVIEW_TS, "不许再写回「块顶 − 8」").not.toMatch(/top - 8/);
+    expect(PREVIEW_TS, "不许再写回「scrollTop + 8」").not.toMatch(/scrollTop \+ 8/);
   });
 
   it("预览交出去的是**实际落点**：找不到目标块就交 null", () => {
@@ -585,8 +698,10 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
     expect(main, "切激活文档那路不播").toMatch(
       /if \(tab && !aligned\) pushSyncToSiblings\(tab\);\n/,
     );
+    // ⚠️ B251 换锚：单参 `v`（旧写法是 `px, line` 两个 —— 「跨侧只交整数块首」那两个
+    //    补丁的产物，正是 B247「每切一轮往上掉」的病根）。
     expect(PUSH_BODY, "广播排在最后（本地先对齐，别人接手时落点一致）").toMatch(
-      /broadcastSyncPos\(src, px, line\);/,
+      /broadcastSyncPos\(src, v\);/,
     );
   });
 
@@ -609,10 +724,12 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
     expect(PUSH_BODY, "from 不能少").toMatch(/from: windowLabel,/);
     expect(PUSH_BODY, "文档 ID 不能少").toMatch(/docId: src\.docId,/);
     expect(PUSH_BODY, "源那份的 tabId 不能少（对端要跳过它）").toMatch(/srcTabId: src\.tabId,/);
-    // 坐标两个数一起带：源那侧是预览就只有 line、是源码就只有 px，对端按自己那一侧挑。
-    // ⚠️ 签名收口到 "); 免得只命中注释里那句「px 与 line 一起带」。
+    // ⚠️ B251：坐标只有**一种东西** —— 规范游标 `v`。旧签名是 `px` + `line` 两个（源那侧
+    //    是预览就只有 line、是源码就只有 px，对端按自己那一侧挑）；合成一个 `v` 之后
+    //    对端也不必再按「自己哪一侧」挑坐标，少一层分支就是少一处失配。
+    // ⚠️ 签名收口到 "); 免得只命中注释里那句「v 一起带」。
     expect(PUSH_BODY, "签名要收口").toMatch(
-      /function broadcastSyncPos\(src: Tab, px: number \| null, line: number \| null\)/,
+      /function broadcastSyncPos\(src: Tab, v: number \| null\)/,
     );
   });
 
@@ -647,7 +764,8 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
     // 这是 B159 最容易写错的地方：把接收端另写一份「简化版」，于是跨视图模式那条
     // 纪律（B154）在网络这一侧悄悄丢掉 —— 表现为「一个预览一个源码时跨窗口不同步」。
     expect(PUSH_BODY, "抽取后的落点函数要留在推送段里").toContain("function applySyncToSibling(");
-    expect(main, "本地循环要调它").toMatch(/applySyncToSibling\(other, px, line\);/);
+    // ⚠️ B251 换锚：单参 `v`（旧写法两个实参，是「跨侧只交整数块首」时期的遗骸）。
+    expect(main, "本地循环要调它").toMatch(/applySyncToSibling\(other, v\);/);
     // ⚠️ 判据放行号：`applySyncToSibling(other,` 被 prettier 折成了三行。
     expect(main, "接收端也调同一个").toMatch(/applySyncToSibling\(\s*other,/);
   });
@@ -667,10 +785,10 @@ describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚�
     );
     // ⚠️ B248：第一参从 `shownView` 换成 `view` —— 离屏源码兄弟没视图时，拿同文档的
     //    **另一个源码态视图**量 `lineBlockAt`（排版一致 ⇒ 等价于量它自己）换算。
-    //    锚点跟着改，判据仍是「行号要真的被用上」。
-    expect(PUSH_BODY, "换算出来的行号要真的用上").toContain(
-      "const top = editorLineTopPx(view, line);",
-    );
+    //    ⚠️ B251 再换锚：落点出口现在叫 `sourceTopOfV`（`editorLineTopPx` 退化成它的
+    //    「取行顶」内部件），且**交的是完整 `v`**（含行内比例，由它自己按行高插值）。
+    //    判据仍是「换算出来的像素要真的被用上」，不是改松。
+    expect(PUSH_BODY, "换算出来的行号要真的用上").toContain("const top = sourceTopOfV(view, v);");
     // ⚠️ B242：跨侧落点只给**行首**，不再按行内比例插值 —— 那串 frac 是**编辑器行内**
     //   的比例，从预览侧搬过来量的是「块内」，往返不等值 ⇒ 每切一轮吃掉一点（用户报
     //   「来回切位置会变化」的一路成因）。行首两边都有确定对应，来回切恒等。
@@ -702,9 +820,9 @@ describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚�
     // 的钩子 ⇒ 图片 / KaTeX / Shiki 一增强完，预览就自己跳一下。
     // B162：纪律收进 `syncToLineProgrammatic`（程序定位入口自带「不留尾巴」+ 程序定位
     // 窗口），调用点换过去；入口自身「不留尾巴」在 preview-sync 那侧盯。
-    expect(PUSH_BODY, "预览分支要走程序定位入口").toMatch(
-      /preview\.syncToLineProgrammatic\(Math\.floor\(line\)\)/,
-    );
+    // ⚠️ B251 换锚：小数不再被 `Math.floor` 掐掉 ⇒ 直接交完整 `v`（预览侧按块内比例
+    //    插值）。这条**正向**判据盯的是「不许退回 syncToLine」，锚点跟着实现走。
+    expect(PUSH_BODY, "预览分支要走程序定位入口").toMatch(/preview\.syncToLineProgrammatic\(v\)/);
     expect(PUSH_BODY, "不许再走会留尾巴的 syncToLine").not.toMatch(/preview\.syncToLine\(line\)/);
   });
 
@@ -712,11 +830,10 @@ describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚�
     // B170：预览跨面板同步走 `syncToLineProgrammatic` —— 它内部 `markProgrammatic` 标来源，
     // 回执由预览监听经 scroll-guard 吞掉；且不留 `pendingSyncLine` 尾巴（B162）。不再套
     // `restoringViewport` 还原窗口（B170 删了那套时间窗）。
-    expect(PUSH_BODY, "预览分支要走程序定位入口").toMatch(
-      /preview\.syncToLineProgrammatic\(Math\.floor\(line\)\);/,
-    );
+    expect(PUSH_BODY, "预览分支要走程序定位入口").toMatch(/preview\.syncToLineProgrammatic\(v\);/);
     // 落点显式补记（程序定位不写快照）：必须排在 syncToLineProgrammatic 之后。
-    const atSync = PUSH_BODY.indexOf("preview.syncToLineProgrammatic(Math.floor(line));");
+    // ⚠️ B251 换锚：交的是完整 `v`（旧写法 `Math.floor(line)` 会把块内比例掐掉）。
+    const atSync = PUSH_BODY.indexOf("preview.syncToLineProgrammatic(v);");
     const atRecord = PUSH_BODY.indexOf("recordScroll(other.tabId, landed);");
     expect(atSync, "要能定位程序定位入口那句").toBeGreaterThan(-1);
     expect(atRecord, "要能定位补记那笔").toBeGreaterThan(-1);
@@ -1147,20 +1264,24 @@ describe("B152 反向验证：退回旧写法，上面那几条必须变红", ()
   });
 
   it("退回「直接写兄弟的 scrollTop，绕过唯一闸口」→ 位置那条必须落空", () => {
-    // ⚠️ 退化串要连着那行的缩进：函数里有两笔 `recordScroll(other.tabId, …)`，只按
-    //    短句 replace 的话替换掉的未必是这笔，断言就会落在另一笔上（假绿）。
-    const ORIG = "recordScroll(other.tabId, px);";
+    // ⚠️ 退化串要连着那行的缩进：函数里有两笔 `recordScroll(other.tabId, …)`（预览分支
+    //    记 `landed`、统一分支记 `top`），只按短句 replace 的话替换掉的未必是这笔，
+    //    断言就会落在另一笔上（假绿）。
+    // ⚠️ B251 换锚：落点现在是 `sourceTopOfV` 换算出来的 `top`（旧的「px 直通」那一格
+    //    已经并进统一分支），退化串跟着换。
+    const ORIG = "recordScroll(other.tabId, top);";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "other.scrollTop = px;");
+    const degraded = main.replace(ORIG, "other.scrollTop = top;");
     const body = slice(degraded, "function pushSyncToSiblings(", "function showMessage(");
     expect(body, "绕过 recordScroll 的写法要被抓到").not.toMatch(
-      /recordScroll\(other\.tabId, px\)/,
+      /recordScroll\(other\.tabId, top\)/,
     );
   });
 
   it("删掉「离屏预览兄弟跳过位置」那句 → 顺序那条必须落空", () => {
     // ⚠️ B159 起这句挪进了 `applySyncToSibling`（缩进也跟着变了），ORIG 要按新排书写。
-    const ORIG = "    if (line === null || !shown?.preview) return;";
+    // ⚠️ B251 换锚：判空条件从 `line` 改成 `v`（跨侧统一交游标之后 `line` 不再是形参）。
+    const ORIG = "    if (v === null || !shown?.preview) return;";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
     const degraded = main.replace(ORIG, "");
     const body = slice(degraded, "function applySyncToSibling(", "function showMessage(");
@@ -1170,12 +1291,13 @@ describe("B152 反向验证：退回旧写法，上面那几条必须变红", ()
   it("退回「钉兄弟 DOM 不标程序来源（裸写 scrollTop）」→ px 分支那条必须落空", () => {
     // px 分支必须走 `pinScrollTop`（它内部 markProgrammatic 标来源、回执被吞）；
     // 退化成裸写 scrollTop 后，那条「走 pinScrollTop」的契约必须落空。
-    const ORIG = "pinScrollTop(shownView.scrollDOM, px);";
+    // ⚠️ B251 换锚：钉的是统一分支换算出来的 `top`（旧的 `px` 那一格已并掉）。
+    const ORIG = "pinScrollTop(shownView.scrollDOM, top);";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "shownView.scrollDOM.scrollTop = px;");
-    const body = slice(degraded, "function applySyncToSibling(", "function showMessage(");
+    const degraded = main.replace(ORIG, "shownView.scrollDOM.scrollTop = top;");
+    const body = slice(degraded, "function applySyncToSibling(", "function syncSourceSnapshot(");
     expect(body, "裸写 scrollTop 的写法要被抓到（没经 pinScrollTop 标来源）").not.toMatch(
-      /pinScrollTop\(shownView\.scrollDOM, px\);/,
+      /pinScrollTop\(shownView\.scrollDOM, top\);/,
     );
   });
 
@@ -1274,25 +1396,34 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
   });
 
   it("退回「源在预览里也拿 src.scrollTop 当编辑器像素」→ 坐标系那条必须落空", () => {
-    // ⚠️ B240 二轮：退化串原先锚的是整行 `const px = srcPreview ? null : src.scrollTop;`，
-    //    而那一行后半截已改成「取源容器实时 scrollTop」⇒ 整行锚点失效、判据变成
-    //    「找不到原文」的红（与 `pitfalls/0112` 同族）。改锚**三元结构**那一段
-    //    （`const px = srcPreview ? null : `），它才是这条纪律的载体。
-    const ORIG = "const px = srcPreview ? null : ";
-    expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "const px = ");
-    const body = slice(degraded, "function pushSyncToSiblings(", "function showMessage(");
-    expect(body, "退回后就不认「预览那侧不产 px」这条纪律了").not.toMatch(ORIG);
+    // ⚠️ B251 彻底换锚：退化串原先锚 `const px = srcPreview ? null : `（推兄弟那一路的
+    //    局部三元），而统一 `v` 之后「源在哪一侧就取哪一侧」这个纪律**整个搬进了唯一
+    //    取值口 `syncSourceV`** —— 推兄弟那一路只剩一句 `const v = syncSourceV(src)`，
+    //    锚点留在那儿等于退化做了个寂寞（B163 同型）。现在退化 `syncSourceV` 的**预览
+    //    分支**：拿双语义槽 `t.scrollTop`（此刻装的是预览像素）当游标 ⇒ 推给源码兄弟的
+    //    是预览像素，两个面板互相拉。（另一半「源码侧读快照槽」见下一条。）
+    const ORIG = '  if (t.viewMode === "preview") return p?.preview?.topVisibleLine() ?? null;';
+    expect(SYNC_V, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = main.replace(ORIG, '  if (t.viewMode === "preview") return t.scrollTop;');
+    const body = slice(degraded, "function syncSourceV(", "function viewportOfTab(");
+    // ⚠️ 退化真的落进去了（自证：双语义槽那句现在确实在 —— 正向契约里的
+    //    「双语义槽不许当游标」也随之红掉，两道判据一起报）。
+    expect(body, "退化串确实换了写法（预览侧改读槽）").toContain("return t.scrollTop;");
+    // 关键判空：预览侧不再按自己那侧的几何取 v ⇒ 上面那条正向契约必须红。
+    expect(body, "退回后源在预览里不再按预览几何取 v").not.toContain("topVisibleLine()");
   });
 
   it("退回「px 读快照槽（滞后一帧）」→ 实时取值那条必须落空", () => {
-    // B240 二轮新增：源码侧 px 必须取源容器的实时 scrollTop。退回成读快照槽 ⇒
-    // 推给兄弟的是上一次的位置（实测真实 260 时只推出 100）。
-    const ORIG = "srcView?.scrollDOM.scrollTop ?? src.scrollTop";
-    expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "src.scrollTop");
-    const body = slice(degraded, "function pushSyncToSiblings(", "function showMessage(");
-    expect(body, "退回后 px 又变成滞后一帧的快照槽").not.toContain(ORIG);
+    // ⚠️ B251 换锚：源码侧那一格旧的写法是 `srcView?.scrollDOM.scrollTop ?? src.scrollTop`
+    //    （实测真实 260 时只推出 100）。统一 `v` 之后这一格在 `syncSourceV` 的源码分支上
+    //    —— 退化串改锚到那一句，退回成读快照槽 `t.scrollTop` ⇒ 滞后一帧、且槽里存的
+    //    还是上一次的编辑器像素。两条退化各打各的那半边。
+    const ORIG = "  return view ? topVisibleLineFrac(view) : null;";
+    expect(SYNC_V, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = main.replace(ORIG, "  return t.scrollTop;");
+    const body = slice(degraded, "function syncSourceV(", "function viewportOfTab(");
+    // 「源码侧按实时几何取 v」这条纪律落空 ⇒ 上面那条正向契约必须红。
+    expect(body, "退回后源码侧不再按实时几何取 v").not.toContain("topVisibleLineFrac(view)");
   });
 
   it("退回「预览侧先推后写快照」→ 顺序那条必须落空", () => {
@@ -1342,34 +1473,43 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
 
 // ------------------------------------------------------- B160 反向验证
 describe("B160 反向验证：退回旧写法，上面那四条必须变红", () => {
-  it("退回「源码兄弟只认 px」→ 行号那条必须落空", () => {
-    // 退回 B160 前状：在 `px === null`（源是预览侧）时直接 return，于是源码兄弟
-    // 一动不动 —— 用户报的「滚动预览，源码文档没有同步滚动」。
+  it("退回「源码兄弟只认 px，离屏/没容器就不动」→ 离屏写槽那条必须落空", () => {
+    // 退回 B160 前状：在 `px === null`（源是预览侧）或换不出容器时直接 return，于是源码
+    // 兄弟一动不动 —— 用户报的「滚动预览，源码文档没有同步滚动」。
     //
-    // ⚠️ B240：这里的退化串原先取的是 `if (!shownView) return;` 与 `if (px !== null) {`
-    //    **相邻两行**的精确文本，而 B240 把源码分支重排了（`if (px !== null) {` 提到前头，
-    //    `!shownView` 的守卫挪进分支内部）⇒ 那条串整个散掉，判据变成「找不到原文」的红，
-    //    跟它要验证的行为无关。**退化串不许锚在源码的排布上**（同 B233 那条
-    //    「拿某行代码当 slice 锚点」）：改成只认「px 为 null 就落空」这一条语义。
-    const ORIG = "if (px !== null) {";
+    // ⚠️ B251 换锚：统一 `v` 之后源码分支只剩**一道**判空（`if (v === null) return;`），
+    //    `if (px !== null) {` 那个老守卫已经并掉；退化串改锚到**等价的那一道** ——
+    //    把判空扩成 `if (v === null || !shown) return;`（= 老 B160 的「px 取不到 /
+    //    没容器就 return ⇒ 源码兄弟一动不动」）。退化串是**单句结构**（判空 + return
+    //    一整条），不是只写 `v === null` 那几个字符 —— 退化成判恒真照样命中，等于没退化。
+    const ORIG = "  if (v === null) return;";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "if (px === null) return;\n  if (px !== null) {");
-    const body = slice(degraded, "function applySyncToSibling(", "function showMessage(");
-    // 退化后「只看 px 就 return」那句回来了 ⇒ 「源码兄弟要认行号」必须落空。
-    expect(body, "退回后源码分支又只看 px 了").toMatch(/if \(px === null\) return;/);
+    const degraded = main.replace(ORIG, "  if (v === null || !shown) return;");
+    const body = slice(degraded, "function applySyncToSibling(", "function syncSourceSnapshot(");
+    // 退化后「在不在屏」又成了挡路门槛 ⇒ B240 那条「离屏源码兄弟也要写位置快照」的
+    // 反向闸必须命中（它认的不是函数名，是「!shown / !shownView 就 return」这个形态）。
+    expect(body, "退回后源码分支又被『在不在屏』挡住了").toMatch(
+      /if \(v === null \|\| !shown\) return;/,
+    );
+    // 顺手自证：这一退只动了守卫，落点换算还在 ⇒ 被打红的确实是最上面那道反向闸。
+    expect(body, "落点换算还在（被打破的是『不许被在屏挡住』那条）").toContain(
+      "const top = sourceTopOfV(view, v);",
+    );
   });
 
   it("退回「走 syncToLine（留尾巴、无程序定位窗口）」→ 两条必须落空", () => {
     // B162 前状：预览分支调 `syncToLine` —— 它会留 `pendingSyncLine` 尾巴（每次重排
     // 都把预览拽回某一行），也没有程序定位窗口（逃过守卫的 scroll 会被反推成用户滚动）。
-    const ORIG = "preview.syncToLineProgrammatic(Math.floor(line));";
+    // ⚠️ B251 换锚：交的是完整 `v`（旧写法 `Math.floor(line)` 把块内比例掐掉，而 B247
+    //    那个「每切一轮往上掉」正是从这儿长出来的），退化串跟着换。
+    const ORIG = "preview.syncToLineProgrammatic(v);";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "preview.syncToLine(line);");
-    const body = slice(degraded, "function applySyncToSibling(", "function showMessage(");
+    const degraded = main.replace(ORIG, "preview.syncToLine(v);");
+    const body = slice(degraded, "function applySyncToSibling(", "function syncSourceSnapshot(");
     expect(body, "退化后预览分支不再走程序定位入口").not.toContain(
-      /preview\.syncToLineProgrammatic\(Math\.floor\(line\)\)/,
+      /preview\.syncToLineProgrammatic\(v\)/,
     );
-    expect(body, "退化后尾巴又留下来了").toMatch(/preview\.syncToLine\(line\)/);
+    expect(body, "退化后尾巴又留下来了").toMatch(/preview\.syncToLine\(v\)/);
   });
 
   it("把换算那笔的补记删掉 → 「补记在钉位之后」那条必须落空", () => {

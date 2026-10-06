@@ -250,12 +250,19 @@ function bodyOf(header: string, from: string = src): string {
 describe("B148 静态契约：切模式是一次明确的交接，不是各认各的", () => {
   it("切回源码之前要先问预览停在哪一行", () => {
     const body = bodyOf("function toggleViewMode(");
-    expect(body, "没有预览顶行就无从反推编辑器位置").toMatch(/topVisibleLine\(\)/);
+    // ⚠️ B251 换锚：切模式不再自己问 `topVisibleLine()` / `topBlockStartLine()`，改走
+    //    **同步坐标的唯一取值口** `syncSourceV` —— 判据仍是「预览的顶行在切换前就被问过」，
+    //    只是问的那个出口换成了统一取值口（口径本身由 sync-cursor 那一路盯着）。
+    expect(body, "没有预览顶行就无从反推编辑器位置").toMatch(/syncSourceV\(/);
   });
 
   it("问行号必须在改 viewMode 之前（之后编辑器已被清零，问不到）", () => {
     const body = bodyOf("function toggleViewMode(");
-    const ask = body.indexOf("topVisibleLine(");
+    // ⚠️ B251 换锚：切模式不再自己问 `topVisibleLine` / `topBlockStartLine`，改走
+    //    **同步坐标的唯一取值口** `syncSourceV` —— 这里盯的是「问在改 viewMode 之前」这条
+    //    顺序纪律（切换后编辑器已 display:none，顶行无从反推），取值口径本身由
+    //    `sync-cursor` 那一路的合同盯着。
+    const ask = body.indexOf("syncSourceV(tab)");
     const flip = body.indexOf("tab.viewMode =");
     expect(ask, "取顶行的那一行得还在").toBeGreaterThan(-1);
     expect(flip, "改 viewMode 的那一行得还在").toBeGreaterThan(-1);
@@ -266,13 +273,14 @@ describe("B148 静态契约：切模式是一次明确的交接，不是各认�
 
   it("交接过去的必须是**编辑器侧**的像素，且走唯一闸口", () => {
     const body = bodyOf("function toggleViewMode(");
-    // B242：换算抽成 `editorLineTopPx`（与**跨侧同步落点**共用同一个函数），所以这里
-    //   盯的是「切模式走了那个同源换算」，而不是 toggleViewMode 体内那行 lineBlockAt。
-    expect(body, "要按文档行反推编辑器像素（并且用的是同源换算）").toContain(
-      "handoff = editorLineTopPx(view, line);",
+    // ⚠️ B251：换算出口换成 `sourceTopOfV`（与**跨侧同步落点 / 切标签收口**同一个），所以
+    //   这里盯的是「切模式走了那个同源换算、且落点允许带小数」，而不是 toggleViewMode 体内
+    //   那行 lineBlockAt。`editorLineTopPx` 只留在 `sourceTopOfV` 内部当行顶那一步。
+    expect(body, "要把游标按文档行反推成编辑器像素（并且用的是同源换算）").toContain(
+      "handoff = sourceTopOfV(view, v);",
     );
     // 换算函数本身：按文档行反推，靠 lineBlockAt 定位，不是把预览的像素原样搬过去
-    expect(src, "行首换算用 lineBlockAt 按文档行定位").toMatch(
+    expect(src, "行顶换算用 lineBlockAt 按文档行定位").toMatch(
       /lineBlockAt\(view\.state\.doc\.line\(n\)\.from\)\.top/,
     );
     expect(body, "换了这一侧的像素就得走唯一闸口").toMatch(/recordScroll\(/);
@@ -288,10 +296,11 @@ describe("B148 反向验证：把交接摘掉，上面几条必须变红", () =>
   it("退回「切回源码时直接沿用预览的像素」，契约必须抓住", () => {
     // 退化：拿掉取顶行、按行反推、写闸口三步，只留 `tab.viewMode =` 与后续的还原。
     // ⚠️ 整块按原样搬（缩进也算）：只摘不插的话原处还会留一份，退化会悄悄变成「没改」。
-    // ⚠️ B243 同语义换锚：切模式这一路交的是「块起始行」（整数）—— 跨侧收口（`syncSourceSnapshot`）
-    //   也是同一个值，两条路径才咬得住同一处；带小数的小数行号只归跟随那条路。
-    const ASK = "    const line = panel.preview?.topBlockStartLine() ?? null;\n";
-    const CONVERT = "      handoff = editorLineTopPx(view, line);\n";
+    // ⚠️ B251 同语义换锚：切模式这一路交的是**规范游标 `v`**（与跨侧收口 `syncSourceSnapshot`
+    //   同一个值、同一条取值口），落点由 `sourceTopOfV` 换算；带小数的小数行号不再是
+    //   「只归跟随」—— 跨侧也交小数，只是各自按自己那侧的几何插值。
+    const ASK = "    const v = syncSourceV(tab);\n";
+    const CONVERT = "      handoff = sourceTopOfV(view, v);\n";
     const WRITE = "  if (handoff !== null) recordScroll(tab.tabId, handoff);\n";
     let degraded = src;
     let removed = 0;
@@ -304,17 +313,16 @@ describe("B148 反向验证：把交接摘掉，上面几条必须变红", () =>
     expect(degraded, "退化版要真的换了写法").not.toBe(src);
 
     const body = bodyOf("function toggleViewMode(", degraded);
-    // ⚠️ B243：扫的必须是**当前交的那个函数名**（`topBlockStartLine`）—— 扫旧名 `topVisibleLine`
-    //    的话，退化成旧名反而扫不到 ⇒ 恒绿、判据白写。
-    expect(body, "退化后不再问预览的顶行").not.toMatch(/topBlockStartLine\(\)/);
-    expect(body, "退化后不再按行反推编辑器像素").not.toMatch(/lineBlockAt\(/);
+    // ⚠️ B251：扫的必须是**当前交的那个出口**（`syncSourceV` / `sourceTopOfV`）—— 扫旧名
+    //   的话，退化成旧名反而扫不到 ⇒ 恒绿、判据白写。
+    expect(body, "退化后不再问预览的游标").not.toMatch(/syncSourceV\(/);
+    expect(body, "退化后不再按游标反推编辑器像素").not.toMatch(/sourceTopOfV\(/);
     expect(body, "退化后不再交接像素").not.toMatch(/recordScroll\(/);
   });
 
   it("退化成「先切 mode 再问顶行」，顺序契约必须抓住", () => {
-    // ⚠️ B243 同语义换锚：切模式这一路交的是「块起始行」（整数）—— 跨侧收口（`syncSourceSnapshot`）
-    //   也是同一个值，两条路径才咬得住同一处；带小数的小数行号只归跟随那条路。
-    const ASK = "    const line = panel.preview?.topBlockStartLine() ?? null;\n";
+    // ⚠️ B251 同语义换锚：切模式与跨侧收口都从 `syncSourceV` 取同一个 `v`。
+    const ASK = "    const v = syncSourceV(tab);\n";
     const FLIP = '  tab.viewMode = toPreview ? "preview" : "source";\n';
     expect(src).toContain(ASK);
     expect(src).toContain(FLIP);
@@ -325,8 +333,8 @@ describe("B148 反向验证：把交接摘掉，上面几条必须变红", () =>
     const body = bodyOf("function toggleViewMode(", moved);
     expect(body.indexOf("tab.viewMode =")).toBeGreaterThan(-1);
     expect(
-      body.indexOf("topBlockStartLine("),
-      "退化后取顶行应排在改 viewMode 之后（顺序契约此时必须落空）",
+      body.indexOf("syncSourceV("),
+      "退化后取游标应排在改 viewMode 之后（顺序契约此时必须落空）",
     ).toBeGreaterThan(body.indexOf("tab.viewMode ="));
   });
 });

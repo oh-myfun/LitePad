@@ -26,7 +26,7 @@ const ROW = 14;
 /**
  * 预览块顶：**真实几何**——块高不等宽（模拟 h1 / 段落块高参差），块顶 = 前面各块高度累加。
  *
- * ⚠️ 曾经这里写成 `idx * ROW`（等宽），并且把 `A' = A - 8` **写死**成 168/160。
+ * ⚠️ 曾经这里写成 `idx * ROW`（等宽），并且把 `A'` **写死**成「顶边 − 8」的 168/160。
  *    那在等宽假设下自洽，但真实里块高参差时「预览第 13 块的顶」根本不是 168 ——
  *    非等宽一上，先炸的是**桩自己的期望值**（`warm-up`、`前提：b 预览停在 A'`），
  *    根本走不到产品逻辑 ⇒ 测的是桩不是产品（B246 踩过）。
@@ -38,7 +38,7 @@ function blockHeight(idx: number): number {
   return ROW + (idx % 3) * 11;
 }
 
-/** 第 k 块的顶边（前面 k 块高度之和）。`A'` 就是 `topOfBlock(12) - 8`，不再写死。 */
+/** 第 k 块的顶边（前面 k 块高度之和）。`A'` 就是 `topOfBlock(12)`（ANCHOR = 0，块顶=落点），不再写死。 */
 function topOfBlock(k: number): number {
   let s = 0;
   for (let i = 0; i < k; i++) s += blockHeight(i);
@@ -267,14 +267,14 @@ function toggleMode(): void {
 
 // 源码侧的位置 A：第 13 行的行首（下标 12 ⇒ 顶 = 12 × 行高）。
 const A = 12 * ROW;
-// 预览侧对应位置 A'：**同一个块**（行 13）的顶边 - 8。
+// 预览侧对应位置 A'：**同一个块**（行 13）的顶边。
 //
 // ⚠️ 这两个值**从块几何推导，绝不写死**：
-//    `applySyncToLine` 落点是 `块顶 - 8`（给 `topVisibleLine()` 的「+8 偏移」留口径），
-//    而 `topBlockStartLine()` 又用 `scrollTop + 8` 反算回同一个块 ⇒ 两个方向自洽。
+//    `applySyncToLine` 落点就是 `块顶`（ANCHOR = 0，不减不增），
+//    而 `topBlockStartLine()` 用 `scrollTop + TOP_PROBE` 反算回同一个块 ⇒ 两个方向自洽。
 //    块高不等宽时「第 13 块的顶」≠ 168，写死就会先炸桩的前提断言（B246 教训）。
 //    别把这 8 写成 0，否则量的是「落点漂 8px」而不是「四格稳不稳」。
-const AP = topOfBlock(12) - 8;
+const AP = topOfBlock(12);
 
 describe("B243 复核：两面板 / 四标签（a 源码 + b 预览 同栏，c 源码 + d 预览 异栏）", () => {
   beforeAll(async () => {
@@ -382,14 +382,14 @@ describe("B243 复核：两面板 / 四标签（a 源码 + b 预览 同栏，c �
 
   it("③ 亚像素取锚：预览停在「块顶-8」再带个小数时，切回源码不许退回上一块", async () => {
     // 用户实测 symptom：每次切「代码 tab ↔ 预览 tab」都往上挪，越靠顶挪得越少。
-    // 机制：落点 `块顶 - 8` 与取锚 `scrollTop + 8` 在真实里差不到 1px（scrollTop 带小数），
+    // 机制：落点就是块顶，取锚 `scrollTop + TOP_PROBE`（半像素探测），
     // `topAt <= offset` 于是命中**前一个块** ⇒ 源码被钉到上一块的首行 ⇒ 越切越靠顶。
     // 先切到 b 预览，让它自己落到 A'（160）。
     clickTab(0, 1);
     await wait(220);
     expect(previewOf(0).scrollTop, "前提：b 预览停在 A'").toBe(AP);
 
-    // 故意把预览的 scrollTop 压成「块顶 - 8 - 0.5」——真实浏览器里 scrollTop 常是这个样。
+    // 故意把预览的 scrollTop 压成「块顶 - 0.2」——真实浏览器里 scrollTop 常是这样的小数。
     previewOf(0).scrollTop = AP - 0.5;
     await wait(120);
 
@@ -439,7 +439,7 @@ describe("B243 复核：两面板 / 四标签（a 源码 + b 预览 同栏，c �
 
     clickTab(0, 1); // 激活预览 tab b，源码 a 离屏
     await wait(240);
-    userScroll(previewOf(0), AP); // 预览顶正好落在块 12（顶 - 8，与 topBlockStartLine 同口径）
+    userScroll(previewOf(0), AP); // 预览顶正好落在块 12（顶，与 topBlockStartLine 同口径）
     await wait(240);
 
     clickTab(0, 0); // 切回源码 a —— 此刻收口被 B247 守卫挡着，位置只能来自它自己的槽

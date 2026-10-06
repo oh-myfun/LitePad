@@ -666,19 +666,25 @@ function displayedPanelOfTab(tabId: number): Panel | undefined {
 // 前 `markProgrammatic(el)`，scroll 监听见标记即吞，标记靠「用户接管滚动」的真实输入清除，
 // 不比位置、不赌时序、无时间窗。下面 `applySyncToSibling` 的落点日志保留为 debug 诊断。
 
-function applySyncToSibling(other: Tab, px: number | null, line: number | null): void {
+/**
+ * B251：把**规范游标 `v`** 落到一份兄弟上 —— 「谁被推、推到哪儿」的**唯一落点函数**。
+ *
+ * 签名从 `(px, line)` 双参改成单一 `v`：源码态与预览态两条分支各自只差「`v` 怎么变成
+ * 自己那侧的像素」，而「先记槽、再钉 DOM」那个顺序纪律不再有两份。
+ */
+function applySyncToSibling(other: Tab, v: number | null): void {
   const shown = displayedPanelOfTab(other.tabId);
   // B167：落点也留一条 —— 「谁被推、推到哪儿」与上面那条「谁在推」配对看，
   //   拉锯的表现就是同一个 docId 上 A→B、B→A 交替出现，且 px 在几个值之间来回跳。
   logger.debug(
     "sync",
-    `落 other=${other.tabId} doc=${other.docId} mode=${other.viewMode} px=${px} line=${line} shown=${!!shown}`,
+    `落 other=${other.tabId} doc=${other.docId} mode=${other.viewMode} v=${v} shown=${!!shown}`,
   );
   // 兄弟是预览态 ⇒ 它只认行：编辑器像素塞不进它的槽（纪律 2）。换算只能从源那侧
   // 的**顶行**来，所以跨视图模式这一路必须走 `line`；离屏的预览兄弟没有容器可算，
   // 只能靠它的槽自己那份记录，这里不写任何东西（写了就是污染）。
   if (other.viewMode === "preview") {
-    if (line === null || !shown?.preview) return;
+    if (v === null || !shown?.preview) return;
     const preview = shown.preview;
     // B170：跨面板同步把预览按行定位 —— 程序摆位，回执由预览的 scroll 监听经 scroll-guard
     // 标记吞掉（不比位置、不赌时序、不靠还原窗口，渲染扰动也免疫）。
@@ -688,35 +694,26 @@ function applySyncToSibling(other: Tab, px: number | null, line: number | null):
     //   「定位没做」写成「它停在顶部」，下一次切过去天然回顶（B134 同型）。
     // B242：只给**整数行号**（块首对齐），与 `applyPanelMode` 那次 `syncToLine(anchorLine)`
     //   同口径 —— 跨侧同步与切模式于是落在预览的同一个位置。
-    //   ⚠️ 别把 `line` 的小数部分带进来：`applySyncToLine` 会把小数当「块内比例」插值，
-    //      而那个小数是**编辑器行内**的比例（两边排版不同、高度不同），搬过来量纲就错。
-    const landed = preview.syncToLineProgrammatic(Math.floor(line));
+    //   ⚠️ B251 起小数不再被掐掉：跨侧统一交「规范游标 `v`」，预览侧拿小数当
+    //      **块内结构比例**插值（与 `topVisibleLine` 严格互逆），两侧的比例都是
+    //      归一化的**结构比例**、不再是像素比例 ⇒ 不再有 B242 说的量纲错配。
+    const landed = preview.syncToLineProgrammatic(v);
     // `syncToLine` 同步落地，容器里的值可直接读；落点显式补记（程序定位不写快照）。
     if (landed !== null) recordScroll(other.tabId, landed);
     return;
   }
   const shownView = shown?.view?.view;
-  if (px !== null) {
-    // B240：落点**先记**，且**离屏的兄弟也要记**。
-    //   一个 panel 只挂一个 `EditorView`（`viewTabId` 决定它此刻显示谁），所以「非激活
-    //   标签」没有自己的容器可钉 —— 但它的快照槽 `t.scrollTop` 是能写的，而
-    //   `restoreViewScroll` 切过去时正是拿这个槽钉位置。原先这里对离屏兄弟直接
-    //   `return`，等于「同文档的其它标签切过去永远停在老位置」⇒ 用户报「非激活的标签
-    //   也要统一滚动位置」。
-    //   ⚠️ 快照是**兄弟那一侧**的像素，而 `px` 正是编辑器像素 —— 两边同为源码态，
-    //   同一份文档同一套排版，同一个 px 含义相同（纪律 2 的「别把预览像素当编辑器
-    //   像素」在这里不成立，因为源也是编辑器那一侧）。
-    recordScroll(other.tabId, px);
-    // 离屏的兄弟没有容器可钉，跳过钉位即可。⚠️ 隐藏实例（`panelId < 0`，标签已搬到
-    // 别的窗口）也走这一条 —— 它同样不在任何面板里；它那一侧的位置由跨窗口的
-    // EVT_SYNC_POS 负责推给真正在显示它的窗口，本地只把快照记进会话（取回时生效）。
-    if (!shownView) return;
-    // 派发选区**在先**、钉位置在后：CM6 为了让光标可见可能自己滚一下，钉在后面
-    // 才能把它盖掉 —— 顺序反了就变成「位置被光标拽走」。
-    // B170：pinScrollTop 会标记来源，回执由编辑器 scroll 监听吞掉，不必套还原窗口。
-    pinScrollTop(shownView.scrollDOM, px);
-    return;
-  }
+  // ⚠️ B251：原先这里先判 `px !== null`（源码态 ⇒ 编辑器像素直通过来一次写完），否则才
+  //    退到下面「源是预览 ⇒ 从行号换算」那一大段 —— 两路各写一遍「先记槽、再钉 DOM」。
+  //    现在统一交 `v`，两路合并成一条：在屏用 `shownView` 自己、离屏借一个同文档的视图，
+  //    落点一律 `sourceTopOfV` ⇒ 源码态与预览态只在**换算方式**上不同，顺序纪律只剩一份。
+  if (v === null) return;
+  // B240：落点**先记**，且**离屏的兄弟也要记**。
+  //   一个 panel 只挂一个 `EditorView`（`viewTabId` 决定它此刻显示谁），所以「非激活
+  //   标签」没有自己的容器可钉 —— 但它的快照槽 `t.scrollTop` 是能写的，而
+  //   `restoreViewScroll` 切过去时正是拿这个槽钉位置 ⇒ 离屏标签也得先把落点落进槽。
+  //   ⚠️ 这里记的是**由 `v` 换算出**的像素（源码态那一路），不再是「源那侧的 px 直通」；
+  //      两边同为源码态、同一份文档同一套排版，换算回来同一个位置。
   // 走到这里 = 源是**预览**那一侧（`px` 恒为 null，B160），手上只有行号。
   // B240：离屏的源码兄弟换不出编辑器像素 —— 行号→像素要按它**自己那份文档**的
   //   `lineBlockAt` 算，而它此刻没有视图（`view` 归面板所有，正在显示别的标签）。
@@ -741,31 +738,31 @@ function applySyncToSibling(other: Tab, px: number | null, line: number | null):
   if (!view) {
     for (const t of instancesOfDoc(other.docId)) {
       if (t.tabId === other.tabId || t.viewMode === "preview") continue;
-      const v = displayedPanelOfTab(t.tabId)?.view?.view;
-      if (v) {
-        view = v;
+      // ⚠️ B251：改名 —— `v` 现在已经是**规范游标**，不能拿它当「借来的 EditorView」用
+      //    （同名会让下面 `sourceTopOfV(view, v)` 读成借来的那个 view，静默换算错目标）。
+      const instView = displayedPanelOfTab(t.tabId)?.view?.view;
+      if (instView) {
+        view = instView;
         break;
       }
     }
   }
   if (!view) return;
-  // B160：源是**预览**侧 ⇒ 按纪律 2 它交不出编辑器像素，`px` 恒为 `null`。换算只能从行号来：
-  // 行首对齐的像素坐标与 `SyncHost.scrollToLine` 是同一套（纪律 4：中间只许出现「行号」这一种换算）。
-  if (line === null) return;
-  // ⚠️ B242：落点走 `editorLineTopPx` —— 与切源码/预览那一路（toggleViewMode 的 handoff）
-  //   **同一个函数**，只给「**行首**」。这里**不**再自己补行内比例插值：那串比例是
-  //   **编辑器行内**的，源是预览侧时它其实量的是「块内」，搬到另一侧量纲就不对 ⇒
-  //   往返不等值，每切一轮吃掉一点，来回切表现成「位置越来越歪」。
-  //   （B174 那条行内比例只服务于**同侧跟随**：源码→源码走 px 直通，源码→预览那条跟随链
-  //    本来就在同一坐标系里用；跨坐标系只允许出现「行号」这一种中介。）
-  const top = editorLineTopPx(view, line);
+  // ⚠️ B251：落点走 `sourceTopOfV` —— 与切源码/预览那一路（toggleViewMode 的 handoff）
+  //   **同一个函数**，且**允许带行内比例**（内部显式插值，不再被 CM6 的上取整吞掉）。
+  //   旧写法只给行首是有意的（B242：比例跨侧量纲不对），但那要以「收口交整数块首」为
+  //   前提 —— 而整数块首正是 B247 那个「每切一轮往上掉一趟」的病根。统一到 `v` 之后，
+  //   跨侧带的是**归一化的结构比例**（源码侧小数 = 行内比例、预览侧小数 = 块内比例），
+  //   各自在**自己那一侧**按同一份几何插值 ⇒ 往返恒等、不会每轮吃掉一点。
+  const top = sourceTopOfV(view, v);
   if (top === null) return;
+  // ⚠️ 顺序：**先记槽、再钉 DOM**（与源码在屏那一支同源 —— 槽里得先有值，离屏那份
+  //   根本没容器可钉，只有槽能把它带走）。
+  recordScroll(other.tabId, top);
   // ⚠️ 只有兄弟**自己**在屏时才钉它自己的 DOM —— `view` 有可能是借来的（同文档另一个
   //    源码视图），离屏兄弟压根没容器可钉，拿它去 pin 等于把正显示着的那个实例推走。
-  //    位置已经写进槽，切过去 `restoreViewScroll` 会自己读出来。
+  //    槽上面那行已经记好，切过去 `restoreViewScroll` 会自己读出来。
   if (shownView) pinScrollTop(shownView.scrollDOM, top);
-  // 落点得记，否则兄弟这份的位置只活在 DOM 上：离屏前没人补记，重启就丢了。
-  recordScroll(other.tabId, top);
 }
 
 /**
@@ -778,34 +775,17 @@ function applySyncToSibling(other: Tab, px: number | null, line: number | null):
  * 坐标口径与 `pushSyncToSiblings` 同一套（纪律 2 / 4）：源显示在哪一侧就取哪一侧，
  * 预览侧取预览的顶行（带行内比例的小数），源码侧取 `topVisibleLineFrac`。
  */
-function syncSourceSnapshot(
-  src: Tab | undefined,
-  nextTabId: number,
-): { px: number | null; line: number | null } | null {
+function syncSourceSnapshot(src: Tab | undefined, nextTabId: number): number | null {
   if (!src || src.tabId === nextTabId) return null;
   // 同步没开 ⇒ 各认各的（B149 基线），谁也别替谁决定位置。
   if (docSyncModes.get(src.docId) !== true) return null;
   if (src.scrollTop === null) return null;
-  const srcPanel = panelOfTab(src.tabId);
-  const srcPreview = src.viewMode === "preview" ? srcPanel?.preview : undefined;
-  const srcView = srcPreview ? undefined : srcPanel?.view?.view;
-  // ⚠️ B243：预览侧交**整数块起始行**，绝不交带小数的小数行号 ——
-  //    `topVisibleLine()` 掺了「块内比例」，给小数出去两边会各取整各的：
-  //    编辑器侧 `doc.line(小数)` 被 CM6 **上取整**（`lineInner` 判 `line >= target`），
-  //    预览侧 `Math.floor(小数)` **下取整** ⇒ 各越一档、都跑到用户正看着那一块的后面
-  //    （实测：预览顶在块 5 走了 70% ⇒ 交 6.4 ⇒ 编辑器落行 7、预览落块 7，差两行）。
-  //    「同一个行号 ⇒ 同一处」只在整数上成立；小数是**跟随**专用的（`pushSyncToSiblings`
-  //    那条路要它连续走，否则预览变阶梯），收口这里必须收整数。
-  const line = srcPreview
-    ? srcPreview.topBlockStartLine()
-    : srcView
-      ? topVisibleLineFrac(srcView)
-      : null;
-  // ⚠️ B241：`px` 这个槽是**双语义**的（源码侧存编辑器像素、预览侧存预览像素，B129/B154）。
-  //    `applySyncToSibling` 的源码分支只认 `px`、无视 `line` ⇒ 源是预览时交 px 就是拿预览
-  //    像素去钉编辑器（这就是「切过去掉 0 / 位置乱跳」）。口径必须与 `pushSyncToSiblings`
-  //    一致：源在哪一侧，就只交那一侧认得的东西 —— 预览侧 ⇒ px 恒 null，只交行号。
-  return { px: srcPreview ? null : src.scrollTop, line };
+  // ⚠️ B251：交的是**规范游标 `v`**（实数行号），不再是 `{px, line}` 双字段。
+  //    那两样本来就是同一份编号的两半：源显示在哪一侧就取那一侧的「行号 + 比例」，
+  //    而统一坐标之后预览侧的「块内比例」与源码侧的「行内比例」都是**归一化比例**。
+  //    过去这里交「整数块首」是为了躲 CM6 的上取整（B243）／给 B247 守卫让路 ——
+  //    而那两个补丁正是「切 tab 越切越靠顶」的直接原因：守卫本身把收口值定死在块首。
+  return syncSourceV(src);
 }
 
 /**
@@ -830,28 +810,26 @@ function syncSourceSnapshot(
  *
  * @returns 本次切换是否真的收口了（同步没开 / 源没位置 ⇒ 没收口，调用方照旧推播）
  */
-function alignShownToSyncSource(
-  panel: Panel,
-  src: Tab | undefined,
-  snap: { px: number | null; line: number | null } | null,
-): boolean {
-  if (!snap || !src) return false;
+function alignShownToSyncSource(panel: Panel, src: Tab | undefined, snap: number | null): boolean {
+  if (snap === null || !src) return false;
   const shown = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
   if (!shown || shown.tabId === src.tabId) return false;
   // ⚠️ B241 曾经在这里加过「跨侧（一源码一预览）不收口」的守卫 —— 那会儿跨侧走的是
   //    「搬行内比例」的换算，往返不等值，只能不重算。B242 把跨侧落点统一成行首对齐
   //    （`editorLineTopPx` / 整数行号，与切源码·预览同一套）⇒ 跨侧也恒等，跨侧照收。
   //
-  // ⚠️ B247（用户拍板「切回源码要保住自己位置」；真机复现：文档中段「代码 tab ↔ 预览
-  //    tab」来回切，滚动位置会变化）：源是预览（`px === null`）而显示中的是**源码**时，
-  //    **不许按整数块首再推一次**。
-  //    `restoreViewScroll` 刚把这份源码按它自己的槽还原到用户滚出来的**精确**位置（可能
-  //    落在段落块的第 3 行），这里再推 `editorLineTopPx(块首)` 等于把它**覆盖成段首** ⇒
-  //    每切一轮往上掉一趟（桩证据：同一份含跨 3 行段落的文档，warm-up 切一轮回来源码从
-  //    168 被压到 140，四条判据全红）。同标签切模式（Ctrl+/）不经过这次覆盖 ⇒ 它是准的，
-  //    「切 tab 与切模式落点一样」在这条路上才真成立。
-  if (snap.px === null && shown.viewMode !== "preview") return false;
-  applySyncToSibling(shown, snap.px, snap.line);
+  // ⚠️ B247 那条守卫（`snap.px === null && shown.viewMode !== "preview" ⇒ return false`）
+  //    **已随 B251 撤掉**。它是「跨侧只交**整数块首**」这个前提下的补丁：收口把落点定死
+  //    在块首，`restoreViewScroll` 刚按槽把这份源码还原到**块内第 3 行**的精确位置，再推
+  //    块首等于把它盖回段首 ⇒ 每切一轮往上掉一趟（桩证据：跨 3 行段落的文档，warm-up
+  //    切一轮回来源码 168 → 140）。B251 起收口交**完整 `v`**（含块内结构比例），落点由
+  //    `sourceTopOfV` 在**自己那一侧**按同一份几何插值 ⇒ 跨侧往返恒等，「压成块首」的
+  //    病根本身消失了。⚠️ 撤不撤由退化说了算：把那一行补回去跑同一批用例若全绿，说明
+  //    守卫只是冗余、删了无险；若红，说明还有另一条没补上的路径（见 memory 2026-10-06）。
+  //
+  //    （历史：B247 的原始症状是「文档中段代码 tab ↔ 预览 tab 来回切，滚动位置会变化」
+  //     —— 用户拍板切回源码要保住自己位置；同标签切模式 Ctrl+/ 不经过覆盖 ⇒ 它一直准的）。
+  applySyncToSibling(shown, snap);
   return true;
 }
 
@@ -861,13 +839,12 @@ function alignShownToSyncSource(
  * ⚠️ 只对「用户滚动」那几路开（`crossWindow`）：光标 / 输入那一路不广播 —— 在
  *    主窗口敲一个字就带着子窗口跳，不是「同步滚动」，是「打字干扰」。
  */
-function broadcastSyncPos(src: Tab, px: number | null, line: number | null): void {
+function broadcastSyncPos(src: Tab, v: number | null): void {
   const payload: SyncPosPayload = {
     from: windowLabel,
     docId: src.docId,
     srcTabId: src.tabId,
-    px,
-    line,
+    v,
   };
   void emit(EVT_SYNC_POS, payload).catch(() => {
     // 没有别的窗口（绝大多数时候）不是错误，本窗口照常工作
@@ -915,45 +892,27 @@ function pushSyncToSiblings(src: Tab, crossWindow = false): void {
   // 光标位置取源的 `head`。同源内容一致，但离线那一份可能还没追上最新正文
   // （`syncDocInstances` 对它是离线更新），所以要夹回它自己的行数再落。
   const head = src.state.selection.main.head;
-  // 源此刻显示在哪一侧，就取那一侧的坐标（纪律 2 / 4）。先取局部变量：后面是同步
-  // 代码块，收窄不跨块保留。
-  const srcPanel = panelOfTab(src.tabId);
-  const srcPreview = src.viewMode === "preview" ? srcPanel?.preview : undefined;
-  const srcView = srcPreview ? undefined : srcPanel?.view?.view;
-  // ⚠️ B243：这里**仍取小数** `topVisibleLine()` —— 这一路是**跟随**（源每滚一点就推一次），
-  //    小数是让预览「跟着连续走」的关键；换成 `topBlockStartLine()` 那种块起始行会一步跳到
-  //    块首、跟随变阶梯（B174 那条用户报的「卡一下、跳一下」会重来）。
-  //    ⚠️ 只有**收口**那一路（`syncSourceSnapshot`）才交整数（`topBlockStartLine()`），
-  //      因为 `doc.line(小数)` 会被 CM6 上取整、与预览侧 `floor` 差一档 —— 详见那里。
-  // ⚠️ B249：源是**预览**这一支从 `topVisibleLine()`（小数）改成 `topBlockStartLine()`（整数）。
-  //    旧写法留小数出去，两边各取整各的 —— 源码兄弟走 `editorLineTopPx` ⇒ `doc.line(小数)`
-  //    被 CM6 **上取整**，预览兄弟走 `syncToLineProgrammatic` ⇒ `Math.floor` **下取整**，
-  //    于是「预览顶在块 5 走了 70%（小数 6.4）」这里会推出两个值：源码落行 7、预览落块 6，
-  //    差一行；而那个小数跨侧本来也没人真用（源码只认行号、预览只认块首），丢掉它不会
-  //    少任何连续性 —— 用户报「滚预览时两边总差一行 / 差半行」就是这一路。
-  //    ⚠️ 别顺手把**源是源码**那支（下面 `topVisibleLineFrac`）也改成整数：那条是
-  //    「源码 → 预览」的同侧跟随，小数是让预览**连续跟着走**的关键（B174 那条「卡一下、
-  //    跳一下」的病根），整数会让跟随变阶梯。小数只有一种合法去处：同侧跟随。
-  const line = srcPreview
-    ? srcPreview.topBlockStartLine()
-    : srcView
-      ? topVisibleLineFrac(srcView)
-      : null;
-  // ⚠️ B240 二轮：px 必须取**源容器的实时 scrollTop**，不能读 `src.scrollTop` 那个
-  //   快照槽。快照只在各条滚动监听里「写」，而两条监听一条是「先写后推」、另一条
-  //   （预览侧）曾是「先推后写」⇒ 推给兄弟的可能是**上一次**的位置。
-  //   实测（复现脚本）：真实位置 260 时，编辑器侧推出 260、预览侧只推出 100 ——
-  //   而离屏兄弟的槽位被写进这个过期值，切过去当然对不上（用户报的
-  //   「未激活标签切过去位置和其它同名文件不一样」）。
-  //   `line` 那条本来就取的是实时值（`topVisibleLineFrac(srcView)` 直接量 DOM），
-  //   两边口径这才一致。
-  const px = srcPreview ? null : (srcView?.scrollDOM.scrollTop ?? src.scrollTop);
+  // 源此刻显示在哪一侧，就取那一侧的坐标（纪律 2 / 4）—— 但**只经 `syncSourceV` 一个口**，
+  // 这一路自己不碰 `topVisibleLineFrac` / `topVisibleLine` / 容器的 scrollTop：
+  // 先取局部变量是因为后面是同步代码块，收窄不跨块保留。
+  // ⚠️ B251：坐标只有**一种东西** —— 规范游标 `v`，且**只从** `syncSourceV` 拿。
+  //    以前这里是三套：`px`（源是源码时的编辑器像素）+ `line`（源是预览时的整数块首），
+  //    而整数块首这一路是 B249 改的 —— 它是「跨侧只交整数块首」的补丁，代价是丢掉
+  //    源在块内的位置（B247 那个「每切一轮往上掉」就是从这条补丁长出来的）。
+  //    统一交 `v`（实数行号，小数 = 在**自己那一侧**按同一份几何插出来的归一化比例）：
+  //    · 源是源码 ⇒ 就是 `topVisibleLineFrac` 那个小数（行内比例）；
+  //    · 源是预览 ⇒ 就是 `topVisibleLine()` 那个小数（已按**块内/行内**折成行号+比例）。
+  //    两条本来就是同一个公式，只是此前没人认；现在谁也不许再自己取坐标。
+  //    ⚠️ 小数**不是**可以丢掉的零头：跟随要它才能「连续走」（B174 那条「卡一下、跳一下」），
+  //    跨侧收口要它才能「切回去不掉位置」（B247 那条）。B249 当初丢它，两边各取整各的
+  //    —— 源码侧 CM6 上取整、预览侧 `Math.floor` 下取整 —— 直接就是「差一行 / 差半行」。
+  const v = syncSourceV(src);
   // B167 定位用：同步滚动是「每秒几十次」的高频链路，抖起来只能靠日志看是谁在推谁。
   //   这几条全是 debug（默认 info 看不到，需在设置里把 log_level 调到 debug），
   //   排查时按 docId 过滤即可看出是不是「A 推 B、B 又推回 A」的拉锯。
   logger.debug(
     "sync",
-    `推 src=${src.tabId} doc=${src.docId} px=${px} line=${line} sibs=${sibs.length} cross=${crossWindow}`,
+    `推 src=${src.tabId} doc=${src.docId} v=${v} sibs=${sibs.length} cross=${crossWindow}`,
   );
   for (const other of sibs) {
     const line2 = other.state.doc.lineAt(Math.min(head, other.state.doc.length));
@@ -978,10 +937,10 @@ function pushSyncToSiblings(src: Tab, crossWindow = false): void {
       other.state = other.state.update({ selection: { anchor: pos } }).state;
     }
     // 位置那一路（跨视图模式的换算都关在这一函数里）
-    applySyncToSibling(other, px, line);
+    applySyncToSibling(other, v);
   }
   // B159：位置广播排在最后 —— 本地兄弟已经对齐过一次，别人接手时看到的是同一个落点。
-  if (crossWindow) broadcastSyncPos(src, px, line);
+  if (crossWindow) broadcastSyncPos(src, v);
 }
 
 // ---------------------------------------------------------------- 状态呈现
@@ -4794,9 +4753,27 @@ function isMdActive(): boolean {
  * 一下」的阶梯（用户报：预览跟随同步时跳动，而 TOC 一次性大跳反而没问题 —— 一次大跳
  * 人眼接受，持续小跳很扎眼）。带上行内比例后坐标连续，落点也就连续。
  */
+/**
+ * 找「视口顶边那一行」时的**内缩量**（像素，＜1）。
+ *
+ * ⚠️ B251 定案 **ANCHOR = 0**：视口坐标与内容坐标之间**不许**再有任何常数平移（读 `+8`/
+ * 写 `−8` 那套是 B23 留下的魔法数，`.md-preview` 的 `padding` 里找不到 8px 的几何依据）。
+ * 这个常量不是偏移 —— 它只用来在**块/行边界上**问「顶边压在谁身上」：踏在整行/整块顶上
+ * 时 CM6 的 `lineBlockAtHeight` / 预览的二分都按「含这个 height」取值，正好压界会退到上一
+ * 行。内缩半像素问一次，比例仍按真·scrollTop 算 ⇒ 读与写严格互逆、往返不攒误差。
+ */
+const TOP_PROBE = 0.5;
+
 function topVisibleLineFrac(view: EditorView): number {
   const scrollTop = view.scrollDOM.scrollTop;
-  const block = view.lineBlockAtHeight(scrollTop + 1);
+  // ⚠️ B251（ANCHOR = 0）：探测点只是「问 CM6 视口顶上那一块是哪一块」时的**内缩量**，
+  //    **不是**坐标平移 —— 比例下面按**真·scrollTop** 算。旧写法把 `+1` 一起算进比例
+  //    （`(scrollTop + 1 - lineTop) / lineHeight`），而落点 `sourceTopOfV` 写的是
+  //    `lineTop + frac * lineHeight`（不补这 1px）⇒ 每走一次往返就偏 1px：预览→源码→预览
+  //    看着没事，源码→预览→源码每轮掉 1px，切几十次就看得出来（B245 那类「越切越靠顶」）。
+  //    ⚠️ 内缩量必须＞0：滚到**整行顶**（scrollTop === lineTop）时 CM6 的 `lineBlockAtHeight`
+  //    按「块含 this height」取，正好压在边界会退到**上一行** ⇒ 行号错一格。半像素安全网。
+  const block = view.lineBlockAtHeight(scrollTop + TOP_PROBE);
   const line = view.state.doc.lineAt(block.from);
   // B175：换行（isWrap=true）下一条逻辑行会被 CM6 拆成**多个视觉块**（每块一行高），
   // 这些块的 `lineAt(block.from).number` 都是同一个逻辑行号、块 `height` 只是一条视觉行高。
@@ -4808,7 +4785,9 @@ function topVisibleLineFrac(view: EditorView): number {
   const nextLine = line.number < view.state.doc.lines ? view.state.doc.line(line.number + 1) : null;
   const nextTop = nextLine ? view.lineBlockAt(nextLine.from).top : lineTop + (block.height || 1);
   const lineHeight = nextTop - lineTop || block.height || 1;
-  const ratio = Math.min(1, Math.max(0, (scrollTop + 1 - lineTop) / lineHeight));
+  // ⚠️ B251：比例**不加探针**（ANCHOR = 0）—— 与 `sourceTopOfV` 的 `lineTop + frac*h`
+  //    严格互逆，往返一分不差。探针只影响「是哪一行」，不影响「行内走了多少」。
+  const ratio = Math.min(1, Math.max(0, (scrollTop - lineTop) / lineHeight));
   return line.number + ratio;
 }
 
@@ -4836,6 +4815,49 @@ function topVisibleLineOf(view: EditorView): number {
 function editorLineTopPx(view: EditorView, line: number): number | null {
   const n = Math.min(Math.max(1, line), view.state.doc.lines);
   return Math.max(0, view.lineBlockAt(view.state.doc.line(n).from).top);
+}
+
+/**
+ * B251：把**规范游标 `v`**（实数行号）换算成编辑器像素 —— 源码侧落点的**唯一出口**。
+ *
+ * `v = 行号 + 行内比例`：整数部分定行（走 `editorLineTopPx`），小数部分按**行高插值**
+ * （下一行顶 − 本行顶，含折行的整逻辑行高，与 `topVisibleLineFrac` 同口径）
+ * ⇒ **读与写严格互逆**。
+ *
+ * ⚠️ 旧写法把 `v` 的小数直接丢给 `editorLineTopPx` —— CM6 的 `doc.line(小数)` 会**向上
+ *    取整**，于是每一路跨侧换算都白吃一次取整（B249 那个「差一行」有一半就在这一处：
+ *    收口交的 `line` 明明带了块内比例，去程被上取整、回程预览侧 `Math.floor` 下取整，
+ *    各取整各的）。现在显式插值，小数不再被吞掉。
+ */
+function sourceTopOfV(view: EditorView, v: number): number | null {
+  const lines = view.state.doc.lines;
+  const base = Math.floor(Math.min(Math.max(v, 1), lines));
+  const lineTop = editorLineTopPx(view, base);
+  if (lineTop === null) return null;
+  // ⚠️ 量不出下一个行顶（末行）就退回行首 —— 绝不拿 `block.height` 之类的近似值顶上，
+  //    否则跨侧换算每轮带一点误差，来回切就漂（B240 二轮同型：别拿缓存做实时决策）。
+  const nextTop = base < lines ? editorLineTopPx(view, base + 1) : null;
+  const h = nextTop !== null ? nextTop - lineTop : 0;
+  return h > 0 ? lineTop + (v - base) * h : lineTop;
+}
+
+/**
+ * B251：**同步坐标的唯一取值口** —— 跟随 / 切标签收口 / 切模式交接三路都从这里取
+ * 「源」的规范游标 `v`。
+ *
+ * 以前这里是三处各取各的：跟随走 `px`（源是源码时的编辑器像素）+ `line`（源是预览时的
+ * 整数块首）两套，收口 `syncSourceSnapshot` 又是另一套 `{px, line}`，切模式 handoff 又是
+ * `topBlockStartLine + editorLineTopPx` 手工拼 —— 同一个「源显示在哪一侧」被抄成三种口径，
+ * 每换一次手就吃一次差（B247 守卫 / B249 改整数 / B240 二轮读实时值，全是在这三层不一致上
+ * 打的补丁）。现在只有 `v` 一种东西：源码侧就是 `topVisibleLineFrac` 那个小数，
+ * 预览侧就是 `topVisibleLine()` 那个小数 —— **两边本来就是同一个公式**，只是此前没人认。
+ */
+function syncSourceV(t: Tab | undefined): number | null {
+  if (!t) return null;
+  const p = panelOfTab(t.tabId);
+  if (t.viewMode === "preview") return p?.preview?.topVisibleLine() ?? null;
+  const view = p?.view?.view;
+  return view ? topVisibleLineFrac(view) : null;
 }
 
 /**
@@ -5271,15 +5293,16 @@ function toggleViewMode(target?: Tab): void {
   let handoff: number | null = null;
   if (!toPreview && panel.view) {
     // ⚠️ 必须在改 viewMode **之前**问：切换后编辑器是 display:none，问不出顶行。
-    //    ⚠️ B243：取**块起始行**（整数）而不是带小数的 `topVisibleLine()` —— 跨侧收口
-    //      （`syncSourceSnapshot`）交的是同一个整数，两条路径才真是「同一套计算」；
-    //      小数这会儿会被 CM6 上取整越过一块，与预览侧 `floor` 的落点错开两行。
-    const line = panel.preview?.topBlockStartLine() ?? null;
+    //    ⚠️ B251：坐标只从 `syncSourceV` 一个口取（与跟随 / 切标签收口同一条），再交给
+    //      **同一个** `sourceTopOfV` 换算 —— 三条路径真·同一套计算。
+    //      B243 那会儿这里取的是**块起始行**（整数）—— 那是「跨侧只交整数」前提下的
+    //      补丁，代价是丢掉预览在块内走了多少（B247 的「每切一轮往上掉」就长在这）。
+    //      现在交**完整 `v`**：预览那侧的块内比例由 `sourceTopOfV` 按**它自己那份
+    //      几何**（源码行顶之间的差）显式插回来，不再靠 CM6 的取整猜。
+    const v = syncSourceV(tab);
     const view = panel.view.view;
-    if (line !== null) {
-      // B242：与**跨侧同步落点**共用同一个换算（editorLineTopPx），两条路径的位置
-      //   算法从此是同一份 —— 于是「同步后切模式 / 切不同模式的标签」也不会有偏差。
-      handoff = editorLineTopPx(view, line);
+    if (v !== null) {
+      handoff = sourceTopOfV(view, v);
     } else {
       // 预览一份都没渲染出来（大文件降级就是这样）：拿不到顶行，也就**无从**反推
       // 编辑器该停在哪。这时宁可不动编辑器（让它按 CM6 自己的还原来），也别把预览的
@@ -7655,13 +7678,19 @@ const EVT_DOC_RESYNC_FULL = "doc-resync-full";
 const EVT_SYNC_MODE = "sync-scroll-mode";
 const EVT_SYNC_POS = "sync-scroll-pos";
 
-/** 跨窗口同步滚动的载荷（`px` 为编辑器侧像素，`line` 为源那一侧的顶行）。 */
+/**
+ * 跨窗口同步滚动的载荷。
+ *
+ * ⚠️ B251：`px` / `line` 双字段换成单个 **`v`**（规范游标，实数行号）。那两样本来就是
+ *   「源显示在哪一侧」的两种记账口径 —— 同一份位置被抄成两半，跨侧一换算就差一档
+ *   （B249 的「差一行」、B247 的「压成块首」都栽在这），而线上格式本来也只有本窗口
+ *   自己发自己收，没有第二个实现要兼容。
+ */
 interface SyncPosPayload {
   from?: string;
   docId?: number;
   srcTabId?: number;
-  px?: number | null;
-  line?: number | null;
+  v?: number | null;
 }
 interface SyncModePayload {
   from?: string;
@@ -7921,20 +7950,19 @@ function applySyncMode(payload: SyncModePayload | null): void {
  *    跳过它是防御（回声过滤与 `from` 那条是两回事，`from` 只保证不是自己发的）。
  */
 function applyRemoteSyncPos(payload: SyncPosPayload | null): void {
-  const { from, docId, srcTabId, px, line } = payload ?? {};
+  const { from, docId, srcTabId, v } = payload ?? {};
   if (!from || from === windowLabel || typeof docId !== "number" || typeof srcTabId !== "number") {
     return;
   }
   // 本窗口没开这份文档的同步滚动（开关那一条还没轮到，或用户在这边关过）⇒ 不动。
   if (docSyncModes.get(docId) !== true) return;
-  logger.debug("sync", `收 ← ${from} doc=${docId} px=${px} line=${line} srcTab=${srcTabId}`);
+  logger.debug("sync", `收 ← ${from} doc=${docId} v=${v} srcTab=${srcTabId}`);
+  // ⚠️ B251：落点走的是和本窗口三条路**同一个** `applySyncToSibling(v)` —— 跨窗口不是
+  //    「另一套换算」，只是另一批接收者。远端交来的 `v` 与本地自己取出来的 `v` 同口径，
+  //    远端那份源码/预览按它自己的几何插 ⇒ 与本窗口盯着同一处（用户报：跨窗口滚不对齐）。
   for (const other of instancesOfDoc(docId)) {
     if (other.tabId === srcTabId) continue;
-    applySyncToSibling(
-      other,
-      typeof px === "number" ? px : null,
-      typeof line === "number" ? line : null,
-    );
+    applySyncToSibling(other, typeof v === "number" ? v : null);
   }
 }
 

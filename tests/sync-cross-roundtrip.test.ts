@@ -262,7 +262,7 @@ describe("B242 跨侧：同步滚动与切源码/预览用同一套位置计算�
 
   /** 预览此刻顶上那一块的**起始行**（`data-line-start` 那一格）。 */
   function previewTopBlockLine(): number {
-    const s = previewRoot().scrollTop + 8; // 与 `topVisibleLine()` 的 +8 同一口径
+    const s = previewRoot().scrollTop + 0.5; // 与 preview.ts 的 `TOP_PROBE` 同一口径
     const els = Array.from(previewRoot().querySelectorAll("[data-line-start]")) as HTMLElement[];
     let best = -1;
     // 块顶沿 DOM 序单调 ⇒ 取「块顶不越过视口顶」这批里的最后一个（起始行最大的那一块）
@@ -274,43 +274,85 @@ describe("B242 跨侧：同步滚动与切源码/预览用同一套位置计算�
     return best;
   }
 
-  /** 编辑器此刻顶上那一条**逻辑行**（几何：第一个行顶不高于滚动位置的那一行）。 */
-  function sourceTopLine(): number {
-    const s = scroller().scrollTop;
-    const lines = Array.from(scroller().querySelectorAll(".cm-line")) as HTMLElement[];
-    for (let i = 0; i < lines.length; i++) {
-      if (i * ROW >= s) return i + 1;
+  /** 预览此刻顶边落在顶上那一块里的**比例**（0 = 正压块顶）。 */
+  function previewTopFrac(): number {
+    // ⚠️ B251（ANCHOR = 0）：`s` 只用来定「顶边压在哪一块上」，**比例不许吃它** ——
+    //    与 preview.ts 的 `topVisibleLine` 同构（探测点管身份、比例用真·`scrollTop`）。
+    //    旧写法把这个常数一起算进比例，而落点写的是块顶（不补它）⇒ 每走一次往返就偏
+    //    那么多（实测差 0.5/ROW = 0.036，正好是这一格的误差）。
+    const s = previewRoot().scrollTop + 0.5; // 与 preview.ts 的 `TOP_PROBE` 同口径
+    const els = Array.from(previewRoot().querySelectorAll("[data-line-start]")) as HTMLElement[];
+    let top: { start: number; top: number } | null = null;
+    for (const el of els) {
+      const start = Number(el.dataset.lineStart);
+      if (!Number.isFinite(start)) continue;
+      const t = blockTopOf(el);
+      // 块顶沿 DOM 序单调 ⇒ 取「块顶不越过视口顶」这批里的最后一个（起始行最大的那一块）
+      if (t <= s && (!top || top.start <= start)) top = { start, top: t };
     }
-    return lines.length;
+    if (!top) return 0;
+    // 桩里每个块一行（见 MD 那段）⇒ 块高 = ROW；nextBlockTop − blockTop 也是同量。
+    return Math.min(1, Math.max(0, (previewRoot().scrollTop - top.top) / ROW));
   }
 
-  it("跨侧切过去，落到的是预览顶上那一块的行首（不许差一行）", async () => {
+  /**
+   * 编辑器此刻顶上那一条**逻辑行**（几何：行号 n 的行顶 = (n−1) × 行高）。
+   *
+   * ⚠️ B251 换判据：旧写法 `for (i…) if (i*ROW >= s) return i+1` 只在 s **正好压在行顶上**
+   *    时才对 —— s 落在行内部（比如 126 → 128）它就把下一行报出来（返回 n+1 而不是 n），
+   *    于是「块内走了多少比例」这件事在这个 helper 里根本表达不出来。现在按
+   *    「第 n 行占 [(n−1)·ROW, n·ROW)」直接算，行内比例也就顺带落在同一个数上，
+   *    下面那条判据才抓得住「比例被掐成行首」。
+   */
+  function sourceTopLine(): number {
+    return Math.floor(scroller().scrollTop / ROW) + 1;
+  }
+
+  /** 编辑器顶边落在这一行内部的**比例**（0 = 正压行顶）。 */
+  function sourceTopFrac(): number {
+    const s = scroller().scrollTop;
+    const n = sourceTopLine();
+    return (s - (n - 1) * ROW) / ROW;
+  }
+
+  it("跨侧切过去，落的是预览那份 `v` 在源码侧的同一个位置（不许差一行，也不许掐掉比例）", async () => {
     const btn = document.getElementById("sync-scroll") as HTMLElement | null;
     if (!btn) throw new Error("同步键没出现");
     btn.click();
     await wait(80);
 
-    clickTab(1); // 先切到预览 tab，下面用**切模式**这条同样走 `topBlockStartLine` 的路
+    clickTab(1); // 先切到预览 tab，下面用**切模式**这一条同样从 `syncSourceV` 取值的路
     await wait(200);
     // 滚到一个**块中间**的位置：这样 `topVisibleLine()` 给出来的是带小数的小数行号
-    // （例如 6.4），才会把「取整口径」这件事暴露出来 —— 正好落在块首的话两种口径同值。
+    // （例如 6.4），才会把「取整口径 / 比例口径」这件事暴露出来 —— 正好落在块首的话
+    // 「只交整数块首」与「交完整 v」两种写法同值，这条用例就成了摆设。
     userScroll(previewRoot(), 120);
     await wait(120);
     const block = previewTopBlockLine();
     expect(block, "前提：预览确实是停在某个块上（否则这条用例测不到取整口径）").toBeGreaterThan(0);
+    const fracBefore = previewTopFrac();
+    expect(
+      fracBefore,
+      "前提：预览确实是停在**块内**、不是压在块顶（否则比例无从判）",
+    ).toBeGreaterThan(0);
 
-    toggleMode(); // 预览 → 源码（同一份 tab 的 handoff，B243 整数口径）
+    toggleMode(); // 预览 → 源码（同一份 tab 的 handoff，B251 完整 `v`）
     await wait(260);
     const top = sourceTopLine();
 
     // ⚠️ CM6 的 `doc.line(小数)` 是**向上取整**（`lineInner` 里判 `line >= target`），
-    //    而预览侧 `syncToLineProgrammatic(Math.floor(line))` 是向下取整 —— 两边各差一行
-    //    ⇒ 切过去顶上不是预览顶上那一块（用户报的「切过去位置对不上」）。
-    // ⚠️ B247：取整口径这条契约改挂在**切模式**上 —— 切 tab 这一路已被要求「保住源码
-    //    自己的块内位置」（对齐参照系是切模式），不再把源码按块首压回去。
-    expect(top, `切模式落点必须落在预览顶上那一块（第 ${block} 块）的行首，不能顺延到下一行`).toBe(
+    //    而预览侧 `Math.floor` / `blockAtLine` 是向下取整 —— 两边各差一档 ⇒ 切过去顶上
+    //    不是预览顶上那一块（B243/B249 实测：预览顶在块 5 走了 70%，切过去落到第 7 行，
+    //    差两行；用户报的「切过去位置对不上」就是这一路）。
+    //    B251 的落点是**同一个 `v`**：整数部分 = 预览顶上那一块的起始行，小数部分 = 块内
+    //    比例按源码行高插回来 ⇒ 既不会顺延到再下一行（差一行复发），也不会被掐成行首。
+    expect(top, `切模式落点必须落在预览顶上那一块（第 ${block} 块）那一行，不能顺延到下一行`).toBe(
       block,
     );
+    expect(
+      sourceTopFrac(),
+      "落点要保住预览那份块内比例（退回「只交整数块首」这条会红）",
+    ).toBeCloseTo(fracBefore, 2);
   });
 
   it("跨侧收口落点 == 切源码/预览那一路的落点（两条路径同一套计算）", async () => {
