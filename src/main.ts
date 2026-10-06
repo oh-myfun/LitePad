@@ -965,11 +965,23 @@ function pushSyncToSiblings(
   //    还没排，从它往外推出去的就是「文档开头」，会把源与其余兄弟一起拽到顶。
   //    （B254 那条通用律的同型：`view.setState` / 重建视图这类「位置归零」的瞬间，
   //     产生的那趟推播不能拿它当源坐标。）
-  //    ⚠️ **B261 是这条通用律的另一条支线**，别只记这一处：DOM 被摘除时浏览器同样会把
-  //      `scrollTop` 归零，那一发 **scroll 事件**也是归零的产物 —— 而它是**异步**到的，
-  //      到的时候面板早换过 view 了，于是「旧容器的 0」被当成用户位置写进**正显示那份**
-  //      的快照（另见编辑器滚动监听那句 `isConnected` 早退）。归零有几条通道，
-  //      就候在那几条通道的出口上各放一道闸，别指望一处守全。
+  //    ⚠️ **B261（真凶已定位，两条；都在这条推播的下游）**：位置「被归零 / 从没存在过」
+  //       会顺着这两条路被误采进去 —— ①「scroll 事件」路（这里这一处监听）；②「主动读
+  //       容器」路（`rememberViewScroll()`：DOM 消失前读一眼）。两者形态不同：事件路靠
+  //       回执，主动读路靠调用点排在归零之前。⚠️⚠️ **第一轮的结论是假的**：那会儿按
+  //       ① 下结论（"摘除 ⇒ 归零 ⇒ 派发 scroll"）并照它加闸 ⇒ 桩上红、真机**毫无变化**
+  //       （用户报「还在」）—— 真浏览器在元素被摘除 / `display:none` 时归零 `scrollTop`
+  //       属于「重置」,**根本不派发 scroll**，那一发是桩里注入的。那条闸已撤。
+  //       ✅ **本轮真凶**（自测台退化 ⇒ 红、还原 ⇒ 绿，双向验过）：
+  //         · **copy 分支既没夹推播、也没给新副本落位**（右键分屏 = 复制式，见
+  //           `splitPanelWithTab` 里 B261 那两行）：`refreshAll()` 尾那趟以**空档副本**
+  //           为源推播 ⇒ 同文档的原标签被钉到 0（用户症状②；自测台退化 `0/0` ⇒ 修复
+  //           `287/287`）。
+  //         · **已有右分屏那一支的顺序反了**（见 `openPreviewToSide` 里 B261 那段）：
+  //           落位排在 `applyPanelMode` **之后**，而它尾那句 `if (anchorLine > 1)
+  //           preview.syncToLine(anchorLine)` 读的是**面板 EditorView 上次按槽还原出来的
+  //           陈旧 scrollTop ⇒ `anchorLine` 根本不是空档、是旧值** ⇒ 把刚按源落好的位置
+  //           又掀回旧值（用户症状①；自测台：源 290 该落 870，被陈旧 287 掀回 861）。
   //    ⚠️ 这里挡在**函数入口**（而不是改调用方的那行判据）—— `switchTab` 尾那句的
   //      写法被 `sync-scroll-mode` 好几条契约钉着，去改它会整片翻红，而语义本来就
   //      是「这一趟推播不许发生」，压在推播自身最贴切。
@@ -1563,15 +1575,6 @@ function rebuildLayout(): void {
       if (p.view) {
         const shownView = p.view.view;
         shownView.scrollDOM.addEventListener("scroll", () => {
-          // ⚠️⚠️ **B261**：这一发 scroll 若来自**已经不在文档里**的容器 —— 它是「DOM 被
-          //    摘除 ⇒ 浏览器把 `scrollTop` 归零」的**产物**，不是用户滚的。
-          //    `rebuildLayout()` 重建面板时旧 view 会被摘掉（开侧边预览 / 新建分屏都走
-          //    它），而这一发回执是**异步**到的：等它到这儿，`p.viewTabId` 已经指向
-          //    **此刻正显示的那一份**，闭包里那个 `shownView` 却是被摘掉的那个 ⇒ 于是
-          //    把「旧容器的 0」当成用户位置写进**正显示这份**的快照，再顺着下面那句
-          //    `pushSyncToSiblings` 把兄弟（刚按源落好的那份新预览）也抹到开头。
-          //    （用户报的两条症状同一根因：预览停在文档开头 / 新建分屏后原标签位置变化。）
-          if (!shownView.scrollDOM.isConnected) return;
           const t = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
           // B170：程序钉位置的回执由 scroll-guard 标记认领、直接吞（见 src/scroll-guard.ts）：
           // 不比位置、不赌时序、不靠还原窗口，渲染扰动（setBlocks 归零再拉回、图片加载重排）
@@ -2499,6 +2502,28 @@ function splitPanelWithTab(
       bodyEl: null,
     });
     tabs.set(inst.tabId, inst);
+    // ⚠️⚠️ **B261**：复制出来的这一份是**空档实例**（`makeInstance` ⇒ `scrollTop: null`，
+    //    编辑器视口 scrollTop 恒 0），而下面 `refreshAll()` 尾那趟 `pushSyncToSiblings` 是以
+    //    **它**（此刻的活动标签）为源往外推的 —— 源没有位置，`syncSourceV` 只能退读 DOM
+    //    ⇒ 推出 `v = 1`（文档开头）⇒ 同文档的**原标签**被 `applySyncToSibling` 记成
+    //    `top = 0` 并钉进 DOM ⇒ 用户报的「新建分屏时原标签内滚动位置出现变化（顶到 0）」。
+    //    与 B254 / B259 同型：**「位置归零（或从没存在过）的那一瞬间产生的推播，不能拿它
+    //    当源坐标」**。三方入口（右键分屏 / Alt+Shift+方向键 / Ctrl 拖拽复制）都直接调这里，
+    //    只有 `openPreviewToSide` 在外面夹了 `suppressSyncPush` ⇒ 同一条病根只在「开侧边
+    //    预览」上被挡住，在别处照旧发作（用户：两个问题都还在）。
+    //
+    //    ⇒ 落位排在 `rebuildLayout()` **之前**：这一趟会把新面板的编辑器挂起来，而空栏视图
+    //      的 scrollTop 恒 0，等挂完再补就晚了。落的是**槽**（`applySyncToSibling` 只写槽、
+    //      不碰新面板还没建好的 DOM；真要钉也轮到 `restoreViewScroll` 按槽来）。
+    //
+    //    ⚠️ 顺序也不能反（`syncSourceV` 必须先于任何重建采）：源此刻还在屏上、位置是真的，
+    //       一旦被 `rebuildLayout` 摘下来换别的标签，采到的就是接班那份的坐标。
+    // ⚠️ 变量名刻意**不叫 `v`**：`tests/view-mode-scroll.test.ts` 里 B148 那两条退化契约盯的
+    //    整句就是 `const v = syncSourceV(tab);`，而退化的摘句是按**首次出现**定位的 ——
+    //    这一处行号更靠前，同名会让退化 `replace` 摘到**这里**而不是切模式那一处 ⇒
+    //    退化变成了「没改」，两条判据（ASK 被摘 / 顺序契约）双双假绿。
+    const vCopy = syncSourceV(tab);
+    if (vCopy !== null) landPreviewAtSource(inst, vCopy);
     layout = splitPanelAt(layout, targetId, dir, newId, newFirst);
     activePanelId = newId;
     rebuildLayout();
@@ -5784,8 +5809,17 @@ function openPreviewToSide(panelId: number): void {
     suppressSyncPush = true;
     switchTab(rightId, targetId);
     suppressSyncPush = false;
-    // B259：按源落位。必须排在 applyPanelMode 之后 —— `anchorLine` 读的是这份新实例
-    //    的空档视口（恒 0），`if (anchorLine > 1)` 那句补不上这一格。
+    // ⚠️⚠️ B261：`applyPanelMode` 必须排在这一句**之前**（与右邻居不存在那一支同序）。
+    //    它尾上那句 `if (anchorLine > 1) preview.syncToLine(anchorLine)` 读的是**面板那个
+    //    EditorView 此刻的 scrollTop** —— 这里它不一定是**空档**：分屏那份实例是
+    //    `splitPanelWithTab` 的 copy 分支造出来的，那份槽在 copy 分支里就被落过一次
+    //    （B261 底下那两行），面板一挂上编辑器就按槽还原到那个值 ⇒ `anchorLine` 是
+    //    一份**陈旧**位置，而这次点击要落的是**源当前**那一格 ⇒ 让 applyPanelMode 先跑，
+    //    它那一跳就盖不掉刚落好的位置。反着来（B259 那版）实测：源 290 ⇒ 该落 870，
+    //    被陈旧 287 掀回 861 —— 就是用户报的「被打开/激活的预览标签滚动位置和打开的
+    //    标签文件滚动位置不一致」。
+    applyPanelMode(rp);
+    // B259：按源落位（排在 applyPanelMode 之后，理由见上）。
     landPreviewAtSource(tabs.get(targetId)!, v);
     // ⚠️ 落完这一份，同文档**其余**兄弟也得跟上同一个 `v`（B258 那个补推同型）：
     //    以左栏那一份（就是上面采 `v` 的那份）为源推其余兄弟，接班这一份已经落好、
@@ -5793,8 +5827,6 @@ function openPreviewToSide(panelId: number): void {
     if (docSyncModes.get(doc.tabId) === true) {
       pushSyncToSiblings(tab, false, { v, skipTabIds: [targetId] });
     }
-    // switchTab 早退时不会走到 applyPanelMode，这里补一次（走过正常路径时幂等）。
-    applyPanelMode(rp);
     renderPanelTabs(rightId);
     renderPanelOps(rightId);
   }
