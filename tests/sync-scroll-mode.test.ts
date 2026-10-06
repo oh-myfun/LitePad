@@ -370,19 +370,24 @@ describe("B152 同步滚动模式：推进与触发点", () => {
     expect(main, "用户滚动之后要推：谁滚谁当源").toMatch(/if \(t\) pushSyncToSiblings\(t, true\);/);
     // 「切换激活文档时则根据新的激活文档进行同步」—— 这一句就落在 switchTab 末尾。
     // ⚠️ B241：这一趟带闸门 ——「没收口」才推全部兄弟（回推会把换算值刷回源那一格）。
+    //    ⚠️⚠️ B260 换锚：调用点不再是裸 `pushSyncToSiblings(tab)` —— B259 把总闸
+    //    `suppressSyncPush` 提到入口后第二参固定 `false`，B260 又让**交接游标**顶掉
+    //    `syncSrc`（源那一格被自己一侧自然上限截小的那份不许再当交接值）。判据仍然只
+    //    盯「这一趟存在、且用交接游标 `handV`」，闸门语义（!aligned 才推全部）一字未动。
     //    判据要认 prettier 折行后的「条件 + 换行 + 调用」整块，别只认半句。
     expect(main, "切激活文档后要按新源推（没收口那一支）").toMatch(
-      /if \(tab && !aligned\) \{\n\s*pushSyncToSiblings\(tab\);/,
+      /if \(tab && !aligned\) \{\n\s*pushSyncToSiblings\(tab, false, \{ v: handV \}\);/,
     );
     // ⚠️ B258 换锚（新增的一支）：收口**生效**时原本整趟跳过 ⇒ 兄弟那一格永远停在
     //    上一次被推到的值上（用户报：预览滚到底 → 切源码 → 切回预览，只有这一格跟着走）。
     //    现在改成照样补推，但只推**其余兄弟**（源与接班都已被收口写好），且沿用收口
-    //    同一个 `v` —— 判据盯这三件事：补推存在、排在不推那支的后面、用了 `syncSrc`。
+    //    同一个游标 —— ⚠️ B260 跟着 `syncSrc` 一起换成 `handV`：两分支必须用同一个数，
+    //    否则「接班」与「其余兄弟」会掉成两档（B258 要的就是同位）。
     expect(main, "收口生效那一支也要补推兄弟（否则兄弟停在旧值）").toMatch(
-      /\} else if \(tab && syncSrc !== null && shownTab\) \{\n\s*pushSyncToSiblings\(tab, false, \{\n\s*v: syncSrc,\n\s*skipTabIds: \[shownTab\.tabId, tab\.tabId\],/,
+      /\} else if \(tab && handV !== null && shownTab\) \{\n\s*pushSyncToSiblings\(tab, false, \{\n\s*v: handV,\n\s*skipTabIds: \[shownTab\.tabId, tab\.tabId\],/,
     );
     expect(main, "补推要排在「不推」那一支后面（两条互斥分支）").toMatch(
-      /\} else if \(tab && syncSrc !== null && shownTab\) \{/,
+      /\} else if \(tab && handV !== null && shownTab\) \{/,
     );
     expect(main, "全局刷新兜底（新出现的那一份要对齐）").toMatch(/const act = activeTab\(\);/);
   });
@@ -808,8 +813,11 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
     // 切激活文档 / 全局刷新这两路也不播：那是「本地对齐」，不是用户滚动。
     // ⚠️ B258 换锚：签名已折成多行，旧锚 `/function pushSyncToSiblings\(src: Tab, crossWindow = false\)/`
     //    会静默失配 —— 这里认「默认第二参 false + 第三参省略」这两件事实质，不是放宽。
+    // ⚠️ B260 二次换锚：B260 让这一支带上交接游标（没收口 ⇒ 整趟按交出的源推，交的值
+    //    就是收口那一格的口径），判据跟着认「第二参显式 false + 第三参只带换游标」，
+    //    仍然只盯「不播跨窗口」这一件事实质，没放宽成抹掉调用本身。
     expect(main, "切激活文档那路不播").toMatch(
-      /if \(tab && !aligned\) \{\n\s*pushSyncToSiblings\(tab\);\n/,
+      /if \(tab && !aligned\) \{\n\s*pushSyncToSiblings\(tab, false, \{ v: handV \}\);\n/,
     );
     // ⚠️ B251 换锚：单参 `v`（旧写法是 `px, line` 两个 —— 「跨侧只交整数块首」那两个
     //    补丁的产物，正是 B247「每切一轮往上掉」的病根）。

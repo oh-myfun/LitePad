@@ -481,7 +481,7 @@ describe("B257：同步滚动 / 切模式 / 切标签三路往返，落点必须
     await wait(320);
   });
 
-  it("还原那一帧被裁小的窗口里切标签，右分屏预览不许被带走（B256 回归 + 多轮）", async () => {
+  it("还原那一帧被裁小的窗口里切标签，右分屏预览不许被减小（B256 回归 + 多轮）", async () => {
     userScroll(scroller(), SRC_PX);
     await wait(300);
     const before = snap();
@@ -489,14 +489,23 @@ describe("B257：同步滚动 / 切模式 / 切标签三路往返，落点必须
     clickTab(0, 1);
     await wait(300);
     clickTab(0, 0);
+    // ⚠️⚠️ **B260 换判据**：这条原先钉的是「右分屏预览不许**动**」。那是 B256 那会儿的
+    //    副产物 —— 那会儿 B241 让「收口生效 ⇒ 整趟推播被跳过」，兄弟压根没被推过，永远
+    //    停在上一次的旧值上 ⇒ 「不动」是「没人管它」的结果，不是「不许动」的纪律。
+    //    B258 之后兄弟**必须**按交接游标与接班同位；B260 又定「交接不许减小」⇒ 兄弟
+    //    从 861 跟到 966 是**跟着走**，不是被减小。判据改钉两件：① 不许跌破切前任一方
+    //    （退化成「按源那个被裁小的值落位」会直接掉到 0 档，这里拦得住）；② 与接班同位。
+    const floor = Math.min(before.p1, previewOf(0).scrollTop);
+    const sameAsShown = previewOf(0).scrollTop;
     expect(
       right.scrollTop,
-      `切回源码后右分屏预览不许动（切前 ${before.p1} → 现在 ${right.scrollTop}）`,
-    ).toBe(before.p1);
+      `切完标签右分屏预览被减小了（切前 ${before.p1} → 现在 ${right.scrollTop}，底线 ${floor}）`,
+    ).toBeGreaterThanOrEqual(floor);
+    expect(right.scrollTop, "右分屏预览要与接班那一格同位（B258）").toBe(sameAsShown);
     editorMax = Infinity;
     await wait(340);
     expect(scroller().scrollTop, "下一帧源必须回到自己那份位置").toBe(SRC_PX);
-    expect(right.scrollTop, "源立住之后右预览仍停在同一格").toBe(before.p1);
+    expect(right.scrollTop, "源立住之后右预览仍停在同一格").toBe(sameAsShown);
   });
 
   it("源是预览那一侧（左分屏预览在屏）：切两个预览标签往返 4 轮，两侧预览每轮都要恒等", async () => {

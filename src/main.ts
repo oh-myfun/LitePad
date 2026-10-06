@@ -1007,6 +1007,10 @@ function pushSyncToSiblings(
   //    且因为每轮切回来都复现同一条路径，歪值冻在那里「之后怎么切都不动」。所以像素走
   //    `sourceCursorPx`（DOM 与槽不一致 ⇒ 用槽），别再直接 `view.scrollDOM.scrollTop`。
   const v = opts.v !== undefined ? opts.v : syncSourceV(src);
+  // ⚠️ B260：下面循环里**曾经**另取一个同名 `v = syncSourceV(src)`，把上面这个盖掉 ——
+  //    于是 `opts.v` 只进了日志和跨窗广播，**落点那一趟照旧重算** `syncSourceV(src)`。
+  //    B258 传 `opts.v` 就是为了「兄弟与接班落在同一个数」，被盖掉就让那趟补推名存实亡。
+  //    ⇒ 这里是唯一取值口，循环里不许再取第二个同名量（换锚时一并订正，别抬杠）。
   // B167 定位用：同步滚动是「每秒几十次」的高频链路，抖起来只能靠日志看是谁在推谁。
   //   这几条全是 debug（默认 info 看不到，需在设置里把 log_level 调到 debug），
   //   排查时按 docId 过滤即可看出是不是「A 推 B、B 又推回 A」的拉锯。
@@ -1024,7 +1028,12 @@ function pushSyncToSiblings(
     //    （历史：更早那版 `other.viewMode !== "preview"` 是**绝对**判断，冒充不了「跨不跨
     //     侧」这个**相对**关系 —— 源源码 + 兄弟预览被判成同侧 ⇒ 交行内比例 ⇒ 预览按块高
     //     插值 ⇒ 恒偏下；源预览 + 兄弟源码同理恒偏上。）
-    const v = syncSourceV(src);
+    //
+    // ⚠️⚠️ B260：上面那条注释里没提的一行 —— 这里**曾经**另起一个同名
+    //    `const v = syncSourceV(src);`，把取值口那个 `v` 盖掉 ⇒ `opts.v` 只进了日志与
+    //    跨窗广播，**落点那趟照旧重算** `syncSourceV(src)`（B258 传 `opts.v` 是为了让
+    //    「兄弟与接班落在同一个数」，被盖掉就等于那趟补推名存实亡）。本轮删掉这一行 ——
+    //    整个函数只有上面一个取值口，循环里不许再出现第二个同名 `v`。
     const line2 = other.state.doc.lineAt(Math.min(head, other.state.doc.length));
     const pos = Math.min(head, line2.to);
     const shownView = displayedPanelOfTab(other.tabId)?.view?.view;
@@ -1718,7 +1727,20 @@ function switchTab(panelId: number, tabId: number): void {
   // B240 三轮：同步开着 ⇒ 切过去的位置由**源**给定（离屏那份算不出自己的位置，
   // 见 alignShownToSyncSource）。排在最后那次补焦点之后 —— 焦点会把光标滚进视野，
   // 排在它之前会被顶掉（B145 那套顺序纪律）。
-  const aligned = tab ? alignShownToSyncSource(panel, shownTab, syncSrc) : false;
+  // ⚠️ B260：交接游标取「源交过来的」与「接班这一格自己记的」里更靠后的那个
+  //    （`handoverV` 上有那一段推演）；**源没顶到自己的上限时不取 max**（那份是真值，
+  //    被停着的旧预览顶偏就是 B260 ③ 那条症状）。必须排在 `restorePreviewScroll` 之后
+  //    —— 接班这份
+  //    此刻已显示、位置已还原，它自己那一格才是可信的「切换前位置」。
+  //    ⚠️⚠️ `to` **只认预览那一侧**：接班若是源码标签，`syncSourceV(tab)` 交回来的是它
+  //        **自己的快照**（上次停在那儿的值），拿它去跟源取 max，等于把「它上回停在
+  //        哪儿」当成交接班的位置 —— 一裁就偏（自测台三个红：位置 60 被裁成 56、
+  //        切过去的那张记录被抹成 0、光标/视口丢一份）。只有预览那一侧装得下比源码
+  //        上限更靠后的真值（同一份 24 行 md：预览能到 966 / 块 23，源码只到 294 / 行 21），
+  //        才是「源被自己上限裁过时」唯一值得去问的那一格。
+  const toV = tab && tab.viewMode === "preview" ? (panel.preview?.topVisibleLine() ?? null) : null;
+  const handV = tab ? handoverV(syncSrc, toV, sourceAtOwnFloor(shownTab)) : null;
+  const aligned = tab ? alignShownToSyncSource(panel, shownTab, handV) : false;
   // CM6 测量（含它的滚动锚点补偿）排在下一帧，位置得在补偿之后收回来（B146）
   measureAndKeepScroll(panel);
   logViewport("切换 · 测量收尾后", panel);
@@ -1742,11 +1764,19 @@ function switchTab(panelId: number, tabId: number): void {
     //    分别是 24 与 21 —— 源码那一格被自然上限裁过，真值回不来了）。
     //    ⇒ 收口生效时照样补推，但只推**其余兄弟**，且用 `syncSrc`（收口同一口径的那个
     //    `v`），保证兄弟与接班那一份落在同一个数上。
+    //
+    // ⚠️⚠️ **B260（用户拍定：不要因为切换标签或者模式自动减小滚动位置）**：`syncSrc` 是
+    //    离屏前从**源**那一格采的，而源那一格可能已经被它自己一侧的自然上限截过（预览能
+    //    滚到块 23、源码只能滚到行 21 ⇒ 源交回来的是 22，真值 23 回不来）。照这个截过的数
+    //    交接，切回来的那一格就被**自动减小**了（自测台：预览 966 ⇒ 切一轮 ⇒ 882，每轮
+    //    都掉同一截）。⇒ 交接游标取 `handoverV(syncSrc, 接班自己那一格)` —— 谁也不许被
+    //    截小；落点照旧由 `applySyncToSibling` 按目标那侧的几何裁（裁的是 DOM 写入，不是
+    //    记录值）。这一趟两分支都用它，保证「接班」与「其余兄弟」是同一个数（B258 的要求）。
     if (tab && !aligned) {
-      pushSyncToSiblings(tab);
-    } else if (tab && syncSrc !== null && shownTab) {
+      pushSyncToSiblings(tab, false, { v: handV });
+    } else if (tab && handV !== null && shownTab) {
       pushSyncToSiblings(tab, false, {
-        v: syncSrc,
+        v: handV,
         skipTabIds: [shownTab.tabId, tab.tabId], // 源与接班都已被收口写好，谁也不许再动
       });
     }
@@ -5058,6 +5088,71 @@ function syncSourceV(t: Tab | undefined): number | null {
 }
 
 /**
+ * B260 用户拍定：**不要因为切换标签或者模式自动减小滚动位置** ⇒ 交接游标取两边
+ * **更靠后**的那一格。
+ *
+ * 病在哪一眼看得见（自测台，同一份 24 行 md、视口 3 行 / 3 块）：预览能滚到
+ * **块 23**（966px），源码只能滚到**行 21**（294px）。预览滚到底时它的游标是 23，
+ * 而源那一格被自己一侧的自然上限裁过、读回来只有 22（＝294 这个「截过的值」）
+ * ⇒ 切回预览时照 22 落，预览从 966 被拉到 882（差 84px = 两个块高），而且每切一轮
+ * 都这么落 ⇒ 用户报的「切回来位置小了一截」。反过来也成立：源码那一格的记录如果
+ * 超出预览能滚到的范围，照它落预览会被浏览器裁到预览的底 —— 那也不是「减小」。
+ *
+ * ⚠️ 取 `max` 而不是「源说什么就是什么」，管的是**交接这一路**（切标签 / 切模式）。
+ *    「跟随」那一路（用户滚了谁跟着动）仍然照源走 —— 那本来就是要挪位置，
+ *    不是被自动减小的对象。
+ *
+ * ⚠️ `v` 是**同一把尺子**（规范游标，行号 + 归一化比例），所以两边可以直接比大小；
+ *    不是像素比 —— 行高 14 与块高 42 那两个量纲不同，比了也没意义。
+ *
+ * ⚠️ 但「一律取更靠后」会翻车：源停在**中段**、顶不到自己一侧的上限时，它交回来的那份是
+ *    **真值**，此时拿「上一次预览停在哪」去顶它，就变成「源码停在中段 → 切预览 → 预览被
+ *    甩到上一次预览停的地方（自测台 840 ⇒ 966 甩到底）」，切回来源码也跟着被拽走
+ *    （287 ⇒ 294）。这条用例就是 ③ 钉着的：`tests/sync-handover.test.ts`「反向」。
+ *    ⇒ 只在源那一格**顶到自己一侧的自然上限**（它交的值可能被裁小、真值回不来）时才去
+ *    问接班那一格，取更靠后的；没顶到上限 ⇒ 源说了算。见 `sourceAtOwnFloor`。
+ *
+ * @param from 源（刚显示、马上要离屏）那一格交过来的游标
+ * @param to   接班这一格**自己此刻**记的游标（此刻它已经显示、位置已还原）；源没顶到
+ *             上限时这一路无效（它的真值已经算数），留 `null` 表示「不许拿旧位置顶它」
+ * @param sourceSuspect 源那一格是不是顶到了自己一侧的自然上限（见 `sourceAtOwnFloor`）
+ */
+function handoverV(from: number | null, to: number | null, sourceSuspect = false): number | null {
+  if (from === null) return to;
+  if (to === null || !sourceSuspect) return from;
+  return Math.max(from, to);
+}
+
+/**
+ * 「顶到自然上限」的容差（px）—— 与 `PIN_EPSILON_PX` 同口径：缩放不是 100% 时
+ * `scrollTop` 天生带小数，差不到一个像素就别当成「还没到顶」。
+ */
+const SOURCE_FLOOR_EPSILON_PX = 1;
+
+/**
+ * 源码那一格是不是**顶到它自己一侧的自然上限**（B260，交代给 `handoverV` 的第三参）。
+ *
+ * 顶到 ⇒ 它交回来的游标**有可能已经被裁小**（真值还在，只是这一格表达不出来）⇒ 交接时
+ * 它说了不算，得再去问停在那侧的那一格要更靠后的那份。没顶到 ⇒ 它那份是**真值**。
+ *
+ * 自测台（同一份 24 行 md、视口 3 行 / 3 块）：源码只能滚到 294（顶在 `v`≈21），
+ * 预览能滚到 966（顶在 `v` ≈ 23）—— 预览滚到底那一路交回来的 `v` 常常是 22 而不是 23，
+ * 就是这么被裁掉的（用户报的「切回来小了一截」）。反过来源码停在中段（287 / `v`=20.5）
+ * 时，20.5 是准的，谁都不许拿旧位置把它顶成 23。
+ *
+ * ⚠️ 判据读**实时 DOM**：`scrollHeight - clientHeight` 就是这一侧的上限，与预览侧
+ *    `naturalMax` 同一套口径。纯预览实例没有源码侧可问（一律 false）—— 那份位置归
+ *    预览，见 `syncSourceV` 里对 `t.viewMode === "preview"` 的分支。
+ */
+function sourceAtOwnFloor(t: Tab | undefined): boolean {
+  if (!t || t.viewMode === "preview") return false;
+  const view = panelOfTab(t.tabId)?.view?.view;
+  if (!view) return false;
+  const dom = view.scrollDOM;
+  return dom.scrollHeight - dom.clientHeight - dom.scrollTop <= SOURCE_FLOOR_EPSILON_PX;
+}
+
+/**
  * 标签当前的视口滚动位置（B126 + B129）。
  *
  * 正显示在面板上的实例要取视图的**实时值**（用户刚滚过但还没切走，快照还没更新）；
@@ -5487,6 +5582,22 @@ function toggleViewMode(target?: Tab): void {
   const panel = getPanel(tab.panelId);
   if (!panel || !panel.bodyEl) return;
   const toPreview = tab.viewMode !== "preview";
+  // ⚠️⚠️ **B260（用户拍定：不要因为切换标签或者模式自动减小滚动位置）**：切**到**预览
+  //    这一路原先**没有交接** —— 落点只由 `applyPanelMode` 拿编辑器**此刻的实时 DOM**
+  //    当 `anchorLine`，而编辑器那一格早被**它自己**的自然上限裁过（自测台同一份 24 行 md、
+  //    视口 3 行 / 3 块：预览能滚到 966 / `v`=23，源码只能滚到 294 / `v`=22）⇒ 照 22 落
+  //    预览就掉到 882（差 84px = 两个块高），且切一轮掉一截、越切越靠顶。
+  //    交接游标取「源码交出来的」与「预览这一格自己记的」里**更靠后**的那个（`handoverV`），
+  //    但**只限源码那一格顶到自己一侧的上限**（它的值被裁过、真值回不来）—— 源码停在中段
+  //    时它交的是真值，不许拿「上一次预览停在哪」把它顶偏（`handoverV` 上那段推演 + ③ 用例）。
+  //    ⚠️ 两样都必须在**动手改之前**问：`syncSourceV` 认 `tab.viewMode`（改完这一格就归
+  //       预览侧），`preview.topVisibleLine()` 读的是预览 DOM（`applyPanelMode` 那一下
+  //       重渲染会把这块位置顶掉）。
+  const fromSourceV = toPreview ? syncSourceV(tab) : null;
+  const fromPreviewV = toPreview ? (panel.preview?.topVisibleLine() ?? null) : null;
+  // ⚠️ 与上两行**同帧**定：一旦 `applyPanelMode` 把编辑器切走（`display:none` ⇒ scrollTop
+  //    清零），这一格就永远问不出它到底顶没顶到上限了。
+  const fromSourceFloor = fromSourceV !== null && sourceAtOwnFloor(tab);
   // 纯预览 → 源码是一次**交接**，不是各认各的：`t.scrollTop` 只有一个槽，装的是
   // 「当前这一侧」的像素（B139）。纯预览期间编辑器被 `display:none` 清零，它那份
   // 位置已经没了，而预览的滚动监听把**预览的像素**写进了同一个槽 —— 直接拿去钉
@@ -5497,16 +5608,11 @@ function toggleViewMode(target?: Tab): void {
     // ⚠️ 必须在改 viewMode **之前**问：切换后编辑器是 display:none，问不出顶行。
     //    ⚠️ B251：坐标只从 `syncSourceV` 一个口取（与跟随 / 切标签收口同一条），再交给
     //      **同一个** `sourceTopOfV` 换算 —— 三条路径真·同一套计算。
-    //      ⚠️ 但**跨侧要带 `cross = true`**（B251 后复验）：预览 ⇄ 源码这一路是跨坐标系，
-    //      预览的比例归一在**块高**上、`sourceTopOfV` 按**行高**插 ⇒ 直接喂完整 `v` 会按
-    //      `ratio × (块高 − 块行数×行高)` 偏出去，方向恒为**往上**（用户报：切换 tab 往上
-    //      偏移又出现）。交整数块首 ⇒ 小数 0、两侧零偏差，与 B243 之前的行为一致；换来的
-    //      是丢掉「预览停在块内第几行」的精细度 —— 跨侧本来也给不出这个精度的闭合口径。
-    //
-    //      ⚠️⚠️ **B257 翻案**：那句「按比例归一在块高上 ⇒ 交整数块首」站不住 —— 预览侧
-    //        读是 `start + ratio × range`、写是 `into / range`，**乘除抵消**，交出来的小数
-    //        本来就是「这一块（这一行）走了多少」，与源码侧同一个量。丢小数唯一的效果是
-    //        每切一次模式丢一格比例（自测台：源码 287 ⇒ 切模式一来一回变 280）。
+    //      ⚠️ 这里**不带 `cross`**：B251 那会儿给跨侧配过「只交整数块首 / 交整数顶行」的
+    //        一档（理由是「预览的比例归一在块高、源码按行高插 ⇒ 喂完整 `v` 会偏上去」），
+    //        B257 已翻案（见 `syncSourceV` 上那段）—— 预览侧读 `start + ratio × range` /
+    //        写 `into / range`，**乘除抵消**，交出来的小数本来就是「这一行走了多少」，与
+    //        源码侧同一个量；丢小数只会每切一次模式丢一格比例（自测台：287 ⇒ 280）。
     //        ⇒ 交**完整 `v`**，与跟随 / 收口两条路同一份口径。
     const v = syncSourceV(tab);
     const view = panel.view.view;
@@ -5528,6 +5634,15 @@ function toggleViewMode(target?: Tab): void {
   const sourceEditor = panel.view;
   try {
     applyPanelMode(panel);
+    // ⚠️ B260（续）：`applyPanelMode` 已经按编辑器**实时 DOM**（被裁小的那份）把预览
+    //    定位过一次，这里按交接游标再定位一次 —— 谁也不许因切模式被自动减小。
+    //    必须排在 `applyPanelMode` **之后**：它那一次 `setBlocks` 才把预览内容撑开，
+    //    早一步 `blockAtLine` 量不出来（同 `restorePreviewScroll` 那段的顺序纪律）。
+    const handV =
+      toPreview && fromSourceV !== null
+        ? handoverV(fromSourceV, fromPreviewV, fromSourceFloor)
+        : null;
+    if (handV !== null) panel.preview?.syncToLine(handV);
     // ⚠️ 这一下 focus 的两处顺序都有讲究：
     //   ① 必须排在 `applyPanelMode` **之后**：之前编辑器还是 display:none，对隐藏元素
     //      focus 会静默失败（同 B181 那条）；

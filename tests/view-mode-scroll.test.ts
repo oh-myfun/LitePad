@@ -313,11 +313,22 @@ describe("B148 反向验证：把交接摘掉，上面几条必须变红", () =>
     expect(degraded, "退化版要真的换了写法").not.toBe(src);
 
     const body = bodyOf("function toggleViewMode(", degraded);
-    // ⚠️ B251：扫的必须是**当前交的那个出口**（`syncSourceV` / `sourceTopOfV`）—— 扫旧名
-    //   的话，退化成旧名反而扫不到 ⇒ 恒绿、判据白写。
-    expect(body, "退化后不再问预览的游标").not.toMatch(/syncSourceV\(/);
-    expect(body, "退化后不再按游标反推编辑器像素").not.toMatch(/sourceTopOfV\(/);
-    expect(body, "退化后不再交接像素").not.toMatch(/recordScroll\(/);
+    // ⚠️ B260 同语义换锚：不再按**裸名**（`syncSourceV\(` / `sourceTopOfV` / `recordScroll`）
+    //    扫，改盯**上面摘掉的那三句本身**（整句 + 缩进），一条判据对一句退化。
+    //    Why：B260 在函数**顶部**新加了一条「切到预览那一路」的交接取值
+    //    `const fromSourceV = toPreview ? syncSourceV(tab) : null;`，它还含 `syncSourceV(` ——
+    //    扫裸名的话退化后照样命中 ⇒ 第一条恒绿、B148 这条序契约被架空（它管的是「切**回**
+    //    源码按游标反推」这一路，另一路是这次**新增**的合法路径，不该被它判死）。
+    //    逐句对上 ⇒ 退化摘哪一句、哪一条红，不互相掩盖。
+    expect(body, "退化后不再问这一路的游标（ASK 被摘）").not.toMatch(
+      /const v = syncSourceV\(tab\)/,
+    );
+    expect(body, "退化后不再按游标反推编辑器像素（CONVERT 被摘）").not.toMatch(
+      /handoff = sourceTopOfV\(view, v\)/,
+    );
+    expect(body, "退化后不再交接像素（WRITE 被摘）").not.toMatch(
+      /if \(handoff !== null\) recordScroll\(/,
+    );
   });
 
   it("退化成「先切 mode 再问顶行」，顺序契约必须抓住", () => {
@@ -331,11 +342,18 @@ describe("B148 反向验证：把交接摘掉，上面几条必须变红", () =>
     expect(moved, "退化版要真的换了写法").not.toBe(src);
 
     const body = bodyOf("function toggleViewMode(", moved);
-    expect(body.indexOf("tab.viewMode =")).toBeGreaterThan(-1);
-    expect(
-      body.indexOf("syncSourceV("),
-      "退化后取游标应排在改 viewMode 之后（顺序契约此时必须落空）",
-    ).toBeGreaterThan(body.indexOf("tab.viewMode ="));
+    // ⚠️ B260 同语义换锚：位置闸盯**切回源码这一路**那条 ASK 的整句，不盯裸名
+    //    `syncSourceV(（` —— 后者会命中函数顶部 B260 新增的 `fromSourceV`（它**故意**排在
+    //    改 viewMode **之前**、属于另一条路径），那么比大小恒成立 ⇒ 顺序契约白写。
+    const asked = body.indexOf("const v = syncSourceV(tab)");
+    const flipped = body.indexOf("tab.viewMode = toPreview");
+    // ⚠️ 位置闸必配「在场闸」：缺一份时它的 indexOf 是 -1，两边都缺/只缺一边都会靠
+    //    大小关系悄悄放行（只写 `toBeGreaterThan` 是假绿定式）。
+    expect(flipped, "退化版里改 viewMode 那一行还在").toBeGreaterThanOrEqual(0);
+    expect(asked, "退化版里被搬走的那句还在").toBeGreaterThanOrEqual(0);
+    expect(asked, "退化后取游标应排在改 viewMode 之后（顺序契约此时必须落空）").toBeGreaterThan(
+      flipped,
+    );
   });
 });
 
