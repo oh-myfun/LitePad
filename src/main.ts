@@ -2447,8 +2447,31 @@ function duplicateTabToPanel(tabId: number, hostPanelId: number): void {
   inst.viewMode = src.viewMode;
   const sel = src.state.selection.main;
   inst.state = inst.state.update({ selection: { anchor: sel.anchor, head: sel.head } }).state;
+  // ⚠️⚠️ **B261 第三处同型缺口**：`duplicateTabToPanel`（右键「复制标签」/「复制到相邻
+  //    面板」/ Ctrl 拖到面板中心 = `moveTabToPanel(copy=true)`）造出的这份 `makeInstance`
+  //    同样是**空档**（`scrollTop: null`、编辑器视口恒 0），而这条路径**从来没有任何落位**
+  //    —— 前两轮修的是 `splitPanelWithTab` 的 copy 分支与 `openPreviewToSide`，都没盖到它。
+  //    ⇒ 两面受害：· 新副本自己停在文档开头（用户报「复制标签滚动位置没有复制」）；
+  //                · `refreshAll` 尾那趟 `pushSyncToSiblings(activeTab())` 正好以这份空档
+  //                  为源往外推（B152）⇒ 同文档的原标签被记成 `top = 0` 钉进 DOM。
+  //    修法与 copy 分支**同口径**：`rebuildLayout()` 之前先落位，落的是**槽**
+  //    （此刻新实例还没进面板，没有容器可钉；槽会被 `restoreViewScroll` 带走）。
+  //    ⚠️ 顺序不能反：`syncSourceV` 必须在源**还在屏上**（位置真实）时采；
+  //       ⚠️ 变量名刻意**不叫 `v`**：`tests/view-mode-scroll.test.ts` 里 B148 那两条退化
+  //          契约盯的整句是 `const v = syncSourceV(tab);`，退化的摘句按**首次出现**定位 ——
+  //          这一处行号更靠前，同名会让退化 `replace` 摘到这里 ⇒ 退化变成「没改」⇒ 假绿。
+  // ⚠️⚠️ `syncSourceV` 排在 attach **之前**（源此刻还在屏上、位置是真的），落位排在 attach
+  //    **之后**（见下面那条）—— 两件事必须拆开，顺序写反这一份就仍然停在文档开头。
+  const vDup = syncSourceV(src);
   attachTabToPanel(inst, host);
   activePanelId = hostPanelId;
+  // ⚠️⚠️ 落位必须在 `attachTabToPanel` **之后**：`recordScroll` 是靠 `tabs.get(tabId)`
+  //    把位置写进这份实例的槽的，而 `makeInstance` **不落表**、`attachTabToPanel` 内部那句
+  //    `tabs.set(...)` 才是它进表的那一刻。排在前面 ⇒ 写槽时压根查不到这份 ⇒ **静默空转**
+  //    （探针实测：落位完 `inst.scrollTop` 还是 `null`，新副本照样顶到 0）。
+  //    ⚠️ 反过来说 `syncSourceV` 也不能挪到 attach 之后太远 —— 它读的是源那一格，
+  //       attach 一下手 host 的 `activeTabId` 就换成这份新副本了。
+  if (vDup !== null) landPreviewAtSource(inst, vDup);
   rebuildLayout();
   refreshAll();
   scheduleSessionSave();
