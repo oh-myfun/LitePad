@@ -821,7 +821,21 @@ function landPreviewAtSource(other: Tab, v: number | null): void {
  * 坐标口径与 `pushSyncToSiblings` 同一套（纪律 2 / 4）：源显示在哪一侧就取哪一侧，
  * 预览侧取预览的顶行（带行内比例的小数），源码侧取 `topVisibleLineFrac`。
  */
-function syncSourceSnapshot(src: Tab | undefined, nextTabId: number): number | null {
+// ⚠️⚠️ **B261 第八轮（用户报：一个分屏里挂着「源码标签」+「预览标签」两个同文件标签，
+//     从源码标签切到预览标签，滚动位置变化了）**：返回值多带一个 `atFloor` =
+//     「源那一格顶没顶到自己一侧的自然上限」。**这一问必须在源还在屏、还是真话的时候采**
+//     （本函数，`setState` 之前）；等到下面 `switchTab` 收口那一问（1759 行）源早已离屏、
+//     编辑器被 `display:none` 清零 —— 真机上那一问读出来恒是 `0 - 0 - 0 = 0 <= 1`
+//     ⇒ **恒判「顶到上限」** ⇒ B260 的 `max` 每次切标签都开 ⇒ 落点恒取「接班那一格自己
+//     按旧槽还原出来的位置」，源停在中段那份真值被顶掉（桩上实测：源游标 20.5 该落
+//     **861**，实际落 **966** = 预览标签自己那格的旧位置）。
+//     ⚠️ `sourceAtOwnFloor` 本身**不许加闸 / 加缓存去救**这一处：那等于让同一个 bool 在
+//        两个时刻两个值，谁也说不清它何时是真值（退化验过：只加闸 ⇒ 桩上照样绿，鉴别力为零）。
+//        解药是把这一问挪到**有真值的那一刻**，这里采、那里用。
+function syncSourceSnapshot(
+  src: Tab | undefined,
+  nextTabId: number,
+): { v: number | null; atFloor: boolean } | null {
   if (!src || src.tabId === nextTabId) return null;
   // 同步没开 ⇒ 各认各的（B149 基线），谁也别替谁决定位置。
   if (docSyncModes.get(src.docId) !== true) return null;
@@ -834,7 +848,9 @@ function syncSourceSnapshot(src: Tab | undefined, nextTabId: number): number | n
   //    ⚠️ 收口这一路**不区分跨侧 / 同侧**，一律交完整 `v`：B251 那版按两侧 viewMode
   //      是否不同取 `cross`（跨侧丢小数），本轮 B257 撤掉 —— 收口交整数块首 = 每切一次
   //      把接班那份往回拽一整段（自测台：切模式一来一回，源码 287 ⇒ 280）。
-  return syncSourceV(src);
+  //    ⚠️ B261 第八轮：与 `v` **同帧**把「顶没顶上限」一起采下（此刻源还在屏，问得出真话；
+  //       到了调用点那一刻编辑器已 `display:none`，问出来必然是假的「0 - 0 - 0 ≤ 1」）。
+  return { v: syncSourceV(src), atFloor: sourceAtOwnFloor(src) };
 }
 
 /**
@@ -1756,7 +1772,15 @@ function switchTab(panelId: number, tabId: number): void {
   //        上限更靠后的真值（同一份 24 行 md：预览能到 966 / 块 23，源码只到 294 / 行 21），
   //        才是「源被自己上限裁过时」唯一值得去问的那一格。
   const toV = tab && tab.viewMode === "preview" ? (panel.preview?.topVisibleLine() ?? null) : null;
-  const handV = tab ? handoverV(syncSrc, toV, sourceAtOwnFloor(shownTab)) : null;
+  // ⚠️⚠️ **B261 第八轮（用户报：一个分屏里有源码标签 + 预览标签两个同文件标签，从源码
+  //    标签切到预览标签，滚动位置变化了）**：第三参改用**离屏前同帧采下的** `syncSrc.atFloor`，
+  //    不再当场问 `sourceAtOwnFloor(shownTab)` —— 那一问此刻排在 `applyPanelMode` **之后**，
+  //    源已离屏、编辑器被 `display:none` 清零，真机上恒读 `0 - 0 - 0 = 0 <= 1` ⇒ **恒判
+  //    「顶到上限」** ⇒ B260 的 `max` 每次切标签都开 ⇒ 落点恒被「接班那一格自己的旧位置」
+  //    顶走（桩上实测：源游标 20.5 该落 861，实际 966）。退化验过：改回当场问 ⇒ 用例立刻红。
+  //    ⚠️ 而且 `shownTab` 压根**不该**作为这一行的坐标来源：`syncSourceV` 只认「此刻显示着的
+  //       那一份」，此刻显示的是接班那份 —— 拿它去问自己的上限，问出来的数是谁的都说不清。
+  const handV = tab ? handoverV(syncSrc?.v ?? null, toV, syncSrc?.atFloor ?? false) : null;
   const aligned = tab ? alignShownToSyncSource(panel, shownTab, handV) : false;
   // CM6 测量（含它的滚动锚点补偿）排在下一帧，位置得在补偿之后收回来（B146）
   measureAndKeepScroll(panel);
