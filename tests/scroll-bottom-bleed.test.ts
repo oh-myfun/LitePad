@@ -586,4 +586,62 @@ describe("B265 底部留白：最后一行 / 最后一块能滚到容器顶", ()
       6,
     );
   });
+
+  it("⑨ ResizeObserver 回调里「值没变」就一个字节都不写（否则浏览器抛 ResizeObserver loop）", async () => {
+    // ⚠️ 用户实拍：`boot error: ResizeObserver loop completed with undelivered notifications`。
+    //    机理：回调里动样式 ⇒ 浏览器在同一帧里又收一轮通知，攒够就抛；而 `index.html` 的
+    //    全局 `error` 监听把它当成启动失败渲染成红条。**收敛保证**就是这一条 ——
+    //    算出来跟上次一样 ⇒ 不写 ⇒ 这一帧没有真变化 ⇒ 循环到此为止。
+    const cm = src();
+    const md = pv();
+    const cmWrites: string[] = [];
+    const mdWrites: string[] = [];
+    const spy = (el: HTMLElement, sink: string[], name: string): void => {
+      const style = el.style as unknown as { setProperty: (k: string, v: string) => void };
+      const orig = style.setProperty.bind(el.style);
+      style.setProperty = (k: string, v: string): void => {
+        if (k === name) sink.push(v);
+        orig(k, v);
+      };
+    };
+    spy(cm, cmWrites, "--cm-bleed-bottom");
+    spy(md, mdWrites, "--md-bleed-bottom");
+    // ⚠️ 逐个 try：RO 回调里混着源码侧与预览侧两套 `applyBottomBleed`，一个抛错会断整轮。
+    const flush = async (rounds: number): Promise<void> => {
+      for (let i = 0; i < rounds; i++) {
+        roCallbacks.forEach((f) => {
+          try {
+            f();
+          } catch {
+            /* 抛的是别的实例（已销毁 / 量不到），吞掉继续 */
+          }
+        });
+        await wait(150);
+      }
+    };
+    // 先补三轮：分屏后那两格的 `contentHeight` 是逐步量出来的 ⇒ 头几轮值**会**变、会写。
+    // 这几轮不算数，只是把状态推到稳态。
+    await flush(3);
+    cmWrites.length = 0;
+    mdWrites.length = 0;
+    // 容器高与文档都没动 ⇒ 算出来的值必然与上次相同 ⇒ 一次都不许写。
+    // 退化（摘掉「值没变就 return」）⇒ 每轮都写 ⇒ 这里变成 2 ⇒ 红。
+    await flush(2);
+    expect(cmWrites.length, "源码：值没变 ⇒ 不许再写样式（每写一次浏览器就多收一轮通知）").toBe(0);
+    expect(mdWrites.length, "预览：同上").toBe(0);
+  });
+
+  it("⑩ 两处 ResizeObserver 必须观察 border-box（我们写的 padding 不能改到「被观察量」）", async () => {
+    // ⚠️ `ResizeObserver` 默认看 content-box，而我们写的正是 padding / 内盒 ⇒ 那一笔把
+    //    被观察量改小 ⇒ 回调再来一轮 ⇒ **自反馈成环**。border-box 不受 padding 影响。
+    const edSrc = readFileSync("src/editor/editor.ts", "utf-8");
+    const pvSrc = readFileSync("src/markdown/preview.ts", "utf-8");
+    expect(
+      edSrc,
+      "源码侧：留白写进 .cm-content 的 padding，观察量必须是 scrollDOM 的 border-box",
+    ).toMatch(/ro\.observe\(view\.scrollDOM,\s*\{\s*box:\s*"border-box"\s*\}\)/);
+    expect(pvSrc, "预览侧：留白写在 root 自己的 padding-bottom 上，更要观察 border-box").toMatch(
+      /ro\.observe\(this\.root,\s*\{\s*box:\s*"border-box"\s*\}\)/,
+    );
+  });
 });

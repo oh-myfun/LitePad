@@ -64,6 +64,8 @@ export class PreviewPane {
   /** 程序定位（大纲跳转/转到行）的目标行：异步增强或图片加载重排后据此重定位 */
   private pendingSyncLine: number | null = null;
   private mermaidSeq = 0;
+  /** 上一次真正写进 DOM 的底部留白值（-1 = 还没写过）；「值没变就不写」的记账，见 applyBottomBleed */
+  private bleedPx = -1;
   /** 活动文档目录（相对路径图片解析基准） */
   private baseDir: string | null = null;
 
@@ -80,7 +82,13 @@ export class PreviewPane {
     // B265：底部留白跟着**容器尺寸**重算（分屏拖分隔条、窗口缩放、字号档都动它）。
     // jsdom 里没有 ResizeObserver ⇒ 判空，留白那帧由下面的 setBlocks 兜底算一次。
     if (typeof ResizeObserver !== "undefined") {
-      new ResizeObserver(() => this.applyBottomBleed()).observe(this.root);
+      const ro = new ResizeObserver(() => this.applyBottomBleed());
+      // ⚠️ 必须观察 **border-box**：留白写在 `root` 自己的 `padding-bottom` 上，而
+      //    `ResizeObserver` 默认看的是 **content-box** —— 那等于「我们这一笔把被观察量
+      //    改小了」⇒ 回调再来一轮 ⇒ 自反馈成环（启动那帧布局还没稳，浏览器直接抛
+      //    `ResizeObserver loop completed with undelivered notifications`）。
+      //    border-box 不受 padding 影响 ⇒ 容器真变了才回调，绝不成环。
+      ro.observe(this.root, { box: "border-box" });
     }
     this.root.addEventListener("click", (e) => {
       const target = e.target as HTMLElement;
@@ -546,6 +554,13 @@ export class PreviewPane {
     const last = this.blocks[this.blocks.length - 1];
     const lastH = last ? last.el.getBoundingClientRect().height || last.el.offsetHeight : 0;
     const px = clientH > 0 && lastH > 0 ? Math.max(0, clientH - lastH) : 0;
+    // ⚠️⚠️ **值没变就一个字节都不写**：在 `ResizeObserver` 回调里动样式，浏览器会在同一帧
+    //    里再收一轮通知，攒够就抛 `ResizeObserver loop completed with undelivered
+    //    notifications`（B265 首版启动即弹红条 —— `index.html` 的全局 error 监听把它当成
+    //    启动失败渲染出来了）。`px` 只由「容器高 + 末块高」决定，值不变 ⇒ 这一帧没有真
+    //    变化 ⇒ 不写，循环到此为止（「不写」本身就是收敛保证）。
+    if (px === this.bleedPx) return;
+    this.bleedPx = px;
     this.root.style.setProperty(BOTTOM_BLEED_VAR, `${px}px`);
   }
 

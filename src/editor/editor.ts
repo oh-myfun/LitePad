@@ -96,13 +96,27 @@ export function sourceBottomBleedPx(view: EditorView): number {
   return Math.max(0, block.top + clientH - baseContent);
 }
 
+/**
+ * 上一次真正写进 DOM 的留白值（按 view 记）。
+ * ⚠️ 存在的唯一理由：让「值没变就不写」成立 —— 见 `applyBottomBleed` 里那条注释。
+ */
+const lastBleed = new WeakMap<EditorView, number>();
+
 function applyBottomBleed(view: EditorView): void {
   // ⚠️ 量不出就**一个字节都不写**：`setState` 那一帧编辑器还是 `display:none`（CM6 也还没
   //    测出新文档的行高），此刻算出来是 0 —— 照写就等于把上一帧那个对的值抹成 0，这一格
   //    就永远少了一屏可滚（B257 同型：写「瞬态的 0」比不写更糟，真机靠 ResizeObserver 补，
   //    但补之前那一小段里位置是错的）。
   if (view.scrollDOM.clientHeight <= 0 || view.contentHeight <= 0) return;
-  view.scrollDOM.style.setProperty(BOTTOM_BLEED_VAR, `${sourceBottomBleedPx(view)}px`);
+  const px = sourceBottomBleedPx(view);
+  // ⚠️⚠️ **值没变就一个字节都不写**：在 `ResizeObserver` 回调里动样式，浏览器会在同一帧
+  //    里再收一轮通知，攒够就抛 `ResizeObserver loop completed with undelivered
+  //    notifications`（B265 首版启动即弹红条 —— `index.html` 的全局 error 监听把它
+  //    当成启动失败渲染出来了）。留白只由「容器高 + 文档几何」决定，值不变 ⇒ 这一帧
+  //    没有真变化 ⇒ 不写，循环到此为止（「不写」本身就是收敛保证，不是省一次赋值）。
+  if (lastBleed.get(view) === px) return;
+  lastBleed.set(view, px);
+  view.scrollDOM.style.setProperty(BOTTOM_BLEED_VAR, `${px}px`);
 }
 
 /**
@@ -119,8 +133,12 @@ function bottomBleedExtension(): Extension {
       sync();
       let ro: ResizeObserver | null = null;
       if (typeof ResizeObserver !== "undefined") {
+        // ⚠️ 必须观察 **border-box**：留白写进的是 `.cm-content` 的 `padding-bottom`
+        //    （scrollDOM 的内盒），外框尺寸不随它变 ⇒ 我们这一笔**不会**反过来再触发
+        //    自己。观察默认的 content-box 时，padding 一动就把「被观察量」改小 ⇒ 回调
+        //    再来一轮 ⇒ 自反馈成环（启动那帧布局还没稳 ⇒ 直接抛 ResizeObserver loop）。
         ro = new ResizeObserver(() => sync());
-        ro.observe(view.scrollDOM);
+        ro.observe(view.scrollDOM, { box: "border-box" });
       }
       return {
         update(u: ViewUpdate): void {
