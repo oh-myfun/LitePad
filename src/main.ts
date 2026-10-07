@@ -436,6 +436,15 @@ let suppressDirty = false;
  */
 let suppressSyncPush = false;
 
+/**
+ * B263：**挂起的游标** ——「离屏源码兄弟这一手没量成」的记号（tabId → 游标 `v`）。
+ *
+ * ⚠️ 这不是**待补的位置**：那一刻的尺子（借来的那块 `EditorView`）多半正被 `display:none`
+ *    藏着，本身量不出东西，拿它挂的「位置」是假的。挂的是**游标**（哪一行），等这份兄弟
+ *    现形、尺子好用时再量一次 —— 见 `flushPendingSyncCursor`。
+ */
+const pendingSyncCursor = new Map<number, number>();
+
 const LOSSY_ABORT = Symbol("lossy-abort");
 
 // ---------------------------------------------------------------- 基础访问
@@ -688,6 +697,35 @@ function displayedPanelOfTab(tabId: number): Panel | undefined {
 // 不比位置、不赌时序、无时间窗。下面 `applySyncToSibling` 的落点日志保留为 debug 诊断。
 
 /**
+ * ⚠️⚠️ B263（用户报：同文档三标签、分屏 A 挂源码 a + 预览 b、分屏 B 挂纯预览 c，
+ *    滚任意一个再切激活标签 a / b，位置偏移）：**离屏的源码兄弟常常换不出一把能用的尺子。**
+ *
+ * 一个 panel 只挂一个 `EditorView`：「面板正显示预览标签」⇒ 源码那一格连人带容器一起
+ * `display:none`（`.panel-host.mode-preview .panel-editor`），`view` 还活着、state 也在，
+ * 但 CM6 量不出行顶（`lineBlockAt` 报 0 或上一次的陈旧值）。拿它去 `sourceTopOfV` ⇒ `top`
+ * 恒 0 ⇒ 下面那句 `recordScroll` 就把那份离屏兄弟的槽写成「第 1 行」⇒ 切过去
+ * `restoreViewScroll` 读出来 ⇒ **回顶**（自测台实测：滚 c 到 v=33.31，切回 a 落到 v=1.00）。
+ *
+ * ⚠️⚠️ 修法是**分两步**：
+ *    ① **闸门**：借来的尺子正躺在纯预览那一格里（面板带 `mode-preview` 类）⇒ 这一手
+ *       量不成，**连换算带写槽一起跳过** —— 写下去的 0 会当成「用户停在第 1 行」进会话
+ *       记录（`recordScroll → sessionStore.setScroll`），那是「重启回顶」，与本条症状同型；
+ *    ② **挂起 + 补写**：这一手的游标存进 `pendingSyncCursor`，等这份兄弟**自己现形**
+ *       （切标签切到它）、`applyPanelMode` 已把编辑器从 `display:none` 放开的那一刻，
+ *       再量一次补写进它自己的槽 —— 紧邻的 `restoreViewScroll` 就读到补好的值
+ *       （见 `flushPendingSyncCursor`）。
+ *    ⚠️ 两步缺一不可：只有①（换不出就不写）会让这份离屏源码**跟不上同步**（B248 那条老病：
+ *       滚预览时未显示的那份代码标签纹丝不动，切过去还是老位置）；只有②（不设闸门）则那个
+ *       0 已经进了槽和会话，只是被补写盖住 —— 中间那一次落盘就会把「重启回顶」留下。
+ *
+ * ⚠️ 为什么不拿「`getClientRects().length > 0`」当闸门（真机的准话：元素 `display:none`
+ *    ⇒ 空 rect）：**jsdom 不做布局**，没覆写 `getClientRects` 的桩恒返回空列表 ⇒ 那一判据
+ *    在桩上恒假 ⇒ 既有的 `sync-*` 用例（它们的桩把 `lineBlockAt` 覆成实时几何、本来就
+ *    「离屏也能量」）会**集体翻红**。判据得落在真机与桩**同价**的量上 —— 面板模式类是
+ *    产品自己的口径（`applyPanelMode` 写它、`rememberViewScroll` 读它），两边都对。
+ */
+
+/**
  * B251：把**规范游标 `v`** 落到一份兄弟上 —— 「谁被推、推到哪儿」的**唯一落点函数**。
  *
  * 签名从 `(px, line)` 双参改成单一 `v`：源码态与预览态两条分支各自只差「`v` 怎么变成
@@ -758,6 +796,19 @@ function applySyncToSibling(other: Tab, v: number | null): void {
   //    再兜不住（面板压根没视图，例如纯预览面板还没建过编辑器）才去找同文档其它源码
   //    实例，最后才是真的「换不出 ⇒ 留死格」。
   let view = shownView ?? panelOfTab(other.tabId)?.view?.view;
+  // ⚠️⚠️ **B263**：借来的这块尺子正躺在**纯预览那一格**里 —— 面板带 `mode-preview` 类
+  //    ⇒ `.panel-editor { display: none }` ⇒ CM6 量不出行顶 ⇒ 这一手**量不成**。
+  //    量不成就**两步都不做**：既不换算、也不写槽（写下去的 `top` 恒 0，会当成「用户停在
+  //    第 1 行」进会话记录 ⇒ 重启回顶，B162 那条老纪律：宁可留死格，不许拿 0 抹真位置）。
+  //    那一手**不能白丢** —— 游标挂进 `pendingSyncCursor`，等这份兄弟现形再补写（下面闸门
+  //    之后那条 `if (!view)` 兜底循环也照旧跑，找同文档另一个源码尺子）。
+  //    ⚠️ 闸门判据取**面板模式类**（`applyPanelMode` 写它、`rememberViewScroll` 读它，是
+  //       产品自己的口径）—— 不取「量得到量不到」：那在桩上恒真（既有桩把 `lineBlockAt`
+  //       覆成实时几何、离屏也能量）⇒ 闸门在桩上恒假 ⇒ 怎么退化都绿。
+  if (!shownView) pendingSyncCursor.set(other.tabId, v);
+  const rulerHidden =
+    !shownView && !!panelOfTab(other.tabId)?.bodyEl?.classList.contains("mode-preview");
+  if (rulerHidden) return;
   if (!view) {
     for (const t of instancesOfDoc(other.docId)) {
       if (t.tabId === other.tabId || t.viewMode === "preview") continue;
@@ -1761,6 +1812,28 @@ function rebuildLayout(): void {
 
 // ---------------------------------------------------------------- 标签操作
 
+/**
+ * B263：把**挂起的游标**补写成源码兄弟自己的槽 —— 在「这份兄弟现形之后、`restoreViewScroll`
+ * 之前」调用（见 `switchTab` 里 `applyPanelMode` 与 `restoreViewScroll` 之间那一行）。
+ *
+ * ⚠️ 为什么必须卡在这两行之间：`applyPanelMode` 才把 `mode-preview` 摘掉、把编辑器从
+ *    `display:none` 里放出来，此刻量 `sourceTopOfV` 才是**准的**（上一刻量的是一块藏着的
+ *    几何）；而 `restoreViewScroll` 马上就要读它的槽把视口钉住，补写必须排在那之前，
+ *    否则补了也来不及、用户看到的还是回顶的那个位置。
+ *
+ * ⚠️ 补写用的是 `recordScroll`（**只写槽**）—— 这一路不钉 DOM：那格此刻正在被 `switchTab`
+ *    自己钉，`pinScrollTop` 插进去会被随后那一次还原盖掉。
+ */
+function flushPendingSyncCursor(panel: Panel, tabId: number): void {
+  const v = pendingSyncCursor.get(tabId);
+  if (v === undefined) return;
+  pendingSyncCursor.delete(tabId);
+  if (!panel.view) return;
+  const top = sourceTopOfV(panel.view.view, v);
+  if (top === null) return;
+  recordScroll(tabId, top);
+}
+
 function switchTab(panelId: number, tabId: number): void {
   const panel = getPanel(panelId);
   if (!panel) return;
@@ -1828,6 +1901,9 @@ function switchTab(panelId: number, tabId: number): void {
   //   `.panel-host.mode-preview .panel-editor { display: none }`（styles/preview.css）
   //   ⇒ display:none 期间写 scrollTop 浏览器不认、class 一切还清零。
   applyPanelMode(panel);
+  // B263：编辑器刚从 `display:none` 放出来 ⇒ 这一刻才量得准 —— 补写挂起的那手游标，
+  //    ⚠️ 必须排在下面 `restoreViewScroll` **之前**：还原是读槽钉视口，补写晚一步就来不及。
+  flushPendingSyncCursor(panel, tabId);
   // applyPanelMode 已经让编辑器重新可见 ⇒ 这一趟还原**现在才钉得进去**。
   restoreViewScroll(panel);
   logViewport("切换 · 还原后", panel);

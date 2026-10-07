@@ -470,11 +470,21 @@ describe("B126 静态契约：滚动位置必须自己存取", () => {
     // 逐点看：**每一处**整态切换之后都得有还原，否则视口就停在 setState 停下的地方。
     const setStateSites = [...src.matchAll(/(\bview|panel\.view)\.setState\(/g)];
     expect(setStateSites.length, "应能定位到全部整态切换").toBeGreaterThanOrEqual(4);
-    for (const m of setStateSites) {
-      const after = src.slice(m.index! + m[0].length, m.index! + m[0].length + 600);
+    for (let i = 0; i < setStateSites.length; i++) {
+      const m = setStateSites[i];
+      // ⚠️ B263：窗口**不能**再用「往后数 600 个字符」—— 那是在给注释长度打赌：
+      //    `switchTab` 里 setState 与 `restoreViewScroll` 之间夹着 B126/B145/B254 三段
+      //    长注释，窗口一满就把还原顶出去 ⇒ 守卫生效打掉了产品行为（本轮就是这么红的）。
+      //    改成**结构窗**：从这个 setState 取到「下一个 setState（或下一个函数声明）」
+      //    为止 —— 注释再长也吃不掉，而「同函数内压根没有还原」照样红。
+      const nexSetOrFn = src
+        .slice(m.index! + m[0].length)
+        .search(/(\bview|panel\.view)\.setState\(|\bfunction \w+\s*\(/);
+      const end = nexSetOrFn < 0 ? src.length : m.index! + m[0].length + nexSetOrFn;
+      const after = src.slice(m.index! + m[0].length, end);
       expect(
         after,
-        `第 ${m.index! + 1} 行的 setState 之后必须还原滚动（离得太远等于没有）`,
+        `第 ${m.index! + 1} 行的 setState 之后（同一段代码内）必须还原滚动 —— 没有它就停在 setState 停下的地方`,
       ).toContain("restoreViewScroll(");
     }
     const restoreSites = src.match(/restoreViewScroll\(/g) ?? [];
