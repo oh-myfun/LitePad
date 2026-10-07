@@ -812,6 +812,40 @@ function landPreviewAtSource(other: Tab, v: number | null): void {
 }
 
 /**
+ * B261 第四轮：**等 CM6 把新几何量出来再按 `v` 落位**（`landPreviewAtSource` 的 measure 版）。
+ *
+ * 分屏那一刻 `rebuildLayout()` 已经把 DOM 重建完（面板确实分成了两个、容器确实窄了一半），
+ * 但**新建 EditorView 的 `lineBlock` 是下一帧 `measure` 才有的** —— `sourceTopOfV` 读
+ * `view.lineBlockAt(...)` 拿到的还是**整宽时那套行位置**，同一个 `v` 换算出来的是旧几何的
+ * 像素（自测台：`v=21.5` 在整宽下 = 287，窄栏同一行该是 95.67 ⇒ 落点差 191px，
+ * 看着就是「原标签滚动位置出现变化，跟面板宽度有关」）。
+ *
+ * ⇒ 落地必须**跨过那一轮 measure**（等下一帧再落）：那时 CM6 的量已经是新几何。
+ *
+ * ⚠️ 不用 `view.requestMeasure(cb)`：它对「刚建的 view」不保证当帧跑（自测台探针零输出，
+ *    等于什么都没落）；rAF 一定能跨过 CM6 自己那轮 measure。
+ *
+ * ⚠️⚠️ **这一拍在 jsdom 桩里没有鉴别力 —— 别拿桩来证明它。** 桩的行几何是测试自己给的
+ *    （`tests/sync-split-narrow.test.ts` 覆写 `lineBlockAt`/`lineBlockAtHeight`，同步就能算），
+ *    同步落与 rAF 落落点一样 ⇒ 退化「去掉这一拍」桩里照样绿。它服务的只有真机：新 view 的
+ *    `lineBlock` 确实要等 measure 那一轮才有。本轮用窄桩证明的是**「宽度变了 ⇒ 两格都得按
+ *    新几何重落」**（摘掉源那格 / 把落位移回 `rebuildLayout` 之前，两条都精确红），
+ *    不是证明「等一帧」本身。
+ */
+function landAfterMeasure(other: Tab, v: number | null): void {
+  if (v === null) return;
+  const view = displayedPanelOfTab(other.tabId)?.view?.view;
+  // 没量到（离屏 / 还没挂上）就当场落：槽总归能写，挂上后 `restoreViewScroll` 会按它还原。
+  if (!view) {
+    landPreviewAtSource(other, v);
+    return;
+  }
+  requestAnimationFrame(() => {
+    setTimeout(() => landPreviewAtSource(other, v), 0);
+  });
+}
+
+/**
  * B240 三轮：切标签那一刻，把**源**（刚显示的那一份，下一刻就要离屏）的坐标就地采下来。
  *
  * ⚠️ 必须在它离屏**之前**采。离屏之后 `panelOfTab(src).view?.view` 取到的是面板的那一个
@@ -2535,21 +2569,39 @@ function splitPanelWithTab(
     //    只有 `openPreviewToSide` 在外面夹了 `suppressSyncPush` ⇒ 同一条病根只在「开侧边
     //    预览」上被挡住，在别处照旧发作（用户：两个问题都还在）。
     //
-    //    ⇒ 落位排在 `rebuildLayout()` **之前**：这一趟会把新面板的编辑器挂起来，而空栏视图
-    //      的 scrollTop 恒 0，等挂完再补就晚了。落的是**槽**（`applySyncToSibling` 只写槽、
-    //      不碰新面板还没建好的 DOM；真要钉也轮到 `restoreViewScroll` 按槽来）。
+    //    ⚠️ 上面那句「落位排在 `rebuildLayout()` 之前」的**结论已被第四轮推翻**（见下面
+    //       那一大段）：分屏那一刻左栏立刻**变窄**、编辑器重排 ⇒ 必须**之后**落。
     //
-    //    ⚠️ 顺序也不能反（`syncSourceV` 必须先于任何重建采）：源此刻还在屏上、位置是真的，
+    //    ⚠️ `syncSourceV` 仍然必须排在最前（先于任何重建采）：源此刻还在屏上、位置是真的，
     //       一旦被 `rebuildLayout` 摘下来换别的标签，采到的就是接班那份的坐标。
     // ⚠️ 变量名刻意**不叫 `v`**：`tests/view-mode-scroll.test.ts` 里 B148 那两条退化契约盯的
     //    整句就是 `const v = syncSourceV(tab);`，而退化的摘句是按**首次出现**定位的 ——
     //    这一处行号更靠前，同名会让退化 `replace` 摘到**这里**而不是切模式那一处 ⇒
     //    退化变成了「没改」，两条判据（ASK 被摘 / 顺序契约）双双假绿。
     const vCopy = syncSourceV(tab);
-    if (vCopy !== null) landPreviewAtSource(inst, vCopy);
     layout = splitPanelAt(layout, targetId, dir, newId, newFirst);
     activePanelId = newId;
     rebuildLayout();
+    // ⚠️⚠️⚠️ **B261 第四轮（用户：「新建分屏时原标签内滚动位置出现了变化，
+    //    可能跟面板宽度变化有关」）—— 落位必须排在 `rebuildLayout()` 之后，而且
+    //    **源那一格也得重落**（只落新副本是上一轮漏的那一半）。**
+    //
+    //    分屏那一刻左栏从「整宽」变成「半宽」⇒ 编辑器（word_wrap 开着）**重排 / 折行** ⇒
+    //    **同一个 `scrollTop` 像素在新几何下是另一行**；而这份实例的槽里存的**只有像素**
+    //    （`recordScroll` 直接写 px），跨宽度的尺子只有**游标 `v`**。
+    //    ⇒ `restoreViewScroll` 拿旧像素（分屏前量出来的 287）去钉**已变窄**的左栏 ⇒
+    //      源被钉到「新宽度的 287px」⇒ 看着就是「原标签滚动位置出现变化」；而之前那两轮
+    //      的修法只把 `v` 落给了**新副本**，左栏那份压根没人重落 ⇒ 真机上症状②从来没修好过
+    //      （jsdom 桩**没有布局、没有宽度** ⇒ 这条在桩里根本测不出来 —— 典型的假绿）。
+    //
+    //    ⇒ 两个面板都按**新几何**挂好之后，按同一个 `vCopy` 把**两格**都重落一遍：
+    //      源（左栏）与新副本（右栏）。谁后谁赢：落位要盖过 `rebuildLayout` 那一钉。
+    //
+    //    ⚠️ 顺序不能反：`syncSourceV` 在最前采（旧几何）；`landPreviewAtSource` 在
+    //       `rebuildLayout` 之后落（新几何）—— 用错一边换算，落点就带着旧/新宽度的量。
+    // ⚠️ 走 measure 版：落位必须用**新几何**换算，否则 `v` 会被算成旧宽度的像素。
+    landAfterMeasure(tab, vCopy);
+    landAfterMeasure(inst, vCopy);
     refreshAll();
     scheduleSessionSave();
     return;
