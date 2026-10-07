@@ -2580,12 +2580,29 @@ function splitPanelWithTab(
     //    ⇒ 落位回同步；「用新几何换算」靠**排在 `rebuildLayout()` 之后**这一条守住
     //      （窄栏用例 `tests/sync-split-narrow.test.ts` 守的就是这条顺序）。
     //
-    //    ⚠️ **这里只落新副本一份，源（左栏）不显式落 —— 第四轮那句 `landAfterMeasure(tab, …)`
-    //       是净负债，本轮撤掉了。** 同步落位之后 `refreshAll()` 那趟推播会以 `inst`
-    //       为源（`activePanelId = newId` ⇒ `activeTab()` 正是它）把 `vCopy` 推给同文档
-    //       的每一个兄弟，源这一格自然落到同一位置 —— 退化「摘掉源那格的重落」桩里
-    //       **照样绿**（两侧实测都没变）就是证据：显式落源被推播覆盖了。留着它只会
-    //       多一行死代码 + 一条恒真契约误导后人，谁都别再加回来。
+    //    ⚠️⚠️ **B261 第六轮：两格都得显式落 —— 只落新副本这一条是净负债，第四轮那句
+    //       「显式落源是净负债、谁都别再加回来」的**推论错了**，本轮订正。**
+    //
+    //       上面那些「显式落源没用、被推播覆盖了」的实测**只在同步开着时成立**：
+    //       `pushSyncToSiblings` 入口那句 `docSyncModes.get(src.docId) !== true ⇒ return`
+    //       ⇒ **同步关着时根本没有推播**。而左栏那份是 `rebuildLayout()` → `restoreViewScroll`
+    //       用**槽里那份分屏前按整宽量出来的旧像素**（`t.scrollTop`）还原进**已变窄**的
+    //       编辑器 ⇒ 旧像素在新几何下是**另一行**，而且**再也没人把它扳回来** ——
+    //       这正是用户报的「新建分屏时原标签内滚动位置出现了变化（可能跟面板宽度有关）」
+    //       在真机上的**稳态形态**：同步开着只闪一下就被推播扳回来，同步关着是**一直错**
+    //       （`tests/sync-split-narrow-off.test.ts` 实测左栏停在 287 而不是 95.67）。
+    //
+    //       ⇒ 本轮把源（左栏）也按同一个 `vCopy` 在新几何下重落一遍。走 `landPreviewAtSource`
+    //         而不是 `pushSyncToSiblings`：前者**不看 `docSyncModes` 闸**，同步关着也照样
+    //         生效 —— 那正是它存在的意义（B259 开侧边预览那一路同理，`landPreviewAtSource`
+    //         的注释里那条「一次性落位」也是这个用途）。
+    //
+    //       ⚠️ 顺序纪律：两格都排在 `rebuildLayout()` **之后**（新几何才量得对）、都用最前
+    //         采到的 `vCopy`（分屏前按**旧**几何采的游标）。退化「摘掉源那格这一行」
+    //         ⇒ `tests/sync-split-narrow-off.test.ts` **立刻红**（左栏停在旧像素 287，
+    //         而不是新几何的 95.67）；同步开着时红不红**不能拿来当事** —— 推播会把左栏
+    //         扳回来，那条工况由 `tests/sync-split-narrow.test.ts` 守「两格落点一致」的结果。
+    landPreviewAtSource(tab, vCopy);
     landPreviewAtSource(inst, vCopy);
     refreshAll();
     scheduleSessionSave();
