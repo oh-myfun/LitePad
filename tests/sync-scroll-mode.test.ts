@@ -578,12 +578,12 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
     // ⚠️ 取值口**还是那一个**（`syncSourceV`），本轮 B257 只是把 `cross` 那一档删了 ——
     //    源停在哪一侧照旧由取值口自己认，跟随 / 收口 / 交接都不许再各取各的，也不许再
     //    「按跨侧丢小数」（丢掉的就是切换时那一点偏移：源码 287 ⇒ 280、预览 847 ⇒ 840）。
-    // ⚠️⚠️ B261 第八轮换锚（同语义，不是改松判据）：返回值结构从 `number | null` 改成
-    //    `{ v, atFloor }`，`return syncSourceV(src);` 这句已经不存在 —— 盯的仍是**同一笔
-    //    return 整条**：`v` 照旧从唯一取值口出（单参、无 cross 档），且「顶没顶自己上限」
-    //    与 `v` **同帧**采下（此刻源还在屏，问得出真话）。
-    expect(SNAP_BODY, "收口走唯一取值口，交完整 `v`，与 atFloor 同帧采下").toMatch(
-      /return \{ v: syncSourceV\(src\), atFloor: sourceAtOwnFloor\(src\) \};/,
+    // ⚠️⚠️ B266 换锚（同语义，不是改松判据）：`syncSourceSnapshot` 的返回值从
+    //    `{ v, atFloor }` 简化为 `number | null` —— B265 已让两侧末行/末块都能滚到视口顶，
+    //    自然上限不再错配，`atFloor` 特判已无前提，故直接 `return syncSourceV(src);`
+    //    （`v` 仍从唯一取值口出，单参、无 cross 档；不再同帧采 atFloor）。
+    expect(SNAP_BODY, "收口走唯一取值口，交完整 `v`（B266 起不再带 atFloor）").toMatch(
+      /return syncSourceV\(src\);/,
     );
     // ⚠️ 反向闸：不许退回「按跨侧判据现算要不要丢小数」那一版（收口 / 跟随 / 切模式
     //    三处各传一个 cross 实参）—— 那正是每跨一次侧吃一格比例的入口。
@@ -598,24 +598,16 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
     expect(SYNC_BODY, "落点不许再手拼坐标").not.toMatch(/editorLineTopPx\(view, line\)/);
   });
 
-  it("切标签收口只消费离屏前采下的 atFloor —— 不许在这一帧再问一次源的上限", () => {
-    // ⚠️⚠️ **B261 第八轮（用户报：一个分屏里挂着源码标签 + 预览标签两个同文件标签，从源码
-    //    标签切到预览标签，滚动位置变化了）**：`sourceAtOwnFloor` 那一项读的是
-    //    `scrollHeight - clientHeight - scrollTop`，而收口这一行排在 `applyPanelMode`
-    //    **之后** —— 源已离屏、编辑器被 `display:none` 清零 ⇒ 真机上恒读 `0 - 0 - 0 = 0`
-    //    ⇒ 恒 ≤ 1 ⇒ **恒判「顶到自己那侧的上限」** ⇒ B260 的 `max` 分支每次切标签都开
-    //    ⇒ 落点恒取「接班那一格按它自己旧槽还原出来的位置」，源停在中段那份真值被顶掉
-    //    （桩上实测：源游标 20.5 该落 861，实际落 966）。
-    //    ⇒ 解药是**挪采样点**（上面那条同帧采），这里只消费；判据盯整条 `handoverV` 调用：
-    //    `v` 与 `atFloor` 都出自同一份离屏前的快照，不许再夹一个当场问。
-    expect(SWITCH_BODY, "收口的 v / atFloor 都出自离屏前那一份快照").toMatch(
-      /const handV = tab \? handoverV\(syncSrc\?\.v \?\? null, toV, syncSrc\?\.atFloor \?\? false\)/,
+  it("切标签收口直接用离屏前采下的源真实 v（B266：不再有 atFloor / handoverV 特判）", () => {
+    // ⚠️⚠️ **B266**：B265 已让两侧末行/末块都能滚到视口顶，两侧 floor 游标都 = 文档末行
+    //    `v`，自然上限不再错配，故「顶没顶上限」的 `atFloor` 与「取更靠后」的 `handoverV`
+    //    已无前提。收口直接消费 `syncSourceSnapshot` 在离屏前采下的源真实 `v`（即 `syncSrc`），
+    //    不再需要同帧采 atFloor、也不再在切标签这一帧当场问源上限。判据钉住新形态。
+    expect(SWITCH_BODY, "收口消费离屏前采下的源真实 v（syncSrc），无 handoverV").toMatch(
+      /const handV = tab \? syncSrc : null;/,
     );
-    // ⚠️ 反向闸：不许退回「当场问 `shownTab` 自己」—— 此刻显示的是接班那一格，
-    //    拿它去问自己的上限，问出来的数是谁的都说不清（且永远真）。
-    expect(SWITCH_BODY, "不许在切标签这一帧再问源的上限").not.toMatch(
-      /handoverV\([^)]*sourceAtOwnFloor\(shownTab\)/,
-    );
+    // ⚠️ 反向闸：B260 的 `handoverV` 整段特判必须彻底删除，切标签收口体里不许再出现。
+    expect(SWITCH_BODY, "切标签收口体不得残留 handoverV 特判").not.toMatch(/handoverV\(/);
   });
 
   it("跨侧交完整 v：小数是「走了一格多少」，跨侧照带（丢了就是每切一次偏一格）", () => {

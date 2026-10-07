@@ -19,6 +19,15 @@ const PREVIEW_BOTTOM = ROWS * BLOCK - VIEW_H;
 const SRC_BOTTOM = ROWS * ROW - VIEW_H;
 /** 源码中段的落点（非上限 ⇒ 用来看「来回切会不会漂」）。 */
 const SRC_MID = 287;
+/**
+ * B266：建模 B265 的源码侧 `--cm-bleed-bottom` 留白。真实 app 里留白 =
+ * `lastRow.top + clientHeight - contentHeight` = `(rows-1)*ROW + VIEW_H - rows*ROW`
+ * = `VIEW_H - ROW`，使源码滚动区延伸到「末行贴视口顶」（源码 max v = 行数）。
+ * 不建模这层，桩里源码仍按 `rows*ROW - VIEW_H`(=294/v≈22) 封顶，B260 旧前提在
+ * 桩里依旧成立，删 handover 会让 3 条用例假红。建模后源码 naturalMax=322(v=24)，
+ * 与预览侧(966/v=24) 对齐，反映 B265 真实几何。
+ */
+const SRC_BLEED = VIEW_H - ROW;
 const MD = Array.from({ length: ROWS }, (_, i) => `# 标题 ${i + 1}`).join("\n");
 
 const editorMax = Infinity;
@@ -210,7 +219,10 @@ function naturalMax(el: HTMLElement): number {
   const rows = isEditor
     ? el.querySelectorAll(".cm-line").length
     : el.querySelectorAll("[data-line-start]").length;
-  return Math.max(0, rows * (isEditor ? ROW : BLOCK) - VIEW_H);
+  // ⚠️ B266：源码侧加 B265 留白（见 `SRC_BLEED`），否则桩里源码封顶在 294(v≈22)，
+  //    与预览侧(966/v=24) 上限错配残留 —— 那正是 B260 要修的病，删 handover 后会假红。
+  const unit = isEditor ? ROW : BLOCK;
+  return Math.max(0, rows * unit - VIEW_H + (isEditor ? SRC_BLEED : 0));
 }
 /** 标签条上某一栏的标签：按 DOM 序点。 */
 function tabEl(i: number): HTMLElement {
