@@ -2848,6 +2848,31 @@ function splitPanelWithTab(
 
   const src = panelOfTab(tabId);
   if (!src) return;
+  // ⚠️⚠️⚠️ **B264（用户：同文件 2 个标签、初始未分屏，把其中一个标签**拖**成第二个分屏
+  //    ⇒ 滚动位置偏移、且两个标签滚动位置出现差异）—— 这里补的不是「再打一针」，是
+  //    copy 支那半套**本来就该在 move 支上也有一份**的东西。**
+  //
+  //    病型（与 B254 / B261 同族，但病位在**这里**，两边症状叠加）：
+  //    ① **游标采错了锚**。单栏里只有一个宿主，同文档的「源码标签 + 预览标签」只能
+  //       亮一个 —— 拖走的那份（本例预览标签 tab2）此刻是**离屏**的，屏幕上真在滚的是
+  //       另一份（源码标签 tab1，槽里 px=100）。照抄 copy 支那句 `syncSourceV(tab)`
+  //       采的是**被拖那份的隐藏侧**（预览离屏 ⇒ 0 ⇒ v=1），把这个假游标当成分屏后
+  //       两格的共同落点 ⇒ 老那一格被钉回文档开头（桩实测：100 ⇒ 0，会话落盘 `0|0`，
+  //       即**永久**丢了，不只是闪一下）。
+  //    ② **没有「按新几何重落」**。分屏那一刻老栏从整宽变半宽 ⇒ word_wrap 重排 ⇒
+  //       `rebuildLayout → restoreViewScroll` 拿槽里**旧像素**去钉**新几何**的编辑器
+  //       ⇒ 跨几何的旧像素是另一行。copy 支有 `vCopy` + 两格 `landOnFrameGeometry`
+  //       兜住，move 支一个都没有 ⇒ 分离的那半病就只在这里发作。
+  //
+  //    ⚠️ ① 的锚必须取 **`viewTabId`（视图实际显示谁）**，不能取 `activeTabId`（那是要
+  //       被搬走的那个），也不能取被拖的 `tab`；view 还没建时回退 `activeTabId`。
+  //       这跟 `switchTab` 收口那条「采坐标必须离屏前」是同一条律，只是这次的病是
+  //       「采的是离屏的那一份」而不是「采的时刻不对」。
+  const anchor =
+    (src.viewTabId !== null && src.viewTabId !== undefined ? tabs.get(src.viewTabId) : undefined) ??
+    tabs.get(src.activeTabId) ??
+    tab;
+  const vDrop = syncSourceV(anchor);
   const newId = nextPanelId++;
   panels.set(newId, {
     panelId: newId,
@@ -2859,7 +2884,8 @@ function splitPanelWithTab(
     previewTimer: null,
     bodyEl: null,
   });
-  src.tabs = src.tabs.filter((id) => id !== tabId);
+  const rest = src.tabs.filter((id) => id !== tabId);
+  src.tabs = rest;
   tab.panelId = newId;
   layout = splitPanelAt(layout, targetId, dir, newId, newFirst);
   activePanelId = newId;
@@ -2874,6 +2900,17 @@ function splitPanelWithTab(
     // 交给 pruneEmptyPanels 统一摘掉（摘掉后新面板正好落在原位置，等价于「没动」）。
     if (!pruneEmptyPanels()) {
       rebuildLayout();
+      // ⚠️⚠️ **B264：两格都要按新几何重落（B262 口径，与 copy 支 `landOnFrameGeometry`
+      //    那一对对称）。这里跨两格是因为 move 支**没有新实例**：被拖的那份（tab）落在
+      //    新面板，老面板剩下的那几份（rest）留在原格 —— copy 支是 `tab` + 新副本两个
+      //    对象，move 支是 `tab` + `rest` 的并集。**
+      //    ⚠️ 顺序同 copy 支：重落排 `rebuildLayout()` **之后**（这一帧的几何才量得对），
+      //       游标用**离屏前**采的 `vDrop`；`refreshAll()` 排最后（它尾那趟
+      //       `pushSyncToSiblings(activeTab())` 的源此刻是**刚归零的新面板**，本例会把
+      //       老格钉回 v=1 —— 重落正是用来盖这一下的，与 copy 支那半边完全同型）。
+      for (const t of [tab, ...rest.map((id) => tabs.get(id)).filter((x): x is Tab => !!x)]) {
+        landOnFrameGeometry(t, vDrop);
+      }
       refreshAll();
     }
   }
