@@ -812,40 +812,6 @@ function landPreviewAtSource(other: Tab, v: number | null): void {
 }
 
 /**
- * B261 第四轮：**等 CM6 把新几何量出来再按 `v` 落位**（`landPreviewAtSource` 的 measure 版）。
- *
- * 分屏那一刻 `rebuildLayout()` 已经把 DOM 重建完（面板确实分成了两个、容器确实窄了一半），
- * 但**新建 EditorView 的 `lineBlock` 是下一帧 `measure` 才有的** —— `sourceTopOfV` 读
- * `view.lineBlockAt(...)` 拿到的还是**整宽时那套行位置**，同一个 `v` 换算出来的是旧几何的
- * 像素（自测台：`v=21.5` 在整宽下 = 287，窄栏同一行该是 95.67 ⇒ 落点差 191px，
- * 看着就是「原标签滚动位置出现变化，跟面板宽度有关」）。
- *
- * ⇒ 落地必须**跨过那一轮 measure**（等下一帧再落）：那时 CM6 的量已经是新几何。
- *
- * ⚠️ 不用 `view.requestMeasure(cb)`：它对「刚建的 view」不保证当帧跑（自测台探针零输出，
- *    等于什么都没落）；rAF 一定能跨过 CM6 自己那轮 measure。
- *
- * ⚠️⚠️ **这一拍在 jsdom 桩里没有鉴别力 —— 别拿桩来证明它。** 桩的行几何是测试自己给的
- *    （`tests/sync-split-narrow.test.ts` 覆写 `lineBlockAt`/`lineBlockAtHeight`，同步就能算），
- *    同步落与 rAF 落落点一样 ⇒ 退化「去掉这一拍」桩里照样绿。它服务的只有真机：新 view 的
- *    `lineBlock` 确实要等 measure 那一轮才有。本轮用窄桩证明的是**「宽度变了 ⇒ 两格都得按
- *    新几何重落」**（摘掉源那格 / 把落位移回 `rebuildLayout` 之前，两条都精确红），
- *    不是证明「等一帧」本身。
- */
-function landAfterMeasure(other: Tab, v: number | null): void {
-  if (v === null) return;
-  const view = displayedPanelOfTab(other.tabId)?.view?.view;
-  // 没量到（离屏 / 还没挂上）就当场落：槽总归能写，挂上后 `restoreViewScroll` 会按它还原。
-  if (!view) {
-    landPreviewAtSource(other, v);
-    return;
-  }
-  requestAnimationFrame(() => {
-    setTimeout(() => landPreviewAtSource(other, v), 0);
-  });
-}
-
-/**
  * B240 三轮：切标签那一刻，把**源**（刚显示的那一份，下一刻就要离屏）的坐标就地采下来。
  *
  * ⚠️ 必须在它离屏**之前**采。离屏之后 `panelOfTab(src).view?.view` 取到的是面板的那一个
@@ -2599,9 +2565,28 @@ function splitPanelWithTab(
     //
     //    ⚠️ 顺序不能反：`syncSourceV` 在最前采（旧几何）；`landPreviewAtSource` 在
     //       `rebuildLayout` 之后落（新几何）—— 用错一边换算，落点就带着旧/新宽度的量。
-    // ⚠️ 走 measure 版：落位必须用**新几何**换算，否则 `v` 会被算成旧宽度的像素。
-    landAfterMeasure(tab, vCopy);
-    landAfterMeasure(inst, vCopy);
+    // ⚠️ **同步落位，不许异步**（B261 第五轮，用户：「这次修改，之前标签切换的不同步
+    //    问题又出现了」）：第四轮这里走的是 `landAfterMeasure`（rAF + setTimeout(0)），
+    //    本意是等 CM6 量出新几何；但一次性落位一旦跨过一帧，那一帧里**任何**事都会
+    //    先把位置改掉，而这一拍还拿着**分屏前采的 `vCopy`** ⇒ 下一帧落下去时
+    //    `displayedPanelOfTab(other.tabId)` 可能已经指向**别的面板/别的标签**
+    //    （用户切了标签、切了模式、或者 rebuildLayout 又跑了一轮）—— `applySyncToSibling`
+    //    于是按**陈旧游标**把那份**刚被用户切好的位置**硬钉回 `vCopy` 那一行，
+    //    表现就是「切标签不同步 / 位置对不上」。这正是 `landPreviewAtSource` 上那段
+    //    「跟随时每帧更正、一次性落位必须**当场**落下去」要防的那一类。
+    //    ⚠️ 真机上 CM6 的 `lineBlock` 那一轮 measure 确实会晚，但**晚一帧落错的代价**
+    //       （把用户切好的位置钉歪）远大于「按尚未 measure 的几何落一次、随后被
+    //       `measureAndKeepScroll` / 用户下一滚带走」—— 后者只会偏一点，前者是**不同步**。
+    //    ⇒ 落位回同步；「用新几何换算」靠**排在 `rebuildLayout()` 之后**这一条守住
+    //      （窄栏用例 `tests/sync-split-narrow.test.ts` 守的就是这条顺序）。
+    //
+    //    ⚠️ **这里只落新副本一份，源（左栏）不显式落 —— 第四轮那句 `landAfterMeasure(tab, …)`
+    //       是净负债，本轮撤掉了。** 同步落位之后 `refreshAll()` 那趟推播会以 `inst`
+    //       为源（`activePanelId = newId` ⇒ `activeTab()` 正是它）把 `vCopy` 推给同文档
+    //       的每一个兄弟，源这一格自然落到同一位置 —— 退化「摘掉源那格的重落」桩里
+    //       **照样绿**（两侧实测都没变）就是证据：显式落源被推播覆盖了。留着它只会
+    //       多一行死代码 + 一条恒真契约误导后人，谁都别再加回来。
+    landPreviewAtSource(inst, vCopy);
     refreshAll();
     scheduleSessionSave();
     return;

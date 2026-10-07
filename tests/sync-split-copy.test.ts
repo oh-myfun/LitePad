@@ -35,6 +35,8 @@ const BLOCK = ROW * 3;
 const VIEW_H = ROW * 3;
 /** 源码滚动位置（px）：压在**行中间**（+7）⇒ 游标带 0.5 的行内比例。 */
 const SRC_PX = ROW * 20 + 7; // 287
+/** 分屏那一帧里用户滚到的另一处（在自然上限 294 之内）。 */
+const OTHER = ROW * 14; // 196
 
 /** md 正文：一行一个标题 ⇒ 预览块 k 与源码行 k+1 一一对应，块顶 = k×BLOCK。 */
 const MD = Array.from({ length: 24 }, (_, i) => `# 标题 ${i + 1}`).join("\n");
@@ -276,5 +278,39 @@ describe("B261：新建分屏 ⇒ 原标签不许被推到文档开头", () => {
       `新建分屏把原标签带跑了（应该还是 SRC_PX）；两侧实测 = ${scroller().scrollTop}/${scroller(1).scrollTop}`,
     ).toBe(SRC_PX);
     expect(scroller(1).scrollTop, "新建分屏的那份副本没落在源的那一格").toBe(SRC_PX);
+  });
+
+  // ⚠️⚠️ B261 第五轮：这条守的是**落位的时序**，不是落点。
+  //   第四轮把 copy 分支的落位做成 `rAF + setTimeout(0)`（本意是等 CM6 量出新几何），
+  //   于是分屏那一帧里**先发生**的任何事（用户滚一下 / 切标签 / 又跑一轮 rebuildLayout）
+  //   都会被那一拍**用分屏前采的陈旧游标 `vCopy` 盖回去** —— 那一拍还按
+  //   `displayedPanelOfTab(other.tabId)` 现取面板，取的很可能已经不是落位时那一份。
+  //   真机表现：用户报「切标签 / 切换不同步」；桩里用这一条把它钉住：
+  //   **分屏当场落位 ⇒ 之后用户滚到哪就该停哪**。
+  //   退化（把两格落位移进 `setTimeout(0)` 跨过一帧）⇒ 位置被旧游标钉回 SRC_PX ⇒ 本例精确红。
+  it("分屏后的那一帧里发生滚动/切换，落位不许把位置按分屏前的旧游标盖回去", async () => {
+    await wait(200);
+    expect(
+      scroller().scrollTop,
+      `前提：上一例已分屏并同步落位，此刻左栏 = ${scroller().scrollTop}`,
+    ).toBe(SRC_PX);
+
+    // ⚠️ **必须再分一次屏**：待跑的那一拍是 copy 分支注册出来的，上一例那拍早就跑完了。
+    //    不重新触发，这一例里根本不存在「跨帧落位」可盯 ⇒ 退化也绿（第一次写这条时
+    //    就栽在这：用例测了个空气）。
+    splitH(); // ← 这次分屏才注册落位那一拍
+    // ⚠️ 落位注册之后、那一拍跑之前，用户滚到了别处（真机 = 同一帧里滚了/切了）
+    userScroll(scroller(), OTHER);
+    await wait(300);
+
+    const both = `${scroller().scrollTop}/${scroller(1).scrollTop}`;
+    expect(
+      scroller().scrollTop,
+      `分屏那一帧里滚了却被分屏前的旧游标钉回去了（应 ${OTHER}，两侧实测 = ${both}）`,
+    ).toBe(OTHER);
+    expect(
+      scroller(1).scrollTop,
+      `新副本没跟上那一帧里的滚动（应 ${OTHER}，两侧实测 = ${both}）`,
+    ).toBe(OTHER);
   });
 });
