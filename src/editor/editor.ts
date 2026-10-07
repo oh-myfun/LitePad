@@ -10,6 +10,7 @@ import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { oneDark } from "@codemirror/theme-one-dark";
 import {
   EditorView,
+  ViewPlugin,
   crosshairCursor,
   drawSelection,
   dropCursor,
@@ -46,6 +47,91 @@ export function foldMarkerDOM(open: boolean): HTMLElement {
   span.setAttribute("aria-hidden", "true");
   span.innerHTML = open ? CODICONS.chevronDown : CODICONS.chevronRight;
   return span;
+}
+
+/**
+ * B265：底部留白（scroll past end）—— 让**最后一行**能滚到容器**顶**、下面留一屏空白。
+ *
+ * 病在哪先摆清楚：源码这一格的可滚余量是 `scrollHeight − clientHeight`，而内容高只到
+ * 「最后一行底」。想让最后一行贴容器顶，需要
+ *
+ *     maxScroll === 最后一行.top
+ *     ⇔ baseContent + bleed − clientH === lastLineTop
+ *     ⇔ bleed === lastLineTop + clientH − baseContent
+ *
+ * （`baseContent` = 不含留白的内容高；`.cm-content` 带 `min-height:100%`，所以它永远
+ *   ≥ clientHeight —— 短文档那一路自动成立，不必另开分支。）
+ *
+ * 不加这一条 ⇒ 源码永远只能把最后一行滚到**视口底**（B260 实测 24 行 / 视口 3 行 ⇒ 上限
+ * 294，末行 top 是 322），而预览因为按块排版、块高与行高不是一个量，它的「最后一块在顶」
+ * 落在别处 ⇒ 两侧**自然上限天生不对齐**，滚到底时游标各自被自己那侧裁一刀（B260 那句
+ * 「预览能到 966、源码只到 294」）。留出这一屏之后，两侧都能滚到「最后的内容贴顶」，
+ * 「到底 top 位置对不上」整类问题从根上消掉。
+ *
+ * ⚠️ 留白写在 **CSS 变量** 上、由主题规则消费（不是直接写死 inline padding）：
+ *     - inline style 会盖掉 `body.print-mode` 的既有打印规则 ⇒ 打印多出一屏空白；
+ *     - 变量让 print 那条规则只要把 `--cm-bleed-bottom: 0px` 置掉就能归零（见 preview.css 同款）。
+ * ⚠️ 量不出（离屏 `display:none` ⇒ clientHeight=0，或大文件降级还没测出行高）一律写 **0**，
+ *    绝不写负值 —— 把「看不见」当成「可滚」会把这一格钉死在开头（B257 同型教训）。
+ */
+const BOTTOM_BLEED_VAR = "--cm-bleed-bottom";
+
+/**
+ * 这一格该留多少底部空白（px，可为小数）。
+ * 见上面 `BOTTOM_BLEED_VAR` 那段的推导 —— 它就是那个 `bleed === lastLineTop + clientH − baseContent`。
+ */
+export function sourceBottomBleedPx(view: EditorView): number {
+  const clientH = view.scrollDOM.clientHeight;
+  if (!(clientH > 0)) return 0;
+  // ⚠️ CM6 的 `Text` **没有** `lastLine()`（只有 `lines` / `line(n)`），拿文档长当 height
+  //    去问又会落进上一行 ⇒ 明确取最后一行再问它的块。
+  const doc = view.state.doc;
+  const block = view.lineBlockAt(doc.line(doc.lines).from);
+  // ⚠️ 基准高取 CM6 自己的 `contentHeight`，**不能**取 `contentDOM.offsetHeight`：
+  //    后者把我自己刚加的那截 padding 也算进去 ⇒ 每重算一次 `baseContent` 就涨一截、
+  //    算出来的留白就缩一截 ⇒ 先给 28、下一帧给 0、第三帧又 28…（分屏拖一下就抖）。
+  //    `contentHeight` 只量文档行高，永远不含我加的空白，两次重算落同一个值。
+  const baseContent = view.contentHeight;
+  if (!(block.height > 0) || !(baseContent > 0)) return 0;
+  return Math.max(0, block.top + clientH - baseContent);
+}
+
+function applyBottomBleed(view: EditorView): void {
+  // ⚠️ 量不出就**一个字节都不写**：`setState` 那一帧编辑器还是 `display:none`（CM6 也还没
+  //    测出新文档的行高），此刻算出来是 0 —— 照写就等于把上一帧那个对的值抹成 0，这一格
+  //    就永远少了一屏可滚（B257 同型：写「瞬态的 0」比不写更糟，真机靠 ResizeObserver 补，
+  //    但补之前那一小段里位置是错的）。
+  if (view.scrollDOM.clientHeight <= 0 || view.contentHeight <= 0) return;
+  view.scrollDOM.style.setProperty(BOTTOM_BLEED_VAR, `${sourceBottomBleedPx(view)}px`);
+}
+
+/**
+ * 底部留白扩展：随**视口尺寸 / 文档 / 几何**变化重算（分屏、拖分隔条、换字号、切标签
+ * 换来另一份文档都要跟）。`ResizeObserver` 打在 scrollDOM 上 —— 分屏那一格宽度一变，
+ * 折行行数与行高跟着变，`clientHeight` 也在同一帧里变，所以观察容器本身就够了。
+ */
+function bottomBleedExtension(): Extension {
+  return [
+    // 变量宿主挂 scrollDOM（.cm-content 是它的子元素，变量沿继承下来拿到）
+    EditorView.theme({ ".cm-content": { paddingBottom: `var(${BOTTOM_BLEED_VAR}, 0px)` } }),
+    ViewPlugin.define((view: EditorView) => {
+      const sync = (): void => applyBottomBleed(view);
+      sync();
+      let ro: ResizeObserver | null = null;
+      if (typeof ResizeObserver !== "undefined") {
+        ro = new ResizeObserver(() => sync());
+        ro.observe(view.scrollDOM);
+      }
+      return {
+        update(u: ViewUpdate): void {
+          if (u.docChanged || u.geometryChanged) sync();
+        },
+        destroy(): void {
+          ro?.disconnect();
+        },
+      };
+    }),
+  ];
 }
 
 /**
@@ -103,6 +189,9 @@ function baseExtensions(perf: PerfProfile): Extension[] {
   if (perf.selectionMatches) {
     ext.push(highlightSelectionMatches());
   }
+  // B265：底部留白（末行能滚到容器顶）—— 与上面几档一样按 perf 之外无条件注入：
+  // 它是滚动几何的一部分，不是可裁剪的开销，关掉它「到底 top 对不齐」就直接回来。
+  ext.push(bottomBleedExtension());
   return ext;
 }
 

@@ -424,8 +424,10 @@ describe("B172 预览侧顶行（topVisibleLine / blockAtOffset）", () => {
     pane.root.scrollTop = 899; // 探测 899.5 < 900 ⇒ 命中顶边 520 那块（line 18），
     // 比例 = (899 − 520) / (900 − 520) ≈ 0.997 ⇒ 18 + 0.997×12 ≈ 30（line 30 那块就到跟前了）
     expect(pane.topVisibleLine()).toBeCloseTo(30, 0);
-    pane.root.scrollTop = 5000; // 滚过末尾 ⇒ 最后一块（没有下一块，返回行首）
-    expect(pane.topVisibleLine()).toBe(80);
+    // ⚠️ B265：末块没有下一块 ⇒ 把块内比例补满、交「末块末行」（lineEnd=83，inclusive）。
+    //   旧口径返回行首 80 ⇒ 预览到底时的游标比源码少一整块，两侧 floor 天生对不上。
+    pane.root.scrollTop = 5000; // 滚过末尾 ⇒ 最后一块，比例补满
+    expect(pane.topVisibleLine()).toBe(83);
   });
 
   it("顶行映射与按行定位互逆：读出来的行摆回去还落在同一处（B174）", () => {

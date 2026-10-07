@@ -19,7 +19,11 @@
   --md-link: #0969da;
 
   overflow-y: auto;
-  padding: 16px 24px 48px;
+  /* B265：底部再叠一份「动态留白」（--md-bleed-bottom = clientHeight − 最后一块高，
+     由 preview.ts 写）。这样预览能滚到「最后一块贴容器顶、下面留一屏空白」，
+     与源码侧「最后一行贴容器顶」同一个口径 —— 两侧的自然上限终于落在同一处，
+     「滚到底两者 top 对不上」整类问题才消得掉。48px 是原有的收尾留白，保住它。 */
+  padding: 16px 24px calc(48px + var(--md-bleed-bottom, 0px));
   background: var(--md-bg);
   color: var(--md-fg);
   /* 预览字号跟随应用字号（--font-size 由 :root 提供，缩放/设置都改它）；
@@ -653,6 +657,9 @@ body.layout-dragging .toc-grip {
     display: block !important;
   }
   body.print-mode .md-preview {
+    /* B265：打印把底部留白归零 —— 变量置 0 比覆盖 padding-bottom 干净，
+       既不用复制一份角标值，也不会漏掉 CSS 里其它用到它的地方。 */
+    --md-bleed-bottom: 0px;
     overflow: visible;
     background: #fff;
     color: #000;

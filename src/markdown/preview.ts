@@ -29,6 +29,20 @@ const LAZY_THRESHOLD_LINES = 5000; // 大文档：关闭 Mermaid/Shiki 自动渲
  */
 const TOP_PROBE = 0.5;
 
+/**
+ * B265：底部留白（scroll past end）的 CSS 变量名。
+ *
+ * 与源码侧（`src/editor/editor.ts` 的 `--cm-bleed-bottom`）同一招：预览也改成**让最后一
+ * 块能滚到容器顶**、下面留一屏空白。不这么做的话，预览的自然上限卡在「最后一块贴容器底」，
+ * 而源码那一格卡在「最后一行贴容器底」—— 两侧底不是同一个位置，B260 那句「预览能到 966、
+ * 源码只到 294」就是这么来的，滚到底时两侧游标被各自那把上限各裁一刀，怎么对齐都差一截。
+ *
+ * ⚠️ 同样走 CSS 变量、不写 inline `padding-bottom` 字面值：变量可以被
+ *    `body.print-mode .md-preview { --md-bleed-bottom: 0px }` 归零（见 preview.css），
+ *    硬写 inline 会把既有打印规则全盖掉、打印多出整整一屏空白。
+ */
+const BOTTOM_BLEED_VAR = "--md-bleed-bottom";
+
 export interface SyncHost {
   /** 编辑器可视区顶行（1-based） */
   topVisibleLine(): number;
@@ -63,6 +77,11 @@ export class PreviewPane {
     attachUserScrollClear(this.root);
     // 图片/iframe 的 load 不冒泡，用捕获阶段监听——布局变化后按 pending 行重定位
     this.root.addEventListener("load", () => this.applyPending(), true);
+    // B265：底部留白跟着**容器尺寸**重算（分屏拖分隔条、窗口缩放、字号档都动它）。
+    // jsdom 里没有 ResizeObserver ⇒ 判空，留白那帧由下面的 setBlocks 兜底算一次。
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(() => this.applyBottomBleed()).observe(this.root);
+    }
     this.root.addEventListener("click", (e) => {
       const target = e.target as HTMLElement;
       // 任务列表点击切换（预览态，不回写源码，M3 仅展示）
@@ -130,6 +149,10 @@ export class PreviewPane {
     // 少了这一步，任何一次重渲染（编辑、切标签）都会让预览弹回文档开头。
     const prevScroll = this.root.scrollTop;
     this.blocks = next;
+    // ⚠️ B265：留白要在**插回 DOM 之前**算 —— 块的尺寸这会儿才定得下来，而下面那句恢复
+    //    scrollTop 会被当帧的滚动上限裁；留白是**放宽**上限的（多一屏可滚），算晚了
+    //    恢复值就可能先被裁小、下一帧才被补回来（与源码 restoreViewScroll 同型）。
+    this.applyBottomBleed();
     this.root.replaceChildren(frag);
     if (this.pendingSyncLine !== null) {
       this.applySyncToLine(this.pendingSyncLine);
@@ -506,6 +529,27 @@ export class PreviewPane {
   }
 
   /**
+   * B265：按当前几何重算预览的**底部留白** —— 量 = `clientHeight − 最后一块的高`。
+   *
+   * 推导（与 `--cm-bleed-bottom` 那一段同源）：加完 padding 后
+   *     maxScroll = contentH + padding − clientH
+   * 想让「最后一块顶」正好贴在容器顶（`maxScroll === 最后一块.top`，而它 ≈ contentH − 末块高）
+   *     ⇒ padding === clientHeight − 末块高。
+   *
+   * ⚠️ 只有**最后一块**才配这个量：前面那些块本来就能滚到顶，给它们多留一屏只会让视图
+   *    一进预览就空一大截（「预览一打开先白一屏」）。
+   * ⚠️ 量不出（离屏 `clientHeight = 0`，或空文档没有块）一律写 **0** —— 把「看不见」当
+   *    成「可滚」会把这一格钉死在开头，正是 B257 那份教训。
+   */
+  private applyBottomBleed(): void {
+    const clientH = this.root.clientHeight;
+    const last = this.blocks[this.blocks.length - 1];
+    const lastH = last ? last.el.getBoundingClientRect().height || last.el.offsetHeight : 0;
+    const px = clientH > 0 && lastH > 0 ? Math.max(0, clientH - lastH) : 0;
+    this.root.style.setProperty(BOTTOM_BLEED_VAR, `${px}px`);
+  }
+
+  /**
    * 预览此刻停在哪一行（md 源码行号），定不出来返回 `null`（B148）。
    *
    * 纯预览态切回源码时用得上：编辑器那一路位置在 `display:none` 期间被浏览器清零
@@ -532,7 +576,17 @@ export class PreviewPane {
     const start = Number(el.dataset.lineStart);
     if (!Number.isFinite(start) || start <= 0) return null;
     const next = this.blocks[idx + 1];
-    if (!next) return start;
+    // ⚠️ B265：走到这里说明**已经滚过最后一块的顶**（`indexOfBlockAtOffset` 只挑「顶边
+    //    不超过探测点」的最后一块，末块被选中 ⇔ 它顶到了容器顶）⇒ 该交**块末行**而不是
+    //    块起始行。源码那一格到底时交的是 `doc.lines`（末行贴容器顶 ⇒ 行号 = 文档末行、
+    //    行内比例 0），两边若一个给末块尾、一个给末行头，就差一个**末块的高度**（末块占
+    //    3 行就差 2 行）⇒ 切标签 / 切模式之后两格各回各的「底」。
+    //    落点仍走块顶（`applySyncToLine`）：v = 末块末行 ⇒ `blockAtLine` 命中末块 ⇒ 沉到
+    //    块顶 ⇒ 读回来还是末块末行，往返不攒误差。
+    if (!next) {
+      const end = Number(el.dataset.lineEnd);
+      return Number.isFinite(end) && end > 0 ? end : start;
+    }
     const top = this.blockTop(el);
     const nextTop = this.blockTop(next.el);
     const range = Number(next.el.dataset.lineStart) - start;
