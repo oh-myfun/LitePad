@@ -812,6 +812,98 @@ function landPreviewAtSource(other: Tab, v: number | null): void {
 }
 
 /**
+ * 一轮「几何变化后重落」共用的取消标记（`landOnFrameGeometry` 用它）。
+ *
+ * 同一次同步执行块里注册的重落算**同一轮**（copy 分支一次会注册两条：原标签 + 新副本；
+ * `disposePanel` / `openPreviewToSide` 也各是一整轮）—— 这一格里**任何一个**容器在那一
+ * 拍里被用户接管，整轮就都得作废：这一轮的任务是「把几块面板一起还原回几何变化之前」，
+ * 用户既已接管其中一块，剩下的跟着旧游标还原就是再造一次「切标签不同步」。
+ *
+ * 微任务回合即「一轮结束」：重落注册全在同一块同步代码里，微任务一定排在它们之后、
+ * 也排在 rAF 之前 ⇒ 下一条同步块自然换新一轮。
+ */
+let landRound: { userTookOver: boolean } | null = null;
+
+/**
+ * B262：几何变化（开/关侧边预览、加/删分屏）之后，把一份兄弟按**这一帧的几何**重落回
+ * 它原来的游标上 —— 「先采后落」这条纪律里，「落」这一半的**落点换算**必须等几何到位。
+ *
+ * ⚠️⚠️ 为什么不能像 `landPreviewAtSource` 那样**当场**落下去（用户报：打开侧边预览 /
+ *     加删分屏之后，原先那个标签的滚动位置**跳到别的行**了）：
+ *
+ *    几何（面板数）一变 ⇒ 面板宽窄变 ⇒ 折行数变 ⇒ 一条逻辑行的**视觉行高**变。但
+ *    `rebuildLayout()` 换上去的那批 `EditorView` 的 heightMap 还是**旧宽度的** ——
+ *    CM6 的 `requestMeasure()` 排的是**下一帧**的 rAF，在那之前 `lineBlockAt` 报的是
+ *    旧宽度下的行顶。于是「拿旧尺子量新位置」：`sourceTopOfV` 把旧几何算出来的行顶
+ *    钉进已经变窄/变宽的编辑器 ⇒ **落到另一行**（自测台滞后几何桩实测：整宽 287 ⇒
+ *    窄栏该落 95.67，当场落算出 287 = 旧几何下的 v=20.5，真机几何下一看已是第 61 行，
+ *    差 40 行）。
+ *
+ *    ⚠️ 这一层**现有桩全盖住了**：`tests/sync-*` 那批把 `lineBlockAt` 覆写成**实时**几何
+ *      （`rowH()` 按面板数立刻变）⇒ 桩上「游标全程闭合」是**桩的特权**，不是产品行为。
+ *      真要用例得咬住它，见 `tests/sync-geometry-lag.test.ts`（几何一变，CM 那把尺子
+ *      留到帧头才换，与 CM6 的时序一致）。
+ *
+ * ⚠️ 为什么这里能够/必须「排到下一帧再落」—— 第四轮那个跨帧 `landAfterMeasure`
+ *     当初是**没加闸门**才被撤的（commit `6db1663`）：跨一帧 ⇒ 那一帧里切标签 / 切模式 /
+ *     再 rebuild 都可能发生 ⇒ `displayedPanelOfTab` 已指向别处，而它还拿着分屏前采的
+ *     `vCopy` 硬钉 ⇒ 把用户刚切好的位置按旧游标钉回去（「切标签不同步」）。所以这里把
+ *     那一帧的**闸门**补上：下面回调里认死「我注册时看到的那一个 (view, viewTabId)」，
+ *     两者任一变了 ⇒ 整条作废、**一个字节都不动**（既不是硬钉回去，也不是硬钉）。
+ *     ⚠️ 先试过把换算排进 CM6 measure 的 `write` 阶段（`view.requestMeasure({ write })`，
+ *        与几何变化同帧、跑在 `viewState.measure()` 之后）：**放弃**，理由是 CM6 的写阶段
+ *        在 `Updating` 状态里重入 `LayerView.draw`，jsdom 桩上它自带的那些 write 回调
+ *        直接抛 `Cannot read properties of undefined` ⇒ 连 ours 那一轮也被吞掉（同一份桩
+ *        里换回「下一帧」就稳）。同帧的甜头（那一帧插不进用户输入）其实由上面那道闸门等价
+ *        换来 —— 认死 view/viewTabId 就是「同一帧才成立」的判据。
+ *
+ * ⚠️ 游标 `v` 仍然**采在几何变化之前**：变化之后再采，读到的是「新面板按旧像素还原出来
+ *    的歪位置」换算出的游标，量的是同一个错。
+ *
+ * ⚠️ 只换「落点换算」这一步，落位出口还是 `applySyncToSibling`（同一个 `v`、同一套
+ *    `recordScroll` / 程序标记），所以同步关着这一路照样生效。
+ */
+function landOnFrameGeometry(tab: Tab, v: number | null): void {
+  if (v === null) return;
+  const view = displayedPanelOfTab(tab.tabId)?.view?.view ?? panelOfTab(tab.tabId)?.view?.view;
+  if (!view) return;
+  // ⚠️ 注册这一刻这个容器是不是「我们程序摆的」（那几条几何变化路径都经 `pinScrollTop`
+  //    打过标记）。它只有在**本来是自家、这一拍里又不是了**才算用户接管；本来就没标记是
+  //    稳态，什么都说明不了。
+  const markedAtReg = isProgrammatic(view.scrollDOM);
+  if (landRound === null) {
+    landRound = { userTookOver: false };
+    queueMicrotask(() => {
+      landRound = null;
+    });
+  }
+  const round = landRound;
+  // ⚠️ 落位排到**这一帧的末尾**（CM6 的 measure 就在这一帧里把 heightMap 刷成新的，而
+  //    我们的 rAF 排在它之后 ⇒ 换算用的已经是这一帧的几何）。
+  //    ⚠️ 不用 CM6 measure 的 **write 阶段**（试过，撤）：`applySyncToSibling` 尾巴上那句
+  //       `pinScrollTop` 在 measure 周期里写 `scrollTop` ⇒ 重入 CM6 的 `LayerView.draw`
+  //       ⇒ 位置被清零（真机未必炸，但这里炸了就得当它炸）。
+  requestAnimationFrame(() => {
+    // ⚠️⚠️ 跨帧闸门（第四轮 `landAfterMeasure` 缺的就是这一道，commit `6db1663`）：
+    //    跨一帧 ⇒ 那一帧里切标签 / 切模式 / 用户滚一下都可能发生，而这个 `v` 是**几何
+    //    变化之前**采的 ⇒ 一律不许拿它去盖那一拍里新发生的事。
+    //    ⚠️ 判「谁在显示谁」用 `viewTabId` 而不是 `activeTabId`（见 `syncSourceV` 那条）。
+    const now = displayedPanelOfTab(tab.tabId);
+    if (now?.view?.view !== view || now?.viewTabId !== tab.tabId) return;
+    // ⚠️⚠️ 「用户有没有在那一拍里接管这个容器」只能靠 `markProgrammatic` 那套来源标记
+    //    （见 `scroll-guard.ts`）：用户一滚（wheel / 滚键 / 拖滚动条）`clearProgrammatic`
+    //    就把标记摘掉 ⇒ 标记从有到无 = 位置在这一拍里归了用户 ⇒ 陈旧游标不许盖回去。
+    //    ⚠️ 之前试过拿**像素**当基准（注册时记 `scrollTop`、回调时比较）：不成 ——
+    //      rebuild 那条路会把容器归零**并记账**（`t.scrollTop` 也跟着从 287 变 0），与
+    //      「用户滚到别处」在数值上完全一样，闸门要么挡掉合法落位、要么挡不住用户滚动。
+    //      来源标记是唯一分得清「归零重排」与「用户接管」这两者的信号。
+    if (markedAtReg && !isProgrammatic(view.scrollDOM)) round.userTookOver = true;
+    if (round.userTookOver) return;
+    applySyncToSibling(tab, v);
+  });
+}
+
+/**
  * B240 三轮：切标签那一刻，把**源**（刚显示的那一份，下一刻就要离屏）的坐标就地采下来。
  *
  * ⚠️ 必须在它离屏**之前**采。离屏之后 `panelOfTab(src).view?.view` 取到的是面板的那一个
@@ -2160,8 +2252,10 @@ function disposePanel(panelId: number): void {
   //
   //    这正是 S11（新建分屏）的**反向半边**：那边几何**变窄**、这里**变宽**，病一样是
   //    「跨几何的像素当尺子」，尺子只有游标 `v`。⇒ 落位纪律照抄那一轮，只是取反方向：
-  //    **先采后落**，`syncSourceV` 排在最前（旧几何）、`landPreviewAtSource` 排在
-  //    `rebuildLayout()` 之后（新几何）。
+  //    **先采后落**，`syncSourceV` 排在最前（旧几何）、`landOnFrameGeometry` 排在
+  //    `rebuildLayout()` 之后（本帧几何）。⚠️ B262 修正了一句旧口径：排在之后 ≠ 用
+  //    **新**几何换算 —— CM6 的 heightMap 要到那一帧的 measure 才更新（见
+  //    `landOnFrameGeometry`），当场换算等于拿旧尺子量新位置。
   //
   //    ⚠️ **采的是「所有还显示着的东西」**，不是只采宿主那一个：面板数一变，留存面板的
   //       几何都会跟着变（三格布局里关掉中间那格，左右两格宽度都不再是关之前的）⇒
@@ -2181,7 +2275,13 @@ function disposePanel(panelId: number): void {
     if (t) reland.push({ tab: t, v: syncSourceV(t) });
   }
   rebuildLayout();
-  for (const r of reland) landPreviewAtSource(r.tab, r.v);
+  // ⚠️ B262：这里原先是 `landPreviewAtSource`（**当场**落）⇒ 那一刻 CM6 的 heightMap
+  //    还是旧的，`sourceTopOfV` 拿旧尺子量新位置 ⇒ 落到另一行（用户报「加/删分屏之后原
+  //    标签滚动位置跳行」）。改成 `landOnFrameGeometry`：换算排到这一帧的 measure 之后。
+  //    ⚠️ 「先采后落」的纪律没变 —— 变的只是**落那一半的尺子**：原来以为「排在
+  //       `rebuildLayout()` 之后」就等于「用新几何」，其实不是（heightMap 要到那一帧的
+  //       measure 才刷），现在换尺子这一半被显式排到了帧上，见 `landOnFrameGeometry`。
+  for (const r of reland) landOnFrameGeometry(r.tab, r.v);
   refreshAll();
   scheduleSessionSave();
 }
@@ -2620,8 +2720,14 @@ function splitPanelWithTab(
     //
     //    ⚠️ 顺序不能反：`syncSourceV` 在最前采（旧几何）；`landPreviewAtSource` 在
     //       `rebuildLayout` 之后落（新几何）—— 用错一边换算，落点就带着旧/新宽度的量。
-    // ⚠️ **同步落位，不许异步**（B261 第五轮，用户：「这次修改，之前标签切换的不同步
-    //    问题又出现了」）：第四轮这里走的是 `landAfterMeasure`（rAF + setTimeout(0)），
+    // ⚠️ **落位不许跨帧**（B262 把第五轮那句「同步落位，不许异步」收窄成这一条）：
+    //    第四轮被撤的是**跨过一帧**去落（`landAfterMeasure` = rAF + setTimeout(0)），
+    //    病在**帧边界**上（那一帧里切标签 / 切模式 / 再 rebuild ⇒ 拿分屏前的 `vCopy`
+    //    把用户刚切好的位置钉回去），不在「晚一步落」这件事本身；本轮因此把落点换算
+    //    挪到 CM6 measure 的 **write 阶段**（`landOnFrameGeometry`）—— 仍与几何变化
+    //    **同一帧**，帧边界那类回归照旧堵着，而换算的尺子换成了这一帧的实测几何。
+    // ⚠️ 第五轮那次回归（用户：「这次修改，之前标签切换的不同步问题又出现了」）出自
+    //    第四轮这里走的是 `landAfterMeasure`（rAF + setTimeout(0)），
     //    本意是等 CM6 量出新几何；但一次性落位一旦跨过一帧，那一帧里**任何**事都会
     //    先把位置改掉，而这一拍还拿着**分屏前采的 `vCopy`** ⇒ 下一帧落下去时
     //    `displayedPanelOfTab(other.tabId)` 可能已经指向**别的面板/别的标签**
@@ -2647,18 +2753,18 @@ function splitPanelWithTab(
     //       在真机上的**稳态形态**：同步开着只闪一下就被推播扳回来，同步关着是**一直错**
     //       （`tests/sync-split-narrow-off.test.ts` 实测左栏停在 287 而不是 95.67）。
     //
-    //       ⇒ 本轮把源（左栏）也按同一个 `vCopy` 在新几何下重落一遍。走 `landPreviewAtSource`
-    //         而不是 `pushSyncToSiblings`：前者**不看 `docSyncModes` 闸**，同步关着也照样
-    //         生效 —— 那正是它存在的意义（B259 开侧边预览那一路同理，`landPreviewAtSource`
-    //         的注释里那条「一次性落位」也是这个用途）。
+    //       ⇒ 本轮把源（左栏）也按同一个 `vCopy` 在**新几何**下重落一遍。走
+    //         `landOnFrameGeometry` 而不是 `pushSyncToSiblings`：前者**不看 `docSyncModes` 闸**，
+    //         同步关着也照样生效 —— 那正是它存在的意义（B259 开侧边预览那一路同理，
+    //         也是「一次性落位」这个用途，见 `landPreviewAtSource` 的注释）。
     //
-    //       ⚠️ 顺序纪律：两格都排在 `rebuildLayout()` **之后**（新几何才量得对）、都用最前
+    //       ⚠️ 顺序纪律：两格都排在 `rebuildLayout()` **之后**（这帧几何才量得对）、都用最前
     //         采到的 `vCopy`（分屏前按**旧**几何采的游标）。退化「摘掉源那格这一行」
     //         ⇒ `tests/sync-split-narrow-off.test.ts` **立刻红**（左栏停在旧像素 287，
     //         而不是新几何的 95.67）；同步开着时红不红**不能拿来当事** —— 推播会把左栏
     //         扳回来，那条工况由 `tests/sync-split-narrow.test.ts` 守「两格落点一致」的结果。
-    landPreviewAtSource(tab, vCopy);
-    landPreviewAtSource(inst, vCopy);
+    landOnFrameGeometry(tab, vCopy);
+    landOnFrameGeometry(inst, vCopy);
     refreshAll();
     scheduleSessionSave();
     return;
@@ -5889,7 +5995,7 @@ function openPreviewToSide(panelId: number): void {
     //    排、编辑器视口 scrollTop 恒 0）⇒ 推出的 `v` 是「文档开头」，直接把左栏那份
     //    源码钉到顶（自测台实测 287 ⇒ 0；比「新那份没同步」更糟）。
     //    与 B254 同型：位置归零的那个瞬间产生的推播不能当源坐标。夹住这一趟，
-    //    落位交给下面那行 `landPreviewAtSource`。
+    //    落位交给下面那行 `landOnFrameGeometry`（几何刚变，换算得排到这一帧的 measure 之后）。
     suppressSyncPush = true;
     splitPanelWithTab(panelId, "h", tab.tabId, false, true);
     suppressSyncPush = false;
@@ -5907,7 +6013,7 @@ function openPreviewToSide(panelId: number): void {
       //    （上面 copy 分支给的是全新 CM state，scrollTop 恒 0）⇒ 它壮不了这一格，
       //    只能由源交过来的 `v` 补。这一步排 applyPanelMode 之后：预览容器要先建、
       //    块要先排（renderMarkdownFor 是同步的），`syncToLineProgrammatic` 才量得到落点。
-      landPreviewAtSource(nt, v);
+      landOnFrameGeometry(nt, v);
     }
   } else {
     const rp = panels.get(rightId);
@@ -5952,7 +6058,7 @@ function openPreviewToSide(panelId: number): void {
     //    标签文件滚动位置不一致」。
     applyPanelMode(rp);
     // B259：按源落位（排在 applyPanelMode 之后，理由见上）。
-    landPreviewAtSource(tabs.get(targetId)!, v);
+    landOnFrameGeometry(tabs.get(targetId)!, v);
     // ⚠️ 落完这一份，同文档**其余**兄弟也得跟上同一个 `v`（B258 那个补推同型）：
     //    以左栏那一份（就是上面采 `v` 的那份）为源推其余兄弟，接班这一份已经落好、
     //    不许再动。同步关着时不必推（各认各的，B149 基线）。
