@@ -2126,7 +2126,38 @@ function disposePanel(panelId: number): void {
   if (activePanelId === panelId) {
     activePanelId = sibling ?? [...panels.keys()][0] ?? 0;
   }
+  // ⚠️⚠️ **B261 第七轮（用户点名要端到端验「新增 / 减少分屏」时翻出来的）**：关掉一个
+  //    分屏 ⇒ 剩下那格**变宽**、编辑器（word_wrap 开着）重排 ⇒ **同一个 `scrollTop` 像素
+  //    在宽栏里是另一行**，而槽（`t.scrollTop`）里存的是**窄栏**像素 —— `rebuildLayout`
+  //    → `restoreViewScroll` 拿它去钉**已变宽**的面板 ⇒ 位置被钉到另一行，而且
+  //    **`pushSyncToSiblings` 救不了**：关完只剩一个面板、同文档再没有兄弟实例可推
+  //    （`sibs.length === 0` ⇒ 推播入口就 return），所以**同步开着也照样错**
+  //    （`tests/sync-split-close.test.ts` 实测：该落 287，实际停在 95.67 = 窄栏像素）。
+  //
+  //    这正是 S11（新建分屏）的**反向半边**：那边几何**变窄**、这里**变宽**，病一样是
+  //    「跨几何的像素当尺子」，尺子只有游标 `v`。⇒ 落位纪律照抄那一轮，只是取反方向：
+  //    **先采后落**，`syncSourceV` 排在最前（旧几何）、`landPreviewAtSource` 排在
+  //    `rebuildLayout()` 之后（新几何）。
+  //
+  //    ⚠️ **采的是「所有还显示着的东西」**，不是只采宿主那一个：面板数一变，留存面板的
+  //       几何都会跟着变（三格布局里关掉中间那格，左右两格宽度都不再是关之前的）⇒
+  //       谁显着谁就得按旧游标重落一遍。
+  //
+  //    ⚠️ 顺带说一下「并入宿主的那些标签」（`closePanelById` 把关闭面板的标签搬到宿主）
+  //       **为什么不用管**：这一刻它们没显示 ⇒ `syncSourceV` 采不出游标（它只认「面板此刻
+  //       显示的那一份」），但也不需要 —— 重落那一下走的 `applySyncToSibling` 即使是
+  //       `shown=false`，也会把同一游标写进它的槽（`recordScroll`）⇒ 之后点它，落点照样
+  //       是对的（自测台实测：关完分屏再点并入的那份副本，落 287 = 整宽同一行）。
+  //       ⚠️ 这条是靠 `applySyncToSibling` 的「落位也写槽」兜住的，**不要**因为它看着
+  //          「没重落」就以为漏了；真改了那条的写法，这里就得补一块。
+  const reland: Array<{ tab: Tab; v: number | null }> = [];
+  for (const p of panels.values()) {
+    if (!p.view || p.viewTabId === null) continue;
+    const t = tabs.get(p.viewTabId);
+    if (t) reland.push({ tab: t, v: syncSourceV(t) });
+  }
   rebuildLayout();
+  for (const r of reland) landPreviewAtSource(r.tab, r.v);
   refreshAll();
   scheduleSessionSave();
 }
