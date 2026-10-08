@@ -1,7 +1,7 @@
 # LitePad GitHub Release 工作流
 # 触发：① 推送 v* tag（本地由 scripts/release.sh 创建）
 #       ② 手动派发（workflow_dispatch）—— 用于重跑失败的任务，或对已有 tag 补发
-# 流程：Windows runner（GNU 工具链，与本地一致）→ tsc/vite → tauri build → NSIS → GitHub Release
+# 流程：Windows runner（MSVC 工具链，与本地一致）→ tsc/vite → tauri build → NSIS → GitHub Release
 name: Release
 
 on:
@@ -32,24 +32,13 @@ jobs:
           node-version: 22
           cache: npm
 
-      # 与本地一致：MinGW-w64 提供 GNU 工具链的链接环境
-      - name: Set up MSYS2 MinGW64
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: false
-          install: mingw-w64-x86_64-toolchain
-
-      - name: Add MinGW to PATH
-        shell: pwsh
-        run: Add-Content $env:GITHUB_PATH "C:\msys64\mingw64\bin"
-
-      # rust-toolchain.toml 锁定 stable-x86_64-pc-windows-gnu，rustup 会自动安装对应宿主
-      - name: Install Rust (GNU host)
+      # 与本地一致：MSVC 工具链（rust-toolchain.toml 锁定 stable-x86_64-pc-windows-msvc），
+      # 链接用 runner 预装的 Visual Studio，无需 MSYS2 / MinGW / windres
+      - name: Install Rust (MSVC host)
         shell: pwsh
         run: |
-          rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
-          rustup default stable-x86_64-pc-windows-gnu
+          rustup toolchain install stable-x86_64-pc-windows-msvc --profile minimal
+          rustup default stable-x86_64-pc-windows-msvc
 
       - uses: Swatinem/rust-cache@v2
         with:

@@ -2,8 +2,9 @@
 # 触发：push 到 main、任意 PR、手动派发
 # 流程：与本地质量门（.githooks）对齐 —— 格式 → lint → 类型 → 前端构建 → vitest → cargo test
 #
-# 说明：本机开发用 MSYS2 MinGW（无 MSVC），宿主工具链由 rust-toolchain.toml
-# 锁定为 stable-x86_64-pc-windows-gnu，故 CI 也必须配 MinGW64 才能链接。
+# 说明：宿主工具链为 MSVC——rust-toolchain.toml 锁定 stable-x86_64-pc-windows-msvc，
+# 链接环境由 windows runner 预装的 Visual Studio（C++ 工作负载 + Windows SDK）提供，
+# 无需 MSYS2 / MinGW（资源编译走 rc.exe，不是 windres）。
 name: CI
 
 on:
@@ -28,24 +29,13 @@ jobs:
           node-version: 22
           cache: npm
 
-      # 与本地一致：MinGW-w64 提供 GNU 工具链的链接环境
-      - name: Set up MSYS2 MinGW64
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: false
-          install: mingw-w64-x86_64-toolchain
-
-      - name: Add MinGW to PATH
-        shell: pwsh
-        run: Add-Content $env:GITHUB_PATH "C:\msys64\mingw64\bin"
-
-      # rust-toolchain.toml 锁定 stable-x86_64-pc-windows-gnu，rustup 会自动装宿主
-      - name: Install Rust (GNU host)
+      # 与本地一致：MSVC 工具链（rust-toolchain.toml 锁定 stable-x86_64-pc-windows-msvc），
+      # 链接用 runner 预装的 Visual Studio，无需 MSYS2 / MinGW / windres
+      - name: Install Rust (MSVC host)
         shell: pwsh
         run: |
-          rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
-          rustup default stable-x86_64-pc-windows-gnu
+          rustup toolchain install stable-x86_64-pc-windows-msvc --profile minimal
+          rustup default stable-x86_64-pc-windows-msvc
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -65,8 +55,12 @@ jobs:
           npx vite build
 
       - name: Frontend tests (vitest)
-        run: npx vitest run
+        # ⚠️ --maxWorkers=2 是必须的（B223）：全量并发下 20+ 文件同时 import src/main，
+        # 会随机 3~6 文件报 Hook timed out in 10000ms 而零用例红。
+        run: npx vitest run --maxWorkers=2
 
-      - name: Rust tests (cargo test)
+      - name: Rust tests (cargo test --release)
         working-directory: src-tauri
-        run: cargo test
+        # ⚠️ 必须 --release：dev 档激活 dev-dependencies 的 feature 组合，schemars 0.8.22
+        # 走 indexmap v1 ⇒ E0107 直接编不过（与 build-all.sh 第 3 步同口径）。
+        run: cargo test --release
