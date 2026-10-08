@@ -445,6 +445,21 @@ let suppressSyncPush = false;
  */
 const pendingSyncCursor = new Map<number, number>();
 
+/**
+ * B271：「尺子未测」窗口标记 —— `setState` / 新建视图之后、measure 帧之前，CM6 的
+ * heightMap 还是**估算行高**（B256 已证真机 estimate ≠ 实测），这个窗口里一切
+ * `sourceTopOfV` 换算都落在「估算空间」，写出去的 px 在 measure 换成实测排版后对应的
+ * 是**另一行**（用例几何：v=9.5 实测 119px、估算 170px —— 收口把它写进槽，
+ * `reassertViewScroll` 再钉回 DOM，歪值就此锁死并经同步传染全部同文档实例，
+ * 用户报的「切源码对不上 / 切回预览跳变」的完整病根）。
+ *
+ * 窗口内的 v→px 换算一律**挂起**（`pendingSyncCursor`），等 `measureAndKeepScroll`
+ * 的 rAF（此刻 measure 已完成、heightMap 已是实测）按实测几何统一补写——
+ * 与 B263 的「display:none 量不成 ⇒ 挂起」同一个纪律，只是判据从「藏没藏」
+ * 换成「测没测」。挂起对在屏目标同样生效：估算 px 写进 DOM 一样是毒。
+ */
+const unmeasuredPanels = new WeakSet<Panel>();
+
 const LOSSY_ABORT = Symbol("lossy-abort");
 
 // ---------------------------------------------------------------- 基础访问
@@ -809,13 +824,25 @@ function applySyncToSibling(other: Tab, v: number | null): void {
   const rulerHidden =
     !shownView && !!panelOfTab(other.tabId)?.bodyEl?.classList.contains("mode-preview");
   if (rulerHidden) return;
+  // ⚠️⚠️ **B271**：尺子未测（`setState`/新建视图之后、measure 帧之前，见 `unmeasuredPanels`）
+  //    ⇒ 换算必落「估算空间」—— 一个字节的估算 px 都不许写：写进槽会被
+  //    `reassertViewScroll` 钉回 DOM（measure 换成实测排版后同一个 px 对应**另一行**），
+  //    再经同步传染全部同文档实例。**在屏目标同样有毒**（毒的是它自己的 DOM+槽）⇒
+  //    同样改挂起，等 measure 后的补写按实测几何落。
+  const rulerPanel = shownView ? shown : panelOfTab(other.tabId);
+  if (view && rulerPanel && unmeasuredPanels.has(rulerPanel)) {
+    if (shownView) pendingSyncCursor.set(other.tabId, v);
+    return;
+  }
   if (!view) {
     for (const t of instancesOfDoc(other.docId)) {
       if (t.tabId === other.tabId || t.viewMode === "preview") continue;
       // ⚠️ B251：改名 —— `v` 现在已经是**规范游标**，不能拿它当「借来的 EditorView」用
       //    （同名会让下面 `sourceTopOfV(view, v)` 读成借来的那个 view，静默换算错目标）。
-      const instView = displayedPanelOfTab(t.tabId)?.view?.view;
-      if (instView) {
+      const instPanel = displayedPanelOfTab(t.tabId);
+      const instView = instPanel?.view?.view;
+      // B271：借尺子也要借**测过的** —— 未测面板的尺子同样是估算空间
+      if (instView && instPanel && !unmeasuredPanels.has(instPanel)) {
         view = instView;
         break;
       }
@@ -1680,6 +1707,8 @@ function rebuildLayout(): void {
         p.view = createEditor(editorEl, tab.state);
         suppressDirty = false;
         p.viewTabId = tab.tabId;
+        // B271：新建视图同样从估算行高起步（heightMap 要等第一帧 measure 才实测）
+        unmeasuredPanels.add(p);
         // 同 switchTab：焦点先给、还原排在后面（focus 会把光标滚进视野，反过来就白钉了）
         if (panelId === activePanelId) p.view.focus();
         // B126：视图是新建的，滚动位置只活在标签快照里 → 显式还给 DOM
@@ -1718,6 +1747,15 @@ function rebuildLayout(): void {
         const shownView = p.view.view;
         shownView.scrollDOM.addEventListener("scroll", () => {
           const t = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
+          // ⚠️⚠️ **B271：对称的 B129 闸** —— 预览侧那条监听早有 `t.viewMode !== "preview"`
+          //    ⇒ return，**编辑器侧漏了**。面板正显示纯预览标签时编辑器整格 `display:none`，
+          //    此刻编辑器的 scroll 只可能是浏览器重置 / CM6 测量补偿 / 程序性扰动 —— 把
+          //    编辑器像素写进预览标签的槽（那份槽的语义是**预览**像素，B129）再把它当源
+          //    推给兄弟 = 用幽灵坐标污染全部分屏（金标准验证台 S9 实测：隐藏编辑器一发
+          //    scroll ⇒ 同文档源码标签的挂起游标被毒成旧值，切回去整格停在旧位置，
+          //    用户报的「反复修了很多轮还有问题」的最后一条病根）。
+          //    mode-split（viewMode="split"）编辑器可见，照常记录与推播，不受此闸影响。
+          if (!t || !isMdTab(t) || t.viewMode === "preview") return;
           // B170：程序钉位置的回执由 scroll-guard 标记认领、直接吞（见 src/scroll-guard.ts）：
           // 不比位置、不赌时序、不靠还原窗口，渲染扰动（setBlocks 归零再拉回、图片加载重排）
           // 也免疫。用户接管滚动时标记被清，随后的 scroll 才是真用户。
@@ -1744,9 +1782,10 @@ function rebuildLayout(): void {
           //   它这一行的原样写法（B154 / B159），也别在注释里抄它的完整字面量 ——
           //   反向验证那条退化用的是字面量 replace，注释里出现同串会被先替换掉。
           if (t) pushSyncToSiblings(t, true);
-          // 编辑器（源）滚动时让预览跟随；程序钉位置的那发已被上面的标记吞掉，不会到这。
-          if (!t || !isMdTab(t) || t.viewMode !== "preview") return;
-          preview.syncFromEditor();
+          // B271：原尾部的 `preview.syncFromEditor()` 已删 —— `viewMode` 只有
+          // "source" | "preview" 两档，那支只在**纯预览**（编辑器 display:none）时可达，
+          // 正是上面新闸拦掉的幽灵路径；编辑器可见时预览跟随走别的水路（同面板分屏），
+          // 这条监听里从来没有它的合法工况。
         });
         attachUserScrollClear(shownView.scrollDOM);
         attachPasteHandler(p);
@@ -1824,6 +1863,8 @@ function flushPendingSyncCursor(panel: Panel, tabId: number, keepPending = false
   const v = pendingSyncCursor.get(tabId);
   if (v === undefined) return;
   if (!panel.view) return;
+  // B271：尺子未测 ⇒ 这一手续不成，留着 pending 给 measure 后那次（不写估算 px）
+  if (unmeasuredPanels.has(panel)) return;
   const top = sourceTopOfV(panel.view.view, v);
   if (top === null) return;
   if (!keepPending) pendingSyncCursor.delete(tabId);
@@ -1887,6 +1928,8 @@ function switchTab(panelId: number, tabId: number): void {
   suppressSyncPush = true;
   view.setState(tab.state);
   suppressSyncPush = false;
+  // B271：从这一刻到 measure 帧，heightMap 是估算行高 —— 换算窗口开启（见 unmeasuredPanels）
+  unmeasuredPanels.add(panel);
   suppressDirty = false;
   // ⚠️ 焦点必须排在钉位置**之前**（B145）：`focus()` 会把光标滚进视野，而光标往往
   // 不在刚还原出来的可视区里 —— 排在后面等于把刚钉好的位置顶掉。
@@ -2257,6 +2300,8 @@ async function closeTabById(tabId: number): Promise<void> {
     suppressDirty = true;
     view.setState(nextTab.state);
     suppressDirty = false;
+    // B271：估算窗口开启（measureAndKeepScroll 的 rAF 关闭）
+    unmeasuredPanels.add(panel);
     // B126：接班的标签沿用**它自己**上次的位置（光标随 state，视口随 scrollTop）
     restoreViewScroll(panel);
   }
@@ -2440,9 +2485,14 @@ function splitActivePanel(panelId: number, dir: "h" | "v"): void {
         suppressDirty = true;
         view.setState(prev.state);
         suppressDirty = false;
+        // B271：估算窗口开启（本支原本没有 measureAndKeepScroll，下面补上）
+        unmeasuredPanels.add(panel);
         // B126：原位剩下的标签也要拿回自己的视口位置
         restoreViewScroll(panel);
       }
+      // B271：估算窗口必须由 measureAndKeepScroll 的 rAF 关闭 —— 本支原本没有，
+      // 不补的话挂起的游标永远等不到实测补写
+      measureAndKeepScroll(panel);
     } else {
       // 原面板空了：清悬挂引用，同步一个新标签过去（异步完成后重建挂载视图）
       panel.activeTabId = -1;
@@ -3024,9 +3074,13 @@ function rebuildDocInstances(doc: Doc, text: string, keepCursor = false): void {
       suppressDirty = true;
       panel.view.setState(inst.state);
       suppressDirty = false;
+      // B271：估算窗口开启（见 unmeasuredPanels）
+      unmeasuredPanels.add(panel);
       panel.viewTabId = inst.tabId;
       // B126：整态重建把视口清零；保光标的场合（外部刷新）顺带把视口也保住
       if (keepCursor) restoreViewScroll(panel);
+      // B271：估算窗口由 measureAndKeepScroll 的 rAF 关闭
+      measureAndKeepScroll(panel);
     }
   }
 }
@@ -5799,10 +5853,26 @@ function applyPanelMode(panel: Panel): void {
 function measureAndKeepScroll(panel: Panel): void {
   if (!panel.view) return;
   panel.view.view.requestMeasure();
+  // B271：帧首快照 —— rAF 里用来判「这一帧里**用户接管了编辑器**没有」。
+  //   接管 = 位置变了（DOM scrollTop ≠ 帧首）**且**程序标记已被真实输入清除
+  //   （scroll-guard 的黏性标记只认用户接管）。这正是 B262「整轮取消」的同一条纪律：
+  //   分屏那一帧里用户滚了，随后按旧游标补写/重钉就是把用户刚滚的位置盖回去
+  //   （sync-split-copy 回归：应 196 被钉回 287）。
+  const dom = panel.view.view.scrollDOM;
+  const startPx = dom.scrollTop;
   requestAnimationFrame(() => {
-    // B270：measure 已完成、heightMap 已是实测行高 —— `switchTab` 里那趟补写若落在
-    // 「估算空间」（keepPending 留下的挂起），这里按同一把 `v` **再补一次**并落槽；
-    // 随后的 `reassertViewScroll` 把修正后的槽钉回视口。没挂起 ⇒ 空操作。
+    // B271：CM6 的 measure（rAF 序在前）此刻已完成、heightMap 已是实测行高 ——
+    // 估算窗口就此关闭。窗口内挂起的 v 在这里按**实测几何**补写并落槽，
+    // 随后的 `reassertViewScroll` 把修正后的槽钉回视口。
+    unmeasuredPanels.delete(panel);
+    const userTookOver = dom.scrollTop !== startPx && !isProgrammatic(dom);
+    if (userTookOver) {
+      logger.trace(
+        "viewport",
+        `panel=${panel.panelId} 这一帧用户接管编辑器（${startPx}→${dom.scrollTop}）⇒ 挂起与重钉全部让路`,
+      );
+      return;
+    }
     if (panel.viewTabId !== null) flushPendingSyncCursor(panel, panel.viewTabId);
     reassertViewScroll(panel);
   });
@@ -8577,8 +8647,12 @@ function applyDocResyncFull(
       // 整态重建：只 dispatch changes 的话 tab.state 与视图会不同步（后续切标签立刻串档）
       if (view) view.setState(whole);
       inst.state = whole;
+      // B271：估算窗口开启（见 unmeasuredPanels）
+      if (p) unmeasuredPanels.add(p);
       // B126：整段替换后视图被拉回开头，按旧视口位置还回去（浏览器自动裁剪）
       if (view && p) restoreViewScroll(p);
+      // B271：估算窗口由 measureAndKeepScroll 的 rAF 关闭
+      if (p) measureAndKeepScroll(p);
     }
   } finally {
     syncingDocId = null;
