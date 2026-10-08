@@ -1806,14 +1806,27 @@ function rebuildLayout(): void {
  *
  * ⚠️ 补写用的是 `recordScroll`（**只写槽**）—— 这一路不钉 DOM：那格此刻正在被 `switchTab`
  *    自己钉，`pinScrollTop` 插进去会被随后那一次还原盖掉。
+ *
+ * ⚠️⚠️ **B270（用户报：三实例同文档 —— 左面板源码+预览两标签、右面板预览，两预览同步滚，
+ *    切源码「位置对不上」、切回预览「跳变」）—— 这一趟补写其实量不准**：它发生在
+ *    `setState` 之后、measure 之前，CM6 的 heightMap 还是**估算行高**（B256 已证真机
+ *    estimate ≠ 实测：写 1222 当帧只落 858 那一型）。换出来的 `top` 是「估算空间」的
+ *    像素，restore 把它钉上；下帧 measure 换成实测排版后，同一个 px 对应的就是**另一行**
+ *    ⇒ 源码显示的位置与预览对不上。更糟的是切回预览时 `syncSourceSnapshot` 按这份歪位采
+ *    `v`，收口把两个预览一起推得跳变。
+ *
+ *    修法 = **补写分两段**：`switchTab` 里这一趟照旧先写（保 B263 的「离屏先有值」语义，
+ *    `keepPending: true` **不删** pending）；`measureAndKeepScroll` 的 rAF（measure 已
+ *    完成、heightMap 已是实测）里**再补一次**同一把 pending `v` 的换算并落槽，随后的
+ *    `reassertViewScroll` 把它钉回去 —— 成功后才删。估算空间那一版只活一帧。
  */
-function flushPendingSyncCursor(panel: Panel, tabId: number): void {
+function flushPendingSyncCursor(panel: Panel, tabId: number, keepPending = false): void {
   const v = pendingSyncCursor.get(tabId);
   if (v === undefined) return;
-  pendingSyncCursor.delete(tabId);
   if (!panel.view) return;
   const top = sourceTopOfV(panel.view.view, v);
   if (top === null) return;
+  if (!keepPending) pendingSyncCursor.delete(tabId);
   recordScroll(tabId, top);
 }
 
@@ -1886,7 +1899,10 @@ function switchTab(panelId: number, tabId: number): void {
   applyPanelMode(panel);
   // B263：编辑器刚从 `display:none` 放出来 ⇒ 这一刻才量得准 —— 补写挂起的那手游标，
   //    ⚠️ 必须排在下面 `restoreViewScroll` **之前**：还原是读槽钉视口，补写晚一步就来不及。
-  flushPendingSyncCursor(panel, tabId);
+  //    ⚠️ B270：此刻 heightMap 还是估算行高（setState 刚跑完、measure 还没来），这一趟
+  //    换出来的是「估算空间」的像素 —— 只当**占位值**用（保 B263 语义），`keepPending`
+  //    不删挂起；measure 完成后 `measureAndKeepScroll` 的 rAF 里按实测几何**再补一次**。
+  flushPendingSyncCursor(panel, tabId, true);
   // applyPanelMode 已经让编辑器重新可见 ⇒ 这一趟还原**现在才钉得进去**。
   restoreViewScroll(panel);
   logViewport("切换 · 还原后", panel);
@@ -5784,6 +5800,10 @@ function measureAndKeepScroll(panel: Panel): void {
   if (!panel.view) return;
   panel.view.view.requestMeasure();
   requestAnimationFrame(() => {
+    // B270：measure 已完成、heightMap 已是实测行高 —— `switchTab` 里那趟补写若落在
+    // 「估算空间」（keepPending 留下的挂起），这里按同一把 `v` **再补一次**并落槽；
+    // 随后的 `reassertViewScroll` 把修正后的槽钉回视口。没挂起 ⇒ 空操作。
+    if (panel.viewTabId !== null) flushPendingSyncCursor(panel, panel.viewTabId);
     reassertViewScroll(panel);
   });
 }
