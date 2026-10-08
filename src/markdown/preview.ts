@@ -68,6 +68,27 @@ export class PreviewPane {
   private bleedPx = -1;
   /** 是否已有一次「布局落定后再补量」的 rAF 在飞（避免 setBlocks 每发都排队、叠成无限循环） */
   private bleedRafPending = false;
+  /**
+   * B272：ResizeObserver 那一路的跨帧重算在飞（同一轮通知合并成一发）。
+   * ⚠️ 存在的唯一理由：**绝不在这帧的回调里动样式** —— 在同一次 delivery 里改被观察量，
+   * 浏览器会再收一轮通知，攒够就抛 `ResizeObserver loop completed with undelivered
+   * notifications`（真机：预览可见后每帧一条，被 `index.html` 的全局 error 监听堆成满屏
+   * 红条）。排到 rAF 里写 ⇒ 新通知落到下一帧，属于正常迭代，不再抛错。
+   */
+  private bleedRoPending = false;
+  /**
+   * B272：连续「重算又变了」的次数 —— 熔断用。
+   * 真机上存在**结构性抖动**：留白写进 `padding-bottom`，而 `px` 又拿 `clientHeight`
+   * （padding-box，含这份留白）去算；容器高度由内容撑开时，这一笔会把「被观察量」改大
+   * ⇒ 下一帧再算出另一个 px ⇒ 又写…… 叠加「滚动条出/没 ⇒ 折行 ⇒ 末块高变」就成了每帧
+   * 一条的稳定环。值稳定即归零；连续 `BLEED_CHURN_LIMIT` 次仍变 ⇒ 本轮停手，
+   * 由下一次 `setBlocks`（内容/块高真变化）重置。
+   */
+  private bleedChurn = 0;
+  /** B272：连续重算多少次还在变就算失控（本轮停手）。3 次足以吃掉临界抖动。 */
+  private static readonly BLEED_CHURN_LIMIT = 3;
+  /** B272：`px` 的变化小于这个值就当没变（亚像素 / 滚动条临界那 1px 抖扭不值得重写一次）。 */
+  private static readonly BLEED_EPSILON_PX = 1;
   /** 活动文档目录（相对路径图片解析基准） */
   private baseDir: string | null = null;
 
@@ -84,7 +105,11 @@ export class PreviewPane {
     // B265：底部留白跟着**容器尺寸**重算（分屏拖分隔条、窗口缩放、字号档都动它）。
     // jsdom 里没有 ResizeObserver ⇒ 判空，留白那帧由下面的 setBlocks 兜底算一次。
     if (typeof ResizeObserver !== "undefined") {
-      const ro = new ResizeObserver(() => this.applyBottomBleed());
+      // ⚠️ B272：回调**不直接算** —— 改走 `scheduleBleedFromRo()`（排到 rAF 跨帧写）。
+      //    在这帧的回调里动 `padding-bottom` ⇒ 浏览器同帧再收一轮通知 ⇒ 抛
+      //    `ResizeObserver loop completed with undelivered notifications`（真机每帧一条，
+      //    被全局 error 监听堆成满屏红条）。跨帧写则新通知落到下一帧，是正常迭代。
+      const ro = new ResizeObserver(() => this.scheduleBleedFromRo());
       // ⚠️ 必须观察 **border-box**：留白写在 `root` 自己的 `padding-bottom` 上，而
       //    `ResizeObserver` 默认看的是 **content-box** —— 那等于「我们这一笔把被观察量
       //    改小了」⇒ 回调再来一轮 ⇒ 自反馈成环（启动那帧布局还没稳，浏览器直接抛
@@ -165,6 +190,8 @@ export class PreviewPane {
     //   的游离节点（高度恒 0）⇒ `lastH = 0` ⇒ `--md-bleed-bottom` 永远算成 0 ⇒ 预览
     //   底部永远到不了顶（与源码「最后一行贴容器顶」对不上）。插完立刻算，先把可滚上限
     //   放宽，下面 scrollTop 恢复才不会被旧上限裁小（与源码 restoreViewScroll 同型）。
+    // B272：内容/块高真变了 ⇒ 熔断计数归零（上一次抖动判定的结论对新内容不成立）
+    this.bleedChurn = 0;
     this.applyBottomBleed();
     // ⚠️ B269：同步那一发若量不出（预览离屏 / 刚建实例还没布局 ⇒ `clientHeight = 0`，或末块异步
     //   增强未落地 ⇒ 末块高 0），`applyBottomBleed` 内部那道闸会**一个字节都不写**，保留上一次的
@@ -586,9 +613,36 @@ export class PreviewPane {
     //    notifications`（B265 首版启动即弹红条 —— `index.html` 的全局 error 监听把它当成
     //    启动失败渲染出来了）。`px` 只由「容器高 + 末块高」决定，值不变 ⇒ 这一帧没有真
     //    变化 ⇒ 不写，循环到此为止（「不写」本身就是收敛保证）。
-    if (px === this.bleedPx) return;
+    //    ⚠️ B272：**带 1px 容差** —— `clientHeight` 里含我们自己这份 `padding-bottom`，
+    //    容器高度由内容撑开时它随这一笔变化；叠上「滚动条出/没 ⇒ 折行 ⇒ 末块高 ±1」就是
+    //    每帧都"变"一点的稳定环（真机每帧一条 RO loop）。1px 的差没有任何观感差别，
+    //    ≤1px 一律当没变 ⇒ 环在此收敛。
+    if (Math.abs(px - this.bleedPx) <= PreviewPane.BLEED_EPSILON_PX) return;
     this.bleedPx = px;
     this.root.style.setProperty(BOTTOM_BLEED_VAR, `${px}px`);
+  }
+
+  /**
+   * B272：ResizeObserver 那一路的**跨帧重算**（含熔断）。
+   *
+   * 两条纪律：
+   *   ① **跨帧** —— 回调当帧不写样式，写排到 rAF，避免同帧连续通知（RO loop 错误的成因）；
+   *   ② **熔断** —— 连续 `BLEED_CHURN_LIMIT` 次重算后值还在变 ⇒ 判为结构性抖动（留白改变
+   *      被观察量 / 滚动条临界），本轮停手，不再排队。值稳定一次即归零；`setBlocks`
+   *      （内容或块高真变化）也会归零 ⇒ 后续真实变化照常生效。
+   *      ⚠️ 停手≠算错：留白停在最后一次量出的值上，观感与「多抖 1px」无差别，换来的是
+   *      不再每帧抛错、不再刷满屏红条、不再每帧重排。
+   */
+  private scheduleBleedFromRo(): void {
+    if (this.bleedRoPending) return; // 同一轮通知合并成一发
+    if (this.bleedChurn >= PreviewPane.BLEED_CHURN_LIMIT) return; // 熔断：本轮停手
+    this.bleedRoPending = true;
+    requestAnimationFrame(() => {
+      this.bleedRoPending = false;
+      const before = this.bleedPx;
+      this.applyBottomBleed();
+      this.bleedChurn = this.bleedPx === before ? 0 : this.bleedChurn + 1;
+    });
   }
 
   /**

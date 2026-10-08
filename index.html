@@ -228,8 +228,28 @@
          同时把错误渲染到屏幕可见的覆盖层（用户/诊断可直接看到，而非静默白屏）。 -->
     <script>
       (function () {
+        // ⚠️⚠️ B272：**已知的浏览器噪声不进红条**。
+        //   `ResizeObserver loop completed with undelivered notifications` 是浏览器在
+        //   「一帧里回调又产生了未送达通知」时的**告警**（不是致命错误，应用照常可用）。
+        //   预览底部留白那一路抖起来时它每帧一条 ⇒ 红条被堆满屏、日志几秒几百 KB，
+        //   用户看到的就是「软件启动报错」（真机日志 02:07:42 起连续数十条）。
+        //   ⇒ 噪声只写日志（且只写一次），不渲染；覆盖层留给真正的致命错误。
+        var NOISE = [/ResizeObserver loop completed/];
+        var seen = Object.create(null);
+        var MAX_LINES = 6;
+        var lines = 0;
+        var capped = false;
+        function isNoise(raw) {
+          for (var i = 0; i < NOISE.length; i++) {
+            if (NOISE[i].test(raw)) return true;
+          }
+          return false;
+        }
         function showError(msg) {
           try {
+            // 同一条只渲染一次：重复文本堆在覆盖层里没有信息量，只会把屏幕顶穿。
+            if (seen[msg]) return;
+            seen[msg] = true;
             var box = document.getElementById("boot-error-overlay");
             if (!box) {
               box = document.createElement("div");
@@ -240,6 +260,16 @@
                 "font:13px/1.5 Consolas,Menlo,monospace;white-space:pre-wrap;";
               (document.body || document.documentElement).appendChild(box);
             }
+            // 条数封顶：再往后指路到日志，别让覆盖层无限长。
+            if (lines >= MAX_LINES) {
+              if (!capped) {
+                capped = true;
+                box.textContent +=
+                  "…（后续错误已省略，详见日志 %APPDATA%\\LitePad\\logs\\litepad.log）\n";
+              }
+              return;
+            }
+            lines++;
             box.textContent += msg + "\n";
           } catch (_) {}
         }
@@ -247,7 +277,10 @@
           var raw = (e && (e.message || e.reason)) || e || "unknown error";
           var detail =
             kind + ": " + raw + (e && e.filename ? " @ " + e.filename + ":" + (e.lineno || 0) : "");
-          showError(detail);
+          // ⚠️ 同一条只处理一次 —— 噪声每帧一条时，日志也只留一条（否则日志几秒上百 KB）。
+          if (seen["log:" + detail]) return;
+          seen["log:" + detail] = true;
+          if (!isNoise(String(raw))) showError(detail);
           try {
             window.__TAURI_INTERNALS__.invoke("frontend_ready", { detail: detail });
           } catch (_) {
