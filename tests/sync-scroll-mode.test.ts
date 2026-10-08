@@ -694,7 +694,10 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
     //   修两件事：① 跨侧（预览⇄源码）只交整数块首（`syncSourceV` 的 `cross` 档）⇒ 零偏差；
     //   ② 守卫按**新语义**请回来 —— `snap` 现在是游标 `v`，「源是预览」只能从 `src.viewMode`
     //   认（旧写法靠 `snap.px === null` 那套双字段，改类型后自动失效，正是假绿的温床）。
-    expect(ALIGN_BODY, "新语义的 B247 守卫要还在（源预览 + 显示源码 ⇒ 早退）").toContain(
+    // ⚠️⚠️ **B276：B247 守卫已撤销**（用户拍板，金标准优先 —— 见 `alignShownToSyncSource`
+    //    里那段 B276 注释）。反向闸必须留着且要能变红：守卫一旦被加回来，源码就不再被
+    //    收口对齐 ⇒ 与两个预览差十几行（真机 04:34:44：源码 v79.6 / 预览 v95）。
+    expect(ALIGN_BODY, "撤销的 B247 守卫不许长回来（源预览+显示源码 ⇒ 早退）").not.toContain(
       'if (src.viewMode === "preview" && shown.viewMode !== "preview") return false;',
     );
     // 反向闸（两条）：不许退回**旧写法** —— `snap` 是 `number`，`snap.px` 恒 undefined，
@@ -705,7 +708,8 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
     // 早退只封这一格：源是预览、目标也是预览（同侧）照收，不许一刀切全退。
     // ⚠️ 正向取整条表达式（只判 `src.viewMode === "preview"` 会连同侧那一格一起命中，
     //    退化打不掉就变假绿）。
-    expect(ALIGN_BODY, "守卫只压「源预览 → 目标源码」这一格，同侧那一格必须放过去").toMatch(
+    // B276：撤销后不再有「只压源预览→目标源码」的短路 —— 收口对源码/预览一律生效。
+    expect(ALIGN_BODY, "收口不许再按「源预览 → 目标源码」短路（B276 撤销）").not.toMatch(
       /if \(src\.viewMode === "preview" && shown\.viewMode !== "preview"\) return false;/,
     );
     expect(ALIGN_BODY, "跨侧收口靠落点函数落地（守卫只是短路这一格）").toContain(

@@ -517,6 +517,21 @@ describe("金标准：所有同文件实例滚动位置严格一致（切标签/
     await roundTrip("S9 roundTrip", V1);
   });
 
+  it("S12 钉位补钉窗口里用户滚了：不许把用户顶回去，且必须推给兄弟", async () => {
+    // 接 S10：P0 在预览态（tab2 显示、tab1 源码离屏）；先切回源码格触发一次 pin/补钉链。
+    activatePanel(0);
+    const srcTab = tabsOf(0)[0];
+    srcTab.click();
+    await wait(8); // ← 故意只等一帧：补钉链（逐帧补钉 12 帧）还在飞
+    // 此刻用户接管：wheel 清掉程序标记并滚到别处
+    scrollShownToV(0, V1);
+    await wait(500);
+    // ①用户的位置不许被补钉顶回切换前那个值
+    expectAllAt("S12 用户接管后", V1);
+    // ②这一发必须真的推给了兄弟（另一格的预览要跟上）—— 被黏性标记吞掉的话这里就不一致
+    await roundTrip("S12 roundTrip", V1);
+  });
+
   it("S10 幽灵闸：预览态下隐藏编辑器的一发 scroll 不得污染任何实例", async () => {
     // 接 S9 roundTrip：P0 激活的是预览标签（T2）、面板 mode-preview、编辑器整格藏着的。
     expect(modeOf(0), "前提：P0 在预览态、编辑器隐藏").toBe("preview");

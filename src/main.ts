@@ -996,6 +996,14 @@ function syncSourceSnapshot(src: Tab | undefined, nextTabId: number): number | n
   // 同步没开 ⇒ 各认各的（B149 基线），谁也别替谁决定位置。
   if (docSyncModes.get(src.docId) !== true) return null;
   if (src.scrollTop === null) return null;
+  // ⚠️⚠️ **B276：源那一格的尺子若还在估算窗口 ⇒ 这把游标不可信，宁可不收口**。
+  //    `setState` / 建视图之后到 measure 帧之前，CM6 的 heightMap 是估算行高（B256/B271），
+  //    此刻按源像素算出来的行号是错的 —— 真机 trace（04:34:39）：源码格在 1713.33px，
+  //    被算成 **v=64.587**（1713.33/64.587 ≈ 26.5，那是**旧宽度**下的行高；实测 ≈22），
+  //    收口照这个错 v 落位 ⇒ 预览落到 1887 而不是 2249，凭空偏 362px。
+  //    ⇒ 与 B263「量不出就挂起」同一条纪律：不可信的坐标一个都别往外发。
+  const srcPanel = panelOfTab(src.tabId);
+  if (srcPanel && unmeasuredPanels.has(srcPanel)) return null;
   // ⚠️ B251/B257：交的是**规范游标 `v`**（实数行号，带行内/块内比例的小数），收口这一路
   //    **不区分跨侧 / 同侧**，一律交完整 `v`：B251 那版按两侧 viewMode 是否不同取 `cross`
   //    （跨侧丢小数），本轮 B257 撤掉 —— 收口交整数块首 = 每切一次把接班那份往回拽一整段
@@ -1060,7 +1068,15 @@ function alignShownToSyncSource(panel: Panel, src: Tab | undefined, snap: number
   //    不许覆盖」，与「跨侧交不交小数」是两件事，别把两者绑在一起读。
   //    （历史：B247 原始症状是「文档中段代码 tab ↔ 预览 tab 来回切，滚动位置会变化」。
   //      B251 那会儿顺带写的「切模式 Ctrl+/ 也只交整数块首」同样随 `cross` 一起失效。）
-  if (src.viewMode === "preview" && shown.viewMode !== "preview") return false;
+  // ⚠️⚠️ **B276：这道 B247 守卫撤销了**（用户拍板，金标准优先）。
+  //    它原本的语义是「源是预览、显示的是源码 ⇒ 彻底不推，保住源码自己还原出来的精确
+  //    位置」（B247 / B251 两轮为「切回源码要保住自己位置」拍的板）。但那与用户在 B271
+  //    拍定的金标准**直接冲突** ——「所有同文件标签不管是否激活，滚动位置都完全一致」。
+  //    真机 trace 实测的代价（04:34:44）：切到源码 ⇒ 收口被这道守卫拦掉 ⇒ 源码停在
+  //    v=79.6、两个预览都在 v=95 ⇒ **差 15.5 行**，正是用户反复报的「激活源码位置和预览
+  //    对应不上」。
+  //    ⚠️ 当初怕的「拿带比例的量覆盖掉精确位置」已经不成立：B257 之后跨侧交的是**完整
+  //    小数游标 v**，覆盖就是对齐，不再每轮吃掉一格比例。
   applySyncToSibling(shown, snap);
   return true;
 }
@@ -5717,6 +5733,17 @@ function pinScrollTop(el: HTMLElement, px: number): void {
     // ⚠️ 别在这里 `pinningContainers.delete` —— 接手的新链还在跑，删了会让
     //    `pinInFlight` 误判「没人在钉」，把半路那个中间值采进快照（B145 的读闸口）。
     if (pinTokens.get(el) !== token) return;
+    // ⚠️⚠️ **B276：用户接管滚动 ⇒ 整轮补钉作废**（与 B262「整轮取消」同一条纪律）。
+    //    补钉每帧都 `markProgrammatic` 并 `el.scrollTop = px`：用户在补钉窗口里滚一下，
+    //    ①那一发 scroll 因黏性标记被**吞掉**（不写快照、**不推兄弟**）；②下一帧补钉又把
+    //    位置顶回 px ⇒「我滚了但另一格不动、位置还弹回去」。
+    //    真机 trace（04:34:45）：切标签后用户把源码从 2352 滚到 1796.67，全程**没有一条
+    //    推播**，两个预览都停在旧游标 v95 —— 用户报的「同步还是有问题」就是这一处。
+    //    判据与 measure 那条同款：帧首是我们标的、此刻标记没了 ⇒ 真实输入清过它。
+    if (frame > 0 && !isProgrammatic(el)) {
+      pinningContainers.delete(el);
+      return;
+    }
     // 每次赋值前都标：重试途中（被浏览器裁成 0 后下一帧再钉）每一发都被认领。
     markProgrammatic(el);
     el.scrollTop = px;
