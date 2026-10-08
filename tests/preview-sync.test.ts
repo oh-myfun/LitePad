@@ -6,6 +6,7 @@
 //         并在异步增强/图片 load 后按 pending 行重定位。
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { PreviewPane } from "../src/markdown/preview";
+import { renderBlocks } from "../src/markdown/pipeline";
 
 // 模拟真实浏览器的 rect 语义：
 // - 每个 block 在**内容坐标**里的偏移固定（contentTops）
@@ -468,5 +469,64 @@ describe("B172 预览侧顶行（topVisibleLine / blockAtOffset）", () => {
     expect(body, "要切到二分查找的函数体").toContain("private indexOfBlockAtOffset(");
     expect(body, "二分取中点").toMatch(/const mid = \(lo \+ hi\) >> 1;/);
     expect(body, "不再逐个 block 摸一遍布局").not.toMatch(/for \(const b of this\.blocks\)/);
+  });
+});
+
+describe("B268：末尾空行时预览底部游标须与源码侧（doc.lines）一致", () => {
+  // 走真实 `renderBlocks`：末块 lineEnd 在未修前只到「内容行」，修复后拉到文档末行。
+  function paneFromSrc(src: string): {
+    pane: PreviewPane;
+    root: HTMLElement;
+    lastContentTop: number;
+  } {
+    const blocks = renderBlocks(src);
+    const pane = new PreviewPane();
+    const els: HTMLElement[] = [];
+    let contentTop = 0;
+    const built = blocks.map((b) => {
+      const el = document.createElement("div");
+      el.className = "md-block";
+      el.dataset.lineStart = String(b.lineStart);
+      el.dataset.lineEnd = String(b.lineEnd);
+      contentTops.set(el, contentTop);
+      Object.defineProperty(el, "offsetTop", { value: contentTop + CONTAINER_TOP });
+      els.push(el);
+      contentTop += 100; // 每块 100 内容坐标高（桩里仅要求单调）
+      return { html: b.html, el };
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (pane as any).blocks = built;
+    pane.root.replaceChildren(...els);
+    curRoot = pane.root;
+    pane.setHost({
+      topVisibleLine: () => 0,
+      scrollToLine: () => {},
+      lineCount: () => blocks.length,
+    });
+    return { pane, root: pane.root, lastContentTop: contentTop - 100 };
+  }
+
+  it("末尾空行：预览到底游标 = 文档末行，而非末块内容行（修复前会少算空行）", () => {
+    const src = "# 标题\n\n正文。\n\n"; // doc.lines = 4，末块（正文段落）内容行 = 3
+    const { pane, root, lastContentTop } = paneFromSrc(src);
+    root.scrollTop = lastContentTop; // 把末块顶到容器顶
+    const v = pane.topVisibleLine();
+    expect(v, "修复前此处得 3（lineEnd 内容行），导致与源码到底 v=4 错配").toBe(4);
+  });
+
+  it("无末尾空行：预览到底游标 = 文档末行（行为不变）", () => {
+    const src = "# 标题\n\n正文。"; // doc.lines = 3，末块内容行 = 3
+    const { pane, root, lastContentTop } = paneFromSrc(src);
+    root.scrollTop = lastContentTop;
+    expect(pane.topVisibleLine()).toBe(3);
+  });
+
+  it("源码 v（doc.lines）→ 预览落地仍在末块顶，且读回仍是 doc.lines（往返闭合）", () => {
+    const src = "# 标题\n\n正文。\n\n\n"; // doc.lines = 5
+    const { pane, root, lastContentTop } = paneFromSrc(src);
+    const landed = pane.syncToLineProgrammatic(5); // 模拟从源码同步过来的 v
+    expect(root.scrollTop, "落点 = 末块顶").toBe(lastContentTop);
+    expect(pane.topVisibleLine(), "读回仍是文档末行，往返不丢").toBe(5);
+    expect(landed, "落地成功").not.toBeNull();
   });
 });

@@ -16,6 +16,30 @@ describe("markdown pipeline", () => {
     }
   });
 
+  it("B268：末块 lineEnd 必须覆盖到文档末行（末尾空行不影响底部游标）", () => {
+    // 文档末尾带空行：markdown-it 的 map[1] 只到「最后内容行」，不含空行，
+    // 而 CM6 的 doc.lines 含这些空行。若末块 lineEnd 停在内容行，预览侧底部 v
+    // 就比源码侧小「空行数」，同步到底两侧落点错配（源码到底 v=doc.lines，
+    // 预览到底 v=lineEnd）。修复后末块 lineEnd 必须拉到 doc.lines。
+    const withTrailing = "# 标题\n\n正文。\n\n"; // 末行是空行 ⇒ doc.lines = 4，末块内容行 = 3
+    const blocks = renderBlocks(withTrailing);
+    const last = blocks[blocks.length - 1];
+    expect(last.lineEnd, "末块 lineEnd 必须等于文档末行（含末尾空行）").toBe(4);
+
+    // 无末尾空行：末块 lineEnd 本就等于 doc.lines，不应被改坏。
+    const noTrailing = "# 标题\n\n正文。";
+    const blocks2 = renderBlocks(noTrailing);
+    const last2 = blocks2[blocks2.length - 1];
+    // 该文档 doc.lines = 3，末块（正文段落）lineEnd 本就是 3
+    expect(last2.lineEnd, "无末尾空行时末块 lineEnd 保持内容行").toBe(3);
+
+    // 多行末尾空行：lineEnd 必须吃满所有末尾空行（末尾换行只丢一个空段，
+    // "a\nb\nc\n\n\n" ⇒ 行 = a/b/c/空/空 = 5 行，doc.lines = 5）。
+    const manyTrailing = "a\nb\nc\n\n\n";
+    const blocks3 = renderBlocks(manyTrailing);
+    expect(blocks3[blocks3.length - 1].lineEnd, "多行末尾空行照样吃满").toBe(5);
+  });
+
   it("B244：收尾 token（*_close）不算新块 —— 每个标题/段落只交一块", () => {
     // 退化锚点：早先这里按 `t.level === 0` 一律另起 block，而 markdown-it 的
     // heading/paragraph 都是「open(level0) → inline(level1) → close(level0)」三段 ⇒

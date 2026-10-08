@@ -133,6 +133,24 @@ function createMd(): MdInstance {
 
 const md = createMd();
 
+/**
+ * 与 CodeMirror 的 `doc.lines` 对齐的源码行数。
+ *
+ * CM6 把文档按 `\n` 切行，**结尾的空段（trailing newline）不计入额外一行**：
+ *   "a\nb\n"   → 2 行；  "a\nb\n\n" → 3 行；  "a\n\n" → 2 行；  "" → 1 行。
+ * 所以行数 = 换行数 + 1，若以 `\n` 结尾再把那一个空段扣掉。markdown-it 的 `map`
+ * 也按 `\n` 计（并内部把 `\r\n` 归一），两边口径一致。
+ */
+function countSourceLines(src: string): number {
+  if (src.length === 0) return 1;
+  let n = 1;
+  for (let i = 0; i < src.length; i++) {
+    if (src.charCodeAt(i) === 10) n++;
+  }
+  if (src.charCodeAt(src.length - 1) === 10) n--;
+  return Math.max(1, n);
+}
+
 /** 解析并切分为顶层 block（带 source 行区间）。空文档返回空数组。 */
 export function renderBlocks(src: string): MdBlock[] {
   const env = {};
@@ -170,6 +188,21 @@ export function renderBlocks(src: string): MdBlock[] {
     // 区间修正：用 close token 之后的边界；map[1] 为 exclusive，转 inclusive
     const html = md.renderer.render(g.tokens, md.options, env);
     blocks.push({ lineStart: g.map[0] + 1, lineEnd: Math.max(g.map[1], g.map[0] + 1), html });
+  }
+  // ⚠️ B268：末块的 `lineEnd` 必须覆盖到**文档末行**（`doc.lines`），而非 markdown-it 给的
+  // 「最后内容行」。文档末尾若有空行（trailing blank lines），markdown-it 的 `map[1]` 只到
+  // 最后内容行、不含那些空行 ⇒ `lineEnd < doc.lines`。这会让两侧底部游标错配：
+  //   · 源码侧到底 `topVisibleLineFrac` 交 `doc.lines`（最后一行贴容器顶）；
+  //   · 预览侧到底 `topVisibleLine()` 交 `lineEnd`（最后一块末行）。
+  // 二者不等 ⇒ 同步到底时两侧落点差「末块之后的空行数」：
+  //   · 手动滚源码到底（v=doc.lines）再同步，预览只到 lineEnd（看着像没到底）；
+  //   · 滚预览到底（v=lineEnd）反推源码，`sourceTopOfV` 只落到 lineEnd（向「上」跳几行）。
+  // 把末块 `lineEnd` 拉到文档末行后，两侧底部 `v` 统一为 `doc.lines`，往返闭合。
+  // 仅最后一个块受影响（其 `next` 恒为空，`applySyncToLine` 不插值，只落块顶），中间块不变。
+  if (blocks.length > 0) {
+    const total = countSourceLines(src);
+    const last = blocks[blocks.length - 1];
+    if (total > last.lineEnd) last.lineEnd = total;
   }
   return blocks;
 }
