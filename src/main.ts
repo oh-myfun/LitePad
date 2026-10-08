@@ -1963,19 +1963,27 @@ function switchTab(panelId: number, tabId: number): void {
   //    `focus()` 内部走 `focusPreventScroll`（`preventScroll: true`，拿不到就回滚滚动栈），
   //    不会把刚钉好的视口位置顶掉；已经聚焦过时它就是个空操作。
   view.focus();
-  // applyPanelMode 里的 syncToLine 会把预览按「编辑器顶行」重新定位一次，
-  // 纯预览实例的位置得在它之后再钉回来（B130）
-  restorePreviewScroll(panel);
-  logViewport("切换 · 预览还原后", panel);
+  // ⚠️⚠️ **B274**：预览还原（`restorePreviewScroll`）从这儿挪到**收口之后** —— 见下面
+  //    `alignShownToSyncSource` 后那一行。原位置在收口之前 ⇒ 切到预览标签时先被钉回
+  //    **旧槽**（真机日志 04:04:28.142：视图先到 3014 = 上一轮的旧位置），下一拍才被
+  //    收口修正到 2249 —— 765px 的"先错后跳"就是这么来的。
+  logViewport("切换 · 预览还原前", panel);
   // B240 三轮：同步开着 ⇒ 切过去的位置由**源**给定（离屏那份算不出自己的位置，
   // 见 alignShownToSyncSource）。排在最后那次补焦点之后 —— 焦点会把光标滚进视野，
   // 排在它之前会被顶掉（B145 那套顺序纪律）。
   // ⚠️ B266：B265 已让两侧末行/末块都能滚到视口顶，两侧 floor 游标都 = 文档末行 `v`，
   //    自然上限不再错配，故不再需要「顶没顶上限」的 `atFloor` / `handoverV` 特判。
   //    收口直接用源的真实 `v`（由 `syncSourceSnapshot` 在离屏前采下）；必须排在
-  //    `restorePreviewScroll` 之后 —— 接班这份此刻已显示、位置已还原，才是可信坐标。
+  //    预览还原**之后**（B274）—— 见下面那一行。
   const handV = tab ? syncSrc : null;
   const aligned = tab ? alignShownToSyncSource(panel, shownTab, handV) : false;
+  // ⚠️⚠️ **B274**：纯预览实例的位置**排在收口之后**再钉（B130 的「必须排在
+  //    `applyPanelMode` 之后」照样满足）。理由：收口（`applySyncToSibling` 的预览支）
+  //    落位成功会 `recordScroll` 把**新落点写进槽** ⇒ 这里钉的就是同步后的位置；
+  //    收口没落位（预览还没渲染 / 行号找不到块）时槽还是旧值 ⇒ 这里照旧兜底钉旧值。
+  //    ⇒ 消除「先钉旧槽、下一拍再跳到同步位置」的中间态。
+  restorePreviewScroll(panel);
+  logViewport("切换 · 预览还原后", panel);
   // CM6 测量（含它的滚动锚点补偿）排在下一帧，位置得在补偿之后收回来（B146）
   measureAndKeepScroll(panel);
   logViewport("切换 · 测量收尾后", panel);
@@ -5874,6 +5882,18 @@ function measureAndKeepScroll(panel: Panel): void {
       return;
     }
     if (panel.viewTabId !== null) flushPendingSyncCursor(panel, panel.viewTabId);
+    // ⚠️⚠️ **B274：离屏兄弟的槽也要跟上**。
+    //    只有「切到它那一趟」才会 flush 它自己的挂起 ⇒ 在此之前它的槽一直停在旧值
+    //    （真机日志 04:04:20~25：滚预览全程，离屏源码 tab1 的槽始终是 1923）。
+    //    后果有二：①切过去时从旧值跳到同步位置（用户看到的"跳一下"）；②会话落盘把
+    //    这个不同步**固化**，重启后各格各停各的（源码 v80.5 / 预览 v95）。
+    //    ⇒ 每次 measure 之后，把**其它面板**上已测量的挂起一并补写（只写槽、不钉 DOM）。
+    for (const otherId of [...pendingSyncCursor.keys()]) {
+      const otherPanel = panelOfTab(otherId);
+      if (otherPanel && otherPanel !== panel && !unmeasuredPanels.has(otherPanel)) {
+        flushPendingSyncCursor(otherPanel, otherId);
+      }
+    }
     reassertViewScroll(panel);
   });
 }
