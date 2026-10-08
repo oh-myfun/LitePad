@@ -66,6 +66,8 @@ export class PreviewPane {
   private mermaidSeq = 0;
   /** 上一次真正写进 DOM 的底部留白值（-1 = 还没写过）；「值没变就不写」的记账，见 applyBottomBleed */
   private bleedPx = -1;
+  /** 是否已有一次「布局落定后再补量」的 rAF 在飞（避免 setBlocks 每发都排队、叠成无限循环） */
+  private bleedRafPending = false;
   /** 活动文档目录（相对路径图片解析基准） */
   private baseDir: string | null = null;
 
@@ -164,6 +166,20 @@ export class PreviewPane {
     //   底部永远到不了顶（与源码「最后一行贴容器顶」对不上）。插完立刻算，先把可滚上限
     //   放宽，下面 scrollTop 恢复才不会被旧上限裁小（与源码 restoreViewScroll 同型）。
     this.applyBottomBleed();
+    // ⚠️ B269：同步那一发若量不出（预览离屏 / 刚建实例还没布局 ⇒ `clientHeight = 0`，或末块异步
+    //   增强未落地 ⇒ 末块高 0），`applyBottomBleed` 内部那道闸会**一个字节都不写**，保留上一次的
+    //   值。但「进入预览模式 / 恢复会话」那一帧往往是第一次量（还没有「上一次」），这一发跳过后
+    //   就必须有下一发补上 —— 而 `.md-preview` 是**固定高的滚动容器**，它的 border-box 尺寸恒定，
+    //   **内容 / 块高变化不触发 ResizeObserver**，所以光靠 RO 补不回来。这里显式排一帧 rAF，在布局
+    //   落定之后按真实几何再量一次。`bleedPx` 闸门保证这一发幂等（值没变就不写），`bleedRafPending`
+    //   保证每个 setBlocks 最多排一发、绝不成环（不写那发不会自触发新 rAF）。
+    if (!this.bleedRafPending && (this.root.clientHeight <= 0 || this.bleedPx < 0)) {
+      this.bleedRafPending = true;
+      requestAnimationFrame(() => {
+        this.bleedRafPending = false;
+        this.applyBottomBleed();
+      });
+    }
     if (this.pendingSyncLine !== null) {
       this.applySyncToLine(this.pendingSyncLine);
     } else {
@@ -553,9 +569,18 @@ export class PreviewPane {
    */
   private applyBottomBleed(): void {
     const clientH = this.root.clientHeight;
+    // ⚠️ B269：离屏 / 还没布局 ⇒ `clientHeight = 0` ⇒ **一个字节都不写**，保留上一次量出来的
+    //   值（与源码侧 `--cm-bleed-bottom` 那道闸同口径：写「瞬态的 0」比不写更糟 —— 真机要等布局
+    //   落定再由 `setBlocks` 里那发 rAF 补，补之前这一格的可滚上限是错误的）。旧写法这里直接算成
+    //   0 写下去：预览若先以隐藏态被量过一次（clientHeight=0 ⇒ 写 0），之后进入预览模式那一发只要
+    //   也踩到 0，就把上一次对的值抹掉、再也翻不回正数 —— 正是用户报的「预览模式最后一个块滚不到顶」。
+    if (!(clientH > 0)) return;
     const last = this.blocks[this.blocks.length - 1];
-    const lastH = last ? last.el.getBoundingClientRect().height || last.el.offsetHeight : 0;
-    const px = clientH > 0 && lastH > 0 ? Math.max(0, clientH - lastH) : 0;
+    if (!last) return;
+    const lastH = last.el.getBoundingClientRect().height || last.el.offsetHeight;
+    // 末块还没量出高度（刚 replaceChildren、异步增强未落地）⇒ 不写，等下一帧再量。
+    if (!(lastH > 0)) return;
+    const px = Math.max(0, clientH - lastH);
     // ⚠️⚠️ **值没变就一个字节都不写**：在 `ResizeObserver` 回调里动样式，浏览器会在同一帧
     //    里再收一轮通知，攒够就抛 `ResizeObserver loop completed with undelivered
     //    notifications`（B265 首版启动即弹红条 —— `index.html` 的全局 error 监听把它当成
