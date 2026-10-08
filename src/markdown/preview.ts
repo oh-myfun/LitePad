@@ -157,11 +157,13 @@ export class PreviewPane {
     // 少了这一步，任何一次重渲染（编辑、切标签）都会让预览弹回文档开头。
     const prevScroll = this.root.scrollTop;
     this.blocks = next;
-    // ⚠️ B265：留白要在**插回 DOM 之前**算 —— 块的尺寸这会儿才定得下来，而下面那句恢复
-    //    scrollTop 会被当帧的滚动上限裁；留白是**放宽**上限的（多一屏可滚），算晚了
-    //    恢复值就可能先被裁小、下一帧才被补回来（与源码 restoreViewScroll 同型）。
-    this.applyBottomBleed();
     this.root.replaceChildren(frag);
+    // ⚠️ B265 修复：留白必须在**插回 DOM 之后**算 —— 块此刻才真正挂载到文档，
+    //   `getBoundingClientRect()` 才能量出真实高度。插之前量的是 DocumentFragment 里
+    //   的游离节点（高度恒 0）⇒ `lastH = 0` ⇒ `--md-bleed-bottom` 永远算成 0 ⇒ 预览
+    //   底部永远到不了顶（与源码「最后一行贴容器顶」对不上）。插完立刻算，先把可滚上限
+    //   放宽，下面 scrollTop 恢复才不会被旧上限裁小（与源码 restoreViewScroll 同型）。
+    this.applyBottomBleed();
     if (this.pendingSyncLine !== null) {
       this.applySyncToLine(this.pendingSyncLine);
     } else {
