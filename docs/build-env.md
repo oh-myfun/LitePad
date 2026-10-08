@@ -1,14 +1,17 @@
 # LitePad 构建与环境指南
 
-> 贡献者向。本机环境为 Windows + MSYS2 MinGW64（**无 MSVC**）。团队内部的开发沙箱特殊坑见
-> `.workbuddy/memory/ref/session-env.md`（不进本文件）。
+> 贡献者向。本机/CI 工具链为 **Windows + MSVC**（Visual Studio 2022「使用 C++ 的桌面开发」工作负载 + Windows SDK）。
+> 团队内部的开发沙箱特殊坑见 `.workbuddy/memory/ref/session-env.md`（不进本文件）。
 
 ## 工具链
 
-- 宿主工具链由项目根 `rust-toolchain.toml` 锁定为 `stable-x86_64-pc-windows-gnu`。
-  原因：build script / proc-macro 必须编译到宿主平台，而本机没有 `link.exe`，
-  链接器由 MSYS2 MinGW-w64 提供。**构建前确保 `msys64/mingw64/bin` 与 cargo 在 PATH 上。**
-- 需 MSYS2 MinGW64（`pacman -S mingw-w64-x86_64-toolchain` 之类）提供 `gcc`/`windres` 等。
+- 宿主工具链由项目根 `rust-toolchain.toml` 锁定为 **`stable-x86_64-pc-windows-msvc`**（强制，非可选）。
+  `webview2-com` 在 MSVC 下把 WebView2 loader **静态链进 exe**，单个 exe 即可运行；
+  用 GNU 会动态导入 `WebView2Loader.dll`，缺它直接 `0xC0000135` 起不来（v0.11.0 发布包栽过）。
+- MSVC 链接器（`cl.exe` / `link.exe` / `rc.exe`）由 **Visual Studio 的 C++ 桌面工作负载 + Windows SDK** 提供，
+  rustc 用 `vswhere` 自动探测安装，**无需 vcvars、无需手工加 PATH**（默认安装路径即可，不要求无空格目录）。
+- **不再需要 MSYS2 / MinGW**：资源编译走 Windows SDK 的 `rc.exe`，不是 `windres`。
+  构建脚本里若仍见到 `msys64` 的 PATH 引用，属历史残留、不再依赖，且会在前端构建前被剥离（见下）。
 
 ## 构建
 
@@ -30,7 +33,7 @@ node node_modules/@tauri-apps/cli/tauri.js build
 ```
 
 - ⚠️ **分步只用于排查，不要拿它替代 `npm run build:all`**：完整流程里已经修好的几处
-  （safe-delete 开关、前端那步必须剥掉 MSYS2 的 PATH 条目、打包前 `dist/assets` 点数自检、
+  （safe-delete 开关、前端那步会剥掉 PATH 里可能残留的 MSYS2 条目、打包前 `dist/assets` 点数自检、
   Rust 侧只编 release）在分步手敲时全靠人记 —— 漏一条就是「构建 exit 0、产物却是空壳」
   这类最难查的故障。环境缺什么、该用哪条命令，先跑 `bash scripts/doctor.sh`。
 
@@ -40,12 +43,9 @@ node node_modules/@tauri-apps/cli/tauri.js build
 
 ## WebView2 运行库
 
-Tauri 2 的 **`WebView2Loader.dll` 不会被 bundler 自动收进包**，必须显式声明（用 map 形式，
-源必须是仓库内副本 `src-tauri/WebView2Loader.dll`）：
-
-```jsonc
-"bundle": { "resources": { "WebView2Loader.dll": "WebView2Loader.dll" } }
-```
+- **MSVC 下无需任何额外操作**：`webview2-com` 把 WebView2 loader **静态链进 exe**，运行时不依赖外部的 `WebView2Loader.dll`。仓库里也**没有**这个文件，请勿自作主张补 `bundle.resources` 的 resource map，否则 `tauri build` 会因找不到源文件而失败。
+- 真正需要的是系统级的 **WebView2 运行时**：Win11 已自带；Win10 装一次 Microsoft 的 Evergreen Runtime 即可。
+- （历史参考）GNU 工具链时代才需要把 `WebView2Loader.dll` 作为 bundle resource 显式声明；现工具链为 MSVC，该做法已废弃。
 
 ## 改名 / 移动仓库后必须 `cargo clean`
 
@@ -70,7 +70,7 @@ Rust 构建缓存里烙死了绝对路径。改目录名后 `cargo build/test` �
 | `release.yml` | push `v*` tag、手动 | 构建 NSIS → 建 GitHub Release 并附安装包 |
 
 - **只推 main 不会发布**：必须 `git push origin main --follow-tags`。
-- 两条流水线都需装 MSYS2 MinGW64 并 `rustup default stable-x86_64-pc-windows-gnu`（无 MSVC）。
+- 两条流水线都基于 **MSVC**（`stable-x86_64-pc-windows-msvc`）构建；runner 需装 Visual Studio 2022「使用 C++ 的桌面开发」工作负载 + Windows SDK，**无需 MSYS2 / MinGW**。
 - Release 失败可 Actions 页面手动 dispatch 填 `tag` 重跑。
 
 ## 临时文件落点

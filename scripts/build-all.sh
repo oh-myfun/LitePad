@@ -11,14 +11,14 @@ set -e
 #
 # ⚠️ 这一节是「必须存在」的，不是为了好看：曾经因为会话里 PATH 被剥空
 # （node / cargo 都不在 PATH，npm 又撞 WSL 黑名单），我在会话里手抄了一份等价命令，
-# 之后每次都绕开本脚本手敲 —— 而脚本里**已经修过的坑**（safe-delete 开关、MSYS2 剥离、
+# 之后每次都绕开本脚本手敲 —— 而脚本里**已经修过的坑**（safe-delete 开关、MSYS2 PATH 剥离、
 # dist/assets 点数自检）在手抄版里全靠现场记起，于是反复踩。
 # ⇒ 结论：环境差异一律在**脚本内**兜住。脚本跑不动就**修脚本**，绝不在会话里另起一套命令。
 #
 # node：PATH 里没有就用 managed node；npm：先探测它能不能真的跑起来（某些沙箱里 npm 是
 # bash 脚本，会撞 WSL 黑名单报「拒绝访问」），跑不起来就直调 node_modules 里的入口。
 
-export PATH="/c/msys64/mingw64/bin:$HOME/.cargo/bin:$PATH"
+export PATH="$HOME/.cargo/bin:$PATH"
 
 if ! command -v node >/dev/null 2>&1; then
   for c in \
@@ -48,10 +48,10 @@ export CODEBUDDY_SAFE_DELETE_ENABLED=0
 cd "$(dirname "$0")/.."
 
 echo "==> [1/4] 前端类型检查 + 构建（tsc + vite）"
-# ⚠️ vite 不能在带 MSYS2 条目的 PATH 下跑，否则**挂死**（09-20 实测坐实，此前标为「疑点未定论」）：
-# 表现为 CPU 只走 ~25s 就不动、内存 1.8G、`dist/assets` 被清空后不写入，挂十几分钟也不出产物。
-# 本脚本顶部为了给 cargo 提供 windres 把 `/c/msys64/mingw64/bin` 前插进 PATH，所以这里
-# **临时摘掉**再跑前端构建；第 3 步的 cargo 仍走完整 PATH（它需要 windres）。
+# ⚠️ vite 不能在带 MSYS2 条目的 PATH 下跑，否则**挂死**（09-20 实测坐实）：
+# CPU 走 ~25s 就不动、内存 1.8G、`dist/assets` 被清空后不写入，挂十几分钟也不出产物。
+# 本脚本不再为 cargo 注入 msys64（MSVC 资源编译走 Windows SDK 的 rc.exe，不需要 windres）；
+# 但如果**你自己的 PATH** 里残留 msys64，这里仍把它临时摘掉再跑前端构建，跑完即失效、不影响后续 cargo 步骤。
 FE_PATH=""
 OLDIFS="$IFS"
 IFS=":"
