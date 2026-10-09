@@ -25,6 +25,7 @@ import { readFileSync } from "node:fs";
 // CRLF** 会一次性打掉一大片断言（`topLevelFnBody` 认 `\n}` 后的那个字符是 `\n`，CRLF 下
 // 是 `\r`，函数体直接抠成空串）。这里先归一，是防那类「改一个字节红一大片」的复发。
 const main = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
+const main2 = readFileSync("src/sync-scroll.ts", "utf-8").replace(/\r\n/g, "\n");
 const html = readFileSync("index.html", "utf-8").replace(/\r\n/g, "\n");
 const css = readFileSync("src/styles/global.css", "utf-8").replace(/\r\n/g, "\n");
 const PREVIEW_TS = readFileSync("src/markdown/preview.ts", "utf-8").replace(/\r\n/g, "\n");
@@ -47,27 +48,27 @@ const SYNC_STATE = "const docSyncModes = new Map<number, boolean>();";
 // ⚠️ B159 起这段里有三个函数（`applySyncToSibling` / `broadcastSyncPos` /
 //    `pushSyncToSiblings`）—— 位置落兄弟那几条纪律抽进了前两个，切片必须从最上面那个
 //    起头，否则下面那些「预览分支要写在 px 直推之前」的判据会静默失配（切片为空）。
-const PUSH_BODY = slice(main, "function applySyncToSibling(", "function showMessage(");
+const PUSH_BODY = slice(main2, "function applySyncToSibling(", "function flushPendingSyncCursor(");
 // ⚠️ B251：`PUSH_BODY`（落点函数 + 推兄弟 + 广播）与 `pushSyncToSiblings` 现在是**两段**，
 //    契约要看的是各自的落点/取坐标那一处，全段扫会把「谁取坐标」和「往哪落」搅在一起，
 //    于是下面几条判据要么找不到锚点、要么锚在对方身上（退化照样绿）。分开各切一份。
 /** 「往兄弟身上落位置」那一段（`applySyncToSibling` 全函数）。 */
 function applyBody(): string {
-  return slice(main, "function applySyncToSibling(", "function syncSourceSnapshot(");
+  return slice(main2, "function applySyncToSibling(", "function syncSourceSnapshot(");
 }
 /** 「从源身上取坐标再往兄弟落」那一段（`pushSyncToSiblings` 全函数）。 */
 function pushBody(): string {
-  return slice(main, "function pushSyncToSiblings(", "function showMessage(");
+  return slice(main2, "function pushSyncToSiblings(", "function flushPendingSyncCursor(");
 }
 // ⚠️ B251 新增两份切片：统一游标之后，「游标→像素」与「像素→游标」各自只剩一个出口，
 //    判据（尤其是退化串）得能盯到**那一个函数**身上 —— 全段扫会把「谁取坐标」与
 //    「往哪落」搅在一起，退化掉哪一边都照样命中（B163 同型）。
 /** 「游标 → 编辑器像素」的唯一换算出口（`sourceTopOfV`）。 */
-const SOURCE_TOP = slice(main, "function sourceTopOfV(", "function syncSourceV(");
+const SOURCE_TOP = slice(main2, "function sourceTopOfV(", "function syncSourceV(");
 /** 「同步坐标的唯一取值口」（`syncSourceV`）—— 跟随 / 收口 / 交接三条路都经它。 */
-const SYNC_V = slice(main, "function syncSourceV(", "function viewportOfTab(");
+const SYNC_V = slice(main2, "function syncSourceV(", "function rememberViewScroll(");
 const BTN_BODY = slice(main, "function refreshSyncButton(", "function refreshStatus(");
-const SRC_BODY = slice(main, "function isSyncSource(", "/** 这个实例此刻是否被某个面板");
+const SRC_BODY = slice(main2, "function isSyncSource(", "function applySyncToSibling(");
 // ⚠️ B233：终点原本是紧邻的 `sbLang.addEventListener`，而那句已随「状态栏语言项
 //    纯展示化」删除 ⇒ 换成它后面那句 `sbEncoding.addEventListener`（仍是紧邻的下一句）。
 //    锚点失效时 slice 会静默返回空串，判据全绿 —— 换锚点后务必回读确认非空。
@@ -76,7 +77,7 @@ const CLICK_BODY = slice(
   'syncScrollBtn.addEventListener("click"',
   'sbEncoding.addEventListener("click"',
 );
-const PIN_BODY = slice(main, "function pinScrollTop(", "function restoreViewScroll(");
+const PIN_BODY = slice(main, "function pinScrollTop(", "function applyPanelMode(");
 // 大纲 onJump：跳转定位逻辑（受同步滚动状态约束的那一段）—— 与 B152 同路数，盯静态契约。
 const ONJUMP_BODY = slice(
   main,
@@ -496,7 +497,7 @@ describe("B240 同步滚动：非激活（离屏）标签也要统一滚动位�
     // 写快照之所以有用，靠的是切过去时有人读它。判据钉住那个读取点。
     // ⚠️ 终点用 `applyPanelMode`（`pinScrollTop` 排在 `restoreViewScroll` **之前**，
     //    拿它当终点会切出空串 —— `slice` 会红，不是静默放行）。
-    const restore = slice(main, "function restoreViewScroll(", "function applyPanelMode(");
+    const restore = slice(main2, "function restoreViewScroll(", "function restorePreviewScroll(");
     expect(restore, "切标签时要把快照槽还给视图").toContain("t.scrollTop");
     // 位置闸（B273 翻案后的新口径）：快照槽 `t.scrollTop` 的**读取**必须排在自己被钉
     // （`pinScrollTop`）之前 —— 但 B273 在它**前面**多开了一条 `syncV` 派生分支（那条也钉、
@@ -511,9 +512,13 @@ describe("B240 同步滚动：非激活（离屏）标签也要统一滚动位�
 describe("B240 三轮：切过来显示的那一份，由**源**收口（不可见也要算）", () => {
   // ⚠️ 锚点一律取**带调用形态的单句**：单写函数名会被上方注释拦下来（`indexOf` 撞到
   //   注释里那句复述就等于定位到注释，位置闸直接假绿）。这样退化掉哪一句都能对得上。
-  const SNAP_BODY = slice(main, "function syncSourceSnapshot(", "function alignShownToSyncSource(");
+  const SNAP_BODY = slice(
+    main2,
+    "function syncSourceSnapshot(",
+    "function alignShownToSyncSource(",
+  );
   const ALIGN_BODY = slice(
-    main,
+    main2,
     "function alignShownToSyncSource(",
     "function pushSyncToSiblings(",
   );
@@ -527,10 +532,10 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
     "if (v === null) return;",
   );
   const LAND_BODY = slice(PREVIEW_TS, "  private applySyncToLine(", "  private blockAtLine(");
-  const SYNC_BODY = slice(main, "function applySyncToSibling(", "function syncSourceSnapshot(");
+  const SYNC_BODY = slice(main2, "function applySyncToSibling(", "function syncSourceSnapshot(");
   // ⚠️ B257 换锚：终点从 `topVisibleLineOf`（那个取整版顶行函数已随「跨侧交完整 v」一起
   //    删掉）换成紧邻的 `editorLineTopPx` —— 锚点失效时 slice 静默返空串、判据全绿。
-  const LINE_TOP = slice(main, "function editorLineTopPx(", "function sourceTopOfV(");
+  const LINE_TOP = slice(main2, "function editorLineTopPx(", "function sourceTopOfV(");
 
   it("源那一格还没离屏就得把坐标采下来 —— 采点排在面板换页之前", () => {
     const sample = SWITCH_BODY.indexOf("syncSourceSnapshot(shownTab, tabId);");
@@ -727,10 +732,11 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
 
   it("跨侧落点与切源码/预览同源：两边都走同一个换算出口，不许各插各的", () => {
     // 这条是本次诉求的**根判据**：同步滚动与代码/预览切换的位置计算必须是**同一个函数**。
-    const shared = main.indexOf("function sourceTopOfV(");
+    const shared = main2.indexOf("function sourceTopOfV(");
     expect(shared, "游标→像素的换算要抽成唯一一份，别两处各写一行").toBeGreaterThanOrEqual(0);
     // 调用方：切模式那一路的 handoff、以及跨侧落点（都在 main 里、都调它）
-    const calls = (main.match(/sourceTopOfV\(/g) ?? []).length;
+    const calls =
+      (main.match(/sourceTopOfV\(/g) ?? []).length + (main2.match(/sourceTopOfV\(/g) ?? []).length;
     expect(calls, "sourceTopOfV 至少被切模式 + 跨侧落点两处用上").toBeGreaterThanOrEqual(3);
     // 反向闸：跨侧源码分支不许再出现「按行内比例手动插值」那串老写法
     expect(applyBody(), "跨侧不许搬 frac（编辑器行内比例搬到预览那边量纲就错）").not.toMatch(
@@ -915,7 +921,7 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
     // 纪律（B154）在网络这一侧悄悄丢掉 —— 表现为「一个预览一个源码时跨窗口不同步」。
     expect(PUSH_BODY, "抽取后的落点函数要留在推送段里").toContain("function applySyncToSibling(");
     // ⚠️ B251 换锚：单参 `v`（旧写法两个实参，是「跨侧只交整数块首」时期的遗骸）。
-    expect(main, "本地循环要调它").toMatch(/applySyncToSibling\(other, v\);/);
+    expect(main2, "本地循环要调它").toMatch(/applySyncToSibling\(other, v\);/);
     // ⚠️ 判据放行号：`applySyncToSibling(other,` 被 prettier 折成了三行。
     expect(main, "接收端也调同一个").toMatch(/applySyncToSibling\(\s*other,/);
   });
@@ -1154,8 +1160,12 @@ describe("B164 子窗口也要能同步滚动（跨窗口广播）", () => {
     // ② 提前 return 不给广播让路
     const ORIG = "if (sibs.length === 0 && !crossWindow) return;";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degradedPush = main.replace(ORIG, "if (sibs.length === 0) return;");
-    const pushBody = slice(degradedPush, "function pushSyncToSiblings(", "function showMessage(");
+    const degradedPush = main2.replace(ORIG, "if (sibs.length === 0) return;");
+    const pushBody = slice(
+      degradedPush,
+      "function pushSyncToSiblings(",
+      "function flushPendingSyncCursor(",
+    );
     expect(pushBody, "退化后「不许无条件 return」必须命中").toMatch(
       /if \(sibs\.length === 0\) return;/,
     );
@@ -1190,8 +1200,12 @@ describe("B167 同步滚动抖动：选区派发不许自带滚动 + 回推要�
   it("B167 反向验证：退回两处旧写法，上面两条必须落空", () => {
     const ORIG = "shownView.dispatch({ selection: { anchor: pos }, scrollIntoView: false });";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degradedPush = main.replace(ORIG, "shownView.dispatch({ selection: { anchor: pos } });");
-    const pushBody = slice(degradedPush, "function pushSyncToSiblings(", "function showMessage(");
+    const degradedPush = main2.replace(ORIG, "shownView.dispatch({ selection: { anchor: pos } });");
+    const pushBody = slice(
+      degradedPush,
+      "function pushSyncToSiblings(",
+      "function flushPendingSyncCursor(",
+    );
     // ⚠️ 判据要盯**调用**（`dispatch({…scrollIntoView: false}`）：源码注释里也提到这个
     //    选项名，只判 `scrollIntoView: false` 会连注释一起命中 ⇒ 退化用例假绿。
     expect(pushBody, "退化后「必须关掉自动滚动」必须落空").not.toMatch(
@@ -1421,8 +1435,12 @@ describe("B152 反向验证：退回旧写法，上面那几条必须变红", ()
     //    已经并进统一分支），退化串跟着换。
     const ORIG = "recordScroll(other.tabId, top);";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "other.scrollTop = top;");
-    const body = slice(degraded, "function pushSyncToSiblings(", "function showMessage(");
+    const degraded = main2.replace(ORIG, "other.scrollTop = top;");
+    const body = slice(
+      degraded,
+      "function pushSyncToSiblings(",
+      "function flushPendingSyncCursor(",
+    );
     expect(body, "绕过 recordScroll 的写法要被抓到").not.toMatch(
       /recordScroll\(other\.tabId, top\)/,
     );
@@ -1433,8 +1451,8 @@ describe("B152 反向验证：退回旧写法，上面那几条必须变红", ()
     // ⚠️ B251 换锚：判空条件从 `line` 改成 `v`（跨侧统一交游标之后 `line` 不再是形参）。
     const ORIG = "    if (v === null || !shown?.preview) return;";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "");
-    const body = slice(degraded, "function applySyncToSibling(", "function showMessage(");
+    const degraded = main2.replace(ORIG, "");
+    const body = slice(degraded, "function applySyncToSibling(", "function landPreviewAtSource(");
     expect(body, "删掉后就不该再有这句子").not.toContain(ORIG);
   });
 
@@ -1444,7 +1462,7 @@ describe("B152 反向验证：退回旧写法，上面那几条必须变红", ()
     // ⚠️ B251 换锚：钉的是统一分支换算出来的 `top`（旧的 `px` 那一格已并掉）。
     const ORIG = "pinScrollTop(shownView.scrollDOM, top);";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "shownView.scrollDOM.scrollTop = top;");
+    const degraded = main2.replace(ORIG, "shownView.scrollDOM.scrollTop = top;");
     const body = slice(degraded, "function applySyncToSibling(", "function syncSourceSnapshot(");
     expect(body, "裸写 scrollTop 的写法要被抓到（没经 pinScrollTop 标来源）").not.toMatch(
       /pinScrollTop\(shownView\.scrollDOM, top\);/,
@@ -1557,8 +1575,8 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
     // ⚠️ 退化成「`: return t.scrollTop;`」而不是「`: t.scrollTop;`」—— 退化后的串要能命中
     //    正向契约那条 `return (t|src).scrollTop`，少了 `return` 两道判据一起落空 ⇒ 假绿
     //    （这条退化验上一轮就栽在锚点写死的形态上，见 B163 同型）。
-    const degraded = main.replace(ORIG, ": return t.scrollTop;");
-    const body = slice(degraded, "function syncSourceV(", "function viewportOfTab(");
+    const degraded = main2.replace(ORIG, ": return t.scrollTop;");
+    const body = slice(degraded, "function syncSourceV(", "function rememberViewScroll(");
     // ⚠️ 退化真的落进去了（自证：双语义槽那句现在确实在 —— 正向契约里的
     //    「双语义槽不许当游标」也随之红掉，两道判据一起报）。
     expect(body, "退化串确实换了写法（预览侧改读槽）").toContain("return t.scrollTop;");
@@ -1585,8 +1603,8 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
     // ⚠️ B257：这一档不再有 `cross` 分支，所以退化串**只退化这一条 return**，前后各分支都不动。
     const ORIG = "return topVisibleLineFrac(view, sourceCursorPx(t, view));";
     expect(SYNC_V, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "  return t.scrollTop;");
-    const body = slice(degraded, "function syncSourceV(", "function viewportOfTab(");
+    const degraded = main2.replace(ORIG, "  return t.scrollTop;");
+    const body = slice(degraded, "function syncSourceV(", "function rememberViewScroll(");
     // 「源码侧按实时几何取 v」这条纪律落空 ⇒ 上面那条正向契约必须红。
     expect(body, "退回后源码侧不再按实时几何取 v").not.toContain("topVisibleLineFrac(view)");
   });
@@ -1612,8 +1630,12 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
     //    只写 `recordScroll(other.tabId, landed)` 的话，退化成判恒真照样命中，等于没退化。
     const ORIG = "if (landed !== null) recordScroll(other.tabId, landed);";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "");
-    const body = slice(degraded, "function pushSyncToSiblings(", "function showMessage(");
+    const degraded = main2.replace(ORIG, "");
+    const body = slice(
+      degraded,
+      "function pushSyncToSiblings(",
+      "function flushPendingSyncCursor(",
+    );
     // 源码分支那笔是 `…, px)`，盯着 `landed` 才只打预览这一格（盯 `shown` 那套前缀已作废）。
     expect(body, "删掉这笔记录后，预览兄弟就没位置可落了").not.toMatch(
       /recordScroll\(other\.tabId,\s*landed\)/,
@@ -1649,7 +1671,7 @@ describe("B160 反向验证：退回旧写法，上面那四条必须变红", ()
     //    一整条），不是只写 `v === null` 那几个字符 —— 退化成判恒真照样命中，等于没退化。
     const ORIG = "  if (v === null) return;";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "  if (v === null || !shown) return;");
+    const degraded = main2.replace(ORIG, "  if (v === null || !shown) return;");
     const body = slice(degraded, "function applySyncToSibling(", "function syncSourceSnapshot(");
     // 退化后「在不在屏」又成了挡路门槛 ⇒ B240 那条「离屏源码兄弟也要写位置快照」的
     // 反向闸必须命中（它认的不是函数名，是「!shown / !shownView 就 return」这个形态）。
@@ -1669,7 +1691,7 @@ describe("B160 反向验证：退回旧写法，上面那四条必须变红", ()
     //    退化串跟着换。
     const ORIG = "preview.syncToLineProgrammatic(v);";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "preview.syncToLine(v);");
+    const degraded = main2.replace(ORIG, "preview.syncToLine(v);");
     const body = slice(degraded, "function applySyncToSibling(", "function syncSourceSnapshot(");
     expect(body, "退化后预览分支不再走程序定位入口").not.toContain(
       /preview\.syncToLineProgrammatic\(v\)/,
@@ -1685,8 +1707,8 @@ describe("B160 反向验证：退回旧写法，上面那四条必须变红", ()
     //    `shownView.scrollDOM.scrollTop` —— 那个值此时还没被我们动过，补记它等于没补）。
     const ORIG_REC = "  recordScroll(other.tabId, top);";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG_REC);
-    const degraded = main.replace(ORIG_REC, "");
-    const body = slice(degraded, "function applySyncToSibling(", "function showMessage(");
+    const degraded = main2.replace(ORIG_REC, "");
+    const body = slice(degraded, "function applySyncToSibling(", "function landPreviewAtSource(");
     expect(body, "删掉补记后「换算分支补记在钉位之后」就站不住了").not.toContain(ORIG_REC);
   });
 });
@@ -1700,7 +1722,7 @@ describe("B160 反向验证：退回旧写法，上面那四条必须变红", ()
 describe("B175 同步跟随坐标按整条逻辑行算行内比例（折行段落不抖）", () => {
   // ⚠️ B257 换锚：终点 `topVisibleLineOf`（取整版顶行函数）已删 ⇒ 换成紧邻的
   //    `editorLineTopPx`（锚点失效 slice 会静默返空串、判据全绿，务必回读确认非空）。
-  const FRAC = slice(main, "function topVisibleLineFrac(", "function editorLineTopPx(");
+  const FRAC = slice(main2, "function topVisibleLineFrac(", "function editorLineTopPx(");
   it("topVisibleLineFrac 取整条逻辑行的顶与下一行顶之差当总高，再算进入比例", () => {
     // 单行视觉块高度（block.height）当总高 ⇒ 折行段落里行号卡死。必须取这一行的首视觉块
     // 顶（lineTop）与下一行顶（nextTop）之差当整条逻辑行的高度。
@@ -1732,8 +1754,8 @@ describe("B175 同步跟随坐标按整条逻辑行算行内比例（折行段�
 
   it("B175 反向验证：退回单视觉块比例 → 「整条逻辑行高度」那条必须落空", () => {
     const ORIG_LINE = "const lineHeight = nextTop - lineTop || block.height || 1;";
-    expect(main, "退化串要先自证原句还在").toContain(ORIG_LINE);
-    const degradedMain = main.replace(ORIG_LINE, "const h = block.height || 1;");
+    expect(main2, "退化串要先自证原句还在").toContain(ORIG_LINE);
+    const degradedMain = main2.replace(ORIG_LINE, "const h = block.height || 1;");
     const degradedFrac = slice(
       degradedMain,
       "function topVisibleLineFrac(",
@@ -1971,7 +1993,7 @@ describe("B186 大纲跳转受同步滚动状态约束（多开不同步则只�
 //    `handleUpdate` 那句推送必须**读**这个标志。退化（删写 / 删读 / 挪到 setState
 //    之后）三条都要红 —— 见下面那个反向验证块。
 const SWITCH_BODY = slice(main, "function switchTab(", "function makeDoc(");
-const UPDATE_BODY = slice(main, "function handleUpdate(", "function isSyncSource(");
+const UPDATE_BODY = slice(main, "function handleUpdate(", "function displayedPanelOfTab(");
 
 describe("B254 切标签那一刻不许拿「刚被归零的位置」推兄弟", () => {
   it("抑制标志必须夹住 switchTab 里的 setState（不能挪前挪后、不能只写不读）", () => {

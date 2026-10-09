@@ -399,7 +399,8 @@ describe("B126 编辑器光标 / 视口不得复位", () => {
 });
 
 describe("B126 静态契约：滚动位置必须自己存取", () => {
-  const src = readFileSync("src/main.ts", "utf-8");
+  const src =
+    readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/sync-scroll.ts", "utf-8");
 
   it("必须有「取快照 / 还原」两个helper，且还原真的写回 scrollTop", () => {
     expect(src, "落盘前要取快照").toContain("function viewportOfTab");

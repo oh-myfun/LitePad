@@ -210,7 +210,8 @@ describe("B134 视口恢复：赋值被浏览器裁剪后要能钉回来", () =>
 });
 
 describe("B134 静态契约：两条恢复路径都要走「钉稳」", () => {
-  const src = readFileSync("src/main.ts", "utf-8");
+  const src =
+    readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/sync-scroll.ts", "utf-8");
 
   it("编辑器侧与预览侧都不得裸写 scrollTop", () => {
     expect(src, "编辑器侧要走 pinScrollTop").toMatch(

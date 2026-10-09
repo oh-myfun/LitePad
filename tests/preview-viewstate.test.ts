@@ -150,7 +150,8 @@ describe("B129 纯预览态的视图位置要进会话并还原", () => {
   });
 
   it("静态契约：存取两端都按 viewMode 分流，且真的写进了预览容器", () => {
-    const src = readFileSync("src/main.ts", "utf-8");
+    const src =
+      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/sync-scroll.ts", "utf-8");
     expect(
       src,
       "纯预览态的视图位置必须从预览容器取（编辑器是 display:none，scrollTop 恒为 0）",
@@ -161,7 +162,8 @@ describe("B129 纯预览态的视图位置要进会话并还原", () => {
   });
 
   it("反向验证：拆掉任一端，上面两条断言都会失效", () => {
-    const src = readFileSync("src/main.ts", "utf-8");
+    const src =
+      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/sync-scroll.ts", "utf-8");
     // 退化 A：存的时候只看编辑器那一侧
     // 拆卸与断言都钉到**整行**：main.ts 里另有 `if (t.viewMode === "preview") return;`
     // （rememberViewScroll 的早退），只按前缀拆会把别人的代码也算成「已删除」。

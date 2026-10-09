@@ -243,7 +243,11 @@ describe("B146 换文档：setState 期间自动派发的滚动不许记进任�
 });
 
 // 归一换行：字面量按 LF 写；工作副本若被翻成 CRLF，`;\r\n` 中间的 `\r` 会坑掉带 `\n` 的判据。
-const src = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
+const src = (
+  readFileSync("src/main.ts", "utf-8") +
+  "\n" +
+  readFileSync("src/sync-scroll.ts", "utf-8")
+).replace(/\r\n/g, "\n");
 
 /** 取出某个函数 / 回调的**函数体**（从 header 处起做花括号配平）。 */
 function bodyOf(header: string, from: string = src): string {
