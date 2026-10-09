@@ -16,6 +16,7 @@ afterEach(() => {
 });
 
 const main = readFileSync("src/main.ts", "utf-8");
+const encoding = readFileSync("src/encoding.ts", "utf-8");
 const menubar = readFileSync("src/shell/menubar.ts", "utf-8");
 const codec = readFileSync("src-tauri/src/core/codec.rs", "utf-8");
 
@@ -175,7 +176,7 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
   });
 
   it("BOM 只认 UTF-8 两档：UTF-16 的带/不带 BOM 是独立条目，不走这项", () => {
-    const body = topLevelFnBody(main, "bomTarget");
+    const body = topLevelFnBody(encoding, "bomTarget");
     expect(body).toContain("ENC_UTF8_BOM");
     expect(body).toContain("return null");
     // 反例：不要把 UTF-16LE without BOM 也算成「可去 BOM」
@@ -217,7 +218,7 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
     expect(body.split("withLanguageGroups").length - 1).toBe(2);
     expect(body).toContain("const groups = encodingOptions.map");
 
-    const helper = topLevelFnBody(main, "withLanguageGroups");
+    const helper = topLevelFnBody(encoding, "withLanguageGroups");
     expect(helper, "换组处要插一条分隔线").toContain("separator: true");
     expect(helper, "之后的每一组要收成子菜单入口").toContain("submenu:");
     // 第一组必须内联平铺：收口时 out 还是空的就说明它是第一组（那条路只铺不收）
