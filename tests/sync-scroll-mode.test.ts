@@ -498,8 +498,12 @@ describe("B240 同步滚动：非激活（离屏）标签也要统一滚动位�
     //    拿它当终点会切出空串 —— `slice` 会红，不是静默放行）。
     const restore = slice(main, "function restoreViewScroll(", "function applyPanelMode(");
     expect(restore, "切标签时要把快照槽还给视图").toContain("t.scrollTop");
-    // 位置闸：读取必须发生在 pinScrollTop 之前（先读到值再钉）。
-    expect(restore.indexOf("t.scrollTop")).toBeLessThan(restore.indexOf("pinScrollTop("));
+    // 位置闸（B273 翻案后的新口径）：快照槽 `t.scrollTop` 的**读取**必须排在自己被钉
+    // （`pinScrollTop`）之前 —— 但 B273 在它**前面**多开了一条 `syncV` 派生分支（那条也钉、
+    // 用的是换算后的像素而非槽），所以终点不能再取「第一个 `pinScrollTop(`」，否则会把
+    // `syncV` 分支那次钉算成「槽还没读就钉」而假红。判据收紧到**兜底那一次钉**
+    // （`restoreViewScroll` 里最后一个 `pinScrollTop(`）= 兜底分支先读 `t.scrollTop` 再钉它。
+    expect(restore.indexOf("t.scrollTop")).toBeLessThan(restore.lastIndexOf("pinScrollTop("));
   });
 });
 

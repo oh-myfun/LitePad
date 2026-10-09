@@ -371,6 +371,21 @@ interface Tab {
    * 预览容器。所以存取两端都按 `viewMode === "preview"` 分流，别死盯编辑器。
    */
   scrollTop: number | null;
+  /** 规范游标 `v`（实数行号，带行内/块内比例的小数）：与视图模式无关、无需测量的
+   * 同源实例对齐基准（B273）。
+   *
+   * 它记录「同一份文档在所有实例里应该停在哪个规范位置」，不区分源码 px / 预览 px、
+   * 也不依赖任何一侧的 DOM 测量 —— 因而**离屏实例（没有视图可借）也能持有准确位置**。
+   *
+   * 跟随滚动 / 收口时由 `pushSyncToSiblings` + `applySyncToSibling` 写入所有兄弟
+   * （含离屏源码、离屏预览）；`restoreViewScroll` / `restorePreviewScroll` 切回时按
+   * 各自模式从 `v` 派生像素，保证「已经同步好的实例切回来不跳」。
+   *
+   * `null` = 这份实例还没被任何一次同步定位过（与 scrollTop 的 null 语义对齐）。
+   *
+   * ⚠️ **运行时缓存，不入会话落盘** —— 它是从 DOM 实时位置反推的，会话恢复时重新从
+   * `scrollTop` 走老路径即可（模式相关的 px 才需要落盘）。 */
+  syncV: number | null;
 }
 
 /** 面板：布局树叶子，持有独立 EditorView 与自己的标签列表。 */
@@ -754,6 +769,14 @@ function applySyncToSibling(other: Tab, v: number | null): void {
     "sync",
     `落 other=${other.tabId} doc=${other.docId} mode=${other.viewMode} v=${v} shown=${!!shown}`,
   );
+  // ⚠️ **B273**：规范游标 `syncV` 无条件写——不论在屏/离屏、源码/预览，所有兄弟都先
+  //   记下同一个规范性位置。这正是修「离屏实例跟随不更新 / 切回跳变」的关键：离屏的
+  //   源码兄弟（下面 `rulerHidden` 早退那一支）和离屏的预览兄弟（上面 `viewMode==="preview"`
+  //   且 `!shown?.preview` 早退那一支）此前都拿不到任何位置，切回来只能读陈旧的 `scrollTop`
+  //   （甚至 null ⇒ 退化光标可见），于是看着像「位置变了」。`syncV` 与模式无关、不依赖 DOM
+  //   测量，离屏也能准确持有；`restoreViewScroll` / `restorePreviewScroll` 切回时按各自
+  //   模式从 `syncV` 派生像素，已同步好的实例不跳。
+  other.syncV = v;
   // 兄弟是预览态 ⇒ 它只认行：编辑器像素塞不进它的槽（纪律 2）。换算只能从源那侧
   // 的**顶行**来，所以跨视图模式这一路必须走 `line`；离屏的预览兄弟没有容器可算，
   // 只能靠它的槽自己那份记录，这里不写任何东西（写了就是污染）。
@@ -1012,14 +1035,6 @@ function syncSourceSnapshot(src: Tab | undefined, nextTabId: number): number | n
   //    预览 `--md-bleed-bottom`），两侧 floor 游标都 = 文档末行 `v`，自然上限不再错配，
   //    故不再需要「顶没顶上限」的 `atFloor` 特判，直接用源的真实 `v` 收口。
   const v = syncSourceV(src);
-  // B278 临时埋点（定位「收口交整数 95」用，定因后撤）：把换算输入也打出来 ——
-  // DOM/槽是否一致、预览容器此刻的 scrollTop，能直接看出 v 是不是「末块整数」路径交的。
-  logger.trace(
-    "sync",
-    `采源游标 tab=${src.tabId} v=${v} slot=${src.scrollTop} ` +
-      `srcMode=${src.viewMode} prevTop=${srcPanel?.preview?.root.scrollTop ?? "n/a"} ` +
-      `srcTop=${srcPanel?.view?.view.scrollDOM.scrollTop ?? "n/a"}`,
-  );
   return v;
 }
 
@@ -1218,6 +1233,8 @@ function pushSyncToSiblings(
   //    且因为每轮切回来都复现同一条路径，歪值冻在那里「之后怎么切都不动」。所以像素走
   //    `sourceCursorPx`（DOM 与槽不一致 ⇒ 用槽），别再直接 `view.scrollDOM.scrollTop`。
   const v = opts.v !== undefined ? opts.v : syncSourceV(src);
+  // ⚠️ B273：源自己也要记下规范游标（与兄弟同口径），切走再切回时 restore 能从它派生像素。
+  src.syncV = v;
   // ⚠️ B260：下面循环里**曾经**另取一个同名 `v = syncSourceV(src)`，把上面这个盖掉 ——
   //    于是 `opts.v` 只进了日志和跨窗广播，**落点那一趟照旧重算** `syncSourceV(src)`。
   //    B258 传 `opts.v` 就是为了「兄弟与接班落在同一个数」，被盖掉就让那趟补推名存实亡。
@@ -2136,6 +2153,7 @@ function makeInstance(doc: Doc, panelId: number, text: string): Tab {
     state,
     viewMode: "source",
     scrollTop: null,
+    syncV: null,
   };
 }
 
@@ -5813,6 +5831,30 @@ function restoreViewScroll(panel: Panel): void {
   // B170：整段还原都是程序摆位 —— 先标来源，赋值派发的 scroll 由监听经 scroll-guard 吞掉，
   // 不会被当成用户滚动反推 / 落盘成 0。`pinScrollTop` 内部也会继续标、覆盖补钉回执。
   markProgrammatic(view.scrollDOM);
+  // ⚠️ **B273**：同步开着且这份实例已被同步定位过 ⇒ 从规范游标 `syncV` 派生源码像素，
+  //   而不是读可能陈旧的 `scrollTop`。离屏实例跟随时只有 `syncV` 是准的（`scrollTop` 没更新过），
+  //   直接读它切回来就会跳。派生后再 `recordScroll` 把新像素写回槽，陈旧值被覆盖。
+  //   ⚠️ 尺子未测（新建视图 / setState 之后到 measure 帧之前）⇒ 此刻换算必落「估算空间」，
+  //      一个字节都不写，改挂起等 measure 后的补写（与现有 `pendingSyncCursor` 纪律一致）。
+  if (docSyncModes.get(t.docId) === true && t.syncV !== null) {
+    if (unmeasuredPanels.has(panel)) {
+      // ⚠️ 尺子未测：v→px 换算会落「估算空间」，先把正确的 v 挂起，等 measure 后
+      //    `flushPendingSyncCursor` 按实测几何补写并落槽、再由 `reassertViewScroll` 钉回。
+      //    但槽里那份 `t.scrollTop` 是之前实测过的真值，**照样落到下面旧路径钉它兜底**：
+      //    浏览器按此刻估算余量裁一下（正是 B256 那条「还原被裁小」窗口），measure 后
+      //    上面那趟补钉回正位。不放行 ⇒ 离屏/未测期间这一格至少停在「真值被裁一帧」，
+      //    不会空着等到 measure 才动（B256 的桩靠这个把裁剪窗口造出来）。
+      pendingSyncCursor.set(t.tabId, t.syncV);
+    } else {
+      const top = sourceTopOfV(view, t.syncV);
+      if (top !== null) {
+        pinScrollTop(view.scrollDOM, top);
+        recordScroll(t.tabId, top);
+        return;
+      }
+      // top 为 null（量不出几何）：落到下面用 scrollTop 的旧路径兜底。
+    }
+  }
   if (t.scrollTop !== null) {
     pinScrollTop(view.scrollDOM, t.scrollTop);
     return;
@@ -5836,17 +5878,34 @@ function restoreViewScroll(panel: Panel): void {
 function restorePreviewScroll(panel: Panel): void {
   if (panel.viewTabId === null || !panel.preview) return;
   const t = tabs.get(panel.viewTabId);
-  if (!t || t.viewMode !== "preview" || t.scrollTop === null) return;
+  if (!t || t.viewMode !== "preview") return;
+  const preview = panel.preview;
+  // ⚠️ **B273**：同步开着且这份预览已被同步定位过 ⇒ 从规范游标 `syncV` 派生预览像素。
+  //   离屏预览兄弟跟随时只拿到了 `syncV`（没有容器可换算），切回来若直接读陈旧的
+  //   `scrollTop`（甚至 null）就会跳。`syncToLineProgrammatic` 返回**实际落点**，
+  //   落点写回槽覆盖陈旧值（没落地 ⇒ 落到下面用 scrollTop 的旧路径兜底）。
+  //   ⚠️ `applyPanelMode` 先于本函数把预览 `setBlocks` 渲染好，这里一定能算到块几何
+  //      （B129 纪律：必须在 applyPanelMode 之后）。
+  if (docSyncModes.get(t.docId) === true && t.syncV !== null) {
+    const landed = preview.syncToLineProgrammatic(t.syncV);
+    if (landed !== null) {
+      recordScroll(t.tabId, landed);
+      preview.clearPendingSync();
+      return;
+    }
+    // landed 为 null（没找到块）：落到下面用 scrollTop 的旧路径兜底。
+  }
+  if (t.scrollTop === null) return;
   // 预览那一次 `setBlocks` 刚把内容撑开，同一帧内赋值会被裁成 0（B134），
   // 所以走同一套「钉稳」：写不进去就下一帧再钉。`pinScrollTop` 内部标程序来源，
   // 回执被预览滚动监听经 scroll-guard 吞掉，不会写脏这份快照（B170）。
   // 先取局部变量：闭包里 TS 不保留对 `panel.preview` / `t.scrollTop` 的收窄
-  const root = panel.preview.root as HTMLElement;
+  const root = preview.root as HTMLElement;
   const px = t.scrollTop;
   pinScrollTop(root, px);
   // 位置已按像素钉死，待重定位行号就是过期的了：留着它，下一次图片/公式增强的
   // 二次定位（`applyPending`）会把预览从我们钉的落点拽回那一行（B146）。
-  panel.preview.clearPendingSync();
+  preview.clearPendingSync();
 }
 
 /** 应用面板视图模式：源码 / 分屏 / 纯预览（非 md 标签强制源码）。 */
