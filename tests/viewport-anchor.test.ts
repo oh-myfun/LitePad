@@ -246,7 +246,9 @@ describe("B146 换文档：setState 期间自动派发的滚动不许记进任�
 const src = (
   readFileSync("src/main.ts", "utf-8") +
   "\n" +
-  readFileSync("src/sync-scroll.ts", "utf-8")
+  readFileSync("src/sync-scroll.ts", "utf-8") +
+  "\n" +
+  readFileSync("src/core/viewport.ts", "utf-8")
 ).replace(/\r\n/g, "\n");
 
 /** 取出某个函数 / 回调的**函数体**（从 header 处起做花括号配平）。 */

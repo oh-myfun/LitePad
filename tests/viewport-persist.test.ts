@@ -270,7 +270,8 @@ function stripComments(code: string): string {
 }
 
 describe("B132 静态契约：滚动排程 + 关窗兜底", () => {
-  const src = readFileSync("src/main.ts", "utf-8");
+  const src =
+    readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/core/viewport.ts", "utf-8");
 
   it("滚动监听里要排程会话保存，关窗的放行支要走「拦下 → 存完 → 再关」", () => {
     expect(src, "滚动后要排程落盘").toMatch(

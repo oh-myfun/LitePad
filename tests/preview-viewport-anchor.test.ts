@@ -280,7 +280,11 @@ describe("B137 预览位置要记在标签自己那份快照里", () => {
 
 describe("B139 静态契约：快照按 tabId 索引，不许回头读容器", () => {
   const src =
-    readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/sync-scroll.ts", "utf-8");
+    readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/sync-scroll.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/core/viewport.ts", "utf-8");
 
   it("落盘只读标签自己的快照，不读面板上的容器", () => {
     // 用「到 return 为止」的间隔而不是「紧跟函数体开头」：函数上面要挂说明注释，

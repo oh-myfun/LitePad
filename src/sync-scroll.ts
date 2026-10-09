@@ -14,17 +14,10 @@ import {
   docSyncModes,
   windowLabel,
 } from "./core/app-state";
-import {
-  panelOfTab,
-  instancesOfDoc,
-  displayedPanelOfTab,
-  pinInFlight,
-  recordScroll,
-  pinScrollTop,
-  EVT_SYNC_POS,
-} from "./main";
+import { panelOfTab, instancesOfDoc, displayedPanelOfTab } from "./core/panels";
+import { pinInFlight, recordScroll, pinScrollTop } from "./core/viewport";
+import { EVT_SYNC_POS, type SyncPosPayload } from "./core/events";
 import type { Tab, Panel } from "./core/app-state";
-import type { SyncPosPayload } from "./main";
 
 /**
  * 一轮「几何变化后重落」共用的取消标记（`landOnFrameGeometry` 用它）。

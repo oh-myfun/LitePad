@@ -212,7 +212,9 @@ describe("B145 恢复位置：布局晚几帧稳定时也必须钉回（而不�
 const src = (
   readFileSync("src/main.ts", "utf-8") +
   "\n" +
-  readFileSync("src/sync-scroll.ts", "utf-8")
+  readFileSync("src/sync-scroll.ts", "utf-8") +
+  "\n" +
+  readFileSync("src/core/viewport.ts", "utf-8")
 ).replace(/\r\n/g, "\n");
 
 /** 取出某个函数 / 回调的**函数体**（从 header 处起做花括号配平）。 */

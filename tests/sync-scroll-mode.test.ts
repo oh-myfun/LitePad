@@ -27,6 +27,9 @@ import { readFileSync } from "node:fs";
 const main = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
 const main2 = readFileSync("src/sync-scroll.ts", "utf-8").replace(/\r\n/g, "\n");
 const main3 = readFileSync("src/core/app-state.ts", "utf-8").replace(/\r\n/g, "\n");
+const main4 = readFileSync("src/core/viewport.ts", "utf-8").replace(/\r\n/g, "\n");
+const main5 = readFileSync("src/core/events.ts", "utf-8").replace(/\r\n/g, "\n");
+const main6 = readFileSync("src/core/panels.ts", "utf-8").replace(/\r\n/g, "\n");
 const html = readFileSync("index.html", "utf-8").replace(/\r\n/g, "\n");
 const css = readFileSync("src/styles/global.css", "utf-8").replace(/\r\n/g, "\n");
 const PREVIEW_TS = readFileSync("src/markdown/preview.ts", "utf-8").replace(/\r\n/g, "\n");
@@ -78,7 +81,7 @@ const CLICK_BODY = slice(
   'syncScrollBtn.addEventListener("click"',
   'sbEncoding.addEventListener("click"',
 );
-const PIN_BODY = slice(main, "function pinScrollTop(", "function applyPanelMode(");
+const PIN_BODY = main4.slice(main4.indexOf("function pinScrollTop("));
 // 大纲 onJump：跳转定位逻辑（受同步滚动状态约束的那一段）—— 与 B152 同路数，盯静态契约。
 const ONJUMP_BODY = slice(
   main,
@@ -111,7 +114,7 @@ describe("B152 同步滚动模式：按钮与状态", () => {
     // 只开一份时子窗口露脸、主窗口却藏着 —— 口径不一致。现在一律只数本窗口实例。
     expect(BTN_BODY, "显隐不许再掺跨窗口的共享集合").not.toMatch(/sharedDocIds/);
     // B173：连本窗口的隐藏实例（`panelId < 0`）也不许算一份。
-    expect(main, "隐藏实例要被滤掉").toMatch(
+    expect(main6, "隐藏实例要被滤掉").toMatch(
       /function visibleInstancesOfDoc\(docId: number\): Tab\[\] \{\s*\n\s*return instancesOfDoc\(docId\)\.filter\(\(t\) => t\.panelId >= 0\);/,
     );
   });
@@ -812,7 +815,7 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
 
 // ------------------------------------------------- B159：跨窗口同步滚动
 describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动）", () => {
-  const MSG_BODY = slice(main, "const EVT_DOC_CHANGE = ", "/** 正在套用远端变更");
+  const MSG_BODY = main5.slice(main5.indexOf("const EVT_DOC_CHANGE = "));
   const RECV_BODY = slice(main, "function applySyncMode(", "/** 注册跨窗口同步的监听");
   const POS_RCV = slice(main, "function applyRemoteSyncPos(", "/** 注册跨窗口同步的监听");
   const LISTEN = slice(
@@ -1840,10 +1843,10 @@ describe("B178 跨窗口多开检测：主/子窗口同步键显隐一致", () =
     // 广播出去的「本窗口可见 docId 集合」要留底以便算 diff，只在变化时发事件。
     expect(main, "要有上次广播集合").toMatch(/let lastBroadcastDocIds = new Set<number>\(\);/);
     // 四个事件常量
-    expect(main, "open 事件要在").toMatch(/const EVT_DOC_OPEN = "doc-open";/);
-    expect(main, "close 事件要在").toMatch(/const EVT_DOC_CLOSE_NOTIFY = "doc-close-notify";/);
-    expect(main, "resync 请求事件要在").toMatch(/const EVT_DOC_OPEN_RESYNC = "doc-open-resync";/);
-    expect(main, "窗口关闭通知事件要在").toMatch(/const EVT_WINDOW_CLOSED = "window-closed";/);
+    expect(main5, "open 事件要在").toMatch(/const EVT_DOC_OPEN = "doc-open";/);
+    expect(main5, "close 事件要在").toMatch(/const EVT_DOC_CLOSE_NOTIFY = "doc-close-notify";/);
+    expect(main5, "resync 请求事件要在").toMatch(/const EVT_DOC_OPEN_RESYNC = "doc-open-resync";/);
+    expect(main5, "窗口关闭通知事件要在").toMatch(/const EVT_WINDOW_CLOSED = "window-closed";/);
   });
 
   it("broadcastDocPresence 按可见集合 diff，只在变化时广播 open/close", () => {
@@ -1994,7 +1997,7 @@ describe("B186 大纲跳转受同步滚动状态约束（多开不同步则只�
 //    `handleUpdate` 那句推送必须**读**这个标志。退化（删写 / 删读 / 挪到 setState
 //    之后）三条都要红 —— 见下面那个反向验证块。
 const SWITCH_BODY = slice(main, "function switchTab(", "function makeDoc(");
-const UPDATE_BODY = slice(main, "function handleUpdate(", "function displayedPanelOfTab(");
+const UPDATE_BODY = slice(main, "function handleUpdate(", "function syncDocInstances(");
 
 describe("B254 切标签那一刻不许拿「刚被归零的位置」推兄弟", () => {
   it("抑制标志必须夹住 switchTab 里的 setState（不能挪前挪后、不能只写不读）", () => {
