@@ -183,7 +183,7 @@ describe("B225：编辑器字体 / 行距必须真的接到 CSS", () => {
   it("改字号 / 字体 / 行距后一律走 measureAndKeepScroll（不许裸 requestMeasure）", () => {
     // 退化形态：回到裸 `view.requestMeasure()` —— CM6 测量结束会做滚动锚点补偿，
     // 把视口顶行往下推一截（B146），改一次设置就飘一次。
-    const src = readFileSync("src/main.ts", "utf-8");
+    const src = readFileSync("src/appearance.ts", "utf-8");
     // B231：真正会改 CM6 布局的三个 —— 字号、编辑器行距、**代码字体**
     // （源码区改吃 --font-code，换字体即改行宽；B227 时它只落预览、不碰 CM6，
     //  才不需要重测，那版判断已随口径作废）。
@@ -421,7 +421,7 @@ describe("B227 内嵌字体：@font-face、正文/代码两条栈、两处消费
   it("界面文字不跟用户设置走（用户裁决：标签栏/菜单/状态栏保持不可配）", () => {
     // --font-ui 是 :root 里的写死栈，不接受任何内联覆盖。
     // 契约盯两处：①全局消费点不许读 --font-body；②applyFontFamily 只写 --font-body。
-    const src = readFileSync("src/main.ts", "utf-8");
+    const src = readFileSync("src/appearance.ts", "utf-8");
     const body = stripLineComments(topLevelFnBody(src, "applyFontFamily"));
     // 反向闸在前
     expect(body, "界面栈 --font-ui 不许被用户设置覆盖").not.toContain("--font-ui");

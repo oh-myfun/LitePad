@@ -610,8 +610,9 @@ describe("标签样式切换（B114：connected | pill）", () => {
 
     // main.ts：断言必须落在代码上（说明性注释里会复述这些标识符 —— B79 的教训）
     const src = stripLineComments(readFileSync("src/main.ts", "utf-8"));
-    expect(src, "档位必须写进 html[data-tab-style]").toContain("dataset.tabStyle");
-    expect(src, "未知值必须回落 connected（与 Rust 回落一致）").toContain(
+    const appearance = stripLineComments(readFileSync("src/appearance.ts", "utf-8"));
+    expect(appearance, "档位必须写进 html[data-tab-style]").toContain("dataset.tabStyle");
+    expect(appearance, "未知值必须回落 connected（与 Rust 回落一致）").toContain(
       'style === "pill" ? "pill" : "connected"',
     );
     expect(src, "切换必须写回 settings 才能存盘（B79 同款教训）").toMatch(
@@ -698,7 +699,8 @@ describe("标签操作槽位空位（B115：预留 | 紧凑，对齐 VS Code tab
     expect(dlg, "外观页必须有「标签按钮预留空位」开关").toContain('"标签按钮预留空位"');
 
     const src = stripLineComments(readFileSync("src/main.ts", "utf-8"));
-    expect(src, "档位必须写进 html[data-tab-reserve]").toContain("dataset.tabReserve");
+    const appearance = stripLineComments(readFileSync("src/appearance.ts", "utf-8"));
+    expect(appearance, "档位必须写进 html[data-tab-reserve]").toContain("dataset.tabReserve");
     expect(src, "切换必须写回 settings 才能存盘（B79 同款教训）").toMatch(
       /settings\.tab_action_reserve_space\s*=/,
     );

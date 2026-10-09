@@ -728,6 +728,7 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
 
   it("B235：预览正文宽度由 CSS 变量驱动，三档值正确（全宽=不限宽）", () => {
     const main = readFileSync("src/main.ts", "utf-8");
+    const appearance = readFileSync("src/appearance.ts", "utf-8");
     // ⚠️ 反向闸排在正向断言之前
     expect(main, "预览 CSS 不该再有硬编码的 860px 上限").not.toMatch(/--md-content-max[^;]*860px/);
 
@@ -737,10 +738,10 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
       ["wide", "1100px"],
       ["full", "none"],
     ] as const) {
-      expect(main, `${kind} 档应映射到 ${px}`).toContain(`${kind}: "${px}"`);
+      expect(appearance, `${kind} 档应映射到 ${px}`).toContain(`${kind}: "${px}"`);
     }
     // 全宽给 none 才是真「不限宽」—— 写一个大数字就等于还有个上限
-    expect(main, "全宽档必须是 none，写成具体 px 就仍会被截住").toMatch(/full:\s*"none"/);
+    expect(appearance, "全宽档必须是 none，写成具体 px 就仍会被截住").toMatch(/full:\s*"none"/);
 
     // CSS 侧：`.md-block` 读这个变量，且不再写死 860px
     const css = readFileSync("src/styles/preview.css", "utf-8");
@@ -777,27 +778,29 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
     expect(css, "兜底参数要还在").toContain("var(--md-content-max, none)");
     // 正向：值只能由 main.ts 写在 :root 上，**一处**
     const main = readFileSync("src/main.ts", "utf-8");
+    const appearance = readFileSync("src/appearance.ts", "utf-8");
     // ⚠️ 反向闸在前：不许去挨个改 `.md-preview` 元素 —— 元素自身的声明优先于
     // :root 继承值，那就等于把档位顶掉（与上面那条是同一个 bug 的另一条路径）。
     expect(main, "不许直接往 .md-preview 元素上写这个变量").not.toContain(
       'querySelectorAll(".md-preview")',
     );
     expect(
-      main.split('setProperty("--md-content-max"').length - 1,
+      appearance.split('setProperty("--md-content-max"').length - 1,
       "写这个变量的地方只能有 :root 一处",
     ).toBe(1);
-    expect(main, "档位必须写在 :root 上才传得到 .md-block").toContain(
+    expect(appearance, "档位必须写在 :root 上才传得到 .md-block").toContain(
       'document.documentElement.style.setProperty("--md-content-max"',
     );
   });
 
   it("B235：宽度档走 applyPreviewWidth 写 :root，缺省全宽", () => {
     const main = readFileSync("src/main.ts", "utf-8");
+    const appearance = readFileSync("src/appearance.ts", "utf-8");
     // 正向：启动回放 + 设置接线都在
     expect(main, "启动时应回放该档").toContain("applyPreviewWidth(settings?.preview_width");
     expect(main, "设置项接线应在").toContain("onPreviewWidth:");
     // 未知档位一律落全宽（B235 的默认口径）
-    expect(main, "未知档位应落全宽").toContain(
+    expect(appearance, "未知档位应落全宽").toContain(
       'return v === "standard" || v === "wide" ? v : "full"',
     );
   });

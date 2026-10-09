@@ -1,0 +1,136 @@
+// 外观 / 主题 / 字号 / 字体 / 预览宽度的 setter 集合。
+//
+// 这些函数**只**消费 core/app-state 的状态、sync-scroll 的保视口测量、以及 DOM / CSS 变量，
+// 不调用 main.ts 里任何编排逻辑 —— 因此被抽成独立模块，main.ts 只负责在启动时调用它们。
+// 抽离后 main.ts 同步滚动以外的「外观」职责归零，便于独立单测（见 tests/appearance.test.ts 规划）。
+
+import { EditorView } from "@codemirror/view";
+import { oneDark as oneDarkTheme } from "@codemirror/theme-one-dark";
+import type { PreviewWidth } from "./ipc/api";
+import { tabs, panels, setIsWrap } from "./core/app-state";
+import { measureAndKeepScroll } from "./sync-scroll";
+
+export function applyDarkToTabs(dark: boolean): void {
+  for (const tab of tabs.values()) {
+    const effect = tab.comps.theme.reconfigure(dark ? oneDarkTheme : []);
+    const panel = panels.get(tab.panelId);
+    if (panel?.view && panel.viewTabId === tab.tabId) {
+      panel.view.view.dispatch({ effects: effect });
+      tab.state = panel.view.view.state;
+    } else {
+      tab.state = tab.state.update({ effects: effect }).state;
+    }
+  }
+}
+
+export function applyWrapToTabs(wrap: boolean): void {
+  setIsWrap(wrap);
+  for (const tab of tabs.values()) {
+    const effect = tab.comps.wrap.reconfigure(wrap ? EditorView.lineWrapping : []);
+    const panel = panels.get(tab.panelId);
+    if (panel?.view && panel.viewTabId === tab.tabId) {
+      panel.view.view.dispatch({ effects: effect });
+      tab.state = panel.view.view.state;
+    } else {
+      tab.state = tab.state.update({ effects: effect }).state;
+    }
+  }
+}
+
+export function applyFontSize(px: number): void {
+  document.documentElement.style.setProperty("--font-size", `${px}px`);
+  // 字号变化后 CM6 要重新测量，否则行号/光标定位会短暂错位。
+  // ⚠️ B225：测量统一走 `measureAndKeepScroll`（B146）—— 裸 `requestMeasure()`
+  // 会触发 CM6 的滚动锚点补偿，把视口顶行往下推一截。
+  for (const p of panels.values()) measureAndKeepScroll(p);
+}
+
+export function applyPreviewLineHeight(value: number): void {
+  const v = Math.min(2.5, Math.max(1, Number(value) || 1.7));
+  document.documentElement.style.setProperty("--md-line-height", String(v));
+}
+
+/** B235：预览**正文内容区**的宽度档 → 具体 px 值。
+ *
+ * ⚠️ 这一档管的是「正文居中宽度」（原先硬编码在 `preview.css` 的 860px），
+ *    **不是**源码与预览两栏的分屏比例 —— 那个由拖拽分隔条管，是另一件事。
+ * ⚠️ 存**档位名**而不是 px：同一档在不同分辨率/缩放下观感才稳定，以后调值
+ *    也只改这张表，不动用户的设置文件。
+ * ⚠️ 全宽档给 `none`（不限宽）而不是一个很大的数字 —— 写上限的话超过就还是被截住。
+ */
+export const PREVIEW_WIDTH_PX: Record<PreviewWidth, string> = {
+  standard: "860px",
+  wide: "1100px",
+  full: "none",
+};
+
+export function normalizePreviewWidth(v: unknown): PreviewWidth {
+  return v === "standard" || v === "wide" ? v : "full";
+}
+
+export function applyPreviewWidth(value: unknown): void {
+  const kind = normalizePreviewWidth(value);
+  document.documentElement.style.setProperty("--md-content-max", PREVIEW_WIDTH_PX[kind]);
+}
+
+/**
+ * 正文字体：写 :root 上的 --font-body，**只**消费在预览正文（`.md-preview`）。
+ * 空串（默认）则移除内联变量，回落到 :root 里那份内嵌思源黑体。
+ *
+ * ⚠️ B231 口径：源码区已划归**代码字体**（见下面的代码字体 setter），所以这一项
+ *    **不再影响编辑器**。改名「正文字体」；B227 时的临时中转变量已删除。
+ *
+ *    这里**不重测编辑器**是刻意的：--font-body 没有任何 CM6 消费方，
+ *    measureAndKeepScroll 纯属空转。真正要重测的是下面那个代码字体 setter。
+ *
+ *    ⚠️ 注释里**别写别的 setter 名**：`tests/static.ts` 的 `topLevelFnBody` 按
+ *    `indexOf(name)` 取首次出现定位函数体，注释里提一句别人的名字就会让那条
+ *    契约截到本函数的注释里、断言凭空失败。
+ */
+export function applyFontFamily(family: string): void {
+  const root = document.documentElement.style;
+  const f = family.trim();
+  if (!f) {
+    root.removeProperty("--font-body");
+  } else {
+    // 族名带空格时必须加引号，否则 CSS 解析会当成多个族名
+    root.setProperty("--font-body", f.includes(" ") ? `"${f}"` : f);
+  }
+}
+
+export function applyEditorLineHeight(value: number): void {
+  const v = Math.min(2.5, Math.max(1, Number(value) || 1.5));
+  document.documentElement.style.setProperty("--editor-line-height", String(v));
+  // 行距一改行高就变，CM6 必须重测；同 applyFontSize 走 measureAndKeepScroll
+  for (const p of panels.values()) measureAndKeepScroll(p);
+}
+
+/**
+ * B231：代码字体 —— 写 :root 上的 --font-code。消费方两处：
+ * ①编辑器源码区（CM6 那条 `.cm-editor, .cm-scroller` 规则）；
+ * ②预览里的 `code` / `pre` / 数学占位。**凡是代码一律等宽**。
+ *
+ * 与上面那个正文字体 setter 不同的是这一项**要重测编辑器**：源码区吃这个值，
+ * 换字体会改行宽，进而影响折行与视口锚点，所以与字号 / 行距同理走
+ * measureAndKeepScroll。（B227 时它只落在预览、不碰 CM6，才不需要重测。）
+ */
+export function applyCodeFontFamily(family: string): void {
+  const root = document.documentElement.style;
+  const f = family.trim();
+  if (!f) {
+    root.removeProperty("--font-code");
+  } else {
+    root.setProperty("--font-code", f.includes(" ") ? `"${f}"` : f);
+  }
+  // B231：源码区现在吃这个值，换字体同样会改行宽 → 必须重测并保住视口
+  for (const p of panels.values()) measureAndKeepScroll(p);
+}
+
+export function applyTabStyle(style: string): void {
+  // 写进 <html data-tab-style>；未知值一律按 "connected" 处理（与 Rust 回落一致）。
+  document.documentElement.dataset.tabStyle = style === "pill" ? "pill" : "connected";
+}
+
+export function applyTabActionReserve(on: boolean): void {
+  document.documentElement.dataset.tabReserve = on ? "on" : "off";
+}
