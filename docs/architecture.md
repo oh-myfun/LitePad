@@ -19,7 +19,7 @@
 | --------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------- |
 | 文档模型  | `src-tauri/src/doc.rs`、`tab.rs`、`session.rs`、`backup/`                                                          | 文档/实例/会话/热退出副本                                      |
 | 编辑器    | `src/editor/`（CodeMirror 6 封装）、`src/shell/find.ts`、`outline`                                                 | 编辑、查找、大纲                                               |
-| 外壳/UI   | `src/shell/`（main / menubar / tooltip / zoom / preferencesdialog / keymap / keymapdialog / splitview / tabstrip）、`src/appearance.ts`（外观 setter 集合）、`src/encoding.ts`（编码菜单纯函数叶子） | 菜单、标题栏与窗口控制、提示、缩放、设置、快捷键、布局、标签栏、主题/字号/字体/预览宽度、编码菜单 |
+| 外壳/UI   | `src/shell/`（main / menubar / tooltip / zoom / preferencesdialog / keymap / keymapdialog / splitview / tabstrip）、`src/appearance.ts`（外观 setter 集合）、`src/encoding.ts`（编码菜单纯函数叶子）、`src/doc-model.ts`（文档/标签/实例纯模型操作 + 工厂） | 菜单、标题栏与窗口控制、提示、缩放、设置、快捷键、布局、标签栏、主题/字号/字体/预览宽度、编码菜单、文档模型 |
 | 预览      | `src/editor/preview/`                                                                                              | Markdown 渲染与预览内查找                                      |
 | 窗口      | `src-tauri/src/windows.rs`                                                                                         | 主窗口 + 卫星窗口（多窗口）                                    |
 | 构建/打包 | `src-tauri/tauri.conf.json`、`build.rs`、`scripts/release.sh`                                                      | 版本、图标、NSIS                                               |
@@ -66,6 +66,7 @@
   `allow-is-always-on-top` 两条授权。
 - **样式与主题**：组件统一用 CSS 变量；`hidden` 属性必须配 `display:none`；外观/主题/字号/字体/预览宽度的 setter 集中在 `src/appearance.ts`（只消费 core/app-state 与 DOM，不回调 main 编排逻辑，可独立单测）。
 - **编码菜单叶子**：BOM 目标判定（`bomTarget`）、语言分组收口（`withLanguageGroups`）、UTF-8 两档常量（`ENC_UTF8` / `ENC_UTF8_BOM`）抽到 `src/encoding.ts`；只依赖 `MenuItem` 类型、不碰模块级状态，可独立单测。写盘出口 `convertDoc` 与菜单模型 `encodingMenuModel` 仍留在 `main.ts`，只在此消费这两个叶子。
+- **文档模型叶子**：`makeDoc` / `makeInstance` / `isDirtyVsBaseline` / `markClean` / `markDiskVersion` / `registerDoc` / `attachTabToPanel` / `panelIdsInOrder` 抽到 `src/doc-model.ts`；只依赖 `core/app-state`、`editor/*`、`shell/layout`，对 `main.ts` 零反向依赖。`makeInstance` 需要的编辑器更新回调通过 `setInstanceOnUpdate(handleUpdate)` 在启动时注入（解耦 main 的 handleUpdate，避免 feature 模块 import main）。
 - **查找/大纲/缩放/设置/快捷键/菜单/标签栏/分屏/提示/保存/图标**：见 `src/shell/` 与各 `ref` 详情。
 - **多窗口（卫星窗口）**：新窗口与主窗口共享文档状态、标签可来回拖；「文档只有一个真相」跨 WebView 成立。
   跨窗口拖拽与窗口内**同语义**：途中只亮落点预览，**松手才提交**——指针掠过哪块面板都不会

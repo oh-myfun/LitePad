@@ -197,8 +197,8 @@ describe("B112 静态契约：判脏靠基线，清脏靠 markClean", () => {
   });
 
   it("isDirtyVsBaseline：先比长度再比内容，基线未知时保守判脏", () => {
-    const src = stripLineComments(readFileSync("src/main.ts", "utf-8"));
-    const fn = src.match(/function isDirtyVsBaseline\([\s\S]*?\n\}/)?.[0] ?? "";
+    const docModel = stripLineComments(readFileSync("src/doc-model.ts", "utf-8"));
+    const fn = docModel.match(/function isDirtyVsBaseline\([\s\S]*?\n\}/)?.[0] ?? "";
     expect(fn, "应有 isDirtyVsBaseline").toBeTruthy();
     // 基线未知（热退出副本还原）：没有「原样」可参照，只能一直脏到用户保存
     expect(fn, "基线为 null 必须保守判脏").toMatch(/base === null[\s\S]{0,60}return true/);
@@ -211,8 +211,8 @@ describe("B112 静态契约：判脏靠基线，清脏靠 markClean", () => {
   });
 
   it("markClean 必须同时钉正文/编码/行尾（只清 dirty 会让判据失真）", () => {
-    const src = stripLineComments(readFileSync("src/main.ts", "utf-8"));
-    const fn = src.match(/function markClean\([\s\S]*?\n\}/)?.[0] ?? "";
+    const docModel = stripLineComments(readFileSync("src/doc-model.ts", "utf-8"));
+    const fn = docModel.match(/function markClean\([\s\S]*?\n\}/)?.[0] ?? "";
     expect(fn, "应有 markClean").toBeTruthy();
     expect(fn, "必须钉正文").toContain("doc.baseline = text;");
     expect(fn, "必须钉编码").toContain("doc.baselineEncoding = doc.encoding;");

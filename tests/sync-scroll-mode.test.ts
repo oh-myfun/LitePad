@@ -1996,7 +1996,7 @@ describe("B186 大纲跳转受同步滚动状态约束（多开不同步则只�
 // ⚠️ 这一条用静态契约盯：`switchTab` 的 `setState` 必须被抑制标志**裹住**，
 //    `handleUpdate` 那句推送必须**读**这个标志。退化（删写 / 删读 / 挪到 setState
 //    之后）三条都要红 —— 见下面那个反向验证块。
-const SWITCH_BODY = slice(main, "function switchTab(", "function makeDoc(");
+const SWITCH_BODY = slice(main, "function switchTab(", "function newUntitled(");
 const UPDATE_BODY = slice(main, "function handleUpdate(", "function syncDocInstances(");
 
 describe("B254 切标签那一刻不许拿「刚被归零的位置」推兄弟", () => {
