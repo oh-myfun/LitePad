@@ -2048,7 +2048,20 @@ function switchTab(panelId: number, tabId: number): void {
   // body（CM6 的 10ms 失焦兜底随之摘掉 `cm-focused`，光标一闪而过）；这里在切标签的焦点
   // 之后排一个 macrotask 再 focus 一次，既赶在 10ms 兜底生效前把焦点钉回编辑器，又能盖过
   // 任意时机的手势结束回焦，光标不再闪。
-  setTimeout(() => view.focus(), 0);
+  // ⚠️⚠️ **B277：延迟补焦点这一拍不许滚动**。
+  //    CM6 的 `view.focus()` 内部走 `focusPreventScroll(contentDOM)`，而 WebView2 上它的
+  //    支持性检测可能失败、**回滚成普通 focus** ⇒ 浏览器把**光标所在行**滚进视野（源码
+  //    光标停在上次编辑的地方）⇒ 把刚收口钉好的位置悄悄盖掉 —— 真机 trace
+  //    （08:17:53.294 收口钉 2478 之后，中间零日志，54.081 保存时 DOM 已经是 1922.67
+  //    ≈ 光标行 80）⇒ 用户看到的「切回去位置对不上/弹回老地方」的最后一块拼图。
+  //    ⇒ ①原生 `preventScroll: true`（Chromium/WebView2 原生支持，绕过 CM6 的检测）；
+  //    ②下一帧 `reassertViewScroll` 复核：DOM 被谁拉走了都钉回槽（用户已滚则槽=用户
+  //    位置，钉回去无害；被 focus 拉走则槽仍是收口值，钉回正确）。
+  setTimeout(() => {
+    view.view.contentDOM.focus({ preventScroll: true });
+    view.view.update([]); // B182：同步补 `cm-focused` 类（同 EditorHandle.focus 的收尾）
+    requestAnimationFrame(() => reassertViewScroll(panel));
+  }, 0);
 }
 
 function makeDoc(

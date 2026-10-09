@@ -550,16 +550,27 @@ describe("B181 静态契约：切标签后编辑器必须拿到焦点", () => {
     ).toBe(-1);
   });
 
-  it("B182（续）：切完标签要延迟一拍再补一次焦点，盖过 WebView2 手势结束回焦", () => {
+  it("B182（续）+ B277：切完标签要延迟一拍再补一次焦点，且这一拍不许滚动", () => {
     // 左键 mousedown 不再拦默认焦点（那会废掉原生拖拽，标签拖不动），焦点被偷到 body 的
     // 副作用靠 switchTab 末尾这拍延迟补焦点化解：WebView2 手势结束后会把焦点归 body，
     // 若没有这拍延迟，CM6 的 10ms 失焦兜底会把 `cm-focused` 摘掉，光标一闪而过。
-    const reFocus = /setTimeout\(\s*\(\)\s*=>\s*view\.focus\(\),\s*0\s*\)/;
-    expect(body, "switchTab 末尾必须延迟一拍再 focus 一次").toMatch(reFocus);
+    //
+    // ⚠️⚠️ B277：这拍 focus 还**不许滚动** —— CM6 的 `view.focus()` 内部
+    //    `focusPreventScroll` 在 WebView2 上支持性检测可能失败、回滚成普通 focus ⇒
+    //    浏览器把**光标所在行**滚进视野 ⇒ 把刚收口钉好的位置盖掉（真机 08:17:53 钉 2478
+    //    之后 DOM 被悄悄滚回 1922.67 ≈ 光标行 80，中间零日志）。⇒ 必须是原生
+    //    `contentDOM.focus({ preventScroll: true })`，且下一帧 reassert 复核。
+    const reFocus =
+      /setTimeout\(\s*\(\)\s*=>\s*\{?\s*view\.view\.contentDOM\.focus\(\{\s*preventScroll:\s*true\s*\}\)/;
+    expect(body, "switchTab 末尾必须延迟一拍用原生 preventScroll 补 focus").toMatch(reFocus);
+    expect(body, "这一拍后面必须跟一次 reassert 复核（DOM 被谁拉走都钉回槽）").toMatch(
+      /contentDOM\.focus\(\{\s*preventScroll:\s*true\s*\}\)[\s\S]{0,220}reassertViewScroll\(panel\)/,
+    );
   });
 
   it("反向验证：删掉延迟补焦点，B182 续契约必须抓住", () => {
-    const reFocus = /setTimeout\(\s*\(\)\s*=>\s*view\.focus\(\),\s*0\s*\)/;
+    const reFocus =
+      /setTimeout\(\s*\(\)\s*=>\s*\{?\s*view\.view\.contentDOM\.focus\(\{\s*preventScroll:\s*true\s*\}\)/;
     expect(body, "退化用的延迟补焦点必须还在").toMatch(reFocus);
     const degraded = body.replace(reFocus, "/* 已删除延迟补焦点 */");
     expect(degraded, "退化后不应再匹配到延迟补焦点（否则这条断言形同虚设）").not.toMatch(reFocus);
