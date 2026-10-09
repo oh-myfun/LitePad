@@ -1011,7 +1011,16 @@ function syncSourceSnapshot(src: Tab | undefined, nextTabId: number): number | n
   //    ⚠️ B266：B265 已让两侧末行/末块都能滚到视口顶（源码 `--cm-bleed-bottom`、
   //    预览 `--md-bleed-bottom`），两侧 floor 游标都 = 文档末行 `v`，自然上限不再错配，
   //    故不再需要「顶没顶上限」的 `atFloor` 特判，直接用源的真实 `v` 收口。
-  return syncSourceV(src);
+  const v = syncSourceV(src);
+  // B278 临时埋点（定位「收口交整数 95」用，定因后撤）：把换算输入也打出来 ——
+  // DOM/槽是否一致、预览容器此刻的 scrollTop，能直接看出 v 是不是「末块整数」路径交的。
+  logger.trace(
+    "sync",
+    `采源游标 tab=${src.tabId} v=${v} slot=${src.scrollTop} ` +
+      `srcMode=${src.viewMode} prevTop=${srcPanel?.preview?.root.scrollTop ?? "n/a"} ` +
+      `srcTop=${srcPanel?.view?.view.scrollDOM.scrollTop ?? "n/a"}`,
+  );
+  return v;
 }
 
 /**

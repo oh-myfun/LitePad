@@ -582,8 +582,11 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
     //    `{ v, atFloor }` 简化为 `number | null` —— B265 已让两侧末行/末块都能滚到视口顶，
     //    自然上限不再错配，`atFloor` 特判已无前提，故直接 `return syncSourceV(src);`
     //    （`v` 仍从唯一取值口出，单参、无 cross 档；不再同帧采 atFloor）。
-    expect(SNAP_BODY, "收口走唯一取值口，交完整 `v`（B266 起不再带 atFloor）").toMatch(
-      /return syncSourceV\(src\);/,
+    // ⚠️⚠️ B278 换锚（同语义）：`syncSourceV(src)` 先存进 `v`、打一条采源埋点后再返回
+    //    —— 采源埋点要打「换算输入」（dom/slot/预览 scrollTop）才能定位「收口交整数 95」
+    //    那条路。取值口仍是唯一的 `syncSourceV(src)`，语义未变。
+    expect(SNAP_BODY, "收口走唯一取值口，交完整 `v`（B278 埋点在返回前）").toMatch(
+      /const v = syncSourceV\(src\);[\s\S]*?return v;/,
     );
     // ⚠️ 反向闸：不许退回「按跨侧判据现算要不要丢小数」那一版（收口 / 跟随 / 切模式
     //    三处各传一个 cross 实参）—— 那正是每跨一次侧吃一格比例的入口。
