@@ -9,7 +9,7 @@ import "./styles/global.css";
 
 // ChangeSet 既要当类型又要用运行时的 `ChangeSet.fromJSON`（跨窗口同步要还原对端的
 // 变更集），所以这里不能写成 `type ChangeSet`。
-import { ChangeSet, EditorState } from "@codemirror/state";
+import { ChangeSet } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { redo, selectAll, undo } from "@codemirror/commands";
 import { foldAll, foldCode, unfoldAll, unfoldCode } from "@codemirror/language";
@@ -37,12 +37,7 @@ import appMarkUrl from "../src-tauri/icons/app-mark.png";
 
 import { attachUserScrollClear, isProgrammatic, markProgrammatic } from "./scroll-guard";
 
-import {
-  createEditor,
-  makeTabState,
-  type EditorHandle,
-  type TabCompartments,
-} from "./editor/editor";
+import { createEditor, makeTabState } from "./editor/editor";
 import {
   buildFindQuery,
   clearFindQuery,
@@ -66,7 +61,6 @@ import {
   listEols,
   listFonts,
   // B218：编码候选带上语言分组（「中文（简体 / 繁体）」这类组名由后端那份列表带出）
-  type EncodingItem,
   // B227：本机字体枚举项（Rust list_fonts 的负载）
   type FontItem,
   // B235：预览正文宽度档（standard / wide / full）
@@ -95,7 +89,6 @@ import {
   type SessionState,
   // B193：会话记录类型 —— 卫星标签要按 `owner` 分组还原成独立窗口，得拿到这份类型
   type TabSession,
-  type Settings,
   type WindowPayload,
   type WindowSpot,
 } from "./ipc/api";
@@ -201,6 +194,48 @@ import {
   reassertViewScroll,
   syncingCursorDocId,
 } from "./sync-scroll";
+import {
+  Tab,
+  Doc,
+  Panel,
+  tabs,
+  docs,
+  panels,
+  layout,
+  activePanelId,
+  settings,
+  keymapOverrides,
+  eolOptions,
+  encodingOptions,
+  themeMode,
+  isDark,
+  isWrap,
+  suppressDirty,
+  suppressSyncPush,
+  unmeasuredPanels,
+  docSyncModes,
+  windowLabel,
+  syncingDocId,
+  setTabs,
+  setDocs,
+  setLayout,
+  setNextPanelId,
+  setNextInstId,
+  setActivePanelId,
+  setSettings,
+  setKeymapOverrides,
+  setEolOptions,
+  setEncodingOptions,
+  setThemeModeState,
+  setIsDark,
+  setIsWrap,
+  setSuppressDirty,
+  setSuppressSyncPush,
+  setWindowLabel,
+  setSyncingDocId,
+  takePanelId,
+  takeInstId,
+} from "./core/app-state";
 
 // ------------------------------------------------------------------ 启动计时（B50）
 
@@ -310,190 +345,6 @@ const sbEol = el<HTMLButtonElement>("sb-eol");
 // B233：状态栏语言项是**纯展示**（md 也不再来回切视图）⇒ HTML 侧已改成 <span>。
 const sbLang = el<HTMLSpanElement>("sb-lang");
 
-/** 文档级记录：与 Rust Doc 一一对应（tabId 唯一）。元数据与脏标记由所有实例共享。 */
-interface Doc {
-  tabId: number;
-  path: string | null;
-  name: string;
-  encoding: string;
-  eol: string;
-  mixedEol: boolean;
-  readonly: boolean;
-  /**
-   * 有未保存的修改（标签上那个 ●）。
-   *
-   * B112 起它是**算出来的**（见 `isDirtyVsBaseline`），而不是「一改过就永远脏」：
-   * 编辑后撤销回原样、或者改了又手动改回来，都会自然转回不脏 —— 用户要的正是
-   * 「内容回到修改前状态就不该显示待保存」。
-   */
-  dirty: boolean;
-  /**
-   * 判脏的基线：正文与它完全一致、且编码/行尾也没动过 ⇒ 干净。
-   * `null` = 基线未知（热退出副本还原、跨窗口认领一类「只知道它脏、不知道原样是啥」
-   * 的情形），此时只能靠保存 / 重新载入显式转干净。
-   */
-  baseline: string | null;
-  baselineEncoding: string;
-  baselineEol: string;
-  /** 磁盘文件在会话期间被外部修改（状态栏提示，标记被保存动作清除） */
-  external: boolean;
-  langLabel: string;
-  /**
-   * 已知磁盘版本：`file-changed` 事件里的 (mtimeMs, size) 与它相同 ⇒ 那次事件是
-   * **自己保存激起的回声**，必须忽略；不同 ⇒ 真的被外部改了（VS Code 的 etag 同理）。
-   *
-   * 只有关联了磁盘路径的文档才有意义；未命名文档恒为 0/0，不会收到事件。
-   */
-  diskMtimeMs: number;
-  diskSize: number;
-  /**
-   * M4 大文件档位：由 Rust 按文件字节数判定（OpenedFile.sizeClass），
-   * 决定该文档关闭哪些昂贵编辑器特性；未命名文档恒为 normal。
-   */
-  sizeClass: SizeClass;
-  /**
-   * 热退出副本 ID（B68）：首次需要写副本时生成一次，此后跨会话稳定。
-   * 它是副本的唯一身份——副本文件本身不含「属于哪个标签」的索引，
-   * 全靠会话里的这个 ID 把副本认领回来。
-   */
-  backupId: string | null;
-  /** 磁盘备份区里当前确实存在该文档的副本（决定关窗能否跳过确认框） */
-  backedUp: boolean;
-}
-
-/** 标签实例：文档在某面板中的一份视图（独立光标/撤销历史/视图模式）。
- *  同一文档可在多个面板各有一个实例，编辑内容通过变更集实时同步，
- *  内存中的文档数据只有一份（docs）。 */
-export interface Tab {
-  /** 实例 id（UI 层标签标识，与 Rust tabId 无关） */
-  tabId: number;
-  /** 所属文档（Rust tabId） */
-  docId: number;
-  panelId: number;
-  comps: TabCompartments;
-  state: EditorState;
-  /** Markdown 视图（仅 .md 有效）：源码 / 预览（实例独立，可左源码右预览对照） */
-  viewMode: "source" | "preview";
-  /**
-   * 该标签上次显示时的视口滚动位置（px，B126）。
-   *
-   * 滚动位置只活在 DOM（`scrollDOM.scrollTop`）上，**不进 EditorState** ——
-   * 切标签（setState 重建 ViewState）、重建布局（视图销毁重建）都会把它清零。
-   * 所以要自己记一份：切走之前存、切回之后还。
-   *
-   * `null` = 这份实例还从没显示过（新建 / 会话恢复后还没切到过）。此时不能硬钉 0：
-   * 会话只带了 cursorLine/cursorCol，光标可能在屏幕外，钉 0 看着就是「光标丢了」，
-   * 于是退化为「保证光标可见」（见 restoreViewScroll）。
-   *
-   * ⚠️ **纯预览态（B129）下这个槽位记的是预览那一侧的滚动位置**：编辑器此时是
-   * `display:none`，浏览器会把它的 scrollTop 清零，真正承载「视图位置」的是
-   * 预览容器。所以存取两端都按 `viewMode === "preview"` 分流，别死盯编辑器。
-   */
-  scrollTop: number | null;
-  /** 规范游标 `v`（实数行号，带行内/块内比例的小数）：与视图模式无关、无需测量的
-   * 同源实例对齐基准（B273）。
-   *
-   * 它记录「同一份文档在所有实例里应该停在哪个规范位置」，不区分源码 px / 预览 px、
-   * 也不依赖任何一侧的 DOM 测量 —— 因而**离屏实例（没有视图可借）也能持有准确位置**。
-   *
-   * 跟随滚动 / 收口时由 `pushSyncToSiblings` + `applySyncToSibling` 写入所有兄弟
-   * （含离屏源码、离屏预览）；`restoreViewScroll` / `restorePreviewScroll` 切回时按
-   * 各自模式从 `v` 派生像素，保证「已经同步好的实例切回来不跳」。
-   *
-   * `null` = 这份实例还没被任何一次同步定位过（与 scrollTop 的 null 语义对齐）。
-   *
-   * ⚠️ **运行时缓存，不入会话落盘** —— 它是从 DOM 实时位置反推的，会话恢复时重新从
-   * `scrollTop` 走老路径即可（模式相关的 px 才需要落盘）。 */
-  syncV: number | null;
-}
-
-/** 面板：布局树叶子，持有独立 EditorView 与自己的标签列表。 */
-export interface Panel {
-  panelId: number;
-  tabs: number[];
-  activeTabId: number;
-  view: EditorHandle | null;
-  /** 视图当前实际显示的实例 id（与 activeTabId 可能短暂不一致：
-   *  调用方先改 activeTabId 再 rebuild 时，快照回写必须按它寻址，防串档） */
-  viewTabId: number | null;
-  /** Markdown 预览（面板挂载后创建） */
-  preview: PreviewPane | null;
-  /** 预览渲染防抖定时器 */
-  previewTimer: number | null;
-  /** splitview 传入的宿主元素（.panel-host） */
-  bodyEl: HTMLElement | null;
-}
-
-export let tabs = new Map<number, Tab>();
-let docs = new Map<number, Doc>();
-const panels = new Map<number, Panel>();
-let layout: LayoutNode = leaf(0);
-let nextPanelId = 1;
-let nextInstId = 1;
-export let activePanelId = 0;
-
-let settings: Settings | null = null;
-/** 快捷键用户覆盖的前端镜像（与 settings.keymap 同步，改完立即持久化）。 */
-let keymapOverrides: KeymapOverrides = {};
-/** 「首选项 → 新建默认行尾/编码」的候选：启动预取，供子菜单同步渲染。 */
-let eolOptions: string[] = ["CRLF", "LF", "CR"];
-/**
- * 编码候选（B218）：`label` 原样传回后端，`group` 是它所属的语言组名
- * （菜单按这个 `group` 切块：首块内联铺开，之后的每组收成一条子菜单入口）。
- * 启动预取之前是空列表 —— 空着就空着，绝不在前端手抄一份兜底清单
- * （那份迟早和后端差一条，而差的那一条表现就是「菜单里有、功能没接上」）。
- */
-let encodingOptions: EncodingItem[] = [];
-let themeMode: ThemeMode = "system";
-let isDark = false;
-let isWrap = true;
-/** 载入文件时抑制脏标记（setState/dispatch 会触发 updateListener） */
-let suppressDirty = false;
-/**
- * ⚠️ B254：切换标签那一刻，抑制 `handleUpdate` 里那句「推兄弟」。
- *
- * `switchTab` 里整态换文档那一次（`setState`）是**同步**派发 update 的，而 CM6 按
- * `setState` 的语义会把编辑器 scrollTop 归零再重排 ⇒ 那一轮 `handleUpdate` 读到的
- * 源位置是「刚被归零的 0」，不是用户停的地方。而此刻 `activeTabId` 已经改成新标签、
- * `isSyncSource` 已经为真 ⇒ 539 那句会拿 0 当源 `pushSyncToSiblings`：
- *    · 源是刚切过去的源码 ⇒ 跨侧交整数顶行 1 ⇒ 所有**同文档兄弟的预览**（分屏另一半、
- *      另一个面板那份）被 `syncToLineProgrammatic(1)` 拉回**文档开头**，落点还被
- *      `recordScroll` 写进它们自己的槽；
- *    · 源是刚切过去的预览（另一端）⇒ `topVisibleLine()` 在隐藏容器上读回 0 ⇒ 同一个病。
- * 收尾时 `switchTab` 因为「收口已对齐」跳过推播（B241）⇒ **没人把兄弟救回来**。
- * 用户报的就是这两半连起来：「切标签后另一个预览向上偏移，且之后切换标签不再变化」
- * —— 每次切都推同一发 0，看起来就是位置被钉死在顶上。
- *
- * 切标签本身有自己的收口（`syncSourceSnapshot` 在 setState 之前就采下了源的真实位置），
- * 这一发推播**不携带任何有效信息**，只留害处 ⇒ 与 `suppressDirty` 同一路数，置位包住
- * `setState` 即可（B145 那条顺序纪律不受影响：还原 `restoreViewScroll` 排在后面）。
- */
-export let suppressSyncPush = false;
-
-/**
- * B263：**挂起的游标** ——「离屏源码兄弟这一手没量成」的记号（tabId → 游标 `v`）。
- *
- * ⚠️ 这不是**待补的位置**：那一刻的尺子（借来的那块 `EditorView`）多半正被 `display:none`
- *    藏着，本身量不出东西，拿它挂的「位置」是假的。挂的是**游标**（哪一行），等这份兄弟
- *    现形、尺子好用时再量一次 —— 见 `flushPendingSyncCursor`。
- */
-export const pendingSyncCursor = new Map<number, number>();
-
-/**
- * B271：「尺子未测」窗口标记 —— `setState` / 新建视图之后、measure 帧之前，CM6 的
- * heightMap 还是**估算行高**（B256 已证真机 estimate ≠ 实测），这个窗口里一切
- * `sourceTopOfV` 换算都落在「估算空间」，写出去的 px 在 measure 换成实测排版后对应的
- * 是**另一行**（用例几何：v=9.5 实测 119px、估算 170px —— 收口把它写进槽，
- * `reassertViewScroll` 再钉回 DOM，歪值就此锁死并经同步传染全部同文档实例，
- * 用户报的「切源码对不上 / 切回预览跳变」的完整病根）。
- *
- * 窗口内的 v→px 换算一律**挂起**（`pendingSyncCursor`），等 `measureAndKeepScroll`
- * 的 rAF（此刻 measure 已完成、heightMap 已是实测）按实测几何统一补写——
- * 与 B263 的「display:none 量不成 ⇒ 挂起」同一个纪律，只是判据从「藏没藏」
- * 换成「测没测」。挂起对在屏目标同样生效：估算 px 写进 DOM 一样是毒。
- */
-export const unmeasuredPanels = new WeakSet<Panel>();
-
 const LOSSY_ABORT = Symbol("lossy-abort");
 
 // ---------------------------------------------------------------- 基础访问
@@ -571,9 +422,6 @@ function panelOfView(view: EditorView): Panel | undefined {
   return undefined;
 }
 
-/** 同源同步回环抑制：向兄弟实例分发变更期间，其 updateListener 不再二次广播。 */
-let syncingDocId: number | null = null;
-
 /** 编辑事务（来自任意面板的 view）：快照写回 + 脏标记 + 同源实例同步。 */
 function handleUpdate(view: EditorView, update: ViewUpdate): void {
   const panel = panelOfView(view);
@@ -642,7 +490,7 @@ function handleUpdate(view: EditorView, update: ViewUpdate): void {
 /** 把某实例的内容变更广播到同文档的其他实例（内容同源，内存一份）。 */
 function syncDocInstances(src: Tab, changes: ChangeSet): void {
   if (changes.empty) return;
-  syncingDocId = src.docId;
+  setSyncingDocId(src.docId);
   try {
     for (const other of tabs.values()) {
       if (other.docId !== src.docId || other.tabId === src.tabId) continue;
@@ -656,25 +504,11 @@ function syncDocInstances(src: Tab, changes: ChangeSet): void {
       }
     }
   } finally {
-    syncingDocId = null;
+    setSyncingDocId(null);
   }
 }
 
 // ------------------------------------------------------- B152 同步滚动模式
-/**
- * 按**文档**记的同步滚动开关（`docId → 是否开启`）。
- *
- * 默认一律关闭 —— B149 定的基线照旧：同源多实例各记各的光标与滚动位置。只有用户
- * 按下标题栏那颗键才联动，并且**一个文档一份状态**：在几份之间切来切去，按钮**不
- * 复位** —— 联动方向跟着激活态走，开关本身属于这个文档。
- *
- * 方向是**单向**的：永远「激活文档 → 其它实例」。反向同步（兄弟抢着当源）会让两份
- * 滚动互相拉扯，用户看到的就是抖。
- *
- * ⚠️ 不落盘：会话结构动一次代价不小（B141 那批 `Tab` 字段还没迁进 session store），
- *    而「默认不关联」本来就是保守口径 —— 重启回到关闭，按一下即可。
- */
-export const docSyncModes = new Map<number, boolean>();
 
 // B171：这里原先有 `sharedDocIds`（B164 加的），用来把「卫星窗口采纳的文档」也算成
 // 「开着多份」，好让子窗口也能看到这颗键。已删 —— 主窗口手上那份是**隐藏实例**，
@@ -875,7 +709,7 @@ function refreshAll(): void {
  */
 function markActivePanel(panelId: number): void {
   const changed = panelId !== activePanelId;
-  activePanelId = panelId;
+  setActivePanelId(panelId);
   for (const el of layoutArea.querySelectorAll<HTMLElement>(".layout-panel")) {
     el.classList.toggle("layout-panel-active", Number(el.dataset.panelId) === panelId);
   }
@@ -1155,9 +989,9 @@ function rebuildLayout(): void {
       p.bodyEl = hostEl;
 
       if (tab) {
-        suppressDirty = true;
+        setSuppressDirty(true);
         p.view = createEditor(editorEl, tab.state);
-        suppressDirty = false;
+        setSuppressDirty(false);
         p.viewTabId = tab.tabId;
         // B271：新建视图同样从估算行高起步（heightMap 要等第一帧 measure 才实测）
         unmeasuredPanels.add(p);
@@ -1335,17 +1169,17 @@ function switchTab(panelId: number, tabId: number): void {
   panel.viewTabId = tabId;
   const view = panel.view; // 闭包里不保留对 `panel.view` 的收窄，先取一份
   markProgrammatic(view.view.scrollDOM);
-  suppressDirty = true;
+  setSuppressDirty(true);
   // ⚠️ B254：这一发 `setState` 把编辑器 scrollTop 归零并**同步**派发 update ⇒
   //    `handleUpdate` 那一轮拿到的源位置是 0，推兄弟等于把所有同文档预览钉回开头
   //    （「切标签后另一个预览向上偏移、之后永远不动」）。切标签的收口已经在上面
   //    `syncSourceSnapshot` 里采下源的真实位置，这一发推播没信息、只有害处。
-  suppressSyncPush = true;
+  setSuppressSyncPush(true);
   view.setState(tab.state);
-  suppressSyncPush = false;
+  setSuppressSyncPush(false);
   // B271：从这一刻到 measure 帧，heightMap 是估算行高 —— 换算窗口开启（见 unmeasuredPanels）
   unmeasuredPanels.add(panel);
-  suppressDirty = false;
+  setSuppressDirty(false);
   // ⚠️ 焦点必须排在钉位置**之前**（B145）：`focus()` 会把光标滚进视野，而光标往往
   // 不在刚还原出来的可视区里 —— 排在后面等于把刚钉好的位置顶掉。
   view.focus();
@@ -1519,7 +1353,7 @@ function makeInstance(doc: Doc, panelId: number, text: string): Tab {
     handleUpdate,
   );
   return {
-    tabId: nextInstId++,
+    tabId: takeInstId(),
     docId: doc.tabId,
     panelId,
     comps,
@@ -1591,9 +1425,9 @@ async function newUntitled(): Promise<void> {
   let panel = activePanel();
   if (!panel) {
     // 无面板（全部关闭的极端情况）→ 重建单面板
-    layout = leaf(0);
-    nextPanelId = 1;
-    activePanelId = 0;
+    setLayout(leaf(0));
+    setNextPanelId(1);
+    setActivePanelId(0);
     panels.set(0, {
       panelId: 0,
       tabs: [],
@@ -1734,9 +1568,9 @@ async function closeTabById(tabId: number): Promise<void> {
     // `restoreViewScroll` 的 `pinScrollTop` 继续标，覆盖补钉回执。
     panel.viewTabId = nextId;
     markProgrammatic(view.view.scrollDOM);
-    suppressDirty = true;
+    setSuppressDirty(true);
     view.setState(nextTab.state);
-    suppressDirty = false;
+    setSuppressDirty(false);
     // B271：估算窗口开启（measureAndKeepScroll 的 rAF 关闭）
     unmeasuredPanels.add(panel);
     // B126：接班的标签沿用**它自己**上次的位置（光标随 state，视口随 scrollTop）
@@ -1764,7 +1598,7 @@ function disposePanel(panelId: number): void {
   // 在旧树上取视觉相邻面板，作为关闭后的活动面板
   const sibling = siblingLeafOf(layout, panelId);
   const newTree = removePanel(layout, panelId);
-  if (newTree) layout = newTree;
+  if (newTree) setLayout(newTree);
 
   // 销毁残留的编辑器视图（预览 DOM 随 rebuildLayout 清空，监听器一并回收）
   if (panel.view) {
@@ -1779,7 +1613,7 @@ function disposePanel(panelId: number): void {
   panels.delete(panelId);
 
   if (activePanelId === panelId) {
-    activePanelId = sibling ?? [...panels.keys()][0] ?? 0;
+    setActivePanelId(sibling ?? [...panels.keys()][0] ?? 0);
   }
   // ⚠️⚠️ **B261 第七轮（用户点名要端到端验「新增 / 减少分屏」时翻出来的）**：关掉一个
   //    分屏 ⇒ 剩下那格**变宽**、编辑器（word_wrap 开着）重排 ⇒ **同一个 `scrollTop` 像素
@@ -1879,7 +1713,7 @@ function closePanelById(panelId: number, hostId?: number): void {
   if (host.activeTabId === -1 && panel.tabs.length > 0) {
     host.activeTabId = panel.tabs[0];
   }
-  if (activePanelId === panelId) activePanelId = host.panelId;
+  if (activePanelId === panelId) setActivePanelId(host.panelId);
   disposePanel(panelId);
 }
 
@@ -1888,8 +1722,8 @@ function splitActivePanel(panelId: number, dir: "h" | "v"): void {
   const panel = getPanel(panelId);
   if (!panel) return;
   exitMaximize(); // 同 splitPanelWithTab：最大化态下不先还原就会分出 0 宽的新面板
-  const newId = nextPanelId++;
-  layout = treeSplitPanel(layout, panelId, dir, newId);
+  const newId = takePanelId();
+  setLayout(treeSplitPanel(layout, panelId, dir, newId));
   const currentTabId = panel.activeTabId;
   const tab = tabs.get(currentTabId);
   panels.set(newId, {
@@ -1919,9 +1753,9 @@ function splitActivePanel(panelId: number, dir: "h" | "v"): void {
         panel.viewTabId = prev.tabId;
         const view = panel.view; // 闭包里不保留对 `panel.view` 的收窄，先取一份
         markProgrammatic(view.view.scrollDOM);
-        suppressDirty = true;
+        setSuppressDirty(true);
         view.setState(prev.state);
-        suppressDirty = false;
+        setSuppressDirty(false);
         // B271：估算窗口开启（本支原本没有 measureAndKeepScroll，下面补上）
         unmeasuredPanels.add(panel);
         // B126：原位剩下的标签也要拿回自己的视口位置
@@ -1952,7 +1786,7 @@ function splitActivePanel(panelId: number, dir: "h" | "v"): void {
       })();
     }
   }
-  activePanelId = newId;
+  setActivePanelId(newId);
   rebuildLayout();
   refreshAll();
 }
@@ -1974,7 +1808,7 @@ function moveTabToPanel(tabId: number, hostId: number, copy = false): void {
   tab.panelId = hostId;
   host.tabs.push(tabId);
   host.activeTabId = tabId;
-  if (activePanelId === src.panelId) activePanelId = hostId;
+  if (activePanelId === src.panelId) setActivePanelId(hostId);
   if (src.tabs.length === 0 && countLeaves(layout) > 1) {
     disposePanel(src.panelId);
   } else {
@@ -2095,7 +1929,7 @@ function moveGroupToPanel(
   const src = getPanel(srcId);
   if (!src || srcId === targetId || countLeaves(layout) < 2) return;
   exitMaximize();
-  const newId = nextPanelId++;
+  const newId = takePanelId();
   const moved = [...src.tabs];
   panels.set(newId, {
     panelId: newId,
@@ -2113,8 +1947,8 @@ function moveGroupToPanel(
   }
   src.tabs = [];
   src.activeTabId = -1;
-  layout = splitPanelAt(layout, targetId, dir, newId, newFirst);
-  activePanelId = newId;
+  setLayout(splitPanelAt(layout, targetId, dir, newId, newFirst));
+  setActivePanelId(newId);
   // 源面板已空 → 摘除（内部会 rebuild + refreshAll）
   disposePanel(srcId);
 }
@@ -2163,7 +1997,7 @@ function duplicateTabToPanel(tabId: number, hostPanelId: number): void {
   //    **之后**（见下面那条）—— 两件事必须拆开，顺序写反这一份就仍然停在文档开头。
   const vDup = syncSourceV(src);
   attachTabToPanel(inst, host);
-  activePanelId = hostPanelId;
+  setActivePanelId(hostPanelId);
   // ⚠️⚠️ 落位必须在 `attachTabToPanel` **之后**：`recordScroll` 是靠 `tabs.get(tabId)`
   //    把位置写进这份实例的槽的，而 `makeInstance` **不落表**、`attachTabToPanel` 内部那句
   //    `tabs.set(...)` 才是它进表的那一刻。排在前面 ⇒ 写槽时压根查不到这份 ⇒ **静默空转**
@@ -2211,7 +2045,7 @@ function splitPanelWithTab(
     inst.viewMode = tab.viewMode;
     const sel = tab.state.selection.main;
     inst.state = inst.state.update({ selection: { anchor: sel.anchor, head: sel.head } }).state;
-    const newId = nextPanelId++;
+    const newId = takePanelId();
     inst.panelId = newId;
     panels.set(newId, {
       panelId: newId,
@@ -2244,8 +2078,8 @@ function splitPanelWithTab(
     //    这一处行号更靠前，同名会让退化 `replace` 摘到**这里**而不是切模式那一处 ⇒
     //    退化变成了「没改」，两条判据（ASK 被摘 / 顺序契约）双双假绿。
     const vCopy = syncSourceV(tab);
-    layout = splitPanelAt(layout, targetId, dir, newId, newFirst);
-    activePanelId = newId;
+    setLayout(splitPanelAt(layout, targetId, dir, newId, newFirst));
+    setActivePanelId(newId);
     rebuildLayout();
     // ⚠️⚠️⚠️ **B261 第四轮（用户：「新建分屏时原标签内滚动位置出现了变化，
     //    可能跟面板宽度变化有关」）—— 落位必须排在 `rebuildLayout()` 之后，而且
@@ -2341,7 +2175,7 @@ function splitPanelWithTab(
     tabs.get(src.activeTabId) ??
     tab;
   const vDrop = syncSourceV(anchor);
-  const newId = nextPanelId++;
+  const newId = takePanelId();
   panels.set(newId, {
     panelId: newId,
     tabs: [tabId],
@@ -2355,8 +2189,8 @@ function splitPanelWithTab(
   const rest = src.tabs.filter((id) => id !== tabId);
   src.tabs = rest;
   tab.panelId = newId;
-  layout = splitPanelAt(layout, targetId, dir, newId, newFirst);
-  activePanelId = newId;
+  setLayout(splitPanelAt(layout, targetId, dir, newId, newFirst));
+  setActivePanelId(newId);
 
   if (src.tabs.length === 0 && countLeaves(layout) > 1 && src.panelId !== targetId) {
     // 源面板已空且非唯一：移交给 disposePanel 统一摘除（会再次 rebuild）
@@ -2462,7 +2296,7 @@ function moveTabToStrip(panelId: number, tabId: number, beforeTabId: number | nu
   dst.tabs.splice(idx, 0, tabId);
   tab.panelId = panelId;
   dst.activeTabId = tabId;
-  activePanelId = panelId;
+  setActivePanelId(panelId);
 
   if (src.tabs.length === 0 && countLeaves(layout) > 1) {
     // 源面板被拖空：统一交给 disposePanel（内部会 rebuild）
@@ -2508,9 +2342,9 @@ function rebuildDocInstances(doc: Doc, text: string, keepCursor = false): void {
     }
     const panel = panels.get(inst.panelId);
     if (panel?.view && panel.viewTabId === inst.tabId) {
-      suppressDirty = true;
+      setSuppressDirty(true);
       panel.view.setState(inst.state);
-      suppressDirty = false;
+      setSuppressDirty(false);
       // B271：估算窗口开启（见 unmeasuredPanels）
       unmeasuredPanels.add(panel);
       panel.viewTabId = inst.tabId;
@@ -2557,7 +2391,7 @@ async function doOpen(
       const instPanel = inst ? panelOfTab(inst.tabId) : undefined;
       // 只有「本来就开在这个面板」或「压根没指定落点」才算复用成功
       if (inst && instPanel && (inTarget !== undefined || targetPanelId === undefined)) {
-        activePanelId = instPanel.panelId;
+        setActivePanelId(instPanel.panelId);
         switchTab(instPanel.panelId, inst.tabId);
         rebuildLayout();
         refreshAll();
@@ -2603,7 +2437,7 @@ async function doOpen(
     registerDoc(doc);
     const tab = makeInstance(doc, panel.panelId, file.text);
     attachTabToPanel(tab, panel);
-    if (panel.panelId !== activePanelId) activePanelId = panel.panelId;
+    if (panel.panelId !== activePanelId) setActivePanelId(panel.panelId);
     // 重建挂载（应用 md 视图模式 + 预览）并聚焦
     rebuildLayout();
     refreshAll();
@@ -3138,7 +2972,7 @@ async function switchEncoding(label: string): Promise<void> {
 
   try {
     const file = await reloadFile(doc.tabId, label);
-    suppressDirty = true;
+    setSuppressDirty(true);
     doc.encoding = file.encoding;
     doc.eol = file.eol;
     doc.mixedEol = file.mixedEol;
@@ -3151,7 +2985,7 @@ async function switchEncoding(label: string): Promise<void> {
     discardBackupFor(doc);
     // 重载替换内容：重建该文档全部实例并刷新挂载中的视图
     rebuildDocInstances(doc, file.text);
-    suppressDirty = false;
+    setSuppressDirty(false);
     refreshAll();
     showMessage(`已用 ${label} 重新载入 ${file.name}`);
   } catch (err) {
@@ -3478,10 +3312,10 @@ async function restoreSession(): Promise<boolean> {
   const panels0 = sp;
 
   panels.clear();
-  tabs = new Map();
-  docs = new Map();
-  nextPanelId = 1;
-  nextInstId = 1;
+  setTabs(new Map());
+  setDocs(new Map());
+  setNextPanelId(1);
+  setNextInstId(1);
 
   // 会话面板索引 → 真实面板 id（随布局树叶子创建）
   const idMap = new Map<number, number>();
@@ -3489,7 +3323,7 @@ async function restoreSession(): Promise<boolean> {
   function ensurePanel(idx: number): LayoutNode {
     let realId = idMap.get(idx);
     if (realId === undefined) {
-      realId = nextPanelId++;
+      realId = takePanelId();
       panels.set(realId, {
         panelId: realId,
         tabs: [],
@@ -3534,7 +3368,7 @@ async function restoreSession(): Promise<boolean> {
   }
 
   try {
-    layout = buildTree(sess.layout);
+    setLayout(buildTree(sess.layout));
   } catch (e) {
     // 布局树解析失败 = 整个会话没法照原样摆回去，此时继续恢复标签只会得到一堆
     // 位置错乱的面板 —— 退回空白标签。但「为什么整份都不要了」必须留下来（B147）。
@@ -3544,7 +3378,7 @@ async function restoreSession(): Promise<boolean> {
   // 会话面板没全部落到布局树（索引越界等）→ 追加水平分屏兜底
   for (let i = 0; i < panels0.length; i++) {
     if (!idMap.has(i)) {
-      layout = { kind: "split", dir: "h", ratio: 0.5, a: layout, b: ensurePanel(i) };
+      setLayout({ kind: "split", dir: "h", ratio: 0.5, a: layout, b: ensurePanel(i) });
     }
   }
 
@@ -3773,13 +3607,13 @@ async function restoreSession(): Promise<boolean> {
       }）`,
     );
     panels.clear();
-    tabs = new Map();
-    docs = new Map();
+    setTabs(new Map());
+    setDocs(new Map());
     return false;
   }
 
-  activePanelId = idMap.get(sess.activePanel) ?? [...panels.keys()][0];
-  if (!panels.has(activePanelId)) activePanelId = [...panels.keys()][0];
+  setActivePanelId(idMap.get(sess.activePanel) ?? [...panels.keys()][0]);
+  if (!panels.has(activePanelId)) setActivePanelId([...panels.keys()][0]);
   // 恢复完看一眼：盘上的位置是怎么落到视图上的（「滚到一半闪回开头」要看这里）
   logViewport("加载 · 会话恢复后", getPanel(activePanelId) ?? undefined);
   // B147：这里给出「恢复了什么、丢了什么」的整体结论。上游 bootstrap 那一条 info
@@ -5092,7 +4926,7 @@ function toggleViewMode(target?: Tab): void {
   if (handoff !== null) recordScroll(tab.tabId, handoff);
   tab.viewMode = toPreview ? "preview" : "source";
   // 切换视图本身不是编辑：隐藏/恢复编辑器可能让 CM6 产生事务，这里一律不置脏
-  suppressDirty = true;
+  setSuppressDirty(true);
   // B190：切回源码后要把焦点给回编辑器（预览态期间它是 `display:none`，拿不住焦点，
   // 焦点早已不在它身上）。先取一份局部引用，避免闭包里再去读 `panel.view`。
   const sourceEditor = panel.view;
@@ -5113,7 +4947,7 @@ function toggleViewMode(target?: Tab): void {
     // 刚从纯预览回来：编辑器刚从 display:none 出来、被清零了，把交接过来的那份钉回去
     if (handoff !== null) restoreViewScroll(panel);
   } finally {
-    suppressDirty = false;
+    setSuppressDirty(false);
   }
   // 隐藏 / 恢复编辑器会改变尺寸，CM6 随之测量，而它的滚动锚点补偿会把视口往下
   // 推一点 —— 位置得在补偿之后收回来（B146）
@@ -5179,9 +5013,9 @@ function openPreviewToSide(panelId: number): void {
     //    源码钉到顶（自测台实测 287 ⇒ 0；比「新那份没同步」更糟）。
     //    与 B254 同型：位置归零的那个瞬间产生的推播不能当源坐标。夹住这一趟，
     //    落位交给下面那行 `landOnFrameGeometry`（几何刚变，换算得排到这一帧的 measure 之后）。
-    suppressSyncPush = true;
+    setSuppressSyncPush(true);
     splitPanelWithTab(panelId, "h", tab.tabId, false, true);
-    suppressSyncPush = false;
+    setSuppressSyncPush(false);
     const np = panels.get(activePanelId);
     const nt = np ? tabs.get(np.activeTabId) : undefined;
     if (np && nt && isMdTab(nt)) {
@@ -5227,9 +5061,9 @@ function openPreviewToSide(panelId: number): void {
     //    落位交给下面那行，且用同一个 `v`，落点严格一致。
     //    ⚠️ 夹的是**这一趟**（不是永久规则）：`pushSyncToSiblings` 入口加了
     //    `suppressSyncPush` 早退，见那边的注释。
-    suppressSyncPush = true;
+    setSuppressSyncPush(true);
     switchTab(rightId, targetId);
-    suppressSyncPush = false;
+    setSuppressSyncPush(false);
     // ⚠️⚠️ B261：`applyPanelMode` 必须排在这一句**之前**（与右邻居不存在那一支同序）。
     //    它尾上那句 `if (anchorLine > 1) preview.syncToLine(anchorLine)` 读的是**面板那个
     //    EditorView 此刻的 scrollTop** —— 这里它不一定是**空档**：分屏那份实例是
@@ -5656,7 +5490,7 @@ function applyDarkToTabs(dark: boolean): void {
 }
 
 function applyWrapToTabs(wrap: boolean): void {
-  isWrap = wrap;
+  setIsWrap(wrap);
   for (const tab of tabs.values()) {
     const effect = tab.comps.wrap.reconfigure(wrap ? EditorView.lineWrapping : []);
     const panel = panels.get(tab.panelId);
@@ -5816,13 +5650,13 @@ function sanitizeKeymap(raw: Record<string, string>): KeymapOverrides {
 async function loadPreferenceOptions(): Promise<void> {
   try {
     const list = await listEols();
-    if (list.length > 0) eolOptions = list;
+    if (list.length > 0) setEolOptions(list);
   } catch {
     // 保持内置三档
   }
   try {
     const list = await listEncodings();
-    if (list.length > 0) encodingOptions = list;
+    if (list.length > 0) setEncodingOptions(list);
   } catch {
     // 保持空列表：宁可这一刻菜单里一条不列，也不塞一份自造的兜底清单
   }
@@ -5870,7 +5704,7 @@ async function setTabActionReserve(on: boolean): Promise<void> {
 
 /** 主题档位（设置页「外观」分类的下拉）：立即生效 + 持久化。 */
 async function setThemeMode(mode: ThemeMode): Promise<void> {
-  themeMode = mode;
+  setThemeModeState(mode);
   // ⚠️ **必须写回 settings，否则根本存不下来**（B79 用户实测：每次打开都是深色）。
   // 根因：persistSettings() 存的是整个 settings 对象，而启动时读的是 `settings.theme`
   // （main 里 `themeMode = normalizeMode(settings?.theme)`）。其它每一项设置都会在这里写回
@@ -5879,7 +5713,7 @@ async function setThemeMode(mode: ThemeMode): Promise<void> {
   if (settings) settings.theme = mode;
   const dark = applyTheme(mode);
   if (dark !== isDark) applyDarkToTabs(dark);
-  isDark = dark;
+  setIsDark(dark);
   publishThemeMode();
   await persistSettings();
   showMessage(mode === "system" ? "主题：跟随系统" : mode === "dark" ? "主题：深色" : "主题：浅色");
@@ -5903,7 +5737,7 @@ async function setDefaultEncoding(value: string): Promise<void> {
 
 /** 快捷键覆盖表变更（快捷键对话框 → 立即持久化）。 */
 async function applyKeymapOverrides(next: KeymapOverrides): Promise<void> {
-  keymapOverrides = next;
+  setKeymapOverrides(next);
   if (settings) {
     settings.keymap = { ...next };
     await persistSettings();
@@ -6034,7 +5868,7 @@ async function setFontSizeValue(px: number): Promise<void> {
 /** 自动换行开关（绝对值；由「查看」菜单的勾选项切换）。 */
 async function setWordWrap(on: boolean): Promise<void> {
   if (isWrap === on) return;
-  isWrap = on;
+  setIsWrap(on);
   applyWrapToTabs(on);
   if (settings) {
     settings.word_wrap = on;
@@ -6881,8 +6715,6 @@ function showFatalError(err: unknown): void {
 
 /** 本窗口的身份。启动时问一次 Rust，之后不再变。 */
 let windowKind: "main" | "satellite" = "main";
-/** 本窗口 label（"main" / "sat-1"…）：定向投递事件要用。 */
-export let windowLabel = "main";
 
 /** 主窗口 label。与 Rust `windows::MAIN_LABEL`、capabilities 的 `main` 三处必须一致。 */
 const MAIN_WINDOW_LABEL = "main";
@@ -7648,7 +7480,7 @@ function applyRemoteDocChange(payload: DocChangePayload | null): void {
   }
 
   applyingRemote = true;
-  syncingDocId = docId; // 与窗口内同源同步共用同一个回环闸门
+  setSyncingDocId(docId); // 与窗口内同源同步共用同一个回环闸门
   try {
     for (const inst of instances) {
       const p = panels.get(inst.panelId);
@@ -7663,7 +7495,7 @@ function applyRemoteDocChange(payload: DocChangePayload | null): void {
     requestDocResync(docId);
     return;
   } finally {
-    syncingDocId = null;
+    setSyncingDocId(null);
     applyingRemote = false;
   }
 
@@ -7728,7 +7560,7 @@ function applyDocResyncFull(
     return;
   }
   applyingRemote = true;
-  syncingDocId = docId;
+  setSyncingDocId(docId);
   try {
     for (const inst of instances) {
       const p = panels.get(inst.panelId);
@@ -7750,7 +7582,7 @@ function applyDocResyncFull(
       if (p) measureAndKeepScroll(p);
     }
   } finally {
-    syncingDocId = null;
+    setSyncingDocId(null);
     applyingRemote = false;
   }
   if (doc) {
@@ -7906,10 +7738,10 @@ async function initSatelliteWindow(me: WindowPayload | null): Promise<void> {
   await setupShell();
 
   panels.clear();
-  tabs = new Map();
-  docs = new Map();
-  nextPanelId = 1;
-  nextInstId = 1;
+  setTabs(new Map());
+  setDocs(new Map());
+  setNextPanelId(1);
+  setNextInstId(1);
   panels.set(0, {
     panelId: 0,
     tabs: [],
@@ -7920,7 +7752,7 @@ async function initSatelliteWindow(me: WindowPayload | null): Promise<void> {
     previewTimer: null,
     bodyEl: null,
   });
-  activePanelId = 0;
+  setActivePanelId(0);
 
   // 承载标签（内部会 rebuildLayout / refreshAll；scheduleSessionSave 在卫星窗口是空操作）
   adoptTransferredTabs(incoming, 0);
@@ -8126,27 +7958,27 @@ async function destroySelf(): Promise<void> {
  */
 async function setupShell(): Promise<void> {
   try {
-    settings = await loadSettings();
+    setSettings(await loadSettings());
   } catch {
-    settings = null;
+    setSettings(null);
   }
   bootMark("settings");
 
-  keymapOverrides = sanitizeKeymap(settings?.keymap ?? {});
+  setKeymapOverrides(sanitizeKeymap(settings?.keymap ?? {}));
   // 预设必须在任何 effectiveKeys / resolveCommand 之前落地：它是键位基线，
   // 晚设置会让菜单、命令面板先按默认键位渲染一遍，表现为「预设没生效」。
   setKeymapPreset(normalizePresetId(settings?.keymap_preset));
   void loadPreferenceOptions();
 
-  themeMode = normalizeMode(settings?.theme);
-  isDark = applyTheme(themeMode);
+  setThemeModeState(normalizeMode(settings?.theme));
+  setIsDark(applyTheme(themeMode));
   // 档位写进 <html data-theme-mode>（B97 前由顶栏那颗主题按钮承担）
   publishThemeMode();
   // 标签样式写进 <html data-tab-style>（B114；必须在任何标签渲染前落地）
   applyTabStyle(settings?.tab_style ?? "connected");
   // 标签操作槽位空位写进 <html data-tab-reserve>（B115，同上）
   applyTabActionReserve(settings?.tab_action_reserve_space ?? true);
-  isWrap = settings?.word_wrap ?? true;
+  setIsWrap(settings?.word_wrap ?? true);
   applyFontSize(settings?.font_size ?? 14);
   applyFontFamily(settings?.font_family ?? "");
   applyCodeFontFamily(settings?.code_font_family ?? "");
@@ -8174,7 +8006,7 @@ async function setupShell(): Promise<void> {
     () => themeMode,
     (dark) => {
       if (dark !== isDark) {
-        isDark = dark;
+        setIsDark(dark);
         applyDarkToTabs(dark);
       }
     },
@@ -8250,7 +8082,7 @@ async function bootstrap(): Promise<void> {
   try {
     me = await windowPayload();
     windowKind = me.kind;
-    windowLabel = me.label;
+    setWindowLabel(me.label);
   } catch {
     // 老版本后端 / 单窗口环境下拿不到身份应答：按主窗口走（退回 B71 之前的行为）
     windowKind = "main";
@@ -8319,10 +8151,10 @@ async function bootstrap(): Promise<void> {
   t = bootMark("session", t);
   if (!restored) {
     panels.clear();
-    tabs = new Map();
-    docs = new Map();
-    nextPanelId = 1;
-    nextInstId = 1;
+    setTabs(new Map());
+    setDocs(new Map());
+    setNextPanelId(1);
+    setNextInstId(1);
     panels.set(0, {
       panelId: 0,
       tabs: [],
@@ -8341,7 +8173,7 @@ async function bootstrap(): Promise<void> {
       registerDoc(doc);
       const tab = makeInstance(doc, 0, "");
       attachTabToPanel(tab, panels.get(0)!);
-      activePanelId = 0;
+      setActivePanelId(0);
     } catch (err) {
       // 起不来 = 后面全白搭，这里必须留一条（B144）。
       logger.error("new-tab", String(err));

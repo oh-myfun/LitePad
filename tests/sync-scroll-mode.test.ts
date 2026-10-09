@@ -26,6 +26,7 @@ import { readFileSync } from "node:fs";
 // 是 `\r`，函数体直接抠成空串）。这里先归一，是防那类「改一个字节红一大片」的复发。
 const main = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
 const main2 = readFileSync("src/sync-scroll.ts", "utf-8").replace(/\r\n/g, "\n");
+const main3 = readFileSync("src/core/app-state.ts", "utf-8").replace(/\r\n/g, "\n");
 const html = readFileSync("index.html", "utf-8").replace(/\r\n/g, "\n");
 const css = readFileSync("src/styles/global.css", "utf-8").replace(/\r\n/g, "\n");
 const PREVIEW_TS = readFileSync("src/markdown/preview.ts", "utf-8").replace(/\r\n/g, "\n");
@@ -116,7 +117,7 @@ describe("B152 同步滚动模式：按钮与状态", () => {
   });
 
   it("开关状态按**文档**记，切换激活文档时不复位", () => {
-    expect(main, "状态容器要按文档（docId）记").toContain(SYNC_STATE);
+    expect(main3, "状态容器要按文档（docId）记").toContain(SYNC_STATE);
     // 按 tab 记 ⇒ 切一下标签状态就没了，正是用户说的「同步按钮状态不变」要防的。
     expect(BTN_BODY, "亮灯要读那份文档自己的开关值").toMatch(
       /docSyncModes\.get\(tab\.docId\) === true/,
@@ -1997,8 +1998,8 @@ const UPDATE_BODY = slice(main, "function handleUpdate(", "function displayedPan
 
 describe("B254 切标签那一刻不许拿「刚被归零的位置」推兄弟", () => {
   it("抑制标志必须夹住 switchTab 里的 setState（不能挪前挪后、不能只写不读）", () => {
-    const ON = "suppressSyncPush = true;";
-    const OFF = "suppressSyncPush = false;";
+    const ON = "setSuppressSyncPush(true);";
+    const OFF = "setSuppressSyncPush(false);";
     const SET = "view.setState(tab.state);";
     expect(SWITCH_BODY, "三条锚点都要能找到").toContain(ON);
     expect(SWITCH_BODY, "三条锚点都要能找到").toContain(OFF);
@@ -2029,12 +2030,13 @@ describe("B254 切标签那一刻不许拿「刚被归零的位置」推兄弟",
 
 describe("B254 反向验证：退回旧写法，上面那几条必须变红", () => {
   it("退化：删掉置位 / 挪到 setState 之后 / 摘掉读取，三条判据都要落空", () => {
-    const ON = "suppressSyncPush = true;\n  view.setState(tab.state);\n  suppressSyncPush = false;";
+    const ON =
+      "setSuppressSyncPush(true);\n  view.setState(tab.state);\n  setSuppressSyncPush(false);";
     expect(SWITCH_BODY, "退化串要先自证原句还在").toContain(ON);
 
     // ① 删掉抑制：源里再没有「夹住 setState 那一对」（但 `let suppressPush` 声明还在）
     const off = SWITCH_BODY.replace(ON, "  view.setState(tab.state);");
-    expect(off, "退化①：抑制那一对被摘掉了").not.toContain("suppressSyncPush = true;");
+    expect(off, "退化①：抑制那一对被摘掉了").not.toContain("setSuppressSyncPush(true);");
     expect(off, "退化①：setState 本身还在（红因是没了抑制，不是这句消失）").toContain(
       "view.setState(tab.state);",
     );
@@ -2042,9 +2044,9 @@ describe("B254 反向验证：退回旧写法，上面那几条必须变红", ()
     // ② 挪到 setState **之后**：标志还在，但那一发同步 update 已经推完了（拦不住）
     const moved = SWITCH_BODY.replace(
       ON,
-      "  view.setState(tab.state);\n  suppressSyncPush = true;\n  suppressSyncPush = false;",
+      "  view.setState(tab.state);\n  setSuppressSyncPush(true);\n  setSuppressSyncPush(false);",
     );
-    expect(moved.indexOf("suppressSyncPush = true;")).toBeGreaterThan(
+    expect(moved.indexOf("setSuppressSyncPush(true);")).toBeGreaterThan(
       moved.indexOf("view.setState(tab.state);"),
     );
 
