@@ -151,6 +151,18 @@ export function setWindowKind(k: "main" | "satellite"): void {
  */
 export const remoteOpenByWindow = new Map<string, Set<number>>();
 
+/** 主窗口 label。与 Rust `windows::MAIN_LABEL`、capabilities 的 `main` 三处必须一致。 */
+export const MAIN_WINDOW_LABEL = "main";
+
+/**
+ * 已搬到别的窗口的文档：docId → { 本地隐藏实例的 tabId, 承载它的窗口 label }。
+ *
+ * 隐藏实例（panelId = -1）继续留在 `tabs` 里，但不属于任何面板 —— 它承担两件事：
+ * 会话快照能带上这些标签（见 snapshotSession 的 satelliteTabs）、卫星窗口异常消失时
+ * 还能把标签恢复成可见的。
+ */
+export const remotedTabs = new Map<number, { tabId: number; owner: string }>();
+
 /**
  * B188：已「借出」给卫星窗口的文档 id（借出期间主窗口隐藏实例继续持有正文，
  * 卫星窗关闭后归还）。跨窗口拖拽认领 / 归还链路读写。

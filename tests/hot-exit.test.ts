@@ -215,7 +215,8 @@ describe("B68 热退出（自动保存关 / 热退出开）", () => {
 });
 
 describe("B68 热退出：关窗不询问，下次启动还原未保存内容", () => {
-  const src = readFileSync("src/main.ts", "utf-8");
+  const src =
+    readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/session/session.ts", "utf-8");
   const api = readFileSync("src/ipc/api.ts", "utf-8");
   const rustBackup = readFileSync("src-tauri/src/backup/mod.rs", "utf-8");
   const rustCommands = readFileSync("src-tauri/src/commands/mod.rs", "utf-8");

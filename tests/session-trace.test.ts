@@ -33,7 +33,8 @@ function catchBody(code: string, from: number): string {
 }
 
 describe("B147 会话链路的可观测性", () => {
-  const src = readFileSync("src/main.ts", "utf-8");
+  const src =
+    readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/session/session.ts", "utf-8");
   const restore = topLevelFnBody(src, "async function restoreSession(): Promise<boolean> {");
   const snapshot = topLevelFnBody(
     src,

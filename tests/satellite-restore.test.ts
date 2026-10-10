@@ -255,7 +255,11 @@ describe("B193 会话里的卫星标签按卫星窗口还原", () => {
 });
 
 describe("B193 静态契约：分组要落盘、失败要兜底", () => {
-  const main = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
+  const main = (
+    readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/session/session.ts", "utf-8")
+  ).replace(/\r\n/g, "\n");
   const store = readFileSync("src/session/store.ts", "utf-8").replace(/\r\n/g, "\n");
 
   it("落盘要把 owner（窗口归属）带上，否则多窗口会被坍缩成一份", () => {
@@ -276,9 +280,9 @@ describe("B193 静态契约：分组要落盘、失败要兜底", () => {
 
   it("B193 反向验证：摘掉兜底 → 上面那条必须落空", () => {
     const ORIG =
-      "      if (t && t.panelId === -1 && !remotedTabs.has(t.docId)) reclaimRemoted(tabId);";
+      "      if (t && t.panelId === -1 && !remotedTabs.has(t.docId)) reclaimRemotedRef(tabId);";
     expect(main, "退化串要先自证原句还在").toContain(ORIG);
     const degraded = main.replace(ORIG, "");
-    expect(degraded, "退化后不再有收回兜底").not.toMatch(/reclaimRemoted\(tabId\)/);
+    expect(degraded, "退化后不再有收回兜底").not.toMatch(/reclaimRemotedRef\(tabId\)/);
   });
 });

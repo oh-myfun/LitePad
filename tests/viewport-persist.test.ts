@@ -275,11 +275,13 @@ describe("B132 静态契约：滚动排程 + 关窗兜底", () => {
     "\n" +
     readFileSync("src/tabs.ts", "utf-8") +
     "\n" +
+    readFileSync("src/session/session.ts", "utf-8") +
+    "\n" +
     readFileSync("src/core/viewport.ts", "utf-8");
 
   it("滚动监听里要排程会话保存，关窗的放行支要走「拦下 → 存完 → 再关」", () => {
     expect(src, "滚动后要排程落盘").toMatch(
-      /t\.scrollTop = shownView\.scrollDOM\.scrollTop;[\s\S]{0,260}?scheduleSessionSaveRef\(\);/,
+      /t\.scrollTop = shownView\.scrollDOM\.scrollTop;[\s\S]{0,260}?scheduleSessionSave\(\);/,
     );
     expect(src, "关窗回调要『先拦下 → 再丢一条没人 await 的收尾』").toMatch(CLOSE_CALLBACK);
     expect(src, "无脏文档那支要先等会话落盘，光排队等于没存").toMatch(CLEAN_BRANCH);
@@ -318,7 +320,7 @@ describe("B132 静态契约：滚动排程 + 关窗兜底", () => {
     // ⚠️ 拆卸与断言必须用**同一条精确串**（老规矩）：按缩进猜字符串这次又没对上，
     // 结果「没拆掉」却被判成「拆掉了」—— 一条假绿。改成同一个正则做替换。
     const SCROLL_ANCHOR =
-      /t\.scrollTop = shownView\.scrollDOM\.scrollTop;[\s\S]{0,260}?scheduleSessionSaveRef\(\);/;
+      /t\.scrollTop = shownView\.scrollDOM\.scrollTop;[\s\S]{0,260}?scheduleSessionSave\(\);/;
     const degradedScroll = src.replace(
       SCROLL_ANCHOR,
       "t.scrollTop = shownView.scrollDOM.scrollTop;",

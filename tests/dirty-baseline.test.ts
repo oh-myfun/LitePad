@@ -187,7 +187,9 @@ describe("B112 内容回到修改前状态就不该再是待保存", () => {
 
 describe("B112 静态契约：判脏靠基线，清脏靠 markClean", () => {
   it("handleUpdate 必须按基线判脏，而不是「一改过就永远脏」", () => {
-    const src = stripLineComments(readFileSync("src/main.ts", "utf-8"));
+    const src = stripLineComments(
+      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/session/session.ts", "utf-8"),
+    );
     const handler = src.match(/function handleUpdate\([\s\S]*?\n\}/)?.[0] ?? "";
     expect(handler, "应有 handleUpdate").toBeTruthy();
     // 退化写法是 `!doc.dirty` 门控 + 直接置 true —— 那样撤销回原样也摘不掉 ●
@@ -220,7 +222,9 @@ describe("B112 静态契约：判脏靠基线，清脏靠 markClean", () => {
   });
 
   it("清脏的四处都必须走 markClean（保存 / 自动保存 / 重载 / 以磁盘为准）", () => {
-    const src = stripLineComments(readFileSync("src/main.ts", "utf-8"));
+    const src = stripLineComments(
+      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/session/session.ts", "utf-8"),
+    );
     const marks = src.match(/markClean\(/g) ?? [];
     // isDirtyVsBaseline 的定义 + markClean 的定义各 1 处，调用点应 ≥ 4
     expect(marks.length, "清脏处应全部改走 markClean").toBeGreaterThanOrEqual(4);

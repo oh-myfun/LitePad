@@ -13,7 +13,8 @@ describe("B50 会话恢复必须并行读盘（而不是逐个 await）", () => 
   // 往返（读盘 + 编码检测），总耗时是各次之和；并行后总耗时≈最慢的那一次。
   // B68 起预取里多了「先问副本」这一步，但仍然是同一个 Promise.all 扇出。
   it("restoreSession 内必须先把文件并行预取好，再按序组装标签", () => {
-    const src = readFileSync("src/main.ts", "utf-8");
+    const src =
+      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/session/session.ts", "utf-8");
     const start = src.indexOf("async function restoreSession");
     expect(start, "必须能定位 restoreSession").toBeGreaterThan(-1);
     const body = src.slice(start, start + 8000);
@@ -112,7 +113,12 @@ describe("B50 启动不得露出白色窗口（用户反馈：打开时先白屏
   });
 
   it("前端必须回报启动各阶段耗时（便于定位慢在哪一段）", () => {
-    const src = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/ui.ts", "utf-8");
+    const src =
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/session/session.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/ui.ts", "utf-8");
     expect(src, "必须有 reportBoot 上报入口").toContain("function reportBoot");
     // 至少三处：定义 + 外壳就绪 + 全部就绪；任一被删都会丢失诊断
     const calls = src.match(/reportBoot\(/g) ?? [];
@@ -125,7 +131,12 @@ describe("B50 启动不得露出白色窗口（用户反馈：打开时先白屏
 
 describe("窗口标题：软件名在前、文件名在后", () => {
   it("窗口标题软件名在前、文件名在后（用户要求）", () => {
-    const src = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/ui.ts", "utf-8");
+    const src =
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/session/session.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/ui.ts", "utf-8");
     expect(src, "标题格式应为 LitePad - 文件名").toContain(
       "`LitePad - ${doc.name}${mark}${suffix}`",
     );
@@ -139,7 +150,12 @@ describe("窗口标题：软件名在前、文件名在后", () => {
 // replaceWith 换掉、节点脱链），用户看到的就是「点了没反应」。
 describe("B226 标签区操作键「点了没反应」：mousedown 里不许换掉按钮节点", () => {
   it("活动面板没变时必须早退，不许重建 .panel-ops", () => {
-    const src = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/ui.ts", "utf-8");
+    const src =
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/session/session.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/ui.ts", "utf-8");
     const fn = src.match(/function markActivePanel\([\s\S]*?\n\}/)?.[0] ?? "";
     expect(fn, "markActivePanel 必须还在").toBeTruthy();
     expect(fn, "必须判活动面板有没有变").toMatch(/const changed = panelId !== activePanelId;/);

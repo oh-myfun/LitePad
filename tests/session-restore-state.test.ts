@@ -325,7 +325,11 @@ describe("B129 会话恢复：面板激活标签 + 每标签光标 + 每标签�
 
 describe("B129 静态契约：三样都要进出会话", () => {
   const src =
-    readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/core/viewport.ts", "utf-8");
+    readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/session/session.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/core/viewport.ts", "utf-8");
 
   it("会话记录要同时带光标行列、视口与激活下标", () => {
     // B141：这三项现在都由 `sessionStore`（src/session/store.ts）产出，main.ts 只负责

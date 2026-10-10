@@ -56,7 +56,11 @@ const SAVE_FAIL_LOG_NO_G = /logger\.warn\("session", `(?:保存失败|会话写�
 
 describe("B143 静态契约", () => {
   const main =
-    readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/core/viewport.ts", "utf-8");
+    readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/session/session.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/core/viewport.ts", "utf-8");
   const store = readFileSync("src/session/store.ts", "utf-8");
   const rs = readFileSync("src-tauri/src/session/mod.rs", "utf-8");
 
@@ -111,7 +115,11 @@ describe("B143 静态契约", () => {
  */
 describe("B151 pin 的「立住」判定要留小数容差", () => {
   const main =
-    readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/core/viewport.ts", "utf-8");
+    readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/session/session.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/core/viewport.ts", "utf-8");
 
   it("容差要同时用在「钉上了」和「被文档夹住」两支上", () => {
     expect(main, "容差常量要有定义").toMatch(/const PIN_EPSILON_PX = 1;/);

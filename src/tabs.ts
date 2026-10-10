@@ -66,6 +66,7 @@ import {
 } from "./doc-model";
 import { applyPanelMode, openPreviewToSide, toggleViewMode } from "./markdown";
 import { updateTocDrawer } from "./toc";
+import { discardBackupFor, scheduleSessionSave } from "./session/session";
 import { attachUserScrollClear, isProgrammatic, markProgrammatic } from "./scroll-guard";
 import { closeTab as ipcCloseTab, newTab as ipcNewTab } from "./ipc/api";
 import { invoke } from "@tauri-apps/api/core";
@@ -90,7 +91,6 @@ import {
 
 /** 过渡期依赖注入（见文件头注释）。main 在启动时调用一次 installTabDeps。 */
 export interface TabDeps {
-  scheduleSessionSave(): void; // → src/session/（#412）
   retargetFindBar(): void; // → src/find/（#413）
   applyPanelMode(panel: Panel): void; // → src/markdown.ts（#410）
   toggleViewMode(target?: Tab): void; // → src/markdown.ts（#410）
@@ -100,31 +100,26 @@ export interface TabDeps {
   returnTabToMain(tabId: number): void; // → src/multiwindow/（#415）
   requestSatelliteClose(): void; // → src/multiwindow/（#415）
   saveDocCore(doc: Doc, inst: Tab, forceDialog: boolean): Promise<boolean>; // → src/io/（#414）
-  discardBackupFor(doc: Doc): void; // → src/session/（#412）
   docHeldElsewhere(docId: number, waitMs?: number): Promise<boolean>; // → src/multiwindow/（#415）
   keyHint(id: string): string; // → 随命令/菜单拆分（#416）
 }
 
-let scheduleSessionSaveRef: TabDeps["scheduleSessionSave"] = () => {};
 let retargetFindBarRef: TabDeps["retargetFindBar"] = () => {};
 let attachPasteHandlerRef: TabDeps["attachPasteHandler"] = () => {};
 let openTabsInNewWindowRef: TabDeps["openTabsInNewWindow"] = async () => {};
 let returnTabToMainRef: TabDeps["returnTabToMain"] = () => {};
 let requestSatelliteCloseRef: TabDeps["requestSatelliteClose"] = () => {};
 let saveDocCoreRef: TabDeps["saveDocCore"] = async () => false;
-let discardBackupForRef: TabDeps["discardBackupFor"] = () => {};
 let docHeldElsewhereRef: TabDeps["docHeldElsewhere"] = async () => false;
 let keyHintRef: TabDeps["keyHint"] = (id) => id;
 
 export function installTabDeps(deps: TabDeps): void {
-  scheduleSessionSaveRef = deps.scheduleSessionSave;
   retargetFindBarRef = deps.retargetFindBar;
   attachPasteHandlerRef = deps.attachPasteHandler;
   openTabsInNewWindowRef = deps.openTabsInNewWindow;
   returnTabToMainRef = deps.returnTabToMain;
   requestSatelliteCloseRef = deps.requestSatelliteClose;
   saveDocCoreRef = deps.saveDocCore;
-  discardBackupForRef = deps.discardBackupFor;
   docHeldElsewhereRef = deps.docHeldElsewhere;
   keyHintRef = deps.keyHint;
 }
@@ -209,7 +204,7 @@ function tabstripCallbacks(p: Panel): TabstripCallbacks {
       p.tabs.splice(fi, 1);
       p.tabs.splice(p.tabs.indexOf(to) + (fi < ti ? 1 : 0), 0, from);
       renderPanelTabs(p.panelId);
-      scheduleSessionSaveRef();
+      scheduleSessionSave();
     },
     onNew: () => void newUntitled(),
   };
@@ -324,7 +319,7 @@ function rebuildLayout(): void {
       // 拖分隔条 = 用户要自己摆布局 → 退出最大化（否则快照与手摆的比例互相打架）
       exitMaximize();
       updateRatio(layout, path, ratio);
-      scheduleSessionSaveRef();
+      scheduleSessionSave();
     },
     onCloseOtherTab: (panelId, tabId) => {
       const p = getPanel(panelId);
@@ -460,7 +455,7 @@ function rebuildLayout(): void {
           // B132：写进快照还不算数 —— 得落盘。滚动本身**不触发**任何排程，用户
           // 滚到中段、没干别的事就关窗，会话里留下的还是上一次（滚之前那份），
           // 重启就回到老位置（B132）。防抖 800ms：滚动停下才写，不会每帧落盘。
-          scheduleSessionSaveRef();
+          scheduleSessionSave();
           // B152 / B154：滚的是谁，谁就是源 —— 兄弟跟着同一个位置走。
           // ⚠️ 这里**不再**前置 `isSyncSource`：用户明确要求「窗口没有激活时，鼠标放在
           //    一个视口中也能滚动，这时同步滚动也要生效」（B154）。回环不是靠「只有
@@ -490,7 +485,7 @@ function rebuildLayout(): void {
         // 不写快照、不推兄弟；落盘排程照旧（位置本身没变）。渲染扰动（图片·公式增强二次
         // 定位、setBlocks 重排）也一并免疫。用户接管时标记被清。
         if (isProgrammatic(preview.root)) {
-          scheduleSessionSaveRef();
+          scheduleSessionSave();
           return;
         }
         // B154：与编辑器那侧同口径 —— **谁滚谁当源**，用户手指还在预览上、窗口也没
@@ -505,7 +500,7 @@ function rebuildLayout(): void {
         t.scrollTop = preview.root.scrollTop;
         recordScroll(t.tabId, t.scrollTop);
         pushSyncToSiblings(t, true);
-        scheduleSessionSaveRef();
+        scheduleSessionSave();
       });
 
       applyPanelMode(p);
@@ -776,7 +771,7 @@ async function closeTabById(tabId: number): Promise<void> {
     // 该文档要彻底离开了：无论是「已保存」还是「用户选了不保存」，
     // 备份区里的副本都不该再留着——热退出的承诺是「关窗才还原」，不是
     // 「关标签也还原」。用户明确丢弃的内容必须真的丢弃。
-    discardBackupForRef(doc);
+    discardBackupFor(doc);
     // B161：**Rust 那侧的文档是进程级的**（`state.docs` 只有一份），本窗口这是最后一个
     // 实例，不等于别的窗口没有 —— 主窗口那份隐藏实例、另一个卫星窗口的可见标签都算
     // 有人拿着。直接 `close_tab` 会把别人手上那份一起废掉（正是对端保存时报「文档不
@@ -835,7 +830,7 @@ async function closeTabById(tabId: number): Promise<void> {
   // 只重绘标签栏即可；「关闭其他/关闭右侧」批量关闭同样受益，不再逐个切换。
   if (!wasShown) {
     renderPanelTabs(panel.panelId);
-    scheduleSessionSaveRef();
+    scheduleSessionSave();
     return;
   }
   // 激活相邻标签
@@ -869,7 +864,7 @@ async function closeTabById(tabId: number): Promise<void> {
     updateTocDrawer();
   }
   renderPanelTabs(panel.panelId);
-  scheduleSessionSaveRef();
+  scheduleSessionSave();
 }
 
 /** 移除分屏区域并销毁其资源（不并入其他面板的标签）。 */
@@ -937,7 +932,7 @@ function disposePanel(panelId: number): void {
   //       measure 才刷），现在换尺子这一半被显式排到了帧上，见 `landOnFrameGeometry`。
   for (const r of reland) landOnFrameGeometry(r.tab, r.v);
   refreshAll();
-  scheduleSessionSaveRef();
+  scheduleSessionSave();
 }
 
 /**
@@ -1166,7 +1161,7 @@ function toggleMaximizePanel(panelId: number = activePanelId): void {
   if (maximizedPanelId !== null) {
     exitMaximize();
     rebuildLayout();
-    scheduleSessionSaveRef();
+    scheduleSessionSave();
     return;
   }
   if (countLeaves(layout) < 2) return; // 只有一个面板：无事可做（快捷键也不该抢键）
@@ -1179,7 +1174,7 @@ function toggleMaximizePanel(panelId: number = activePanelId): void {
   // 另一侧被挤成 0，必须明确告诉用户怎么回来（操作栏那个「还原」按钮是第二条退路）
   const hint = keyHintRef("panel.toggleMaximize");
   showMessage(hint ? `已最大化该面板，${hint} 还原` : "已最大化该面板");
-  scheduleSessionSaveRef();
+  scheduleSessionSave();
 }
 
 /** 会话里存**未最大化**的比例：0/1 存进 session 会让下次启动只剩一块面板。 */
@@ -1283,7 +1278,7 @@ function duplicateTabToPanel(tabId: number, hostPanelId: number): void {
   if (vDup !== null) landPreviewAtSource(inst, vDup);
   rebuildLayout();
   refreshAll();
-  scheduleSessionSaveRef();
+  scheduleSessionSave();
 }
 
 /** 同源复制到视觉相邻面板（左右分屏对照源码/预览的快捷入口）。 */
@@ -1420,7 +1415,7 @@ function splitPanelWithTab(
     landOnFrameGeometry(tab, vCopy);
     landOnFrameGeometry(inst, vCopy);
     refreshAll();
-    scheduleSessionSaveRef();
+    scheduleSessionSave();
     return;
   }
 
@@ -1537,7 +1532,7 @@ function reorderTabInPanel(panelId: number, from: number, to: number): void {
   p.tabs.splice(fi, 1);
   p.tabs.splice(p.tabs.indexOf(to) + (fi < ti ? 1 : 0), 0, from);
   renderPanelTabs(panelId);
-  scheduleSessionSaveRef();
+  scheduleSessionSave();
 }
 
 /** 拖拽标签落在 tab 区（B27）：同面板调整顺序，跨面板移动到该插入位置。
@@ -1564,7 +1559,7 @@ function moveTabToStrip(panelId: number, tabId: number, beforeTabId: number | nu
     renderPanelTabs(panelId);
     refreshTitle();
     refreshStatus();
-    scheduleSessionSaveRef();
+    scheduleSessionSave();
     return;
   }
 
@@ -1584,7 +1579,7 @@ function moveTabToStrip(panelId: number, tabId: number, beforeTabId: number | nu
     rebuildLayout();
     refreshAll();
   }
-  scheduleSessionSaveRef();
+  scheduleSessionSave();
 }
 
 export {

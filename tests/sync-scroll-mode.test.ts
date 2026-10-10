@@ -33,6 +33,8 @@ const tabsSrc = readFileSync("src/tabs.ts", "utf-8").replace(/\r\n/g, "\n");
 const mdSrc = readFileSync("src/markdown.ts", "utf-8").replace(/\r\n/g, "\n");
 // 大纲 TOC / 侧栏簇（updateTocDrawer…）已拆到 toc.ts（解耦第十步）。
 const tocSrc = readFileSync("src/toc.ts", "utf-8").replace(/\r\n/g, "\n");
+// 会话 / 自动保存 / 热退出簇（refreshSession / restoreSession…）已拆到 session/session.ts（解耦第十一步）。
+const sessSrc = readFileSync("src/session/session.ts", "utf-8").replace(/\r\n/g, "\n");
 const main2 = readFileSync("src/sync-scroll.ts", "utf-8").replace(/\r\n/g, "\n");
 const main3 = readFileSync("src/core/app-state.ts", "utf-8").replace(/\r\n/g, "\n");
 const main4 = readFileSync("src/core/viewport.ts", "utf-8").replace(/\r\n/g, "\n");
@@ -1022,7 +1024,7 @@ describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚�
     const listener = slice(tabsSrc, 'preview.root.addEventListener("scroll"', "applyPanelMode(p);");
     expect(listener, "要能定位预览滚动监听体").not.toBe("");
     expect(listener, "守卫里必须有程序回执判据").toContain("if (isProgrammatic(preview.root))");
-    expect(listener, "挡住之后仍要排程落盘").toContain("scheduleSessionSaveRef();");
+    expect(listener, "挡住之后仍要排程落盘").toContain("scheduleSessionSave();");
   });
 });
 
@@ -1387,13 +1389,13 @@ describe("B169 同步滚动开关落入会话文件并恢复", () => {
   });
 
   it("refreshSession 退出前把 docSyncModes 的开关刷进会话记录", () => {
-    expect(main, "刷新要把同步开关刷进记录").toMatch(
+    expect(sessSrc, "刷新要把同步开关刷进记录").toMatch(
       /sessionStore\.setSyncMode\(t\.tabId, docSyncModes\.get\(t\.docId\) === true\)/,
     );
   });
 
   it("restoreSession 要把读到的 syncMode 写回 docSyncModes", () => {
-    expect(main, "恢复要把 syncMode 写回 docSyncModes").toMatch(
+    expect(sessSrc, "恢复要把 syncMode 写回 docSyncModes").toMatch(
       /if \(st\.syncMode\) docSyncModes\.set\(inst\.docId, true\);/,
     );
   });
@@ -1409,7 +1411,7 @@ describe("B169 同步滚动开关落入会话文件并恢复", () => {
     // ⚠️ 不写死缩进：这行住在 `buildInstance` 里，抽函数/改嵌套会改变它的缩进，
     // 写死的字面量会「找不着原句」而红（B193 抽 buildInstance 时就红过一次）。
     // 改成先按行匹配取出原句再删 —— 既是自证（取不到就红），也不受排版影响。
-    const found = main.match(
+    const found = sessSrc.match(
       /^[ \t]*if \(st\.syncMode\) docSyncModes\.set\(inst\.docId, true\);$/m,
     );
     expect(found, "退化串要先自证原句还在").not.toBeNull();

@@ -42,6 +42,7 @@ import { renderBlocks } from "./markdown/pipeline";
 import { rightNeighborOf } from "./shell/layout";
 import { renderPanelOps, renderPanelTabs, splitPanelWithTab, switchTab } from "./tabs";
 import { updateTocDrawer } from "./toc";
+import { scheduleSessionSave } from "./session/session";
 import type { FindBarQuery, FindBarHandle } from "./shell/findbar";
 
 /** 预览侧查找规格（M5 预览查找用；#413 find 拆出后归 find 模块）。 */
@@ -54,19 +55,16 @@ export type PreviewFindSpec = {
 
 /** 过渡期依赖注入（见文件头注释）。main 在启动时调用一次 installMarkdownDeps。 */
 export interface MarkdownDeps {
-  scheduleSessionSave(): void; // → src/session/（#412）
   findSpecOf(q: FindBarQuery): PreviewFindSpec; // → src/find/（#413）
   applyPreviewFindToPanel(p: Panel, spec: PreviewFindSpec): void; // → src/find/（#413）
   getFindBar(): FindBarHandle | null; // → src/find/（#413，过渡期 getter）
 }
 
-let scheduleSessionSaveRef: MarkdownDeps["scheduleSessionSave"] = () => {};
 let findSpecOfRef: MarkdownDeps["findSpecOf"] = () => null;
 let applyPreviewFindToPanelRef: MarkdownDeps["applyPreviewFindToPanel"] = () => {};
 let getFindBarRef: MarkdownDeps["getFindBar"] = () => null;
 
 export function installMarkdownDeps(deps: MarkdownDeps): void {
-  scheduleSessionSaveRef = deps.scheduleSessionSave;
   findSpecOfRef = deps.findSpecOf;
   applyPreviewFindToPanelRef = deps.applyPreviewFindToPanel;
   getFindBarRef = deps.getFindBar;
@@ -246,7 +244,7 @@ function toggleViewMode(target?: Tab): void {
   refreshViewModeButton();
   // B224：切换键是双字形开关（预览态画 edit-code），字形必须跟着 viewMode 走
   renderPanelOps();
-  scheduleSessionSaveRef();
+  scheduleSessionSave();
 }
 
 /**
@@ -368,7 +366,7 @@ function openPreviewToSide(panelId: number): void {
     renderPanelTabs(rightId);
     renderPanelOps(rightId);
   }
-  scheduleSessionSaveRef();
+  scheduleSessionSave();
 }
 
 /** 状态栏语言/格式项：**纯展示**高亮语言名（记事本式）。

@@ -307,6 +307,8 @@ describe("B71 面板操作补齐（移动标签 / 切焦点 / 右键分屏 / 最
     "\n" +
     readFileSync("src/tabs.ts", "utf-8") +
     "\n" +
+    readFileSync("src/session/session.ts", "utf-8") +
+    "\n" +
     readFileSync("src/doc-model.ts", "utf-8");
   const km = readFileSync("src/shell/keymap.ts", "utf-8");
   const ts = readFileSync("src/shell/tabstrip.ts", "utf-8");
@@ -496,6 +498,8 @@ describe("焦点面板：非活动分屏降亮度（class 实时同步）", () =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
       readFileSync("src/tabs.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/session/session.ts", "utf-8") +
       "\n" +
       readFileSync("src/toc.ts", "utf-8");
     const ui = readFileSync("src/ui.ts", "utf-8");
