@@ -12,6 +12,8 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
   const src =
     readFileSync("src/main.ts", "utf-8") +
     "\n" +
+    readFileSync("src/multiwindow/windows.ts", "utf-8") +
+    "\n" +
     readFileSync("src/io/files.ts", "utf-8") +
     "\n" +
     readFileSync("src/tabs.ts", "utf-8");
@@ -304,10 +306,10 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
     // 样子，而重新打开拿到的是磁盘内容 —— 两份各说各话，正是最怕的状态。
     const body = fnBody("async function doOpen");
     expect(body, "隐藏实例（在别的窗口）要先取回").toMatch(
-      /const remoted = remotedTabs\.get\(existingDoc\.tabId\);\s*\n\s*if \(inst && remoted !== undefined\) \{[\s\S]{0,240}reclaimRemotedRef\(inst\.tabId, host\)/,
+      /const remoted = remotedTabs\.get\(existingDoc\.tabId\);\s*\n\s*if \(inst && remoted !== undefined\) \{[\s\S]{0,240}reclaimRemoted\(inst\.tabId, host\)/,
     );
     expect(body, "取回要走既有的激活收尾（重建/刷新/存会话）").toMatch(
-      /reclaimRemotedRef\(inst\.tabId, host\);[\s\S]{0,240}scheduleSessionSave\(\);/,
+      /reclaimRemoted\(inst\.tabId, host\);[\s\S]{0,240}scheduleSessionSave\(\);/,
     );
   });
 
@@ -380,6 +382,8 @@ describe("卫星窗口静态契约", () => {
     const main =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
+      readFileSync("src/multiwindow/windows.ts", "utf-8") +
+      "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
       readFileSync("src/tabs.ts", "utf-8");
@@ -410,6 +414,8 @@ describe("卫星窗口静态契约", () => {
 describe("B153 卫星窗口：比主窗口简洁，关窗不碰主窗口的收尾", () => {
   const src =
     readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/multiwindow/windows.ts", "utf-8") +
     "\n" +
     readFileSync("src/io/files.ts", "utf-8") +
     "\n" +
@@ -487,6 +493,8 @@ describe("B153 卫星窗口：比主窗口简洁，关窗不碰主窗口的收�
 describe("B153 反向验证：退回旧写法，上面那几条必须变红", () => {
   const src =
     readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/multiwindow/windows.ts", "utf-8") +
     "\n" +
     readFileSync("src/io/files.ts", "utf-8") +
     "\n" +

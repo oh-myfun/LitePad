@@ -232,6 +232,8 @@ describe("B189 跨面板激活：焦点给到目标编辑区（光标恢复）",
     const src = (
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
+      readFileSync("src/multiwindow/windows.ts", "utf-8") +
+      "\n" +
       readFileSync("src/tabs.ts", "utf-8") +
       "\n" +
       readFileSync("src/markdown.ts", "utf-8")
@@ -408,6 +410,8 @@ describe("B126 静态契约：滚动位置必须自己存取", () => {
   const src =
     readFileSync("src/main.ts", "utf-8") +
     "\n" +
+    readFileSync("src/multiwindow/windows.ts", "utf-8") +
+    "\n" +
     readFileSync("src/tabs.ts", "utf-8") +
     "\n" +
     readFileSync("src/sync-scroll.ts", "utf-8") +
@@ -526,6 +530,8 @@ describe("B126 静态契约：滚动位置必须自己存取", () => {
 describe("B181 静态契约：切标签后编辑器必须拿到焦点", () => {
   const raw = (
     readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/multiwindow/windows.ts", "utf-8") +
     "\n" +
     readFileSync("src/tabs.ts", "utf-8") +
     "\n" +

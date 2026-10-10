@@ -258,6 +258,8 @@ describe("B193 静态契约：分组要落盘、失败要兜底", () => {
   const main = (
     readFileSync("src/main.ts", "utf-8") +
     "\n" +
+    readFileSync("src/multiwindow/windows.ts", "utf-8") +
+    "\n" +
     readFileSync("src/session/session.ts", "utf-8")
   ).replace(/\r\n/g, "\n");
   const store = readFileSync("src/session/store.ts", "utf-8").replace(/\r\n/g, "\n");
@@ -280,9 +282,9 @@ describe("B193 静态契约：分组要落盘、失败要兜底", () => {
 
   it("B193 反向验证：摘掉兜底 → 上面那条必须落空", () => {
     const ORIG =
-      "      if (t && t.panelId === -1 && !remotedTabs.has(t.docId)) reclaimRemotedRef(tabId);";
+      "      if (t && t.panelId === -1 && !remotedTabs.has(t.docId)) reclaimRemoted(tabId);";
     expect(main, "退化串要先自证原句还在").toContain(ORIG);
     const degraded = main.replace(ORIG, "");
-    expect(degraded, "退化后不再有收回兜底").not.toMatch(/reclaimRemotedRef\(tabId\)/);
+    expect(degraded, "退化后不再有收回兜底").not.toMatch(/(?<!\w)reclaimRemoted\(tabId\)/);
   });
 });

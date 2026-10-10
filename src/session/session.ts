@@ -8,8 +8,7 @@
 // 只依赖 core/* + ui + doc-model + editor/* + ipc + session/store，对 main.ts 零反向依赖。
 //
 // ⚠️ 过渡期 DI：rebuildDocInstances（→ src/io/，#414）、reclaimRemoted / openTabsInNewWindow
-//    （→ src/multiwindow/，#415）经 installSessionDeps 在启动时注入；
-//    各模块拆出后逐个换成直接 import 并删掉对应 ref。
+//    （→ src/multiwindow/，#415）已随 #414/#415 全部换成直接 import——本模块无 DI。
 
 import {
   MAIN_WINDOW_LABEL,
@@ -71,20 +70,7 @@ import { refreshAll, showMessage } from "../ui";
 import { sessionStore } from "./store";
 import { emitTo } from "@tauri-apps/api/event";
 import { rebuildDocInstances } from "../io/files";
-
-/** 过渡期依赖注入（见文件头注释）。main 在启动时调用一次 installSessionDeps。 */
-export interface SessionDeps {
-  reclaimRemoted(tabId: number): void; // → src/multiwindow/（#415）
-  openTabsInNewWindow(tabIds: number[]): Promise<void>; // → src/multiwindow/（#415）
-}
-
-let reclaimRemotedRef: SessionDeps["reclaimRemoted"] = () => {};
-let openTabsInNewWindowRef: SessionDeps["openTabsInNewWindow"] = async () => {};
-
-export function installSessionDeps(deps: SessionDeps): void {
-  reclaimRemotedRef = deps.reclaimRemoted;
-  openTabsInNewWindowRef = deps.openTabsInNewWindow;
-}
+import { openTabsInNewWindow, reclaimRemoted } from "../multiwindow/windows";
 
 // ---------------------------------------------------------------- 会话 / 自动保存（M2）
 
@@ -715,7 +701,7 @@ async function restoreSatelliteWindows(
 ): Promise<void> {
   for (const g of groups) {
     try {
-      await openTabsInNewWindowRef(g.tabIds);
+      await openTabsInNewWindow(g.tabIds);
     } catch (e) {
       // ⚠️ 必须兜住：这条链上任何一处抛异常都会跳过 `remoteTabLocally`，若不接住，
       // 整批标签就停在隐藏态（不进面板、也不写会话）⇒ 用户的字凭空消失，
@@ -725,7 +711,7 @@ async function restoreSatelliteWindows(
     for (const tabId of g.tabIds) {
       const t = tabs.get(tabId);
       // 还挂在 -1 且没被登记成「已借出」⇒ 窗口没接走 → 收回主窗口
-      if (t && t.panelId === -1 && !remotedTabs.has(t.docId)) reclaimRemotedRef(tabId);
+      if (t && t.panelId === -1 && !remotedTabs.has(t.docId)) reclaimRemoted(tabId);
     }
   }
   rebuildLayout();

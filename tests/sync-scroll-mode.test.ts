@@ -35,6 +35,8 @@ const mdSrc = readFileSync("src/markdown.ts", "utf-8").replace(/\r\n/g, "\n");
 const tocSrc = readFileSync("src/toc.ts", "utf-8").replace(/\r\n/g, "\n");
 // 会话 / 自动保存 / 热退出簇（refreshSession / restoreSession…）已拆到 session/session.ts（解耦第十一步）。
 const sessSrc = readFileSync("src/session/session.ts", "utf-8").replace(/\r\n/g, "\n");
+// 多窗口 / 卫星 / 跨窗口同步簇（applySyncMode…）已拆到 multiwindow/windows.ts（解耦第十四步）。
+const mwSrc = readFileSync("src/multiwindow/windows.ts", "utf-8").replace(/\r\n/g, "\n");
 const main2 = readFileSync("src/sync-scroll.ts", "utf-8").replace(/\r\n/g, "\n");
 const main3 = readFileSync("src/core/app-state.ts", "utf-8").replace(/\r\n/g, "\n");
 const main4 = readFileSync("src/core/viewport.ts", "utf-8").replace(/\r\n/g, "\n");
@@ -833,13 +835,11 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
 // ------------------------------------------------- B159：跨窗口同步滚动
 describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动）", () => {
   const MSG_BODY = main5.slice(main5.indexOf("const EVT_DOC_CHANGE = "));
-  const RECV_BODY = slice(main, "function applySyncMode(", "/** 注册跨窗口同步的监听");
-  const POS_RCV = slice(main, "function applyRemoteSyncPos(", "/** 注册跨窗口同步的监听");
-  const LISTEN = slice(
-    main,
-    "function listenDocSync(",
-    "// ---------------------------------------------------------------- 卫星窗口引导",
-  );
+  const RECV_BODY = slice(mwSrc, "function applySyncMode(", "/** 注册跨窗口同步的监听");
+  const POS_RCV = slice(mwSrc, "function applyRemoteSyncPos(", "/** 注册跨窗口同步的监听");
+  // listenDocSync 已拆到 multiwindow/windows.ts 且是该簇最后一个函数 ——
+  // 终锚「卫星窗口引导」横幅不在同一文件，改用簇尾（文件尾的 export 块）。
+  const LISTEN = slice(mwSrc, "function listenDocSync(", "\nexport {");
 
   it("四条事件常量都要在，且从与文档同步那三兄弟里长出来", () => {
     expect(MSG_BODY, "同步滚动的两条要跟三兄弟放一起").toMatch(/const EVT_SYNC_MODE = /);
@@ -944,7 +944,7 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
     // ⚠️ B251 换锚：单参 `v`（旧写法两个实参，是「跨侧只交整数块首」时期的遗骸）。
     expect(main2, "本地循环要调它").toMatch(/applySyncToSibling\(other, v\);/);
     // ⚠️ 判据放行号：`applySyncToSibling(other,` 被 prettier 折成了三行。
-    expect(main, "接收端也调同一个").toMatch(/applySyncToSibling\(\s*other,/);
+    expect(mwSrc, "接收端也调同一个").toMatch(/applySyncToSibling\(\s*other,/);
   });
 });
 
@@ -1345,7 +1345,7 @@ describe("B169 卫星窗口同步键状态要与主窗口一致", () => {
   });
 
   it("transferSnapshotOf 要把本窗口的开关值写进载荷", () => {
-    const BODY = slice(main, "function transferSnapshotOf(", "function remoteTabLocally(");
+    const BODY = slice(mwSrc, "function transferSnapshotOf(", "function remoteTabLocally(");
     expect(BODY, "要能定位 transferSnapshotOf").toContain("function transferSnapshotOf(");
     expect(BODY, "载荷里要写 syncMode").toMatch(
       /syncMode:\s*docSyncModes\.get\(tab\.docId\) === true/,
@@ -1353,7 +1353,7 @@ describe("B169 卫星窗口同步键状态要与主窗口一致", () => {
   });
 
   it("adoptTransferredTabs 要把收到的 syncMode 接进本窗口状态", () => {
-    const BODY = slice(main, "function adoptTransferredTabs(", "function returnTabsToMain(");
+    const BODY = slice(mwSrc, "function adoptTransferredTabs(", "function returnTabsToMain(");
     expect(BODY, "要能定位 adoptTransferredTabs").toContain("function adoptTransferredTabs(");
     expect(BODY, "收到 on 要把 docSyncModes 置真").toMatch(
       /if \(st\.syncMode\) docSyncModes\.set\(st\.docId, true\);/,
@@ -1362,8 +1362,8 @@ describe("B169 卫星窗口同步键状态要与主窗口一致", () => {
 
   it("B169 反向验证：摘掉采纳时接状态 → 上面那条必须落空", () => {
     const ORIG = "    if (st.syncMode) docSyncModes.set(st.docId, true);";
-    expect(main, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "");
+    expect(mwSrc, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = mwSrc.replace(ORIG, "");
     const BODY = slice(degraded, "function adoptTransferredTabs(", "function returnTabsToMain(");
     expect(BODY, "退化后不再接 syncMode 进本窗口状态").not.toMatch(
       /if \(st\.syncMode\) docSyncModes\.set\(st\.docId, true\);/,
@@ -1888,11 +1888,8 @@ describe("B178 跨窗口多开检测：主/子窗口同步键显隐一致", () =
   });
 
   it("listenDocSync 要装齐四条存在性监听（open/close/resync/window-closed），且回声要丢", () => {
-    const LISTEN = slice(
-      main,
-      "function listenDocSync(",
-      "// ---------------------------------------------------------------- 卫星窗口引导",
-    );
+    // listenDocSync 已拆到 multiwindow/windows.ts（#415）⇒ 终锚改用文件尾 export 块
+    const LISTEN = slice(mwSrc, "function listenDocSync(", "\nexport {");
     expect(LISTEN, "open 监听").toMatch(/listen<DocPresencePayload>\(EVT_DOC_OPEN/);
     expect(LISTEN, "close 监听").toMatch(/listen<DocPresencePayload>\(EVT_DOC_CLOSE_NOTIFY/);
     expect(LISTEN, "resync 监听").toMatch(/listen<\{ from\?: string \}>\(EVT_DOC_OPEN_RESYNC/);

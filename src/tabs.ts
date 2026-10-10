@@ -69,6 +69,12 @@ import { updateTocDrawer } from "./toc";
 import { discardBackupFor, scheduleSessionSave } from "./session/session";
 import { retargetFindBar } from "./find/findbar";
 import { saveDocCore } from "./io/files";
+import {
+  docHeldElsewhere,
+  openTabsInNewWindow,
+  requestSatelliteClose,
+  returnTabToMain,
+} from "./multiwindow/windows";
 import { attachUserScrollClear, isProgrammatic, markProgrammatic } from "./scroll-guard";
 import { closeTab as ipcCloseTab, newTab as ipcNewTab } from "./ipc/api";
 import { invoke } from "@tauri-apps/api/core";
@@ -97,26 +103,14 @@ export interface TabDeps {
   toggleViewMode(target?: Tab): void; // → src/markdown.ts（#410）
   openPreviewToSide(panelId: number): void; // → src/markdown.ts（#410）
   attachPasteHandler(panel: Panel): void; // → src/image-paste/（#416）
-  openTabsInNewWindow(tabIds: number[]): Promise<void>; // → src/multiwindow/（#415）
-  returnTabToMain(tabId: number): void; // → src/multiwindow/（#415）
-  requestSatelliteClose(): void; // → src/multiwindow/（#415）
-  docHeldElsewhere(docId: number, waitMs?: number): Promise<boolean>; // → src/multiwindow/（#415）
   keyHint(id: string): string; // → 随命令/菜单拆分（#416）
 }
 
 let attachPasteHandlerRef: TabDeps["attachPasteHandler"] = () => {};
-let openTabsInNewWindowRef: TabDeps["openTabsInNewWindow"] = async () => {};
-let returnTabToMainRef: TabDeps["returnTabToMain"] = () => {};
-let requestSatelliteCloseRef: TabDeps["requestSatelliteClose"] = () => {};
-let docHeldElsewhereRef: TabDeps["docHeldElsewhere"] = async () => false;
 let keyHintRef: TabDeps["keyHint"] = (id) => id;
 
 export function installTabDeps(deps: TabDeps): void {
   attachPasteHandlerRef = deps.attachPasteHandler;
-  openTabsInNewWindowRef = deps.openTabsInNewWindow;
-  returnTabToMainRef = deps.returnTabToMain;
-  requestSatelliteCloseRef = deps.requestSatelliteClose;
-  docHeldElsewhereRef = deps.docHeldElsewhere;
   keyHintRef = deps.keyHint;
 }
 
@@ -191,8 +185,8 @@ function tabstripCallbacks(p: Panel): TabstripCallbacks {
     onToggleMaximize: countLeaves(layout) > 1 ? () => toggleMaximizePanel(p.panelId) : undefined,
     // B71 ④：把标签交给新窗口。主窗口与卫星窗口都可用 —— 卫星窗口里再开一个窗口，
     // 对用户来说就是「再拎出去一份」，没有理由禁止。
-    onOpenInNewWindow: (tabId) => void openTabsInNewWindowRef([tabId]),
-    onReturnToMain: windowKind === "satellite" ? (tabId) => returnTabToMainRef(tabId) : undefined,
+    onOpenInNewWindow: (tabId) => void openTabsInNewWindow([tabId]),
+    onReturnToMain: windowKind === "satellite" ? (tabId) => returnTabToMain(tabId) : undefined,
     onReorder: (from, to) => {
       const fi = p.tabs.indexOf(from);
       const ti = p.tabs.indexOf(to);
@@ -344,9 +338,8 @@ function rebuildLayout(): void {
     // B71：右键「左右/上下分屏」与双击标签最大化（splitview 首次构建标签栏时也要有）
     onSplitTab: (panelId, tabId, dir) => splitPanelWithTab(panelId, dir, tabId, false, true),
     onToggleMaximizePanel: (panelId) => toggleMaximizePanel(panelId),
-    onOpenTabInNewWindow: (tabId) => void openTabsInNewWindowRef([tabId]),
-    onReturnTabToMain:
-      windowKind === "satellite" ? (tabId) => returnTabToMainRef(tabId) : undefined,
+    onOpenTabInNewWindow: (tabId) => void openTabsInNewWindow([tabId]),
+    onReturnTabToMain: windowKind === "satellite" ? (tabId) => returnTabToMain(tabId) : undefined,
     // B71：拖标签栏空白处 = 拖整组。并入 = 「关掉这个分屏但指定并入目标」
     onMergeGroup: (srcId, targetId) => closePanelById(srcId, targetId),
     onMoveGroupToPanel: (srcId, targetId, dir, newFirst) =>
@@ -774,7 +767,7 @@ async function closeTabById(tabId: number): Promise<void> {
     // 存在」、看起来像「同文件的标签被一起关掉」的原因）。所以先问一圈，有人应答就
     // 只摘本地。单窗口（没有外借、自己也不是卫星）不必问，省掉这 150ms。
     const maybeShared = windowKind === "satellite" || loanedDocIds.has(doc.tabId);
-    const held = maybeShared ? await docHeldElsewhereRef(doc.tabId) : false;
+    const held = maybeShared ? await docHeldElsewhere(doc.tabId) : false;
     if (!held) {
       try {
         await ipcCloseTab(doc.tabId);
@@ -809,7 +802,7 @@ async function closeTabById(tabId: number): Promise<void> {
       // （CloseRequested → registerSatelliteClose → finishSatelliteClose）。
       // B188：关窗即真关，**不把标签交回主窗口**（与点 X 同款口径，见 `requestSatelliteClose`
       // 注释）。没关的文件标签由主窗口那份隐藏实例接着管，未保存内容靠热退出副本兜住。
-      requestSatelliteCloseRef();
+      requestSatelliteClose();
       return;
     }
     if (countLeaves(layout) <= 1) {
@@ -968,7 +961,7 @@ function closePanelById(panelId: number, hostId?: number): void {
     // B161：子窗口**唯一的面板也能关** —— 它没有「并入相邻面板」这条退路，关掉这块
     // 就等于关掉这个窗口。里面还开着的标签**不交回主窗口**（B188：关窗即真关，与点 X
     // 同款口径；文档由主窗口那份隐藏实例接着管，未保存内容靠热退出副本兜住）。
-    requestSatelliteCloseRef();
+    requestSatelliteClose();
     return;
   }
   if (countLeaves(layout) <= 1) return;

@@ -7,8 +7,7 @@
 // 只依赖 core/* + ui + doc-model + tabs + session/session + ipc/api + editor/*，
 // 对 main.ts 零反向依赖。
 //
-// ⚠️ 过渡期 DI：reclaimRemoted（→ src/multiwindow/，#415）经 installIoDeps 在启动时注入；
-//    #415 拆出后换成直接 import 并删掉 ref。
+// reclaimRemoted 已随 #415 换直接 import——本模块无 DI。
 
 import {
   activePanelId,
@@ -69,6 +68,7 @@ import {
   switchTab,
 } from "../tabs";
 import { LOSSY_ABORT, TEXT_FILTERS, refreshAll, showMessage } from "../ui";
+import { reclaimRemoted } from "../multiwindow/windows";
 import {
   applyDiskContent,
   discardBackupFor,
@@ -76,17 +76,6 @@ import {
   scheduleSessionSave,
 } from "../session/session";
 import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-
-/** 过渡期依赖注入（见文件头注释）。main 在启动时调用一次 installIoDeps。 */
-export interface IoDeps {
-  reclaimRemoted(tabId: number, panelId?: number): void; // → src/multiwindow/（#415）
-}
-
-let reclaimRemotedRef: IoDeps["reclaimRemoted"] = () => {};
-
-export function installIoDeps(deps: IoDeps): void {
-  reclaimRemotedRef = deps.reclaimRemoted;
-}
 
 // ---------------------------------------------------------------- 打开 / 保存
 
@@ -185,7 +174,7 @@ async function doOpen(
         const host =
           (targetPanelId !== undefined ? getPanel(targetPanelId) : undefined)?.panelId ??
           activePanelId;
-        reclaimRemotedRef(inst.tabId, host);
+        reclaimRemoted(inst.tabId, host);
         rebuildLayout();
         refreshAll();
         scheduleSessionSave();

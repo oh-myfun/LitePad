@@ -37,7 +37,12 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { topLevelFnBody } from "./static";
 
-const src = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/tabs.ts", "utf-8");
+const src =
+  readFileSync("src/main.ts", "utf-8") +
+  "\n" +
+  readFileSync("src/multiwindow/windows.ts", "utf-8") +
+  "\n" +
+  readFileSync("src/tabs.ts", "utf-8");
 const rust = readFileSync("src-tauri/src/main.rs", "utf-8");
 
 /** 取某个顶层函数的源码体（见 tests/static.ts 的说明）。 */
@@ -137,7 +142,7 @@ describe("B155 / B157 卫星窗口：关掉最后一个文件 / 面板 = 关掉�
     expect(sat, "落点不许交还（returnTabs = true 已废）").not.toMatch(
       /requestSatelliteClose\(true\)/,
     );
-    expect(sat, "落点走不交还的默认档").toMatch(/requestSatelliteCloseRef\(\)/);
+    expect(sat, "落点走不交还的默认档").toMatch(/requestSatelliteClose\(\)/);
     // 反向自证：主窗口那两条兜底还都在（上面的 not.toMatch 不是因为压根没写）
     expect(branch, "主窗口仍要能新建未命名文档").toMatch(/void newUntitled\(\)/);
     expect(branch, "主窗口仍要能移除空分屏区域").toMatch(/disposePanel\(panel\.panelId\)/);
@@ -197,12 +202,12 @@ describe("B161 关标签只关自己这一份：先问一圈，再决定动不�
 
   it("关标签的落点要问「还有没有人拿着」，有人应答就不删 Rust 文档", () => {
     const body = bare("function closeTabById");
-    expect(body, "要先问一圈").toMatch(/docHeldElsewhereRef\(doc\.tabId\)/);
+    expect(body, "要先问一圈").toMatch(/docHeldElsewhere\(doc\.tabId\)/);
     // 判据要能区分「只摘本地」与「连 Rust 一起删」：后者是有条件的
     expect(body, "有人拿着时不许 close_tab").toMatch(/if \(!held\)/);
     expect(body, "该删的时候还是得删（关标签是真关闭）").toMatch(/ipcCloseTab\(doc\.tabId\)/);
     // ⚠️ 顺序：问必须在删之前（等不到应答就删，问了等于没问）
-    const atAsk = body.search(/docHeldElsewhereRef\(doc\.tabId\)/);
+    const atAsk = body.search(/docHeldElsewhere\(doc\.tabId\)/);
     const atClose = body.search(/ipcCloseTab\(doc\.tabId\)/);
     expect(atAsk, "要能定位问那一句").toBeGreaterThan(-1);
     expect(atClose, "要能定位删那一句").toBeGreaterThan(-1);
@@ -267,7 +272,7 @@ describe("B161 子窗口可以关掉唯一的面板（= 关窗，不交回主窗
     expect(body, "落点不许交还（returnTabs = true 已废）").not.toMatch(
       /requestSatelliteClose\(true\)/,
     );
-    expect(body, "落点走不交还的默认档").toMatch(/requestSatelliteCloseRef\(\)/);
+    expect(body, "落点走不交还的默认档").toMatch(/requestSatelliteClose\(\)/);
     // ⚠️ 顺序：卫星那一档必须排在「唯一面板 → 直接 return」之前，反了就永远够不到
     const atSat = body.search(/windowKind === "satellite"/);
     const atBail = body.search(/if \(countLeaves\(layout\) <= 1\) return;/);
