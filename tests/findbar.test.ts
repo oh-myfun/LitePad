@@ -598,6 +598,8 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     const src =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
+      readFileSync("src/find/findbar.ts", "utf-8") +
+      "\n" +
       readFileSync("src/tabs.ts", "utf-8") +
       "\n" +
       readFileSync("src/markdown.ts", "utf-8");
@@ -605,8 +607,8 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     // 切换标签（switchTab）与切换活动面板都要重新把查询应用到新视图，而不是关闭浮层
     expect(src, "切换标签后必须重新定位查找查询").toContain("retargetFindBar()");
     const switchBody = src.match(/function switchTab\([\s\S]*?\n\}/)?.[0] ?? "";
-    // 过渡期 DI：switchTab 里的调用点带 Ref 后缀（tabs.ts 的 TabDeps）
-    expect(switchBody, "switchTab 末尾必须调 retargetFindBar").toContain("retargetFindBarRef()");
+    // retargetFindBar 已拆到 find/findbar.ts（#413）⇒ tabs.ts 直接 import，调用点是直接名
+    expect(switchBody, "switchTab 末尾必须调 retargetFindBar").toContain("retargetFindBar()");
     const barSrc = readFileSync("src/shell/findbar.ts", "utf-8");
     expect(barSrc, "查找栏不得自行监听标签切换而关闭").not.toContain("switchTab");
     expect(barSrc, "关闭只应由 close/Esc/× 触发").toContain("function close(): void");
@@ -628,6 +630,8 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     const main =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
+      readFileSync("src/find/findbar.ts", "utf-8") +
+      "\n" +
       readFileSync("src/tabs.ts", "utf-8") +
       "\n" +
       readFileSync("src/markdown.ts", "utf-8");
@@ -639,7 +643,7 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     expect(rmStart, "应能定位 renderMarkdownFor").toBeGreaterThan(-1);
     const rmBody = main.slice(rmStart, main.indexOf("\nfunction ", rmStart + 10));
     expect(rmBody, "重渲染后必须重放预览高亮").toContain(
-      "applyPreviewFindToPanelRef(panel, findSpecOfRef(fb.getQuery()))",
+      "applyPreviewFindToPanel(panel, findSpecOf(fb.getQuery()))",
     );
     expect(main, "clearFindHighlight 必须同时清预览高亮").toMatch(
       /clearFindHighlight[\s\S]{0,200}?applyFind\(null\)/,
@@ -668,6 +672,8 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
 
     const main =
       readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/find/findbar.ts", "utf-8") +
       "\n" +
       readFileSync("src/tabs.ts", "utf-8") +
       "\n" +
@@ -725,6 +731,8 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     const main =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
+      readFileSync("src/find/findbar.ts", "utf-8") +
+      "\n" +
       readFileSync("src/tabs.ts", "utf-8") +
       "\n" +
       readFileSync("src/markdown.ts", "utf-8");
@@ -743,6 +751,8 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
     const main =
       readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/find/findbar.ts", "utf-8") +
       "\n" +
       readFileSync("src/tabs.ts", "utf-8") +
       "\n" +
@@ -1137,6 +1147,8 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     const bar = readFileSync("src/shell/findbar.ts", "utf-8");
     const main =
       readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/find/findbar.ts", "utf-8") +
       "\n" +
       readFileSync("src/tabs.ts", "utf-8") +
       "\n" +

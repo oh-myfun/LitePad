@@ -376,9 +376,9 @@ describe("B71 面板操作补齐（移动标签 / 切焦点 / 右键分屏 / 最
       "markActivePanel(next);",
       "refreshTitle();",
       "refreshStatus();",
-      // retargetFindBar 是过渡期 DI（tabs.ts 的 TabDeps）；updateTocDrawer 已拆到 toc.ts（#411）⇒ 直接名
+      // updateTocDrawer（#411 → toc.ts）/ retargetFindBar（#413 → find/findbar.ts）均已拆出 ⇒ 直接名
       "updateTocDrawer();",
-      "retargetFindBarRef();",
+      "retargetFindBar();",
     ]) {
       expect(body, `focusPanelByDelta 缺 ${call}`).toContain(call);
     }

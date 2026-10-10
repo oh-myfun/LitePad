@@ -6,9 +6,7 @@
 // 只依赖 core/* + sync-scroll + ui + shell/* + doc-model + editor/* + markdown/preview，
 // 对 main.ts 零反向依赖。
 //
-// ⚠️ 过渡期 DI：本模块会调用尚未拆出的下游模块函数（session / find / toc），
-//    经 installMarkdownDeps 在启动时注入（MarkdownDeps）。
-//    等 #411–#413 各模块拆出后，逐个换成直接 import 并删掉对应 ref —— 注释里标了去向。
+// session（#412）/ find（#413）/ toc（#411）拆出后已全部换成直接 import——本模块无 DI。
 
 import {
   activePanelId,
@@ -43,32 +41,9 @@ import { rightNeighborOf } from "./shell/layout";
 import { renderPanelOps, renderPanelTabs, splitPanelWithTab, switchTab } from "./tabs";
 import { updateTocDrawer } from "./toc";
 import { scheduleSessionSave } from "./session/session";
-import type { FindBarQuery, FindBarHandle } from "./shell/findbar";
-
-/** 预览侧查找规格（M5 预览查找用；#413 find 拆出后归 find 模块）。 */
-export type PreviewFindSpec = {
-  text: string;
-  caseSensitive: boolean;
-  wholeWord: boolean;
-  regexp: boolean;
-} | null;
-
-/** 过渡期依赖注入（见文件头注释）。main 在启动时调用一次 installMarkdownDeps。 */
-export interface MarkdownDeps {
-  findSpecOf(q: FindBarQuery): PreviewFindSpec; // → src/find/（#413）
-  applyPreviewFindToPanel(p: Panel, spec: PreviewFindSpec): void; // → src/find/（#413）
-  getFindBar(): FindBarHandle | null; // → src/find/（#413，过渡期 getter）
-}
-
-let findSpecOfRef: MarkdownDeps["findSpecOf"] = () => null;
-let applyPreviewFindToPanelRef: MarkdownDeps["applyPreviewFindToPanel"] = () => {};
-let getFindBarRef: MarkdownDeps["getFindBar"] = () => null;
-
-export function installMarkdownDeps(deps: MarkdownDeps): void {
-  findSpecOfRef = deps.findSpecOf;
-  applyPreviewFindToPanelRef = deps.applyPreviewFindToPanel;
-  getFindBarRef = deps.getFindBar;
-}
+// #413 find 拆出 ⇒ MarkdownDeps 全清，预览查找桥改直接 import（find/findbar 反向只取本模块的
+// PreviewFindSpec 类型——等等，类型已归 find/findbar，这里只取值，无类型回边）
+import { applyPreviewFindToPanel, findSpecOf, getFindBar } from "./find/findbar";
 
 // ---------------------------------------------------------------- Markdown 预览（M3）
 
@@ -137,8 +112,8 @@ function renderMarkdownFor(panel: Panel, force = false): void {
 
   preview.setBlocks(renderBlocks(tab.state.doc.toString()));
   // 重渲染重建了 block DOM，查找高亮随之丢失——重放当前查询（B30）
-  const fb = getFindBarRef();
-  if (fb?.isOpen()) applyPreviewFindToPanelRef(panel, findSpecOfRef(fb.getQuery()));
+  const fb = getFindBar();
+  if (fb?.isOpen()) applyPreviewFindToPanel(panel, findSpecOf(fb.getQuery()));
 }
 
 function scheduleMdRender(panelId: number): void {

@@ -67,6 +67,7 @@ import {
 import { applyPanelMode, openPreviewToSide, toggleViewMode } from "./markdown";
 import { updateTocDrawer } from "./toc";
 import { discardBackupFor, scheduleSessionSave } from "./session/session";
+import { retargetFindBar } from "./find/findbar";
 import { attachUserScrollClear, isProgrammatic, markProgrammatic } from "./scroll-guard";
 import { closeTab as ipcCloseTab, newTab as ipcNewTab } from "./ipc/api";
 import { invoke } from "@tauri-apps/api/core";
@@ -91,7 +92,6 @@ import {
 
 /** 过渡期依赖注入（见文件头注释）。main 在启动时调用一次 installTabDeps。 */
 export interface TabDeps {
-  retargetFindBar(): void; // → src/find/（#413）
   applyPanelMode(panel: Panel): void; // → src/markdown.ts（#410）
   toggleViewMode(target?: Tab): void; // → src/markdown.ts（#410）
   openPreviewToSide(panelId: number): void; // → src/markdown.ts（#410）
@@ -104,7 +104,6 @@ export interface TabDeps {
   keyHint(id: string): string; // → 随命令/菜单拆分（#416）
 }
 
-let retargetFindBarRef: TabDeps["retargetFindBar"] = () => {};
 let attachPasteHandlerRef: TabDeps["attachPasteHandler"] = () => {};
 let openTabsInNewWindowRef: TabDeps["openTabsInNewWindow"] = async () => {};
 let returnTabToMainRef: TabDeps["returnTabToMain"] = () => {};
@@ -114,7 +113,6 @@ let docHeldElsewhereRef: TabDeps["docHeldElsewhere"] = async () => false;
 let keyHintRef: TabDeps["keyHint"] = (id) => id;
 
 export function installTabDeps(deps: TabDeps): void {
-  retargetFindBarRef = deps.retargetFindBar;
   attachPasteHandlerRef = deps.attachPasteHandler;
   openTabsInNewWindowRef = deps.openTabsInNewWindow;
   returnTabToMainRef = deps.returnTabToMain;
@@ -310,7 +308,7 @@ function rebuildLayout(): void {
         activatedView.focus();
         setTimeout(() => activatedView.focus(), 0);
       }
-      retargetFindBarRef();
+      retargetFindBar();
     },
     onActivateTab: (panelId, tabId) => switchTab(panelId, tabId),
     onCloseTab: (tabId) => void closeTabById(tabId),
@@ -674,7 +672,7 @@ function switchTab(panelId: number, tabId: number): void {
   // B224：该面板活动标签 md 与否可能变了（md ↔ 非 md 切换），操作区跟着刷一遍
   renderPanelOps(panelId);
   // 悬浮查找栏不随标签切换关闭——只把查询重新应用到新的活动视图
-  retargetFindBarRef();
+  retargetFindBar();
   // B182（续）：左键 mousedown 不再拦默认焦点（那会连带废掉原生拖拽，标签拖不动），
   // 改为切完标签后**延迟一拍**再补一次焦点。WebView2 在整次手势结束后会把焦点重新定到
   // body（CM6 的 10ms 失焦兜底随之摘掉 `cm-focused`，光标一闪而过）；这里在切标签的焦点
@@ -1126,7 +1124,7 @@ function focusPanelByDelta(delta: number): void {
   refreshStatus();
   updateTocDrawer();
   panels.get(next)?.view?.focus();
-  retargetFindBarRef();
+  retargetFindBar();
 }
 
 // ---------------------------------------------------------------- 面板最大化（B71）
