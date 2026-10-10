@@ -10,7 +10,14 @@
 // 所以这里逐条钉住：配置、HTML 结构、样式、权限、接线，缺一根都算红。
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { stripCssComments, ruleBlock, pngAlpha, topLevelFnBody } from "./static";
+import {
+  alphaGrid,
+  gridDiff,
+  pngAlpha,
+  ruleBlock,
+  stripCssComments,
+  topLevelFnBody,
+} from "./static";
 
 const tauriConf = (): string => readFileSync("src-tauri/tauri.conf.json", "utf-8");
 const indexHtml = (): string => readFileSync("index.html", "utf-8");
@@ -261,8 +268,10 @@ describe("B97 自建标题栏", () => {
     expect(src, "标题栏那颗必须有 import 落点").toBeTruthy();
     expect(src![1], "标题栏那颗必须挂 app-mark.png").toBe("app-mark.png");
 
-    // B222 用户拍定标题栏也用带底版（羽毛图自带深色圆角方底）：
-    // 四边中点必须**不透明**（无底版时代这里断言的是 alpha=0，方向整个反过来）
+    // ⚠️ B222 的**带底版**判据（四边中点 alpha=255）已随源图换版作废：
+    //    现行源图 docs/LitePad.png 是**无底的内缩图形**（四周透明留白，图形只占中间约
+    //    341×376/512）。所以形态判据方向反过来 —— 四边中点**应当透明**；
+    //    而「同源性」改用形状指纹钉：标题栏这颗必须与源图、与打包图同形。
     const alpha = pngAlpha(readFileSync(`src-tauri/icons/${src![1]}`));
     const mid = (a: number, b: number) => Math.floor((a + b) / 2);
     for (const [x, y, where] of [
@@ -271,16 +280,21 @@ describe("B97 自建标题栏", () => {
       [2, mid(0, alpha.height - 1), "左边中点"],
       [alpha.width - 3, mid(0, alpha.height - 1), "右边中点"],
     ] as [number, number, string][]) {
-      expect(alpha.at(x, y), `${where}必须不透明（带底版；全透明说明退回了无底版）`).toBe(255);
+      expect(alpha.at(x, y), `${where}应当透明（无底版；不透明说明塞回了带底旧图）`).toBe(0);
     }
     expect(alpha.hasInk, "全透明就是图没画上 / 脚本没出图").toBe(true);
-    // 对照组：打包图同四个点也必须不透明 —— 这条是解码器自己的反向闸：
-    // 万一 pngAlpha 恒返回 255，上面的断言永远绿，有这一条才炸得出来。
-    // （两版都带底，方向一致；恒 255 的假解码器靠 hasInk 与七档断言兜底。）
+    // 同源闸门（这条才是防回归的正主）：标题栏这颗 = 源图直出 = 打包图标同形。
+    // 换源图后三者一起变；手画一张丢进来 / 旧自绘残留 ⇒ 指纹对不上，立刻红。
+    const source = pngAlpha(readFileSync("docs/LitePad.png"));
     const packed = pngAlpha(readFileSync("src-tauri/icons/128x128.png"));
-    const mid2 = (a: number, b: number) => Math.floor((a + b) / 2);
-    expect(packed.at(mid2(0, packed.width - 1), 2), "对照组上边中点应当不透明").toBeGreaterThan(0);
-    expect(packed.at(2, mid2(0, packed.height - 1)), "对照组左边中点应当不透明").toBeGreaterThan(0);
+    expect(
+      gridDiff(alphaGrid(alpha), alphaGrid(source)),
+      "标题栏那颗必须与源图同形（不是别处画的那张）",
+    ).toBeLessThan(32);
+    expect(
+      gridDiff(alphaGrid(alpha), alphaGrid(packed)),
+      "标题栏那颗与打包图标同源（B222：与打包图标同源）",
+    ).toBeLessThan(32);
   });
 
   it("B220：标题栏 gap 16px，且四键之间的抵消量必须同取这一颗变量", () => {

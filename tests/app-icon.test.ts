@@ -1,7 +1,15 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { readFileSync, statSync } from "node:fs";
-import { edgeEnergy, icoEntries, pngAlpha, pyFnBody, readJson } from "./static";
+import {
+  alphaGrid,
+  edgeEnergy,
+  gridDiff,
+  icoEntries,
+  pngAlpha,
+  pyFnBody,
+  readJson,
+} from "./static";
 
 describe("应用图标（矢量自绘，四角一致）", () => {
   it("B25/B34 应用图标四角圆角必须一致（矢量自绘，非镜像修角）", () => {
@@ -223,10 +231,17 @@ describe("应用图标（矢量自绘，四角一致）", () => {
     // 源图本体必须入库（脚本可复现的前提）
     expect(statSync("docs/LitePad.png").size, "源图必须入库，否则脚本跑不起来").toBeGreaterThan(0);
 
-    // 产物侧：标题栏那颗必须真的是源图缩出来的（带底），而不是旧自绘图残留在盘上。
-    // 判据：app-mark 与 128x128.png 同为源图直出 —— 四边中点都应落在深色底内（非透明）。
-    // （结构性的七档 / 第一档断言在上面 B221 两条里，这里不重复。）
+    // 产物侧：标题栏那颗必须真的是**源图缩出来的**，而不是旧自绘图残留在盘上。
+    // ⚠️ B222 之后源图是无底的内缩图形（四周透明留白，见 docs/LitePad.png）——
+    //    原来那条「四边中点 alpha=255（带底）」判据对新图永远红，且它判的是**配色方案**
+    //    不是**同源性**。真正要防的回归是「app-mark 没跟随源图」，
+    //    所以改用形状指纹：app-mark 必须与 docs/LitePad.png 同形。
     const mark = pngAlpha(readFileSync("src-tauri/icons/app-mark.png"));
-    expect(mark.at(2, Math.floor(mark.height / 2)), "app-mark 左边中点应是带底的").toBe(255);
+    expect(mark.hasInk, "空图就是脚本没出图").toBe(true);
+    const source = pngAlpha(readFileSync("docs/LitePad.png"));
+    expect(
+      gridDiff(alphaGrid(mark), alphaGrid(source)),
+      "app-mark 必须是源图直出（形状指纹要与 docs/LitePad.png 一致）",
+    ).toBeLessThan(32);
   });
 });

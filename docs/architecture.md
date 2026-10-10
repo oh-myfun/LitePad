@@ -22,7 +22,7 @@
 | 外壳/UI   | `src/shell/`（main / menubar / tooltip / zoom / preferencesdialog / keymap / keymapdialog / splitview / tabstrip）、`src/appearance.ts`（外观 setter 集合）、`src/encoding.ts`（编码菜单纯函数叶子）、`src/doc-model.ts`（文档/标签/实例纯模型操作 + 工厂）、`src/ui.ts`（启动计时 / DOM 句柄 / 基础访问 / 状态呈现服务簇）、`src/tabs.ts`（标签/面板/布局操作 + 标签栏渲染）、`src/markdown.ts`（Markdown 预览：视图模式切换 / 渲染调度 / 视图模式按钮）、`src/toc.ts`（大纲 TOC 抽屉 + 侧栏可见性/宽度） | 菜单、标题栏与窗口控制、提示、缩放、设置、快捷键、布局、标签栏、主题/字号/字体/预览宽度、编码菜单、文档模型、状态呈现、标签与面板操作、Markdown 预览、大纲与侧栏 |
 | 预览      | `src/editor/preview/`                                                                                              | Markdown 渲染与预览内查找                                      |
 | 窗口      | `src-tauri/src/windows.rs`；`src/multiwindow/windows.ts`（标签搬出/回收、拖拽出窗、跨窗口同源同步）                  | 主窗口 + 卫星窗口（多窗口）                                    |
-| 构建/打包 | `src-tauri/tauri.conf.json`、`build.rs`、`scripts/release.sh`                                                      | 版本、图标、NSIS                                               |
+| 构建/打包 | `src-tauri/tauri.conf.json`、`build.rs`、`scripts/release.sh`、`scripts/make_icons.py`（图标产物链，源图 = `docs/LitePad.png`） | 版本、图标、NSIS                                               |
 
 ## 各关注点一句话
 
@@ -89,3 +89,12 @@
 - 每次编译产出发布版本：`tsc → vite → vitest → cargo build+test → tauri build`，
   质量门 = `.githooks`（pre-commit: prettier/eslint/tsc/cargo fmt；pre-push: vitest/cargo test）+ GitHub `CI`。
 - 发布只由 `v*` tag 触发（`git push origin main --follow-tags`）。最新发布 **v0.11.0**。
+
+- **图标（B222 起采用源图方案）**：真相在 `docs/LitePad.png`（512×512 RGBA）。换图标 = 换这张图，再跑
+  `C:/Users/maoyu/.workbuddy/binaries/python/envs/default/Scripts/python.exe scripts/make_icons.py`
+  —— 脚本**只做缩放与格式转换**（不重绘、不加底），9 件产物落在 `src-tauri/icons/`。
+  ⚠️ 现行源图是**无底的内缩图形**（不透明区约 (117,66)–(458,443)，四边中点透明），
+  所以 B222 的「app-mark 四边中点 alpha=255（带底版）」判据已作废，改为
+  「四边中点**应当透明** + 与源图/打包图标**形状指纹同源**」（`tests/static.ts` 的
+  `alphaGrid`/`gridDiff`）。产物换版后必须重新 `build-all` 才会嵌进 exe/setup ——
+  `scripts/icon_check.py` 报「图标不一致」通常就是这一步没做。

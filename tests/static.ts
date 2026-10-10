@@ -309,6 +309,41 @@ export interface PngAlpha {
   hasInk: boolean;
 }
 
+/**
+ * 归一化网格上的 alpha 指纹（每格取块平均）。
+ *
+ * 用来判「两张图是否**同一张母版**缩出来的」：规格不同也能比（512 vs 256 都行），
+ * 抗锯齿的抖动被块平均吃掉。B222 之后源图是无底的内缩图形（四周透明留白），
+ * 靠单点采样（四边中点）判形态已经不成立 —— 形状指纹才是能跟着源图走的判据。
+ */
+export function alphaGrid(p: PngAlpha, n = 8): number[] {
+  const out: number[] = [];
+  for (let gy = 0; gy < n; gy += 1) {
+    for (let gx = 0; gx < n; gx += 1) {
+      const x0 = Math.floor((gx * p.width) / n);
+      const x1 = Math.max(x0 + 1, Math.floor(((gx + 1) * p.width) / n));
+      const y0 = Math.floor((gy * p.height) / n);
+      const y1 = Math.max(y0 + 1, Math.floor(((gy + 1) * p.height) / n));
+      let sum = 0;
+      let cnt = 0;
+      for (let y = y0; y < y1; y += 1) {
+        for (let x = x0; x < x1; x += 1) {
+          sum += p.at(x, y);
+          cnt += 1;
+        }
+      }
+      out.push(Math.round(sum / cnt));
+    }
+  }
+  return out;
+}
+
+/** 两条指纹的最大逐格差值（同源直出应当很小）。 */
+export function gridDiff(a: number[], b: number[]): number {
+  if (a.length !== b.length) throw new Error("指纹长度不一致");
+  return Math.max(...a.map((v, i) => Math.abs(v - b[i])));
+}
+
 export function pngAlpha(file: Buffer): PngAlpha {
   const buf = Buffer.from(file);
   let width = 0;
