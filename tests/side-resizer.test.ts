@@ -342,7 +342,7 @@ describe("大纲（TOC）静态契约", () => {
     const html = readFileSync("index.html", "utf-8");
     expect(html, "index.html 必须有 #side-resizer 分隔条").toContain('id="side-resizer"');
 
-    const src = readFileSync("src/main.ts", "utf-8");
+    const src = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/toc.ts", "utf-8");
     expect(src, "bootstrap 必须挂载大纲分隔条").toContain("setupSideResizer()");
     expect(src, "挂载必须走 attachSideResizer").toContain("attachSideResizer(");
     // B194：显隐已收敛进 `setSideOpen`（开合 + 回写设置一处收口）—— 断言盯
@@ -381,7 +381,11 @@ describe("大纲（TOC）静态契约", () => {
 // 逻辑那一半锁在 tests/side-resizer.test.ts 的「B207 拖到最小再往左拖」；这里锁**接线**
 // 与**可视性** —— 「收起后缝还看得见、还抓得住」是 CSS 那一半，一起才闭环。
 describe("B207 拖到最小再往左拖：接线与可视性契约", () => {
-  const src = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
+  const src = (
+    readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/toc.ts", "utf-8")
+  ).replace(/\r\n/g, "\n");
   const preview = readFileSync("src/styles/preview.css", "utf-8").replace(/\r\n/g, "\n");
 
   it("分隔条要接到 setSideOpen（拖分隔条与点大纲键同一条路）", () => {
@@ -439,7 +443,11 @@ describe("B207 拖到最小再往左拖：接线与可视性契约", () => {
 // 用户诉求：「大纲打开状态也要支持恢复」。存 settings.json（与 toc_width 同处）——
 // 它是窗口级外观状态，不属于某份文档，所以不进会话文件。
 describe("B194 大纲开合状态：切一次要落盘、启动要回放", () => {
-  const src = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
+  const src = (
+    readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/toc.ts", "utf-8")
+  ).replace(/\r\n/g, "\n");
   const api = readFileSync("src/ipc/api.ts", "utf-8").replace(/\r\n/g, "\n");
   const rs = readFileSync("src-tauri/src/session/mod.rs", "utf-8").replace(/\r\n/g, "\n");
 
@@ -492,7 +500,11 @@ describe("B212 命名：左栏的宽度与收放不挂大纲前缀", () => {
   const html = readFileSync("index.html", "utf-8").replace(/\r\n/g, "\n");
   const preview = readFileSync("src/styles/preview.css", "utf-8").replace(/\r\n/g, "\n");
   const globalCss = readFileSync("src/styles/global.css", "utf-8").replace(/\r\n/g, "\n");
-  const src = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
+  const src = (
+    readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/toc.ts", "utf-8")
+  ).replace(/\r\n/g, "\n");
   const toc = readFileSync("src/markdown/toc.ts", "utf-8").replace(/\r\n/g, "\n");
 
   it("样式表与 index.html 不许再出现旧的大纲分割线选择器", () => {

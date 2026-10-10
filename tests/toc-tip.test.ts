@@ -17,7 +17,9 @@ import type { TocEntry } from "../src/markdown/pipeline";
 
 const TOC = stripLineComments(readFileSync("src/markdown/toc.ts", "utf-8"));
 const TABSTRIP = stripLineComments(readFileSync("src/shell/tabstrip.ts", "utf-8"));
-const MAIN = stripLineComments(readFileSync("src/main.ts", "utf-8"));
+const MAIN = stripLineComments(
+  readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/toc.ts", "utf-8"),
+);
 
 /** 抠出某次 `setTip(<firstArg>, …)` 的完整调用（容 prettier 折行）。 */
 function call(file: string, firstArg: string): string {

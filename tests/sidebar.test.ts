@@ -15,7 +15,9 @@ const preview = readFileSync("src/styles/preview.css", "utf-8").replace(/\r\n/g,
 const src = (
   readFileSync("src/main.ts", "utf-8") +
   "\n" +
-  readFileSync("src/ui.ts", "utf-8")
+  readFileSync("src/ui.ts", "utf-8") +
+  "\n" +
+  readFileSync("src/toc.ts", "utf-8")
 ).replace(/\r\n/g, "\n");
 const icons = readFileSync("src/shell/codicons.ts", "utf-8").replace(/\r\n/g, "\n");
 

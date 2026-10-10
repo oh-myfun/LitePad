@@ -45,7 +45,7 @@ describe("B205/B209 大纲标题栏：顶部「大纲」字样 + 全量折叠/�
   });
 
   it("合并键的字形/文案/按下态四处同源，切换走 CODICONS（不写死 codicon id）", () => {
-    const main = readFileSync("src/main.ts", "utf-8");
+    const main = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/toc.ts", "utf-8");
     const refresh = main.match(/function refreshTocToggleAll\(\)[\s\S]*?\n\}/)?.[0] ?? "";
     expect(refresh, "要能定位 refreshTocToggleAll（四处同源的收口）").toBeTruthy();
     // 字形按当前态在两颗之间切，且都从 CODICONS 取
@@ -435,7 +435,7 @@ describe("B214：手动折叠 / 展开后，顶部那颗全量键要跟着变", 
   });
 
   it("接线契约：折叠一变就报给刷按钮那个函数，出口只有 applyFold 一处", () => {
-    const main = readFileSync("src/main.ts", "utf-8");
+    const main = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/toc.ts", "utf-8");
     expect(main, "建表时就把刷按钮的函数交出去").toMatch(
       /createTocList\(tocList,\s*refreshTocToggleAll\)/,
     );

@@ -41,6 +41,7 @@ import { perfProfileFor } from "./editor/perf";
 import { renderBlocks } from "./markdown/pipeline";
 import { rightNeighborOf } from "./shell/layout";
 import { renderPanelOps, renderPanelTabs, splitPanelWithTab, switchTab } from "./tabs";
+import { updateTocDrawer } from "./toc";
 import type { FindBarQuery, FindBarHandle } from "./shell/findbar";
 
 /** 预览侧查找规格（M5 预览查找用；#413 find 拆出后归 find 模块）。 */
@@ -56,21 +57,18 @@ export interface MarkdownDeps {
   scheduleSessionSave(): void; // → src/session/（#412）
   findSpecOf(q: FindBarQuery): PreviewFindSpec; // → src/find/（#413）
   applyPreviewFindToPanel(p: Panel, spec: PreviewFindSpec): void; // → src/find/（#413）
-  updateTocDrawer(): void; // → src/toc.ts（#411）
   getFindBar(): FindBarHandle | null; // → src/find/（#413，过渡期 getter）
 }
 
 let scheduleSessionSaveRef: MarkdownDeps["scheduleSessionSave"] = () => {};
 let findSpecOfRef: MarkdownDeps["findSpecOf"] = () => null;
 let applyPreviewFindToPanelRef: MarkdownDeps["applyPreviewFindToPanel"] = () => {};
-let updateTocDrawerRef: MarkdownDeps["updateTocDrawer"] = () => {};
 let getFindBarRef: MarkdownDeps["getFindBar"] = () => null;
 
 export function installMarkdownDeps(deps: MarkdownDeps): void {
   scheduleSessionSaveRef = deps.scheduleSessionSave;
   findSpecOfRef = deps.findSpecOf;
   applyPreviewFindToPanelRef = deps.applyPreviewFindToPanel;
-  updateTocDrawerRef = deps.updateTocDrawer;
   getFindBarRef = deps.getFindBar;
 }
 
@@ -152,7 +150,7 @@ function scheduleMdRender(panelId: number): void {
   panel.previewTimer = setTimeout(() => {
     panel.previewTimer = null;
     renderMarkdownFor(panel);
-    if (panel.panelId === activePanelId && !tocPanel.hidden) updateTocDrawerRef();
+    if (panel.panelId === activePanelId && !tocPanel.hidden) updateTocDrawer();
   }, 120) as unknown as number;
 }
 

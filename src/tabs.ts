@@ -65,6 +65,7 @@ import {
   panelIdsInOrder,
 } from "./doc-model";
 import { applyPanelMode, openPreviewToSide, toggleViewMode } from "./markdown";
+import { updateTocDrawer } from "./toc";
 import { attachUserScrollClear, isProgrammatic, markProgrammatic } from "./scroll-guard";
 import { closeTab as ipcCloseTab, newTab as ipcNewTab } from "./ipc/api";
 import { invoke } from "@tauri-apps/api/core";
@@ -90,7 +91,6 @@ import {
 /** 过渡期依赖注入（见文件头注释）。main 在启动时调用一次 installTabDeps。 */
 export interface TabDeps {
   scheduleSessionSave(): void; // → src/session/（#412）
-  updateTocDrawer(): void; // → src/toc.ts（#411）
   retargetFindBar(): void; // → src/find/（#413）
   applyPanelMode(panel: Panel): void; // → src/markdown.ts（#410）
   toggleViewMode(target?: Tab): void; // → src/markdown.ts（#410）
@@ -106,7 +106,6 @@ export interface TabDeps {
 }
 
 let scheduleSessionSaveRef: TabDeps["scheduleSessionSave"] = () => {};
-let updateTocDrawerRef: TabDeps["updateTocDrawer"] = () => {};
 let retargetFindBarRef: TabDeps["retargetFindBar"] = () => {};
 let attachPasteHandlerRef: TabDeps["attachPasteHandler"] = () => {};
 let openTabsInNewWindowRef: TabDeps["openTabsInNewWindow"] = async () => {};
@@ -119,7 +118,6 @@ let keyHintRef: TabDeps["keyHint"] = (id) => id;
 
 export function installTabDeps(deps: TabDeps): void {
   scheduleSessionSaveRef = deps.scheduleSessionSave;
-  updateTocDrawerRef = deps.updateTocDrawer;
   retargetFindBarRef = deps.retargetFindBar;
   attachPasteHandlerRef = deps.attachPasteHandler;
   openTabsInNewWindowRef = deps.openTabsInNewWindow;
@@ -300,14 +298,14 @@ function rebuildLayout(): void {
         // 幂等兜底（B33）：即使面板没变也要刷大纲——桌面实测存在
         // activePanelId 已是目标面板但大纲仍残留上一份文档的路径，
         // 早退会跳过清空。updateTocDrawer 幂等且开销小。
-        updateTocDrawerRef();
+        updateTocDrawer();
         return;
       }
       refreshTitle();
       refreshStatus();
       // 大纲跟随**活动面板**的活动文档：分屏下点另一块面板（文本 ↔ md）若不刷新，
       // 大纲会一直停在上一份 md 的大纲上（B23）。这里不重绘标签条（会吞掉 click）。
-      updateTocDrawerRef();
+      updateTocDrawer();
       // B189：跨面板激活要把焦点给到目标面板的编辑区（用户原话「切激活标签只要把焦点
       // 给到对应编辑区就行」）。只 focus 一次不够：WebView2 在整次鼠标手势结束时会把焦点
       // 重新定到 body（同 B183 切标签那条），不延迟一拍补回、`cm-focused` 就被失焦兜底摘掉、
@@ -645,7 +643,7 @@ function switchTab(panelId: number, tabId: number): void {
   if (panelId === activePanelId) {
     refreshTitle();
     refreshStatus();
-    updateTocDrawerRef();
+    updateTocDrawer();
     // B152：切到新激活的那份之后，兄弟立刻按**新的源**对齐一次 —— 用户说得很明确：
     // 「切换激活文档时则根据新的激活文档进行同步」。同步状态本身不动（按钮不复位）。
     // 排在 refreshTitle 之后：显隐与点亮态在这一帧已经就绪。
@@ -868,7 +866,7 @@ async function closeTabById(tabId: number): Promise<void> {
   if (panel.panelId === activePanelId) {
     refreshTitle();
     refreshStatus();
-    updateTocDrawerRef();
+    updateTocDrawer();
   }
   renderPanelTabs(panel.panelId);
   scheduleSessionSaveRef();
@@ -1131,7 +1129,7 @@ function focusPanelByDelta(delta: number): void {
   markActivePanel(next);
   refreshTitle();
   refreshStatus();
-  updateTocDrawerRef();
+  updateTocDrawer();
   panels.get(next)?.view?.focus();
   retargetFindBarRef();
 }

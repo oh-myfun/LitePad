@@ -31,6 +31,8 @@ const main = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
 const tabsSrc = readFileSync("src/tabs.ts", "utf-8").replace(/\r\n/g, "\n");
 // Markdown 预览簇（toggleViewMode / openPreviewToSide / applyPanelMode…）已拆到 markdown.ts（解耦第九步）。
 const mdSrc = readFileSync("src/markdown.ts", "utf-8").replace(/\r\n/g, "\n");
+// 大纲 TOC / 侧栏簇（updateTocDrawer…）已拆到 toc.ts（解耦第十步）。
+const tocSrc = readFileSync("src/toc.ts", "utf-8").replace(/\r\n/g, "\n");
 const main2 = readFileSync("src/sync-scroll.ts", "utf-8").replace(/\r\n/g, "\n");
 const main3 = readFileSync("src/core/app-state.ts", "utf-8").replace(/\r\n/g, "\n");
 const main4 = readFileSync("src/core/viewport.ts", "utf-8").replace(/\r\n/g, "\n");
@@ -90,11 +92,9 @@ const CLICK_BODY = slice(
 );
 const PIN_BODY = main4.slice(main4.indexOf("function pinScrollTop("));
 // 大纲 onJump：跳转定位逻辑（受同步滚动状态约束的那一段）—— 与 B152 同路数，盯静态契约。
-const ONJUMP_BODY = slice(
-  main,
-  "onJump: (entry) => {",
-  "// ---------------------------------------------------------------- 导出（M3）",
-);
+// updateTocDrawer 已拆到 toc.ts（解耦第十步）且是该文件最后一个函数，
+// 终锚用文件尾的 export 块（main 里那个「导出」横幅已不在同一文件）。
+const ONJUMP_BODY = slice(tocSrc, "onJump: (entry) => {", "\nexport {");
 
 describe("B152 同步滚动模式：按钮与状态", () => {
   it("按钮挂在标题栏的文档名后面，默认收起", () => {
