@@ -243,7 +243,12 @@ describe("B131 拖入已打开的文件：落点不同就别动原标签", () =>
   });
 
   it("反向验证：这个判据不是恒真的（退化实现会把它做成「永远跳回原面板」）", () => {
-    const src = readFileSync("src/main.ts", "utf-8");
+    const src =
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/io/files.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/io/files.ts", "utf-8");
     // 退化：不看落点，一律取第一个实例（修复前的写法）
     const degraded = src.replaceAll(
       "const inTarget =\n        targetPanelId !== undefined ? all.find((t) => t.panelId === targetPanelId) : undefined;",

@@ -303,7 +303,12 @@ describe("B91-2 回归：文件拖入被捕获阶段拦下，不漏给页面内�
 });
 
 describe("B91 接线（静态断言）", () => {
-  const main = readFileSync("src/main.ts", "utf-8");
+  const main =
+    readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/io/files.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/io/files.ts", "utf-8");
   const filedrop = readFileSync("src/shell/filedrop.ts", "utf-8");
   const bridge = readFileSync("src-tauri/src/dropbridge.rs", "utf-8");
 

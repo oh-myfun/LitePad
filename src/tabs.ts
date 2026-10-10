@@ -68,6 +68,7 @@ import { applyPanelMode, openPreviewToSide, toggleViewMode } from "./markdown";
 import { updateTocDrawer } from "./toc";
 import { discardBackupFor, scheduleSessionSave } from "./session/session";
 import { retargetFindBar } from "./find/findbar";
+import { saveDocCore } from "./io/files";
 import { attachUserScrollClear, isProgrammatic, markProgrammatic } from "./scroll-guard";
 import { closeTab as ipcCloseTab, newTab as ipcNewTab } from "./ipc/api";
 import { invoke } from "@tauri-apps/api/core";
@@ -99,7 +100,6 @@ export interface TabDeps {
   openTabsInNewWindow(tabIds: number[]): Promise<void>; // → src/multiwindow/（#415）
   returnTabToMain(tabId: number): void; // → src/multiwindow/（#415）
   requestSatelliteClose(): void; // → src/multiwindow/（#415）
-  saveDocCore(doc: Doc, inst: Tab, forceDialog: boolean): Promise<boolean>; // → src/io/（#414）
   docHeldElsewhere(docId: number, waitMs?: number): Promise<boolean>; // → src/multiwindow/（#415）
   keyHint(id: string): string; // → 随命令/菜单拆分（#416）
 }
@@ -108,7 +108,6 @@ let attachPasteHandlerRef: TabDeps["attachPasteHandler"] = () => {};
 let openTabsInNewWindowRef: TabDeps["openTabsInNewWindow"] = async () => {};
 let returnTabToMainRef: TabDeps["returnTabToMain"] = () => {};
 let requestSatelliteCloseRef: TabDeps["requestSatelliteClose"] = () => {};
-let saveDocCoreRef: TabDeps["saveDocCore"] = async () => false;
 let docHeldElsewhereRef: TabDeps["docHeldElsewhere"] = async () => false;
 let keyHintRef: TabDeps["keyHint"] = (id) => id;
 
@@ -117,7 +116,6 @@ export function installTabDeps(deps: TabDeps): void {
   openTabsInNewWindowRef = deps.openTabsInNewWindow;
   returnTabToMainRef = deps.returnTabToMain;
   requestSatelliteCloseRef = deps.requestSatelliteClose;
-  saveDocCoreRef = deps.saveDocCore;
   docHeldElsewhereRef = deps.docHeldElsewhere;
   keyHintRef = deps.keyHint;
 }
@@ -760,7 +758,7 @@ async function closeTabById(tabId: number): Promise<void> {
     const choice = await showSaveConfirmDialog({ title: "关闭标签", names: [doc.name] });
     if (choice === "cancel") return;
     if (choice === "save") {
-      const ok = await saveDocCoreRef(doc, tab, false);
+      const ok = await saveDocCore(doc, tab, false);
       if (!ok) return;
     }
   }

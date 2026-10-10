@@ -30,6 +30,11 @@ export function setInstanceOnUpdate(fn: (view: EditorView, update: ViewUpdate) =
   instanceOnUpdate = fn;
 }
 
+/** 读回当前注入的编辑器更新回调（io 的 rebuildDocInstances 重建状态时要用）。 */
+export function getInstanceOnUpdate(): (view: EditorView, update: ViewUpdate) => void {
+  return instanceOnUpdate;
+}
+
 function makeDoc(
   tabId: number,
   text: string,

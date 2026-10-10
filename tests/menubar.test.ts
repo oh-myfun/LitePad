@@ -317,7 +317,11 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
 
     // 静态契约：回调落到 Rust 的 toggle_devtools，且不顺手往键位表塞一个 id
     const main =
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/io/files.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/find/findbar.ts", "utf-8");
     expect(main, "帮助菜单必须真的调 IPC 去切开发者工具").toContain('"toggle_devtools"');
     expect(src, "切换开发人员工具不得再走 keyHint").not.toContain('keyHint("help.');
     const keymap = readFileSync("src/shell/keymap.ts", "utf-8");
@@ -356,7 +360,11 @@ describe("设置项归属与接线（B42/B46）", () => {
     expect(existsSync("src/shell/preferencesdialog.ts"), "旧首选项弹窗必须删除").toBe(false);
     expect(existsSync("src/shell/keymapdialog.ts"), "快捷键逻辑文件应存在").toBe(true);
     const src =
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/io/files.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/find/findbar.ts", "utf-8");
     expect(src, "main 必须引入 showSettingsDialog").toContain("showSettingsDialog(");
     expect(src, "main 必须有打开设置页函数").toContain("function openSettingsDialog(");
     expect(src, "main 不得再残留 preferencesdialog").not.toContain("preferencesdialog");
@@ -388,7 +396,11 @@ describe("设置项归属与接线（B42/B46）", () => {
       expect(dlg, `设置页必须含「${item}」`).toContain(item);
     }
     const src =
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/io/files.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/find/findbar.ts", "utf-8");
     expect(src, "main 必须引入 showSettingsDialog").toContain("showSettingsDialog(");
     expect(src, "main 必须有打开设置页函数").toContain("function openSettingsDialog(");
     const menu = readFileSync("src/shell/menubar.ts", "utf-8");
@@ -397,7 +409,11 @@ describe("设置项归属与接线（B42/B46）", () => {
 
   it("每个被移出的设置项都在设置页里接线到 main.ts", () => {
     const src =
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/io/files.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/find/findbar.ts", "utf-8");
     // B108：自动保存 / 热退出从菜单搬进设置页，靠 onAutosave / onHotExit 接线
     expect(src, "自动保存由设置页接线").toContain("onAutosave:");
     expect(src, "热退出由设置页接线").toContain("onHotExit:");
@@ -430,7 +446,11 @@ describe("设置项归属与接线（B42/B46）", () => {
     expect(menu, "菜单栏不得再有分屏回调").not.toContain("onClosePanel");
 
     const src =
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/io/files.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/find/findbar.ts", "utf-8");
     expect(src, "main.ts 必须保留左右分屏处理").toContain('splitActivePanel(activePanelId, "h")');
     expect(src, "main.ts 必须保留上下分屏处理").toContain('splitActivePanel(activePanelId, "v")');
     expect(src, "main.ts 必须保留移除分屏处理").toContain("closePanelById(activePanelId)");
@@ -445,7 +465,11 @@ describe("设置项归属与接线（B42/B46）", () => {
 describe("快捷键注册表与对话框", () => {
   it("全局快捷键改由注册表统一分发（不再散落硬编码监听）", () => {
     const src =
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/io/files.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/find/findbar.ts", "utf-8");
     expect(src, "必须用 resolveCommand 分发").toContain("resolveCommand(e, keymapOverrides)");
     expect(src, "必须有 runShortcut 动作表").toContain("function runShortcut(");
     expect(src, "设置对话框打开时应让路").toContain(".settings-overlay");
@@ -471,7 +495,11 @@ describe("快捷键注册表与对话框", () => {
     expect(dlg, "必须做冲突检测").toContain("findConflict");
     expect(dlg, "只读项不得渲染成可点按钮").toContain("editable === false");
     const src =
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/io/files.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/find/findbar.ts", "utf-8");
     expect(src, "改动必须持久化").toContain("settings.keymap");
   });
 });
@@ -479,7 +507,11 @@ describe("快捷键注册表与对话框", () => {
 describe("查找入口统一（悬浮查找栏）", () => {
   it("main.ts 必须接线悬浮查找栏：查找/替换都走同一个 openFindBar", () => {
     const src =
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/io/files.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/find/findbar.ts", "utf-8");
     // prettier 会重排 import，断言只看标识符存在（不锁定排版）
     expect(/\bcreateFindBar\b/.test(src), "必须引入 createFindBar").toBe(true);
     expect(src.includes("function openFindBar("), "必须有统一入口 openFindBar").toBe(true);
@@ -493,7 +525,11 @@ describe("查找入口统一（悬浮查找栏）", () => {
 
   it("B39/B40：查找范围不用下拉菜单，跨文档改为文档图标，且不做文件夹搜索", () => {
     const src =
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/io/files.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/find/findbar.ts", "utf-8");
     expect(src, "不得再出现 folder 范围入口").not.toContain('openFindBar("folder")');
     expect(src, "不得再调用读盘的跨文件搜索 IPC").not.toContain("searchFiles");
     expect(src, "不得再有默认搜索目录推导").not.toContain("defaultSearchDir");
@@ -513,7 +549,11 @@ describe("查找入口统一（悬浮查找栏）", () => {
 
   it("不得再存在第二套查找 UI（CM6 面板 / 独立查找窗口）", () => {
     const src =
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/io/files.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/find/findbar.ts", "utf-8");
     expect(src, "不得再打开 CM6 内置搜索面板").not.toContain("openSearchPanel");
     expect(src, "不得再引用旧的 searchbar 模块").not.toContain("./editor/searchbar");
     expect(src, "不得再引用独立的在文件中查找窗口").not.toContain("./shell/findinfiles");
@@ -537,7 +577,11 @@ describe("B 档：删掉菜单项提示（写了也永远不显示 = 死代码�
   const tabstripSrc = readFileSync("src/shell/tabstrip.ts", "utf-8");
   const filedropSrc = readFileSync("src/shell/filedrop.ts", "utf-8");
   const mainSrc =
-    readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/find/findbar.ts", "utf-8");
+    readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/io/files.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/find/findbar.ts", "utf-8");
   it("MenuItem 不再有 title 字段，fillMenu 也不再挂提示", () => {
     expect(menuSrc, "MenuItem 不该再留 title 字段").not.toMatch(/^\s*title\?: string;/m);
     const fill = topLevelFnBody(menuSrc, "function fillMenu");
@@ -583,7 +627,11 @@ describe("B 档：删掉菜单项提示（写了也永远不显示 = 死代码�
 describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
   const menu = (): string => readFileSync("src/shell/menubar.ts", "utf-8");
   const main = (): string =>
-    readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/find/findbar.ts", "utf-8");
+    readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/io/files.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/find/findbar.ts", "utf-8");
 
   it("「查看」不得再有主题 / 预览行距 / 大纲宽度 / 分屏", () => {
     // 只看「查看」菜单那一段，避免把「文件 → 设置…」里的同名词条误判为残留
@@ -668,7 +716,11 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
 
   it("B97/B106：主题只从「文件 → 设置…」进出，顶栏不再有主题/导出按钮", () => {
     const main =
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/io/files.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/find/findbar.ts", "utf-8");
     // 档位仍要有个可读的落点（它是跨模块状态：换档要联动 CodeMirror 的明暗）
     expect(main, "档位要写进 data 属性供测试/样式用").toContain("dataset.themeMode");
     expect(main, "换档必须联动面板明暗").toContain("applyDarkToTabs");
@@ -711,7 +763,11 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
 
     // ---- ② 标题栏的窗口控制键也必须按「名字」取图（B97 起唯一的图标按钮组） ----
     const main =
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/io/files.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/find/findbar.ts", "utf-8");
     for (const pair of [
       '[winMinimize, "chromeMinimize"]',
       '[winMaximize, "chromeMaximize"]',
@@ -748,7 +804,11 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     // `.codicon[class*='codicon-']` 与 `.panel-op .codicon` 特异性相同（0-2-0），
     // 谁在后谁生效 —— 引反了字号覆盖就静默失效（B102 当天就在这一条上踩过推理）。
     const main =
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/io/files.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/find/findbar.ts", "utf-8");
     const codiconAt = main.indexOf("@vscode/codicons/dist/codicon.css");
     const globalAt = main.indexOf('"./styles/global.css"');
     expect(codiconAt, "main.ts 必须引入官方 codicon.css（否则图标全是豆腐块）").toBeGreaterThan(-1);
@@ -890,7 +950,11 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     // 回车在三种范围里一律是步进（下一个 / 上一个）。
     // 跨文档搜索函数已拆到 find/findbar.ts（#413）⇒ 拼进源
     const main = stripLineComments(
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/find/findbar.ts", "utf-8"),
+      readFileSync("src/main.ts", "utf-8") +
+        "\n" +
+        readFileSync("src/io/files.ts", "utf-8") +
+        "\n" +
+        readFileSync("src/find/findbar.ts", "utf-8"),
     );
     const bar = stripLineComments(readFileSync("src/shell/findbar.ts", "utf-8"));
 

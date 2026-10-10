@@ -70,20 +70,18 @@ import { freshTextOfDoc, layoutForSession, rebuildLayout, renderPanelTabs } from
 import { refreshAll, showMessage } from "../ui";
 import { sessionStore } from "./store";
 import { emitTo } from "@tauri-apps/api/event";
+import { rebuildDocInstances } from "../io/files";
 
 /** 过渡期依赖注入（见文件头注释）。main 在启动时调用一次 installSessionDeps。 */
 export interface SessionDeps {
-  rebuildDocInstances(doc: Doc, text: string, keepCursor?: boolean): void; // → src/io/（#414）
   reclaimRemoted(tabId: number): void; // → src/multiwindow/（#415）
   openTabsInNewWindow(tabIds: number[]): Promise<void>; // → src/multiwindow/（#415）
 }
 
-let rebuildDocInstancesRef: SessionDeps["rebuildDocInstances"] = () => {};
 let reclaimRemotedRef: SessionDeps["reclaimRemoted"] = () => {};
 let openTabsInNewWindowRef: SessionDeps["openTabsInNewWindow"] = async () => {};
 
 export function installSessionDeps(deps: SessionDeps): void {
-  rebuildDocInstancesRef = deps.rebuildDocInstances;
   reclaimRemotedRef = deps.reclaimRemoted;
   openTabsInNewWindowRef = deps.openTabsInNewWindow;
 }
@@ -1084,7 +1082,7 @@ function applyDiskContent(doc: Doc, file: OpenedFile, mtimeMs: number, size: num
   doc.external = false;
   // 内容以磁盘为准 → 此前那份未保存副本作废（留着会让下次启动拿它顶掉刚载入的内容）
   discardBackupFor(doc);
-  rebuildDocInstancesRef(doc, file.text, true);
+  rebuildDocInstances(doc, file.text, true);
   refreshAll();
 }
 

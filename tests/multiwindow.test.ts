@@ -9,7 +9,12 @@ import { readFileSync } from "node:fs";
 import { readJson, topLevelFnBody } from "./static";
 
 describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是复制一份）", () => {
-  const src = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/tabs.ts", "utf-8");
+  const src =
+    readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/io/files.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/tabs.ts", "utf-8");
   const rust = readFileSync("src-tauri/src/windows.rs", "utf-8");
   const api = readFileSync("src/ipc/api.ts", "utf-8");
   const caps = readJson("src-tauri/capabilities/default.json");
@@ -299,10 +304,10 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
     // 样子，而重新打开拿到的是磁盘内容 —— 两份各说各话，正是最怕的状态。
     const body = fnBody("async function doOpen");
     expect(body, "隐藏实例（在别的窗口）要先取回").toMatch(
-      /const remoted = remotedTabs\.get\(existingDoc\.tabId\);\s*\n\s*if \(inst && remoted !== undefined\) \{[\s\S]{0,240}reclaimRemoted\(inst\.tabId, host\)/,
+      /const remoted = remotedTabs\.get\(existingDoc\.tabId\);\s*\n\s*if \(inst && remoted !== undefined\) \{[\s\S]{0,240}reclaimRemotedRef\(inst\.tabId, host\)/,
     );
     expect(body, "取回要走既有的激活收尾（重建/刷新/存会话）").toMatch(
-      /reclaimRemoted\(inst\.tabId, host\);[\s\S]{0,240}scheduleSessionSave\(\);/,
+      /reclaimRemotedRef\(inst\.tabId, host\);[\s\S]{0,240}scheduleSessionSave\(\);/,
     );
   });
 
@@ -372,7 +377,12 @@ describe("卫星窗口静态契约", () => {
 
     // ⑤ 失败原因必须带出来：原先两种情况（建窗失败 / 就绪超时）都只报一句
     //    「没能打开」，把 WebView2 拒绝创建这种可诊断的信息一起吞掉了
-    const main = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/tabs.ts", "utf-8");
+    const main =
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/io/files.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/tabs.ts", "utf-8");
     expect(main, "失败原因按 label 存下来").toMatch(/failedLabels\.set\(l, e\.payload\?\.message/);
     expect(main, "detail 必须真的由原因拼出来").toMatch(
       /const detail = why \? `：\$\{why\}` : "：等待新窗口就绪超时";/,
@@ -398,7 +408,12 @@ describe("卫星窗口静态契约", () => {
 // 分支里注册，卫星窗口装的是 `registerSatelliteClose`。这里要防的是**以后有人把主窗口的
 // 收尾塞进卫星那条链**（写 session.json / 热退出备份 / 「确定退出吗？」）。
 describe("B153 卫星窗口：比主窗口简洁，关窗不碰主窗口的收尾", () => {
-  const src = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/tabs.ts", "utf-8");
+  const src =
+    readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/io/files.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/tabs.ts", "utf-8");
   const css = readFileSync("src/styles/global.css", "utf-8");
 
   function fnBody(name: string): string {
@@ -470,7 +485,12 @@ describe("B153 卫星窗口：比主窗口简洁，关窗不碰主窗口的收�
 
 // ------------------------------------------------------- 反向验证
 describe("B153 反向验证：退回旧写法，上面那几条必须变红", () => {
-  const src = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/tabs.ts", "utf-8");
+  const src =
+    readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/io/files.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/tabs.ts", "utf-8");
   const css = readFileSync("src/styles/global.css", "utf-8");
 
   function fnBody(name: string, from: string): string {

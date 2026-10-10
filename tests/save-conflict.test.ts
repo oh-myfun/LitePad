@@ -22,7 +22,11 @@ describe("B88 保存时的脏写检查：磁盘版本更新要把选择权交回
   // ⚠️ 所有断言都跑在 stripLineComments 之后：本段说明里就写着 expectMtimeMs 这类
   //    标识符，整份文件比对会让「挖掉真代码」也照样通过（假绿，B79 已踩过一次）。
   const main = stripLineComments(
-    readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/session/session.ts", "utf-8"),
+    readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/io/files.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/session/session.ts", "utf-8"),
   );
   const api = stripLineComments(readFileSync("src/ipc/api.ts", "utf-8"));
   const rustCmds = stripLineComments(readFileSync("src-tauri/src/commands/mod.rs", "utf-8"));

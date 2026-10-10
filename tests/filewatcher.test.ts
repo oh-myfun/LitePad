@@ -26,7 +26,11 @@ describe("B87 文件监听：外部修改要真的刷新内容（VS Code 三态 
   // ⚠️ 下面所有断言都跑在 `stripLineComments` 之后：本段说明里就写着 `markDiskVersion`
   // 这类标识符，整份文件比对会让「挖掉真代码」也照样通过（假绿，B79 已踩过一次）。
   const main = stripLineComments(
-    readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/session/session.ts", "utf-8"),
+    readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/io/files.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/session/session.ts", "utf-8"),
   );
   const api = stripLineComments(readFileSync("src/ipc/api.ts", "utf-8"));
   const rustCmds = stripLineComments(readFileSync("src-tauri/src/commands/mod.rs", "utf-8"));
@@ -205,7 +209,7 @@ describe("B87 文件监听：外部修改要真的刷新内容（VS Code 三态 
       // ⚠️ 不清副本的话，下次启动会拿这份「已被放弃的未保存内容」顶掉刚载入的磁盘版本
       expect(applyDisk, "必须丢弃热退出副本").toContain("discardBackupFor(doc);");
       expect(applyDisk, "必须真的替换实例内容并保留光标").toContain(
-        "rebuildDocInstancesRef(doc, file.text, true)",
+        "rebuildDocInstances(doc, file.text, true)",
       );
     });
 
