@@ -70,6 +70,7 @@ import { discardBackupFor, scheduleSessionSave } from "./session/session";
 import { retargetFindBar } from "./find/findbar";
 import { saveDocCore } from "./io/files";
 import { attachPasteHandler } from "./io/export";
+import { keyHint } from "./prefs";
 import {
   docHeldElsewhere,
   openTabsInNewWindow,
@@ -97,20 +98,6 @@ import {
   updateRatio,
   type MaximizeSnapshot,
 } from "./shell/layout";
-
-/** 过渡期依赖注入（见文件头注释）。main 在启动时调用一次 installTabDeps。 */
-export interface TabDeps {
-  applyPanelMode(panel: Panel): void; // → src/markdown.ts（#410）
-  toggleViewMode(target?: Tab): void; // → src/markdown.ts（#410）
-  openPreviewToSide(panelId: number): void; // → src/markdown.ts（#410）
-  keyHint(id: string): string; // → 随命令/菜单拆分（#416）
-}
-
-let keyHintRef: TabDeps["keyHint"] = (id) => id;
-
-export function installTabDeps(deps: TabDeps): void {
-  keyHintRef = deps.keyHint;
-}
 
 function renderPanelTabs(onlyPanelId?: number): void {
   for (const p of panels.values()) {
@@ -1159,7 +1146,7 @@ function toggleMaximizePanel(panelId: number = activePanelId): void {
   markActivePanel(panelId);
   rebuildLayout();
   // 另一侧被挤成 0，必须明确告诉用户怎么回来（操作栏那个「还原」按钮是第二条退路）
-  const hint = keyHintRef("panel.toggleMaximize");
+  const hint = keyHint("panel.toggleMaximize");
   showMessage(hint ? `已最大化该面板，${hint} 还原` : "已最大化该面板");
   scheduleSessionSave();
 }

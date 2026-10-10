@@ -218,6 +218,8 @@ describe("B68 热退出：关窗不询问，下次启动还原未保存内容", 
   const src =
     readFileSync("src/main.ts", "utf-8") +
     "\n" +
+    readFileSync("src/prefs.ts", "utf-8") +
+    "\n" +
     readFileSync("src/io/files.ts", "utf-8") +
     "\n" +
     readFileSync("src/session/session.ts", "utf-8");

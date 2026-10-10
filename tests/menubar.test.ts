@@ -319,6 +319,8 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
     const main =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
+      readFileSync("src/prefs.ts", "utf-8") +
+      "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
       readFileSync("src/find/findbar.ts", "utf-8");
@@ -362,6 +364,8 @@ describe("设置项归属与接线（B42/B46）", () => {
     const src =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
+      readFileSync("src/prefs.ts", "utf-8") +
+      "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
       readFileSync("src/find/findbar.ts", "utf-8");
@@ -398,6 +402,8 @@ describe("设置项归属与接线（B42/B46）", () => {
     const src =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
+      readFileSync("src/prefs.ts", "utf-8") +
+      "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
       readFileSync("src/find/findbar.ts", "utf-8");
@@ -410,6 +416,8 @@ describe("设置项归属与接线（B42/B46）", () => {
   it("每个被移出的设置项都在设置页里接线到 main.ts", () => {
     const src =
       readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/prefs.ts", "utf-8") +
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
@@ -448,6 +456,8 @@ describe("设置项归属与接线（B42/B46）", () => {
     const src =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
+      readFileSync("src/prefs.ts", "utf-8") +
+      "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
       readFileSync("src/find/findbar.ts", "utf-8");
@@ -466,6 +476,8 @@ describe("快捷键注册表与对话框", () => {
   it("全局快捷键改由注册表统一分发（不再散落硬编码监听）", () => {
     const src =
       readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/prefs.ts", "utf-8") +
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
@@ -497,6 +509,8 @@ describe("快捷键注册表与对话框", () => {
     const src =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
+      readFileSync("src/prefs.ts", "utf-8") +
+      "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
       readFileSync("src/find/findbar.ts", "utf-8");
@@ -508,6 +522,8 @@ describe("查找入口统一（悬浮查找栏）", () => {
   it("main.ts 必须接线悬浮查找栏：查找/替换都走同一个 openFindBar", () => {
     const src =
       readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/prefs.ts", "utf-8") +
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
@@ -526,6 +542,8 @@ describe("查找入口统一（悬浮查找栏）", () => {
   it("B39/B40：查找范围不用下拉菜单，跨文档改为文档图标，且不做文件夹搜索", () => {
     const src =
       readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/prefs.ts", "utf-8") +
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
@@ -550,6 +568,8 @@ describe("查找入口统一（悬浮查找栏）", () => {
   it("不得再存在第二套查找 UI（CM6 面板 / 独立查找窗口）", () => {
     const src =
       readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/prefs.ts", "utf-8") +
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
@@ -578,6 +598,8 @@ describe("B 档：删掉菜单项提示（写了也永远不显示 = 死代码�
   const filedropSrc = readFileSync("src/shell/filedrop.ts", "utf-8");
   const mainSrc =
     readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/prefs.ts", "utf-8") +
     "\n" +
     readFileSync("src/io/files.ts", "utf-8") +
     "\n" +
@@ -628,6 +650,8 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
   const menu = (): string => readFileSync("src/shell/menubar.ts", "utf-8");
   const main = (): string =>
     readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/prefs.ts", "utf-8") +
     "\n" +
     readFileSync("src/io/files.ts", "utf-8") +
     "\n" +
@@ -718,6 +742,8 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     const main =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
+      readFileSync("src/prefs.ts", "utf-8") +
+      "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
       readFileSync("src/find/findbar.ts", "utf-8");
@@ -765,6 +791,8 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     const main =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
+      readFileSync("src/prefs.ts", "utf-8") +
+      "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
       readFileSync("src/find/findbar.ts", "utf-8");
@@ -805,6 +833,8 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     // 谁在后谁生效 —— 引反了字号覆盖就静默失效（B102 当天就在这一条上踩过推理）。
     const main =
       readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/prefs.ts", "utf-8") +
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
@@ -952,6 +982,8 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     const main = stripLineComments(
       readFileSync("src/main.ts", "utf-8") +
         "\n" +
+        readFileSync("src/prefs.ts", "utf-8") +
+        "\n" +
         readFileSync("src/io/files.ts", "utf-8") +
         "\n" +
         readFileSync("src/find/findbar.ts", "utf-8"),
@@ -987,7 +1019,10 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     // `persistSettings()` 和 `themeMode = normalizeMode(settings?.theme)`，
     // 反向验证实测——挖掉真正的调用后，只要还比对整份文件，断言照样通过（假绿）。
     // 所以先剥掉整行注释再断言。
-    const main = stripLineComments(readFileSync("src/main.ts", "utf-8"));
+    // setThemeMode 已拆到 src/prefs.ts（#416-2）⇒ 源要拼上它
+    const main = stripLineComments(
+      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/prefs.ts", "utf-8"),
+    );
 
     // ---- ① 落盘：settings.theme 必须被写回 ----
     // 用户实测「每次打开都是深色」。根因：启动时读的是 `settings.theme`，而 setThemeMode

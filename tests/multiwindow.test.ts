@@ -12,6 +12,8 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
   const src =
     readFileSync("src/main.ts", "utf-8") +
     "\n" +
+    readFileSync("src/prefs.ts", "utf-8") +
+    "\n" +
     readFileSync("src/multiwindow/windows.ts", "utf-8") +
     "\n" +
     readFileSync("src/io/files.ts", "utf-8") +
@@ -382,6 +384,8 @@ describe("卫星窗口静态契约", () => {
     const main =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
+      readFileSync("src/prefs.ts", "utf-8") +
+      "\n" +
       readFileSync("src/multiwindow/windows.ts", "utf-8") +
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
@@ -414,6 +418,8 @@ describe("卫星窗口静态契约", () => {
 describe("B153 卫星窗口：比主窗口简洁，关窗不碰主窗口的收尾", () => {
   const src =
     readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/prefs.ts", "utf-8") +
     "\n" +
     readFileSync("src/multiwindow/windows.ts", "utf-8") +
     "\n" +
@@ -493,6 +499,8 @@ describe("B153 卫星窗口：比主窗口简洁，关窗不碰主窗口的收�
 describe("B153 反向验证：退回旧写法，上面那几条必须变红", () => {
   const src =
     readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/prefs.ts", "utf-8") +
     "\n" +
     readFileSync("src/multiwindow/windows.ts", "utf-8") +
     "\n" +

@@ -610,7 +610,11 @@ describe("标签样式切换（B114：connected | pill）", () => {
 
     // main.ts：断言必须落在代码上（说明性注释里会复述这些标识符 —— B79 的教训）
     const src = stripLineComments(
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/tabs.ts", "utf-8"),
+      readFileSync("src/main.ts", "utf-8") +
+        "\n" +
+        readFileSync("src/prefs.ts", "utf-8") +
+        "\n" +
+        readFileSync("src/tabs.ts", "utf-8"),
     );
     const appearance = stripLineComments(readFileSync("src/appearance.ts", "utf-8"));
     expect(appearance, "档位必须写进 html[data-tab-style]").toContain("dataset.tabStyle");
@@ -701,7 +705,11 @@ describe("标签操作槽位空位（B115：预留 | 紧凑，对齐 VS Code tab
     expect(dlg, "外观页必须有「标签按钮预留空位」开关").toContain('"标签按钮预留空位"');
 
     const src = stripLineComments(
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/tabs.ts", "utf-8"),
+      readFileSync("src/main.ts", "utf-8") +
+        "\n" +
+        readFileSync("src/prefs.ts", "utf-8") +
+        "\n" +
+        readFileSync("src/tabs.ts", "utf-8"),
     );
     const appearance = stripLineComments(readFileSync("src/appearance.ts", "utf-8"));
     expect(appearance, "档位必须写进 html[data-tab-reserve]").toContain("dataset.tabReserve");
@@ -1089,7 +1097,11 @@ describe("标签右键菜单分组与「打开文件所在目录」（B123-7）"
     );
 
     const mainTs = stripLineComments(
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/tabs.ts", "utf-8"),
+      readFileSync("src/main.ts", "utf-8") +
+        "\n" +
+        readFileSync("src/prefs.ts", "utf-8") +
+        "\n" +
+        readFileSync("src/tabs.ts", "utf-8"),
     );
     expect(mainTs, "main.ts 必须实现 onRevealInFolder 并 invoke 命令").toContain(
       'invoke("reveal_in_folder"',

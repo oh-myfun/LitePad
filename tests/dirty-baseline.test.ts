@@ -190,6 +190,8 @@ describe("B112 静态契约：判脏靠基线，清脏靠 markClean", () => {
     const src = stripLineComments(
       readFileSync("src/main.ts", "utf-8") +
         "\n" +
+        readFileSync("src/prefs.ts", "utf-8") +
+        "\n" +
         readFileSync("src/io/files.ts", "utf-8") +
         "\n" +
         readFileSync("src/session/session.ts", "utf-8"),
@@ -228,6 +230,8 @@ describe("B112 静态契约：判脏靠基线，清脏靠 markClean", () => {
   it("清脏的四处都必须走 markClean（保存 / 自动保存 / 重载 / 以磁盘为准）", () => {
     const src = stripLineComments(
       readFileSync("src/main.ts", "utf-8") +
+        "\n" +
+        readFileSync("src/prefs.ts", "utf-8") +
         "\n" +
         readFileSync("src/io/files.ts", "utf-8") +
         "\n" +

@@ -7,7 +7,7 @@
 //    常用几条（B219），也不再有「四项硬编码兜底」这种跟后端对不上的清单。
 import { describe, it, expect, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
-import { ruleBlock, topLevelFnBody } from "./static";
+import { fnBody, ruleBlock, topLevelFnBody } from "./static";
 import { createMenuBar, type EncodingMenuModel, type MenuBarCallbacks } from "../src/shell/menubar";
 import { closePopupMenu } from "../src/shell/menu";
 
@@ -15,7 +15,7 @@ afterEach(() => {
   closePopupMenu();
 });
 
-const main = readFileSync("src/main.ts", "utf-8");
+const main = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/prefs.ts", "utf-8");
 const encoding = readFileSync("src/encoding.ts", "utf-8");
 const menubar = readFileSync("src/shell/menubar.ts", "utf-8");
 const codec = readFileSync("src-tauri/src/core/codec.rs", "utf-8");
@@ -141,14 +141,14 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
   it("编码清单由「转换」那一组承载，条目数不写死", () => {
     const model = modelOf((m) => m);
     // 判据看的是**来源**：两组都从 encodingOptions 的下发结果里 map 出来
-    const body = topLevelFnBody(main, "encodingMenuModel");
+    const body = fnBody(main, "encodingMenuModel");
     expect(body).toContain("encodingOptions.map");
     expect(body).toContain("eolOptions.map");
     expect(group(model, "convertTo").length, "转换组条目数应与下发清单一致").toBe(1);
   });
 
   it("转换只有一个出口 convertDoc，编码 / BOM / 行尾三条路都汇到它", () => {
-    const body = topLevelFnBody(main, "encodingMenuModel");
+    const body = fnBody(main, "encodingMenuModel");
     // BOM 两项与行尾各项都写成 convertDoc({ encoding: … }) / convertDoc({ eol: … })
     expect(body).toContain("convertDoc({ encoding:");
     expect(body).toContain("convertDoc({ eol:");
@@ -159,7 +159,7 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
   });
 
   it("convertDoc 先写 doc.encoding 再走保存（顺序反了就绕过不可逆保护）", () => {
-    const body = topLevelFnBody(main, "convertDoc");
+    const body = fnBody(main, "convertDoc");
     const atAssign = body.indexOf("doc.encoding = enc");
     const atSave = body.indexOf("saveDocCore");
     expect(atAssign, "应先赋目标编码").toBeGreaterThan(-1);
@@ -168,7 +168,7 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
   });
 
   it("保存被拒时把编码/行尾字段退回（否则状态栏会对不上磁盘）", () => {
-    const body = topLevelFnBody(main, "convertDoc");
+    const body = fnBody(main, "convertDoc");
     const atRollback = body.indexOf("doc.encoding = prevEnc");
     const atSave = body.indexOf("saveDocCore");
     expect(atRollback).toBeGreaterThan(atSave);
@@ -184,7 +184,7 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
   });
 
   it("状态栏那颗键的菜单只从启动时预取的那份清单取数（点开不再走 IPC）", () => {
-    const body = topLevelFnBody(main, "showEncodingMenu");
+    const body = fnBody(main, "showEncodingMenu");
     // BOM 两项、行尾符两项仍与主菜单同取一份模型
     expect(body).toContain("encodingMenuModel()");
     // 旧的「点开才 await listEncodings() + 四项兜底」实现应已删除：
@@ -213,7 +213,7 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
   });
 
   it("B218：编码 / 转换两路都收成两级（首组内联，其余语言组走子菜单）", () => {
-    const body = topLevelFnBody(main, "encodingMenuModel");
+    const body = fnBody(main, "encodingMenuModel");
     // 解读编码与转换为… 两路都要走同一个收口出口，别各写一遍（两遍就必差一处）
     expect(body.split("withLanguageGroups").length - 1).toBe(2);
     expect(body).toContain("const groups = encodingOptions.map");
@@ -237,12 +237,12 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
       "fn menu_entries_have_no_duplicate_labels",
     );
     // 前端这一侧：两路条目都只从后端清单映射出来，不许第二处拼装把条目再凑一遍
-    const body = topLevelFnBody(main, "encodingMenuModel");
+    const body = fnBody(main, "encodingMenuModel");
     expect(body, "条目只能从后端清单映射").toContain("encodingOptions.map");
   });
 
   it("B219：状态栏那颗键只铺常用几条（常用集来自后端 common，不许手抄白名单）", () => {
-    const body = topLevelFnBody(main, "showEncodingMenu");
+    const body = fnBody(main, "showEncodingMenu");
     // 反例一：别把编码那一组原样摊平 —— 全量 40 条平铺就是用户说的「显示完整列表」。
     //    ⚠️ 这条要排在正向判据前面：反例先红才能证明它咬得住，否则退化时被正向
     //       断言抢先报错，这条闸等于没验过。
@@ -257,7 +257,7 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
     expect(body, "不许手抄常用编码清单").not.toMatch(/"UTF-8 with BOM"/);
     expect(body, "不许手抄常用编码清单").not.toMatch(/GB18030/);
     // 主菜单那条全量两级不受影响：仍从全量清单收成子菜单，不许跟着收窄
-    const model = topLevelFnBody(main, "encodingMenuModel");
+    const model = fnBody(main, "encodingMenuModel");
     expect(model, "主菜单仍要全量走两级").toContain("withLanguageGroups");
     expect(model, "收口出口拿的是全量清单").toContain("encodingOptions.map");
     expect(model, "主菜单不许跟着收窄成常用集").not.toContain("it.common");
