@@ -112,7 +112,7 @@ describe("B50 启动不得露出白色窗口（用户反馈：打开时先白屏
   });
 
   it("前端必须回报启动各阶段耗时（便于定位慢在哪一段）", () => {
-    const src = readFileSync("src/main.ts", "utf-8");
+    const src = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/ui.ts", "utf-8");
     expect(src, "必须有 reportBoot 上报入口").toContain("function reportBoot");
     // 至少三处：定义 + 外壳就绪 + 全部就绪；任一被删都会丢失诊断
     const calls = src.match(/reportBoot\(/g) ?? [];
@@ -125,7 +125,7 @@ describe("B50 启动不得露出白色窗口（用户反馈：打开时先白屏
 
 describe("窗口标题：软件名在前、文件名在后", () => {
   it("窗口标题软件名在前、文件名在后（用户要求）", () => {
-    const src = readFileSync("src/main.ts", "utf-8");
+    const src = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/ui.ts", "utf-8");
     expect(src, "标题格式应为 LitePad - 文件名").toContain(
       "`LitePad - ${doc.name}${mark}${suffix}`",
     );
@@ -139,7 +139,7 @@ describe("窗口标题：软件名在前、文件名在后", () => {
 // replaceWith 换掉、节点脱链），用户看到的就是「点了没反应」。
 describe("B226 标签区操作键「点了没反应」：mousedown 里不许换掉按钮节点", () => {
   it("活动面板没变时必须早退，不许重建 .panel-ops", () => {
-    const src = readFileSync("src/main.ts", "utf-8");
+    const src = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/ui.ts", "utf-8");
     const fn = src.match(/function markActivePanel\([\s\S]*?\n\}/)?.[0] ?? "";
     expect(fn, "markActivePanel 必须还在").toBeTruthy();
     expect(fn, "必须判活动面板有没有变").toMatch(/const changed = panelId !== activePanelId;/);
@@ -148,12 +148,12 @@ describe("B226 标签区操作键「点了没反应」：mousedown 里不许换�
     const guard = fn.indexOf("if (!changed) return;");
     // ⚠️ 必须带分号取：函数注释里也写了 `renderPanelOps()` 这个字面量（不带分号），
     // 它排在早退之前，不带分号会命中注释、把顺序闸反着算。
-    const rebuild = fn.indexOf("renderPanelOps();");
+    const rebuild = fn.indexOf("renderPanelOpsRef();");
     expect(
       guard,
       "缺早退护栏：活动面板没变也会重建 ops ⇒ 按钮被 replaceWith 换掉、节点脱链 ⇒ 浏览器合成的 click 派发不到它（真机 CDP 实测已复现）",
     ).toBeGreaterThanOrEqual(0);
     expect(rebuild, "变了才重建 ops").toBeGreaterThan(guard);
-    expect(fn, "重建 ops 全函数只许这一处，且落在早退之后").toContain("renderPanelOps();");
+    expect(fn, "重建 ops 全函数只许这一处，且落在早退之后").toContain("renderPanelOpsRef();");
   });
 });

@@ -17,7 +17,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { stripCssComments, cssDecls, ruleBlock, fnBody } from "./static";
 
-const main = readFileSync("src/main.ts", "utf8");
+const main = readFileSync("src/main.ts", "utf8") + "\n" + readFileSync("src/ui.ts", "utf8");
 const css = readFileSync("src/styles/global.css", "utf8");
 const html = readFileSync("index.html", "utf8");
 
@@ -69,7 +69,9 @@ describe("B233 状态栏语言项：纯展示，md 也不切视图", () => {
     const uses = main
       .split("\n")
       .map((l) => l.trim())
-      .filter((l) => l.includes("sbLang") && !l.startsWith("const sbLang"));
+      .filter(
+        (l) => l.includes("sbLang") && !l.startsWith("const sbLang") && !/^\s*sbLang,/.test(l),
+      );
     expect(uses, "sbLang 只该出现在「显示语言名」与「clearTip(sbLang)」两处").toHaveLength(2);
     expect(uses[0], "第一处应是显示语言名").toContain("textContent");
     expect(uses[1], "第二处应是清提示（裸传参）").toBe("clearTip(sbLang);");

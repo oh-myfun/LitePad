@@ -33,6 +33,7 @@ const main6 = readFileSync("src/core/panels.ts", "utf-8").replace(/\r\n/g, "\n")
 const html = readFileSync("index.html", "utf-8").replace(/\r\n/g, "\n");
 const css = readFileSync("src/styles/global.css", "utf-8").replace(/\r\n/g, "\n");
 const PREVIEW_TS = readFileSync("src/markdown/preview.ts", "utf-8").replace(/\r\n/g, "\n");
+const ui = readFileSync("src/ui.ts", "utf-8").replace(/\r\n/g, "\n");
 
 /** 编辑器滚动监听那条（含它前面那几行自限守卫）—— 与下面几条同一段切片。 */
 function scrollBodyOf(src: string): string {
@@ -71,7 +72,7 @@ function pushBody(): string {
 const SOURCE_TOP = slice(main2, "function sourceTopOfV(", "function syncSourceV(");
 /** 「同步坐标的唯一取值口」（`syncSourceV`）—— 跟随 / 收口 / 交接三条路都经它。 */
 const SYNC_V = slice(main2, "function syncSourceV(", "function rememberViewScroll(");
-const BTN_BODY = slice(main, "function refreshSyncButton(", "function refreshStatus(");
+const BTN_BODY = slice(ui, "function refreshSyncButton(", "function refreshStatus(");
 const SRC_BODY = slice(main2, "function isSyncSource(", "function applySyncToSibling(");
 // ⚠️ B233：终点原本是紧邻的 `sbLang.addEventListener`，而那句已随「状态栏语言项
 //    纯展示化」删除 ⇒ 换成它后面那句 `sbEncoding.addEventListener`（仍是紧邻的下一句）。
@@ -106,10 +107,10 @@ describe("B152 同步滚动模式：按钮与状态", () => {
 
   it("显隐判据是「当前激活文档开着多份」—— 两个窗口同口径，只数本窗口**可见**实例（B171/B173）", () => {
     // 只看「有没有文档」⇒ 单开也露脸，用户点下去什么也不会发生。
-    expect(main, "显隐要按可见实例个数判").toMatch(
+    expect(BTN_BODY, "显隐要按可见实例个数判").toMatch(
       /visibleInstancesOfDoc\(tab\.docId\)\.length > 1/,
     );
-    expect(main, "无文档时要藏").toMatch(/syncScrollBtn\.hidden = !multi;/);
+    expect(BTN_BODY, "无文档时要藏").toMatch(/syncScrollBtn\.hidden = !multi;/);
     // B171：B164 曾给子窗口开后门（额外认「这份文档在别的窗口也有」），于是同文件
     // 只开一份时子窗口露脸、主窗口却藏着 —— 口径不一致。现在一律只数本窗口实例。
     expect(BTN_BODY, "显隐不许再掺跨窗口的共享集合").not.toMatch(/sharedDocIds/);
@@ -394,7 +395,7 @@ describe("B152 同步滚动模式：推进与触发点", () => {
     expect(main, "补推要排在「不推」那一支后面（两条互斥分支）").toMatch(
       /\} else if \(tab && handV !== null && shownTab\) \{/,
     );
-    expect(main, "全局刷新兜底（新出现的那一份要对齐）").toMatch(/const act = activeTab\(\);/);
+    expect(ui, "全局刷新兜底（新出现的那一份要对齐）").toMatch(/const act = activeTab\(\);/);
   });
 
   it("点开的那一刻就推一次，不用等用户再滚一下", () => {
@@ -1139,19 +1140,19 @@ describe("B164 子窗口也要能同步滚动（跨窗口广播）", () => {
 
   it("反向验证：退回旧写法，上面两条必须落空", () => {
     // ① 显隐再掺进「别的窗口也有一份」（B164 的 `sharedDocIds`）⇒ 子窗口单开也露脸
-    const i = main.indexOf("const multi =");
+    const i = ui.indexOf("const multi =");
     expect(i, "要能定位显隐判据").toBeGreaterThan(-1);
     const degradedBtn =
-      main.slice(0, i) +
+      ui.slice(0, i) +
       "const multi = !!tab && (instancesOfDoc(tab.docId).length > 1 || sharedDocIds.has(tab.docId));" +
-      main.slice(main.indexOf(";", i) + 1);
+      ui.slice(ui.indexOf(";", i) + 1);
     const btnBody = slice(degradedBtn, "function refreshSyncButton(", "function refreshStatus(");
     expect(btnBody, "退化后「不许有共享文档集合」必须命中").toMatch(/sharedDocIds/);
     // ①b B173：退回「把隐藏实例也算一份」⇒ 只开了一份的窗口照样露脸
     const degradedHidden =
-      main.slice(0, i) +
+      ui.slice(0, i) +
       "const multi = !!tab && instancesOfDoc(tab.docId).length > 1;" +
-      main.slice(main.indexOf(";", i) + 1);
+      ui.slice(ui.indexOf(";", i) + 1);
     const hiddenBody = slice(
       degradedHidden,
       "function refreshSyncButton(",
@@ -1409,10 +1410,9 @@ describe("B152 反向验证：退回旧写法，上面那几条必须变红", ()
   it("退回「单开一份也露脸」→ 显隐那两条必须落空", () => {
     // ⚠️ 退化串按位置取，不按字面量 replace：判据的排版变过好几轮（B164 折成两行、
     //    B171 又回到单行），只认老单行字面量会静默空转（B163 踩过同一坑）。
-    const i = main.indexOf("const multi =");
+    const i = ui.indexOf("const multi =");
     expect(i, "要能定位显隐判据").toBeGreaterThan(-1);
-    const degraded =
-      main.slice(0, i) + "const multi = !!tab;" + main.slice(main.indexOf(";", i) + 1);
+    const degraded = ui.slice(0, i) + "const multi = !!tab;" + ui.slice(ui.indexOf(";", i) + 1);
     expect(degraded, "退化后不该再有可见实例数判据").not.toMatch(
       /visibleInstancesOfDoc\(tab\.docId\)\.length > 1/,
     );
@@ -1424,7 +1424,7 @@ describe("B152 反向验证：退回旧写法，上面那几条必须变红", ()
   it("退回「按 tabId 记状态」→ 「切换激活文档不复位」必须落空", () => {
     const ORIG = "const on = docSyncModes.get(tab.docId) === true;";
     expect(BTN_BODY, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "const on = docSyncModes.get(tab.tabId) === true;");
+    const degraded = ui.replace(ORIG, "const on = docSyncModes.get(tab.tabId) === true;");
     const body = slice(degraded, "function refreshSyncButton(", "function refreshStatus(");
     expect(body, "退化后亮灯按 tab 取 ⇒ 切一下就复位").not.toMatch(
       /docSyncModes\.get\(tab\.docId\) === true/,
@@ -1475,8 +1475,8 @@ describe("B152 反向验证：退回旧写法，上面那几条必须变红", ()
 
   it("退回「用 sync 字形」→「链条」那条必须落空", () => {
     const ORIG = "syncScrollBtn.innerHTML = on ? CODICONS.link : CODICONS.unlink;";
-    expect(main, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "syncScrollBtn.innerHTML = CODICONS.sync;");
+    expect(ui, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = ui.replace(ORIG, "syncScrollBtn.innerHTML = CODICONS.sync;");
     expect(degraded, "退回 sync 就退回圆箭头、跟右上角更新键族撞形了").not.toMatch(
       /syncScrollBtn\.innerHTML = on \? CODICONS\.link : CODICONS\.unlink;/,
     );
@@ -1484,8 +1484,8 @@ describe("B152 反向验证：退回旧写法，上面那几条必须变红", ()
 
   it("B166 反向验证：把字形切换从 refreshSyncButton 摘掉 → 上一条必须落空", () => {
     const ORIG = "  syncScrollBtn.innerHTML = on ? CODICONS.link : CODICONS.unlink;";
-    expect(main, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "");
+    expect(ui, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = ui.replace(ORIG, "");
     const body = slice(degraded, "function refreshSyncButton(", "function refreshStatus(");
     expect(body, "摘掉后「字形要由开关值决定」必须落空").not.toMatch(
       /syncScrollBtn\.innerHTML = on \? CODICONS\.link : CODICONS\.unlink;/,
@@ -1837,11 +1837,11 @@ describe("B176 非激活源滚动不再被兄弟反推成 A↔B 拉锯", () => {
 // （任一远端窗口也开着就算 1）。窗口干净关掉就整条删掉。
 describe("B178 跨窗口多开检测：主/子窗口同步键显隐一致", () => {
   it("要有存在性登记：按窗口标签记别的窗口开着哪些可见文档", () => {
-    expect(main, "要有跨窗口可见文档登记 Map").toMatch(
+    expect(main3, "要有跨窗口可见文档登记 Map").toMatch(
       /const remoteOpenByWindow = new Map<string, Set<number>>\(\);/,
     );
     // 广播出去的「本窗口可见 docId 集合」要留底以便算 diff，只在变化时发事件。
-    expect(main, "要有上次广播集合").toMatch(/let lastBroadcastDocIds = new Set<number>\(\);/);
+    expect(ui, "要有上次广播集合").toMatch(/let lastBroadcastDocIds = new Set<number>\(\);/);
     // 四个事件常量
     expect(main5, "open 事件要在").toMatch(/const EVT_DOC_OPEN = "doc-open";/);
     expect(main5, "close 事件要在").toMatch(/const EVT_DOC_CLOSE_NOTIFY = "doc-close-notify";/);
@@ -1850,7 +1850,7 @@ describe("B178 跨窗口多开检测：主/子窗口同步键显隐一致", () =
   });
 
   it("broadcastDocPresence 按可见集合 diff，只在变化时广播 open/close", () => {
-    const FN = slice(main, "function broadcastDocPresence(", "function refreshAll(");
+    const FN = slice(ui, "function broadcastDocPresence(", "function refreshAll(");
     expect(FN, "要能定位").toContain("function broadcastDocPresence(");
     // 可见实例才广播（panelId >= 0 滤掉隐藏实例，与 B173 同口径）
     expect(FN, "只数可见实例").toMatch(/t\.panelId >= 0/);
@@ -1912,12 +1912,12 @@ describe("B178 跨窗口多开检测：主/子窗口同步键显隐一致", () =
 
   it("B178 反向验证：退回「只数本窗口」→ 跨窗口那条必须落空", () => {
     // 退化成 B178 前的口径：只数本窗口可见实例，跨窗口的那一半没了。
-    const i = main.indexOf("const multi =");
+    const i = ui.indexOf("const multi =");
     expect(i, "要能定位显隐判据").toBeGreaterThan(-1);
     const degraded =
-      main.slice(0, i) +
+      ui.slice(0, i) +
       "const multi = !!tab && visibleInstancesOfDoc(tab.docId).length > 1;" +
-      main.slice(main.indexOf(";", i) + 1);
+      ui.slice(ui.indexOf(";", i) + 1);
     // 只查按钮函数体：模块级的 `remoteHasDoc` 定义本身留着（它仍是给其它判据用的工具
     // 函数），要落空的是「按钮显隐判据里跨窗口那一半」。
     const btn = slice(degraded, "function refreshSyncButton(", "function refreshStatus(");

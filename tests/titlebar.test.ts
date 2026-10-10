@@ -148,7 +148,7 @@ describe("B97 自建标题栏", () => {
   });
 
   it("标题栏中间的文档名与窗口标题同源（都来自 refreshTitle）", () => {
-    const main = mainSrc();
+    const main = readFileSync("src/ui.ts", "utf-8");
     const body = main.slice(
       main.indexOf("function refreshTitle("),
       main.indexOf("function refreshStatus("),

@@ -135,6 +135,15 @@ export interface Doc {
 export let windowLabel = "main";
 
 /**
+ * B178：别的窗口也开着哪些文档（窗口 label → 可见 docId 集合）。
+ *
+ * 跨窗口「多开」判据只认「别的窗口可见地开着」—— 隐藏实例不算，与
+ * `visibleInstancesOfDoc` 同口径。本窗口广播 `EVT_DOC_OPEN`/`EVT_DOC_CLOSE_NOTIFY`
+ * 时对端据此更新；同步滚动按钮显隐据此对齐。
+ */
+export const remoteOpenByWindow = new Map<string, Set<number>>();
+
+/**
  * 按**文档**记的同步滚动开关（`docId → 是否开启`）。
  *
  * 默认一律关闭 —— B149 定的基线照旧：同源多实例各记各的光标与滚动位置。只有用户

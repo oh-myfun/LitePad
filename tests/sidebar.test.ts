@@ -12,7 +12,11 @@ import { cssDecls, ruleBlock, themeBlock } from "./static";
 const html = readFileSync("index.html", "utf-8").replace(/\r\n/g, "\n");
 const css = readFileSync("src/styles/global.css", "utf-8").replace(/\r\n/g, "\n");
 const preview = readFileSync("src/styles/preview.css", "utf-8").replace(/\r\n/g, "\n");
-const src = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
+const src = (
+  readFileSync("src/main.ts", "utf-8") +
+  "\n" +
+  readFileSync("src/ui.ts", "utf-8")
+).replace(/\r\n/g, "\n");
 const icons = readFileSync("src/shell/codicons.ts", "utf-8").replace(/\r\n/g, "\n");
 
 /** 取某条规则里某条声明的原文（含属性名），取不到返回空串。 */
