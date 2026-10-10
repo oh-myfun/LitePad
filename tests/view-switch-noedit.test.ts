@@ -182,7 +182,8 @@ describe("非编辑操作不得改动文件（静态契约）", () => {
   it("非编辑操作不得改动文件：只有文本真变化才置脏/写盘（用户要求）", () => {
     // 用户反馈：切换 Markdown 预览/源码、或点击内容区，不应该改变文件内容。
     // 根因防线有三条，缺一条就会"没编辑却被自动保存改写磁盘文件"：
-    const src = readFileSync("src/main.ts", "utf-8");
+    const src =
+      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/markdown.ts", "utf-8");
     const handler = src.match(/function handleUpdate\([\s\S]*?\n\}/)?.[0] ?? "";
     expect(handler, "应有 handleUpdate").toBeTruthy();
     // ① docChanged 不等于"内容变了"——要比较前后文本

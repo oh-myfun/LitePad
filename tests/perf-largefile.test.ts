@@ -203,7 +203,8 @@ describe("M4 大文件分级：降级而不是拒绝（原先 20 MB 直接打不
   });
 
   it("大文件停用自动预览，但手动切预览仍可渲染（降级不是禁用）", () => {
-    const src = readFileSync("src/main.ts", "utf-8");
+    const src =
+      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/markdown.ts", "utf-8");
     expect(src).toMatch(/function renderMarkdownFor\(panel: Panel, force = false\)/);
     expect(src).toMatch(/perfProfileFor\(doc\.sizeClass\)\.autoPreview/);
     // 用户主动切模式时必须传 force=true

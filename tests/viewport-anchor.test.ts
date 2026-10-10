@@ -248,6 +248,8 @@ const src = (
   "\n" +
   readFileSync("src/tabs.ts", "utf-8") +
   "\n" +
+  readFileSync("src/markdown.ts", "utf-8") +
+  "\n" +
   readFileSync("src/sync-scroll.ts", "utf-8") +
   "\n" +
   readFileSync("src/core/viewport.ts", "utf-8")

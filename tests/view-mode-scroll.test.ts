@@ -230,7 +230,13 @@ describe("B148 源码 / 预览反复切换：位置不许在两侧之间串档",
 });
 
 const src =
-  readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/sync-scroll.ts", "utf-8");
+  readFileSync("src/main.ts", "utf-8") +
+  "\n" +
+  readFileSync("src/tabs.ts", "utf-8") +
+  "\n" +
+  readFileSync("src/markdown.ts", "utf-8") +
+  "\n" +
+  readFileSync("src/sync-scroll.ts", "utf-8");
 
 /** 取出某个函数的**函数体**（从 header 处起做花括号配平）。 */
 function bodyOf(header: string, from: string = src): string {

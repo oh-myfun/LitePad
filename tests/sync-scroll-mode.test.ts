@@ -29,6 +29,8 @@ const main = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
 // ⚠️ 只把「定义已迁走」的切片指到 tabsSrc，别整份拼进 main —— 跨文件的 indexOf 顺序比较
 //    会全部失真（收口/换页/测量的先后闸全在函数体内部，必须同文件内才有意义）。
 const tabsSrc = readFileSync("src/tabs.ts", "utf-8").replace(/\r\n/g, "\n");
+// Markdown 预览簇（toggleViewMode / openPreviewToSide / applyPanelMode…）已拆到 markdown.ts（解耦第九步）。
+const mdSrc = readFileSync("src/markdown.ts", "utf-8").replace(/\r\n/g, "\n");
 const main2 = readFileSync("src/sync-scroll.ts", "utf-8").replace(/\r\n/g, "\n");
 const main3 = readFileSync("src/core/app-state.ts", "utf-8").replace(/\r\n/g, "\n");
 const main4 = readFileSync("src/core/viewport.ts", "utf-8").replace(/\r\n/g, "\n");
@@ -303,7 +305,7 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
     expect(scroll, "这条不许再挂 isSyncSource 前置").not.toMatch(/isSyncSource\(/);
     // 预览容器那条：程序摆位的回执由 `isProgrammatic(preview.root)` 吞掉（不推兄弟），
     // 真用户滚动才到推兄弟那一句——守卫必须排在推同步之前。
-    const prev = slice(tabsSrc, 'preview.root.addEventListener("scroll"', "applyPanelModeRef(p);");
+    const prev = slice(tabsSrc, 'preview.root.addEventListener("scroll"', "applyPanelMode(p);");
     expect(prev, "预览里滚也要推兄弟").toMatch(/^\s*pushSyncToSiblings\(t, true\);/m);
     const atGuard = prev.indexOf("if (isProgrammatic(preview.root))");
     const atPush = prev.indexOf("pushSyncToSiblings(t, true)");
@@ -554,7 +556,7 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
 
   it("源那一格还没离屏就得把坐标采下来 —— 采点排在面板换页之前", () => {
     const sample = SWITCH_BODY.indexOf("syncSourceSnapshot(shownTab, tabId);");
-    const swap = SWITCH_BODY.indexOf("applyPanelModeRef(panel);");
+    const swap = SWITCH_BODY.indexOf("applyPanelMode(panel);");
     expect(sample, "切标签时要就地采源坐标").toBeGreaterThanOrEqual(0);
     expect(swap, "面板换页那一句要切得到").toBeGreaterThanOrEqual(0);
     expect(
@@ -569,14 +571,14 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
     //    jsdom 不做 CSS 级联 ⇒ 这条**只能**静态盯。顺序反了 ⇒ 源码侧切到预览态时先写了
     //    一个看不见的 scrollTop，等编辑器重新可见，位置并没落进去（切过去视觉上回顶）。
     const restore = SWITCH_BODY.indexOf("restoreViewScroll(panel);");
-    const swap = SWITCH_BODY.indexOf("applyPanelModeRef(panel);");
+    const swap = SWITCH_BODY.indexOf("applyPanelMode(panel);");
     expect(restore, "还原那一句要切得到").toBeGreaterThanOrEqual(0);
     expect(swap, "换页那一句要切得到").toBeGreaterThanOrEqual(0);
     expect(restore, "还原排在换页之后（编辑器可见了才钉得进位置）").toBeGreaterThan(swap);
   });
 
   it("换完页再收口 —— 收口的对象是切过来显示的那一份，不是源", () => {
-    const swap = SWITCH_BODY.indexOf("applyPanelModeRef(panel);");
+    const swap = SWITCH_BODY.indexOf("applyPanelMode(panel);");
     const align = SWITCH_BODY.indexOf("const aligned = tab ? alignShownToSyncSource(");
     expect(align, "切换末尾要收口").toBeGreaterThanOrEqual(0);
     expect(swap, "换页那一句要切得到").toBeGreaterThanOrEqual(0);
@@ -659,7 +661,7 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
   });
 
   it("切源码/预览那一路（toggleViewMode）与收口同一个出口（两条路径同一口径）", () => {
-    const body = slice(main, "function toggleViewMode(", "function openPreviewToSide(");
+    const body = slice(mdSrc, "function toggleViewMode(", "function openPreviewToSide(");
     // ⚠️ B251 那会儿这里钉的是「跨侧交接 ⇒ 取值口带 `cross = true`」，本轮 B257 翻案删掉
     //    那一档：切模式是跨侧（预览 ⇄ 源码），但不许丢小数 —— 丢了就是每切一次模式丢半行
     //    （自测台：源码 287 ⇒ 一来一回变 280）。只写 `syncSourceV(tab` 会连收口那处一起
@@ -885,11 +887,7 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
       "attachPasteHandlerRef(p);",
     );
     expect(scroll, "编辑器里滚要往外播").toMatch(/if \(t\) pushSyncToSiblings\(t, true\);/);
-    const preview = slice(
-      tabsSrc,
-      'preview.root.addEventListener("scroll"',
-      "applyPanelModeRef(p);",
-    );
+    const preview = slice(tabsSrc, 'preview.root.addEventListener("scroll"', "applyPanelMode(p);");
     expect(preview, "预览里滚也要往外播").toMatch(/pushSyncToSiblings\(t, true\);/);
     expect(CLICK_BODY, "按下开关那一刻也要播（先播状态，再播位置）").toMatch(
       /EVT_SYNC_MODE, \{ from: windowLabel, docId: tab\.docId, on \}/,
@@ -1021,11 +1019,7 @@ describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚�
     // 预览监听首行认 `isProgrammatic(preview.root)`：程序钉位的回执（跨面板同步钉位、
     // 会话恢复、setBlocks 恢复、异步二次定位）一律被吞（不写快照、不推兄弟），只排程落盘；
     // 真用户滚动时标记已被清，才会落到推兄弟那一路。
-    const listener = slice(
-      tabsSrc,
-      'preview.root.addEventListener("scroll"',
-      "applyPanelModeRef(p);",
-    );
+    const listener = slice(tabsSrc, 'preview.root.addEventListener("scroll"', "applyPanelMode(p);");
     expect(listener, "要能定位预览滚动监听体").not.toBe("");
     expect(listener, "守卫里必须有程序回执判据").toContain("if (isProgrammatic(preview.root))");
     expect(listener, "挡住之后仍要排程落盘").toContain("scheduleSessionSaveRef();");
@@ -1217,7 +1211,7 @@ describe("B167 同步滚动抖动：选区派发不许自带滚动 + 回推要�
     const previewScroll = slice(
       tabsSrc,
       'preview.root.addEventListener("scroll"',
-      "applyPanelModeRef(p);",
+      "applyPanelMode(p);",
     );
     expect(previewScroll, "预览监听也要吞程序回执").toContain("if (isProgrammatic(preview.root))");
   });
@@ -1264,7 +1258,7 @@ describe("B170 同步滚动抖动：彻底屏蔽「自家滚动回执」被当�
     const previewScroll = slice(
       tabsSrc,
       'preview.root.addEventListener("scroll"',
-      "applyPanelModeRef(p);",
+      "applyPanelMode(p);",
     );
     expect(previewScroll, "预览监听也要认程序来源标记").toContain(
       "if (isProgrammatic(preview.root))",
@@ -1581,7 +1575,7 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
     expect(at, "退化串要先自证原句还在").toBeGreaterThan(-1);
     // ⚠️ 按位置切：编辑器那侧也有一笔同形，整串 replace 会删到错的那笔（假绿）。
     const degraded = tabsSrc.slice(0, at) + tabsSrc.slice(at + ORIG.length);
-    const prev = slice(degraded, 'preview.root.addEventListener("scroll"', "applyPanelModeRef(p);");
+    const prev = slice(degraded, 'preview.root.addEventListener("scroll"', "applyPanelMode(p);");
     // ⚠️ 判据要认**调用**形态（`pushSyncToSiblings(t, true);`）—— 那段的注释里也提名了
     //    这个函数，只认字面会命中注释，退化看着「没生效」（跟 isSyncSource 那次同坑）。
     expect(prev, "预览监听退回后就不再推兄弟了").not.toMatch(/pushSyncToSiblings\(t, true\);/);
@@ -1640,7 +1634,7 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
     const previewScroll = slice(
       tabsSrc,
       'preview.root.addEventListener("scroll"',
-      "applyPanelModeRef(p);",
+      "applyPanelMode(p);",
     );
     const rec = previewScroll.indexOf("recordScroll(t.tabId, t.scrollTop);");
     const push = previewScroll.indexOf("pushSyncToSiblings(t, true);");

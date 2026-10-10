@@ -234,7 +234,7 @@ describe("B189 跨面板激活：焦点给到目标编辑区（光标恢复）",
       "\n" +
       readFileSync("src/tabs.ts", "utf-8") +
       "\n" +
-      readFileSync("src/tabs.ts", "utf-8")
+      readFileSync("src/markdown.ts", "utf-8")
     ).replace(/\r\n/g, "\n");
     const start = src.indexOf("onActivatePanel: (panelId) => {");
     const end = src.indexOf("onActivateTab:", start);
@@ -529,7 +529,7 @@ describe("B181 静态契约：切标签后编辑器必须拿到焦点", () => {
     "\n" +
     readFileSync("src/tabs.ts", "utf-8") +
     "\n" +
-    readFileSync("src/tabs.ts", "utf-8")
+    readFileSync("src/markdown.ts", "utf-8")
   ).replace(/\r\n/g, "\n");
   const code = (s: string): string =>
     s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
@@ -537,7 +537,7 @@ describe("B181 静态契约：切标签后编辑器必须拿到焦点", () => {
 
   it("模式类切完之后必须再补一次 view.focus()", () => {
     expect(body, "应能定位 switchTab 函数体").not.toBe("");
-    const apply = body.indexOf("applyPanelModeRef(panel);");
+    const apply = body.indexOf("applyPanelMode(panel);");
     const restore = body.indexOf("restoreViewScroll(p");
     expect(restore, "应能看到钉位置").toBeGreaterThan(-1);
     expect(apply, "应能看到模式类切换").toBeGreaterThan(-1);
@@ -558,13 +558,13 @@ describe("B181 静态契约：切标签后编辑器必须拿到焦点", () => {
 
   it("反向验证：删掉补的那次 focus，B181 契约必须抓住", () => {
     const FOCUS = "view.focus();";
-    const apply = body.indexOf("applyPanelModeRef(panel);");
+    const apply = body.indexOf("applyPanelMode(panel);");
     const focus2 = body.indexOf(FOCUS, apply);
     expect(focus2, "退化用的补焦点必须还在").toBeGreaterThan(apply);
     // 真的删掉（只改判据不改源码 = 假绿）
     const degraded = body.slice(0, focus2) + body.slice(focus2 + FOCUS.length);
     expect(
-      degraded.indexOf(FOCUS, degraded.indexOf("applyPanelModeRef(panel);")),
+      degraded.indexOf(FOCUS, degraded.indexOf("applyPanelMode(panel);")),
       "退化后 applyPanelMode 之后不再有 focus",
     ).toBe(-1);
   });

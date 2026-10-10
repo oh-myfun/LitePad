@@ -64,6 +64,7 @@ import {
   isMdTab,
   panelIdsInOrder,
 } from "./doc-model";
+import { applyPanelMode, openPreviewToSide, toggleViewMode } from "./markdown";
 import { attachUserScrollClear, isProgrammatic, markProgrammatic } from "./scroll-guard";
 import { closeTab as ipcCloseTab, newTab as ipcNewTab } from "./ipc/api";
 import { invoke } from "@tauri-apps/api/core";
@@ -107,9 +108,6 @@ export interface TabDeps {
 let scheduleSessionSaveRef: TabDeps["scheduleSessionSave"] = () => {};
 let updateTocDrawerRef: TabDeps["updateTocDrawer"] = () => {};
 let retargetFindBarRef: TabDeps["retargetFindBar"] = () => {};
-let applyPanelModeRef: TabDeps["applyPanelMode"] = () => {};
-let toggleViewModeRef: TabDeps["toggleViewMode"] = () => {};
-let openPreviewToSideRef: TabDeps["openPreviewToSide"] = () => {};
 let attachPasteHandlerRef: TabDeps["attachPasteHandler"] = () => {};
 let openTabsInNewWindowRef: TabDeps["openTabsInNewWindow"] = async () => {};
 let returnTabToMainRef: TabDeps["returnTabToMain"] = () => {};
@@ -123,9 +121,6 @@ export function installTabDeps(deps: TabDeps): void {
   scheduleSessionSaveRef = deps.scheduleSessionSave;
   updateTocDrawerRef = deps.updateTocDrawer;
   retargetFindBarRef = deps.retargetFindBar;
-  applyPanelModeRef = deps.applyPanelMode;
-  toggleViewModeRef = deps.toggleViewMode;
-  openPreviewToSideRef = deps.openPreviewToSide;
   attachPasteHandlerRef = deps.attachPasteHandler;
   openTabsInNewWindowRef = deps.openTabsInNewWindow;
   returnTabToMainRef = deps.returnTabToMain;
@@ -376,7 +371,7 @@ function rebuildLayout(): void {
       void newUntitled();
     },
     // B224：标签区右侧那两颗 Markdown 键（只在活动面板渲染，见 panelDataOf）
-    onOpenPreviewToSide: (panelId) => openPreviewToSideRef(panelId),
+    onOpenPreviewToSide: (panelId) => openPreviewToSide(panelId),
     onTogglePreview: (panelId) => {
       // B228：先取**这颗键自己那一栏**的标签再切，别碰全局活动面板。
       // ⚠️ 以前这里是「面板不是活动的就先把活动面板拽过去，然后无参切换」两步 ——
@@ -386,7 +381,7 @@ function rebuildLayout(): void {
       const own = getPanel(panelId);
       const ownTab = own ? tabs.get(own.activeTabId) : undefined;
       if (!own || !ownTab) return;
-      toggleViewModeRef(ownTab);
+      toggleViewMode(ownTab);
     },
     mountView: (panelId, hostEl) => {
       const p = getPanel(panelId);
@@ -515,7 +510,7 @@ function rebuildLayout(): void {
         scheduleSessionSaveRef();
       });
 
-      applyPanelModeRef(p);
+      applyPanelMode(p);
       // 纯预览实例的视图位置在预览那一侧，渲染完再钉回去（B129）
       restorePreviewScroll(p);
       // CM6 测量（含它的滚动锚点补偿）排在下一帧，位置得在补偿之后收回来（B146）
@@ -599,7 +594,7 @@ function switchTab(panelId: number, tabId: number): void {
   // ⚠️ 必须排在 applyPanelMode **之后**：applyPanelMode 才把 `mode-preview` 摘掉，而
   //   `.panel-host.mode-preview .panel-editor { display: none }`（styles/preview.css）
   //   ⇒ display:none 期间写 scrollTop 浏览器不认、class 一切还清零。
-  applyPanelModeRef(panel);
+  applyPanelMode(panel);
   // B263：编辑器刚从 `display:none` 放出来 ⇒ 这一刻才量得准 —— 补写挂起的那手游标，
   //    ⚠️ 必须排在下面 `restoreViewScroll` **之前**：还原是读槽钉视口，补写晚一步就来不及。
   //    ⚠️ B270：此刻 heightMap 还是估算行高（setState 刚跑完、measure 还没来），这一趟
@@ -864,7 +859,7 @@ async function closeTabById(tabId: number): Promise<void> {
     // B126：接班的标签沿用**它自己**上次的位置（光标随 state，视口随 scrollTop）
     restoreViewScroll(panel);
   }
-  applyPanelModeRef(panel);
+  applyPanelMode(panel);
   // 同上：接班的是纯预览实例时，位置在预览那侧，applyPanelMode 的 syncToLine
   // 会把预览按编辑器顶行顶掉一次，得在它之后钉回来（B129 同款）
   restorePreviewScroll(panel);

@@ -1142,7 +1142,12 @@ describe("分屏：面板操作栏与分隔条（B54）", () => {
     expect(sv, "面板渲染不得再调 onSplitPanel").not.toContain("onSplitPanel");
 
     // 删按钮 ≠ 删功能：菜单 / 快捷键的分屏入口必须还在（B53 之前就有）
-    const main = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/tabs.ts", "utf-8");
+    const main =
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/tabs.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/markdown.ts", "utf-8");
     expect(main, "菜单左右分屏处理必须保留").toContain('splitActivePanel(activePanelId, "h")');
     expect(main, "菜单上下分屏处理必须保留").toContain('splitActivePanel(activePanelId, "v")');
     const km = readFileSync("src/shell/keymap.ts", "utf-8");
@@ -1264,7 +1269,12 @@ describe("B224：标签区右侧的 Markdown 操作键", () => {
   });
 
   it("main 侧口径：md 只给活动面板；侧边预览用辨方向的右邻 + 复用分支", () => {
-    const main = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/tabs.ts", "utf-8");
+    const main =
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/tabs.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/markdown.ts", "utf-8");
     expect(main, "md 标记必须判活动面板（键只挂活动面板，用户拍定）").toMatch(
       /const md = !!act && isMdTab\(act\)/,
     );
@@ -1299,7 +1309,12 @@ describe("B224：标签区右侧的 Markdown 操作键", () => {
 // 「先 rebuildLayout（那时标签还是 source）→ 后置 preview」，中间没人再刷；回调那边又
 // 把切换落点交给了全局活动面板（`markActivePanel(panelId)` + `toggleViewMode()` 无参）。
 describe("B228 侧边预览开出的那一栏：切换键字形与切换落点都跟着那一栏走", () => {
-  const main = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/tabs.ts", "utf-8");
+  const main =
+    readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/tabs.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/markdown.ts", "utf-8");
   const body = (anchor: string, src = main): string =>
     src.match(new RegExp(anchor + "[\\s\\S]*?\\n\\}"))?.[0] ?? "";
 
@@ -1319,7 +1334,7 @@ describe("B228 侧边预览开出的那一栏：切换键字形与切换落点�
       "markActivePanel",
     );
     expect(cb, "必须取这颗键自己那一栏的标签").toMatch(/tabs\.get\(own\.activeTabId\)/);
-    expect(cb, "必须带标签调 toggleViewMode").toMatch(/toggleViewModeRef\(ownTab\)/);
+    expect(cb, "必须带标签调 toggleViewMode").toMatch(/toggleViewMode\(ownTab\)/);
   });
 
   it("toggleViewMode 的落点必须是「这份标签所在的面板」", () => {
@@ -1350,7 +1365,7 @@ describe("B228 侧边预览开出的那一栏：切换键字形与切换落点�
     );
 
     const greedy = main.replace(
-      /toggleViewModeRef\(ownTab\);/,
+      /toggleViewMode\(ownTab\);/,
       "if (own.panelId !== activePanelId) markActivePanel(own.panelId);\n      toggleViewMode();",
     );
     expect(greedy, "退化②：回调又去 markActivePanel + 无参 toggle").not.toBe(main);
@@ -1389,7 +1404,12 @@ describe("B228 侧边预览开出的那一栏：切换键字形与切换落点�
 // 行为侧由 tests/preview-side-existing.test.ts 真的把 main.ts 跑起来验证：
 // 静态契约证明不了「编辑器里装的是哪份文档」。
 describe("B232 侧边预览开在已有文档的右面板：切回源码必须是新那份的文档", () => {
-  const main = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/tabs.ts", "utf-8");
+  const main =
+    readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/tabs.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/markdown.ts", "utf-8");
   const switchFn = main.match(/function switchTab\([\s\S]*?\n\}/)?.[0] ?? "";
   const openFn = main.match(/function openPreviewToSide\([\s\S]*?\n\}/)?.[0] ?? "";
   const elseBranch = openFn.slice(openFn.indexOf("} else {"));
