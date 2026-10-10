@@ -49,7 +49,7 @@ const ui = readFileSync("src/ui.ts", "utf-8").replace(/\r\n/g, "\n");
 
 /** 编辑器滚动监听那条（含它前面那几行自限守卫）—— 与下面几条同一段切片。 */
 function scrollBodyOf(src: string): string {
-  return slice(src, 'shownView.scrollDOM.addEventListener("scroll"', "attachPasteHandlerRef(p);");
+  return slice(src, 'shownView.scrollDOM.addEventListener("scroll"', "attachPasteHandler(p);");
 }
 
 /** 抠出一段源码（按首尾标记切片）—— 段落格式会随排版变，标记要挑稳的。 */
@@ -153,7 +153,7 @@ describe("B152 同步滚动模式：按钮与状态", () => {
     const scroll = slice(
       tabsSrc,
       'shownView.scrollDOM.addEventListener("scroll"',
-      "attachPasteHandlerRef(p);",
+      "attachPasteHandler(p);",
     );
     expect(scroll, "编辑器滚动监听不许再要求源是激活的").not.toMatch(/isSyncSource\(/);
   });
@@ -302,7 +302,7 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
     const scroll = slice(
       tabsSrc,
       'shownView.scrollDOM.addEventListener("scroll"',
-      "attachPasteHandlerRef(p);",
+      "attachPasteHandler(p);",
     );
     expect(scroll, "编辑器里滚要推兄弟").toMatch(/\n\s*if \(t\) pushSyncToSiblings\(t, true\);\n/);
     // ⚠️ 判据里带括号：那段的注释也提到这个名字，只认字面会连注释一起命中（假绿）。
@@ -886,7 +886,7 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
     const scroll = slice(
       tabsSrc,
       'shownView.scrollDOM.addEventListener("scroll"',
-      "attachPasteHandlerRef(p);",
+      "attachPasteHandler(p);",
     );
     expect(scroll, "编辑器里滚要往外播").toMatch(/if \(t\) pushSyncToSiblings\(t, true\);/);
     const preview = slice(tabsSrc, 'preview.root.addEventListener("scroll"', "applyPanelMode(p);");
@@ -1294,7 +1294,7 @@ describe("B170 同步滚动抖动：彻底屏蔽「自家滚动回执」被当�
     const editor = slice(
       degraded,
       'shownView.scrollDOM.addEventListener("scroll"',
-      "attachPasteHandlerRef(p);",
+      "attachPasteHandler(p);",
     );
     expect(editor, "退化后编辑器监听不再认程序回执").not.toContain(
       "if (isProgrammatic(shownView.scrollDOM)) return;",
@@ -1564,7 +1564,7 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
     const scroll = slice(
       degraded,
       'shownView.scrollDOM.addEventListener("scroll"',
-      "attachPasteHandlerRef(p);",
+      "attachPasteHandler(p);",
     );
     expect(scroll, "退回后编辑器监听就不再是「谁滚谁当源」了").not.toMatch(
       /\n\s*if \(t\) pushSyncToSiblings\(t, true\);\n/,

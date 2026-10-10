@@ -13,12 +13,11 @@ import { ChangeSet } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { redo, selectAll, undo } from "@codemirror/commands";
 import { foldAll, foldCode, unfoldAll, unfoldCode } from "@codemirror/language";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { ask, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { ask } from "@tauri-apps/plugin-dialog";
 
 import "katex/dist/katex.min.css";
 import "./styles/preview.css";
@@ -50,7 +49,6 @@ import {
 
 import {
   discardOrphanBackups,
-  exportFile,
   listEncodings,
   listEols,
   listFonts,
@@ -61,7 +59,6 @@ import {
   newTab as ipcNewTab,
   takePendingFiles,
   reloadFile,
-  savePasteImage,
   saveSession,
   saveSettings,
   windowPayload,
@@ -70,8 +67,6 @@ import {
   // B193：会话记录类型 —— 卫星标签要按 `owner` 分组还原成独立窗口，得拿到这份类型
   type WindowPayload,
 } from "./ipc/api";
-import { buildExportHtml, printToPdf } from "./markdown/exporter";
-import { renderFull } from "./markdown/pipeline";
 import { logger, syncLevel } from "./core/logger";
 import { sessionStore } from "./session/store";
 import { attachWheelZoom } from "./shell/zoom";
@@ -114,7 +109,6 @@ import {
   toggleViewMode,
   openPreviewToSide,
   refreshViewModeButton,
-  dirname,
 } from "./markdown";
 import { ensureFindBar, openFindBar, retargetFindBar } from "./find/findbar";
 import {
@@ -151,6 +145,7 @@ import {
   rebuildDocInstances,
   saveDocCore,
 } from "./io/files";
+import { exportHtml, exportPdf } from "./io/export";
 import {
   acceptDroppedTabs,
   adoptTransferredTabs,
@@ -201,7 +196,6 @@ import { isSyncSource, pushSyncToSiblings, syncingCursorDocId } from "./sync-scr
 import {
   Tab,
   Doc,
-  Panel,
   tabs,
   docs,
   panels,
@@ -244,7 +238,7 @@ import {
   EVT_DOC_OPEN_RESYNC,
   EVT_WINDOW_CLOSED,
 } from "./core/events";
-import { activePanel, activeTab, panelOfTab, docOf, instancesOfDoc } from "./core/panels";
+import { activePanel, activeTab, docOf, instancesOfDoc } from "./core/panels";
 import { logViewport } from "./core/viewport";
 import {
   bootMark,
@@ -354,7 +348,6 @@ installTabDeps({
   applyPanelMode,
   toggleViewMode,
   openPreviewToSide,
-  attachPasteHandler,
   keyHint,
 });
 
@@ -641,99 +634,6 @@ function publishThemeMode(): void {
  */
 function publishWindowKind(): void {
   document.documentElement.dataset.windowKind = windowKind;
-}
-
-// ---------------------------------------------------------------- 导出（M3）
-
-async function exportHtml(): Promise<void> {
-  const tab = activeTab();
-  if (!tab || !isMdTab(tab)) return;
-  const doc = docOf(tab);
-  const srcPanel = panelOfTab(tab.tabId);
-  if (srcPanel?.view && srcPanel.viewTabId === tab.tabId) {
-    tab.state = srcPanel.view.view.state;
-  }
-  const picked = await saveDialog({
-    defaultPath: doc.name.replace(/\.(md|markdown|mdown|mkd)$/i, "") + ".html",
-    filters: [{ name: "HTML", extensions: ["html"] }],
-  });
-  if (!picked) return;
-  try {
-    const html = buildExportHtml(doc.name, renderFull(tab.state.doc.toString()));
-    await exportFile(picked, html);
-    showMessage(`已导出 ${picked}`);
-    logger.info("export", `html ${doc.name}`);
-  } catch (err) {
-    showMessage(String(err), true);
-  }
-}
-
-function exportPdf(): void {
-  const tab = activeTab();
-  if (!tab || !isMdTab(tab)) return;
-  const doc = docOf(tab);
-  const bodyHtml = renderFull(tab.state.doc.toString());
-  // 打印 DOM 中的相对路径图片重写为 asset 协议地址
-  const dir = doc.path ? dirname(doc.path) : null;
-  const docEl = new DOMParser().parseFromString(bodyHtml, "text/html");
-  if (dir) {
-    for (const img of docEl.querySelectorAll("img[src]")) {
-      const src = img.getAttribute("src") ?? "";
-      if (/^(https?:|data:|#|\/)/i.test(src)) continue;
-      const abs = dir.replace(/[\\/]+$/, "") + "\\" + src;
-      img.setAttribute("src", convertFileSrc(abs));
-    }
-  }
-  const wrapped = docEl.body.innerHTML;
-  printToPdf(doc.name, wrapped);
-  logger.info("export", `pdf ${doc.name}`);
-}
-
-// ---------------------------------------------------------------- 图片粘贴（M3）
-
-function attachPasteHandler(panel: Panel): void {
-  if (!panel.view) return;
-  panel.view.view.dom.addEventListener("paste", (e: ClipboardEvent) => {
-    const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
-    const doc = tab ? docs.get(tab.docId) : undefined;
-    if (!tab || !doc || !isMdTab(tab) || !doc.path) return;
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    for (const item of items) {
-      if (item.kind === "file" && item.type.startsWith("image/")) {
-        const file = item.getAsFile();
-        if (!file) continue;
-        e.preventDefault();
-        void pasteImageToAssets(panel, tab, file);
-        return;
-      }
-    }
-  });
-}
-
-async function pasteImageToAssets(panel: Panel, tab: Tab, file: File): Promise<void> {
-  try {
-    const dataUrl = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(file);
-    });
-    const b64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
-    const ext = (file.type.split("/")[1] ?? "png").toLowerCase();
-    const img = await savePasteImage(docOf(tab).tabId, b64, ext);
-    const view = panel.view!.view;
-    const pos = view.state.selection.main.head;
-    view.dispatch({
-      changes: { from: pos, insert: `![](${img.rel})` },
-      selection: { anchor: pos + img.rel.length + 4 },
-    });
-    tab.state = view.state;
-    showMessage(`图片已保存到 ${img.rel}`);
-    logger.info("paste", `image ${img.rel} ${file.size}B`);
-  } catch (err) {
-    showMessage(String(err), true);
-  }
 }
 
 // ---------------------------------------------------------------- 主题 / 换行 / 字号

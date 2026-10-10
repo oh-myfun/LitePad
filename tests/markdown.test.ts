@@ -124,13 +124,16 @@ describe("md 扩展名清单必须多处一致", () => {
       readFileSync("src/tabs.ts", "utf-8") +
       "\n" +
       // isMdDoc（含扩展名清单）已拆到 doc-model（解耦第八步）
-      readFileSync("src/doc-model.ts", "utf-8");
+      readFileSync("src/doc-model.ts", "utf-8") +
+      "\n" +
+      // 导出那一路也带一份扩展名清单（已拆到 io/export.ts，#416-1）
+      readFileSync("src/io/export.ts", "utf-8");
     const literals = [...`${mainSrc}\n${outline}`.matchAll(/\\\.\([a-z|]+\)\$/g)]
       .map((m) => m[0])
       .filter((s) => s.includes("markdown"));
     expect(
       literals.length,
-      "至少三处（main ×1 + doc-model ×1 + outline ×1）",
+      "至少四处（main ×1 + doc-model ×1 + io/export ×1 + outline ×1）",
     ).toBeGreaterThanOrEqual(3);
     expect(new Set(literals).size, "各处必须完全一致").toBe(1);
     expect(literals[0]).toBe("\\.(md|markdown|mdown|mkd)$");

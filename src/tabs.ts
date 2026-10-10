@@ -69,6 +69,7 @@ import { updateTocDrawer } from "./toc";
 import { discardBackupFor, scheduleSessionSave } from "./session/session";
 import { retargetFindBar } from "./find/findbar";
 import { saveDocCore } from "./io/files";
+import { attachPasteHandler } from "./io/export";
 import {
   docHeldElsewhere,
   openTabsInNewWindow,
@@ -102,15 +103,12 @@ export interface TabDeps {
   applyPanelMode(panel: Panel): void; // → src/markdown.ts（#410）
   toggleViewMode(target?: Tab): void; // → src/markdown.ts（#410）
   openPreviewToSide(panelId: number): void; // → src/markdown.ts（#410）
-  attachPasteHandler(panel: Panel): void; // → src/image-paste/（#416）
   keyHint(id: string): string; // → 随命令/菜单拆分（#416）
 }
 
-let attachPasteHandlerRef: TabDeps["attachPasteHandler"] = () => {};
 let keyHintRef: TabDeps["keyHint"] = (id) => id;
 
 export function installTabDeps(deps: TabDeps): void {
-  attachPasteHandlerRef = deps.attachPasteHandler;
   keyHintRef = deps.keyHint;
 }
 
@@ -462,7 +460,7 @@ function rebuildLayout(): void {
           // 这条监听里从来没有它的合法工况。
         });
         attachUserScrollClear(shownView.scrollDOM);
-        attachPasteHandlerRef(p);
+        attachPasteHandler(p);
       }
       // B137：预览滚动和编辑器滚动是同一件事 —— 位置只活在 DOM 上，随滚动即时
       // 记进它**自己那份**快照（后台预览标签没有滚动事件，全靠这里补记）。
