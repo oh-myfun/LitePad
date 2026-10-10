@@ -18,7 +18,9 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
     "\n" +
     readFileSync("src/io/files.ts", "utf-8") +
     "\n" +
-    readFileSync("src/tabs.ts", "utf-8");
+    readFileSync("src/tabs.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/commands.ts", "utf-8");
   const rust = readFileSync("src-tauri/src/windows.rs", "utf-8");
   const api = readFileSync("src/ipc/api.ts", "utf-8");
   const caps = readJson("src-tauri/capabilities/default.json");
@@ -390,7 +392,9 @@ describe("卫星窗口静态契约", () => {
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
-      readFileSync("src/tabs.ts", "utf-8");
+      readFileSync("src/tabs.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     expect(main, "失败原因按 label 存下来").toMatch(/failedLabels\.set\(l, e\.payload\?\.message/);
     expect(main, "detail 必须真的由原因拼出来").toMatch(
       /const detail = why \? `：\$\{why\}` : "：等待新窗口就绪超时";/,
@@ -425,7 +429,9 @@ describe("B153 卫星窗口：比主窗口简洁，关窗不碰主窗口的收�
     "\n" +
     readFileSync("src/io/files.ts", "utf-8") +
     "\n" +
-    readFileSync("src/tabs.ts", "utf-8");
+    readFileSync("src/tabs.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/commands.ts", "utf-8");
   const css = readFileSync("src/styles/global.css", "utf-8");
 
   function fnBody(name: string): string {
@@ -506,7 +512,9 @@ describe("B153 反向验证：退回旧写法，上面那几条必须变红", ()
     "\n" +
     readFileSync("src/io/files.ts", "utf-8") +
     "\n" +
-    readFileSync("src/tabs.ts", "utf-8");
+    readFileSync("src/tabs.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/commands.ts", "utf-8");
   const css = readFileSync("src/styles/global.css", "utf-8");
 
   function fnBody(name: string, from: string): string {

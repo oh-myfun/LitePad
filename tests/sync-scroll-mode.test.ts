@@ -39,6 +39,8 @@ const sessSrc = readFileSync("src/session/session.ts", "utf-8").replace(/\r\n/g,
 const mwSrc = readFileSync("src/multiwindow/windows.ts", "utf-8").replace(/\r\n/g, "\n");
 const main2 = readFileSync("src/sync-scroll.ts", "utf-8").replace(/\r\n/g, "\n");
 const main3 = readFileSync("src/core/app-state.ts", "utf-8").replace(/\r\n/g, "\n");
+// 命令层（编辑菜单/折叠/转到行/查看档位/标题栏+菜单栏装配…）已拆到 commands.ts（解耦第十七步 / #416-3）。
+const commandsSrc = readFileSync("src/commands.ts", "utf-8").replace(/\r\n/g, "\n");
 const main4 = readFileSync("src/core/viewport.ts", "utf-8").replace(/\r\n/g, "\n");
 const main5 = readFileSync("src/core/events.ts", "utf-8").replace(/\r\n/g, "\n");
 const main6 = readFileSync("src/core/panels.ts", "utf-8").replace(/\r\n/g, "\n");
@@ -1118,7 +1120,7 @@ describe("B154 / B166 字形：link（链条），随开关在 link / unlink 间
     expect(BTN_BODY, "字形要由开关值决定").toMatch(
       /syncScrollBtn\.innerHTML = on \? CODICONS\.link : CODICONS\.unlink;/,
     );
-    const setup = slice(main, "function setupTitleBar(", "\nfunction ");
+    const setup = slice(commandsSrc, "function setupTitleBar(", "\nfunction ");
     expect(setup, "启动兜底要给未开启态的字形").toContain(
       "syncScrollBtn.innerHTML = CODICONS.unlink;",
     );

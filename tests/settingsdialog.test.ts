@@ -293,7 +293,11 @@ describe("B106 设置页：接线守卫", () => {
     expect(existsSync("src/shell/settingsdialog.ts"), "统一设置页文件应存在").toBe(true);
 
     const main =
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/prefs.ts", "utf-8");
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/prefs.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     expect(main, "main 必须引入 showSettingsDialog").toContain("showSettingsDialog(");
     expect(main, "main 必须有打开设置页的函数").toContain("function openSettingsDialog(");
     // B239：openSettingsDialog 改成 async（开页前要 await 字体枚举），菜单回调包 void
@@ -615,7 +619,11 @@ describe("B239 字体列表：开页前必须已拿到本机枚举", () => {
   /** openSettingsDialog 的函数体（只认 `function <name>(`，见 tests/static.ts）。 */
   function openSettingsBody(): string {
     const main =
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/prefs.ts", "utf-8");
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/prefs.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     const start = main.indexOf("async function openSettingsDialog(");
     expect(start, "main.ts 里应有 async function openSettingsDialog(").toBeGreaterThanOrEqual(0);
     // 顶层函数收尾 = 行首 `}` 后紧跟换行/EOF
@@ -646,7 +654,11 @@ describe("B239 字体列表：开页前必须已拿到本机枚举", () => {
 
   it("枚举失败也不阻断开页（ensureSystemFonts 内部已兜住，await 它不会抛）", () => {
     const main =
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/prefs.ts", "utf-8");
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/prefs.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     const start = main.indexOf("async function ensureSystemFonts(");
     expect(start, "应有 ensureSystemFonts").toBeGreaterThanOrEqual(0);
     let end = main.indexOf("\n}", start);
@@ -731,7 +743,11 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
 
   it("B235：预览正文宽度由 CSS 变量驱动，三档值正确（全宽=不限宽）", () => {
     const main =
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/prefs.ts", "utf-8");
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/prefs.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     const appearance = readFileSync("src/appearance.ts", "utf-8");
     // ⚠️ 反向闸排在正向断言之前
     expect(main, "预览 CSS 不该再有硬编码的 860px 上限").not.toMatch(/--md-content-max[^;]*860px/);
@@ -782,7 +798,11 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
     expect(css, "兜底参数要还在").toContain("var(--md-content-max, none)");
     // 正向：值只能由 main.ts 写在 :root 上，**一处**
     const main =
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/prefs.ts", "utf-8");
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/prefs.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     const appearance = readFileSync("src/appearance.ts", "utf-8");
     // ⚠️ 反向闸在前：不许去挨个改 `.md-preview` 元素 —— 元素自身的声明优先于
     // :root 继承值，那就等于把档位顶掉（与上面那条是同一个 bug 的另一条路径）。
@@ -800,7 +820,11 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
 
   it("B235：宽度档走 applyPreviewWidth 写 :root，缺省全宽", () => {
     const main =
-      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/prefs.ts", "utf-8");
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/prefs.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     const appearance = readFileSync("src/appearance.ts", "utf-8");
     // 正向：启动回放 + 设置接线都在
     expect(main, "启动时应回放该档").toContain("applyPreviewWidth(settings?.preview_width");

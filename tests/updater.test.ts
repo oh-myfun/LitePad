@@ -235,7 +235,7 @@ describe("B107 更新链路静态守卫", () => {
     expect(menu, "帮助菜单必须有检查更新入口").toContain('label: "检查更新…"');
     expect(menu, "回调类型必须声明").toContain("onCheckUpdate");
 
-    const main = readSrc("src/main.ts");
+    const main = readSrc("src/main.ts") + "\n" + readSrc("src/commands.ts");
     expect(main, "main 必须初始化更新键").toContain("initUpdater({");
     expect(main, "菜单回调必须接到手动检查").toContain("updaterHandle?.checkNow()");
     expect(main, "persist 必须走热退出同款会话落盘").toContain("persist: () => persistSession()");

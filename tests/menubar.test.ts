@@ -323,7 +323,9 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
-      readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/find/findbar.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     expect(main, "帮助菜单必须真的调 IPC 去切开发者工具").toContain('"toggle_devtools"');
     expect(src, "切换开发人员工具不得再走 keyHint").not.toContain('keyHint("help.');
     const keymap = readFileSync("src/shell/keymap.ts", "utf-8");
@@ -368,7 +370,9 @@ describe("设置项归属与接线（B42/B46）", () => {
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
-      readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/find/findbar.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     expect(src, "main 必须引入 showSettingsDialog").toContain("showSettingsDialog(");
     expect(src, "main 必须有打开设置页函数").toContain("function openSettingsDialog(");
     expect(src, "main 不得再残留 preferencesdialog").not.toContain("preferencesdialog");
@@ -406,7 +410,9 @@ describe("设置项归属与接线（B42/B46）", () => {
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
-      readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/find/findbar.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     expect(src, "main 必须引入 showSettingsDialog").toContain("showSettingsDialog(");
     expect(src, "main 必须有打开设置页函数").toContain("function openSettingsDialog(");
     const menu = readFileSync("src/shell/menubar.ts", "utf-8");
@@ -421,7 +427,9 @@ describe("设置项归属与接线（B42/B46）", () => {
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
-      readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/find/findbar.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     // B108：自动保存 / 热退出从菜单搬进设置页，靠 onAutosave / onHotExit 接线
     expect(src, "自动保存由设置页接线").toContain("onAutosave:");
     expect(src, "热退出由设置页接线").toContain("onHotExit:");
@@ -460,7 +468,9 @@ describe("设置项归属与接线（B42/B46）", () => {
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
-      readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/find/findbar.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     expect(src, "main.ts 必须保留左右分屏处理").toContain('splitActivePanel(activePanelId, "h")');
     expect(src, "main.ts 必须保留上下分屏处理").toContain('splitActivePanel(activePanelId, "v")');
     expect(src, "main.ts 必须保留移除分屏处理").toContain("closePanelById(activePanelId)");
@@ -481,7 +491,9 @@ describe("快捷键注册表与对话框", () => {
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
-      readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/find/findbar.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     expect(src, "必须用 resolveCommand 分发").toContain("resolveCommand(e, keymapOverrides)");
     expect(src, "必须有 runShortcut 动作表").toContain("function runShortcut(");
     expect(src, "设置对话框打开时应让路").toContain(".settings-overlay");
@@ -513,7 +525,9 @@ describe("快捷键注册表与对话框", () => {
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
-      readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/find/findbar.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     expect(src, "改动必须持久化").toContain("settings.keymap");
   });
 });
@@ -527,7 +541,9 @@ describe("查找入口统一（悬浮查找栏）", () => {
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
-      readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/find/findbar.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     // prettier 会重排 import，断言只看标识符存在（不锁定排版）
     expect(/\bcreateFindBar\b/.test(src), "必须引入 createFindBar").toBe(true);
     expect(src.includes("function openFindBar("), "必须有统一入口 openFindBar").toBe(true);
@@ -547,7 +563,9 @@ describe("查找入口统一（悬浮查找栏）", () => {
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
-      readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/find/findbar.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     expect(src, "不得再出现 folder 范围入口").not.toContain('openFindBar("folder")');
     expect(src, "不得再调用读盘的跨文件搜索 IPC").not.toContain("searchFiles");
     expect(src, "不得再有默认搜索目录推导").not.toContain("defaultSearchDir");
@@ -573,7 +591,9 @@ describe("查找入口统一（悬浮查找栏）", () => {
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
-      readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/find/findbar.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     expect(src, "不得再打开 CM6 内置搜索面板").not.toContain("openSearchPanel");
     expect(src, "不得再引用旧的 searchbar 模块").not.toContain("./editor/searchbar");
     expect(src, "不得再引用独立的在文件中查找窗口").not.toContain("./shell/findinfiles");
@@ -746,7 +766,9 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
-      readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/find/findbar.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     // 档位仍要有个可读的落点（它是跨模块状态：换档要联动 CodeMirror 的明暗）
     expect(main, "档位要写进 data 属性供测试/样式用").toContain("dataset.themeMode");
     expect(main, "换档必须联动面板明暗").toContain("applyDarkToTabs");
@@ -795,7 +817,9 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
-      readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/find/findbar.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     for (const pair of [
       '[winMinimize, "chromeMinimize"]',
       '[winMaximize, "chromeMaximize"]',
@@ -838,7 +862,9 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
-      readFileSync("src/find/findbar.ts", "utf-8");
+      readFileSync("src/find/findbar.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     const codiconAt = main.indexOf("@vscode/codicons/dist/codicon.css");
     const globalAt = main.indexOf('"./styles/global.css"');
     expect(codiconAt, "main.ts 必须引入官方 codicon.css（否则图标全是豆腐块）").toBeGreaterThan(-1);

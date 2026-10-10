@@ -373,7 +373,8 @@ describe("B177 跟随坐标带小数时预览不许坠底", () => {
 describe("预览同步接线（静态断言）", () => {
   it("main.ts 的大纲跳转/转到行必须对预览态实例显式 syncToLine", async () => {
     const { readFileSync } = await import("node:fs");
-    const src = readFileSync("src/main.ts", "utf-8");
+    const src =
+      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/commands.ts", "utf-8");
     expect(src, "大纲 onJump 需按 viewMode===preview 调 syncToLine").toMatch(
       /viewMode === "preview"\)?\s*(panel\.preview|p\.preview)\?\.syncToLine/,
     );
@@ -382,7 +383,8 @@ describe("预览同步接线（静态断言）", () => {
 
   it("md 预览重渲染必须由「文本真的变了」门控（B23：否则跳转落点被冲掉）", async () => {
     const { readFileSync } = await import("node:fs");
-    const src = readFileSync("src/main.ts", "utf-8");
+    const src =
+      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/commands.ts", "utf-8");
     // 仅改选区/点击也会触发 update → 若按任意 update 排程重渲染，
     // 大纲跳转后 120ms 的 replaceChildren 会把预览 scrollTop 清零。
     expect(src, "scheduleMdRender 调用必须由 textChanged 门控").toMatch(

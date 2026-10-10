@@ -276,7 +276,8 @@ it("快捷键对话框必须能切预设", () => {
 });
 
 describe("B42：快捷键可浏览可编辑", () => {
-  const main = (): string => readFileSync("src/main.ts", "utf-8");
+  const main = (): string =>
+    readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/commands.ts", "utf-8");
 
   it("注册表覆盖全部命令，且大纲/折叠/分屏都有默认键位", () => {
     const km = readFileSync("src/shell/keymap.ts", "utf-8");

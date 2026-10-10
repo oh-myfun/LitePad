@@ -602,7 +602,9 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       "\n" +
       readFileSync("src/tabs.ts", "utf-8") +
       "\n" +
-      readFileSync("src/markdown.ts", "utf-8");
+      readFileSync("src/markdown.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     expect(src, "必须挂到 #app（应用级浮层），不能挂在面板里").toContain('createFindBar(el("app")');
     // 切换标签（switchTab）与切换活动面板都要重新把查询应用到新视图，而不是关闭浮层
     expect(src, "切换标签后必须重新定位查找查询").toContain("retargetFindBar()");
@@ -634,7 +636,9 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       "\n" +
       readFileSync("src/tabs.ts", "utf-8") +
       "\n" +
-      readFileSync("src/markdown.ts", "utf-8");
+      readFileSync("src/markdown.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     expect(main, "applyFindQuery 必须同步预览高亮").toContain("applyPreviewFindEverywhere(q)");
     // 重放必须发生在 renderMarkdownFor **函数体内**。
     // 早期这里按「renderMarkdownFor 后 600 字符内」匹配，M4 给该函数加了
@@ -677,7 +681,9 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       "\n" +
       readFileSync("src/tabs.ts", "utf-8") +
       "\n" +
-      readFileSync("src/markdown.ts", "utf-8");
+      readFileSync("src/markdown.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     expect(main, "不得再调用读盘的跨文件搜索 IPC").not.toContain("searchFiles");
     expect(main, "不得再有默认搜索目录推导").not.toContain("defaultSearchDir");
     expect(main, "不得再有 Ctrl+Shift+F 入口").not.toContain("Ctrl+Shift+F");
@@ -735,7 +741,9 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       "\n" +
       readFileSync("src/tabs.ts", "utf-8") +
       "\n" +
-      readFileSync("src/markdown.ts", "utf-8");
+      readFileSync("src/markdown.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
     expect(main, "计数必须用紧凑的 N / M").toMatch(
       /bar\.setCount\(`\$\{idx \+ 1\} \/ \$\{matches\.length\}`\)/,
     );
@@ -756,7 +764,9 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       "\n" +
       readFileSync("src/tabs.ts", "utf-8") +
       "\n" +
-      readFileSync("src/markdown.ts", "utf-8");
+      readFileSync("src/markdown.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
 
     // ---- ① 浮层底部那条空白：状态行空文本时必须收起 ----
     // 用户实测：主行下面吊着一条空白。根因是 .find-status 一直挂着 min-height，
@@ -1152,7 +1162,9 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       "\n" +
       readFileSync("src/tabs.ts", "utf-8") +
       "\n" +
-      readFileSync("src/markdown.ts", "utf-8");
+      readFileSync("src/markdown.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/commands.ts", "utf-8");
 
     // ---- ① 左缘手柄对齐 VS Code（findWidget.css + sash.css）----
     // 「错位」的根因：VS Code 的 `.find-widget` 带 `overflow: hidden`，那条 4px 手柄被

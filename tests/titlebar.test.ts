@@ -21,7 +21,8 @@ import {
 
 const tauriConf = (): string => readFileSync("src-tauri/tauri.conf.json", "utf-8");
 const indexHtml = (): string => readFileSync("index.html", "utf-8");
-const mainSrc = (): string => readFileSync("src/main.ts", "utf-8");
+const mainSrc = (): string =>
+  readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/commands.ts", "utf-8");
 // 只拿**规则**文本：删样式时留的说明注释不算样式，见 stripCssComments 的说明。
 const css = (): string => stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
 const menuSrc = (): string => readFileSync("src/shell/menubar.ts", "utf-8");
