@@ -229,7 +229,13 @@ describe("B189 跨面板激活：焦点给到目标编辑区（光标恢复）",
   });
 
   it("静态契约：onActivatePanel 必须有延迟补焦点（对抗 WebView2 手势结束回焦）", () => {
-    const src = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
+    const src = (
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/tabs.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/tabs.ts", "utf-8")
+    ).replace(/\r\n/g, "\n");
     const start = src.indexOf("onActivatePanel: (panelId) => {");
     const end = src.indexOf("onActivateTab:", start);
     expect(start, "应能定位 onActivatePanel 回调").toBeGreaterThan(-1);
@@ -402,6 +408,8 @@ describe("B126 静态契约：滚动位置必须自己存取", () => {
   const src =
     readFileSync("src/main.ts", "utf-8") +
     "\n" +
+    readFileSync("src/tabs.ts", "utf-8") +
+    "\n" +
     readFileSync("src/sync-scroll.ts", "utf-8") +
     "\n" +
     readFileSync("src/core/viewport.ts", "utf-8");
@@ -516,14 +524,20 @@ describe("B126 静态契约：滚动位置必须自己存取", () => {
 //    真机那个「对 display:none 元素 focus 静默失败」的行为在这里复现不出来。
 //    所以这里锁的是**顺序不变量** —— 类切完之后必须再补一次焦点。
 describe("B181 静态契约：切标签后编辑器必须拿到焦点", () => {
-  const raw = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
+  const raw = (
+    readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/tabs.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/tabs.ts", "utf-8")
+  ).replace(/\r\n/g, "\n");
   const code = (s: string): string =>
     s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
   const body = code(topLevelFnBody(raw, "function switchTab("));
 
   it("模式类切完之后必须再补一次 view.focus()", () => {
     expect(body, "应能定位 switchTab 函数体").not.toBe("");
-    const apply = body.indexOf("applyPanelMode(panel);");
+    const apply = body.indexOf("applyPanelModeRef(panel);");
     const restore = body.indexOf("restoreViewScroll(p");
     expect(restore, "应能看到钉位置").toBeGreaterThan(-1);
     expect(apply, "应能看到模式类切换").toBeGreaterThan(-1);
@@ -544,13 +558,13 @@ describe("B181 静态契约：切标签后编辑器必须拿到焦点", () => {
 
   it("反向验证：删掉补的那次 focus，B181 契约必须抓住", () => {
     const FOCUS = "view.focus();";
-    const apply = body.indexOf("applyPanelMode(panel);");
+    const apply = body.indexOf("applyPanelModeRef(panel);");
     const focus2 = body.indexOf(FOCUS, apply);
     expect(focus2, "退化用的补焦点必须还在").toBeGreaterThan(apply);
     // 真的删掉（只改判据不改源码 = 假绿）
     const degraded = body.slice(0, focus2) + body.slice(focus2 + FOCUS.length);
     expect(
-      degraded.indexOf(FOCUS, degraded.indexOf("applyPanelMode(panel);")),
+      degraded.indexOf(FOCUS, degraded.indexOf("applyPanelModeRef(panel);")),
       "退化后 applyPanelMode 之后不再有 focus",
     ).toBe(-1);
   });

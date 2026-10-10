@@ -25,6 +25,10 @@ import { readFileSync } from "node:fs";
 // CRLF** 会一次性打掉一大片断言（`topLevelFnBody` 认 `\n}` 后的那个字符是 `\n`，CRLF 下
 // 是 `\r`，函数体直接抠成空串）。这里先归一，是防那类「改一个字节红一大片」的复发。
 const main = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
+// 标签/面板/布局簇（switchTab / 滚动监听 / closeTabById…）已拆到 tabs.ts（解耦第八步）。
+// ⚠️ 只把「定义已迁走」的切片指到 tabsSrc，别整份拼进 main —— 跨文件的 indexOf 顺序比较
+//    会全部失真（收口/换页/测量的先后闸全在函数体内部，必须同文件内才有意义）。
+const tabsSrc = readFileSync("src/tabs.ts", "utf-8").replace(/\r\n/g, "\n");
 const main2 = readFileSync("src/sync-scroll.ts", "utf-8").replace(/\r\n/g, "\n");
 const main3 = readFileSync("src/core/app-state.ts", "utf-8").replace(/\r\n/g, "\n");
 const main4 = readFileSync("src/core/viewport.ts", "utf-8").replace(/\r\n/g, "\n");
@@ -37,7 +41,7 @@ const ui = readFileSync("src/ui.ts", "utf-8").replace(/\r\n/g, "\n");
 
 /** 编辑器滚动监听那条（含它前面那几行自限守卫）—— 与下面几条同一段切片。 */
 function scrollBodyOf(src: string): string {
-  return slice(src, 'shownView.scrollDOM.addEventListener("scroll"', "attachPasteHandler(p);");
+  return slice(src, 'shownView.scrollDOM.addEventListener("scroll"', "attachPasteHandlerRef(p);");
 }
 
 /** 抠出一段源码（按首尾标记切片）—— 段落格式会随排版变，标记要挑稳的。 */
@@ -141,9 +145,9 @@ describe("B152 同步滚动模式：按钮与状态", () => {
     // 它只剩光标这一半的闸门：位置那两条滚动监听不许再挂这个前置。
     // ⚠️ 判据里带括号 —— 源码那段的注释里也提到这个名字，只认字面会连注释一起命中。
     const scroll = slice(
-      main,
+      tabsSrc,
       'shownView.scrollDOM.addEventListener("scroll"',
-      "attachPasteHandler(p);",
+      "attachPasteHandlerRef(p);",
     );
     expect(scroll, "编辑器滚动监听不许再要求源是激活的").not.toMatch(/isSyncSource\(/);
   });
@@ -290,16 +294,16 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
 
   it("两条滚动监听都是「谁滚谁当源」，不再要求源是激活的那份", () => {
     const scroll = slice(
-      main,
+      tabsSrc,
       'shownView.scrollDOM.addEventListener("scroll"',
-      "attachPasteHandler(p);",
+      "attachPasteHandlerRef(p);",
     );
     expect(scroll, "编辑器里滚要推兄弟").toMatch(/\n\s*if \(t\) pushSyncToSiblings\(t, true\);\n/);
     // ⚠️ 判据里带括号：那段的注释也提到这个名字，只认字面会连注释一起命中（假绿）。
     expect(scroll, "这条不许再挂 isSyncSource 前置").not.toMatch(/isSyncSource\(/);
     // 预览容器那条：程序摆位的回执由 `isProgrammatic(preview.root)` 吞掉（不推兄弟），
     // 真用户滚动才到推兄弟那一句——守卫必须排在推同步之前。
-    const prev = slice(main, 'preview.root.addEventListener("scroll"', "applyPanelMode(p);");
+    const prev = slice(tabsSrc, 'preview.root.addEventListener("scroll"', "applyPanelModeRef(p);");
     expect(prev, "预览里滚也要推兄弟").toMatch(/^\s*pushSyncToSiblings\(t, true\);/m);
     const atGuard = prev.indexOf("if (isProgrammatic(preview.root))");
     const atPush = prev.indexOf("pushSyncToSiblings(t, true)");
@@ -311,7 +315,7 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
   it("位置同步的回环闸门：程序回执守卫仍在编辑器监听首段，且排在推兄弟之前", () => {
     // 「谁滚谁当源」的代价是少了一道天然闸门，回环全靠 scroll-guard 的 `isProgrammatic`
     // 标记 —— 程序钉位置的回执在更前面就被吞掉，到不了推兄弟那一路。少这一道就是抖动。
-    const scroll = scrollBodyOf(main);
+    const scroll = scrollBodyOf(tabsSrc);
     expect(scroll, "程序滚动期间不许推").toMatch(
       /if \(isProgrammatic\(shownView\.scrollDOM\)\) return;/,
     );
@@ -373,7 +377,9 @@ describe("B152 同步滚动模式：推进与触发点", () => {
       //    折到了下一行 —— 判据得认「条件 + 换行 + 调用」这一整块，别只认半句。
       /if \(!suppressSyncPush && isSyncSource\(tab, panel\) && syncingCursorDocId !== tab\.docId\)\n\s*pushSyncToSiblings\(tab\);/,
     );
-    expect(main, "用户滚动之后要推：谁滚谁当源").toMatch(/if \(t\) pushSyncToSiblings\(t, true\);/);
+    expect(tabsSrc, "用户滚动之后要推：谁滚谁当源").toMatch(
+      /if \(t\) pushSyncToSiblings\(t, true\);/,
+    );
     // 「切换激活文档时则根据新的激活文档进行同步」—— 这一句就落在 switchTab 末尾。
     // ⚠️ B241：这一趟带闸门 ——「没收口」才推全部兄弟（回推会把换算值刷回源那一格）。
     //    ⚠️⚠️ B260 换锚：调用点不再是裸 `pushSyncToSiblings(tab)` —— B259 把总闸
@@ -381,7 +387,7 @@ describe("B152 同步滚动模式：推进与触发点", () => {
     //    `syncSrc`（源那一格被自己一侧自然上限截小的那份不许再当交接值）。判据仍然只
     //    盯「这一趟存在、且用交接游标 `handV`」，闸门语义（!aligned 才推全部）一字未动。
     //    判据要认 prettier 折行后的「条件 + 换行 + 调用」整块，别只认半句。
-    expect(main, "切激活文档后要按新源推（没收口那一支）").toMatch(
+    expect(tabsSrc, "切激活文档后要按新源推（没收口那一支）").toMatch(
       /if \(tab && !aligned\) \{\n\s*pushSyncToSiblings\(tab, false, \{ v: handV \}\);/,
     );
     // ⚠️ B258 换锚（新增的一支）：收口**生效**时原本整趟跳过 ⇒ 兄弟那一格永远停在
@@ -389,10 +395,10 @@ describe("B152 同步滚动模式：推进与触发点", () => {
     //    现在改成照样补推，但只推**其余兄弟**（源与接班都已被收口写好），且沿用收口
     //    同一个游标 —— ⚠️ B260 跟着 `syncSrc` 一起换成 `handV`：两分支必须用同一个数，
     //    否则「接班」与「其余兄弟」会掉成两档（B258 要的就是同位）。
-    expect(main, "收口生效那一支也要补推兄弟（否则兄弟停在旧值）").toMatch(
+    expect(tabsSrc, "收口生效那一支也要补推兄弟（否则兄弟停在旧值）").toMatch(
       /\} else if \(tab && handV !== null && shownTab\) \{\n\s*pushSyncToSiblings\(tab, false, \{\n\s*v: handV,\n\s*skipTabIds: \[shownTab\.tabId, tab\.tabId\],/,
     );
-    expect(main, "补推要排在「不推」那一支后面（两条互斥分支）").toMatch(
+    expect(tabsSrc, "补推要排在「不推」那一支后面（两条互斥分支）").toMatch(
       /\} else if \(tab && handV !== null && shownTab\) \{/,
     );
     expect(ui, "全局刷新兜底（新出现的那一份要对齐）").toMatch(/const act = activeTab\(\);/);
@@ -527,7 +533,11 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
     "function alignShownToSyncSource(",
     "function pushSyncToSiblings(",
   );
-  const SWITCH_BODY = slice(main, "  rememberViewScroll(panel);", "measureAndKeepScroll(panel);");
+  const SWITCH_BODY = slice(
+    tabsSrc,
+    "  rememberViewScroll(panel);",
+    "measureAndKeepScroll(panel);",
+  );
   // ⚠️ B251 换锚：终点从 `if (px !== null) {`（已被并掉的源码态 px 直推分支）换成统一
   //    分支里那道「`v` 取不到就返回」—— 预览态那一支仍从它自己的判据切起，跨侧两条
   //    汇成一条之后它们的交叠点就在这儿。
@@ -544,7 +554,7 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
 
   it("源那一格还没离屏就得把坐标采下来 —— 采点排在面板换页之前", () => {
     const sample = SWITCH_BODY.indexOf("syncSourceSnapshot(shownTab, tabId);");
-    const swap = SWITCH_BODY.indexOf("applyPanelMode(panel);");
+    const swap = SWITCH_BODY.indexOf("applyPanelModeRef(panel);");
     expect(sample, "切标签时要就地采源坐标").toBeGreaterThanOrEqual(0);
     expect(swap, "面板换页那一句要切得到").toBeGreaterThanOrEqual(0);
     expect(
@@ -559,14 +569,14 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
     //    jsdom 不做 CSS 级联 ⇒ 这条**只能**静态盯。顺序反了 ⇒ 源码侧切到预览态时先写了
     //    一个看不见的 scrollTop，等编辑器重新可见，位置并没落进去（切过去视觉上回顶）。
     const restore = SWITCH_BODY.indexOf("restoreViewScroll(panel);");
-    const swap = SWITCH_BODY.indexOf("applyPanelMode(panel);");
+    const swap = SWITCH_BODY.indexOf("applyPanelModeRef(panel);");
     expect(restore, "还原那一句要切得到").toBeGreaterThanOrEqual(0);
     expect(swap, "换页那一句要切得到").toBeGreaterThanOrEqual(0);
     expect(restore, "还原排在换页之后（编辑器可见了才钉得进位置）").toBeGreaterThan(swap);
   });
 
   it("换完页再收口 —— 收口的对象是切过来显示的那一份，不是源", () => {
-    const swap = SWITCH_BODY.indexOf("applyPanelMode(panel);");
+    const swap = SWITCH_BODY.indexOf("applyPanelModeRef(panel);");
     const align = SWITCH_BODY.indexOf("const aligned = tab ? alignShownToSyncSource(");
     expect(align, "切换末尾要收口").toBeGreaterThanOrEqual(0);
     expect(swap, "换页那一句要切得到").toBeGreaterThanOrEqual(0);
@@ -575,8 +585,8 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
   });
 
   it("收口排在 CM6 测量补偿之前（位置先定死，再让测量去补偿）", () => {
-    const align = main.indexOf("const aligned = tab ? alignShownToSyncSource(");
-    const measure = main.indexOf("measureAndKeepScroll(panel);");
+    const align = tabsSrc.indexOf("const aligned = tab ? alignShownToSyncSource(");
+    const measure = tabsSrc.indexOf("measureAndKeepScroll(panel);");
     expect(align, "收口调用要在源码里").toBeGreaterThanOrEqual(0);
     expect(measure, "测量调用要在源码里").toBeGreaterThanOrEqual(0);
     expect(align, "收口排在测量补偿之前").toBeLessThan(measure);
@@ -761,11 +771,13 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
     //    块，且现在多一支「收口生效 ⇒ 补推其余兄弟」）—— 换锚到同一处的**两半**语义：
     //    「没收口 ⇒ 推全部 / 收口生效 ⇒ 只推其余兄弟且跳过源与接班」。
     const NOT_ALIGNED = "if (tab && !aligned) {";
-    expect(main.indexOf(NOT_ALIGNED), "切完那趟回推要留给没收口的情形").toBeGreaterThanOrEqual(0);
+    expect(tabsSrc.indexOf(NOT_ALIGNED), "切完那趟回推要留给没收口的情形").toBeGreaterThanOrEqual(
+      0,
+    );
     expect(ALIGN_BODY, "收口路径要有交回 true 的那一瞬").toContain("return true;");
     // 位置闸：闸门必须紧跟着收口调用出现（顺序本身是判据：先判 aligned 再决定推不推）。
-    const call = main.indexOf("if (tab && !aligned) {");
-    const src = main.indexOf("const aligned = tab ? alignShownToSyncSource(");
+    const call = tabsSrc.indexOf("if (tab && !aligned) {");
+    const src = tabsSrc.indexOf("const aligned = tab ? alignShownToSyncSource(");
     expect(src, "收口结果要接住，供下面的闸门用").toBeGreaterThanOrEqual(0);
     expect(src, "闸门排在收口调用之后（拿到结果才谈得上跳过）").toBeLessThan(call);
   });
@@ -856,7 +868,7 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
     // ⚠️ B260 二次换锚：B260 让这一支带上交接游标（没收口 ⇒ 整趟按交出的源推，交的值
     //    就是收口那一格的口径），判据跟着认「第二参显式 false + 第三参只带换游标」，
     //    仍然只盯「不播跨窗口」这一件事实质，没放宽成抹掉调用本身。
-    expect(main, "切激活文档那路不播").toMatch(
+    expect(tabsSrc, "切激活文档那路不播").toMatch(
       /if \(tab && !aligned\) \{\n\s*pushSyncToSiblings\(tab, false, \{ v: handV \}\);\n/,
     );
     // ⚠️ B251 换锚：单参 `v`（旧写法是 `px, line` 两个 —— 「跨侧只交整数块首」那两个
@@ -868,12 +880,16 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
 
   it("三个触发点都显式打开了 crossWindow", () => {
     const scroll = slice(
-      main,
+      tabsSrc,
       'shownView.scrollDOM.addEventListener("scroll"',
-      "attachPasteHandler(p);",
+      "attachPasteHandlerRef(p);",
     );
     expect(scroll, "编辑器里滚要往外播").toMatch(/if \(t\) pushSyncToSiblings\(t, true\);/);
-    const preview = slice(main, 'preview.root.addEventListener("scroll"', "applyPanelMode(p);");
+    const preview = slice(
+      tabsSrc,
+      'preview.root.addEventListener("scroll"',
+      "applyPanelModeRef(p);",
+    );
     expect(preview, "预览里滚也要往外播").toMatch(/pushSyncToSiblings\(t, true\);/);
     expect(CLICK_BODY, "按下开关那一刻也要播（先播状态，再播位置）").toMatch(
       /EVT_SYNC_MODE, \{ from: windowLabel, docId: tab\.docId, on \}/,
@@ -935,7 +951,7 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
 // ------------------------------------------------- B160：双向同步的两个空洞
 describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚预览源码不动）", () => {
   /** 预览侧的行首对齐写法 —— 用来对表源码分支换算出来的那套坐标。 */
-  const HOST = slice(main, "scrollToLine: (line: number) => {", "lineCount: () =>");
+  const HOST = slice(tabsSrc, "scrollToLine: (line: number) => {", "lineCount: () =>");
 
   it("源码兄弟要认行号：源是预览侧时 px 恒为 null，不能因此就不动", () => {
     // 用户报「滚动预览，源码文档没有同步滚动」。`pushSyncToSiblings` 对预览态的源
@@ -1005,10 +1021,14 @@ describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚�
     // 预览监听首行认 `isProgrammatic(preview.root)`：程序钉位的回执（跨面板同步钉位、
     // 会话恢复、setBlocks 恢复、异步二次定位）一律被吞（不写快照、不推兄弟），只排程落盘；
     // 真用户滚动时标记已被清，才会落到推兄弟那一路。
-    const listener = slice(main, 'preview.root.addEventListener("scroll"', "applyPanelMode(p);");
+    const listener = slice(
+      tabsSrc,
+      'preview.root.addEventListener("scroll"',
+      "applyPanelModeRef(p);",
+    );
     expect(listener, "要能定位预览滚动监听体").not.toBe("");
     expect(listener, "守卫里必须有程序回执判据").toContain("if (isProgrammatic(preview.root))");
-    expect(listener, "挡住之后仍要排程落盘").toContain("scheduleSessionSave();");
+    expect(listener, "挡住之后仍要排程落盘").toContain("scheduleSessionSaveRef();");
   });
 });
 
@@ -1191,13 +1211,13 @@ describe("B167 同步滚动抖动：选区派发不许自带滚动 + 回推要�
   it("两条滚动监听都要用 isProgrammatic 吞掉自家程序回执（否则回推成闭环）", () => {
     // B170：程序钉位的回执由 scroll-guard 标记认领、直接吞掉——这是抖动根除的关键，
     // 两条监听（编辑器 / 预览）都必须有这道守卫，且排在推兄弟之前。
-    expect(scrollBodyOf(main), "编辑器监听要吞程序回执").toContain(
+    expect(scrollBodyOf(tabsSrc), "编辑器监听要吞程序回执").toContain(
       "if (isProgrammatic(shownView.scrollDOM)) return;",
     );
     const previewScroll = slice(
-      main,
+      tabsSrc,
       'preview.root.addEventListener("scroll"',
-      "applyPanelMode(p);",
+      "applyPanelModeRef(p);",
     );
     expect(previewScroll, "预览监听也要吞程序回执").toContain("if (isProgrammatic(preview.root))");
   });
@@ -1218,8 +1238,8 @@ describe("B167 同步滚动抖动：选区派发不许自带滚动 + 回推要�
     );
 
     const GUARD = "if (isProgrammatic(shownView.scrollDOM)) return;";
-    expect(main, "退化串要先自证原句还在").toContain(GUARD);
-    const degradedGuard = main.replace(
+    expect(tabsSrc, "退化串要先自证原句还在").toContain(GUARD);
+    const degradedGuard = tabsSrc.replace(
       /if \(isProgrammatic\(shownView\.scrollDOM\)\) return;/,
       "// (B170 退化：摘掉程序回执判定)",
     );
@@ -1237,14 +1257,14 @@ describe("B167 同步滚动抖动：选区派发不许自带滚动 + 回推要�
 // 接管滚动的真实输入清除，**黏性**保留到那一刻，对几百 ms 后的迟到回执也免疫。
 describe("B170 同步滚动抖动：彻底屏蔽「自家滚动回执」被当成用户滚动", () => {
   it("两条滚动监听在推兄弟之前认「程序来源标记」并直接吞掉（不赌时序、不比位置）", () => {
-    const editor = scrollBodyOf(main);
+    const editor = scrollBodyOf(tabsSrc);
     expect(editor, "编辑器监听要认程序来源标记").toContain(
       "if (isProgrammatic(shownView.scrollDOM)) return;",
     );
     const previewScroll = slice(
-      main,
+      tabsSrc,
       'preview.root.addEventListener("scroll"',
-      "applyPanelMode(p);",
+      "applyPanelModeRef(p);",
     );
     expect(previewScroll, "预览监听也要认程序来源标记").toContain(
       "if (isProgrammatic(preview.root))",
@@ -1273,12 +1293,12 @@ describe("B170 同步滚动抖动：彻底屏蔽「自家滚动回执」被当�
     // ⚠️ 退化串要连着缩进：那段的注释里也提到 isProgrammatic 这个名字，只按裸名 replace
     //   会把注释里那句也换掉，退化版「什么都没改」⇒ 反向验证静默失效。
     const ORIG = "          if (isProgrammatic(shownView.scrollDOM)) return;";
-    expect(main, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "          // (B170 退化：摘掉程序回执判定)");
+    expect(tabsSrc, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = tabsSrc.replace(ORIG, "          // (B170 退化：摘掉程序回执判定)");
     const editor = slice(
       degraded,
       'shownView.scrollDOM.addEventListener("scroll"',
-      "attachPasteHandler(p);",
+      "attachPasteHandlerRef(p);",
     );
     expect(editor, "退化后编辑器监听不再认程序回执").not.toContain(
       "if (isProgrammatic(shownView.scrollDOM)) return;",
@@ -1298,7 +1318,7 @@ describe("B170 同步滚动抖动：彻底屏蔽「自家滚动回执」被当�
 // 抖动（用户报的「非激活文档滚动抖」「预览跟随整文档重渲染」同源）。修法：scrollToLine
 // 摆位时 `markProgrammatic(v.scrollDOM)`（B170 的 scroll-guard 合成来源标记）。
 describe("B169 同步滚动抖动：预览驱动编辑器滚动要被当成自家回执吞掉", () => {
-  const HOST = slice(main, "scrollToLine: (line: number) => {", "lineCount: () =>");
+  const HOST = slice(tabsSrc, "scrollToLine: (line: number) => {", "lineCount: () =>");
 
   it("host.scrollToLine 摆位时要 markProgrammatic（预览驱动编辑器滚动标成程序回执）", () => {
     expect(HOST, "要能定位 scrollToLine 回调").toContain("scrollToLine: (line: number) => {");
@@ -1539,8 +1559,8 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
     // ⚠️ B159 起这一笔带第二个实参（`crossWindow`），退化串要跟着写全，
     //    否则退化版「什么都没改」，整条反向验证静默失效（本文件栽过一次）。
     const ORIG = "if (t) pushSyncToSiblings(t, true);";
-    expect(main, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = main.replace(ORIG, "if (t && isSyncSource(t, p)) pushSyncToSiblings(t);");
+    expect(tabsSrc, "退化串要先自证原句还在").toContain(ORIG);
+    const degraded = tabsSrc.replace(ORIG, "if (t && isSyncSource(t, p)) pushSyncToSiblings(t);");
     // 退回后编辑器那一侧又要求「源是激活的」，鼠标没点过的视口就带不动兄弟了。
     expect(degraded, "退回后编辑器监听又挂回激活判定").toMatch(
       /if \(t && isSyncSource\(t, p\)\) pushSyncToSiblings\(t\);/,
@@ -1548,7 +1568,7 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
     const scroll = slice(
       degraded,
       'shownView.scrollDOM.addEventListener("scroll"',
-      "attachPasteHandler(p);",
+      "attachPasteHandlerRef(p);",
     );
     expect(scroll, "退回后编辑器监听就不再是「谁滚谁当源」了").not.toMatch(
       /\n\s*if \(t\) pushSyncToSiblings\(t, true\);\n/,
@@ -1557,11 +1577,11 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
 
   it("从预览监听里删掉推兄弟那句 → 「两条滚动监听」那条必须落空", () => {
     const ORIG = "pushSyncToSiblings(t, true);";
-    const at = main.lastIndexOf(ORIG);
+    const at = tabsSrc.lastIndexOf(ORIG);
     expect(at, "退化串要先自证原句还在").toBeGreaterThan(-1);
     // ⚠️ 按位置切：编辑器那侧也有一笔同形，整串 replace 会删到错的那笔（假绿）。
-    const degraded = main.slice(0, at) + main.slice(at + ORIG.length);
-    const prev = slice(degraded, 'preview.root.addEventListener("scroll"', "applyPanelMode(p);");
+    const degraded = tabsSrc.slice(0, at) + tabsSrc.slice(at + ORIG.length);
+    const prev = slice(degraded, 'preview.root.addEventListener("scroll"', "applyPanelModeRef(p);");
     // ⚠️ 判据要认**调用**形态（`pushSyncToSiblings(t, true);`）—— 那段的注释里也提名了
     //    这个函数，只认字面会命中注释，退化看着「没生效」（跟 isSyncSource 那次同坑）。
     expect(prev, "预览监听退回后就不再推兄弟了").not.toMatch(/pushSyncToSiblings\(t, true\);/);
@@ -1618,9 +1638,9 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
     // 而 px 读的是快照槽 ⇒ 推给兄弟的是上一次的位置。与编辑器侧口径不一致。
     // 判据：预览监听里 `recordScroll` 必须排在 `pushSyncToSiblings` **之前**。
     const previewScroll = slice(
-      main,
+      tabsSrc,
       'preview.root.addEventListener("scroll"',
-      "applyPanelMode(p);",
+      "applyPanelModeRef(p);",
     );
     const rec = previewScroll.indexOf("recordScroll(t.tabId, t.scrollTop);");
     const push = previewScroll.indexOf("pushSyncToSiblings(t, true);");
@@ -1743,7 +1763,7 @@ describe("B175 同步跟随坐标按整条逻辑行算行内比例（折行段�
   it("编辑器→预览跟随（syncFromEditor）用的顶行坐标也走带比例的小数", () => {
     // `host.topVisibleLine` 喂给 `syncFromEditor`；原来返回整数 `topVisibleLineOf` ⇒
     // 源面板自己的预览也跟着阶梯跳（同一份抖动症状）。必须走 `topVisibleLineFrac`。
-    const host = slice(main, "preview.setHost({", "lineCount: () =>");
+    const host = slice(tabsSrc, "preview.setHost({", "lineCount: () =>");
     expect(host, "topVisibleLine 要返回带比例的小数").toMatch(/return topVisibleLineFrac\(v\);/);
     // ⚠️ B257：`topVisibleLineOf`（整数顶行）已随「切模式交完整 v」删掉 —— 原来这条反向闸
     //    扫的是它，现在恒真（假绿），改成扫**代码形态**：交出去之前不许先 `Math.floor`
@@ -1864,9 +1884,10 @@ describe("B178 跨窗口多开检测：主/子窗口同步键显隐一致", () =
   });
 
   it("refreshAll 与 closeTabById 都要触发存在性广播", () => {
-    expect(main, "全局刷新要广播存在性").toMatch(/broadcastDocPresence\(\);/);
+    // refreshAll 已拆到 ui.ts（解耦第七步）⇒ 广播断言跟着读 ui
+    expect(ui, "全局刷新要广播存在性").toMatch(/broadcastDocPresence\(\);/);
     // 关标签不进 refreshAll（closeTabById 自己收尾），所以这里也要单独广播。
-    const CLOSE = slice(main, "async function closeTabById(", "function disposePanel(");
+    const CLOSE = slice(tabsSrc, "async function closeTabById(", "function disposePanel(");
     expect(CLOSE, "关标签要广播存在性").toMatch(/broadcastDocPresence\(\);/);
   });
 
@@ -1996,7 +2017,7 @@ describe("B186 大纲跳转受同步滚动状态约束（多开不同步则只�
 // ⚠️ 这一条用静态契约盯：`switchTab` 的 `setState` 必须被抑制标志**裹住**，
 //    `handleUpdate` 那句推送必须**读**这个标志。退化（删写 / 删读 / 挪到 setState
 //    之后）三条都要红 —— 见下面那个反向验证块。
-const SWITCH_BODY = slice(main, "function switchTab(", "function newUntitled(");
+const SWITCH_BODY = slice(tabsSrc, "function switchTab(", "function newUntitled(");
 const UPDATE_BODY = slice(main, "function handleUpdate(", "function syncDocInstances(");
 
 describe("B254 切标签那一刻不许拿「刚被归零的位置」推兄弟", () => {

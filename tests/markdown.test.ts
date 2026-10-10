@@ -118,11 +118,20 @@ describe("md 扩展名清单必须多处一致", () => {
     // 不一致会出现「面板认它是 Markdown、导出却不认」这种半吊子状态。
     // ⚠️ 只比 Markdown 那一条：outline 里还另有一组「配置类扩展名」，那不是同一件事。
     const outline = readFileSync("src/markdown/outline.ts", "utf-8");
-    const mainSrc = readFileSync("src/main.ts", "utf-8");
+    const mainSrc =
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/tabs.ts", "utf-8") +
+      "\n" +
+      // isMdDoc（含扩展名清单）已拆到 doc-model（解耦第八步）
+      readFileSync("src/doc-model.ts", "utf-8");
     const literals = [...`${mainSrc}\n${outline}`.matchAll(/\\\.\([a-z|]+\)\$/g)]
       .map((m) => m[0])
       .filter((s) => s.includes("markdown"));
-    expect(literals.length, "至少三处（main ×2 + outline ×1）").toBeGreaterThanOrEqual(3);
+    expect(
+      literals.length,
+      "至少三处（main ×1 + doc-model ×1 + outline ×1）",
+    ).toBeGreaterThanOrEqual(3);
     expect(new Set(literals).size, "各处必须完全一致").toBe(1);
     expect(literals[0]).toBe("\\.(md|markdown|mdown|mkd)$");
   });

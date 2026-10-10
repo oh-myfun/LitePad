@@ -134,6 +134,14 @@ export interface Doc {
 /** 本窗口 label（"main" / "sat-1"…）：定向投递事件要用。 */
 export let windowLabel = "main";
 
+/** 本窗口种类（B71）：主窗口 / 卫星窗口。卫星窗口的面板可以关（=关窗）、
+ *  标签可以「回到主窗口」，主窗口不行。启动时由 bootstrap 按身份回读写入。 */
+export let windowKind: "main" | "satellite" = "main";
+
+export function setWindowKind(k: "main" | "satellite"): void {
+  windowKind = k;
+}
+
 /**
  * B178：别的窗口也开着哪些文档（窗口 label → 可见 docId 集合）。
  *
@@ -142,6 +150,12 @@ export let windowLabel = "main";
  * 时对端据此更新；同步滚动按钮显隐据此对齐。
  */
 export const remoteOpenByWindow = new Map<string, Set<number>>();
+
+/**
+ * B188：已「借出」给卫星窗口的文档 id（借出期间主窗口隐藏实例继续持有正文，
+ * 卫星窗关闭后归还）。跨窗口拖拽认领 / 归还链路读写。
+ */
+export const loanedDocIds = new Set<number>();
 
 /**
  * 按**文档**记的同步滚动开关（`docId → 是否开启`）。

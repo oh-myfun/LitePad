@@ -282,6 +282,8 @@ describe("B139 静态契约：快照按 tabId 索引，不许回头读容器", (
   const src =
     readFileSync("src/main.ts", "utf-8") +
     "\n" +
+    readFileSync("src/tabs.ts", "utf-8") +
+    "\n" +
     readFileSync("src/sync-scroll.ts", "utf-8") +
     "\n" +
     readFileSync("src/core/viewport.ts", "utf-8");

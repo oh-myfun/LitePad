@@ -303,7 +303,11 @@ describe("B71 面板操作补齐（移动标签 / 切焦点 / 右键分屏 / 最
   //   ③ 标签右键的「左右分屏 / 上下分屏」（同时补上 splitview 首次构建时的接线）
   //   ④ 最大化 / 还原面板（Alt+Shift+↑、双击标签、面板上的还原按钮）
   const src =
-    readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/doc-model.ts", "utf-8");
+    readFileSync("src/main.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/tabs.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/doc-model.ts", "utf-8");
   const km = readFileSync("src/shell/keymap.ts", "utf-8");
   const ts = readFileSync("src/shell/tabstrip.ts", "utf-8");
   const sv = readFileSync("src/shell/splitview.ts", "utf-8");
@@ -370,8 +374,9 @@ describe("B71 面板操作补齐（移动标签 / 切焦点 / 右键分屏 / 最
       "markActivePanel(next);",
       "refreshTitle();",
       "refreshStatus();",
-      "updateTocDrawer();",
-      "retargetFindBar();",
+      // updateTocDrawer / retargetFindBar 是过渡期 DI（tabs.ts 的 TabDeps）⇒ 调用点是 Ref 后缀
+      "updateTocDrawerRef();",
+      "retargetFindBarRef();",
     ]) {
       expect(body, `focusPanelByDelta 缺 ${call}`).toContain(call);
     }
@@ -487,7 +492,7 @@ describe("焦点面板：非活动分屏降亮度（class 实时同步）", () =
       /\.layout-panel:not\(\.layout-panel-active\)\s+\.tab-active/,
     );
 
-    const main = readFileSync("src/main.ts", "utf-8");
+    const main = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/tabs.ts", "utf-8");
     const ui = readFileSync("src/ui.ts", "utf-8");
     const fn = ui.match(/function markActivePanel\([\s\S]*?\n\}/)?.[0] ?? "";
     expect(fn, "必须有 markActivePanel 同步 class").toBeTruthy();

@@ -246,6 +246,8 @@ describe("B146 换文档：setState 期间自动派发的滚动不许记进任�
 const src = (
   readFileSync("src/main.ts", "utf-8") +
   "\n" +
+  readFileSync("src/tabs.ts", "utf-8") +
+  "\n" +
   readFileSync("src/sync-scroll.ts", "utf-8") +
   "\n" +
   readFileSync("src/core/viewport.ts", "utf-8")
@@ -339,7 +341,12 @@ describe("B146 反向验证：把收尾摘掉，上面那几条必须变红", ()
     for (const c of CALLS) {
       // 只切掉「切标签 / 切模式 / 关闭接班」那几处（挂载那条排在 switchTab 之前，
       // 用另一个用例盯）。同一行式样在多个站点出现，所以要循环着摘干净。
-      const from = degraded.indexOf("function switchTab(");
+      // switchTab 已迁到 tabs.ts（拼接在 main 之后），toggleViewMode 还在 main ——
+      // 退化起点取两者更早的那个，保住「挂载那条排在被退化站点之前」的原有语义。
+      const from = Math.min(
+        degraded.indexOf("function switchTab("),
+        degraded.indexOf("function toggleViewMode("),
+      );
       let at = degraded.indexOf(c, from);
       while (at >= 0) {
         degraded = degraded.slice(0, at) + degraded.slice(at + c.length);

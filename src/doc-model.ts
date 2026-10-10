@@ -19,6 +19,7 @@ import { detectLanguage } from "./editor/language";
 import { perfProfileFor, type SizeClass } from "./editor/perf";
 import { makeTabState } from "./editor/editor";
 import { eachLeaf } from "./shell/layout";
+import { activeTab } from "./core/panels";
 import type { EditorView, ViewUpdate } from "@codemirror/view";
 
 /** makeInstance 创建 CM6 状态时用的更新回调（由 main 在启动时注入）。 */
@@ -158,6 +159,20 @@ function panelIdsInOrder(): number[] {
   return ids;
 }
 
+/** Markdown 文档判定（按文件名后缀）。纯谓词：tabs / 预览 / 菜单共用一份口径。 */
+function isMdDoc(doc: Doc | undefined | null): boolean {
+  return !!doc && /\.(md|markdown|mdown|mkd)$/i.test(doc.name);
+}
+
+function isMdTab(tab: Tab): boolean {
+  return isMdDoc(docs.get(tab.docId));
+}
+
+function isMdActive(): boolean {
+  const t = activeTab();
+  return !!t && isMdTab(t);
+}
+
 export {
   makeDoc,
   makeInstance,
@@ -167,4 +182,7 @@ export {
   registerDoc,
   attachTabToPanel,
   panelIdsInOrder,
+  isMdDoc,
+  isMdTab,
+  isMdActive,
 };

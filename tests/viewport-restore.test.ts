@@ -212,6 +212,8 @@ describe("B145 恢复位置：布局晚几帧稳定时也必须钉回（而不�
 const src = (
   readFileSync("src/main.ts", "utf-8") +
   "\n" +
+  readFileSync("src/tabs.ts", "utf-8") +
+  "\n" +
   readFileSync("src/sync-scroll.ts", "utf-8") +
   "\n" +
   readFileSync("src/core/viewport.ts", "utf-8")

@@ -72,7 +72,11 @@ describe("B225：编辑器字体 / 行距必须真的接到 CSS", () => {
 
   it("选择器依赖的祖先类必须是 JS 真的建出来的 DOM 类（防「选择器挂空」假绿）", () => {
     const code =
-      readFileSync("src/shell/splitview.ts", "utf-8") + "\n" + readFileSync("src/main.ts", "utf-8");
+      readFileSync("src/shell/splitview.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/main.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/tabs.ts", "utf-8");
     const classes = [...CHAIN.matchAll(/\.([A-Za-z0-9_-]+)/g)].map((m) => m[1]);
     expect(classes.length, "选择器里应有多个祖先类").toBeGreaterThan(1);
     for (const cls of classes) {

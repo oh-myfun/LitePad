@@ -16,7 +16,9 @@ import { readFileSync } from "node:fs";
 import { fnBody, stripCssComments, stripLineComments } from "./static";
 
 const CONFIRM = stripLineComments(readFileSync("src/shell/saveconfirm.ts", "utf-8"));
-const MAIN = stripLineComments(readFileSync("src/main.ts", "utf-8"));
+const MAIN = stripLineComments(
+  readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/tabs.ts", "utf-8"),
+);
 const CSS = stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
 
 /** 从 main.ts 截函数体；截不到直接空串，让断言给出「找不到」而不是误判通过。 */

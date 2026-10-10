@@ -89,7 +89,7 @@ describe("stripInsertInfo（tab 区插入位置）", () => {
 });
 
 describe("B26/B27 接线（静态断言）", () => {
-  const main = readFileSync("src/main.ts", "utf-8");
+  const main = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/tabs.ts", "utf-8");
   const sv = readFileSync("src/shell/splitview.ts", "utf-8");
   const css = readFileSync("src/styles/global.css", "utf-8");
 
