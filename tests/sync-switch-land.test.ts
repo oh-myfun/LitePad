@@ -63,7 +63,8 @@ beforeAll(() => {
     const idx = Math.max(0, Array.prototype.indexOf.call(el.parentElement?.children ?? [], el));
     const top = isRoot ? el.scrollTop : isLine ? idx * ROW : idx * BLOCK;
     const height = isRoot || isLine ? ROW : 0;
-    const r: Record<string, number> = {
+    // toJSON 是函数，Record<string, number> 装不下 —— 反正下面 as unknown as DOMRect 已逃生
+    const r: Record<string, unknown> = {
       top,
       left: 0,
       right: 600,
@@ -246,7 +247,7 @@ function previewRoot(): HTMLElement {
       `预览宿主共 ${all.length} 份，一份都没渲染出块（清单：${all
         .map(
           (e) =>
-            `panel=${e.closest(".layout-panel")?.dataset.panelId}:${
+            `panel=${e.closest<HTMLElement>(".layout-panel")?.dataset.panelId}:${
               e.querySelectorAll("[data-line-start]").length
             }块`,
         )

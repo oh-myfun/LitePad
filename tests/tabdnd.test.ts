@@ -49,6 +49,7 @@ import {
   isTabDragData,
   readTabDragPayload,
   startTabDrag,
+  type LocalDrop,
   type TabDndConfig,
   type TabDragPayload,
 } from "../src/shell/tabdnd";
@@ -60,15 +61,22 @@ function payload(over: Partial<TabDragPayload> = {}): TabDragPayload {
 
 /** 收集配置里各个回调的调用；默认全部「成功」。 */
 function makeConfig(over: Partial<TabDndConfig> = {}) {
+  // ⚠️ vi.fn 显式定型成 TabDndConfig 的回调签名：不标注时推断出「零参元组」与
+  // 「zone: "center" 字面量」，`mock.calls[0][0]` 取参与 `mockReturnValue(zone:"right")`
+  // 都会假红。入参类型宽成 unknown 也没关系 —— mock 只关心调用记录与返回值。
   const calls = {
-    preview: vi.fn(() => ({ panelId: 1, zone: "center" as const, beforeTabId: null })),
-    clear: vi.fn(),
-    commitLocal: vi.fn(() => true),
-    snapshot: vi.fn(() => [{ docId: 7, text: "hello" }]),
-    relinquish: vi.fn(),
-    adopt: vi.fn(() => true),
-    onFallback: vi.fn(),
-    onWarn: vi.fn(),
+    preview: vi.fn<(x: number, y: number, altKey: boolean) => unknown>(() => ({
+      panelId: 1,
+      zone: "center",
+      beforeTabId: null,
+    })),
+    clear: vi.fn<() => void>(),
+    commitLocal: vi.fn<(req: LocalDrop) => boolean>(() => true),
+    snapshot: vi.fn<(payload: TabDragPayload) => unknown>(() => [{ docId: 7, text: "hello" }]),
+    relinquish: vi.fn<(payload: TabDragPayload, toLabel: string) => void>(),
+    adopt: vi.fn<(tabs: unknown, spot: unknown) => boolean>(() => true),
+    onFallback: vi.fn<(payload: TabDragPayload, screenX: number, screenY: number) => void>(),
+    onWarn: vi.fn<(what: string) => void>(),
   };
   const cfg = {
     selfLabel: "main",

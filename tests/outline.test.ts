@@ -1,9 +1,9 @@
 // B33 多格式大纲：toml/ini/yaml/json/py 的结构化提取 + md 转调 + 不支持格式
 import { describe, it, expect } from "vitest";
-import { extractOutline, outlineSupported } from "../src/markdown/outline";
+import { extractOutline, outlineSupported, type OutlineResult } from "../src/markdown/outline";
 
-const lines = (r: { text: string; level: number; line: number }[]) =>
-  r.map((e) => ({ t: e.text, l: e.level, n: e.line }));
+// OutlineResult 含 null（不支持的格式）—— 测试只喂支持的格式，null 视为空表。
+const lines = (r: OutlineResult) => (r ?? []).map((e) => ({ t: e.text, l: e.level, n: e.line }));
 
 describe("多格式大纲提取（B33）", () => {
   it("TOML：段名按点分深度分层，忽略注释", () => {

@@ -10,14 +10,18 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  */
 
 // emit 的调用被这里捕获，才能在测试里断言真实入参。
-const emitSpy = vi.hoisted(() => vi.fn(() => Promise.resolve()));
+const emitSpy = vi.hoisted(() =>
+  vi.fn<(event: string, payload: Record<string, unknown>) => Promise<void>>(() =>
+    Promise.resolve(),
+  ),
+);
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ label: "sat-7" }),
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
-  emit: (event: string, payload: unknown) => emitSpy(event, payload),
+  emit: (event: string, payload: Record<string, unknown>) => emitSpy(event, payload),
   listen: () => Promise.resolve({ unlisten: () => {} }),
 }));
 

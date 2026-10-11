@@ -72,6 +72,7 @@ const noop = (): void => {};
 
 function makeCb(): MenuBarCallbacks {
   return {
+    encodingMenu: () => ({ encodedIn: [], convertTo: [], bom: [], eol: [] }),
     onNew: noop,
     onOpen: noop,
     onSave: noop,

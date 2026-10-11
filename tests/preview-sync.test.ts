@@ -66,7 +66,6 @@ function fakeBlock(lineStart: number, lineEnd: number, contentTop: number): HTML
 let restore: () => void;
 beforeAll(() => {
   restore = installRectStub();
-  // @ts-expect-error 测试环境补丁（applyPending 用 rAF）
   window.requestAnimationFrame = (cb: FrameRequestCallback) =>
     setTimeout(() => cb(0), 0) as unknown as number;
 });

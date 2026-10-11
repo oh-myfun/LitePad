@@ -40,8 +40,8 @@ const previewMax = Infinity;
 const unmeasuredViews = new Set<unknown>();
 type DocLike = {
   lines: number;
-  lineAt(pos: number): { from: number; to: number };
-  line(n: number): { from: number };
+  lineAt(pos: number): { from: number; to: number; number: number };
+  line(n: number): { from: number; to: number };
 };
 const rawRaf = window.requestAnimationFrame.bind(window);
 const settleThenRun = (cb: FrameRequestCallback): number =>

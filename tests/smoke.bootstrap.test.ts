@@ -354,7 +354,7 @@ describe("bootstrap + drag-split smoke", () => {
     const item = items.find((r) => r.querySelector(".settings-item-label")?.textContent === "主题");
     const dd = item?.querySelector(".dropdown") as HTMLElement | null;
     expect(dd, "设置页里应有「主题」下拉").toBeTruthy();
-    const opt = [...dd!.querySelectorAll(".dropdown-option")].find(
+    const opt = [...dd!.querySelectorAll<HTMLElement>(".dropdown-option")].find(
       (o) => o.dataset.value === mode,
     ) as HTMLButtonElement | undefined;
     expect(opt, `主题下拉应有「${mode}」选项`).toBeTruthy();
@@ -815,7 +815,9 @@ describe("bootstrap + drag-split smoke", () => {
       ).toBe(beforePanels);
       expect(document.body.classList.contains("tab-drag-active"), "拖拽光标类应移除").toBe(false);
       expect(document.querySelector(".tab-insert"), "松手后插入指示线应移除").toBeNull();
-      const names = Array.from(target!.querySelectorAll(".tab")).map((t) => t.dataset.tip);
+      const names = Array.from(target!.querySelectorAll<HTMLElement>(".tab")).map(
+        (t) => t.dataset.tip,
+      );
       expect(names[names.length - 1], "被拖标签应追加到末尾").toBe(firstName);
       expect(names.length, "标签总数不变").toBe(beforeCount);
     } finally {
@@ -1049,7 +1051,12 @@ describe("bootstrap + drag-split smoke", () => {
 
     // 快捷键（设置页内一个分类，也可独立弹窗）：打开时全局快捷键必须整体让路
     const { showKeymapDialog } = await import("../src/shell/keymapdialog");
-    showKeymapDialog({ overrides: {}, onChange: () => {} });
+    showKeymapDialog({
+      overrides: {},
+      onChange: () => {},
+      preset: "default",
+      onPresetChange: () => {},
+    });
     expect(document.querySelector(".settings-overlay"), "对话框应已打开").toBeTruthy();
     const during = hotkey({ code: "KeyO", key: "O", ctrlKey: true, shiftKey: true });
     window.dispatchEvent(during);
@@ -1169,7 +1176,7 @@ describe("bootstrap + drag-split smoke", () => {
     );
 
     // 待关标签确实已经消失
-    const names = Array.from(strip.querySelectorAll(".tab")).map((t) => t.dataset.tip);
+    const names = Array.from(strip.querySelectorAll<HTMLElement>(".tab")).map((t) => t.dataset.tip);
     expect(names, `${victimName} 应已被关闭`).not.toContain(victimName);
     expect(capturedError, `关闭标签不应抛错：${String(capturedError)}`).toBeNull();
   });

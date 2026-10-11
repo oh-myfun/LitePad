@@ -249,7 +249,8 @@ describe("B230 下拉搜索", () => {
   });
 
   it("重新展开时搜索词清空（与原生 select 一致）", () => {
-    const { search, root } = open({ searchable: true });
+    const { search: sMaybe, root } = open({ searchable: true });
+    const search = sMaybe!; // searchable: true ⇒ 搜索框必建
     const trigger = root.querySelector(".dropdown-trigger") as HTMLButtonElement;
     type(search, "consol");
     expect(search.value).toBe("consol");

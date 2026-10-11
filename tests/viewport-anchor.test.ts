@@ -228,7 +228,10 @@ describe("B146 换文档：setState 期间自动派发的滚动不许记进任�
     const CM = await import("@codemirror/view");
     const setState = CM.EditorView.prototype.setState;
     let swapped = false;
-    CM.EditorView.prototype.setState = function patched(this: unknown, s: unknown): void {
+    CM.EditorView.prototype.setState = function patched(
+      this: unknown,
+      s: Parameters<typeof setState>[0],
+    ): void {
       setState.call(this, s);
       if (swapped) return;
       swapped = true;

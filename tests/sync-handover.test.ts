@@ -248,7 +248,7 @@ describe("B260 交接游标不许被自动减小", () => {
     btn.click(); // 开同步
     await wait(220);
     installClamp(src(), () => editorMax);
-    const root = document.querySelector(".layout-panel .md-preview");
+    const root = document.querySelector<HTMLElement>(".layout-panel .md-preview");
     if (root) installClamp(root, () => previewMax);
   });
 

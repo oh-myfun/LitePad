@@ -15,6 +15,8 @@ import { initUpdater, type UpdaterHandle } from "../src/shell/updater";
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn() }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
 
+import type { Update } from "@tauri-apps/plugin-updater";
+
 type DownloadCb = (event: unknown) => void;
 
 /** 替身 Update：可编排进度事件与失败模式；downloadAndInstall 自证「替身确实跑了」。 */

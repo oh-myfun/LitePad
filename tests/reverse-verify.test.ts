@@ -199,7 +199,7 @@ describe("反向验证：查找的范围过滤与保留大小写（退化实现�
   });
 
   it("退化：preserveCase 原样返回 → 不迁移大小写", () => {
-    const degenerate = (m: string, r: string) => r; // 退化点：永不迁移
+    const degenerate = (_m: string, r: string) => r; // 退化点：永不迁移
     // ⚠️ 先自证退化实现**确实跑了**：它得把替换串原样吐出来。
     expect(degenerate("Foo", "baz"), "退化实现确实原样返回了").toBe("baz");
     expect(degenerate("Foo", "baz"), "与基准对照：不迁移 ⇒ 迁移用例不是恒真").not.toBe(

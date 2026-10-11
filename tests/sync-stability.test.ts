@@ -82,7 +82,8 @@ beforeAll(() => {
     const idx = Math.max(0, Array.prototype.indexOf.call(el.parentElement?.children ?? [], el));
     const top = isRoot ? el.scrollTop : isLine ? idx * ROW : idx * BLOCK;
     const height = isRoot || isLine ? ROW : 0;
-    const r: Record<string, number> = {
+    // toJSON 是函数，Record<string, number> 装不下 —— 反正下面 as unknown as DOMRect 已逃生
+    const r: Record<string, unknown> = {
       top,
       left: 0,
       right: 600,
@@ -342,7 +343,7 @@ describe("B257：同步滚动 / 切模式 / 切标签三路往返，落点必须
     // 两类容器都装上裁剪：编辑器（B256 那一路）+ 预览（本轮新补的镜像盲区）
     installClamp(scroller(), () => editorMax);
     for (const panel of Array.from(document.querySelectorAll<HTMLElement>(".layout-panel"))) {
-      const root = panel.querySelector(".md-preview");
+      const root = panel.querySelector<HTMLElement>(".md-preview");
       if (root) installClamp(root, () => previewMax);
     }
     right = previewOf(1);

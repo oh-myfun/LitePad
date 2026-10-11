@@ -145,7 +145,9 @@ vi.mock("../src/ipc/api", () => ({
     }),
   saveFile: () => Promise.resolve({ lossy: [], path: "" }),
   savePasteImage: () => Promise.resolve(""),
-  saveSession: (state: { panels: { tabs: { path: string; scrollTop: number | null }[] }[] }) => {
+  saveSession: (state: {
+    panels: { tabs: { path: string; scrollTop: number | null; viewMode: string | null }[] }[];
+  }) => {
     wired.saved.push(state);
     return Promise.resolve();
   },

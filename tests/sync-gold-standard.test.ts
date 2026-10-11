@@ -37,8 +37,8 @@ const settleThenRun = (cb: FrameRequestCallback): number =>
 
 type DocLike = {
   lines: number;
-  lineAt(pos: number): { from: number; to: number };
-  line(n: number): { from: number };
+  lineAt(pos: number): { from: number; to: number; number: number };
+  line(n: number): { from: number; to: number };
 };
 
 async function installEstimateOverrides(): Promise<void> {

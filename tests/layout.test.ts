@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { cssDecls, topLevelFnBody, tabsAll, sessionAll } from "./static";
+
+// 帮助器建出来的都是 split 节点：收窄类型，免得每个断言都要先 `kind === "split" &&`。
+type SplitNode = Extract<LayoutNode, { kind: "split" }>;
 import {
   countLeaves,
   eachLeaf,
@@ -133,7 +136,7 @@ describe("layout tree", () => {
 
   it("removePanel 移除后树规约为单叶子", () => {
     const three = splitPanel(splitPanel(leaf(1), 1, "h", 2), 2, "v", 3);
-    const t = removePanel(removePanel(three, 3), 2);
+    const t = removePanel(removePanel(three, 3)!, 2);
     expect(t).toEqual({ kind: "leaf", panelId: 1 });
   });
 
@@ -173,7 +176,7 @@ describe("layout tree", () => {
 describe("updateRatio 路径约定（B26 回归：分割条位置随开/关文档跳变）", () => {
   // build() 传给 onRatioChange 的 path 是「分割节点自身」的树路径：
   // 根分割 = []，根的 a 子树里的分割 = [0]，b 子树里 = [1]……
-  const nested = (): LayoutNode => ({
+  const nested = (): SplitNode => ({
     kind: "split",
     dir: "h",
     ratio: 0.5,
@@ -214,7 +217,7 @@ describe("B71 最大化 / 还原面板（只改比例，不动结构）", () => 
   // 取舍：不新增「隐藏面板」的渲染分支 —— 最大化只是把「根 → 该叶子」路径上
   // 每一层的比例推到 0/1，面板、标签、编辑器实例全都留着（另一侧渲染成 0 宽）。
   // 这样拖分隔条、保存会话、序列化都仍然只认识 ratio 一种状态。
-  const sample = (): LayoutNode => ({
+  const sample = (): SplitNode => ({
     kind: "split",
     dir: "h",
     ratio: 0.4,

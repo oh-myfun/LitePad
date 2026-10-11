@@ -179,7 +179,7 @@ function host(): HTMLElement {
   return document.querySelector(".panel-host") as HTMLElement;
 }
 function view(): EditorView | undefined {
-  return EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement);
+  return EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement) ?? undefined;
 }
 function previewRoot(): HTMLElement | null {
   return document.querySelector(".md-preview") as HTMLElement | null;

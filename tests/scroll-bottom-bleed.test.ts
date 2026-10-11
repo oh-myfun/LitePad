@@ -387,7 +387,7 @@ describe("B265 底部留白：最后一行 / 最后一块能滚到容器顶", ()
     btn.click(); // 开同步
     await wait(220);
     installClamp(src(), () => editorMax);
-    const root = document.querySelector(".layout-panel .md-preview");
+    const root = document.querySelector<HTMLElement>(".layout-panel .md-preview");
     if (root) installClamp(root, () => previewMax);
     // ⚠️ 留白是在**视图创建时**算的（那时 jsdom 还没给 clientHeight ⇒ 量不出、写的是 0），
     //    要等一次 `setState`（换标签会重建插件实例）才按新几何重算。所以装上钳位之后先

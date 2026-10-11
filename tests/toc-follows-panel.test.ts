@@ -14,7 +14,6 @@ beforeAll(() => {
     "",
   );
   document.body.innerHTML = body;
-  // @ts-expect-error jsdom 兜底
   window.matchMedia = (q: string) => ({
     matches: false,
     media: q,
@@ -25,10 +24,8 @@ beforeAll(() => {
     removeListener() {},
     dispatchEvent: () => false,
   });
-  // @ts-expect-error jsdom 兜底
   window.requestAnimationFrame = (cb: FrameRequestCallback) =>
     setTimeout(() => cb(0), 0) as unknown as number;
-  // @ts-expect-error jsdom 兜底
   window.cancelAnimationFrame = (id: number) => clearTimeout(id);
 });
 

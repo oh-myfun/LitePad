@@ -73,7 +73,8 @@ beforeAll(() => {
     const idx = Math.max(0, Array.prototype.indexOf.call(el.parentElement?.children ?? [], el));
     const top = isRoot ? el.scrollTop : isLine ? idx * rowH() : idx * BLOCK;
     const height = isRoot ? ROW : isLine ? rowH() : 0;
-    const r: Record<string, number> = {
+    // toJSON 是函数，Record<string, number> 装不下 —— 反正下面 as unknown as DOMRect 已逃生
+    const r: Record<string, unknown> = {
       top,
       left: 0,
       right: 600,
@@ -310,7 +311,7 @@ describe("B261 第六轮：同步关着时新建分屏 ⇒ 左栏不许被旧像
       throw new Error("前提破了：同步是关着的（本用例要的就是同步关的工况）");
     await wait(220);
     installClamp(scroller(), () => editorMax);
-    const root = document.querySelector(".layout-panel .md-preview");
+    const root = document.querySelector<HTMLElement>(".layout-panel .md-preview");
     if (root) installClamp(root, () => previewMax);
   });
 

@@ -245,7 +245,7 @@ describe("B261 第八轮：一个分屏里「源码标签 ↔ 预览标签」切
     btn.click(); // 开同步（两个同文档实例 ⇒ multi 闸放行）
     await wait(220);
     installClamp(src(), () => editorMax);
-    const root = document.querySelector(".layout-panel .md-preview");
+    const root = document.querySelector<HTMLElement>(".layout-panel .md-preview");
     if (root) installClamp(root, () => previewMax);
   });
 

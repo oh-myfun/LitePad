@@ -325,7 +325,7 @@ function scheduleFontSizeSave(): void {
   fontSizeSaveTimer = setTimeout(() => {
     fontSizeSaveTimer = null;
     void persistSettings();
-  }, 400);
+  }, 400) as unknown as number;
 }
 
 /** 预览行距：写 :root 上的 --md-line-height，.md-preview 通过 var() 生效。 */

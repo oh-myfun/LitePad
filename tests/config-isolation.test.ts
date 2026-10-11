@@ -95,7 +95,7 @@ describe("配置目录隔离（截图不碰用户目录）", () => {
     expect(py.slice(recipe, call), "移开前必须先试过一次 shoot").toContain("shoot(");
     // 且必须是「只调一次」：出现两次就说明又变回无条件清了
     // ⚠️ 偏移量要用**整段匹配**的长度：`m.index` 指向前导换行，只 +1 会重新命中同一处。
-    const second = py.indexOf("clear_webview_profile()", call + m[0].length);
+    const second = py.indexOf("clear_webview_profile()", call + m![0].length);
     expect(second, "按需移开只能有一处调用").toBe(-1);
   });
 });

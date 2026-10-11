@@ -12,7 +12,7 @@ import { renderTabstrip, type TabViewData, type TabstripCallbacks } from "../src
 /** B125：jsdom 没有 ResizeObserver，这里记下回调供用例手动触发（模拟面板宽度变化）。 */
 const roCallbacks: Array<() => void> = [];
 class FakeResizeObserver {
-  constructor(private cb: () => void) {
+  constructor(cb: () => void) {
     roCallbacks.push(cb);
   }
   observe(): void {}
@@ -34,8 +34,10 @@ let restore: (() => void) | null = null;
 
 beforeAll(() => {
   const proto = HTMLElement.prototype;
-  const def = (prop: string, desc: PropertyDescriptor): void =>
+  // 块体：Object.defineProperty 返回传入对象，箭头简写会把返回值塞给 void 声明（TS2322）。
+  const def = (prop: string, desc: PropertyDescriptor): void => {
     Object.defineProperty(proto, prop, { configurable: true, ...desc });
+  };
 
   // B125：装在渲染之前，tabstrip 里 `typeof ResizeObserver !== "undefined"` 才成立
   (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = FakeResizeObserver;
@@ -368,7 +370,9 @@ describe("B125 标签区滚动条：自动隐藏 + 跟随面板宽度自适应�
     wrapOf(host).querySelector<HTMLElement>(".panel-tabstrip-scrollbar")!;
   const thumbOf = (host: HTMLElement): HTMLElement => barOf(host).firstElementChild as HTMLElement;
   const visible = (host: HTMLElement): boolean => barOf(host).classList.contains("is-visible");
-  const fire = (el: HTMLElement, type: string): void => el.dispatchEvent(new Event(type));
+  const fire = (el: HTMLElement, type: string): void => {
+    el.dispatchEvent(new Event(type));
+  };
   const px = (v: string): number => Number.parseInt(v, 10);
 
   it("默认隐藏：溢出也只是把 thumb 备好，不画出来", () => {

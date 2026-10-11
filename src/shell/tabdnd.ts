@@ -97,11 +97,12 @@ export function decodeTabDrag(raw: unknown): TabDragPayload | null {
   };
 }
 
-/** 这次拖拽是不是「标签拖拽」。只看 types（拖拽途中读不到 data，只有 types 可用）。 */
-export function isTabDragData(dt: DataTransfer | null | undefined): boolean {
+/** 这次拖拽是不是「标签拖拽」。只看 types（拖拽途中读不到 data，只有 types 可用）。
+ *  ⚠️ 参数是最小结构类型而非 `DataTransfer`：本函数只读 `types`，测试的 FakeDataTransfer
+ *  也直接可传（真 DataTransfer 结构兼容，调用方零改动）。 */
+export function isTabDragData(dt: { types: ArrayLike<string> } | null | undefined): boolean {
   if (!dt) return false;
-  const types = dt.types as unknown as ArrayLike<string> | undefined;
-  return types ? Array.from(types).includes(TAB_MIME) : false;
+  return Array.from(dt.types).includes(TAB_MIME);
 }
 
 /**
@@ -110,7 +111,9 @@ export function isTabDragData(dt: DataTransfer | null | undefined): boolean {
  * ⚠️ 只有 `drop` 里能读 `getData`（`dragenter`/`dragover` 期间浏览器处于保护模式，
  * 一律返回空串）—— 所以「是什么」在 dragover 阶段只能靠 `types` 判，具体内容等落地。
  */
-export function readTabDragPayload(dt: DataTransfer | null | undefined): TabDragPayload | null {
+export function readTabDragPayload(
+  dt: { types: ArrayLike<string>; getData(mime: string): string } | null | undefined,
+): TabDragPayload | null {
   if (!isTabDragData(dt)) return null;
   try {
     return decodeTabDrag(dt?.getData(TAB_MIME));

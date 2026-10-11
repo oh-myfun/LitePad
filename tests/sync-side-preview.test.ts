@@ -52,7 +52,8 @@ beforeAll(() => {
     const idx = Math.max(0, Array.prototype.indexOf.call(el.parentElement?.children ?? [], el));
     const top = isRoot ? el.scrollTop : isLine ? idx * ROW : idx * BLOCK;
     const height = isRoot || isLine ? ROW : 0;
-    const r: Record<string, number> = {
+    // toJSON 是函数，Record<string, number> 装不下 —— 反正下面 as unknown as DOMRect 已逃生
+    const r: Record<string, unknown> = {
       top,
       left: 0,
       right: 600,
@@ -287,7 +288,7 @@ describe("B259：开侧边预览 ⇒ 新那份预览要落在「源此刻那一�
     btn.click();
     await wait(220);
     installClamp(scroller(), () => editorMax);
-    const root = document.querySelector(".layout-panel .md-preview");
+    const root = document.querySelector<HTMLElement>(".layout-panel .md-preview");
     if (root) installClamp(root, () => previewMax);
   });
 

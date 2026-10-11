@@ -431,13 +431,13 @@ function activatePanel(panel: HTMLElement): void {
 /** 面板操作区那颗键（按 aria-label 前缀）；md 两颗只在活动面板上挂。 */
 function clickPanelOpIn(panel: HTMLElement | null, prefix: string): HTMLElement {
   const scope = panel ?? (document as unknown as HTMLElement);
-  const btn = Array.from(scope.querySelectorAll<HTMLElement>(".panel-op")).find((b) =>
+  const btn = Array.from(scope.querySelectorAll<HTMLButtonElement>(".panel-op")).find((b) =>
     (b.getAttribute("aria-label") ?? "").startsWith(prefix),
   );
   if (!btn) {
     throw new Error(
       `找不到「${prefix}」这颗面板键（现有 = ${
-        Array.from(scope.querySelectorAll<HTMLElement>(".panel-op"))
+        Array.from(scope.querySelectorAll<HTMLButtonElement>(".panel-op"))
           .map((b) => b.getAttribute("aria-label") ?? "")
           .join("/") || "（无）"
       }）`,
@@ -461,7 +461,7 @@ function toggleModeIn(panel: HTMLElement): void {
 }
 
 function closePanelOp(panel: HTMLElement): void {
-  const btn = Array.from(panel.querySelectorAll<HTMLElement>(".panel-op")).find((b) =>
+  const btn = Array.from(panel.querySelectorAll<HTMLButtonElement>(".panel-op")).find((b) =>
     (b.getAttribute("aria-label") ?? "").startsWith("移除该分屏"),
   );
   if (!btn) throw new Error("这一栏没有「移除该分屏」这颗键");

@@ -53,7 +53,8 @@ beforeAll(() => {
         ? Math.max(0, Array.prototype.indexOf.call(el.parentElement?.children ?? [], el)) * ROW
         : blockTopOf(el);
     const height = isRoot || isLine ? ROW : 0;
-    const r: Record<string, number> = {
+    // toJSON 是函数，Record<string, number> 装不下 —— 反正下面 as unknown as DOMRect 已逃生
+    const r: Record<string, unknown> = {
       top,
       left: 0,
       right: 600,
@@ -203,7 +204,9 @@ function previewRoot(): HTMLElement {
   if (withBlocks.length === 0) {
     throw new Error(
       `预览宿主共 ${all.length} 份，一份都没渲染出块（清单：${all
-        .map((e) => `${e.closest(".layout-panel")?.dataset.panelId}:${e.children.length}`)
+        .map(
+          (e) => `${e.closest<HTMLElement>(".layout-panel")?.dataset.panelId}:${e.children.length}`,
+        )
         .join(",")}）`,
     );
   }

@@ -80,14 +80,14 @@ function rowValue(label: string): string {
 
 /** 下拉选项值列表。 */
 function rowValues(label: string): string[] {
-  return [...rowControl(label).querySelectorAll(".dropdown-option")].map(
+  return [...rowControl(label).querySelectorAll<HTMLElement>(".dropdown-option")].map(
     (o) => o.dataset.value ?? "",
   );
 }
 
 /** 选中某一下拉项的某个值（模拟点击选项，触发 onPick）。 */
 function pickRow(label: string, value: string): void {
-  const opt = [...rowControl(label).querySelectorAll(".dropdown-option")].find(
+  const opt = [...rowControl(label).querySelectorAll<HTMLElement>(".dropdown-option")].find(
     (o) => o.dataset.value === value,
   ) as HTMLButtonElement | undefined;
   expect(opt, `下拉「${label}」应有值「${value}」的选项`).toBeTruthy();
@@ -732,7 +732,7 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
     expect(groups, "应有且只有一个「预览」小分组标题").toEqual(["预览"]);
 
     // 分组标题必须落在两项预览设置**之前**（否则分组等于没分组）
-    const kids = [...body.children];
+    const kids = [...body.children] as HTMLElement[];
     const gi = kids.findIndex((el) => el.classList.contains("settings-group-title"));
     const pi = kids.findIndex((el) => rowLabels(el).includes("预览行距"));
     const di = kids.findIndex((el) => rowLabels(el).includes("预览布局宽度"));

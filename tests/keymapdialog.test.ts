@@ -23,14 +23,14 @@ function openDialog(
 function presetDropdown(): HTMLElement {
   const trigger = document.querySelector(".keymap-preset");
   expect(trigger, "对话框应有键位预设下拉").toBeTruthy();
-  const root = trigger!.closest(".dropdown");
+  const root = trigger!.closest<HTMLElement>(".dropdown");
   expect(root, "预设下拉应有 .dropdown 容器").toBeTruthy();
   return root!;
 }
 
 /** 切换预设：直接点对应选项（模拟用户操作，触发 onPick）。 */
 function pickPreset(id: string): void {
-  const opt = [...presetDropdown().querySelectorAll(".dropdown-option")].find(
+  const opt = [...presetDropdown().querySelectorAll<HTMLElement>(".dropdown-option")].find(
     (o) => o.dataset.value === id,
   ) as HTMLButtonElement | undefined;
   expect(opt, `预设下拉应有「${id}」选项`).toBeTruthy();

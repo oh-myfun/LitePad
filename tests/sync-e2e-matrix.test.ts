@@ -62,7 +62,8 @@ beforeAll(() => {
     const idx = Math.max(0, Array.prototype.indexOf.call(el.parentElement?.children ?? [], el));
     const top = isRoot ? el.scrollTop : isLine ? idx * rowH() : idx * BLOCK;
     const height = isRoot ? ROW : isLine ? rowH() : 0;
-    const r: Record<string, number> = {
+    // toJSON 是函数，Record<string, number> 装不下 —— 反正下面 as unknown as DOMRect 已逃生
+    const r: Record<string, unknown> = {
       top,
       left: 0,
       right: 600,
@@ -328,13 +329,13 @@ function toggleMode(): void {
 
 /** 面板操作区按 aria-label 前缀找那颗键（只认活动面板会渲染的那几颗 md 键）。 */
 function clickPanelOp(labelPrefix: string): void {
-  const btn = Array.from(document.querySelectorAll<HTMLElement>(".panel-op")).find((b) =>
+  const btn = Array.from(document.querySelectorAll<HTMLButtonElement>(".panel-op")).find((b) =>
     (b.getAttribute("aria-label") ?? "").startsWith(labelPrefix),
   );
   if (!btn)
     throw new Error(
       `找不到「${labelPrefix}」这颗面板键；现有 = ${
-        Array.from(document.querySelectorAll<HTMLElement>(".panel-op"))
+        Array.from(document.querySelectorAll<HTMLButtonElement>(".panel-op"))
           .map((b) => b.getAttribute("aria-label") ?? "")
           .join("/") || "（无）"
       }`,
@@ -369,7 +370,7 @@ function splitH(): void {
  *    关会把「关错那一格」伪装成「位置不对」。
  */
 function closePanelOp(panel: HTMLElement): void {
-  const btn = Array.from(panel.querySelectorAll<HTMLElement>(".panel-op")).find((b) =>
+  const btn = Array.from(panel.querySelectorAll<HTMLButtonElement>(".panel-op")).find((b) =>
     (b.getAttribute("aria-label") ?? "").startsWith("移除该分屏"),
   );
   if (!btn) throw new Error(`这一栏没有「移除该分屏」这颗键`);

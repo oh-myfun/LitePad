@@ -55,7 +55,8 @@ beforeAll(() => {
         : blockTopOf(el);
     // 预览块内层高度按 0 算（内层容器不撑高），编辑器行与预览根按整行高。
     const height = isRoot || isLine ? el.clientHeight || 0 || ROW : ROW * 0;
-    const r: Record<string, number> = {
+    // toJSON 是函数，Record<string, number> 装不下 —— 反正下面 as unknown as DOMRect 已逃生
+    const r: Record<string, unknown> = {
       top,
       left: 0,
       right: 600,
