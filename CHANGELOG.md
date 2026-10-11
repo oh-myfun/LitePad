@@ -3,6 +3,128 @@
 > 本文件由 `scripts/gen-changelog.sh` 从 Conventional Commit 自动生成，
 > `scripts/release.sh` 发布时自动刷新；版本口径见 `docs/conventions.md`「版本号规则」。
 
+## v0.18.13 — 2026-10-11
+
+本版距 `v0.18.1` 共 104 个提交。
+
+### 新功能
+
+- 用新源图重出全套图标产物并重新打包（exe/setup 已嵌入）；B222 判据改为无底版 + 同源指纹 `d347060`
+- B265 编辑区底部留白，末行/末块可滚到顶 `dd76ca8`
+- B251 P2 三路同步统一到单一游标 v，ANCHOR=0 清掉偏移常量 `462971c`
+- 统一同步游标地基 —— 源码行号 ⇄ 预览块+比例 严格互逆纯函数（B251 P1） `ce786e2`
+- B237 字体档位改「比例/等宽」且两栏同列表；内嵌等宽补汉字层 `865f911`
+- B236 未保存确认框改自绘三按钮（保存/不保存/取消），文案与布局对 VS Code `fc33b55`
+- B235 预览布局宽度三档（标准/宽屏/全宽默认），设置页去掉大纲宽度 `ae96674`
+- B227 默认字体内嵌 + 正文/代码分开设（设置页对齐 InkNote） `e7c68f7`
+
+### 修复
+
+- B273 规范游标 `syncV` 落地 + 修 2 处全量回归回潮 `3563a63`
+- B277 延迟补焦点不许滚动 —— WebView2 上 focusPreventScroll 失效回滚成普通 focus，光标行滚进视野盖掉收口位置；改原生 preventScroll + 下帧 reassert 复核 `161d7a7`
+- B276 同步滚动三处真病灶 —— 撤 B247 守卫、源几何未测不采游标、pinScrollTop 补钉用户接管即整轮取消 `510de0a`
+- B274 切标签位置中间态 —— 预览还原排到收口之后；measure 后补写其它面板的挂起游标 `8698ff0`
+- B272 预览底部留白 RO 自反馈环（红条刷屏/启动报错）—— 跨帧写 + 熔断 + 1px 容差；红条噪声过滤与封顶 `22a4ecb`
+- B271 金标准端到端验证台 —— 估算窗口闸 + 编辑器侧对称 B129 闸 + measure 后补写的用户接管让路 `4a5a004`
+- B270 三实例同文档切源码对不上/回预览跳变 —— pending 游标补写分两段，measure 后按实测几何复核 `56ae0e7`
+- B269 预览启动即在预览态时末块滚不到顶（离屏闸门 + rAF 补量） `7a8ed86`
+- B268 末块 lineEnd 覆盖到文档末行，修复带末尾空行时同步底部游标错配 `d4bd8d2`
+- B265 预览底部留白在块挂载后测量，修复最底区域滚不到顶 `d79cfe4`
+- B266 删除「到底」特判(handoverV/sourceAtOwnFloor/atFloor)，统一游标直接吃源真实 v `7cb3052`
+- B265b 修启动报 ResizeObserver loop（底部留白的 RO 自反馈） `14f9640`
+- 拖标签分屏（move 支）补游标重落，防位置被钉回开头 `7d803ac`
+- B263 同文档三标签切激活标签位置偏移（离屏源码兄弟拿隐藏尺子量出 0 ⇒ 回顶） `6913a38`
+- B262 几何变化后按这一帧的几何重落，别拿旧 heightMap 量新位置 `9a70545`
+- 切标签交接改用离屏前同帧采下的游标上限，修源码标签↔预览标签切换换位置 `9562d96`
+- 关分屏后按统一游标重落，端到端矩阵补齐四类操作 (B261) `b010138`
+- 同步关着时新建分屏也要按新几何重落原标签（B261 第六轮） `931b595`
+- 撤回第四轮异步落位（跨帧一次性落位把切好的位置钉回去） `6db1663`
+- 新建分屏后源与新副本都按新几何重落（面板变窄 ⇒ 同一像素是另一行） `4288c18`
+- 复制标签要带上源的滚动位置（B261 第三处同型缺口） `b705a84`
+- 新建分屏与开侧边预览的滚动落位（B261 两条真根因） `f496baf`
+- 重建面板时归零那一发 scroll 不许当成用户位置（B261） `16982c9`
+- 切标签/切模式不许因切换而自动减小滚动位置（B260） `d16f6df`
+- 打开侧边预览要把源那一格落下来（B259） `6feb4a6`
+- 切回预览时把其余兄弟预览按同一个游标补推一次（B258） `9bd96dc`
+- 跨侧照交完整游标 v，切标签/切模式不再每跨一次丢一格比例 `8bd4f58`
+- 还原没立住那一帧不再被当成同步的源 `d849d11`
+- 切标签那一刻不许拿「刚被归零的位置」推兄弟（B254） `b557537`
+- 跟随路径跨侧判据改回「源与目标是否分处两侧」 `1671781`
+- 跨侧交小数漏了源码那一半 —— 行内比例被预览当块内比例用（切 tab 另一个预览标签恒偏下） `10142b7`
+- 切 tab 往上偏移复发 —— 跨侧只交整数块首，两个比例归一在不同量纲上 `0bdb188`
+- 滚预览时推给源码兄弟的行号交整数（小数让两边各取整，差一行/半行） `d645114`
+- 单面板下滚预览也要算得出离屏源码兄弟的落点（借面板自己的 EditorView） `6d0a9a6`
+- 滚预览时也把位置推给离屏的源码兄弟（原先这一格换不出就整条不写） `828192b`
+- 切回源码 tab 保住自己位置，不再被块首压回去（切 tab 自动偏移） `7d9c65d`
+- 取锚比较加半像素容差，禁止亚像素让预览退回上一块（切代码/预览 tab 越切越靠顶） `908be0d`
+- 预览块把 open/close 切成两块，跨侧同步恒钉回第1行（B244 四标签复核） `0c373b6`
+- 跨侧交点改交整数块起始行（小数取整分歧让切过去差两行） `10efda6`
+- 同步滚动与切源码/预览统一走行首对齐（editorLineTopPx） `a0c2098`
+- 切 tab 位置漂移 —— px 双语义采样、收口后不回推、跨侧只同侧收口 `b4b40ee`
+- 切换时由源收口，不可见实例也算（B240 三轮） `8c74a37`
+- B240 二轮 同步滚动的坐标要取实时值，别读快照槽（离屏标签仍对不上） `9fc5390`
+- B240 同步滚动时非激活的标签也要统一滚动位置 `30db304`
+- B239 字体列表退回手抄清单（开页前 fire-and-forget 取枚举 + 同步建页） `9899a45`
+- B238 预览布局宽度不生效（.md-preview 本地声明遮蔽 :root 变量）+ 说明压成一句 `1997d13`
+- B236 大纲条目的提示框改与标签同档（跟随鼠标、紧凑档、无小箭头） `0265359`
+- B234 字体枚举修等宽误判与变体冗余（280→122 条，等宽桶 244 误判→14 精确） `9b5e885`
+- B232 侧边预览开在已有文档的面板时，切回源码显示的是新那份 `bf4d6ed`
+- B230 字体下拉限高不再顶出视口 + 支持搜索 `bd2182a`
+- B226 标签区操作键点了没反应——mousedown 里换掉了按钮节点，合成的 click 派发不到 `fe477c2`
+- B225 换本机装着的字体也不生效——CM6 的 .cm-scroller 把继承截胡 `33dc28d`
+
+### 重构
+
+- P2 收尾——tabstrip 滚轮/自绘悬浮滚动条(B117/B125)拆出 shell/scrollbar.ts 纯叶子（bindWheel/ensureOverlayScrollbar/syncOverlayScrollbar 三出口，零反向依赖），tabstrip.test.ts 拼接重锚 `7e9c65f`
+- P3-b 拆分 session/session.ts 上帝文件——persist(落盘/自动保存/热退出/外部变更)+rebuild(恢复/卫星窗口)两子模块 + session.ts 门面（export *，单向 rebuild→persist 无环），tests/static.ts 增 SESSION_PARTS/sessionAll() 重锚 15 处静态契约 `4e5eca7`
+- P3-a 拆分 tabs.ts 上帝文件——按职责分 render/lifecycle/split/deps 四子模块 + index 门面（export * 零 importer 改动），tests/static.ts 增 TABS_PARTS/tabsAll() 并重锚 32 处读 tabs.ts 的静态契约 `6982fd9`
+- P2 纯工具/数据提纯——scroll-guard 升 core/、zoneOf+DropZone 抽 dnd/geometry、el 抽 dom、TEXT_FILTERS 抽 io/filters（core 自洽 + 纯函数/数据归位） `92b2e03`
+- 跨窗口广播收口到 emitCrossWindow，注入 from 并再导出 convertFileSrc `9edd5a0`
+- break tabs<->markdown / tabs<->session cycles via DI setters `40c5136`
+- P0 速赢——layout.ts 升 core/ 消 core→shell 违规；删死模块 sync/cursor.ts；tests 加 concatSrc 去源码拼接重复 `97f9ab9`
+- #417 收口——main 成纯编排层，删临时脚本，清遗留 DI 注释，architecture 终稿 `3c69f43`
+- 抽出命令层到 src/commands.ts（编辑菜单/折叠/转到行/查看档位/标题栏+菜单栏装配；main 降至 1173 行） `5adb7a6`
+- 抽出设置/编码/档位簇到 src/prefs.ts（撤销最后一个 keyHint Ref，TabDeps 全清，全项目再无过渡期 DI） `ab81628`
+- 抽出导出/图片粘贴簇到 src/io/export.ts（撤销 attachPasteHandlerRef，TabDeps 剩 1） `2767931`
+- 抽出多窗口/卫星/跨窗口同步簇到 src/multiwindow/windows.ts（零 DI；撤销 7 个 Ref，SessionDeps/IoDeps 全清） `91d183c`
+- 抽出打开/保存/文件拖入簇到 src/io/files.ts（撤销 2 个过渡期 Ref，handleUpdate 走 getInstanceOnUpdate 读回） `6cddf76`
+- 抽出悬浮查找/替换栏簇到 src/find/findbar.ts（零 DI；MarkdownDeps 全清，PreviewFindSpec 归位） `1b716f7`
+- 抽出会话/自动保存/热退出簇到 src/session/session.ts（撤销 3 个过渡期 Ref，MAIN_WINDOW_LABEL/remotedTabs 收进 app-state） `83757f9`
+- 抽出大纲 TOC/侧栏簇到 src/toc.ts（撤销 updateTocDrawer 的 2 个过渡期 Ref） `5d2a42d`
+- 抽出 Markdown 预览簇到 src/markdown.ts（撤销 tabs.ts 的 3 个过渡期 Ref） `db940b4`
+- 抽出标签/面板/布局簇到 src/tabs.ts（过渡期 installTabDeps 依赖注入） `695dfc7`
+- 抽出启动计时/DOM句柄/基础访问/状态呈现到 src/ui.ts `27512bc`
+- 抽出文档/标签/实例纯模型操作到 src/doc-model.ts `da59e52`
+- 抽出编码菜单纯函数叶子到 src/encoding.ts `3c3d231`
+- 抽离主题/字号/字体/预览宽度 setter 到 src/appearance.ts `fe9ebe0`
+- 拆出 panels / viewport / events 三个公共底座，sync-scroll 不再依赖 main.ts `278b51e`
+- 共享状态集中到 src/core/app-state.ts（解耦第二步） `ebb2ba4`
+- 把同步滚动逻辑从 main.ts 拆到 src/sync-scroll.ts `eb1a5c0`
+- B233 状态栏语言项改成纯展示，md 不再兼视图切换器 `c3d56dc`
+- B231 字体口径翻转——正文字体只管预览正文，源码区归代码字体 `9fed0a8`
+- B229「Markdown 预览」分类并入「编辑器」 `28a70f8`
+
+### 其他
+
+- 旧 CSS 断言写法迁移 ruleBlock——97 处旧 \`\\\{[^}]*\\\}\` 提取清至 29 处（机械迁移 66 + editor-css truthy 2），ruleBlock 升级：归一选择器列表 ,\\n、独占规则边界（尾段/列表成员不误配）、atLineStart 行首锚等价旧 \\n 写法；余 29 处为跨段列表/退化构造/matchAll/@font-face 刻意保留 `335fa59`
+- tests/ 纳入 tsc 类型门禁——tsconfig include 加 tests、lib 升 ES2022、装 @types/node；修 247→0 全部类型错（vi.fn 定型/querySelector 泛型/判别联合收窄/DocLike 补成员/撤 4 处空转 @ts-expect-error），tabdnd 两函数签名收最小结构类型 `a4cacbe`
+- B278 收口采源埋点（临时诊断，定位「收口交整数 v」残差后撤）+ 唯一取值口契约换锚 `14562e8`
+- 工作流对齐 MSVC 工具链（移除 MSYS2/GNU 残留）；cargo test 改 --release、vitest 限并发 `8a13342`
+- 纠正过时工具链描述（MSVC 替代 MSYS2/MinGW），脚本移除 msys64 依赖 `336ff0a`
+- B261 补 4 条分屏+多标签「来回切换多轮」端到端用例（时间轴 + 退化记录） `27f93c5`
+- B261 补 8 条端到端滚动一致性用例（7 类整列无覆盖入口） `436f2ca`
+- 临时把发布版日志默认级提到 trace + 预览落点加落点校验行（B255 取证，定案后回退） `bcc1179`
+- 订正跨侧口径的过期注释（B251 那套「跨侧交完整 v 就不再有量纲错配」已被本轮推翻） `4e61850`
+- bump 0.18.7 -> 0.18.8（B247~B251 一批未发布改动合成一个 patch，收口切 tab 往上偏移复发） `8341f8e`
+- 桩改成真实块高不等宽 + A/A' 从块几何推导（切 tab 不偏移的判据才有鉴别力） `7d83cad`
+- 加判据「切预览 tab 的落点 == 本标签切模式的落点」（B246） `2f4e676`
+- bump 0.18.6 -> 0.18.7（B244 新 bug 修复：预览块双切导致跨侧同步钉回第1行） `138f3da`
+- bump 0.18.5 → 0.18.6（B243 跨侧交点交整数块起始行） `a494582`
+- bump 0.18.4 → 0.18.5（B242 跨侧统一行首对齐 + 删跨侧收口守卫） `3f1a500`
+- bump 0.18.1 → 0.18.2（B236b 大纲提示同档 / B237 字体档位+汉字层 / B238 预览宽度修复） `4feaf1f`
+
+---
+
 ## v0.18.1 — 2026-10-04
 
 本版距 `v0.18.0` 共 3 个提交。
