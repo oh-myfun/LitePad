@@ -77,6 +77,31 @@ export function logViewport(where: string, panel?: Panel): void {
 }
 
 /**
+ * B280：**还原几何**诊断（debug）。
+ *
+ * 「切回去位置不对 / 渲染不完整」这类症状只有把**当时的几何**打全才定位得了：容器高 /
+ * 内容高 / 实际渲染行数 / 可滚范围 / 留白，外加「想钉 vs 落下」。默认 info 看不到，
+ * 排查时把设置里的日志级别调到 debug（或 trace）再按 tabId 过滤。
+ * ⚠️ 别提到 info：滚动采样一秒几十条，会把 2MB 的日志冲掉（同 `logViewport` 的纪律）。
+ */
+export function logViewportGeom(where: string, panel?: Panel): void {
+  const p = panel ?? activePanel();
+  const view = p?.view?.view;
+  if (!p || !view) {
+    logger.debug("viewport", `${where} 无视图（面板未挂载）`);
+    return;
+  }
+  const el = view.scrollDOM;
+  const bleed = Number.parseFloat(el.style.getPropertyValue("--cm-bleed-bottom")) || 0;
+  logger.debug(
+    "viewport",
+    `${where} tab=${p.viewTabId ?? "-"} clientH=${el.clientHeight} contentH=${fmtPx(view.contentHeight)} ` +
+      `渲染行=${el.querySelectorAll(".cm-line").length} scrollH=${fmtPx(el.scrollHeight)} ` +
+      `scrollTop=${fmtPx(el.scrollTop)} bleed=${fmtPx(bleed)}`,
+  );
+}
+
+/**
  * 写标签的滚动位置到会话记录 —— **唯一闸口**（B145）。
  *
  * ⚠️ B170：还原期不再靠「`restoringViewports` 两帧窗口」在出口拦（那是赌时序的时间窗，

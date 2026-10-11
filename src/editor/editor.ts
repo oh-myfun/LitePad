@@ -78,7 +78,27 @@ const BOTTOM_BLEED_VAR = "--cm-bleed-bottom";
 
 /**
  * 这一格该留多少底部空白（px，可为小数）。
- * 见上面 `BOTTOM_BLEED_VAR` 那段的推导 —— 它就是那个 `bleed === lastLineTop + clientH − baseContent`。
+ *
+ * ⚠️⚠️ **B280（本轮按用户要求，从编辑器源头根治）**：公式是 **`clientH − 末行高`**
+ *   —— 与预览侧 `PreviewPane.applyBottomBleed`（`clientH − 末块高`）**同一个式子**，
+ *   两侧从此对称。它和旧写法 `末行top + clientH − contentHeight` 代数等价
+ *   （`末行top − contentHeight ≡ −末行高`），但旧写法**绕道 `contentHeight`**：
+ *   `contentHeight` 要等 CM6 测完整份文档才有值，新建视图 / `setState` 那一帧它是 **0**
+ *   ⇒ 旧闸门 `contentHeight > 0` 拦下 ⇒ **留白写不出来（= 0）⇒ 可滚范围少整整一屏**
+ *   ⇒ 于是每个场景（切标签 / 切模式 / 分屏 / 同步落点）都得靠补钉去「凑」这个底部位置
+ *   （B256 / B270 / B278 全是这条根长出来的后遗症）。
+ *
+ *   去掉这个依赖之后：**首帧就能写出正确留白**，可滚范围从第一帧起就容纳
+ *   「末行贴顶」，钉位不再被裁 ⇒ 不回退、不闪、不依赖重试窗口。
+ *
+ * ⚠️ 方向恒安全（这是本式子的关键性质）：末行高量不出时退回 CM6 的 `defaultLineHeight`
+ *   （同步可得、恒 > 0，见其文档「may not be accurate for all lines」）。末行真·折行时
+ *   `defaultLineHeight` 偏小 ⇒ 算出的留白**偏大** ⇒ 范围**更宽**（无害，只是能多滚一点点）；
+ *   量出来之后收敛到精确值（恰好够）。**永远不会偏小** —— 而「偏小」正是所有
+ *   clamp 类 bug（尾行被裁到视口底）的唯一方向。
+ *
+ * ⚠️ 副产品：留白与**文档长度无关** ⇒ 换文档不再需要重算（只有末行折行 / 字号变化才更新），
+ *   顺带消掉一处 RO 抖动源。
  */
 export function sourceBottomBleedPx(view: EditorView): number {
   const clientH = view.scrollDOM.clientHeight;
@@ -87,13 +107,10 @@ export function sourceBottomBleedPx(view: EditorView): number {
   //    去问又会落进上一行 ⇒ 明确取最后一行再问它的块。
   const doc = view.state.doc;
   const block = view.lineBlockAt(doc.line(doc.lines).from);
-  // ⚠️ 基准高取 CM6 自己的 `contentHeight`，**不能**取 `contentDOM.offsetHeight`：
-  //    后者把我自己刚加的那截 padding 也算进去 ⇒ 每重算一次 `baseContent` 就涨一截、
-  //    算出来的留白就缩一截 ⇒ 先给 28、下一帧给 0、第三帧又 28…（分屏拖一下就抖）。
-  //    `contentHeight` 只量文档行高，永远不含我加的空白，两次重算落同一个值。
-  const baseContent = view.contentHeight;
-  if (!(block.height > 0) || !(baseContent > 0)) return 0;
-  return Math.max(0, block.top + clientH - baseContent);
+  // ⚠️ 量不出末行高（heightMap 还是估算 / 该行还没排过）就退回 CM6 的默认行高 —— 它是
+  //    同步可得的估算值、恒 > 0。绝不退回 0：留白为 0 = 可滚范围少一屏（B257 同型教训）。
+  const lastH = block.height > 0 ? block.height : view.defaultLineHeight;
+  return Math.max(0, clientH - lastH);
 }
 
 /**
@@ -103,11 +120,13 @@ export function sourceBottomBleedPx(view: EditorView): number {
 const lastBleed = new WeakMap<EditorView, number>();
 
 function applyBottomBleed(view: EditorView): void {
-  // ⚠️ 量不出就**一个字节都不写**：`setState` 那一帧编辑器还是 `display:none`（CM6 也还没
-  //    测出新文档的行高），此刻算出来是 0 —— 照写就等于把上一帧那个对的值抹成 0，这一格
-  //    就永远少了一屏可滚（B257 同型：写「瞬态的 0」比不写更糟，真机靠 ResizeObserver 补，
-  //    但补之前那一小段里位置是错的）。
-  if (view.scrollDOM.clientHeight <= 0 || view.contentHeight <= 0) return;
+  // ⚠️ **只剩「量不出容器高」这一道闸**（B280）：离屏 `display:none` ⇒ `clientHeight = 0`
+  //    ⇒ 算不出 ⇒ 一个字节都不写，保留上一帧对的值（B257 同型：写「瞬态的 0」会把上一帧
+  //    那个对的值抹掉、比不写更糟）。
+  //    ⚠️ 旧写法这里还叠了 `contentHeight <= 0` 一道 —— 那道正是「新建视图 / `setState`
+  //    那一帧写不出留白 ⇒ 可滚范围少一屏」的元凶；B280 把公式改成不依赖 `contentHeight`
+  //    之后，这道闸必须一并撤掉，否则新公式的优势被它重新吃掉。
+  if (view.scrollDOM.clientHeight <= 0) return;
   const px = sourceBottomBleedPx(view);
   // ⚠️⚠️ **值没变就一个字节都不写**：在 `ResizeObserver` 回调里动样式，浏览器会在同一帧
   //    里再收一轮通知，攒够就抛 `ResizeObserver loop completed with undelivered

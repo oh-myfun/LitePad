@@ -647,3 +647,45 @@ describe("B265 底部留白：最后一行 / 最后一块能滚到容器顶", ()
     );
   });
 });
+
+/**
+ * B280 · **留白公式不许依赖异步测量的 `contentHeight`**（用户要求：从编辑器源头根治，
+ * 别在每个场景补钉去凑底部位置）。
+ *
+ * 旧式 `末行top + clientH − contentHeight` 与预览侧 `clientH − 末块高` 代数等价，但绕道
+ * `contentHeight` ⇒ 新建视图 / `setState` 那一帧它是 **0** ⇒ 闸门拦下 ⇒ 留白写 0 ⇒
+ * 可滚范围少一屏 ⇒ 于是切标签 / 切模式 / 分屏 / 同步落点都得靠补钉去救（B256/B270/B278）。
+ */
+describe("B280 静态契约：留白 = 视口高 − 末行高（与预览侧同一个公式）", () => {
+  const edSrc = readFileSync("src/editor/editor.ts", "utf-8");
+
+  it("源码侧改用直接公式，末行高量不出时退回 CM6 的默认行高（永不退回 0）", () => {
+    expect(
+      edSrc,
+      "末行高：量得出就用实测，量不出就退回 defaultLineHeight（同步可得、恒 > 0）",
+    ).toMatch(/const lastH = block\.height > 0 \? block\.height : view\.defaultLineHeight;/);
+    expect(edSrc, "留白 = 视口高 − 末行高（与预览侧 clientH − 末块高 同一个式子）").toMatch(
+      /return Math\.max\(0, clientH - lastH\);/,
+    );
+  });
+
+  it("闸门只留「容器高量不出」这一道，不许再叠 contentHeight（否则新公式的优势被吃掉）", () => {
+    expect(edSrc, "旧的 contentHeight 闸门必须已删除").not.toMatch(/\|\| view\.contentHeight <= 0/);
+    expect(edSrc, "只按容器高判（离屏 display:none ⇒ 一个字节都不写，保留旧值）").toMatch(
+      /if \(view\.scrollDOM\.clientHeight <= 0\) return;/,
+    );
+  });
+
+  it("反向验证：退回 contentHeight 那套，上面两条必须全部落空", () => {
+    const CURRENT = "return Math.max(0, clientH - lastH);";
+    expect(edSrc, "退化串要先自证原句还在").toContain(CURRENT);
+    const degraded = edSrc.replace(
+      CURRENT,
+      "return Math.max(0, block.top + clientH - view.contentHeight);",
+    );
+    expect(degraded, "退化实现应真的换了写法").not.toBe(edSrc);
+    expect(degraded, "退化后又依赖 contentHeight（第二条此时必须落空）").toMatch(
+      /\|\| view\.contentHeight <= 0|view\.contentHeight/,
+    );
+  });
+});

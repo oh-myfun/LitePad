@@ -14,7 +14,7 @@ import {
   docSyncModes,
 } from "./core/app-state";
 import { panelOfTab, instancesOfDoc, displayedPanelOfTab } from "./core/panels";
-import { pinInFlight, recordScroll, pinScrollTop } from "./core/viewport";
+import { pinInFlight, recordScroll, pinScrollTop, logViewportGeom, fmtPx } from "./core/viewport";
 import { EVT_SYNC_POS } from "./core/events";
 import type { Tab, Panel } from "./core/app-state";
 
@@ -250,7 +250,20 @@ export function applySyncToSibling(other: Tab, v: number | null): void {
   //    量它的 `lineBlockAt` 得到的就是离屏源码兄弟自己的几何。
   //    再兜不住（面板压根没视图，例如纯预览面板还没建过编辑器）才去找同文档其它源码
   //    实例，最后才是真的「换不出 ⇒ 留死格」。
-  let view = shownView ?? panelOfTab(other.tabId)?.view?.view;
+  // ⚠️⚠️ **B280**：借尺子之前先认「这把尺子此刻量的是不是同一份文档」。
+  //    `panelOfTab(other.tabId).view` 是**面板**那块唯一的 EditorView，它显示的是面板的
+  //    活动标签 —— 那份**可能是别的文档**。拿它去 `sourceTopOfV` ⇒ `v` 被按别人的行数夹
+  //    一遍、换出一个属于别人几何的 px（短文档甚至恒 0），下一行 `recordScroll` 把它写进
+  //    这份兄弟的槽 ⇒ 落盘固化 ⇒ 切过去 / 重启读到错值就**跳回开头**（用户报的症状①）。
+  //    ⇒ 文档对不上就**不借**：交给下面那个循环去找同文档真正显示着的源码实例；找不到
+  //    就 `if (!view) return` 留死格（B162 那条老纪律 —— 宁可不动，也不许拿错值抹真位置）。
+  let view = shownView;
+  if (!view) {
+    const p = panelOfTab(other.tabId);
+    const shownTabId = p?.viewTabId ?? null;
+    const shownTab = shownTabId !== null ? tabs.get(shownTabId) : undefined;
+    view = shownTab && shownTab.docId === other.docId ? p?.view?.view : undefined;
+  }
   // ⚠️⚠️ **B263**：借来的这块尺子正躺在**纯预览那一格**里 —— 面板带 `mode-preview` 类
   //    ⇒ `.panel-editor { display: none }` ⇒ CM6 量不出行顶 ⇒ 这一手**量不成**。
   //    量不成就**两步都不做**：既不换算、也不写槽（写下去的 `top` 恒 0，会当成「用户停在
@@ -913,6 +926,9 @@ export function restoreViewScroll(panel: Panel): void {
   // B170：整段还原都是程序摆位 —— 先标来源，赋值派发的 scroll 由监听经 scroll-guard 吞掉，
   // 不会被当成用户滚动反推 / 落盘成 0。`pinScrollTop` 内部也会继续标、覆盖补钉回执。
   markProgrammatic(view.scrollDOM);
+  // B280：还原几何（debug）—— 症状「切回去渲染不完整 / 跳回开头」靠这一条定位：
+  //   钉位**前**的容器高 / 内容高 / 渲染行数 / 可滚范围 / 留白全打出来（见 logViewportGeom）。
+  logViewportGeom("还原 · 钉前", panel);
   // ⚠️ **B273**：同步开着且这份实例已被同步定位过 ⇒ 从规范游标 `syncV` 派生源码像素，
   //   而不是读可能陈旧的 `scrollTop`。离屏实例跟随时只有 `syncV` 是准的（`scrollTop` 没更新过），
   //   直接读它切回来就会跳。派生后再 `recordScroll` 把新像素写回槽，陈旧值被覆盖。
@@ -932,6 +948,7 @@ export function restoreViewScroll(panel: Panel): void {
       if (top !== null) {
         pinScrollTop(view.scrollDOM, top);
         recordScroll(t.tabId, top);
+        logViewportGeom(`还原 · 钉后(游标) 目标=${fmtPx(top)}`, panel);
         return;
       }
       // top 为 null（量不出几何）：落到下面用 scrollTop 的旧路径兜底。
@@ -939,6 +956,7 @@ export function restoreViewScroll(panel: Panel): void {
   }
   if (t.scrollTop !== null) {
     pinScrollTop(view.scrollDOM, t.scrollTop);
+    logViewportGeom(`还原 · 钉后(槽) 目标=${fmtPx(t.scrollTop)}`, panel);
     return;
   }
   // 快照里没有位置（这份实例从没显示过）：退化为「保证光标可见」
