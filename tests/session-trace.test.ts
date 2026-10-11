@@ -10,7 +10,7 @@
 // 照旧 —— 把日志删掉，这些用例必须变红。
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { topLevelFnBody } from "./static";
+import { topLevelFnBody, sessionAll } from "./static";
 
 /** 剥掉注释，免得注释里的字样（「跳过」「恢复」等）被当成代码。 */
 function stripComments(code: string): string {
@@ -33,8 +33,7 @@ function catchBody(code: string, from: number): string {
 }
 
 describe("B147 会话链路的可观测性", () => {
-  const src =
-    readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/session/session.ts", "utf-8");
+  const src = readFileSync("src/main.ts", "utf-8") + "\n" + sessionAll();
   const restore = topLevelFnBody(src, "async function restoreSession(): Promise<boolean> {");
   const snapshot = topLevelFnBody(
     src,

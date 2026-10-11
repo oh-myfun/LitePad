@@ -8,6 +8,7 @@
 // 一份、或大家共用同一份，都会当场露馅。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
+import { sessionAll } from "./static";
 import { EditorView } from "@codemirror/view";
 
 beforeAll(() => {
@@ -329,7 +330,7 @@ describe("B129 静态契约：三样都要进出会话", () => {
   const src =
     readFileSync("src/main.ts", "utf-8") +
     "\n" +
-    readFileSync("src/session/session.ts", "utf-8") +
+    sessionAll() +
     "\n" +
     readFileSync("src/core/viewport.ts", "utf-8");
 

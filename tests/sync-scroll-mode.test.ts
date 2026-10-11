@@ -20,7 +20,7 @@
 // 「切标签 + 钉位置 + 兄弟实例」的真实时序，只有静态契约盯得住。
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { tabsAll } from "./static";
+import { tabsAll, sessionAll } from "./static";
 
 // ⚠️ 归一换行：下面的契约字面量 / 正则都按 LF 写。仓库里存的是 LF，但**工作副本被翻成
 // CRLF** 会一次性打掉一大片断言（`topLevelFnBody` 认 `\n}` 后的那个字符是 `\n`，CRLF 下
@@ -36,8 +36,8 @@ const tabsSrc = tabsAll();
 const mdSrc = readFileSync("src/markdown.ts", "utf-8").replace(/\r\n/g, "\n");
 // 大纲 TOC / 侧栏簇（updateTocDrawer…）已拆到 toc.ts（解耦第十步）。
 const tocSrc = readFileSync("src/toc.ts", "utf-8").replace(/\r\n/g, "\n");
-// 会话 / 自动保存 / 热退出簇（refreshSession / restoreSession…）已拆到 session/session.ts（解耦第十一步）。
-const sessSrc = readFileSync("src/session/session.ts", "utf-8").replace(/\r\n/g, "\n");
+// 会话 / 自动保存 / 热退出簇（refreshSession / restoreSession…）已拆到 src/session/ persist+rebuild（P3-b）。
+const sessSrc = sessionAll();
 // 多窗口 / 卫星 / 跨窗口同步簇（applySyncMode…）已拆到 multiwindow/windows.ts（解耦第十四步）。
 const mwSrc = readFileSync("src/multiwindow/windows.ts", "utf-8").replace(/\r\n/g, "\n");
 const main2 = readFileSync("src/sync-scroll.ts", "utf-8").replace(/\r\n/g, "\n");

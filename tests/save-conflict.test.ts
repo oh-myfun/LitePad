@@ -6,7 +6,7 @@
 // IPC 回包契约、前端四个分支与冲突框兜底，无法在运行时端到端断言，故用源码文本断言。
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { stripLineComments, topLevelFnBody } from "./static";
+import { stripLineComments, topLevelFnBody, sessionAll } from "./static";
 
 describe("B88 保存时的脏写检查：磁盘版本更新要把选择权交回用户（VS Code FILE_MODIFIED_SINCE）", () => {
   // 需求：用户**主动保存**的瞬间，磁盘上的版本可能已经变了（事件还在防抖窗口里 /
@@ -26,7 +26,7 @@ describe("B88 保存时的脏写检查：磁盘版本更新要把选择权交回
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
-      readFileSync("src/session/session.ts", "utf-8"),
+      sessionAll(),
   );
   const api = stripLineComments(readFileSync("src/ipc/api.ts", "utf-8"));
   const rustCmds = stripLineComments(readFileSync("src-tauri/src/commands/mod.rs", "utf-8"));

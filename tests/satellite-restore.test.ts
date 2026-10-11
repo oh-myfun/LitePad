@@ -11,6 +11,7 @@
 //   · 并回主窗口 ⇒ 主窗口标签数变成 4（而非 1），且一个窗口都不开。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
+import { sessionAll } from "./static";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -262,7 +263,7 @@ describe("B193 静态契约：分组要落盘、失败要兜底", () => {
     "\n" +
     readFileSync("src/multiwindow/windows.ts", "utf-8") +
     "\n" +
-    readFileSync("src/session/session.ts", "utf-8")
+    sessionAll()
   ).replace(/\r\n/g, "\n");
   const store = readFileSync("src/session/store.ts", "utf-8").replace(/\r\n/g, "\n");
 

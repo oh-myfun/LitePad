@@ -10,7 +10,7 @@ import { extname, join } from "node:path";
 import zlib from "node:zlib";
 
 // 拼接多个源码模块为一段文本，供「拼接源码 + toContain/toMatch」类契约断言复用。
-// 传相对路径（不含 `src/` 前缀、不含 `.ts` 后缀），例如 concatSrc(["main", "session/session", "ui"])。
+// 传相对路径（不含 `src/` 前缀、不含 `.ts` 后缀），例如 concatSrc(["main", ...SESSION_PARTS, "ui"])。
 // 早期这些清单在多个测试里手写重复，模块改名/增删时易漏改导致断言静默失真 —— 集中到此处。
 export function concatSrc(relPaths: string[]): string {
   // 顺带归一 CRLF —— 源码约定一律 LF，Windows 上 readFileSync 可能读回 CRLF，
@@ -22,8 +22,19 @@ export function concatSrc(relPaths: string[]): string {
 }
 
 // 常用模块集（避免同一组清单在多个测试里重复）。
-export const MAIN_SESSION_UI = ["main", "session/session", "ui"];
-export const MAIN_SESSION = ["main", "session/session"];
+//
+// P3-b：原 `src/session/session.ts` 上帝文件拆成 persist / rebuild 两个子模块，门面
+// session.ts 只做 `export *` 重导出 —— 读「session 行为侧源码」的契约一律改读这两份拼接。
+// 顺序 persist→rebuild 与原文件一致（排程/落盘在前，restoreSession 在后）。
+export const SESSION_PARTS = ["session/persist", "session/rebuild"];
+
+/** 原 `readFileSync("src/session/session.ts")` 的替代品：两个子模块拼接（CRLF 已归一）。 */
+export function sessionAll(): string {
+  return concatSrc(SESSION_PARTS);
+}
+
+export const MAIN_SESSION_UI = ["main", ...SESSION_PARTS, "ui"];
+export const MAIN_SESSION = ["main", ...SESSION_PARTS];
 
 // P3 批次：原 `src/tabs.ts` 上帝文件拆成四个子模块（src/tabs/），门面 index.ts 只做
 // `export *` 重导出 —— 读「tabs 源码」的静态契约一律改读这四份拼接（concatSrc 归一 CRLF）。

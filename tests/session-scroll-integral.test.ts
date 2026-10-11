@@ -13,6 +13,7 @@
 // 的 `de_scroll_top`，由 Rust 单测盯）。外加把静默吞掉的失败留一条日志。
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
+import { sessionAll } from "./static";
 import { sessionStore } from "../src/session/store";
 
 describe("B143 视口位置要按整数落盘", () => {
@@ -58,7 +59,7 @@ describe("B143 静态契约", () => {
   const main =
     readFileSync("src/main.ts", "utf-8") +
     "\n" +
-    readFileSync("src/session/session.ts", "utf-8") +
+    sessionAll() +
     "\n" +
     readFileSync("src/core/viewport.ts", "utf-8");
   const store = readFileSync("src/session/store.ts", "utf-8");
@@ -117,7 +118,7 @@ describe("B151 pin 的「立住」判定要留小数容差", () => {
   const main =
     readFileSync("src/main.ts", "utf-8") +
     "\n" +
-    readFileSync("src/session/session.ts", "utf-8") +
+    sessionAll() +
     "\n" +
     readFileSync("src/core/viewport.ts", "utf-8");
 

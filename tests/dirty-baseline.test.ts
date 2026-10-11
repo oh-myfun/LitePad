@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { EditorView } from "@codemirror/view";
 import { undo } from "@codemirror/commands";
-import { stripLineComments } from "./static";
+import { stripLineComments, sessionAll } from "./static";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -196,7 +196,7 @@ describe("B112 静态契约：判脏靠基线，清脏靠 markClean", () => {
         "\n" +
         readFileSync("src/io/files.ts", "utf-8") +
         "\n" +
-        readFileSync("src/session/session.ts", "utf-8"),
+        sessionAll(),
     );
     const handler = src.match(/function handleUpdate\([\s\S]*?\n\}/)?.[0] ?? "";
     expect(handler, "应有 handleUpdate").toBeTruthy();
@@ -237,7 +237,7 @@ describe("B112 静态契约：判脏靠基线，清脏靠 markClean", () => {
         "\n" +
         readFileSync("src/io/files.ts", "utf-8") +
         "\n" +
-        readFileSync("src/session/session.ts", "utf-8"),
+        sessionAll(),
     );
     const marks = src.match(/markClean\(/g) ?? [];
     // isDirtyVsBaseline 的定义 + markClean 的定义各 1 处，调用点应 ≥ 4

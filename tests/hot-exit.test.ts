@@ -12,7 +12,7 @@
 // （src-tauri/src/backup/mod.rs）；本文件只管前端编排。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
-import { topLevelFnBody } from "./static";
+import { topLevelFnBody, sessionAll } from "./static";
 import { EditorView } from "@codemirror/view";
 
 beforeAll(() => {
@@ -224,7 +224,7 @@ describe("B68 热退出：关窗不询问，下次启动还原未保存内容", 
     "\n" +
     readFileSync("src/io/files.ts", "utf-8") +
     "\n" +
-    readFileSync("src/session/session.ts", "utf-8");
+    sessionAll();
   const api = readFileSync("src/ipc/api.ts", "utf-8");
   const rustBackup = readFileSync("src-tauri/src/backup/mod.rs", "utf-8");
   const rustCommands = readFileSync("src-tauri/src/commands/mod.rs", "utf-8");

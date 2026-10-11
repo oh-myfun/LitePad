@@ -10,7 +10,7 @@
 // tests/hot-exit.test.ts；副本格式/路径穿越由 Rust 单测覆盖。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
-import { topLevelFnBody } from "./static";
+import { topLevelFnBody, sessionAll } from "./static";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -175,8 +175,7 @@ describe("B69 空的新建文档也要跨重启回来", () => {
   // 用户报告：热退出开着，新建了但还没打字的空文档，下次打开却没了。
   // 根因：它既没有 path、也不脏（没输入 → 不写副本），而 B68 的会话包含条件是
   // 「有 path || 有副本」，于是整条被漏掉。改法是靠 docId 认领。
-  const src =
-    readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/session/session.ts", "utf-8");
+  const src = readFileSync("src/main.ts", "utf-8") + "\n" + sessionAll();
   const api = readFileSync("src/ipc/api.ts", "utf-8");
   const rustSession = readFileSync("src-tauri/src/session/mod.rs", "utf-8");
   const storeSrc = readFileSync("src/session/store.ts", "utf-8");

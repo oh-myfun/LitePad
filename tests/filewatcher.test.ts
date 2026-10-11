@@ -6,7 +6,7 @@
 // 否则会把用户刚编辑的内容用刚写出去的旧内容覆盖回去。
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { stripLineComments, topLevelFnBody } from "./static";
+import { stripLineComments, topLevelFnBody, fnBody, sessionAll } from "./static";
 
 describe("B87 文件监听：外部修改要真的刷新内容（VS Code 三态 + 回声抑制）", () => {
   // 事故：M2 起就有 watcher，但前端收到 `file-changed` 只置了个 `doc.external = true`
@@ -30,17 +30,16 @@ describe("B87 文件监听：外部修改要真的刷新内容（VS Code 三态 
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
-      readFileSync("src/session/session.ts", "utf-8"),
+      sessionAll(),
   );
   const api = stripLineComments(readFileSync("src/ipc/api.ts", "utf-8"));
   const rustCmds = stripLineComments(readFileSync("src-tauri/src/commands/mod.rs", "utf-8"));
   const rustMain = stripLineComments(readFileSync("src-tauri/src/main.rs", "utf-8"));
   const dialog = stripLineComments(readFileSync("src/shell/conflictdialog.ts", "utf-8"));
 
-  const core = topLevelFnBody(
-    main,
-    "async function resolveExternalChangeCore(doc: Doc, payload: FileChangedPayload)",
-  );
+  // ⚠️ 用 fnBody（只认 `function <name>(`）：P3-b 加 export 前缀后签名被 prettier 折行，
+  // 带完整参数表的 topLevelFnBody 锚点会失配；调用点没有 `function ` 前缀，不会取歪。
+  const core = fnBody(main, "resolveExternalChangeCore");
   const applyDisk = topLevelFnBody(
     main,
     "function applyDiskContent(doc: Doc, file: OpenedFile, mtimeMs: number, size: number)",

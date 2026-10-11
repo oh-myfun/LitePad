@@ -7,7 +7,7 @@
 // 存与转存都是好的，坏在「谁在什么时候去存」。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
-import { tabsAll } from "./static";
+import { tabsAll, sessionAll } from "./static";
 import { EditorView } from "@codemirror/view";
 
 beforeAll(() => {
@@ -278,7 +278,7 @@ describe("B132 静态契约：滚动排程 + 关窗兜底", () => {
     "\n" +
     tabsAll() +
     "\n" +
-    readFileSync("src/session/session.ts", "utf-8") +
+    sessionAll() +
     "\n" +
     readFileSync("src/core/viewport.ts", "utf-8");
 
