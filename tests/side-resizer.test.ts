@@ -3,6 +3,7 @@
 // 用户要求「大纲区域也要支持宽度调节」——本文件覆盖拖拽编排的全部行为，
 // regressions.test.ts 另补静态接线断言（index.html 元素、CSS 光标、设置字段）。
 import { describe, it, expect } from "vitest";
+import { ruleBlock } from "./static";
 import { readFileSync } from "node:fs";
 import {
   attachSideResizer,
@@ -325,11 +326,11 @@ describe("大纲（TOC）静态契约", () => {
     // 会让展开区比编辑区亮一档，看着像浮在窗口上的另一块东西。
     expect(panel, "TOC 面板背景透明（露出父卡片的 --bg）").toMatch(/background:\s*transparent/);
     expect(panel, "不得再引用未定义的 --panel-bg").not.toContain("--panel-bg");
-    const hover = preview.match(/\.toc-item:hover\s*\{[^}]*\}/)?.[0] ?? "";
+    const hover = ruleBlock(preview, ".toc-item:hover");
     expect(hover, "TOC hover 必须用 --bg-hover").toContain("var(--bg-hover");
-    const active = preview.match(/\.toc-item\.toc-active\s*\{[^}]*\}/)?.[0] ?? "";
+    const active = ruleBlock(preview, ".toc-item.toc-active");
     expect(active, "TOC 活动项必须用 --accent").toContain("var(--accent");
-    const empty = preview.match(/\.toc-empty\s*\{[^}]*\}/)?.[0] ?? "";
+    const empty = ruleBlock(preview, ".toc-empty");
     expect(empty, "TOC 空态必须用 --fg-muted").toContain("var(--fg-muted");
     const g = readFileSync("src/styles/global.css", "utf-8");
     expect(g, "global.css 不得残留未定义的 --bg-panel 引用").not.toContain("--bg-panel");
@@ -360,13 +361,13 @@ describe("大纲（TOC）静态契约", () => {
     );
 
     const css = readFileSync("src/styles/preview.css", "utf-8");
-    const resizer = css.match(/\.side-resizer\s*\{[^}]*\}/)?.[0] ?? "";
+    const resizer = ruleBlock(css, ".side-resizer");
     expect(resizer, "应有 .side-resizer 规则块").toBeTruthy();
     // B61：竖线光标取 VS Code **非 mac** 档的 ew-resize（col-resize 是 mac 档，
     // Windows 上会渲染成「箭头中间多一根竖杠」）
     expect(resizer, "分隔条必须是左右调整光标（非 mac 档 ew-resize）").toContain("ew-resize");
     // 旧样式把 min-width 写死为 240px，会挡住拖动变窄
-    const panel = css.match(/\.toc-panel\s*\{[^}]*\}/)?.[0] ?? "";
+    const panel = ruleBlock(css, ".toc-panel");
     expect(panel, ".toc-panel 不得再写死 min-width: 240px").not.toContain("min-width: 240px");
 
     const api = readFileSync("src/ipc/api.ts", "utf-8");
@@ -400,7 +401,7 @@ describe("B207 拖到最小再往左拖：接线与可视性契约", () => {
   });
 
   it("收起态的缝：留着、可抓、把手可见（旧口径掐指针 + 隐身把手已废）", () => {
-    const off = preview.match(/\.side-resizer\.is-off\s*\{[^}]*\}/)?.[0] ?? "";
+    const off = ruleBlock(preview, ".side-resizer.is-off");
     expect(off, "应有 .side-resizer.is-off 规则块").toBeTruthy();
     expect(off, "收起时空隙照样吃指针（拖回来就靠它）").toContain("pointer-events: auto");
     expect(off, "收起时空隙仍是左右调整光标").toContain("cursor: ew-resize");

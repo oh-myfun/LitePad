@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { themeBlock } from "./static";
+import { ruleBlock, themeBlock } from "./static";
 
 describe("滚动条：全应用统一且随深浅色联动", () => {
   it("滚动条必须全应用统一且随深浅色联动（用户要求）", () => {
@@ -35,12 +35,12 @@ describe("滚动条：全应用统一且随深浅色联动", () => {
     // —— 双写 scrollbar-width / scrollbar-color 时渲染路径由 Chromium 挑，
     //    挑到系统那一路伪元素就管不着 ⇒ 曾经冒出 Windows 的三角箭头。
     //    本软件只跑 Windows + WebView2，标准属性本就没收益，不再双写。
-    const bar = g.match(/::-webkit-scrollbar\s*\{[^}]*\}/)?.[0] ?? "";
+    const bar = ruleBlock(g, "::-webkit-scrollbar");
     expect(bar, "应有 ::-webkit-scrollbar 规则").toBeTruthy();
     expect(bar, "滚动条宽度必须显式声明（伪元素路径唯一的证据）").toMatch(/width:\s*\d+px/);
     expect(g, "不得双写标准属性 scrollbar-width（会抢渲染路径）").not.toMatch(/scrollbar-width:/);
     expect(g, "不得双写标准属性 scrollbar-color（会抢渲染路径）").not.toMatch(/scrollbar-color:/);
-    const thumb = g.match(/::-webkit-scrollbar-thumb\s*\{[^}]*\}/)?.[0] ?? "";
+    const thumb = ruleBlock(g, "::-webkit-scrollbar-thumb");
     expect(thumb, "应有 ::-webkit-scrollbar-thumb 规则").toBeTruthy();
     expect(thumb, "滑块颜色必须引用 --sb-thumb 变量").toContain("var(--sb-thumb");
     expect(thumb, "滑块不得写死十六进制颜色").not.toMatch(/#[0-9a-fA-F]{3,8}\b/);

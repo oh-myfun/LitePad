@@ -8,7 +8,7 @@
 //     几何量用桩函数补上（jsdom 的 rect 恒为 0）。
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { cssDecls, themeBlock, topLevelFnBody } from "./static";
+import { cssDecls, ruleBlock, themeBlock, topLevelFnBody } from "./static";
 import {
   computeTipGeometry,
   computeTipGeometryAtMouse,
@@ -358,7 +358,7 @@ describe("tooltip 层行为（jsdom）", () => {
       /\.tooltip\[data-pointer="true"\]\s*\{[^}]*border-radius:\s*3px/,
     );
     expect(
-      cssDecls(css.match(/\n\.tooltip\s*\{[^}]*\}/)?.[0] ?? ""),
+      cssDecls(ruleBlock(css, ".tooltip", undefined, true)),
       "基础档不许再写成 3px —— 那样所有提示都会是方角",
     ).not.toMatch(/border-radius:\s*3px/);
   });
@@ -568,7 +568,7 @@ describe("A 档：菜单开着就绝不弹提示", () => {
 describe("B58 应用级 tooltip（取代原生 title，外观对齐 VS Code hover）", () => {
   it("提示层外观取自 VS Code：fixed / 13px / 19px / 2px 8px / 5px 圆角 / 不参与命中", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
-    const tip = cssDecls(css.match(/\n\.tooltip\s*\{[^}]*\}/)?.[0] ?? "");
+    const tip = cssDecls(ruleBlock(css, ".tooltip", undefined, true));
     expect(tip, "应有 .tooltip 规则").toBeTruthy();
     expect(tip, "fixed 定位（提示不随内容滚动）").toMatch(/position:\s*fixed/);
     // 菜单（1000）与转到行浮层（1000）之上：菜单项自己也要能弹提示
@@ -590,7 +590,7 @@ describe("B58 应用级 tooltip（取代原生 title，外观对齐 VS Code hove
       /max-width:\s*420px/,
     );
     // 提示文本必须可换行：长路径超过 420px 时变多行，而不是 nowrap 顶成一行溢出气泡
-    const textRule = css.match(/\n\.tooltip-text\s*\{[^}]*\}/)?.[0] ?? "";
+    const textRule = ruleBlock(css, ".tooltip-text", undefined, true);
     expect(textRule, "应有 .tooltip-text 规则").toBeTruthy();
     expect(textRule, "超过 max-width 必须换行（white-space: normal）").toMatch(
       /white-space:\s*normal/,
@@ -601,7 +601,7 @@ describe("B58 应用级 tooltip（取代原生 title，外观对齐 VS Code hove
       /\n\.tooltip-text\s*\{[^}]*\}/,
       "\n.tooltip-text {\n  white-space: nowrap;\n}",
     );
-    const deg = degraded.match(/\n\.tooltip-text\s*\{[^}]*\}/)?.[0] ?? "";
+    const deg = ruleBlock(degraded, ".tooltip-text");
     expect(deg, "退化版必须真的改回 nowrap").toMatch(/white-space:\s*nowrap/);
     expect(deg, "退化版不得再含换行声明").not.toMatch(/white-space:\s*normal/);
     expect(deg, "退化版不得再含 overflow-wrap").not.toMatch(/overflow-wrap/);
@@ -643,7 +643,7 @@ describe("B58 应用级 tooltip（取代原生 title，外观对齐 VS Code hove
     const css = readFileSync("src/styles/global.css", "utf-8");
 
     // 键帽数值 = VS Code keybindingLabel.css（11px / min-width 12px / padding 3px 5px / 圆角 3px）
-    const kbd = cssDecls(css.match(/\n\.tooltip-kbd\s*\{[^}]*\}/)?.[0] ?? "");
+    const kbd = cssDecls(ruleBlock(css, ".tooltip-kbd", undefined, true));
     expect(kbd, "应有 .tooltip-kbd 规则").toBeTruthy();
     expect(kbd, "min-width 12px").toMatch(/min-width:\s*12px/);
     expect(kbd, "padding 3px 5px").toMatch(/padding:\s*3px 5px/);
@@ -653,7 +653,7 @@ describe("B58 应用级 tooltip（取代原生 title，外观对齐 VS Code hove
     );
 
     // caret：6px 方块转 45°，只留朝外的两条边 → 看起来是一个贴住目标的三角
-    const caret = cssDecls(css.match(/\n\.tooltip-caret\s*\{[^}]*\}/)?.[0] ?? "");
+    const caret = cssDecls(ruleBlock(css, ".tooltip-caret", undefined, true));
     expect(caret, "应有 .tooltip-caret 规则").toBeTruthy();
     expect(caret, "6px 方块（= VS Code PointerSize 的一半为 3px）").toMatch(/width:\s*6px/);
     expect(caret).toMatch(/height:\s*6px/);

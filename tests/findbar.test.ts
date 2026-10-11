@@ -620,7 +620,7 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     // 根因：.find-bar { display: flex } 覆盖了 hidden 属性的 UA 样式（display:none），
     // close() 置 dom.hidden=true 后浮层仍然可见。
     const css = readFileSync("src/styles/global.css", "utf-8");
-    const hiddenRule = css.match(/\.find-bar\[hidden\]\s*\{[^}]*\}/)?.[0] ?? "";
+    const hiddenRule = ruleBlock(css, ".find-bar[hidden]");
     expect(hiddenRule, "必须有 .find-bar[hidden] { display: none } 规则").toContain(
       "display: none",
     );
@@ -717,7 +717,7 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     expect(bar, "查询对象必须有 preserveCase").toContain("preserveCase");
 
     const css = readFileSync("src/styles/global.css", "utf-8");
-    const barBlock = css.match(/\.find-bar\s*\{[^}]*\}/)?.[0] ?? "";
+    const barBlock = ruleBlock(css, ".find-bar");
     expect(barBlock, "浮层必须钉在右侧").toMatch(/right:\s*\d+px/);
     expect(barBlock, "浮层不得再用 left 定位").not.toMatch(/(^|[^-])left:\s*\d+px/);
     expect(css, "标题栏的 move 光标必须移除").not.toContain("cursor: move");
@@ -792,7 +792,7 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     );
     expect(bar, "⚠️ 徽标不得再依赖 setDocCount（B78 旧语义已废弃）").not.toContain("setDocCount");
     expect(bar, "徽标数字只能由主程序回灌").toMatch(/setDocIndex: \(a, b\) => \{/);
-    const badgeBlock = css.match(/\.find-badge\s*\{[^}]*\}/)?.[0] ?? "";
+    const badgeBlock = ruleBlock(css, ".find-badge");
     expect(badgeBlock, "徽标必须收在按钮盒内，不得用负偏移溢出").not.toMatch(/\b(top|right):\s*-/);
     expect(badgeBlock, "徽标只是标注，不得抢按钮的点击").toContain("pointer-events: none");
 

@@ -20,7 +20,7 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
     // ⚠️ 必须 \n 锚定行首：pill 覆盖块（B114）的选择器是
     //   :root[data-tab-style="pill"] .panel-tabstrip
     // 无锚定时 \.panel-tabstrip\s*\{ 会命中它的尾段，抓回来的是 pill 块的块体。
-    const strip = css.match(/\n\.panel-tabstrip\s*\{[^}]*\}/)?.[0] ?? "";
+    const strip = ruleBlock(css, ".panel-tabstrip", undefined, true);
     expect(strip, "应有 .panel-tabstrip 规则").toBeTruthy();
     expect(strip, "标签区不再吃原生滚动条（B117 悬浮化）").toContain("overflow-x: hidden");
     expect(css, "原生 webkit 滚动条规则必须整体删除").not.toMatch(
@@ -78,10 +78,10 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
     expect(barRule, "淡出必须有过渡（对齐 VS Code .invisible.fade = 800ms linear）").toMatch(
       /transition:\s*opacity\s+800ms/,
     );
-    const shown = css.match(/\.panel-tabstrip-scrollbar\.is-visible \{[^}]*\}/)?.[0] ?? "";
+    const shown = ruleBlock(css, ".panel-tabstrip-scrollbar.is-visible");
     expect(shown, "可见态必须不透明").toMatch(/opacity:\s*1/);
     expect(shown, "出现要即时（过渡只留给淡出）").toMatch(/transition:\s*none/);
-    const thumbRule = css.match(/\.panel-tabstrip-scrollbar-thumb \{[^}]*\}/)?.[0] ?? "";
+    const thumbRule = ruleBlock(css, ".panel-tabstrip-scrollbar-thumb");
     expect(thumbRule, "隐藏时 thumb 必须让出点击（否则一条看不见的条挡住标签底部）").toContain(
       "pointer-events: none",
     );
@@ -110,7 +110,7 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
     // 条带高度：悬浮条不占布局 → 30px = 3px 上间距 + 24px 标签 + 3px 下间隙
     // （B123-6 两档统一，上下对称，下间隙 = thumb 高度）
     expect(strip, "标签栏高度必须固定（无溢出↔有溢出恒定，不抖）").toMatch(/height:\s*\d+px/);
-    const tabRule = css.match(/\n\.tab\s*\{[^}]*\}/)?.[0] ?? "";
+    const tabRule = ruleBlock(css, ".tab", undefined, true);
     const stripH = Number(strip.match(/height:\s*(\d+)px/)![1]);
     const tabH = Number(tabRule.match(/height:\s*(\d+)px/)![1]);
     expect(stripH - tabH, "上下间隙共 6px（3+3 对称，B123-6）").toBe(6);
@@ -125,7 +125,7 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
     //   右花括号**截断（B113 这次就在注释里引过 VS Code 的选择器，一截断 flex 声明全丢，
     //   报的是「文件名不得收缩」这种八竿子打不着的错）——见 pitfalls/0075。
     const css = readFileSync("src/styles/global.css", "utf-8");
-    const tab = cssDecls(ruleBlock(css, ".tab"));
+    const tab = cssDecls(ruleBlock(css, ".tab", undefined, true));
     expect(tab, "应有 .tab 规则").toBeTruthy();
     expect(tab, "标签必须不可收缩（flex-shrink:0），否则标签变多时宽度被压窄").toMatch(
       /flex:\s*0 0 auto/,
@@ -162,7 +162,7 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
   });
   it("B57 ● 与 × 共用固定尺寸槽位，显隐走 opacity（对齐 VS Code 标签操作列）", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
-    const slot = cssDecls(css.match(/\n\.tab-action\s*\{[^}]*\}/)?.[0] ?? "");
+    const slot = cssDecls(ruleBlock(css, ".tab-action", undefined, true));
     expect(slot, "应有 .tab-action 槽位规则").toBeTruthy();
     expect(slot, "槽位尺寸必须固定，否则悬停切换会改变标签宽度").toMatch(/width:\s*\d+px/);
     expect(slot).toMatch(/height:\s*\d+px/);
@@ -170,7 +170,7 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
     // VS Code 标签操作列用 opacity 而不是 display 做显隐（经典档 multieditortabscontrol.css
     // 与 Modern UI 档 tabs.css 都是这套）：布局本来就被固定槽位锁住，
     // opacity 既能淡入，也不触发重排。
-    const layer = cssDecls(css.match(/\.tab-mark,\s*\.tab-close\s*\{[^}]*\}/)?.[0] ?? "");
+    const layer = cssDecls(ruleBlock(css, ".tab-mark, .tab-close"));
     expect(layer, "应有 .tab-mark / .tab-close 公共层规则").toBeTruthy();
     expect(layer, "默认必须隐藏（opacity: 0）").toMatch(/opacity:\s*0\b/);
     expect(layer, "不得再用 display 切换显隐").not.toMatch(/display:\s*none/);
@@ -271,7 +271,7 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
 
     // 「关闭按钮区域」= ● 所在的那个固定槽位：× 必须铺满它，否则指针压在 ● 上
     // 却换不出 ×（或有缝隙时闪回 ●），手感直接错位。
-    const layer = cssDecls(css.match(/\.tab-mark,\s*\.tab-close\s*\{[^}]*\}/)?.[0] ?? "");
+    const layer = cssDecls(ruleBlock(css, ".tab-mark, .tab-close"));
     expect(layer, "× 与 ● 必须共用一个槽位").toMatch(/position:\s*absolute/);
     expect(layer, "槽位必须铺满（inset: 0），否则关闭区与 ● 的位置对不上").toMatch(/inset:\s*0/);
   });
@@ -283,7 +283,7 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     // 旧药丸方案 =「每颗标签自己上色 + 彼此留 4px 缝」；VS Code 1.139 的 connected =
     // 「一条连续表面 + 活动标签取编辑器背景色、只有上方两角圆、底边敞开与编辑区相连」。
     const css = readFileSync("src/styles/global.css", "utf-8");
-    const tab = cssDecls(ruleBlock(css, ".tab"));
+    const tab = cssDecls(ruleBlock(css, ".tab", undefined, true));
     expect(tab, "应有 .tab 规则").toBeTruthy();
     const h = tab.match(/height:\s*(\d+)px/);
     expect(h, "标签高度必须显式给出（字号档位变化时栏高才恒定）").toBeTruthy();
@@ -333,7 +333,7 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     // connectedEditorTabs.css 的变量链 shoulder-radius = cap-radius（同源自
     // cornerRadius-small）。LitePad 用 --tab-radius 单一来源，顶部圆角与肩部
     // 的 width/height/radius/阴影偏移全部引用它，改圆角只动一处。
-    const rootBlock = css.match(/:root\s*\{[^}]*\}/)?.[0] ?? "";
+    const rootBlock = ruleBlock(css, ":root");
     expect(rootBlock, "标签圆角单一来源变量必须在 :root 定义").toContain("--tab-radius: 5px");
     // ⚠️ 不用 ruleBlock 取肩部：首条规则是群组选择器，`::after` 后恰好跟 `{`
     // 会提前命中共享块 —— 直接正则 + 块内特征（left: 100%）锚定独立规则。
@@ -348,9 +348,7 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     expect(shoulderGroup.replace(/\s+/g, " "), "两肩尺寸走 --tab-radius（与顶部同半径）").toContain(
       "width: var(--tab-radius)",
     );
-    const shoulderBefore = (
-      css.match(/\.tab-active \.tab-fill::before\s*\{[^}]*\}/)?.[0] ?? ""
-    ).replace(/\s+/g, " ");
+    const shoulderBefore = ruleBlock(css, ".tab-active .tab-fill::before").replace(/\s+/g, " ");
     expect(shoulderBefore, "左肩反弧半径 = 顶部圆角半径").toContain(
       "border-bottom-right-radius: var(--tab-radius)",
     );
@@ -452,7 +450,7 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
   });
   it("B117：底部不再预留滚动条空间（32 → 28px），插入线直达条带底", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
-    const strip = css.match(/\n\.panel-tabstrip\s*\{[^}]*\}/)?.[0] ?? "";
+    const strip = ruleBlock(css, ".panel-tabstrip", undefined, true);
     expect(strip, "应有 .panel-tabstrip 规则").toBeTruthy();
     // B113：connected 标签**相连**，不再靠 gap 撑缝（缝会让 fill 接不上，
     // 活动标签与编辑器之间就出现断口）；分隔感改由活动标签的凸起给出。
@@ -470,7 +468,9 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
 
     // B123-6：条带统一 30px = 3(上) + 24(标签) + 3(下间隙=thumb 高度)，
     // 两档同高切档不抖；connected 的 fill 用 inset -3px 0 -3px 伸进上下间隙。
-    const tabH = Number(cssDecls(ruleBlock(css, ".tab")).match(/height:\s*(\d+)px/)![1]);
+    const tabH = Number(
+      cssDecls(ruleBlock(css, ".tab", undefined, true)).match(/height:\s*(\d+)px/)![1],
+    );
     const stripH = Number(strip.match(/height:\s*(\d+)px/)![1]);
     expect(stripH, "条带统一 30px（B123-6）").toBe(30);
     expect(stripH - tabH, "上下间隙共 6px（3+3 对称）").toBe(6);
@@ -987,7 +987,7 @@ describe("编辑区大卡片外框（B123，修正 B122：卡片上移到整个�
     );
 
     // 分屏边界恢复静息细线（大卡片内部，实拍 VS Code #272829 ≈ --sep-line）
-    const sep = css.match(/\.layout-sep::after\s*\{[^}]*\}/)?.[0] ?? "";
+    const sep = ruleBlock(css, ".layout-sep::after");
     expect(sep, "分屏分隔条静息必须画 --sep-line 细线（B123）").toContain(
       "background: var(--sep-line)",
     );
@@ -1003,7 +1003,7 @@ describe("编辑区大卡片外框（B123，修正 B122：卡片上移到整个�
     );
 
     // 反向验证①：分屏分隔条静息透明化回潮（B122 旧契约）必须被咬住
-    const sepBlock = (src: string) => src.match(/\.layout-sep::after\s*\{[^}]*\}/)?.[0] ?? "";
+    const sepBlock = (src: string) => ruleBlock(src, ".layout-sep::after");
     const BAD_SEP = css.replace(
       /\.layout-sep::after\s*\{[^}]*\}/,
       '.layout-sep::after {\n  content: "";\n  position: absolute;\n  background: transparent;\n}',

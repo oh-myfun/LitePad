@@ -2,6 +2,7 @@
 // Ctrl + 滚轮缩放字号：滚轮方向、preventDefault（阻断 WebView2 整页缩放）、
 // 以及触控板捏合（密集小 delta）的累加阈值。
 import { describe, it, expect, afterEach } from "vitest";
+import { ruleBlock } from "./static";
 import { readFileSync } from "node:fs";
 import { attachWheelZoom } from "../src/shell/zoom";
 
@@ -79,7 +80,7 @@ describe("Ctrl+滚轮缩放字号", () => {
 
     // 预览字号不能再写死：必须跟随 --font-size（导出 HTML 只注入 preview.css，故需兜底）
     const css = readFileSync("src/styles/preview.css", "utf-8");
-    const root = css.match(/\.md-preview\s*\{[^}]*\}/)?.[0] ?? "";
+    const root = ruleBlock(css, ".md-preview");
     expect(root, "应有 .md-preview 规则").toBeTruthy();
     expect(root, "预览字号必须跟随 --font-size").toContain("var(--font-size");
     expect(root, "导出场景缺少 :root，需要 14px 兜底").toContain("var(--font-size, 14px)");

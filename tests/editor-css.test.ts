@@ -17,10 +17,9 @@ describe("编辑器 DOM / CSS 静态契约", () => {
     // 根因：flex 项的 min-height:auto = 内容高度（滚动容器才豁免为 0）——
     // .panel-editor 缺 min-height:0 时被整篇文档撑开、被 .panel-host 裁掉。
     const css = readFileSync("src/styles/preview.css", "utf-8");
-    const editorBlock = css.match(/\.panel-host \.panel-editor \{[^}]*\}/)?.[0] ?? "";
+    const editorBlock = ruleBlock(css, ".panel-host .panel-editor");
     expect(editorBlock, ".panel-editor 必须允许收缩（min-height: 0）").toContain("min-height: 0");
-    const scrollerBlock =
-      css.match(/\.panel-host \.panel-editor \.cm-scroller \{[^}]*\}/)?.[0] ?? "";
+    const scrollerBlock = ruleBlock(css, ".panel-host .panel-editor .cm-scroller");
     expect(
       scrollerBlock,
       "cm-scroller 必须显式 overflow: auto（CM 基础主题只有 overflow-x）",
@@ -31,16 +30,16 @@ describe("编辑器 DOM / CSS 静态契约", () => {
     // .split-preview 是 absolute inset:0，宿主缺 position:relative 时
     // 会相对整个布局容器定位——单面板碰巧正确、嵌套分屏错位。
     const css = readFileSync("src/styles/global.css", "utf-8");
-    const block = css.match(/\.layout-panel\s*\{[^}]*\}/);
-    expect(block, "global.css 应有 .layout-panel 规则块").toBeTruthy();
-    expect(block![0], ".layout-panel 必须包含 position: relative").toMatch(/position:\s*relative/);
+    const block = ruleBlock(css, ".layout-panel");
+    expect(block, "global.css 应有 .layout-panel 规则块").not.toBe("");
+    expect(block, ".layout-panel 必须包含 position: relative").toMatch(/position:\s*relative/);
   });
   it("行号 gutter 必须走主题变量（深浅色切换联动，而非 CM 默认/oneDark 固定配色）", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
-    const block = css.match(/\.panel-host \.cm-editor \.cm-gutters\s*\{[^}]*\}/);
-    expect(block, "应有 .cm-gutters 主题化规则").toBeTruthy();
-    expect(block![0], "gutter 背景必须引用主题变量").toMatch(/var\(--/);
-    expect(block![0], "gutter 文字色必须引用主题变量").toMatch(/color:\s*var\(--/);
+    const block = ruleBlock(css, ".panel-host .cm-editor .cm-gutters");
+    expect(block, "应有 .cm-gutters 主题化规则").not.toBe("");
+    expect(block, "gutter 背景必须引用主题变量").toMatch(/var\(--/);
+    expect(block, "gutter 文字色必须引用主题变量").toMatch(/color:\s*var\(--/);
   });
   it("折叠图标必须是 codicon 字形标记（open/closed 形态不同，颜色走 CSS 变量）", async () => {
     const { foldMarkerDOM } = await import("../src/editor/editor");

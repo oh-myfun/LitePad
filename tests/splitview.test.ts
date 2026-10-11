@@ -775,10 +775,10 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     // 之间**：用户点名要空隙 + 三点把手（VS Code 的 sash grip），再画 1px 竖线就成了
     // 「有线的缝」，两头不靠 ⇒ 「同款」到此为止，两条各管一个场景，这里按新口径锁死。
     const previewCss = readFileSync("src/styles/preview.css", "utf-8");
-    const resizer = previewCss.match(/\.side-resizer\s*\{[^}]*\}/)?.[0] ?? "";
+    const resizer = ruleBlock(previewCss, ".side-resizer");
     expect(resizer, "应有 .side-resizer 规则块").toBeTruthy();
     const globalCss = readFileSync("src/styles/global.css", "utf-8");
-    const sep = globalCss.match(/\.layout-sep\s*\{[^}]*\}/)?.[0] ?? "";
+    const sep = ruleBlock(globalCss, ".layout-sep");
     expect(sep, "分屏分割条基准样式应存在").toBeTruthy();
 
     // ① 分屏边界（卡片内部，B60 起）：不占布局，静息细线由 ::after 画
@@ -786,7 +786,7 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     // 分屏分隔条：颜色在共享的 .layout-sep::after，几何按方向类定位
     // （B59 S5：线色从通用 --border 抽成 --sep-line；B122 曾短暂透明，
     //   B123 卡片上移到 .layout-area 后分屏边界回到卡片内部，静息细线恢复）
-    const sepLine = globalCss.match(/\.layout-sep::after\s*\{[^}]*\}/)?.[0] ?? "";
+    const sepLine = ruleBlock(globalCss, ".layout-sep::after");
     expect(sepLine, "分屏分隔条细线必须由伪元素画").toContain("background: var(--sep-line)");
     expect(globalCss, "横向分隔条的细线几何").toMatch(/\.layout-sep-h::after\s*\{/);
     expect(globalCss, "纵向分隔条的细线几何").toMatch(/\.layout-sep-v::after\s*\{/);
@@ -802,7 +802,7 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     // 3px 的 ::before 命中区已删 —— 可抓范围做到 10px 比 VS Code 的 sash 宽了一倍。
     // ⚠️ B201：::before 以「hover 才亮的发丝线（pointer-events: none）」的身份回来了，
     //    所以它**可以**存在，判据是「不许外溢」+「必须不吃指针」。
-    const seam = previewCss.match(/\.side-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+    const seam = ruleBlock(previewCss, ".side-resizer::before");
     expect(seam, "seam 的 ::before 应存在（B201）").toBeTruthy();
     expect(seam, "seam 只是视觉反馈，不吃指针（命中区 = 本体 4px）").toContain(
       "pointer-events: none",
@@ -817,7 +817,7 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     //    `.monaco-sash.hover:not(.disabled)::after { opacity: 0 }`（同文件 README：
     //    "On hover/active the grip fades out in favour of the existing full-length highlight"）。
     //    转亮那版（--fg）是 B201 的口径，与 VS Code 相反：16px 字形压在 4px 亮条上两边都糊。
-    const grip = previewCss.match(/\n\.toc-grip\s*\{[^}]*\}/)?.[0] ?? "";
+    const grip = ruleBlock(previewCss, ".toc-grip");
     expect(grip, "三点把手静息走 --fg-muted").toMatch(/color:\s*var\(--fg-muted[,)]/);
     const gripHL =
       previewCss.match(/\.side-resizer:hover \.toc-grip,[\s\S]{0,140}?\{[^}]*\}/)?.[0] ?? "";
@@ -827,13 +827,13 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     expect(gripHL, "不是「悬停把手转亮」那版").not.toMatch(/color:\s*var\(--fg[,)]/);
     // B207：收起展开区 = 只折展开区 —— 缝留着（间距不跳变）**并且照样可抓**，
     // 把手也留着（它现在是「这条缝能拖回来」的唯一可见标记）。
-    const off = previewCss.match(/\.side-resizer\.is-off\s*\{[^}]*\}/)?.[0] ?? "";
+    const off = ruleBlock(previewCss, ".side-resizer.is-off");
     expect(off, "收起时空隙照样吃指针（往右拖回来就靠它）").toContain("pointer-events: auto");
     expect(previewCss, "收起时把手不许消失（要看得见这条缝在哪）").not.toMatch(
       /\.side-resizer\.is-off \.toc-grip\s*\{[^}]*visibility:\s*hidden/,
     );
 
-    const panel = previewCss.match(/\.toc-panel\s*\{[^}]*\}/)?.[0] ?? "";
+    const panel = ruleBlock(previewCss, ".toc-panel");
     expect(panel, ".toc-panel 不得自带 border-right（与分隔条叠成双线）").not.toContain(
       "border-right",
     );
@@ -845,10 +845,9 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     );
     expect(BAD, "替身必须真的替换过").not.toBe(previewCss);
     expect(() => {
-      expect(
-        BAD.match(/\.side-resizer\s*\{[^}]*\}/)?.[0] ?? "",
-        "替身退回「不占布局」必须被抓到",
-      ).toMatch(/flex:\s*0 0 var\(--card-gap\)/);
+      expect(ruleBlock(BAD, ".side-resizer"), "替身退回「不占布局」必须被抓到").toMatch(
+        /flex:\s*0 0 var\(--card-gap\)/,
+      );
     }).toThrow();
   });
   it("B59 分屏对齐 VS Code：复位/极限光标/方向光标/角手柄/落点高亮（静态契约）", () => {
@@ -917,7 +916,7 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     }
 
     // S3 落点高亮过渡（B60 保留）：70ms 位移 / 150ms opacity（VS Code editordroptarget.css）
-    const preview = css.match(/\.split-preview::after\s*\{[^}]*\}/)?.[0] ?? "";
+    const preview = ruleBlock(css, ".split-preview::after");
     expect(preview, "填充走 --drop-fill").toContain("background: var(--drop-fill)");
     // B60：填充与描边同源（都走 --drop-fill），叠加成约 @0.39，改主题不会只改一半。
     // B60 二次反馈：用户明确「不用描边」—— 填充值保持不动，只去掉那圈 2px 边。
@@ -1112,7 +1111,7 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     );
 
     // 拖拽期间由 body 兜住光标（命中区只有 7px，指针一离开就没了），三档值必须与上面一致
-    const drag = css.match(/body\.layout-dragging\s*\{[^}]*\}/)?.[0] ?? "";
+    const drag = ruleBlock(css, "body.layout-dragging");
     expect(drag, "拖拽默认光标与竖线一致").toMatch(/cursor:\s*ew-resize/);
     expect(cssCode, "不得残留 mac 档 col-resize").not.toContain("col-resize");
     expect(cssCode, "不得残留 mac 档 row-resize").not.toContain("row-resize");
@@ -1156,7 +1155,7 @@ describe("分屏：面板操作栏与分隔条（B54）", () => {
   });
   it("分隔条：视觉细线 + 更宽命中区（原先 5px 可视条兼当命中区，容易抓空）", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
-    const sep = css.match(/\n\.layout-sep\s*\{[^}]*\}/)?.[0] ?? "";
+    const sep = ruleBlock(css, ".layout-sep", undefined, true);
     expect(sep, "应有 .layout-sep 规则").toBeTruthy();
     // B60：分隔条本身改为**不占布局**（flex 基准 0）—— 原先 7px 的透明占位会撑开
     // 两侧内容、露出祖先底色，视觉上就是一条粗带；命中区搬到 ::before 向两侧溢出。

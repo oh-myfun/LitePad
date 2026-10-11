@@ -47,7 +47,7 @@ describe("B201 左栏几何：卡片画完整一圈 + 按钮列内部分割线 +
     );
     // 收起展开区时它得收掉：那时按钮列右缘正好贴着卡片右缘，
     // 两条 1px 边紧挨着 = 一条 2px 粗的线。
-    const collapsed = css.match(/\.side-shell\.is-collapsed > \.side-bar\s*\{[^}]*\}/)?.[0] ?? "";
+    const collapsed = ruleBlock(css, ".side-shell.is-collapsed > .side-bar");
     expect(collapsed, "必须有一条收起态的抑制规则").toBeTruthy();
     expect(collapsed, "收起时那条内部竖线要收掉").toMatch(/border-right-color:\s*transparent/);
   });
@@ -67,7 +67,7 @@ describe("B201 左栏几何：卡片画完整一圈 + 按钮列内部分割线 +
   it("④ 拖拽带对齐 VS Code sash：平时透明、悬停/拖拽整条 4px 点亮", () => {
     // sash.css 三层：本体 4px + `:before` 换 background-color + 0.1s ease-out 过渡。
     // 关键是**平时什么都不画**（本体是 editorWidget.border 那层透明），反馈全在悬停那一下。
-    const seam = preview.match(/\.side-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+    const seam = ruleBlock(preview, ".side-resizer::before");
     expect(seam, "应有 .side-resizer::before 这条 sash 反馈").toBeTruthy();
     expect(seam, "平时必须透明（sash 默认态就是看不见）").toMatch(/background:\s*transparent/);
     expect(seam, "亮度必须是渐变（sash.css 的 transition: background-color .1s ease-out）").toMatch(
@@ -92,7 +92,7 @@ describe("B201 左栏几何：卡片画完整一圈 + 按钮列内部分割线 +
       /body\.layout-dragging\s+\.side-resizer::before/,
     );
     // 三点把手必须压在亮条之上：亮条是绝对定位的兄弟，不抬层就糊掉三点
-    const grip = preview.match(/\n\.toc-grip\s*\{[^}]*\}/)?.[0] ?? "";
+    const grip = ruleBlock(preview, ".toc-grip", undefined, true);
     expect(grip, "三点把手要抬到亮条之上").toMatch(/position:\s*relative/);
     expect(grip, "抬层靠 z-index").toMatch(/z-index:\s*1/);
   });
@@ -121,7 +121,7 @@ describe("B201 左栏几何：卡片画完整一圈 + 按钮列内部分割线 +
     );
     expect(BAD, "替身必须真的改成常驻线").not.toBe(preview);
     expect(() => {
-      const block = BAD.match(/\.side-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+      const block = ruleBlock(BAD, ".side-resizer::before");
       expect(block, "sash 默认态必须透明").toMatch(/background:\s*transparent/);
     }).toThrow();
   });
@@ -133,7 +133,7 @@ describe("B201 左栏几何：卡片画完整一圈 + 按钮列内部分割线 +
     );
     expect(BAD, "替身必须真的摘掉过渡").not.toBe(preview);
     expect(() => {
-      const block = BAD.match(/\.side-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+      const block = ruleBlock(BAD, ".side-resizer::before");
       expect(block, "sash 的变色过渡必须还在").toMatch(
         /transition:\s*background-color 0\.1s ease-out/,
       );
@@ -216,10 +216,10 @@ describe("B195 侧栏卡片样式", () => {
     expect(btn, "常态字形取 muted").toContain("color: var(--fg-muted)");
 
     // 三档反馈：悬停淡底 / 按下更沉 / 点亮 accent —— 缺一档就成了「按下去没反应」
-    const hover = css.match(/\.side-btn:hover\s*\{[^}]*\}/)?.[0] ?? "";
+    const hover = ruleBlock(css, ".side-btn:hover");
     expect(hover, "悬停要铺底 =「这颗可点」").toMatch(/background:\s*var\(--bg-hover\)/);
     expect(hover, "悬停同时把字形转亮").toMatch(/color:\s*var\(--fg\)/);
-    const on = css.match(/\.side-btn\.is-on\s*\{[^}]*\}/)?.[0] ?? "";
+    const on = ruleBlock(css, ".side-btn.is-on");
     expect(on, "点亮 = 当前视图，给一档 accent 底").toMatch(/background:\s*var\(--side-btn-on\)/);
     expect(on, "点亮时字形走 accent（比悬停那档纯白更有指向）").toMatch(/color:\s*var\(--accent\)/);
     expect(css, "按下要更沉一档（VS Code 列表项 / 活动栏同款）").toMatch(
@@ -310,7 +310,7 @@ describe("B195 空隙与三点把手", () => {
     expect(resizer, "仍是左右调整光标（B61：非 mac 档 ew-resize）").toContain("ew-resize");
     expect(resizer, "把手要在空隙里居中").toContain("align-items: center");
 
-    const grip = preview.match(/\n\.toc-grip\s*\{[^}]*\}/)?.[0] ?? "";
+    const grip = ruleBlock(preview, ".toc-grip", undefined, true);
     expect(grip, "三点把手静息取 --fg-muted").toMatch(/color:\s*var\(--fg-muted[,)]/);
     const off = cssDecls(ruleBlock(preview, ".side-resizer.is-off"));
     // B207（用户点名「隐藏展开区后分割线仍然能看到和操作」）：收起态**照样可抓** ——
@@ -320,9 +320,9 @@ describe("B195 空隙与三点把手", () => {
   });
 
   it("收起态把手**比展开态更醒目**（它是唯一能把展开区拖回来的提示），但让位次序不能翻", () => {
-    const base = cssDecls(ruleBlock(preview, ".toc-grip"));
+    const base = cssDecls(ruleBlock(preview, ".toc-grip", undefined, true));
     expect(base, "静息那颗点的基础透明度").toMatch(/opacity:\s*0\.55/);
-    const offGrip = preview.match(/\.side-resizer\.is-off \.toc-grip\s*\{[^}]*\}/)?.[0] ?? "";
+    const offGrip = ruleBlock(preview, ".side-resizer.is-off .toc-grip");
     expect(offGrip, "收起态要有把手提亮这一档").toBeTruthy();
     expect(offGrip, "收起态把手要顶到不透明（展开区不在了，它是唯一入口）").toMatch(
       /opacity:\s*1(;|\})/,
@@ -397,7 +397,7 @@ describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘�
     //    它带 `pointer-events: none`，纯视觉反馈，命中区仍是本体那 4px。所以判据不再是
     //    「不许出现 ::before」（那会把 hover 反馈一起禁掉，B201 就做不出来了），
     //    而是「不许出现**带外溢定位**的 ::before」+「::before 必须不吃指针」。
-    const seamRule = preview.match(/\.side-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+    const seamRule = ruleBlock(preview, ".side-resizer::before");
     expect(seamRule, "seam 的 ::before 必须存在（B201 的 hover 反馈）").toBeTruthy();
     expect(seamRule, "seam 必须是纯视觉反馈：不吃指针（命中区仍是本体 4px）").toContain(
       "pointer-events: none",
@@ -437,7 +437,7 @@ describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘�
     // ⚠️ 它是加在 `:before` **本体**上的：平时 background 是 transparent，圆角看不见，
     //    只有 hover / 拖拽上色那一刻才显形 ⇒ 效果就是「亮带两头是圆的」。
     //    所以判据盯 `.side-resizer::before` 那一条，不是 hover 那一条。
-    const seamRule = preview.match(/\.side-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+    const seamRule = ruleBlock(preview, ".side-resizer::before");
     expect(seamRule, "要能定位 seam 的 ::before").toBeTruthy();
     expect(seamRule, "圆角取值要跟着缝宽走（--card-gap = VS Code 的 hover-size）").toMatch(
       /border-radius:\s*calc\(var\(--card-gap\)\s*\/\s*2\)/,
@@ -451,7 +451,7 @@ describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘�
     );
     expect(BAD, "替身必须真的换过圆角取值").not.toBe(preview);
     expect(() => {
-      const seamRule = BAD.match(/\.side-resizer::before\s*\{[^}]*\}/)?.[0] ?? "";
+      const seamRule = ruleBlock(BAD, ".side-resizer::before");
       expect(seamRule, "替身的写死圆角必须被抓到").toMatch(
         /border-radius:\s*calc\(var\(--card-gap\)\s*\/\s*2\)/,
       );
@@ -473,7 +473,7 @@ describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘�
   });
 
   it("把手是 16px 的三点（B199 用户裁决调大），缝仍是 4px 不动", () => {
-    const gripSize = preview.match(/\.toc-grip \.codicon\s*\{[^}]*\}/)?.[0] ?? "";
+    const gripSize = ruleBlock(preview, ".toc-grip .codicon");
     expect(gripSize, "把手要够大才看得清「这儿能拖」").toMatch(/font-size:\s*16px/);
     // 竖排三点在整行高度里垂直居中（.side-resizer 撑满卡片高度），16px 上下都够不着卡片边
     expect(
@@ -509,10 +509,9 @@ describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘�
     const BAD = preview.replace(/font-size:\s*16px/, "font-size: 12px");
     expect(BAD, "替身必须真的缩小把手").not.toBe(preview);
     expect(() => {
-      expect(
-        BAD.match(/\.toc-grip \.codicon\s*\{[^}]*\}/)?.[0] ?? "",
-        "替身的小把手必须被抓到",
-      ).toMatch(/font-size:\s*16px/);
+      expect(ruleBlock(BAD, ".toc-grip .codicon"), "替身的小把手必须被抓到").toMatch(
+        /font-size:\s*16px/,
+      );
     }).toThrow();
   });
 
@@ -583,7 +582,7 @@ describe("B203 完全复制 VS Code 的左右栏间距 / 外框边距 / 拖拽�
       /color:\s*var\(--fg[,)]|opacity:\s*1/,
     );
     // 让位要**淡得回来**：过渡只留 opacity，对齐 sashHandles.css 的 transition .1s ease-out
-    const grip = preview.match(/\n\.toc-grip\s*\{[^}]*\}/)?.[0] ?? "";
+    const grip = ruleBlock(preview, ".toc-grip", undefined, true);
     expect(grip, "把手只在 opacity 这一件事上做过渡").toMatch(
       /transition:\s*opacity 0\.1s ease-out/,
     );
@@ -609,7 +608,7 @@ describe("B203 完全复制 VS Code 的左右栏间距 / 外框边距 / 拖拽�
     const BAD = preview.replace(/(\n\.toc-grip\s*\{[^}]*)pointer-events:\s*none;/, "$1");
     expect(BAD, "替身必须真的把 pointer-events 摘掉").not.toBe(preview);
     expect(() => {
-      const grip = BAD.match(/\n\.toc-grip\s*\{[^}]*\}/)?.[0] ?? "";
+      const grip = ruleBlock(BAD, ".toc-grip");
       expect(grip, "替身必须真的不再声明 pointer-events: none").toMatch(/pointer-events:\s*none/);
     }).toThrow();
   });
@@ -683,7 +682,7 @@ describe("B199 卡片底色一致：左栏与编辑区同一颗变量，三点�
   });
 
   it("⑤ 三点把手 16px（用户裁决调大），缝仍是 4px", () => {
-    const gripSize = preview.match(/\.toc-grip \.codicon\s*\{[^}]*\}/)?.[0] ?? "";
+    const gripSize = ruleBlock(preview, ".toc-grip .codicon");
     expect(gripSize, "把手要够大才看得清「这儿能拖」").toMatch(/font-size:\s*16px/);
     // 竖排三点在整行高度里垂直居中（.side-resizer 撑满卡片高度），16px 上下都够不着卡片边
     expect(
@@ -853,7 +852,7 @@ describe("B198 标题栏整栏显隐：双字形开关 + 整栏一起收", () =>
       /#main-row\.is-sidebar-off > #side-resizer\s*\{\s*display:\s*none;/,
     );
     // 与「只折展开区」那条分清：那一条是留缝的（间距不跳变），这里必须相反
-    const offRule = preview.match(/\.side-resizer\.is-off\s*\{[^}]*\}/)?.[0] ?? "";
+    const offRule = ruleBlock(preview, ".side-resizer.is-off");
     // B207：收起展开区 = 只折展开区 —— 缝留着**并且还抓得住**（旧口径把把手隐身 + 掐指针，
     // 结果拖到底就再也拖不回来），把手也照旧在（它现在真是「这里能拖」的标记了）。
     expect(offRule, "收起展开区仍留缝、且照样可抓").toContain("pointer-events: auto");

@@ -109,55 +109,76 @@ export function stripCssComments(css: string): string {
 }
 
 // 取某条规则的**声明块体**（同样剥注释 + 数花括号）。selector 直接当字面量用。
-// 支持三种写法：
 //   · 单选择器 `.find-bar { }`
-//   · 选择器列表里的一员 `.find-nav, ... .find-x { }`（会自动扫到列表末尾的那个 `{`）
+//   · 选择器列表（`.tab-mark, .tab-close { }`）：把**完整列表**写进 selector，
+//     `,\n` 换行会先归一成 ", " 再匹配（块体里的逗号换行不影响）。
 //   · 同一选择器出现多次时用 filter 指定取哪一条：
 //       - 数字 = 取第 n 处；
 //       - 字符串 = 取**块体里含该声明**的那一处（推荐，比数序号稳）。
 //     例：`.find-x` 先出现在扁平按钮列表里，自己还有一条定位规则 →
 //     `ruleBlock(css, ".find-x", "position")`
-// ⚠️ 新写的用例请用它，不要再用 `\.foo\s*\{[^}]*\}` —— 那个写法在块内注释含 `}` 时
-// 会从注释处截断：断言 `toContain` 会误报「缺失」（假红），而断言 `not.toContain`
-// 会**静默通过**（假绿），后者尤其危险。
-// TODO(backlog): 仓库里还有 ~46 处旧写法待迁移，见 .workbuddy/memory/open-items/backlog.md。
-export function ruleBlock(css: string, selector: string, filter?: number | string): string {
-  const code = css.replace(/\/\*[\s\S]*?\*\//g, "");
+//   · atLineStart = true：要求命中处**必须行首**（旧 `\n\.foo\s*\{` 写法的等价物）——
+//     复合覆盖块（如 `:root[data-tab-style="pill"] .panel-tabstrip`）的**尾段**与
+//     单选择器同名时，不加锚会抓到覆盖块的块体（B114 那批契约靠它区分）。
+// ⚠️ 边界只认「紧跟 `{`」：同名选择器作为**列表成员**（后面跟 `,`）不命中 ——
+//   要取列表规则就把完整列表写进 selector。旧写法 `\{[^}]*\}` 的两个坑（注释里
+//   有 `}` 会截断、块内注释复述标识符会假绿）都靠剥注释 + 数花括号解决。
+// TODO(backlog): 仓库里还有少量复杂旧写法（`[^{]*` 跨段 / matchAll 计数 /
+//   `css.replace` 退化构造）保留原样，见 .workbuddy/memory/open-items/backlog.md。
+export function ruleBlock(
+  css: string,
+  selector: string,
+  filter?: number | string,
+  atLineStart = false,
+): string {
+  let code = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  // 选择器列表的 `,\n` 换行归一成 ", "，字面量才对得上（只影响匹配位置，块体空白差异无害）
+  code = code.replace(/,\s*\n\s*/g, ", ");
   const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  // 选择器后必须是边界字符，免得 `.find-row` 命中 `.find-row-replace`
-  const re = new RegExp(`${esc}(?=[\\s,{])`, "g");
-  let seen = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(code))) {
-    seen++;
-    const open = code.indexOf("{", m.index);
-    if (open < 0) return "";
-    // 选择器与该 `{` 之间只允许出现选择器列的字符（`.a, .b:hover > c[attr="x"]`）。
-    // 判据：中间**不能出现 `;` / `}`** —— 那说明已经越过上一条声明或上一条规则，
-    // 撞到的是别处的 `{`（例如 `.foo` 恰好在某个属性值里被提到）。
-    const between = code.slice(m.index + m[0].length, open);
-    if (/[;{}]/.test(between)) continue;
-    let depth = 0;
-    let body = "";
-    for (let i = open; i < code.length; i++) {
-      const ch = code.charAt(i);
-      if (ch === "{") depth++;
-      else if (ch === "}") {
-        depth--;
-        if (depth === 0) {
-          body = code.slice(open + 1, i);
-          break;
+  // 两段扫描：
+  //  ① 「独占规则」——选择器字面量紧跟 `{`（后面跟 `,` 的列表成员不命中）。
+  //     同名选择器是更长复合选择器**尾段**（如 `:root[...] .panel-tabstrip`）时，
+  //     ①可能抓到别人的块体 ⇒ 配合第 4 参 atLineStart 要求命中处行首（旧
+  //     `\n\.foo\s*\{` 写法的等价物）。
+  //  ② 退回「列表成员」——①找不到（或 filter 没命中）时，允许字面量后面跟 `,`
+  //     并取**整条列表规则**的块体（旧 ruleBlock 的行为，`k .find-x, ...` 这种
+  //     中段成员靠它取）。
+  const own = new RegExp(`${esc}(?=\\s*\\{)`, "g");
+  const member = new RegExp(`${esc}(?=[\\s,{])`, "g");
+  const scan = (re: RegExp): string => {
+    let seen = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(code))) {
+      seen++;
+      if (atLineStart) {
+        const prev = m.index === 0 ? "\n" : code[m.index - 1];
+        if (prev !== "\n") continue;
+      }
+      const open = code.indexOf("{", m.index);
+      if (open < 0) return "";
+      let depth = 0;
+      let body = "";
+      for (let i = open; i < code.length; i++) {
+        const ch = code.charAt(i);
+        if (ch === "{") depth++;
+        else if (ch === "}") {
+          depth--;
+          if (depth === 0) {
+            body = code.slice(open + 1, i);
+            break;
+          }
         }
       }
+      if (typeof filter === "string") {
+        if (body.includes(filter)) return body;
+        continue;
+      }
+      if (typeof filter === "number" && seen < filter) continue;
+      return body;
     }
-    if (typeof filter === "string") {
-      if (body.includes(filter)) return body;
-      continue;
-    }
-    if (typeof filter === "number" && seen < filter) continue;
-    return body;
-  }
-  return "";
+    return "";
+  };
+  return scan(own) || scan(member);
 }
 
 // 断样式规则时先剥掉注释：注释里常写「旧值是什么」（如 flex: 0 1 auto），

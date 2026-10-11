@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { themeBlock, cssDecls, FILE_FAMILIES, tabsAll } from "./static";
+import { FILE_FAMILIES, cssDecls, ruleBlock, tabsAll, themeBlock } from "./static";
 
 describe("标签前置文件类型图标（B57）", () => {
   it("B57 标签前置文件类型图标：家族字形 + 家族配色，且家族覆盖注册表全部语言", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
-    const icon = cssDecls(css.match(/\n\.tab-icon\s*\{[^}]*\}/)?.[0] ?? "");
+    const icon = cssDecls(ruleBlock(css, ".tab-icon", undefined, true));
     expect(icon, "应有 .tab-icon 规则").toBeTruthy();
     expect(icon, "图标不得收缩（文件名变长不能把图标挤扁）").toMatch(/flex:\s*0 0 auto/);
     expect(icon, "图标固定 16px").toMatch(/width:\s*16px/);

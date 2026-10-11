@@ -15,6 +15,7 @@
 //      + 定向投递正文；
 //   5. **不误伤**：窗口内松手绝不回落（否则会莫名多出一个新窗口）。
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { ruleBlock } from "./static";
 import { readFileSync } from "node:fs";
 
 const bus = vi.hoisted(() => ({
@@ -731,7 +732,7 @@ describe("标签拖拽静态契约（从 regressions 拆出）", () => {
 
     // ⑤ 样式：快照源要**离屏但可渲染**（fixed + left/top 挪出屏），绝不能用
     //    display:none / visibility:hidden —— 不渲染就拍出一张空图。
-    const imageRule = css.match(/\.tab-drag-image\s*\{[^}]*\}/)?.[0] ?? "";
+    const imageRule = ruleBlock(css, ".tab-drag-image");
     expect(imageRule, "快照容器规则必须存在").not.toBe("");
     expect(imageRule, "离屏摆放（fixed + 挪出屏）").toMatch(
       /position:\s*fixed[\s\S]*?left:\s*-10000px/,
@@ -740,7 +741,7 @@ describe("标签拖拽静态契约（从 regressions 拆出）", () => {
       /display:\s*none|visibility:\s*hidden/,
     );
     // 不再是指针编排的常驻浮层：`pointer-events` / `z-index: 1000` 那套随之退场
-    const ghostRule = css.match(/\.tab-drag-ghost\s*\{[^}]*\}/)?.[0] ?? "";
+    const ghostRule = ruleBlock(css, ".tab-drag-ghost");
     expect(ghostRule, "影像不再是常驻浮层（交系统后无需拦截指针）").not.toMatch(
       /pointer-events:\s*none/,
     );
