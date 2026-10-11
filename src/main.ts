@@ -312,9 +312,6 @@ setUpdateTocDrawer(updateTocDrawer);
 setRenderPanelTabs(renderPanelTabs);
 setRenderPanelOps(renderPanelOps);
 
-// 把尚未拆出的下游模块函数注入 tabs.ts（过渡期 DI，见 tabs.ts 文件头注释；
-// #410–#415 拆出后逐个换成直接 import 并删除对应条目）。
-
 /** 把某实例的内容变更广播到同文档的其他实例（内容同源，内存一份）。 */
 function syncDocInstances(src: Tab, changes: ChangeSet): void {
   if (changes.empty) return;

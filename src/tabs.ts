@@ -3,10 +3,8 @@
 // 职责：标签操作（switchTab / closeTabById / 移动 / 复制 / 分屏拖拽）、面板最大化、
 // 标签栏与操作区渲染（renderPanelTabs / renderPanelOps）、布局树重建（rebuildLayout）。
 // 只依赖 core/* + sync-scroll + ui + shell/* + doc-model，对 main.ts 零反向依赖。
-//
-// ⚠️ 过渡期 DI：本模块会调用尚未拆出的下游模块函数（session / markdown / find / io /
-//    multiwindow / image-paste），经 installTabDeps 在启动时注入（TabDeps）。
-//    等 #410–#415 各模块拆出后，逐个换成直接 import 并删掉对应 ref —— 注释里标了去向。
+// 下游动作按需直接 import（session / markdown / find / io / multiwindow / image-paste），
+// 无过渡期 DI。
 
 import {
   type Doc,

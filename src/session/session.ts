@@ -6,9 +6,8 @@
 // 外部文件变更恢复（handleFileChanged / resolveExternalChange* / applyDiskContent /
 // openDiskCopyForCompare）。权威类型在 ./store（SessionState），本模块是行为侧。
 // 只依赖 core/* + ui + doc-model + editor/* + ipc + session/store，对 main.ts 零反向依赖。
-//
-// ⚠️ 过渡期 DI：rebuildDocInstances（→ src/io/，#414）、reclaimRemoted / openTabsInNewWindow
-//    （→ src/multiwindow/，#415）已随 #414/#415 全部换成直接 import——本模块无 DI。
+// 下游依赖均直接 import（rebuildDocInstances→src/io/，reclaimRemoted/openTabsInNewWindow
+// →src/multiwindow/），无过渡期 DI。
 
 import {
   MAIN_WINDOW_LABEL,
