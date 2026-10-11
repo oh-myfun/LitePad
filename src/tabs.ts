@@ -3,8 +3,8 @@
 // 职责：标签操作（switchTab / closeTabById / 移动 / 复制 / 分屏拖拽）、面板最大化、
 // 标签栏与操作区渲染（renderPanelTabs / renderPanelOps）、布局树重建（rebuildLayout）。
 // 只依赖 core/* + sync-scroll + ui + shell/* + doc-model，对 main.ts 零反向依赖。
-// 下游动作按需直接 import（session / markdown / find / io / multiwindow / image-paste），
-// 无过渡期 DI。
+// 下游动作按需直接 import（find / io / multiwindow / image-paste）；markdown / session
+// 因与 tabs 互相引用，改由 main 经 setter 注入（见文件底部 setApplyPanelMode 等）。
 
 import {
   type Doc,
@@ -62,9 +62,7 @@ import {
   isMdTab,
   panelIdsInOrder,
 } from "./doc-model";
-import { applyPanelMode, openPreviewToSide, toggleViewMode } from "./markdown";
 import { updateTocDrawer } from "./toc";
-import { discardBackupFor, scheduleSessionSave } from "./session/session";
 import { retargetFindBar } from "./find/findbar";
 import { saveDocCore } from "./io/files";
 import { attachPasteHandler } from "./io/export";
@@ -82,6 +80,32 @@ import { showSaveConfirmDialog } from "./shell/saveconfirm";
 import { createEditor } from "./editor/editor";
 import { PreviewPane } from "./markdown/preview";
 import { logViewport, recordScroll } from "./core/viewport";
+
+// 打破 tabs↔markdown / tabs↔session 循环依赖：tabs 作为消费者不再静态 import 这两个
+// 模块，改为持有可重绑定的本地绑定，由 main 在 bootstrap 期经 setter 注入真实实现。
+// 调用点保持原名（applyPanelMode / openPreviewToSide / toggleViewMode / discardBackupFor /
+// scheduleSessionSave），函数体逻辑与既有静态契约测试完全不变；运行期由注入接管。
+let applyPanelMode: (panel: Panel) => void = () => {};
+let openPreviewToSide: (panelId: number) => void = () => {};
+let toggleViewMode: (target?: Tab) => void = () => {};
+let discardBackupFor: (doc: Doc) => void = () => {};
+let scheduleSessionSave: () => void = () => {};
+
+export function setApplyPanelMode(fn: (panel: Panel) => void): void {
+  applyPanelMode = fn;
+}
+export function setOpenPreviewToSide(fn: (panelId: number) => void): void {
+  openPreviewToSide = fn;
+}
+export function setToggleViewMode(fn: (target?: Tab) => void): void {
+  toggleViewMode = fn;
+}
+export function setDiscardBackupFor(fn: (doc: Doc) => void): void {
+  discardBackupFor = fn;
+}
+export function setScheduleSessionSave(fn: () => void): void {
+  scheduleSessionSave = fn;
+}
 import {
   countLeaves,
   leaf,

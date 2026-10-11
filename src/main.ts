@@ -83,8 +83,19 @@ import {
   toggleMaximizePanel,
   closeTabById,
   newUntitled,
+  setApplyPanelMode,
+  setOpenPreviewToSide,
+  setToggleViewMode,
+  setDiscardBackupFor,
+  setScheduleSessionSave,
 } from "./tabs";
-import { scheduleMdRender, toggleViewMode, refreshViewModeButton } from "./markdown";
+import {
+  scheduleMdRender,
+  toggleViewMode,
+  refreshViewModeButton,
+  applyPanelMode,
+  openPreviewToSide,
+} from "./markdown";
 import { openFindBar } from "./find/findbar";
 import {
   setupSideResizer,
@@ -311,6 +322,12 @@ setRefreshViewModeButton(refreshViewModeButton);
 setUpdateTocDrawer(updateTocDrawer);
 setRenderPanelTabs(renderPanelTabs);
 setRenderPanelOps(renderPanelOps);
+// 把 markdown / session 的动作注入 tabs（打破 tabs↔markdown / tabs↔session 循环依赖）
+setApplyPanelMode(applyPanelMode);
+setOpenPreviewToSide(openPreviewToSide);
+setToggleViewMode(toggleViewMode);
+setDiscardBackupFor(discardBackupFor);
+setScheduleSessionSave(scheduleSessionSave);
 
 /** 把某实例的内容变更广播到同文档的其他实例（内容同源，内存一份）。 */
 function syncDocInstances(src: Tab, changes: ChangeSet): void {
