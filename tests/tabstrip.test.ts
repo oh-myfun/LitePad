@@ -36,7 +36,12 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
     expect(strip, "标签永不换行（VS Code）").toContain("flex-wrap: nowrap");
     expect(css, "折叠按钮的样式必须整体删除").not.toContain("tab-more");
 
-    const ts = readFileSync("src/shell/tabstrip.ts", "utf-8");
+    // P2 内聚拆分：滚动交互/自绘滚动条已迁 src/shell/scrollbar.ts —— 拼接两份再锚
+    // （本段全部是 toContain/not.toMatch 类锚点，无跨文件 indexOf 顺序闸）。
+    const ts =
+      readFileSync("src/shell/tabstrip.ts", "utf-8") +
+      "\n" +
+      readFileSync("src/shell/scrollbar.ts", "utf-8");
     const tsCode = stripLineComments(ts);
     expect(tsCode, "折叠机制必须整体删除（含下拉列表构造）").not.toContain("tab-more");
     expect(tsCode, "不应再按 tabId 重对齐可见窗口").not.toContain("reanchorStart");
