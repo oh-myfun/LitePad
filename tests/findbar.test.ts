@@ -6,7 +6,7 @@
 // ⑦紧凑计数、无匹配变红。
 import { describe, it, expect } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
-import { themeBlock, ruleBlock, stripCssComments } from "./static";
+import { themeBlock, ruleBlock, stripCssComments, tabsAll } from "./static";
 import { createFindBar, type FindBarQuery } from "../src/shell/findbar";
 import { CODICONS } from "../src/shell/codicons";
 import { preserveCase, restrictToRange } from "../src/editor/find";
@@ -600,7 +600,7 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       "\n" +
       readFileSync("src/find/findbar.ts", "utf-8") +
       "\n" +
-      readFileSync("src/tabs.ts", "utf-8") +
+      tabsAll() +
       "\n" +
       readFileSync("src/markdown.ts", "utf-8") +
       "\n" +
@@ -634,7 +634,7 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       "\n" +
       readFileSync("src/find/findbar.ts", "utf-8") +
       "\n" +
-      readFileSync("src/tabs.ts", "utf-8") +
+      tabsAll() +
       "\n" +
       readFileSync("src/markdown.ts", "utf-8") +
       "\n" +
@@ -679,7 +679,7 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       "\n" +
       readFileSync("src/find/findbar.ts", "utf-8") +
       "\n" +
-      readFileSync("src/tabs.ts", "utf-8") +
+      tabsAll() +
       "\n" +
       readFileSync("src/markdown.ts", "utf-8") +
       "\n" +
@@ -739,7 +739,7 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       "\n" +
       readFileSync("src/find/findbar.ts", "utf-8") +
       "\n" +
-      readFileSync("src/tabs.ts", "utf-8") +
+      tabsAll() +
       "\n" +
       readFileSync("src/markdown.ts", "utf-8") +
       "\n" +
@@ -762,7 +762,7 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       "\n" +
       readFileSync("src/find/findbar.ts", "utf-8") +
       "\n" +
-      readFileSync("src/tabs.ts", "utf-8") +
+      tabsAll() +
       "\n" +
       readFileSync("src/markdown.ts", "utf-8") +
       "\n" +
@@ -1160,7 +1160,7 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       "\n" +
       readFileSync("src/find/findbar.ts", "utf-8") +
       "\n" +
-      readFileSync("src/tabs.ts", "utf-8") +
+      tabsAll() +
       "\n" +
       readFileSync("src/markdown.ts", "utf-8") +
       "\n" +

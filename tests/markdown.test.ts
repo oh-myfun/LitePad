@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { tabsAll } from "./static";
 
 import { extractToc, renderBlocks, renderFull } from "../src/markdown/pipeline";
 
@@ -121,7 +122,7 @@ describe("md 扩展名清单必须多处一致", () => {
     const mainSrc =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
-      readFileSync("src/tabs.ts", "utf-8") +
+      tabsAll() +
       "\n" +
       // isMdDoc（含扩展名清单）已拆到 doc-model（解耦第八步）
       readFileSync("src/doc-model.ts", "utf-8") +

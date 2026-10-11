@@ -24,10 +24,22 @@ export function concatSrc(relPaths: string[]): string {
 // 常用模块集（避免同一组清单在多个测试里重复）。
 export const MAIN_SESSION_UI = ["main", "session/session", "ui"];
 export const MAIN_SESSION = ["main", "session/session"];
+
+// P3 批次：原 `src/tabs.ts` 上帝文件拆成四个子模块（src/tabs/），门面 index.ts 只做
+// `export *` 重导出 —— 读「tabs 源码」的静态契约一律改读这四份拼接（concatSrc 归一 CRLF）。
+// 顺序 render→lifecycle→split→deps 与原文件大体一致；indexOf 顺序闸只许用于**同一子模块内**
+// 的两个锚点（跨子模块的先后已不保证与原文件相同）。
+export const TABS_PARTS = ["tabs/render", "tabs/lifecycle", "tabs/split", "tabs/deps"];
+
+/** 原 `readFileSync("src/tabs.ts")` 的替代品：四个子模块拼接（CRLF 已归一）。 */
+export function tabsAll(): string {
+  return concatSrc(TABS_PARTS);
+}
+
 export const SYNC_BUNDLE = [
   "main",
   "multiwindow/windows",
-  "tabs",
+  ...TABS_PARTS,
   "markdown",
   "sync-scroll",
   "core/viewport",

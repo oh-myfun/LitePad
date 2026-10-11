@@ -20,15 +20,18 @@
 // 「切标签 + 钉位置 + 兄弟实例」的真实时序，只有静态契约盯得住。
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
+import { tabsAll } from "./static";
 
 // ⚠️ 归一换行：下面的契约字面量 / 正则都按 LF 写。仓库里存的是 LF，但**工作副本被翻成
 // CRLF** 会一次性打掉一大片断言（`topLevelFnBody` 认 `\n}` 后的那个字符是 `\n`，CRLF 下
 // 是 `\r`，函数体直接抠成空串）。这里先归一，是防那类「改一个字节红一大片」的复发。
 const main = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
-// 标签/面板/布局簇（switchTab / 滚动监听 / closeTabById…）已拆到 tabs.ts（解耦第八步）。
+// 标签/面板/布局簇（switchTab / 滚动监听 / closeTabById…）已拆到 src/tabs/ 四子模块（P3）。
 // ⚠️ 只把「定义已迁走」的切片指到 tabsSrc，别整份拼进 main —— 跨文件的 indexOf 顺序比较
 //    会全部失真（收口/换页/测量的先后闸全在函数体内部，必须同文件内才有意义）。
-const tabsSrc = readFileSync("src/tabs.ts", "utf-8").replace(/\r\n/g, "\n");
+//    ⚠️ tabsAll = render+lifecycle+split+deps 拼接：indexOf 顺序闸只许比**同一子模块内**
+//       的两个锚点（switchTab / rebuildLayout / closeTabById 的内部闸都在 lifecycle 里）。
+const tabsSrc = tabsAll();
 // Markdown 预览簇（toggleViewMode / openPreviewToSide / applyPanelMode…）已拆到 markdown.ts（解耦第九步）。
 const mdSrc = readFileSync("src/markdown.ts", "utf-8").replace(/\r\n/g, "\n");
 // 大纲 TOC / 侧栏簇（updateTocDrawer…）已拆到 toc.ts（解耦第十步）。

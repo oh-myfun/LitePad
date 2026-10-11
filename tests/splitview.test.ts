@@ -4,7 +4,7 @@
 // 参考源码见 docs/vscode-reference/（sash.ts/css、splitview.css、editorDropTarget.ts）。
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { themeBlock, cssDecls, ruleBlock } from "./static";
+import { themeBlock, cssDecls, ruleBlock, tabsAll } from "./static";
 
 // B91-2：标签拖拽走 HTML5 DnD，影像交给 `dataTransfer.setDragImage` 由系统绘制。
 // 本文件要验「tabstrip 确实造了影像并交给了系统」，因此需要一个装着传输层的环境；
@@ -1145,7 +1145,7 @@ describe("分屏：面板操作栏与分隔条（B54）", () => {
     const main =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
-      readFileSync("src/tabs.ts", "utf-8") +
+      tabsAll() +
       "\n" +
       readFileSync("src/markdown.ts", "utf-8");
     expect(main, "菜单左右分屏处理必须保留").toContain('splitActivePanel(activePanelId, "h")');
@@ -1272,7 +1272,7 @@ describe("B224：标签区右侧的 Markdown 操作键", () => {
     const main =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
-      readFileSync("src/tabs.ts", "utf-8") +
+      tabsAll() +
       "\n" +
       readFileSync("src/markdown.ts", "utf-8");
     expect(main, "md 标记必须判活动面板（键只挂活动面板，用户拍定）").toMatch(
@@ -1312,7 +1312,7 @@ describe("B228 侧边预览开出的那一栏：切换键字形与切换落点�
   const main =
     readFileSync("src/main.ts", "utf-8") +
     "\n" +
-    readFileSync("src/tabs.ts", "utf-8") +
+    tabsAll() +
     "\n" +
     readFileSync("src/markdown.ts", "utf-8");
   const body = (anchor: string, src = main): string =>
@@ -1407,7 +1407,7 @@ describe("B232 侧边预览开在已有文档的右面板：切回源码必须�
   const main =
     readFileSync("src/main.ts", "utf-8") +
     "\n" +
-    readFileSync("src/tabs.ts", "utf-8") +
+    tabsAll() +
     "\n" +
     readFileSync("src/markdown.ts", "utf-8");
   const switchFn = main.match(/function switchTab\([\s\S]*?\n\}/)?.[0] ?? "";

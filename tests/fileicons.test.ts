@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { themeBlock, cssDecls, FILE_FAMILIES } from "./static";
+import { themeBlock, cssDecls, FILE_FAMILIES, tabsAll } from "./static";
 
 describe("标签前置文件类型图标（B57）", () => {
   it("B57 标签前置文件类型图标：家族字形 + 家族配色，且家族覆盖注册表全部语言", () => {
@@ -36,7 +36,7 @@ describe("标签前置文件类型图标（B57）", () => {
     expect(ts, "标签必须建 .tab-icon 节点").toContain('"tab-icon"');
     expect(ts, "图标必须带 data-fam（CSS 靠它取色）").toContain("data-fam");
     expect(ts, "图标必须来自 fileIconHtml").toContain("fileIconHtml(");
-    const main = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/tabs.ts", "utf-8");
+    const main = readFileSync("src/main.ts", "utf-8") + "\n" + tabsAll();
     expect(main, "main 必须把语言标签喂给标签视图数据").toMatch(/lang:\s*doc\?\.langLabel/);
   });
   it("B57 图标家族：覆盖语言注册表全部 label，未知语言回落 txt", async () => {

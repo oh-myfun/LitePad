@@ -16,6 +16,7 @@
 // 先把「预览此刻停在哪一行」换成**编辑器侧的像素**写进同一个槽，之后这一侧认的就是它。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
+import { tabsAll } from "./static";
 import { EditorView } from "@codemirror/view";
 
 beforeAll(() => {
@@ -234,7 +235,7 @@ describe("B148 源码 / 预览反复切换：位置不许在两侧之间串档",
 const src =
   readFileSync("src/main.ts", "utf-8") +
   "\n" +
-  readFileSync("src/tabs.ts", "utf-8") +
+  tabsAll() +
   "\n" +
   readFileSync("src/markdown.ts", "utf-8") +
   "\n" +

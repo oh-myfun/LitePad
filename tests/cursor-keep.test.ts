@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { EditorView } from "@codemirror/view";
 import { fireDrag, makeDataTransfer } from "./dnd";
-import { topLevelFnBody, concatSrc, SYNC_BUNDLE } from "./static";
+import { topLevelFnBody, concatSrc, SYNC_BUNDLE, tabsAll, TABS_PARTS } from "./static";
 import { createEditor, makeTabState } from "../src/editor/editor";
 import { perfProfileFor } from "../src/editor/perf";
 
@@ -231,7 +231,7 @@ describe("B189 跨面板激活：焦点给到目标编辑区（光标恢复）",
   });
 
   it("静态契约：onActivatePanel 必须有延迟补焦点（对抗 WebView2 手势结束回焦）", () => {
-    const src = concatSrc(["main", "multiwindow/windows", "tabs", "markdown"]);
+    const src = concatSrc(["main", "multiwindow/windows", ...TABS_PARTS, "markdown"]);
     const start = src.indexOf("onActivatePanel: (panelId) => {");
     const end = src.indexOf("onActivateTab:", start);
     expect(start, "应能定位 onActivatePanel 回调").toBeGreaterThan(-1);
@@ -518,7 +518,7 @@ describe("B181 静态契约：切标签后编辑器必须拿到焦点", () => {
     "\n" +
     readFileSync("src/multiwindow/windows.ts", "utf-8") +
     "\n" +
-    readFileSync("src/tabs.ts", "utf-8") +
+    tabsAll() +
     "\n" +
     readFileSync("src/markdown.ts", "utf-8")
   ).replace(/\r\n/g, "\n");

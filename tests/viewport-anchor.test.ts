@@ -13,6 +13,7 @@
 // 所以修复是「测量之后再确认一次」，本文件的行为用例就把这一手复刻出来。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
+import { tabsAll } from "./static";
 import { sessionStore } from "../src/session/store";
 
 beforeAll(() => {
@@ -248,7 +249,7 @@ describe("B146 换文档：setState 期间自动派发的滚动不许记进任�
 const src = (
   readFileSync("src/main.ts", "utf-8") +
   "\n" +
-  readFileSync("src/tabs.ts", "utf-8") +
+  tabsAll() +
   "\n" +
   readFileSync("src/markdown.ts", "utf-8") +
   "\n" +

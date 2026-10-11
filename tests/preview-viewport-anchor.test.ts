@@ -15,6 +15,7 @@
 // 「这份值是谁写的」：用户滚的才记，程序摆的不记。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
+import { tabsAll } from "./static";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -284,7 +285,7 @@ describe("B139 静态契约：快照按 tabId 索引，不许回头读容器", (
   const src =
     readFileSync("src/main.ts", "utf-8") +
     "\n" +
-    readFileSync("src/tabs.ts", "utf-8") +
+    tabsAll() +
     "\n" +
     readFileSync("src/sync-scroll.ts", "utf-8") +
     "\n" +

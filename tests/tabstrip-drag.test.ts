@@ -5,6 +5,7 @@
 // B26：分割条比例回写路径约定（updateRatio 已进 layout.ts，见 layout.test.ts）。
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
+import { tabsAll } from "./static";
 import { stripInsertInfo } from "../src/shell/splitview";
 
 // 几何桩：jsdom 无布局，按元素逐个登记矩形
@@ -89,7 +90,7 @@ describe("stripInsertInfo（tab 区插入位置）", () => {
 });
 
 describe("B26/B27 接线（静态断言）", () => {
-  const main = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/tabs.ts", "utf-8");
+  const main = readFileSync("src/main.ts", "utf-8") + "\n" + tabsAll();
   const sv = readFileSync("src/shell/splitview.ts", "utf-8");
   const css = readFileSync("src/styles/global.css", "utf-8");
 

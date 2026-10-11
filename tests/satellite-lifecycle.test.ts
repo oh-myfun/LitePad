@@ -35,14 +35,14 @@
 //   · 正则太松，退化串一旦是它的**子串**就永远为真（所以关键处带括号/分号收口）。
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { topLevelFnBody } from "./static";
+import { topLevelFnBody, tabsAll } from "./static";
 
 const src =
   readFileSync("src/main.ts", "utf-8") +
   "\n" +
   readFileSync("src/multiwindow/windows.ts", "utf-8") +
   "\n" +
-  readFileSync("src/tabs.ts", "utf-8");
+  tabsAll();
 const rust = readFileSync("src-tauri/src/main.rs", "utf-8");
 
 /** 取某个顶层函数的源码体（见 tests/static.ts 的说明）。 */

@@ -6,7 +6,7 @@
 // 从 `tests/regressions.test.ts` 按模块拆出（09-22）。
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { readJson, topLevelFnBody } from "./static";
+import { readJson, topLevelFnBody, tabsAll } from "./static";
 
 describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是复制一份）", () => {
   const src =
@@ -18,7 +18,7 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
     "\n" +
     readFileSync("src/io/files.ts", "utf-8") +
     "\n" +
-    readFileSync("src/tabs.ts", "utf-8") +
+    tabsAll() +
     "\n" +
     readFileSync("src/commands.ts", "utf-8");
   const rust = readFileSync("src-tauri/src/windows.rs", "utf-8");
@@ -394,7 +394,7 @@ describe("卫星窗口静态契约", () => {
       "\n" +
       readFileSync("src/io/files.ts", "utf-8") +
       "\n" +
-      readFileSync("src/tabs.ts", "utf-8") +
+      tabsAll() +
       "\n" +
       readFileSync("src/commands.ts", "utf-8");
     expect(main, "失败原因按 label 存下来").toMatch(/failedLabels\.set\(l, e\.payload\?\.message/);
@@ -431,7 +431,7 @@ describe("B153 卫星窗口：比主窗口简洁，关窗不碰主窗口的收�
     "\n" +
     readFileSync("src/io/files.ts", "utf-8") +
     "\n" +
-    readFileSync("src/tabs.ts", "utf-8") +
+    tabsAll() +
     "\n" +
     readFileSync("src/commands.ts", "utf-8");
   const css = readFileSync("src/styles/global.css", "utf-8");
@@ -514,7 +514,7 @@ describe("B153 反向验证：退回旧写法，上面那几条必须变红", ()
     "\n" +
     readFileSync("src/io/files.ts", "utf-8") +
     "\n" +
-    readFileSync("src/tabs.ts", "utf-8") +
+    tabsAll() +
     "\n" +
     readFileSync("src/commands.ts", "utf-8");
   const css = readFileSync("src/styles/global.css", "utf-8");

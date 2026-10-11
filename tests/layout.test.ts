@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { cssDecls, topLevelFnBody } from "./static";
+import { cssDecls, topLevelFnBody, tabsAll } from "./static";
 import {
   countLeaves,
   eachLeaf,
@@ -305,7 +305,7 @@ describe("B71 面板操作补齐（移动标签 / 切焦点 / 右键分屏 / 最
   const src =
     readFileSync("src/main.ts", "utf-8") +
     "\n" +
-    readFileSync("src/tabs.ts", "utf-8") +
+    tabsAll() +
     "\n" +
     readFileSync("src/session/session.ts", "utf-8") +
     "\n" +
@@ -497,7 +497,7 @@ describe("焦点面板：非活动分屏降亮度（class 实时同步）", () =
     const main =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
-      readFileSync("src/tabs.ts", "utf-8") +
+      tabsAll() +
       "\n" +
       readFileSync("src/session/session.ts", "utf-8") +
       "\n" +

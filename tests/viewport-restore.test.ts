@@ -15,6 +15,7 @@
 // 差别只在这里把「布局就绪」推迟到**第 3 帧之后**，让「只补一帧」的旧写法露馅。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
+import { tabsAll } from "./static";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -214,7 +215,7 @@ describe("B145 恢复位置：布局晚几帧稳定时也必须钉回（而不�
 const src = (
   readFileSync("src/main.ts", "utf-8") +
   "\n" +
-  readFileSync("src/tabs.ts", "utf-8") +
+  tabsAll() +
   "\n" +
   readFileSync("src/sync-scroll.ts", "utf-8") +
   "\n" +

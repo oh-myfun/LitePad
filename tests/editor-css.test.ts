@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
-import { ruleBlock, cssDecls, stripLineComments, topLevelFnBody } from "./static";
+import { ruleBlock, cssDecls, stripLineComments, topLevelFnBody, tabsAll } from "./static";
 import {
   DEFAULT_BODY_FONT_LABEL,
   DEFAULT_CODE_FONT_LABEL,
@@ -76,7 +76,7 @@ describe("B225：编辑器字体 / 行距必须真的接到 CSS", () => {
       "\n" +
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
-      readFileSync("src/tabs.ts", "utf-8");
+      tabsAll();
     const classes = [...CHAIN.matchAll(/\.([A-Za-z0-9_-]+)/g)].map((m) => m[1]);
     expect(classes.length, "选择器里应有多个祖先类").toBeGreaterThan(1);
     for (const cls of classes) {
