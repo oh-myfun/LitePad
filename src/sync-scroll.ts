@@ -4,7 +4,7 @@
 import { logger } from "./core/logger";
 import { EditorView } from "@codemirror/view";
 import { emitCrossWindow } from "./ipc/api";
-import { isProgrammatic, markProgrammatic } from "./scroll-guard";
+import { isProgrammatic, markProgrammatic } from "./core/scroll-guard";
 import {
   tabs,
   activePanelId,

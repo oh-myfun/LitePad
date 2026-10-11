@@ -73,7 +73,7 @@ import {
   requestSatelliteClose,
   returnTabToMain,
 } from "./multiwindow/windows";
-import { attachUserScrollClear, isProgrammatic, markProgrammatic } from "./scroll-guard";
+import { attachUserScrollClear, isProgrammatic, markProgrammatic } from "./core/scroll-guard";
 import { closeTab as ipcCloseTab, newTab as ipcNewTab } from "./ipc/api";
 import { invoke } from "@tauri-apps/api/core";
 import { showSaveConfirmDialog } from "./shell/saveconfirm";

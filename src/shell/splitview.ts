@@ -9,6 +9,7 @@ import {
 } from "./tabstrip";
 import { startTabDrag, type TabDragPayload } from "./tabdnd";
 import { setTip } from "./tooltip";
+import { zoneOf, DropZone } from "../dnd/geometry";
 
 /**
  * 分屏区域渲染：递归布局树 → DOM。
@@ -634,27 +635,6 @@ export function refreshPanelOps(panelId: number, data: PanelRenderData): void {
   );
   if (!host) return;
   host.replaceWith(buildPanelOps(data, svCallbacks));
-}
-
-export type DropZone = "left" | "right" | "top" | "bottom" | "center";
-
-/**
- * 指针在面板内的分区。
- * - 两轴都落在内侧（边缘 28% 带以内）= `center`（移入/排序，不分屏）。
- * - 落在边缘带时用 VS Code 的「1/3 方向优先」定方向：左右各占外侧 1/3 优先左右分屏，
- *   中 1/3 才按上/下半区给上/下 —— 角部归属因此可预期
- *   （对标 `workbench/.../editorDropTarget.ts:424-479` 的 splitWidthThreshold = 宽/3）。
- * - jsdom 无布局（宽高为 0）时回 `center`，避免 NaN 判定落到意外分支。
- */
-export function zoneOf(rect: DOMRect, x: number, y: number): DropZone {
-  if (!(rect.width > 0) || !(rect.height > 0)) return "center";
-  const rx = (x - rect.left) / rect.width;
-  const ry = (y - rect.top) / rect.height;
-  const EDGE = 0.28;
-  if (rx >= EDGE && rx <= 1 - EDGE && ry >= EDGE && ry <= 1 - EDGE) return "center";
-  if (rx < 1 / 3) return "left";
-  if (rx > 2 / 3) return "right";
-  return ry < 0.5 ? "top" : "bottom";
 }
 
 function tabUnder(panel: HTMLElement, x: number, y: number): number | null {

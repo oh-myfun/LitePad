@@ -57,7 +57,8 @@ import {
   type SaveConflict,
 } from "../ipc/api";
 import type { FileDropTarget } from "../shell/filedrop";
-import { clearAllDropPreviews, panelAt, zoneOf } from "../shell/splitview";
+import { clearAllDropPreviews, panelAt } from "../shell/splitview";
+import { zoneOf } from "../dnd/geometry";
 import { showSaveConflictDialog } from "../shell/conflictdialog";
 import { measureAndKeepScroll, restoreViewScroll } from "../sync-scroll";
 import {
@@ -67,7 +68,8 @@ import {
   splitPanelWithTab,
   switchTab,
 } from "../tabs";
-import { LOSSY_ABORT, TEXT_FILTERS, refreshAll, showMessage } from "../ui";
+import { LOSSY_ABORT, refreshAll, showMessage } from "../ui";
+import { TEXT_FILTERS } from "./filters";
 import { reclaimRemoted } from "../multiwindow/windows";
 import {
   applyDiskContent,

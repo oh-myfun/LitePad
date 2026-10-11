@@ -8,7 +8,7 @@ import { Panel, Tab, tabs } from "./app-state";
 import { activePanel } from "./panels";
 import { logger } from "./logger";
 import { sessionStore } from "../session/store";
-import { isProgrammatic, markProgrammatic } from "../scroll-guard";
+import { isProgrammatic, markProgrammatic } from "./scroll-guard";
 
 /**
  * 标签当前的视口滚动位置（B126 + B129）。

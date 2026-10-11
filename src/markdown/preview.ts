@@ -1,7 +1,7 @@
 import { convertFileSrc } from "../ipc/api";
 
 import type { MdBlock } from "./pipeline";
-import { attachUserScrollClear, isProgrammatic, markProgrammatic } from "../scroll-guard";
+import { attachUserScrollClear, isProgrammatic, markProgrammatic } from "../core/scroll-guard";
 
 /**
  * Markdown 预览面板（M3）：

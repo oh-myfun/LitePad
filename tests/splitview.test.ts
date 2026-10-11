@@ -19,10 +19,10 @@ import {
   commitTabDrop,
   refreshPanelOps,
   renderSplitview,
-  zoneOf,
   type PanelRenderData,
   type SplitviewCallbacks,
 } from "../src/shell/splitview";
+import { zoneOf } from "../src/dnd/geometry";
 import { eachLeaf, leaf, type LayoutNode } from "../src/core/layout";
 import { CODICONS } from "../src/shell/codicons";
 import { renderTabstrip } from "../src/shell/tabstrip";

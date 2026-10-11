@@ -29,6 +29,7 @@ import {
   remoteOpenByWindow,
 } from "./core/app-state";
 import { pushSyncToSiblings } from "./sync-scroll";
+import { el } from "./dom";
 
 // ------------------------------------------------------------------ 启动计时（B50）
 
@@ -58,39 +59,6 @@ function reportBoot(stage: string): void {
   void invoke("frontend_ready", { detail: `${stage} [${BOOT_MARKS.join(" ")}]` }).catch(() => {
     /* 诊断上报失败不阻塞启动 */
   });
-}
-
-const TEXT_FILTERS = [
-  {
-    name: "文本文件",
-    extensions: [
-      "txt",
-      "md",
-      "markdown",
-      "json",
-      "js",
-      "ts",
-      "rs",
-      "py",
-      "html",
-      "css",
-      "xml",
-      "yml",
-      "yaml",
-      "ini",
-      "bat",
-      "sh",
-      "sql",
-      "log",
-    ],
-  },
-  { name: "所有文件", extensions: ["*"] },
-];
-
-function el<T extends HTMLElement>(id: string): T {
-  const node = document.getElementById(id);
-  if (!node) throw new Error(`缺少 DOM 节点：#${id}`);
-  return node as T;
 }
 
 const layoutArea = el("layout-area");
@@ -383,7 +351,6 @@ export function setRenderPanelOps(fn: (onlyPanelId?: number) => void): void {
 export {
   BOOT_T0,
   BOOT_MARKS,
-  TEXT_FILTERS,
   LOSSY_ABORT,
   bootMark,
   reportBoot,
