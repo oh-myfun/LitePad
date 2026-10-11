@@ -16,7 +16,7 @@ import {
   splitPanelAt,
   type LayoutNode,
   updateRatio,
-} from "../src/shell/layout";
+} from "../src/core/layout";
 
 const tree: LayoutNode = {
   kind: "split",

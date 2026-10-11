@@ -37,7 +37,7 @@ import { clearTip } from "./shell/tooltip";
 import { logger } from "./core/logger";
 import { perfProfileFor } from "./editor/perf";
 import { renderBlocks } from "./markdown/pipeline";
-import { rightNeighborOf } from "./shell/layout";
+import { rightNeighborOf } from "./core/layout";
 import { renderPanelOps, renderPanelTabs, splitPanelWithTab, switchTab } from "./tabs";
 import { updateTocDrawer } from "./toc";
 import { scheduleSessionSave } from "./session/session";

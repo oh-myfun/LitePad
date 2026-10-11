@@ -61,7 +61,7 @@ import {
   type SessionState,
   type TabSession,
 } from "../ipc/api";
-import { LayoutNode, leaf } from "../shell/layout";
+import { LayoutNode, leaf } from "../core/layout";
 import { showExternalConflictDialog } from "../shell/conflictdialog";
 import { rememberViewScroll } from "../sync-scroll";
 import { freshTextOfDoc, layoutForSession, rebuildLayout, renderPanelTabs } from "../tabs";

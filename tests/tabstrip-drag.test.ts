@@ -94,7 +94,7 @@ describe("B26/B27 接线（静态断言）", () => {
   const css = readFileSync("src/styles/global.css", "utf-8");
 
   it("比例回写必须与 build 的路径约定一致（splitview 传节点自身路径）", () => {
-    const layout = readFileSync("src/shell/layout.ts", "utf-8");
+    const layout = readFileSync("src/core/layout.ts", "utf-8");
     expect(layout, "updateRatio 空路径 = 根分割自身").toMatch(
       /if \(path\.length === 0\) \{\s*\n\s*node\.ratio =/,
     );

@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { EditorView } from "@codemirror/view";
 import { fireDrag, makeDataTransfer } from "./dnd";
-import { topLevelFnBody } from "./static";
+import { topLevelFnBody, concatSrc, SYNC_BUNDLE } from "./static";
 import { createEditor, makeTabState } from "../src/editor/editor";
 import { perfProfileFor } from "../src/editor/perf";
 
@@ -229,15 +229,7 @@ describe("B189 跨面板激活：焦点给到目标编辑区（光标恢复）",
   });
 
   it("静态契约：onActivatePanel 必须有延迟补焦点（对抗 WebView2 手势结束回焦）", () => {
-    const src = (
-      readFileSync("src/main.ts", "utf-8") +
-      "\n" +
-      readFileSync("src/multiwindow/windows.ts", "utf-8") +
-      "\n" +
-      readFileSync("src/tabs.ts", "utf-8") +
-      "\n" +
-      readFileSync("src/markdown.ts", "utf-8")
-    ).replace(/\r\n/g, "\n");
+    const src = concatSrc(["main", "multiwindow/windows", "tabs", "markdown"]);
     const start = src.indexOf("onActivatePanel: (panelId) => {");
     const end = src.indexOf("onActivateTab:", start);
     expect(start, "应能定位 onActivatePanel 回调").toBeGreaterThan(-1);
@@ -407,16 +399,7 @@ describe("B126 编辑器光标 / 视口不得复位", () => {
 });
 
 describe("B126 静态契约：滚动位置必须自己存取", () => {
-  const src =
-    readFileSync("src/main.ts", "utf-8") +
-    "\n" +
-    readFileSync("src/multiwindow/windows.ts", "utf-8") +
-    "\n" +
-    readFileSync("src/tabs.ts", "utf-8") +
-    "\n" +
-    readFileSync("src/sync-scroll.ts", "utf-8") +
-    "\n" +
-    readFileSync("src/core/viewport.ts", "utf-8");
+  const src = concatSrc(SYNC_BUNDLE);
 
   it("必须有「取快照 / 还原」两个helper，且还原真的写回 scrollTop", () => {
     expect(src, "落盘前要取快照").toContain("function viewportOfTab");

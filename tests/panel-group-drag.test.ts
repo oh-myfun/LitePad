@@ -33,7 +33,7 @@ import {
   createTabDragImage,
 } from "../src/shell/tabstrip";
 import { TAB_MIME, encodeTabDrag, installTabDnd, readTabDragPayload } from "../src/shell/tabdnd";
-import { leaf, type LayoutNode } from "../src/shell/layout";
+import { leaf, type LayoutNode } from "../src/core/layout";
 import { fireDrag, makeDataTransfer, type FakeDataTransfer } from "./dnd";
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {

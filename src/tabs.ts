@@ -95,7 +95,7 @@ import {
   splitPanel as treeSplitPanel,
   updateRatio,
   type MaximizeSnapshot,
-} from "./shell/layout";
+} from "./core/layout";
 
 function renderPanelTabs(onlyPanelId?: number): void {
   for (const p of panels.values()) {
@@ -487,7 +487,7 @@ function rebuildLayout(): void {
   });
 }
 
-// updateRatio 已移到 src/shell/layout.ts（与 build 的路径约定对齐，B26 修复）
+// updateRatio 已移到 src/core/layout.ts（与 build 的路径约定对齐，B26 修复）
 
 // ---------------------------------------------------------------- 标签操作
 

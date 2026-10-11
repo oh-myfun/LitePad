@@ -23,7 +23,7 @@ import {
   type PanelRenderData,
   type SplitviewCallbacks,
 } from "../src/shell/splitview";
-import { eachLeaf, leaf, type LayoutNode } from "../src/shell/layout";
+import { eachLeaf, leaf, type LayoutNode } from "../src/core/layout";
 import { CODICONS } from "../src/shell/codicons";
 import { renderTabstrip } from "../src/shell/tabstrip";
 import { installTabDnd } from "../src/shell/tabdnd";

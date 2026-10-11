@@ -9,6 +9,30 @@ import { readFileSync, readdirSync } from "node:fs";
 import { extname, join } from "node:path";
 import zlib from "node:zlib";
 
+// 拼接多个源码模块为一段文本，供「拼接源码 + toContain/toMatch」类契约断言复用。
+// 传相对路径（不含 `src/` 前缀、不含 `.ts` 后缀），例如 concatSrc(["main", "session/session", "ui"])。
+// 早期这些清单在多个测试里手写重复，模块改名/增删时易漏改导致断言静默失真 —— 集中到此处。
+export function concatSrc(relPaths: string[]): string {
+  // 顺带归一 CRLF —— 源码约定一律 LF，Windows 上 readFileSync 可能读回 CRLF，
+  // 多处调用点原本各自 .replace(/\r\n/g, "\n")，这里统一收口。
+  return relPaths
+    .map((p) => readFileSync(`src/${p}.ts`, "utf-8"))
+    .join("\n")
+    .replace(/\r\n/g, "\n");
+}
+
+// 常用模块集（避免同一组清单在多个测试里重复）。
+export const MAIN_SESSION_UI = ["main", "session/session", "ui"];
+export const MAIN_SESSION = ["main", "session/session"];
+export const SYNC_BUNDLE = [
+  "main",
+  "multiwindow/windows",
+  "tabs",
+  "markdown",
+  "sync-scroll",
+  "core/viewport",
+];
+
 // JSON 配置结构松散（tauri.conf/package.json 各异），此处刻意放宽：
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function readJson(path: string): any {

@@ -1,6 +1,6 @@
 // 文档 / 标签 / 实例的纯模型操作 + 工厂。
 //
-// 这一段只依赖 core/*（状态）、editor/*（CM6 状态构造）、shell/layout（遍历），
+// 这一段只依赖 core/*（状态）、editor/*（CM6 状态构造）、core/layout（遍历），
 // 不依赖 main.ts —— makeInstance 需要的编辑器更新回调通过 setInstanceOnUpdate 注入，
 // 这样本模块对 main 零反向依赖（解耦纪律：功能模块 → core/*，不许 import main.ts）。
 
@@ -18,7 +18,7 @@ import {
 import { detectLanguage } from "./editor/language";
 import { perfProfileFor, type SizeClass } from "./editor/perf";
 import { makeTabState } from "./editor/editor";
-import { eachLeaf } from "./shell/layout";
+import { eachLeaf } from "./core/layout";
 import { activeTab } from "./core/panels";
 import type { EditorView, ViewUpdate } from "@codemirror/view";
 

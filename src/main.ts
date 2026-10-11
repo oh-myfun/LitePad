@@ -152,7 +152,7 @@ import {
   setupTitleBar,
   togglePin,
 } from "./commands";
-import { countLeaves } from "./shell/layout";
+import { countLeaves } from "./core/layout";
 import { commandById, normalizePresetId, resolveCommand, setKeymapPreset } from "./shell/keymap";
 import { KEYMAP_RECORDING_CLASS } from "./shell/keymapdialog";
 // B235：`PREVIEW_WIDTH_LABELS` 是宽度档的中文标签（提示气泡用），

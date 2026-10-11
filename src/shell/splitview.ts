@@ -1,4 +1,4 @@
-import type { LayoutNode } from "./layout";
+import type { LayoutNode } from "../core/layout";
 import { CODICONS } from "./codicons";
 import {
   GROUP_IMAGE_ANCHOR,

@@ -14,7 +14,7 @@ import type { SizeClass } from "../editor/perf";
 import type { EncodingItem, Settings } from "../ipc/api";
 import type { PreviewPane } from "../markdown/preview";
 import type { KeymapOverrides } from "../shell/keymap";
-import { leaf, type LayoutNode } from "../shell/layout";
+import { leaf, type LayoutNode } from "./layout";
 import type { ThemeMode } from "../theme/theme";
 
 /** 面板：布局树叶子，持有独立 EditorView 与自己的标签列表。 */
