@@ -169,30 +169,35 @@ export function pinScrollTop(el: HTMLElement, px: number): void {
     markProgrammatic(el);
     el.scrollTop = px;
     const landed = el.scrollTop;
-    // 立住了。或者被**文档长度**夹住（短文档，px 本来就超出可滚动范围）也算立住 ——
-    // 那种情况下 0 是合法的落点，不该误判成「没布局」而继续重试。
-    //
-    // ⚠️ 两支都留容差（用户反馈）：落点与目标**差一点**（缩放下的小数，甚至反超一点）
-    // 就是钉上了，别再重试；只有落后**明显**超过容差，才是「文档短、被夹住」。
-    // 原来写 `landed === px || landed < px`，小数落点两边都落空 ⇒ 每回都报「没立住」。
     const diff = landed - px;
-    const stuck =
-      Math.abs(diff) <= PIN_EPSILON_PX || (px > 0 && landed > 0 && diff < -PIN_EPSILON_PX);
-    if (stuck) {
+    // 落在容差内（含缩放小数 / 轻微反超）⇒ 钉稳，收工。
+    const withinTol = Math.abs(diff) <= PIN_EPSILON_PX;
+    if (withinTol) {
       // B139/B145：钉稳的这下发已经被标记吞掉，无需再记「白名单」；只退出补钉循环。
       // 标记仍留在容器上（黏性），等用户接管才清。
       pinningContainers.delete(el);
       return;
     }
+    // ⚠️⚠️ **B278（修用户报的回退）**：「向下裁切」（`landed < px`，落点被浏览器裁到更靠上的
+    //   可滚上限）**不再**当场当「立住」停重试 —— 两类情况都会表现为向下裁切：
+    //   ① 文档真·短、`px` 本就超出可滚上限 —— 合法落点（停在 maxScroll），无可奈何；
+    //   ② **`scrollHeight` 还没撑开**（底部留白 `--cm-bleed-bottom` 尚未 apply / 内容未渲染 /
+    //      分屏新建实例 measure 未完成的临时窗口）—— 几帧内会涨回来，涨回后这一票本应能落定。
+    //   旧写法把 ② 也当「立住」立即收工 ⇒ bleed 涨回后补钉链早已结束、322 永久卡在 276
+    //   （末行退到视口底，正是用户报的「尾行跳到页面底部」）。
+    //   ⇒ 向下裁切一律**继续重试到窗口末**；只有「落点仍在容差外且 `landed<=0`（面板 0 宽 /
+    //   内容始终没撑开，真·坏掉）」才告警，落点在某个合法 maxScroll（`landed>0`）的短文档场景
+    //   静默收工（那本来就是正确落点，不该刷 WARN）。
     if (frame + 1 >= PIN_MAX_FRAMES) {
       pinningContainers.delete(el);
-      // 尺寸早就有、却始终钉不进去 ⇒ 真出问题了（面板还是 0 宽、内容始终没撑开）。
-      // 留一条：这正是「重启后位置回到顶部」那类症状要看的东西。
-      // ⚠️ 这里出现才说明容差没兜住 —— 差个零点几 px 的缩放小数不该走到这行。
-      logger.warn(
-        "viewport",
-        `pin ${px} 没立住（${frame + 1} 帧后 scrollTop=${fmtPx(landed)}，差 ${fmtPx(diff)}px）`,
-      );
+      if (landed <= 0) {
+        // 尺寸早就有、却始终钉不进去 ⇒ 真出问题了（面板还是 0 宽、内容始终没撑开）。
+        // 留一条：这正是「重启后位置回到顶部」那类症状要看的东西。
+        logger.warn(
+          "viewport",
+          `pin ${px} 没立住（${frame + 1} 帧后 scrollTop=${fmtPx(landed)}，差 ${fmtPx(diff)}px）`,
+        );
+      }
       return;
     }
     logger.trace("viewport", `pin ${px} 被裁（第 ${frame + 1} 帧，scrollTop=${fmtPx(landed)}）`);

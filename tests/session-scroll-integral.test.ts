@@ -122,12 +122,19 @@ describe("B151 pin 的「立住」判定要留小数容差", () => {
     "\n" +
     readFileSync("src/core/viewport.ts", "utf-8");
 
-  it("容差要同时用在「钉上了」和「被文档夹住」两支上", () => {
+  it("容差要同时用在「钉上了」那支；「被文档夹住」那支由 B278 改判重试", () => {
     expect(main, "容差常量要有定义").toMatch(/const PIN_EPSILON_PX = 1;/);
     expect(main, "「钉上了」那支要用容差").toMatch(/Math\.abs\(diff\) <= PIN_EPSILON_PX/);
-    // 只给第一支加容差不够：落点比目标小一点（缩放）同样落在第二支之外，
-    // 于是「被夹住」被误判成「钉不进去」，照样重试到帧数用尽。
-    expect(main, "「被文档夹住」那支也要留容差").toMatch(/diff < -PIN_EPSILON_PX/);
+    // ⚠️ **B278（B151 旧第二支翻案）**：旧写法把「落点比目标小 1px 以上」当场判「立住」
+    //   收工 —— 缩放小数场景它确实兜住了（差零点几 px 落在第一支容差里），但它同时把
+    //   「`scrollHeight` 还没撑开」（底部留白尚未 apply / 内容未渲染）的**临时**向下裁切
+    //   也当成了终局：补钉链当场结束，留白涨回后 322 永久卡在 276（末行退到视口底，
+    //   用户报的「尾行跳到页面底部」）。⇒ 旧第二支必须**消失**，向下裁切一律重试到窗口末。
+    expect(main, "旧的「被夹住即立住」判据必须已删除").not.toMatch(/diff < -PIN_EPSILON_PX/);
+    // 新语义：重试到 PIN_MAX_FRAMES 用尽；窗口末只有「真·坏掉」（landed<=0，面板 0 宽 /
+    // 内容始终没撑开）才告警，落在某个合法 maxScroll（landed>0）的短文档静默收工。
+    expect(main, "窗口末收工要有帧数闸").toMatch(/if \(frame \+ 1 >= PIN_MAX_FRAMES\) \{/);
+    expect(main, "告警只留给 landed<=0 的真·坏掉").toMatch(/if \(landed <= 0\) \{/);
   });
 
   it("WARN 只在容差没兜住时出现，且带上差值（差个零点几 px 不该走到这行）", () => {
@@ -138,19 +145,20 @@ describe("B151 pin 的「立住」判定要留小数容差", () => {
   });
 
   it("反向验证：退回精确相等的旧判据，上面几条必须全部落空", () => {
-    const CURRENT =
-      "      Math.abs(diff) <= PIN_EPSILON_PX || (px > 0 && landed > 0 && diff < -PIN_EPSILON_PX);";
+    const CURRENT = "    const withinTol = Math.abs(diff) <= PIN_EPSILON_PX;";
     expect(main, "退化串要先自证原句还在").toContain(CURRENT);
 
-    const degraded = main
-      .replace(CURRENT, "      landed === px || (px > 0 && landed > 0 && landed < px);")
-      .replace("    const diff = landed - px;\n", "");
+    const degraded = main.replace(CURRENT, "    const withinTol = landed === px;");
     expect(degraded, "退化实现应真的换了写法").not.toBe(main);
     expect(degraded, "退化后不再有容差比较（第一条此时必须落空）").not.toMatch(
       /Math\.abs\(diff\) <= PIN_EPSILON_PX/,
     );
-    expect(degraded, "退化后「被夹住」又变回精确比较（第二条此时必须落空）").not.toMatch(
-      /diff < -PIN_EPSILON_PX/,
-    );
+
+    // 反向验证第二条：把「告警只留给真·坏掉」的闸拆掉（退回无条件告警），
+    // 「告警只留给 landed<=0」那条契约必须落空。
+    const GATE = "      if (landed <= 0) {";
+    expect(main, "退化串要先自证告警闸还在").toContain(GATE);
+    const degradedGate = main.replace(GATE, "      if (true) {");
+    expect(degradedGate, "退化实现应真的换了写法").not.toBe(main);
   });
 });
