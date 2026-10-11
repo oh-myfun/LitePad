@@ -109,7 +109,9 @@ describe("B71 ④ 拖出到新窗口 = 同一批文档的第二扇窗（不是�
     expect(body, "接收侧不许排热退出副本").not.toContain("scheduleBackup()");
     const req = fnBody("function requestDocResync");
     expect(req, "重同步请求要防抖（同一个文档不连发）").toMatch(/resyncPending/);
-    expect(req, "广播要带窗口身份，供对端定向应答").toMatch(/from: windowLabel/);
+    expect(req, "重同步请求走 emitCrossWindow（自动注入 from，供对端定向应答）").toMatch(
+      /emitCrossWindow\(EVT_DOC_RESYNC_REQ, \{ docId \}\)/,
+    );
     // 三个事件名必须一致（对不上就是「发出去了没人接」）
     for (const evt of ["doc-change", "doc-resync-request", "doc-resync-full"]) {
       expect(src, `事件名 ${evt} 必须同时出现在常量与监听里`).toContain(`"${evt}"`);

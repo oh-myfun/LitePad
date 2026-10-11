@@ -89,6 +89,8 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 
 // ⚠️ `../src/ipc/api` 的桩必须**导出全部**：漏一个 ⇒ 调用点静默降级、用例照样绿。
 vi.mock("../src/ipc/api", () => ({
+  emitCrossWindow: vi.fn(async () => {}),
+  convertFileSrc: (p: string) => `asset://${p}`,
   checkEncodable: () => Promise.resolve([]),
   closeTab: () => Promise.resolve(),
   exportFile: () => Promise.resolve(),

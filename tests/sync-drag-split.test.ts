@@ -155,6 +155,8 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 
 // 单面板 + 同文件两标签（源码 tab1 / 预览 tab2）⇒ 初始未分屏，拖一个出去才分出第二栏。
 vi.mock("../src/ipc/api", () => ({
+  emitCrossWindow: vi.fn(async () => {}),
+  convertFileSrc: (p: string) => `asset://${p}`,
   checkEncodable: () => Promise.resolve([]),
   closeTab: () => Promise.resolve(),
   exportFile: () => Promise.resolve(),

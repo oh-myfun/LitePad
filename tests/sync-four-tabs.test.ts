@@ -123,6 +123,8 @@ const MD = Array.from({ length: 24 }, (_, i) => `# 标题 ${i + 1}`).join("\n");
 // ⚠️ 两个面板：面板 1 = 标签 a(源码) + b(预览)，面板 2 = 标签 c(源码) + d(预览)。
 //    layout 是**二叉树**（`{a, b}`，写 children 会静默塌成单面板）。
 vi.mock("../src/ipc/api", () => ({
+  emitCrossWindow: vi.fn(async () => {}),
+  convertFileSrc: (p: string) => `asset://${p}`,
   checkEncodable: () => Promise.resolve([]),
   closeTab: () => Promise.resolve(),
   exportFile: () => Promise.resolve(),

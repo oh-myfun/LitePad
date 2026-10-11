@@ -120,6 +120,8 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 //    三个而不是两个：多轮来回切时「每一轮切到**不同**那份」，才能避免「每轮都走同一条
 //    切走路径」把某个环节藏起来（gaps ② 只用了 a→b→a，b 那条的覆盖是恒定的）。
 vi.mock("../src/ipc/api", () => ({
+  emitCrossWindow: vi.fn(async () => {}),
+  convertFileSrc: (p: string) => `asset://${p}`,
   checkEncodable: () => Promise.resolve([]),
   closeTab: () => Promise.resolve(),
   exportFile: () => Promise.resolve(),

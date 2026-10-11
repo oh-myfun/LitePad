@@ -3,7 +3,7 @@
 
 import { logger } from "./core/logger";
 import { EditorView } from "@codemirror/view";
-import { emit } from "@tauri-apps/api/event";
+import { emitCrossWindow } from "./ipc/api";
 import { isProgrammatic, markProgrammatic } from "./scroll-guard";
 import {
   tabs,
@@ -12,11 +12,10 @@ import {
   pendingSyncCursor,
   unmeasuredPanels,
   docSyncModes,
-  windowLabel,
 } from "./core/app-state";
 import { panelOfTab, instancesOfDoc, displayedPanelOfTab } from "./core/panels";
 import { pinInFlight, recordScroll, pinScrollTop } from "./core/viewport";
-import { EVT_SYNC_POS, type SyncPosPayload } from "./core/events";
+import { EVT_SYNC_POS } from "./core/events";
 import type { Tab, Panel } from "./core/app-state";
 
 /**
@@ -521,13 +520,12 @@ export function alignShownToSyncSource(
  *    主窗口敲一个字就带着子窗口跳，不是「同步滚动」，是「打字干扰」。
  */
 export function broadcastSyncPos(src: Tab, v: number | null): void {
-  const payload: SyncPosPayload = {
-    from: windowLabel,
+  // `from` 由 emitCrossWindow 注入（= 当前窗口 label），对端据此丢回声 / 跳过源标签。
+  void emitCrossWindow(EVT_SYNC_POS, {
     docId: src.docId,
     srcTabId: src.tabId,
     v,
-  };
-  void emit(EVT_SYNC_POS, payload).catch(() => {
+  }).catch(() => {
     // 没有别的窗口（绝大多数时候）不是错误，本窗口照常工作
   });
 }

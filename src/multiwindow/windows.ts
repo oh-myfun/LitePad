@@ -72,9 +72,15 @@ import { refreshAll, refreshSyncButton, refreshTitle, showMessage } from "../ui"
 import { applySyncToSibling, measureAndKeepScroll, restoreViewScroll } from "../sync-scroll";
 import { scheduleSessionSave } from "../session/session";
 import { normalizeSizeClass } from "../editor/perf";
-import { openSatelliteWindow, SatellitePayload, SatelliteTab, WindowSpot } from "../ipc/api";
+import {
+  openSatelliteWindow,
+  SatellitePayload,
+  SatelliteTab,
+  WindowSpot,
+  emitCrossWindow,
+} from "../ipc/api";
 import type { DropSpot } from "../shell/splitview";
-import { emit, emitTo, listen } from "@tauri-apps/api/event";
+import { emitTo, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 // ---------------------------------------------------------------- 多窗口（B71 ④）
@@ -651,9 +657,7 @@ function docHeldElsewhere(docId: number, waitMs = 150): Promise<boolean> {
           return;
         }
         unlisten = un;
-        void emit<DocClosePayload>(EVT_DOC_CLOSE_QUERY, { from: windowLabel, docId }).catch(
-          () => {},
-        );
+        void emitCrossWindow(EVT_DOC_CLOSE_QUERY, { docId }).catch(() => {});
         // 没人应答也算数：等过了这阵就当「没人拿着」。
         timer = setTimeout(() => finish(false), waitMs);
       })
@@ -677,8 +681,7 @@ const resyncPending = new Set<number>();
 /** 把本地编辑广播给其他窗口（自己也会收到这份事件，靠 payload.from 过滤掉）。 */
 function broadcastDocChange(docId: number, changes: ChangeSet, baseLen: number): void {
   if (applyingRemote || changes.empty) return;
-  void emit(EVT_DOC_CHANGE, {
-    from: windowLabel,
+  void emitCrossWindow(EVT_DOC_CHANGE, {
     docId,
     baseLen,
     changes: changes.toJSON(),
@@ -759,7 +762,7 @@ function requestDocResync(docId: number): void {
   if (resyncPending.has(docId)) return;
   resyncPending.add(docId);
   window.setTimeout(() => resyncPending.delete(docId), 2000);
-  void emit(EVT_DOC_RESYNC_REQ, { from: windowLabel, docId }).catch(() => {});
+  void emitCrossWindow(EVT_DOC_RESYNC_REQ, { docId }).catch(() => {});
 }
 
 /** 收到全文纠错请求：本窗口持有该文档就回一份全文（两边取到的内容相同）。 */
@@ -921,7 +924,7 @@ function listenDocSync(): void {
     if (!p?.from || p.from === windowLabel) return;
     for (const t of tabs.values()) {
       if (t.panelId >= 0) {
-        void emit(EVT_DOC_OPEN, { from: windowLabel, docId: t.docId }).catch(() => {});
+        void emitCrossWindow(EVT_DOC_OPEN, { docId: t.docId }).catch(() => {});
       }
     }
   }).catch(() => {});

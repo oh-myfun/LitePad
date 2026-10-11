@@ -245,7 +245,7 @@ describe("B161 关标签只关自己这一份：先问一圈，再决定动不�
     // ⚠️ 顺序反了会**假绿**：回得快的一方在监听就位之前就把应答发了，发起方一条都
     //    收不到 ⇒ 判定成「没人拿着」⇒ 又把别人的那份一起关掉。
     const atListen = query.search(/listen<DocClosePayload>\(EVT_DOC_CLOSE_HELD/);
-    const atEmit = query.search(/emit<DocClosePayload>\(EVT_DOC_CLOSE_QUERY/);
+    const atEmit = query.search(/emitCrossWindow\(EVT_DOC_CLOSE_QUERY/);
     expect(atListen, "要能定位装监听那句").toBeGreaterThan(-1);
     expect(atEmit, "要能定位广播那句").toBeGreaterThan(-1);
     expect(atListen, "监听必须先于广播（否则漏收应答）").toBeLessThan(atEmit);
@@ -307,7 +307,7 @@ describe("B155 主窗口关窗时，卫星窗口跟随关闭", () => {
     const body = bare("async function finishAndDestroy");
     // ⚠️ 判据取**最后一次** emit 的位置：只看第一处会被「原来那处还在，又在销毁后
     //    补发一次」骗过去 —— 那样 emit 倒是有了，顺序照样是错的（曾在此假绿）。
-    const emits = [...body.matchAll(/emit\(EVT_APP_QUIT/g)].map((m) => m.index ?? 0);
+    const emits = [...body.matchAll(/emitCrossWindow\(EVT_APP_QUIT/g)].map((m) => m.index ?? 0);
     expect(emits.length, "退出广播必须发").toBeGreaterThan(0);
     const lastEmit = Math.max(...emits);
     const destroys = [...body.matchAll(/await destroySelf\(\)/g)].map((m) => m.index ?? 0);
@@ -407,19 +407,18 @@ describe("B161 反向验证：退回旧写法，上面那几条必须变红", ()
   });
 
   it("把「先装监听再广播」倒过来 → 顺序那条必须落空", () => {
-    const AT =
-      "        void emit<DocClosePayload>(EVT_DOC_CLOSE_QUERY, { from: windowLabel, docId }).catch(\n          () => {},\n        );";
+    const AT = "        void emitCrossWindow(EVT_DOC_CLOSE_QUERY, { docId }).catch(() => {});";
     expect(src, "退化串要先自证原句还在").toContain(AT);
     // 挪到函数体最前面：监听还没就位就广播，应答收不到 ⇒ 判定「没人拿着」⇒ 一起关掉
     const degraded = src
       .replace(AT, "")
       .replace(
         "function docHeldElsewhere(docId: number, waitMs = 150): Promise<boolean> {\n  return new Promise((resolve) => {",
-        "function docHeldElsewhere(docId: number, waitMs = 150): Promise<boolean> {\n  void emit<DocClosePayload>(EVT_DOC_CLOSE_QUERY, { from: windowLabel, docId }).catch(() => {});\n  return new Promise((resolve) => {",
+        "function docHeldElsewhere(docId: number, waitMs = 150): Promise<boolean> {\n  void emitCrossWindow(EVT_DOC_CLOSE_QUERY, { docId }).catch(() => {});\n  return new Promise((resolve) => {",
       );
     const body = bare2(degraded, "function docHeldElsewhere");
     const atListen = body.search(/listen<DocClosePayload>\(EVT_DOC_CLOSE_HELD/);
-    const atEmit = body.search(/emit<DocClosePayload>\(EVT_DOC_CLOSE_QUERY/);
+    const atEmit = body.search(/emitCrossWindow\(EVT_DOC_CLOSE_QUERY/);
     expect(atEmit, "广播那句还在（只是挪了位置）").toBeGreaterThan(-1);
     expect(atEmit, "退化后广播跑到了监听前面").toBeLessThan(atListen);
   });

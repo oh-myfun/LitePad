@@ -123,6 +123,8 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 //    再切回，不是同文档换实例；一个面板 ⇒ 每次「开侧边预览 / 新增分屏」面板数 +1、
 //    「关分屏」−1，几何与合并路径两条维度都是活的。
 vi.mock("../src/ipc/api", () => ({
+  emitCrossWindow: vi.fn(async () => {}),
+  convertFileSrc: (p: string) => `asset://${p}`,
   checkEncodable: () => Promise.resolve([]),
   closeTab: () => Promise.resolve(),
   exportFile: () => Promise.resolve(),

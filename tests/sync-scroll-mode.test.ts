@@ -894,13 +894,15 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
     const preview = slice(tabsSrc, 'preview.root.addEventListener("scroll"', "applyPanelMode(p);");
     expect(preview, "预览里滚也要往外播").toMatch(/pushSyncToSiblings\(t, true\);/);
     expect(CLICK_BODY, "按下开关那一刻也要播（先播状态，再播位置）").toMatch(
-      /EVT_SYNC_MODE, \{ from: windowLabel, docId: tab\.docId, on \}/,
+      /emitCrossWindow\(EVT_SYNC_MODE, \{ docId: tab\.docId, on \}\)/,
     );
   });
 
   it("位置广播要带齐四样：谁发的、哪个文档、哪一份是源、坐标", () => {
     // `from` 是必填的自证字段（tauri 的广播本机也会收到自己的回声），缺了就分不清。
-    expect(PUSH_BODY, "from 不能少").toMatch(/from: windowLabel,/);
+    expect(PUSH_BODY, "from 由 emitCrossWindow 注入（不再手写）").toMatch(
+      /emitCrossWindow\(EVT_SYNC_POS, \{/,
+    );
     expect(PUSH_BODY, "文档 ID 不能少").toMatch(/docId: src\.docId,/);
     expect(PUSH_BODY, "源那份的 tabId 不能少（对端要跳过它）").toMatch(/srcTabId: src\.tabId,/);
     // ⚠️ B251：坐标只有**一种东西** —— 规范游标 `v`。旧签名是 `px` + `line` 两个（源那侧
@@ -1873,10 +1875,8 @@ describe("B178 跨窗口多开检测：主/子窗口同步键显隐一致", () =
     // 可见实例才广播（panelId >= 0 滤掉隐藏实例，与 B173 同口径）
     expect(FN, "只数可见实例").toMatch(/t\.panelId >= 0/);
     // 新增 → 广播 open；消失 → 广播 close
-    expect(FN, "新增广播 open").toMatch(/emit\(EVT_DOC_OPEN, \{ from: windowLabel, docId \}\)/);
-    expect(FN, "消失广播 close").toMatch(
-      /emit\(EVT_DOC_CLOSE_NOTIFY, \{ from: windowLabel, docId \}\)/,
-    );
+    expect(FN, "新增广播 open").toMatch(/emitCrossWindow\(EVT_DOC_OPEN, \{ docId \}\)/);
+    expect(FN, "消失广播 close").toMatch(/emitCrossWindow\(EVT_DOC_CLOSE_NOTIFY, \{ docId \}\)/);
     // 收口：把本次集合存为 lastBroadcast
     expect(FN, "diff 基准要更新").toMatch(/lastBroadcastDocIds = now;/);
   });
@@ -1903,9 +1903,7 @@ describe("B178 跨窗口多开检测：主/子窗口同步键显隐一致", () =
   it("新窗口上线要问一圈重播（resync 请求），上线方据此补齐", () => {
     // setupShell 里 `listenDocSync();` 之后、本函数内 `installFileDropTarget({` 之前要发一次。
     const SHELL = slice(main, "async function setupShell(", "installFileDropTarget({");
-    expect(SHELL, "引导里要发 resync 请求").toMatch(
-      /emit\(EVT_DOC_OPEN_RESYNC, \{ from: windowLabel \}\)/,
-    );
+    expect(SHELL, "引导里要发 resync 请求").toMatch(/emitCrossWindow\(EVT_DOC_OPEN_RESYNC, \{\}\)/);
   });
 
   it("卫星窗口干净关窗要通知对端清掉它那一条", () => {
@@ -1914,7 +1912,7 @@ describe("B178 跨窗口多开检测：主/子窗口同步键显隐一致", () =
       "async function finishSatelliteClose(",
       "async function finishAndDestroy(",
     );
-    expect(FIN, "卫星关窗要通知对端").toMatch(/emit\(EVT_WINDOW_CLOSED, \{ from: windowLabel \}\)/);
+    expect(FIN, "卫星关窗要通知对端").toMatch(/emitCrossWindow\(EVT_WINDOW_CLOSED, \{\}\)/);
   });
 
   it("刷新按钮的「多份」判据要包含跨窗口：本窗口可见 > 1 或 远端也开着这份", () => {

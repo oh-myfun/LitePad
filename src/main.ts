@@ -15,6 +15,7 @@ import { ChangeSet } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { emitCrossWindow } from "./ipc/api";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 import "katex/dist/katex.min.css";
@@ -216,13 +217,7 @@ import {
   setWindowKind,
   setSyncingDocId,
 } from "./core/app-state";
-import {
-  EVT_SYNC_MODE,
-  SyncModePayload,
-  EVT_APP_QUIT,
-  EVT_DOC_OPEN_RESYNC,
-  EVT_WINDOW_CLOSED,
-} from "./core/events";
+import { EVT_SYNC_MODE, EVT_APP_QUIT, EVT_DOC_OPEN_RESYNC, EVT_WINDOW_CLOSED } from "./core/events";
 import { activePanel, activeTab, instancesOfDoc } from "./core/panels";
 import { logViewport } from "./core/viewport";
 import {
@@ -389,9 +384,7 @@ function bindEvents(): void {
     refreshSyncButton(tab);
     // B159：这两条**一起**发。只发开关，另一窗口的按钮亮着却不动 = 更迷惑；
     //   只发位置，另一窗口压根不知道这份文档开着同步滚动。
-    void emit<SyncModePayload>(EVT_SYNC_MODE, { from: windowLabel, docId: tab.docId, on }).catch(
-      () => {},
-    );
+    void emitCrossWindow(EVT_SYNC_MODE, { docId: tab.docId, on }).catch(() => {});
     if (on) pushSyncToSiblings(tab, true);
   });
 
@@ -783,7 +776,7 @@ async function finishSatelliteClose(): Promise<void> {
   // B178：卫星干净关窗要告诉对端「本窗口没了」，对端据此把 `remoteOpenByWindow`
   // 里这条清掉 —— 否则主窗口那份同文档的同步键会一直亮着（其实卫星早就关了）。
   // 这一句只广播、不等回话；广播失败（已无对端）按「本来就该清」处理，不阻塞关窗。
-  void emit(EVT_WINDOW_CLOSED, { from: windowLabel }).catch(() => {});
+  void emitCrossWindow(EVT_WINDOW_CLOSED, {}).catch(() => {});
   // B188：干净关窗要**显式**告诉主窗口「别把借出去的隐藏实例接回来」—— 用户明确不要交还。
   // 主窗口据此把 `remotedTabs` 里 owner=本窗口 的条目作废旧账（dropRemotedForOwner），
   // 而不是走崩溃兜底把它们恢复成可见标签。这条必须先于 `destroySelf()` 发：主窗口的
@@ -807,7 +800,7 @@ async function finishAndDestroy(dirty: Doc[]): Promise<void> {
   // 卫星窗口没有独立生命周期（它承载的就是主窗口分出去的那几个文件），主窗口一没
   // 它就变成「打不开也关不掉」的孤儿窗口。这里只广播不等回话：后面还有会话落盘，
   // 等子窗口回一条 destroy 的应答反而会把主窗口的退出拖住。
-  void emit(EVT_APP_QUIT, { from: windowLabel }).catch((e: unknown) => {
+  void emitCrossWindow(EVT_APP_QUIT, {}).catch((e: unknown) => {
     logger.debug("window", `退出广播没发出去：${String(e)}`);
   });
   if (dirty.length === 0) {
@@ -966,7 +959,7 @@ async function setupShell(): Promise<void> {
   // B178：引导末尾问一圈「你们都开着哪些可见文档」—— 老窗口把当前集合重播一遍，
   // 新上线的窗口据此补齐 `remoteOpenByWindow`（否则它只知道自己开的，收不到老窗口
   // 已经开着的那些）。只发一次，不进刷新循环，不会形成回声环。
-  void emit(EVT_DOC_OPEN_RESYNC, { from: windowLabel }).catch(() => {});
+  void emitCrossWindow(EVT_DOC_OPEN_RESYNC, {}).catch(() => {});
 
   // 从资源管理器拖入文件（B91 改造）：wry 的原生拖放处理器已关闭（它做的两处劫持会把
   // 页面内 HTML5 拖放一起废掉，详见 `src-tauri/src/dropbridge.rs` 模块头），改由两层拼：

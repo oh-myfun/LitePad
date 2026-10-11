@@ -53,6 +53,8 @@ const PREVIEW_SCROLL = 420;
 const saved = vi.hoisted(() => ({ session: null as Record<string, unknown> | null }));
 
 vi.mock("../src/ipc/api", () => ({
+  emitCrossWindow: vi.fn(async () => {}),
+  convertFileSrc: (p: string) => `asset://${p}`,
   checkEncodable: () => Promise.resolve([]),
   closeTab: () => Promise.resolve(),
   exportFile: () => Promise.resolve(),

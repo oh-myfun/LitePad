@@ -138,6 +138,8 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 // 左面板：tab0 = 源码、tab1 = 预览（同文档 a.md）；active = 1（启动即预览，使源码离屏藏在
 // mode-preview 面板里 —— 这正是 `applySyncToSibling` 里 `rulerHidden` 那条分支）。
 vi.mock("../src/ipc/api", () => ({
+  emitCrossWindow: vi.fn(async () => {}),
+  convertFileSrc: (p: string) => `asset://${p}`,
   checkEncodable: () => Promise.resolve([]),
   closeTab: () => Promise.resolve(),
   exportFile: () => Promise.resolve(),

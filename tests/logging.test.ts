@@ -18,6 +18,8 @@ const sink = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/ipc/api", () => ({
+  emitCrossWindow: vi.fn(async () => {}),
+  convertFileSrc: (p: string) => `asset://${p}`,
   logEvent: (event: string, detail: string, level: string) => {
     sink.lines.push({ level, event, detail });
     return Promise.resolve();

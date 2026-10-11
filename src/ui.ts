@@ -10,7 +10,7 @@
 // （视图模式键 / 大纲抽屉 / 标签条 / 面板操作键）注入进来，避免 main ↔ ui 循环依赖。
 
 import { invoke } from "@tauri-apps/api/core";
-import { emit } from "@tauri-apps/api/event";
+import { emitCrossWindow } from "./ipc/api";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { EditorView } from "@codemirror/view";
 import { CODICONS } from "./shell/codicons";
@@ -24,7 +24,6 @@ import {
   docs,
   tabs,
   docSyncModes,
-  windowLabel,
   setActivePanelId,
   activePanelId,
   remoteOpenByWindow,
@@ -300,12 +299,12 @@ function broadcastDocPresence(): void {
   }
   for (const docId of now) {
     if (!lastBroadcastDocIds.has(docId)) {
-      void emit(EVT_DOC_OPEN, { from: windowLabel, docId }).catch(() => {});
+      void emitCrossWindow(EVT_DOC_OPEN, { docId }).catch(() => {});
     }
   }
   for (const docId of lastBroadcastDocIds) {
     if (!now.has(docId)) {
-      void emit(EVT_DOC_CLOSE_NOTIFY, { from: windowLabel, docId }).catch(() => {});
+      void emitCrossWindow(EVT_DOC_CLOSE_NOTIFY, { docId }).catch(() => {});
     }
   }
   lastBroadcastDocIds = now;

@@ -99,6 +99,8 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 // ⚠️ 会话只有一个面板、挂两份同 md 实例（源 + 预览）：这样同步键才露脸，
 //    而点击「打开侧边预览」时右侧**没有**邻居 ⇒ 走新建分屏那一支。
 vi.mock("../src/ipc/api", () => ({
+  emitCrossWindow: vi.fn(async () => {}),
+  convertFileSrc: (p: string) => `asset://${p}`,
   checkEncodable: () => Promise.resolve([]),
   closeTab: () => Promise.resolve(),
   exportFile: () => Promise.resolve(),

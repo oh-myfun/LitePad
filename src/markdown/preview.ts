@@ -1,4 +1,4 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { convertFileSrc } from "../ipc/api";
 
 import type { MdBlock } from "./pipeline";
 import { attachUserScrollClear, isProgrammatic, markProgrammatic } from "../scroll-guard";

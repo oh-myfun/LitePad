@@ -157,6 +157,8 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 //    ① 后面每一步都能让面板数 +1/−1，「几何这一维」才是活的（几何不变 ⇒ 本文件退化成假绿）。
 //    ② 判定的是「重落有没有按新几何算」，跟文档份数无关，先用两份干净的文档起手。
 vi.mock("../src/ipc/api", () => ({
+  emitCrossWindow: vi.fn(async () => {}),
+  convertFileSrc: (p: string) => `asset://${p}`,
   checkEncodable: () => Promise.resolve([]),
   closeTab: () => Promise.resolve(),
   exportFile: () => Promise.resolve(),

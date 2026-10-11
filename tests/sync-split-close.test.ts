@@ -111,6 +111,8 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 // ⚠️ 会话只有**一个**面板、挂一份 md：这样「新建分屏」才真的会新建一个面板，
 //    而「关掉分屏」才真的能把面板数从 2 变回 1（几何随之变回整宽）。
 vi.mock("../src/ipc/api", () => ({
+  emitCrossWindow: vi.fn(async () => {}),
+  convertFileSrc: (p: string) => `asset://${p}`,
   checkEncodable: () => Promise.resolve([]),
   closeTab: () => Promise.resolve(),
   exportFile: () => Promise.resolve(),

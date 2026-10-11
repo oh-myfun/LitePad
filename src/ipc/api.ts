@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 /** 与 Rust `TabInfo` 对应（rename_all = camelCase）。 */
 export interface TabInfo {
@@ -550,3 +552,18 @@ export function openSatelliteWindow(
     y: spot?.y ?? null,
   });
 }
+
+/**
+ * 跨窗口广播封装：自动注入 `from` = 当前窗口 label，替换散落的
+ * `emit(event, { from: windowLabel, ... })` 手写形态。`from`-family 纯广播走这里；
+ * 与 Rust 同源的 `label`-family（`satellite-*`）定向 `emitTo`、以及 `tabdnd` 的
+ * `cfg.selfLabel` 不在此收口范围内，保持各事件族语义不变。
+ */
+export function emitCrossWindow(event: string, payload: Record<string, unknown>): Promise<void> {
+  // 注入的 `from` 放在展开之后 ⇒ 调用方若误传 `from` 也会被真实窗口身份覆盖，
+  // 保证跨窗口身份唯一可信（调用方本就不该手写 `from`）。
+  return emit(event, { ...payload, from: getCurrentWindow().label });
+}
+
+/** 路径 → 前端 `src` 可用的 Tauri 资产 URL（统一收口再导出，避免散落 import）。 */
+export { convertFileSrc } from "@tauri-apps/api/core";

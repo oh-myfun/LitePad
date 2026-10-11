@@ -16,7 +16,7 @@ import { exportFile, savePasteImage } from "../ipc/api";
 import { showMessage } from "../ui";
 import { logger } from "../core/logger";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { convertFileSrc } from "../ipc/api";
 import type { Panel } from "../core/app-state";
 
 // ---------------------------------------------------------------- 导出（M3）
