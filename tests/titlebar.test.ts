@@ -269,19 +269,19 @@ describe("B97 自建标题栏", () => {
     expect(src, "标题栏那颗必须有 import 落点").toBeTruthy();
     expect(src![1], "标题栏那颗必须挂 app-mark.png").toBe("app-mark.png");
 
-    // ⚠️ B222 的**带底版**判据（四边中点 alpha=255）已随源图换版作废：
-    //    现行源图 docs/LitePad.png 是**无底的内缩图形**（四周透明留白，图形只占中间约
-    //    341×376/512）。所以形态判据方向反过来 —— 四边中点**应当透明**；
-    //    而「同源性」改用形状指纹钉：标题栏这颗必须与源图、与打包图同形。
+    // ⚠️ B222 的形态判据随源图换版更新（2026-10 用户换版，2048×2048）：
+    //    现行源图是**圆角方块带底、顶满画布**的形态——四周不再有旧版的透明留白
+    //    （旧 512 源图留白大，「边中点透明」判据还成立；新图留白仅 1–2px，固定 3px
+    //    采样会采进底里假红）。方向改为盯**四角**：圆角方块的必要条件是四角透明，
+    //    塞一张直角满幅方图进来立刻红。同源性仍用形状指纹钉（下方正主）。
     const alpha = pngAlpha(readFileSync(`src-tauri/icons/${src![1]}`));
-    const mid = (a: number, b: number) => Math.floor((a + b) / 2);
     for (const [x, y, where] of [
-      [mid(0, alpha.width - 1), 2, "上边中点"],
-      [mid(0, alpha.width - 1), alpha.height - 3, "下边中点"],
-      [2, mid(0, alpha.height - 1), "左边中点"],
-      [alpha.width - 3, mid(0, alpha.height - 1), "右边中点"],
+      [1, 1, "左上角"],
+      [alpha.width - 2, 1, "右上角"],
+      [1, alpha.height - 2, "左下角"],
+      [alpha.width - 2, alpha.height - 2, "右下角"],
     ] as [number, number, string][]) {
-      expect(alpha.at(x, y), `${where}应当透明（无底版；不透明说明塞回了带底旧图）`).toBe(0);
+      expect(alpha.at(x, y), `${where}应当透明（圆角方块；不透明说明塞了直角满幅方图）`).toBe(0);
     }
     expect(alpha.hasInk, "全透明就是图没画上 / 脚本没出图").toBe(true);
     // 同源闸门（这条才是防回归的正主）：标题栏这颗 = 源图直出 = 打包图标同形。
