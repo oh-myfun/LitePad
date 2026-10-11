@@ -111,6 +111,24 @@ function renderMarkdownFor(panel: Panel, force = false): void {
   preview.setNotice(null);
 
   preview.setBlocks(renderBlocks(tab.state.doc.toString()));
+  // ⚠️⚠️ **B279（用户报：输入时预览跳错位）**：`setBlocks` 把块 DOM 整块重建、块几何
+  //    换新 —— 而输入期间同步落点（`pushSyncToSiblings` 每次击键一推）是按**旧块几何**
+  //    算的（渲染是 120ms 防抖，落点永远追不上几何）；重渲染落地那一刻，先前落进去的
+  //    旧 px 对应的已是另一行，却没有任何人按同步游标在新几何上补落一次 ⇒ 预览停在
+  //    错位上，直到用户再滚一下才被纠正。这里补上：同步开着、这份实例正以预览态在屏、
+  //    且已被同步定位过（`syncV` 在每次推播里无条件跟着源走，见 `applySyncToSibling`）
+  //    ⇒ 按规范游标在**新几何**上重落一次（`syncToLineProgrammatic` 是程序摆位，回执被
+  //    scroll-guard 吞），与 `restorePreviewScroll` 同一条纪律；落定后按行号的待重定位
+  //    就是过期值了，一并清（B146：留着它会把预览从钉好的落点拽回旧行）。
+  //    编辑面板自己的预览（mode-source，display:none）不落 —— 隐藏元素钉不住，切过去时
+  //    有 `restorePreviewScroll` / `applyPanelMode` 按同一游标接管。
+  if (docSyncModes.get(tab.docId) === true && tab.viewMode === "preview" && tab.syncV !== null) {
+    const landed = preview.syncToLineProgrammatic(tab.syncV);
+    if (landed !== null) {
+      recordScroll(tab.tabId, landed);
+      preview.clearPendingSync();
+    }
+  }
   // 重渲染重建了 block DOM，查找高亮随之丢失——重放当前查询（B30）
   const fb = getFindBar();
   if (fb?.isOpen()) applyPreviewFindToPanel(panel, findSpecOf(fb.getQuery()));
