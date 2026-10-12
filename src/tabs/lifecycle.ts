@@ -37,6 +37,7 @@ import {
   alignShownToSyncSource,
   syncSourceSnapshot,
   topVisibleLineFrac,
+  sourceTopOfV,
   landOnFrameGeometry,
 } from "../sync-scroll";
 import {
@@ -253,8 +254,12 @@ export function rebuildLayout(): void {
         scrollToLine: (line: number) => {
           const v = p.view?.view;
           if (!v) return;
-          const l = v.state.doc.line(Math.min(Math.max(1, line), v.state.doc.lines));
-          const top = v.lineBlockAt(l.from).top;
+          // ⚠️ 落点走 `sourceTopOfV`（与跨侧同步 / 切模式交接同一个换算出口）：支持**小数**
+          //    行号（块内比例），且末行按整行高落点（软折行也贴顶）。旧写法 `lineBlockAt(l.from).top`
+          //    只认整数行首、又只取首视觉块高，预览→编辑器跟随时把末块取整到块首 ⇒ 兄弟格
+          //    跟不到末块底（用户报：预览滚到底、源码停在上一个块首，差末块那几行）。
+          const top = sourceTopOfV(v, Math.min(Math.max(line, 1), v.state.doc.lines));
+          if (top === null) return;
           v.scrollDOM.scrollTop = top;
           // B169/B170：预览驱动编辑器滚动属程序摆位（点 block 跳转 / 预览→编辑器跟随），
           // 其回执 scroll 必须被编辑器监听经 scroll-guard 标记吞掉 —— 否则这份没标记的位置

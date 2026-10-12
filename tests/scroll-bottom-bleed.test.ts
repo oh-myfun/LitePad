@@ -683,11 +683,19 @@ describe("B265 底部留白：最后一行 / 最后一块能滚到容器顶", ()
 describe("B280 静态契约：留白 = 视口高 − 末行高（与预览侧同一个公式）", () => {
   const edSrc = readFileSync("src/editor/editor.ts", "utf-8");
 
-  it("源码侧改用直接公式，末行高量不出时退回 CM6 的默认行高（永不退回 0）", () => {
+  it("源码侧改用直接公式：末行高 = 末视觉块底 − 首视觉块顶（软折行整行高），量不出退 defaultLineHeight", () => {
+    // ⚠️ 软折行：一个逻辑行被 CM6 拆成多个视觉块，`lineBlockAt(末行.from)` 只给首视觉块高
+    //    （单行高）。必须按「末视觉块底 − 首视觉块顶」取整行高，否则末行折行时留白偏小、
+    //    末行贴不了顶、兄弟格跟不到底（用户报：源码末行折行后滚不到顶）。
+    expect(edSrc, "末行整高 = 末视觉块底 − 首视觉块顶（与预览侧 lastLineHeightOf 同口径）").toMatch(
+      /const fullH = lastBlock\.top \+ lastBlock\.height - firstBlock\.top;/,
+    );
     expect(
       edSrc,
-      "末行高：量得出就用实测，量不出就退回 defaultLineHeight（同步可得、恒 > 0）",
-    ).toMatch(/const lastH = block\.height > 0 \? block\.height : view\.defaultLineHeight;/);
+      "末行高量不出（heightMap 还在估算）⇒ 退回 CM6 默认行高（同步可得、恒 > 0，永不退回 0）",
+    ).toMatch(
+      /if \(!\(firstBlock\.height > 0\)\) return Math\.max\(0, clientH - view\.defaultLineHeight\);/,
+    );
     expect(edSrc, "留白 = 视口高 − 末行高（与预览侧 clientH − 末块高 同一个式子）").toMatch(
       /return Math\.max\(0, clientH - lastH\);/,
     );
@@ -711,5 +719,17 @@ describe("B280 静态契约：留白 = 视口高 − 末行高（与预览侧同
     expect(degraded, "退化后又依赖 contentHeight（第二条此时必须落空）").toMatch(
       /\|\| view\.contentHeight <= 0|view\.contentHeight/,
     );
+  });
+
+  it("反向验证：退回「只取首视觉块高」，上面的整行高锚点必须落空", () => {
+    const CURRENT = "const fullH = lastBlock.top + lastBlock.height - firstBlock.top;";
+    expect(edSrc, "退化串要先自证原句还在").toContain(CURRENT);
+    // 退化成「末行高 = 首视觉块高」（旧 bug：软折行末行留白偏小、贴不了顶）
+    const degraded = edSrc.replace(CURRENT, "const fullH = firstBlock.height;");
+    expect(degraded, "退化实现应真的换了写法").not.toBe(edSrc);
+    expect(
+      degraded,
+      "退化成只取首视觉块高（旧 bug：折行末行留白偏小）⇒ 整行高锚点落空",
+    ).not.toMatch(/const fullH = lastBlock\.top \+ lastBlock\.height - firstBlock\.top;/);
   });
 });

@@ -689,7 +689,7 @@ export class PreviewPane {
    * 纯预览态切回源码时用得上：编辑器那一路位置在 `display:none` 期间被浏览器清零
    * （CM6 的 `inputState.lastScrollTop` 也会被那发 0 值 scroll 改写），**无从恢复**；
    * 唯一说得通的落点是「用户正在看的那一行」。取法与 `onPreviewScroll` 完全一样
-   * （同一个 `blockAtOffset`、同一个 `TOP_PROBE` 探测点），免得两边对「顶行」的定义分叉。
+   * （同一个 `indexOfBlockAtOffset`、同一个 `TOP_PROBE` 探测点），免得两边对「顶行」的定义分叉。
    */
   /**
    * 预览此刻停在哪一行 —— **带行内比例的小数**（B174）。
@@ -755,10 +755,14 @@ export class PreviewPane {
     if (!this.host) return;
     // 用户手动滚动预览：取消待重定位（避免异步重排后又把视图拉回）
     this.pendingSyncLine = null;
-    const top = this.root.scrollTop;
-    const target = this.blockAtOffset(top + TOP_PROBE);
-    if (!target) return;
-    this.host.scrollToLine(Number(target.el.dataset.lineStart));
+    // ⚠️ 推「顶边那一行」的**小数游标 v**（与源码→预览那一路 `topVisibleLineFrac` 同口径），
+    //    不再只推整数块首。旧写法推 `lineStart` ⇒ 末块（占多行）整块被钉到块首，兄弟源码
+    //    差末块那几行到不了底（用户报：预览滚到底、源码停在上一块首）；中段块内比例也丢，
+    //    跟随退回整数阶梯。末块顶到顶边时 `topVisibleLine()` 交 `lineEnd`（整行末行），落点
+    //    经 `sourceTopOfV` 仍到末行顶，往返闭合。
+    const v = this.topVisibleLine();
+    if (v === null) return;
+    this.host.scrollToLine(v);
   }
 
   private blockAtLine(line: number): BlockNode | null {
@@ -814,10 +818,5 @@ export class PreviewPane {
       }
     }
     return hit >= 0 ? hit : 0;
-  }
-
-  private blockAtOffset(offset: number): BlockNode | null {
-    const i = this.indexOfBlockAtOffset(offset);
-    return i < 0 ? null : (this.blocks[i] ?? null);
   }
 }

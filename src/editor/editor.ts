@@ -106,10 +106,18 @@ export function sourceBottomBleedPx(view: EditorView): number {
   // ⚠️ CM6 的 `Text` **没有** `lastLine()`（只有 `lines` / `line(n)`），拿文档长当 height
   //    去问又会落进上一行 ⇒ 明确取最后一行再问它的块。
   const doc = view.state.doc;
-  const block = view.lineBlockAt(doc.line(doc.lines).from);
+  const lastLine = doc.line(doc.lines);
+  const firstBlock = view.lineBlockAt(lastLine.from);
   // ⚠️ 量不出末行高（heightMap 还是估算 / 该行还没排过）就退回 CM6 的默认行高 —— 它是
   //    同步可得的估算值、恒 > 0。绝不退回 0：留白为 0 = 可滚范围少一屏（B257 同型教训）。
-  const lastH = block.height > 0 ? block.height : view.defaultLineHeight;
+  if (!(firstBlock.height > 0)) return Math.max(0, clientH - view.defaultLineHeight);
+  // ⚠️ 末行软折行（一个逻辑行被 CM6 拆成多个视觉块）：`lineBlockAt(末行.from)` 只给**首视觉块**
+  //    的高度（单行高），整行实际高得多。若按首视觉块高算留白 ⇒ 留白偏小 ⇒ 末行贴不了顶
+  //    （用户报：源码末行折行后滚不到顶、兄弟格跟不到底）。按「末视觉块底 − 首视觉块顶」
+  //    取整行高，与预览侧 `lastLineHeightOf` 同口径（都是「末行整高」）。
+  const lastBlock = doc.length > lastLine.from ? view.lineBlockAt(doc.length - 1) : firstBlock;
+  const fullH = lastBlock.top + lastBlock.height - firstBlock.top;
+  const lastH = fullH > firstBlock.height ? fullH : firstBlock.height;
   return Math.max(0, clientH - lastH);
 }
 

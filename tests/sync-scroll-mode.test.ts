@@ -982,7 +982,10 @@ describe("B160 同步滚动双向打通（用户报：滚源码预览抖 / 滚�
     );
     // ⚠️ 与预览那侧的 `SyncHost.scrollToLine` 必须是**同一套**坐标，否则两个方向
     //    各自算一套，来回同步一次就偏一次（B160 这次抖动的另一半原因）。
-    expect(HOST, "预览侧要先算出顶行像素").toMatch(/const top = v\.lineBlockAt\(l\.from\)\.top;/);
+    expect(
+      HOST,
+      "预览侧落点走 sourceTopOfV（与跨侧同步同出口：支持小数、末行按整行高贴顶）",
+    ).toMatch(/const top = sourceTopOfV\(v, Math\.min\(Math\.max\(line, 1\)/);
     expect(HOST, "预览侧把顶行像素落进编辑器滚动槽").toMatch(/v\.scrollDOM\.scrollTop = top;/);
   });
 
@@ -1326,8 +1329,8 @@ describe("B169 同步滚动抖动：预览驱动编辑器滚动要被当成自�
   it("host.scrollToLine 摆位时要 markProgrammatic（预览驱动编辑器滚动标成程序回执）", () => {
     expect(HOST, "要能定位 scrollToLine 回调").toContain("scrollToLine: (line: number) => {");
     expect(HOST, "预览驱动编辑器滚动要标记成程序回执").toMatch(/markProgrammatic\(v\.scrollDOM\);/);
-    expect(HOST, "算出的顶行要先收进局部变量 top").toMatch(
-      /const top = v\.lineBlockAt\(l\.from\)\.top;/,
+    expect(HOST, "算出的顶行要先收进局部变量 top（走 sourceTopOfV 换算）").toMatch(
+      /const top = sourceTopOfV\(v, Math\.min\(Math\.max\(line, 1\)/,
     );
     expect(HOST, "要把 top 落进编辑器滚动槽").toMatch(/v\.scrollDOM\.scrollTop = top;/);
   });
