@@ -520,7 +520,7 @@ export function splitPanelWithTab(
     // 交给 pruneEmptyPanels 统一摘掉（摘掉后新面板正好落在原位置，等价于「没动」）。
     if (!pruneEmptyPanels()) {
       rebuildLayout();
-      // ⚠️⚠️ **B264：两格都要按新几何重落（B262 口径，与 copy 支 `landOnFrameGeometry`
+      // ⚠️⚠️ **B264：源码格要按新几何重落（B262 口径，与 copy 支 `landOnFrameGeometry`
       //    那一对对称）。这里跨两格是因为 move 支**没有新实例**：被拖的那份（tab）落在
       //    新面板，老面板剩下的那几份（rest）留在原格 —— copy 支是 `tab` + 新副本两个
       //    对象，move 支是 `tab` + `rest` 的并集。**
@@ -528,7 +528,18 @@ export function splitPanelWithTab(
       //       游标用**离屏前**采的 `vDrop`；`refreshAll()` 排最后（它尾那趟
       //       `pushSyncToSiblings(activeTab())` 的源此刻是**刚归零的新面板**，本例会把
       //       老格钉回 v=1 —— 重落正是用来盖这一下的，与 copy 支那半边完全同型）。
+      // ⚠️⚠️ **B281（用户：预览标签从一个分屏拖到另一分屏时滚动位置跳回 0）：`vDrop` 是
+      //    **源编辑器**此刻显示的游标（anchored on `src.viewTabId`）。原本这一趟把预览标签
+      //    也按 `vDrop` 重落 ⇒ `landOnFrameGeometry(preview, vDrop)` ⇒ `applySyncToSibling`
+      //    ⇒ `preview.syncToLineProgrammatic(vDrop)` 且把落点写进它自己的槽（`recordScroll`）。
+      //    源编辑器停在文档开头（vDrop≈1）时落点≈0，预览于是被从自己原本的位置（可能很深）
+      //    硬钉回顶部，下次切回 / 重启读到 0 —— 正是用户报的「跳回 0」。
+      //    ⇒ 预览标签**不**在这一趟里重落：它的位置由 `rebuildLayout → mountView →
+      //    `restorePreviewScroll` 按它**自己的** `t.syncV`（同步开着 ≡ 源游标）或
+      //    `t.scrollTop`（同步关着，自己的像素）还原，任何路径都不许拿源编辑器的游标去覆盖它。
+      //    源码标签仍按 `vDrop` 重落（跨几何的旧像素是另一行，必须按规范游标 `v` 重落，B262）。
       for (const t of [tab, ...rest.map((id) => tabs.get(id)).filter((x): x is Tab => !!x)]) {
+        if (t.viewMode === "preview") continue;
         landOnFrameGeometry(t, vDrop);
       }
       refreshAll();
