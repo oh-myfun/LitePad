@@ -10,7 +10,6 @@ import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { oneDark } from "@codemirror/theme-one-dark";
 import {
   EditorView,
-  ViewPlugin,
   crosshairCursor,
   drawSelection,
   dropCursor,
@@ -47,136 +46,6 @@ export function foldMarkerDOM(open: boolean): HTMLElement {
   span.setAttribute("aria-hidden", "true");
   span.innerHTML = open ? CODICONS.chevronDown : CODICONS.chevronRight;
   return span;
-}
-
-/**
- * B265：底部留白（scroll past end）—— 让**最后一行**能滚到容器**顶**、下面留一屏空白。
- *
- * 病在哪先摆清楚：源码这一格的可滚余量是 `scrollHeight − clientHeight`，而内容高只到
- * 「最后一行底」。想让最后一行贴容器顶，需要
- *
- *     maxScroll === 最后一行.top
- *     ⇔ baseContent + bleed − clientH === lastLineTop
- *     ⇔ bleed === lastLineTop + clientH − baseContent
- *
- * （`baseContent` = 不含留白的内容高；`.cm-content` 带 `min-height:100%`，所以它永远
- *   ≥ clientHeight —— 短文档那一路自动成立，不必另开分支。）
- *
- * 不加这一条 ⇒ 源码永远只能把最后一行滚到**视口底**（B260 实测 24 行 / 视口 3 行 ⇒ 上限
- * 294，末行 top 是 322），而预览因为按块排版、块高与行高不是一个量，它的「最后一块在顶」
- * 落在别处 ⇒ 两侧**自然上限天生不对齐**，滚到底时游标各自被自己那侧裁一刀（B260 那句
- * 「预览能到 966、源码只到 294」）。留出这一屏之后，两侧都能滚到「最后的内容贴顶」，
- * 「到底 top 位置对不上」整类问题从根上消掉。
- *
- * ⚠️ 留白写在 **CSS 变量** 上、由主题规则消费（不是直接写死 inline padding）：
- *     - inline style 会盖掉 `body.print-mode` 的既有打印规则 ⇒ 打印多出一屏空白；
- *     - 变量让 print 那条规则只要把 `--cm-bleed-bottom: 0px` 置掉就能归零（见 preview.css 同款）。
- * ⚠️ 量不出（离屏 `display:none` ⇒ clientHeight=0，或大文件降级还没测出行高）一律写 **0**，
- *    绝不写负值 —— 把「看不见」当成「可滚」会把这一格钉死在开头（B257 同型教训）。
- */
-const BOTTOM_BLEED_VAR = "--cm-bleed-bottom";
-
-/**
- * 这一格该留多少底部空白（px，可为小数）。
- *
- * ⚠️⚠️ **B280（本轮按用户要求，从编辑器源头根治）**：公式是 **`clientH − 末行高`**
- *   —— 与预览侧 `PreviewPane.applyBottomBleed`（`clientH − 末块高`）**同一个式子**，
- *   两侧从此对称。它和旧写法 `末行top + clientH − contentHeight` 代数等价
- *   （`末行top − contentHeight ≡ −末行高`），但旧写法**绕道 `contentHeight`**：
- *   `contentHeight` 要等 CM6 测完整份文档才有值，新建视图 / `setState` 那一帧它是 **0**
- *   ⇒ 旧闸门 `contentHeight > 0` 拦下 ⇒ **留白写不出来（= 0）⇒ 可滚范围少整整一屏**
- *   ⇒ 于是每个场景（切标签 / 切模式 / 分屏 / 同步落点）都得靠补钉去「凑」这个底部位置
- *   （B256 / B270 / B278 全是这条根长出来的后遗症）。
- *
- *   去掉这个依赖之后：**首帧就能写出正确留白**，可滚范围从第一帧起就容纳
- *   「末行贴顶」，钉位不再被裁 ⇒ 不回退、不闪、不依赖重试窗口。
- *
- * ⚠️ 方向恒安全（这是本式子的关键性质）：末行高量不出时退回 CM6 的 `defaultLineHeight`
- *   （同步可得、恒 > 0，见其文档「may not be accurate for all lines」）。末行真·折行时
- *   `defaultLineHeight` 偏小 ⇒ 算出的留白**偏大** ⇒ 范围**更宽**（无害，只是能多滚一点点）；
- *   量出来之后收敛到精确值（恰好够）。**永远不会偏小** —— 而「偏小」正是所有
- *   clamp 类 bug（尾行被裁到视口底）的唯一方向。
- *
- * ⚠️ 副产品：留白与**文档长度无关** ⇒ 换文档不再需要重算（只有末行折行 / 字号变化才更新），
- *   顺带消掉一处 RO 抖动源。
- */
-export function sourceBottomBleedPx(view: EditorView): number {
-  const clientH = view.scrollDOM.clientHeight;
-  if (!(clientH > 0)) return 0;
-  // ⚠️ CM6 的 `Text` **没有** `lastLine()`（只有 `lines` / `line(n)`），拿文档长当 height
-  //    去问又会落进上一行 ⇒ 明确取最后一行再问它的块。
-  const doc = view.state.doc;
-  const lastLine = doc.line(doc.lines);
-  const firstBlock = view.lineBlockAt(lastLine.from);
-  // ⚠️ 量不出末行高（heightMap 还是估算 / 该行还没排过）就退回 CM6 的默认行高 —— 它是
-  //    同步可得的估算值、恒 > 0。绝不退回 0：留白为 0 = 可滚范围少一屏（B257 同型教训）。
-  if (!(firstBlock.height > 0)) return Math.max(0, clientH - view.defaultLineHeight);
-  // ⚠️ 末行软折行（一个逻辑行被 CM6 拆成多个视觉块）：`lineBlockAt(末行.from)` 只给**首视觉块**
-  //    的高度（单行高），整行实际高得多。若按首视觉块高算留白 ⇒ 留白偏小 ⇒ 末行贴不了顶
-  //    （用户报：源码末行折行后滚不到顶、兄弟格跟不到底）。按「末视觉块底 − 首视觉块顶」
-  //    取整行高，与预览侧 `lastLineHeightOf` 同口径（都是「末行整高」）。
-  const lastBlock = doc.length > lastLine.from ? view.lineBlockAt(doc.length - 1) : firstBlock;
-  const fullH = lastBlock.top + lastBlock.height - firstBlock.top;
-  const lastH = fullH > firstBlock.height ? fullH : firstBlock.height;
-  return Math.max(0, clientH - lastH);
-}
-
-/**
- * 上一次真正写进 DOM 的留白值（按 view 记）。
- * ⚠️ 存在的唯一理由：让「值没变就不写」成立 —— 见 `applyBottomBleed` 里那条注释。
- */
-const lastBleed = new WeakMap<EditorView, number>();
-
-function applyBottomBleed(view: EditorView): void {
-  // ⚠️ **只剩「量不出容器高」这一道闸**（B280）：离屏 `display:none` ⇒ `clientHeight = 0`
-  //    ⇒ 算不出 ⇒ 一个字节都不写，保留上一帧对的值（B257 同型：写「瞬态的 0」会把上一帧
-  //    那个对的值抹掉、比不写更糟）。
-  //    ⚠️ 旧写法这里还叠了 `contentHeight <= 0` 一道 —— 那道正是「新建视图 / `setState`
-  //    那一帧写不出留白 ⇒ 可滚范围少一屏」的元凶；B280 把公式改成不依赖 `contentHeight`
-  //    之后，这道闸必须一并撤掉，否则新公式的优势被它重新吃掉。
-  if (view.scrollDOM.clientHeight <= 0) return;
-  const px = sourceBottomBleedPx(view);
-  // ⚠️⚠️ **值没变就一个字节都不写**：在 `ResizeObserver` 回调里动样式，浏览器会在同一帧
-  //    里再收一轮通知，攒够就抛 `ResizeObserver loop completed with undelivered
-  //    notifications`（B265 首版启动即弹红条 —— `index.html` 的全局 error 监听把它
-  //    当成启动失败渲染出来了）。留白只由「容器高 + 文档几何」决定，值不变 ⇒ 这一帧
-  //    没有真变化 ⇒ 不写，循环到此为止（「不写」本身就是收敛保证，不是省一次赋值）。
-  if (lastBleed.get(view) === px) return;
-  lastBleed.set(view, px);
-  view.scrollDOM.style.setProperty(BOTTOM_BLEED_VAR, `${px}px`);
-}
-
-/**
- * 底部留白扩展：随**视口尺寸 / 文档 / 几何**变化重算（分屏、拖分隔条、换字号、切标签
- * 换来另一份文档都要跟）。`ResizeObserver` 打在 scrollDOM 上 —— 分屏那一格宽度一变，
- * 折行行数与行高跟着变，`clientHeight` 也在同一帧里变，所以观察容器本身就够了。
- */
-function bottomBleedExtension(): Extension {
-  return [
-    // 变量宿主挂 scrollDOM（.cm-content 是它的子元素，变量沿继承下来拿到）
-    EditorView.theme({ ".cm-content": { paddingBottom: `var(${BOTTOM_BLEED_VAR}, 0px)` } }),
-    ViewPlugin.define((view: EditorView) => {
-      const sync = (): void => applyBottomBleed(view);
-      sync();
-      let ro: ResizeObserver | null = null;
-      if (typeof ResizeObserver !== "undefined") {
-        // ⚠️ 必须观察 **border-box**：留白写进的是 `.cm-content` 的 `padding-bottom`
-        //    （scrollDOM 的内盒），外框尺寸不随它变 ⇒ 我们这一笔**不会**反过来再触发
-        //    自己。观察默认的 content-box 时，padding 一动就把「被观察量」改小 ⇒ 回调
-        //    再来一轮 ⇒ 自反馈成环（启动那帧布局还没稳 ⇒ 直接抛 ResizeObserver loop）。
-        ro = new ResizeObserver(() => sync());
-        ro.observe(view.scrollDOM, { box: "border-box" });
-      }
-      return {
-        update(u: ViewUpdate): void {
-          if (u.docChanged || u.geometryChanged) sync();
-        },
-        destroy(): void {
-          ro?.disconnect();
-        },
-      };
-    }),
-  ];
 }
 
 /**
@@ -234,9 +103,6 @@ function baseExtensions(perf: PerfProfile): Extension[] {
   if (perf.selectionMatches) {
     ext.push(highlightSelectionMatches());
   }
-  // B265：底部留白（末行能滚到容器顶）—— 与上面几档一样按 perf 之外无条件注入：
-  // 它是滚动几何的一部分，不是可裁剪的开销，关掉它「到底 top 对不齐」就直接回来。
-  ext.push(bottomBleedExtension());
   return ext;
 }
 

@@ -17,12 +17,21 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 
-const ROWS = 24;
 const ROW = 14;
 const BLOCK = ROW * 3;
 const VIEW_H = 60;
-const SRC_FLOOR = (ROWS - 1) * ROW; // 末行 top = 322
-const PREV_FLOOR = 21 * BLOCK + 2 * ROW; // 末行 top = 910
+// ⚠️ B284：底部留白已撤 ⇒ 「底」= 各自的自然上限（内容高 − 视口高），不再是「末行贴顶」。
+const PREV_FLOOR = 22 * BLOCK - VIEW_H; // 预览上限 = 924 − 60 = 864
+/**
+ * 预览滚到底（864）时，按**游标换算**出的源码侧像素：末块（top 882）此刻**不在**顶边
+ * （顶边是块 idx 20、top 840）⇒ v = 21 + (864−840)/42 ≈ 21.571 ⇒
+ * 源码像素 = 20×14 + 0.571×14 = **288**。
+ * ⚠️ 288 > 源码自己的上限 276 ⇒ 这一格被藏住时先落在 288，现形后被浏览器裁到 276（＝它的底），
+ *    与「各自到底」一致。所以这一条钉的是**游标一致**（288），不是「等于它的上限」。
+ */
+const SRC_AT_PREV_FLOOR = 20 * ROW + ((PREV_FLOOR - 20 * BLOCK) / BLOCK) * ROW; // 288
+/** 旧 bug（只推整数块首 22）会落到第 22 行顶 294 —— 反钉用，判据必须能与 288 区分。 */
+const SRC_AT_BLOCK_START = 21 * ROW; // 294
 const MD = [
   ...Array.from({ length: 21 }, (_, i) => `# 标题 ${i + 1}`),
   "段落第一行",
@@ -278,17 +287,18 @@ describe("B283 单面板预览在屏：预览滚 ⇒ 被藏的源码兄弟跟到
     expect(hidden(), "源码这一格确实被 mode-preview 藏住").toBe(true);
   });
 
-  it("① 预览滚到底（末块顶到容器顶）⇒ 被藏源码兄弟落到「末行贴顶」（= SRC_FLOOR，不是上一块首）", async () => {
+  it("① 预览滚到底 ⇒ 被藏源码兄弟落在**同一游标**上（288），不是上一块首（294）", async () => {
     userScroll(pv(), 99999);
     await wait(400);
-    expect(pv().scrollTop, "前提：预览滚到自己那一侧的底（末行 top）").toBeCloseTo(PREV_FLOOR, 6);
+    expect(pv().scrollTop, "前提：预览滚到自己那一侧的底").toBeCloseTo(PREV_FLOOR, 6);
     // ⚠️ 旧写法 `onPreviewScroll` 推整数 `data-line-start`（末块 = 22）⇒ host.scrollToLine(22)
-    //   ⇒ 源码停在第 22 行顶（294），差末块那几行；新写法推 `topVisibleLine()`（末块交 lineEnd
-    //   = 24）⇒ sourceTopOfV(24) = 322 = 末行贴顶。
-    expect(src().scrollTop, "被藏源码兄弟必须跟到末行贴顶（322），不是上一块首（294）").toBeCloseTo(
-      SRC_FLOOR,
-      6,
-    );
+    //   ⇒ 源码停在第 22 行顶（294），差末块那几行；新写法推小数 `topVisibleLine()`
+    //   ⇒ sourceTopOfV(21.571) = 288，与预览同一游标。
+    expect(src().scrollTop, "被藏源码兄弟落在同一游标（288）").toBeCloseTo(SRC_AT_PREV_FLOOR, 6);
+    expect(
+      src().scrollTop,
+      "反钉：不许退回整数块首（294）—— 288 与 294 必须能区分",
+    ).not.toBeCloseTo(SRC_AT_BLOCK_START, 6);
   });
 
   it("② 预览滚到「中段块内半行」位置 ⇒ 被藏源码兄弟按**小数**落点（≠ 整数阶梯）", async () => {

@@ -36,6 +36,7 @@ import {
   flushPendingSyncCursor,
   alignShownToSyncSource,
   syncSourceSnapshot,
+  tabAtOwnFloor,
   topVisibleLineFrac,
   sourceTopOfV,
   landOnFrameGeometry,
@@ -391,6 +392,9 @@ export function switchTab(panelId: number, tabId: number): void {
   // B240 三轮：同步开着时，先把**源（刚显示的这一份）**的坐标就地采下来 —— 它马上要
   // 离屏，离屏之后就再也读不到它自己的实时 DOM 了（见下面 alignShownToSyncSource）。
   const syncSrc = syncSourceSnapshot(shownTab, tabId);
+  // ⚠️ B284：与 `syncSrc` **同帧**把「源顶没顶到自己的底」一起采下 —— 此刻源还在屏、
+  //    `tabAtOwnFloor` 问得出真话；再晚一步源已离屏（`clientHeight = 0`）⇒ 恒答「没到底」。
+  const srcAtFloor = tabAtOwnFloor(shownTab);
   const tab = tabs.get(tabId);
   if (!tab) return;
   panel.activeTabId = tabId;
@@ -460,12 +464,12 @@ export function switchTab(panelId: number, tabId: number): void {
   // B240 三轮：同步开着 ⇒ 切过去的位置由**源**给定（离屏那份算不出自己的位置，
   // 见 alignShownToSyncSource）。排在最后那次补焦点之后 —— 焦点会把光标滚进视野，
   // 排在它之前会被顶掉（B145 那套顺序纪律）。
-  // ⚠️ B266：B265 已让两侧末行/末块都能滚到视口顶，两侧 floor 游标都 = 文档末行 `v`，
-  //    自然上限不再错配，故不再需要「顶没顶上限」的 `atFloor` / `handoverV` 特判。
-  //    收口直接用源的真实 `v`（由 `syncSourceSnapshot` 在离屏前采下）；必须排在
+  // ⚠️ B284：撤掉留白后两侧 `maxScroll` 重新错配 ⇒ 收口需要「源顶没顶到自己的底」
+  //    （`srcAtFloor`，在上面与 `syncSrc` 同帧采下）：到底 ⇒ 接班这份落到**它自己那一侧的
+  //    底**，不再按游标换算（B266 当初是因为留白才把这层判据删掉的）。必须排在
   //    预览还原**之后**（B274）—— 见下面那一行。
   const handV = tab ? syncSrc : null;
-  const aligned = tab ? alignShownToSyncSource(panel, shownTab, handV) : false;
+  const aligned = tab ? alignShownToSyncSource(panel, shownTab, handV, srcAtFloor) : false;
   // ⚠️⚠️ **B274**：纯预览实例的位置**排在收口之后**再钉（B130 的「必须排在
   //    `applyPanelMode` 之后」照样满足）。理由：收口（`applySyncToSibling` 的预览支）
   //    落位成功会 `recordScroll` 把**新落点写进槽** ⇒ 这里钉的就是同步后的位置；
@@ -497,16 +501,17 @@ export function switchTab(panelId: number, tabId: number): void {
     //    ⇒ 收口生效时照样补推，但只推**其余兄弟**，且用 `syncSrc`（收口同一口径的那个
     //    `v`），保证兄弟与接班那一份落在同一个数上。
     //
-    // ⚠️⚠️ **B266**：`handV` 就是 `syncSourceSnapshot` 在离屏前从**源**采的真实 `v`
-    //    （B265 已让两侧末行/末块都能滚到视口顶，两侧 floor 游标都 = 文档末行 `v`，
-    //    自然上限不再错配，故不再需要 B260 的 `handoverV` / `atFloor`「谁也不许被截小」特判）。
+    // ⚠️⚠️ **B284**：`handV` 是 `syncSourceSnapshot` 在离屏前从**源**采的真实 `v`，
+    //    `srcAtFloor` 是同帧采下的「源到底了吗」。到底 ⇒ 兄弟各自落到**自己那一侧的底**
+    //    （撤留白后两侧 maxScroll 错配，照游标换算会把对方拽离它的底 ⇒ 到底后来回滚会跳）。
     //    落点照旧由 `applySyncToSibling` 按目标那侧的几何裁（裁的是 DOM 写入，不是记录值）。
     //    这一趟两分支都用它，保证「接班」与「其余兄弟」是同一个数（B258 的要求）。
     if (tab && !aligned) {
-      pushSyncToSiblings(tab, false, { v: handV });
+      pushSyncToSiblings(tab, false, { v: handV, atFloor: srcAtFloor });
     } else if (tab && handV !== null && shownTab) {
       pushSyncToSiblings(tab, false, {
         v: handV,
+        atFloor: srcAtFloor,
         skipTabIds: [shownTab.tabId, tab.tabId], // 源与接班都已被收口写好，谁也不许再动
       });
     }

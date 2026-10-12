@@ -24,10 +24,12 @@ import { activeTab, docOf, getPanel } from "./core/panels";
 import {
   landOnFrameGeometry,
   measureAndKeepScroll,
+  ownFloorPx,
   pushSyncToSiblings,
   restoreViewScroll,
   sourceTopOfV,
   syncSourceV,
+  tabAtOwnFloor,
   topVisibleLineFrac,
 } from "./sync-scroll";
 import { recordScroll } from "./core/viewport";
@@ -165,11 +167,17 @@ function toggleViewMode(target?: Tab): void {
   const panel = getPanel(tab.panelId);
   if (!panel || !panel.bodyEl) return;
   const toPreview = tab.viewMode !== "preview";
-  // ⚠️⚠️ **B266**：B265 已让两侧末行/末块都能滚到视口顶，两侧 floor 游标都 = 文档末行 `v`，
-  //    自然上限不再错配，故不再需要「顶没顶上限」的 `atFloor` / `handoverV` 特判。切到预览
-  //    这一路直接拿源码此刻的真实 `v` 当交接游标（必须在 `applyPanelMode` 之前问：
-  //    `syncSourceV` 认 `tab.viewMode`，改完这一格就归预览侧，问出来的就不是源码的游标了）。
+  // ⚠️⚠️ **B284**：撤掉留白后两侧 `maxScroll` 重新错配 ⇒ 切模式这一路**重新需要**
+  //    「顶没顶到自己的底」判据（`fromAtFloor`，同帧采下）。切到预览这一路拿源码此刻的
+  //    真实 `v` 当交接游标（必须在 `applyPanelMode` 之前问：`syncSourceV` 认 `tab.viewMode`，
+  //    改完这一格就归预览侧，问出来的就不是源码的游标了）；到底 ⇒ 改落「各自到底」。
   const fromSourceV = toPreview ? syncSourceV(tab) : null;
+  // ⚠️ B284：与 `fromSourceV` **同帧**采下「当前这一侧顶没顶到自己的底」。必须在改
+  //    `viewMode` **之前**问 —— `tabAtOwnFloor` 按 `tab.viewMode` 选该问哪一侧的容器，
+  //    改完之后问到的就是另一侧（而那一侧此刻还没摆位，答的是无意义的值）。
+  //    到底 ⇒ 切换的落点改成「各自到底」，不再按游标换算（两侧内容高天生不同，到底时
+  //    顶行本来就不相等，照游标换算就是用户报的「到底后跳变」）。
+  const fromAtFloor = tabAtOwnFloor(tab);
   // 纯预览 → 源码是一次**交接**，不是各认各的：`t.scrollTop` 只有一个槽，装的是
   // 「当前这一侧」的像素（B139）。纯预览期间编辑器被 `display:none` 清零，它那份
   // 位置已经没了，而预览的滚动监听把**预览的像素**写进了同一个槽 —— 直接拿去钉
@@ -189,7 +197,8 @@ function toggleViewMode(target?: Tab): void {
     const v = syncSourceV(tab);
     const view = panel.view.view;
     if (v !== null) {
-      handoff = sourceTopOfV(view, v);
+      // ⚠️ B284：源（此刻是预览那一侧）到底 ⇒ 源码落到**它自己那一侧的底**，不再按游标换算。
+      handoff = fromAtFloor ? ownFloorPx(view.scrollDOM) : sourceTopOfV(view, v);
     } else {
       // 预览一份都没渲染出来（大文件降级就是这样）：拿不到顶行，也就**无从**反推
       // 编辑器该停在哪。这时宁可不动编辑器（让它按 CM6 自己的还原来），也别把预览的
@@ -206,11 +215,18 @@ function toggleViewMode(target?: Tab): void {
   const sourceEditor = panel.view;
   try {
     applyPanelMode(panel);
-    // ⚠️ B266：切到预览这一路直接按源码交接游标 `fromSourceV` 再定位一次，谁也不许因切
-    //    模式被自动减小。必须排在 `applyPanelMode` **之后**：它那一次 `setBlocks` 才把预览
+    // ⚠️ B284：切到预览这一路按源码交接游标 `fromSourceV` 再定位一次，谁也不许因切
+    //    模式被自动减小；到底 ⇒ 改成「各自到底」。必须排在 `applyPanelMode` **之后**：它那一次 `setBlocks` 才把预览
     //    内容撑开，早一步 `blockAtLine` 量不出来（同 `restorePreviewScroll` 那段的顺序纪律）。
     const handV = toPreview && fromSourceV !== null ? fromSourceV : null;
-    if (handV !== null) panel.preview?.syncToLine(handV);
+    if (handV !== null) {
+      // ⚠️ B284：源到底 ⇒ 预览落到**它自己那一侧的底**（各自到底），不再按游标换算。
+      if (fromAtFloor && panel.preview) {
+        panel.preview.setScrollTop(ownFloorPx(panel.preview.root));
+      } else {
+        panel.preview?.syncToLine(handV);
+      }
+    }
     // ⚠️ 这一下 focus 的两处顺序都有讲究：
     //   ① 必须排在 `applyPanelMode` **之后**：之前编辑器还是 display:none，对隐藏元素
     //      focus 会静默失败（同 B181 那条）；

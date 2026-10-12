@@ -178,7 +178,48 @@ export function isSyncSource(tab: Tab, panel: Panel): boolean {
  * 签名从 `(px, line)` 双参改成单一 `v`：源码态与预览态两条分支各自只差「`v` 怎么变成
  * 自己那侧的像素」，而「先记槽、再钉 DOM」那个顺序纪律不再有两份。
  */
-export function applySyncToSibling(other: Tab, v: number | null): void {
+/**
+ * B284「到底」锚点：把**在屏**的兄弟摆到**它自己那一侧的底**。
+ *
+ * 与按游标换算那一支互斥：到底了就不换算（`v` 在两侧本就不相等 —— 内容高天生不同），
+ * 直接各回各的底 ⇒ 底↔底互推是**不动点**，来回滚不会跳。
+ *
+ * ⚠️ 抽成独立函数、且排在落点函数**之前**，不只是为了短：`sync-scroll-mode` 那几条契约是
+ *   按「落点函数 → 取收口游标那函数」这段**源码切片**来扫的，锚点里就有
+ *   「预览态兄弟那一支」这种形态串 —— 这段若内联进落点函数体，切片会先撞上本函数这份，
+ *   把判据全锚错地方（实测三条契约集体误伤）。
+ *   ⚠️ 同理，**注释里不许原样复述那些切片起止串**：契约扫的是整段源码，注释里写一遍
+ *   一样会被 `indexOf` 先命中（本轮就是这么踩的）。这里一律用「落点函数」这类说法指代。
+ *
+ * @returns 是否真的落了位。离屏 / 没有容器 ⇒ `false` ⇒ 调用方落回按游标换算那一支
+ *   —— 那一支还负责 B263 的 `pendingSyncCursor` 补写（离屏兄弟现形时靠它补位）。
+ *   当初写成「到底就直接 return」把这条整跳过了 ⇒ 离屏源码兄弟切回来位置不对
+ *   （sync-three-tabs 实测：v 从 33.31 掉到 32.8）。
+ */
+function landAtOwnFloor(other: Tab, shown: Panel | undefined): boolean {
+  if (other.viewMode === "preview") {
+    const preview = shown?.preview;
+    if (!preview) return false;
+    const floorPx = ownFloorPx(preview.root);
+    preview.setScrollTop(floorPx);
+    // ⚠️ 补记**实际落点**（不是算出来的那个数）：容器还没撑开时摆位落不下去，
+    //    把算出来的值记进槽等于把「没落地」写成「停在那儿」（B134 同型）。
+    const landed = preview.root.scrollTop;
+    recordScroll(other.tabId, landed);
+    return true;
+  }
+  const sv = shown?.view?.view;
+  if (!sv) return false;
+  const floorPx = ownFloorPx(sv.scrollDOM);
+  // 顺序同下面那一支：先记槽、再钉 DOM（离屏兄弟只有槽能带走位置）。
+  // ⚠️ 变量名取 `floorPx` 而不是 `px`：后者在历史上专指「源那一侧的像素」，B154 那条
+  //    契约（不许拿源像素当落点）正是按那个调用形态抓的；而这里是**兄弟自己那一侧**的底。
+  recordScroll(other.tabId, floorPx);
+  pinScrollTop(sv.scrollDOM, floorPx);
+  return true;
+}
+
+export function applySyncToSibling(other: Tab, v: number | null, atFloor = false): void {
   const shown = displayedPanelOfTab(other.tabId);
   // B167：落点也留一条 —— 「谁被推、推到哪儿」与上面那条「谁在推」配对看，
   //   拉锯的表现就是同一个 docId 上 A→B、B→A 交替出现，且 px 在几个值之间来回跳。
@@ -194,6 +235,10 @@ export function applySyncToSibling(other: Tab, v: number | null): void {
   //   测量，离屏也能准确持有；`restoreViewScroll` / `restorePreviewScroll` 切回时按各自
   //   模式从 `syncV` 派生像素，已同步好的实例不跳。
   other.syncV = v;
+  // ⚠️⚠️ **B284「到底」共享锚点**：源顶到它自己那一侧的底 ⇒ 兄弟落到**它自己那一侧的底**，
+  //    不再按顶行游标 `v` 换算（两侧内容高天生不同 ⇒ 到底时顶行本来就不相等，照 v 换算
+  //    必然把对方拽离它自己的底，来回滚就是用户报的「到底后跳变」）。底↔底互推是**不动点**。
+  if (atFloor && landAtOwnFloor(other, shown)) return;
   // 兄弟是预览态 ⇒ 它只认行：编辑器像素塞不进它的槽（纪律 2）。换算只能从源那侧
   // 的**顶行**来，所以跨视图模式这一路必须走 `line`；离屏的预览兄弟没有容器可算，
   // 只能靠它的槽自己那份记录，这里不写任何东西（写了就是污染）。
@@ -448,9 +493,11 @@ export function syncSourceSnapshot(src: Tab | undefined, nextTabId: number): num
   //    **不区分跨侧 / 同侧**，一律交完整 `v`：B251 那版按两侧 viewMode 是否不同取 `cross`
   //    （跨侧丢小数），本轮 B257 撤掉 —— 收口交整数块首 = 每切一次把接班那份往回拽一整段
   //    （自测台：切模式一来一回，源码 287 ⇒ 280）。
-  //    ⚠️ B266：B265 已让两侧末行/末块都能滚到视口顶（源码 `--cm-bleed-bottom`、
-  //    预览 `--md-bleed-bottom`），两侧 floor 游标都 = 文档末行 `v`，自然上限不再错配，
-  //    故不再需要「顶没顶上限」的 `atFloor` 特判，直接用源的真实 `v` 收口。
+  //    ⚠️ B284：B265 的留白已撤（用户拍板：不再把尾行滚到顶、底下不加空白）⇒ 两侧
+  //    `maxScroll` 重新错配，收口这一路**重新需要**「顶没顶上限」的 `atFloor` 判据
+  //    （B266 当初是因为留白才把它删掉的）。到底由调用方在**离屏前同帧**采下、经
+  //    `alignShownToSyncSource` / `pushSyncToSiblings(opts.atFloor)` 传进来 ——
+  //    离屏后 `clientHeight = 0`，`tabAtOwnFloor` 恒答「没到底」，问不出真话。
   const v = syncSourceV(src);
   return v;
 }
@@ -481,6 +528,7 @@ export function alignShownToSyncSource(
   panel: Panel,
   src: Tab | undefined,
   snap: number | null,
+  atFloor = false,
 ): boolean {
   if (snap === null || !src) return false;
   const shown = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
@@ -522,7 +570,7 @@ export function alignShownToSyncSource(
   //    对应不上」。
   //    ⚠️ 当初怕的「拿带比例的量覆盖掉精确位置」已经不成立：B257 之后跨侧交的是**完整
   //    小数游标 v**，覆盖就是对齐，不再每轮吃掉一格比例。
-  applySyncToSibling(shown, snap);
+  applySyncToSibling(shown, snap, atFloor);
   return true;
 }
 
@@ -583,7 +631,7 @@ export function broadcastSyncPos(src: Tab, v: number | null): void {
 export function pushSyncToSiblings(
   src: Tab,
   crossWindow = false,
-  opts: { v?: number | null; skipTabIds?: number[] } = {},
+  opts: { v?: number | null; skipTabIds?: number[]; atFloor?: boolean } = {},
 ): void {
   if (docSyncModes.get(src.docId) !== true) return;
   // ⚠️ B259：`suppressSyncPush` 这一层**原来只挡光标那一路的调用点**（`handleUpdate`
@@ -653,6 +701,10 @@ export function pushSyncToSiblings(
   //    且因为每轮切回来都复现同一条路径，歪值冻在那里「之后怎么切都不动」。所以像素走
   //    `sourceCursorPx`（DOM 与槽不一致 ⇒ 用槽），别再直接 `view.scrollDOM.scrollTop`。
   const v = opts.v !== undefined ? opts.v : syncSourceV(src);
+  // ⚠️ B284：与 `v` **同帧**把「源顶没顶到自己的底」一起采下（此刻源还在屏、问得出真话；
+  //    等到切标签收口那一刻源早已离屏、`clientHeight = 0` ⇒ 那一问恒假，见 `tabAtOwnFloor`）。
+  //    ⚠️ 交接那一趟源**已经离屏**，只能信调用方当场采下来的 `opts.atFloor`。
+  const atFloor = opts.atFloor ?? tabAtOwnFloor(src);
   // ⚠️ B273：源自己也要记下规范游标（与兄弟同口径），切走再切回时 restore 能从它派生像素。
   src.syncV = v;
   // ⚠️ B260：下面循环里**曾经**另取一个同名 `v = syncSourceV(src)`，把上面这个盖掉 ——
@@ -704,7 +756,7 @@ export function pushSyncToSiblings(
       other.state = other.state.update({ selection: { anchor: pos } }).state;
     }
     // 位置那一路（跨视图模式的换算都关在这一函数里）
-    applySyncToSibling(other, v);
+    applySyncToSibling(other, v, atFloor);
   }
   // B159：位置广播排在最后 —— 本地兄弟已经对齐过一次，别人接手时看到的是同一个落点。
   if (crossWindow) broadcastSyncPos(src, v);
@@ -860,6 +912,50 @@ export function syncSourceV(t: Tab | undefined): number | null {
   // ⚠️ B256：像素过 `sourceCursorPx`（DOM 与槽不一致 ⇒ 用槽）—— 别再直接读
   //    `view.scrollDOM.scrollTop`：那一路会把「还原刚写完、被浏览器裁小的那一帧」当成源。
   return topVisibleLineFrac(view, sourceCursorPx(t, view));
+}
+
+/**
+ * 「顶到自然上限」的容差（px）—— 与 `PIN_EPSILON_PX` 同口径：缩放不是 100% 时
+ * `scrollTop` 天生带小数，差不到一个像素就别当成「还没到顶」。
+ */
+const FLOOR_EPSILON_PX = 1;
+
+/** 一侧自己的可滚上限（px）：`maxScroll`。「到底」锚点落的就是这个位置。 */
+export function ownFloorPx(el: HTMLElement): number {
+  return Math.max(0, el.scrollHeight - el.clientHeight);
+}
+
+/**
+ * B284：这一份**此刻显示在屏的那一侧**是不是顶到了它自己一侧的自然上限。
+ *
+ * ⚠️ 为什么「到底」必须脱离游标单独判：撤掉底部留白后，源码按行排、预览按块排 ⇒ 同一份
+ *    文档两侧内容高天生不同 ⇒ `maxScroll` 不同 ⇒ 「各自到底」时它们的**顶行游标 v 本来
+ *    就不相等**（24 行 md / 视口 60：源码底 v≈20.7、预览底 v≈21.6）。照旧用 v 互推，
+ *    到底那一发必然把对方拽离它自己的底，来回滚就看到位置跳变（用户报：滚动到底部后
+ *    跳变滚动位置）。⇒ 「到底」做成**共享状态**：源到底 ⇒ 兄弟各自落到自己的底。
+ *
+ * ⚠️ 只在**量得出**时才回答：`clientHeight <= 0`（离屏 `display:none`）时
+ *    `scrollHeight - 0 - scrollTop` 恒 ≤ 容差 ⇒ **恒判「到底」**（B261 踩过：切标签收口
+ *    那一问源早已离屏 ⇒ 恒真 ⇒ 每次切换都把位置顶走）。量不出一律答「没到底」。
+ */
+export function tabAtOwnFloor(t: Tab | undefined): boolean {
+  if (!t) return false;
+  const p = displayedPanelOfTab(t.tabId);
+  if (!p) return false;
+  const el = t.viewMode === "preview" ? p.preview?.root : p.view?.view?.scrollDOM;
+  if (!el) return false;
+  // ⚠️ 离屏（`display:none` ⇒ `clientHeight = 0`）：`scrollHeight - 0 - scrollTop` 恒 ≤ 容差
+  //    ⇒ 不闸住就**恒判「到底」**（B261 踩过：切标签收口那一问源已离屏 ⇒ 恒真 ⇒ 每次
+  //    切换都把位置顶走）。量不出一律答「没到底」。
+  if (el.clientHeight <= 0) return false;
+  // ⚠️⚠️ 同理，**可滚范围必须真存在**：`scrollHeight` 还没撑开（新建实例 / 内容未渲染 /
+  //    桩里没建模）时 `ownFloorPx` 算出 0，而 `scrollTop` 也是 0 ⇒ `0 - 0 ≤ 容差` ⇒
+  //    照样**恒判「到底」**（B284 实测：sync-three-tabs 那条用例被这一路假阳性打红 ——
+  //    锚点分支一进就 `return`，把 B263 的 `pendingSyncCursor` 补写整条跳过了）。
+  //    ⇒ 没有可滚范围就谈不上「到底」，一律答「没到底」，交回按游标换算那一路。
+  const floor = ownFloorPx(el);
+  if (floor <= 0) return false;
+  return floor - el.scrollTop <= FLOOR_EPSILON_PX;
 }
 
 /**

@@ -399,7 +399,7 @@ describe("B152 同步滚动模式：推进与触发点", () => {
     //    盯「这一趟存在、且用交接游标 `handV`」，闸门语义（!aligned 才推全部）一字未动。
     //    判据要认 prettier 折行后的「条件 + 换行 + 调用」整块，别只认半句。
     expect(tabsSrc, "切激活文档后要按新源推（没收口那一支）").toMatch(
-      /if \(tab && !aligned\) \{\n\s*pushSyncToSiblings\(tab, false, \{ v: handV \}\);/,
+      /if \(tab && !aligned\) \{\n\s*pushSyncToSiblings\(tab, false, \{ v: handV, atFloor: srcAtFloor \}\);/,
     );
     // ⚠️ B258 换锚（新增的一支）：收口**生效**时原本整趟跳过 ⇒ 兄弟那一格永远停在
     //    上一次被推到的值上（用户报：预览滚到底 → 切源码 → 切回预览，只有这一格跟着走）。
@@ -407,7 +407,7 @@ describe("B152 同步滚动模式：推进与触发点", () => {
     //    同一个游标 —— ⚠️ B260 跟着 `syncSrc` 一起换成 `handV`：两分支必须用同一个数，
     //    否则「接班」与「其余兄弟」会掉成两档（B258 要的就是同位）。
     expect(tabsSrc, "收口生效那一支也要补推兄弟（否则兄弟停在旧值）").toMatch(
-      /\} else if \(tab && handV !== null && shownTab\) \{\n\s*pushSyncToSiblings\(tab, false, \{\n\s*v: handV,\n\s*skipTabIds: \[shownTab\.tabId, tab\.tabId\],/,
+      /\} else if \(tab && handV !== null && shownTab\) \{\n\s*pushSyncToSiblings\(tab, false, \{\n\s*v: handV,\n\s*atFloor: srcAtFloor,\n\s*skipTabIds: \[shownTab\.tabId, tab\.tabId\],/,
     );
     expect(tabsSrc, "补推要排在「不推」那一支后面（两条互斥分支）").toMatch(
       /\} else if \(tab && handV !== null && shownTab\) \{/,
@@ -687,7 +687,9 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
   });
 
   it("收口调的就是同一个落点函数，只交一个游标（不是 px + line 两个）", () => {
-    expect(ALIGN_BODY, "收口要按源的位置落位").toContain("applySyncToSibling(shown, snap);");
+    expect(ALIGN_BODY, "收口要按源的位置落位").toContain(
+      "applySyncToSibling(shown, snap, atFloor);",
+    );
     expect(ALIGN_BODY.match(/applySyncToSibling\(/g)?.length, "落点调用只有这一处").toBe(1);
   });
 
@@ -714,7 +716,7 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
       "if (src.viewMode !== shown.viewMode) return false;",
     );
     expect(ALIGN_BODY, "收口对两侧一视同仁：都调同一个落点函数").toContain(
-      "applySyncToSibling(shown, snap);",
+      "applySyncToSibling(shown, snap, atFloor);",
     );
     expect(ALIGN_BODY, "收口成功要交回 true（调用方据此跳过回推）").toContain("return true;");
   });
@@ -751,7 +753,7 @@ describe("B240 三轮：切过来显示的那一份，由**源**收口（不可�
       /if \(src\.viewMode === "preview" && shown\.viewMode !== "preview"\) return false;/,
     );
     expect(ALIGN_BODY, "跨侧收口靠落点函数落地（守卫只是短路这一格）").toContain(
-      "applySyncToSibling(shown, snap);",
+      "applySyncToSibling(shown, snap, atFloor);",
     );
     expect(ALIGN_BODY.match(/applySyncToSibling\(/g)?.length, "收口只有这一处落点调用").toBe(1);
   });
@@ -863,7 +865,8 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
       // ⚠️ B258 换锚：第三参 `{ … } = {}` 是收口后补推兄弟那一趟加的（传 `v` / `skipTabIds`
       //    两个可选字段），prettier 顺势把签名折成多行 —— 判据认「默认不播」这个实义：
       //    第二参 `crossWindow = false` 且 `broadcastSyncPos` 那道闸挂在它身上。
-      /function pushSyncToSiblings\(\s*src: Tab,\s*crossWindow = false,\s*opts: \{ v\?: number \| null; skipTabIds\?: number\[\] \} = \{\},\s*\): void/,
+      //    ⚠️ B284 换锚：第三参多了一个可选字段 `atFloor`（到底锚点，见 `tabAtOwnFloor`）。
+      /function pushSyncToSiblings\(\s*src: Tab,\s*crossWindow = false,\s*opts: \{ v\?: number \| null; skipTabIds\?: number\[\]; atFloor\?: boolean \} = \{\},\s*\): void/,
     );
     // 光标 / 输入那一路：不带第二个实参，走默认。
     expect(main, "光标那一半不许跨窗口（且不反推同步触发的那轮）").toMatch(
@@ -878,7 +881,7 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
     //    就是收口那一格的口径），判据跟着认「第二参显式 false + 第三参只带换游标」，
     //    仍然只盯「不播跨窗口」这一件事实质，没放宽成抹掉调用本身。
     expect(tabsSrc, "切激活文档那路不播").toMatch(
-      /if \(tab && !aligned\) \{\n\s*pushSyncToSiblings\(tab, false, \{ v: handV \}\);\n/,
+      /if \(tab && !aligned\) \{\n\s*pushSyncToSiblings\(tab, false, \{ v: handV, atFloor: srcAtFloor \}\);\n/,
     );
     // ⚠️ B251 换锚：单参 `v`（旧写法是 `px, line` 两个 —— 「跨侧只交整数块首」那两个
     //    补丁的产物，正是 B247「每切一轮往上掉」的病根）。

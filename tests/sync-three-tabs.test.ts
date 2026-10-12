@@ -268,7 +268,11 @@ function installClamp(el: HTMLElement): void {
     configurable: true,
     get: () => st,
     set: (v: number) => {
-      st = Math.min(Math.max(v, 0), Infinity);
+      // ⚠️ B284：必须按**真实可滚上限**裁 —— 真机浏览器本来就会裁，原先写 `Infinity`
+      //    等于让 `scrollTop` 停在**物理上到不了**的位置（本用例里 800 > 上限 784），
+      //    于是「读回来的游标」与「到底锚点会落到的位置」差 0.5 行，判据自相矛盾。
+      const max = Math.max(0, el.scrollHeight - el.clientHeight);
+      st = Math.min(Math.max(v, 0), max);
     },
   });
 }
@@ -397,8 +401,15 @@ describe("B263 同文档三标签（分屏 A = 源码 a + 预览 b，分屏 B = 
     const cEl = (): HTMLElement => panels()[1].querySelector(".md-preview") as HTMLElement;
     /** a 停的位置（源码格：1-based 行号 + 行内比例）。 */
     const vA = (): number => SRC_PX / rowH() + 1;
+    /**
+     * ⚠️ B284：`PREV_PX`（800）**超出**预览那一侧的可滚上限（内容 60×14 − 视口 4×14 = **784**）
+     *   ⇒ 真机上浏览器会把它裁到 784，而「到底锚点」也会主动把兄弟落到它自己的底（784）。
+     *   判据必须按**物理可达的那一点**算，不能按名义的 800 —— 否则期望值永远高出一截
+     *   （实测：按 800 算 v=33.31，实际落 32.8，差 0.5 行 = 那个 16px 的越界量）。
+     */
+    const PREV_REACHABLE = Math.min(PREV_PX, cEl().scrollHeight - cEl().clientHeight);
     /** c 停的位置（预览格：块 lineStart + 像素比例 × 跨行数）。 */
-    const vC = (): number => prevVAt(cEl(), PREV_PX) as number;
+    const vC = (): number => prevVAt(cEl(), PREV_REACHABLE) as number;
 
     /** ⚠️ 反假绿：读了 null 就 throw —— 一栏读不出来时「for 一次都不转」会恒绿。 */
     const expectAt = (label: string, got: number | null, want: number): void => {

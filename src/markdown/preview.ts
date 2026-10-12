@@ -29,20 +29,6 @@ const LAZY_THRESHOLD_LINES = 5000; // 大文档：关闭 Mermaid/Shiki 自动渲
  */
 const TOP_PROBE = 0.5;
 
-/**
- * B265：底部留白（scroll past end）的 CSS 变量名。
- *
- * 与源码侧（`src/editor/editor.ts` 的 `--cm-bleed-bottom`）同一招：预览也改成**让最后一
- * 块能滚到容器顶**、下面留一屏空白。不这么做的话，预览的自然上限卡在「最后一块贴容器底」，
- * 而源码那一格卡在「最后一行贴容器底」—— 两侧底不是同一个位置，B260 那句「预览能到 966、
- * 源码只到 294」就是这么来的，滚到底时两侧游标被各自那把上限各裁一刀，怎么对齐都差一截。
- *
- * ⚠️ 同样走 CSS 变量、不写 inline `padding-bottom` 字面值：变量可以被
- *    `body.print-mode .md-preview { --md-bleed-bottom: 0px }` 归零（见 preview.css），
- *    硬写 inline 会把既有打印规则全盖掉、打印多出整整一屏空白。
- */
-const BOTTOM_BLEED_VAR = "--md-bleed-bottom";
-
 export interface SyncHost {
   /** 编辑器可视区顶行（1-based） */
   topVisibleLine(): number;
@@ -64,31 +50,6 @@ export class PreviewPane {
   /** 程序定位（大纲跳转/转到行）的目标行：异步增强或图片加载重排后据此重定位 */
   private pendingSyncLine: number | null = null;
   private mermaidSeq = 0;
-  /** 上一次真正写进 DOM 的底部留白值（-1 = 还没写过）；「值没变就不写」的记账，见 applyBottomBleed */
-  private bleedPx = -1;
-  /** 是否已有一次「布局落定后再补量」的 rAF 在飞（避免 setBlocks 每发都排队、叠成无限循环） */
-  private bleedRafPending = false;
-  /**
-   * B272：ResizeObserver 那一路的跨帧重算在飞（同一轮通知合并成一发）。
-   * ⚠️ 存在的唯一理由：**绝不在这帧的回调里动样式** —— 在同一次 delivery 里改被观察量，
-   * 浏览器会再收一轮通知，攒够就抛 `ResizeObserver loop completed with undelivered
-   * notifications`（真机：预览可见后每帧一条，被 `index.html` 的全局 error 监听堆成满屏
-   * 红条）。排到 rAF 里写 ⇒ 新通知落到下一帧，属于正常迭代，不再抛错。
-   */
-  private bleedRoPending = false;
-  /**
-   * B272：连续「重算又变了」的次数 —— 熔断用。
-   * 真机上存在**结构性抖动**：留白写进 `padding-bottom`，而 `px` 又拿 `clientHeight`
-   * （padding-box，含这份留白）去算；容器高度由内容撑开时，这一笔会把「被观察量」改大
-   * ⇒ 下一帧再算出另一个 px ⇒ 又写…… 叠加「滚动条出/没 ⇒ 折行 ⇒ 末块高变」就成了每帧
-   * 一条的稳定环。值稳定即归零；连续 `BLEED_CHURN_LIMIT` 次仍变 ⇒ 本轮停手，
-   * 由下一次 `setBlocks`（内容/块高真变化）重置。
-   */
-  private bleedChurn = 0;
-  /** B272：连续重算多少次还在变就算失控（本轮停手）。3 次足以吃掉临界抖动。 */
-  private static readonly BLEED_CHURN_LIMIT = 3;
-  /** B272：`px` 的变化小于这个值就当没变（亚像素 / 滚动条临界那 1px 抖扭不值得重写一次）。 */
-  private static readonly BLEED_EPSILON_PX = 1;
   /** 活动文档目录（相对路径图片解析基准） */
   private baseDir: string | null = null;
 
@@ -102,21 +63,6 @@ export class PreviewPane {
     attachUserScrollClear(this.root);
     // 图片/iframe 的 load 不冒泡，用捕获阶段监听——布局变化后按 pending 行重定位
     this.root.addEventListener("load", () => this.applyPending(), true);
-    // B265：底部留白跟着**容器尺寸**重算（分屏拖分隔条、窗口缩放、字号档都动它）。
-    // jsdom 里没有 ResizeObserver ⇒ 判空，留白那帧由下面的 setBlocks 兜底算一次。
-    if (typeof ResizeObserver !== "undefined") {
-      // ⚠️ B272：回调**不直接算** —— 改走 `scheduleBleedFromRo()`（排到 rAF 跨帧写）。
-      //    在这帧的回调里动 `padding-bottom` ⇒ 浏览器同帧再收一轮通知 ⇒ 抛
-      //    `ResizeObserver loop completed with undelivered notifications`（真机每帧一条，
-      //    被全局 error 监听堆成满屏红条）。跨帧写则新通知落到下一帧，是正常迭代。
-      const ro = new ResizeObserver(() => this.scheduleBleedFromRo());
-      // ⚠️ 必须观察 **border-box**：留白写在 `root` 自己的 `padding-bottom` 上，而
-      //    `ResizeObserver` 默认看的是 **content-box** —— 那等于「我们这一笔把被观察量
-      //    改小了」⇒ 回调再来一轮 ⇒ 自反馈成环（启动那帧布局还没稳，浏览器直接抛
-      //    `ResizeObserver loop completed with undelivered notifications`）。
-      //    border-box 不受 padding 影响 ⇒ 容器真变了才回调，绝不成环。
-      ro.observe(this.root, { box: "border-box" });
-    }
     this.root.addEventListener("click", (e) => {
       const target = e.target as HTMLElement;
       // 任务列表点击切换（预览态，不回写源码，M3 仅展示）
@@ -185,28 +131,6 @@ export class PreviewPane {
     const prevScroll = this.root.scrollTop;
     this.blocks = next;
     this.root.replaceChildren(frag);
-    // ⚠️ B265 修复：留白必须在**插回 DOM 之后**算 —— 块此刻才真正挂载到文档，
-    //   `getBoundingClientRect()` 才能量出真实高度。插之前量的是 DocumentFragment 里
-    //   的游离节点（高度恒 0）⇒ `lastH = 0` ⇒ `--md-bleed-bottom` 永远算成 0 ⇒ 预览
-    //   底部永远到不了顶（与源码「最后一行贴容器顶」对不上）。插完立刻算，先把可滚上限
-    //   放宽，下面 scrollTop 恢复才不会被旧上限裁小（与源码 restoreViewScroll 同型）。
-    // B272：内容/块高真变了 ⇒ 熔断计数归零（上一次抖动判定的结论对新内容不成立）
-    this.bleedChurn = 0;
-    this.applyBottomBleed();
-    // ⚠️ B269：同步那一发若量不出（预览离屏 / 刚建实例还没布局 ⇒ `clientHeight = 0`，或末块异步
-    //   增强未落地 ⇒ 末块高 0），`applyBottomBleed` 内部那道闸会**一个字节都不写**，保留上一次的
-    //   值。但「进入预览模式 / 恢复会话」那一帧往往是第一次量（还没有「上一次」），这一发跳过后
-    //   就必须有下一发补上 —— 而 `.md-preview` 是**固定高的滚动容器**，它的 border-box 尺寸恒定，
-    //   **内容 / 块高变化不触发 ResizeObserver**，所以光靠 RO 补不回来。这里显式排一帧 rAF，在布局
-    //   落定之后按真实几何再量一次。`bleedPx` 闸门保证这一发幂等（值没变就不写），`bleedRafPending`
-    //   保证每个 setBlocks 最多排一发、绝不成环（不写那发不会自触发新 rAF）。
-    if (!this.bleedRafPending && (this.root.clientHeight <= 0 || this.bleedPx < 0)) {
-      this.bleedRafPending = true;
-      requestAnimationFrame(() => {
-        this.bleedRafPending = false;
-        this.applyBottomBleed();
-      });
-    }
     if (this.pendingSyncLine !== null) {
       this.applySyncToLine(this.pendingSyncLine);
     } else {
@@ -594,93 +518,6 @@ export class PreviewPane {
   private blockTop(el: HTMLElement): number {
     const base = this.root.getBoundingClientRect();
     return el.getBoundingClientRect().top - base.top + this.root.scrollTop;
-  }
-
-  /**
-   * B265（本单修复）：按当前几何重算预览的**底部留白** —— 量 = `clientHeight − 最后一行的高`。
-   *
-   * 推导（与 `--cm-bleed-bottom` 同源）：加完 padding 后
-   *     maxScroll = contentH + padding − clientH
-   * 想让「最后一行顶」正好贴在容器顶（`maxScroll === 最后一行.top`）
-   *     ⇒ padding === clientHeight − 最后一行高。
-   *
-   * ⚠️ 与编辑器侧 `sourceBottomBleedPx` **同一个公式、同一个粒度（末行）**：编辑器按
-   *    `clientH − 末行高` 算；预览此前按 `clientH − 末块高` 算 —— 末块若占多行（段落 /
-   *    代码块 / 列表……），最后一行就永远滚不到容器顶（用户报「只能滚动到最后一块」）。
-   *    本修复把预览也改成按**最后一行**算，两侧底对齐、最后一行都能贴顶。
-   * ⚠️ 只有**最后一行**才配这个量：前面那些行本来就能滚到顶，给它们多留一屏只会让视图
-   *    一进预览就空一大截（「预览一打开先白一屏」）。
-   * ⚠️ 量不出（离屏 `clientHeight = 0`，或空文档没有块）一律写 **0** —— 把「看不见」当
-   *    成「可滚」会把这一格钉死在开头，正是 B257 那份教训。
-   */
-  private applyBottomBleed(): void {
-    const clientH = this.root.clientHeight;
-    // ⚠️ B269：离屏 / 还没布局 ⇒ `clientHeight = 0` ⇒ **一个字节都不写**，保留上一次量出来的
-    //   值（与源码侧 `--cm-bleed-bottom` 那道闸同口径：写「瞬态的 0」比不写更糟 —— 真机要等布局
-    //   落定再由 `setBlocks` 里那发 rAF 补，补之前这一格的可滚上限是错误的）。旧写法这里直接算成
-    //   0 写下去：预览若先以隐藏态被量过一次（clientHeight=0 ⇒ 写 0），之后进入预览模式那一发只要
-    //   也踩到 0，就把上一次对的值抹掉、再也翻不回正数 —— 正是用户报的「预览模式最后一个块滚不到顶」。
-    if (!(clientH > 0)) return;
-    const last = this.blocks[this.blocks.length - 1];
-    if (!last) return;
-    const lastH = this.lastLineHeightOf(last.el);
-    // 末行高还没量出（刚 replaceChildren、异步增强未落地）⇒ 不写，等下一帧再量。
-    if (!(lastH > 0)) return;
-    const px = Math.max(0, clientH - lastH);
-    // ⚠️⚠️ **值没变就一个字节都不写**：在 `ResizeObserver` 回调里动样式，浏览器会在同一帧
-    //    里再收一轮通知，攒够就抛 `ResizeObserver loop completed with undelivered
-    //    notifications`（B265 首版启动即弹红条 —— `index.html` 的全局 error 监听把它当成
-    //    启动失败渲染出来了）。`px` 只由「容器高 + 末行高」决定，值不变 ⇒ 这一帧没有真
-    //    变化 ⇒ 不写，循环到此为止（「不写」本身就是收敛保证）。
-    //    ⚠️ B272：**带 1px 容差** —— `clientHeight` 里含我们自己这份 `padding-bottom`，
-    //    容器高度由内容撑开时它随这一笔变化；叠上「滚动条出/没 ⇒ 折行 ⇒ 末行高 ±1」就是
-    //    每帧都"变"一点的稳定环（真机每帧一条 RO loop）。1px 的差没有任何观感差别，
-    //    ≤1px 一律当没变 ⇒ 环在此收敛。
-    if (Math.abs(px - this.bleedPx) <= PreviewPane.BLEED_EPSILON_PX) return;
-    this.bleedPx = px;
-    this.root.style.setProperty(BOTTOM_BLEED_VAR, `${px}px`);
-  }
-
-  /**
-   * 最后一块里「最后一行」的高（与编辑器 `sourceBottomBleedPx` 的末行高同口径）。
-   *
-   * 标题 / 段落 / 列表项 / 代码块……每一**视觉行**都是一个 line-box，高 = 该块的计算行高；
-   * 量得出就用 `getComputedStyle` 解析出的 px（真实浏览器恒可得、且天然 = 一个视觉行高，
-   * 含折行：末行就是最后那个 line-box，高 = line-height）。
-   * jsdom 解析不出行高（返回空串 / `"normal"`）⇒ 退回「块高 ÷ 本块占的源行数」——
-   * 测试桩里每块高 `BLOCK`、每块 3 源行 ⇒ 单源行高 = `ROW`，与编辑器末行高同口径；
-   * 真实浏览器不会走到这一支。末块高量不出（异步增强未落地）⇒ 返回 0，由调用方吞掉。
-   */
-  private lastLineHeightOf(el: HTMLElement): number {
-    const cs = typeof getComputedStyle === "function" ? getComputedStyle(el) : null;
-    const lh = cs ? parseFloat(cs.lineHeight) : NaN;
-    if (Number.isFinite(lh) && lh > 0) return lh;
-    const lines = Math.max(1, Number(el.dataset.lineEnd) - Number(el.dataset.lineStart) + 1);
-    const h = el.getBoundingClientRect().height || el.offsetHeight;
-    return h > 0 ? h / lines : 0;
-  }
-
-  /**
-   * B272：ResizeObserver 那一路的**跨帧重算**（含熔断）。
-   *
-   * 两条纪律：
-   *   ① **跨帧** —— 回调当帧不写样式，写排到 rAF，避免同帧连续通知（RO loop 错误的成因）；
-   *   ② **熔断** —— 连续 `BLEED_CHURN_LIMIT` 次重算后值还在变 ⇒ 判为结构性抖动（留白改变
-   *      被观察量 / 滚动条临界），本轮停手，不再排队。值稳定一次即归零；`setBlocks`
-   *      （内容或块高真变化）也会归零 ⇒ 后续真实变化照常生效。
-   *      ⚠️ 停手≠算错：留白停在最后一次量出的值上，观感与「多抖 1px」无差别，换来的是
-   *      不再每帧抛错、不再刷满屏红条、不再每帧重排。
-   */
-  private scheduleBleedFromRo(): void {
-    if (this.bleedRoPending) return; // 同一轮通知合并成一发
-    if (this.bleedChurn >= PreviewPane.BLEED_CHURN_LIMIT) return; // 熔断：本轮停手
-    this.bleedRoPending = true;
-    requestAnimationFrame(() => {
-      this.bleedRoPending = false;
-      const before = this.bleedPx;
-      this.applyBottomBleed();
-      this.bleedChurn = this.bleedPx === before ? 0 : this.bleedChurn + 1;
-    });
   }
 
   /**

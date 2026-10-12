@@ -288,8 +288,10 @@ describe("B148 静态契约：切模式是一次明确的交接，不是各认�
     // ⚠️ B251：换算出口换成 `sourceTopOfV`（与**跨侧同步落点 / 切标签收口**同一个），所以
     //   这里盯的是「切模式走了那个同源换算、且落点允许带小数」，而不是 toggleViewMode 体内
     //   那行 lineBlockAt。`editorLineTopPx` 只留在 `sourceTopOfV` 内部当行顶那一步。
+    // ⚠️ B284：切回源码这一路多了一道「到底锚点」—— 源（预览侧）到底 ⇒ 落源码自己那一侧的
+    //   底（`ownFloorPx`），否则照旧走同源换算 `sourceTopOfV`。两分支都在这同一行上。
     expect(body, "要把游标按文档行反推成编辑器像素（并且用的是同源换算）").toContain(
-      "handoff = sourceTopOfV(view, v);",
+      "handoff = fromAtFloor ? ownFloorPx(view.scrollDOM) : sourceTopOfV(view, v);",
     );
     // 换算函数本身：按文档行反推，靠 lineBlockAt 定位，不是把预览的像素原样搬过去
     expect(src, "行顶换算用 lineBlockAt 按文档行定位").toMatch(
@@ -312,7 +314,8 @@ describe("B148 反向验证：把交接摘掉，上面几条必须变红", () =>
     //   `syncSourceV`，落点由 `sourceTopOfV` 换算）；跨侧小数恒 0（预览的小数归一在
     //   **块高**、源码侧按**行高**插，跨侧带比例会恒偏上），只有**同侧跟随**才用带比例的量。
     const ASK = "    const v = syncSourceV(tab);\n";
-    const CONVERT = "      handoff = sourceTopOfV(view, v);\n";
+    const CONVERT =
+      "      handoff = fromAtFloor ? ownFloorPx(view.scrollDOM) : sourceTopOfV(view, v);\n";
     const WRITE = "  if (handoff !== null) recordScroll(tab.tabId, handoff);\n";
     let degraded = src;
     let removed = 0;

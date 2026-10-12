@@ -92,12 +92,11 @@ export function logViewportGeom(where: string, panel?: Panel): void {
     return;
   }
   const el = view.scrollDOM;
-  const bleed = Number.parseFloat(el.style.getPropertyValue("--cm-bleed-bottom")) || 0;
   logger.debug(
     "viewport",
     `${where} tab=${p.viewTabId ?? "-"} clientH=${el.clientHeight} contentH=${fmtPx(view.contentHeight)} ` +
       `渲染行=${el.querySelectorAll(".cm-line").length} scrollH=${fmtPx(el.scrollHeight)} ` +
-      `scrollTop=${fmtPx(el.scrollTop)} bleed=${fmtPx(bleed)}`,
+      `scrollTop=${fmtPx(el.scrollTop)}`,
   );
 }
 
@@ -206,10 +205,8 @@ export function pinScrollTop(el: HTMLElement, px: number): void {
     // ⚠️⚠️ **B278（修用户报的回退）**：「向下裁切」（`landed < px`，落点被浏览器裁到更靠上的
     //   可滚上限）**不再**当场当「立住」停重试 —— 两类情况都会表现为向下裁切：
     //   ① 文档真·短、`px` 本就超出可滚上限 —— 合法落点（停在 maxScroll），无可奈何；
-    //   ② **`scrollHeight` 还没撑开**（底部留白 `--cm-bleed-bottom` 尚未 apply / 内容未渲染 /
-    //      分屏新建实例 measure 未完成的临时窗口）—— 几帧内会涨回来，涨回后这一票本应能落定。
-    //   旧写法把 ② 也当「立住」立即收工 ⇒ bleed 涨回后补钉链早已结束、322 永久卡在 276
-    //   （末行退到视口底，正是用户报的「尾行跳到页面底部」）。
+    //   ② **`scrollHeight` 还没撑开**（内容未渲染 / 分屏新建实例 measure 未完成的临时窗口）
+    //      —— 几帧内会涨回来，涨回后这一票本应能落定。
     //   ⇒ 向下裁切一律**继续重试到窗口末**；只有「落点仍在容差外且 `landed<=0`（面板 0 宽 /
     //   内容始终没撑开，真·坏掉）」才告警，落点在某个合法 maxScroll（`landed>0`）的短文档场景
     //   静默收工（那本来就是正确落点，不该刷 WARN）。
