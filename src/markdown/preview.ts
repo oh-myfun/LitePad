@@ -565,6 +565,21 @@ export class PreviewPane {
       );
       const into = Math.min(range, Math.max(0, line - Number(el.dataset.lineStart)));
       top += ((this.blockTop(next.el) - top) * into) / range;
+    } else {
+      // ⚠️ 末块（next 不存在）：上面那条「跨块插值」用不上，旧写法整块落到**块顶**
+      //    （lineStart 顶对齐）。但「滚到底 / 同步到文档末行」的语义应是「最后一行顶对齐到
+      //    容器顶」—— 与编辑器 `sourceTopOfV` 末行贴顶、以及本单底部留白（末行高）同口径：
+      //    末块占多行时，只落块顶 ⇒ 最后一行永远差一截到不了顶（用户报「只能滚动到最后一块」
+      //    的同源问题在同步 / 切标签恢复路径上同样存在）。按块内源行均分块高，把请求的源行
+      //    顶对齐到容器顶（与中段块 `into/range` 插值的落点语义一致）。`topVisibleLine` 对末块
+      //    仍交 `lineEnd`（滚过末块顶即交末行），往返闭合不变。
+      const start = Number(el.dataset.lineStart);
+      const lines = Math.max(1, Number(el.dataset.lineEnd) - start + 1);
+      const lineIdx = line - start;
+      if (lineIdx > 0 && lineIdx < lines) {
+        const h = el.getBoundingClientRect().height || 0;
+        top += (h / lines) * lineIdx;
+      }
     }
     // ANCHOR = 0：落点就是块顶本身（旧口径是块顶往回让 8 像素，那一对常数是往返攒误差的
     // 来源，随 B251 一起撤掉 —— B245 的「越切越靠顶」在 ANCHOR = 0 下没有病根可犯）。
@@ -582,14 +597,18 @@ export class PreviewPane {
   }
 
   /**
-   * B265：按当前几何重算预览的**底部留白** —— 量 = `clientHeight − 最后一块的高`。
+   * B265（本单修复）：按当前几何重算预览的**底部留白** —— 量 = `clientHeight − 最后一行的高`。
    *
-   * 推导（与 `--cm-bleed-bottom` 那一段同源）：加完 padding 后
+   * 推导（与 `--cm-bleed-bottom` 同源）：加完 padding 后
    *     maxScroll = contentH + padding − clientH
-   * 想让「最后一块顶」正好贴在容器顶（`maxScroll === 最后一块.top`，而它 ≈ contentH − 末块高）
-   *     ⇒ padding === clientHeight − 末块高。
+   * 想让「最后一行顶」正好贴在容器顶（`maxScroll === 最后一行.top`）
+   *     ⇒ padding === clientHeight − 最后一行高。
    *
-   * ⚠️ 只有**最后一块**才配这个量：前面那些块本来就能滚到顶，给它们多留一屏只会让视图
+   * ⚠️ 与编辑器侧 `sourceBottomBleedPx` **同一个公式、同一个粒度（末行）**：编辑器按
+   *    `clientH − 末行高` 算；预览此前按 `clientH − 末块高` 算 —— 末块若占多行（段落 /
+   *    代码块 / 列表……），最后一行就永远滚不到容器顶（用户报「只能滚动到最后一块」）。
+   *    本修复把预览也改成按**最后一行**算，两侧底对齐、最后一行都能贴顶。
+   * ⚠️ 只有**最后一行**才配这个量：前面那些行本来就能滚到顶，给它们多留一屏只会让视图
    *    一进预览就空一大截（「预览一打开先白一屏」）。
    * ⚠️ 量不出（离屏 `clientHeight = 0`，或空文档没有块）一律写 **0** —— 把「看不见」当
    *    成「可滚」会把这一格钉死在开头，正是 B257 那份教训。
@@ -604,22 +623,41 @@ export class PreviewPane {
     if (!(clientH > 0)) return;
     const last = this.blocks[this.blocks.length - 1];
     if (!last) return;
-    const lastH = last.el.getBoundingClientRect().height || last.el.offsetHeight;
-    // 末块还没量出高度（刚 replaceChildren、异步增强未落地）⇒ 不写，等下一帧再量。
+    const lastH = this.lastLineHeightOf(last.el);
+    // 末行高还没量出（刚 replaceChildren、异步增强未落地）⇒ 不写，等下一帧再量。
     if (!(lastH > 0)) return;
     const px = Math.max(0, clientH - lastH);
     // ⚠️⚠️ **值没变就一个字节都不写**：在 `ResizeObserver` 回调里动样式，浏览器会在同一帧
     //    里再收一轮通知，攒够就抛 `ResizeObserver loop completed with undelivered
     //    notifications`（B265 首版启动即弹红条 —— `index.html` 的全局 error 监听把它当成
-    //    启动失败渲染出来了）。`px` 只由「容器高 + 末块高」决定，值不变 ⇒ 这一帧没有真
+    //    启动失败渲染出来了）。`px` 只由「容器高 + 末行高」决定，值不变 ⇒ 这一帧没有真
     //    变化 ⇒ 不写，循环到此为止（「不写」本身就是收敛保证）。
     //    ⚠️ B272：**带 1px 容差** —— `clientHeight` 里含我们自己这份 `padding-bottom`，
-    //    容器高度由内容撑开时它随这一笔变化；叠上「滚动条出/没 ⇒ 折行 ⇒ 末块高 ±1」就是
+    //    容器高度由内容撑开时它随这一笔变化；叠上「滚动条出/没 ⇒ 折行 ⇒ 末行高 ±1」就是
     //    每帧都"变"一点的稳定环（真机每帧一条 RO loop）。1px 的差没有任何观感差别，
     //    ≤1px 一律当没变 ⇒ 环在此收敛。
     if (Math.abs(px - this.bleedPx) <= PreviewPane.BLEED_EPSILON_PX) return;
     this.bleedPx = px;
     this.root.style.setProperty(BOTTOM_BLEED_VAR, `${px}px`);
+  }
+
+  /**
+   * 最后一块里「最后一行」的高（与编辑器 `sourceBottomBleedPx` 的末行高同口径）。
+   *
+   * 标题 / 段落 / 列表项 / 代码块……每一**视觉行**都是一个 line-box，高 = 该块的计算行高；
+   * 量得出就用 `getComputedStyle` 解析出的 px（真实浏览器恒可得、且天然 = 一个视觉行高，
+   * 含折行：末行就是最后那个 line-box，高 = line-height）。
+   * jsdom 解析不出行高（返回空串 / `"normal"`）⇒ 退回「块高 ÷ 本块占的源行数」——
+   * 测试桩里每块高 `BLOCK`、每块 3 源行 ⇒ 单源行高 = `ROW`，与编辑器末行高同口径；
+   * 真实浏览器不会走到这一支。末块高量不出（异步增强未落地）⇒ 返回 0，由调用方吞掉。
+   */
+  private lastLineHeightOf(el: HTMLElement): number {
+    const cs = typeof getComputedStyle === "function" ? getComputedStyle(el) : null;
+    const lh = cs ? parseFloat(cs.lineHeight) : NaN;
+    if (Number.isFinite(lh) && lh > 0) return lh;
+    const lines = Math.max(1, Number(el.dataset.lineEnd) - Number(el.dataset.lineStart) + 1);
+    const h = el.getBoundingClientRect().height || el.offsetHeight;
+    return h > 0 ? h / lines : 0;
   }
 
   /**

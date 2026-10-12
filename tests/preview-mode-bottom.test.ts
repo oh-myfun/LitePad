@@ -9,7 +9,8 @@
 // 半屏变成整屏，块要重排），所以单列一条专门咬它。
 //
 // 几何前提同 scroll-bottom-bleed.test.ts：24 行 md、行高 14、块高 42（末块跨 22–24 三行）、
-// 视口 60 ⇒ 预览留白 = 视口 60 − 末块 42 = 18，滚到底 = 末块 top = 21×42 = 882。
+// 视口 60 ⇒ 预览留白 = 视口 60 − 末行 14 = 46（本单修复：此前是 视口 60 − 末块 42 = 18），
+// 滚到底 = 末行 top = 21×42 + 2×14 = 910。
 //
 // ───────────────────────────────────────────────────────────────────────────
 // **这条用例要咬住的是 B269 的修复本身（rAF 补量），不是「切到预览」那一手**：
@@ -53,8 +54,8 @@ const ROWS = 24;
 const ROW = 14;
 const BLOCK = ROW * 3;
 const VIEW_H = 60;
-const PREV_FLOOR = 21 * BLOCK;
-const PREV_BLEED = VIEW_H - BLOCK;
+const PREV_FLOOR = 21 * BLOCK + 2 * ROW;
+const PREV_BLEED = VIEW_H - ROW;
 const MD = [
   ...Array.from({ length: 21 }, (_, i) => `# 标题 ${i + 1}`),
   "段落第一行",
@@ -252,6 +253,15 @@ function lastBlockTop(el: HTMLElement): number {
     (blocks[blocks.length - 1]?.getBoundingClientRect().top ?? 0) - el.getBoundingClientRect().top
   );
 }
+/** 末行此刻相对容器顶的位置：`== 0` 即「贴顶」。 */
+function lastPreviewLineTop(el: HTMLElement): number {
+  const blocks = Array.from(el.querySelectorAll("[data-line-start]")) as HTMLElement[];
+  const last = blocks[blocks.length - 1];
+  if (!last) return 0;
+  const blockTop = last.getBoundingClientRect().top - el.getBoundingClientRect().top;
+  const lines = Number(last.dataset.lineEnd) - Number(last.dataset.lineStart);
+  return blockTop + lines * ROW;
+}
 
 describe("B269 预览模式（单格，启动即在预览态）：最后一个块能滚到容器顶", () => {
   beforeAll(async () => {
@@ -262,7 +272,7 @@ describe("B269 预览模式（单格，启动即在预览态）：最后一个�
     btn.click();
     await wait(220);
     // ⚠️ 关键顺序：先把「布局落定后 clientHeight = 视口」这件事 mock 上去，
-    // 再 flush 那个被 B269 排进来的 rAF 补量 ⇒ 补量在 clientHeight 可用时重算 → 写出 18。
+    // 再 flush 那个被 B269 排进来的 rAF 补量 ⇒ 补量在 clientHeight 可用时重算 → 写出 46（末行高）。
     // 若颠倒（先 flush / 让 setup.ts 的 setTimeout(0) 提前烧掉补量）⇒ 补量在 clientHeight=0
     // 时跑、返回不写，之后 `.md-preview` 固定高、RO 不触发 ⇒ bleed 永远 0（就是用户报的 bug）。
     installClamp(pv(), () => PREV_FLOOR);
@@ -270,22 +280,23 @@ describe("B269 预览模式（单格，启动即在预览态）：最后一个�
     await wait(60);
   });
 
-  it("① 启动即在预览态 ⇒ --md-bleed-bottom = 视口 − 末块高（= 18），不是 0", () => {
+  it("① 启动即在预览态 ⇒ --md-bleed-bottom = 视口 − 末行高（= 46），不是 0", () => {
     expect(
       Number.parseFloat(pv().style.getPropertyValue("--md-bleed-bottom")) || 0,
-      "预览模式单格：留白 = 60 − 42 = 18（B269 修复前这里会卡在 0）",
+      "预览模式单格：留白 = 60 − 14 = 46（B269 修复前这里会卡在 0；块粒度为 18 已改为末行粒度）",
     ).toBeCloseTo(PREV_BLEED, 6);
   });
 
-  it("② 手动滚到底 ⇒ 最后一块贴容器顶，游标 = 文档末行", async () => {
+  it("② 手动滚到底 ⇒ 预览最后一行（不是最后一块）贴容器顶，游标 = 文档末行", async () => {
     userScroll(pv(), 99999);
     await wait(400);
-    expect(pv().scrollTop, "预览模式滚到底 = 末块 top (882)").toBeCloseTo(PREV_FLOOR, 6);
-    expect(lastBlockTop(pv()), "滚到底时最后一块必须贴在容器顶（下面留一屏空白）").toBeCloseTo(
-      0,
-      6,
-    );
-    // 末块顶到容器顶时，游标交的是「块末行」= 文档末行（B265/B268 的口径）。
+    expect(pv().scrollTop, "预览模式滚到底 = 末行 top (910)").toBeCloseTo(PREV_FLOOR, 6);
+    expect(lastPreviewLineTop(pv()), "滚到底时预览最后一行必须贴在容器顶").toBeCloseTo(0, 6);
+    expect(
+      lastBlockTop(pv()),
+      "末行贴顶时最后一块已越过容器顶（其顶在视口之上，下面留一屏空白）",
+    ).toBeLessThan(0);
+    // 末行（= 块末行 = 文档末行）交的是文档末行（B265/B268 的口径）。
     const blocks = Array.from(pv().querySelectorAll("[data-line-start]")) as HTMLElement[];
     const last = blocks[blocks.length - 1];
     expect(Number(last.dataset.lineEnd)).toBe(ROWS);

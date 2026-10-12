@@ -153,10 +153,11 @@ describe("B272 预览底部留白：ResizeObserver 自反馈必须收敛", () =>
     pv.setBlocks(sampleBlocks());
     const after = bleedOf(pv);
     expect(after, "真变化时留白必须跟上（熔断不许永久停摆）").not.toBe(frozen);
-    // 自反馈模型：clientHeight = baseH + 当前留白 ⇒ 新的留白 = (260 + frozen) − 末块高
+    // 自反馈模型：clientHeight = baseH + 当前留白 ⇒ 新的留白 = (260 + frozen) − 末行高。
+    // 本单修复：留白按末行粒度，末块跨 3 行 ⇒ 末行高 = 末块高 ÷ 3 = 42/3 = 14。
     expect(
-      Math.abs(after - (baseH + frozen - BLOCK)),
-      "新的留白 = 新的容器高 − 末块高",
+      Math.abs(after - (baseH + frozen - BLOCK / 3)),
+      "新的留白 = 新的容器高 − 末行高",
     ).toBeLessThanOrEqual(1);
   });
 });

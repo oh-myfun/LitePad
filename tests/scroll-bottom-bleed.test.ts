@@ -6,15 +6,16 @@
 // ⚠️ 几何必须让**两侧的自然上限明显不同**（这是整条用例的前提）：
 //   24 行 md、行高 14、块高 42（= 3 行）、视口 60 ⇒
 //     · 源码：内容 336、末行 top = 322 ⇒ 留白 46 ⇒ 滚到底 = **322**（末行贴容器顶）
-//     · 预览：内容 1008、末块 top = 966 ⇒ 留白 18 ⇒ 滚到底 = **966**（末块贴容器顶）
-//   不放留白的话这两格分别只能到 336−60=276 与 1008−60=948 —— 前者停在**倒数第 5 行**贴顶、
-//   后者停在末块上方一屏，两侧底根本不是同一个位置（B260 那句「预览 966 / 源码 294」同型）。
+//     · 预览：内容 924、末行 top = 910 ⇒ 留白 46 ⇒ 滚到底 = **910**（末行贴容器顶；
+//         22 块 × 42，末块跨 22–24 三行、占 42 高，末行在块内偏移 2×ROW = 28 ⇒ 882 + 28）
+//   不放留白的话这两格分别只能到 336−60=276 与 924−60=864 —— 前者停在**倒数第 5 行**贴顶、
+//   后者停在末块顶（末行还差一截才到顶），两侧底根本不是同一个位置（B260 那句「预览 966 / 源码 294」同型）。
 //
 // ⚠️ 桩里 `scrollHeight` / `naturalMax` **必须把源码写出去的那截留白算进去**（读 CSS 变量
 //    `--cm-bleed-bottom` / `--md-bleed-bottom`），否则桩里的「可滚上限」会比真机短一截，
 //   「滚到底 = 末单元贴顶」这一整件事在桩上根本发生不了、用例变假绿。
 // ⚠️ `.md-block` 的高度也给了 BLOCK（与它已有的 top 建模同口径）—— 预览那截留白就量自
-//    「末块的高」，给 0 会让留白虚高一屏。
+//    「末行的高」（本单修复：此前量的是末块高，末块跨多行时末行滚不到顶），给 0 会让留白虚高一屏。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 
@@ -25,11 +26,15 @@ const BLOCK = ROW * 3;
 const VIEW_H = 60;
 /** 源码滚到底（= 最后一行 top）。 */
 const SRC_FLOOR = (ROWS - 1) * ROW;
-/** 预览滚到底（= 最后一块 top）：21 块 × 42（末块跨 22–24 三行，也占 42）。 */
-const PREV_FLOOR = 21 * BLOCK;
+/**
+ * 预览滚到底（= **最后一行** top，不是最后一块）：22 块 × 42，末块跨 22–24 三行、占 42 高，
+ * 末行在块内偏移 2×ROW = 28 ⇒ 最后一行 top = 21×BLOCK + 2×ROW = 882 + 28 = 910。
+ * ⚠️ 这正是本单修复的点：此前留白按「末块高」算，滚到底只能到末块顶（882），末行永远差一截。
+ */
+const PREV_FLOOR = 21 * BLOCK + 2 * ROW;
 /** 两侧该留的白。 */
 const SRC_BLEED = VIEW_H - ROW;
-const PREV_BLEED = VIEW_H - BLOCK;
+const PREV_BLEED = VIEW_H - ROW;
 /**
  * ⚠️ 末块必须**跨多行**（这里 3 行）：若每块只占一行，末块的 `start` 与 `lineEnd` 是同一个数，
  * `topVisibleLine()` 交「块起始行」与交「块末行」在数值上完全等价 ⇒ 退化针③打在空处、
@@ -319,6 +324,20 @@ function lastBlockTop(el: HTMLElement): number {
   );
 }
 /**
+ * 末**行**（最后一块里最后那一行）此刻的容器相对位置：== 容器顶 ⇒ 最后一行贴顶成立。
+ * ⚠️ 本单修复的关键判据：此前留白按「末块高」算，滚到底只能到末块顶（lastBlockTop=0、
+ * 但末行还差一截）；修复后留白按「末行高」算，滚到底末行贴顶（此函数 = 0、lastBlockTop 为负）。
+ * 测试桩：每块高 BLOCK、每源行占 ROW，故末行在块内偏移 = (lineEnd − lineStart) × ROW。
+ */
+function lastPreviewLineTop(el: HTMLElement): number {
+  const blocks = Array.from(el.querySelectorAll("[data-line-start]")) as HTMLElement[];
+  const last = blocks[blocks.length - 1];
+  if (!last) return 0;
+  const blockTop = last.getBoundingClientRect().top - el.getBoundingClientRect().top;
+  const lines = Number(last.dataset.lineEnd) - Number(last.dataset.lineStart);
+  return blockTop + lines * ROW;
+}
+/**
  * 源码那侧**不这么量** —— CM6 虚拟化：视口外的行不在 DOM 里，拿「最后一个 `.cm-line` 的
  * 位置」问末行在哪会问到一个**渲染出来的**行（桩里量到 308 = 行 23，不是行 24）。
  * 源码侧的「最后一行贴容器顶」由游标直接钉死：`v` 的整数部分 = 文档行数、比例 = 0
@@ -412,14 +431,18 @@ describe("B265 底部留白：最后一行 / 最后一块能滚到容器顶", ()
     );
   });
 
-  it("② 滚到底 ⇒ 预览最后一块贴容器顶，游标也 = 文档末行", async () => {
+  it("② 滚到底 ⇒ 预览**最后一行**（不是最后一块）贴容器顶，游标也 = 文档末行", async () => {
     userScroll(pv(), 99999);
     await wait(400);
-    expect(pv().scrollTop, "预览该滚到自己那一侧的底（= 末块 top）").toBeCloseTo(PREV_FLOOR, 6);
-    expect(lastBlockTop(pv()), "滚到底时最后一块必须贴在容器顶（下面留一屏空白）").toBeCloseTo(
-      0,
-      6,
-    );
+    expect(pv().scrollTop, "预览该滚到自己那一侧的底（= 末行 top）").toBeCloseTo(PREV_FLOOR, 6);
+    expect(
+      lastPreviewLineTop(pv()),
+      "滚到底时最后一行必须贴在容器顶（下面留一屏空白）—— 本单修复的关键判据",
+    ).toBeCloseTo(0, 6);
+    expect(
+      lastBlockTop(pv()),
+      "末行贴顶 ⇒ 最后一块已经被滚过容器顶（块顶在 0 之上），不再是「只到末块顶」",
+    ).toBeLessThan(0);
     // ⚠️⚠️ 这里**故意不**断言「源码被同步推过来」：面板正显示源码标签时，那一格里的
     //   预览是被 `display:none` 藏住的（真机上用户滚不到它），产品那条 scroll 监听第一行
     //   `if (!t || t.viewMode !== "preview") return;` 就直接 return 了 ── 桩把 display:none
@@ -432,8 +455,9 @@ describe("B265 底部留白：最后一行 / 最后一块能滚到容器顶", ()
     await wait(400);
     const vSrc = vOf(src());
     expect(vSrc).not.toBeNull();
-    // 源码到底 ⇒ 同步把预览推到它自己的底；两侧都停在「最后的内容贴顶」。
-    expect(pv().scrollTop).toBeCloseTo(PREV_FLOOR, 6);
+    // 源码滚到底（= 末行贴顶）；预览在 ② 已滚到底（= 末行贴顶），隐藏态下同步不反推它，
+    // 故仍停在末行顶。两侧游标都 = 文档末行 ⇒ 严格相等。
+    expect(pv().scrollTop, "预览在 ② 已滚到底（= 末行 top）").toBeCloseTo(PREV_FLOOR, 6);
     expect(vOf(pv()), "两侧到底的游标必须严格相等").toBeCloseTo(vSrc as number, 6);
   });
 
@@ -477,7 +501,7 @@ describe("B265 底部留白：最后一行 / 最后一块能滚到容器顶", ()
     ).toBeCloseTo(SRC_BLEED, 6);
     expect(
       Number.parseFloat(pv().style.getPropertyValue("--md-bleed-bottom")) || 0,
-      "预览留白 = 视口 60 − 末块 42",
+      "预览留白 = 视口 60 − 末行 14（本单修复：此前是 视口 60 − 末块 42 = 18）",
     ).toBeCloseTo(PREV_BLEED, 6);
   });
 

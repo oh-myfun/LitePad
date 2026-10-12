@@ -73,6 +73,7 @@ describe("B265 预览底部留白：必须在块挂载后测量", () => {
     const bleed = Number.parseFloat(pv.root.style.getPropertyValue("--md-bleed-bottom")) || 0;
     // 旧代码（replaceChildren 前测量游离节点）⇒ bleed 恒 0 ⇒ 这条断言变红。
     expect(bleed).toBeGreaterThan(0);
-    expect(bleed).toBe(VIEW_H - BLOCK);
+    // 本单修复：留白 = 视口 − 末行高（不再是 末块高）。末块跨 3 行 ⇒ 末行高 = 42/3 = 14 ⇒ 留白 = 46。
+    expect(bleed).toBe(VIEW_H - ROW);
   });
 });
