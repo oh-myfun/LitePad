@@ -206,6 +206,19 @@ function landAtOwnFloor(other: Tab, shown: Panel | undefined): boolean {
     //    把算出来的值记进槽等于把「没落地」写成「停在那儿」（B134 同型）。
     const landed = preview.root.scrollTop;
     recordScroll(other.tabId, landed);
+    // ⚠️⚠️ **B285**：落点是「**自己这一侧**的底」，与源那一侧的 `v` **不是同一个数**
+    //   （到底时源码顶行 ≈20.71、预览顶行 ≈21.57，内容高天生不同）⇒ 规范游标必须
+    //   改写成**实际落点反算的 v**，不能留着源那一侧的值。
+    //   留着会怎样：`restorePreviewScroll` 优先按 `syncV` 派生（B273），而 `syncV`
+    //   此刻是源的 v ⇒ 落 828，把刚摆好的 864 覆盖掉。离屏预览现形时同病
+    //   （`switchTab` 的收口先把 `syncV` 写成源的 v，紧接着的还原就按它派生）。
+    //   用户报的就是这个：**没显示的预览标签滚动位置和显示的预览标签滚动位置不一致**。
+    //   ⚠️ 往返严格互逆：`topVisibleLine` 与 `applySyncToLine` 同一套块几何、ANCHOR=0，
+    //      按反算值再派生落回同一个像素（B245 立的互逆，这里不另起一套）。
+    //   ⚠️ 反算失败（host 没挂 / 块没渲染）就留着 `v` —— 那一支至少指向源的真实位置，
+    //      比抹成 null 强（null 会让还原整段跳过同步那一支）。
+    const backAtFloor = preview.topVisibleLine();
+    if (backAtFloor !== null) other.syncV = backAtFloor;
     return true;
   }
   const sv = shown?.view?.view;
@@ -216,6 +229,12 @@ function landAtOwnFloor(other: Tab, shown: Panel | undefined): boolean {
   //    契约（不许拿源像素当落点）正是按那个调用形态抓的；而这里是**兄弟自己那一侧**的底。
   recordScroll(other.tabId, floorPx);
   pinScrollTop(sv.scrollDOM, floorPx);
+  // ⚠️ 源码支**不**跟着预览支改写 `syncV`（B285 只修预览那一支）：
+  //   `restoreViewScroll` 按源的 v 换算出像素后，会被**自然上限裁回底**自愈 —— 源码
+  //   到底 ⇔ scrollTop = 自然上限，任何超出的值都裁到上限。而预览侧按源的 v 换算出
+  //   828 < 864 是**合法** scrollTop，裁剪救不回来（B285 实测 36px 裂口）。
+  //   ⚠️ 真要源码侧也坏，得构造「预览比源码矮」（块高 < 行高）的非自然几何 —— 真实 md
+  //      里段落至少占一行 ⇒ 块高 >= 行高 ⇒ 证不出危害，按纪律不预先收窄。
   return true;
 }
 
