@@ -6,12 +6,13 @@
 // 零外部函数依赖——只依赖 core/* + ui + shell/* + markdown/pipeline（TocEntry 类型），
 // 对 main.ts 零反向依赖。
 
-import { docs, docSyncModes, panels, settings } from "./core/app-state";
-import { activeTab, activePanel, docOf, instancesOfDoc } from "./core/panels";
+import { docs, settings } from "./core/app-state";
+import { activeTab, activePanel } from "./core/panels";
 import { CODICONS } from "./shell/codicons";
 import { setTip } from "./shell/tooltip";
 import { saveSettings } from "./ipc/api";
 import { extractOutline } from "./markdown/outline";
+import { syncJumpToLine } from "./sync-scroll";
 import { EditorView } from "@codemirror/view";
 import {
   mainRow,
@@ -238,7 +239,6 @@ function updateTocDrawer(): void {
       const panel = activePanel();
       const tab2 = activeTab();
       if (!panel?.view || !tab2) return;
-      const doc = docOf(tab2);
       const line = Math.min(Math.max(1, entry.line), tab2.state.doc.lines);
       const pos = tab2.state.doc.line(line).from;
       // 活动实例：视图定位 + 聚焦（y:"start" 把标题行顶到视口顶部；
@@ -249,28 +249,11 @@ function updateTocDrawer(): void {
       });
       tab2.state = panel.view.view.state;
       if (tab2.viewMode === "preview") panel.preview?.syncToLine(line);
-      // 仅当该文档开启了同步滚动（docSyncModes）才把大纲跳转广播给同文档其它实例；
-      // 未关联同步滚动时大纲只影响激活实例（用户诉求：多开不同步则各自独立滚动）。
-      // 守卫口径与 pushSyncToSiblings 保持一致（tab2.docId）。
-      if (docSyncModes.get(tab2.docId) === true) {
-        // 同文件的其他实例：选区同步写进快照（内容经 ChangeSet 广播保持一致，
-        // 位置对全部实例有效）；可见实例同时滚动定位
-        for (const inst of instancesOfDoc(doc.tabId)) {
-          if (inst.tabId === tab2.tabId) continue;
-          const p = panels.get(inst.panelId);
-          if (p?.view && p.viewTabId === inst.tabId) {
-            p.view.view.dispatch({
-              selection: { anchor: pos },
-              effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: 0 }),
-            });
-            inst.state = p.view.view.state;
-            // 预览态面板编辑器是隐藏的，收不到滚动事件——显式按行定位预览
-            if (inst.viewMode === "preview") p.preview?.syncToLine(line);
-          } else {
-            inst.state = inst.state.update({ selection: { anchor: pos } }).state;
-          }
-        }
-      }
+      // 统一位置同步入口：本地兄弟派发 + 跨窗口广播都由 pushSyncToSiblings 收口
+      // （内部按 docSyncModes 守卫——未开同步滚动则只动激活实例，与用户诉求一致）。
+      // 这把「大纲跳转」与「转到行 / 查找命中」三条触发源并到同一条路径，
+      // 消除各自手工 instancesOfDoc 循环带来的漏跨窗口广播与行为差异。
+      syncJumpToLine(tab2, line);
       panel.view.focus();
       updateTocDrawer();
     },

@@ -788,6 +788,25 @@ export function pushSyncToSiblings(
 }
 
 /**
+ * 触发式位置跳转（大纲点击 / 转到行 / 查找命中）的统一同步入口。
+ *
+ * 三处触发源原先各自手工 `for (inst of instancesOfDoc(...))` 循环本地实例，**完全没有
+ * crossWindow 广播**，且重写了兄弟派发逻辑（与 `pushSyncToSiblings` 行为差异：y:"center"
+ * vs y:"start"、漏光标派发、漏离屏快照落槽……）。多窗口下点击大纲跳转不跟随就是这一条漏广播。
+ *
+ * 收口到这一处后：本地兄弟派发 + 跨窗口广播都由 `pushSyncToSiblings` 负责，三处不再各写一遍，
+ * 行为天然一致。`v` 用与收口同一个口径的实数行号（带小数比例），这里不另取坐标；
+ * 跨窗口广播恒开（`crossWindow=true`）—— 这几类「用户主动跳转」本就该带着别的窗口一起走
+ * （前提是该文档开了同步滚动，由 `pushSyncToSiblings` 内部 `docSyncModes` 守卫裁决）。
+ *
+ * @param src 触发跳转的活动实例（它自身的定位由调用方 dispatch 完成，本函数只推兄弟 + 广播）。
+ * @param v   跳转目标行（实数行号，小数 = 行内比例；整数即顶到该行顶，与 y:"start" 对齐）。
+ */
+export function syncJumpToLine(src: Tab, v: number | null): void {
+  pushSyncToSiblings(src, true, { v });
+}
+
+/**
  * B263：把**挂起的游标**补写成源码兄弟自己的槽 —— 在「这份兄弟现形之后、`restoreViewScroll`
  * 之前」调用（见 `switchTab` 里 `applyPanelMode` 与 `restoreViewScroll` 之间那一行）。
  *

@@ -1982,32 +1982,34 @@ describe("B172 反向验证：摘掉作废判定，上面那条必须落空", ()
   });
 });
 
-describe("B186 大纲跳转受同步滚动状态约束（多开不同步则只动激活实例）", () => {
-  it("未开启同步滚动时，大纲跳转不得广播给同文档其它实例", () => {
+describe("B186 大纲跳转经统一入口同步（多开不同步则只动激活实例）", () => {
+  it("onJump 把兄弟同步 + 跨窗口广播交给统一入口 syncJumpToLine（不再内联循环）", () => {
     // 用户诉求：文件多开且未关联同步滚动时，大纲只能影响激活文档的滚动位置。
-    // 激活实例自身的定位（含预览 syncToLine）在守卫之外，永远生效；
-    // 守卫只包住「遍历 instancesOfDoc 广播选区 + 滚动」那段。
-    const GUARD = "if (docSyncModes.get(tab2.docId) === true) {";
-    const FOR = "for (const inst of instancesOfDoc(doc.tabId))";
+    // 激活实例自身的定位（含预览 syncToLine）必须在守卫之外，永远生效；
+    // 守卫（同步滚动开关）现已收口进 pushSyncToSiblings，不再内联在 onJump。
     const ACTIVE = "tab2.state = panel.view.view.state;";
-    expect(ONJUMP_BODY, "onJump 必须显式用 docSyncModes 守卫广播段").toContain(GUARD);
-    expect(ONJUMP_BODY, "onJump 仍存在遍历同文档实例的广播段").toContain(FOR);
-    expect(ONJUMP_BODY.indexOf(ACTIVE), "激活实例定位必须在守卫之外（永远生效）").toBeLessThan(
-      ONJUMP_BODY.indexOf(GUARD),
+    const DELEGATE = "syncJumpToLine(tab2";
+    expect(ONJUMP_BODY, "onJump 必须先定位激活实例（不受同步状态约束，永远生效）").toContain(
+      ACTIVE,
     );
-    expect(ONJUMP_BODY.indexOf(GUARD), "守卫必须包在广播循环之前（循环才受约束）").toBeLessThan(
-      ONJUMP_BODY.indexOf(FOR),
+    expect(ONJUMP_BODY, "onJump 必须把兄弟同步 + 跨窗口广播交给统一入口").toContain(DELEGATE);
+    expect(
+      ONJUMP_BODY,
+      "守卫不应再内联在 onJump（统一由同步入口按 docSyncModes 裁决）",
+    ).not.toContain("if (docSyncModes.get(tab2.docId) === true)");
+    // 守卫现在落在 pushSyncToSiblings（sync-scroll.ts）—— 这才是「未开同步则只动激活实例」的裁决点。
+    const PUSH = pushBody();
+    expect(PUSH, "统一入口 pushSyncToSiblings 必须按 docSyncModes 守卫").toContain(
+      "if (docSyncModes.get(src.docId) !== true) return;",
     );
   });
 
-  it("反向验证：退回「无条件广播」→ 上面那道守卫必须落空", () => {
-    const GUARD = "if (docSyncModes.get(tab2.docId) === true) {";
-    expect(ONJUMP_BODY, "退化串要先自证原句还在").toContain(GUARD);
-    const degraded = ONJUMP_BODY.replace(GUARD, "");
-    expect(degraded, "摘掉守卫后 onJump 不再受同步滚动约束").not.toContain(GUARD);
-    expect(degraded, "摘掉后广播循环仍在（即恢复成无条件广播）").toContain(
-      "for (const inst of instancesOfDoc(doc.tabId))",
-    );
+  it("反向验证：pushSyncToSiblings 摘掉守卫 ⇒ 同步状态失效（恢复无条件广播）", () => {
+    const PUSH = pushBody();
+    const GUARD = "if (docSyncModes.get(src.docId) !== true) return;";
+    expect(PUSH, "退化串要先自证原句还在").toContain(GUARD);
+    const degraded = PUSH.replace(GUARD, "");
+    expect(degraded, "摘掉守卫后推送不再受同步滚动约束（恢复成无条件广播）").not.toContain(GUARD);
   });
 });
 

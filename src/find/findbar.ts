@@ -22,6 +22,7 @@ import {
 } from "../editor/find";
 import { isDirtyVsBaseline, isMdTab } from "../doc-model";
 import { freshTextOfDoc, renderPanelTabs, switchTab } from "../tabs";
+import { syncJumpToLine } from "../sync-scroll";
 import { el, refreshTitle } from "../ui";
 import {
   createFindBar,
@@ -537,18 +538,23 @@ function openFindHit(hit: FindHit): void {
   if (insts.length === 0) return;
   const target = insts[0];
   switchTab(target.panelId, target.tabId);
-  for (const inst of insts) {
-    const p = panels.get(inst.panelId);
-    if (p?.view && p.viewTabId === inst.tabId) {
-      p.view.view.dispatch({
-        selection: { anchor: hit.from, head: hit.to },
-        effects: EditorView.scrollIntoView(hit.from, { y: "center" }),
-      });
-      inst.state = p.view.view.state;
-    } else {
-      inst.state = inst.state.update({ selection: { anchor: hit.from, head: hit.to } }).state;
-    }
+  // 活动实例：选中命中区间并滚到视野中间（本地动作，保持 y:"center"）。
+  const p = panels.get(target.panelId);
+  if (p?.view && p.viewTabId === target.tabId) {
+    p.view.view.dispatch({
+      selection: { anchor: hit.from, head: hit.to },
+      effects: EditorView.scrollIntoView(hit.from, { y: "center" }),
+    });
+    target.state = p.view.view.state;
+  } else {
+    target.state = target.state.update({ selection: { anchor: hit.from, head: hit.to } }).state;
   }
+  // 统一位置同步入口：本地兄弟派发 + 跨窗口广播收口到 pushSyncToSiblings
+  // （内部按 docSyncModes 守卫——未开同步滚动则只动激活实例）。
+  syncJumpToLine(
+    target,
+    target.state.doc.lineAt(Math.min(hit.from, target.state.doc.length)).number,
+  );
   activePanel()?.view?.focus();
 }
 
