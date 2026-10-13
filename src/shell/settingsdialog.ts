@@ -21,6 +21,8 @@ import { createDropdown } from "./dropdown";
 import { createSwitch } from "./switch";
 // B235：`PreviewWidth` 是宽度档的类型（standard / wide / full）。
 import type { PreviewWidth } from "../ipc/api";
+// B288：日志级别五档的类型（设置页下拉要用它收窄回调参数）。
+import { type LogLevel } from "../core/logger";
 
 export type ThemeChoice = "system" | "light" | "dark";
 
@@ -73,6 +75,23 @@ export interface SettingsDialogOptions {
   onTabActionReserveSpace: (on: boolean) => void;
   /** 快捷键分类页所需的改键逻辑（复用 keymapdialog） */
   keymap: KeymapDialogOptions;
+  /**
+   * B288：日志级别（error / warn / info / debug / trace）。「通用」分类里的下拉。
+   *
+   * ⚠️ 它**不在**前端 `settings` 对象里 —— 级别走独立的 `log_level` / `set_log_level`
+   *    IPC（Rust 侧持有 `session.log_level` 并**即时生效**，不用重启）。所以这一对
+   *    getter/setter 直连 `core/logger`，与「自动保存」那类读 `settings` 的项不是
+   *    同一个来源 —— 别照抄成 `settings?.log_level`。
+   */
+  logLevel: () => LogLevel;
+  onLogLevel: (level: LogLevel) => void;
+  /**
+   * B288：「打开日志文件」—— 用系统默认程序打开 `<配置目录>/logs/litepad.log`。
+   *
+   * 排查问题时（比如定位同步滚动 / 拖拽复位）要反复看日志，不该让用户自己去
+   * `%APPDATA%` 里摸路径 —— 何况配置目录还能被 `LITEPAD_CONFIG_DIR` 搬走。
+   */
+  onOpenLog: () => void;
 }
 
 /** 「本机没装」候选的标注后缀（选了会静默回落到内置等宽栈，看着像没反应）。 */
@@ -602,6 +621,37 @@ function numberSelectRow(
   );
 }
 
+/** B288：日志级别五档（`core/logger` 的 `LogLevel`），由低到高。 */
+const LOG_LEVEL_OPTIONS: { label: string; value: LogLevel }[] = [
+  { label: "错误（error）", value: "error" },
+  { label: "警告（warn）", value: "warn" },
+  { label: "信息（info，默认）", value: "info" },
+  { label: "调试（debug）", value: "debug" },
+  { label: "跟踪（trace）", value: "trace" },
+];
+
+/**
+ * B288：一行「说明 + 右侧按钮」—— 设置页里唯一**触发动作**而不是改值的那类项。
+ *
+ * ⚠️ 与 `toggleRow` / `selectRow` 同款（`settingsItem` 拼装），只是控件换成一个普通
+ *    button。全局 `button` 是透明底，行内看不出可点 ⇒ 补 `.settings-mini-btn` 那条
+ *    边框（样式在 global.css），与下拉 / 开关的观感对齐。
+ */
+function buttonRow(
+  label: string,
+  desc: string,
+  btnLabel: string,
+  onClick: () => void,
+): HTMLElement {
+  const btn = document.createElement("button");
+  btn.className = "settings-mini-btn";
+  btn.type = "button";
+  btn.textContent = btnLabel;
+  btn.setAttribute("aria-label", label);
+  btn.addEventListener("click", onClick);
+  return settingsItem(label, desc, btn);
+}
+
 /**
  * B227：字体选择行 ＝ 分段小切换（B236 起是 比例 / 等宽）＋ 字体下拉。
  *
@@ -695,6 +745,27 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
         "关窗时把未保存内容写进独立副本（原文件不动），下次启动还原成未保存标签，且关窗不再询问。",
         opts.hotExit(),
         (v) => opts.onHotExit(v),
+      ),
+    );
+    // B288：日志级别 —— 排查问题时临时开 debug / trace 复现，**即时生效、不用换包重启**。
+    //   ⚠️ 说明里必须交代高档位的代价：滚动 / 同步那几路一秒能打几十条，默认的 2MB
+    //      日志会被很快冲掉（见 core/logger 与 core/viewport 那两条「别提到 info」的
+    //      纪律）⇒ 长时间挂着等于看不到更早的记录，定位完应调回「信息」。
+    body.appendChild(
+      selectRow(
+        "日志级别",
+        "排查问题时临时调高：debug / trace 会记下滚动、同步、视口等诊断行，即时生效、不用重启；级别越高日志越大、旧记录被冲掉得越快，定位完建议调回「信息」。",
+        LOG_LEVEL_OPTIONS,
+        opts.logLevel(),
+        (v) => opts.onLogLevel(v as LogLevel),
+      ),
+    );
+    body.appendChild(
+      buttonRow(
+        "日志文件",
+        "用系统默认程序打开 litepad.log（配置目录下的 logs 目录）。",
+        "打开",
+        () => opts.onOpenLog(),
       ),
     );
   } else if (id === "appearance") {

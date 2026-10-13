@@ -25,6 +25,7 @@ import {
 } from "../core/app-state";
 import { getPanel, activePanel, panelOfTab, docOf, instancesOfDoc } from "../core/panels";
 import { countLeaves, leaf, siblingLeafOf, removePanel, updateRatio } from "../core/layout";
+import { logger } from "../core/logger";
 import {
   pushSyncToSiblings,
   restoreViewScroll,
@@ -888,9 +889,21 @@ export function moveTabToStrip(panelId: number, tabId: number, beforeTabId: numb
   setActivePanelId(panelId);
 
   if (src.tabs.length === 0 && countLeaves(layout) > 1) {
+    // ⚠️ B288 诊断：**这两条分支的 trace 是定位「拖完位置回顶」的关键** ——
+    //    `disposePanel` 这条**没有** `splitPanelWithTab` 里 else 支那套按离屏前游标
+    //    重落（`landOnFrameGeometry`），被拖标签在新面板重建后容易停在 0。
+    //    复现时先看走的是哪一条，再对上 viewport 那几条「记忆 / 还原」trace。
+    logger.trace(
+      "tabs",
+      `拖拽(标签条) · 源面板 ${src.panelId} 被拖空 ⇒ disposePanel tab=${tabId} → 面板 ${panelId}`,
+    );
     // 源面板被拖空：统一交给 disposePanel（内部会 rebuild）
     disposePanel(src.panelId);
   } else {
+    logger.trace(
+      "tabs",
+      `拖拽(标签条) · 源面板 ${src.panelId} 仍有标签 ⇒ rebuild tab=${tabId} → 面板 ${panelId}`,
+    );
     if (src.activeTabId === tabId) {
       src.activeTabId = src.tabs[Math.min(from, src.tabs.length - 1)] ?? -1;
     }

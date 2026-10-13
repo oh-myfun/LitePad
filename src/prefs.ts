@@ -49,6 +49,7 @@ import {
   listEncodings,
   listEols,
   listFonts,
+  openLogFile,
   reloadFile,
   saveSettings,
   type FontItem,
@@ -67,7 +68,7 @@ import {
 import { showPopupMenu, type MenuItem } from "./shell/menu";
 import { PREVIEW_WIDTH_LABELS, showSettingsDialog } from "./shell/settingsdialog";
 import { refreshAll, sbEncoding, sbEol, showMessage } from "./ui";
-import { logger } from "./core/logger";
+import { level as currentLogLevel, logger, setLevelPersisted } from "./core/logger";
 import { ask } from "@tauri-apps/plugin-dialog";
 
 // ---------------------------------------------------------------- 编码转换（B215）
@@ -645,6 +646,21 @@ async function openSettingsDialog(): Promise<void> {
     onTabStyle: (v) => void setTabStyle(v),
     tabActionReserveSpace: () => settings?.tab_action_reserve_space ?? true,
     onTabActionReserveSpace: (v) => void setTabActionReserve(v),
+    // B288：日志级别 —— **不读 `settings`**：级别由 Rust 侧 `session.log_level` 持有，
+    // 走独立的 log_level / set_log_level IPC 即时生效（不用重启），这里直连 core/logger。
+    logLevel: () => currentLogLevel(),
+    onLogLevel: (v) => {
+      void setLevelPersisted(v).catch(() => {
+        // 落盘失败不影响本次生效：内存里的级别已经切了，日志照样能开。
+        // 只是重启会回到旧级别 —— 与「字体枚举没到手退回手抄清单」同一口径（能降级就降级）。
+      });
+    },
+    // 打开日志文件（路径由 Rust 算，前端不拼）。
+    onOpenLog: () => {
+      void openLogFile().catch(() => {
+        void showMessage("打不开日志文件（可能还没有日志落盘）");
+      });
+    },
     keymap: {
       overrides: keymapOverrides,
       onChange: (next) => void applyKeymapOverrides(next),

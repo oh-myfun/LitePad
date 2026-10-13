@@ -315,6 +315,17 @@ export function setLogLevel(level: string): Promise<void> {
   return invoke<void>("set_log_level", { level });
 }
 
+/**
+ * 用系统默认程序打开日志文件（B288）。
+ *
+ * 设置页「通用」分类里那颗「打开日志文件」走这里。路径由 **Rust 侧**自己算
+ * （`<配置目录>/logs/litepad.log`，尊重 `LITEPAD_CONFIG_DIR`）—— 前端不该去拼这个
+ * 路径：配置目录可能被环境变量搬走，拼错了打不开还查不出原因。
+ */
+export function openLogFile(): Promise<void> {
+  return invoke<void>("open_log_file");
+}
+
 // ---------------------------------------------------------------- 会话（M2）
 
 export interface TabSession {

@@ -220,6 +220,7 @@ fn main() {
             commands::log_event,
             commands::log_level,
             commands::set_log_level,
+            commands::open_log_file,
             commands::frontend_ready,
             commands::load_session,
             commands::save_session,

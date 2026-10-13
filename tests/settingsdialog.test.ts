@@ -53,6 +53,11 @@ function makeOpts(): SettingsDialogOptions {
     onTabStyle: noop,
     tabActionReserveSpace: () => true,
     onTabActionReserveSpace: noop,
+    // B288：日志级别 —— 走独立的 log_level / set_log_level IPC（Rust 侧持有并即时生效），
+    // **不读 settings**；另一项是「打开日志文件」的动作回调。
+    logLevel: () => "info",
+    onLogLevel: noop,
+    onOpenLog: noop,
     keymap: {
       overrides: {} as KeymapOverrides,
       onChange: noop,
@@ -139,6 +144,43 @@ describe("B106 统一设置页：三栏结构", () => {
       (p) => p.querySelector(".settings-page-title")?.textContent === "外观",
     ) as HTMLElement;
     expect(appearance.hidden, "切到快捷键后外观页应隐藏").toBe(true);
+  });
+});
+
+describe("B288 通用页：日志级别 + 打开日志文件", () => {
+  it("日志级别下拉五档齐全，默认 info，改选回调新级别", () => {
+    const opts = makeOpts();
+    const picked: string[] = [];
+    opts.onLogLevel = (v) => {
+      picked.push(v);
+    };
+    showSettingsDialog(opts);
+    expect(rowValue("日志级别"), "默认应为 info").toBe("info");
+    expect(rowValues("日志级别"), "五档应齐全且按低→高排").toEqual([
+      "error",
+      "warn",
+      "info",
+      "debug",
+      "trace",
+    ]);
+    // 排查时临时开 debug —— 回调必须把新级别交出去（main 侧走 setLevelPersisted 即时生效）
+    pickRow("日志级别", "debug");
+    expect(picked, "改选应回调新级别").toEqual(["debug"]);
+  });
+
+  it("「日志文件」行的按钮点击触发 onOpenLog（一键打开 litepad.log）", () => {
+    const opts = makeOpts();
+    let opened = 0;
+    opts.onOpenLog = () => {
+      opened += 1;
+    };
+    showSettingsDialog(opts);
+    const btn = [...document.querySelectorAll(".settings-item")]
+      .find((r) => r.querySelector(".settings-item-label")?.textContent === "日志文件")
+      ?.querySelector("button.settings-mini-btn") as HTMLButtonElement | undefined;
+    expect(btn, "「日志文件」行应有一颗按钮").toBeTruthy();
+    btn!.click();
+    expect(opened, "点击应触发 onOpenLog 一次").toBe(1);
   });
 });
 

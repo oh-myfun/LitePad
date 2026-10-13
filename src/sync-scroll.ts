@@ -1047,11 +1047,24 @@ export function rememberViewScroll(panel: Panel): void {
     if (mode?.contains("mode-preview") || mode?.contains("mode-split")) {
       const root = panel.preview?.root ?? null;
       if (root === null || !pinInFlight(root)) {
+        // ⚠️ B288 诊断：这一眼读到的就是**即将写进槽**的值。真机复现里出现过
+        //    「容器已被 rebuild 换掉 ⇒ 读到 0 ⇒ 槽被抹平」，靠这条 trace 区分
+        //    「容器真的归零」与「读到的是旧值」。（trace 级：默认看不到，排错时开）
+        logger.trace(
+          "viewport",
+          `记忆 · 预览容器 tab=${t.tabId} 读到=${root ? fmtPx(root.scrollTop) : "无容器"} 原槽=${t.scrollTop === null ? "null" : fmtPx(t.scrollTop)}`,
+        );
         recordScroll(t.tabId, root ? root.scrollTop : null);
       }
     }
     return;
   }
+  // ⚠️ B288 诊断：同上 —— 源码侧「消失前看最后一眼」读到的容器值。与下面那条
+  //    `写入位置` trace 成对看：两条的 px 一致说明读的是真值，出现 0 就是容器已归零。
+  logger.trace(
+    "viewport",
+    `记忆 · 源码容器 tab=${t.tabId} 读到=${fmtPx(panel.view.view.scrollDOM.scrollTop)} 原槽=${t.scrollTop === null ? "null" : fmtPx(t.scrollTop)}`,
+  );
   recordScroll(t.tabId, panel.view.view.scrollDOM.scrollTop);
 }
 
@@ -1131,6 +1144,12 @@ export function restorePreviewScroll(panel: Panel): void {
     if (landed !== null) {
       recordScroll(t.tabId, landed);
       preview.clearPendingSync();
+      // ⚠️ B288 诊断：按游标还原预览的**落点**。若内容是异步渲染的，这一步可能算不出
+      //    块几何（`landed` 为 null ⇒ 走下面兜底），或落点与容器实际值不符 ⇒ 看这一条。
+      logger.trace(
+        "viewport",
+        `还原 · 预览(游标) tab=${t.tabId} 游标=${t.syncV} 落到=${fmtPx(landed)} 容器=${fmtPx(preview.root?.scrollTop ?? -1)}`,
+      );
       return;
     }
     // landed 为 null（没找到块）：落到下面用 scrollTop 的旧路径兜底。
@@ -1143,6 +1162,13 @@ export function restorePreviewScroll(panel: Panel): void {
   const root = preview.root as HTMLElement;
   const px = t.scrollTop;
   pinScrollTop(root, px);
+  // ⚠️ B288 诊断：**这条最能坐实「还原值被容器裁掉」** —— 想钉的是槽里的真值
+  //    （比如 2886），若此刻预览内容还没渲染完（容器可滚范围还是 0），浏览器会把它
+  //    裁成 0 ⇒ 下面打出来的「容器」就是 0，而「想钉」还是 2886。两者不等即中招。
+  logger.trace(
+    "viewport",
+    `还原 · 预览(槽) tab=${t.tabId} 想钉=${fmtPx(px)} 容器=${fmtPx(root.scrollTop)}`,
+  );
   // 位置已按像素钉死，待重定位行号就是过期的了：留着它，下一次图片/公式增强的
   // 二次定位（`applyPending`）会把预览从我们钉的落点拽回那一行（B146）。
   preview.clearPendingSync();

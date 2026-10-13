@@ -2197,6 +2197,14 @@ button:focus-visible {
   flex-shrink: 0;
 }
 
+/* B288：设置项右侧的**行内按钮**（如「打开日志文件」）。
+   全局 `button` 是透明底 + 透明边框，放进设置行里根本看不出可点 ⇒ 这里补一条
+   边框；字号降到 12px 与 .settings-item-desc 同档，别把行高顶起来。 */
+.settings-mini-btn {
+  border-color: var(--border);
+  font-size: 12px;
+}
+
 /* B227 字体两栏：分段小切换（B236 起是 比例 / 等宽）＋ 字体下拉。
    放在 .settings-item-control 里靠右，与其它设置项的控件列对齐；
    下拉宽度给足 —— 族名最长能到「Microsoft YaHei UI / 新細明體」那一档，

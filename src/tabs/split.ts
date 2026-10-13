@@ -49,6 +49,7 @@ import {
 } from "../doc-model";
 import { updateTocDrawer } from "../toc";
 import { markActivePanel, refreshAll, refreshTitle, refreshStatus, showMessage } from "../ui";
+import { logger } from "../core/logger";
 import { retargetFindBar } from "../find/findbar";
 import { keyHint } from "../prefs";
 import { newTab as ipcNewTab } from "../ipc/api";
@@ -511,6 +512,12 @@ export function splitPanelWithTab(
   setActivePanelId(newId);
 
   if (src.tabs.length === 0 && countLeaves(layout) > 1 && src.panelId !== targetId) {
+    // ⚠️ B288 诊断：与 `moveTabToStrip` 那对同型 —— 这条**没有**下面 else 支的重落，
+    //    `vDrop`（离屏前采的游标）在这条路上采了却没用。复现时先看走哪一条。
+    logger.trace(
+      "tabs",
+      `拖拽(分屏) · 源面板 ${src.panelId} 被拖空 ⇒ disposePanel tab=${tabId} 游标=${vDrop}`,
+    );
     // 源面板已空且非唯一：移交给 disposePanel 统一摘除（会再次 rebuild）
     disposePanel(src.panelId);
   } else {
