@@ -598,13 +598,19 @@ export function alignShownToSyncSource(
  *
  * ⚠️ 只对「用户滚动」那几路开（`crossWindow`）：光标 / 输入那一路不广播 —— 在
  *    主窗口敲一个字就带着子窗口跳，不是「同步滚动」，是「打字干扰」。
+ *
+ * ⚠️⚠️ **B286**：`atFloor` 必须一起广播。本窗口内「到底 ⇒ 兄弟落自己那一侧的底」靠
+ *   `applySyncToSibling` 的第三参传（B284）；跨窗口那条路原先只带 `{docId, srcTabId, v}`，
+ *   对端于是**永远不知道源已到底**，只能按游标 `v` 换算 ⇒ 落到 828 而不是自己那一侧的
+ *   底 864（36px 裂口，与 B285 同型）。用户报的就是「多窗口同步滚动时两个窗口对不齐」。
  */
-export function broadcastSyncPos(src: Tab, v: number | null): void {
+export function broadcastSyncPos(src: Tab, v: number | null, atFloor = false): void {
   // `from` 由 emitCrossWindow 注入（= 当前窗口 label），对端据此丢回声 / 跳过源标签。
   void emitCrossWindow(EVT_SYNC_POS, {
     docId: src.docId,
     srcTabId: src.tabId,
     v,
+    atFloor,
   }).catch(() => {
     // 没有别的窗口（绝大多数时候）不是错误，本窗口照常工作
   });
@@ -778,7 +784,7 @@ export function pushSyncToSiblings(
     applySyncToSibling(other, v, atFloor);
   }
   // B159：位置广播排在最后 —— 本地兄弟已经对齐过一次，别人接手时看到的是同一个落点。
-  if (crossWindow) broadcastSyncPos(src, v);
+  if (crossWindow) broadcastSyncPos(src, v, atFloor);
 }
 
 /**

@@ -885,8 +885,11 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
     );
     // ⚠️ B251 换锚：单参 `v`（旧写法是 `px, line` 两个 —— 「跨侧只交整数块首」那两个
     //    补丁的产物，正是 B247「每切一轮往上掉」的病根）。
+    // ⚠️ B286 再换锚：第三参 `atFloor`（「源顶没顶到自己的底」）必须一起交给广播 ——
+    //    跨窗口那一侧原先只带 `{docId, srcTabId, v}`，对端永远不知道源已到底 ⇒ 只能按
+    //    游标换算 ⇒ 落 828 而非自己那一侧的底 864（用户报：多窗口同步滚动对不齐）。
     expect(PUSH_BODY, "广播排在最后（本地先对齐，别人接手时落点一致）").toMatch(
-      /broadcastSyncPos\(src, v\);/,
+      /broadcastSyncPos\(src, v, atFloor\);/,
     );
   });
 
@@ -915,8 +918,15 @@ describe("B159 跨窗口同步滚动（用户报：子窗口文档没跟着动�
     //    是预览就只有 line、是源码就只有 px，对端按自己那一侧挑）；合成一个 `v` 之后
     //    对端也不必再按「自己哪一侧」挑坐标，少一层分支就是少一处失配。
     // ⚠️ 签名收口到 "); 免得只命中注释里那句「v 一起带」。
+    // ⚠️ B286 换锚：第三参 `atFloor = false`（到底锚点，见 `tabAtOwnFloor`）——
+    //    没有它，跨窗口广播就说不出「源已到底」，对端只能按游标 v 换算。
     expect(PUSH_BODY, "签名要收口").toMatch(
-      /function broadcastSyncPos\(src: Tab, v: number \| null\)/,
+      /function broadcastSyncPos\(src: Tab, v: number \| null, atFloor = false\)/,
+    );
+    // ⚠️⚠️ B286：payload 里必须真的写出 `atFloor`。签名有形参 ≠ 载荷带字段 ——
+    //    这条盯的是「字段真的进了 payload」，与上一行（签名）各管一半。
+    expect(PUSH_BODY, "到底状态要真的进载荷（少了它，对端按 v 换算就会对不齐）").toMatch(
+      /emitCrossWindow\(EVT_SYNC_POS, \{[\s\S]{0,120}?atFloor,/,
     );
   });
 

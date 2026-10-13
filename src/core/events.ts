@@ -68,6 +68,11 @@ export interface SyncPosPayload {
   docId?: number;
   srcTabId?: number;
   v?: number | null;
+  /** B286：源这一侧此刻**顶没顶到自己的底**。到底时对端不能按游标 `v` 换算
+   *  （两侧内容高天生不同 ⇒ 到底时顶行游标本就不相等），必须落到**它自己那一侧**的底。
+   *  ⚠️ 这个字段此前的缺失就是「多窗口同步滚动对不齐」的根因：本窗口内 `atFloor` 靠
+   *     `applySyncToSibling` 第三参传递（B284），跨窗口那条路却把它整个丢了。 */
+  atFloor?: boolean;
 }
 
 export interface SyncModePayload {

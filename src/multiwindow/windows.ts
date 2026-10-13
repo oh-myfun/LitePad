@@ -864,7 +864,7 @@ function applySyncMode(payload: SyncModePayload | null): void {
  *    跳过它是防御（回声过滤与 `from` 那条是两回事，`from` 只保证不是自己发的）。
  */
 function applyRemoteSyncPos(payload: SyncPosPayload | null): void {
-  const { from, docId, srcTabId, v } = payload ?? {};
+  const { from, docId, srcTabId, v, atFloor } = payload ?? {};
   if (!from || from === windowLabel || typeof docId !== "number" || typeof srcTabId !== "number") {
     return;
   }
@@ -874,9 +874,14 @@ function applyRemoteSyncPos(payload: SyncPosPayload | null): void {
   // ⚠️ B251：落点走的是和本窗口三条路**同一个** `applySyncToSibling(v)` —— 跨窗口不是
   //    「另一套换算」，只是另一批接收者。远端交来的 `v` 与本地自己取出来的 `v` 同口径，
   //    远端那份源码/预览按它自己的几何插 ⇒ 与本窗口盯着同一处（用户报：跨窗口滚不对齐）。
+  // ⚠️⚠️ **B286**：`atFloor` 必须一起透传。两侧内容高天生不同 ⇒ 到底时顶行游标 `v` 本来
+  //    就不相等（源码 ≈20.71 / 预览 ≈21.57），照 `v` 换算必然把对端拽离它自己的底
+  //    （落 828 而非 864）。源到底 ⇒ 对端也落到**它自己那一侧**的底（B284 的「各自到底」，
+  //    跨窗口是同一条口径）。缺这个字段就是「多窗口同步滚动对不齐」的根因。
+  const floor = atFloor === true;
   for (const other of instancesOfDoc(docId)) {
     if (other.tabId === srcTabId) continue;
-    applySyncToSibling(other, typeof v === "number" ? v : null);
+    applySyncToSibling(other, typeof v === "number" ? v : null, floor);
   }
 }
 
