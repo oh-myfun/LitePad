@@ -26,6 +26,8 @@ export interface SessionTabRecord {
   cursorLine: number;
   cursorCol: number;
   scrollTop: number | null;
+  /** B288④-4：规范视口游标 v（实数行号+行内比例，**宽度无关**），落盘存档真值；恢复按当前几何反算像素。 */
+  syncV: number | null;
   viewMode: string | null;
   backupId: string | null;
   /** B169：同步滚动开关（按文档记，B152）。恢复时写回前端 `docSyncModes`。 */
@@ -56,6 +58,7 @@ function blankRecord(tabId: number, docId: number): SessionTabRecord {
     cursorLine: 1,
     cursorCol: 1,
     scrollTop: null,
+    syncV: null,
     viewMode: null,
     backupId: null,
     syncMode: false,
@@ -77,6 +80,8 @@ function toDisk(r: SessionTabRecord): TabSession {
     // （往回滚的增量是整数，可基数还带着那个小数，于是连续失败）。
     // 出口统一取整：1px 的误差对还原无感，能落下去才要紧。
     scrollTop: r.scrollTop === null ? null : Math.round(r.scrollTop),
+    // B288④-4：`syncV` 是规范游标（宽度无关），同样走取整出口（Rust 侧 u32 容差同 scrollTop）。
+    syncV: r.syncV === null ? null : Math.round(r.syncV),
     viewMode: r.viewMode,
     backupId: r.backupId,
     docId: r.docId,
@@ -154,6 +159,12 @@ class SessionStore {
   setScroll(tabId: number, px: number | null): void {
     const r = this.recs.get(tabId);
     if (r) r.scrollTop = px;
+  }
+
+  /** B288④-4：规范视口游标 v 一并落盘（宽度无关唯一真值；换宽度/重启按当前几何反算）。 */
+  setSyncV(tabId: number, v: number | null): void {
+    const r = this.recs.get(tabId);
+    if (r) r.syncV = v;
   }
 
   setViewMode(tabId: number, mode: string | null): void {

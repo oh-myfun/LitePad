@@ -731,7 +731,11 @@ export function pushSyncToSiblings(
   //    ⚠️ 交接那一趟源**已经离屏**，只能信调用方当场采下来的 `opts.atFloor`。
   const atFloor = opts.atFloor ?? tabAtOwnFloor(src);
   // ⚠️ B273：源自己也要记下规范游标（与兄弟同口径），切走再切回时 restore 能从它派生像素。
-  src.syncV = v;
+  // ⚠️ B288④-1：源游标为 null（容器未测量 / 真机把 detached 容器 scrollTop 钳 0 读出假 0）
+  //   时**不许**把源的规范游标 `syncV` 写成 null —— 那等于用「读不出来」覆盖「已知的真值」，
+  //   后续切回 / 跨窗广播 / 落盘全按 null 派生（回顶）。源在屏且测得准才写；读不出时保留
+  //   上一次同步留下的 `syncV`（指向真实位置）。
+  if (v !== null) src.syncV = v;
   // ⚠️ B260：下面循环里**曾经**另取一个同名 `v = syncSourceV(src)`，把上面这个盖掉 ——
   //    于是 `opts.v` 只进了日志和跨窗广播，**落点那一趟照旧重算** `syncSourceV(src)`。
   //    B258 传 `opts.v` 就是为了「兄弟与接班落在同一个数」，被盖掉就让那趟补推名存实亡。
@@ -950,7 +954,17 @@ export function syncSourceV(t: Tab | undefined): number | null {
   //    `cross` 两档给 `topBlockStartLine()`（整数块首），本轮 B257 撤掉 —— 见上面那段
   //    翻案：读是 `start + ratio × range`、写是 `into / range`，乘除抵消 ⇒ 交整数块首
   //    纯属自丢位置（自测台：预览 847 ⇒ 切一轮变 840）。
-  if (t.viewMode === "preview") return p?.preview?.topVisibleLine() ?? null;
+  if (t.viewMode === "preview") {
+    // ⚠️ B288④-1：预览容器未测量（拖标签摘面板 / 重挂载的零尺寸窗口）时 `topVisibleLine()`
+    //    **不可信**——此刻 scrollTop 被钳 0、块却还在 ⇒ 读出「第一块行号」假游标（约 v=1），
+    //    把停在深处的预览当成「置顶」推给兄弟 ⇒ 源码瞬拖到 0，且把 `syncV` 毒化成假值
+    //    （下次切回预览时从毒化的 v 派生，位置错乱）。与源码侧 `sourceCursorPx` 回退槽值、
+    //    `restorePreviewScroll` 的 `!unmeasuredPanels.has(panel)` 守卫同款纪律（B271）：未测量
+    //    一律报**上次同步的规范游标 `t.syncV`**（宁可报已知真值，不许报 0 抹位置）。已测量才
+    //    走 `topVisibleLine()` 读当前真实可见行（用户滚预览时的实时同步靠它）。
+    if (p && unmeasuredPanels.has(p)) return t.syncV ?? null;
+    return p?.preview?.topVisibleLine() ?? null;
+  }
   const view = p?.view?.view;
   if (!view) return null;
   // ⚠️ B256：像素过 `sourceCursorPx`（DOM 与槽不一致 ⇒ 用槽）—— 别再直接读
@@ -1275,6 +1289,13 @@ export function measureAndKeepScroll(panel: Panel): void {
       }
     }
     reassertViewScroll(panel);
+    // ⚠️ B288④-3：预览面板测量完成后，按规范游标 `syncV` 把预览重定位到**新几何**下对应行。
+    //    源码有 `pendingSyncCursor` + `reassertViewScroll` 两道保险，预览此前**没有**这一道：
+    //    `restorePreviewScroll` 在「未测量」窗口里落到旧像素（`t.scrollTop`，分屏前按旧宽度量
+    //    出来的），测完既没人按新宽度重算，也就一直停错行（宽度变化 → 两侧错位）。这里补上
+    //    「测完按 syncV 反算」这道，与源码同口径（canonical v 唯一真值、像素现场反算）。
+    //    面板没挂预览 / 不是预览标签 / 同步关着 / 没有规范游标 ⇒ `restorePreviewScroll` 自己早退。
+    restorePreviewScroll(panel);
   });
 }
 

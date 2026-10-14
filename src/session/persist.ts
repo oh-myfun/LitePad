@@ -153,7 +153,7 @@ export function refreshSession(): void {
       // ⚠️ 新登记的记录要**带着** `t` 里已有的视口位置进来（B145）：会话恢复的标签在
       // `restoreSession` 里已经把位置读进 `t.scrollTop`，登记成空白的话，下面那条写入
       // 又会被还原期的闸口挡掉 —— 「刚恢复出来的位置」这一轮就白恢复了。
-      sessionStore.register(t.tabId, t.docId, { scrollTop: t.scrollTop });
+      sessionStore.register(t.tabId, t.docId, { scrollTop: t.scrollTop, syncV: t.syncV });
     }
     sessionStore.setDoc(t.tabId, {
       path: d.path ?? "",
@@ -234,8 +234,8 @@ export function sessionSummary(s: SessionState, skipped: string[] = []): string 
     .map(
       (t) =>
         `${t.path || "(未命名)"}|行${t.cursorLine}:${t.cursorCol}|位${t.scrollTop ?? "-"}${
-          t.viewMode ? `|${t.viewMode}` : ""
-        }`,
+          t.syncV !== undefined && t.syncV !== null ? `|v${t.syncV}` : ""
+        }${t.viewMode ? `|${t.viewMode}` : ""}`,
     )
     .join("  ");
   const rest = total - shown.length;

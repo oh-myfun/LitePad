@@ -542,19 +542,19 @@ export function splitPanelWithTab(
       //       游标用**离屏前**采的 `vDrop`；`refreshAll()` 排最后（它尾那趟
       //       `pushSyncToSiblings(activeTab())` 的源此刻是**刚归零的新面板**，本例会把
       //       老格钉回 v=1 —— 重落正是用来盖这一下的，与 copy 支那半边完全同型）。
-      // ⚠️⚠️ **B281（用户：预览标签从一个分屏拖到另一分屏时滚动位置跳回 0）：`vDrop` 是
-      //    **源编辑器**此刻显示的游标（anchored on `src.viewTabId`）。原本这一趟把预览标签
-      //    也按 `vDrop` 重落 ⇒ `landOnFrameGeometry(preview, vDrop)` ⇒ `applySyncToSibling`
-      //    ⇒ `preview.syncToLineProgrammatic(vDrop)` 且把落点写进它自己的槽（`recordScroll`）。
-      //    源编辑器停在文档开头（vDrop≈1）时落点≈0，预览于是被从自己原本的位置（可能很深）
-      //    硬钉回顶部，下次切回 / 重启读到 0 —— 正是用户报的「跳回 0」。
-      //    ⇒ 预览标签**不**在这一趟里重落：它的位置由 `rebuildLayout → mountView →
-      //    `restorePreviewScroll` 按它**自己的** `t.syncV`（同步开着 ≡ 源游标）或
-      //    `t.scrollTop`（同步关着，自己的像素）还原，任何路径都不许拿源编辑器的游标去覆盖它。
-      //    源码标签仍按 `vDrop` 重落（跨几何的旧像素是另一行，必须按规范游标 `v` 重落，B262）。
+      // ⚠️⚠️ **B281（用户：预览标签从一个分屏拖到另一分屏时滚动位置跳回 0）+ B288④-2
+      //    （几何变化后预览错位）：预览标签**绝不用源的 `vDrop` 重落**（B281：源停在开头时
+      //    `vDrop≈1` ⇒ 把预览硬钉回顶）。但它**必须**在新几何下按**自己的**规范游标重落 ——
+      //    否则宽度变窄后它仍停旧像素，那在新宽度下是另一行，与源码（按 vDrop 重落）错位。
+      //    ⇒ 源码标签用 `vDrop`、预览标签用**它自己的 `t.syncV`**（同步开着 ≡ 源游标、天然就是
+      //    「同一行」；宽度无关，像素现场反算，正是 B288④ 的 canonical-v 机制）。同步关着时
+      //    `t.syncV` 恒 null ⇒ 跳过这趟，交回 `restorePreviewScroll` 按它自己的像素
+      //    `t.scrollTop` 还原（旧行为，不污染）。
       for (const t of [tab, ...rest.map((id) => tabs.get(id)).filter((x): x is Tab => !!x)]) {
-        if (t.viewMode === "preview") continue;
-        landOnFrameGeometry(t, vDrop);
+        // 预览按自身规范游标、源码按源 vDrop（B281：绝不用源游标覆盖预览自己那份位置）。
+        const v = t.viewMode === "preview" ? t.syncV : vDrop;
+        if (v === null) continue;
+        landOnFrameGeometry(t, v);
       }
       refreshAll();
     }

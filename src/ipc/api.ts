@@ -343,6 +343,17 @@ export interface TabSession {
    * `null` = 这份实例从没显示过 → 接手方自行保证光标可见。
    */
   scrollTop?: number | null;
+  /**
+   * B288④-4：规范视口游标 `v`（实数行号，带行内比例小数，**与宽度无关**）。
+   *
+   * `scrollTop` 是**像素**、宽度一变就是另一行（分屏 / 改字号 / 缩放都会让它错位），所以它
+   * 只能当「当前几何下的现场值」用、不能当存档真值。`syncV` 记的是「看到第几行」，宽度无关，
+   * 恢复时按当前几何现场反算像素 ⇒ 换宽度重启也按**同一行**还原（不再因为像素错位而偏移）。
+   *
+   * ⚠️ 旧会话没有这个字段 ⇒ `undefined` ⇒ 恢复时回退 `scrollTop`（兼容，不要求立刻重排旧会话）。
+   * 同步关着 / 还没同步过 ⇒ 落 `null` ⇒ 同样回退 `scrollTop`。
+   */
+  syncV?: number | null;
   /** Markdown 视图模式（source/split/preview） */
   viewMode?: string | null;
   /**
