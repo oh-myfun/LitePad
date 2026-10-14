@@ -283,9 +283,22 @@ describe("B132 静态契约：滚动排程 + 关窗兜底", () => {
     readFileSync("src/core/viewport.ts", "utf-8");
 
   it("滚动监听里要排程会话保存，关窗的放行支要走「拦下 → 存完 → 再关」", () => {
-    expect(src, "滚动后要排程落盘").toMatch(
-      /t\.scrollTop = shownView\.scrollDOM\.scrollTop;[\s\S]{0,260}?scheduleSessionSave\(\);/,
+    // ⚠️⚠️ **不许用字符窗口**（原 `{0,260}`、放宽到 600 都不行）：
+    //    ① 260 被 B288⑤-1a 插入的 v 维护撑破；② 放宽到 600 会**跨进预览那侧**的
+    //       `scheduleSessionSave()` ⇒ 退化时「删掉编辑器这一处还能靠预览那处蒙中」⇒ 假绿
+    //       （已实测：600 窗口下摘掉编辑器那处，本条仍绿，只有行为用例红）。
+    //    ⇒ 正确做法：**只在编辑器监听块内**找，块边界用下一个 `attachUserScrollClear`。
+    const lStart = src.indexOf('shownView.scrollDOM.addEventListener("scroll"');
+    expect(lStart, "应能定位编辑器滚动监听").toBeGreaterThan(-1);
+    const lEnd = src.indexOf("attachUserScrollClear", lStart);
+    const editorListener = src.slice(lStart, lEnd < 0 ? src.length : lEnd);
+    expect(editorListener, "编辑器监听里要写槽").toContain(
+      "t.scrollTop = shownView.scrollDOM.scrollTop;",
     );
+    expect(
+      editorListener,
+      "滚动后要排程落盘（必须是编辑器这一侧自己的，不能拿预览那侧顶替）",
+    ).toMatch(/scheduleSessionSave\(\);/);
     expect(src, "关窗回调要『先拦下 → 再丢一条没人 await 的收尾』").toMatch(CLOSE_CALLBACK);
     expect(src, "无脏文档那支要先等会话落盘，光排队等于没存").toMatch(CLEAN_BRANCH);
     expect(src, "收尾要以 destroy() 收场（close() 会再发一次 CloseRequested）").toMatch(CLOSE_TAIL);
