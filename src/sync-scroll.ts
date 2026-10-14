@@ -1289,13 +1289,17 @@ export function measureAndKeepScroll(panel: Panel): void {
       }
     }
     reassertViewScroll(panel);
-    // ⚠️ B288④-3：预览面板测量完成后，按规范游标 `syncV` 把预览重定位到**新几何**下对应行。
-    //    源码有 `pendingSyncCursor` + `reassertViewScroll` 两道保险，预览此前**没有**这一道：
-    //    `restorePreviewScroll` 在「未测量」窗口里落到旧像素（`t.scrollTop`，分屏前按旧宽度量
-    //    出来的），测完既没人按新宽度重算，也就一直停错行（宽度变化 → 两侧错位）。这里补上
-    //    「测完按 syncV 反算」这道，与源码同口径（canonical v 唯一真值、像素现场反算）。
-    //    面板没挂预览 / 不是预览标签 / 同步关着 / 没有规范游标 ⇒ `restorePreviewScroll` 自己早退。
-    restorePreviewScroll(panel);
+    // ⚠️⚠️ **B288④-3 已撤回（e2e 证明有害，勿再加回来）**：曾在这里补 `restorePreviewScroll(panel)`
+    //    让预览「测完按 syncV 重落」。实测（sync-e2e-matrix ③ / sync-e2e-switch-cycle ②③）：
+    //    ① 此处 `unmeasuredPanels.delete(panel)`（上面第 1269 行）**已经跑过** ⇒ 它不走
+    //       「未测量 ⇒ 跳过游标」那条守卫，而是直接走游标支 `syncToLineProgrammatic(t.syncV)`；
+    //    ② 但此刻**预览的块几何还没渲染/测量好**（预览靠 `renderMarkdownFor`→`setBlocks`
+    //       自己的那条链路铺开，与本帧 CM6 measure 不是同一拍）⇒ v→px 按未铺开的几何算出
+    //       287（= v×源码行高 14，而非 v×块高 42 的 861）；
+    //    ③ `syncToLineProgrammatic` 落地即 `recordScroll(287)` **把槽写成错的 287** ⇒
+    //       后续步骤（新增/减少分屏、关回单面板）全部从被污染的值派生，连锁红 5 条。
+    //    ⇒ 预览的重落**必须留在它自己那条链路**（B279 补落 / `renderMarkdownFor` 之后），
+    //      不许借 CM6 的 measure 帧越俎代庖。宽度变化后预览按 v 重落由 ④-2（split move 支）负责。
   });
 }
 

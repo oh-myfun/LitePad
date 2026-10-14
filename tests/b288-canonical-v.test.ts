@@ -10,10 +10,10 @@
 // 修法（用户拍定「会话内 + session 存 v」全量方案）：把规范游标 `v`（行号+小数、宽度无关）
 // 立为唯一真值，像素仅现场反算；并让 session 落盘也存 v，实现换宽度重启仍按行还原。
 //
-// 四处改动各配一条可红契约（jsdom 造不出未测量窗口 / 拖拽几何，故 #443/#444/#445 走
-// 静态契约 + 退化反验证，与 B288 二轮 restore-preview-unmeasured 同口径；#446 走真实
-// 运行时回环）。退化反验证一律「把那一行从源串里摘掉，上面的判定必须翻转」——证明确实
-// 钉住了具体那一行，而非随便一段注释。
+// 四处改动各配一条可红契约（jsdom 造不出未测量窗口 / 拖拽几何，故 ④-1/④-2 走静态契约 +
+// 退化反验证，与 B288 二轮 restore-preview-unmeasured 同口径；④-3 已撤回故不留契约；
+// ④-4 走真实运行时回环）。退化反验证一律「把那一行从源串里摘掉，上面的判定必须翻转」——
+// 证明确实钉住了具体那一行，而非随便一段注释。
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { sessionStore } from "../src/session/store";
@@ -21,15 +21,6 @@ import { sessionStore } from "../src/session/store";
 const SYNC = readFileSync("src/sync-scroll.ts", "utf-8").replace(/\r\n/g, "\n");
 const SPLIT = readFileSync("src/tabs/split.ts", "utf-8").replace(/\r\n/g, "\n");
 const REBUILD = readFileSync("src/session/rebuild.ts", "utf-8").replace(/\r\n/g, "\n");
-
-/** 取出 `measureAndKeepScroll` 的函数体（首次出现，避免被 import 块截歪）。 */
-function measureBody(): string {
-  const start = SYNC.indexOf("export function measureAndKeepScroll(");
-  if (start < 0) throw new Error("应能定位 measureAndKeepScroll");
-  const next = SYNC.indexOf("\nexport function", start + 10);
-  const end = next < 0 ? SYNC.length : next;
-  return SYNC.slice(start, end);
-}
 
 describe("B288④-1 syncSourceV 未测量预览必须报已知 syncV（不许报 0 抹位置）", () => {
   it("预览分支必须在未测量守卫下返回 t.syncV（不是 topVisibleLine 假游标）", () => {
@@ -77,30 +68,12 @@ describe("B288④-2 split move 支预览按自身 syncV 重落（绝不用源 vD
   });
 });
 
-describe("B288④-3 measureAndKeepScroll 测完补 restorePreviewScroll 按新几何重落", () => {
-  it("预览必须在 reassertViewScroll 之后按规范游标重定位", () => {
-    const body = measureBody();
-    const reassert = body.indexOf("reassertViewScroll(panel)");
-    const restore = body.indexOf("restorePreviewScroll(panel)");
-    expect(reassert, "应能定位 reassertViewScroll(panel)").toBeGreaterThan(-1);
-    expect(restore, "应能定位 restorePreviewScroll(panel)").toBeGreaterThan(-1);
-    expect(
-      restore,
-      "restorePreviewScroll(panel) 必须在 reassertViewScroll 之后（测完才按新几何重算）",
-    ).toBeGreaterThan(reassert);
-  });
-
-  it("反向验证：摘掉 restorePreviewScroll(panel) 调用，上面的判定必须失效", () => {
-    const call = "restorePreviewScroll(panel);";
-    expect(measureBody(), "前置：固定代码确有该调用").toContain(call);
-    const degraded = measureBody().replace(call, "/* removed */");
-    expect(degraded, "退化：应真的摘掉了该调用").not.toBe(measureBody());
-    expect(
-      degraded,
-      "退化后 restorePreviewScroll(panel) 调用必须消失（否则上面的 toContain 形同虚设）",
-    ).not.toContain(call);
-  });
-});
+// ⚠️ **B288④-3 已撤回**：原打算在 `measureAndKeepScroll` 的 rAF 里补
+// `restorePreviewScroll(panel)` 让预览「测完按 syncV 重落」。e2e 证明它有害（见
+// `src/sync-scroll.ts` 同位置的撤回说明）：该帧 `unmeasuredPanels.delete(panel)` 已先跑过
+// ⇒ 走游标支 `syncToLineProgrammatic(t.syncV)`，而预览块几何此刻还没铺开 ⇒ v→px 算成
+// 287（v×源码行高）而非 861（v×块高），且 `recordScroll(287)` 把槽污染 ⇒ 连锁红 5 条。
+// 此处**不留契约**（留了就是给一条已被证伪的做法背书）；宽度变化后预览按 v 重落由 ④-2 负责。
 
 describe("B288④-4 session 存规范游标 v（宽度无关、换宽度重启按行还原）", () => {
   it("toSessionState 把 syncV 随记录落盘并取整，未同步时为 null", () => {

@@ -211,10 +211,12 @@ describe("B154 同步滚动：跨视图模式与「谁滚谁当源」", () => {
     // ⚠️ B251 换锚：这条 RD 现在挂在**唯一取值口** `syncSourceV` 上 —— 「源显示在哪一侧
     //    就取哪一侧」这个判断在全文件里**只此一处**（跟随 / 收口 / 交接都经它），旧写法
     //    是散在 `pushSyncToSiblings` 里的局部三元 ⇒ 判据从 `applyBody` 上移到取值口。
-    // ⚠️ 判据带完整结构（判空 + return 一整条）：只写 `t.viewMode === "preview"` 会连
-    //    `syncSourceSnapshot` 里那句同形的判空一起命中，退化打不掉就变假绿。
+    // ⚠️ 判据带完整结构（预览分支整块 + 走预览那侧几何的 return 一整条）：只写
+    //    `t.viewMode === "preview"` 会连 `syncSourceSnapshot` 里那句同形的判空一起命中，
+    //    退化打不掉就变假绿。B288④ 后预览分支扩成块（先未测量守卫、再走预览几何），
+    //    故判据要覆盖「`if (...) preview` 块内确实有 `return p?.preview?.topVisibleLine()`」。
     expect(SYNC_V, "源那侧要先认出预览容器（源是预览就走预览那侧）").toMatch(
-      /if \(t\.viewMode === "preview"\) return/,
+      /if \(t\.viewMode === "preview"\) \{[\s\S]*?return p\?\.preview\?\.topVisibleLine\(\) \?\? null;/,
     );
     // ⚠️⚠️ B257 翻案：这两条以前是「跨侧只交整数块首 / 同侧才交完整 `v`」的**跨侧档**
     //    （B251 立的，本轮撤掉）。撤它的理由（自测台 `tests/sync-stability.test.ts` 实测）：
