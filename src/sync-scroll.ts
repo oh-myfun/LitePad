@@ -1170,19 +1170,29 @@ export function restorePreviewScroll(panel: Panel): void {
   //   ⚠️ `applyPanelMode` 先于本函数把预览 `setBlocks` 渲染好，这里一定能算到块几何
   //      （B129 纪律：必须在 applyPanelMode 之后）。
   if (docSyncModes.get(t.docId) === true && t.syncV !== null) {
-    const landed = preview.syncToLineProgrammatic(t.syncV);
-    if (landed !== null) {
-      recordScroll(t.tabId, landed);
-      preview.clearPendingSync();
-      // ⚠️ B288 诊断：按游标还原预览的**落点**。若内容是异步渲染的，这一步可能算不出
-      //    块几何（`landed` 为 null ⇒ 走下面兜底），或落点与容器实际值不符 ⇒ 看这一条。
-      logger.trace(
-        "viewport",
-        `还原 · 预览(游标) tab=${t.tabId} 游标=${t.syncV} 落到=${fmtPx(landed)} 容器=${fmtPx(preview.root?.scrollTop ?? -1)}`,
-      );
-      return;
+    // ⚠️ B288 二轮（用户复现：拖标签分屏预览仍复位）：尺子未测（新建视图 / setState
+    //    之后到 measure 帧之前，或拖标签把面板摘出渲染树后重挂载的窗口）时，
+    //    `syncToLineProgrammatic(v)` 拿不到块几何，会把 v→px 算成 **0**（返回 0 而非
+    //    null）—— 不像 `restoreViewScroll` 里 `sourceTopOfV` 返回 null 能自然兜底。
+    //    若此刻 `recordScroll(0)` + `return`，会把槽里正确的真值（如 2886）抹成 0，
+    //    之后 `rememberViewScroll` 的未测量守卫也救不回（那时容器已 measured、
+    //    scrollHeight>0，三判据合取不成立）。与 `restoreViewScroll` 同款纪律：未测量
+    //    时跳过游标分支，落到下面「槽支」用 `t.scrollTop` 钉，`pinScrollTop` 逐帧补钉，
+    //    等容器撑开后自愈。
+    if (!unmeasuredPanels.has(panel)) {
+      const landed = preview.syncToLineProgrammatic(t.syncV);
+      if (landed !== null) {
+        recordScroll(t.tabId, landed);
+        preview.clearPendingSync();
+        // ⚠️ B288 诊断：按游标还原预览的**落点**。
+        logger.trace(
+          "viewport",
+          `还原 · 预览(游标) tab=${t.tabId} 游标=${t.syncV} 落到=${fmtPx(landed)} 容器=${fmtPx(preview.root?.scrollTop ?? -1)}`,
+        );
+        return;
+      }
     }
-    // landed 为 null（没找到块）：落到下面用 scrollTop 的旧路径兜底。
+    // 未测量（跳过游标）/ landed 为 null（没找到块）⇒ 落到下面用 scrollTop 的旧路径兜底。
   }
   if (t.scrollTop === null) return;
   // 预览那一次 `setBlocks` 刚把内容撑开，同一帧内赋值会被裁成 0（B134），
