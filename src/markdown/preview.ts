@@ -479,6 +479,24 @@ export class PreviewPane {
     const idx = this.blocks.indexOf(target);
     const next = this.blocks[idx + 1];
     const el = target.el;
+    // B288 三轮：块几何不可用（容器未铺开 / display:none / 刚挂载尚未 layout）时，块与
+    //   容器的 rect 全为 0，`blockTop` 算出的 `top` 必为 0——照常返回 0 会被调用方当成
+    //   「停在顶部」：`renderMarkdownFor` 的 B279 补落 `recordScroll(0)` 把槽里真值抹掉、
+    //   预览视觉被钉回开头（用户复现「拖标签分屏预览置 0」的现场）。这里直接返回 null，
+    //   让所有调用方走兜底：`restorePreviewScroll` 的 `pinScrollTop` 按槽里真值自愈、B279
+    //   补落的 `if (landed !== null)` 跳过不写。jsdom 测试桩（preview-sync / sync-drag-split）
+    //   给块 / 容器非 0 几何，不受影响；判定要求「块 rect 全 0 且容器高 0」二者同时成立，
+    //   才认作未铺开——已铺开的容器（高 > 0）即便某块恰好贴顶（rect.top=0）也不会误判。
+    const eb = el.getBoundingClientRect();
+    if (
+      eb.top === 0 &&
+      eb.left === 0 &&
+      eb.width === 0 &&
+      eb.height === 0 &&
+      this.root.getBoundingClientRect().height === 0
+    ) {
+      return null;
+    }
     // 关键：offsetTop 的基准是最近的**定位祖先**（外层 .layout-panel，含标签栏），
     // 拿它当预览内容偏移会带上几十像素常量误差 → 改用相对预览容器的 rect 差值。
     let top = this.blockTop(el);
