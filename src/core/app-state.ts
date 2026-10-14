@@ -195,21 +195,12 @@ export let syncingDocId: number | null = null;
  * `reassertViewScroll` 再钉回 DOM，歪值就此锁死并经同步传染全部同文档实例，
  * 用户报的「切源码对不上 / 切回预览跳变」的完整病根）。
  *
- * 窗口内的 v→px 换算一律**挂起**（`pendingSyncCursor`），等 `measureAndKeepScroll`
- * 的 rAF（此刻 measure 已完成、heightMap 已是实测）按实测几何统一补写——
- * 与 B263 的「display:none 量不成 ⇒ 挂起」同一个纪律，只是判据从「藏没藏」
- * 换成「测没测」。挂起对在屏目标同样生效：估算 px 写进 DOM 一样是毒。
+ * 窗口内的 v→px 换算一律**不写**（落槽支兜底），等 `measureAndKeepScroll` 的 rAF
+ * （此刻 measure 已完成、heightMap 已是实测）调 `restoreViewScroll` 按实测几何重落
+ * （B288⑤-4：挂起补写 `pendingSyncCursor` 已删 —— 单轨下还原走 v，重落就是重还原，
+ * 与 B263 的「display:none 量不成 ⇒ 跳过」同一个纪律，只是判据从「藏没藏」换成「测没测」）。
  */
 export const unmeasuredPanels = new WeakSet<Panel>();
-
-/**
- * B263：**挂起的游标** ——「离屏源码兄弟这一手没量成」的记号（tabId → 游标 `v`）。
- *
- * ⚠️ 这不是**待补的位置**：那一刻的尺子（借来的那块 `EditorView`）多半正被 `display:none`
- *    藏着，本身量不出东西，拿它挂的「位置」是假的。挂的是**游标**（哪一行），等这份兄弟
- *    现形、尺子好用时再量一次 —— 见 `flushPendingSyncCursor`。
- */
-export const pendingSyncCursor = new Map<number, number>();
 
 /**
  * ⚠️ B254：切换标签那一刻，抑制 `handleUpdate` 里那句「推兄弟」。

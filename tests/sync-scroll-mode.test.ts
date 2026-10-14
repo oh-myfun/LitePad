@@ -70,7 +70,7 @@ const SYNC_STATE = "const docSyncModes = new Map<number, boolean>();";
 // ⚠️ B159 起这段里有三个函数（`applySyncToSibling` / `broadcastSyncPos` /
 //    `pushSyncToSiblings`）—— 位置落兄弟那几条纪律抽进了前两个，切片必须从最上面那个
 //    起头，否则下面那些「预览分支要写在 px 直推之前」的判据会静默失配（切片为空）。
-const PUSH_BODY = slice(main2, "function applySyncToSibling(", "function flushPendingSyncCursor(");
+const PUSH_BODY = slice(main2, "function applySyncToSibling(", "function topVisibleLineFrac(");
 // ⚠️ B251：`PUSH_BODY`（落点函数 + 推兄弟 + 广播）与 `pushSyncToSiblings` 现在是**两段**，
 //    契约要看的是各自的落点/取坐标那一处，全段扫会把「谁取坐标」和「往哪落」搅在一起，
 //    于是下面几条判据要么找不到锚点、要么锚在对方身上（退化照样绿）。分开各切一份。
@@ -80,7 +80,7 @@ function applyBody(): string {
 }
 /** 「从源身上取坐标再往兄弟落」那一段（`pushSyncToSiblings` 全函数）。 */
 function pushBody(): string {
-  return slice(main2, "function pushSyncToSiblings(", "function flushPendingSyncCursor(");
+  return slice(main2, "function pushSyncToSiblings(", "function topVisibleLineFrac(");
 }
 // ⚠️ B251 新增两份切片：统一游标之后，「游标→像素」与「像素→游标」各自只剩一个出口，
 //    判据（尤其是退化串）得能盯到**那一个函数**身上 —— 全段扫会把「谁取坐标」与
@@ -1210,7 +1210,7 @@ describe("B164 子窗口也要能同步滚动（跨窗口广播）", () => {
     const pushBody = slice(
       degradedPush,
       "function pushSyncToSiblings(",
-      "function flushPendingSyncCursor(",
+      "function topVisibleLineFrac(",
     );
     expect(pushBody, "退化后「不许无条件 return」必须命中").toMatch(
       /if \(sibs\.length === 0\) return;/,
@@ -1250,7 +1250,7 @@ describe("B167 同步滚动抖动：选区派发不许自带滚动 + 回推要�
     const pushBody = slice(
       degradedPush,
       "function pushSyncToSiblings(",
-      "function flushPendingSyncCursor(",
+      "function topVisibleLineFrac(",
     );
     // ⚠️ 判据要盯**调用**（`dispatch({…scrollIntoView: false}`）：源码注释里也提到这个
     //    选项名，只判 `scrollIntoView: false` 会连注释一起命中 ⇒ 退化用例假绿。
@@ -1481,11 +1481,7 @@ describe("B152 反向验证：退回旧写法，上面那几条必须变红", ()
     const ORIG = "recordScroll(other.tabId, top);";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
     const degraded = main2.replace(ORIG, "other.scrollTop = top;");
-    const body = slice(
-      degraded,
-      "function pushSyncToSiblings(",
-      "function flushPendingSyncCursor(",
-    );
+    const body = slice(degraded, "function pushSyncToSiblings(", "function topVisibleLineFrac(");
     expect(body, "绕过 recordScroll 的写法要被抓到").not.toMatch(
       /recordScroll\(other\.tabId, top\)/,
     );
@@ -1676,11 +1672,7 @@ describe("B154 反向验证：退回 B152 的旧口径，上面那几条必须�
     const ORIG = "if (landed !== null) recordScroll(other.tabId, landed);";
     expect(PUSH_BODY, "退化串要先自证原句还在").toContain(ORIG);
     const degraded = main2.replace(ORIG, "");
-    const body = slice(
-      degraded,
-      "function pushSyncToSiblings(",
-      "function flushPendingSyncCursor(",
-    );
+    const body = slice(degraded, "function pushSyncToSiblings(", "function topVisibleLineFrac(");
     // 源码分支那笔是 `…, px)`，盯着 `landed` 才只打预览这一格（盯 `shown` 那套前缀已作废）。
     expect(body, "删掉这笔记录后，预览兄弟就没位置可落了").not.toMatch(
       /recordScroll\(other\.tabId,\s*landed\)/,

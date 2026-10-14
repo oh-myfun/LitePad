@@ -111,3 +111,29 @@ describe("B288⑤-1b 还原路径不再要求「同步开着」（同步关着�
     expect(degraded, "退化后门槛必须出现（否则上面的 not.toContain 形同虚设）").toContain(GATE);
   });
 });
+
+describe("B288⑤-4 挂起补写机制已删（pendingSyncCursor / flushPendingSyncCursor）", () => {
+  // 单轨下还原走 v（1b）：「几何没好先挂起、等 measure 后按估算/实测几何补写槽」整条
+  // 机制被「measure 后 restoreViewScroll 按 v 重落」取代 —— 挂起是双轨时代给像素槽续命的补丁。
+  it("源码里不再有挂起机制，measure rAF 改调 restoreViewScroll 重落", () => {
+    expect(SYNC, "pendingSyncCursor 必须已删（加回来就是给双轨续命）").not.toContain(
+      "pendingSyncCursor",
+    );
+    expect(SYNC, "flushPendingSyncCursor 必须已删").not.toContain("flushPendingSyncCursor");
+    const body = fnBodyOf("export function measureAndKeepScroll(panel: Panel): void {");
+    expect(body, "measure 完成后应按 v 重还原（一步到位）").toContain("restoreViewScroll(panel);");
+  });
+
+  it("反向验证：把重落换回旧的「flush + reassert」组合，上面的判定必须失效", () => {
+    const body = fnBodyOf("export function measureAndKeepScroll(panel: Panel): void {");
+    expect(body, "前置：rAF 里确有重落").toContain("restoreViewScroll(panel);");
+    const degraded = body.replace(
+      "restoreViewScroll(panel);",
+      "flushPendingSyncCursor(panel, panel.viewTabId); reassertViewScroll(panel);",
+    );
+    expect(degraded, "退化：应真的换回了旧组合").not.toBe(body);
+    expect(degraded, "退化后重落必须消失（否则上面的 toContain 形同虚设）").not.toContain(
+      "restoreViewScroll(panel);",
+    );
+  });
+});

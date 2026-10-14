@@ -34,7 +34,6 @@ import {
   measureAndKeepScroll,
   reassertViewScroll,
   syncSourceV,
-  flushPendingSyncCursor,
   alignShownToSyncSource,
   syncSourceSnapshot,
   tabAtOwnFloor,
@@ -443,12 +442,10 @@ export function switchTab(panelId: number, tabId: number): void {
   //   `.panel-host.mode-preview .panel-editor { display: none }`（styles/preview.css）
   //   ⇒ display:none 期间写 scrollTop 浏览器不认、class 一切还清零。
   applyPanelMode(panel);
-  // B263：编辑器刚从 `display:none` 放出来 ⇒ 这一刻才量得准 —— 补写挂起的那手游标，
-  //    ⚠️ 必须排在下面 `restoreViewScroll` **之前**：还原是读槽钉视口，补写晚一步就来不及。
-  //    ⚠️ B270：此刻 heightMap 还是估算行高（setState 刚跑完、measure 还没来），这一趟
-  //    换出来的是「估算空间」的像素 —— 只当**占位值**用（保 B263 语义），`keepPending`
-  //    不删挂起；measure 完成后 `measureAndKeepScroll` 的 rAF 里按实测几何**再补一次**。
-  flushPendingSyncCursor(panel, tabId, true);
+  // B288⑤-4：原先这里有一条 `flushPendingSyncCursor(panel, tabId, true)`（B263 挂起补写，
+  //  写「估算空间」的占位 px 进槽）。单轨下 `restoreViewScroll` 的 v 分支直接按 syncV
+  //  现算落位（1b），占位值无用；measure 后的 rAF 会再按实测几何重落 —— 整条挂起机制
+  //  （pendingSyncCursor / flushPendingSyncCursor）已删。
   // applyPanelMode 已经让编辑器重新可见 ⇒ 这一趟还原**现在才钉得进去**。
   restoreViewScroll(panel);
   logViewport("切换 · 还原后", panel);

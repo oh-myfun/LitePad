@@ -9,7 +9,6 @@ import {
   tabs,
   activePanelId,
   suppressSyncPush,
-  pendingSyncCursor,
   unmeasuredPanels,
   docSyncModes,
 } from "./core/app-state";
@@ -153,17 +152,15 @@ export function isSyncSource(tab: Tab, panel: Panel): boolean {
  * 恒 0 ⇒ 下面那句 `recordScroll` 就把那份离屏兄弟的槽写成「第 1 行」⇒ 切过去
  * `restoreViewScroll` 读出来 ⇒ **回顶**（自测台实测：滚 c 到 v=33.31，切回 a 落到 v=1.00）。
  *
- * ⚠️⚠️ 修法是**分两步**：
+ * ⚠️⚠️ 修法（B288⑤-4 后收敛为一条 + 一道闸）：
  *    ① **闸门**：借来的尺子正躺在纯预览那一格里（面板带 `mode-preview` 类）⇒ 这一手
- *       量不成，**连换算带写槽一起跳过** —— 写下去的 0 会当成「用户停在第 1 行」进会话
- *       记录（`recordScroll → sessionStore.setScroll`），那是「重启回顶」，与本条症状同型；
- *    ② **挂起 + 补写**：这一手的游标存进 `pendingSyncCursor`，等这份兄弟**自己现形**
- *       （切标签切到它）、`applyPanelMode` 已把编辑器从 `display:none` 放开的那一刻，
- *       再量一次补写进它自己的槽 —— 紧邻的 `restoreViewScroll` 就读到补好的值
- *       （见 `flushPendingSyncCursor`）。
- *    ⚠️ 两步缺一不可：只有①（换不出就不写）会让这份离屏源码**跟不上同步**（B248 那条老病：
- *       滚预览时未显示的那份代码标签纹丝不动，切过去还是老位置）；只有②（不设闸门）则那个
- *       0 已经进了槽和会话，只是被补写盖住 —— 中间那一次落盘就会把「重启回顶」留下。
+ *       量不成，**连换算带写槽一起跳过** —— 写下去的 0 会当成「用户停在第 1 行」，
+ *       那是「重启回顶」，与本条症状同型；
+ *    ② **离屏兄弟靠 `other.syncV` 跟上**（B273）：v 与模式/测量无关、无条件写；
+ *       它现形时 `restoreViewScroll` 的 v 分支按同一游标现算像素落位。
+ *       （B288⑤-4 前②是「挂起 pending + 现形补写槽」—— 单轨下落盘只存 v，
+ *       挂起补写是重复劳动，已删。）
+ *    ⚠️ 闸门仍不可省：不设闸门那个 0 就进了 DOM 和槽，中间那一次落盘就会把「重启回顶」留下。
  *
  * ⚠️ 为什么不拿「`getClientRects().length > 0`」当闸门（真机的准话：元素 `display:none`
  *    ⇒ 空 rect）：**jsdom 不做布局**，没覆写 `getClientRects` 的桩恒返回空列表 ⇒ 那一判据
@@ -191,8 +188,7 @@ export function isSyncSource(tab: Tab, panel: Panel): boolean {
  *   ⚠️ 同理，**注释里不许原样复述那些切片起止串**：契约扫的是整段源码，注释里写一遍
  *   一样会被 `indexOf` 先命中（本轮就是这么踩的）。这里一律用「落点函数」这类说法指代。
  *
- * @returns 是否真的落了位。离屏 / 没有容器 ⇒ `false` ⇒ 调用方落回按游标换算那一支
- *   —— 那一支还负责 B263 的 `pendingSyncCursor` 补写（离屏兄弟现形时靠它补位）。
+ * @returns 是否真的落了位。离屏 / 没有容器 ⇒ `false` ⇒ 调用方落回按游标换算那一支。
  *   当初写成「到底就直接 return」把这条整跳过了 ⇒ 离屏源码兄弟切回来位置不对
  *   （sync-three-tabs 实测：v 从 33.31 掉到 32.8）。
  */
@@ -332,23 +328,22 @@ export function applySyncToSibling(other: Tab, v: number | null, atFloor = false
   //    ⇒ `.panel-editor { display: none }` ⇒ CM6 量不出行顶 ⇒ 这一手**量不成**。
   //    量不成就**两步都不做**：既不换算、也不写槽（写下去的 `top` 恒 0，会当成「用户停在
   //    第 1 行」进会话记录 ⇒ 重启回顶，B162 那条老纪律：宁可留死格，不许拿 0 抹真位置）。
-  //    那一手**不能白丢** —— 游标挂进 `pendingSyncCursor`，等这份兄弟现形再补写（下面闸门
-  //    之后那条 `if (!view)` 兜底循环也照旧跑，找同文档另一个源码尺子）。
+  //    ⚠️ **B288⑤-4：挂起补写已删** —— 单轨下兄弟现形时 `restoreViewScroll` 的 v 分支
+  //       直接按 `other.syncV` 落位（同一个 v，1b 起不再要求同步开着），挂起补写是重复
+  //       劳动，且它写的「估算空间 px 槽」正是要消灭的东西。
   //    ⚠️ 闸门判据取**面板模式类**（`applyPanelMode` 写它、`rememberViewScroll` 读它，是
   //       产品自己的口径）—— 不取「量得到量不到」：那在桩上恒真（既有桩把 `lineBlockAt`
   //       覆成实时几何、离屏也能量）⇒ 闸门在桩上恒假 ⇒ 怎么退化都绿。
-  if (!shownView) pendingSyncCursor.set(other.tabId, v);
   const rulerHidden =
     !shownView && !!panelOfTab(other.tabId)?.bodyEl?.classList.contains("mode-preview");
   if (rulerHidden) return;
   // ⚠️⚠️ **B271**：尺子未测（`setState`/新建视图之后、measure 帧之前，见 `unmeasuredPanels`）
-  //    ⇒ 换算必落「估算空间」—— 一个字节的估算 px 都不许写：写进槽会被
-  //    `reassertViewScroll` 钉回 DOM（measure 换成实测排版后同一个 px 对应**另一行**），
-  //    再经同步传染全部同文档实例。**在屏目标同样有毒**（毒的是它自己的 DOM+槽）⇒
-  //    同样改挂起，等 measure 后的补写按实测几何落。
+  //    ⇒ 换算必落「估算空间」—— 一个字节的估算 px 都不许写。**在屏目标同样有毒**
+  //    （毒的是它自己的 DOM+槽）⇒ 同样直接跳过。
+  //    ⚠️ **B288⑤-4**：不再挂起 —— `measureAndKeepScroll` 的 rAF（measure 完成、
+  //       heightMap 已实测）会调 `restoreViewScroll` 按 v 重落，一步到位。
   const rulerPanel = shownView ? shown : panelOfTab(other.tabId);
   if (view && rulerPanel && unmeasuredPanels.has(rulerPanel)) {
-    if (shownView) pendingSyncCursor.set(other.tabId, v);
     return;
   }
   if (!view) {
@@ -810,43 +805,6 @@ export function syncJumpToLine(src: Tab, v: number | null): void {
   pushSyncToSiblings(src, true, { v });
 }
 
-/**
- * B263：把**挂起的游标**补写成源码兄弟自己的槽 —— 在「这份兄弟现形之后、`restoreViewScroll`
- * 之前」调用（见 `switchTab` 里 `applyPanelMode` 与 `restoreViewScroll` 之间那一行）。
- *
- * ⚠️ 为什么必须卡在这两行之间：`applyPanelMode` 才把 `mode-preview` 摘掉、把编辑器从
- *    `display:none` 里放出来，此刻量 `sourceTopOfV` 才是**准的**（上一刻量的是一块藏着的
- *    几何）；而 `restoreViewScroll` 马上就要读它的槽把视口钉住，补写必须排在那之前，
- *    否则补了也来不及、用户看到的还是回顶的那个位置。
- *
- * ⚠️ 补写用的是 `recordScroll`（**只写槽**）—— 这一路不钉 DOM：那格此刻正在被 `switchTab`
- *    自己钉，`pinScrollTop` 插进去会被随后那一次还原盖掉。
- *
- * ⚠️⚠️ **B270（用户报：三实例同文档 —— 左面板源码+预览两标签、右面板预览，两预览同步滚，
- *    切源码「位置对不上」、切回预览「跳变」）—— 这一趟补写其实量不准**：它发生在
- *    `setState` 之后、measure 之前，CM6 的 heightMap 还是**估算行高**（B256 已证真机
- *    estimate ≠ 实测：写 1222 当帧只落 858 那一型）。换出来的 `top` 是「估算空间」的
- *    像素，restore 把它钉上；下帧 measure 换成实测排版后，同一个 px 对应的就是**另一行**
- *    ⇒ 源码显示的位置与预览对不上。更糟的是切回预览时 `syncSourceSnapshot` 按这份歪位采
- *    `v`，收口把两个预览一起推得跳变。
- *
- *    修法 = **补写分两段**：`switchTab` 里这一趟照旧先写（保 B263 的「离屏先有值」语义，
- *    `keepPending: true` **不删** pending）；`measureAndKeepScroll` 的 rAF（measure 已
- *    完成、heightMap 已是实测）里**再补一次**同一把 pending `v` 的换算并落槽，随后的
- *    `reassertViewScroll` 把它钉回去 —— 成功后才删。估算空间那一版只活一帧。
- */
-export function flushPendingSyncCursor(panel: Panel, tabId: number, keepPending = false): void {
-  const v = pendingSyncCursor.get(tabId);
-  if (v === undefined) return;
-  if (!panel.view) return;
-  // B271：尺子未测 ⇒ 这一手续不成，留着 pending 给 measure 后那次（不写估算 px）
-  if (unmeasuredPanels.has(panel)) return;
-  const top = sourceTopOfV(panel.view.view, v);
-  if (top === null) return;
-  if (!keepPending) pendingSyncCursor.delete(tabId);
-  recordScroll(tabId, top);
-}
-
 export function topVisibleLineFrac(view: EditorView, px = view.scrollDOM.scrollTop): number {
   // ⚠️ B256：`px` **可以显式指定**（见 `sourceCursorPx`：还原刚写完、浏览器还没接过那一刻
   //    要按「这份标签**该**停在哪」取游标，而不是按 DOM 里那个被裁小的余量）。不传就照旧
@@ -1009,7 +967,7 @@ export function tabAtOwnFloor(t: Tab | undefined): boolean {
   // ⚠️⚠️ 同理，**可滚范围必须真存在**：`scrollHeight` 还没撑开（新建实例 / 内容未渲染 /
   //    桩里没建模）时 `ownFloorPx` 算出 0，而 `scrollTop` 也是 0 ⇒ `0 - 0 ≤ 容差` ⇒
   //    照样**恒判「到底」**（B284 实测：sync-three-tabs 那条用例被这一路假阳性打红 ——
-  //    锚点分支一进就 `return`，把 B263 的 `pendingSyncCursor` 补写整条跳过了）。
+  //    锚点分支一进就 `return`，把按游标换算那一支整条跳过了）。
   //    ⇒ 没有可滚范围就谈不上「到底」，一律答「没到底」，交回按游标换算那一路。
   const floor = ownFloorPx(el);
   if (floor <= 0) return false;
@@ -1134,16 +1092,16 @@ export function restoreViewScroll(panel: Panel): void {
   //      同步关着时它正是 B149 基线要的「各认各的」——按自己的 v 还原自己的位置，
   //      而不是退回像素槽（像素几何相关，宽度一变就错行）。
   //   ⚠️ 尺子未测（新建视图 / setState 之后到 measure 帧之前）⇒ 此刻换算必落「估算空间」，
-  //      一个字节都不写，改挂起等 measure 后的补写（与现有 `pendingSyncCursor` 纪律一致）。
+  //      一个字节都不写，落到下面槽支兜底；measure 后 `measureAndKeepScroll` 的 rAF 会调
+  //      **本函数**按实测几何重落（B288⑤-4：挂起补写已删，重落就是重还原）。
   if (t.syncV !== null) {
     if (unmeasuredPanels.has(panel)) {
-      // ⚠️ 尺子未测：v→px 换算会落「估算空间」，先把正确的 v 挂起，等 measure 后
-      //    `flushPendingSyncCursor` 按实测几何补写并落槽、再由 `reassertViewScroll` 钉回。
-      //    但槽里那份 `t.scrollTop` 是之前实测过的真值，**照样落到下面旧路径钉它兜底**：
+      // ⚠️ 尺子未测：v→px 换算会落「估算空间」，**什么都不写**（B288⑤-4：挂起补写已删）。
+      //    槽里那份 `t.scrollTop` 是之前实测过的真值，**照样落到下面旧路径钉它兜底**：
       //    浏览器按此刻估算余量裁一下（正是 B256 那条「还原被裁小」窗口），measure 后
-      //    上面那趟补钉回正位。不放行 ⇒ 离屏/未测期间这一格至少停在「真值被裁一帧」，
+      //    `measureAndKeepScroll` 的 rAF 调**本函数**按实测几何重落（v 分支一步到位）。
+      //    不放行 ⇒ 离屏/未测期间这一格至少停在「真值被裁一帧」，
       //    不会空着等到 measure 才动（B256 的桩靠这个把裁剪窗口造出来）。
-      pendingSyncCursor.set(t.tabId, t.syncV);
     } else {
       const top = sourceTopOfV(view, t.syncV);
       if (top !== null) {
@@ -1271,8 +1229,7 @@ export function measureAndKeepScroll(panel: Panel): void {
   const startPx = dom.scrollTop;
   requestAnimationFrame(() => {
     // B271：CM6 的 measure（rAF 序在前）此刻已完成、heightMap 已是实测行高 ——
-    // 估算窗口就此关闭。窗口内挂起的 v 在这里按**实测几何**补写并落槽，
-    // 随后的 `reassertViewScroll` 把修正后的槽钉回视口。
+    // 估算窗口就此关闭。
     unmeasuredPanels.delete(panel);
     const userTookOver = dom.scrollTop !== startPx && !isProgrammatic(dom);
     if (userTookOver) {
@@ -1282,20 +1239,15 @@ export function measureAndKeepScroll(panel: Panel): void {
       );
       return;
     }
-    if (panel.viewTabId !== null) flushPendingSyncCursor(panel, panel.viewTabId);
-    // ⚠️⚠️ **B274：离屏兄弟的槽也要跟上**。
-    //    只有「切到它那一趟」才会 flush 它自己的挂起 ⇒ 在此之前它的槽一直停在旧值
-    //    （真机日志 04:04:20~25：滚预览全程，离屏源码 tab1 的槽始终是 1923）。
-    //    后果有二：①切过去时从旧值跳到同步位置（用户看到的"跳一下"）；②会话落盘把
-    //    这个不同步**固化**，重启后各格各停各的（源码 v80.5 / 预览 v95）。
-    //    ⇒ 每次 measure 之后，把**其它面板**上已测量的挂起一并补写（只写槽、不钉 DOM）。
-    for (const otherId of [...pendingSyncCursor.keys()]) {
-      const otherPanel = panelOfTab(otherId);
-      if (otherPanel && otherPanel !== panel && !unmeasuredPanels.has(otherPanel)) {
-        flushPendingSyncCursor(otherPanel, otherId);
-      }
-    }
-    reassertViewScroll(panel);
+    // ⚠️ **B288⑤-4：挂起补写与重钉两道已删**，
+    //    换成**重还原**一步到位 —— measure 完成后几何是实测的，`restoreViewScroll` 的
+    //    v 分支按实测几何把 v 现算成 px 钉回 DOM 并落槽（同一函数、同一条纪律）。
+    //    预览面板会被它开头的 `viewMode === "preview"` 闸跳过 —— 预览的重落必须留在
+    //    自己那条链路（B279 补落），不许借 CM6 的 measure 帧越俎代庖（④-3 的教训）。
+    //    ⚠️ B274 的「离屏兄弟的槽也要跟上」随之瓦解：单轨下落盘只存 v，而 v 由
+    //       `applySyncToSibling` 无条件写 ⇒ 离屏兄弟的会话位置永远是最新的，槽（px）
+    //       只是 v=null 时的兜底，不再需要跨面板补写。
+    restoreViewScroll(panel);
     // ⚠️⚠️ **B288④-3 已撤回（e2e 证明有害，勿再加回来）**：曾在这里补 `restorePreviewScroll(panel)`
     //    让预览「测完按 syncV 重落」。实测（sync-e2e-matrix ③ / sync-e2e-switch-cycle ②③）：
     //    ① 此处 `unmeasuredPanels.delete(panel)`（上面第 1269 行）**已经跑过** ⇒ 它不走
