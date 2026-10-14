@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { sessionAll } from "./static";
 import { EditorView } from "@codemirror/view";
+import { tabs } from "../src/core/app-state";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -85,6 +86,7 @@ vi.mock("../src/ipc/api", () => ({
               cursorLine: 5,
               cursorCol: 3,
               scrollTop: 120,
+              syncV: 120 / 14, // B288⑤-1c：位置真值（行号，带行内比例）
             },
             {
               path: "b.md",
@@ -93,6 +95,7 @@ vi.mock("../src/ipc/api", () => ({
               cursorLine: 9,
               cursorCol: 2,
               scrollTop: 240,
+              syncV: 240 / 14,
             },
           ],
         },
@@ -107,6 +110,7 @@ vi.mock("../src/ipc/api", () => ({
               cursorLine: 3,
               cursorCol: 4,
               scrollTop: 60,
+              syncV: 60 / 14,
             },
           ],
         },
@@ -234,6 +238,18 @@ function cursorAt(view: EditorView): { line: number; col: number; scroll: number
     scroll: view.scrollDOM.scrollTop,
   };
 }
+/**
+ * 该文档对应标签的**规范游标 v**（B288⑤-1c）。
+ *
+ * ⚠️ 位置断言一律盯 v、不盯 px：像素是几何相关的「现场产物」（jsdom 下 CM6 的行高是
+ *    **估算值**，实测约 188px 而非 14 ⇒ 拿 px 当判据会随估算漂移，且 1c 删掉像素落盘后
+ *    根本不再有像素可恢复）。v 才是存档真值，恢复的是它，px 由当前几何现算。
+ */
+function syncVAt(i: number): number | null {
+  // ⚠️ 按**创建顺序**取，不按 path：这套 mock 下三个文档的 `path` 读出来都是 "a.md"
+  //   （实测 DIAG），path 匹配会全命中第一个。顺序则是稳定的：0=a.md、1=b.md、2=c.md。
+  return [...tabs.values()][i]?.syncV ?? null;
+}
 /** 标签条上第 i 个标签对应的文件路径（从视图内容反推，jsdom 无 data 属性保证）。 */
 function docNameOf(view: EditorView): string {
   return (view.state.doc.toString().split("\n")[0] ?? "").split(" line")[0];
@@ -264,11 +280,11 @@ describe("B129 会话恢复：面板激活标签 + 每标签光标 + 每标签�
 
   it("② 活动标签自己那份光标与视口被恢复（其余标签不得顶替）", () => {
     const shown = views().find((v) => panels()[0].contains(v.dom))!;
-    expect(cursorAt(shown), "b.md 应回到第 9 行第 2 列 / 视口 240").toEqual({
+    expect({ line: cursorAt(shown).line, col: cursorAt(shown).col }).toEqual({
       line: 9,
       col: 2,
-      scroll: 240,
     });
+    expect(syncVAt(1), "b.md 的规范游标要恢复成它自己那份（不是别人的）").toBe(240 / 14);
   });
 
   it("③ 切到同面板的另一个标签：它**自己的**光标与视口，不是刚离开那个的", async () => {
@@ -276,22 +292,17 @@ describe("B129 会话恢复：面板激活标签 + 每标签光标 + 每标签�
     await wait(60);
     const a = views().find((v) => panels()[0].contains(v.dom))!;
     expect(docNameOf(a), "应切到 a.md").toBe("a.md");
-    expect(cursorAt(a), "a.md 应回到第 5 行第 3 列 / 视口 120").toEqual({
-      line: 5,
-      col: 3,
-      scroll: 120,
-    });
+    expect({ line: cursorAt(a).line, col: cursorAt(a).col }).toEqual({ line: 5, col: 3 });
+    expect(syncVAt(0), "a.md 的规范游标要恢复成它自己那份").toBe(120 / 14);
 
     // 再切回 b.md：必须回到 b.md 自己的位置（共享视口的话这里会是 120）
     clickTab(tabEls(0)[1]);
     await wait(60);
     const b = views().find((v) => panels()[0].contains(v.dom))!;
     expect(docNameOf(b), "应切回 b.md").toBe("b.md");
-    expect(cursorAt(b), "b.md 应回到自己的第 9 行 / 视口 240").toEqual({
-      line: 9,
-      col: 2,
-      scroll: 240,
-    });
+    expect({ line: cursorAt(b).line, col: cursorAt(b).col }).toEqual({ line: 9, col: 2 });
+    // 共享视口的话这里会是 a.md 那份（120/14）
+    expect(syncVAt(1), "切回 b.md：仍是它自己那份游标，不是刚离开那个的").toBe(240 / 14);
   });
 
   it("④ 非活动面板的标签同样恢复自己的位置", async () => {
@@ -299,11 +310,8 @@ describe("B129 会话恢复：面板激活标签 + 每标签光标 + 每标签�
     await wait(60);
     const c = views().find((v) => panels()[1].contains(v.dom))!;
     expect(docNameOf(c), "面板1 显示的应是 c.md").toBe("c.md");
-    expect(cursorAt(c), "c.md 应回到第 3 行第 4 列 / 视口 60").toEqual({
-      line: 3,
-      col: 4,
-      scroll: 60,
-    });
+    expect({ line: cursorAt(c).line, col: cursorAt(c).col }).toEqual({ line: 3, col: 4 });
+    expect(syncVAt(2), "非活动面板的标签也要恢复它自己那份游标").toBe(60 / 14);
   });
 
   it("⑤ 还原空窗期的 0 值 scroll 不该排程落盘（B142）", async () => {
