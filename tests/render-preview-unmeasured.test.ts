@@ -34,13 +34,15 @@ function applySyncToLineBody(): string {
 describe("B288 三轮 applySyncToLine 块几何不可用必须返回 null", () => {
   it("换算点必须认「块 rect 全 0 且容器高 0」并早退返回 null（与 restoreViewScroll 同款兜底）", () => {
     const body = applySyncToLineBody();
-    // 必须同时认块 rect 全 0 与容器高 0（避免误判已铺开容器里恰好贴顶的块）
+    // 必须同时认块 rect 全 0 与容器高 0（避免误判已铺开容器里恰好贴顶的块）。
+    // prettier 会把条件折行，逐段断言，不绑定具体排版（见 preview.ts 实际换行）。
     expect(body, "applySyncToLine 必须检查容器高 0").toContain(
       "this.root.getBoundingClientRect().height === 0",
     );
-    expect(body, "applySyncToLine 必须检查块 rect 全 0").toContain(
-      "eb.top === 0 && eb.left === 0 && eb.width === 0 && eb.height === 0",
-    );
+    expect(body, "applySyncToLine 必须检查块 top 0").toContain("eb.top === 0");
+    expect(body, "applySyncToLine 必须检查块 left 0").toContain("eb.left === 0");
+    expect(body, "applySyncToLine 必须检查块 width 0").toContain("eb.width === 0");
+    expect(body, "applySyncToLine 必须检查块 height 0").toContain("eb.height === 0");
     // 早退：上面的判定必须引导到一个 `return null`，且排在计算/返回 nextTop 之前
     const guardPos = body.indexOf("this.root.getBoundingClientRect().height === 0");
     // 从判定之后找「未铺开」那处早退 null（避开函数顶部 `if (!target) return null`）
