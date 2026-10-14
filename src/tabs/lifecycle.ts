@@ -293,6 +293,11 @@ export function rebuildLayout(): void {
           // 重建布局 / 销毁面板」也不会丢。
           if (t) {
             t.scrollTop = shownView.scrollDOM.scrollTop;
+            // ⚠️ **顺序**：必须先更新 `syncV` **再** `recordScroll` —— 后者内部会把
+            //   `t.syncV` 落进会话记录（`sessionStore.setSyncV`），写反了落盘的就是**上一次**
+            //   的游标（滞后一次滚动），重启后按陈旧 v 还原。
+            const v = syncSourceV(t);
+            if (v !== null) t.syncV = v;
             recordScroll(t.tabId, t.scrollTop);
           }
           // B132：写进快照还不算数 —— 得落盘。滚动本身**不触发**任何排程，用户
@@ -341,6 +346,10 @@ export function rebuildLayout(): void {
         //   的槽位被写进这个过期值，切过去就对不上（用户报的位置不一致）。
         //   编辑器侧那条监听一直是「先写后推」（见 mountView 里那段），别把它也翻过来。
         t.scrollTop = preview.root.scrollTop;
+        // 同编辑器侧：先更新 `syncV` **再** `recordScroll`（后者会把 v 落盘，写反了滞后一次滚动）。
+        //   v 无条件维护 —— 同步关着的预览标签此前也拿不到 v，1c 删掉像素轨后就没法还原位置了。
+        const pv = syncSourceV(t);
+        if (pv !== null) t.syncV = pv;
         recordScroll(t.tabId, t.scrollTop);
         pushSyncToSiblings(t, true);
         scheduleSessionSave();
