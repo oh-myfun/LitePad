@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { tabsAll, sessionAll } from "./static";
 import { EditorView } from "@codemirror/view";
+import { tabs } from "../src/core/app-state";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -28,7 +29,14 @@ const wired = vi.hoisted(() => ({
   close: null as ((ev: { preventDefault(): void }) => void) | null,
   events: [] as string[],
   saved: [] as {
-    panels: { tabs: { path: string; scrollTop: number | null; cursorLine?: number }[] }[];
+    panels: {
+      tabs: {
+        path: string;
+        scrollTop?: number | null;
+        syncV?: number | null;
+        cursorLine?: number;
+      }[];
+    }[];
   }[],
 }));
 
@@ -149,7 +157,9 @@ vi.mock("../src/ipc/api", () => ({
   saveFile: () => Promise.resolve({ lossy: [], path: "" }),
   savePasteImage: () => Promise.resolve(""),
   // 落盘载荷留档：用例要断言「存下来的那份视口是滚之后的」
-  saveSession: (state: { panels: { tabs: { path: string; scrollTop: number | null }[] }[] }) => {
+  saveSession: (state: {
+    panels: { tabs: { path: string; scrollTop?: number | null; syncV?: number | null }[] }[];
+  }) => {
     wired.events.push("save");
     wired.saved.push(state);
     return Promise.resolve();
@@ -177,9 +187,10 @@ function scrollTo(px: number): void {
   sc.scrollTop = px;
   sc.dispatchEvent(new Event("scroll", { bubbles: false }));
 }
-function lastSaved(): number | null {
+function lastSavedV(): number | null {
+  // B288⑤-1c：像素已不落盘，位置唯一存档真值是规范游标 v。
   const last = wired.saved[wired.saved.length - 1];
-  return last?.panels[0]?.tabs[0]?.scrollTop ?? null;
+  return last?.panels[0]?.tabs[0]?.syncV ?? null;
 }
 
 describe("B132 视口位置：滚动要能自己排程落盘，关窗要兜底存一次", () => {
@@ -195,7 +206,10 @@ describe("B132 视口位置：滚动要能自己排程落盘，关窗要兜底�
     expect(wired.saved.length, "滚动应自己排程落盘（否则关窗前那一刻=没存）").toBeGreaterThan(
       before,
     );
-    expect(lastSaved(), "落盘的视口应是滚动后的 500，而不是会话里的 0").toBe(500);
+    // B288⑤-1c：像素不落盘 ⇒ 盯 v：落盘的必须是「滚到 500 之后」那份游标（非 null、
+    // 且与标签当前 v 一致 —— 不需要知道 jsdom 的估算行高）。
+    expect(lastSavedV(), "落盘的应是滚动后的规范游标（不是会话里的 null）").not.toBeNull();
+    expect(lastSavedV()).toBe(tabs.get(1)?.syncV);
   });
 
   it("② 无脏文档关窗：先拦下窗口、存完再关（Rust 侧没有关窗钩子，不等就白存）", async () => {
@@ -214,7 +228,7 @@ describe("B132 视口位置：滚动要能自己排程落盘，关窗要兜底�
     // 关键：顺序。'close' 一旦排在 'save' 前面，存就赶不上窗口关闭了。
     // 设置不进这条序列：它在设置窗口里改动时就存了，关窗不重复写（B140）。
     expect(wired.events, "必须先落盘（save）、再关窗（close）").toEqual(["save", "close"]);
-    expect(lastSaved(), "关窗时存的应是当前视口 500").toBe(500);
+    expect(lastSavedV(), "关窗时存的应是当前游标").toBe(tabs.get(1)?.syncV);
   });
 
   it("③ 移光标 + 滚动后直接关窗：落盘的就是此刻的（B140）", async () => {
@@ -233,7 +247,9 @@ describe("B132 视口位置：滚动要能自己排程落盘，关窗要兜底�
     const last = wired.saved[wired.saved.length - 1];
     const tab = last?.panels[0]?.tabs.find((t) => t.path === "a.md");
     expect(tab?.cursorLine, "落盘的光标应是此刻的第 8 行，不是打开时的第 1 行").toBe(8);
-    expect(tab?.scrollTop, "落盘的视口应是此刻的 300").toBe(300);
+    // B288⑤-1c：裸写像素**不派发事件** ⇒ 滚动监听不会更新 v ⇒ 落盘的仍是用户滚 500
+    // 那份游标。语义反转但更对：程序性像素摆位本来就不该被当作用户位置存档（B139/B170）。
+    expect(tab?.syncV, "裸写像素不许污染规范游标（落盘的仍是用户那份 v）").toBe(tabs.get(1)?.syncV);
   });
 });
 
@@ -319,15 +335,18 @@ describe("B132 静态契约：滚动排程 + 关窗兜底", () => {
     // 分别盯两个写入（而不是「同一段里先后出现」）：间距一变正则就失配，
     // 而这两句各自都是契约本身。
     expect(src, "刷新要把光标写进 store").toMatch(/sessionStore\.setCursor\(t\.tabId,/);
-    // B145：视口那一条走 `recordScroll`（唯一闸口）—— 还原期不许从容器读回来。
-    expect(src, "刷新要把视口写进 store").toMatch(/recordScroll\(t\.tabId, viewportOfTab\(t\)\);/);
-    // ⚠️ 反过来，落盘前**不许**再直连 store 写视口：那样就绕过了还原期的闸口。
+    // B288⑤-1c：像素已不落盘（`recordScroll(t.tabId, viewportOfTab(t))` 那条自赋值已删、
+    //   `sessionStore.setScroll` 已删）。视口落盘只剩规范游标 v 一条路。
+    expect(src, "像素刷新那一条必须已删除").not.toMatch(
+      /recordScroll\(t\.tabId, viewportOfTab\(t\)\);/,
+    );
+    // ⚠️ 反过来，落盘前**不许**再直连 store 写位置：那样就绕过了还原期的闸口。
     // 「唯一出口」按函数体算，而不是整串替换（闸口自己那一行当然就是直连 store 的）。
     const gate = functionBody(src, "function recordScroll(");
     const direct =
-      (src.match(/sessionStore\.setScroll\(/g) ?? []).length -
-      (gate.match(/sessionStore\.setScroll\(/g) ?? []).length;
-    expect(direct, "store.setScroll 只准出现在 recordScroll 里").toBe(0);
+      (src.match(/sessionStore\.setSyncV\(/g) ?? []).length -
+      (gate.match(/sessionStore\.setSyncV\(/g) ?? []).length;
+    expect(direct, "store.setSyncV 只准出现在 recordScroll 里").toBe(0);
     // B141：会话只有一个出口 —— 不再有「面板标签一份、卫星标签一份」的就地拼装
     expect(src, "不该再有就地拼装的标签记录").not.toMatch(/function sessionTabRecordOf/);
   });

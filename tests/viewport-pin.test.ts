@@ -11,6 +11,7 @@
 // （复刻浏览器行为），看位置能不能在布局稳定后仍然立住。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
+import { tabs } from "../src/core/app-state";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -198,6 +199,14 @@ describe("B134 视口恢复：赋值被浏览器裁剪后要能钉回来", () =>
   });
 
   it("切回那个视口 500 的标签：位置必须在布局稳定后仍然立住（而不是被裁成 0）", async () => {
+    // ⚠️ B288⑤-1c：位置不再从**会话**恢复（像素已不落盘）⇒ 位置直接种进标签的槽
+    //   （`t.scrollTop`，v 置 null 走「槽支」还原）。B134 盯的是 **pin 机制本身**
+    //   （赋值被裁 → 逐帧重试 → 布局稳定后立住），位置来源（会话 / 槽）与它无关。
+    const t0 = tabs.get(1);
+    if (!t0) throw new Error("找不到 tabId=1");
+    t0.scrollTop = 500;
+    t0.syncV = null;
+
     installClampingScroll();
     expect(geom.ready, "用例应已安排好布局就绪的那一帧").toBe(false);
 

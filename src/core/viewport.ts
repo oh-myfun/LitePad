@@ -116,10 +116,10 @@ export function recordScroll(tabId: number, px: number | null): void {
   // 记录被写进去的那一条（trace）：滚一下就有几十条，所以级别压到 trace 而不是 debug。
   // 「哪一步把手放歪了」要看的就是这一串 —— 相邻两条之间差了多少，就是那一步改的量。
   logger.trace("viewport", `写入位置 tab=${tabId} px=${px}`);
-  sessionStore.setScroll(tabId, px);
-  // B288④-4：规范视口游标 `syncV` 一并落盘（canonical v 是宽度无关的唯一真值；换宽度/
-  // 重启都按当前几何反算）。同步关着/还没同步过 ⇒ `syncV` 为 null ⇒ 落盘 null ⇒ 恢复时
-  // 回退 `scrollTop`（兼容旧会话与未同步实例）。这是写滚动位置的唯一闸口，顺手记上 v。
+  // B288⑤-1c：像素**不再落盘**（`sessionStore.setScroll` 已删）—— 几何相关，换宽度就错行。
+  //   落盘只认规范游标 `syncV`（宽度无关），恢复时按当前几何反算像素。
+  //   ⚠️ 调用方必须**先更新 `t.syncV` 再调本函数**（见 `lifecycle.ts` 滚动监听的顺序注释），
+  //      否则落的是上一次的游标。
   if (t) sessionStore.setSyncV(tabId, t.syncV);
 }
 

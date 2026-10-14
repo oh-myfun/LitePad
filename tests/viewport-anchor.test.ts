@@ -14,7 +14,7 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { tabsAll } from "./static";
-import { sessionStore } from "../src/session/store";
+import { tabs } from "../src/core/app-state";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -190,11 +190,23 @@ describe("B146 滚动锚点补偿：测量把位置往下推之后要收回来",
 
   it("补偿把落点往下推了 7px，最终仍要钉回标签自己的那份 500", async () => {
     installDriftScroll();
+    // ⚠️ B288⑤-1c：位置不再从会话的**像素**恢复（像素已不落盘）⇒ 先在 a.md 上**滚出**
+    //   一个位置建立规范游标 v，再切走 / 切回来触发还原 + 补偿。同一几何下 v→px 是闭合的，
+    //   所以不需要知道 jsdom 的估算行高（实测约 188px，拿它当常数很脆）。
+    const sc0 = document.querySelector(".layout-panel .cm-scroller") as HTMLElement;
+    clickTab(0); // a.md
+    await wait(120);
+    sc0.scrollTop = 500;
+    sc0.dispatchEvent(new Event("scroll"));
+    await wait(120);
+
     // 只漂一次，且正好消耗在 switchTab 里那一次还原赋值上（真机就是这一手）
     drift.left = 1;
     drift.diff = 7; // 必须 > 1，否则 CM6 自己都不会结算
 
-    clickTab(0); // a.md，视口 500
+    clickTab(1); // → b.md
+    await wait(120);
+    clickTab(0); // → 切回 a.md：按 v 还原、补偿 +7、最终仍要钉回 500
     await wait(120); // 越过测量与收尾的那一帧
 
     expect(scrollTopNow(), "锚点补偿后的位置必须被收回去").toBe(500);
@@ -215,11 +227,10 @@ describe("B146 换文档：setState 期间自动派发的滚动不许记进任�
         real = Math.max(0, v);
       },
     });
-    sessionStore.reset();
-    sessionStore.register(1, 1, { path: "a.md" });
-    sessionStore.register(2, 2, { path: "b.md" });
-    sessionStore.setScroll(1, 777); // 出去的那张（= 容器当前值，切走时照旧记一遍）
-    sessionStore.setScroll(2, 120); // 进来的那张
+    // B288⑤-1c：会话记录只存规范游标 v（像素已不落盘）⇒ 判据盯 **tab.syncV** ——
+    //   换文档那两下自动滚动不许把「用户停过的位置」（v）污染掉。
+    tabs.get(1)!.syncV = 20.5; // 出去的那张
+    tabs.get(2)!.syncV = 8; // 进来的那张
 
     // ⚠️ 不能在 setter 里派发 scroll：那一刻的写入是**我们自己的钉位置**，本来就归
     // 「程序滚动不许写快照」管（B139），派发了也照样被挡 —— 等于什么都没模拟。
@@ -243,8 +254,8 @@ describe("B146 换文档：setState 期间自动派发的滚动不许记进任�
     await wait(120); // 越过还原窗口与那一帧的释放
     CM.EditorView.prototype.setState = setState;
 
-    expect(sessionStore.get(1)?.scrollTop, "出去那张的记录不许被换文档的滚动污染").toBe(777);
-    expect(sessionStore.get(2)?.scrollTop, "进来的那张的记录不许被动过").toBe(120);
+    expect(tabs.get(1)?.syncV, "出去那张的游标不许被换文档的滚动污染").toBe(20.5);
+    expect(tabs.get(2)?.syncV, "进来的那张的游标不许被动过").toBe(8);
   });
 });
 

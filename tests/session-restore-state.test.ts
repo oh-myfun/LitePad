@@ -342,37 +342,31 @@ describe("B129 静态契约：三样都要进出会话", () => {
     "\n" +
     readFileSync("src/core/viewport.ts", "utf-8");
 
-  it("会话记录要同时带光标行列、视口与激活下标", () => {
+  it("会话记录要同时带光标行列、规范游标与激活下标", () => {
     // B141：这三项现在都由 `sessionStore`（src/session/store.ts）产出，main.ts 只负责
     // 把它们刷进去 —— 所以断言一半盯 store 的序列化，一半盯刷新。
+    // B288⑤-1c：视口位置只以规范游标 `syncV` 落盘（像素已退役）。
     const store = readFileSync("src/session/store.ts", "utf-8");
     expect(store, "每个标签都要记光标行").toMatch(/cursorLine: r\.cursorLine,/);
-    // B143：出口会顺手取整（小数会让 Rust 侧整份会话反序列化失败），所以这里
-    // 认「scrollTop 字段来自 r.scrollTop」这回事，不咬死是否包了 `Math.round`。
-    expect(store, "每个标签都要记视口位置").toMatch(
-      /scrollTop: r\.scrollTop === null \? null : Math\.round\(r\.scrollTop\),/,
-    );
+    expect(store, "每个标签都要记规范游标 v").toMatch(/syncV: r\.syncV,/);
+    expect(store, "像素出口必须已删除").not.toMatch(/scrollTop: r\.scrollTop/);
     expect(store, "面板记录要带激活下标").toMatch(/active: Math\.max\(/);
-    expect(src, "刷新要把视口刷进会话记录").toMatch(/sessionStore\.setScroll\(/);
+    expect(src, "刷新要把规范游标刷进会话记录").toMatch(/sessionStore\.setSyncV\(/);
   });
 
   it("恢复时要逐个标签接住这三样", () => {
     expect(src, "光标要写回实例状态").toMatch(/inst\.state = inst\.state\.update\(\{ selection/);
-    expect(src, "视口要写回实例快照").toMatch(/inst\.scrollTop = st\.scrollTop/);
+    expect(src, "规范游标要写回实例").toMatch(/inst\.syncV = st\.syncV/);
+    expect(src, "像素写回必须已删除").not.toMatch(/inst\.scrollTop = st\.scrollTop/);
     expect(src, "面板激活标签要写回").toMatch(/panel\.activeTabId = panel\.tabs\[active\]/);
   });
 
   it("反向验证：退化实现（只恢复活动标签 / 只恢复光标）必定被上两条抓住", () => {
-    // 退化 A：不逐个标签接住视口（比如只处理活动标签那一个）
+    // 退化 A：不逐个标签接住规范游标（比如只处理活动标签那一个）
     // 注意用 replaceAll —— main.ts 里有两处写回（会话恢复 / 跨窗口接管），
     // 只摘掉一处时正则仍能在另一处匹配到，断言就会变成假绿。
-    const degradedCursor = src.replaceAll(
-      /inst\.scrollTop = st\.scrollTop \?\? null;/g,
-      "// 已删除",
-    );
-    expect(degradedCursor, "退化后不应再匹配视口写回").not.toMatch(
-      /inst\.scrollTop = st\.scrollTop/,
-    );
+    const degradedCursor = src.replaceAll(/inst\.syncV = st\.syncV \?\? null;/g, "// 已删除");
+    expect(degradedCursor, "退化后不应再匹配游标写回").not.toMatch(/inst\.syncV = st\.syncV/);
     // 退化 B：面板激活下标不还原（一律取第一个）。
     // ⚠️ 拆卸与断言必须用**同一条精确串**：main.ts 里另有一处 `panel.activeTabId =
     // panel.tabs[...]`（关标签时的补位），用宽泛正则会把别人的代码也算成「已删除」。

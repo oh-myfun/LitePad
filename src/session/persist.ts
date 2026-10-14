@@ -22,7 +22,7 @@ import {
   type Tab,
 } from "../core/app-state";
 import { activePanel, getPanel, instancesOfDoc } from "../core/panels";
-import { logViewport, recordScroll, viewportOfTab } from "../core/viewport";
+import { logViewport } from "../core/viewport";
 import { logger } from "../core/logger";
 import {
   isMdTab,
@@ -150,10 +150,11 @@ export function refreshSession(): void {
     const d = docs.get(t.docId);
     if (!d) continue;
     if (!sessionStore.get(t.tabId)) {
-      // ⚠️ 新登记的记录要**带着** `t` 里已有的视口位置进来（B145）：会话恢复的标签在
-      // `restoreSession` 里已经把位置读进 `t.scrollTop`，登记成空白的话，下面那条写入
+      // ⚠️ 新登记的记录要**带着** `t` 里已有的位置进来（B145）：会话恢复的标签在
+      // `restoreSession` 里已经把位置读进 `t.syncV`，登记成空白的话，下面那条写入
       // 又会被还原期的闸口挡掉 —— 「刚恢复出来的位置」这一轮就白恢复了。
-      sessionStore.register(t.tabId, t.docId, { scrollTop: t.scrollTop, syncV: t.syncV });
+      // B288⑤-1c：只带规范游标 `v`（像素已不落盘）。
+      sessionStore.register(t.tabId, t.docId, { syncV: t.syncV });
     }
     sessionStore.setDoc(t.tabId, {
       path: d.path ?? "",
@@ -179,9 +180,9 @@ export function refreshSession(): void {
       sessionStore.setCursor(t.tabId, line.number, pos - line.from + 1);
       rememberViewScroll(p);
     }
-    // ⚠️ 这一条走 `recordScroll` 而不是直连 store（B145 单一闸口）：落盘前的这次刷新
-    // 读的是 `t`，而 `t` 里的位置可能正好来自「刚钉、还没立住」的容器。
-    recordScroll(t.tabId, viewportOfTab(t));
+    // B288⑤-1c：原先这里有一条 `recordScroll(t.tabId, viewportOfTab(t))`（落盘前刷新）。
+    //   它读的是像素槽、再写回同一个像素槽 —— 像素已不落盘（只落 `syncV`），
+    //   而 `syncV` 的落盘本就由各处 `recordScroll` 走同一闸口完成 ⇒ 这一条纯自赋值，删。
   }
 }
 
@@ -233,9 +234,10 @@ export function sessionSummary(s: SessionState, skipped: string[] = []): string 
   const body = shown
     .map(
       (t) =>
-        `${t.path || "(未命名)"}|行${t.cursorLine}:${t.cursorCol}|位${t.scrollTop ?? "-"}${
-          t.syncV !== undefined && t.syncV !== null ? `|v${t.syncV}` : ""
-        }${t.viewMode ? `|${t.viewMode}` : ""}`,
+        // B288⑤-1c：位置只以规范游标 v 入日志（像素已不落盘，显示「位」没有意义）。
+        `${t.path || "(未命名)"}|行${t.cursorLine}:${t.cursorCol}|v${t.syncV ?? "-"}${
+          t.viewMode ? `|${t.viewMode}` : ""
+        }`,
     )
     .join("  ");
   const rest = total - shown.length;

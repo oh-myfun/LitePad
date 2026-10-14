@@ -25,7 +25,9 @@ export interface SessionTabRecord {
   eol: string;
   cursorLine: number;
   cursorCol: number;
-  scrollTop: number | null;
+  // B288⑤-1c：像素槽 `scrollTop` 已退役 —— 位置只以规范游标 `v`（宽度无关）落盘，
+  //   恢复时按当前几何反算像素（换宽度 / 改字号 / 缩放后重启仍按同一行还原）。
+  //   旧会话无 v ⇒ `syncV` 为 null ⇒ 前端退化为「保证光标可见」。
   /** B288④-4：规范视口游标 v（实数行号+行内比例，**宽度无关**），落盘存档真值；恢复按当前几何反算像素。 */
   syncV: number | null;
   viewMode: string | null;
@@ -57,7 +59,6 @@ function blankRecord(tabId: number, docId: number): SessionTabRecord {
     eol: "CRLF",
     cursorLine: 1,
     cursorCol: 1,
-    scrollTop: null,
     syncV: null,
     viewMode: null,
     backupId: null,
@@ -78,12 +79,12 @@ function toDisk(r: SessionTabRecord): TabSession {
     // 反序列化失败 ⇒ `save_session` 报错 ⇒ `persistSession` 的 catch 把它吞掉 ⇒
     // 会话从此**一次也写不进去**，表现就是「滚到底之后再滚，位置就不刷新了」
     // （往回滚的增量是整数，可基数还带着那个小数，于是连续失败）。
-    // 出口统一取整：1px 的误差对还原无感，能落下去才要紧。
-    scrollTop: r.scrollTop === null ? null : Math.round(r.scrollTop),
-    // B288④-4 + ⑤：`syncV` 是规范游标（宽度无关）。
-    //   ⚠️ **不取整**：v 带行内比例（如 20.571 行），取整会丢最多半行。Rust 侧 `sync_v`
-    //     是 `Option<f64>`（见 `src-tauri/src/session/mod.rs`），接得住小数，也不会重演
-    //     B143「前端 double 撞裸 u32 ⇒ 整份会话反序列化失败」。
+    // B288⑤-1c：像素**不再落盘** —— 几何相关（分屏 / 改字号 / 缩放都会让同一个像素
+    //   变成另一行）。位置的唯一存档真值是规范游标 `v`。
+    //   （B143 那条「Rust 侧 `scroll_top` 是 Option<u32>、小数会让整份会话反序列化失败」
+    //    的坑随之消失 —— 不再有像素出口。旧盘上的 `scroll_top` 仍由 `de_scroll_top` 宽容读取。）
+    // ⚠️ syncV **不取整**：v 带行内比例（如 20.571 行），取整丢最多半行。Rust 侧 `sync_v`
+    //   是 `Option<f64>`，接得住小数。
     syncV: r.syncV,
     viewMode: r.viewMode,
     backupId: r.backupId,
@@ -159,10 +160,7 @@ class SessionStore {
     r.cursorCol = col;
   }
 
-  setScroll(tabId: number, px: number | null): void {
-    const r = this.recs.get(tabId);
-    if (r) r.scrollTop = px;
-  }
+  // B288⑤-1c：`setScroll` 已删除 —— 像素不再进会话记录（见 `toDisk` 的注释）。
 
   /** B288④-4：规范视口游标 v 一并落盘（宽度无关唯一真值；换宽度/重启按当前几何反算）。 */
   setSyncV(tabId: number, v: number | null): void {

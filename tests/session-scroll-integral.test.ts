@@ -16,38 +16,29 @@ import { readFileSync } from "node:fs";
 import { sessionAll } from "./static";
 import { sessionStore } from "../src/session/store";
 
-describe("B143 视口位置要按整数落盘", () => {
-  it("小数 scrollTop 落盘时四舍五入（小数会让 Rust 侧整份会话反序列化失败）", () => {
+// ⚠️ B288⑤-1c：**像素已不再落盘**（`scrollTop` 退役 —— 几何相关，换宽度就是另一行）。
+//   位置只以规范游标 `syncV` 存档，所以「取整纪律」换到 `syncV` 上，且**结论反了**：
+//   v 是唯一真值 ⇒ **不许取整**（取整丢行内比例 = 最多半行的真实偏差）。
+//   B143 那条「double 撞裸 u32 ⇒ 整份会话反序列化失败」也随之消失：Rust 侧 `sync_v`
+//   是 `Option<f64>`。旧盘上的 `scroll_top` 仍由 `de_scroll_top` 宽容读取（只读取，不参与还原）。
+describe("B143 → ⑤-1c 位置落盘：syncV 原样落盘，不得丢行内比例", () => {
+  it("小数 syncV 原样落盘（取整会丢行内比例，v 是唯一真值 ⇒ 就是真实偏差）", () => {
     sessionStore.reset();
     sessionStore.register(1, 1, { path: "a.md" });
     sessionStore.setPanel(0, [1], 1);
 
-    sessionStore.setScroll(1, 842.6);
+    sessionStore.setSyncV(1, 20.571);
     const up = sessionStore.toSessionState(() => true).panels[0].tabs[0];
-    expect(up.scrollTop, "842.6 必须落成 843").toBe(843);
-    expect(Number.isInteger(up.scrollTop), "落盘的 scrollTop 必须是整数").toBe(true);
+    expect(up.syncV, "20.571 必须原样落盘（取整 21 就差 0.43 行）").toBe(20.571);
+    expect(up.syncV, "不许被取整").not.toBe(21);
 
-    sessionStore.setScroll(1, 842.4);
-    const down = sessionStore.toSessionState(() => true).panels[0].tabs[0];
-    expect(down.scrollTop, "842.4 必须落成 842").toBe(842);
+    // 整数行号（正好停在行首）不受影响
+    sessionStore.setSyncV(1, 842);
+    expect(sessionStore.toSessionState(() => true).panels[0].tabs[0].syncV).toBe(842);
 
-    // 整数那条老路径不能因为取整改动走样
-    sessionStore.setScroll(1, 842);
-    expect(sessionStore.toSessionState(() => true).panels[0].tabs[0].scrollTop).toBe(842);
-
-    // 从没显示过的标签仍是 null（「按光标定位」的信号不能被取整改写成 0）
-    sessionStore.setScroll(1, null);
-    expect(sessionStore.toSessionState(() => true).panels[0].tabs[0].scrollTop).toBeNull();
-  });
-
-  it("取整只发生在落盘出口，内存里仍保留原值（还原精度不受影响）", () => {
-    sessionStore.reset();
-    sessionStore.register(2, 2, { path: "b.md" });
-    sessionStore.setScroll(2, 1234.4);
-    // 出口取整 ≠ 存储取整：内存这份是还原时要用到的值，不该被提前抹掉小数。
-    expect(sessionStore.get(2)?.scrollTop).toBe(1234.4);
-    sessionStore.setPanel(0, [2], 2);
-    expect(sessionStore.toSessionState(() => true).panels[0].tabs[0].scrollTop).toBe(1234);
+    // 没同步过 / 从没显示过的标签仍是 null（「按光标定位」的信号不能被写成 0）
+    sessionStore.setSyncV(1, null);
+    expect(sessionStore.toSessionState(() => true).panels[0].tabs[0].syncV).toBeNull();
   });
 });
 
@@ -65,11 +56,13 @@ describe("B143 静态契约", () => {
   const store = readFileSync("src/session/store.ts", "utf-8");
   const rs = readFileSync("src-tauri/src/session/mod.rs", "utf-8");
 
-  it("落盘出口要取整，且 Rust 侧要能接住小数", () => {
-    expect(store, "出口必须取整").toMatch(
-      /scrollTop: r\.scrollTop === null \? null : Math\.round\(r\.scrollTop\),/,
-    );
-    // 只改前端不够：已经写进盘里的小数还得能被读回来，否则下次启动会话照样读不出。
+  it("像素出口已删除；syncV 不许取整；旧盘小数仍要能读回", () => {
+    // ⑤-1c：像素已退役 ⇒ 不许再有 `Math.round(r.scrollTop)` 这种出口。
+    expect(store, "像素出口必须已删除").not.toMatch(/Math\.round\(r\.scrollTop\)/);
+    // v 是唯一真值 ⇒ 落盘不许取整
+    expect(store, "syncV 出口不许取整").toMatch(/syncV: r\.syncV,/);
+    expect(store, "syncV 出口不许出现 Math.round").not.toMatch(/Math\.round\(r\.syncV\)/);
+    // **旧盘**里已经写进去的小数 `scroll_top` 还得能被读回来（不过它已不参与还原）。
     expect(rs, "Rust 侧要挂宽容反序列化").toMatch(/deserialize_with = "de_scroll_top"/);
   });
 
@@ -83,13 +76,14 @@ describe("B143 静态契约", () => {
   });
 
   it("反向验证：退回「不取整 / 静默吞掉」，上面两条必须失败", () => {
+    // 退化一：把 syncV 出口改回取整（丢行内比例）⇒ 上面「不许取整」两条必须落空。
     const degradedStore = store.replace(
-      "scrollTop: r.scrollTop === null ? null : Math.round(r.scrollTop),",
-      "scrollTop: r.scrollTop,",
+      "syncV: r.syncV,",
+      "syncV: r.syncV === null ? null : Math.round(r.syncV),",
     );
     expect(degradedStore, "退化实现应真的换了写法").not.toBe(store);
-    expect(degradedStore, "退化后不再取整（第一条的 toMatch 此时必须落空）").not.toMatch(
-      /Math\.round\(r\.scrollTop\)/,
+    expect(degradedStore, "退化后又开始取整（「不许取整」那条此时必须落空）").toMatch(
+      /Math\.round\(r\.syncV\)/,
     );
 
     const degradedRs = rs.replace(/deserialize_with = "de_scroll_top"/, "");

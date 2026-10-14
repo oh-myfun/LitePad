@@ -312,10 +312,9 @@ export async function restoreSession(): Promise<boolean> {
     const line = inst.state.doc.line(lineNo);
     const pos = line.from + Math.min(Math.max(0, (st.cursorCol || 1) - 1), line.length);
     inst.state = inst.state.update({ selection: { anchor: pos } }).state;
-    // B126：视口位置一并带回（null = 旧会话没有这个字段 → 切过去时保证光标可见）
-    inst.scrollTop = st.scrollTop ?? null;
-    // B288④-4：规范视口游标 v 一并带回（`syncV` 是宽度无关的唯一真值，恢复时按当前几何反算
-    // 像素 ⇒ 换宽度重启也按同一行还原）。旧会话没有这个字段 ⇒ `undefined` ⇒ 回退 `scrollTop`。
+    // B288⑤-1c：像素不再从会话恢复（磁盘已不存 `scrollTop`）。位置只认规范游标 `v`：
+    //   有 v ⇒ 按当前几何反算像素（换宽度重启也按同一行还原）；无 v（旧会话 / 从未滚动过）
+    //   ⇒ 保持 null，切过去时退化为「保证光标可见」（同 B126 的空值语义）。
     inst.syncV = st.syncV ?? null;
     // B169：同步滚动开关（按文档记）→ 写回 `docSyncModes`，同步键点亮态与退出前一致
     if (st.syncMode) docSyncModes.set(inst.docId, true);

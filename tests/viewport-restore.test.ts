@@ -16,6 +16,7 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { tabsAll } from "./static";
+import { tabs } from "../src/core/app-state";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -199,6 +200,14 @@ describe("B145 恢复位置：布局晚几帧稳定时也必须钉回（而不�
   });
 
   it("布局稳定前连续好几帧都被裁：位置最终仍要钉住 500，而不是停在顶部", async () => {
+    // ⚠️ B288⑤-1c：位置不再从**会话**恢复（像素已不落盘）⇒ 位置直接种进标签的槽
+    //   （`t.scrollTop`，v 置 null 走「槽支」还原）。本用例盯的是 **pin 机制本身**
+    //   （连续多帧被裁 → 逐帧重试 → 布局就绪那帧立住），位置来源与它无关。
+    const t0 = tabs.get(1);
+    if (!t0) throw new Error("找不到 tabId=1");
+    t0.scrollTop = 500;
+    t0.syncV = null;
+
     installClampingScroll();
     arrangeLayoutReadyInFrames(2); // 第 3 帧才布局就绪
     expect(geom.ready, "用例应已安排好布局就绪的那一帧").toBe(false);
