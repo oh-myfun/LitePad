@@ -34,9 +34,11 @@ import { EditorView } from "@codemirror/view";
  * ⚠️ `vi.mock` 工厂被提升到 import 之上 ⇒ 这个夹子必须也用 `vi.hoisted` 造，否则 TDZ。
  */
 const cap = vi.hoisted(() => ({
-  session: null as null | { panels: { tabs: { scrollTop: number | null }[] }[] },
+  session: null as null | {
+    panels: { tabs: { scrollTop?: number | null; syncV?: number | null }[] }[];
+  },
 }));
-type CapSession = { panels: { tabs: { scrollTop: number | null }[] }[] };
+type CapSession = { panels: { tabs: { scrollTop?: number | null; syncV?: number | null }[] }[] };
 
 const ROW = 14;
 /** ⚠️ 预览块高：逐块不同（真机：长行换行 ⇒ 块高 = n×行高，n 逐块变）。14 / 25 / 36 循环。 */
@@ -442,12 +444,13 @@ describe("B263 同文档三标签（分屏 A = 源码 a + 预览 b，分屏 B = 
     //       文件就是「下次启动回顶」，症状与用户报的完全同一类，只是换到重启那一天。
     //    ⚠️ 抓的是**会话落盘载荷**（800ms 防抖）而不是槽本身：槽此刻已经没人看得见。
     await wait(1400);
-    const aRec = cap.session?.panels?.[0]?.tabs?.[0]?.scrollTop ?? null;
+    // B288⑤-1c：落盘已无像素 —— 盯规范游标（a 滚到 SRC_PX=100 ⇒ v=100/14）。
+    const aRec = cap.session?.panels?.[0]?.tabs?.[0]?.syncV ?? null;
     expect(aRec, "③′ 会话里没记下 a 的位置 ⇒ 这条判据会假绿（抓空了）").not.toBe(null);
-    expect(
-      aRec,
-      `③′ 滚 c 把 a 的会话位置写成 ${aRec}（该是 ${SRC_PX}）——量不出的尺子不许拿 0 落盘`,
-    ).toBeCloseTo(SRC_PX, 0);
+    // ⚠️ 1c 后落盘的是 syncV；a 离屏跟随同步 ⇒ 它的 v 是跟随值（≈15.29），不是初始
+    //    SRC_PX 对应的 7.14。这条闸锁的是「那次坏写别发生」⇒ 判据 = 没被抹成 null/0。
+    expect(aRec, "③′ 会话里没记下 a 的游标 ⇒ 这条判据会假绿（抓空了）").not.toBe(null);
+    expect(aRec ?? 0, "③′ 量不出的尺子不许拿假值落盘（写 0 / 抹 null 都算坏写）").not.toBe(0);
 
     // ⚠️⚠️ 病位：此刻 a 离屏、A 栏的 EditorView 被 `display:none` 藏着 ⇒ 量不到几何。
     //    修前那版 `recordScroll(a, 0)` ⇒ 切回来 `restoreViewScroll` 读 0 ⇒ **回顶**

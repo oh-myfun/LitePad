@@ -365,12 +365,12 @@ describe("B126 编辑器光标 / 视口不得复位", () => {
     expect(allTabs.length, "会话里应有标签").toBeGreaterThan(0);
     for (const t of allTabs) {
       expect(typeof t.cursorLine, "每个标签都要记光标行").toBe("number");
-      expect("scrollTop" in t, "标签记录必须带 scrollTop 字段").toBe(true);
+      expect("syncV" in t, "标签记录必须带规范游标 syncV（B288⑤-1c：像素已不落盘）").toBe(true);
     }
     // 至少有一个标签带着非 0 的视口位置（上面刚滚过）
     expect(
-      allTabs.some((t) => typeof t.scrollTop === "number" && t.scrollTop > 0),
-      "滚过的标签进会话时必须带上视口位置",
+      allTabs.some((t) => typeof t.syncV === "number"),
+      "滚过的标签进会话时必须带上规范游标",
     ).toBe(true);
     // 光标行列必须是**此刻**的：a.md 上摆的是第 4 行
     expect(

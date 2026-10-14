@@ -15,6 +15,7 @@
 //   · 修好：认出文档对不上 ⇒ 改找同文档真正显示着的源码实例（左格 a.md）⇒ 9×14 = **126**
 // 落盘后按 tabId 读回槽值即可区分（56 vs 126，差 70px，量级远超容差）。
 import { describe, it, expect, vi, beforeAll } from "vitest";
+import { tabs } from "../src/core/app-state";
 import { readFileSync } from "node:fs";
 
 const ROW = 14;
@@ -267,19 +268,18 @@ describe("B280 借尺子必须认文档（否则隐藏兄弟的槽被别人几�
     userScroll(left, SRC_PX);
     await wait(1600); // 等防抖落盘
 
-    const rec = session.last as {
-      panels?: Array<{ tabs?: Array<{ path?: string; scrollTop?: number | null }> }>;
-    } | null;
-    expect(rec, "会话没落盘").not.toBeNull();
-    const right = rec?.panels?.[1];
-    expect(right, "会话里要有右格").toBeTruthy();
-    // 右格第 2 颗标签 = 那份隐藏的 a.md（文档 X）
-    const hidden = right?.tabs?.[1];
-    expect(hidden?.path, "前提：右格第 2 颗标签是 a.md").toBe("a.md");
+    // B288⑤-1c：落盘已无像素，而 56 vs 126 是**同一个 v=10** 下的两个 px（错的只是
+    //   换算用的尺子）⇒ 判据搬到**运行时槽**（`recordScroll` 仍写它，bug 写 56 时槽也是 56）。
+    //   标签按创建顺序取第 3 个：载荷顺序 = 面板0[a.md] + 面板1[b.md, a.md隐藏]。
+    const hiddenTab = [...tabs.values()][2];
+    expect(hiddenTab, "前提：第 3 个标签是右格那份隐藏的 a.md").toBeTruthy();
     expect(
-      hidden?.scrollTop,
+      hiddenTab?.scrollTop,
       "隐藏兄弟的落点要按文档 X（24 行）算 = 126；按借来的文档 Y（5 行）算会变成 56",
     ).toBeCloseTo(SRC_PX, 6);
-    expect(hidden?.scrollTop ?? 0, "不许落到「借错尺子」的那个值上").not.toBeCloseTo(POISON_PX, 6);
+    expect(hiddenTab?.scrollTop ?? 0, "不许落到「借错尺子」的那个值上").not.toBeCloseTo(
+      POISON_PX,
+      6,
+    );
   });
 });

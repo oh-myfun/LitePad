@@ -23,9 +23,11 @@ import { makeDataTransfer, fireDrag } from "./dnd";
 
 /** 最近一次会话落盘（800ms 防抖）。 */
 const cap = vi.hoisted(() => ({
-  session: null as null | { panels: { tabs: { scrollTop: number | null }[] }[] },
+  session: null as null | {
+    panels: { tabs: { scrollTop?: number | null; syncV?: number | null }[] }[];
+  },
 }));
-type CapSession = { panels: { tabs: { scrollTop: number | null }[] }[] };
+type CapSession = { panels: { tabs: { scrollTop?: number | null; syncV?: number | null }[] }[] };
 
 const ROW = 14;
 /** 预览块高：逐块不同（14/25/36 循环）—— 与行高脱钩，跨侧换算才量得出来。 */
@@ -378,15 +380,16 @@ describe("B264 同文件两标签、单栏 → 拖标签成第二个分屏", () 
     );
 
     await wait(1400); // 800ms 会话防抖
-    const rec = (cap.session?.panels ?? []).flatMap((p) => p.tabs.map((t) => t.scrollTop));
+    // B288⑤-1c：落盘已无像素 —— 盯规范游标（不许两格都被抹成 null）。
+    const rec = (cap.session?.panels ?? []).flatMap((p) => p.tabs.map((t) => t.syncV));
     expect(rec.length, "会话应记两格").toBe(2);
     expect(
-      rec.filter((px) => px !== null && px > 0).length,
-      "会话不许把两格都记成 0",
+      rec.filter((v) => v !== null && v !== undefined).length,
+      "会话不许把两格游标都抹成 null",
     ).toBeGreaterThanOrEqual(1);
     expect(
-      rec.some((px) => Math.abs((px ?? 0) - srcEl(0).scrollTop) < 1),
-      "会话里得留着源码格这个位置（修复前实测 0 | 0 ⇒ 位置永久丢）",
+      rec.some((v) => Math.abs((v ?? 0) - EXPECT_V) < 1),
+      "会话里得留着源码格这份游标（修复前实测 null | null ⇒ 位置永久丢）",
     ).toBe(true);
   });
 });

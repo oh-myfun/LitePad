@@ -6,6 +6,7 @@
 // 于是「上次翻到中段、重启后弹回开头」。source/split 两档不受影响，所以这条得单独盯。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
+import { tabs } from "../src/core/app-state";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -49,6 +50,10 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 
 /** 预览容器上被记住的滚动位置（用户当时翻到的位置）。 */
 const PREVIEW_SCROLL = 420;
+/** 按创建顺序取第 i 个标签的规范游标（B288⑤-1c：位置断言盯 v）。 */
+function syncVAt(i: number): number | null {
+  return [...tabs.values()][i]?.syncV ?? null;
+}
 
 const saved = vi.hoisted(() => ({ session: null as Record<string, unknown> | null }));
 
@@ -76,6 +81,7 @@ vi.mock("../src/ipc/api", () => ({
               cursorLine: 20,
               cursorCol: 1,
               scrollTop: PREVIEW_SCROLL,
+              syncV: 3,
               viewMode: "preview",
             },
           ],
@@ -148,7 +154,9 @@ describe("B129 纯预览态的视图位置要进会话并还原", () => {
   it("恢复后预览停在原处，不是文档开头", () => {
     const root = previewRoot();
     expect(root, "应渲染出预览容器").toBeTruthy();
-    expect(root!.scrollTop, "预览应回到上次的位置").toBe(PREVIEW_SCROLL);
+    // B288⑤-1c：jsdom 无布局，预览 px 由 v 现算在本文件桩下不可靠 ⇒ DOM 断言撤，
+    // 硬判据是「v 恢复成它自己那份」（链路断了她就是 null / 顶替值）。
+    expect(syncVAt(0), "预览实例的规范游标要恢复成它自己那份").toBe(3);
   });
 
   it("静态契约：存取两端都按 viewMode 分流，且真的写进了预览容器", () => {
