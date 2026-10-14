@@ -1050,22 +1050,52 @@ export function rememberViewScroll(panel: Panel): void {
         // ⚠️ B288 诊断：这一眼读到的就是**即将写进槽**的值。真机复现里出现过
         //    「容器已被 rebuild 换掉 ⇒ 读到 0 ⇒ 槽被抹平」，靠这条 trace 区分
         //    「容器真的归零」与「读到的是旧值」。（trace 级：默认看不到，排错时开）
-        logger.trace(
-          "viewport",
-          `记忆 · 预览容器 tab=${t.tabId} 读到=${root ? fmtPx(root.scrollTop) : "无容器"} 原槽=${t.scrollTop === null ? "null" : fmtPx(t.scrollTop)}`,
-        );
-        recordScroll(t.tabId, root ? root.scrollTop : null);
+        // ⚠️ B288 同款根因：预览根容器未测量（scrollHeight ≤ 0，拖标签把面板摘空后的
+        //    零尺寸窗口）且读到 0、槽里却有真值 ⇒ 跳过，不许拿 0 抹真实位置。
+        if (
+          root !== null &&
+          root.scrollHeight <= 0 &&
+          root.scrollTop === 0 &&
+          t.scrollTop !== null
+        ) {
+          logger.trace(
+            "viewport",
+            `记忆 · 预览容器未测量 tab=${t.tabId}，跳过二次污染（保留原槽=${fmtPx(t.scrollTop)}）`,
+          );
+        } else {
+          logger.trace(
+            "viewport",
+            `记忆 · 预览容器 tab=${t.tabId} 读到=${root ? fmtPx(root.scrollTop) : "无容器"} 原槽=${t.scrollTop === null ? "null" : fmtPx(t.scrollTop)}`,
+          );
+          recordScroll(t.tabId, root ? root.scrollTop : null);
+        }
       }
     }
     return;
   }
   // ⚠️ B288 诊断：同上 —— 源码侧「消失前看最后一眼」读到的容器值。与下面那条
   //    `写入位置` trace 成对看：两条的 px 一致说明读的是真值，出现 0 就是容器已归零。
+  const scroller = panel.view.view.scrollDOM;
+  // ⚠️ B288 根因修复：容器未测量（拖标签把源面板摘空 / 摘出渲染树后的零尺寸窗口，
+  //   真实浏览器会把 detached / 零尺寸容器的 scrollTop 钳成 0）时，读出来的 0 会抹掉
+  //   槽里那份真实位置（拖完一回车就停在开头、会话落盘成 0、还经同步推播传染兄弟）。
+  //   与 pinInFlight 守卫同款纪律（B130/B162：宁留死格、不许拿 0 抹真位置）：读到的
+  //   也是 0、且槽里确有真值，就跳过。jsdom 下 scrollHeight 恒为 0、且 detached 容器
+  //   不钳 0（读到的是桩里存的非零值），所以这条在桩里放行；真机那个会抹真值的窗口
+  //   靠它拦住。前置：拖分屏路径在 `setLayout` 摘空源面板之前已采过一次
+  //   （见 `splitPanelWithTab` 里的 `rememberViewScroll(src)`），这里拦的是「二次污染」。
+  if (scroller.scrollHeight <= 0 && scroller.scrollTop === 0 && t.scrollTop !== null) {
+    logger.trace(
+      "viewport",
+      `记忆 · 源码容器未测量 tab=${t.tabId}，跳过二次污染（保留原槽=${fmtPx(t.scrollTop)}）`,
+    );
+    return;
+  }
   logger.trace(
     "viewport",
-    `记忆 · 源码容器 tab=${t.tabId} 读到=${fmtPx(panel.view.view.scrollDOM.scrollTop)} 原槽=${t.scrollTop === null ? "null" : fmtPx(t.scrollTop)}`,
+    `记忆 · 源码容器 tab=${t.tabId} 读到=${fmtPx(scroller.scrollTop)} 原槽=${t.scrollTop === null ? "null" : fmtPx(t.scrollTop)}`,
   );
-  recordScroll(t.tabId, panel.view.view.scrollDOM.scrollTop);
+  recordScroll(t.tabId, scroller.scrollTop);
 }
 
 export function restoreViewScroll(panel: Panel): void {

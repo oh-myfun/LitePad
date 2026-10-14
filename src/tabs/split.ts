@@ -39,6 +39,7 @@ import {
   landOnFrameGeometry,
   restoreViewScroll,
   measureAndKeepScroll,
+  rememberViewScroll,
 } from "../sync-scroll";
 import {
   makeDoc,
@@ -508,6 +509,12 @@ export function splitPanelWithTab(
   const rest = src.tabs.filter((id) => id !== tabId);
   src.tabs = rest;
   tab.panelId = newId;
+  // ⚠️ B288 根因修复：下面 `setLayout` 会把源面板从渲染树摘掉（空源面板被渲染成
+  //   零尺寸 / 或整体 detached），此刻再 `rememberViewScroll` 读到的就是钳成 0 的假值，
+  //   会把槽里的真实位置抹平（拖完标签回顶、会话落盘 0）。所以在摘面板**之前**先采一眼
+  //   —— 源视图此刻还满尺寸显示着文档，读到的是真值。（`rememberViewScroll` 内部对
+  //   「未测量且读到 0」会二次兜底跳过，这里是第一道、也是拖分屏路径专属的采集点。）
+  if (src.view) rememberViewScroll(src);
   setLayout(splitPanelAt(layout, targetId, dir, newId, newFirst));
   setActivePanelId(newId);
 
