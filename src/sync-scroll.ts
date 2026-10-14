@@ -1126,12 +1126,16 @@ export function restoreViewScroll(panel: Panel): void {
   // B280：还原几何（debug）—— 症状「切回去渲染不完整 / 跳回开头」靠这一条定位：
   //   钉位**前**的容器高 / 内容高 / 渲染行数 / 可滚范围 / 留白全打出来（见 logViewportGeom）。
   logViewportGeom("还原 · 钉前", panel);
-  // ⚠️ **B273**：同步开着且这份实例已被同步定位过 ⇒ 从规范游标 `syncV` 派生源码像素，
+  // ⚠️ **B273 + B288⑤-1b**：这份实例有规范游标 ⇒ 一律从 `syncV` 派生源码像素，
   //   而不是读可能陈旧的 `scrollTop`。离屏实例跟随时只有 `syncV` 是准的（`scrollTop` 没更新过），
   //   直接读它切回来就会跳。派生后再 `recordScroll` 把新像素写回槽，陈旧值被覆盖。
+  //   ⚠️⚠️ **1b 不再要求「同步开着」**：B288⑤-1a 之后**每个标签都有自己的 v**（滚动监听
+  //      无条件维护，与同步开关无关），v 的语义就是「这份标签自己停在第几行」。
+  //      同步关着时它正是 B149 基线要的「各认各的」——按自己的 v 还原自己的位置，
+  //      而不是退回像素槽（像素几何相关，宽度一变就错行）。
   //   ⚠️ 尺子未测（新建视图 / setState 之后到 measure 帧之前）⇒ 此刻换算必落「估算空间」，
   //      一个字节都不写，改挂起等 measure 后的补写（与现有 `pendingSyncCursor` 纪律一致）。
-  if (docSyncModes.get(t.docId) === true && t.syncV !== null) {
+  if (t.syncV !== null) {
     if (unmeasuredPanels.has(panel)) {
       // ⚠️ 尺子未测：v→px 换算会落「估算空间」，先把正确的 v 挂起，等 measure 后
       //    `flushPendingSyncCursor` 按实测几何补写并落槽、再由 `reassertViewScroll` 钉回。
@@ -1177,13 +1181,16 @@ export function restorePreviewScroll(panel: Panel): void {
   const t = tabs.get(panel.viewTabId);
   if (!t || t.viewMode !== "preview") return;
   const preview = panel.preview;
-  // ⚠️ **B273**：同步开着且这份预览已被同步定位过 ⇒ 从规范游标 `syncV` 派生预览像素。
+  // ⚠️ **B273 + B288⑤-1b**：这份预览有规范游标 ⇒ 一律从 `syncV` 派生预览像素。
   //   离屏预览兄弟跟随时只拿到了 `syncV`（没有容器可换算），切回来若直接读陈旧的
   //   `scrollTop`（甚至 null）就会跳。`syncToLineProgrammatic` 返回**实际落点**，
   //   落点写回槽覆盖陈旧值（没落地 ⇒ 落到下面用 scrollTop 的旧路径兜底）。
   //   ⚠️ `applyPanelMode` 先于本函数把预览 `setBlocks` 渲染好，这里一定能算到块几何
   //      （B129 纪律：必须在 applyPanelMode 之后）。
-  if (docSyncModes.get(t.docId) === true && t.syncV !== null) {
+  //   ⚠️⚠️ **1b 不再要求「同步开着」**（同 `restoreViewScroll`）：1a 之后每个标签都有自己的
+  //      v，同步关着时 v 就是这份预览自己停的那一行 ⇒ 按它现算像素（宽度无关），
+  //      而不是退回几何相关的像素槽（宽度一变就错行）。
+  if (t.syncV !== null) {
     // ⚠️ B288 二轮（用户复现：拖标签分屏预览仍复位）：尺子未测（新建视图 / setState
     //    之后到 measure 帧之前，或拖标签把面板摘出渲染树后重挂载的窗口）时，
     //    `syncToLineProgrammatic(v)` 拿不到块几何，会把 v→px 算成 **0**（返回 0 而非

@@ -14,6 +14,15 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 
 const LIFECYCLE = readFileSync("src/tabs/lifecycle.ts", "utf-8").replace(/\r\n/g, "\n");
+const SYNC = readFileSync("src/sync-scroll.ts", "utf-8").replace(/\r\n/g, "\n");
+
+/** 取某个顶层导出函数的函数体（到下一个 `\nexport ` 为止）。 */
+function fnBodyOf(header: string): string {
+  const start = SYNC.indexOf(header);
+  if (start < 0) throw new Error(`应能定位 ${header}`);
+  const next = SYNC.indexOf("\nexport ", start + 10);
+  return SYNC.slice(start, next < 0 ? SYNC.length : next);
+}
 
 describe("B288⑤-1a 滚动监听无条件维护规范游标 v", () => {
   it("编辑器侧：先按 syncSourceV 更新 t.syncV，再 recordScroll（落盘不能滞后）", () => {
@@ -68,5 +77,37 @@ describe("B288⑤-1a 滚动监听无条件维护规范游标 v", () => {
     // 退化后「写 v」排到了 recordScroll **之后** ⇒ 正向那条顺序闸（`askWrite < write`）
     // 必然失效（落盘的是上一次的游标）。这条就是正向契约的鉴别力自证。
     expect(askWrite, "顺序写反后，正向顺序闸必须失效（否则那条闸形同虚设）").toBeGreaterThan(write);
+  });
+});
+
+describe("B288⑤-1b 还原路径不再要求「同步开着」（同步关着也按 v 现算）", () => {
+  // 1a 之后每个标签都有自己的 v ⇒ v 分支不该再被 `docSyncModes` 卡住：
+  // 同步关着时 v 就是这份标签自己停的那一行，按它现算像素（宽度无关），
+  // 而不是退回几何相关的像素槽（宽度一变就错行）。
+  it("restoreViewScroll 的游标分支只看 syncV，不带 docSyncModes 门槛", () => {
+    const body = fnBodyOf("export function restoreViewScroll(panel: Panel): void {");
+    expect(body, "应有只认 syncV 的游标分支").toContain("if (t.syncV !== null) {");
+    expect(
+      body,
+      "同步关着的标签也要按 v 还原（门槛加回来 ⇒ 退化回像素槽，宽度一变就错行）",
+    ).not.toContain("docSyncModes.get(t.docId) === true && t.syncV !== null");
+  });
+
+  it("restorePreviewScroll 的游标分支同样不带 docSyncModes 门槛", () => {
+    const body = fnBodyOf("export function restorePreviewScroll(panel: Panel): void {");
+    expect(body, "应有只认 syncV 的游标分支").toContain("if (t.syncV !== null) {");
+    expect(body, "同步关着的预览也要按 v 还原（门槛加回来 ⇒ 退化回像素槽）").not.toContain(
+      "docSyncModes.get(t.docId) === true && t.syncV !== null",
+    );
+  });
+
+  it("反向验证：把 docSyncModes 门槛加回去，上面的判定必须失效", () => {
+    const GATE = "docSyncModes.get(t.docId) === true && t.syncV !== null";
+    const body = fnBodyOf("export function restoreViewScroll(panel: Panel): void {");
+    expect(body, "前置：固定代码已无该门槛").not.toContain(GATE);
+    // 退化：模拟 pre-1b 写法（同步关着 ⇒ 退回像素槽）
+    const degraded = body.replace("if (t.syncV !== null) {", `if (${GATE}) {`);
+    expect(degraded, "退化：应真的把门槛加回去了").not.toBe(body);
+    expect(degraded, "退化后门槛必须出现（否则上面的 not.toContain 形同虚设）").toContain(GATE);
   });
 });
