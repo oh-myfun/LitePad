@@ -295,6 +295,8 @@ impl Default for TabSession {
             cursor_line: 1,
             cursor_col: 1,
             scroll_top: None,
+            // B288⑤-1c：位置只以规范游标 v 存档（像素 `scroll_top` 已退役）。
+            sync_v: None,
             view_mode: None,
             backup_id: None,
             doc_id: None,
