@@ -80,8 +80,11 @@ function toDisk(r: SessionTabRecord): TabSession {
     // （往回滚的增量是整数，可基数还带着那个小数，于是连续失败）。
     // 出口统一取整：1px 的误差对还原无感，能落下去才要紧。
     scrollTop: r.scrollTop === null ? null : Math.round(r.scrollTop),
-    // B288④-4：`syncV` 是规范游标（宽度无关），同样走取整出口（Rust 侧 u32 容差同 scrollTop）。
-    syncV: r.syncV === null ? null : Math.round(r.syncV),
+    // B288④-4 + ⑤：`syncV` 是规范游标（宽度无关）。
+    //   ⚠️ **不取整**：v 带行内比例（如 20.571 行），取整会丢最多半行。Rust 侧 `sync_v`
+    //     是 `Option<f64>`（见 `src-tauri/src/session/mod.rs`），接得住小数，也不会重演
+    //     B143「前端 double 撞裸 u32 ⇒ 整份会话反序列化失败」。
+    syncV: r.syncV,
     viewMode: r.viewMode,
     backupId: r.backupId,
     docId: r.docId,

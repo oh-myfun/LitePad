@@ -242,6 +242,20 @@ pub struct TabSession {
     /// B143），裸 `u32` 会让整份会话读不出来。
     #[serde(alias = "scroll_top", deserialize_with = "de_scroll_top")]
     pub scroll_top: Option<u32>,
+    /// B288⑤-1c：规范视口游标 v（实数行号 + 行内比例，**宽度无关**）。
+    ///
+    /// 这是位置的**唯一存档真值** —— 像素 `scroll_top` 已退役（几何相关：分屏 / 改字号 /
+    /// 缩放都会让同一个像素变成另一行）。恢复时按当前几何把 v 反算成像素 ⇒ 换宽度重启
+    /// 也按同一行还原。
+    ///
+    /// ⚠️ 用 `f64` 而不是 `u32`：v 带行内比例（如 20.571 行），取整会丢最多半行；v 是
+    ///   唯一真值之后这个误差就是**真实的位置偏差**（不再是「有像素兜底，差半行无所谓」）。
+    ///   f64 也不会重演 B143 那种「前端 double 撞上裸 u32 ⇒ 整份会话反序列化失败」。
+    ///   ⚠️ 但旧盘 / 旧前端可能已经写入过整数 `syncV`，f64 照单全收（u32 是 f64 的子集）。
+    ///
+    /// 旧会话没有这个字段 ⇒ `None`（容器级 `default`）⇒ 前端退化为「保证光标可见」。
+    #[serde(alias = "sync_v")]
+    pub sync_v: Option<f64>,
     /// Markdown 视图模式（source/split/preview），仅 md 文件有意义
     #[serde(alias = "view_mode")]
     pub view_mode: Option<String>,

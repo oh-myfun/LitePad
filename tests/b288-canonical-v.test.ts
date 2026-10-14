@@ -76,7 +76,7 @@ describe("B288④-2 split move 支预览按自身 syncV 重落（绝不用源 vD
 // 此处**不留契约**（留了就是给一条已被证伪的做法背书）；宽度变化后预览按 v 重落由 ④-2 负责。
 
 describe("B288④-4 session 存规范游标 v（宽度无关、换宽度重启按行还原）", () => {
-  it("toSessionState 把 syncV 随记录落盘并取整，未同步时为 null", () => {
+  it("toSessionState 把 syncV 原样落盘（保留行内比例），未同步时为 null", () => {
     sessionStore.reset();
     sessionStore.register(1, 10, { path: "a.md", viewMode: "preview" });
     sessionStore.setPanel(0, [1], 1);
@@ -84,11 +84,9 @@ describe("B288④-4 session 存规范游标 v（宽度无关、换宽度重启�
     // 规范游标 v 是真值（宽度无关）：8.4 行带行内比例
     sessionStore.setSyncV(1, 8.4);
     const up = sessionStore.toSessionState(() => true).panels[0].tabs[0];
-    expect(up.syncV, "磁盘记录应携带规范游标 v（宽度无关唯一真值）").toBe(8); // Math.round(8.4)
-    expect(
-      Number.isInteger(up.syncV),
-      "落盘的 syncV 必须是整数（Rust 侧 u32 容差同 scrollTop）",
-    ).toBe(true);
+    // ⚠️ 不许取整：v 带行内比例，取整丢最多半行。Rust 侧 `sync_v` 是 Option<f64>，接得住小数。
+    expect(up.syncV, "磁盘记录应携带规范游标 v（宽度无关唯一真值）").toBe(8.4);
+    expect(up.syncV, "落盘不得丢行内比例（取整 = 最多半行的偏差）").not.toBe(8);
 
     // 未同步 / 未测时 syncV 为 null，绝不污染兄弟（回退 scrollTop 路径）
     sessionStore.setSyncV(1, null);
@@ -98,8 +96,9 @@ describe("B288④-4 session 存规范游标 v（宽度无关、换宽度重启�
 
   it("反向验证：toDisk 不写 syncV 时，上面的回环判定必须失效", () => {
     // 退化：把 toDisk 里那一行 `syncV: r.syncV === null ? null : Math.round(r.syncV),`
-    // 整条摘掉 ⇒ 序列化结果不再携带 syncV ⇒ 上面的 `expect(up.syncV).toBe(8)` 必红。
-    const line = "syncV: r.syncV === null ? null : Math.round(r.syncV),";
+    // 退化：把 toDisk 里那一行 `syncV: r.syncV,` 整条摘掉 ⇒ 序列化结果不再携带 syncV
+    // ⇒ 上面的 `expect(up.syncV).toBe(8.4)` 必红（真机表现：换宽度重启后位置按旧像素错位）。
+    const line = "syncV: r.syncV,";
     expect(SYNC.length >= 0, "前置：源串就绪").toBe(true); // 占位，避免 lint
     expect(readFileSync("src/session/store.ts", "utf-8"), "固定代码确有 syncV 序列化").toContain(
       line,
@@ -110,7 +109,7 @@ describe("B288④-4 session 存规范游标 v（宽度无关、换宽度重启�
     sessionStore.setPanel(0, [2], 2);
     sessionStore.setSyncV(2, 8.4);
     const up = sessionStore.toSessionState(() => true).panels[0].tabs[0];
-    expect(up.syncV, "前置：正常实现下 syncV 随记录落盘").toBe(8);
+    expect(up.syncV, "前置：正常实现下 syncV 随记录落盘（原值，不取整）").toBe(8.4);
 
     // 模拟 pre-fix：toDisk 漏写 syncV ⇒ 真机表现为「换宽度重启后预览按旧像素错位」
     const STORE = readFileSync("src/session/store.ts", "utf-8").replace(/\r\n/g, "\n");
