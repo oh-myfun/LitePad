@@ -16,7 +16,6 @@ import {
   panels,
   tabs,
   setSuppressDirty,
-  setSuppressSyncPush,
   type Panel,
   type Tab,
 } from "./core/app-state";
@@ -303,9 +302,7 @@ function openPreviewToSide(panelId: number): void {
     //    源码钉到顶（自测台实测 287 ⇒ 0；比「新那份没同步」更糟）。
     //    与 B254 同型：位置归零的那个瞬间产生的推播不能当源坐标。夹住这一趟，
     //    落位交给下面那行 `landOnFrameGeometry`（几何刚变，换算得排到这一帧的 measure 之后）。
-    setSuppressSyncPush(true);
     splitPanelWithTab(panelId, "h", tab.tabId, false, true);
-    setSuppressSyncPush(false);
     const np = panels.get(activePanelId);
     const nt = np ? tabs.get(np.activeTabId) : undefined;
     if (np && nt && isMdTab(nt)) {
@@ -351,9 +348,7 @@ function openPreviewToSide(panelId: number): void {
     //    落位交给下面那行，且用同一个 `v`，落点严格一致。
     //    ⚠️ 夹的是**这一趟**（不是永久规则）：`pushSyncToSiblings` 入口加了
     //    `suppressSyncPush` 早退，见那边的注释。
-    setSuppressSyncPush(true);
     switchTab(rightId, targetId);
-    setSuppressSyncPush(false);
     // ⚠️⚠️ B261：`applyPanelMode` 必须排在这一句**之前**（与右邻居不存在那一支同序）。
     //    它尾上那句 `if (anchorLine > 1) preview.syncToLine(anchorLine)` 读的是**面板那个
     //    EditorView 此刻的 scrollTop** —— 这里它不一定是**空档**：分屏那份实例是

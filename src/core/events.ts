@@ -40,48 +40,6 @@ export const EVT_DOC_RESYNC_REQ = "doc-resync-request";
 export const EVT_DOC_RESYNC_FULL = "doc-resync-full";
 
 /**
- * 跨窗口同步滚动的两条（B159：`pushSyncToSiblings` 原来只扫本窗口 `tabs`，
- * 「新建窗口」拎出去的那份完全收不到通知 —— 用户报的就是这个）。
- *
- *   · `sync-scroll-mode` —— 开关状态（`docId → on`）。**必须先于位置到达**：
- *     对端靠它知道自己该不该跟着动。
- *   · `sync-scroll-pos` —— 源那份的位置（`px` 与 `line` 一起带，坐标属于**源那一侧**，
- *     由对端按自己 `viewMode` 挑一个用，跨视图模式的换算从不到网络上）。
- *
- * ⚠️ `from` 是**必填**的自证字段：tauri 的广播本机也会收到自己的回声，
- *    各处一律 `from === windowLabel → return`（与文档同步那三条同口径）。
- */
-export const EVT_SYNC_MODE = "sync-scroll-mode";
-
-export const EVT_SYNC_POS = "sync-scroll-pos";
-
-/**
- * 跨窗口同步滚动的载荷。
- *
- * ⚠️ B251：`px` / `line` 双字段换成单个 **`v`**（规范游标，实数行号）。那两样本来就是
- *   「源显示在哪一侧」的两种记账口径 —— 同一份位置被抄成两半，跨侧一换算就差一档
- *   （B249 的「差一行」、B247 的「压成块首」都栽在这），而线上格式本来也只有本窗口
- *   自己发自己收，没有第二个实现要兼容。
- */
-export interface SyncPosPayload {
-  from?: string;
-  docId?: number;
-  srcTabId?: number;
-  v?: number | null;
-  /** B286：源这一侧此刻**顶没顶到自己的底**。到底时对端不能按游标 `v` 换算
-   *  （两侧内容高天生不同 ⇒ 到底时顶行游标本就不相等），必须落到**它自己那一侧**的底。
-   *  ⚠️ 这个字段此前的缺失就是「多窗口同步滚动对不齐」的根因：本窗口内 `atFloor` 靠
-   *     `applySyncToSibling` 第三参传递（B284），跨窗口那条路却把它整个丢了。 */
-  atFloor?: boolean;
-}
-
-export interface SyncModePayload {
-  from?: string;
-  docId?: number;
-  on?: boolean;
-}
-
-/**
  * B161：关标签之前先问一圈「这份文档还有没有人拿着」。
  *
  * Rust 侧的文档是**进程级**的（`state.docs` 一份），而标签是每个窗口各持一份 ——

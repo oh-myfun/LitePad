@@ -47,15 +47,6 @@ export function tabsAll(): string {
   return concatSrc(TABS_PARTS);
 }
 
-export const SYNC_BUNDLE = [
-  "main",
-  "multiwindow/windows",
-  ...TABS_PARTS,
-  "markdown",
-  "sync-scroll",
-  "core/viewport",
-];
-
 // JSON 配置结构松散（tauri.conf/package.json 各异），此处刻意放宽：
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function readJson(path: string): any {

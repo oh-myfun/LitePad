@@ -19,7 +19,6 @@ import {
   setActivePanelId,
   setNextPanelId,
   setSuppressDirty,
-  setSuppressSyncPush,
   unmeasuredPanels,
   settings,
 } from "../core/app-state";
@@ -426,9 +425,7 @@ export function switchTab(panelId: number, tabId: number): void {
   //    `handleUpdate` 那一轮拿到的源位置是 0，推兄弟等于把所有同文档预览钉回开头
   //    （「切标签后另一个预览向上偏移、之后永远不动」）。切标签的收口已经在上面
   //    `syncSourceSnapshot` 里采下源的真实位置，这一发推播没信息、只有害处。
-  setSuppressSyncPush(true);
   view.setState(tab.state);
-  setSuppressSyncPush(false);
   // B271：从这一刻到 measure 帧，heightMap 是估算行高 —— 换算窗口开启（见 unmeasuredPanels）
   unmeasuredPanels.add(panel);
   setSuppressDirty(false);

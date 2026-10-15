@@ -209,27 +209,6 @@ export let syncingDocId: number | null = null;
  */
 export const unmeasuredPanels = new WeakSet<Panel>();
 
-/**
- * ⚠️ B254：切换标签那一刻，抑制 `handleUpdate` 里那句「推兄弟」。
- *
- * `switchTab` 里整态换文档那一次（`setState`）是**同步**派发 update 的，而 CM6 按
- * `setState` 的语义会把编辑器 scrollTop 归零再重排 ⇒ 那一轮 `handleUpdate` 读到的
- * 源位置是「刚被归零的 0」，不是用户停的地方。而此刻 `activeTabId` 已经改成新标签、
- * `isSyncSource` 已经为真 ⇒ 539 那句会拿 0 当源 `pushSyncToSiblings`：
- *    · 源是刚切过去的源码 ⇒ 跨侧交整数顶行 1 ⇒ 所有**同文档兄弟的预览**（分屏另一半、
- *      另一个面板那份）被 `syncToLineProgrammatic(1)` 拉回**文档开头**，落点还被
- *      `recordScroll` 写进它们自己的槽；
- *    · 源是刚切过去的预览（另一端）⇒ `topVisibleLine()` 在隐藏容器上读回 0 ⇒ 同一个病。
- * 收尾时 `switchTab` 因为「收口已对齐」跳过推播（B241）⇒ **没人把兄弟救回来**。
- * 用户报的就是这两半连起来：「切标签后另一个预览向上偏移，且之后切换标签不再变化」
- * —— 每次切都推同一发 0，看起来就是位置被钉死在顶上。
- *
- * 切标签本身有自己的收口（`syncSourceSnapshot` 在 setState 之前就采下了源的真实位置），
- * 这一发推播**不携带任何有效信息**，只留害处 ⇒ 与 `suppressDirty` 同一路数，置位包住
- * `setState` 即可（B145 那条顺序纪律不受影响：还原 `restoreViewScroll` 排在后面）。
- */
-export let suppressSyncPush = false;
-
 /** 载入文件时抑制脏标记（setState/dispatch 会触发 updateListener） */
 export let suppressDirty = false;
 
@@ -323,10 +302,6 @@ export function setIsWrap(v: typeof isWrap): void {
 
 export function setSuppressDirty(v: typeof suppressDirty): void {
   suppressDirty = v;
-}
-
-export function setSuppressSyncPush(v: typeof suppressSyncPush): void {
-  suppressSyncPush = v;
 }
 
 export function setWindowLabel(v: typeof windowLabel): void {

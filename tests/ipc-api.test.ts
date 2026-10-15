@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  *
  * 这块之前是散落的 `emit(event, { from: windowLabel, ... })` 手写形态，
  * 容易漏写 `from` 或被悄悄改成别的字段名。运行时测试兜底证明「身份真的进去了」，
- * 静态契约（sync-scroll-mode / multiwindow / satellite-lifecycle）只管「走的是 emitCrossWindow」。
+ * 静态契约（multiwindow / satellite-lifecycle）只管「走的是 emitCrossWindow」。
  */
 
 // emit 的调用被这里捕获，才能在测试里断言真实入参。
@@ -38,10 +38,10 @@ describe("ipc/api 收口", () => {
   });
 
   it("emitCrossWindow 自动注入 from = 当前窗口 label，并透传其余载荷", async () => {
-    await emitCrossWindow("sync-scroll-pos", { docId: 3, v: 12.5 });
+    await emitCrossWindow("doc-open", { docId: 3, v: 12.5 });
     expect(emitSpy, "emit 只调一次").toHaveBeenCalledTimes(1);
     const [event, payload] = emitSpy.mock.calls[0] as [string, Record<string, unknown>];
-    expect(event, "事件名原样透传").toBe("sync-scroll-pos");
+    expect(event, "事件名原样透传").toBe("doc-open");
     expect(payload.from, "from 必须是当前窗口身份").toBe("sat-7");
     expect(payload.docId, "业务载荷原样透传").toBe(3);
     expect(payload.v, "业务载荷原样透传").toBe(12.5);
