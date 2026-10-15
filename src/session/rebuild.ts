@@ -315,7 +315,6 @@ export async function restoreSession(): Promise<boolean> {
     // B288⑤-1c：像素不再从会话恢复（磁盘已不存 `scrollTop`）。位置只认规范游标 `v`：
     //   有 v ⇒ 按当前几何反算像素（换宽度重启也按同一行还原）；无 v（旧会话 / 从未滚动过）
     //   ⇒ 保持 null，切过去时退化为「保证光标可见」（同 B126 的空值语义）。
-    inst.syncV = st.syncV ?? null;
     // B169：同步滚动开关（按文档记）→ 写回 `docSyncModes`，同步键点亮态与退出前一致
     if (st.syncMode) docSyncModes.set(inst.docId, true);
     return inst;

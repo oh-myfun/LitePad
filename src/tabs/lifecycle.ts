@@ -34,7 +34,7 @@ import {
   layoutArea,
 } from "../ui";
 import { renderSplitview, type PanelRenderData } from "../shell/splitview";
-import { attachTabToPanel, makeDoc, makeInstance, registerDoc, isMdTab } from "../doc-model";
+import { attachTabToPanel, makeDoc, makeInstance, registerDoc } from "../doc-model";
 import { updateTocDrawer } from "../toc";
 import { retargetFindBar } from "../find/findbar";
 import { saveDocCore } from "../io/files";
@@ -42,8 +42,8 @@ import { attachPasteHandler } from "../io/export";
 import { showSaveConfirmDialog } from "../shell/saveconfirm";
 import { createEditor } from "../editor/editor";
 import { PreviewPane } from "../markdown/preview";
-import { logViewport, recordScroll } from "../core/viewport";
-import { attachUserScrollClear, isProgrammatic, markProgrammatic } from "../core/scroll-guard";
+import { logViewport } from "../core/viewport";
+import { attachUserScrollClear, markProgrammatic } from "../core/scroll-guard";
 import { closeTab as ipcCloseTab, newTab as ipcNewTab } from "../ipc/api";
 import { renderPanelTabs, renderPanelOps, panelDataOf } from "./render";
 import {
@@ -218,70 +218,16 @@ export function rebuildLayout(): void {
       p.preview = preview;
       hostEl.appendChild(preview.root);
       preview.setHost({
-        // 同步滚动已整体清除：这两个回调只为满足 PreviewPane 的 SyncHost 接口，
-        // 不再做任何跨侧跟随 / 行号换算（新方案落地时在此重写）。
-        topVisibleLine: () => 1,
+        // 同步滚动已整体清除：此回调只为满足 PreviewPane 的 SyncHost 接口，
+        // 不再驱动编辑器滚动（新方案落地时在此重写）。
         scrollToLine: () => {},
         lineCount: () => p.view?.view.state.doc.lines ?? 0,
       });
       if (p.view) {
         const shownView = p.view.view;
-        shownView.scrollDOM.addEventListener("scroll", () => {
-          const t = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
-          // ⚠️⚠️ **B271：对称的 B129 闸** —— 预览侧那条监听早有 `t.viewMode !== "preview"`
-          //    ⇒ return，**编辑器侧漏了**。面板正显示纯预览标签时编辑器整格 `display:none`，
-          //    此刻编辑器的 scroll 只可能是浏览器重置 / CM6 测量补偿 / 程序性扰动 —— 把
-          //    编辑器像素写进预览标签的槽（那份槽的语义是**预览**像素，B129）再把它当源
-          //    推给兄弟 = 用幽灵坐标污染全部分屏（金标准验证台 S9 实测：隐藏编辑器一发
-          //    scroll ⇒ 同文档源码标签的挂起游标被毒成旧值，切回去整格停在旧位置，
-          //    用户报的「反复修了很多轮还有问题」的最后一条病根）。
-          //    mode-split（viewMode="split"）编辑器可见，照常记录与推播，不受此闸影响。
-          if (!t || !isMdTab(t) || t.viewMode === "preview") return;
-          // B170：程序钉位置的回执由 scroll-guard 标记认领、直接吞（见 src/scroll-guard.ts）：
-          // 不比位置、不赌时序、不靠还原窗口，渲染扰动（setBlocks 归零再拉回、图片加载重排）
-          // 也免疫。用户接管滚动时标记被清，随后的 scroll 才是真用户。
-          if (isProgrammatic(shownView.scrollDOM)) return;
-          // B126：滚动位置只活在 DOM 上，随滚动即时记进标签快照（赋值极廉价，
-          // 不排程）。快照是与视图生命周期解耦的全局记录，所以「滚过但没切走就
-          // 重建布局 / 销毁面板」也不会丢。
-          if (t) {
-            t.scrollTop = shownView.scrollDOM.scrollTop;
-            recordScroll(t.tabId, t.scrollTop);
-          }
-          // B132：写进快照还不算数 —— 得落盘。滚动本身**不触发**任何排程，用户
-          // 滚到中段、没干别的事就关窗，会话里留下的还是上一次（滚之前那份），
-          // 重启就回到老位置（B132）。防抖 800ms：滚动停下才写，不会每帧落盘。
-          scheduleSessionSave();
-        });
         attachUserScrollClear(shownView.scrollDOM);
         attachPasteHandler(p);
       }
-      // B137：预览滚动和编辑器滚动是同一件事 —— 位置只活在 DOM 上，随滚动即时
-      // 记进它**自己那份**快照（后台预览标签没有滚动事件，全靠这里补记）。
-      // 同 B132：写完还得排程落盘，否则「滚过预览就关窗」留下的还是滚之前那份。
-      preview.root.addEventListener("scroll", () => {
-        const t = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
-        if (!t || t.viewMode !== "preview") return;
-        // B170：程序钉位置的回执由 scroll-guard 标记认领、直接吞（见 src/scroll-guard.ts），
-        // 不写快照、不推兄弟；落盘排程照旧（位置本身没变）。渲染扰动（图片·公式增强二次
-        // 定位、setBlocks 重排）也一并免疫。用户接管时标记被清。
-        if (isProgrammatic(preview.root)) {
-          scheduleSessionSave();
-          return;
-        }
-        // B154：与编辑器那侧同口径 —— **谁滚谁当源**，用户手指还在预览上、窗口也没
-        //   激活，源码那份也要跟着走。
-        // B159：预览侧这一路同样往外广播 —— 纯预览态那份就是它的源，别的窗口也该跟上。
-        //
-        // ⚠️ B240 二轮：**顺序与编辑器侧对齐（先写快照、后推兄弟）**。原先是反的
-        //   （先 push 再 recordScroll），而 `pushSyncToSiblings` 取 px 读的是快照槽
-        //   ⇒ 推给兄弟的是**上一次**的位置（实测真实 260 时只推出 100）。离屏兄弟
-        //   的槽位被写进这个过期值，切过去就对不上（用户报的位置不一致）。
-        //   编辑器侧那条监听一直是「先写后推」（见 mountView 里那段），别把它也翻过来。
-        t.scrollTop = preview.root.scrollTop;
-        recordScroll(t.tabId, t.scrollTop);
-        scheduleSessionSave();
-      });
 
       applyPanelMode(p);
       if (panelId === activePanelId && p.view) {

@@ -62,7 +62,6 @@ export interface Tab {
    * `display:none`，浏览器会把它的 scrollTop 清零，真正承载「视图位置」的是
    * 预览容器。所以存取两端都按 `viewMode === "preview"` 分流，别死盯编辑器。
    */
-  scrollTop: number | null;
   /** 规范游标 `v`（实数行号，带行内/块内比例的小数）：与视图模式无关、无需测量的
    * 同源实例对齐基准（B273）。
    *
@@ -77,7 +76,6 @@ export interface Tab {
    *
    * ⚠️ **运行时缓存，不入会话落盘** —— 它是从 DOM 实时位置反推的，会话恢复时重新从
    * `scrollTop` 走老路径即可（模式相关的 px 才需要落盘）。 */
-  syncV: number | null;
 }
 
 /** 文档级记录：与 Rust Doc 一一对应（tabId 唯一）。元数据与脏标记由所有实例共享。 */

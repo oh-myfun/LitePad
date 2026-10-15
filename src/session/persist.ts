@@ -149,11 +149,7 @@ export function refreshSession(): void {
     const d = docs.get(t.docId);
     if (!d) continue;
     if (!sessionStore.get(t.tabId)) {
-      // ⚠️ 新登记的记录要**带着** `t` 里已有的位置进来（B145）：会话恢复的标签在
-      // `restoreSession` 里已经把位置读进 `t.syncV`，登记成空白的话，下面那条写入
-      // 又会被还原期的闸口挡掉 —— 「刚恢复出来的位置」这一轮就白恢复了。
-      // B288⑤-1c：只带规范游标 `v`（像素已不落盘）。
-      sessionStore.register(t.tabId, t.docId, { syncV: t.syncV });
+      sessionStore.register(t.tabId, t.docId);
     }
     sessionStore.setDoc(t.tabId, {
       path: d.path ?? "",
@@ -230,8 +226,7 @@ export function sessionSummary(s: SessionState, skipped: string[] = []): string 
   const body = shown
     .map(
       (t) =>
-        // B288⑤-1c：位置只以规范游标 v 入日志（像素已不落盘，显示「位」没有意义）。
-        `${t.path || "(未命名)"}|行${t.cursorLine}:${t.cursorCol}|v${t.syncV ?? "-"}${
+        `${t.path || "(未命名)"}|行${t.cursorLine}:${t.cursorCol}${
           t.viewMode ? `|${t.viewMode}` : ""
         }`,
     )

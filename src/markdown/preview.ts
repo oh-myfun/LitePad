@@ -1,7 +1,7 @@
 import { convertFileSrc } from "../ipc/api";
 
 import type { MdBlock } from "./pipeline";
-import { attachUserScrollClear, isProgrammatic, markProgrammatic } from "../core/scroll-guard";
+import { attachUserScrollClear, markProgrammatic } from "../core/scroll-guard";
 
 /**
  * Markdown 预览面板（M3）：
@@ -12,26 +12,7 @@ import { attachUserScrollClear, isProgrammatic, markProgrammatic } from "../core
 
 const LAZY_THRESHOLD_LINES = 5000; // 大文档：关闭 Mermaid/Shiki 自动渲染
 
-/**
- * 块边界探测点（B251 定案 **ANCHOR = 0**）。
- *
- * ⚠️ 这个常量**不是坐标平移** —— 它只用来在**块边界上**问「视口顶边压在哪一块」：
- * 二分要拿一个 offset 去和块顶边比，比的就是「视口顶 + 半像素」这个探测点。
- *
- * 旧口径是一对正负 8 像素的常数（落点写「块顶往回让 8」，取锚往前探 8）。这一对常数
- * 让「写下去的位置」和「读回来的坐标」各自带一个常量，比例里再吃一次 ⇒ 每走一次往返
- * 就攒一次误差（≈半行），预览与源码的「严格互逆」只成了一半。ANCHOR = 0 之后：
- *   · 落点就是块顶本身（`Math.max(0, top)`）；
- *   · 比例用真·`scrollTop`，不吃探测点；
- *   ⇒ 读写严格互逆，往返不攒误差。B245 那个「越切越靠顶」的病根（真实 `scrollTop` 带
- *   小数、旧口径减 8 加回来仍是「块顶 − 0.5」< 块顶 ⇒ 二分命中前一块）随着这一对常数
- *   一起没了，`indexOfBlockAtOffset` 里那半像素容差 `EPS` 也就不用兜了。
- */
-const TOP_PROBE = 0.5;
-
 export interface SyncHost {
-  /** 编辑器可视区顶行（1-based） */
-  topVisibleLine(): number;
   /** 编辑器滚动到指定行（行首对齐） */
   scrollToLine(line: number): void;
   /** 文档总行数（大文档降级判断用） */
@@ -56,7 +37,6 @@ export class PreviewPane {
   constructor() {
     this.root = document.createElement("div");
     this.root.className = "md-preview";
-    this.root.addEventListener("scroll", () => this.onPreviewScroll());
     // B170：给预览滚动容器挂「用户接管即清程序标记」的监听 —— 标记靠真实输入清除、
     // 不靠时间窗（见 src/scroll-guard.ts）。这样渲染扰动（setBlocks 归零再拉回、图片加载
     // 重排）导致的 actual≠expect 不会被误判成用户滚动反推编辑器。
@@ -497,52 +477,6 @@ export class PreviewPane {
   }
 
   /**
-   * 预览此刻停在哪一行（md 源码行号），定不出来返回 `null`（B148）。
-   *
-   * 纯预览态切回源码时用得上：编辑器那一路位置在 `display:none` 期间被浏览器清零
-   * （CM6 的 `inputState.lastScrollTop` 也会被那发 0 值 scroll 改写），**无从恢复**；
-   * 唯一说得通的落点是「用户正在看的那一行」。取法与 `onPreviewScroll` 完全一样
-   * （同一个 `indexOfBlockAtOffset`、同一个 `TOP_PROBE` 探测点），免得两边对「顶行」的定义分叉。
-   */
-  /**
-   * 预览此刻停在哪一行 —— **带行内比例的小数**（B174）。
-   *
-   * 同步滚动的坐标若是整数：源在一行内滚动时行号不变 ⇒ 目标一动不动，跨行瞬间跳一格，
-   * 连起来就是「卡一下、跳一下」（用户报：跟随同步时预览跳动，而 TOC 一次性大跳反而没
-   * 问题 —— 一次大跳人眼接受，持续小跳很扎眼）。
-   *
-   * ⚠️ 映射必须与 `applySyncToLine` **互逆**：落点就是块顶（`Math.max(0, top)`），这个比例
-   * 就按「到下一块顶边」用真·`scrollTop` 算（探测点只拿去问「压在哪一块」，不进比例），
-   * 否则「读出来的行」与「按行摆下去的位置」对不上，跟随会自带一个来回偏的量。
-   */
-  topVisibleLine(): number | null {
-    if (!this.host) return null;
-    const idx = this.indexOfBlockAtOffset(this.root.scrollTop + TOP_PROBE);
-    if (idx < 0) return null;
-    const el = this.blocks[idx].el;
-    const start = Number(el.dataset.lineStart);
-    if (!Number.isFinite(start) || start <= 0) return null;
-    const next = this.blocks[idx + 1];
-    // ⚠️ B265：走到这里说明**已经滚过最后一块的顶**（`indexOfBlockAtOffset` 只挑「顶边
-    //    不超过探测点」的最后一块，末块被选中 ⇔ 它顶到了容器顶）⇒ 该交**块末行**而不是
-    //    块起始行。源码那一格到底时交的是 `doc.lines`（末行贴容器顶 ⇒ 行号 = 文档末行、
-    //    行内比例 0），两边若一个给末块尾、一个给末行头，就差一个**末块的高度**（末块占
-    //    3 行就差 2 行）⇒ 切标签 / 切模式之后两格各回各的「底」。
-    //    落点仍走块顶（`applySyncToLine`）：v = 末块末行 ⇒ `blockAtLine` 命中末块 ⇒ 沉到
-    //    块顶 ⇒ 读回来还是末块末行，往返不攒误差。
-    if (!next) {
-      const end = Number(el.dataset.lineEnd);
-      return Number.isFinite(end) && end > 0 ? end : start;
-    }
-    const top = this.blockTop(el);
-    const nextTop = this.blockTop(next.el);
-    const range = Number(next.el.dataset.lineStart) - start;
-    if (!(nextTop > top) || !(range > 0)) return start;
-    const ratio = Math.min(1, Math.max(0, (this.root.scrollTop - top) / (nextTop - top)));
-    return start + ratio * range;
-  }
-
-  /**
    * 布局稳定后按 pending 行再定位一次（异步增强 / 图片加载后调用）。
    *
    * B170：这一发是**异步补刀**（图片 / 公式增强后布局变了，再定位一次）。它走
@@ -557,25 +491,6 @@ export class PreviewPane {
       if (this.pendingSyncLine !== line) return;
       this.applySyncToLine(line);
     });
-  }
-
-  private onPreviewScroll(): void {
-    // B170：程序摆位的回执（跨面板同步钉位、会话恢复、setBlocks 恢复、异步二次定位）
-    // 一律由 scroll-guard 标记认领、直接吞（不写快照、不推兄弟）。标记靠用户接管滚动的
-    // 真实输入清除，**不比位置、不赌时序、无时间窗** —— 渲染扰动（setBlocks 归零再拉回、
-    // 图片加载重排位移）把 actual 拖离 expect 也不会被误判成用户滚动反推编辑器，闭环拉锯根除。
-    if (isProgrammatic(this.root)) return;
-    if (!this.host) return;
-    // 用户手动滚动预览：取消待重定位（避免异步重排后又把视图拉回）
-    this.pendingSyncLine = null;
-    // ⚠️ 推「顶边那一行」的**小数游标 v**（与源码→预览那一路 `topVisibleLineFrac` 同口径），
-    //    不再只推整数块首。旧写法推 `lineStart` ⇒ 末块（占多行）整块被钉到块首，兄弟源码
-    //    差末块那几行到不了底（用户报：预览滚到底、源码停在上一块首）；中段块内比例也丢，
-    //    跟随退回整数阶梯。末块顶到顶边时 `topVisibleLine()` 交 `lineEnd`（整行末行），落点
-    //    经 `sourceTopOfV` 仍到末行顶，往返闭合。
-    const v = this.topVisibleLine();
-    if (v === null) return;
-    this.host.scrollToLine(v);
   }
 
   private blockAtLine(line: number): BlockNode | null {
@@ -595,41 +510,5 @@ export class PreviewPane {
       if (line <= e) return b;
     }
     return hit ?? this.blocks[this.blocks.length - 1] ?? null;
-  }
-
-  /**
-   * 命中「最后一个顶边不超过 offset 的 block」。
-   *
-   * B172：跟随路径（用户滚预览、预览当源做同步）**每个 scroll 事件**都走这里。block 的
-   * 顶边在文档里单调递增，所以可以二分 —— 线性版要从头摸到命中位置，滚到文档中部就是
-   * 几百个节点、上千次 `getBoundingClientRect`；二分只需 log₂N 次，且基准 rect 提到循环
-   * 外只算一次。语义与线性版一致（都取最后一个 ≤ offset 的，一个都不满足则退回首个）。
-   */
-  private indexOfBlockAtOffset(offset: number): number {
-    const n = this.blocks.length;
-    if (n === 0) return -1;
-    const base = this.root.getBoundingClientRect().top;
-    const scroll = this.root.scrollTop;
-    const topAt = (i: number): number =>
-      this.blocks[i].el.getBoundingClientRect().top - base + scroll;
-    // ⚠️ ANCHOR = 0（B251）：落点就是块顶本身（见 `TOP_PROBE` 的说明），所以「写下去的位
-    // 置」与「读回来的坐标」不掺任何常数，下面这条比较在带小数的真实 `scrollTop` 上也成立。
-    // 旧口径落点比块顶少 8、取锚又加 8 还原，等宽几何里正好抵消、看不出问题；真实浏览器
-    // `scrollTop` 常带小数，减 8 加回来仍是「块顶 − 0.5」< 块顶 ⇒ 二分命中**前一个块** ⇒
-    // 每次「预览→源码」都退回上一块，越切越靠顶（B245 那个「越切越靠顶」symptom）。
-    // 当时只能拿半像素容差 `EPS` 兜；现在那一对常数撤了，容差跟着撤，判据回到纯比较。
-    let lo = 0;
-    let hi = n - 1;
-    let hit = -1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (topAt(mid) <= offset) {
-        hit = mid;
-        lo = mid + 1;
-      } else {
-        hi = mid - 1;
-      }
-    }
-    return hit >= 0 ? hit : 0;
   }
 }

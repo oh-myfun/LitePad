@@ -10,7 +10,6 @@ import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { sessionAll } from "./static";
 import { EditorView } from "@codemirror/view";
-import { tabs } from "../src/core/app-state";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -86,7 +85,6 @@ vi.mock("../src/ipc/api", () => ({
               cursorLine: 5,
               cursorCol: 3,
               scrollTop: 120,
-              syncV: 120 / 14, // B288⑤-1c：位置真值（行号，带行内比例）
             },
             {
               path: "b.md",
@@ -95,7 +93,6 @@ vi.mock("../src/ipc/api", () => ({
               cursorLine: 9,
               cursorCol: 2,
               scrollTop: 240,
-              syncV: 240 / 14,
             },
           ],
         },
@@ -110,7 +107,6 @@ vi.mock("../src/ipc/api", () => ({
               cursorLine: 3,
               cursorCol: 4,
               scrollTop: 60,
-              syncV: 60 / 14,
             },
           ],
         },
@@ -245,11 +241,6 @@ function cursorAt(view: EditorView): { line: number; col: number; scroll: number
  *    **估算值**，实测约 188px 而非 14 ⇒ 拿 px 当判据会随估算漂移，且 1c 删掉像素落盘后
  *    根本不再有像素可恢复）。v 才是存档真值，恢复的是它，px 由当前几何现算。
  */
-function syncVAt(i: number): number | null {
-  // ⚠️ 按**创建顺序**取，不按 path：这套 mock 下三个文档的 `path` 读出来都是 "a.md"
-  //   （实测 DIAG），path 匹配会全命中第一个。顺序则是稳定的：0=a.md、1=b.md、2=c.md。
-  return [...tabs.values()][i]?.syncV ?? null;
-}
 /** 标签条上第 i 个标签对应的文件路径（从视图内容反推，jsdom 无 data 属性保证）。 */
 function docNameOf(view: EditorView): string {
   return (view.state.doc.toString().split("\n")[0] ?? "").split(" line")[0];
@@ -284,7 +275,6 @@ describe("B129 会话恢复：面板激活标签 + 每标签光标 + 每标签�
       line: 9,
       col: 2,
     });
-    expect(syncVAt(1), "b.md 的规范游标要恢复成它自己那份（不是别人的）").toBe(240 / 14);
   });
 
   it("③ 切到同面板的另一个标签：它**自己的**光标与视口，不是刚离开那个的", async () => {
@@ -293,7 +283,6 @@ describe("B129 会话恢复：面板激活标签 + 每标签光标 + 每标签�
     const a = views().find((v) => panels()[0].contains(v.dom))!;
     expect(docNameOf(a), "应切到 a.md").toBe("a.md");
     expect({ line: cursorAt(a).line, col: cursorAt(a).col }).toEqual({ line: 5, col: 3 });
-    expect(syncVAt(0), "a.md 的规范游标要恢复成它自己那份").toBe(120 / 14);
 
     // 再切回 b.md：必须回到 b.md 自己的位置（共享视口的话这里会是 120）
     clickTab(tabEls(0)[1]);
@@ -302,7 +291,6 @@ describe("B129 会话恢复：面板激活标签 + 每标签光标 + 每标签�
     expect(docNameOf(b), "应切回 b.md").toBe("b.md");
     expect({ line: cursorAt(b).line, col: cursorAt(b).col }).toEqual({ line: 9, col: 2 });
     // 共享视口的话这里会是 a.md 那份（120/14）
-    expect(syncVAt(1), "切回 b.md：仍是它自己那份游标，不是刚离开那个的").toBe(240 / 14);
   });
 
   it("④ 非活动面板的标签同样恢复自己的位置", async () => {
@@ -311,7 +299,6 @@ describe("B129 会话恢复：面板激活标签 + 每标签光标 + 每标签�
     const c = views().find((v) => panels()[1].contains(v.dom))!;
     expect(docNameOf(c), "面板1 显示的应是 c.md").toBe("c.md");
     expect({ line: cursorAt(c).line, col: cursorAt(c).col }).toEqual({ line: 3, col: 4 });
-    expect(syncVAt(2), "非活动面板的标签也要恢复它自己那份游标").toBe(60 / 14);
   });
 
   it("⑤ 还原空窗期的 0 值 scroll 不该排程落盘（B142）", async () => {
@@ -342,32 +329,21 @@ describe("B129 静态契约：三样都要进出会话", () => {
     "\n" +
     readFileSync("src/core/viewport.ts", "utf-8");
 
-  it("会话记录要同时带光标行列、规范游标与激活下标", () => {
-    // B141：这三项现在都由 `sessionStore`（src/session/store.ts）产出，main.ts 只负责
+  it("会话记录要带光标行列与激活下标", () => {
+    // B141：这两项现在都由 `sessionStore`（src/session/store.ts）产出，main.ts 只负责
     // 把它们刷进去 —— 所以断言一半盯 store 的序列化，一半盯刷新。
-    // B288⑤-1c：视口位置只以规范游标 `syncV` 落盘（像素已退役）。
     const store = readFileSync("src/session/store.ts", "utf-8");
     expect(store, "每个标签都要记光标行").toMatch(/cursorLine: r\.cursorLine,/);
-    expect(store, "每个标签都要记规范游标 v").toMatch(/syncV: r\.syncV,/);
-    expect(store, "像素出口必须已删除").not.toMatch(/scrollTop: r\.scrollTop/);
     expect(store, "面板记录要带激活下标").toMatch(/active: Math\.max\(/);
-    expect(src, "刷新要把规范游标刷进会话记录").toMatch(/sessionStore\.setSyncV\(/);
   });
 
-  it("恢复时要逐个标签接住这三样", () => {
+  it("恢复时要逐个标签接住光标与激活下标", () => {
     expect(src, "光标要写回实例状态").toMatch(/inst\.state = inst\.state\.update\(\{ selection/);
-    expect(src, "规范游标要写回实例").toMatch(/inst\.syncV = st\.syncV/);
-    expect(src, "像素写回必须已删除").not.toMatch(/inst\.scrollTop = st\.scrollTop/);
     expect(src, "面板激活标签要写回").toMatch(/panel\.activeTabId = panel\.tabs\[active\]/);
   });
 
   it("反向验证：退化实现（只恢复活动标签 / 只恢复光标）必定被上两条抓住", () => {
-    // 退化 A：不逐个标签接住规范游标（比如只处理活动标签那一个）
-    // 注意用 replaceAll —— main.ts 里有两处写回（会话恢复 / 跨窗口接管），
-    // 只摘掉一处时正则仍能在另一处匹配到，断言就会变成假绿。
-    const degradedCursor = src.replaceAll(/inst\.syncV = st\.syncV \?\? null;/g, "// 已删除");
-    expect(degradedCursor, "退化后不应再匹配游标写回").not.toMatch(/inst\.syncV = st\.syncV/);
-    // 退化 B：面板激活下标不还原（一律取第一个）。
+    // 退化 A：面板激活下标不还原（一律取第一个）。
     // ⚠️ 拆卸与断言必须用**同一条精确串**：main.ts 里另有一处 `panel.activeTabId =
     // panel.tabs[...]`（关标签时的补位），用宽泛正则会把别人的代码也算成「已删除」。
     const degradedActive = src.replaceAll("panel.activeTabId = panel.tabs[active];", "");

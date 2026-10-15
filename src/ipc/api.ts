@@ -334,26 +334,6 @@ export interface TabSession {
   eol: string;
   cursorLine: number;
   cursorCol: number;
-  /**
-   * 视口滚动位置（px）。只记光标行列是不够的：恢复后文件停在开头、光标却在第 N
-   * 行（屏幕外），看上去就跟「光标复位了」一样（B126）。
-   *
-   * ⚠️ **纯预览态（B129）下这个槽是预览容器的滚动位置**：编辑器此时 `display:none`，
-   * `scrollTop` 被浏览器清零，真正承载视图位置的是预览容器。
-   * `null` = 这份实例从没显示过 → 接手方自行保证光标可见。
-   */
-  scrollTop?: number | null;
-  /**
-   * B288④-4：规范视口游标 `v`（实数行号，带行内比例小数，**与宽度无关**）。
-   *
-   * `scrollTop` 是**像素**、宽度一变就是另一行（分屏 / 改字号 / 缩放都会让它错位），所以它
-   * 只能当「当前几何下的现场值」用、不能当存档真值。`syncV` 记的是「看到第几行」，宽度无关，
-   * 恢复时按当前几何现场反算像素 ⇒ 换宽度重启也按**同一行**还原（不再因为像素错位而偏移）。
-   *
-   * ⚠️ 旧会话没有这个字段 ⇒ `undefined` ⇒ 恢复时回退 `scrollTop`（兼容，不要求立刻重排旧会话）。
-   * 同步关着 / 还没同步过 ⇒ 落 `null` ⇒ 同样回退 `scrollTop`。
-   */
-  syncV?: number | null;
   /** Markdown 视图模式（source/split/preview） */
   viewMode?: string | null;
   /**
@@ -524,8 +504,6 @@ export interface SatelliteTab {
   viewMode: string;
   cursorLine: number;
   cursorCol: number;
-  /** 视口滚动位置（px）；纯预览侧是预览容器的位置（B129），`null` = 从没显示过 */
-  scrollTop: number | null;
   /** B169：同步滚动开关（按文档记）——让接手窗口的同步键点亮态与主窗口一致 */
   syncMode?: boolean;
   sizeClass: "normal" | "large" | "huge";

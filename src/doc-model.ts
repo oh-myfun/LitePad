@@ -97,8 +97,6 @@ function makeInstance(doc: Doc, panelId: number, text: string): Tab {
     comps,
     state,
     viewMode: "source",
-    scrollTop: null,
-    syncV: null,
   };
 }
 

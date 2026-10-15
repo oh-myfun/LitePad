@@ -27,7 +27,6 @@ import {
   setSyncingDocId,
 } from "../core/app-state";
 import { activeTab, instancesOfDoc } from "../core/panels";
-import { viewportOfTab } from "../core/viewport";
 import {
   DocChangePayload,
   DocClosePayload,
@@ -124,8 +123,6 @@ function transferSnapshotOf(tabId: number): SatelliteTab | null {
     viewMode: isMdTab(tab) ? tab.viewMode : "source",
     cursorLine: line.number,
     cursorCol: pos - line.from + 1,
-    // B126：视口位置一起带走，接手的窗口才是「接着看」而不是「从头看」
-    scrollTop: viewportOfTab(tab),
     // B169：同步滚动开关一起带走——否则主窗口开着同步、子窗口收下后按钮还是灭的，
     // 两边状态对不上（用户报「子窗口的同步按钮状态和主窗口的要一致」）。
     syncMode: docSyncModes.get(tab.docId) === true,
@@ -306,7 +303,6 @@ function adoptTransferredTabs(incoming: SatelliteTab[], panelId = activePanelId)
     const line = inst.state.doc.line(lineNo);
     const pos = line.from + Math.min(Math.max(0, (st.cursorCol || 1) - 1), line.length);
     inst.state = inst.state.update({ selection: { anchor: pos } }).state;
-    inst.scrollTop = st.scrollTop ?? null;
     attachTabToPanel(inst, panel);
     adopted.push(inst.tabId);
   }

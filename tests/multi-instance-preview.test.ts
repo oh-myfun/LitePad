@@ -8,7 +8,6 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { EditorView } from "@codemirror/view";
-import { tabs } from "../src/core/app-state";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -77,7 +76,6 @@ vi.mock("../src/ipc/api", () => ({
               cursorLine: 6,
               cursorCol: 1,
               scrollTop: 100,
-              syncV: 6,
               viewMode: "source",
             },
             {
@@ -87,7 +85,6 @@ vi.mock("../src/ipc/api", () => ({
               cursorLine: 14,
               cursorCol: 1,
               scrollTop: 300,
-              syncV: 14,
               viewMode: "preview",
             },
           ],
@@ -209,7 +206,6 @@ function cursorLine(): number {
 }
 
 describe("B130 同源多实例：代码 / 预览各自回各的", () => {
-  // 恢复完成那一刻预览的落点（由载荷 syncV=14 现算）——「切回后落在同一处」的自洽基准。
   let restoredPx = -1;
   beforeAll(async () => {
     await import("../src/main");
@@ -251,6 +247,5 @@ describe("B130 同源多实例：代码 / 预览各自回各的", () => {
     expect(previewRoot()!.scrollTop, "预览实例的视口应回到恢复时那一处（不许回顶 / 串档）").toBe(
       restoredPx,
     );
-    expect([...tabs.values()][1]?.syncV, "预览实例的规范游标仍是它自己那份").toBe(14);
   });
 });
