@@ -89,10 +89,8 @@ impl Level {
 
 /// 默认级别：`debug` 构建放低一档（开发期直接看得到细节），发布版 info。
 ///
-/// ⚠️ B255 曾临时把发布版那档改成 `Trace` 出包取证（同步滚动那一路的
-/// `[viewport] 切换·还原 / 写入位置` 与 `[sync] 推 / 落` 全是 debug / trace，默认 info
-/// 下一次复现什么都拿不到）。证据读出来、B256 定案之后已改回 `Level::Info` ——
-/// 别为了「下次好查」再把它调低：滚动采样一秒几十条 trace 会把日志冲掉。
+/// ⚠️ B255 曾临时把发布版那档改成 `Trace` 出包取证，证据读完已改回 `Level::Info` ——
+/// 别为了「下次好查」再把它调低：高频 trace 会把日志冲掉，真出问题时反而看不见。
 pub fn default_level() -> Level {
     if cfg!(debug_assertions) {
         Level::Debug

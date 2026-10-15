@@ -90,7 +90,6 @@ vi.mock("../src/ipc/api", () => ({
               eol: "LF",
               cursorLine: 1,
               cursorCol: 1,
-              scrollTop: null,
             },
           ],
         },

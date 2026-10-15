@@ -120,24 +120,14 @@ fix 各自算一个）。例：修 B213 时来回改三轮 ⇒ 只值一次 patc
   `starts_with` 不做 `..` 归一化，那样会写出假绿的用例。
 - 取舍：外部（别的编辑器）改了 `session.json` 也不会再提示，下次会话保存仍会覆盖它。
   这是有意的 —— 它是 LitePad 的私有数据，不是用户文档。
-
-## 同源多实例（B149 + B152）
+## 同源多实例（B149）
 
 - **同一文件打开多份时，光标与滚动位置默认不互相关联**（用户拍板，`tests/multi-instance-scope.test.ts`
   把这条基线钉住）：`syncDocInstances` 只派发 `{ changes }`（纯文本），光标 / 视口 / 视图模式
   各实例各归各的。
-- **同步滚动模式（B152）是这条基线的显式例外，但它走独立通道**：默认依旧不关联，只有用户按下
-  标题栏文档名后面那颗键才联动。实现落在 `docSyncModes` / `isSyncSource` / `pushSyncToSiblings`，
-  **不进 `syncDocInstances`** —— 文本同步那条链路一个字节都没动（「哪份正文更新、怎么合并」和
-  「位置跟不跟」是两件事，别混进同一处）。
-  ⚠️ 想改联动行为时**，改的是 `pushSyncToSiblings` 这一处，**不是往 `syncDocInstances` 里塞 ——
-  那等于把「只同步文本」这条不变量悄悄拆了，之后没人知道哪块能删。
-- 同步滚动的口径（写死在 `tests/sync-scroll-mode.test.ts`）：
-  ① **状态粒度 = 文档**（`Map<docId, boolean>`）—— 一个文档一份开关，切激活文档按钮不复位；
-  ② 方向**单向**（永远「激活文档 → 其它实例」），`isSyncSource` 同时是回环闸门，别再叠守卫；
-  ③ 兄弟的位置只写 `recordScroll`，钉 DOM 要套 `restoringViewport` + `pinScrollTop`，且先派发
-  选区再钉位置；④ 纯预览实例那个槽装的是**预览侧像素**，只跟光标、不跟编辑器的 px；
-  ⑤ 触发点四处：`handleUpdate` / 编辑器 scroll / `switchTab` 末尾 / `refreshAll` 末尾。
+- ⚠️ **同步滚动模式（B152）已在重构中整体清除**（`sync-scroll.ts` / 位置记忆 / 跨窗广播均已删除）：
+  标题栏那颗键保留可见但 **inert**，点击只翻转 `docSyncModes` 与自身字形，不产生任何联动。
+  `docSyncModes` 现在只是这颗键的状态存储（随会话 / 卫星标签载荷搬运点亮态），不是待恢复的功能开关。
 - 「同源」只到文本这一层就够：两份实例的光标互不干涉，用户完全可以一边看代码一边
   对照预览翻到不同位置 —— 那正是同文件多实例的用途（B130 的恢复口径同源）。
 
@@ -160,93 +150,18 @@ fix 各自算一个）。例：修 B213 时来回改三轮 ⇒ 只值一次 patc
 - 增删一个「可放任意内容」的目录时，必须同步所有全仓枚举型清单
   （`.gitignore` / `.prettierignore` / eslint `ignores` / `tsconfig.include` / 测试里的 `SKIP_DIRS`），
   否则探针会误伤无关守卫。
+## 视口位置（已移除）
 
-## 视口位置（B134 / B139 / B142 / B145 / B146）
+⚠️ **本节描述的整套机制（位置记忆 / 还原）已随同步滚动重构整体删除**：`pinScrollTop` /
+`recordScroll` / `rememberViewScroll` / `measureAndKeepScroll` / `restoringViewport` /
+`restoreViewScroll` / `clearPendingSync` / `t.scrollTop` 像素槽 / CM6 测量补偿收尾
+（B134 / B139 / B142 / B145 / B146 / B148 / B151 那一路）全部不复存在，别再到代码里找它们。
 
-- **还原位置要「钉到立住为止」**：`pinScrollTop` 逐帧补钉（上限 `PIN_MAX_FRAMES` 帧），
-  中间值一个都不信。只补一帧是不够的 —— 窗口刚打开时布局可能连着好几帧都没稳，
-  差一帧位置就永久停在被裁掉的 0 上。补钉期间 `viewportWriteDepth` 不降，
-  「程序滚动不许写快照」的区间必须活到最后一次补钉之后。
-- **写快照只有 `recordScroll` 一个出口**（B145）：`restoringViewports` 原来只被两个
-  scroll 监听认，`rememberViewScroll` / `refreshSession` 那几条旁路照样能把还原期
-  的中间值写进记录。别再直连 `sessionStore.setScroll`。
-- **`pinInFlight` 是容器的 Trust 开关**：钉位置还在重试时，容器里摆的是没立住的值
-  （多半是 0），`rememberViewScroll` 看见了必须一个字都不采。
-- **`focus()` 必须排在还原位置之前**（切标签 / 挂载）：`focus()` 会把光标滚进视野，
-  排在钉位置之后等于白钉 —— 这就是「切换标签位置会变」。
-- 补钉始终没立住时会留一条 `logger.warn("viewport", …)`（含目标值、实际值与差值）。
-  真机出现「重启回到顶部」先看这条日志。
-- ⚠️ **「立住」的判据必须留容差**（B151，用户质疑「滚动位置应该不需要考虑小数」，他对）：
-  `scrollTop` 是 double，缩放 ≠100% 时落点天然带小数 ⇒ 拿 `landed === px` 精确比较，
-  小数永远对不上，每次补钉都重试到 `PIN_MAX_FRAMES` 甩一条「没立住」—— 满屏都是这条，
-  真出问题时反而看不见。现在按 `PIN_EPSILON_PX`（1px）判，「被文档长度夹住」那支同样带容差。
-  顺带：落点打印走 `fmtPx()`，别把 `493.3333435058594` 整串塞进日志。
-- **换文档（`setState`）期间的自动滚动是**主因**（B146 二轮修订，用户拍板）**：
-  CM6 的 `setState` 实现末尾是
+现状：滚动位置只活在 DOM 上，切标签 / 重建布局后**不再记忆与还原**；预览侧只保留
+按源行号的本地定位（大纲跳转 / 转到行，`PreviewPane.syncToLine`）。会话只落光标
+（`cursor_line` / `cursor_col`），重启后保证光标可见，不恢复滚动位置。
 
-  ```js
-  if (hadFocus) this.focus(); // 换完文档自己再滚一次，把光标滚进视野
-  this.requestMeasure();
-  ```
-
-  再加上浏览器按**新内容长度**裁剪 `scrollTop` —— 这两下都不是用户造成的。而它们
-  派发的 scroll 那一刻，滚动监听会把「换文档的副作用」当成「用户停过的位置」写进
-  记录：**这就是「切换标签，md 文档的滚动位置会不断往下移」的直接原因**
-  （源码 / 预览都中）。次要成因是下面那条 CM6 测量补偿。
-
-  两条硬规矩：
-  1. `panel.viewTabId` 要**先于** `setState` 改掉 —— 滚动监听靠它寻址，晚一步那几下
-     滚动就记到**旧**标签头上了。
-  2. 整个「换文档 → 还原」要罩进 `restoringViewport(tabId, …)`，还原窗口要从
-     `setState` **之前**就开着，不能只罩住还原那一下。两帧后才解锁，而浏览器 scroll
-     事件是**下一帧**才派发的，正好落在窗口里。
-
-  ⚠️ 别再给这段叠「也算程序滚动」的计数器（试过 `swappingView`，已删）：它挡掉的并不
-  只有换文档那两下自动滚动，**切完标签同一帧内的用户滚动也一并丢了**
-  （`session-restore-state` 的 B129 用例因此变红）。`restoringViewport` 的两帧窗口
-  已经够用，行为用例实测退回修复前后照样精确变红。加保险前先能说清「丢掉的那一下
-  一定是程序造成的」。
-
-  ⚠️ 修这个 bug 时注意：**别在 `setState` 的 scrollTop setter 里派发 scroll 来模拟**。
-  那一刻的写入是我们自己的钉位置，本来就归 B139 那条「程序滚动不许写快照」管，
-  照样被挡 —— 等于什么都没模拟（B146 实测踩过）。要模拟就钩住 `EditorView.prototype.setState`，
-  在它**之后**改一次容器值并派发事件，见 `tests/viewport-anchor.test.ts`。
-
-- **CM6 测量会把视口往下推，`requestMeasure()` 不能裸调**（B146）：`@codemirror/view`
-  在 measure 收尾时做「滚动锚点补偿」——拿视口顶行高度与上次记的锚点比，差 >1px
-  就 `scrollTop += diff`。`setState` 换文档后 heightMap 是拿 `HeightOracle` 按**估算
-  行高**建的，measure 换成实测行高，软换行 / 中英文混排下 `diff` 恒为正 ⇒ 每切一次
-  标签视口再多挪一点。测量统一走 `measureAndKeepScroll(panel)`，它在补偿之后把位置
-  收回来。这是**次要**成因，别拿它当主修复。
-  ⚠️ 时序是躲不掉的：`requestMeasure()` 排的是**下一帧** rAF，而 `pinScrollTop` 第一次
-  就判定「立住」、不再补钉，中间无人把关 —— 这正是这个 bug 藏了这么久的原因。
-- **预览按像素钉完之后要 `clearPendingSync()`**：`applySyncToLine` 只写 `pendingSyncLine`
-  不消费它，而 `applyPending` 会被任意一次图片 / 公式增强的 `load` 唤醒，留着旧行号
-  就会把预览从刚钉好的落点拽走。
-- ⚠️⚠️ **源码 / 预览共用一个 px 槽，切换模式是一次「交接」，不是各认各的**（B148）：
-  `t.scrollTop` 只有一个字段，装的是「**当前这一侧**」的像素。纯预览态下编辑器是
-  `display:none`，它的 `scrollDOM.scrollTop` 被浏览器清零，CM6 的
-  `inputState.lastScrollTop`（`observers.scroll` 记的那个，focus 时才回读）也被那发
-  0 值 scroll 改写 ⇒ **编辑器的位置无从恢复**；而预览的滚动监听照常把**预览的像素**
-  写进同一个槽。切回源码时 `measureAndKeepScroll` 下一帧的 `reassertViewScroll` 认的
-  判据是 `t.viewMode !== "preview"`（此刻已是源码）⇒ 就把预览的像素钉到了编辑器上。
-  于是 `editor@E → preview@syncToLine(E) → 用户滚预览到 P' → source@P'` —— 每绕一圈
-  偏一次，这就是「反复切换源码 / 预览，滚动位置持续偏移」。
-
-  修法（**不加第二个字段**，B138 已拍板不再为位置加字段）：切回源码之前，先把
-  「预览此刻停在哪一行」换成**编辑器侧**的像素（`PreviewPane.topVisibleLine()` →
-  `view.lineBlockAt(doc.line(n).from).top`），**走 `recordScroll` 写进同一个槽**，
-  再 `restoreViewScroll` 钉回去。三处顺序都是契约：
-
-  1. 问顶行必须在改 `tab.viewMode` **之前**（切换后编辑器已是 `display:none`，问不出）；
-  2. 走 `recordScroll` 唯一闸口，别直连 `sessionStore.setScroll`；
-  3. 拿到落点才 `restoreViewScroll`，否则下一帧的测量收尾会拿旧值动手。
-
-  ⚠️ 预览一份都没渲染出来（`topVisibleLine()` 返回 `null`，大文件降级就是这种）时，
-  **宁可不动编辑器**，也别把预览的像素原样钉过去 —— 后者跳到的位置没有任何依据，
-  比停在开头更像 bug。
-  ⚠️ 这条链路在 jsdom 里能真复现（B148 的 `tests/view-mode-scroll.test.ts`：退化实现
-  报 `expected 3000 not to be 3000`），因为要的只是「写进去的值 ≠ 另一侧的像素」。
+若将来要重做「位置记忆」，这是全新设计（用户已明确「换个思路」），不要参照本节旧口径。
 
 ## 图标
 

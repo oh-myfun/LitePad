@@ -107,7 +107,6 @@ function tab(path: string, owner?: string) {
     eol: "LF",
     cursorLine: 1,
     cursorCol: 1,
-    scrollTop: 0,
     // 分组键：sat-1 两个标签、sat-2 一个标签
     ...(owner ? { owner } : {}),
   };

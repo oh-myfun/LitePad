@@ -3,7 +3,7 @@
 > 轻量，但不将就。
 
 这是一份用于演示 LitePad 渲染能力的样例文档：**左侧源码、右侧实时预览**，
-配合大纲 TOC 与同步滚动，写完即可见。
+配合大纲 TOC，写完即可见。
 
 ## 特性一览
 
@@ -24,11 +24,10 @@
 代码按需加载高亮器，不用的语言不进首屏体积：
 
 ```ts
-// 同步滚动：编辑 ↔ 预览按 block 锚点对齐
-export function syncPreview(line: number): void {
-  const block = findBlockBySourceLine(line);
-  if (!block) return;
-  preview.scrollTo({ top: block.offsetTop, behavior: "smooth" });
+// 代码高亮按需加载：不用的语言不进首屏体积
+const highlighter = await import("./highlighters/" + lang);
+export function highlight(code: string, lang: string): Promise<string> {
+  return highlighter.then((h) => h.render(code));
 }
 ```
 

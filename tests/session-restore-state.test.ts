@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-// B129 · 会话恢复必须覆盖三件事：① 每个面板**激活的标签**、② 每个标签**各自的光标**、
-// ③ 每个标签**各自的视图位置**。
+// B129 · 会话恢复必须覆盖两件事：① 每个面板**激活的标签**、② 每个标签**各自的光标**。
+// （③ 各自的视图位置 —— 滚动记忆/还原已随同步滚动重构整体移除，不再恢复。）
 //
 // 为什么需要这一整份用例：cursor-keep.test.ts 喂给恢复流程的会话里所有标签都是
 // `cursorLine: 1` —— 于是「只恢复了活动标签」和「每个标签都恢复」在那些断言里长得
-// 一模一样，等于没在测。这里给每个标签安排**不同的**行/列/视口，任何一处只恢复
+// 一模一样，等于没在测。这里给每个标签安排**不同的**行/列，任何一处只恢复
 // 一份、或大家共用同一份，都会当场露馅。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
@@ -20,9 +20,9 @@ beforeAll(() => {
   document.body.innerHTML = body;
 });
 
-/** 最后一次落盘的会话（B142 用它盯「空窗期的 0 有没有被写下去」）。 */
+/** 落盘记录（反向契约用：滚动事件不再触发会话落盘）。 */
 const wired = vi.hoisted(() => ({
-  saved: [] as { panels: { tabs: { path: string; scrollTop: number | null }[] }[] }[],
+  saved: [] as unknown[],
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -84,7 +84,6 @@ vi.mock("../src/ipc/api", () => ({
               eol: "LF",
               cursorLine: 5,
               cursorCol: 3,
-              scrollTop: 120,
             },
             {
               path: "b.md",
@@ -92,7 +91,6 @@ vi.mock("../src/ipc/api", () => ({
               eol: "LF",
               cursorLine: 9,
               cursorCol: 2,
-              scrollTop: 240,
             },
           ],
         },
@@ -106,7 +104,6 @@ vi.mock("../src/ipc/api", () => ({
               eol: "LF",
               cursorLine: 3,
               cursorCol: 4,
-              scrollTop: 60,
             },
           ],
         },
@@ -151,7 +148,7 @@ vi.mock("../src/ipc/api", () => ({
     }),
   saveFile: () => Promise.resolve({ lossy: [], path: "" }),
   savePasteImage: () => Promise.resolve(""),
-  saveSession: (state: { panels: { tabs: { path: string; scrollTop: number | null }[] }[] }) => {
+  saveSession: (state: unknown) => {
     wired.saved.push(state);
     return Promise.resolve();
   },
@@ -224,29 +221,21 @@ function clickTab(el: HTMLElement): void {
   el.dispatchEvent(mouse("mousedown", 5, 5));
   el.dispatchEvent(mouse("click", 5, 5));
 }
-/** 该视图里的光标行 / 列（1-based）与视口位置。 */
-function cursorAt(view: EditorView): { line: number; col: number; scroll: number } {
+/** 该视图里的光标行 / 列（1-based）。 */
+function cursorAt(view: EditorView): { line: number; col: number } {
   const head = view.state.selection.main.head;
   const line = view.state.doc.lineAt(head);
   return {
     line: line.number,
     col: head - line.from + 1,
-    scroll: view.scrollDOM.scrollTop,
   };
 }
-/**
- * 该文档对应标签的**规范游标 v**（B288⑤-1c）。
- *
- * ⚠️ 位置断言一律盯 v、不盯 px：像素是几何相关的「现场产物」（jsdom 下 CM6 的行高是
- *    **估算值**，实测约 188px 而非 14 ⇒ 拿 px 当判据会随估算漂移，且 1c 删掉像素落盘后
- *    根本不再有像素可恢复）。v 才是存档真值，恢复的是它，px 由当前几何现算。
- */
 /** 标签条上第 i 个标签对应的文件路径（从视图内容反推，jsdom 无 data 属性保证）。 */
 function docNameOf(view: EditorView): string {
   return (view.state.doc.toString().split("\n")[0] ?? "").split(" line")[0];
 }
 
-describe("B129 会话恢复：面板激活标签 + 每标签光标 + 每标签视图位置", () => {
+describe("B129 会话恢复：面板激活标签 + 每标签光标", () => {
   beforeAll(async () => {
     await import("../src/main");
     await wait(300);
@@ -277,20 +266,19 @@ describe("B129 会话恢复：面板激活标签 + 每标签光标 + 每标签�
     });
   });
 
-  it("③ 切到同面板的另一个标签：它**自己的**光标与视口，不是刚离开那个的", async () => {
+  it("③ 切到同面板的另一个标签：它**自己的**光标，不是刚离开那个的", async () => {
     clickTab(tabEls(0)[0]);
     await wait(60);
     const a = views().find((v) => panels()[0].contains(v.dom))!;
     expect(docNameOf(a), "应切到 a.md").toBe("a.md");
     expect({ line: cursorAt(a).line, col: cursorAt(a).col }).toEqual({ line: 5, col: 3 });
 
-    // 再切回 b.md：必须回到 b.md 自己的位置（共享视口的话这里会是 120）
+    // 再切回 b.md：必须回到 b.md 自己的光标（共享状态的话这里会是 a.md 那份）
     clickTab(tabEls(0)[1]);
     await wait(60);
     const b = views().find((v) => panels()[0].contains(v.dom))!;
     expect(docNameOf(b), "应切回 b.md").toBe("b.md");
     expect({ line: cursorAt(b).line, col: cursorAt(b).col }).toEqual({ line: 9, col: 2 });
-    // 共享视口的话这里会是 a.md 那份（120/14）
   });
 
   it("④ 非活动面板的标签同样恢复自己的位置", async () => {
@@ -301,33 +289,26 @@ describe("B129 会话恢复：面板激活标签 + 每标签光标 + 每标签�
     expect({ line: cursorAt(c).line, col: cursorAt(c).col }).toEqual({ line: 3, col: 4 });
   });
 
-  it("⑤ 还原空窗期的 0 值 scroll 不该排程落盘（B142）", async () => {
-    // 真机上：视图刚 setState、内容还没撑开，浏览器把我们的赋值裁成 0 并派发一发
-    // scroll；位置要等下一帧补钉才立住。那发事件若照常处理，就会把 0 写进会话记录
-    // **并排程一次落盘** —— 用户若在这 800ms 内关窗，盘上就是 0，重启回到顶部。
-    // （之后位置补钉成功又会刷新回来，所以症状是「闪一下」，盘上的中间态才是真问题。）
+  it("⑤ 滚动事件不再触发会话落盘（位置记忆已移除的反向契约）", async () => {
+    // 同步滚动 / 位置记忆整体清除后，滚动事件与会话落盘之间不该再有任何因果：
+    // 谁要是把 scroll 监听（或 recordScroll 那类写槽）加回来，这条就得红。
     clickTab(tabEls(0)[0]);
     await wait(60);
     await wait(900); // 先让路上的落盘都落定，拿到干净的基线
     const before = wired.saved.length;
 
-    clickTab(tabEls(0)[1]); // 切到 b.md：触发一次位置还原
+    clickTab(tabEls(0)[1]); // 切到 b.md
     const sc = panels()[0].querySelector(".cm-scroller") as HTMLElement;
-    sc.scrollTop = 0; // 模拟「被浏览器裁掉」
+    sc.scrollTop = 0;
     sc.dispatchEvent(new Event("scroll", { bubbles: false }));
     await wait(900); // 越过 800ms 防抖
 
-    expect(wired.saved.length, "空窗期的 0 不该再排一次落盘").toBe(before);
+    expect(wired.saved.length, "滚动事件不该再排一次落盘").toBe(before);
   });
 });
 
-describe("B129 静态契约：三样都要进出会话", () => {
-  const src =
-    readFileSync("src/main.ts", "utf-8") +
-    "\n" +
-    sessionAll() +
-    "\n" +
-    readFileSync("src/core/viewport.ts", "utf-8");
+describe("B129 静态契约：两样都要进出会话", () => {
+  const src = readFileSync("src/main.ts", "utf-8") + "\n" + sessionAll();
 
   it("会话记录要带光标行列与激活下标", () => {
     // B141：这两项现在都由 `sessionStore`（src/session/store.ts）产出，main.ts 只负责

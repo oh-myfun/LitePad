@@ -67,16 +67,6 @@ function toDisk(r: SessionTabRecord): TabSession {
     eol: r.eol,
     cursorLine: r.cursorLine,
     cursorCol: r.cursorCol,
-    // B143：浏览器里 `scrollTop` 是 **double** —— 缩放下「滚到底」正好是
-    // `scrollHeight - clientHeight`，几乎必然带小数（125% 缩放是重灾区）。
-    // 而 Rust 侧 `scroll_top` 是 `Option<u32>`：一个小数就让**整份** SessionState
-    // 反序列化失败 ⇒ `save_session` 报错 ⇒ `persistSession` 的 catch 把它吞掉 ⇒
-    // 会话从此**一次也写不进去**，表现就是「滚到底之后再滚，位置就不刷新了」
-    // （往回滚的增量是整数，可基数还带着那个小数，于是连续失败）。
-    // B288⑤-1c：像素**不再落盘** —— 几何相关（分屏 / 改字号 / 缩放都会让同一个像素
-    //   变成另一行）。位置的唯一存档真值是规范游标 `v`。
-    //   （B143 那条「Rust 侧 `scroll_top` 是 Option<u32>、小数会让整份会话反序列化失败」
-    //    的坑随之消失 —— 不再有像素出口。旧盘上的 `scroll_top` 仍由 `de_scroll_top` 宽容读取。）
     viewMode: r.viewMode,
     backupId: r.backupId,
     docId: r.docId,

@@ -228,8 +228,10 @@ pub struct TabSession {
     /// 旧版本落盘的会话没有这个字段，反序列化为 `None`，行为与 B69 之前一致。
     #[serde(alias = "doc_id")]
     pub doc_id: Option<u64>,
-    /// B169：同步滚动开关（按文档记，B152）。落盘后重新打开时写回前端 `docSyncModes`，
-    /// 让同步键点亮态与退出前一致。`false` = 没开过同步（旧会话没有这个字段也走默认）。
+    /// B169：同步滚动开关（按文档记，B152）。⚠️ 同步滚动逻辑已整体清除（重构）——
+    /// 这个字段现在只搬运标题栏那颗键的**点亮态**（按键 inert，不产生任何联动），
+    /// 落盘后重新打开时写回前端 `docSyncModes`，让键的点亮态与退出前一致。
+    /// `false` = 没开过（旧会话没有这个字段也走默认）。
     #[serde(alias = "sync_mode")]
     pub sync_mode: bool,
     /// B193：仅 `satellite_tabs` 段使用 —— 该标签当时属于哪个卫星窗口（label 作分组键）。

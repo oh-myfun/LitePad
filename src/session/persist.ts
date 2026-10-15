@@ -299,8 +299,7 @@ export async function persistSession(): Promise<void> {
     logger.trace("session", "保存 · 已交给后端");
   } catch (e) {
     // B143：这里原来是**静默**吞掉的。整份会话写不进去时界面上一点迹象都没有
-    // （只表现为「位置/光标不再刷新」），排查只能靠猜 —— 小数 scrollTop 让 Rust 侧
-    // 反序列化失败那次就是这么被藏起来的。至少留一条日志。
+    // （只表现为「光标不再刷新」），排查只能靠猜。至少留一条日志。
     logger.warn("session", `保存失败：${String(e)}`);
   }
 }

@@ -4,7 +4,7 @@
 //
 // 这条用例盯的是「同源多实例」这条最刁的分支：会话里会有多条记录指向同一个
 // path，恢复时只能读一次盘（restoredCache 按身份去重），于是「文档只有一份、
-// 实例各有各的」——每个实例的光标、视口、**视图模式**都得是自己的。
+// 实例各有各的」——每个实例的光标与**视图模式**都得是自己的。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { EditorView } from "@codemirror/view";
@@ -75,7 +75,6 @@ vi.mock("../src/ipc/api", () => ({
               eol: "LF",
               cursorLine: 6,
               cursorCol: 1,
-              scrollTop: 100,
               viewMode: "source",
             },
             {
@@ -84,7 +83,6 @@ vi.mock("../src/ipc/api", () => ({
               eol: "LF",
               cursorLine: 14,
               cursorCol: 1,
-              scrollTop: 300,
               viewMode: "preview",
             },
           ],
@@ -206,7 +204,6 @@ function cursorLine(): number {
 }
 
 describe("B130 同源多实例：代码 / 预览各自回各的", () => {
-  let restoredPx = -1;
   beforeAll(async () => {
     await import("../src/main");
     await wait(300);
@@ -227,7 +224,6 @@ describe("B130 同源多实例：代码 / 预览各自回各的", () => {
     const pv = previewRoot();
     expect(pv, "应渲染出预览容器").toBeTruthy();
     expect(pv!.textContent ?? "", "预览里应有渲染出来的正文").toContain("正文第");
-    restoredPx = pv!.scrollTop;
   });
 
   it("切到看代码的那个实例：回到源码态，且光标是它自己的那一行", async () => {
@@ -237,15 +233,18 @@ describe("B130 同源多实例：代码 / 预览各自回各的", () => {
     expect(cursorLine(), "源码实例的光标应是第 6 行").toBe(CURSOR.source);
   });
 
-  it("切回预览实例：又变回预览，光标与视口也都是它自己的", async () => {
-    clickTab(tabEls()[1]);
+  it("切回预览实例：又变回预览，光标是它自己的，且视口不被重渲染冲掉", async () => {
+    // 先把预览滚到一个非 0 位置（此刻虽在源码态，预览节点仍在 DOM 里，jsdom 无视
+    // display:none）：0 ⇒ 0 的断言恒真、没有鉴别力，必须让「setBlocks 没收住
+    // replaceChildren 前的 scrollTop」这条真的会红。
+    previewRoot()!.scrollTop = 500;
+    clickTab(tabEls()[1]); // 切回预览实例：applyPanelMode → setBlocks 整块重渲染
     await wait(60);
     expect(host().classList.contains("mode-preview"), "应回到预览态").toBe(true);
     expect(cursorLine(), "预览实例的光标应是第 14 行").toBe(CURSOR.preview);
-    // B288⑤-1c：位置按 v 现算（px 数值随几何，不再钉 300）—— 盯「回到恢复时那一处」
-    //   的自洽 + 「v 还是它自己那份」。
-    expect(previewRoot()!.scrollTop, "预览实例的视口应回到恢复时那一处（不许回顶 / 串档）").toBe(
-      restoredPx,
-    );
+    expect(
+      previewRoot()!.scrollTop,
+      "切回预览重渲染后视口应接住（replaceChildren 会清零 scrollTop）",
+    ).toBe(500);
   });
 });
