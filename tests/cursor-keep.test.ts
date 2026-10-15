@@ -573,8 +573,9 @@ describe("B181 静态契约：切标签后编辑器必须拿到焦点", () => {
     const reFocus =
       /setTimeout\(\s*\(\)\s*=>\s*\{?\s*view\.view\.contentDOM\.focus\(\{\s*preventScroll:\s*true\s*\}\)/;
     expect(body, "switchTab 末尾必须延迟一拍用原生 preventScroll 补 focus").toMatch(reFocus);
-    expect(body, "这一拍后面必须跟一次 reassert 复核（DOM 被谁拉走都钉回槽）").toMatch(
-      /contentDOM\.focus\(\{\s*preventScroll:\s*true\s*\}\)[\s\S]{0,220}reassertViewScroll\(panel\)/,
+    // B288⑤-2：复核升级为 restoreViewScroll 重还原（v 是唯一真值，比按槽复核更强）。
+    expect(body, "这一拍后面必须跟一次重还原（DOM 被 focus 拉走都按 v 钉回）").toMatch(
+      /contentDOM\.focus\(\{\s*preventScroll:\s*true\s*\}\)[\s\S]{0,220}restoreViewScroll\(panel\)/,
     );
   });
 

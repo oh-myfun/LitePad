@@ -32,7 +32,6 @@ import {
   restorePreviewScroll,
   rememberViewScroll,
   measureAndKeepScroll,
-  reassertViewScroll,
   syncSourceV,
   alignShownToSyncSource,
   syncSourceSnapshot,
@@ -540,12 +539,15 @@ export function switchTab(panelId: number, tabId: number): void {
   //    （08:17:53.294 收口钉 2478 之后，中间零日志，54.081 保存时 DOM 已经是 1922.67
   //    ≈ 光标行 80）⇒ 用户看到的「切回去位置对不上/弹回老地方」的最后一块拼图。
   //    ⇒ ①原生 `preventScroll: true`（Chromium/WebView2 原生支持，绕过 CM6 的检测）；
-  //    ②下一帧 `reassertViewScroll` 复核：DOM 被谁拉走了都钉回槽（用户已滚则槽=用户
-  //    位置，钉回去无害；被 focus 拉走则槽仍是收口值，钉回正确）。
+  //    ②下一帧 `restoreViewScroll` 重还原：单轨下 v 是唯一真值、比槽复核更强 —— focus 把
+  //    DOM 拉去光标行时，v 分支按实测几何把 v 现算重钉（用户已滚则 v=用户位置，钉回无害；
+  //    被 focus 拉走则钉回收口值）。预览态被它开头闸跳过（预览无此复核需求）。
+  //    （B288⑤-2：原 `reassertViewScroll` 槽复核已并入删除 —— 它是槽支的温和版，
+  //    v 单轨后「按槽复核」天然弱于「按 v 重落」。）
   setTimeout(() => {
     view.view.contentDOM.focus({ preventScroll: true });
     view.view.update([]); // B182：同步补 `cm-focused` 类（同 EditorHandle.focus 的收尾）
-    requestAnimationFrame(() => reassertViewScroll(panel));
+    requestAnimationFrame(() => restoreViewScroll(panel));
   }, 0);
 }
 

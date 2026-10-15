@@ -310,11 +310,13 @@ describe("B146 静态契约：测量统一走收尾，别在各处裸调 request
     }
   });
 
-  it("收尾只在位置真的被动过时才补钉", () => {
-    const body = bodyOf("function reassertViewScroll(");
-    // 没被动过就别钉：白钉会占用 pinningContainers，干扰随后的采样
-    expect(body).toMatch(/scrollTop === px/);
-    expect(body, "补钉要过唯一闸口 pinScrollTop").toMatch(/pinScrollTop\(/);
+  it("还原补钉要过唯一闸口 pinScrollTop（reassert 槽复核已并入 restoreViewScroll）", () => {
+    // B288⑤-2：reassertViewScroll 已删，switchTab 延迟复核改调 restoreViewScroll。
+    //   槽支（v=null 或未测兜底）与原 reassert 同语义：把槽里的真值 pin 回 DOM。
+    const body = bodyOf("function restoreViewScroll(");
+    expect(body, "槽支要过唯一闸口 pinScrollTop").toMatch(
+      /pinScrollTop\(view\.scrollDOM, t\.scrollTop\)/,
+    );
     // pinScrollTop 内部每帧标程序来源，回执被监听经 scroll-guard 吞掉（不写回记录）
     const pin = bodyOf("function pinScrollTop(");
     expect(pin, "补钉期间派发的 scroll 不能写回记录（要标程序来源）").toMatch(

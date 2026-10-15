@@ -1262,21 +1262,5 @@ export function measureAndKeepScroll(panel: Panel): void {
   });
 }
 
-/** 测量后的滚动锚点补偿把位置挪走了 → 钉回标签自己那份快照（B146）。 */
-export function reassertViewScroll(panel: Panel): void {
-  if (!panel.view || panel.viewTabId === null) return;
-  const t = tabs.get(panel.viewTabId);
-  if (!t || t.viewMode === "preview") return;
-  const px = t.scrollTop;
-  if (px === null) return;
-  const view = panel.view.view;
-  // 没被动过就别碰：钉一次会占用 `pinningContainers`，白白干扰随后可能发生的
-  // 「视图消失前看最后一眼」（B145 的读闸口见 `pinInFlight` 会跳过它）。
-  if (view.scrollDOM.scrollTop === px) return;
-  logger.trace(
-    "viewport",
-    `锚点补偿挪走了位置 tab=${t.tabId} 实际 ${view.scrollDOM.scrollTop} → 钉回 ${px}`,
-  );
-  // B170：`pinScrollTop` 标程序来源，回执被监听吞掉，不再罩还原窗口。
-  pinScrollTop(view.scrollDOM, px);
-}
+// B288⑤-2：`reassertViewScroll`（槽复核）已并入删除 —— switchTab 延迟补焦点后的复核
+// 改调 `restoreViewScroll`（v 是唯一真值，比按槽复核更强；见该函数与 lifecycle 的注释）。
