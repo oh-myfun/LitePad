@@ -917,10 +917,10 @@ export function syncSourceV(t: Tab | undefined): number | null {
     //    **不可信**——此刻 scrollTop 被钳 0、块却还在 ⇒ 读出「第一块行号」假游标（约 v=1），
     //    把停在深处的预览当成「置顶」推给兄弟 ⇒ 源码瞬拖到 0，且把 `syncV` 毒化成假值
     //    （下次切回预览时从毒化的 v 派生，位置错乱）。与源码侧 `sourceCursorPx` 回退槽值、
-    //    `restorePreviewScroll` 的 `!unmeasuredPanels.has(panel)` 守卫同款纪律（B271）：未测量
+    //    `restorePreviewScroll` 游标支的同款守卫（`previewGeometryUnready`，B271）：未测量
     //    一律报**上次同步的规范游标 `t.syncV`**（宁可报已知真值，不许报 0 抹位置）。已测量才
     //    走 `topVisibleLine()` 读当前真实可见行（用户滚预览时的实时同步靠它）。
-    if (p && unmeasuredPanels.has(p)) return t.syncV ?? null;
+    if (p && previewGeometryUnready(p)) return t.syncV ?? null;
     return p?.preview?.topVisibleLine() ?? null;
   }
   const view = p?.view?.view;
@@ -1158,7 +1158,7 @@ export function restorePreviewScroll(panel: Panel): void {
     //    scrollHeight>0，三判据合取不成立）。与 `restoreViewScroll` 同款纪律：未测量
     //    时跳过游标分支，落到下面「槽支」用 `t.scrollTop` 钉，`pinScrollTop` 逐帧补钉，
     //    等容器撑开后自愈。
-    if (!unmeasuredPanels.has(panel)) {
+    if (!previewGeometryUnready(panel)) {
       const landed = preview.syncToLineProgrammatic(t.syncV);
       if (landed !== null) {
         recordScroll(t.tabId, landed);
@@ -1191,6 +1191,33 @@ export function restorePreviewScroll(panel: Panel): void {
   // 位置已按像素钉死，待重定位行号就是过期的了：留着它，下一次图片/公式增强的
   // 二次定位（`applyPending`）会把预览从我们钉的落点拽回那一行（B146）。
   preview.clearPendingSync();
+}
+
+/**
+ * B288⑤-3：预览侧的「几何可信」查询 —— 预览游标换算（`topVisibleLine()` /
+ * `syncToLineProgrammatic`）**只准在这道闸放行时使用**。
+ *
+ * ⚠️⚠️ **语义拆分**（本切片的核心）：`unmeasuredPanels` 是**编辑器 CM6 measure** 的
+ *    窗口标记（setState/重挂载 → measure 帧关闭，见 `measureAndKeepScroll`），它**不是**
+ *    预览的信号 —— 预览块几何由 `renderMarkdownFor`→`setBlocks` 自己的链路铺开，
+ *    与 CM6 measure **不是同一拍**（B288 三轮的教训：jsdom 下预览几何可用但本集合有
+ *    标记 ⇒ 拿它挡预览会**误杀**有用的补落）。
+ *
+ *    现状是**分层的双保险**，各答各的问题：
+ *    ① **换算点自检**（第一道、语义正确的）：`preview.ts` 的 `applySyncToLine` 在
+ *       「块 rect 全 0 且容器高 0」时返回 `null` —— 这是预览几何的**真判据**，
+ *       与 measure 无关、与桩/真机同价；
+ *    ② **本查询**（第二道、保守挡板）：借用 CM6 窗口挡「拖分屏刚重挂」那一拍 ——
+ *       块 rect **部分可用**（有值但容器未撑开）时自检不触发、却仍算出错 px 并
+ *       `recordScroll` 污染槽（B288 二轮的真机场景）。两事件通常同窗（面板刚重建
+ *       ⇒ CM6 也没测）但不严格同拍 ⇒ 它挡的是交集，误杀面已被 ① 兜住（jsdom 下
+ *       ① 使守卫冗余，真机上 ② 补 ① 的空窗）。
+ *
+ *    ⇒ 未来若要换判据（如 `root.isConnected && scrollHeight > 0`），**只动这一个函数**；
+ *      两处调用点（`syncSourceV` 预览支 / `restorePreviewScroll` 游标支）不许各自内联判断。
+ */
+export function previewGeometryUnready(panel: Panel): boolean {
+  return unmeasuredPanels.has(panel);
 }
 
 /**

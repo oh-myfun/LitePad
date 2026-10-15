@@ -23,18 +23,15 @@ function restorePreviewBody(): string {
 }
 
 describe("B288 二轮 restorePreviewScroll 未测量不许走游标记 0", () => {
-  it("游标分支必须被 unmeasuredPanels 守卫挡住（与 restoreViewScroll 同款）", () => {
+  it("游标分支必须被 previewGeometryUnready 守卫挡住（B288⑤-3 收口后的具名查询）", () => {
     const body = restorePreviewBody();
-    // 守卫必须出现，且是「非未测量」才走游标
-    expect(body, "restorePreviewScroll 必须认 unmeasuredPanels").toContain(
-      "unmeasuredPanels.has(panel)",
-    );
-    expect(body, "游标分支须跳过未测量窗口（!unmeasuredPanels.has(panel)）").toContain(
-      "!unmeasuredPanels.has(panel)",
-    );
+    // B288⑤-3：守卫收口到具名查询 `previewGeometryUnready`（语义拆分：unmeasuredPanels
+    // 是 CM6 measure 的标记、不是预览的信号；预览侧借用必须走收口，不许内联 has）。
+    expect(body, "restorePreviewScroll 必须走具名守卫").toContain("previewGeometryUnready(panel)");
+    expect(body, "不许内联 unmeasuredPanels.has").not.toContain("unmeasuredPanels.has(panel)");
     // syncToLineProgrammatic 的真实调用（带 `preview.` 前缀与 `(`，以避开函数体注释里
     // 反引号提及的同名词）必须排在该守卫之后（在受保护的块内）
-    const guardPos = body.indexOf("!unmeasuredPanels.has(panel)");
+    const guardPos = body.indexOf("previewGeometryUnready(panel)");
     const syncPos = body.indexOf("preview.syncToLineProgrammatic(");
     expect(guardPos, "应能定位守卫").toBeGreaterThan(-1);
     expect(syncPos, "应能定位 preview.syncToLineProgrammatic 真实调用").toBeGreaterThan(-1);
@@ -44,16 +41,15 @@ describe("B288 二轮 restorePreviewScroll 未测量不许走游标记 0", () =>
     ).toBeGreaterThan(guardPos);
   });
 
-  it("反向验证：删掉 !unmeasuredPanels.has(panel) 守卫，上面的判定必须失效", () => {
+  it("反向验证：删掉 previewGeometryUnready 守卫，上面的判定必须失效", () => {
     const body = restorePreviewBody();
-    const guard = "!unmeasuredPanels.has(panel)";
+    const guard = "!previewGeometryUnready(panel)";
     expect(body, "前置：固定代码确有守卫").toContain(guard);
     // 退化：把守卫条件换成 true，模拟 pre-fix「游标分支无条件执行」行为
     const degraded = body.replace(guard, "true /* guard removed */");
     expect(degraded, "退化：应真的摘掉了守卫那一层").not.toBe(body);
-    expect(
-      degraded,
-      "退化后 !unmeasuredPanels.has(panel) 必须消失（否则上面的 toContain 形同虚设）",
-    ).not.toContain(guard);
+    expect(degraded, "退化后具名守卫必须消失（否则上面的 toContain 形同虚设）").not.toContain(
+      guard,
+    );
   });
 });

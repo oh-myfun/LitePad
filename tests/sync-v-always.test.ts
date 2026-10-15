@@ -137,3 +137,29 @@ describe("B288⑤-4 挂起补写机制已删（pendingSyncCursor / flushPendingS
     );
   });
 });
+
+describe("B288⑤-3 预览几何守卫收口到 previewGeometryUnready（语义拆分）", () => {
+  // unmeasuredPanels 是「编辑器 CM6 measure」的窗口标记，不是预览的信号（预览块几何
+  // 由 setBlocks 自己铺开、与 measure 不同拍）。预览侧两处守卫必须走同一个具名查询收口
+  // —— 未来换判据（root.isConnected && scrollHeight>0 之类）只动一处，不许各自内联 has。
+  it("syncSourceV 预览支与 restorePreviewScroll 游标支都走 previewGeometryUnready", () => {
+    const syncV = fnBodyOf("export function syncSourceV(t: Tab | undefined): number | null {");
+    expect(syncV, "syncSourceV 预览支要走具名守卫").toContain("previewGeometryUnready(p)");
+    expect(syncV, "不许内联 unmeasuredPanels.has").not.toContain("unmeasuredPanels.has(p)");
+    const restoreP = fnBodyOf("export function restorePreviewScroll(panel: Panel): void {");
+    expect(restoreP, "restorePreviewScroll 游标支要走具名守卫").toContain(
+      "previewGeometryUnready(panel)",
+    );
+    expect(restoreP, "不许内联 unmeasuredPanels.has").not.toContain("unmeasuredPanels.has(panel)");
+  });
+
+  it("反向验证：把守卫改回内联 unmeasuredPanels.has，上面的判定必须失效", () => {
+    const syncV = fnBodyOf("export function syncSourceV(t: Tab | undefined): number | null {");
+    expect(syncV, "前置：固定代码已收口").toContain("previewGeometryUnready(p)");
+    const degraded = syncV.replace("previewGeometryUnready(p)", "unmeasuredPanels.has(p)");
+    expect(degraded, "退化：应真的改回内联").not.toBe(syncV);
+    expect(degraded, "退化后具名守卫必须消失（否则上面的 toContain 形同虚设）").not.toContain(
+      "previewGeometryUnready(p)",
+    );
+  });
+});

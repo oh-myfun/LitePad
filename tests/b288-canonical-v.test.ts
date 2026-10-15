@@ -25,8 +25,9 @@ const REBUILD = readFileSync("src/session/rebuild.ts", "utf-8").replace(/\r\n/g,
 describe("B288④-1 syncSourceV 未测量预览必须报已知 syncV（不许报 0 抹位置）", () => {
   it("预览分支必须在未测量守卫下返回 t.syncV（不是 topVisibleLine 假游标）", () => {
     // 守卫那一行必须存在，且位于 `topVisibleLine()` 真实读数之前（受未测量保护）。
-    expect(SYNC, "syncSourceV 必须认 unmeasuredPanels").toContain("unmeasuredPanels.has(p)");
-    const guardLine = SYNC.indexOf("if (p && unmeasuredPanels.has(p)) return t.syncV ?? null;");
+    // B288⑤-3：守卫收口到具名查询 previewGeometryUnready（语义拆分，不许内联 has）。
+    expect(SYNC, "syncSourceV 必须走具名守卫").toContain("previewGeometryUnready(p)");
+    const guardLine = SYNC.indexOf("if (p && previewGeometryUnready(p)) return t.syncV ?? null;");
     expect(guardLine, "应能定位未测量守卫分支").toBeGreaterThan(-1);
     const realRead = SYNC.indexOf("p?.preview?.topVisibleLine() ?? null");
     expect(realRead, "应能定位预览真实读数").toBeGreaterThan(-1);
@@ -37,7 +38,7 @@ describe("B288④-1 syncSourceV 未测量预览必须报已知 syncV（不许报
   });
 
   it("反向验证：摘掉未测量守卫分支，上面的判定必须失效", () => {
-    const guard = "if (p && unmeasuredPanels.has(p)) return t.syncV ?? null;";
+    const guard = "if (p && previewGeometryUnready(p)) return t.syncV ?? null;";
     expect(SYNC, "前置：固定代码确有守卫").toContain(guard);
     const degraded = SYNC.replace(guard, "/* guard removed */");
     expect(degraded, "退化：应真的摘掉了守卫那一行").not.toBe(SYNC);

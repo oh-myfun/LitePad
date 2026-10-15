@@ -199,6 +199,13 @@ export let syncingDocId: number | null = null;
  * （此刻 measure 已完成、heightMap 已是实测）调 `restoreViewScroll` 按实测几何重落
  * （B288⑤-4：挂起补写 `pendingSyncCursor` 已删 —— 单轨下还原走 v，重落就是重还原，
  * 与 B263 的「display:none 量不成 ⇒ 跳过」同一个纪律，只是判据从「藏没藏」换成「测没测」）。
+ *
+ * ⚠️⚠️ **语义边界（B288⑤-3）**：本集合是**编辑器 CM6 measure** 的窗口标记，**不是**
+ *    预览的信号 —— 预览块几何由 `setBlocks` 自己的链路铺开，与 measure 不是同一拍
+ *    （B288 三轮：拿它挡预览会在 jsdom 下误杀有用的补落）。预览侧借它做保守挡板的
+ *    两处调用**必须**走 `previewGeometryUnready`（见 `sync-scroll.ts`）收口，不许各自
+ *    内联 `has` —— 预览几何的**真判据**在换算点自检（`applySyncToLine` 块 rect 全 0
+ *    ⇒ null），本集合只是「拖分屏刚重挂」那一拍的第二道挡板。
  */
 export const unmeasuredPanels = new WeakSet<Panel>();
 
