@@ -12,7 +12,6 @@ import { CODICONS } from "./shell/codicons";
 import { setTip } from "./shell/tooltip";
 import { saveSettings } from "./ipc/api";
 import { extractOutline } from "./markdown/outline";
-import { syncJumpToLine } from "./sync-scroll";
 import { EditorView } from "@codemirror/view";
 import {
   mainRow,
@@ -249,11 +248,6 @@ function updateTocDrawer(): void {
       });
       tab2.state = panel.view.view.state;
       if (tab2.viewMode === "preview") panel.preview?.syncToLine(line);
-      // 统一位置同步入口：本地兄弟派发 + 跨窗口广播都由 pushSyncToSiblings 收口
-      // （内部按 docSyncModes 守卫——未开同步滚动则只动激活实例，与用户诉求一致）。
-      // 这把「大纲跳转」与「转到行 / 查找命中」三条触发源并到同一条路径，
-      // 消除各自手工 instancesOfDoc 循环带来的漏跨窗口广播与行为差异。
-      syncJumpToLine(tab2, line);
       panel.view.focus();
       updateTocDrawer();
     },

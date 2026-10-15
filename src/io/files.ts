@@ -17,7 +17,6 @@ import {
   panels,
   remotedTabs,
   tabs,
-  unmeasuredPanels,
   setActivePanelId,
   setSuppressDirty,
   type Doc,
@@ -60,7 +59,6 @@ import type { FileDropTarget } from "../shell/filedrop";
 import { clearAllDropPreviews, panelAt } from "../shell/splitview";
 import { zoneOf } from "../dnd/geometry";
 import { showSaveConflictDialog } from "../shell/conflictdialog";
-import { measureAndKeepScroll, restoreViewScroll } from "../sync-scroll";
 import {
   freshTextOfDoc,
   rebuildLayout,
@@ -113,13 +111,7 @@ function rebuildDocInstances(doc: Doc, text: string, keepCursor = false): void {
       setSuppressDirty(true);
       panel.view.setState(inst.state);
       setSuppressDirty(false);
-      // B271：估算窗口开启（见 unmeasuredPanels）
-      unmeasuredPanels.add(panel);
       panel.viewTabId = inst.tabId;
-      // B126：整态重建把视口清零；保光标的场合（外部刷新）顺带把视口也保住
-      if (keepCursor) restoreViewScroll(panel);
-      // B271：估算窗口由 measureAndKeepScroll 的 rAF 关闭
-      measureAndKeepScroll(panel);
     }
   }
 }

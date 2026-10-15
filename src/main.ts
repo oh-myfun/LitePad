@@ -256,7 +256,7 @@ function handleUpdate(view: EditorView, update: ViewUpdate): void {
   const caretLine = view.state.doc.lineAt(caretPos);
   sessionStore.setCursor(tab.tabId, caretLine.number, caretPos - caretLine.from + 1);
   updatePositionOf(panel.panelId, view);
-  // 同步滚动推送已在重构第一步整体清除（见 sync-scroll.ts）：handleUpdate 不再把光标 /
+  // 同步滚动推送已在重构整体清除：handleUpdate 不再把光标 /
   // 位置推给兄弟实例。`docSyncModes` 与这颗同步键仍保留，但不再产生任何滚动副作用。
   // 文本是否真的变了：点击内容区、移动光标、切换视图、重新测量都会产生
   // update 但前后文本完全一致——那不是编辑。
@@ -371,7 +371,7 @@ function bindEvents(): void {
   syncScrollBtn.addEventListener("click", () => {
     const tab = activeTab();
     if (!tab) return;
-    // 同步滚动逻辑已在重构第一步整体清除（见 sync-scroll.ts）：这颗键保留可见，但只翻转
+    // 同步滚动逻辑已在重构整体清除：这颗键保留可见，但只翻转
     // `docSyncModes` 与自身 glyph，不再产生任何滚动 / 跨窗口广播副作用。
     const on = docSyncModes.get(tab.docId) !== true;
     docSyncModes.set(tab.docId, on);

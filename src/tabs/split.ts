@@ -8,7 +8,6 @@
 // 对 main.ts 零反向依赖。与 render / lifecycle 形成（运行期安全的）循环引用。
 
 import {
-  type Tab,
   tabs,
   docs,
   panels,
@@ -18,7 +17,6 @@ import {
   setActivePanelId,
   takePanelId,
   setSuppressDirty,
-  unmeasuredPanels,
   settings,
 } from "../core/app-state";
 import { getPanel, activePanel, panelOfTab } from "../core/panels";
@@ -33,14 +31,6 @@ import {
   type MaximizeSnapshot,
   type LayoutNode,
 } from "../core/layout";
-import {
-  syncSourceV,
-  landPreviewAtSource,
-  landOnFrameGeometry,
-  restoreViewScroll,
-  measureAndKeepScroll,
-  rememberViewScroll,
-} from "../sync-scroll";
 import {
   makeDoc,
   makeInstance,
@@ -109,14 +99,7 @@ export function splitActivePanel(panelId: number, dir: "h" | "v"): void {
         setSuppressDirty(true);
         view.setState(prev.state);
         setSuppressDirty(false);
-        // B271：估算窗口开启（本支原本没有 measureAndKeepScroll，下面补上）
-        unmeasuredPanels.add(panel);
-        // B126：原位剩下的标签也要拿回自己的视口位置
-        restoreViewScroll(panel);
       }
-      // B271：估算窗口必须由 measureAndKeepScroll 的 rAF 关闭 —— 本支原本没有，
-      // 不补的话挂起的游标永远等不到实测补写
-      measureAndKeepScroll(panel);
     } else {
       // 原面板空了：清悬挂引用，同步一个新标签过去（异步完成后重建挂载视图）
       panel.activeTabId = -1;
@@ -300,31 +283,8 @@ export function duplicateTabToPanel(tabId: number, hostPanelId: number): void {
   inst.viewMode = src.viewMode;
   const sel = src.state.selection.main;
   inst.state = inst.state.update({ selection: { anchor: sel.anchor, head: sel.head } }).state;
-  // ⚠️⚠️ **B261 第三处同型缺口**：`duplicateTabToPanel`（右键「复制标签」/「复制到相邻
-  //    面板」/ Ctrl 拖到面板中心 = `moveTabToPanel(copy=true)`）造出的这份 `makeInstance`
-  //    同样是**空档**（`scrollTop: null`、编辑器视口恒 0），而这条路径**从来没有任何落位**
-  //    —— 前两轮修的是 `splitPanelWithTab` 的 copy 分支与 `openPreviewToSide`，都没盖到它。
-  //    ⇒ 两面受害：· 新副本自己停在文档开头（用户报「复制标签滚动位置没有复制」）；
-  //                · `refreshAll` 尾那趟 `pushSyncToSiblings(activeTab())` 正好以这份空档
-  //                  为源往外推（B152）⇒ 同文档的原标签被记成 `top = 0` 钉进 DOM。
-  //    修法与 copy 分支**同口径**：`rebuildLayout()` 之前先落位，落的是**槽**
-  //    （此刻新实例还没进面板，没有容器可钉；槽会被 `restoreViewScroll` 带走）。
-  //    ⚠️ 顺序不能反：`syncSourceV` 必须在源**还在屏上**（位置真实）时采；
-  //       ⚠️ 变量名刻意**不叫 `v`**：`tests/view-mode-scroll.test.ts` 里 B148 那两条退化
-  //          契约盯的整句是 `const v = syncSourceV(tab);`，退化的摘句按**首次出现**定位 ——
-  //          这一处行号更靠前，同名会让退化 `replace` 摘到这里 ⇒ 退化变成「没改」⇒ 假绿。
-  // ⚠️⚠️ `syncSourceV` 排在 attach **之前**（源此刻还在屏上、位置是真的），落位排在 attach
-  //    **之后**（见下面那条）—— 两件事必须拆开，顺序写反这一份就仍然停在文档开头。
-  const vDup = syncSourceV(src);
   attachTabToPanel(inst, host);
   setActivePanelId(hostPanelId);
-  // ⚠️⚠️ 落位必须在 `attachTabToPanel` **之后**：`recordScroll` 是靠 `tabs.get(tabId)`
-  //    把位置写进这份实例的槽的，而 `makeInstance` **不落表**、`attachTabToPanel` 内部那句
-  //    `tabs.set(...)` 才是它进表的那一刻。排在前面 ⇒ 写槽时压根查不到这份 ⇒ **静默空转**
-  //    （探针实测：落位完 `inst.scrollTop` 还是 `null`，新副本照样顶到 0）。
-  //    ⚠️ 反过来说 `syncSourceV` 也不能挪到 attach 之后太远 —— 它读的是源那一格，
-  //       attach 一下手 host 的 `activeTabId` 就换成这份新副本了。
-  if (vDup !== null) landPreviewAtSource(inst, vDup);
   rebuildLayout();
   refreshAll();
   scheduleSessionSave();
@@ -391,78 +351,9 @@ export function splitPanelWithTab(
     //    ⚠️ 上面那句「落位排在 `rebuildLayout()` 之前」的**结论已被第四轮推翻**（见下面
     //       那一大段）：分屏那一刻左栏立刻**变窄**、编辑器重排 ⇒ 必须**之后**落。
     //
-    //    ⚠️ `syncSourceV` 仍然必须排在最前（先于任何重建采）：源此刻还在屏上、位置是真的，
-    //       一旦被 `rebuildLayout` 摘下来换别的标签，采到的就是接班那份的坐标。
-    // ⚠️ 变量名刻意**不叫 `v`**：`tests/view-mode-scroll.test.ts` 里 B148 那两条退化契约盯的
-    //    整句就是 `const v = syncSourceV(tab);`，而退化的摘句是按**首次出现**定位的 ——
-    //    这一处行号更靠前，同名会让退化 `replace` 摘到**这里**而不是切模式那一处 ⇒
-    //    退化变成了「没改」，两条判据（ASK 被摘 / 顺序契约）双双假绿。
-    const vCopy = syncSourceV(tab);
     setLayout(splitPanelAt(layout, targetId, dir, newId, newFirst));
     setActivePanelId(newId);
     rebuildLayout();
-    // ⚠️⚠️⚠️ **B261 第四轮（用户：「新建分屏时原标签内滚动位置出现了变化，
-    //    可能跟面板宽度变化有关」）—— 落位必须排在 `rebuildLayout()` 之后，而且
-    //    **源那一格也得重落**（只落新副本是上一轮漏的那一半）。**
-    //
-    //    分屏那一刻左栏从「整宽」变成「半宽」⇒ 编辑器（word_wrap 开着）**重排 / 折行** ⇒
-    //    **同一个 `scrollTop` 像素在新几何下是另一行**；而这份实例的槽里存的**只有像素**
-    //    （`recordScroll` 直接写 px），跨宽度的尺子只有**游标 `v`**。
-    //    ⇒ `restoreViewScroll` 拿旧像素（分屏前量出来的 287）去钉**已变窄**的左栏 ⇒
-    //      源被钉到「新宽度的 287px」⇒ 看着就是「原标签滚动位置出现变化」；而之前那两轮
-    //      的修法只把 `v` 落给了**新副本**，左栏那份压根没人重落 ⇒ 真机上症状②从来没修好过
-    //      （jsdom 桩**没有布局、没有宽度** ⇒ 这条在桩里根本测不出来 —— 典型的假绿）。
-    //
-    //    ⇒ 两个面板都按**新几何**挂好之后，按同一个 `vCopy` 把**两格**都重落一遍：
-    //      源（左栏）与新副本（右栏）。谁后谁赢：落位要盖过 `rebuildLayout` 那一钉。
-    //
-    //    ⚠️ 顺序不能反：`syncSourceV` 在最前采（旧几何）；`landPreviewAtSource` 在
-    //       `rebuildLayout` 之后落（新几何）—— 用错一边换算，落点就带着旧/新宽度的量。
-    // ⚠️ **落位不许跨帧**（B262 把第五轮那句「同步落位，不许异步」收窄成这一条）：
-    //    第四轮被撤的是**跨过一帧**去落（`landAfterMeasure` = rAF + setTimeout(0)），
-    //    病在**帧边界**上（那一帧里切标签 / 切模式 / 再 rebuild ⇒ 拿分屏前的 `vCopy`
-    //    把用户刚切好的位置钉回去），不在「晚一步落」这件事本身；本轮因此把落点换算
-    //    挪到 CM6 measure 的 **write 阶段**（`landOnFrameGeometry`）—— 仍与几何变化
-    //    **同一帧**，帧边界那类回归照旧堵着，而换算的尺子换成了这一帧的实测几何。
-    // ⚠️ 第五轮那次回归（用户：「这次修改，之前标签切换的不同步问题又出现了」）出自
-    //    第四轮这里走的是 `landAfterMeasure`（rAF + setTimeout(0)），
-    //    本意是等 CM6 量出新几何；但一次性落位一旦跨过一帧，那一帧里**任何**事都会
-    //    先把位置改掉，而这一拍还拿着**分屏前采的 `vCopy`** ⇒ 下一帧落下去时
-    //    `displayedPanelOfTab(other.tabId)` 可能已经指向**别的面板/别的标签**
-    //    （用户切了标签、切了模式、或者 rebuildLayout 又跑了一轮）—— `applySyncToSibling`
-    //    于是按**陈旧游标**把那份**刚被用户切好的位置**硬钉回 `vCopy` 那一行，
-    //    表现就是「切标签不同步 / 位置对不上」。这正是 `landPreviewAtSource` 上那段
-    //    「跟随时每帧更正、一次性落位必须**当场**落下去」要防的那一类。
-    //    ⚠️ 真机上 CM6 的 `lineBlock` 那一轮 measure 确实会晚，但**晚一帧落错的代价**
-    //       （把用户切好的位置钉歪）远大于「按尚未 measure 的几何落一次、随后被
-    //       `measureAndKeepScroll` / 用户下一滚带走」—— 后者只会偏一点，前者是**不同步**。
-    //    ⇒ 落位回同步；「用新几何换算」靠**排在 `rebuildLayout()` 之后**这一条守住
-    //      （窄栏用例 `tests/sync-split-narrow.test.ts` 守的就是这条顺序）。
-    //
-    //    ⚠️⚠️ **B261 第六轮：两格都得显式落 —— 只落新副本这一条是净负债，第四轮那句
-    //       「显式落源是净负债、谁都别再加回来」的**推论错了**，本轮订正。**
-    //
-    //       上面那些「显式落源没用、被推播覆盖了」的实测**只在同步开着时成立**：
-    //       `pushSyncToSiblings` 入口那句 `docSyncModes.get(src.docId) !== true ⇒ return`
-    //       ⇒ **同步关着时根本没有推播**。而左栏那份是 `rebuildLayout()` → `restoreViewScroll`
-    //       用**槽里那份分屏前按整宽量出来的旧像素**（`t.scrollTop`）还原进**已变窄**的
-    //       编辑器 ⇒ 旧像素在新几何下是**另一行**，而且**再也没人把它扳回来** ——
-    //       这正是用户报的「新建分屏时原标签内滚动位置出现了变化（可能跟面板宽度有关）」
-    //       在真机上的**稳态形态**：同步开着只闪一下就被推播扳回来，同步关着是**一直错**
-    //       （`tests/sync-split-narrow-off.test.ts` 实测左栏停在 287 而不是 95.67）。
-    //
-    //       ⇒ 本轮把源（左栏）也按同一个 `vCopy` 在**新几何**下重落一遍。走
-    //         `landOnFrameGeometry` 而不是 `pushSyncToSiblings`：前者**不看 `docSyncModes` 闸**，
-    //         同步关着也照样生效 —— 那正是它存在的意义（B259 开侧边预览那一路同理，
-    //         也是「一次性落位」这个用途，见 `landPreviewAtSource` 的注释）。
-    //
-    //       ⚠️ 顺序纪律：两格都排在 `rebuildLayout()` **之后**（这帧几何才量得对）、都用最前
-    //         采到的 `vCopy`（分屏前按**旧**几何采的游标）。退化「摘掉源那格这一行」
-    //         ⇒ `tests/sync-split-narrow-off.test.ts` **立刻红**（左栏停在旧像素 287，
-    //         而不是新几何的 95.67）；同步开着时红不红**不能拿来当事** —— 推播会把左栏
-    //         扳回来，那条工况由 `tests/sync-split-narrow.test.ts` 守「两格落点一致」的结果。
-    landOnFrameGeometry(tab, vCopy);
-    landOnFrameGeometry(inst, vCopy);
     refreshAll();
     scheduleSessionSave();
     return;
@@ -486,15 +377,6 @@ export function splitPanelWithTab(
   //       ⇒ 跨几何的旧像素是另一行。copy 支有 `vCopy` + 两格 `landOnFrameGeometry`
   //       兜住，move 支一个都没有 ⇒ 分离的那半病就只在这里发作。
   //
-  //    ⚠️ ① 的锚必须取 **`viewTabId`（视图实际显示谁）**，不能取 `activeTabId`（那是要
-  //       被搬走的那个），也不能取被拖的 `tab`；view 还没建时回退 `activeTabId`。
-  //       这跟 `switchTab` 收口那条「采坐标必须离屏前」是同一条律，只是这次的病是
-  //       「采的是离屏的那一份」而不是「采的时刻不对」。
-  const anchor =
-    (src.viewTabId !== null && src.viewTabId !== undefined ? tabs.get(src.viewTabId) : undefined) ??
-    tabs.get(src.activeTabId) ??
-    tab;
-  const vDrop = syncSourceV(anchor);
   const newId = takePanelId();
   panels.set(newId, {
     panelId: newId,
@@ -509,22 +391,11 @@ export function splitPanelWithTab(
   const rest = src.tabs.filter((id) => id !== tabId);
   src.tabs = rest;
   tab.panelId = newId;
-  // ⚠️ B288 根因修复：下面 `setLayout` 会把源面板从渲染树摘掉（空源面板被渲染成
-  //   零尺寸 / 或整体 detached），此刻再 `rememberViewScroll` 读到的就是钳成 0 的假值，
-  //   会把槽里的真实位置抹平（拖完标签回顶、会话落盘 0）。所以在摘面板**之前**先采一眼
-  //   —— 源视图此刻还满尺寸显示着文档，读到的是真值。（`rememberViewScroll` 内部对
-  //   「未测量且读到 0」会二次兜底跳过，这里是第一道、也是拖分屏路径专属的采集点。）
-  if (src.view) rememberViewScroll(src);
   setLayout(splitPanelAt(layout, targetId, dir, newId, newFirst));
   setActivePanelId(newId);
 
   if (src.tabs.length === 0 && countLeaves(layout) > 1 && src.panelId !== targetId) {
-    // ⚠️ B288 诊断：与 `moveTabToStrip` 那对同型 —— 这条**没有**下面 else 支的重落，
-    //    `vDrop`（离屏前采的游标）在这条路上采了却没用。复现时先看走哪一条。
-    logger.trace(
-      "tabs",
-      `拖拽(分屏) · 源面板 ${src.panelId} 被拖空 ⇒ disposePanel tab=${tabId} 游标=${vDrop}`,
-    );
+    logger.trace("tabs", `拖拽(分屏) · 源面板 ${src.panelId} 被拖空 ⇒ disposePanel tab=${tabId}`);
     // 源面板已空且非唯一：移交给 disposePanel 统一摘除（会再次 rebuild）
     disposePanel(src.panelId);
   } else {
@@ -534,28 +405,6 @@ export function splitPanelWithTab(
     // 交给 pruneEmptyPanels 统一摘掉（摘掉后新面板正好落在原位置，等价于「没动」）。
     if (!pruneEmptyPanels()) {
       rebuildLayout();
-      // ⚠️⚠️ **B264：源码格要按新几何重落（B262 口径，与 copy 支 `landOnFrameGeometry`
-      //    那一对对称）。这里跨两格是因为 move 支**没有新实例**：被拖的那份（tab）落在
-      //    新面板，老面板剩下的那几份（rest）留在原格 —— copy 支是 `tab` + 新副本两个
-      //    对象，move 支是 `tab` + `rest` 的并集。**
-      //    ⚠️ 顺序同 copy 支：重落排 `rebuildLayout()` **之后**（这一帧的几何才量得对），
-      //       游标用**离屏前**采的 `vDrop`；`refreshAll()` 排最后（它尾那趟
-      //       `pushSyncToSiblings(activeTab())` 的源此刻是**刚归零的新面板**，本例会把
-      //       老格钉回 v=1 —— 重落正是用来盖这一下的，与 copy 支那半边完全同型）。
-      // ⚠️⚠️ **B281（用户：预览标签从一个分屏拖到另一分屏时滚动位置跳回 0）+ B288④-2
-      //    （几何变化后预览错位）：预览标签**绝不用源的 `vDrop` 重落**（B281：源停在开头时
-      //    `vDrop≈1` ⇒ 把预览硬钉回顶）。但它**必须**在新几何下按**自己的**规范游标重落 ——
-      //    否则宽度变窄后它仍停旧像素，那在新宽度下是另一行，与源码（按 vDrop 重落）错位。
-      //    ⇒ 源码标签用 `vDrop`、预览标签用**它自己的 `t.syncV`**（同步开着 ≡ 源游标、天然就是
-      //    「同一行」；宽度无关，像素现场反算，正是 B288④ 的 canonical-v 机制）。同步关着时
-      //    `t.syncV` 恒 null ⇒ 跳过这趟，交回 `restorePreviewScroll` 按它自己的像素
-      //    `t.scrollTop` 还原（旧行为，不污染）。
-      for (const t of [tab, ...rest.map((id) => tabs.get(id)).filter((x): x is Tab => !!x)]) {
-        // 预览按自身规范游标、源码按源 vDrop（B281：绝不用源游标覆盖预览自己那份位置）。
-        const v = t.viewMode === "preview" ? t.syncV : vDrop;
-        if (v === null) continue;
-        landOnFrameGeometry(t, v);
-      }
       refreshAll();
     }
   }

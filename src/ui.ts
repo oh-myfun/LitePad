@@ -5,7 +5,7 @@
 // 这些函数彼此耦合且都依赖同一批 DOM 句柄，故整体搬家，main.ts 通过本模块导出的
 // 句柄与函数复用，不再各自持有副本。
 //
-// 解耦纪律：本模块只依赖 shell/*、core/*、sync-scroll，绝不 import main.ts；
+// 解耦纪律：本模块只依赖 shell/*、core/*，绝不 import main.ts；
 // 反过来 main.ts 在 bootstrap 期通过四个 DI setter 把本模块需要的渲染回调
 // （视图模式键 / 大纲抽屉 / 标签条 / 面板操作键）注入进来，避免 main ↔ ui 循环依赖。
 
@@ -28,7 +28,6 @@ import {
   activePanelId,
   remoteOpenByWindow,
 } from "./core/app-state";
-import { pushSyncToSiblings } from "./sync-scroll";
 import { el } from "./dom";
 
 // ------------------------------------------------------------------ 启动计时（B50）
@@ -287,11 +286,6 @@ function refreshAll(): void {
   // B224：md 两颗键跟着活动面板 / 活动标签走，任何全局刷新都要同步一遍
   // （开/关标签、复制实例、会话恢复都可能改变「活动面板的标签是不是 md」）。
   renderPanelOpsRef();
-  // B152：任何一次全局刷新（复制标签 / 分裂面板 / 认领标签 / 会话恢复…）之后，兄弟
-  // 实例都要对齐到当前激活文档 —— 新出现的那一份不该停在「还没同步过」的老位置上。
-  // 放在最后：这一轮该重建的 DOM 都落定了，钉下去不会被随后而来的还原盖掉。
-  const act = activeTab();
-  if (act) pushSyncToSiblings(act);
   // B178：本窗口可见文档集合变了，通知别的窗口（开/关标签、认领、搬移都进这里）。
   broadcastDocPresence();
 }

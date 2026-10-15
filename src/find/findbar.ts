@@ -22,7 +22,6 @@ import {
 } from "../editor/find";
 import { isDirtyVsBaseline, isMdTab } from "../doc-model";
 import { freshTextOfDoc, renderPanelTabs, switchTab } from "../tabs";
-import { syncJumpToLine } from "../sync-scroll";
 import { el, refreshTitle } from "../ui";
 import {
   createFindBar,
@@ -549,12 +548,6 @@ function openFindHit(hit: FindHit): void {
   } else {
     target.state = target.state.update({ selection: { anchor: hit.from, head: hit.to } }).state;
   }
-  // 统一位置同步入口：本地兄弟派发 + 跨窗口广播收口到 pushSyncToSiblings
-  // （内部按 docSyncModes 守卫——未开同步滚动则只动激活实例）。
-  syncJumpToLine(
-    target,
-    target.state.doc.lineAt(Math.min(hit.from, target.state.doc.length)).number,
-  );
   activePanel()?.view?.focus();
 }
 

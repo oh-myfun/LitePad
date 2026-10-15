@@ -8,7 +8,6 @@
 // 零外部函数依赖（无 DI）——依赖 core/* + ui + tabs + find/findbar + prefs + shell/* + editor/*。
 
 import { isWrap, panels, settings, tabs, windowKind, type Tab } from "./core/app-state";
-import { syncJumpToLine } from "./sync-scroll";
 import { logger } from "./core/logger";
 import { redo, selectAll, undo } from "@codemirror/commands";
 import { activePanel, activeTab, docOf, instancesOfDoc } from "./core/panels";
@@ -227,9 +226,6 @@ function openGotoLine(): void {
         const t = tabStateWriteBack(view);
         // 活动面板是预览态时编辑器隐藏、收不到滚动事件，显式定位预览
         if (t?.viewMode === "preview") panel.preview?.syncToLine(target);
-        // 统一位置同步入口：本地兄弟 + 跨窗口广播收口到 pushSyncToSiblings
-        // （内部按 docSyncModes 守卫——未开同步滚动则只动激活实例）。
-        if (t) syncJumpToLine(t, target);
         view.focus();
       }
     }

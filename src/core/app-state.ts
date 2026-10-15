@@ -187,28 +187,6 @@ export const docSyncModes = new Map<number, boolean>();
 /** 同源同步回环抑制：向兄弟实例分发变更期间，其 updateListener 不再二次广播。 */
 export let syncingDocId: number | null = null;
 
-/**
- * B271：「尺子未测」窗口标记 —— `setState` / 新建视图之后、measure 帧之前，CM6 的
- * heightMap 还是**估算行高**（B256 已证真机 estimate ≠ 实测），这个窗口里一切
- * `sourceTopOfV` 换算都落在「估算空间」，写出去的 px 在 measure 换成实测排版后对应的
- * 是**另一行**（用例几何：v=9.5 实测 119px、估算 170px —— 收口把它写进槽，
- * `reassertViewScroll` 再钉回 DOM，歪值就此锁死并经同步传染全部同文档实例，
- * 用户报的「切源码对不上 / 切回预览跳变」的完整病根）。
- *
- * 窗口内的 v→px 换算一律**不写**（落槽支兜底），等 `measureAndKeepScroll` 的 rAF
- * （此刻 measure 已完成、heightMap 已是实测）调 `restoreViewScroll` 按实测几何重落
- * （B288⑤-4：挂起补写 `pendingSyncCursor` 已删 —— 单轨下还原走 v，重落就是重还原，
- * 与 B263 的「display:none 量不成 ⇒ 跳过」同一个纪律，只是判据从「藏没藏」换成「测没测」）。
- *
- * ⚠️⚠️ **语义边界（B288⑤-3）**：本集合是**编辑器 CM6 measure** 的窗口标记，**不是**
- *    预览的信号 —— 预览块几何由 `setBlocks` 自己的链路铺开，与 measure 不是同一拍
- *    （B288 三轮：拿它挡预览会在 jsdom 下误杀有用的补落）。预览侧借它做保守挡板的
- *    两处调用**必须**走 `previewGeometryUnready`（见 `sync-scroll.ts`）收口，不许各自
- *    内联 `has` —— 预览几何的**真判据**在换算点自检（`applySyncToLine` 块 rect 全 0
- *    ⇒ null），本集合只是「拖分屏刚重挂」那一拍的第二道挡板。
- */
-export const unmeasuredPanels = new WeakSet<Panel>();
-
 /** 载入文件时抑制脏标记（setState/dispatch 会触发 updateListener） */
 export let suppressDirty = false;
 

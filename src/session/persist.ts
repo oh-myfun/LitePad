@@ -48,7 +48,6 @@ import {
 } from "../ipc/api";
 import { LayoutNode } from "../core/layout";
 import { showExternalConflictDialog } from "../shell/conflictdialog";
-import { rememberViewScroll } from "../sync-scroll";
 import { freshTextOfDoc, layoutForSession, rebuildLayout, renderPanelTabs } from "../tabs";
 import { refreshAll, showMessage } from "../ui";
 import { sessionStore } from "./store";
@@ -170,15 +169,12 @@ export function refreshSession(): void {
     // （同 B140 的「消失前看最后一眼」，只不过现在写的是 store 而不是 Tab）。
     // 其余标签的光标在 `handleUpdate` 里就已经即时写进来了，这里不动它。
     //
-    // ⚠️ 读容器的那一下由 `rememberViewScroll` 自己把关（B145）：它认 `pinInFlight`，
-    // 钉位置还在重试时一个字都不采；写记录走 `recordScroll`，还原期一律挡掉。
     const p = panels.get(t.panelId);
     if (p?.view && p.viewTabId === t.tabId) {
       t.state = p.view.view.state;
       const pos = t.state.selection.main.head;
       const line = t.state.doc.lineAt(pos);
       sessionStore.setCursor(t.tabId, line.number, pos - line.from + 1);
-      rememberViewScroll(p);
     }
     // B288⑤-1c：原先这里有一条 `recordScroll(t.tabId, viewportOfTab(t))`（落盘前刷新）。
     //   它读的是像素槽、再写回同一个像素槽 —— 像素已不落盘（只落 `syncV`），

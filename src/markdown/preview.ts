@@ -398,45 +398,14 @@ export class PreviewPane {
   // ------------------------------------------------ 同步滚动
 
   /**
-   * 编辑器 → 预览：把编辑器可视区顶行对应的 block 滚到预览顶部附近（跟随）。
-   *
-   * B171：这一路是**跟随**（编辑器每滚一次就走一次），必须走「不留尾巴」那支 ——
-   * 用 `syncToLine` 会记下 `pendingSyncLine`，之后任意一次图片 / 公式增强
-   * （`applyPending`）或重渲染都会把预览按那个**早已过期**的行号再拽一次，
-   * 表现为同步滚动时预览反复跳（用户反复报的抖动）。
-   */
-  syncFromEditor(): void {
-    if (!this.host) return;
-    this.syncToLineProgrammatic(this.host.topVisibleLine());
-  }
-
-  /**
    * 按行号直接滚动预览（大纲跳转 / 程序定位用）。
-   * 与 syncFromEditor 的区别：不依赖编辑器可视区——预览态面板的编辑器
-   * 是 display:none，其 scrollTop 不会变，必须显式按目标行定位。
-   * 目标行记入 pendingSyncLine：异步增强/图片加载引发的布局变化会重新定位一次。
+   * 不依赖编辑器可视区 —— 预览态面板的编辑器是 display:none，其 scrollTop 不会变，
+   * 必须显式按目标行定位。目标行记入 pendingSyncLine：异步增强/图片加载引发的
+   * 布局变化会重新定位一次。
    */
   syncToLine(line: number): void {
     this.pendingSyncLine = line;
     this.applySyncToLine(line);
-  }
-
-  /**
-   * B170：**程序发起**的按行定位 —— 凡「跟随」类定位都走它：跨面板同步滚动，
-   * 以及编辑器滚动时让预览跟随的 `syncFromEditor`（B171 起也改走这里）。
-   *
-   * 与 `syncToLine`（大纲跳转：一次性目标，增强后还要按它重定位）的区别：
-   *   · **不留 `pendingSyncLine` 尾巴**：跟随的目标行每帧都在变，记下来等于给
-   *     每次重排留一个「把预览拽回某一行」的钩子（B160 抖动的根源之一）；
-   *   · **标程序来源**：定位前 `markProgrammatic(this.root)`，回执 scroll 被监听见标记
-   *     即吞（见 src/scroll-guard.ts，合成 VS Code 的 `scrollType`）。标记靠用户接管
-   *     滚动的真实输入清除，**不靠时间窗** —— 渲染扰动（setBlocks 归零再拉回、图片加载
-   *     重排）把 actual 拖离 expect 也不会被误判成用户滚动反推编辑器，闭环拉锯根除。
-   */
-  syncToLineProgrammatic(line: number): number | null {
-    this.pendingSyncLine = null;
-    // 返回**实际落点**（`null` = 没落地）；内部 `markProgrammatic(this.root)` 覆盖本次回执。
-    return this.applySyncToLine(line);
   }
 
   /**
@@ -451,17 +420,6 @@ export class PreviewPane {
     this.root.scrollTop = nextTop;
     markProgrammatic(this.root);
     // 位置已定，别再被异步重排（图片/公式增强）拽回行定位
-    this.pendingSyncLine = null;
-  }
-
-  /**
-   * 位置已由调用方按**像素**钉死，抹掉待重定位的行号（B146）。
-   *
-   * `applySyncToLine` 只写 `pendingSyncLine`、不消费它，而 `applyPending` 会被任意
-   * 一次图片 / 公式增强的 `load` 唤醒 —— 留着旧行号，预览就会从刚钉好的落点被拽回
-   * 那一行。切标签后位置是**按像素**还原的（不是按行），这一行必须清掉。
-   */
-  clearPendingSync(): void {
     this.pendingSyncLine = null;
   }
 

@@ -2,12 +2,11 @@
 //
 // 职责：switchTab / closeTabById / newUntitled / rebuildLayout / disposePanel /
 // pruneEmptyPanels / closePanelById / freshTextOfDoc / moveTabToStrip / closeTabsSequentially。
-// 只依赖 core/* + sync-scroll + ui + shell/* + doc-model + 下游模块（render / split / deps /
+// 只依赖 core/* + ui + shell/* + doc-model + 下游模块（render / split / deps /
 // windows），对 main.ts 零反向依赖。render / split 与本项目形成（运行期安全的）循环引用。
 
 import {
   type Doc,
-  type Tab,
   tabs,
   docs,
   panels,
@@ -19,26 +18,11 @@ import {
   setActivePanelId,
   setNextPanelId,
   setSuppressDirty,
-  unmeasuredPanels,
   settings,
 } from "../core/app-state";
 import { getPanel, activePanel, panelOfTab, docOf, instancesOfDoc } from "../core/panels";
 import { countLeaves, leaf, siblingLeafOf, removePanel, updateRatio } from "../core/layout";
 import { logger } from "../core/logger";
-import {
-  pushSyncToSiblings,
-  restoreViewScroll,
-  restorePreviewScroll,
-  rememberViewScroll,
-  measureAndKeepScroll,
-  syncSourceV,
-  alignShownToSyncSource,
-  syncSourceSnapshot,
-  tabAtOwnFloor,
-  topVisibleLineFrac,
-  sourceTopOfV,
-  landOnFrameGeometry,
-} from "../sync-scroll";
 import {
   showMessage,
   markActivePanel,
@@ -106,7 +90,6 @@ export function rebuildLayout(): void {
     if (p.view) {
       const shown = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
       if (shown) shown.state = p.view.view.state;
-      rememberViewScroll(p);
       p.view.view.destroy();
       p.view = null;
       p.viewTabId = null;
@@ -228,44 +211,17 @@ export function rebuildLayout(): void {
         p.view = createEditor(editorEl, tab.state);
         setSuppressDirty(false);
         p.viewTabId = tab.tabId;
-        // B271：新建视图同样从估算行高起步（heightMap 要等第一帧 measure 才实测）
-        unmeasuredPanels.add(p);
-        // 同 switchTab：焦点先给、还原排在后面（focus 会把光标滚进视野，反过来就白钉了）
         if (panelId === activePanelId) p.view.focus();
-        // B126：视图是新建的，滚动位置只活在标签快照里 → 显式还给 DOM
-        restoreViewScroll(p);
       }
 
       const preview = new PreviewPane();
       p.preview = preview;
       hostEl.appendChild(preview.root);
       preview.setHost({
-        topVisibleLine: () => {
-          const v = p.view?.view;
-          if (!v) return 1;
-          // B175：跟随用**带行内比例的小数**（与 `pushSyncToSiblings` / 切模式交接取的坐标
-          // 同口径，见 `topVisibleLineFrac`）。原来返回的整数行号 ⇒ 编辑器在一行内滚动时
-          // 预览那份不动、跨行才跳一格，连续跟随就成了「卡一下、跳一下」的阶梯，看着就像
-          // 「预览整页重渲染」（用户反复报的同步抖动）。⚠️ B257：整数档（`topVisibleLineOf`）
-          //    整个删了 —— 切模式交接走同一条小数口径，取整数会留半个行高的残差。
-          return topVisibleLineFrac(v);
-        },
-        scrollToLine: (line: number) => {
-          const v = p.view?.view;
-          if (!v) return;
-          // ⚠️ 落点走 `sourceTopOfV`（与跨侧同步 / 切模式交接同一个换算出口）：支持**小数**
-          //    行号（块内比例），且末行按整行高落点（软折行也贴顶）。旧写法 `lineBlockAt(l.from).top`
-          //    只认整数行首、又只取首视觉块高，预览→编辑器跟随时把末块取整到块首 ⇒ 兄弟格
-          //    跟不到末块底（用户报：预览滚到底、源码停在上一个块首，差末块那几行）。
-          const top = sourceTopOfV(v, Math.min(Math.max(line, 1), v.state.doc.lines));
-          if (top === null) return;
-          v.scrollDOM.scrollTop = top;
-          // B169/B170：预览驱动编辑器滚动属程序摆位（点 block 跳转 / 预览→编辑器跟随），
-          // 其回执 scroll 必须被编辑器监听经 scroll-guard 标记吞掉 —— 否则这份没标记的位置
-          // 会被当作用户滚动反推预览，预览再被推回编辑器，闭环成拉锯 / 抖动
-          // （用户报的「非激活文档滚动抖」「预览跟随整文档重渲染」同源）。
-          markProgrammatic(v.scrollDOM);
-        },
+        // 同步滚动已整体清除：这两个回调只为满足 PreviewPane 的 SyncHost 接口，
+        // 不再做任何跨侧跟随 / 行号换算（新方案落地时在此重写）。
+        topVisibleLine: () => 1,
+        scrollToLine: () => {},
         lineCount: () => p.view?.view.state.doc.lines ?? 0,
       });
       if (p.view) {
@@ -290,32 +246,12 @@ export function rebuildLayout(): void {
           // 重建布局 / 销毁面板」也不会丢。
           if (t) {
             t.scrollTop = shownView.scrollDOM.scrollTop;
-            // ⚠️ **顺序**：必须先更新 `syncV` **再** `recordScroll` —— 后者内部会把
-            //   `t.syncV` 落进会话记录（`sessionStore.setSyncV`），写反了落盘的就是**上一次**
-            //   的游标（滞后一次滚动），重启后按陈旧 v 还原。
-            const v = syncSourceV(t);
-            if (v !== null) t.syncV = v;
             recordScroll(t.tabId, t.scrollTop);
           }
           // B132：写进快照还不算数 —— 得落盘。滚动本身**不触发**任何排程，用户
           // 滚到中段、没干别的事就关窗，会话里留下的还是上一次（滚之前那份），
           // 重启就回到老位置（B132）。防抖 800ms：滚动停下才写，不会每帧落盘。
           scheduleSessionSave();
-          // B152 / B154：滚的是谁，谁就是源 —— 兄弟跟着同一个位置走。
-          // ⚠️ 这里**不再**前置 `isSyncSource`：用户明确要求「窗口没有激活时，鼠标放在
-          //    一个视口中也能滚动，这时同步滚动也要生效」（B154）。回环不是靠「只有
-          //    激活的那份能当源」挡的，而是靠 scroll-guard 的 `isProgrammatic` 标记：
-          //    程序钉位置的回执在更前面就被吞掉了，到不了这一路。
-          // 排在排程之后：本条监听的活儿跟它是两件事，别为 B132 那条契约挤在一起。
-          // B159：跨窗口那一路也在这里开 —— 「谁滚谁当源」在别的窗口同样算数。
-          // ⚠️ 别把下面那句推同步的 `if (t) …` 包进新块里：好几条老契约认的就是
-          //   它这一行的原样写法（B154 / B159），也别在注释里抄它的完整字面量 ——
-          //   反向验证那条退化用的是字面量 replace，注释里出现同串会被先替换掉。
-          if (t) pushSyncToSiblings(t, true);
-          // B271：原尾部的 `preview.syncFromEditor()` 已删 —— `viewMode` 只有
-          // "source" | "preview" 两档，那支只在**纯预览**（编辑器 display:none）时可达，
-          // 正是上面新闸拦掉的幽灵路径；编辑器可见时预览跟随走别的水路（同面板分屏），
-          // 这条监听里从来没有它的合法工况。
         });
         attachUserScrollClear(shownView.scrollDOM);
         attachPasteHandler(p);
@@ -343,20 +279,11 @@ export function rebuildLayout(): void {
         //   的槽位被写进这个过期值，切过去就对不上（用户报的位置不一致）。
         //   编辑器侧那条监听一直是「先写后推」（见 mountView 里那段），别把它也翻过来。
         t.scrollTop = preview.root.scrollTop;
-        // 同编辑器侧：先更新 `syncV` **再** `recordScroll`（后者会把 v 落盘，写反了滞后一次滚动）。
-        //   v 无条件维护 —— 同步关着的预览标签此前也拿不到 v，1c 删掉像素轨后就没法还原位置了。
-        const pv = syncSourceV(t);
-        if (pv !== null) t.syncV = pv;
         recordScroll(t.tabId, t.scrollTop);
-        pushSyncToSiblings(t, true);
         scheduleSessionSave();
       });
 
       applyPanelMode(p);
-      // 纯预览实例的视图位置在预览那一侧，渲染完再钉回去（B129）
-      restorePreviewScroll(p);
-      // CM6 测量（含它的滚动锚点补偿）排在下一帧，位置得在补偿之后收回来（B146）
-      measureAndKeepScroll(p);
       if (panelId === activePanelId && p.view) {
         updatePositionOf(panelId, p.view.view);
       }
@@ -393,15 +320,6 @@ export function switchTab(panelId: number, tabId: number): void {
   // 会把视图当前内容写进错误的标签（内容串档/被覆写为空白的同源缺陷）。
   const shownTab = tabs.get(panel.viewTabId ?? panel.activeTabId);
   if (shownTab) shownTab.state = panel.view.view.state;
-  // B126：setState 会重建 ViewState 并把视口拉回开头，采完这一眼再切换
-  rememberViewScroll(panel);
-  logViewport("切换 · 采旧位置后", panel);
-  // B240 三轮：同步开着时，先把**源（刚显示的这一份）**的坐标就地采下来 —— 它马上要
-  // 离屏，离屏之后就再也读不到它自己的实时 DOM 了（见下面 alignShownToSyncSource）。
-  const syncSrc = syncSourceSnapshot(shownTab, tabId);
-  // ⚠️ B284：与 `syncSrc` **同帧**把「源顶没顶到自己的底」一起采下 —— 此刻源还在屏、
-  //    `tabAtOwnFloor` 问得出真话；再晚一步源已离屏（`clientHeight = 0`）⇒ 恒答「没到底」。
-  const srcAtFloor = tabAtOwnFloor(shownTab);
   const tab = tabs.get(tabId);
   if (!tab) return;
   panel.activeTabId = tabId;
@@ -421,13 +339,7 @@ export function switchTab(panelId: number, tabId: number): void {
   const view = panel.view; // 闭包里不保留对 `panel.view` 的收窄，先取一份
   markProgrammatic(view.view.scrollDOM);
   setSuppressDirty(true);
-  // ⚠️ B254：这一发 `setState` 把编辑器 scrollTop 归零并**同步**派发 update ⇒
-  //    `handleUpdate` 那一轮拿到的源位置是 0，推兄弟等于把所有同文档预览钉回开头
-  //    （「切标签后另一个预览向上偏移、之后永远不动」）。切标签的收口已经在上面
-  //    `syncSourceSnapshot` 里采下源的真实位置，这一发推播没信息、只有害处。
   view.setState(tab.state);
-  // B271：从这一刻到 measure 帧，heightMap 是估算行高 —— 换算窗口开启（见 unmeasuredPanels）
-  unmeasuredPanels.add(panel);
   setSuppressDirty(false);
   // ⚠️ 焦点必须排在钉位置**之前**（B145）：`focus()` 会把光标滚进视野，而光标往往
   // 不在刚还原出来的可视区里 —— 排在后面等于把刚钉好的位置顶掉。
@@ -438,13 +350,6 @@ export function switchTab(panelId: number, tabId: number): void {
   //   `.panel-host.mode-preview .panel-editor { display: none }`（styles/preview.css）
   //   ⇒ display:none 期间写 scrollTop 浏览器不认、class 一切还清零。
   applyPanelMode(panel);
-  // B288⑤-4：原先这里有一条 `flushPendingSyncCursor(panel, tabId, true)`（B263 挂起补写，
-  //  写「估算空间」的占位 px 进槽）。单轨下 `restoreViewScroll` 的 v 分支直接按 syncV
-  //  现算落位（1b），占位值无用；measure 后的 rAF 会再按实测几何重落 —— 整条挂起机制
-  //  （pendingSyncCursor / flushPendingSyncCursor）已删。
-  // applyPanelMode 已经让编辑器重新可见 ⇒ 这一趟还原**现在才钉得进去**。
-  restoreViewScroll(panel);
-  logViewport("切换 · 还原后", panel);
   // B181：类切完**再补一次焦点** —— 否则「从预览态的标签切走」之后编辑器没有焦点。
   //
   // ⚠️ 上面那次 `view.focus()` 排在 `applyPanelMode` **之前**，而 `mode-preview` 会把
@@ -459,65 +364,10 @@ export function switchTab(panelId: number, tabId: number): void {
   //    `focus()` 内部走 `focusPreventScroll`（`preventScroll: true`，拿不到就回滚滚动栈），
   //    不会把刚钉好的视口位置顶掉；已经聚焦过时它就是个空操作。
   view.focus();
-  // ⚠️⚠️ **B274**：预览还原（`restorePreviewScroll`）从这儿挪到**收口之后** —— 见下面
-  //    `alignShownToSyncSource` 后那一行。原位置在收口之前 ⇒ 切到预览标签时先被钉回
-  //    **旧槽**（真机日志 04:04:28.142：视图先到 3014 = 上一轮的旧位置），下一拍才被
-  //    收口修正到 2249 —— 765px 的"先错后跳"就是这么来的。
-  logViewport("切换 · 预览还原前", panel);
-  // B240 三轮：同步开着 ⇒ 切过去的位置由**源**给定（离屏那份算不出自己的位置，
-  // 见 alignShownToSyncSource）。排在最后那次补焦点之后 —— 焦点会把光标滚进视野，
-  // 排在它之前会被顶掉（B145 那套顺序纪律）。
-  // ⚠️ B284：撤掉留白后两侧 `maxScroll` 重新错配 ⇒ 收口需要「源顶没顶到自己的底」
-  //    （`srcAtFloor`，在上面与 `syncSrc` 同帧采下）：到底 ⇒ 接班这份落到**它自己那一侧的
-  //    底**，不再按游标换算（B266 当初是因为留白才把这层判据删掉的）。必须排在
-  //    预览还原**之后**（B274）—— 见下面那一行。
-  const handV = tab ? syncSrc : null;
-  const aligned = tab ? alignShownToSyncSource(panel, shownTab, handV, srcAtFloor) : false;
-  // ⚠️⚠️ **B274**：纯预览实例的位置**排在收口之后**再钉（B130 的「必须排在
-  //    `applyPanelMode` 之后」照样满足）。理由：收口（`applySyncToSibling` 的预览支）
-  //    落位成功会 `recordScroll` 把**新落点写进槽** ⇒ 这里钉的就是同步后的位置；
-  //    收口没落位（预览还没渲染 / 行号找不到块）时槽还是旧值 ⇒ 这里照旧兜底钉旧值。
-  //    ⇒ 消除「先钉旧槽、下一拍再跳到同步位置」的中间态。
-  restorePreviewScroll(panel);
-  logViewport("切换 · 预览还原后", panel);
-  // CM6 测量（含它的滚动锚点补偿）排在下一帧，位置得在补偿之后收回来（B146）
-  measureAndKeepScroll(panel);
-  logViewport("切换 · 测量收尾后", panel);
   if (panelId === activePanelId) {
     refreshTitle();
     refreshStatus();
     updateTocDrawer();
-    // B152：切到新激活的那份之后，兄弟立刻按**新的源**对齐一次 —— 用户说得很明确：
-    // 「切换激活文档时则根据新的激活文档进行同步」。同步状态本身不动（按钮不复位）。
-    // 排在 refreshTitle 之后：显隐与点亮态在这一帧已经就绪。
-    //
-    // ⚠️ B241：没收口（同步关 / 源没位置）时才需要它补一次对齐 —— 推播会把「接班这份的
-    //    落位值」写进兄弟（此刻正是源）的槽，跨侧换算每轮都不等值，照推就是把源也带歪
-    //    （来回切换位置会变化）。
-    //
-    // ⚠️⚠️ **B258 补这一格**：收口（aligned）时**也不能整趟跳过**。收口只写**接班那一份**
-    //    一个格子，而同一时刻可能还有其他分屏挂着**同文档的预览**；那一趟跳过的推播正是
-    //    唯一能把兄弟按源坐标对齐的机会 ⇒ 兄弟永远停在「上一次被推到的值」上，与接班那
-    //    份错位（用户报：预览滚到底 → 切源码 → 切回预览，只有这一格跟着走，其他分屏的
-    //    预览没同步）。桩上实测 `左 882 / 右 966`（差 84px = 两个块高，日志里两趟的 `v`
-    //    分别是 24 与 21 —— 源码那一格被自然上限裁过，真值回不来了）。
-    //    ⇒ 收口生效时照样补推，但只推**其余兄弟**，且用 `syncSrc`（收口同一口径的那个
-    //    `v`），保证兄弟与接班那一份落在同一个数上。
-    //
-    // ⚠️⚠️ **B284**：`handV` 是 `syncSourceSnapshot` 在离屏前从**源**采的真实 `v`，
-    //    `srcAtFloor` 是同帧采下的「源到底了吗」。到底 ⇒ 兄弟各自落到**自己那一侧的底**
-    //    （撤留白后两侧 maxScroll 错配，照游标换算会把对方拽离它的底 ⇒ 到底后来回滚会跳）。
-    //    落点照旧由 `applySyncToSibling` 按目标那侧的几何裁（裁的是 DOM 写入，不是记录值）。
-    //    这一趟两分支都用它，保证「接班」与「其余兄弟」是同一个数（B258 的要求）。
-    if (tab && !aligned) {
-      pushSyncToSiblings(tab, false, { v: handV, atFloor: srcAtFloor });
-    } else if (tab && handV !== null && shownTab) {
-      pushSyncToSiblings(tab, false, {
-        v: handV,
-        atFloor: srcAtFloor,
-        skipTabIds: [shownTab.tabId, tab.tabId], // 源与接班都已被收口写好，谁也不许再动
-      });
-    }
   }
   renderPanelTabs(panelId);
   // B224：该面板活动标签 md 与否可能变了（md ↔ 非 md 切换），操作区跟着刷一遍
@@ -535,16 +385,11 @@ export function switchTab(panelId: number, tabId: number): void {
   //    光标停在上次编辑的地方）⇒ 把刚收口钉好的位置悄悄盖掉 —— 真机 trace
   //    （08:17:53.294 收口钉 2478 之后，中间零日志，54.081 保存时 DOM 已经是 1922.67
   //    ≈ 光标行 80）⇒ 用户看到的「切回去位置对不上/弹回老地方」的最后一块拼图。
-  //    ⇒ ①原生 `preventScroll: true`（Chromium/WebView2 原生支持，绕过 CM6 的检测）；
-  //    ②下一帧 `restoreViewScroll` 重还原：单轨下 v 是唯一真值、比槽复核更强 —— focus 把
-  //    DOM 拉去光标行时，v 分支按实测几何把 v 现算重钉（用户已滚则 v=用户位置，钉回无害；
-  //    被 focus 拉走则钉回收口值）。预览态被它开头闸跳过（预览无此复核需求）。
-  //    （B288⑤-2：原 `reassertViewScroll` 槽复核已并入删除 —— 它是槽支的温和版，
-  //    v 单轨后「按槽复核」天然弱于「按 v 重落」。）
+  //    ⇒ 原生 `preventScroll: true`（Chromium/WebView2 原生支持，绕过 CM6 的检测）
+  //    即可把焦点钉回编辑器，不必再靠「下一帧重还原」补救。
   setTimeout(() => {
     view.view.contentDOM.focus({ preventScroll: true });
     view.view.update([]); // B182：同步补 `cm-focused` 类（同 EditorHandle.focus 的收尾）
-    requestAnimationFrame(() => restoreViewScroll(panel));
   }, 0);
 }
 
@@ -699,17 +544,8 @@ export async function closeTabById(tabId: number): Promise<void> {
     setSuppressDirty(true);
     view.setState(nextTab.state);
     setSuppressDirty(false);
-    // B271：估算窗口开启（measureAndKeepScroll 的 rAF 关闭）
-    unmeasuredPanels.add(panel);
-    // B126：接班的标签沿用**它自己**上次的位置（光标随 state，视口随 scrollTop）
-    restoreViewScroll(panel);
   }
   applyPanelMode(panel);
-  // 同上：接班的是纯预览实例时，位置在预览那侧，applyPanelMode 的 syncToLine
-  // 会把预览按编辑器顶行顶掉一次，得在它之后钉回来（B129 同款）
-  restorePreviewScroll(panel);
-  // CM6 测量（含它的滚动锚点补偿）排在下一帧，位置得在补偿之后收回来（B146）
-  measureAndKeepScroll(panel);
   if (panel.panelId === activePanelId) {
     refreshTitle();
     refreshStatus();
@@ -732,7 +568,6 @@ export function disposePanel(panelId: number): void {
   if (panel.view) {
     const t = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
     if (t) t.state = panel.view.view.state;
-    rememberViewScroll(panel);
     panel.view.view.destroy();
   }
   panel.view = null;
@@ -743,46 +578,7 @@ export function disposePanel(panelId: number): void {
   if (activePanelId === panelId) {
     setActivePanelId(sibling ?? [...panels.keys()][0] ?? 0);
   }
-  // ⚠️⚠️ **B261 第七轮（用户点名要端到端验「新增 / 减少分屏」时翻出来的）**：关掉一个
-  //    分屏 ⇒ 剩下那格**变宽**、编辑器（word_wrap 开着）重排 ⇒ **同一个 `scrollTop` 像素
-  //    在宽栏里是另一行**，而槽（`t.scrollTop`）里存的是**窄栏**像素 —— `rebuildLayout`
-  //    → `restoreViewScroll` 拿它去钉**已变宽**的面板 ⇒ 位置被钉到另一行，而且
-  //    **`pushSyncToSiblings` 救不了**：关完只剩一个面板、同文档再没有兄弟实例可推
-  //    （`sibs.length === 0` ⇒ 推播入口就 return），所以**同步开着也照样错**
-  //    （`tests/sync-split-close.test.ts` 实测：该落 287，实际停在 95.67 = 窄栏像素）。
-  //
-  //    这正是 S11（新建分屏）的**反向半边**：那边几何**变窄**、这里**变宽**，病一样是
-  //    「跨几何的像素当尺子」，尺子只有游标 `v`。⇒ 落位纪律照抄那一轮，只是取反方向：
-  //    **先采后落**，`syncSourceV` 排在最前（旧几何）、`landOnFrameGeometry` 排在
-  //    `rebuildLayout()` 之后（本帧几何）。⚠️ B262 修正了一句旧口径：排在之后 ≠ 用
-  //    **新**几何换算 —— CM6 的 heightMap 要到那一帧的 measure 才更新（见
-  //    `landOnFrameGeometry`），当场换算等于拿旧尺子量新位置。
-  //
-  //    ⚠️ **采的是「所有还显示着的东西」**，不是只采宿主那一个：面板数一变，留存面板的
-  //       几何都会跟着变（三格布局里关掉中间那格，左右两格宽度都不再是关之前的）⇒
-  //       谁显着谁就得按旧游标重落一遍。
-  //
-  //    ⚠️ 顺带说一下「并入宿主的那些标签」（`closePanelById` 把关闭面板的标签搬到宿主）
-  //       **为什么不用管**：这一刻它们没显示 ⇒ `syncSourceV` 采不出游标（它只认「面板此刻
-  //       显示的那一份」），但也不需要 —— 重落那一下走的 `applySyncToSibling` 即使是
-  //       `shown=false`，也会把同一游标写进它的槽（`recordScroll`）⇒ 之后点它，落点照样
-  //       是对的（自测台实测：关完分屏再点并入的那份副本，落 287 = 整宽同一行）。
-  //       ⚠️ 这条是靠 `applySyncToSibling` 的「落位也写槽」兜住的，**不要**因为它看着
-  //          「没重落」就以为漏了；真改了那条的写法，这里就得补一块。
-  const reland: Array<{ tab: Tab; v: number | null }> = [];
-  for (const p of panels.values()) {
-    if (!p.view || p.viewTabId === null) continue;
-    const t = tabs.get(p.viewTabId);
-    if (t) reland.push({ tab: t, v: syncSourceV(t) });
-  }
   rebuildLayout();
-  // ⚠️ B262：这里原先是 `landPreviewAtSource`（**当场**落）⇒ 那一刻 CM6 的 heightMap
-  //    还是旧的，`sourceTopOfV` 拿旧尺子量新位置 ⇒ 落到另一行（用户报「加/删分屏之后原
-  //    标签滚动位置跳行」）。改成 `landOnFrameGeometry`：换算排到这一帧的 measure 之后。
-  //    ⚠️ 「先采后落」的纪律没变 —— 变的只是**落那一半的尺子**：原来以为「排在
-  //       `rebuildLayout()` 之后」就等于「用新几何」，其实不是（heightMap 要到那一帧的
-  //       measure 才刷），现在换尺子这一半被显式排到了帧上，见 `landOnFrameGeometry`。
-  for (const r of reland) landOnFrameGeometry(r.tab, r.v);
   refreshAll();
   scheduleSessionSave();
 }

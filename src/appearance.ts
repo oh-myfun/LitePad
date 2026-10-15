@@ -1,14 +1,13 @@
 // 外观 / 主题 / 字号 / 字体 / 预览宽度的 setter 集合。
 //
-// 这些函数**只**消费 core/app-state 的状态、sync-scroll 的保视口测量、以及 DOM / CSS 变量，
+// 这些函数**只**消费 core/app-state 的状态、以及 DOM / CSS 变量，
 // 不调用 main.ts 里任何编排逻辑 —— 因此被抽成独立模块，main.ts 只负责在启动时调用它们。
-// 抽离后 main.ts 同步滚动以外的「外观」职责归零，便于独立单测（见 tests/appearance.test.ts 规划）。
+// 抽离后 main.ts 的「外观」职责归零，便于独立单测（见 tests/appearance.test.ts 规划）。
 
 import { EditorView } from "@codemirror/view";
 import { oneDark as oneDarkTheme } from "@codemirror/theme-one-dark";
 import type { PreviewWidth } from "./ipc/api";
 import { tabs, panels, setIsWrap } from "./core/app-state";
-import { measureAndKeepScroll } from "./sync-scroll";
 
 export function applyDarkToTabs(dark: boolean): void {
   for (const tab of tabs.values()) {
@@ -39,10 +38,6 @@ export function applyWrapToTabs(wrap: boolean): void {
 
 export function applyFontSize(px: number): void {
   document.documentElement.style.setProperty("--font-size", `${px}px`);
-  // 字号变化后 CM6 要重新测量，否则行号/光标定位会短暂错位。
-  // ⚠️ B225：测量统一走 `measureAndKeepScroll`（B146）—— 裸 `requestMeasure()`
-  // 会触发 CM6 的滚动锚点补偿，把视口顶行往下推一截。
-  for (const p of panels.values()) measureAndKeepScroll(p);
 }
 
 export function applyPreviewLineHeight(value: number): void {
@@ -101,8 +96,6 @@ export function applyFontFamily(family: string): void {
 export function applyEditorLineHeight(value: number): void {
   const v = Math.min(2.5, Math.max(1, Number(value) || 1.5));
   document.documentElement.style.setProperty("--editor-line-height", String(v));
-  // 行距一改行高就变，CM6 必须重测；同 applyFontSize 走 measureAndKeepScroll
-  for (const p of panels.values()) measureAndKeepScroll(p);
 }
 
 /**
@@ -110,9 +103,8 @@ export function applyEditorLineHeight(value: number): void {
  * ①编辑器源码区（CM6 那条 `.cm-editor, .cm-scroller` 规则）；
  * ②预览里的 `code` / `pre` / 数学占位。**凡是代码一律等宽**。
  *
- * 与上面那个正文字体 setter 不同的是这一项**要重测编辑器**：源码区吃这个值，
- * 换字体会改行宽，进而影响折行与视口锚点，所以与字号 / 行距同理走
- * measureAndKeepScroll。（B227 时它只落在预览、不碰 CM6，才不需要重测。）
+ * 与上面那个正文字体 setter 不同的是这一项会影响源码区：源码区吃这个值，
+ * 换字体会改行宽，进而影响折行。（B227 时它只落在预览、不碰 CM6。）
  */
 export function applyCodeFontFamily(family: string): void {
   const root = document.documentElement.style;
@@ -122,8 +114,6 @@ export function applyCodeFontFamily(family: string): void {
   } else {
     root.setProperty("--font-code", f.includes(" ") ? `"${f}"` : f);
   }
-  // B231：源码区现在吃这个值，换字体同样会改行宽 → 必须重测并保住视口
-  for (const p of panels.values()) measureAndKeepScroll(p);
 }
 
 export function applyTabStyle(style: string): void {

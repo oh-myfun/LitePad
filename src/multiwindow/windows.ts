@@ -22,7 +22,6 @@ import {
   remotedTabs,
   remoteOpenByWindow,
   tabs,
-  unmeasuredPanels,
   windowKind,
   windowLabel,
   setSyncingDocId,
@@ -808,10 +807,8 @@ function applyDocResyncFull(
       // 整态重建：只 dispatch changes 的话 tab.state 与视图会不同步（后续切标签立刻串档）
       if (view) view.setState(whole);
       inst.state = whole;
-      // B271：估算窗口开启（见 unmeasuredPanels）
-      if (p) unmeasuredPanels.add(p);
-      // 同步滚动的重落 / 还原逻辑已在重构第一步清除（见 sync-scroll.ts）：整段替换后
-      // 不再把视图按旧视口位置还回去。估算窗口（unmeasuredPanels）的生命周期由后续重构负责。
+      // 同步滚动的重落 / 还原逻辑已在重构清除：整段替换后
+      // 不再把视图按旧视口位置还回去。
     }
   } finally {
     setSyncingDocId(null);
@@ -837,7 +834,7 @@ function listenDocSync(): void {
   ).catch(() => {});
   // B178：跨窗口「这份文档在别的窗口还开着吗」的存在性登记（让同步键在主/子窗口同显隐）。
   // 按 `from`（窗口标签）记进 `remoteOpenByWindow`，自己的回声一律丢（与上面几条同口径）。
-  // B159：同步滚动的跨窗口开关 / 位置广播已在重构第一步整体清除（见 sync-scroll.ts），
+  // B159：同步滚动的跨窗口开关 / 位置广播已在重构整体清除，
   // 因此不再在此注册 EVT_SYNC_MODE / EVT_SYNC_POS 监听。
   void listen<DocPresencePayload>(EVT_DOC_OPEN, (e) => {
     const p = e.payload;
