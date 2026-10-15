@@ -599,7 +599,7 @@ export function alignShownToSyncSource(
  *   对端于是**永远不知道源已到底**，只能按游标 `v` 换算 ⇒ 落到 828 而不是自己那一侧的
  *   底 864（36px 裂口，与 B285 同型）。用户报的就是「多窗口同步滚动时两个窗口对不齐」。
  */
-export function broadcastSyncPos(src: Tab, v: number | null, atFloor = false): void {
+function broadcastSyncPos(src: Tab, v: number | null, atFloor = false): void {
   // `from` 由 emitCrossWindow 注入（= 当前窗口 label），对端据此丢回声 / 跳过源标签。
   void emitCrossWindow(EVT_SYNC_POS, {
     docId: src.docId,
@@ -851,7 +851,7 @@ export function topVisibleLineFrac(view: EditorView, px = view.scrollDOM.scrollT
  *
  * @returns 行号越界返回 `null`（文档比行号短 / 还没同步完正文）
  */
-export function editorLineTopPx(view: EditorView, line: number): number | null {
+function editorLineTopPx(view: EditorView, line: number): number | null {
   const n = Math.min(Math.max(1, line), view.state.doc.lines);
   return Math.max(0, view.lineBlockAt(view.state.doc.line(n).from).top);
 }
@@ -899,7 +899,7 @@ export function sourceTopOfV(view: EditorView, v: number): number | null {
  *       都不变；真有程序摆位让两者分家（`pinScrollTop` + 回执被吞）时，槽里记的也是
  *      「我们最后决定的位置」，比一个半路的中间值更接近用户看到的东西。
  */
-export function sourceCursorPx(t: Tab, view: EditorView): number {
+function sourceCursorPx(t: Tab, view: EditorView): number {
   const dom = view.scrollDOM.scrollTop;
   if (t.scrollTop !== null && Math.abs(dom - t.scrollTop) > LAND_STALE_PX) return t.scrollTop;
   return dom;
