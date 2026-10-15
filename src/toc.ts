@@ -231,8 +231,8 @@ function updateTocDrawer(): void {
   const cursorLine = tab.state.doc.lineAt(tab.state.selection.main.head).number;
   // B205：`createTocList` **只建一次**（建表那一刻它记下折叠态的容器），重绘只走
   //       render —— 光标一动就重绘，每次重建控制器会把用户折的节冲回全展开。
-  //       ⚠️ `onJump` 保持内联在 render 的这一份参数里：`tests/sync-scroll-mode.test.ts`
-  //          的静态契约按 `onJump: (entry) => {` 这句原文切片，提成具名函数会整段失配。
+  //       ⚠️ `onJump` 保持内联在 render 的这一份参数里：tests/static.ts 的静态契约
+  //           按 `onJump: (entry) => {` 这句原文切片，提成具名函数会整段失配。
   tocListView.render(tocEntries, cursorLine, {
     onJump: (entry) => {
       const panel = activePanel();

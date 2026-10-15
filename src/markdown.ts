@@ -176,11 +176,6 @@ function openPreviewToSide(panelId: number): void {
   if (rightId === null) {
     // 右侧没有面板：新建右分屏放一份副本。splitPanelWithTab 的 copy 分支会把
     // 新面板设为活动面板并 rebuildLayout + refreshAll（副本的 view 在那时挂载）。
-    //
-    // ⚠️⚠️ B259：`refreshAll()` 收尾曾以**此刻的活动文档**为源往外推 —— 而此刻活动文档
-    //    正是**刚复制出来的那份空档副本**（预览还没排、编辑器视口 scrollTop 恒 0）
-    //    ⇒ 推的是「文档开头」，会把左栏那份源码钉到顶（自测台实测 287 ⇒ 0）。
-    //    与 B254 同型：位置归零的那个瞬间不能当源坐标。
     splitPanelWithTab(panelId, "h", tab.tabId, false, true);
     const np = panels.get(activePanelId);
     const nt = np ? tabs.get(np.activeTabId) : undefined;
@@ -216,15 +211,6 @@ function openPreviewToSide(panelId: number): void {
     // **不会**因为「activeTabId 已经是目标」而早退，视图会真的换成新标签那份文档。
     rp.activeTabId = targetId;
     switchTab(rightId, targetId);
-    // ⚠️⚠️ B261：`applyPanelMode` 必须排在这一句**之前**（与右邻居不存在那一支同序）。
-    //    它尾上那句 `if (anchorLine > 1) preview.syncToLine(anchorLine)` 读的是**面板那个
-    //    EditorView 此刻的 scrollTop** —— 这里它不一定是**空档**：分屏那份实例是
-    //    `splitPanelWithTab` 的 copy 分支造出来的，那份槽在 copy 分支里就被落过一次
-    //    （B261 底下那两行），面板一挂上编辑器就按槽还原到那个值 ⇒ `anchorLine` 是
-    //    一份**陈旧**位置，而这次点击要落的是**源当前**那一格 ⇒ 让 applyPanelMode 先跑，
-    //    它那一跳就盖不掉刚落好的位置。反着来（B259 那版）实测：源 290 ⇒ 该落 870，
-    //    被陈旧 287 掀回 861 —— 就是用户报的「被打开/激活的预览标签滚动位置和打开的
-    //    标签文件滚动位置不一致」。
     applyPanelMode(rp);
     renderPanelTabs(rightId);
     renderPanelOps(rightId);

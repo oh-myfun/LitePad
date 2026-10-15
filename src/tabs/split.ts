@@ -89,9 +89,8 @@ export function splitActivePanel(panelId: number, dir: "h" | "v"): void {
       panel.activeTabId = panel.tabs[panel.tabs.length - 1];
       const prev = tabs.get(panel.activeTabId);
       if (panel.view && prev) {
-        // 同 switchTab（B146）：CM6 的 setState 会归零 / 重排 scrollTop，那一发若不标记
-        // 会被当成用户滚动落进记录。`viewTabId` 先认下接班标签（否则记到被移走那张头上），
-        // 换文档前先标程序来源，`restoreViewScroll` 的 `pinScrollTop` 继续标覆盖补钉回执。
+        // 同 switchTab：CM6 的 setState 会归零 / 重排 scrollTop，`viewTabId` 先认下
+        // 接班标签（否则寻址会落到被移走那张头上）。
         panel.viewTabId = prev.tabId;
         const view = panel.view; // 闭包里不保留对 `panel.view` 的收窄，先取一份
         setSuppressDirty(true);
@@ -336,19 +335,6 @@ export function splitPanelWithTab(
       bodyEl: null,
     });
     tabs.set(inst.tabId, inst);
-    // ⚠️⚠️ **B261**：复制出来的这一份是**空档实例**（`makeInstance` ⇒ `scrollTop: null`，
-    //    编辑器视口 scrollTop 恒 0），而下面 `refreshAll()` 尾那趟 `pushSyncToSiblings` 是以
-    //    **它**（此刻的活动标签）为源往外推的 —— 源没有位置，`syncSourceV` 只能退读 DOM
-    //    ⇒ 推出 `v = 1`（文档开头）⇒ 同文档的**原标签**被 `applySyncToSibling` 记成
-    //    `top = 0` 并钉进 DOM ⇒ 用户报的「新建分屏时原标签内滚动位置出现变化（顶到 0）」。
-    //    与 B254 / B259 同型：**「位置归零（或从没存在过）的那一瞬间产生的推播，不能拿它
-    //    当源坐标」**。三方入口（右键分屏 / Alt+Shift+方向键 / Ctrl 拖拽复制）都直接调这里，
-    //    只有 `openPreviewToSide` 在外面夹了 `suppressSyncPush` ⇒ 同一条病根只在「开侧边
-    //    预览」上被挡住，在别处照旧发作（用户：两个问题都还在）。
-    //
-    //    ⚠️ 上面那句「落位排在 `rebuildLayout()` 之前」的**结论已被第四轮推翻**（见下面
-    //       那一大段）：分屏那一刻左栏立刻**变窄**、编辑器重排 ⇒ 必须**之后**落。
-    //
     setLayout(splitPanelAt(layout, targetId, dir, newId, newFirst));
     setActivePanelId(newId);
     rebuildLayout();
@@ -359,22 +345,6 @@ export function splitPanelWithTab(
 
   const src = panelOfTab(tabId);
   if (!src) return;
-  // ⚠️⚠️⚠️ **B264（用户：同文件 2 个标签、初始未分屏，把其中一个标签**拖**成第二个分屏
-  //    ⇒ 滚动位置偏移、且两个标签滚动位置出现差异）—— 这里补的不是「再打一针」，是
-  //    copy 支那半套**本来就该在 move 支上也有一份**的东西。**
-  //
-  //    病型（与 B254 / B261 同族，但病位在**这里**，两边症状叠加）：
-  //    ① **游标采错了锚**。单栏里只有一个宿主，同文档的「源码标签 + 预览标签」只能
-  //       亮一个 —— 拖走的那份（本例预览标签 tab2）此刻是**离屏**的，屏幕上真在滚的是
-  //       另一份（源码标签 tab1，槽里 px=100）。照抄 copy 支那句 `syncSourceV(tab)`
-  //       采的是**被拖那份的隐藏侧**（预览离屏 ⇒ 0 ⇒ v=1），把这个假游标当成分屏后
-  //       两格的共同落点 ⇒ 老那一格被钉回文档开头（桩实测：100 ⇒ 0，会话落盘 `0|0`，
-  //       即**永久**丢了，不只是闪一下）。
-  //    ② **没有「按新几何重落」**。分屏那一刻老栏从整宽变半宽 ⇒ word_wrap 重排 ⇒
-  //       `rebuildLayout → restoreViewScroll` 拿槽里**旧像素**去钉**新几何**的编辑器
-  //       ⇒ 跨几何的旧像素是另一行。copy 支有 `vCopy` + 两格 `landOnFrameGeometry`
-  //       兜住，move 支一个都没有 ⇒ 分离的那半病就只在这里发作。
-  //
   const newId = takePanelId();
   panels.set(newId, {
     panelId: newId,

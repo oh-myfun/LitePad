@@ -258,9 +258,9 @@ function adoptTransferredTabs(incoming: SatelliteTab[], panelId = activePanelId)
   if (!panel) return [];
   const adopted: number[] = [];
   for (const st of incoming) {
-    // B169：主窗口那份文档若开着同步滚动，接手的卫星窗口也得认这个状态 —— 否则
-    // 卫星窗口的同步键灭着、主窗口亮着，状态对不上。这里只改本地 `docSyncModes`
-    // （单向，不落盘），跨窗口那一笔仍走 `EVT_SYNC_MODE` 保双方一致。
+    // B169：主窗口那份文档的同步滚动开关状态一起带走 —— 否则主窗口开着、子窗口收下后
+    // 按钮还是灭的，两边点亮态对不上（用户报「子窗口的同步按钮状态和主窗口的要一致」）。
+    // 注意：同步联动本身已禁用，这里搬的只是按键的点亮态。
     if (st.syncMode) docSyncModes.set(st.docId, true);
     // 该文档在本地还留着隐藏实例（刚从别的窗口交回来）→ 先把它摘掉，避免出现
     // 「两份实例同源但互不同步」——同源多实例的前提是同一窗口内共用一个 docs 条目，
@@ -830,8 +830,7 @@ function listenDocSync(): void {
   ).catch(() => {});
   // B178：跨窗口「这份文档在别的窗口还开着吗」的存在性登记（让同步键在主/子窗口同显隐）。
   // 按 `from`（窗口标签）记进 `remoteOpenByWindow`，自己的回声一律丢（与上面几条同口径）。
-  // B159：同步滚动的跨窗口开关 / 位置广播已在重构整体清除，
-  // 因此不再在此注册 EVT_SYNC_MODE / EVT_SYNC_POS 监听。
+  // B159：同步滚动的跨窗口开关 / 位置广播已在重构整体清除，这里不再注册任何相关监听。
   void listen<DocPresencePayload>(EVT_DOC_OPEN, (e) => {
     const p = e.payload;
     if (!p?.docId || !p.from || p.from === windowLabel) return;

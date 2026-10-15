@@ -88,7 +88,7 @@ export interface SettingsDialogOptions {
   /**
    * B288：「打开日志文件」—— 用系统默认程序打开 `<配置目录>/logs/litepad.log`。
    *
-   * 排查问题时（比如定位同步滚动 / 拖拽复位）要反复看日志，不该让用户自己去
+   * 排查问题时（比如启动异常 / 保存失败）要反复看日志，不该让用户自己去
    * `%APPDATA%` 里摸路径 —— 何况配置目录还能被 `LITEPAD_CONFIG_DIR` 搬走。
    */
   onOpenLog: () => void;

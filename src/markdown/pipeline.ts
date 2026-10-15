@@ -4,7 +4,7 @@ import footnote from "markdown-it-footnote";
 /**
  * Markdown 渲染管线（M3）：
  * - markdown-it + GFM（表格/删除线/任务列表/自动链接为内置或轻量规则）
- * - 顶层 block 切分：每个 block 带 source line 区间 [mapStart, mapEnd)，供增量 patch 与同步滚动
+ * - 顶层 block 切分：每个 block 带 source line 区间 [mapStart, mapEnd)，供增量 patch 与按行定位
  * - 标题提取（TOC/大纲）+ 标题锚点 id
  * - KaTeX / Mermaid 占位输出（懒加载增强阶段替换），Shiki 高亮走增强阶段
  */
@@ -163,10 +163,8 @@ export function renderBlocks(src: string): MdBlock[] {
     // markdown-it 的标题/段落都是「open(level0) → inline(level1) → close(level0)」三段。
     // 早先这里按 `t.level === 0` 一律当新块 ⇒ 每个标题被切成两块（开标签块 + 闭标签块），
     // 实测 24 行标题文档交出 48 块、闭标签块 `lineStart` 恒为 1；这些空壳块混进预览的
-    // `this.blocks` 后，`indexOfBlockAtOffset`（取「最后一个顶边 ≤ offset」）永远命中
-    // 顶边与真块相同、却 `lineStart=1` 的伪块 ⇒ 预览那份游标恒为 1（B257 后 = 块首行 + 0
-    // 比例的 `v`），一收口就把源码钉回第 1 行（滚动位置清零，来回切标签就看见位置乱跳，
-    // 见 B244 四标签复核）。
+    // `this.blocks` 后，按行定位会命中顶边与真块相同、却 `lineStart=1` 的伪块 ⇒ 预览那份
+    // 待定位行恒为 1（一收口就把视图钉回第 1 行，来回切标签就看见位置乱跳，见 B244 四标签复核）。
     // 收尾 token 必须并入当前块（它们本来就属于同一个 block 的边界）。
     if (t.level === 0 && !t.type.endsWith("_close")) {
       if (t.hidden && current && t.type !== "heading_open") {
@@ -191,14 +189,10 @@ export function renderBlocks(src: string): MdBlock[] {
   }
   // ⚠️ B268：末块的 `lineEnd` 必须覆盖到**文档末行**（`doc.lines`），而非 markdown-it 给的
   // 「最后内容行」。文档末尾若有空行（trailing blank lines），markdown-it 的 `map[1]` 只到
-  // 最后内容行、不含那些空行 ⇒ `lineEnd < doc.lines`。这会让两侧底部游标错配：
-  //   · 源码侧到底 `topVisibleLineFrac` 交 `doc.lines`（最后一行贴容器顶）；
-  //   · 预览侧到底 `topVisibleLine()` 交 `lineEnd`（最后一块末行）。
-  // 二者不等 ⇒ 同步到底时两侧落点差「末块之后的空行数」：
-  //   · 手动滚源码到底（v=doc.lines）再同步，预览只到 lineEnd（看着像没到底）；
-  //   · 滚预览到底（v=lineEnd）反推源码，`sourceTopOfV` 只落到 lineEnd（向「上」跳几行）。
-  // 把末块 `lineEnd` 拉到文档末行后，两侧底部 `v` 统一为 `doc.lines`，往返闭合。
-  // 仅最后一个块受影响（其 `next` 恒为空，`applySyncToLine` 不插值，只落块顶），中间块不变。
+  // 最后内容行、不含那些空行 ⇒ `lineEnd < doc.lines`。这会让「定位到文档末行」的落点
+  // 差「末块之后的空行数」：末行永远差一截到不了顶。把末块 `lineEnd` 拉到文档末行后，
+  // 按行定位到底与源码口径一致。仅最后一个块受影响（其 `next` 恒为空，`applySyncToLine`
+  // 不插值，只落块顶），中间块不变。
   if (blocks.length > 0) {
     const total = countSourceLines(src);
     const last = blocks[blocks.length - 1];

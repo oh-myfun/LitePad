@@ -338,25 +338,7 @@ function syncDocInstances(src: Tab, changes: ChangeSet): void {
   }
 }
 
-// ------------------------------------------------------- B152 同步滚动模式
-
-// B171：这里原先有 `sharedDocIds`（B164 加的），用来把「卫星窗口采纳的文档」也算成
-// 「开着多份」，好让子窗口也能看到这颗键。已删 —— 主窗口手上那份是**隐藏实例**，
-// 主窗口自己按 `instancesOfDoc` 数也只有 1 份、同样不显示这颗键；子窗口认它，就成了
-// 「同文件没多开却显示关联按钮」，与主窗口口径不一致。现在两个窗口同口径：只看
-// **本窗口内**这份文档的实例数（跨窗口的开关 / 位置广播不受影响，仍走 EVT_SYNC_*）。
-
-/**
- * 把源的**位置**落到一份兄弟上（B152 位置那一路的四条纪律全在这一个函数里）。
- *
- * 本窗口那一路和跨窗口那一路调用的是**同一个**函数 —— 纪律只有一份，抄成两份
- * 迟早有一份漏掉「跨视图模式只能换算」那一条（B154 就栽在复制粘贴上）。
- */
-// B170：滚动来源标记改走 `src/scroll-guard.ts`（合成 VS Code 的 `scrollType`）—— 程序定位
-// 前 `markProgrammatic(el)`，scroll 监听见标记即吞，标记靠「用户接管滚动」的真实输入清除，
-// 不比位置、不赌时序、无时间窗。下面 `applySyncToSibling` 的落点日志保留为 debug 诊断。
-
-// ---------------------------------------------------------------- 事件绑定
+// ------------------------------------------------------- 事件绑定
 
 function bindEvents(): void {
   // 自建标题栏（B97）右侧三颗窗口控制键。关闭键走 close() 而不是 destroy()：
@@ -366,8 +348,8 @@ function bindEvents(): void {
   winClose.addEventListener("click", () => void getCurrentWindow().close());
   // 「钉在顶部」开关（B99）：都是「切换 + 回读」，逻辑见 togglePin。
   winPin.addEventListener("click", () => void togglePin());
-  // B152：同步滚动开关。按下就**立刻**推一次 —— 不用等用户再滚一下才看到「跟着动了」。
-  // 关闭则什么都不做（各回各的，与 B149 的基线一致）。
+  // B152：同步滚动开关。同步逻辑已在重构整体清除 —— 这颗键保留可见，点击只翻转
+  // `docSyncModes` 与自身 glyph，不再产生任何滚动 / 跨窗口广播副作用（见下面的处理）。
   syncScrollBtn.addEventListener("click", () => {
     const tab = activeTab();
     if (!tab) return;
@@ -911,7 +893,7 @@ async function setupShell(): Promise<void> {
   applyCodeFontFamily(settings?.code_font_family ?? "");
   applyPreviewLineHeight(settings?.preview_line_height ?? 1.7);
   // B235：预览正文宽度档（缺省「全宽」）。改了它不影响任何测量 ——
-  // 宽度只影响换行位置，不动视口锚点，所以不必走 measureAndKeepScroll。
+  // 宽度只影响换行位置，不动视口锚点。
   applyPreviewWidth(settings?.preview_width ?? "full");
   applyEditorLineHeight(settings?.editor_line_height ?? 1.5);
   setupSideBar();

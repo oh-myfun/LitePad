@@ -176,7 +176,7 @@ function refreshTitle(): void {
  * 的键，用户只会以为坏了。
  *
  * B171：「多份」只数**本窗口内**的实例，主窗口与子窗口同口径。
- * B164 曾让子窗口额外认「这份文档在别的窗口也有」（`sharedDocIds`），结果是同文件
+ * B164 曾让子窗口额外认「这份文档在别的窗口也有」，结果是同文件
  * 只开一份时子窗口也露出这颗键 —— 而它对应的那份是主窗口的**隐藏实例**，主窗口
  * 自己数也只算 1 份、同样不显示。口径不一致，且同步到一个看不见的实例没有意义。
  * B173：再多滤一层 —— 本窗口内**隐藏**实例（`panelId < 0`，标签搬到别的窗口后留下的
@@ -192,7 +192,7 @@ function refreshSyncButton(tab: Tab | undefined): void {
   // ⚠️ 先算出布尔量：直接写 `hidden = !tab || …` 是收窄不了 `tab` 的，后面那句
   //    `if (hidden) return` 挡不住「tab 可能是 undefined」这条报错。
   // B178：跨窗口多开也算「多份」—— 本窗口可见实例 > 1，或任一别的窗口也可见地开着这份。
-  // 状态一致性已由 `EVT_SYNC_MODE` 保（主/子窗口读同一份 docSyncModes 的镜像），这里只补
+  // 状态一致性随卫星标签载荷一起搬运（`syncMode`，见 multiwindow/windows.ts），这里只补
   // 显隐：两个窗口都数到 ≥2 份，同步键就都露脸。仍只数**可见**实例（B171/B173 口径不变）。
   const multi = !!tab && (visibleInstancesOfDoc(tab.docId).length > 1 || remoteHasDoc(tab.docId));
   syncScrollBtn.hidden = !multi;
@@ -207,7 +207,9 @@ function refreshSyncButton(tab: Tab | undefined): void {
   syncScrollBtn.setAttribute("aria-pressed", String(on));
   const label = on ? "取消同步滚动" : "同步滚动";
   syncScrollBtn.setAttribute("aria-label", label);
-  setTip(syncScrollBtn, on ? "同步滚动（已开启，其它份跟着这份走）" : "同步滚动（点击开启）");
+  // ⚠️ 同步滚动已整体禁用（重构清除）：提示不许再承诺「其它份跟着这份走」那类
+  //    不存在的效果，只说明这颗键当前只是状态开关。
+  setTip(syncScrollBtn, "同步滚动（已禁用，仅记录开关状态）");
 }
 
 function refreshStatus(): void {

@@ -75,8 +75,8 @@ export function applyPreviewWidth(value: unknown): void {
  * ⚠️ B231 口径：源码区已划归**代码字体**（见下面的代码字体 setter），所以这一项
  *    **不再影响编辑器**。改名「正文字体」；B227 时的临时中转变量已删除。
  *
- *    这里**不重测编辑器**是刻意的：--font-body 没有任何 CM6 消费方，
- *    measureAndKeepScroll 纯属空转。真正要重测的是下面那个代码字体 setter。
+ *    这里**不重测编辑器**是刻意的：--font-body 没有任何 CM6 消费方，重测纯属空转。
+ *    真正要重测的是下面那个代码字体 setter。
  *
  *    ⚠️ 注释里**别写别的 setter 名**：`tests/static.ts` 的 `topLevelFnBody` 按
  *    `indexOf(name)` 取首次出现定位函数体，注释里提一句别人的名字就会让那条

@@ -172,9 +172,8 @@ export function refreshSession(): void {
       const line = t.state.doc.lineAt(pos);
       sessionStore.setCursor(t.tabId, line.number, pos - line.from + 1);
     }
-    // B288⑤-1c：原先这里有一条 `recordScroll(t.tabId, viewportOfTab(t))`（落盘前刷新）。
-    //   它读的是像素槽、再写回同一个像素槽 —— 像素已不落盘（只落 `syncV`），
-    //   而 `syncV` 的落盘本就由各处 `recordScroll` 走同一闸口完成 ⇒ 这一条纯自赋值，删。
+    // B288⑤-1c：原先这里落盘前还会按 DOM 刷新一次像素位置 —— 像素轨已整体移除
+    // （位置记忆 / 恢复随同步滚动重构一起清除），光标由上面几句写入即可。
   }
 }
 

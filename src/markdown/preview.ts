@@ -6,12 +6,12 @@ import type { MdBlock } from "./pipeline";
  * Markdown 预览面板（M3）：
  * - 增量 patch：按顶层 block 复用 DOM（html 不变的 block 不动节点）
  * - 懒加载增强：KaTeX / Mermaid / Shiki 均动态 import，首次用到才加载
- * - 双向同步滚动：block 锚点对齐 + 来源标记（src/scroll-guard 合成 VS Code `scrollType`）
+ * - 本地定位：按源行号滚动（大纲跳转 / 转到行），异步重排后按待定位行重落
  */
 
 const LAZY_THRESHOLD_LINES = 5000; // 大文档：关闭 Mermaid/Shiki 自动渲染
 
-export interface SyncHost {
+export interface PreviewHost {
   /** 文档总行数（大文档降级判断用） */
   lineCount(): number;
 }
@@ -24,7 +24,7 @@ interface BlockNode {
 export class PreviewPane {
   readonly root: HTMLElement;
   private blocks: BlockNode[] = [];
-  private host: SyncHost | null = null;
+  private host: PreviewHost | null = null;
   /** 程序定位（大纲跳转/转到行）的目标行：异步增强或图片加载重排后据此重定位 */
   private pendingSyncLine: number | null = null;
   private mermaidSeq = 0;
@@ -34,9 +34,6 @@ export class PreviewPane {
   constructor() {
     this.root = document.createElement("div");
     this.root.className = "md-preview";
-    // B170：给预览滚动容器挂「用户接管即清程序标记」的监听 —— 标记靠真实输入清除、
-    // 不靠时间窗（见 src/scroll-guard.ts）。这样渲染扰动（setBlocks 归零再拉回、图片加载
-    // 重排）导致的 actual≠expect 不会被误判成用户滚动反推编辑器。
     // 图片/iframe 的 load 不冒泡，用捕获阶段监听——布局变化后按 pending 行重定位
     this.root.addEventListener("load", () => this.applyPending(), true);
     this.root.addEventListener("click", (e) => {
@@ -51,7 +48,7 @@ export class PreviewPane {
     });
   }
 
-  setHost(host: SyncHost): void {
+  setHost(host: PreviewHost): void {
     this.host = host;
   }
 
@@ -105,8 +102,6 @@ export class PreviewPane {
       this.applySyncToLine(this.pendingSyncLine);
     } else {
       this.root.scrollTop = prevScroll;
-      // B170：这次恢复是程序摆位（replaceChildren 把 scrollTop 清零后我们拉回），回执由
-      // 预览 scroll 监听经 scroll-guard 标记吞掉，不当成用户滚动。
     }
     if (options.enhanced !== false) void this.enhance();
     // 重排后布局可能变化（图片/公式占位），按 pending 行再定位一次
@@ -215,8 +210,7 @@ export class PreviewPane {
     this.findMarks.forEach((m, i) =>
       m.classList.toggle("cm-find-match-active", i === this.findActive),
     );
-    // jsdom 未实现 scrollIntoView；WebView2 正常。滚动 .md-preview 会触发
-    // 编辑器↔预览同步（回环锁在 onPreviewScroll 内处理）。
+    // jsdom 未实现 scrollIntoView；WebView2 正常。
     this.findMarks[this.findActive].scrollIntoView?.({ block: "center" });
   }
 
@@ -364,10 +358,10 @@ export class PreviewPane {
     }
   }
 
-  // ------------------------------------------------ 同步滚动
+  // ------------------------------------------------ 本地定位（按行）
 
   /**
-   * 按行号直接滚动预览（大纲跳转 / 程序定位用）。
+   * 按行号直接滚动预览（大纲跳转 / 转到行用）。
    * 不依赖编辑器可视区 —— 预览态面板的编辑器是 display:none，其 scrollTop 不会变，
    * 必须显式按目标行定位。目标行记入 pendingSyncLine：异步增强/图片加载引发的
    * 布局变化会重新定位一次。
@@ -378,26 +372,11 @@ export class PreviewPane {
   }
 
   /**
-   * 直接摆到指定像素位置（B129：会话恢复）。
-   *
-   * 与 `syncToLine` 的区别是**不认行、只认位置**：恢复会话时编辑器是 `display:none`，
-   * 没法像切视图那样按「编辑器顶行」反推预览该停在哪。本次摆位 `markProgrammatic`——
-   * 否则紧随其后的 scroll 事件会被当成用户手动滚动，反过来去动编辑器（B170）。
-   */
-  setScrollTop(px: number): void {
-    const nextTop = Math.max(0, px);
-    this.root.scrollTop = nextTop;
-    // 位置已定，别再被异步重排（图片/公式增强）拽回行定位
-    this.pendingSyncLine = null;
-  }
-
-  /**
    * 按行定位预览，**返回实际落点**（`null` = 没落地）。
    *
    * ⚠️ 返回值不是摆设：`blockAtLine` 找不到目标 block 时（预览还没渲染 / 行号越界）这里
-   * 是直接 return、容器一动没动的。调用方若不看返回值、照例把容器里的值当落点记进快照，
-   * 「定位没做」就会被记成「它停在顶部」—— 下一次切过去天然回顶（B134 那个病再犯一次：
-   * 没钉住 ≠ 位置是 0，见 `pinScrollTop` 的 `stuck` 判定）。
+   * 是直接 return、容器一动没动的。调用方若不看返回值、照例把容器里的值当落点，
+   * 「定位没做」就会被当成「它停在顶部」。
    */
   private applySyncToLine(line: number): number | null {
     const target = this.blockAtLine(line);
@@ -405,14 +384,11 @@ export class PreviewPane {
     const idx = this.blocks.indexOf(target);
     const next = this.blocks[idx + 1];
     const el = target.el;
-    // B288 三轮：块几何不可用（容器未铺开 / display:none / 刚挂载尚未 layout）时，块与
-    //   容器的 rect 全为 0，`blockTop` 算出的 `top` 必为 0——照常返回 0 会被调用方当成
-    //   「停在顶部」：`renderMarkdownFor` 的 B279 补落 `recordScroll(0)` 把槽里真值抹掉、
-    //   预览视觉被钉回开头（用户复现「拖标签分屏预览置 0」的现场）。这里直接返回 null，
-    //   让所有调用方走兜底：`restorePreviewScroll` 的 `pinScrollTop` 按槽里真值自愈、B279
-    //   补落的 `if (landed !== null)` 跳过不写。jsdom 测试桩（preview-sync / sync-drag-split）
-    //   给块 / 容器非 0 几何，不受影响；判定要求「块 rect 全 0 且容器高 0」二者同时成立，
-    //   才认作未铺开——已铺开的容器（高 > 0）即便某块恰好贴顶（rect.top=0）也不会误判。
+    // 块几何不可用（容器未铺开 / display:none / 刚挂载尚未 layout）时，块与容器的
+    // rect 全为 0，`blockTop` 算出的 `top` 必为 0——照常返回 0 会被调用方当成
+    // 「停在顶部」。这里直接返回 null，让调用方走各自的兜底。判定要求「块 rect 全 0
+    // 且容器高 0」二者同时成立才认作未铺开——已铺开的容器（高 > 0）即便某块恰好
+    // 贴顶（rect.top=0）也不会误判。
     const eb = el.getBoundingClientRect();
     if (
       eb.top === 0 &&
@@ -435,12 +411,10 @@ export class PreviewPane {
       top += ((this.blockTop(next.el) - top) * into) / range;
     } else {
       // ⚠️ 末块（next 不存在）：上面那条「跨块插值」用不上，旧写法整块落到**块顶**
-      //    （lineStart 顶对齐）。但「滚到底 / 同步到文档末行」的语义应是「最后一行顶对齐到
-      //    容器顶」—— 与编辑器 `sourceTopOfV` 末行贴顶、以及本单底部留白（末行高）同口径：
-      //    末块占多行时，只落块顶 ⇒ 最后一行永远差一截到不了顶（用户报「只能滚动到最后一块」
-      //    的同源问题在同步 / 切标签恢复路径上同样存在）。按块内源行均分块高，把请求的源行
-      //    顶对齐到容器顶（与中段块 `into/range` 插值的落点语义一致）。`topVisibleLine` 对末块
-      //    仍交 `lineEnd`（滚过末块顶即交末行），往返闭合不变。
+      //    （lineStart 顶对齐）。但「定位到文档末行」的语义应是「最后一行顶对齐到
+      //    容器顶」—— 末块占多行时，只落块顶 ⇒ 最后一行永远差一截到不了顶。
+      //    按块内源行均分块高，把请求的源行顶对齐到容器顶（与中段块 `into/range`
+      //    插值的落点语义一致）。
       const start = Number(el.dataset.lineStart);
       const lines = Math.max(1, Number(el.dataset.lineEnd) - start + 1);
       const lineIdx = line - start;
@@ -452,7 +426,6 @@ export class PreviewPane {
     // ANCHOR = 0：落点就是块顶本身（旧口径是块顶往回让 8 像素，那一对常数是往返攒误差的
     // 来源，随 B251 一起撤掉 —— B245 的「越切越靠顶」在 ANCHOR = 0 下没有病根可犯）。
     const nextTop = Math.max(0, top);
-    // B170：程序摆位，先标来源再赋值，回执由 scroll 监听经 scroll-guard 吞掉。
     this.root.scrollTop = nextTop;
     return nextTop;
   }
@@ -466,10 +439,8 @@ export class PreviewPane {
   /**
    * 布局稳定后按 pending 行再定位一次（异步增强 / 图片加载后调用）。
    *
-   * B170：这一发是**异步补刀**（图片 / 公式增强后布局变了，再定位一次）。它走
-   * `applySyncToLine`，内部 `markProgrammatic` 已把来源标好，回执由滚动监听直接吞掉
-   * —— 不再需要 `suppressScrollWrite` 那种「先压位再解位」的时序补丁（异步补刀落点
-   * 和上一次不同，旧方案里它会被当成用户滚动写进快照，正是 960/952 抖动的根）。
+   * 图片 / 公式增强后布局变了，下一帧按 pending 行补定位一次；期间 pending 行被
+   * 换掉（新的定位请求）就丢弃这一发。
    */
   private applyPending(): void {
     if (this.pendingSyncLine === null) return;
@@ -481,13 +452,12 @@ export class PreviewPane {
   }
 
   private blockAtLine(line: number): BlockNode | null {
-    // ⚠️ `line` 可能带行内比例小数（B174/B175：同步跟随用 `topVisibleLineFrac` 的
-    //   小数坐标，让预览跟随连续而非阶梯跳）。旧写法 `line >= s && line <= e` 兜不住小数：
-    //   12.3 落在 `[12,12]` 块里却被 `12.3 <= 12` 判否、又够不到 `[13,13]` ⇒ 落到「最后
-    //   一个块」⇒ 预览被钉到最底部（用户：滚源码预览直接到底）。空行造成的区间缝隙
-    //   （段落 [12,14] 与 [16,18] 之间缺 15）也会把小数行号挤到缝里、同样误坠底部。
-    //   改按「行号有序」线性找：取 `lineStart <= line` 的最后一块；若该块已含 line 直接命中，
-    //   缝隙 / 单块小数则稳定落到缝隙前那块，不再误坠底部。
+    // ⚠️ `line` 可能带行内比例小数（按比例插值的定位坐标）。旧写法
+    // `line >= s && line <= e` 兜不住小数：12.3 落在 `[12,12]` 块里却被 `12.3 <= 12`
+    // 判否、又够不到 `[13,13]` ⇒ 落到「最后一个块」⇒ 预览被钉到最底部。空行造成的
+    // 区间缝隙（段落 [12,14] 与 [16,18] 之间缺 15）也会把小数行号挤到缝里、同样误坠
+    // 底部。改按「行号有序」线性找：取 `lineStart <= line` 的最后一块；若该块已含
+    // line 直接命中，缝隙 / 单块小数则稳定落到缝隙前那块，不再误坠底部。
     let hit: BlockNode | null = null;
     for (const b of this.blocks) {
       const s = Number(b.el.dataset.lineStart);

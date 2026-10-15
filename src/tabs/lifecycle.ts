@@ -261,18 +261,11 @@ export function switchTab(panelId: number, tabId: number): void {
   const tab = tabs.get(tabId);
   if (!tab) return;
   panel.activeTabId = tabId;
-  // ⚠️ 下面这三步（改 `viewTabId` → 换文档 → 还原）的顺序是 B146 二轮改出来的，
-  // 别再随手调回去。CM6 的 `setState` 末尾是：
-  //     if (hadFocus) this.focus();   // 换完文档自己把光标滚进视野
-  //     this.requestMeasure();
-  // 加上浏览器按**新内容长度**裁剪 scrollTop —— 换文档必然自己动一下 scrollTop 并
-  // 派发 scroll。用户报的「切换标签，md 文档的滚动位置会不断往下移」就是这个：
-  // 那几下滚动既不是用户造成的，`viewTabId` 当时还指着旧标签（守卫按它寻址），
-  // 一不留神就被记成「用户停过的位置」。
-  //   ① `viewTabId` **先于** setState 改：滚动监听靠它寻址，晚一步就记到旧标签头上；
-  //   ② 换文档前先给编辑器标「程序来源」：CM6 的 `setState` 会把 scrollTop 归零再
-  //      重排，那一发 scroll 若不标记就会被当成用户滚动、写进接班标签的记录（B134/B146）。
-  //      `restoreViewScroll` 里的 `pinScrollTop` 也会继续标，覆盖随后的补钉回执。
+  // ⚠️ 下面几步的顺序是 B146 二轮改出来的，别再随手调回去。CM6 的 `setState` 末尾
+  // 会自己 `focus()`（hadFocus 时）—— 换完文档把光标滚进视野。`viewTabId` 必须
+  // **先于** setState 改：视口日志与各处寻址都按它认「视图正显示哪份」，晚一步就
+  // 找到旧标签头上。setState 还会把 scrollTop 归零再按新内容长度重排，那几下滚动
+  // 不是用户造成的（同步滚动与位置记忆已整体移除，这里只余寻址 / 焦点顺序纪律）。
   panel.viewTabId = tabId;
   const view = panel.view; // 闭包里不保留对 `panel.view` 的收窄，先取一份
   setSuppressDirty(true);
@@ -282,10 +275,6 @@ export function switchTab(panelId: number, tabId: number): void {
   // 不在刚还原出来的可视区里 —— 排在后面等于把刚钉好的位置顶掉。
   view.focus();
   logViewport("切换 · 还原窗口内", panel);
-  // B126：setState 重建了 ViewState 并把视口拉回开头，这里把滚动位置还回去。
-  // ⚠️ 必须排在 applyPanelMode **之后**：applyPanelMode 才把 `mode-preview` 摘掉，而
-  //   `.panel-host.mode-preview .panel-editor { display: none }`（styles/preview.css）
-  //   ⇒ display:none 期间写 scrollTop 浏览器不认、class 一切还清零。
   applyPanelMode(panel);
   // B181：类切完**再补一次焦点** —— 否则「从预览态的标签切走」之后编辑器没有焦点。
   //
@@ -295,9 +284,9 @@ export function switchTab(panelId: number, tabId: number): void {
   //    不报错、也不聚焦。等 `applyPanelMode` 把类切回 `mode-source`，编辑器可见了
   //    却没人聚焦 ⇒ 用户看到「光标消失了、按方向键没反应、得先点一下编辑区才能输入」。
   //
-  // ⚠️ 那第一次 focus **不能删也不能挪**：它排在 `restoreViewScroll` 之前是 B145 的要求
-  //    （焦点先把光标滚进视野，随后的钉位置才盖得住）。所以这里是**补第二次** ——
-  //    此刻类已切好、编辑器可见，`focus()` 才真能拿到焦点。
+  // ⚠️ 那第一次 focus **不能删也不能挪**：它紧跟着 setState —— 换完文档立刻把焦点
+  //    拉回编辑器（B145 立下的顺序：先聚焦、后切视图模式）。所以这里是**补第二次**
+  //    —— 此刻类已切好、编辑器可见，`focus()` 才真能拿到焦点。
   //    `focus()` 内部走 `focusPreventScroll`（`preventScroll: true`，拿不到就回滚滚动栈），
   //    不会把刚钉好的视口位置顶掉；已经聚焦过时它就是个空操作。
   view.focus();
@@ -473,9 +462,8 @@ export async function closeTabById(tabId: number): Promise<void> {
   const nextTab = tabs.get(nextId);
   if (panel.view && nextTab) {
     const view = panel.view; // 闭包里不保留对 `panel.view` 的收窄，先取一份
-    // 同 switchTab（B146）：CM6 的 setState 自己会再 focus / 重排，把 scrollTop 归零
-    // 那一发若不标记就会被当成用户滚动写进接班标签记录。换文档前先标程序来源，
-    // `restoreViewScroll` 的 `pinScrollTop` 继续标，覆盖补钉回执。
+    // 同 switchTab：`viewTabId` 先认下接班标签再 setState（寻址按它），CM6 的
+    // setState 会自己 focus / 重排，scrollTop 归零那几下不是用户造成的。
     panel.viewTabId = nextId;
     setSuppressDirty(true);
     view.setState(nextTab.state);
@@ -626,10 +614,8 @@ export function moveTabToStrip(panelId: number, tabId: number, beforeTabId: numb
   setActivePanelId(panelId);
 
   if (src.tabs.length === 0 && countLeaves(layout) > 1) {
-    // ⚠️ B288 诊断：**这两条分支的 trace 是定位「拖完位置回顶」的关键** ——
-    //    `disposePanel` 这条**没有** `splitPanelWithTab` 里 else 支那套按离屏前游标
-    //    重落（`landOnFrameGeometry`），被拖标签在新面板重建后容易停在 0。
-    //    复现时先看走的是哪一条，再对上 viewport 那几条「记忆 / 还原」trace。
+    // 源面板被拖空 vs 仍有标签：两条分支各留一条 trace，排查重建类问题时
+    // 先看走的是哪一条（disposePanel 内部会再 rebuild）。
     logger.trace(
       "tabs",
       `拖拽(标签条) · 源面板 ${src.panelId} 被拖空 ⇒ disposePanel tab=${tabId} → 面板 ${panelId}`,
