@@ -44,7 +44,6 @@ import { logger } from "../core/logger";
 import { retargetFindBar } from "../find/findbar";
 import { keyHint } from "../prefs";
 import { newTab as ipcNewTab } from "../ipc/api";
-import { markProgrammatic } from "../core/scroll-guard";
 import { renderPanelTabs } from "./render";
 import { rebuildLayout, disposePanel, freshTextOfDoc, pruneEmptyPanels } from "./lifecycle";
 import { scheduleSessionSave } from "./deps";
@@ -95,7 +94,6 @@ export function splitActivePanel(panelId: number, dir: "h" | "v"): void {
         // 换文档前先标程序来源，`restoreViewScroll` 的 `pinScrollTop` 继续标覆盖补钉回执。
         panel.viewTabId = prev.tabId;
         const view = panel.view; // 闭包里不保留对 `panel.view` 的收窄，先取一份
-        markProgrammatic(view.view.scrollDOM);
         setSuppressDirty(true);
         view.setState(prev.state);
         setSuppressDirty(false);

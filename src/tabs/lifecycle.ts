@@ -43,7 +43,6 @@ import { showSaveConfirmDialog } from "../shell/saveconfirm";
 import { createEditor } from "../editor/editor";
 import { PreviewPane } from "../markdown/preview";
 import { logViewport } from "../core/viewport";
-import { attachUserScrollClear, markProgrammatic } from "../core/scroll-guard";
 import { closeTab as ipcCloseTab, newTab as ipcNewTab } from "../ipc/api";
 import { renderPanelTabs, renderPanelOps, panelDataOf } from "./render";
 import {
@@ -218,16 +217,9 @@ export function rebuildLayout(): void {
       p.preview = preview;
       hostEl.appendChild(preview.root);
       preview.setHost({
-        // 同步滚动已整体清除：此回调只为满足 PreviewPane 的 SyncHost 接口，
-        // 不再驱动编辑器滚动（新方案落地时在此重写）。
-        scrollToLine: () => {},
         lineCount: () => p.view?.view.state.doc.lines ?? 0,
       });
-      if (p.view) {
-        const shownView = p.view.view;
-        attachUserScrollClear(shownView.scrollDOM);
-        attachPasteHandler(p);
-      }
+      if (p.view) attachPasteHandler(p);
 
       applyPanelMode(p);
       if (panelId === activePanelId && p.view) {
@@ -283,7 +275,6 @@ export function switchTab(panelId: number, tabId: number): void {
   //      `restoreViewScroll` 里的 `pinScrollTop` 也会继续标，覆盖随后的补钉回执。
   panel.viewTabId = tabId;
   const view = panel.view; // 闭包里不保留对 `panel.view` 的收窄，先取一份
-  markProgrammatic(view.view.scrollDOM);
   setSuppressDirty(true);
   view.setState(tab.state);
   setSuppressDirty(false);
@@ -486,7 +477,6 @@ export async function closeTabById(tabId: number): Promise<void> {
     // 那一发若不标记就会被当成用户滚动写进接班标签记录。换文档前先标程序来源，
     // `restoreViewScroll` 的 `pinScrollTop` 继续标，覆盖补钉回执。
     panel.viewTabId = nextId;
-    markProgrammatic(view.view.scrollDOM);
     setSuppressDirty(true);
     view.setState(nextTab.state);
     setSuppressDirty(false);

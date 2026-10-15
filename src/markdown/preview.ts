@@ -1,7 +1,6 @@
 import { convertFileSrc } from "../ipc/api";
 
 import type { MdBlock } from "./pipeline";
-import { attachUserScrollClear, markProgrammatic } from "../core/scroll-guard";
 
 /**
  * Markdown 预览面板（M3）：
@@ -13,8 +12,6 @@ import { attachUserScrollClear, markProgrammatic } from "../core/scroll-guard";
 const LAZY_THRESHOLD_LINES = 5000; // 大文档：关闭 Mermaid/Shiki 自动渲染
 
 export interface SyncHost {
-  /** 编辑器滚动到指定行（行首对齐） */
-  scrollToLine(line: number): void;
   /** 文档总行数（大文档降级判断用） */
   lineCount(): number;
 }
@@ -40,7 +37,6 @@ export class PreviewPane {
     // B170：给预览滚动容器挂「用户接管即清程序标记」的监听 —— 标记靠真实输入清除、
     // 不靠时间窗（见 src/scroll-guard.ts）。这样渲染扰动（setBlocks 归零再拉回、图片加载
     // 重排）导致的 actual≠expect 不会被误判成用户滚动反推编辑器。
-    attachUserScrollClear(this.root);
     // 图片/iframe 的 load 不冒泡，用捕获阶段监听——布局变化后按 pending 行重定位
     this.root.addEventListener("load", () => this.applyPending(), true);
     this.root.addEventListener("click", (e) => {
@@ -52,12 +48,6 @@ export class PreviewPane {
       }
       // 点击链接交给浏览器默认行为（锚点/脚注跳转）
       if (target.closest("a")) return;
-      // 点击 block → 编辑器定位到对应行（不抢焦点，打字不被打断）
-      const block = target.closest<HTMLElement>(".md-block");
-      if (block?.dataset.lineStart) {
-        const line = Number(block.dataset.lineStart);
-        if (line > 0) this.host?.scrollToLine(line);
-      }
     });
   }
 
@@ -117,7 +107,6 @@ export class PreviewPane {
       this.root.scrollTop = prevScroll;
       // B170：这次恢复是程序摆位（replaceChildren 把 scrollTop 清零后我们拉回），回执由
       // 预览 scroll 监听经 scroll-guard 标记吞掉，不当成用户滚动。
-      markProgrammatic(this.root);
     }
     if (options.enhanced !== false) void this.enhance();
     // 重排后布局可能变化（图片/公式占位），按 pending 行再定位一次
@@ -398,7 +387,6 @@ export class PreviewPane {
   setScrollTop(px: number): void {
     const nextTop = Math.max(0, px);
     this.root.scrollTop = nextTop;
-    markProgrammatic(this.root);
     // 位置已定，别再被异步重排（图片/公式增强）拽回行定位
     this.pendingSyncLine = null;
   }
@@ -465,7 +453,6 @@ export class PreviewPane {
     // 来源，随 B251 一起撤掉 —— B245 的「越切越靠顶」在 ANCHOR = 0 下没有病根可犯）。
     const nextTop = Math.max(0, top);
     // B170：程序摆位，先标来源再赋值，回执由 scroll 监听经 scroll-guard 吞掉。
-    markProgrammatic(this.root);
     this.root.scrollTop = nextTop;
     return nextTop;
   }

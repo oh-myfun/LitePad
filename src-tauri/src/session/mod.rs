@@ -191,25 +191,6 @@ fn save_at<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
 
 // ---------------------------------------------------------------- 会话状态（M2）
 
-/// 视口位置按**浮点**收下再取整（B143）。
-///
-/// 浏览器里 `scrollTop` 是 double：系统缩放不是 100% 时，「滚到底」正好等于
-/// `scrollHeight - clientHeight`，几乎必然带小数（125% / 150% 缩放是重灾区）。
-/// 而本字段是 `Option<u32>` —— 一个小数会让**整份** `SessionState` 反序列化失败
-/// ⇒ `save_session` 直接报错 ⇒ 前端那个 catch 静默吞掉 ⇒ 会话从此一次也写不进去，
-/// 表现就是「滚到底之后再滚，位置再也不刷新」（往回滚的增量是整数，可基数还带着
-/// 那个小数，于是连续失败）。
-///
-/// 宁可差 1px，也不能让整份会话落不下去。已经写了小数的历史文件也能被读回来。
-fn de_scroll_top<'de, D>(d: D) -> Result<Option<u32>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let v = Option::<f64>::deserialize(d)?;
-    Ok(v.filter(|n| n.is_finite() && *n >= 0.0)
-        .map(|n| n.round() as u32))
-}
-
 /// 单个会话标签：按路径恢复（未命名文档不参与会话）。
 ///
 /// 线上格式是 **camelCase**（`cursorLine` / `viewMode`），与前端
@@ -227,35 +208,6 @@ pub struct TabSession {
     pub cursor_line: u32,
     #[serde(alias = "cursor_col")]
     pub cursor_col: u32,
-    /// 视口滚动位置（px）。
-    ///
-    /// 光标只记到行列，视口不记的话恢复后文件停在开头、光标却在屏幕外，
-    /// 看上去就跟「光标复位了」一样（B126）。
-    ///
-    /// ⚠️ **纯预览态（B129）下这个槽是预览容器的滚动位置**：编辑器此时是
-    /// `display:none`，`scrollTop` 被浏览器清零，真正承载视图位置的是预览容器。
-    /// 所以前端存取两端都按 `view_mode` 分流，别死盯编辑器。
-    ///
-    /// `None` = 这份标签从没显示过，由前端按光标位置自行定位。
-    ///
-    /// ⚠️ 反序列化走 `de_scroll_top`：浏览器给的是 double（见该函数注释，
-    /// B143），裸 `u32` 会让整份会话读不出来。
-    #[serde(alias = "scroll_top", deserialize_with = "de_scroll_top")]
-    pub scroll_top: Option<u32>,
-    /// B288⑤-1c：规范视口游标 v（实数行号 + 行内比例，**宽度无关**）。
-    ///
-    /// 这是位置的**唯一存档真值** —— 像素 `scroll_top` 已退役（几何相关：分屏 / 改字号 /
-    /// 缩放都会让同一个像素变成另一行）。恢复时按当前几何把 v 反算成像素 ⇒ 换宽度重启
-    /// 也按同一行还原。
-    ///
-    /// ⚠️ 用 `f64` 而不是 `u32`：v 带行内比例（如 20.571 行），取整会丢最多半行；v 是
-    ///   唯一真值之后这个误差就是**真实的位置偏差**（不再是「有像素兜底，差半行无所谓」）。
-    ///   f64 也不会重演 B143 那种「前端 double 撞上裸 u32 ⇒ 整份会话反序列化失败」。
-    ///   ⚠️ 但旧盘 / 旧前端可能已经写入过整数 `syncV`，f64 照单全收（u32 是 f64 的子集）。
-    ///
-    /// 旧会话没有这个字段 ⇒ `None`（容器级 `default`）⇒ 前端退化为「保证光标可见」。
-    #[serde(alias = "sync_v")]
-    pub sync_v: Option<f64>,
     /// Markdown 视图模式（source/split/preview），仅 md 文件有意义
     #[serde(alias = "view_mode")]
     pub view_mode: Option<String>,
@@ -294,9 +246,6 @@ impl Default for TabSession {
             eol: "CRLF".into(),
             cursor_line: 1,
             cursor_col: 1,
-            scroll_top: None,
-            // B288⑤-1c：位置只以规范游标 v 存档（像素 `scroll_top` 已退役）。
-            sync_v: None,
             view_mode: None,
             backup_id: None,
             doc_id: None,
@@ -512,114 +461,6 @@ mod tests {
             "落盘应为 activePanel：{out}"
         );
         assert!(!out.contains("cursor_line"), "不应再落盘 snake_case：{out}");
-    }
-
-    /// B126 / B129：视图位置要跟着会话走。
-    ///
-    /// 编辑器侧与纯预览侧**共用 `scrollTop` 这一个槽**（B136 试过拆成 `topLine` +
-    /// `scrollTop` 两个字段各管一段，结果两端都得靠 `view_mode` 猜是谁的，又绕回
-    /// B129 那个「编辑器顶行被污染成 0」的坑 —— 已回退），由前端按 `view_mode`
-    /// 决定它眼下记的是编辑器还是预览容器的位置。
-    ///
-    /// 只记光标行列是不够的：恢复后文件停在开头、光标却在第 N 行（屏幕外），
-    /// 用户看到的就是「光标丢了」。缺字段时回落 None，前端按光标位置自行定位。
-    #[test]
-    fn session_carries_viewport_position() {
-        let json = r#"{
-          "panels": [
-            { "tabs": [
-                { "path": "a.md", "encoding": "UTF-8", "eol": "LF",
-                  "cursorLine": 12, "cursorCol": 5,
-                  "scrollTop": 842 }
-              ], "active": 0 }
-          ],
-          "layout": { "kind": "leaf", "panelId": 0 },
-          "activePanel": 0
-        }"#;
-
-        let state: SessionState = serde_json::from_str(json).expect("应能读入带 scrollTop 的会话");
-        let tab = &state.panels[0].tabs[0];
-        assert_eq!(tab.scroll_top, Some(842), "视口位置应原样读到");
-        let out = serde_json::to_string(&state).unwrap();
-        assert!(
-            out.contains("\"scrollTop\":842"),
-            "落盘应为 scrollTop：{out}"
-        );
-        assert!(
-            !out.contains("topLine"),
-            "不应再落盘已回退的 topLine：{out}"
-        );
-
-        // 旧会话没有这个字段 → None，不能因为缺字段把整份会话判死
-        let old = r#"{
-          "panels": [
-            { "tabs": [
-                { "path": "a.md", "encoding": "UTF-8", "eol": "LF",
-                  "cursorLine": 3, "cursorCol": 1 }
-              ], "active": 0 }
-          ],
-          "layout": { "kind": "leaf", "panelId": 0 },
-          "activePanel": 0
-        }"#;
-        let old_state: SessionState = serde_json::from_str(old).expect("旧会话应照旧可读");
-        let old_tab = &old_state.panels[0].tabs[0];
-        assert_eq!(old_tab.scroll_top, None);
-    }
-
-    /// B143：视口位置**带小数**时也必须能读进来。
-    ///
-    /// 浏览器 `scrollTop` 是 double：系统缩放不是 100% 时，「滚到底」= `scrollHeight
-    /// - clientHeight` 几乎必然是小数（125% 缩放尤其）。以前这个字段是裸 `u32`：
-    /// 一个 `842.4` 就让**整份** `SessionState` 反序列化失败 ⇒ `save_session` 报错 ⇒
-    /// 前端静默吞掉 ⇒ 会话从此一次也写不进去，用户只看到「位置不再刷新」。
-    ///
-    /// 所以：整数照旧、小数四舍五入、`null` 仍是 None。
-    #[test]
-    fn scroll_top_accepts_fractional_pixels() {
-        let mk = |scroll: &str| -> String {
-            format!(
-                r#"{{
-                  "panels": [
-                    {{ "tabs": [
-                        {{ "path": "a.md", "encoding": "UTF-8", "eol": "LF",
-                          "cursorLine": 12, "cursorCol": 5,
-                          "scrollTop": {scroll} }}
-                      ], "active": 0 }}
-                  ],
-                  "layout": {{ "kind": "leaf", "panelId": 0 }},
-                  "activePanel": 0
-                }}"#
-            )
-        };
-
-        // 反向印证：裸 `u32` 确实接不住小数 —— 这正是「整份会话读不出来」的原因，
-        // 也是必须挂 `de_scroll_top` 的理由（修法不是拍脑袋来的）。
-        assert!(
-            serde_json::from_str::<Option<u32>>("842.4").is_err(),
-            "裸 u32 应拒绝小数（否则本用例就没有意义）"
-        );
-
-        let frac: SessionState =
-            serde_json::from_str(&mk("842.4")).expect("小数 scrollTop 不能让整份会话读不出来");
-        assert_eq!(frac.panels[0].tabs[0].scroll_top, Some(842));
-
-        let frac_up: SessionState = serde_json::from_str(&mk("842.6")).unwrap();
-        assert_eq!(
-            frac_up.panels[0].tabs[0].scroll_top,
-            Some(843),
-            "四舍五入，不是截断"
-        );
-
-        // 整数那条老路径不能因为改了反序列化就走样
-        let int: SessionState = serde_json::from_str(&mk("842")).unwrap();
-        assert_eq!(int.panels[0].tabs[0].scroll_top, Some(842));
-
-        let none: SessionState = serde_json::from_str(&mk("null")).unwrap();
-        assert_eq!(none.panels[0].tabs[0].scroll_top, None);
-
-        // 负数（异常值）按「没位置」处理，不许把整份会话判死
-        let neg: SessionState = serde_json::from_str(&mk("-3.5")).unwrap();
-        assert_eq!(neg.panels[0].tabs[0].scroll_top, None);
     }
 
     /// 旧版本（B48 及更早）落盘的是 snake_case，升级后仍要能读出来。
