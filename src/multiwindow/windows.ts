@@ -7,8 +7,7 @@
 // applyBackupIds / reclaimFromVanished / dropRemotedDoc / dropRemotedForOwner）、
 // 关标签防误杀（hasVisibleInstanceOf / handleDocCloseQuery / docHeldElsewhere）、
 // 跨窗口同源同步（broadcastDocChange / applyRemoteDocChange / requestDocResync /
-// answerDocResync / applyDocResyncFull / applySyncMode / applyRemoteSyncPos /
-// listenDocSync）。
+// answerDocResync / applyDocResyncFull / listenDocSync）。
 // **零外部函数依赖（无 DI）**——共享状态（windowKind / windowLabel / remotedTabs /
 // remoteOpenByWindow / loanedDocIds）已在 core/app-state。
 // 对 main.ts 零反向依赖。
@@ -42,11 +41,7 @@ import {
   EVT_DOC_OPEN_RESYNC,
   EVT_DOC_RESYNC_FULL,
   EVT_DOC_RESYNC_REQ,
-  EVT_SYNC_MODE,
-  EVT_SYNC_POS,
   EVT_WINDOW_CLOSED,
-  SyncModePayload,
-  SyncPosPayload,
 } from "../core/events";
 import type { TabDragPayload } from "../shell/tabdnd";
 import { logger } from "../core/logger";
@@ -69,7 +64,6 @@ import {
   splitPanelWithTab,
 } from "../tabs";
 import { refreshAll, refreshSyncButton, refreshTitle, showMessage } from "../ui";
-import { applySyncToSibling, measureAndKeepScroll, restoreViewScroll } from "../sync-scroll";
 import { scheduleSessionSave } from "../session/session";
 import { normalizeSizeClass } from "../editor/perf";
 import {
@@ -816,10 +810,8 @@ function applyDocResyncFull(
       inst.state = whole;
       // B271：估算窗口开启（见 unmeasuredPanels）
       if (p) unmeasuredPanels.add(p);
-      // B126：整段替换后视图被拉回开头，按旧视口位置还回去（浏览器自动裁剪）
-      if (view && p) restoreViewScroll(p);
-      // B271：估算窗口由 measureAndKeepScroll 的 rAF 关闭
-      if (p) measureAndKeepScroll(p);
+      // 同步滚动的重落 / 还原逻辑已在重构第一步清除（见 sync-scroll.ts）：整段替换后
+      // 不再把视图按旧视口位置还回去。估算窗口（unmeasuredPanels）的生命周期由后续重构负责。
     }
   } finally {
     setSyncingDocId(null);
@@ -829,59 +821,6 @@ function applyDocResyncFull(
     showMessage(`${doc.name} 已按另一个窗口的内容重新同步`);
     refreshTitle();
     renderPanelTabs();
-  }
-}
-
-/**
- * B159：收到别的窗口的同步滚动开关 —— 本窗口那份文档跟着开 / 关。
- *
- * ⚠️ 不落盘也不改写 `docSyncModes` 的所有权：开关仍然「一个文档一份」，只是这份
- *    状态在两个窗口里保持一致（否则主窗口按下后子窗口压根不知道自己该跟着动）。
- * ⚠️ 这里**要**刷新按钮的显隐与点亮态：主窗口按下后，收到事件的窗口只要这份文档
- *    在自己这儿也是「开着多份」，按钮就跟着点亮；反过来一样。
- *    ⚠️ B171 起两个窗口同口径、显隐只认 `instancesOfDoc`：收到开关事件**不等于**
- *    本窗口该显示这颗键（本窗口可能只开了一份，键仍是 hidden），但状态照写进
- *    `docSyncModes` —— 等本窗口也开成多份，键一露脸就是「已开启」，不会错位。
- */
-function applySyncMode(payload: SyncModePayload | null): void {
-  const { from, docId, on } = payload ?? {};
-  if (!from || from === windowLabel || typeof docId !== "number" || typeof on !== "boolean") {
-    return;
-  }
-  if (docSyncModes.get(docId) === on) return;
-  docSyncModes.set(docId, on);
-  logger.debug("sync", `同步滚动 ← 远端 ${on ? "开" : "关"} docId=${docId} from=${from}`);
-  refreshSyncButton(activeTab());
-}
-
-/**
- * B159：收到别的窗口滚过来的位置 —— 在本窗口**自己那份**同源实例上落一次。
- *
- * ⚠️ 收这边**绝不回推**：`applySyncToSibling` 里钉位置走 `pinScrollTop`（B170 起内部
- *    `markProgrammatic`），那发 scroll 被监听经 scroll-guard 标认识破、直接吞掉 ——
- *    所以「谁滚谁当源」在跨窗口这一侧依然成立，不用另加闸门。
- * ⚠️ 只扫 `docId` 的全部实例并跳过 `srcTabId`：源那个 tabId 在别的窗口不重复出现，
- *    跳过它是防御（回声过滤与 `from` 那条是两回事，`from` 只保证不是自己发的）。
- */
-function applyRemoteSyncPos(payload: SyncPosPayload | null): void {
-  const { from, docId, srcTabId, v, atFloor } = payload ?? {};
-  if (!from || from === windowLabel || typeof docId !== "number" || typeof srcTabId !== "number") {
-    return;
-  }
-  // 本窗口没开这份文档的同步滚动（开关那一条还没轮到，或用户在这边关过）⇒ 不动。
-  if (docSyncModes.get(docId) !== true) return;
-  logger.debug("sync", `收 ← ${from} doc=${docId} v=${v} srcTab=${srcTabId}`);
-  // ⚠️ B251：落点走的是和本窗口三条路**同一个** `applySyncToSibling(v)` —— 跨窗口不是
-  //    「另一套换算」，只是另一批接收者。远端交来的 `v` 与本地自己取出来的 `v` 同口径，
-  //    远端那份源码/预览按它自己的几何插 ⇒ 与本窗口盯着同一处（用户报：跨窗口滚不对齐）。
-  // ⚠️⚠️ **B286**：`atFloor` 必须一起透传。两侧内容高天生不同 ⇒ 到底时顶行游标 `v` 本来
-  //    就不相等（源码 ≈20.71 / 预览 ≈21.57），照 `v` 换算必然把对端拽离它自己的底
-  //    （落 828 而非 864）。源到底 ⇒ 对端也落到**它自己那一侧**的底（B284 的「各自到底」，
-  //    跨窗口是同一条口径）。缺这个字段就是「多窗口同步滚动对不齐」的根因。
-  const floor = atFloor === true;
-  for (const other of instancesOfDoc(docId)) {
-    if (other.tabId === srcTabId) continue;
-    applySyncToSibling(other, typeof v === "number" ? v : null, floor);
   }
 }
 
@@ -896,16 +835,10 @@ function listenDocSync(): void {
   void listen<{ from?: string; docId?: number; text?: string }>("doc-resync-full", (e) =>
     applyDocResyncFull(e.payload ?? null),
   ).catch(() => {});
-  // B159：同步滚动那两条也挂在这同一个函数里 —— 「两种窗口都要装」这条契约本来就
-  // 由 `listenDocSync();` 那句断言看着，拆到别处就得再写一份同样的断言。
-  void listen<SyncModePayload>(EVT_SYNC_MODE, (e) => applySyncMode(e.payload ?? null)).catch(
-    () => {},
-  );
-  void listen<SyncPosPayload>(EVT_SYNC_POS, (e) => applyRemoteSyncPos(e.payload ?? null)).catch(
-    () => {},
-  );
   // B178：跨窗口「这份文档在别的窗口还开着吗」的存在性登记（让同步键在主/子窗口同显隐）。
   // 按 `from`（窗口标签）记进 `remoteOpenByWindow`，自己的回声一律丢（与上面几条同口径）。
+  // B159：同步滚动的跨窗口开关 / 位置广播已在重构第一步整体清除（见 sync-scroll.ts），
+  // 因此不再在此注册 EVT_SYNC_MODE / EVT_SYNC_POS 监听。
   void listen<DocPresencePayload>(EVT_DOC_OPEN, (e) => {
     const p = e.payload;
     if (!p?.docId || !p.from || p.from === windowLabel) return;

@@ -184,7 +184,6 @@ import {
   showFileDropChoice,
 } from "./shell/filedrop";
 import { applyTheme, normalizeMode, watchSystemTheme } from "./theme/theme";
-import { isSyncSource, pushSyncToSiblings, syncingCursorDocId } from "./sync-scroll";
 import {
   Tab,
   Doc,
@@ -198,7 +197,6 @@ import {
   themeMode,
   isDark,
   suppressDirty,
-  suppressSyncPush,
   docSyncModes,
   windowLabel,
   windowKind,
@@ -217,7 +215,7 @@ import {
   setWindowKind,
   setSyncingDocId,
 } from "./core/app-state";
-import { EVT_SYNC_MODE, EVT_APP_QUIT, EVT_DOC_OPEN_RESYNC, EVT_WINDOW_CLOSED } from "./core/events";
+import { EVT_APP_QUIT, EVT_DOC_OPEN_RESYNC, EVT_WINDOW_CLOSED } from "./core/events";
 import { activePanel, activeTab, instancesOfDoc } from "./core/panels";
 import { logViewport } from "./core/viewport";
 import {
@@ -258,13 +256,8 @@ function handleUpdate(view: EditorView, update: ViewUpdate): void {
   const caretLine = view.state.doc.lineAt(caretPos);
   sessionStore.setCursor(tab.tabId, caretLine.number, caretPos - caretLine.from + 1);
   updatePositionOf(panel.panelId, view);
-  // B152：同步滚动模式下，激活文档这边一动光标（移动、输入都是 update）就带着
-  // 兄弟一起走。`isSyncSource` 保证只有「激活的那份」当源，兄弟自己被推时不会
-  // 反过来再推一次（见它的注释）。
-  // B176：被同源光标同步 dispatch 触发的一轮 `handleUpdate` 不反推 —— 否则非激活源会被
-  //   拽回旧位置（A↔B 拉锯 / 非激活文档滚动抖）。光标仍由上面那发 dispatch 落到兄弟。
-  if (!suppressSyncPush && isSyncSource(tab, panel) && syncingCursorDocId !== tab.docId)
-    pushSyncToSiblings(tab);
+  // 同步滚动推送已在重构第一步整体清除（见 sync-scroll.ts）：handleUpdate 不再把光标 /
+  // 位置推给兄弟实例。`docSyncModes` 与这颗同步键仍保留，但不再产生任何滚动副作用。
   // 文本是否真的变了：点击内容区、移动光标、切换视图、重新测量都会产生
   // update 但前后文本完全一致——那不是编辑。
   // 关键：md 预览重渲染**只**在文本真变化时才排程。若按「任意 update」排程，
@@ -378,14 +371,12 @@ function bindEvents(): void {
   syncScrollBtn.addEventListener("click", () => {
     const tab = activeTab();
     if (!tab) return;
+    // 同步滚动逻辑已在重构第一步整体清除（见 sync-scroll.ts）：这颗键保留可见，但只翻转
+    // `docSyncModes` 与自身 glyph，不再产生任何滚动 / 跨窗口广播副作用。
     const on = docSyncModes.get(tab.docId) !== true;
     docSyncModes.set(tab.docId, on);
-    logger.debug("sync", `同步滚动 → ${on ? "开" : "关"} docId=${tab.docId}`);
+    logger.debug("sync", `同步滚动 → ${on ? "开" : "关"} docId=${tab.docId}（已禁用，不产生效果）`);
     refreshSyncButton(tab);
-    // B159：这两条**一起**发。只发开关，另一窗口的按钮亮着却不动 = 更迷惑；
-    //   只发位置，另一窗口压根不知道这份文档开着同步滚动。
-    void emitCrossWindow(EVT_SYNC_MODE, { docId: tab.docId, on }).catch(() => {});
-    if (on) pushSyncToSiblings(tab, true);
   });
 
   // B233：状态栏语言项不再兼视图切换器（见 refreshViewModeButton 的注释），
