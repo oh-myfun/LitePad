@@ -3,6 +3,38 @@
 > 本文件由 `scripts/gen-changelog.sh` 从 Conventional Commit 自动生成，
 > `scripts/release.sh` 发布时自动刷新；版本口径见 `docs/conventions.md`「版本号规则」。
 
+## v0.18.24 — 2026-10-15
+
+本版距 `v0.18.23` 共 17 个提交。
+
+### 修复
+
+- TabSession::default 补 sync_v 字段（编译缺字段） `880d3ff`
+- 补 Rust 侧 sync_v 字段，v 落盘才真的生效（④-4 的静默失效） `a0befd1`
+- B288④ 撤回 ④-3（measureAndKeepScroll 补 restorePreviewScroll 有害） `7e853db`
+- B288④ 拖标签分屏滚动复位/漂移 — canonical-v 机制（会话内 + session 存 v） `83670f4`
+- 预览未铺开时 applySyncToLine 返回 null 避免算成 0 抹槽 `78a47cf`
+- 拖分屏预览仍复位——restorePreviewScroll 未测量时跳过游标分支 `d4bf786`
+
+### 重构
+
+- 收窄三个仅内部使用的导出（B288⑤ 收官审计） `50f8472`
+- B288⑤-3 预览几何守卫收口到 previewGeometryUnready —— 语义拆分 `92208df`
+- B288⑤-2 reassert 槽复核并入 restoreViewScroll —— 落位入口 4→3 `e0075e6`
+- B288⑤-4 删除挂起补写机制（pendingSyncCursor / flushPendingSyncCursor） `502cccb`
+- B288⑤-1c 删除像素落盘 —— 位置只以规范游标 v 存档 `637f10c`
+- B288⑤-1b 还原路径不再要求「同步开着」，一律按 v 现算 `447a0cd`
+- B288⑤-1a 滚动监听无条件维护规范游标 v（为删像素轨铺路） `2585fd6`
+
+### 其他
+
+- 1c 全量门禁收尾 —— 9 条断言从「落盘 px」搬到「v / 运行时槽」 `5f650e0`
+- 位置断言从「盯 px」改成「盯 v」（1c 删像素落盘的前置） `0e9005e`
+- 修 viewport-persist 滚动落盘契约的假绿（字符窗口 → 监听块切片） `fbc7efe`
+- 修正未铺开判定契约断言以匹配 prettier 折行 `cbcdacf`
+
+---
+
 ## v0.18.23 — 2026-10-14
 
 本版距 `v0.18.13` 共 12 个提交。
