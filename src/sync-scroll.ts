@@ -1170,8 +1170,35 @@ export function restorePreviewScroll(panel: Panel): void {
         );
         return;
       }
+      // 几何已就绪但没找到块（landed null）：落到下面用 scrollTop 的旧路径兜底（旧行为）。
+    } else {
+      // ⚠️⚠️ **B288⑥（用户：开机关 / 合并分屏后预览停在顶部）**：几何未就绪那一趟落不了位，
+      //    而 `measureAndKeepScroll` 的 rAF 只重还原**编辑器**（B288④-3 撤回预览那句），
+      //    预览这条路径在 layout 之后没有重落入口 ⇒ 预览永久停在顶部。
+      //    ⇒ 排 rAF 在**布局完成后**按同一 `syncV` 重落。**但本帧 rAF 早于
+      //      `measureAndKeepScroll` 的 rAF 注册**（mountView 先调 `restorePreviewScroll`、
+      //      `unmeasuredPanels` 还没清），若只放一轮会正好撞在「几何仍未就绪」那一拍、
+      //      又被 `previewReseedPending` 挡掉（已占坑）⇒ 沦为空转、预览停在顶部。
+      //      ⇒ **链式重试**：每帧判几何就绪与否，未就绪就再排一轮、直到 `unmeasuredPanels`
+      //        被 `measureAndKeepScroll` 清掉（那帧 layout 也已完成，块几何真实可得），
+      //        才真正落位。`previewReseedPending` 只在「已落位」时释放，期间挡掉并发调用
+      //        叠的重复重试（如 refreshAll 又调一次本函数）。
+      if (!previewReseedPending.has(panel)) {
+        previewReseedPending.add(panel);
+        const reseed = () => {
+          if (previewGeometryUnready(panel)) {
+            requestAnimationFrame(reseed);
+            return;
+          }
+          previewReseedPending.delete(panel);
+          restorePreviewScroll(panel);
+        };
+        requestAnimationFrame(reseed);
+      }
+      // syncV 是规范真值，未落位就交给上面的重试，不再退回像素槽
+      // （几何未就绪时像素也会被浏览器裁掉，且像素已不落盘）。
+      return;
     }
-    // 未测量（跳过游标）/ landed 为 null（没找到块）⇒ 落到下面用 scrollTop 的旧路径兜底。
   }
   if (t.scrollTop === null) return;
   // 预览那一次 `setBlocks` 刚把内容撑开，同一帧内赋值会被裁成 0（B134），
@@ -1219,6 +1246,18 @@ export function restorePreviewScroll(panel: Panel): void {
 export function previewGeometryUnready(panel: Panel): boolean {
   return unmeasuredPanels.has(panel);
 }
+
+/**
+ * B288⑥：预览落位「几何未就绪」时的链式重试标记。
+ *
+ * `restorePreviewScroll` 在几何未就绪（`previewGeometryUnready` = 编辑器未测量 / 刚
+ * `setBlocks` 尚未 layout）那一趟落不了位，会排一个 rAF 在布局完成后按同一 `syncV` 重落。
+ * 但 mountView 里本函数早于 `measureAndKeepScroll` 注册 rAF，只放一轮会撞在「几何仍未就绪」
+ * 那一拍 ⇒ 必须**链式重试**到几何就绪才落。这个 `WeakSet` 在「已落位」前一直占坑，挡掉
+ * 并发调用（如 refreshAll 又调一次 `restorePreviewScroll`）叠的重复重试；落位成功那一轮
+ * 才 `delete`，归还坑位。
+ */
+const previewReseedPending = new WeakSet<Panel>();
 
 /**
  * 切换标签 / 切换源码↔预览之后让 CM6 重新测量，并把视口位置**收回来**（B146）。
