@@ -12,6 +12,8 @@ import { CODICONS } from "./shell/codicons";
 import { setTip } from "./shell/tooltip";
 import { saveSettings } from "./ipc/api";
 import { extractOutline } from "./markdown/outline";
+import { EditorScrollAnchor } from "./sync-scroll/anchor";
+import { syncCoordinator } from "./sync-scroll/wire";
 import { EditorView } from "@codemirror/view";
 import {
   mainRow,
@@ -247,7 +249,9 @@ function updateTocDrawer(): void {
         effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: 0 }),
       });
       tab2.state = panel.view.view.state;
-      if (tab2.viewMode === "preview") panel.preview?.syncToLine(line);
+      // v1：编辑器已 scrollIntoView 定位，驱动协调器把落点广播给同文档预览/其它面板
+      // （取代旧的 preview.syncToLine；B152 关则不广播）。
+      syncCoordinator.syncFromDriver(String(tab2.docId), new EditorScrollAnchor(panel.view.view));
       panel.view.focus();
       updateTocDrawer();
     },

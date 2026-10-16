@@ -21,6 +21,7 @@ import {
   settings,
 } from "../core/app-state";
 import { getPanel, activePanel, panelOfTab, docOf, instancesOfDoc } from "../core/panels";
+import { reconcileSyncRegistrations } from "../sync-scroll/wire";
 import { countLeaves, leaf, siblingLeafOf, removePanel, updateRatio } from "../core/layout";
 import { logger } from "../core/logger";
 import {
@@ -225,6 +226,8 @@ export function rebuildLayout(): void {
       if (panelId === activePanelId && p.view) {
         updatePositionOf(panelId, p.view.view);
       }
+      // 同步滚动 v1：本面板编辑器+预览已就绪，纳入协调器（reconcile 会先解绑旧句柄）。
+      reconcileSyncRegistrations();
     },
   });
 }
@@ -317,6 +320,8 @@ export function switchTab(panelId: number, tabId: number): void {
     view.view.contentDOM.focus({ preventScroll: true });
     view.view.update([]); // B182：同步补 `cm-focused` 类（同 EditorHandle.focus 的收尾）
   }, 0);
+  // 同步滚动 v1：显示的标签（docId）变了，重注册本面板锚点到新文档下。
+  reconcileSyncRegistrations();
 }
 
 /** 新建未命名标签（开到活动面板）。 */

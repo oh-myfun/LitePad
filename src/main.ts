@@ -217,6 +217,7 @@ import {
 } from "./core/app-state";
 import { EVT_APP_QUIT, EVT_DOC_OPEN_RESYNC, EVT_WINDOW_CLOSED } from "./core/events";
 import { activePanel, activeTab, instancesOfDoc } from "./core/panels";
+import { syncCoordinator } from "./sync-scroll/wire";
 import { logViewport } from "./core/viewport";
 import {
   bootMark,
@@ -357,7 +358,9 @@ function bindEvents(): void {
     // `docSyncModes` 与自身 glyph，不再产生任何滚动 / 跨窗口广播副作用。
     const on = docSyncModes.get(tab.docId) !== true;
     docSyncModes.set(tab.docId, on);
-    logger.debug("sync", `同步滚动 → ${on ? "开" : "关"} docId=${tab.docId}（已禁用，不产生效果）`);
+    // v1 接线：B152 开关直接驱动协调器（按文档）。关 → 仅当前 pane；开 → 所有同文件视口。
+    syncCoordinator.setEnabled(String(tab.docId), on);
+    logger.debug("sync", `同步滚动 → ${on ? "开" : "关"} docId=${tab.docId}`);
     refreshSyncButton(tab);
   });
 

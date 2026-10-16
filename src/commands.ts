@@ -12,6 +12,8 @@ import { logger } from "./core/logger";
 import { redo, selectAll, undo } from "@codemirror/commands";
 import { activePanel, activeTab, docOf, instancesOfDoc } from "./core/panels";
 import { closeTabById, newUntitled, switchTab } from "./tabs";
+import { EditorScrollAnchor } from "./sync-scroll/anchor";
+import { syncCoordinator } from "./sync-scroll/wire";
 import { refreshViewModeButton, toggleViewMode } from "./markdown";
 import { doOpen, doSave, doSaveAll } from "./io/files";
 import { exportHtml, exportPdf } from "./io/export";
@@ -224,8 +226,9 @@ function openGotoLine(): void {
           effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: 0 }),
         });
         const t = tabStateWriteBack(view);
-        // 活动面板是预览态时编辑器隐藏、收不到滚动事件，显式定位预览
-        if (t?.viewMode === "preview") panel.preview?.syncToLine(target);
+        // 活动面板是预览态时编辑器隐藏、收不到滚动事件，显式驱动协调器把本编辑器
+        // 的落点广播给同文档的预览/其它面板（B152 关则不广播）。取代旧的 preview.syncToLine。
+        if (t) syncCoordinator.syncFromDriver(String(t.docId), new EditorScrollAnchor(view));
         view.focus();
       }
     }

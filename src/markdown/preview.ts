@@ -1,6 +1,7 @@
 import { convertFileSrc } from "../ipc/api";
 
 import type { MdBlock } from "./pipeline";
+import type { PreviewScrollSurface } from "../sync-scroll/preview";
 
 /**
  * Markdown 预览面板（M3）：
@@ -361,17 +362,6 @@ export class PreviewPane {
   // ------------------------------------------------ 本地定位（按行）
 
   /**
-   * 按行号直接滚动预览（大纲跳转 / 转到行用）。
-   * 不依赖编辑器可视区 —— 预览态面板的编辑器是 display:none，其 scrollTop 不会变，
-   * 必须显式按目标行定位。目标行记入 pendingSyncLine：异步增强/图片加载引发的
-   * 布局变化会重新定位一次。
-   */
-  syncToLine(line: number): void {
-    this.pendingSyncLine = line;
-    this.applySyncToLine(line);
-  }
-
-  /**
    * 按行定位预览，**返回实际落点**（`null` = 没落地）。
    *
    * ⚠️ 返回值不是摆设：`blockAtLine` 找不到目标 block 时（预览还没渲染 / 行号越界）这里
@@ -449,6 +439,39 @@ export class PreviewPane {
       if (this.pendingSyncLine !== line) return;
       this.applySyncToLine(line);
     });
+  }
+
+  /**
+   * 暴露给同步滚动协调器的预览侧几何表面（v1）。`blocks()` 实时测量各顶层 block 的
+   * 源行范围与相对内容区顶的偏移；`root.scrollTop` 可写，供 `PreviewScrollAnchor`
+   * 落点；`schedule` 走 rAF，未铺开时重试定位。
+   */
+  scrollSurface(): PreviewScrollSurface {
+    const root = this.root;
+    return {
+      root: {
+        get scrollTop() {
+          return root.scrollTop;
+        },
+        set scrollTop(v: number) {
+          root.scrollTop = v;
+        },
+        get clientHeight() {
+          return root.clientHeight;
+        },
+      },
+      // 箭头函数：词法 this 即 PreviewPane，this.blocks 始终读实时数组（setBlocks 会换引用）。
+      blocks: () =>
+        this.blocks.map((b) => ({
+          lineStart: Number(b.el.dataset.lineStart),
+          lineEnd: Number(b.el.dataset.lineEnd),
+          top: this.blockTop(b.el),
+          height: b.el.getBoundingClientRect().height,
+        })),
+      schedule: (fn) => {
+        requestAnimationFrame(fn);
+      },
+    };
   }
 
   private blockAtLine(line: number): BlockNode | null {
