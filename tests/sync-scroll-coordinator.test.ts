@@ -84,19 +84,20 @@ describe("SyncScrollCoordinator 多锚点（editor+preview+其它 tab）", () =>
   });
 });
 
-describe("SyncScrollCoordinator B152 关闭不广播", () => {
-  it("setEnabled(false) 后 syncFrom 不写任何同 docId 锚点", () => {
+describe("SyncScrollCoordinator B152 按文档关闭不广播", () => {
+  it("setEnabled('f1', false) 后 syncFrom 不写任何同 docId 锚点", () => {
     const sch = makeScheduler();
     const co = new SyncScrollCoordinator(sch.schedule);
     const a = makeFakeAnchor(3.5);
     const b = makeFakeAnchor(1);
     co.register(a.anchor, "f1");
     co.register(b.anchor, "f1");
-    co.setEnabled(false);
+    co.setEnabled("f1", false);
     co.syncFrom(a.anchor);
     sch.flush();
     expect(b.setVCalls).toEqual([]);
-    expect(co.isEnabled()).toBe(false);
+    expect(co.isOn("f1")).toBe(false);
+    expect(co.isOn("f2")).toBe(true); // 其它文档默认开
   });
 });
 
@@ -245,8 +246,31 @@ describe("SyncScrollCoordinator 输入监听挂载", () => {
     const b = makeFakeAnchor(1);
     co.register(a.anchor, "f1", makeSurface(node));
     co.register(b.anchor, "f1");
-    co.setEnabled(false);
+    co.setEnabled("f1", false);
     node.dispatchEvent(new Event("wheel"));
+    sch.flush();
+    expect(b.setVCalls).toEqual([]);
+  });
+
+  it("syncFromDriver 用裸锚点直接广播（无需先在册）", () => {
+    const sch = makeScheduler();
+    const co = new SyncScrollCoordinator(sch.schedule);
+    const a = makeFakeAnchor(8); // 未在 coordinator 注册的 driver
+    const b = makeFakeAnchor(1);
+    co.register(b.anchor, "f1");
+    co.syncFromDriver("f1", a.anchor);
+    sch.flush();
+    expect(b.setVCalls).toEqual([8]);
+  });
+
+  it("syncFromDriver 在 B152 关的文档上不广播", () => {
+    const sch = makeScheduler();
+    const co = new SyncScrollCoordinator(sch.schedule);
+    const a = makeFakeAnchor(8);
+    const b = makeFakeAnchor(1);
+    co.register(b.anchor, "f1");
+    co.setEnabled("f1", false);
+    co.syncFromDriver("f1", a.anchor);
     sch.flush();
     expect(b.setVCalls).toEqual([]);
   });
