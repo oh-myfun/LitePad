@@ -14,7 +14,11 @@ function makeScheduler() {
     const c = q.splice(0, q.length);
     for (const f of c) f();
   };
-  return { schedule, flush, pending: () => q.length };
+  const flushOne = () => {
+    const f = q.shift();
+    if (f) f();
+  };
+  return { schedule, flush, flushOne, pending: () => q.length };
 }
 
 /** fake 锚点：记录 setV 调用、getV 返回可改写的当前值。 */
@@ -144,26 +148,25 @@ describe("SyncScrollCoordinator syncFrom 按引用查未注册锚点", () => {
   });
 });
 
-describe("SyncScrollCoordinator 输入监听挂载", () => {
+describe("SyncScrollCoordinator scroll 监听", () => {
   function makeSurface(node: EventTarget): CoordinatedSurface {
-    return {
-      events: node,
-      rect: () =>
-        ({
-          left: 0,
-          top: 0,
-          right: 100,
-          bottom: 200,
-          width: 100,
-          height: 200,
-          x: 0,
-          y: 0,
-        }) as DOMRect,
-      scrollbarWidth: () => 15, // 槽在 clientX > 85 区域
-    };
+    return { events: node };
   }
 
-  it("wheel 触发广播（flush 后目标收到）", () => {
+  it("scroll 事件触发广播（flush 后目标收到）", () => {
+    const sch = makeScheduler();
+    const co = new SyncScrollCoordinator(sch.schedule);
+    const node = new EventTarget();
+    const a = makeFakeAnchor(4);
+    const b = makeFakeAnchor(1);
+    co.register(a.anchor, "f1", makeSurface(node));
+    co.register(b.anchor, "f1");
+    node.dispatchEvent(new Event("scroll"));
+    sch.flush();
+    expect(b.setVCalls).toEqual([4]);
+  });
+
+  it("scroll 之外的事件（wheel/pointerdown/keydown）不触发广播", () => {
     const sch = makeScheduler();
     const co = new SyncScrollCoordinator(sch.schedule);
     const node = new EventTarget();
@@ -172,59 +175,71 @@ describe("SyncScrollCoordinator 输入监听挂载", () => {
     co.register(a.anchor, "f1", makeSurface(node));
     co.register(b.anchor, "f1");
     node.dispatchEvent(new Event("wheel"));
+    node.dispatchEvent(new Event("pointerdown"));
+    node.dispatchEvent(new Event("keydown"));
     sch.flush();
-    expect(b.setVCalls).toEqual([4]);
+    expect(b.setVCalls).toEqual([]);
   });
 
-  /** 本环境的 jsdom 未暴露 KeyboardEvent，用裸 Event 挂 key 属性构造。 */
-  function keyEvent(key: string): Event {
-    const e = new Event("keydown");
-    Object.defineProperty(e, "key", { value: key });
-    return e;
-  }
-
-  it("键盘滚动键触发广播；非滚动键不触发", () => {
+  it("连续 scroll（拖动 / 惯性）每一拍都触发广播", () => {
     const sch = makeScheduler();
     const co = new SyncScrollCoordinator(sch.schedule);
     const node = new EventTarget();
-    const a = makeFakeAnchor(4);
+    const a = makeFakeAnchor(1);
     const b = makeFakeAnchor(1);
     co.register(a.anchor, "f1", makeSurface(node));
     co.register(b.anchor, "f1");
-    node.dispatchEvent(keyEvent("ArrowDown"));
+    node.dispatchEvent(new Event("scroll")); // 拖到 3
+    a.setGetV(3);
     sch.flush();
-    expect(b.setVCalls).toEqual([4]);
-
-    const b2calls = b.setVCalls.length;
-    node.dispatchEvent(keyEvent("a"));
+    node.dispatchEvent(new Event("scroll")); // 拖到 5
+    a.setGetV(5);
     sch.flush();
-    expect(b.setVCalls.length).toBe(b2calls); // 非滚动键不广播
+    expect(b.setVCalls).toEqual([3, 5]);
   });
 
-  it("滚动条拖动（pointerdown 命中右侧槽）触发；命中内容区不触发", () => {
+  it("回声抑制：target 因 setV 产生的 scroll 被忽略，不回灌", () => {
     const sch = makeScheduler();
     const co = new SyncScrollCoordinator(sch.schedule);
-    const node = new EventTarget();
-    const a = makeFakeAnchor(4);
-    const b = makeFakeAnchor(1);
-    co.register(a.anchor, "f1", makeSurface(node));
-    co.register(b.anchor, "f1");
-
-    const onGutter = new Event("pointerdown") as Event & { clientX: number };
-    onGutter.clientX = 95; // > 85 → 槽
-    node.dispatchEvent(onGutter);
-    sch.flush();
+    const nodeA = new EventTarget();
+    const nodeB = new EventTarget();
+    const a = makeFakeAnchor(4); // driver
+    const b = makeFakeAnchor(1); // target
+    co.register(a.anchor, "f1", makeSurface(nodeA));
+    co.register(b.anchor, "f1", makeSurface(nodeB));
+    // A 滚动 → 广播给 B（B 因本次 setV 产生 scroll）
+    nodeA.dispatchEvent(new Event("scroll"));
+    sch.flushOne(); // 主帧：B.setV(4) + 置 B.programmatic
     expect(b.setVCalls).toEqual([4]);
-
-    const b2calls = b.setVCalls.length;
-    const inContent = new Event("pointerdown") as Event & { clientX: number };
-    inContent.clientX = 50; // 内容区
-    node.dispatchEvent(inContent);
-    sch.flush();
-    expect(b.setVCalls.length).toBe(b2calls); // 内容区点击不广播
+    expect(a.setVCalls).toEqual([]);
+    // B 的回声 scroll 应被抑制，不再广播给 A
+    nodeB.dispatchEvent(new Event("scroll"));
+    sch.flush(); // 仅跑安全清位
+    expect(a.setVCalls).toEqual([]); // 未回灌
+    expect(b.setVCalls).toEqual([4]); // B 自身未被再次写
   });
 
-  it("unregister 解绑监听，之后 wheel 不再广播", () => {
+  it("回声清位后 B 再次真实滚动可正常驱动 A", () => {
+    const sch = makeScheduler();
+    const co = new SyncScrollCoordinator(sch.schedule);
+    const nodeA = new EventTarget();
+    const nodeB = new EventTarget();
+    const a = makeFakeAnchor(4);
+    const b = makeFakeAnchor(1);
+    co.register(a.anchor, "f1", makeSurface(nodeA));
+    co.register(b.anchor, "f1", makeSurface(nodeB));
+    nodeA.dispatchEvent(new Event("scroll"));
+    sch.flushOne();
+    nodeB.dispatchEvent(new Event("scroll")); // 被抑制（programmatic 清位）
+    sch.flush();
+    // 安全清位后，B 再次滚动应重新驱动 A
+    nodeB.dispatchEvent(new Event("scroll"));
+    b.setGetV(9);
+    sch.flush();
+    expect(a.setVCalls).toEqual([9]); // B 这次作为 driver 成功广播
+  });
+
+  it("unregister 解绑 scroll 监听，之后 scroll 不再广播", () => {
     const sch = makeScheduler();
     const co = new SyncScrollCoordinator(sch.schedule);
     const node = new EventTarget();
@@ -233,12 +248,12 @@ describe("SyncScrollCoordinator 输入监听挂载", () => {
     const h = co.register(a.anchor, "f1", makeSurface(node));
     co.register(b.anchor, "f1");
     co.unregister(h);
-    node.dispatchEvent(new Event("wheel"));
+    node.dispatchEvent(new Event("scroll"));
     sch.flush();
     expect(b.setVCalls).toEqual([]);
   });
 
-  it("B152 关闭时输入事件也不广播（当前 pane 仍原生滚）", () => {
+  it("B152 关闭时 scroll 也不广播（当前 pane 仍原生滚）", () => {
     const sch = makeScheduler();
     const co = new SyncScrollCoordinator(sch.schedule);
     const node = new EventTarget();
@@ -247,7 +262,7 @@ describe("SyncScrollCoordinator 输入监听挂载", () => {
     co.register(a.anchor, "f1", makeSurface(node));
     co.register(b.anchor, "f1");
     co.setEnabled("f1", false);
-    node.dispatchEvent(new Event("wheel"));
+    node.dispatchEvent(new Event("scroll"));
     sch.flush();
     expect(b.setVCalls).toEqual([]);
   });

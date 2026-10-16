@@ -1,14 +1,15 @@
 /**
- * 同步滚动 v1 —— 输入事件驱动的协调器（T3，T4 扩展为按文档开关）。
+ * 同步滚动 v1 —— scroll 事件驱动的协调器（T3 起；2026-10-17 由输入事件触发改为
+ * scroll 事件触发，修拖动 / 触摸 / 滚轮三处缺口）。
  *
- * 取代旧「scroll 事件 + 全局 suppressSyncPush + 回声抑制」机制。核心思路：
- * 同步触发点从滚动**结果**（scroll 事件）挪到**原始输入**——wheel / 滚动条拖动 /
- * 键盘滚动键 / 程序化跳转（`syncFrom` / `syncFromDriver`）。某 pane 触发 → 标
- * `pendingDriver` → rAF 内读 `v = driver.getV()` → 对**同 docId** 的其余 anchor `setV(v)`。
+ * 触发点从原始输入（wheel / pointerdown / keydown）改为每个锚点的 `scroll` 事件：
+ * 滚动**落定后**才触发，天然覆盖滚轮、键盘滚动键、滚动条拖动、触摸拖动、惯性所有情形，
+ * 且读到的 `v` 就是最终位置——没有「读在滚动生效之前」的滞后（原方案的根因）。
  *
- * 结构上无回环、无需回声抑制：`target.setV` 只改 `scrollTop`、不产生任何输入事件
- * （也不监听 scroll 事件），故无人监听 → 不会二次触发 → 不会回声。last-writer-wins：
- * rAF 合并同一帧内的多次 wheel/键盘，帧内读一次 getV（取最终落点）。
+ * 回环用**按锚点 programmatic 守卫**抑制（取代旧全局 suppressSyncPush，不再有
+ * 脆弱的全局布尔与振荡）：广播给目标 T 前置 `T.programmatic = true`；T 因本次 setV
+ * 产生的 scroll 事件清位并跳过（不回灌）。driver 自身不置位 → 它的用户 scroll 正常广播。
+ * 置位同时排一个 rAF 安全复位，防「no-op setV 不产生 scroll 事件」导致守卫卡死。
  *
  * B152 语义（用户 2026-10-16 拍板）：按**文档**记开关（`docSyncModes` 同口径）。
  * 关 → 仅当前 pane 滚（不广播）；开 → 所有同文件视口（同 docId 的 editor + preview +
@@ -20,17 +21,10 @@
 
 import type { ScrollAnchor } from "./anchor";
 
-/** 键盘滚动键（不含普通输入字符键；Space 仅在非编辑滚动语义下作为滚动触发）。 */
-const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
-
-/** 协调器挂监听的可视面（生产传入预览/编辑器 DOM 节点，测试用 fake）。 */
+/** 协调器挂监听的可视面（生产传入预览/编辑器滚动容器，测试用 fake）。 */
 export interface CoordinatedSurface {
-  /** 事件源（DOM 节点），协调器挂 wheel / pointerdown / keydown。 */
+  /** 滚动容器（DOM 节点），协调器挂 `scroll` 监听来感知该 pane 的滚动落点。 */
   readonly events: EventTarget;
-  /** 该 pane 可视区边框（滚动条槽命中检测用）。 */
-  rect(): DOMRect;
-  /** 滚动条槽宽（像素）。 */
-  scrollbarWidth(): number;
 }
 
 /** 已注册的锚点句柄（register 返回，unregister / syncFrom 用）。 */
@@ -44,10 +38,10 @@ export interface AnchorHandle {
 type DriverRef = { anchor: ScrollAnchor; docId: string };
 
 interface InternalEntry extends AnchorHandle {
+  /** 本锚点因协调器 setV 产生的 scroll 需被忽略（回声抑制），下次 scroll 清位。 */
+  programmatic?: boolean;
   handlers?: {
-    onWheel: EventListener;
-    onPointerDown: EventListener;
-    onKeyDown: EventListener;
+    onScroll: EventListener;
   };
 }
 
@@ -151,7 +145,7 @@ export class SyncScrollCoordinator {
   }
 
   private scheduleFrame(): void {
-    if (this.rafId !== null) return; // 合并同一帧内多次触发
+    if (this.rafId !== null) return; // 合并同一帧内多次滚动
     this.rafId = this.schedule(() => {
       this.rafId = null;
       const driver = this.pendingDriver;
@@ -161,7 +155,14 @@ export class SyncScrollCoordinator {
       const set = this.entries.get(driver.docId);
       if (!set) return;
       for (const e of set) {
-        if (e === driver) continue; // 不回写 driver（无回环）
+        if (e.anchor === driver.anchor) continue; // 不回写 driver（无回环）
+        if (e.anchor.getV() === v) continue; // 已同位置：不置位、不 setV
+        // 回声抑制：置位 → 本次 setV 引发的 scroll 清位并跳过；
+        // 同时排一个 rAF 安全复位，防 no-op setV 不产生 scroll 事件导致守卫卡死。
+        e.programmatic = true;
+        this.schedule(() => {
+          e.programmatic = false;
+        });
         e.anchor.setV(v);
       }
     });
@@ -170,30 +171,23 @@ export class SyncScrollCoordinator {
   private attach(entry: InternalEntry): void {
     const s = entry.surface;
     if (!s) return;
-    const onWheel: EventListener = () => this.drive(entry);
-    const onPointerDown: EventListener = (ev) => {
-      const pe = ev as PointerEvent;
-      const r = s.rect();
-      // 命中滚动条槽（右侧 scrollbarWidth 内）→ 视作滚动条拖动。
-      if (pe.clientX > r.right - s.scrollbarWidth()) this.drive(entry);
+    // 仅听 `scroll`：滚动落定后才广播，天然覆盖滚轮 / 键盘滚动键 / 滚动条拖动 /
+    // 触摸拖动 / 惯性；读到的是最终位置，无「读在滚动生效前」的滞后。
+    const onScroll: EventListener = () => {
+      if (entry.programmatic) {
+        entry.programmatic = false; // 本次 setV 引发的回声，吞掉
+        return;
+      }
+      this.drive(entry);
     };
-    const onKeyDown: EventListener = (ev) => {
-      const ke = ev as KeyboardEvent;
-      if (SCROLL_KEYS.has(ke.key)) this.drive(entry);
-    };
-    s.events.addEventListener("wheel", onWheel, { passive: true });
-    s.events.addEventListener("pointerdown", onPointerDown);
-    s.events.addEventListener("keydown", onKeyDown);
-    entry.handlers = { onWheel, onPointerDown, onKeyDown };
+    s.events.addEventListener("scroll", onScroll);
+    entry.handlers = { onScroll };
   }
 
   private detach(entry: InternalEntry): void {
     const s = entry.surface;
     if (!s || !entry.handlers) return;
-    const h = entry.handlers;
-    s.events.removeEventListener("wheel", h.onWheel);
-    s.events.removeEventListener("pointerdown", h.onPointerDown);
-    s.events.removeEventListener("keydown", h.onKeyDown);
+    s.events.removeEventListener("scroll", entry.handlers.onScroll);
     entry.handlers = undefined;
   }
 }

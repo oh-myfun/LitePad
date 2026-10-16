@@ -27,19 +27,11 @@ interface ScrollDom {
 }
 
 function editorSurface(view: ScrollDom): CoordinatedSurface {
-  return {
-    events: view.scrollDOM,
-    rect: () => view.scrollDOM.getBoundingClientRect(),
-    scrollbarWidth: () => view.scrollDOM.offsetWidth - view.scrollDOM.clientWidth,
-  };
+  return { events: view.scrollDOM };
 }
 
 function previewSurface(root: HTMLElement): CoordinatedSurface {
-  return {
-    events: root,
-    rect: () => root.getBoundingClientRect(),
-    scrollbarWidth: () => root.offsetWidth - root.clientWidth,
-  };
+  return { events: root };
 }
 
 /**
