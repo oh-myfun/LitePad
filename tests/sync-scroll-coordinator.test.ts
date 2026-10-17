@@ -149,35 +149,26 @@ describe("SyncScrollCoordinator syncFrom 按引用查未注册锚点", () => {
   });
 });
 
-describe("SyncScrollCoordinator scroll 监听 + 用户滚动武装", () => {
+describe("SyncScrollCoordinator scroll 监听驱动广播（T6：滚动落定即广播，无需武装）", () => {
   function makeSurface(node: EventTarget): CoordinatedSurface {
     return { events: node };
   }
 
-  /** 可控时钟 + 注入 now 的协调器，便于精确测试武装时间窗。 */
-  function makeClockedCoordinator(armMs = 180, graceMs = 120) {
+  it("锚点 scroll 事件直接广播给同 docId 其余锚点", () => {
     const sch = makeScheduler();
-    const clock = { t: 0 };
-    const co = new SyncScrollCoordinator(sch.schedule, { now: () => clock.t, armMs, graceMs });
-    return { sch, co, clock };
-  }
-
-  it("经 wheel 武装后 scroll 广播", () => {
-    const { sch, co, clock } = makeClockedCoordinator();
+    const co = new SyncScrollCoordinator(sch.schedule);
     const node = document.createElement("div");
     const a = makeFakeAnchor(4);
     const b = makeFakeAnchor(1);
     co.register(a.anchor, "f1", makeSurface(node));
     co.register(b.anchor, "f1");
-    clock.t = 0;
-    node.dispatchEvent(new Event("wheel")); // 武装至 180
     node.dispatchEvent(new Event("scroll"));
     sch.flush();
     expect(b.setVCalls).toEqual([4]);
   });
 
-  it("scroll 之外的事件（wheel/pointerdown/keydown）本身不广播，仅武装", () => {
-    // 注意：这些事件只武装，不驱动；驱动仍只在 scroll 上发生。
+  it("scroll 之外的事件（wheel/pointerdown/keydown）本身不广播（只有 scroll 驱动）", () => {
+    // 这些事件只产生输入、不驱动；驱动仍只在 scroll 上发生。
     const sch = makeScheduler();
     const co = new SyncScrollCoordinator(sch.schedule);
     const node = document.createElement("div");
@@ -189,92 +180,88 @@ describe("SyncScrollCoordinator scroll 监听 + 用户滚动武装", () => {
     node.dispatchEvent(new Event("pointerdown"));
     node.dispatchEvent(new Event("keydown"));
     sch.flush();
-    expect(b.setVCalls).toEqual([]); // 没有 scroll，仍不广播
+    expect(b.setVCalls).toEqual([]); // 没有 scroll，不广播
   });
 
-  it("连续 scroll（拖动 / 惯性）：pointerdown 交互中每一拍都广播", () => {
-    const { sch, co } = makeClockedCoordinator();
+  it("连续 scroll（拖动/惯性/滚轮）每一拍都广播", () => {
+    const sch = makeScheduler();
+    const co = new SyncScrollCoordinator(sch.schedule);
     const node = document.createElement("div");
     const a = makeFakeAnchor(1);
     const b = makeFakeAnchor(1);
     co.register(a.anchor, "f1", makeSurface(node));
     co.register(b.anchor, "f1");
-    node.dispatchEvent(new Event("pointerdown")); // 开始交互
-    node.dispatchEvent(new Event("scroll")); // 拖到 3
+    node.dispatchEvent(new Event("scroll"));
     a.setGetV(3);
     sch.flush();
-    node.dispatchEvent(new Event("scroll")); // 拖到 5
+    node.dispatchEvent(new Event("scroll"));
     a.setGetV(5);
     sch.flush();
     expect(b.setVCalls).toEqual([3, 5]);
   });
 
   it("回声抑制：target 因 setV 产生的 scroll 被忽略，不回灌", () => {
-    const { sch, co } = makeClockedCoordinator();
+    const sch = makeScheduler();
+    const co = new SyncScrollCoordinator(sch.schedule);
     const nodeA = document.createElement("div");
     const nodeB = document.createElement("div");
     const a = makeFakeAnchor(4); // driver
     const b = makeFakeAnchor(1); // target
     co.register(a.anchor, "f1", makeSurface(nodeA));
     co.register(b.anchor, "f1", makeSurface(nodeB));
-    // A 先武装（pointerdown）再滚动 → A 广播给 B（B 因本次 setV 产生 scroll）
-    nodeA.dispatchEvent(new Event("pointerdown"));
     nodeA.dispatchEvent(new Event("scroll"));
     sch.flushOne(); // 主帧：B.setV(4) + 置 B.programmatic
     expect(b.setVCalls).toEqual([4]);
     expect(a.setVCalls).toEqual([]);
-    // B 的回声 scroll 应被抑制，不再广播给 A
-    nodeB.dispatchEvent(new Event("scroll"));
+    nodeB.dispatchEvent(new Event("scroll")); // B 回声
     sch.flush(); // 仅跑安全清位
     expect(a.setVCalls).toEqual([]); // 未回灌
     expect(b.setVCalls).toEqual([4]); // B 自身未被再次写
   });
 
-  it("回声清位后 B 再次真实滚动（武装后）可正常驱动 A", () => {
-    const { sch, co } = makeClockedCoordinator();
+  it("回声清位后 B 再次真实滚动可正常驱动 A", () => {
+    const sch = makeScheduler();
+    const co = new SyncScrollCoordinator(sch.schedule);
     const nodeA = document.createElement("div");
     const nodeB = document.createElement("div");
     const a = makeFakeAnchor(4);
     const b = makeFakeAnchor(1);
     co.register(a.anchor, "f1", makeSurface(nodeA));
     co.register(b.anchor, "f1", makeSurface(nodeB));
-    nodeA.dispatchEvent(new Event("pointerdown"));
     nodeA.dispatchEvent(new Event("scroll"));
     sch.flushOne();
     nodeB.dispatchEvent(new Event("scroll")); // 被抑制（programmatic 清位）
     sch.flush();
-    // 安全清位后，B 武装并再次滚动应重新驱动 A
-    nodeB.dispatchEvent(new Event("pointerdown"));
+    // 清位后，B 再滚动应重新驱动 A
     nodeB.dispatchEvent(new Event("scroll"));
     b.setGetV(9);
     sch.flush();
     expect(a.setVCalls).toEqual([9]); // B 这次作为 driver 成功广播
   });
 
-  it("unregister 解绑监听：武装并注销后 scroll 不再广播", () => {
-    const { sch, co } = makeClockedCoordinator();
+  it("unregister 解绑监听：注销后 scroll 不再广播", () => {
+    const sch = makeScheduler();
+    const co = new SyncScrollCoordinator(sch.schedule);
     const node = document.createElement("div");
     const a = makeFakeAnchor(4);
     const b = makeFakeAnchor(1);
     const h = co.register(a.anchor, "f1", makeSurface(node));
     co.register(b.anchor, "f1");
-    node.dispatchEvent(new Event("pointerdown")); // 武装
     co.unregister(h); // 解绑后监听移除
     node.dispatchEvent(new Event("scroll"));
     sch.flush();
     expect(b.setVCalls).toEqual([]);
   });
 
-  it("B152 关闭时即便武装也不广播（当前 pane 仍原生滚）", () => {
-    const { sch, co, clock } = makeClockedCoordinator();
+  it("B152 关闭时 scroll 不广播（当前 pane 仍原生滚）", () => {
+    const sch = makeScheduler();
+    const co = new SyncScrollCoordinator(sch.schedule);
     const node = document.createElement("div");
     const a = makeFakeAnchor(4);
     const b = makeFakeAnchor(1);
     co.register(a.anchor, "f1", makeSurface(node));
     co.register(b.anchor, "f1");
     co.setEnabled("f1", false);
-    clock.t = 0;
-    node.dispatchEvent(new Event("wheel")); // 武装
     node.dispatchEvent(new Event("scroll"));
     sch.flush();
     expect(b.setVCalls).toEqual([]);
@@ -304,47 +291,20 @@ describe("SyncScrollCoordinator scroll 监听 + 用户滚动武装", () => {
   });
 });
 
-describe("SyncScrollCoordinator 用户滚动武装守卫（T7 防结构性滚动自动跳变）", () => {
+describe("SyncScrollCoordinator 结构性滚动抑制（T7 修正版：显式 suppressStructural 盖住 setState 归零重排）", () => {
   function makeSurface(node: EventTarget): CoordinatedSurface {
     return { events: node };
   }
 
-  function makeClocked(armMs = 180, graceMs = 120) {
+  /** 注入 now + suppressMs 的可控协调器，便于精确测试抑制窗口。 */
+  function makeClocked(suppressMs = 120) {
     const sch = makeScheduler();
     const clock = { t: 0 };
-    const co = new SyncScrollCoordinator(sch.schedule, { now: () => clock.t, armMs, graceMs });
+    const co = new SyncScrollCoordinator(sch.schedule, { now: () => clock.t, suppressMs });
     return { sch, co, clock };
   }
 
-  it("未经武装的 scroll 被忽略（结构性滚动：标签切换/复制/拖拽/分屏重排不广播）", () => {
-    const { sch, co } = makeClocked();
-    const node = document.createElement("div");
-    const a = makeFakeAnchor(4);
-    const b = makeFakeAnchor(1);
-    co.register(a.anchor, "f1", makeSurface(node));
-    co.register(b.anchor, "f1");
-    // 没有任何输入武装，CM6 setState 归零重排产生的 scroll 不应广播
-    node.dispatchEvent(new Event("scroll"));
-    sch.flush();
-    expect(b.setVCalls).toEqual([]);
-  });
-
-  it("wheel 脉冲到期后再 scroll 被忽略（惯性尾部边界）", () => {
-    const { sch, co, clock } = makeClocked(180);
-    const node = document.createElement("div");
-    const a = makeFakeAnchor(4);
-    const b = makeFakeAnchor(1);
-    co.register(a.anchor, "f1", makeSurface(node));
-    co.register(b.anchor, "f1");
-    clock.t = 0;
-    node.dispatchEvent(new Event("wheel")); // 武装至 180
-    clock.t = 200; // 已过期
-    node.dispatchEvent(new Event("scroll"));
-    sch.flush();
-    expect(b.setVCalls).toEqual([]);
-  });
-
-  it("键盘滚动键（PageDown）武装、其它键不武装", () => {
+  it("suppressStructural 后窗口内 scroll 不广播（标签切换/复制/分屏/拖拽重排）", () => {
     const { sch, co, clock } = makeClocked();
     const node = document.createElement("div");
     const a = makeFakeAnchor(4);
@@ -352,87 +312,90 @@ describe("SyncScrollCoordinator 用户滚动武装守卫（T7 防结构性滚动
     co.register(a.anchor, "f1", makeSurface(node));
     co.register(b.anchor, "f1");
     clock.t = 0;
-    node.dispatchEvent(new KeyboardEvent("keydown", { key: "a" })); // 非滚动键
-    node.dispatchEvent(new Event("scroll"));
+    co.suppressStructural("f1"); // 结构性操作前显式抑制
+    node.dispatchEvent(new Event("scroll")); // CM6 setState 归零重排产生的 scroll
     sch.flush();
-    expect(b.setVCalls).toEqual([]); // 'a' 不武装 → 忽略
-    node.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown" })); // 滚动键
-    node.dispatchEvent(new Event("scroll"));
-    sch.flush();
-    expect(b.setVCalls).toEqual([4]); // 武装后广播
+    expect(b.setVCalls).toEqual([]); // 被抑制，不广播（防自动跳变/调回顶部）
   });
 
-  it("pointerdown→scroll→pointerup→grace→过期 全生命周期", () => {
-    const { sch, co, clock } = makeClocked(180, 120);
+  it("抑制窗口过期后 scroll 重新广播（用户滚动照常同步）", () => {
+    const { sch, co, clock } = makeClocked(120);
     const node = document.createElement("div");
-    const a = makeFakeAnchor(1);
+    const a = makeFakeAnchor(4);
     const b = makeFakeAnchor(1);
     co.register(a.anchor, "f1", makeSurface(node));
     co.register(b.anchor, "f1");
-    // 1) 开始交互，scroll 广播
     clock.t = 0;
-    node.dispatchEvent(new Event("pointerdown"));
-    node.dispatchEvent(new Event("scroll"));
-    a.setGetV(3);
+    co.suppressStructural("f1"); // 抑制至 120
+    clock.t = 200; // 已过期
+    node.dispatchEvent(new Event("scroll")); // 真正的用户滚动
     sch.flush();
-    expect(b.setVCalls).toEqual([3]);
-    // 2) 交互中即便超时也继续广播（re-arm 续杯）
-    clock.t = 500;
-    node.dispatchEvent(new Event("scroll"));
-    a.setGetV(5);
-    sch.flush();
-    expect(b.setVCalls).toEqual([3, 5]);
-    // 3) pointerup 结束交互（监听挂在 window，须派发到 window），留 grace 余韵（120ms）
-    window.dispatchEvent(new Event("pointerup"));
-    // grace 内（<=620）仍广播
-    clock.t = 600;
-    node.dispatchEvent(new Event("scroll"));
-    a.setGetV(7);
-    sch.flush();
-    expect(b.setVCalls).toEqual([3, 5, 7]);
-    // 4) grace 过期后 scroll 被忽略（结构性）
-    clock.t = 800;
-    node.dispatchEvent(new Event("scroll"));
-    a.setGetV(9);
-    sch.flush();
-    expect(b.setVCalls).toEqual([3, 5, 7]); // 9 未被广播
+    expect(b.setVCalls).toEqual([4]); // 过期后正常广播
   });
 
-  it("交互中长滚动条拖动逐拍广播（连续 scroll）", () => {
-    const { sch, co } = makeClocked();
+  it("窗口内再次 suppressStructural 续杯（覆盖后续帧的结构性 scroll）", () => {
+    const { sch, co, clock } = makeClocked(120);
     const node = document.createElement("div");
-    const a = makeFakeAnchor(1);
+    const a = makeFakeAnchor(4);
     const b = makeFakeAnchor(1);
     co.register(a.anchor, "f1", makeSurface(node));
     co.register(b.anchor, "f1");
-    node.dispatchEvent(new Event("pointerdown"));
+    clock.t = 0;
+    co.suppressStructural("f1"); // 抑制至 120
+    clock.t = 100;
+    co.suppressStructural("f1"); // 续杯至 220
+    clock.t = 200;
     node.dispatchEvent(new Event("scroll"));
-    a.setGetV(2);
     sch.flush();
-    node.dispatchEvent(new Event("scroll"));
-    a.setGetV(4);
-    sch.flush();
-    node.dispatchEvent(new Event("scroll"));
-    a.setGetV(6);
-    sch.flush();
-    expect(b.setVCalls).toEqual([2, 4, 6]);
+    expect(b.setVCalls).toEqual([]); // 仍在窗口内，不广播
   });
 
-  it("触控场景：pointer 事件（pointerType=touch）同样武装——无独立 touch 监听也不漏", () => {
-    // WebView2/Chromium 触摸生成 pointer 事件，pointerdown 已覆盖触摸拖动，
-    // 无需单独 TouchEvent 监听即可同步。
-    const { sch, co } = makeClocked();
-    const node = document.createElement("div");
-    const a = makeFakeAnchor(1);
-    const b = makeFakeAnchor(1);
-    co.register(a.anchor, "f1", makeSurface(node));
+  it("按 docId 隔离：被抑制的 docId 不广播，其它 docId 照常广播", () => {
+    const { sch, co, clock } = makeClocked();
+    const nodeF1 = document.createElement("div");
+    const nodeF2 = document.createElement("div");
+    const a = makeFakeAnchor(4); // f1 driver
+    const b = makeFakeAnchor(1); // f1 target
+    const c = makeFakeAnchor(9); // f2 driver
+    const d = makeFakeAnchor(1); // f2 target
+    co.register(a.anchor, "f1", makeSurface(nodeF1));
     co.register(b.anchor, "f1");
-    const pe = new Event("pointerdown") as PointerEvent & { pointerType?: string };
-    (pe as unknown as { pointerType: string }).pointerType = "touch";
-    node.dispatchEvent(pe);
-    node.dispatchEvent(new Event("scroll"));
-    a.setGetV(8);
+    co.register(c.anchor, "f2", makeSurface(nodeF2));
+    co.register(d.anchor, "f2");
+    clock.t = 0;
+    co.suppressStructural("f1"); // 仅抑制 f1
+    nodeF1.dispatchEvent(new Event("scroll")); // f1 结构性
+    nodeF2.dispatchEvent(new Event("scroll")); // f2 用户滚动
     sch.flush();
-    expect(b.setVCalls).toEqual([8]);
+    expect(b.setVCalls).toEqual([]); // f1 被抑制
+    expect(d.setVCalls).toEqual([9]); // f2 照常广播
+  });
+
+  it("syncFromDriver 不经抑制（TOC/查找/转到行必须照常同步）", () => {
+    const { sch, co, clock } = makeClocked();
+    const node = document.createElement("div");
+    const a = makeFakeAnchor(8); // 裸 driver
+    const b = makeFakeAnchor(1);
+    co.register(b.anchor, "f1", makeSurface(node));
+    clock.t = 0;
+    co.suppressStructural("f1"); // 即便抑制中，程序化跳转仍广播
+    co.syncFromDriver("f1", a.anchor);
+    sch.flush();
+    expect(b.setVCalls).toEqual([8]); // 绕过抑制
+  });
+
+  it("suppressStructural 对未注册 docId 也无副作用（窗口过期后注册不残留抑制）", () => {
+    const { sch, co, clock } = makeClocked(120);
+    clock.t = 0;
+    co.suppressStructural("fX"); // 抑制一个尚未注册的 docId（模拟先抑制后 reconcile）
+    clock.t = 200; // 已过期
+    const node = document.createElement("div");
+    const a = makeFakeAnchor(4);
+    const b = makeFakeAnchor(1);
+    co.register(a.anchor, "fX", makeSurface(node));
+    co.register(b.anchor, "fX");
+    node.dispatchEvent(new Event("scroll"));
+    sch.flush();
+    expect(b.setVCalls).toEqual([4]); // 过期后正常广播，无残留抑制
   });
 });

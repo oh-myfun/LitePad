@@ -46,6 +46,7 @@ import { keyHint } from "../prefs";
 import { newTab as ipcNewTab } from "../ipc/api";
 import { renderPanelTabs } from "./render";
 import { rebuildLayout, disposePanel, freshTextOfDoc, pruneEmptyPanels } from "./lifecycle";
+import { syncCoordinator } from "../sync-scroll/wire";
 import { scheduleSessionSave } from "./deps";
 
 /**
@@ -91,6 +92,9 @@ export function splitActivePanel(panelId: number, dir: "h" | "v"): void {
       if (panel.view && prev) {
         // 同 switchTab：CM6 的 setState 会归零 / 重排 scrollTop，`viewTabId` 先认下
         // 接班标签（否则寻址会落到被移走那张头上）。
+        // —— 同步滚动 v1：setState 前先抑制「被移走标签」的 docId，盖住归零重排引发的
+        // 结构性 scroll 自动跳变；末尾 reconcile 会再抑制新 docId（prev 的 docId）。
+        syncCoordinator.suppressStructural(String(tab.docId));
         panel.viewTabId = prev.tabId;
         const view = panel.view; // 闭包里不保留对 `panel.view` 的收窄，先取一份
         setSuppressDirty(true);
