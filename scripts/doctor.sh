@@ -68,5 +68,6 @@ echo "  只跑类型检查：        npm run typecheck"
 echo "  只跑测试：            node scripts/run-vitest.cjs"
 echo "  重拍截图：            CODEBUDDY_SAFE_DELETE_ENABLED=0 python scripts/capture-screenshots.py"
 echo "  快照 .workbuddy：     bash scripts/backup-workbuddy.sh"
+echo "  记忆卫生自检：        bash scripts/memory-hygiene.sh        （判据见 .workbuddy/memory/rules/index.md）"
 echo
 echo "（以上任何一条失败，修对应脚本，不要在会话里手抄等价命令。）"
