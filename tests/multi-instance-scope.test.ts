@@ -1,14 +1,20 @@
 // @vitest-environment jsdom
-// 「同一文件打开多份时，**无需关联**光标和滚动位置」（用户拍板，B149）。
+// 「同一文件打开多份时，文本同源、光标各归各」——B149 的这一半仍然成立，且本文件锁定它
+// （`syncDocInstances` 只派发 `{ changes }`，绝不带 cursor / scrollTop）。
 //
-// 当前基线：同源多实例之间**只同步文本**（`syncDocInstances` 只派发 `{ changes }`），
-// 光标、视口、视图模式各归各的 —— 同步滚动模式已整体移除，这里只锁文本同步基线。
+// 但「视口（滚动位置）」的同步已由 B152 同步滚动接管（2026-10-16 重新引入）：B152 开
+// （默认）→ 同 docId 的 editor/preview/其它面板 视口同步；B152 关 → 同文档多实例视口
+// 各归各（即 B149 当初钉的「视口不跟随」基线，在 B152 关时成立）。跨窗视口独立仍由 B178
+// 广播链维持 inert，不在本文件范围。
 //
-// 这条用例把这条**基线**钉住：它不是一个可以随手改的偏好，而是下面几条契约共同
-// 撑着的现状 —— 一旦有人为了「方便」把光标/视口也串起来，这些用例就得先变红。
+// 本文件分两块动态用例：① B152 开 —— 同 docId 多实例视口跟随；② B152 关 —— 同 docId
+// 多实例视口独立（B149 基线）。后者把「别顺手把视口串起来」钉住；一旦有人在 syncDocInstances
+// 里塞 cursor/scrollTop，下面静态契约用例就得先变红。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { EditorView } from "@codemirror/view";
+import { tabs } from "../src/core/app-state";
+import { syncCoordinator } from "../src/sync-scroll/wire";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -166,10 +172,23 @@ function setScroll(el: HTMLElement, px: number): void {
   el.dispatchEvent(new Event("scroll"));
 }
 
-describe("B149 同源多实例：只同步文本，光标与视口各归各的", () => {
+/** 启动真实 app（main 已挂到 document.body，含两个 a.md 面板）。 */
+async function bootApp(): Promise<void> {
+  await import("../src/main");
+  await wait(300);
+}
+/** 当前在册 tab 的 docId（两个 a.md 实例共享同一 docId，协调器即按它分组）。 */
+function currentDocId(): string {
+  const tab = [...tabs.values()][0];
+  if (!tab) throw new Error("没拿到 tab，无法定位 docId");
+  return String(tab.docId);
+}
+
+describe("B152 开（默认）：同 docId 多实例视口同步", () => {
   beforeAll(async () => {
-    await import("../src/main");
-    await wait(300);
+    await bootApp();
+    // 默认即开；显式置位以免疫后续用例改了全局状态。
+    syncCoordinator.setEnabled(currentDocId(), true);
   });
 
   it("两个实例都挂在各自面板上（用例才有得比）", () => {
@@ -178,17 +197,23 @@ describe("B149 同源多实例：只同步文本，光标与视口各归各的",
     expect(panelView(1)).toBeTruthy();
   });
 
-  it("左边滚到 600，右边的视口不许跟着动", async () => {
-    // 先给右边一个明确的落点，再动左边 —— 「右边的值被动过」才判得出来
+  it("左边滚到 600，右边视口跟着走（同 docId 视口同步，B152 开）", async () => {
+    // 先给右边一个明确的落点，再动左边 —— 右边的值「被带过去」才判得出来
     setScroll(panelScroller(1), RIGHT.scrollTop);
-    await wait(60);
+    await wait(80);
     setScroll(panelScroller(0), LEFT.scrollTop);
-    await wait(120);
+    await wait(150);
 
+    const right = panelScroller(1).scrollTop;
+    const left = panelScroller(0).scrollTop;
     expect(
-      panelScroller(1).scrollTop,
-      `右边的视口应仍是 ${RIGHT.scrollTop}，不该被左边的滚动带着走`,
-    ).toBe(RIGHT.scrollTop);
+      right,
+      `B152 开时同 docId 视口应同步：右边应离开 ${RIGHT.scrollTop} 跟着左边走`,
+    ).not.toBe(RIGHT.scrollTop);
+    expect(
+      Math.abs(right - left),
+      `右边应跟到左边附近（允许行高取整：左边 ${left} / 右边 ${right}）`,
+    ).toBeLessThan(80);
   });
 
   it("左边改文本：右边文本同源跟着变，但光标与视口都不被搬走", async () => {
@@ -217,6 +242,25 @@ describe("B149 同源多实例：只同步文本，光标与视口各归各的",
       panelScroller(1).scrollTop,
       `右边视口应仍是 ${rightScrollBefore}，不该被左边这次编辑带着走`,
     ).toBe(rightScrollBefore);
+  });
+});
+
+describe("B152 关：同 docId 多实例视口独立（B149 基线在此成立）", () => {
+  beforeAll(async () => {
+    await bootApp();
+    syncCoordinator.setEnabled(currentDocId(), false);
+  });
+
+  it("左边滚到 600，右边视口不许跟着动（B152 关，B149 基线）", async () => {
+    setScroll(panelScroller(1), RIGHT.scrollTop);
+    await wait(80);
+    setScroll(panelScroller(0), LEFT.scrollTop);
+    await wait(150);
+
+    expect(
+      panelScroller(1).scrollTop,
+      `B152 关时同 docId 视口应各自独立：右边应仍是 ${RIGHT.scrollTop}，不该被左边的滚动带着走`,
+    ).toBe(RIGHT.scrollTop);
   });
 });
 
