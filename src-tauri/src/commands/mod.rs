@@ -1191,30 +1191,35 @@ pub fn log_level() -> String {
     logging::level().as_key().to_string()
 }
 
-/// 用系统默认程序打开日志文件（B288）。
+/// 日志文件的绝对路径（B289）。
 ///
-/// 设置页「通用」分类里「日志级别」下面那颗「打开日志文件」走这里 —— 排查问题时
-/// 不必自己摸到 `<配置目录>/logs/litepad.log`（配置目录还可能被 `LITEPAD_CONFIG_DIR`
-/// 搬走，路径不是背得下来的常量）。
-///
-/// ⚠️ 与 `reveal_in_folder` 分工不同：那条是 `explorer /select,`（**在资源管理器里
-///    选中**文件），这一条是 `start`（**用关联程序打开**文件，通常是记事本/编辑器）。
-///    `start` 后面那个空串是它的老规矩 —— 第一个带引号的参数会被当成窗口标题，
-///    不先占位就会把路径当成标题、什么也不打开。
+/// ⚠️ 这里**不再负责「打开」**：以前这条命令自己 `cmd /C start` 去拉系统关联程序，
+/// 关联程序起不来时用户看到的就是「点了没反应」。现在只把路径交给前端，打开由
+/// LitePad 自己的标签页来做（`prefs.ts` 的 `onOpenLog` → `doOpen(path)`）——
+/// 不依赖外部程序、不依赖 `.log` 关联到谁，窗口里直接能看。
+/// 路径仍然只能由 Rust 算：配置目录可能被 `LITEPAD_CONFIG_DIR` 搬走，前端不该拼。
 #[tauri::command]
-pub fn open_log_file() -> Result<(), String> {
+pub fn log_file_path() -> Result<String, String> {
     let Some(dir) = logging::log_dir() else {
+        logging::log(Level::Warn, "log", "取日志路径：拿不到配置目录");
         return Err("拿不到配置目录".into());
     };
     let path = dir.join("litepad.log");
     if !path.exists() {
-        return Err("日志文件还不存在（本次启动还没有日志落盘）".into());
+        logging::log(
+            Level::Warn,
+            "log",
+            &format!("取日志路径：{} 不存在", path.display()),
+        );
+        return Err(format!("日志文件还不存在：{}", path.display()));
     }
-    std::process::Command::new("cmd")
-        .args(["/C", "start", "", &path.to_string_lossy()])
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("打开日志文件失败：{e}"))
+    let size = path.metadata().map(|m| m.len()).unwrap_or(0);
+    logging::log(
+        Level::Info,
+        "log",
+        &format!("日志路径交给前端：{}（{size} 字节）", path.display()),
+    );
+    Ok(path.to_string_lossy().to_string())
 }
 
 #[tauri::command]

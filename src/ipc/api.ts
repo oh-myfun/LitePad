@@ -316,14 +316,15 @@ export function setLogLevel(level: string): Promise<void> {
 }
 
 /**
- * 用系统默认程序打开日志文件（B288）。
+ * 日志文件的绝对路径（B289）。
  *
- * 设置页「通用」分类里那颗「打开日志文件」走这里。路径由 **Rust 侧**自己算
- * （`<配置目录>/logs/litepad.log`，尊重 `LITEPAD_CONFIG_DIR`）—— 前端不该去拼这个
- * 路径：配置目录可能被环境变量搬走，拼错了打不开还查不出原因。
+ * 设置页那颗「打开日志」用它：路径由 **Rust 侧**算（`<配置目录>/logs/litepad.log`，
+ * 尊重 `LITEPAD_CONFIG_DIR`），前端拿到路径后交给自己这边的 `doOpen` 开成标签页。
+ * ⚠️ 前端不许自己拼这个路径（配置目录可能被环境变量搬走）；也不许再走系统关联程序 ——
+ * 上一版 `cmd /C start` 依赖 `.log` 关联到谁，关联程序起不来时用户只看到「点了没反应」。
  */
-export function openLogFile(): Promise<void> {
-  return invoke<void>("open_log_file");
+export function logFilePath(): Promise<string> {
+  return invoke<string>("log_file_path");
 }
 
 // ---------------------------------------------------------------- 会话（M2）
@@ -504,6 +505,13 @@ export interface SatelliteTab {
   viewMode: string;
   cursorLine: number;
   cursorCol: number;
+  /**
+   * 共享坐标 `v`（源码行号 + 行内小数）—— 同步滚动 v1 的「这一格看到哪儿」。
+   * 只传 cursorLine 的话，接手窗口只能把视口摆到**光标**那一行，而那不是发起窗口当下
+   * 显示的那一处 ⇒「同一份文档，两个窗口显示的不是同一处」（B286 那一族）。
+   * 存 v 而不是像素：两个窗口的宽度/字号/软折行都不同，像素在那边没有意义。
+   */
+  scrollV: number;
   /** B169：同步滚动开关（按文档记）——让接手窗口的同步键点亮态与主窗口一致 */
   syncMode?: boolean;
   sizeClass: "normal" | "large" | "huge";

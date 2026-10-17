@@ -220,7 +220,7 @@ fn main() {
             commands::log_event,
             commands::log_level,
             commands::set_log_level,
-            commands::open_log_file,
+            commands::log_file_path,
             commands::frontend_ready,
             commands::load_session,
             commands::save_session,
@@ -238,6 +238,15 @@ fn main() {
             commands::watchdog_start_drag,
             commands::toggle_devtools,
         ])
-        .run(tauri::generate_context!())
-        .expect("LitePad 启动失败");
+        .build(tauri::generate_context!())
+        .expect("LitePad 启动失败")
+        .run(|_app, event| {
+            // B289：日志写盘在后台线程，`log()` 只入队就返回。进程一退出那条线程就被杀掉，
+            // 队列里还没消费的行列全丢 —— 而「关窗保存 / 会话落盘 / 退出原因」恰恰是最后
+            // 入队的那几条，正好是复现取证最需要的。退出前压一枚哨兵等它写空（带超时，
+            // 写盘线程已经死了也不许把退出卡住）。
+            if matches!(event, tauri::RunEvent::Exit) {
+                core::logging::flush_pending(std::time::Duration::from_millis(400));
+            }
+        });
 }

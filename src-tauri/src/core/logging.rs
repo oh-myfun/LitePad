@@ -23,10 +23,11 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::OnceLock;
 use std::thread;
+use std::time::{Duration, Instant};
 
 use crate::session;
 
@@ -162,16 +163,52 @@ fn init_with(dir: Option<PathBuf>, level: Level) {
     thread::Builder::new()
         .name("litepad-log".into())
         .spawn(move || {
-            let mut w = match Writer::open(&dir) {
-                Some(w) => w,
-                None => return,
+            let Some(mut w) = Writer::open(&dir) else {
+                return;
             };
-            // 线程活着就一直收；发送端（全局静态）永不 drop，所以靠 recv() 阻塞即可。
-            while let Ok(line) = rx.recv() {
-                w.write_line(&line);
-            }
+            pump(&rx, &mut w);
         })
         .ok();
+}
+
+/// 队列排空哨兵。channel 是 FIFO，所以它被消费时，**在它之前**入队的每一行都已写盘。
+const DRAIN_SENTINEL: &str = "\u{0}__litepad_log_drain__";
+static DRAINED: AtomicBool = AtomicBool::new(false);
+
+/// 写盘线程的主循环体：逐行落盘，收到排空哨兵就把它当作「队列到此已写完」的信号。
+///
+/// 抽成函数（而不是留在 `spawn` 的闭包里）只为了一个原因：这条「哨兵之前的一行都不许丢」
+/// 的契约可以用一条本地 channel 精确测出来，不必起全局线程、也不依赖时序。
+fn pump(rx: &std::sync::mpsc::Receiver<String>, w: &mut Writer) {
+    // 线程活着就一直收；发送端（全局静态）永不 drop，所以靠 recv() 阻塞即可。
+    while let Ok(line) = rx.recv() {
+        // 哨兵不是日志，是 `flush_pending` 的回执 ⇒ 绝不能写成一行。
+        if line == DRAIN_SENTINEL {
+            DRAINED.store(true, Ordering::SeqCst);
+            continue;
+        }
+        w.write_line(&line);
+    }
+}
+
+/// **关闭前把队列里剩下的日志写完**（B289）。
+///
+/// 写盘在后台线程，`log()` 只是入队就返回：进程一退出，那条线程被直接杀掉，队列里
+/// 还没消费的行列全部丢失 —— 而「关窗时保存 / 会话落盘 / 退出原因」这几条恰恰是
+/// 排在最后入队、最容易丢的那几条。取证场景里最要命的正是它们。
+///
+/// 做法：往队列尾上压一枚哨兵，等写盘线程消费到它（哨兵之前的一切都已落盘）。
+/// 带超时：写盘线程要是已经死了（目录被删、句柄打不开），这里绝不能把退出流程卡住。
+pub fn flush_pending(wait: Duration) {
+    let Some(tx) = SENDER.get() else { return };
+    DRAINED.store(false, Ordering::SeqCst);
+    if tx.send(DRAIN_SENTINEL.to_string()).is_err() {
+        return;
+    }
+    let start = Instant::now();
+    while !DRAINED.load(Ordering::SeqCst) && start.elapsed() < wait {
+        thread::sleep(Duration::from_millis(2));
+    }
 }
 
 /// 记一条。**不阻塞**：入队即返回，写盘在后台线程。
@@ -451,6 +488,44 @@ mod tests {
                 .trim(),
             "first line\nsecond line",
             "历史文件不该被回写"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 排空契约（B289）：`flush_pending` 压进去的那枚哨兵**之前**的每一行都必须已经落盘。
+    ///
+    /// 退出前丢日志的机制不是「文件没 flush」—— 每行本来就 flush 了 —— 而是**队列里还没
+    /// 被写盘线程取走的行**随线程一起没了。所以这条测的是顺序契约而不是时序运气：
+    /// 本地 channel + `pump`，不碰全局 SENDER，也不睡时间。
+    #[test]
+    fn drain_sentinel_awaits_every_line_queued_before_it() {
+        let dir =
+            std::env::temp_dir().join(format!("litepad-logtest-drain-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let (tx, rx) = channel::<String>();
+        for i in 0..5 {
+            tx.send(format!("queued line {i}")).unwrap();
+        }
+        tx.send(DRAIN_SENTINEL.to_string()).unwrap();
+        // 发送端先放手：`pump` 收完这 6 条（含哨兵）之后 recv() 才返回 Err 退出循环，
+        // 不会像生产里那样阻塞等下一条。
+        drop(tx);
+
+        let mut w = Writer::open(&dir).expect("应能打开日志文件");
+        pump(&rx, &mut w);
+
+        let text = fs::read_to_string(dir.join(FILE)).unwrap();
+        assert_eq!(
+            text.matches("queued line").count(),
+            5,
+            "哨兵之前入队的 5 行必须全部落盘：\n{text}"
+        );
+        assert!(
+            !text.contains("log_drain"),
+            "哨兵不是日志行，不该被写进文件：\n{text}"
         );
 
         let _ = fs::remove_dir_all(&dir);

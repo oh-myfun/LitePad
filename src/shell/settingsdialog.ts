@@ -86,7 +86,9 @@ export interface SettingsDialogOptions {
   logLevel: () => LogLevel;
   onLogLevel: (level: LogLevel) => void;
   /**
-   * B288：「打开日志文件」—— 用系统默认程序打开 `<配置目录>/logs/litepad.log`。
+   * B288（B289 改道）：「打开日志文件」—— 由**本应用**把 `<配置目录>/logs/litepad.log`
+   * 开成一个标签页，不再交给系统关联程序（那条路依赖 `.log` 被设成什么程序，起不来时
+   * 界面上只剩「点了没反应」）。
    *
    * 排查问题时（比如启动异常 / 保存失败）要反复看日志，不该让用户自己去
    * `%APPDATA%` 里摸路径 —— 何况配置目录还能被 `LITEPAD_CONFIG_DIR` 搬走。
@@ -763,7 +765,7 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
     body.appendChild(
       buttonRow(
         "日志文件",
-        "用系统默认程序打开 litepad.log（配置目录下的 logs 目录）。",
+        "在 LitePad 里把 litepad.log 开成一个标签页（配置目录下的 logs 目录）。",
         "打开",
         () => opts.onOpenLog(),
       ),

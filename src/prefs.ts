@@ -42,14 +42,14 @@ import {
   applyWrapToTabs,
   normalizePreviewWidth,
 } from "./appearance";
-import { rebuildDocInstances } from "./io/files";
+import { doOpen, rebuildDocInstances } from "./io/files";
 import { cancelPendingBackup, discardAllBackups, discardBackupFor } from "./session/session";
 import { saveDocCore } from "./io/files";
 import {
   listEncodings,
   listEols,
   listFonts,
-  openLogFile,
+  logFilePath,
   reloadFile,
   saveSettings,
   type FontItem,
@@ -655,11 +655,27 @@ async function openSettingsDialog(): Promise<void> {
         // 只是重启会回到旧级别 —— 与「字体枚举没到手退回手抄清单」同一口径（能降级就降级）。
       });
     },
-    // 打开日志文件（路径由 Rust 算，前端不拼）。
+    // 「打开日志文件」= **用 LitePad 自己**开成标签页（B289）。
+    //
+    // 上一版是 Rust 侧 `cmd /C start` 拉系统关联程序：`.log` 关联到谁、那个程序起不起得来
+    // 都不在我们手里，起不来时用户只看到「点了没反应」。现在 Rust 只给路径，打开这一步
+    // 走本应用的 `doOpen` —— 同窗口、同标签、同一套编码/大文件档位处理，没有外部依赖。
+    //
+    // ⚠️ 两边都留痕：`点击` 那条证明手势真到了处理器；失败必须带**真实原因**
+    //（早先 `.catch(() => …)` 把 rejection 整条丢掉，这功能一坏就结构性无法诊断）。
     onOpenLog: () => {
-      void openLogFile().catch(() => {
-        void showMessage("打不开日志文件（可能还没有日志落盘）");
-      });
+      logger.info("log", "点击「打开日志文件」");
+      void logFilePath()
+        .then(async (path) => {
+          // `doOpen` 自己会把失败拼成提示框并返回 null ⇒ 这里补一条日志，
+          // 否则真机上只剩「弹了个框」，事后查不到是哪一步没成。
+          if ((await doOpen(path)) === null) logger.warn("log", `没能在本窗口打开 ${path}`);
+        })
+        .catch((e: unknown) => {
+          const why = e instanceof Error ? e.message : String(e);
+          logger.warn("log", `打开日志文件失败：${why}`);
+          void showMessage(why.length > 120 ? `${why.slice(0, 120)}…` : why, true);
+        });
     },
     keymap: {
       overrides: keymapOverrides,
