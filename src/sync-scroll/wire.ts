@@ -46,8 +46,8 @@ export function reconcileSyncRegistrations(): void {
     if (!tab) continue;
     const docId = String(tab.docId);
     // 重注册即结构性操作（标签切换 / 分屏 / 复制 / 拖拽重挂都经此 chokepoint）：
-    // 抑制该 docId 的滚动广播窗口，盖住 CM6 setState 归零重排引发的「自动跳变 / 调回顶部」。
-    // 结构性 scroll 被浏览器推迟到下一帧、晚于本同步调用，故窗口能稳稳盖住。
+    // 进入该 docId 的结构性突发抑制，自适应吞没 CM6 setState 归零重排引发的「自动跳变 /
+    // 调回顶部」。结构性 scroll 被浏览器推迟到下一帧、晚于本同步调用，突发内的 scroll 都会被吞没。
     syncCoordinator.suppressStructural(docId);
     if (p.view?.view) {
       handles.push(

@@ -291,20 +291,20 @@ describe("SyncScrollCoordinator scroll 监听驱动广播（T6：滚动落定即
   });
 });
 
-describe("SyncScrollCoordinator 结构性滚动抑制（T7 修正版：显式 suppressStructural 盖住 setState 归零重排）", () => {
+describe("SyncScrollCoordinator 结构性滚动抑制（T7 修正版：自适应突发吞没，非固定时间窗）", () => {
   function makeSurface(node: EventTarget): CoordinatedSurface {
     return { events: node };
   }
 
-  /** 注入 now + suppressMs 的可控协调器，便于精确测试抑制窗口。 */
-  function makeClocked(suppressMs = 120) {
+  /** 注入 now + quiesceMs 的可控协调器，便于精确测试自适应突发抑制。 */
+  function makeClocked(quiesceMs = 150) {
     const sch = makeScheduler();
     const clock = { t: 0 };
-    const co = new SyncScrollCoordinator(sch.schedule, { now: () => clock.t, suppressMs });
+    const co = new SyncScrollCoordinator(sch.schedule, { now: () => clock.t, quiesceMs });
     return { sch, co, clock };
   }
 
-  it("suppressStructural 后窗口内 scroll 不广播（标签切换/复制/分屏/拖拽重排）", () => {
+  it("进入抑制后，结构性突发内的 scroll 被吞没、不广播（标签切换/复制/分屏/拖拽重排）", () => {
     const { sch, co, clock } = makeClocked();
     const node = document.createElement("div");
     const a = makeFakeAnchor(4);
@@ -312,45 +312,58 @@ describe("SyncScrollCoordinator 结构性滚动抑制（T7 修正版：显式 su
     co.register(a.anchor, "f1", makeSurface(node));
     co.register(b.anchor, "f1");
     clock.t = 0;
-    co.suppressStructural("f1"); // 结构性操作前显式抑制
-    node.dispatchEvent(new Event("scroll")); // CM6 setState 归零重排产生的 scroll
+    co.suppressStructural("f1"); // 结构性操作前进入抑制（最近被吞 = 0）
+    clock.t = 10;
+    node.dispatchEvent(new Event("scroll")); // CM6 setState 归零重排产生的 scroll（突发内）
     sch.flush();
-    expect(b.setVCalls).toEqual([]); // 被抑制，不广播（防自动跳变/调回顶部）
+    expect(b.setVCalls).toEqual([]); // 被吞没，不广播（防自动跳变/调回顶部）
   });
 
-  it("抑制窗口过期后 scroll 重新广播（用户滚动照常同步）", () => {
-    const { sch, co, clock } = makeClocked(120);
+  it("突发静默超 quiesceMs 后，下一条 scroll 视为用户滚动、自动解除并广播", () => {
+    const { sch, co, clock } = makeClocked(150);
     const node = document.createElement("div");
     const a = makeFakeAnchor(4);
     const b = makeFakeAnchor(1);
     co.register(a.anchor, "f1", makeSurface(node));
     co.register(b.anchor, "f1");
     clock.t = 0;
-    co.suppressStructural("f1"); // 抑制至 120
-    clock.t = 200; // 已过期
+    co.suppressStructural("f1"); // 最近被吞 = 0
+    clock.t = 200; // 距上次被吞 200 > 150，突发结束
     node.dispatchEvent(new Event("scroll")); // 真正的用户滚动
     sch.flush();
-    expect(b.setVCalls).toEqual([4]); // 过期后正常广播
+    expect(b.setVCalls).toEqual([4]); // 解除抑制后正常广播
   });
 
-  it("窗口内再次 suppressStructural 续杯（覆盖后续帧的结构性 scroll）", () => {
-    const { sch, co, clock } = makeClocked(120);
+  it("自适应突发：连续多条 scroll 间隔都在 quiesce 内全部吞没；之后静默超间隙才广播", () => {
+    const { sch, co, clock } = makeClocked(150);
     const node = document.createElement("div");
-    const a = makeFakeAnchor(4);
+    const a = makeFakeAnchor(1);
     const b = makeFakeAnchor(1);
     co.register(a.anchor, "f1", makeSurface(node));
     co.register(b.anchor, "f1");
     clock.t = 0;
-    co.suppressStructural("f1"); // 抑制至 120
-    clock.t = 100;
-    co.suppressStructural("f1"); // 续杯至 220
-    clock.t = 200;
+    co.suppressStructural("f1"); // 最近被吞 = 0
+    clock.t = 10;
     node.dispatchEvent(new Event("scroll"));
-    sch.flush();
-    expect(b.setVCalls).toEqual([]); // 仍在窗口内，不广播
+    a.setGetV(2);
+    sch.flush(); // 距0 ≤150 吞
+    clock.t = 20;
+    node.dispatchEvent(new Event("scroll"));
+    a.setGetV(3);
+    sch.flush(); // 距10 ≤150 吞
+    clock.t = 30;
+    node.dispatchEvent(new Event("scroll"));
+    a.setGetV(4);
+    sch.flush(); // 距20 ≤150 吞
+    expect(b.setVCalls).toEqual([]); // 突发内全部未广播
+    clock.t = 300;
+    node.dispatchEvent(new Event("scroll"));
+    a.setGetV(9);
+    sch.flush(); // 距30=270>150 解除
+    expect(b.setVCalls).toEqual([9]); // 用户滚动才广播
   });
 
-  it("按 docId 隔离：被抑制的 docId 不广播，其它 docId 照常广播", () => {
+  it("按 docId 隔离：被抑制的 docId 在突发内不广播，其它 docId 照常广播", () => {
     const { sch, co, clock } = makeClocked();
     const nodeF1 = document.createElement("div");
     const nodeF2 = document.createElement("div");
@@ -363,11 +376,12 @@ describe("SyncScrollCoordinator 结构性滚动抑制（T7 修正版：显式 su
     co.register(c.anchor, "f2", makeSurface(nodeF2));
     co.register(d.anchor, "f2");
     clock.t = 0;
-    co.suppressStructural("f1"); // 仅抑制 f1
-    nodeF1.dispatchEvent(new Event("scroll")); // f1 结构性
-    nodeF2.dispatchEvent(new Event("scroll")); // f2 用户滚动
+    co.suppressStructural("f1"); // 仅抑制 f1（最近被吞 f1 = 0）
+    clock.t = 10;
+    nodeF1.dispatchEvent(new Event("scroll")); // f1 结构性（突发内）
+    nodeF2.dispatchEvent(new Event("scroll")); // f2 用户滚动（无抑制）
     sch.flush();
-    expect(b.setVCalls).toEqual([]); // f1 被抑制
+    expect(b.setVCalls).toEqual([]); // f1 被吞没
     expect(d.setVCalls).toEqual([9]); // f2 照常广播
   });
 
@@ -384,11 +398,11 @@ describe("SyncScrollCoordinator 结构性滚动抑制（T7 修正版：显式 su
     expect(b.setVCalls).toEqual([8]); // 绕过抑制
   });
 
-  it("suppressStructural 对未注册 docId 也无副作用（窗口过期后注册不残留抑制）", () => {
-    const { sch, co, clock } = makeClocked(120);
+  it("suppressStructural 对未注册 docId 也无副作用（静默超间隙后注册不残留抑制）", () => {
+    const { sch, co, clock } = makeClocked(150);
     clock.t = 0;
     co.suppressStructural("fX"); // 抑制一个尚未注册的 docId（模拟先抑制后 reconcile）
-    clock.t = 200; // 已过期
+    clock.t = 200; // 距上次被吞 200 > 150，已解除
     const node = document.createElement("div");
     const a = makeFakeAnchor(4);
     const b = makeFakeAnchor(1);
@@ -396,6 +410,23 @@ describe("SyncScrollCoordinator 结构性滚动抑制（T7 修正版：显式 su
     co.register(b.anchor, "fX");
     node.dispatchEvent(new Event("scroll"));
     sch.flush();
-    expect(b.setVCalls).toEqual([4]); // 过期后正常广播，无残留抑制
+    expect(b.setVCalls).toEqual([4]); // 解除后正常广播，无残留抑制
+  });
+
+  it("re-suppress 续杯：抑制中途再次 suppress 重置时间戳，延长突发覆盖", () => {
+    const { sch, co, clock } = makeClocked(150);
+    const node = document.createElement("div");
+    const a = makeFakeAnchor(4);
+    const b = makeFakeAnchor(1);
+    co.register(a.anchor, "f1", makeSurface(node));
+    co.register(b.anchor, "f1");
+    clock.t = 0;
+    co.suppressStructural("f1"); // 最近被吞 = 0
+    clock.t = 100;
+    co.suppressStructural("f1"); // 续杯：最近被吞 = 100
+    clock.t = 200;
+    node.dispatchEvent(new Event("scroll")); // 距100 = 100 ≤150，仍在突发内
+    sch.flush();
+    expect(b.setVCalls).toEqual([]); // 仍被吞没
   });
 });

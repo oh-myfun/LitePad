@@ -270,8 +270,8 @@ export function switchTab(panelId: number, tabId: number): void {
   // 找到旧标签头上。setState 还会把 scrollTop 归零再按新内容长度重排，那几下滚动
   // 不是用户造成的（同步滚动与位置记忆已整体移除，这里只余寻址 / 焦点顺序纪律）。
   // —— 同步滚动 v1：setState 归零重排的滚动若被广播，同 docId 其它视口会「自动跳变 /
-  // 调回顶部」。编辑器此刻仍在旧 docId 下，先抑制旧 docId 的驱动；reconcile（本函数
-  // 末尾）会再抑制新 docId，双保险盖住推迟到下一帧派发的结构性 scroll。
+  // 调回顶部」。编辑器此刻仍在旧 docId 下，先让旧 docId 进入结构性突发抑制；reconcile
+  // （本函数末尾）会再让新 docId 进入抑制，双保险吞没推迟到下一帧派发的结构性 scroll。
   if (shownTab) syncCoordinator.suppressStructural(String(shownTab.docId));
   panel.viewTabId = tabId;
   const view = panel.view; // 闭包里不保留对 `panel.view` 的收窄，先取一份
