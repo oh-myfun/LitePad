@@ -803,8 +803,8 @@ function applyDocResyncFull(
       }).state;
       // 整态重建：只 dispatch changes 的话 tab.state 与视图会不同步（后续切标签立刻串档）
       if (view) {
-        // 同步滚动 v1：整态重建会归零重排，滚动不是用户造成的；让该 docId 进入结构性
-        // 突发抑制，吞没同 docId 其它视口的自动跳变 / 调回顶部。
+        // 同步滚动 v1：整态重建会归零重排，滚动不是用户造成的；给该 docId 上结构性锁，
+        // 吞没同 docId 其它视口的自动跳变 / 调回顶部（锁挂到用户手势或 ~1s 兜底）。
         syncCoordinator.suppressStructural(String(inst.docId));
         view.setState(whole);
       }

@@ -166,8 +166,14 @@ function panelView(i: number): EditorView {
   if (!v) throw new Error(`第 ${i} 块面板的 EditorView 找不到`);
   return v;
 }
-/** 用户滚容器：设 scrollTop 并派发 scroll（T7 修正版后 scroll 直接驱动广播，无需武装）。 */
+/**
+ * 用户滚容器：先派发 wheel（真实用户手势，解除结构性锁）再设 scrollTop 并派发 scroll。
+ * T7 终版后结构性锁只由用户真实手势或 ~1s 兜底解锁（不再靠短窗口/帧计数），故这里须先
+ * 模拟手势，否则同 docId 视口的滚动会被结构性锁误吞、测不出 B152 同步（生产里用户滚动必然
+ * 先有 wheel/pointerdown/keydown 等手势，锁即随之解除）。
+ */
 function setScroll(el: HTMLElement, px: number): void {
+  el.dispatchEvent(new Event("wheel")); // 真实用户滚动前的手势：解除结构性锁
   el.scrollTop = px;
   el.dispatchEvent(new Event("scroll"));
 }

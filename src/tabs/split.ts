@@ -100,6 +100,9 @@ export function splitActivePanel(panelId: number, dir: "h" | "v"): void {
         setSuppressDirty(true);
         view.setState(prev.state);
         setSuppressDirty(false);
+        // 同步滚动 v1：setState 归零重排的滚动不是用户造成的。prev 的 docId 由末尾
+        // rebuildLayout → mountView → reconcileSyncRegistrations 上锁覆盖；此处 tab.docId 也先上锁
+        // （同 docId 在分屏新面板挂载时 reconcile 会再锁），锁挂到用户手势或 ~1s 兜底。
       }
     } else {
       // 原面板空了：清悬挂引用，同步一个新标签过去（异步完成后重建挂载视图）

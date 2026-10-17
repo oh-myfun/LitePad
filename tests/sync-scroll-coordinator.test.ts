@@ -291,43 +291,62 @@ describe("SyncScrollCoordinator scroll 监听驱动广播（T6：滚动落定即
   });
 });
 
-describe("SyncScrollCoordinator 结构性滚动抑制（T7 终版：确定性帧释放，无时间窗）", () => {
+describe("SyncScrollCoordinator 结构性滚动抑制（T7 终版：结构性锁 + 用户手势解锁，无时间窗/无帧计数）", () => {
   function makeSurface(node: EventTarget): CoordinatedSurface {
     return { events: node };
   }
 
-  it("进入抑制后，结构性突发内的 scroll 被吞没、不广播（标签切换/复制/分屏/拖拽重排）", () => {
+  it("上锁后，结构性突发内的 scroll 被吞没、不广播（标签切换/复制/分屏/拖拽重排）", () => {
     const sch = makeScheduler();
-    const co = new SyncScrollCoordinator(sch.schedule); // releaseFrames 默认 2
+    const co = new SyncScrollCoordinator(sch.schedule);
     const node = document.createElement("div");
     const a = makeFakeAnchor(4);
     const b = makeFakeAnchor(1);
     co.register(a.anchor, "f1", makeSurface(node));
     co.register(b.anchor, "f1");
-    co.suppressStructural("f1"); // 结构性操作前进入抑制
-    node.dispatchEvent(new Event("scroll")); // CM6 setState 归零重排产生的 scroll（突发内）
+    co.suppressStructural("f1"); // 结构性操作前上锁
+    node.dispatchEvent(new Event("scroll")); // CM6 setState 归零重排产生的 scroll
     sch.flush();
     expect(b.setVCalls).toEqual([]); // 被吞没，不广播（防自动跳变/调回顶部）
   });
 
-  it("releaseFrames 帧静默后，下一条 scroll 视为用户滚动、自动解除并广播", () => {
+  it("锁只由用户真实手势解除：wheel 之后同 docId 的 scroll 正常广播", () => {
     const sch = makeScheduler();
-    const co = new SyncScrollCoordinator(sch.schedule); // 默认 2 帧
+    const co = new SyncScrollCoordinator(sch.schedule);
     const node = document.createElement("div");
     const a = makeFakeAnchor(4);
     const b = makeFakeAnchor(1);
     co.register(a.anchor, "f1", makeSurface(node));
     co.register(b.anchor, "f1");
     co.suppressStructural("f1");
-    node.dispatchEvent(new Event("scroll")); // 结构性，吞 + 续杯
-    sch.flush(); // 帧1：剩余 2→1
-    sch.flush(); // 帧2：剩余 1→0，解除抑制
+    node.dispatchEvent(new Event("scroll")); // 结构性，吞
+    sch.flush();
+    expect(b.setVCalls).toEqual([]);
+    // 用户开始滚动（滚轮手势）⇒ 锁解除
+    node.dispatchEvent(new Event("wheel"));
     node.dispatchEvent(new Event("scroll")); // 真正的用户滚动
     sch.flush();
-    expect(b.setVCalls).toEqual([4]); // 解除抑制后正常广播
+    expect(b.setVCalls).toEqual([4]); // 解除后正常广播
   });
 
-  it("确定性突发：连续多条 scroll 全部吞没；releaseFrames 帧静默后才广播", () => {
+  it("pointerdown/keydown/touchstart 同样解锁（覆盖各输入源）", () => {
+    const sch = makeScheduler();
+    const co = new SyncScrollCoordinator(sch.schedule);
+    const node = document.createElement("div");
+    const a = makeFakeAnchor(4);
+    const b = makeFakeAnchor(1);
+    co.register(a.anchor, "f1", makeSurface(node));
+    co.register(b.anchor, "f1");
+    co.suppressStructural("f1");
+    for (const ev of ["pointerdown", "keydown", "touchstart"] as const) {
+      node.dispatchEvent(new Event(ev)); // 用户手势 ⇒ 解锁
+      node.dispatchEvent(new Event("scroll")); // 用户滚动
+      sch.flush();
+    }
+    expect(b.setVCalls).toEqual([4, 4, 4]); // 每次手势后用户滚动都广播
+  });
+
+  it("确定性突发：连续多条 scroll 全部吞没；锁不靠静默帧解除", () => {
     const sch = makeScheduler();
     const co = new SyncScrollCoordinator(sch.schedule);
     const node = document.createElement("div");
@@ -336,24 +355,53 @@ describe("SyncScrollCoordinator 结构性滚动抑制（T7 终版：确定性帧
     co.register(a.anchor, "f1", makeSurface(node));
     co.register(b.anchor, "f1");
     co.suppressStructural("f1");
-    node.dispatchEvent(new Event("scroll"));
-    a.setGetV(2);
-    sch.flush(); // 吞, 续杯
-    node.dispatchEvent(new Event("scroll"));
-    a.setGetV(3);
-    sch.flush(); // 吞, 续杯
-    node.dispatchEvent(new Event("scroll"));
-    a.setGetV(4);
-    sch.flush(); // 吞, 续杯
+    for (const v of [2, 3, 4]) {
+      a.setGetV(v);
+      node.dispatchEvent(new Event("scroll"));
+      sch.flush();
+    }
     expect(b.setVCalls).toEqual([]); // 突发内全部未广播
-    sch.flush(); // 静默帧：剩余归零、解除
-    node.dispatchEvent(new Event("scroll"));
-    a.setGetV(9);
-    sch.flush(); // 用户滚动才广播
-    expect(b.setVCalls).toEqual([9]);
   });
 
-  it("按 docId 隔离：被抑制的 docId 在突发内不广播，其它 docId 照常广播", () => {
+  it("gap-immune：结构性 scroll 迟到 > 任意静默空隙仍被吞没（旧版时间窗/帧释放会漏，本版不会）", () => {
+    const sch = makeScheduler();
+    // fallbackFrames 注入为 10：旧模型 releaseFrames=2 会在 2 静默帧后解除并漏出迟到 scroll；
+    // 本模型即便 10 帧静默也不解除（除非用户手势），证明不受空隙影响。
+    const co = new SyncScrollCoordinator(sch.schedule, { fallbackFrames: 10 });
+    const node = document.createElement("div");
+    const a = makeFakeAnchor(4);
+    const b = makeFakeAnchor(1);
+    co.register(a.anchor, "f1", makeSurface(node));
+    co.register(b.anchor, "f1");
+    co.suppressStructural("f1");
+    node.dispatchEvent(new Event("scroll")); // 结构性 scroll（突发内）
+    sch.flush();
+    // 静默若干帧（5 帧，< 10 兜底，但远大于旧模型 2 帧）—— 旧模型此时已解除
+    for (let i = 0; i < 5; i++) sch.flush();
+    // 迟到的结构性 scroll（如 focus / 异步 layout 引发）到了
+    node.dispatchEvent(new Event("scroll"));
+    sch.flush();
+    expect(b.setVCalls).toEqual([]); // 仍被吞没，不漏出广播（gap-immune）
+  });
+
+  it("兜底静默 watchdog：fallbackFrames 帧无任何结构性 scroll 后强制解锁", () => {
+    const sch = makeScheduler();
+    const co = new SyncScrollCoordinator(sch.schedule, { fallbackFrames: 2 });
+    const node = document.createElement("div");
+    const a = makeFakeAnchor(4);
+    const b = makeFakeAnchor(1);
+    co.register(a.anchor, "f1", makeSurface(node));
+    co.register(b.anchor, "f1");
+    co.suppressStructural("f1");
+    // 2 帧静默、无结构性 scroll ⇒ watchdog 强制解锁
+    sch.flush();
+    sch.flush();
+    node.dispatchEvent(new Event("scroll")); // 此刻用户滚动（锁已解除）
+    sch.flush();
+    expect(b.setVCalls).toEqual([4]); // 解锁后正常广播
+  });
+
+  it("按 docId 隔离：被锁的 docId 在突发内不广播，其它 docId 照常广播", () => {
     const sch = makeScheduler();
     const co = new SyncScrollCoordinator(sch.schedule);
     const nodeF1 = document.createElement("div");
@@ -366,77 +414,47 @@ describe("SyncScrollCoordinator 结构性滚动抑制（T7 终版：确定性帧
     co.register(b.anchor, "f1");
     co.register(c.anchor, "f2", makeSurface(nodeF2));
     co.register(d.anchor, "f2");
-    co.suppressStructural("f1"); // 仅抑制 f1
+    co.suppressStructural("f1"); // 仅锁 f1
     nodeF1.dispatchEvent(new Event("scroll")); // f1 结构性（突发内）
-    nodeF2.dispatchEvent(new Event("scroll")); // f2 用户滚动（无抑制）
+    nodeF2.dispatchEvent(new Event("scroll")); // f2 用户滚动（无锁）
     sch.flush();
     expect(b.setVCalls).toEqual([]); // f1 被吞没
     expect(d.setVCalls).toEqual([9]); // f2 照常广播
   });
 
-  it("syncFromDriver 不经抑制（TOC/查找/转到行必须照常同步）", () => {
+  it("syncFromDriver 不经锁（TOC/查找/转到行必须照常同步）", () => {
     const sch = makeScheduler();
     const co = new SyncScrollCoordinator(sch.schedule);
     const node = document.createElement("div");
     const a = makeFakeAnchor(8); // 裸 driver
     const b = makeFakeAnchor(1);
     co.register(b.anchor, "f1", makeSurface(node));
-    co.suppressStructural("f1"); // 即便抑制中，程序化跳转仍广播
+    co.suppressStructural("f1"); // 即便上锁，程序化跳转仍广播
     co.syncFromDriver("f1", a.anchor);
     sch.flush();
-    expect(b.setVCalls).toEqual([8]); // 绕过抑制
+    expect(b.setVCalls).toEqual([8]); // 绕过锁
   });
 
-  it("suppressStructural 对未注册 docId 无副作用（releaseFrames 帧后注册不残留抑制）", () => {
+  it("用户手势解锁只解该 docId：另一 docId 仍锁住", () => {
     const sch = makeScheduler();
     const co = new SyncScrollCoordinator(sch.schedule);
-    co.suppressStructural("fX"); // 抑制一个尚未注册的 docId（模拟先抑制后 reconcile）
-    sch.flush();
-    sch.flush(); // 两帧静默：解除
-    const node = document.createElement("div");
+    const nodeF1 = document.createElement("div");
+    const nodeF2 = document.createElement("div");
     const a = makeFakeAnchor(4);
     const b = makeFakeAnchor(1);
-    co.register(a.anchor, "fX", makeSurface(node));
-    co.register(b.anchor, "fX");
-    node.dispatchEvent(new Event("scroll"));
-    sch.flush();
-    expect(b.setVCalls).toEqual([4]); // 解除后正常广播，无残留抑制
-  });
-
-  it("re-suppress 续杯：抑制中途再次 suppress 重置剩余帧，延长突发覆盖", () => {
-    const sch = makeScheduler();
-    const co = new SyncScrollCoordinator(sch.schedule);
-    const node = document.createElement("div");
-    const a = makeFakeAnchor(4);
-    const b = makeFakeAnchor(1);
-    co.register(a.anchor, "f1", makeSurface(node));
+    const c = makeFakeAnchor(9);
+    const d = makeFakeAnchor(1);
+    co.register(a.anchor, "f1", makeSurface(nodeF1));
     co.register(b.anchor, "f1");
+    co.register(c.anchor, "f2", makeSurface(nodeF2));
+    co.register(d.anchor, "f2");
     co.suppressStructural("f1");
-    sch.flush(); // 帧1：2→1（仍未解除）
-    co.suppressStructural("f1"); // 续杯：重置为 2
-    node.dispatchEvent(new Event("scroll")); // 仍结构性，吞
+    co.suppressStructural("f2");
+    nodeF1.dispatchEvent(new Event("wheel")); // 仅 f1 面板收到用户手势
+    nodeF1.dispatchEvent(new Event("scroll"));
+    nodeF2.dispatchEvent(new Event("scroll")); // f2 仍锁
     sch.flush();
-    expect(b.setVCalls).toEqual([]); // 续杯期间仍被吞没
-  });
-
-  it("releaseFrames 可注入：设为 3 时需 3 帧静默才解除", () => {
-    const sch = makeScheduler();
-    const co = new SyncScrollCoordinator(sch.schedule, { releaseFrames: 3 });
-    const node = document.createElement("div");
-    const a = makeFakeAnchor(4);
-    const b = makeFakeAnchor(1);
-    co.register(a.anchor, "f1", makeSurface(node));
-    co.register(b.anchor, "f1");
-    co.suppressStructural("f1");
-    node.dispatchEvent(new Event("scroll")); // 吞 + 续杯到 3
-    sch.flush();
-    sch.flush(); // 3→2→1，仍未解除
-    node.dispatchEvent(new Event("scroll")); // 仍结构性，吞 + 续杯到 3
-    sch.flush(); // 3→2
-    sch.flush(); // 2→1
-    sch.flush(); // 1→0，解除
-    node.dispatchEvent(new Event("scroll")); // 用户滚动
-    sch.flush();
-    expect(b.setVCalls).toEqual([4]); // 解除后才广播
+    expect(b.setVCalls).toEqual([4]); // f1 解锁后广播
+    expect(d.setVCalls).toEqual([]); // f2 仍被吞没
   });
 });
