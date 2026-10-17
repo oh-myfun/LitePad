@@ -424,6 +424,7 @@ export async function closeTabById(tabId: number): Promise<void> {
 
   const idx = panel.tabs.indexOf(tabId);
   panel.tabs = panel.tabs.filter((id) => id !== tabId);
+  const closedDocId = tabs.get(tabId)?.docId; // 同步滚动 v1：删除前记下被关标签 docId（删除后即不可解析）
   tabs.delete(tabId);
   // B178：本地这份没了（可能是该文档在本窗口的最后一个可见实例），别的窗口要能据此
   // 把自己的同步键收起。放在 tab 真正摘除之后，diff 才能算出「这份文档不再可见」。
@@ -471,6 +472,10 @@ export async function closeTabById(tabId: number): Promise<void> {
   const nextTab = tabs.get(nextId);
   if (panel.view && nextTab) {
     const view = panel.view; // 闭包里不保留对 `panel.view` 的收窄，先取一份
+    // 同步滚动 v1：关闭正在显示的标签后，`setState` 把视图切到相邻标签，归零重排的滚动
+    // 不是用户造成的；让被关标签（当前显示）的 docId 进入结构性突发抑制，吞没同 docId
+    // 其它视口的自动跳变 / 调回顶部。
+    if (closedDocId !== undefined) syncCoordinator.suppressStructural(String(closedDocId));
     // 同 switchTab：`viewTabId` 先认下接班标签再 setState（寻址按它），CM6 的
     // setState 会自己 focus / 重排，scrollTop 归零那几下不是用户造成的。
     panel.viewTabId = nextId;

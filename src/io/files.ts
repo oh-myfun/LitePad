@@ -22,6 +22,7 @@ import {
   type Doc,
   type Tab,
 } from "../core/app-state";
+import { syncCoordinator } from "../sync-scroll/wire";
 import {
   activePanel,
   activeTab,
@@ -108,6 +109,9 @@ function rebuildDocInstances(doc: Doc, text: string, keepCursor = false): void {
     }
     const panel = panels.get(inst.panelId);
     if (panel?.view && panel.viewTabId === inst.tabId) {
+      // 同步滚动 v1：重载会把整份内容 setState 进去，归零重排的滚动不是用户造成的；
+      // 让该 docId 进入结构性突发抑制，吞没同 docId 其它视口的自动跳变 / 调回顶部。
+      syncCoordinator.suppressStructural(String(inst.docId));
       setSuppressDirty(true);
       panel.view.setState(inst.state);
       setSuppressDirty(false);

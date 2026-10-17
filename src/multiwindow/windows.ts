@@ -27,6 +27,7 @@ import {
   setSyncingDocId,
 } from "../core/app-state";
 import { activeTab, instancesOfDoc } from "../core/panels";
+import { syncCoordinator } from "../sync-scroll/wire";
 import {
   DocChangePayload,
   DocClosePayload,
@@ -801,7 +802,12 @@ function applyDocResyncFull(
         changes: { from: 0, to: base.doc.length, insert: text },
       }).state;
       // 整态重建：只 dispatch changes 的话 tab.state 与视图会不同步（后续切标签立刻串档）
-      if (view) view.setState(whole);
+      if (view) {
+        // 同步滚动 v1：整态重建会归零重排，滚动不是用户造成的；让该 docId 进入结构性
+        // 突发抑制，吞没同 docId 其它视口的自动跳变 / 调回顶部。
+        syncCoordinator.suppressStructural(String(inst.docId));
+        view.setState(whole);
+      }
       inst.state = whole;
       // 同步滚动的重落 / 还原逻辑已在重构清除：整段替换后
       // 不再把视图按旧视口位置还回去。
