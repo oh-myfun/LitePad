@@ -46,8 +46,8 @@ import { keyHint } from "../prefs";
 import { newTab as ipcNewTab } from "../ipc/api";
 import { renderPanelTabs } from "./render";
 import { rebuildLayout, disposePanel, freshTextOfDoc, pruneEmptyPanels } from "./lifecycle";
-import { syncCoordinator } from "../sync-scroll/wire";
-import { scheduleSessionSave } from "./deps";
+import { landVisibleSideAtV, readVisibleV } from "../sync-scroll/wire";
+import { applyPanelMode, scheduleSessionSave } from "./deps";
 
 /**
  * 最大化中的面板 id；null = 没有。
@@ -92,17 +92,20 @@ export function splitActivePanel(panelId: number, dir: "h" | "v"): void {
       if (panel.view && prev) {
         // 同 switchTab：CM6 的 setState 会归零 / 重排 scrollTop，`viewTabId` 先认下
         // 接班标签（否则寻址会落到被移走那张头上）。
-        // —— 同步滚动 v1：setState 前先让「被移走标签」的 docId 进入结构性突发抑制，吞没
-        // 归零重排引发的结构性 scroll 自动跳变；末尾 reconcile 会再让新 docId（prev 的 docId）进入抑制。
-        syncCoordinator.suppressStructural(String(tab.docId));
-        panel.viewTabId = prev.tabId;
+        // —— 同步滚动 v1：归零重排不再上锁，改由「同栈扶回位置 + 账本登记」认领。
         const view = panel.view; // 闭包里不保留对 `panel.view` 的收窄，先取一份
+        // 与 switchTab 同纪律：**两端都按当前看得见那一侧**读写。按编辑器读写在预览态的
+        // 标签上是「读回恒 1.0、写回是空操作」（编辑器 display:none）⇒ 位置凭空丢失。
+        const live = readVisibleV(panel);
+        if (live !== null) tab.scrollV = live;
+        tab.state = view.view.state;
+        panel.viewTabId = prev.tabId;
         setSuppressDirty(true);
         view.setState(prev.state);
         setSuppressDirty(false);
-        // 同步滚动 v1：setState 归零重排的滚动不是用户造成的。prev 的 docId 由末尾
-        // rebuildLayout → mountView → reconcileSyncRegistrations 上锁覆盖；此处 tab.docId 也先上锁
-        // （同 docId 在分屏新面板挂载时 reconcile 会再锁），锁挂到用户手势或 ~1s 兜底。
+        view.focus();
+        applyPanelMode(panel);
+        landVisibleSideAtV(panel, prev.scrollV);
       }
     } else {
       // 原面板空了：清悬挂引用，同步一个新标签过去（异步完成后重建挂载视图）
@@ -324,9 +327,18 @@ export function splitPanelWithTab(
     const srcPanel = panels.get(tab.panelId);
     if (srcPanel?.view && srcPanel.viewTabId === tab.tabId) {
       tab.state = srcPanel.view.view.state;
+      // 位置同理：`tab.scrollV` 只在 rebuildLayout / switchTab 时刷新，正在被看的这一格
+      // 可能是「滚了但还没经过那两个口」的状态。复制之前按**当下可见侧**取一次实时 v，
+      // 副本才继承得到用户此刻真正看到的那一处。
+      const live = readVisibleV(srcPanel);
+      if (live !== null) tab.scrollV = live;
     }
     const inst = makeInstance(doc, -1, tab.state.doc.toString());
     inst.viewMode = tab.viewMode;
+    // 同步滚动 v1：副本继承**源当下**的共享坐标 v（上面刚回写过 tab.state，这里回写位置）。
+    // 不带这一句，新格永远从顶部/游标起步（`makeInstance` 的 `scrollV: 1`），而 mountView
+    // 的「扶回可见侧」就只能扶回那个 1 ⇒「打开侧边预览显示的不是同一处」（B259）。
+    inst.scrollV = tab.scrollV;
     const sel = tab.state.selection.main;
     inst.state = inst.state.update({ selection: { anchor: sel.anchor, head: sel.head } }).state;
     const newId = takePanelId();

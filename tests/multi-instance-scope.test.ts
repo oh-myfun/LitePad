@@ -167,13 +167,21 @@ function panelView(i: number): EditorView {
   return v;
 }
 /**
- * 用户滚容器：先派发 wheel（真实用户手势，解除结构性锁）再设 scrollTop 并派发 scroll。
- * T7 终版后结构性锁只由用户真实手势或 ~1s 兜底解锁（不再靠短窗口/帧计数），故这里须先
- * 模拟手势，否则同 docId 视口的滚动会被结构性锁误吞、测不出 B152 同步（生产里用户滚动必然
- * 先有 wheel/pointerdown/keydown 等手势，锁即随之解除）。
+ * 静默摆位：只写 scrollTop、**不派发 scroll**。
+ * 用来给右边铺一个已知起点。派发 scroll 的话右边就成了 driver，会向左边广播并留下一笔
+ * 在途承诺；紧接着再动左边，左边那发就被账本判成「我们没兑现的承诺」而被补写按住 ——
+ * 于是右边永远看不到左边过来（账本的正确行为，但不是这条用例想测的东西）。
+ */
+function placeSilently(el: HTMLElement, px: number): void {
+  el.scrollTop = px;
+}
+
+/**
+ * 用户滚容器：设 scrollTop 并派发 scroll。
+ * 协调器只听 `scroll`（落定后的位置），`wheel` 之类手势事件本身不驱动广播，所以
+ * T7 时代「先派发 wheel 解除结构性锁」那一行已经跟着那把锁一起删掉了。
  */
 function setScroll(el: HTMLElement, px: number): void {
-  el.dispatchEvent(new Event("wheel")); // 真实用户滚动前的手势：解除结构性锁
   el.scrollTop = px;
   el.dispatchEvent(new Event("scroll"));
 }
@@ -205,7 +213,7 @@ describe("B152 开（默认）：同 docId 多实例视口同步", () => {
 
   it("左边滚到 600，右边视口跟着走（同 docId 视口同步，B152 开）", async () => {
     // 先给右边一个明确的落点，再动左边 —— 右边的值「被带过去」才判得出来
-    setScroll(panelScroller(1), RIGHT.scrollTop);
+    placeSilently(panelScroller(1), RIGHT.scrollTop);
     await wait(80);
     setScroll(panelScroller(0), LEFT.scrollTop);
     await wait(150);
@@ -258,7 +266,7 @@ describe("B152 关：同 docId 多实例视口独立（B149 基线在此成立�
   });
 
   it("左边滚到 600，右边视口不许跟着动（B152 关，B149 基线）", async () => {
-    setScroll(panelScroller(1), RIGHT.scrollTop);
+    placeSilently(panelScroller(1), RIGHT.scrollTop);
     await wait(80);
     setScroll(panelScroller(0), LEFT.scrollTop);
     await wait(150);

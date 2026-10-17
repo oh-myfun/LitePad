@@ -28,6 +28,7 @@ import { renderBlocks } from "./markdown/pipeline";
 import { rightNeighborOf } from "./core/layout";
 import { renderPanelOps, renderPanelTabs, splitPanelWithTab, switchTab } from "./tabs";
 import { updateTocDrawer } from "./toc";
+import { landVisibleSideAtV, readVisibleV, reconcileSyncRegistrations } from "./sync-scroll/wire";
 import { scheduleSessionSave } from "./session/session";
 // #413 find 拆出 ⇒ MarkdownDeps 全清，预览查找桥改直接 import（find/findbar 反向只取本模块的
 // PreviewFindSpec 类型——等等，类型已归 find/findbar，这里只取值，无类型回边）
@@ -128,12 +129,24 @@ function toggleViewMode(target?: Tab): void {
   // B190：切回源码后要把焦点给回编辑器（预览态期间它是 `display:none`，拿不住焦点，
   // 焦点早已不在它身上）。先取一份局部引用，避免闭包里再去读 `panel.view`。
   const sourceEditor = panel.view;
+  // 切换**之前**先把「此刻看得见那一侧」的共享坐标 v 记下来。必须赶在换类之前读：
+  // 另一侧现在是 `display:none`，它的 `getV()` 只会报 1.0，读不到用户真正看到的那一行。
+  const keepV = readVisibleV(panel);
   try {
     applyPanelMode(panel);
     // ⚠️ 这一下 focus 的顺序有讲究：必须排在 `applyPanelMode` **之后** —— 之前编辑器
     //     还是 display:none，对隐藏元素 focus 会静默失败（同 B181 那条）。
     // 切到预览不用聚焦 —— 编辑器是隐藏的，focus 无意义且必然失败。
     if (!toPreview) sourceEditor?.focus();
+    // —— 同步滚动 v1 · 跨显隐接力落位 ——————————————————————————————————————
+    // 刚现形的那一侧此刻持有的是它自己的残值：预览被 `display:none` 归零（弹回文档开头），
+    // 源码被上面那发 `focus()` 滚到**光标**那一行 —— 两者都不是用户切走之前看到的那一行，
+    // 这就是「预览模式切换位置跳变」。扶回同一个 v，并同栈向账本认领这一写。
+    if (keepV !== null) landVisibleSideAtV(panel, keepV);
+    // 显隐变了 ⇒ 在册的滚动面也跟着变。这条路以前一次都不重注册：切换后在册的还是
+    // **被藏起来**那一侧，它 `getV()` 恒 1.0、现形时又补发滚动 ⇒ 幽灵锚点把对栏拽走
+    //（B285 那一族）。
+    reconcileSyncRegistrations();
   } finally {
     setSuppressDirty(false);
   }

@@ -27,7 +27,7 @@ import {
   setSyncingDocId,
 } from "../core/app-state";
 import { activeTab, instancesOfDoc } from "../core/panels";
-import { syncCoordinator } from "../sync-scroll/wire";
+import { claimVisibleHere, readVisibleV } from "../sync-scroll/wire";
 import {
   DocChangePayload,
   DocClosePayload,
@@ -112,6 +112,10 @@ function transferSnapshotOf(tabId: number): SatelliteTab | null {
   const text = tab.state.doc.toString();
   const pos = Math.min(tab.state.selection.main.head, text.length);
   const line = tab.state.doc.lineAt(pos);
+  // 位置取**实时**的可见侧（拖走那一刻用户看到的正是它），拿不到才退回 `tab.scrollV`
+  //（`rebuildLayout` / `switchTab` 维护的快照）。
+  const shownPanel = [...panels.values()].find((p) => p.viewTabId === tabId);
+  const scrollV = (shownPanel ? readVisibleV(shownPanel) : null) ?? tab.scrollV;
   return {
     docId: doc.tabId,
     path: doc.path,
@@ -124,6 +128,7 @@ function transferSnapshotOf(tabId: number): SatelliteTab | null {
     viewMode: isMdTab(tab) ? tab.viewMode : "source",
     cursorLine: line.number,
     cursorCol: pos - line.from + 1,
+    scrollV,
     // B169：同步滚动开关一起带走——否则主窗口开着同步、子窗口收下后按钮还是灭的，
     // 两边状态对不上（用户报「子窗口的同步按钮状态和主窗口的要一致」）。
     syncMode: docSyncModes.get(tab.docId) === true,
@@ -304,6 +309,11 @@ function adoptTransferredTabs(incoming: SatelliteTab[], panelId = activePanelId)
     const line = inst.state.doc.line(lineNo);
     const pos = line.from + Math.min(Math.max(0, (st.cursorCol || 1) - 1), line.length);
     inst.state = inst.state.update({ selection: { anchor: pos } }).state;
+    // 跨窗口带过来的共享坐标 `v` 交给下面 `rebuildLayout` → `mountView` 里那次「扶回可见侧」。
+    // 不写这一句，接手窗口只会把视口摆到**光标**那一行（`st.cursorLine`），而发起窗口当下
+    // 显示的是另一处 ⇒「同一份文档两个窗口对不上」（B286 那一族）。
+    // 老 payload（对端版本没这个字段）不动，保持默认 1 ⇒ 行为退回改造前，不会读脏值。
+    if (typeof st.scrollV === "number" && st.scrollV > 1) inst.scrollV = st.scrollV;
     attachTabToPanel(inst, panel);
     adopted.push(inst.tabId);
   }
@@ -716,6 +726,11 @@ function applyRemoteDocChange(payload: DocChangePayload | null): void {
       const p = panels.get(inst.panelId);
       if (p?.view && p.viewTabId === inst.tabId) {
         p.view.view.dispatch({ changes });
+        // 内容高度一变，浏览器就可能按新的 scrollHeight 把 `scrollTop` 裁掉一位。那一发是
+        // **这次远端写入**造成的，不是用户滚的 —— 必须同栈认领，否则协调器把它当用户滚动
+        // 广播给同文档的其它视口（用户报的「多窗口同步位置跳变」正是这一发）。
+        const here = claimVisibleHere(p);
+        if (here !== null) inst.scrollV = here; // 顺手把快照认账，别让下次切标签灌回旧位置
       } else {
         inst.state = inst.state.update({ changes }).state;
       }
@@ -793,8 +808,8 @@ function applyDocResyncFull(
   setSyncingDocId(docId);
   try {
     for (const inst of instances) {
-      const p = panels.get(inst.panelId);
-      const view = p && p.viewTabId === inst.tabId ? p.view : null;
+      const panel = panels.get(inst.panelId);
+      const view = panel && panel.viewTabId === inst.tabId ? panel.view : null;
       // 基准取**挂载中的视图状态**（同 freshTextOfDoc 的口径）：快照与视图万一短暂不一致，
       // 按快照算出的整段替换会把视图拽回旧长度。
       const base = view ? view.view.state : inst.state;
@@ -802,11 +817,15 @@ function applyDocResyncFull(
         changes: { from: 0, to: base.doc.length, insert: text },
       }).state;
       // 整态重建：只 dispatch changes 的话 tab.state 与视图会不同步（后续切标签立刻串档）
-      if (view) {
-        // 同步滚动 v1：整态重建会归零重排，滚动不是用户造成的；给该 docId 上结构性锁，
-        // 吞没同 docId 其它视口的自动跳变 / 调回顶部（锁挂到用户手势或 ~1s 兜底）。
-        syncCoordinator.suppressStructural(String(inst.docId));
+      if (view && panel) {
+        // 同步滚动 v1：整态重建会归零重排，那几下不是用户滚的。不上锁：写完同栈把
+        // 「它就停在这儿也是我造成的」登记进账本，迟到的 scroll 会被认领吞掉。
         view.setState(whole);
+        const here = claimVisibleHere(panel);
+        // 顺手把这份标签的位置快照**认账**成现实：整段换正文之后旧 `scrollV` 指向的行早就
+        // 不是那一处了，留着它，下次 `switchTab` 会把视图硬灌到一个凭旧行号算出来的位置
+        // ⇒「对端纠一次错，我这边切个标签又跳一次」。
+        if (here !== null) inst.scrollV = here;
       }
       inst.state = whole;
       // 同步滚动的重落 / 还原逻辑已在重构清除：整段替换后

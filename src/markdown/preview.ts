@@ -2,6 +2,8 @@ import { convertFileSrc } from "../ipc/api";
 
 import type { MdBlock } from "./pipeline";
 import type { PreviewScrollSurface } from "../sync-scroll/preview";
+import { PreviewScrollAnchor } from "../sync-scroll/preview";
+import { syncCoordinator } from "../sync-scroll/wire";
 
 /**
  * Markdown 预览面板（M3）：
@@ -61,6 +63,12 @@ export class PreviewPane {
 
   /** 增量 patch：逐 index 比对 html，相同复用节点。 */
   setBlocks(list: MdBlock[], options: { enhanced?: boolean } = {}): void {
+    // ⚠️ 必须**进函数就记**原位置：下面那个循环用 `frag.appendChild(old.el)` 复用节点，
+    // 而把子节点搬进 DocumentFragment 就是**从本容器摘走**——root 一空，浏览器立刻把
+    // scrollTop 归零。等到 `replaceChildren` 前再去读，拿到的已经是 0，于是每一次
+    // 「内容没变的重渲染」都会悄悄把预览弹回文档开头（真机验证台 --trace=rerender 实测：
+    // 调用前 top=602、调用后 top=0，而 scrollHeight 前后都是 1814，说明不是裁剪、是没读到）。
+    const prevScroll = this.root.scrollTop;
     // 查找标记先拆干净：被替换的 block 会带走标记，而复用的 block 会把
     // 旧标记留在节点里，导致计数与 DOM 脱节（重放由 main 层在 patch 后进行）
     if (this.findMarks.length > 0) {
@@ -94,15 +102,19 @@ export class PreviewPane {
     // 内容变了，旧的待定位行号已失去意义（行号基准随文本漂移）→ 作废，
     // 否则下一次重渲染会把视图拽回很久以前跳转过的那一行。
     if (contentChanged) this.pendingSyncLine = null;
-    // replaceChildren 会把 scrollTop 清零：先记住原位置，插完立刻恢复。
-    // 少了这一步，任何一次重渲染（编辑、切标签）都会让预览弹回文档开头。
-    const prevScroll = this.root.scrollTop;
+    // replaceChildren 会把 scrollTop 清零：用函数开头记下的原位置恢复。
     this.blocks = next;
     this.root.replaceChildren(frag);
+    // ⚠️ 先读一次 scrollHeight **强制布局**，再写 scrollTop。
+    // 不强制的话，写入发生在「新内容还没定局高度」的那一刻，浏览器会按当时的
+    // scrollHeight 把它裁掉（裁到 0 就是「弹回顶部」），随后高度定局却没人再把位置扶回去。
+    // 这正是真机验证台 S7 抓到的那条：`P0.编辑器 15.10 → 1.00`。
+    void this.root.scrollHeight;
     if (this.pendingSyncLine !== null) {
       this.applySyncToLine(this.pendingSyncLine);
     } else {
       this.root.scrollTop = prevScroll;
+      this.declareOwnScroll();
     }
     if (options.enhanced !== false) void this.enhance();
     // 重排后布局可能变化（图片/公式占位），按 pending 行再定位一次
@@ -417,7 +429,25 @@ export class PreviewPane {
     // 来源，随 B251 一起撤掉 —— B245 的「越切越靠顶」在 ANCHOR = 0 下没有病根可犯）。
     const nextTop = Math.max(0, top);
     this.root.scrollTop = nextTop;
+    // 这一发是我们自己写的（大纲跳转 / 转到行 / 增强后补定位），必须登记：否则它会被
+    // 协调器当作用户滚动广播给同文档的其它视口，把那边也拽过来（拽完那边再回报回来）。
+    this.declareOwnScroll();
     return nextTop;
+  }
+
+  /**
+   * 向同步滚动账本认领「刚刚那次 `scrollTop` 写入是我自己干的」。
+   *
+   * 必须在写入之后的**同一同步调用栈**内调用：浏览器每元素每帧只派发一发 `scroll`、
+   * 读的是那一帧的最终值，所以只要登记赶在那发派发之前，这一发就会被账本吞掉。
+   * 登记的是**当前读回**的 `v`（不是想要的目标行）：这一发的语义是「它停在这儿也是我
+   * 造成的」，位置由内容决定，我们不该替它承诺去哪儿。
+   */
+  private declareOwnScroll(): void {
+    const anchor = new PreviewScrollAnchor(this.scrollSurface());
+    // 这两处都是「刚写完，它停在这儿也是我造成的」⇒ 不假设该落在哪儿，意图与落点同值。
+    const here = anchor.getV();
+    syncCoordinator.expectSurfaceV(this.root, here, here);
   }
 
   /** block 相对预览内容区的偏移（不受 offsetParent 与当前滚动影响）。 */

@@ -21,7 +21,12 @@ import {
   settings,
 } from "../core/app-state";
 import { getPanel, activePanel, panelOfTab, docOf, instancesOfDoc } from "../core/panels";
-import { reconcileSyncRegistrations, syncCoordinator } from "../sync-scroll/wire";
+import {
+  landVisibleSideAtV,
+  readVisibleV,
+  reconcileSyncRegistrations,
+  syncCoordinator,
+} from "../sync-scroll/wire";
 import { countLeaves, leaf, siblingLeafOf, removePanel, updateRatio } from "../core/layout";
 import { logger } from "../core/logger";
 import {
@@ -89,7 +94,21 @@ export function rebuildLayout(): void {
   for (const p of panels.values()) {
     if (p.view) {
       const shown = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
-      if (shown) shown.state = p.view.view.state;
+      if (shown) {
+        shown.state = p.view.view.state;
+        // 位置也得赶在 destroy **之前**取。只回写 state 的话，重建出来的 view 从
+        // `scrollTop = 0` 起步，再被 `mountView` 里那发 `focus()` 按游标滚一位 ——
+        // 用户看到的就是「只是拖走了**没在显示**的另一张标签，这一格的位置却没了」
+        //（B281 / B288；真机台 S17 钉的正是这一步）。
+        // 取的是**当前看得见那一侧**的 v：预览态那一格显示的是预览，它的编辑器早就被
+        // `display:none` 归零了，按编辑器读只会存下一个假的 1.0。
+        const v = readVisibleV(p);
+        if (v !== null) shown.scrollV = v;
+        logger.trace(
+          "sync",
+          `重建前快照 tab=${shown.tabId} 存=${v === null ? "读不到" : v.toFixed(2)}`,
+        );
+      }
       p.view.view.destroy();
       p.view = null;
       p.viewTabId = null;
@@ -223,6 +242,17 @@ export function rebuildLayout(): void {
       if (p.view) attachPasteHandler(p);
 
       applyPanelMode(p);
+      // —— 同步滚动 v1 · 重建后的落位（与 `rebuildLayout` 销毁前那次快照配成一对）————————
+      // 必须排在 `applyPanelMode` 之后：类换完才知道这一格此刻露的是哪一侧，而隐藏那一侧
+      // 写不进去（`display:none` 下 `scrollTop` 恒 0）。扶回之后由 `reconcileSyncRegistrations`
+      // 重挂监听，`landVisibleSideAtV` 已同栈向账本认领，所以这一发不会被广播给同文档的其它视口。
+      //
+      // ⚠️ **无条件**落位（原来这里带着「scrollV 大于一行才写」的守卫）。`scrollV` 的缺省值就是 1，
+      // 于是「这张标签的位置 = 文档顶部」与「这张标签从来没记过位置」在数据里长得一样，
+      // 守卫把它们一起跳过 ⇒ 视口留在 `setState` + `focus()` 带过去的那一格（上一张标签的
+      // 位置，或这张标签的光标行），用户看到的就是「切过去位置不对、也不归位」。
+      // 真机 03:24:59：`切入 tab=2 意图=1.00` 之后没有任何登记，`视图=800`（= 上一张的 20.67 行）。
+      if (tab) landVisibleSideAtV(p, tab.scrollV);
       if (panelId === activePanelId && p.view) {
         updatePositionOf(panelId, p.view.view);
       }
@@ -260,19 +290,37 @@ export function switchTab(panelId: number, tabId: number): void {
   // 调用方可能已改 activeTabId 而视图仍显示旧标签——按 activeTabId 回写
   // 会把视图当前内容写进错误的标签（内容串档/被覆写为空白的同源缺陷）。
   const shownTab = tabs.get(panel.viewTabId ?? panel.activeTabId);
-  if (shownTab) shownTab.state = panel.view.view.state;
+  if (shownTab) {
+    // 换走之前先把**这一份**的视口位置按 `v`（源码行轴，宽度无关）快照下来，
+    // 切回来时原样扶回去。必须在读 `getV()` 之后才写 state：两者取的是同一个当前视图。
+    //
+    // ⚠️ 读的是**当前看得见那一侧**，不是编辑器：预览态的标签里 `.panel-editor` 是
+    // `display:none`（preview.css:635-637），它的 `scrollTop` 恒 0 ⇒ 按编辑器读会把
+    // 「1.0」当成这份标签的位置存起来，切回来自然弹回顶部（真机日志：
+    // `切换 · 还原窗口内 tab=4 模式=preview 视图=0`；台子 S19 钉的就是这一条）。
+    const live = readVisibleV(panel);
+    if (live !== null) shownTab.scrollV = live;
+    shownTab.state = panel.view.view.state;
+    logger.trace(
+      "sync",
+      `切出 tab=${shownTab.tabId} 快照=${live === null ? "读不到" : live.toFixed(2)}`,
+    );
+  }
   const tab = tabs.get(tabId);
   if (!tab) return;
+  // B292 · 方案 A：接班标签跟随**当前共享 v**，而不是它自己那份陈值。被藏着的那张不注册进
+  // 协调器（B285「幽灵锚点」的取舍），所以同步走过的这一段它一个字都没收到，`scrollV` 停在
+  // 上一次被显示时的位置 ⇒ 真机 03:45:43：`切入 tab=3 意图=1.00`，而右栏预览那侧已经在 20.67。
+  // 取不到共享值（同文档没有别的视口在册 / 该文档的同步关着）⇒ 回落到这张标签自己的记忆。
+  const followV = syncCoordinator.currentV(String(tab.docId));
+  if (followV !== null) tab.scrollV = followV;
   panel.activeTabId = tabId;
   // ⚠️ 下面几步的顺序是 B146 二轮改出来的，别再随手调回去。CM6 的 `setState` 末尾
   // 会自己 `focus()`（hadFocus 时）—— 换完文档把光标滚进视野。`viewTabId` 必须
   // **先于** setState 改：视口日志与各处寻址都按它认「视图正显示哪份」，晚一步就
   // 找到旧标签头上。setState 还会把 scrollTop 归零再按新内容长度重排，那几下滚动
   // 不是用户造成的（同步滚动与位置记忆已整体移除，这里只余寻址 / 焦点顺序纪律）。
-  // —— 同步滚动 v1：setState 归零重排的滚动若被广播，同 docId 其它视口会「自动跳变 /
-  // 调回顶部」。编辑器此刻仍在旧 docId 下，先让旧 docId 进入结构性突发抑制；reconcile
-  // （本函数末尾）会再让新 docId 进入抑制，双保险吞没推迟到下一帧派发的结构性 scroll。
-  if (shownTab) syncCoordinator.suppressStructural(String(shownTab.docId));
+  // —— 同步滚动 v1：归零重排的那几下由**下面的位置恢复 + 账本登记**认领，不再上锁。
   panel.viewTabId = tabId;
   const view = panel.view; // 闭包里不保留对 `panel.view` 的收窄，先取一份
   setSuppressDirty(true);
@@ -281,7 +329,6 @@ export function switchTab(panelId: number, tabId: number): void {
   // ⚠️ 焦点必须排在钉位置**之前**（B145）：`focus()` 会把光标滚进视野，而光标往往
   // 不在刚还原出来的可视区里 —— 排在后面等于把刚钉好的位置顶掉。
   view.focus();
-  logViewport("切换 · 还原窗口内", panel);
   applyPanelMode(panel);
   // B181：类切完**再补一次焦点** —— 否则「从预览态的标签切走」之后编辑器没有焦点。
   //
@@ -297,6 +344,24 @@ export function switchTab(panelId: number, tabId: number): void {
   //    `focus()` 内部走 `focusPreventScroll`（`preventScroll: true`，拿不到就回滚滚动栈），
   //    不会把刚钉好的视口位置顶掉；已经聚焦过时它就是个空操作。
   view.focus();
+  // —— 同步滚动 v1 · 位置恢复（必须**同栈**，且排在两次 focus 之后）————————————————
+  // `setState` 把 scrollTop 归零了；这里立刻把该标签自己的 `scrollV` 扶回去。
+  //
+  // 为什么必须同栈：浏览器每个元素每帧只派发**一发** `scroll`，读的是那一帧的最终值。
+  // 同栈里「归零 → 扶回」会被合并成一发、报的是扶回后的位置；一旦把扶回推到下一帧，
+  // 中间那发「归零」就会独立派发出去。而协调器只听 `scroll`，没有登记过的滚动一律算
+  // 用户滚的 ⇒ 同 docId 的其它视口跟着跳回顶部。这就是 B254/B277/B288 那一路的根。
+  //
+  // `landVisibleSideAtV` 扶的是**现在看得见那一侧**，并向账本同栈登记（意图 + 真实落点）。
+  // 两端都必须按可见侧走：只写编辑器的话，接班标签若是预览态，`applyPanelMode` 刚把
+  // `.panel-editor` 藏起来 ⇒ 那一写是空操作，预览停在 `setBlocks` 复原出来的 0 ⇒
+  // 「预览态标签之间互切，每次都没回到自己那一份的位置」（台子 S19 / 真机 视图=0）。
+  landVisibleSideAtV(panel, tab.scrollV);
+  // 「切标签位置跳」的判定证据必须取在**落位之后**。上一版这条诊断打在 `applyPanelMode`
+  // 之前，那会儿这一格还在旧文档旧侧上 ⇒ 预览态恒打 `视图=0`，连续两轮把它读成
+  // 「修复没生效」，其实是探针放错了地方。
+  logViewport("切换 · 落位后", panel);
+  logger.trace("sync", `切入 tab=${tab.tabId} 意图=${tab.scrollV.toFixed(2)}`);
   if (panelId === activePanelId) {
     refreshTitle();
     refreshStatus();
@@ -323,8 +388,7 @@ export function switchTab(panelId: number, tabId: number): void {
   setTimeout(() => {
     view.view.contentDOM.focus({ preventScroll: true });
     view.view.update([]); // B182：同步补 `cm-focused` 类（同 EditorHandle.focus 的收尾）
-    // 同步滚动 v1：结构性锁不在此处解除——setState 异步重排的 scroll 迟到数帧仍会被锁吞没；
-    // 锁只在用户真实手势（wheel/pointerdown/keydown/touchstart）或 ~1s 兜底时解除，见 coordinator。
+    // 同步滚动 v1：这里**只补焦点、绝不允许滚动**（B277）——它会盖掉上面同栈扶好的位置。
   }, 0);
   // 同步滚动 v1：显示的标签（docId）变了，重注册本面板锚点到新文档下。
   reconcileSyncRegistrations();

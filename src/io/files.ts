@@ -22,7 +22,7 @@ import {
   type Doc,
   type Tab,
 } from "../core/app-state";
-import { syncCoordinator } from "../sync-scroll/wire";
+import { claimVisibleHere } from "../sync-scroll/wire";
 import {
   activePanel,
   activeTab,
@@ -109,13 +109,18 @@ function rebuildDocInstances(doc: Doc, text: string, keepCursor = false): void {
     }
     const panel = panels.get(inst.panelId);
     if (panel?.view && panel.viewTabId === inst.tabId) {
-      // 同步滚动 v1：重载会把整份内容 setState 进去，归零重排的滚动不是用户造成的；
-      // 给该 docId 上结构性锁，吞没同 docId 其它视口的自动跳变 / 调回顶部（锁挂到用户手势或 ~1s 兜底）。
-      syncCoordinator.suppressStructural(String(inst.docId));
+      // 同步滚动 v1：重载把整份内容 setState 进去，CM6 会归零重排 —— 那几下不是用户滚的。
+      // 不上锁：写完**同栈**把「它就停在这儿也是我造成的」登记进账本，迟到的那发 scroll
+      // 会被认领吞掉而不是广播给同 docId 的其它视口。
       setSuppressDirty(true);
       panel.view.setState(inst.state);
       setSuppressDirty(false);
       panel.viewTabId = inst.tabId;
+      // 「它就停在这儿也是我造成的」⇒ 认领**看得见那一侧**（隐藏侧恒 0，按它认领会连带吞掉
+      // 现形后被扶到的那一发）。顺带把这份标签的位置快照认账成现实：重载换过正文之后，
+      // 旧 `scrollV` 指向的行已经不是那一处了，留着它下次切标签会硬灌回一个错位置。
+      const here = claimVisibleHere(panel);
+      if (here !== null) inst.scrollV = here;
     }
   }
 }

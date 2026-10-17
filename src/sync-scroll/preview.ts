@@ -6,8 +6,8 @@
  * 行进 30%）。`v` 与编辑器侧的 `v` 同名同义（共享坐标），两侧只在各自边缘把
  * `v` 与像素互转，中间只传 `v`（取代旧像素/v 双轨）。
  *
- * 设计背景见项目记忆 `2026-10-16.md`：单一 `v` 坐标 + 输入事件驱动的协调器，
- * 结构上无回环，不需要 `programmatic` 抑制标志。
+ * 抑制与广播策略全在 `coordinator.ts`（期望账本）：本文件只做换算，
+ * `setV` 把**实际落到**的 v 回报给调用方，被容器边界裁住时回报的就是裁剪后的值。
  *
  * 与 `applySyncToLine` 的一致性（幂等稳定）：
  * - `setV` 正向：块内按「本块顶 → 下一块顶」像素跨度，对 `next.lineStart - lineStart`
@@ -55,8 +55,20 @@ export interface PreviewScrollSurface {
 /** 预览视口的滚动锚点（块内源行插值的薄包装）。 */
 export class PreviewScrollAnchor implements ScrollAnchor {
   private pendingV: number | null = null;
+  /** 上一次 `setV` 是否只是排了重试（没真写像素）。供补定位落定后决定要不要登记。 */
+  private deferred = false;
 
-  constructor(private readonly surface: PreviewScrollSurface) {}
+  constructor(
+    private readonly surface: PreviewScrollSurface,
+    /**
+     * 「我这一写落定了，请记账」——由 `wire.ts` 注入（绑到该滚动面的 `expectSurfaceV`）。
+     *
+     * 为什么需要它：未铺开时 `setV` 不写像素，改记 pending 下一帧重试。那一帧的写入发生在
+     * 协调器 `writeTo` 的调用栈**之外** —— 不登记就是一发无人认领的 `scroll`，会被判成
+     * 用户滚动并广播给同文档的其它视口（协调器的单一写入方纪律在这条异步支线上会断）。
+     */
+    private readonly declare?: (intentV: number, landedV: number) => void,
+  ) {}
 
   getV(): number {
     const blocks = this.surface.blocks();
@@ -89,17 +101,24 @@ export class PreviewScrollAnchor implements ScrollAnchor {
     return last.lineEnd;
   }
 
-  setV(v: number): void {
+  /**
+   * 把预览顶边移到源码行 `v`，返回**实际落到**的 v。
+   * 未铺开时不写像素，改为记 pending 下一帧重试 —— 此时返回入参 `v`：
+   * 那是对协调器账本的**承诺**（「它最终会到这儿」），返回裁剪后的现状会把承诺改写成
+   * 「现在这个错位置」，随后补定位那一发就会被账本判成「没兑现」而被补写拽回去。
+   */
+  setV(v: number): number {
     const blocks = this.surface.blocks();
     if (blocks.length === 0 || this.isUnmeasured(blocks)) {
       this.scheduleRetry(v);
-      return;
+      return v;
     }
     const target = this.blockAtLine(blocks, v);
     if (!target) {
       this.scheduleRetry(v);
-      return;
+      return v;
     }
+    this.deferred = false;
     const idx = blocks.indexOf(target);
     const next = blocks[idx + 1];
     let top = target.top;
@@ -117,16 +136,22 @@ export class PreviewScrollAnchor implements ScrollAnchor {
       }
     }
     this.surface.root.scrollTop = Math.max(0, top);
+    // 读回真实落点：容器比目标短会被浏览器截到 maxScroll，账本必须看到这个事实值。
+    return this.getV();
   }
 
   /** 未铺开：记 pending，rAF 重试（与 PreviewPane.applyPending 同思路）。 */
   private scheduleRetry(v: number): void {
+    this.deferred = true;
     this.pendingV = v;
     this.surface.schedule(() => {
       if (this.pendingV === null) return;
       const retry = this.pendingV;
       this.pendingV = null;
-      this.setV(retry);
+      const landed = this.setV(retry);
+      // 只在**真的写下去了**时登记：还在「没铺开」状态时 setV 又排了一帧，此时登记
+      // 「落点 = 现状」会把下一帧真正的补定位判成用户滚动并广播出去。
+      if (!this.deferred) this.declare?.(retry, landed);
     });
   }
 

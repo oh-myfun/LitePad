@@ -1,49 +1,60 @@
 /**
- * 同步滚动 v1 —— scroll 事件驱动 + 「结构性滚动抑制」的协调器（T3 起；T6 改输入触发
- * 为 scroll 触发；T7 经「用户滚动武装」→「固定窗口」→「自适应突发（墙钟）」→「确定性
- * 帧释放（静默计数）」四版迭代，最终收敛为**本文件的「结构性锁 + 用户手势解锁」**：
- * 彻底去掉一切时间窗 / 帧计数 / 输入猜测（见下方 ⚠️）。
+ * 同步滚动 v1 —— **期望账本**（expectation ledger）协调器。
  *
- * 触发点 = 每个锚点的 `scroll` 事件：滚动**落定后**才触发，天然覆盖滚轮、键盘滚动键、
- * 滚动条拖动、触摸拖动、惯性所有情形，且读到的 `v` 就是最终位置——没有「读在滚动生效
- * 之前」的滞后（原方案根因）。
+ * ## 为什么要把上一版的机制全删掉
+ * 触发点用 `scroll` 事件是对的（它是**落定后**的位置，天然覆盖滚轮 / 键盘滚动键 / 滚动条
+ * 拖动 / 触摸 / 惯性，且没有「读在滚动生效之前」的一帧滞后）。但 `scroll` 是**结果**信号，
+ * 而 `scrollTop` 在协调器之外还有多个写入方（CM6 `setState`、`PreviewPane.setBlocks` 的
+ * 清零+复原、`applySyncToLine`、`applyPending` 的下一帧补定位、位置恢复）。
+ * 从结果信号**反推不出是谁写的**，于是 T7 连出五版「猜时间」的抑制机制：
+ * 用户滚动武装 → 固定窗口 → 自适应突发 → 确定性帧释放 → 结构性锁+手势解锁。
+ * 五版全量门禁 ✅ 却五版真机复现，因为它们都只是在「猜紧 ⇒ 误杀用户滚动（不同步）」与
+ * 「猜松 ⇒ 结构性滚动漏出（自动跳变/调回顶部）」之间挪位置——**同一个 bug 的两面**。
+ * 真机验证台（`scripts/sync-scroll-probe.mjs`）给出的判决性证据是 S7：唯一没登记写入的那个
+ * 点（`setBlocks`），就是唯一还在坏的那个点。
  *
- * 回环用**按锚点 programmatic 守卫**抑制（取代旧全局 suppressSyncPush，不再有脆弱的
- * 全局布尔与振荡）：广播给目标 T 前置 `T.programmatic = true`；T 因本次 setV 产生的
- * scroll 事件清位并跳过（不回灌）。driver 自身不置位 → 它的用户 scroll 正常广播。
- * 置位同时排一个 rAF 安全复位，防「no-op setV 不产生 scroll 事件」导致守卫卡死。
+ * ## 本文件的做法：把「猜」换成「查」
+ * 谁写了 `scrollTop`、打算写到哪，就**先登记**；`scroll` 事件到来时只做一次查表比较。
+ * 每笔承诺记**三个**事实：意图 `expectedV`（要去哪儿）、真实落点 `landedV`（那一写当时
+ * 换算到哪）、以及落点那一刻的**像素** `landedPx`：
+ *   - 没登记过 ⇒ 这一下不是我们写的 ⇒ 用户滚动 ⇒ 广播；
+ *   - 观察值 ≈ 意图 ⇒ 承诺兑现 ⇒ 吞掉，销账；
+ *   - 像素还是我们写下去那一个（±1px）而 v 没到意图 ⇒ 是我们的回声但位置没落地 ⇒ 补写兑现，
+ *     仍不广播；补到上限（`MAX_REASSERT`）还补不上 ⇒ 认账：把当前落点登记成**新基线**
+ *     （不是清空账本——清空会让这一格下一发原地重报的余波被误判成用户滚动，把对栏拽走）；
+ *   - 像素也不是我们那一个 ⇒ **有人把它挪到了我们没写过的地方** ⇒ 用户滚动 ⇒ 广播。
  *
- * ⚠️ 结构性滚动抑制（修自动跳变根因，T7 终版 = 结构性锁 + 用户手势解锁）：
- *   CM6 在标签切换 / 复制标签 / 分屏 / 标签拖拽重挂 / 文件重载 / 多窗整态重建时会 `setState`
- *   把 `scrollTop` 归零并重排（`tabs/lifecycle.ts`/`tabs/split.ts`/`io/files.ts`/
- *   `multiwindow/windows.ts` 注释明载「那几下滚动不是用户造成的」）。这些滚动若被广播，
- *   同 docId 其它视口就会「自动跳变 / 调回顶部」。
- *   —— T7 前四版（用户滚动武装 / 固定窗口 / 墙钟 quiesceMs / 确定性帧释放=静默计数）都
- *      有一个**同类脆弱点**：靠「静默 N 帧 / N 毫秒后判定突发结束」来解除抑制，只要结构性
- *      scroll 在解除后（或两次结构性 scroll 间出现空隙后）迟到，就会漏出广播 → 仍然自动跳变。
- *   —— 终版（本文件）改为**结构性锁**：`suppressStructural(docId)` 给该 docId 上一把锁
- *      （在 `structural` 集合里），期间该 docId 的所有 scroll 被持续吞没；**只有两种途径
- *      解锁**：(1) 用户真实手势（wheel / pointerdown / keydown / touchstart 任一落在
- *      该 docId 的某面板上）—— 用户一旦接管滚动，锁即解开、后续滚动照常同步；(2) 兜底
- *      静默 `fallbackFrames`（默认 60 帧 ≈ 1s）强制解锁，防漏调 / 永不触发手势导致永久
- *      过抑制。完全不靠时间窗 / 帧计数 / 输入猜测，不受异步派发（setState 重排 scroll
- *      迟到数帧）或空隙影响：锁一直挂到用户滚动或 ~1s 兜底，结构性 scroll 无论多晚到都被
- *      吞没。参考 VS Code 预览同步的「程序化滚动标记 + 结构化锁」范式。
+ * ⚠️ 回声的身份为什么必须认像素：`v` 是「源码行号」，而**行号↔像素的换算表本身会迟到**。
+ * CM6 虚拟化下 `setState` 之后高度图只覆盖到视口附近，写入被当时的 `scrollHeight` 裁住；
+ * 高度图细化后**同一个 `scrollTop` 被重新解释成另一个行号**。真机 2026-10-18 02:42 的
+ * `意图=20.25 落点=14.74 obs=20.13`（像素自始至终 702）就是这一形状 —— 只按 v 比，
+ * 自己那一发被判成「别人挪走了」⇒ 一发假广播拽走对栏，还把漂移值存进位置记忆
+ * （每次切标签掉 0.03~0.2 行：23.32→23.10→23.03→23.01），正是「跳变从来没被扶回过、
+ * 最后位置还是错的」那一条。
  *
- * B152 语义（用户 2026-10-16 拍板）：按**文档**记开关（docSyncModes 同口径）。
- * 关 → 仅当前 pane 滚（不广播）；开 → 所有同文件视口（同 docId 的 editor + preview +
- * 其它 tab/面板）同步。`isOn(docId)` 默认 true（与 B152 默认开一致），关掉后 `drive`
- * 直接返回，当前 pane 仍按浏览器原生滚动，仅不做跨 pane 广播。
+ * 最后那条「像素不是我们那一个」也是「到底」一族的判据：意图被容器上限裁住时承诺永远
+ * 兑不了现，若只比意图，此后用户的每一格滚动都会被判成「没兑现」而被补写拽回原地 ——
+ * 表现就是到底以后不再跟手。
+ * 全部判定都是事件驱动的确定性比较：**没有时间窗、没有帧计数、没有看门狗、没有猜输入事件**。
  *
- * 设计背景见项目记忆 `2026-10-16.md` 与 `MEMORY.md` 的「同步滚动新方案」。
+ * ## 账本按「滚动面（DOM 节点）」记，不按锚点对象记
+ * `reconcileSyncRegistrations()` 每次都会重建锚点对象（wire.ts 的既有形状）。若账本挂在锚点
+ * 上，重注册就把在途的承诺洗掉了——那正是上一版 `programmatic` 标志会漏的路径。
+ *
+ * B152 语义（用户 2026-10-16 拍板）：按**文档**记开关。关 → 仅当前 pane 滚（不广播）；
+ * 开 → 所有同文件视口（同 docId 的 editor + preview + 其它 tab/面板）同步。
  */
 
 import type { ScrollAnchor } from "./anchor";
 
-/** 协调器挂监听的可视面（生产传入预览/编辑器滚动容器，测试用 fake）。 */
+/**
+ * 协调器挂监听的可视面（生产传入预览/编辑器的滚动容器，测试用 fake）。
+ * `label` 只给 TRACE 日志用（`P1:preview` 这种），判定逻辑一个字节都不看它。
+ */
 export interface CoordinatedSurface {
-  /** 滚动容器（DOM 节点），协调器挂 `scroll` 监听来感知该 pane 的滚动落点。 */
+  /** 滚动容器（DOM 节点），协调器在它上面挂 `scroll` 监听。 */
   readonly events: EventTarget;
+  readonly label?: string;
 }
 
 /** 已注册的锚点句柄（register 返回，unregister / syncFrom 用）。 */
@@ -56,54 +67,103 @@ export interface AnchorHandle {
 /** 驱动源的最小形状：一个锚点 + 它所属的文档。 */
 type DriverRef = { anchor: ScrollAnchor; docId: string };
 
-/** 协调器可注入的选项（测试用，生产走默认）。 */
-export interface CoordinatorOptions {
+/**
+ * 判定「读到的位置就是承诺的位置」的容差，单位是**源码行**。
+ * 0.05 行 = 一行高的 5%，远高于像素取整/浮点噪声，又远低于用户一次最小滚动步长
+ * （键盘一次 1 行），所以它不会把「用户动了一下」误判成「就是我们写的那一下」。
+ */
+const V_EPS = 0.05;
+
+/**
+ * 一笔承诺最多补写几次。补写是为了**兑现自己说好的位置**（同栈写入被裁剪的场景），
+ * 不是轮询布局：只有真的收到一发对不上的 scroll 才会消耗一次。到上限就承认现状，
+ * 并且仍然不广播——那一下始终不是用户滚的。
+ */
+const MAX_REASSERT = 3;
+
+/**
+ * 判定「这一发就是**我们那次写入**的回声」的像素容差。
+ * 1px 只用来吃掉取整噪声；用户最小的一步（键盘一行 ≈ 16~20px）远在它之外。
+ */
+const PX_EPS = 1;
+
+/** TRACE 日志读数：两位小数足够分出「差一格」与「差半屏」。 */
+const n = (v: number | null): string => (v === null ? "-" : v.toFixed(2));
+
+/**
+ * 滚动面当前的像素读数。读不到（不是元素的面、单测里的假面）⇒ null ⇒ 退回按 v 认回声。
+ *
+ * 为什么非像素不可：`v`（源码行号）**不是跨「布局定局」守恒的量**。CM6 虚拟化下
+ * `setState` 之后高度图只覆盖到视口附近，写入被当时的 scrollHeight 裁住；高度图细化后
+ * **同一个 scrollTop 会被重新解释成另一个行号**。真机 2026-10-18 02:42 就是这一形状：
+ * 登记 `意图=20.25 落点=14.74`，回声 `obs=20.13`（像素一直是 702）⇒ 按 v 比既不是意图
+ * 也不是落点 ⇒ 被判成「别人挪走了」⇒ 假广播拽走对栏 + 漂移值被存进位置记忆（逐次衰减）。
+ */
+function pxOf(target: EventTarget): number | null {
+  const px = (target as { scrollTop?: unknown }).scrollTop;
+  return typeof px === "number" ? px : null;
+}
+
+/** 一个滚动面的账本。 */
+interface Ledger {
+  /** 我们承诺它应该落在这；null = 没有任何在途承诺 ⇒ 下一次滚动算用户滚动。 */
+  expectedV: number | null;
   /**
-   * 兜底静默帧数：某 docId 上了结构性锁却长时间（>`fallbackFrames` 帧）无任何结构性
-   * scroll，强制解锁，防止该 docId 永久过抑制。默认 60（≈1s @60fps）。
+   * 我们上一次写入**真实落到**的位置（`setV` 的回报值 / 登记时的读回值）。
+   * 它和意图不同才是关键：被容器上限裁住、或布局没定局时，回声报的是这个值，
+   * 观察值只要既不是意图也不是它，就只能是别人挪的 ⇒ 用户滚动。
    */
-  fallbackFrames?: number;
+  landedV: number;
+  /**
+   * 上一次写入落定那一刻的**像素**读数（读不到 ⇒ null）。
+   * 回声的身份认它，不认 `landedV`：布局定局前后同一个像素会被换算成不同的 `v`，
+   * 只比 `v` 就会把自己那一发判成用户滚动（见 `pxOf`）。
+   */
+  landedPx: number | null;
+  /** 这笔承诺已经补写过几次（只在「收到对不上的 scroll」时递增）。 */
+  reasserts: number;
 }
 
 interface InternalEntry extends AnchorHandle {
-  /** 本锚点因协调器 setV 产生的 scroll 需被忽略（回声抑制），下次 scroll 清位。 */
-  programmatic?: boolean;
-  handlers?: {
-    onScroll: EventListener;
-    onUserInput: EventListener;
-  };
+  handlers?: { onScroll: EventListener };
 }
 
 /**
- * 同步滚动协调器：把同 docId 的多个锚点（editor/preview/其它 tab/面板）按滚动联动。
+ * 同步滚动协调器：把同 docId 的多个锚点（editor / preview / 其它 tab / 面板）按滚动联动。
  */
 export class SyncScrollCoordinator {
   private readonly entries = new Map<string, Set<InternalEntry>>();
-  /** 按文档的开关（默认 true，与 B152 默认开一致）。 */
+  /** 按文档的 B152 开关（默认开，与 B152 默认值一致）。 */
   private readonly docEnabled = new Map<string, boolean>();
-  /**
-   * 结构性滚动抑制的「锁」集合（按 docId）：存在即表示该 docId 正处于结构性操作中——
-   * 期间持续吞没该 docId 的所有 scroll，直到用户真实手势或兜底静默解锁。
-   */
-  private readonly structural = new Set<string>();
-  /**
-   * 兜底「最后结构性 scroll 帧」计数（按 docId）：上锁期间，每次吞没结构性 scroll
-   * 都重置为 `fallbackFrames`；递减到 0 仍无结构性 scroll 即强制解锁（防永久过抑制）。
-   */
-  private readonly fallbackSeen = new Map<string, number>();
-  private fallbackRafId: number | null = null;
+  /** 账本：按滚动面（DOM 节点）记，不受锚点对象重建影响。 */
+  private readonly ledgers = new Map<EventTarget, Ledger>();
   private rafId: number | null = null;
-  private pendingDriver: DriverRef | null = null;
+  private pendingDriver: DriverRef | InternalEntry | null = null;
   private readonly schedule: (fn: () => void) => number | null;
-  private readonly fallbackFrames: number;
+  /**
+   * TRACE 日志出口，由 `wire.ts` 注入（绑到 `logger.trace("sync", …)`）。
+   *
+   * 走注入而不是直接 import `core/logger`：本模块是纯逻辑（`schedule` 同款纪律），
+   * 单测里没有 Tauri IPC，引日志模块就得给 72 个测试文件补 mock。默认空实现，
+   * 生产把这一步接上 ⇒ 真机报「位置最终不对」时能直接读出**哪条分支把这一发判成了什么**。
+   */
+  private readonly trace: (msg: string) => void;
+  /** 滚动面 → 人类可读标签（只服务日志；账本按 EventTarget 记，不受它影响）。 */
+  private readonly labels = new Map<EventTarget, string>();
 
   constructor(
     schedule: (fn: () => void) => number | null = (fn) => requestAnimationFrame(fn),
-    opts: CoordinatorOptions = {},
+    trace: (msg: string) => void = () => {},
   ) {
     this.schedule = schedule;
-    this.fallbackFrames = opts.fallbackFrames ?? 60;
+    this.trace = trace;
   }
+
+  private labelOf(surface?: EventTarget): string {
+    return (surface && this.labels.get(surface)) || "?";
+  }
+
+  // ───────────────────────────── 开关 ─────────────────────────────
 
   /** B152 开关（按文档）：开 → 所有同文件视口同步；关 → 仅当前 pane（不广播）。 */
   setEnabled(docId: string, on: boolean): void {
@@ -115,42 +175,76 @@ export class SyncScrollCoordinator {
     return this.docEnabled.get(docId) !== false;
   }
 
+  // ───────────────────────────── 账本 ─────────────────────────────
+
+  private ledgerFor(surface: EventTarget): Ledger {
+    let l = this.ledgers.get(surface);
+    if (!l) {
+      l = { expectedV: null, landedV: 1, landedPx: null, reasserts: 0 };
+      this.ledgers.set(surface, l);
+    }
+    return l;
+  }
+
+  /** 该文档当前的共享坐标（B292 · 方案 A）：同步开着且有带滚动面的在册视口时，读它们的 `v`。
+   *  同一个文档的在册视口本来就互相跟齐，所以读第一个就是那个共享值。同步关 / 一个都不在册 ⇒
+   *  null ⇒ 调用方回落到「这张标签自己记的位置」。 */
+  currentV(docId: string): number | null {
+    if (!this.isOn(docId)) return null;
+    for (const e of this.entries.get(docId) ?? []) {
+      if (e.surface) return e.anchor.getV();
+    }
+    return null;
+  }
+
   /**
-   * 结构性滚动抑制：给某 docId 上一把「结构性锁」（确定性、无时间窗）。
-   * 由我们自己的结构性操作调用——`reconcileSyncRegistrations`（重注册每个 docId）、
-   * `switchTab`/`splitActivePanel`/`closeTabById` 在 `setState` 前、以及 `io/files.ts`
-   * 文件重载、`multiwindow/windows.ts` 整态重建——覆盖标签切换 / 复制 / 分屏 / 拖拽重挂 /
-   * 文件重载 / 多窗重建引发的 `setState` 归零重排。锁期间该 docId 的 scroll 被持续吞没，
-   * **不受异步派发（setState 重排 scroll 迟到）或空隙影响**；解锁只靠：(1) 用户真实手势
-   * （wheel/pointerdown/keydown/touchstart 落在该 docId 某面板）或 (2) 兜底静默
-   * `fallbackFrames` 帧强制解锁（防漏调导致永久过抑制）。
+   * **单一写入方登记口**：协调器之外任何要动某个视口 `scrollTop` 的代码，都必须在写完
+   * 之后的**同一同步调用栈内**调这个，把「我打算让它停在哪」和「那一写当时实际落在哪」
+   * 一起登记进来。
+   *
+   * 语义是：随后来自这个滚动面、且位置等于这两个值之一的 scroll 是我们自己写出来的回声，
+   * 别当作用户滚动去广播；落到两者之外的，才是用户。
+   *
+   * ⚠️ `landedV` 必须是**写入之后**读回的值，不能拿 `intentV` 顶替：布局没定局时那发回声
+   * 报的就是 `landedV`，把它记成意图等于把它判成用户滚动 ⇒ 对栏被拽到落点上。
+   * 「落在哪就是哪」的场景（重载 / 整态重建 / 预览重渲染）两个值传同一个即可。
+   *
+   * 需要它的四类调用点（漏一类就复现一条「自动跳变」）：
+   *   - `switchTab()` / `split.ts`：CM6 `setState` 归零 + 位置恢复；
+   *   - `io/files.ts` 重载、`multiwindow/windows.ts` 整态重建：`setState` 归零重排；
+   *   - `PreviewPane.setBlocks()`：`replaceChildren` 清零再同栈复原；
+   *   - `PreviewPane.applySyncToLine()` / `applyPending()`：大纲跳转、图片/增强后的补定位。
+   *
+   * 按**滚动面**寻址（不是按锚点对象）：`reconcileSyncRegistrations()` 每次都新建锚点，
+   * 承诺必须活过那轮重建。登记也不要求这一格当前在册——被 CSS 藏着的格子的显隐时机
+   * 跟账本无关。
    */
-  suppressStructural(docId: string): void {
-    this.structural.add(docId);
-    this.fallbackSeen.set(docId, this.fallbackFrames);
-    this.scheduleFallback();
+  expectSurfaceV(events: EventTarget, intentV: number, landedV: number): void {
+    const l = this.ledgerFor(events);
+    l.expectedV = intentV;
+    l.landedV = landedV;
+    // 像素必须在**登记的这一刻**取：调用方刚写完，此刻的 `scrollTop` 就是那一发的真实落点。
+    l.landedPx = pxOf(events);
+    l.reasserts = 0;
+    this.trace(
+      `登记[${this.labelOf(events)}] 意图=${n(intentV)} 落点=${n(landedV)} 落点px=${n(l.landedPx)}`,
+    );
   }
 
-  /** 兜底静默循环：上锁期间每帧递减 fallbackSeen，归零仍无结构性 scroll 则强制解锁。 */
-  private scheduleFallback(): void {
-    if (this.fallbackRafId !== null) return;
-    this.fallbackRafId = this.schedule(() => {
-      this.fallbackRafId = null;
-      for (const [docId, n] of this.fallbackSeen) {
-        if (n <= 1) {
-          this.fallbackSeen.delete(docId);
-          this.structural.delete(docId); // 强制解锁
-        } else {
-          this.fallbackSeen.set(docId, n - 1);
-        }
-      }
-      if (this.fallbackSeen.size > 0) this.scheduleFallback();
-    });
+  /**
+   * 该滚动面当前的承诺（只读，供验证台与单测断言「此刻有没有在途认领」）。
+   * null = 没有承诺在途 ⇒ 下一发 scroll 会被判成用户滚动。
+   */
+  pendingExpectation(events: EventTarget): number | null {
+    return this.ledgers.get(events)?.expectedV ?? null;
   }
 
-  /** 注册一个锚点（可带可视面，自动挂 scroll + 用户手势监听）。返回句柄供注销/驱动。 */
+  // ───────────────────────────── 注册 ─────────────────────────────
+
+  /** 注册一个锚点（带可视面时自动挂 `scroll` 监听）。返回句柄供注销 / 驱动。 */
   register(anchor: ScrollAnchor, docId: string, surface?: CoordinatedSurface): AnchorHandle {
     const entry: InternalEntry = { anchor, docId, surface };
+    if (surface?.label) this.labels.set(surface.events, surface.label);
     let set = this.entries.get(docId);
     if (!set) {
       set = new Set();
@@ -161,7 +255,7 @@ export class SyncScrollCoordinator {
     return entry;
   }
 
-  /** 注销锚点并解绑其监听。 */
+  /** 注销锚点并解绑监听。**账本不跟着清**：它在途的承诺属于那个 DOM 节点，不属于这个对象。 */
   unregister(handle: AnchorHandle): void {
     const set = this.entries.get(handle.docId);
     if (!set) return;
@@ -175,11 +269,11 @@ export class SyncScrollCoordinator {
     if (set.size === 0) this.entries.delete(handle.docId);
   }
 
+  // ───────────────────────────── 驱动 ─────────────────────────────
+
   /**
-   * 程序化跳转驱动（已注册的锚点）：调用方负责先把 driver 自身滚到目标位置，
-   * 本方法只把 driver 的 `getV()` 广播给同 docId 的其余锚点（不回写 driver）。
-   * 亦可传未注册的 ScrollAnchor，协调器按引用查找其句柄。
-   * 注意：本方法**不经结构性锁**（TOC / 查找 / 转到行是显式用户动作，必须照常同步）。
+   * 程序化跳转驱动（已注册的锚点）：调用方先把 driver 自身滚到目标，本方法只把它的
+   * `getV()` 广播给同 docId 的其余锚点（不回写 driver）。亦可传未注册的 ScrollAnchor。
    */
   syncFrom(target: ScrollAnchor | AnchorHandle): void {
     const entry = this.toEntry(target);
@@ -188,8 +282,6 @@ export class SyncScrollCoordinator {
 
   /**
    * 程序化跳转驱动（直接给锚点，无需先在册）：TOC 点击 / 查找下一处 / 转到行用。
-   * 调用方先让某个 pane 滚到目标（如编辑器 `scrollIntoView`），再调本方法把该 pane
-   * 的 `getV()` 广播给同 docId 的其余锚点（预览 + 其它面板/标签），不回写 driver 自身。
    */
   syncFromDriver(docId: string, driver: ScrollAnchor): void {
     if (!this.isOn(docId)) return;
@@ -199,7 +291,6 @@ export class SyncScrollCoordinator {
 
   private toEntry(target: ScrollAnchor | AnchorHandle): InternalEntry | null {
     if (this.isHandle(target)) {
-      // 校验仍在册（防止用已注销句柄）。
       const set = this.entries.get(target.docId);
       if (set) {
         for (const e of set) if (e.anchor === target.anchor) return e;
@@ -216,7 +307,7 @@ export class SyncScrollCoordinator {
     return (t as AnchorHandle).anchor !== undefined && (t as AnchorHandle).docId !== undefined;
   }
 
-  /** 原始输入触发：driver 滚动，rAF 内广播给同 docId 其余 anchor。 */
+  /** 用户滚动：driver 落定后，下一帧把它的 v 广播给同 docId 的其余锚点。 */
   private drive(entry: InternalEntry): void {
     if (!this.isOn(entry.docId)) return;
     this.pendingDriver = entry;
@@ -233,60 +324,129 @@ export class SyncScrollCoordinator {
       const v = driver.anchor.getV();
       const set = this.entries.get(driver.docId);
       if (!set) return;
+      this.trace(
+        `帧广播 doc=${driver.docId} 驱动=[${this.labelOf(
+          (driver as InternalEntry).surface?.events,
+        )}] v=${n(v)} 目标=${set.size - 1}`,
+      );
       for (const e of set) {
         if (e.anchor === driver.anchor) continue; // 不回写 driver（无回环）
-        if (e.anchor.getV() === v) continue; // 已同位置：不置位、不 setV
-        // 回声抑制：置位 → 本次 setV 引发的 scroll 清位并跳过；
-        // 同时排一个 rAF 安全复位，防 no-op setV 不产生 scroll 事件导致守卫卡死。
-        e.programmatic = true;
-        this.schedule(() => {
-          e.programmatic = false;
-        });
-        e.anchor.setV(v);
+        this.writeTo(e, v);
       }
     });
   }
 
+  /**
+   * 把某个锚点写到 v，并把这一笔（意图 + 真实落点）登记进账本。
+   *
+   * 两个值都要记。只记意图的话，「布局没定局所以还没落地」与「这一格真的到不了那儿」
+   * 在账本里长得一样，于是到底之后用户的每一格滚动都会被判成前者而被补写拽回去。
+   * 真实落点由 `setV` 诚实回报（见 anchor.ts）；意图则不能换成落点，否则内容刚重建时
+   * 承诺会被改写成那个错位置、再也追不上——那正是历代「到底两侧对不齐」的形态。
+   */
+  private writeTo(e: InternalEntry, v: number): number {
+    const before = e.anchor.getV();
+    if (Math.abs(before - v) <= V_EPS) return before;
+    const landed = e.anchor.setV(v);
+    this.trace(
+      `广播写[${this.labelOf(e.surface?.events)}] 目标=${n(v)} 落点=${n(landed)}${
+        Math.abs(landed - v) > V_EPS ? " (被裁/未定局)" : ""
+      }`,
+    );
+    if (e.surface) {
+      // 先写后登记是安全的：`scroll` 按帧异步派发，同一同步栈内不会重入 onScroll；
+      // 而登记必须拿到 setV 的回报值——那才是这一发回声会报上来的位置。
+      const l = this.ledgerFor(e.surface.events);
+      l.expectedV = v;
+      l.landedV = landed;
+      l.landedPx = pxOf(e.surface.events);
+      l.reasserts = 0;
+    }
+    return landed;
+  }
+
+  // ───────────────────────────── 事件 ─────────────────────────────
+
   private attach(entry: InternalEntry): void {
     const s = entry.surface;
     if (!s) return;
-    const events = s.events;
-    // 仅听 `scroll`：滚动落定后才广播，天然覆盖滚轮 / 键盘滚动键 / 滚动条拖动 /
-    // 触摸拖动 / 惯性；读到的是最终位置，无「读在滚动生效前」的滞后。
-    const onScroll: EventListener = () => {
-      if (entry.programmatic) {
-        entry.programmatic = false; // 本次 setV 引发的回声，吞掉（回环抑制）
-        return;
-      }
-      // 结构性锁：docId 上锁期间，本 scroll 视为结构性重排（非用户），吞掉；并刷新兜底计数。
-      if (this.structural.has(entry.docId)) {
-        this.fallbackSeen.set(entry.docId, this.fallbackFrames); // 续杯：结构性 scroll 续命
-        return;
-      }
-      this.drive(entry);
-    };
-    // 用户真实手势（滚轮 / 指针按下 / 键盘 / 触摸开始）落在某面板上 ⇒ 该 docId 解锁：
-    // 用户一旦接管滚动，结构性锁解除，后续滚动照常同步。完全不靠时间窗 / 帧计数。
-    const onUserInput: EventListener = () => {
-      this.structural.delete(entry.docId);
-      this.fallbackSeen.delete(entry.docId);
-    };
-    events.addEventListener("scroll", onScroll);
-    events.addEventListener("wheel", onUserInput);
-    events.addEventListener("pointerdown", onUserInput);
-    events.addEventListener("keydown", onUserInput);
-    events.addEventListener("touchstart", onUserInput);
-    entry.handlers = { onScroll, onUserInput };
+    const onScroll: EventListener = () => this.onScroll(entry);
+    s.events.addEventListener("scroll", onScroll);
+    entry.handlers = { onScroll };
   }
 
   private detach(entry: InternalEntry): void {
     const s = entry.surface;
     if (!s || !entry.handlers) return;
     s.events.removeEventListener("scroll", entry.handlers.onScroll);
-    s.events.removeEventListener("wheel", entry.handlers.onUserInput);
-    s.events.removeEventListener("pointerdown", entry.handlers.onUserInput);
-    s.events.removeEventListener("keydown", entry.handlers.onUserInput);
-    s.events.removeEventListener("touchstart", entry.handlers.onUserInput);
     entry.handlers = undefined;
+  }
+
+  /**
+   * 一发 scroll 的判定。全程只做查表与比较，不猜时间、不猜输入。
+   * 见文件头的三条分支。
+   */
+  private onScroll(entry: InternalEntry): void {
+    const surface = entry.surface?.events;
+    if (!surface) {
+      this.trace(`scroll[${this.labelOf(surface)} doc=${entry.docId}] 判=无滚动面→广播`);
+      this.drive(entry);
+      return;
+    }
+    const label = this.labelOf(surface);
+    const l = this.ledgerFor(surface);
+    if (l.expectedV === null) {
+      this.trace(`scroll[${label}] 判=账本无承诺→用户滚动·广播`);
+      this.drive(entry); // 没人承诺过位置 ⇒ 这一下只能是用户滚的
+      return;
+    }
+    const observed = entry.anchor.getV();
+    const observedPx = pxOf(surface);
+    // **回声的身份认像素**：像素没动 ⇒ 就是我们那一发，哪怕 `v` 因为高度图细化换了读数
+    // （见 `pxOf` 那段：真机 02:42 的 `意图=20.25 落点=14.74 obs=20.13` 全是同一个 702px）。
+    // 读不到像素的面（不是元素 / 单测假面）退回旧的「按 v 比落点」判据，行为不变。
+    const echo =
+      observedPx !== null && l.landedPx !== null
+        ? Math.abs(observedPx - l.landedPx) <= PX_EPS
+        : Math.abs(observed - l.landedV) <= V_EPS;
+    this.trace(
+      `scroll[${label}] obs=${n(observed)} px=${n(observedPx)} 意图=${n(l.expectedV)} 落点=${n(
+        l.landedV,
+      )}/${n(l.landedPx)} 补=${l.reasserts}`,
+    );
+    if (Math.abs(observed - l.expectedV) <= V_EPS) {
+      l.expectedV = null; // 兑现了：这就是我们自己写的那一下
+      l.reasserts = 0;
+      this.trace(`  →判=兑现·吞掉`);
+      return;
+    }
+    if (!echo) {
+      // 既不是承诺的位置、像素也不是我们写下去那一个 ⇒ 有人把它挪走了 ⇒ 用户滚动。
+      // 「到底」那一族靠这条分支保住：意图被容器上限裁住之后承诺永远兑不了现，只比意图
+      // 就会把此后每一格用户滚动都判成「没兑现」而被补写拽回原地（到底以后不再跟手）。
+      l.expectedV = null;
+      l.reasserts = 0;
+      this.trace(`  →判=被人挪走→用户滚动·广播`);
+      this.drive(entry);
+      return;
+    }
+    if (l.reasserts < MAX_REASSERT) {
+      // 还是我们那一发的回声，但位置没落地（内容刚重建、布局还没定局）⇒ 补写兑现。
+      // ⚠️ 意图不动：把承诺改成读回值就等于退回「按现状认账」，而布局滞后时读回值正是
+      // 那个错位置 —— 一改就永远追不上了。落点（v 与像素）跟着更新，供下一发回声比对。
+      l.reasserts++;
+      l.landedV = entry.anchor.setV(l.expectedV);
+      l.landedPx = pxOf(surface);
+      this.trace(`  →判=没兑现·补写#${l.reasserts} 新落点=${n(l.landedV)}/${n(l.landedPx)}`);
+      return;
+    }
+    // 补不上就认账：把**当前落点**登记成新基线，而不是把账本清空。
+    // 清空的话，这一格下一次原地重报的那发（内容高度定局后的余波）就会因为没有承诺
+    // 在途而被判成用户滚动 ⇒ 把对栏一起拽走。认账成基线之后，只有真的动了新位置才算用户。
+    l.expectedV = observed;
+    l.landedV = observed;
+    l.landedPx = observedPx;
+    l.reasserts = 0;
+    this.trace(`  →判=补不上→认账为新基线`);
   }
 }
