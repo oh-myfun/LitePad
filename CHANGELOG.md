@@ -3,6 +3,41 @@
 > 本文件由 `scripts/gen-changelog.sh` 从 Conventional Commit 自动生成，
 > `scripts/release.sh` 发布时自动刷新；版本口径见 `docs/conventions.md`「版本号规则」。
 
+## v0.19.0 — 2026-10-17
+
+本版距 `v0.18.24` 共 17 个提交。
+
+### 新功能
+
+- T4 wire coordinator into main/lifecycle/commands/toc (B152 gate + reroute) `9cf9b4f`
+- v1 input-event-driven coordinator (T3) `82496a2`
+- v1 preview edge converter — PreviewScrollAnchor (T2) `6c54ba7`
+- v1 edge converter — ScrollAnchor interface + EditorScrollAnchor `92d377d`
+
+### 修复
+
+- 改用 scroll 事件驱动，修拖动/触摸/滚轮滞后 `e6ef901`
+- B288⑥ 预览未就绪链式重试 rAF 重落位置（开机关/合并分屏停在顶部） `79dd066`
+
+### 重构
+
+- per-doc B152 enable + syncFromDriver (T3.5) `7ae906b`
+- scrub sync-scroll residue in Rust/docs/tests and de-vacuum two viewport assertions `92bc603`
+- purge sync-scroll residue comments, dead setScrollTop method, and misleading toggle tooltip `d88d65f`
+- remove scroll-guard dead mechanism, preview-to-editor sync hook, and Rust position fields `f4cd0ad`
+- remove sync-scroll scroll-event responses and scroll-position memory plumbing `73d5167`
+- delete sync-scroll module and all call sites (full teardown) `62b3f67`
+- remove sync-scroll dead code leftovers (orphan events, suppressSyncPush, test refs) `f01c08b`
+- clear all sync-scroll logic and tests (step 1; B152 link button kept visible but inert) `7a8290a`
+
+### 其他
+
+- B149 基线改为按 B152 开关——开则同 docId 视口同步，关则独立 `c81c4d2`
+- drop dead recordScroll/pinScrollTop references in fonts.css font-display rationale `de4f74c`
+- drop stale scrollTop reference in Rust session doc comment `2170619`
+
+---
+
 ## v0.18.24 — 2026-10-15
 
 本版距 `v0.18.23` 共 17 个提交。
