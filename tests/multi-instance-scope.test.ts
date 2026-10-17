@@ -166,8 +166,9 @@ function panelView(i: number): EditorView {
   if (!v) throw new Error(`第 ${i} 块面板的 EditorView 找不到`);
   return v;
 }
-/** 用户滚容器：派发一发 scroll，走的正是生产环境那条监听。 */
+/** 用户滚容器：先派发 wheel 武装（T7 后需输入武装才广播），再设 scrollTop 并派发 scroll。 */
 function setScroll(el: HTMLElement, px: number): void {
+  el.dispatchEvent(new Event("wheel")); // 模拟用户滚轮：武装协调器，否则 scroll 被视为结构性
   el.scrollTop = px;
   el.dispatchEvent(new Event("scroll"));
 }
