@@ -449,7 +449,9 @@ describe("跨窗口同步滚动的接线（B297）", () => {
   it("main.ts 那颗键：翻转走唯一写点，并广播给所有窗口", () => {
     expect(boot).toContain("setDocSyncMode(tab.docId, on)");
     expect(boot).toContain("broadcastSyncMode(tab.docId, on)");
-    expect(boot).toContain("pushDocSyncModes();"); // 会话恢复出来的开关推进协调器
+    // B304：不再有「引导末尾整表补推」那一步 —— 它排在 `restoreSession()` 之前推的是空表，
+    // 而恢复那一步直接写 map，两边就分裂了（按钮灭着却还在同步）。
+    expect(boot).not.toMatch(/pushDocSyncModes\s*\(/);
   });
 
   it("开关的缺省只有一处定义，UI 不再自写 === true；提示也不许再说「已禁用」", () => {
@@ -457,7 +459,9 @@ describe("跨窗口同步滚动的接线（B297）", () => {
     expect(chrome).toContain("docSyncOn(tab.docId)");
     expect(chrome).not.toContain("已禁用，仅记录开关状态");
     // 两头都记：只写 true 的话，退出前关着的那份文档重启后自己翻回「开」
-    expect(sessRebuild).toContain("docSyncModes.set(inst.docId, st.syncMode !== false)");
+    expect(sessRebuild).toContain("setDocSyncMode(inst.docId, st.syncMode !== false)");
+    // 而且**只**走那个写点：直接写 map 就是绕过协调器（B304 的真病灶，契约原先还把它钉死了）
+    expect(sessRebuild).not.toMatch(/docSyncModes\.set\(/);
   });
 
   it("宿主不另抄一份：收端直接用生产函数", () => {

@@ -16,7 +16,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { docSyncModes, docSyncOn, panels, tabs, type Panel, type Tab } from "../src/core/app-state";
 import {
   applySharedVFromRemote,
-  pushDocSyncModes,
   readVisibleV,
   setDocSyncMode,
   syncCoordinator,
@@ -285,13 +284,15 @@ describe("开关的口径：默认开、单一真值", () => {
     expect(syncCoordinator.isOn("5")).toBe(true);
   });
 
-  it("会话恢复只写了 map，引导时由 pushDocSyncModes 整表推进协调器（否则按钮灭着却还在同步）", () => {
-    // `session/rebuild.ts` 那一层不该反过来认识协调器，所以它只往 map 里写；没人推的话，
-    // 退出前**关着**的那份文档重启后又回到缺省「开」，用户看到的却是灭的键。
-    docSyncModes.set(12, false);
-    expect(syncCoordinator.isOn("12")).toBe(true); // 还没推：协调器仍按缺省「开」
-    pushDocSyncModes();
-    expect(syncCoordinator.isOn("12")).toBe(false); // 推过之后两边一致
+  it("开关只有一个写点：走 `setDocSyncMode` 就两边一致（B304）", () => {
+    // 这一条原先断言的是「恢复只写 map，引导末尾由 `pushDocSyncModes` 整表补推」—— 用例照着
+    // 设计的说法自己调一遍 push 就绿，看不见真实接线的顺序，而线上那一发排在
+    // `restoreSession()` **之前**、推的是空表 ⇒ 真机 23:23:01「键灭着却还在同步」。
+    // 写点合并之后不需要补推，也就不存在「推早了」这种病。
+    setDocSyncMode(12, false);
+    expect(docSyncModes.get(12)).toBe(false);
+    expect(syncCoordinator.isOn("12"), "只写 map 就会分裂：协调器仍按缺省「开」").toBe(false);
+    setDocSyncMode(12, true);
   });
 });
 

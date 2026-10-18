@@ -222,7 +222,6 @@ import { activePanel, activeTab, instancesOfDoc } from "./core/panels";
 import {
   applyHandedBackPositions,
   collectWindowPositions,
-  pushDocSyncModes,
   setDocSyncMode,
 } from "./sync-scroll/wire";
 import { logViewport } from "./core/viewport";
@@ -943,9 +942,9 @@ async function setupShell(): Promise<void> {
 
   // B71 ④：跨窗口同源正文同步（主窗口与卫星窗口都要装，见 listenDocSync）
   // B297：同一个函数里还装了跨窗口同步滚动的外发口与两条监听（`sync-pos` / `sync-mode`）。
-  // 装监听之前先把会话里恢复出来的开关推进协调器（`pushDocSyncModes`），否则「上次关掉的
-  // 那份文件，重启后又悄悄跟着同步」—— 按钮与行为两套口径。
-  pushDocSyncModes();
+  // 这里**不再**往协调器推开关表（B304）：会话恢复那一步现在走 `setDocSyncMode` 这个唯一
+  // 写点，map 与协调器一起翻 —— 事后补推的那一发排在 `restoreSession()` 之前，推的是空表，
+  // 于是真机出现过「键灭着却还在同步」。
   listenDocSync();
   // B178：引导末尾问一圈「你们都开着哪些可见文档」—— 老窗口把当前集合重播一遍，
   // 新上线的窗口据此补齐 `remoteOpenByWindow`（否则它只知道自己开的，收不到老窗口

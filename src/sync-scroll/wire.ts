@@ -133,21 +133,15 @@ export function faceOf(
 /**
  * B152 开关的**唯一写点**：持久层那份状态与协调器必须一起翻（只改一边就是上一条的病）。
  * 读走 `core/app-state` 的 `docSyncOn`（缺省开，与协调器 `isOn` 同一口径）。
+ *
+ * ⚠️ B304：任何要改开关的地方（会话恢复、点键、跨窗口套用）都必须走这里，别再直接
+ * `docSyncModes.set`。以前额外有一个「引导末尾整表补推」的 `pushDocSyncModes`，它排在
+ * `restoreSession()` 之前、推的是一张还没填的表，恢复那一步又是直接写 map ⇒ 按钮灭着、
+ * 协调器还按缺省「开」在广播（真机 23:23:01）。写点合并之后那个顺序陷阱没有立足点。
  */
 export function setDocSyncMode(docId: number, on: boolean): void {
   docSyncModes.set(docId, on);
   syncCoordinator.setEnabled(String(docId), on);
-}
-
-/**
- * 把 `docSyncModes` 整表推进协调器（引导时调一次，B297）。
- *
- * 会话恢复那一步直接往 map 里写值（`session/rebuild.ts`，那一层不该反过来认识协调器），
- * 而这些值过去没有任何人推给协调器 ⇒「上次关掉的那份文件，重启后又悄悄跟着同步」。
- * 协调器的缺省是开，所以显式记过的每一条都要推。
- */
-export function pushDocSyncModes(): void {
-  for (const [docId, on] of docSyncModes) syncCoordinator.setEnabled(String(docId), on);
 }
 
 /**

@@ -7,7 +7,6 @@
 
 import {
   activePanelId,
-  docSyncModes,
   docs,
   layout,
   panels,
@@ -41,6 +40,7 @@ import {
 import { rebuildLayout } from "../tabs";
 import { refreshAll } from "../ui";
 import { scheduleSessionSave } from "./persist";
+import { setDocSyncMode } from "../sync-scroll/wire";
 import { openTabsInNewWindow, reclaimRemoted } from "../multiwindow/windows";
 
 /** 启动时恢复上次会话：按保存的布局树重建面板，逐个打开文件并恢复光标。失败返回 false（退回空白标签）。 */
@@ -331,10 +331,16 @@ export async function restoreSession(): Promise<boolean> {
     const line = inst.state.doc.line(lineNo);
     const pos = line.from + Math.min(Math.max(0, (st.cursorCol || 1) - 1), line.length);
     inst.state = inst.state.update({ selection: { anchor: pos } }).state;
-    // B169：同步滚动开关（按文档记）→ 写回 `docSyncModes`，同步键点亮态与退出前一致。
+    // B169：同步滚动开关（按文档记）→ 写回开关表，同步键点亮态与退出前一致。
     // B297：两头都要写（以前只写 true）—— 只写 true 的话，退出前**关着**的那份文档重启后
     // 变成没记过，而「没记过 = 开」，于是用户关掉的开关自己翻回去了。
-    docSyncModes.set(inst.docId, st.syncMode !== false);
+    //
+    // ⚠️ B304：必须走 `setDocSyncMode` 这个**唯一写点**，不能像以前那样直接 `docSyncModes.set`。
+    // 真机 23:23:01：盘上每条记录都是 `syncMode:false`，按钮按 `docSyncOn` 显示成灭的，协调器
+    // 却还按缺省「开」在广播（`帧广播 doc=2` + `广播写[P2:editor]`，中间没人点过键）。原因是
+    // `pushDocSyncModes()` 排在 `restoreSession()` 之前，推的是还没填过的空表 —— 两份状态靠
+    // 「事后补推」对齐，顺序一错就分裂；写点合并之后这类顺序陷阱从结构上不存在。
+    setDocSyncMode(inst.docId, st.syncMode !== false);
     // B302：恢复这一格的视口位置。**无条件写**（不变量 4：`scrollV` 缺省就是 1，任何
     // 「大于 1 才写」的守卫都会把「从没记过」一起跳过，视口于是留在 setState 带过去的那一格）。
     inst.scrollV = typeof st.scrollV === "number" ? st.scrollV : (docScrollV.get(inst.docId) ?? 1);

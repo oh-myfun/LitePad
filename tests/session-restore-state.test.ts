@@ -10,8 +10,14 @@ import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { sessionAll } from "./static";
 import { EditorView } from "@codemirror/view";
-import { panels as appPanels, tabs as appTabs, type Panel, type Tab } from "../src/core/app-state";
-import { readVisibleV } from "../src/sync-scroll/wire";
+import {
+  docSyncOn,
+  panels as appPanels,
+  tabs as appTabs,
+  type Panel,
+  type Tab,
+} from "../src/core/app-state";
+import { readVisibleV, syncCoordinator } from "../src/sync-scroll/wire";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -320,6 +326,17 @@ describe("B302 · 位置随会话回来：每格各存各的 + 文档级兜底",
       expect.closeTo(7.75, 5),
       expect.closeTo(1, 5),
     ]);
+  });
+
+  it("恢复出来的开关必须把协调器一起翻（B304：显示关着、行为还在同步）", () => {
+    // 真机 23:23:01：会话里这份文档每一条记录都是 `syncMode:false`，按钮按 `docSyncOn` 显示成
+    // 灭的，而协调器仍按缺省「开」在广播（日志连着 `帧广播 doc=2` + `广播写[P2:editor]`，中间
+    // 没有任何一次「同步滚动 → 开」）。根因：`pushDocSyncModes()` 排在 `restoreSession()` 之前，
+    // 推的是一张还没填的表；而恢复那一步是**直接写 map**，绕过了 `setDocSyncMode` 这个唯一写点。
+    expect(docSyncOn(200), "先确认盘上的值确实读成了关（不是两边都错）").toBe(false);
+    expect(syncCoordinator.isOn("200"), "协调器没跟上 ⇒ 用户看到「键是灭的，两格却还在同步」").toBe(
+      false,
+    );
   });
 
   it("恢复后头一次落盘：没显示的那一格也带着自己的位置下去，不许退成没记过（B303）", async () => {
