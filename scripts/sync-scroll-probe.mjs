@@ -1047,52 +1047,69 @@ const SCENARIOS = [
   },
   {
     id: "S21",
-    name: "落位之后静置（enhance 改变块高）→ v 不许漂（用户：最后还是错的）",
+    name: "落位之后块高才定局（KaTeX / Mermaid 后到）→ v 不许漂（用户：最后还是错的）",
     async: async ({ cdp }) => {
-      // 这条专门验上一轮查到的台子/真机不对称：台子过去把 `enhance()` 关掉，代码高亮 /
-      // mermaid / 图片这些「渲染之后才改变块高」的东西就不存在 ⇒ 落位永远落在已定局的几何上，
-      // 看着对；生产不是这样。宿主现在走真实 enhance 路径（见 renderMarkdownMirror）。
+      // 这条验的是上一轮查到的台子/真机不对称：落位发生在 `setBlocks` 的同一同步栈里，而
+      // `enhance()`（公式、图、代码高亮）是**之后**才替换节点、才把块高定下来的。
+      // 要让它有鉴别力，两件事缺一不可：
+      //   1. fixture 里必须有「渲染之后才变高」的内容，且排在落点**之上**（公式 + mermaid 图，
+      //      见 `tests/fixtures/sync-scroll.md` 的「第一节之二」）；落点之下变高什么都动不了。
+      //   2. 第一次取样**不能等 settle**：`settle()` 要等 v 连续几轮不动才返回，而块高正是在
+      //      落位之后的那一拍定下来的 —— 等过它再比，两次读数天然一样（本条上一版自报
+      //      「无鉴别力」就是这个原因）。
       const { start, credible } = await preScroll(cdp, 900);
       if (!credible) return ["SKIP", `预置滚动不足（${start.editor.v.toFixed(2)} 行）`];
       const panelId = start.editor.panelId;
       const wantV = start.editor.v;
       await cdp.evalJson(`__harness.setMode(${panelId}, "preview")`);
-      const landed = await settle(cdp, { stableRounds: 4, timeoutMs: 6000 });
-      const pv0 = landed.find((x) => x.panelId === panelId)?.preview;
+      const grab = async () =>
+        (await cdp.evalJson(MEASURE)).find((x) => x.panelId === panelId)?.preview ?? null;
+      const pv0 = await grab(); // 落位之后**立刻**读：这时增强还没跑完
       if (!pv0) return ["SKIP", "切到预览后量不到该格预览"];
-      await delay(2500); // 等 enhance 收尾（块高是在这一刻之后才定局的）
-      const after = await settle(cdp, { stableRounds: 4, timeoutMs: 6000 });
-      const pv1 = after.find((x) => x.panelId === panelId)?.preview;
+      // 等几何定局（连续两轮 maxScroll / 块数一致），最多 6s
+      let pv1 = pv0;
+      const t0 = Date.now();
+      for (;;) {
+        await delay(120);
+        const now = await grab();
+        if (!now) return ["SKIP", "静置过程中量不到该格预览"];
+        const stable =
+          Math.abs(now.maxScroll - pv1.maxScroll) <= 1 && now.blockCount === pv1.blockCount;
+        pv1 = now;
+        if (stable || Date.now() - t0 > 6000) break;
+      }
+      // 先问「这条场景**能**失败吗」，再谈它绿不绿。
+      const grew = Math.abs(pv1.maxScroll - pv0.maxScroll) > 1 || pv1.blockCount !== pv0.blockCount;
       await cdp.evalJson(`__harness.setMode(${panelId}, "source")`);
       await settle(cdp, { stableRounds: 3 });
-      if (!pv1) return ["SKIP", "静置后量不到该格预览"];
-      // ⚠️ 先问「这条场景**能**失败吗」，再谈它绿不绿。
-      // `settle()` 本身是等 v 不动才返回的：如果 enhance 改变块高发生在第一次 settle 之前，
-      // 那次 settle 就已经把它等掉了 ⇒ 静置 2.5s 后当然一动不动，绿灯是空的。
-      // 判据：静置期间预览的 `maxScroll`（= scrollHeight − clientHeight）或块数**变过**，
-      // 才说明这一格几何是在落位之后才定局的 ⇒ 这条才有资格报 PASS。
-      const grew = Math.abs(pv1.maxScroll - pv0.maxScroll) > 1 || pv1.blockCount !== pv0.blockCount;
       if (!grew)
         return [
           "SKIP",
-          `无鉴别力：静置 2.5s 期间预览高度没变（maxScroll ${pv0.maxScroll} → ${pv1.maxScroll}，` +
-            `块数 ${pv0.blockCount} → ${pv1.blockCount}）⇒ enhance 没在这条 fixture 上改块高，` +
+          `无鉴别力：落位之后几何没再变过（maxScroll ${pv0.maxScroll} → ${pv1.maxScroll}，` +
+            `块数 ${pv0.blockCount} → ${pv1.blockCount}）⇒ 增强没有在落点后改块高，` +
             `这一发测不出「落位钉在旧几何」，不能当证据`,
         ];
       const drift = Math.abs(pv1.v - pv0.v);
       if (drift > TOL)
         return [
           "FAIL",
-          `落定那一刻在 ${pv0.v.toFixed(2)}（top ${pv0.scrollTop}），静置 2.5s 后漂到 ${pv1.v.toFixed(2)}` +
-            `（top ${pv1.scrollTop}，maxScroll ${pv0.maxScroll} → ${pv1.maxScroll}）` +
-            `⇒ 块高是**之后**才定局的，落位钉在旧几何上 = 最终位置本身就是错的` +
-            `（切走前源在 ${wantV.toFixed(2)}）`,
+          `落定那一刻在 ${pv0.v.toFixed(2)}（top ${pv0.scrollTop}），几何后到定局后漂到 ` +
+            `${pv1.v.toFixed(2)}（top ${pv1.scrollTop}，maxScroll ${pv0.maxScroll} → ${pv1.maxScroll}）` +
+            `⇒ 块高是**之后**才定局的，落位钉在旧几何上 = 最终位置本身就是错的（切走前源在 ${wantV.toFixed(2)}）`,
+        ];
+      const off = Math.abs(pv1.v - wantV);
+      if (off > TOL)
+        return [
+          "FAIL",
+          `几何定局后停在 ${pv1.v.toFixed(2)}，而切走前源码在 ${wantV.toFixed(2)}（差 ${off.toFixed(2)} 行，` +
+            `maxScroll ${pv0.maxScroll} → ${pv1.maxScroll}）⇒ 增强改块高把接力位置冲掉了`,
         ];
       return [
         "PASS",
-        `静置 2.5s 期间几何确实变了（maxScroll ${pv0.maxScroll} → ${pv1.maxScroll}，` +
+        `静置期间几何确实后到定局（maxScroll ${pv0.maxScroll} → ${pv1.maxScroll}，` +
           `块数 ${pv0.blockCount} → ${pv1.blockCount}），v 仍在 ${pv1.v.toFixed(2)}` +
-          `（漂 ${drift.toFixed(2)} 行，容差 ${TOL}）⇒ 落位跟上了后到的块高变化`,
+          `（当场 ${pv0.v.toFixed(2)}，漂 ${drift.toFixed(2)} 行；源 ${wantV.toFixed(2)}）` +
+          `⇒ 落位跟上了后到的块高变化`,
       ];
     },
   },
@@ -1175,6 +1192,590 @@ const SCENARIOS = [
             "FAIL",
             `B 切过去落在 ${onB.toFixed(2)}：既不是共享位置 ${wantV.toFixed(2)}，` +
               `⇒ 隐藏那一张不注册 ⇒ 收不到广播，接班时回到的是自己的陈值`,
+          ];
+    },
+  },
+  {
+    id: "S26",
+    name: "复制标签（同源新开一张）→ 出现那一下就得停在文档当前位置，且不许把整份文档拽到顶部（B293）",
+    async: async ({ cdp }) => {
+      // S25 管的是「切到那张复制品」，这一条管的是「复制品**出现**那一下」：
+      // `duplicateTabToPanel` 直接把新实例设为活动并 `rebuildLayout`，`mountView` 按
+      // `tab.scrollV` 落位，而 `makeInstance` 的缺省是 1 ⇒ 新标签停在顶部。
+      // 更狠的是第二半：这张新标签随即成为该文档**第一个在册视口**，于是 B292 方案 A
+      // （接班跟随共享 v）读到的共享值就变成 1.00 ⇒ 整份文档被拽到顶部。这两步在
+      // `.tmp` 取证里的原始读数：`P0 ed=1.00/0px`、`currentV(X)=1`、切回第一张 `ed=1.00`。
+      const { start, credible } = await preScroll(cdp, 900);
+      if (!credible) return ["SKIP", `预置滚动不足（${start.editor.v.toFixed(2)} 行）`];
+      const panelId = start.editor.panelId;
+      const ids = await cdp.evalJson(`__harness.docIds()`);
+      const wantV = start.editor.v;
+      const shared0 = await cdp.evalJson(`__harness.currentV("${ids.long}")`);
+      const dup = await cdp.evalJson(`__harness.duplicateTab(${panelId}, 0)`);
+      if (typeof dup !== "number" || dup < 0) return ["SKIP", "同源复制这张标签没建起来"];
+      const shown = await settle(cdp, { stableRounds: 4, timeoutMs: 5000 });
+      const onCopy = shown.find((x) => x.panelId === panelId)?.editor?.v ?? null;
+      await cdp.evalJson(`__harness.switchTab(${panelId}, 0)`); // 切回原来那张
+      const back = await settle(cdp, { stableRounds: 4, timeoutMs: 5000 });
+      const onOrigin = back.find((x) => x.panelId === panelId)?.editor?.v ?? null;
+      if (onCopy === null || onOrigin === null) return ["SKIP", "复制/切回过程中量不到这一格"];
+      const problems = [];
+      if (Math.abs(onCopy - wantV) > TOL)
+        problems.push(
+          `复制出来的那张出现在 ${onCopy.toFixed(2)}，文档此刻在 ${wantV.toFixed(2)}` +
+            `${onCopy < 2 ? "（≈顶部 ⇒ 新实例带的是 makeInstance 的缺省 1，没人把共享位置种给它）" : ""}`,
+        );
+      if (Math.abs(onOrigin - wantV) > TOL)
+        problems.push(
+          `切回原来那张落到 ${onOrigin.toFixed(2)}（切走前 ${wantV.toFixed(2)}）` +
+            `⇒ 停在顶部的复制品成了该文档第一个在册视口，方案 A 把整份文档拽上顶`,
+        );
+      return problems.length
+        ? ["FAIL", problems.join("；")]
+        : [
+            "PASS",
+            `出现在 ${onCopy.toFixed(2)}、切回 ${onOrigin.toFixed(2)}（源 ${wantV.toFixed(2)}，抄下时共享 ${shared0?.toFixed(2)}）⇒ 复制那一下没把位置丢掉，也没带塌整份文档`,
+          ];
+    },
+  },
+  {
+    id: "S27",
+    name: "拖标签跨面板 → 搬走的那张与源面板接班的那张都停在共享位置（B293）",
+    async: async ({ cdp }) => {
+      // 取证结论：被拖走的那张**没病**（`rebuildLayout` 销毁前按可见侧快照了它，落位拿到的是
+      // 活值 ⇒ 真机 43.67 原样跟到新格）。病在**源面板接班那一张**：`moveTabToPanel` 把
+      // `src.activeTabId` 指向 `src.tabs[last]`，如果那是一张从没显示过的同源标签，它的
+      // `scrollV` 是陈值 ⇒ 这一格弹到旧位置/顶部，而它随即成为该文档第一个在册视口。
+      // 所以这条判据是「mountView 这条重建路径也要跟随共享 v」，与 `switchTab` 同口径。
+      const { start, credible } = await preScroll(cdp, 900);
+      if (!credible) return ["SKIP", `预置滚动不足（${start.editor.v.toFixed(2)} 行）`];
+      const panelId = start.editor.panelId;
+      const host = start.preview.panelId;
+      const ids = await cdp.evalJson(`__harness.docIds()`);
+      // 1) 造一张「同源、之后一直在旁边没显示过」的标签当接班（复用 duplicateTab 构造器）。
+      const dup = await cdp.evalJson(`__harness.duplicateTab(${panelId}, 0)`);
+      if (typeof dup !== "number" || dup < 0) return ["SKIP", "接班用的同源标签没造出来"];
+      await cdp.evalJson(`__harness.switchTab(${panelId}, 0)`);
+      await settle(cdp, { stableRounds: 3, timeoutMs: 5000 });
+      // 2) 再滚一次：这一步才让「共享位置」与「接班那张记的陈值」分叉。
+      await preScroll(cdp, 600);
+      const now = (await cdp.evalJson(MEASURE)).find((x) => x.panelId === panelId)?.editor;
+      const stale = await cdp.evalJson(`__harness.scrollVOf(${panelId}, ${dup})`);
+      if (!now || now.v < 3)
+        return ["SKIP", `再滚之后这一格在 ${now?.v.toFixed(2) ?? "∅"} ⇒ 前提没立住`];
+      if (stale === null || Math.abs(stale - now.v) <= TOL)
+        return [
+          "SKIP",
+          `无鉴别力：接班那张记的 ${stale?.toFixed(2) ?? "∅"} 与当前共享位置 ${now.v.toFixed(2)} 没分叉 ⇒ 本条判据这一发测不出`,
+        ];
+      const wantV = now.v;
+      const shared0 = await cdp.evalJson(`__harness.currentV("${ids.long}")`);
+      const shownTabId = (await cdp.evalJson(MEASURE))
+        .find((x) => x.panelId === panelId)
+        .tabs.find((t) => t.active).tabId;
+      // 3) 把**正在显示**的那张拖到另一格面板 ⇒ 源面板由那张陈值标签接班。
+      await cdp.evalJson(`__harness.moveTab(${shownTabId}, ${host})`);
+      const after = await settle(cdp, { stableRounds: 4, timeoutMs: 6000 });
+      const srcNow = after.find((x) => x.panelId === panelId)?.editor ?? null;
+      const hostNow = after.find((x) => x.panelId === host)?.editor ?? null;
+      // 还原：拖回去 + 指回第一张，别把改过档的台子留给后续场景。
+      await cdp.evalJson(`__harness.moveTab(${shownTabId}, ${panelId})`);
+      await cdp.evalJson(`__harness.switchTab(${panelId}, 0)`);
+      await settle(cdp, { stableRounds: 3 });
+      if (!srcNow || !hostNow)
+        return [
+          "SKIP",
+          `拖放后量不到（源面板=${srcNow ? "有" : "无"} 目标面板=${hostNow ? "有" : "无"}）`,
+        ];
+      const problems = [];
+      if (Math.abs(srcNow.v - wantV) > TOL)
+        problems.push(
+          `源面板接班那张落在 ${srcNow.v.toFixed(2)}，拖走前文档在 ${wantV.toFixed(2)}，` +
+            `而它自己记的陈值是 ${stale.toFixed(2)}${Math.abs(srcNow.v - stale) <= TOL ? "（= 陈值 ⇒ 重建路径按 tab.scrollV 落位，没人跟随共享 v）" : ""}`,
+        );
+      if (Math.abs(hostNow.v - wantV) > TOL)
+        problems.push(`被拖走的那张落在 ${hostNow.v.toFixed(2)}，拖走前在 ${wantV.toFixed(2)}`);
+      return problems.length
+        ? ["FAIL", problems.join("；")]
+        : [
+            "PASS",
+            `拖走后源面板接班那张 ${srcNow.v.toFixed(2)}、新格里那张 ${hostNow.v.toFixed(2)}，都在共享位置 ${wantV.toFixed(2)} 附近（接班那张自己记的是陈值 ${stale.toFixed(2)}）`,
+          ];
+    },
+  },
+  {
+    id: "S30",
+    name: "跨窗口同步滚动（B297）：只有用户滚动才外发；对端推来的 v 落到本窗口每个面，且绝不回推",
+    async: async ({ cdp }) => {
+      // 真机才有两个窗口与一条 IPC，台子只有一个 JS 上下文 —— 但**两端各自的接线**在真实
+      // 浏览器里全部可判：① 用户滚一格，外发口必须被叫到、且发的是这一帧落定后的 v；
+      // ② 对端推来一个远处的 v，本窗口这一文档的每个可见面（源码侧 + 预览侧）各自换算落到
+      //    同一个 v（**像素必须不同**，相同就说明跨窗口传的是像素而不是共享坐标）；
+      // ③ 这一发远端套用**不得**再外发（回声环在源头就不成立，而不是靠对端认 `from`）；
+      // ④ 这份文档的同步关着 ⇒ 推不动（开关 gate 的是整条联动，收端也算）。
+      // 台子的场景按顺序复用同一页状态 ⇒ 前提自己摆正，并且**认准同一份文档**的两个面：
+      // 上一条留下的是哪份文档、哪一格露着源码侧，都会让判据②把别的文档的预览算进来。
+      const long = Number((await cdp.evalJson(`__harness.docIds()`)).long);
+      const doc = String(long);
+      const snapDocs = async () => {
+        const sn = await cdp.evalJson(MEASURE);
+        const pd = await cdp.evalJson(`__harness.docIdsOfPanels()`);
+        const docOf = (id) => pd.find((x) => x.panelId === id)?.docId;
+        return { sn, docOf };
+      };
+      // 面板的显隐与模式是**上一条场景留下的既态**（S27 收尾把这份文档留在了预览态），
+      // 所以「哪一格露着源码侧」不能靠碰运气找：先把挂着这份文档的面板自己切成源码态，
+      // 量不到就换下一格，全部失败才认 SKIP —— 前置是自己摆的，判据才只测被测的那件事。
+      const hostIds = async () =>
+        (await cdp.evalJson(`__harness.docIdsOfPanels()`))
+          .filter((x) => x.docId === long)
+          .map((x) => x.panelId);
+      let srcHost = null;
+      let candidates = await hostIds();
+      if (!candidates.length) {
+        // 这份文档一格都没有（前面被关掉/拖走了）⇒ 「打开侧边预览」那条路会造出 docLongId 的新格
+        await cdp.evalJson(`__harness.addPreviewPanel()`);
+        await settle(cdp, { stableRounds: 2, timeoutMs: 3000 });
+        candidates = await hostIds();
+      }
+      for (const id of candidates) {
+        await cdp.evalJson(`__harness.setMode(${id}, "source")`);
+        await settle(cdp, { stableRounds: 2, timeoutMs: 3000 });
+        srcHost = (await cdp.evalJson(MEASURE)).find((h) => h.panelId === id && h.editor);
+        if (srcHost) break;
+      }
+      if (!srcHost)
+        return [
+          "SKIP",
+          `把挂着这份文档的面板（${candidates.join(",") || "∅，且开不出新格"}）逐个切到源码态后仍量不到编辑器`,
+        ];
+      const ep = srcHost.panelId;
+      let { sn, docOf } = await snapDocs();
+      let pvHost = sn.find(
+        (h) => h.panelId !== ep && h.preview?.blockCount > 0 && docOf(h.panelId) === long,
+      );
+      if (!pvHost) {
+        // 「打开侧边预览」那条路造的正是这份文档的预览格
+        await cdp.evalJson(`__harness.addPreviewPanel()`);
+        await settle(cdp, { stableRounds: 2, timeoutMs: 3000 });
+        ({ sn, docOf } = await snapDocs());
+        pvHost = sn.find(
+          (h) => h.panelId !== ep && h.preview?.blockCount > 0 && docOf(h.panelId) === long,
+        );
+      }
+      if (!pvHost) return ["SKIP", "造不出同一文档的预览面 ⇒ 判据②（各自换算）测不了"];
+      const pp = pvHost.panelId;
+
+      // 真实滚轮预置：先回顶再向下滚（滚轮位移在已经贴底时是 0，会把「什么都没发生」读成通过）
+      const ed0 = (await cdp.evalJson(MEASURE)).find((x) => x.panelId === ep)?.editor;
+      if (!ed0) return ["SKIP", "切回源码后这一格量不到了"];
+      await cdp.evalJson(`__harness.clearOutbound()`);
+      await cdp.click(ed0.x, ed0.y);
+      await cdp.wheel(ed0.x, ed0.y, -20000);
+      await settle(cdp, { stableRounds: 3 });
+      await cdp.wheel(ed0.x, ed0.y, 700);
+      const after = await settle(cdp, { stableRounds: 4, timeoutMs: 5000 });
+      const edV = after.find((x) => x.panelId === ep)?.editor?.v ?? 0;
+      if (edV < 5)
+        return [
+          "SKIP",
+          `预置滚动不足（${edV.toFixed(2)} 行）⇒ 这一格的布局没定局，本条判据无从下手`,
+        ];
+
+      // ① 用户真的滚了一格 ⇒ 外发口被叫到，且发的是这一帧落定后的 v
+      const count = await cdp.evalJson(`__harness.outboundCount()`);
+      const last = await cdp.evalJson(`__harness.lastOutbound()`);
+      if (!count)
+        return [
+          "SKIP",
+          "无鉴别力：这一发用户滚动一个字节都没外发（外发口没接上，或被账本判成了回声）⇒ 本条测不出跨窗口",
+        ];
+      if (!last || last.docId !== doc || Math.abs(last.v - edV) > TOL)
+        return [
+          "FAIL",
+          `用户滚动外发了 ${JSON.stringify(last)}，而编辑器落定在 ${edV.toFixed(2)}（doc ${doc}）⇒ 发的不是这一帧的位置`,
+        ];
+
+      // ② / ③ 对端推来一个远处的 v
+      const want = Math.max(3, Math.round(edV / 2));
+      await cdp.evalJson(`__harness.clearOutbound()`);
+      await cdp.evalJson(`__harness.applyRemoteV("${doc}", ${want})`);
+      const moved = await settle(cdp, { stableRounds: 4, timeoutMs: 5000 });
+      const ed2 = moved.find((x) => x.panelId === ep)?.editor;
+      const pv2 = moved.find((x) => x.panelId === pp)?.preview;
+      const echoed = await cdp.evalJson(`__harness.outboundCount()`);
+      const problems = [];
+      if (echoed)
+        problems.push(
+          `远端套用之后又外发了 ${echoed} 次 ⇒ 回声环：对端会被推回同一个位置，两个窗口互相拽`,
+        );
+      if (!ed2 || Math.abs(ed2.v - want) > TOL)
+        problems.push(`源码侧落在 ${ed2 ? ed2.v.toFixed(2) : "∅"}，对端要求 ${want}`);
+      if (!pv2 || Math.abs(pv2.v - want) > TOL)
+        problems.push(`预览侧落在 ${pv2 ? pv2.v.toFixed(2) : "∅"}，对端要求 ${want}`);
+      if (ed2 && pv2 && Math.abs(ed2.scrollTop - pv2.scrollTop) < 2)
+        problems.push(
+          `两侧像素一模一样（${Math.round(ed2.scrollTop)}）⇒ 跨窗口传的大概率是像素而不是共享坐标 v`,
+        );
+
+      // ④ 关着 ⇒ 推不动
+      if (!problems.length) {
+        const off = want + 8;
+        await cdp.evalJson(`__harness.setSyncEnabled("${doc}", false)`);
+        await cdp.evalJson(`__harness.applyRemoteV("${doc}", ${off})`);
+        await settle(cdp, { stableRounds: 2, timeoutMs: 2500 });
+        const held = (await cdp.evalJson(MEASURE)).find((x) => x.panelId === ep)?.editor;
+        await cdp.evalJson(`__harness.setSyncEnabled("${doc}", true)`);
+        if (held && Math.abs(held.v - off) <= TOL)
+          problems.push(
+            `这份文档的同步关着，却被对端推到了 ${held.v.toFixed(2)} ⇒ 开关没 gate 收端`,
+          );
+      }
+      return problems.length
+        ? ["FAIL", problems.join("；")]
+        : [
+            "PASS",
+            `用户滚一格 ⇒ 外发 ${count} 次（最后一发 v=${last.v.toFixed(2)}，与落定一致）；` +
+              `对端推 ${want} ⇒ 源码 ${ed2.v.toFixed(2)} / 预览 ${pv2.v.toFixed(2)} 同一个 v、` +
+              `各自像素 ${Math.round(ed2.scrollTop)} vs ${Math.round(pv2.scrollTop)}，回推 0 次；关着推不动`,
+          ];
+    },
+  },
+  {
+    id: "S31",
+    name: "两格宽度不同 ⇒ 按行首字符贴得到同一视觉行、只按 v 贴不到（B300 逐行对齐）",
+    async: async ({ cdp }) => {
+      // 判据本体。`v` 的小数是「该逻辑行**块高**的比例」，而块高随宽度变（软折行数不同）⇒
+      // 两格宽度不同时，同一个 `v` 对应的根本不是同一行文字（真机对照：同一 `v=6.83`，
+      // 主窗口 376px、新窗口 280px ⇒ 用户眼里的「有点偏移」）。这一条把同一份文档摆进两格
+      // 源码、给它们**不同宽度**，然后比两种落法的差别：
+      //   1. 用户滚 A ⇒ 外发必须带数字型的行首字符位置（不带 = 接线没通，红）。
+      //   2. 按 pos 推给 B ⇒ B 顶边所在视觉行必须**包含**那个字符（真 CM6 的 coordsAtPos 比行顶）。
+      //   3. 只按 v 推给 B ⇒ 对照。若这样也贴得到同一行，说明这两档宽度此刻折行没差别
+      //      ⇒ 这一发无鉴别力，如实报 SKIP，不算通过。
+      const snap = () => cdp.evalJson(MEASURE);
+      const docIds = await cdp.evalJson(`__harness.docIdsOfPanels()`);
+      const long = Number((await cdp.evalJson(`__harness.docIds()`)).long);
+      let A = -1;
+      for (const x of docIds.filter((d) => d.docId === long)) {
+        await cdp.evalJson(`__harness.setMode(${x.panelId}, "source")`);
+        await settle(cdp, { stableRounds: 2, timeoutMs: 3000 });
+        if ((await snap()).find((h) => h.panelId === x.panelId)?.editor) {
+          A = x.panelId;
+          break;
+        }
+      }
+      if (A < 0) return ["SKIP", "没有一格能把这份文档摆在源码侧"];
+      const others = (await snap()).filter((h) => h.panelId !== A);
+      if (!others.length) return ["SKIP", "台子只剩一格，摆不出第二档宽度"];
+      const B = others[0].panelId;
+      // 同源复制一张搬到 B（S26/S27 的构造器），两格都源码态显示这份文档
+      const dupIndex = await cdp.evalJson(`__harness.duplicateTab(${A}, 0)`);
+      if (typeof dupIndex !== "number" || dupIndex < 0) return ["SKIP", "同源复制这张标签没建起来"];
+      await settle(cdp, { stableRounds: 3, timeoutMs: 5000 });
+      // ⚠️ `duplicateTab` 返回的是**序号**（host.tabs.length-1），不是 tabId：拿序号当 id 去
+      // moveTab 会搬错一张（本轮就是这么把 doc=2 搬过去的）。按序号把 id 取回来。
+      const aIds = await cdp.evalJson(`__harness.tabIdsOf(${A})`);
+      const copyId = aIds[dupIndex];
+      if (typeof copyId !== "number") return ["SKIP", "按序号取不回复制那张的 tabId"];
+      await cdp.evalJson(`__harness.moveTab(${copyId}, ${B})`);
+      // 搬过去不等于挂上去：显式切到那一张，否则 B 挂的还是它自己原来那份文档
+      const bIds = await cdp.evalJson(`__harness.tabIdsOf(${B})`);
+      const bIdx = bIds.indexOf(copyId);
+      if (bIdx < 0) return ["SKIP", `搬过去那张不在 B 的标签表里（B=${bIds.join(",")}）`];
+      await cdp.evalJson(`__harness.switchTab(${B}, ${bIdx})`);
+      await cdp.evalJson(`__harness.setMode(${B}, "source")`);
+      await cdp.evalJson(`__harness.switchTab(${A}, 0)`);
+      await settle(cdp, { stableRounds: 3, timeoutMs: 6000 });
+      const docsNow = await cdp.evalJson(`__harness.docIdsOfPanels()`);
+      if (docsNow.find((x) => x.panelId === B)?.docId !== long)
+        return [
+          "SKIP",
+          `搬不到第二格：B 现在挂的是 doc=${docsNow.find((x) => x.panelId === B)?.docId ?? "?"}，不是这份文档`,
+        ];
+      // 前提：得有**真的会软折行**的长行，否则两档宽度下同一行都只有一视觉行，按 v 与按
+      // 字符落的是同一行 ⇒ 本条测不出差别（上一发就是这么如实报无鉴别力的）。
+      // 长行由场景自己塞进来、跑完还原（用 fixture 原文再走一次整段纠错那条生产路径）。
+      const NL = String.fromCharCode(10);
+      const longLines =
+        "# 折行试验" +
+        NL +
+        Array.from({ length: 12 }, (_, i) => `第${i}段 ` + "长".repeat(600)).join(NL) +
+        NL;
+      await cdp.evalJson(`__harness.remoteFullResync(${long}, ${JSON.stringify(longLines)})`);
+      await settle(cdp, { stableRounds: 4, timeoutMs: 6000 });
+      // 两档宽度：让同一行在 A 里折得多、在 B 里折得少（这正是跨窗口那种不一致）
+      await cdp.evalJson(`__harness.setWidth(${A}, 620)`);
+      await cdp.evalJson(`__harness.setWidth(${B}, 980)`);
+      await settle(cdp, { stableRounds: 4, timeoutMs: 6000 });
+      const both = await snap();
+      const ea = both.find((x) => x.panelId === A)?.editor;
+      const eb = both.find((x) => x.panelId === B)?.editor;
+      if (!ea || !eb) {
+        await cdp.evalJson(`__harness.setWidth(${A}, 0)`);
+        await cdp.evalJson(`__harness.setWidth(${B}, 0)`);
+        return ["SKIP", "改宽度之后量不到两格的源码面"];
+      }
+      // A 真滚一格（CDP 真实滚轮）⇒ 外发带 pos
+      await cdp.evalJson(`__harness.clearOutbound()`);
+      await cdp.click(ea.x, ea.y);
+      await cdp.wheel(ea.x, ea.y, -12000);
+      await settle(cdp, { stableRounds: 3 });
+      await cdp.wheel(ea.x, ea.y, 900);
+      const after = await settle(cdp, { stableRounds: 4, timeoutMs: 5000 });
+      const vA = after.find((x) => x.panelId === A)?.editor?.v ?? 0;
+      const last = await cdp.evalJson(`__harness.lastOutbound()`);
+      const problems = [];
+      if (vA < 3) {
+        problems.push(`A 预置滚动只有 ${vA.toFixed(2)} 行 ⇒ 前提没立住`);
+      } else if (!last || typeof last.pos !== "number") {
+        problems.push(`外发没带行首字符位置（最后一发 ${JSON.stringify(last)}）⇒ pos 那条接线没通`);
+      }
+      let byPos = null;
+      let byV = null;
+      if (!problems.length) {
+        const pos = last.pos;
+        await cdp.evalJson(`__harness.applyRemoteV("${long}", ${vA}, ${pos})`);
+        await settle(cdp, { stableRounds: 4, timeoutMs: 5000 });
+        byPos = await cdp.evalJson(`__harness.alignReport(${B}, ${pos})`);
+        if (!byPos || byPos.charTop === null) {
+          problems.push("B 格顶边量不到 A 顶边那个字符 ⇒ 判据无从下手");
+        } else if (Math.abs(byPos.charTop) > 2) {
+          problems.push(
+            `按 pos 对齐后，A 顶边那个字符在 B 顶边${byPos.charTop > 0 ? "下方" : "上方"} ${Math.abs(byPos.charTop)}px` +
+              `（B 行首=${byPos.topPos}）⇒ 逐行对齐没生效`,
+          );
+        }
+        // 对照：**只按 v 推**（改造前的行为）。`v` 的小数是「该行块高的比例」，块高随宽度变
+        // ⇒ 顶边落在那一视觉行的中间，用户看到的「有点偏移」就是这个。它要也能把那个字符
+        // 摆到顶边，说明这两档宽度此刻折行没差别 ⇒ 这一发没有鉴别力，如实报 SKIP，不许当通过。
+        await cdp.evalJson(`__harness.applyRemoteV("${long}", ${vA}, null)`);
+        await settle(cdp, { stableRounds: 4, timeoutMs: 5000 });
+        byV = await cdp.evalJson(`__harness.alignReport(${B}, ${pos})`);
+        if (byV && Math.abs(byV.charTop ?? 0) <= Math.abs(byPos?.charTop ?? 0) + 2)
+          problems.push("SKIP-无鉴别力");
+      }
+      // 还原台子：文本、宽度、复制那张都归位，别把改过几何的台子留给后面的场景
+      await cdp.evalJson(`__harness.remoteFullResync(${long}, window.__FIXTURE_LONG__)`);
+      await settle(cdp, { stableRounds: 3, timeoutMs: 5000 });
+      await cdp.evalJson(`__harness.setWidth(${A}, 0)`);
+      await cdp.evalJson(`__harness.setWidth(${B}, 0)`);
+      await cdp.evalJson(`__harness.moveTab(${copyId}, ${A})`);
+      await cdp.evalJson(`__harness.switchTab(${A}, 0)`);
+      await settle(cdp, { stableRounds: 3, timeoutMs: 5000 });
+      if (problems.includes("SKIP-无鉴别力"))
+        return [
+          "SKIP",
+          `无鉴别力：这一档宽度组合下只按 v 也能把 A 顶边那个字符摆到 B 顶边` +
+            ` ⇒ 本条测不出两种落法的差别（byPos=${JSON.stringify(byPos)} byV=${JSON.stringify(byV)}）`,
+        ];
+      return problems.length
+        ? ["FAIL", problems.join("；")]
+        : [
+            "PASS",
+            `用户滚 A（${vA.toFixed(2)} 行）外发带顶边字符 ${last.pos}；推给另一档宽度的 B：` +
+              `按 pos 那个字符就在顶边（偏 ${byPos?.charTop}px，像素 ${byPos?.scrollTop}），` +
+              `只按 v 差 ${byV?.charTop}px（像素 ${byV?.scrollTop}）⇒ 行对齐要靠字符，不靠块高比例`,
+          ];
+    },
+  },
+  {
+    id: "S28",
+    name: "落位链必须自己收口：没布局时先藏起来、收口后一定露出来（B294/B295）",
+    async: async ({ cdp }) => {
+      // 台子平时「一帧就落准」，复现不了真机那条 `落点px=0.00` 的多帧落位。`landWhileHidden`
+      // 用「没有布局盒」把同一个形状造出来（`display:none` 下 `scrollTop` 写入无效 ⇒ 读回恒 1.00），
+      // 于是这条场景同时判两件事：
+      //   1. **链条有没有藏**：写入进不去时必须把那一侧的滚动面藏起来 —— 不藏就是把「顶部 /
+      //      估算位置」这些中间态画给用户看（用户报的「对齐前闪动」）。改动前这条是红的。
+      //   2. **收口守卫**：落准或到重试上限之后必须露出来，绝不能把内容永久藏死（那比闪动更糟）。
+      const first = (await cdp.evalJson(MEASURE)).find((x) => x.editor || x.preview);
+      if (!first) return ["SKIP", "一格都量不到"];
+      const panelId = first.panelId;
+      // 造的形是「编辑器那一侧没有布局盒」⇒ 可见侧必须是编辑器。`setMode` 是**赋值**不是取反
+      // （与 `toggleViewMode` 同形），已经是源码态时这一发无害。
+      await cdp.evalJson(`__harness.setMode(${panelId}, "source")`);
+      await settle(cdp, { stableRounds: 2, timeoutMs: 3000 });
+      const want = 20;
+      const r = await cdp.evalJson(`__harness.landWhileHidden(${panelId}, ${want})`);
+      if (!r) return ["SKIP", "宿主拿不到这一格的滚动面（faceOf 返回 null）"];
+      const after = await settle(cdp, { stableRounds: 3, timeoutMs: 4000 });
+      const vis = await cdp.evalJson(
+        `(() => { const el = document.querySelector('.panel-host[data-panel-id="${panelId}"] .cm-scroller');` +
+          `return el` +
+          ` ? { v: getComputedStyle(el).visibility, top: el.scrollTop, sh: el.scrollHeight, ch: el.clientHeight }` +
+          ` : null; })()`,
+      );
+      const geom = `滚动面 vis=${vis?.v} scrollTop=${vis?.top} scrollHeight=${vis?.sh} clientHeight=${vis?.ch}`;
+      const ed = after.find((x) => x.panelId === panelId)?.editor;
+      if (r.concealed !== "hidden")
+        return [
+          "FAIL",
+          `写入被裁到 0 的那一发没有把滚动面藏起来（concealed="${r.concealed}"）⇒ ` +
+            `顶部/估算位置那些中间态又会被画出来（B295）`,
+        ];
+      if (vis?.v === "hidden")
+        return [
+          "FAIL",
+          `链条走完滚动面仍是 visibility:hidden ⇒ 内容被永久藏死（露出那一发丢了；${geom}）`,
+        ];
+      return [
+        "PASS",
+        `没布局时藏起来重试（concealed=hidden）→ 收口露出（vis=${vis?.v}）→ ` +
+          `停在 ${ed ? ed.v.toFixed(2) : "∅"}（意图 ${want}；${geom}）。` +
+          `判据只有前两条（藏过 / 不许留在藏着）：这里用 display:none 造的「完全没有布局」比真机` +
+          `「刚 new 出来还没量行高」更狠，链条能否在 3 次上限内落准取决于那一格先前量过没有，` +
+          `所以位置只作读数不作判据。`,
+      ];
+    },
+  },
+  {
+    id: "S29",
+    name: "落位链在途时又来一轮结构性重建 ⇒ 位置不许被读成顶部（B296 · 跨窗口双重建）",
+    async: async ({ cdp }) => {
+      // 真机 14:19:51（拖标签出窗口那一下）：主窗口被 `rebuildLayout` 连做两轮，第一轮的落位链
+      // 还在途（DOM 被裁在顶部 0px），第二轮的快照**按 DOM 读** ⇒ 读到 1.00 ⇒ `tab.scrollV` 被
+      // 写坏、新建的元素被扶到文档顶部，随后这个 1.00 原样落进会话。
+      // 判据：链在途时做第二轮重建，那张标签记下的位置不许塌到顶部。
+      // 「快照必须在销毁前读」那条纪律没改 —— 改的是**读谁**：账本（欠着的那个 v）在前，DOM 兜底。
+      const first = (await cdp.evalJson(MEASURE)).find((x) => x.editor || x.preview);
+      if (!first) return ["SKIP", "一格都量不到"];
+      const panelId = first.panelId;
+      await cdp.evalJson(`__harness.setMode(${panelId}, "source")`);
+      await settle(cdp, { stableRounds: 2, timeoutMs: 3000 });
+      const want = 20;
+      const r = await cdp.evalJson(`__harness.landWhileHidden(${panelId}, ${want})`);
+      if (!r) return ["SKIP", "宿主拿不到这一格的滚动面"];
+      if (r.concealed !== "hidden")
+        return [
+          "SKIP",
+          `无鉴别力：那一发第 0 帧就落准、重试链根本没起来 ⇒ 此刻台子测不出「链在途时快照读谁」`,
+        ];
+      const idx = (await cdp.evalJson(MEASURE))
+        .find((x) => x.panelId === panelId)
+        .tabs.findIndex((t) => t.active);
+      // 链正跑着（DOM 还停在被裁到的顶部）—— 立刻再来一轮结构性重建，正是真机那 16ms 内的第二发。
+      await cdp.evalJson(`__harness.rebuildLayout()`);
+      const stored = await cdp.evalJson(`__harness.scrollVOf(${panelId}, ${idx})`);
+      await settle(cdp, { stableRounds: 3, timeoutMs: 4000 });
+      if (stored === null) return ["SKIP", "读不到那张标签的记忆值"];
+      if (stored < want - 5)
+        return [
+          "FAIL",
+          `链在途时第二轮重建把第 ${idx} 张的 scrollV 记成 ${stored.toFixed(2)}` +
+            `（欠的位置是 ${want.toFixed(2)}）⇒ 快照按 DOM 读到了还没落成的投影（B296）`,
+        ];
+      return [
+        "PASS",
+        `链在途时第二轮重建仍记 ${stored.toFixed(2)}（欠的位置 ${want.toFixed(2)}，没塌成顶部）`,
+      ];
+    },
+  },
+  {
+    id: "S32",
+    name: "同步关着 ⇒ 每一格各停各的：副本停在源此刻的位置，切回原来那张不跟到副本的位置（B303）",
+    async: async ({ cdp }) => {
+      // 用户报的「开关关闭时会出现位置同步」在真机日志里的形状是：关着同步，同文档的几格
+      // 全落在同一个值上。串位置有三条**借用**路径：恢复时的文档级兜底、重建/切标签时的
+      // 接班跟随、落盘补建记录不带 seed（下一次的恢复就只能走兜底）。
+      // B303 给跟随加上了开关的闸，副本的位置改由 `duplicateTabToPanel` 显式种 —— 所以这条
+      // 判两件事：
+      //   1. 关着同步，副本出现那一下仍停在源此刻的位置（靠的是显式种子，不是共享值）；
+      //      这一半有鉴别力：摘掉宿主镜像那道种子立刻红（副本停在 1.00）。
+      //   2. 把副本往下滚一段再切回原来那一张，它回到**自己**记着的位置，而不是副本那一个。
+      //      这一半是 `switchTab` 那道 `currentV` 闸的回归护栏；`sharedVByDoc` 新加的闸只挡
+      //      「落位链在途时」那一发（要第二格同文档 + 链正跑着才碰得到），台子此刻造不出那个
+      //      形，所以它由 `sync-scroll-sequence` 的序列契约钉，不在这条的判据里。
+      //
+      // ⚠️ 台子的 setup 自己搭（不走 `preScroll`）：前面那条场景会把视口留在没布局好的格子上，
+      // 借它的状态就得到「预置滚动 1.00 ⇒ SKIP」，判据永远跑不到（本轮就是这么空转了一发）。
+      const long = Number((await cdp.evalJson(`__harness.docIds()`)).long);
+      const onOff = async () => {
+        await cdp.evalJson(`__harness.setSyncEnabled("${long}", true)`);
+      };
+      const docAt = await cdp.evalJson(`__harness.docIdsOfPanels()`);
+      let A = -1;
+      for (const x of docAt.filter((d) => d.docId === long)) {
+        await cdp.evalJson(`__harness.setMode(${x.panelId}, "source")`);
+        await settle(cdp, { stableRounds: 2, timeoutMs: 3000 });
+        if ((await cdp.evalJson(MEASURE)).find((h) => h.panelId === x.panelId)?.editor) {
+          A = x.panelId;
+          break;
+        }
+      }
+      if (A < 0) return ["SKIP", "没有一格能把这份文档摆在源码侧"];
+      await cdp.evalJson(`__harness.setSyncEnabled("${long}", false)`);
+      // 先回顶再向下滚（同 `preScroll` 的纪律：不留「滚不动 ⇒ 谁都没动 ⇒ 恒真」那个形状）
+      const at = (await cdp.evalJson(MEASURE)).find((x) => x.panelId === A)?.editor;
+      if (!at) {
+        await onOff();
+        return ["SKIP", "摆在源码侧那一格量不到编辑器"];
+      }
+      await cdp.click(at.x, at.y);
+      await cdp.wheel(at.x, at.y, -20000);
+      await settle(cdp, { stableRounds: 3, timeoutMs: 4000 });
+      await cdp.wheel(at.x, at.y, 700);
+      await settle(cdp, { stableRounds: 4, timeoutMs: 5000 });
+      const wantV = (await cdp.evalJson(MEASURE)).find((x) => x.panelId === A)?.editor?.v ?? null;
+      if (wantV === null || wantV < 5) {
+        await onOff();
+        return ["SKIP", `预置滚动不足（${wantV === null ? "量不到" : wantV.toFixed(2)} 行）`];
+      }
+      const dup = await cdp.evalJson(`__harness.duplicateTab(${A}, 0)`);
+      if (typeof dup !== "number" || dup < 0) {
+        await onOff();
+        return ["SKIP", "同源复制这张标签没建起来"];
+      }
+      const vOf = async () =>
+        (await cdp.evalJson(MEASURE)).find((x) => x.panelId === A)?.editor?.v ?? null;
+      // ⚠️ 每一次读数之前都要先 `settle`：滚轮与落位都是跨帧才落定的，读完就判会拿到「还没
+      // 动」的那一帧（上一版就是这样：副本停在源的位置、滚那一下却读成没滚 ⇒ 自己报无鉴别力）。
+      await settle(cdp, { stableRounds: 4, timeoutMs: 5000 });
+      const onCopy = await vOf();
+      const snap = (await cdp.evalJson(MEASURE)).find((x) => x.panelId === A);
+      if (!snap?.editor || onCopy === null) {
+        await onOff();
+        return ["SKIP", "复制之后量不到这一格的编辑器"];
+      }
+      await cdp.click(snap.editor.x, snap.editor.y);
+      await cdp.wheel(snap.editor.x, snap.editor.y, 600); // 往下：与顶部（落位坏掉的那个形状）分得开
+      await settle(cdp, { stableRounds: 4, timeoutMs: 5000 });
+      const onCopy2 = await vOf();
+      await cdp.evalJson(`__harness.switchTab(${A}, 0)`); // 切回原来那一张
+      await settle(cdp, { stableRounds: 4, timeoutMs: 5000 });
+      const onOrigin = await vOf();
+      await onOff();
+      if (onCopy2 === null || onOrigin === null) return ["SKIP", "滚副本或切回那一下量不到这一格"];
+      const problems = [];
+      if (Math.abs(onCopy - wantV) > TOL)
+        problems.push(
+          `副本出现在 ${onCopy.toFixed(2)}，源此刻在 ${wantV.toFixed(2)}` +
+            `⇒ 关着同步时没人给它种位置（` +
+            `${onCopy < 2 ? "≈顶部：mountView 的跟随已被开关挡下，而 duplicateTabToPanel 那道显式种子没了）" : "不是顶部，那就是种子取错了地方）"}`,
+        );
+      const gap = Math.abs(onCopy2 - wantV);
+      if (gap < 3)
+        return [
+          "SKIP",
+          `无鉴别力：副本只停在 ${onCopy2.toFixed(2)}，与源的 ${wantV.toFixed(2)} 差 ${gap.toFixed(2)} 行` +
+            `⇒ 切回原来那张时「跟自己的」与「跟副本的」分不出来`,
+        ];
+      if (Math.abs(onOrigin - onCopy2) <= TOL)
+        problems.push(
+          `切回原来那张落到 ${onOrigin.toFixed(2)} = 副本的位置（它自己记的是 ${wantV.toFixed(2)}）` +
+            `⇒ 开关关着还在串位置（接班跟随没问开关）`,
+        );
+      else if (Math.abs(onOrigin - wantV) > TOL)
+        problems.push(
+          `切回原来那张落在 ${onOrigin.toFixed(2)}，既不是副本的 ${onCopy2.toFixed(2)} 也不是它自己的` +
+            ` ${wantV.toFixed(2)}（差 ${(onOrigin - wantV).toFixed(2)} 行）⇒ 落位取到了别处的值`,
+        );
+      return problems.length
+        ? ["FAIL", problems.join("；")]
+        : [
+            "PASS",
+            `副本停在 ${onCopy.toFixed(2)}（源 ${wantV.toFixed(2)}）→ 滚到 ${onCopy2.toFixed(2)} → ` +
+              `切回原来那张回自己那份 ${onOrigin.toFixed(2)} ⇒ 关着同步各停各的，副本仍停在源的位置`,
           ];
     },
   },

@@ -10,7 +10,7 @@
 import {
   MAIN_WINDOW_LABEL,
   activePanelId,
-  docSyncModes,
+  docSyncOn,
   docs,
   panels,
   remotedTabs,
@@ -19,8 +19,10 @@ import {
   windowKind,
   windowLabel,
   type Doc,
+  type Panel,
   type Tab,
 } from "../core/app-state";
+import { readVisibleV } from "../sync-scroll/wire";
 import { activePanel, getPanel, instancesOfDoc } from "../core/panels";
 import { logViewport } from "../core/viewport";
 import { logger } from "../core/logger";
@@ -149,7 +151,10 @@ export function refreshSession(): void {
     const d = docs.get(t.docId);
     if (!d) continue;
     if (!sessionStore.get(t.tabId)) {
-      sessionStore.register(t.tabId, t.docId);
+      // B303：seed 里必须带上位置。恢复只把 `v` 写进 `Tab.scrollV`，这份记录是落盘时才补建的；
+      // 不带 seed 就等于屏上没显示的那几格一落盘就退成「没记过」，下一次重启只剩文档级兜底可走
+      // ⇒ 同文档所有格子坍到同一个位置（真机 22:37:05 → 22:37:08：源码那两格 15.58 变 `v=没记`）。
+      sessionStore.register(t.tabId, t.docId, { scrollV: t.scrollV });
     }
     sessionStore.setDoc(t.tabId, {
       path: d.path ?? "",
@@ -160,21 +165,40 @@ export function refreshSession(): void {
     sessionStore.setViewMode(t.tabId, isMdTab(t) ? t.viewMode : null);
     // B169：同步滚动开关是 `docSyncModes`（按文档记，B152）里的值，退出前刷进记录，
     // 落盘后重开时由 `restoreSession` 写回，让同步键点亮态与退出前一致。
-    sessionStore.setSyncMode(t.tabId, docSyncModes.get(t.docId) === true);
+    sessionStore.setSyncMode(t.tabId, docSyncOn(t.docId));
     // 正显示在面板上的那个：光标与视口都在视图 / DOM 上，先采一次再写进记录
     // （同 B140 的「消失前看最后一眼」，只不过现在写的是 store 而不是 Tab）。
     // 其余标签的光标在 `handleUpdate` 里就已经即时写进来了，这里不动它。
     //
+    // B288⑤-1c 摘掉的是**像素轨**；B302 落回来的是与宽度无关的共享坐标 `v`（见下）。
     const p = panels.get(t.panelId);
-    if (p?.view && p.viewTabId === t.tabId) {
-      t.state = p.view.view.state;
-      const pos = t.state.selection.main.head;
-      const line = t.state.doc.lineAt(pos);
-      sessionStore.setCursor(t.tabId, line.number, pos - line.from + 1);
+    if (p && p.viewTabId === t.tabId) {
+      if (p.view) {
+        t.state = p.view.view.state;
+        const pos = t.state.selection.main.head;
+        const line = t.state.doc.lineAt(pos);
+        sessionStore.setCursor(t.tabId, line.number, pos - line.from + 1);
+      }
+      // 每格各存各的：这一格此刻屏上停在哪儿，就采哪儿（源码侧与预览侧各自换算成同一个 `v`）。
+      samplePanelScrollV(p);
     }
-    // B288⑤-1c：原先这里落盘前还会按 DOM 刷新一次像素位置 —— 像素轨已整体移除
-    // （位置记忆 / 恢复随同步滚动重构一起清除），光标由上面几句写入即可。
   }
+}
+
+/**
+ * 落盘前把这一格**看得见那一侧**的视口位置认账进会话记录（B302）。
+ *
+ * 只采可见侧、且只认量得出来的：隐藏侧 `scrollTop` 恒 0、落位链在途那一两帧 DOM 还停在
+ * 被裁到的旧位置，两者都不是「用户此刻看到的那一处」。量不出来就一个字节都不改（B299）——
+ * 拿兜底的 1.00 覆盖掉上一次记对的位置，正是拖出新窗口跳顶那一族的形状。
+ */
+export function samplePanelScrollV(p: Panel): void {
+  const t = tabs.get(p.viewTabId ?? p.activeTabId);
+  if (!t) return;
+  const live = readVisibleV(p);
+  if (live === null) return;
+  t.scrollV = live;
+  sessionStore.setScrollV(t.tabId, live);
 }
 
 // B141：`sessionTabRecordOf` 已删除 —— 标签的会话记录现在由 `sessionStore`（`src/session/store.ts`
@@ -227,7 +251,7 @@ export function sessionSummary(s: SessionState, skipped: string[] = []): string 
       (t) =>
         `${t.path || "(未命名)"}|行${t.cursorLine}:${t.cursorCol}${
           t.viewMode ? `|${t.viewMode}` : ""
-        }`,
+        }${typeof t.scrollV === "number" ? `|v=${t.scrollV.toFixed(2)}` : "|v=没记"}`,
     )
     .join("  ");
   const rest = total - shown.length;

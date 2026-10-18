@@ -78,6 +78,25 @@ export async function restoreSession(): Promise<boolean> {
   if (!sp.some((p) => p.tabs.length > 0) && satTabs.length === 0) return false;
   const panels0 = sp;
 
+  /**
+   * B302 · 文档级兜底：这一格**从没被看到过**（记录里是 `null`）时，借同一份文档里
+   * 第一个记着位置的那一份。缺了这一步，「同一文档分两格、只在其中一格滚过」重启就会
+   * 把没记过那一格弹回顶部，而它随即成为活动标签 ⇒ 按方案 A 又把整份文档拽上顶。
+   *
+   * ⚠️ B303：只给**同步开着**的那些文档铺这张表。开关是那份文档的属性（B152：关⇒只有
+   * 当前这一格，开⇒同 docId 所有视口），关着时借兄弟格的位置就是用户眼里的「没开同步却
+   * 跟着同步」（真机 22:37 那一轮：关着同步，同文档四格全落在卫星窗口滚出来的 24.95）。
+   * 关着 ⇒ 没记过那一格就老老实实停在顶部（不变量 4：落位无条件，但借位置是有条件的）。
+   */
+  const docScrollV = new Map<number, number>();
+  for (const rec of [...panels0.flatMap((p) => p.tabs ?? []), ...satTabs]) {
+    if (typeof rec.docId !== "number") continue;
+    if (rec.syncMode === false) continue;
+    if (typeof rec.scrollV === "number" && !docScrollV.has(rec.docId)) {
+      docScrollV.set(rec.docId, rec.scrollV);
+    }
+  }
+
   panels.clear();
   setTabs(new Map());
   setDocs(new Map());
@@ -312,8 +331,13 @@ export async function restoreSession(): Promise<boolean> {
     const line = inst.state.doc.line(lineNo);
     const pos = line.from + Math.min(Math.max(0, (st.cursorCol || 1) - 1), line.length);
     inst.state = inst.state.update({ selection: { anchor: pos } }).state;
-    // B169：同步滚动开关（按文档记）→ 写回 `docSyncModes`，同步键点亮态与退出前一致
-    if (st.syncMode) docSyncModes.set(inst.docId, true);
+    // B169：同步滚动开关（按文档记）→ 写回 `docSyncModes`，同步键点亮态与退出前一致。
+    // B297：两头都要写（以前只写 true）—— 只写 true 的话，退出前**关着**的那份文档重启后
+    // 变成没记过，而「没记过 = 开」，于是用户关掉的开关自己翻回去了。
+    docSyncModes.set(inst.docId, st.syncMode !== false);
+    // B302：恢复这一格的视口位置。**无条件写**（不变量 4：`scrollV` 缺省就是 1，任何
+    // 「大于 1 才写」的守卫都会把「从没记过」一起跳过，视口于是留在 setState 带过去的那一格）。
+    inst.scrollV = typeof st.scrollV === "number" ? st.scrollV : (docScrollV.get(inst.docId) ?? 1);
     return inst;
   }
 

@@ -234,6 +234,12 @@ pub struct TabSession {
     /// `false` = 没开过（旧会话没有这个字段也走默认）。
     #[serde(alias = "sync_mode")]
     pub sync_mode: bool,
+    /// B302：这一格上次被看到时的共享坐标 `v`（源码行号 + 小数，与宽度无关）。
+    ///
+    /// `None` ＝「这一格从没被看到过」，与 `Some(1.0)`（就停在顶部）是两件事：恢复时先取
+    /// 自己这一份，取不到才借同文档别的实例那一份。Rust 只透传，换算全在前端。
+    #[serde(alias = "scroll_v")]
+    pub scroll_v: Option<f64>,
     /// B193：仅 `satellite_tabs` 段使用 —— 该标签当时属于哪个卫星窗口（label 作分组键）。
     /// `None` = 旧会话没写过这个字段，整批当作同一组。
     #[serde(alias = "owner")]
@@ -252,6 +258,7 @@ impl Default for TabSession {
             backup_id: None,
             doc_id: None,
             sync_mode: false,
+            scroll_v: None,
             owner: None,
         }
     }
@@ -463,6 +470,41 @@ mod tests {
             "落盘应为 activePanel：{out}"
         );
         assert!(!out.contains("cursor_line"), "不应再落盘 snake_case：{out}");
+    }
+
+    /// B302：会话要带每格自己的视口位置 `scrollV`（共享坐标 `v`）。
+    ///
+    /// 两头都要钉：`scrollV`（camelCase）读得进来、落得出去；而**缺省必须是 `None`**——
+    /// `Some(1.0)`（停在顶部）与 `None`（从没记过）在恢复端是两条不同的路（文档级兜底只在
+    /// `None` 时启用）。旧会话没有这个字段也归 `None`，不能读成 1。
+    #[test]
+    fn session_carries_per_tab_scroll_v() {
+        let json = r#"{
+          "panels": [
+            { "tabs": [
+                { "path": "a.md", "docId": 1, "scrollV": 42.5 },
+                { "path": "b.md", "docId": 2, "scrollV": null },
+                { "path": "c.md", "docId": 3 }
+              ], "active": 0 }
+          ],
+          "layout": { "kind": "leaf", "panelId": 0 },
+          "activePanel": 0
+        }"#;
+        let state: SessionState =
+            serde_json::from_str(json).expect("scrollV 应能按 camelCase 读入");
+        assert_eq!(state.panels[0].tabs[0].scroll_v, Some(42.5));
+        assert_eq!(
+            state.panels[0].tabs[1].scroll_v, None,
+            "显式 null（从没记过）与有值必须分得开"
+        );
+        assert_eq!(
+            state.panels[0].tabs[2].scroll_v, None,
+            "旧会话没有这个字段 ⇒ None，不能读成停在顶部"
+        );
+
+        let out = serde_json::to_string(&state).unwrap();
+        assert!(out.contains("\"scrollV\""), "落盘应为 scrollV：{out}");
+        assert!(!out.contains("scroll_v"), "不应落 snake_case：{out}");
     }
 
     /// 旧版本（B48 及更早）落盘的是 snake_case，升级后仍要能读出来。

@@ -623,3 +623,210 @@ describe("SyncScrollCoordinator · 回声按像素认（真机 02:42 那一族�
     expect(pv.setVCalls).toEqual([25]);
   });
 });
+
+describe("主动跳转的坐标由跳转本身给（B301 · 点大纲有时把位置复位到顶部）", () => {
+  // 真机 19:23:27 / 19:23:33 两轮的形状（都是**预览态**标签上点大纲）：
+  //   viewport 更新 · handleUpdate 后 tab=4 模式=preview 视图=16
+  //   sync [main] 外发 doc=1 v=1.00
+  //   sync [main] 帧广播 doc=1 驱动=[?] v=1.00 目标=1
+  //   sync [sat-4] 广播写[P0:preview] 目标=1.00 落点=1.00     ← 看得见那一侧被拽上顶
+  // `驱动=[?]` 只有两个来源：`toc.ts` 的 onJump 与 `commands.ts` 的转到行 —— 它们都把自己
+  // new 出来的**编辑器**锚点交给 `syncFromDriver`。可当这一格处于预览态时编辑器是
+  // `display:none`：它的 `scrollTop` 恒 0、`getV()` 只能报 1.00（隐藏侧根本量不出位置，
+  // B285/B293 那一条「被藏起来的一侧不注册」说的就是它）。协调器在**下一帧**才读这个锚点，
+  // 于是「用户点到哪一行」这个事实被换成「那一侧此刻的兜底读数」，并向所有窗口外发。
+  //
+  // 跳转的目标行调用方本来就知道（`entry.line` / 输入的行号）⇒ 它应当直接把坐标交出来，
+  // 而不是委托某个面去读。
+  it("留案：把隐藏侧的锚点交给 syncFromDriver，下一帧广播的就是它那串兜底 1.00", () => {
+    const sch = makeScheduler();
+    const co = new SyncScrollCoordinator(sch.schedule);
+    const preview = makePane(21); // 用户看得见的那一侧，好好停在 21 行
+    co.register(preview.anchor, "d1", preview.surface);
+    const sent: number[] = [];
+    co.setOutbound((_, v) => sent.push(v));
+    const hiddenEditor: ScrollAnchor = { getV: () => 1.0, setV: (x) => x };
+    co.syncFromDriver("d1", hiddenEditor);
+    sch.flush();
+    expect(sent).toEqual([1.0]); // 复位值就是这么发出去给别的窗口的
+    expect(preview.setVCalls).toEqual([1.0]); // 并且把本窗口看得见那一侧也拽上顶
+  });
+
+  it("syncTo(docId, 目标行)：广播的是跳转目标，谁都不去读某一侧", () => {
+    const sch = makeScheduler();
+    const co = new SyncScrollCoordinator(sch.schedule);
+    const preview = makePane(21);
+    const editor = makePane(21);
+    co.register(preview.anchor, "d2", preview.surface);
+    co.register(editor.anchor, "d2", editor.surface);
+    const sent: number[] = [];
+    co.setOutbound((_, v) => sent.push(v));
+    co.syncTo("d2", 30);
+    sch.flush();
+    expect(sent).toEqual([30]);
+    expect(preview.setVCalls).toEqual([30]);
+    expect(editor.setVCalls).toEqual([30]);
+  });
+
+  it("那份文档的同步关着 ⇒ 跳转不外发、也不动别的面（开关 gate 的是整条联动）", () => {
+    const sch = makeScheduler();
+    const co = new SyncScrollCoordinator(sch.schedule);
+    const preview = makePane(21);
+    co.register(preview.anchor, "d3", preview.surface);
+    const sent: number[] = [];
+    co.setOutbound((_, v) => sent.push(v));
+    co.setEnabled("d3", false);
+    co.syncTo("d3", 30);
+    sch.flush();
+    expect(sent).toEqual([]);
+    expect(preview.setVCalls).toEqual([]);
+  });
+
+  it("同一帧里连点两次大纲 ⇒ 只发最后一发（合帧不变，last-writer-wins）", () => {
+    const sch = makeScheduler();
+    const co = new SyncScrollCoordinator(sch.schedule);
+    const preview = makePane(21);
+    co.register(preview.anchor, "d4", preview.surface);
+    const sent: number[] = [];
+    co.setOutbound((_, v) => sent.push(v));
+    co.syncTo("d4", 30);
+    co.syncTo("d4", 40);
+    sch.flush();
+    expect(sent).toEqual([40]);
+    expect(preview.setVCalls).toEqual([40]);
+  });
+});
+
+/**
+ * 会按**视觉行**对齐的假面（B300）。
+ *
+ * `chars` 是这一格宽度下每个视觉行的行首字符（越窄的行数组越密）。同一份文档在两格里
+ * 可以有不同的 `chars` ⇒ 同一个字符落在不同的行序号上 ⇒ 读回的 `v` 也不同。这正是
+ * 「只传 v 对不齐」的形状，也是「按 pos 对齐后不许再拿对方的 v 去补写」的原因。
+ */
+function makeRowPane(rows: { char: number; v: number }[], initialIndex = 0) {
+  const el = document.createElement("div");
+  const chars = rows.map((r) => r.char);
+  let idx = initialIndex;
+  const setVCalls: number[] = [];
+  const setVAtCalls: number[] = [];
+  const anchor: ScrollAnchor = {
+    getV: () => rows[idx].v,
+    setV: (v: number) => {
+      setVCalls.push(v);
+      for (let i = rows.length - 1; i >= 0; i--)
+        if (rows[i].v <= v) {
+          idx = i;
+          break;
+        }
+      el.scrollTop = idx * 20;
+      return rows[idx].v;
+    },
+    topPos: () => chars[idx],
+    setVAt: (pos: number) => {
+      setVAtCalls.push(pos);
+      for (let i = rows.length - 1; i >= 0; i--)
+        if (chars[i] <= pos) {
+          idx = i;
+          break;
+        }
+      el.scrollTop = idx * 20;
+      return rows[idx].v;
+    },
+  };
+  return {
+    el,
+    anchor,
+    surface: { events: el } as CoordinatedSurface,
+    setVCalls,
+    setVAtCalls,
+    at: () => idx,
+    v: () => rows[idx].v,
+    scroll: () => el.dispatchEvent(new Event("scroll")),
+  };
+}
+
+describe("帧广播把视觉行位置一起带走（B300 · 逐行对齐）", () => {
+  // 宽格：每视觉行 40 字，v 是 1 + 行内比例；窄格：每视觉行 30 字 ⇒ **同一个字符在两格里
+  // 算出的 v 本来就不相等**。这就是只传 v 对不齐、以及按字符对齐后必须就地认领的原因。
+  const WIDE = [
+    { char: 0, v: 1.0 },
+    { char: 40, v: 1.25 },
+    { char: 80, v: 1.5 },
+    { char: 120, v: 1.75 },
+  ];
+  const NARROW = [
+    { char: 0, v: 1.0 },
+    { char: 30, v: 1.3 },
+    { char: 60, v: 1.6 },
+    { char: 90, v: 1.9 },
+    { char: 120, v: 2.2 },
+  ];
+
+  it("驱动面的 topPos 与 v 一起外发；同文档的行能力面按 pos 对齐，不再用 setV", () => {
+    const sch = makeScheduler();
+    const co = new SyncScrollCoordinator(sch.schedule);
+    const wide = makeRowPane(WIDE, 1);
+    const narrow = makeRowPane(NARROW, 0);
+    co.register(wide.anchor, "r1", wide.surface);
+    co.register(narrow.anchor, "r1", narrow.surface);
+    const sent: Array<[string, number, number | null]> = [];
+    co.setOutbound((d, v, at) => sent.push([d, v, at ?? null]));
+    wide.scroll();
+    sch.flush();
+    expect(sent).toEqual([["r1", 1.25, 40]]); // v 与 pos 都带
+    expect(narrow.setVAtCalls).toEqual([40]); // 按字符对齐
+    expect(narrow.setVCalls).toEqual([]); // 而不是按对方的 v
+    expect(narrow.at()).toBe(1); // 30..60 那一行
+    expect(wide.setVCalls).toEqual([]); // driver 自己不回写
+  });
+
+  it("两格宽度不同 ⇒ 对齐同一字符后各自的 v 不等：回声必须被认成自己的，不许补写", () => {
+    const sch = makeScheduler();
+    const co = new SyncScrollCoordinator(sch.schedule);
+    const wide = makeRowPane(WIDE, 1);
+    const narrow = makeRowPane(NARROW, 0);
+    co.register(wide.anchor, "r2", wide.surface);
+    co.register(narrow.anchor, "r2", narrow.surface);
+    let out = 0;
+    co.setOutbound(() => {
+      out += 1;
+    });
+    wide.scroll();
+    sch.flush();
+    expect(wide.v()).toBe(1.25);
+    expect(narrow.v()).toBe(1.3); // 同一字符，两格算出的 v 不同
+    narrow.scroll(); // 那一发的回声（像素确实动过）
+    sch.flush();
+    // 意图被记成自己的读回值 ⇒ 这一发判成「兑现·吞掉」：不补写、也不再外发。
+    // 记成对方的 1.25 就会被判成「没兑现」而把它拽回去，逐行对齐自己把自己拆掉。
+    expect(narrow.setVAtCalls).toEqual([40]);
+    expect(narrow.setVCalls).toEqual([]);
+    expect(out).toBe(1);
+  });
+
+  it("已经停在该字符那一行的面 ⇒ 一个字节都不写（echo 保护）", () => {
+    const sch = makeScheduler();
+    const co = new SyncScrollCoordinator(sch.schedule);
+    const a = makeRowPane(WIDE, 1);
+    const b = makeRowPane(WIDE, 1); // 同宽度、同一行
+    co.register(a.anchor, "r3", a.surface);
+    co.register(b.anchor, "r3", b.surface);
+    a.scroll();
+    sch.flush();
+    expect(b.setVAtCalls).toEqual([]);
+    expect(b.setVCalls).toEqual([]);
+  });
+
+  it("对面只有 v、没有 pos（老版本 / 预览面）⇒ 照旧按 v 写", () => {
+    const sch = makeScheduler();
+    const co = new SyncScrollCoordinator(sch.schedule);
+    const driver = makeRowPane(WIDE, 1);
+    const pv = makePane(1); // 只会 setV 的预览面
+    co.register(driver.anchor, "r4", driver.surface);
+    co.register(pv.anchor, "r4", pv.surface);
+    driver.scroll();
+    sch.flush();
+    expect(pv.setVCalls).toEqual([1.25]);
+  });
+});

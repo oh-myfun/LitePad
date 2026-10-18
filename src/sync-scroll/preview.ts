@@ -70,6 +70,16 @@ export class PreviewScrollAnchor implements ScrollAnchor {
     private readonly declare?: (intentV: number, landedV: number) => void,
   ) {}
 
+  /**
+   * 块还没铺开、或那一发还只是排在下下一帧的承诺 ⇒ 这个面**报不出**位置。
+   * 此时 `getV()` 返回的 1.0 是「量不出来」的兜底值，不是读数（B299）。
+   */
+  hasPosition(): boolean {
+    if (this.pendingV !== null) return false;
+    const blocks = this.surface.blocks();
+    return blocks.length > 0 && !this.isUnmeasured(blocks);
+  }
+
   getV(): number {
     const blocks = this.surface.blocks();
     if (blocks.length === 0 || this.isUnmeasured(blocks)) return 1.0;

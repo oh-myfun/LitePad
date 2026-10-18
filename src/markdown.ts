@@ -123,15 +123,21 @@ function toggleViewMode(target?: Tab): void {
   const panel = getPanel(tab.panelId);
   if (!panel || !panel.bodyEl) return;
   const toPreview = tab.viewMode !== "preview";
-  tab.viewMode = toPreview ? "preview" : "source";
   // 切换视图本身不是编辑：隐藏/恢复编辑器可能让 CM6 产生事务，这里一律不置脏
   setSuppressDirty(true);
   // B190：切回源码后要把焦点给回编辑器（预览态期间它是 `display:none`，拿不住焦点，
   // 焦点早已不在它身上）。先取一份局部引用，避免闭包里再去读 `panel.view`。
   const sourceEditor = panel.view;
-  // 切换**之前**先把「此刻看得见那一侧」的共享坐标 v 记下来。必须赶在换类之前读：
-  // 另一侧现在是 `display:none`，它的 `getV()` 只会报 1.0，读不到用户真正看到的那一行。
+  // ⚠️⚠️ 这一发读 v **必须排在写 `tab.viewMode` 之前**（B293，真机台 S16/S14/S20 钉住）。
+  // `readVisibleV` → `sideOfPanel` 判「哪一侧看得见」用的就是 `tab.viewMode`，而此刻 DOM 上
+  // 的 `mode-*` 类还没换（要等下面的 `applyPanelMode`）。所以一旦先写了 viewMode，读到的
+  // 就是「将要现形、现在还被 `display:none` 归零」那一侧 ⇒ `keepV` 恒 1.00 ⇒ 下面那一发
+  // 落位把刚现形的一侧**钉回文档顶部** —— 用户报的「源码 ↔ 预览切换位置跳变」正是这一条
+  //（真机台复刻生产顺序后：切到预览落在 1.00，切走前编辑器在 43.67）。
+  // 注释里写的「必须赶在换类之前读」是这个意思，但代码以前只把读放在了换**类**之前、
+  // 却排在换**状态**之后，于是这句话一直是空的。
   const keepV = readVisibleV(panel);
+  tab.viewMode = toPreview ? "preview" : "source";
   try {
     applyPanelMode(panel);
     // ⚠️ 这一下 focus 的顺序有讲究：必须排在 `applyPanelMode` **之后** —— 之前编辑器

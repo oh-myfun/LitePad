@@ -288,6 +288,13 @@ export function duplicateTabToPanel(tabId: number, hostPanelId: number): void {
   if (text === null) return;
   const inst = makeInstance(doc, hostPanelId, text);
   inst.viewMode = src.viewMode;
+  // B303：副本的位置由**源当下可见侧**直接种下去，不再指望重建时那次「跟随共享 v」——
+  // 那一路现在只听同步开关（关着就不许把一个实例的位置借给另一个）。而开关关着时
+  // 「复制一张 / 打开侧边预览」照样要出现在用户此刻看到的那一处（B259），所以这里得是
+  // 一道与开关无关的显式种子：源正被显示就取它的实时读数，否则取它自己记着的那份。
+  const srcPanel = panels.get(src.panelId);
+  const srcLive = srcPanel && srcPanel.viewTabId === src.tabId ? readVisibleV(srcPanel) : null;
+  inst.scrollV = srcLive ?? src.scrollV;
   const sel = src.state.selection.main;
   inst.state = inst.state.update({ selection: { anchor: sel.anchor, head: sel.head } }).state;
   attachTabToPanel(inst, host);

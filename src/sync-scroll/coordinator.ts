@@ -43,6 +43,11 @@
  *
  * B152 语义（用户 2026-10-16 拍板）：按**文档**记开关。关 → 仅当前 pane 滚（不广播）；
  * 开 → 所有同文件视口（同 docId 的 editor + preview + 其它 tab/面板）同步。
+ *
+ * B297（用户 2026-10-18 拍板）：这条联动不再止于本窗口 —— 开着同步的那份文档，滚任何一个
+ * 窗口，所有窗口里同一文档的可见面都落到同一个 `v`。跨窗口只是本模块的一个**可选端口**
+ * （`setOutbound`）：判定与广播的时机与窗内完全同一个，所以「回声不外发、补写不外发、
+ * 远端套用不外发」不需要再写第二套规则。
  */
 
 import type { ScrollAnchor } from "./anchor";
@@ -64,8 +69,8 @@ export interface AnchorHandle {
   readonly surface?: CoordinatedSurface;
 }
 
-/** 驱动源的最小形状：一个锚点 + 它所属的文档。 */
-type DriverRef = { anchor: ScrollAnchor; docId: string };
+/** 驱动源的最小形状：一个锚点 + 它所属的文档。`label` 只用于 TRACE 认是谁驱动的。 */
+type DriverRef = { anchor: ScrollAnchor; docId: string; label?: string };
 
 /**
  * 判定「读到的位置就是承诺的位置」的容差，单位是**源码行**。
@@ -150,6 +155,16 @@ export class SyncScrollCoordinator {
   private readonly trace: (msg: string) => void;
   /** 滚动面 → 人类可读标签（只服务日志；账本按 EventTarget 记，不受它影响）。 */
   private readonly labels = new Map<EventTarget, string>();
+  /**
+   * 跨窗口外发口（B297）：由 `multiwindow/windows.ts` 注册，把「这一文档被用户滚到了 v」
+   * 告诉其它窗口。没注册 = 单窗口行为，与本模块改造前一字不差。
+   *
+   * 走注入而不是在本模块 import `ipc/api`：本文件是纯逻辑（`schedule` / `trace` 同款纪律），
+   * 而且依赖方向必须是 `multiwindow → sync-scroll`，反过来会把 Tauri 事件层拖进协调器。
+   */
+  private outbound: ((docId: string, v: number, at: number | null) => void) | null = null;
+  /** 账本判成「用户挪动了这一格」时的宿主通知（B302 持久化），与同步开关无关。 */
+  private onUserScroll: ((docId: string, v: number) => void) | null = null;
 
   constructor(
     schedule: (fn: () => void) => number | null = (fn) => requestAnimationFrame(fn),
@@ -157,6 +172,22 @@ export class SyncScrollCoordinator {
   ) {
     this.schedule = schedule;
     this.trace = trace;
+  }
+
+  /** 装 / 拆跨窗口外发口（传 null 拆掉）。`at` 是顶边那一视觉行的字符位置（B300），可空。 */
+  setOutbound(fn: ((docId: string, v: number, at: number | null) => void) | null): void {
+    this.outbound = fn;
+  }
+
+  /**
+   * 装 / 拆「这一格被用户挪动了」的宿主通知（B302 · 持久化用）。
+   *
+   * ⚠️ 它在 `isOn` 那道闸**之前**触发，这是与 `outbound` 唯一的区别：位置是这一格自己的
+   * 事实，同步开关关着也得落盘；开关 gate 的是「要不要把别人也扶过去」，不是「发生了什么」。
+   * 触发点仍然只有账本判成「用户滚动 / 主动跳转」那几支 —— 回声、补写、远端套用不算。
+   */
+  setOnUserScroll(fn: ((docId: string, v: number) => void) | null): void {
+    this.onUserScroll = fn;
   }
 
   private labelOf(surface?: EventTarget): string {
@@ -186,13 +217,17 @@ export class SyncScrollCoordinator {
     return l;
   }
 
-  /** 该文档当前的共享坐标（B292 · 方案 A）：同步开着且有带滚动面的在册视口时，读它们的 `v`。
-   *  同一个文档的在册视口本来就互相跟齐，所以读第一个就是那个共享值。同步关 / 一个都不在册 ⇒
-   *  null ⇒ 调用方回落到「这张标签自己记的位置」。 */
+  /** 该文档当前的共享坐标（B292 · 方案 A）：同步开着且有**量得出位置**的在册视口时，读它们的 `v`。
+   *  同一个文档的在册视口本来就互相跟齐，所以读第一个报得出数的就是那个共享值。同步关 / 一个都
+   *  不在册 / 只剩量不出来的面 ⇒ null ⇒ 调用方回落到「这张标签自己记的位置」。
+   *  ⚠️ 那个「量不出来」的门槛是 B299：没铺开的预览面 `getV()` 硬报 1.0，把它当权威就等于把
+   *  正确记忆改写成顶部 —— 新窗口冷启动那份正是这么塌到顶的。 */
   currentV(docId: string): number | null {
     if (!this.isOn(docId)) return null;
     for (const e of this.entries.get(docId) ?? []) {
-      if (e.surface) return e.anchor.getV();
+      if (!e.surface) continue;
+      if (e.anchor.hasPosition?.() === false) continue;
+      return e.anchor.getV();
     }
     return null;
   }
@@ -281,11 +316,30 @@ export class SyncScrollCoordinator {
   }
 
   /**
-   * 程序化跳转驱动（直接给锚点，无需先在册）：TOC 点击 / 查找下一处 / 转到行用。
+   * 程序化跳转驱动（直接给锚点，无需先在册）：调用方先把 driver 自身滚到目标，本方法在
+   * **下一帧**读它的 `getV()` 并广播。
+   *
+   * ⚠️ 别用它驱动「此刻看不见的那一侧」：被 `display:none` 藏起来的编辑器 `scrollTop` 恒 0，
+   * 只能报出兜底的 1.00 ⇒ 全窗口被拽上顶（B301，真机 19:23 预览态标签上点大纲那一族）。
+   * 跳转的目标行调用方本来就知道，那种场合用 `syncTo`。
    */
   syncFromDriver(docId: string, driver: ScrollAnchor): void {
     if (!this.isOn(docId)) return;
     this.pendingDriver = { anchor: driver, docId };
+    this.scheduleFrame();
+  }
+
+  /**
+   * 程序化跳转驱动（直接给坐标）：TOC 点击 / 转到行用。
+   *
+   * 「跳到哪一行」是调用方的**事实**，不是任何一个面此刻的读数 —— 所以这一发谁都不去读：
+   * 值直接外发给别的窗口，窗内则写进每一个在册面（包括本窗口看得见的那一侧）。
+   * 关着那份文档的同步时一声不响：开关 gate 的是整条联动，收端与本地跳转都算。
+   */
+  syncTo(docId: string, v: number): void {
+    this.onUserScroll?.(docId, v); // 跳转也是用户的一次意图，关着同步同样要落盘
+    if (!this.isOn(docId)) return;
+    this.pendingDriver = { anchor: { getV: () => v, setV: (x) => x }, docId, label: "跳转" };
     this.scheduleFrame();
   }
 
@@ -307,9 +361,14 @@ export class SyncScrollCoordinator {
     return (t as AnchorHandle).anchor !== undefined && (t as AnchorHandle).docId !== undefined;
   }
 
-  /** 用户滚动：driver 落定后，下一帧把它的 v 广播给同 docId 的其余锚点。 */
+  /**
+   * 用户滚动：driver 落定后，下一帧把它的 v 广播给同 docId 的其余锚点。
+   *
+   * ⚠️ 这里**不**过 `isOn` 那道闸：位置是这一格自己的事实，开关关着也得让宿主知道一次
+   * （B302 落盘）。闸在帧体里，gate 掉的是「把别人也扶过去」，不是「发生了什么」；
+   * 而通知跟着帧走还有一个必要的好处 —— 一次滚动手势几十发 `scroll` 只在落定那帧报一次。
+   */
   private drive(entry: InternalEntry): void {
-    if (!this.isOn(entry.docId)) return;
     this.pendingDriver = entry;
     this.scheduleFrame();
   }
@@ -322,16 +381,30 @@ export class SyncScrollCoordinator {
       this.pendingDriver = null;
       if (!driver) return;
       const v = driver.anchor.getV();
+      // 顶边那一视觉行的字符位置（B300 · 逐行对齐）：`v` 的小数是「该逻辑行块高的比例」，
+      // 而块高随宽度变 ⇒ 两格宽度不同时同一个 `v` 对应的不是同一行文字。字符位置是宽度无关
+      // 的事实，所以能拿到就一起带出去；拿不到（隐藏侧 / 预览面 / 老对端）就照旧只传 `v`。
+      const at = driver.anchor.topPos?.() ?? null;
+      // 落盘通知（B302）：一次滚动手势几十发 `scroll` 在这里只汇成一发，且报的是**落定后**
+      // 的读数。它在开关闸之前 —— 同步关着的时候，「这一格停在哪」照样是该记的事实。
+      this.onUserScroll?.(driver.docId, v);
+      if (!this.isOn(driver.docId)) return;
+      // 跨窗口外发（B297）：能走到这里，说明这一发已经被账本判成「用户滚的 / 有人主动跳」，
+      // 而 `v` 是**这一帧落定后**的读数（`syncTo` 那一类跳转则是跳转本身给的坐标）——
+      // 与本窗口兄弟面拿到的那一个字节不差。
+      // 只在能到达这里的路径上触发（回声、补写、远端套用都不经过 `drive`），所以这一发
+      // 天然不会把对端推回来的位置再推回去。
+      this.outbound?.(driver.docId, v, at);
       const set = this.entries.get(driver.docId);
       if (!set) return;
       this.trace(
-        `帧广播 doc=${driver.docId} 驱动=[${this.labelOf(
-          (driver as InternalEntry).surface?.events,
-        )}] v=${n(v)} 目标=${set.size - 1}`,
+        `帧广播 doc=${driver.docId} 驱动=[${
+          (driver as DriverRef).label ?? this.labelOf((driver as InternalEntry).surface?.events)
+        }] v=${n(v)}${at === null ? "" : ` 行首@${at}`} 目标=${set.size - 1}`,
       );
       for (const e of set) {
         if (e.anchor === driver.anchor) continue; // 不回写 driver（无回环）
-        this.writeTo(e, v);
+        this.writeTo(e, v, at);
       }
     });
   }
@@ -344,20 +417,26 @@ export class SyncScrollCoordinator {
    * 真实落点由 `setV` 诚实回报（见 anchor.ts）；意图则不能换成落点，否则内容刚重建时
    * 承诺会被改写成那个错位置、再也追不上——那正是历代「到底两侧对不齐」的形态。
    */
-  private writeTo(e: InternalEntry, v: number): number {
+  private writeTo(e: InternalEntry, v: number, at: number | null = null): number {
+    const byPos = at !== null && at !== undefined && !!e.anchor.setVAt;
+    if (byPos && e.anchor.topPos?.() === at) return e.anchor.getV(); // 已经在那一视觉行 ⇒ 一个字节都不写
     const before = e.anchor.getV();
-    if (Math.abs(before - v) <= V_EPS) return before;
-    const landed = e.anchor.setV(v);
+    if (!byPos && Math.abs(before - v) <= V_EPS) return before;
+    const landed = byPos ? e.anchor.setVAt!(at!) : e.anchor.setV(v);
+    // 按 pos 对齐的那一发，**意图记成读回值**（就地认领）：两格宽度不同时，同一字符各自算出
+    // 的 `v` 本来就不相等，把意图登记成对方的 `v`，紧随其后的回声就会被判成「没兑现」而补写
+    // 回去 —— 逐行对齐会被自己拽掉，正是 B290 那一族（认像素不认 v）换了个方向复发。
+    const intent = byPos ? landed : v;
     this.trace(
-      `广播写[${this.labelOf(e.surface?.events)}] 目标=${n(v)} 落点=${n(landed)}${
-        Math.abs(landed - v) > V_EPS ? " (被裁/未定局)" : ""
-      }`,
+      `广播写[${this.labelOf(e.surface?.events)}] 目标=${n(v)}${
+        at === null ? "" : ` 行首@${at}`
+      } 落点=${n(landed)}${!byPos && Math.abs(landed - v) > V_EPS ? " (被裁/未定局)" : ""}`,
     );
     if (e.surface) {
       // 先写后登记是安全的：`scroll` 按帧异步派发，同一同步栈内不会重入 onScroll；
       // 而登记必须拿到 setV 的回报值——那才是这一发回声会报上来的位置。
       const l = this.ledgerFor(e.surface.events);
-      l.expectedV = v;
+      l.expectedV = intent;
       l.landedV = landed;
       l.landedPx = pxOf(e.surface.events);
       l.reasserts = 0;

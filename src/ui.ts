@@ -23,7 +23,7 @@ import {
   panels,
   docs,
   tabs,
-  docSyncModes,
+  docSyncOn,
   setActivePanelId,
   activePanelId,
   remoteOpenByWindow,
@@ -197,7 +197,7 @@ function refreshSyncButton(tab: Tab | undefined): void {
   const multi = !!tab && (visibleInstancesOfDoc(tab.docId).length > 1 || remoteHasDoc(tab.docId));
   syncScrollBtn.hidden = !multi;
   if (!multi) return;
-  const on = docSyncModes.get(tab.docId) === true;
+  const on = docSyncOn(tab.docId);
   // B166：字形随开关切换 —— 开 = link（连着）、关 = unlink（链环分开的那颗）。
   // 状态全落在字形上（与置顶键同口径），不再靠配色；`.is-on` 只留给 aria /
   // tooltip 那层语义，视觉上与常态无差。
@@ -207,9 +207,14 @@ function refreshSyncButton(tab: Tab | undefined): void {
   syncScrollBtn.setAttribute("aria-pressed", String(on));
   const label = on ? "取消同步滚动" : "同步滚动";
   syncScrollBtn.setAttribute("aria-label", label);
-  // ⚠️ 同步滚动已整体禁用（重构清除）：提示不许再承诺「其它份跟着这份走」那类
-  //    不存在的效果，只说明这颗键当前只是状态开关。
-  setTip(syncScrollBtn, "同步滚动（已禁用，仅记录开关状态）");
+  // B297：这颗键重新是真的开关 —— 翻转会驱动本窗口的联动并广播给装着同一份文档的
+  //    其它窗口（开关是那份文档的属性，不是这个窗口的属性）。
+  setTip(
+    syncScrollBtn,
+    on
+      ? "取消同步滚动（同一份文件在所有窗口同步滚动位置）"
+      : "同步滚动（同一份文件在所有窗口同步滚动位置）",
+  );
 }
 
 function refreshStatus(): void {

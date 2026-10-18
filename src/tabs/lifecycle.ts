@@ -25,7 +25,9 @@ import {
   landVisibleSideAtV,
   readVisibleV,
   reconcileSyncRegistrations,
+  sharedVByDoc,
   syncCoordinator,
+  syncTrace,
 } from "../sync-scroll/wire";
 import { countLeaves, leaf, siblingLeafOf, removePanel, updateRatio } from "../core/layout";
 import { logger } from "../core/logger";
@@ -86,8 +88,22 @@ export async function closeTabsSequentially(ids: number[]): Promise<void> {
 
 // ---------------------------------------------------------------- 布局渲染
 
+/**
+ * 本轮重建期间「各文档此刻的共享位置」（B293 · 方案 A 的跨重建版），由 `rebuildLayout`
+ * 在销毁任何 view **之前**刷新、由 `mountView` 在落位之前消费。
+ *
+ * 为什么要有这个一次性的手递手：`switchTab` 那条「接班标签跟随当前共享 v」读得到在册锚点，
+ * 因为那条路的 EditorView 还活着；而重建这一路等 `mountView` 跑起来时，上一轮的锚点指向的
+ * DOM 已经被拆掉了（`currentV` 那时读回来的是 0/1.0 的垃圾）。所以**共享位置必须在还读得
+ * 到的那一刻抄一份**，传给落位那一步。
+ */
+let rebuildSharedV = new Map<string, number>();
+
 /** 结构变化后全量重建布局区（面板 view 销毁重建，状态都在 Tab 快照里）。 */
 export function rebuildLayout(): void {
+  // ⚠️ 这一发必须排在下面那个销毁循环**之前**（见 `sharedVByDoc` 的注释）：view 一拆，
+  // 在册锚点就只会报顶部，届时再取共享位置等于亲手把整份文档钉回第一行。
+  rebuildSharedV = sharedVByDoc();
   // 同步所有面板的当前 view 状态到标签快照。
   // 必须按 viewTabId（视图实际显示的实例）回写：调用方可能已改 activeTabId
   // 而视图仍显示旧标签——按 activeTabId 回写会把旧文档串进新活动标签。
@@ -104,9 +120,10 @@ export function rebuildLayout(): void {
         // `display:none` 归零了，按编辑器读只会存下一个假的 1.0。
         const v = readVisibleV(p);
         if (v !== null) shown.scrollV = v;
-        logger.trace(
-          "sync",
-          `重建前快照 tab=${shown.tabId} 存=${v === null ? "读不到" : v.toFixed(2)}`,
+        syncTrace(
+          `重建前快照 tab=${shown.tabId} 存=${v === null ? "读不到" : v.toFixed(2)} doc共享=${
+            rebuildSharedV.get(String(shown.docId))?.toFixed(2) ?? "无"
+          }`,
         );
       }
       p.view.view.destroy();
@@ -252,7 +269,27 @@ export function rebuildLayout(): void {
       // 守卫把它们一起跳过 ⇒ 视口留在 `setState` + `focus()` 带过去的那一格（上一张标签的
       // 位置，或这张标签的光标行），用户看到的就是「切过去位置不对、也不归位」。
       // 真机 03:24:59：`切入 tab=2 意图=1.00` 之后没有任何登记，`视图=800`（= 上一张的 20.67 行）。
-      if (tab) landVisibleSideAtV(p, tab.scrollV);
+      //
+      // —— 同步滚动 v1 · 方案 A 的跨重建版（B293）————————————————————————————————————
+      // 这一格现在显示的是 `p.activeTabId` 那一张（被拖进来的、同源复制出来的、接班的）。
+      // 同一文档在它**没被显示**的那段时间里不注册进协调器、一个字都收不到 ⇒ 它记的
+      // `scrollV` 是陈值（新实例干脆就是缺省 1）。照它落位就把这一格弹到顶部，而它随即成为
+      // 该文档第一个在册视口 ⇒ 之后的接班全跟着上顶（真机取证：复制一张后
+      // `P0 ed=1.00`、`currentV(X)=1`，切回原来那张也落到 1.00）。
+      // 所以：先跟随重建前抄下的共享位置，取不到（该文档同步关着 / 一个视口都不在册）才
+      // 回落到这张标签自己的记忆 —— 与 `switchTab` 那条判据同一个口径。
+      if (tab) {
+        const shared = rebuildSharedV.get(String(tab.docId));
+        if (shared !== undefined) {
+          syncTrace(
+            `重建落位 tab=${tab.tabId} 记忆=${tab.scrollV.toFixed(2)} 跟随共享=${shared.toFixed(2)}`,
+          );
+          tab.scrollV = shared;
+        } else {
+          syncTrace(`重建落位 tab=${tab.tabId} 记忆=${tab.scrollV.toFixed(2)} 无共享值`);
+        }
+        landVisibleSideAtV(p, tab.scrollV);
+      }
       if (panelId === activePanelId && p.view) {
         updatePositionOf(panelId, p.view.view);
       }
@@ -301,10 +338,7 @@ export function switchTab(panelId: number, tabId: number): void {
     const live = readVisibleV(panel);
     if (live !== null) shownTab.scrollV = live;
     shownTab.state = panel.view.view.state;
-    logger.trace(
-      "sync",
-      `切出 tab=${shownTab.tabId} 快照=${live === null ? "读不到" : live.toFixed(2)}`,
-    );
+    syncTrace(`切出 tab=${shownTab.tabId} 快照=${live === null ? "读不到" : live.toFixed(2)}`);
   }
   const tab = tabs.get(tabId);
   if (!tab) return;
@@ -361,7 +395,7 @@ export function switchTab(panelId: number, tabId: number): void {
   // 之前，那会儿这一格还在旧文档旧侧上 ⇒ 预览态恒打 `视图=0`，连续两轮把它读成
   // 「修复没生效」，其实是探针放错了地方。
   logViewport("切换 · 落位后", panel);
-  logger.trace("sync", `切入 tab=${tab.tabId} 意图=${tab.scrollV.toFixed(2)}`);
+  syncTrace(`切入 tab=${tab.tabId} 意图=${tab.scrollV.toFixed(2)}`);
   if (panelId === activePanelId) {
     refreshTitle();
     refreshStatus();

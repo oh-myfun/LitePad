@@ -152,12 +152,18 @@ export const loanedDocIds = new Set<number>();
 /**
  * 按**文档**记的同步滚动开关（`docId → 是否开启`）。
  *
- * ⚠️ 同步滚动逻辑已在重构中整体清除（`sync-scroll.ts` / 位置记忆 / 跨窗广播均已删除）——
- *    这个 Map 现在只是那颗标题栏按键的**状态存储**：按键仍可见、点击只翻转这里的值与
- *    自身字形，不产生任何滚动联动。保留它是为了「按键点亮态跨会话 / 跨窗口一致」
- *    （B169 起随卫星标签载荷与会话落盘搬运），不是留待恢复的同步功能。
+ * B297（2026-10-18）起它重新是**行为**的开关，不只是按键的状态存储：`sync-scroll/wire.ts`
+ * 的 `setDocSyncMode` 是唯一的写点（同时驱动协调器），并跨窗口广播（`sync-mode`）。
+ * 读的一律走下面的 `docSyncOn` —— 缺省是「开」，与协调器同一口径；直接写 `=== true`
+ * 会让从没点过的键显示成灭的而实际还在同步（这正是清除那一轮留下的分裂）。
+ * 值随会话落盘与卫星标签载荷搬运（B169），为的是「点亮态跨会话 / 跨窗口一致」。
  */
 export const docSyncModes = new Map<number, boolean>();
+
+/** 某文档的同步滚动开关（缺省开）。⚠️ 读开关只走这里，别在调用处再写一遍 `=== true`。 */
+export function docSyncOn(docId: number): boolean {
+  return docSyncModes.get(docId) !== false;
+}
 
 /** 同源同步回环抑制：向兄弟实例分发变更期间，其 updateListener 不再二次广播。 */
 export let syncingDocId: number | null = null;

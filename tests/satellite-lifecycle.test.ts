@@ -349,18 +349,29 @@ describe("B188 干净关窗：隐藏实例作废旧账，不接回主窗口", ()
     expect(atClean, "clean-close 必须排在销毁之前").toBeLessThan(atDestroy);
     // ⚠️ 顺序：EVT_WINDOW_CLOSED 与 clean-close 都在 destroy 前即可，二者先后不敏感，
     //     但 clean-close 一定在 destroy 前（主窗口才有机会先清空 remotedTabs）。
+    // B302：载荷除 label 还要带上本窗口屏上那份位置清单 —— 会话只有主窗口在写，
+    // 交还晚一步，主窗口就已经把那条记录作废了。
     expect(body, "clean-close 携带本窗口 label").toMatch(
-      /satellite-clean-close",\s*\{\s*label:\s*windowLabel\s*\}/,
+      /satellite-clean-close",\s*\{\s*label:\s*windowLabel,/,
     );
+    expect(body, "clean-close 要带上位置清单").toMatch(/positions:\s*collectWindowPositions\(\)/);
   });
 
   it("主窗口引导装 satellite-clean-close 监听，且调用 dropRemotedForOwner（不是 reclaim）", () => {
     const boot = bare("async function bootstrap");
-    const at = boot.indexOf('void listen<{ label?: string }>("satellite-clean-close"');
+    // 锚在事件名那一段字符串上：`listen<{…}>(\n  "satellite-clean-close",` 会被 prettier 拆行，
+    // 钉整串泛型参数表等于把格式写进契约（格式一改就假红，本轮就踩了一次）。
+    const at = boot.indexOf('"satellite-clean-close"');
     expect(at, "必须装 satellite-clean-close 监听").toBeGreaterThan(-1);
-    const seg = boot.slice(at, at + 260);
+    const seg = boot.slice(at, at + 600);
+    expect(seg, "监听要收 positions 这一段载荷（B302）").toContain("positions");
     expect(seg, "监听里要调 dropRemotedForOwner").toMatch(/dropRemotedForOwner\(/);
     expect(seg, "干净关窗不许走崩溃兜底 reclaim").not.toMatch(/reclaimFromVanished\(/);
+    // B302：交还回来的位置要先落到那份隐藏实例的记录上，再作废旧账（反了就等于没交还）
+    const atApply = seg.indexOf("applyHandedBackPositions(");
+    const atDrop = seg.indexOf("dropRemotedForOwner(");
+    expect(atApply, "监听里没有收下交还的位置").toBeGreaterThanOrEqual(0);
+    expect(atApply, "位置必须排在作废之前落下去").toBeLessThan(atDrop);
   });
 
   it("dropRemotedForOwner：按 owner 批量摘掉隐藏实例", () => {

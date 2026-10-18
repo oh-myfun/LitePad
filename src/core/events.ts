@@ -98,3 +98,65 @@ export interface DocPresencePayload {
   from?: string;
   docId?: number;
 }
+
+/**
+ * B297（2026-10-18）：跨窗口同步滚动 —— 这两个事件在 `7a8290a` 那一轮整体清除里被删掉，
+ * 现在按**期望账本**的口径重新接上：只有账本判成「用户滚的 / 主动跳」那一发才外发，
+ * 收到的那一端走本窗口同一条落位纪律（认领 + 没落进去就藏起重试），所以不会形成回声环。
+ *
+ * `sync-pos` 只带共享坐标 `v`（源码行号 + 小数），**不带像素**：每个窗口、每一侧、每档
+ * 宽度都在自己的边缘换算，像素是各自的事（同一份文档两个窗口的「到底」本来就是两个像素）。
+ * `docId` 用数字与 `doc-change` 同口径；协调器内部按 `String(docId)` 记，转换在两端各自做。
+ */
+export const EVT_SYNC_POS = "sync-pos";
+
+/** B152 的开关是**那份文档**的属性，不是这个窗口的属性 ⇒ 改动要跨窗口联动。 */
+export const EVT_SYNC_MODE = "sync-mode";
+
+export interface SyncPosPayload {
+  from?: string;
+  docId?: number;
+  /** 共享坐标：源码行号 + 小数。 */
+  v?: number;
+  /**
+   * 顶边那一**视觉行**的行首字符位置（B300 · 逐行对齐）。可选：老对端不发、以及隐藏侧
+   * 量不出来时就是 `undefined`，收端退回按 `v` 落位。
+   * ⚠️ 为什么 `v` 不够：`v` 的小数是「该逻辑行**块高**的比例」，块高随宽度变（软折行数不同）
+   * ⇒ 两个宽度的窗口按同一个 `v` 对齐，顶边会差半行到一行（真机对照：同一 `v=6.83`，
+   * 主窗口 376px、新窗口 280px）。字符位置才是宽度无关的事实。仍**不传像素**：像素在跨窗口
+   * 这条路上从没有意义（每格内容高度不同）。
+   */
+  pos?: number;
+}
+
+/**
+ * 一扇窗口「此刻屏上停在哪」的一条读数（B302 · 卫星关窗时交还给主窗口落盘）。
+ *
+ * 带的是共享坐标 `v` 而不是像素：会话只有主窗口在写，卫星那份位置要能落进主窗口那份
+ * session.json，就必须是主窗口那一格换算得出的那个口径。
+ */
+export interface WindowScrollPosition {
+  docId: number;
+  /** 共享坐标 `v`（与宽度无关的那一份，不是像素）。 */
+  v: number;
+}
+
+/**
+ * B302：非主窗口把自己屏上的位置报给主窗口 —— 会话只有主窗口在写。
+ *
+ * 与 `sync-pos` 分开是有意的：那条**受同步开关管**（关着就不该动别人的视口），而「我滚到了
+ * 哪儿」是这一格的事实，开关关着也得持久化。收端只记账（写主窗口那份隐藏实例的记录），
+ * 绝不扶任何一格的视口。
+ */
+export const EVT_WINDOW_POS = "window-positions";
+
+export interface WindowPosPayload {
+  from?: string;
+  positions?: WindowScrollPosition[];
+}
+
+export interface SyncModePayload {
+  from?: string;
+  docId?: number;
+  on?: boolean;
+}

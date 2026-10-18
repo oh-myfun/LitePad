@@ -15,7 +15,7 @@
 import {
   MAIN_WINDOW_LABEL,
   activePanelId,
-  docSyncModes,
+  docSyncOn,
   docs,
   loanedDocIds,
   panels,
@@ -27,7 +27,15 @@ import {
   setSyncingDocId,
 } from "../core/app-state";
 import { activeTab, instancesOfDoc } from "../core/panels";
-import { claimVisibleHere, readVisibleV } from "../sync-scroll/wire";
+import {
+  applyHandedBackPositions,
+  applySharedVFromRemote,
+  claimVisibleHere,
+  readVisibleV,
+  setDocSyncMode,
+  syncCoordinator,
+  syncTrace,
+} from "../sync-scroll/wire";
 import {
   DocChangePayload,
   DocClosePayload,
@@ -40,7 +48,13 @@ import {
   EVT_DOC_OPEN_RESYNC,
   EVT_DOC_RESYNC_FULL,
   EVT_DOC_RESYNC_REQ,
+  EVT_SYNC_MODE,
+  EVT_SYNC_POS,
   EVT_WINDOW_CLOSED,
+  EVT_WINDOW_POS,
+  SyncModePayload,
+  SyncPosPayload,
+  WindowPosPayload,
 } from "../core/events";
 import type { TabDragPayload } from "../shell/tabdnd";
 import { logger } from "../core/logger";
@@ -115,7 +129,12 @@ function transferSnapshotOf(tabId: number): SatelliteTab | null {
   // 位置取**实时**的可见侧（拖走那一刻用户看到的正是它），拿不到才退回 `tab.scrollV`
   //（`rebuildLayout` / `switchTab` 维护的快照）。
   const shownPanel = [...panels.values()].find((p) => p.viewTabId === tabId);
-  const scrollV = (shownPanel ? readVisibleV(shownPanel) : null) ?? tab.scrollV;
+  const live = shownPanel ? readVisibleV(shownPanel) : null;
+  const scrollV = live ?? tab.scrollV;
+  // 跨窗口对不齐的第一现场：交出那一侧**当下**认的是哪一个位置（实时可见侧还是记忆）。
+  syncTrace(
+    `交出 tab=${tabId} 载荷v=${scrollV.toFixed(2)} 来源=${live === null ? "记忆" : "实时可见侧"}`,
+  );
   return {
     docId: doc.tabId,
     path: doc.path,
@@ -131,7 +150,7 @@ function transferSnapshotOf(tabId: number): SatelliteTab | null {
     scrollV,
     // B169：同步滚动开关一起带走——否则主窗口开着同步、子窗口收下后按钮还是灭的，
     // 两边状态对不上（用户报「子窗口的同步按钮状态和主窗口的要一致」）。
-    syncMode: docSyncModes.get(tab.docId) === true,
+    syncMode: docSyncOn(tab.docId),
     sizeClass: doc.sizeClass,
     backupId: doc.backupId,
     backedUp: doc.backedUp,
@@ -266,8 +285,9 @@ function adoptTransferredTabs(incoming: SatelliteTab[], panelId = activePanelId)
   for (const st of incoming) {
     // B169：主窗口那份文档的同步滚动开关状态一起带走 —— 否则主窗口开着、子窗口收下后
     // 按钮还是灭的，两边点亮态对不上（用户报「子窗口的同步按钮状态和主窗口的要一致」）。
-    // 注意：同步联动本身已禁用，这里搬的只是按键的点亮态。
-    if (st.syncMode) docSyncModes.set(st.docId, true);
+    // B297：搬过来的不再只是按键的点亮态 —— 经 `setDocSyncMode` 同时驱动协调器，
+    // 所以「主窗口开着、子窗口收下后真的跟着联动」这一条现在成立（以前是显示而已）。
+    setDocSyncMode(st.docId, st.syncMode !== false);
     // 该文档在本地还留着隐藏实例（刚从别的窗口交回来）→ 先把它摘掉，避免出现
     // 「两份实例同源但互不同步」——同源多实例的前提是同一窗口内共用一个 docs 条目，
     // 而隐藏实例的正文可能与交回来的最新正文不一致。
@@ -314,6 +334,10 @@ function adoptTransferredTabs(incoming: SatelliteTab[], panelId = activePanelId)
     // 显示的是另一处 ⇒「同一份文档两个窗口对不上」（B286 那一族）。
     // 老 payload（对端版本没这个字段）不动，保持默认 1 ⇒ 行为退回改造前，不会读脏值。
     if (typeof st.scrollV === "number" && st.scrollV > 1) inst.scrollV = st.scrollV;
+    // 对端搬过来的那一个 `v` 有没有真接到新实例上 —— 两个窗口对不齐时先看这一行。
+    syncTrace(
+      `接手 tab=${inst.tabId} 载荷v=${typeof st.scrollV === "number" ? st.scrollV.toFixed(2) : "无"} 记下=${inst.scrollV.toFixed(2)}`,
+    );
     attachTabToPanel(inst, panel);
     adopted.push(inst.tabId);
   }
@@ -855,7 +879,6 @@ function listenDocSync(): void {
   ).catch(() => {});
   // B178：跨窗口「这份文档在别的窗口还开着吗」的存在性登记（让同步键在主/子窗口同显隐）。
   // 按 `from`（窗口标签）记进 `remoteOpenByWindow`，自己的回声一律丢（与上面几条同口径）。
-  // B159：同步滚动的跨窗口开关 / 位置广播已在重构整体清除，这里不再注册任何相关监听。
   void listen<DocPresencePayload>(EVT_DOC_OPEN, (e) => {
     const p = e.payload;
     if (!p?.docId || !p.from || p.from === windowLabel) return;
@@ -874,12 +897,17 @@ function listenDocSync(): void {
     refreshSyncButton(activeTab());
   }).catch(() => {});
   // 新窗口上线问了一圈，这里把本窗口当前可见集合重播一遍（idempotent，重复加无害）。
+  // B297：顺带把这些文档的同步开关一起重播 —— 开关是按文档记的，冷启动的窗口只知道自己
+  // 那份，不对齐就会出现「老窗口关着、新窗口还在跟」的两套口径。
   void listen<{ from?: string }>(EVT_DOC_OPEN_RESYNC, (e) => {
     const p = e.payload;
     if (!p?.from || p.from === windowLabel) return;
     for (const t of tabs.values()) {
       if (t.panelId >= 0) {
         void emitCrossWindow(EVT_DOC_OPEN, { docId: t.docId }).catch(() => {});
+        void emitCrossWindow(EVT_SYNC_MODE, { docId: t.docId, on: docSyncOn(t.docId) }).catch(
+          () => {},
+        );
       }
     }
   }).catch(() => {});
@@ -898,6 +926,70 @@ function listenDocSync(): void {
     if (!p?.docId || !p.from || p.from === windowLabel) return;
     handleDocCloseQuery(p.docId, p.from);
   }).catch(() => {});
+
+  // ── B297：跨窗口同步滚动 ────────────────────────────────────────────────────────────
+  // 发：协调器把每一发**判成用户滚动 / 主动跳转**的落定位置交给这个外发口（回声、补写、
+  // 落位链、远端套用都不经过它 ⇒ 结构上不会把对端推来的位置再推回去）。载荷带共享坐标
+  // `v` 与顶边那一视觉行的行首字符位置 `pos`（B300），不带像素：每个窗口、源码与预览、
+  // 每档宽度都在自己的边缘换算。
+  syncCoordinator.setOutbound((docId, v, at) => {
+    syncTrace(`外发 doc=${docId} v=${v.toFixed(2)}${at === null ? "" : ` 行首@${at}`}`);
+    void emitCrossWindow(EVT_SYNC_POS, {
+      docId: Number(docId),
+      v,
+      pos: at ?? undefined,
+    }).catch(() => {});
+  });
+  void listen<SyncPosPayload>(EVT_SYNC_POS, (e) => {
+    const p = e.payload;
+    if (!p?.from || p.from === windowLabel) return; // 自己的回声
+    if (typeof p.v !== "number" || typeof p.docId !== "number") return;
+    // `pos` 可缺（老对端 / 对端那一侧量不出来）⇒ 退回按 `v` 落位，不许当成 0。
+    applySharedVFromRemote(String(p.docId), p.v, typeof p.pos === "number" ? p.pos : null);
+  }).catch(() => {});
+
+  // ── B302：滚动位置的持久化通道 ────────────────────────────────────────────────
+  // 会话只有主窗口在写（`scheduleSessionSave` 在卫星窗口是空操作），所以：
+  //   · 主窗口：账本判成用户滚动 / 主动跳转 ⇒ 排一次落盘；位置本身由落盘时按可见侧现采
+  //     （`samplePanelScrollV`），这里不重复记账，免得两条口径写出两个不同的值。
+  //   · 卫星窗口：把位置报给主窗口（`window-positions`），主窗口把它写进自己那份**隐藏实例**
+  //     的会话记录 —— 「每个窗口各存各的」于是仍落在同一个 session.json 里。
+  //
+  // ⚠️ 这一条**不受同步开关管**，因为它只记账、不动任何 DOM：卫星那一格的位置本来就是它自己
+  // 那份实例的，主窗口只是替它落盘。B303 之所以像「关着同步还在同步」，问题不在这条通道，
+  // 而在**借用**那三处（恢复时的文档级兜底、重建时的接班跟随、落盘时补建记录不带 seed）——
+  // 借用才决定用户看得见什么，所以闸全部加在那三处，这里不动。
+  syncCoordinator.setOnUserScroll((docId, v) => {
+    if (windowKind === "main") {
+      scheduleSessionSave();
+      return;
+    }
+    void emitCrossWindow(EVT_WINDOW_POS, {
+      positions: [{ docId: Number(docId), v }],
+    }).catch(() => {});
+  });
+  void listen<WindowPosPayload>(EVT_WINDOW_POS, (e) => {
+    const p = e.payload;
+    if (windowKind !== "main") return;
+    if (!p?.from || p.from === windowLabel || !p.positions?.length) return;
+    applyHandedBackPositions(p.from, p.positions);
+    scheduleSessionSave();
+  }).catch(() => {});
+  // 开关是**那份文档**的属性，不是这个窗口的属性：A 点一下，所有窗口里这份文件的开关与
+  // 按钮字形一起翻（B152 / B178 的「两边点亮态要一致」到这里才算真的做到）。
+  void listen<SyncModePayload>(EVT_SYNC_MODE, (e) => {
+    const p = e.payload;
+    if (!p?.from || p.from === windowLabel) return;
+    if (typeof p.on !== "boolean" || typeof p.docId !== "number") return;
+    setDocSyncMode(p.docId, p.on);
+    refreshSyncButton(activeTab());
+    syncTrace(`远端开关 doc=${p.docId} → ${p.on ? "开" : "关"}`);
+  }).catch(() => {});
+}
+
+/** 本窗口改了某文档的同步开关 ⇒ 告诉所有窗口（自己收到的回声由 `from` 滤掉）。 */
+function broadcastSyncMode(docId: number, on: boolean): void {
+  void emitCrossWindow(EVT_SYNC_MODE, { docId, on }).catch(() => {});
 }
 
 export {
@@ -921,5 +1013,6 @@ export {
   handleDocCloseQuery,
   docHeldElsewhere,
   broadcastDocChange,
+  broadcastSyncMode,
   listenDocSync,
 };

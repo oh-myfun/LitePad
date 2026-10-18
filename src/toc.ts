@@ -12,7 +12,6 @@ import { CODICONS } from "./shell/codicons";
 import { setTip } from "./shell/tooltip";
 import { saveSettings } from "./ipc/api";
 import { extractOutline } from "./markdown/outline";
-import { EditorScrollAnchor } from "./sync-scroll/anchor";
 import { syncCoordinator } from "./sync-scroll/wire";
 import { EditorView } from "@codemirror/view";
 import {
@@ -249,9 +248,12 @@ function updateTocDrawer(): void {
         effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: 0 }),
       });
       tab2.state = panel.view.view.state;
-      // v1：编辑器已 scrollIntoView 定位，驱动协调器把落点广播给同文档预览/其它面板
+      // v1：编辑器已 scrollIntoView 定位，把落点广播给同文档预览/其它面板
       // （取代旧的 preview.syncToLine；B152 关则不广播）。
-      syncCoordinator.syncFromDriver(String(tab2.docId), new EditorScrollAnchor(panel.view.view));
+      // ⚠️ 坐标由这一跳自己给（`line`），不把编辑器锚点交给协调器去读：这一格处于**预览态**时
+      // 编辑器是隐藏的，它的 `scrollTop` 恒 0、下一帧只会报出兜底的 1.00 ⇒ 所有窗口一起复位到
+      // 顶部（B301，真机 19:23:27 / 19:23:33 两轮 `外发 doc=1 v=1.00 驱动=[?]` 就是这么来的）。
+      syncCoordinator.syncTo(String(tab2.docId), line);
       panel.view.focus();
       updateTocDrawer();
     },

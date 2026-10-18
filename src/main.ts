@@ -136,6 +136,7 @@ import {
   applyBackupIds,
   applyTabsReturn,
   broadcastDocChange,
+  broadcastSyncMode,
   dropOnDesktop,
   dropRemotedForOwner,
   listenDocSync,
@@ -197,7 +198,7 @@ import {
   themeMode,
   isDark,
   suppressDirty,
-  docSyncModes,
+  docSyncOn,
   windowLabel,
   windowKind,
   syncingDocId,
@@ -216,8 +217,14 @@ import {
   setSyncingDocId,
 } from "./core/app-state";
 import { EVT_APP_QUIT, EVT_DOC_OPEN_RESYNC, EVT_WINDOW_CLOSED } from "./core/events";
+import type { WindowScrollPosition } from "./core/events";
 import { activePanel, activeTab, instancesOfDoc } from "./core/panels";
-import { syncCoordinator } from "./sync-scroll/wire";
+import {
+  applyHandedBackPositions,
+  collectWindowPositions,
+  pushDocSyncModes,
+  setDocSyncMode,
+} from "./sync-scroll/wire";
 import { logViewport } from "./core/viewport";
 import {
   bootMark,
@@ -257,8 +264,8 @@ function handleUpdate(view: EditorView, update: ViewUpdate): void {
   const caretLine = view.state.doc.lineAt(caretPos);
   sessionStore.setCursor(tab.tabId, caretLine.number, caretPos - caretLine.from + 1);
   updatePositionOf(panel.panelId, view);
-  // 同步滚动推送已在重构整体清除：handleUpdate 不再把光标 /
-  // 位置推给兄弟实例。`docSyncModes` 与这颗同步键仍保留，但不再产生任何滚动副作用。
+  // 同步滚动不由这里推：位置联动只认 `scroll` 事件 + 期望账本（sync-scroll/coordinator），
+  // 跨窗口那一份由协调器的外发口在「判成用户滚动」那一帧末尾发（B297）。
   // 文本是否真的变了：点击内容区、移动光标、切换视图、重新测量都会产生
   // update 但前后文本完全一致——那不是编辑。
   // 关键：md 预览重渲染**只**在文本真变化时才排程。若按「任意 update」排程，
@@ -349,17 +356,15 @@ function bindEvents(): void {
   winClose.addEventListener("click", () => void getCurrentWindow().close());
   // 「钉在顶部」开关（B99）：都是「切换 + 回读」，逻辑见 togglePin。
   winPin.addEventListener("click", () => void togglePin());
-  // B152：同步滚动开关。同步逻辑已在重构整体清除 —— 这颗键保留可见，点击只翻转
-  // `docSyncModes` 与自身 glyph，不再产生任何滚动 / 跨窗口广播副作用（见下面的处理）。
+  // B152：同步滚动开关（按**文档**记，B152）。B297 起这颗键真的管事：翻转即驱动本窗口的
+  // 协调器，并广播给所有装着同一份文档的窗口 —— 开关是那份文档的属性，不是这个窗口的属性，
+  // 所以「A 窗口点了关，B 窗口还在跟着滚」这一类分裂从此不成立。
   syncScrollBtn.addEventListener("click", () => {
     const tab = activeTab();
     if (!tab) return;
-    // 同步滚动逻辑已在重构整体清除：这颗键保留可见，但只翻转
-    // `docSyncModes` 与自身 glyph，不再产生任何滚动 / 跨窗口广播副作用。
-    const on = docSyncModes.get(tab.docId) !== true;
-    docSyncModes.set(tab.docId, on);
-    // v1 接线：B152 开关直接驱动协调器（按文档）。关 → 仅当前 pane；开 → 所有同文件视口。
-    syncCoordinator.setEnabled(String(tab.docId), on);
+    const on = !docSyncOn(tab.docId);
+    setDocSyncMode(tab.docId, on);
+    broadcastSyncMode(tab.docId, on);
     logger.debug("sync", `同步滚动 → ${on ? "开" : "关"} docId=${tab.docId}`);
     refreshSyncButton(tab);
   });
@@ -758,7 +763,13 @@ async function finishSatelliteClose(): Promise<void> {
   // 而不是走崩溃兜底把它们恢复成可见标签。这条必须先于 `destroySelf()` 发：主窗口的
   // clean-close 处理落定后，Rust 的 `satellite-closed`(Destroyed) 才到，`reclaimFromVanished`
   // 那时已是空操作，不会把「关掉」的子窗口标签又接回主窗口。
-  void emit("satellite-clean-close", { label: windowLabel }).catch(() => {});
+  //
+  // B302：随同一并发的是**本窗口屏上那份位置**（共享坐标 `v`，不是像素）。会话只有主窗口
+  // 在写，卫星自己那些格的位置只能由它落进主窗口那一份记录里 —— 量不出位置的格子不进清单。
+  void emit("satellite-clean-close", {
+    label: windowLabel,
+    positions: collectWindowPositions(),
+  }).catch(() => {});
   await destroySelf();
 }
 
@@ -931,6 +942,10 @@ async function setupShell(): Promise<void> {
   }).catch(() => {});
 
   // B71 ④：跨窗口同源正文同步（主窗口与卫星窗口都要装，见 listenDocSync）
+  // B297：同一个函数里还装了跨窗口同步滚动的外发口与两条监听（`sync-pos` / `sync-mode`）。
+  // 装监听之前先把会话里恢复出来的开关推进协调器（`pushDocSyncModes`），否则「上次关掉的
+  // 那份文件，重启后又悄悄跟着同步」—— 按钮与行为两套口径。
+  pushDocSyncModes();
   listenDocSync();
   // B178：引导末尾问一圈「你们都开着哪些可见文档」—— 老窗口把当前集合重播一遍，
   // 新上线的窗口据此补齐 `remoteOpenByWindow`（否则它只知道自己开的，收不到老窗口
@@ -1004,6 +1019,16 @@ async function bootstrap(): Promise<void> {
   //    `registerWindowClose`。那是刻意退回 B71 之前的行为，不是新口径。
   publishWindowKind();
 
+  // B144：级别以后端为准（它决定要不要落盘）。不 await —— 日志拿不到就按默认 info 继续，
+  // 绝不能反过来卡住启动。
+  // ⚠️ B298：这一句必须排在下面 `windowKind === "satellite"` 那条分支**之前**。卫星窗口在
+  // 那条分支里 `return`，把它留在启动收尾等于「子窗口的前端永远停在默认 info」——而过滤
+  // 发生在发 IPC 之前，于是子窗口所有 trace/debug 一条都进不了 `litepad.log`。真机
+  // 17:39–17:41 那一轮：主窗口 456 行 sync trace、新窗口 0 行，可它明明在往外发位置
+  // （主窗口那侧的 `远端推` 就是证据）。「拖出窗口建新窗口」正是只有子窗口看得见的那一段，
+  // 缺了这些行就只能猜 —— 这一族因此反复修不动。
+  void syncLevel();
+
   // B91-2：标签拖拽走 HTML5 DnD（影像是系统绘制的，能跟出窗口）。**两个窗口都要装**
   // —— 谁都可能成为落点（主窗口能接卫星窗口的，卫星窗口之间也能互拖）。
   // 这里把四件事接到宿主状态上：落点怎么算、窗口内松手怎么办、跨窗口怎么交接、
@@ -1046,11 +1071,17 @@ async function bootstrap(): Promise<void> {
   // 可见标签）。这条先于 Rust 的 `satellite-closed`(Destroyed) 到达，使崩溃兜底
   // `reclaimFromVanished` 落在已清空的 remotedTabs 上、成为空操作。卫星窗口自己的 label
   // 不会收到（事件跨窗口广播、自己那份被 `from === windowLabel` 过滤），故这里只挡回声。
-  void listen<{ label?: string }>("satellite-clean-close", (e) => {
-    const lbl = e.payload?.label;
-    if (!lbl || lbl === windowLabel) return;
-    dropRemotedForOwner(lbl);
-  }).catch(() => {});
+  void listen<{ label?: string; positions?: WindowScrollPosition[] }>(
+    "satellite-clean-close",
+    (e) => {
+      const lbl = e.payload?.label;
+      if (!lbl || lbl === windowLabel) return;
+      // 顺序要紧：先按 `remotedTabs` 把交还回来的位置落到那份隐藏实例的记录上，再作废旧账
+      //（`dropRemotedForOwner` 一跑，那条记录就不存在了，位置也就没地方落了）。
+      applyHandedBackPositions(lbl, e.payload?.positions ?? []);
+      dropRemotedForOwner(lbl);
+    },
+  ).catch(() => {});
 
   // 主题、菜单、工具栏全部就绪。此刻 DOM 已是正确配色的界面外壳，后面的会话
   // 恢复（读盘）再久也只是「内容晚一点出现」，不会让用户盯着一块空板。
@@ -1141,10 +1172,6 @@ async function bootstrap(): Promise<void> {
     showMessage(restored ? "已恢复上次会话" : "就绪");
     bootMark("render", t);
     void persistSession();
-
-    // B144：级别以后端为准（它决定要不要落盘）。不 await —— 这是启动收尾，
-    // 日志拿不到就按默认 info 继续，绝不能反过来卡住启动。
-    void syncLevel();
 
     reportBoot(`ready set_title=${diagSetTitle} tabs=${tabs.size} panels=${panels.size}`);
   } catch (err) {

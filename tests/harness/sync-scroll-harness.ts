@@ -34,10 +34,15 @@ import { renderBlocks } from "../../src/markdown/pipeline";
 import { panels, tabs, type Panel, type Tab } from "../../src/core/app-state";
 import { isMdTab, makeDoc, registerDoc } from "../../src/doc-model";
 import {
+  applySharedVFromRemote,
+  faceOf,
   landVisibleSideAtV,
   readVisibleV,
   reconcileSyncRegistrations,
+  sharedVByDoc,
+  sideOfPanel,
   syncCoordinator,
+  type SyncSide,
 } from "../../src/sync-scroll/wire";
 import { EditorScrollAnchor } from "../../src/sync-scroll/anchor";
 import {
@@ -85,30 +90,54 @@ export interface HarnessApi {
   /** 关掉一格面板（复刻 closePanelById / pruneEmptyPanels 的注册注销）。 */
   removePanel(panelId: number): void;
   /**
-   * 切该面板的源码/预览模式。⚠️ **忠实**复刻 `toggleViewMode`（`markdown.ts:119-152`）：
-   * 写 `viewMode` → `applyPanelMode` 换类 + 重渲染预览 → 切回源码时 `focus()`。
-   * 生产这条路径**不调** `reconcileSyncRegistrations()`，这里也不能调 ——
-   * 早先的版本调了，于是台子测的是宿主而不是应用（S13/S14 因此在绿着掩盖线上缺陷）。
+   * 切该面板的源码/预览模式。⚠️ **忠实**复刻 `toggleViewMode`（`markdown.ts`）：
+   * 读**此刻可见那一侧**的 v → 写 `viewMode` → `applyPanelMode` 换类 + 重渲染预览 →
+   * 切回源码时 `focus()` → `landVisibleSideAtV` 扶回 → `reconcileSyncRegistrations()` →
+   * 末尾一记延迟补焦点（B190）。
+   * 「读 v 排在写 viewMode 之前」这条顺序是判据的一部分，写在 `sync-scroll-sequence.test.ts`
+   * 的序列契约里：反过来读到的是还没现形那一侧（`display:none` ⇒ 恒 1.00），
+   * 落位就把用户钉回文档顶部（B293）。
    */
   setMode(panelId: number, mode: "source" | "preview"): void;
   /**
-   * 把标签移入另一格面板。复刻 `tabdnd` drop → `commitTabDrop` → `moveTabToPanel`
-   * （`split.ts:140-163`）→ `rebuildLayout`（销毁全部 EditorView）→ `mountView`
-   * （`lifecycle.ts:199-232`：从 `tab.state` 新建编辑器 + 活动面板 focus + applyPanelMode
-   * + reconcile）。生产这条路**完全不碰 `tab.scrollV`**，镜像也必须不碰，否则又是宿主替
-   * 应用把事做了。
-   */
-  /**
-   * 同源复制一张标签进**同一格**面板（复刻 `duplicateTabToPanel`，`split.ts:282-298`：
+   * 同源复制一张标签进**同一格**面板（复刻 `duplicateTabToPanel`，`split.ts`：
    * 取当前正文 → 新实例（抄 `viewMode` 与选区）→ 挂到该面板并设为活动 → 重建挂载）。
-   * 返回新标签在该面板 `tabs` 里的下标（探针按下标切标签，拿不到 tabId）。
-   * S25 需要它：真机那条症状的形状是「同一格里同一文件的第二张源码标签」，而这一张在被显示
+   * 返回新标签在该面板 `tabs` 里的下标（探针按下标切标签，tabId 由 MEASURE 的 tabs 列表给）。
+   * S25/S26 需要它：真机那条症状的形状是「同一格里同一文件的第二张源码标签」，而这一张在被显示
    * 之前从不注册进协调器 ⇒ 它记的 `scrollV` 天生是陈值。
    */
+  duplicateTab(panelId: number, index: number): number;
+  /**
+   * 把标签移入另一格面板。复刻 `tabdnd` drop → `commitTabDrop` → `moveTabToPanel`
+   * （`split.ts`）→ `rebuildLayout`（销毁全部 EditorView）→ `mountView`
+   * （从 `tab.state` 新建编辑器 + 活动面板 focus + applyPanelMode + reconcile）。
+   */
+  moveTab(tabId: number, hostPanelId: number): void;
   /** 只读取证：该文档当前的共享坐标（`syncCoordinator.currentV`），null = 没有在册视口。 */
   currentV(docId: string): number | null;
-  duplicateTab(panelId: number, index: number): number;
-  moveTab(tabId: number, hostPanelId: number): void;
+  /**
+   * 只读取证：该面板 `tabs` 里第 index 张标签**自己记住**的 `scrollV`（不是它当前显示的
+   * 位置）。用来分清「没记」（这个值是陈的）与「记了没写 / 写了被抢」（值是好的，DOM 却没跟上）。
+   */
+  scrollVOf(panelId: number, index: number): number | null;
+  /** 某一格的标签序号表（S31 要挑出显示这份文档的那一张再复制）。 */
+  tabIdsOf(panelId: number): number[];
+  /**
+   * 在**没有布局盒**的那一侧按 `v` 落位（复刻真机「刚 new 出来还没有布局 ⇒ 写入被裁到 0」
+   * 那一发），随后恢复显示。用来逼出台子平时复现不了的落位重试链（B294/B295）：
+   * 返回链条**此刻**有没有把滚动面藏起来。判据由 S28 给。
+   */
+  landWhileHidden(
+    panelId: number,
+    v: number,
+  ): { ok: boolean; side: SyncSide; concealed: string } | null;
+  /**
+   * 再跑一轮 `rebuildLayout` 的镜像（快照 → 销毁 → 重挂）。
+   * S29 用它复刻真机 14:19:51 跨窗口拖出那一段的形状：**上一轮的落位链还在途**
+   * （DOM 还停在被裁到的顶部）时又来一轮结构性重建 —— 这一轮的快照读到什么，
+   * 就写进 `tab.scrollV`，随后原样落进会话。
+   */
+  rebuildLayout(): void;
   /**
    * 远端文档变更（复刻 `windows.ts:719` 的裸 `view.dispatch({changes})`）。
    * 生产那一发**没有**账本登记 —— 镜像照抄，包括这个缺失。
@@ -120,11 +149,53 @@ export interface HarnessApi {
    * 且明确**不**把旧视口位置还回去。
    */
   remoteFullResync(docId: number, text: string): void;
+  /**
+   * 收到对端窗口推来的共享坐标（B297）—— 直接调**生产**的 `applySharedVFromRemote`，
+   * 宿主不复刻它（复刻一次就有一次比生产更正确的风险，本轮已踩过）。
+   */
+  applyRemoteV(docId: string, v: number, at?: number | null): void;
+  /**
+   * 取证用：每格面板**当前显示的那张标签属于哪份文档**（`viewTabId ?? activeTabId`）。
+   * S30 要靠它挑出「同一份文档的预览面」，否则会把别的文档的预览算进判据。
+   */
+  docIdsOfPanels(): { panelId: number; docId: number }[];
+  /**
+   * 强制某一格的宽度（B300 判据要用）：两格显示同一份文档、宽度不同 ⇒ 同一字符各自折进
+   * 不同的视觉行 —— 只有这样才能测出「按 v 对齐」与「按行首字符对齐」的差别。
+   */
+  setWidth(panelId: number, px: number): void;
+  /**
+   * 这一格此刻顶边所在视觉行，与「包含 `pos` 的那一视觉行」是不是同一行（B300 的判据本体）。
+   * 用真 CM6 的 `coordsAtPos` 比两行的屏幕顶：同一行 ⇒ 差 0（容差 2px）。
+   */
+  alignReport(
+    panelId: number,
+    pos: number,
+  ): {
+    topPos: number | null;
+    sameRow: boolean;
+    charTop: number | null;
+    scrollTop: number;
+    v: number;
+  } | null;
+  /**
+   * 跨窗口外发口的取证探针。生产里这个口由 `multiwindow/windows.ts` 在 `listenDocSync`
+   * 里装上（把「用户滚了一下」emit 给别的窗口）；本宿主没有事件层，所以由宿主装上并计数。
+   */
+  clearOutbound(): void;
+  outboundCount(): number;
+  lastOutbound(): { docId: string; v: number; pos: number | null } | null;
 }
 
 let nextTabId = 1;
 let nextPanelId = 2;
 let activePanelId = 0;
+/**
+ * 跨窗口外发口的记录（B297）。生产里这个口由 `multiwindow/windows.ts` 在 `listenDocSync`
+ * 里装上、把每一发「判成用户滚动」的落定位置 emit 给别的窗口；本宿主没有事件层，
+ * 所以由宿主装同一个口并计数 —— S30 判的就是「用户滚动才外发、远端套用绝不外发」。
+ */
+let outboundLog: { docId: string; v: number; pos: number | null }[] = [];
 const docLongId = 1;
 const docShortId = 2;
 const fixtureText = () => ({ long: window.__FIXTURE_LONG__, short: window.__FIXTURE_SHORT__ });
@@ -225,10 +296,10 @@ function applyPanelModeMirror(panel: Panel): void {
  * 新建一个（`scrollTop` 从 0 起步）、活动面板 `focus()`（CM6 把光标行滚进视野）、
  * 走 `applyPanelMode`、把 `scrollV` 扶回**现在看得见**那一侧并认领、最后 reconcile。
  *
- * ⚠️ 落位/读取直接 import 生产的 `readVisibleV` / `landVisibleSideAtV`：这两步是应用的事，
- * 宿主抄一份就又会「替应用做事」——抄错还测不出来（本轮已经踩过一次）。
+ * ⚠️ 落位/读取直接 import 生产的 `readVisibleV` / `landVisibleSideAtV` / `sharedVByDoc`：
+ * 这几步是应用的事，宿主抄一份就又会「替应用做事」——抄错还测不出来（本轮已经踩过一次）。
  */
-function remountPanel(panel: Panel): void {
+function remountPanel(panel: Panel, shared: Map<string, number>): void {
   const host = panel.bodyEl;
   const shown = tabs.get(panel.viewTabId ?? panel.activeTabId);
   if (!host || !panel.view || !shown) return;
@@ -247,8 +318,25 @@ function remountPanel(panel: Panel): void {
   panel.viewTabId = tab.tabId;
   if (panel.panelId === activePanelId) panel.view.focus();
   applyPanelModeMirror(panel);
+  // B293 · 方案 A 的跨重建版（同 `lifecycle.ts:mountView`）：接班/新来的这一张在被显示之前
+  // 不注册 ⇒ 它的 `scrollV` 是陈值，先跟随销毁前抄下的共享位置，抄不到才用自己的记忆。
+  const follow = shared.get(String(tab.docId));
+  if (follow !== undefined) tab.scrollV = follow;
   landVisibleSideAtV(panel, tab.scrollV);
   reconcileSyncRegistrations();
+}
+
+/**
+ * 生产 `rebuildLayout()` 的净效果：**先**在所有 view 还活着的时候抄下各文档的共享位置，
+ * **再**逐格销毁重建。顺序本身就是判据（`sync-scroll-sequence.test.ts` 钉住）——
+ * 销毁之后再 `currentV` 读回来的是 0/1.0 的垃圾，等于把整份文档钉回顶部。
+ */
+function rebuildLayoutMirror(): void {
+  const shared = sharedVByDoc();
+  for (const id of [...panels.keys()]) {
+    const p = panels.get(id);
+    if (p) remountPanel(p, shared);
+  }
 }
 
 /** 标签条高亮（生产经 `renderPanelTabs`）：MEASURE 读 `tab-active` 决定点第几个标签。 */
@@ -267,6 +355,11 @@ function install(): void {
   const fx = fixtureText();
   registerDoc(makeDoc(docLongId, fx.long, "sync-scroll.md", null, "utf-8", "LF", false));
   registerDoc(makeDoc(docShortId, fx.short, "sync-scroll-b.md", null, "utf-8", "LF", false));
+
+  // B297：生产由 `windows.ts` 在此时装上跨窗口外发口；宿主装同一个口，只多记一份流水给 S30。
+  // 与生产同一个接线（windows.ts 的 setOutbound）：`v` 之外还把行首字符位置带出去，
+  // 台子的判据要靠它验「逐行对齐」（B300）。少抄一个参数 = 台子测的是想象中的接线。
+  syncCoordinator.setOutbound((docId, v, at) => outboundLog.push({ docId, v, pos: at }));
 
   // 排版变量必须按生产缺省落一遍，否则几何对不上：--font-size / --editor-line-height
   // 直接决定 CM6 的行块高度，而 v 的行内小数部分就是从它算出来的。
@@ -404,19 +497,60 @@ function install(): void {
       const panel = panels.get(panelId);
       const tab = panel ? tabs.get(panel.activeTabId) : undefined;
       if (!panel || !tab) return;
-      // 同 `toggleViewMode`（markdown.ts）：读切换前那一侧的 v → 写 viewMode → applyPanelMode
-      // （换类 + 强制重渲染预览）→ 切回源码才 focus（隐藏元素上 focus 会静默失败，B181/B190）
-      // → 把刚现形那一侧扶回同一个 v 并认领 → reconcile。
+      // 同 `toggleViewMode`（markdown.ts）：读**此刻可见那一侧**的 v → 写 viewMode →
+      // applyPanelMode（换类 + 强制重渲染预览）→ 切回源码才 focus（隐藏元素上 focus 会静默
+      // 失败，B181/B190）→ 把刚现形那一侧扶回同一个 v 并认领 → reconcile →
+      // 末尾还有一记延迟补焦点（B190：WebView2 在手势结束会把焦点定回 body）。
+      // ⚠️ 读 v 必须排在写 viewMode **之前**：`sideOfPanel` 按 viewMode 判可见侧，而那一刻
+      // `mode-*` 类还没换，先写后读读到的是被 `display:none` 归零的那一侧（B293）。
+      const sourceEditor = panel.view;
       const keepV = readVisibleV(panel);
       tab.viewMode = mode;
-      const sourceEditor = panel.view;
       applyPanelModeMirror(panel);
       if (mode === "source") sourceEditor?.focus();
       if (keepV !== null) landVisibleSideAtV(panel, keepV);
       reconcileSyncRegistrations();
+      // 生产末尾还有一记延迟补焦点（B190：手势结束 WebView2 会把焦点定回 body）。
+      // 它必须**不**动视口，否则会把刚钉好的位置顶掉（B277 那一类）——台子照抄这一发，
+      // 免得「宿主比生产少一步」又把抢位置的那一路藏起来。
+      if (mode === "source" && sourceEditor) {
+        const handle = sourceEditor;
+        setTimeout(() => handle.focus(), 0);
+      }
     },
     currentV(docId) {
       return syncCoordinator.currentV(docId);
+    },
+    tabIdsOf(panelId) {
+      const host = panels.get(panelId);
+      return host ? [...host.tabs] : [];
+    },
+    scrollVOf(panelId, index) {
+      const host = panels.get(panelId);
+      const tab = host ? tabs.get(host.tabs[index]) : undefined;
+      return tab ? tab.scrollV : null;
+    },
+    landWhileHidden(panelId, v) {
+      const host = panels.get(panelId);
+      if (!host) return null;
+      const side = sideOfPanel(host);
+      const face = faceOf(host, side);
+      if (!face) return null;
+      // 造「这一侧此刻没有布局盒」的形状 —— 真机 08:14:45 那条 `落点px=0.00` 就是这么来的
+      // （编辑器刚 new 出来还没有布局）。台子本身一帧就落准，不这样造就拿不到多帧落位的链。
+      const box =
+        host.bodyEl?.querySelector<HTMLElement>(".panel-editor") ??
+        (face.el.parentElement as HTMLElement | null);
+      const prev = box?.style.display ?? null;
+      if (box) box.style.display = "none";
+      const ok = landVisibleSideAtV(host, v);
+      // 同步读：链条**此刻**藏没藏（`landVisibleSideAtV` 里藏与写是同一个同步栈）。
+      const concealed = face.el.style.visibility;
+      if (box && prev !== null) box.style.display = prev;
+      return { ok, side, concealed };
+    },
+    rebuildLayout() {
+      rebuildLayoutMirror();
     },
     duplicateTab(panelId, index) {
       const host = panels.get(panelId);
@@ -425,6 +559,11 @@ function install(): void {
       // 生产的正文取自 `freshTextOfDoc(doc)`；这里同一文档当前 state 的文本与之同义。
       const inst = makeTab(src.docId, src.state.doc.toString(), host.panelId, src.viewMode);
       inst.state = inst.state.update({ selection: src.state.selection.main }).state;
+      // 同 `duplicateTabToPanel`（src/tabs/split.ts）：副本的位置是一道**与同步开关无关的
+      // 显式种子**（B303 之后重建那一路的跟随只听开关，关着时不靠它种位置）。
+      const srcPanel = panels.get(src.panelId);
+      const srcLive = srcPanel && srcPanel.viewTabId === src.tabId ? readVisibleV(srcPanel) : null;
+      inst.scrollV = srcLive ?? src.scrollV;
       host.tabs.push(inst.tabId);
       host.activeTabId = inst.tabId;
       const chip = document.createElement("div");
@@ -433,7 +572,9 @@ function install(): void {
       chip.textContent = `copy#${inst.tabId}`;
       host.bodyEl?.querySelector(".panel-tabstrip")?.append(chip);
       renderTabstripMirror(host);
-      remountPanel(host);
+      // 生产：`setActivePanelId(hostPanelId)` → `rebuildLayout()`（整轮销毁重建）。
+      activePanelId = host.panelId;
+      rebuildLayoutMirror();
       return host.tabs.length - 1;
     },
     moveTab(tabId, hostPanelId) {
@@ -456,8 +597,10 @@ function install(): void {
       if (chip && strip) strip.append(chip);
       renderTabstripMirror(src);
       renderTabstripMirror(host);
-      remountPanel(src);
-      remountPanel(host);
+      // 生产这里是一次 `rebuildLayout()`：**所有**面板的 view 一起销毁重建（共享位置在
+      // 销毁之前抄），所以镜像也必须整轮重建，不能只重建受影响的两格 ——
+      // 只重建两格会把「另一格也在同一轮里被重新落位」这件事漏掉（B293）。
+      rebuildLayoutMirror();
     },
     remoteDocChange(docId, insertText) {
       // 同 `applyRemoteDocChange`（windows.ts:719）：直接 dispatch changes。
@@ -489,6 +632,68 @@ function install(): void {
     setSyncEnabled(docId, on) {
       syncCoordinator.setEnabled(docId, on);
     },
+    setWidth(panelId, px) {
+      const host = panels.get(panelId);
+      const el = host?.bodyEl?.closest(".panel-host") as HTMLElement | null;
+      if (!el) return;
+      if (px > 0) {
+        el.style.flex = "0 0 " + px + "px";
+        el.style.width = px + "px";
+      } else {
+        // 0 = 还原：内联宽度留着会把后面的场景一直挤在窄容器里（S28/S29 会被误伤）
+        el.style.flex = "";
+        el.style.width = "";
+      }
+      // CM6 靠 ResizeObserver 重新测量；这里只是让宽度真的变了（判据靠 settle 等它定局）
+      host?.view?.view.requestMeasure?.();
+    },
+    alignReport(panelId, pos) {
+      const host = panels.get(panelId);
+      if (!host) return null;
+      const face = faceOf(host, sideOfPanel(host));
+      if (!face) return null;
+      const topPos = face.anchor.topPos?.() ?? null;
+      const view = host.view?.view;
+      let sameRow = false;
+      let charTop = null as number | null;
+      // ⚠️ pos 越界（这一格此刻挂的是别的文档 / 文档刚被换短）时 CM6 直接抛 RangeError。
+      // 取证 getter 不许把台子带崩：认不出位置就报 sameRow=false，让场景自己去看前提。
+      const len = view?.state?.doc?.length ?? 0;
+      if (view && topPos !== null && pos >= 0 && pos <= len) {
+        try {
+          const a = view.coordsAtPos(pos);
+          const b = view.coordsAtPos(topPos);
+          sameRow = !!a && !!b && Math.abs(a.top - b.top) < 2;
+          // 「A 顶边那个字符离 B 顶边还差几像素」。0 = 那一行整行从顶边开始；
+          // 非 0 = 顶边切在行中间（用户眼里的「有点偏移」）。sameRow 太粗，看不见这个。
+          const rect = view.scrollDOM.getBoundingClientRect();
+          if (a) charTop = Math.round(a.top - rect.top);
+        } catch {
+          sameRow = false;
+        }
+      }
+      return {
+        topPos,
+        sameRow,
+        charTop,
+        scrollTop: Math.round(face.el.scrollTop),
+        v: Number(face.anchor.getV().toFixed(2)),
+      };
+    },
+    docIdsOfPanels() {
+      return [...panels.values()].map((p) => {
+        const t = tabs.get(p.viewTabId ?? p.activeTabId);
+        return { panelId: p.panelId, docId: t?.docId ?? -1 };
+      });
+    },
+    applyRemoteV(docId, v, at) {
+      applySharedVFromRemote(docId, v, at ?? null);
+    },
+    clearOutbound() {
+      outboundLog = [];
+    },
+    outboundCount: () => outboundLog.length,
+    lastOutbound: () => (outboundLog.length ? outboundLog[outboundLog.length - 1] : null),
     docIds: () => ({ long: docLongId, short: docShortId }),
   };
 }

@@ -29,6 +29,13 @@ export interface SessionTabRecord {
   backupId: string | null;
   /** B169：同步滚动开关（按文档记，B152）。恢复时写回前端 `docSyncModes`。 */
   syncMode: boolean;
+  /**
+   * B302：这一格上次被看到时的共享坐标 `v`；`null` = 从没被看到过。
+   *
+   * ⚠️ 必须允许 `null`：`1`（停在顶部）与「没记过」在数据里长成一个样，恢复时就会把
+   * 同文档兄弟格那份对的记忆覆盖成顶部（B299 那一族）。落盘时只由**看得见那一侧**现采。
+   */
+  scrollV: number | null;
 }
 
 /** 一个面板的会话记录：标签顺序 + 活动标签。 */
@@ -57,6 +64,7 @@ function blankRecord(tabId: number, docId: number): SessionTabRecord {
     viewMode: null,
     backupId: null,
     syncMode: false,
+    scrollV: null,
   };
 }
 
@@ -71,6 +79,7 @@ function toDisk(r: SessionTabRecord): TabSession {
     backupId: r.backupId,
     docId: r.docId,
     syncMode: r.syncMode,
+    scrollV: r.scrollV,
   };
 }
 
@@ -150,6 +159,18 @@ class SessionStore {
   setSyncMode(tabId: number, on: boolean): void {
     const r = this.recs.get(tabId);
     if (r) r.syncMode = on;
+  }
+
+  /**
+   * B302：这一格的视口位置（共享坐标 `v`）。
+   *
+   * 只有两个来源配写它：① 落盘前对**看得见那一侧**的现采（`samplePanelScrollV`）；
+   * ② 卫星窗口关窗时交还的位置。隐藏侧的读数恒 0、在途落位的 DOM 还是旧位置，
+   * 两者都不许直接写这里（前者由 `readVisibleV` 报 null 挡住，后者由账本挡）。
+   */
+  setScrollV(tabId: number, v: number | null): void {
+    const r = this.recs.get(tabId);
+    if (r) r.scrollV = v;
   }
 
   // ---------------------------------------------------------------- 结构（面板 / 布局）
