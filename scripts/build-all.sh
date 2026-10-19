@@ -153,7 +153,13 @@ ls -lh "src-tauri/target/$LITEPAD_PROFILE/bundle/nsis/"*.exe
 # 口径（用户 2026-10-18）：每次修改**自动 +patch**，不需要征询；minor/major 才要先问用户。
 # 挂在交付入口而不是 pre-commit 钩子里，是因为本仓库常用 `git commit <paths>`（路径限定提交
 # 会绕过索引），钩子里 `git add` 的版本号会被那次提交**静默丢掉**、还要把别人的在飞文件一起提交。
-if [ -n "${CI:-}" ]; then
+#
+# ⚠️ `LITEPAD_RELEASE=1`（由 `scripts/release.sh` 传入）时**整段跳过**：那条链已经先把版本
+#    bump 到目标档、构建完还要拿这几个文件去提交 release。这里再 +patch 一次，就会把
+#    「tag 叫 v0.22.0、文件里写 0.22.1」这种东西提交出去（v0.22.0 那次就是这么来的）。
+if [ -n "${LITEPAD_RELEASE:-}" ]; then
+  echo "· 由 release.sh 驱动：版本号归它管，这里不推 patch"
+elif [ -n "${CI:-}" ]; then
   echo "· CI 环境：不动版本号（版本号由本地交付流程推进）"
 elif git diff-tree --no-commit-id --name-only -r HEAD | grep -qE '^src/|^src-tauri/src/'; then
   if git diff-tree --no-commit-id --name-only -r HEAD | grep -q '^package.json$'; then
