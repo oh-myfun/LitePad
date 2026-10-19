@@ -31,6 +31,10 @@ vi.mock("../src/ipc/api", () => ({
   clearRecents: h.clearRecents,
   getRecentLimit: h.getRecentLimit,
   setRecentLimit: h.setRecentLimit,
+  // ⚠️ `core/logger` 的 `log()` 每一条都要调 `logEvent` 落后端日志。这份 mock 是**整表替换**
+  //    模块的，少列一个导出，失败分支里那句 `logger.warn(...)` 就会在 `.catch` 里再抛一次
+  //    —— vitest 报「1299 全绿 + 1 个未处理拒绝」，就是这么来的（不是产品代码的锅）。
+  logEvent: () => Promise.resolve(),
 }));
 
 /** store 与各模块的状态都是模块级的，每个用例都得拿一份新的图。 */
