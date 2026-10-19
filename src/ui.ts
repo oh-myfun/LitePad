@@ -161,7 +161,10 @@ let diagSetTitle = "skipped";
 function refreshTitle(): void {
   const tab = activeTab();
   const doc = tab ? docs.get(tab.docId) : undefined;
-  const mark = doc?.dirty ? " ●" : "";
+  // 用 `•`（U+2022）而不是标签栏那个 `●`（U+25CF）：后者是按整个 em 画的几何实心圆，
+  // 在 12.5px 的标题字号下几乎与文字等高，用户报「太大了」。标签栏那颗不受影响 ——
+  // 它坐在固定尺寸槽位里、由 CSS 控大小（见 global.css 的 `.tab-mark`）。
+  const mark = doc?.dirty ? " •" : "";
   const suffix = doc?.readonly ? " [只读]" : "";
   // 软件名在前，文件名在后：无文档时只有 LitePad
   const title = doc ? `LitePad - ${doc.name}${mark}${suffix}` : "LitePad";

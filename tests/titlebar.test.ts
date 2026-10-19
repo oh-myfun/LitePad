@@ -166,6 +166,12 @@ describe("B97 自建标题栏", () => {
     expect(body, "任务栏/Alt+Tab 读的窗口标题仍要 setTitle").toContain(".setTitle(title)");
     // 自建标题栏里应用名是噪声（窗口与任务栏已经有了），只放文档名
     expect(body, "标题栏不得重复写应用名").not.toMatch(/titleText\.textContent\s*=[^;]*LitePad/);
+    // 未保存那颗点用半角 `•`：`●`（U+25CF）是按整 em 画的几何实心圆，在 12.5px 的标题字号下
+    // 几乎与文字等高（用户报「太大了」）。标签栏那颗不受这条约束 —— 它坐在固定槽位里由 CSS 控。
+    expect(body, "标题栏的未保存标记要用小圆点 •").toContain('" •"');
+    expect(body, "标题栏不许再用整 em 的 ●（同一个串还要经 setTitle 进任务栏）").not.toContain(
+      '" ●"',
+    );
   });
 
   it("搬走的功能必须仍有入口：导出进「文件 → 导出 ▸」，主题在「文件 → 设置…」", () => {
