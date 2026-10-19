@@ -75,8 +75,32 @@ fn main() {
             commands::push_pending_files(files.clone());
             // 应用已运行时：拉起主窗口并转发事件（前端据此开新标签）
             if let Some(win) = app.get_webview_window("main") {
+                // B313 三句各管一件事，少一句就回到「文件开了、窗口还在任务栏里」：
+                //   · `unminimize` —— tao 的 `set_focus` 在缓存标记说「还最小化」时是**空操作**
+                //     （守卫是 visible && !minimized && !foreground），而 `show()` 也不还原最小化；
+                //   · `show` —— 窗口被藏起来时（非最小化）把它放回可见态；
+                //   · 排队补一发 `set_focus` —— unminimize 的真实动作（改标记 + SW_RESTORE）排在
+                //     事件循环的任务队列里，此刻同步读到的标记还是「最小化」。这条闭包排在它后面，
+                //     那时标记已清，`set_focus` 才真走到 force_window_active：先 SetForegroundWindow，
+                //     被前台锁挡下再用一次 Alt 键输入抢回前台权限 —— 双击方是 Explorer，
+                //     前台权限不在本进程手上，那记兜底才是「提到顶部」真正生效的那一步。
+                let _ = win.unminimize();
                 let _ = win.show();
-                let _ = win.set_focus();
+                let later = win.clone();
+                let _ = win.run_on_main_thread(move || {
+                    let _ = later.set_focus();
+                });
+                core::logging::log(
+                    core::logging::Level::Info,
+                    "assoc",
+                    &format!("单实例转发 {} 个文件 · 已请求还原并激活主窗口", files.len()),
+                );
+            } else {
+                core::logging::log(
+                    core::logging::Level::Warn,
+                    "assoc",
+                    "单实例转发时找不到主窗口（label=main）",
+                );
             }
             let _ = app.emit("open-file", serde_json::json!({ "paths": files }));
         }))
