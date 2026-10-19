@@ -70,7 +70,7 @@ export interface SideResizerOptions {
   onChange: (width: number) => void;
   /**
    * B207：展开区此刻是不是摊开着。收起态往右拖要能**拖回来**，而开关状态只有调用方那
-   * 一份（`setSideOpen` 是显隐的唯一出口），这里问它，不自己另记一份。
+   * 一份（`setDrawer` 是显隐的唯一出口），这里问它，不自己另记一份。
    */
   isOpen?: () => boolean;
   /**
@@ -116,7 +116,7 @@ export function attachSideResizer(
 
   /**
    * B207：只在该变的时候报一次 —— 拖到底会连发几十个 mousemove，每个都去切一次
-   * `setSideOpen` 会把落盘与重绘打十遍。
+   * `setDrawer` 会把落盘与重绘打十遍。
    * ⚠️ 判据问 `isOpen()` 而不是自己缓存布尔：显隐的唯一出口在调用方那边，缓存一份迟早
    *    跟它错开（用户这时候顺手点了那颗「大纲」键，两边就对不上了）。
    */

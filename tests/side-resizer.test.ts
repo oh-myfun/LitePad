@@ -286,7 +286,7 @@ describe("B207 拖到最小再往左拖：收起 / 拉回展开区", () => {
     mouse(document, "mouseup", 200 + SIDE_MIN_WIDTH + 60);
   });
 
-  it("一次拖到底只报一次收起（几十个 mousemove 不能切几十次 setSideOpen）", () => {
+  it("一次拖到底只报一次收起（几十个 mousemove 不能切几十次 setDrawer）", () => {
     const { resizer, opened } = mountOpen(SIDE_DEFAULT_WIDTH, true);
     mouse(resizer, "mousedown", 400);
     for (let x = 399; x >= 200; x -= 1) mouse(document, "mousemove", x);
@@ -343,21 +343,22 @@ describe("大纲（TOC）静态契约", () => {
     const html = readFileSync("index.html", "utf-8");
     expect(html, "index.html 必须有 #side-resizer 分隔条").toContain('id="side-resizer"');
 
-    const src = readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/toc.ts", "utf-8");
-    expect(src, "bootstrap 必须挂载大纲分隔条").toContain("setupSideResizer()");
+    const src =
+      readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/shell/drawer.ts", "utf-8");
+    expect(src, "bootstrap 必须挂载左栏分隔条").toContain("setupSideResizer()");
     expect(src, "挂载必须走 attachSideResizer").toContain("attachSideResizer(");
-    // B194：显隐已收敛进 `setSideOpen`（开合 + 回写设置一处收口）—— 断言盯
-    // 「同一个函数里面板与分隔条的 hidden 一起写」，而不是盯某一行的字面量。
-    const setOpen = src.match(/function setSideOpen\([\s\S]*?\n\}/)?.[0] ?? "";
-    expect(setOpen, "应有 setSideOpen 收口大纲显隐").toBeTruthy();
-    expect(setOpen, "展开区的显隐仍由面板自己承担").toContain("tocPanel.hidden = !open;");
+    // B307：显隐收敛在**外壳**的 `setDrawer`（开合 + 两块面板 + 两颗键 + 回写设置一处收口）
+    // —— 断言盯「同一个函数里壳与分隔条一起翻」，而不是盯某一行的字面量。
+    const setOpen = src.match(/function setDrawer\([\s\S]*?\n\}/)?.[0] ?? "";
+    expect(setOpen, "应有 setDrawer 收口展开区显隐").toBeTruthy();
+    expect(setOpen, "外壳的显隐由壳自己承担").toContain("sideDrawer.hidden = !open;");
     // B195：空隙（分隔条）**不再 hidden** —— 它是两张卡片之间的固定间距，
     // 跟着 hidden 会让间距在开合时跳变；收起时只转 is-off（把手消失 + 不吃指针）。
     expect(setOpen, "收起时空隙转 is-off（不是 hidden）").toContain(
-      'tocResizer.classList.toggle("is-off", !open)',
+      'sideResizer.classList.toggle("is-off", !open)',
     );
     expect(setOpen, "按钮列的点亮态必须在同一处收口（面板开了键就要亮）").toContain(
-      'sideOutline.classList.toggle("is-on", open)',
+      'spec.button.classList.toggle("is-on", name === view)',
     );
 
     const css = readFileSync("src/styles/preview.css", "utf-8");
@@ -366,9 +367,17 @@ describe("大纲（TOC）静态契约", () => {
     // B61：竖线光标取 VS Code **非 mac** 档的 ew-resize（col-resize 是 mac 档，
     // Windows 上会渲染成「箭头中间多一根竖杠」）
     expect(resizer, "分隔条必须是左右调整光标（非 mac 档 ew-resize）").toContain("ew-resize");
-    // 旧样式把 min-width 写死为 240px，会挡住拖动变窄
-    const panel = ruleBlock(css, ".toc-panel");
-    expect(panel, ".toc-panel 不得再写死 min-width: 240px").not.toContain("min-width: 240px");
+    // B307：宽度归外壳。旧样式把 min-width 写死为 240px 会挡住拖动变窄，如今壳上的下限
+    // 必须等于代码里的 `SIDE_MIN_WIDTH`（160），而两块视图**不许**再带自己的宽度。
+    const drawerRule = ruleBlock(css, ".side-drawer");
+    expect(drawerRule, "宽度得写在 .side-drawer 上").toContain("min-width: 160px");
+    expect(drawerRule, "外壳的下限不许高过 SIDE_MIN_WIDTH（拖不窄）").not.toContain(
+      "min-width: 240px",
+    );
+    for (const sel of [".toc-panel", ".recent-panel"]) {
+      const view = ruleBlock(css, sel);
+      expect(view, `${sel} 不许再自带 min-width（第二处宽度口径）`).not.toMatch(/min-width:/);
+    }
 
     const api = readFileSync("src/ipc/api.ts", "utf-8");
     expect(api, "Settings 类型需要 toc_width 字段").toContain("toc_width: number");
@@ -385,18 +394,23 @@ describe("B207 拖到最小再往左拖：接线与可视性契约", () => {
   const src = (
     readFileSync("src/main.ts", "utf-8") +
     "\n" +
-    readFileSync("src/toc.ts", "utf-8")
+    readFileSync("src/shell/drawer.ts", "utf-8")
   ).replace(/\r\n/g, "\n");
   const preview = readFileSync("src/styles/preview.css", "utf-8").replace(/\r\n/g, "\n");
 
-  it("分隔条要接到 setSideOpen（拖分隔条与点大纲键同一条路）", () => {
+  it("分隔条要接到 setDrawer（拖分隔条与点那两颗键同一条路），且挂的是外壳", () => {
     const body = src.match(/function setupSideResizer\(\)[\s\S]*?\n\}/)?.[0] ?? "";
-    expect(body, "应有 setupSideResizer 收口大纲分隔条").toBeTruthy();
-    expect(body, "必须把开合问给调用方（isOpen）").toContain("isOpen: () => !tocPanel.hidden");
-    expect(body, "展开区收放必须回 setSideOpen（唯一出口）").toMatch(
-      /onOpenChange:\s*\(open\)\s*=>\s*\{\s*setSideOpen\(open\);/,
+    expect(body, "应有 setupSideResizer 收口左栏分隔条").toBeTruthy();
+    // B307：拖的目标元素必须是**壳**（`#side-drawer`）。挂在某一块面板上就是回到老毛病：
+    // 最近抽屉开着时拖它 = 换视图，而不是改宽度。
+    expect(body, "attachSideResizer 的第二个参数必须是外壳 sideDrawer").toContain(
+      "attachSideResizer(sideResizer, sideDrawer",
     );
-    // ⚠️ 反着来不许：另存一份开合布尔跟面板的 hidden 各走各的，迟早错开
+    expect(body, "必须把开合问给外壳（不许自己记一份）").toContain("isOpen: () => isDrawerOpen()");
+    expect(body, "展开区收放必须回 setDrawer（唯一出口）").toMatch(
+      /onOpenChange:\s*\(open\)\s*=>\s*\{\s*setDrawer\(open \? lastView : null\);/,
+    );
+    // ⚠️ 反着来不许：另存一份开合布尔跟壳的 hidden 各走各的，迟早错开
     expect(body, "不许自己另记一份开合状态").not.toMatch(/let tocOpen/);
   });
 
@@ -428,14 +442,14 @@ describe("B207 拖到最小再往左拖：接线与可视性契约", () => {
     }).toThrow();
   });
 
-  it("反向验证：isOpen 改成自存布尔（跟面板错开）必须被咬住", () => {
-    const BAD = src.replace("isOpen: () => !tocPanel.hidden", "isOpen: () => true");
+  it("反向验证：isOpen 写死（跟外壳的 hidden 错开）必须被咬住", () => {
+    const BAD = src.replace("isOpen: () => isDrawerOpen()", "isOpen: () => true");
     expect(BAD, "替身必须真的改成写死").not.toBe(src);
     expect(() => {
       expect(
         BAD.match(/function setupSideResizer\(\)[\s\S]*?\n\}/)?.[0],
-        "自存布尔必须被抓到",
-      ).toContain("isOpen: () => !tocPanel.hidden");
+        "写死的 isOpen 必须被抓到",
+      ).toContain("isOpen: () => isDrawerOpen()");
     }).toThrow();
   });
 });
@@ -447,7 +461,9 @@ describe("B194 大纲开合状态：切一次要落盘、启动要回放", () =>
   const src = (
     readFileSync("src/main.ts", "utf-8") +
     "\n" +
-    readFileSync("src/toc.ts", "utf-8")
+    readFileSync("src/toc.ts", "utf-8") +
+    "\n" +
+    readFileSync("src/shell/drawer.ts", "utf-8")
   ).replace(/\r\n/g, "\n");
   const api = readFileSync("src/ipc/api.ts", "utf-8").replace(/\r\n/g, "\n");
   const rs = readFileSync("src-tauri/src/session/mod.rs", "utf-8").replace(/\r\n/g, "\n");
@@ -466,31 +482,32 @@ describe("B194 大纲开合状态：切一次要落盘、启动要回放", () =>
   });
 
   it("切换大纲要把开合状态写进设置并落盘", () => {
-    const body = bodyOf("function setSideOpen(");
-    expect(body, "要把开合写进 settings.toc_open").toMatch(/settings\.toc_open = open;/);
+    // B307：落盘点从 `setSideOpen` 搬到外壳的 `setDrawer`，语义照旧 ——
+    // 只有「启动时摊开的是大纲」才记 true（最近那块不落盘，B305 的裁决）。
+    const body = bodyOf("function setDrawer(");
+    expect(body, "要把开合写进 settings.toc_open").toMatch(/settings\.toc_open = view === "toc";/);
     expect(body, "写完要落盘").toMatch(/saveSettings\(settings\)/);
-    // 唯一入口：命令与顶部按钮都走 toggleToc → setSideOpen
-    // （预算 200 → 500：B305 在这两句之间插了「子窗口空转」那道闸和它的说明。这类
-    //  「函数头之后 N 字内必须出现 X」的断言一插代码就断，改的时候两侧都要看一眼。）
-    expect(src, "toggleToc 必须走 setSideOpen（唯一收口）").toMatch(
-      /function toggleToc\(\): void[\s\S]{0,500}setSideOpen\(tocPanel\.hidden\)/,
-    );
+    // 唯一入口：命令与顶部按钮都走 toggleToc → setDrawer。
+    // ⚠️ 不写字符预算：这类「函数头之后 N 字内必须出现 X」的断言一插代码就断（B305/B307
+    //  两次都是它），改成「toggleToc 体内部就得出现 setDrawer」。
+    const toggle = bodyOf("function toggleToc(");
+    expect(toggle, "toggleToc 必须走 setDrawer（唯一收口）").toContain("setDrawer(");
   });
 
   it("启动时要回放上次的开合，且回放本身不写盘", () => {
     expect(src, "启动要按 settings.toc_open 回放").toMatch(
-      /setSideOpen\(settings\?\.toc_open \?\? false, false\)/,
+      /setDrawer\(settings\?\.toc_open \? "toc" : null, false\)/,
     );
     // persist=false：否则「加载失败 → 用默认值」会把默认值固化成用户设置
-    const body = bodyOf("function setSideOpen(");
+    const body = bodyOf("function setDrawer(");
     expect(body, "persist=false 时不得回写设置").toMatch(/if \(!persist \|\| !settings\) return;/);
   });
 
   it("B194 反向验证：摘掉落盘 → 上面那条必须落空", () => {
-    const ORIG = "  settings.toc_open = open;";
+    const ORIG = '  settings.toc_open = view === "toc";';
     expect(src, "退化串要先自证原句还在").toContain(ORIG);
     const degraded = src.replace(ORIG, "");
-    expect(degraded, "退化后不再写 toc_open").not.toMatch(/settings\.toc_open = open;/);
+    expect(degraded, "退化后不再写 toc_open").not.toMatch(/settings\.toc_open = view === "toc";/);
   });
 });
 
@@ -506,7 +523,11 @@ describe("B212 命名：左栏的宽度与收放不挂大纲前缀", () => {
   const src = (
     readFileSync("src/main.ts", "utf-8") +
     "\n" +
-    readFileSync("src/toc.ts", "utf-8")
+    readFileSync("src/toc.ts", "utf-8") +
+    "\n" +
+    // B307：新落下的是 `shell/drawer.ts` —— 反向闸不覆盖它就等于没装：
+    // 谁把外壳的出口改回 `setTocOpen` 这类名字，这三条照样绿。
+    readFileSync("src/shell/drawer.ts", "utf-8")
   ).replace(/\r\n/g, "\n");
   const toc = readFileSync("src/markdown/toc.ts", "utf-8").replace(/\r\n/g, "\n");
 

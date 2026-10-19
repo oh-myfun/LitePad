@@ -17,7 +17,10 @@ const src = (
   "\n" +
   readFileSync("src/ui.ts", "utf-8") +
   "\n" +
-  readFileSync("src/toc.ts", "utf-8")
+  readFileSync("src/toc.ts", "utf-8") +
+  "\n" +
+  // B307：展开区的显隐出口搬到了外壳，这个拼接清单不含它就等于没盯。
+  readFileSync("src/shell/drawer.ts", "utf-8")
 ).replace(/\r\n/g, "\n");
 const icons = readFileSync("src/shell/codicons.ts", "utf-8").replace(/\r\n/g, "\n");
 
@@ -52,14 +55,14 @@ describe("B201 左栏几何：卡片画完整一圈 + 按钮列内部分割线 +
     expect(collapsed, "收起时那条内部竖线要收掉").toMatch(/border-right-color:\s*transparent/);
   });
 
-  it("③ 显隐由 setSideOpen 一处收口：卡片挂同类名，别在 CSS 里翻显隐", () => {
+  it("③ 显隐由外壳 setDrawer 一处收口：卡片挂同类名，别在 CSS 里翻显隐", () => {
     expect(src, "side-shell 要先 el() 取出来").toMatch(/const sideShell = el\("side-shell"\)/);
-    expect(src, "setSideOpen 里必须给卡片挂 is-collapsed（第 5 件事）").toMatch(
+    expect(src, "setDrawer 里必须给卡片挂 is-collapsed（第 5 件事）").toMatch(
       /sideShell\.classList\.toggle\("is-collapsed",\s*!open\)/,
     );
-    // 首屏（HTML 里 #toc-panel 本来就是 hidden）也要带这个类：否则那条内部竖线会先画
+    // 首屏（HTML 里外壳本来就是 hidden）也要带这个类：否则那条内部竖线会先画
     // 出来、再被启动回放收掉 —— 开屏闪一帧 2px 粗线。
-    expect(html, "首屏收起态：卡片先带 is-collapsed，与 #toc-panel 的 hidden 同源").toMatch(
+    expect(html, "首屏收起态：卡片先带 is-collapsed，与 #side-drawer 的 hidden 同源").toMatch(
       /<div id="side-shell" class="side-shell is-collapsed">/,
     );
   });
@@ -141,30 +144,38 @@ describe("B201 左栏几何：卡片画完整一圈 + 按钮列内部分割线 +
   });
 });
 
-describe("B195 侧栏结构：按钮列 → 展开区 → 空隙 → 编辑区", () => {
-  it("index.html 里四段的先后顺序与嵌套关系正确", () => {
+describe("B195 侧栏结构：按钮列 → 展开区（外壳套两块视图）→ 空隙 → 编辑区", () => {
+  it("index.html 里各段的先后顺序与嵌套关系正确", () => {
     const at = (id: string) => html.indexOf(`id="${id}"`);
     const iShell = at("side-shell");
     const iBar = at("side-bar");
     const iOutline = at("side-outline");
+    const iDrawer = at("side-drawer");
     const iPanel = at("toc-panel");
+    const iRecent = at("recent-panel");
     const iResizer = at("side-resizer");
     const iArea = at("layout-area");
     for (const [name, i] of [
       ["side-shell", iShell],
       ["side-bar", iBar],
       ["side-outline", iOutline],
+      ["side-drawer", iDrawer],
       ["toc-panel", iPanel],
+      ["recent-panel", iRecent],
       ["side-resizer", iResizer],
       ["layout-area", iArea],
     ] as const) {
       expect(i, `index.html 必须有 #${name}`).toBeGreaterThan(-1);
     }
-    // 按钮列在展开区**之前**（最左侧），展开区在空隙之前，空隙在编辑区之前
-    expect(iBar, "按钮列必须在展开区之前").toBeLessThan(iPanel);
+    // 按钮列在展开区**之前**（最左侧），两块视图都在壳**里面**，壳在空隙之前，空隙在编辑区之前
+    expect(iBar, "按钮列必须在展开区之前").toBeLessThan(iDrawer);
     expect(iOutline, "大纲键必须落在按钮列里").toBeGreaterThan(iBar);
-    expect(iOutline, "大纲键必须落在按钮列里").toBeLessThan(iPanel);
-    expect(iPanel, "空隙必须在展开区与编辑区之间").toBeLessThan(iResizer);
+    expect(iOutline, "大纲键必须落在按钮列里").toBeLessThan(iDrawer);
+    // B307：壳的开标签必须排在两块面板之前（真正的嵌套由 drawer.test.ts 用运行时行为盯：
+    // 壳收起时两块都得拿不到位置）。这里只挡「壳跑到面板外面变成第二份外壳」这一种走形。
+    expect(iDrawer, "外壳的开标签必须先于大纲那块").toBeLessThan(iPanel);
+    expect(iDrawer, "外壳的开标签必须先于最近打开那块").toBeLessThan(iRecent);
+    expect(iPanel, "空隙必须贴着展开区（在壳之外）").toBeLessThan(iResizer);
     expect(iResizer).toBeLessThan(iArea);
   });
 
@@ -698,45 +709,53 @@ describe("B199 卡片底色一致：左栏与编辑区同一颗变量，三点�
 });
 
 describe("B195 接线：按钮列点亮态与面板开合一处收口", () => {
-  it("setupSideBar 装上字形与点击，且排在开合回放之前", () => {
+  it("setupSideBar 装上字形与点击、把大纲登记进外壳，且排在开合回放之前", () => {
     const setup = src.match(/function setupSideBar\(\)[\s\S]*?\n\}/)?.[0] ?? "";
     expect(setup, "应有 setupSideBar").toBeTruthy();
     expect(setup, "大纲键要填字形").toContain("sideOutline.innerHTML = CODICONS.outline");
     expect(setup, "把手要填字形").toContain("tocGrip.innerHTML = CODICONS.grip");
     expect(setup, "点击走 toggleToc（与命令、菜单同一入口）").toContain("toggleToc()");
-    // 回放（setSideOpen）会写 is-on / aria-pressed，先装配再回放才不会装到空元素上
+    expect(setup, "大纲这一块必须登记进外壳（登记了才有点亮态与互斥）").toContain(
+      'registerDrawerView("toc"',
+    );
+    // 回放（setDrawer）会写 is-on / aria-pressed，先装配再回放才不会装到空元素上
     const iCall = src.indexOf("setupSideBar();");
-    const iReplay = src.indexOf("setSideOpen(settings?.toc_open ?? false, false)");
+    const iReplay = src.indexOf('setDrawer(settings?.toc_open ? "toc" : null, false)');
     expect(iCall, "bootstrap 必须调用 setupSideBar").toBeGreaterThan(-1);
     expect(iReplay, "bootstrap 必须回放开合").toBeGreaterThan(-1);
     expect(iCall, "先装按钮列、再回放开合").toBeLessThan(iReplay);
   });
 
-  it("setSideOpen 一处写完：面板显隐 + 空隙 is-off + 键 is-on/aria-pressed", () => {
-    const body = src.match(/function setSideOpen\([\s\S]*?\n\}/)?.[0] ?? "";
-    expect(body, "应有 setSideOpen").toBeTruthy();
-    expect(body, "展开区显隐").toContain("tocPanel.hidden = !open;");
+  it("setDrawer 一处写完：壳显隐 + 空隙 is-off + 两块面板 + 两颗键 is-on/aria-pressed", () => {
+    const body = src.match(/function setDrawer\([\s\S]*?\n\}/)?.[0] ?? "";
+    expect(body, "应有 setDrawer 这个唯一出口").toBeTruthy();
+    expect(body, "展开区显隐写在壳上").toContain("sideDrawer.hidden = !open;");
     expect(body, "空隙转 is-off（不 hidden：间距不跳变）").toContain(
-      'tocResizer.classList.toggle("is-off", !open)',
+      'sideResizer.classList.toggle("is-off", !open)',
     );
-    expect(body, "键点亮").toContain('sideOutline.classList.toggle("is-on", open)');
+    expect(body, "每块面板按「轮到我没」写 hidden（互斥是结构性的）").toContain(
+      "spec.panel.hidden = name !== view;",
+    );
+    expect(body, "键点亮").toContain('spec.button.classList.toggle("is-on", name === view)');
     expect(body, "aria-pressed 与点亮态同源").toContain(
-      'sideOutline.setAttribute("aria-pressed", String(open))',
+      'spec.button.setAttribute("aria-pressed", String(name === view))',
     );
     // 按钮列本身**常驻**：这里不该出现把整列藏掉的代码
     expect(body, "按钮列不得跟着隐藏（收起也留一列）").not.toContain("side-bar");
   });
 
   it("反向验证：摘掉键的点亮态 → 契约必须落空", () => {
-    const ORIG = '  sideOutline.classList.toggle("is-on", open);';
+    const ORIG = '    spec.button.classList.toggle("is-on", name === view);';
     expect(src, "退化串要先自证原句还在").toContain(ORIG);
     const BAD = src.replace(ORIG, "");
-    expect(BAD, "退化后不再点亮").not.toContain('sideOutline.classList.toggle("is-on", open)');
+    expect(BAD, "退化后不再点亮").not.toContain(
+      'spec.button.classList.toggle("is-on", name === view)',
+    );
     expect(() => {
       expect(
-        BAD.match(/function setSideOpen\([\s\S]*?\n\}/)?.[0] ?? "",
+        BAD.match(/function setDrawer\([\s\S]*?\n\}/)?.[0] ?? "",
         "退化后的缺失必须被抓到",
-      ).toContain('sideOutline.classList.toggle("is-on", open)');
+      ).toContain('spec.button.classList.toggle("is-on", name === view)');
     }).toThrow();
   });
 });
@@ -745,7 +764,7 @@ describe("B195 接线：按钮列点亮态与面板开合一处收口", () => {
 // 用户点名：「标题栏上增加 layout-sidebar-left / layout-sidebar-left-off 按钮，参考 vscode，
 // 但是 vscode 应该只对左边栏的展开区做了折叠，按钮还是会显示，本软件直接隐藏整个左边栏」。
 // 于是这里分两层：`applySidebarVisible` 管「左栏在不在」（整张卡片 + 中间缝一起收），
-// `setSideOpen` 管「卡片里的展开区开没开」—— 两层互不撤销，谁也不替对方清状态。
+// 外壳的 `setDrawer` 管「卡片里的展开区开没开」—— 两层互不撤销，谁也不替对方清状态。
 // 与 VS Code 的差别只在**生效范围**：那边折的只是展开区、活动栏仍在（按钮一直显示），
 // 本软件收的是整张卡片；但**这颗键自己**两边都始终显示 —— 它是左栏唯一的开关入口。
 describe("B198 标题栏整栏显隐：双字形开关 + 整栏一起收", () => {
@@ -808,7 +827,7 @@ describe("B198 标题栏整栏显隐：双字形开关 + 整栏一起收", () =>
     expect(body, "文案要跟着换（关）").toContain('"显示左栏"');
     expect(body, "文案要跟着换（开）").toContain('"隐藏左栏"');
     expect(body, "提示走 setTip（与 refreshPinButton 同一口径）").toContain("setTip(sidebarToggle");
-    // 与 setSideOpen 同一口径：只有 persist 为真且设置已就绪才落盘
+    // 与外壳 setDrawer 同一口径：只有 persist 为真且设置已就绪才落盘
     expect(body, "落盘前要先过 persist 门槛").toContain("if (!persist || !settings) return;");
     expect(body, "写进设置里的字段是 sidebar_off").toMatch(/settings\.sidebar_off = off;/);
   });
@@ -827,26 +846,39 @@ describe("B198 标题栏整栏显隐：双字形开关 + 整栏一起收", () =>
     );
   });
 
-  it("⑤ 与 setSideOpen 正交：整栏收着不动展开区，反之亦然", () => {
-    const toc = src.match(/function setSideOpen\([\s\S]*?\n\}/)?.[0] ?? "";
+  it("⑤ 与外壳 setDrawer 正交：整栏收着不动展开区，反之亦然", () => {
+    const drawer = src.match(/function setDrawer\([\s\S]*?\n\}/)?.[0] ?? "";
     const bar = src.match(/function applySidebarVisible\([\s\S]*?\n\}/)?.[0] ?? "";
     // 整栏收放不许顺手改展开区（不然「收起左栏 = 大纲也关了」就是半同步）
-    expect(bar, "整栏收放不得碰展开区显隐").not.toMatch(/tocPanel\.(hidden|style)/);
+    expect(bar, "整栏收放不得碰展开区显隐").not.toMatch(
+      /(tocPanel|recentPanel|sideDrawer)\.(hidden|style)/,
+    );
     expect(bar, "整栏收放不得碰展开区的开合字段（互不撤销）").not.toMatch(/toc_open/);
-    // 反过来也不许：按钮列的点亮态仍归 setSideOpen 管
-    expect(toc, "展开区开合不得顺手收放整栏").not.toMatch(/is-sidebar-off/);
-    expect(toc, "整栏收起时展开区值照旧留着 ⇒ 这里不许出现 sidebar_off").not.toMatch(/sidebar_off/);
-    // 双击/拖拽无关，但「整栏收着时点大纲」这条命令要先放栏 —— 否则是死键
-    // （B305 在这一句之前插了「子窗口空转」那道闸，所以预算从 200 放宽到 600：
-    //  这种字符预算断言一插代码就断，是它自己的脆弱，改动时两侧都要看清）。
-    expect(src, "大纲命令在整栏收着时先把它放出来（display:none 里切展开区＝没反应）").toMatch(
-      /function toggleToc\(\)[\s\S]{0,600}?if \(isSidebarOff\(\)\) applySidebarVisible\(false\);[\s\S]{0,120}?setSideOpen\(tocPanel\.hidden\)/,
+    // 反过来也不许：外壳只管展开区，整栏的去留归 applySidebarVisible
+    expect(drawer, "展开区开合不得顺手收放整栏").not.toMatch(/is-sidebar-off/);
+    expect(drawer, "整栏收起时展开区值照旧留着 ⇒ 这里不许出现 sidebar_off").not.toMatch(
+      /sidebar_off/,
     );
-    // B305：子窗口整条左栏都不在，大纲命令必须空转 —— 否则会「打开一块看不见的面板」，
-    // 顺带把 `toc_open` 写成 true 落盘，下次在主窗口就表现为「没点它，大纲自己开起来了」。
-    expect(src, "大纲命令在子窗口空转").toMatch(
-      /function toggleToc\(\): void\s*\{[\s\S]{0,400}?if \(windowKind === "satellite"\) return;/,
-    );
+    // 双击/拖拽无关，但「整栏收着时点大纲」这条命令要先放栏 —— 否则是死键。
+    // ⚠️ 不写字符预算（`{0,600}` 那一版每次往两句之间插闸就断，是断言自己的脆弱）：
+    //  改成在 `toggleToc` 体内比先后 —— 插多少注释都不影响它，而顺序真的反了才红。
+    const toggle = src.match(/function toggleToc\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+    const iRestore = toggle.indexOf("applySidebarVisible(false)");
+    const iOutlet = toggle.indexOf("setDrawer(");
+    expect(iRestore, "toggleToc 里要先放整栏").toBeGreaterThan(-1);
+    expect(iOutlet, "toggleToc 必须走外壳唯一出口").toBeGreaterThan(-1);
+    expect(
+      iRestore,
+      "整栏收着时必须先把它放出来，再切展开区（display:none 里切＝没反应）",
+    ).toBeLessThan(iOutlet);
+    // B305 / B307：子窗口整条左栏都不在，大纲命令必须**最先**空转 —— 否则会「打开一块
+    // 看不见的面板」，顺带把 `toc_open` 写成 true 落盘，下次在主窗口就表现为「没点它，
+    // 大纲自己开起来了」。
+    expect(toggle, "大纲命令在子窗口空转").toContain('if (windowKind === "satellite") return;');
+    expect(
+      toggle.indexOf('if (windowKind === "satellite") return;'),
+      "空转那道闸必须排在放栏之前（不然空转还会改掉整栏偏好）",
+    ).toBeLessThan(iRestore);
   });
 
   it("⑥ 整栏收起时卡片与缝**一起**消失（不是只折展开区）", () => {
@@ -948,7 +980,7 @@ describe("B198 整栏去留：切一次要落盘、启动要回放", () => {
 
 // ------------------------------------------------------------------ B207（真机回归）
 // 用户真机报「左栏没法折叠起来了，分割线区域空隙太大」。
-// 根因不在 JS：`setSideOpen(false)` 写的 `tocPanel.hidden = true` 一直是对的，
+// 根因不在 JS：`setSideOpen(false)`（B307 起这个出口叫外壳的 `setDrawer`）写的 `tocPanel.hidden = true` 一直是对的，
 // 但 `.toc-panel { display: flex }`（B205 加的）是**作者样式表**，CSS 级联里作者样式表
 // 优先于 UA 样式表 —— **与选择器权重无关** ⇒ UA 的 `[hidden] { display: none }` 被压掉，
 // 属性改了、面板照旧占着 160px 显示。所以：
@@ -964,6 +996,12 @@ describe("B207 `display` 压过 UA 的 `[hidden]`：凡写 display 又靠 hidden
   //    后来人给任何一个元素补 `display` 时都得顺手配一条，这里把「哪几个元素」列出来，
   //    免得每次都要重新踩一遍。
   const cases = [
+    {
+      sel: ".side-drawer",
+      file: "preview.css",
+      css: preview,
+      why: "B307 起收起的是**外壳**：漏了这条就是「壳收了却还占着一片」，两块视图跟着一起糊在原地",
+    },
     {
       sel: ".toc-panel",
       file: "preview.css",

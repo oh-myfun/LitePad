@@ -30,7 +30,7 @@ vi.mock("../src/io/files", () => ({
 }));
 
 let panel: typeof import("../src/recents/panel");
-let toc: typeof import("../src/toc");
+let drawer: typeof import("../src/shell/drawer");
 let appState: typeof import("../src/core/app-state");
 let ui: typeof import("../src/ui");
 
@@ -41,12 +41,19 @@ beforeAll(async () => {
     "",
   );
   document.body.innerHTML = body;
-  [panel, toc, appState, ui] = await Promise.all([
+  [panel, drawer, appState, ui] = await Promise.all([
     import("../src/recents/panel"),
-    import("../src/toc"),
+    import("../src/shell/drawer"),
     import("../src/core/app-state"),
     import("../src/ui"),
   ]);
+  // 大纲那一块也登记进外壳：生产里由 `setupSideBar` 做，这里不装配整条按钮列，
+  // 但互斥的判据（`tocPanel.hidden`）要有写它的人，否则测的是「没人登记」而不是「互斥」。
+  drawer.registerDrawerView("toc", {
+    panel: ui.tocPanel,
+    button: ui.sideOutline,
+    onShow: () => {},
+  });
 });
 
 /** 三条样本：两个同名不同目录（B 行形状就是为了分开它们）+ 一个别的目录。 */
@@ -65,8 +72,8 @@ beforeEach(() => {
   seed();
   vi.clearAllMocks();
   panel.setupRecentsPanel();
-  panel.setRecentOpen(false);
-  toc.setSideOpen(false, false);
+  // B307：显隐归外壳（`setDrawer` 是唯一出口），面板自己不再有别出口。
+  drawer.setDrawer(null, false);
   panel.renderRecents();
 });
 
@@ -74,16 +81,17 @@ const rows = () => [...document.querySelectorAll<HTMLElement>(".recent-row")];
 
 describe("B305 最近打开面板", () => {
   it("点「最近打开」⇒ 自己摊开、大纲收起（两块互斥，同时只露一块）", () => {
-    panel.setRecentOpen(true);
+    drawer.setDrawer("recent", false);
     expect(ui.recentPanel.hidden, "最近打开没摊开").toBe(false);
+    expect(ui.sideDrawer.hidden, "外壳自己也得跟着摊开").toBe(false);
     expect(ui.tocPanel.hidden, "大纲必须一起收起").toBe(true);
     expect(ui.sideRecent.classList.contains("is-on"), "键要点亮").toBe(true);
     expect(ui.sideRecent.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("大纲那条路摊开时 ⇒ 最近打开收起来（两个方向都得闭合，否则能同时露两块）", () => {
-    panel.setRecentOpen(true);
-    toc.setSideOpen(true, false);
+    drawer.setDrawer("recent", false);
+    drawer.setDrawer("toc", false);
     expect(ui.recentPanel.hidden, "大纲打开时最近打开还摊着 ⇒ 两块抽屉并排占位").toBe(true);
     expect(ui.sideRecent.classList.contains("is-on"), "收掉了键还亮着就是半同步").toBe(false);
     expect(ui.sideRecent.getAttribute("aria-pressed")).toBe("false");
@@ -126,13 +134,14 @@ describe("B305 最近打开面板", () => {
   });
 
   it("上限 0 ⇒ 那颗键整条收掉不占位，正摊着的抽屉一起收起", () => {
-    panel.setRecentOpen(true);
+    drawer.setDrawer("recent", false);
     expect(ui.sideRecent.hidden, "上限 20 时键该在").toBe(false);
     h.limit = 0;
     panel.renderRecents();
     // 入口留着就是「点进去只有一句已停止记录」：功能关了就把门也关上。
     expect(ui.sideRecent.hidden, "上限 0 还留着入口").toBe(true);
-    expect(ui.recentPanel.hidden, "门收了抽屉还摊着 ⇒ 一块没有入口的面板").toBe(true);
+    expect(ui.sideDrawer.hidden, "门收了外壳还摊着 ⇒ 一块没有入口的抽屉").toBe(true);
+    expect(ui.recentPanel.hidden, "外壳收了这一块也必须跟着收").toBe(true);
     expect(ui.sideRecent.classList.contains("is-on"), "收掉的键不许还亮着").toBe(false);
   });
 
@@ -198,14 +207,6 @@ describe("B305 最近打开面板", () => {
     panel.toggleRecentPanel();
     expect(ui.recentPanel.hidden, "子窗口把抽屉打开了").toBe(true);
     appState.setWindowKind("main");
-  });
-
-  it("抽屉宽度跟着大纲那块抄（拖完分隔条再打开，不许跳回默认 240）", () => {
-    ui.tocPanel.style.width = "320px";
-    ui.tocPanel.style.minWidth = "320px";
-    panel.setRecentOpen(true);
-    expect(ui.recentPanel.style.width).toBe("320px");
-    expect(ui.recentPanel.style.minWidth).toBe("320px");
   });
 
   it("relativeTime 六档文案", () => {

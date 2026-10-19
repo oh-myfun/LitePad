@@ -110,6 +110,18 @@ describe("B305 · 侧栏结构与子窗口收口", () => {
       "第二颗键必须排在大纲键之后（按钮列是常驻一列，顺序就是读法）",
     ).toBeGreaterThan(html.indexOf('id="side-outline"'));
     expect(html).toMatch(/id="recent-panel"[^>]*hidden/);
+    // B307：收起的是**外壳**，两块面板各自只带「轮到我没」那一层。
+    // 首屏必须连壳一起藏着，否则开屏先画出一块抽屉再被启动回放收掉。
+    expect(html, "外壳首屏就得藏着").toMatch(/id="side-drawer"[^>]*hidden/);
+  });
+
+  it("B307：外壳 `.side-drawer` 也写了 display ⇒ 同样要一条 [hidden] 兜底", () => {
+    // 与下面 `.recent-panel` 那条是同一个坑：作者样式表的 `display: flex` 压过 UA 的隐藏规则。
+    // 壳是这一族里最要命的一个 —— 它漏了就是「两块抽屉一起占着位，左栏折不起来」。
+    expect(css).toMatch(/\.side-drawer\s*\{[^}]*display:\s*flex/);
+    expect(css, "没这条就是「收了壳却还占着一片」").toMatch(
+      /\.side-drawer\[hidden\]\s*\{[^}]*display:\s*none/,
+    );
   });
 
   it("`.recent-panel[hidden]` 兜底必须写（作者样式表压过 UA 那条隐藏规则，B207 同款坑）", () => {

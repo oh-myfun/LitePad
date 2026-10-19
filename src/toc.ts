@@ -1,14 +1,17 @@
 // 大纲 TOC / 侧栏（从 main.ts 拆出，解耦第十步 / #411）。
 //
-// 职责：大纲抽屉（updateTocDrawer / refreshTocToggleAll / toggleToc / tocListView
-// 控制器与 tocEntries 状态）、侧栏可见性与宽度（applySidebarVisible / isSidebarOff /
-// toggleSidebar / setSideOpen / setupSideBar / setupSideResizer / sideWidth）。
+// 职责：大纲视图（updateTocDrawer / refreshTocToggleAll / toggleToc / tocListView
+// 控制器与 tocEntries 状态）+ 左栏**整栏**可见性（applySidebarVisible / isSidebarOff /
+// toggleSidebar / setupSideBar）。
+// B307：展开区的开合、宽度与分隔条都搬到 `src/shell/drawer.ts`（外壳），这里只留
+// 「整栏在不在」这一层和大纲这一块视图自己。
 // 零外部函数依赖——只依赖 core/* + ui + shell/* + markdown/pipeline（TocEntry 类型），
 // 对 main.ts 零反向依赖。
 
 import { docs, settings, windowKind } from "./core/app-state";
 import { activeTab, activePanel } from "./core/panels";
 import { CODICONS } from "./shell/codicons";
+import { activeDrawer, registerDrawerView, setDrawer } from "./shell/drawer";
 import { setTip } from "./shell/tooltip";
 import { saveSettings } from "./ipc/api";
 import { extractOutline } from "./markdown/outline";
@@ -16,23 +19,14 @@ import { syncCoordinator } from "./sync-scroll/wire";
 import { EditorView } from "@codemirror/view";
 import {
   mainRow,
-  recentPanel,
   sideOutline,
-  sideShell,
   sidebarToggle,
-  closeRecentDrawer,
   tocGrip,
   tocList,
   tocPanel,
-  tocResizer,
   tocToggleAll,
 } from "./ui";
-import {
-  attachSideResizer,
-  clampSideWidth,
-  createTocList,
-  type TocListHandle,
-} from "./markdown/toc";
+import { createTocList, type TocListHandle } from "./markdown/toc";
 import type { TocEntry } from "./markdown/pipeline";
 // ---------------------------------------------------------------- 大纲 TOC（M3）
 
@@ -51,66 +45,12 @@ let tocEntries: TocEntry[] = [];
  */
 const tocListView: TocListHandle = createTocList(tocList, refreshTocToggleAll);
 
-/** 大纲宽度（由设置载入、拖拽后回写设置；160–640px） */
-let sideWidth = 240;
-
-/**
- * B235：`sideResizerHandle` 这个句柄已删 —— 设置页那个「大纲宽度」下拉移除后，
- * 它唯一的读者（`setTocWidthValue` 里那句 `setWidth`）没了，`tsc` 的
- * `noUnusedLocals` 会拦这种「只赋值不读取」的变量。
- * ⚠️ `attachSideResizer(...)` 的调用本身必须留着 —— 它才是真正注册拖拽监听、
- *    并把 `onChange` 接上「夹取 → 回写设置」的那一步。返回值直接丢弃即可。
- */
-
-/**
- * B305：两块展开区（大纲 / 最近打开）共用同一档抽屉宽度。
- *
- * 分隔条的 inline 宽度只写在 `#toc-panel` 上（`attachSideResizer` 里那一发 `apply`），
- * 这里把同一份数抄给 `#recent-panel`。漏了这一步：拖完分隔条再点「最近打开」，抽屉会
- * 跳回 CSS 里那个默认 240px —— 用户读作「宽度设置丢了」。
- * 省略 `w` 时抄 `#toc-panel` 上现有的那一份（打开最近面板那一路走这一支）。
- */
-function applyDrawerWidth(w?: number): void {
-  const width = w ?? Number.parseFloat(tocPanel.style.width);
-  if (!Number.isFinite(width)) return;
-  for (const panel of [tocPanel, recentPanel]) {
-    panel.style.width = `${width}px`;
-    panel.style.minWidth = `${width}px`;
-  }
-}
-
-/** 挂载大纲宽度分隔条。设置未就绪（settings 为 null）时只生效不持久化。 */
-function setupSideResizer(): void {
-  sideWidth = clampSideWidth(settings?.toc_width ?? 240);
-  attachSideResizer(tocResizer, tocPanel, {
-    initial: sideWidth,
-    // B207（用户点名「拖到最小后再往左拖就隐藏展开区，隐藏后分割线仍可拖回来」）：把
-    // 收放的两个口子接到 `setSideOpen` —— 拖分隔条和点那颗「大纲」键走**同一条**路，
-    // 键的点亮态 / 落盘都在 `setSideOpen` 一处收着，这里只当传声筒。
-    // ⚠️ `isOpen` 问的是面板自己（`tocPanel.hidden`）而不是另存一个布尔：显隐的唯一
-    //    出口是 `setSideOpen`，复制一份状态迟早跟它错开。
-    isOpen: () => !tocPanel.hidden,
-    onOpenChange: (open) => {
-      setSideOpen(open);
-    },
-    onChange: (w) => {
-      sideWidth = w;
-      // 拖到哪，两块展开区都跟到哪（最近打开那块平时藏着，藏着也得跟着改宽度）。
-      applyDrawerWidth(w);
-      if (!settings) return;
-      settings.toc_width = w;
-      void saveSettings(settings).catch(() => {
-        // 持久化失败不影响本次生效
-      });
-    },
-  });
-}
-
 /**
  * B195：装配侧栏按钮列（字形 + 点击）+ 空隙里的三点把手 + B205 展开区那两颗全量键。
  *
- * 与 `setSideOpen` 的分工：这里只管「装上」，开合态一律由 `setSideOpen` 收口
- * （按钮的 `is-on` / `aria-pressed` 也在那儿写，免得两处各写一半不同步）。
+ * 与 `setDrawer` 的分工：这里只管「装上 + 把大纲这一块登记进外壳」，开合态一律由
+ * `src/shell/drawer.ts` 收口（面板 `hidden`、键的 `is-on` / `aria-pressed` 都在那一处写，
+ * 免得两处各写一半不同步）。
  *
  * ⚠️ 全量键**不落盘**（折叠状态不写设置）：大纲是「当前这份文档」的一次性视图，
  *    跟置顶（窗口瞬时态）、大纲宽度（偏好）不是一个层级的东西。
@@ -120,6 +60,10 @@ function setupSideBar(): void {
   tocGrip.innerHTML = CODICONS.grip;
   sideOutline.addEventListener("click", () => toggleToc());
   sidebarToggle.addEventListener("click", () => toggleSidebar());
+  // B307：把大纲这一块**登记进外壳**。点亮态与 `hidden` 都由 `setDrawer` 写，这里只交
+  // 「面板 / 键 / 摊开时重绘什么」三样 —— 启动回放（`setDrawer(..., false)`）排在装配之后，
+  // 登记早于回放才不会回放到一个不存在的视图。
+  registerDrawerView("toc", { panel: tocPanel, button: sideOutline, onShow: updateTocDrawer });
   // B209：一颗键在「全部折叠 ⇄ 全部展开」之间切换。字形 / aria-label / 提示 / 按下态
   // **四处同源**（都在下面这一个函数里），免得出现「图标已经是展开、读屏器还念折叠」。
   tocToggleAll.addEventListener("click", () => {
@@ -150,9 +94,9 @@ function refreshTocToggleAll(): void {
 /**
  * B198：左栏**整栏**显隐（标题栏那颗 layout-sidebar-left / -off）。
  *
- * 与 `setSideOpen` 是**两层、互不撤销**：
+ * 与外壳的 `setDrawer` 是**两层、互不撤销**：
  *   · 这一处管「左栏在不在」—— 侧栏卡片、中间缝一起收光（用户点名「直接隐藏整个左边栏」）；
- *   · `setSideOpen` 管「卡片里的展开区开没开」。
+ *   · `setDrawer` 管「卡片里的展开区开没开」。
  * 整栏收着时展开区的开合值照旧留在设置里，重新露出时回到用户上次的样子 —— 谁也不替
  * 对方清状态。
  *
@@ -160,7 +104,7 @@ function refreshTocToggleAll(): void {
  *   本软件收的是整张卡片；但**这颗键本身**两边都一样始终显示 —— 它是左栏唯一的开关入口，
  *   跟着一起收就没法再点回来了。
  *
- * `persist = false` 用于**启动时回放**（口径同 `setSideOpen`）。
+ * `persist = false` 用于**启动时回放**（口径同 `setDrawer`）。
  */
 function applySidebarVisible(off: boolean, persist = true): void {
   mainRow.classList.toggle("is-sidebar-off", off);
@@ -191,39 +135,12 @@ function toggleSidebar(): void {
 }
 
 /**
- * B194：开/关左侧栏（大纲），并把状态写进设置。
+ * 摊开 / 收起大纲这一块。
  *
- * `persist = false` 用于**启动时回放**：那时只是把盘上的值搬到 DOM，不该反过来再写一次盘
- * （写回去会把「加载失败 → 用默认值」那次的值固化成用户设置）。
- *
- * B195：这里同时是**按钮列点亮态的唯一出口** —— 面板显隐、空隙把手、按钮 `is-on` /
- * `aria-pressed` 四件事一处收口，避免「面板开了但键没亮」这类半同步。
- *
- * B201 补第五件：卡片自身的 `is-collapsed`（按钮列 ↔ 展开区那条内部竖线的显隐）。
- * 收着时按钮列右缘那条线与卡片自己的右缘线会挨在一起变成 2px 粗的一条，所以得一起收。
+ * B307：开合本身归外壳（`src/shell/drawer.ts` 的 `setDrawer` 是唯一出口，面板 `hidden`、
+ * 卡片 `is-collapsed`、分隔条 `is-off`、两颗键的点亮态与 `toc_open` 落盘都在那一处写完），
+ * 这里只留「大纲这一块要不要轮到」和它前面那两道闸。
  */
-function setSideOpen(open: boolean, persist = true): void {
-  tocPanel.hidden = !open;
-  // 空隙（分隔条）**不跟着隐藏**：它是侧栏卡片与编辑区卡片之间的固定间距，
-  // 收起时只是展开区折起来 —— 这条缝本身**照样能抓**（B207：旧口径在这里连缝一起掐了
-  // 指针、把手也隐身，往左拖到底就成了一条死带，往右拖也拖不回来），收起态唯一的意义
-  // 就是「缝还在、间距不跳变」。收**整张卡片**那一档才连缝一起不占位。
-  tocResizer.classList.toggle("is-off", !open);
-  // 卡片上的这条同类名：内部那条竖线只在「展开区确实摊开着」时才值得画。
-  sideShell.classList.toggle("is-collapsed", !open);
-  sideOutline.classList.toggle("is-on", open);
-  sideOutline.setAttribute("aria-pressed", String(open));
-  if (open) updateTocDrawer();
-  // B305：两块展开区互斥 —— 大纲摊开时把「最近打开」收起来。收的动作仍由面板自己那一个
-  // 出口做（连键的点亮态一起翻），这里只负责「叫它收」；反向那一半在 `setRecentOpen` 里。
-  if (open) closeRecentDrawer();
-  if (!persist || !settings) return;
-  settings.toc_open = open;
-  void saveSettings(settings).catch(() => {
-    // 持久化失败不影响本次生效（与分隔条回写宽度同一口径）
-  });
-}
-
 function toggleToc(): void {
   // B305：子窗口没有左边栏（CSS 收掉了整张卡片）。快捷键 / 命令面板那一路不打这条例子
   // 就会「打开一块看不见的面板」，顺带把 `toc_open` 写成 true 落盘 —— 下次到主窗口里
@@ -232,8 +149,8 @@ function toggleToc(): void {
   // B198：整栏收着时，「大纲」这条命令（菜单 / 快捷键入口）先把它整栏放出来 ——
   // 展开区藏在 display:none 的容器里，光切开合等于点了没反应（死键）。
   if (isSidebarOff()) applySidebarVisible(false);
-  // 当前 hidden 取反即「接下来是否展开」
-  setSideOpen(tocPanel.hidden);
+  // 已经是当前视图 ⇒ 收起外壳；否则把外壳摊开并切到大纲（互斥由外壳一处保证）。
+  setDrawer(activeDrawer() === "toc" ? null : "toc");
 }
 
 function updateTocDrawer(): void {
@@ -292,14 +209,11 @@ function updateTocDrawer(): void {
 }
 
 export {
-  setupSideResizer,
   setupSideBar,
   refreshTocToggleAll,
   applySidebarVisible,
   isSidebarOff,
   toggleSidebar,
-  setSideOpen,
   toggleToc,
   updateTocDrawer,
-  applyDrawerWidth,
 };

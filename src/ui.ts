@@ -89,16 +89,20 @@ const tocPanel = el("toc-panel");
 const tocList = el("toc-list");
 // B209：全量折叠/展开合并成**一颗**键（原 #toc-collapse-all / #toc-expand-all 两颗）。
 const tocToggleAll = el<HTMLButtonElement>("toc-toggle-all");
-const tocResizer = el("side-resizer");
+// B307：分隔条调的是**外壳**的宽度，名字跟着元素走（`#side-resizer`），不再挂在「大纲」名下。
+const sideResizer = el("side-resizer");
 // B201：左栏**卡片**（按钮列 + 展开区），展开区折起时它挂 `is-collapsed`
 // —— 那条内部竖线（按钮列 ↔ 展开区）要跟着收，见 preview.css / global.css 的同款说明。
 const sideShell = el("side-shell");
 // B195：侧栏按钮列里的「大纲」键（常驻，收起展开区时列本身还在）与空隙里的三点把手。
 const sideOutline = el<HTMLButtonElement>("side-outline");
-// B305：侧栏第二颗键（最近打开）与它的展开区。显隐出口是 `setRecentOpen`，
-// 与大纲那块一样：面板 `hidden` + 按钮 `is-on` / `aria-pressed` 一处收口。
+// B305：侧栏第二颗键（最近打开）与它的展开区。B307 起显隐归外壳（`shell/drawer.ts` 的
+// `setDrawer`），这两颗键的 `is-on` / `aria-pressed` 也在那一处跟着当前视图一起翻。
 const sideRecent = el<HTMLButtonElement>("side-recent");
 const recentPanel = el("recent-panel");
+// B307（方案乙）：两块展开区共用的**外壳**。宽度、显隐、按钮列那条内部竖线都写在它身上，
+// 唯一出口是 `src/shell/drawer.ts` 的 `setDrawer`。
+const sideDrawer = el("side-drawer");
 const recentList = el("recent-list");
 const recentCount = el<HTMLSpanElement>("recent-count");
 const recentClear = el<HTMLButtonElement>("recent-clear");
@@ -362,23 +366,6 @@ export function setRenderPanelOps(fn: (onlyPanelId?: number) => void): void {
   renderPanelOpsRef = fn;
 }
 
-/**
- * B305：大纲那块摊开时，把「最近打开」收起来。
- *
- * 走注入而不是让 `toc` 直接 import 面板模块：`panel → toc → ui` 已经是这条方向，
- * 反向再来一条就是环（本仓库躲这类环一直用的是这套 `*Ref` 接线）。
- * 没装配（子窗口压根不装面板）时它是空操作 —— 收起一块不存在的面板，本来就该什么都不发生。
- */
-let closeRecentDrawerRef: () => void = () => {};
-
-export function setCloseRecentDrawer(fn: () => void): void {
-  closeRecentDrawerRef = fn;
-}
-
-export function closeRecentDrawer(): void {
-  closeRecentDrawerRef();
-}
-
 export {
   BOOT_T0,
   BOOT_MARKS,
@@ -399,8 +386,9 @@ export {
   tocPanel,
   tocList,
   tocToggleAll,
-  tocResizer,
+  sideResizer,
   sideShell,
+  sideDrawer,
   sideOutline,
   sideRecent,
   recentPanel,

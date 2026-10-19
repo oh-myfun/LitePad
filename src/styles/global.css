@@ -2484,10 +2484,11 @@ button:focus-visible {
   padding: 0 var(--card-edge) var(--card-edge);
 }
 
-#toc-panel {
+#side-drawer {
   height: 100%;
   min-height: 0;
-  /* 面板配色统一在 preview.css 的 .toc-panel（走全局主题变量）；这里不再重复定义背景 */
+  /* 壳的配色跟随父卡片 .side-shell（B199 那一条 --bg 同色裁决），宽度见 preview.css 的
+     `.side-drawer`；这里只管它在卡片那一行里**必须占满高度**。 */
 }
 
 /* ---------- 侧栏卡片（B195，对齐 VS Code 的 activity bar + side bar）----------
@@ -2552,15 +2553,15 @@ button:focus-visible {
      ⚠️ 两条线别搞混，它们是**两个位置的两条线**：
         · 这里这条在卡片**内部** 40px 处，把按钮列与展开区分开；
         · .side-shell 的 border-right 在卡片**右缘**，那是卡片自己的外框（上面那一段）。
-     ⚠️ 收起展开区时（main.ts 的 setSideOpen 挂上 .side-shell.is-collapsed）这条要收掉：
+     ⚠️ 收起展开区时（`src/shell/drawer.ts` 的 setDrawer 挂上 .side-shell.is-collapsed）这条要收掉：
         那时按钮列右缘正好贴着卡片右缘，两条 1px 边会**紧挨着变成 2px 粗的一条线**。
-        用 is-collapsed 而不是 `#toc-panel[hidden]` 选择器，是为了让显隐继续由
-        setSideOpen 一处收口（B195 的口径：开合态不许散在 CSS 里）。 */
+        用 is-collapsed 而不是 `[hidden]` 选择器，是为了让显隐继续由
+        setDrawer 一处收口（B195 的口径：开合态不许散在 CSS 里）。 */
   border-right: 1px solid var(--sep-line);
 }
 
 /* 展开区折着：按钮列右缘那条内部竖线收掉（理由见上面 .side-bar 的 B201 注释）。
-   ⚠️ 同类名只挂这一个元素上（main.ts 的 setSideOpen），别在别处再翻一次显隐。 */
+   ⚠️ 同类名只挂这一个元素上（`src/shell/drawer.ts` 的 setDrawer），别在别处再翻一次显隐。 */
 .side-shell.is-collapsed > .side-bar {
   border-right-color: transparent;
 }

@@ -152,9 +152,9 @@
            ⚠️ 空隙（#side-resizer）**不再随左栏收起而隐藏**：它是两张卡片之间的固定间距，
               收起时只是把手消失（左栏）、不再吃指针（见 preview.css 的 .side-resizer.is-off）。 -->
       <div id="main-row">
-        <!-- B201：首屏就是「展开区折着」这一态（下面 #toc-panel 已 hidden），卡片先带上
+        <!-- B201：首屏就是「展开区折着」这一态（下面 #side-drawer 已 hidden），卡片先带上
              is-collapsed —— 否则那条按钮列内部竖线会先画出来、再被 main.ts 的启动回放
-             收掉，开屏闪一帧 2px 粗线。运行时唯一出口仍是 setSideOpen。 -->
+             收掉，开屏闪一帧 2px 粗线。运行时唯一出口仍是 drawer.ts 的 setDrawer。 -->
         <div id="side-shell" class="side-shell is-collapsed">
           <div id="side-bar" class="side-bar">
             <button
@@ -166,9 +166,10 @@
               aria-label="大纲"
               aria-pressed="false"
             ></button>
-            <!-- B305：第二颗常驻键 ——「最近打开」。与「大纲」互斥展开（同时只露一块），
-                 显隐各自一个出口（`setSideOpen` / `setRecentOpen`），点亮态也各自收着。
-                 首屏不写 hidden 之外的状态：名单是历史账，不像大纲那样跟着文档走。 -->
+            <!-- B305：第二颗常驻键 ——「最近打开」。与「大纲」互斥展开（同时只露一块）：
+                 互斥现在由外壳 `setDrawer(view)` 一处保证（见下面 #side-drawer），两颗键各自
+                 只管「轮到我没」。首屏不写 hidden 之外的状态：名单是历史账，不像大纲那样
+                 跟着文档走。 -->
             <button
               id="side-recent"
               class="side-btn"
@@ -179,7 +180,12 @@
               aria-pressed="false"
             ></button>
           </div>
-          <!-- B205（用户点名「顶部有大纲字样 + 全部展开/折叠按钮」，列表支持折叠展开）：
+          <!-- B307（方案乙）：两块展开区**共用一层外壳**。宽度、显隐、按钮列那条内部竖线、
+               `toc_open` 落盘都归壳（`src/shell/drawer.ts` 的 `setDrawer` 是唯一出口）；
+               里面的 `aside` 退化成「当前是不是我这一块」的视图，互斥从此是结构性的，
+               不再由两块面板互相打电话。 -->
+          <div id="side-drawer" class="side-drawer" hidden>
+            <!-- B205（用户点名「顶部有大纲字样 + 全部展开/折叠按钮」，列表支持折叠展开）：
                展开区拆成**两条**：上边一条常驻的标题栏（「大纲」字样 + 两颗全量键），
                下边一条会重绘的列表。
 
@@ -188,53 +194,54 @@
                   标题栏是静态结构，列表是动态内容。
                ⚠️ 两颗全量键的顺序照 VS Code `outlineActions.ts`（Collapse All → Expand All）。
                   它们**不带** `data-tip` 之外的文字：图标只用 codicon，读屏器走 aria-label。 -->
-          <aside id="toc-panel" class="toc-panel" hidden>
-            <div id="toc-head" class="toc-head">
-              <span id="toc-title" class="toc-title">大纲</span>
-              <!-- B209（用户点名「全部折叠和全部展开合并到一个按钮」）：只有**一颗**键，
+            <aside id="toc-panel" class="toc-panel" hidden>
+              <div id="toc-head" class="toc-head">
+                <span id="toc-title" class="toc-title">大纲</span>
+                <!-- B209（用户点名「全部折叠和全部展开合并到一个按钮」）：只有**一颗**键，
                    按一下在「全部折叠 ⇄ 全部展开」之间切换 —— 字形 / aria-label / 提示
                    三处跟着当前态一起翻（接线见 main.ts 的 `refreshTocToggleAll`）。
                    ⚠️ HTML 里**不写死**字形与文案：首屏还没有大纲内容，该显示哪一支
                       由 `refreshTocToggleAll()` 第一次调用时按 `allCollapsed()` 决定，
                       写死就会出现「首屏写着全部折叠、点一下却也是折叠」的错位。 -->
-              <button
-                id="toc-toggle-all"
-                class="toc-head-btn"
-                type="button"
-                data-tip="全部折叠"
-                aria-label="全部折叠"
-                aria-pressed="false"
-              ></button>
-            </div>
-            <div id="toc-list" class="toc-list"></div>
-          </aside>
-          <!-- B305：最近打开的展开区。结构与大纲那块**同形但不同款**：
+                <button
+                  id="toc-toggle-all"
+                  class="toc-head-btn"
+                  type="button"
+                  data-tip="全部折叠"
+                  aria-label="全部折叠"
+                  aria-pressed="false"
+                ></button>
+              </div>
+              <div id="toc-list" class="toc-list"></div>
+            </aside>
+            <!-- B305：最近打开的展开区。结构与大纲那块**同形但不同款**：
                标题栏（标题 + 计数 + 垃圾桶）常驻，列表才重绘 —— `renderRecents` 只清
                `#recent-list`（B205 那条纪律：标题栏是静态结构，谁也不能替谁）。
                计数「6/20」= 当前条数 / 设置上限，由 JS 写；垃圾桶**不带文字**，只走
                codicon + aria-label（与 toc 那两颗全量键同款）。
                首屏 `hidden`：这块不持久化（与 `toc_open` 不同类），每次启动都收着。 -->
-          <aside id="recent-panel" class="recent-panel" hidden>
-            <div id="recent-head" class="recent-head">
-              <span id="recent-title" class="recent-title">最近打开</span>
-              <span id="recent-count" class="recent-count">0/0</span>
-              <button
-                id="recent-clear"
-                class="toc-head-btn"
-                type="button"
-                data-tip="清空全部"
-                aria-label="清空全部"
-              ></button>
-            </div>
-            <div id="recent-list" class="recent-list"></div>
-          </aside>
+            <aside id="recent-panel" class="recent-panel" hidden>
+              <div id="recent-head" class="recent-head">
+                <span id="recent-title" class="recent-title">最近打开</span>
+                <span id="recent-count" class="recent-count">0/0</span>
+                <button
+                  id="recent-clear"
+                  class="toc-head-btn"
+                  type="button"
+                  data-tip="清空全部"
+                  aria-label="清空全部"
+                ></button>
+              </div>
+              <div id="recent-list" class="recent-list"></div>
+            </aside>
+          </div>
         </div>
         <div
           id="side-resizer"
           class="side-resizer is-off"
-          data-tip="拖动调整大纲宽度"
+          data-tip="拖动调整左栏展开区宽度"
           data-tip-detail="双击恢复默认 240px"
-          aria-label="拖动调整大纲宽度，双击恢复默认"
+          aria-label="拖动调整左栏展开区宽度，双击恢复默认"
         >
           <!-- 三点把手：字形由 main.ts 的 setupSideBar 用 CODICONS.grip 填入 -->
           <span id="toc-grip" class="toc-grip" aria-hidden="true"></span>

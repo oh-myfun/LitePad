@@ -37,14 +37,20 @@ describe("B305 上限项与启动装配", () => {
     expect(main.indexOf("initRecentsStore()")).toBeLessThan(atPanel);
   });
 
-  it("没装面板时 closeRecentDrawer 是空操作（大纲那条路不许因为缺接线而炸）", () => {
-    const ui = readFileSync("src/ui.ts", "utf-8");
-    expect(ui).toMatch(/let closeRecentDrawerRef: \(\) => void = \(\) => \{\};/);
-  });
-
-  it("大纲那块摊开时必须叫面板收起（互斥的两个方向，缺一边就能同时露两块）", () => {
-    const toc = readFileSync("src/toc.ts", "utf-8");
-    const body = toc.slice(toc.indexOf("function setSideOpen("));
-    expect(body.slice(0, 1400), "setSideOpen 没叫最近打开收起").toContain("closeRecentDrawer()");
+  it("互斥改成结构性的：外壳按「轮到我没」写两块面板，反向注入整个不许存在（B307）", () => {
+    // 旧形状是两块面板互相打电话（`setSideOpen` 叫 `closeRecentDrawer`，反过来再叫一次），
+    // 两条方向各写一半 ⇒ 只要漏一条就能同时露两块。新形状只有一句：轮不到我的都得收起。
+    const d = readFileSync("src/shell/drawer.ts", "utf-8");
+    const body = d.slice(
+      d.indexOf("export function setDrawer("),
+      d.indexOf("\nexport function setupSideResizer"),
+    );
+    expect(body, "找不到 setDrawer 这个唯一出口").toContain("spec.panel.hidden = name !== view;");
+    expect(body, "点亮态必须与面板显隐同处收口，否则又长出「键灭了还摊着」").toContain(
+      'spec.button.classList.toggle("is-on", name === view)',
+    );
+    // 反向闸：那条注入通道必须已经删干净（留着就是第二个出口）。
+    expect(readFileSync("src/ui.ts", "utf-8")).not.toContain("closeRecentDrawer");
+    expect(readFileSync("src/toc.ts", "utf-8")).not.toContain("closeRecentDrawer");
   });
 });

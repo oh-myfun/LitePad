@@ -239,11 +239,31 @@
    露的是父卡片 .side-shell 的 --bg（= 编辑区同色）。原先这条写 var(--bg-elevated)，
    于是展开区比编辑区亮一档，左栏看着像另外一块东西 —— 那正是要修的现象。
    ⚠️ scrollbar 什么的照旧由根上的 color-scheme 管，删掉底色不影响滚动条配色。 */
-.toc-panel {
+/* B307（方案乙）：展开区的**外壳**才是宽度与显隐的主人。
+   从前这两件事写在 `.toc-panel` 上，而分隔条的 inline 宽度也只写在 `#toc-panel` 上 ⇒
+   第二块抽屉（最近打开）只能靠 `applyDrawerWidth` 去**抄**一份，抄漏一次就是「换一块抽屉
+   宽度跳回 240」。现在壳上一处写完：拖到哪 = 壳多宽 = 哪块视图在里面都一样宽。
+   ⚠️ 那条 `[hidden]` 兜底与下面两块视图是同一个坑（作者样式表的 `display: flex` 压得过 UA
+      的隐藏规则，与权重无关）—— jsdom 不做级联，三条都由静态契约盯着。 */
+.side-drawer {
   /* 初始宽度：运行期由 attachSideResizer 写 inline width/min-width 覆盖（可拖拽，160–640px） */
   width: 240px;
   min-width: 160px;
   flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.side-drawer[hidden] {
+  display: none;
+}
+
+/* 两块视图并排待在壳里，**同一刻只露一块**（`setDrawer(view)` 按「轮到我没」写 hidden）。
+   宽度交给壳（`width: 100%` 跟着壳走），自己只管「标题栏常驻 + 列表滚动」这一套内部排布。 */
+.toc-panel {
+  width: 100%;
+  flex: 1 1 auto;
   /* B205：面板改成**上下两条**（标题栏固着 + 列表滚动），滚动条从面板挪到列表 ——
      标题栏常驻才叫「顶部有大纲字样 + 全量键」，跟着列表一起滚就没意义了。 */
   display: flex;
@@ -259,7 +279,7 @@
    是**同一类坑**，上面这条 `display: flex` 一写就必须配一条：
    UA 样式表那条隐藏规则是**作者样式表压不过的那一方** —— CSS 级联里作者样式表
    优先于 UA 样式表，**与选择器权重无关**（`.toc-panel` 0-1-0 与那条 0-1-0 同权重
-   也照样赢）。于是 `setSideOpen(false)` 写的隐藏属性只改了个属性，
+   也照样赢）。于是 `setDrawer(null)` 写的隐藏属性只改了个属性，
    展开区**照旧占着 160px 显示**。
    症状（B207 上线后用户真机报的）：
      · 「左栏没法折叠起来了」 —— 拖到最小再往左拖，收起通知照常触发，
@@ -276,16 +296,11 @@
 
 /* B305：最近打开的展开区 —— 与 `.toc-panel` **同形不同款**：同样是「标题栏常驻 + 列表滚动」，
    但一行有两截（文件名 / 目录），所以行高给到 34px 一档，标题栏右侧多挂一颗垃圾桶。
-   ⚠️ 宽度与大纲同一档：分隔条的 inline 宽度只写在 `#toc-panel` 上，两块面板由 `src/toc.ts`
-      的 `applyDrawerWidth` 一起跟；面板打开时也会从大纲那块抄一次。漏了这一步，「拖完分隔条
-      再点最近打开」就会看见抽屉跳回默认宽。
-   ⚠️ 那条 `[hidden]` 兜底与 `.toc-panel` 是同一个坑：作者样式表的 `display: flex` 压得过
-      UA 的隐藏规则（与权重无关），光写 hidden 属性会「收起来了却还占着一片」。jsdom 不做
-      CSS 级联，运行时断言 `hidden === true` 是假绿 ⇒ 由 tests/recents-contract.test.ts 静态盯。 */
+   ⚠️ B307 起宽度不在这里：两块视图共吃 `.side-drawer` 那一份宽度（壳上写一次），
+      这里只留内部排布。那条 `[hidden]` 兜底仍要在 —— 它管的是「轮不到我时不许占位」。 */
 .recent-panel {
-  width: 240px;
-  min-width: 160px;
-  flex: 0 0 auto;
+  width: 100%;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-height: 0;

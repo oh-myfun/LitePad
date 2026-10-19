@@ -1,28 +1,22 @@
 /**
  * B305 · 最近打开面板（视图层）。
  *
- * 只做三件事：把 `#recent-panel` 的显隐收在一个出口、把 Rust 给的那份名单画出来、
+ * 只做三件事：把这一块登记成外壳的一个视图、把 Rust 给的那份名单画出来、
  * 把三种手势（打开一条 / 单条清除 / 清空全部）转成一次调用。
  * **不判「这份文件还开着吗」、不排序、不去重** —— 那些归 Rust（`src-tauri/src/session/recent.rs`），
  * 视图再判一遍就是两套口径，迟早跟真值错开（B304 那一族的教训）。
  *
  * 依赖方向说清，免得日后有人顺手补一条反向 import 成环：
- *   本模块 → `toc`（互斥：摊开这块就收起大纲）→ `ui`；
- *   反方向（大纲打开时收起这块）经 `ui.setCloseRecentDrawer` 注入，`toc` 不认识本模块。
+ *   本模块 → `shell/drawer`（把这一块登记成外壳的一个视图）→ `ui`；
+ *   「整栏在不在」那一层仍问 `toc`（两层互不撤销，B198 的口径）。
+ * B307 起**没有**反向注入了：互斥与点亮态都由外壳一处写，大纲那边不认识本模块。
  */
 import { windowKind } from "../core/app-state";
 import { doOpen } from "../io/files";
 import { CODICONS } from "../shell/codicons";
-import { applyDrawerWidth, applySidebarVisible, isSidebarOff, setSideOpen } from "../toc";
-import {
-  recentClear,
-  recentCount,
-  recentList,
-  recentPanel,
-  setCloseRecentDrawer,
-  showMessage,
-  sideRecent,
-} from "../ui";
+import { activeDrawer, registerDrawerView, setDrawer } from "../shell/drawer";
+import { applySidebarVisible, isSidebarOff } from "../toc";
+import { recentClear, recentCount, recentList, recentPanel, sideRecent, showMessage } from "../ui";
 import {
   clearRecentEntries,
   forgetRecentEntry,
@@ -38,7 +32,9 @@ let wired = false;
 export function setupRecentsPanel(): void {
   sideRecent.innerHTML = CODICONS.history;
   recentClear.innerHTML = CODICONS.trash;
-  setCloseRecentDrawer(() => setRecentOpen(false));
+  // B307：把这一块登记成外壳的一个视图。面板 `hidden`、那颗键的 `is-on` / `aria-pressed`、
+  // 与大纲的互斥、宽度与那条竖线 —— 全在 `setDrawer` 一处，这里只交「轮到我时重画什么」。
+  registerDrawerView("recent", { panel: recentPanel, button: sideRecent, onShow: renderRecents });
   onRecentsChange(() => renderRecents());
   if (!wired) {
     wired = true;
@@ -47,29 +43,6 @@ export function setupRecentsPanel(): void {
     recentList.addEventListener("click", (e) => onListClick(e));
   }
   renderRecents();
-}
-
-/**
- * `#recent-panel` 显隐的**唯一出口**：面板 `hidden` + 键的 `is-on` / `aria-pressed`
- * 三处同源（与 `setSideOpen` 同一纪律 —— 半同步就会长出「面板开着而键是灭的」）。
- *
- * ⚠️ `hidden` 属性还不够：`.recent-panel` 的 `display: flex` 是作者样式，压得过 UA 那条
- * 隐藏规则，必须连带 `[hidden] { display: none }` 那条 CSS（见 preview.css）。jsdom 不做
- * 级联，这里断言 `hidden === true` 证明不了它真的不占位 —— 那条 CSS 由静态契约盯着。
- */
-export function setRecentOpen(open: boolean): void {
-  if (open) {
-    // 互斥：同一刻只露一块。走 `setSideOpen` 而不是自己改 DOM —— 大纲那块的四件事
-    //（面板 / 缝 / 卡片竖线 / 键点亮）只有它一个出口知道全。
-    setSideOpen(false);
-    // 抽屉宽度是 `attachSideResizer` 内联写在 `#toc-panel` 上的，这块得抄一份，
-    // 否则「拖完分隔条再点最近打开」会看见它跳回默认宽。
-    applyDrawerWidth();
-  }
-  recentPanel.hidden = !open;
-  sideRecent.classList.toggle("is-on", open);
-  sideRecent.setAttribute("aria-pressed", String(open));
-  if (open) renderRecents();
 }
 
 /** 上限为 0 = 整个功能关掉（Rust 那边既不记录也把名单清了），所以入口也不该留着。 */
@@ -86,13 +59,13 @@ export function toggleRecentPanel(): void {
   // ⚠️ 必须排在「整栏收着先放出来」**之前**：挡晚了就是一次空转改掉用户的「左栏收起」
   // 偏好（而且落盘），下次启动左栏莫名其妙地开着。
   if (isRecentsDisabled()) return;
-  if (!recentPanel.hidden) {
-    setRecentOpen(false);
+  if (activeDrawer() === "recent") {
+    setDrawer(null);
     return;
   }
   // 整栏收着时先把它放出来（口径同 `toggleToc` 的 B198：藏在 display:none 里切显隐＝死键）。
   if (isSidebarOff()) applySidebarVisible(false);
-  setRecentOpen(true);
+  setDrawer("recent");
 }
 
 /** 按当前缓存重画。Rust 的广播、改上限、清除之后都走这里，视图自己从不缓存第二份名单。 */
@@ -100,10 +73,10 @@ export function renderRecents(): void {
   const list = getRecents();
   const cap = getRecentLimit();
   // B306：上限 0 = 功能整条关掉（Rust 那边既不记录、也把名单一起清了），入口留着只会
-  // 让人点进去看一句「已停止记录」。正摊着的抽屉跟着收起 —— 门关了不许屋里还亮着，
-  // 而 `is-on` / `aria-pressed` 仍由 `setRecentOpen` 那一个出口翻，这里不自己改。
+  // 让人点进去看一句「已停止记录」。正摊着这一块就把外壳收起 —— 门关了不许屋里还亮着，
+  // 而点亮态与 `is-collapsed` 仍由 `setDrawer` 那一个出口翻，这里不自己改 DOM。
   sideRecent.hidden = cap === 0;
-  if (cap === 0 && !recentPanel.hidden) setRecentOpen(false);
+  if (cap === 0 && activeDrawer() === "recent") setDrawer(null);
   recentCount.textContent = `${list.length}/${cap}`;
   recentCount.setAttribute("aria-label", `${list.length} 条，上限 ${cap}`);
   recentClear.setAttribute("data-tip", list.length === 0 ? "没有可清空的记录" : "清空全部");

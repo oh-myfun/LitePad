@@ -98,14 +98,8 @@ import {
   openPreviewToSide,
 } from "./markdown";
 import { openFindBar } from "./find/findbar";
-import {
-  setupSideResizer,
-  setupSideBar,
-  applySidebarVisible,
-  setSideOpen,
-  toggleToc,
-  updateTocDrawer,
-} from "./toc";
+import { setupSideBar, applySidebarVisible, toggleToc, updateTocDrawer } from "./toc";
+import { setDrawer, setupSideResizer } from "./shell/drawer";
 import {
   scheduleSessionSave,
   snapshotSession,
@@ -914,8 +908,10 @@ async function setupShell(): Promise<void> {
   applyEditorLineHeight(settings?.editor_line_height ?? 1.5);
   setupSideBar();
   setupSideResizer();
-  // B194：回放上次的侧栏开合（`persist = false` —— 只是把盘上的值搬到 DOM）
-  setSideOpen(settings?.toc_open ?? false, false);
+  // B194 / B307：回放上次的展开区开合。`persist = false` —— 只是把盘上的值搬到 DOM。
+  // 此刻登记进外壳的只有大纲那一块（`setupRecentsPanel` 排在会话恢复之后），最近那块
+  // 的首屏 `hidden` 由 index.html 带着，等它自己登记时再谈。
+  setDrawer(settings?.toc_open ? "toc" : null, false);
   // B198：回放整栏去留（同一口径，persist = false 免得把默认值固化成设置）。
   //   排在 setupSideBar 之后：那颗键的字形由 applySidebarVisible 写，先装才装得上。
   applySidebarVisible(settings?.sidebar_off ?? false, false);
