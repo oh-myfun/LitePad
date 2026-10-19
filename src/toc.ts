@@ -20,6 +20,7 @@ import {
   sideOutline,
   sideShell,
   sidebarToggle,
+  closeRecentDrawer,
   tocGrip,
   tocList,
   tocPanel,
@@ -213,6 +214,9 @@ function setSideOpen(open: boolean, persist = true): void {
   sideOutline.classList.toggle("is-on", open);
   sideOutline.setAttribute("aria-pressed", String(open));
   if (open) updateTocDrawer();
+  // B305：两块展开区互斥 —— 大纲摊开时把「最近打开」收起来。收的动作仍由面板自己那一个
+  // 出口做（连键的点亮态一起翻），这里只负责「叫它收」；反向那一半在 `setRecentOpen` 里。
+  if (open) closeRecentDrawer();
   if (!persist || !settings) return;
   settings.toc_open = open;
   void saveSettings(settings).catch(() => {

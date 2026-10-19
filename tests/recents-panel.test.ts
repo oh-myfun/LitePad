@@ -1,0 +1,198 @@
+// @vitest-environment jsdom
+// B305 Task 6 · 面板行为。用**真实的 index.html 骨架**跑：`#side-recent` / `#recent-panel`
+// 那些节点必须真在，否则测的是测试自己搭的假结构。
+//
+// ⚠️ 顺序有讲究：`src/ui.ts` 在**模块求值时**就 `el("layout-area")` 逐个取节点、取不到就抛。
+//    而 ESM 的 `import` 声明比文件正文先执行 ⇒ 静态 import 一定会抢在 `innerHTML` 之前炸。
+//    所以这里先把骨架装好，再动态 import 被测模块。
+import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+
+const h = vi.hoisted(() => ({
+  entries: [] as { path: string; name: string; closedAt: number }[],
+  limit: 20,
+  onRecentsChange: vi.fn((_cb: (e: unknown[]) => void) => () => {}),
+  forgetRecentEntry: vi.fn(() => Promise.resolve()),
+  clearRecentEntries: vi.fn(() => Promise.resolve()),
+  openPath: vi.fn((_path: string) => Promise.resolve(null)),
+}));
+
+vi.mock("../src/recents/store", () => ({
+  onRecentsChange: h.onRecentsChange,
+  getRecents: () => h.entries,
+  getRecentLimit: () => h.limit,
+  forgetRecentEntry: h.forgetRecentEntry,
+  clearRecentEntries: h.clearRecentEntries,
+}));
+
+vi.mock("../src/io/files", () => ({
+  doOpen: (path: string) => h.openPath(path),
+}));
+
+let panel: typeof import("../src/recents/panel");
+let toc: typeof import("../src/toc");
+let appState: typeof import("../src/core/app-state");
+let ui: typeof import("../src/ui");
+
+beforeAll(async () => {
+  const html = readFileSync("index.html", "utf-8");
+  const body = (html.match(/<body>([\s\S]*)<\/body>/)?.[1] ?? "").replace(
+    /<script[\s\S]*?<\/script>/g,
+    "",
+  );
+  document.body.innerHTML = body;
+  [panel, toc, appState, ui] = await Promise.all([
+    import("../src/recents/panel"),
+    import("../src/toc"),
+    import("../src/core/app-state"),
+    import("../src/ui"),
+  ]);
+});
+
+/** 三条样本：两个同名不同目录（B 行形状就是为了分开它们）+ 一个别的目录。 */
+function seed(): void {
+  const now = Date.now();
+  h.entries = [
+    { path: "D:\\工作\\报价\\单.md", name: "单.md", closedAt: now - 60_000 },
+    { path: "D:\\工作\\10月\\单.md", name: "单.md", closedAt: now - 3_600_000 },
+    { path: "C:\\notes\\三.md", name: "三.md", closedAt: now - 86_400_000 * 2 },
+  ];
+  h.limit = 20;
+}
+
+beforeEach(() => {
+  appState.setWindowKind("main");
+  seed();
+  vi.clearAllMocks();
+  panel.setupRecentsPanel();
+  panel.setRecentOpen(false);
+  toc.setSideOpen(false, false);
+  panel.renderRecents();
+});
+
+const rows = () => [...document.querySelectorAll<HTMLElement>(".recent-row")];
+
+describe("B305 最近打开面板", () => {
+  it("点「最近打开」⇒ 自己摊开、大纲收起（两块互斥，同时只露一块）", () => {
+    panel.setRecentOpen(true);
+    expect(ui.recentPanel.hidden, "最近打开没摊开").toBe(false);
+    expect(ui.tocPanel.hidden, "大纲必须一起收起").toBe(true);
+    expect(ui.sideRecent.classList.contains("is-on"), "键要点亮").toBe(true);
+    expect(ui.sideRecent.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("大纲那条路摊开时 ⇒ 最近打开收起来（两个方向都得闭合，否则能同时露两块）", () => {
+    panel.setRecentOpen(true);
+    toc.setSideOpen(true, false);
+    expect(ui.recentPanel.hidden, "大纲打开时最近打开还摊着 ⇒ 两块抽屉并排占位").toBe(true);
+    expect(ui.sideRecent.classList.contains("is-on"), "收掉了键还亮着就是半同步").toBe(false);
+    expect(ui.sideRecent.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("一行两截：主行文件名、次行目录（用户选的 B 形状）", () => {
+    panel.renderRecents();
+    const [first, second] = rows();
+    expect(first.querySelector(".recent-name")?.textContent).toBe("单.md");
+    expect(first.querySelector(".recent-dir")?.textContent).toBe("D:\\工作\\报价");
+    expect(second.querySelector(".recent-dir")?.textContent).toBe("D:\\工作\\10月");
+  });
+
+  it("路径里的尖括号只当文字，不当标签（不许拿 innerHTML 拼用户路径）", () => {
+    h.entries = [
+      { path: "C:\\a\\<img src=x onerror=alert(1)>.md", name: "x", closedAt: Date.now() },
+    ];
+    panel.renderRecents();
+    expect(document.querySelector("img"), "路径被当成 HTML 注入了").toBeNull();
+    expect(rows()[0].dataset.path).toBe("C:\\a\\<img src=x onerror=alert(1)>.md");
+  });
+
+  it("悬停属性带完整路径与相对时间（截断了也有地方看全）", () => {
+    panel.renderRecents();
+    const row = rows()[0];
+    expect(row.getAttribute("data-tip")).toBe("D:\\工作\\报价\\单.md");
+    expect(row.getAttribute("data-tip-detail")).toContain("分钟前");
+  });
+
+  it("标题栏计数是「当前条数/上限」", () => {
+    panel.renderRecents();
+    expect(ui.recentCount.textContent).toBe("3/20");
+  });
+
+  it("上限 0 ⇒ 空态说清「不是还没关过，是不再记录」", () => {
+    h.entries = [];
+    h.limit = 0;
+    panel.renderRecents();
+    expect(ui.recentList.textContent).toBe("已停止记录（上限为 0）");
+  });
+
+  it("名单空 ⇒ 空态是「还没有关掉过的文件」", () => {
+    h.entries = [];
+    panel.renderRecents();
+    expect(ui.recentList.textContent).toBe("还没有关掉过的文件");
+  });
+
+  it("点一行 ⇒ 用那一行的路径走现有打开流程", () => {
+    panel.renderRecents();
+    rows()[2].click();
+    expect(h.openPath).toHaveBeenCalledWith("C:\\notes\\三.md");
+  });
+
+  it("悬停那颗 ✕ ⇒ 只清那一条", () => {
+    panel.renderRecents();
+    const del = rows()[1].querySelector<HTMLElement>(".recent-del");
+    expect(del, "行里没有单条清除键").not.toBeNull();
+    del!.click();
+    expect(h.forgetRecentEntry).toHaveBeenCalledWith("D:\\工作\\10月\\单.md");
+  });
+
+  it("点 ✕ 不许同时触发「打开这一行」（同一颗点击面里的两个动作）", () => {
+    panel.renderRecents();
+    rows()[0].querySelector<HTMLElement>(".recent-del")!.click();
+    expect(h.openPath).not.toHaveBeenCalled();
+  });
+
+  it("标题栏那颗垃圾桶 ⇒ 清空并留一句提示", async () => {
+    panel.renderRecents();
+    document.getElementById("recent-clear")!.click();
+    // 清空是异步的（`await` 回包之后才发提示），不排一下微任务就会读到还没写的状态栏。
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(h.clearRecentEntries).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent ?? "").toContain("已清空");
+  });
+
+  it("子窗口里那颗键空转（Review Focus #5：看不见的面板不该被打开并写脏设置）", () => {
+    appState.setWindowKind("satellite");
+    panel.toggleRecentPanel();
+    expect(ui.recentPanel.hidden, "子窗口把抽屉打开了").toBe(true);
+    appState.setWindowKind("main");
+  });
+
+  it("抽屉宽度跟着大纲那块抄（拖完分隔条再打开，不许跳回默认 240）", () => {
+    ui.tocPanel.style.width = "320px";
+    ui.tocPanel.style.minWidth = "320px";
+    panel.setRecentOpen(true);
+    expect(ui.recentPanel.style.width).toBe("320px");
+    expect(ui.recentPanel.style.minWidth).toBe("320px");
+  });
+
+  it("relativeTime 六档文案", () => {
+    // ⚠️ 全部用**本地时间**构造：`Date.UTC` 配 `getHours()` 会把用例挂在「这台机器是
+    //    UTC+8」这个前提上，换时区就假红（HH:mm 那几档尤其明显）。
+    const now = new Date(2026, 9, 19, 12, 0, 0).getTime();
+    expect(panel.relativeTime(now - 30_000, now)).toBe("刚刚");
+    expect(panel.relativeTime(now - 5 * 60_000, now)).toBe("5 分钟前");
+    expect(panel.relativeTime(new Date(2026, 9, 19, 9, 0, 0).getTime(), now)).toBe("3 小时前");
+    expect(panel.relativeTime(new Date(2026, 9, 18, 12, 40, 0).getTime(), now)).toBe("昨天 12:40");
+    expect(panel.relativeTime(new Date(2026, 9, 16, 12, 0, 0).getTime(), now)).toBe(
+      "10月16日 12:00",
+    );
+    expect(panel.relativeTime(new Date(2019, 0, 2, 8, 0, 0).getTime(), now)).toBe("2019年1月2日");
+  });
+
+  it("dirOf 两种分隔符与无目录输入", () => {
+    expect(panel.dirOf("C:\\a\\b.md")).toBe("C:\\a");
+    expect(panel.dirOf("/x/y/z.md")).toBe("/x/y");
+    expect(panel.dirOf("bare.md")).toBe("");
+  });
+});

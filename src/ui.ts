@@ -362,6 +362,23 @@ export function setRenderPanelOps(fn: (onlyPanelId?: number) => void): void {
   renderPanelOpsRef = fn;
 }
 
+/**
+ * B305：大纲那块摊开时，把「最近打开」收起来。
+ *
+ * 走注入而不是让 `toc` 直接 import 面板模块：`panel → toc → ui` 已经是这条方向，
+ * 反向再来一条就是环（本仓库躲这类环一直用的是这套 `*Ref` 接线）。
+ * 没装配（子窗口压根不装面板）时它是空操作 —— 收起一块不存在的面板，本来就该什么都不发生。
+ */
+let closeRecentDrawerRef: () => void = () => {};
+
+export function setCloseRecentDrawer(fn: () => void): void {
+  closeRecentDrawerRef = fn;
+}
+
+export function closeRecentDrawer(): void {
+  closeRecentDrawerRef();
+}
+
 export {
   BOOT_T0,
   BOOT_MARKS,
