@@ -658,8 +658,12 @@ describe("B 档：删掉菜单项提示（写了也永远不显示 = 死代码�
     expect(filedropSrc, "isMarkdownPath 这条旧判据应已删除").not.toMatch(/isMarkdownPath/);
 
     // main.ts 接线：落点面板的活动文档是不是 md 由 panelDocIsMarkdown 回答
-    expect(mainSrc, "落点判定必须问「落点面板的活动文档」").toMatch(
-      /needsChoice\(p\.paths, target !== null && panelDocIsMarkdown\(target\.panelId\)\)/,
+    expect(mainSrc, "落点判定必须问「落点面板的活动文档」").toMatch(/needsChoice\(p\.paths,/);
+    expect(mainSrc, "判据本体是 panelDocIsMarkdown(target.panelId)").toContain(
+      "panelDocIsMarkdown(target.panelId)",
+    );
+    expect(mainSrc, "落在标签条上不问：那一条「插入文件路径」只对文档成立").toMatch(
+      /!target\.onStrip[\s\S]{0,80}panelDocIsMarkdown/,
     );
     const helper = topLevelFnBody(mainSrc, "function panelDocIsMarkdown");
     expect(helper, "取不到 panelDocIsMarkdown").toBeTruthy();
@@ -1030,6 +1034,12 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     );
     expect(buildAll, "只有碰 src/ 或 src-tauri/src/ 才算一次修改").toContain(
       "grep -qE '^src/|^src-tauri/src/'",
+    );
+    //    用户 2026-10-18 补的口径：**同一个 bug 修几轮不重复加版本号** ——
+    //    额度键是 subject 里的 `B\d+`，已在 `chore(version)` 信息里记过「随 Bxxx」就不再给第二档。
+    expect(buildAll, "同一 bug 本版内已给过额度 ⇒ 不得重复 +patch").toContain('grep -q "随 $BNO"');
+    expect(guard, "守卫提示要带上判同用的 ticket 号，否则补的那条无法参与后续判同").toContain(
+      "同一 bug 多轮只算一档",
     );
 
     // ④ 守卫「拦该问没问」，绝不自动判档；且缺工具时响亮失败而非静默放行。

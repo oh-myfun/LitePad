@@ -65,8 +65,9 @@ PRODUCT_COMMITS="$(git log "$TAG..HEAD" --no-merges --format='%h' -- src/ src-ta
 if [ "${PRODUCT_COMMITS:-0}" -gt 0 ] && [ "$PKG" = "$TAG_VER" ]; then
   echo "" >&2
   echo "✗ 版本守卫：$TAG 以来有 $PRODUCT_COMMITS 个改动产品代码的提交，但版本号仍是 v$PKG（没动过）。" >&2
-  echo "  口径是「每次修改自动 +patch」⇒ 交付流程漏跑了 bump。补一条：" >&2
-  echo "      bash scripts/bump-version.sh patch --commit" >&2
+  echo "  口径是「每次修改自动 +patch，但**同一 bug 多轮只算一档**」⇒ 交付流程漏跑了 bump。补一条：" >&2
+  echo "      bash scripts/bump-version.sh patch --commit --note '随 B<本轮 ticket 号>'" >&2
+  echo "  （`--note` 里的「随 Bxxx」是判同的额度记录：同一 B 号本版内已出现过，就不该再给第二档）" >&2
   echo "  （若这批提交里混着纯 docs/test 的，也只该有至少一个 patch —— 版本是仓库级，不做逐提交核对）" >&2
   exit 1
 fi

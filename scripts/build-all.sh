@@ -159,8 +159,17 @@ elif git diff-tree --no-commit-id --name-only -r HEAD | grep -qE '^src/|^src-tau
   if git diff-tree --no-commit-id --name-only -r HEAD | grep -q '^package.json$'; then
     echo "· 本次提交已自带版本号改动 ⇒ 不再自动 +patch"
   else
+    # ⚠️ **同一个 bug 的多轮修复不重复加版本号**（用户 2026-10-18 补的口径）：
+    #    额度键 = subject 里的 `B\d+`；已在 `chore(version)` 提交信息里出现过「随 Bxxx」就不再给。
+    #    没带 ticket 号的提交无从判同，各算一次（宁可多一档，不要把两个 bug 混成一档）。
     BNO="$(git log -1 --format=%s | grep -oE 'B[0-9]+' | head -1)"
-    bash scripts/bump-version.sh patch --commit ${BNO:+--note "随 $BNO"}
+    LAST_TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo '')"
+    if [ -n "$BNO" ] && [ -n "$LAST_TAG" ] &&
+       git log "$LAST_TAG..HEAD" --format='%s' --grep='^chore(version)' | grep -q "随 $BNO"; then
+      echo "· 同一个 bug（$BNO）本版内已给过 patch 额度 ⇒ 不再 +patch"
+    else
+      bash scripts/bump-version.sh patch --commit ${BNO:+--note "随 $BNO"}
+    fi
   fi
 else
   echo "· 本次提交未碰产品代码（docs/test/scripts/记忆）⇒ 不推 patch"
