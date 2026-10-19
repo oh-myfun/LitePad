@@ -35,7 +35,17 @@ let entries: RecentEntry[] = [];
 let limit = 20;
 /** 上一次**成功**上报的可见路径集合的指纹；`null` = 还没成功上报过（或上一次失败了）。 */
 let lastReportedKey: string | null = null;
+/**
+ * 请求序号。回包到达顺序**没有保证**：连发两报时旧那一包可能后到，直接写缓存就会把
+ * 名单退回旧状态（用户读作「还开着的文件出现在最近打开里」）。只认最新那一个。
+ */
+let requestSeq = 0;
 const subscribers = new Set<(entries: RecentEntry[]) => void>();
+
+function applyIfFresh(seq: number, list: RecentEntry[]): void {
+  if (seq !== requestSeq) return;
+  setEntries(list);
+}
 
 function notify(): void {
   for (const cb of subscribers) cb(entries);
@@ -81,6 +91,7 @@ export function syncVisiblePaths(): void {
   // 刷新带崩（测试里那份只列了几个导出的 `../src/ipc/api` mock 就是这么炸的）。
   // 基准同样要退回去 —— 否则失败那批路径此后再也不会补报。
   let send: Promise<RecentEntry[]>;
+  const seq = ++requestSeq;
   try {
     send = syncOpenPaths(next);
   } catch (e: unknown) {
@@ -88,11 +99,13 @@ export function syncVisiblePaths(): void {
     logger.warn("recents", `可见路径上报没发出去，下次刷新重试：${String(e)}`);
     return;
   }
-  void send.then(setEntries).catch((e: unknown) => {
-    if (lastReportedKey === key) lastReportedKey = null;
-    logger.warn("recents", `可见路径上报失败，下次刷新重试：${String(e)}`);
-    return undefined;
-  });
+  void send
+    .then((list) => applyIfFresh(seq, list))
+    .catch((e: unknown) => {
+      if (lastReportedKey === key) lastReportedKey = null;
+      logger.warn("recents", `可见路径上报失败，下次刷新重试：${String(e)}`);
+      return undefined;
+    });
 }
 
 /** 订阅名单变化（面板用）。返回反注册函数。 */
@@ -137,8 +150,9 @@ export async function initRecentsStore(): Promise<void> {
 
 /** 单条清除（行上那颗 ✕）。 */
 export async function forgetRecentEntry(path: string): Promise<void> {
+  const seq = ++requestSeq;
   try {
-    setEntries(await forgetRecent(path));
+    applyIfFresh(seq, await forgetRecent(path));
   } catch (e: unknown) {
     logger.warn("recents", `清除单条失败：${String(e)}`);
   }
@@ -146,8 +160,9 @@ export async function forgetRecentEntry(path: string): Promise<void> {
 
 /** 清空全部（标题栏那颗垃圾桶）。 */
 export async function clearRecentEntries(): Promise<void> {
+  const seq = ++requestSeq;
   try {
-    setEntries(await clearRecents());
+    applyIfFresh(seq, await clearRecents());
   } catch (e: unknown) {
     logger.warn("recents", `清空名单失败：${String(e)}`);
   }

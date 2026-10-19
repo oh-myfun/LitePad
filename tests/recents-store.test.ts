@@ -153,6 +153,37 @@ describe("B305 可见路径上报", () => {
     expect(seen).toEqual([2]);
   });
 
+  it("连续两次变化 ⇒ 迟到的旧回包不许盖掉新状态", async () => {
+    // 场景：一次连点里连发两报（只有 A 开着 → A、B 都开着）。Rust 那边由 Mutex 串行，
+    // 真值最后是「两个都开着 ⇒ 名单里没有它们」；但**两个 IPC 回包的到达顺序没有保证**，
+    // 旧那一包后到就把名单写回旧样子 —— 用户看到的是「还开着的文件出现在最近打开里」。
+    const { store, state } = await fresh();
+    withTabs(state, [inst(1, 100, 0)], [doc(100, "C:\\x\\a.md")]);
+    const deferred: Array<(v: unknown[]) => void> = [];
+    h.syncOpenPaths.mockImplementation(
+      () =>
+        new Promise((res) => {
+          deferred.push(res as (v: unknown[]) => void);
+        }),
+    );
+    store.syncVisiblePaths();
+    withTabs(
+      state,
+      [inst(1, 100, 0), inst(2, 200, 0)],
+      [doc(100, "C:\\x\\a.md"), doc(200, "C:\\x\\b.md")],
+    );
+    store.syncVisiblePaths();
+    expect(deferred, "两报都该发出去").toHaveLength(2);
+    deferred[1]([{ path: "b.md", name: "b.md", closedAt: 2 }]);
+    deferred[0]([{ path: "a.md", name: "a.md", closedAt: 1 }]);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(
+      store.getRecents().map((e) => e.path),
+      "过期回包必须被丢掉",
+    ).toEqual(["b.md"]);
+  });
+
   it("recents-changed 广播换掉缓存并通知订阅者（别的窗口关的文件要立刻露脸）", async () => {
     const { store } = await fresh();
     await store.initRecentsStore();
