@@ -166,6 +166,18 @@
               aria-label="大纲"
               aria-pressed="false"
             ></button>
+            <!-- B305：第二颗常驻键 ——「最近打开」。与「大纲」互斥展开（同时只露一块），
+                 显隐各自一个出口（`setSideOpen` / `setRecentOpen`），点亮态也各自收着。
+                 首屏不写 hidden 之外的状态：名单是历史账，不像大纲那样跟着文档走。 -->
+            <button
+              id="side-recent"
+              class="side-btn"
+              type="button"
+              data-tip="最近打开"
+              data-tip-placement="right"
+              aria-label="最近打开"
+              aria-pressed="false"
+            ></button>
           </div>
           <!-- B205（用户点名「顶部有大纲字样 + 全部展开/折叠按钮」，列表支持折叠展开）：
                展开区拆成**两条**：上边一条常驻的标题栏（「大纲」字样 + 两颗全量键），
@@ -195,6 +207,26 @@
               ></button>
             </div>
             <div id="toc-list" class="toc-list"></div>
+          </aside>
+          <!-- B305：最近打开的展开区。结构与大纲那块**同形但不同款**：
+               标题栏（标题 + 计数 + 垃圾桶）常驻，列表才重绘 —— `renderRecents` 只清
+               `#recent-list`（B205 那条纪律：标题栏是静态结构，谁也不能替谁）。
+               计数「6/20」= 当前条数 / 设置上限，由 JS 写；垃圾桶**不带文字**，只走
+               codicon + aria-label（与 toc 那两颗全量键同款）。
+               首屏 `hidden`：这块不持久化（与 `toc_open` 不同类），每次启动都收着。 -->
+          <aside id="recent-panel" class="recent-panel" hidden>
+            <div id="recent-head" class="recent-head">
+              <span id="recent-title" class="recent-title">最近打开</span>
+              <span id="recent-count" class="recent-count">0/0</span>
+              <button
+                id="recent-clear"
+                class="toc-head-btn"
+                type="button"
+                data-tip="清空全部"
+                aria-label="清空全部"
+              ></button>
+            </div>
+            <div id="recent-list" class="recent-list"></div>
           </aside>
         </div>
         <div

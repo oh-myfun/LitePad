@@ -274,6 +274,132 @@
   display: none;
 }
 
+/* B305：最近打开的展开区 —— 与 `.toc-panel` **同形不同款**：同样是「标题栏常驻 + 列表滚动」，
+   但一行有两截（文件名 / 目录），所以行高给到 34px 一档，标题栏右侧多挂一颗垃圾桶。
+   ⚠️ 宽度与大纲同一档：分隔条的 inline 宽度只写在 `#toc-panel` 上，两块面板由 `src/toc.ts`
+      的 `applyDrawerWidth` 一起跟；面板打开时也会从大纲那块抄一次。漏了这一步，「拖完分隔条
+      再点最近打开」就会看见抽屉跳回默认宽。
+   ⚠️ 那条 `[hidden]` 兜底与 `.toc-panel` 是同一个坑：作者样式表的 `display: flex` 压得过
+      UA 的隐藏规则（与权重无关），光写 hidden 属性会「收起来了却还占着一片」。jsdom 不做
+      CSS 级联，运行时断言 `hidden === true` 是假绿 ⇒ 由 tests/recents-contract.test.ts 静态盯。 */
+.recent-panel {
+  width: 240px;
+  min-width: 160px;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  background: transparent;
+}
+.recent-panel[hidden] {
+  display: none;
+}
+/* 标题栏与 `.toc-head` 同一档（11px muted 的「区块标题」读法，不是可点的东西）。 */
+.recent-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 4px 0 10px;
+  font-size: 11px;
+  line-height: 1;
+}
+.recent-title {
+  flex: 0 0 auto;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted, #656d76);
+}
+/* 计数「6/20」= 当前条数 / 设置上限。等宽数字：名单增减时这一格不该左右跳。 */
+.recent-count {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  padding-right: 4px;
+  color: var(--fg-muted, #656d76);
+  font-variant-numeric: tabular-nums;
+}
+.recent-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0 8px;
+}
+/* 一行：左侧两截文字，右侧那颗 ✕（平时不占视觉、悬停才露 —— 与标签栏那颗 × 同一口径，
+   常驻会让每一行都像被删过）。整行是一个点击面，不需要「点到字上才算」。 */
+.recent-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 4px 6px 4px 10px;
+  text-align: left;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--fg, #24292f);
+}
+.recent-row:hover {
+  background: var(--bg-hover, #eee);
+}
+.recent-line {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.recent-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1.35;
+}
+/* 目录那一截是「用来分辨同名文件」的，淡一档、字号小一档，抢不过文件名。
+   ⚠️ 不用 `direction: rtl` 那招去「保留路径末尾」：冒号与反斜杠在 bidi 里会被重新排序，
+      `C:\工作` 会画出 `\C:工作` 这种顺序 —— 省一次截断换来一条读错的路，不值。
+      栏窄了就正常截尾，完整路径在悬停浮层里（`data-tip`）。 */
+.recent-dir {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--fg-muted, #656d76);
+}
+.recent-del {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  visibility: hidden;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--fg-muted, #656d76);
+}
+.recent-row:hover .recent-del,
+.recent-del:focus-visible {
+  visibility: visible;
+}
+.recent-del:hover {
+  background: var(--side-btn-active, #d6d9dc);
+  color: var(--fg, #24292f);
+}
+.recent-del .codicon {
+  font-size: 14px;
+}
+.recent-empty {
+  padding: 8px 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg-muted, #656d76);
+}
+
 /* 大纲宽度分隔条（B195 改版）：**不再是贴着面板的一条细线** ——
    B123 之后编辑区整块是一张卡片，侧栏（B195）也做成卡片，两者之间是**空隙**；
    VS Code 在这一档给的是 sash（可拖），这里按用户点名再补一颗**三点把手**摆在

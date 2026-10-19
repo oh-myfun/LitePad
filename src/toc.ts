@@ -6,7 +6,7 @@
 // 零外部函数依赖——只依赖 core/* + ui + shell/* + markdown/pipeline（TocEntry 类型），
 // 对 main.ts 零反向依赖。
 
-import { docs, settings } from "./core/app-state";
+import { docs, settings, windowKind } from "./core/app-state";
 import { activeTab, activePanel } from "./core/panels";
 import { CODICONS } from "./shell/codicons";
 import { setTip } from "./shell/tooltip";
@@ -16,6 +16,7 @@ import { syncCoordinator } from "./sync-scroll/wire";
 import { EditorView } from "@codemirror/view";
 import {
   mainRow,
+  recentPanel,
   sideOutline,
   sideShell,
   sidebarToggle,
@@ -60,6 +61,23 @@ let sideWidth = 240;
  *    并把 `onChange` 接上「夹取 → 回写设置」的那一步。返回值直接丢弃即可。
  */
 
+/**
+ * B305：两块展开区（大纲 / 最近打开）共用同一档抽屉宽度。
+ *
+ * 分隔条的 inline 宽度只写在 `#toc-panel` 上（`attachSideResizer` 里那一发 `apply`），
+ * 这里把同一份数抄给 `#recent-panel`。漏了这一步：拖完分隔条再点「最近打开」，抽屉会
+ * 跳回 CSS 里那个默认 240px —— 用户读作「宽度设置丢了」。
+ * 省略 `w` 时抄 `#toc-panel` 上现有的那一份（打开最近面板那一路走这一支）。
+ */
+function applyDrawerWidth(w?: number): void {
+  const width = w ?? Number.parseFloat(tocPanel.style.width);
+  if (!Number.isFinite(width)) return;
+  for (const panel of [tocPanel, recentPanel]) {
+    panel.style.width = `${width}px`;
+    panel.style.minWidth = `${width}px`;
+  }
+}
+
 /** 挂载大纲宽度分隔条。设置未就绪（settings 为 null）时只生效不持久化。 */
 function setupSideResizer(): void {
   sideWidth = clampSideWidth(settings?.toc_width ?? 240);
@@ -76,6 +94,8 @@ function setupSideResizer(): void {
     },
     onChange: (w) => {
       sideWidth = w;
+      // 拖到哪，两块展开区都跟到哪（最近打开那块平时藏着，藏着也得跟着改宽度）。
+      applyDrawerWidth(w);
       if (!settings) return;
       settings.toc_width = w;
       void saveSettings(settings).catch(() => {
@@ -201,6 +221,10 @@ function setSideOpen(open: boolean, persist = true): void {
 }
 
 function toggleToc(): void {
+  // B305：子窗口没有左边栏（CSS 收掉了整张卡片）。快捷键 / 命令面板那一路不打这条例子
+  // 就会「打开一块看不见的面板」，顺带把 `toc_open` 写成 true 落盘 —— 下次到主窗口里
+  // 就表现为「也没点它，大纲自己开起来了」。
+  if (windowKind === "satellite") return;
   // B198：整栏收着时，「大纲」这条命令（菜单 / 快捷键入口）先把它整栏放出来 ——
   // 展开区藏在 display:none 的容器里，光切开合等于点了没反应（死键）。
   if (isSidebarOff()) applySidebarVisible(false);
@@ -273,4 +297,5 @@ export {
   setSideOpen,
   toggleToc,
   updateTocDrawer,
+  applyDrawerWidth,
 };

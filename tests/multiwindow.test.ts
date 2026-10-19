@@ -574,6 +574,11 @@ describe("B153 反向验证：退回旧写法，上面那几条必须变红", ()
       /html\[data-window-kind="satellite"\]\s*\.menu-bar\s*\{[^}]*display:\s*none;\s*}/,
       "",
     );
-    expect(degraded, "删掉后不该还有这条规则").not.toMatch(/data-window-kind="satellite"/);
+    // B305 起这份文件里有了**第二条** satellite 规则（子窗口收左边栏），所以这里不能再
+    // 断言「整份文件没有 satellite 字样」—— 那等于把「CSS 里只有一处」当成契约，第二处
+    // 一进来就假红。收窄到被删的那条本身，反向验证的力道不减。
+    expect(degraded, "删掉后不该还有菜单栏那条规则").not.toMatch(
+      /data-window-kind="satellite"\s*\.menu-bar/,
+    );
   });
 });

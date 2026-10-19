@@ -88,3 +88,52 @@ describe("B305 · 可见路径上报只挂一处", () => {
     expect(readFileSync("src/multiwindow/windows.ts", "utf-8")).not.toContain("syncOpenPaths");
   });
 });
+
+describe("B305 · 侧栏结构与子窗口收口", () => {
+  const html = readFileSync("index.html", "utf-8");
+  const css = readFileSync("src/styles/preview.css", "utf-8");
+  const globalCss = readFileSync("src/styles/global.css", "utf-8");
+
+  it("六颗 id 齐备，且「最近打开」键排在大纲键之后（按钮列自上而下 = 心智顺序）", () => {
+    for (const id of [
+      "side-recent",
+      "recent-panel",
+      "recent-head",
+      "recent-count",
+      "recent-clear",
+      "recent-list",
+    ]) {
+      expect(html, `缺 #${id}`).toContain(`id="${id}"`);
+    }
+    expect(
+      html.indexOf('id="side-recent"'),
+      "第二颗键必须排在大纲键之后（按钮列是常驻一列，顺序就是读法）",
+    ).toBeGreaterThan(html.indexOf('id="side-outline"'));
+    expect(html).toMatch(/id="recent-panel"[^>]*hidden/);
+  });
+
+  it("`.recent-panel[hidden]` 兜底必须写（作者样式表压过 UA 那条隐藏规则，B207 同款坑）", () => {
+    // `.toc-panel` 当年就栽在这里：`display: flex` 一写，hidden 属性只改了个属性、
+    // 面板照旧占着宽度。jsdom 不做 CSS 级联 ⇒ 运行时断言 `hidden === true` 是**假绿**，
+    // 这条只能用静态契约盯住（口径同 tests/sidebar.test.ts）。
+    expect(css).toMatch(/\.recent-panel\s*\{[^}]*display:\s*flex/);
+    expect(css, "没这条就会「收起来了却还占着一片」").toMatch(
+      /\.recent-panel\[hidden\]\s*\{[^}]*display:\s*none/,
+    );
+  });
+
+  it("子窗口收掉整条左栏：卡片、空隙、标题栏那颗左栏键一起收（Review Focus #5）", () => {
+    for (const sel of ["#side-shell", "#side-resizer", "#sidebar-toggle"]) {
+      expect(
+        globalCss,
+        `子窗口还留着 ${sel}：左边栏多出一块没有内容的空白，那颗键点了也没东西可看`,
+      ).toContain(`html[data-window-kind="satellite"] ${sel}`);
+    }
+  });
+
+  it("两颗新图标走 codicon 字形（仓库红线：不手绘 SVG）", () => {
+    const icons = readFileSync("src/shell/codicons.ts", "utf-8");
+    expect(icons).toMatch(/history:\s*"history"/);
+    expect(icons).toMatch(/trash:\s*"trash"/);
+  });
+});

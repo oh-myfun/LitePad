@@ -591,6 +591,18 @@ html[data-window-kind="satellite"] .menu-bar {
   display: none;
 }
 
+/* B305（用户点名「子窗口去除左边栏」）：卫星窗口不收左栏，收到的就不是「子窗口」那副样子 ——
+   一条按钮列 + 一块抽屉占着 200 多 px，而它承载的只是一两个文件。
+   三件一起收：侧栏卡片（按钮列 + 两块展开区）、中间的缝与把手、以及标题栏那颗「隐藏左栏」键。
+   最后那颗必须收：它收放的是这张卡片，卡片本来就不在 ⇒ 留着它就是一颗点了没反应的死键
+   （口径同上面菜单栏那条 —— 观感由 CSS 彻底收掉，JS 侧 `toggleToc` / `toggleRecentPanel`
+   再各挡一道，免得快捷键把看不见的面板"打开"了还顺手把开合值写进设置）。 */
+html[data-window-kind="satellite"] #side-shell,
+html[data-window-kind="satellite"] #side-resizer,
+html[data-window-kind="satellite"] #sidebar-toggle {
+  display: none;
+}
+
 /* B110：菜单按钮与窗口三键同一条声明（见上方 `.win-btn, .title-btn, .menu-btn`）——
    无边框 / 无圆角 / 满高 / 同一悬停淡底 / 同一焦点环。
    这里只留**文字标签**不得不不同的两项：三键是 46px 的图标方键，而菜单是

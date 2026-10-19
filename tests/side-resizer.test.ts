@@ -470,8 +470,10 @@ describe("B194 大纲开合状态：切一次要落盘、启动要回放", () =>
     expect(body, "要把开合写进 settings.toc_open").toMatch(/settings\.toc_open = open;/);
     expect(body, "写完要落盘").toMatch(/saveSettings\(settings\)/);
     // 唯一入口：命令与顶部按钮都走 toggleToc → setSideOpen
+    // （预算 200 → 500：B305 在这两句之间插了「子窗口空转」那道闸和它的说明。这类
+    //  「函数头之后 N 字内必须出现 X」的断言一插代码就断，改的时候两侧都要看一眼。）
     expect(src, "toggleToc 必须走 setSideOpen（唯一收口）").toMatch(
-      /function toggleToc\(\)[\s\S]{0,200}setSideOpen\(tocPanel\.hidden\)/,
+      /function toggleToc\(\): void[\s\S]{0,500}setSideOpen\(tocPanel\.hidden\)/,
     );
   });
 

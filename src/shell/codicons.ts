@@ -96,6 +96,11 @@ const IDS = {
   //    `gripper`（六点两列）是 VS Code 拖动手柄那一族，点更多、更密，在 4px 宽的
   //    缝里会糊成一团，且与 kebab 那颗同为「点阵」，所以只留三点的这颗。
   grip: "kebab-vertical",
+  // —— 侧栏第二颗键（B305 最近打开）——
+  // `history`（带箭头的时钟，VS Code「最近使用」那一族用的就是它）；清单标题栏那颗
+  // 清空键取 `trash`（与「全部折叠」那两颗同为标题栏小动作键，只用字形不写文字）。
+  history: "history",
+  trash: "trash",
   // —— 侧栏展开区的全量折叠 / 展开（B205）——
   // 字形照 VS Code `outlineActions.ts`：Collapse All 用 `collapse-all`（两道相向的
   // 折角，把整棵树收起来），Expand All 用 `expand-all`（反向）。那两颗按钮的 `when`

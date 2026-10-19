@@ -95,6 +95,13 @@ const tocResizer = el("side-resizer");
 const sideShell = el("side-shell");
 // B195：侧栏按钮列里的「大纲」键（常驻，收起展开区时列本身还在）与空隙里的三点把手。
 const sideOutline = el<HTMLButtonElement>("side-outline");
+// B305：侧栏第二颗键（最近打开）与它的展开区。显隐出口是 `setRecentOpen`，
+// 与大纲那块一样：面板 `hidden` + 按钮 `is-on` / `aria-pressed` 一处收口。
+const sideRecent = el<HTMLButtonElement>("side-recent");
+const recentPanel = el("recent-panel");
+const recentList = el("recent-list");
+const recentCount = el<HTMLSpanElement>("recent-count");
+const recentClear = el<HTMLButtonElement>("recent-clear");
 const tocGrip = el("toc-grip");
 // B198：标题栏那颗整栏显隐键，与它收放的是 #main-row 这一整行（侧栏卡片 → 缝 → 编辑区）。
 const sidebarToggle = el<HTMLButtonElement>("sidebar-toggle");
@@ -378,6 +385,11 @@ export {
   tocResizer,
   sideShell,
   sideOutline,
+  sideRecent,
+  recentPanel,
+  recentList,
+  recentCount,
+  recentClear,
   tocGrip,
   sidebarToggle,
   mainRow,

@@ -837,8 +837,15 @@ describe("B198 标题栏整栏显隐：双字形开关 + 整栏一起收", () =>
     expect(toc, "展开区开合不得顺手收放整栏").not.toMatch(/is-sidebar-off/);
     expect(toc, "整栏收起时展开区值照旧留着 ⇒ 这里不许出现 sidebar_off").not.toMatch(/sidebar_off/);
     // 双击/拖拽无关，但「整栏收着时点大纲」这条命令要先放栏 —— 否则是死键
+    // （B305 在这一句之前插了「子窗口空转」那道闸，所以预算从 200 放宽到 600：
+    //  这种字符预算断言一插代码就断，是它自己的脆弱，改动时两侧都要看清）。
     expect(src, "大纲命令在整栏收着时先把它放出来（display:none 里切展开区＝没反应）").toMatch(
-      /function toggleToc\(\)[\s\S]{0,200}?if \(isSidebarOff\(\)\) applySidebarVisible\(false\);[\s\S]{0,120}?setSideOpen\(tocPanel\.hidden\)/,
+      /function toggleToc\(\)[\s\S]{0,600}?if \(isSidebarOff\(\)\) applySidebarVisible\(false\);[\s\S]{0,120}?setSideOpen\(tocPanel\.hidden\)/,
+    );
+    // B305：子窗口整条左栏都不在，大纲命令必须空转 —— 否则会「打开一块看不见的面板」，
+    // 顺带把 `toc_open` 写成 true 落盘，下次在主窗口就表现为「没点它，大纲自己开起来了」。
+    expect(src, "大纲命令在子窗口空转").toMatch(
+      /function toggleToc\(\): void\s*\{[\s\S]{0,400}?if \(windowKind === "satellite"\) return;/,
     );
   });
 
