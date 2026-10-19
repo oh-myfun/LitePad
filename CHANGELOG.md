@@ -3,6 +3,17 @@
 > 本文件由 `scripts/gen-changelog.sh` 从 Conventional Commit 自动生成，
 > `scripts/release.sh` 发布时自动刷新；版本口径见 `docs/conventions.md`「版本号规则」。
 
+## v0.23.0 — 2026-10-20
+
+本版距 `v0.22.0` 共 2 个提交。
+
+### 修复
+
+- release 期间关掉 build-all 的自动 +patch `4c868a3`
+- 双击关联文件先把主窗口还原再抢前台（B313） `69e4f2e`
+
+---
+
 ## v0.22.0 — 2026-10-20
 
 本版距 `v0.20.0` 共 26 个提交。
