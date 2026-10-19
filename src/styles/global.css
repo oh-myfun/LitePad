@@ -2289,9 +2289,9 @@ button:focus-visible {
   font-size: 12px;
 }
 
-/* ---------- 右上角更新键（B107：src/shell/updater.ts） ----------
+/* ---------- 更新键（B107：src/shell/updater.ts；B311 起钉在「左栏开关」左边） ----------
    ⚠️ B158 起它的**尺寸 / 悬停 / 铺底都跟着上面那一族走**（`.title-btn.upd-btn` 就在
-      那条共享规则里），所以这里只留这颗键自己的三样：定位上下文、提示点、进度条。
+      那条共享规则里），所以这里只留这颗键自己的三样：定位上下文、提示点、圆环。
       下面两个数值也是**按 24×24 重算**的：46px 方键上的 26px 进度条与
       top/right: 5/7 的提示点，直接搬过来会把键撑破、点还会掉到角外。 */
 
@@ -2312,22 +2312,40 @@ button:focus-visible {
   background: var(--accent);
 }
 
-/* 下载中：小进度条（替代转圈动画）—— track + accent 填充，宽度由 JS 按 percent 设。
-   18px 是「塞进 24px 键还左右各留 3px」的宽（46px 键上的 26px 直接搬会顶到边）。 */
-.title-btn.upd-btn .upd-bar {
+/* 检查中 / 下载中：一颗圆环（B311，取代原来那条 18×4 横进度条 —— 键挪到左栏开关旁边之后，
+   横条在那儿读起来像一条没对齐的下划线；圆环自带「围绕中心推进」的语义，旋转档也共用同一画法）。
+   画法是纯 CSS：conic-gradient 画「已完成的扇形 + 剩下的暗轨」，radial mask 把中间掏空成
+   2.5px 的环。⚠️ 不许换成手绘 <svg>：图标一律走 codicon，那条守卫还在。
+   完成度由 JS 写在元素的 `--p`（0–100）上，每 1% 更新一发。
+   ⚠️ 不给它加 transition：没经 `@property` 注册的自定义属性不可插值，硬加只会让人以为在平滑。 */
+.title-btn.upd-btn .upd-ring {
   display: block;
-  width: 18px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--bg-hover);
-  overflow: hidden;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: conic-gradient(var(--accent) calc(var(--p, 0) * 1%), var(--bg-hover) 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 0);
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 0);
 }
-.title-btn.upd-btn .upd-bar-fill {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-  border-radius: 2px;
-  transition: width 0.15s linear;
+
+/* 检查中：没有「完成度」可画 ⇒ 固定一截 28% 的弧转起来（进度未知就说未知，
+   别拿一条不动的满环冒充 0%）。 */
+.title-btn.upd-btn.is-spin .upd-ring {
+  background: conic-gradient(var(--accent) 28%, transparent 0);
+  animation: upd-spin 0.9s linear infinite;
+}
+
+@keyframes upd-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 系统要求减少动效时不转，但弧长留着 —— 状态还得看得见，只是不动。 */
+@media (prefers-reduced-motion: reduce) {
+  .title-btn.upd-btn.is-spin .upd-ring {
+    animation: none;
+  }
 }
 
 /* ---------- 开关（B111：设置页布尔项用自绘 switch 取代原生 checkbox） ----------

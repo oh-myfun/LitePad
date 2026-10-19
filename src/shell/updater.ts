@@ -1,11 +1,15 @@
 /**
  * 应用内自动更新（B107，方案 A：官方 tauri-plugin-updater）。
  *
- * 链路：启动后延迟静默检查一次 → 之后按间隔静默轮询；「帮助 → 检查更新…」走手动检查。
- * 发现新版本后标题栏右上角出现更新键（插在置顶键左侧，无更新时不可见）：
- *   available   = cloud-download，点击开始下载安装；
- *   downloading = 小进度条（替代转圈动画），tip/aria 带百分比；
+ * 链路：启动后延迟静默检查一次 → 之后按间隔静默轮询；「帮助 → 检查更新」走手动检查。
+ * 更新键钉在标题栏 `.title-actions` 的**第一个孩子**（= 「左栏开关」那颗键的左边，B311），
+ * 一颗键按阶段换画法：
+ *   checking    = 旋转圆环（**只有手动检查才亮**，用户 2026-10-20 定：自动检查照旧不打扰）
+ *   available   = cloud-download + 提示点，点击开始下载安装；
+ *   downloading = 进度圆环（B311 取代原来那条 18×4 横进度条），完成度写在 `--p` 上；
  *   ready       = refresh，点击保存现场后 relaunch（NSIS passive 安装由 updater 触发）。
+ * 圆环是纯 CSS（conic-gradient + radial mask，见 global.css 的 `.upd-ring`）—— 图标一律走
+ * codicon，不许为它手绘 SVG，这条守卫在 `tests/updater.test.ts` 里钉着。
  *
  * 与 InkNote 同款的关键纪律：
  *   · **自动检查失败一律静默**（console.warn）——断网 / 404 是常态，不能打扰写作；
@@ -23,10 +27,10 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { CODICONS } from "./codicons";
 import { setTip } from "./tooltip";
 
-export type UpdatePhase = "idle" | "available" | "downloading" | "ready";
+export type UpdatePhase = "idle" | "checking" | "available" | "downloading" | "ready";
 
 export interface UpdaterOptions {
-  /** 标题栏右上角容器（.title-actions）：更新键动态创建，插在置顶键左侧。 */
+  /** 标题栏工具键容器（.title-actions）：更新键动态创建，插在**最左边**。 */
   host: HTMLElement;
   /** 状态栏提示出口（main.ts 的 showMessage）。 */
   showMessage: (text: string, isError?: boolean) => void;
@@ -49,8 +53,9 @@ export function initUpdater(opts: UpdaterOptions): UpdaterHandle {
   btn.className = "title-btn upd-btn";
   btn.style.display = "none"; // .title-btn 的 inline-flex 会压掉 [hidden]，直接控 display
   btn.setAttribute("aria-label", "检查更新");
-  const pin = opts.host.querySelector("#win-pin");
-  opts.host.insertBefore(btn, pin);
+  // B311：插在容器的**第一个孩子**前面 ⇒ 落在「左栏开关」那颗键的左边（用户点名）。
+  // 不写死 id：生产里第一个孩子是 #sidebar-toggle，测试宿主里是别的键，都插到最前。
+  opts.host.insertBefore(btn, opts.host.firstElementChild);
 
   let phase: UpdatePhase = "idle";
   let pending: Update | null = null;
@@ -58,9 +63,25 @@ export function initUpdater(opts: UpdaterOptions): UpdaterHandle {
   let percent = 0;
   let busy = false; // 检查/安装共用的防重入锁
 
-  /** 按阶段渲染按钮：字形即状态（三态共用一颗键，与 codicons.ts 的注释同口径）。 */
+  /**
+   * 画那颗圆环：只建一次，之后只改完成度（写在元素的 `--p` 上）。
+   *
+   * ⚠️ 不重建 DOM 是判据的一部分：下载每 1% 就来一发，重建会让环每帧从零画起（闪烁），
+   * 也与原来那条进度条「只更新填充宽度」的口径不一致。
+   * `p = null` ⇒ 撤掉完成度，交给 `.is-spin` 那档的固定弧长（检查中）。
+   */
+  function drawRing(p: number | null): void {
+    if (!btn.querySelector(".upd-ring")) btn.innerHTML = `<span class="upd-ring"></span>`;
+    const ring = btn.querySelector<HTMLElement>(".upd-ring");
+    if (!ring) return;
+    if (p === null) ring.style.removeProperty("--p");
+    else ring.style.setProperty("--p", String(p));
+  }
+
+  /** 按阶段渲染按钮：字形 / 圆环即状态（几态共用一颗键，与 codicons.ts 的注释同口径）。 */
   function render(): void {
     btn.classList.toggle("is-busy", phase === "downloading");
+    btn.classList.toggle("is-spin", phase === "checking");
     btn.classList.toggle("has-update", phase === "available" || phase === "ready");
     if (phase === "idle") {
       btn.style.display = "none";
@@ -71,15 +92,12 @@ export function initUpdater(opts: UpdaterOptions): UpdaterHandle {
       btn.innerHTML = CODICONS.cloudDownload;
       setTip(btn, `发现新版本 v${version}`, { detail: "点击下载并安装" });
       btn.setAttribute("aria-label", `发现新版本 v${version}，点击下载安装`);
+    } else if (phase === "checking") {
+      drawRing(null);
+      setTip(btn, "正在检查更新…", { detail: "手动检查" });
+      btn.setAttribute("aria-label", "正在检查更新");
     } else if (phase === "downloading") {
-      // 小进度条（替代转圈动画）：track + accent 填充，宽度随 percent 走。
-      // 进度条只建一次，后续只更新填充宽度（配合 CSS transition 平滑增长）。
-      const fill = btn.querySelector<HTMLElement>(".upd-bar-fill");
-      if (!fill) {
-        btn.innerHTML = `<span class="upd-bar"><span class="upd-bar-fill" style="width:${percent}%"></span></span>`;
-      } else {
-        fill.style.width = `${percent}%`;
-      }
+      drawRing(percent);
       setTip(btn, `正在下载 v${version}…`, { detail: `${percent}%` });
       btn.setAttribute("aria-label", `正在下载更新 v${version}，已完成 ${percent}%`);
     } else {
@@ -95,10 +113,15 @@ export function initUpdater(opts: UpdaterOptions): UpdaterHandle {
       return;
     }
     if (pending) {
-      if (!silent) opts.showMessage(`已有可用更新：v${version}（右上角按钮）`);
+      if (!silent) opts.showMessage(`已有可用更新：v${version}（标题栏那颗更新键）`);
       return;
     }
     busy = true;
+    // 只有手动检查才亮旋转环；静默自动检查（启动一次 + 每 6 小时轮询）照旧什么都不显示
+    if (!silent) {
+      phase = "checking";
+      render();
+    }
     try {
       const update = await check();
       if (!update) {
@@ -109,12 +132,18 @@ export function initUpdater(opts: UpdaterOptions): UpdaterHandle {
       version = update.version;
       phase = "available";
       render();
-      opts.showMessage(`发现新版本 v${version}，点击右上角按钮下载安装`);
+      opts.showMessage(`发现新版本 v${version}，点击更新键下载安装`);
     } catch (err) {
       // ⚠️ 自动检查（silent）失败必须静默：断网 / 404 / 源不可达都是常态
       if (silent) console.warn("自动检查更新失败", err);
       else opts.showMessage(`检查更新失败：${String(err)}`, true);
     } finally {
+      // 查完还是「检查中」⇒ 说明没有可用更新（或失败），圆环收回去；
+      // 查到更新的分支已把 phase 改成 available，这里不该再动它。
+      if (phase === "checking") {
+        phase = "idle";
+        render();
+      }
       busy = false;
     }
   }

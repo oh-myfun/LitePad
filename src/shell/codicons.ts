@@ -60,10 +60,12 @@ const IDS = {
   //   同时**不再靠 `.is-on` 配色**表达状态，全落在字形上。
   pinned: "pinned",
   pin: "pin",
-  // —— 右上角更新键（B107）——
-  // 三态共用一颗按钮、字形即状态：发现新版本 = cloud-download（点击下载安装），
-  // 下载中 = 小进度条（track + accent 填充，见 updater.ts 的 .upd-bar / .upd-bar-fill，
-  //   替代原先的 loading 旋转动画），就绪待重启 = refresh（点击 relaunch）。
+  // —— 更新键（B107，B311 起钉在「左栏开关」左边）——
+  // 一颗键按阶段换画法：发现新版本 = cloud-download（点击下载安装），就绪待重启 = refresh
+  // （点击 relaunch），这两档是字形；检查中 / 下载中是**圆环**（CSS 画的，见 global.css 的
+  // `.upd-ring`：下载按 percent 走，检查中是固定弧长旋转）。
+  // 沿革：B107 原本是 loading 旋转 → 换成横进度条 → B311 键搬家后统一成圆环
+  // （横条在新位置读起来像一条没对齐的下划线；旋转又回到了「检查中」这一档，但只在手动检查时）。
   cloudDownload: "cloud-download",
   refresh: "refresh",
   // —— 标题栏文档名后的同步滚动键（B152 / B154 / B166）——

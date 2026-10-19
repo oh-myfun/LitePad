@@ -37,10 +37,14 @@ function fakeUpdate(version: string, opts: { fail?: boolean; noEvents?: boolean 
 
 function makeHost(): HTMLElement {
   const host = document.createElement("div");
-  // 与真实 .title-actions 同构：里面有一颗置顶键，更新键应插在它前面
+  host.className = "title-actions";
+  // 与真实 .title-actions 同构（index.html）：左栏开关在前、置顶键在后，
+  // 更新键 B311 起要插在**最左边**（= 左栏开关的左侧）。
+  const side = document.createElement("button");
+  side.id = "sidebar-toggle";
   const pin = document.createElement("button");
   pin.id = "win-pin";
-  host.appendChild(pin);
+  host.append(side, pin);
   document.body.appendChild(host);
   return host;
 }
@@ -111,7 +115,7 @@ describe("B107 更新状态机", () => {
     await vi.waitFor(() => expect(vi.mocked(relaunch)).toHaveBeenCalledTimes(2));
   });
 
-  it("下载中：进度条 + 百分比写进 aria-label", async () => {
+  it("下载中：进度圆环 + 百分比写进 aria-label 与 `--p`", async () => {
     let captured: DownloadCb | undefined;
     const update = fakeUpdate("0.14.0");
     (update.downloadAndInstall as ReturnType<typeof vi.fn>).mockImplementation(
@@ -128,8 +132,52 @@ describe("B107 更新状态机", () => {
     await vi.waitFor(() => expect(captured).toBeTruthy());
     captured?.({ event: "Started", data: { contentLength: 100 } });
     captured?.({ event: "Progress", data: { chunkLength: 40 } });
-    expect(updBtn().innerHTML, "下载中 = 进度条（替代转圈）").toContain("upd-bar-fill");
+    const ring = updBtn().querySelector<HTMLElement>(".upd-ring");
+    expect(ring, "下载中 = 进度圆环（B311 取代横进度条）").toBeTruthy();
+    expect(ring!.style.getPropertyValue("--p"), "完成度写在 --p 上").toBe("40");
+    expect(updBtn().innerHTML, "圆环是 CSS 画的，不许混进手绘 SVG").not.toContain("<svg");
     expect(updBtn().getAttribute("aria-label")).toContain("40%");
+    // 同一发里再进一格：必须复用那个节点，不能重建（重建 = 每 1% 闪一次）
+    const same = ring!;
+    captured?.({ event: "Progress", data: { chunkLength: 20 } });
+    expect(updBtn().querySelector(".upd-ring")).toBe(same);
+    expect(same.style.getPropertyValue("--p")).toBe("60");
+  });
+
+  it("B311 位置：更新键插在 .title-actions 最左边（= 左栏开关那颗的左侧）", async () => {
+    vi.mocked(check).mockResolvedValue(fakeUpdate("0.14.0"));
+    const host = makeHost();
+    initUpdater({
+      host,
+      showMessage: () => {},
+      persist: vi.fn(),
+      initialDelayMs: 0,
+      intervalMs: 0,
+    });
+    const kids = [...host.children].map((el) => el.id || el.className);
+    expect(kids[0], "更新键必须是第一个孩子").toContain("upd-btn");
+    expect(kids[1], "紧跟其后才是左栏开关").toBe("sidebar-toggle");
+    expect(kids[2], "置顶键仍在最后").toBe("win-pin");
+  });
+
+  it("手动检查在途：按钮亮起来转圆环；查完没更新就收回（自动检查不许亮）", async () => {
+    let settle: (u: Update | null) => void = () => {};
+    vi.mocked(check).mockImplementation(
+      () => new Promise<Update | null>((r) => (settle = r)) as ReturnType<typeof check>,
+    );
+    const handle = init([], []);
+    const p = handle.checkNow(); // 不 await：这一发还挂在检查中
+    await vi.waitFor(() => expect(vi.mocked(check)).toHaveBeenCalledTimes(1));
+    const btn = updBtn();
+    expect(btn.style.display, "检查中按钮要出现").toBe("");
+    expect(btn.classList.contains("is-spin"), "检查中 = 旋转那一档").toBe(true);
+    expect(btn.querySelector(".upd-ring"), "旋转档画的也是圆环").toBeTruthy();
+    expect(btn.getAttribute("aria-label")).toBe("正在检查更新");
+
+    settle(null);
+    await p;
+    expect(btn.style.display, "查完没有更新 ⇒ 收回").toBe("none");
+    expect(btn.classList.contains("is-spin")).toBe(false);
   });
 
   it("安装失败：退回 available 态可重试，状态栏报错", async () => {
@@ -226,12 +274,15 @@ describe("B107 更新链路静态守卫", () => {
     expect(main, "Rust 必须注册 process 插件（relaunch）").toContain("tauri_plugin_process::init");
   });
 
-  it("前端接线：更新模块存在、菜单入口、钉进标题栏右上角", () => {
+  it("前端接线：更新模块存在、菜单入口、钉在「左栏开关」左边（B311）", () => {
     expect(existsSync("src/shell/updater.ts"), "updater 模块必须存在").toBe(true);
     const upd = readSrc("src/shell/updater.ts");
     expect(upd, "自动检查失败必须静默（console.warn）").toContain("console.warn");
     expect(upd, "安装前必须 persist 落盘现场").toContain("await opts.persist()");
-    expect(upd, "不得手绘 SVG（图标走 codicon）").not.toContain("<svg");
+    expect(upd, "不得手绘 SVG（图标走 codicon，圆环走 CSS）").not.toContain("<svg");
+    expect(upd, "更新键必须插成容器的第一个孩子（= 左栏开关左边），别再按 id 找置顶键").toContain(
+      "opts.host.insertBefore(btn, opts.host.firstElementChild)",
+    );
 
     const menu = readSrc("src/shell/menubar.ts");
     expect(menu, "帮助菜单必须有检查更新入口").toContain('label: "检查更新"');
