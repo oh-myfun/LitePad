@@ -472,15 +472,22 @@ function install(): void {
       };
     },
     addPreviewPanel() {
-      // 同 `splitPanelWithTab` 的 copy 分支（split.ts）：副本先继承**源当下可见侧**的 v，
-      // 落位再交给「扶回可见侧」。少了这两步，新格只能从顶部起步 —— S18 早先那发绿是
-      // 布局挤压引起的一发广播**碰巧**把它带过去的，不是种子，不能当证据。
+      // 同 `openPreviewToSide` 的「右侧没有面板」那一支（B310）：生产的副本**不是**按预览态
+      // 建格的 —— `splitPanelWithTab` 的 copy 分支抄的是**源那一格的** `viewMode`（源码态），
+      // `rebuildLayout` → `mountView` 落位并 reconcile 之后，函数才后置 `preview` 并补两发。
+      // ⚠️ 宿主上一版直接按预览态建格、只一发 reconcile ⇒ 宿主比生产更正确，S11–S13/S18
+      // 一路绿灯而线上是坏的（这一族第二次踩：第一次是 `setMode` 多调一发 reconcile）。
       const src = panels.get(activePanelId) ?? [...panels.values()][0];
       const live = src ? readVisibleV(src) : null;
-      const p = createPanel("preview", docLongId, "sync-scroll.md");
+      const p = createPanel("source", docLongId, "sync-scroll.md");
       const tab = tabs.get(p.activeTabId);
       if (tab && live !== null) tab.scrollV = live;
       if (tab) landVisibleSideAtV(p, tab.scrollV);
+      reconcileSyncRegistrations(); // mountView 末尾那一发：登记的是**编辑器**面
+      if (!tab) return p.panelId;
+      tab.viewMode = "preview"; // ⚠️ 后置
+      applyPanelModeMirror(p); // applyPanelMode(np)
+      landVisibleSideAtV(p, tab.scrollV);
       reconcileSyncRegistrations();
       return p.panelId;
     },

@@ -597,3 +597,90 @@ describe("滚动位置随会话进出（B302）", () => {
     }
   });
 });
+
+describe("打开侧边预览 · 后置 preview 之后的三发补偿（B310）", () => {
+  // 真机 2026-10-20 00:15（v0.21.0）：单标签 + 打开侧边预览，开关亮着，滚哪一侧另一侧都不动。
+  // 日志形状：`reconcile 在册=P1:editor/doc2, P3:editor/doc2` → 228 发全部
+  // `广播写[P3:editor] … 落点=1.00`，而 `读可见侧[P3:preview] v=1.00`。
+  //
+  // 病根是装配顺序：`splitPanelWithTab` 的 copy 分支抄的是**源那一格的** `viewMode`（源码态），
+  // 于是 `rebuildLayout` → `mountView` 末尾那次 reconcile 登记的是新那格的**编辑器**面；
+  // `openPreviewToSide` 之后才 `viewMode = "preview"` + `applyPanelMode`，谁都没再补。
+  // 在册于是是一格 `display:none` 的编辑器（写得进像素、`getV()` 恒 1.0），看得见那份预览
+  // 一个监听都没挂 ⇒ 两个方向都静。同一条纪律 `toggleViewMode` 早就有（末尾的落位 + reconcile），
+  // 这一支是它唯一的漏网出口。
+  //
+  // ⚠️ 为什么只能钉在这里：宿主抄的就是这条序列（`sync-scroll-harness.ts` 的 `addPreviewPanel`
+  // 上一版直接按预览态建格、只一发 reconcile ⇒ **宿主比生产更正确**，S11–S13/S18 一路绿灯而
+  // 线上是坏的）。行为层在 `tests/sync-scroll-side-preview.test.ts`，这一层钉接线本身。
+  const FLIP = 'viewMode = "preview"';
+  const AFTER = [
+    ["applyPanelMode", "后置 preview 之后没人把显隐落到 DOM（切换键字形、预览渲染都挂在它上面）"],
+    ["landVisibleSideAtV(", "可见侧没人落位 ⇒ B259 那颗种子还挂在马上被藏起来的编辑器上"],
+    ["reconcileSyncRegistrations()", "在册的还是刚被藏起来的编辑器面 ⇒ 两侧互不跟随（B310 本体）"],
+  ] as const;
+
+  /** 后置 preview 之后，那三发必须**依次**出现；少一发或顺序倒过来都算违规。 */
+  const check = (body: string): string[] => {
+    const flip = body.indexOf(FLIP);
+    if (flip < 0) return ["找不到后置 preview 那一步 ⇒ 这一支的形状变了，契约得跟着重看"];
+    const tail = body.slice(flip);
+    const v: string[] = [];
+    let prev = -1;
+    let prevName = "";
+    for (const [needle, why] of AFTER) {
+      const at = tail.indexOf(needle);
+      if (at < 0) {
+        v.push(`${why}（缺 ${needle}）`);
+        continue;
+      }
+      if (prev >= 0 && at < prev) v.push(`顺序错了：${needle} 排在 ${prevName} 之前`);
+      prev = at;
+      prevName = needle;
+    }
+    return v;
+  };
+
+  /** 生产的「右侧没有面板」那一支（`if (rightId === null)` 到 `} else {`）。 */
+  const branchA = (src: string): string => {
+    const from = src.indexOf("if (rightId === null) {");
+    expect(from, "openPreviewToSide 的分支形状变了").toBeGreaterThanOrEqual(0);
+    const to = src.indexOf("} else {", from);
+    expect(to, "openPreviewToSide 的复用分支找不到了").toBeGreaterThanOrEqual(0);
+    return src.slice(from, to);
+  };
+
+  const prod = branchA(bodyOf(md, "function openPreviewToSide"));
+  // ⚠️ 带 `{`：接口声明那一行是 `addPreviewPanel(): number;`，`bodyOf` 按 header 定位、
+  // 只找参数表后面第一个 `{` —— 不带花括号就会配平到**后面某个别的块**上去。
+  const mirror = bodyOf(host, "addPreviewPanel() {");
+
+  it("生产 openPreviewToSide（新建右分屏那一支）：后置 preview 之后落位 + 重注册", () => {
+    expect(check(prod)).toEqual([]);
+  });
+
+  it("宿主 addPreviewPanel 同形（宿主比生产多做或少做一步，台子就是在测想象中的装配）", () => {
+    expect(check(mirror)).toEqual([]);
+    // 而且镜像必须也照抄「mountView 那一发在册在前」：副本先按源码态挂载、后置才换预览。
+    const firstReconcile = mirror.indexOf("reconcileSyncRegistrations()");
+    expect(firstReconcile, "宿主里找不到那一发在册").toBeGreaterThanOrEqual(0);
+    expect(
+      firstReconcile < mirror.indexOf(FLIP),
+      "宿主没复刻「先按源码态挂载并登记」这一步 ⇒ 它测的是修好之后的世界",
+    ).toBe(true);
+  });
+
+  // 判别力（可逆摘规则：破坏只发生在内存里的替身上，交付文件一个字节都不动）。
+  for (const [name, dropped, needle] of [
+    ["少一发重注册", "      reconcileSyncRegistrations();\n", "reconcileSyncRegistrations()"],
+    ["少一发落位", "      landVisibleSideAtV(np, nt.scrollV);\n", "landVisibleSideAtV("],
+  ] as const) {
+    it(`退化替身「${name}」必须让这条契约转红`, () => {
+      const degraded = prod.replace(dropped, "");
+      expect(degraded, "替身没剥掉东西：这一发在生产里不长这样，判据是空的").not.toEqual(prod);
+      const v = check(degraded);
+      expect(v.length, `${name} 却没变红 ⇒ 契约恒真`).toBeGreaterThan(0);
+      expect(v[0], name).toContain(needle);
+    });
+  }
+});

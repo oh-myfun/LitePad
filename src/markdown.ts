@@ -206,6 +206,16 @@ function openPreviewToSide(panelId: number): void {
       // 同步在早退之前，代价只有一次 querySelectorAll）。
       markActivePanel(np.panelId);
       applyPanelMode(np); // 内部会刷操作区 ⇒ 切换键字形当场翻成 edit-code
+      // 后置 preview 之后要补的两发（B310，同 `toggleViewMode` 末尾那两步一样的纪律）：
+      //   ① 落位 —— 副本那颗 `scrollV` 种子（`split.ts` 为 B259 埋的「新格不许从顶部起步」）
+      //      是被 `mountView` 扶到**当时可见**那一侧的，而那一刻还是源码态，扶的是编辑器；
+      //      这一换之后看得见的是预览，不补这一发，B259 的承诺在这条分支上一直是空的。
+      //   ② 重注册 —— 显隐变了 ⇒ 在册的滚动面跟着变。以前一次都不补：在册的还是那格
+      //      刚被藏起来的编辑器（`getV()` 恒 1.0、写得进但用户看不见），预览面一个监听
+      //      都没挂 ⇒ 两个方向都不动（真机 00:15：228 发 `广播写[P3:editor] … 落点=1.00`，
+      //      而 `读可见侧[P3:preview] v=1.00`）。
+      landVisibleSideAtV(np, nt.scrollV);
+      reconcileSyncRegistrations();
     }
   } else {
     const rp = panels.get(rightId);
