@@ -72,10 +72,20 @@ export function setRecentOpen(open: boolean): void {
   if (open) renderRecents();
 }
 
+/** 上限为 0 = 整个功能关掉（Rust 那边既不记录也把名单清了），所以入口也不该留着。 */
+function isRecentsDisabled(): boolean {
+  return getRecentLimit() === 0;
+}
+
 export function toggleRecentPanel(): void {
   // 子窗口整条左栏都不在（CSS 收掉了卡片）：不挡这道就会把看不见的面板打开，
   // 还顺手把开合值写进设置 —— 下次到主窗口就表现为「没点它，那块自己开起来了」。
   if (windowKind === "satellite") return;
+  // B306：上限 0 时那颗键已经收了（点不到），但这里仍是唯一的入口 —— 将来挂快捷键 /
+  // 命令面板就从这里进，规则要长在门上而不是长在门把手上。
+  // ⚠️ 必须排在「整栏收着先放出来」**之前**：挡晚了就是一次空转改掉用户的「左栏收起」
+  // 偏好（而且落盘），下次启动左栏莫名其妙地开着。
+  if (isRecentsDisabled()) return;
   if (!recentPanel.hidden) {
     setRecentOpen(false);
     return;
@@ -89,6 +99,11 @@ export function toggleRecentPanel(): void {
 export function renderRecents(): void {
   const list = getRecents();
   const cap = getRecentLimit();
+  // B306：上限 0 = 功能整条关掉（Rust 那边既不记录、也把名单一起清了），入口留着只会
+  // 让人点进去看一句「已停止记录」。正摊着的抽屉跟着收起 —— 门关了不许屋里还亮着，
+  // 而 `is-on` / `aria-pressed` 仍由 `setRecentOpen` 那一个出口翻，这里不自己改。
+  sideRecent.hidden = cap === 0;
+  if (cap === 0 && !recentPanel.hidden) setRecentOpen(false);
   recentCount.textContent = `${list.length}/${cap}`;
   recentCount.setAttribute("aria-label", `${list.length} 条，上限 ${cap}`);
   recentClear.setAttribute("data-tip", list.length === 0 ? "没有可清空的记录" : "清空全部");

@@ -134,6 +134,10 @@ export async function initRecentsStore(): Promise<void> {
   }
   try {
     limit = await rpcGetRecentLimit();
+    // ⚠️ 上限到手要**再通知一次**：上面那次（`setEntries`）带的还是模块里的占位 20。
+    // 漏了这一发，面板首帧的计数会写成「1/20」，而 B306 那条「上限 0 收起入口」更是
+    // 直接拿错口径 —— 真上限是 0 时那颗键会留在按钮列里点不开。
+    notify();
   } catch (e: unknown) {
     logger.warn("recents", `上限没取到（按占位值 ${limit} 显示）：${String(e)}`);
   }

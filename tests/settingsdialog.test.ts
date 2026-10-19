@@ -982,6 +982,8 @@ describe("B305 通用页：最近打开保留数量", () => {
       rowItem("最近打开保留数量").querySelector(".settings-item-desc")?.textContent ?? "";
     expect(desc).toContain("0");
     expect(desc, "0 档不解释就等于一个吞掉名单的开关").toContain("不再记录");
+    // B306：0 档还会把左栏那颗键一起收起 —— 不写清，用户下次看到的就只是「键自己消失了」。
+    expect(desc, "0 档会收起入口，这句必须写在说明里").toContain("收起");
   });
 
   it("静态：档位候选不许悄悄少一档（上限与名单是同一份文件里的两个字段）", () => {

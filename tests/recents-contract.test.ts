@@ -131,6 +131,15 @@ describe("B305 · 侧栏结构与子窗口收口", () => {
     }
   });
 
+  it("B306：`.side-btn[hidden]` 兜底必须写（上限 0 收起那颗键走的是同一条级联坑）", () => {
+    // `.side-btn` 自己写了 `display: flex` ⇒ 作者样式表压过 UA 那条 `[hidden]`，
+    // `hidden = true` 只改属性不改显示，键会留在按钮列里空占一格（点了还没反应）。
+    // jsdom 不做 CSS 级联 ⇒ 运行时断言 `hidden === true` 证明不了它真的不占位。
+    expect(globalCss, "没这条就是「收起来了却还占着一格」").toMatch(
+      /\.side-btn\[hidden\]\s*\{[^}]*display:\s*none/,
+    );
+  });
+
   it("两颗新图标走 codicon 字形（仓库红线：不手绘 SVG）", () => {
     const icons = readFileSync("src/shell/codicons.ts", "utf-8");
     expect(icons).toMatch(/history:\s*"history"/);

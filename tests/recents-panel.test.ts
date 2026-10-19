@@ -125,6 +125,38 @@ describe("B305 最近打开面板", () => {
     expect(ui.recentList.textContent).toBe("已停止记录（上限为 0）");
   });
 
+  it("上限 0 ⇒ 那颗键整条收掉不占位，正摊着的抽屉一起收起", () => {
+    panel.setRecentOpen(true);
+    expect(ui.sideRecent.hidden, "上限 20 时键该在").toBe(false);
+    h.limit = 0;
+    panel.renderRecents();
+    // 入口留着就是「点进去只有一句已停止记录」：功能关了就把门也关上。
+    expect(ui.sideRecent.hidden, "上限 0 还留着入口").toBe(true);
+    expect(ui.recentPanel.hidden, "门收了抽屉还摊着 ⇒ 一块没有入口的面板").toBe(true);
+    expect(ui.sideRecent.classList.contains("is-on"), "收掉的键不许还亮着").toBe(false);
+  });
+
+  it("上限从 0 调回非 0 ⇒ 键跟着回来（不许做成单向的门）", () => {
+    h.limit = 0;
+    panel.renderRecents();
+    expect(ui.sideRecent.hidden).toBe(true);
+    h.limit = 50;
+    panel.renderRecents();
+    expect(ui.sideRecent.hidden, "把上限调回来门却永远回不来").toBe(false);
+  });
+
+  it("上限 0 时点快捷键：不摊开抽屉，也不顺手把整条左栏放出来", () => {
+    h.limit = 0;
+    panel.renderRecents();
+    ui.mainRow.classList.add("is-sidebar-off");
+    panel.toggleRecentPanel();
+    expect(ui.recentPanel.hidden, "功能关着却把抽屉打开了").toBe(true);
+    // `toggleRecentPanel` 开头有一句「整栏收着先放出来」：功能关着时这句也不许跑到，
+    // 否则一次空转就把用户的「左栏收起」偏好改掉了（还会落盘）。
+    expect(ui.mainRow.classList.contains("is-sidebar-off"), "空转改掉了整栏收起态").toBe(true);
+    ui.mainRow.classList.remove("is-sidebar-off");
+  });
+
   it("名单空 ⇒ 空态是「还没有关掉过的文件」", () => {
     h.entries = [];
     panel.renderRecents();

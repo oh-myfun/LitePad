@@ -222,6 +222,18 @@ describe("B305 可见路径上报", () => {
     expect(store.getRecentLimit(), "上限的权威是 Rust").toBe(50);
   });
 
+  it("上限取到之后必须再通知一次 ⇒ 首帧的计数与入口显隐用的是真上限", async () => {
+    const { store } = await fresh();
+    h.listRecents.mockResolvedValue([{ path: "a.md", name: "a.md", closedAt: 1 }]);
+    h.getRecentLimit.mockResolvedValue(0);
+    const caps: number[] = [];
+    store.onRecentsChange(() => caps.push(store.getRecentLimit()));
+    await store.initRecentsStore();
+    // 名单先到那一次通知里，上限还是模块里那个占位值。上限到手后必须再通知一次，
+    // 否则首帧画成「1/20」而真上限是 0 ⇒ 计数、空态文案、那颗键的显隐全用错口径。
+    expect(caps[caps.length - 1], "最后一次通知没带上 Rust 的上限").toBe(0);
+  });
+
   it("单条清除与清空都按回包更新缓存", async () => {
     const { store } = await fresh();
     h.syncOpenPaths.mockResolvedValue([{ path: "a.md", name: "a.md", closedAt: 1 }]);

@@ -2581,6 +2581,14 @@ button:focus-visible {
   color: var(--fg-muted);
 }
 
+/* B306（用户点名「上限设为 0 时自动隐藏左栏中的最近打开」）：`display: flex` 是作者样式，
+   压得过 UA 那条 `[hidden] { display: none }`（与 `.toc-panel` / `.recent-panel` 同一个坑，
+   见 preview.css）。没有这一条，`sideRecent.hidden = true` 只改属性不改显示 ⇒ 功能关掉了
+   却还在按钮列里空占一格，点了也没反应。 */
+.side-btn[hidden] {
+  display: none;
+}
+
 /* B202（用户点名「左栏按钮 hover、按下时也应该有不同背景色，参考 VS Code」）：
    三档反馈，对齐 VS Code activity bar 那套（hoverBackground → 按下更沉一档 /
    打开这个视图时 activeBackground 给一档淡 accent）：
