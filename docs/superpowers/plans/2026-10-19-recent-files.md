@@ -137,7 +137,7 @@ Expected: 编译失败（`recent` 模块不存在 / 未定义项）。
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `cargo test --manifest-path src-tauri/Cargo.toml session::recent`
-Expected: `test result: ok. 9 passed`
+Expected: `test result: ok. 11 passed`（实际落地 11 条：计划 8 条 + `forget`/`clear` 变更回报 + `file_name_of` 分隔符两档）
 
 - [ ] **Step 5: 提交**
 

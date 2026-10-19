@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+/// B305：最近打开名单（独立文件 `recents.json`，理由见 `recent.rs` 头部）。
+pub mod recent;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
