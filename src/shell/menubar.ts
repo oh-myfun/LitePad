@@ -4,7 +4,7 @@ import { closePopupMenu, showPopupMenu, type MenuItem } from "./menu";
  * 菜单栏（文件 / 编辑 / 查看 / 帮助）。
  *
  * 结构参考 Win11 记事本：点击展开下拉，hover 自动切换已打开的菜单。
- * 「文件 → 设置…」打开统一设置页（B106：把原「设置 → 首选项 / 快捷键」合并为
+ * 「文件 → 设置」打开统一设置页（B106：把原「设置 → 首选项 / 快捷键」合并为
  *   一个三栏设置页，快捷键作为其中一个分类）。
  * 分屏不占菜单项，只保留快捷键。
  */
@@ -18,7 +18,7 @@ import { closePopupMenu, showPopupMenu, type MenuItem } from "./menu";
 export interface EncodingMenuModel {
   /** 解读方式：重新载入以该编码解读，不碰磁盘。 */
   encodedIn: MenuItem[];
-  /** 转换为…：立即按该编码写盘（Notepad++ 的 Convert 语义）。 */
+  /** 转换为：立即按该编码写盘（Notepad++ 的 Convert 语义）。 */
   convertTo: MenuItem[];
   /** 添加 / 移除 BOM（就地切 UTF-8 的 BOM 位，不适用时置灰）。 */
   bom: MenuItem[];
@@ -105,10 +105,10 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
     label: "文件",
     items: (cb) => [
       { label: withKey("新建", cb.keyHint("file.new")), onSelect: cb.onNew },
-      { label: withKey("打开…", cb.keyHint("file.open")), onSelect: cb.onOpen },
+      { label: withKey("打开", cb.keyHint("file.open")), onSelect: cb.onOpen },
       { separator: true },
       { label: withKey("保存", cb.keyHint("file.save")), onSelect: cb.onSave },
-      { label: withKey("另存为…", cb.keyHint("file.saveAs")), onSelect: cb.onSaveAs },
+      { label: withKey("另存为", cb.keyHint("file.saveAs")), onSelect: cb.onSaveAs },
       { label: withKey("全部保存", cb.keyHint("file.saveAll")), onSelect: cb.onSaveAll },
       {
         // B97：顶栏那颗导出按钮搬到了这里。子菜单每次展开时重新求值，
@@ -128,7 +128,7 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
         ],
       },
       { separator: true },
-      { label: "设置…", onSelect: cb.onSettings },
+      { label: "设置", onSelect: cb.onSettings },
       { separator: true },
       { label: withKey("关闭标签", cb.keyHint("file.close")), onSelect: cb.onCloseTab },
       { label: "退出", onSelect: cb.onExit },
@@ -145,11 +145,11 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
       { label: "粘贴\tCtrl+V", onSelect: cb.onPaste },
       { label: "删除\tDel", onSelect: cb.onDelete },
       { separator: true },
-      { label: withKey("查找…", cb.keyHint("edit.find")), onSelect: cb.onFind },
+      { label: withKey("查找", cb.keyHint("edit.find")), onSelect: cb.onFind },
       { label: withKey("查找下一个", cb.keyHint("edit.findNext")), onSelect: cb.onFindNext },
       { label: withKey("查找上一个", cb.keyHint("edit.findPrev")), onSelect: cb.onFindPrev },
-      { label: withKey("替换…", cb.keyHint("edit.replace")), onSelect: cb.onReplace },
-      { label: withKey("转到…", cb.keyHint("edit.goto")), onSelect: cb.onGoto },
+      { label: withKey("替换", cb.keyHint("edit.replace")), onSelect: cb.onReplace },
+      { label: withKey("转到", cb.keyHint("edit.goto")), onSelect: cb.onGoto },
       { separator: true },
       { label: "全选\tCtrl+A", onSelect: cb.onSelectAll },
       { label: withKey("时间/日期", cb.keyHint("edit.timeDate")), onSelect: cb.onTimeDate },
@@ -183,7 +183,7 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
       const model = cb.encodingMenu();
       return [
         { label: "解读编码", submenu: () => model.encodedIn },
-        { label: "转换为…", submenu: () => model.convertTo },
+        { label: "转换为", submenu: () => model.convertTo },
         { separator: true },
         // BOM 两项是叶子，直接摊开（就两条，不值得再套一层子菜单）
         ...model.bom,
@@ -195,7 +195,7 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
   {
     label: "帮助",
     items: (cb) => [
-      { label: "检查更新…", onSelect: cb.onCheckUpdate },
+      { label: "检查更新", onSelect: cb.onCheckUpdate },
       { separator: true },
       // B211：与 VS Code 一样挂在「检查更新」与「关于」之间，顺序照 VS Code 中文版。
       { label: "切换开发人员工具", onSelect: cb.onToggleDevtools },

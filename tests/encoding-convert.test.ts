@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // 编码完善与转换（B215）：
-// 1) 运行时：菜单栏多出「编码」一栏，四组条目（解读编码 / 转换为… / BOM / 行尾符）
+// 1) 运行时：菜单栏多出「编码」一栏，四组条目（解读编码 / 转换为 / BOM / 行尾符）
 //    都从 main 传进来的同一份模型渲染；
 // 2) 静态：转换出口只有一个 `convertDoc`，它**先改 doc.encoding 再走保存**
 //    （顺序反了就等于绕过不可逆保护），状态栏那颗键只铺后端 `common` 标注的
@@ -114,12 +114,12 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
     expect(letters.length, "助记符数量应与菜单栏数一致").toBe(5);
   });
 
-  it("编码菜单渲染出四组：解读编码 / 转换为… / BOM / 行尾符", async () => {
+  it("编码菜单渲染出四组：解读编码 / 转换为 / BOM / 行尾符", async () => {
     callbackWith(modelOf((m) => m));
     await openMenu("编码");
     expect(labelsOf([...document.querySelectorAll(".popup-menu")].at(-1)!)).toEqual([
       "解读编码",
-      "转换为…",
+      "转换为",
       "添加 BOM",
       "移除 BOM",
       "转换行尾符",
@@ -134,7 +134,7 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
       "UTF-8 with BOM",
       "ISO-2022-JP",
     ]);
-    expect(labelsOf(await openSubmenu("转换为…"))).toEqual(["Shift-JIS"]);
+    expect(labelsOf(await openSubmenu("转换为"))).toEqual(["Shift-JIS"]);
     expect(labelsOf(await openSubmenu("转换行尾符"))).toEqual(["CRLF", "LF"]);
   });
 
@@ -214,7 +214,7 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
 
   it("B218：编码 / 转换两路都收成两级（首组内联，其余语言组走子菜单）", () => {
     const body = fnBody(main, "encodingMenuModel");
-    // 解读编码与转换为… 两路都要走同一个收口出口，别各写一遍（两遍就必差一处）
+    // 解读编码与转换为 两路都要走同一个收口出口，别各写一遍（两遍就必差一处）
     expect(body.split("withLanguageGroups").length - 1).toBe(2);
     expect(body).toContain("const groups = encodingOptions.map");
 

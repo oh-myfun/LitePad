@@ -234,7 +234,7 @@ describe("B107 更新链路静态守卫", () => {
     expect(upd, "不得手绘 SVG（图标走 codicon）").not.toContain("<svg");
 
     const menu = readSrc("src/shell/menubar.ts");
-    expect(menu, "帮助菜单必须有检查更新入口").toContain('label: "检查更新…"');
+    expect(menu, "帮助菜单必须有检查更新入口").toContain('label: "检查更新"');
     expect(menu, "回调类型必须声明").toContain("onCheckUpdate");
 
     const main = readSrc("src/main.ts") + "\n" + readSrc("src/commands.ts");

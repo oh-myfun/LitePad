@@ -358,8 +358,10 @@ describe("B106 设置页：接线守卫", () => {
     expect(menu, "菜单栏回调接口必须有 onSettings").toContain("onSettings:");
     expect(menu, "不得再残留 onPreferences").not.toContain("onPreferences");
     expect(menu, "不得再残留 onKeymap").not.toContain("onKeymap");
-    expect(menu, "不得再有「设置」顶层菜单").not.toContain('label: "设置"');
-    expect(menu, "文件菜单必须含「设置…」入口").toContain('label: "设置…"');
+    // 顶层条目的形状是 `label: "X"` 紧跟 `items:`；菜单文案去掉省略号后，旧的
+    // not.toContain('label: "设置"') 会被「文件」里那颗叶子命中 ⇒ 改成按形状判。
+    expect(menu, "不得再有「设置」顶层菜单").not.toMatch(/label:\s*"设置",\s*\n\s*items:/);
+    expect(menu, "文件菜单必须含「设置」入口").toContain('label: "设置", onSelect: cb.onSettings');
   });
 });
 

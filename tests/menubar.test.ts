@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // 菜单栏回归测试（B42 结构 + B106 统一设置页）：
 // 1) 运行时断言四份菜单的结构——主题/预览行距/大纲宽度/分屏已从「查看」移出，
-//    新建默认行尾/编码已从「文件」移出，统一收进「文件 → 设置…」；帮助只剩「关于」；
+//    新建默认行尾/编码已从「文件」移出，统一收进「文件 → 设置」；帮助只剩「关于」；
 // 2) 设置入口在「文件」菜单里，点击即回调、打开统一设置页；
 // 3) 静态断言入口唯一（不再有设置窗口/独立「设置」菜单；分屏只留快捷键）。
 import { describe, it, expect, afterEach } from "vitest";
@@ -109,9 +109,9 @@ function makeCb(): MenuBarCallbacks {
     wrapChecked: () => true,
     onToggleStatusbar: noop,
     statusbarChecked: () => false,
-    // 文件 → 设置…
+    // 文件 → 设置
     onSettings: noop,
-    // 帮助 → 检查更新…
+    // 帮助 → 检查更新
     onCheckUpdate: noop,
     // 帮助 → 切换开发人员工具（B211）
     onToggleDevtools: noop,
@@ -148,21 +148,21 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
     expect(css, ".mnemonic 规则必须已删除").not.toMatch(/\.mnemonic\s*\{/);
   });
 
-  it("文件菜单：保留 新建/打开/保存三兄弟/设置…/关闭标签/退出（自动保存与热退出已迁入设置页）", async () => {
+  it("文件菜单：保留 新建/打开/保存三兄弟/设置/关闭标签/退出（自动保存与热退出已迁入设置页）", async () => {
     const host = document.createElement("nav");
     document.body.appendChild(host);
     createMenuBar(host, makeCb());
     await clickMenuBtn(host, "文件");
     const texts = rootTexts();
     expect(texts).toContain("新建\tCtrl+N");
-    expect(texts).toContain("打开…\tCtrl+O");
+    expect(texts).toContain("打开\tCtrl+O");
     expect(texts).toContain("保存\tCtrl+S");
-    expect(texts).toContain("另存为…\tCtrl+Shift+S");
+    expect(texts).toContain("另存为\tCtrl+Shift+S");
     expect(texts).toContain("全部保存\tCtrl+Alt+S");
     // B108：自动保存 / 热退出已搬到设置页「通用」分类，菜单不再承载
     expect(texts, "文件菜单不再有自动保存").not.toContain("自动保存");
     expect(texts, "文件菜单不再有热退出").not.toContain("热退出（关窗不询问）");
-    expect(texts).toContain("设置…");
+    expect(texts).toContain("设置");
     expect(texts).toContain("关闭标签\tCtrl+W");
     expect(texts).toContain("退出");
     expect(
@@ -194,17 +194,29 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
       "复制\tCtrl+C",
       "粘贴\tCtrl+V",
       "删除\tDel",
-      "查找…\tCtrl+F",
+      "查找\tCtrl+F",
       "查找下一个\tF3",
       "查找上一个\tShift+F3",
-      "替换…\tCtrl+H",
-      "转到…\tCtrl+G",
+      "替换\tCtrl+H",
+      "转到\tCtrl+G",
       "全选\tCtrl+A",
       "时间/日期\tF5",
     ]) {
       expect(texts, `编辑菜单应含「${t}」`).toContain(t);
     }
     expect(texts, "不得再有「在文件中查找」").not.toContain("在文件中查找\tCtrl+Shift+F");
+  });
+
+  it("菜单条目一律不带省略号（用户 2026-10-20 点名去掉；新加的条目也照这条）", () => {
+    const src = readFileSync("src/shell/menubar.ts", "utf-8");
+    const from = src.indexOf("const MENUS");
+    expect(from, "菜单表找不到，判据本身失效了").toBeGreaterThanOrEqual(0);
+    const table = src.slice(from, src.indexOf("\n];", from));
+    expect(table, "菜单表里不许出现「…」").not.toContain("…");
+    // 反向自证：把一项改回带省略号的旧文案，这条必须转红
+    const degraded = table.replace('{ label: "设置", onSelect', '{ label: "设置…", onSelect');
+    expect(degraded).not.toEqual(table);
+    expect(degraded.includes("…"), "退化替身没让判据变红 ⇒ 这条是恒真").toBe(true);
   });
 
   it("B42：查看菜单去掉主题/预览行距/大纲宽度/分屏，保留缩放与勾选态开关", async () => {
@@ -266,15 +278,15 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
     const btnLabels = [...host.querySelectorAll("button.menu-btn")].map((b) => b.textContent ?? "");
     expect(btnLabels, "不得再出现独立的「设置」菜单").not.toContain("设置(S)");
 
-    // 「文件」菜单里能找到「设置…」
+    // 「文件」菜单里能找到「设置」
     await clickMenuBtn(host, "文件");
-    expect(rootTexts().join("\n"), "文件菜单应包含「设置…」").toContain("设置…");
-    await clickAny("设置…");
+    expect(rootTexts().join("\n"), "文件菜单应包含「设置」").toContain("设置");
+    await clickAny("设置");
     expect(calls).toEqual(["settings"]);
     expect(document.querySelector(".popup-menu"), "点击叶子项后弹层应收起").toBeNull();
   });
 
-  it("B107：帮助菜单 = 检查更新… + 切换开发人员工具 + 关于 LitePad（快捷键已移入设置）", async () => {
+  it("B107：帮助菜单 = 检查更新 + 切换开发人员工具 + 关于 LitePad（快捷键已移入设置）", async () => {
     const host = document.createElement("nav");
     document.body.appendChild(host);
     const cb = makeCb();
@@ -283,16 +295,16 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
     cb.onAbout = () => calls.push("about");
     createMenuBar(host, cb);
     await clickMenuBtn(host, "帮助");
-    expect(rootTexts()).toEqual(["检查更新…", "切换开发人员工具", "关于 LitePad"]);
+    expect(rootTexts()).toEqual(["检查更新", "切换开发人员工具", "关于 LitePad"]);
     expect(rootTexts().join(""), "帮助里不得再有快捷键入口").not.toContain("快捷键");
-    await clickAny("检查更新…");
+    await clickAny("检查更新");
     await clickMenuBtn(host, "帮助");
     await clickAny("关于 LitePad");
     expect(calls).toEqual(["check-update", "about"]);
   });
 
   it("B211：帮助 → 切换开发人员工具 是单键切换，且不挂快捷键", async () => {
-    // 菜单结构：必须夹在「检查更新…」与「关于」之间，与 VS Code 中文版的次序一致。
+    // 菜单结构：必须夹在「检查更新」与「关于」之间，与 VS Code 中文版的次序一致。
     const src = readFileSync("src/shell/menubar.ts", "utf-8");
     const helpBlock = src.slice(src.indexOf('label: "帮助"'));
     expect(helpBlock, "帮助菜单里必须有切换开发人员工具").toContain("切换开发人员工具");
@@ -383,8 +395,11 @@ describe("设置项归属与接线（B42/B46）", () => {
     expect(menu, "菜单栏必须有 onSettings 回调").toContain("onSettings:");
     expect(menu, "菜单栏不得再残留 onPreferences").not.toContain("onPreferences");
     expect(menu, "菜单栏不得再残留 onKeymap").not.toContain("onKeymap");
-    expect(menu, "不得再有独立的「设置」顶层菜单").not.toContain('label: "设置"');
-    expect(menu, "文件菜单必须含「设置…」入口").toContain('label: "设置…"');
+    // 「独立顶层设置菜单」的形状是 `label: "设置"` 紧跟 `items:`（顶层条目都带 items），
+    // 「文件」里那颗叶子是 `label: "设置", onSelect:`。菜单文案去掉省略号之后，旧的
+    // `not.toContain('label: "设置"')` 会被自己人命中 ⇒ 换成按形状判，判据还更准。
+    expect(menu, "不得再有独立的「设置」顶层菜单").not.toMatch(/label:\s*"设置",\s*\n\s*items:/);
+    expect(menu, "文件菜单必须含「设置」入口").toContain('label: "设置", onSelect: cb.onSettings');
   });
 
   it("B106：统一设置页必须含全部设置项并接线到 main.ts", () => {
@@ -548,7 +563,7 @@ describe("查找入口统一（悬浮查找栏）", () => {
     // prettier 会重排 import，断言只看标识符存在（不锁定排版）
     expect(/\bcreateFindBar\b/.test(src), "必须引入 createFindBar").toBe(true);
     expect(src.includes("function openFindBar("), "必须有统一入口 openFindBar").toBe(true);
-    expect(src.includes('openFindBar("replace")'), "菜单「替换…」/Ctrl+H 走同一入口").toBe(true);
+    expect(src.includes('openFindBar("replace")'), "菜单「替换」/Ctrl+H 走同一入口").toBe(true);
     expect(src.includes("async function doSaveAll")).toBe(true);
     // F5 插入时间日期必须拦截 WebView2 默认刷新
     expect(src.includes("insertTimeDate")).toBe(true);
@@ -683,7 +698,7 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     readFileSync("src/find/findbar.ts", "utf-8");
 
   it("「查看」不得再有主题 / 预览行距 / 大纲宽度 / 分屏", () => {
-    // 只看「查看」菜单那一段，避免把「文件 → 设置…」里的同名词条误判为残留
+    // 只看「查看」菜单那一段，避免把「文件 → 设置」里的同名词条误判为残留
     const src = menu();
     const viewBlock = src.slice(src.indexOf('label: "查看"'), src.indexOf('label: "帮助"'));
     expect(viewBlock, "查看菜单不得再有主题三态").not.toContain("主题：");
@@ -710,13 +725,16 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     expect(helpBlock, "帮助菜单不得再有快捷键入口").not.toContain("快捷键");
   });
 
-  it("B106：「文件 → 设置…」是统一设置页入口，原「设置」菜单与首选项弹窗已移除", () => {
+  it("B106：「文件 → 设置」是统一设置页入口，原「设置」菜单与首选项弹窗已移除", () => {
     const src = menu();
-    // 不再有独立的「设置」顶层菜单
-    expect(src, "不得再有独立的「设置」顶层菜单").not.toContain('label: "设置"');
+    // 顶层条目的形状是 `label: "X"` 紧跟 `items:`；菜单文案去掉省略号后，旧的
+    // not.toContain('label: "设置"') 会被自己人命中 ⇒ 改成按形状判（判据还更准）。
+    expect(src, "不得再有独立的「设置」顶层菜单").not.toMatch(/label:\s*"设置",\s*\n\s*items:/);
     // 设置入口在「文件」菜单里
     const fileBlock = src.slice(src.indexOf('label: "文件"'), src.indexOf('label: "编辑"'));
-    expect(fileBlock, "「文件」菜单必须有「设置…」入口").toContain('label: "设置…"');
+    expect(fileBlock, "「文件」菜单必须有「设置」入口").toContain(
+      'label: "设置", onSelect: cb.onSettings',
+    );
 
     // 原先散落在原子菜单里的预设值全部收进统一设置页（按分组标签断言）
     const dlg = readFileSync("src/shell/settingsdialog.ts", "utf-8");
@@ -760,10 +778,12 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     expect(viewBlock, "「查看」菜单必须保留自动换行").toContain("自动换行");
     expect(fileBlock, "「文件」菜单不再有自动保存").not.toContain("自动保存");
     expect(fileBlock, "「文件」菜单不再有热退出").not.toContain("热退出（关窗不询问）");
-    expect(fileBlock, "「文件」菜单的设置入口即快捷键去向").toContain('label: "设置…"');
+    expect(fileBlock, "「文件」菜单的设置入口即快捷键去向").toContain(
+      'label: "设置", onSelect: cb.onSettings',
+    );
   });
 
-  it("B97/B106：主题只从「文件 → 设置…」进出，顶栏不再有主题/导出按钮", () => {
+  it("B97/B106：主题只从「文件 → 设置」进出，顶栏不再有主题/导出按钮", () => {
     const main =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
@@ -786,7 +806,7 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     for (const gone of ["btn-theme", "btn-export", "btn-new", "toolbar-actions"]) {
       expect(html, `顶栏不得再有 ${gone}`).not.toContain(gone);
     }
-    // 「移除」必须配「仍在别处可达」：导出在「文件 → 导出 ▸」，主题在「文件 → 设置… → 外观」
+    // 「移除」必须配「仍在别处可达」：导出在「文件 → 导出 ▸」，主题在「文件 → 设置 → 外观」
     const menu = readFileSync("src/shell/menubar.ts", "utf-8");
     expect(menu, "导出必须有菜单入口").toContain('label: "导出"');
     expect(menu, "导出菜单项要带回调").toContain("onExportHtml");

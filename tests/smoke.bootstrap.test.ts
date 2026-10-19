@@ -330,25 +330,25 @@ describe("bootstrap + drag-split smoke", () => {
   }
 
   /**
-   * 走「文件 → 打开…」驱动 doOpen。
+   * 走「文件 → 打开」驱动 doOpen。
    *
    * B97 把顶栏那排快捷按钮整体移除后，原先靠 `#btn-open.click()` 驱动的路径改走菜单 ——
    * 菜单是这条动作现在唯一（也是真实）的入口。
    */
   async function openViaMenu(): Promise<void> {
     await openMenu("文件");
-    await clickMenuItem("打开…");
+    await clickMenuItem("打开");
   }
 
   /**
-   * 走「文件 → 设置… → 外观 → 主题」换主题档位。
+   * 走「文件 → 设置 → 外观 → 主题」换主题档位。
    *
-   * B106 起设置收编为「文件 → 设置…」打开的统一三栏设置页，「主题」是「外观」分类里的
+   * B106 起设置收编为「文件 → 设置」打开的统一三栏设置页，「主题」是「外观」分类里的
    * 一个下拉。凡是验证「换档立即生效 / 写回 settings / 编辑器跟随」的用例都走这条真实链路。
    */
   async function setThemeViaPreferences(mode: "light" | "dark" | "system"): Promise<void> {
     await openMenu("文件");
-    await clickMenuItem("设置…");
+    await clickMenuItem("设置");
     // 统一设置页默认停在「外观」分类，「主题」下拉直接可见
     const items = [...document.querySelectorAll(".settings-panel .settings-item")];
     const item = items.find((r) => r.querySelector(".settings-item-label")?.textContent === "主题");
@@ -474,8 +474,8 @@ describe("bootstrap + drag-split smoke", () => {
     ).toBe(false);
   });
 
-  it("B97/B106：主题从「文件 → 设置… → 外观 → 主题」换档，立即生效且明暗必定翻转", async () => {
-    // B106 把主题收进「文件 → 设置…」打开的统一设置页，「外观」分类里的「主题」下拉是它唯一入口。
+  it("B97/B106：主题从「文件 → 设置 → 外观 → 主题」换档，立即生效且明暗必定翻转", async () => {
+    // B106 把主题收进「文件 → 设置」打开的统一设置页，「外观」分类里的「主题」下拉是它唯一入口。
     // 这条盖住最要紧的一点：换档之后**外观当场就变**。
     // （旧实现有「点了没反应」，根因是 cycle 顺序在系统偏好与当前档一致时不翻转；
     //  现在是从下拉里直接选档，那条边根本不存在。）
