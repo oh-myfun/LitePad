@@ -167,7 +167,7 @@ git commit -m "feat(recents): 名单内核 · 从可见集合推导「刚关掉�
 
   // crate::commands::recents —— 全部 #[tauri::command]
   pub fn sync_open_paths(window: tauri::Window, app: tauri::AppHandle, state: State<'_, AppState>, paths: Vec<String>) -> Vec<session::recent::RecentEntry>;
-  pub fn list_recents(state: State<'_, AppState>) -> Vec<session::recent::RecentEntry>;
+  pub fn list_recents(app: tauri::AppHandle, state: State<'_, AppState>) -> Vec<session::recent::RecentEntry>;
   pub fn forget_recent(window: tauri::Window, app: tauri::AppHandle, state: State<'_, AppState>, path: String) -> Vec<session::recent::RecentEntry>;
   pub fn clear_recents(window: tauri::Window, app: tauri::AppHandle, state: State<'_, AppState>) -> Vec<session::recent::RecentEntry>;
   pub fn get_recent_limit(state: State<'_, AppState>) -> usize;
@@ -180,26 +180,15 @@ git commit -m "feat(recents): 名单内核 · 从可见集合推导「刚关掉�
 
 `tests/recents-contract.test.ts`（`// @vitest-environment jsdom` 不必，用 `readFileSync`；照 `tests/repo-hygiene.test.ts` 的读文件方式）：
 
-```ts
-it("六条 recents 命令都在 invoke_handler 注册表里", () => {
-  const src = readFileSync("src-tauri/src/main.rs", "utf-8");
-  for (const n of ["sync_open_paths", "list_recents", "forget_recent", "clear_recents", "get_recent_limit", "set_recent_limit"]) {
-    expect(src, `命令 ${n} 没注册`).toContain(`recents::${n}`);
-  }
-});
+落地为四条（`between(src, start, end)` 这个取段小工具是必要的：找不到起点/终点就直接抛，**别让断言对着空串自娱自乐** —— 用 `indexOf` 裸切 + `slice(0, 400)` 那种写法，needle 一漂测试就无声变绿）：
 
-it("主窗口销毁立 quitting 旗标，卫星销毁只清自己那条（Review Focus #3）", () => {
-  const src = readFileSync("src-tauri/src/main.rs", "utf-8");
-  const mainBranch = src.slice(src.indexOf("win.label() == windows::MAIN_LABEL"));
-  expect(mainBranch.slice(0, 900)).toContain("quitting");
-  const satBranch = src.slice(src.indexOf("reg.forget_pending(win.label())"));
-  expect(satBranch.slice(0, 900)).toContain("drop_window");
-  expect(satBranch.slice(0, 900)).toContain("recents");
-});
-```
+1. 六条命令名都在 `generate_handler![…]` 里（`recents::sync_open_paths` 这种全名，不是裸名）。
+2. `on_window_event` 里：主窗口分支含 `mark_quitting`，卫星分支含 `on_window_destroyed`，整段不含 `unwrap_state`。
+3. `.run(|…|)` 兜底：含 `ExitRequested` 且含 `mark_quitting`。
+4. `commands/recents.rs` 里 `on_window_destroyed` 与 `sync_open_paths` 两个函数体内 **`prune_open` 的位子都排在 `record_closed` 之前**，且广播名串是 `"recents-changed"`。
 
 Run: `node scripts/run-vitest.cjs tests/recents-contract.test.ts`
-Expected: FAIL（两条都不满足）。
+Expected: FAIL（四条全红）。
 
 - [ ] **Step 2: 加 `AppState` 三字段与 setup 装载**
 
@@ -216,8 +205,8 @@ Expected: FAIL（两条都不满足）。
 
 - [ ] **Step 4: 接 `on_window_event` 与 `RunEvent::ExitRequested`**
 
-`main.rs:99-107` 主窗口分支：先 `state.quitting.store(true, Ordering::SeqCst)`，再照旧 `emit("app-quit")`（不剪名单、不记录）。
-`:109-116` 卫星分支：`drop_window(win.label())` 之后按 Task 1/2 的同一口径 prune→record→publish，`quitting` 为真时跳过 record（仍做 prune）。拿状态用 `app.try_state::<commands::AppState>()`（与同一段 `try_state::<windows::WindowRegistry>()` 同款，不许 `unwrap` —— 窗口事件可能早于 manage）。
+`main.rs:99-107` 主窗口分支：在既有 `emit("app-quit")` **之后**调 `commands::recents::mark_quitting(state)`（不剪名单、不记录）。放后面是有意省事的：旗标只需赶在任何卫星 `Destroyed` 之前立起来，而这两句都在同一个同步分支里、卫星销毁事件必然更晚到；放前面会把 `tests/satellite-lifecycle.test.ts:336` 那条「MAIN_LABEL 之后 400 字内要出现 app-quit」的既有契约挤断 —— 那种字符预算契约一插代码就断，是评审时该看见的味道，但本轮不改它。
+`:109-116` 卫星分支：`reg.forget_pending(…)` 之后调 `commands::recents::on_window_destroyed(&app, state, win.label())`（内部按 `drop_window` → 剪枝 → 记录 → `publish` 走，与 `sync_open_paths` 同一口径）。拿状态一律 `try_state`（窗口事件可能早于 manage，`unwrap_state` 会把进程 panic 在关窗那一刻）。
 `.run(|app, event| …)`（`:243`）里在既有 `RunEvent::Exit` 那条旁加 `RunEvent::ExitRequested { .. }` ⇒ 立 `quitting`（这是 updater `relaunch()` 与主窗口被强杀两条路的兜底）。
 
 - [ ] **Step 5: 跑测试确认通过**

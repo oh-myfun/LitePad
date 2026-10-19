@@ -3,8 +3,13 @@
 //! 约定：字段一律 snake_case，前端按同名传递。
 //! 大文件读取、跨文件搜索等重活后续改为流式 channel，控制面保持小消息。
 
+/// B305：最近打开。名单的唯一写点在那里（与 `docs` 那种「前端各持一份视图」不同 ——
+/// 那是 `settings.json` 被每扇窗口整表覆写咬过一次的教训，见 `session/recent.rs` 头部）。
+pub mod recents;
+
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
@@ -17,6 +22,7 @@ use crate::core::{
     logging::{self, Level},
 };
 use crate::session;
+use crate::session::recent::{OpenSets, Recents};
 
 /// 进程启动时刻（在 `main()` 第一行写入），用于计算「点击图标 → 界面出现」的端到端耗时。
 pub static BOOT: OnceLock<Instant> = OnceLock::new();
@@ -26,11 +32,24 @@ pub static BOOT: OnceLock<Instant> = OnceLock::new();
 /// `docs` 的顺序即标签栏顺序；`next_id` 保证标签 id 在应用生命周期内唯一，
 /// 前端一律按 id 寻址，不使用索引。
 /// `watcher` 是全局文件监听器（M2：外部修改提示）。
+///
+/// B305 三件（最近打开）：
+///   · `recents`  —— 名单本体，Rust 单点持有并写 `recents.json`（`settings.json` 没有
+///     权威窗口，每个窗口都能整表覆写它，把名单放进去等于「别人一次无关的设置写入
+///     就把名单冲掉」）；
+///   · `open_sets` —— 每扇窗口「此刻看得见哪些路径」的账。**「文件被关掉了」是从这张
+///     账的并集里消失推导出来的**，不是某个关闭动作的属性（见 `session/recent.rs` 头部）；
+///   · `quitting` —— 主窗口已销毁 = 应用正在退出，此后一律「只剪不记」。不立这面旗，
+///     正常关主窗口会先销毁各窗口，每条可见账清空时都把用户**正在用**的文件记成
+///     「刚关掉」—— 与「退出时仍开着的不算」正相反。
 #[derive(Default)]
 pub struct AppState {
     pub docs: Mutex<Vec<doc::Doc>>,
     pub next_id: Mutex<u64>,
     pub watcher: Mutex<Option<RecommendedWatcher>>,
+    pub recents: Mutex<Recents>,
+    pub open_sets: Mutex<OpenSets>,
+    pub quitting: AtomicBool,
 }
 
 fn alloc_id(state: &AppState) -> Result<u64, String> {

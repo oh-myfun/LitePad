@@ -80,7 +80,12 @@ fn main() {
             }
             let _ = app.emit("open-file", serde_json::json!({ "paths": files }));
         }))
-        .manage(commands::AppState::default())
+        .manage(commands::AppState {
+            // B305：名单开局就从盘上读进来（读不到 / 坏了都回落默认，绝不因为名单文件
+            // 损坏而让应用起不来 —— 口径同 `session::load`）。
+            recents: std::sync::Mutex::new(session::recent::load()),
+            ..Default::default()
+        })
         // B71 ④ 多窗口：label → 待投递载荷（见 windows 模块头部）
         .manage(windows::WindowRegistry::default())
         // B71 ④：卫星窗口被销毁时，把它的 label 广播出去。
@@ -104,11 +109,25 @@ fn main() {
                 // 都够不到那串 await。这里是进程级的最后一道保险，与下面那条
                 // `satellite-closed` 同一个路数：事件是唯一还能跨过死亡边界的东西。
                 let _ = win.app_handle().emit("app-quit", serde_json::json!({}));
+                // B305：主窗口没了 = 应用正在退出 → 立退出旗标。各窗口随后依次销毁，
+                // 每条可见账清空时都不该被记成「刚关掉」（用户口径：退出时仍开着的不算）。
+                // 漏了这一面旗，用户正在用的文件会整批进名单。
+                if let Some(st) = win.app_handle().try_state::<commands::AppState>() {
+                    commands::recents::mark_quitting(st.inner());
+                }
                 return;
             }
             let app = win.app_handle();
             if let Some(reg) = app.try_state::<windows::WindowRegistry>() {
                 reg.forget_pending(win.label());
+            }
+            // B305：清掉这扇窗口的可见账。它独有的那些路径就此从「所有窗口的并集」里
+            // 消失 = 用户把这份文件关掉了 ⇒ 记进最近打开。这正是「文档只在子窗口并关闭了，
+            // 主窗口列表也要刷新」的落点：不靠前端的 `doc-close-notify`（那条只带 docId，
+            // 而且 B157 起子窗口关窗刻意不广播每份文档的关闭）。
+            // 主窗口销毁时这条不会走到（上面已经 return），退出中的卫星窗口只剪不记。
+            if let Some(st) = app.try_state::<commands::AppState>() {
+                commands::recents::on_window_destroyed(&app, st.inner(), win.label());
             }
             let _ = app.emit(
                 "satellite-closed",
@@ -233,6 +252,13 @@ fn main() {
             commands::take_pending_files,
             commands::list_fonts,
             commands::reveal_in_folder,
+            // B305 最近打开（名单的唯一写点，见 commands/recents.rs 头部）
+            commands::recents::sync_open_paths,
+            commands::recents::list_recents,
+            commands::recents::forget_recent,
+            commands::recents::clear_recents,
+            commands::recents::get_recent_limit,
+            commands::recents::set_recent_limit,
             windows::window_payload,
             windows::open_satellite_window,
             commands::watchdog_start_drag,
@@ -240,7 +266,16 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("LitePad 启动失败")
-        .run(|_app, event| {
+        .run(|app, event| {
+            // B305：`RunEvent::ExitRequested` 是退出旗标的**进程级兜底**。主窗口 Destroyed
+            // 那一条覆盖不到「updater relaunch」与「被强杀」这两路 —— 前者各窗口销毁顺序
+            // 不保证，后者压根没有窗口事件。漏了这一面旗，退出时开着的文件会被整批记成
+            // 「刚关掉」。
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                if let Some(st) = app.try_state::<commands::AppState>() {
+                    commands::recents::mark_quitting(st.inner());
+                }
+            }
             // B289：日志写盘在后台线程，`log()` 只入队就返回。进程一退出那条线程就被杀掉，
             // 队列里还没消费的行列全丢 —— 而「关窗保存 / 会话落盘 / 退出原因」恰恰是最后
             // 入队的那几条，正好是复现取证最需要的。退出前压一枚哨兵等它写空（带超时，
