@@ -16,6 +16,8 @@ import { EditorView } from "@codemirror/view";
 import { CODICONS } from "./shell/codicons";
 import { setTip } from "./shell/tooltip";
 import { EVT_DOC_OPEN, EVT_DOC_CLOSE_NOTIFY } from "./core/events";
+// B305：可见路径集合变了要报给 Rust（名单的「被关掉了」是从并集消失推导的，见 recents/store.ts）。
+import { syncVisiblePaths } from "./recents/store";
 import { activeTab, getPanel, visibleInstancesOfDoc } from "./core/panels";
 import {
   Tab,
@@ -282,6 +284,10 @@ function broadcastDocPresence(): void {
     }
   }
   lastBroadcastDocIds = now;
+  // B305：同一条「可见集合变了」的链上再报一份**路径**账给 Rust。名单里「某个文件被关掉了」
+  // 就是从各窗口并报的并集里消失推导出来的 —— 不在 close/open 各分支埋点，漏不到
+  // 「关整个子窗口」「拖出去又关掉」这类最难复现的路径（细节见 src/recents/store.ts 头部）。
+  syncVisiblePaths();
 }
 
 function refreshAll(): void {

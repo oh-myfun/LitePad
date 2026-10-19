@@ -73,3 +73,18 @@ describe("B305 · Rust 命令注册与窗口销毁接线", () => {
     expect(rs).toContain('"recents-changed"');
   });
 });
+
+describe("B305 · 可见路径上报只挂一处", () => {
+  const ui = readFileSync("src/ui.ts", "utf-8");
+  const body = between(ui, "function broadcastDocPresence(): void {", "\nfunction refreshAll(");
+
+  it("上报并入 broadcastDocPresence —— 它已经是「可见集合变了」的唯一广播点", () => {
+    expect(body).toContain("syncVisiblePaths()");
+  });
+
+  it("打开/关闭流程里不许再各写一遍上报（两处上报 = 两个基准 = 迟早互相覆盖）", () => {
+    expect(readFileSync("src/io/files.ts", "utf-8")).not.toContain("syncOpenPaths");
+    expect(readFileSync("src/tabs/lifecycle.ts", "utf-8")).not.toContain("syncOpenPaths");
+    expect(readFileSync("src/multiwindow/windows.ts", "utf-8")).not.toContain("syncOpenPaths");
+  });
+});
