@@ -448,7 +448,7 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
       "el.append(fill, icon, name, action)",
     );
   });
-  it("B117：底部不再预留滚动条空间（32 → 28px），插入线直达条带底", () => {
+  it("B117：底部不再预留滚动条空间（条带 30px），插入线贯穿整条标签带（B309）", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
     const strip = ruleBlock(css, ".panel-tabstrip", undefined, true);
     expect(strip, "应有 .panel-tabstrip 规则").toBeTruthy();
@@ -478,12 +478,18 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
       /\.panel-tabstrip::-webkit-scrollbar/,
     );
 
-    // 拖拽插入线必须跟着标签行走；底部间隙取消后直达条带底（B117）。
-    // ⚠️ B123-5 起 pill 档有自己的 .tab-insert 覆盖块（bottom: 3px）且在文件里
-    //   更靠前 —— 锚定基础块必须带 top: 3px 特征，否则会命中 pill 块。
-    const insert = css.match(/\.tab-insert\s*\{[^}]*top:\s*3px[^}]*\}/)?.[0] ?? "";
-    expect(insert, "拖拽插入线必须与标签行等高").toMatch(/top:\s*3px/);
-    expect(insert, "插入线必须直达条带底（无下间隙）").toMatch(/bottom:\s*0/);
+    // 拖拽插入线必须**贯穿整条标签带**：connected 档的 `.tab-fill` 是 `inset: -3px 0 -3px`，
+    // 上下那 6px 间隙都被填成标签底色 ⇒ 线从 3px 起就比标签带短一截，用户读作
+    // 「线偏下、上面缺一小段」（B309）。pill 档相反：胶囊只占中间 24px，线跟着内缩。
+    // ⚠️ 锚定基础块一律用 `ruleBlock(..., atLineStart)`：pill 覆盖块的选择器尾段也是
+    //   `.tab-insert`，裸正则 `\.tab-insert\s*\{` 会命中它（B123-5 那次靠「带 top:3px
+    //   特征」绕过，这一版两档都有 top ⇒ 那个绕法自己就失效了）。
+    const insert = ruleBlock(css, ".tab-insert", undefined, true);
+    expect(insert, "基础块（connected 档）必须贯穿条带上下沿").toMatch(/top:\s*0/);
+    expect(insert).toMatch(/bottom:\s*0/);
+    const pillInsert = ruleBlock(css, ':root[data-tab-style="pill"] .tab-insert');
+    expect(pillInsert, "pill 档的线只贯穿胶囊行（上下 3px 是空白）").toMatch(/top:\s*3px/);
+    expect(pillInsert).toMatch(/bottom:\s*3px/);
   });
   it("B116 闪烁效果整体移除：CSS 无 tab-flash 规则、TS 无 flashTab（含反向验证）", () => {
     // B47 引入的「切换后闪一次」被用户要求整体移除（B116）。
@@ -577,8 +583,10 @@ describe("标签样式切换（B114：connected | pill）", () => {
     //   前缀 includes 会混过去；必须精确匹配两值形态。
     if (!/padding:\s*3px 4px\s*;/.test(strip)) v.push("pill 条带留白上下 3px / 左右 4px");
     if (/height:\s*\d+px/.test(strip)) v.push("pill 不得覆盖条带高度（统一 30px，B123-6）");
-    if (!get(':root[data-tab-style="pill"] .tab-insert').includes("bottom: 3px"))
+    const pillInsertSel = ':root[data-tab-style="pill"] .tab-insert';
+    if (!get(pillInsertSel).includes("bottom: 3px"))
       v.push("pill 插入线只贯穿胶囊行（bottom: 3px）");
+    if (!get(pillInsertSel).includes("top: 3px")) v.push("pill 插入线不许吃掉上间隙（top: 3px）");
     return v;
   }
 
@@ -609,6 +617,7 @@ describe("标签样式切换（B114：connected | pill）", () => {
       "pill 恢复胶囊之间的 4px 缝隙",
       "pill 条带留白上下 3px / 左右 4px",
       "pill 插入线只贯穿胶囊行（bottom: 3px）",
+      "pill 插入线不许吃掉上间隙（top: 3px）",
     ]);
   });
 

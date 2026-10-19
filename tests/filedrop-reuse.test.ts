@@ -62,8 +62,15 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   save: () => Promise.resolve(null),
 }));
 
-/** 第一次按路径打开是「新开」，之后 Rust 会回 `reused: true`。 */
-let opened = 0;
+/**
+ * 按路径认「这份开过没有」—— 与 Rust 的 `open_file` 同口径：同一个路径第二次打开才 `reused`，
+ * 每条路径各有各的文档号。
+ *
+ * ⚠️ 早先这里是「第 N 次调用之后一律 reused」，那只对**反复拖同一份文件**成立（B131 那几条
+ *   就是那种）。B309 要拖的是几份不同的文件，按调用次数就会把「新开一份」误判成「复用另一份」，
+ *   测出来的全是假象。
+ */
+const docIdByPath = new Map<string, number>();
 
 vi.mock("../src/ipc/api", () => ({
   emitCrossWindow: vi.fn(async () => {}),
@@ -117,11 +124,12 @@ vi.mock("../src/ipc/api", () => ({
   newTab: () =>
     Promise.resolve({ tabId: 1, name: "未命名", readonly: false, encoding: "UTF-8", eol: "CRLF" }),
   openFile: (path: string) => {
-    opened += 1;
+    const known = docIdByPath.get(path);
+    if (known === undefined) docIdByPath.set(path, docIdByPath.size);
     return Promise.resolve({
-      tabId: 0,
+      tabId: known ?? docIdByPath.get(path) ?? 0,
       // 与 Rust 一致：同一个路径第二次打开时复用文档（`reused` 为真）
-      reused: opened > 1,
+      reused: known !== undefined,
       text: `alpha\nbeta\ngamma\n`,
       name: path,
       path,
@@ -199,6 +207,12 @@ function dropFiles(paths: string[], x: number, y: number): void {
 function panelEls(): HTMLElement[] {
   return Array.from(document.querySelectorAll(".layout-panel")) as HTMLElement[];
 }
+/** 某面板标签条上，从左到右的标签名（插入位置对不对，看这个最直观）。 */
+function tabNames(panelIdx: number): string[] {
+  return Array.from(panelEls()[panelIdx].querySelectorAll(".tab .tab-name")).map(
+    (e) => e.textContent?.trim() ?? "",
+  );
+}
 /** 每个面板里各显示着哪份文档的首行（jsdom 里靠视图内容反推）。 */
 function shownFirstLineOf(panelIdx: number): string {
   const v = EditorView.findFromDOM(panelEls()[panelIdx].querySelector(".cm-editor") as HTMLElement);
@@ -261,5 +275,41 @@ describe("B131 拖入已打开的文件：落点不同就别动原标签", () =>
     expect(src, "正向实现必须真的按落点挑实例").toMatch(
       /all\.find\(\(t\) => t\.panelId === targetPanelId\)/,
     );
+  });
+});
+
+describe("B309 文件落到标签条：插进竖线那一格，别分屏", () => {
+  beforeAll(async () => {
+    // 上面那组已经把 main 装配起来了；这里再取一次只是幂等地拿到同一份模块图。
+    await import("../src/main");
+    await wait(30);
+  });
+
+  it("落到面板0 标签条最左 ⇒ 新标签插到最前，面板数不变", async () => {
+    const before = tabNames(0);
+    dropFiles(["c.md"], 5, 10); // 面板0 的标签条，x=5 = 第一个标签之前
+    await wait(120);
+    expect(panelEls().length, "落在标签条上不该分出第三块面板").toBe(2);
+    expect(tabNames(0), "竖线画在最左 ⇒ 就插在最前").toEqual(["c.md", ...before]);
+    expect(document.querySelector(".tab-insert"), "落地后要收掉指示线").toBeNull();
+    expect(document.querySelector(".split-preview.show"), "不许留分屏预览的残影").toBeNull();
+  });
+
+  it("落下来的是已经开着的文件 ⇒ 只激活，不按竖线把它搬走", async () => {
+    const order = tabNames(0);
+    const count = allTabCount();
+    dropFiles(["a.txt"], 5, 10);
+    await wait(120);
+    expect(allTabCount(), "复用不该新增标签").toBe(count);
+    expect(tabNames(0), "复用也不该按落点搬动那个标签：用户拖的是文件，不是标签").toEqual(order);
+  });
+
+  it("落到面板1 的标签条 ⇒ 标签开在面板1，面板0 一枚不动", async () => {
+    const keep = tabNames(0);
+    dropFiles(["d.md"], 215, 10); // 面板1 的标签条（strip 桩：left 210、宽 200）
+    await wait(120);
+    expect(tabNames(0), "别的面板上的落点不许搬动这一块").toEqual(keep);
+    expect(tabNames(1).at(-1), "落点面板追加到末尾").toBe("d.md");
+    expect(panelEls().length).toBe(2);
   });
 });

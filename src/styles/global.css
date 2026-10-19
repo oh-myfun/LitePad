@@ -963,7 +963,9 @@ button:focus-visible {
   padding: 3px 4px;
 }
 :root[data-tab-style="pill"] .tab-insert {
-  /* 插入线只贯穿胶囊行，不吃掉下间隙 */
+  /* 胶囊行只占中间 24px：上下那 3px 是间隙（没有底色），线伸进去会像是「插进空白」。
+     与 connected 档相反 —— 那边 fill 把间隙也填了色，线就得以条带上下沿为准。 */
+  top: 3px;
   bottom: 3px;
 }
 
@@ -3031,9 +3033,12 @@ button:focus-visible {
    绝对定位子元素会随内容一起滚 —— splitview 计算偏移时必须补上 scrollLeft。 */
 .tab-insert {
   position: absolute;
-  /* 对齐 24px 标签行：3px 上间距起、直达条带底（B123-6 统一 30px 后，
-     connected 的下间隙被 fill 补齐、视觉上仍直达；pill 档覆盖 bottom: 3px） */
-  top: 3px;
+  /* 贯穿**整条标签带**（30px）：connected 档的 `.tab-fill` 是 `inset: -3px 0 -3px`，
+     上下各外扩 3px 把条带的上间距也画上底色 —— 视觉上标签带就是整条 30px。
+     所以这里必须从 0 起：先前那版写 `top: 3px`（按「标签行 = 24px」算），竖线顶端
+     比别的标签的底色短一小截，读起来就是「线偏下、上面缺一块」。
+     pill 档胶囊只占中间 24px（3/3 对称间隙），由下面那条覆盖成 3px/3px。 */
+  top: 0;
   bottom: 0;
   width: 2px;
   border-radius: 1px;

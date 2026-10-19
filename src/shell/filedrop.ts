@@ -152,11 +152,6 @@ export function installFileDropTarget(
   };
 }
 
-export interface FileDropTarget {
-  panelId: number;
-  zone: "left" | "right" | "top" | "bottom" | "center";
-}
-
 /**
  * 是否需要弹选择菜单：**单个文件**落到**活动文档是 Markdown 的面板**上时才问。
  *

@@ -5,7 +5,7 @@
 // B26：分割条比例回写路径约定（updateRatio 已进 layout.ts，见 layout.test.ts）。
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
-import { tabsAll } from "./static";
+import { fnBody, tabsAll } from "./static";
 import { stripInsertInfo } from "../src/shell/splitview";
 
 // 几何桩：jsdom 无布局，按元素逐个登记矩形
@@ -126,15 +126,19 @@ describe("B26/B27 接线（静态断言）", () => {
     // B89：落点判定抽成了 previewDropAt（本窗口拖拽与**跨窗口悬停**共用同一份），
     // 互斥的做法从「进 tab 区时手动清预览」变成「每次判定开头先清两种痕迹」——
     // 后者更不容易漏：任何一处忘记清理都不会留下上一帧的残影。
-    expect(sv, "落点判定开头先把两种痕迹都清掉").toMatch(
-      /function previewDropAt[\s\S]{0,300}clearAllPreviews\(\);\s*\n\s*clearInsertIndicators\(\);/,
-    );
-    expect(sv, "落在 tab 区只画插入线").toMatch(
-      /if \(strip\) \{[\s\S]{0,240}showInsertIndicator\(strip, info\.offsetLeft\)/,
-    );
-    expect(sv, "落在面板区才画分屏预览").toMatch(
-      /preview\.className = `split-preview show zone-\$\{effZone\}`/,
-    );
+    // B309 起判定本体搬进 `hitAt`（`spotAt` 也用它），所以这里量的是 previewDropAt 这个壳：
+    // 「先清两种」+「两种痕迹各由一个分支画」。哪条分支画什么由运行时用例盯
+    // （tests/filedrop-strip.test.ts：真的去 DOM 里找 .tab-insert / .split-preview.show）。
+    const body = fnBody(sv, "previewDropAt");
+    expect(body, "取不到 previewDropAt 的函数体").toBeTruthy();
+    expect(body, "开头先把两种痕迹都清掉").toContain("clearAllPreviews();");
+    expect(body, "两种都要清，只清一种就是残影").toContain("clearInsertIndicators();");
+    expect(body, "标签区那一支画插入线").toContain("showInsertIndicator(");
+    expect(body, "面板区那一支画分屏预览").toContain("split-preview show zone-");
+    expect(
+      body.indexOf("clearAllPreviews()"),
+      "清理必须排在画之前，否则同一帧先亮旧的",
+    ).toBeLessThan(body.indexOf("showInsertIndicator("));
   });
 
   it("空标签栏的插入线贴最左（B90：否则空面板上悬停会冒出一条滚动条）", () => {

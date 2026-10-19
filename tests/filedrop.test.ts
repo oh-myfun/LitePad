@@ -313,8 +313,15 @@ describe("B91 接线（静态断言）", () => {
   const bridge = readFileSync("src-tauri/src/dropbridge.rs", "utf-8");
 
   it("页面侧必须装上收接，且只处理 drop（enter/over/leave 已由页面内监听接管）", () => {
-    expect(main, "必须装页面级文件拖入收接").toMatch(
-      /installFileDropTarget\(\{[\s\S]{0,120}preview:[\s\S]{0,80}clear:/,
+    // 用「取那一次调用的实参对象，再看两个键在不在」代替字符预算正则：
+    // 预算写法每往两句之间插一行注释就断，而且它测的是距离不是结构。
+    const at = main.indexOf("installFileDropTarget({");
+    expect(at, "必须装页面级文件拖入收接").toBeGreaterThanOrEqual(0);
+    const wiring = main.slice(at, main.indexOf("});", at));
+    expect(wiring).toContain("preview:");
+    expect(wiring).toContain("clear:");
+    expect(wiring.indexOf("preview:"), "两个回调都得在同一个实参对象里").toBeLessThan(
+      wiring.indexOf("clear:"),
     );
     expect(main, "onDragDropEvent 只该管 drop").toMatch(/if \(p\.type !== "drop"\) return;/);
     expect(main, "出口不可用要留一行日志，别静默失效").toContain("hasFileDropBridge()");
@@ -342,8 +349,9 @@ describe("B91 接线（静态断言）", () => {
     expect(main, "doOpen 必须支持指定落点面板").toContain(
       "async function doOpen(\n  presetPath?: string,\n  encoding?: string,\n  targetPanelId?: number,\n)",
     );
-    expect(main, "必须把落点面板的 md 判据传进去").toMatch(
-      /needsChoice\(p\.paths, target !== null && panelDocIsMarkdown\(target\.panelId\)\)/,
+    expect(main, "必须把落点面板的 md 判据传进去").toMatch(/needsChoice\(p\.paths,/);
+    expect(main, "判据问的是落点面板的活动文档，不是拖进来的文件名").toContain(
+      "panelDocIsMarkdown(target.panelId)",
     );
     expect(main, "「插入文件路径」必须插入活动编辑器光标处").toContain(
       "function insertDroppedPath(path: string)",

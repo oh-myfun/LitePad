@@ -4,6 +4,7 @@
 // 保存冲突与有损确认（resolveSaveConflict / confirmLossy）、实例内容重建
 // （rebuildDocInstances）、文件拖入（showFileDropPreview / fileDropTargetAt /
 // dropPosOf / insertDroppedPath）、面板文档形态判断（panelDocIsMarkdown）。
+// 落点判定**不在本模块**：与标签拖拽共用 `shell/splitview` 那一份（见下面那两个函数）。
 // 只依赖 core/* + ui + doc-model + tabs + session/session + ipc/api + editor/*，
 // 对 main.ts 零反向依赖。
 //
@@ -56,12 +57,11 @@ import {
   type OpenedFile,
   type SaveConflict,
 } from "../ipc/api";
-import type { FileDropTarget } from "../shell/filedrop";
-import { clearAllDropPreviews, panelAt } from "../shell/splitview";
-import { zoneOf } from "../dnd/geometry";
+import { previewDropAt, spotAt, type DropSpot } from "../shell/splitview";
 import { showSaveConflictDialog } from "../shell/conflictdialog";
 import {
   freshTextOfDoc,
+  moveTabToStrip,
   rebuildLayout,
   renderPanelTabs,
   splitPanelWithTab,
@@ -241,23 +241,19 @@ function dropPosOf(p: { x: number; y: number }): { x: number; y: number } {
   return { x: p.x / scale, y: p.y / scale };
 }
 
-/** 悬停高亮：复用标签拖拽的落点预览层，指明会落到哪个面板的哪个分区。 */
+/**
+ * 悬停高亮：与标签拖拽**同一份落点判定**（`previewDropAt`）。
+ *
+ * 以前这里自己只画分屏预览，于是「文件拖到标签条上」显示的是「向上分屏」——而标签
+ * 拖到同一处画的是插入竖线。两套判定迟早跟彼此错开，所以直接交出去。
+ */
 function showFileDropPreview(x: number, y: number): void {
-  clearAllDropPreviews();
-  const el = panelAt(x, y);
-  if (!el) return;
-  const preview = el.querySelector(".split-preview");
-  if (preview)
-    preview.className = `split-preview show zone-${zoneOf(el.getBoundingClientRect(), x, y)}`;
+  previewDropAt(x, y);
 }
 
-/** 指针位置 → 落点面板与分区（不在任何面板内为 null，回落到活动面板打开）。 */
-function fileDropTargetAt(x: number, y: number): FileDropTarget | null {
-  const el = panelAt(x, y);
-  if (!el) return null;
-  const id = Number(el.dataset.panelId);
-  if (!Number.isFinite(id)) return null;
-  return { panelId: id, zone: zoneOf(el.getBoundingClientRect(), x, y) };
+/** 指针位置 → 落点（面板 + 分区；落在标签条上时连带插入位置）。 */
+function fileDropTargetAt(x: number, y: number): DropSpot | null {
+  return spotAt(x, y);
 }
 
 /**
@@ -272,10 +268,23 @@ function panelDocIsMarkdown(panelId: number): boolean {
   return !!t && isMdTab(t);
 }
 
-/** 按落点打开：中央 = 落进该面板；边缘 = 在该面板旁分屏打开。 */
-async function openDroppedAt(path: string, target: FileDropTarget | null): Promise<void> {
+/**
+ * 按落点打开：标签条 = 在竖线那一格插新标签；中央 = 落进该面板；边缘 = 在该面板旁分屏。
+ *
+ * ⚠️ 标签条那一支**不改已有标签的位置**：拖进来的文件如果本来就开着，`doOpen` 只会激活
+ * 它（`reused` 分支），这时按竖线去挪就等于「拖个文件把别处的标签搬走了」。判据用
+ * 「开之前有没有这个实例」，不重算一遍路径归一化（那套在 Rust）。
+ */
+async function openDroppedAt(path: string, target: DropSpot | null): Promise<void> {
+  const before = target?.onStrip ? new Set(tabs.keys()) : null;
   const tabId = await doOpen(path, undefined, target?.panelId);
-  if (tabId === null || !target || target.zone === "center") return;
+  if (tabId === null || !target) return;
+  if (target.onStrip) {
+    if (before?.has(tabId)) return;
+    moveTabToStrip(target.panelId, tabId, target.beforeTabId);
+    return;
+  }
+  if (target.zone === "center") return;
   const dir = target.zone === "left" || target.zone === "right" ? "h" : "v";
   const newFirst = target.zone === "left" || target.zone === "top";
   splitPanelWithTab(target.panelId, dir, tabId, newFirst, false);

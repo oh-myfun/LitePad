@@ -165,7 +165,6 @@ import { KEYMAP_RECORDING_CLASS } from "./shell/keymapdialog";
 // B235：`PREVIEW_WIDTH_LABELS` 是宽度档的中文标签（提示气泡用），
 // 与设置页那份同源 —— 别在手抄第二遍。
 import {
-  clearAllDropPreviews,
   clearDropIndicators,
   commitTabDrop,
   previewDropAt,
@@ -959,22 +958,27 @@ async function setupShell(): Promise<void> {
   //     （HTML5 file drop 本身只有内容没有路径，所以这一段必须过桥。）
   installFileDropTarget({
     preview: (x, y) => showFileDropPreview(x, y),
-    clear: () => clearAllDropPreviews(),
+    // 与标签拖拽同一个清场出口：现在文件悬停也会画标签插入竖线，只清分屏预览会留残影。
+    clear: () => clearDropIndicators(),
   });
   if (!hasFileDropBridge()) logger.warn("drop", "path bridge unavailable");
 
-  // B24：落地按分区打开（中央=该面板，边缘=分屏）；单个 Markdown 弹菜单选「打开文档 /
-  // 插入文件路径」。这里只处理 drop —— enter/over/leave 已由上面的页面内监听接管。
+  // B24：落地按分区打开（标签条=在那一格插标签，中央=该面板，边缘=分屏）；单个 Markdown
+  // 弹菜单选「打开文档 / 插入文件路径」。这里只处理 drop —— enter/over/leave 已由上面的
+  // 页面内监听接管。
   void getCurrentWebview()
     .onDragDropEvent((ev) => {
       const p = ev.payload;
       if (p.type !== "drop") return;
       const pos = dropPosOf(p.position);
       const target = fileDropTargetAt(pos.x, pos.y);
-      clearAllDropPreviews();
+      clearDropIndicators();
       // B70 B 档：问「打开 / 插入路径」的前提是**落点是一份 Markdown**，
       // 而不是「拖进来的文件是 Markdown」。
-      if (needsChoice(p.paths, target !== null && panelDocIsMarkdown(target.panelId))) {
+      // 落在标签条上不问：那一条「插入文件路径」只对文档成立，而瞄着标签条的意图本来就
+      // 是「在这儿开一个标签」，问一句只是挡路。
+      const asksForPath = target !== null && !target.onStrip && panelDocIsMarkdown(target.panelId);
+      if (needsChoice(p.paths, asksForPath)) {
         const path = p.paths[0];
         const name = path.split(/[\\/]/).pop() ?? path;
         showFileDropChoice(name, pos, {
@@ -1139,15 +1143,15 @@ async function bootstrap(): Promise<void> {
     logger.warn("pending", `take failed: ${String(e)}`);
   }
 
-  // B305：最近打开。位置排在会话恢复**之后**：恢复会开一批标签，而「这份文件还开着吗」
-  // 全靠各窗口并报的可见集合来剪名单 —— 先取名单再恢复，中间那一瞬会把用户刚打开的
-  // 文件显示在「最近关闭」里。
+  // B305 / B308：最近打开。记账认的是「这次新出现了哪些路径」，所以会话恢复那批文件会一次
+  // 进名单 —— 这正是新语义要的（打开过就在册，正开着的也留着）。装配位置仍排在
+  // `restoreSession()` 之后，与界面同侧、没有别的数据依赖。
   // ⚠️ **不 await**：面板是订阅式的，数据到了自然重画，启动链不必为一次 IPC 多等一拍。
   //    等这一拍会挪动启动期那几次会话落盘的相对次序（`tests/satellite-restore.test.ts`
   //    的落盘回环就是这么被顶偏的）—— 旁路功能不该改主干的时序。
   // 只给主窗口装：子窗口连左边栏都被 CSS 收掉了（Review Focus #5），装上去只有
   // 一份看不见的缓存和一条没人画的名单在跑；它该做的记账走 `refreshAll` →
-  // `broadcastDocPresence` → `syncVisiblePaths` 那条，与本装配无关。
+  // `broadcastDocPresence` → `reportOpenedPaths` 那条（每个窗口各自报，与本装配无关）。
   if (windowKind === "main") {
     void initRecentsStore();
     setupRecentsPanel();

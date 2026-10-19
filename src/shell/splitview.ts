@@ -167,11 +167,6 @@ function clearAllPreviews(): void {
   });
 }
 
-/** 清掉所有面板的分屏落点预览（标签拖拽与文件拖入共用）。 */
-export function clearAllDropPreviews(): void {
-  clearAllPreviews();
-}
-
 /** 面板级 tab 区（strip）元素。 */
 function stripOf(panelEl: HTMLElement): HTMLElement | null {
   return panelEl.querySelector(".panel-tabstrip");
@@ -242,38 +237,78 @@ export function clearDropIndicators(): void {
 export interface DropSpot {
   panelId: number;
   zone: DropZone;
-  /** 仅 `panel-tabstrip` 上有效：插到该标签之前；null = 追加到末尾 */
+  /** 指针是否落在该面板的标签条里。`true` 时 `zone` 恒为 `center`（标签区不分屏）。 */
+  onStrip: boolean;
+  /** 仅 `onStrip` 为真时有效：插到该标签之前；null = 追加到末尾 */
   beforeTabId: number | null;
 }
 
+/** 判定结果连带**该画的元素**：调用方不必再命中测试一遍。 */
+interface DropHit {
+  panelEl: HTMLElement;
+  /** 落在标签区时是那块 strip，否则 null */
+  strip: HTMLElement | null;
+  insert: StripInsertInfo | null;
+  spot: DropSpot;
+}
+
 /**
- * 在 (x, y) 画落点预览，并把算出来的落点交回调用方。
+ * (x, y) 这个指针**会落到哪儿**，连带预览要落在哪个元素上。
  *
- * 调用方只有一处 —— `tabdnd.ts` 的页面级 dragover/drop。窗口内拖拽与**别的窗口**
- * 拖过来的标签都走它，落点语义因此天然一致，不会「窗口内一种、跨窗口另一种」。
- *
- * 每次都先全清再画：拖拽途中「上一个面板的预览」必须消失，否则会同时亮两块。
+ * 判定顺序有讲究：先问「是不是落在标签条里」（排序 / 插新标签），再谈分屏 zone。
+ * 反过来会把标签条那 30px 当成「面板上缘 = 向上分屏」，用户瞄着标签条却分出一屏。
  */
-export function previewDropAt(x: number, y: number, altKey = false): DropSpot | null {
-  clearAllPreviews();
-  clearInsertIndicators();
+function hitAt(x: number, y: number, altKey: boolean): DropHit | null {
   const panelEl = panelAt(x, y);
   if (!panelEl) return null;
   const panelId = Number(panelEl.dataset.panelId);
   // B27：tab 区 = 调整顺序（插入指示线），面板区 = 分屏预览，两者互斥
   const strip = stripUnder(panelEl, x, y);
   if (strip) {
-    const info = stripInsertInfo(strip, x);
-    if (info) showInsertIndicator(strip, info.offsetLeft);
-    return { panelId, zone: "center", beforeTabId: info?.beforeTabId ?? null };
+    const insert = stripInsertInfo(strip, x);
+    return {
+      panelEl,
+      strip,
+      insert,
+      spot: { panelId, zone: "center", onStrip: true, beforeTabId: insert?.beforeTabId ?? null },
+    };
   }
   const zone = zoneOf(panelEl.getBoundingClientRect(), x, y);
-  // O5：按住 Alt = 临时取消分屏（本次落点按 center 处理）。预览同步切换成 center，
-  // 拖拽时就能看到「这次不会分屏」。（对标 editorDropTarget.ts:382-384 的 Alt 反转开关）
-  const effZone = altKey ? "center" : zone;
-  const preview = panelEl.querySelector(".split-preview");
-  if (preview) preview.className = `split-preview show zone-${effZone}`;
-  return { panelId, zone: effZone, beforeTabId: null };
+  // O5：按住 Alt = 临时取消分屏（本次落点按 center 处理），预览同步跟着切。
+  // （对标 editorDropTarget.ts:382-384 的 Alt 反转开关）
+  return {
+    panelEl,
+    strip: null,
+    insert: null,
+    spot: { panelId, zone: altKey ? "center" : zone, onStrip: false, beforeTabId: null },
+  };
+}
+
+/** 纯判定，不画任何东西（落地那一刻用它：那时指针已经走了，画了也没人看）。 */
+export function spotAt(x: number, y: number, altKey = false): DropSpot | null {
+  return hitAt(x, y, altKey)?.spot ?? null;
+}
+
+/**
+ * 在 (x, y) 画落点预览，并把算出来的落点交回调用方。
+ *
+ * 调用方是标签拖拽（`tabdnd.ts` 的 dragover，本窗口与跨窗口悬停同一份）与文件拖入的悬停
+ * —— 共用一份判定，落点语义因此天然一致，不会「窗口内一种、跨窗口一种、拖文件又一种」。
+ *
+ * 每次都先全清再画：拖拽途中「上一个面板的预览」必须消失，否则会同时亮两块。
+ */
+export function previewDropAt(x: number, y: number, altKey = false): DropSpot | null {
+  clearAllPreviews();
+  clearInsertIndicators();
+  const hit = hitAt(x, y, altKey);
+  if (!hit) return null;
+  if (hit.strip && hit.insert) {
+    showInsertIndicator(hit.strip, hit.insert.offsetLeft);
+  } else {
+    const preview = hit.panelEl.querySelector(".split-preview");
+    if (preview) preview.className = `split-preview show zone-${hit.spot.zone}`;
+  }
+  return hit.spot;
 }
 
 /** 一次落点提交（HTML5 `drop` 处理器调用）。 */
