@@ -1,20 +1,21 @@
 /**
- * B305 · 最近打开的前端视图缓存 + 可见路径上报。
+ * B305 · 最近打开的前端视图缓存 + 「刚打开了哪些文件」的上报。
  *
  * 职责边界要说清：**名单归 Rust**（`src-tauri/src/commands/recents.rs`），本模块不排序、
  * 不去重、不裁剪、不判文件还在不在。它只做两件本地写得对的事：
  *
- *   1. 算「本窗口此刻屏上看得见哪些文件」并上报 —— 这是「某个文件被关掉了」的唯一信号。
- *      挂在 `broadcastDocPresence` 上（`src/ui.ts`），因为那条已经是「可见集合变了」的唯一
+ *   1. 算「本窗口此刻开着哪些文件」并整份上报 —— Rust 在它自己那本 per-window 账上算差集，
+ *      只有**新出现**的路径才记进名单（B308：打开过就在册，LRU 维护）。
+ *      挂在 `broadcastDocPresence` 上（`src/ui.ts`），因为那条已经是「开着的集合变了」的唯一
  *      广播点：开标签走 `refreshAll`、关标签走 `closeTabById`，两条都调它，覆盖全。
- *      不在每个关闭分支各埋一遍的理由与 B157/B188 同一族：埋点一多就会漏，而漏掉的情形
- *      （关整个子窗口、标签拖出去又关掉）恰好是最难复现的那几类。
+ *      不在每个打开分支各埋一遍的理由与 B157/B188 同一族：埋点一多就会漏，而漏掉的情形
+ *      （会话恢复、文件关联、标签拖去子窗口）恰好是最难复现的那几类。
  *   2. 缓存 Rust 给的那份 + 变了通知订阅者（面板只认这一份，不自己去 invoke）。
  *
- * ⚠️ 上报必须**在 IPC 失败时把 diff 基准退回去**。基准记的是「我以为对方已经知道的状态」，
- * 失败了还不退回去，就等于把「这条路径从没上报过」写成了一段假历史：那份文件后来被关掉
- * 也进不了名单，而且此后再也不会补报 —— 用户看到的是「明明关了却不在最近打开里」，
- * 日志里查不到原因（B303/B304 那一族「单点写坏就无声」的同款形状）。
+ * ⚠️ 上报必须**在 IPC 失败时把基准退回去**。基准记的是「我以为对方已经知道的那一份」，
+ * 失败了还不退回去，此后同一份集合不会再报 —— 而 Rust 那边一直没见过它，于是这批文件
+ * 永远进不了名单，用户看到的是「明明打开过却不在最近打开里」，日志里查不到原因
+ * （B303/B304 那一族「单点写坏就无声」的同款形状）。
  */
 import { listen } from "@tauri-apps/api/event";
 import { docs, tabs } from "../core/app-state";
@@ -25,8 +26,8 @@ import {
   forgetRecent,
   getRecentLimit as rpcGetRecentLimit,
   listRecents,
+  noteOpenedPaths,
   setRecentLimit as rpcSetRecentLimit,
-  syncOpenPaths,
   type RecentEntry,
 } from "../ipc/api";
 
@@ -37,7 +38,7 @@ let limit = 20;
 let lastReportedKey: string | null = null;
 /**
  * 请求序号。回包到达顺序**没有保证**：连发两报时旧那一包可能后到，直接写缓存就会把
- * 名单退回旧状态（用户读作「还开着的文件出现在最近打开里」）。只认最新那一个。
+ * 名单退回旧状态（用户读作「刚打开的那份没露脸」）。只认最新那一个。
  */
 let requestSeq = 0;
 const subscribers = new Set<(entries: RecentEntry[]) => void>();
@@ -57,11 +58,11 @@ function setEntries(next: RecentEntry[]): void {
 }
 
 /**
- * 本窗口可见实例的磁盘路径（去重、未命名不算）。
+ * 本窗口开着的实例的磁盘路径（去重、未命名不算）。
  *
  * 只数 `panelId >= 0` 的实例 —— 与 `broadcastDocPresence` 的 B171/B173 口径一致：标签被
- * 拖去卫星窗口后本地留的那份隐藏实例（`panelId < 0`）**不算「还开着」**，否则主窗口的隐藏
- * 副本会把这份文件一直压住，用户子在子窗口关掉它也不会进名单。
+ * 拖去卫星窗口后本地留的那份隐藏实例（`panelId < 0`）**不算这一扇开着**，否则会替子窗口
+ * 抢记一次「新打开」（那边自己会报）。
  */
 export function visibleOpenPaths(): string[] {
   const out: string[] = [];
@@ -78,10 +79,11 @@ export function visibleOpenPaths(): string[] {
 }
 
 /**
- * 可见集合变了才发一次 IPC（`refreshAll` 一轮交互能触发几十次，每次都发就是拿 IPC 刷 Rust）。
+ * 开着的集合变了才发一次 IPC（`refreshAll` 一轮交互能触发几十次，每次都发就是拿 IPC 刷 Rust）。
+ * 报的是**整份集合**，差集由 Rust 在那本 per-window 账上算 —— 它才知道哪些是「这次新出现」。
  * 回包与 `recents-changed` 广播都是同一份名单，谁先到都无所谓。
  */
-export function syncVisiblePaths(): void {
+export function reportOpenedPaths(): void {
   const next = visibleOpenPaths();
   // 排序后拼指纹：上报的数组本身保持原顺序（Rust 侧不依赖顺序，但日志里读起来对得上手势）。
   const key = [...next].sort().join("\n");
@@ -89,21 +91,21 @@ export function syncVisiblePaths(): void {
   lastReportedKey = key;
   // ⚠️ 这条挂在 `refreshAll` 主干上，而名单是**旁路功能**：取数那一下的同步异常也不许把界面
   // 刷新带崩（测试里那份只列了几个导出的 `../src/ipc/api` mock 就是这么炸的）。
-  // 基准同样要退回去 —— 否则失败那批路径此后再也不会补报。
+  // 基准同样要退回去 —— 否则这批路径此后再也不会补报，而 Rust 那边一直没见过它们。
   let send: Promise<RecentEntry[]>;
   const seq = ++requestSeq;
   try {
-    send = syncOpenPaths(next);
+    send = noteOpenedPaths(next);
   } catch (e: unknown) {
     lastReportedKey = null;
-    logger.warn("recents", `可见路径上报没发出去，下次刷新重试：${String(e)}`);
+    logger.warn("recents", `打开路径上报没发出去，下次刷新重试：${String(e)}`);
     return;
   }
   void send
     .then((list) => applyIfFresh(seq, list))
     .catch((e: unknown) => {
       if (lastReportedKey === key) lastReportedKey = null;
-      logger.warn("recents", `可见路径上报失败，下次刷新重试：${String(e)}`);
+      logger.warn("recents", `打开路径上报失败，下次刷新重试：${String(e)}`);
       return undefined;
     });
 }
@@ -142,8 +144,9 @@ export async function initRecentsStore(): Promise<void> {
     logger.warn("recents", `上限没取到（按占位值 ${limit} 显示）：${String(e)}`);
   }
   try {
-    // ⚠️ 不按 `from` 过滤：这条是 **Rust 发的快照**，不是某扇窗口的回声。名单是「各窗口
-    // 可见集合的并集」推导出来的，本窗口也是视图之一，所以「自己发的要丢掉」在这里是错的。
+    // ⚠️ 这是 **Rust 发的全量快照**，不是某扇窗口的增量：名单只有一份、由 Rust 统一持有并广播，
+    // 本窗口也是它的订阅者之一。按「自己发的要丢掉」去过滤在这一层是错的 —— 点名单那一行
+    // 触发的记入也会被判成回声，面板停在旧名单上。
     await listen<RecentsChangedPayload>(EVT_RECENTS_CHANGED, (e) => {
       setEntries(e.payload?.entries ?? []);
     });

@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 
 const h = vi.hoisted(() => ({
-  entries: [] as { path: string; name: string; closedAt: number }[],
+  entries: [] as { path: string; name: string; openedAt: number }[],
   limit: 20,
   onRecentsChange: vi.fn((_cb: (e: unknown[]) => void) => () => {}),
   forgetRecentEntry: vi.fn(() => Promise.resolve()),
@@ -60,9 +60,9 @@ beforeAll(async () => {
 function seed(): void {
   const now = Date.now();
   h.entries = [
-    { path: "D:\\工作\\报价\\单.md", name: "单.md", closedAt: now - 60_000 },
-    { path: "D:\\工作\\10月\\单.md", name: "单.md", closedAt: now - 3_600_000 },
-    { path: "C:\\notes\\三.md", name: "三.md", closedAt: now - 86_400_000 * 2 },
+    { path: "D:\\工作\\报价\\单.md", name: "单.md", openedAt: now - 60_000 },
+    { path: "D:\\工作\\10月\\单.md", name: "单.md", openedAt: now - 3_600_000 },
+    { path: "C:\\notes\\三.md", name: "三.md", openedAt: now - 86_400_000 * 2 },
   ];
   h.limit = 20;
 }
@@ -107,7 +107,7 @@ describe("B305 最近打开面板", () => {
 
   it("路径里的尖括号只当文字，不当标签（不许拿 innerHTML 拼用户路径）", () => {
     h.entries = [
-      { path: "C:\\a\\<img src=x onerror=alert(1)>.md", name: "x", closedAt: Date.now() },
+      { path: "C:\\a\\<img src=x onerror=alert(1)>.md", name: "x", openedAt: Date.now() },
     ];
     panel.renderRecents();
     expect(document.querySelector("img"), "路径被当成 HTML 注入了").toBeNull();
@@ -126,7 +126,7 @@ describe("B305 最近打开面板", () => {
     expect(ui.recentCount.textContent).toBe("3/20");
   });
 
-  it("上限 0 ⇒ 空态说清「不是还没关过，是不再记录」", () => {
+  it("上限 0 ⇒ 空态说清「不是还没打开过，是不再记录」", () => {
     h.entries = [];
     h.limit = 0;
     panel.renderRecents();
@@ -166,10 +166,10 @@ describe("B305 最近打开面板", () => {
     ui.mainRow.classList.remove("is-sidebar-off");
   });
 
-  it("名单空 ⇒ 空态是「还没有关掉过的文件」", () => {
+  it("名单空 ⇒ 空态是「还没有打开过的文件」", () => {
     h.entries = [];
     panel.renderRecents();
-    expect(ui.recentList.textContent).toBe("还没有关掉过的文件");
+    expect(ui.recentList.textContent).toBe("还没有打开过的文件");
   });
 
   it("点一行 ⇒ 用那一行的路径走现有打开流程", () => {

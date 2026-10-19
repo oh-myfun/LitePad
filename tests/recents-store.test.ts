@@ -1,15 +1,16 @@
 // @vitest-environment jsdom
-// B305 Task 4 · 名单的前端视图缓存 + 可见路径上报。
+// B305 Task 4 · 名单的前端视图缓存 + 「这一扇此刻开着哪些文件」的上报。
 //
-// 这里测的是**账**，不是界面：可见集合怎么算、什么时候才发一次 IPC、回包与广播怎么进缓存。
-// 名单的记账规则本身在 Rust（`session/recent.rs` 的 #[cfg(test)]），这层不重复一遍。
+// 这里测的是**账**，不是界面：开着的集合怎么算、什么时候才发一次 IPC、回包与广播怎么进缓存。
+// 名单的记账规则本身在 Rust（`session/recent.rs` 的 #[cfg(test)]），这层不重复一遍 ——
+// B308 起连「哪些是新出现的」都归 Rust 算（它手上有每扇窗口的上一份账）。
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type * as appState from "../src/core/app-state";
 
 const h = vi.hoisted(() => ({
   listeners: new Map<string, (e: { payload: unknown }) => void>(),
   listRecents: vi.fn((): Promise<unknown[]> => Promise.resolve([])),
-  syncOpenPaths: vi.fn((_paths: string[]): Promise<unknown[]> => Promise.resolve([])),
+  noteOpenedPaths: vi.fn((_paths: string[]): Promise<unknown[]> => Promise.resolve([])),
   forgetRecent: vi.fn((_path: string): Promise<unknown[]> => Promise.resolve([])),
   clearRecents: vi.fn((): Promise<unknown[]> => Promise.resolve([])),
   getRecentLimit: vi.fn((): Promise<number> => Promise.resolve(20)),
@@ -26,7 +27,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 vi.mock("../src/ipc/api", () => ({
   listRecents: h.listRecents,
-  syncOpenPaths: h.syncOpenPaths,
+  noteOpenedPaths: h.noteOpenedPaths,
   forgetRecent: h.forgetRecent,
   clearRecents: h.clearRecents,
   getRecentLimit: h.getRecentLimit,
@@ -70,14 +71,14 @@ beforeEach(() => {
   h.listeners.clear();
   vi.clearAllMocks();
   h.listRecents.mockResolvedValue([]);
-  h.syncOpenPaths.mockResolvedValue([]);
+  h.noteOpenedPaths.mockResolvedValue([]);
   h.forgetRecent.mockResolvedValue([]);
   h.clearRecents.mockResolvedValue([]);
   h.getRecentLimit.mockResolvedValue(20);
   h.setRecentLimit.mockImplementation((n: number) => Promise.resolve(n));
 });
 
-describe("B305 可见路径上报", () => {
+describe("B305/B308 开着的集合上报", () => {
   it("只数可见实例：隐藏实例（panelId < 0）不进集合", async () => {
     const { store, state } = await fresh();
     withTabs(
@@ -107,50 +108,50 @@ describe("B305 可见路径上报", () => {
   it("集合没变 ⇒ 一次 IPC 都不发（refreshAll 触发得极频繁）", async () => {
     const { store, state } = await fresh();
     withTabs(state, [inst(1, 100, 0)], [doc(100, "C:\\x\\a.md")]);
-    store.syncVisiblePaths();
-    store.syncVisiblePaths();
-    store.syncVisiblePaths();
-    expect(h.syncOpenPaths, "没变还发就是拿 IPC 刷 Rust").toHaveBeenCalledTimes(1);
-    expect(h.syncOpenPaths.mock.calls[0]).toEqual([["C:\\x\\a.md"]]);
+    store.reportOpenedPaths();
+    store.reportOpenedPaths();
+    store.reportOpenedPaths();
+    expect(h.noteOpenedPaths, "没变还发就是拿 IPC 刷 Rust").toHaveBeenCalledTimes(1);
+    expect(h.noteOpenedPaths.mock.calls[0]).toEqual([["C:\\x\\a.md"]]);
   });
 
-  it("关掉最后一格 ⇒ 上报的集合少一条（这就是「刚被关掉」的唯一信号）", async () => {
+  it("集合变了 ⇒ 重报整份（差集归 Rust，它才有每扇窗口的上一份账）", async () => {
     const { store, state } = await fresh();
     withTabs(
       state,
       [inst(1, 100, 0), inst(2, 200, 0)],
       [doc(100, "C:\\x\\a.md"), doc(200, "C:\\x\\b.md")],
     );
-    store.syncVisiblePaths();
+    store.reportOpenedPaths();
     withTabs(state, [inst(1, 100, 0)], [doc(100, "C:\\x\\a.md")]);
-    store.syncVisiblePaths();
-    expect(h.syncOpenPaths).toHaveBeenCalledTimes(2);
-    expect(h.syncOpenPaths.mock.calls[1]).toEqual([["C:\\x\\a.md"]]);
+    store.reportOpenedPaths();
+    expect(h.noteOpenedPaths).toHaveBeenCalledTimes(2);
+    expect(h.noteOpenedPaths.mock.calls[1]).toEqual([["C:\\x\\a.md"]]);
   });
 
-  it("IPC 失败 ⇒ diff 基准退回去，下一次刷新会重试", async () => {
-    // 不回退的话：一次失败就把「这条路径从没上报过」写成假历史 ⇒ 那份文件关了也进不了名单，
-    // 而且再也不会补报 —— 用户看到的正是「明明关了却不在最近打开里」，还查不到原因。
+  it("IPC 失败 ⇒ 上报基准退回去，下一次刷新会重试", async () => {
+    // 不回退的话：一次失败就把「这份已经报过了」写成假历史 ⇒ 那次「新打开」永远不会补报，
+    // 用户看到的正是「明明打开过却不在最近打开里」，还查不到原因。
     const { store, state } = await fresh();
     withTabs(state, [inst(1, 100, 0)], [doc(100, "C:\\x\\a.md")]);
-    h.syncOpenPaths.mockRejectedValueOnce(new Error("IPC 断了"));
-    store.syncVisiblePaths();
+    h.noteOpenedPaths.mockRejectedValueOnce(new Error("IPC 断了"));
+    store.reportOpenedPaths();
     await Promise.resolve();
     await Promise.resolve();
-    expect(h.syncOpenPaths).toHaveBeenCalledTimes(1);
-    store.syncVisiblePaths();
-    expect(h.syncOpenPaths, "失败过就必须再试一次").toHaveBeenCalledTimes(2);
+    expect(h.noteOpenedPaths).toHaveBeenCalledTimes(1);
+    store.reportOpenedPaths();
+    expect(h.noteOpenedPaths, "失败过就必须再试一次").toHaveBeenCalledTimes(2);
   });
 
   it("回包写进缓存并通知订阅者", async () => {
     const { store } = await fresh();
     const seen: number[] = [];
     store.onRecentsChange((entries) => seen.push(entries.length));
-    h.syncOpenPaths.mockResolvedValue([
-      { path: "C:\\x\\a.md", name: "a.md", closedAt: 1 },
-      { path: "C:\\x\\b.md", name: "b.md", closedAt: 2 },
+    h.noteOpenedPaths.mockResolvedValue([
+      { path: "C:\\x\\a.md", name: "a.md", openedAt: 1 },
+      { path: "C:\\x\\b.md", name: "b.md", openedAt: 2 },
     ]);
-    store.syncVisiblePaths();
+    store.reportOpenedPaths();
     await Promise.resolve();
     await Promise.resolve();
     expect(store.getRecents()).toHaveLength(2);
@@ -159,27 +160,27 @@ describe("B305 可见路径上报", () => {
 
   it("连续两次变化 ⇒ 迟到的旧回包不许盖掉新状态", async () => {
     // 场景：一次连点里连发两报（只有 A 开着 → A、B 都开着）。Rust 那边由 Mutex 串行，
-    // 真值最后是「两个都开着 ⇒ 名单里没有它们」；但**两个 IPC 回包的到达顺序没有保证**，
-    // 旧那一包后到就把名单写回旧样子 —— 用户看到的是「还开着的文件出现在最近打开里」。
+    // 真值最后是「两条都打开过 ⇒ 名单里两条，B 在前」；但**两个 IPC 回包的到达顺序没有保证**，
+    // 旧那一包后到就把名单写回只剩 A 的旧样子 —— 用户看到的是「刚打开的那份没露脸」。
     const { store, state } = await fresh();
     withTabs(state, [inst(1, 100, 0)], [doc(100, "C:\\x\\a.md")]);
     const deferred: Array<(v: unknown[]) => void> = [];
-    h.syncOpenPaths.mockImplementation(
+    h.noteOpenedPaths.mockImplementation(
       () =>
         new Promise((res) => {
           deferred.push(res as (v: unknown[]) => void);
         }),
     );
-    store.syncVisiblePaths();
+    store.reportOpenedPaths();
     withTabs(
       state,
       [inst(1, 100, 0), inst(2, 200, 0)],
       [doc(100, "C:\\x\\a.md"), doc(200, "C:\\x\\b.md")],
     );
-    store.syncVisiblePaths();
+    store.reportOpenedPaths();
     expect(deferred, "两报都该发出去").toHaveLength(2);
-    deferred[1]([{ path: "b.md", name: "b.md", closedAt: 2 }]);
-    deferred[0]([{ path: "a.md", name: "a.md", closedAt: 1 }]);
+    deferred[1]([{ path: "b.md", name: "b.md", openedAt: 2 }]);
+    deferred[0]([{ path: "a.md", name: "a.md", openedAt: 1 }]);
     await Promise.resolve();
     await Promise.resolve();
     expect(
@@ -188,14 +189,14 @@ describe("B305 可见路径上报", () => {
     ).toEqual(["b.md"]);
   });
 
-  it("recents-changed 广播换掉缓存并通知订阅者（别的窗口关的文件要立刻露脸）", async () => {
+  it("recents-changed 广播换掉缓存并通知订阅者（别的窗口打开的文件要立刻露脸）", async () => {
     const { store } = await fresh();
     await store.initRecentsStore();
     const cb = h.listeners.get("recents-changed");
-    expect(cb, "没装上广播监听 ⇒ 子窗口关的文件永远不会出现在主窗口").toBeTypeOf("function");
+    expect(cb, "没装上广播监听 ⇒ 子窗口打开的文件永远不会出现在主窗口").toBeTypeOf("function");
     const seen: number[] = [];
     store.onRecentsChange((entries) => seen.push(entries.length));
-    cb!({ payload: { entries: [{ path: "z.md", name: "z.md", closedAt: 9 }] } });
+    cb!({ payload: { entries: [{ path: "z.md", name: "z.md", openedAt: 9 }] } });
     expect(store.getRecents()).toHaveLength(1);
     expect(store.getRecents()[0].path).toBe("z.md");
     expect(seen).toEqual([1]);
@@ -208,14 +209,14 @@ describe("B305 可见路径上报", () => {
     const off = store.onRecentsChange((entries) => seen.push(entries.length));
     off();
     h.listeners.get("recents-changed")!({
-      payload: { entries: [{ path: "z.md", name: "z.md", closedAt: 9 }] },
+      payload: { entries: [{ path: "z.md", name: "z.md", openedAt: 9 }] },
     });
     expect(seen).toEqual([]);
   });
 
   it("initRecentsStore 拉首帧：名单与上限都从 Rust 取，不用前端默认值顶包", async () => {
     const { store } = await fresh();
-    h.listRecents.mockResolvedValue([{ path: "a.md", name: "a.md", closedAt: 1 }]);
+    h.listRecents.mockResolvedValue([{ path: "a.md", name: "a.md", openedAt: 1 }]);
     h.getRecentLimit.mockResolvedValue(50);
     await store.initRecentsStore();
     expect(store.getRecents()).toHaveLength(1);
@@ -224,7 +225,7 @@ describe("B305 可见路径上报", () => {
 
   it("上限取到之后必须再通知一次 ⇒ 首帧的计数与入口显隐用的是真上限", async () => {
     const { store } = await fresh();
-    h.listRecents.mockResolvedValue([{ path: "a.md", name: "a.md", closedAt: 1 }]);
+    h.listRecents.mockResolvedValue([{ path: "a.md", name: "a.md", openedAt: 1 }]);
     h.getRecentLimit.mockResolvedValue(0);
     const caps: number[] = [];
     store.onRecentsChange(() => caps.push(store.getRecentLimit()));
@@ -236,8 +237,8 @@ describe("B305 可见路径上报", () => {
 
   it("单条清除与清空都按回包更新缓存", async () => {
     const { store } = await fresh();
-    h.syncOpenPaths.mockResolvedValue([{ path: "a.md", name: "a.md", closedAt: 1 }]);
-    store.syncVisiblePaths();
+    h.noteOpenedPaths.mockResolvedValue([{ path: "a.md", name: "a.md", openedAt: 1 }]);
+    store.reportOpenedPaths();
     await Promise.resolve();
     await Promise.resolve();
     expect(store.getRecents()).toHaveLength(1);
@@ -247,7 +248,7 @@ describe("B305 可见路径上报", () => {
     expect(h.forgetRecent).toHaveBeenCalledWith("a.md");
     expect(store.getRecents()).toHaveLength(0);
 
-    h.clearRecents.mockResolvedValue([{ path: "b.md", name: "b.md", closedAt: 2 }]);
+    h.clearRecents.mockResolvedValue([{ path: "b.md", name: "b.md", openedAt: 2 }]);
     await store.clearRecentEntries();
     expect(store.getRecents()).toHaveLength(1);
   });
@@ -262,8 +263,8 @@ describe("B305 可见路径上报", () => {
 
   it("改上限也通知订阅者（面板那格「6/20」带的是上限，不是条数）", async () => {
     const { store } = await fresh();
-    h.syncOpenPaths.mockResolvedValue([{ path: "a.md", name: "a.md", closedAt: 1 }]);
-    store.syncVisiblePaths();
+    h.noteOpenedPaths.mockResolvedValue([{ path: "a.md", name: "a.md", openedAt: 1 }]);
+    store.reportOpenedPaths();
     await Promise.resolve();
     await Promise.resolve();
     const seen: string[] = [];

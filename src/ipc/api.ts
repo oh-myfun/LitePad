@@ -179,12 +179,14 @@ export interface Settings {
  * 这里只是视图读的那份形状。它**不在 `Settings` 里**：那张表没有权威窗口，每个窗口都能
  * 整表覆写（`src/toc.ts` 里三处 `saveSettings`），名单放进去等于「别人一次无关的设置
  * 写入就把名单冲掉」。
- * `closedAt` 是毫秒时间戳，相对时间（「刚才 / 3 分钟前」）由渲染端换算 —— 文案归界面。
+ * `openedAt` 是**最后一次打开**的毫秒时间戳，相对时间（「刚才 / 3 分钟前」）由渲染端换算 ——
+ * 文案归界面。B305 那版这个字段叫 `closedAt`（名单只收关掉的），B308 语义翻成「打开过就在册，
+ * LRU 维护」后改了名；旧盘由 Rust 那侧的 serde alias 认下来，前端不许再读旧键。
  */
 export interface RecentEntry {
   path: string;
   name: string;
-  closedAt: number;
+  openedAt: number;
 }
 
 /** 列名单。Rust 顺手剔掉磁盘上已不存在的条目，所以这里可能比上一次少几条。 */
@@ -193,14 +195,14 @@ export function listRecents(): Promise<RecentEntry[]> {
 }
 
 /**
- * 上报本窗口「此刻屏上看得见哪些文件」。名单的记账全靠这条推导：
- * 一份路径从所有窗口的并集里消失 = 用户把它关掉了。
+ * 上报本窗口「此刻开着哪些文件」。Rust 在那本 per-window 账上算差集，只有**这次新出现**的
+ * 路径才被记进名单（顶到最前，不占第二格）。
  *
  * 回包是**变更后的完整名单**（`forgetRecent` / `clearRecents` 同），视图直接拿它重画，
  * 不必再 `listRecents` 一次 —— 少一次往返就少一次读到中间态的机会。
  */
-export function syncOpenPaths(paths: string[]): Promise<RecentEntry[]> {
-  return invoke<RecentEntry[]>("sync_open_paths", { paths });
+export function noteOpenedPaths(paths: string[]): Promise<RecentEntry[]> {
+  return invoke<RecentEntry[]>("note_opened", { paths });
 }
 
 /** 单条清除（行上那颗 ✕）。 */

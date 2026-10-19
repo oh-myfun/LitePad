@@ -27,7 +27,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 
 import {
   listRecents,
-  syncOpenPaths,
+  noteOpenedPaths,
   forgetRecent,
   clearRecents,
   getRecentLimit,
@@ -47,8 +47,8 @@ describe("B305 前端 IPC 薄包装", () => {
       "list_recents",
     );
 
-    await syncOpenPaths(["a.md", "b.md"]);
-    expect(invokeSpy.mock.calls[1]).toEqual(["sync_open_paths", { paths: ["a.md", "b.md"] }]);
+    await noteOpenedPaths(["a.md", "b.md"]);
+    expect(invokeSpy.mock.calls[1]).toEqual(["note_opened", { paths: ["a.md", "b.md"] }]);
 
     await forgetRecent("a.md");
     expect(invokeSpy.mock.calls[2]).toEqual(["forget_recent", { path: "a.md" }]);
@@ -64,9 +64,9 @@ describe("B305 前端 IPC 薄包装", () => {
   });
 
   it("改过名单的三条命令把 Rust 回包的完整名单原样交给调用方（视图不必再 list 一次）", async () => {
-    const entries = [{ path: "a.md", name: "a.md", closedAt: 17 }];
+    const entries = [{ path: "a.md", name: "a.md", openedAt: 17 }];
     invokeSpy.mockResolvedValue(entries);
-    await expect(syncOpenPaths([])).resolves.toEqual(entries);
+    await expect(noteOpenedPaths([])).resolves.toEqual(entries);
     await expect(forgetRecent("a.md")).resolves.toEqual(entries);
     await expect(clearRecents()).resolves.toEqual(entries);
   });
@@ -82,10 +82,13 @@ describe("B305 前端 IPC 薄包装", () => {
     expect(rust, "Rust 侧没广播这个名字").toContain(`"${EVT_RECENTS_CHANGED}"`);
   });
 
-  it("线上字段是 closedAt（camelCase），Rust 侧靠 rename_all 落同一串", () => {
+  it("线上字段是 openedAt（camelCase），Rust 侧靠 rename_all 落同一串", () => {
     const api = readFileSync("src/ipc/api.ts", "utf-8");
-    expect(api).toContain("closedAt");
+    expect(api).toContain("openedAt");
     const rust = readFileSync("src-tauri/src/session/recent.rs", "utf-8");
     expect(rust).toContain('rename_all = "camelCase"');
+    // B308 之前那份盘写的还是 closedAt。字段改名不迁移，老名单在升级后直接读不回来 ——
+    // 用户视角是「升级把最近打开清空了」。alias 是这条盘上历史的唯一续命线。
+    expect(rust).toContain('alias = "closedAt"');
   });
 });

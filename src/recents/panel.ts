@@ -84,9 +84,9 @@ export function renderRecents(): void {
   if (list.length === 0) {
     const empty = document.createElement("div");
     empty.className = "recent-empty";
-    // 两种空态得分开说：「还没关过」与「不再记录」是两件不同的事，
+    // 两种空态得分开说：「还没打开过」与「不再记录」是两件不同的事，
     // 混成一句，用户把上限调成 0 之后会以为功能坏了。
-    empty.textContent = cap === 0 ? "已停止记录（上限为 0）" : "还没有关掉过的文件";
+    empty.textContent = cap === 0 ? "已停止记录（上限为 0）" : "还没有打开过的文件";
     recentList.append(empty);
     return;
   }
@@ -120,7 +120,7 @@ function rowOf(e: RecentEntry): HTMLElement {
 
   // 完整路径与相对时间挂在悬停浮层上：行里两处都做了截断，看全的地方必须有。
   row.setAttribute("data-tip", e.path);
-  row.setAttribute("data-tip-detail", relativeTime(e.closedAt));
+  row.setAttribute("data-tip-detail", relativeTime(e.openedAt));
   row.append(line, del);
   return row;
 }
@@ -150,14 +150,14 @@ async function clearAll(): Promise<void> {
 }
 
 /**
- * 相对时间。先按**日历天**分档再谈小时：跨了天还说「23 小时前」，用户读作「今天」，
- * 而「昨天」才是他要的那个信息。
+ * 相对时间（读的是「最后一次打开」那一刻）。先按**日历天**分档再谈小时：跨了天还说
+ * 「23 小时前」，用户读作「今天」，而「昨天」才是他要的那个信息。
  * 分档：刚刚（<1 分）/ N 分钟前 / N 小时前（同一天内）/ 昨天 HH:mm / M月D日 HH:mm（同年）/
  * YYYY年M月D日（跨年）。
  */
-export function relativeTime(closedAt: number, now: number = Date.now()): string {
-  const diff = Math.max(0, now - closedAt);
-  const from = new Date(closedAt);
+export function relativeTime(openedAt: number, now: number = Date.now()): string {
+  const diff = Math.max(0, now - openedAt);
+  const from = new Date(openedAt);
   const to = new Date(now);
   const days = dayDiff(from, to);
   if (days >= 1) {

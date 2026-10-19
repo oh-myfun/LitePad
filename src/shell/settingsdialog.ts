@@ -781,7 +781,7 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
     body.appendChild(
       selectRow(
         "最近打开保留数量",
-        "关掉的文档在左栏「最近打开」里留几条（按最后关闭的时间排，重新打开就从名单里划掉）。选 0 = 不再记录、清空现有名单，并收起左栏那颗「最近打开」键。",
+        "打开过的文档在左栏「最近打开」里留几条（正开着的也留在名单里，按最后一次打开的时间排，再打开一次就顶到最前）。选 0 = 不再记录、清空现有名单，并收起左栏那颗「最近打开」键。",
         [
           { label: "不记录（0）", value: "0" },
           { label: "10 条", value: "10" },

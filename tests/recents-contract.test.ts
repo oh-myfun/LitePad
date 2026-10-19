@@ -1,11 +1,12 @@
 // @vitest-environment node
-// B305 跨语言/跨层契约。这些形状一旦漂走，**每一侧的单测都还是绿的**：命令名拼错的 IPC 在
-// Rust 侧只是没被注册、在前端只是没人调；窗口销毁那条链只有真机跑得动，本地无从验。
+// B305/B308 跨语言/跨层契约。这些形状一旦漂走，**每一侧的单测都还是绿的**：命令名拼错的 IPC 在
+// Rust 侧只是没被注册、在前端只是没人调；「谁负责算差集」这种职责错位本地也只能靠串字钉住。
 // 所以这里钉的是「两侧必须同时存在同一串字」，不是行为（行为在 recent.rs 的 #[cfg(test)] 里）。
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 
 const rustMain = readFileSync("src-tauri/src/main.rs", "utf-8");
+const recentsRs = readFileSync("src-tauri/src/commands/recents.rs", "utf-8");
 
 /** 取 `start` 到 `end` 之间的那一段（找不到就抛，别让断言对着空串自娱自乐）。 */
 function between(src: string, start: string, end: string): string {
@@ -16,11 +17,11 @@ function between(src: string, start: string, end: string): string {
   return src.slice(a, b);
 }
 
-describe("B305 · Rust 命令注册与窗口销毁接线", () => {
+describe("B305/B308 · Rust 命令注册与窗口销毁那条链", () => {
   it("六条 recents 命令都在 invoke_handler 注册表里", () => {
     const handler = between(rustMain, "generate_handler![", "])");
     for (const n of [
-      "sync_open_paths",
+      "note_opened",
       "list_recents",
       "forget_recent",
       "clear_recents",
@@ -33,59 +34,62 @@ describe("B305 · Rust 命令注册与窗口销毁接线", () => {
     }
   });
 
-  it("主窗口销毁立退出旗标，卫星销毁清自己那条账（Review Focus #3）", () => {
+  it("窗口销毁那条链不再碰名单（B308：记的是「出现」，关窗不产生任何记入事件）", () => {
     const winEvent = between(rustMain, ".on_window_event(|win, event| {", ".setup(|app| {");
-    const mainBranch = between(
+    expect(
       winEvent,
-      "win.label() == windows::MAIN_LABEL",
-      "let app = win.app_handle();",
-    );
-    expect(
-      mainBranch,
-      "关主窗口 = 退出：必须先立退出旗标，否则各窗口销毁时会把用户正在用的文件全记成「刚关掉」",
-    ).toContain("mark_quitting");
-    const satBranch = winEvent.slice(winEvent.indexOf("reg.forget_pending(win.label())"));
-    expect(
-      satBranch,
-      "子窗口销毁必须收口到最近打开那条链（「文档只在子窗口并关掉」全靠它）",
-    ).toContain("on_window_destroyed");
+      "名单一挂回窗口销毁，正常关主窗口就会把用户正在用的文件全记成「刚关掉」——那正是 B308 删掉的旧语义",
+    ).not.toContain("recents::");
+    // 那条链本身还在，只是它服务的是卫星标签接还，不是最近打开。
+    expect(winEvent).toContain("forget_pending");
     expect(
       winEvent,
       "窗口事件可能早于 manage：拿共享状态只许 try_state，unwrap 会把进程 panic 在关窗那一刻",
     ).not.toContain("unwrap_state");
-  });
-
-  it("退出兜底：RunEvent 里也立旗标（updater relaunch 与强杀都够不到前端那条链）", () => {
     const run = rustMain.slice(rustMain.indexOf(".run(|"));
-    expect(run).toContain("ExitRequested");
-    expect(run).toContain("mark_quitting");
+    expect(run, "退出兜底只剩日志压尾（RunEvent::Exit）").toContain("RunEvent::Exit");
+    expect(
+      run,
+      "「退出中就不记」那面旗整套删了：再立一次就是把「打开过就在册」改回「退出前不算」",
+    ).not.toContain("ExitRequested");
   });
 
-  it("卫星收口里剪枝排在记录之前（先记后剪会让名单闪一条又没了）", () => {
-    const rs = readFileSync("src-tauri/src/commands/recents.rs", "utf-8");
-    const body = rs.slice(rs.indexOf("pub fn on_window_destroyed"));
-    expect(body, "窗口没了必须清掉它那一份可见账").toContain("drop_window");
-    expect(body.indexOf("prune_open"), "剪枝必须早于记录").toBeLessThan(
-      body.indexOf("record_closed"),
+  it("AppState 只剩两份名单账：recents + open_sets（旗标字段已随旧语义删掉）", () => {
+    const mod = readFileSync("src-tauri/src/commands/mod.rs", "utf-8");
+    const body = between(mod, "pub struct AppState {", "\n}");
+    expect(body).toContain("recents: Mutex<Recents>");
+    expect(body, "差集要在每扇窗口的上一份账上算，这本没了就等于「每次都当全新增」").toContain(
+      "open_sets: Mutex<OpenSets>",
     );
-    const sync = rs.slice(rs.indexOf("pub fn sync_open_paths"));
-    expect(sync.indexOf("prune_open")).toBeLessThan(sync.indexOf("record_closed"));
-    expect(rs).toContain('"recents-changed"');
+    expect(body, "退出旗标字段还留着 = 有人以为它有用").not.toMatch(/quitting|AtomicBool/);
+  });
+
+  it("note_opened 的次序：先在 per-window 账上算新出现，再走 LRU 记入", () => {
+    const body = between(recentsRs, "pub fn note_opened(", "/// 列名单");
+    expect(body, "那本 per-window 账没了 ⇒ 每次都把整份集合当新增重记").toContain("open_sets");
+    expect(
+      body.indexOf("update"),
+      "差集没算就记入 ⇒ LRU 顺序变成「上报顺序」而不是打开顺序，正开着的文件每刷一次被顶到最前",
+    ).toBeLessThan(body.indexOf("touch_opened"));
+    expect(body, "没有新增时要早退，不写盘不广播（refreshAll 一轮能触发几十次）").toContain(
+      "opened.is_empty()",
+    );
+    expect(recentsRs).toContain('"recents-changed"');
   });
 });
 
-describe("B305 · 可见路径上报只挂一处", () => {
+describe("B305/B308 · 开着的集合上报只挂一处", () => {
   const ui = readFileSync("src/ui.ts", "utf-8");
   const body = between(ui, "function broadcastDocPresence(): void {", "\nfunction refreshAll(");
 
-  it("上报并入 broadcastDocPresence —— 它已经是「可见集合变了」的唯一广播点", () => {
-    expect(body).toContain("syncVisiblePaths()");
+  it("上报并入 broadcastDocPresence —— 它已经是「开着的集合变了」的唯一广播点", () => {
+    expect(body).toContain("reportOpenedPaths()");
   });
 
   it("打开/关闭流程里不许再各写一遍上报（两处上报 = 两个基准 = 迟早互相覆盖）", () => {
-    expect(readFileSync("src/io/files.ts", "utf-8")).not.toContain("syncOpenPaths");
-    expect(readFileSync("src/tabs/lifecycle.ts", "utf-8")).not.toContain("syncOpenPaths");
-    expect(readFileSync("src/multiwindow/windows.ts", "utf-8")).not.toContain("syncOpenPaths");
+    expect(readFileSync("src/io/files.ts", "utf-8")).not.toContain("noteOpenedPaths");
+    expect(readFileSync("src/tabs/lifecycle.ts", "utf-8")).not.toContain("noteOpenedPaths");
+    expect(readFileSync("src/multiwindow/windows.ts", "utf-8")).not.toContain("noteOpenedPaths");
   });
 });
 

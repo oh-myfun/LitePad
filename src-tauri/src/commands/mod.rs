@@ -9,7 +9,6 @@ pub mod recents;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
@@ -33,15 +32,14 @@ pub static BOOT: OnceLock<Instant> = OnceLock::new();
 /// 前端一律按 id 寻址，不使用索引。
 /// `watcher` 是全局文件监听器（M2：外部修改提示）。
 ///
-/// B305 三件（最近打开）：
+/// B305 两件（最近打开），B308 起语义是「打开过就在册，LRU 维护」：
 ///   · `recents`  —— 名单本体，Rust 单点持有并写 `recents.json`（`settings.json` 没有
 ///     权威窗口，每个窗口都能整表覆写它，把名单放进去等于「别人一次无关的设置写入
 ///     就把名单冲掉」）；
-///   · `open_sets` —— 每扇窗口「此刻看得见哪些路径」的账。**「文件被关掉了」是从这张
-///     账的并集里消失推导出来的**，不是某个关闭动作的属性（见 `session/recent.rs` 头部）；
-///   · `quitting` —— 主窗口已销毁 = 应用正在退出，此后一律「只剪不记」。不立这面旗，
-///     正常关主窗口会先销毁各窗口，每条可见账清空时都把用户**正在用**的文件记成
-///     「刚关掉」—— 与「退出时仍开着的不算」正相反。
+///   · `open_sets` —— 每扇窗口「上一次报过哪些开着的标签」。它现在只为算**新出现**的
+///     路径服务（差集在这一本账上算），不再用来推导「谁关掉了什么」。
+///     旧版的第三件 `quitting`（退出中就不记）随「消失即关闭」那套推导一起删了：
+///     记出现的地方，关窗本来就不产生事件。
 #[derive(Default)]
 pub struct AppState {
     pub docs: Mutex<Vec<doc::Doc>>,
@@ -49,7 +47,6 @@ pub struct AppState {
     pub watcher: Mutex<Option<RecommendedWatcher>>,
     pub recents: Mutex<Recents>,
     pub open_sets: Mutex<OpenSets>,
-    pub quitting: AtomicBool,
 }
 
 fn alloc_id(state: &AppState) -> Result<u64, String> {

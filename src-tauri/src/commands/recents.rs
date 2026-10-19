@@ -1,21 +1,20 @@
 //! B305 · 最近打开的 IPC 层：名单的唯一写点。
 //!
-//! ⚠️ 名单**只有这一处会改**（`note` 与 `on_window_destroyed` 两个口子），改完一律走
-//! `publish`：落盘 + 广播 + 回传当前条目三件事同处。窗口身份取 `window.label()`
-//! （Rust 侧自证），不接受前端传来的 `from` —— 前端那个字段是自证的，本模块不需要它。
+//! ⚠️ 名单**只有这一处会改**（`note` 这一个口子），改完一律走 `publish`：落盘 + 广播 +
+//! 回传当前条目三件事同处。窗口身份取 `window.label()`（Rust 侧自证），不接受前端传来的
+//! `from` —— 前端那个字段是自证的，本模块不需要它。
 //!
-//! 为什么记账的输入是「各窗口的可见路径集合」而不是「谁关了标签」：见
-//! `session::recent` 模块头部。落到 IPC 上的效果是 —— 子窗口关标签、关整个子窗口、
-//! 标签拖出去又关掉，一条都不用各写一遍。
+//! B308：语义是「**打开过就在册，以 LRU 维护**」（用户口径，覆盖了旧版「只放已关掉的」）。
+//! 记账的输入因此是「这一扇窗口刚出现了哪些路径」——差集在 `OpenSets` 上算，各窗口各记各的。
+//! 于是名单里可以同时躺着正开着的文件，重新打开只是把它顶到最前，而不是把它划掉。
 
-use std::sync::atomic::Ordering;
 use std::sync::{Mutex, MutexGuard};
 
 use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::AppState;
 use crate::core::logging::{self, Level};
-use crate::session::recent::{self, key_of, prune_open, record_closed, RecentEntry, Recents};
+use crate::session::recent::{self, key_of, touch_opened, RecentEntry, Recents};
 
 /// 广播名。**必须与前端 `src/core/events.ts` 的 `EVT_RECENTS_CHANGED` 一字不差** ——
 /// 事件名跨语言拼错不会有任何报错，只会表现为「名单不刷新」（`tests/recents-ipc.test.ts` 钉这条）。
@@ -84,53 +83,37 @@ fn note(
     }
 }
 
-/// 本窗口「此刻屏上看得见哪些文件」。可见实例的路径集合变了才调（前端那侧有 diff，
-/// 见 `src/recents/store.ts`），没变它自己会早退。
+/// 本窗口「此刻开着哪些文件」。整份送来，差集在这边算（前端那侧只有一道闸：集合没变
+/// 直接早退，见 `src/recents/store.ts` —— 它手上没有 per-window 的上一份账，算不出差集）。
 ///
-/// ⚠️ 顺序必须是**先剪后记**：剪枝对着的是刚并进来的完整并集，若先记再剪，同一轮里
-/// 「这个窗口刚关掉、另一个窗口报上来它其实还开着」的那条会先被记上、再被剪掉 ——
-/// 名单会闪一条又没了。
+/// ⚠️ 记的是「出现」而不是「消失」：名单里留着正开着的文件是新语义的本意，
+/// 所以这里既不需要并集，也不需要「退出中」那面旗（旧版要靠它挡住「关窗时把正在用的
+/// 文件记成刚关掉」——那个场景根本不存在了）。
 #[tauri::command]
-pub fn sync_open_paths(
+pub fn note_opened(
     window: tauri::Window,
     app: AppHandle,
     state: State<'_, AppState>,
     paths: Vec<String>,
 ) -> Vec<RecentEntry> {
     let label = window.label().to_string();
-    let (vanished, open_keys) = {
-        let mut o = lock(&state.open_sets);
-        let vanished = o.update(&label, &paths);
-        (vanished, o.union_keys())
-    };
-    let quitting = state.quitting.load(Ordering::SeqCst);
+    let opened = lock(&state.open_sets).update(&label, &paths);
     let now = now_ms();
-    if vanished.is_empty() {
+    if opened.is_empty() {
         logging::log(
             Level::Debug,
             "recents",
-            &format!("同步 {label} 可见={} 无消失项", paths.len()),
+            &format!("同步 {label} 可见={} 无新打开项", paths.len()),
         );
-    } else {
-        logging::log(
-            Level::Info,
-            "recents",
-            &format!(
-                "同步 {label} 可见={} 消失={} 退出中={}",
-                paths.len(),
-                vanished.len(),
-                quitting
-            ),
-        );
+        return entries_of(state.inner());
     }
-    note(&app, &state, "剪除+记录", |r| {
-        let pruned = prune_open(r, &open_keys);
-        let recorded = if quitting {
-            false
-        } else {
-            record_closed(r, &vanished, now)
-        };
-        pruned || recorded
+    logging::log(
+        Level::Info,
+        "recents",
+        &format!("同步 {label} 可见={} 新打开={}", paths.len(), opened.len()),
+    );
+    note(&app, &state, "记录打开", |r| {
+        touch_opened(r, &opened, now)
     })
 }
 
@@ -189,42 +172,8 @@ pub fn set_recent_limit(
     lock(&state.recents).limit
 }
 
-/// 主窗口没了 = 应用正在退出：立旗标，此后一律「只剪不记」。
-///
-/// 口径来自用户那句「（退出时还开着的）不算」——不立这面旗，正常关主窗口会先销毁各窗口，
-/// 每条可见账清空时都把用户**正在用**的文件记成「刚关掉」。
-pub fn mark_quitting(state: &AppState) {
-    state.quitting.store(true, Ordering::SeqCst);
-}
-
-/// 某扇窗口销毁：清掉它那份可见账，并把它独有的路径记进名单。
-///
-/// 与 `sync_open_paths` 同一口径（先剪后记、退出中不记）。卫星窗口关窗即真关（B188），
-/// 这条就是「文档只在子窗口并被关掉 ⇒ 主窗口的名单立刻刷新」的落点。
-pub fn on_window_destroyed(app: &AppHandle, state: &AppState, label: &str) {
-    let (vanished, open_keys) = {
-        let mut o = lock(&state.open_sets);
-        let vanished = o.drop_window(label);
-        (vanished, o.union_keys())
-    };
-    let quitting = state.quitting.load(Ordering::SeqCst);
-    let now = now_ms();
-    logging::log(
-        Level::Info,
-        "recents",
-        &format!(
-            "窗口没了 {label} 消失={} 退出中={}",
-            vanished.len(),
-            quitting
-        ),
-    );
-    note(app, state, "窗口销毁", |r| {
-        let pruned = prune_open(r, &open_keys);
-        let recorded = if quitting {
-            false
-        } else {
-            record_closed(r, &vanished, now)
-        };
-        pruned || recorded
-    });
-}
+// B305 那版在这里有两个函数：`mark_quitting`（立「退出中」旗）与 `on_window_destroyed`
+// （窗口销毁时清那本可见账并把独有路径记进名单）。它们存在的唯一理由是把「从可见集合里
+// 消失」认成「刚关掉」——不立那面旗，正常关主窗口会先把各窗口销毁，把用户**正在用**的文件
+// 全记成刚关掉。B308 起记的是「出现」，关窗不产生任何事件，两个函数与 `WindowEvent::Destroyed`
+// 那个钩子一起删掉：少一处「窗口生命周期里偷偷改名单」的地方。
