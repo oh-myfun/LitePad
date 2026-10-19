@@ -217,6 +217,9 @@ import {
   setSyncingDocId,
 } from "./core/app-state";
 import { EVT_APP_QUIT, EVT_DOC_OPEN_RESYNC, EVT_WINDOW_CLOSED } from "./core/events";
+// B305：最近打开（store = 与 Rust 之间的那份缓存，panel = 左栏那块展开区）。
+import { setupRecentsPanel } from "./recents/panel";
+import { initRecentsStore } from "./recents/store";
 import type { WindowScrollPosition } from "./core/events";
 import { activePanel, activeTab, instancesOfDoc } from "./core/panels";
 import {
@@ -1138,6 +1141,20 @@ async function bootstrap(): Promise<void> {
     // B144：以前是空的。取队列失败不影响主流程，但「双击 .md 没反应」这类
     // 报告靠它是唯一线索（Rust 侧已经把入队记下来了）。
     logger.warn("pending", `take failed: ${String(e)}`);
+  }
+
+  // B305：最近打开。位置排在会话恢复**之后**：恢复会开一批标签，而「这份文件还开着吗」
+  // 全靠各窗口并报的可见集合来剪名单 —— 先取名单再恢复，中间那一瞬会把用户刚打开的
+  // 文件显示在「最近关闭」里。
+  // ⚠️ **不 await**：面板是订阅式的，数据到了自然重画，启动链不必为一次 IPC 多等一拍。
+  //    等这一拍会挪动启动期那几次会话落盘的相对次序（`tests/satellite-restore.test.ts`
+  //    的落盘回环就是这么被顶偏的）—— 旁路功能不该改主干的时序。
+  // 只给主窗口装：子窗口连左边栏都被 CSS 收掉了（Review Focus #5），装上去只有
+  // 一份看不见的缓存和一条没人画的名单在跑；它该做的记账走 `refreshAll` →
+  // `broadcastDocPresence` → `syncVisiblePaths` 那条，与本装配无关。
+  if (windowKind === "main") {
+    void initRecentsStore();
+    setupRecentsPanel();
   }
 
   // 备份区孤儿清理：副本文件本身不含「属于哪个标签」的索引，认领全靠会话，

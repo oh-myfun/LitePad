@@ -69,6 +69,8 @@ import { showPopupMenu, type MenuItem } from "./shell/menu";
 import { PREVIEW_WIDTH_LABELS, showSettingsDialog } from "./shell/settingsdialog";
 import { refreshAll, sbEncoding, sbEol, showMessage } from "./ui";
 import { level as currentLogLevel, logger, setLevelPersisted } from "./core/logger";
+// B305：最近打开的上限。与日志级别同一类 —— 值不在 `settings` 对象里，由 Rust 单点持有。
+import { applyRecentLimit, getRecentLimit } from "./recents/store";
 import { ask } from "@tauri-apps/plugin-dialog";
 
 // ---------------------------------------------------------------- 编码转换（B215）
@@ -683,6 +685,12 @@ async function openSettingsDialog(): Promise<void> {
       preset: getKeymapPreset().id,
       onPresetChange: (id) => void applyKeymapPreset(id),
     },
+    // B305：最近打开保留数量。**读的是 `recents/store` 的那份缓存，不是 `settings`** ——
+    // 名单与上限由 Rust 单点持有（`recents.json`）：`settings.json` 没有权威窗口，每扇窗口
+    // 都能整表覆写它，把名单放进去迟早被一次无关的设置写入冲掉（B304 那一族「两套口径」）。
+    // 改完由 store 通知面板自己重画，这里不再伸手去渲染面板（第二个写点迟早与真值错开）。
+    recentLimit: () => getRecentLimit(),
+    onRecentLimit: (v) => void applyRecentLimit(v),
   });
 }
 

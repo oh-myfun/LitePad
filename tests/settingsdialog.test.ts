@@ -58,6 +58,10 @@ function makeOpts(): SettingsDialogOptions {
     logLevel: () => "info",
     onLogLevel: noop,
     onOpenLog: noop,
+    // B305：最近打开保留数量 —— 与日志级别同款：**不读 settings**，值由 Rust 持有
+    //（名单存 recents.json，那张表没有权威窗口，见 src-tauri/src/session/recent.rs 头部）。
+    recentLimit: () => 20,
+    onRecentLimit: noop,
     keymap: {
       overrides: {} as KeymapOverrides,
       onChange: noop,
@@ -943,5 +947,58 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
     expect(block, "缺少 .settings-group-title 规则块").not.toBe("");
     expect(block, "分组标题应更小一号").toContain("font-size: 12px");
     expect(block, "分组标题下沿应有分隔线").toContain("border-bottom: 1px solid var(--border)");
+  });
+});
+
+describe("B305 通用页：最近打开保留数量", () => {
+  /** 行整块（要读它的说明文字）。 */
+  function rowItem(label: string): HTMLElement {
+    const item = [...document.querySelectorAll(".settings-item")].find(
+      (r) => r.querySelector(".settings-item-label")?.textContent === label,
+    );
+    expect(item, `行「${label}」应存在`).toBeTruthy();
+    return item as HTMLElement;
+  }
+
+  it("五档齐全（0/10/20/50/100），当前值取 getter", () => {
+    showSettingsDialog(makeOpts());
+    expect(rowValue("最近打开保留数量")).toBe("20");
+    expect(rowValues("最近打开保留数量")).toEqual(["0", "10", "20", "50", "100"]);
+  });
+
+  it("改档位 ⇒ 交出的是数字，不是字符串（0 档要能被认成「不记录」而不是「无」）", () => {
+    const opts = makeOpts();
+    const picked: number[] = [];
+    opts.onRecentLimit = (v) => picked.push(v);
+    showSettingsDialog(opts);
+    pickRow("最近打开保留数量", "50");
+    pickRow("最近打开保留数量", "0");
+    expect(picked).toEqual([50, 0]);
+  });
+
+  it("说明里必须写清 0 档语义，否则用户只能靠试", () => {
+    showSettingsDialog(makeOpts());
+    const desc =
+      rowItem("最近打开保留数量").querySelector(".settings-item-desc")?.textContent ?? "";
+    expect(desc).toContain("0");
+    expect(desc, "0 档不解释就等于一个吞掉名单的开关").toContain("不再记录");
+  });
+
+  it("静态：档位候选不许悄悄少一档（上限与名单是同一份文件里的两个字段）", () => {
+    const src = readFileSync("src/shell/settingsdialog.ts", "utf-8");
+    const block = src.slice(
+      src.indexOf('"最近打开保留数量"'),
+      src.indexOf('"最近打开保留数量"') + 900,
+    );
+    for (const n of ["0", "10", "20", "50", "100"]) {
+      expect(block, `档位缺 ${n}`).toContain(`value: "${n}"`);
+    }
+  });
+
+  it("静态：搜索关键词补了「最近打开」，否则按名字搜不到这一项", () => {
+    const src = readFileSync("src/shell/settingsdialog.ts", "utf-8");
+    const general = src.slice(src.indexOf('id: "general"'), src.indexOf('id: "appearance"'));
+    expect(general).toContain('"最近打开"');
+    expect(general).toContain('"上限"');
   });
 });

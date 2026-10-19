@@ -157,6 +157,10 @@ export async function clearRecentEntries(): Promise<void> {
  * 改「保存数量上限」。回包是**生效后的**上限（别的窗口可能刚写过），本地一律以它为准，
  * 失败也不回滚界面 —— 与 `setLevelPersisted` 同口径：内存里已经切了，重启回落旧值是可
  * 接受的降级，把设置页卡住不是。
+ *
+ * ⚠️ 改完也要 `notify()`：面板标题栏那格「6/20」带的是上限，不是条数。只等条目变化的话，
+ *    裁掉的条目会从名单里消失、而计数还写着旧上限（Rust 那边裁与广播是一起的，本地这一路
+ *    要是漏了通知，就要等下一次广播才 correction —— 中间那一段就是用户眼里的「没反应」）。
  */
 export async function applyRecentLimit(next: number): Promise<number> {
   try {
@@ -164,5 +168,6 @@ export async function applyRecentLimit(next: number): Promise<number> {
   } catch (e: unknown) {
     logger.warn("recents", `上限没落盘（本次仍生效）：${String(e)}`);
   }
+  notify();
   return limit;
 }

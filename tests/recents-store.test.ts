@@ -212,4 +212,19 @@ describe("B305 可见路径上报", () => {
     expect(h.setRecentLimit).toHaveBeenCalledWith(999);
     expect(store.getRecentLimit()).toBe(10);
   });
+
+  it("改上限也通知订阅者（面板那格「6/20」带的是上限，不是条数）", async () => {
+    const { store } = await fresh();
+    h.syncOpenPaths.mockResolvedValue([{ path: "a.md", name: "a.md", closedAt: 1 }]);
+    store.syncVisiblePaths();
+    await Promise.resolve();
+    await Promise.resolve();
+    const seen: string[] = [];
+    store.onRecentsChange((list) => seen.push(`${list.length}/${store.getRecentLimit()}`));
+    h.setRecentLimit.mockResolvedValue(2);
+    await store.applyRecentLimit(2);
+    expect(seen, "只等条目变化的话，计数会停在旧上限那一段 ⇒ 用户读作「改了没反应」").toEqual([
+      "1/2",
+    ]);
+  });
 });

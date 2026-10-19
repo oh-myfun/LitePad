@@ -94,6 +94,15 @@ export interface SettingsDialogOptions {
    * `%APPDATA%` 里摸路径 —— 何况配置目录还能被 `LITEPAD_CONFIG_DIR` 搬走。
    */
   onOpenLog: () => void;
+  /**
+   * B305：最近打开保留数量（0 = 不再记录并清空现有名单）。
+   *
+   * 与 `logLevel` 同款：**不在前端 `settings` 对象里**。名单与它的上限由 Rust 单点持有
+   *（`recents.json`）—— `settings.json` 没有权威窗口，每扇窗口都能整表覆写，放进去迟早
+   * 被一次无关的设置写入冲掉。所以这一对 getter/setter 直连 `recents/store`。
+   */
+  recentLimit: () => number;
+  onRecentLimit: (limit: number) => void;
 }
 
 /** 「本机没装」候选的标注后缀（选了会静默回落到内置等宽栈，看着像没反应）。 */
@@ -295,7 +304,22 @@ const CATEGORIES: Category[] = [
   {
     id: "general",
     label: "通用",
-    keywords: ["通用", "首选项", "自动保存", "热退出", "保存", "备份", "autosave", "hot exit"],
+    keywords: [
+      "通用",
+      "首选项",
+      "自动保存",
+      "热退出",
+      "保存",
+      "备份",
+      "autosave",
+      "hot exit",
+      // B305：顶部搜索是按关键词过滤分类的，不补这几个 ⇒ 搜「最近打开」一个分类都命中不了。
+      "最近打开",
+      "最近文件",
+      "名单",
+      "上限",
+      "历史",
+    ],
   },
   {
     id: "appearance",
@@ -747,6 +771,25 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
         "关窗时把未保存内容写进独立副本（原文件不动），下次启动还原成未保存标签，且关窗不再询问。",
         opts.hotExit(),
         (v) => opts.onHotExit(v),
+      ),
+    );
+    // B305：最近打开保留数量。`0` 是**有语义的一档**（不再记录 + 清空），不是一个空值 ——
+    // 所以它必须出现在说明里，否则用户只能靠试才知道「选了 0，名单就没了」。
+    // 档位就地列出来、不抽常量：这一档候选只有这一处用，抽出去反而让「行与它的档位」
+    // 分在两处，改档位时说明文字容易跟着漏。
+    body.appendChild(
+      selectRow(
+        "最近打开保留数量",
+        "关掉的文档在左栏「最近打开」里留几条（按最后关闭的时间排，重新打开就从名单里划掉）。选 0 = 不再记录，并清空现有名单。",
+        [
+          { label: "不记录（0）", value: "0" },
+          { label: "10 条", value: "10" },
+          { label: "20 条（默认）", value: "20" },
+          { label: "50 条", value: "50" },
+          { label: "100 条", value: "100" },
+        ],
+        String(opts.recentLimit()),
+        (v) => opts.onRecentLimit(Number(v)),
       ),
     );
     // B288：日志级别 —— 排查问题时临时开 debug / trace 复现，**即时生效、不用换包重启**。
