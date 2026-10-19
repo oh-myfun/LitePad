@@ -148,3 +148,20 @@ echo
 echo "构建完成，产物（profile=$LITEPAD_PROFILE）："
 ls -lh "src-tauri/target/$LITEPAD_PROFILE/litepad.exe"
 ls -lh "src-tauri/target/$LITEPAD_PROFILE/bundle/nsis/"*.exe
+
+# ---------------------------------------------------------------- 版本号自动推进
+# 口径（用户 2026-10-18）：每次修改**自动 +patch**，不需要征询；minor/major 才要先问用户。
+# 挂在交付入口而不是 pre-commit 钩子里，是因为本仓库常用 `git commit <paths>`（路径限定提交
+# 会绕过索引），钩子里 `git add` 的版本号会被那次提交**静默丢掉**、还要把别人的在飞文件一起提交。
+if [ -n "${CI:-}" ]; then
+  echo "· CI 环境：不动版本号（版本号由本地交付流程推进）"
+elif git diff-tree --no-commit-id --name-only -r HEAD | grep -qE '^src/|^src-tauri/src/'; then
+  if git diff-tree --no-commit-id --name-only -r HEAD | grep -q '^package.json$'; then
+    echo "· 本次提交已自带版本号改动 ⇒ 不再自动 +patch"
+  else
+    BNO="$(git log -1 --format=%s | grep -oE 'B[0-9]+' | head -1)"
+    bash scripts/bump-version.sh patch --commit ${BNO:+--note "随 $BNO"}
+  fi
+else
+  echo "· 本次提交未碰产品代码（docs/test/scripts/记忆）⇒ 不推 patch"
+fi

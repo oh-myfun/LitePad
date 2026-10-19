@@ -30,47 +30,19 @@ fi
 
 CUR=$(node -p "require('./package.json').version")
 
-if [[ "$VER_ARG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  VER="$VER_ARG"
-elif [[ "$VER_ARG" =~ ^(patch|minor|major)$ ]]; then
-  IFS=. read -r MA MI PA <<< "$CUR"
-  case "$VER_ARG" in
-    major) MA=$((MA + 1)); MI=0; PA=0 ;;
-    minor) MI=$((MI + 1)); PA=0 ;;
-    patch) PA=$((PA + 1)) ;;
-  esac
-  VER="$MA.$MI.$PA"
-else
-  echo "✗ 无效版本参数：$VER_ARG（应为 x.y.z 或 patch/minor/major）"
-  exit 1
-fi
-
-if git rev-parse -q --verify "refs/tags/v$VER" >/dev/null; then
-  echo "✗ tag v$VER 已存在"
+# ---- 1) 版本号四处同步 ----
+# 唯一实现在 scripts/bump-version.sh（档位计算、目标 tag 冲突校验、Cargo.lock 同步都在那里）。
+# 这里**不再重复写一遍**：两处各写一份 = 以后加一处漏一处（本项目已有同类教训）。
+bash scripts/bump-version.sh "$VER_ARG" || { echo "✗ 版本号同步失败（档位非法 / 目标 tag 已存在 / 文件格式变了）" >&2; exit 1; }
+VER="$(node -p "require('./package.json').version")"
+if [ "$VER" = "$CUR" ]; then
+  echo "✗ 版本号没有变化（仍是 v$CUR），没什么可发布的" >&2
   exit 1
 fi
 
 echo "═══════════════════════════════════════"
 echo " LitePad release：v$CUR → v$VER"
 echo "═══════════════════════════════════════"
-
-# ---- 1) 版本三处同步 ----
-node -e "
-  const fs = require('fs');
-  const edit = (f, re, rep) => {
-    const t = fs.readFileSync(f, 'utf-8');
-    if (!re.test(t)) { console.error('✗ ' + f + ' 中找不到版本号'); process.exit(1); }
-    fs.writeFileSync(f, t.replace(re, rep));
-  };
-  edit('package.json', /(\"version\":\s*\")[^\"]+(\")/, '\$1$VER\$2');
-  edit('src-tauri/tauri.conf.json', /(\"version\":\s*\")[^\"]+(\")/, '\$1$VER\$2');
-  edit('src-tauri/Cargo.toml', /^(version\s*=\s*\")[^\"]+(\")/m, '\$1$VER\$2');
-"
-# ⚠️ 与 build-all.sh:35 同款自举：本脚本自己也会直接调 cargo（同步 Cargo.lock），
-# 而 cargo 未必在会话 PATH 里 —— 少了这一行会 "cargo: command not found" 后静默失败。
-command -v cargo >/dev/null 2>&1 || export PATH="$HOME/.cargo/bin:$PATH"
-(cd src-tauri && cargo update -p litepad -q)   # 同步 Cargo.lock
-echo "✓ 版本号已同步到 v$VER（package.json / tauri.conf.json / Cargo.toml / Cargo.lock）"
 
 # ---- 1.5) 更新日志：从 Conventional Commit 自动生成本版小节（随后进同一个 release 提交）----
 bash scripts/gen-changelog.sh "$(git describe --tags --abbrev=0 2>/dev/null)" "$VER"

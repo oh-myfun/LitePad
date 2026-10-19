@@ -72,9 +72,9 @@ for t in grep sed head bash; do
   }
 done
 
-echo "▸ 版本号守卫（feat 未 bump / 有效提交超阈值即阻断，口径见 docs/conventions.md）"
+echo "▸ 版本号守卫（每次修改必须有 patch；feat/破坏性变更须先征询用户才放行，口径见 docs/conventions.md）"
 bash scripts/check-version-bump.sh || {
-  echo "✗ pre-push 失败：版本号未按规则 bump" >&2
+  echo "✗ pre-push 失败：版本号未按口径处理（patch 没随修改推进，或该问用户的 minor/major 没问）" >&2
   exit 1
 }
 

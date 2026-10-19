@@ -18,32 +18,38 @@
   然后 `git push origin main --follow-tags`。`--ci` 跳过本地全量（tauri build 冷启约 38 分钟）；
   但即使用 `--ci`，随后的推送仍会被 pre-push 拦着本地构建一遍，所以 exe 不会是旧的。
 
-### 版本号何时该动（SemVer + Conventional Commit）
+### 版本维护规则（用户 2026-10-18 定）
 
-发布工具不缺（release.sh 已能四处同步 + 打 tag + CI 出包），缺的是**触发**。口径：
+| 改动性质                                        | 谁决定   | 动作                                                      |
+| ----------------------------------------------- | -------- | --------------------------------------------------------- |
+| 每次修改（碰产品代码 `src/`、`src-tauri/src/`） | **自动** | 交付时自动 `+patch`，不必征询                             |
+| 较大改动（`feat`）                              | **用户** | 先问「是否推进 minor」，同意才 `scripts/release.sh minor` |
+| 非兼容的大型改动（`!` / `BREAKING CHANGE`）     | **用户** | 先问「是否推进 major」，同意才 `scripts/release.sh major` |
 
-| 提交类型                                                | 版本位                       |
-| ------------------------------------------------------- | ---------------------------- |
-| `feat`（含 `feat!`）                                    | MINOR                        |
-| `fix` / `perf`                                          | PATCH                        |
-| 破坏性变更（`!` / `BREAKING CHANGE`）                   | 1.0.0 前记 MINOR，之后 MAJOR |
-| `docs` / `test` / `chore` / `style` / `ci` / `refactor` | 不单独触发，只计入累积       |
+要点：
 
-触发时机（满足任一即 bump）：
+- **判档权在人，不在工具**。旧的「`feat` 自动算 minor」「有效提交满 10 自动算 patch」
+  **已废弃** —— 那等于工具替用户拍板。现在工具只做两件事：把该自动加的 patch 加上，
+  以及在**该问却没问**的时候拦住推送。
+- 旧的「同一 bug 反复修复只算一个 patch 额度」（按 `B\d+` 去重）也**已被取代**：
+  现在每次碰产品代码的交付都 +patch，不做去重。
+- 「每次修改」指碰**产品代码**的改动。纯 `docs/` / `tests/` / `scripts/` / 内部记忆提交不推 patch
+  —— 版本号是软件版本，不是提交计数器。
+- patch 由**交付入口**自动推进：`bash scripts/build-all.sh` 末尾调用
+  `scripts/bump-version.sh patch --commit`，把版本号单独提交成一条 `chore(version): …`。
+  之所以挂在交付入口而不是 pre-commit 钩子：本仓库常用 `git commit <paths>`，**路径限定提交会绕过索引**，
+  钩子里 `git add` 的版本号会被那次提交静默丢掉，还会把别人在飞的文件一起提交。
+- `scripts/bump-version.sh <patch|minor|major|x.y.z>` 是版本号写入的**唯一**实现，一次写齐四处
+  （`package.json` / `tauri.conf.json` / `Cargo.toml` / `Cargo.lock`）；`release.sh` 也调它。别在别处再写一份。
+- CI 环境不动版本号（由本地交付流程推进）。
 
-- 距最近 tag 出现**任一 `feat`** → `npm run release minor`
-- 或距最近 tag 出现**任一 `fix`** → `npm run release patch`
-- 或有效提交（feat/perf/refactor/revert，fix 不计入）累计 **≥10** → `npm run release patch`
-
-⚠️ **同一个 bug 反复修复只算一个版本号**：一次真修之后再跟着两次真机回归，也只认那一个
-patch 额度。判据是**去重后的 bug 键**（subject 里的 `B\d+` ticket 号；没有 ticket 号的
-fix 各自算一个）。例：修 B213 时来回改三轮 ⇒ 只值一次 patch；若期间还夹过一个 feat，
-那次 bump 直接进 minor，patch 额度被一起吃掉，不必再补。
-
-**牙齿**：pre-push 先跑 `scripts/check-version-bump.sh`（排在 vitest 之前，失败得快）——
-未达阈值只告警，达阈值**直接阻断推送**并打印该执行的命令；同时校验
-`package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml` 三处版本号必须一致。
-确属误报可用 `LITEPAD_SKIP_VERSION_CHECK=1` 绕过。
+**牙齿**：pre-push 在 vitest 之前跑 `scripts/check-version-bump.sh`——① 四处版本号必须一致；
+② tag 以来有产品代码提交而版本号纹丝不动 ⇒ 阻断，给出 `bash scripts/bump-version.sh patch --commit`；
+③ tag 以来有 `feat` 而 minor 未变 ⇒ 阻断，要求**先问用户**；④ 有破坏性标记而 major 未变 ⇒ 同上问 major。
+用户答「不升档」后才用 `LITEPAD_VERSION_ACK=asked git push …` 放行（**没问过就别设这个变量**，
+它代表「已征询且用户答不升」）；`LITEPAD_SKIP_VERSION_CHECK=1` 是连一致性都不查的紧急绕过。
+守卫内部还会硬检查 `grep`/`node` 等工具存在 —— 缺了就直接失败而不是跳过：钩子环境里 grep 缺失时
+计数会变空串，`[ "" -gt 0 ]` 判假，守卫会「看起来通过」而实际什么都没统计（09-18 实测过的假绿）。
 
 **CHANGELOG.md**：由 `scripts/gen-changelog.sh` 从 Conventional Commit 自动生成，
 `release.sh` 发布时自动刷新并进同一个 release 提交，**不要手改**。

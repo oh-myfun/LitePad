@@ -1,102 +1,105 @@
 #!/usr/bin/env bash
-# LitePad 版本号守卫：防止「开发了半天版本号一点没变」。
+# LitePad 版本号守卫（由 .githooks/pre-push 调用）—— 把版本维护口径变成可执行判据。
 #
-# 口径（见 docs/conventions.md「版本号规则」，SemVer + Conventional Commit）：
-#   feat            → minor
-#   fix / perf      → patch
-#   破坏性（! / BREAKING CHANGE）→ 1.0.0 前记 minor，1.0.0 后 major
-#   docs / test / chore / style / ci → 不单独触发，只计入累积
+# 口径（用户 2026-10-18 定）：
+#   每次修改            → **自动** +patch，不必征询
+#   较大改动（feat）     → 必须先**问用户**是否 +minor
+#   非兼容的大型改动     → 必须先**问用户**是否 +major
 #
-# 行为：距最近 tag 以来达到阈值却没 bump → 阻断 push（exit 1）；未达阈值 → 只告警。
-# 由 .githooks/pre-push 在 vitest/cargo 之前调用（便宜的检查先做，失败得快）。
+# 本脚本**不替用户决定档位**。它只做两件事：
+#   A. 「该自动加的 patch 到底加了没有」（没加 = 交付流程漏跑 bump）；
+#   B. 「该问的 minor / major 问了没有」（没问 = 拦住推送，逼出那次询问）。
+# 旧的「按提交类型自动判档并强制 bump」已废弃：那等于工具替用户拍板，与口径相反。
 #
 # 用法：
-#   bash scripts/check-version-bump.sh              # 手动查一次
-#   LITEPAD_SKIP_VERSION_CHECK=1 git push ...        # 紧急绕过（仅限明确知情时）
+#   bash scripts/check-version-bump.sh                    # 手动查
+#   git push origin main --follow-tags                    # 正常推送（守卫自动跑）
+#   LITEPAD_VERSION_ACK=asked git push ...                # **仅限真的问过用户且用户答不升档**
+#   LITEPAD_SKIP_VERSION_CHECK=1 git push ...             # 紧急绕过（版本一致性也不查）
 set -uo pipefail
-cd "$(git rev-parse --show-toplevel)" || exit 1
-
-# —— 阈值 ——
-FEAT_BLOCK=1        # 有 feat 却未 bump → 阻断
-FIX_BLOCK=1         # 有 fix（去重后）却未 bump → 阻断
-EFFECTIVE_BLOCK=10  # 有效提交累计 ≥10 未 bump → 阻断
-EFFECTIVE_WARN=5    # ≥5 → 告警
-ALL_WARN=20         # 总提交 ≥20 → 告警
+cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
 
 if [ "${LITEPAD_SKIP_VERSION_CHECK:-0}" = "1" ]; then
-  echo "⚠ 已按 LITEPAD_SKIP_VERSION_CHECK=1 跳过版本号守卫"
+  echo "⚠ 已按 LITEPAD_SKIP_VERSION_CHECK=1 跳过版本号守卫（版本状态未经校验）" >&2
   exit 0
 fi
 
-# —— 1) 三处版本号必须同步 ——
+# ---- 工具必须齐：缺一个就**响亮失败**，不许静默放行 ----
+# 钩子环境里 grep 可能不在 PATH（09-18 实测：grep 缺失时下面这些 `grep -c` 全变空串，
+# `[ "" -gt 0 ]` 判假 ⇒ 「✓ 版本号守卫通过」其实是**根本没统计**。宁可拦住推送。
+for need in grep sed awk node git; do
+  command -v "$need" >/dev/null 2>&1 || {
+    echo "✗ 版本守卫缺工具「$need」，无法完成统计 —— **拒绝静默放行**（补 PATH 后重推）。" >&2
+    exit 1
+  }
+done
+
+# ---- A0) 四处版本号必须一致（package.json 为准，其余三处必须跟上）----
 PKG="$(node -p "require('./package.json').version" 2>/dev/null || echo "")"
 TAURI="$(node -p "require('./src-tauri/tauri.conf.json').version" 2>/dev/null || echo "")"
 CARGO="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' src-tauri/Cargo.toml | head -1)"
+LOCK="$(awk '/^name = "litepad"$/{f=1;next} f&&/^version/{print $3;exit}' src-tauri/Cargo.lock | tr -d '\"')"
 
-if [ -z "$PKG" ] || [ -z "$TAURI" ] || [ -z "$CARGO" ]; then
-  echo "⚠ 读不全三处版本号（pkg='$PKG' tauri='$TAURI' cargo='$CARGO'），跳过守卫" >&2
-  exit 0
-fi
+if [ -z "$PKG" ]; then echo "⚠ 读不到 package.json 版本，跳过守卫" >&2; exit 0; fi
+for pair in "tauri.conf.json:$TAURI" "Cargo.toml:$CARGO" "Cargo.lock:$LOCK"; do
+  if [ "${pair#*:}" != "$PKG" ]; then
+    echo "✗ 版本号不一致：package.json=$PKG，${pair%%:*}=${pair#*:}" >&2
+    echo "  修：bash scripts/bump-version.sh patch   （或 <minor|major>，四处由它一次写齐）" >&2
+    exit 1
+  fi
+done
 
-if [ "$PKG" != "$TAURI" ] || [ "$PKG" != "$CARGO" ]; then
-  echo "✗ 三处版本号不一致：" >&2
-  echo "    package.json        = $PKG" >&2
-  echo "    tauri.conf.json     = $TAURI" >&2
-  echo "    src-tauri/Cargo.toml= $CARGO" >&2
-  echo "  修：npm run release $PKG    （release.sh 会三处同步）" >&2
-  exit 1
-fi
-
-# —— 2) 定位最近 tag ——
+# ---- 定位最近 tag ----
 TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo "")"
-if [ -z "$TAG" ]; then
-  echo "· 尚无 tag，跳过版本号守卫"
-  exit 0
-fi
+if [ -z "$TAG" ]; then echo "· 尚无 tag，跳过版本号守卫"; exit 0; fi
 TAG_VER="${TAG#v}"
+echo "· 版本号 $PKG，最近 tag $TAG（$TAG_VER）"
 
-# 版本号已领先 tag ⇒ 说明已经 bump 过（release 流程：先改版本再打 tag）
-if [ "$PKG" != "$TAG_VER" ]; then
-  echo "✓ 版本号已 bump：$TAG → v$PKG（推送时用 --follow-tags，否则 tag 不上去、不会出 Release）"
-  exit 0
-fi
+split() { IFS=. read -r "$1" "$2" "$3" <<< "$4"; }
+MAJOR_C=; MINOR_C=; PATCH_C=; split MAJOR_C MINOR_C PATCH_C "$PKG"
+MAJOR_T=; MINOR_T=; PATCH_T=; split MAJOR_T MINOR_T PATCH_T "$TAG_VER"
 
-# —— 3) 统计 tag 以来的提交类型 ——
-LOG="$(git log "${TAG}..HEAD" --no-merges --pretty=format:'%s' || true)"
-FEAT="$(printf '%s\n' "$LOG" | grep -cE '^feat(\(|\!|:)' || true)"
-# ⚠️ fix 的额度**按 bug 键去重**，不是按提交条数（用户口径：同一个 bug 反复修复只算一个
-#    版本号）。真修完再跟两轮真机回归，patch 额度不该被刷成三条。
-#    键 = subject 里的 `B\d+`（ticket 号）；没带 ticket 号的 fix 无法归类，各算一个。
-FIX_SUBJ="$(printf '%s\n' "$LOG" | grep -E '^fix(\(|\!|:)' || true)"
-FIX_KEYS="$(printf '%s\n' "$FIX_SUBJ" | sed -E 's/^fix(\([^)]*\))?:[[:space:]]*//' | grep -oE 'B[0-9]+' | sort -u || true)"
-if [ -z "$FIX_KEYS" ]; then
-  FIX_KEYS="$FIX_SUBJ"
-fi
-FIX="$(printf '%s\n' "$FIX_KEYS" | grep -cE '.' || true)"
-# ⚠️ fix 不重复计入 EFFECTIVE（上面已按 bug 键给了它一份额度，两边都算会让阈值翻倍）
-EFFECTIVE="$(printf '%s\n' "$LOG" | grep -cE '^(feat|perf|refactor|revert)(\(|\!|:)' || true)"
-ALL="$(printf '%s\n' "$LOG" | grep -cE '.' || true)"
-
-verdict() {
-  # $1 = 建议 minor | patch
+# ---- A) 每次修改都要有 patch ----
+# 统计 tag 以来**碰过产品代码**的提交数（只碰 docs/tests/scripts/记忆的不算一次「修改」）。
+PRODUCT_COMMITS="$(git log "$TAG..HEAD" --no-merges --format='%h' -- src/ src-tauri/src/ | grep -c . || true)"
+if [ "${PRODUCT_COMMITS:-0}" -gt 0 ] && [ "$PKG" = "$TAG_VER" ]; then
   echo "" >&2
-  echo "✗ 版本号守卫：距 $TAG 已 $ALL 个提交（feat $FEAT / fix 去重 $FIX / 有效 $EFFECTIVE），版本号仍是 $PKG" >&2
-  echo "  按 docs/conventions.md 的口径，应 bump $1。" >&2
-  echo "  执行其一：" >&2
-  echo "      npm run release $1            # 本地全量构建（tsc/vitest/cargo/NSIS）后打 tag" >&2
-  echo "      npm run release $1 -- --ci    # 跳过本地构建，由 GitHub Actions 在 tag 上出包" >&2
-  echo "  确属误报可用 LITEPAD_SKIP_VERSION_CHECK=1 绕过。" >&2
+  echo "✗ 版本守卫：$TAG 以来有 $PRODUCT_COMMITS 个改动产品代码的提交，但版本号仍是 v$PKG（没动过）。" >&2
+  echo "  口径是「每次修改自动 +patch」⇒ 交付流程漏跑了 bump。补一条：" >&2
+  echo "      bash scripts/bump-version.sh patch --commit" >&2
+  echo "  （若这批提交里混着纯 docs/test 的，也只该有至少一个 patch —— 版本是仓库级，不做逐提交核对）" >&2
   exit 1
-}
-
-if [ "$FEAT" -ge "$FEAT_BLOCK" ]; then verdict minor; fi
-if [ "$FIX" -ge "$FIX_BLOCK" ] || [ "$EFFECTIVE" -ge "$EFFECTIVE_BLOCK" ]; then verdict patch; fi
-
-if [ "$EFFECTIVE" -ge "$EFFECTIVE_WARN" ] || [ "$ALL" -ge "$ALL_WARN" ]; then
-  echo "⚠ 版本号仍是 $PKG：$TAG 以来 $ALL 个提交（feat $FEAT / fix 去重 $FIX / 有效 $EFFECTIVE），接近 bump 阈值" >&2
-  echo "  （feat ≥$FEAT_BLOCK 或 fix（去重后）≥$FIX_BLOCK 或有效提交 ≥$EFFECTIVE_BLOCK 会强制阻断；先 npm run release <patch|minor>）" >&2
-  exit 0
 fi
 
-echo "✓ 版本号守卫通过（$TAG 以来 $ALL 个提交，无需 bump）"
+# ---- B) feat ⇒ 必须先问用户是否 minor ----
+FEATS="$(git log "$TAG..HEAD" --no-merges --pretty=format:'%s' | grep -cE '^feat(\(|\!|:)' || true)"
+if [ "${FEATS:-0}" -gt 0 ] && [ "$MINOR_C" = "$MINOR_T" ] && [ "$MAJOR_C" = "$MAJOR_T" ]; then
+  if [ "${LITEPAD_VERSION_ACK:-}" = "asked" ]; then
+    echo "⚠ $TAG 以来有 $FEATS 个 feat 提交，minor 未动 —— 已按 LITEPAD_VERSION_ACK=asked 放行" >&2
+  else
+    echo "" >&2
+    echo "✗ 版本守卫：$TAG 以来有 $FEATS 个 feat（较大改动）。口径要求**先问用户**是否推进 minor。" >&2
+    echo "  正确动作：问用户 →「推进」就 bash scripts/release.sh minor；「不推进」再推：" >&2
+    echo "      LITEPAD_VERSION_ACK=asked git push origin HEAD --follow-tags" >&2
+    echo "  ⚠️ 没问过用户就别设这个环境变量 —— 它代表「已征询且用户答不升档」。" >&2
+    exit 1
+  fi
+fi
+
+# ---- B) 破坏性变更 ⇒ 必须先问用户是否 major ----
+BREAKING="$(git log "$TAG..HEAD" --no-merges --pretty=format:'%s%n%b' | grep -cE '^[a-z]+\([^)]*\)!|^[a-z]+!:|^BREAKING CHANGE' || true)"
+if [ "${BREAKING:-0}" -gt 0 ] && [ "$MAJOR_C" = "$MAJOR_T" ]; then
+  if [ "${LITEPAD_VERSION_ACK:-}" = "asked" ]; then
+    echo "⚠ $TAG 以来有 $BREAKING 处破坏性变更标记，major 未动 —— 已按 ACK 放行" >&2
+  else
+    echo "" >&2
+    echo "✗ 版本守卫：$TAG 以来有 $BREAKING 处破坏性变更（`!` 或 BREAKING CHANGE）。" >&2
+    echo "  口径要求**先问用户**是否推进 major。确认后：" >&2
+    echo "      bash scripts/release.sh major            # 用户同意升 major" >&2
+    echo "      LITEPAD_VERSION_ACK=asked git push ...   # 用户答不升" >&2
+    exit 1
+  fi
+fi
+
+echo "✓ 版本号守卫通过（patch 已随修改推进；无待征询的 minor/major）"
 exit 0

@@ -997,6 +997,51 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     ).toBe(true);
   });
 
+  it("B308 版本维护口径：patch 自动加、minor/major 必须先问用户，且 bump 只有一处实现", () => {
+    // 用户 2026-10-18 定的规则：「每次修改自动推进 patch；较大改动可询问是否 minor；
+    // 非兼容性的大型改动询问是否 major」。要点是**判档权在人不在工具** ——
+    // 旧实现按提交类型自动判档（feat→minor、满 10 提交→patch），等于工具替用户拍板，已废弃。
+    // 这条契约把四件事钉住，任何一件被「简化」回去都会变红。
+    const bump = readFileSync("scripts/bump-version.sh", "utf-8");
+    const release = readFileSync("scripts/release.sh", "utf-8");
+    const buildAll = readFileSync("scripts/build-all.sh", "utf-8");
+    const guard = readFileSync("scripts/check-version-bump.sh", "utf-8");
+
+    // ① 唯一实现：四处里三处文本 + Cargo.lock 交给 cargo，且 NEW 必须走环境变量
+    //    （`node -e '…' NEW=x` 只是 argv，读 process.env.NEW 会得到 undefined 并写进版本号）。
+    expect(bump, "bump-version.sh 必须写 package.json / tauri.conf.json / Cargo.toml").toContain(
+      'edit("src-tauri/Cargo.toml"',
+    );
+    expect(bump, "Cargo.lock 必须由 cargo 自己同步，别手改").toContain("cargo update -p litepad");
+    expect(bump, "NEW 必须经 process.env 注入").toContain("process.env.NEW");
+    expect(bump, "不得把版本号写成一个已发布过的 tag").toContain("refs/tags/v$NEW");
+
+    // ② release.sh 只能委托，不得再留一份内联 bump（两处各写 = 以后加一处漏一处）。
+    expect(release, "release.sh 必须复用 bump-version.sh").toContain(
+      'bash scripts/bump-version.sh "$VER_ARG"',
+    );
+    expect(release, "release.sh 里不许再有第二份版本号写入实现").not.toContain(
+      "edit('package.json'",
+    );
+
+    // ③ patch 由交付入口自动推进，且只在碰产品代码时推。
+    expect(buildAll, "build-all.sh 必须自动 +patch").toContain(
+      "bash scripts/bump-version.sh patch --commit",
+    );
+    expect(buildAll, "只有碰 src/ 或 src-tauri/src/ 才算一次修改").toContain(
+      "grep -qE '^src/|^src-tauri/src/'",
+    );
+
+    // ④ 守卫「拦该问没问」，绝不自动判档；且缺工具时响亮失败而非静默放行。
+    expect(guard, "feat 必须先问用户是否 minor").toContain("先问用户");
+    expect(guard, "征询后要显式 ACK 才放行").toContain("LITEPAD_VERSION_ACK");
+    expect(guard, "缺 grep 等工具必须拒绝静默放行").toContain("拒绝静默放行");
+    expect(guard, "判档权已交还用户：不许保留自动判档阈值").not.toContain("EFFECTIVE_BLOCK");
+    expect(guard, "判档权已交还用户：不许保留 feat 自动升 minor 的开关").not.toContain(
+      "FEAT_BLOCK",
+    );
+  });
+
   it("B86 三种查找范围共用同一套触发与计数逻辑（不再靠回车触发搜索）", () => {
     // 事故：点亮「所有打开的文档」后既不刷新结果也不更新按钮，改搜索文本同样没反应，
     // **必须再按一次回车**才搜。两个根因：
