@@ -1143,15 +1143,16 @@ async function bootstrap(): Promise<void> {
     logger.warn("pending", `take failed: ${String(e)}`);
   }
 
-  // B305 / B308：最近打开。记账认的是「这次新出现了哪些路径」，所以会话恢复那批文件会一次
-  // 进名单 —— 这正是新语义要的（打开过就在册，正开着的也留着）。装配位置仍排在
-  // `restoreSession()` 之后，与界面同侧、没有别的数据依赖。
+  // B305 / B308：最近打开。装配的只是**视图**（缓存 + 左栏那块展开区）；记入不在这里，
+  // 长在所有打开动作共用的那扇漏斗上（`io/files.ts` 的 `doOpen` → `noteOpened`），
+  // 会话恢复走 `session/rebuild` 的 `open_file`、压根不经那扇 ⇒ 「恢复不算打开」。
+  // 装配位置排在 `restoreSession()` 之后，与界面同侧、没有别的数据依赖。
   // ⚠️ **不 await**：面板是订阅式的，数据到了自然重画，启动链不必为一次 IPC 多等一拍。
   //    等这一拍会挪动启动期那几次会话落盘的相对次序（`tests/satellite-restore.test.ts`
   //    的落盘回环就是这么被顶偏的）—— 旁路功能不该改主干的时序。
   // 只给主窗口装：子窗口连左边栏都被 CSS 收掉了（Review Focus #5），装上去只有
-  // 一份看不见的缓存和一条没人画的名单在跑；它该做的记账走 `refreshAll` →
-  // `broadcastDocPresence` → `reportOpenedPaths` 那条（每个窗口各自报，与本装配无关）。
+  // 一份看不见的缓存和一条没人画的名单在跑；子窗口该做的记账在 `doOpen` 那一发，
+  // 与本装配无关（每个窗口自己打开的文件自己报）。
   if (windowKind === "main") {
     void initRecentsStore();
     setupRecentsPanel();

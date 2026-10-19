@@ -21,7 +21,7 @@ use crate::core::{
     logging::{self, Level},
 };
 use crate::session;
-use crate::session::recent::{OpenSets, Recents};
+use crate::session::recent::Recents;
 
 /// 进程启动时刻（在 `main()` 第一行写入），用于计算「点击图标 → 界面出现」的端到端耗时。
 pub static BOOT: OnceLock<Instant> = OnceLock::new();
@@ -32,21 +32,21 @@ pub static BOOT: OnceLock<Instant> = OnceLock::new();
 /// 前端一律按 id 寻址，不使用索引。
 /// `watcher` 是全局文件监听器（M2：外部修改提示）。
 ///
-/// B305 两件（最近打开），B308 起语义是「打开过就在册，LRU 维护」：
+/// B305 一件（最近打开），B308 起语义是「打开过就在册，LRU 维护」：
 ///   · `recents`  —— 名单本体，Rust 单点持有并写 `recents.json`（`settings.json` 没有
 ///     权威窗口，每个窗口都能整表覆写它，把名单放进去等于「别人一次无关的设置写入
-///     就把名单冲掉」）；
-///   · `open_sets` —— 每扇窗口「上一次报过哪些开着的标签」。它现在只为算**新出现**的
-///     路径服务（差集在这一本账上算），不再用来推导「谁关掉了什么」。
-///     旧版的第三件 `quitting`（退出中就不记）随「消失即关闭」那套推导一起删了：
-///     记出现的地方，关窗本来就不产生事件。
+///     就把名单冲掉」）。
+///     记入源是「用户打开了一份文件」这个动作，一次一发 ⇒ 不需要 per-window 的
+///     「上一份可见集合」那本账（`open_sets`，B308 收尾时删）：那本账只能看集合的变化，
+///     于是会把会话恢复也记成一次打开，而用户裁决「恢复不算打开」。
+///     更早的 `quitting`（退出中就不记）随「消失即关闭」那套推导一起删了：
+///     记打开动作的地方，关窗本来就不产生事件。
 #[derive(Default)]
 pub struct AppState {
     pub docs: Mutex<Vec<doc::Doc>>,
     pub next_id: Mutex<u64>,
     pub watcher: Mutex<Option<RecommendedWatcher>>,
     pub recents: Mutex<Recents>,
-    pub open_sets: Mutex<OpenSets>,
 }
 
 fn alloc_id(state: &AppState) -> Result<u64, String> {

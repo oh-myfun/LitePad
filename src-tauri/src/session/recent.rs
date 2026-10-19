@@ -9,15 +9,16 @@
 //! 就把名单冲掉」。会话那份归主窗口写（`session/persist.ts`），但设置没有这层归属。
 //!
 //! B308 把语义翻正：**打开过就在册，以 LRU 维护**（用户口径「不再考虑文件是否目前正
-//! 打开着，只要是打开过的都放到列表里」）。所以记账的输入是「哪条路径**刚出现**」，
-//! 而不是「哪条路径消失了」——
+//! 打开着，只要是打开过的都放到列表里」）。B308 收尾又钉死**记的是哪一件事**：
+//! 「用户打开了一份文件」这个**动作**，不是「某条路径从可见集合里冒出来」那个**结果**——
+//! 会话恢复会让文件冒出来，但没人“打开”它（用户裁决「恢复不算打开」）。
 //!   · 名单里可以同时躺着正开着的文件；重新打开不再把它从名单里划掉；
-//!   · 同一路径再出现 ⇒ 顶到最前并刷新时间戳，绝不占第二格；
+//!   · 同一路径再打开 ⇒ 顶到最前并刷新时间戳，绝不占第二格；
 //!   · 超过上限挤掉尾巴；`limit = 0` 是「不再记录」而不是「记了再裁」。
-//! 这一改也删掉了旧机制那一整套：并集推导、「退出时仍开着的不算」旗标、窗口销毁钩子
-//! （它们存在的唯一理由是把「消失」认成「关闭」）。
+//! 于是这条链上不需要任何 per-window 的账：记入源是动作，一次一发，`note_opened(path)`。
+//! 旧机制（并集推导、「退出时仍开着的不算」旗标、窗口销毁钩子、per-window 可见集合差集）
+//! 全部退场——它们存在的唯一理由就是把「集合的变化」当成「用户的意图」。
 
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -203,43 +204,6 @@ pub fn drop_missing(r: &mut Recents, exists: impl Fn(&str) -> bool) -> bool {
     r.entries.len() != before
 }
 
-/// 每扇窗口「上一次报过哪些开着的标签」：`窗口 label → (身份键 → 显示路径)`。
-///
-/// 它现在只为**出现**那一半服务：这一窗口的新集合里、上一次没记过的键 = 「刚被打开」。
-/// 只数可见实例（隐藏实例不上报，与 `broadcastDocPresence` 的 B171/B173 口径一致）。
-///
-/// ⚠️ 不需要「窗口没了把这条账清掉」那个钩子：卫星 label 是进程内自增（`windows.rs:23`，
-/// `sat-<n>` 从不回收），不会被新窗口复用 ⇒ 残留那份集合顶多让一条本来就在册的路径
-/// 少报一次，不会把「新打开」吞成「老早见过」。
-#[derive(Debug, Default)]
-pub struct OpenSets {
-    map: HashMap<String, HashMap<String, String>>,
-}
-
-impl OpenSets {
-    /// 某窗口报上最新的可见集合。返回**这次新出现的** `(键, 显示路径)`，排序过便于断言。
-    ///
-    /// 第一次报（这窗口本来没有账）算「全都新出现」—— 会话恢复那批就是这么进名单的。
-    pub fn update(&mut self, window: &str, paths: &[String]) -> Vec<(String, String)> {
-        let mut next: HashMap<String, String> = HashMap::new();
-        for p in paths {
-            let k = key_of(p);
-            next.entry(k).or_insert_with(|| p.clone());
-        }
-        let prev = self
-            .map
-            .insert(window.to_string(), next.clone())
-            .unwrap_or_default();
-        let mut out: Vec<(String, String)> = next
-            .iter()
-            .filter(|(k, _)| !prev.contains_key(*k))
-            .map(|(k, d)| (k.clone(), d.clone()))
-            .collect();
-        out.sort();
-        out
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,9 +211,6 @@ mod tests {
     /// 造 `touch_opened` 的一条输入（key 由 `key_of` 现算，与生产同一口径）。
     fn op(p: &str) -> (String, String) {
         (key_of(p), p.to_string())
-    }
-    fn s(p: &str) -> String {
-        p.to_string()
     }
 
     #[test]
@@ -348,52 +309,6 @@ mod tests {
         assert_eq!(file_name_of("/x/y/b.md"), "b.md");
         assert_eq!(file_name_of("c.md"), "c.md");
         assert_eq!(file_name_of(""), "");
-    }
-
-    #[test]
-    fn open_sets_reports_only_paths_newly_appear_in_that_window() {
-        // B308 的方向：出现即记。差的是**这一扇窗口自己**上一次的集合，不是所有窗口的并集。
-        let mut o = OpenSets::default();
-        let a = s(r"C:\d\a.md");
-        let b = s(r"C:\d\b.md");
-        // 第一次报 = 全都新出现（会话恢复那批就是这么进名单的）。
-        let fresh: Vec<String> = o
-            .update("main", &[a.clone()])
-            .iter()
-            .map(|(k, _)| k.clone())
-            .collect();
-        assert_eq!(fresh, vec![key_of(&a)], "首报必须记下来");
-        // 同一批再报一遍（切标签、刷新界面）⇒ 一条都不许多记。
-        assert!(o.update("main", &[a.clone()]).is_empty(), "重复报不许重记");
-        // 新开一个标签 ⇒ 只报新出现那条。
-        let added = o.update("main", &[a.clone(), b.clone()]);
-        assert_eq!(added.len(), 1);
-        assert_eq!(added[0].1, b, "回的是显示路径");
-        // 关掉 b 再开回来 ⇒ 又算一次出现（LRU 要顶到最前）。
-        assert!(
-            o.update("main", &[a.clone()]).is_empty(),
-            "消失不是事件，不该报东西"
-        );
-        let back = o.update("main", &[a.clone(), b.clone()]);
-        assert_eq!(
-            back.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>(),
-            vec![key_of(&s(r"C:\d\b.md"))]
-        );
-    }
-
-    #[test]
-    fn each_window_keeps_its_own_seen_set() {
-        // 卫星窗口独立记账：主窗口早就开着的文件，被拎去卫星窗口算「那边新出现」，
-        // 于是它在另一扇被打开也会顶一次 —— 这正是 LRU 要的。
-        let mut o = OpenSets::default();
-        let a = s(r"C:\d\a.md");
-        assert_eq!(o.update("main", &[a.clone()]).len(), 1);
-        assert_eq!(
-            o.update("sat-1", &[a.clone()]).len(),
-            1,
-            "换了窗口就得算一次出现"
-        );
-        assert!(o.update("sat-1", &[a.clone()]).is_empty());
     }
 
     #[test]

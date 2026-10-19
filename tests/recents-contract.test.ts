@@ -34,7 +34,7 @@ describe("B305/B308 · Rust 命令注册与窗口销毁那条链", () => {
     }
   });
 
-  it("窗口销毁那条链不再碰名单（B308：记的是「出现」，关窗不产生任何记入事件）", () => {
+  it("窗口销毁那条链不再碰名单（B308：记的是打开动作，关窗不产生任何记入事件）", () => {
     const winEvent = between(rustMain, ".on_window_event(|win, event| {", ".setup(|app| {");
     expect(
       winEvent,
@@ -54,42 +54,92 @@ describe("B305/B308 · Rust 命令注册与窗口销毁那条链", () => {
     ).not.toContain("ExitRequested");
   });
 
-  it("AppState 只剩两份名单账：recents + open_sets（旗标字段已随旧语义删掉）", () => {
+  it("AppState 只剩一份名单账：recents（per-window 可见集合那本账已随旧语义删掉）", () => {
     const mod = readFileSync("src-tauri/src/commands/mod.rs", "utf-8");
     const body = between(mod, "pub struct AppState {", "\n}");
     expect(body).toContain("recents: Mutex<Recents>");
-    expect(body, "差集要在每扇窗口的上一份账上算，这本没了就等于「每次都当全新增」").toContain(
-      "open_sets: Mutex<OpenSets>",
-    );
+    expect(
+      body,
+      "记的是打开动作，一次一发 ⇒ 没有「上一份可见集合」可存了；留着就是有人在等一个不会来的差集",
+    ).not.toContain("open_sets");
     expect(body, "退出旗标字段还留着 = 有人以为它有用").not.toMatch(/quitting|AtomicBool/);
   });
 
-  it("note_opened 的次序：先在 per-window 账上算新出现，再走 LRU 记入", () => {
+  it("note_opened 的形状：一份路径 → 现算身份键 → LRU 记入", () => {
     const body = between(recentsRs, "pub fn note_opened(", "/// 列名单");
-    expect(body, "那本 per-window 账没了 ⇒ 每次都把整份集合当新增重记").toContain("open_sets");
     expect(
-      body.indexOf("update"),
-      "差集没算就记入 ⇒ LRU 顺序变成「上报顺序」而不是打开顺序，正开着的文件每刷一次被顶到最前",
-    ).toBeLessThan(body.indexOf("touch_opened"));
-    expect(body, "没有新增时要早退，不写盘不广播（refreshAll 一轮能触发几十次）").toContain(
-      "opened.is_empty()",
+      body,
+      "参数必须是一条路径。回集合就得有人算差集，而算差集只能看集合 ⇒ 恢复会被记成打开",
+    ).toMatch(/path:\s*String/);
+    expect(
+      body,
+      "身份键必须在 Rust 现算（canonicalize + 剥前缀 + 小写），前端那份字符串不算数",
+    ).toContain("key_of(&path)");
+    expect(body, "改名单必须走 note() 那一个口子：绕过它就等于绕过「变了才落盘 + 广播」").toContain(
+      'note(&app, &state, "记录打开"',
     );
+    expect(body, "per-window 那本账已经删了，别再回来").not.toContain("open_sets");
     expect(recentsRs).toContain('"recents-changed"');
   });
 });
 
-describe("B305/B308 · 开着的集合上报只挂一处", () => {
-  const ui = readFileSync("src/ui.ts", "utf-8");
-  const body = between(ui, "function broadcastDocPresence(): void {", "\nfunction refreshAll(");
+describe("B308 · 记入只挂在「打开」这一处（恢复不算打开）", () => {
+  const files = readFileSync("src/io/files.ts", "utf-8");
 
-  it("上报并入 broadcastDocPresence —— 它已经是「开着的集合变了」的唯一广播点", () => {
-    expect(body).toContain("reportOpenedPaths()");
+  it("唯一调用点在 doOpen，且排在 openFile 成功之后（拿退化替身自证判据有牙）", () => {
+    // ⚠️ 替身在内存里造，**不往交付文件里注破坏内容**：那种做法会被拦下来，还会留下坏文件。
+    const check = (src: string): string[] => {
+      const v: string[] = [];
+      const at = src.indexOf("async function doOpen(");
+      if (at < 0) return ["找不到 doOpen 的声明"];
+      const body = src.slice(at, src.indexOf("\n}", at) + 2);
+      const read = body.indexOf("await openFile(");
+      const rec = body.indexOf("noteOpened(");
+      if (read < 0) v.push("doOpen 里没有读盘调用");
+      if (rec < 0) v.push("doOpen 里没有记入调用");
+      else if (rec < read) v.push("记入排在读盘之前：取消对话框与读盘失败也会留一条记录");
+      if (!body.includes("noteOpened(file.path)"))
+        v.push("记的必须是 Rust 回的那条路径（已归一化），不是前端手上的原始串");
+      return v;
+    };
+    expect(check(files), "真实源码的违规条目").toEqual([]);
+    const degraded = files
+      .replace("    noteOpened(file.path);\n", "")
+      .replace(
+        "    const file = await openFile(target, encoding ?? null);",
+        "    noteOpened(target);\n    const file = await openFile(target, encoding ?? null);",
+      );
+    expect(degraded, "替身必须真的改了地方（没改上就是拿原文件自证通过 = 恒真）").not.toEqual(
+      files,
+    );
+    expect(check(degraded), "退化替身必须被点名").toEqual([
+      "记入排在读盘之前：取消对话框与读盘失败也会留一条记录",
+      "记的必须是 Rust 回的那条路径（已归一化），不是前端手上的原始串",
+    ]);
   });
 
-  it("打开/关闭流程里不许再各写一遍上报（两处上报 = 两个基准 = 迟早互相覆盖）", () => {
-    expect(readFileSync("src/io/files.ts", "utf-8")).not.toContain("noteOpenedPaths");
-    expect(readFileSync("src/tabs/lifecycle.ts", "utf-8")).not.toContain("noteOpenedPaths");
-    expect(readFileSync("src/multiwindow/windows.ts", "utf-8")).not.toContain("noteOpenedPaths");
+  it("会话恢复与各条打开旁路都不许记 —— 恢复走 rebuild 的 open_file，压根不是「打开」这个动作", () => {
+    for (const f of [
+      "src/session/rebuild.ts",
+      "src/session/persist.ts",
+      "src/tabs/lifecycle.ts",
+      "src/multiwindow/windows.ts",
+      "src/ui.ts",
+    ]) {
+      expect(readFileSync(f, "utf-8"), `${f} 里不该出现记入调用`).not.toContain("noteOpened");
+    }
+    // 把恢复改成「借道 doOpen」同样能让它进名单 —— 那等于让一次重构顺手决定「恢复算不算
+    // 打开」这句话。要改，先回来改这条契约与用户确认。
+    expect(
+      readFileSync("src/session/rebuild.ts", "utf-8"),
+      "恢复流程不许借用打开那条漏斗（doOpen 现在是「用户打开了它」的同义词）",
+    ).not.toMatch(/\bdoOpen\(/);
+  });
+
+  it("旧那套「整份可见集合上报」不许回来（回来了就又开始把恢复记成打开）", () => {
+    expect(files).not.toMatch(/reportOpenedPaths|visibleOpenPaths/);
+    expect(readFileSync("src/ui.ts", "utf-8")).not.toMatch(/reportOpenedPaths|visibleOpenPaths/);
+    expect(readFileSync("src/recents/store.ts", "utf-8")).not.toMatch(/lastReportedKey/);
   });
 });
 

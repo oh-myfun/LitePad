@@ -5,8 +5,10 @@
 //! `from` —— 前端那个字段是自证的，本模块不需要它。
 //!
 //! B308：语义是「**打开过就在册，以 LRU 维护**」（用户口径，覆盖了旧版「只放已关掉的」）。
-//! 记账的输入因此是「这一扇窗口刚出现了哪些路径」——差集在 `OpenSets` 上算，各窗口各记各的。
-//! 于是名单里可以同时躺着正开着的文件，重新打开只是把它顶到最前，而不是把它划掉。
+//! 记账的输入是「**用户打开了一份文件**」这个动作本身（`note_opened(path)` 一次一发），
+//! 不是「某条路径从可见集合里冒出来」那个结果 —— 后者会把会话恢复也记成一次打开，
+//! 而用户明确裁决「恢复不算打开」。名单里因此可以同时躺着正开着的文件，
+//! 重新打开只是把它顶到最前，而不是把它划掉。
 
 use std::sync::{Mutex, MutexGuard};
 
@@ -83,37 +85,28 @@ fn note(
     }
 }
 
-/// 本窗口「此刻开着哪些文件」。整份送来，差集在这边算（前端那侧只有一道闸：集合没变
-/// 直接早退，见 `src/recents/store.ts` —— 它手上没有 per-window 的上一份账，算不出差集）。
+/// 用户打开了一份文件 ⇒ 记一笔（LRU 顶到最前）。
 ///
-/// ⚠️ 记的是「出现」而不是「消失」：名单里留着正开着的文件是新语义的本意，
-/// 所以这里既不需要并集，也不需要「退出中」那面旗（旧版要靠它挡住「关窗时把正在用的
-/// 文件记成刚关掉」——那个场景根本不存在了）。
+/// ⚠️ 记入源是**打开这个动作**，不是「某条路径从可见集合里冒出来」：会话恢复同样会让文件
+/// 冒出来，可没人打开它（用户裁决「恢复不算打开」）。前端那条唯一的打开漏斗是 `doOpen`
+/// （文件对话框、拖放、文件关联、点名单那一行、设置页打开日志都从那儿走），而恢复走
+/// `session/rebuild` 直接调 `open_file`，压根不经那一扇 —— 语义对了就不需要「启动首报只登记」
+/// 那种时间窗或旗标，也不需要有 per-window 的上一份账来算差集。
+///
+/// 显示路径用调用方给的那一条（`doOpen` 传的是 Rust 自己回的那条，已归一化）；
+/// 身份键在 `touch_opened` 里现算，与名单里既有条目同一口径比。
 #[tauri::command]
 pub fn note_opened(
     window: tauri::Window,
     app: AppHandle,
     state: State<'_, AppState>,
-    paths: Vec<String>,
+    path: String,
 ) -> Vec<RecentEntry> {
     let label = window.label().to_string();
-    let opened = lock(&state.open_sets).update(&label, &paths);
+    logging::log(Level::Info, "recents", &format!("{label} 打开 {path}"));
     let now = now_ms();
-    if opened.is_empty() {
-        logging::log(
-            Level::Debug,
-            "recents",
-            &format!("同步 {label} 可见={} 无新打开项", paths.len()),
-        );
-        return entries_of(state.inner());
-    }
-    logging::log(
-        Level::Info,
-        "recents",
-        &format!("同步 {label} 可见={} 新打开={}", paths.len(), opened.len()),
-    );
     note(&app, &state, "记录打开", |r| {
-        touch_opened(r, &opened, now)
+        touch_opened(r, &[(key_of(&path), path)], now)
     })
 }
 

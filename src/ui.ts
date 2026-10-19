@@ -16,8 +16,6 @@ import { EditorView } from "@codemirror/view";
 import { CODICONS } from "./shell/codicons";
 import { setTip } from "./shell/tooltip";
 import { EVT_DOC_OPEN, EVT_DOC_CLOSE_NOTIFY } from "./core/events";
-// B305/B308：开着的集合变了就整份报给 Rust（新出现的才记进名单，LRU 维护，见 recents/store.ts）。
-import { reportOpenedPaths } from "./recents/store";
 import { activeTab, getPanel, visibleInstancesOfDoc } from "./core/panels";
 import {
   Tab,
@@ -295,11 +293,6 @@ function broadcastDocPresence(): void {
     }
   }
   lastBroadcastDocIds = now;
-  // B305 / B308：同一条「开着的集合变了」的链上再报一份**路径**账给 Rust。名单记的是
-  // 「这次新出现了哪些」（差集在 Rust 那本 per-window 账上算），打开过就在册、LRU 维护 ——
-  // 不在各打开分支埋点，漏不到会话恢复 / 文件关联 / 拖去子窗口这类最难复现的路径
-  // （细节见 src/recents/store.ts 头部）。
-  reportOpenedPaths();
 }
 
 function refreshAll(): void {

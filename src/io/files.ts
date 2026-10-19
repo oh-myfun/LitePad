@@ -58,6 +58,7 @@ import {
   type SaveConflict,
 } from "../ipc/api";
 import { previewDropAt, spotAt, type DropSpot } from "../shell/splitview";
+import { noteOpened } from "../recents/store";
 import { showSaveConflictDialog } from "../shell/conflictdialog";
 import {
   freshTextOfDoc,
@@ -144,6 +145,11 @@ async function doOpen(
 
   try {
     const file = await openFile(target, encoding ?? null);
+    // B308：名单记的就是这一发「用户打开了这份文件」（LRU 顶到最前）。放在 `openFile`
+    // 成功之后、各分支之前：取消对话框与读盘失败都不该留记录，而「复用已有标签」那一支
+    // 同样是一次打开（用户明确又开了它一次）。会话恢复走 `session/rebuild` 的 `open_file`，
+    // 不经这里 ⇒ 恢复不算打开（用户裁决）。
+    noteOpened(file.path);
     const existingDoc = docs.get(file.tabId);
 
     if (file.reused && existingDoc) {

@@ -27,7 +27,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 
 import {
   listRecents,
-  noteOpenedPaths,
+  noteOpenedPath,
   forgetRecent,
   clearRecents,
   getRecentLimit,
@@ -47,8 +47,11 @@ describe("B305 前端 IPC 薄包装", () => {
       "list_recents",
     );
 
-    await noteOpenedPaths(["a.md", "b.md"]);
-    expect(invokeSpy.mock.calls[1]).toEqual(["note_opened", { paths: ["a.md", "b.md"] }]);
+    await noteOpenedPath("a.md");
+    expect(invokeSpy.mock.calls[1], "参数是**一份**路径，不是集合（记的是打开动作）").toEqual([
+      "note_opened",
+      { path: "a.md" },
+    ]);
 
     await forgetRecent("a.md");
     expect(invokeSpy.mock.calls[2]).toEqual(["forget_recent", { path: "a.md" }]);
@@ -66,7 +69,7 @@ describe("B305 前端 IPC 薄包装", () => {
   it("改过名单的三条命令把 Rust 回包的完整名单原样交给调用方（视图不必再 list 一次）", async () => {
     const entries = [{ path: "a.md", name: "a.md", openedAt: 17 }];
     invokeSpy.mockResolvedValue(entries);
-    await expect(noteOpenedPaths([])).resolves.toEqual(entries);
+    await expect(noteOpenedPath("a.md")).resolves.toEqual(entries);
     await expect(forgetRecent("a.md")).resolves.toEqual(entries);
     await expect(clearRecents()).resolves.toEqual(entries);
   });

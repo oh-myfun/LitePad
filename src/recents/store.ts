@@ -1,24 +1,20 @@
 /**
- * B305 · 最近打开的前端视图缓存 + 「刚打开了哪些文件」的上报。
+ * B305 · 最近打开的前端视图缓存 + 「刚打开了哪份文件」的记入。
  *
  * 职责边界要说清：**名单归 Rust**（`src-tauri/src/commands/recents.rs`），本模块不排序、
  * 不去重、不裁剪、不判文件还在不在。它只做两件本地写得对的事：
  *
- *   1. 算「本窗口此刻开着哪些文件」并整份上报 —— Rust 在它自己那本 per-window 账上算差集，
- *      只有**新出现**的路径才记进名单（B308：打开过就在册，LRU 维护）。
- *      挂在 `broadcastDocPresence` 上（`src/ui.ts`），因为那条已经是「开着的集合变了」的唯一
- *      广播点：开标签走 `refreshAll`、关标签走 `closeTabById`，两条都调它，覆盖全。
- *      不在每个打开分支各埋一遍的理由与 B157/B188 同一族：埋点一多就会漏，而漏掉的情形
- *      （会话恢复、文件关联、标签拖去子窗口）恰好是最难复现的那几类。
+ *   1. 把「用户打开了一份文件」这个动作报一发（`noteOpened`，唯一调用点是 `io/files.ts`
+ *      的 `doOpen`）。B308 收尾的裁决是「**恢复不算打开**」：记入源必须是动作而不是「某条
+ *      路径出现在屏上」那个结果 —— 会话恢复会让文件出现在屏上却没人打开它，而恢复走
+ *      `session/rebuild` 直接调 `open_file`，压根不经 `doOpen`，所以语义一对，机制上就
+ *      不需要时间窗、旗标，也不需要 per-window 的上一份可见集合来算差集。
  *   2. 缓存 Rust 给的那份 + 变了通知订阅者（面板只认这一份，不自己去 invoke）。
  *
- * ⚠️ 上报必须**在 IPC 失败时把基准退回去**。基准记的是「我以为对方已经知道的那一份」，
- * 失败了还不退回去，此后同一份集合不会再报 —— 而 Rust 那边一直没见过它，于是这批文件
- * 永远进不了名单，用户看到的是「明明打开过却不在最近打开里」，日志里查不到原因
- * （B303/B304 那一族「单点写坏就无声」的同款形状）。
+ * ⚠️ 记入失败只留一行日志：打开动作是一次性的，没有「下一次刷新补报」这条路可走；
+ * 但它**绝不许把打开流程带崩** —— 名单是旁路功能，`doOpen` 是主干。
  */
 import { listen } from "@tauri-apps/api/event";
-import { docs, tabs } from "../core/app-state";
 import { EVT_RECENTS_CHANGED, type RecentsChangedPayload } from "../core/events";
 import { logger } from "../core/logger";
 import {
@@ -26,7 +22,7 @@ import {
   forgetRecent,
   getRecentLimit as rpcGetRecentLimit,
   listRecents,
-  noteOpenedPaths,
+  noteOpenedPath,
   setRecentLimit as rpcSetRecentLimit,
   type RecentEntry,
 } from "../ipc/api";
@@ -34,8 +30,6 @@ import {
 let entries: RecentEntry[] = [];
 /** 初值只是占位：真正的上限以 Rust 为准（`initRecentsStore` 与每次改完都重新取）。 */
 let limit = 20;
-/** 上一次**成功**上报的可见路径集合的指纹；`null` = 还没成功上报过（或上一次失败了）。 */
-let lastReportedKey: string | null = null;
 /**
  * 请求序号。回包到达顺序**没有保证**：连发两报时旧那一包可能后到，直接写缓存就会把
  * 名单退回旧状态（用户读作「刚打开的那份没露脸」）。只认最新那一个。
@@ -58,54 +52,26 @@ function setEntries(next: RecentEntry[]): void {
 }
 
 /**
- * 本窗口开着的实例的磁盘路径（去重、未命名不算）。
+ * 记一笔「用户打开了这份文件」。唯一调用点是 `io/files.ts` 的 `doOpen` —— 那里是所有打开
+ * 动作共用的漏斗（文件对话框、拖放、文件关联、点名单那一行、设置页打开日志）。
  *
- * 只数 `panelId >= 0` 的实例 —— 与 `broadcastDocPresence` 的 B171/B173 口径一致：标签被
- * 拖去卫星窗口后本地留的那份隐藏实例（`panelId < 0`）**不算这一扇开着**，否则会替子窗口
- * 抢记一次「新打开」（那边自己会报）。
+ * 回包是变更后的完整名单，直接进缓存；`requestSeq` 那道闸照样适用（连点两行名单时，
+ * 旧那一包后到会把手上这份写回旧样子）。
  */
-export function visibleOpenPaths(): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const t of tabs.values()) {
-    if (t.panelId < 0) continue;
-    const path = docs.get(t.docId)?.path;
-    if (!path) continue;
-    if (seen.has(path)) continue;
-    seen.add(path);
-    out.push(path);
-  }
-  return out;
-}
-
-/**
- * 开着的集合变了才发一次 IPC（`refreshAll` 一轮交互能触发几十次，每次都发就是拿 IPC 刷 Rust）。
- * 报的是**整份集合**，差集由 Rust 在那本 per-window 账上算 —— 它才知道哪些是「这次新出现」。
- * 回包与 `recents-changed` 广播都是同一份名单，谁先到都无所谓。
- */
-export function reportOpenedPaths(): void {
-  const next = visibleOpenPaths();
-  // 排序后拼指纹：上报的数组本身保持原顺序（Rust 侧不依赖顺序，但日志里读起来对得上手势）。
-  const key = [...next].sort().join("\n");
-  if (key === lastReportedKey) return;
-  lastReportedKey = key;
-  // ⚠️ 这条挂在 `refreshAll` 主干上，而名单是**旁路功能**：取数那一下的同步异常也不许把界面
-  // 刷新带崩（测试里那份只列了几个导出的 `../src/ipc/api` mock 就是这么炸的）。
-  // 基准同样要退回去 —— 否则这批路径此后再也不会补报，而 Rust 那边一直没见过它们。
-  let send: Promise<RecentEntry[]>;
+export function noteOpened(path: string): void {
   const seq = ++requestSeq;
+  let send: Promise<RecentEntry[]>;
   try {
-    send = noteOpenedPaths(next);
+    send = noteOpenedPath(path);
   } catch (e: unknown) {
-    lastReportedKey = null;
-    logger.warn("recents", `打开路径上报没发出去，下次刷新重试：${String(e)}`);
+    // ⚠️ 这一发挂在 `doOpen` 的主干上：名单取不成都不能把「打开文件」带崩。
+    logger.warn("recents", `打开记录没记上：${String(e)}`);
     return;
   }
   void send
     .then((list) => applyIfFresh(seq, list))
     .catch((e: unknown) => {
-      if (lastReportedKey === key) lastReportedKey = null;
-      logger.warn("recents", `打开路径上报失败，下次刷新重试：${String(e)}`);
+      logger.warn("recents", `打开记录没记上（这份文件已经打开了）：${String(e)}`);
       return undefined;
     });
 }

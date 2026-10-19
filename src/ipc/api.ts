@@ -195,14 +195,18 @@ export function listRecents(): Promise<RecentEntry[]> {
 }
 
 /**
- * 上报本窗口「此刻开着哪些文件」。Rust 在那本 per-window 账上算差集，只有**这次新出现**的
- * 路径才被记进名单（顶到最前，不占第二格）。
+ * 「用户打开了一份文件」⇒ 记一笔（Rust 侧 LRU 顶到最前）。
+ *
+ * ⚠️ 只由 `doOpen` 那一发调用（`src/io/files.ts`）：记的是**打开这个动作**，不是「某条路径
+ * 出现在屏上」。会话恢复会让文件出现在屏上，却没人打开它（用户裁决「恢复不算打开」），
+ * 而恢复走 `session/rebuild` 直接调 `open_file`，压根不经 `doOpen` —— 所以这里不需要
+ * 「启动那一会儿别记」那种时间窗或旗标。
  *
  * 回包是**变更后的完整名单**（`forgetRecent` / `clearRecents` 同），视图直接拿它重画，
  * 不必再 `listRecents` 一次 —— 少一次往返就少一次读到中间态的机会。
  */
-export function noteOpenedPaths(paths: string[]): Promise<RecentEntry[]> {
-  return invoke<RecentEntry[]>("note_opened", { paths });
+export function noteOpenedPath(path: string): Promise<RecentEntry[]> {
+  return invoke<RecentEntry[]>("note_opened", { path });
 }
 
 /** 单条清除（行上那颗 ✕）。 */
