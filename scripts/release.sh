@@ -35,10 +35,10 @@ CUR=$(node -p "require('./package.json').version")
 # 这里**不再重复写一遍**：两处各写一份 = 以后加一处漏一处（本项目已有同类教训）。
 bash scripts/bump-version.sh "$VER_ARG" || { echo "✗ 版本号同步失败（档位非法 / 目标 tag 已存在 / 文件格式变了）" >&2; exit 1; }
 VER="$(node -p "require('./package.json').version")"
-if [ "$VER" = "$CUR" ]; then
-  echo "✗ 版本号没有变化（仍是 v$CUR），没什么可发布的" >&2
-  exit 1
-fi
+# ⚠️ 允许「就地发版」：patch 由交付流程自动推进，所以版本号常常**已经**领先于 tag；
+#    此时 `release.sh <当前版本号>` 的含义是「就发这个版本」，不是错误，别拦。
+#    （真正要拦的两件事 bump-version.sh 已经拦了：档位非法、目标 tag 已存在。）
+if [ -z "$VER" ]; then echo "✗ 读不到版本号" >&2; exit 1; fi
 
 echo "═══════════════════════════════════════"
 echo " LitePad release：v$CUR → v$VER"
