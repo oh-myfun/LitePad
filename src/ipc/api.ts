@@ -98,6 +98,9 @@ export interface SavedFile {
  */
 export type PreviewWidth = "standard" | "wide" | "full";
 
+/** 左栏展开区里「此刻轮到哪一块」（B312）。外壳 `DrawerView` 就是这个别名的再导出。 */
+export type DrawerViewName = "toc" | "recent";
+
 export interface Settings {
   theme: string;
   default_eol: string;
@@ -134,13 +137,23 @@ export interface Settings {
   /** 大纲抽屉宽度（px，160–640） */
   toc_width: number;
   /**
-   * B194：大纲（左侧栏）是否**展开**。默认 false（与 index.html 的 `hidden` 初值一致）。
+   * B194：左栏**展开区是否摊开**。默认 false（与 index.html 的 `hidden` 初值一致）。
    *
    * 和 `toc_width` 一样放在设置里，而不是会话文件：它是**窗口级外观状态**
    * （关掉再开应该保持原样），不属于某份文档的状态 —— 会话是按文档组织的，放进去
    * 会变成「换了个文件，侧栏开合就跟着变」。
+   *
+   * B312 起它只管「开没开」，「开着的是哪一块」交给 `drawer_view`。
    */
   toc_open: boolean;
+  /**
+   * B312：展开区**摊开的是哪一块**（`toc` 大纲 / `recent` 最近打开）。
+   *
+   * 与 `toc_open` 是一对：那颗记「开没开」，这颗记「开着的是谁」。收起时**不覆盖**
+   * 这一颗（保留最后一次摊开的那块）⇒ 拖分隔条拖回来、与下次启动都指向同一块。
+   * 旧配置文件没这个字段 ⇒ Rust 侧默认 `toc`，行为与加字段之前完全一致。
+   */
+  drawer_view: DrawerViewName;
   /**
    * B198：整个左栏（按钮列 + 展开区 + 中间缝）是否**收起**。默认 false（左栏在）。
    *

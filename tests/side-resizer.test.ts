@@ -358,7 +358,11 @@ describe("大纲（TOC）静态契约", () => {
       'sideResizer.classList.toggle("is-off", !open)',
     );
     expect(setOpen, "按钮列的点亮态必须在同一处收口（面板开了键就要亮）").toContain(
-      'spec.button.classList.toggle("is-on", name === view)',
+      "applyView(name, spec)",
+    );
+    const apply = src.match(/function applyView\([\s\S]*?\n\}/)?.[0] ?? "";
+    expect(apply, "点亮态与面板显隐共用同一段（B312 起登记补写也走它）").toContain(
+      'spec.button.classList.toggle("is-on", name === active)',
     );
 
     const css = readFileSync("src/styles/preview.css", "utf-8");
@@ -475,17 +479,26 @@ describe("B194 大纲开合状态：切一次要落盘、启动要回放", () =>
     return src.slice(i, j);
   }
 
-  it("设置里要有 toc_open（前端类型 + Rust 结构 + 默认值）", () => {
+  it("设置里要有两格（toc_open + drawer_view：前端类型 + Rust 结构 + 默认值）", () => {
     expect(api, "Settings 类型需要 toc_open 字段").toContain("toc_open: boolean");
     expect(rs, "Rust Settings 需要 toc_open 字段").toContain("pub toc_open: bool");
     expect(rs, "默认应为关闭（与 index.html 的 hidden 初值一致）").toContain("toc_open: false");
+    // B312：「开着的是哪一块」是第二格。类型只在前端有（后端不校验枚举，理由同 tab_style），
+    // Rust 侧存串 + 默认 "toc" ⇒ 旧配置文件缺这一格也不会读失败。
+    expect(api, "Settings 类型需要 drawer_view 字段").toContain("drawer_view: DrawerViewName");
+    expect(rs, "Rust Settings 需要 drawer_view 字段").toContain("pub drawer_view: String");
+    expect(rs, "默认应为大纲").toContain('drawer_view: "toc".into()');
   });
 
-  it("切换大纲要把开合状态写进设置并落盘", () => {
-    // B307：落盘点从 `setSideOpen` 搬到外壳的 `setDrawer`，语义照旧 ——
-    // 只有「启动时摊开的是大纲」才记 true（最近那块不落盘，B305 的裁决）。
+  it("切换要把「开没开」与「哪一块」都写进设置并落盘", () => {
+    // B307：落盘点从 `setSideOpen` 搬到外壳的 `setDrawer`。
+    // B312：`toc_open` 只管开没开（旧语义「只有大纲才记 true」把两块挤进一格，
+    // 于是最近那块永远存不下来 —— 用户这次报的就是它）。
     const body = bodyOf("function setDrawer(");
-    expect(body, "要把开合写进 settings.toc_open").toMatch(/settings\.toc_open = view === "toc";/);
+    expect(body, "要把开合写进 settings.toc_open").toMatch(/settings\.toc_open = open;/);
+    expect(body, "要把哪一块写进 settings.drawer_view").toMatch(
+      /if \(view\) settings\.drawer_view = view;/,
+    );
     expect(body, "写完要落盘").toMatch(/saveSettings\(settings\)/);
     // 唯一入口：命令与顶部按钮都走 toggleToc → setDrawer。
     // ⚠️ 不写字符预算：这类「函数头之后 N 字内必须出现 X」的断言一插代码就断（B305/B307
@@ -494,20 +507,40 @@ describe("B194 大纲开合状态：切一次要落盘、启动要回放", () =>
     expect(toggle, "toggleToc 必须走 setDrawer（唯一收口）").toContain("setDrawer(");
   });
 
-  it("启动时要回放上次的开合，且回放本身不写盘", () => {
-    expect(src, "启动要按 settings.toc_open 回放").toMatch(
-      /setDrawer\(settings\?\.toc_open \? "toc" : null, false\)/,
+  it("启动时要回放那两格，且回放本身不写盘", () => {
+    expect(src, "启动要调外壳的回放（两格都在那里读）").toMatch(/\n {2}replayDrawer\(\);/);
+    const replay = bodyOf("export function replayDrawer(");
+    expect(replay, "「哪一块」要读 settings.drawer_view").toMatch(
+      /viewFromSetting\(settings\?\.drawer_view\)/,
+    );
+    expect(replay, "「开没开」要读 settings.toc_open").toMatch(
+      /setDrawer\(settings\?\.toc_open \? view : null, false\)/,
     );
     // persist=false：否则「加载失败 → 用默认值」会把默认值固化成用户设置
     const body = bodyOf("function setDrawer(");
     expect(body, "persist=false 时不得回写设置").toMatch(/if \(!persist \|\| !settings\) return;/);
   });
 
-  it("B194 反向验证：摘掉落盘 → 上面那条必须落空", () => {
-    const ORIG = '  settings.toc_open = view === "toc";';
-    expect(src, "退化串要先自证原句还在").toContain(ORIG);
-    const degraded = src.replace(ORIG, "");
-    expect(degraded, "退化后不再写 toc_open").not.toMatch(/settings\.toc_open = view === "toc";/);
+  it("B194 + B312 反向验证：摘掉落盘 → 上面那条必须落空", () => {
+    for (const ORIG of [
+      "  settings.toc_open = open;",
+      "  if (view) settings.drawer_view = view;",
+    ]) {
+      expect(src, "退化串要先自证原句还在").toContain(ORIG);
+      const degraded = src.replace(ORIG, "");
+      expect(degraded, `摘掉「${ORIG.trim()}」之后必须再也匹配不上`).not.toContain(ORIG.trim());
+    }
+  });
+
+  it("B312 登记补写：迟登记的那一块在登记那一刻就得对上当前开合态", () => {
+    // 生产次序：外壳回放在装配阶段，最近那块排在会话恢复之后才登记 ⇒ 登记那一刻
+    // 若不补写，重启后就是「壳开着、两块都藏着」的一片空白。
+    const reg = bodyOf("export function registerDrawerView(");
+    expect(reg, "登记要顺手把当前开合态补到这一块上").toContain("applyView(name, spec)");
+    const apply = bodyOf("function applyView(");
+    expect(apply, "补写读的是模块里的 active，不是调用方传的第二套口径").toContain(
+      "spec.panel.hidden = name !== active;",
+    );
   });
 });
 

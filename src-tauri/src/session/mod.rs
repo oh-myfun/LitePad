@@ -53,6 +53,12 @@ pub struct Settings {
     /// 与 `toc_width` 同属设置而非会话：它是**窗口级外观状态**（关掉再开应保持原样），
     /// 不跟着某份文档走。
     pub toc_open: bool,
+    /// B312：展开区摊开的是**哪一块**（`"toc"` 大纲 / `"recent"` 最近打开，默认 `"toc"`）。
+    ///
+    /// 与 `toc_open` 是一对：那颗管「开没开」，这颗管「开着的是谁」。后端不校验取值
+    /// —— 未知值由前端回落成 `"toc"`，理由同 `tab_style` / `keymap_preset`（枚举是前端概念，
+    /// 放到后端反而要跟着前端改）。旧配置文件缺这一格 ⇒ `#[serde(default)]` 给 `"toc"`。
+    pub drawer_view: String,
     /// B198：整个左栏（按钮列 + 展开区 + 中间缝）是否**收起**（默认 false = 左栏在）。
     ///
     /// 与 `toc_open` 是两层、互不撤销：`sidebar_off` 管「左栏在不在」，
@@ -101,6 +107,7 @@ impl Default for Settings {
             preview_width: "full".into(),
             toc_width: 240.0,
             toc_open: false,
+            drawer_view: "toc".into(),
             sidebar_off: false,
             keymap: HashMap::new(),
             keymap_preset: "default".into(),
@@ -605,6 +612,32 @@ mod tests {
             "缺失应回落 true（VS Code 默认）"
         );
         assert!(Settings::default().tab_action_reserve_space);
+    }
+
+    /// B312：老配置缺 `drawer_view` 必须回落 `"toc"`（容器级 `#[serde(default)]`），
+    /// 否则 load() 整体失败、用户全部偏好一起丢。
+    #[test]
+    fn settings_without_drawer_view_falls_back_to_toc() {
+        let json = r#"{ "theme": "dark" }"#;
+
+        let s: Settings = serde_json::from_str(json).expect("缺 drawer_view 也应能读入");
+        assert_eq!(s.drawer_view, "toc", "缺失应回落大纲");
+        assert_eq!(Settings::default().drawer_view, "toc");
+    }
+
+    /// B312：落盘字段名必须是 drawer_view（前端 Settings 按同名读写）。
+    /// 后端**不校验**取值 —— `"recent"` 原样存，未知串由前端回落 `"toc"`，理由同 tab_style。
+    #[test]
+    fn settings_drawer_view_round_trip() {
+        let s = Settings {
+            drawer_view: "recent".into(),
+            ..Settings::default()
+        };
+        let out = serde_json::to_string(&s).unwrap();
+        assert!(
+            out.contains("\"drawer_view\":\"recent\""),
+            "落盘字段应为 snake_case drawer_view：{out}"
+        );
     }
 
     /// B68：会话必须带上热退出副本 ID。

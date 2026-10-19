@@ -720,7 +720,7 @@ describe("B195 接线：按钮列点亮态与面板开合一处收口", () => {
     );
     // 回放（setDrawer）会写 is-on / aria-pressed，先装配再回放才不会装到空元素上
     const iCall = src.indexOf("setupSideBar();");
-    const iReplay = src.indexOf('setDrawer(settings?.toc_open ? "toc" : null, false)');
+    const iReplay = src.indexOf("replayDrawer();");
     expect(iCall, "bootstrap 必须调用 setupSideBar").toBeGreaterThan(-1);
     expect(iReplay, "bootstrap 必须回放开合").toBeGreaterThan(-1);
     expect(iCall, "先装按钮列、再回放开合").toBeLessThan(iReplay);
@@ -733,29 +733,36 @@ describe("B195 接线：按钮列点亮态与面板开合一处收口", () => {
     expect(body, "空隙转 is-off（不 hidden：间距不跳变）").toContain(
       'sideResizer.classList.toggle("is-off", !open)',
     );
-    expect(body, "每块面板按「轮到我没」写 hidden（互斥是结构性的）").toContain(
-      "spec.panel.hidden = name !== view;",
+    // B312：面板与键的写法收进了 `applyView` —— 不是把它拆成第二个出口，而是**同一段**
+    // 现在有两个调用者（切换时整表循环、登记时补写迟到那一块）。收口仍然只有一处代码。
+    expect(body, "每块面板与键都经同一段写完（不许在 setDrawer 里另写一份）").toContain(
+      "for (const [name, spec] of views) applyView(name, spec);",
     );
-    expect(body, "键点亮").toContain('spec.button.classList.toggle("is-on", name === view)');
-    expect(body, "aria-pressed 与点亮态同源").toContain(
-      'spec.button.setAttribute("aria-pressed", String(name === view))',
+    const apply = src.match(/function applyView\([\s\S]*?\n\}/)?.[0] ?? "";
+    expect(apply, "应有 applyView 这一段（面板显隐与点亮态同源）").toBeTruthy();
+    expect(apply, "每块面板按「轮到我没」写 hidden（互斥是结构性的）").toContain(
+      "spec.panel.hidden = name !== active;",
+    );
+    expect(apply, "键点亮").toContain('spec.button.classList.toggle("is-on", name === active)');
+    expect(apply, "aria-pressed 与点亮态同源").toContain(
+      'spec.button.setAttribute("aria-pressed", String(name === active))',
     );
     // 按钮列本身**常驻**：这里不该出现把整列藏掉的代码
     expect(body, "按钮列不得跟着隐藏（收起也留一列）").not.toContain("side-bar");
   });
 
   it("反向验证：摘掉键的点亮态 → 契约必须落空", () => {
-    const ORIG = '    spec.button.classList.toggle("is-on", name === view);';
+    const ORIG = '  spec.button.classList.toggle("is-on", name === active);';
     expect(src, "退化串要先自证原句还在").toContain(ORIG);
     const BAD = src.replace(ORIG, "");
     expect(BAD, "退化后不再点亮").not.toContain(
-      'spec.button.classList.toggle("is-on", name === view)',
+      'spec.button.classList.toggle("is-on", name === active)',
     );
     expect(() => {
       expect(
-        BAD.match(/function setDrawer\([\s\S]*?\n\}/)?.[0] ?? "",
+        BAD.match(/function applyView\([\s\S]*?\n\}/)?.[0] ?? "",
         "退化后的缺失必须被抓到",
-      ).toContain('spec.button.classList.toggle("is-on", name === view)');
+      ).toContain('spec.button.classList.toggle("is-on", name === active)');
     }).toThrow();
   });
 });

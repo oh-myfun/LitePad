@@ -1,7 +1,7 @@
 /**
  * B307（方案乙）：左栏展开区的**外壳**。
  *
- * 一句话的职责：外壳拥有 **宽度 / 显隐 / 按钮列那条内部竖线 / `toc_open` 落盘**，
+ * 一句话的职责：外壳拥有 **宽度 / 显隐 / 按钮列那条内部竖线 / `toc_open` + `drawer_view` 落盘**，
  * 里面的两块面板（大纲、最近打开）只是「此刻轮到哪一块」的视图。
  *
  * 为什么要单独一层：B305 给左栏加了第二块展开区之后，「展开区开着」这个外壳态仍然由
@@ -16,11 +16,12 @@
  * 登记进来的 `onShow` —— 反向 import 就是环，这类环本仓库一向靠注入躲，这里用注册表躲。
  */
 import { settings } from "../core/app-state";
-import { saveSettings } from "../ipc/api";
+import { saveSettings, type DrawerViewName } from "../ipc/api";
 import { attachSideResizer, clampSideWidth } from "../markdown/toc";
 import { sideDrawer, sideResizer, sideShell } from "../ui";
 
-export type DrawerView = "toc" | "recent";
+/** 两块面板的名字。真相在 `ipc/api` 的 `DrawerViewName`（它同时是设置里的字段类型）。 */
+export type DrawerView = DrawerViewName;
 
 interface DrawerViewSpec {
   /** 这一块的面板元素：轮不到它时 `hidden = true`。 */
@@ -33,9 +34,17 @@ interface DrawerViewSpec {
 
 const views = new Map<DrawerView, DrawerViewSpec>();
 
-/** 视图自己在装配那一步登记（`setupSideBar` / `setupRecentsPanel` 都在启动回放之前跑）。 */
+/**
+ * 视图自己在装配那一步登记：大纲排在启动回放**之前**，最近那块排在会话恢复**之后**。
+ *
+ * ⚠️ 登记**补写**当前开合态：生产次序里最近那块排在会话恢复之后才登记，而外壳回放
+ * 排在装配阶段 —— 于是「壳已判成摊开、这块还没进册」那一刻，`setDrawer` 的循环根本看不见它，
+ * 重启后「最近打开」就是一片空白。谁登记谁补一次，就不需要把启动链拆开重排（那条链上
+ * 每一次 `await` 的次序都有人踩过，见 `main.ts` 里 B305 那段注释）。
+ */
 export function registerDrawerView(name: DrawerView, spec: DrawerViewSpec): void {
   views.set(name, spec);
+  applyView(name, spec);
 }
 
 let active: DrawerView | null = null;
@@ -43,6 +52,13 @@ let active: DrawerView | null = null;
 let lastView: DrawerView = "toc";
 /** 分隔条当前宽度（`setupSideResizer` 的初值与回写都用它）。 */
 let sideWidth = 240;
+
+/** 把「此刻轮到哪一块」写到这一块的面板与键上（`setDrawer` 的循环体与登记补写共用同一段）。 */
+function applyView(name: DrawerView, spec: DrawerViewSpec): void {
+  spec.panel.hidden = name !== active;
+  spec.button.classList.toggle("is-on", name === active);
+  spec.button.setAttribute("aria-pressed", String(name === active));
+}
 
 export function activeDrawer(): DrawerView | null {
   return active;
@@ -73,19 +89,35 @@ export function setDrawer(view: DrawerView | null, persist = true): void {
   sideShell.classList.toggle("is-collapsed", !open);
   // 分隔条**不跟着隐藏**：它是两张卡片之间的固定间距，照样吃指针、照样能拖回来（B207）。
   sideResizer.classList.toggle("is-off", !open);
-  for (const [name, spec] of views) {
-    spec.panel.hidden = name !== view;
-    spec.button.classList.toggle("is-on", name === view);
-    spec.button.setAttribute("aria-pressed", String(name === view));
-  }
+  for (const [name, spec] of views) applyView(name, spec);
   if (view) views.get(view)?.onShow();
   if (!persist || !settings) return;
-  // 落盘语义照旧只有一个 `toc_open`：「启动时摊开、且摊开的是大纲」。最近那块是历史账，
-  // 不跟着会话走（B305 的裁决），所以它开着时写的是 false。
-  settings.toc_open = view === "toc";
+  // B312：两格各管一件事 —— `toc_open` 只答「开没开」，`drawer_view` 只答「开着的是谁」。
+  // 收起时**不覆盖** `drawer_view`：它记的是「最后一次摊开的那块」，拖回来与下次启动都靠它；
+  // 抹掉它就等于替用户改了选择。（旧语义把这两件挤进一格，于是「最近打开」开着时写的
+  // 是 `toc_open = false` ⇒ 重启后那一块永远收起 —— 用户这次报的就是它。）
+  settings.toc_open = open;
+  if (view) settings.drawer_view = view;
   void saveSettings(settings).catch(() => {
     // 持久化失败不影响本次生效（与分隔条回写宽度同一口径）
   });
+}
+
+/** 盘上那格认不认：未知值（手改过文件 / 别的版本写的串）一律回落大纲，不许把壳搞崩。 */
+function viewFromSetting(raw: string | undefined): DrawerView {
+  return raw === "recent" ? "recent" : "toc";
+}
+
+/**
+ * 启动回放：把盘上那两格（开没开 + 哪一块）搬到 DOM，`persist = false` 不反写盘。
+ *
+ * ⚠️ 即使收起也要先把「哪一块」摆进 `lastView`：分隔条拖回来露的就是这一块，
+ * 不摆的话收起状态下拖开永远是大纲。
+ */
+export function replayDrawer(): void {
+  const view = viewFromSetting(settings?.drawer_view);
+  lastView = view;
+  setDrawer(settings?.toc_open ? view : null, false);
 }
 
 /**

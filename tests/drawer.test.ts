@@ -70,7 +70,7 @@ function drag(resizer: EventTarget, from: number, to: number): void {
 }
 
 beforeEach(() => {
-  appState.setSettings({ toc_open: false, toc_width: 240 } as never);
+  appState.setSettings({ toc_open: false, drawer_view: "toc", toc_width: 240 } as never);
   h.saved.length = 0;
   registerBoth();
   drawer.setDrawer(null, false);
@@ -135,23 +135,79 @@ describe("B307 展开区外壳", () => {
     expect(ui.tocPanel.hidden).toBe(true);
   });
 
-  it("落盘语义照旧只有 toc_open：大纲开着才 true", () => {
+  it("落盘两格各管一件事：开没开写 toc_open，开着的是谁写 drawer_view", () => {
     drawer.setDrawer("toc");
     expect(appState.settings?.toc_open, "大纲摊开必须记 true").toBe(true);
+    expect(appState.settings?.drawer_view).toBe("toc");
     drawer.setDrawer("recent");
-    expect(appState.settings?.toc_open, "最近那块不落盘 ⇒ false").toBe(false);
+    expect(appState.settings?.toc_open, "B312：壳一样是摊开的，不许因为换了一块就记 false").toBe(
+      true,
+    );
+    expect(appState.settings?.drawer_view).toBe("recent");
     drawer.setDrawer(null);
     expect(appState.settings?.toc_open).toBe(false);
+    expect(appState.settings?.drawer_view, "收起不许抹掉最后一次摊开的那块").toBe("recent");
     expect(
       h.saved.map((s) => s.toc_open),
       "每一次都要真的落盘",
-    ).toEqual([true, false, false]);
+    ).toEqual([true, true, false]);
   });
 
   it("persist = false 的启动回放只搬 DOM，不反写盘（免得把默认值固化成用户设置）", () => {
     drawer.setDrawer("toc", false);
     expect(ui.sideDrawer.hidden).toBe(false);
     expect(h.saved, "回放不该发一次 saveSettings").toEqual([]);
+  });
+});
+
+describe("B312 展开区「哪一块」也进设置", () => {
+  it("启动回放读两格：开着的是最近 ⇒ 那块摊开，且不反写盘", () => {
+    appState.setSettings({ toc_open: true, drawer_view: "recent", toc_width: 240 } as never);
+    drawer.replayDrawer();
+    expect(ui.sideDrawer.hidden, "回放说开着，壳就该开着").toBe(false);
+    expect(ui.recentPanel.hidden, "该摊开的是最近那块").toBe(false);
+    expect(ui.tocPanel.hidden, "互斥照旧").toBe(true);
+    expect(h.saved, "回放只是搬 DOM").toEqual([]);
+  });
+
+  it("toc_open 为 false 时收起，但「哪一块」照旧搬进 lastView（拖分隔条拖回来露它）", () => {
+    appState.setSettings({ toc_open: false, drawer_view: "recent", toc_width: 240 } as never);
+    drawer.replayDrawer();
+    expect(ui.sideDrawer.hidden).toBe(true);
+    drag(ui.sideResizer, 100, 300);
+    expect(ui.sideDrawer.hidden, "拖开没生效").toBe(false);
+    expect(ui.recentPanel.hidden, "拖回来露的是大纲而不是盘上那块").toBe(false);
+  });
+
+  it("盘上是未知值（手改文件 / 别的版本写的串）⇒ 回落大纲，不许把壳搞崩", () => {
+    appState.setSettings({ toc_open: true, drawer_view: "nope", toc_width: 240 } as never);
+    drawer.replayDrawer();
+    expect(ui.sideDrawer.hidden).toBe(false);
+    expect(ui.tocPanel.hidden).toBe(false);
+    expect(ui.recentPanel.hidden).toBe(true);
+  });
+
+  it("登记晚于回放的那一块，登记那一刻补写当前开合态", async () => {
+    // 生产次序就是这样：回放排在 setupShell 里，最近那块排在会话恢复之后才登记。
+    // 外壳的循环只认已登记的视图 ⇒ 迟到者在「壳已开、它还没进册」那一刻必须补上，
+    // 否则重启后「最近打开」永远是一片空白。
+    vi.resetModules();
+    const [d, ui2, st] = await Promise.all([
+      import("../src/shell/drawer"),
+      import("../src/ui"),
+      import("../src/core/app-state"),
+    ]);
+    st.setSettings({ toc_open: true, drawer_view: "recent", toc_width: 240 } as never);
+    d.replayDrawer();
+    expect(ui2.sideDrawer.hidden, "回放判的是外壳，与登没登记无关").toBe(false);
+    d.registerDrawerView("recent", {
+      panel: ui2.recentPanel,
+      button: ui2.sideRecent,
+      onShow: () => {},
+    });
+    expect(ui2.recentPanel.hidden, "迟到的那块没在登记时补写 ⇒ 壳开着却空一片").toBe(false);
+    expect(ui2.sideRecent.classList.contains("is-on"), "那颗键也要补亮").toBe(true);
+    expect(ui2.sideRecent.getAttribute("aria-pressed")).toBe("true");
   });
 });
 

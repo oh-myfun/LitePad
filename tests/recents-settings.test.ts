@@ -40,14 +40,22 @@ describe("B305 上限项与启动装配", () => {
   it("互斥改成结构性的：外壳按「轮到我没」写两块面板，反向注入整个不许存在（B307）", () => {
     // 旧形状是两块面板互相打电话（`setSideOpen` 叫 `closeRecentDrawer`，反过来再叫一次），
     // 两条方向各写一半 ⇒ 只要漏一条就能同时露两块。新形状只有一句：轮不到我的都得收起。
+    // B312 起那一段叫 `applyView`（切换时整表循环 + 登记时补写迟到那块，两个调用者共用一段）。
     const d = readFileSync("src/shell/drawer.ts", "utf-8");
     const body = d.slice(
       d.indexOf("export function setDrawer("),
       d.indexOf("\nexport function setupSideResizer"),
     );
-    expect(body, "找不到 setDrawer 这个唯一出口").toContain("spec.panel.hidden = name !== view;");
-    expect(body, "点亮态必须与面板显隐同处收口，否则又长出「键灭了还摊着」").toContain(
-      'spec.button.classList.toggle("is-on", name === view)',
+    expect(body, "找不到 setDrawer 这个唯一出口").toContain("applyView(name, spec)");
+    const apply = d.slice(
+      d.indexOf("function applyView("),
+      d.indexOf("export function setDrawer("),
+    );
+    expect(apply, "面板显隐与点亮态必须同一段（否则又长出「键灭了还摊着」）").toContain(
+      "spec.panel.hidden = name !== active;",
+    );
+    expect(apply, "键的点亮态读的是同一个 active").toContain(
+      'spec.button.classList.toggle("is-on", name === active)',
     );
     // 反向闸：那条注入通道必须已经删干净（留着就是第二个出口）。
     expect(readFileSync("src/ui.ts", "utf-8")).not.toContain("closeRecentDrawer");
