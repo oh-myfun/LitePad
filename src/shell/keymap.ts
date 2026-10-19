@@ -244,9 +244,9 @@ export function isUsableBinding(b: Binding): boolean {
 export const COMMANDS: CommandDef[] = [
   // ---- 文件 ----
   { id: "file.new", label: "新建标签", group: "文件", keys: ["Ctrl+N"] },
-  { id: "file.open", label: "打开文件…", group: "文件", keys: ["Ctrl+O"] },
+  { id: "file.open", label: "打开文件", group: "文件", keys: ["Ctrl+O"] },
   { id: "file.save", label: "保存", group: "文件", keys: ["Ctrl+S"] },
-  { id: "file.saveAs", label: "另存为…", group: "文件", keys: ["Ctrl+Shift+S"] },
+  { id: "file.saveAs", label: "另存为", group: "文件", keys: ["Ctrl+Shift+S"] },
   { id: "file.saveAll", label: "全部保存", group: "文件", keys: ["Ctrl+Alt+S"] },
   { id: "file.close", label: "关闭标签", group: "文件", keys: ["Ctrl+W"] },
 
@@ -265,13 +265,13 @@ export const COMMANDS: CommandDef[] = [
   },
 
   // ---- 编辑 ----
-  { id: "edit.find", label: "查找…", group: "编辑", keys: ["Ctrl+F"] },
-  { id: "edit.replace", label: "替换…", group: "编辑", keys: ["Ctrl+H"] },
+  { id: "edit.find", label: "查找", group: "编辑", keys: ["Ctrl+F"] },
+  { id: "edit.replace", label: "替换", group: "编辑", keys: ["Ctrl+H"] },
   { id: "edit.findNext", label: "查找下一个", group: "编辑", keys: ["F3"] },
   { id: "edit.findPrev", label: "查找上一个", group: "编辑", keys: ["Shift+F3"] },
   {
     id: "edit.goto",
-    label: "转到行…",
+    label: "转到行",
     group: "编辑",
     keys: ["Ctrl+G"],
     note: "编辑器聚焦时若被编辑器自身占用则跳过",
@@ -290,7 +290,7 @@ export const COMMANDS: CommandDef[] = [
   { id: "view.zoomReset", label: "重置字号", group: "视图", keys: ["Ctrl+0"] },
   {
     id: "palette.open",
-    label: "命令面板…",
+    label: "命令面板",
     group: "视图",
     keys: ["Ctrl+Shift+P"],
     note: "按名字搜索并执行任意命令，右侧显示当前键位",

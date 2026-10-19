@@ -135,9 +135,9 @@ describe("快捷键对话框：浏览", () => {
 describe("快捷键对话框：编辑", () => {
   it("点键位按钮进入录制态，按下组合键即改键并回调", () => {
     const { changes } = openDialog();
-    keyButton("打开文件…").click();
+    keyButton("打开文件").click();
     expect(document.body.classList.contains(KEYMAP_RECORDING_CLASS), "应进入录制态").toBe(true);
-    expect(keyButton("打开文件…").textContent).toBe("按下新键…");
+    expect(keyButton("打开文件").textContent).toBe("按下新键…");
 
     // Ctrl+Shift+P 已是「命令面板」的默认键位，这里换一个确实空闲的键
     pressDoc({ code: "KeyJ", key: "J", ctrlKey: true, altKey: true });
@@ -145,12 +145,12 @@ describe("快捷键对话框：编辑", () => {
     expect(changes).toEqual([{ "file.open": "Ctrl+Alt+J" }]);
     expect(document.body.classList.contains(KEYMAP_RECORDING_CLASS), "录制应结束").toBe(false);
     // 列表已重绘为新键位
-    expect(keyButton("打开文件…").textContent).toBe("Ctrl+Alt+J");
+    expect(keyButton("打开文件").textContent).toBe("Ctrl+Alt+J");
   });
 
   it("纯修饰键按下不结束录制（等真正的按键）", () => {
     const { changes } = openDialog();
-    keyButton("打开文件…").click();
+    keyButton("打开文件").click();
     pressDoc({ code: "ShiftLeft", key: "Shift", shiftKey: true });
     expect(document.body.classList.contains(KEYMAP_RECORDING_CLASS)).toBe(true);
     expect(changes).toEqual([]);
@@ -158,7 +158,7 @@ describe("快捷键对话框：编辑", () => {
 
   it("撞到已占用的键位会被拦下，并提示占用者", () => {
     const { changes } = openDialog();
-    keyButton("打开文件…").click();
+    keyButton("打开文件").click();
     pressDoc({ code: "KeyS", key: "s", ctrlKey: true });
 
     expect(changes, "冲突时不得写入").toEqual([]);
@@ -170,7 +170,7 @@ describe("快捷键对话框：编辑", () => {
 
   it("裸字母会被拒绝（否则会抢走正常输入）", () => {
     const { changes } = openDialog();
-    keyButton("打开文件…").click();
+    keyButton("打开文件").click();
     pressDoc({ code: "KeyP", key: "p" });
     expect(changes).toEqual([]);
     expect(hintText()).toContain("Ctrl");
@@ -179,7 +179,7 @@ describe("快捷键对话框：编辑", () => {
 
   it("Esc 在录制中只取消录制，不关闭对话框", () => {
     const { changes } = openDialog();
-    keyButton("打开文件…").click();
+    keyButton("打开文件").click();
     pressDoc({ code: "Escape", key: "Escape" });
 
     expect(document.querySelector(".settings-overlay"), "对话框应仍在").toBeTruthy();
@@ -236,12 +236,12 @@ describe("M4 快捷键对话框：键位预设下拉", () => {
 
   it("切换预设立即改变列表里显示的键位", () => {
     openDialog({});
-    expect(keyButton("另存为…").textContent).toBe("Ctrl+Shift+S");
+    expect(keyButton("另存为").textContent).toBe("Ctrl+Shift+S");
 
     pickPreset("notepadpp");
 
     // Notepad++ 预设下另存为是 Ctrl+Alt+S
-    expect(keyButton("另存为…").textContent).toBe("Ctrl+Alt+S");
+    expect(keyButton("另存为").textContent).toBe("Ctrl+Alt+S");
   });
 
   it("切换预设会清掉旧的自定义覆盖（否则换回默认仍带着旧键位）", () => {
@@ -343,5 +343,20 @@ describe("B42：快捷键可浏览可编辑", () => {
     );
     // 旧的只读说明清单已废弃
     expect(dlg, "不得再保留只读的 KEYMAP_DOC 清单").not.toContain("KEYMAP_DOC");
+  });
+});
+
+describe("命令表的文案口径（与菜单栏同一条）", () => {
+  it("命令 label 一律不带尾部省略号（用户 2026-10-20：「设置 ▸ 快捷键」里的点点点也去掉）", () => {
+    const src = readFileSync("src/shell/keymap.ts", "utf-8");
+    const labels = [...src.matchAll(/label:\s*"([^"]*)"/g)].map((m) => m[1]);
+    expect(labels.length, "一条 label 都没抓到 ⇒ 这条判据是空的").toBeGreaterThan(20);
+    expect(
+      labels.filter((l) => l.endsWith("…")),
+      "这些命令名还带着省略号",
+    ).toEqual([]);
+    // 反向自证：把一条改回旧文案，判据必须抓到它（否则这条是恒真）
+    const degraded = labels.map((l) => (l === "另存为" ? "另存为…" : l));
+    expect(degraded.filter((l) => l.endsWith("…"))).toEqual(["另存为…"]);
   });
 });
