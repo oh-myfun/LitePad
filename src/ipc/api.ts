@@ -172,6 +172,57 @@ export interface Settings {
   tab_action_reserve_space: boolean;
 }
 
+/**
+ * B305：最近打开的一条记录。
+ *
+ * ⚠️ 名单归 Rust 持有（`<配置目录>/recents.json`，见 `src-tauri/src/session/recent.rs`），
+ * 这里只是视图读的那份形状。它**不在 `Settings` 里**：那张表没有权威窗口，每个窗口都能
+ * 整表覆写（`src/toc.ts` 里三处 `saveSettings`），名单放进去等于「别人一次无关的设置
+ * 写入就把名单冲掉」。
+ * `closedAt` 是毫秒时间戳，相对时间（「刚才 / 3 分钟前」）由渲染端换算 —— 文案归界面。
+ */
+export interface RecentEntry {
+  path: string;
+  name: string;
+  closedAt: number;
+}
+
+/** 列名单。Rust 顺手剔掉磁盘上已不存在的条目，所以这里可能比上一次少几条。 */
+export function listRecents(): Promise<RecentEntry[]> {
+  return invoke<RecentEntry[]>("list_recents");
+}
+
+/**
+ * 上报本窗口「此刻屏上看得见哪些文件」。名单的记账全靠这条推导：
+ * 一份路径从所有窗口的并集里消失 = 用户把它关掉了。
+ *
+ * 回包是**变更后的完整名单**（`forgetRecent` / `clearRecents` 同），视图直接拿它重画，
+ * 不必再 `listRecents` 一次 —— 少一次往返就少一次读到中间态的机会。
+ */
+export function syncOpenPaths(paths: string[]): Promise<RecentEntry[]> {
+  return invoke<RecentEntry[]>("sync_open_paths", { paths });
+}
+
+/** 单条清除（行上那颗 ✕）。 */
+export function forgetRecent(path: string): Promise<RecentEntry[]> {
+  return invoke<RecentEntry[]>("forget_recent", { path });
+}
+
+/** 清空全部（标题栏那颗垃圾桶）。 */
+export function clearRecents(): Promise<RecentEntry[]> {
+  return invoke<RecentEntry[]>("clear_recents");
+}
+
+/** 保存数量上限（设置页那一项；0 = 不再记录并清空）。 */
+export function getRecentLimit(): Promise<number> {
+  return invoke<number>("get_recent_limit");
+}
+
+/** 改上限。回包是**生效后的**上限（别的窗口可能刚写过，以 Rust 为准）。 */
+export function setRecentLimit(limit: number): Promise<number> {
+  return invoke<number>("set_recent_limit", { limit });
+}
+
 export function newTab(encoding?: string | null): Promise<TabInfo> {
   return invoke<TabInfo>("new_tab", { encoding: encoding ?? null });
 }

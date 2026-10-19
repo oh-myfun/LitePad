@@ -4,6 +4,10 @@
 // 逼着每个功能模块反过来 import main.ts（hub 型耦合 + 循环依赖）。
 // 归到 core/ 之后，功能模块只依赖 core/*，各自可单独单测。
 
+// 只取类型（`api.ts` 不 import 本文件，这条依赖不会成环）：载荷里的 RecentEntry 与 IPC
+// 回包是同一个形状，复制一份字段表迟早跟 Rust 那边错开。
+import type { RecentEntry } from "../ipc/api";
+
 /**
  * 同一文档同时挂在两个窗口上时，正文必须双向实时同步。
  *
@@ -159,4 +163,18 @@ export interface SyncModePayload {
   from?: string;
   docId?: number;
   on?: boolean;
+}
+
+/**
+ * B305：最近打开名单变了。
+ *
+ * ⚠️ 这条**不是** `from`-family 的跨窗口回声，发人是 Rust（`commands/recents.rs` 的
+ * `publish`）：名单归它单点持有，改完就广播一份完整快照。所以收端不许按 `from === windowLabel`
+ * 过滤掉自己 —— 没有「自己发的」这一说，本窗口只是视图。
+ * 载荷是变更后的完整条目，视图拿它整块重画，不再回头 `list_recents`。
+ */
+export const EVT_RECENTS_CHANGED = "recents-changed";
+
+export interface RecentsChangedPayload {
+  entries?: RecentEntry[];
 }

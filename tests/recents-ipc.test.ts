@@ -1,0 +1,91 @@
+// @vitest-environment node
+// B305 Task 3 · 前端 IPC 薄包装。
+//
+// 为什么值得单独钉：命令名与参数键是**跨语言的两端字符串**，写错任何一侧都不会有编译错误，
+// 表现是「名单永远不动」。运行时也测不出来（jsdom 里没有 Rust）。所以这里断言的正是
+// 「发出去的那串字」，再加一条跨语言的事件名对照。
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+
+const invokeSpy = vi.hoisted(() =>
+  vi.fn<(cmd: string, args?: Record<string, unknown>) => Promise<unknown>>(() =>
+    Promise.resolve([]),
+  ),
+);
+
+vi.mock("@tauri-apps/api/core", () => ({
+  convertFileSrc: (p: string) => `asset://${p}`,
+  invoke: (cmd: string, args?: Record<string, unknown>) => invokeSpy(cmd, args),
+}));
+vi.mock("@tauri-apps/api/event", () => ({
+  emit: () => Promise.resolve(),
+  listen: () => Promise.resolve({ unlisten: () => {} }),
+}));
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({ label: "main" }),
+}));
+
+import {
+  listRecents,
+  syncOpenPaths,
+  forgetRecent,
+  clearRecents,
+  getRecentLimit,
+  setRecentLimit,
+} from "../src/ipc/api";
+import { EVT_RECENTS_CHANGED } from "../src/core/events";
+
+describe("B305 前端 IPC 薄包装", () => {
+  beforeEach(() => {
+    invokeSpy.mockClear();
+    invokeSpy.mockResolvedValue([]);
+  });
+
+  it("六个命令名与参数键逐个对齐 Rust 侧", async () => {
+    await listRecents();
+    expect(invokeSpy.mock.calls[0]?.[0], "Tauri 命令名写错只会静默「命令不存在」").toBe(
+      "list_recents",
+    );
+
+    await syncOpenPaths(["a.md", "b.md"]);
+    expect(invokeSpy.mock.calls[1]).toEqual(["sync_open_paths", { paths: ["a.md", "b.md"] }]);
+
+    await forgetRecent("a.md");
+    expect(invokeSpy.mock.calls[2]).toEqual(["forget_recent", { path: "a.md" }]);
+
+    await clearRecents();
+    expect(invokeSpy.mock.calls[3]?.[0]).toBe("clear_recents");
+
+    await getRecentLimit();
+    expect(invokeSpy.mock.calls[4]?.[0]).toBe("get_recent_limit");
+
+    await setRecentLimit(50);
+    expect(invokeSpy.mock.calls[5]).toEqual(["set_recent_limit", { limit: 50 }]);
+  });
+
+  it("改过名单的三条命令把 Rust 回包的完整名单原样交给调用方（视图不必再 list 一次）", async () => {
+    const entries = [{ path: "a.md", name: "a.md", closedAt: 17 }];
+    invokeSpy.mockResolvedValue(entries);
+    await expect(syncOpenPaths([])).resolves.toEqual(entries);
+    await expect(forgetRecent("a.md")).resolves.toEqual(entries);
+    await expect(clearRecents()).resolves.toEqual(entries);
+  });
+
+  it("setRecentLimit 回的是生效后的上限（Rust 才是权威，别的窗口可能刚写过）", async () => {
+    invokeSpy.mockResolvedValue(10);
+    await expect(setRecentLimit(999)).resolves.toBe(10);
+  });
+
+  it("广播事件名两侧同一串字（跨语言拼错不报错，只表现为「名单不刷新」）", () => {
+    expect(EVT_RECENTS_CHANGED).toBe("recents-changed");
+    const rust = readFileSync("src-tauri/src/commands/recents.rs", "utf-8");
+    expect(rust, "Rust 侧没广播这个名字").toContain(`"${EVT_RECENTS_CHANGED}"`);
+  });
+
+  it("线上字段是 closedAt（camelCase），Rust 侧靠 rename_all 落同一串", () => {
+    const api = readFileSync("src/ipc/api.ts", "utf-8");
+    expect(api).toContain("closedAt");
+    const rust = readFileSync("src-tauri/src/session/recent.rs", "utf-8");
+    expect(rust).toContain('rename_all = "camelCase"');
+  });
+});
