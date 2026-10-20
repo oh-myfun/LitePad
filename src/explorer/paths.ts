@@ -22,7 +22,7 @@ import { EVT_DOC_PATH_CHANGED, type DocPathChangedPayload } from "../core/events
 import { logger } from "../core/logger";
 import { emitCrossWindow, setDocPath } from "../ipc/api";
 import { forgetRecentEntry, retitleRecentEntry } from "../recents/store";
-import { scheduleSessionSave } from "../session/persist";
+import { scheduleBackup, scheduleSessionSave } from "../session/persist";
 import { refreshAll } from "../ui";
 import { onPathsChanged, type PathChange } from "./store";
 
@@ -100,16 +100,25 @@ function orphan(doc: Doc): void {
  */
 function applyToDocs(change: PathChange): number[] {
   const hit: number[] = [];
+  let orphaned = false;
   for (const doc of docs.values()) {
     if (!doc.path || !touches(doc.path, change.from)) continue;
     if (change.to === null) {
       orphan(doc);
+      orphaned = true;
     } else {
       const next = rewritePath(doc.path, change.from, change.to);
       if (next === null) continue;
       relabel(doc, next);
     }
     hit.push(doc.tabId);
+  }
+  if (orphaned) {
+    // ⚠️ 没有这一发，「删掉正开着的文件」等于把那份内容判了死刑：会话对**无路径**的文档
+    // 有一条 B68/B69 的判据 —— 「无路径且脏、又没副本」不进会话（否则重启会被当成空文档）。
+    // 抹掉路径之后这份文档正好落进那一格，所以必须立刻补一发热退出副本；副本落地时会
+    // 再排一次会话写（`flushBackups` 里 `assignedNewId` 那一段），标签就又被留住了。
+    scheduleBackup();
   }
   if (hit.length > 0) {
     // `refreshAll` 是那一组刷新的唯一出口：标签名、窗口标题、状态栏、按钮勾选态一起跟上。

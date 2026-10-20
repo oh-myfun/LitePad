@@ -624,6 +624,9 @@ async function commitRename(raw: string): Promise<void> {
   try {
     const made = await renameEntryAt(plan.dir, plan.path, name);
     showMessage(`已重命名为 ${made.name}`);
+    // 选中态跟着走到新路径：`refreshDir` 已经按**旧**路径重画过一遍（那一格谁也不匹配 ⇒
+    // 高亮凭空消失），用户刚改完名却看见选中没了，读作「改名把这一条弄丢了」。
+    select(made.path);
   } catch (e: unknown) {
     renderTree();
     showMessage(String(e), true);

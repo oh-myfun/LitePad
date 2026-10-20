@@ -486,6 +486,8 @@ describe("B315 右键菜单与常规操作", () => {
     press(input!, "Enter");
     await vi.waitFor(() => expect(h.renamed).toEqual([[`${ROOT}\\a.md`, "改好的.md"]]));
     await vi.waitFor(() => expect(names()).toContain("改好的.md"));
+    // 选中态要跟着走到新那一条：重绘是按**旧**路径做的，不补这一发就是「改完名选中凭空没了」。
+    expect(rowAt("改好的.md").getAttribute("aria-selected"), "选中态没跟着改名走").toBe("true");
     expect(ui.explorerTree.querySelector(".explorer-input"), "提交后输入框要收掉").toBeNull();
 
     press(rowAt("b.md"), "F2");

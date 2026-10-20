@@ -40,6 +40,22 @@ vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ label: h.selfLabel, setTitle: () => Promise.resolve() }),
 }));
 
+/** 会话与热退出副本两发排程各被叫了几次（删除那一形必须补副本，见 paths.ts 那条 ⚠️）。 */
+const persist = vi.hoisted(() => ({ backup: 0, session: 0 }));
+
+vi.mock("../src/session/persist", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../src/session/persist")>();
+  return {
+    ...real,
+    scheduleBackup: () => {
+      persist.backup += 1;
+    },
+    scheduleSessionSave: () => {
+      persist.session += 1;
+    },
+  };
+});
+
 vi.mock("../src/ipc/api", async (importOriginal) => {
   const real = await importOriginal<typeof import("../src/ipc/api")>();
   const base = (p: string): string => p.slice(p.lastIndexOf("\\") + 1);
@@ -139,6 +155,8 @@ beforeEach(() => {
   h.retitled.length = 0;
   h.forgotten.length = 0;
   h.selfLabel = "main";
+  persist.backup = 0;
+  persist.session = 0;
   appState.docs.clear();
   appState.tabs.clear();
   appState.panels.clear();
@@ -179,6 +197,7 @@ describe("B315 打开着的文档跟着盘上改", () => {
     expect(h.docPaths).toEqual([[7, P("b.md")]]);
     expect(h.retitled).toEqual([[P("a.md"), P("b.md")]]);
     expect(h.forgotten, "改名不是删除").toEqual([]);
+    expect(persist.backup, "改名不动内容 ⇒ 不该顺手写一发热退出副本").toBe(0);
     expect(pathBroadcasts()).toEqual([
       { changes: [{ from: P("a.md"), to: P("b.md") }], from: "main" },
     ]);
@@ -246,6 +265,10 @@ describe("B315 打开着的文档跟着盘上改", () => {
     expect(h.docPaths).toEqual([[11, ""]]);
     expect(h.forgotten).toEqual([P("a.md")]);
     expect(h.retitled, "删除没有「改成什么」可言").toEqual([]);
+    // ⚠️ 「无路径 + 脏 + 没副本」的文档**不进会话**（B68/B69 判据）⇒ 删完不补一发副本，
+    // 用户重启就直接看见这份内容没了。这一条是真机那轮抓出来的。
+    expect(persist.backup, "抹掉路径之后必须立刻排一发热退出副本").toBe(1);
+    expect(persist.session).toBe(1);
     expect(pathBroadcasts()[0].changes, "删除那一发要带得出「没有了」而不是空串").toEqual([
       { from: P("a.md"), to: null },
     ]);
