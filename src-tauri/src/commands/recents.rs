@@ -133,6 +133,23 @@ pub fn forget_recent(
     })
 }
 
+/// B315 · 资源管理器里改名 / 挪走 ⇒ 名单里那一条**就地改写**（目录会牵到它里面每一条）。
+/// 不新增、不换位置、不改时间戳：那三样一起改了，用户看到的就是「我明明只是改了个名，
+/// 最近打开的顺序全乱了」。
+#[tauri::command]
+pub fn retitle_recent(
+    window: tauri::Window,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    old: String,
+    new: String,
+) -> Vec<RecentEntry> {
+    let label = window.label().to_string();
+    note(&app, &state, &format!("{label} 改写路径"), |r| {
+        recent::retitle(r, &old, &new)
+    })
+}
+
 /// 清空全部（标题栏那颗垃圾桶）。不弹确认框 —— 名单会自己长回来。
 #[tauri::command]
 pub fn clear_recents(

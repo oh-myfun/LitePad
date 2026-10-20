@@ -178,3 +178,24 @@ export const EVT_RECENTS_CHANGED = "recents-changed";
 export interface RecentsChangedPayload {
   entries?: RecentEntry[];
 }
+
+/**
+ * B315 · 盘上的一条路径被改了（改名 / 挪走），或者已经没有了（送进回收站）。
+ *
+ * 只有**发起方**（资源管理器只在主窗口）会动盘、动后端那份文档记录、动「最近打开」。
+ * 这一条只让别的窗口把自己内存里的账改过来：每个窗口只改自己的 `docs`，收到之后
+ * **不再转发**，所以不会形成回声环（`from` 照旧带着，用来把自己那一发排除掉 ——
+ * 主窗口也会收到自己广播的回声，第二遍虽是无操作，但那几发 RPC 不该再发一次）。
+ */
+export const EVT_DOC_PATH_CHANGED = "doc-path-changed";
+
+export interface PathChangeItem {
+  from: string;
+  /** 新的完整路径；`null` = 盘上已经没有它。 */
+  to: string | null;
+}
+
+export interface DocPathChangedPayload {
+  from?: string;
+  changes?: PathChangeItem[];
+}

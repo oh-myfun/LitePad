@@ -23,6 +23,7 @@ import {
   getRecentLimit as rpcGetRecentLimit,
   listRecents,
   noteOpenedPath,
+  retitleRecent,
   setRecentLimit as rpcSetRecentLimit,
   type RecentEntry,
 } from "../ipc/api";
@@ -128,6 +129,23 @@ export async function forgetRecentEntry(path: string): Promise<void> {
     applyIfFresh(seq, await forgetRecent(path));
   } catch (e: unknown) {
     logger.warn("recents", `清除单条失败：${String(e)}`);
+  }
+}
+
+/**
+ * B315 · 就地改写名单里那一条（资源管理器改名 / 挪走）。
+ *
+ * 回包仍是**变更后的完整名单**，所以与上面两条同一条路：只认最新那一包。
+ * 删掉那一条走 `forgetRecentEntry`，不传空串 —— 「改写成一个不存在的路径」在 Rust 那侧
+ * 是一条都不改（`retitle` 拒空参数），名单会停在旧路径上，直到下一次 `list_recents`
+ * 把它当失效项剔掉。
+ */
+export async function retitleRecentEntry(old: string, next: string): Promise<void> {
+  const seq = ++requestSeq;
+  try {
+    applyIfFresh(seq, await retitleRecent(old, next));
+  } catch (e: unknown) {
+    logger.warn("recents", `改写路径失败：${String(e)}`);
   }
 }
 

@@ -703,6 +703,44 @@ pub fn list_tabs(state: State<'_, AppState>) -> Result<Vec<TabInfo>, String> {
     Ok(guard.iter().map(tab_info).collect())
 }
 
+/// B315 · 资源管理器把盘上的路径改了（改名 / 挪走 / 送回收站）⇒ 后端这份文档记录跟着改。
+///
+/// ⚠️ 为什么不能只改前端那一份 —— 这里存的这一条是三个动作的地基：
+///  · `save_file` 的 `path` 为空时**回落到它**（自动保存正是空 path）。不改的话，
+///    「把 a.md 改名成 b.md」之后下一次自动保存就把 `a.md` 凭空又写了出来 ——
+///    用户读作「改名没生效，旧文件还在」。
+///  · `save_paste_image` 按它决定图片落在哪一层。
+///  · 外部修改的匹配是 `d.path == 事件路径`（main.rs 那圈监听线程），不改就再也收不到
+///    这份文档的事件；而旧路径上的监听得取消，不然回收站里那条一动就激起一发假「外部修改」。
+///
+/// 传空串 = 盘上已经没有这条路（送进回收站）：取消监听并退回「尚未关联磁盘路径」那一态，
+/// 与未命名文档同形 —— 于是自动保存自然跳过它，手动保存走「另存为」，绝不会往回收站里
+/// 那条路径偷偷写字节（那等于把用户刚删掉的文件复活）。
+#[tauri::command]
+pub fn set_doc_path(tab_id: u64, path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let raw = PathBuf::from(path.trim());
+    let target = if raw.as_os_str().is_empty() {
+        PathBuf::new()
+    } else {
+        normalize_path(fs::canonicalize(&raw).unwrap_or(raw.clone()))
+    };
+    let old = {
+        let mut guard = state.docs.lock().map_err(|e| e.to_string())?;
+        let d = guard
+            .iter_mut()
+            .find(|d| d.id == tab_id)
+            .ok_or_else(|| format!("标签 {tab_id} 不存在"))?;
+        std::mem::replace(&mut d.path, target.clone())
+    };
+    if !old.as_os_str().is_empty() && old != target {
+        unwatch_file(&state, &old);
+    }
+    if !target.as_os_str().is_empty() && target != old {
+        watch_file(&state, &target);
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------- 热退出（B68）
 
 /// 从热退出副本还原出来的标签。与 `OpenedFile` 同形（少 reused/size/lossy），

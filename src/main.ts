@@ -216,6 +216,7 @@ import { setupRecentsPanel } from "./recents/panel";
 // 搬进 store（**不走 panel 的 `openFolder`** —— 那条会顺手 saveSettings，而启动回放不该
 // 把读到的值再写一遍，口径同 B312 的 `persist = false`）。
 import { promptOpenFolder, setupExplorer, toggleExplorer } from "./explorer/panel";
+import { setupPathRewiring } from "./explorer/paths";
 import { setRoot as setExplorerRoot } from "./explorer/store";
 import { initRecentsStore } from "./recents/store";
 import type { WindowScrollPosition } from "./core/events";
@@ -956,6 +957,9 @@ async function setupShell(): Promise<void> {
   // 写点，map 与协调器一起翻 —— 事后补推的那一发排在 `restoreSession()` 之前，推的是空表，
   // 于是真机出现过「键灭着却还在同步」。
   listenDocSync();
+  // B315：盘上的路径被资源管理器改了 ⇒ 文档、后端记录、「最近打开」和别的窗口都要跟着改账。
+  // 每扇窗口都得装（发起方只有主窗口，但改账是各家内存各自的事），所以排在 windowKind 分支之前。
+  setupPathRewiring();
   // B178：引导末尾问一圈「你们都开着哪些可见文档」—— 老窗口把当前集合重播一遍，
   // 新上线的窗口据此补齐 `remoteOpenByWindow`（否则它只知道自己开的，收不到老窗口
   // 已经开着的那些）。只发一次，不进刷新循环，不会形成回声环。

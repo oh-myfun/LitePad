@@ -238,6 +238,17 @@ export function forgetRecent(path: string): Promise<RecentEntry[]> {
   return invoke<RecentEntry[]>("forget_recent", { path });
 }
 
+/**
+ * B315 · 名单里那一条**就地改写**（资源管理器改名 / 挪走之后）。
+ *
+ * 与 `noteOpenedPath` 的区别就是要的那三点：不新增、不顶到最前、不改时间戳 ——
+ * 用户只是改了个文件名，最近打开的顺序不该跟着大洗牌。
+ * 参数名 `new` 是 Rust 那侧的名字（Tauri 按原样取键，前端这里只能写成 `new:`）。
+ */
+export function retitleRecent(old: string, next: string): Promise<RecentEntry[]> {
+  return invoke<RecentEntry[]>("retitle_recent", { old, new: next });
+}
+
 /** 清空全部（标题栏那颗垃圾桶）。 */
 export function clearRecents(): Promise<RecentEntry[]> {
   return invoke<RecentEntry[]>("clear_recents");
@@ -400,6 +411,17 @@ export function closeTab(tabId: number): Promise<void> {
 
 export function listTabs(): Promise<TabInfo[]> {
   return invoke<TabInfo[]>("list_tabs");
+}
+
+/**
+ * B315 · 盘上的路径被资源管理器改了（改名 / 挪走）⇒ 后端那份文档记录也要跟着改。
+ *
+ * ⚠️ 漏了这一发，界面上标签写的是新路径、后端记的还是旧的，而**自动保存走的是后端那条**
+ * （它传 `path: null` 让 Rust 回落）—— 表现就是「改完名旧文件又回来了」。
+ * `path` 传空串 = 盘上已经没有它（送进回收站）：退回「未关联磁盘路径」那一态。
+ */
+export function setDocPath(tabId: number, path: string): Promise<void> {
+  return invoke<void>("set_doc_path", { tabId, path });
 }
 
 /** 保存前探测目标编码是否会丢字符（不可逆保护）。 */

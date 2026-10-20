@@ -175,6 +175,41 @@ pub fn forget(r: &mut Recents, key: &str) -> bool {
     r.entries.len() != before
 }
 
+/// 一条路径被改名 / 挪走 ⇒ **就地改写**那一格：不新增、不换位置、不改时间戳。
+///
+/// 目录改名会牵到它下面每一条在册文件 ⇒ 命中规则是「同一条」或「以它为前缀」，
+/// 尾巴保留条目自己那一份写法（大小写不动 —— 名单里显示的就是用户当初那一条）。
+/// 前端那份 `rewritePath`（`src/explorer/paths.ts`）与此同规则，两处各自实现是
+/// 跨语言的必然：文档在 JS 手里，名单在 Rust 手里。
+pub fn retitle(r: &mut Recents, old: &str, new: &str) -> bool {
+    let flat = |s: &str| s.replace('/', "\\");
+    let oldp = flat(old).trim_end_matches('\\').to_string();
+    let newp = flat(new);
+    if oldp.is_empty() || newp.is_empty() {
+        return false;
+    }
+    let prefix = format!("{oldp}\\");
+    let mut changed = false;
+    for e in r.entries.iter_mut() {
+        let path = flat(&e.path);
+        let tail = if path.eq_ignore_ascii_case(&oldp) {
+            ""
+        } else if path.len() > prefix.len() && path[..prefix.len()].eq_ignore_ascii_case(&prefix) {
+            &path[prefix.len()..]
+        } else {
+            continue;
+        };
+        e.path = if tail.is_empty() {
+            newp.clone()
+        } else {
+            format!("{newp}\\{tail}")
+        };
+        e.name = file_name_of(&e.path);
+        changed = true;
+    }
+    changed
+}
+
 pub fn clear(r: &mut Recents) -> bool {
     if r.entries.is_empty() {
         return false;
@@ -229,6 +264,50 @@ mod tests {
         assert_eq!(r.entries.len(), 2, "同一路径不许占两格");
         assert_eq!(r.entries[0].path, r"C:\d\a.md");
         assert_eq!(r.entries[0].opened_at, 3_000);
+    }
+
+    #[test]
+    fn retitle_rewrites_in_place_for_file_and_folder() {
+        let mut r = Recents::default();
+        touch_opened(&mut r, &[op(r"C:\d\a.md")], 1_000);
+        touch_opened(&mut r, &[op(r"C:\d\notes\b.md")], 2_000);
+        touch_opened(&mut r, &[op(r"C:\other.md")], 3_000);
+        // 此刻顺序：other(3000) / notes\b(2000) / a(1000)
+
+        assert!(retitle(&mut r, r"C:\d\notes", r"C:\d\笔记"));
+        assert_eq!(
+            r.entries[1].path, r"C:\d\笔记\b.md",
+            "目录改名要牵到它里面每一条在册的"
+        );
+        assert_eq!(r.entries[1].name, "b.md", "显示名跟着新路径的最后一段");
+        assert_eq!(r.entries[1].opened_at, 2_000, "就地改写不许顺手顶到最前");
+        assert_eq!(
+            r.entries[0].path, r"C:\other.md",
+            "不相干的那条一个字都不动"
+        );
+        assert_eq!(
+            r.entries[2].path, r"C:\d\a.md",
+            "同层另一条也不动（不是前缀）"
+        );
+        assert_eq!(r.entries.len(), 3, "改写不是新增");
+
+        assert!(
+            !retitle(&mut r, r"C:\d\notes", r"C:\d\笔记"),
+            "已经没命中的话要回 false（没人该为一次空改写盘）"
+        );
+        assert!(retitle(&mut r, r"C:\d\a.md", r"C:\d\z.md"));
+        assert_eq!(r.entries[2].path, r"C:\d\z.md", "单条文件改名走同一条路");
+    }
+
+    #[test]
+    fn retitle_matches_case_insensitively_and_keeps_the_tail_writing() {
+        let mut r = Recents::default();
+        touch_opened(&mut r, &[op(r"C:\Dir\Sub\A.md")], 1);
+        assert!(retitle(&mut r, r"c:\dir\sub", r"C:\dir\SUB2"));
+        assert_eq!(
+            r.entries[0].path, r"C:\dir\SUB2\A.md",
+            "命中按忽略大小写，尾巴保留条目自己那一份写法"
+        );
     }
 
     #[test]
