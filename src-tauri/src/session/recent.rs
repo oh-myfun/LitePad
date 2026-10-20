@@ -192,10 +192,21 @@ pub fn retitle(r: &mut Recents, old: &str, new: &str) -> bool {
     let mut changed = false;
     for e in r.entries.iter_mut() {
         let path = flat(&e.path);
+        // ⚠️ 按字节切前缀必须走 `split_at_checked`：中文路径里一个字符占 3 字节，
+        // 而 `prefix.len()` 是从**另一条**路径算出来的 —— 两条的字符边界不一定对得上。
+        // 直接 `&path[..prefix.len()]` 会 panic 在「byte index is not a char boundary」，
+        // 而它炸的时机是用户在资源管理器里改了一个中文名（名单里只要躺着一条同层的中文，
+        // 整发 IPC 就回不来，界面上表现为「改了名而标签没动」）。
+        // 落在非边界上 ⇒ 那一段本来就**不可能**与 prefix 相等（UTF-8 的后续字节恒 ≥0x80，
+        // 而 ASCII 大小写折叠只在 <0x80 上有意义），跳过就是正确答案。
         let tail = if path.eq_ignore_ascii_case(&oldp) {
             ""
-        } else if path.len() > prefix.len() && path[..prefix.len()].eq_ignore_ascii_case(&prefix) {
-            &path[prefix.len()..]
+        } else if let Some((head, rest)) = path.split_at_checked(prefix.len()) {
+            if head.eq_ignore_ascii_case(&prefix) {
+                rest
+            } else {
+                continue;
+            }
         } else {
             continue;
         };
@@ -297,6 +308,29 @@ mod tests {
         );
         assert!(retitle(&mut r, r"C:\d\a.md", r"C:\d\z.md"));
         assert_eq!(r.entries[2].path, r"C:\d\z.md", "单条文件改名走同一条路");
+    }
+
+    /// 中文名单里改一个**英文名**：前缀的字节数落在邻居那条的汉字中间。
+    ///
+    /// ⚠️ 这一条钉的是 `retitle` 里按字节切前缀那一句。`C:\d\a.md\` 是 9 字节，
+    /// 而 `C:\d\笔记\b.md` 的「记」占 8..11 —— 直接 `&path[..9]` 会 panic 在
+    /// 「not a char boundary」。炸的样子是整发 IPC 回不来，界面上只剩
+    /// 「我改了个名，标签没动」，而名单里只要躺着一条中文名就每次都炸。
+    #[test]
+    fn retitle_survives_a_neighbor_with_other_multibyte_widths() {
+        let mut r = Recents::default();
+        touch_opened(&mut r, &[op(r"C:\d\笔记\b.md")], 1_000);
+        touch_opened(&mut r, &[op(r"C:\d\a.md")], 2_000);
+        assert_eq!(
+            r.entries[0].path, r"C:\d\a.md",
+            "替身要先自证顺序（改错了对象等于没测）"
+        );
+        assert!(retitle(&mut r, r"C:\d\a.md", r"C:\d\z.md"));
+        assert_eq!(r.entries[0].path, r"C:\d\z.md");
+        assert_eq!(
+            r.entries[1].path, r"C:\d\笔记\b.md",
+            "不相干那条一个字都不动"
+        );
     }
 
     #[test]

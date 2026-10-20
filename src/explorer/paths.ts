@@ -43,9 +43,10 @@ function tailOf(path: string, from: string): string | null {
   const p = asKey(path);
   const f = asKey(from);
   if (!p || !f) return null;
-  if (p.toLowerCase() === f.toLowerCase()) return "";
-  const pre = `${f.toLowerCase()}\\`;
-  return p.toLowerCase().startsWith(pre) ? p.slice(pre.length) : null;
+  if (p.length === f.length && p.toLowerCase() === f.toLowerCase()) return "";
+  const head = p.slice(0, f.length + 1);
+  if (head.length < f.length + 1) return null;
+  return head.toLowerCase() === `${f.toLowerCase()}\\` ? p.slice(f.length + 1) : null;
 }
 
 /** 这条盘上路径变了，牵不牵到这一份文档？（目录改名会牵到它里面每一条） */
