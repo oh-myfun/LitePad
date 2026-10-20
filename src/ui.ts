@@ -104,6 +104,16 @@ const sideDrawer = el("side-drawer");
 const recentList = el("recent-list");
 const recentCount = el<HTMLSpanElement>("recent-count");
 const recentClear = el<HTMLButtonElement>("recent-clear");
+// B314：侧栏第三块（资源管理器）。显隐与点亮态同归外壳 `setDrawer`，这里只交出节点本身。
+const sideExplorer = el<HTMLButtonElement>("side-explorer");
+const explorerPanel = el("explorer-panel");
+const explorerTitle = el<HTMLSpanElement>("explorer-title");
+const explorerTree = el("explorer-tree");
+const explorerOpen = el<HTMLButtonElement>("explorer-open");
+const explorerRefresh = el<HTMLButtonElement>("explorer-refresh");
+const explorerCollapse = el<HTMLButtonElement>("explorer-collapse");
+const explorerNewFile = el<HTMLButtonElement>("explorer-new-file");
+const explorerNewDir = el<HTMLButtonElement>("explorer-new-dir");
 const tocGrip = el("toc-grip");
 // B198：标题栏那颗整栏显隐键，与它收放的是 #main-row 这一整行（侧栏卡片 → 缝 → 编辑区）。
 const sidebarToggle = el<HTMLButtonElement>("sidebar-toggle");
@@ -392,6 +402,15 @@ export {
   recentList,
   recentCount,
   recentClear,
+  sideExplorer,
+  explorerPanel,
+  explorerTitle,
+  explorerTree,
+  explorerOpen,
+  explorerRefresh,
+  explorerCollapse,
+  explorerNewFile,
+  explorerNewDir,
   tocGrip,
   sidebarToggle,
   mainRow,

@@ -179,6 +179,18 @@
               aria-label="最近打开"
               aria-pressed="false"
             ></button>
+            <!-- B314：第三颗常驻键 ——「资源管理器」。与前两颗一样由外壳 `setDrawer` 管
+                 点亮态与互斥；没打开过文件夹时它**照样可点**（点了进去是一句「还没有打开
+                 文件夹」+ 那颗打开键），藏掉反而让人以为功能坏了。 -->
+            <button
+              id="side-explorer"
+              class="side-btn"
+              type="button"
+              data-tip="资源管理器"
+              data-tip-placement="right"
+              aria-label="资源管理器"
+              aria-pressed="false"
+            ></button>
           </div>
           <!-- B307（方案乙）：两块展开区**共用一层外壳**。宽度、显隐、按钮列那条内部竖线、
                `toc_open` 落盘都归壳（`src/shell/drawer.ts` 的 `setDrawer` 是唯一出口）；
@@ -233,6 +245,56 @@
                 ></button>
               </div>
               <div id="recent-list" class="recent-list"></div>
+            </aside>
+            <!-- B314：资源管理器。结构与上面两块同形（标题栏常驻 + 列表重绘），
+                 差异都在「行」上：树的一行要带**层级缩进**与**折叠箭头**，所以这里是一棵
+                 `role="tree"` 的树，不是清单。
+                 标题栏四颗键：刷新 / 全部折叠 / 新建文件 / 新建目录 —— 全部只用 codicon
+                 + aria-label（口径同上两块的垃圾桶与全量键）。
+                 首屏 `hidden`：轮不到这块时由外壳 `setDrawer` 写 hidden（B307 那条纪律），
+                 HTML 里的初值只是「还没回放」的临时态。 -->
+            <aside id="explorer-panel" class="explorer-panel" hidden>
+              <div class="explorer-head">
+                <span id="explorer-title" class="explorer-title">资源管理器</span>
+                <button
+                  id="explorer-open"
+                  class="toc-head-btn"
+                  type="button"
+                  data-tip="打开文件夹"
+                  aria-label="打开文件夹"
+                ></button>
+                <button
+                  id="explorer-refresh"
+                  class="toc-head-btn"
+                  type="button"
+                  data-tip="刷新"
+                  aria-label="刷新"
+                ></button>
+                <button
+                  id="explorer-collapse"
+                  class="toc-head-btn"
+                  type="button"
+                  data-tip="全部折叠"
+                  aria-label="全部折叠"
+                ></button>
+                <button
+                  id="explorer-new-file"
+                  class="toc-head-btn"
+                  type="button"
+                  data-tip="新建文件"
+                  aria-label="新建文件"
+                ></button>
+                <button
+                  id="explorer-new-dir"
+                  class="toc-head-btn"
+                  type="button"
+                  data-tip="新建目录"
+                  aria-label="新建目录"
+                ></button>
+              </div>
+              <!-- 根目录那一行（VS Code 一样：根是树的第一个节点，永远在）。
+                   名字由 JS 写，路径挂 data-tip —— 标题栏那格宽度有限，全路径只能进提示。 -->
+              <div id="explorer-tree" class="explorer-tree" role="tree" aria-label="文件树"></div>
             </aside>
           </div>
         </div>

@@ -110,6 +110,18 @@ const IDS = {
   // 状态全落在字形上，读者不必猜哪边是开），所以不需要为它们准备反相字形。
   collapseAll: "collapse-all",
   expandAll: "expand-all",
+  // —— 侧栏第三颗键与资源管理器（B314）——
+  // 按钮列那颗取 `files`（两张纸，VS Code 活动栏给 Explorer 用的正是它，上面 `files`
+  // 那颗归查找栏那族用）。树里两颗：**双字形开关**照本应用一贯口径落在字形上 ——
+  // 目录收起画 `folder`（空心合口）、展开画 `folder-opened`（开口）。
+  folder: "folder",
+  folderOpened: "folder-opened",
+  // 文件用通用的 `file`（白纸折角）。不按扩展名换字形：`src/shell/fileicons.ts` 那十族
+  // 是**标签**上的身份标记，树里再画一遍就是两套口径。
+  file: "file",
+  // 标题栏两颗新建：官方名 `new-file` / `new-folder`（带 + 号的那两颗）。
+  newFile: "new-file",
+  newFolder: "new-folder",
   // —— 面板 / 标签 ——
   circleFilled: "circle-filled",
   // —— 标签区右侧的 Markdown 操作键（B224，对齐 VS Code 的 editor/title 动作）——

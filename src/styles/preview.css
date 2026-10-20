@@ -415,6 +415,153 @@
   color: var(--fg-muted, #656d76);
 }
 
+/* B314：资源管理器。外框（标题栏 + 滚动列表）与上面两块同一套，**不一样的只有「行」**：
+   树的一行要按层级缩进、要带折叠箭头，所以缩进走 `--depth` 一个 CSS 变量，由 JS 逐行写 ——
+   ⚠️ 不用「给每层套一层带 padding-left 的 div」那种写法吗？其实两层都有：`.explorer-node`
+   把「这一行 + 它的子层」包在一起，但**缩进仍然按行的深度算**，因为折叠时子容器整体
+   `hidden`，若靠容器累加 padding，一行的高度会随祖先的开合抖动。 */
+.explorer-panel {
+  width: 100%;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  background: transparent;
+}
+.explorer-panel[hidden] {
+  display: none;
+}
+.explorer-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 4px 0 10px;
+  font-size: 11px;
+  line-height: 1;
+}
+.explorer-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted, #656d76);
+}
+.explorer-tree {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 0 8px;
+  outline: none;
+}
+.explorer-children {
+  min-width: 0;
+}
+.explorer-children[hidden] {
+  display: none;
+}
+/* 一行：`--depth` 那一档 12px 的缩进照 VS Code 的 trees 节奏（他们给 8px 的行高增量 +
+   一层 6~12px 的 indent，窄栏里 12 刚好能看出「这是我点开的那一层的子项」）。 */
+.explorer-row,
+.explorer-root,
+.explorer-note {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding-left: calc(6px + var(--depth, 0) * 12px);
+  padding-right: 6px;
+  height: 22px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--fg, #24292f);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.explorer-root {
+  font-weight: 600;
+}
+.explorer-row:hover,
+.explorer-root:hover {
+  background: var(--bg-hover, #eee);
+}
+.explorer-row[aria-selected="true"],
+.explorer-root[aria-selected="true"] {
+  background: var(--side-btn-active, #d6d9dc);
+}
+.explorer-row:focus-visible,
+.explorer-root:focus-visible {
+  outline: 1px solid var(--accent, #0969da);
+  outline-offset: -1px;
+}
+.explorer-twisty {
+  flex: 0 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.explorer-twisty .codicon {
+  font-size: 12px;
+}
+.explorer-glyph {
+  flex: 0 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-muted, #656d76);
+}
+.explorer-glyph .codicon {
+  font-size: 14px;
+}
+.explorer-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 层内的说明行（读取中 / 空 / 读不了）：不可点、淡一档，但**占同一缩进**，
+   否则「空目录」那句话看起来像挂在上一层。 */
+.explorer-note {
+  cursor: default;
+  color: var(--fg-muted, #656d76);
+  font-size: 11px;
+}
+/* 新建时那格的输入框：与行同高，看不出是在「改一行」而不是弹了个框（VS Code 同款手感）。 */
+.explorer-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 18px;
+  padding: 0 3px;
+  font-size: 12px;
+  color: var(--fg, #24292f);
+  background: var(--bg, #fff);
+  border: 1px solid var(--accent, #0969da);
+  border-radius: 2px;
+}
+.explorer-hint {
+  padding: 6px 10px;
+}
+.explorer-hint-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--fg, #24292f);
+  background: transparent;
+  border: 1px solid var(--border, #d0d7de);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.explorer-hint-btn:hover {
+  background: var(--bg-hover, #eee);
+}
+.explorer-hint-btn .codicon {
+  font-size: 14px;
+}
+
 /* 大纲宽度分隔条（B195 改版）：**不再是贴着面板的一条细线** ——
    B123 之后编辑区整块是一张卡片，侧栏（B195）也做成卡片，两者之间是**空隙**；
    VS Code 在这一档给的是 sash（可拖），这里按用户点名再补一颗**三点把手**摆在

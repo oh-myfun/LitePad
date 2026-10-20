@@ -60,8 +60,9 @@ export function setRoot(path: string): void {
   failed.clear();
   expanded.clear();
   loading.clear();
-  // 根那一层立刻读：面板展开时必须有东西可画，不能先给一片空白等一次点击。
-  void loadDir(path);
+  // 空串 = 「没有文件夹」这一态：清干净就够，不该再发一次注定失败的读盘（错误列表里
+  // 挂一条「读不了：」会让用户以为程序坏了，而那其实是「没开」）。
+  if (path) void loadDir(path);
   notify();
 }
 

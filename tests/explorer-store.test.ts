@@ -193,6 +193,23 @@ describe("B314 资源管理器缓存层", () => {
     expect(store.hasRoot()).toBe(true);
   });
 
+  it("空串是「没有文件夹」那一态：清干净就行，不许发一次注定失败的读盘", async () => {
+    h.dirs.set("E:\\根", [{ name: "a.md", isDir: false }]);
+    store.setRoot("E:\\根");
+    await vi.waitFor(() => expect(store.childrenOf("E:\\根")).toBeTruthy());
+
+    store.setRoot("");
+    expect(store.hasRoot()).toBe(false);
+    expect(store.getRoot()).toBe("");
+    expect(store.childrenOf("E:\\根"), "换到「没有」要清空缓存").toBeUndefined();
+    await Promise.resolve();
+    expect(
+      h.calls.filter((c) => c === ""),
+      "空路径不该发 IPC",
+    ).toHaveLength(0);
+    expect(store.errorOf(""), "也不该给空路径记一条错误").toBeUndefined();
+  });
+
   it("读到内容会通知订阅者（面板只认通知，不自取）", async () => {
     const seen: number[] = [];
     store.onExplorerChange(() => seen.push(store.childrenOf("E:\\根")?.length ?? -1));
