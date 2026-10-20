@@ -60,6 +60,10 @@
      右侧那条写成 `calc(本颗 - gap)` 而不是写死像素：gap 一变，净留白仍旧跟着这一颗走。
      取值 10px 是跟菜单项 .menu-btn 的水平内边距取齐 —— 图标离窗口左缘太近会「顶边」。 */
   --title-mark-pad: 10px;
+  /* 标题栏里那行文档名的字号（B224 起它同时是**标签名**的字号）。
+     ⚠️ 这一颗有第二个人：`.tab` 读它 —— 用户点名「标签里的中文字要和标题栏一样大」。
+     两处各写一个 12.5px，改一边就成了「标题 12.5、标签 14」那种一眼看得出的错开。 */
+  --title-text-size: 12.5px;
 }
 
 :root[data-theme="dark"] {
@@ -428,7 +432,7 @@ body {
 }
 
 .title-text {
-  font-size: 12.5px;
+  font-size: var(--title-text-size);
   color: var(--fg-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -754,6 +758,11 @@ button:focus-visible {
      右 4px：配合 .tab-action 槽位（20px、字形 16px 居中）凑出「字形到标签右缘 6px」，
      与左侧的 6px 对称。 */
   padding: 0 4px 0 6px;
+  /* 标签名与标题栏那行文档名**同字号**（用户点名）：不写就只能吃 body 的 14px，
+     于是「标题 12.5 / 标签 14」两行中文一眼看出是两种东西。
+     ⚠️ 只有文字跟着走：图标与 ●/× 是 codicon 字形，尺寸由 codicon.css 的
+     `font: 16px/1 codicon` 简写给死（见 B102 那段），不受这里影响。 */
+  font-size: var(--title-text-size);
   min-width: 60px;
   /* 单标签名超长时按此上限截断（与拖拽浮影 .tab-drag-ghost-name 同宽），标签栏标签多时
      仍靠横向滚动，不互相挤压（B56 原意保留）。截断效果见 .tab-name。 */

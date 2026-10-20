@@ -38,7 +38,7 @@ function drag(resizer: EventTarget, from: number, to: number): void {
 }
 
 describe("clampSideWidth 边界收敛", () => {
-  it("非法值回落默认，超界值收敛到 [160, 640]", () => {
+  it("非法值回落默认，超界值收敛到 [SIDE_MIN_WIDTH, SIDE_MAX_WIDTH]", () => {
     expect(clampSideWidth(Number.NaN)).toBe(SIDE_DEFAULT_WIDTH);
     expect(clampSideWidth(Number.POSITIVE_INFINITY)).toBe(SIDE_DEFAULT_WIDTH);
     expect(clampSideWidth(10)).toBe(SIDE_MIN_WIDTH);
@@ -263,9 +263,16 @@ describe("B207 拖到最小再往左拖：收起 / 拉回展开区", () => {
     expect(handle.isOpen(), "此刻是收着的").toBe(false);
     // ⚠️ 关键：不松手直接往右拖回来。收起后缝缩回按钮列右缘、宽度钉在最小宽 ——
     //    要是还抱着「手势开始时那个 240」当基准，这一整段都是死区，缝纹丝不动。
-    mouse(document, "mousemove", 400);
+    mouse(document, "mousemove", 400); // target = -20 + 200 = 180：过了展开线，但还在最小宽之下
     expect(handle.isOpen(), "同一个手势里折了还得能展回来").toBe(true);
-    expect(panel.style.width, "宽度按**新锚**（0）接着走，不是从手势起点倒推").toBe("180px");
+    expect(panel.style.width, "先落在最小宽（B212 那条「先变最小宽、继续拖才再变宽」）").toBe(
+      `${SIDE_MIN_WIDTH}px`,
+    );
+    mouse(document, "mousemove", 400 + (SIDE_MIN_WIDTH - 180) + 20); // target 再过最小宽 20
+    expect(
+      panel.style.width,
+      "宽度按**新锚**（0）接着走：还在同一个手势里就得跟着手动，不是死在最小宽上",
+    ).toBe(`${SIDE_MIN_WIDTH + 20}px`);
     mouse(document, "mouseup", 400);
   });
 
@@ -372,9 +379,10 @@ describe("大纲（TOC）静态契约", () => {
     // Windows 上会渲染成「箭头中间多一根竖杠」）
     expect(resizer, "分隔条必须是左右调整光标（非 mac 档 ew-resize）").toContain("ew-resize");
     // B307：宽度归外壳。旧样式把 min-width 写死为 240px 会挡住拖动变窄，如今壳上的下限
-    // 必须等于代码里的 `SIDE_MIN_WIDTH`（160），而两块视图**不许**再带自己的宽度。
+    // 必须**等于代码里的 `SIDE_MIN_WIDTH`**（B317 提到 220，这里读符号不读字面量 ——
+    // 上一版把 160 抄进了断言，提最小宽时它就自己打红了一次），而两块视图**不许**再带自己的宽度。
     const drawerRule = ruleBlock(css, ".side-drawer");
-    expect(drawerRule, "宽度得写在 .side-drawer 上").toContain("min-width: 160px");
+    expect(drawerRule, "宽度得写在 .side-drawer 上").toContain(`min-width: ${SIDE_MIN_WIDTH}px`);
     expect(drawerRule, "外壳的下限不许高过 SIDE_MIN_WIDTH（拖不窄）").not.toContain(
       "min-width: 240px",
     );

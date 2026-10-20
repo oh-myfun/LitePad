@@ -239,3 +239,50 @@ describe("B315 路径改写的跨层契约", () => {
     expect(listener, "收到别窗那一发不许再广播").not.toContain("emitCrossWindow");
   });
 });
+
+describe("B317 标题排与初屏那一排的样式契约", () => {
+  const toc = read("src/markdown/toc.ts");
+  const panel = read("src/explorer/panel.ts");
+
+  /** 取 `export const NAME = 数字;` 里那个数字（跨文件的同值判据，两侧都得从源码现读）。 */
+  const numConst = (src: string, name: string): number => {
+    const m = src.match(new RegExp(`export const ${name} = (\\d+)`));
+    expect(m, `源码里找不到 ${name}`).toBeTruthy();
+    return Number(m?.[1]);
+  };
+
+  it("展开区最小宽：JS 的下限与 CSS 的初值必须同值（160 那一档装不下标题那一排）", () => {
+    const min = numConst(toc, "SIDE_MIN_WIDTH");
+    const m = css.match(/\.side-drawer\s*\{[^}]*min-width:\s*(\d+)px/);
+    expect(m, "preview.css 里 `.side-drawer` 要有 min-width").toBeTruthy();
+    expect(Number(m?.[1]), "两处不同值 = 「没拖过时挤成一团，一拖才终于不松」").toBe(min);
+    // 判据的鉴别力：把 CSS 改回旧的 160 必须被打红
+    expect(min, "最小宽提到 220 才装得下「资源管理器」+ 五颗键").toBeGreaterThanOrEqual(220);
+  });
+
+  it("还没打开文件夹时顶部那一排收起：类名两侧同源，不许一边写一边漏", () => {
+    expect(panel, "renderTree 要挂 no-root").toContain('explorerPanel.classList.add("no-root")');
+    expect(panel, "有根时要摘掉（摘不掉就永远看不见那五颗键）").toContain(
+      'explorerPanel.classList.remove("no-root")',
+    );
+    // 顺序也算判据：先 return 掉无根那一支，再摘 —— 反了就会 add 完立刻 remove。
+    expect(panel.indexOf('classList.add("no-root")')).toBeLessThan(
+      panel.indexOf('classList.remove("no-root")'),
+    );
+    expect(css).toMatch(/\.explorer-panel\.no-root \.toc-head-btn\s*\{\s*display:\s*none/);
+    // 自证：类名写错一个字母（CSS 与 TS 各写各的）时上面两条必有一条落空
+    expect(css.includes(".explorer-panel.no-rootz")).toBe(false);
+  });
+
+  it("初屏那颗「打开文件夹」整宽、图标与文字成组居中", () => {
+    const btn = css.slice(
+      css.indexOf(".explorer-hint-btn {"),
+      css.indexOf(".explorer-hint-btn:hover"),
+    );
+    expect(btn, "取不到 .explorer-hint-btn").toBeTruthy();
+    expect(btn).toMatch(/display:\s*flex/);
+    expect(btn, "inline-flex 只吃内容宽，撑不满边栏").not.toMatch(/display:\s*inline-flex/);
+    expect(btn).toMatch(/width:\s*100%/);
+    expect(btn).toMatch(/justify-content:\s*center/);
+  });
+});

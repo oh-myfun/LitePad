@@ -290,7 +290,7 @@ export const PREVIEW_WIDTH_LABELS: Record<PreviewWidth, string> = {
 
 // ⚠️ B235：`TOC_WIDTH_OPTIONS`（大纲宽度候选）已连同设置项一起删除 ——
 //    用户点名「去除大纲宽度」。大纲宽度仍由左侧栏的拖拽分隔条控制
-//    （`clampSideWidth`，160–640px，拖完回写 `settings.toc_width`），功能没丢。
+//    （`clampSideWidth`，最小宽到 640px，下限见 `SIDE_MIN_WIDTH`；拖完回写 `settings.toc_width`），功能没丢。
 //    这个常量原先只有设置页那一行在用 ⇒ 删干净，别留死代码。
 
 interface Category {

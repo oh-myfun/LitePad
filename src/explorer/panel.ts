@@ -297,9 +297,13 @@ function renderTree(): void {
   explorerTree.replaceChildren();
   if (!hasRoot()) {
     explorerTitle.textContent = "资源管理器";
+    // B317（用户点名）：没有根时顶部那一排键没一颗用得上 —— 新建 / 刷新 / 全部折叠都要先有
+    // 一棵树，而「打开文件夹」下面那颗大按钮就是它自己的出口。整排收起，标题独占那一行。
+    explorerPanel.classList.add("no-root");
     explorerTree.append(note("还没有打开文件夹", 0), openHintRow());
     return;
   }
+  explorerPanel.classList.remove("no-root");
   const root = getRoot();
   const rootName = nameOf(root);
   explorerTitle.textContent = "资源管理器";

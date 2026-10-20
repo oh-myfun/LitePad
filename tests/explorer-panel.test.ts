@@ -260,10 +260,14 @@ describe("B314 资源管理器面板", () => {
 
     const btn = ui.explorerTree.querySelector(".explorer-hint-btn");
     expect(btn, "提示里要带一个能点的入口").toBeTruthy();
+    // B317（用户点名）：没根时顶部那一排键整排收起（样式表里 `.explorer-panel.no-root`
+    // 那条负责隐藏）—— jsdom 不跑级联，所以这里钉的是**类挂上了**，样式那条走静态契约。
+    expect(ui.explorerPanel.classList.contains("no-root")).toBe(true);
     h.pick = ROOT;
     await click(btn!);
     await vi.waitFor(() => expect(store.getRoot()).toBe(ROOT));
     expect(names()).toContain("a.md");
+    expect(ui.explorerPanel.classList.contains("no-root"), "有了根就得把那排放回来").toBe(false);
   });
 
   it("刷新键重读展开着的层；全部折叠收掉子目录但留着根", async () => {

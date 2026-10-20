@@ -246,9 +246,11 @@
    ⚠️ 那条 `[hidden]` 兜底与下面两块视图是同一个坑（作者样式表的 `display: flex` 压得过 UA
       的隐藏规则，与权重无关）—— jsdom 不做级联，三条都由静态契约盯着。 */
 .side-drawer {
-  /* 初始宽度：运行期由 attachSideResizer 写 inline width/min-width 覆盖（可拖拽，160–640px） */
+  /* 初始宽度：运行期由 attachSideResizer 写 inline width/min-width 覆盖（可拖拽，220–640px） */
   width: 240px;
-  min-width: 160px;
+  /* ⚠️ 与 `markdown/toc.ts` 的 `SIDE_MIN_WIDTH` 同值（B317 一起从 160 提到 220）：
+     这里管「没拖过时的初值」，那颗管拖拽下限，错开就成了「一拖才终于不挤」。 */
+  min-width: 220px;
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
@@ -280,7 +282,7 @@
    UA 样式表那条隐藏规则是**作者样式表压不过的那一方** —— CSS 级联里作者样式表
    优先于 UA 样式表，**与选择器权重无关**（`.toc-panel` 0-1-0 与那条 0-1-0 同权重
    也照样赢）。于是 `setDrawer(null)` 写的隐藏属性只改了个属性，
-   展开区**照旧占着 160px 显示**。
+   展开区**照旧占着一整个最小宽显示**（当年那一档是 160px，现值见 `SIDE_MIN_WIDTH`）。
    症状（B207 上线后用户真机报的）：
      · 「左栏没法折叠起来了」 —— 拖到最小再往左拖，收起通知照常触发，
        但面板纹丝不动，看着就是折叠功能整个不工作；
@@ -450,6 +452,13 @@
   letter-spacing: 0.04em;
   color: var(--fg-muted, #656d76);
 }
+/* B317（用户点名）：还没打开文件夹时顶部那一排键收起 —— 五颗里有四颗要先得有一棵树，
+   而「打开文件夹」那颗的出口就在下面的整宽按钮上。`display:none` 而不是 `hidden`：
+   这一排是 flex 子项，留着 `hidden` 还得配一条兜底（同类坑见 `.recent-panel[hidden]`），
+   而这一排根本不需要占位。类名由 `explorer/panel.ts` 的 `renderTree` 一处写。 */
+.explorer-panel.no-root .toc-head-btn {
+  display: none;
+}
 .explorer-tree {
   flex: 1 1 auto;
   min-height: 0;
@@ -551,11 +560,16 @@
   border-radius: 2px;
 }
 .explorer-hint {
-  padding: 6px 10px;
+  padding: 8px 10px;
 }
+/* B317（用户点名）：这颗是「还没打开文件夹」那一屏唯一的出口，要**整宽**、文字居中 ——
+   `inline-flex` 只吃内容宽度，左边那一小块就成了「半个按钮悬在那」的观感。
+   图标与文字当成一组一起居中（`justify-content: center`），不是把文字单独推到中间。 */
 .explorer-hint-btn {
-  display: inline-flex;
+  display: flex;
+  width: 100%;
   align-items: center;
+  justify-content: center;
   gap: 4px;
   padding: 3px 8px;
   font-size: 12px;
