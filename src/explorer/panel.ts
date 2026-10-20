@@ -90,6 +90,11 @@ export function setupExplorer(): void {
     onShow: renderTree,
   });
   onExplorerChange(() => renderTree());
+  // ⚠️ 按钮列那颗的点击**必须在这里挂**：`registerDrawerView` 只管「显隐与亮灭怎么算」，
+  //   不接管点击（口径同 `toc.ts` 的 `sideOutline` / `recents/panel.ts` 的 `sideRecent`）。
+  //   真机验收抓到过：漏这一句时那颗键看着正常、点下去毫无反应，而用例全是
+  //   「程序里调 `setDrawer` 再断言亮灭」，永远照不出来。
+  sideExplorer.addEventListener("click", () => toggleExplorer());
   explorerOpen.addEventListener("click", () => void promptOpenFolder());
   explorerRefresh.addEventListener("click", () => void refresh());
   explorerCollapse.addEventListener("click", () => {

@@ -285,4 +285,17 @@ describe("B314 资源管理器面板", () => {
     drawer.setDrawer("explorer");
     expect(ui.explorerPanel.hidden).toBe(false);
   });
+
+  it("按钮列那颗**点得动**：一下摊开、再一下收起（真机验收抓到的漏挂）", async () => {
+    // 上面那条「装配」用例是 `setDrawer("explorer")` 之后断言亮灭 —— 那颗键根本没被点过，
+    // 于是「只登记不挂点击」这一形在 jsdom 里全绿、在真机上点不动（B314-8）。
+    drawer.setDrawer(null, false);
+    expect(ui.explorerPanel.hidden).toBe(true);
+    await click(ui.sideExplorer);
+    expect(ui.explorerPanel.hidden, "点那颗键就该摊开").toBe(false);
+    expect(ui.sideExplorer.classList.contains("is-on")).toBe(true);
+    await click(ui.sideExplorer);
+    expect(ui.explorerPanel.hidden, "再点一下收起").toBe(true);
+    expect(ui.sideExplorer.classList.contains("is-on"), "收掉了键不许还亮着").toBe(false);
+  });
 });

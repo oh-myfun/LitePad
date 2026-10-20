@@ -111,6 +111,31 @@ describe("B314 资源管理器跨层契约", () => {
     );
   });
 
+  it("三块视图各自挂自己那颗按钮的点击（登记 ≠ 挂线，真机抓到过漏挂）", () => {
+    // `registerDrawerView` 只管「显隐与亮灭怎么算」，点击监听归各视图自己挂。
+    // 漏挂的表现是「那颗键看着正常、点下去毫无反应」，而 jsdom 那侧全是
+    // 「程序里调 setDrawer 再断言亮灭」，照不出来 ⇒ 这一条按源码串钉住三块。
+    const wiring: [string, string][] = [
+      ["src/toc.ts", "sideOutline"],
+      ["src/recents/panel.ts", "sideRecent"],
+      ["src/explorer/panel.ts", "sideExplorer"],
+    ];
+    for (const [file, ref] of wiring) {
+      expect(read(file), `${ref} 必须挂 click（不然按钮列那颗是死的）`).toMatch(
+        new RegExp(`${ref}\\.addEventListener\\("click"`),
+      );
+      // 自证判据有鉴别力：把那一句抹掉，上面那条必须落空
+      const degraded = read(file).replace(
+        new RegExp(`${ref}\\.addEventListener\\("click"`),
+        `${ref}.addEventListener("contextmenu"`,
+      );
+      expect(
+        new RegExp(`${ref}\\.addEventListener\\("click"`).test(degraded),
+        "退化串要先自证原句还在",
+      ).toBe(false);
+    }
+  });
+
   it("命令、菜单、快捷键三条入口都接上了同一个动作", () => {
     expect(keymap, "命令表要有打开文件夹").toContain(`id: "file.openFolder"`);
     expect(keymap, "命令表要有资源管理器开合").toContain(`id: "view.explorer"`);
