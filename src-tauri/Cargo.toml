@@ -35,6 +35,7 @@ chardetng = "0.1"
 # M2 文件监听：外部修改提示
 notify = "6"
 base64 = "0.22"
+trash = "5"
 
 # B91 文件拖入路径桥：直接操作 WebView2 取回真实路径（见 `src/dropbridge.rs`）。
 # ⚠️ 版本必须与 wry 0.55 用的**同一版**（0.38 / 0.61）：`ICoreWebView2*` 是 windows 类型，

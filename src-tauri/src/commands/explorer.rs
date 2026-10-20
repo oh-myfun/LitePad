@@ -1,19 +1,24 @@
-//! B314 · 资源管理器的 IPC 层：一次只读**一层**目录，外加「新建文件 / 新建目录」。
+//! B314 / B315 · 资源管理器的 IPC 层：一次只读**一层**目录，外加建、改、搬、删。
 //!
 //! 职责边界（照 `recents.rs` 那一刀）：**判定归这里，缓存归前端 store**。
 //! 本模块不持状态、不记展开态、不知道「当前打开的是哪个文件夹」—— 那些都是视图的事。
-//! 它只回答三句话：这一层有什么、这个名字能不能用、按这个名字建一个空文件/空目录。
+//! 它回答的是：这一层有什么、这个名字能不能用、按这个名字建一个空文件/空目录、
+//! 把这条路径改名 / 复制 / 挪走 / 送回收站。
 //!
-//! ⚠️ 两个刻意的选择：
+//! ⚠️ 三个刻意的选择：
 //!   · **懒加载**：`list_dir` 只读传入的那一层，绝不递归。根选在 `D:\` 或某个
 //!     `node_modules` 上时，一次递归能把进程卡死，而一次 read_dir 最多几毫秒。
-//!   · **名字在这里校验，不在前端拼路径**：`create_*` 收的是 `dir` + `name` 两段。
-//!     前端递一个已经拼好的全路径的话，`..`、`\\`、盘符这些就得靠前端记得滤 ——
+//!     （B315 的 `copy_entry` 是**唯一**递归的地方，而且只在用户明确「粘贴一个目录」时。）
+//!   · **名字在这里校验，不在前端拼路径**：`create_*` / `rename_*` 收的是 `dir` + `name`
+//!     两段。前端递一个已经拼好的全路径的话，`..`、`\\`、盘符这些就得靠前端记得滤 ——
 //!     而在系统边界上「别人传进来的名字」必须由收下它的那一方校验（口径同 `save_file`
 //!     只认自己发过的路径，其余一律不猜）。
+//!   · **写操作的 target 一律要在根之内**（`guard_within`）：剪贴板那份路径存在前端，
+//!     一旦记错层，「粘贴」就会把东西写进根外的目录，而用户只在树里看 —— 看不见 ≠ 没发生。
+//!     这一道不是防恶意，是防我们自己的簿记出错。
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
@@ -239,6 +244,216 @@ pub fn create_dir(dir: String, name: String) -> Result<FsEntry, String> {
     Ok(entry_of(checked, &target, true))
 }
 
+// ---------------------------------------------------------------- B315 · 改 / 搬 / 删
+
+/// 规范化一条路径用于**比较**（不改磁盘上的任何东西）。
+/// 取不到（还没建出来、权限不够）就退回原串 —— 调用方只拿它做前缀判断，
+/// 真正要动文件的那几步自有 `exists()` 与 IO 错误兜着。
+fn norm(path: &Path) -> std::path::PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// 这条路径在不在当前根之内（含根本身）。
+///
+/// ⚠️ 必须先 `canonicalize` 再比前缀：拿原始串比的话，
+/// `D:\笔记\..\Windows\System32` 看着在 `D:\笔记` 底下，实际不是。
+/// ⚠️ 而且要按**路径分量**比（`Path::starts_with`），不是按字符串：
+/// `"D:\笔记2".starts_with("D:\笔记")` 为真，可它俩是两个不同的目录。
+/// Windows 的路径不分大小写 ⇒ 两边都换成大写再比。
+fn within(root: &Path, path: &Path) -> bool {
+    let up = |p: &Path| PathBuf::from(p.to_string_lossy().to_uppercase());
+    let (r, p) = (up(&norm(root)), up(&norm(path)));
+    p.starts_with(&r)
+}
+
+/// 越界就报错，错误话术直接给用户看（前端那句「不在当前文件夹内」不用另写）。
+fn guard_within(root: &str, path: &Path) -> Result<(), String> {
+    if root.is_empty() {
+        return Err("还没有打开文件夹".into());
+    }
+    if within(Path::new(root), path) {
+        Ok(())
+    } else {
+        Err(format!(
+            "这条路径不在当前文件夹内：{}",
+            path.to_string_lossy()
+        ))
+    }
+}
+
+/// 把 `名字.扩展名` 拆成 `(名字, 扩展名)`；点开头的整体（`.gitignore`）算**没扩展名**，
+/// 否则 `.gitignore` 加后缀会变成 `. (2)gitignore` 那种没人认得的东西。
+fn split_ext(name: &str) -> (String, String) {
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() => {
+            (stem.to_string(), ext.to_string())
+        }
+        _ => (name.to_string(), String::new()),
+    }
+}
+
+/// 目标层里已经占了这个名字的话，往后缀 ` (2)` ` (3)`… 找一个空位。
+/// 口径按用户拍的：**粘贴 / 复制 / 移动的冲突自动加后缀**（不弹窗问覆盖），
+/// 而**重命名撞名是报错** —— 改名时静默换个名字，用户会以为盘上真叫那个。
+fn unique_in(dir: &Path, name: &str) -> String {
+    if !dir.join(name).exists() {
+        return name.to_string();
+    }
+    let (stem, ext) = split_ext(name);
+    for i in 2..1000 {
+        let cand = if ext.is_empty() {
+            format!("{stem} ({i})")
+        } else {
+            format!("{stem} ({i}).{ext}")
+        };
+        if !dir.join(&cand).exists() {
+            return cand;
+        }
+    }
+    format!("{stem} (copy)")
+}
+
+/// 递归复制一份（目录 → 逐条进来；文件 → `fs::copy`）。
+/// 只跟随真实目录：Windows 上的重解析点（junction / 符号链接目录）在这里当文件复制，
+/// 免得 `D:\笔记` 里一个指向自己的链接把这次粘贴变成无限递归。
+fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
+    let meta = fs::symlink_metadata(src).map_err(|e| format!("读不了 {src:?}：{e}"))?;
+    if meta.is_dir() {
+        fs::create_dir_all(dst).map_err(|e| format!("建不了 {dst:?}：{e}"))?;
+        for item in fs::read_dir(src).map_err(|e| format!("列不了 {src:?}：{e}"))? {
+            let item = item.map_err(|e| format!("列不了 {src:?}：{e}"))?;
+            let name = item.file_name();
+            copy_tree(&item.path(), &dst.join(name))?;
+        }
+        Ok(())
+    } else {
+        fs::copy(src, dst).map_err(|e| format!("复制不了 {src:?}：{e}"))?;
+        Ok(())
+    }
+}
+
+/// 校验「要动的那条路径」还在盘上、且在根之内，并回它的名字与父目录。
+///
+/// ⚠️ 顺序要紧：**先验在不在，再验在不在根内**。反过来的话，一条已经不存在的
+/// 路径连 `canonicalize` 都做不出来，跟规范化过的根对不上前缀 —— 用户会看到
+/// 「这条路径不在当前文件夹内」，而真话是「它早没了」。
+fn checked_src(root: &str, src: &str) -> Result<(PathBuf, String, PathBuf), String> {
+    let s = Path::new(src);
+    if !s.exists() {
+        return Err(format!("已经不存在了：{src}"));
+    }
+    guard_within(root, s)?;
+    let name = s
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .ok_or_else(|| format!("这条路径没有名字：{src}"))?;
+    let parent = s
+        .parent()
+        .ok_or_else(|| format!("这条路径没有父目录：{src}"))?
+        .to_path_buf();
+    Ok((s.to_path_buf(), name, parent))
+}
+
+/// 目录不许粘进它自己（或它的某个子孙）里。
+/// `copy_tree` 会先把目标建出来，再一边走源一边往里塞 —— 源里从此有了目标，
+/// 那是个自我包含的无限递归，会把盘塞满。移动那条也一样（跨卷复制回退时同一条路）。
+fn refuse_self_contained(from: &Path, dest: &Path) -> Result<(), String> {
+    if from.is_dir() && within(from, dest) {
+        return Err("不能把一个目录放进它自己里面".into());
+    }
+    Ok(())
+}
+
+/// 改名。**撞名报错、不加后缀**（见 `unique_in` 上面那段口径）。
+/// 返回新那一条，前端拿它的 `path` 去改写标签 / 会话 / 最近打开。
+#[tauri::command]
+pub fn rename_entry(root: String, path: String, new_name: String) -> Result<FsEntry, String> {
+    let checked = check_name(&new_name)?;
+    let (src, _old, parent) = checked_src(&root, &path)?;
+    let target = parent.join(&checked);
+    if target.exists() {
+        return Err(format!("这一层里已经有 {checked} 了"));
+    }
+    fs::rename(&src, &target).map_err(|e| format!("改不了名：{e}"))?;
+    Ok(entry_of(checked, &target, target.is_dir()))
+}
+
+/// 复制一份到 `dest_dir`（同名自动加后缀）。目录走 `copy_tree`。
+#[tauri::command]
+pub fn copy_entry(root: String, src: String, dest_dir: String) -> Result<FsEntry, String> {
+    let (from, name, _parent) = checked_src(&root, &src)?;
+    let dest = Path::new(&dest_dir);
+    if !dest.is_dir() {
+        return Err(format!("目标不是目录，或它已经不存在：{dest_dir}"));
+    }
+    guard_within(&root, dest)?;
+    refuse_self_contained(&from, dest)?;
+    // 复制**允许**就地复制（同层会拿到 `x (2).ext`）：Ctrl+C / Ctrl+V 在同一层里
+    // 造一份副本是 VS Code 的正经用法，不是误操作。只有**移动**才拒同层（那是空操作）。
+    let final_name = unique_in(dest, &name);
+    let target = dest.join(&final_name);
+    copy_tree(&from, &target)?;
+    Ok(entry_of(final_name, &target, from.is_dir()))
+}
+
+/// 挪走到 `dest_dir`（同名自动加后缀）。同卷 `fs::rename` 一发搞定；
+/// 跨卷（`D:\` → `C:\`）它报「not the same device」，那时才退化成**先复制、
+/// 复制整份成功后再删原件** —— 顺序反了就是拿用户的数据赌一次 IO。
+#[tauri::command]
+pub fn move_entry(root: String, src: String, dest_dir: String) -> Result<FsEntry, String> {
+    let (from, name, parent) = checked_src(&root, &src)?;
+    let dest = Path::new(&dest_dir);
+    if !dest.is_dir() {
+        return Err(format!("目标不是目录，或它已经不存在：{dest_dir}"));
+    }
+    guard_within(&root, dest)?;
+    refuse_self_contained(&from, dest)?;
+    if norm(&parent) == norm(dest) {
+        return Err("要挪的东西就在这层里".into());
+    }
+    let final_name = unique_in(dest, &name);
+    let target = dest.join(&final_name);
+    match fs::rename(&from, &target) {
+        Ok(()) => Ok(entry_of(final_name, &target, target.is_dir())),
+        Err(_) => {
+            copy_tree(&from, &target)?;
+            let removed = if from.is_dir() {
+                fs::remove_dir_all(&from)
+            } else {
+                fs::remove_file(&from)
+            };
+            removed.map_err(|e| format!("已经复制到 {final_name}，但原件删不掉：{e}"))?;
+            Ok(entry_of(final_name, &target, target.is_dir()))
+        }
+    }
+}
+
+/// 送进**系统回收站**（用户拍的口径：可反悔，不做永久删除）。
+/// `trash` 在 Windows 上走 `IFileOperation`（文件 / 目录它自己分），
+/// 不带确认弹窗（`hwnd_owner = None`），与 VS Code 的「按 Delete 直接进回收站」一致。
+#[tauri::command]
+pub fn delete_entry(root: String, path: String) -> Result<(), String> {
+    let (src, _name, _parent) = checked_src(&root, &path)?;
+    trash::delete(&src).map_err(|e| format!("送不进回收站：{e}"))
+}
+
+/// 在系统资源管理器里选中这一条。
+///
+/// `explorer.exe` 的 `/select,` 参数**要自己带引号**（路径里有空格时不引就会按空格断），
+/// 而且它选中完常常回一个非 0 退出码 —— 那不是失败，所以这里 `spawn` 之后不等、不看结果。
+#[tauri::command]
+pub fn reveal_in_explorer(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Err(format!("已经不存在了：{path}"));
+    }
+    std::process::Command::new("explorer")
+        .arg(format!("/select,\"{}\"", path.replace('"', "")))
+        .spawn()
+        .map_err(|e| format!("打不开资源管理器：{e}"))?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------- 用例
 
 #[cfg(test)]
@@ -415,6 +630,212 @@ mod tests {
         let gone = dir.join("没这个");
         let err = create_file(gone.to_string_lossy().into_owned(), "a.md".into()).unwrap_err();
         assert!(err.contains("父目录不存在"), "错误要能读：{err}");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // ---------------------------- B315
+
+    /// 造一棵 `根/a.md` + `根/notes/b.md` + `根/notes/子/c.md`，回根。
+    fn fixture(tag: &str) -> std::path::PathBuf {
+        let dir = tmp(tag);
+        fs::write(dir.join("a.md"), "A").unwrap();
+        fs::create_dir(dir.join("notes")).unwrap();
+        fs::write(dir.join("notes").join("b.md"), "B").unwrap();
+        fs::create_dir(dir.join("notes").join("子")).unwrap();
+        fs::write(dir.join("notes").join("子").join("c.md"), "C").unwrap();
+        dir
+    }
+
+    #[test]
+    fn split_ext_keeps_dotfiles_whole() {
+        assert_eq!(split_ext("a.md"), ("a".into(), "md".into()));
+        assert_eq!(split_ext("笔记"), ("笔记".into(), "".into()));
+        // 点开头的整体算「没扩展名」：`.gitignore (2)` 才对，`. (2)gitignore` 是垃圾
+        assert_eq!(split_ext(".gitignore"), (".gitignore".into(), "".into()));
+        assert_eq!(split_ext("a.tar.gz"), ("a.tar".into(), "gz".into()));
+    }
+
+    #[test]
+    fn unique_in_finds_the_first_free_slot() {
+        let dir = tmp("unique");
+        assert_eq!(unique_in(&dir, "a.md"), "a.md", "没占就用原名");
+        fs::write(dir.join("a.md"), "").unwrap();
+        assert_eq!(unique_in(&dir, "a.md"), "a (2).md");
+        fs::write(dir.join("a (2).md"), "").unwrap();
+        assert_eq!(
+            unique_in(&dir, "a.md"),
+            "a (3).md",
+            "后缀要接着往后找，不复用已占的"
+        );
+        fs::write(dir.join("无扩展"), "").unwrap();
+        assert_eq!(unique_in(&dir, "无扩展"), "无扩展 (2)");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn guard_within_refuses_escaping_the_root() {
+        let dir = fixture("guard");
+        let root = dir.to_string_lossy().into_owned();
+        assert!(
+            guard_within(&root, &dir.join("notes")).is_ok(),
+            "根内的要放行"
+        );
+        assert!(guard_within(&root, &dir).is_ok(), "根本身算界内");
+        // 字符串手术骗不过 canonicalize：`根\..\别处` 真在根外
+        let escape = dir.join("..").join("别处");
+        assert!(
+            guard_within(&root, &escape).is_err(),
+            "带 .. 的必须拦住：{escape:?}"
+        );
+        assert!(guard_within(&root, Path::new("C:\\windows")).is_err());
+        assert!(guard_within("", &dir).is_err(), "没根的时候一句都不许写");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rename_entry_moves_it_and_refuses_a_clash() {
+        let dir = fixture("rename");
+        let root = dir.to_string_lossy().into_owned();
+        let e = rename_entry(
+            root.clone(),
+            dir.join("a.md").to_string_lossy().into_owned(),
+            "  改好的.md  ".into(),
+        )
+        .unwrap();
+        assert_eq!(e.name, "改好的.md", "首尾空白该去掉");
+        assert!(!dir.join("a.md").exists(), "旧的不再在");
+        assert_eq!(
+            fs::read_to_string(&e.path).unwrap(),
+            "A",
+            "内容一个字都不动"
+        );
+
+        fs::write(dir.join("b.md"), "").unwrap();
+        let err = rename_entry(root.clone(), e.path.clone(), "b.md".into()).unwrap_err();
+        assert!(err.contains("已经有"), "改名撞名要报错：{err}");
+        assert!(
+            dir.join("改好的.md").exists() && !dir.join("改好的.md (2)").exists(),
+            "报错那条不许顺手改名"
+        );
+        assert!(
+            rename_entry(root, e.path, "a/b".into()).is_err(),
+            "非法名字要拒"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn copy_entry_duplicates_without_touching_the_source() {
+        let dir = fixture("copy");
+        let root = dir.to_string_lossy().into_owned();
+        let a = dir.join("a.md").to_string_lossy().into_owned();
+        let notes = dir.join("notes").to_string_lossy().into_owned();
+
+        let made = copy_entry(root.clone(), a.clone(), notes.clone()).unwrap();
+        assert!(made.path.ends_with("a.md"), "去别的层用原名");
+        assert!(dir.join("a.md").exists(), "复制不是移动，原件一条都不许少");
+        assert_eq!(
+            fs::read_to_string(dir.join("notes").join("a.md")).unwrap(),
+            "A"
+        );
+
+        // 就地复制（粘回它自己所在的那一层）是 VS Code 的正经用法 ⇒ 允许，加后缀
+        let deep = copy_entry(root.clone(), notes.clone(), root.clone()).unwrap();
+        assert!(
+            deep.path.ends_with("notes (2)"),
+            "同层复制 = 加后缀那份：{}",
+            deep.path
+        );
+        assert_eq!(
+            fs::read_to_string(Path::new(&deep.path).join("子").join("c.md")).unwrap(),
+            "C",
+            "目录要整棵跟着复制"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn copy_and_move_refuse_to_paste_a_folder_into_itself() {
+        // 这一条拦的是**无限递归**：目标先被建出来，遍历源时又看见了目标，
+        // 于是往自己里面一层层塞下去，直到把盘塞满或路径超长。
+        let dir = fixture("copyself");
+        let root = dir.to_string_lossy().into_owned();
+        let notes = dir.join("notes").to_string_lossy().into_owned();
+        let into_own_child = dir.join("notes").join("子").to_string_lossy().into_owned();
+        let err = copy_entry(root.clone(), notes.clone(), into_own_child.clone()).unwrap_err();
+        assert!(err.contains("它自己里面"), "错误要能读：{err}");
+        let err = move_entry(root, notes, into_own_child).unwrap_err();
+        assert!(err.contains("它自己里面"), "移动那条同拒：{err}");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn move_entry_relocates_and_refuses_same_layer() {
+        let dir = fixture("move");
+        let root = dir.to_string_lossy().into_owned();
+        let src = dir.join("a.md").to_string_lossy().into_owned();
+        let into = dir.join("notes").to_string_lossy().into_owned();
+
+        let made = move_entry(root.clone(), src.clone(), into.clone()).unwrap();
+        assert!(!dir.join("a.md").exists(), "挪走之后原处该空");
+        assert_eq!(fs::read_to_string(&made.path).unwrap(), "A");
+
+        fs::write(dir.join("notes").join("a.md"), "占位").unwrap();
+        let again = move_entry(root.clone(), src.clone(), into.clone()).unwrap_err();
+        assert!(
+            again.contains("已经不存在"),
+            "挪一个不在的东西要报错：{again}"
+        );
+        assert!(move_entry(root, src, into).is_err(), "同层挪动没有意义");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn move_entry_suffixes_when_the_target_layer_already_has_it() {
+        let dir = fixture("move2");
+        let root = dir.to_string_lossy().into_owned();
+        let made = move_entry(
+            root,
+            dir.join("a.md").to_string_lossy().into_owned(),
+            dir.join("notes").to_string_lossy().into_owned(),
+        )
+        .unwrap();
+        assert!(made.path.ends_with("a.md"), "notes 里没有 a.md");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn delete_entry_checks_before_touching_the_bin() {
+        // 只验**校验**那一段：真送回收站会往用户的回收拉里丢东西、还要起 COM，
+        // 那一条留给真机验收（.tmp/explorer-check.py 那台子）肉眼结案。
+        let dir = fixture("del");
+        let root = dir.to_string_lossy().into_owned();
+        let gone = dir.join("没这个.md").to_string_lossy().into_owned();
+        assert!(
+            delete_entry(root.clone(), gone)
+                .unwrap_err()
+                .contains("已经不存在"),
+            "不在盘上的要先报错"
+        );
+        let escape = dir.join("..").join("别处.md");
+        fs::write(&escape, "x").unwrap();
+        assert!(
+            delete_entry(root.clone(), escape.to_string_lossy().into_owned()).is_err(),
+            "根外的一条绝对不许进回收站"
+        );
+        assert!(escape.exists(), "被拒的那条要原样留在盘上");
+        let _ = fs::remove_file(&escape);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reveal_refuses_a_path_that_is_not_there() {
+        // 同样只验校验段：真开资源管理器会弹一个窗口出来，那是桌面行为，不是本模块的事。
+        let dir = tmp("reveal");
+        let missing = dir.join("没这个.md").to_string_lossy().into_owned();
+        assert!(reveal_in_explorer(missing)
+            .unwrap_err()
+            .contains("已经不存在"));
         fs::remove_dir_all(&dir).unwrap();
     }
 }
