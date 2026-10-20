@@ -322,9 +322,13 @@ export function deleteEntry(root: string, path: string): Promise<void> {
   return invoke<void>("delete_entry", { root, path });
 }
 
-/** 在系统资源管理器里选中这一条。 */
-export function revealInExplorer(path: string): Promise<void> {
-  return invoke<void>("reveal_in_explorer", { path });
+/**
+ * 在系统资源管理器里选中这一条。
+ * 命令是 B123-7 就有的 `reveal_in_folder`（标签右键菜单在用），这里只是给树补一层
+ * 薄包装 —— 同一条桌面行为**不该有两个入口**，所以 B315 不另开一条命令。
+ */
+export function revealInFolder(path: string): Promise<void> {
+  return invoke<void>("reveal_in_folder", { path });
 }
 
 export function newTab(encoding?: string | null): Promise<TabInfo> {

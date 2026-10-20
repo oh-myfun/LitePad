@@ -249,8 +249,15 @@ pub fn create_dir(dir: String, name: String) -> Result<FsEntry, String> {
 /// 规范化一条路径用于**比较**（不改磁盘上的任何东西）。
 /// 取不到（还没建出来、权限不够）就退回原串 —— 调用方只拿它做前缀判断，
 /// 真正要动文件的那几步自有 `exists()` 与 IO 错误兜着。
-fn norm(path: &Path) -> std::path::PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+///
+/// ⚠️ 一律过 `normalize_path`：本仓库的成文规矩是「canonicalize 的结果必须剥掉
+/// `\\?\`」（见 `commands::normalize_path` 那段），留着它一旦顺着某条 return 溜到
+/// 前端，用户看到的就是 `\\?\D:\笔记\a.md`。
+fn norm(path: &Path) -> PathBuf {
+    match path.canonicalize() {
+        Ok(p) => crate::commands::normalize_path(p),
+        Err(_) => path.to_path_buf(),
+    }
 }
 
 /// 这条路径在不在当前根之内（含根本身）。
@@ -435,23 +442,6 @@ pub fn move_entry(root: String, src: String, dest_dir: String) -> Result<FsEntry
 pub fn delete_entry(root: String, path: String) -> Result<(), String> {
     let (src, _name, _parent) = checked_src(&root, &path)?;
     trash::delete(&src).map_err(|e| format!("送不进回收站：{e}"))
-}
-
-/// 在系统资源管理器里选中这一条。
-///
-/// `explorer.exe` 的 `/select,` 参数**要自己带引号**（路径里有空格时不引就会按空格断），
-/// 而且它选中完常常回一个非 0 退出码 —— 那不是失败，所以这里 `spawn` 之后不等、不看结果。
-#[tauri::command]
-pub fn reveal_in_explorer(path: String) -> Result<(), String> {
-    let p = Path::new(&path);
-    if !p.exists() {
-        return Err(format!("已经不存在了：{path}"));
-    }
-    std::process::Command::new("explorer")
-        .arg(format!("/select,\"{}\"", path.replace('"', "")))
-        .spawn()
-        .map_err(|e| format!("打不开资源管理器：{e}"))?;
-    Ok(())
 }
 
 // ---------------------------------------------------------------- 用例
@@ -825,17 +815,6 @@ mod tests {
         );
         assert!(escape.exists(), "被拒的那条要原样留在盘上");
         let _ = fs::remove_file(&escape);
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn reveal_refuses_a_path_that_is_not_there() {
-        // 同样只验校验段：真开资源管理器会弹一个窗口出来，那是桌面行为，不是本模块的事。
-        let dir = tmp("reveal");
-        let missing = dir.join("没这个.md").to_string_lossy().into_owned();
-        assert!(reveal_in_explorer(missing)
-            .unwrap_err()
-            .contains("已经不存在"));
         fs::remove_dir_all(&dir).unwrap();
     }
 }

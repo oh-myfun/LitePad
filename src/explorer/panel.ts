@@ -1,11 +1,12 @@
 /**
- * B314 · 资源管理器面板（视图层）。
+ * B314 / B315 · 资源管理器面板（视图层）。
  *
- * 只做四件事：把这一棵**懒加载的树**画出来、把三种手势（点开目录 / 点文件 / 键盘上下）
- * 转成一次调用、把四颗标题栏键（打开文件夹 / 刷新 / 全部折叠 / 新建）接上、把新建的
- * 名字输入框放在**它该在的那一层**。
+ * 只做五件事：把这一棵**懒加载的树**画出来、把三种手势（点开目录 / 点文件 / 键盘上下）
+ * 转成一次调用、把四颗标题栏键（打开文件夹 / 刷新 / 全部折叠 / 新建）接上、把新建与
+ * 改名的名字输入框放在**它该在的那一层**、以及 B315 的**右键菜单**（复用 `shell/menu`
+ * 那套浮层，不另造一个菜单组件）。
  * **不读盘、不排序、不校验名字、不拼路径** —— 那些在 `commands/explorer.rs`；
- * **不缓存、不判在飞** —— 那些在 `./store.ts`。视图再判一遍就是两套口径（B304 那一族的教训）。
+ * **不缓存、不判在飞、不动剪贴板** —— 那些在 `./store.ts`。视图再判一遍就是两套口径（B304 那一族的教训）。
  *
  * 依赖方向：本模块 → `shell/drawer`（登记成外壳的一个视图）→ `ui`；
  * 打开文件走 `io/files` 的 `doOpen`（与拖放、最近打开、文件关联同一扇漏斗，
@@ -13,10 +14,11 @@
  */
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { windowKind, settings } from "../core/app-state";
-import { createDir, createFile, saveSettings, type FsEntry } from "../ipc/api";
+import { createDir, createFile, revealInFolder, saveSettings, type FsEntry } from "../ipc/api";
 import { doOpen } from "../io/files";
 import { CODICONS } from "../shell/codicons";
 import { activeDrawer, registerDrawerView, setDrawer } from "../shell/drawer";
+import { showPopupMenu, type MenuItem } from "../shell/menu";
 import {
   explorerCollapse,
   explorerNewDir,
@@ -33,15 +35,21 @@ import {
   childrenOf,
   collapseAll,
   errorOf,
+  getClipboard,
   getRoot,
   hasRoot,
   isExpanded,
   isLoading,
   onExplorerChange,
+  pasteInto,
   refresh,
   refreshDir,
+  renameEntryAt,
+  setClipboard,
   setRoot,
   toggleDir,
+  trashAt,
+  type ClipItem,
 } from "./store";
 
 type Kind = "file" | "dir";
@@ -50,6 +58,8 @@ type Kind = "file" | "dir";
 let selected: string | null = null;
 /** 正在输入名字的创建：目标目录 + 建什么。非 null 时那一层下面多一个输入框。 */
 let creating: { dir: string; kind: Kind } | null = null;
+/** 正在改名那一条（路径 + 它所在层）。非 null 时它那一行的名字换成输入框。 */
+let renaming: { path: string; dir: string } | null = null;
 /** 根那一行自己收没收起（根永远是树的第一节点，VS Code 一样）。 */
 let rootOpen = true;
 /** 每一行的父亲与类型：渲染时顺手记下，新建目标目录靠它算，**不做路径字符串手术**。 */
@@ -97,13 +107,11 @@ export function setupExplorer(): void {
   sideExplorer.addEventListener("click", () => toggleExplorer());
   explorerOpen.addEventListener("click", () => void promptOpenFolder());
   explorerRefresh.addEventListener("click", () => void refresh());
-  explorerCollapse.addEventListener("click", () => {
-    collapseAll();
-    rootOpen = true; // 「全部折叠」收的是子目录；根那一行留着，否则整块像被清空了
-  });
+  explorerCollapse.addEventListener("click", () => collapseAllHere());
   explorerNewFile.addEventListener("click", () => startCreate("file"));
   explorerNewDir.addEventListener("click", () => startCreate("dir"));
   explorerTree.addEventListener("click", (e) => onRowClick(e as MouseEvent));
+  explorerTree.addEventListener("contextmenu", (e) => onRowContext(e as MouseEvent));
   explorerTree.addEventListener("keydown", (e) => onTreeKey(e));
   renderTree();
 }
@@ -126,6 +134,46 @@ function note(text: string, depth: number): HTMLElement {
   row.style.setProperty("--depth", String(depth));
   row.textContent = text;
   return row;
+}
+
+/** 名字那一格。**一律 textContent**：文件名里可以有 `<`、`&`，拼 innerHTML 就是给自己造注入点
+ *  （口径同 recents/panel.ts 的 `rowOf`）。 */
+function nameSpan(text: string): HTMLElement {
+  const span = document.createElement("span");
+  span.className = "explorer-name";
+  span.textContent = text;
+  return span;
+}
+
+/** 改名用的输入框：预填当前名字、默认只选中**主名**（扩展名留着，与 VS Code 一致）。 */
+function renameInput(e: FsEntry): HTMLElement {
+  const input = document.createElement("input");
+  input.className = "explorer-input";
+  input.type = "text";
+  input.value = e.name;
+  input.setAttribute("aria-label", `重命名 ${e.name}（回车确认，Esc 取消）`);
+  const dot = e.name.lastIndexOf(".");
+  queueMicrotask(() => {
+    input.focus();
+    if (dot > 0) input.setSelectionRange(0, dot);
+    else input.select();
+  });
+  input.addEventListener("keydown", (ev) => {
+    const k = (ev as KeyboardEvent).key;
+    if (k === "Enter") {
+      ev.preventDefault();
+      void commitRename(input.value);
+    } else if (k === "Escape") {
+      ev.preventDefault();
+      renaming = null;
+      renderTree();
+    }
+  });
+  // blur 也提交：口径与 `inputRow` 一致（点空白处之后回来看见名字没改，用户读作 bug）
+  input.addEventListener("blur", () => {
+    if (renaming) void commitRename(input.value);
+  });
+  return input;
 }
 
 function inputRow(kind: Kind): HTMLElement {
@@ -217,12 +265,8 @@ function renderEntry(e: FsEntry, dir: string, depth: number): HTMLElement {
   glyph.className = "explorer-glyph";
   glyph.innerHTML =
     kind === "dir" ? (open ? CODICONS.folderOpened : CODICONS.folder) : CODICONS.file;
-  const name = document.createElement("span");
-  name.className = "explorer-name";
-  // ⚠️ 一律 textContent：文件名里可以有 `<`、`&`，拼 innerHTML 就是给自己造注入点
-  //   （口径同 recents/panel.ts 的 `rowOf`）。
-  name.textContent = e.name;
-  row.append(twisty, glyph, name);
+  const name = nameSpan(e.name);
+  row.append(twisty, glyph, renaming?.path === e.path ? renameInput(e) : name);
 
   if (kind === "dir") {
     const kids = document.createElement("div");
@@ -398,6 +442,24 @@ function onTreeKey(ev: KeyboardEvent): void {
       if (row?.dataset.kind === "dir") void activateDir(cur);
       else if (row) void doOpen(cur);
       break;
+    case "F2":
+    case "Delete":
+    case "c":
+    case "x":
+    case "v": {
+      // 键盘那一路的动作都问「选中了谁」，所以先把焦点那一条变成选中那一条 ——
+      // 用 Tab 键走进树时 `selected` 还可能是上一回点中的另一行。
+      const wantClip = ev.key === "c" || ev.key === "x" || ev.key === "v";
+      if (wantClip && (ev.altKey || ev.metaKey || !ev.ctrlKey)) break;
+      ev.preventDefault();
+      select(cur);
+      const onRoot = cur === getRoot();
+      if (ev.key === "F2" && !onRoot) startRename(cur);
+      else if (ev.key === "Delete" && !onRoot) void doDelete();
+      else if (ev.key === "v") void doPaste();
+      else if (!onRoot) void doClip(ev.key === "x");
+      break;
+    }
     default:
       break;
   }
@@ -405,8 +467,12 @@ function onTreeKey(ev: KeyboardEvent): void {
 
 // ---------------------------------------------------------------- 新建
 
-/** 目标目录：选中的是目录就用它；是文件用它的父亲；什么都没选就用根。 */
-function createTarget(): string | null {
+/**
+ * 该动手的那一层：选中的是目录就用它；是文件用它的父亲；什么都没选（或选的就是根）用根。
+ * 「新建文件 / 新建目录 / 粘贴」三条共用这一份判据 —— 两条各算一遍目标，
+ * 迟早会出现「新建落在这层、粘贴落在那层」那种没人解释得清的分裂。
+ */
+function targetDir(): string | null {
   if (!hasRoot()) return null;
   if (!selected) return getRoot();
   const r = rows.get(selected);
@@ -415,7 +481,7 @@ function createTarget(): string | null {
 }
 
 function startCreate(kind: Kind): void {
-  const dir = createTarget();
+  const dir = targetDir();
   if (!dir) {
     showMessage("还没有打开文件夹");
     return;
@@ -446,6 +512,179 @@ async function commitCreate(raw: string): Promise<void> {
   } catch (e: unknown) {
     renderTree();
     // Rust 那句校验的话直接给用户（「名字里不能有 / \\ …」），不再包一层「失败了」。
+    showMessage(String(e), true);
+  }
+}
+
+// ---------------------------------------------------------------- B315 · 右键菜单与常规操作
+
+/**
+ * 剪贴板里的一条要带上它**当下所在那一层**：缓存层不做路径手术（`rows` 这份父子表
+ * 只在这里有），所以「父亲」由面板算好再交出去。
+ */
+function clipItem(path: string): ClipItem | null {
+  if (!path || path === getRoot()) return null; // 根自己不进剪贴板：它就是整棵树
+  return { path, dir: rows.get(path)?.dir ?? getRoot() };
+}
+
+function onRowContext(ev: MouseEvent): void {
+  ev.preventDefault();
+  if (windowKind === "satellite") return;
+  const row = rowFromEvent(ev);
+  const path = row?.dataset.path ?? "";
+  // 先选中再弹菜单：菜单里那几项问的全是「选中了谁」，不选就会对着上一行的目标动手
+  if (path) select(path);
+  showPopupMenu(null, menuFor(path), { x: ev.clientX, y: ev.clientY });
+}
+
+/**
+ * 菜单条目。`path` 为空 = 空白处（等价于对根动手）；根那一行自己**不参与**改名 /
+ * 复制 / 剪切 / 删除 —— 那是整棵树，删了它面板就空了，而「打开文件夹」那条键才是它的出口。
+ */
+function menuFor(path: string): MenuItem[] {
+  if (!hasRoot()) {
+    return [{ label: "打开文件夹…", onSelect: () => void promptOpenFolder() }];
+  }
+  const isRoot = !path || path === getRoot();
+  const kind: Kind = rows.get(path)?.kind ?? "dir";
+  const clip = getClipboard();
+  const dest = targetDir();
+  const out: MenuItem[] = [];
+  const push = (...items: MenuItem[]): void => {
+    const last = out[out.length - 1];
+    const first = items[0];
+    // 分组整组缺席时不留孤零零的分隔线（口径同 tabstrip 的 fillMenu）
+    if (out.length && first && !first.separator && !last?.separator) out.push({ separator: true });
+    out.push(...items);
+  };
+
+  if (!isRoot && kind === "file") {
+    push({ label: "打开", onSelect: () => void doOpen(path) });
+  }
+  push(
+    { label: "新建文件", onSelect: () => startCreate("file") },
+    { label: "新建目录", onSelect: () => startCreate("dir") },
+  );
+  if (!isRoot) {
+    // 标签里的 `\t` 是 `shell/menu` 的快捷键位约定（左标签、右按键提示），
+    // 与下面 `onTreeKey` 那几条一一对应 —— 写了提示就得真做得到，所以两处同一批键。
+    push(
+      { label: "重命名\tF2", onSelect: () => startRename(path) },
+      { label: "复制\tCtrl+C", onSelect: () => void doClip(false) },
+      { label: "剪切\tCtrl+X", onSelect: () => void doClip(true) },
+      {
+        label: "粘贴\tCtrl+V",
+        disabled: !clip || !dest,
+        onSelect: () => void doPaste(),
+      },
+      { label: "删除\tDel", onSelect: () => void doDelete() },
+    );
+  } else {
+    push({ label: "粘贴\tCtrl+V", disabled: !clip, onSelect: () => void doPaste() });
+  }
+  push({ label: "复制路径", onSelect: () => doCopyPath(isRoot ? getRoot() : path) });
+  push({
+    label: "在资源管理器中显示",
+    onSelect: () => void doReveal(isRoot ? getRoot() : path),
+  });
+  if (isRoot) {
+    push(
+      { label: "刷新", onSelect: () => void refresh() },
+      { label: "全部折叠", onSelect: () => void collapseAllHere() },
+    );
+  }
+  return out;
+}
+
+/** 「全部折叠」那颗键与菜单里那一条**共用**：收的是子目录，根那一行留着（否则整块像被清空了）。 */
+function collapseAllHere(): void {
+  collapseAll();
+  rootOpen = true;
+}
+
+function startRename(path: string): void {
+  const dir = rows.get(path)?.dir;
+  if (!dir) {
+    showMessage("根目录不能改名", true);
+    return;
+  }
+  renaming = { path, dir };
+  renderTree();
+}
+
+async function commitRename(raw: string): Promise<void> {
+  const plan = renaming;
+  renaming = null;
+  if (!plan) return;
+  const name = raw.trim();
+  if (!name || name === nameOf(plan.path)) {
+    renderTree(); // 没改 = 取消，不发那一发 IPC
+    return;
+  }
+  try {
+    const made = await renameEntryAt(plan.dir, plan.path, name);
+    showMessage(`已重命名为 ${made.name}`);
+  } catch (e: unknown) {
+    renderTree();
+    showMessage(String(e), true);
+  }
+}
+
+/** 复制 / 剪切：把选中那一条连同它所在层交给缓存层。 */
+function doClip(cut: boolean): Promise<void> {
+  const item = selected ? clipItem(selected) : null;
+  if (!item) {
+    showMessage(cut ? "这一条不能剪切" : "这一条不能复制", true);
+    return Promise.resolve();
+  }
+  setClipboard(cut ? "cut" : "copy", [item]);
+  showMessage(`${cut ? "已剪切" : "已复制"} ${item.path.split(/[\\/]/).pop() ?? ""}`);
+  return Promise.resolve();
+}
+
+async function doPaste(): Promise<void> {
+  const dest = targetDir();
+  if (!dest) {
+    showMessage("还没有打开文件夹", true);
+    return;
+  }
+  if (!getClipboard()) {
+    showMessage("剪贴板是空的", true);
+    return;
+  }
+  try {
+    const made = await pasteInto(dest);
+    showMessage(`已粘贴 ${made.length} 条`);
+  } catch (e: unknown) {
+    showMessage(String(e), true);
+  }
+}
+
+async function doDelete(): Promise<void> {
+  const path = selected;
+  if (!path || path === getRoot()) {
+    showMessage("根目录不能删除", true);
+    return;
+  }
+  const dir = rows.get(path)?.dir ?? getRoot();
+  try {
+    await trashAt(dir, path);
+    selected = null;
+    renderTree();
+    showMessage(`已送进回收站：${path.split(/[\\/]/).pop() ?? path}`);
+  } catch (e: unknown) {
+    showMessage(String(e), true);
+  }
+}
+
+function doCopyPath(path: string): void {
+  void navigator.clipboard.writeText(path).then(() => showMessage(`已复制路径：${path}`));
+}
+
+async function doReveal(path: string): Promise<void> {
+  try {
+    await revealInFolder(path);
+  } catch (e: unknown) {
     showMessage(String(e), true);
   }
 }

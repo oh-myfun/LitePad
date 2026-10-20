@@ -16,6 +16,14 @@ const h = vi.hoisted(() => ({
   created: [] as { kind: string; dir: string; name: string }[],
   /** 「打开文件夹」对话框要回的东西。 */
   pick: null as string | null,
+  /** B315：五条写操作各记一笔。 */
+  renamed: [] as [string, string][],
+  copied: [] as [string, string][],
+  moved: [] as [string, string][],
+  deleted: [] as string[],
+  revealed: [] as string[],
+  /** 让某条写操作报错的开关。 */
+  failOn: new Set<string>(),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -52,6 +60,53 @@ vi.mock("../src/ipc/api", async (importOriginal) => {
       h.created.push({ kind: "dir", dir, name });
       return Promise.resolve(mk(`${dir}\\${name}`, name, true));
     },
+    // B315 五条。假实现**顺手改 `h.dirs`**：不然「删掉的那一行还画着」这种结论
+    // 就只是断言了我自己记的那笔账，而不是屏幕上真变了样。
+    renameEntry: (_root: string, path: string, newName: string) => {
+      h.renamed.push([path, newName]);
+      if (h.failOn.has("rename")) return Promise.reject(new Error("这一层里已经有 它了"));
+      const dir = path.slice(0, path.lastIndexOf("\\"));
+      const old = path.slice(path.lastIndexOf("\\") + 1);
+      h.dirs.set(
+        dir,
+        (h.dirs.get(dir) ?? []).map((k) => (k[0] === old ? [newName, k[1]] : k)),
+      );
+      return Promise.resolve(mk(`${dir}\\${newName}`, newName, h.dirs.has(path)));
+    },
+    copyEntry: (_root: string, src: string, destDir: string) => {
+      h.copied.push([src, destDir]);
+      const name = src.slice(src.lastIndexOf("\\") + 1);
+      const isDir = h.dirs.has(src);
+      h.dirs.set(destDir, [...(h.dirs.get(destDir) ?? []), [name, isDir]]);
+      return Promise.resolve(mk(`${destDir}\\${name}`, name, isDir));
+    },
+    moveEntry: (_root: string, src: string, destDir: string) => {
+      h.moved.push([src, destDir]);
+      const name = src.slice(src.lastIndexOf("\\") + 1);
+      const from = src.slice(0, src.lastIndexOf("\\"));
+      const isDir = h.dirs.has(src);
+      h.dirs.set(
+        from,
+        (h.dirs.get(from) ?? []).filter((k) => k[0] !== name),
+      );
+      h.dirs.set(destDir, [...(h.dirs.get(destDir) ?? []), [name, isDir]]);
+      return Promise.resolve(mk(`${destDir}\\${name}`, name, isDir));
+    },
+    deleteEntry: (_root: string, path: string) => {
+      h.deleted.push(path);
+      if (h.failOn.has("delete")) return Promise.reject(new Error("送不进回收站"));
+      const dir = path.slice(0, path.lastIndexOf("\\"));
+      const name = path.slice(path.lastIndexOf("\\") + 1);
+      h.dirs.set(
+        dir,
+        (h.dirs.get(dir) ?? []).filter((k) => k[0] !== name),
+      );
+      return Promise.resolve();
+    },
+    revealInFolder: (path: string) => {
+      h.revealed.push(path);
+      return Promise.resolve();
+    },
     saveSettings: () => Promise.resolve(),
   };
 });
@@ -67,6 +122,7 @@ let panel: typeof import("../src/explorer/panel");
 let store: typeof import("../src/explorer/store");
 let drawer: typeof import("../src/shell/drawer");
 let ui: typeof import("../src/ui");
+let menu: typeof import("../src/shell/menu");
 
 beforeAll(async () => {
   const html = readFileSync("index.html", "utf-8");
@@ -75,11 +131,12 @@ beforeAll(async () => {
     "",
   );
   document.body.innerHTML = body;
-  [panel, store, drawer, ui] = await Promise.all([
+  [panel, store, drawer, ui, menu] = await Promise.all([
     import("../src/explorer/panel"),
     import("../src/explorer/store"),
     import("../src/shell/drawer"),
     import("../src/ui"),
+    import("../src/shell/menu"),
   ]);
   // 另两块视图也登记着：互斥与点亮态的判据要有写它们的人（口径同 recents-panel.test.ts）。
   drawer.registerDrawerView("toc", {
@@ -120,7 +177,15 @@ beforeEach(async () => {
   h.calls.length = 0;
   h.opened.length = 0;
   h.created.length = 0;
+  h.renamed.length = 0;
+  h.copied.length = 0;
+  h.moved.length = 0;
+  h.deleted.length = 0;
+  h.revealed.length = 0;
+  h.failOn.clear();
   h.pick = null;
+  store.clearClipboard();
+  menu.closePopupMenu();
   h.dirs.clear();
   h.dirs.set(ROOT, [
     ["notes", true],
@@ -298,4 +363,191 @@ describe("B314 资源管理器面板", () => {
     expect(ui.explorerPanel.hidden, "再点一下收起").toBe(true);
     expect(ui.sideExplorer.classList.contains("is-on"), "收掉了键不许还亮着").toBe(false);
   });
+});
+
+describe("B315 右键菜单与常规操作", () => {
+  function menuEl(): HTMLElement {
+    const el = document.querySelector<HTMLElement>(".popup-menu");
+    if (!el) throw new Error("菜单没弹出来");
+    return el;
+  }
+
+  function labels(): string[] {
+    return [...menuEl().querySelectorAll<HTMLButtonElement>("button")].map(
+      (b) => b.querySelector(".menu-label")?.textContent ?? "",
+    );
+  }
+
+  function menuItem(needle: string): HTMLButtonElement {
+    const btn = [...menuEl().querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      (b.querySelector(".menu-label")?.textContent ?? "").includes(needle),
+    );
+    if (!btn) throw new Error(`菜单里没有「${needle}」（现有：${labels().join(" / ")}）`);
+    return btn;
+  }
+
+  async function rightClick(el: Element): Promise<void> {
+    el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 30, clientY: 40 }));
+    await vi.waitFor(() => expect(document.querySelector(".popup-menu")).toBeTruthy());
+  }
+
+  async function pick(needle: string): Promise<void> {
+    menuItem(needle).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await vi.waitFor(() => expect(true).toBe(true));
+  }
+
+  function press(el: Element, key: string, mods: KeyboardEventInit = {}): void {
+    el.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, ...mods }));
+  }
+
+  it("右键文件行：菜单条目齐、那一行先被选中、没剪贴板时粘贴是灰的", async () => {
+    await rightClick(rowAt("a.md"));
+    expect(labels()).toEqual([
+      "打开",
+      "新建文件",
+      "新建目录",
+      "重命名",
+      "复制",
+      "剪切",
+      "粘贴",
+      "删除",
+      "复制路径",
+      "在资源管理器中显示",
+    ]);
+    expect(rowAt("a.md").getAttribute("aria-selected"), "菜单问的是「选中了谁」，得先选中").toBe(
+      "true",
+    );
+    expect(menuItem("粘贴").disabled, "剪贴板空着，粘贴该是灰的").toBe(true);
+    expect(menuItem("重命名").disabled, "快捷键提示挂在标签里（\\t 那一段）").toBe(false);
+  });
+
+  it("右键根那一行：改名 / 复制 / 删除都不给，换成刷新与全部折叠", async () => {
+    await rightClick(rowAt("笔记"));
+    const got = labels();
+    expect(got, "根就是整棵树，删了面板就空了").not.toContain("删除");
+    expect(got).not.toContain("重命名");
+    expect(got).not.toContain("复制");
+    expect(got).toContain("新建文件");
+    expect(got).toContain("刷新");
+    expect(got).toContain("全部折叠");
+  });
+
+  it("菜单点删除 → 走 delete IPC，那一行从屏幕上消失", async () => {
+    await rightClick(rowAt("b.md"));
+    await pick("删除");
+    expect(h.deleted).toEqual([`${ROOT}\\b.md`]);
+    await vi.waitFor(() => expect(names()).not.toContain("b.md"));
+    expect(names(), "别的行不受牵连").toEqual(expect.arrayContaining(["笔记", "a.md"]));
+  });
+
+  it("复制 → 右键目录粘贴：走 copy、落到那一层，源那一条还在", async () => {
+    await rightClick(rowAt("a.md"));
+    await pick("复制");
+    expect(store.getClipboard()?.mode).toBe("copy");
+    await rightClick(rowAt("notes"));
+    expect(menuItem("粘贴").disabled, "有剪贴板了，粘贴该能点").toBe(false);
+    await pick("粘贴");
+    expect(h.copied).toEqual([[`${ROOT}\\a.md`, `${ROOT}\\notes`]]);
+    expect(names(), "复制不动源").toContain("a.md");
+    await click(rowAt("notes")); // 展开看那一层真收到了副本
+    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    expect(names(), "副本画进了目标那一层").toContain("a.md");
+  });
+
+  it("剪切 → 粘贴走 move；复制那份粘完还留着（能连着粘几层）", async () => {
+    await rightClick(rowAt("a.md"));
+    await pick("复制");
+    await rightClick(rowAt("notes"));
+    await pick("粘贴");
+    expect(store.getClipboard(), "复制那一份要留着").not.toBeNull();
+    await rightClick(rowAt("b.md"));
+    await pick("剪切");
+    expect(store.getClipboard()?.mode).toBe("cut");
+    await rightClick(rowAt("notes"));
+    await pick("粘贴");
+    expect(h.moved).toEqual([[`${ROOT}\\b.md`, `${ROOT}\\notes`]]);
+    expect(store.getClipboard(), "剪切那份粘成功就该收掉").toBeNull();
+  });
+
+  it("粘贴落到「选中目录本身」而不是它的上一层：目录行 = 它自己，文件行 = 它所在层", async () => {
+    await rightClick(rowAt("a.md"));
+    await pick("剪切");
+    await rightClick(rowAt("notes"));
+    await pick("粘贴");
+    expect(h.moved, "目标该是 notes 这一层").toEqual([[`${ROOT}\\a.md`, `${ROOT}\\notes`]]);
+  });
+
+  it("F2 改名：输入框预填当前名，回车发 IPC 并画出新名；Esc 取消不发", async () => {
+    press(rowAt("a.md"), "F2");
+    const input = ui.explorerTree.querySelector<HTMLInputElement>(".explorer-input");
+    expect(input, "没画出改名输入框").toBeTruthy();
+    expect(input!.value, "预填的是当前那一个名字").toBe("a.md");
+    input!.value = "改好的.md";
+    press(input!, "Enter");
+    await vi.waitFor(() => expect(h.renamed).toEqual([[`${ROOT}\\a.md`, "改好的.md"]]));
+    await vi.waitFor(() => expect(names()).toContain("改好的.md"));
+    expect(ui.explorerTree.querySelector(".explorer-input"), "提交后输入框要收掉").toBeNull();
+
+    press(rowAt("b.md"), "F2");
+    const second = ui.explorerTree.querySelector<HTMLInputElement>(".explorer-input");
+    press(second!, "Escape");
+    expect(renamingCount(), "Esc 之后不许还留着输入框").toBe(0);
+    expect(h.renamed, "Esc 那条不发 IPC").toHaveLength(1);
+  });
+
+  it("名字没改就回车 = 取消（不发那一发没意义的 IPC）", () => {
+    press(rowAt("a.md"), "F2");
+    const input = ui.explorerTree.querySelector<HTMLInputElement>(".explorer-input")!;
+    press(input, "Enter");
+    expect(h.renamed).toEqual([]);
+  });
+
+  it("键盘那一路：Ctrl+C / Ctrl+V 与菜单同一套动作；Ctrl+Shift+C 不算", async () => {
+    const a = rowAt("a.md");
+    press(a, "c", { ctrlKey: true });
+    expect(store.getClipboard()?.mode).toBe("copy");
+    press(a, "C", { ctrlKey: true, shiftKey: true });
+    expect(store.getClipboard()?.mode, "带 Shift 的组合不该被当成复制").toBe("copy");
+
+    press(rowAt("notes"), "v", { ctrlKey: true });
+    await vi.waitFor(() => expect(h.copied).toEqual([[`${ROOT}\\a.md`, `${ROOT}\\notes`]]));
+  });
+
+  it("Delete 键与菜单那条同一条路；根那一行按 Delete 什么都不发", async () => {
+    press(rowAt("b.md"), "Delete");
+    await vi.waitFor(() => expect(h.deleted).toEqual([`${ROOT}\\b.md`]));
+    press(rowAt("笔记"), "Delete");
+    expect(h.deleted, "根不许删").toHaveLength(1);
+  });
+
+  it("改名失败：树停在原样、错误原样进状态栏，不许留下一个改了一半的样子", async () => {
+    h.failOn.add("rename");
+    press(rowAt("a.md"), "F2");
+    const input = ui.explorerTree.querySelector<HTMLInputElement>(".explorer-input")!;
+    input.value = "撞了.md";
+    press(input, "Enter");
+    const bar = document.getElementById("sb-message")!;
+    await vi.waitFor(() => expect(bar.textContent).toContain("已经有"));
+    expect(bar.classList.contains("sb-message-error"), "报错那条要走错误色").toBe(true);
+    expect(names()).toContain("a.md");
+    expect(names()).not.toContain("撞了.md");
+  });
+
+  it("复制路径 / 在资源管理器中显示：两条都拿**这一行**的路径，不是选中那一条的", async () => {
+    const writes: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: (s: string) => Promise.resolve(writes.push(s)) },
+      configurable: true,
+    });
+    await rightClick(rowAt("b.md"));
+    await pick("复制路径");
+    await vi.waitFor(() => expect(writes).toEqual([`${ROOT}\\b.md`]));
+    await rightClick(rowAt("notes"));
+    await pick("在资源管理器中显示");
+    expect(h.revealed).toEqual([`${ROOT}\\notes`]);
+  });
+
+  function renamingCount(): number {
+    return ui.explorerTree.querySelectorAll(".explorer-input").length;
+  }
 });

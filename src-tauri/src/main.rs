@@ -280,7 +280,6 @@ fn main() {
             commands::explorer::copy_entry,
             commands::explorer::move_entry,
             commands::explorer::delete_entry,
-            commands::explorer::reveal_in_explorer,
             windows::window_payload,
             windows::open_satellite_window,
             commands::watchdog_start_drag,
