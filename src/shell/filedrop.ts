@@ -17,6 +17,22 @@ import { showPopupMenu } from "./menu";
  *   内容读出来插进文档 —— 本项目没有这个功能，只有比它早拦才拦得住（见函数头）。
  */
 
+/**
+ * B316 · 树里拖出来的那一条带的自定义 MIME（值 = 被拖的路径）。
+ *
+ * 为什么要有它：同一扇 `drop` 事件上要分得开三种来源 —— 系统资源管理器拖进来的（`Files`）、
+ * 标签拖拽（`tabdnd` 那套自定义类型）、以及树里的条目。只靠「有没有 files」判会把
+ * 「从树里拖到编辑区」当成外部文件拖入，然后交给宿主桥去取路径 —— 而 HTML5 内部拖拽
+ * 压根没有 `File` 对象，那一发会静默什么都不做。
+ */
+export const TREE_DRAG_MIME = "application/x-litepad-tree-path";
+
+/** 这次拖拽是不是「树里的一条被拖起来」。 */
+export function isTreeDrag(dt: DataTransfer | null): boolean {
+  if (!dt) return false;
+  return Array.from(dt.types).includes(TREE_DRAG_MIME);
+}
+
 /** 与 Rust 侧 `dropbridge::MSG_TAG` 必须逐字一致（桥靠它筛掉别的 web message）。 */
 export const FILE_DROP_TAG = "__litepad_file_drop__";
 

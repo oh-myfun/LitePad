@@ -376,3 +376,40 @@ describe("B315 缓存层的动作与剪贴板", () => {
     expect(store.getClipboard()).toBeNull();
   });
 });
+
+describe("B316 缓存层：拖到某一层 = 移动", () => {
+  const R = "E:\\笔记";
+  const P = (...segs: string[]): string => segs.join("\\");
+
+  it("走 move、广播 from→to，源层与目标层各刷一次", async () => {
+    const sub = P(R, "子");
+    h.dirs.set(R, [
+      { name: "a.md", isDir: false },
+      { name: "子", isDir: true },
+    ]);
+    h.dirs.set(sub, []);
+    store.setRoot(R);
+    await vi.waitFor(() => expect(store.childrenOf(R)).toBeTruthy());
+    const seen: { from: string; to: string | null }[] = [];
+    store.onPathsChanged((c) => seen.push(...c));
+    h.calls.length = 0;
+
+    const made = await store.moveTo(P(R, "a.md"), R, sub);
+    expect(h.ops).toEqual([`move ${P(R, "a.md")} -> ${sub}`]);
+    expect(made.path).toBe(P(sub, "a.md"));
+    expect(seen).toEqual([{ from: P(R, "a.md"), to: P(sub, "a.md") }]);
+    expect(h.calls.sort()).toEqual([R, sub].sort());
+    expect(store.getClipboard(), "拖拽不碰剪贴板").toBeNull();
+  });
+
+  it("移动失败：不广播、错误原样透传（面板那句「挪不动」要有出处）", async () => {
+    h.dirs.set(R, [{ name: "a.md", isDir: false }]);
+    store.setRoot(R);
+    await vi.waitFor(() => expect(store.childrenOf(R)).toBeTruthy());
+    const seen: unknown[] = [];
+    store.onPathsChanged((c) => seen.push(...c));
+    h.failOn.add("move");
+    await expect(store.moveTo(P(R, "a.md"), R, P(R, "子"))).rejects.toThrow("挪不动");
+    expect(seen).toEqual([]);
+  });
+});

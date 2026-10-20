@@ -269,3 +269,20 @@ export async function pasteInto(destDir: string): Promise<FsEntry[]> {
   }
   return made;
 }
+
+/**
+ * B316 · 拖到某一层 = 移动那一条。走的是与「剪切 + 粘贴」同一条 `move_entry`，
+ * 区别只在**不碰剪贴板**：拖完不该在剪贴板里留下一条谁也没打算再粘第二次的东西。
+ *
+ * `srcDir` 由调用方给（面板手里有每一行的父亲，这里不做路径字符串手术）。同层的移动
+ * 不归本函数管 —— Rust 那条命令对同层是**报错**（「挪到它本来就在的那一层」没有意义），
+ * 而拖到同层的一个文件上（= 移到它那一层）在用户眼里是「放回了原处」，应当**静默无操作**，
+ * 所以那条判据留在面板那侧：同层就不发这一发。
+ */
+export async function moveTo(path: string, srcDir: string, destDir: string): Promise<FsEntry> {
+  const made = await moveEntry(root, path, destDir);
+  notifyPaths([{ from: path, to: made.path }]);
+  await refreshDir(srcDir);
+  if (srcDir !== destDir) await refreshDir(destDir);
+  return made;
+}
