@@ -18,12 +18,13 @@ function between(src: string, start: string, end: string): string {
 }
 
 describe("B305/B308 · Rust 命令注册与窗口销毁那条链", () => {
-  it("六条 recents 命令都在 invoke_handler 注册表里", () => {
+  it("七条 recents 命令都在 invoke_handler 注册表里", () => {
     const handler = between(rustMain, "generate_handler![", "])");
     for (const n of [
       "note_opened",
       "list_recents",
       "forget_recent",
+      "retitle_recent",
       "clear_recents",
       "get_recent_limit",
       "set_recent_limit",
@@ -32,6 +33,21 @@ describe("B305/B308 · Rust 命令注册与窗口销毁那条链", () => {
         `recents::${n}`,
       );
     }
+  });
+
+  it("B315 · 改写名单这一发：参数名两端对齐，且只走 note() 那一个口子", () => {
+    const api = readFileSync("src/ipc/api.ts", "utf-8");
+    const body = between(recentsRs, "pub fn retitle_recent(", "/// 清空全部");
+    // Tauri 把 Rust 的参数名原样当成 JSON 键：这里少写一个 `new:`，命令收得到、参数却是 undefined
+    expect(api, "前端必须按 Rust 那侧的键名发 { old, new }").toContain(
+      'invoke<RecentEntry[]>("retitle_recent", { old, new: next })',
+    );
+    expect(body).toContain("old: String");
+    expect(body).toContain("new: String");
+    expect(
+      body,
+      "绕过 note() 就是绕过「变了才落盘 + 广播」：名单改在内存里，屏上那一块不跟着变",
+    ).toContain("note(&app, &state");
   });
 
   it("窗口销毁那条链不再碰名单（B308：记的是打开动作，关窗不产生任何记入事件）", () => {
@@ -148,7 +164,7 @@ describe("B305 · 侧栏结构与子窗口收口", () => {
   const css = readFileSync("src/styles/preview.css", "utf-8");
   const globalCss = readFileSync("src/styles/global.css", "utf-8");
 
-  it("六颗 id 齐备，且「最近打开」键排在大纲键之后（按钮列自上而下 = 心智顺序）", () => {
+  it("六颗 id 齐备，按钮列自上而下 = 资源管理器 → 最近打开 → 大纲（B315 重排）", () => {
     for (const id of [
       "side-recent",
       "recent-panel",
@@ -159,10 +175,12 @@ describe("B305 · 侧栏结构与子窗口收口", () => {
     ]) {
       expect(html, `缺 #${id}`).toContain(`id="${id}"`);
     }
-    expect(
-      html.indexOf('id="side-recent"'),
-      "第二颗键必须排在大纲键之后（按钮列是常驻一列，顺序就是读法）",
-    ).toBeGreaterThan(html.indexOf('id="side-outline"'));
+    // 这一列是常驻的一列，屏上的上下位置就是唯一的读法：DOM 次序即顺序。
+    const at = (id: string): number => html.indexOf(`id="${id}"`);
+    expect(at("side-explorer"), "B315 点名：资源管理器在最上").toBeLessThan(at("side-recent"));
+    expect(at("side-recent"), "B315 点名：最近打开在中间、大纲在最下").toBeLessThan(
+      at("side-outline"),
+    );
     expect(html).toMatch(/id="recent-panel"[^>]*hidden/);
     // B307：收起的是**外壳**，两块面板各自只带「轮到我没」那一层。
     // 首屏必须连壳一起藏着，否则开屏先画出一块抽屉再被启动回放收掉。

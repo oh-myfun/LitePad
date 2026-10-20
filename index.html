@@ -157,19 +157,21 @@
              收掉，开屏闪一帧 2px 粗线。运行时唯一出口仍是 drawer.ts 的 setDrawer。 -->
         <div id="side-shell" class="side-shell is-collapsed">
           <div id="side-bar" class="side-bar">
+            <!-- B315（用户点名「边栏按钮顺序为资源管理器、最近打开、大纲」）：这一列自上而下
+                 就是读法 —— 从「我的东西」到「这份文档的东西」。键的**登记次序**不影响
+                 互斥与点亮态（那些归 `setDrawer`），只有屏上的上下位置受影响。 -->
             <button
-              id="side-outline"
+              id="side-explorer"
               class="side-btn"
               type="button"
-              data-tip="大纲"
+              data-tip="资源管理器"
               data-tip-placement="right"
-              aria-label="大纲"
+              aria-label="资源管理器"
               aria-pressed="false"
             ></button>
-            <!-- B305：第二颗常驻键 ——「最近打开」。与「大纲」互斥展开（同时只露一块）：
-                 互斥现在由外壳 `setDrawer(view)` 一处保证（见下面 #side-drawer），两颗键各自
-                 只管「轮到我没」。首屏不写 hidden 之外的状态：名单是历史账，不像大纲那样
-                 跟着文档走。 -->
+            <!-- B305：「最近打开」。与另外两块互斥展开（同时只露一块）：互斥由外壳
+                 `setDrawer(view)` 一处保证（见下面 #side-drawer），每颗键只管「轮到我没」。
+                 首屏不写 hidden 之外的状态：名单是历史账，不像大纲那样跟着文档走。 -->
             <button
               id="side-recent"
               class="side-btn"
@@ -179,16 +181,13 @@
               aria-label="最近打开"
               aria-pressed="false"
             ></button>
-            <!-- B314：第三颗常驻键 ——「资源管理器」。与前两颗一样由外壳 `setDrawer` 管
-                 点亮态与互斥；没打开过文件夹时它**照样可点**（点了进去是一句「还没有打开
-                 文件夹」+ 那颗打开键），藏掉反而让人以为功能坏了。 -->
             <button
-              id="side-explorer"
+              id="side-outline"
               class="side-btn"
               type="button"
-              data-tip="资源管理器"
+              data-tip="大纲"
               data-tip-placement="right"
-              aria-label="资源管理器"
+              aria-label="大纲"
               aria-pressed="false"
             ></button>
           </div>
@@ -256,26 +255,14 @@
             <aside id="explorer-panel" class="explorer-panel" hidden>
               <div class="explorer-head">
                 <span id="explorer-title" class="explorer-title">资源管理器</span>
+                <!-- B315（用户点名「打开文件夹放在最左边」+ 重排这一排）：按「换地方 → 造东西
+                     → 整理当前这棵树」的动线排。`explorer-open` 是唯一能无根用的键，所以它排头。 -->
                 <button
                   id="explorer-open"
                   class="toc-head-btn"
                   type="button"
                   data-tip="打开文件夹"
                   aria-label="打开文件夹"
-                ></button>
-                <button
-                  id="explorer-refresh"
-                  class="toc-head-btn"
-                  type="button"
-                  data-tip="刷新"
-                  aria-label="刷新"
-                ></button>
-                <button
-                  id="explorer-collapse"
-                  class="toc-head-btn"
-                  type="button"
-                  data-tip="全部折叠"
-                  aria-label="全部折叠"
                 ></button>
                 <button
                   id="explorer-new-file"
@@ -290,6 +277,20 @@
                   type="button"
                   data-tip="新建目录"
                   aria-label="新建目录"
+                ></button>
+                <button
+                  id="explorer-refresh"
+                  class="toc-head-btn"
+                  type="button"
+                  data-tip="刷新"
+                  aria-label="刷新"
+                ></button>
+                <button
+                  id="explorer-collapse"
+                  class="toc-head-btn"
+                  type="button"
+                  data-tip="全部折叠"
+                  aria-label="全部折叠"
                 ></button>
               </div>
               <!-- 根目录那一行（VS Code 一样：根是树的第一个节点，永远在）。

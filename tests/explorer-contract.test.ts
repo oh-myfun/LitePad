@@ -169,3 +169,73 @@ describe("B314 资源管理器跨层契约", () => {
     );
   });
 });
+
+describe("B315 路径改写的跨层契约", () => {
+  const rustMod = read("src-tauri/src/commands/mod.rs");
+  const paths = read("src/explorer/paths.ts");
+
+  it("四条写操作 + set_doc_path 两端都在（拼错的命令名只表现为「点了没反应」）", () => {
+    for (const name of ["rename_entry", "copy_entry", "move_entry", "delete_entry"]) {
+      expect(rustCmds, `Rust 侧要 pub fn ${name}`).toContain(`pub fn ${name}(`);
+      expect(rustMain, `${name} 必须注册`).toContain(`commands::explorer::${name},`);
+      expect(api, `前端要 invoke("${name}")`).toContain(`"${name}"`);
+    }
+    // 后端那份文档记录的路径：**自动保存回落的就是它**。注册漏了 → 改名后旧文件被写回来，
+    // 而这条链的每一端单测都还是绿的，所以只能在这里钉。
+    expect(rustMod, "Rust 侧要 pub fn set_doc_path").toContain("pub fn set_doc_path(");
+    expect(rustMain, "set_doc_path 必须注册").toContain("commands::set_doc_path,");
+    expect(api, '前端要 invoke("set_doc_path")').toContain(`"set_doc_path"`);
+  });
+
+  it("`destDir` / `newName` 这类跨语言参数名要逐字对上 Rust 的下划线写法", () => {
+    expect(api).toContain(`invoke<FsEntry>("rename_entry", { root, path, newName })`);
+    expect(api).toContain(`invoke<FsEntry>("copy_entry", { root, src, destDir })`);
+    expect(api).toContain(`invoke<FsEntry>("move_entry", { root, src, destDir })`);
+    expect(rustCmds).toContain("new_name: String");
+    expect(rustCmds).toContain("dest_dir: String");
+  });
+
+  it("对账模块挂在每一扇窗口上，而不是只挂在主窗口那一支", () => {
+    // 发起方只有主窗口，但「谁拿着这份文档谁改自己那份账」——卫星窗口漏装就是
+    // 「在子窗口里标签还写着旧名字，保存却写到了新路径」。
+    const at = boot.indexOf("setupPathRewiring();");
+    expect(at, "没装配 ⇒ 改了名而标签永远停在旧名字").toBeGreaterThan(-1);
+    expect(boot.slice(0, at), "要在 windowKind 分支之前").not.toContain('windowKind === "main"');
+    expect(boot, "从模块本身取，不许就地再写一份").toContain(
+      'import { setupPathRewiring } from "./explorer/paths";',
+    );
+  });
+
+  it("顶部那一排：换地方 → 造东西 → 整理这棵树（B315 点名打开键在最左）", () => {
+    const order = [
+      "explorer-open",
+      "explorer-new-file",
+      "explorer-new-dir",
+      "explorer-refresh",
+      "explorer-collapse",
+    ];
+    const inOrder = (src: string): boolean => {
+      let prev = -1;
+      for (const id of order) {
+        const at = src.indexOf(`id="${id}"`);
+        if (at < 0 || at <= prev) return false;
+        prev = at;
+      }
+      return true;
+    };
+    // 这一排是常驻的一排，屏上的左右位置就是唯一读法：DOM 次序即顺序。
+    expect(inOrder(html), "顶部那一排次序漂了").toBe(true);
+    // 自证判据有鉴别力：把「新建文件」那一颗抹掉，上面那条必须落空
+    expect(inOrder(html.replace('id="explorer-new-file"', 'id="explorer-zzz"'))).toBe(false);
+  });
+
+  it("名单只由发起方改，回收站那条走「删掉」而不是「改写成空」", () => {
+    expect(paths).toContain("retitleRecentEntry(change.from, change.to)");
+    expect(paths).toContain("forgetRecentEntry(change.from)");
+    // 监听那一段只做「改自己这份账」：再去改名单 = 同一次改名记两回（第二回已经命中不到，
+    // 名单会停在旧写法上）；再转发一次 = 回声环。
+    const listener = paths.slice(paths.indexOf("export function setupPathRewiring"));
+    expect(listener, "收到别窗那一发不许再动名单").not.toMatch(/RecentEntry\(/);
+    expect(listener, "收到别窗那一发不许再广播").not.toContain("emitCrossWindow");
+  });
+});
