@@ -12,10 +12,15 @@ import { readFileSync } from "node:fs";
 import { readJson } from "./static";
 import {
   FILE_DROP_TAG,
+  TREE_DRAG_FILE_MIME,
+  TREE_DRAG_MIME,
   bridgeMessage,
   hasFileDropBridge,
   installFileDropTarget,
+  installTreeFileDropTarget,
   isFileDrag,
+  isTreeDrag,
+  isTreeFileDrag,
   needsChoice,
   postFilesToHost,
   showFileDropChoice,
@@ -95,15 +100,32 @@ describe("落点选择菜单（打开文档 / 插入文件路径）", () => {
 /** 造事件：jsdom 没有 DragEvent 构造器，用普通 Event 挂上处理器要读的属性即可。 */
 function dragEvent(
   type: string,
-  init: { types?: string[]; x?: number; y?: number; at?: number; files?: File[] },
+  init: {
+    types?: string[];
+    x?: number;
+    y?: number;
+    at?: number;
+    files?: File[];
+    /** 自定义 MIME 的载荷（树里拖出的那一路靠它带路径）。 */
+    data?: Record<string, string>;
+    /** `dragleave` 的「指针去了哪儿」；不给就是 undefined（与 jsdom 默认一致）。 */
+    related?: EventTarget | null;
+  },
 ) {
   const e = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperty(e, "dataTransfer", {
-    value: { types: init.types ?? [], files: init.files ?? [], dropEffect: "" },
+    value: {
+      types: init.types ?? [],
+      files: init.files ?? [],
+      dropEffect: "",
+      getData: (mime: string) => init.data?.[mime] ?? "",
+    },
   });
   Object.defineProperty(e, "clientX", { value: init.x ?? 0 });
   Object.defineProperty(e, "clientY", { value: init.y ?? 0 });
   if (init.at !== undefined) Object.defineProperty(e, "timeStamp", { value: init.at });
+  if (init.related !== undefined)
+    Object.defineProperty(e, "relatedTarget", { value: init.related });
   return e;
 }
 
@@ -302,6 +324,118 @@ describe("B91-2 回归：文件拖入被捕获阶段拦下，不漏给页面内�
   });
 });
 
+describe("B316-3 树里拖一条文件到面板区：认领、高亮、落地走同一扇漏斗", () => {
+  let previews: { x: number; y: number }[];
+  let lands: { path: string; x: number; y: number }[];
+  let clears: number;
+  let uninstall: () => void;
+
+  const PATH = "E:\\笔记\\a.md";
+  /** 落点闸门用「x>100 才算面板区」当替身 —— 真判据是 `fileDropTargetAt`，不归本模块管。 */
+  const inPanel = (x: number): boolean => x > 100;
+  const file = (x: number, y: number, at?: number) => ({
+    types: [TREE_DRAG_MIME, TREE_DRAG_FILE_MIME],
+    data: { [TREE_DRAG_MIME]: PATH, [TREE_DRAG_FILE_MIME]: PATH },
+    x,
+    y,
+    at,
+  });
+
+  beforeEach(() => {
+    previews = [];
+    lands = [];
+    clears = 0;
+    uninstall = installTreeFileDropTarget({
+      landable: (x) => inPanel(x),
+      preview: (x, y) => previews.push({ x, y }),
+      clear: () => clears++,
+      land: (path, x, y) => lands.push({ path, x, y }),
+    });
+  });
+  afterEach(() => uninstall());
+
+  it("判据要两条 MIME 都在：只有文件那条（没有树那条）不算树里拖出来的", () => {
+    const dt = (types: string[]) => ({ types }) as unknown as DataTransfer;
+    expect(isTreeDrag(dt([TREE_DRAG_MIME]))).toBe(true);
+    expect(isTreeFileDrag(dt([TREE_DRAG_MIME, TREE_DRAG_FILE_MIME]))).toBe(true);
+    expect(isTreeFileDrag(dt([TREE_DRAG_FILE_MIME])), "野载荷不认").toBe(false);
+    expect(isTreeFileDrag(dt([TREE_DRAG_MIME])), "目录不带文件那条 ⇒ 不认").toBe(false);
+  });
+
+  it("面板区上方：dragover 拦默认动作并画高亮，松手把路径交给落地那扇门", () => {
+    const over = dragEvent("dragover", file(120, 60, 1000));
+    document.dispatchEvent(over);
+    expect(over.defaultPrevented, "不拦根本收不到 drop").toBe(true);
+    expect(previews).toEqual([{ x: 120, y: 60 }]);
+
+    const drop = dragEvent("drop", file(140, 70));
+    document.dispatchEvent(drop);
+    expect(drop.defaultPrevented).toBe(true);
+    expect(lands, "落地的是一发「打开这一条」，不是把 File 交给宿主桥").toEqual([
+      { path: PATH, x: 140, y: 70 },
+    ]);
+    expect(clears, "落地即清高亮").toBe(1);
+  });
+
+  it("目录（只有树那条 MIME）一概不认领：面板区没有「打开一个目录」这回事", () => {
+    const dir = {
+      types: [TREE_DRAG_MIME],
+      data: { [TREE_DRAG_MIME]: "E:\\笔记\\notes" },
+      x: 120,
+      y: 60,
+      at: 1000,
+    };
+    const over = dragEvent("dragover", dir);
+    document.dispatchEvent(over);
+    expect(over.defaultPrevented, "不拦 ⇒ 默认的禁止光标，正是「这里落不下去」那句话").toBe(false);
+    expect(previews.length).toBe(0);
+    const drop = dragEvent("drop", { ...dir, at: 2000 });
+    document.dispatchEvent(drop);
+    expect(drop.defaultPrevented).toBe(false);
+    expect(lands).toEqual([]);
+  });
+
+  it("面板区之外不认领（侧栏 / 标题栏 / 树的空白处都算之外），一行代码都不动", () => {
+    const over = dragEvent("dragover", { ...file(50, 60), at: 1000 });
+    document.dispatchEvent(over);
+    expect(over.defaultPrevented).toBe(false);
+    expect(previews.length).toBe(0);
+    // 松手在面板区之外同样不发：`landable` 是唯一的闸门，两道闸必须成对
+    const drop = dragEvent("drop", { ...file(50, 60), at: 2000 });
+    document.dispatchEvent(drop);
+    expect(lands).toEqual([]);
+  });
+
+  it("外部文件与标签拖拽原样放行：三条通道各认各的载荷", () => {
+    for (const types of [["Files"], ["application/x-litepad-tab"], ["Text"]]) {
+      const over = dragEvent("dragover", { types, x: 300, y: 60, at: 1000 });
+      document.dispatchEvent(over);
+      expect(over.defaultPrevented, `${types.join("/")} 不该被树那一路拦下`).toBe(false);
+    }
+    expect(previews.length).toBe(0);
+  });
+
+  it("悬停预览跟着 40ms 节流走（口径与外部拖入一致）", () => {
+    document.dispatchEvent(dragEvent("dragover", file(120, 60, 1000)));
+    document.dispatchEvent(dragEvent("dragover", file(125, 62, 1020)));
+    expect(previews.length).toBe(1);
+    document.dispatchEvent(dragEvent("dragover", file(300, 200, 1100)));
+    expect(previews).toEqual([
+      { x: 120, y: 60 },
+      { x: 300, y: 200 },
+    ]);
+  });
+
+  it("离开整窗与 dragend 都要清高亮；行与行之间挪动不误清", () => {
+    document.dispatchEvent(dragEvent("dragleave", { ...file(120, 60), related: null }));
+    expect(clears, "relatedTarget 为空 = 真的离开窗口").toBe(1);
+    document.dispatchEvent(dragEvent("dragleave", { ...file(120, 60), related: document.body }));
+    expect(clears, "只是换了个子元素 ⇒ 下一发 dragover 会重画，不该清").toBe(1);
+    document.dispatchEvent(dragEvent("dragend", file(120, 60)));
+    expect(clears, "拖拽在别处结束（松手在窗口外）不能留残影").toBe(2);
+  });
+});
+
 describe("B91 接线（静态断言）", () => {
   const main =
     readFileSync("src/main.ts", "utf-8") +
@@ -349,12 +483,31 @@ describe("B91 接线（静态断言）", () => {
     expect(main, "doOpen 必须支持指定落点面板").toContain(
       "async function doOpen(\n  presetPath?: string,\n  encoding?: string,\n  targetPanelId?: number,\n)",
     );
-    expect(main, "必须把落点面板的 md 判据传进去").toMatch(/needsChoice\(p\.paths,/);
+    expect(main, "必须把落点面板的 md 判据传进去").toMatch(/needsChoice\(paths,/);
     expect(main, "判据问的是落点面板的活动文档，不是拖进来的文件名").toContain(
       "panelDocIsMarkdown(target.panelId)",
     );
     expect(main, "「插入文件路径」必须插入活动编辑器光标处").toContain(
       "function insertDroppedPath(path: string)",
+    );
+  });
+
+  it("外部拖入与树里拖出必须汇到同一扇漏斗（两套「落地」迟早跟彼此错开）", () => {
+    const app = readFileSync("src/main.ts", "utf-8");
+    const at = app.indexOf("installTreeFileDropTarget({");
+    expect(at, "B316-3：树里拖到面板区必须装收接").toBeGreaterThanOrEqual(0);
+    const wiring = app.slice(at, app.indexOf("});", at));
+    for (const key of ["landable:", "preview:", "clear:", "land:"]) {
+      expect(wiring, `实参对象里要有 ${key}（漏一个就是一路不通）`).toContain(key);
+    }
+    // 两条来源都只调 `landDroppedPaths`，落地逻辑不再各写一遍：
+    // 桥回传那一路传的是整个 paths，树里那一路只有一条，所以包成数组。
+    expect(app, "宿主桥回传那一路走同一扇门").toMatch(
+      /landDroppedPaths\(p\.paths, pos\.x, pos\.y\)/,
+    );
+    expect(app, "树里那一路走同一扇门").toMatch(/landDroppedPaths\(\[path], x, y\)/);
+    expect(app, "树里的悬停高亮必须与外部拖入同一份（都交给 showFileDropPreview）").toMatch(
+      /preview: \(x, y\) => showFileDropPreview\(x, y\)/,
     );
   });
 

@@ -116,12 +116,10 @@ import {
   doOpen,
   doSave,
   doSaveAll,
-  openDroppedAt,
   showFileDropPreview,
   fileDropTargetAt,
   dropPosOf,
-  insertDroppedPath,
-  panelDocIsMarkdown,
+  landDroppedPaths,
   saveDocCore,
 } from "./io/files";
 import {
@@ -174,8 +172,7 @@ import { installTabDnd } from "./shell/tabdnd";
 import {
   hasFileDropBridge,
   installFileDropTarget,
-  needsChoice,
-  showFileDropChoice,
+  installTreeFileDropTarget,
 } from "./shell/filedrop";
 import { applyTheme, normalizeMode, watchSystemTheme } from "./theme/theme";
 import {
@@ -987,25 +984,18 @@ async function setupShell(): Promise<void> {
       const p = ev.payload;
       if (p.type !== "drop") return;
       const pos = dropPosOf(p.position);
-      const target = fileDropTargetAt(pos.x, pos.y);
-      clearDropIndicators();
-      // B70 B 档：问「打开 / 插入路径」的前提是**落点是一份 Markdown**，
-      // 而不是「拖进来的文件是 Markdown」。
-      // 落在标签条上不问：那一条「插入文件路径」只对文档成立，而瞄着标签条的意图本来就
-      // 是「在这儿开一个标签」，问一句只是挡路。
-      const asksForPath = target !== null && !target.onStrip && panelDocIsMarkdown(target.panelId);
-      if (needsChoice(p.paths, asksForPath)) {
-        const path = p.paths[0];
-        const name = path.split(/[\\/]/).pop() ?? path;
-        showFileDropChoice(name, pos, {
-          onOpen: () => void openDroppedAt(path, target),
-          onInsert: () => insertDroppedPath(path),
-        });
-        return;
-      }
-      for (const path of p.paths) void openDroppedAt(path, target);
+      landDroppedPaths(p.paths, pos.x, pos.y);
     })
     .catch(() => {});
+
+  // B316-3：树里拖一条**文件**到面板区 = 与外部拖入完全同一路（打开 / 分屏 / 插标签）。
+  // 不走宿主桥 —— 页面内的拖拽没有 `File` 对象，路径本来就在 `dataTransfer` 里。
+  installTreeFileDropTarget({
+    landable: (x, y) => fileDropTargetAt(x, y) !== null,
+    preview: (x, y) => showFileDropPreview(x, y),
+    clear: () => clearDropIndicators(),
+    land: (path, x, y) => landDroppedPaths([path], x, y),
+  });
 
   // 文件关联（单实例）：应用已运行时双击 .md/.markdown → Rust 转发 open-file 事件到主窗口。
   // 事件只作「来活了」的信号，真正要开的路径在 Rust 待打开队列里，这里取走打开。

@@ -3,7 +3,7 @@
 // 职责：打开（doOpen / openDroppedAt）、保存（doSave / doSaveAll / saveDocCore）、
 // 保存冲突与有损确认（resolveSaveConflict / confirmLossy）、实例内容重建
 // （rebuildDocInstances）、文件拖入（showFileDropPreview / fileDropTargetAt /
-// dropPosOf / insertDroppedPath）、面板文档形态判断（panelDocIsMarkdown）。
+// dropPosOf / insertDroppedPath / landDroppedPaths）、面板文档形态判断（panelDocIsMarkdown）。
 // 落点判定**不在本模块**：与标签拖拽共用 `shell/splitview` 那一份（见下面那两个函数）。
 // 只依赖 core/* + ui + doc-model + tabs + session/session + ipc/api + editor/*，
 // 对 main.ts 零反向依赖。
@@ -57,7 +57,8 @@ import {
   type OpenedFile,
   type SaveConflict,
 } from "../ipc/api";
-import { previewDropAt, spotAt, type DropSpot } from "../shell/splitview";
+import { previewDropAt, spotAt, clearDropIndicators, type DropSpot } from "../shell/splitview";
+import { needsChoice, showFileDropChoice } from "../shell/filedrop";
 import { noteOpened } from "../recents/store";
 import { showSaveConflictDialog } from "../shell/conflictdialog";
 import {
@@ -314,6 +315,35 @@ function insertDroppedPath(path: string): void {
   showMessage(`已插入路径 ${path}`);
 }
 
+/**
+ * 拿到路径与屏幕点之后怎么办 —— **外部拖入**（经宿主桥换回路径）与**树里拖出**（路径就在
+ * `dataTransfer` 里）两条都汇到这一扇漏斗：落点、要不要问一句「打开 / 插入路径」、打开 /
+ * 分屏 / 插标签，全是同一份（口径同 `showFileDropPreview`：两套迟早跟彼此错开）。
+ *
+ * B70 B 档：问「打开 / 插入路径」的前提是**落点是一份 Markdown**，而不是「拖进来的文件是
+ * Markdown」。落在标签条上不问：那一条「插入文件路径」只对文档成立，而瞄着标签条的意图
+ * 本来就是「在这儿开一个标签」，问一句只是挡路。
+ */
+function landDroppedPaths(paths: string[], x: number, y: number): void {
+  const target = fileDropTargetAt(x, y);
+  clearDropIndicators();
+  const asksForPath = target !== null && !target.onStrip && panelDocIsMarkdown(target.panelId);
+  if (needsChoice(paths, asksForPath)) {
+    const path = paths[0];
+    const name = path.split(/[\\/]/).pop() ?? path;
+    showFileDropChoice(
+      name,
+      { x, y },
+      {
+        onOpen: () => void openDroppedAt(path, target),
+        onInsert: () => insertDroppedPath(path),
+      },
+    );
+    return;
+  }
+  for (const path of paths) void openDroppedAt(path, target);
+}
+
 async function confirmLossy(chars: LossyChar[], encoding: string): Promise<void> {
   const preview = chars
     .slice(0, 5)
@@ -536,6 +566,7 @@ export {
   dropPosOf,
   fileDropTargetAt,
   insertDroppedPath,
+  landDroppedPaths,
   openDroppedAt,
   panelDocIsMarkdown,
   rebuildDocInstances,

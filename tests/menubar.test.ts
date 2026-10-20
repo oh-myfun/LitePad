@@ -677,7 +677,8 @@ describe("B 档：删掉菜单项提示（写了也永远不显示 = 死代码�
     expect(filedropSrc, "isMarkdownPath 这条旧判据应已删除").not.toMatch(/isMarkdownPath/);
 
     // main.ts 接线：落点面板的活动文档是不是 md 由 panelDocIsMarkdown 回答
-    expect(mainSrc, "落点判定必须问「落点面板的活动文档」").toMatch(/needsChoice\(p\.paths,/);
+    // （B316-3 起这段本体在 `io/files.ts` 的 `landDroppedPaths` 里，`mainSrc` 已含那一页）
+    expect(mainSrc, "落点判定必须问「落点面板的活动文档」").toMatch(/needsChoice\(paths,/);
     expect(mainSrc, "判据本体是 panelDocIsMarkdown(target.panelId)").toContain(
       "panelDocIsMarkdown(target.panelId)",
     );

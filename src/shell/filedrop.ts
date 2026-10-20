@@ -33,6 +33,22 @@ export function isTreeDrag(dt: DataTransfer | null): boolean {
   return Array.from(dt.types).includes(TREE_DRAG_MIME);
 }
 
+/**
+ * 树里拖出来的是**文件**时才带这一条（值 = 路径）。
+ *
+ * 面板区只谈得上「打开一份文件」—— 目录拖到编辑器上没有任何合理落点（`doOpen` 会奔着
+ * 一个目录去读盘），所以那一路干脆不认领，让指针停在默认的禁止态。目录的拖拽归树里自己
+ * （B316-2 挪一层），两条判据各管各的。
+ */
+export const TREE_DRAG_FILE_MIME = "application/x-litepad-tree-file";
+
+/** 这次拖拽是不是「树里拖出来的一条文件」（面板区那一路的认领判据）。 */
+export function isTreeFileDrag(dt: DataTransfer | null): boolean {
+  if (!dt) return false;
+  const types = Array.from(dt.types);
+  return types.includes(TREE_DRAG_FILE_MIME) && types.includes(TREE_DRAG_MIME);
+}
+
 /** 与 Rust 侧 `dropbridge::MSG_TAG` 必须逐字一致（桥靠它筛掉别的 web message）。 */
 export const FILE_DROP_TAG = "__litepad_file_drop__";
 
@@ -165,6 +181,80 @@ export function installFileDropTarget(
     document.removeEventListener("dragover", onOver, CAPTURE);
     document.removeEventListener("dragleave", onLeave, CAPTURE);
     document.removeEventListener("drop", onDrop, CAPTURE);
+  };
+}
+
+/**
+ * 装「树里拖出来的文件落到面板区」的页面级收接，返回卸载函数（B316-3）。
+ *
+ * 为什么不能借用上面那套：wry 的原生拖放被关了（`dragDropEnabled: false`），外部文件的
+ * 路径靠宿主桥换（`postFilesToHost` → Rust → `tauri://drag-drop`）。而**页面内**的 HTML5
+ * 拖拽压根没有 `File` 对象 —— 走桥那一发会静默什么都不做。路径本来就躺在 `dataTransfer`
+ * 里，就地取出来直接落地即可。
+ *
+ * ⚠️ 只认领 `landable` 说「这儿落得下去」的那几下（= 面板区，含标签条）。树的空白处、
+ *   侧栏、标题栏都不算：那里没有「打开到哪儿」这回事，而树里那一层的落点由
+ *   `explorer/panel.ts` 自己判（B316-2）。不 `preventDefault` = 默认的禁止光标，正是想要的。
+ * ⚠️ 捕获阶段挂载 + `stopPropagation`：口径同 `installFileDropTarget`，比页面内任何组件都早，
+ *   CodeMirror 才没机会把这次拖拽当成它自己的选区拖放（它看见 `Text` 才动手，但抢在前面更稳）。
+ */
+export interface TreeFileDropCallbacks {
+  /** 指针底下是不是一个能落地的面板区落点。 */
+  landable: (x: number, y: number) => boolean;
+  /** 与外部文件拖入**同一份**悬停高亮（分屏预览 / 标签插入竖线）。 */
+  preview: (x: number, y: number) => void;
+  clear: () => void;
+  /** 松手：路径 + 逻辑像素坐标。「怎么落地」交回调用方，与 `tauri://drag-drop` 那一路同源。 */
+  land: (path: string, x: number, y: number) => void;
+}
+
+export function installTreeFileDropTarget(cb: TreeFileDropCallbacks): () => void {
+  let lastHover = 0;
+
+  /** 载荷 + 落点两道闸都过了才认领。 */
+  const claim = (e: DragEvent): string | null => {
+    if (!isTreeFileDrag(e.dataTransfer)) return null;
+    if (!cb.landable(e.clientX, e.clientY)) return null;
+    e.preventDefault();
+    e.stopPropagation();
+    return e.dataTransfer?.getData(TREE_DRAG_FILE_MIME) ?? "";
+  };
+
+  const onOver = (e: DragEvent): void => {
+    if (claim(e) === null) return;
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    const now = e.timeStamp;
+    if (now - lastHover < HOVER_THROTTLE_MS) return;
+    lastHover = now;
+    cb.preview(e.clientX, e.clientY);
+  };
+  const onLeave = (e: DragEvent): void => {
+    if (!isTreeFileDrag(e.dataTransfer)) return;
+    // 离开窗口那一刻 `relatedTarget` 为空；行与行之间挪动不该把高亮抹掉（下一发 dragover 会重画）。
+    if (e.relatedTarget === null) cb.clear();
+  };
+  const onDrop = (e: DragEvent): void => {
+    const path = claim(e);
+    lastHover = 0;
+    if (path === null) return;
+    cb.clear();
+    if (path) cb.land(path, e.clientX, e.clientY);
+  };
+  /** 拖拽在别处结束（比如松手在窗口外）：高亮不能留在屏幕上。 */
+  const onEnd = (e: DragEvent): void => {
+    if (isTreeFileDrag(e.dataTransfer)) cb.clear();
+  };
+
+  const CAPTURE = { capture: true } as const;
+  document.addEventListener("dragover", onOver, CAPTURE);
+  document.addEventListener("dragleave", onLeave, CAPTURE);
+  document.addEventListener("drop", onDrop, CAPTURE);
+  document.addEventListener("dragend", onEnd, CAPTURE);
+  return () => {
+    document.removeEventListener("dragover", onOver, CAPTURE);
+    document.removeEventListener("dragleave", onLeave, CAPTURE);
+    document.removeEventListener("drop", onDrop, CAPTURE);
+    document.removeEventListener("dragend", onEnd, CAPTURE);
   };
 }
 

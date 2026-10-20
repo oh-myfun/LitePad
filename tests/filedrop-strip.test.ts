@@ -7,6 +7,7 @@
 // 所以这里的断言全部对着「同一处指针，两种拖法给同一个答案」来写。
 import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { topLevelFnBody } from "./static";
 
 vi.mock("@tauri-apps/api/event", () => ({
   emit: () => Promise.resolve(),
@@ -178,8 +179,15 @@ describe("接线：文件拖入用的是同一份判定", () => {
   });
 
   it("落在标签条时不弹「插入文件路径」菜单", () => {
-    expect(main, "瞄着标签条的意图就是「在这儿开一个标签」，问一句只是挡路").toMatch(
+    // 判据本体在 `io/files.ts` 的 `landDroppedPaths` 里（B316-3 把两条拖入通道汇到同一扇门，
+    // main.ts 因此只剩「取坐标 + 转调」）。两头都守：搬走了判据这一侧要红，漏了接线另一侧要红。
+    const body = topLevelFnBody(files, "function landDroppedPaths");
+    expect(body, "取不到 landDroppedPaths 的函数体").toBeTruthy();
+    expect(body, "瞄着标签条的意图就是「在这儿开一个标签」，问一句只是挡路").toMatch(
       /!target\.onStrip[\s\S]{0,80}panelDocIsMarkdown\(target\.panelId\)/,
+    );
+    expect(main, "外部拖入必须转调这一扇门（自己再写一遍就是两套口径）").toContain(
+      "landDroppedPaths(",
     );
   });
 

@@ -19,7 +19,7 @@ import { doOpen } from "../io/files";
 import { CODICONS } from "../shell/codicons";
 import { activeDrawer, registerDrawerView, setDrawer } from "../shell/drawer";
 import { showPopupMenu, type MenuItem } from "../shell/menu";
-import { isTreeDrag, TREE_DRAG_MIME } from "../shell/filedrop";
+import { isTreeDrag, TREE_DRAG_FILE_MIME, TREE_DRAG_MIME } from "../shell/filedrop";
 import {
   explorerCollapse,
   explorerNewDir,
@@ -815,6 +815,9 @@ function onRowDragStart(ev: DragEvent): void {
     // 只塞自家这一种 MIME：外部文件（`Files`）与标签拖拽各有各的落点判定，而拖到窗口外
     // 不做（用户口径）。B316-3 靠这个 MIME 认出「这是树里拖出来的，不是外部文件」。
     ev.dataTransfer.setData(TREE_DRAG_MIME, path);
+    // 文件再多带一条：面板区只谈得上打开**文件**，目录拖过去没有落点，所以那一路不认领
+    // （指针停在默认的禁止态）。目录想挪一层归树里自己判（B316-2）。
+    if (r.kind === "file") ev.dataTransfer.setData(TREE_DRAG_FILE_MIME, path);
   }
   paintMarks();
 }

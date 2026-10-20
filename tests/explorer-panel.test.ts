@@ -8,8 +8,8 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { fireDrag, makeDataTransfer, type FakeDataTransfer } from "./dnd";
-// 只取那一个常量：`shell/filedrop` 与 `shell/menu` 都不在模块顶层碰 DOM，静态 import 安全。
-import { TREE_DRAG_MIME } from "../src/shell/filedrop";
+// 只取那两条常量：`shell/filedrop` 与 `shell/menu` 都不在模块顶层碰 DOM，静态 import 安全。
+import { TREE_DRAG_FILE_MIME, TREE_DRAG_MIME } from "../src/shell/filedrop";
 
 const h = vi.hoisted(() => ({
   /** 目录路径 → 该回的那一层子项（`[名, 是不是目录]`）。 */
@@ -594,16 +594,29 @@ describe("B316 树内拖拽 = 移动", () => {
     expect(rowAt("笔记").draggable, "根那一行压根不设 draggable").toBe(false);
 
     const dt = start("a.md");
-    expect(dt.types, "不带 text/plain：拖到窗口外不做，也不给编辑器留一份文本可插").toEqual([
-      TREE_DRAG_MIME,
-    ]);
+    expect(
+      dt.types,
+      "两条自家的，不带 text/plain：拖到窗口外不做，也不给编辑器留一份文本可插",
+    ).toEqual([TREE_DRAG_MIME, TREE_DRAG_FILE_MIME]);
     expect(dt.getData(TREE_DRAG_MIME)).toBe(`${ROOT}\\a.md`);
+    expect(dt.getData(TREE_DRAG_FILE_MIME), "文件才带这一条 ⇒ 面板区那一路才认领（B316-3）").toBe(
+      `${ROOT}\\a.md`,
+    );
     expect(dt.effectAllowed).toBe("move");
     expect(marked("explorer-dragging")).toEqual(["a.md"]);
 
+    const dirDt = start("notes");
+    expect(
+      dirDt.types,
+      "目录不带第二条：面板区没有「打开一个目录」这回事，它只能在树里挪一层",
+    ).toEqual([TREE_DRAG_MIME]);
+    expect(marked("explorer-dragging"), "源行高亮跟着换成目录那一行").toEqual(["notes"]);
+
     const ev = fireDrag("dragstart", rowAt("笔记"), makeDataTransfer());
     expect(ev.defaultPrevented, "根被野路子拖起来（程序里直接派发事件）时要拦下").toBe(true);
-    expect(marked("explorer-dragging"), "根不参与，源行高亮不该跟着换").toEqual(["a.md"]);
+    expect(marked("explorer-dragging"), "根不参与，源行高亮还留在上一单那一条上").toEqual([
+      "notes",
+    ]);
   });
 
   it("落点 = 目录行：移进它；状态栏报一句，那一层里看得见搬进来的那条", async () => {
