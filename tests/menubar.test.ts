@@ -75,6 +75,10 @@ function makeCb(): MenuBarCallbacks {
     encodingMenu: () => ({ encodedIn: [], convertTo: [], bom: [], eol: [] }),
     onNew: noop,
     onOpen: noop,
+    // B314：打开文件夹 + 资源管理器开合
+    onOpenFolder: noop,
+    onExplorer: noop,
+    explorerChecked: () => false,
     onSave: noop,
     onSaveAs: noop,
     onSaveAll: noop,

@@ -105,7 +105,7 @@ export function setDrawer(view: DrawerView | null, persist = true): void {
 
 /** 盘上那格认不认：未知值（手改过文件 / 别的版本写的串）一律回落大纲，不许把壳搞崩。 */
 function viewFromSetting(raw: string | undefined): DrawerView {
-  return raw === "recent" ? "recent" : "toc";
+  return raw === "recent" || raw === "explorer" ? raw : "toc";
 }
 
 /**

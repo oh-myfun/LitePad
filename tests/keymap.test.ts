@@ -269,10 +269,27 @@ describe("命令表自检", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("每个可编辑命令都有默认键位或明确无键位说明", () => {
+  /**
+   * 确实不给默认键位的命令（B314 起允许「空键位」这一档，但必须是**登记过的决定**）。
+   *
+   * `file.openFolder`：VS Code 给它的是 `Ctrl+K Ctrl+O` 那一族前缀键位，本应用没实现前缀键；
+   * 而单占一颗 `Ctrl+Shift+F` 会抢走以后「在项目里查找」的位置 —— 菜单与命令面板都点得到，
+   * 值得留着键位空位。用户在设置 ▸ 快捷键里自己绑是允许的（覆盖表按 id 存，与有无默认无关）。
+   */
+  const NO_KEYS = new Set(["file.openFolder"]);
+
+  it("每个可编辑命令都有默认键位，或在 NO_KEYS 里写明不给的理由", () => {
     for (const cmd of COMMANDS) {
       if (cmd.editable === false) continue;
+      if (NO_KEYS.has(cmd.id)) {
+        expect(cmd.keys.length, `${cmd.id} 在免键位名单里却带了默认键位`).toBe(0);
+        continue;
+      }
       expect(cmd.keys.length, `${cmd.id} 应有默认键位`).toBeGreaterThan(0);
+    }
+    // 名单不许烂掉：里面的 id 都得还在命令表里
+    for (const id of NO_KEYS) {
+      expect(commandById(id), `免键位名单里的 ${id} 已不在命令表`).toBeTruthy();
     }
   });
 

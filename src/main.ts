@@ -212,6 +212,11 @@ import {
 import { EVT_APP_QUIT, EVT_DOC_OPEN_RESYNC, EVT_WINDOW_CLOSED } from "./core/events";
 // B305：最近打开（store = 与 Rust 之间的那份缓存，panel = 左栏那块展开区）。
 import { setupRecentsPanel } from "./recents/panel";
+// B314：资源管理器。`setupExplorer` 装键并登记成外壳的第三块；`setRoot` 只把盘上那个根
+// 搬进 store（**不走 panel 的 `openFolder`** —— 那条会顺手 saveSettings，而启动回放不该
+// 把读到的值再写一遍，口径同 B312 的 `persist = false`）。
+import { promptOpenFolder, setupExplorer, toggleExplorer } from "./explorer/panel";
+import { setRoot as setExplorerRoot } from "./explorer/store";
 import { initRecentsStore } from "./recents/store";
 import type { WindowScrollPosition } from "./core/events";
 import { activePanel, activeTab, instancesOfDoc } from "./core/panels";
@@ -459,6 +464,9 @@ function runShortcut(id: string): void {
     case "file.open":
       void doOpen();
       break;
+    case "file.openFolder":
+      void promptOpenFolder();
+      break;
     case "file.save":
       void doSave(false);
       break;
@@ -502,6 +510,9 @@ function runShortcut(id: string): void {
       break;
     case "view.outline":
       toggleToc();
+      break;
+    case "view.explorer":
+      toggleExplorer();
       break;
     case "view.foldCode":
       foldCodeOperation(true);
@@ -1157,6 +1168,12 @@ async function bootstrap(): Promise<void> {
   if (windowKind === "main") {
     void initRecentsStore();
     setupRecentsPanel();
+    // B314：资源管理器排在同一处（同样只给主窗口，同样是「登记晚于启动回放」那一形 ——
+    // 外壳在 `registerDrawerView` 里补写当前开合态，见 drawer.ts 那条 ⚠️）。
+    // 根只在盘上真有值时才搬：空串走一遍 setRoot 等于白读一次盘、还留一条「读不了：」的错误。
+    setupExplorer();
+    const folderRoot = settings?.folder_root ?? "";
+    if (folderRoot) setExplorerRoot(folderRoot);
   }
 
   // 备份区孤儿清理：副本文件本身不含「属于哪个标签」的索引，认领全靠会话，

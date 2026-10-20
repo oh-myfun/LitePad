@@ -245,6 +245,15 @@ export const COMMANDS: CommandDef[] = [
   // ---- 文件 ----
   { id: "file.new", label: "新建标签", group: "文件", keys: ["Ctrl+N"] },
   { id: "file.open", label: "打开文件", group: "文件", keys: ["Ctrl+O"] },
+  {
+    // B314：打开文件夹。默认**不抢键位**（Ctrl+K 那一族前缀键位在本应用没实现，
+    // 单给一颗 Ctrl+Shift+E 又与「资源管理器」撞）—— 菜单与命令面板都点得到。
+    id: "file.openFolder",
+    label: "打开文件夹",
+    group: "文件",
+    keys: [],
+    note: "打开后左栏资源管理器会摊开；再次选择会换根",
+  },
   { id: "file.save", label: "保存", group: "文件", keys: ["Ctrl+S"] },
   { id: "file.saveAs", label: "另存为", group: "文件", keys: ["Ctrl+Shift+S"] },
   { id: "file.saveAll", label: "全部保存", group: "文件", keys: ["Ctrl+Alt+S"] },
@@ -281,6 +290,13 @@ export const COMMANDS: CommandDef[] = [
   // ---- 视图 ----
   { id: "view.toggle", label: "切换 源码 / 预览", group: "视图", keys: ["Ctrl+/"] },
   { id: "view.outline", label: "显示/隐藏大纲 TOC", group: "视图", keys: ["Ctrl+Shift+O"] },
+  {
+    // B314：与大纲那颗同族（一颗键管一块展开区的开合），键位取 VS Code 的 Explorer 那一颗。
+    id: "view.explorer",
+    label: "显示/隐藏资源管理器",
+    group: "视图",
+    keys: ["Ctrl+Shift+E"],
+  },
   { id: "view.foldCode", label: "折叠光标处代码块", group: "视图", keys: ["Ctrl+Shift+["] },
   { id: "view.unfoldCode", label: "展开光标处代码块", group: "视图", keys: ["Ctrl+Shift+]"] },
   { id: "view.foldAll", label: "折叠全部", group: "视图", keys: ["Ctrl+Alt+["] },

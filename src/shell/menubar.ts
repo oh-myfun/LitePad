@@ -29,6 +29,8 @@ export interface EncodingMenuModel {
 export interface MenuBarCallbacks {
   onNew: () => void;
   onOpen: () => void;
+  /** B314：打开文件夹（换资源管理器的根）。菜单与命令面板都有入口，默认不配键位。 */
+  onOpenFolder: () => void;
   onSave: () => void;
   onSaveAs: () => void;
   onSaveAll: () => void;
@@ -59,6 +61,9 @@ export interface MenuBarCallbacks {
   onOutline: () => void;
   /** 大纲抽屉展开态（勾选显示） */
   tocChecked: () => boolean;
+  /** B314：资源管理器那一块是否正摊着（判据与 `tocChecked` 同一处：外壳的当前视图）。 */
+  explorerChecked: () => boolean;
+  onExplorer: () => void;
   onFoldAll: () => void;
   onUnfoldAll: () => void;
   onZoomIn: () => void;
@@ -106,6 +111,10 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
     items: (cb) => [
       { label: withKey("新建", cb.keyHint("file.new")), onSelect: cb.onNew },
       { label: withKey("打开", cb.keyHint("file.open")), onSelect: cb.onOpen },
+      {
+        label: withKey("打开文件夹", cb.keyHint("file.openFolder")),
+        onSelect: cb.onOpenFolder,
+      },
       { separator: true },
       { label: withKey("保存", cb.keyHint("file.save")), onSelect: cb.onSave },
       { label: withKey("另存为", cb.keyHint("file.saveAs")), onSelect: cb.onSaveAs },
@@ -163,6 +172,13 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
         label: withKey("大纲 TOC", cb.keyHint("view.outline")),
         checked: cb.tocChecked(),
         onSelect: cb.onOutline,
+      },
+      {
+        // B314：与上面那颗同族（勾 = 这一块正摊着）。三块展开区互斥由外壳一处判，
+        // 所以这两条 `checked` 不可能同时为真 —— 不是各读各的面板 hidden。
+        label: withKey("资源管理器", cb.keyHint("view.explorer")),
+        checked: cb.explorerChecked(),
+        onSelect: cb.onExplorer,
       },
       { separator: true },
       { label: withKey("折叠全部", cb.keyHint("view.foldAll")), onSelect: cb.onFoldAll },
