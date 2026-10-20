@@ -273,19 +273,32 @@ fn within(root: &Path, path: &Path) -> bool {
     p.starts_with(&r)
 }
 
+/// 路径里带着 `..` 分量 ⇒ 一律当界外。
+///
+/// ⚠️ 为什么不能只靠上面那句「先 canonicalize 再比」：canonicalize 要求**目标存在**，
+/// 而 `根\..\别处` 在 `别处` 还没建出来时直接失败（粘贴/复制的目标层常常正是这种「还没建」
+/// 的一层），回落到原始串之后按分量比 —— `根\..\别处` 的头几项恰好就是 `根` 那几项，
+/// 于是越界的那一条被判成界内，东西写到了根外面。
+/// 自己写一遍词典法折 `..`（std 没有稳定的 LexicalNormalizer）在这里没必要：树里每一条
+/// 路径都是 Rust 自己造的，压根不该出现 `..`；出现了就是我们的簿记出错，而出错按界外拒
+/// 掉最省事 —— 拒错了用户只会看见一句「不在当前文件夹内」，写错了却是往根外面落东西。
+fn has_parent(path: &Path) -> bool {
+    path.components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+}
+
 /// 越界就报错，错误话术直接给用户看（前端那句「不在当前文件夹内」不用另写）。
 fn guard_within(root: &str, path: &Path) -> Result<(), String> {
     if root.is_empty() {
         return Err("还没有打开文件夹".into());
     }
-    if within(Path::new(root), path) {
-        Ok(())
-    } else {
-        Err(format!(
+    if has_parent(path) || !within(Path::new(root), path) {
+        return Err(format!(
             "这条路径不在当前文件夹内：{}",
             path.to_string_lossy()
-        ))
+        ));
     }
+    Ok(())
 }
 
 /// 把 `名字.扩展名` 拆成 `(名字, 扩展名)`；点开头的整体（`.gitignore`）算**没扩展名**，
@@ -671,12 +684,37 @@ mod tests {
             "根内的要放行"
         );
         assert!(guard_within(&root, &dir).is_ok(), "根本身算界内");
+        // ⚠️ 「还没建出来」的一层照样要放行：粘贴的目标层正是这种。
+        // 这一条盯的是修法 —— 拿「必须存在」去堵 `..` 那个口子会把正常粘贴一起堵死。
+        assert!(
+            guard_within(&root, &dir.join("没建出来的层")).is_ok(),
+            "不存在但在根内 ⇒ 不许拒"
+        );
         // 字符串手术骗不过 canonicalize：`根\..\别处` 真在根外
         let escape = dir.join("..").join("别处");
         assert!(
             guard_within(&root, &escape).is_err(),
             "带 .. 的必须拦住：{escape:?}"
         );
+        // 同一个 `..`，目标**存在**时两条闸都要拦得住：`has_parent` 看分量，
+        // `within` 看 canonicalize 之后的真位置 —— 少了后一条，「先折好 .. 再传进来」
+        // 这种写法就又把根外面的一层放进来了。
+        let sibling = dir.join("..").join("litepad-fs-escape-target");
+        fs::create_dir(&sibling).unwrap();
+        let outside = sibling.canonicalize().expect("替身要能解析得出真位置");
+        assert!(
+            outside.exists() && !outside.starts_with(dir.canonicalize().unwrap()),
+            "替身要先自证这条真在根外（不在根外就是断言在对着空气放行）"
+        );
+        assert!(
+            guard_within(&root, &sibling).is_err(),
+            "带 .. 的（存在）要拦"
+        );
+        assert!(
+            guard_within(&root, &outside).is_err(),
+            "折好 .. 之后的绝对路径同样要拦"
+        );
+        fs::remove_dir_all(&sibling).unwrap();
         assert!(guard_within(&root, Path::new("C:\\windows")).is_err());
         assert!(guard_within("", &dir).is_err(), "没根的时候一句都不许写");
         fs::remove_dir_all(&dir).unwrap();
