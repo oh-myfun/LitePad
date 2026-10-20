@@ -98,8 +98,8 @@ export interface SavedFile {
  */
 export type PreviewWidth = "standard" | "wide" | "full";
 
-/** 左栏展开区里「此刻轮到哪一块」（B312）。外壳 `DrawerView` 就是这个别名的再导出。 */
-export type DrawerViewName = "toc" | "recent";
+/** 左栏展开区里「此刻轮到哪一块」（B312；B314 加了第三块资源管理器）。外壳 `DrawerView` 是这个别名的再导出。 */
+export type DrawerViewName = "toc" | "recent" | "explorer";
 
 export interface Settings {
   theme: string;
@@ -147,7 +147,7 @@ export interface Settings {
    */
   toc_open: boolean;
   /**
-   * B312：展开区**摊开的是哪一块**（`toc` 大纲 / `recent` 最近打开）。
+   * B312：展开区**摊开的是哪一块**（`toc` 大纲 / `recent` 最近打开 / `explorer` 资源管理器）。
    *
    * 与 `toc_open` 是一对：那颗记「开没开」，这颗记「开着的是谁」。收起时**不覆盖**
    * 这一颗（保留最后一次摊开的那块）⇒ 拖分隔条拖回来、与下次启动都指向同一块。
@@ -163,6 +163,17 @@ export interface Settings {
    * 谁也不该替对方清除状态）。
    */
   sidebar_off: boolean;
+  /**
+   * B314：资源管理器当前打开的**文件夹根路径**（空串 = 没有）。
+   *
+   * 归设置不归会话，理由与 `toc_open` 同一套（见 `session/mod.rs` 那一段）：它是**窗口级
+   * 外观状态**，不属于某份文档。反过来放会话里会变成「打开一份新文件，根目录跟着那份
+   * 文档的会话走」，而用户期望的是「我上次在看哪个文件夹」。
+   * ⚠️ 只存根路径，**不存展开态**：一棵树的展开态是「这一轮浏览的临时足迹」，
+   * 存下来只会让下次启动先画半屏、再去盘上把每一层要开的目录挨个读一遍。
+   * 旧配置缺这格 ⇒ Rust 侧 `#[serde(default)]` 给空串（读不出来就当没开文件夹）。
+   */
+  folder_root: string;
   /**
    * 快捷键覆盖表：命令 id → 键位串（如 `file.save: "Ctrl+S"`）。
    * 空串表示显式解绑；缺项表示用 COMMANDS 里的默认键位。
@@ -240,6 +251,45 @@ export function getRecentLimit(): Promise<number> {
 /** 改上限。回包是**生效后的**上限（别的窗口可能刚写过，以 Rust 为准）。 */
 export function setRecentLimit(limit: number): Promise<number> {
   return invoke<number>("set_recent_limit", { limit });
+}
+
+// ---------------------------------------------------------------- B314 资源管理器
+
+/**
+ * 一层目录里的一条（Rust `commands/explorer.rs` 的 `FsEntry`，字段一律 camelCase）。
+ * `size` 目录为 0、`mtimeMs` 取不到时为 0 —— 前端不许拿 0 当「文件不存在」的证据。
+ */
+export interface FsEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size: number;
+  mtimeMs: number;
+}
+
+export interface DirListing {
+  entries: FsEntry[];
+  /** 真被上限裁过才算 true（不是「条数刚好等于上限」）；前端据此提示「只显示前 2000 条」。 */
+  truncated: boolean;
+}
+
+/** 读一层目录。**一次只读一层**（递归在盘符根或 `node_modules` 上能把进程卡死）。 */
+export function listDir(path: string): Promise<DirListing> {
+  return invoke<DirListing>("list_dir", { path });
+}
+
+/**
+ * 新建空文件。`name` 原样透传、**校验在 Rust**：`..` / 分隔符 / 盘符这些一旦要求每个
+ * 调用者自己滤，就总会有人漏 —— 收名字的那一方必须自己验。
+ * 重名一律报错，不覆盖（覆盖用户手里的东西从来不是「新建」该有的行为）。
+ */
+export function createFile(dir: string, name: string): Promise<FsEntry> {
+  return invoke<FsEntry>("create_file", { dir, name });
+}
+
+/** 新建一层目录。参数语义与 `createFile` 完全一致（只建一段，父目录必须已在）。 */
+export function createDir(dir: string, name: string): Promise<FsEntry> {
+  return invoke<FsEntry>("create_dir", { dir, name });
 }
 
 export function newTab(encoding?: string | null): Promise<TabInfo> {

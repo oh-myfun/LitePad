@@ -65,6 +65,12 @@ pub struct Settings {
     /// `toc_open` 管「卡片里的展开区开没开」—— 整栏收起时展开区的开合值照旧留着，
     /// 重新露出时回到用户上次的样子。
     pub sidebar_off: bool,
+    /// B314：资源管理器的**文件夹根路径**（空串 = 没开）。
+    ///
+    /// 与 `toc_open` / `drawer_view` 同一层：窗口级外观状态归设置，不归某份文档的会话。
+    /// 只存根、不存展开态 —— 展开态是这一轮浏览的临时足迹，存下来下次启动要先画半屏
+    /// 再挨个读每层目录，得不偿失。旧配置缺这格 ⇒ 容器级 `#[serde(default)]` 给空串。
+    pub folder_root: String,
     /// 快捷键覆盖表：命令 id → 键位串（空串 = 显式解绑）。
     /// 后端不解释内容，只负责存取；合法性由前端 keymap 模块过滤。
     pub keymap: HashMap<String, String>,
@@ -109,6 +115,7 @@ impl Default for Settings {
             toc_open: false,
             drawer_view: "toc".into(),
             sidebar_off: false,
+            folder_root: String::new(),
             keymap: HashMap::new(),
             keymap_preset: "default".into(),
             tab_style: "connected".into(),
@@ -637,6 +644,26 @@ mod tests {
         assert!(
             out.contains("\"drawer_view\":\"recent\""),
             "落盘字段应为 snake_case drawer_view：{out}"
+        );
+    }
+
+    /// B314：资源管理器的根路径。老配置缺这格必须回落**空串**（= 没开文件夹），
+    /// 否则 load() 整体失败、用户全部偏好一起丢（口径同 drawer_view）。
+    #[test]
+    fn settings_folder_root_round_trip_and_falls_back_to_empty() {
+        let s: Settings =
+            serde_json::from_str(r#"{ "theme": "dark" }"#).expect("缺 folder_root 也应能读入");
+        assert_eq!(s.folder_root, "", "缺失应回落空串（没有根 = 树是空的）");
+        assert_eq!(Settings::default().folder_root, "");
+
+        let with = Settings {
+            folder_root: r"C:\笔记".into(),
+            ..Settings::default()
+        };
+        let out = serde_json::to_string(&with).unwrap();
+        assert!(
+            out.contains("\"folder_root\":\"C:\\\\笔记\""),
+            "落盘字段应为 snake_case folder_root：{out}"
         );
     }
 
