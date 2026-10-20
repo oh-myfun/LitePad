@@ -286,3 +286,47 @@ describe("B317 标题排与初屏那一排的样式契约", () => {
     expect(btn).toMatch(/justify-content:\s*center/);
   });
 });
+
+describe("B318 行内新建 / 改名框与「输入框那一族」同形", () => {
+  const preview = css;
+  const global = read("src/styles/global.css");
+
+  /** 取某条规则体的属性值（同属性多处出现取第一条）。 */
+  const block = (src: string, sel: string): string => {
+    const at = src.indexOf(`${sel} {`);
+    expect(at, `找不到规则 ${sel}`).toBeGreaterThanOrEqual(0);
+    return src.slice(at, src.indexOf("}", at));
+  };
+  const prop = (body: string, name: string): string =>
+    (body.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1] ?? "").trim();
+
+  it("常态不挂 accent；accent 只在聚焦那一下走 outline（与 .find-field 同一口径）", () => {
+    const box = block(preview, ".explorer-input");
+    expect(prop(box, "border"), "常态描边要用中性边框").toBe("1px solid var(--border, #d0d7de)");
+    expect(
+      box,
+      "不许再把 accent 画在常态边框上（本软件只在聚焦 / 激活时才上 accent）",
+    ).not.toContain("--accent");
+    const focus = block(preview, ".explorer-input:focus");
+    expect(prop(focus, "outline")).toBe("1px solid var(--accent, #0969da)");
+    expect(prop(focus, "outline-offset")).toBe("-1px");
+    // 同族判据：聚焦环的描法两边必须一致（改了其中一处就得看见）
+    expect(
+      prop(block(global, ".find-field:focus-within"), "outline-offset"),
+      "聚焦环一边 outline、一边 border-color，两种描法迟早错开",
+    ).toBe(prop(focus, "outline-offset"));
+  });
+
+  it("圆角 / 字号跟着输入框那一族走，别自立一档", () => {
+    const box = block(preview, ".explorer-input");
+    expect(prop(box, "border-radius"), "与 .goto-input 不同圆角 = 一眼看出是两种控件").toBe(
+      prop(block(global, ".goto-input"), "border-radius"),
+    );
+    expect(prop(box, "font-size"), "字号跟那一行（12px），也与设置页的数字框同值").toBe(
+      prop(block(global, '.settings-dialog input[type="number"]'), "font-size"),
+    );
+    expect(prop(box, "box-sizing"), "带边框又不想顶出 22px 那一行，必须 border-box").toBe(
+      "border-box",
+    );
+  });
+});

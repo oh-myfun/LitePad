@@ -548,16 +548,29 @@
   font-size: 11px;
 }
 /* 新建时那格的输入框：与行同高，看不出是在「改一行」而不是弹了个框（VS Code 同款手感）。 */
+/* B318（用户点名「和软件整体风格不一致」）：行内新建 / 改名的框改成走**输入框那一族**的形状
+   —— 中性描边 + 4px 圆角（同 `.goto-input`、设置页那颗数字框），accent 只在**聚焦**那一下
+   用 `outline: 1px + offset -1px` 描出来（同 `.find-field`、也同 VS Code 的
+   `.monaco-inputbox.synthetic-focus`）。
+   旧写法是「常态就挂一条 1px 实线蓝边 + 2px 圆角」：整棵树里只有它一直在亮，而本软件的
+   口径是 accent 只跟着聚焦 / 激活走（`--accent` 在别处都是焦点环 / 选中态）。
+   ⚠️ 描边用 outline 不用改 border-color：边框一增一删会抖那 1px（`.find-field` 同条理由）。
+   ⚠️ `box-sizing: border-box` 是必须的：这一行只有 22px，加了 1px 上下边框再撑 20px 就顶出行了。 */
 .explorer-input {
   flex: 1 1 auto;
   min-width: 0;
-  height: 18px;
+  height: 20px;
+  box-sizing: border-box;
   padding: 0 3px;
   font-size: 12px;
   color: var(--fg, #24292f);
   background: var(--bg, #fff);
-  border: 1px solid var(--accent, #0969da);
-  border-radius: 2px;
+  border: 1px solid var(--border, #d0d7de);
+  border-radius: 4px;
+}
+.explorer-input:focus {
+  outline: 1px solid var(--accent, #0969da);
+  outline-offset: -1px;
 }
 .explorer-hint {
   padding: 8px 10px;
