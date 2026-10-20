@@ -292,6 +292,41 @@ export function createDir(dir: string, name: string): Promise<FsEntry> {
   return invoke<FsEntry>("create_dir", { dir, name });
 }
 
+// ------------------------------------------------------ B315 树里的常规文件操作
+//
+// 五条都带 `root`：**写操作的 target 必须在当前根之内**，而这道判定在 Rust。
+// 前端传根不是冗余 —— 剪贴板那份路径存在我们自己的内存里，记错一层就会把东西
+// 写到用户没看着的地方；看不见 ≠ 没发生（口径同 `check_name`：边界上的校验
+// 由收下参数的那一方做）。
+// `destDir` / `newName` 会被 Tauri 换成 Rust 那侧的 `dest_dir` / `new_name`，
+// 两端各自拼错一个字母的代价是「命令收得到、参数是 undefined」，所以配套用例
+// 在 `tests/explorer-contract.test.ts` 里钉着。
+
+/** 改名。**撞名报错、不加后缀**（与粘贴相反：改名时静默换个名字，用户会以为盘上真叫那个）。 */
+export function renameEntry(root: string, path: string, newName: string): Promise<FsEntry> {
+  return invoke<FsEntry>("rename_entry", { root, path, newName });
+}
+
+/** 复制一份到 `destDir`（目录整棵跟着走；撞名自动加后缀 `x (2).ext`）。 */
+export function copyEntry(root: string, src: string, destDir: string): Promise<FsEntry> {
+  return invoke<FsEntry>("copy_entry", { root, src, destDir });
+}
+
+/** 挪走到 `destDir`（同层是空操作 → 报错；跨卷时 Rust 退化成「复制整份成功后再删原件」）。 */
+export function moveEntry(root: string, src: string, destDir: string): Promise<FsEntry> {
+  return invoke<FsEntry>("move_entry", { root, src, destDir });
+}
+
+/** 送进**系统回收站**（可反悔；本应用没有「永久删除」这个入口）。 */
+export function deleteEntry(root: string, path: string): Promise<void> {
+  return invoke<void>("delete_entry", { root, path });
+}
+
+/** 在系统资源管理器里选中这一条。 */
+export function revealInExplorer(path: string): Promise<void> {
+  return invoke<void>("reveal_in_explorer", { path });
+}
+
 export function newTab(encoding?: string | null): Promise<TabInfo> {
   return invoke<TabInfo>("new_tab", { encoding: encoding ?? null });
 }

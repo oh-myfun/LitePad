@@ -13,7 +13,21 @@ const h = vi.hoisted(() => ({
   /** 登记过的路径**先不答**，resolve 存这里 —— 由用例决定那一发什么时候落地。 */
   gated: new Set<string>(),
   pending: new Map<string, (listing: unknown) => void>(),
+  /** B315：写操作各记一笔（`改名 E:\a.md -> b.md` 这种形状，用例按前缀判）。 */
+  ops: [] as string[],
+  /** 让某个写操作报错，键 = rename / copy / move / delete。 */
+  failOn: new Set<string>(),
 }));
+
+const base = (p: string): string => p.slice(p.lastIndexOf("\\") + 1);
+const parentOf = (p: string): string => p.slice(0, p.lastIndexOf("\\"));
+const mk = (dir: string, name: string, isDir: boolean) => ({
+  name,
+  path: `${dir}\\${name}`,
+  isDir,
+  size: 1,
+  mtimeMs: 0,
+});
 
 function toListing(path: string, kids: { name: string; isDir: boolean }[]) {
   return {
@@ -43,6 +57,29 @@ vi.mock("../src/ipc/api", async (importOriginal) => {
       }
       return Promise.resolve(toListing(path, kids));
     },
+    renameEntry: (_root: string, path: string, newName: string) => {
+      h.ops.push(`rename ${path} -> ${newName}`);
+      if (h.failOn.has("rename")) return Promise.reject(new Error("这一层里已经有 它了"));
+      return Promise.resolve(mk(parentOf(path), newName, h.dirs.has(path)));
+    },
+    copyEntry: (_root: string, src: string, destDir: string) => {
+      h.ops.push(`copy ${src} -> ${destDir}`);
+      if (h.failOn.has("copy")) return Promise.reject(new Error("复制不了"));
+      return Promise.resolve(mk(destDir, base(src), h.dirs.has(src)));
+    },
+    moveEntry: (_root: string, src: string, destDir: string) => {
+      h.ops.push(`move ${src} -> ${destDir}`);
+      if (h.failOn.has("move")) return Promise.reject(new Error("挪不动"));
+      return Promise.resolve(mk(destDir, base(src), h.dirs.has(src)));
+    },
+    deleteEntry: (_root: string, path: string) => {
+      h.ops.push(`delete ${path}`);
+      return h.failOn.has("delete") ? Promise.reject(new Error("送不进回收站")) : Promise.resolve();
+    },
+    revealInExplorer: (path: string) => {
+      h.ops.push(`reveal ${path}`);
+      return Promise.resolve();
+    },
   };
 });
 
@@ -51,6 +88,8 @@ let store: typeof import("../src/explorer/store");
 async function load(): Promise<typeof import("../src/explorer/store")> {
   vi.resetModules();
   h.calls.length = 0;
+  h.ops.length = 0;
+  h.failOn.clear();
   h.dirs.clear();
   h.gated.clear();
   h.pending.clear();
@@ -216,5 +255,124 @@ describe("B314 资源管理器缓存层", () => {
     h.dirs.set("E:\\根", [{ name: "a.md", isDir: false }]);
     store.setRoot("E:\\根");
     await vi.waitFor(() => expect(seen).toContain(1));
+  });
+});
+
+describe("B315 缓存层的动作与剪贴板", () => {
+  const R = "E:\\笔记";
+  /** 拼路径只用这一个帮手：反斜杠在源码里长什么样，测一次就够，不必每条都写两遍。 */
+  const P = (...segs: string[]): string => segs.join("\\");
+
+  type Change = { from: string; to: string | null };
+
+  /** 起一个根、等它读出来，顺手挂上「路径改写」的探针。 */
+  async function boot(kids: { name: string; isDir: boolean }[]): Promise<Change[]> {
+    h.dirs.set(R, kids);
+    store.setRoot(R);
+    await vi.waitFor(() => expect(store.childrenOf(R)).toBeTruthy());
+    const seen: Change[] = [];
+    store.onPathsChanged((c) => seen.push(...c));
+    return seen;
+  }
+
+  it("改名：广播 from→to，并只重读它所在那一层", async () => {
+    const seen = await boot([{ name: "a.md", isDir: false }]);
+    h.calls.length = 0;
+    const made = await store.renameEntryAt(R, P(R, "a.md"), "b.md");
+    expect(h.ops).toEqual([`rename ${P(R, "a.md")} -> b.md`]);
+    expect(made.path).toBe(P(R, "b.md"));
+    expect(seen).toEqual([{ from: P(R, "a.md"), to: P(R, "b.md") }]);
+    expect(h.calls, "一次改名只动了一层，不该刷整棵树").toEqual([R]);
+  });
+
+  it("改名失败时什么都不动（不广播、不重读、错误原样透传）", async () => {
+    const seen = await boot([{ name: "a.md", isDir: false }]);
+    h.calls.length = 0;
+    h.failOn.add("rename");
+    await expect(store.renameEntryAt(R, P(R, "a.md"), "撞了.md")).rejects.toThrow("已经有");
+    expect(seen, "没改成就不该广播「路径变了」").toEqual([]);
+    expect(h.calls, "没改成就不该重读那一层").toEqual([]);
+  });
+
+  it("删除：广播 to=null，被删那条的展开态与那一层缓存一起掉", async () => {
+    const d = P(R, "d");
+    h.dirs.set(R, [{ name: "d", isDir: true }]);
+    h.dirs.set(d, [{ name: "x.md", isDir: false }]);
+    store.setRoot(R);
+    await vi.waitFor(() => expect(store.childrenOf(R)).toBeTruthy());
+    await store.toggleDir(d);
+    expect(store.isExpanded(d)).toBe(true);
+    const seen: Change[] = [];
+    store.onPathsChanged((c) => seen.push(...c));
+
+    await store.trashAt(R, d);
+    expect(h.ops).toContain(`delete ${d}`);
+    expect(seen).toEqual([{ from: d, to: null }]);
+    expect(store.isExpanded(d), "删掉的目录不许还记着展开").toBe(false);
+    expect(store.childrenOf(d), "也不许还留着它的子项").toBeUndefined();
+  });
+
+  it("删除失败：不广播（那份文档还该是干净的）", async () => {
+    const seen = await boot([{ name: "a.md", isDir: false }]);
+    h.failOn.add("delete");
+    await expect(store.trashAt(R, P(R, "a.md"))).rejects.toThrow("回收站");
+    expect(seen).toEqual([]);
+  });
+
+  it("复制粘贴：走 copy、剪贴板留着、一条路径都不广播", async () => {
+    const sub = P(R, "子");
+    const seen = await boot([
+      { name: "a.md", isDir: false },
+      { name: "子", isDir: true },
+    ]);
+    h.dirs.set(sub, []);
+    store.setClipboard("copy", [{ path: P(R, "a.md"), dir: R }]);
+    const made = await store.pasteInto(sub);
+    expect(h.ops).toContain(`copy ${P(R, "a.md")} -> ${sub}`);
+    expect(made[0].path).toBe(P(sub, "a.md"));
+    expect(seen, "复制不动任何已打开的文档").toEqual([]);
+    expect(store.getClipboard(), "复制那份要留着，好连着往几层粘").not.toBeNull();
+  });
+
+  it("剪切粘贴：走 move、每条成功就广播一次，全成了才清空剪贴板", async () => {
+    const sub = P(R, "子");
+    const seen = await boot([
+      { name: "a.md", isDir: false },
+      { name: "子", isDir: true },
+    ]);
+    h.dirs.set(sub, []);
+    store.setClipboard("cut", [{ path: P(R, "a.md"), dir: R }]);
+    await store.pasteInto(sub);
+    expect(h.ops).toContain(`move ${P(R, "a.md")} -> ${sub}`);
+    expect(seen).toEqual([{ from: P(R, "a.md"), to: P(sub, "a.md") }]);
+    expect(store.getClipboard()).toBeNull();
+  });
+
+  it("粘贴半途失败：动过的两层照样刷过，剪贴板不清（用户能重来）", async () => {
+    const sub = P(R, "子");
+    const seen = await boot([
+      { name: "a.md", isDir: false },
+      { name: "子", isDir: true },
+    ]);
+    h.dirs.set(sub, []);
+    store.setClipboard("cut", [{ path: P(R, "a.md"), dir: R }]);
+    h.calls.length = 0;
+    h.failOn.add("move");
+    await expect(store.pasteInto(sub)).rejects.toThrow("挪不动");
+    expect(store.getClipboard(), "没搬成的那份要还在剪贴板里").not.toBeNull();
+    expect(seen, "一条都没落地，就不该广播路径改写").toEqual([]);
+    expect(h.calls, "失败了也要把源层与目标层都刷一遍，别留半真半假的树").toEqual(
+      expect.arrayContaining([R, sub]),
+    );
+  });
+
+  it("空的一组 = 收起剪贴板（别留一条「0 项」的空剪贴板让粘贴是灰的还报成功）", () => {
+    store.setClipboard("copy", [{ path: P(R, "a.md"), dir: R }]);
+    expect(store.getClipboard()).not.toBeNull();
+    store.setClipboard("copy", []);
+    expect(store.getClipboard()).toBeNull();
+    store.setClipboard("cut", [{ path: P(R, "a.md"), dir: R }]);
+    store.clearClipboard();
+    expect(store.getClipboard()).toBeNull();
   });
 });
