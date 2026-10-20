@@ -272,6 +272,10 @@ fn main() {
             commands::recents::clear_recents,
             commands::recents::get_recent_limit,
             commands::recents::set_recent_limit,
+            // B314 资源管理器（一次只读一层，见 commands/explorer.rs 头部）
+            commands::explorer::list_dir,
+            commands::explorer::create_file,
+            commands::explorer::create_dir,
             windows::window_payload,
             windows::open_satellite_window,
             commands::watchdog_start_drag,

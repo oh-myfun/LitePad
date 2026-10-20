@@ -7,6 +7,9 @@
 /// 那是 `settings.json` 被每扇窗口整表覆写咬过一次的教训，见 `session/recent.rs` 头部）。
 pub mod recents;
 
+/// B314：资源管理器。名字不叫 `fs` —— 本模块自己 `use std::fs`，同名会撞 E0255。
+pub mod explorer;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
