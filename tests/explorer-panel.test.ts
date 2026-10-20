@@ -7,6 +7,9 @@
 // ⚠️ 静态 import 会抢在 `innerHTML` 之前把 `ui.ts` 的 `el()` 炸掉（口径同 recents-panel.test.ts）。
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
+import { fireDrag, makeDataTransfer, type FakeDataTransfer } from "./dnd";
+// 只取那一个常量：`shell/filedrop` 与 `shell/menu` 都不在模块顶层碰 DOM，静态 import 安全。
+import { TREE_DRAG_MIME } from "../src/shell/filedrop";
 
 const h = vi.hoisted(() => ({
   /** 目录路径 → 该回的那一层子项（`[名, 是不是目录]`）。 */
@@ -82,6 +85,7 @@ vi.mock("../src/ipc/api", async (importOriginal) => {
     },
     moveEntry: (_root: string, src: string, destDir: string) => {
       h.moved.push([src, destDir]);
+      if (h.failOn.has("move")) return Promise.reject(new Error("要挪的东西就在这层里"));
       const name = src.slice(src.lastIndexOf("\\") + 1);
       const from = src.slice(0, src.lastIndexOf("\\"));
       const isDir = h.dirs.has(src);
@@ -552,4 +556,232 @@ describe("B315 右键菜单与常规操作", () => {
   function renamingCount(): number {
     return ui.explorerTree.querySelectorAll(".explorer-input").length;
   }
+});
+
+describe("B316 树内拖拽 = 移动", () => {
+  // 上一单留在飞行里的拖拽会让这一单的判据糊掉（`dragging` 是模块态）。走事件那扇门收摊：
+  // `dragend` 的监听不问载荷，无条件清高亮 + 取消排队中的展开。
+  beforeEach(() => {
+    fireDrag("dragend", ui.explorerTree, null);
+  });
+
+  /** 起点。返回那份载荷给后面几步复用 —— 真机上一次拖拽自始至终是同一个 `DataTransfer`。 */
+  function start(name: string): FakeDataTransfer {
+    const dt = makeDataTransfer();
+    fireDrag("dragstart", rowAt(name), dt);
+    return dt;
+  }
+  function over(name: string, dt: FakeDataTransfer): MouseEvent {
+    return fireDrag("dragover", rowAt(name), dt);
+  }
+  function leave(name: string, dt: FakeDataTransfer, to: Element | null): MouseEvent {
+    return fireDrag("dragleave", rowAt(name), dt, { relatedTarget: to });
+  }
+  function drop(name: string, dt: FakeDataTransfer): MouseEvent {
+    return fireDrag("drop", rowAt(name), dt);
+  }
+  /** 带某个类的那几行的名字（比数 `querySelectorAll` 的条数好读，而且报得出是谁）。 */
+  function marked(cls: string): string[] {
+    return [...ui.explorerTree.querySelectorAll<HTMLElement>(`.${cls}`)].map(
+      (el) => el.querySelector(".explorer-name")?.textContent ?? el.dataset.path ?? "?",
+    );
+  }
+  const waitHover = (): Promise<void> => new Promise((r) => setTimeout(r, 750));
+
+  it("每一行都可拖，根那一行不可（它没有父亲）；拖起来只交出自家 MIME", () => {
+    expect(rowAt("a.md").draggable).toBe(true);
+    expect(rowAt("notes").draggable, "目录同样可拖").toBe(true);
+    expect(rowAt("笔记").draggable, "根那一行压根不设 draggable").toBe(false);
+
+    const dt = start("a.md");
+    expect(dt.types, "不带 text/plain：拖到窗口外不做，也不给编辑器留一份文本可插").toEqual([
+      TREE_DRAG_MIME,
+    ]);
+    expect(dt.getData(TREE_DRAG_MIME)).toBe(`${ROOT}\\a.md`);
+    expect(dt.effectAllowed).toBe("move");
+    expect(marked("explorer-dragging")).toEqual(["a.md"]);
+
+    const ev = fireDrag("dragstart", rowAt("笔记"), makeDataTransfer());
+    expect(ev.defaultPrevented, "根被野路子拖起来（程序里直接派发事件）时要拦下").toBe(true);
+    expect(marked("explorer-dragging"), "根不参与，源行高亮不该跟着换").toEqual(["a.md"]);
+  });
+
+  it("落点 = 目录行：移进它；状态栏报一句，那一层里看得见搬进来的那条", async () => {
+    const dt = start("a.md");
+    const notes = rowAt("notes");
+    expect(over("notes", dt).defaultPrevented, "能落 ⇒ 必须 preventDefault，否则收不到 drop").toBe(
+      true,
+    );
+    expect(dt.dropEffect).toBe("move");
+    expect(marked("explorer-drop-on")).toEqual(["notes"]);
+    drop("notes", dt);
+    await vi.waitFor(() => expect(h.moved).toEqual([[`${ROOT}\\a.md`, `${ROOT}\\notes`]]));
+    const bar = document.getElementById("sb-message")!;
+    // 状态栏那句要单独等：`h.moved` 在假实现里是**同步**记的，而报话那句排在整条
+    // 刷新链（挪 → 刷两层 → 重绘）之后，拿它当「渲染完了」的信号会读到上一单的残留。
+    await vi.waitFor(() => expect(bar.textContent).toContain("已移动 a.md"));
+    expect(bar.classList.contains("sb-message-error")).toBe(false);
+    expect(marked("explorer-dragging"), "松手就收摊").toEqual([]);
+
+    await click(rowAt("notes"));
+    await vi.waitFor(() => expect(names()).toContain("a.md"));
+    expect(
+      names().filter((n) => n === "a.md"),
+      "根那一层里不该还留着一份",
+    ).toHaveLength(1);
+    expect(notes.isConnected, "树是被重绘的：判据不能攥着旧元素").toBe(false);
+  });
+
+  it("落点 = 文件行：移到那个文件所在的那一层（与新建/粘贴同一判据）", async () => {
+    await click(rowAt("notes"));
+    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    const dt = start("deeper.md");
+    expect(over("b.md", dt).defaultPrevented, "落点是 b.md 所在那一层，不是 b.md 自己").toBe(true);
+    drop("b.md", dt);
+    // 按**层级**等：`deeper.md` 挪到根之前也在屏幕上（notes 是展开着的），
+    // 拿「有没有这一行」当信号会立刻结算，然后读到一半重绘的树。
+    await vi.waitFor(() => expect(rowAt("deeper.md").getAttribute("aria-level")).toBe("2"));
+    expect(h.moved).toEqual([[`${ROOT}\\notes\\deeper.md`, ROOT]]);
+    expect(
+      names().filter((n) => n === "deeper.md"),
+      "只该在根看见一次",
+    ).toHaveLength(1);
+  });
+
+  it("落点 = 根那一行：移到根", async () => {
+    await click(rowAt("notes"));
+    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    const dt = start("deeper.md");
+    expect(marked("explorer-drop-on"), "还没移动指针时没有落点").toEqual([]);
+    expect(over("笔记", dt).defaultPrevented).toBe(true);
+    expect(marked("explorer-drop-on")).toEqual(["笔记"]);
+    drop("笔记", dt);
+    await vi.waitFor(() => expect(h.moved).toEqual([[`${ROOT}\\notes\\deeper.md`, ROOT]]));
+  });
+
+  it("同层 = 空操作：不拦 dragover（于是光标显示禁止）、松手什么都不发", () => {
+    const dt = start("a.md");
+    expect(over("b.md", dt).defaultPrevented, "不 preventDefault = 默认那根禁止光标").toBe(false);
+    expect(marked("explorer-drop-on")).toEqual([]);
+    drop("b.md", dt);
+    expect(h.moved).toEqual([]);
+
+    const dir = start("notes");
+    expect(over("a.md", dir).defaultPrevented, "目录挪到自己待着的那一层").toBe(false);
+    drop("a.md", dir);
+    expect(h.moved).toEqual([]);
+  });
+
+  it("拖到自己身上 / 拖进自己的子孙里 = 禁止光标、什么都不发", async () => {
+    h.dirs.set(`${ROOT}\\notes`, [
+      ["deeper.md", false],
+      ["sub", true],
+    ]);
+    h.dirs.set(`${ROOT}\\notes\\sub`, [["x.md", false]]);
+    await click(rowAt("notes"));
+    await vi.waitFor(() => expect(names()).toContain("sub"));
+    await click(rowAt("sub"));
+    await vi.waitFor(() => expect(names()).toContain("x.md"));
+
+    const dt = start("notes");
+    expect(over("notes", dt).defaultPrevented, "落在自己身上").toBe(false);
+    expect(over("sub", dt).defaultPrevented, "落在自己的直接子孙里").toBe(false);
+    expect(
+      over("x.md", dt).defaultPrevented,
+      "落在孙子的文件上：落点是它父亲 sub，仍在自己里面",
+    ).toBe(false);
+    expect(marked("explorer-drop-on")).toEqual([]);
+    drop("sub", dt);
+    expect(h.moved).toEqual([]);
+  });
+
+  it("落在树里的空白处不算落点（更不当成「移到根」—— 那会把一次误操作变成一次真搬家）", () => {
+    const dt = start("a.md");
+    const ev = fireDrag("dragover", ui.explorerTree, dt);
+    expect(ev.defaultPrevented).toBe(false);
+    expect(drop("笔记", dt).type, "先确认落点确实没算上").toBe("drop");
+    expect(marked("explorer-drop-on")).toEqual([]);
+  });
+
+  it("悬停在折叠的目录上约 0.6 秒自动摊开，两层高亮跟着重绘后的新行重贴", async () => {
+    const dt = start("a.md");
+    over("notes", dt);
+    expect(store.isExpanded(`${ROOT}\\notes`), "刚到那一格不该立刻展开").toBe(false);
+    await vi.waitFor(() => expect(store.isExpanded(`${ROOT}\\notes`)).toBe(true), {
+      timeout: 2000,
+    });
+    expect(marked("explorer-dragging"), "重绘把源行换成了新元素，高亮得按路径重贴").toEqual([
+      "a.md",
+    ]);
+    expect(marked("explorer-drop-on")).toEqual(["notes"]);
+    expect(names()).toContain("deeper.md");
+    // 摊开之后落点仍是那一层：同层判据要用**当下**的源目录，展开前后不能变成两套。
+    drop("notes", dt);
+    await vi.waitFor(() => expect(h.moved).toEqual([[`${ROOT}\\a.md`, `${ROOT}\\notes`]]));
+  });
+
+  it("同一行里挪一格不算离开（不然悬停展开的计时每帧被重置，永远等不到）", async () => {
+    const dt = start("a.md");
+    const notes = rowAt("notes");
+    over("notes", dt);
+    fireDrag("dragleave", notes.querySelector(".explorer-name")!, dt, {
+      relatedTarget: notes.querySelector(".explorer-glyph"),
+    });
+    await vi.waitFor(() => expect(store.isExpanded(`${ROOT}\\notes`)).toBe(true), {
+      timeout: 2000,
+    });
+  });
+
+  it("离开落点那一行就取消排队中的展开；dragend 之后高亮与松手一并作废", async () => {
+    const dt = start("a.md");
+    over("notes", dt);
+    leave("notes", dt, rowAt("b.md"));
+    expect(marked("explorer-drop-on")).toEqual([]);
+    await waitHover();
+    expect(store.isExpanded(`${ROOT}\\notes`), "那一发悬停展开作废了").toBe(false);
+
+    const dir = start("b.md");
+    over("notes", dir);
+    fireDrag("dragend", rowAt("notes"), dir);
+    expect(marked("explorer-dragging")).toEqual([]);
+    expect(marked("explorer-drop-on")).toEqual([]);
+    await waitHover();
+    expect(store.isExpanded(`${ROOT}\\notes`)).toBe(false);
+    drop("notes", dir);
+    expect(h.moved, "拖拽已经结束了，迟到的 drop 不该再搬一次家").toEqual([]);
+  });
+
+  it("外部文件拖过树时不抢：自家 MIME 不在载荷里，dragover / drop 一概不接手", () => {
+    const mine = start("a.md");
+    over("notes", mine);
+    const files = makeDataTransfer(["Files"]);
+    expect(fireDrag("dragover", rowAt("notes"), files).defaultPrevented).toBe(false);
+    expect(fireDrag("drop", rowAt("notes"), files).defaultPrevented).toBe(false);
+    expect(h.moved).toEqual([]);
+    expect(marked("explorer-drop-on"), "外部那一下不该把已算好的落点高亮抢走").toEqual(["notes"]);
+  });
+
+  it("改名时从输入框里拖选文字，不是拖这一行", () => {
+    rowAt("a.md").dispatchEvent(new KeyboardEvent("keydown", { key: "F2", bubbles: true }));
+    const input = ui.explorerTree.querySelector<HTMLInputElement>(".explorer-input")!;
+    const dt = makeDataTransfer();
+    fireDrag("dragstart", input, dt);
+    expect(dt.types, "没交出自家 MIME = 这次拖拽不是树发起的").toEqual([]);
+    expect(marked("explorer-dragging")).toEqual([]);
+    // 收掉改名态：`renaming` 是模块态，留着它下一单的 beforeEach 重绘时那一行会画成输入框，
+    // 于是「树里有没有 a.md 这一行」永远等不到（B315 那几单是靠提交/Escape 自己收的）。
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  });
+
+  it("挪不动时：错误原样进状态栏（走错误色），树上不留一个搬了一半的样子", async () => {
+    h.failOn.add("move");
+    const dt = start("a.md");
+    over("notes", dt);
+    drop("notes", dt);
+    const bar = document.getElementById("sb-message")!;
+    await vi.waitFor(() => expect(bar.textContent).toContain("就在这层里"));
+    expect(bar.classList.contains("sb-message-error"), "报错那条要走错误色").toBe(true);
+    expect(names()).toContain("a.md");
+    expect(marked("explorer-dragging")).toEqual([]);
+  });
 });

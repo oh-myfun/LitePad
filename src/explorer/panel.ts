@@ -19,6 +19,7 @@ import { doOpen } from "../io/files";
 import { CODICONS } from "../shell/codicons";
 import { activeDrawer, registerDrawerView, setDrawer } from "../shell/drawer";
 import { showPopupMenu, type MenuItem } from "../shell/menu";
+import { isTreeDrag, TREE_DRAG_MIME } from "../shell/filedrop";
 import {
   explorerCollapse,
   explorerNewDir,
@@ -40,6 +41,7 @@ import {
   hasRoot,
   isExpanded,
   isLoading,
+  moveTo,
   onExplorerChange,
   pasteInto,
   refresh,
@@ -112,6 +114,12 @@ export function setupExplorer(): void {
   explorerNewDir.addEventListener("click", () => startCreate("dir"));
   explorerTree.addEventListener("click", (e) => onRowClick(e as MouseEvent));
   explorerTree.addEventListener("contextmenu", (e) => onRowContext(e as MouseEvent));
+  // B316：拖到别的那一层 = 移动。五个事件都挂在树上（行是重绘出来的，逐行挂必漏）。
+  explorerTree.addEventListener("dragstart", (e) => onRowDragStart(e as DragEvent));
+  explorerTree.addEventListener("dragover", (e) => onRowDragOver(e as DragEvent));
+  explorerTree.addEventListener("dragleave", (e) => onRowDragLeave(e as DragEvent));
+  explorerTree.addEventListener("drop", (e) => onRowDrop(e as DragEvent));
+  explorerTree.addEventListener("dragend", () => endDrag());
   explorerTree.addEventListener("keydown", (e) => onTreeKey(e));
   renderTree();
 }
@@ -252,6 +260,8 @@ function renderEntry(e: FsEntry, dir: string, depth: number): HTMLElement {
   row.setAttribute("aria-selected", String(selected === e.path));
   if (kind === "dir") row.setAttribute("aria-expanded", String(open));
   row.tabIndex = selected === e.path ? 0 : -1;
+  // B316：树里每一行都可拖（根那一行不可 —— 它没有父亲，拖出去无处可放）。
+  row.draggable = true;
   // 完整路径进原生 title：悬停浮层那套（data-tip）在树里会每行挂一条、还盖住下一行，
   // 而这一句只是「看全那个路径」，title 够用且不引入新的层级。
   row.title = e.path;
@@ -319,6 +329,8 @@ function renderTree(): void {
   kids.hidden = !rootOpen;
   if (rootOpen) renderChildren(kids, root, 1);
   explorerTree.append(kids);
+  // 拖拽途中被悬停展开打断过一次重绘：那两层高亮贴在的是**刚被丢掉**的旧元素上，得按路径重贴。
+  if (dragging) paintMarks();
 }
 
 /** 没有根那一行时给的出口：一句提示 + 一颗「打开文件夹」的入口（不让人对着空白版发呆）。 */
@@ -690,4 +702,172 @@ async function doReveal(path: string): Promise<void> {
   } catch (e: unknown) {
     showMessage(String(e), true);
   }
+}
+
+// ---------------------------------------------------------------- B316 · 树内拖拽 = 移动
+
+/** 悬停在折叠的目录上多久自己摊开。再短会把「路过」读成「要展开」，再长用户就以为没反应。 */
+const HOVER_EXPAND_MS = 600;
+
+/** 正被拖着的那一条：路径 + 它**当下所在那一层**（同层松手是空操作，得知道从哪来）。 */
+let dragging: { path: string; dir: string } | null = null;
+/** 当前落点那一行的路径（高亮与悬停展开都按路径算，不攥元素 —— 见 `paintMarks`）。 */
+let dropPath: string | null = null;
+let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+let hoverPath: string | null = null;
+
+/** 分隔符折成 `\`、去尾、折叠大小写 —— Windows 路径比来比去都得先过这一道（口径同 `paths.ts`）。 */
+function normPath(p: string): string {
+  return p.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+}
+
+/**
+ * 落点那一层：目录行 = 它自己；根行 = 根；文件行 = **那个文件所在的那一层**（与
+ * `targetDir` 同一判据 —— 指着 `a.md` 松手，用户的意图是「跟 a.md 放一起」，不是钻进
+ * 一个叫 a.md 的目录）。
+ */
+function dropDirOf(row: HTMLElement): string | null {
+  const path = row.dataset.path ?? "";
+  if (!path) return null;
+  const r = rows.get(path);
+  if (!r) return path; // 父子表里没有 `path` 的只有根那一行
+  return r.kind === "dir" ? path : r.dir;
+}
+
+/** `dest` 是不是落在 `src` 里面（含 `src` 自己）。目录拖进自己的子孙 = 盘上不可能成立。 */
+function withinDragged(dest: string, src: string): boolean {
+  const d = normPath(dest);
+  const s = normPath(src);
+  return d === s || d.startsWith(`${s}\\`);
+}
+
+/**
+ * 这次拖该落到哪儿。给 `null` 就是「松手什么都不发」：同层（空操作）、落在自己身上、
+ * 落在自己的子孙里。调用方据此决定拦不拦 `dragover` 的默认行为 —— 不拦，浏览器给的
+ * 正好是那根「禁止」光标，不必自己画。
+ */
+function dropPlan(ev: DragEvent): { src: string; srcDir: string; destDir: string } | null {
+  if (!dragging) return null;
+  const row = rowFromEvent(ev);
+  if (!row) return null; // 空白处不算落点，更不等于「移到根」—— 那会把一次滑手变成一次真搬家
+  const destDir = dropDirOf(row);
+  if (!destDir) return null;
+  if (withinDragged(destDir, dragging.path)) return null;
+  if (normPath(destDir) === normPath(dragging.dir)) return null;
+  return { src: dragging.path, srcDir: dragging.dir, destDir };
+}
+
+/** 高亮一律**按路径重贴**：悬停展开会重绘整棵树，攥着旧元素等于贴在一堆已丢弃的节点上。 */
+function paintMarks(): void {
+  for (const el of explorerTree.querySelectorAll<HTMLElement>(
+    ".explorer-dragging, .explorer-drop-on",
+  )) {
+    el.classList.remove("explorer-dragging", "explorer-drop-on");
+  }
+  if (dragging) rowEl(dragging.path)?.classList.add("explorer-dragging");
+  if (dropPath) rowEl(dropPath)?.classList.add("explorer-drop-on");
+}
+
+function markDropRow(path: string | null): void {
+  if (dropPath === path) return;
+  dropPath = path;
+  paintMarks();
+}
+
+function cancelHover(): void {
+  if (hoverTimer !== null) clearTimeout(hoverTimer);
+  hoverTimer = null;
+  hoverPath = null;
+}
+
+/** 在折叠的目录落点上排队一次自动摊开；`dragover` 每帧都来，同一条只留一个计时器。 */
+function scheduleHover(path: string): void {
+  if (hoverPath === path && hoverTimer !== null) return; // 这一条已经在计时了（dragover 每帧都来）
+  cancelHover();
+  const kind = rows.get(path)?.kind ?? "dir";
+  if (kind !== "dir") return;
+  const collapsed = path === getRoot() ? !rootOpen : !isExpanded(path);
+  if (!collapsed) return;
+  hoverPath = path;
+  hoverTimer = setTimeout(() => {
+    hoverTimer = null;
+    hoverPath = null;
+    void activateDir(path);
+  }, HOVER_EXPAND_MS);
+}
+
+function onRowDragStart(ev: DragEvent): void {
+  const from = ev.target as HTMLElement | null;
+  // 改名输入框里选中一段文字拖一下，同样是 `dragstart` —— 那不是在拖这一行。
+  if (from && (from.tagName === "INPUT" || from.closest(".explorer-input"))) return;
+  const row = rowFromEvent(ev);
+  const path = row?.dataset.path ?? "";
+  const r = rows.get(path);
+  // 根那一行压根没设 `draggable`（`renderEntry` 才设）；拿父子表当闸，顺带挡住它以外的野路径。
+  if (!r) {
+    ev.preventDefault();
+    return;
+  }
+  dragging = { path, dir: r.dir };
+  dropPath = null;
+  if (ev.dataTransfer) {
+    ev.dataTransfer.effectAllowed = "move";
+    // 只塞自家这一种 MIME：外部文件（`Files`）与标签拖拽各有各的落点判定，而拖到窗口外
+    // 不做（用户口径）。B316-3 靠这个 MIME 认出「这是树里拖出来的，不是外部文件」。
+    ev.dataTransfer.setData(TREE_DRAG_MIME, path);
+  }
+  paintMarks();
+}
+
+function onRowDragOver(ev: DragEvent): void {
+  if (!isTreeDrag(ev.dataTransfer)) return;
+  const plan = dropPlan(ev);
+  if (!plan) {
+    markDropRow(null);
+    cancelHover();
+    return; // 不 preventDefault ⇒ 默认的「禁止」光标
+  }
+  ev.preventDefault();
+  if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+  const row = rowFromEvent(ev);
+  markDropRow(row?.dataset.path ?? null);
+  // 悬停展开只对**目录落点**成立：指着文件时那一层本来就看得见，等 0.6 秒只会莫名其妙。
+  const p = row?.dataset.path ?? "";
+  if (p && (rows.get(p)?.kind ?? "dir") === "dir") scheduleHover(p);
+  else cancelHover();
+}
+
+function onRowDragLeave(ev: DragEvent): void {
+  if (!isTreeDrag(ev.dataTransfer)) return;
+  const row = rowFromEvent(ev);
+  const to = ev.relatedTarget as Node | null;
+  // 从名字那一格挪到同一行的箭头，也会冒出一个 `dragleave`；按「指针还在不在这一行」判，
+  // 否则悬停展开的计时每帧被重置一次，永远等不到那 0.6 秒。
+  if (row && to && row.contains(to)) return;
+  markDropRow(null);
+  cancelHover();
+}
+
+function onRowDrop(ev: DragEvent): void {
+  if (!isTreeDrag(ev.dataTransfer)) return;
+  ev.preventDefault(); // 不交给默认处理：否则这次拖拽可能被当成文本塞进别处
+  const plan = dropPlan(ev);
+  const name = nameOf(dragging?.path ?? "");
+  endDrag();
+  if (!plan) return;
+  void moveTo(plan.src, plan.srcDir, plan.destDir)
+    .then((made) => {
+      select(made.path);
+      showMessage(`已移动 ${name}`);
+    })
+    .catch((e: unknown) => {
+      showMessage(String(e), true);
+    });
+}
+
+function endDrag(): void {
+  cancelHover();
+  dragging = null;
+  dropPath = null;
+  paintMarks();
 }

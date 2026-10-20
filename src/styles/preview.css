@@ -496,6 +496,16 @@
   outline: 1px solid var(--accent, #0969da);
   outline-offset: -1px;
 }
+/* B316 · 拖拽：被拿起来那一条淡一档；落点整格描边 —— 落的是**那一层**（目录 / 根 /
+   文件所在层），不是两行之间的缝，所以不画插入线、只框住目标。 */
+.explorer-dragging {
+  opacity: 0.45;
+}
+.explorer-drop-on {
+  background: var(--bg-hover, #eee);
+  outline: 1px solid var(--accent, #0969da);
+  outline-offset: -1px;
+}
 .explorer-twisty {
   flex: 0 0 14px;
   display: flex;

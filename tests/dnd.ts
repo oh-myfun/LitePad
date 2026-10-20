@@ -69,6 +69,8 @@ export interface DragInit {
   ctrlKey?: boolean;
   /** 覆盖 `timeStamp`：节流逻辑按它算间隔，必须可控（jsdom 自己给的是构造时刻）。 */
   timeStamp?: number;
+  /** `dragleave` 的「指针去了哪儿」：同一行里挪一格与离开整行只有这一份能分辨（B316 悬停展开靠它）。 */
+  relatedTarget?: EventTarget | null;
 }
 
 /**
@@ -90,6 +92,7 @@ export function fireDrag(
     screenY: init.screenY ?? 0,
     altKey: !!init.altKey,
     ctrlKey: !!init.ctrlKey,
+    relatedTarget: init.relatedTarget ?? null,
   });
   Object.defineProperty(e, "dataTransfer", { value: dt, configurable: true });
   if (init.timeStamp !== undefined) {
