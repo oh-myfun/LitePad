@@ -568,6 +568,13 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* B328：行那一族是 `line-height: 1` ⇒ clip 框只有 12px，而 12px 字号的墨迹要 14px
+     （3 倍缩放量像素：`overflow: visible` 对照组越出框底 +2.00 CSS px）—— 省略号那层
+     正好把 p / g / q / j 的下伸部切掉。撑这一格而不是撑整行：字在行盒里居中，
+     行盒上下各长一半 ⇒ 字一点没动，只有裁切框变松。
+     ⚠️ 1.35（`recent-name` 那一档）实测仍缺 1 设备行；1.5 = 18px 还装得进 22px 的行，
+        再往上就会把整棵树撑胖（判据两头都在 tests/explorer-contract.test.ts）。 */
+  line-height: 1.5;
 }
 /* 层内的说明行（读取中 / 空 / 读不了）：不可点、淡一档，但**占同一缩进**，
    否则「空目录」那句话看起来像挂在上一层。 */

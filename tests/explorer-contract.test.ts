@@ -370,3 +370,53 @@ describe("B318 行内新建 / 改名框与「输入框那一族」同形", () =>
     );
   });
 });
+
+describe("B328 名字那一格的下伸部（p / g / q / j 不许被省略号那层切掉）", () => {
+  /** 取某条规则体（含结尾的 `}`），并**抹掉注释**：判据要读的是声明，不是散文
+   *  —— 注释里那句「行那一族按 1 排」长得跟声明一模一样，留着它就能把这条闸喂假。 */
+  const block = (sel: string): string => {
+    const at = css.indexOf(sel);
+    expect(at, `找不到规则 ${sel}`).toBeGreaterThanOrEqual(0);
+    return css.slice(at, css.indexOf("}", at) + 1).replace(/\/\*[\s\S]*?\*\//g, "");
+  };
+  const num = (body: string, name: string): number => {
+    // 属性名前必须再没有一个 `-`：不然查 `height` 会一头扎进 `line-height`，
+    // 读到 1 还以为量到了行高。（`px?` 是「p 加可选 x」，要写 `(?:px)?` 才是「px 可选」。）
+    const m = body.match(new RegExp(`[;{\\s]${name}:\\s*(\\d+(?:\\.\\d+)?)(?:px)?`));
+    expect(m, `规则里找不到 ${name}（带 px 的量）`).toBeTruthy();
+    return Number(m?.[1]);
+  };
+
+  // 取证（.tmp/descender/，3 倍缩放量像素，字面量都写在这里以免判据悬空）：
+  //   行那一族是 `line-height: 1` ⇒ clip 框只有 12px，而 12px 字号的墨迹要 14px：
+  //   `overflow: visible` 对照组越出框底 **+2.00 CSS px**，现状（hidden）正好把这一截切掉。
+  //   撑高行盒时字不动（内容居中于行盒，行盒上下各长一半），所以只有 clip 框在长：
+  //   1.35 → 仍缺 1 设备行（越框底 −0.43，墨迹短了一档）；1.45 → −0.70；1.5 → −1.00（干净）。
+  const FLOOR = 1.45;
+
+  it("带着 overflow:hidden 的那一格，必须同时带着撑得下下伸部的行高", () => {
+    const name = block(".explorer-name {");
+    // 反例排在正向之前（B219 定式）：先钉住「省略号那层还在」——它是这一格存在的理由，
+    // 也是切掉下伸部的那把刀；把它删了就等于用「不切」换「长文件名顶出边栏」。
+    expect(name, "省略号要靠 overflow:hidden 裁").toMatch(/overflow:\s*hidden/);
+    expect(name, "text-overflow 与它配对，少一半就没有省略号").toMatch(/text-overflow:\s*ellipsis/);
+    const lh = num(name, "line-height");
+    expect(lh, `行盒 ${lh} ⇒ 下伸部被切（判据下限 ${FLOOR}）`).toBeGreaterThanOrEqual(FLOOR);
+    // 自证判据有鉴别力：改回「跟字号同高」的 1，正是被切掉的那一版，必须落空
+    const degraded = name.replace(/line-height:\s*[\d.]+/, "line-height: 1");
+    expect(degraded, "退化串要先自证原句还在").not.toBe(name);
+    expect(num(degraded, "line-height"), "1 那一档就是用户报的那一版").toBeLessThan(FLOOR);
+  });
+
+  it("但 clip 框也不能长过那一行（行高 22px 是树的密度，撑破它就整棵树变胖）", () => {
+    const row = block(".explorer-row,");
+    const rowH = num(row, "height");
+    const fs = num(row, "font-size");
+    expect(row, "行那一族仍按 line-height: 1 排（名字那格自己撑）").toMatch(/line-height:\s*1;/);
+    const name = block(".explorer-name {");
+    const box = num(name, "line-height") * fs;
+    expect(box, `行盒 ${box}px 顶破 ${rowH}px 的行 ⇒ 行高被撑开`).toBeLessThanOrEqual(rowH);
+    // 同一条尺子量「长过头」的替身：必须量出不一样的结论，否则上面那条是恒真的
+    expect(2 * fs, "2 那一档（24px）必须被同一把尺子拒掉").toBeGreaterThan(rowH);
+  });
+});
