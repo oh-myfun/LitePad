@@ -95,6 +95,65 @@ describe("预览岛级增量（B319-A2）", () => {
     expect(now[0].dataset.lineStart).toBe("1");
   });
 
+  // ↓↓ 评审补的两形：删除的两种形状。插入那一形早就钉住了，删除没有 ——
+  // 而「把该留的岛删掉 / 把新岛插错位置」恰恰只在删除时才会露出来。
+  it("删除中间一块：其余岛仍是同一批节点，且新块（若有）插在正确位置", () => {
+    const p = mkPane();
+    p.setBlocks([bk(A, 1), bk(B, 3), bk(C, 5)]);
+    const [a, , c] = islands(p);
+    const bEl = islands(p)[1];
+    p.setBlocks([bk(A, 1), bk(C, 3)]);
+    const now = islands(p);
+    expect(now.length).toBe(2);
+    expect(now[0]).toBe(a);
+    expect(now[1]).toBe(c);
+    expect(bEl.isConnected, "被删的那块还挂在 DOM 上").toBe(false);
+    // 再走一形：删中间一块的同时末尾多出一块 ⇒ 新岛必须排在复用岛之后
+    p.setBlocks([bk(A, 1), bk(C, 3), bk(X, 5)]);
+    const now2 = islands(p);
+    expect(now2[0]).toBe(a);
+    expect(now2[1]).toBe(c);
+    expect(now2[2].textContent).toBe("新插入的一段");
+  });
+
+  it("删除末尾一块：剩下的岛不动，也不许有岛被挪到容器末尾之后", () => {
+    const p = mkPane();
+    p.setBlocks([bk(A, 1), bk(B, 3), bk(C, 5)]);
+    const [a, b] = islands(p);
+    p.setNotice("提示条");
+    p.setBlocks([bk(A, 1), bk(B, 3)]);
+    const now = islands(p);
+    expect(now.length).toBe(2);
+    expect(now[0]).toBe(a);
+    expect(now[1]).toBe(b);
+    expect(p.root.lastElementChild?.className).toBe("md-preview-notice");
+  });
+
+  // 评审争的那一条：`contentChanged` 是不是死代码。用两侧断言把它钉住 ——
+  // 内容变了必须**作废**待定位行（否则下一发被旧行号拽走），内容没变必须**仍然**照它重定位。
+  // 只断言前者就是空转：桩永远不被调用它也是绿。
+  it("开头插入一段 ⇒ 待定位行作废；内容一字没改 ⇒ 仍按待定位行重定位", () => {
+    const mkWithPending = (list: MdBlock[]) => {
+      const p = mkPane();
+      p.setBlocks(list);
+      const calls: number[] = [];
+      const hole = p as unknown as {
+        pendingSyncLine: number | null;
+        applySyncToLine: (n: number) => void;
+      };
+      hole.applySyncToLine = (n: number) => void calls.push(n);
+      hole.pendingSyncLine = 5;
+      return { p, calls };
+    };
+    const a = mkWithPending([bk(A, 1), bk(B, 3)]);
+    a.p.setBlocks([bk(X, 1), bk(A, 3), bk(B, 5)]); // 开头多了一段
+    expect(a.calls, "内容变了还照旧行号重定位 ⇒ 预览会被拽到很久以前跳转过的那行").toEqual([]);
+
+    const b = mkWithPending([bk(A, 1), bk(B, 3)]);
+    b.p.setBlocks([bk(A, 1), bk(B, 3)]); // 一字没改
+    expect(b.calls, "内容没改时待定位行必须仍然生效").toEqual([5]);
+  });
+
   it("写完 scrollTop 之后、setBlocks 返回之前，同栈向账本认领", () => {
     const p = mkPane();
     p.setBlocks([bk(A, 1), bk(B, 3)]);

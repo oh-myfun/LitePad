@@ -189,7 +189,14 @@ function revealSourceLine(panelId: number, line: number): void {
   const panel = getPanel(panelId);
   const tab = panel && panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
   const view = panel?.view;
-  if (!tab || !view) return;
+  if (!tab || !view) {
+    // 静默 return 会被用户读成「那颗双击键是死的」（B314-8 那一族），所以留一条日志。
+    logger.warn(
+      "preview",
+      `双击回源码落空：这一格没有可定位的标签/编辑器 面板=${panelId} 行=${line}`,
+    );
+    return;
+  }
   if (tab.viewMode !== "source") toggleViewMode(tab);
   const doc = view.view.state.doc;
   const target = Math.min(Math.max(1, line), doc.lines);
