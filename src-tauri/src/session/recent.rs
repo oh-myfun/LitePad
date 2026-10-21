@@ -1,7 +1,7 @@
 //! B305 · 最近打开名单的内核（纯逻辑，不碰窗口与 IPC）。
 //!
 //! 盘上位置：`<配置目录>/recents.json`，形如
-//! `{ "limit": 20, "entries": [ { "path", "name", "openedAt" } ] }`，线上格式 camelCase
+//! `{ "limit": 50, "entries": [ { "path", "name", "openedAt" } ] }`，线上格式 camelCase
 //! （与前端 `src/ipc/api.ts` 的 `RecentEntry` 一一对应）。
 //!
 //! ⚠️ 名单**不在 `settings.json` 里**：那张表没有权威窗口，每个窗口都能整表覆写它
@@ -30,8 +30,9 @@ use crate::core::{
     logging::{self, Level},
 };
 
-/// 默认保留条数。设置页「最近打开保留数量」的候选档位与它同一处口径（0/10/20/50/100）。
-pub const DEFAULT_LIMIT: usize = 20;
+/// 默认保留条数。设置页「最近打开保留数量」的候选档位与它同一处口径（0/10/20/50/100），
+/// 其中写着「（默认）」的那一档必须就是这个数（`tests/recents-settings.test.ts` 钉着）。
+pub const DEFAULT_LIMIT: usize = 50;
 
 /// 一条「打开过」的记录。`path` 是**第一次记下它时那条原始路径**（显示用），
 /// `opened_at` 是最后一次打开的毫秒时间戳（相对时间由前端换算，Rust 不碰本地化文案）。

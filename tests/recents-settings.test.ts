@@ -61,4 +61,31 @@ describe("B305 上限项与启动装配", () => {
     expect(readFileSync("src/ui.ts", "utf-8")).not.toContain("closeRecentDrawer");
     expect(readFileSync("src/toc.ts", "utf-8")).not.toContain("closeRecentDrawer");
   });
+
+  it("默认档三处同口径：Rust 的 DEFAULT_LIMIT == 设置页标（默认）那一档 == store 占位值（B323）", () => {
+    const rust = readFileSync("src-tauri/src/session/recent.rs", "utf-8");
+    const dialog = readFileSync("src/shell/settingsdialog.ts", "utf-8");
+    const store = readFileSync("src/recents/store.ts", "utf-8");
+
+    const rustDefault = Number(rust.match(/pub const DEFAULT_LIMIT: usize = (\d+);/)?.[1]);
+    expect(rustDefault, "Rust 侧找不到默认档").toBeGreaterThan(0);
+    expect(rustDefault, "用户口径：默认保留 50 条").toBe(50);
+
+    // 只看「最近打开保留数量」那一行的档位数组（取带引号的那一处，文件头的注释里也有这个词）：
+    // 全文件数「（默认）」没意义，别的行（标签样式「相连（默认）」）也各自标着自己的默认档。
+    const at = dialog.indexOf('"最近打开保留数量"');
+    expect(at, "设置页里找不到那一行").toBeGreaterThan(-1);
+    const row = dialog.slice(at, at + 1200);
+    const marked = row.match(/\{ label: "(\d+) 条（默认）", value: "(\d+)" \}/);
+    expect(marked, "那一行必须恰有一档写着（默认）").toBeTruthy();
+    expect([...row.matchAll(/（默认）/g)], "一行里两处标默认等于没标").toHaveLength(1);
+    expect(Number(marked![2]), "label 写的条数与 value 必须同一个数").toBe(Number(marked![1]));
+    expect(Number(marked![2]), "设置页的默认档要跟 Rust 一致").toBe(rustDefault);
+
+    const placeholder = Number(store.match(/^let limit = (\d+);/m)?.[1]);
+    expect(
+      placeholder,
+      "store 的占位值要跟 Rust 一致（首帧 aria-label「N 条，上限 M」与「上限 0 收起入口」都读它）",
+    ).toBe(rustDefault);
+  });
 });

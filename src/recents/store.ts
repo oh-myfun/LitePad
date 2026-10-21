@@ -29,8 +29,9 @@ import {
 } from "../ipc/api";
 
 let entries: RecentEntry[] = [];
-/** 初值只是占位：真正的上限以 Rust 为准（`initRecentsStore` 与每次改完都重新取）。 */
-let limit = 20;
+/** 初值只是占位：真正的上限以 Rust 为准（`initRecentsStore` 与每次改完都重新取）。
+ *  这个数与 Rust 的 `DEFAULT_LIMIT` 必须同口径 —— 首帧的「上限 N」与 B306 那颗键的收起都读它。 */
+let limit = 50;
 /**
  * 请求序号。回包到达顺序**没有保证**：连发两报时旧那一包可能后到，直接写缓存就会把
  * 名单退回旧状态（用户读作「刚打开的那份没露脸」）。只认最新那一个。
@@ -103,7 +104,7 @@ export async function initRecentsStore(): Promise<void> {
   }
   try {
     limit = await rpcGetRecentLimit();
-    // ⚠️ 上限到手要**再通知一次**：上面那次（`setEntries`）带的还是模块里的占位 20。
+    // ⚠️ 上限到手要**再通知一次**：上面那次（`setEntries`）带的还是模块里的占位上限。
     // 漏了这一发，面板首帧的计数会写成「1/20」，而 B306 那条「上限 0 收起入口」更是
     // 直接拿错口径 —— 真上限是 0 时那颗键会留在按钮列里点不开。
     notify();

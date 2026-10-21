@@ -460,9 +460,10 @@ export function showSettingsDialog(opts: SettingsDialogOptions): void {
   const pages: Record<string, HTMLElement> = {};
   let keymapFilter: ((q: string) => void) | null = null;
   let keymapHandle: KeymapPageHandle | null = null;
-  // 默认停在「外观」——显式写死，避免分类顺序调整（如把「通用」提到首位）时
-  // 默认页跟着漂移；主题仍是最常改的一项。
-  let active = "appearance";
+  // 默认停在「通用」——显式写死，避免分类顺序调整时默认页跟着漂移（B323 用户口径：
+  // 打开设置先落在通用那一页）。改这条要连 `tests/settingsdialog.test.ts` 里那条
+  // 「默认停在通用」一起改，那一条是这一句唯一的运行时证据。
+  let active = "general";
 
   function visibleCategories(q: string): string[] {
     const query = q.trim().toLowerCase();
@@ -785,8 +786,8 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
         [
           { label: "不记录（0）", value: "0" },
           { label: "10 条", value: "10" },
-          { label: "20 条（默认）", value: "20" },
-          { label: "50 条", value: "50" },
+          { label: "20 条", value: "20" },
+          { label: "50 条（默认）", value: "50" },
           { label: "100 条", value: "100" },
         ],
         String(opts.recentLimit()),

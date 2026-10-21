@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // B106 统一设置页运行时测试：
-// 1) 打开后是三栏结构（顶部搜索 + 左侧分类导航 + 右侧设置项），默认停在「外观」；
+// 1) 打开后是三栏结构（顶部搜索 + 左侧分类导航 + 右侧设置项），默认停在「通用」；
 // 2) 控件初值取自 opts 的 getter，change 立即回调对应 setter（即时生效 + 持久化由 main 负责）；
 // 3) 「快捷键」作为其中一个分类，复用 keymapdialog 的改键界面；
 // 4) 顶部搜索按分类过滤左侧导航；
@@ -124,15 +124,20 @@ describe("B106 统一设置页：三栏结构", () => {
     expect(document.querySelector(".settings-content"), "应有右侧内容区").toBeTruthy();
   });
 
-  it("左侧分类导航含 5 个分类（通用在前），默认停在「外观」", () => {
+  it("左侧分类导航含 5 个分类（通用在前），默认停在「通用」", () => {
     showSettingsDialog(makeOpts());
     // B229：原「Markdown 预览」分类已并入「编辑器」，导航少一项。
     expect(navItems()).toEqual(["通用", "外观", "编辑器", "新建文件", "快捷键"]);
-    const appearance = [...document.querySelectorAll(".settings-page")].find(
-      (p) => p.querySelector(".settings-page-title")?.textContent === "外观",
-    ) as HTMLElement | undefined;
+    const pageByTitle = (t: string) =>
+      [...document.querySelectorAll(".settings-page")].find(
+        (p) => p.querySelector(".settings-page-title")?.textContent === t,
+      ) as HTMLElement | undefined;
+    const general = pageByTitle("通用");
+    const appearance = pageByTitle("外观");
+    expect(general, "应有通用分类页").toBeTruthy();
     expect(appearance, "应有外观分类页").toBeTruthy();
-    expect(appearance!.hidden, "外观分类默认应可见").toBe(false);
+    expect(general!.hidden, "通用分类默认应可见（B323 用户口径：打开设置先落在通用）").toBe(false);
+    expect(appearance!.hidden, "默认停在通用 ⇒ 外观那一页此刻该藏着").toBe(true);
     expect(rowValue("主题"), "默认主题应为 system").toBe("system");
   });
 
@@ -255,7 +260,7 @@ describe("B106 设置项：初值 + 即时回调", () => {
     opts.onHotExit = (v) => calls.push(`hotExit:${v}`);
     showSettingsDialog(opts);
 
-    // 切到「通用」分类（默认停在「外观」）
+    // 「通用」是 B323 之后的默认页，这一发点击点的是**已经停着**的那一页 —— 顺带钉住重点不炸
     const generalNav = [...document.querySelectorAll(".settings-nav-item")].find(
       (b) => b.textContent === "通用",
     ) as HTMLButtonElement;
