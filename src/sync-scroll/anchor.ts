@@ -88,6 +88,10 @@ export class EditorScrollAnchor implements ScrollAnchor {
    * （真机验证台 S8 实测差 52px）。报成末尾之后由各侧容器自然裁剪 ⇒ 各到各的底。
    *
    * 压根不能滚（`max <= 0`）时**不认**到底：短文档的 `scrollTop` 恒 0，认了就永远报末尾。
+   *
+   * ⚠️ 这里报的 `doc.lines` 能与预览侧的末块 `lineEnd` 对上，靠的是 B268 那条末块修正
+   *    （`markdown/pipeline.ts` 把末块 `lineEnd` 拉到文档末行）。谁改那段，两侧底坐标就差一截，
+   *    而且退化成「每次到底都走满补写三轮」—— 闭环判据见 `tests/sync-scroll-bottom.test.ts`。
    */
   private atBottom(): number | null {
     const el = this.view.scrollDOM;

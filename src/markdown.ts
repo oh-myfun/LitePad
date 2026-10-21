@@ -207,6 +207,12 @@ function revealSourceLine(panelId: number, line: number): void {
   });
   tab.state = view.view.state;
   syncCoordinator.syncTo(String(tab.docId), target);
+  // ⚠️ 翻态那一发（`toggleViewMode` 末尾的落位）可能**没写进去**：编辑器刚现形、还没有布局，
+  // 写入被裁到 0 ⇒ 账本记下「欠这一格 keepV」并把滚动面先藏起来按帧重试（B294/B295）。
+  // 我们后面这两下（scrollIntoView / syncTo）都不碰那笔欠账 ⇒ 链条会把它一直拽回
+  // 「切走之前」的位置。补一发以**目标行**为意图的落位：欠账被改写成我们要的那个 v，
+  // 落不进去时重试的也是它（评审 I2）。
+  landVisibleSideAtV(panel, target);
   view.view.focus();
 }
 

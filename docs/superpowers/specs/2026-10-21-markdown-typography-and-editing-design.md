@@ -14,8 +14,8 @@
 `pipeline.ts` / `preview.ts` 的真实结构造岛），Chromium 内核实测相邻岛间隙：
 
 | 相邻 | P→P | H1→P | P→H2 | H2→P | P→UL | UL→QUOTE | QUOTE→PRE | PRE→P |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| px  | 0   | 0    | 0    | 0    | 4    | 4      | 0         | 0     |
+| ---- | --- | ---- | ---- | ---- | ---- | -------- | --------- | ----- |
+| px   | 0   | 0    | 0    | 0    | 4    | 4        | 0         | 0     |
 
 机制（`src/styles/preview.css:65-75`）：每个岛是 `div.md-block > 单个元素`，而 `.md-block` 自己只吃
 `margin: 0 auto`（上下为 0），同时 `> :first-child{margin-top:0}` 与 `:last-child{margin-bottom:0}`
@@ -26,13 +26,13 @@
 
 ## 调研结论（四方对照，作为决策依据）
 
-| | 渲染/解析 | 编辑内核 | 真值 | 增量 | 写回源码 |
-| --- | --- | --- | --- | --- | --- |
-| LitePad 现状 | markdown-it 15 + KaTeX + Shiki + mermaid 12 | 无（只读 innerHTML） | CM6 文本 | 岛级、**按下标**比 html | 不涉及 |
-| InkNote | CM6 装饰（无预览 DOM） | CM6 本体 | CM6 文本 | CM6 事务 | 同文本，无往返 |
-| VS Code 内置预览 | markdown-it 14 | 无 | TextDocument | **morphdom** 逐元素 diff | 不涉及 |
-| VS Code 新 `@vscode/markdown-editor` | markdown-it 14 | 自研实验型自定义编辑器 | **仍是 TextDocument** | 增量 | 区间编辑 |
-| vscode-office（cweijan）4.2.2 | **Lute**（Go→JS 引擎） | **Vditor 私有 fork**（vendored，非 npm） | contenteditable DOM | 块级 `SpinVditorDOM` | **400ms 防抖 + 整文档 replace** |
+|                                      | 渲染/解析                                   | 编辑内核                                 | 真值                  | 增量                     | 写回源码                        |
+| ------------------------------------ | ------------------------------------------- | ---------------------------------------- | --------------------- | ------------------------ | ------------------------------- |
+| LitePad 现状                         | markdown-it 15 + KaTeX + Shiki + mermaid 12 | 无（只读 innerHTML）                     | CM6 文本              | 岛级、**按下标**比 html  | 不涉及                          |
+| InkNote                              | CM6 装饰（无预览 DOM）                      | CM6 本体                                 | CM6 文本              | CM6 事务                 | 同文本，无往返                  |
+| VS Code 内置预览                     | markdown-it 14                              | 无                                       | TextDocument          | **morphdom** 逐元素 diff | 不涉及                          |
+| VS Code 新 `@vscode/markdown-editor` | markdown-it 14                              | 自研实验型自定义编辑器                   | **仍是 TextDocument** | 增量                     | 区间编辑                        |
+| vscode-office（cweijan）4.2.2        | **Lute**（Go→JS 引擎）                      | **Vditor 私有 fork**（vendored，非 npm） | contenteditable DOM   | 块级 `SpinVditorDOM`     | **400ms 防抖 + 整文档 replace** |
 
 对本地安装 `~/.vscode/extensions/cweijan.vscode-office-4.2.2` 逐字核对到的四条实据：
 
@@ -79,11 +79,21 @@
 /* ⚠️ 更正（实施时定稿）：这三档**只在用点写 `var(--x, 兜底)`**，绝不在 `:root`/`.md-preview`
    上声明 —— 声明了就把「将来设置页要往 :root 写这几颗变量」的那条路堵死（B238 同一族陷阱）。
    值：--md-flow 0.7em / --md-head-flow 1.6em / --md-after-head 0.8em（15px 基准 ≈ 10.5/24/12px）。 */
-.md-preview .md-block + .md-block { margin-top: var(--md-flow, 0.7em); }
-.md-preview .md-block:has(> :is(h1,h2,h3)) + .md-block:not(:has(> :is(h1,h2,h3,h4,h5,h6))) { margin-top: var(--md-after-head, 0.8em); }
-.md-preview .md-block + .md-block:has(> :is(h1,h2,h3,h4,h5,h6)) { margin-top: var(--md-head-flow, 1.6em); }
-.md-preview li:first-child { margin-top: 0; }
-.md-preview li:last-child { margin-bottom: 0; }
+.md-preview .md-block + .md-block {
+  margin-top: var(--md-flow, 0.7em);
+}
+.md-preview .md-block:has(> :is(h1, h2, h3)) + .md-block:not(:has(> :is(h1, h2, h3, h4, h5, h6))) {
+  margin-top: var(--md-after-head, 0.8em);
+}
+.md-preview .md-block + .md-block:has(> :is(h1, h2, h3, h4, h5, h6)) {
+  margin-top: var(--md-head-flow, 1.6em);
+}
+.md-preview li:first-child {
+  margin-top: 0;
+}
+.md-preview li:last-child {
+  margin-bottom: 0;
+}
 ```
 
 - **顺序与具体度都是承重的**：第一行 `.md-preview .md-block + .md-block` 是 3 个类（0,3,0）；
@@ -123,6 +133,12 @@
    一旦同时改位置语义，真机 B288 那一族用例就分不出「回归」还是「新口径」。
    「敲第一段、视线跟着自己那一行走」是**另一件事**，另立一轮再提。
    那两个滚动守卫**保留**：变更区在视口上方时布局照样变，仍需按原位扶。
+   > **实施后补记的一条口径变更（待使用者确认）**：A1 的块间节奏把两侧「顶对齐同一源行」之后
+   > 各自剩余高度推得不相等，真机台 S8「各自到底」差到 52px 转红。收口方式不是放宽容差，而是
+   > 两侧锚点在**被自己的可滚上限裁住**时把共享坐标饱和成文档末行，对侧 `setV` 把这一发兑现成
+   > 自己的底（提交 `085f64e`）。这等于把 B268 那条「定位到末行 = 末行顶对齐」在**到不了底时**
+   > 重新解释成「到底」。闭环判据见 `tests/sync-scroll-bottom.test.ts`；
+   > 两侧饱和值之所以能对齐，靠的是 B268 已把末块 `lineEnd` 拉到文档末行（`pipeline.ts` 末块修正）。
 5. 写完 `scrollTop` 之后**同一同步调用栈内**继续 `declareOwnScroll()`，同步滚动账本纪律不变
    （`:437-451`）。`blocks()` 是实时量岛矩形的，岛集合变了就重测，没有缓存要失效。
 6. `setNotice()` 那个非岛子节点必须在 patch 之后仍是最后一个；查找标记仍整片拆掉重放（口径不变）。

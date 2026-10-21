@@ -247,4 +247,33 @@ describe("B130 同源多实例：代码 / 预览各自回各的", () => {
       "切回预览重渲染后视口应接住（replaceChildren 会清零 scrollTop）",
     ).toBe(500);
   });
+
+  // B319-A3 的端到端判据（评审 I1：这条以前只有「读源码文本」的静态契约）。
+  // 它恰好是 B301 / B293 两族病根的交汇点，而顺序错了在这里就是看得见的：
+  // 光标会停在切走之前那一行，而不是被双击那一块的首行。
+  it("双击预览里某一块：翻回源码态，光标落在被点那一块的首行", async () => {
+    clickTab(tabEls()[1]); // 先站到「看预览」的那个实例上
+    await wait(60);
+    expect(host().classList.contains("mode-preview"), "前置：这一格应是预览态").toBe(true);
+
+    const src = Array.from(
+      { length: 40 },
+      (_, i) => `# 标题 ${i + 1}\n\n正文第 ${i + 1} 段。`,
+    ).join("\n\n");
+    const want = "正文第 7 段。";
+    const wantLine = src.split("\n").indexOf(want) + 1; // 期望行号由**正文**独立算出，不读 dataset
+    const island = Array.from(previewRoot()!.querySelectorAll<HTMLElement>(".md-block")).find(
+      (el) => (el.textContent ?? "").includes(want),
+    );
+    expect(island, `预览里应找得到「${want}」那一块`).toBeTruthy();
+
+    island!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    await wait(120);
+
+    expect(host().classList.contains("mode-source"), "双击后应翻回源码态").toBe(true);
+    expect(
+      cursorLine(),
+      `光标应落在「${want}」（独立算出的第 ${wantLine} 行），实际第 ${cursorLine()} 行`,
+    ).toBe(wantLine);
+  });
 });
