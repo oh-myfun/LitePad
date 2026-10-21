@@ -26,6 +26,7 @@ import {
   retitleRecent,
   setRecentLimit as rpcSetRecentLimit,
   type RecentEntry,
+  type RecentKind,
 } from "../ipc/api";
 
 let entries: RecentEntry[] = [];
@@ -54,17 +55,20 @@ function setEntries(next: RecentEntry[]): void {
 }
 
 /**
- * 记一笔「用户打开了这份文件」。唯一调用点是 `io/files.ts` 的 `doOpen` —— 那里是所有打开
- * 动作共用的漏斗（文件对话框、拖放、文件关联、点名单那一行、设置页打开日志）。
+ * 记一笔「用户打开了这一条」。两个调用点，各管一类：
+ *   · `io/files.ts` 的 `doOpen` —— 所有**打开文件**动作共用的漏斗（文件对话框、拖放、
+ *     文件关联、点名单那一行、设置页打开日志）；
+ *   · `explorer/panel.ts` 的 `openFolder` —— **打开文件夹**（B332；启动回放根走 store.setRoot，
+ *     不经这一扇，所以「恢复不算打开」那条裁决对两类都成立，不需要额外旗标）。
  *
  * 回包是变更后的完整名单，直接进缓存；`requestSeq` 那道闸照样适用（连点两行名单时，
  * 旧那一包后到会把手上这份写回旧样子）。
  */
-export function noteOpened(path: string): void {
+export function noteOpened(path: string, kind: RecentKind = "file"): void {
   const seq = ++requestSeq;
   let send: Promise<RecentEntry[]>;
   try {
-    send = noteOpenedPath(path);
+    send = noteOpenedPath(path, kind);
   } catch (e: unknown) {
     // ⚠️ 这一发挂在 `doOpen` 的主干上：名单取不成都不能把「打开文件」带崩。
     logger.warn("recents", `打开记录没记上：${String(e)}`);

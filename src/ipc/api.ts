@@ -207,10 +207,18 @@ export interface Settings {
  * 文案归界面。B305 那版这个字段叫 `closedAt`（名单只收关掉的），B308 语义翻成「打开过就在册，
  * LRU 维护」后改了名；旧盘由 Rust 那侧的 serde alias 认下来，前端不许再读旧键。
  */
+/** B332：名单里的两类。取值与 Rust 的 `RecentKind`（`#[serde(rename_all = "lowercase")]`）逐字对齐。 */
+export type RecentKind = "file" | "folder";
+
 export interface RecentEntry {
   path: string;
   name: string;
   openedAt: number;
+  /**
+   * B332 起才有这一格。旧盘（`recents.json` 里没它）由 Rust 读成 `"file"`，
+   * 所以这里可以当它总是存在 —— 前端不许再写一份「没有就当文件」的兜底，两处判会错开。
+   */
+  kind: RecentKind;
 }
 
 /** 列名单。Rust 顺手剔掉磁盘上已不存在的条目，所以这里可能比上一次少几条。 */
@@ -219,18 +227,18 @@ export function listRecents(): Promise<RecentEntry[]> {
 }
 
 /**
- * 「用户打开了一份文件」⇒ 记一笔（Rust 侧 LRU 顶到最前）。
+ * 「用户打开了一份文件 / 一个文件夹」⇒ 记一笔（Rust 侧 LRU 顶到最前，上限**每类各一份**）。
  *
- * ⚠️ 只由 `doOpen` 那一发调用（`src/io/files.ts`）：记的是**打开这个动作**，不是「某条路径
- * 出现在屏上」。会话恢复会让文件出现在屏上，却没人打开它（用户裁决「恢复不算打开」），
- * 而恢复走 `session/rebuild` 直接调 `open_file`，压根不经 `doOpen` —— 所以这里不需要
- * 「启动那一会儿别记」那种时间窗或旗标。
+ * ⚠️ 只由**打开这个动作**调用：文件走 `src/io/files.ts` 的 `doOpen`，文件夹走
+ * `src/explorer/panel.ts` 的 `openFolder`。会话恢复会让路径出现在屏上，却没人打开它
+ * （用户裁决「恢复不算打开」），而恢复走 `session/rebuild` 直接调 `open_file`、启动回放根
+ * 走 `store.setRoot` —— 都不经这两扇，所以这里不需要「启动那一会儿别记」的时间窗或旗标。
  *
  * 回包是**变更后的完整名单**（`forgetRecent` / `clearRecents` 同），视图直接拿它重画，
  * 不必再 `listRecents` 一次 —— 少一次往返就少一次读到中间态的机会。
  */
-export function noteOpenedPath(path: string): Promise<RecentEntry[]> {
-  return invoke<RecentEntry[]>("note_opened", { path });
+export function noteOpenedPath(path: string, kind: RecentKind = "file"): Promise<RecentEntry[]> {
+  return invoke<RecentEntry[]>("note_opened", { path, kind });
 }
 
 /** 单条清除（行上那颗 ✕）。 */

@@ -16,6 +16,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { windowKind, settings } from "../core/app-state";
 import { createDir, createFile, revealInFolder, saveSettings, type FsEntry } from "../ipc/api";
 import { doOpen } from "../io/files";
+import { noteOpened } from "../recents/store";
 import { CODICONS } from "../shell/codicons";
 import { activeDrawer, registerDrawerView, setDrawer } from "../shell/drawer";
 import { showPopupMenu, type MenuItem } from "../shell/menu";
@@ -72,6 +73,9 @@ let visible: string[] = [];
 /** 换根：读盘上那个路径、写回设置。空串 = 关闭文件夹（树收干净）。 */
 export async function openFolder(path: string): Promise<void> {
   setRoot(path);
+  // B332：换根就是「用户打开了这个文件夹」⇒ 往最近名单记一条。空串（关闭）不记。
+  // 启动回放那一路走 `store.setRoot`，不经这一扇 —— 「恢复不算打开」对两类都成立。
+  if (path) noteOpened(path, "folder");
   if (!settings) return;
   settings.folder_root = path;
   await saveSettings(settings).catch(() => {

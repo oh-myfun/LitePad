@@ -393,6 +393,16 @@
   flex: 1 1 auto;
   min-width: 0;
 }
+/* B332：分组标题那一行（文件夹 / 文件）。与 `.recent-head` 同一档「区块标题」读法：
+   11px、muted、不可点 —— 它不是条目，dataset.path 与那颗 ✕ 一概不挂。
+   上下只留 2px：它夹在两组条目中间，再松就把「一组」拆成两段看。 */
+.recent-group {
+  padding: 2px 10px 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg-muted, #656d76);
+  user-select: none;
+}
 .recent-name {
   overflow: hidden;
   text-overflow: ellipsis;

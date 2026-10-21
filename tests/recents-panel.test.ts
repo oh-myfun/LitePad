@@ -9,7 +9,13 @@ import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 
 const h = vi.hoisted(() => ({
-  entries: [] as { path: string; name: string; openedAt: number }[],
+  entries: [] as {
+    path: string;
+    name: string;
+    openedAt: number;
+    /** B332：旧样本一律不写这一格 = 当作文件（与 Rust 读旧盘的 `#[serde(default)]` 同一口径）。 */
+    kind?: "file" | "folder";
+  }[],
   limit: 20,
   onRecentsChange: vi.fn((_cb: (e: unknown[]) => void) => () => {}),
   forgetRecentEntry: vi.fn(() => Promise.resolve()),
@@ -80,6 +86,45 @@ beforeEach(() => {
 const rows = () => [...document.querySelectorAll<HTMLElement>(".recent-row")];
 
 describe("B305 最近打开面板", () => {
+  it("B332：文件夹那一组始终排在文件之上，两类都在时才挂分组标题", () => {
+    const now = Date.now();
+    h.entries = [
+      { path: "C:\\notes\\a.md", name: "a.md", openedAt: now - 1_000 },
+      { path: "D:\\工作\\报价", name: "报价", openedAt: now - 2_000, kind: "folder" },
+      { path: "C:\\notes\\b.md", name: "b.md", openedAt: now - 3_000 },
+      { path: "D:\\other", name: "other", openedAt: now - 4_000, kind: "folder" },
+    ];
+    panel.renderRecents();
+    expect(
+      rows().map((r) => r.dataset.path),
+      "桶内保持 Rust 给的那个顺序（新→旧），桶间才是文件夹在上",
+    ).toEqual(["D:\\工作\\报价", "D:\\other", "C:\\notes\\a.md", "C:\\notes\\b.md"]);
+    expect(
+      [...document.querySelectorAll(".recent-group")].map((g) => g.textContent),
+      "两类都在 ⇒ 各挂一个标题，否则光看名字分不清哪个是目录",
+    ).toEqual(["文件夹", "文件"]);
+  });
+
+  it("B332：只有一类时不挂标题（整屏本来就是那一类，标题是噪音）", () => {
+    seed(); // 三条全是文件
+    panel.renderRecents();
+    expect(document.querySelectorAll(".recent-group").length).toBe(0);
+    expect(rows().length, "行数不许因为标题而少一条").toBe(3);
+  });
+
+  it("B332：计数那颗按两类各报一次（上限现在是**每类**的，合起来报会读成「快满了」）", () => {
+    const now = Date.now();
+    h.entries = [
+      { path: "D:\\工作\\报价", name: "报价", openedAt: now - 1_000, kind: "folder" },
+      { path: "D:\\other", name: "other", openedAt: now - 2_000, kind: "folder" },
+      { path: "C:\\notes\\a.md", name: "a.md", openedAt: now - 3_000 },
+    ];
+    h.limit = 20;
+    panel.renderRecents();
+    expect(ui.recentCount.textContent).toBe("2+1/20");
+    expect(ui.recentCount.getAttribute("aria-label")).toBe("文件夹 2 条、文件 1 条，每类上限 20");
+  });
+
   it("点「最近打开」⇒ 自己摊开、大纲收起（两块互斥，同时只露一块）", () => {
     drawer.setDrawer("recent", false);
     expect(ui.recentPanel.hidden, "最近打开没摊开").toBe(false);
@@ -121,9 +166,9 @@ describe("B305 最近打开面板", () => {
     expect(row.getAttribute("data-tip-detail")).toContain("分钟前");
   });
 
-  it("标题栏计数是「当前条数/上限」", () => {
-    panel.renderRecents();
-    expect(ui.recentCount.textContent).toBe("3/20");
+  it("标题栏计数是「文件夹+文件/每类上限」（B332 起两类各一份额度）", () => {
+    panel.renderRecents(); // seed() 那三条都是文件
+    expect(ui.recentCount.textContent).toBe("0+3/20");
   });
 
   it("上限 0 ⇒ 空态说清「不是还没打开过，是不再记录」", () => {
@@ -169,7 +214,7 @@ describe("B305 最近打开面板", () => {
   it("名单空 ⇒ 空态是「还没有打开过的文件」", () => {
     h.entries = [];
     panel.renderRecents();
-    expect(ui.recentList.textContent).toBe("还没有打开过的文件");
+    expect(ui.recentList.textContent).toBe("还没有打开过的文件或文件夹");
   });
 
   it("点一行 ⇒ 用那一行的路径走现有打开流程", () => {

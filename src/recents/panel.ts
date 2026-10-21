@@ -77,8 +77,15 @@ export function renderRecents(): void {
   // 而点亮态与 `is-collapsed` 仍由 `setDrawer` 那一个出口翻，这里不自己改 DOM。
   sideRecent.hidden = cap === 0;
   if (cap === 0 && activeDrawer() === "recent") setDrawer(null);
-  recentCount.textContent = `${list.length}/${cap}`;
-  recentCount.setAttribute("aria-label", `${list.length} 条，上限 ${cap}`);
+  // B332：两类各一份额度 ⇒ 计数分两段报。「23/20」这种合起来的读法会把人吓一跳
+  //（其实一类都没满），而「满了没地方放新的」正是用户调上限时唯一想知道的事。
+  const folders = list.filter((e) => e.kind === "folder");
+  const files = list.filter((e) => e.kind !== "folder");
+  recentCount.textContent = `${folders.length}+${files.length}/${cap}`;
+  recentCount.setAttribute(
+    "aria-label",
+    `文件夹 ${folders.length} 条、文件 ${files.length} 条，每类上限 ${cap}`,
+  );
   recentClear.setAttribute("data-tip", list.length === 0 ? "没有可清空的记录" : "清空全部");
   recentList.replaceChildren();
   if (list.length === 0) {
@@ -86,11 +93,25 @@ export function renderRecents(): void {
     empty.className = "recent-empty";
     // 两种空态得分开说：「还没打开过」与「不再记录」是两件不同的事，
     // 混成一句，用户把上限调成 0 之后会以为功能坏了。
-    empty.textContent = cap === 0 ? "已停止记录（上限为 0）" : "还没有打开过的文件";
+    empty.textContent = cap === 0 ? "已停止记录（上限为 0）" : "还没有打开过的文件或文件夹";
     recentList.append(empty);
     return;
   }
-  for (const e of list) recentList.append(rowOf(e));
+  // 文件夹那一组永远在文件之上（用户点名，与 VS Code 的 Open Recent 同序）。
+  // 标题只在两类都在时才挂：只有一类时它是噪音，还白占一行。
+  const both = folders.length > 0 && files.length > 0;
+  if (both) recentList.append(groupHead("文件夹"));
+  for (const e of folders) recentList.append(rowOf(e));
+  if (both) recentList.append(groupHead("文件"));
+  for (const e of files) recentList.append(rowOf(e));
+}
+
+/** 分组标题那一行（不可点：它不是条目，`rowOf` 那套 dataset.path / ✕ 一概不挂）。 */
+function groupHead(label: string): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "recent-group";
+  el.textContent = label;
+  return el;
 }
 
 /**

@@ -63,11 +63,13 @@ beforeEach(() => {
 });
 
 describe("B308 记入：一次打开报一发", () => {
-  it("路径原样交出去（显示与身份键都由 Rust 定）", async () => {
+  it("路径原样交出去（显示与身份键都由 Rust 定），类型不写就是 file", async () => {
     const store = await fresh();
     store.noteOpened("C:\\x\\a.md");
     expect(h.noteOpenedPath).toHaveBeenCalledTimes(1);
-    expect(h.noteOpenedPath.mock.calls[0]).toEqual(["C:\\x\\a.md"]);
+    expect(h.noteOpenedPath.mock.calls[0]).toEqual(["C:\\x\\a.md", "file"]);
+    store.noteOpened("D:\\工作\\报价", "folder");
+    expect(h.noteOpenedPath.mock.calls[1]).toEqual(["D:\\工作\\报价", "folder"]);
   });
 
   it("同一份文件再打开一次也要再报（LRU 要顶到最前，这里没有「报过就不报」那种闸）", async () => {

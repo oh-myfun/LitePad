@@ -48,22 +48,28 @@ describe("B305 前端 IPC 薄包装", () => {
     );
 
     await noteOpenedPath("a.md");
-    expect(invokeSpy.mock.calls[1], "参数是**一份**路径，不是集合（记的是打开动作）").toEqual([
+    expect(
+      invokeSpy.mock.calls[1],
+      "参数是**一份**路径 + 一类，不是集合（记的是打开动作）",
+    ).toEqual(["note_opened", { path: "a.md", kind: "file" }]);
+    // B332：不写第二颗 = 文件；写 folder 就原样带过去（Rust 按它分桶算上限）
+    await noteOpenedPath("D:\\工作\\报价", "folder");
+    expect(invokeSpy.mock.calls[2]).toEqual([
       "note_opened",
-      { path: "a.md" },
+      { path: "D:\\工作\\报价", kind: "folder" },
     ]);
 
     await forgetRecent("a.md");
-    expect(invokeSpy.mock.calls[2]).toEqual(["forget_recent", { path: "a.md" }]);
+    expect(invokeSpy.mock.calls[3]).toEqual(["forget_recent", { path: "a.md" }]);
 
     await clearRecents();
-    expect(invokeSpy.mock.calls[3]?.[0]).toBe("clear_recents");
+    expect(invokeSpy.mock.calls[4]?.[0]).toBe("clear_recents");
 
     await getRecentLimit();
-    expect(invokeSpy.mock.calls[4]?.[0]).toBe("get_recent_limit");
+    expect(invokeSpy.mock.calls[5]?.[0]).toBe("get_recent_limit");
 
     await setRecentLimit(50);
-    expect(invokeSpy.mock.calls[5]).toEqual(["set_recent_limit", { limit: 50 }]);
+    expect(invokeSpy.mock.calls[6]).toEqual(["set_recent_limit", { limit: 50 }]);
   });
 
   it("改过名单的三条命令把 Rust 回包的完整名单原样交给调用方（视图不必再 list 一次）", async () => {

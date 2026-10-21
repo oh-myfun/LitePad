@@ -102,7 +102,7 @@ describe("B305/B308 · Rust 命令注册与窗口销毁那条链", () => {
 describe("B308 · 记入只挂在「打开」这一处（恢复不算打开）", () => {
   const files = readFileSync("src/io/files.ts", "utf-8");
 
-  it("唯一调用点在 doOpen，且排在 openFile 成功之后（拿退化替身自证判据有牙）", () => {
+  it("文件的记入点在 doOpen，且排在 openFile 成功之后（拿退化替身自证判据有牙）", () => {
     // ⚠️ 替身在内存里造，**不往交付文件里注破坏内容**：那种做法会被拦下来，还会留下坏文件。
     const check = (src: string): string[] => {
       const v: string[] = [];
@@ -228,5 +228,69 @@ describe("B305 · 侧栏结构与子窗口收口", () => {
     const icons = readFileSync("src/shell/codicons.ts", "utf-8");
     expect(icons).toMatch(/history:\s*"history"/);
     expect(icons).toMatch(/trash:\s*"trash"/);
+  });
+});
+
+describe("B332 · 两类条目：kind 两端对齐 + 文件夹的记入点", () => {
+  const api = readFileSync("src/ipc/api.ts", "utf-8");
+  const recentRs = readFileSync("src-tauri/src/session/recent.rs", "utf-8");
+  const explorer = readFileSync("src/explorer/panel.ts", "utf-8");
+  const boot = readFileSync("src/main.ts", "utf-8");
+
+  it("kind 这一格两端同名同取值（拼错不会报错，只会把文件夹悄悄记成文件）", () => {
+    expect(api, "前端要发 { path, kind }").toContain(
+      'invoke<RecentEntry[]>("note_opened", { path, kind })',
+    );
+    const body = between(recentsRs, "pub fn note_opened(", "/// 列名单");
+    expect(
+      body,
+      "Rust 那侧收 RecentKind 而不是裸 String：非法值要当场反序列化失败，不许静默当成文件",
+    ).toMatch(/kind:\s*RecentKind/);
+    expect(
+      recentRs,
+      "枚举序列化成小写串，与前端那两个字符串字面量（file / folder）逐字对齐",
+    ).toMatch(/#\[serde\(rename_all = "lowercase"\)\]/);
+    expect(
+      recentRs,
+      "旧盘没这一格 ⇒ 必须 default 成 File。少了它整表反序列化失败，而 load() 的兜底是「异常回落空名单」，用户读作「升级后最近打开全没了」",
+    ).toMatch(/#\[serde\(default\)\]\s*\n\s*pub kind:\s*RecentKind/);
+  });
+
+  it("上限现在是**每类**一份：裁剪必须走按桶那个口子，不许退回 truncate", () => {
+    expect(
+      recentRs,
+      "`entries.truncate(limit)` 是「两类合起来算」：连开几个文件就把上午那个目录挤没了",
+    ).not.toMatch(/r\.entries\.truncate\(r?\.?limit\)/);
+    expect(recentRs, "touch_opened 与 apply_limit 必须共用同一个裁剪口子").toMatch(
+      /trim_per_bucket\(r\)/,
+    );
+    const n = (recentRs.match(/trim_per_bucket\(r\)/g) ?? []).length;
+    expect(n, "两处（记入后、改上限后）都得裁，漏一处就是「上限改了但名单没跟着瘦」").toBe(2);
+  });
+
+  it("文件夹的记入点在 openFolder，且空串（关闭文件夹）不记", () => {
+    const at = explorer.indexOf("export async function openFolder(");
+    expect(at, "找不到 openFolder 的声明").toBeGreaterThan(-1);
+    const body = explorer.slice(at, explorer.indexOf("\n}", at) + 2);
+    expect(body, "换根要记一条 folder").toContain('noteOpened(path, "folder")');
+    expect(body, "关闭文件夹传的是空串：记了就是「被我关掉的东西出现在最近打开里」").toMatch(
+      /if \(path\) noteOpened/,
+    );
+    // 自证判据有牙：抹掉那道守卫，上面那条必须落空
+    const degraded = body.replace(
+      'if (path) noteOpened(path, "folder");',
+      'noteOpened(path, "folder");',
+    );
+    expect(degraded, "退化替身必须真的改了地方").not.toEqual(body);
+    expect(degraded).not.toMatch(/if \(path\) noteOpened/);
+  });
+
+  it("启动回放那一发不记：它走 store.setRoot，压根不经 openFolder", () => {
+    const at = boot.indexOf("setExplorerRoot(folderRoot)");
+    expect(at, "回放置根要用 store 的 setRoot（B308 那条裁决的落点）").toBeGreaterThan(-1);
+    expect(
+      boot.slice(at - 400, at + 200),
+      "回放附近出现 openFolder( ⇒ 每次开机都把当前根顶到最近名单最前，LRU 就废了",
+    ).not.toContain("openFolder(");
   });
 });
