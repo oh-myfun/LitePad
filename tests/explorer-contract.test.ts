@@ -371,7 +371,7 @@ describe("B318 行内新建 / 改名框与「输入框那一族」同形", () =>
   });
 });
 
-describe("B328 名字那一格的下伸部（p / g / q / j 不许被省略号那层切掉）", () => {
+describe("B328/B329 侧栏那几格的下伸部（省略号那层不许切字）", () => {
   /** 取某条规则体（含结尾的 `}`），并**抹掉注释**：判据要读的是声明，不是散文
    *  —— 注释里那句「行那一族按 1 排」长得跟声明一模一样，留着它就能把这条闸喂假。 */
   const block = (sel: string): string => {
@@ -387,12 +387,14 @@ describe("B328 名字那一格的下伸部（p / g / q / j 不许被省略号那
     return Number(m?.[1]);
   };
 
-  // 取证（.tmp/descender/，3 倍缩放量像素，字面量都写在这里以免判据悬空）：
-  //   行那一族是 `line-height: 1` ⇒ clip 框只有 12px，而 12px 字号的墨迹要 14px：
-  //   `overflow: visible` 对照组越出框底 **+2.00 CSS px**，现状（hidden）正好把这一截切掉。
-  //   撑高行盒时字不动（内容居中于行盒，行盒上下各长一半），所以只有 clip 框在长：
-  //   1.35 → 仍缺 1 设备行（越框底 −0.43，墨迹短了一档）；1.45 → −0.70；1.5 → −1.00（干净）。
+  // 取证（.tmp/descender/probe-ab.html，3 倍缩放量像素）：**同一行高**下并排渲两版，
+  // 唯一变量是 `overflow: hidden` / `visible`，逐点数框内墨点 —— 不等就是在切。
+  //   资源管理器那一格（12px 粗体）：1.30 少 52 点（末行整条没了）、1.35 少 18 点
+  //   （末行被削掉半条）、**1.40 起两版逐点相同**。取 1.5 是留一整行的余量。
+  //   行盒长高时字不动（内容居中于行盒，上下各长一半）⇒ 只有裁切框在变松。
   const FLOOR = 1.45;
+  /** 侧栏里带省略号的那几格统一这一档（B328 资源管理器、B329 最近打开）。 */
+  const SIDE_LH = 1.5;
 
   it("带着 overflow:hidden 的那一格，必须同时带着撑得下下伸部的行高", () => {
     const name = block(".explorer-name {");
@@ -418,5 +420,35 @@ describe("B328 名字那一格的下伸部（p / g / q / j 不许被省略号那
     expect(box, `行盒 ${box}px 顶破 ${rowH}px 的行 ⇒ 行高被撑开`).toBeLessThanOrEqual(rowH);
     // 同一条尺子量「长过头」的替身：必须量出不一样的结论，否则上面那条是恒真的
     expect(2 * fs, "2 那一档（24px）必须被同一把尺子拒掉").toBeGreaterThan(rowH);
+  });
+
+  it("B329：最近打开那两截走同一口径（名字 12px / 目录 11px 都带着省略号那层）", () => {
+    for (const sel of [".recent-name {", ".recent-dir {"]) {
+      const cell = block(sel);
+      expect(cell, `${sel} 也在用 overflow:hidden 裁字`).toMatch(/overflow:\s*hidden/);
+      expect(
+        num(cell, "line-height"),
+        `${sel} 与资源管理器那一格错开一档 = 两块面板的下伸部一处切一处不切`,
+      ).toBe(SIDE_LH);
+    }
+    // 自证：目录那一截回到旧的 1.3 必须被打红（它 11px，看着像够用，边界行仍会被削）
+    const dir = block(".recent-dir {").replace(/line-height:\s*[\d.]+/, "line-height: 1.3");
+    expect(num(dir, "line-height"), "1.3 那一档是改之前的样子").not.toBe(SIDE_LH);
+  });
+
+  it("B329：撑高两截的同时把上下 padding 收掉，整行还是 38.5px（列表不许变胖）", () => {
+    const row = block(".recent-row {");
+    const name = block(".recent-name {");
+    const dir = block(".recent-dir {");
+    const pad = num(row, "padding"); // shorthand 第一颗 = 上下
+    const total = 2 * pad + SIDE_LH * num(name, "font-size") + SIDE_LH * num(dir, "font-size");
+    expect(total, `整行 ${total}px：两截各 +1.8/+2.2，padding 没补就是 42.5`).toBeLessThanOrEqual(
+      39,
+    );
+    // 同一把尺子量「只撑行盒不收 padding」的替身：42.5 必须被拒掉
+    expect(
+      2 * 4 + SIDE_LH * num(name, "font-size") + SIDE_LH * num(dir, "font-size"),
+      "padding 留在 4px 那一档 = 每一行胖 4px",
+    ).toBeGreaterThan(39);
   });
 });
