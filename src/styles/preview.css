@@ -270,11 +270,11 @@
    ⚠️ 那条 `[hidden]` 兜底与下面两块视图是同一个坑（作者样式表的 `display: flex` 压得过 UA
       的隐藏规则，与权重无关）—— jsdom 不做级联，三条都由静态契约盯着。 */
 .side-drawer {
-  /* 初始宽度：运行期由 attachSideResizer 写 inline width/min-width 覆盖（可拖拽，220–640px） */
+  /* 初始宽度：运行期由 attachSideResizer 写 inline width/min-width 覆盖（可拖拽，200–640px） */
   width: 240px;
-  /* ⚠️ 与 `markdown/toc.ts` 的 `SIDE_MIN_WIDTH` 同值（B317 一起从 160 提到 220）：
-     这里管「没拖过时的初值」，那颗管拖拽下限，错开就成了「一拖才终于不挤」。 */
-  min-width: 220px;
+  /* ⚠️ 与 `markdown/toc.ts` 的 `SIDE_MIN_WIDTH` 同值（B317 一起从 160 提到 220，B326 又一起
+     收到 200）：这里管「没拖过时的初值下限」，那颗管拖拽下限，错开就成了「一拖才终于不挤」。 */
+  min-width: 200px;
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;

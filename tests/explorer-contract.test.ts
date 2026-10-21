@@ -257,7 +257,10 @@ describe("B317 标题排与初屏那一排的样式契约", () => {
     expect(m, "preview.css 里 `.side-drawer` 要有 min-width").toBeTruthy();
     expect(Number(m?.[1]), "两处不同值 = 「没拖过时挤成一团，一拖才终于不松」").toBe(min);
     // 判据的鉴别力：把 CSS 改回旧的 160 必须被打红
-    expect(min, "最小宽提到 220 才装得下「资源管理器」+ 五颗键").toBeGreaterThanOrEqual(220);
+    expect(
+      min,
+      "160 那一档装不下「资源管理器」+ 五颗键（B317 定；B326 用户收到 200）",
+    ).toBeGreaterThanOrEqual(200);
   });
 
   it("还没打开文件夹时顶部那一排收起：类名两侧同源，不许一边写一边漏", () => {
