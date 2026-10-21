@@ -80,6 +80,8 @@ function makeCb(): MenuBarCallbacks {
     // B331：关闭文件夹（判据给真值：默认当作「开着」，置灰那条另有专门的用例）
     onCloseFolder: noop,
     hasFolderRoot: () => true,
+    // B332：子菜单内容由 `recents/panel` 负责，这里给一份空的（菜单层只测「挂没挂上入口」）
+    recentSubmenu: () => [],
     onExplorer: noop,
     explorerChecked: () => false,
     onSave: noop,
@@ -150,6 +152,42 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
     };
     expect((await build(false)).disabled, "没开文件夹 ⇒ 置灰").toBe(true);
     expect((await build(true)).disabled, "开着文件夹 ⇒ 不许还是灰的").toBe(false);
+  });
+
+  it("B332：「打开最近」是父项，向右展开时问的是回调（不是建菜单时冻住的那一份）", async () => {
+    const host = document.createElement("nav");
+    document.body.appendChild(host);
+    let built = 0;
+    createMenuBar(host, {
+      ...makeCb(),
+      recentSubmenu: () => {
+        built++;
+        return [
+          { label: "报价", onSelect: noop },
+          { label: "更多...", onSelect: noop },
+        ];
+      },
+    });
+    await clickMenuBtn(host, "文件");
+    const parent = [...document.querySelectorAll(".popup-menu button")].find((b) =>
+      b.textContent?.includes("打开最近"),
+    );
+    expect(parent, "文件菜单里缺「打开最近」那一颗").toBeTruthy();
+    expect(parent!.classList.contains("has-submenu"), "它得是父项（挂右向箭头、能往里走）").toBe(
+      true,
+    );
+    // 每次渲染「文件」这一层时都重新问一遍回调 ⇒ 名单是活的（不是装配那一刻冻住的那一份）。
+    expect(built, "打开文件菜单就该问一次回调").toBe(1);
+    parent!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    const leaves = [...document.querySelectorAll(".popup-menu button")].map((b) =>
+      b.textContent?.trim(),
+    );
+    expect(leaves.filter((t) => t === "报价" || t === "更多...").length).toBe(2);
+    // 再开一次：第一下是「同一颗键 = 收起」（`openBtn === btn` 那一支），第二下才重新展开。
+    await clickMenuBtn(host, "文件");
+    await clickMenuBtn(host, "文件");
+    expect(built, "第二次打开必须再问一遍：名单在变，缓存上一轮就等于菜单里是旧账").toBe(2);
   });
 
   it("B103：菜单按钮是「标签(字母)」写法，不再有首字下划线和 Alt 键帽提示", () => {

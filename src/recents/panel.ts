@@ -15,6 +15,7 @@ import { windowKind } from "../core/app-state";
 import { doOpen } from "../io/files";
 import { CODICONS } from "../shell/codicons";
 import { activeDrawer, registerDrawerView, setDrawer } from "../shell/drawer";
+import { openFolder } from "../explorer/panel";
 import { applySidebarVisible, isSidebarOff } from "../toc";
 import { recentClear, recentCount, recentList, recentPanel, sideRecent, showMessage } from "../ui";
 import {
@@ -25,6 +26,7 @@ import {
   onRecentsChange,
 } from "./store";
 import type { RecentEntry } from "../ipc/api";
+import type { MenuItem } from "../shell/menu";
 
 /** 键与监听只装一次：重复装配会让一次点击触发好几遍（测试里逐用例重新装配时尤其明显）。 */
 let wired = false;
@@ -66,6 +68,44 @@ export function toggleRecentPanel(): void {
   // 整栏收着时先把它放出来（口径同 `toggleToc` 的 B198：藏在 display:none 里切显隐＝死键）。
   if (isSidebarOff()) applySidebarVisible(false);
   setDrawer("recent");
+}
+
+/** 菜单里每类各露几条 —— 与 VS Code 的 `MAX_MENU_RECENT_ENTRIES` 同值（10）。 */
+const MENU_MAX_PER_KIND = 10;
+
+/** 「更多...」那颗：把完整清单摊开（全部条目与单条移除都在那块面板里）。 */
+export function showRecentPanel(): void {
+  if (windowKind === "satellite" || isRecentsDisabled()) return;
+  if (isSidebarOff()) applySidebarVisible(false);
+  setDrawer("recent");
+}
+
+/**
+ * B332 ·「文件 ▸ 打开最近 ▸」里的那一屏。菜单每次展开时重新求值 ⇒ 拿的就是当下这份缓存。
+ *
+ * 两段：文件夹在上、文件在下（用户点名，与 VS Code 的 Open Recent 同序），各取前 10 条。
+ * 名单可以有 50+50 条，菜单不是用来翻到底的 —— 底部那颗「更多...」才是入口。
+ * 点文件夹条目 = 换根（走 `openFolder`，顺手记一条新的 LRU）；点文件条目 = 打开（`doOpen`，
+ * 与面板里点那一行走的是同一扇）。
+ */
+export function recentMenuItems(): MenuItem[] {
+  const list = getRecents();
+  const folders = list.filter((e) => e.kind === "folder").slice(0, MENU_MAX_PER_KIND);
+  const files = list.filter((e) => e.kind !== "folder").slice(0, MENU_MAX_PER_KIND);
+  if (folders.length === 0 && files.length === 0) {
+    // 空子菜单点开是一片空白 = 用户以为功能坏了；给一句说明 + 那颗还能去的「更多...」。
+    return [
+      { label: "还没有打开过的记录", disabled: true },
+      { separator: true },
+      { label: "更多...", onSelect: showRecentPanel },
+    ];
+  }
+  const items: MenuItem[] = [];
+  for (const e of folders) items.push({ label: e.name, onSelect: () => void openFolder(e.path) });
+  if (folders.length > 0 && files.length > 0) items.push({ separator: true });
+  for (const e of files) items.push({ label: e.name, onSelect: () => void doOpen(e.path) });
+  items.push({ separator: true }, { label: "更多...", onSelect: showRecentPanel });
+  return items;
 }
 
 /** 按当前缓存重画。Rust 的广播、改上限、清除之后都走这里，视图自己从不缓存第二份名单。 */

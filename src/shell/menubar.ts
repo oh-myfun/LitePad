@@ -37,6 +37,11 @@ export interface MenuBarCallbacks {
    */
   onCloseFolder: () => void;
   hasFolderRoot: () => boolean;
+  /**
+   * B332：「文件 ▸ 打开最近 ▸」里的那一屏。交**函数**而不是数组：子菜单每次展开时求值，
+   * 才拿得到当下这份名单（数组的话，菜单建好那一刻就冻住了）。
+   */
+  recentSubmenu: () => MenuItem[];
   onSave: () => void;
   onSaveAs: () => void;
   onSaveAll: () => void;
@@ -126,6 +131,12 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
         label: withKey("关闭文件夹", cb.keyHint("file.closeFolder")),
         disabled: !cb.hasFolderRoot(),
         onSelect: cb.onCloseFolder,
+      },
+      {
+        // B332：VS Code 的 File ▸ Open Recent 那一套。条目本身在 `recents/panel.ts` 里排
+        //（文件夹一段、文件一段、底部「更多...」），这里只挂入口。
+        label: "打开最近",
+        submenu: () => cb.recentSubmenu(),
       },
       { separator: true },
       { label: withKey("保存", cb.keyHint("file.save")), onSelect: cb.onSave },

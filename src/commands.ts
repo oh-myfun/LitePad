@@ -50,6 +50,7 @@ import { toggleToc } from "./toc";
 // B314：资源管理器（打开文件夹 = 换根；开合 = 外壳那一块的第三块）。
 import { closeFolder, promptOpenFolder, toggleExplorer } from "./explorer/panel";
 import { hasRoot } from "./explorer/store";
+import { recentMenuItems } from "./recents/panel";
 import { isMdActive } from "./doc-model";
 import { EditorView } from "@codemirror/view";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -468,6 +469,7 @@ function setupMenuBar(): void {
     onOpenFolder: () => void promptOpenFolder(),
     onCloseFolder: () => void closeFolder(),
     hasFolderRoot: () => hasRoot(),
+    recentSubmenu: () => recentMenuItems(),
     onSave: () => void doSave(false),
     onSaveAs: () => void doSave(true),
     onSaveAll: () => void doSaveAll(),

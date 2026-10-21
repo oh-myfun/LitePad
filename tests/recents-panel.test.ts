@@ -86,6 +86,64 @@ beforeEach(() => {
 const rows = () => [...document.querySelectorAll<HTMLElement>(".recent-row")];
 
 describe("B305 最近打开面板", () => {
+  it("B332：菜单里每类各取前 10 条，文件夹那段在上，底部「更多...」开面板", async () => {
+    const now = Date.now();
+    h.entries = [
+      ...Array.from({ length: 12 }, (_, i) => ({
+        path: `D:\\f${i}`,
+        name: `f${i}`,
+        openedAt: now - i,
+        kind: "folder" as const,
+      })),
+      ...Array.from({ length: 12 }, (_, i) => ({
+        path: `C:\\d\\a${i}.md`,
+        name: `a${i}.md`,
+        openedAt: now - 100 - i,
+      })),
+    ];
+    const items = panel.recentMenuItems();
+    const labels = items.filter((i) => !i.separator).map((i) => i.label);
+    expect(
+      labels.slice(0, 10),
+      "文件夹那段：各取前 10（VS Code 的 MAX_MENU_RECENT_ENTRIES）",
+    ).toEqual(Array.from({ length: 10 }, (_, i) => `f${i}`));
+    expect(labels.slice(10, 20), "文件那段接在后面，同样 10 条封顶").toEqual(
+      Array.from({ length: 10 }, (_, i) => `a${i}.md`),
+    );
+    expect(labels.at(-1), "底部那颗是「更多...」").toBe("更多...");
+    expect(items.filter((i) => i.separator).length, "两段之间一条、进「更多」之前一条").toBe(2);
+    expect(labels, "第 11 条不许露脸（名单是完整清单，菜单只是入口）").not.toContain("f11");
+    expect(labels).not.toContain("a11.md");
+  });
+
+  it("B332：点菜单里的文件夹条目 = 换根（走 openFolder），点文件条目 = 打开", async () => {
+    const explorer = await import("../src/explorer/panel");
+    const spy = vi.spyOn(explorer, "openFolder").mockResolvedValue(undefined);
+    h.entries = [
+      { path: "D:\\工作\\报价", name: "报价", openedAt: Date.now(), kind: "folder" },
+      { path: "C:\\notes\\a.md", name: "a.md", openedAt: Date.now() },
+    ];
+    const items = panel.recentMenuItems();
+    const folder = items.find((i) => i.label === "报价")!;
+    const file = items.find((i) => i.label === "a.md")!;
+    folder.onSelect?.();
+    file.onSelect?.();
+    await Promise.resolve();
+    expect(spy).toHaveBeenCalledWith("D:\\工作\\报价");
+    expect(h.openPath).toHaveBeenCalledWith("C:\\notes\\a.md");
+    spy.mockRestore();
+  });
+
+  it("B332：名单空着时子菜单不许是一片空白（给一条说明 + 「更多...」）", () => {
+    h.entries = [];
+    const labels = panel.recentMenuItems().map((i) => i.label ?? "—");
+    expect(
+      labels.some((l) => l.includes("还没有")),
+      "空子菜单 = 用户以为功能坏了",
+    ).toBe(true);
+    expect(labels).toContain("更多...");
+  });
+
   it("B332：文件夹那一组始终排在文件之上，两类都在时才挂分组标题", () => {
     const now = Date.now();
     h.entries = [
