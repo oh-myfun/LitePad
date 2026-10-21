@@ -10,6 +10,7 @@ import { type Doc, type Panel, type Tab } from "../core/app-state";
 let applyPanelMode: (panel: Panel) => void = () => {};
 let openPreviewToSide: (panelId: number) => void = () => {};
 let toggleViewMode: (target?: Tab) => void = () => {};
+let revealSourceLine: (panelId: number, line: number) => void = () => {};
 let discardBackupFor: (doc: Doc) => void = () => {};
 let scheduleSessionSave: () => void = () => {};
 
@@ -22,6 +23,9 @@ export function setOpenPreviewToSide(fn: (panelId: number) => void): void {
 export function setToggleViewMode(fn: (target?: Tab) => void): void {
   toggleViewMode = fn;
 }
+export function setRevealSourceLine(fn: (panelId: number, line: number) => void): void {
+  revealSourceLine = fn;
+}
 export function setDiscardBackupFor(fn: (doc: Doc) => void): void {
   discardBackupFor = fn;
 }
@@ -30,5 +34,13 @@ export function setScheduleSessionSave(fn: () => void): void {
 }
 
 // 下游模块（render / lifecycle / split）直接 import 这些 `let` 绑定；ESM 实时绑定，
-// 运行期由上面的 setter 替换后调用点立即生效。
-export { applyPanelMode, openPreviewToSide, toggleViewMode, discardBackupFor, scheduleSessionSave };
+// 运行期由注入接管。调用点保持原名（applyPanelMode / openPreviewToSide / toggleViewMode /
+// revealSourceLine / discardBackupFor / scheduleSessionSave），函数体逻辑与既有静态契约测试完全不变。
+export {
+  applyPanelMode,
+  openPreviewToSide,
+  toggleViewMode,
+  revealSourceLine,
+  discardBackupFor,
+  scheduleSessionSave,
+};

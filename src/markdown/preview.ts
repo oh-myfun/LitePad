@@ -50,6 +50,7 @@ export class PreviewPane {
   private mermaidSeq = 0;
   /** 活动文档目录（相对路径图片解析基准） */
   private baseDir: string | null = null;
+  private onBlockDblClick: ((line: number) => void) | null = null;
 
   constructor() {
     this.root = document.createElement("div");
@@ -66,6 +67,18 @@ export class PreviewPane {
       // 点击链接交给浏览器默认行为（锚点/脚注跳转）
       if (target.closest("a")) return;
     });
+    // A3：双击某一块 = 回源码那一行（由宿主把这一下接到 `revealSourceLine`）。
+    this.root.addEventListener("dblclick", (e) => {
+      const island = (e.target as HTMLElement).closest?.(".md-block");
+      if (!(island instanceof HTMLElement) || island.parentElement !== this.root) return;
+      const line = Number(island.dataset.lineStart);
+      if (Number.isFinite(line)) this.onBlockDblClick?.(line);
+    });
+  }
+
+  /** 双击某个顶层块时的回调（行号为该块的 source 起始行）。传 null 撤掉。 */
+  setBlockDblClick(cb: ((line: number) => void) | null): void {
+    this.onBlockDblClick = cb;
   }
 
   setHost(host: PreviewHost): void {
