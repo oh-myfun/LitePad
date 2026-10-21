@@ -45,6 +45,8 @@ export interface PreviewScrollSurface {
     scrollTop: number;
     /** 视口高（像素）。 */
     clientHeight: number;
+    /** 内容总高（像素）。缺省 = 不参与「到底」判定。 */
+    scrollHeight?: number;
   };
   /** 当前所有块的有序几何（按 lineStart 升序，取自实时 DOM 测量）。 */
   blocks(): PreviewBlockGeom[];
@@ -84,6 +86,9 @@ export class PreviewScrollAnchor implements ScrollAnchor {
     const blocks = this.surface.blocks();
     if (blocks.length === 0 || this.isUnmeasured(blocks)) return 1.0;
     const s = this.surface.root.scrollTop;
+    // 到底那一族（B319）：被自己的可滚上限裁住时报「最后一块的末行」，别报还能往下对齐的行号。
+    const end = this.atBottom(blocks);
+    if (end !== null) return end;
     for (let i = 0; i < blocks.length; i++) {
       const b = blocks[i];
       const next = blocks[i + 1];
@@ -145,9 +150,33 @@ export class PreviewScrollAnchor implements ScrollAnchor {
         top += (target.height / lines) * lineIdx;
       }
     }
-    this.surface.root.scrollTop = Math.max(0, top);
+    const root = this.surface.root;
+    const last = blocks[blocks.length - 1];
+    // 「末尾」那一发兑现成**自己的底**（与 `atBottom` 的读数配成一对）：只对齐末块顶的话，
+    // 块间节奏把底又往下推了一截，这一发就永远差那 52px 到底不了。
+    const aim =
+      last && v >= last.lineEnd && root.scrollHeight !== undefined
+        ? Math.max(top, root.scrollHeight - root.clientHeight)
+        : top;
+    root.scrollTop = Math.max(0, aim);
     // 读回真实落点：容器比目标短会被浏览器截到 maxScroll，账本必须看到这个事实值。
     return this.getV();
+  }
+
+  /**
+   * 到底那一族（B319）：被自己的可滚上限裁住时报「最后一块的末行」。
+   *
+   * 预览有了块间节奏之后，「顶对齐同一个源行」两侧下面剩余的内容高度不再相等：
+   * 源码那一格到了底，预览那一格还差一截（真机验证台 S8 实测差 52px），于是它永远
+   * 报不出「我也到底了」，协调器每补写一发都被拽回那个对齐点 ⇒ 到底以后看不见末行。
+   * 报成末行之后，对侧的 `setV` 会把这一发兑现成自己的底。
+   */
+  private atBottom(blocks: PreviewBlockGeom[]): number | null {
+    const { scrollTop, clientHeight, scrollHeight } = this.surface.root;
+    if (scrollHeight === undefined) return null;
+    const max = scrollHeight - clientHeight;
+    if (max <= 0 || scrollTop < max - 1) return null;
+    return blocks[blocks.length - 1]?.lineEnd ?? null;
   }
 
   /** 未铺开：记 pending，rAF 重试（与 PreviewPane.applyPending 同思路）。 */

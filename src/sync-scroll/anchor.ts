@@ -53,6 +53,9 @@ export interface ScrollAnchor {
 export interface EditorScrollSurface {
   readonly scrollDOM: {
     scrollTop: number;
+    /** 容器自身的高度信息（真 CM6 有；假面不给 = 不参与「到底」判定）。 */
+    clientHeight?: number;
+    scrollHeight?: number;
     getBoundingClientRect?(): { top: number; left: number; height: number };
   };
   lineBlockAtHeight(height: number): { top: number; height: number; from: number };
@@ -73,7 +76,25 @@ export class EditorScrollAnchor implements ScrollAnchor {
   constructor(private readonly view: EditorScrollSurface) {}
 
   getV(): number {
-    return this.vAt(this.view.scrollDOM.scrollTop);
+    const end = this.atBottom();
+    return end !== null ? end : this.vAt(this.view.scrollDOM.scrollTop);
+  }
+
+  /**
+   * 被自己的可滚上限裁住了 ⇒ 共享坐标改报「文档末尾那一行」。
+   *
+   * 两侧「顶对齐到同一个源行」之后，各自下面还剩多少像素本来就不相等：预览有块间节奏、
+   * 源码有软折行。继续报「容器顶那一行」，接的那一侧就永远差一截到不了自己的底
+   * （真机验证台 S8 实测差 52px）。报成末尾之后由各侧容器自然裁剪 ⇒ 各到各的底。
+   *
+   * 压根不能滚（`max <= 0`）时**不认**到底：短文档的 `scrollTop` 恒 0，认了就永远报末尾。
+   */
+  private atBottom(): number | null {
+    const el = this.view.scrollDOM;
+    if (el.clientHeight === undefined || el.scrollHeight === undefined) return null;
+    const max = el.scrollHeight - el.clientHeight;
+    if (max <= 0 || el.scrollTop < max - 1) return null;
+    return this.view.state.doc.lines;
   }
 
   setV(v: number): number {

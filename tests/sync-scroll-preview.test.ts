@@ -10,8 +10,8 @@ import {
  * root.scrollTop 可读写，schedule 接到可控队列（不依赖真实 rAF 时序）。
  * jsdom 无布局，全程用纯数，能精确断言 getV/setV 往返与未铺开重试。
  */
-function makeFakePreview(blocks: PreviewBlockGeom[]) {
-  const root = { scrollTop: 0, clientHeight: 10 };
+function makeFakePreview(blocks: PreviewBlockGeom[], scrollHeight = 0) {
+  const root = { scrollTop: 0, clientHeight: 10, scrollHeight };
   let blockState = blocks;
   const queue: Array<() => void> = [];
   const schedule = (fn: () => void) => {
@@ -39,6 +39,34 @@ function makeFakePreview(blocks: PreviewBlockGeom[]) {
     },
   };
 }
+
+describe("PreviewScrollAnchor.getV 的「到底」饱和（B319）", () => {
+  // 一块 9 个源行、高 30；视口高 10 ⇒ 可滚上限 20。
+  // 预览有了块间节奏之后，两侧在同一个 `v` 下的剩余内容高度不再相等：
+  // 「容器顶对齐到第 N 行」这一发到不了自己的底，共享坐标必须在被裁住时改报「末尾」。
+  const nine = [{ lineStart: 1, lineEnd: 9, top: 0, height: 30 }];
+
+  it("滚到自己的上限时，报的是最后一块的末行（不是还能往下对齐的行号）", () => {
+    const f = makeFakePreview(nine, 30);
+    f.root.clientHeight = 10;
+    f.root.scrollTop = 20; // = scrollHeight - clientHeight
+    expect(new PreviewScrollAnchor(f.surface).getV()).toBe(9);
+  });
+
+  it("没到底时照常按块内插值报数", () => {
+    const f = makeFakePreview(nine, 30);
+    f.root.clientHeight = 10;
+    f.root.scrollTop = 10;
+    expect(new PreviewScrollAnchor(f.surface).getV()).toBeCloseTo(4, 10);
+  });
+
+  it("内容不够高（压根不能滚）时不认「到底」", () => {
+    const f = makeFakePreview(nine, 30);
+    f.root.clientHeight = 40; // 比内容还高 ⇒ max=0，此刻 scrollTop=0 既是顶也是底
+    f.root.scrollTop = 0;
+    expect(new PreviewScrollAnchor(f.surface).getV()).toBe(1);
+  });
+});
 
 describe("PreviewScrollAnchor.getV", () => {
   // 两块：块1 行[1,3] top0 h30；块2 行[4,6] top30 h30。

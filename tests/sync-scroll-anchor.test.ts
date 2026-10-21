@@ -49,6 +49,27 @@ describe("EditorScrollAnchor.getV", () => {
   // 4 行，每行 10px：tops = [0,10,20,30]。
   const doc = makeFakeDoc([10, 10, 10, 10]);
 
+  // B319：预览有了块间节奏之后，两侧在同一个 `v` 下的「剩余内容高度」不再相等 ——
+  // 「容器顶对齐到第 N 行」这一发到底时再也撞不上各自的底。共享坐标必须在**被自己
+  // 的底裁住**时饱和成「文档末尾」，让接的那一侧靠浏览器裁剪各到各的底。
+  it("被自己的底裁住时，报的是文档末尾那一行（不是还能往下对齐的行号）", () => {
+    const at = makeFakeDoc([10, 10, 10, 10]);
+    Object.assign(at.scrollDOM, { scrollTop: 20, clientHeight: 20, scrollHeight: 40 });
+    expect(new EditorScrollAnchor(at).getV()).toBe(4);
+  });
+
+  it("没到底时照常报「容器顶那一行」，不许提前饱和", () => {
+    const mid = makeFakeDoc([10, 10, 10, 10]);
+    Object.assign(mid.scrollDOM, { scrollTop: 10, clientHeight: 20, scrollHeight: 40 });
+    expect(new EditorScrollAnchor(mid).getV()).toBe(2.0);
+  });
+
+  it("内容不够高（压根不能滚）时不认「到底」，免得短文档永远报末尾", () => {
+    const short = makeFakeDoc([10, 10, 10, 10]);
+    Object.assign(short.scrollDOM, { scrollTop: 0, clientHeight: 80, scrollHeight: 40 });
+    expect(new EditorScrollAnchor(short).getV()).toBe(1.0);
+  });
+
   it("视口顶在第 1 行顶部时 v=1.0", () => {
     doc.scrollDOM.scrollTop = 0;
     expect(new EditorScrollAnchor(doc).getV()).toBe(1.0);

@@ -525,6 +525,10 @@ export class PreviewPane {
         get clientHeight() {
           return root.clientHeight;
         },
+        // 「到底」的判据要它（B319）：块间节奏让两侧底下面的剩余高度不再相等。
+        get scrollHeight() {
+          return root.scrollHeight;
+        },
       },
       // 箭头函数：词法 this 即 PreviewPane，this.blocks 始终读实时数组（setBlocks 会换引用）。
       blocks: () =>
