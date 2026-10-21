@@ -347,6 +347,18 @@ describe("B97 自建标题栏", () => {
     expect(refs(actions), ".title-actions 至少要引用一次").toBeGreaterThan(0);
   });
 
+  it("B324：标题栏那族图标键左右各 3px（不再只挂左边一条 6px）", () => {
+    // 这一族 = 同步滚动键 / 置顶键 / 更新键 / 布局键，共用一条列表规则（见 global.css 那段
+    // 「只留一条」的说明）。左右对称之后，首键左侧与末键右侧各得 3px，而不是全挤在左边。
+    const fam = ruleBlock(css(), ".sync-btn");
+    expect(fam, "找不到这一族那条共用规则").toContain("width: 24px");
+    // 反例排前（B219 定式）：正向抢先报错的话，这条闸等于没验过。
+    expect(fam, "不许再出现 6px —— 那正是「只挂左边」的老写法").not.toMatch(/6px/);
+    expect(fam, "不许退回只写左边一条").not.toMatch(/margin-left:\s*6px/);
+    expect(fam).toMatch(/margin-left:\s*3px/);
+    expect(fam).toMatch(/margin-right:\s*3px/);
+  });
+
   it("B223：图标左右留白同取一颗变量（右侧靠 calc 抵消 gap，净宽与左侧一致）", () => {
     const root = ruleBlock(css(), ":root");
     // ⚠️ 反例一律排在正向断言之前（B219 定式）：反例被正向抢先报错，这条闸等于没验过。

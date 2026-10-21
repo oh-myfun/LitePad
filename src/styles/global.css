@@ -645,7 +645,8 @@ html[data-window-kind="satellite"] #sidebar-toggle {
   flex: 0 0 auto;
   width: 24px;
   height: 24px;
-  margin-left: 6px;
+  margin-left: 3px;
+  margin-right: 3px;
   border-radius: 3px;
   background: transparent;
 }
