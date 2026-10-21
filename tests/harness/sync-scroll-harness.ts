@@ -19,7 +19,8 @@
  *
  * 复刻的结构性滚动来源（线上「自动跳变 / 调回顶部」的全部来源）：
  *   1. `view.setState(别的文档)` 归零 `scrollDOM.scrollTop` —— 同 `lifecycle.ts:279`；
- *   2. `PreviewPane.setBlocks()` 的 `replaceChildren` 清零后同栈复原 —— 同 `preview.ts:99-105`；
+ *   2. `PreviewPane.setBlocks()` 重画之后同栈复原 `scrollTop`（B319 起是岛级就地补丁，
+ *      不再是 `replaceChildren` 清零）—— 同 `preview.ts` 的 `setBlocks`；
  *   3. 每次结构性操作后调真实 `reconcileSyncRegistrations()` —— 同 `lifecycle.ts:330`。
  * 没搬过来的是会话 / IPC / 菜单那一圈，它们不参与滚动。
  */

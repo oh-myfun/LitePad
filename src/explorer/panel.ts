@@ -226,8 +226,8 @@ function inputRow(kind: Kind): HTMLElement {
 function renderChildren(host: HTMLElement, dir: string, depth: number): void {
   // 输入框长在该层最前，但**不取代**这一层的内容：以前这里直接 return，
   // 结果一按「新建」整层条目就消失，用户读作「文件被删了」。
-  const creatingHere = !!creating && creating.dir === dir;
-  if (creatingHere) host.append(inputRow(creating!.kind));
+  const creatingHere = creating && creating.dir === dir ? creating : null;
+  if (creatingHere) host.append(inputRow(creatingHere.kind));
   const kids = childrenOf(dir);
   if (isLoading(dir)) {
     host.append(note("读取中…", depth));

@@ -70,6 +70,25 @@ describe("EditorScrollAnchor.getV", () => {
     expect(new EditorScrollAnchor(short).getV()).toBe(1.0);
   });
 
+  // 评审 I4：`setV` 的返回值是给协调器账本当「落点」用的，必须与 `getV` **同一个口径**。
+  // 一边饱和、一边不饱和 ⇒ 到底那一发的「意图 vs 落点」永远对不上，账本每发都要白补写。
+  it("setV 的落点与 getV 同一个口径（到底时都报文档末尾）", () => {
+    const at = makeFakeDoc([10, 10, 10, 10]);
+    let top = 0;
+    Object.defineProperty(at.scrollDOM, "scrollTop", {
+      configurable: true,
+      get: () => top,
+      // 真实浏览器会把写入裁到 maxScroll，fake 不裁就测不出「被底裁住」这一形
+      set: (v: number) => {
+        top = Math.max(0, Math.min(v, 40 - 20));
+      },
+    });
+    Object.assign(at.scrollDOM, { clientHeight: 20, scrollHeight: 40 });
+    const a = new EditorScrollAnchor(at);
+    expect(a.setV(10), "被底裁住时 setV 不许回报到第 3 行").toBe(4);
+    expect(a.setV(10)).toBe(a.getV());
+  });
+
   it("视口顶在第 1 行顶部时 v=1.0", () => {
     doc.scrollDOM.scrollTop = 0;
     expect(new EditorScrollAnchor(doc).getV()).toBe(1.0);

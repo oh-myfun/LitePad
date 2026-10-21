@@ -80,7 +80,10 @@ export class PreviewPane {
     });
     // A3：双击某一块 = 回源码那一行（由宿主把这一下接到 `revealSourceLine`）。
     this.root.addEventListener("dblclick", (e) => {
-      const island = (e.target as HTMLElement).closest?.(".md-block");
+      const hit = e.target as HTMLElement;
+      // 链接让浏览器自己开（与上面 click 的口径一致）：双击链接的人要的是打开，不是回源码。
+      if (hit.closest?.("a")) return;
+      const island = hit.closest?.(".md-block");
       if (!(island instanceof HTMLElement) || island.parentElement !== this.root) return;
       const line = Number(island.dataset.lineStart);
       if (Number.isFinite(line)) this.onBlockDblClick?.(line);
@@ -176,8 +179,8 @@ export class PreviewPane {
    * 在预览区顶部显示一条占位说明（M4 大文件：自动预览被停用时告诉用户原因）。
    * 传 null 移除。它不是 block，不参与 patch、行号同步与查找高亮。
    *
-   * 注意：`setBlocks()` 会 `replaceChildren` 整块重建，所以调用顺序必须是
-   * 先 setBlocks 再 setNotice，否则提示会被下一次渲染抹掉。
+   * 注意：`setBlocks()` 会把 `noticeEl` 当作**尾锚**（新岛一律插在它之前），所以调用顺序
+   * 仍然是先 setBlocks 再 setNotice —— 反过来的话，下一次渲染会把新岛插在旧提示之后。
    */
   setNotice(text: string | null): void {
     if (!text) {
@@ -334,11 +337,17 @@ export class PreviewPane {
 
     // 相对路径图片 → asset 协议地址（预览时才可显示本地图片）
     if (this.baseDir) {
-      for (const img of root.querySelectorAll("img[src]")) {
-        const src = img.getAttribute("src") ?? "";
-        if (!src || /^(https?:|data:|#|\/)/i.test(src)) continue;
-        const abs = this.baseDir.replace(/[\\/]+$/, "") + "\\" + src;
-        img.setAttribute("src", convertFileSrc(abs));
+      for (const img of root.querySelectorAll<HTMLImageElement>("img[src]")) {
+        // ⚠️ 原始相对值记在 `data-rel-src` 上：岛级增量会让两份文档共享的头几段成批
+        // 复用，而复用岛里的 `src` 已经是 asset 地址 —— 拿 `src` 判「是不是相对路径」
+        // 就等于永远不重算，换文档后图还停在上一份的目录（评审 I5）。
+        const rel = img.dataset.relSrc ?? img.getAttribute("src") ?? "";
+        if (!rel || /^(https?:|data:|#|\/)/i.test(rel)) continue;
+        img.dataset.relSrc = rel;
+        const abs = this.baseDir.replace(/[\\/]+$/, "") + "\\" + rel;
+        const next = convertFileSrc(abs);
+        // 同值不重写：改 `src` 哪怕值一样也可能让浏览器重新解码那张图
+        if (img.getAttribute("src") !== next) img.setAttribute("src", next);
       }
     }
 

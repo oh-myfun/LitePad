@@ -45,6 +45,15 @@ describe("预览双击（B319-A3）", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it("双击链接：不许翻回源码（那一发该交给浏览器打开链接）", () => {
+    const p = mkPane();
+    p.setBlocks([bk('<p>看 <a href="https://example.com">这个链接</a></p>', 1)]);
+    const spy = vi.fn();
+    p.setBlockDblClick(spy);
+    p.root.querySelector("a")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(spy, "与既有 click 口径不一致：click 放过 <a>，dblclick 不该抢").not.toHaveBeenCalled();
+  });
+
   it("没设回调时双击不炸（预览还没接上源码那一侧）", () => {
     const p = mkPane();
     p.setBlocks([bk("<p>一</p>", 1)]);

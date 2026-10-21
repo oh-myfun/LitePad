@@ -104,8 +104,10 @@ export class EditorScrollAnchor implements ScrollAnchor {
     const block = this.view.lineBlockAt(this.view.state.doc.line(lineNo).from);
     const target = block.top + frac * Math.max(1, block.height);
     this.view.scrollDOM.scrollTop = target;
-    // 读回真实落点换算：写下去被裁剪的话，返回的是裁剪后的 v。
-    return this.vAt(this.view.scrollDOM.scrollTop);
+    // 读回真实落点换算（被容器底裁住时 `getV` 会饱和成文档末尾）。
+    // ⚠️ 必须走 `getV`、不能直接 `vAt`：账本拿这个返回值当「落点」比对，一侧饱和、
+    // 一侧不饱和就永远对不上，每一发广播到底都要白补写几轮（评审 I4）。
+    return this.getV();
   }
 
   /**

@@ -21,6 +21,12 @@ vi.mock("../src/sync-scroll/wire", () => ({
   },
 }));
 
+vi.mock("../src/ipc/api", () => ({
+  // 生产 Windows 上 convertFileSrc 给的是 `http://asset.localhost/…`（带 http: 前缀），
+  // 正好落进「已经是绝对地址 ⇒ 不再重算」那条守卫 —— 这正是 I5 的坑，替身照实写。
+  convertFileSrc: (p: string) => `http://asset.localhost/${p.replace(/[\\/]/g, "/")}`,
+}));
+
 import { PreviewPane } from "../src/markdown/preview";
 import type { MdBlock } from "../src/markdown/pipeline";
 
@@ -59,13 +65,17 @@ describe("预览岛级增量（B319-A2）", () => {
 
   it("判据只比 html：行号漂移不重建，但 data-line* 跟着刷新", () => {
     const p = mkPane();
-    p.setBlocks([bk(A, 1), bk(B, 3)]);
+    // 行区间刻意做成「起点 ≠ 终点」：只断 lineStart 的话，漏刷 lineEnd 也能全绿，
+    // 而末块按行均分与 A3 落点吃的正是 lineEnd（评审 M2）。
+    p.setBlocks([bk(A, 1, 2), bk(B, 3, 5)]);
     const [a] = islands(p);
-    p.setBlocks([bk(A, 4), bk(B, 6)]);
+    p.setBlocks([bk(A, 4, 5), bk(B, 6, 9)]);
     const now = islands(p);
     expect(now[0]).toBe(a);
     expect(now[0].dataset.lineStart).toBe("4");
+    expect(now[0].dataset.lineEnd).toBe("5");
     expect(now[1].dataset.lineStart).toBe("6");
+    expect(now[1].dataset.lineEnd).toBe("9");
   });
 
   it("复用岛的子树一个字都没被碰（增强结果活得下来）", () => {
@@ -189,6 +199,27 @@ describe("预览岛级增量（B319-A2）", () => {
       "remove",
       "insert",
     ]);
+  });
+
+  // 评审 I5：A2 把复用命中面从「同下标同 html」放宽到「任意偏移的前缀/后缀」，于是
+  // 两份文档共享的头几段会成批复用 —— 复用岛里已被改写成 asset URL 的 <img src>
+  // 就带着**上一份文档的目录**活了下来（那条守卫见 `/^(https?:|…)/` 会跳过它）。
+  it("换到另一目录的文档：复用岛里的相对图必须按新 baseDir 重算", async () => {
+    const settle = async () => {
+      for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
+    };
+    const p = mkPane();
+    const html = '<p><img src="a.png" alt="图"></p>';
+    p.setBaseDir("D:\\docs\\one");
+    p.setBlocks([bk(html, 1)]);
+    await settle();
+    const img = p.root.querySelector("img")!;
+    expect(img.getAttribute("src"), "首绘就该换成 asset 地址").toContain("docs/one/a.png");
+
+    p.setBaseDir("D:\\docs\\two");
+    p.setBlocks([bk(html, 1)]); // 同一份 html ⇒ 这一发是复用岛，enhance 仍要重算 src
+    await settle();
+    expect(img.getAttribute("src"), "图仍停在上一份文档的目录").toContain("docs/two/a.png");
   });
 
   it("写完 scrollTop 之后、setBlocks 返回之前，同栈向账本认领", () => {

@@ -76,11 +76,12 @@
 （导出走 `renderFull`，不包岛，靠子元素 margin：`h*{margin:24px 0 12px}`、`p{margin:10px 0}`）：
 
 ```css
-:root { --md-flow: 0.7em; --md-head-flow: 1.6em; --md-after-head: 0.8em; }
-/* 15px 基准下 = 10.5 / 24 / 12px */
-.md-preview .md-block + .md-block { margin-top: var(--md-flow); }
-.md-preview .md-block:has(> :is(h1,h2,h3)) + .md-block:not(:has(> :is(h1,h2,h3,h4,h5,h6))) { margin-top: var(--md-after-head); }
-.md-preview .md-block + .md-block:has(> :is(h1,h2,h3,h4,h5,h6)) { margin-top: var(--md-head-flow); }
+/* ⚠️ 更正（实施时定稿）：这三档**只在用点写 `var(--x, 兜底)`**，绝不在 `:root`/`.md-preview`
+   上声明 —— 声明了就把「将来设置页要往 :root 写这几颗变量」的那条路堵死（B238 同一族陷阱）。
+   值：--md-flow 0.7em / --md-head-flow 1.6em / --md-after-head 0.8em（15px 基准 ≈ 10.5/24/12px）。 */
+.md-preview .md-block + .md-block { margin-top: var(--md-flow, 0.7em); }
+.md-preview .md-block:has(> :is(h1,h2,h3)) + .md-block:not(:has(> :is(h1,h2,h3,h4,h5,h6))) { margin-top: var(--md-after-head, 0.8em); }
+.md-preview .md-block + .md-block:has(> :is(h1,h2,h3,h4,h5,h6)) { margin-top: var(--md-head-flow, 1.6em); }
 .md-preview li:first-child { margin-top: 0; }
 .md-preview li:last-child { margin-bottom: 0; }
 ```
