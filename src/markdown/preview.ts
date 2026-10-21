@@ -14,6 +14,17 @@ import { syncCoordinator } from "../sync-scroll/wire";
 
 const LAZY_THRESHOLD_LINES = 5000; // 大文档：关闭 Mermaid/Shiki 自动渲染
 
+/**
+ * mermaid 的 render id 计数器，**模块级**（整份文档唯一），不是每格各自一份。
+ *
+ * `mermaid.render(id, …)` 进 body 的第一件事就是 `document.getElementById(id)?.remove()`
+ * （mermaid.core.mjs:1232）。同一份 md 开两个预览格（源码格 + 预览格，两边都会渲染）时，
+ * 各格自己的 `mermaidSeq` 会撞出同一个 id ⇒ 后画那一发把前一发已经插进 DOM 的 `<svg>` 删掉。
+ * 岛级增量之前每格每次都重建，下一发又画回来（只表现为闪）；复用之后被删的那格不再重画
+ * ⇒ 图永久消失（B319 真机抓到）。
+ */
+let mmdUid = 0;
+
 export interface PreviewHost {
   /** 文档总行数（大文档降级判断用） */
   lineCount(): number;
@@ -389,7 +400,7 @@ export class PreviewPane {
         });
         for (const el of mermaids) {
           const code = el.textContent ?? "";
-          const id = `mmd-${seq}-${[...mermaids].indexOf(el)}`;
+          const id = `mmd-${++mmdUid}`;
           try {
             const { svg } = await mermaid.render(id, code);
             if (!el.isConnected || seq !== this.mermaidSeq) return;
