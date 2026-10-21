@@ -87,7 +87,6 @@ import {
   setApplyPanelMode,
   setOpenPreviewToSide,
   setToggleViewMode,
-  setRevealSourceLine,
   setDiscardBackupFor,
   setScheduleSessionSave,
 } from "./tabs";
@@ -97,7 +96,6 @@ import {
   refreshViewModeButton,
   applyPanelMode,
   openPreviewToSide,
-  revealSourceLine,
 } from "./markdown";
 import { openFindBar } from "./find/findbar";
 import { setupSideBar, applySidebarVisible, toggleToc, updateTocDrawer } from "./toc";
@@ -322,7 +320,6 @@ setRenderPanelOps(renderPanelOps);
 setApplyPanelMode(applyPanelMode);
 setOpenPreviewToSide(openPreviewToSide);
 setToggleViewMode(toggleViewMode);
-setRevealSourceLine(revealSourceLine);
 setDiscardBackupFor(discardBackupFor);
 setScheduleSessionSave(scheduleSessionSave);
 

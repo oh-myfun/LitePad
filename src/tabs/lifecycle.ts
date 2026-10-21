@@ -69,7 +69,6 @@ import {
   applyPanelMode,
   openPreviewToSide,
   toggleViewMode,
-  revealSourceLine,
   discardBackupFor,
 } from "./deps";
 import {
@@ -257,8 +256,6 @@ export function rebuildLayout(): void {
       preview.setHost({
         lineCount: () => p.view?.view.state.doc.lines ?? 0,
       });
-      // A3：双击预览某一块 = 回源码那一行（走「转到行」那条已验证的通路）。
-      preview.setBlockDblClick((line) => revealSourceLine(p.panelId, line));
       if (p.view) attachPasteHandler(p);
 
       applyPanelMode(p);

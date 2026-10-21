@@ -28,13 +28,7 @@ import { renderBlocks } from "./markdown/pipeline";
 import { rightNeighborOf } from "./core/layout";
 import { renderPanelOps, renderPanelTabs, splitPanelWithTab, switchTab } from "./tabs";
 import { updateTocDrawer } from "./toc";
-import { EditorView } from "@codemirror/view";
-import {
-  landVisibleSideAtV,
-  readVisibleV,
-  reconcileSyncRegistrations,
-  syncCoordinator,
-} from "./sync-scroll/wire";
+import { landVisibleSideAtV, readVisibleV, reconcileSyncRegistrations } from "./sync-scroll/wire";
 import { scheduleSessionSave } from "./session/session";
 // #413 find 拆出 ⇒ MarkdownDeps 全清，预览查找桥改直接 import（find/findbar 反向只取本模块的
 // PreviewFindSpec 类型——等等，类型已归 find/findbar，这里只取值，无类型回边）
@@ -177,46 +171,6 @@ function toggleViewMode(target?: Tab): void {
 }
 
 /**
- * 把某一格翻回源码态并定位到第 `line` 行（A3：双击预览里的某一块）。
- *
- * ⚠️ 翻态必须排在落位**之前**：`toggleViewMode` 末尾那发 `landVisibleSideAtV` 扶的是
- *    「切走之前」的残值，先落位就会被它盖掉（B293 那一族）。
- * ⚠️ 坐标由这一跳自己给（`syncTo` 直接把行号交给协调器），不把编辑器锚点交出去让它读：
- *    这一格刚才还是预览态，那份编辑器一直被 `display:none` 归零，只会报兜底的 1.00，
- *    于是全窗口被拽回顶部（B301，与「转到行」同一个病根）。
- */
-function revealSourceLine(panelId: number, line: number): void {
-  const panel = getPanel(panelId);
-  const tab = panel && panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
-  const view = panel?.view;
-  if (!tab || !view) {
-    // 静默 return 会被用户读成「那颗双击键是死的」（B314-8 那一族），所以留一条日志。
-    logger.warn(
-      "preview",
-      `双击回源码落空：这一格没有可定位的标签/编辑器 面板=${panelId} 行=${line}`,
-    );
-    return;
-  }
-  if (tab.viewMode !== "source") toggleViewMode(tab);
-  const doc = view.view.state.doc;
-  const target = Math.min(Math.max(1, line), doc.lines);
-  const pos = doc.line(target).from;
-  view.view.dispatch({
-    selection: { anchor: pos },
-    effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: 0 }),
-  });
-  tab.state = view.view.state;
-  syncCoordinator.syncTo(String(tab.docId), target);
-  // ⚠️ 翻态那一发（`toggleViewMode` 末尾的落位）可能**没写进去**：编辑器刚现形、还没有布局，
-  // 写入被裁到 0 ⇒ 账本记下「欠这一格 keepV」并把滚动面先藏起来按帧重试（B294/B295）。
-  // 我们后面这两下（scrollIntoView / syncTo）都不碰那笔欠账 ⇒ 链条会把它一直拽回
-  // 「切走之前」的位置。补一发以**目标行**为意图的落位：欠账被改写成我们要的那个 v，
-  // 落不进去时重试的也是它（评审 I2）。
-  landVisibleSideAtV(panel, target);
-  view.view.focus();
-}
-
-/**
  * 把当前 Markdown 文档的预览开到**右侧分屏**（B224，VS Code `markdown.showPreviewToSide`）。
  *
  * 落点（用户拍定）：右侧已有面板就**复用**它 —— 那边已有这份文档就接管那一份，没有就
@@ -317,7 +271,6 @@ export {
   scheduleMdRender,
   toggleViewMode,
   openPreviewToSide,
-  revealSourceLine,
   refreshViewModeButton,
   dirname,
 };
