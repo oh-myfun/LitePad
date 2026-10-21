@@ -74,6 +74,30 @@
   margin-bottom: 0;
 }
 
+/* B319-A1：块间节奏声明在**岛与岛之间**。上面那两条清零是把岛内唯一子元素的上下
+   margin 抹掉的（它既是 first 又是 last），而岛壳自己只有 `margin: 0 auto` ⇒ 岛之间
+   实测 0px，整页挤成一坨。
+   ⚠️ 两条特例都必须带上 `+ .md-block`：通用那条是 3 个类 (0,3,0)，写成
+      `.md-preview .md-block:has(…)` 只有 (0,2,1)，会被通用那条整条盖掉。
+      同理，标题上方那条排在通用那条**之后**（具体度相同，靠顺序决胜）。 */
+.md-preview .md-block + .md-block {
+  margin-top: var(--md-flow, 0.7em);
+}
+.md-preview .md-block:has(> :is(h1, h2, h3)) + .md-block:not(:has(> :is(h1, h2, h3, h4, h5, h6))) {
+  margin-top: var(--md-after-head, 0.8em);
+}
+.md-preview .md-block + .md-block:has(> :is(h1, h2, h3, h4, h5, h6)) {
+  margin-top: var(--md-head-flow, 1.6em);
+}
+/* ul/ol 只有 padding-left，`li` 的上下 margin 会一路穿出岛壳（实测漏出 4px），
+   补这两条把岛壳重新收紧贴内容 —— 同步滚动的按行插值量的就是壳的矩形。 */
+.md-preview li:first-child {
+  margin-top: 0;
+}
+.md-preview li:last-child {
+  margin-bottom: 0;
+}
+
 .md-preview h1,
 .md-preview h2,
 .md-preview h3,
