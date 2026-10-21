@@ -300,7 +300,9 @@ function renderTree(): void {
     explorerTitle.textContent = "资源管理器";
     // B317（用户点名）：没有根时顶部那一排键没一颗用得上 —— 新建 / 刷新 / 全部折叠都要先有
     // 一棵树，而「打开文件夹」下面那颗大按钮就是它自己的出口。整排收起，标题独占那一行。
+    // B327：打开键平时住在根那一行，无根时放回头部这一排（跟着整排一起被 `.no-root` 收起）。
     explorerPanel.classList.add("no-root");
+    explorerPanel.querySelector<HTMLElement>(".explorer-head")?.append(explorerOpen);
     explorerTree.append(note("还没有打开文件夹", 0), openHintRow());
     return;
   }
@@ -327,7 +329,9 @@ function renderTree(): void {
   const rn = document.createElement("span");
   rn.className = "explorer-name";
   rn.textContent = rootName;
-  rootRow.append(rt, rg, rn);
+  // B327：「打开文件夹」挂进根这一行的最右（换目录是跟这棵树走的事）。元素还是骨架里那一颗，
+  // 监听与 data-tip 都在它身上，搬的只是位置；`replaceChildren` 每次把它摘下来，这里再挂回去。
+  rootRow.append(rt, rg, rn, explorerOpen);
   explorerTree.append(rootRow);
   const kids = document.createElement("div");
   kids.className = "explorer-children";
@@ -370,6 +374,9 @@ function rowFromEvent(ev: Event): HTMLElement | null {
 }
 
 function onRowClick(ev: MouseEvent): void {
+  // B327：根那一行里现在挂着「打开文件夹」那颗键，而整棵树是**委托**点击 —— 不挡掉的话一发
+  // 点击会同时开目录选择器 + 把根折叠/展开一遍（`activateDir` 当场 renderTree，键还会被搬走）。
+  if ((ev.target as HTMLElement | null)?.closest("button")) return;
   const row = rowFromEvent(ev);
   if (!row) return;
   const path = row.dataset.path ?? "";
@@ -547,6 +554,8 @@ function clipItem(path: string): ClipItem | null {
 function onRowContext(ev: MouseEvent): void {
   ev.preventDefault();
   if (windowKind === "satellite") return;
+  // 按钮上右键不许弹那一行的菜单：菜单问的是「选中了谁」，而右键这颗键的人要的是这颗键
+  if ((ev.target as HTMLElement | null)?.closest("button")) return;
   const row = rowFromEvent(ev);
   const path = row?.dataset.path ?? "";
   // 先选中再弹菜单：菜单里那几项问的全是「选中了谁」，不选就会对着上一行的目标动手

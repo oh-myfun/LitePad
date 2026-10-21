@@ -270,11 +270,11 @@
    ⚠️ 那条 `[hidden]` 兜底与下面两块视图是同一个坑（作者样式表的 `display: flex` 压得过 UA
       的隐藏规则，与权重无关）—— jsdom 不做级联，三条都由静态契约盯着。 */
 .side-drawer {
-  /* 初始宽度：运行期由 attachSideResizer 写 inline width/min-width 覆盖（可拖拽，200–640px） */
+  /* 初始宽度：运行期由 attachSideResizer 写 inline width/min-width 覆盖（可拖拽，180–640px） */
   width: 240px;
-  /* ⚠️ 与 `markdown/toc.ts` 的 `SIDE_MIN_WIDTH` 同值（B317 一起从 160 提到 220，B326 又一起
-     收到 200）：这里管「没拖过时的初值下限」，那颗管拖拽下限，错开就成了「一拖才终于不挤」。 */
-  min-width: 200px;
+  /* ⚠️ 与 `markdown/toc.ts` 的 `SIDE_MIN_WIDTH` 同值（B317 一起从 160 提到 220，B326/B327
+     又一起收到 180）：这里管「没拖过时的初值下限」，那颗管拖拽下限，错开就成了「一拖才终于不挤」。 */
+  min-width: 180px;
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
@@ -515,6 +515,11 @@
 }
 .explorer-root {
   font-weight: 600;
+}
+/* B327：「打开文件夹」搬进根这一行（`renderTree` 把那颗键 append 进来），贴右只能靠 auto 边距
+   —— 名字那截是 `flex: 1 1 auto` + 省略号，路径一长就把余量吃干，写固定 margin 会跟着漂。 */
+.explorer-root .toc-head-btn {
+  margin-left: auto;
 }
 .explorer-row:hover,
 .explorer-root:hover {

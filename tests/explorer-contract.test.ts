@@ -206,9 +206,8 @@ describe("B315 路径改写的跨层契约", () => {
     );
   });
 
-  it("顶部那一排：换地方 → 造东西 → 整理这棵树（B315 点名打开键在最左）", () => {
+  it("顶部那一排：造东西 → 整理这棵树（B327 起打开键不在这排里）", () => {
     const order = [
-      "explorer-open",
       "explorer-new-file",
       "explorer-new-dir",
       "explorer-refresh",
@@ -227,6 +226,44 @@ describe("B315 路径改写的跨层契约", () => {
     expect(inOrder(html), "顶部那一排次序漂了").toBe(true);
     // 自证判据有鉴别力：把「新建文件」那一颗抹掉，上面那条必须落空
     expect(inOrder(html.replace('id="explorer-new-file"', 'id="explorer-zzz"'))).toBe(false);
+    // 反向闸：打开键在**骨架里**只是歇脚处（无根时它回到头部被 no-root 收起），
+    // 屏上它该在根那一行 —— 所以头部那一排的次序里不许再算它。
+    const head = html.slice(
+      html.indexOf('class="explorer-head"'),
+      html.indexOf('id="explorer-tree"'),
+    );
+    expect(
+      head.indexOf('id="explorer-open"') < head.indexOf('id="explorer-new-file"'),
+      "打开键不许还排在最左（那正是被搬走的那一颗）",
+    ).toBe(false);
+  });
+
+  it("B327：打开键搬进根目录那一行的最右，且不许被当成「点了那一行」", () => {
+    const panel = read("src/explorer/panel.ts");
+    // 1) 有根 ⇒ 元素被挂到根行；无根 ⇒ 放回头部那一排（no-root 的 CSS 收起整排）
+    expect(panel, "有根时要把打开键挂进根行").toMatch(/rootRow\.append\([\s\S]*explorerOpen\)/);
+    expect(panel, "无根时要放回头部那一排").toMatch(
+      /\.explorer-head[\s\S]{0,120}append\(explorerOpen\)/,
+    );
+    // 2) 贴右靠一条 margin-left:auto（根行是 flex，名字那截 flex:1 已经吃掉余量，
+    //    但省略号一收就漏出空隙 —— 只有 auto 边距能保证「永远在最右」）
+    expect(css, "根行里那颗键要贴右").toMatch(
+      /\.explorer-root \.toc-head-btn\s*\{[^}]*margin-left:\s*auto/,
+    );
+    // 3) 树是**委托**点击（`explorerTree.addEventListener("click", onRowClick)`），按钮搬进来
+    //    之后一发点击会同时命中「开目录」与「折叠根」两件事 ⇒ 委托那一路必须先挡掉按钮。
+    const click = panel.slice(
+      panel.indexOf("function onRowClick"),
+      panel.indexOf("async function activateDir"),
+    );
+    expect(click, "点按钮不该把根行折叠/展开一遍").toContain('closest("button")');
+    expect(
+      panel.slice(
+        panel.indexOf("function onRowContext"),
+        panel.indexOf("function onRowContext") + 700,
+      ),
+      "右键也不该在按钮上弹出那一行的菜单",
+    ).toContain('closest("button")');
   });
 
   it("名单只由发起方改，回收站那条走「删掉」而不是「改写成空」", () => {
@@ -259,8 +296,8 @@ describe("B317 标题排与初屏那一排的样式契约", () => {
     // 判据的鉴别力：把 CSS 改回旧的 160 必须被打红
     expect(
       min,
-      "160 那一档装不下「资源管理器」+ 五颗键（B317 定；B326 用户收到 200）",
-    ).toBeGreaterThanOrEqual(200);
+      "160 那一档装不下标题那一排（B317 定）；B327 把打开键搬进根行，头部只剩四颗，才又收到 180",
+    ).toBeGreaterThanOrEqual(180);
   });
 
   it("还没打开文件夹时顶部那一排收起：类名两侧同源，不许一边写一边漏", () => {

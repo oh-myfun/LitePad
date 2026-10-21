@@ -255,15 +255,10 @@
             <aside id="explorer-panel" class="explorer-panel" hidden>
               <div class="explorer-head">
                 <span id="explorer-title" class="explorer-title">资源管理器</span>
-                <!-- B315（用户点名「打开文件夹放在最左边」+ 重排这一排）：按「换地方 → 造东西
-                     → 整理当前这棵树」的动线排。`explorer-open` 是唯一能无根用的键，所以它排头。 -->
-                <button
-                  id="explorer-open"
-                  class="toc-head-btn"
-                  type="button"
-                  data-tip="打开文件夹"
-                  aria-label="打开文件夹"
-                ></button>
+                <!-- B315 排这一排的动线是「造东西 → 整理当前这棵树」；B327 把「打开文件夹」
+                     从排头挪到下面**根目录那一行的最右**（换目录是跟这棵树走的事，跟着根行走
+                     才顺手）。骨架里它仍留在这一排的最右，只当**歇脚处**：没有根目录时
+                     `renderTree` 把它放回这里，而 `.no-root` 那条 CSS 会把整排收起。 -->
                 <button
                   id="explorer-new-file"
                   class="toc-head-btn"
@@ -291,6 +286,13 @@
                   type="button"
                   data-tip="全部折叠"
                   aria-label="全部折叠"
+                ></button>
+                <button
+                  id="explorer-open"
+                  class="toc-head-btn"
+                  type="button"
+                  data-tip="打开文件夹"
+                  aria-label="打开文件夹"
                 ></button>
               </div>
               <!-- 根目录那一行（VS Code 一样：根是树的第一个节点，永远在）。

@@ -275,6 +275,22 @@ describe("B314 资源管理器面板", () => {
     expect(ui.explorerPanel.classList.contains("no-root"), "有了根就得把那排放回来").toBe(false);
   });
 
+  it("B327：打开键住在根那一行的最右，点它只换目录、不翻根行的面", async () => {
+    const rootRow = rowAt("笔记");
+    const btn = rootRow.querySelector<HTMLElement>("#explorer-open");
+    expect(btn, "打开键该被挂进根目录那一行").toBeTruthy();
+    const expandedBefore = rootRow.getAttribute("aria-expanded");
+
+    // 目录选择器回**同一个**根：这样「根行有没有被翻一次面」才是唯一读得出来的东西。
+    h.pick = ROOT;
+    await click(btn!);
+    await vi.waitFor(() => expect(store.getRoot()).toBe(ROOT));
+    expect(
+      rowAt("笔记").getAttribute("aria-expanded"),
+      "树是委托点击 —— 没挡掉按钮的话，这一发会顺带把根折叠/展开一遍",
+    ).toBe(expandedBefore);
+  });
+
   it("刷新键重读展开着的层；全部折叠收掉子目录但留着根", async () => {
     await click(rowAt("notes"));
     h.calls.length = 0;
