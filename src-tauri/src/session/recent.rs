@@ -34,6 +34,24 @@ use crate::core::{
 /// 其中写着「（默认）」的那一档必须就是这个数（`tests/recents-settings.test.ts` 钉着）。
 pub const DEFAULT_LIMIT: usize = 50;
 
+/// 一条记录的是**哪一类东西**。B332：名单里从此两类并存，各按各的上限算。
+///
+/// ⚠️ `#[serde(default)]`（挂在字段上）是给旧盘用的：`recents.json` 里没这个键的条目一律读成
+///   `File`，于是旧名单零迁移 —— 不写这条，旧文件会整个反序列化失败，而 `load()` 的兜底是
+///   「任何异常回落空名单」，用户看到的就是「升级之后最近打开全没了」。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RecentKind {
+    File,
+    Folder,
+}
+
+impl Default for RecentKind {
+    fn default() -> Self {
+        RecentKind::File
+    }
+}
+
 /// 一条「打开过」的记录。`path` 是**第一次记下它时那条原始路径**（显示用），
 /// `opened_at` 是最后一次打开的毫秒时间戳（相对时间由前端换算，Rust 不碰本地化文案）。
 ///
@@ -46,6 +64,8 @@ pub struct RecentEntry {
     pub name: String,
     #[serde(alias = "closedAt")]
     pub opened_at: i64,
+    #[serde(default)]
+    pub kind: RecentKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,7 +156,14 @@ pub fn key_of(path: &str) -> String {
 /// 把「这些路径刚被打开」落进名单（LRU）。返回 `true` = 名单变了。
 ///
 /// 同键已在册 ⇒ 顶到最前并换时间戳，**不新增第二条**，显示仍留第一次那条写法。
-pub fn touch_opened(r: &mut Recents, opened: &[(String, String)], now_ms: i64) -> bool {
+/// `kind` 跟着这一次动作走（同一路径先当文件夹记下、后来它变成同名文件再打开 ⇒ 自愈成新的一类；
+/// 名单里它仍只占一格）。
+pub fn touch_opened(
+    r: &mut Recents,
+    opened: &[(String, String)],
+    kind: RecentKind,
+    now_ms: i64,
+) -> bool {
     // 上限 0 = 用户明确要「不再记录」。这里不记，而不是「记了再裁」——后者会让名单
     // 在两次同步之间闪出一条又消失。
     if r.limit == 0 || opened.is_empty() {
@@ -160,13 +187,30 @@ pub fn touch_opened(r: &mut Recents, opened: &[(String, String)], now_ms: i64) -
                 path,
                 name,
                 opened_at: now_ms,
+                kind,
             },
         );
     }
-    if r.entries.len() > r.limit {
-        r.entries.truncate(r.limit);
-    }
+    trim_per_bucket(r);
     true
+}
+
+/// 按桶各裁 `limit` 条：表只有一张、额度有两份，桶内顺序（新→旧）不动。
+///
+/// ⚠️ 不许退回成 `entries.truncate(limit)`：那是「两类合起来算」，用户连开几个文件就把
+/// 上午在看的那个目录挤出名单了（症状是「文件夹那条自己不见了」）。
+/// `slot`：Folder 记第 1 格、File 记第 0 格（`bool as usize`），省一个 HashMap。
+fn trim_per_bucket(r: &mut Recents) {
+    if r.limit == 0 {
+        r.entries.clear();
+        return;
+    }
+    let mut kept = [0usize; 2];
+    r.entries.retain(|e| {
+        let slot = usize::from(e.kind == RecentKind::Folder);
+        kept[slot] += 1;
+        kept[slot] <= r.limit
+    });
 }
 
 /// 单条清除（行上那颗 ✕）。传 key（由调用方 `key_of` 现算），不比对原串。
@@ -230,16 +274,12 @@ pub fn clear(r: &mut Recents) -> bool {
     true
 }
 
-/// 改上限：立刻按新档裁剪（变小 ⇒ 裁最旧；0 ⇒ 清空）。
+/// 改上限：立刻按新档裁剪（每桶各裁 `limit` 条；0 ⇒ 整张表清空）。
 pub fn apply_limit(r: &mut Recents, limit: usize) -> bool {
     let limit_changed = r.limit != limit;
     r.limit = limit;
     let before = r.entries.len();
-    if limit == 0 {
-        r.entries.clear();
-    } else if before > limit {
-        r.entries.truncate(limit);
-    }
+    trim_per_bucket(r);
     limit_changed || r.entries.len() != before
 }
 
@@ -263,14 +303,24 @@ mod tests {
     #[test]
     fn touch_opened_puts_newest_first_and_dedupes_by_key() {
         let mut r = Recents::default();
-        assert!(touch_opened(&mut r, &[op(r"C:\d\a.md")], 1_000));
-        assert!(touch_opened(&mut r, &[op(r"C:\d\b.md")], 2_000));
+        assert!(touch_opened(
+            &mut r,
+            &[op(r"C:\d\a.md")],
+            RecentKind::File,
+            1_000
+        ));
+        assert!(touch_opened(
+            &mut r,
+            &[op(r"C:\d\b.md")],
+            RecentKind::File,
+            2_000
+        ));
         assert_eq!(r.entries.len(), 2);
         assert_eq!(r.entries[0].path, r"C:\d\b.md", "新关的必须顶到最前");
         assert_eq!(r.entries[0].name, "b.md", "显示名取自路径最后一段");
 
         assert!(
-            touch_opened(&mut r, &[op(r"C:\d\a.md")], 3_000),
+            touch_opened(&mut r, &[op(r"C:\d\a.md")], RecentKind::File, 3_000),
             "同一文件再关一次要换时间戳"
         );
         assert_eq!(r.entries.len(), 2, "同一路径不许占两格");
@@ -279,11 +329,83 @@ mod tests {
     }
 
     #[test]
+    fn folders_and_files_each_get_their_own_allowance() {
+        // 用户拍板「各算各的」：limit 那一颗是**每类**的上限，两类互不挤占。
+        // 合起来算的写法在这一单会露馅：连开三个文件夹就把最早那个挤没了，
+        // 而用户看到的症状是「我上午在看的那个目录不见了」。
+        let mut r = Recents {
+            limit: 2,
+            entries: Vec::new(),
+        };
+        touch_opened(&mut r, &[op(r"C:\work")], RecentKind::Folder, 1_000);
+        touch_opened(&mut r, &[op(r"C:\d\a.md")], RecentKind::File, 2_000);
+        touch_opened(&mut r, &[op(r"C:\other")], RecentKind::Folder, 3_000);
+        touch_opened(&mut r, &[op(r"C:\d\b.md")], RecentKind::File, 4_000);
+        touch_opened(&mut r, &[op(r"C:\d\c.md")], RecentKind::File, 5_000);
+
+        let folders: Vec<&RecentEntry> = r
+            .entries
+            .iter()
+            .filter(|e| e.kind == RecentKind::Folder)
+            .collect();
+        let files: Vec<&RecentEntry> = r
+            .entries
+            .iter()
+            .filter(|e| e.kind == RecentKind::File)
+            .collect();
+        assert_eq!(folders.len(), 2, "文件开得再多也不该把文件夹挤出名单");
+        assert_eq!(files.len(), 2, "反过来也一样：文件夹不配吃掉文件的额度");
+        assert_eq!(files[0].path, r"C:\d\c.md", "桶内仍按最近打开排");
+        assert!(
+            !r.entries.iter().any(|e| e.path == r"C:\d\a.md"),
+            "要挤也只挤同桶里最旧的那条"
+        );
+    }
+
+    #[test]
+    fn apply_limit_trims_each_bucket_separately() {
+        let mut r = Recents::default();
+        touch_opened(&mut r, &[op(r"C:\one")], RecentKind::Folder, 1);
+        touch_opened(&mut r, &[op(r"C:\two")], RecentKind::Folder, 2);
+        touch_opened(&mut r, &[op(r"C:\a.md")], RecentKind::File, 3);
+        touch_opened(&mut r, &[op(r"C:\b.md")], RecentKind::File, 4);
+        assert!(apply_limit(&mut r, 1));
+        assert_eq!(
+            r.entries
+                .iter()
+                .map(|e| e.path.as_str())
+                .collect::<Vec<_>>(),
+            vec![r"C:\b.md", r"C:\two"],
+            "降到 1 档 ⇒ 每桶各留最新一条，不是整张表只留一条"
+        );
+    }
+
+    #[test]
+    fn old_disk_without_kind_reads_as_file() {
+        // ⚠️ 这条钉的是 `#[serde(default)]` 那一行：读不出来的话 `load()` 的兜底是
+        // 「任何异常回落空名单」，用户看到的症状是「升级之后最近打开全没了」。
+        let json = r#"{"limit":50,"entries":[{"path":"C:\\d\\a.md","name":"a.md","openedAt":1}]}"#;
+        let r: Recents = serde_json::from_str(json).expect("旧盘（没有 kind 这一格）必须读得出来");
+        assert_eq!(r.entries[0].kind, RecentKind::File);
+    }
+
+    #[test]
+    fn reopening_the_same_path_adopts_the_newest_kind() {
+        // 同一个键只占一格；类型跟着这一次动作走（那个目录后来被换成同名文件时能自愈）。
+        let mut r = Recents::default();
+        touch_opened(&mut r, &[op(r"C:\d\notes")], RecentKind::Folder, 1_000);
+        touch_opened(&mut r, &[op(r"C:\d\notes")], RecentKind::File, 2_000);
+        assert_eq!(r.entries.len(), 1, "不许占两格");
+        assert_eq!(r.entries[0].kind, RecentKind::File);
+        assert_eq!(r.entries[0].opened_at, 2_000);
+    }
+
+    #[test]
     fn retitle_rewrites_in_place_for_file_and_folder() {
         let mut r = Recents::default();
-        touch_opened(&mut r, &[op(r"C:\d\a.md")], 1_000);
-        touch_opened(&mut r, &[op(r"C:\d\notes\b.md")], 2_000);
-        touch_opened(&mut r, &[op(r"C:\other.md")], 3_000);
+        touch_opened(&mut r, &[op(r"C:\d\a.md")], RecentKind::File, 1_000);
+        touch_opened(&mut r, &[op(r"C:\d\notes\b.md")], RecentKind::File, 2_000);
+        touch_opened(&mut r, &[op(r"C:\other.md")], RecentKind::File, 3_000);
         // 此刻顺序：other(3000) / notes\b(2000) / a(1000)
 
         assert!(retitle(&mut r, r"C:\d\notes", r"C:\d\笔记"));
@@ -320,8 +442,8 @@ mod tests {
     #[test]
     fn retitle_survives_a_neighbor_with_other_multibyte_widths() {
         let mut r = Recents::default();
-        touch_opened(&mut r, &[op(r"C:\d\笔记\b.md")], 1_000);
-        touch_opened(&mut r, &[op(r"C:\d\a.md")], 2_000);
+        touch_opened(&mut r, &[op(r"C:\d\笔记\b.md")], RecentKind::File, 1_000);
+        touch_opened(&mut r, &[op(r"C:\d\a.md")], RecentKind::File, 2_000);
         assert_eq!(
             r.entries[0].path, r"C:\d\a.md",
             "替身要先自证顺序（改错了对象等于没测）"
@@ -337,7 +459,7 @@ mod tests {
     #[test]
     fn retitle_matches_case_insensitively_and_keeps_the_tail_writing() {
         let mut r = Recents::default();
-        touch_opened(&mut r, &[op(r"C:\Dir\Sub\A.md")], 1);
+        touch_opened(&mut r, &[op(r"C:\Dir\Sub\A.md")], RecentKind::File, 1);
         assert!(retitle(&mut r, r"c:\dir\sub", r"C:\dir\SUB2"));
         assert_eq!(
             r.entries[0].path, r"C:\dir\SUB2\A.md",
@@ -352,7 +474,7 @@ mod tests {
             entries: Vec::new(),
         };
         assert!(
-            !touch_opened(&mut r, &[op(r"C:\d\a.md")], 1_000),
+            !touch_opened(&mut r, &[op(r"C:\d\a.md")], RecentKind::File, 1_000),
             "上限 0 = 不再记录"
         );
         assert!(r.entries.is_empty());
@@ -364,6 +486,7 @@ mod tests {
         touch_opened(
             &mut r,
             &[op(r"C:\d\1.md"), op(r"C:\d\2.md"), op(r"C:\d\3.md")],
+            RecentKind::File,
             1_000,
         );
         assert_eq!(r.entries.len(), 3);
@@ -381,11 +504,11 @@ mod tests {
     #[test]
     fn forget_and_clear_report_whether_the_list_changed() {
         let mut r = Recents::default();
-        touch_opened(&mut r, &[op(r"C:\d\a.md")], 1_000);
+        touch_opened(&mut r, &[op(r"C:\d\a.md")], RecentKind::File, 1_000);
         assert!(forget(&mut r, &key_of(r"C:\d\a.md")));
         assert!(r.entries.is_empty());
         assert!(!forget(&mut r, &key_of(r"C:\d\a.md")), "不在册的不算变更");
-        touch_opened(&mut r, &[op(r"C:\d\a.md")], 2_000);
+        touch_opened(&mut r, &[op(r"C:\d\a.md")], RecentKind::File, 2_000);
         assert!(clear(&mut r));
         assert!(
             !clear(&mut r),
@@ -408,8 +531,8 @@ mod tests {
             "Windows 路径大小写不敏感"
         );
         let mut r = Recents::default();
-        touch_opened(&mut r, &[op(r"C:\Dir\A.md")], 1_000);
-        touch_opened(&mut r, &[op(r"c:\dir\a.md")], 2_000);
+        touch_opened(&mut r, &[op(r"C:\Dir\A.md")], RecentKind::File, 1_000);
+        touch_opened(&mut r, &[op(r"c:\dir\a.md")], RecentKind::File, 2_000);
         assert_eq!(r.entries.len(), 1, "两种写法不许占两格");
         assert_eq!(
             r.entries[0].path, r"C:\Dir\A.md",
@@ -430,9 +553,19 @@ mod tests {
         // 「打开过就在册」：重新打开**不**把条目划掉（旧语义那条 `prune_open` 已删），
         // 只把它顶到最前并换时间戳。
         let mut r = Recents::default();
-        touch_opened(&mut r, &[op(r"C:\d\a.md"), op(r"C:\d\b.md")], 1_000);
+        touch_opened(
+            &mut r,
+            &[op(r"C:\d\a.md"), op(r"C:\d\b.md")],
+            RecentKind::File,
+            1_000,
+        );
         assert_eq!(r.entries[0].path, r"C:\d\b.md");
-        assert!(touch_opened(&mut r, &[op(r"C:\d\a.md")], 2_000));
+        assert!(touch_opened(
+            &mut r,
+            &[op(r"C:\d\a.md")],
+            RecentKind::File,
+            2_000
+        ));
         assert_eq!(r.entries.len(), 2, "还在开着也得留在名单里");
         assert_eq!(r.entries[0].path, r"C:\d\a.md", "再打开要顶到最前");
         assert_eq!(r.entries[0].opened_at, 2_000);
@@ -441,7 +574,12 @@ mod tests {
     #[test]
     fn drop_missing_removes_gone_files_and_reports_the_change() {
         let mut r = Recents::default();
-        touch_opened(&mut r, &[op(r"C:\d\a.md"), op(r"C:\d\b.md")], 1_000);
+        touch_opened(
+            &mut r,
+            &[op(r"C:\d\a.md"), op(r"C:\d\b.md")],
+            RecentKind::File,
+            1_000,
+        );
         let changed = drop_missing(&mut r, |p| p != r"C:\d\b.md");
         assert!(changed);
         assert_eq!(r.entries.len(), 1);

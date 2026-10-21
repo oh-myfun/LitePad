@@ -16,7 +16,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::AppState;
 use crate::core::logging::{self, Level};
-use crate::session::recent::{self, key_of, touch_opened, RecentEntry, Recents};
+use crate::session::recent::{self, key_of, touch_opened, RecentEntry, RecentKind, Recents};
 
 /// 广播名。**必须与前端 `src/core/events.ts` 的 `EVT_RECENTS_CHANGED` 一字不差** ——
 /// 事件名跨语言拼错不会有任何报错，只会表现为「名单不刷新」（`tests/recents-ipc.test.ts` 钉这条）。
@@ -101,12 +101,17 @@ pub fn note_opened(
     app: AppHandle,
     state: State<'_, AppState>,
     path: String,
+    kind: RecentKind,
 ) -> Vec<RecentEntry> {
     let label = window.label().to_string();
-    logging::log(Level::Info, "recents", &format!("{label} 打开 {path}"));
+    logging::log(
+        Level::Info,
+        "recents",
+        &format!("{label} 打开 {path}（{kind:?}）"),
+    );
     let now = now_ms();
     note(&app, &state, "记录打开", |r| {
-        touch_opened(r, &[(key_of(&path), path)], now)
+        touch_opened(r, &[(key_of(&path), path)], kind, now)
     })
 }
 
