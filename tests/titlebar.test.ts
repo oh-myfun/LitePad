@@ -274,15 +274,16 @@ describe("B97 自建标题栏", () => {
     expect(main, "位图要真的挂到元素上").toContain("appMark.style.backgroundImage");
   });
 
-  it("B222：标题栏那颗与打包图标同源（带底版），显示尺寸 24px", () => {
+  it("B222：标题栏那颗与打包图标同源（带底版），显示尺寸 16px（B325 用户改口径）", () => {
     const s = ruleBlock(css(), ".app-mark");
     // ⚠️ 反例一律排在正向断言之前：B219 的教训 —— 反例一旦被正向抢先报错，
     // 这条反向闸等于根本没验过（退化照样能「通过反向验证」）。
-    expect(s, "不许悄悄缩回原先那个 16px").not.toMatch(/(^|[^-])width:\s*16px/);
-    expect(s, "不许悄悄缩回原先那个 16px").not.toMatch(/(^|[^-])height:\s*16px/);
+    // 这颗的历史是 16 → 30 → 24 → 16：反向闸钉的是**上一版**那个数，不是最早的 16。
+    expect(s, "不许停在上一版那个 24px").not.toMatch(/(^|[^-])width:\s*24px/);
+    expect(s, "不许停在上一版那个 24px").not.toMatch(/(^|[^-])height:\s*24px/);
     expect(s, "也不许停在上次那个 30px").not.toMatch(/(^|[^-])width:\s*30px/);
-    expect(s, "必须显式声明宽度").toContain("width: 24px");
-    expect(s, "必须显式声明高度").toContain("height: 24px");
+    expect(s, "必须显式声明宽度").toContain("width: 16px");
+    expect(s, "必须显式声明高度").toContain("height: 16px");
     expect(s, "带底版靠 contain 等比缩，不许拉伸").toContain("background-size: contain");
 
     // 带底版的唯一真相源是 make_icons.py（B222 换源图后由它出全套），不许手画一张丢进来
@@ -325,11 +326,12 @@ describe("B97 自建标题栏", () => {
     ).toBeLessThan(32);
   });
 
-  it("B220：标题栏 gap 16px，且四键之间的抵消量必须同取这一颗变量", () => {
+  it("B220：标题栏 gap 12px（B325 收紧），且四键之间的抵消量必须同取这一颗变量", () => {
     const root = ruleBlock(css(), ":root");
-    expect(root, "几何量只认 :root 里那一颗").toMatch(/--title-gap:\s*16px/);
+    expect(root, "几何量只认 :root 里那一颗").toMatch(/--title-gap:\s*12px/);
     // 反例放最前：写死 gap 就等于把「抵消量」甩下了车（gap 8→16 那次差的正是这一处）
     expect(root, "不许再写死 8px 的老间距").not.toMatch(/--title-gap:\s*8px/);
+    expect(root, "不许退回 16px 那版（图标缩到 16 之后太疏）").not.toMatch(/--title-gap:\s*16px/);
 
     const bar = ruleBlock(css(), ".title-bar");
     expect(bar, "子项间距必须引用变量").toContain("gap: var(--title-gap)");
@@ -365,7 +367,10 @@ describe("B97 自建标题栏", () => {
     expect(root, "不许把留白写成 gap 那颗（那是四键之间的间距，不是图标留白）").not.toMatch(
       /--title-mark-pad:\s*16px/,
     );
-    expect(root, "留白量只在 :root 里定义一次").toMatch(/--title-mark-pad:\s*10px/);
+    expect(root, "留白量只在 :root 里定义一次").toMatch(/--title-mark-pad:\s*8px/);
+    expect(root, "不许停在上一版那个 10px（图标 24 时的量）").not.toMatch(
+      /--title-mark-pad:\s*10px/,
+    );
 
     const bar = ruleBlock(css(), ".title-bar");
     expect(bar, "左侧留白必须引用变量").toContain("padding-left: var(--title-mark-pad)");
@@ -376,7 +381,9 @@ describe("B97 自建标题栏", () => {
       "margin-right: calc(var(--title-mark-pad) - var(--title-gap))",
     );
     // 两条反向闸：写正像素会与 gap **叠加**（右侧反而比左侧更宽），写负字面量则 gap 一改就失联
-    expect(mark, "不许写正的像素（会与 gap 叠成 26px）").not.toMatch(/margin-right:\s*\d+px/);
+    expect(mark, "不许写正的像素（会与 gap 叠加，右侧反而比左侧更宽）").not.toMatch(
+      /margin-right:\s*\d+px/,
+    );
     expect(mark, "不许写死负像素（gap 一变就失联）").not.toMatch(/margin-right:\s*-\d+px/);
 
     // 代入验算：右侧净留白 = 容器 gap + 这条 margin，必须正好等于左侧那颗变量的值。

@@ -47,19 +47,20 @@
      · 圆角 = `--vscode-cornerRadius-large` 8px（`.side-shell` / `.layout-area` 两处）。 */
   --card-gap: 4px;
   --card-edge: 4px;
-  /* 标题栏里**所有** flex 子项之间的间距（B220 第三遍：8px → 16px）。
+  /* 标题栏里**所有** flex 子项之间的间距（B220 第三遍 8px → 16px；B325 收到 12px ——
+     图标缩到 16×16 之后 16px 显得太疏）。
      ⚠️ 这一颗有第二个人：`.title-actions` 的那条 `margin-right: calc(-1 * var(--title-gap))`
      靠它把「置顶键 ↔ 窗口控制三键」之间那道 gap 抵消掉，四键才连成一组。
      两处**必须同取这一颗变量** —— 谁改成字面量，四键之间就会突然裂开一条缝
      （gap 8→16 那次就是这个耦合没跟上，差 8px）。 */
-  --title-gap: 16px;
+  --title-gap: 12px;
   /* 左上角图标（.app-mark）**左右两侧**的留白（B223）：左 = .title-bar 的 padding-left，
      右 = .title-bar 的 gap 加上 .app-mark 那条负 margin-right，二者合起来正好等于这一颗。
      ⚠️ 两侧必须同取这一颗 —— 图标左边贴窗口边缘、右边贴菜单，只改一边就成了
      「左疏右密」（原来左 10px、右 16px，用户点名要拉平）。
      右侧那条写成 `calc(本颗 - gap)` 而不是写死像素：gap 一变，净留白仍旧跟着这一颗走。
-     取值 10px 是跟菜单项 .menu-btn 的水平内边距取齐 —— 图标离窗口左缘太近会「顶边」。 */
-  --title-mark-pad: 10px;
+     取值 8px 跟着图标一起收（B325：图标 24 → 16，留白 10 → 8，比例照旧）。 */
+  --title-mark-pad: 8px;
   /* 标题栏里那行文档名的字号（B224 起它同时是**标签名**的字号）。
      ⚠️ 这一颗有第二个人：`.tab` 读它 —— 用户点名「标签里的中文字要和标题栏一样大」。
      两处各写一个 12.5px，改一边就成了「标题 12.5、标签 14」那种一眼看得出的错开。 */
@@ -363,10 +364,10 @@ body {
   /* B165：给绝对居中的 .title-center 当定位基准（文档名要钉在整条标题栏正中，
      不再是「剩余空位内居中」—— 左侧菜单一长，原来那个居中就会整体被挤偏）。 */
   position: relative;
-  /* 左留白取 --title-mark-pad（10px，与菜单项 .menu-btn 的水平内边距取齐 —— 左上角图标
+  /* 左留白取 --title-mark-pad（B325 起 8px，跟着 16×16 的图标一起收 —— 左上角图标
      离窗口左缘太近会「顶边」，原先 4px 时图标字形几乎贴着边框）。
-     ⚠️ 不许写回字面量：这 10px 有第二个人 —— .app-mark 那条 margin-right 要跟它算出
-     同样的右侧净留白（B223 用户点名「logo 右侧空白与左侧一致」）；两侧各写一个 10px，
+     ⚠️ 不许写回字面量：这一颗有第二个人 —— .app-mark 那条 margin-right 要跟它算出
+     同样的右侧净留白（B223 用户点名「logo 右侧空白与左侧一致」）；两侧各写一个数，
      改了一边就是「左疏右密」。右端不留：关闭键要贴到窗口边缘。 */
   padding-left: var(--title-mark-pad);
   background: var(--bg-toolbar);
@@ -380,16 +381,17 @@ body {
    位图不在 CSS 里：由 main.ts 从 src-tauri/icons 引入后写成内联 background-image，
    保证与 exe / 任务栏图标是同一份源文件，而不是往前端目录再存一份会走样的副本。
    pointer-events:none 只是把「不可点」写明，免得日后被当成可点区域往上挂事件。
-   ⚠️ 显示尺寸（B220）定在 24px（比对面的 24×24 方键再小一档，作为纯标识的份量）：
-   标题栏 34px 高仍留 5px 上下余量，比 30px 那版松快。左右留白同取 --title-mark-pad
+   ⚠️ 显示尺寸（B325）定在 16px —— 这颗是纯标识，不必比对面那族 24×24 的图标键更抢眼。
+   历史上它走过 16 → 30 → 24 → 16，测试里的反向闸钉的是**上一版**那个数
+   （见 tests/titlebar.test.ts 的 B222 那条）。左右留白同取 --title-mark-pad
    （B223 用户点名「logo 右侧空白与左侧一致」，原先左 10px / 右 16px 已拉平）。
    源图**带底**（B222 起换羽毛图，见 main.ts），background-size:contain 只负责等比缩，
    别改成 cover：底图一撑就会切掉文档边角。
    浅色主题下纸面偏白（--bg-toolbar #f6f7f8），靠纸面那道淡描边撑对比，观感请实机复核。 */
 .app-mark {
   flex: 0 0 auto;
-  width: 24px;
-  height: 24px;
+  width: 16px;
+  height: 16px;
   /* B223：右侧净留白 = 父级的 gap + 这一条，正好落到 --title-mark-pad，
      与左端的 padding-left 同一个值 ⇒ 图标左右两侧的空白一样宽。
      ⚠️ 必须引用变量做差：写成正的像素会与容器那道 gap **叠加**（比左边更宽），
