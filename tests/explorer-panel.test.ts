@@ -178,6 +178,11 @@ async function click(el: Element): Promise<void> {
 }
 
 beforeEach(async () => {
+  // 上一条用例如果在中途断言失败，`creating` / `renaming` 就漏在模块里 —— 于是整棵树被画成
+  // 输入框，下面 `setRoot` 那句等「a.md」会超时，一条真失败变成三十条噪音。先把输入框按掉。
+  for (const input of ui.explorerTree.querySelectorAll<HTMLInputElement>(".explorer-input")) {
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  }
   h.calls.length = 0;
   h.opened.length = 0;
   h.created.length = 0;
@@ -311,6 +316,39 @@ describe("B314 资源管理器面板", () => {
     );
     await vi.waitFor(() => expect(h.opened).toEqual([`${ROOT}\\notes\\新笔记.md`]));
     expect(ui.explorerTree.querySelector(".explorer-input"), "提交之后输入框要收掉").toBeNull();
+  });
+
+  it("新建态不该把同层其余条目一起藏掉（输入框排在该层最前）", async () => {
+    await click(ui.explorerNewFile); // 什么都没选 ⇒ 建在根那一层
+    const input = ui.explorerTree.querySelector<HTMLInputElement>(".explorer-input");
+    expect(input, "没画出输入框").toBeTruthy();
+    // 输入框长在 `is-creating` 那一行里，「同层」判据要问的是**那一行的父容器**
+    const host = input!.closest(".explorer-row")!.parentElement!;
+    expect(host.classList.contains("explorer-children"), "父容器应是那一层的 children 容器").toBe(
+      true,
+    );
+    expect(
+      host.querySelectorAll(".explorer-row:not(.is-creating)").length,
+      "同层其余条目被那个 return 整层藏了",
+    ).toBeGreaterThanOrEqual(3); // notes / b.md / a.md
+    expect(host.firstElementChild?.classList.contains("is-creating"), "输入框应排在最前").toBe(
+      true,
+    );
+    // ⚠️ 必须收掉新建态再走：`creating` 是模块级状态，漏着它就会把后面每一条用例都画成新建态
+    // （口径同本文件 F2 改名用例结尾那发 Escape）。
+    input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await vi.waitFor(() => expect(ui.explorerTree.querySelector(".explorer-input")).toBeNull());
+  });
+
+  it("空目录进入新建态：只画输入框，不再挂一条「（空）」", async () => {
+    h.dirs.set(`${ROOT}\\notes`, []);
+    await click(rowAt("notes"));
+    await click(ui.explorerNewFile);
+    const input = ui.explorerTree.querySelector<HTMLInputElement>(".explorer-input");
+    expect(input, "空目录里也要画出输入框").toBeTruthy();
+    expect(ui.explorerTree.textContent, "新建态下不该再挂「（空）」").not.toContain("（空）");
+    input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await vi.waitFor(() => expect(ui.explorerTree.querySelector(".explorer-input")).toBeNull());
   });
 
   it("新建目录走 createDir；空名字 = 取消，不发 IPC", async () => {

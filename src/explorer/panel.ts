@@ -224,10 +224,10 @@ function inputRow(kind: Kind): HTMLElement {
 
 /** 一个目录节点之下该画的东西：输入框 / 读取中 / 错误 / 空 / 子项。 */
 function renderChildren(host: HTMLElement, dir: string, depth: number): void {
-  if (creating?.dir === dir) {
-    host.append(inputRow(creating.kind));
-    return;
-  }
+  // 输入框长在该层最前，但**不取代**这一层的内容：以前这里直接 return，
+  // 结果一按「新建」整层条目就消失，用户读作「文件被删了」。
+  const creatingHere = !!creating && creating.dir === dir;
+  if (creatingHere) host.append(inputRow(creating!.kind));
   const kids = childrenOf(dir);
   if (isLoading(dir)) {
     host.append(note("读取中…", depth));
@@ -239,7 +239,8 @@ function renderChildren(host: HTMLElement, dir: string, depth: number): void {
     return;
   }
   if (kids.length === 0) {
-    host.append(note("（空）", depth));
+    // 已经在写名字的那一层不必再挂「（空）」
+    if (!creatingHere) host.append(note("（空）", depth));
     return;
   }
   for (const e of kids) host.append(renderEntry(e, dir, depth));
