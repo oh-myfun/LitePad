@@ -24,6 +24,23 @@ interface BlockNode {
   el: HTMLElement;
 }
 
+/**
+ * 新旧岛表的最长公共前段 / 后段。
+ *
+ * ⚠️ 判据**只许比 `html`**，不许掺行号：上方多一段就会把下面所有块的行号推走，
+ * 掺进行号等于每次插入都让整条后段作废 —— 就地补丁的收益当场归零。
+ */
+function alignIslands(prev: BlockNode[], next: MdBlock[]): { head: number; tail: number } {
+  let head = 0;
+  while (head < prev.length && head < next.length && prev[head].html === next[head].html) head++;
+  const room = Math.min(prev.length - head, next.length - head);
+  let tail = 0;
+  while (tail < room && prev[prev.length - 1 - tail].html === next[next.length - 1 - tail].html) {
+    tail++;
+  }
+  return { head, tail };
+}
+
 export class PreviewPane {
   readonly root: HTMLElement;
   private blocks: BlockNode[] = [];
@@ -61,55 +78,51 @@ export class PreviewPane {
 
   // ------------------------------------------------ 渲染
 
-  /** 增量 patch：逐 index 比对 html，相同复用节点。 */
+  /** 增量 patch：公共前段 + 公共后段之外才重建，未变的岛一个节点都不碰。 */
   setBlocks(list: MdBlock[], options: { enhanced?: boolean } = {}): void {
-    // ⚠️ 必须**进函数就记**原位置：下面那个循环用 `frag.appendChild(old.el)` 复用节点，
-    // 而把子节点搬进 DocumentFragment 就是**从本容器摘走**——root 一空，浏览器立刻把
-    // scrollTop 归零。等到 `replaceChildren` 前再去读，拿到的已经是 0，于是每一次
-    // 「内容没变的重渲染」都会悄悄把预览弹回文档开头（真机验证台 --trace=rerender 实测：
-    // 调用前 top=602、调用后 top=0，而 scrollHeight 前后都是 1814，说明不是裁剪、是没读到）。
-    const prevScroll = this.root.scrollTop;
+    const prev = this.blocks;
+    const { head, tail } = alignIslands(prev, list);
+    // 长度相同且前段吃满整份 = 一个字都没变
+    const contentChanged = head !== list.length || head + tail !== prev.length;
+
     // 查找标记先拆干净：被替换的 block 会带走标记，而复用的 block 会把
     // 旧标记留在节点里，导致计数与 DOM 脱节（重放由 main 层在 patch 后进行）
     if (this.findMarks.length > 0) {
       this.clearFindMarks();
       this.findActive = -1;
     }
-    const frag = document.createDocumentFragment();
-    const next: BlockNode[] = [];
-    let contentChanged = list.length !== this.blocks.length;
-    for (let i = 0; i < list.length; i++) {
-      const b = list[i];
-      const old = this.blocks[i];
-      if (old && old.html === b.html) {
-        next.push(old);
-        frag.appendChild(old.el);
-      } else {
-        contentChanged = true;
-        const el = document.createElement("div");
-        el.className = "md-block";
-        el.dataset.lineStart = String(b.lineStart);
-        el.dataset.lineEnd = String(b.lineEnd);
-        el.innerHTML = b.html;
-        next.push({ html: b.html, el });
-        frag.appendChild(el);
-      }
+
+    for (const stale of prev.slice(head, prev.length - tail)) stale.el.remove();
+    const middle = list.slice(head, list.length - tail).map((b) => this.createIsland(b));
+    // 未变的那一排岛没被摘走，所以容器从头到尾没空过 —— 但**读位置必须排在动手之前**：
+    // 变更区在视口上方时布局照样变（B288 / 真机 S7 那条 `15.10 → 1.00` 就是这么来的）。
+    const prevScroll = this.root.scrollTop;
+    const before = prev[prev.length - tail]?.el ?? this.noticeEl ?? null;
+    for (const el of middle) this.root.insertBefore(el, before);
+
+    const next: BlockNode[] = [
+      ...prev.slice(0, head),
+      ...middle.map((el, i) => ({ html: list[head + i].html, el })),
+      ...prev.slice(prev.length - tail),
+    ];
+    for (let i = 0; i < head; i++) {
+      next[i].el.dataset.lineStart = String(list[i].lineStart);
+      next[i].el.dataset.lineEnd = String(list[i].lineEnd);
     }
-    // 未复用的旧节点从 DOM 摘除（防止事件/观察泄漏）
-    for (const old of this.blocks) {
-      if (!next.includes(old)) old.el.remove();
+    for (let j = 0; j < tail; j++) {
+      const el = next[next.length - tail + j].el;
+      const b = list[list.length - tail + j];
+      el.dataset.lineStart = String(b.lineStart);
+      el.dataset.lineEnd = String(b.lineEnd);
     }
+
     // 内容变了，旧的待定位行号已失去意义（行号基准随文本漂移）→ 作废，
     // 否则下一次重渲染会把视图拽回很久以前跳转过的那一行。
     if (contentChanged) this.pendingSyncLine = null;
-    // replaceChildren 会把 scrollTop 清零：用函数开头记下的原位置恢复。
-    this.blocks = next;
-    this.root.replaceChildren(frag);
-    // ⚠️ 先读一次 scrollHeight **强制布局**，再写 scrollTop。
-    // 不强制的话，写入发生在「新内容还没定局高度」的那一刻，浏览器会按当时的
-    // scrollHeight 把它裁掉（裁到 0 就是「弹回顶部」），随后高度定局却没人再把位置扶回去。
-    // 这正是真机验证台 S7 抓到的那条：`P0.编辑器 15.10 → 1.00`。
+    // ⚠️ 先读一次 scrollHeight **强制布局**，再写 scrollTop。不强制的话，写入发生在
+    //    「新内容还没定局高度」的那一刻，浏览器会按当时的 scrollHeight 把它裁掉。
     void this.root.scrollHeight;
+    this.blocks = next;
     if (this.pendingSyncLine !== null) {
       this.applySyncToLine(this.pendingSyncLine);
     } else {
@@ -119,6 +132,16 @@ export class PreviewPane {
     if (options.enhanced !== false) void this.enhance();
     // 重排后布局可能变化（图片/公式占位），按 pending 行再定位一次
     this.applyPending();
+  }
+
+  /** 一个顶层 block 的岛壳。只在新建时才碰 `innerHTML`，复用路径永远不经过这里。 */
+  private createIsland(b: MdBlock): HTMLElement {
+    const el = document.createElement("div");
+    el.className = "md-block";
+    el.dataset.lineStart = String(b.lineStart);
+    el.dataset.lineEnd = String(b.lineEnd);
+    el.innerHTML = b.html;
+    return el;
   }
 
   private noticeEl: HTMLElement | null = null;
