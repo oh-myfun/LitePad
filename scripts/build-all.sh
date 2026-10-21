@@ -2,6 +2,12 @@
 # LitePad 全量构建：前端构建 + 测试 + release 发布产物（exe + NSIS 安装包）。
 #
 # 项目约定：每次编译都要把发布版本也编译出来，日常交付用本脚本。
+#
+# ⚠️ B330（用户 2026-10-22 收回主动权）：**本脚本不动版本号**。推档由交付方在跑本脚本
+#   **之前**显式做（patch 自决；minor / major 先问用户）。旧做法是把 +patch 挂在末尾，
+#   两个代价：① 「编译过」被当成「发布过」，试构建也吃一档；② 它排在打包**之后**，
+#   产物里嵌的版本串必然比仓库低一档（构建完才改的那个号，这个包根本没带）。
+#   发布链（scripts/release.sh）自己推档并接管，与本脚本无关。
 # 宿主工具链是 **MSVC**（`stable-x86_64-pc-windows-msvc`，见 rust-toolchain.toml）：
 #   GNU 宿主会动态导入 WebView2Loader.dll（装完缺 dll 直接 0xC0000135 打不开），
 #   MSVC 走 webview2-com 的静态链接分支，单个 exe 即可运行（B92）。
@@ -46,6 +52,9 @@ fi
 export CODEBUDDY_SAFE_DELETE_ENABLED=0
 
 cd "$(dirname "$0")/.."
+# 把本次要嵌进产物的版本号先报出来：它必须与仓库里的四处一致，且构建结束后仍然一致
+# （构建改版本号 = 这个包压根没带上新号，报出来就当场看得见）。
+echo "    版本号：$(node -p "require('./package.json').version")（构建不动版本号）"
 
 echo "==> [1/4] 前端类型检查 + 构建（tsc + vite）"
 # ⚠️ vite 不能在带 MSYS2 条目的 PATH 下跑，否则**挂死**（09-20 实测坐实）：
@@ -148,35 +157,3 @@ echo
 echo "构建完成，产物（profile=$LITEPAD_PROFILE）："
 ls -lh "src-tauri/target/$LITEPAD_PROFILE/litepad.exe"
 ls -lh "src-tauri/target/$LITEPAD_PROFILE/bundle/nsis/"*.exe
-
-# ---------------------------------------------------------------- 版本号自动推进
-# 口径（用户 2026-10-18）：每次修改**自动 +patch**，不需要征询；minor/major 才要先问用户。
-# 挂在交付入口而不是 pre-commit 钩子里，是因为本仓库常用 `git commit <paths>`（路径限定提交
-# 会绕过索引），钩子里 `git add` 的版本号会被那次提交**静默丢掉**、还要把别人的在飞文件一起提交。
-#
-# ⚠️ `LITEPAD_RELEASE=1`（由 `scripts/release.sh` 传入）时**整段跳过**：那条链已经先把版本
-#    bump 到目标档、构建完还要拿这几个文件去提交 release。这里再 +patch 一次，就会把
-#    「tag 叫 v0.22.0、文件里写 0.22.1」这种东西提交出去（v0.22.0 那次就是这么来的）。
-if [ -n "${LITEPAD_RELEASE:-}" ]; then
-  echo "· 由 release.sh 驱动：版本号归它管，这里不推 patch"
-elif [ -n "${CI:-}" ]; then
-  echo "· CI 环境：不动版本号（版本号由本地交付流程推进）"
-elif git diff-tree --no-commit-id --name-only -r HEAD | grep -qE '^src/|^src-tauri/src/'; then
-  if git diff-tree --no-commit-id --name-only -r HEAD | grep -q '^package.json$'; then
-    echo "· 本次提交已自带版本号改动 ⇒ 不再自动 +patch"
-  else
-    # ⚠️ **同一个 bug 的多轮修复不重复加版本号**（用户 2026-10-18 补的口径）：
-    #    额度键 = subject 里的 `B\d+`；已在 `chore(version)` 提交信息里出现过「随 Bxxx」就不再给。
-    #    没带 ticket 号的提交无从判同，各算一次（宁可多一档，不要把两个 bug 混成一档）。
-    BNO="$(git log -1 --format=%s | grep -oE 'B[0-9]+' | head -1)"
-    LAST_TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo '')"
-    if [ -n "$BNO" ] && [ -n "$LAST_TAG" ] &&
-       git log "$LAST_TAG..HEAD" --format='%s' --grep='^chore(version)' | grep -q "随 $BNO"; then
-      echo "· 同一个 bug（$BNO）本版内已给过 patch 额度 ⇒ 不再 +patch"
-    else
-      bash scripts/bump-version.sh patch --commit ${BNO:+--note "随 $BNO"}
-    fi
-  fi
-else
-  echo "· 本次提交未碰产品代码（docs/test/scripts/记忆）⇒ 不推 patch"
-fi

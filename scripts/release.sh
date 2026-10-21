@@ -51,10 +51,10 @@ bash scripts/gen-changelog.sh "$(git describe --tags --abbrev=0 2>/dev/null)" "$
 if [ "$SKIP_BUILD" -eq 1 ]; then
   echo "⏭ 跳过本地全量构建（--ci）：交由 GitHub Actions 在 tag 上构建 NSIS 并创建 Release"
 else
-  # LITEPAD_RELEASE：把 build-all 那段「自动 +patch」关掉。本脚本已经把版本 bump 到目标档，
-  # 构建后再 +patch 会把 0.22.1 这种内容提交进「chore(release): v0.22.0」那次提交里
-  # —— tag 名与文件里的版本号不一致（v0.22.0 那次正是这么坏的）。
-  LITEPAD_RELEASE=1 npm run build:all
+  # 构建脚本不碰版本号（B330）：本脚本上面已经把版本 bump 到目标档，`build:all` 只是把
+  # 那一档嵌进产物里。旧做法要在末尾加 `LITEPAD_RELEASE=1` 关掉 build-all 的自动 +patch，
+  # 否则 tag 名与文件里的版本号不一致（v0.22.0 那次正是这么坏的）—— 那段既已拆掉，开关也一并撤。
+  npm run build:all
   echo "✓ 全量构建通过"
   echo "  产物：src-tauri/target/release/litepad.exe"
   echo "        src-tauri/target/release/bundle/nsis/LitePad_${VER}_x64-setup.exe"

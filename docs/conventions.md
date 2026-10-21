@@ -37,9 +37,11 @@
   —— 宁可多一档，也不要把两个 bug 混成一档。
 - 「每次修改」指碰**产品代码**的改动。纯 `docs/` / `tests/` / `scripts/` / 内部记忆提交不推 patch
   —— 版本号是软件版本，不是提交计数器。
-- patch 由**交付入口**自动推进：`bash scripts/build-all.sh` 末尾调用
+- patch 由**交付方在出包前显式推**：跑 `bash scripts/build-all.sh` **之前**先
   `scripts/bump-version.sh patch --commit`，把版本号单独提交成一条 `chore(version): …`。
-  之所以挂在交付入口而不是 pre-commit 钩子：本仓库常用 `git commit <paths>`，**路径限定提交会绕过索引**，
+  ⚠️ 构建脚本自己**不动版本号**（B330，用户 2026-10-22 收回这项主动权）：旧口径把 +patch 挂在
+  `build-all.sh` 末尾，一是让「编译过」等于「发布过」，二是它排在打包**之后**，产物里嵌的版本串
+  必然比仓库低一档。也不挂 pre-commit 钩子：本仓库常用 `git commit <paths>`，**路径限定提交会绕过索引**，
   钩子里 `git add` 的版本号会被那次提交静默丢掉，还会把别人在飞的文件一起提交。
 - `scripts/bump-version.sh <patch|minor|major|x.y.z>` 是版本号写入的**唯一**实现，一次写齐四处
   （`package.json` / `tauri.conf.json` / `Cargo.toml` / `Cargo.lock`）；`release.sh` 也调它。别在别处再写一份。

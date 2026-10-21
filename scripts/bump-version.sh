@@ -91,7 +91,7 @@ if [ "$DO_COMMIT" = 1 ]; then
   if [ -n "$others" ]; then
     echo "⚠ 工作树另有改动 ⇒ **不自动提交**版本号（别把并行会话的在飞文件卷进来）。"
     echo "  待那批改动的提交落地后，手动补一条："
-    echo "      git add ${VER_FILES[*]} && git commit -m 'chore(version): v$NEW（自动 +patch）'"
+    echo "      git add ${VER_FILES[*]} && git commit -m 'chore(version): v$NEW（patch）'"
   else
     git add "${VER_FILES[@]}"
     msg="chore(version): v$NEW（$LEVEL）"

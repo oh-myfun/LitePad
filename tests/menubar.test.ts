@@ -1026,7 +1026,7 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     ).toBe(true);
   });
 
-  it("B308 版本维护口径：patch 自动加、minor/major 必须先问用户，且 bump 只有一处实现", () => {
+  it("B308/B330 版本维护口径：bump 只有一处实现、构建脚本不推档、minor/major 先问用户", () => {
     // 用户 2026-10-18 定的规则：「每次修改自动推进 patch；较大改动可询问是否 minor；
     // 非兼容性的大型改动询问是否 major」。要点是**判档权在人不在工具** ——
     // 旧实现按提交类型自动判档（feat→minor、满 10 提交→patch），等于工具替用户拍板，已废弃。
@@ -1053,16 +1053,22 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
       "edit('package.json'",
     );
 
-    // ③ patch 由交付入口自动推进，且只在碰产品代码时推。
-    expect(buildAll, "build-all.sh 必须自动 +patch").toContain(
-      "bash scripts/bump-version.sh patch --commit",
+    // ③ B330（用户 2026-10-22 收回主动权）：**构建脚本不许再动版本号**。
+    //    旧口径（2026-10-18）是把 +patch 挂在 build-all.sh 末尾，代价两层：
+    //      · 「编译过」与「发布过」被绑成一件事 —— 试构建也吃一档；
+    //      · 它排在打包**之后** ⇒ 安装包里嵌的版本串永远比仓库低一档（0.23.7 的装配着 0.23.8 的仓库）。
+    //    新口径：推进由交付方在构建**前**显式做（patch 自决，minor/major 先问用户）。
+    //    反向闸只挡「自己调用自己」这一种复发，正向闸钉住「构建时把要嵌进去的版本号报出来」——
+    //    报了，落后一档就当场看得见，不用等下一次构建的产物文件名来告诉你。
+    expect(buildAll, "build-all.sh 不许再引用 bump-version（版本号归交付方）").not.toMatch(
+      /bump-version/,
     );
-    expect(buildAll, "只有碰 src/ 或 src-tauri/src/ 才算一次修改").toContain(
-      "grep -qE '^src/|^src-tauri/src/'",
+    expect(buildAll, "构建开头要把本次要嵌入的版本号打出来").toMatch(
+      /版本号.*node -p .*package\.json.*version/,
     );
-    //    用户 2026-10-18 补的口径：**同一个 bug 修几轮不重复加版本号** ——
-    //    额度键是 subject 里的 `B\d+`，已在 `chore(version)` 信息里记过「随 Bxxx」就不再给第二档。
-    expect(buildAll, "同一 bug 本版内已给过额度 ⇒ 不得重复 +patch").toContain('grep -q "随 $BNO"');
+    expect(release, "release.sh 仍然自己推档（它才是交付入口）").toContain(
+      "scripts/bump-version.sh",
+    );
     expect(guard, "守卫提示要带上判同用的 ticket 号，否则补的那条无法参与后续判同").toContain(
       "同一 bug 多轮只算一档",
     );
