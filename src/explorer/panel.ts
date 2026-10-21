@@ -89,6 +89,19 @@ export async function promptOpenFolder(): Promise<void> {
   if (activeDrawer() !== "explorer") setDrawer("explorer");
 }
 
+/**
+ * B331「关闭文件夹」：清根 + 清掉设置里那一格 + 树回初屏。
+ * 走 `openFolder("")` 那条漏斗 —— 换根的三件事（store、设置、落盘）只有一处实现。
+ * 已开着的标签**一个都不动**：关的是「资源管理器看哪个目录」，不是文档（VS Code 的
+ * 「关闭工作区」同样不碰编辑器里的标签）。也不从最近名单里删那条 —— 刚关掉的那个
+ * 正是下一次最可能重开的。
+ * ⚠️ 子窗口没有左边栏，但 `settings` 是全窗口共用那份盘：不挡住就是「子窗口替主窗口抹根」。
+ */
+export async function closeFolder(): Promise<void> {
+  if (windowKind === "satellite") return;
+  await openFolder("");
+}
+
 export function setupExplorer(): void {
   sideExplorer.innerHTML = CODICONS.files;
   explorerOpen.innerHTML = CODICONS.folderOpened;

@@ -276,7 +276,7 @@ describe("命令表自检", () => {
    * 而单占一颗 `Ctrl+Shift+F` 会抢走以后「在项目里查找」的位置 —— 菜单与命令面板都点得到，
    * 值得留着键位空位。用户在设置 ▸ 快捷键里自己绑是允许的（覆盖表按 id 存，与有无默认无关）。
    */
-  const NO_KEYS = new Set(["file.openFolder"]);
+  const NO_KEYS = new Set(["file.openFolder", "file.closeFolder"]);
 
   it("每个可编辑命令都有默认键位，或在 NO_KEYS 里写明不给的理由", () => {
     for (const cmd of COMMANDS) {

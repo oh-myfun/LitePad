@@ -212,7 +212,7 @@ import { setupRecentsPanel } from "./recents/panel";
 // B314：资源管理器。`setupExplorer` 装键并登记成外壳的第三块；`setRoot` 只把盘上那个根
 // 搬进 store（**不走 panel 的 `openFolder`** —— 那条会顺手 saveSettings，而启动回放不该
 // 把读到的值再写一遍，口径同 B312 的 `persist = false`）。
-import { promptOpenFolder, setupExplorer, toggleExplorer } from "./explorer/panel";
+import { closeFolder, promptOpenFolder, setupExplorer, toggleExplorer } from "./explorer/panel";
 import { setupPathRewiring } from "./explorer/paths";
 import { setRoot as setExplorerRoot } from "./explorer/store";
 import { initRecentsStore } from "./recents/store";
@@ -464,6 +464,9 @@ function runShortcut(id: string): void {
       break;
     case "file.openFolder":
       void promptOpenFolder();
+      break;
+    case "file.closeFolder":
+      void closeFolder();
       break;
     case "file.save":
       void doSave(false);

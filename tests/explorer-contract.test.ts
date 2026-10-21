@@ -145,6 +145,36 @@ describe("B314 资源管理器跨层契约", () => {
     expect(boot, "runShortcut 要接 view.explorer").toContain(`case "view.explorer"`);
   });
 
+  it("B331「关闭文件夹」四条入口齐全，且没开文件夹时置灰", () => {
+    // 菜单位置：紧跟在「打开文件夹」后面 —— 这两颗是一对，隔开了就找不到「关掉」在哪。
+    const openAt = menubar.indexOf('withKey("打开文件夹"');
+    const closeAt = menubar.indexOf('withKey("关闭文件夹"');
+    expect(openAt, "取不到「打开文件夹」那一条").toBeGreaterThanOrEqual(0);
+    expect(closeAt, "文件菜单缺「关闭文件夹」").toBeGreaterThan(openAt);
+    // 置灰判据：无根时点亮它 = 「关掉一个没开着的文件夹」，还会顺手把盘上那一格写空。
+    const item = menubar.slice(closeAt, closeAt + 220);
+    expect(item, "无根时不许点亮").toMatch(/disabled:\s*!cb\.hasFolderRoot\(\)/);
+    expect(
+      item,
+      "onSelect 只许走 panel.closeFolder（换根三件事的漏斗在那边，别在菜单里再写一份）",
+    ).toMatch(/onSelect:\s*cb\.onCloseFolder/);
+    // 两端都要有：接口声明 + commands.ts 的实装（漏一侧 = tsc 先炸，但漏的是**判据**这一侧时
+    // 只有这里看得见 —— 接口写了、实装随手 `() => {}` 也能过编译）。
+    expect(menubar).toMatch(/hasFolderRoot:\s*\(\)\s*=>\s*boolean;/);
+    expect(menubar).toMatch(/onCloseFolder:\s*\(\)\s*=>\s*void;/);
+    const cmds = read("src/commands.ts");
+    expect(cmds, "实装要读 store 的 hasRoot，不许自己判路径").toMatch(
+      /hasFolderRoot:\s*\(\)\s*=>\s*hasRoot\(\)/,
+    );
+    expect(cmds, "关闭那颗要调 panel.closeFolder").toMatch(
+      /onCloseFolder:\s*\(\)\s*=>\s*void closeFolder\(\)/,
+    );
+    expect(keymap, "命令表要有 file.closeFolder（命令面板与快捷键覆盖都读它）").toContain(
+      `id: "file.closeFolder"`,
+    );
+    expect(boot, "runShortcut 要接 file.closeFolder").toContain(`case "file.closeFolder"`);
+  });
+
   it("只给主窗口装配，且启动回放不许反写盘", () => {
     const at = boot.indexOf("setupExplorer();");
     expect(at, "没装配 ⇒ 那颗键点了没东西").toBeGreaterThan(-1);

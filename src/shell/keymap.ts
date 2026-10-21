@@ -254,6 +254,14 @@ export const COMMANDS: CommandDef[] = [
     keys: [],
     note: "打开后左栏资源管理器会摊开；再次选择会换根",
   },
+  {
+    // B331：与「打开文件夹」配成一对。同样默认不抢键位。
+    id: "file.closeFolder",
+    label: "关闭文件夹",
+    group: "文件",
+    keys: [],
+    note: "清掉资源管理器的根并记住下次启动不再回放；已打开的标签不受影响",
+  },
   { id: "file.save", label: "保存", group: "文件", keys: ["Ctrl+S"] },
   { id: "file.saveAs", label: "另存为", group: "文件", keys: ["Ctrl+Shift+S"] },
   { id: "file.saveAll", label: "全部保存", group: "文件", keys: ["Ctrl+Alt+S"] },

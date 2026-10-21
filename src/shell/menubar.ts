@@ -31,6 +31,12 @@ export interface MenuBarCallbacks {
   onOpen: () => void;
   /** B314：打开文件夹（换资源管理器的根）。菜单与命令面板都有入口，默认不配键位。 */
   onOpenFolder: () => void;
+  /**
+   * B331：关闭文件夹（清根 + 清设置里那一格）。`hasFolderRoot()` 为假时置灰 ——
+   * 判据与回调分开放，是因为置灰这件事归菜单（它知道什么时候要问），而「有没有根」归 store。
+   */
+  onCloseFolder: () => void;
+  hasFolderRoot: () => boolean;
   onSave: () => void;
   onSaveAs: () => void;
   onSaveAll: () => void;
@@ -114,6 +120,12 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
       {
         label: withKey("打开文件夹", cb.keyHint("file.openFolder")),
         onSelect: cb.onOpenFolder,
+      },
+      {
+        // B331：与上一颗配成一对。没开文件夹时置灰（点亮它 = 把盘上那一格写空一次）。
+        label: withKey("关闭文件夹", cb.keyHint("file.closeFolder")),
+        disabled: !cb.hasFolderRoot(),
+        onSelect: cb.onCloseFolder,
       },
       { separator: true },
       { label: withKey("保存", cb.keyHint("file.save")), onSelect: cb.onSave },

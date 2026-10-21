@@ -77,6 +77,9 @@ function makeCb(): MenuBarCallbacks {
     onOpen: noop,
     // B314：打开文件夹 + 资源管理器开合
     onOpenFolder: noop,
+    // B331：关闭文件夹（判据给真值：默认当作「开着」，置灰那条另有专门的用例）
+    onCloseFolder: noop,
+    hasFolderRoot: () => true,
     onExplorer: noop,
     explorerChecked: () => false,
     onSave: noop,
@@ -131,6 +134,24 @@ afterEach(() => {
 });
 
 describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
+  it("B331：「关闭文件夹」的亮灭跟着「有没有根」两头走", async () => {
+    // 两头都量：只测「灰」会被「永远灰」糊过去，只测「亮」会被「永远亮」糊过去。
+    const build = async (hasRoot: boolean) => {
+      closePopupMenu(); // 上一轮的弹层还挂着 ⇒ 不关掉就会 find 到旧那一层的条目
+      const host = document.createElement("nav");
+      document.body.appendChild(host);
+      createMenuBar(host, { ...makeCb(), hasFolderRoot: () => hasRoot });
+      await clickMenuBtn(host, "文件");
+      const item = [...document.querySelectorAll<HTMLButtonElement>(".popup-menu button")].find(
+        (b) => b.textContent?.includes("关闭文件夹"),
+      );
+      expect(item, "文件菜单里要有「关闭文件夹」这一条").toBeTruthy();
+      return item!;
+    };
+    expect((await build(false)).disabled, "没开文件夹 ⇒ 置灰").toBe(true);
+    expect((await build(true)).disabled, "开着文件夹 ⇒ 不许还是灰的").toBe(false);
+  });
+
   it("B103：菜单按钮是「标签(字母)」写法，不再有首字下划线和 Alt 键帽提示", () => {
     const host = document.createElement("nav");
     document.body.appendChild(host);

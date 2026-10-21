@@ -856,3 +856,34 @@ describe("B316 树内拖拽 = 移动", () => {
     expect(marked("explorer-dragging")).toEqual([]);
   });
 });
+
+describe("B331 关闭文件夹", () => {
+  it("点「关闭文件夹」⇒ 根清空、设置里那一格跟着清空、树回初屏", async () => {
+    const appState = await import("../src/core/app-state");
+    appState.setSettings({ folder_root: ROOT } as never);
+    expect(names(), "前置条件：这单是在「已经开着文件夹」的状态下开始的").toContain("a.md");
+
+    await panel.closeFolder();
+
+    expect(store.getRoot(), "根要真的清掉（不是只把树折叠起来）").toBe("");
+    expect(appState.settings?.folder_root, "设置里留着的还是旧根 ⇒ 下次启动又回放回来").toBe("");
+    await vi.waitFor(() =>
+      expect(ui.explorerPanel.classList.contains("no-root"), "回初屏那颗整宽「打开文件夹」").toBe(
+        true,
+      ),
+    );
+  });
+
+  it("子窗口里那颗什么都不做：它没有左边栏，落盘会把主窗口的根抹掉", async () => {
+    const appState = await import("../src/core/app-state");
+    appState.setSettings({ folder_root: ROOT } as never);
+    appState.setWindowKind("satellite");
+    try {
+      await panel.closeFolder();
+      expect(store.getRoot(), "子窗口不许动根").toBe(ROOT);
+      expect(appState.settings?.folder_root, "更不许替主窗口写盘").toBe(ROOT);
+    } finally {
+      appState.setWindowKind("main");
+    }
+  });
+});
