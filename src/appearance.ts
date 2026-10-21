@@ -9,6 +9,17 @@ import { oneDark as oneDarkTheme } from "@codemirror/theme-one-dark";
 import type { PreviewWidth } from "./ipc/api";
 import { tabs, panels, setIsWrap } from "./core/app-state";
 
+/**
+ * 主题翻了 ⇒ 让每一格的预览把「只在渲染那一刻取色」的东西重画一次（mermaid）。
+ *
+ * 正文 / 公式 / 代码配色都跟着 CSS 变量走，样式自己换就够了，不必惊动 DOM；
+ * mermaid 的 `theme:` 是渲染时读 `dataset.theme` 定死的，而岛级增量会复用那块
+ * （它的 html 没变）⇒ 不显式重画，切主题后图永远停在旧配色（B321 用户报的那条）。
+ */
+export function rethemePreviews(): void {
+  for (const panel of panels.values()) panel.preview?.retheme();
+}
+
 export function applyDarkToTabs(dark: boolean): void {
   for (const tab of tabs.values()) {
     const effect = tab.comps.theme.reconfigure(dark ? oneDarkTheme : []);

@@ -104,6 +104,10 @@ export class PreviewPane {
 
   /** 增量 patch：公共前段 + 公共后段之外才重建，未变的岛一个节点都不碰。 */
   setBlocks(list: MdBlock[], options: { enhanced?: boolean } = {}): void {
+    // ⚠️ 动手之前第一件事就是读位置：摘岛会让浏览器当场按新的 `scrollHeight` 把
+    //    `scrollTop` 裁小（改末块那一形最明显），删完再读拿到的是「已经跳过的位置」，
+    //    扶回去等于没扶（B288，真机台 --trace=rerender 实测 调用前 602 / 调用后 0）。
+    const prevScroll = this.root.scrollTop;
     const prev = this.blocks;
     const { head, tail } = alignIslands(prev, list);
     // 长度相同且前段吃满整份 = 一个字都没变
@@ -118,9 +122,7 @@ export class PreviewPane {
 
     for (const stale of prev.slice(head, prev.length - tail)) stale.el.remove();
     const middle = list.slice(head, list.length - tail).map((b) => this.createIsland(b));
-    // 未变的那一排岛没被摘走，所以容器从头到尾没空过 —— 但**读位置必须排在动手之前**：
-    // 变更区在视口上方时布局照样变（B288 / 真机 S7 那条 `15.10 → 1.00` 就是这么来的）。
-    const prevScroll = this.root.scrollTop;
+    // 未变的那一排岛没被摘走，所以容器从头到尾没空过（位置读取排在函数开头，见上）。
     const before = prev[prev.length - tail]?.el ?? this.noticeEl ?? null;
     for (const el of middle) this.root.insertBefore(el, before);
 
@@ -300,6 +302,23 @@ export class PreviewPane {
     return (this.host?.lineCount() ?? 0) > LAZY_THRESHOLD_LINES;
   }
 
+  /**
+   * 主题换了 ⇒ 把已经画好的 mermaid 岛还原成占位 `pre`，再走一遍增强。
+   *
+   * mermaid 的 `theme:` 只在**渲染那一刻**读 `dataset.theme`，图一旦画出来就定色了；
+   * 而岛级增量会复用那一块（它的 html 没变），所以切主题后图永远停在旧配色（B321）。
+   * 只还原带 mermaid 占位的岛 —— 跟着 CSS 变量走的公式 / 高亮 / 已解码的 `<img>` 一律不碰。
+   */
+  retheme(): void {
+    let dirty = false;
+    for (const b of this.blocks) {
+      if (!b.html.includes("mermaid-src") || !b.el.querySelector(".md-mermaid")) continue;
+      b.el.innerHTML = b.html;
+      dirty = true;
+    }
+    if (dirty) void this.enhance();
+  }
+
   /** 包装 enhance：无论成功/中断都要按 pending 行重定位一次（公式/Mermaid 会改变高度）。 */
   private async enhance(): Promise<void> {
     try {
@@ -368,6 +387,11 @@ export class PreviewPane {
               const html = await codeToHtml(code, {
                 lang,
                 themes: { light: "github-light", dark: "github-dark" },
+                // ⚠️ 默认的 `defaultColor: "light"` 会把浅色值写成**内联** `color` /
+                //    `background-color:#fff`，内联压过类规则 ⇒ 深色主题下代码块仍是白底浅字
+                //    （B321 用户报的「配色不随主题切换」）。关掉它，shiki 只留
+                //    `--shiki-light/--shiki-dark` 变量，切换交回 preview.css。
+                defaultColor: false,
               });
               if (!el.isConnected) continue;
               const holder = document.createElement("div");

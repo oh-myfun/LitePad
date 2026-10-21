@@ -41,6 +41,7 @@ import {
   applyTabStyle,
   applyWrapToTabs,
   normalizePreviewWidth,
+  rethemePreviews,
 } from "./appearance";
 import { doOpen, rebuildDocInstances } from "./io/files";
 import { cancelPendingBackup, discardAllBackups, discardBackupFor } from "./session/session";
@@ -438,7 +439,12 @@ async function setThemeMode(mode: ThemeMode): Promise<void> {
   // 表现为「主题设了、重启就丢」。写回之后紧跟的 persistSettings() 才真正把它存下去。
   if (settings) settings.theme = mode;
   const dark = applyTheme(mode);
-  if (dark !== isDark) applyDarkToTabs(dark);
+  if (dark !== isDark) {
+    applyDarkToTabs(dark);
+    // ⚠️ `applyTheme` 已经把 `dataset.theme` 换成新档位了，所以这一发读到的是**新**主题；
+    //    排在 `setIsDark` 前后都无所谓，但绝不能漏 —— 漏了 mermaid 图会停在旧配色。
+    rethemePreviews();
+  }
   setIsDark(dark);
   publishThemeMode();
   await persistSettings();

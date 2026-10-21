@@ -154,6 +154,43 @@ describe("预览岛级增量（B319-A2）", () => {
     expect(b.calls, "内容没改时待定位行必须仍然生效").toEqual([5]);
   });
 
+  // B288 血泪纪律的顺序判据：`scrollTop` 必须**动手之前**读。摘掉末块会让浏览器当场把
+  // scrollTop 按新的 scrollHeight 裁小，删完再读拿到的是「已经跳了的位置」，扶回去等于没扶。
+  // jsdom 没有布局，所以这里给 scrollTop 装一个记账门面，直接断言事件顺序。
+  it("读 scrollTop 排在摘岛之前（删完再读 = 读到被裁过的位置）", () => {
+    const p = mkPane();
+    p.setBlocks([bk(A, 1), bk(B, 3), bk(C, 5)], { enhanced: false });
+    const [, , last] = islands(p);
+    const events: string[] = [];
+    Object.defineProperty(p.root, "scrollTop", {
+      configurable: true,
+      get: () => {
+        events.push("read");
+        return 42;
+      },
+      set: () => void events.push("write"),
+    });
+    const rawRemove = last.remove.bind(last);
+    last.remove = () => {
+      events.push("remove");
+      return rawRemove();
+    };
+    const rawInsert = p.root.insertBefore.bind(p.root);
+    p.root.insertBefore = ((node: Node, ref: Node | null) => {
+      events.push("insert");
+      return rawInsert(node, ref);
+    }) as typeof p.root.insertBefore;
+
+    // 只改末块 ⇒ head=2、tail=0 ⇒ 末岛被摘走、新末岛被插回来
+    p.setBlocks([bk(A, 1), bk(B, 3), bk("<p>丙改</p>", 5)], { enhanced: false });
+
+    expect(events.slice(0, 3), `事件序：${events.join(" → ")}`).toEqual([
+      "read",
+      "remove",
+      "insert",
+    ]);
+  });
+
   it("写完 scrollTop 之后、setBlocks 返回之前，同栈向账本认领", () => {
     const p = mkPane();
     p.setBlocks([bk(A, 1), bk(B, 3)]);
