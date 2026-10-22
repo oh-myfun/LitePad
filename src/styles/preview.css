@@ -43,7 +43,7 @@
   border-left: 3px solid var(--md-border);
   background: var(--md-code-bg);
   color: var(--md-muted);
-  font-size: 13px;
+  font-size: var(--fs-ui);
   line-height: 1.6;
 }
 
@@ -345,7 +345,7 @@
   flex: 0 0 auto;
   height: 28px;
   padding: 0 4px 0 10px;
-  font-size: 11px;
+  font-size: var(--fs-meta);
   line-height: 1;
 }
 .recent-title {
@@ -378,8 +378,10 @@
   width: 100%;
   /* B329：上下从 4px 收到 2px —— 不是调手感，是给下面两截的行盒让位：
      两截各撑 +1.8/+2.2px，不收回来的话每一行胖 4px，一屏少看两条。
-     字与悬停高亮的净留白没变（行盒里本来就有 leading）。 */
-  padding: 2px 6px 2px 10px;
+     字与悬停高亮的净留白没变（行盒里本来就有 leading）。
+     B337：名字那一截从 12px 并入 ui 档（12.5px）⇒ 行盒再 +0.75px。同一口径继续从
+     padding 里扣（2→1.5），整行 38.25px 仍守着「列表不许变胖」那条预算。 */
+  padding: 1.5px 6px 1.5px 10px;
   text-align: left;
   border: none;
   background: none;
@@ -398,7 +400,7 @@
    上下只留 2px：它夹在两组条目中间，再松就把「一组」拆成两段看。 */
 .recent-group {
   padding: 2px 10px 0;
-  font-size: 11px;
+  font-size: var(--fs-meta);
   line-height: 1.5;
   color: var(--fg-muted, #656d76);
   user-select: none;
@@ -407,7 +409,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: var(--fs-ui);
   /* B329：与 `.explorer-name` 同一口径（那一格为什么不能按字号排，注释在它身上）。
      旧的那一档是「字号 × 1.35」，3 倍缩放量像素下框内墨点与 `overflow: visible` 的替身
      逐点相同 ⇒ 这一截其实没被切；跟着走 1.5 是为了两块面板共用一颗，不再各量各的。 */
@@ -422,7 +424,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: var(--fs-meta);
   /* B329：11px 配「字号 × 1.3」时，裁切框的下沿正好压在最后那条像素行上 ——
      同一份样式，行落在像素格的不同相位上就时切时不切（量出来：一相比 `overflow: visible`
      的替身少 25 个墨点，换一相又逐点相同）。这种「看运气」的边界必须撑开，
@@ -457,7 +459,7 @@
 }
 .recent-empty {
   padding: 8px 12px;
-  font-size: 11px;
+  font-size: var(--fs-meta);
   line-height: 1.5;
   color: var(--fg-muted, #656d76);
 }
@@ -494,7 +496,7 @@
   flex: 0 0 auto;
   height: 28px;
   padding: 0 4px 0 10px;
-  font-size: 11px;
+  font-size: var(--fs-meta);
   line-height: 1;
 }
 .explorer-title {
@@ -535,7 +537,7 @@
   padding-left: calc(6px + var(--depth, 0) * 12px);
   padding-right: 6px;
   height: 22px;
-  font-size: 12px;
+  font-size: var(--fs-ui);
   line-height: 1;
   color: var(--fg, #24292f);
   cursor: pointer;
@@ -610,7 +612,7 @@
 .explorer-note {
   cursor: default;
   color: var(--fg-muted, #656d76);
-  font-size: 11px;
+  font-size: var(--fs-meta);
 }
 /* 新建时那格的输入框：与行同高，看不出是在「改一行」而不是弹了个框（VS Code 同款手感）。 */
 /* B318（用户点名「和软件整体风格不一致」）：行内新建 / 改名的框改成走**输入框那一族**的形状
@@ -627,7 +629,7 @@
   height: 20px;
   box-sizing: border-box;
   padding: 0 3px;
-  font-size: 12px;
+  font-size: var(--fs-ui);
   color: var(--fg, #24292f);
   background: var(--bg, #fff);
   border: 1px solid var(--border, #d0d7de);
@@ -650,7 +652,7 @@
   justify-content: center;
   gap: 4px;
   padding: 3px 8px;
-  font-size: 12px;
+  font-size: var(--fs-ui);
   color: var(--fg, #24292f);
   background: transparent;
   border: 1px solid var(--border, #d0d7de);
@@ -860,7 +862,7 @@ body.layout-dragging .toc-grip {
   flex: 0 0 auto;
   height: 28px;
   padding: 0 4px 0 10px;
-  font-size: 11px;
+  font-size: var(--fs-meta);
   line-height: 1;
 }
 .toc-title {
@@ -922,7 +924,7 @@ body.layout-dragging .toc-grip {
   border: none;
   background: none;
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: var(--fs-ui);
   color: inherit;
   padding: 4px 12px 4px 8px;
   overflow: hidden;
@@ -991,7 +993,7 @@ body.layout-dragging .toc-grip {
 }
 .toc-empty {
   padding: 16px 12px;
-  font-size: 12.5px;
+  font-size: var(--fs-ui);
   color: var(--fg-muted, #656d76);
 }
 

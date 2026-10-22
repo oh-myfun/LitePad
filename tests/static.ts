@@ -178,6 +178,46 @@ export function cssDecls(block: string): string {
   return block.replace(/\/\*[\s\S]*?\*\//g, "");
 }
 
+/**
+ * 把 `var(--token)` 就地展开成 `:root` 里声明的字面值 —— 给**按像素判**的守卫用。
+ *
+ * 为什么要这一层（B337）：字号统一成字阶 token 后，样式里不再写字面 px。而行高预算、
+ * 胶囊高度这类契约判的是「用户实际拿到多大一行」，那是产品事实，token 名只是实现细节
+ * ⇒ 判像素的先过这层展开，判 token 的（tests/type-scale.test.ts）读原文。
+ * 少了这层，改一处 token 取值就得手写着同步七八条守卫里的 px —— 那些守卫恰恰是靠
+ * 「像素变了要红」来防回归的，把它们改成只认 token 名就等于把闸拆了。
+ *
+ * ⚠️ 只认 `:root`（不带属性选择器）里定义的 token：主题块 `:root[data-theme="dark"]`
+ *    会重定义颜色，把它算进来就等于「值取决于主题」被随机命中。字号档全部住在 :root。
+ * ⚠️ `tokenSource` 默认取 `css` 自己 —— preview.css 里没有 `:root`，判它像素的守卫必须
+ *    显式把 global.css 传进来。漏传的表现是「展开后仍是 var(...)，读不到带 px 的量」，
+ *    是一条红，不会假绿。
+ * ⚠️ token 表取自剥注释后的 `:root` 块，但**输出保留注释原文**（只替换 var() 那几处）——
+ *    行号不能动，否则报错里的行号对不上文件；注释里的 `var(...)` 被一起展开无害，
+ *    像素类断言本来就先过 stripCssComments / ruleBlock。
+ * ⚠️ 递归到不动点（上限 5 轮）：`--title-text-size: var(--fs-ui)` 这种「token 指向 token」
+ *    必须能展开，否则 B317 那条「标题那行 = 12.5px」的契约凭空变红。
+ */
+export function resolveCssVars(css: string, tokenSource = css): string {
+  const values = new Map<string, string>();
+  for (const m of ruleBlock(tokenSource, ":root").matchAll(/(--[\w-]+)\s*:\s*([^;]*);/g)) {
+    values.set(m[1], m[2].trim());
+  }
+  // var(--x) / var(--x, fallback)；fallback 里允许一层括号（如 calc 表达式）
+  const VAR = /var\(\s*(--[\w-]+)\s*(?:,\s*([^()]*(?:\([^()]*\)[^()]*)*))?\)/g;
+  let out = css;
+  for (let pass = 0; pass < 5; pass++) {
+    const next = out.replace(VAR, (all, name: string, fallback?: string) => {
+      const v = values.get(name);
+      if (v !== undefined) return v;
+      return fallback === undefined ? all : fallback.trim();
+    });
+    if (next === out) break;
+    out = next;
+  }
+  return out;
+}
+
 // 截某个顶层函数的源码体（源文本里第一条「行首 } 后紧跟换行/EOF」，即顶层收尾花括号）。
 // ⚠️ 不能只找第一条 `\n}`：多行返回类型字面量也会以 `} {` 出现在行首
 //（如 `function f(): {\n  a: number;\n} {`），那样会在签名处就截断，

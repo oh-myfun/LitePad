@@ -7,6 +7,7 @@
 // tests/explorer-store.test.ts 里用真骨架跑，不在这里重复。
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
+import { resolveCssVars } from "./static";
 
 const read = (p: string): string => readFileSync(p, "utf-8").replace(/\r\n/g, "\n");
 
@@ -392,7 +393,7 @@ describe("B318 行内新建 / 改名框与「输入框那一族」同形", () =>
     expect(prop(box, "border-radius"), "与 .goto-input 不同圆角 = 一眼看出是两种控件").toBe(
       prop(block(global, ".goto-input"), "border-radius"),
     );
-    expect(prop(box, "font-size"), "字号跟那一行（12px），也与设置页的数字框同值").toBe(
+    expect(prop(box, "font-size"), "字号跟那一行（ui 档 12.5px），也与设置页的数字框同值").toBe(
       prop(block(global, '.settings-dialog input[type="number"]'), "font-size"),
     );
     expect(prop(box, "box-sizing"), "带边框又不想顶出 22px 那一行，必须 border-box").toBe(
@@ -402,12 +403,16 @@ describe("B318 行内新建 / 改名框与「输入框那一族」同形", () =>
 });
 
 describe("B328/B329 侧栏那几格的下伸部（省略号那层不许切字）", () => {
+  // B337 之后字号写成字阶 token，而这一族判的是**像素预算**（22px 那一行、整行 ≤39px）
+  // ⇒ 先按 :root 把 var() 展开再读。token 定义在 global.css，preview.css 里没有 :root 块，
+  //   漏传第二参的后果是「读不到带 px 的量」直接报红，不是假绿。
+  const cssR = resolveCssVars(css, read("src/styles/global.css"));
   /** 取某条规则体（含结尾的 `}`），并**抹掉注释**：判据要读的是声明，不是散文
    *  —— 注释里那句「行那一族按 1 排」长得跟声明一模一样，留着它就能把这条闸喂假。 */
   const block = (sel: string): string => {
-    const at = css.indexOf(sel);
+    const at = cssR.indexOf(sel);
     expect(at, `找不到规则 ${sel}`).toBeGreaterThanOrEqual(0);
-    return css.slice(at, css.indexOf("}", at) + 1).replace(/\/\*[\s\S]*?\*\//g, "");
+    return cssR.slice(at, cssR.indexOf("}", at) + 1).replace(/\/\*[\s\S]*?\*\//g, "");
   };
   const num = (body: string, name: string): number => {
     // 属性名前必须再没有一个 `-`：不然查 `height` 会一头扎进 `line-height`，
@@ -422,6 +427,8 @@ describe("B328/B329 侧栏那几格的下伸部（省略号那层不许切字）
   //   资源管理器那一格（12px 粗体）：1.30 少 52 点（末行整条没了）、1.35 少 18 点
   //   （末行被削掉半条）、**1.40 起两版逐点相同**。取 1.5 是留一整行的余量。
   //   行盒长高时字不动（内容居中于行盒，上下各长一半）⇒ 只有裁切框在变松。
+  //   B337：这一格并到 ui 档（12.5px）。墨点是 12px 时量的，但下限按**比例**判，
+  //   涨 0.5px 只是让 1.5 那一档从 18px 变 18.75px —— 仍装得进 22px 的行，口径不变。
   const FLOOR = 1.45;
   /** 侧栏里带省略号的那几格统一这一档（B328 资源管理器、B329 最近打开）。 */
   const SIDE_LH = 1.5;
@@ -452,7 +459,7 @@ describe("B328/B329 侧栏那几格的下伸部（省略号那层不许切字）
     expect(2 * fs, "2 那一档（24px）必须被同一把尺子拒掉").toBeGreaterThan(rowH);
   });
 
-  it("B329：最近打开那两截走同一口径（名字 12px / 目录 11px 都带着省略号那层）", () => {
+  it("B329：最近打开那两截走同一口径（名字 12.5px / 目录 11px 都带着省略号那层）", () => {
     for (const sel of [".recent-name {", ".recent-path {"]) {
       const cell = block(sel);
       expect(cell, `${sel} 也在用 overflow:hidden 裁字`).toMatch(/overflow:\s*hidden/);
@@ -466,19 +473,19 @@ describe("B328/B329 侧栏那几格的下伸部（省略号那层不许切字）
     expect(num(dir, "line-height"), "1.3 那一档是改之前的样子").not.toBe(SIDE_LH);
   });
 
-  it("B329：撑高两截的同时把上下 padding 收掉，整行还是 38.5px（列表不许变胖）", () => {
+  it("B329：撑高两截的同时把上下 padding 收掉，整行还是 38.25px（列表不许变胖）", () => {
     const row = block(".recent-row {");
     const name = block(".recent-name {");
     const dir = block(".recent-path {");
     const pad = num(row, "padding"); // shorthand 第一颗 = 上下
     const total = 2 * pad + SIDE_LH * num(name, "font-size") + SIDE_LH * num(dir, "font-size");
-    expect(total, `整行 ${total}px：两截各 +1.8/+2.2，padding 没补就是 42.5`).toBeLessThanOrEqual(
-      39,
-    );
-    // 同一把尺子量「只撑行盒不收 padding」的替身：42.5 必须被拒掉
+    // 名字并到 ui 档（12→12.5）让行盒 +0.75，padding 由 2 收到 1.5 抵掉 ⇒ 38.25，
+    // 仍**低于** B329 那一档的 38.5：预算口径没被字阶统一顶破。
+    expect(total, `整行 ${total}px：padding 没补就是 43.25`).toBeLessThanOrEqual(39);
+    // 同一把尺子量「只撑行盒不收 padding」的替身：43.25 必须被拒掉
     expect(
       2 * 4 + SIDE_LH * num(name, "font-size") + SIDE_LH * num(dir, "font-size"),
-      "padding 留在 4px 那一档 = 每一行胖 4px",
+      "padding 留在 4px 那一档 = 每一行胖 5px",
     ).toBeGreaterThan(39);
   });
 });

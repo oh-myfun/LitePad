@@ -8,7 +8,7 @@
 //     几何量用桩函数补上（jsdom 的 rect 恒为 0）。
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { cssDecls, ruleBlock, themeBlock, topLevelFnBody } from "./static";
+import { cssDecls, ruleBlock, themeBlock, topLevelFnBody, resolveCssVars } from "./static";
 import {
   computeTipGeometry,
   computeTipGeometryAtMouse,
@@ -566,14 +566,19 @@ describe("A 档：菜单开着就绝不弹提示", () => {
 // B58：原生 `title` 由操作系统绘制，配色/圆角/键帽/延迟全不可控（深色界面里会突然弹出
 // 一个浅色系统气泡）。改为全局单例自绘层，外观对齐 VS Code hover。
 describe("B58 应用级 tooltip（取代原生 title，外观对齐 VS Code hover）", () => {
-  it("提示层外观取自 VS Code：fixed / 13px / 19px / 2px 8px / 5px 圆角 / 不参与命中", () => {
+  it("提示层外观取自 VS Code：fixed / 12.5px / 19px / 2px 8px / 5px 圆角 / 不参与命中", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
     const tip = cssDecls(ruleBlock(css, ".tooltip", undefined, true));
     expect(tip, "应有 .tooltip 规则").toBeTruthy();
     expect(tip, "fixed 定位（提示不随内容滚动）").toMatch(/position:\s*fixed/);
     // 菜单（1000）与转到行浮层（1000）之上：菜单项自己也要能弹提示
     expect(tip, "必须浮在菜单之上").toMatch(/z-index:\s*2000/);
-    expect(tip, "13px 字号（= VS Code .hover-contents）").toMatch(/font-size:\s*13px/);
+    // B337：字号并入字阶 ui 档（原本单独一档 13px，抄的是 VS Code .hover-contents）。
+    // 判像素要先展开 var() —— 只钉 token 名的话，谁把 ui 档改成 14px 这条也看不见。
+    expect(
+      cssDecls(ruleBlock(resolveCssVars(css), ".tooltip", undefined, true)),
+      "12.5px 字号（字阶 ui 档）",
+    ).toMatch(/font-size:\s*12\.5px/);
     expect(tip, "19px 行高（= VS Code .hover-contents）").toMatch(/line-height:\s*19px/);
     // B156：按钮类提示照 VS Code 走 `actionbar.showHover()` 那套 —— `appearance.compact`
     //   被写死为 true ⇒ 内边距只有 `2px 8px` 一档。原先这里给的是 4px 8px（抄的是编辑器
@@ -742,14 +747,21 @@ describe("B127 标签 / 关闭按钮的提示对齐 VS Code", () => {
   });
 
   it("CSS 必须备齐 compact 档与「caret 可以整块不画」两条", () => {
-    expect(css, "compact = 12px / 2px 8px（hover.css 的 .compact）").toMatch(
-      /\.tooltip\.tooltip-compact \{[^}]*font-size: 12px[^}]*padding: 2px 8px/s,
+    // B337：两档字号分别落到 ui（12.5px）与 meta（11px）——判像素先展开 var()。
+    // compact 档不许与基础档并成同一颗：并了就没有「小一档的紧凑提示」这一档，
+    // 标签和它的关闭按钮会与长文本提示同大（09-27 用户嫌"厚"那一版的观感）。
+    const r = resolveCssVars(css);
+    expect(r, "compact = 11px / 2px 8px（比基础档小一档，hover.css 的 .compact）").toMatch(
+      /\.tooltip\.tooltip-compact \{[^}]*font-size: 11px[^}]*padding: 2px 8px/s,
     );
-    expect(css, "鼠标定位模式不画 caret").toMatch(/\.tooltip-caret\[hidden\] \{[^}]*display: none/);
+    expect(r, "鼠标定位模式不画 caret").toMatch(/\.tooltip-caret\[hidden\] \{[^}]*display: none/);
   });
 
   it("反向：删掉 compact 规则，上一条断言必须失败", () => {
-    const degraded = css.replace(/\.tooltip\.tooltip-compact \{[^}]*\}\n?/s, "");
+    const degraded = resolveCssVars(css.replace(/\.tooltip\.tooltip-compact \{[^}]*\}\n?/s, ""));
+    expect(degraded, "退化后不该再凑齐「小一档 + 收窄内边距」这一档").not.toMatch(
+      /\.tooltip\.tooltip-compact \{[^}]*font-size: 11px[^}]*padding: 2px 8px/s,
+    );
     expect(degraded, "退化后不该再有 compact 规则").not.toMatch(/\.tooltip\.tooltip-compact \{/);
   });
 });

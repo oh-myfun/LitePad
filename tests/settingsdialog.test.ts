@@ -16,7 +16,7 @@ import {
   FONT_FAMILY_NO_DIFF_SUFFIX,
 } from "../src/shell/settingsdialog";
 import { DEFAULT_PRESET_ID, type KeymapOverrides } from "../src/shell/keymap";
-import { ruleBlock, cssDecls, stripCssComments, stripLineComments } from "./static";
+import { ruleBlock, cssDecls, stripCssComments, stripLineComments, resolveCssVars } from "./static";
 
 const noop = (): void => {};
 
@@ -952,7 +952,13 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
     const block = cssDecls(ruleBlock(css, ".settings-group-title"));
     expect(block, "缺少 .settings-group-title 规则块").not.toBe("");
-    expect(block, "分组标题应更小一号").toContain("font-size: 12px");
+    // B337：字号改写字阶 token ⇒ 判「小一号」要拿**展开后的像素**（口径见 static.ts）。
+    // 只钉 token 名等于把闸拆了：将来谁把 ui 档调到 14px，分组标题就不再是小一号，
+    // 而 `toContain("var(--fs-ui)")` 照样绿。
+    const r = cssDecls(ruleBlock(resolveCssVars(css), ".settings-group-title"));
+    expect(r, "分组标题应更小一号（ui 档 = 12.5px，比正文 14px 小）").toMatch(
+      /font-size:\s*12\.5px/,
+    );
     expect(block, "分组标题下沿应有分隔线").toContain("border-bottom: 1px solid var(--border)");
   });
 });

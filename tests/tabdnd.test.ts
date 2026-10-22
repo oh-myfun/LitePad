@@ -15,7 +15,7 @@
 //      + 定向投递正文；
 //   5. **不误伤**：窗口内松手绝不回落（否则会莫名多出一个新窗口）。
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { ruleBlock } from "./static";
+import { ruleBlock, resolveCssVars } from "./static";
 import { readFileSync } from "node:fs";
 
 const bus = vi.hoisted(() => ({
@@ -755,6 +755,8 @@ describe("标签拖拽静态契约（从 regressions 拆出）", () => {
     // 渲染成 `.monaco-drag-image`（`base/browser/ui/dnd/dnd.css`：12px、圆角 10px、
     // 单行、max-width + 省略号）。
     const css = readFileSync("src/styles/global.css", "utf-8");
+    // B337：字号改写字阶 token ⇒ 判「药丸多大一号」要按**展开后的像素**（见 static.ts）。
+    const cssR = resolveCssVars(css);
     const sv = readFileSync("src/shell/splitview.ts", "utf-8");
     const ts = readFileSync("src/shell/tabstrip.ts", "utf-8");
     const stripComments = (s: string): string =>
@@ -762,6 +764,7 @@ describe("标签拖拽静态契约（从 regressions 拆出）", () => {
     const svCode = stripComments(sv);
     const tsCode = stripComments(ts);
     const pill = css.match(/\.tab-drag-ghost-group\s*\{([^}]*)\}/)?.[1] ?? "";
+    const pillR = cssR.match(/\.tab-drag-ghost-group\s*\{([^}]*)\}/)?.[1] ?? "";
     const nameRule =
       css.match(/\.tab-drag-ghost-group \.tab-drag-ghost-name\s*\{([^}]*)\}/)?.[1] ?? "";
     const countRule =
@@ -773,7 +776,9 @@ describe("标签拖拽静态契约（从 regressions 拆出）", () => {
     // ① 药丸本体：单行 + 圆角 + 收宽度（旧实现的整条带子硬裁已删除）
     expect(pill, "单行").toMatch(/white-space:\s*nowrap/);
     expect(pill, "圆角药丸").toMatch(/border-radius:\s*10px/);
-    expect(pill, "12px（对齐 .monaco-drag-image）").toMatch(/font-size:\s*12px/);
+    expect(pillR, "ui 档 12.5px（VS Code .monaco-drag-image 是 12px，并档后取 ui 档）").toMatch(
+      /font-size:\s*12\.5px/,
+    );
     expect(pill, "宽度收住").toMatch(/max-width:\s*220px/);
     // ② 名字可截断：flex 子项要真截断，必须同时有 overflow:hidden 与 min-width:0
     //    （少了 min-width 就根本不会收缩，省略号静默不出现）

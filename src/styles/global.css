@@ -18,6 +18,17 @@
   --font-mono:
     "Cascadia Code", "JetBrains Mono", "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace;
   --font-size: 14px;
+  /* B337 · UI 字阶。chrome 只准引用这五颗，别再写裸数值 —— 判据见 tests/type-scale.test.ts。
+     meta  次级说明（快捷键串 / 分组头 / 计数 / 路径行 / 面板标题行）
+     ui    主 UI 文本（菜单与弹层列表 / 标签 / 树 / 最近打开 / 状态栏 / 设置页正文）
+     input 命令面板那种大输入场（打字要看清的地方）
+     title 对话框与设置面板的标题
+     hero  设置页那一页的大标题 */
+  --fs-meta: 11px;
+  --fs-ui: 12.5px;
+  --fs-input: 14px;
+  --fs-title: 15px;
+  --fs-hero: 20px;
   --radius: 5px;
   /* 相连标签的圆角总源（B123-2，用户裁决）：活动标签**顶部圆角**与**肩部反向
      圆弧**必须同半径 —— 对齐 VS Code connectedEditorTabs.css 的变量链
@@ -64,7 +75,7 @@
   /* 标题栏里那行文档名的字号（B224 起它同时是**标签名**的字号）。
      ⚠️ 这一颗有第二个人：`.tab` 读它 —— 用户点名「标签里的中文字要和标题栏一样大」。
      两处各写一个 12.5px，改一边就成了「标题 12.5、标签 14」那种一眼看得出的错开。 */
-  --title-text-size: 12.5px;
+  --title-text-size: var(--fs-ui);
 }
 
 :root[data-theme="dark"] {
@@ -624,7 +635,7 @@ html[data-window-kind="satellite"] #sidebar-toggle {
 .menu-btn {
   width: auto;
   padding: 0 10px;
-  font-size: 12.5px;
+  font-size: var(--fs-ui);
   /* B336：22px 高的圆角矩形。圆角**引用全局 `button {}` 那颗 `--radius`**，不写死数值 ——
      「和别的小按钮一致」只有两边指向同一颗变量才成立（写死 5px，token 一改就分家，
      而且没有任何测试会红）。
@@ -689,7 +700,7 @@ html[data-window-kind="satellite"] #sidebar-toggle {
 
 .menu-kbd {
   margin-left: 24px;
-  font-size: 11px;
+  font-size: var(--fs-meta);
   color: var(--fg-muted);
 }
 
@@ -1450,7 +1461,7 @@ button:focus-visible {
   border: 0;
   background: transparent;
   color: var(--fg);
-  font-size: 13px;
+  font-size: var(--fs-ui);
   font-family: var(--font-sans);
   outline: none;
 }
@@ -1477,7 +1488,7 @@ button:focus-visible {
   border-radius: 3px;
   background: none;
   color: var(--fg-muted);
-  font-size: 11px;
+  font-size: var(--fs-meta);
   font-family: var(--font-mono);
   line-height: 1;
   cursor: pointer;
@@ -1518,7 +1529,7 @@ button:focus-visible {
   padding: 2px 0 0 2px;
   min-width: 44px;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--fs-ui);
   white-space: nowrap;
   color: var(--fg);
 }
@@ -1664,7 +1675,7 @@ button:focus-visible {
    （14px 行 + 3px gap + 4px 底内距）。下面这条 [hidden] 与 .find-bar[hidden] 同理：
    一旦有人给 .find-status 加上 display，UA 的 `[hidden] { display: none }` 就会被覆盖。 */
 .find-status {
-  font-size: 11px;
+  font-size: var(--fs-meta);
   color: var(--fg-muted);
   min-height: 14px;
 }
@@ -1730,7 +1741,7 @@ button:focus-visible {
   border-bottom: 1px solid var(--border);
   background: transparent;
   color: var(--fg);
-  font-size: 14px;
+  font-size: var(--fs-input);
   outline: none;
 }
 
@@ -1750,7 +1761,7 @@ button:focus-visible {
   gap: 8px;
   padding: 7px 14px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-ui);
 }
 
 .palette-item.is-active {
@@ -1765,7 +1776,7 @@ button:focus-visible {
 .palette-item-group {
   flex: 1 1 auto;
   color: var(--fg-muted);
-  font-size: 11px;
+  font-size: var(--fs-meta);
 }
 
 .palette-item-keys {
@@ -1776,13 +1787,13 @@ button:focus-visible {
   background: var(--bg);
   color: var(--fg-muted);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-meta);
 }
 
 .palette-empty {
   padding: 18px 14px;
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--fs-ui);
   text-align: center;
 }
 
@@ -1791,7 +1802,7 @@ button:focus-visible {
   padding: 7px 14px;
   border-top: 1px solid var(--border);
   color: var(--fg-muted);
-  font-size: 11px;
+  font-size: var(--fs-meta);
 }
 
 .settings-dialog {
@@ -1806,7 +1817,7 @@ button:focus-visible {
 }
 
 .settings-title {
-  font-size: 15px;
+  font-size: var(--fs-title);
   font-weight: 600;
   margin-bottom: 12px;
   color: var(--fg);
@@ -1821,7 +1832,7 @@ button:focus-visible {
 
 .settings-label {
   flex: 0 0 72px;
-  font-size: 12px;
+  font-size: var(--fs-ui);
   color: var(--fg-muted);
 }
 
@@ -1832,14 +1843,14 @@ button:focus-visible {
   border-radius: 4px;
   background: var(--bg);
   color: var(--fg);
-  font-size: 12px;
+  font-size: var(--fs-ui);
 }
 
 .settings-check {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-ui);
   color: var(--fg);
   cursor: pointer;
 }
@@ -1856,7 +1867,7 @@ button:focus-visible {
   border: 1px solid var(--border);
   border-radius: 3px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-meta);
   color: var(--fg);
 }
 
@@ -1882,7 +1893,7 @@ button:focus-visible {
   min-width: 0;
   height: auto;
   padding: 5px 6px;
-  font-size: 12px;
+  font-size: var(--fs-ui);
 }
 
 .keymap-search {
@@ -1892,7 +1903,7 @@ button:focus-visible {
   border-radius: 4px;
   background: var(--bg);
   color: var(--fg);
-  font-size: 12px;
+  font-size: var(--fs-ui);
 }
 
 /* 聚焦高光与设置页顶部搜索框（.settings-search-wrap:focus-within）用同一套：
@@ -1912,7 +1923,7 @@ button:focus-visible {
   border-radius: 4px;
   background: transparent;
   color: var(--fg);
-  font-size: 12px;
+  font-size: var(--fs-ui);
   cursor: pointer;
 }
 
@@ -1923,7 +1934,7 @@ button:focus-visible {
 .keymap-hint {
   min-height: 17px;
   margin-bottom: 8px;
-  font-size: 11px;
+  font-size: var(--fs-meta);
   color: var(--fg-muted);
 }
 
@@ -1945,7 +1956,7 @@ button:focus-visible {
   z-index: 1;
   padding: 5px 10px 3px;
   background: var(--bg-elevated);
-  font-size: 11px;
+  font-size: var(--fs-meta);
   font-weight: 600;
   color: var(--fg-muted);
 }
@@ -1955,7 +1966,7 @@ button:focus-visible {
   align-items: center;
   gap: 12px;
   padding: 3px 10px;
-  font-size: 12px;
+  font-size: var(--fs-ui);
   color: var(--fg);
 }
 
@@ -1979,7 +1990,7 @@ button:focus-visible {
   background: transparent;
   color: var(--fg);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-meta);
   text-align: center;
   cursor: pointer;
 }
@@ -2005,7 +2016,7 @@ button:focus-visible {
 .keymap-empty {
   padding: 14px;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--fs-ui);
   color: var(--fg-muted);
 }
 
@@ -2020,7 +2031,7 @@ button:focus-visible {
   padding: 5px 16px;
   border-radius: 4px;
   border: 1px solid var(--border);
-  font-size: 12px;
+  font-size: var(--fs-ui);
   cursor: pointer;
 }
 
@@ -2076,7 +2087,7 @@ button:focus-visible {
   border: none;
   background: transparent;
   color: var(--fg);
-  font-size: 13px;
+  font-size: var(--fs-ui);
   font-family: var(--font-ui);
   outline: none;
 }
@@ -2129,7 +2140,7 @@ button:focus-visible {
   border-radius: 6px;
   background: transparent;
   color: var(--fg-muted);
-  font-size: 13px;
+  font-size: var(--fs-ui);
   font-family: var(--font-ui);
   text-align: left;
   /* B111：左栏分类是按钮、有 hover 与选中态 ⇒ 手型（原本写的 default 与点击效果不符）。 */
@@ -2168,19 +2179,19 @@ button:focus-visible {
   padding: 40px 0;
   text-align: center;
   color: var(--fg-muted);
-  font-size: 13px;
+  font-size: var(--fs-ui);
 }
 
 .settings-page-title {
   margin: 0 0 18px;
-  font-size: 20px;
+  font-size: var(--fs-hero);
   font-weight: 600;
   color: var(--fg);
 }
 
 .settings-page-desc {
   margin: -8px 0 16px;
-  font-size: 13px;
+  font-size: var(--fs-ui);
   line-height: 1.5;
   color: var(--fg-muted);
 }
@@ -2195,7 +2206,7 @@ button:focus-visible {
   margin: 22px 0 0;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
-  font-size: 12px;
+  font-size: var(--fs-ui);
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--fg-muted);
@@ -2219,7 +2230,7 @@ button:focus-visible {
 }
 
 .settings-item-label {
-  font-size: 13px;
+  font-size: var(--fs-ui);
   font-weight: 500;
   color: var(--fg);
   line-height: 1.4;
@@ -2227,7 +2238,7 @@ button:focus-visible {
 
 .settings-item-desc {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: var(--fs-ui);
   line-height: 1.45;
   color: var(--fg-muted);
 }
@@ -2244,7 +2255,7 @@ button:focus-visible {
    边框；字号降到 12px 与 .settings-item-desc 同档，别把行高顶起来。 */
 .settings-mini-btn {
   border-color: var(--border);
-  font-size: 12px;
+  font-size: var(--fs-ui);
 }
 
 /* B227 字体两栏：分段小切换（B236 起是 比例 / 等宽）＋ 字体下拉。
@@ -2272,7 +2283,7 @@ button:focus-visible {
   border-radius: calc(var(--radius) - 2px);
   background: none;
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--fs-ui);
   line-height: 1.4;
   cursor: pointer;
 }
@@ -2314,7 +2325,7 @@ button:focus-visible {
   border-radius: 6px;
   background: color-mix(in srgb, var(--danger) 12%, var(--bg));
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-ui);
 }
 
 /* ---------- 更新键（B107：src/shell/updater.ts；B311 起钉在「左栏开关」左边） ----------
@@ -2442,13 +2453,13 @@ button:focus-visible {
 
 .conflict-text {
   margin: 0 0 10px;
-  font-size: 12px;
+  font-size: var(--fs-ui);
   line-height: 1.7;
   color: var(--fg);
 }
 
 .conflict-meta {
-  font-size: 11px;
+  font-size: var(--fs-meta);
   color: var(--fg-muted);
 }
 
@@ -2466,7 +2477,7 @@ button:focus-visible {
 }
 
 .save-confirm-title {
-  font-size: 15px;
+  font-size: var(--fs-title);
   font-weight: 600;
   color: var(--fg);
   margin-bottom: 12px;
@@ -2474,14 +2485,14 @@ button:focus-visible {
 
 .save-confirm-text {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--fs-ui);
   line-height: 1.6;
   color: var(--fg);
 }
 
 .save-confirm-detail {
   margin: 0 0 16px;
-  font-size: 12px;
+  font-size: var(--fs-ui);
   line-height: 1.6;
   color: var(--fg-muted);
   /* 退出的 detail 第一行是文件名清单，可能很长 —— 允许折行并保留换行。 */
@@ -2498,7 +2509,7 @@ button:focus-visible {
   padding: 5px 16px;
   border-radius: 4px;
   border: 1px solid var(--border);
-  font-size: 12px;
+  font-size: var(--fs-ui);
   color: var(--fg);
   background: var(--bg);
   cursor: pointer;
@@ -3282,7 +3293,7 @@ body.tab-drag-active * {
   align-items: center;
   padding: 1px 8px;
   border-radius: 10px;
-  font-size: 12px;
+  font-size: var(--fs-ui);
   line-height: 18px;
   white-space: nowrap;
   /* 长文件名收住（VS Code 同款：max-width + 省略号，避免影像大到看不清） */
@@ -3390,7 +3401,7 @@ body.tab-drag-active * {
      #383838，肉眼无形）。卡片下边框（.layout-panel）承担轮廓职责。
      ⚠️ B204 之后两条 chrome 同色，这条「底色交界」在状态栏上沿已经**不再有对比** ——
         上下分界改由卡片下边框（.layout-area 的下沿）承担，这正是当初就写在旁边的依据。 */
-  font-size: 12px;
+  font-size: var(--fs-ui);
   color: var(--fg-muted);
   user-select: none;
 }
@@ -3425,7 +3436,7 @@ body.tab-drag-active * {
 }
 
 .goto-label {
-  font-size: 13px;
+  font-size: var(--fs-ui);
   color: var(--fg);
   white-space: nowrap;
 }
@@ -3437,7 +3448,7 @@ body.tab-drag-active * {
   border-radius: 4px;
   background: var(--bg);
   color: var(--fg);
-  font-size: 13px;
+  font-size: var(--fs-ui);
 }
 
 .goto-input:focus {
@@ -3457,7 +3468,7 @@ body.tab-drag-active * {
 }
 
 .sb-btn {
-  font-size: 12px;
+  font-size: var(--fs-ui);
   border-radius: 3px;
   padding: 1px 7px;
 }
@@ -3506,7 +3517,7 @@ body.tab-drag-active * {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
-  font-size: 13px;
+  font-size: var(--fs-ui);
   /* 首选项一类长菜单：超高时自身滚动，避免顶出视口 */
   max-height: calc(100vh - 16px);
   overflow-y: auto;
@@ -3568,7 +3579,7 @@ body.tab-drag-active * {
   border-radius: 6px;
   background: var(--bg);
   color: var(--fg);
-  font-size: 13px;
+  font-size: var(--fs-ui);
   font-family: var(--font-ui);
   cursor: pointer;
 }
@@ -3591,7 +3602,7 @@ body.tab-drag-active * {
 .dropdown-trigger .dd-caret {
   flex: 0 0 auto;
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--fs-ui);
 }
 
 /* 列表默认隐藏；展开时跟随 .popup-menu 的 fixed 定位由 JS 设 left/top */
@@ -3629,7 +3640,7 @@ body.tab-drag-active * {
   border-radius: 4px;
   background: var(--bg);
   color: var(--fg);
-  font-size: 12px;
+  font-size: var(--fs-ui);
   font-family: var(--font-ui);
 }
 
@@ -3655,7 +3666,7 @@ body.tab-drag-active * {
 .dropdown-empty {
   padding: 10px 9px;
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--fs-ui);
   text-align: center;
 }
 
@@ -3668,7 +3679,7 @@ body.tab-drag-active * {
 .dropdown-option .dd-note {
   margin-left: auto;
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--fs-ui);
 }
 
 /* 键盘 / 悬停高亮：与 .popup-menu 同款 hover 底色（应用菜单的高亮也走 JS 加的 active 类） */
@@ -3703,7 +3714,7 @@ body.tab-drag-active * {
   max-width: 420px;
   max-height: calc(100vh - 16px);
   padding: 2px 8px;
-  font-size: 13px;
+  font-size: var(--fs-ui);
   line-height: 19px;
   color: var(--fg);
   background: var(--tip-bg);
@@ -3725,13 +3736,16 @@ body.tab-drag-active * {
 }
 
 /* VS Code `appearance.compact`（`WorkbenchHoverDelegate.showHover()` 给所有走
-   hoverDelegate 的提示写死 `compact: true`）：字号降到 12px、内边距收成 2px 8px
+   hoverDelegate 的提示写死 `compact: true`）：字号比基础档小一档、内边距收成 2px 8px
    （`hover.css` 的 `.monaco-hover.workbench-hover.compact`）。
+   B337：两档原本 13px / 12px，并入字阶后基础档 = `--fs-ui`（12.5px）。这一档**不能跟着
+   并到同一颗** —— 并了就等于「compact」这一档不存在了（标签和它的关闭按钮与长文本提示
+   同大，回到 09-27 用户嫌"厚"之前的观感）。字阶里小一档只有 `--fs-meta`（11px），取它。
    ⚠️ 内边距这一档**就是上面基础档的值**，两者现在只差字号 —— 留着这条重复声明是
    有意的：将来若有人给基础档加回厚内边距，标签档不会被一起带跑。
    标签与标签上的关闭按钮走这一档。 */
 .tooltip.tooltip-compact {
-  font-size: 12px;
+  font-size: var(--fs-meta);
   padding: 2px 8px;
 }
 
@@ -3765,7 +3779,7 @@ body.tab-drag-active * {
 /* 第二行补充说明（完整路径 / 行列号）：小字弱色，允许折行 */
 .tooltip-detail {
   color: var(--fg-muted);
-  font-size: 11px;
+  font-size: var(--fs-meta);
   line-height: 15px;
   overflow-wrap: anywhere;
 }
@@ -3785,7 +3799,7 @@ body.tab-drag-active * {
   min-width: 12px;
   padding: 3px 5px;
   margin: 0 2px;
-  font-size: 11px;
+  font-size: var(--fs-meta);
   line-height: 10px;
   color: var(--tip-key-fg);
   background: var(--tip-key-bg);
@@ -3805,7 +3819,7 @@ body.tab-drag-active * {
 
 .tooltip-key-sep {
   padding: 0 1px;
-  font-size: 11px;
+  font-size: var(--fs-meta);
   line-height: 10px;
   color: var(--fg-muted);
 }
