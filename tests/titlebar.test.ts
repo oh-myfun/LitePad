@@ -600,15 +600,27 @@ describe("B97 自建标题栏", () => {
     );
   });
 
-  it("B110：菜单按钮与窗口三键同一条声明（无圆角 / 满高 / 同悬停）", () => {
+  it("B110 + B336：菜单键仍并入三键的共用声明，但观感走**胶囊**（内缩高度 + 全圆两端）", () => {
     const s = css();
     // 菜单按钮必须并进 .win-btn / .title-btn 的共用声明，否则三处各自漂移
     expect(s, "菜单按钮必须并入共用声明").toMatch(/\.win-btn,\s*\.title-btn,\s*\.menu-btn\s*\{/);
     expect(s, "悬停与展开态共用同一底色").toMatch(/\.menu-btn:hover,\s*\.menu-btn\.menu-open/);
     // 菜单是文字标签：宽度随文本走，不能套 46px 的图标方键宽度
     expect(s, "菜单按钮宽度随文本").toMatch(/\.menu-btn\s*\{[^}]*width:\s*auto/);
-    // 容器撑满标题栏，按键才会像三键一样满高（否则 height:100% 无从解析）
+    // 容器撑满标题栏（`align-self`），键在其中**居中**而不是被拉满高
     expect(ruleBlock(s, ".menu-bar"), "菜单容器必须撑满标题栏").toMatch(/align-self:\s*stretch/);
+    // B336：`align-items: center` 是胶囊的前提 —— 还 stretch 的话 `height: 100%` 会把键
+    // 拉到 34px，999px 半径就变成「贴边的两个半圆」，看着像没改。
+    expect(
+      ruleBlock(s, ".menu-bar"),
+      "容器要居中排键（stretch 会把键拉满高，胶囊无从谈起）",
+    ).toMatch(/align-items:\s*center/);
+    // 两条必须落在同一个块里：`[^}]*` 跨不出 `}`，写了 height 忘了 radius 就会被判红
+    expect(s, "菜单键收成 22px 的胶囊").toMatch(/\.menu-btn\s*\{[^}]*height:\s*22px/);
+    expect(s, "两端全圆").toMatch(/\.menu-btn\s*\{[^}]*border-radius:\s*999px/);
+    // 自证（防恒真）：把那颗半径退回共用声明的 0，守卫必须判出来
+    const flat = s.replace(/(\.menu-btn\s*\{[^}]*border-radius:\s*)999px/, "$10");
+    expect(flat, "退化对照必须不再匹配").not.toMatch(/\.menu-btn\s*\{[^}]*border-radius:\s*999px/);
     // 退化对照：把菜单按钮从共用声明里摘出来，守卫必须判出来（防恒真）
     const regressed = s.replace(
       /\.win-btn,\s*\.title-btn,\s*\.menu-btn\s*\{/,
