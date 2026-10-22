@@ -144,6 +144,27 @@ export async function claimExplorerDrop(
   return true;
 }
 
+/**
+ * 拖拽悬停时点亮这一块（B333-2）：外部拖入在页面上没有原生反馈 —— 光标是默认的「可以放」，
+ * 而这一块离编辑面板的矩形太远，`spotAt` 算不出落点、什么也不画。松手之前这是唯一看得见的话。
+ *
+ * ⚠️ 点亮**不按「拖的是不是目录」筛**：拖拽途中前端拿不到可信的类型（路径要过宿主桥换，而桥
+ * 只在松手时跑一次）。所以这条亮带说的是「这一格会接住你这一发」——对目录（换根）与对文件
+ * （在编辑区打开，这是 B333 之前就有的行为）都成立，不是一句谎话。
+ */
+export function markExplorerDropHover(
+  x: number,
+  y: number,
+  hitAt: (x: number, y: number) => Element | null = elementUnderPoint,
+): void {
+  explorerPanel.classList.toggle("is-drop-hover", explorerPanel.contains(hitAt(x, y)));
+}
+
+/** 松手 / 拖出窗口 / 拖到别处：亮带必须跟着收，否则会留在屏幕上（同标签插入竖线那一族）。 */
+export function clearExplorerDropHover(): void {
+  explorerPanel.classList.remove("is-drop-hover");
+}
+
 /** 那一点底下的元素。宿主不提供这能力时按「不在这里」算（交回原来那一路）。 */
 function elementUnderPoint(x: number, y: number): Element | null {
   return typeof document.elementFromPoint === "function" ? document.elementFromPoint(x, y) : null;

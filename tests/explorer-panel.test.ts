@@ -916,6 +916,20 @@ describe("B333 拖一条目录落到资源管理器那一块 = 打开这个文�
       appState.setWindowKind("main");
     }
   });
+
+  it("拖拽悬停在那一块上时点亮它（松手之前唯一的反馈）", () => {
+    panel.markExplorerDropHover(10, 10, overPanel);
+    expect(ui.explorerPanel.classList.contains("is-drop-hover"), "悬停进来该亮").toBe(true);
+
+    panel.markExplorerDropHover(400, 300, overEditor);
+    expect(ui.explorerPanel.classList.contains("is-drop-hover"), "挪出那一块该灭").toBe(false);
+
+    panel.markExplorerDropHover(10, 10, overPanel);
+    panel.clearExplorerDropHover();
+    expect(ui.explorerPanel.classList.contains("is-drop-hover"), "松手/拖出窗口该收干净").toBe(
+      false,
+    );
+  });
 });
 
 describe("B331 关闭文件夹", () => {

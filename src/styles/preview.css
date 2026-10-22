@@ -476,6 +476,13 @@
   padding: 0;
   background: transparent;
 }
+/* B333-2 · 外部拖拽悬停在这上面时点亮。拖的是目录还是文件，页面里当场拿不到可信的答案
+   （路径要过宿主桥换，桥只在松手时跑一次），所以这条亮带只说「这一格会接住你这一发」：
+   目录 ⇒ 换根（B333），文件 ⇒ 落进编辑区打开（B333 之前就有的行为）。
+   用 inset 投影而不是 border：不占布局，亮起来不会把树挤动一行。 */
+.explorer-panel.is-drop-hover {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
 .explorer-panel[hidden] {
   display: none;
 }

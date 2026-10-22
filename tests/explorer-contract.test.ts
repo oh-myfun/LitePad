@@ -497,4 +497,13 @@ describe("B333 拖入文件夹换根：命令名两端 + 那一发接线", () =>
     const claims = (boot.match(/claimExplorerDrop\(/g) ?? []).length;
     expect(claims, "这一发只该在主窗口的 drop 分支里问一次").toBe(1);
   });
+
+  it("悬停亮带（B333-2）三点齐：样式画它、面板切它、主窗口把它挂到拖拽悬停上", () => {
+    // 少任何一点都是「代码写了但屏幕上看不见」—— B314-8 那颗死键就是这一形。
+    const exPanel = read("src/explorer/panel.ts");
+    expect(css, "样式里要有那条亮带").toContain(".explorer-panel.is-drop-hover");
+    expect(exPanel, "面板要真的切这个类").toContain('toggle("is-drop-hover"');
+    expect(boot, "悬停回调里要点亮它").toContain("markExplorerDropHover(x, y)");
+    expect(boot, "清场回调里要收掉它（否则会留在屏幕上）").toContain("clearExplorerDropHover()");
+  });
 });

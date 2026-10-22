@@ -214,7 +214,9 @@ import { setupRecentsPanel } from "./recents/panel";
 // 把读到的值再写一遍，口径同 B312 的 `persist = false`）。
 import {
   claimExplorerDrop,
+  clearExplorerDropHover,
   closeFolder,
+  markExplorerDropHover,
   promptOpenFolder,
   setupExplorer,
   toggleExplorer,
@@ -979,9 +981,16 @@ async function setupShell(): Promise<void> {
   //     `tauri://drag-drop` —— 也就是下面这个 onDragDropEvent，载荷与原生逐字一致。
   //     （HTML5 file drop 本身只有内容没有路径，所以这一段必须过桥。）
   installFileDropTarget({
-    preview: (x, y) => showFileDropPreview(x, y),
+    preview: (x, y) => {
+      showFileDropPreview(x, y);
+      // B333-2：左栏那一块在编辑面板矩形之外，`spotAt` 算不出落点、什么也不画 ⇒ 补一条亮带。
+      markExplorerDropHover(x, y);
+    },
     // 与标签拖拽同一个清场出口：现在文件悬停也会画标签插入竖线，只清分屏预览会留残影。
-    clear: () => clearDropIndicators(),
+    clear: () => {
+      clearDropIndicators();
+      clearExplorerDropHover();
+    },
   });
   if (!hasFileDropBridge()) logger.warn("drop", "path bridge unavailable");
 
