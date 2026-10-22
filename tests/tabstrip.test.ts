@@ -107,7 +107,7 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
       "替身的常显必须被抓到",
     ).toMatch(/opacity:\s*1/);
 
-    // 条带高度：悬浮条不占布局 → 30px = 3px 上间距 + 24px 标签 + 3px 下间隙
+    // 条带高度：悬浮条不占布局 → 28px = 3px 上间距 + 22px 标签 + 3px 下间隙
     // （B123-6 两档统一，上下对称，下间隙 = thumb 高度）
     expect(strip, "标签栏高度必须固定（无溢出↔有溢出恒定，不抖）").toMatch(/height:\s*\d+px/);
     const tabRule = ruleBlock(css, ".tab", undefined, true);
@@ -287,7 +287,10 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     expect(tab, "应有 .tab 规则").toBeTruthy();
     const h = tab.match(/height:\s*(\d+)px/);
     expect(h, "标签高度必须显式给出（字号档位变化时栏高才恒定）").toBeTruthy();
-    expect(Number(h![1]), "标签高 24px（VS Code 常规档 --editor-group-tab-height）").toBe(24);
+    expect(
+      Number(h![1]),
+      "标签高 22px（B334：字号跟标题收到 12.5 后收一档；VS Code 紧凑档同值）",
+    ).toBe(22);
     expect(tab, ".tab 必须是底色层的定位基准").toContain("position: relative");
     // 底色一旦还留在 .tab 上就会盖住 fill 的圆角与描边，connected 的观感直接没了
     expect(tab, "标签自身不得再上底色（底色归 .tab-fill）").not.toMatch(
@@ -300,7 +303,7 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     const fill = cssDecls(ruleBlock(css, ".tab-fill"));
     expect(fill, "应有 .tab-fill 底色层").toBeTruthy();
     expect(fill, "底色层必须绝对定位（才能向上外扩出标签行）").toContain("position: absolute");
-    // B123-6：条带 30px（3+24+3），fill 上下各伸 3px 进间隙、直达条带两沿 ——
+    // B123-6：条带 28px（3+22+3，B334 随标签收档），fill 上下各伸 3px 进间隙、直达条带两沿 ——
     // 活动标签与编辑区融合不因下间隙断线（VS Code fill bottom: -gutter 同款）；
     // ⚠️ 断言到分号，防旧值前缀混过
     expect(fill, "左右相连且上下外扩补齐间隙（B123-6）").toMatch(/inset:\s*-3px 0 -3px\s*;/);
@@ -448,7 +451,7 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
       "el.append(fill, icon, name, action)",
     );
   });
-  it("B117：底部不再预留滚动条空间（条带 30px），插入线贯穿整条标签带（B309）", () => {
+  it("B117：底部不再预留滚动条空间（条带 28px），插入线贯穿整条标签带（B309）", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
     const strip = ruleBlock(css, ".panel-tabstrip", undefined, true);
     expect(strip, "应有 .panel-tabstrip 规则").toBeTruthy();
@@ -466,13 +469,13 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
       "内边距：上 3 / 右 4 / 下 0 / 左 0（B113-2：左侧不留白；B123-6 上间距 3px）",
     ).toMatch(/padding:\s*3px 4px 0 0/);
 
-    // B123-6：条带统一 30px = 3(上) + 24(标签) + 3(下间隙=thumb 高度)，
+    // B123-6：条带统一 28px = 3(上) + 22(标签) + 3(下间隙=thumb 高度)（B334 随标签收档），
     // 两档同高切档不抖；connected 的 fill 用 inset -3px 0 -3px 伸进上下间隙。
     const tabH = Number(
       cssDecls(ruleBlock(css, ".tab", undefined, true)).match(/height:\s*(\d+)px/)![1],
     );
     const stripH = Number(strip.match(/height:\s*(\d+)px/)![1]);
-    expect(stripH, "条带统一 30px（B123-6）").toBe(30);
+    expect(stripH, "条带统一 28px（B123-6 / B334）").toBe(28);
     expect(stripH - tabH, "上下间隙共 6px（3+3 对称）").toBe(6);
     expect(css, "原生 webkit 滚动条规则必须整体删除").not.toMatch(
       /\.panel-tabstrip::-webkit-scrollbar/,
@@ -480,7 +483,7 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
 
     // 拖拽插入线必须**贯穿整条标签带**：connected 档的 `.tab-fill` 是 `inset: -3px 0 -3px`，
     // 上下那 6px 间隙都被填成标签底色 ⇒ 线从 3px 起就比标签带短一截，用户读作
-    // 「线偏下、上面缺一小段」（B309）。pill 档相反：胶囊只占中间 24px，线跟着内缩。
+    // 「线偏下、上面缺一小段」（B309）。pill 档相反：胶囊只占中间 22px，线跟着内缩。
     // ⚠️ 锚定基础块一律用 `ruleBlock(..., atLineStart)`：pill 覆盖块的选择器尾段也是
     //   `.tab-insert`，裸正则 `\.tab-insert\s*\{` 会命中它（B123-5 那次靠「带 top:3px
     //   特征」绕过，这一版两档都有 top ⇒ 那个绕法自己就失效了）。
@@ -577,12 +580,12 @@ describe("标签样式切换（B114：connected | pill）", () => {
       v.push("pill 必须撤掉肩部（胶囊没有舌片）");
     const strip = get(':root[data-tab-style="pill"] .panel-tabstrip');
     if (!strip.includes("gap: 4px")) v.push("pill 恢复胶囊之间的 4px 缝隙");
-    // B123-6：条带高度统一 30px（基础规则），pill 只覆盖 padding —— 上下 3px
+    // B123-6：条带高度统一 28px（基础规则），pill 只覆盖 padding —— 上下 3px
     // 对称（= thumb 高度），左右 4px（B55 胶囊呼吸位）。
     // ⚠️ padding 断言到分号：connected 的 "3px 4px 0 0" 是 "3px 4px" 的超集，
     //   前缀 includes 会混过去；必须精确匹配两值形态。
     if (!/padding:\s*3px 4px\s*;/.test(strip)) v.push("pill 条带留白上下 3px / 左右 4px");
-    if (/height:\s*\d+px/.test(strip)) v.push("pill 不得覆盖条带高度（统一 30px，B123-6）");
+    if (/height:\s*\d+px/.test(strip)) v.push("pill 不得覆盖条带高度（统一 28px，B123-6）");
     const pillInsertSel = ':root[data-tab-style="pill"] .tab-insert';
     if (!get(pillInsertSel).includes("bottom: 3px"))
       v.push("pill 插入线只贯穿胶囊行（bottom: 3px）");

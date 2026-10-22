@@ -738,7 +738,8 @@ button:focus-visible {
                          // (20px = minimum to fit 16px icon + 2px padding)
    —— 「16px 图标 + 上下各 2px」= 20px 只是**刚够放图标的下限**；
    要给图标留呼吸，就得用常规档 24px 药丸 / 32px 标签栏。
-   于是现在：标签栏 32px = 4px 上间距 + 24px 药丸 + 4px 下间隙（4px 滚动条坐在下间隙里）。
+   于是最终落在：标签栏 28px = 3px 上间距 + 22px 标签 + 3px 下间隙（B334 收到 VS Code
+   的紧凑档；自绘悬浮滚动条坐在下间隙里，不占布局）。
    B53 保留下来的只有**溢出改为横向滚动**（见 .panel-tabstrip），不再折叠。 */
 
 /* B113：改走 VS Code 1.139 的 **Connected 相连标签** —— 标签不再是各自独立的药丸，
@@ -753,9 +754,11 @@ button:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  /* 24px = VS Code 的 --editor-group-tab-height（常规档）。
+  /* B334：24 → 22。字号跟着标题收到 12.5px 之后这一格就显得空 —— 22px 是 VS Code 的紧凑档，
+     也正是「16px codicon 图标 + 上下各 3px」那一档（注释里抄来的 VS Code 原话：
+     20px = minimum to fit 16px icon + 2px padding，22 还留着呼吸）。
      固定高度而非靠 padding 撑：字号档位变化时标签栏高度仍恒定，不挤压编辑器。 */
-  height: 24px;
+  height: 22px;
   /* 左 6px = VS Code 的 `padding-left: size60`；有图标时正是这一档
      （VS Code 在 `:not(.show-file-icons)` 时才放宽到 8px —— 图标自己撑出视觉留白）。
      右 4px：配合 .tab-action 槽位（20px、字形 16px 居中）凑出「字形到标签右缘 6px」，
@@ -937,7 +940,7 @@ button:focus-visible {
    药丸观感回到 B55 的 Modern UI 胶囊：透明底、**无描边**、四角圆（4px）、
    活动只靠底色区分；肩部与描边整体撤掉（胶囊没有「舌片」概念）；
    条带重新出现 4px gap 与 4px 左留白 —— 那是胶囊之间的缝隙。
-   ⚠️ 几何（标签 24px / 条带 32px / 滚动条 4px）与相连档**完全共用**，
+   ⚠️ 几何（标签 22px / 条带 28px / 上下各 3px 间隙）与相连档**完全共用**，
    只换底色与圆角 —— 切换档位时条带高度不变，编辑器不会抖。
    ================================================================== */
 :root[data-tab-style="pill"] {
@@ -970,12 +973,12 @@ button:focus-visible {
 }
 :root[data-tab-style="pill"] .panel-tabstrip {
   gap: 4px;
-  /* B123-6：条带高度已统一 30px（基础规则），上下间隙 3px 对称（= thumb 高度），
-     胶囊浮在正中；左右留白 4px 不变（B55 的胶囊呼吸位）。不再覆盖 height。 */
+  /* B123-6：条带高度由基础规则统一给（现 28px，B334 随标签收档），上下间隙 3px 对称
+     （= thumb 高度），胶囊浮在正中；左右留白 4px 不变（B55 的胶囊呼吸位）。不再覆盖 height。 */
   padding: 3px 4px;
 }
 :root[data-tab-style="pill"] .tab-insert {
-  /* 胶囊行只占中间 24px：上下那 3px 是间隙（没有底色），线伸进去会像是「插进空白」。
+  /* 胶囊行只占中间 22px：上下那 3px 是间隙（没有底色），线伸进去会像是「插进空白」。
      与 connected 档相反 —— 那边 fill 把间隙也填了色，线就得以条带上下沿为准。 */
   top: 3px;
   bottom: 3px;
@@ -2988,11 +2991,11 @@ button:focus-visible {
      改 overflow-x: hidden 后 scrollLeft 仍可编程设置：滚轮 / 自绘 thumb 拖拽 /
      ensureVisible 都走程序滚动，原生滚动条彻底退场（也就没有了 B54 那套
      scrollbar-width 复位与 ::-webkit-scrollbar 自绘规则）。
-     ⚠️ 高度是硬约束：30px = 3px 上间距 + 24px 标签 + 3px 下间隙（B123-6 两档
-     统一，上下对称），悬浮条不占布局，溢出与否高度恒定，编辑器不会抖。 */
+     ⚠️ 高度是硬约束：28px = 3px 上间距 + 22px 标签 + 3px 下间隙（B123-6 两档
+     统一，上下对称；B334 随标签收档），悬浮条不占布局，溢出与否高度恒定，编辑器不会抖。 */
   overflow-x: hidden;
   overflow-y: hidden;
-  height: 30px;
+  height: 28px;
 }
 
 /* B117 自绘悬浮滚动条：轨道叠在标签条底部（悬浮、不占布局、透明轨道），
