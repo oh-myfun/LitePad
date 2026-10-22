@@ -452,6 +452,28 @@ body {
   text-overflow: ellipsis;
 }
 
+/* B340：未保存原点（用户点名把星号换成「与标签同款的原点」，画在文档名**后面**）。
+   同款 = 同一颗 codicon `circle-filled` + 同一个 `--warn`，字号走 codicon 基座那一档 16px，
+   与标签 `.tab-mark` 那颗逐像素一致（要收小就在这里加一条 `.title-dirty .codicon`，
+   参照 `.menu-arrow .codicon` 14px 的先例 —— 别去改基座，那会连带全站图标）。
+   ⚠️ `flex: 0 0 auto`：`.title-center` 是 flex，名字超长时靠 `.title-text` 自己的省略号
+      收尾；不给这颗点上 0 0，它会跟着被压扁/裁掉 —— 而它是「这份没存」在标题栏唯一的提示。
+   ⚠️ 下面必须补 `[hidden]` 兜底：本条的 `display: inline-flex` 压得过 UA 的
+      `[hidden] { display: none }`，少了那条 `titleDirty.hidden = true` 根本关不掉
+      （同一族的坑见上面 `.sync-btn[hidden]`）。
+   左留白取 3px，与标题栏这一族图标键的 3px 同档（B324），也是原来星号那一个空格的宽度。 */
+.title-dirty {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 3px;
+  color: var(--warn);
+}
+
+.title-dirty[hidden] {
+  display: none;
+}
+
 /* B152：同步滚动开关，贴在文档名后面（同一文档开着多份时才由 refreshTitle 显隐）。
    ⚠️ `[hidden]` 必须显式给一条：`.win-btn, .title-btn, .menu-btn` 那条共用声明写死了
    `display:inline-flex`，作者样式压过 UA 的 `[hidden]{display:none}` —— 不加这条，

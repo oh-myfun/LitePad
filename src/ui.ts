@@ -71,6 +71,10 @@ const menuBar = el("menu-bar");
 const titleBar = el("title-bar");
 const appMark = el("app-mark");
 const titleText = el("title-text");
+// B340：未保存原点（用户点名把 B317 的星号换成「与标签同款的原点」）。
+// 字形住在 index.html 里（同一颗 codicon `circle-filled`），这里只管显隐 ——
+// 粘进文字里就没法同款：字号与颜色会跟着 `.title-text` 走，而标签那颗是独立元素。
+const titleDirty = el("title-dirty");
 // B152：同步滚动开关（同一文档开着多份时才出现，显隐与点亮态见 refreshSyncButton）。
 // 初值由 index.html 给成 hidden —— 单次打开时不该有一颗点不动的键占着标题栏。
 const syncScrollBtn = el<HTMLButtonElement>("sync-scroll");
@@ -171,16 +175,22 @@ let diagSetTitle = "skipped";
 function refreshTitle(): void {
   const tab = activeTab();
   const doc = tab ? docs.get(tab.docId) : undefined;
-  // 未保存标记用星号 `*`（B317 用户点名）：标题栏这一行是**文字**，星号与文字同一基线、
-  // 同一个 em，不会像圆点那样要么太大（`●` 按整 em 画）要么轻到看不见（`•`）。
-  // 标签栏那颗不受影响 —— 它坐在固定尺寸槽位里由 CSS 控大小（见 global.css 的 `.tab-mark`）。
-  const mark = doc?.dirty ? " *" : "";
+  // B340（用户点名，推翻 B317 的星号）：未保存标记改成「与标签同款的原点」。
+  // 两处分开画是刻意的：
+  //   · 自建标题栏那一行用**独立元素** `#title-dirty`（同一颗 codicon `circle-filled`、
+  //     同一个 `--warn`），拼进文字里就只能吃 `.title-text` 的字号与颜色，不是同款；
+  //   · 窗口标题走任务栏 / Alt+Tab，由操作系统排版、装不了 codicon 字形 ⇒ 用纯文本 ●。
+  const dirty = !!doc?.dirty;
+  const mark = dirty ? " ●" : "";
   const suffix = doc?.readonly ? " [只读]" : "";
   // 软件名在前，文件名在后：无文档时只有 LitePad
   const title = doc ? `LitePad - ${doc.name}${mark}${suffix}` : "LitePad";
   // 自建标题栏（B97）中间那一行只放文档名：应用名已由窗口/任务栏承担，再写一遍是噪声
   // （VS Code 同款取舍）。无文档时留空，而不是回落到「LitePad」。
-  titleText.textContent = doc ? `${doc.name}${mark}${suffix}` : "";
+  titleText.textContent = doc ? `${doc.name}${suffix}` : "";
+  // 点在名字**后面**（用户 2026-10-22 选定）。只读档不产生编辑 ⇒ 不会与这颗同时出现，
+  // 两处顺序不同（标题栏「名 [只读] ●」/ 窗口标题「名 ● [只读]」）也就不会被看见。
+  titleDirty.hidden = !dirty;
   void getCurrentWindow()
     .setTitle(title)
     .then(() => {

@@ -73,6 +73,14 @@
              测试与样式可据此定位文档名（文本由 main.ts 的 refreshTitle 写入）。 -->
         <div id="title-center" class="title-center">
           <span id="title-text" class="title-text"></span>
+          <!-- B340：未保存原点（用户点名把星号换成「与标签同款的原点」）。字形取与标签
+               .tab-mark **同一颗** codicon `circle-filled`，颜色取同一个 `--warn`（见
+               global.css 的 .title-dirty）。默认 hidden：干净文档不该挂着它。
+               ⚠️ 这颗必须留在名字**外面**：拼进 #title-text 就只吃文字的字号与颜色，
+                  不是同款，而且名字被省略号裁切时会把它一起裁掉。 -->
+          <span id="title-dirty" class="title-dirty" aria-hidden="true" hidden
+            ><i class="codicon codicon-circle-filled"></i
+          ></span>
           <!-- B152：同步滚动开关。**只在当前文档开着多份时才露脸**（见 refreshSyncButton 的
                显隐判定），位置就在文档名后面。⚠️ 同步滚动逻辑已整体清除（重构）——
                这颗键保留可见但 **inert**：点击只翻转 aria-pressed 与字形，不产生任何联动。

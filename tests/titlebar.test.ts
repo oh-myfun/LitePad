@@ -168,13 +168,36 @@ describe("B97 自建标题栏", () => {
     expect(body, "任务栏/Alt+Tab 读的窗口标题仍要 setTitle").toContain(".setTitle(title)");
     // 自建标题栏里应用名是噪声（窗口与任务栏已经有了），只放文档名
     expect(body, "标题栏不得重复写应用名").not.toMatch(/titleText\.textContent\s*=[^;]*LitePad/);
-    // 未保存标记用星号（B317 用户点名）：这一行是文字，星号与文字同基线同 em；
-    // 圆点两档都不合适 —— `●`（U+25CF）按整 em 画、几乎与文字等高，`•`（U+2022）又轻到看不见。
-    // 标签栏那颗不受这条约束 —— 它坐在固定尺寸槽位里由 CSS 控大小。
-    expect(body, "标题栏的未保存标记要用星号").toContain('" *"');
-    expect(body, "标题栏不许再用圆点当未保存标记（同一个串还要经 setTitle 进任务栏）").not.toMatch(
-      /"[•●]"/,
+    // B340（用户点名，**推翻 B317 的星号**）：未保存标记改成「与标签同款的原点」。
+    // 判据按形状写：粘在文字里就没法与标签同款（字号颜色都跟着文字走），所以那颗点必须是
+    // **独立元素**，并且取标签同一颗 codicon 字形 + 同一个 `--warn` 色。
+    expect(body, "标题栏那一行不再往文字里拼星号（B317 的 `*` 已被原点取代）").not.toMatch(
+      /\$\{[^}]*\}\.dirty \? " \*"/,
     );
+    expect(body, "未保存原点必须走独立元素的显隐").toContain("titleDirty.hidden");
+    // 窗口标题（任务栏 / Alt+Tab）只能装纯文字，放不了 codicon ⇒ 同一含义用 U+25CF 那颗实心圆。
+    // ⚠️ 这一条是**按符号本身**钉的（用户明确选了 ●）：改名会打红是有意为之，
+    //    因为换掉它就是换掉他挑的那一档，不该静悄悄过去。
+    expect(body, "窗口标题里的未保存标记是 ●").toContain('" ●"');
+    expect(
+      body,
+      "自建标题栏那一行不许把 ● 也拼进文字（两处各画一遍 = 同一状态两个口径，B304 的病）",
+    ).not.toMatch(/titleText\.textContent[^;]*●/);
+    const html = readFileSync("index.html", "utf-8");
+    expect(html, "标题栏那颗点要与标签同一颗字形").toMatch(
+      /id="title-dirty"[\s\S]{0,200}codicon-circle-filled/,
+    );
+    expect(html, "干净文档时默认不许亮着").toMatch(/id="title-dirty"[^>]*hidden/);
+    const dirty = cssDecls(ruleBlock(css(), ".title-dirty"));
+    expect(dirty, "取不到 .title-dirty 规则").toBeTruthy();
+    expect(dirty, "原点颜色与 .tab-mark 同一颗（--warn）").toContain("color: var(--warn)");
+    // ⚠️ 本仓反复踩过的 `[hidden]` 陷阱：上面那条 `display: inline-flex` 特异度高于 UA 的
+    //    `[hidden] { display: none }` ⇒ 没有这一条兜底，`hidden` 属性根本关不掉那颗点。
+    expect(css(), "必须留一条 [hidden] 兜底").toMatch(
+      /\.title-dirty\[hidden\]\s*\{[^}]*display:\s*none/,
+    );
+    // 名字被裁切时点不许被裁掉（它是「这份没存」唯一的提示）
+    expect(dirty, "点不能被 flex 压小或被省略号吃掉").toMatch(/flex:\s*0 0 auto/);
   });
 
   it("标签名与标题栏那行文档名同字号（B317 用户点名）", () => {
