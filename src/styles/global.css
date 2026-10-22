@@ -29,6 +29,14 @@
   --fs-input: 14px;
   --fs-title: 15px;
   --fs-hero: 20px;
+  /* B342 · 中文光学抬升（判据见 tests/titlebar.test.ts）。12px 的中文方块墨迹恰好 1em（基线
+     上 11 / 下 1），而 Noto Sans SC 的 em 格是上 14 / 下 3 ⇒ 墨迹带在按 line-height 居中的行盒里
+     **天生低半格**，与键高、与 line-height 都无关（半 leading 上下同加，差值里抵消）。
+     抬升量 = ((14-11) - (3-1)) / 2 = 0.5px @12px = 1/24 em ⇒ 按 em 计价，换字阶档自动缩放。
+     只给「同排看得见框」的那几处文字用（菜单键标签、标题栏文档名）；图标字形有自己的度量，不跟。
+     ⚠️ 别再回到「给键补 1px 下内边距」那一招：那挪的是行盒里的空位，键与文字谁居中说不清，
+        而且换个字阶档就得重算（用户 2026-10-22 点名「能否不通过 padding」）。 */
+  --cjk-lift: calc(-1em / 24);
   --radius: 5px;
   /* 相连标签的圆角总源（B123-2，用户裁决）：活动标签**顶部圆角**与**肩部反向
      圆弧**必须同半径 —— 对齐 VS Code connectedEditorTabs.css 的变量链
@@ -452,6 +460,21 @@ body {
   text-overflow: ellipsis;
 }
 
+/* B342：中文光学抬升（值与推导见 :root 的 `--cjk-lift`）。这两处是**同一排**的文字：
+   菜单键里的「文件(F)」与中间的文档名，用户眼睛是拿它们互相校准的 —— 所以必须引用同一颗
+   token，而不是各自补数值。用 `position: relative` 而不是 `transform`：只挪绘制位置，
+   不起合成层（层上的字会被按设备像素重排，1.5 倍缩放下容易发虚）。
+   ⚠️ 抬的是**文字**，不动行盒也不动键：`.menu-btn` 的圆角底框、hover 铺底、焦点环都留在原位。
+   ⚠️ 菜单键那一格必须有真元素可挂（`src/shell/menubar.ts` 里包了 `span.menu-label`）——
+      裸文本会被 flex 包成**匿名** flex item，那种盒子选不中，样式无处可写。
+   ⚠️ 图标字形（`.title-dirty` 那颗原点、`.sync-btn`）不跟：codicon 有自己的度量，
+      跟着抬反而会把「与标签同款」的那颗点挪离它自己的居中位。 */
+.title-text,
+.menu-btn .menu-label {
+  position: relative;
+  top: var(--cjk-lift);
+}
+
 /* B340：未保存原点（用户点名把星号换成「与标签同款的原点」，画在文档名**后面**）。
    同款 = 同一颗 codicon `circle-filled` + 同一个 `--warn`，字号走 codicon 基座那一档 16px，
    与标签 `.tab-mark` 那颗逐像素一致（要收小就在这里加一条 `.title-dirty .codicon`，
@@ -657,17 +680,9 @@ html[data-window-kind="satellite"] #sidebar-toggle {
       浏览器重排级联，只有 CSS 契约用例钉着（见 tests/titlebar.test.ts 的 B336）。 */
 .menu-btn {
   width: auto;
-  /* B339：末那一颗 1px 是给中文方块做的光学居中。
-     ⚠️ 量的是「文件」那一方块的墨迹带，不是整条 `文件(F)` —— 括号与拉丁字母会把整串
-     的上下界各撑出去约 1px，按整串量永远居中不了，眼睛读的却是方块那一格。
-     实测（Noto Sans SC / ui 档 12px / 键高 22px）：不补 ⇒ 方块上 5.5、下 4.5，中心低
-     0.5px；补 1px ⇒ 上 5.0、下 5.0 正中；补 2px 又高 0.5px（过头）。
-     为什么裸文本上不计较、这里要计较：键是圆角矩形、hover 铺底看得见框，
-     文字在框里偏半格就读得出来（用户 2026-10-22 点名「文本好像偏下了点」）。
-     ⚠️ 别改用 `transform: translateY(-.5px)`：那挪的是**整颗键**（顶边 6 → 5.5），
-        圆角和 hover 底色会跟着离开标题栏的居中位。
-     ⚠️ 也依赖全局 `* { box-sizing: border-box }`：否则这 1px 会把 22px 的键撑成 23。 */
-  padding: 0 10px 1px;
+  /* 内边距四面同值（上下 0）。文字那半格的光学偏低由 `--cjk-lift` 挪墨迹解决
+     —— 见 :root 那条注释与 `.menu-btn .menu-label`。 */
+  padding: 0 10px;
   font-size: var(--fs-ui);
   /* B336：22px 高的圆角矩形。圆角**引用全局 `button {}` 那颗 `--radius`**，不写死数值 ——
      「和别的小按钮一致」只有两边指向同一颗变量才成立（写死 5px，token 一改就分家，

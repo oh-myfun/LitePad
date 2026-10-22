@@ -696,32 +696,62 @@ describe("B97 自建标题栏", () => {
     );
   });
 
-  it("B339：菜单键里的中文墨迹要落回键的正中（光学居中补的那 1px 下内边距）", () => {
+  it("B342：菜单键与文档名的光学抬升共用一颗 token，不再靠下内边距（用户点名「能否不通过 padding」）", () => {
     const s = css();
-    // atLineStart：共用声明里 `.menu-btn` 是列表成员（前面是空格），只有覆盖规则那颗才在
-    // 行首 —— 不加这个锚就会抓到共用块，两条判据一起变成读同一块的空转。
+    // 病灶（dev 构建上实测，量的是墨迹带 vs 键的边框盒）：12px 的中文方块墨迹恰好 1em（上 11
+    // 下 1），而 em 格是上 14 / 下 3 ⇒ 墨迹在按 line-height 居中的行盒里天生低半格。
+    // 它**不随**键高、也不随 line-height 变（半 leading 上下同加，在差值里抵消）
+    // ⇒ 只有两种治法：给不对称的**空位**（旧 B339 的 padding hack），或挪**墨迹**。用户要后者。
+    // ⚠️ 量的必须是「文件」那一方块，不是整条 `文件(F)` —— 括号把整串上下界各撑出约 1px，
+    //    按整串量怎么补都不居中（这是我第一版量错的地方）。
+    const root = cssDecls(ruleBlock(s, ":root"));
+    const lift = root.match(/--cjk-lift:\s*([^;]+);/);
+    expect(lift, ":root 里必须有 --cjk-lift（抬升只这一颗，别在各处写数值）").toBeTruthy();
+    const raw = lift![1].trim();
+    // 按 em 计价：换字阶档时它跟着缩放（写死 0.5px 的话 meta/hero 档又不居中）
+    const coef = Number(raw.match(/(-?[\d.]+)em/)?.[1]);
+    const divisor = Number(raw.match(/\/\s*([\d.]+)/)?.[1]);
+    expect(Number.isFinite(coef) && coef < 0, `--cjk-lift 要按 em 计价，读到「${raw}」`).toBe(true);
+    expect(Number.isFinite(divisor), `--cjk-lift 的 em 要被除回 1/24，读到「${raw}」`).toBe(true);
+    const pxAtUi = Math.abs(coef / divisor) * 12; // ui 档 = 12px
+    expect(pxAtUi, "ui 档下抬升要正好是实测的 0.5px（半格）").toBeCloseTo(0.5, 4);
+    // 反向对照：分母 24 → 12（等于抬 1px，过头）必须被同一把尺子判不合格
+    const over = raw.replace(/\/\s*24/, "/ 12");
+    expect(over, "退化对照要真改了原句").not.toBe(raw);
+    expect(
+      Math.abs(Number(over.match(/(-?[\d.]+)em/)![1]) / Number(over.match(/\/\s*([\d.]+)/)![1])) *
+        12,
+      "抬 1px（过头）必须被判不合格",
+    ).not.toBeCloseTo(0.5, 4);
+
+    // 两处同排文字共用同一条规则、同一颗 token —— 各写各的数值迟早分家
+    const group = cssDecls(ruleBlock(s, ".title-text, .menu-btn .menu-label"));
+    expect(group, "取不到「文档名 + 菜单键标签」那条共用抬升规则").toBeTruthy();
+    expect(group, "挪墨迹用相对位移（不动行盒、不起合成层，字不会糊）").toMatch(
+      /position:\s*relative/,
+    );
+    expect(group, "两处引用同一颗 --cjk-lift").toMatch(/top:\s*var\(--cjk-lift\)/);
+    expect(group, "不许把抬升写死成 px").not.toMatch(/top:\s*-?[\d.]+px/);
+    const flatTop = group.replace(/top:\s*var\(--cjk-lift\)/, "top: 0");
+    expect(flatTop, "退化块要先真改了").not.toBe(group);
+    expect(flatTop, "摘掉 var(--cjk-lift) 后必须不再匹配").not.toMatch(/top:\s*var\(--cjk-lift\)/);
+
+    // 旧机制不许回潮：`.menu-btn` 覆盖块里的内边距必须上下同值（不对称就是又去挪空位）
+    // atLineStart：共用声明里 `.menu-btn` 是列表成员，只有覆盖规则那颗才在行首。
     const block = cssDecls(ruleBlock(s, ".menu-btn", undefined, true));
     expect(block, "取不到 .menu-btn 的覆盖规则").toBeTruthy();
-    // 实测（真机样式表下量墨迹带；Noto Sans SC / ui 档 12px / 键高 22px）。
-    // ⚠️ 量的是「文件」那一方块，**不是整条 `文件(F)`** —— 括号把整串上下界各撑出约 1px，
-    //    按整串量怎么补都不居中，而眼睛读的是方块那一格（这是我第一版量错的地方）。
-    //   不补 ⇒ 方块上 5.5 / 下 4.5 ⇒ 中心比键中心**低 0.5px**；
-    //   补 1px ⇒ 5.0 / 5.0 正中；补 2px ⇒ 4.5 / 5.5 又高 0.5px（过头）。
-    // 为什么这半像素要在菜单键上计较、在裸文本上不计较：键是圆角矩形、hover 铺底看得见框，
-    // 文字在框里偏半格就读得出来（用户 2026-10-22 点名「文本好像偏下了点」）。
-    expect(block, "下内边距补 1px，把 flex 居中的墨迹抬回正中").toMatch(/padding:\s*0 10px 1px/);
-    // ⚠️ 抬文字**不许**改用 transform：那是整颗键一起走（实测键顶边 6 → 5.5），
-    //    圆角与 hover 底色会跟着离开标题栏的居中位 —— 键歪了，文字却只挪半格。
-    expect(block, "不许用 transform 挪整颗键").not.toMatch(/transform/);
-    // 盒模型前提：全局 `* { box-sizing: border-box }` 在，这颗下内边距才不会把 22px 撑成 23。
-    // 前提一旦被人摘掉，这条判据要红 —— 否则键高悄悄长 1px，而菜单键那排与三键不再同高。
-    expect(cssDecls(ruleBlock(s, "*")), "全局 border-box 是这颗 padding 不撑高键的前提").toMatch(
+    const pad = (block.match(/padding:\s*([^;]+);/)?.[1] ?? "").trim().split(/\s+/);
+    expect(pad.length, ".menu-btn 覆盖块必须自己给出内边距").toBeGreaterThanOrEqual(2);
+    expect(pad[0], `上下内边距必须同值，读到 ${pad.join(" ")}`).toBe(
+      pad.length >= 3 ? pad[2] : pad[0],
+    );
+    expect(block, "不许挪整颗键（键顶边会跟着走，圆角与 hover 底色就歪了）").not.toMatch(
+      /transform|position:|top:/,
+    );
+    // 前提：全局 border-box 在，22px 的键不会被内边距撑成 23；摘掉它这条判据要红。
+    expect(cssDecls(ruleBlock(s, "*")), "全局 border-box 是键高不被内边距撑高的前提").toMatch(
       /box-sizing:\s*border-box/,
     );
-    // 自证（防恒真）：把 1px 退回 0，判据必须不再匹配
-    const flat = block.replace(/padding:\s*0 10px 1px/, "padding: 0 10px");
-    expect(flat, "退化块要先自证原句还在").not.toBe(block);
-    expect(flat, "退回 0 之后必须不再匹配").not.toMatch(/padding:\s*0 10px 1px/);
   });
 
   it("B101：标题栏左侧留足内边距，左上角图标不顶到窗口左缘", () => {

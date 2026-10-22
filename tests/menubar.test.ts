@@ -211,6 +211,25 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
     expect(css, ".mnemonic 规则必须已删除").not.toMatch(/\.mnemonic\s*\{/);
   });
 
+  it("B342：菜单键的文字要包在真元素里（匿名 flex item 挂不住光学抬升）", () => {
+    const host = document.createElement("nav");
+    document.body.appendChild(host);
+    createMenuBar(host, makeCb());
+    const btns = [...host.querySelectorAll("button.menu-btn")];
+    expect(btns.length, "菜单栏要有键").toBeGreaterThan(0);
+    for (const btn of btns) {
+      // 直接 textContent 赋的字符串会被 flex 容器包成**匿名** flex item —— 那种盒子选不中，
+      // 于是「只抬文字、不抬键」（`.menu-btn .menu-label`）根本没有落点。所以要有真 span。
+      const label = btn.querySelector(":scope > .menu-label");
+      expect(label, `「${btn.textContent}」的文字必须包在 .menu-label 里`).toBeTruthy();
+      expect(label!.textContent, "包一层不许改文本（助记符仍跟着）").toBe(btn.textContent);
+    }
+    // 键本身仍是纯文本容器：不许顺手往里塞图标或提示节点
+    for (const btn of btns) {
+      expect(btn.children.length, `「${btn.textContent}」里只该有一个标签元素`).toBe(1);
+    }
+  });
+
   it("文件菜单：保留 新建/打开/保存三兄弟/设置/关闭标签/退出（自动保存与热退出已迁入设置页）", async () => {
     const host = document.createElement("nav");
     document.body.appendChild(host);
