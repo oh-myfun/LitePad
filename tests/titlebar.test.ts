@@ -600,7 +600,7 @@ describe("B97 自建标题栏", () => {
     );
   });
 
-  it("B110 + B336：菜单键仍并入三键的共用声明，但观感走**胶囊**（内缩高度 + 全圆两端）", () => {
+  it("B110 + B336：菜单键仍并入三键的共用声明，但观感走**圆角矩形**（内缩高度 + 共用那颗 --radius）", () => {
     const s = css();
     // 菜单按钮必须并进 .win-btn / .title-btn 的共用声明，否则三处各自漂移
     expect(s, "菜单按钮必须并入共用声明").toMatch(/\.win-btn,\s*\.title-btn,\s*\.menu-btn\s*\{/);
@@ -609,18 +609,32 @@ describe("B97 自建标题栏", () => {
     expect(s, "菜单按钮宽度随文本").toMatch(/\.menu-btn\s*\{[^}]*width:\s*auto/);
     // 容器撑满标题栏（`align-self`），键在其中**居中**而不是被拉满高
     expect(ruleBlock(s, ".menu-bar"), "菜单容器必须撑满标题栏").toMatch(/align-self:\s*stretch/);
-    // B336：`align-items: center` 是胶囊的前提 —— 还 stretch 的话 `height: 100%` 会把键
-    // 拉到 34px，999px 半径就变成「贴边的两个半圆」，看着像没改。
+    // B336：`align-items: center` 是内缩高度的前提 —— 还 stretch 的话 `height: 100%` 会把键
+    // 拉到 34px，圆角就变成「贴边的两个弧」，看着像没改。
     expect(
       ruleBlock(s, ".menu-bar"),
-      "容器要居中排键（stretch 会把键拉满高，胶囊无从谈起）",
+      "容器要居中排键（stretch 会把键拉满高，圆角读不出来）",
     ).toMatch(/align-items:\s*center/);
     // 两条必须落在同一个块里：`[^}]*` 跨不出 `}`，写了 height 忘了 radius 就会被判红
-    expect(s, "菜单键收成 22px 的胶囊").toMatch(/\.menu-btn\s*\{[^}]*height:\s*22px/);
-    expect(s, "两端全圆").toMatch(/\.menu-btn\s*\{[^}]*border-radius:\s*999px/);
-    // 自证（防恒真）：把那颗半径退回共用声明的 0，守卫必须判出来
-    const flat = s.replace(/(\.menu-btn\s*\{[^}]*border-radius:\s*)999px/, "$10");
-    expect(flat, "退化对照必须不再匹配").not.toMatch(/\.menu-btn\s*\{[^}]*border-radius:\s*999px/);
+    expect(s, "菜单键收成 22px").toMatch(/\.menu-btn\s*\{[^}]*height:\s*22px/);
+    // ⚠️ 圆角必须**引用那颗共用 token**，不许写死数值：全局 `button {}` 用的就是 `--radius`。
+    // 「和别的小按钮一致」这句话只有两边指向同一颗变量才成立 —— 写死 5px 的话，
+    // token 一改就分家，而没有任何测试会红。
+    expect(s, "菜单键圆角引用共用 token").toMatch(
+      /\.menu-btn\s*\{[^}]*border-radius:\s*var\(--radius\)/,
+    );
+    expect(
+      /^button\s*\{[^}]*border-radius:\s*var\(--radius\)/m.test(s),
+      "全局小按钮用的也是 --radius",
+    ).toBe(true);
+    expect(s, "不是全圆胶囊（用户改口：跟别的按钮同款的圆角矩形）").not.toMatch(
+      /\.menu-btn\s*\{[^}]*border-radius:\s*999px/,
+    );
+    // 自证（防恒真）：把那颗 token 换成 999px，token 判据必须不再匹配
+    const round = s.replace(/(\.menu-btn\s*\{[^}]*border-radius:\s*)var\(--radius\)/, "$1999px");
+    expect(round, "换成全圆后 token 判据必须不再匹配").not.toMatch(
+      /\.menu-btn\s*\{[^}]*border-radius:\s*var\(--radius\)/,
+    );
     // 退化对照：把菜单按钮从共用声明里摘出来，守卫必须判出来（防恒真）
     const regressed = s.replace(
       /\.win-btn,\s*\.title-btn,\s*\.menu-btn\s*\{/,

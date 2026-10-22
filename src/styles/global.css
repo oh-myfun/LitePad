@@ -581,9 +581,9 @@ body {
   display: flex;
   /* B110：容器像窗口三键那样撑满 34px 标题栏（`align-self: stretch`）。
      B336 起按键本身**不再被拉满高** —— `align-items` 从 stretch 改 center，菜单键收成
-     一颗 22px 的胶囊（见下面 `.menu-btn` 那条覆盖）。stretch 时 `height: 100%` 会把键
-     拉到整条标题栏高，999px 半径就只剩「贴边的两个半圆」，看着像没改。
-     间隙 2px → 4px：方键贴边时 2px 够用，胶囊两端是圆的，挨太近会读成一块。 */
+     22px 的圆角矩形（见下面 `.menu-btn` 那条覆盖）。还 stretch 时 `height: 100%` 会把键
+     拉到整条标题栏高，圆角只剩「贴边的两个弧」，看着像没改。
+     间隙 2px → 4px：方键贴边时 2px 够用，圆角键挨太近会读成一块。 */
   align-items: center;
   align-self: stretch;
   gap: 4px;
@@ -614,7 +614,7 @@ html[data-window-kind="satellite"] #sidebar-toggle {
 
 /* B110：菜单按钮与窗口三键同一条声明（见上方 `.win-btn, .title-btn, .menu-btn`）——
    无边框 / 同一悬停淡底 / 同一焦点环。B336 起**观感分档**：三键仍是满高无圆角的方键，
-   菜单键收成胶囊（下面覆盖 `height` / `border-radius`），因为它是文字标签、
+   菜单键收成 22px 的圆角矩形（下面覆盖 `height` / `border-radius`），因为它是文字标签、
    满高铺底读起来像一整条色带而不是一颗键。
    这里先留**文字标签**不得不不同的两项：三键是 46px 的图标方键，而菜单是
    「文件(F)」这类文字，宽度必须随文本走（否则标签被压断），故给 auto + 横向内边距。
@@ -625,12 +625,12 @@ html[data-window-kind="satellite"] #sidebar-toggle {
   width: auto;
   padding: 0 10px;
   font-size: 12.5px;
-  /* B336：胶囊档。22px 高 + 两端全圆（999px 是让「不管多高都全圆」的写法，
-     与标签那档的 `--tab-radius` 无关 —— 那是一颗方角圆肩，这是胶囊）。
-     共用声明那条 `height: 100%` 在这里被覆盖掉：容器已经改成居中排键，
-     键高不再跟着标题栏走。 */
+  /* B336：22px 高的圆角矩形。圆角**引用全局 `button {}` 那颗 `--radius`**，不写死数值 ——
+     「和别的小按钮一致」只有两边指向同一颗变量才成立（写死 5px，token 一改就分家，
+     而且没有任何测试会红）。
+     共用声明那条 `height: 100%` 在这里被覆盖掉：容器已改成居中排键，键高不再跟着标题栏走。 */
   height: 22px;
-  border-radius: 999px;
+  border-radius: var(--radius);
 }
 
 /* ---------- 标题栏的方形图标键（B152 / B154 / B157 / B158 / B198）----------
