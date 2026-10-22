@@ -178,7 +178,7 @@ function refreshTitle(): void {
   // B340（用户点名，推翻 B317 的星号）：未保存标记改成「与标签同款的原点」。
   // 两处分开画是刻意的：
   //   · 自建标题栏那一行用**独立元素** `#title-dirty`（同一颗 codicon `circle-filled`、
-  //     同一个 `--warn`），拼进文字里就只能吃 `.title-text` 的字号与颜色，不是同款；
+  //     同一个 `--dirty-mark`），拼进文字里就只能吃 `.title-text` 的字号与颜色，不是同款；
   //   · 窗口标题走任务栏 / Alt+Tab，由操作系统排版、装不了 codicon 字形 ⇒ 用纯文本 ●。
   const dirty = !!doc?.dirty;
   const mark = dirty ? " ●" : "";
