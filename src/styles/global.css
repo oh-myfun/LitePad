@@ -474,7 +474,8 @@ body {
   display: none;
 }
 
-/* B152：同步滚动开关，贴在文档名后面（同一文档开着多份时才由 refreshTitle 显隐）。
+/* B152：同步滚动开关，贴在文档名**前面**（B341 用户点名从名字后面挪过来 ——
+   键在后面的话，名字一显隐整排就被推着左右跳；同一文档开着多份时才由 refreshTitle 显隐）。
    ⚠️ `[hidden]` 必须显式给一条：`.win-btn, .title-btn, .menu-btn` 那条共用声明写死了
    `display:inline-flex`，作者样式压过 UA 的 `[hidden]{display:none}` —— 不加这条，
    单开一份时标题栏里就会留下一块空的 46px 方键。
@@ -677,7 +678,7 @@ html[data-window-kind="satellite"] #sidebar-toggle {
 }
 
 /* ---------- 标题栏的方形图标键（B152 / B154 / B157 / B158 / B198）----------
-   四颗同款，一条规则管到底：**同步滚动**（贴在文档名后面）、**始终在最前**
+   四颗同款，一条规则管到底：**同步滚动**（贴在文档名前面，B341）、**始终在最前**
    （`#win-pin`，旧称「钉在顶部」）、**在线更新**（B107，动态创建于 updater.ts）、
    **左栏显隐**（B198，`.title-btn.layout-btn` = `#sidebar-toggle`）。
    ⚠️ B198 那颗也是**双字形开关**（layout-sidebar-left / -off），状态全落在字形上，

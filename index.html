@@ -72,17 +72,9 @@
         <!-- 拖动区在 header（.title-bar）上：这里只管居中与裁切，
              测试与样式可据此定位文档名（文本由 main.ts 的 refreshTitle 写入）。 -->
         <div id="title-center" class="title-center">
-          <span id="title-text" class="title-text"></span>
-          <!-- B340：未保存原点（用户点名把星号换成「与标签同款的原点」）。字形取与标签
-               .tab-mark **同一颗** codicon `circle-filled`，颜色取同一个 `--warn`（见
-               global.css 的 .title-dirty）。默认 hidden：干净文档不该挂着它。
-               ⚠️ 这颗必须留在名字**外面**：拼进 #title-text 就只吃文字的字号与颜色，
-                  不是同款，而且名字被省略号裁切时会把它一起裁掉。 -->
-          <span id="title-dirty" class="title-dirty" aria-hidden="true" hidden
-            ><i class="codicon codicon-circle-filled"></i
-          ></span>
           <!-- B152：同步滚动开关。**只在当前文档开着多份时才露脸**（见 refreshSyncButton 的
-               显隐判定），位置就在文档名后面。⚠️ 同步滚动逻辑已整体清除（重构）——
+               显隐判定）。B341（用户点名）把它挪到文档名**前面**：键在后面的话，
+               名字一显隐整排就被推着左右跳。⚠️ 同步滚动逻辑已整体清除（重构）——
                这颗键保留可见但 **inert**：点击只翻转 aria-pressed 与字形，不产生任何联动。
                B154 起字形取 `link`，外观是 24×24 方形图标键、常态无背景（见 .sync-btn）。
                默认 hidden：单次打开时标题栏应当干干净净，不该挂着一颗点不动的键。 -->
@@ -95,6 +87,15 @@
             aria-label="同步滚动"
             aria-pressed="false"
           ></button>
+          <span id="title-text" class="title-text"></span>
+          <!-- B340：未保存原点（用户点名把星号换成「与标签同款的原点」）。字形取与标签
+               .tab-mark **同一颗** codicon `circle-filled`，颜色取同一个 `--warn`（见
+               global.css 的 .title-dirty）。默认 hidden：干净文档不该挂着它。
+               ⚠️ 这颗必须留在名字**外面**：拼进 #title-text 就只吃文字的字号与颜色，
+                  不是同款，而且名字被省略号裁切时会把它一起裁掉。 -->
+          <span id="title-dirty" class="title-dirty" aria-hidden="true" hidden
+            ><i class="codicon codicon-circle-filled"></i
+          ></span>
         </div>
         <!-- 标题栏工具键（在窗口控制键左侧，不随窗口控制那组的高亮/悬停规则走）：
              「始终在最前」是**开关**，所以用 aria-pressed 表达状态、字形不换（见

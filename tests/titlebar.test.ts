@@ -200,6 +200,26 @@ describe("B97 自建标题栏", () => {
     expect(dirty, "点不能被 flex 压小或被省略号吃掉").toMatch(/flex:\s*0 0 auto/);
   });
 
+  it("B341：同步滚动键排在文档名**前面**（用户点名，B152 的「名字后面」已作废）", () => {
+    const html = readFileSync("index.html", "utf-8");
+    const EXPECTED = ["sync-scroll", "title-text", "title-dirty"];
+    const order = (src: string): string[] =>
+      [...src.matchAll(/id="(sync-scroll|title-text|title-dirty)"/g)].map((m) => m[1]);
+    expect(order(html), "标题栏中间那一排的顺序").toEqual(EXPECTED);
+    // 自证（防恒真）：把两颗 id 就地互换 = 退回「键在名字后面」那一版，判据必须不再匹配
+    const swapped = html
+      .replace('id="sync-scroll"', 'id="__TMP__"')
+      .replace('id="title-text"', 'id="sync-scroll"')
+      .replace('id="__TMP__"', 'id="title-text"');
+    expect(swapped, "退化串要先自证真的动到了").not.toBe(html);
+    expect(order(swapped), "换回原序后必须不再满足「键在前」").not.toEqual(EXPECTED);
+    // 说明性注释里也别留旧话：本仓删样式时爱留「原先是什么」，那是变更史不是现状
+    // （同一族坑见 pitfalls/css-judges-and-pixel-probes 第 1 条 —— 散文会把判据喂假）。
+    expect(html, "index.html 还在说「位置就在文档名后面」").not.toContain("位置就在文档名后面");
+    const sheet = readFileSync("src/styles/global.css", "utf-8");
+    expect(sheet, "global.css 还在说「贴在文档名后面」").not.toContain("贴在文档名后面");
+  });
+
   it("标签名与标题栏那行文档名同字号（B317 用户点名）", () => {
     const title = ruleBlock(css(), ".title-text");
     const tab = ruleBlock(css(), ".tab");
