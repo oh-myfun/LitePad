@@ -164,9 +164,12 @@ class SessionStore {
   /**
    * B302：这一格的视口位置（共享坐标 `v`）。
    *
-   * 只有两个来源配写它：① 落盘前对**看得见那一侧**的现采（`samplePanelScrollV`）；
-   * ② 卫星窗口关窗时交还的位置。隐藏侧的读数恒 0、在途落位的 DOM 还是旧位置，
-   * 两者都不许直接写这里（前者由 `readVisibleV` 报 null 挡住，后者由账本挡）。
+   * 只有三个来源配写它：① 落盘前对**看得见那一侧**的现采（`samplePanelScrollV`）；
+   * ② 卫星窗口交还的位置；③ 同一份文档里**没在显示**的那些实例的记账
+   * （`sync-scroll/wire` 的 `memoVToHiddenInstances`，B344 —— 它们没有面可采，不记就永远停在
+   * 「上次被显示时」，拖出新窗口读的就是这份记忆）。
+   * 隐藏侧的读数恒 0、在途落位的 DOM 还是旧位置，两者都不许直接写这里
+   * （前者由 `readVisibleV` 报 null 挡住，后者由账本挡）。
    */
   setScrollV(tabId: number, v: number | null): void {
     const r = this.recs.get(tabId);

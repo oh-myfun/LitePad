@@ -16,10 +16,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { docSyncModes, docSyncOn, panels, tabs, type Panel, type Tab } from "../src/core/app-state";
 import {
   applySharedVFromRemote,
+  memoVToHiddenInstances,
   readVisibleV,
   setDocSyncMode,
   syncCoordinator,
 } from "../src/sync-scroll/wire";
+import { sessionStore } from "../src/session/store";
 import { SyncScrollCoordinator } from "../src/sync-scroll/coordinator";
 import type { ScrollAnchor } from "../src/sync-scroll/anchor";
 
@@ -264,6 +266,66 @@ describe("收端：把对端推来的 v 落到本窗口", () => {
     } finally {
       syncCoordinator.setOutbound(null);
     }
+  });
+});
+
+describe("本地滚动也要给「没在显示的那一份」记账（B344）", () => {
+  beforeEach(() => {
+    panels.clear();
+    tabs.clear();
+    // ⚠️ 只清 `docSyncModes` 不够：上面那条「开关关着」的用例把协调器自己那份也关了（走的是
+    // 单一写点），不复位的话这个口第一发就被 gate 掉，红在「没记账」上看着像功能坏。
+    docSyncModes.clear();
+    setDocSyncMode(3, true);
+    sessionStore.reset();
+  });
+
+  it("开着同步：隐藏实例的 tab.scrollV 与会话记录都刷成本帧落定后的 v", () => {
+    panelWith(0, 11, 3); // 正在显示的那一张归落位/现采管，不由这个口写
+    const hidden = {
+      tabId: 13,
+      docId: 3,
+      panelId: 0, // 同一条标签带里那张**没在显示**的标签（B344 用户拖的就是它）
+      viewMode: "source",
+      scrollV: 7,
+    } as unknown as Tab;
+    tabs.set(13, hidden);
+    sessionStore.register(13, 3);
+    sessionStore.setScrollV(13, 7);
+    memoVToHiddenInstances("3", 25.5);
+    expect(hidden.scrollV, "现形/拖出时读的就是这份记忆，它必须是最新的").toBeCloseTo(25.5, 5);
+    expect(sessionStore.get(13)?.scrollV, "会话记录跟着走，否则关窗再开又是旧位置").toBeCloseTo(
+      25.5,
+      5,
+    );
+  });
+
+  it("关着同步：一个字都不改（B303「每格各存各的」不许被这条新通道破掉）", () => {
+    panelWith(0, 11, 3);
+    const hidden = {
+      tabId: 13,
+      docId: 3,
+      panelId: 0,
+      viewMode: "source",
+      scrollV: 7,
+    } as unknown as Tab;
+    tabs.set(13, hidden);
+    sessionStore.register(13, 3);
+    sessionStore.setScrollV(13, 7);
+    setDocSyncMode(3, false);
+    memoVToHiddenInstances("3", 25.5);
+    expect(hidden.scrollV).toBe(7);
+    expect(sessionStore.get(13)?.scrollV).toBe(7);
+  });
+
+  it("正在显示的那一张不由这个口写（同一状态两个写点 = B304 的病）", () => {
+    panelWith(0, 11, 3);
+    tabs.get(11)!.scrollV = 7;
+    memoVToHiddenInstances("3", 25.5);
+    expect(
+      tabs.get(11)!.scrollV,
+      "可见面的位置由落位链与落盘现采写，这里再写一遍就会有两套口径",
+    ).toBe(7);
   });
 });
 

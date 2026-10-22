@@ -212,20 +212,42 @@ export function applySharedVFromRemote(docId: string, v: number, at: number | nu
       landed.push(`P${p.panelId}:${sideOfPanel(p)}`);
     }
   }
+  const memoed = memoVToHiddenInstances(docId, v);
+  syncTrace(
+    `远端推 doc=${docId} v=${v.toFixed(2)} ⇒ 落位 ${landed.length ? landed.join(", ") : "（无可见面）"}，记账 ${memoed} 份未显示实例`,
+  );
+}
+
+/**
+ * 把共享坐标 `v` 记进「这份文档里此刻**没在显示**的那些实例」（B344）。
+ *
+ * 隐藏的那一份没有面，`scrollTop` 写不进去，它的位置就只有这份记忆 —— 而「把标签拖出新窗口」
+ * 读的正是它（`transferSnapshotOf` 里那句 `live ?? tab.scrollV`）。原先只有远端推送那一路
+ * 记这个账（B297 顺手带的），**本窗口自己滚**那一发没接：可见面被扶齐了、记忆却停在
+ * 「这张标签上次被显示时」，于是开着同步滚一段再拖出一张没在显示的标签，新窗口落在滚之前
+ * 的位置（用户报的那一形）。同一份旧记忆也会跟着会话落盘，所以关窗再开是同一个病。
+ *
+ * 两道闸与远端那条完全同口径，不许在这儿分家：
+ *   · 开关 gate —— 同步关着时每格各存各的（B303 不许被这条新通道破掉）；
+ *   · 正在显示的那一张**不由这里写**：它的位置归落位链与落盘现采（`samplePanelScrollV`）管，
+ *     两处都写就会写出两个不同的值（B304 那一族「同一状态两个写点」）。
+ * 返回值只供 trace：记了几份。
+ */
+export function memoVToHiddenInstances(docId: string | number, v: number): number {
+  if (!syncCoordinator.isOn(String(docId))) return 0;
+  const id = Number(docId);
   let memoed = 0;
   for (const t of tabs.values()) {
     if (t.docId !== id) continue;
     const p = panels.get(t.panelId);
-    if (p && (p.viewTabId ?? p.activeTabId) === t.tabId) continue; // 正在显示的那张由上面负责
+    if (p && (p.viewTabId ?? p.activeTabId) === t.tabId) continue; // 正在显示的那张由落位/现采负责
     t.scrollV = v;
     // B302：卫星窗口自己不写会话，它那份位置就记在主窗口这份**隐藏实例**的记录上。
     // 于是「每个窗口各存各的」不必等到关窗才落地 —— 主窗口任何时候落盘都带着它。
     sessionStore.setScrollV(t.tabId, v);
     memoed++;
   }
-  syncTrace(
-    `远端推 doc=${docId} v=${v.toFixed(2)} ⇒ 落位 ${landed.length ? landed.join(", ") : "（无可见面）"}，记账 ${memoed} 份未显示实例`,
-  );
+  return memoed;
 }
 
 /** 这一格当前可见面的共享坐标 `v`；量不到（还没挂载 / 没有该侧 / 那一侧报不出位置）⇒ null。

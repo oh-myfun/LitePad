@@ -31,6 +31,7 @@ import {
   applyHandedBackPositions,
   applySharedVFromRemote,
   claimVisibleHere,
+  memoVToHiddenInstances,
   readVisibleV,
   setDocSyncMode,
   syncCoordinator,
@@ -950,8 +951,11 @@ function listenDocSync(): void {
 
   // ── B302：滚动位置的持久化通道 ────────────────────────────────────────────────
   // 会话只有主窗口在写（`scheduleSessionSave` 在卫星窗口是空操作），所以：
-  //   · 主窗口：账本判成用户滚动 / 主动跳转 ⇒ 排一次落盘；位置本身由落盘时按可见侧现采
-  //     （`samplePanelScrollV`），这里不重复记账，免得两条口径写出两个不同的值。
+  //   · 主窗口：账本判成用户滚动 / 主动跳转 ⇒ 排一次落盘。**看得见那一面**的位置由落盘时
+  //     现采（`samplePanelScrollV`），这里不重复写它；但同一份文档里**没在显示**的那些实例
+  //     没有被现采的机会（没有面可采），必须在这个口上记账 —— B344：原先只记可见面，
+  //     于是开着同步滚一段再拖出一张没显示的标签，新窗口落在滚之前那份旧记忆里。
+  //     记的是与远端推送同一个口（`memoVToHiddenInstances`），两份路径不许各写一套口径。
   //   · 卫星窗口：把位置报给主窗口（`window-positions`），主窗口把它写进自己那份**隐藏实例**
   //     的会话记录 —— 「每个窗口各存各的」于是仍落在同一个 session.json 里。
   //
@@ -959,8 +963,11 @@ function listenDocSync(): void {
   // 那份实例的，主窗口只是替它落盘。B303 之所以像「关着同步还在同步」，问题不在这条通道，
   // 而在**借用**那三处（恢复时的文档级兜底、重建时的接班跟随、落盘时补建记录不带 seed）——
   // 借用才决定用户看得见什么，所以闸全部加在那三处，这里不动。
+  // （`memoVToHiddenInstances` 是例外：它改的是「同文档兄弟实例该跟着走」这一共享语义，
+  //  归开关管，所以那个口自己 gate —— 关着时每格各存各的。）
   syncCoordinator.setOnUserScroll((docId, v) => {
     if (windowKind === "main") {
+      memoVToHiddenInstances(docId, v);
       scheduleSessionSave();
       return;
     }

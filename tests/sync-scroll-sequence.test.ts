@@ -442,8 +442,38 @@ describe("跨窗口同步滚动的接线（B297）", () => {
     expect(b).toContain("landVisibleSideAtV(p, v, 0, at)");
     expect(b).not.toContain("syncFrom"); // 一窗内广播就会再走一次帧回调 ⇒ 回声环
     expect(b).not.toContain("this.outbound");
-    // 没在显示的那些实例只记账（方案 A 的跨窗口版）：现形时落在同一处
-    expect(b).toContain("t.scrollV = v");
+    // 没在显示的那些实例只记账（方案 A 的跨窗口版）：B344 起这个循环住在共用口里，
+    // 远端这一发只是**调用**它 —— 本地滚动那一路调的是同一个口（见下一条）。
+    expect(b).toContain("memoVToHiddenInstances(");
+  });
+
+  it("B344：隐藏实例的记账全仓只有一个口，本地滚动与远端推送共用它", () => {
+    const memo = bodyOf(wire, "export function memoVToHiddenInstances(");
+    expect(memo, "记账口自己 gate 开关：同步关着时每格各存各的（B303 不许被新通道破）").toContain(
+      "syncCoordinator.isOn(",
+    );
+    expect(memo).toContain("t.scrollV = v");
+    expect(memo).toContain("sessionStore.setScrollV(t.tabId, v)");
+    // 可见面不由这个口写：它的位置归落位链 + 落盘现采（两个写点 = B304 的病）
+    expect(memo).toContain("(p.viewTabId ?? p.activeTabId) === t.tabId");
+    // 只有一份循环：谁再抄一遍，两条路径就会在不同时刻写出两个不同的值
+    expect(
+      [...wire.matchAll(/for \(const t of tabs\.values\(\)\)/g)].length,
+      "wire.ts 里遍历 tabs 的记账循环只该有一处",
+    ).toBe(1);
+
+    // 接线本身（防「函数写好了但没人调」—— 本仓的 B314-8 就是这么漏的）：
+    // 账本判成「用户滚的」那一发，主窗口分支必须既排落盘、又走这个记账口。
+    const at = win.indexOf("syncCoordinator.setOnUserScroll(");
+    expect(at, "本地滚动的落盘钩子必须还在").toBeGreaterThan(-1);
+    const hook = win.slice(at, at + 500);
+    expect(hook, "主窗口分支仍要排一次落盘").toContain("scheduleSessionSave()");
+    expect(hook, "主窗口分支必须给未显示的兄弟实例记账（B344 的病根就在这条没接）").toContain(
+      "memoVToHiddenInstances(",
+    );
+    // 读侧不变：拖出时优先实时可见侧，读不到才用这份记忆（现在它是新的了）
+    const snap = bodyOf(win, "function transferSnapshotOf(");
+    expect(snap).toContain("live ?? tab.scrollV");
   });
 
   it("main.ts 那颗键：翻转走唯一写点，并广播给所有窗口", () => {
