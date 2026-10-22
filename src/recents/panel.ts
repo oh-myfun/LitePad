@@ -15,9 +15,10 @@ import { windowKind } from "../core/app-state";
 import { doOpen } from "../io/files";
 import { CODICONS } from "../shell/codicons";
 import { activeDrawer, registerDrawerView, setDrawer } from "../shell/drawer";
+import { setTip } from "../shell/tooltip";
 import { openFolder } from "../explorer/panel";
 import { applySidebarVisible, isSidebarOff } from "../toc";
-import { recentClear, recentCount, recentList, recentPanel, sideRecent, showMessage } from "../ui";
+import { recentClear, recentList, recentPanel, sideRecent, showMessage } from "../ui";
 import {
   clearRecentEntries,
   forgetRecentEntry,
@@ -119,15 +120,8 @@ export function renderRecents(): void {
   // 而点亮态与 `is-collapsed` 仍由 `setDrawer` 那一个出口翻，这里不自己改 DOM。
   sideRecent.hidden = cap === 0;
   if (cap === 0 && activeDrawer() === "recent") setDrawer(null);
-  // B332：两类各一份额度 ⇒ 计数分两段报。「23/20」这种合起来的读法会把人吓一跳
-  //（其实一类都没满），而「满了没地方放新的」正是用户调上限时唯一想知道的事。
   const folders = list.filter((e) => e.kind === "folder");
   const files = list.filter((e) => e.kind !== "folder");
-  recentCount.textContent = `${folders.length}+${files.length}/${cap}`;
-  recentCount.setAttribute(
-    "aria-label",
-    `文件夹 ${folders.length} 条、文件 ${files.length} 条，每类上限 ${cap}`,
-  );
   recentClear.setAttribute("data-tip", list.length === 0 ? "没有可清空的记录" : "清空全部");
   recentList.replaceChildren();
   if (list.length === 0) {
@@ -140,19 +134,17 @@ export function renderRecents(): void {
     return;
   }
   // 文件夹那一组永远在文件之上（用户点名，与 VS Code 的 Open Recent 同序）。
-  // 标题只在两类都在时才挂：只有一类时它是噪音，还白占一行。
-  const both = folders.length > 0 && files.length > 0;
-  if (both) recentList.append(groupHead("文件夹"));
+  // B348：两类之间只画一条横线 —— 原先那两行「文件夹」/「文件」小标题撤掉了：
+  // 条目名与次行的完整路径已经把「这是目录还是文件」说清楚，标题只是把它重复一遍。
   for (const e of folders) recentList.append(rowOf(e));
-  if (both) recentList.append(groupHead("文件"));
+  if (folders.length > 0 && files.length > 0) recentList.append(divider());
   for (const e of files) recentList.append(rowOf(e));
 }
 
-/** 分组标题那一行（不可点：它不是条目，`rowOf` 那套 dataset.path / ✕ 一概不挂）。 */
-function groupHead(label: string): HTMLElement {
+/** 两组之间那条横线（不可点：它不是条目，`rowOf` 那套 dataset.path / ✕ 一概不挂）。 */
+function divider(): HTMLElement {
   const el = document.createElement("div");
-  el.className = "recent-group";
-  el.textContent = label;
+  el.className = "recent-divider";
   return el;
 }
 
@@ -185,8 +177,14 @@ function rowOf(e: RecentEntry): HTMLElement {
   del.setAttribute("aria-label", `从最近打开里移除 ${e.name}`);
 
   // 完整路径与相对时间挂在悬停浮层上：行里两处都做了截断，看全的地方必须有。
-  row.setAttribute("data-tip", e.path);
-  row.setAttribute("data-tip-detail", relativeTime(e.openedAt));
+  // B348：档位与标签条 / 大纲同款（跟着鼠标走、紧凑档、带分组标记），所以经 setTip
+  // 挂 —— 裸写 `data-tip` 拿到的是默认档（画 caret、不跟鼠标、非紧凑），两处就不齐了。
+  setTip(row, e.path, {
+    detail: relativeTime(e.openedAt),
+    group: "recents",
+    follow: true,
+    compact: true,
+  });
   row.append(line, del);
   return row;
 }

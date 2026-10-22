@@ -106,7 +106,6 @@ const recentPanel = el("recent-panel");
 // 唯一出口是 `src/shell/drawer.ts` 的 `setDrawer`。
 const sideDrawer = el("side-drawer");
 const recentList = el("recent-list");
-const recentCount = el<HTMLSpanElement>("recent-count");
 const recentClear = el<HTMLButtonElement>("recent-clear");
 // B314：侧栏第三块（资源管理器）。显隐与点亮态同归外壳 `setDrawer`，这里只交出节点本身。
 const sideExplorer = el<HTMLButtonElement>("side-explorer");
@@ -411,7 +410,6 @@ export {
   sideRecent,
   recentPanel,
   recentList,
-  recentCount,
   recentClear,
   sideExplorer,
   explorerPanel,

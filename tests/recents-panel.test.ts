@@ -39,6 +39,7 @@ let panel: typeof import("../src/recents/panel");
 let drawer: typeof import("../src/shell/drawer");
 let appState: typeof import("../src/core/app-state");
 let ui: typeof import("../src/ui");
+let tip: typeof import("../src/shell/tooltip");
 
 beforeAll(async () => {
   const html = readFileSync("index.html", "utf-8");
@@ -47,11 +48,12 @@ beforeAll(async () => {
     "",
   );
   document.body.innerHTML = body;
-  [panel, drawer, appState, ui] = await Promise.all([
+  [panel, drawer, appState, ui, tip] = await Promise.all([
     import("../src/recents/panel"),
     import("../src/shell/drawer"),
     import("../src/core/app-state"),
     import("../src/ui"),
+    import("../src/shell/tooltip"),
   ]);
   // 大纲那一块也登记进外壳：生产里由 `setupSideBar` 做，这里不装配整条按钮列，
   // 但互斥的判据（`tocPanel.hidden`）要有写它的人，否则测的是「没人登记」而不是「互斥」。
@@ -144,7 +146,7 @@ describe("B305 最近打开面板", () => {
     expect(labels).toContain("更多...");
   });
 
-  it("B332：文件夹那一组始终排在文件之上，两类都在时才挂分组标题", () => {
+  it("B332 桶序 + B348 分隔：文件夹那一组始终排在文件之上，两类都在时中间只画一条横线", () => {
     const now = Date.now();
     h.entries = [
       { path: "C:\\notes\\a.md", name: "a.md", openedAt: now - 1_000 },
@@ -158,19 +160,29 @@ describe("B305 最近打开面板", () => {
       "桶内保持 Rust 给的那个顺序（新→旧），桶间才是文件夹在上",
     ).toEqual(["D:\\工作\\报价", "D:\\other", "C:\\notes\\a.md", "C:\\notes\\b.md"]);
     expect(
-      [...document.querySelectorAll(".recent-group")].map((g) => g.textContent),
-      "两类都在 ⇒ 各挂一个标题，否则光看名字分不清哪个是目录",
-    ).toEqual(["文件夹", "文件"]);
+      document.querySelectorAll(".recent-divider").length,
+      "两类都在 ⇒ 中间一条横线（用户点名：只要分隔，不要小标题）",
+    ).toBe(1);
+    expect(
+      document.querySelector(".recent-group"),
+      "「文件夹」/「文件」那两行小标题已经撤掉",
+    ).toBeNull();
+    expect(
+      [...document.querySelectorAll("#recent-list > *")]
+        .filter((el) => !el.classList.contains("recent-row"))
+        .map((el) => el.textContent),
+      "分隔元素不许带文字，也不许被当成条目",
+    ).toEqual([""]);
   });
 
-  it("B332：只有一类时不挂标题（整屏本来就是那一类，标题是噪音）", () => {
+  it("B348：只有一类时连横线也不画（整屏本来就是那一类）", () => {
     seed(); // 三条全是文件
     panel.renderRecents();
-    expect(document.querySelectorAll(".recent-group").length).toBe(0);
-    expect(rows().length, "行数不许因为标题而少一条").toBe(3);
+    expect(document.querySelectorAll(".recent-divider").length).toBe(0);
+    expect(rows().length, "行数不许因为分隔而少一条").toBe(3);
   });
 
-  it("B332：计数那颗按两类各报一次（上限现在是**每类**的，合起来报会读成「快满了」）", () => {
+  it("B348：面板顶部不再显示数量（用户点名去掉；上限那一档在设置页里看）", () => {
     const now = Date.now();
     h.entries = [
       { path: "D:\\工作\\报价", name: "报价", openedAt: now - 1_000, kind: "folder" },
@@ -179,8 +191,11 @@ describe("B305 最近打开面板", () => {
     ];
     h.limit = 20;
     panel.renderRecents();
-    expect(ui.recentCount.textContent).toBe("2+1/20");
-    expect(ui.recentCount.getAttribute("aria-label")).toBe("文件夹 2 条、文件 1 条，每类上限 20");
+    expect(document.getElementById("recent-count"), "那颗计数元素必须整个撤掉").toBeNull();
+    expect(
+      document.getElementById("recent-head")?.textContent ?? "",
+      "标题栏只剩标题 + 垃圾桶，不留计数的位子",
+    ).not.toMatch(/\d/);
   });
 
   it("点「最近打开」⇒ 自己摊开、大纲收起（两块互斥，同时只露一块）", () => {
@@ -221,16 +236,23 @@ describe("B305 最近打开面板", () => {
     expect(rows()[0].dataset.path).toBe("C:\\a\\<img src=x onerror=alert(1)>.md");
   });
 
-  it("悬停属性带完整路径与相对时间（截断了也有地方看全）", () => {
+  it("B348：路径提示与标签/大纲**同款**（走 setTip 的 follow + compact，不再是裸 data-tip）", () => {
     panel.renderRecents();
     const row = rows()[0];
-    expect(row.getAttribute("data-tip")).toBe("D:\\工作\\报价\\单.md");
-    expect(row.getAttribute("data-tip-detail")).toContain("分钟前");
-  });
-
-  it("标题栏计数是「文件夹+文件/每类上限」（B332 起两类各一份额度）", () => {
-    panel.renderRecents(); // seed() 那三条都是文件
-    expect(ui.recentCount.textContent).toBe("0+3/20");
+    expect(row.getAttribute("data-tip"), "提示正文仍是完整路径").toBe("D:\\工作\\报价\\单.md");
+    expect(row.getAttribute("data-tip-detail"), "副行给相对时间").toContain("分钟前");
+    // 与标签条 / 大纲那一档逐项对齐：鼠标定位（不画 caret）+ 紧凑档 + 分组标记。
+    // 参照物直接由 setTip 现做，省得把 opts 形状抄第二份（抄一份就会分家）。
+    const ref = document.createElement("div");
+    tip.setTip(ref, "x", { group: "recents", follow: true, compact: true });
+    const shape = (el: HTMLElement): Record<string, string | undefined> => ({
+      group: el.dataset.tipGroup,
+      follow: el.dataset.tipFollow,
+      compact: el.dataset.tipCompact,
+      placement: el.dataset.tipPlacement,
+      key: el.dataset.tipKey,
+    });
+    expect(shape(row), "这一行的提示档位要与标签/大纲同款").toEqual(shape(ref));
   });
 
   it("上限 0 ⇒ 空态说清「不是还没打开过，是不再记录」", () => {

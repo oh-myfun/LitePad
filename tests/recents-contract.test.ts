@@ -164,17 +164,20 @@ describe("B305 · 侧栏结构与子窗口收口", () => {
   const css = readFileSync("src/styles/preview.css", "utf-8");
   const globalCss = readFileSync("src/styles/global.css", "utf-8");
 
-  it("六颗 id 齐备，按钮列自上而下 = 资源管理器 → 最近打开 → 大纲（B315 重排）", () => {
+  it("五颗 id 齐备（B348 撤掉计数那颗），按钮列自上而下 = 资源管理器 → 最近打开 → 大纲（B315 重排）", () => {
     for (const id of [
       "side-recent",
       "recent-panel",
       "recent-head",
-      "recent-count",
       "recent-clear",
       "recent-list",
     ]) {
       expect(html, `缺 #${id}`).toContain(`id="${id}"`);
     }
+    // 计数是 B348 用户点名撤掉的：结构、样式、代码三处都不许留尸（留一份就会有人以为还有）。
+    expect(html, "#recent-count 必须整个撤掉").not.toContain("recent-count");
+    expect(css, ".recent-count 样式要一起删").not.toMatch(/\.recent-count\s*\{/);
+    expect(readFileSync("src/recents/panel.ts", "utf-8")).not.toMatch(/recentCount/);
     // 这一列是常驻的一列，屏上的上下位置就是唯一的读法：DOM 次序即顺序。
     const at = (id: string): number => html.indexOf(`id="${id}"`);
     expect(at("side-explorer"), "B315 点名：资源管理器在最上").toBeLessThan(at("side-recent"));
@@ -185,6 +188,24 @@ describe("B305 · 侧栏结构与子窗口收口", () => {
     // B307：收起的是**外壳**，两块面板各自只带「轮到我没」那一层。
     // 首屏必须连壳一起藏着，否则开屏先画出一块抽屉再被启动回放收掉。
     expect(html, "外壳首屏就得藏着").toMatch(/id="side-drawer"[^>]*hidden/);
+  });
+
+  it("B348：两类之间画横线、不写小标题；行上提示经 setTip 挂（与标签/大纲同一档）", () => {
+    const panelSrc = readFileSync("src/recents/panel.ts", "utf-8");
+    expect(panelSrc, "分组小标题那套要撤干净（连 groupHead 函数一起）").not.toMatch(/groupHead/);
+    expect(css, ".recent-group 样式要换成 .recent-divider").not.toMatch(/\.recent-group\s*\{/);
+    expect(css, "分隔线要有自己的规则（拿共用 --border 画一条）").toMatch(
+      /\.recent-divider\s*\{[^}]*border-top/,
+    );
+    // 裸 `data-tip` = 默认档（画 caret、不跟鼠标、非紧凑），与标签条 / 大纲那一档不是一回事。
+    // ⚠️ 这里判的是「经不经过 setTip」：只有它会把 follow / compact / group 三格一起写好。
+    expect(panelSrc, "行上的提示要经 setTip").toMatch(/setTip\(\s*row\s*,/);
+    expect(panelSrc, "要开鼠标定位那一档").toMatch(/follow:\s*true/);
+    expect(panelSrc, "要开紧凑档").toMatch(/compact:\s*true/);
+    expect(panelSrc, "要标分组，便于以后整档调整").toMatch(/group:\s*"recents"/);
+    expect(panelSrc, "不许再直接 setAttribute 挂 data-tip").not.toMatch(
+      /row\.setAttribute\("data-tip"/,
+    );
   });
 
   it("B307：外壳 `.side-drawer` 也写了 display ⇒ 同样要一条 [hidden] 兜底", () => {

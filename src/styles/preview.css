@@ -348,20 +348,17 @@
   font-size: var(--fs-meta);
   line-height: 1;
 }
+/* B348：标题栏那颗「当前条数 / 上限」撤了 ⇒ 标题改成像 `.toc-title` 那样吃满剩余宽度
+   （垃圾桶仍贴右缘 —— 原先那一格是靠计数顶开的，删了它就得让标题接手）。 */
 .recent-title {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--fg-muted, #656d76);
-}
-/* 计数「6/20」= 当前条数 / 设置上限。等宽数字：名单增减时这一格不该左右跳。 */
-.recent-count {
-  flex: 1 1 auto;
-  min-width: 0;
-  text-align: right;
-  padding-right: 4px;
-  color: var(--fg-muted, #656d76);
-  font-variant-numeric: tabular-nums;
 }
 .recent-list {
   flex: 1 1 auto;
@@ -395,15 +392,12 @@
   flex: 1 1 auto;
   min-width: 0;
 }
-/* B332：分组标题那一行（文件夹 / 文件）。与 `.recent-head` 同一档「区块标题」读法：
-   11px、muted、不可点 —— 它不是条目，dataset.path 与那颗 ✕ 一概不挂。
-   上下只留 2px：它夹在两组条目中间，再松就把「一组」拆成两段看。 */
-.recent-group {
-  padding: 2px 10px 0;
-  font-size: var(--fs-meta);
-  line-height: 1.5;
-  color: var(--fg-muted, #656d76);
-  user-select: none;
+/* B348：两组之间只画一条横线 —— 原先那两行「文件夹」/「文件」小标题撤了（条目名与次行
+   的完整路径已经把类型说清楚，标题等于把它再说一遍）。它不是条目：`dataset.path` 与
+   那颗 ✕ 一概不挂；左右缩进 10px 与行文字对齐，上下各 3px 让两组各自成块。 */
+.recent-divider {
+  margin: 3px 10px;
+  border-top: 1px solid var(--border, #dcdfe3);
 }
 .recent-name {
   overflow: hidden;
