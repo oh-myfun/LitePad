@@ -453,7 +453,7 @@ describe("B328/B329 侧栏那几格的下伸部（省略号那层不许切字）
   });
 
   it("B329：最近打开那两截走同一口径（名字 12px / 目录 11px 都带着省略号那层）", () => {
-    for (const sel of [".recent-name {", ".recent-dir {"]) {
+    for (const sel of [".recent-name {", ".recent-path {"]) {
       const cell = block(sel);
       expect(cell, `${sel} 也在用 overflow:hidden 裁字`).toMatch(/overflow:\s*hidden/);
       expect(
@@ -462,14 +462,14 @@ describe("B328/B329 侧栏那几格的下伸部（省略号那层不许切字）
       ).toBe(SIDE_LH);
     }
     // 自证：目录那一截回到旧的 1.3 必须被打红（它 11px，看着像够用，边界行仍会被削）
-    const dir = block(".recent-dir {").replace(/line-height:\s*[\d.]+/, "line-height: 1.3");
+    const dir = block(".recent-path {").replace(/line-height:\s*[\d.]+/, "line-height: 1.3");
     expect(num(dir, "line-height"), "1.3 那一档是改之前的样子").not.toBe(SIDE_LH);
   });
 
   it("B329：撑高两截的同时把上下 padding 收掉，整行还是 38.5px（列表不许变胖）", () => {
     const row = block(".recent-row {");
     const name = block(".recent-name {");
-    const dir = block(".recent-dir {");
+    const dir = block(".recent-path {");
     const pad = num(row, "padding"); // shorthand 第一颗 = 上下
     const total = 2 * pad + SIDE_LH * num(name, "font-size") + SIDE_LH * num(dir, "font-size");
     expect(total, `整行 ${total}px：两截各 +1.8/+2.2，padding 没补就是 42.5`).toBeLessThanOrEqual(

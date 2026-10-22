@@ -101,9 +101,11 @@ export function recentMenuItems(): MenuItem[] {
     ];
   }
   const items: MenuItem[] = [];
-  for (const e of folders) items.push({ label: e.name, onSelect: () => void openFolder(e.path) });
+  for (const e of folders)
+    items.push({ label: menuLabelFor(e.name, e.path), onSelect: () => void openFolder(e.path) });
   if (folders.length > 0 && files.length > 0) items.push({ separator: true });
-  for (const e of files) items.push({ label: e.name, onSelect: () => void doOpen(e.path) });
+  for (const e of files)
+    items.push({ label: menuLabelFor(e.name, e.path), onSelect: () => void doOpen(e.path) });
   items.push({ separator: true }, { label: "更多...", onSelect: showRecentPanel });
   return items;
 }
@@ -169,8 +171,11 @@ function rowOf(e: RecentEntry): HTMLElement {
   name.className = "recent-name";
   name.textContent = e.name;
   const dir = document.createElement("div");
-  dir.className = "recent-dir";
-  dir.textContent = dirOf(e.path);
+  dir.className = "recent-path";
+  // B335：次行给**完整路径**，不再只给父目录 —— 同名文件散在好几层时，父目录那一截
+  // 分不开「报价\单.md」与「10月\单.md」之外更深的差别。放不下仍旧省略号截断，
+  // 悬停浮层（data-tip）里是全串。
+  dir.textContent = e.path;
   line.append(name, dir);
 
   const del = document.createElement("button");
@@ -244,10 +249,21 @@ function hhmm(d: Date): string {
   return `${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-/** 行第二截那串目录：去掉最后一段。`C:\a\b.md → C:\a`，`bare.md → ""`。 */
-export function dirOf(path: string): string {
-  const i = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
-  if (i < 0) return "";
-  if (i === 0) return "/";
-  return path.slice(0, i);
+/**
+ * 菜单标签的字符上限（VS Code 的 Open Recent 同档：120）。
+ * `.popup-menu` 只有 `min-width` 没有 `max-width` ⇒ 一条深路径能把整块弹层顶出窗口。
+ */
+const MENU_LABEL_MAX = 120;
+
+/**
+ * 菜单里每一项的标签：`名字 — 完整路径`（B335，用户点名）。
+ * 挤不下的那几条走**中间省略**：头部留「名字 + 路径开头」，尾部留路径末尾 ——
+ * 一条路径的分辨力集中在末尾（哪一层、哪个文件），砍尾等于白写。
+ */
+export function menuLabelFor(name: string, path: string): string {
+  const full = `${name} — ${path}`;
+  if (full.length <= MENU_LABEL_MAX) return full;
+  const keep = MENU_LABEL_MAX - 1; // 留给那一个省略号
+  const head = Math.ceil(keep / 2);
+  return `${full.slice(0, head)}…${full.slice(full.length - (keep - head))}`;
 }

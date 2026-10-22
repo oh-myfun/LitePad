@@ -105,10 +105,10 @@ describe("B305 最近打开面板", () => {
     const labels = items.filter((i) => !i.separator).map((i) => i.label);
     expect(
       labels.slice(0, 10),
-      "文件夹那段：各取前 10（VS Code 的 MAX_MENU_RECENT_ENTRIES）",
-    ).toEqual(Array.from({ length: 10 }, (_, i) => `f${i}`));
+      "文件夹那段：各取前 10（VS Code 的 MAX_MENU_RECENT_ENTRIES），标签带完整路径",
+    ).toEqual(Array.from({ length: 10 }, (_, i) => `f${i} — D:\\f${i}`));
     expect(labels.slice(10, 20), "文件那段接在后面，同样 10 条封顶").toEqual(
-      Array.from({ length: 10 }, (_, i) => `a${i}.md`),
+      Array.from({ length: 10 }, (_, i) => `a${i}.md — C:\\d\\a${i}.md`),
     );
     expect(labels.at(-1), "底部那颗是「更多...」").toBe("更多...");
     expect(items.filter((i) => i.separator).length, "两段之间一条、进「更多」之前一条").toBe(2);
@@ -124,8 +124,8 @@ describe("B305 最近打开面板", () => {
       { path: "C:\\notes\\a.md", name: "a.md", openedAt: Date.now() },
     ];
     const items = panel.recentMenuItems();
-    const folder = items.find((i) => i.label === "报价")!;
-    const file = items.find((i) => i.label === "a.md")!;
+    const folder = items.find((i) => i.label === "报价 — D:\\工作\\报价")!;
+    const file = items.find((i) => i.label === "a.md — C:\\notes\\a.md")!;
     folder.onSelect?.();
     file.onSelect?.();
     await Promise.resolve();
@@ -200,12 +200,16 @@ describe("B305 最近打开面板", () => {
     expect(ui.sideRecent.getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("一行两截：主行文件名、次行目录（用户选的 B 形状）", () => {
+  it("一行两行：主行文件名、次行**完整路径**（B335，用户点名要看得全）", () => {
     panel.renderRecents();
     const [first, second] = rows();
     expect(first.querySelector(".recent-name")?.textContent).toBe("单.md");
-    expect(first.querySelector(".recent-dir")?.textContent).toBe("D:\\工作\\报价");
-    expect(second.querySelector(".recent-dir")?.textContent).toBe("D:\\工作\\10月");
+    expect(first.querySelector(".recent-path")?.textContent).toBe("D:\\工作\\报价\\单.md");
+    expect(second.querySelector(".recent-path")?.textContent).toBe("D:\\工作\\10月\\单.md");
+    expect(
+      second.querySelector(".recent-dir"),
+      "次行不再只给父目录（旧那截分不开同名不同层的路径）",
+    ).toBeNull();
   });
 
   it("路径里的尖括号只当文字，不当标签（不许拿 innerHTML 拼用户路径）", () => {
@@ -326,9 +330,22 @@ describe("B305 最近打开面板", () => {
     expect(panel.relativeTime(new Date(2019, 0, 2, 8, 0, 0).getTime(), now)).toBe("2019年1月2日");
   });
 
-  it("dirOf 两种分隔符与无目录输入", () => {
-    expect(panel.dirOf("C:\\a\\b.md")).toBe("C:\\a");
-    expect(panel.dirOf("/x/y/z.md")).toBe("/x/y");
-    expect(panel.dirOf("bare.md")).toBe("");
+  it("菜单标签 = `名字 — 完整路径`（B335，用户选的形状）", () => {
+    expect(panel.menuLabelFor("单.md", "D:\\工作\\报价\\单.md")).toBe(
+      "单.md — D:\\工作\\报价\\单.md",
+    );
+  });
+
+  it("超长的标签走**中间省略**：保头（名字）保尾（路径末尾），总长封顶", () => {
+    const deep = `E:\\${"很长的一段目录名\\".repeat(30)}报价\\单.md`;
+    const label = panel.menuLabelFor("单.md", deep);
+    expect(label.length, "菜单没有 max-width，不裁会把整块弹层顶出窗口").toBeLessThanOrEqual(120);
+    expect(label.startsWith("单.md — E:\\很长"), "头部是名字 + 路径开头").toBe(true);
+    expect(label.endsWith("报价\\单.md"), "尾部必须是路径末尾 —— 那才是分辨力所在").toBe(true);
+    expect(label).toContain("…");
+    expect(
+      panel.menuLabelFor("单.md", "E:\\短\\单.md"),
+      "没超上限就不许被动过（中间省略只对挤的那几条生效）",
+    ).toBe("单.md — E:\\短\\单.md");
   });
 });
