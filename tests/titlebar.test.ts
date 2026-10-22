@@ -170,8 +170,8 @@ describe("B97 自建标题栏", () => {
     expect(body, "标题栏不得重复写应用名").not.toMatch(/titleText\.textContent\s*=[^;]*LitePad/);
     // B340（用户点名，**推翻 B317 的星号**）：未保存标记改成「与标签同款的原点」。
     // 判据按形状写：粘在文字里就没法与标签同款（字号颜色都跟着文字走），所以那颗点必须是
-    // **独立元素**，并且取标签同一颗 codicon 字形 + 同一个「未保存标记色」token
-    // （B343 起是 `--dirty-mark`，不再是 `--warn` —— 原点不再等于「警告色」，它按主题走）。
+    // **独立元素**，并且取标签同一颗 codicon 字形；颜色那一档演进过两次（B343 按主题、
+    // B345 「与它那一行的字同色」），所以这里只判形状，颜色归 B345 那条用例。
     expect(body, "标题栏那一行不再往文字里拼星号（B317 的 `*` 已被原点取代）").not.toMatch(
       /\$\{[^}]*\}\.dirty \? " \*"/,
     );
@@ -191,9 +191,10 @@ describe("B97 自建标题栏", () => {
     expect(html, "干净文档时默认不许亮着").toMatch(/id="title-dirty"[^>]*hidden/);
     const dirty = cssDecls(ruleBlock(css(), ".title-dirty"));
     expect(dirty, "取不到 .title-dirty 规则").toBeTruthy();
-    expect(dirty, "原点颜色与 .tab-mark 同一颗（--dirty-mark，B343）").toContain(
-      "color: var(--dirty-mark)",
+    expect(dirty, "原点不许再吃警告色（那颗说的是「这份没存」，不是「出错」）").not.toContain(
+      "var(--warn)",
     );
+    // 颜色取值那一档归 B345 那条用例管（「与它那一行的字同色」），这里只判独立元素这件事。
     // ⚠️ 本仓反复踩过的 `[hidden]` 陷阱：上面那条 `display: inline-flex` 特异度高于 UA 的
     //    `[hidden] { display: none }` ⇒ 没有这一条兜底，`hidden` 属性根本关不掉那颗点。
     expect(css(), "必须留一条 [hidden] 兜底").toMatch(
@@ -203,52 +204,48 @@ describe("B97 自建标题栏", () => {
     expect(dirty, "点不能被 flex 压小或被省略号吃掉").toMatch(/flex:\s*0 0 auto/);
   });
 
-  it("B343：未保存原点按主题走（深色纯白 · 浅色转前景），标题栏与标签仍是同一颗", () => {
+  it("B345：未保存原点与它那一行的字同色（标题栏 = 文档名那一颗 · 标签 = 继承标签名）", () => {
     const s = css();
-    const ruleOf = (src: string, sel: string) => cssDecls(ruleBlock(src, sel));
-    const declOf = (src: string, sel: string, prop: string) =>
-      ruleOf(src, sel)
-        .match(new RegExp(`${prop}:\\s*([^;]+);`))?.[1]
+    // 按「形状」判，不抄取值：这里要钉的是「点跟它旁边那行字同一颗来源」，
+    // 具体是哪颗色归主题那块管（B337 那条「判像素先展开 token」的口径同样适用）。
+    const colorOf = (src: string, sel: string) =>
+      cssDecls(ruleBlock(src, sel))
+        .match(/(?:[\s;{])color:\s*([^;]+);/)?.[1]
         .trim() ?? "";
-    const hex = (v: string) => (v.toLowerCase() === "#ffffff" ? "#fff" : v.toLowerCase());
-    // 颜色定义在各主题块里（`resolveCssVars` 只认 `:root`，够不到），所以在**同一块内**自解一层
-    const tokenIn = (block: string, name: string) =>
-      block.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1].trim() ?? "";
-    const deref = (block: string, value: string): string =>
-      /^var\(--[\w-]+\)$/.test(value)
-        ? deref(block, tokenIn(block, value.slice(4, -1).trim()))
-        : value;
-    const dark = ruleOf(s, ':root[data-theme="dark"]');
-    const light = ruleOf(s, ':root[data-theme="light"]');
-    expect(dark, "取不到深色主题块").toBeTruthy();
-    expect(light, "取不到浅色主题块").toBeTruthy();
-    // 两套主题都要显式给这颗：只在一套里定义，另一套就退回继承色（跟着文字走，不算「标记」）
-    expect(tokenIn(dark, "--dirty-mark"), "深色主题必须显式给 --dirty-mark").not.toBe("");
-    expect(tokenIn(light, "--dirty-mark"), "浅色主题必须显式给 --dirty-mark").not.toBe("");
-    expect(hex(tokenIn(dark, "--dirty-mark")), "深色主题下原点是纯白（用户点名）").toBe("#fff");
-    const lightVal = hex(deref(light, tokenIn(light, "--dirty-mark")));
-    expect(lightVal, "浅色主题下原点取那一档的正文前景").toBe(hex(tokenIn(light, "--fg")));
-    // 这条才是「按主题走」的实际目的：浅色主题底色就是 #fff，再画一颗白的等于画个看不见的
-    expect(lightVal, "浅色主题下原点不许与底色同色（白底白点看不见）").not.toBe(
-      hex(tokenIn(light, "--bg")),
+    // ① 标题栏：这一行里唯一的字就是文档名 ⇒ 那颗点的 color 必须与名字写成同一颗。
+    const name = colorOf(s, ".title-text");
+    expect(name, "取不到 .title-text 的 color").not.toBe("");
+    expect(
+      colorOf(s, ".title-dirty"),
+      "标题栏那颗点必须与文档名同色（B343 定的 --dirty-mark 已被这条取代：他要的是「跟字一样」，不是白色）",
+    ).toBe(name);
+    // ② 标签：标签名那一档的色是**跟着活动态换的**（非活动 = 50% 前景、活动 = 满前景），
+    //    所以「与字同色」在这一处只能写 inherit —— 抄一个固定值必然在其中那一档对不上。
+    expect(colorOf(s, ".tab-mark"), "标签那颗点要跟着标签名走 ⇒ 只能继承").toBe("inherit");
+    // inherit 的前提有两条，缺一条它继承到的就不是标签名那一档：
+    expect(
+      colorOf(s, ".tab-name"),
+      ".tab-name 自己不许声明颜色（否则 inherit 继承的是它父亲）",
+    ).toBe("");
+    expect(colorOf(s, ".tab"), "标签行得有可继承的颜色来源（.tab 上那一档随活动态变的色）").toMatch(
+      /color-mix\(/,
     );
-    // 「同款」不变量（B340）：两处颜色必须是同一颗 token，而不是各写各的字面量
-    const dirtyColor = declOf(s, ".title-dirty", "color");
-    const markColor = declOf(s, ".tab-mark", "color");
-    expect(dirtyColor, "标题栏那颗点要引用共用 token").toBe("var(--dirty-mark)");
-    expect(markColor, "标签那颗点要引用同一颗共用 token").toBe(dirtyColor);
-    // 反向对照①：把标签那颗单独改回 --warn（各自为政）⇒ 「同一颗」必须判红
-    const split = s.replace(/(\.tab-mark\s*\{[^}]*?color:\s*)var\(--dirty-mark\)/, "$1var(--warn)");
-    expect(split, "退化串要先自证真的动到了").not.toBe(s);
-    expect(declOf(split, ".tab-mark", "color"), "标签单独换色后必须不再与标题栏同一颗").not.toBe(
-      declOf(split, ".title-dirty", "color"),
+    // ③ 那颗 token 已经零消费者 ⇒ 不许留在两套主题里当死变量
+    for (const sel of [':root[data-theme="dark"]', ':root[data-theme="light"]']) {
+      expect(cssDecls(ruleBlock(s, sel)), `${sel} 里不该再有 --dirty-mark`).not.toMatch(
+        /--dirty-mark\s*:/,
+      );
+    }
+    // 反向对照①：把点改回警告色 ⇒ 与名字不再同一颗，必须判红
+    const warn = s.replace(/(\.title-dirty\s*\{[^}]*?color:\s*)[^;]+;/, "$1var(--warn);");
+    expect(warn, "退化串要先自证真的动到了").not.toBe(s);
+    expect(colorOf(warn, ".title-dirty"), "改成警告色后必须不再与名字同一颗").not.toBe(
+      colorOf(warn, ".title-text"),
     );
-    // 反向对照②：浅色主题画成纯白 ⇒ 「不许与底色同色」那条必须判红
-    const blind = light.replace(/--dirty-mark:\s*[^;]+;/, "--dirty-mark: #fff;");
-    expect(blind, "退化串要真的把浅色那颗改成白").not.toBe(light);
-    expect(hex(tokenIn(blind, "--dirty-mark")), "浅色主题下画纯白 = 看不见（与底色同色）").toBe(
-      hex(tokenIn(blind, "--bg")),
-    );
+    // 反向对照②：把标签那颗写成固定色 ⇒ 不再是「跟字同色」，必须判红
+    const fixed = s.replace(/(\.tab-mark\s*\{\s*color:\s*)inherit/, "$1var(--fg)");
+    expect(fixed, "退化串要先自证真的动到了").not.toBe(s);
+    expect(colorOf(fixed, ".tab-mark"), "写成固定值就不是继承标签名了").not.toBe("inherit");
   });
 
   it("B341：同步滚动键排在文档名**前面**（用户点名，B152 的「名字后面」已作废）", () => {

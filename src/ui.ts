@@ -177,8 +177,9 @@ function refreshTitle(): void {
   const doc = tab ? docs.get(tab.docId) : undefined;
   // B340（用户点名，推翻 B317 的星号）：未保存标记改成「与标签同款的原点」。
   // 两处分开画是刻意的：
-  //   · 自建标题栏那一行用**独立元素** `#title-dirty`（同一颗 codicon `circle-filled`、
-  //     同一个 `--dirty-mark`），拼进文字里就只能吃 `.title-text` 的字号与颜色，不是同款；
+  //   · 自建标题栏那一行用**独立元素** `#title-dirty`（与标签同一颗 codicon `circle-filled`；
+  //     颜色 B345 起与文档名同一颗 —— 但**字号**必须是图标那一档 16px，拼进文字里就只能吃
+  //     `.title-text` 的 12px，那颗点会变成一个看不见的墨点），所以仍要独立成元素；
   //   · 窗口标题走任务栏 / Alt+Tab，由操作系统排版、装不了 codicon 字形 ⇒ 用纯文本 ●。
   const dirty = !!doc?.dirty;
   const mark = dirty ? " ●" : "";

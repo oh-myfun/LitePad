@@ -89,8 +89,8 @@
           ></button>
           <span id="title-text" class="title-text"></span>
           <!-- B340：未保存原点（用户点名把星号换成「与标签同款的原点」）。字形取与标签
-               .tab-mark **同一颗** codicon `circle-filled`，颜色取同一个 `--dirty-mark`（见
-               global.css 的 .title-dirty）。默认 hidden：干净文档不该挂着它。
+               .tab-mark **同一颗** codicon `circle-filled`，颜色与文档名同一颗（B345 取
+               `--fg-muted`，见 global.css 的 .title-dirty）。默认 hidden：干净文档不该挂着它。
                ⚠️ 这颗必须留在名字**外面**：拼进 #title-text 就只吃文字的字号与颜色，
                   不是同款，而且名字被省略号裁切时会把它一起裁掉。 -->
           <span id="title-dirty" class="title-dirty" aria-hidden="true" hidden

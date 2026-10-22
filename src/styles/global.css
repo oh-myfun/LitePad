@@ -112,11 +112,6 @@
   --accent-fg: #ffffff;
   --danger: #f47067;
   --warn: #e2b341;
-  /* B343：未保存原点的取色（标题栏那颗 + 标签那颗，两处共用这一颗 = B340 的「同款」不变）。
-     用户点名「改成白色」；浅色主题的底色本身就是 #fff ⇒ **按主题走**：深色档纯白，
-     浅色档转正文前景（见下面 light 那块）。它不再吃 `--warn`：那颗点说的是「这份还没存」，
-     不是「警告」，琥珀色把它读成了错误提示。 */
-  --dirty-mark: #ffffff;
   /* 标签（B113 起对齐 VS Code 1.139 的 **Connected 相连标签**，不再是独立药丸）：
      标签条是一条**连续的表面**，活动标签取**编辑器底色**、与下方编辑区融为一体
      （B121 最终形态：舌片同色 + 舌片下方无分割线），非活动标签透明。
@@ -231,9 +226,6 @@
   --accent-fg: #ffffff;
   --danger: #cf222e;
   --warn: #9a6700;
-  /* B343：未保存原点（来由见深色档那条）。这一档的底色是 #ffffff ⇒ 纯白那颗点画上去等于没画，
-     所以转成正文前景那一档：读起来是「一行字里多个记号」，而不是看不见 / 不是警告色。 */
-  --dirty-mark: var(--fg);
   /* 标签（B113 Connected 相连标签，同深色档的说明）：条带取 VS Code 浅色档的
      editorGroupHeader.tabsBackground（#F3F3F3），活动标签 = 编辑器背景（纯白）。
      非活动 = 透明；hover 压暗一档（浅色主题里「变亮」没有感知空间）。 */
@@ -484,10 +476,11 @@ body {
 }
 
 /* B340：未保存原点（用户点名把星号换成「与标签同款的原点」，画在文档名**后面**）。
-   同款 = 同一颗 codicon `circle-filled` + 同一个 `--dirty-mark`（B343 起按主题走：
-   深色纯白 / 浅色转前景，不再吃 `--warn`），字号走 codicon 基座那一档 16px，
-   与标签 `.tab-mark` 那颗逐像素一致（要收小就在这里加一条 `.title-dirty .codicon`，
-   参照 `.menu-arrow .codicon` 14px 的先例 —— 别去改基座，那会连带全站图标）。
+   同款 = 同一颗 codicon `circle-filled`；颜色那一档演进过两次：B343 定为按主题走，
+   B345 用户改口「和字体颜色一致」⇒ 这一处取 `.title-text` 那颗 `--fg-muted`，
+   标签那一处取 `inherit`（各自的字本来就不是同一档，见 `.tab-mark`）。
+   字号走 codicon 基座那一档 16px，与标签 `.tab-mark` 那颗逐像素一致（要收小就在这里加一条
+   `.title-dirty .codicon`，参照 `.menu-arrow .codicon` 14px 的先例 —— 别去改基座，那会连带全站图标）。
    ⚠️ `flex: 0 0 auto`：`.title-center` 是 flex，名字超长时靠 `.title-text` 自己的省略号
       收尾；不给这颗点上 0 0，它会跟着被压扁/裁掉 —— 而它是「这份没存」在标题栏唯一的提示。
    ⚠️ 下面必须补 `[hidden]` 兜底：本条的 `display: inline-flex` 压得过 UA 的
@@ -499,7 +492,10 @@ body {
   display: inline-flex;
   align-items: center;
   margin-left: 3px;
-  color: var(--dirty-mark);
+  /* B345：与文档名同一颗色（用户点名「未保存原点颜色改成和字体颜色一致」）。
+     这一行里唯一的字就是名字，所以「字体颜色」= `.title-text` 取的那颗 `--fg-muted`，
+     两处必须写成同一颗 —— 各写各的就会有一天不同色。 */
+  color: var(--fg-muted);
 }
 
 .title-dirty[hidden] {
@@ -1257,9 +1253,13 @@ button:focus-visible {
 }
 
 .tab-mark {
-  /* 未保存圆点：VS Code 用 codicon 的 `circle-filled`，颜色取 `--dirty-mark`
-     （B343 起按主题走；标题栏那颗点吃同一颗，两处才是「同款」）。 */
-  color: var(--dirty-mark);
+  /* 未保存圆点：VS Code 用 codicon 的 `circle-filled`。颜色（B345 用户点名「和字体颜色一致」）
+     取 `inherit` = 标签名那一档：非活动标签是 50% 前景、活动标签是满前景（见上面 `.tab` 与
+     `.tab-active`），所以这里**不能**抄一个固定值 —— 抄哪个都会在另一档对不上。
+     与旁边那颗 × 同一套路数（`.tab-close { color: inherit }`）。
+     标题栏那颗点不跟着这条走：它那一行的字是 `--fg-muted`，各跟各的字（判据见
+     tests/titlebar.test.ts 的 B345）。 */
+  color: inherit;
 }
 
 /* × 的出场口（B66 起按保存状态分档）。
