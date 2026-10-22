@@ -106,13 +106,17 @@ describe("spotAt：落点判定（不画东西）", () => {
 
   it("指针在面板内容区 ⇒ 不是 onStrip，仍按边缘/中央分档", () => {
     mount();
-    // (150, 250)：纵向 250/300 落在下缘 ⇒ bottom 分屏
-    const spot = spotAt(150, 250);
+    // (150, 270)：纵向 270/300 = 0.9 ⇒ 落在下缘带里 ⇒ bottom 分屏。
+    // ⚠️ 这一档在 B346 之前可以是 250（0.833），但中心区改占中间 2/3 之后 250 已经算中央
+    //（要判分屏就得真走到缘边）—— 挪探针别挪判据，这条测的是「内容区也能分屏」这件事。
+    const spot = spotAt(150, 270);
     expect(spot?.onStrip, "内容区不许被认成标签条").toBe(false);
     expect(spot?.zone).toBe("bottom");
     expect(spot?.beforeTabId, "不在标签条上就没有插入位置").toBeNull();
     // 中央 ⇒ center（落进该面板，不分屏）
     expect(spotAt(150, 150)?.zone).toBe("center");
+    // B346：原先 250 这种「靠下但不贴缘」的位置会劈出一屏，现在该并入
+    expect(spotAt(150, 250)?.zone, "ry=0.833 = 新中心区的下边界 ⇒ 不再分屏").toBe("center");
   });
 
   it("面板之外为 null（回落到活动面板打开）", () => {
@@ -135,7 +139,7 @@ describe("previewDropAt：两种痕迹互斥", () => {
   it("内容区画分屏预览，并收掉上一帧的竖线", () => {
     mount();
     previewDropAt(130, 15); // 先在标签条画一条
-    previewDropAt(150, 250); // 再移到内容区
+    previewDropAt(150, 270); // 再移到内容区
     expect(
       document.querySelector(".tab-insert"),
       "拖拽过程中残留的竖线必须清掉，否则两处同时在响",
@@ -148,7 +152,7 @@ describe("previewDropAt：两种痕迹互斥", () => {
   it("clearDropIndicators 两种一起清（文件拖放的 drop 收尾就靠它）", () => {
     mount();
     previewDropAt(130, 15);
-    previewDropAt(150, 250);
+    previewDropAt(150, 270);
     previewDropAt(130, 15);
     clearDropIndicators();
     expect(document.querySelector(".tab-insert")).toBeNull();

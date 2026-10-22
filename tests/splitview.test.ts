@@ -79,9 +79,30 @@ beforeEach(() => {
 const H2: LayoutNode = { kind: "split", dir: "h", ratio: 0.7, a: leaf(1), b: leaf(2) };
 const V2: LayoutNode = { kind: "split", dir: "v", ratio: 0.5, a: leaf(1), b: leaf(2) };
 
-describe("zoneOf（B59 O6：边缘 28% 带 + 1/3 方向优先）", () => {
-  it("两轴都在 28% 带以内 = center（移入/排序）", () => {
+describe("zoneOf（B59 O6 的 1/3 方向优先不变；边缘带宽度 B346 改过一次）", () => {
+  it("两轴都在边缘带以内 = center（移入/排序）", () => {
     expect(zoneOf(rect(), 200, 150)).toBe("center");
+  });
+
+  it("B346：中心区边界放在「中心点到边缘距离的 2/3」处（中心区更大，更容易并入而不是分屏）", () => {
+    // 口径换算：边界离中心 = (中心到边缘的距离) × 2/3 ⇒ 边界离缘 = 半轴 × 1/3 = 全轴的 1/6。
+    // 这块 400×300 的面板 ⇒ 竖直边界 x ≈ 66.7、水平边界 y = 50。
+    const bx = (400 - 400 * (2 / 3)) / 2;
+    const by = (300 - 300 * (2 / 3)) / 2;
+    expect(bx, "换算要自证：中心区必须占中间 2/3 宽").toBeCloseTo(400 / 6, 5);
+    expect(zoneOf(rect(), bx + 1, 150), "界内一点点 = center").toBe("center");
+    expect(zoneOf(rect(), bx - 1, 150), "界外一点点 = 向左分屏").toBe("left");
+    expect(zoneOf(rect(), 200, by + 1), "纵向界内 = center").toBe("center");
+    expect(zoneOf(rect(), 200, by - 1), "纵向界外 = 向上分屏").toBe("top");
+    // 这两条才是要害：旧那一档（边缘 28% = 112px）会把这儿判成分屏
+    expect(zoneOf(rect(), 80, 150), "rx=0.2：旧档分屏，新档必须并入该面板").toBe("center");
+    expect(zoneOf(rect(), 200, 60), "ry=0.2：同上，纵向也要并入").toBe("center");
+    // 反向对照（防恒真）：对照点必须恰好夹在新旧两档之间，否则上面两条谁都判不出。
+    // 旧那一档是「边缘 28% 带」⇒ 水平界 x<112、y<84（400×0.28、300×0.28）。
+    expect(bx, "对照点 80 在新边界之外（新档算中心）").toBeLessThan(80);
+    expect(80, "对照点 80 在旧边界之内（旧档算分屏）").toBeLessThan(400 * 0.28);
+    expect(by, "纵向对照点 60 同理：新界外").toBeLessThan(60);
+    expect(60, "纵向对照点 60 在旧边界之内").toBeLessThan(300 * 0.28);
   });
 
   it("左右外侧 1/3 优先左右分屏", () => {
