@@ -634,7 +634,17 @@ html[data-window-kind="satellite"] #sidebar-toggle {
       浏览器重排级联，只有 CSS 契约用例钉着（见 tests/titlebar.test.ts 的 B336）。 */
 .menu-btn {
   width: auto;
-  padding: 0 10px;
+  /* B339：末那一颗 1px 是给中文方块做的光学居中。
+     ⚠️ 量的是「文件」那一方块的墨迹带，不是整条 `文件(F)` —— 括号与拉丁字母会把整串
+     的上下界各撑出去约 1px，按整串量永远居中不了，眼睛读的却是方块那一格。
+     实测（Noto Sans SC / ui 档 12px / 键高 22px）：不补 ⇒ 方块上 5.5、下 4.5，中心低
+     0.5px；补 1px ⇒ 上 5.0、下 5.0 正中；补 2px 又高 0.5px（过头）。
+     为什么裸文本上不计较、这里要计较：键是圆角矩形、hover 铺底看得见框，
+     文字在框里偏半格就读得出来（用户 2026-10-22 点名「文本好像偏下了点」）。
+     ⚠️ 别改用 `transform: translateY(-.5px)`：那挪的是**整颗键**（顶边 6 → 5.5），
+        圆角和 hover 底色会跟着离开标题栏的居中位。
+     ⚠️ 也依赖全局 `* { box-sizing: border-box }`：否则这 1px 会把 22px 的键撑成 23。 */
+  padding: 0 10px 1px;
   font-size: var(--fs-ui);
   /* B336：22px 高的圆角矩形。圆角**引用全局 `button {}` 那颗 `--radius`**，不写死数值 ——
      「和别的小按钮一致」只有两边指向同一颗变量才成立（写死 5px，token 一改就分家，
