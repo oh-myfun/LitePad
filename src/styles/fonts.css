@@ -50,3 +50,31 @@
   font-display: block;
   src: url("../assets/fonts/noto-sans-sc-regular.woff2") format("woff2");
 }
+
+/* B347 · 界面字体那颗「度量别名」：同一份 woff2 再挂一条族名，只改 used metrics。
+   存在的理由只有一个 —— 这份字体的**中文墨迹在行盒里天生偏低**，而 UI 是一排排
+   固定高度的条（22px 标签、28px 条带、22px 菜单键），偏低的字在同排看着浮不起来。
+   B342 那版是给墨迹补 `top: -0.5px` 的抬升 token，一处一处救；这次从源头治：
+   行盒总高不动，只把基线在盒里的位置挪到「墨迹中心 = 盒中心」。
+
+   两个数是量出来的（dev server + 真 Chromium，100px 下）：
+     · 墨迹带：基线上方 0.85em / 下方 0.09em ⇒ 中心在基线上方 (0.85-0.09)/2 = 0.38em；
+     · used 行盒：ascent 1.16em + descent 0.29em = 1.45em（`line-height: normal` 实测一致）。
+   ⇒ ascent-override  = 1.45/2 + 0.38 = 1.105em → 110.5%
+      descent-override = 1.45/2 − 0.38 = 0.345em →  34.5%
+   **两数之和必须仍是 1.45em**：动了总高就是动行盒，标签/侧栏/最近打开那一族的
+   行高预算（B328/B329/B334）全部要重算 —— 判据钉的就是这两条（tests/ui-font.test.ts）。
+
+   ⚠️ 只给界面用（`--font-ui`）。预览正文仍吃上面那颗原本的 "Noto Sans SC"：
+   正文是多行排版，行盒里那点空位是留给人眼的，用户裁决「这一项只管窗口外壳」。
+   ⚠️ 字形与文件都没换，所以「内嵌」与「本机装了思源」两条路仍然同观感；
+      族名带 ` UI` 后缀是刻意的 —— 与系统里的任何字体都不撞名，命中只能靠这一条声明。 */
+@font-face {
+  font-family: "Noto Sans SC UI";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("../assets/fonts/noto-sans-sc-regular.woff2") format("woff2");
+  ascent-override: 110.5%;
+  descent-override: 34.5%;
+}

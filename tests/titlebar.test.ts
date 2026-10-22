@@ -744,45 +744,19 @@ describe("B97 自建标题栏", () => {
     );
   });
 
-  it("B342：菜单键与文档名的光学抬升共用一颗 token，不再靠下内边距（用户点名「能否不通过 padding」）", () => {
+  it("B342→B347：中文居中改由界面字体的度量别名负责，样式里不许留抬升或不对称内边距", () => {
+    // 病灶没变（B342 那版注释量出来的）：12px 的中文方块墨迹在按 line-height 居中的行盒里
+    // 天生偏低，与键高、与 line-height 都无关（半 leading 上下同加，在差值里抵消）。
+    // 治法换过一次：B342 给墨迹补 `top: -0.5px` 的抬升 token（一处一处救）；
+    // B347 起由界面字体那颗**度量别名** face 从行盒里把基线挪正（同一份 woff2，字形不变），
+    // 于是抬升 token 与它那条规则一起退休。正源与算法推导见 tests/ui-font.test.ts。
     const s = css();
-    // 病灶（dev 构建上实测，量的是墨迹带 vs 键的边框盒）：12px 的中文方块墨迹恰好 1em（上 11
-    // 下 1），而 em 格是上 14 / 下 3 ⇒ 墨迹在按 line-height 居中的行盒里天生低半格。
-    // 它**不随**键高、也不随 line-height 变（半 leading 上下同加，在差值里抵消）
-    // ⇒ 只有两种治法：给不对称的**空位**（旧 B339 的 padding hack），或挪**墨迹**。用户要后者。
-    // ⚠️ 量的必须是「文件」那一方块，不是整条 `文件(F)` —— 括号把整串上下界各撑出约 1px，
-    //    按整串量怎么补都不居中（这是我第一版量错的地方）。
-    const root = cssDecls(ruleBlock(s, ":root"));
-    const lift = root.match(/--cjk-lift:\s*([^;]+);/);
-    expect(lift, ":root 里必须有 --cjk-lift（抬升只这一颗，别在各处写数值）").toBeTruthy();
-    const raw = lift![1].trim();
-    // 按 em 计价：换字阶档时它跟着缩放（写死 0.5px 的话 meta/hero 档又不居中）
-    const coef = Number(raw.match(/(-?[\d.]+)em/)?.[1]);
-    const divisor = Number(raw.match(/\/\s*([\d.]+)/)?.[1]);
-    expect(Number.isFinite(coef) && coef < 0, `--cjk-lift 要按 em 计价，读到「${raw}」`).toBe(true);
-    expect(Number.isFinite(divisor), `--cjk-lift 的 em 要被除回 1/24，读到「${raw}」`).toBe(true);
-    const pxAtUi = Math.abs(coef / divisor) * 12; // ui 档 = 12px
-    expect(pxAtUi, "ui 档下抬升要正好是实测的 0.5px（半格）").toBeCloseTo(0.5, 4);
-    // 反向对照：分母 24 → 12（等于抬 1px，过头）必须被同一把尺子判不合格
-    const over = raw.replace(/\/\s*24/, "/ 12");
-    expect(over, "退化对照要真改了原句").not.toBe(raw);
-    expect(
-      Math.abs(Number(over.match(/(-?[\d.]+)em/)![1]) / Number(over.match(/\/\s*([\d.]+)/)![1])) *
-        12,
-      "抬 1px（过头）必须被判不合格",
-    ).not.toBeCloseTo(0.5, 4);
-
-    // 两处同排文字共用同一条规则、同一颗 token —— 各写各的数值迟早分家
-    const group = cssDecls(ruleBlock(s, ".title-text, .menu-btn .menu-label"));
-    expect(group, "取不到「文档名 + 菜单键标签」那条共用抬升规则").toBeTruthy();
-    expect(group, "挪墨迹用相对位移（不动行盒、不起合成层，字不会糊）").toMatch(
-      /position:\s*relative/,
-    );
-    expect(group, "两处引用同一颗 --cjk-lift").toMatch(/top:\s*var\(--cjk-lift\)/);
-    expect(group, "不许把抬升写死成 px").not.toMatch(/top:\s*-?[\d.]+px/);
-    const flatTop = group.replace(/top:\s*var\(--cjk-lift\)/, "top: 0");
-    expect(flatTop, "退化块要先真改了").not.toBe(group);
-    expect(flatTop, "摘掉 var(--cjk-lift) 后必须不再匹配").not.toMatch(/top:\s*var\(--cjk-lift\)/);
+    for (const sel of [".title-text", ".menu-btn .menu-label"]) {
+      const block = cssDecls(ruleBlock(s, sel));
+      expect(block ?? "", `「${sel}」不该再有 position/top 那类挪墨迹的声明`).not.toMatch(
+        /position:|top:/,
+      );
+    }
 
     // 旧机制不许回潮：`.menu-btn` 覆盖块里的内边距必须上下同值（不对称就是又去挪空位）
     // atLineStart：共用声明里 `.menu-btn` 是列表成员，只有覆盖规则那颗才在行首。
@@ -793,6 +767,11 @@ describe("B97 自建标题栏", () => {
     expect(pad[0], `上下内边距必须同值，读到 ${pad.join(" ")}`).toBe(
       pad.length >= 3 ? pad[2] : pad[0],
     );
+    // 反向对照（防恒真）：把上下内边距改成不对称，同一把尺子必须判红
+    const skewed = block.replace(/padding:\s*[^;]+;/, "padding: 0 10px 1px;");
+    expect(skewed, "退化块要先真改了").not.toBe(block);
+    const sp = (skewed.match(/padding:\s*([^;]+);/)?.[1] ?? "").trim().split(/\s+/);
+    expect(sp[0], "上下不同值必须被判红").not.toBe(sp[2]);
     expect(block, "不许挪整颗键（键顶边会跟着走，圆角与 hover 底色就歪了）").not.toMatch(
       /transform|position:|top:/,
     );

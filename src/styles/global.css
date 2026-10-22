@@ -6,12 +6,16 @@
      源码区正文 + 预览正文」，源码区用的是无衬线的思源黑体；这次把源码区划归代码字体。
        · --font-body 正文（**只**预览正文），内嵌思源黑体（非等宽）
        · --font-code 代码（编辑器源码区 + 预览 code / pre），内嵌 Cascadia Mono（等宽）
-       · --font-ui   界面，**不挂用户设置**（用户裁决：标签栏/菜单/状态栏保持不可配），
-         内嵌思源黑体
+       · --font-ui   界面（标题栏 / 菜单 / 标签 / 左栏 / 设置页），B347 起**可配**
+         （设置页「界面字体」那一栏；空 = 默认）。默认首选是内嵌思源的**度量别名**
+         "Noto Sans SC UI" —— 同一份 woff2、字形不变，只把基线在行盒里挪正（见
+         fonts.css），于是中文不必再靠一处处的抬升 hack 居中。
        · --font-mono **不挂内嵌字体**，它是「选中的字体本机没装时」的第二回落（CM6 的
          .cm-scroller 会截胡继承，见下面那条编辑器规则），保持纯系统等宽栈。
      回落顺序：本机若装了 Cascadia Code / 微软雅黑，字重观感照旧。 */
-  --font-ui: "Noto Sans SC", "Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-ui:
+    "Noto Sans SC UI", "Noto Sans SC", "Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system,
+    sans-serif;
   --font-body:
     "Noto Sans SC", "Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif;
   --font-code: "Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
@@ -29,14 +33,6 @@
   --fs-input: 14px;
   --fs-title: 15px;
   --fs-hero: 20px;
-  /* B342 · 中文光学抬升（判据见 tests/titlebar.test.ts）。12px 的中文方块墨迹恰好 1em（基线
-     上 11 / 下 1），而 Noto Sans SC 的 em 格是上 14 / 下 3 ⇒ 墨迹带在按 line-height 居中的行盒里
-     **天生低半格**，与键高、与 line-height 都无关（半 leading 上下同加，差值里抵消）。
-     抬升量 = ((14-11) - (3-1)) / 2 = 0.5px @12px = 1/24 em ⇒ 按 em 计价，换字阶档自动缩放。
-     只给「同排看得见框」的那几处文字用（菜单键标签、标题栏文档名）；图标字形有自己的度量，不跟。
-     ⚠️ 别再回到「给键补 1px 下内边距」那一招：那挪的是行盒里的空位，键与文字谁居中说不清，
-        而且换个字阶档就得重算（用户 2026-10-22 点名「能否不通过 padding」）。 */
-  --cjk-lift: calc(-1em / 24);
   --radius: 5px;
   /* 相连标签的圆角总源（B123-2，用户裁决）：活动标签**顶部圆角**与**肩部反向
      圆弧**必须同半径 —— 对齐 VS Code connectedEditorTabs.css 的变量链
@@ -460,21 +456,6 @@ body {
   text-overflow: ellipsis;
 }
 
-/* B342：中文光学抬升（值与推导见 :root 的 `--cjk-lift`）。这两处是**同一排**的文字：
-   菜单键里的「文件(F)」与中间的文档名，用户眼睛是拿它们互相校准的 —— 所以必须引用同一颗
-   token，而不是各自补数值。用 `position: relative` 而不是 `transform`：只挪绘制位置，
-   不起合成层（层上的字会被按设备像素重排，1.5 倍缩放下容易发虚）。
-   ⚠️ 抬的是**文字**，不动行盒也不动键：`.menu-btn` 的圆角底框、hover 铺底、焦点环都留在原位。
-   ⚠️ 菜单键那一格必须有真元素可挂（`src/shell/menubar.ts` 里包了 `span.menu-label`）——
-      裸文本会被 flex 包成**匿名** flex item，那种盒子选不中，样式无处可写。
-   ⚠️ 图标字形（`.title-dirty` 那颗原点、`.sync-btn`）不跟：codicon 有自己的度量，
-      跟着抬反而会把「与标签同款」的那颗点挪离它自己的居中位。 */
-.title-text,
-.menu-btn .menu-label {
-  position: relative;
-  top: var(--cjk-lift);
-}
-
 /* B340：未保存原点（用户点名把星号换成「与标签同款的原点」，画在文档名**后面**）。
    同款 = 同一颗 codicon `circle-filled`；颜色那一档演进过两次：B343 定为按主题走，
    B345 用户改口「和字体颜色一致」⇒ 这一处取 `.title-text` 那颗 `--fg-muted`，
@@ -685,8 +666,8 @@ html[data-window-kind="satellite"] #sidebar-toggle {
       浏览器重排级联，只有 CSS 契约用例钉着（见 tests/titlebar.test.ts 的 B336）。 */
 .menu-btn {
   width: auto;
-  /* 内边距四面同值（上下 0）。文字那半格的光学偏低由 `--cjk-lift` 挪墨迹解决
-     —— 见 :root 那条注释与 `.menu-btn .menu-label`。 */
+  /* 内边距四面同值（上下 0）：垂直方向不拿空位凑居中 —— 中文那半格的光学偏低由界面
+     字体那颗度量别名挪正（fonts.css 的 "Noto Sans SC UI"，行盒总高不变、只挪基线）。 */
   padding: 0 10px;
   font-size: var(--fs-ui);
   /* B336：22px 高的圆角矩形。圆角**引用全局 `button {}` 那颗 `--radius`**，不写死数值 ——

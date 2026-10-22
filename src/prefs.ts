@@ -39,6 +39,7 @@ import {
   applyPreviewWidth,
   applyTabActionReserve,
   applyTabStyle,
+  applyUiFontFamily,
   applyWrapToTabs,
   normalizePreviewWidth,
   rethemePreviews,
@@ -570,6 +571,19 @@ async function setCodeFontFamily(family: string): Promise<void> {
   showMessage(family.trim() ? `代码字体 ${family.trim()}` : "代码字体：默认");
 }
 
+/**
+ * B347：界面字体（设置页「界面字体」那一栏；空串 = 内嵌那颗度量别名 face）。
+ * 只管**窗口外壳**：标题栏 / 菜单 / 标签条 / 左栏 / 设置页，预览正文与代码不吃这一项。
+ */
+async function setUiFontFamily(family: string): Promise<void> {
+  applyUiFontFamily(family);
+  if (settings) {
+    settings.ui_font_family = family.trim();
+    await persistSettings();
+  }
+  showMessage(family.trim() ? `界面字体 ${family.trim()}` : "界面字体：默认");
+}
+
 /** 编辑器行距（设置页，1.0–2.5 倍）。 */
 async function setEditorLineHeight(value: number): Promise<void> {
   applyEditorLineHeight(value);
@@ -627,6 +641,9 @@ async function openSettingsDialog(): Promise<void> {
     // B227：代码字体（预览 code/pre），与正文那条分开设
     codeFontFamily: () => settings?.code_font_family ?? "",
     onCodeFontFamily: (family) => void setCodeFontFamily(family),
+    // B347：界面字体（只有窗口外壳），默认那颗是内嵌思源的度量别名
+    uiFontFamily: () => settings?.ui_font_family ?? "",
+    onUiFontFamily: (family) => void setUiFontFamily(family),
     // 本机字体枚举结果（懒取一次，见 ensureSystemFonts）
     systemFonts: () => systemFontsCache,
     fontSize: () => currentFontSize(),

@@ -111,6 +111,12 @@ export interface Settings {
   font_family: string;
   /** B227：代码字体族名（预览的 code/pre）；空串 = 用内嵌 Cascadia Mono */
   code_font_family: string;
+  /**
+   * B347：界面字体族名（**只有窗口外壳**：标题栏 / 菜单 / 标签 / 左栏 / 设置页）。
+   * 空串 = 用内嵌默认那颗 —— 它是思源黑体的「度量别名」face，字形同一份文件，
+   * 只把基线在行盒里挪正，所以中文不用一处一处补抬升。
+   */
+  ui_font_family: string;
   /** 编辑器行距（1.0–2.5，默认 1.5） */
   editor_line_height: number;
   word_wrap: boolean;

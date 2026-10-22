@@ -27,6 +27,8 @@ pub struct Settings {
     pub font_family: String,
     /// B227：代码字体族名（预览 code / pre）；空串 = 用内嵌 Cascadia Mono
     pub code_font_family: String,
+    /// B347：界面字体族名（只有窗口外壳）；空串 = 用内嵌那颗度量别名 face
+    pub ui_font_family: String,
     /// 编辑器行距（1.0–2.5，默认 1.5），作用于 .cm-content
     pub editor_line_height: f64,
     pub word_wrap: bool,
@@ -101,6 +103,7 @@ impl Default for Settings {
             font_size: 14.0,
             font_family: String::new(),
             code_font_family: String::new(),
+            ui_font_family: String::new(),
             editor_line_height: 1.5,
             word_wrap: true,
             // B68：两个开关各管一件事，默认值对齐 VS Code 桌面版

@@ -270,13 +270,7 @@ export function createMenuBar(host: HTMLElement, cb: MenuBarCallbacks): void {
     // 助记符按 VS Code 中文版的样子直接拼在标签后面：`文件(F)`。
     // ⚠️ 不再给首字加下划线、也不再往提示里挂「Alt+F」键帽：中文标签靠下划线标助记符
     //    本来就难认（「文」字下面一道线看不出指的是 F），用户明确要求换成括号 + 字母。
-    // 文字包成真元素（B342）：`--cjk-lift` 那半格光学抬升只挪文字、不挪键，而裸文本被 flex
-    // 包成**匿名** flex item —— 那种盒子在 CSS 里选不中，样式没地方写。类名沿用弹层项的
-    // `.menu-label`（同一件事：菜单元素里的文字），两侧样式各自作用域，不互相影响。
-    const label = document.createElement("span");
-    label.className = "menu-label";
-    label.textContent = `${m.label}(${MENU_KEYS[idx]})`;
-    btn.append(label);
+    btn.textContent = `${m.label}(${MENU_KEYS[idx]})`;
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       if (openBtn === btn) {

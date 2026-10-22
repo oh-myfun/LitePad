@@ -41,6 +41,7 @@ import {
   applyPreviewWidth,
   applyTabActionReserve,
   applyTabStyle,
+  applyUiFontFamily,
 } from "./appearance";
 
 import {
@@ -920,6 +921,9 @@ async function setupShell(): Promise<void> {
   applyFontSize(settings?.font_size ?? 14);
   applyFontFamily(settings?.font_family ?? "");
   applyCodeFontFamily(settings?.code_font_family ?? "");
+  // B347：界面字体（只有外壳）。与另两栏一样必须在首绘前落地 —— 它动的是行盒里
+  // 基线的位置，晚一步就是「标题栏/标签先跳一下再对齐」。
+  applyUiFontFamily(settings?.ui_font_family ?? "");
   applyPreviewLineHeight(settings?.preview_line_height ?? 1.7);
   // B235：预览正文宽度档（缺省「全宽」）。改了它不影响任何测量 ——
   // 宽度只影响换行位置，不动视口锚点。

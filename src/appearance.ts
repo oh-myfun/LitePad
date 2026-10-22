@@ -127,6 +127,25 @@ export function applyCodeFontFamily(family: string): void {
   }
 }
 
+/**
+ * B347：界面字体 —— 写 :root 上的 --font-ui，消费方**只有窗口外壳**（标题栏 / 菜单 /
+ * 标签条 / 左栏三块 / 设置页）。空串 = 移除内联变量，回落到 :root 里那份默认栈，
+ * 其首选是内嵌思源的**度量别名**那颗 face（见 fonts.css 的推导）。
+ *
+ * ⚠️ 预览正文与代码**不吃这一项**（用户裁决：这一栏只管外壳）：那两处各有自己的
+ *    设置项，这里多写一颗就是在别处埋一条「改了没反应」。
+ * ⚠️ 与另两条一样**不重测编辑器**：--font-ui 没有任何 CM6 消费方。
+ */
+export function applyUiFontFamily(family: string): void {
+  const root = document.documentElement.style;
+  const f = family.trim();
+  if (!f) {
+    root.removeProperty("--font-ui");
+  } else {
+    root.setProperty("--font-ui", f.includes(" ") ? `"${f}"` : f);
+  }
+}
+
 export function applyTabStyle(style: string): void {
   // 写进 <html data-tab-style>；未知值一律按 "connected" 处理（与 Rust 回落一致）。
   document.documentElement.dataset.tabStyle = style === "pill" ? "pill" : "connected";

@@ -29,6 +29,9 @@ function makeOpts(): SettingsDialogOptions {
     // B227：代码字体 + 本机枚举清单（枚举空 ⇒ 退回内置手抄清单那份候选）
     codeFontFamily: () => "",
     onCodeFontFamily: noop,
+    // B347：界面字体（只有窗口外壳），与正文/代码各一栏
+    uiFontFamily: () => "",
+    onUiFontFamily: noop,
     systemFonts: () => [],
     fontSize: () => 14,
     onFontSize: noop,
@@ -477,7 +480,7 @@ describe("B111 设置页：switch 组件 + 快捷键搜索框 Esc", () => {
 // B227 起两栏：B231 调整为「正文字体（**只**预览模式正文）」与
 // 「代码字体（编辑器源码区 + 预览里的行内代码/代码块）」；两栏的候选都来自
 // 本机枚举，并各带一个 全部/等宽 的小切换。
-describe("B236 字体两栏：正文字体 / 代码字体 + 比例·等宽切换（两栏候选同一份）", () => {
+describe("B236 字体三栏：界面 / 正文 / 代码 + 比例·等宽切换（各栏候选同一份）", () => {
   const SYS = [
     { name: "Consolas", is_monospace: true },
     { name: "Cascadia Code", is_monospace: true },
@@ -557,6 +560,23 @@ describe("B236 字体两栏：正文字体 / 代码字体 + 比例·等宽切换
     pickRow("代码字体", "Consolas");
     expect(seen, "正文字体要回调 onFontFamily").toEqual(["Arial"]);
     expect(seenCode, "代码字体要回调 onCodeFontFamily").toEqual(["Consolas"]);
+  });
+
+  it("B347：界面字体那一栏默认停「比例」，选值回调 onUiFontFamily", () => {
+    const seenUi: string[] = [];
+    showSettingsDialog({
+      ...makeOpts(),
+      systemFonts: () => SYS,
+      onUiFontFamily: (v) => seenUi.push(v),
+    });
+    expect(rowValues("界面字体")[0], "默认项（空串 = 内嵌那颗别名）要在首位").toBe("");
+    expect(rowValues("界面字体"), "界面字体默认停「比例」档").toContain("Arial");
+    expect(rowValues("界面字体"), "比例档不该混进等宽").not.toContain("Consolas");
+    pickRow("界面字体", "Arial");
+    expect(seenUi, "界面字体要回调 onUiFontFamily").toEqual(["Arial"]);
+    // 反向对照（防恒真）：这一族断言全靠「按标签取行」，标签不存在时辅助函数必须**报错**，
+    // 否则上面几条就是在对着空气打勾。
+    expect(() => rowValues("没有这一栏"), "不存在的标签必须取不到行").toThrow();
   });
 });
 
@@ -769,10 +789,12 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
     ).toBe(5);
   });
 
-  it("编辑器页含 6 项，末尾是「预览」小分组下的预览行距 + 预览布局宽度", () => {
+  it("编辑器页含 7 项，末尾是「预览」小分组下的预览行距 + 预览布局宽度", () => {
     showSettingsDialog(makeOpts());
     const body = pageBody("编辑器");
     expect(rowLabels(body), "编辑器页的项顺序").toEqual([
+      // B347：三栏字体各管一段 —— 界面（外壳）/ 正文（预览）/ 代码（编辑器 + 代码块）
+      "界面字体",
       "正文字体",
       "代码字体",
       "字号（px）",

@@ -35,6 +35,9 @@ export interface SettingsDialogOptions {
   /** B227：代码字体族名（预览 code / pre）；空串 = 用内嵌 Cascadia Mono */
   codeFontFamily: () => string;
   onCodeFontFamily: (family: string) => void;
+  /** B347：界面字体族名（只有窗口外壳）；空串 = 用内嵌那颗度量别名 face */
+  uiFontFamily: () => string;
+  onUiFontFamily: (family: string) => void;
   /**
    * B227：本机字体清单（Rust `list_fonts` 的缓存结果，`is_monospace` 判等宽）。
    * 空数组 = 枚举没到手（非 Windows / IPC 失败），此时退回 `fontFamilyOptions()`
@@ -220,6 +223,12 @@ export const FONT_KIND_LABELS: { kind: FontKind; label: string }[] = [
 /** 内嵌默认在候选里的说法（value 是空串 = 移除变量、回落默认栈）。 */
 export const DEFAULT_BODY_FONT_LABEL = "默认（内嵌思源黑体）";
 export const DEFAULT_CODE_FONT_LABEL = "默认（内嵌 Cascadia Mono）";
+/**
+ * B347：界面字体那颗默认 face 与正文那颗**字形相同**（同一份 woff2），差别只在行盒里
+ * 基线的位置（中文墨迹挪到正中）。所以这里不写「度量别名」那种实现话术 —— 对用户来说
+ * 它就是「内嵌思源黑体」，字重字宽一字不差。
+ */
+export const DEFAULT_UI_FONT_LABEL = "默认（内嵌思源黑体）";
 
 /**
  * 某一栏的候选：内嵌默认 + 本机枚举里**当前这一档**的字体。
@@ -850,12 +859,25 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
       ),
     );
   } else if (id === "editor") {
-    // B231：口径 —— **正文字体**只管预览模式的正文，**代码字体**管编辑器源码区
-    // （源码是代码）+ 预览里的行内代码/代码块。两者彻底分开，界面文字不跟
-    // （用户裁决：标签栏/菜单/状态栏保持不可配）。候选来自 Rust `list_fonts`
-    // 的本机枚举，等宽/全部两栏切换；枚举没到手时由 fontOptionsFor 退回
-    // B225 的手抄清单。
+    // 三栏各管一段，互不越界（B231 定的口径，B347 补上第三栏）：
+    //   · **界面字体** = 窗口外壳（标题栏 / 菜单 / 标签条 / 左侧栏 / 这一页）
+    //   · **正文字体** = 预览模式的正文
+    //   · **代码字体** = 编辑器源码区 + 预览里的行内代码 / 代码块（凡是代码一律等宽）
+    // 候选来自 Rust `list_fonts` 的本机枚举，等宽/全部两栏切换；枚举没到手时由
+    // fontOptionsFor 退回 B225 的手抄清单。
     const sys = opts.systemFonts();
+    body.appendChild(
+      fontRow(
+        "界面字体",
+        "标题栏、菜单、标签与左侧栏的文字。预览正文与代码不跟这一项。",
+        opts.uiFontFamily(),
+        (v) => opts.onUiFontFamily(v),
+        sys,
+        DEFAULT_UI_FONT_LABEL,
+        // 默认那颗是内嵌思源的度量别名（中文在行盒里已居中），落在「比例」档
+        "proportional",
+      ),
+    );
     body.appendChild(
       fontRow(
         "正文字体",
