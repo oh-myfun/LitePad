@@ -289,7 +289,7 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     expect(h, "标签高度必须显式给出（字号档位变化时栏高才恒定）").toBeTruthy();
     expect(
       Number(h![1]),
-      "标签高 22px（B334：字号跟标题收到 12.5 后收一档；VS Code 紧凑档同值）",
+      "标签高 22px（B334：字号跟标题收到 ui 档 12px 后收一档；VS Code 紧凑档同值）",
     ).toBe(22);
     expect(tab, ".tab 必须是底色层的定位基准").toContain("position: relative");
     // 底色一旦还留在 .tab 上就会盖住 fill 的圆角与描边，connected 的观感直接没了

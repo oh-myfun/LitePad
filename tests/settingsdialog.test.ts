@@ -956,9 +956,7 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
     // 只钉 token 名等于把闸拆了：将来谁把 ui 档调到 14px，分组标题就不再是小一号，
     // 而 `toContain("var(--fs-ui)")` 照样绿。
     const r = cssDecls(ruleBlock(resolveCssVars(css), ".settings-group-title"));
-    expect(r, "分组标题应更小一号（ui 档 = 12.5px，比正文 14px 小）").toMatch(
-      /font-size:\s*12\.5px/,
-    );
+    expect(r, "分组标题应更小一号（ui 档 = 12px，比正文 14px 小）").toMatch(/font-size:\s*12px/);
     expect(block, "分组标题下沿应有分隔线").toContain("border-bottom: 1px solid var(--border)");
   });
 });

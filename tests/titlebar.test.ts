@@ -193,11 +193,11 @@ describe("B97 自建标题栏", () => {
       expect(block, `${who} 不许写死字号字面量`).not.toMatch(/font-size:\s*\d/);
     }
     const root = ruleBlock(css(), ":root");
-    // B337：这颗字号现在指向字阶 token ⇒ 判「12.5px」要按**展开后的值**读（见 static.ts）。
+    // B337：这颗字号现在指向字阶 token ⇒ 判「12px」要按**展开后的值**读（见 static.ts）。
     // 上面两条判的是「两处读同一颗 token」，这条钉的是「那颗 token 到底多大」——
     // 两边合起来才既防各写一份、又防有人把 ui 档悄悄调大。
-    expect(resolveCssVars(css()), ":root 里这颗字号要展开成 12.5px").toMatch(
-      /--title-text-size:\s*12\.5px/,
+    expect(resolveCssVars(css()), ":root 里这颗字号要展开成 12px").toMatch(
+      /--title-text-size:\s*12px/,
     );
     expect(root, ":root 里要定义这颗字号").toMatch(/--title-text-size:/);
   });

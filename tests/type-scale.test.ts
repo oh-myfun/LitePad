@@ -5,18 +5,21 @@
 // （2026-10-22），chrome 的字号散在 8/10/11/12/12.5/13/14/15/20 九个档，只有
 // `--font-size` 与 `--title-text-size` 两颗 token，于是 12 / 12.5 / 13 三档只差 0.5px，
 // 肉眼看不出层级，代码里却是三套写法 ——「菜单栏 12.5、点开的列表 13」就是这么来的。
-// 所以这里钉两件事：① 五颗字阶 token 存在且取值对；② 除白名单（图标谱 / 徽标 / token
-// 定义处本身）以外，CSS 里不许再出现裸的 `font-size: Npx`。
+// 定档：12 / 12.5 / 13 并成一颗 `--fs-ui`，取值 **12px**（用户 2026-10-22 点名「12.5 改 12」）。
+// 所以这里钉三件事：① 五颗字阶 token 存在且取值对；② 除白名单（图标谱 / 徽标 / token
+// 定义处本身）以外，CSS 里不许再出现裸的 `font-size: Npx`；③ 并掉的那两档不许借任何
+// 一条规则回潮（判据读的是**展开 token 之后**的值）。
 //
 // ⚠️ 扫描用的文本一律先剥注释（`stripCssComments`）：注释里的散文会喂给判据假数值 ——
 // 这条坑在 B328/B329 那轮踩过（见 pitfalls/css-judges-and-pixel-probes）。
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { stripCssComments } from "./static";
+import { resolveCssVars, stripCssComments } from "./static";
 
 const read = (p: string): string => readFileSync(p, "utf-8").replace(/\r\n/g, "\n");
 
-const FILES = ["src/styles/global.css", "src/styles/preview.css", "src/styles/fonts.css"];
+const GLOBAL_FILE = "src/styles/global.css";
+const FILES = [GLOBAL_FILE, "src/styles/preview.css", "src/styles/fonts.css"];
 const cssOf = (rel: string): string => stripCssComments(read(rel));
 
 /** 白名单：这些选择器里允许出现裸数值。 */
@@ -63,7 +66,7 @@ describe("B337 UI 字阶", () => {
     const root = cssOf("src/styles/global.css");
     for (const [name, value] of [
       ["--fs-meta", "11px"],
-      ["--fs-ui", "12.5px"],
+      ["--fs-ui", "12px"],
       ["--fs-input", "14px"],
       ["--fs-title", "15px"],
       ["--fs-hero", "20px"],
@@ -93,16 +96,28 @@ describe("B337 UI 字阶", () => {
     expect(found, "退化对照必须被抓到").toEqual([{ sel: ".popup-menu", value: "13px" }]);
   });
 
-  it("13px 与 12px 这两档已经从文字尺寸里消失（并进 --fs-ui 是唯一有视觉变化的一步）", () => {
-    // 白名单以外才算违规；图标那一族本就有自己的谱（`.explorer-twisty .codicon` 12px 是图标宽，
-    // 不是字），所以这里读 `violations()` 而不是自己再筛一遍 `:root`。
-    const live = violations();
-    for (const gone of ["13px", "12px"]) {
-      expect(
-        live.filter((v) => v.value === gone).map((v) => `${v.file} ${v.sel}`),
-        `${gone} 还挂在这些选择器上`,
-      ).toEqual([]);
+  it("被并掉的 12.5px 与 13px 这两档不许回潮（12 / 12.5 / 13 并成 ui=12 是唯一有视觉变化的一步）", () => {
+    // 读的是**展开 token 之后**的落点，不是裸数值：`--fs-ui: 13px` 那种「拿 token 装旧档」
+    // 从 `violations()` 前面溜过去，这里拦得住。图标那一族仍按白名单排除
+    // （`.explorer-twisty .codicon` 的 12px 是图标宽，不是字）。
+    const live = FILES.flatMap((f) =>
+      bareSizes(resolveCssVars(cssOf(f), cssOf(GLOBAL_FILE))).map((v) => ({ file: f, ...v })),
+    );
+    for (const gone of ["12.5px", "13px"]) {
+      const hits = live
+        .filter((v) => v.value === gone && !WHITELIST.some(([sel]) => v.sel.includes(sel)))
+        .map((v) => `${v.file} ${v.sel}`);
+      expect(hits, `${gone} 还挂在这些选择器上`).toEqual([]);
     }
+    // 自证：把 ui 档改回 13px，同一把尺子必须把它揪出来（防恒绿）
+    const backTo13 = cssOf(GLOBAL_FILE).replace("--fs-ui: 12px;", "--fs-ui: 13px;");
+    expect(backTo13, "退化串要先自证原句还在").not.toBe(cssOf(GLOBAL_FILE));
+    expect(
+      bareSizes(resolveCssVars(backTo13, backTo13))
+        .filter((v) => v.value === "13px" && !WHITELIST.some(([sel]) => v.sel.includes(sel)))
+        .map((v) => v.sel),
+      "ui 档退回 13px 必须被抓到",
+    ).toContain(".popup-menu");
   });
 
   it("每一处 `var(--fs-*)` 引用都必须在 :root 有定义（写错一档是静默回退，不会有任何报错）", () => {

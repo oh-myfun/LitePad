@@ -393,7 +393,7 @@ describe("B318 行内新建 / 改名框与「输入框那一族」同形", () =>
     expect(prop(box, "border-radius"), "与 .goto-input 不同圆角 = 一眼看出是两种控件").toBe(
       prop(block(global, ".goto-input"), "border-radius"),
     );
-    expect(prop(box, "font-size"), "字号跟那一行（ui 档 12.5px），也与设置页的数字框同值").toBe(
+    expect(prop(box, "font-size"), "字号跟那一行（ui 档 12px），也与设置页的数字框同值").toBe(
       prop(block(global, '.settings-dialog input[type="number"]'), "font-size"),
     );
     expect(prop(box, "box-sizing"), "带边框又不想顶出 22px 那一行，必须 border-box").toBe(
@@ -427,8 +427,8 @@ describe("B328/B329 侧栏那几格的下伸部（省略号那层不许切字）
   //   资源管理器那一格（12px 粗体）：1.30 少 52 点（末行整条没了）、1.35 少 18 点
   //   （末行被削掉半条）、**1.40 起两版逐点相同**。取 1.5 是留一整行的余量。
   //   行盒长高时字不动（内容居中于行盒，上下各长一半）⇒ 只有裁切框在变松。
-  //   B337：这一格并到 ui 档（12.5px）。墨点是 12px 时量的，但下限按**比例**判，
-  //   涨 0.5px 只是让 1.5 那一档从 18px 变 18.75px —— 仍装得进 22px 的行，口径不变。
+  //   B337：字阶定档后这一格就是 ui 档 = **12px**（用户 12.5→12 那一改让它回到当年量墨点
+  //   的那一档），1.5 那一档 = 18px，仍装得进 22px 的行，口径原样。
   const FLOOR = 1.45;
   /** 侧栏里带省略号的那几格统一这一档（B328 资源管理器、B329 最近打开）。 */
   const SIDE_LH = 1.5;
@@ -459,7 +459,7 @@ describe("B328/B329 侧栏那几格的下伸部（省略号那层不许切字）
     expect(2 * fs, "2 那一档（24px）必须被同一把尺子拒掉").toBeGreaterThan(rowH);
   });
 
-  it("B329：最近打开那两截走同一口径（名字 12.5px / 目录 11px 都带着省略号那层）", () => {
+  it("B329：最近打开那两截走同一口径（名字 12px / 目录 11px 都带着省略号那层）", () => {
     for (const sel of [".recent-name {", ".recent-path {"]) {
       const cell = block(sel);
       expect(cell, `${sel} 也在用 overflow:hidden 裁字`).toMatch(/overflow:\s*hidden/);
@@ -473,19 +473,21 @@ describe("B328/B329 侧栏那几格的下伸部（省略号那层不许切字）
     expect(num(dir, "line-height"), "1.3 那一档是改之前的样子").not.toBe(SIDE_LH);
   });
 
-  it("B329：撑高两截的同时把上下 padding 收掉，整行还是 38.25px（列表不许变胖）", () => {
+  it("B329：撑高两截的同时把上下 padding 收掉，整行还是 38.5px（列表不许变胖）", () => {
     const row = block(".recent-row {");
     const name = block(".recent-name {");
     const dir = block(".recent-path {");
     const pad = num(row, "padding"); // shorthand 第一颗 = 上下
     const total = 2 * pad + SIDE_LH * num(name, "font-size") + SIDE_LH * num(dir, "font-size");
-    // 名字并到 ui 档（12→12.5）让行盒 +0.75，padding 由 2 收到 1.5 抵掉 ⇒ 38.25，
-    // 仍**低于** B329 那一档的 38.5：预算口径没被字阶统一顶破。
-    expect(total, `整行 ${total}px：padding 没补就是 43.25`).toBeLessThanOrEqual(39);
-    // 同一把尺子量「只撑行盒不收 padding」的替身：43.25 必须被拒掉
+    // B337 定档 ui = 12px 之后，名字那一截回到当年量墨点的那一档 ⇒ padding 跟着退回
+    // B329 那一版（2px），整行 38.5px 与当时逐字相同；「并档会让行盒 +0.75」那笔让位已经不在了。
+    // ⚠️ 真实布局量到 39px（目录那截 16.5 向上进位）⇒ 这条 39 是**正好贴住**的闸，
+    //    别当它有余量：再给任何一截加 leading、或把 padding 调回去，整行立刻顶破。
+    expect(total, `整行 ${total}px：padding 没补就是 42.5`).toBeLessThanOrEqual(39);
+    // 同一把尺子量「只撑行盒不收 padding」的替身：42.5 必须被拒掉
     expect(
       2 * 4 + SIDE_LH * num(name, "font-size") + SIDE_LH * num(dir, "font-size"),
-      "padding 留在 4px 那一档 = 每一行胖 5px",
+      "padding 留在 4px 那一档 = 每一行胖 4px",
     ).toBeGreaterThan(39);
   });
 });

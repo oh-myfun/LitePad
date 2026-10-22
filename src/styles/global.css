@@ -25,7 +25,7 @@
      title 对话框与设置面板的标题
      hero  设置页那一页的大标题 */
   --fs-meta: 11px;
-  --fs-ui: 12.5px;
+  --fs-ui: 12px;
   --fs-input: 14px;
   --fs-title: 15px;
   --fs-hero: 20px;
@@ -74,7 +74,7 @@
   --title-mark-pad: 8px;
   /* 标题栏里那行文档名的字号（B224 起它同时是**标签名**的字号）。
      ⚠️ 这一颗有第二个人：`.tab` 读它 —— 用户点名「标签里的中文字要和标题栏一样大」。
-     两处各写一个 12.5px，改一边就成了「标题 12.5、标签 14」那种一眼看得出的错开。 */
+     两处各写一份字面量，改一边就成了「标题 12、标签 14」那种一眼看得出的错开。 */
   --title-text-size: var(--fs-ui);
 }
 
@@ -778,7 +778,8 @@ button:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  /* B334：24 → 22。字号跟着标题收到 12.5px 之后这一格就显得空 —— 22px 是 VS Code 的紧凑档，
+  /* B334：24 → 22。字号跟着标题收到 12.5px（B337 定档后是 ui 档 12px）之后这一格就显得空 ——
+     22px 是 VS Code 的紧凑档，
      也正是「16px codicon 图标 + 上下各 3px」那一档（注释里抄来的 VS Code 原话：
      20px = minimum to fit 16px icon + 2px padding，22 还留着呼吸）。
      固定高度而非靠 padding 撑：字号档位变化时标签栏高度仍恒定，不挤压编辑器。 */
@@ -789,7 +790,7 @@ button:focus-visible {
      与左侧的 6px 对称。 */
   padding: 0 4px 0 6px;
   /* 标签名与标题栏那行文档名**同字号**（用户点名）：不写就只能吃 body 的 14px，
-     于是「标题 12.5 / 标签 14」两行中文一眼看出是两种东西。
+     不写就只能吃 body 的 14px，于是「标题 12 / 标签 14」两行中文一眼看出是两种东西。
      ⚠️ 只有文字跟着走：图标与 ●/× 是 codicon 字形，尺寸由 codicon.css 的
      `font: 16px/1 codicon` 简写给死（见 B102 那段），不受这里影响。 */
   font-size: var(--title-text-size);
@@ -3738,7 +3739,7 @@ body.tab-drag-active * {
 /* VS Code `appearance.compact`（`WorkbenchHoverDelegate.showHover()` 给所有走
    hoverDelegate 的提示写死 `compact: true`）：字号比基础档小一档、内边距收成 2px 8px
    （`hover.css` 的 `.monaco-hover.workbench-hover.compact`）。
-   B337：两档原本 13px / 12px，并入字阶后基础档 = `--fs-ui`（12.5px）。这一档**不能跟着
+   B337：两档原本 13px / 12px，并入字阶后基础档 = `--fs-ui`（12px）。这一档**不能跟着
    并到同一颗** —— 并了就等于「compact」这一档不存在了（标签和它的关闭按钮与长文本提示
    同大，回到 09-27 用户嫌"厚"之前的观感）。字阶里小一档只有 `--fs-meta`（11px），取它。
    ⚠️ 内边距这一档**就是上面基础档的值**，两者现在只差字号 —— 留着这条重复声明是
