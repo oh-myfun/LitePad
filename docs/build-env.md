@@ -69,7 +69,8 @@ Rust 构建缓存里烙死了绝对路径。改目录名后 `cargo build/test` �
 | `ci.yml` | push `main`、PR、手动 | format:check → lint → tsc → vite build → vitest → cargo test |
 | `release.yml` | push `v*` tag、手动 | 构建 NSIS → 建 GitHub Release 并附安装包 |
 
-- **只推 main 不会发布**：必须 `git push origin main --follow-tags`。
+- **只推 main 不会发布**：`git push origin main` 之后还要 `git push origin v<版本>`（只推当版
+  tag；把历史 tag 整串带上去会让旧版本各触发一次 Release 去抢 Latest）。
 - 两条流水线都基于 **MSVC**（`stable-x86_64-pc-windows-msvc`）构建；runner 需装 Visual Studio 2022「使用 C++ 的桌面开发」工作负载 + Windows SDK，**无需 MSYS2 / MinGW**。
 - Release 失败可 Actions 页面手动 dispatch 填 `tag` 重跑。
 

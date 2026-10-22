@@ -15,7 +15,9 @@
   还有个容易忽略的连带作用：界面截图脚本 `scripts/capture-screenshots.py` 的前置正是这个 exe
   —— 走 `release.sh --ci`（跳过本地构建）发布的版本，exe 会停在旧代码上，截图就拍不了。
 - **发布只由 `v*` tag 触发**：`bash scripts/release.sh <版本>` 同步四文件版本 → 构建 → tag，
-  然后 `git push origin main --follow-tags`。`--ci` 跳过本地全量（tauri build 冷启约 38 分钟）；
+  然后分两条推送 —— `git push origin main`，再 `git push origin v<版本>`（只推当版那一枚；
+  整串带上去会把历史漏推的旧 tag 也推醒，每个旧 tag 都触发一次 Release 去抢 Latest）。
+  `--ci` 跳过本地全量（tauri build 冷启约 38 分钟）；
   但即使用 `--ci`，随后的推送仍会被 pre-push 拦着本地构建一遍，所以 exe 不会是旧的。
 
 ### 版本维护规则（用户 2026-10-18 定）

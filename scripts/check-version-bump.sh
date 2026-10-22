@@ -13,8 +13,8 @@
 #
 # 用法：
 #   bash scripts/check-version-bump.sh                    # 手动查
-#   git push origin main --follow-tags                    # 正常推送（守卫自动跑）
-#   LITEPAD_VERSION_ACK=asked git push ...                # **仅限真的问过用户且用户答不升档**
+#   git push origin main                                  # 正常推送（守卫自动跑）
+#   LITEPAD_VERSION_ACK=asked git push origin "v<版本>"    # **仅限真的问过用户且用户答不升档**
 #   LITEPAD_SKIP_VERSION_CHECK=1 git push ...             # 紧急绕过（版本一致性也不查）
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
@@ -81,7 +81,7 @@ if [ "${FEATS:-0}" -gt 0 ] && [ "$MINOR_C" = "$MINOR_T" ] && [ "$MAJOR_C" = "$MA
     echo "" >&2
     echo "✗ 版本守卫：$TAG 以来有 $FEATS 个 feat（较大改动）。口径要求**先问用户**是否推进 minor。" >&2
     echo "  正确动作：问用户 →「推进」就 bash scripts/release.sh minor；「不推进」再推：" >&2
-    echo "      LITEPAD_VERSION_ACK=asked git push origin HEAD --follow-tags" >&2
+    echo "      LITEPAD_VERSION_ACK=asked git push origin main（tag 单独推：git push origin \"v<版本>\"）" >&2
     echo "  ⚠️ 没问过用户就别设这个环境变量 —— 它代表「已征询且用户答不升档」。" >&2
     exit 1
   fi

@@ -70,9 +70,11 @@ echo "✓ 已提交并打 tag v$VER"
 cat <<EOF
 
 后续手动步骤：
-  1. git push origin main --follow-tags      # 推送提交与 tag
-     （注意：必须推 tag —— GitHub 的 Release 只由 v* tag 触发；
-      只推 main 只会跑 CI 编译校验，不会发布）
+  1. git push origin main
+     git push origin "v$VER"               # 两条各推一次，只推当版 tag
+     （必须推 tag —— GitHub 的 Release 只由 v* tag 触发；只推 main 只会跑 CI 编译校验，
+      不会发布。⚠️ 别用整串 tag 一起推的那种写法：历史里只要有一档只出包没打过 tag，
+      那批旧 tag 会被一起带上去，而每个旧 tag 都会触发一次 Release 去抢 Latest。）
   2. GitHub Actions（release.yml）会在 tag 触发后自动：
      Windows runner 构建 → NSIS 安装包 → 创建 GitHub Release 并附产物
      查看进度：gh run list --workflow=release.yml   或   gh run watch

@@ -66,6 +66,33 @@ describe("发布：版本号必须四处同步", () => {
   });
 });
 
+describe("交付指引：推送口径（真机吃过一次亏）", () => {
+  /** 会被人照着敲的那几份文本。 */
+  const FILES = [
+    "scripts/release.sh",
+    "scripts/check-version-bump.sh",
+    "docs/architecture.md",
+    "docs/build-env.md",
+    "docs/conventions.md",
+  ];
+
+  it("任何一份指引都不许把 `--follow-tags` 当命令教出去", () => {
+    // 判据盯的是「命令行」而不是这个词：文档里写「不要用 `--follow-tags`」正是要的，
+    // 而 `git push origin main --follow-tags` 那一形会把 v0.23.1 那批历史漏推的旧 tag
+    // 一起推上去 —— 旧 tag 也带安装包，GitHub 的 Latest 会被它抢走（2026-10-19 那次）。
+    for (const f of FILES) {
+      const text = readFileSync(f, "utf-8").replace(/\r\n/g, "\n");
+      expect(text, `${f} 还在教人用 --follow-tags 推送`).not.toMatch(/git push[^\n]*--follow-tags/);
+    }
+  });
+
+  it("正确形状在 release.sh 的收尾指引里：当版 tag 单独推一次", () => {
+    const sh = readFileSync("scripts/release.sh", "utf-8").replace(/\r\n/g, "\n");
+    expect(sh).toContain("git push origin main");
+    expect(sh, "tag 不推上去 = 没有任何发布").toContain('git push origin "v$VER"');
+  });
+});
+
 describe("应用配置：capabilities 必须授予关窗权限", () => {
   it("关闭窗口/最后一个面板不报 ACL 错误：capabilities 必须授予 window close/destroy", () => {
     // 用户报告：unhandledrejection: Command plugin:window|destroy not allowed by ACL。

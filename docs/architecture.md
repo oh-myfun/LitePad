@@ -91,7 +91,8 @@
   （技能 `litepad-reverse-verify`）。
 - 每次编译产出发布版本：`tsc → vite → vitest → cargo build+test → tauri build`，
   质量门 = `.githooks`（pre-commit: prettier/eslint/tsc/cargo fmt；pre-push: vitest/cargo test）+ GitHub `CI`。
-- 发布只由 `v*` tag 触发（`git push origin main --follow-tags`）。最新发布 **v0.11.0**。
+- 发布只由 `v*` tag 触发：`git push origin main` 之后 `git push origin v<版本>`（只推当版 tag，
+  不带历史漏推的那批）。最新发布 **v0.23.10**。
 
 - **图标（B222 起采用源图方案）**：真相在 `docs/LitePad.png`（512×512 RGBA）。换图标 = 换这张图，再跑
   `C:/Users/maoyu/.workbuddy/binaries/python/envs/default/Scripts/python.exe scripts/make_icons.py`
