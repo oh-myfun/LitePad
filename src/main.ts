@@ -212,7 +212,13 @@ import { setupRecentsPanel } from "./recents/panel";
 // B314：资源管理器。`setupExplorer` 装键并登记成外壳的第三块；`setRoot` 只把盘上那个根
 // 搬进 store（**不走 panel 的 `openFolder`** —— 那条会顺手 saveSettings，而启动回放不该
 // 把读到的值再写一遍，口径同 B312 的 `persist = false`）。
-import { closeFolder, promptOpenFolder, setupExplorer, toggleExplorer } from "./explorer/panel";
+import {
+  claimExplorerDrop,
+  closeFolder,
+  promptOpenFolder,
+  setupExplorer,
+  toggleExplorer,
+} from "./explorer/panel";
 import { setupPathRewiring } from "./explorer/paths";
 import { setRoot as setExplorerRoot } from "./explorer/store";
 import { initRecentsStore } from "./recents/store";
@@ -986,8 +992,15 @@ async function setupShell(): Promise<void> {
     .onDragDropEvent((ev) => {
       const p = ev.payload;
       if (p.type !== "drop") return;
+      // 一条路径都没换回来 = 桥把那件事吞了（拖进来的是目录而运行时不给路径正是这一形）。
+      // 不记这一行，用户那边只有一句「拖了没反应」，无从结案。
+      if (p.paths.length === 0) logger.warn("drop", "桥回了 0 条路径：拖进来的东西没有可信的路径");
       const pos = dropPosOf(p.position);
-      landDroppedPaths(p.paths, pos.x, pos.y);
+      // B333：拖进来的是一条**目录**而落点又在资源管理器那一块 ⇒ 换成那个根，不去读盘当文件开。
+      // 问的次序要紧：先问资源管理器认不认领，没认领才交回原来那一路（口径同落点判定本身）。
+      void claimExplorerDrop(p.paths, pos.x, pos.y).then((taken) => {
+        if (!taken) landDroppedPaths(p.paths, pos.x, pos.y);
+      });
     })
     .catch(() => {});
 

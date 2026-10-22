@@ -276,6 +276,8 @@ fn main() {
             commands::recents::set_recent_limit,
             // B314 资源管理器（一次只读一层，见 commands/explorer.rs 头部）
             commands::explorer::list_dir,
+            // B333：拖入的那一条是目录还是文件（落点在资源管理器那一块时决定换根还是打开）
+            commands::explorer::is_dir,
             commands::explorer::create_file,
             commands::explorer::create_dir,
             commands::explorer::rename_entry,

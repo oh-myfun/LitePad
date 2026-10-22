@@ -111,6 +111,9 @@ vi.mock("../src/ipc/api", async (importOriginal) => {
       h.revealed.push(path);
       return Promise.resolve();
     },
+    // B333：这一条是不是目录 —— 假实现按「夹具认得这一层」答，与 listDir 同一份账，
+    // 免得两个假各说一套（那正是契约测试最容易被假夹具糊过去的地方）。
+    isDir: (path: string) => Promise.resolve(h.dirs.has(path)),
     saveSettings: () => Promise.resolve(),
   };
 });
@@ -854,6 +857,64 @@ describe("B316 树内拖拽 = 移动", () => {
     expect(bar.classList.contains("sb-message-error"), "报错那条要走错误色").toBe(true);
     expect(names()).toContain("a.md");
     expect(marked("explorer-dragging")).toEqual([]);
+  });
+});
+
+describe("B333 拖一条目录落到资源管理器那一块 = 打开这个文件夹", () => {
+  /** 拖进来的那条：夹具「认得这一层」= `isDir` 该回真（假实现与 listDir 共用同一份账）。 */
+  const OTHER = "E:\\工作\\报价";
+
+  /** 命中测试替身：桥只回传坐标，所以「这一点落在哪块元素上」是这一发唯一的注入点。 */
+  const overPanel = () => ui.explorerTree;
+  const overEditor = () => document.createElement("div");
+
+  beforeEach(() => {
+    h.dirs.set(OTHER, [["x.md", false]]);
+  });
+
+  it("单条目录 + 落点在面板里 ⇒ 换根、摊开资源管理器、这一发算认领", async () => {
+    drawer.setDrawer(null, false);
+
+    const taken = await panel.claimExplorerDrop([OTHER], 10, 10, overPanel);
+
+    expect(taken, "认领了就轮不到「当文件打开」那一路").toBe(true);
+    expect(store.getRoot()).toBe(OTHER);
+    expect(drawer.activeDrawer(), "VS Code 的口径：换完根要把资源管理器摊开").toBe("explorer");
+    expect(h.opened, "目录不该被当成文件去读盘").toEqual([]);
+    await vi.waitFor(() => expect(names()).toContain("x.md"));
+  });
+
+  it("落点不在那一块 ⇒ 不认领、根不动：瞄准的是编辑区，就该按开文件办", async () => {
+    const taken = await panel.claimExplorerDrop([OTHER], 400, 300, overEditor);
+
+    expect(taken).toBe(false);
+    expect(store.getRoot(), "不该被拖到编辑区的目录悄悄换掉根").toBe(ROOT);
+  });
+
+  it("单条**文件**落到那一块 ⇒ 不认领：后端判假，交回原来那一路", async () => {
+    const taken = await panel.claimExplorerDrop([`${ROOT}\\a.md`], 10, 10, overPanel);
+
+    expect(taken).toBe(false);
+    expect(store.getRoot()).toBe(ROOT);
+  });
+
+  it("一次拖进来好几条 ⇒ 不认领：换根只能有一个，不猜用户想开哪个", async () => {
+    const taken = await panel.claimExplorerDrop([OTHER, `${ROOT}\\notes`], 10, 10, overPanel);
+
+    expect(taken).toBe(false);
+    expect(store.getRoot()).toBe(ROOT);
+  });
+
+  it("子窗口 ⇒ 不认领：它没有左边栏，落盘会把主窗口的根抹掉", async () => {
+    const appState = await import("../src/core/app-state");
+    appState.setWindowKind("satellite");
+    try {
+      const taken = await panel.claimExplorerDrop([OTHER], 10, 10, overPanel);
+      expect(taken).toBe(false);
+      expect(store.getRoot()).toBe(ROOT);
+    } finally {
+      appState.setWindowKind("main");
+    }
   });
 });
 

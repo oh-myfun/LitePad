@@ -194,6 +194,16 @@ pub fn list_dir(path: String) -> Result<DirListing, String> {
     Ok(cap(out, MAX_ENTRIES))
 }
 
+/// 这条路径是不是**目录**（B333：拖入的落点在资源管理器那一块时，靠它决定「换根」还是
+/// 「当文件打开」）。
+///
+/// 读不到 metadata（盘上没有、权限被拒）一律判**假**：判假的那一路交回原来的「打开文件」，
+/// 用户顶多看见一条熟悉的读盘错误，而资源管理器不会被换到一个不存在的根上。
+#[tauri::command]
+pub fn is_dir(path: String) -> bool {
+    Path::new(&path).is_dir()
+}
+
 /// 按上限裁一刀，越界才把 `truncated` 置上。
 /// 拆成纯函数是为了能拿 `limit = 3` 验这条判据 —— 拿真 2000 个文件去撞上限的测试
 /// 既慢又只测了「没裁」那一半。
@@ -491,6 +501,26 @@ mod tests {
         let mut v = vec!["beta", "Alpha", "alpha1"];
         v.sort_by(|a, b| natural_cmp(a, b));
         assert_eq!(v, vec!["Alpha", "alpha1", "beta"]);
+    }
+
+    #[test]
+    fn is_dir_distinguishes_directory_file_and_missing() {
+        let dir = tmp("is-dir");
+        fs::create_dir(dir.join("notes")).unwrap();
+        fs::write(dir.join("a.md"), "x").unwrap();
+
+        assert!(
+            is_dir(dir.join("notes").to_string_lossy().into_owned()),
+            "目录该判真"
+        );
+        assert!(
+            !is_dir(dir.join("a.md").to_string_lossy().into_owned()),
+            "文件该判假"
+        );
+        assert!(
+            !is_dir(dir.join("gone").to_string_lossy().into_owned()),
+            "盘上没有的东西该判假（拖进来一条已消失的路径不该换根）"
+        );
     }
 
     #[test]

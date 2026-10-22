@@ -482,3 +482,19 @@ describe("B328/B329 侧栏那几格的下伸部（省略号那层不许切字）
     ).toBeGreaterThan(39);
   });
 });
+
+describe("B333 拖入文件夹换根：命令名两端 + 那一发接线", () => {
+  it("`is_dir` 三处都在（Rust 定义 / 注册表 / 前端包装）—— 拼错任何一处都只是「拖了没反应」", () => {
+    expect(rustCmds, "Rust 侧要有 pub fn is_dir").toContain("pub fn is_dir(");
+    expect(rustMain, "忘了注册 ⇒ 前端 invoke 直接 reject").toContain("commands::explorer::is_dir,");
+    expect(api, '前端包装要的正是 invoke<boolean>("is_dir"').toContain('invoke<boolean>("is_dir"');
+  });
+
+  it("主窗口把拖入的落点先问一遍资源管理器，**没认领**才交给原来那一路", () => {
+    expect(boot).toContain("claimExplorerDrop(p.paths, pos.x, pos.y)");
+    expect(boot, "认领了就别再走一遍：那会把目录当文件去读盘").toContain("if (!taken)");
+    // 反向守卫：只 claim 不落地 = 拖文件到侧栏那一块以后什么都不做（静默失效最难查）。
+    const claims = (boot.match(/claimExplorerDrop\(/g) ?? []).length;
+    expect(claims, "这一发只该在主窗口的 drop 分支里问一次").toBe(1);
+  });
+});

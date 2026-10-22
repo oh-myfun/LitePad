@@ -14,7 +14,14 @@
  */
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { windowKind, settings } from "../core/app-state";
-import { createDir, createFile, revealInFolder, saveSettings, type FsEntry } from "../ipc/api";
+import {
+  createDir,
+  createFile,
+  isDir,
+  revealInFolder,
+  saveSettings,
+  type FsEntry,
+} from "../ipc/api";
 import { doOpen } from "../io/files";
 import { noteOpened } from "../recents/store";
 import { CODICONS } from "../shell/codicons";
@@ -104,6 +111,42 @@ export async function promptOpenFolder(): Promise<void> {
 export async function closeFolder(): Promise<void> {
   if (windowKind === "satellite") return;
   await openFolder("");
+}
+
+/**
+ * B333 · 「拖一条目录落到资源管理器这一块」= 打开这个文件夹（换根）。
+ *
+ * 三条都成立才认领，差一条就交回原来那一路（`io/files` 的 `landDroppedPaths`，那一路会把
+ * 拖进来的东西当**文件**打开）：落点在那一块里、**只**拖了一条、那一条在盘上真是目录。
+ * 「只一条」是刻意的：根只能有一个，多条时猜用户想开哪个就是替他做错。
+ *
+ * 是不是目录要问后端：路径长什么样判不出目录（`报价` 与 `报价.md` 一样没有可扩展的线索），
+ * 而盘上有什么只有 Rust 知道。
+ *
+ * ⚠️ 命中测试做成可注入的一发，因为宿主桥**只回传坐标** —— `tauri://drag-drop` 的载荷形状
+ * 不能加字段（那是与原生事件逐字对齐的那条约束，见 `dropbridge.rs` 模块头），而 jsdom
+ * 压根没有 `elementFromPoint`。
+ */
+export async function claimExplorerDrop(
+  paths: string[],
+  x: number,
+  y: number,
+  hitAt: (x: number, y: number) => Element | null = elementUnderPoint,
+): Promise<boolean> {
+  // 子窗口整条左栏都不在，而换根会写 `folder_root` —— 那等于替主窗口把根抹掉（同 B331）。
+  if (windowKind === "satellite") return false;
+  if (!explorerPanel.contains(hitAt(x, y))) return false;
+  if (paths.length !== 1) return false;
+  const path = paths[0];
+  if (!path || !(await isDir(path))) return false;
+  await openFolder(path);
+  if (activeDrawer() !== "explorer") setDrawer("explorer");
+  return true;
+}
+
+/** 那一点底下的元素。宿主不提供这能力时按「不在这里」算（交回原来那一路）。 */
+function elementUnderPoint(x: number, y: number): Element | null {
+  return typeof document.elementFromPoint === "function" ? document.elementFromPoint(x, y) : null;
 }
 
 export function setupExplorer(): void {
