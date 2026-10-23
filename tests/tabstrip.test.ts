@@ -325,23 +325,37 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     expect(activeFill, "帽轮廓必须描边（上/左/右）").toMatch(
       /border:\s*var\(--tab-stroke\)\s+solid\s+var\(--border\)/,
     );
-    expect(activeFill, "底边必须不封 —— 开口靠它 + 下探的舌片盖住条带线").toContain(
-      "border-bottom-color: transparent",
+    // B351（用户实测「肩部边框线和编辑区的边框线差了一个像素」）：开口必须用
+    // **零宽底边框**，不能用 `border-bottom-color: transparent` —— 透明的底边框照样占位，
+    // 而肩部伪元素的 `bottom: 0` 锚在 fill 的 **padding box** 底，就被这一格顶上去；
+    // 150% 缩放下 1px 边框被 snap 成 0.667 CSS px = 正好一个设备像素 ⇒ 肩线比条带线高一行。
+    expect(activeFill, "底边必须零宽：既开口又不占位").toMatch(/border-bottom-width:\s*0\s*;/);
+    expect(activeFill, "不许拿透明底边框冒充开口（它占位，会把肩部顶高 1px）").not.toMatch(
+      /border-bottom-color:/,
     );
     expect(activeFill, "z-index 必须抬到 1，否则盖不住条带线（线是 0）").toMatch(/z-index:\s*1/);
     expect(activeFill, "外圆角走 --tab-cap-radius（= 内圆角 + 描边厚）").toMatch(
       /border-radius:\s*var\(--tab-cap-radius\) var\(--tab-cap-radius\) 0 0/,
     );
-    // 反向对照（防恒真）：把底边封上（退回 B116 那种整圈方框）必须被同一条判据抓走
-    const BAD_CLOSED = css.replace(
+    // 反向对照（防恒真）①：退回「透明底边框冒充开口」（= B351 的那一版）必须被抓到
+    const BAD_TRANSPARENT = css.replace(
+      "border-bottom-width: 0;",
       "border-bottom-color: transparent;",
-      "border-bottom-color: var(--border);",
     );
-    expect(BAD_CLOSED, "替身必须真的把底边封上了").toContain("border-bottom-color: var(--border);");
+    expect(BAD_TRANSPARENT, "替身必须真的换过写法").not.toBe(css);
+    const badTransparent = cssDecls(ruleBlock(BAD_TRANSPARENT, ".tab-active .tab-fill"));
+    expect(badTransparent, "零宽那一颗消失 ⇒ 判红").not.toMatch(/border-bottom-width:\s*0\s*;/);
+    expect(badTransparent, "透明底边框必须被点名").toMatch(/border-bottom-color:/);
+    // 反向对照②：把底边整个封上（退回 B116 那种方框）也要被判红
+    const BAD_CLOSED = css.replace(
+      "border-bottom-width: 0;",
+      "border-bottom: var(--tab-stroke) solid var(--border);",
+    );
+    expect(BAD_CLOSED, "替身必须真的把底边封上了").not.toBe(css);
     expect(
       cssDecls(ruleBlock(BAD_CLOSED, ".tab-active .tab-fill")),
       "封底那一版必须被判红",
-    ).not.toContain("border-bottom-color: transparent");
+    ).not.toMatch(/border-bottom-width:\s*0\s*;/);
 
     const hoverFill = cssDecls(ruleBlock(css, ".tab:hover:not(.tab-active) .tab-fill"));
     expect(hoverFill, "悬停要有独立一档底色").toContain("var(--tab-bg-hover)");

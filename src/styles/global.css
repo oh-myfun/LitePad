@@ -901,7 +901,8 @@ button:focus-visible {
 }
 
 /* B349（用户点名照 VS Code 最新版的相连档）：活动标签的**帽轮廓** —— 上 + 左 + 右描边、
-   **底边不封**（border-bottom-color: transparent）。fill 本来就下探到条带底缘
+   **底边不封**（B351 起是 `border-bottom-width: 0`，不是透明边框，原因见下面那条注释）。
+   fill 本来就下探到条带底缘
    （inset 那 -3px 的舌片），于是它的底色把条带下沿那条线（.panel-head::after）盖出
    一个开口 ⇒ 标签与下方编辑区连成一片，这正是「相连」二字的来由。
    ⚠️ z-index 必须抬到 1：线与 fill 同在 `.panel-head` 这一层叠上下文里，线是 0，
@@ -915,7 +916,13 @@ button:focus-visible {
   background: var(--tab-fill-bg);
   z-index: 1;
   border: var(--tab-stroke) solid var(--border);
-  border-bottom-color: transparent;
+  /* B351（用户实测「肩部边框线和编辑区的边框线差了一个像素」）：底边开口必须用
+     **零宽**，不能用 `border-bottom-color: transparent` 冒充 —— 透明的底边框照样占位，
+     而肩部伪元素（下面那块）的 `bottom: 0` 锚的是 fill 的 **padding box** 底，就被这一格
+     顶上去。150% 缩放下 1px 边框被 snap 成 0.667 CSS px = 正好一个设备像素 ⇒ 肩线比
+     `.panel-head::after` 那条横贯线高一行，接缝处看得见台阶。
+     零宽之后 padding box 底 = border box 底 = 条带底，两条线落在同一设备行。 */
+  border-bottom-width: 0;
   border-radius: var(--tab-cap-radius) var(--tab-cap-radius) 0 0;
 }
 
