@@ -13,7 +13,8 @@ import { redo, selectAll, undo } from "@codemirror/commands";
 import { activePanel, activeTab, docOf, instancesOfDoc } from "./core/panels";
 import { closeTabById, newUntitled, switchTab } from "./tabs";
 import { syncCoordinator } from "./sync-scroll/wire";
-import { refreshViewModeButton, toggleViewMode } from "./markdown";
+import { refreshViewModeButton, toggleIrLock, toggleIrRender, toggleViewMode } from "./markdown";
+import { irEditable } from "./markdown/ir-state";
 import { doOpen, doSave, doSaveAll } from "./io/files";
 import { exportHtml, exportPdf } from "./io/export";
 import { ensureFindBar, openFindBar, retargetFindBar } from "./find/findbar";
@@ -89,6 +90,14 @@ function findStep(dir: 1 | -1): void {
 
 /** 时间/日期（F5，参考记事本）：在光标处插入 「HH:MM YYYY/M/D」。 */
 function insertTimeDate(): void {
+  // B352-9：F5 是 `force: true` 的**程序化** `dispatch`，那一发不带 `Transaction.userEvent`
+  // ⇒ 锁的 changeFilter 天然放行它（那条只管键入/粘贴/拖放）。所以这一发只能自己问锁，
+  // 闸必须排在派发之前 —— 排在后面等于没闸。
+  const tab = activeTab();
+  if (!tab || !irEditable(tab)) {
+    showMessage("即时渲染已锁定");
+    return;
+  }
   withView((view) => {
     const d = new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -497,6 +506,16 @@ function setupMenuBar(): void {
     onSelectAll: () => withView((v) => selectAll(v)),
     onTimeDate: () => insertTimeDate(),
     onToggleView: () => toggleViewMode(),
+    // B352-9：即时渲染两条直达命令。目标取「这一块正看着的那份实例」——与 toggleViewMode
+    // 同一口径（B228：不信任全局活动标签，从面板反查）。
+    onIrRender: () => {
+      const tab = activeTab();
+      if (tab) toggleIrRender(tab);
+    },
+    onIrLock: () => {
+      const tab = activeTab();
+      if (tab) toggleIrLock(tab);
+    },
     onOutline: () => toggleToc(),
     tocChecked: () => !tocPanel.hidden,
     onExplorer: () => toggleExplorer(),

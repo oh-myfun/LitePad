@@ -69,6 +69,12 @@ export interface MenuBarCallbacks {
   onSelectAll: () => void;
   onTimeDate: () => void;
   onToggleView: () => void;
+  /**
+   * B352-9：即时渲染的两条直达命令（进/出渲染、只翻锁）。
+   * 与「打开文件夹」同一先例：默认没有键位，右侧提示由 `keyHint` 自己省略。
+   */
+  onIrRender: () => void;
+  onIrLock: () => void;
   onOutline: () => void;
   /** 大纲抽屉展开态（勾选显示） */
   tocChecked: () => boolean;
@@ -191,6 +197,16 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
     label: "查看",
     items: (cb) => [
       { label: withKey("切换 源码 / 预览", cb.keyHint("view.toggle")), onSelect: cb.onToggleView },
+      // B352-9：即时渲染的两条直达命令。label 与命令注册表逐字一致（别长成两套口径），
+      // 右侧键位提示一律取自注册表 —— 用户在设置里绑了键，这里就自己长出来。
+      {
+        label: withKey("切换即时渲染", cb.keyHint("view.liveRender")),
+        onSelect: cb.onIrRender,
+      },
+      {
+        label: withKey("解锁 / 上锁（即时渲染）", cb.keyHint("view.toggleLock")),
+        onSelect: cb.onIrLock,
+      },
       {
         label: withKey("大纲 TOC", cb.keyHint("view.outline")),
         checked: cb.tocChecked(),

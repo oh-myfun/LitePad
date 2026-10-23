@@ -27,7 +27,12 @@ import { logger } from "./core/logger";
 import { perfProfileFor } from "./editor/perf";
 import { renderBlocks } from "./markdown/pipeline";
 import { setIrBlocks, liveRenderExtensions } from "./markdown/live-render";
-import { nextIrState, type IrState } from "./markdown/ir-state";
+import {
+  nextIrState,
+  toggleIrLockState,
+  toggleIrRenderState,
+  type IrState,
+} from "./markdown/ir-state";
 import { EditorState, Transaction, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { gutterExtensions } from "./editor/editor";
@@ -123,11 +128,6 @@ function refreshIr(tab: Tab): void {
   else tab.state = tab.state.update(spec).state;
 }
 
-/** 命令层的写闸门：只有「渲染 + 锁」这一态不许改文本（源码面与可写渲染态照旧）。 */
-export function irEditable(tab: Tab): boolean {
-  return tab.liveRender === "off" || !tab.irLocked;
-}
-
 /**
  * 锁的真机制（计划增量 1）—— 两层各自成立，缺一不可：
  *
@@ -208,15 +208,51 @@ function applyIrState(panel: Panel, tab: Tab, next: IrState): void {
   scheduleSessionSave();
 }
 
+/**
+ * 三条入口（悬浮键的循环、两条直达命令）共用的落地前缀：反查这份实例所在的面板。
+ *
+ * ⚠️ 状态的两个字段只许在 `applyIrState` 里写 —— 入口只算「下一个态是什么」。
+ * 少一道 `isMdTab` 判断就会把 `.txt` 标签也拖进渲染态（悬浮键自己有门槛，命令没有）。
+ */
+function applyIrToTab(tab: Tab, next: IrState): void {
+  const panel = getPanel(tab.panelId);
+  if (!panel || !panel.bodyEl || !isMdTab(tab) || !docOf(tab)) return;
+  applyIrState(panel, tab, next);
+}
+
 /** 悬浮锁键的那一下：三态循环的后继由 `nextIrState` 唯一决定，这里只管落地。 */
 function cycleIrState(tab: Tab): void {
-  const panel = getPanel(tab.panelId);
   const doc = docOf(tab);
-  if (!panel || !panel.bodyEl || !doc) return;
-  applyIrState(
-    panel,
+  if (!doc) return;
+  applyIrToTab(
     tab,
     nextIrState({ liveRender: tab.liveRender, irLocked: tab.irLocked }, { readonly: doc.readonly }),
+  );
+}
+
+/** 直达命令 `view.liveRender`：进/出渲染、锁态不动（映射住 `toggleIrRenderState`）。 */
+function toggleIrRender(tab: Tab): void {
+  const doc = docOf(tab);
+  if (!doc) return;
+  applyIrToTab(
+    tab,
+    toggleIrRenderState(
+      { liveRender: tab.liveRender, irLocked: tab.irLocked },
+      { readonly: doc.readonly },
+    ),
+  );
+}
+
+/** 直达命令 `view.toggleLock`：只翻锁（映射住 `toggleIrLockState`）。 */
+function toggleIrLock(tab: Tab): void {
+  const doc = docOf(tab);
+  if (!doc) return;
+  applyIrToTab(
+    tab,
+    toggleIrLockState(
+      { liveRender: tab.liveRender, irLocked: tab.irLocked },
+      { readonly: doc.readonly },
+    ),
   );
 }
 
@@ -402,8 +438,14 @@ export {
   refreshIr,
   applyIrState,
   cycleIrState,
+  toggleIrRender,
+  toggleIrLock,
   toggleViewMode,
   openPreviewToSide,
   refreshViewModeButton,
   dirname,
 };
+// 写闸门 `irEditable` 的定义住在叶子模块 `markdown/ir-state.ts`（无 DOM）：查找栏与
+// commands.ts 都要问它，而本模块反向 import 着 findbar ⇒ 定义放这边就是一张依赖环。
+// 这里只转一个出口，既有调用点（含 tests/ir-apply.test.ts）不必改 import。
+export { irEditable } from "./markdown/ir-state";

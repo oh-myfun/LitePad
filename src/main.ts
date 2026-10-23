@@ -98,6 +98,8 @@ import {
   applyPanelMode,
   openPreviewToSide,
   cycleIrState,
+  toggleIrRender,
+  toggleIrLock,
 } from "./markdown";
 import { setIrCycleHandler } from "./shell/irlock";
 import { openFindBar } from "./find/findbar";
@@ -525,6 +527,18 @@ function runShortcut(id: string): void {
     case "view.toggle":
       toggleViewMode();
       break;
+    // B352-9：即时渲染的两条直达命令（默认无键位，走命令面板/菜单/用户自绑）。
+    // 与 `toggleViewMode` 同一口径取「这一块正看着的那份实例」，不信任全局活动标签。
+    case "view.liveRender": {
+      const tab = activeTab();
+      if (tab) toggleIrRender(tab);
+      break;
+    }
+    case "view.toggleLock": {
+      const tab = activeTab();
+      if (tab) toggleIrLock(tab);
+      break;
+    }
     case "view.outline":
       toggleToc();
       break;

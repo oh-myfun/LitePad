@@ -21,6 +21,8 @@ import {
   type FindMatch,
 } from "../editor/find";
 import { isDirtyVsBaseline, isMdTab } from "../doc-model";
+// 锁的写闸门取自叶子模块（`src/markdown.ts` 反向 import 着本模块，经它取就成依赖环）
+import { irEditable } from "../markdown/ir-state";
 import { freshTextOfDoc, renderPanelTabs, switchTab } from "../tabs";
 import { el, refreshTitle } from "../ui";
 import {
@@ -326,6 +328,13 @@ function replaceCurrent(q: FindBarQuery): void {
   const panel = activePanel();
   const view = panel?.view?.view;
   if (!panel || !view) return;
+  const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
+  // B352-9：替换是**程序化** `dispatch`，那一发不带 `Transaction.userEvent` ⇒ 锁的 changeFilter
+  // 天然放行它（那条只管键入/粘贴/拖放）。所以这一发必须自己问锁，且闸要排在派发之前。
+  if (tab && !irEditable(tab)) {
+    findBar?.setStatus("即时渲染已锁定");
+    return;
+  }
   const query = buildFindQuery(findOptionsOf(q));
   const matches = restrictMatches(findMatches(view.state, query), q);
   const sel = view.state.selection.main;
@@ -351,7 +360,6 @@ function replaceCurrent(q: FindBarQuery): void {
       }),
     ],
   });
-  const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
   if (tab) tab.state = view.state;
   refreshFindCount();
   findBar?.setStatus("已替换 1 处");
@@ -362,6 +370,14 @@ function replaceCurrent(q: FindBarQuery): void {
  * 落盘仍由各自的保存流程负责）；否则只改当前活动文档。
  */
 function replaceAllInScope(q: FindBarQuery): void {
+  // B352-9：只问**这一块**的锁一次。同源兄弟格与其它文档的写必须照旧放行（spec 那条
+  // 「同源变更集 / 外部重载 ⇒ 放行」），所以不许在下面遍历里逐实例问一遍 —— 那等于把那条堵死。
+  const here = activePanel();
+  const lockedTab = here && here.viewTabId !== null ? tabs.get(here.viewTabId) : undefined;
+  if (lockedTab && !irEditable(lockedTab)) {
+    findBar?.setStatus("即时渲染已锁定");
+    return;
+  }
   if (!q.text) {
     findBar?.setStatus("请输入查找内容");
     return;

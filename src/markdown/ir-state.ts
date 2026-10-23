@@ -55,3 +55,44 @@ export function coerceIrState(raw: {
     irLocked: raw.irLocked !== false,
   };
 }
+
+/**
+ * 命令层的写入口闸：只有「渲染 + 锁」那一态改不了文本。
+ *
+ * 定义放在这个叶子模块而不是 `src/markdown.ts`：查找栏（`src/find/findbar.ts`）与
+ * `src/commands.ts` 都要问锁，而 `markdown.ts` 反向 import 着 findbar —— 让它们经
+ * `markdown.ts` 取这道闸就是一张新依赖环。叶子模块无 DOM、无副作用，谁都能取。
+ *
+ * ⚠️ 这道闸是承重的，不是重复保险：锁的 `changeFilter` 只拒「改文本且带
+ * `Transaction.userEvent` 标注」那一类，而 F5 插入时间与查找栏替换都是**不带标注的
+ * 程序化 `dispatch`** ⇒ 走编辑器那层拦不住（`tests/ir-apply.test.ts` 证的是「必须放行」）。
+ */
+export function irEditable(s: IrState): boolean {
+  return s.liveRender === "off" || !s.irLocked;
+}
+
+/**
+ * 直达命令 `view.liveRender`：进/出渲染，**锁态一位都不动**（spec §命令）。
+ *
+ * 与悬浮键的循环（`nextIrState`）刻意不同：循环 A→B 恒锁着（产品拍板「默认锁着」），
+ * 这一发则尊重用户上一轮留下的锁值 —— 在渲染里解过锁、回源码、再进来，还是可写。
+ * 只读文档除外：C 不可达，所以进渲染时把锁按回 true（与 `nextIrState` 同一条约束）。
+ */
+export function toggleIrRenderState(cur: IrState, opts: { readonly: boolean }): IrState {
+  const liveRender: IrRenderMode = cur.liveRender === "off" ? "ir" : "off";
+  return { liveRender, irLocked: opts.readonly ? true : cur.irLocked };
+}
+
+/**
+ * 直达命令 `view.toggleLock`：只翻锁，渲染态不动。
+ *
+ * 源码态里点它 = 先进渲染、且恒锁着：锁只管渲染面，源码态翻一个没人看的布尔值就是死键
+ * （B314-8 那一族：登记了但点下去什么都没发生）。恒锁而非沿用残值，是为了守住
+ * 「A→渲染 恒为锁着」这一条 —— 想直接落在可写态，先 `view.liveRender` 再翻锁。
+ */
+export function toggleIrLockState(cur: IrState, opts: { readonly: boolean }): IrState {
+  if (cur.liveRender === "off") return { liveRender: "ir", irLocked: true };
+  // 只读文档的 C 不可达：翻不动就原地留着，别造出一个装模作样的「可写渲染态」
+  if (opts.readonly) return cur;
+  return { liveRender: "ir", irLocked: !cur.irLocked };
+}
