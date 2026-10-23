@@ -61,3 +61,21 @@ describe("B352-1 排版规则从容器里剥出来（.md-rendered）", () => {
     );
   });
 });
+
+describe("B352-6 IR 标识的样式（焦点块左边条 + 块 widget 容器）", () => {
+  const g = stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
+
+  it("焦点行标识条存在，且颜色走 token（不写死）", () => {
+    const rule = g.match(/\.cm-line\.md-ir-focus-line\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(rule, "Task 6 发的类名要在样式里有规则").toBeTruthy();
+    expect(rule).toMatch(/var\(--accent/);
+    expect(rule, "不许写死颜色").not.toMatch(/#[0-9a-f]{3,8}\b/i);
+  });
+
+  it("块 widget 容器不带垂直 margin（CM6：块级装饰带 margin 会抖行高估计）", () => {
+    const rule = g.match(/\.md-ir-block\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(rule, "要有 .md-ir-block 规则").toBeTruthy();
+    expect(rule).toMatch(/margin:\s*0/);
+    expect(rule, "不许出现非零的 margin-top/bottom").not.toMatch(/margin-(top|bottom):\s*(?!0)/);
+  });
+});

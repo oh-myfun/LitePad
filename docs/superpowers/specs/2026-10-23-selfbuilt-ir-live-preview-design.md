@@ -163,8 +163,14 @@ LitePad 连这一层都省：**同一个 CM6 实例、同一份 state**，外部
   `locked` ⇒ 所有块都装饰（**无焦点例外**）；否则块区间与任一选区不相交 ⇒ 发一条
   `Decoration.replace({ widget })` 覆盖 `doc.line(lineStart).from .. doc.line(lineEnd).to`，相交 ⇒ 不发。
   **这一个函数是本设计的 TDD 重心**：不碰 DOM、不碰 CM 实例，正反判据都能写成表驱动用例。
-- **ViewPlugin**：`selectionSet || docChanged || viewportChanged` 时重算，产出 `EditorView.decorations`。
-  光标移动不产生事务 ⇒ 必须靠 ViewPlugin 才做得到「点一下就散开」。
+- **装饰由 StateField 提供**（B352-6 实测改判，原文写的是 ViewPlugin）：字段值是 `DecorationSet`，
+  `provide: f => EditorView.decorations.from(f)`；`docChanged || selection || setIrBlocks` 任一变了就重算。
+  光标移动不产生事务、但产生 selection 变化 ⇒ 靠这一发重算做到「点一下就散开」。
+  ⚠️ **不能用 ViewPlugin**：CM6 明确禁止函数式装饰（ViewPlugin 的 `decorations: v => v.decor` 正是函数式）
+  引入块 widget 或覆盖换行的替换装饰 —— `EditorView.decorations` 文档（view 的 index.d.ts:1311）写着，
+  运行时真抛 `RangeError: Block decorations may not be specified via plugins`（实测）。
+  我们的区间天生吞换行（Task 3 口径），所以这条路**只有** StateField 可走；CM6 自己的折叠同理
+  （`@codemirror/language/dist/index.js:1345`）。
 
 widget：`WidgetType` 子类，`toDOM()` 造 `<div class="md-rendered md-ir-block"><div class="md-block">…</div></div>`；
 `eq()` 比 `(lineStart, lineEnd, html)`，命中就复用现有 DOM；`ignoreEvent()` 只放行 `mousedown`、吃掉其它
@@ -277,7 +283,15 @@ fixed 会把每一格的键都钉到窗口同一角并叠起来。所以：
    焦点块左边条（你在哪一块）、循环一发就回纯源码（内容一个字没变）。产品级风险，不是 bug。
 4. **每防抖一拍全量算块 + 重算装饰**：长文档开销由 `eq()` 兜住（DOM 不重建），但 `Decoration.set`
    本身 O(块数)。spike 第 4 项量 5,000 行；顶不住再收 viewport 范围（代价是边缘闪动）。
-5. **widget 高度变化引起滚动跳动**：`estimatedHeight` 与 `requestMeasure` 实测调。
+   **spike 4 结案（B352-6 一次性探针，jsdom + 真 CM6，5,000 行 / 2,500 块）**：
+   纯改选区重算装饰 均值 2.28ms / p95 4.68ms / 最大 11.32ms；打字一来一回（重算 + 重排行结构）
+   均值 3.64ms / p95 4.81ms；`renderBlocks` 整篇解析 均值 8.8ms / p95 14.5ms（在 120ms 防抖背后，
+   不在按键路径上）；DOM 里只挂 17 个渲染块 ⇒ **CM6 的视口裁剪本身就把 widget 限制在视口内**。
+   ⇒ 裁定：**不收 viewport 范围**，保持全篇装饰。真机若顶不住，先查的是那发 `renderBlocks`
+   （8.8ms 量级），不是装饰重算 — 代价若判错：5,000 行以上逐键卡顿，要回头补视口裁剪。
+5. **widget 高度变化引起滚动跳动**：`estimatedHeight` 保持 CM6 默认 `-1`（不知道 ⇒ 按被替换的那些源行
+   的高度估），实测被替换的正是同样这几行 ⇒ 估计天然接近真值；块渲染后比源码高/矮时仍会抖，
+   spike 第 5 项（岛级垂直节奏）在真机上量，不成立再补 `estimatedHeight` 取值。
 6. **IR 与折叠互斥**（§5）：进 IR 折叠槽消失，退出还原。
 7. **锁态是应用级默认 + 实例级会话两层**：跨窗口/新窗口打开同一文档时可能不一致；
    照 VS Code「翻态影响下一个」的口径处理，不做逐文档记。
@@ -348,6 +362,11 @@ fixed 会把每一格的键都钉到窗口同一角并叠起来。所以：
   `effect.is is not a function`（探针实测）；另一条：`comps.x` 必须带着初值进初始 extensions，
   不在配置里的 compartment 被 reconfigure 时**不报错、值被静默丢掉**（`tests/ir-compartments.test.ts`
   拿探针扩展钉住了这一点）。
+- **spike 3 部分结案（点块进编辑，B352-6）**：`view.posAtCoords({x,y}, false)` 在**没有布局**的环境里
+  会返回一个**块外**的位置（jsdom 实测给的是文档末尾），不是 null ⇒ 「反查失败退回块首」这句要写成
+  「反查结果落在本块区间之外就退回块首」。这条规则真机上也用得上：块与块之间的空隙、点在最末一行
+  下沿，都可能反查到隔壁块 —— 手势落在这块的 DOM 上，光标就必须落进这一块（落进隔壁是「点哪儿不是
+  哪儿」）。真机那一下是否落在点击的字符上，留给 Task 11 用眼睛结案。
 
 ## 我的决定（未征求，可推翻）
 

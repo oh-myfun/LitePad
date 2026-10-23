@@ -3486,6 +3486,18 @@ button:focus-visible {
   opacity: 1;
 }
 
+/* B352 即时渲染（IR）：焦点块那一行的左侧标识条。
+   光标所在的那一块露源码，靠这条内嵌左边线与「正在渲染」的其余块区分（Obsidian 同款做法，
+   VS Code 那边是 `markdown.editor.highlightActiveBlock`）。颜色走 token，不写死。 */
+.panel-host .cm-editor .cm-line.md-ir-focus-line {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* 块 widget 的容器：CM6 规定块级装饰不得带垂直 margin（带了自己会抖行高估计）。 */
+.panel-host .cm-editor .md-ir-block {
+  margin: 0;
+}
+
 /* 拖拽分隔条期间的全局态：禁选 + 按方向给光标。
    B59 O3：原先恒为 col-resize —— 上下分屏拖**垂直**分隔条时光标是错的。
    B61：三档都用 VS Code 非 mac 档的值（与 `.layout-sep-h/-v` 一致），

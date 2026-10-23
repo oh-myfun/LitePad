@@ -25,6 +25,7 @@ import { clearTip } from "./shell/tooltip";
 import { logger } from "./core/logger";
 import { perfProfileFor } from "./editor/perf";
 import { renderBlocks } from "./markdown/pipeline";
+import { setIrBlocks } from "./markdown/live-render";
 import { rightNeighborOf } from "./core/layout";
 import { renderPanelOps, renderPanelTabs, splitPanelWithTab, switchTab } from "./tabs";
 import { updateTocDrawer } from "./toc";
@@ -92,6 +93,24 @@ function renderMarkdownFor(panel: Panel, force = false): void {
   if (fb?.isOpen()) applyPreviewFindToPanel(panel, findSpecOf(fb.getQuery()));
 }
 
+/**
+ * 把当前块表灌进这份实例的即时渲染层（B352-6）。
+ *
+ * 与预览共用**同一个防抖写点**（见 `scheduleMdRender`）：另开一个定时器就是第二个口径，
+ * 那族病（B304「显示与行为两套」）本仓已经栽过。
+ * 可见实例走 `view.dispatch`（顺带由 `handleUpdate` 回写 `tab.state`）；
+ * 没挂 view 的实例改状态快照，切回来就带得上。
+ */
+function refreshIr(tab: Tab): void {
+  if (tab.liveRender === "off" || !isMdTab(tab)) return;
+  const blocks = renderBlocks(tab.state.doc.toString());
+  const view = getPanel(tab.panelId)?.view?.view;
+  // 只造一次事务规格：派发点可能有两个（挂着的 view / 状态快照），但块表只算一遍
+  const spec = { effects: setIrBlocks.of(blocks) };
+  if (view && view.state === tab.state) view.dispatch(spec);
+  else tab.state = tab.state.update(spec).state;
+}
+
 function scheduleMdRender(panelId: number): void {
   const panel = getPanel(panelId);
   if (!panel) return;
@@ -99,6 +118,8 @@ function scheduleMdRender(panelId: number): void {
   panel.previewTimer = setTimeout(() => {
     panel.previewTimer = null;
     renderMarkdownFor(panel);
+    const tab = tabs.get(panel.activeTabId);
+    if (tab) refreshIr(tab);
     if (panel.panelId === activePanelId && !tocPanel.hidden) updateTocDrawer();
   }, 120) as unknown as number;
 }
@@ -269,6 +290,7 @@ export {
   applyPanelMode,
   renderMarkdownFor,
   scheduleMdRender,
+  refreshIr,
   toggleViewMode,
   openPreviewToSide,
   refreshViewModeButton,

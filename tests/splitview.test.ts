@@ -1429,10 +1429,16 @@ describe("B228 侧边预览开出的那一栏：切换键字形与切换落点�
     );
 
     // ③ 落点退回「全局活动面板」：把按标签反查换成取活动面板
-    const greedyPanel = main.replace(
+    // ⚠️ 替身必须打在 **toggleViewMode 自己那段**上：`String.replace` 只换**首次出现**，
+    //    而 `getPanel(tab.panelId)` 这行在 markdown.ts 里不止一处（B352-6 的 `refreshIr` 也按标签找面板）。
+    //    按整串替换会换到别人身上 ⇒ 退化没落到被判的函数里，反向验证自己变空转。
+    const tv = body("function toggleViewMode\\(");
+    const tvDegraded = tv.replace(
       "getPanel(tab.panelId)",
       "panels.get(activePanelId) || undefined",
     );
+    expect(tvDegraded, "退化③ 替身必须真替换过（toggleViewMode 里要有那一发反查）").not.toBe(tv);
+    const greedyPanel = main.replace(tv, tvDegraded);
     expect(greedyPanel, "退化③：落点改回全局活动面板").not.toBe(main);
     expect(body("function toggleViewMode\\(", greedyPanel), "③ 反查面板闸必须落空").not.toContain(
       "getPanel(tab.panelId)",
