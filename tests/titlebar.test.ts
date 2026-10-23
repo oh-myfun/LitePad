@@ -715,7 +715,21 @@ describe("B97 自建标题栏", () => {
       "容器要居中排键（stretch 会把键拉满高，圆角读不出来）",
     ).toMatch(/align-items:\s*center/);
     // 两条必须落在同一个块里：`[^}]*` 跨不出 `}`，写了 height 忘了 radius 就会被判红
-    expect(s, "菜单键收成 22px").toMatch(/\.menu-btn\s*\{[^}]*height:\s*22px/);
+    // B354：高度从写死 22px 改成引用共用档位 `--menu-item-h`（菜单列表的行同取它）。
+    // 两头都要钉：① 样式里指的是那颗变量（写回字面量 = 两处将来各改各的）；
+    // ② 过一遍 `resolveCssVars` 之后取值仍是 22px（B336 那一档没被顺手挪走）。
+    expect(s, "菜单键高度引用共用档位").toMatch(
+      /\.menu-btn\s*\{[^}]*height:\s*var\(--menu-item-h\)/,
+    );
+    expect(resolveCssVars(s), "解析后仍是 22px 那一档").toMatch(
+      /\.menu-btn\s*\{[^}]*height:\s*22px/,
+    );
+    // 自证（防恒真）：把它退回写死数值，token 判据必须不再匹配
+    const hardcoded = s.replace(/(\.menu-btn\s*\{[^}]*height:\s*)var\(--menu-item-h\)/, "$122px");
+    expect(hardcoded, "替身必须真的换过写法").not.toBe(s);
+    expect(hardcoded, "写回字面量必须被抓到").not.toMatch(
+      /\.menu-btn\s*\{[^}]*height:\s*var\(--menu-item-h\)/,
+    );
     // ⚠️ 圆角必须**引用那颗共用 token**，不许写死数值：全局 `button {}` 用的就是 `--radius`。
     // 「和别的小按钮一致」这句话只有两边指向同一颗变量才成立 —— 写死 5px 的话，
     // token 一改就分家，而没有任何测试会红。

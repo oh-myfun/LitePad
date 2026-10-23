@@ -46,6 +46,12 @@
   --tab-cap-radius: calc(var(--tab-radius) + var(--tab-stroke));
   --tab-shoulder-radius: var(--tab-cap-radius);
   --transition: 120ms ease;
+  /* B354（用户点名「菜单栏列表按钮改的紧凑一点，按钮高度可以和菜单栏按钮保持一致」）：
+     **菜单栏那颗键**与**菜单里的一行**同一档高度 —— 两处都引用这一颗，写死数值的话
+     改一处就分家（B336 的 22px 原本只写在 `.menu-btn` 一处）。
+     对照 VS Code `base/browser/ui/menu/menu.ts`：那边菜单行是 `.action-menu-item { height: 24px }`，
+     用户要的是「与菜单栏一致」⇒ 取本应用已有的 22px 这一档，不跟它换 24。 */
+  --menu-item-h: 22px;
   /* B196：卡片几何的两档量，取值对齐 VS Code 的 floating panel 那一档
      （用户点名「拖拽区宽度、卡片与窗口边缘的宽度都参考 VS Code」）：
        · --card-gap = 两张卡片之间的空隙，同时也是**拖拽区**的宽度。
@@ -679,8 +685,10 @@ html[data-window-kind="satellite"] #sidebar-toggle {
   /* B336：22px 高的圆角矩形。圆角**引用全局 `button {}` 那颗 `--radius`**，不写死数值 ——
      「和别的小按钮一致」只有两边指向同一颗变量才成立（写死 5px，token 一改就分家，
      而且没有任何测试会红）。
+     B354：高度也改成引用变量（`--menu-item-h`）—— 用户点名菜单列表的行要与这颗键同高，
+     两处各写 22px 就是「今天一致、明天漂移」的那种一致。
      共用声明那条 `height: 100%` 在这里被覆盖掉：容器已改成居中排键，键高不再跟着标题栏走。 */
-  height: 22px;
+  height: var(--menu-item-h);
   border-radius: var(--radius);
 }
 
@@ -728,9 +736,16 @@ html[data-window-kind="satellite"] #sidebar-toggle {
 /* （B103 已删：菜单按钮曾用 .mnemonic 给首字加下划线标助记符。
     现改为 VS Code 的「标签(字母)」写法，如 `文件(F)`，不再需要这条规则。） */
 
+/* B354（用户点名「菜单列表分割线宽度填满列表」）：横向不留外边距 —— 线一路通到两条边框，
+   与 VS Code `menu.ts` 的 `.action-label.separator { width: 100%; margin: 5px 0; padding: 0 }`
+   同一凑法（那边连容器也没有横向留白，见上面 `.popup-menu` 那条）。
+   ⚠️ 「填满」靠的是「容器横向 padding 为 0 + 本条横向 margin 为 0」**两件事**：任何一处
+      补回留白，线就露短一截（判据在 tests/menubar.test.ts 的 B354）。
+      也别改用负外边距去凑 —— 容器 `overflow-y: auto` 会把横向溢出升级成滚动条，
+      线反而短 10px（headless 实测 138 / 应为 148，教训写在 `.popup-menu` 那条）。 */
 .menu-sep {
   height: 1px;
-  margin: 4px 8px;
+  margin: 4px 0;
   background: var(--border);
 }
 
@@ -3744,11 +3759,18 @@ body.tab-drag-active * {
 
 /* ---------- 弹出菜单 ---------- */
 
+/* B354（用户点名「菜单列表分割线宽度填满列表」）：容器**只留上下内边距**（VS Code 同款：
+   `menu.ts` 的 `.monaco-menu .monaco-action-bar.vertical { padding: 4px 0 }`）——
+   于是分割线（以及条目本体）天然一路通到面板两条边框，文字的留白改由条目自己的
+   `padding: 0 9px` 给。
+   ⚠️ 别改回 `padding: 4px` 再用「分割线左右负外边距」凑：本容器是 `overflow-y: auto`
+   （纵向滚动那条），负外边距会让内容横向溢出 ⇒ 浏览器补一条横向滚动条，
+   顺带把 10px 的纵向滚动条槽也占上，线反而短了 10px（headless 实测：138 / 应为 148）。 */
 .popup-menu {
   position: fixed;
   z-index: 1000;
   min-width: 150px;
-  padding: 4px;
+  padding: 4px 0;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -3764,7 +3786,13 @@ body.tab-drag-active * {
   display: flex;
   align-items: center;
   width: 100%;
-  padding: 5px 9px;
+  /* B354（用户点名「紧凑一点，高度与菜单栏按钮一致」）：行高与菜单栏那颗键同取
+     `--menu-item-h`。纵向内边距必须归 0 —— 这一档是 border-box，留着 `5px` 就等于
+     把 12px 的字挤进 22−10=12px 的内容盒里（正好卡住行盒，中文会被削上下沿）。
+     横向 9px 保留：文字要离悬停色块左沿有一点距离（VS Code 那边是 `padding: 0 2em`，
+     因为它把勾选位算在 padding 里）。 */
+  height: var(--menu-item-h);
+  padding: 0 9px;
   text-align: left;
   border-radius: 3px;
 }

@@ -7,8 +7,10 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import {
+  cssDecls,
   hasDistIntegrityGuard,
   hasStep3NotDeliverableWarning,
+  resolveCssVars,
   ruleBlock,
   stripCssComments,
   stripLineComments,
@@ -1314,5 +1316,83 @@ describe("B218：语言归组走子菜单（首组内联，其余每组一条入
     expect(menu, "fillMenu 里不许再渲染 .menu-heading").not.toContain("menu-heading");
     const css = readFileSync("src/styles/global.css", "utf-8");
     expect(css, "CSS 里不许再留那套小标题规则").not.toContain("menu-heading");
+  });
+});
+
+// ------------------------------------------------------- B354：菜单列表的紧凑与分割线
+// 用户点名：「菜单栏列表按钮改的紧凑一点（按钮高度可以和菜单栏按钮保持一致），
+// 菜单列表分割线宽度填满列表。」
+// 对照 VS Code `src/vs/base/browser/ui/menu/menu.ts` 那三条（本轮实测读到的原文）：
+//   · `.action-menu-item { height: 24px }` —— 行是**定高**，不靠上下内边距撑；
+//   · `.monaco-menu .monaco-action-bar.vertical { padding: 4px 0 }` —— 容器没有横向留白；
+//   · `.action-label.separator { width: 100%; margin: 5px 0; padding: 0 }` —— 线通到面板两边。
+// 本应用的条目要留那 4px 的悬停内缩（B336 那一族观感），所以「通到两边」由**分割线自己
+// 外扩**实现，不去动容器 —— 动容器会把每一条目的悬停色块也拉到贴边框。
+describe("B354 菜单列表：行高与菜单栏同档 + 分割线填满宽度", () => {
+  const cssCode = () => stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
+
+  it("① 菜单行定高，且纵向内边距归 0（border-box 下留着 5px 会把 12px 的行盒挤扁）", () => {
+    const item = cssDecls(ruleBlock(cssCode(), ".popup-menu button", "display: flex"));
+    expect(item, "菜单行要定高").toMatch(/height:\s*var\(--menu-item-h\)/);
+    expect(item, "上下不留内边距（高度由那一档给）").toMatch(/padding:\s*0\s+\d+px\s*;/);
+    // 反向对照（防恒真）：把纵向内边距加回去，两条判据必须分别失配
+    const padded = item.replace("padding: 0 9px;", "padding: 5px 9px;");
+    expect(padded, "替身必须真的改过内边距").not.toBe(item);
+    expect(padded, "替身不再满足「padding: 0 …」").not.toMatch(/padding:\s*0\s+\d+px\s*;/);
+    const floated = item.replace(/height:\s*var\(--menu-item-h\);/, "height: auto;");
+    expect(floated, "替身必须真的摘过定高").not.toBe(item);
+    expect(floated, "退回 auto 高度必须被抓到").not.toMatch(/height:\s*var\(--menu-item-h\)/);
+  });
+
+  it("② 「与菜单栏按钮一致」是同一颗变量，不是两处各写 22px", () => {
+    const s = cssCode();
+    const resolved = resolveCssVars(s);
+    for (const [sel, filter] of [
+      [".popup-menu button", "display: flex"],
+      [".menu-btn", "width: auto"],
+    ] as const) {
+      const block = cssDecls(ruleBlock(s, sel, filter));
+      expect(block, `${sel} 要引用共用档位`).toMatch(/height:\s*var\(--menu-item-h\)/);
+      expect(
+        cssDecls(ruleBlock(resolved, sel, filter)),
+        `${sel} 解析后仍是 22px 那一档（B336 的裁决没被顺手挪）`,
+      ).toMatch(/height:\s*22px/);
+    }
+    // 那颗 token 只许在 :root 定义一次（两处定义 = 后写的赢，改一处不生效）
+    const rootDecls = cssDecls(ruleBlock(s, ":root"));
+    expect(
+      [...rootDecls.matchAll(/--menu-item-h:/g)].length,
+      "--menu-item-h 在 :root 里只有一处定义",
+    ).toBe(1);
+  });
+
+  /** 取一条规则里 `padding` / `margin` 简写的**横向**那一项（px 数；`4px 0` → 0）。 */
+  function horizOf(cssText: string, selector: string, prop: "padding" | "margin"): number | null {
+    const v = cssDecls(ruleBlock(cssText, selector))
+      .match(new RegExp(`${prop}:\\s*([^;]+);`))?.[1]
+      ?.trim()
+      .split(/\s+/)
+      .map((x) => parseFloat(x));
+    if (!v || v.some(Number.isNaN)) return null;
+    // 一值 = 四边同值；两值 = 垂直 水平；三/四值 = 上 右 下 左（右即横向）
+    return v.length === 1 ? v[0] : v.length === 2 ? v[1] : v[1];
+  }
+
+  it("③ 分割线填满宽度 = 容器横向留白 0 + 线自己横向 margin 0（两件事缺一就露短）", () => {
+    const s = cssCode();
+    // 上下那 4px 是留给首末行的（不能一起归 0），所以判的是「横向为 0」而不是「没有 padding」
+    expect(
+      horizOf(s, ".popup-menu", "padding"),
+      "容器横向内边距必须为 0（VS Code 的 4px 0 同款）",
+    ).toBe(0);
+    expect(horizOf(s, ".menu-sep", "margin"), "分割线自己也不许留横向外边距").toBe(0);
+    // 反向对照①：容器补回一圈 4px 留白 ⇒ 同一条判据必须落空
+    const padded = s.replace(/(\.popup-menu\s*\{[^}]*padding:\s*)4px 0;/, "$14px;");
+    expect(padded, "替身必须真的补回过留白").not.toBe(s);
+    expect(horizOf(padded, ".popup-menu", "padding"), "替身横向又留白了，必须被抓到").not.toBe(0);
+    // 反向对照②：线自己退回旧的 8px 内缩 ⇒ 同一条判据必须落空
+    const inset = s.replace(/(\.menu-sep\s*\{[^}]*margin:\s*)4px 0;/, "$14px 8px;");
+    expect(inset, "替身必须真的改回内缩").not.toBe(s);
+    expect(horizOf(inset, ".menu-sep", "margin"), "替身横向又留白了，必须被抓到").not.toBe(0);
   });
 });
