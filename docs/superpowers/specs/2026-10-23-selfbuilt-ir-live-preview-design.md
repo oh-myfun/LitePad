@@ -28,11 +28,11 @@ LitePad 现在的 .md 只有两面：CodeMirror 源码、自绘只读预览。�
 
 ### 它印证的三条骨架（自研路线的底气）
 
-| VS Code 的做法 | 出处 | LitePad 的对应 |
-| --- | --- | --- |
-| `vscode.TextDocument` remains the single source of truth | `src/preview/markdownEditorProvider.ts:249-252` 注释 | CM6 的 doc 就是真相源，装饰层永不写文本 |
-| 外发**最小 offset 差量**而非整篇 | `markdown-editor-src/editor.ts:720-738 computeTextEdit(previousText, text) → {start, endExclusive, text}`；host `:1351-1376` 换 `vscode.Range` 后 `applyEdit` | 天然成立：编辑就在 CM6 事务里，变更集管道已在 |
-| **撤销归宿主**，编辑面不自持历史 | `editor.ts:450-461 historyStrategy { undo/redo → host }`，注释「`record` is deliberately omitted」；host `:562-573` 先 `editQueue.drain()` 再执行 | `history()` 已在 `baseExtensions`，不新增第二条撤销栈 |
+| VS Code 的做法                                           | 出处                                                                                                                                                          | LitePad 的对应                                        |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `vscode.TextDocument` remains the single source of truth | `src/preview/markdownEditorProvider.ts:249-252` 注释                                                                                                          | CM6 的 doc 就是真相源，装饰层永不写文本               |
+| 外发**最小 offset 差量**而非整篇                         | `markdown-editor-src/editor.ts:720-738 computeTextEdit(previousText, text) → {start, endExclusive, text}`；host `:1351-1376` 换 `vscode.Range` 后 `applyEdit` | 天然成立：编辑就在 CM6 事务里，变更集管道已在         |
+| **撤销归宿主**，编辑面不自持历史                         | `editor.ts:450-461 historyStrategy { undo/redo → host }`，注释「`record` is deliberately omitted」；host `:562-573` 先 `editQueue.drain()` 再执行             | `history()` 已在 `baseExtensions`，不新增第二条撤销栈 |
 
 外部改动打进编辑面时它传整篇 + `editEpoch`（`markdownEditorProtocol.ts:152` → `editor.ts:196`），靠 epoch
 丢陈旧回声、失败走 `editQueue.invalidate()` + `postAuthoritativeUpdate`（`markdownEditorProvider.ts:599-651`）。
@@ -66,13 +66,13 @@ LitePad 连这一层都省：**同一个 CM6 实例、同一份 state**，外部
 
 ### 不照搬的部分（以及为什么）
 
-| 它有的 | 出处 | 本版不做的理由 |
-| --- | --- | --- |
-| 代码块点开 ⇒ 懒加载**真 iframe 编辑器** | `editor.ts:368-388` 动态 import `@vscode/markdown-editor/web-editors`、bootstrap URL 强制 `/fake.html`、协议 `web-editor/0.12`（CONTRIBUTING.md:188） | 那是「复杂块交给另一个编辑器」；LitePad 让它整块退回原始 markdown 可编辑 |
-| 任务清单也走 iframe provider；checkbox 直接改源 | `taskProgress/taskProgressProvider.ts:18-31`、`editor.ts:417-419 setTaskCheckboxChecked` | 本版 IR 里 checkbox 是**内容不是控件**（`ignoreEvent` 吃掉），勾取回源码态手写 `[x]` |
-| 评论 / 诊断悬浮 / 重命名 / 补全 / webview RPC | `diagnosticHover.ts`、`renameController.ts`、`completionController.ts`、`markdownEditorRpc.ts`、`@vscode/hubrpc` | 那是语言服务器 + 跨进程那一整套；LitePad 的 IR 就在主编辑器实例上，语言特性本来就有 |
-| 节点 id + `findNodeOffsetById` 把嵌入编辑器的相对编辑平移回源 offset | 唯一调用点 `editor.ts:402-413`（`blockOffset + block.codeOffset`） | 没有嵌入编辑器就不需要；但它印证「渲染节点必须能查回源 offset」—— 我们的 `MdBlock.lineStart/lineEnd` 正是这个映射 |
-| 为 diff 视图造的行/块/`innerChanges` 三级脏区间 | `lineDiff.ts:90,151-165,181-198,234-252` | 那是**两个文档对差异**才要的；IR 在同一 state 内，CM6 事务自带差量 |
+| 它有的                                                               | 出处                                                                                                                                                  | 本版不做的理由                                                                                                    |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 代码块点开 ⇒ 懒加载**真 iframe 编辑器**                              | `editor.ts:368-388` 动态 import `@vscode/markdown-editor/web-editors`、bootstrap URL 强制 `/fake.html`、协议 `web-editor/0.12`（CONTRIBUTING.md:188） | 那是「复杂块交给另一个编辑器」；LitePad 让它整块退回原始 markdown 可编辑                                          |
+| 任务清单也走 iframe provider；checkbox 直接改源                      | `taskProgress/taskProgressProvider.ts:18-31`、`editor.ts:417-419 setTaskCheckboxChecked`                                                              | 本版 IR 里 checkbox 是**内容不是控件**（`ignoreEvent` 吃掉），勾取回源码态手写 `[x]`                              |
+| 评论 / 诊断悬浮 / 重命名 / 补全 / webview RPC                        | `diagnosticHover.ts`、`renameController.ts`、`completionController.ts`、`markdownEditorRpc.ts`、`@vscode/hubrpc`                                      | 那是语言服务器 + 跨进程那一整套；LitePad 的 IR 就在主编辑器实例上，语言特性本来就有                               |
+| 节点 id + `findNodeOffsetById` 把嵌入编辑器的相对编辑平移回源 offset | 唯一调用点 `editor.ts:402-413`（`blockOffset + block.codeOffset`）                                                                                    | 没有嵌入编辑器就不需要；但它印证「渲染节点必须能查回源 offset」—— 我们的 `MdBlock.lineStart/lineEnd` 正是这个映射 |
+| 为 diff 视图造的行/块/`innerChanges` 三级脏区间                      | `lineDiff.ts:90,151-165,181-198,234-252`                                                                                                              | 那是**两个文档对差异**才要的；IR 在同一 state 内，CM6 事务自带差量                                                |
 
 `inner change` 记一句：它指**行数不变但字符变了**（`{line,startColumn,endColumn}`，`types/previewMessaging.d.ts:10-17`）——
 行级 diff 看不见、渲染却变了，所以微软专门造了一条通道。LitePad 没这个坑：块按行区间切、比较
@@ -185,11 +185,11 @@ widget：`WidgetType` 子类，`toDOM()` 造 `<div class="md-rendered md-ir-bloc
 
 #### 4.1 状态机
 
-| 态 | `liveRender` | `irLocked` | 编辑面表现 | 键的语义 |
-| --- | --- | --- | --- | --- |
-| **A 源码** | `"off"` | 不生效 | 全原始 markdown，可写 | 按 ⇒ 进 B |
-| **B 渲染·锁** | `"ir"` | `true` | 全块渲染，**不可写**，无焦点例外 | 按 ⇒ 进 C |
-| **C 渲染·可写** | `"ir"` | `false` | 非焦点块渲染、焦点块露源码 | 按 ⇒ 回 A |
+| 态              | `liveRender` | `irLocked` | 编辑面表现                       | 键的语义  |
+| --------------- | ------------ | ---------- | -------------------------------- | --------- |
+| **A 源码**      | `"off"`      | 不生效     | 全原始 markdown，可写            | 按 ⇒ 进 B |
+| **B 渲染·锁**   | `"ir"`       | `true`     | 全块渲染，**不可写**，无焦点例外 | 按 ⇒ 进 C |
+| **C 渲染·可写** | `"ir"`       | `false`    | 非焦点块渲染、焦点块露源码       | 按 ⇒ 回 A |
 
 - **唯一后继**：`A → B → C → A`。**不设跳态**（不允许 A→C，也不允许 C→B）。
   这条要写进判据：循环顺序是这颗键的全部行为，分叉就不可测。
@@ -317,6 +317,37 @@ fixed 会把每一格的键都钉到窗口同一角并叠起来。所以：
    与 VS Code 同框比位置与大小（真机台，不读包）。
 
 任一项实测不过 ⇒ 回本文改设计，不许带着已知破口进实现。
+
+### spike 1 + 2 结案（B352-5 那趟一次性探针：jsdom + 真 CM6，9 行文档 / 3 块）
+
+块级标志在**装饰 spec** 上，不在 `WidgetType` 上 —— CM6 没有 `WidgetType.define({block: true})`
+（那是 ProseMirror 的形），要写 `Decoration.replace({ widget, block: true })`
+（`ReplaceDecorationSpec.block`，`node_modules/@codemirror/view/dist/index.d.ts:176`）。实测四种组合：
+
+| 组合                                             | widget 落点                | 渲染出的行                 | 行号槽                                       |
+| ------------------------------------------------ | -------------------------- | -------------------------- | -------------------------------------------- |
+| `block:true` · 区间吞尾随换行                    | `.cm-content` 直属（块级） | 每块一个单元，块间不剩裸行 | **一个都没有**（只剩测宽度用的那个隐藏元素） |
+| 不带 `block` · 只靠 CSS `display:block` · 吞换行 | 掉进 `.cm-line` 里（内联） | 每块被挤成一行             | 1 / 3 / 7（按块首行）                        |
+| `block:true` · 不吞尾随换行                      | `.cm-content` 直属（块级） | 每两块之间多出一行空白     | 2 / 6 / 9（跳号肉眼可见）                    |
+| 对照 · 无装饰                                    | —                          | 9 行源码                   | 1–9                                          |
+
+- **spike 1 结案**：Task 6 的写法定死 `Decoration.replace({ widget, block: true })`。内联那一形（不带
+  `block`）不能用 —— 它把渲染块塞进 `.cm-line`，标题/列表的行盒与 `lineWrapping` 软折行都跟着乱，
+  而且行号变成「按块首行」的第三种口径。
+- **delta 2 结案（Task 3 的区间口径成立且必要）**：吞掉尾随换行才换来「每块一个单元、块间不剩裸行」；
+  不吞则每两块之间多一行空白。相邻区间半开首尾相接，CM6 全程没报重叠。
+- **spike 2 结案（行号）⇒ 裁定**：块装饰下被盖住的源行**不再发行号**；块级 + 吞换行时整份文档一个行号
+  都不剩，不吞换行那形则是 2/6/9 的跳号（等于让行号说谎）。⇒ **IR 的两个渲染态（B/C）把
+  `comps.gutter` reconfigure 成 `[]`**（行号与折叠槽一起关），回源码态再给回 `gutterExtensions(perf)`。
+  这正是 B352-5 把行号搬进 compartment 的原因；Obsidian / VS Code 的渲染态也都不带行号，
+  块内定位靠焦点块左侧标识条与大纲跳转。
+  ⚠️ 以上是 jsdom 的 DOM 量测（CM6 的结构由 JS 构造，jsdom 与浏览器同构），Task 11 真机验收仍要用眼睛
+  结一次案：IR 态左栏干净无残影、回源码态行号原样回来。
+- **顺带钉住两条 API 事实（Task 6/7 直接用）**：重配 compartment 的效果是 `comps.x.reconfigure(v)`，
+  `.of(v)` 只用于**建状态时**的初值 —— 对已建好的 state 派 `.of()` 会当场抛
+  `effect.is is not a function`（探针实测）；另一条：`comps.x` 必须带着初值进初始 extensions，
+  不在配置里的 compartment 被 reconfigure 时**不报错、值被静默丢掉**（`tests/ir-compartments.test.ts`
+  拿探针扩展钉住了这一点）。
 
 ## 我的决定（未征求，可推翻）
 

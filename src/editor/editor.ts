@@ -49,16 +49,28 @@ export function foldMarkerDOM(open: boolean): HTMLElement {
 }
 
 /**
+ * 左侧 gutter 的那一摞（行号 + 折叠槽）。
+ *
+ * 单独成函数并塞进 `comps.gutter`，是因为 `baseExtensions` 是**所有标签共享**的一份配置：
+ * 硬编在里面的行号切不动，而即时渲染（B352）要求「这一份实例现在渲染 / 那一份还是源码」
+ * 各走各的 gutter（spec §5）。M4 的档位门槛原样带过来 —— 行号是导航底线，任何档位都留；
+ * 折叠槽按 `perf.folding` 给。
+ */
+export function gutterExtensions(perf: PerfProfile): Extension[] {
+  return [lineNumbers(), ...(perf.folding ? [foldGutter({ markerDOM: foldMarkerDOM })] : [])];
+}
+
+/**
  * 基础扩展集（所有标签共享同一份配置）。
  * 语言与主题用 Compartment 注入，每个 EditorState 持有独立 compartment 实例，
  * 因此切换标签（setState）时语言/主题/换行随快照自动恢复。
  *
- * M4：`perf` 按文档体量裁剪昂贵特性（语法高亮 / 折叠 / 括号匹配 / 选中匹配高亮 /
- * 当前行高亮），见 `perf.ts`。行号与撤销历史始终保留——它们是导航与安全的底线。
+ * M4：`perf` 按文档体量裁剪昂贵特性（语法高亮 / 括号匹配 / 选中匹配高亮 /
+ * 当前行高亮），见 `perf.ts`。撤销历史始终保留——它是安全的底线。
+ * 行号与折叠**不在这里**：它们归 `comps.gutter`（见 `gutterExtensions`），要按实例切。
  */
 function baseExtensions(perf: PerfProfile): Extension[] {
   const ext: Extension[] = [
-    lineNumbers(),
     history(),
     drawSelection(),
     dropCursor(),
@@ -94,9 +106,6 @@ function baseExtensions(perf: PerfProfile): Extension[] {
   if (perf.activeLine) {
     ext.push(highlightActiveLineGutter(), highlightActiveLine());
   }
-  if (perf.folding) {
-    ext.push(foldGutter({ markerDOM: foldMarkerDOM }));
-  }
   if (perf.bracketMatching) {
     ext.push(bracketMatching());
   }
@@ -117,6 +126,10 @@ export interface TabCompartments {
   theme: Compartment;
   wrap: Compartment;
   lang: Compartment;
+  /** 左侧 gutter（行号 / 折叠槽）——即时渲染态要按实例换一份（B352） */
+  gutter: Compartment;
+  /** 即时渲染那一层的槽（StateField + ViewPlugin 由 Task 6 注入；空槽 = 源码态） */
+  ir: Compartment;
 }
 
 export interface TabState {
@@ -143,11 +156,17 @@ export function makeTabState(
     theme: new Compartment(),
     wrap: new Compartment(),
     lang: new Compartment(),
+    gutter: new Compartment(),
+    ir: new Compartment(),
   };
   const state = EditorState.create({
     doc,
     extensions: [
       ...baseExtensions(perf),
+      // ⚠️ `ir` 也要**带着初值进配置**：CM6 的 compartment 若没出现在初始 extensions 里，
+      // 之后 `comps.ir.of(x)` 不报错、但值被静默丢掉（Task 6 的装饰层就是这么「配了却没生效」的）。
+      comps.gutter.of(gutterExtensions(perf)),
+      comps.ir.of([]),
       comps.wrap.of(env.wrap ? EditorView.lineWrapping : []),
       comps.theme.of(env.dark ? oneDark : []),
       comps.lang.of(perf.syntax ? (language ?? []) : []),

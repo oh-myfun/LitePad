@@ -235,7 +235,17 @@ function makeTab(
   const { state, comps } = makeTabState(text, markdown(), env, () => {});
   // viewMode 必须与面板的 mode-* 类一致：生产的可见性由它决定（applyPanelMode 就是
   // 按它写类名，reconcileSyncRegistrations 也按它决定注册哪一侧）。
-  const tab: Tab = { tabId: nextTabId++, docId, panelId, comps, state, viewMode, scrollV: 1 };
+  const tab: Tab = {
+    tabId: nextTabId++,
+    docId,
+    panelId,
+    comps,
+    state,
+    viewMode,
+    liveRender: "off",
+    irLocked: true,
+    scrollV: 1,
+  };
   tabs.set(tab.tabId, tab);
   return tab;
 }

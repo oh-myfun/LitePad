@@ -12,6 +12,7 @@ import type { EditorState } from "@codemirror/state";
 import type { EditorHandle, TabCompartments } from "../editor/editor";
 import type { SizeClass } from "../editor/perf";
 import type { EncodingItem, Settings } from "../ipc/api";
+import type { IrRenderMode } from "../markdown/ir-state";
 import type { PreviewPane } from "../markdown/preview";
 import type { KeymapOverrides } from "../shell/keymap";
 import { leaf, type LayoutNode } from "./layout";
@@ -47,6 +48,25 @@ export interface Tab {
   state: EditorState;
   /** Markdown 视图（仅 .md 有效）：源码 / 预览（实例独立，可左源码右预览对照） */
   viewMode: "source" | "preview";
+  /**
+   * 即时渲染（B352）：这一份实例现在渲不渲染块。`"off"` = 纯源码（现状）。
+   *
+   * 为什么是**实例级**而不是文档级：分屏里同一文档常并排两格，「一格渲染、一格源码」
+   * 正是 B352 要支持的对照姿势；`viewMode` 与 `scrollV` 已经各走各的，这两个跟着它们走。
+   * 谁写它：悬浮锁键（Task 8）与直达命令（Task 9）经 `setIr` 一处写；
+   * 谁读它：`applyIrState`（Task 7）据此重配 `comps.ir` / `comps.gutter`。
+   */
+  liveRender: IrRenderMode;
+  /**
+   * 即时渲染的「可写」开关：`true` = 渲染且只读（默认），`false` = 渲染且能在块里直接打字。
+   *
+   * 为什么单独一个字段、不并进 `liveRender`：三态（源码 / 渲染·锁 / 渲染·可写）里
+   * 「渲染」与「可写」是两件事——锁态仍要走装饰层，只是把编辑口关掉（用
+   * `EditorState.changeFilter`，因为 `readOnly`/`editable(false)` 挡不住程序化 dispatch）。
+   * 与 `liveRender` 一样是**实例级**：分屏两格可以一格锁着看、另一格在打字。
+   * 合法组合由 `ir-state.ts` 的 `nextIrState` 保证，别处不许自己拼。
+   */
+  irLocked: boolean;
   /**
    * 这份实例自己的视口位置，用同步滚动的共享坐标 `v`（源码行号 + 小数）。
    *

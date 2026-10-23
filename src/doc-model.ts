@@ -97,6 +97,8 @@ function makeInstance(doc: Doc, panelId: number, text: string): Tab {
     comps,
     state,
     viewMode: "source",
+    liveRender: "off",
+    irLocked: true,
     scrollV: 1,
   };
 }
