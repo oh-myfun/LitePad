@@ -1,4 +1,4 @@
-import { convertFileSrc } from "../ipc/api";
+import { enhanceMarkdown, nextEnhanceSeq } from "./enhance";
 
 import type { MdBlock } from "./pipeline";
 import type { PreviewScrollSurface } from "../sync-scroll/preview";
@@ -8,22 +8,11 @@ import { syncCoordinator } from "../sync-scroll/wire";
 /**
  * Markdown 预览面板（M3）：
  * - 增量 patch：按顶层 block 复用 DOM（html 不变的 block 不动节点）
- * - 懒加载增强：KaTeX / Mermaid / Shiki 均动态 import，首次用到才加载
+ * - 增强走 `./enhance` 的共享出口（B352-2：IR 的块 widget 调同一个，防两份懒加载守卫各漂一半）
  * - 本地定位：按源行号滚动（大纲跳转 / 转到行），异步重排后按待定位行重落
  */
 
 const LAZY_THRESHOLD_LINES = 5000; // 大文档：关闭 Mermaid/Shiki 自动渲染
-
-/**
- * mermaid 的 render id 计数器，**模块级**（整份文档唯一），不是每格各自一份。
- *
- * `mermaid.render(id, …)` 进 body 的第一件事就是 `document.getElementById(id)?.remove()`
- * （mermaid.core.mjs:1232）。同一份 md 开两个预览格（源码格 + 预览格，两边都会渲染）时，
- * 各格自己的 `mermaidSeq` 会撞出同一个 id ⇒ 后画那一发把前一发已经插进 DOM 的 `<svg>` 删掉。
- * 岛级增量之前每格每次都重建，下一发又画回来（只表现为闪）；复用之后被删的那格不再重画
- * ⇒ 图永久消失（B319 真机抓到）。
- */
-let mmdUid = 0;
 
 export interface PreviewHost {
   /** 文档总行数（大文档降级判断用） */
@@ -58,7 +47,6 @@ export class PreviewPane {
   private host: PreviewHost | null = null;
   /** 程序定位（大纲跳转/转到行）的目标行：异步增强或图片加载重排后据此重定位 */
   private pendingSyncLine: number | null = null;
-  private mermaidSeq = 0;
   /** 活动文档目录（相对路径图片解析基准） */
   private baseDir: string | null = null;
 
@@ -306,144 +294,18 @@ export class PreviewPane {
     if (dirty) void this.enhance();
   }
 
-  /** 包装 enhance：无论成功/中断都要按 pending 行重定位一次（公式/Mermaid 会改变高度）。 */
+  /** 包装增强：无论成功/中断都要按 pending 行重定位一次（公式/Mermaid 会改变高度）。 */
   private async enhance(): Promise<void> {
     try {
-      await this.enhanceInner();
+      await enhanceMarkdown(this.root, nextEnhanceSeq(), {
+        bigDoc: this.bigDoc(),
+        baseDir: this.baseDir,
+      });
     } finally {
       this.applyPending();
     }
   }
 
-  private async enhanceInner(): Promise<void> {
-    const seq = ++this.mermaidSeq;
-    const root = this.root;
-
-    // 相对路径图片 → asset 协议地址（预览时才可显示本地图片）
-    if (this.baseDir) {
-      for (const img of root.querySelectorAll<HTMLImageElement>("img[src]")) {
-        // ⚠️ 原始相对值记在 `data-rel-src` 上：岛级增量会让两份文档共享的头几段成批
-        // 复用，而复用岛里的 `src` 已经是 asset 地址 —— 拿 `src` 判「是不是相对路径」
-        // 就等于永远不重算，换文档后图还停在上一份的目录（评审 I5）。
-        const rel = img.dataset.relSrc ?? img.getAttribute("src") ?? "";
-        if (!rel || /^(https?:|data:|#|\/)/i.test(rel)) continue;
-        img.dataset.relSrc = rel;
-        const abs = this.baseDir.replace(/[\\/]+$/, "") + "\\" + rel;
-        const next = convertFileSrc(abs);
-        // 同值不重写：改 `src` 哪怕值一样也可能让浏览器重新解码那张图
-        if (img.getAttribute("src") !== next) img.setAttribute("src", next);
-      }
-    }
-
-    // KaTeX（有占位才 import）
-    const maths = root.querySelectorAll<HTMLElement>(".math-inline-src, .math-display-src");
-    if (maths.length > 0) {
-      try {
-        const katex = (await import("katex")).default;
-        if (seq !== this.mermaidSeq) return;
-        for (const el of maths) {
-          if (!el.isConnected) continue;
-          const tex = el.textContent ?? "";
-          const display = el.classList.contains("math-display-src");
-          const span = document.createElement(display ? "div" : "span");
-          span.className = display ? "math-display" : "math-inline";
-          try {
-            span.innerHTML = katex.renderToString(tex, {
-              displayMode: display,
-              throwOnError: false,
-              output: "html",
-            });
-          } catch {
-            span.textContent = tex;
-          }
-          el.replaceWith(span);
-        }
-      } catch {
-        // katex 加载失败保持占位文本
-      }
-    }
-
-    // Shiki 代码高亮（大文档跳过）
-    if (!this.bigDoc()) {
-      const codes = root.querySelectorAll<HTMLElement>("pre.md-code[data-lang]");
-      const needHighlight = [...codes].filter(
-        (el) => el.dataset.highlighted !== "1" && el.dataset.lang && el.dataset.lang !== "mermaid",
-      );
-      if (needHighlight.length > 0) {
-        try {
-          const { codeToHtml } = await import("shiki");
-          if (seq !== this.mermaidSeq) return;
-          for (const el of needHighlight) {
-            const lang = el.dataset.lang!;
-            const code = el.querySelector("code")?.textContent ?? "";
-            try {
-              const html = await codeToHtml(code, {
-                lang,
-                themes: { light: "github-light", dark: "github-dark" },
-                // ⚠️ 默认的 `defaultColor: "light"` 会把浅色值写成**内联** `color` /
-                //    `background-color:#fff`，内联压过类规则 ⇒ 深色主题下代码块仍是白底浅字
-                //    （B321 用户报的「配色不随主题切换」）。关掉它，shiki 只留
-                //    `--shiki-light/--shiki-dark` 变量，切换交回 preview.css。
-                defaultColor: false,
-              });
-              if (!el.isConnected) continue;
-              const holder = document.createElement("div");
-              holder.innerHTML = html;
-              const pre = holder.firstElementChild;
-              if (pre) {
-                el.replaceWith(pre);
-                (pre as HTMLElement).dataset.highlighted = "1";
-              }
-            } catch {
-              el.dataset.highlighted = "1"; // 不支持的语言保持纯文本
-            }
-          }
-        } catch {
-          // shiki 加载失败保持纯文本
-        }
-      }
-    }
-
-    // Mermaid（大文档不自动渲染，保留源码块 + 提示）
-    const mermaids = root.querySelectorAll<HTMLElement>("pre.mermaid-src");
-    if (mermaids.length > 0 && !this.bigDoc()) {
-      try {
-        const mermaid = (await import("mermaid")).default;
-        if (seq !== this.mermaidSeq) return;
-        mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: "strict",
-          theme: document.documentElement.dataset.theme === "dark" ? "dark" : "default",
-        });
-        for (const el of mermaids) {
-          const code = el.textContent ?? "";
-          const id = `mmd-${++mmdUid}`;
-          try {
-            const { svg } = await mermaid.render(id, code);
-            if (!el.isConnected || seq !== this.mermaidSeq) return;
-            const div = document.createElement("div");
-            div.className = "md-mermaid";
-            div.innerHTML = svg;
-            el.replaceWith(div);
-          } catch {
-            el.classList.add("mermaid-error");
-          }
-        }
-      } catch {
-        // mermaid 加载失败保持源码块
-      }
-    }
-  }
-
-  // ------------------------------------------------ 本地定位（按行）
-
-  /**
-   * 按行定位预览，**返回实际落点**（`null` = 没落地）。
-   *
-   * ⚠️ 返回值不是摆设：`blockAtLine` 找不到目标 block 时（预览还没渲染 / 行号越界）这里
-   * 是直接 return、容器一动没动的。调用方若不看返回值、照例把容器里的值当落点，
-   * 「定位没做」就会被当成「它停在顶部」。
-   */
   private applySyncToLine(line: number): number | null {
     const target = this.blockAtLine(line);
     if (!target) return null;
