@@ -25,7 +25,7 @@ import {
   setKeymapPreset,
   type KeymapOverrides,
 } from "./keymap";
-import { setTip } from "./tooltip";
+import { setTip, setTextTip } from "./tooltip";
 import { createDropdown } from "./dropdown";
 
 export interface KeymapDialogOptions {
@@ -233,8 +233,10 @@ export function mountKeymapPage(host: HTMLElement, opts: KeymapDialogOptions): K
         const name = document.createElement("span");
         name.className = "keymap-cmd";
         name.textContent = cmd.label;
-        // B58：note 是命令的补充说明，走自绘提示层
-        if (cmd.note) setTip(name, cmd.note, { group: "keymap" });
+        // B58：note 是命令的补充说明，走自绘提示层。
+        // B350：那一列是**文本**（会被截断的命令名），归文本档；上面那颗「键位预设」
+        //   是控件，仍走按钮档（带小尖尖）—— 同一张表里两档并存是按类别分的。
+        if (cmd.note) setTextTip(name, cmd.note, { group: "keymap" });
         row.appendChild(name);
 
         if (cmd.editable === false) {

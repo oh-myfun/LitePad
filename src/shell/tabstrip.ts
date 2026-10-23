@@ -2,7 +2,7 @@ import { showPopupMenu } from "./menu";
 import { startTabDrag, type DragImageAnchor } from "./tabdnd";
 import { fileIconHtml, familyOf } from "./fileicons";
 import { CODICONS } from "./codicons";
-import { setTip } from "./tooltip";
+import { setTip, setTextTip } from "./tooltip";
 import { bindWheel, ensureOverlayScrollbar, syncOverlayScrollbar } from "./scrollbar";
 
 /**
@@ -246,16 +246,11 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   // ⚠️ path 可选（未命名/无路径文件缺省）—— 此时退回文件名，不能渲染出 "undefined"。
   // group 现在只用来标识「这批标签属于同一条栏」，不参与秒开（B127 后秒开已停用）。
   //
-  // follow + compact 都取自 VS Code 的标签提示（B127）：
-  //   · `iconLabel.ts` 用 `getDefaultHoverDelegate('mouse')` ⇒ 气泡跟鼠标（x + 10），
-  //     且 `showPointer` 为 false —— **VS Code 的标签提示没有小箭头**；
-  //   · `WorkbenchHoverDelegate.showHover()` 写死 `compact: true` ⇒ 12px / 2px 8px。
+  // 这一档的出处（B127）：VS Code 的标签走 `iconLabel.ts` 的
+  // `getDefaultHoverDelegate('mouse')` ⇒ 气泡跟鼠标、**不画小箭头**，且 `showHover()`
+  // 写死紧凑档。B350 起这两个开关由 setTextTip 一处给，站点只留文案与 group。
   const tip = t.path ?? t.name;
-  setTip(el, t.readonly ? `${tip} [只读]` : tip, {
-    group: "tabstrip",
-    follow: true,
-    compact: true,
-  });
+  setTextTip(el, t.readonly ? `${tip} [只读]` : tip, { group: "tabstrip" });
 
   // 文件类型图标（B57，参考 VS Code 的 .tab.has-icon）：
   // 名字左边一个 16px 的家族字形，颜色由 data-fam 走 CSS 变量（浅深两套）。

@@ -51,13 +51,16 @@
  *    （用户 09-26 反馈：`「移到别的标签或按钮不能马上显示，应该重新判断触发延迟；
  *    隐藏也不是鼠标离开后立马消失」`）。group / instant 那套秒开机制因此**整体不用**。
  *
- * 用法：
+ * 用法（B350 起按「两档」选出口，别手抄开关）：
  * ```ts
- * setTip(btn, "关闭", { key: "Ctrl+W" });   // 动态创建的控件
+ * setTip(btn, "关闭", { key: "Ctrl+W" });   // 按钮 / 控件档：按元素定位，**带小尖尖**
+ * setTextTip(row, e.path, { group: "recents" });   // 文本档：跟鼠标，**不带尖尖**，紧凑字号
  * ```
  * ```html
  * <button data-tip="新建" data-tip-key="Ctrl+N" aria-label="新建 (Ctrl+N)"></button>
  * ```
+ * 静态标记的控件（`index.html` 里那几排键）直接写 `data-tip` 就是按钮档 ⇒ 与 `setTip` 同档，
+ * 不需要为了统一而搬进 JS。
  * 同一条控件栏的提示共享一个分组（容器上标 `data-tip-group="xxx"`）：这组标记现在
  * 只作为**结构性/无障碍**信息留在 DOM 上（窗口控制键、菜单栏各有自己的组），
  * 提示的时序**不再**参考它 —— 秒开已停用，见「有向偏离」第 3 条。
@@ -630,6 +633,24 @@ export function setTip(el: HTMLElement, text: string, opts: TipOptions = {}): vo
   if (!el.textContent?.trim() && !el.hasAttribute("aria-label")) {
     el.setAttribute("aria-label", opts.key ? `${text} (${opts.key})` : text);
   }
+}
+
+/**
+ * 文本档（B350）：名字会被截断、提示里给「那个东西的全称」的一类 —— 标签、大纲条目、
+ * 最近打开行、资源管理器的树行、命令面板行、键位表说明。
+ *
+ * 两个开关都取自 VS Code 的标签那一族（`iconLabel.ts` 用 `placement: 'mouse'`）：跟鼠标走、
+ * **不画小尖尖**（`showPointer` 只在 `placement === 'element'` 为真），再加紧凑字号
+ * （B337 之后是「比基础档小一档」：基础 `--font-size-ui`、紧凑 `--font-size-meta` ——
+ * 这里不写死数字，改字阶不会把注释变成假话）。
+ *
+ * ⚠️ 档位取值只许写在这一处：各站点再手抄一遍 `follow: true`，将来改档必漏一片
+ * （`tests/tooltip-classes.test.ts` 按「全仓只有 tooltip.ts 出现 follow: true」钉住）。
+ *
+ * 按钮 / 控件那一类**不**走这里：它们按元素定位、带小尖尖，用 `setTip()`。
+ */
+export function setTextTip(el: HTMLElement, text: string, opts: TipOptions = {}): void {
+  setTip(el, text, { follow: true, compact: true, ...opts });
 }
 
 /** 摘掉提示（控件变成「无可提示」状态时用，如状态栏语言按钮切回纯文本名） */

@@ -305,7 +305,8 @@
                 ></button>
               </div>
               <!-- 根目录那一行（VS Code 一样：根是树的第一个节点，永远在）。
-                   名字由 JS 写，路径挂 data-tip —— 标题栏那格宽度有限，全路径只能进提示。 -->
+                   名字与路径都由 JS 画（src/explorer/panel.ts），全路径走文本档提示
+                   （setTextTip：跟鼠标、不画尖尖），与标签 / 大纲 / 最近打开同一档。 -->
               <div id="explorer-tree" class="explorer-tree" role="tree" aria-label="文件树"></div>
             </aside>
           </div>

@@ -27,6 +27,7 @@ import { noteOpened } from "../recents/store";
 import { CODICONS } from "../shell/codicons";
 import { activeDrawer, registerDrawerView, setDrawer } from "../shell/drawer";
 import { showPopupMenu, type MenuItem } from "../shell/menu";
+import { setTextTip } from "../shell/tooltip";
 import { isTreeDrag, TREE_DRAG_FILE_MIME, TREE_DRAG_MIME } from "../shell/filedrop";
 import {
   explorerCollapse,
@@ -344,9 +345,10 @@ function renderEntry(e: FsEntry, dir: string, depth: number): HTMLElement {
   row.tabIndex = selected === e.path ? 0 : -1;
   // B316：树里每一行都可拖（根那一行不可 —— 它没有父亲，拖出去无处可放）。
   row.draggable = true;
-  // 完整路径进原生 title：悬停浮层那套（data-tip）在树里会每行挂一条、还盖住下一行，
-  // 而这一句只是「看全那个路径」，title 够用且不引入新的层级。
-  row.title = e.path;
+  // 完整路径进自绘提示层（B350）：原先写原生 `title`，深色界面里会弹一枚不吃主题、
+  // 延迟口径也不一样的系统气泡。档位与标签 / 大纲 / 最近打开同一档（setTextTip）——
+  // 气泡压在鼠标下方，会盖住下面一两行，这与最近打开那排密行是同一种遮挡，可接受。
+  setTextTip(row, e.path, { group: "explorer" });
 
   const twisty = document.createElement("span");
   twisty.className = "explorer-twisty";
@@ -398,7 +400,7 @@ function renderTree(): void {
   rootRow.setAttribute("role", "treeitem");
   rootRow.setAttribute("aria-expanded", String(rootOpen));
   rootRow.setAttribute("aria-level", "1");
-  rootRow.title = root;
+  setTextTip(rootRow, root, { group: "explorer" });
   rootRow.tabIndex = selected === root || visible.length === 0 ? 0 : -1;
   visible.unshift(root);
   const rt = document.createElement("span");

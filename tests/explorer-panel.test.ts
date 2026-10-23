@@ -320,7 +320,11 @@ describe("B314 资源管理器面板", () => {
     await vi.waitFor(() => expect(ui.explorerTree.textContent).toContain("onerror"));
     expect(ui.explorerTree.querySelector("img"), "拼 innerHTML 就是给自己造注入点").toBeNull();
     expect(rowAt(evil).querySelector(".explorer-name")?.textContent).toBe(evil);
-    expect(rowAt(evil).title, "完整路径进 title").toBe(`${ROOT}\\${evil}`);
+    expect(rowAt(evil).dataset.tip, "完整路径进自绘提示层（B350：原生 title 撤了）").toBe(
+      `${ROOT}\\${evil}`,
+    );
+    expect(rowAt(evil).dataset.tipFollow, "树行走文本档：跟鼠标、不画尖尖").toBe("1");
+    expect(rowAt(evil).title, "不许再写原生 title").toBe("");
   });
 
   it("新建文件：输入框长在目标那一层，回车后建、刷那一层并打开", async () => {

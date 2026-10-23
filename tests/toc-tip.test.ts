@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
 // B236：大纲条目的提示框改成与标签**同档**。
 //
-// 两套本来就是同一个 `setTip()`，差别只在选项：
-//   · 标签 `.tab`（tabstrip.ts）→ `{group:"tabstrip", follow:true, compact:true}`
-//     ⇒ 跟鼠标、不画小箭头、提示层 `data-pointer="false"`（圆角 5px）、12px 紧凑档
+// 两套本来就是同一个出口，差别只在选项：
+//   · 标签 `.tab`（tabstrip.ts）→ 跟鼠标、不画小箭头、`data-pointer="false"`（圆角 5px）、紧凑字号
 //   · 大纲 `.toc-item`（toc.ts）→ 原来只有 `{group:"toc"}`
 //     ⇒ 按元素定位、带小箭头、`data-pointer="true"`（圆角 3px）、13px 基础档
 // 用户裁决：**连定位方式一起统一**（跟鼠标、不画箭头），**只改大纲条目**，
-// 顶部那颗「全部折叠/展开」键保持原样（它走 `setAttribute("data-tip", …)` 裸属性）。
+// 顶部那颗「全部折叠/展开」键保持原样（它走 `setAttribute("data-tip", …)` 裸属性 = 按钮档）。
+//
+// B350 之后那一档的开关（`follow` / `compact`）不再由站点手抄，收进了 `setTextTip()` 一处。
+// 所以这一族的判据从「选项里有没有这两颗」改成「**用没用同一个出口**」，
+// 开关本身对不对由 tests/tooltip-classes.test.ts 钉（那里有真 DOM 断言 + 退化替身）。
 
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
@@ -21,36 +24,26 @@ const MAIN = stripLineComments(
   readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/toc.ts", "utf-8"),
 );
 
-/** 抠出某次 `setTip(<firstArg>, …)` 的完整调用（容 prettier 折行）。 */
+/** 抠出某次 `setTextTip(<firstArg>, …)` 的完整调用（容 prettier 折行）。 */
 function call(file: string, firstArg: string): string {
-  const re = new RegExp(`setTip\\(${firstArg},[\\s\\S]{0,240}?\\}\\);`);
+  const re = new RegExp(`setTextTip\\(${firstArg},[\\s\\S]{0,240}?\\);`);
   return re.exec(file)?.[0] ?? "";
 }
 
-/** 调用里出现的开关名（follow / compact / key / detail / placement / group）。 */
-function switches(c: string): string[] {
-  return ["follow", "compact", "key", "detail", "placement", "group"].filter((k) =>
-    new RegExp(`\\b${k}\\b`).test(c),
-  );
-}
-
 describe("B236 大纲提示 · 与标签同档", () => {
-  it("大纲条目必须同时开 follow 与 compact（缺一个就退回带箭头的 13px 那档）", () => {
-    const c = call(TOC, "item");
-    expect(c, "toc.ts 里要能抠到 setTip(item, …)").not.toBe("");
-    expect(c).toContain("follow: true");
-    expect(c).toContain("compact: true");
+  it("大纲条目走文本档出口（退回 setTip 就是带箭头的按钮档）", () => {
+    expect(call(TOC, "item"), "toc.ts 里要能抠到 setTextTip(item, …)").not.toBe("");
   });
 
-  it("跟着标签走：两个开关与标签那颗完全一致", () => {
-    const tocSw = switches(call(TOC, "item"));
-    const tabSw = switches(call(TABSTRIP, "el"));
-    expect(tabSw, "标签那颗的开关要能抠到").not.toHaveLength(0);
-    // 观感相关的两个开关必须都在；group 只是结构性标记，两边不同名没关系
-    for (const k of ["follow", "compact"]) {
-      expect(tocSw, `大纲缺 ${k}`).toContain(k);
-      expect(tabSw, `标签缺 ${k}`).toContain(k);
-    }
+  it("跟着标签走：两处用同一个出口，且都不再手抄开关", () => {
+    const tocCall = call(TOC, "item");
+    const tabCall = call(TABSTRIP, "el");
+    expect(tocCall, "大纲没走文本档").not.toBe("");
+    expect(tabCall, "标签没走文本档").not.toBe("");
+    // 手抄的开关会让「改一档」变成「扫全仓」—— B350 正是为这件事把取值收进 helper。
+    // ⚠️ 只比抠出来的这一段：标签文件里那颗关闭 × 是**按钮**，它合法地自带 compact。
+    expect(tocCall, "大纲又把手抄的开关写回站点上了").not.toMatch(/follow:|compact:/);
+    expect(tabCall, "标签又把手抄的开关写回站点上了").not.toMatch(/follow:|compact:/);
   });
 
   it("提示文案仍是行号（标题文本就在眼前，重复没意义）", () => {
@@ -58,8 +51,9 @@ describe("B236 大纲提示 · 与标签同档", () => {
   });
 
   it("反向：顶部「全部折叠」键不许跟着改（用户明确只改条目）", () => {
-    // 它走裸属性，既没 follow 也没 compact —— 同一块面板里两种提示并存是**有意为之**，
-    // 用户拍的是「只改大纲条目」。改成 setTip 会被这条拦下。
+    // 它走裸属性，既没 follow 也没 compact ⇒ 按元素定位、带小尖尖 = 按钮档。
+    // 同一块面板里两档并存是**有意为之**（用户拍的是「只改大纲条目」），
+    // 把它搬进 setTextTip 会被这条拦下。
     const b = fnBody(MAIN, "refreshTocToggleAll");
     expect(b).toContain('setAttribute("data-tip", label)');
     expect(b).not.toContain("setTip(");
@@ -88,8 +82,8 @@ describe("B236 大纲提示 · 真挂出来的 DOM", () => {
     expect(items[0].dataset.tip).toBe("第 3 行");
     expect(items[1].dataset.tip).toBe("第 12 行");
     for (const it of items) {
-      expect(it.dataset.tipFollow, "follow 标记").toBe("1");
-      expect(it.dataset.tipCompact, "compact 标记").toBe("1");
+      expect(it.dataset.tipFollow, "follow 标记（由 setTextTip 一处给）").toBe("1");
+      expect(it.dataset.tipCompact, "compact 标记（由 setTextTip 一处给）").toBe("1");
       expect(it.dataset.tipGroup).toBe("toc");
     }
     list.remove();

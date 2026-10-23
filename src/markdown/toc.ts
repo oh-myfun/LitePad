@@ -1,5 +1,5 @@
 import type { TocEntry } from "./pipeline";
-import { setTip } from "../shell/tooltip";
+import { setTextTip } from "../shell/tooltip";
 import { CODICONS } from "../shell/codicons";
 
 /**
@@ -410,10 +410,9 @@ export function createTocList(list: HTMLElement, onFoldChange?: () => void): Toc
         item.appendChild(text);
         // B58：提示给行号（标题文本本身就在眼前，重复它没意义）；group 只作结构性标记
         // （B127 之后它已不参与秒开）。
-        // ⚠️ B236：观感与标签那条**完全同档** —— `follow` 让它像标签那样跟鼠标、不画小箭头
-        //   （提示层的 `data-pointer` 随之变 "false" ⇒ 圆角回到 5px），`compact` 让它走
-        //   12px 紧凑档。缺任一个都会退回「13px + 带箭头 + 3px 圆角」那档，与标签对不上。
-        setTip(item, `第 ${node.entry.line} 行`, { group: "toc", follow: true, compact: true });
+        // B236 定的是「与标签完全同档」（跟鼠标、不画小箭头、12px 紧凑）；B350 起那一档
+        // 的开关收进 setTextTip 一处，站点再手抄一遍就会漏改。
+        setTextTip(item, `第 ${node.entry.line} 行`, { group: "toc" });
         item.addEventListener("click", () => cb.onJump(node.entry));
 
         if (node.branch) {

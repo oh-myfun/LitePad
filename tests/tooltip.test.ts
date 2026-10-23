@@ -730,18 +730,26 @@ describe("B127 标签 / 关闭按钮的提示对齐 VS Code", () => {
     expect(revived, "退化后应重新出现被禁的秒开窗口").toMatch(/INSTANT_WINDOW/);
   });
 
-  it("标签走鼠标定位（follow，无 caret）；关闭按钮走元素定位且不开 instant", () => {
-    // iconLabel.ts：`getDefaultHoverDelegate('mouse')` ⇒ 气泡跟鼠标、`showPointer` 为 false
-    expect(strip, "标签提示必须开 follow").toMatch(/setTip\(el,[\s\S]*?follow: true/);
+  it("标签走文本档出口（跟鼠标、无 caret）；关闭按钮走元素定位且不开 instant", () => {
+    // iconLabel.ts：`getDefaultHoverDelegate('mouse')` ⇒ 气泡跟鼠标、`showPointer` 为 false。
+    // B350 起这两颗开关收进 tooltip.ts 的 setTextTip 一处 —— 这里判「走没走那个出口」，
+    // 开关本身对不对由 tests/tooltip-classes.test.ts 用真 DOM 钉。
+    expect(strip, "标签必须走文本档出口").toMatch(/setTextTip\(el,/);
+    expect(ts, "文本档出口必须跟鼠标（不画 caret）").toMatch(
+      /function setTextTip[\s\S]*?follow: true/,
+    );
     // actionbar.ts 那套 `createInstantHoverDelegate()` 的 instantHover 在 LitePad 实测不要
     expect(strip, "关闭按钮不开 instant：与其它目标一样重新计时").not.toMatch(
       /setTip\(close,[\s\S]*?instant: true/,
     );
+    expect(strip, "关闭按钮是**键**，不许被升成文本档").not.toMatch(/setTextTip\(close,/);
   });
 
-  it("两者都是 compact 档（WorkbenchHoverDelegate.showHover 写死 compact: true）", () => {
-    const tabCall = /setTip\(el,[\s\S]*?\}\);/.exec(strip)?.[0] ?? "";
-    expect(tabCall, "标签：compact: true").toContain("compact: true");
+  it("紧凑档：标签由出口给，关闭按钮那颗自己写（它是带尖尖的按钮）", () => {
+    expect(ts, "setTextTip 里要写 compact: true").toMatch(
+      /function setTextTip[\s\S]*?compact: true/,
+    );
+    expect(/setTextTip\(el,/.test(strip), "标签走的是文本档出口").toBe(true);
     const closeCall = /setTip\(close,[\s\S]*?\}\);/.exec(strip)?.[0] ?? "";
     expect(closeCall, "关闭按钮：compact: true").toContain("compact: true");
   });

@@ -15,7 +15,7 @@ import { windowKind } from "../core/app-state";
 import { doOpen } from "../io/files";
 import { CODICONS } from "../shell/codicons";
 import { activeDrawer, registerDrawerView, setDrawer } from "../shell/drawer";
-import { setTip } from "../shell/tooltip";
+import { setTextTip } from "../shell/tooltip";
 import { openFolder } from "../explorer/panel";
 import { applySidebarVisible, isSidebarOff } from "../toc";
 import { recentClear, recentList, recentPanel, sideRecent, showMessage } from "../ui";
@@ -177,14 +177,8 @@ function rowOf(e: RecentEntry): HTMLElement {
   del.setAttribute("aria-label", `从最近打开里移除 ${e.name}`);
 
   // 完整路径与相对时间挂在悬停浮层上：行里两处都做了截断，看全的地方必须有。
-  // B348：档位与标签条 / 大纲同款（跟着鼠标走、紧凑档、带分组标记），所以经 setTip
-  // 挂 —— 裸写 `data-tip` 拿到的是默认档（画 caret、不跟鼠标、非紧凑），两处就不齐了。
-  setTip(row, e.path, {
-    detail: relativeTime(e.openedAt),
-    group: "recents",
-    follow: true,
-    compact: true,
-  });
+  // 档位 = 标签 / 大纲那一档（B348 定的同款，B350 起收进 setTextTip 一处）。
+  setTextTip(row, e.path, { detail: relativeTime(e.openedAt), group: "recents" });
   row.append(line, del);
   return row;
 }

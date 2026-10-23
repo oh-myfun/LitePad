@@ -13,7 +13,7 @@
 
 import { closePopupMenu } from "./menu";
 import { COMMANDS, effectiveKeys, formatBinding, parseKey, type KeymapOverrides } from "./keymap";
-import { setTip } from "./tooltip";
+import { setTextTip } from "./tooltip";
 
 export interface PaletteItem {
   id: string;
@@ -208,8 +208,9 @@ export function showCommandPalette(opts: CommandPaletteOptions): void {
         kbd.textContent = item.keys;
         row.appendChild(kbd);
       }
-      // B58：note 是命令的补充说明（行里已经有键位了），走自绘提示层
-      if (item.note) setTip(row, item.note, { group: "palette" });
+      // B58：note 是命令的补充说明（行里已经有键位了），走自绘提示层。
+      // B350：列表行归文本档（跟鼠标、不画尖尖），与标签 / 大纲 / 最近打开同一档。
+      if (item.note) setTextTip(row, item.note, { group: "palette" });
 
       row.addEventListener("mousemove", () => {
         if (active === i) return;

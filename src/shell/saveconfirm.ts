@@ -24,6 +24,8 @@
  */
 
 /** 三选一的结果。`cancel` 是唯一既没写盘、也没丢改动的那一支。 */
+import { setTip } from "./tooltip";
+
 export type SaveConfirmChoice = "save" | "discard" | "cancel";
 
 export interface SaveConfirmOptions {
@@ -70,20 +72,22 @@ export function showSaveConfirmDialog(opts: SaveConfirmOptions): Promise<SaveCon
     const actions = document.createElement("div");
     actions.className = "save-confirm-actions";
 
+    // 三颗键各带一句后果说明（B350：走自绘提示层的按钮档 = 带小尖尖；
+    // 原先的原生 title 在深色界面里是一枚不吃主题的系统气泡）。
     const save = document.createElement("button");
     save.className = "save-confirm-btn save-confirm-primary";
     save.textContent = opts.names.length > 1 ? "全部保存" : "保存";
-    save.title = "先把改动写盘，再关闭";
+    setTip(save, "先把改动写盘，再关闭");
 
     const discard = document.createElement("button");
     discard.className = "save-confirm-btn save-confirm-secondary";
     discard.textContent = "不保存";
-    discard.title = "放弃这些改动，直接关闭";
+    setTip(discard, "放弃这些改动，直接关闭");
 
     const cancel = document.createElement("button");
     cancel.className = "save-confirm-btn save-confirm-secondary";
     cancel.textContent = "取消";
-    cancel.title = "不关闭，回到编辑器";
+    setTip(cancel, "不关闭，回到编辑器");
 
     // 顺序按用户口径：保存 | 不保存 | 取消（保存在左、为主按钮）
     actions.append(save, discard, cancel);

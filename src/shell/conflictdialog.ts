@@ -16,6 +16,8 @@
  * 用户什么都没选时绝不能替他丢掉编辑器里的修改。
  */
 
+import { setTip } from "./tooltip";
+
 export type ExternalConflictChoice = "keep-mine" | "take-disk" | "compare";
 
 export interface ExternalConflictOptions {
@@ -56,20 +58,22 @@ export function showExternalConflictDialog(
     const actions = document.createElement("div");
     actions.className = "settings-actions conflict-actions";
 
+    // 三颗键的取舍都写在悬停里（B350：走自绘提示层的**按钮档** —— 带小尖尖；
+    // 原先的原生 title 在深色界面里是一枚不吃主题的系统气泡）。
     const keep = document.createElement("button");
     keep.className = "settings-ok";
     keep.textContent = "保留我的修改";
-    keep.title = "编辑器内容不动，保存时会覆盖磁盘上的外部版本";
+    setTip(keep, "编辑器内容不动，保存时会覆盖磁盘上的外部版本");
 
     const take = document.createElement("button");
     take.className = "settings-cancel";
     take.textContent = "载入磁盘版本";
-    take.title = "放弃我的未保存修改，内容换成磁盘上的";
+    setTip(take, "放弃我的未保存修改，内容换成磁盘上的");
 
     const compare = document.createElement("button");
     compare.className = "settings-cancel";
     compare.textContent = "打开磁盘版本对照";
-    compare.title = "把磁盘那份开成一个新标签，当前文档不动";
+    setTip(compare, "把磁盘那份开成一个新标签，当前文档不动");
 
     actions.append(keep, take, compare);
 
@@ -167,17 +171,17 @@ export function showSaveConflictDialog(opts: SaveConflictOptions): Promise<SaveC
     const compare = document.createElement("button");
     compare.className = "settings-ok";
     compare.textContent = "对照比较";
-    compare.title = "把磁盘那份开成一个新标签，当前文档不动";
+    setTip(compare, "把磁盘那份开成一个新标签，当前文档不动");
 
     const overwrite = document.createElement("button");
     overwrite.className = "settings-cancel";
     overwrite.textContent = "覆盖保存";
-    overwrite.title = "用编辑器里的修改覆盖磁盘上的新版本（磁盘那份会丢失）";
+    setTip(overwrite, "用编辑器里的修改覆盖磁盘上的新版本（磁盘那份会丢失）");
 
     const revert = document.createElement("button");
     revert.className = "settings-cancel";
     revert.textContent = "载入磁盘版本";
-    revert.title = "放弃我的未保存修改，内容换成磁盘上的";
+    setTip(revert, "放弃我的未保存修改，内容换成磁盘上的");
 
     actions.append(compare, overwrite, revert);
 

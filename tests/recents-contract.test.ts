@@ -190,18 +190,21 @@ describe("B305 · 侧栏结构与子窗口收口", () => {
     expect(html, "外壳首屏就得藏着").toMatch(/id="side-drawer"[^>]*hidden/);
   });
 
-  it("B348：两类之间画横线、不写小标题；行上提示经 setTip 挂（与标签/大纲同一档）", () => {
+  it("B348：两类之间画横线、不写小标题；行上提示走文本档出口（与标签/大纲同一档）", () => {
     const panelSrc = readFileSync("src/recents/panel.ts", "utf-8");
     expect(panelSrc, "分组小标题那套要撤干净（连 groupHead 函数一起）").not.toMatch(/groupHead/);
     expect(css, ".recent-group 样式要换成 .recent-divider").not.toMatch(/\.recent-group\s*\{/);
     expect(css, "分隔线要有自己的规则（拿共用 --border 画一条）").toMatch(
       /\.recent-divider\s*\{[^}]*border-top/,
     );
-    // 裸 `data-tip` = 默认档（画 caret、不跟鼠标、非紧凑），与标签条 / 大纲那一档不是一回事。
-    // ⚠️ 这里判的是「经不经过 setTip」：只有它会把 follow / compact / group 三格一起写好。
-    expect(panelSrc, "行上的提示要经 setTip").toMatch(/setTip\(\s*row\s*,/);
-    expect(panelSrc, "要开鼠标定位那一档").toMatch(/follow:\s*true/);
-    expect(panelSrc, "要开紧凑档").toMatch(/compact:\s*true/);
+    // 裸 `data-tip` = 按钮档（画 caret、不跟鼠标），与标签条 / 大纲那一档不是一回事。
+    // B350 起那一档的开关（follow / compact）收在 tooltip.ts 的 setTextTip 一处 ⇒
+    // 这里判「走没走那个出口」，站点再手抄一遍就是两边分家（改档会漏掉这一处）。
+    expect(panelSrc, "行上的提示要经文本档出口").toMatch(/setTextTip\(\s*row\s*,/);
+    expect(panelSrc, "开关由 helper 给，站点不该再出现 follow / compact 字面量").not.toMatch(
+      /follow:\s*true|compact:\s*true/,
+    );
+    expect(panelSrc, "不许退回按钮档出口 setTip(row, …)").not.toMatch(/setTip\(\s*row\s*,/);
     expect(panelSrc, "要标分组，便于以后整档调整").toMatch(/group:\s*"recents"/);
     expect(panelSrc, "不许再直接 setAttribute 挂 data-tip").not.toMatch(
       /row\.setAttribute\("data-tip"/,
