@@ -33,7 +33,7 @@
 
 1. **锁的实现机制**（spec §4 只说「两层各自成立」，未指定机制）：`EditorView.editable(false)` 挡键入/IME/粘贴/拖放，**外加** `EditorState.changeFilter` 只拒「带 `Transaction.userEvent` 标注」的改文本事务。理由：`EditorState.readOnly` 与 `editable(false)` 都**挡不住程序化 `dispatch`**，而 `edit.timeDate`（F5，`force: true`）与查找栏「替换全部」正是程序化写。跨格/跨窗口同源变更集与外部改文件重载**不带** userEvent 标注 ⇒ 天然放行，锁不会把这三条一起堵死。
 2. **尾随换行的归属**（spec 未定）：块替换区间 `to = doc.line(lineEnd).to + 1`（该行后面还有行时），否则 `= doc.line(lineEnd).to`。不吞换行会每块留一行空行。Task 5 的探针验证 CM6 是否接受。
-3. **「翻锁影响下一个」只做一半**：本版 = 应用级常量默认 `irLocked = true` + 每实例会话记忆。VS Code 那种 globalState 式「这次翻的锁成为下一份的初始态」要往 Rust settings 加字段，单独成 Task 11 并标 **可砍**，不做删除动作即可。
+3. **「翻锁影响下一个」只做一半**：本版 = 应用级常量默认 `irLocked = true` + 每实例会话记忆。VS Code 那种 globalState 式「这次翻的锁成为下一份的初始态」要往 Rust settings 加字段 —— 用户 2026-10-24 裁决**不做**，原 Task 11 已从本计划删除。
 
 ## Review Focus
 
@@ -41,9 +41,9 @@
 
 1. **锁态下的非键入写入口**：F5「插入时间/日期」（`force: true`）、查找栏「替换全部」、拖文件入编辑区、Ctrl+V 粘贴 —— 期望文本一个字不变，且不弹错误。（Task 7 的 changeFilter 用例 + Task 9 的 F5 / 替换用例）
 2. **锁态下的程序化写必须照样通过**：同源兄弟格的变更集、外部改文件后的重载、热退出副本还原 —— 期望内容更新、装饰跟着重算；锁不许把这三条一起挡死。（Task 7 的第二组用例）
-3. **中文 IME 合成中途点锁**：期望不出现半截上屏、光标不留在已被吞掉的块里、合成窗关闭。（jsdom 造不出真实 composition ⇒ 只能 Task 12 真机台 + 截图肉眼结案）
-4. **分屏两格同一文档、两格 IR 态不同**（一格 C 一格 B，或一格 A）：期望切态后仍落在同一个 `v`，不跳顶、不把另一格拽走。（Task 10 的会话用例只管记忆，行为归 Task 12 真机台）
-5. **软折行的超长段落压成一颗 widget**：期望点中间那行进的是这一块、行号不乱、滚动不因高度估算跳动。（Task 5 探针 + Task 6 用例 + Task 12 截图）
+3. **中文 IME 合成中途点锁**：期望不出现半截上屏、光标不留在已被吞掉的块里、合成窗关闭。（jsdom 造不出真实 composition ⇒ 只能 Task 11 真机台 + 截图肉眼结案）
+4. **分屏两格同一文档、两格 IR 态不同**（一格 C 一格 B，或一格 A）：期望切态后仍落在同一个 `v`，不跳顶、不把另一格拽走。（Task 10 的会话用例只管记忆，行为归 Task 11 真机台）
+5. **软折行的超长段落压成一颗 widget**：期望点中间那行进的是这一块、行号不乱、滚动不因高度估算跳动。（Task 5 探针 + Task 6 用例 + Task 11 截图）
 
 ---
 
@@ -644,23 +644,7 @@ git commit -m "feat(ir): liveRender/irLocked 进会话 · 恢复走 coerceIrStat
 
 ---
 
-### Task 11: 可砍 —— 「翻锁影响下一个」的应用级默认
-
-**只有用户点头才做。不做就删掉本节，本版交付物不受影响。**
-
-VS Code 的语义是 globalState：这次翻的锁成为**下一份文档**的初始态（`markdownEditorProvider.ts:258-262` 注释）。LitePad 要这条就得往 Rust settings 加一个布尔字段。
-
-**Files:** Modify `src-tauri/src/settings`（字段 + 默认 `true`）、`src/prefs.ts`（`setIrLockedDefault(on)` 与 `persistSettings()` 同族写法）、`src/shell/settingsdialog.ts`（通用页一项）、`tests/ir-prefs.test.ts`（新建）。
-
-- [ ] Step 1: 写失败测试 —— `IR_DEFAULT` 不再读常量而读 `settings.ir_locked_default`；缺省仍 `true`。
-- [ ] Step 2: 跑红。
-- [ ] Step 3: 实现三处 + 设置页那一项（文案不带省略号；开关立即生效 + 持久化，照 `setAutosave` 那条写法）。
-- [ ] Step 4: 跑绿，`cargo test` 一并。
-- [ ] Step 5: `git add` 点名五个文件提交 `feat(ir): 锁态默认升成应用级设置（B352-11）`。
-
----
-
-### Task 12: 全量门禁、bump、出包与真机验收
+### Task 11: 全量门禁、bump、出包与真机验收
 
 **Files:** 无源码改动（除非验收发现问题回相应任务）
 
