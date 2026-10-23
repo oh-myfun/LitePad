@@ -64,7 +64,7 @@ export class PreviewPane {
 
   constructor() {
     this.root = document.createElement("div");
-    this.root.className = "md-preview";
+    this.root.className = "md-preview md-rendered";
     // 图片/iframe 的 load 不冒泡，用捕获阶段监听——布局变化后按 pending 行重定位
     this.root.addEventListener("load", () => this.applyPending(), true);
     this.root.addEventListener("click", (e) => {

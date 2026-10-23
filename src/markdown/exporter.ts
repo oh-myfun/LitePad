@@ -22,7 +22,7 @@ ${katexCss}
 </style>
 </head>
 <body class="md-export">
-<article class="md-preview md-export-body">
+<article class="md-preview md-rendered md-export-body">
 ${bodyHtml}
 </article>
 </body>
@@ -34,7 +34,7 @@ export function printToPdf(title: string, bodyHtml: string): void {
   const holder = document.createElement("div");
   holder.id = "print-root";
   const article = document.createElement("article");
-  article.className = "md-preview";
+  article.className = "md-preview md-rendered";
   article.innerHTML = bodyHtml;
   holder.appendChild(article);
   document.body.appendChild(holder);

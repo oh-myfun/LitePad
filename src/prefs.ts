@@ -334,11 +334,11 @@ function scheduleFontSizeSave(): void {
   }, 400) as unknown as number;
 }
 
-/** 预览行距：写 :root 上的 --md-line-height，.md-preview 通过 var() 生效。 */
+/** 预览行距：写 :root 上的 --md-line-height，`.md-rendered` 通过 var() 生效。 */
 
 /** 未知档位一律落「全宽」（B235 的默认口径，也是最不容易显得窄的那档）。 */
 
-/** 预览正文宽度：写 :root 上的 --md-content-max，`.md-preview .md-block` 通过 var() 生效。 */
+/** 预览正文宽度：写 :root 上的 --md-content-max，`.md-rendered .md-block` 通过 var() 生效。 */
 
 /** 编辑器行距：写 :root 上的 --editor-line-height，.cm-content 通过 var() 生效。 */
 

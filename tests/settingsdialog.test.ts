@@ -877,17 +877,20 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
     expect(appearance, "全宽档必须是 none，写成具体 px 就仍会被截住").toMatch(/full:\s*"none"/);
 
     // CSS 侧：`.md-block` 读这个变量，且不再写死 860px
+    // （B352-1 起排版规则挂在共用类 `.md-rendered` 上，`.md-preview` 只剩容器职责）
     const css = readFileSync("src/styles/preview.css", "utf-8");
-    const block = cssDecls(ruleBlock(css, ".md-preview .md-block"));
+    const block = cssDecls(ruleBlock(css, ".md-rendered .md-block"));
     expect(block, "正文宽度应读 --md-content-max").toContain("var(--md-content-max");
     // ⚠️ B238 修正：B235 这里原先断言「`.md-preview` 上要有 `--md-content-max: none`
     //    作默认」—— **那条断言把 bug 钉成了期望**。元素自身的声明**优先于**从 `:root`
     //    继承来的值 ⇒ main.ts 写在 `:root` 的档位被整条遮蔽 ⇒ 换档永远没反应。
     //    「没设过」由 `var()` 的兜底参数负责，不需要那一行（详见下面那条 B238 契约）。
-    expect(
-      cssDecls(ruleBlock(css, ".md-preview")),
-      "变量不许在 .md-preview 上重声明",
-    ).not.toContain("--md-content-max");
+    //    B352-1：两个类都要管 —— 排版类现在是 token 的宿主，在它上面重声明会重演同一个 bug。
+    for (const sel of [".md-preview", ".md-rendered"]) {
+      expect(cssDecls(ruleBlock(css, sel)), `变量不许在 ${sel} 上重声明`).not.toContain(
+        "--md-content-max",
+      );
+    }
   });
 
   it("B238：预览布局宽度的说明保持一句（用户嫌原来的太长）", () => {

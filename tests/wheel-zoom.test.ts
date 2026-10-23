@@ -79,14 +79,15 @@ describe("Ctrl+滚轮缩放字号", () => {
     expect(zoom, "必须用 passive:false 注册，否则 preventDefault 无效").toContain("passive: false");
 
     // 预览字号不能再写死：必须跟随 --font-size（导出 HTML 只注入 preview.css，故需兜底）
+    // （B352-1 起字号在共用排版类 `.md-rendered` 上，`.md-preview` 只剩容器职责）
     const css = readFileSync("src/styles/preview.css", "utf-8");
-    const root = ruleBlock(css, ".md-preview");
-    expect(root, "应有 .md-preview 规则").toBeTruthy();
+    const root = ruleBlock(css, ".md-rendered");
+    expect(root, "应有 .md-rendered 规则").toBeTruthy();
     expect(root, "预览字号必须跟随 --font-size").toContain("var(--font-size");
     expect(root, "导出场景缺少 :root，需要 14px 兜底").toContain("var(--font-size, 14px)");
     expect(root, "预览字号不得再写死 15px").not.toMatch(/font-size:\s*15px/);
     // 代码块用 em 才会跟随缩放
-    const pre = css.match(/\.md-preview pre\.md-code[\s\S]*?\}/)?.[0] ?? "";
+    const pre = css.match(/\.md-rendered pre\.md-code[\s\S]*?\}/)?.[0] ?? "";
     expect(pre, "代码块字号必须用 em 跟随缩放").toMatch(/font-size:\s*[\d.]+em/);
   });
 });

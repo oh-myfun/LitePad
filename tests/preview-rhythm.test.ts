@@ -24,14 +24,14 @@ function hasRule(pattern: RegExp): boolean {
 function rule(selMust: string[], bodyMust: string): string | undefined {
   return rules()
     .find((r) => selMust.every((s) => r.sel.includes(s)) && r.body.includes(bodyMust))
-    ?.sel.replace(/\.md-preview /g, "");
+    ?.sel.replace(/\.md-rendered /g, "");
 }
 
 describe("预览垂直节奏（B319-A1）", () => {
   it("岛与岛之间有默认节奏，兜底值写在用处", () => {
     expect(
       hasRule(
-        /\.md-preview \.md-block \+ \.md-block\s*\{[^}]*margin-top:\s*var\(--md-flow,\s*0\.7em\)/,
+        /\.md-rendered \.md-block \+ \.md-block\s*\{[^}]*margin-top:\s*var\(--md-flow,\s*0\.7em\)/,
       ),
     ).toBe(true);
   });
@@ -52,15 +52,15 @@ describe("预览垂直节奏（B319-A1）", () => {
   });
 
   it("具体度相同的两条特例排在通用那条之后 —— 否则标题间距会被 0.7em 盖掉", () => {
-    const generic = css.indexOf(".md-preview .md-block + .md-block {");
+    const generic = css.indexOf(".md-rendered .md-block + .md-block {");
     const headFlow = css.search(/\.md-block \+ \.md-block:has\(/);
     expect(generic).toBeGreaterThanOrEqual(0);
     expect(headFlow).toBeGreaterThan(generic);
   });
 
   it("列表首末项的上下 margin 清零（堵住从 ul 穿出岛壳的那 4px）", () => {
-    expect(hasRule(/\.md-preview li:first-child\s*\{[^}]*margin-top:\s*0\b/)).toBe(true);
-    expect(hasRule(/\.md-preview li:last-child\s*\{[^}]*margin-bottom:\s*0\b/)).toBe(true);
+    expect(hasRule(/\.md-rendered li:first-child\s*\{[^}]*margin-top:\s*0\b/)).toBe(true);
+    expect(hasRule(/\.md-rendered li:last-child\s*\{[^}]*margin-bottom:\s*0\b/)).toBe(true);
   });
 
   it("岛壳不许改用 flow-root（它会把 li 的 margin 吞进壳里，壳高就不再等于内容高）", () => {
@@ -79,8 +79,8 @@ describe("预览垂直节奏（B319-A1）", () => {
 
   // Review Focus #5：导出 HTML 与 PDF 打印里没有 .md-block 岛壳，间距全靠下面这两条。
   it("子元素自己的 margin 不许被删（导出与 PDF 没有岛壳，靠的就是它们）", () => {
-    expect(hasRule(/\.md-preview p\s*\{[^}]*margin:\s*10px 0/)).toBe(true);
-    expect(hasRule(/\.md-preview h1,[^{}]*\.md-preview h6\s*\{[^}]*margin:\s*24px 0 12px/)).toBe(
+    expect(hasRule(/\.md-rendered p\s*\{[^}]*margin:\s*10px 0/)).toBe(true);
+    expect(hasRule(/\.md-rendered h1,[^{}]*\.md-rendered h6\s*\{[^}]*margin:\s*24px 0 12px/)).toBe(
       true,
     );
   });
