@@ -330,6 +330,11 @@ const SKIP_DIRS = new Set([
   // 内部智能体目录（skills/memory），不随产品发布，且体积庞大；
   // 全仓库文本扫描在此跳过以保 pre-push 门禁稳定（内存文件豁免也覆盖不到的慢路径）。
   ".workbuddy",
+  // 计划执行的台账 / 测试日志（git 忽略，`.superpowers/sdd/.gitignore` 的 `*`）。
+  // 它抓的是 vitest 原文 ⇒ 必然含本守卫那条用例的**名字本身**（旧名在名字里）
+  // ⇒ 谁跑一次任务级测试，谁就把全仓改名守卫判红（B352-3 实测：task-2-tests.log）。
+  // 同 `.tmp`：永不入库、可随时整目录删掉的历史副本，不是会泄漏到产品里的命名残留。
+  ".superpowers",
 ]);
 const BINARY_EXT = new Set([
   ".png",
