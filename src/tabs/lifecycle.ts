@@ -585,6 +585,15 @@ export async function closeTabById(tabId: number): Promise<void> {
     reconcileSyncRegistrations();
   }
   applyPanelMode(panel);
+  // —— 同步滚动 v1 · 位置恢复（B355）——————————————————————————————————————————————
+  // 上面那次 `setState` 把 scrollTop 归零了，而这一支原先到此为止 —— 用户看到的正是
+  // 「关掉旁边那张标签，原来那份文档跳回顶部」。三条「让这一格换一张标签显示」的同形路径
+  // （`switchTab`、`split.ts` 移走后的接班、这一支）里只有这里缺这一发。
+  //
+  // ⚠️ 必须排在 `applyPanelMode` **之后**：`landVisibleSideAtV` 扶的是「此刻看得见那一侧」，
+  //    而可见性由 applyPanelMode 刚写下的 `mode-*` 类决定（排在前面时，接班标签若是预览态，
+  //    那一写落在还被藏着的一侧上 = 空操作）。同 `switchTab` / `split.ts` 的次序。
+  if (panel.view && nextTab) landVisibleSideAtV(panel, nextTab.scrollV);
   if (panel.panelId === activePanelId) {
     refreshTitle();
     refreshStatus();

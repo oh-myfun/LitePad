@@ -249,6 +249,33 @@ describe("切标签序列 · 两端都按「当前可见那一侧」读写", () 
     expect(b.indexOf("readVisibleV(")).toBeLessThan(b.indexOf("setState("));
     expect(b.indexOf("landVisibleSideAtV(")).toBeGreaterThan(b.indexOf("applyPanelMode("));
   });
+
+  // B355：第三条「让这一格换一张标签显示」的路径 —— 关掉正在显示的那一张、激活相邻。
+  // 它比上面两条晚一年才补上落位，用户报的形状是「在其右边新建标签，关掉它，原文档跳回顶部」。
+  // 三条路径同形，所以三条都钉：少钉一条，将来就会又少写一条。
+  it("生产 closeTabById 的接班那一支也有落位（B355）", () => {
+    const b = bodyOf(life, "export async function closeTabById(");
+    expect(b, "接班那张必须被扶回它自己记着的位置").toContain(
+      "landVisibleSideAtV(panel, nextTab.scrollV)",
+    );
+    expect(
+      b.indexOf("landVisibleSideAtV("),
+      "排在 applyPanelMode 之后（扶的是「此刻看得见那一侧」，可见性由它写下的类决定）",
+    ).toBeGreaterThan(b.lastIndexOf("applyPanelMode("));
+    // 反向对照：摘掉这一发，判据必须落空（台子 S33 之外再留一道静态闸）
+    const BAD = b.replace(
+      "if (panel.view && nextTab) landVisibleSideAtV(panel, nextTab.scrollV);",
+      "",
+    );
+    expect(BAD, "替身必须真的摘掉过").not.toBe(b);
+    expect(BAD, "替身缺落位必须被抓到").not.toContain("landVisibleSideAtV(panel, nextTab.scrollV)");
+  });
+
+  it("宿主 closeTab 镜像同形（少抄这一发，S33 测的是宿主不是应用）", () => {
+    const b = bodyOf(host, "closeTab(panelId, index)");
+    expect(b).toContain("landVisibleSideAtV(host, nextTab.scrollV)");
+    expect(b.indexOf("landVisibleSideAtV(")).toBeGreaterThan(b.indexOf("applyPanelModeMirror("));
+  });
 });
 
 describe("预览的异步补定位 · 写在协调器栈外也要回登记", () => {

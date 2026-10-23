@@ -1779,6 +1779,83 @@ const SCENARIOS = [
           ];
     },
   },
+  {
+    id: "S33",
+    name: "滚到中段 → 右侧新建一张标签 → 关掉它 → 原文档必须还停在原处（B355）",
+    async: async ({ cdp }) => {
+      // 用户报的形状：「打开一个文档，向下滚动一下，在其右边新建标签，然后关闭标签，
+      // 原先的文档滚动位置跳回顶部了。」
+      // 三条「让这一格换了一张标签显示」的同形路径里（switchTab / split 移走后的接班 /
+      // closeTabById 的接班），只有最后那条没接落位那一发 ⇒ 这里必须红。
+      // ⚠️ 台子的 P0 会被前面几条场景攒上好几张标签（复制、新建都不回收），甚至把长文那一张
+      //    关掉，所以「第 0 张就是原文档」不成立。而生产「关闭后激活相邻」取的是
+      //    `tabs[min(idx, len-1)]` —— 在三张以上里关掉最后一张，接班的是**中间**那一张，
+      //    量的就不是原文档了（本轮第一版栽在这儿：现场 `sh == ch`，那是短文；第二版单跑
+      //    通过、全量被攒出的 4 张顶成 SKIP）。正解：先按 docId 认出长文那一张，
+      //    把它旁边的清干净（走的正是 `!wasShown` 那一支：只摘标签、不动显示内容）。
+      const ids = await cdp.evalJson(`__harness.docIds()`);
+      const p0 = (await cdp.evalJson(MEASURE)).find((x) => x.editor)?.panelId;
+      if (p0 === undefined) return ["SKIP", "台子里找不到带编辑器的那一格"];
+      for (let guard = 0; guard < 20; guard++) {
+        const docs = await cdp.evalJson(`__harness.docIdsOfTabs(${p0})`);
+        const k = docs.findIndex((d) => d === Number(ids.long));
+        if (k < 0) return ["SKIP", "长文那一张已被前面的场景关掉，这一格里没有原文档了"];
+        await cdp.evalJson(`__harness.switchTab(${p0}, ${k})`); // 让原文档那张始终在显示
+        if (docs.length <= 1) break;
+        await cdp.evalJson(`__harness.closeTab(${p0}, ${k === 0 ? 1 : 0})`); // 关不是它的那一张
+        await settle(cdp, { stableRounds: 2, timeoutMs: 3000 });
+      }
+      const shrunk = (await cdp.evalJson(MEASURE)).find((x) => x.panelId === p0);
+      if (!shrunk || shrunk.tabs.length !== 1)
+        return ["SKIP", `没收成「只有一张」的用户形状（此刻 ${shrunk?.tabs.length ?? "∅"} 张）`];
+
+      const { start, credible } = await preScroll(cdp, 900);
+      if (!credible) return ["SKIP", `预置滚动不足（${start.editor.v.toFixed(2)} 行）`];
+      const wantV = start.editor.v;
+      const at = await cdp.evalJson(`__harness.newTab(${p0})`);
+      if (typeof at !== "number" || at < 0) return ["SKIP", "右侧那张新标签没建起来"];
+      await settle(cdp, { stableRounds: 3, timeoutMs: 5000 });
+      await cdp.evalJson(`__harness.closeTab(${p0}, ${at})`);
+      const landed = await settle(cdp, { stableRounds: 4, timeoutMs: 5000 });
+      const here = landed.find((x) => x.panelId === p0);
+      const onA = here?.editor?.v ?? null;
+      if (onA === null) return ["SKIP", "关掉新标签之后量不到这一格的编辑器"];
+      // 判据分两头看，才能把「没记位置」与「记了没人扶回去」分开（修法完全不同）：
+      //   · scrollVOf(0) = 原文档那张标签**自己记着**的位置；
+      //   · editor.v     = 关掉之后这一格**实际**停在哪。
+      const memo = await cdp.evalJson(`__harness.scrollVOf(${p0}, 0)`);
+      const ctx = `接班 tab=${here.tabs.find((t) => t.active)?.tabId ?? "∅"}`;
+      // 现场诊断（B355 排查时加的，留着）：`v` 是从几何独立复算的，光看它分不清
+      // 「没人写 scrollTop」与「写了但被布局裁回去」。这三样能一口分开。
+      const diag = await cdp.evalJson(`(() => {
+        const host = document.querySelector('.panel-host[data-panel-id="${p0}"]');
+        const sc = host && host.querySelector('.cm-scroller');
+        return {
+          mode: host ? host.className : "∅",
+          top: sc ? Math.round(sc.scrollTop) : -1,
+          sh: sc ? Math.round(sc.scrollHeight) : -1,
+          ch: sc ? Math.round(sc.clientHeight) : -1,
+        };
+      })()`);
+      if (Math.abs(onA - wantV) <= TOL)
+        return [
+          "PASS",
+          `关掉旁边那张之后原文档停在 ${onA.toFixed(2)}（切走前 ${wantV.toFixed(2)}，` +
+            `它自己记的 ${memo?.toFixed(2) ?? "∅"}）⇒ 接班那一发有落位｜${ctx}`,
+        ];
+      const nearTop = onA < 1 + TOL;
+      return [
+        "FAIL",
+        `关掉新建那张之后原文档落到 ${onA.toFixed(2)}（切走前 ${wantV.toFixed(2)}），` +
+          `而它**自己记着**的是 ${memo?.toFixed(2) ?? "∅"} ⇒ ` +
+          (nearTop && memo !== null && Math.abs(memo - wantV) <= TOL
+            ? "位置没丢（记忆是对的），关标签这一支**没人把它扶回去**" +
+              "（`setState` 归零 scrollTop 之后缺 landVisibleSideAtV）"
+            : "记忆与实际两头都不对 ⇒ 先查切出时的快照，再查落位") +
+          `｜现场 ${JSON.stringify(diag)}`,
+      ];
+    },
+  },
 ];
 // ───────────────────────────── 装配 ─────────────────────────────
 

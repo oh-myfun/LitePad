@@ -109,6 +109,22 @@ export interface HarnessApi {
    */
   duplicateTab(panelId: number, index: number): number;
   /**
+   * 在该面板**右侧**新开一张标签（复刻 `newUntitled`，`tabs/lifecycle.ts`：
+   * 新文档 → `makeInstance` → `attachTabToPanel`（push + 设活动）→ `rebuildLayout`）。
+   * 返回新标签在该面板 `tabs` 里的下标。B355 需要它：用户报的形状是「新建那一张被关掉
+   * 之后，原来那张跳回顶部」，而新建走的是整轮销毁重建（与复制那一条不同）。
+   */
+  newTab(panelId: number): number;
+  /**
+   * 关掉该面板第 index 张标签（复刻 `closeTabById` 里「关的正是这一格在显示的那一张」
+   * 那一支：摘出 tabs → 激活相邻 → `viewTabId` 先认下接班 → `setState` → reconcile →
+   * `applyPanelMode` → **落位** → 刷标签条）。
+   * ⚠️ 落位那一发是 B355 补的（原先只有 `switchTab` 与 `split.ts` 的接班有，这一支没有 ⇒
+   * 关掉旁边那张标签，原文档跳回顶部）。改生产这一支的次序时必须同步改这里，
+   * 否则 S33 测的是宿主、不是应用。
+   */
+  closeTab(panelId: number, index: number): void;
+  /**
    * 把标签移入另一格面板。复刻 `tabdnd` drop → `commitTabDrop` → `moveTabToPanel`
    * （`split.ts`）→ `rebuildLayout`（销毁全部 EditorView）→ `mountView`
    * （从 `tab.state` 新建编辑器 + 活动面板 focus + applyPanelMode + reconcile）。
@@ -123,6 +139,12 @@ export interface HarnessApi {
   scrollVOf(panelId: number, index: number): number | null;
   /** 某一格的标签序号表（S31 要挑出显示这份文档的那一张再复制）。 */
   tabIdsOf(panelId: number): number[];
+  /**
+   * 某一格 `tabs` 里每一张的 **docId**（按面板里的左右次序）。
+   * S33 需要它：全量跑时前面几条场景会往这一格里塞副本 / 新标签，甚至把长文那张关掉，
+   * 「第 0 张就是原文档」这个假设不成立 ⇒ 必须先按文档认出那一张，再把它旁边的清掉。
+   */
+  docIdsOfTabs(panelId: number): number[];
   /**
    * 在**没有布局盒**的那一侧按 `v` 落位（复刻真机「刚 new 出来还没有布局 ⇒ 写入被裁到 0」
    * 那一发），随后恢复显示。用来逼出台子平时复现不了的落位重试链（B294/B295）：
@@ -191,6 +213,8 @@ export interface HarnessApi {
 let nextTabId = 1;
 let nextPanelId = 2;
 let activePanelId = 0;
+/** 新建（未命名）标签的文档号：1/2 已被两份夹具占了，从 3 起（B355 的 newTab 用）。 */
+let nextDocId = 3;
 /**
  * 跨窗口外发口的记录（B297）。生产里这个口由 `multiwindow/windows.ts` 在 `listenDocSync`
  * 里装上、把每一发「判成用户滚动」的落定位置 emit 给别的窗口；本宿主没有事件层，
@@ -533,6 +557,10 @@ function install(): void {
       const host = panels.get(panelId);
       return host ? [...host.tabs] : [];
     },
+    docIdsOfTabs(panelId) {
+      const host = panels.get(panelId);
+      return host ? host.tabs.map((id) => tabs.get(id)?.docId ?? -1) : [];
+    },
     scrollVOf(panelId, index) {
       const host = panels.get(panelId);
       const tab = host ? tabs.get(host.tabs[index]) : undefined;
@@ -584,6 +612,59 @@ function install(): void {
       activePanelId = host.panelId;
       rebuildLayoutMirror();
       return host.tabs.length - 1;
+    },
+    newTab(panelId) {
+      const host = panels.get(panelId);
+      if (!host) return -1;
+      // 同 `newUntitled`（tabs/lifecycle.ts）：新建的是**空正文的未命名**标签，不是同一份
+      // 文档的副本 —— 它的 docId 与原来那张无关，所以关掉它时连「共享位置」都不该受影响。
+      const docId = nextDocId++;
+      registerDoc(makeDoc(docId, "", "未命名", null, "UTF-8", "CRLF", false));
+      const inst = makeTab(docId, "", host.panelId, "source");
+      // `attachTabToPanel`（doc-model.ts:154-158）：入表 + push 到末尾 + 设活动，**不动 viewTabId**；
+      // 随后生产走 `rebuildLayout()`（整轮销毁重建，落位在 remount 里）。
+      host.tabs.push(inst.tabId);
+      host.activeTabId = inst.tabId;
+      const chip = document.createElement("div");
+      chip.className = "tab";
+      chip.dataset.tabId = String(inst.tabId);
+      chip.textContent = `未命名#${inst.tabId}`;
+      host.bodyEl?.querySelector(".panel-tabstrip")?.append(chip);
+      activePanelId = host.panelId;
+      rebuildLayoutMirror();
+      renderTabstripMirror(host);
+      return host.tabs.length - 1;
+    },
+    closeTab(panelId, index) {
+      const host = panels.get(panelId);
+      if (!host || host.tabs.length < 2) return;
+      const tabId = host.tabs[index];
+      const idx = host.tabs.indexOf(tabId);
+      if (tabId === undefined || idx < 0) return;
+      // —— 逐行对 `closeTabById` 的「关的正是这一格在显示的那一张」分支 ——
+      host.tabs = host.tabs.filter((id) => id !== tabId);
+      tabs.delete(tabId);
+      host.bodyEl?.querySelector(`.tab[data-tab-id="${tabId}"]`)?.remove();
+      // B45 那一支：关的是**后台**标签 ⇒ 不动显示内容，只刷标签条。
+      // （S33 要先用它把面板收成「只有一张」的用户形状，再走显示那一支。）
+      if (host.viewTabId !== tabId && host.activeTabId !== tabId) {
+        renderTabstripMirror(host);
+        return;
+      }
+      const nextId = host.tabs[Math.min(idx, host.tabs.length - 1)];
+      host.activeTabId = nextId;
+      const nextTab = tabs.get(nextId);
+      if (host.view && nextTab) {
+        host.viewTabId = nextId;
+        host.view.setState(nextTab.state);
+        reconcileSyncRegistrations();
+      }
+      applyPanelModeMirror(host);
+      // B355：生产在这一发之后补了落位（`switchTab` / `split.ts` 同口径，排在
+      // `applyPanelMode` 之后才扶得着「此刻看得见那一侧」）。宿主跟着一起改 ——
+      // 这一行不在，S33 测的就是宿主而不是应用。
+      if (host.view && nextTab) landVisibleSideAtV(host, nextTab.scrollV);
+      renderTabstripMirror(host);
     },
     moveTab(tabId, hostPanelId) {
       const tab = tabs.get(tabId);
