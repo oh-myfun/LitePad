@@ -184,8 +184,11 @@ widget：`WidgetType` 子类，`toDOM()` 造 `<div class="md-rendered md-ir-bloc
 - **键盘**：光标移进块区间 ⇒ 选区相交 ⇒ 装饰消失，原始文本现形。零代码。
 - **鼠标**：widget 上 `mousedown` ⇒ `view.posAtCoords()` 反查 ⇒ dispatch selection ⇒ 该块装饰消失。
   列级精度不保证，保证的是**这一块的合理位置**；反查失败就落该块 `lineStart` 行首，不报错、不吞点击。
-- 锁态：装饰层按 `locked` 全装饰，`EditorView.editable(false)` + `EditorState.readOnly` 同时置 ⇒
-  两层各自成立才算锁死（一层漏了就是「锁着还能改」）。
+- 锁态：装饰层按 `locked` 全装饰，`EditorView.editable.of(false)` **外加** `EditorState.changeFilter`
+  （只拒「改文本且带 `Transaction.userEvent` 标注」的事务）⇒ 两层各自成立才算锁死。
+  ⚠️ 原写法 `EditorState.readOnly` 被换掉是计划增量 1：`readOnly` 与 `editable(false)` 都只管用户手势
+  与 CM6 自带命令，**挡不住** `dispatch`；而 changeFilter 若一刀切拒掉所有改文本，会把
+  「同源兄弟格变更集 / 外部改文件重载 / 热退出副本还原」这三条程序化写一起堵死 ⇒ 按 userEvent 分类。
 
 ### 4. 那颗悬浮键：三态循环（本轮定稿的核心）
 
@@ -304,8 +307,11 @@ fixed 会把每一格的键都钉到窗口同一角并叠起来。所以：
   非法值回落默认（`"off"` / `true`）。
 - **纯函数判据**：`irDecorationsFor` 表驱动用例（光标在内/在外/多光标/跨块选区/首末块/空文档/单行块/锁态）；
   反向对照用内存替身（把「相交就不发」改成「无条件全发」必须被抓红）。
-- 锁态三条同时成立：`EditorView.editable(false)`、`EditorState.readOnly`、装饰层「零焦点例外」；
-  锁态下任何写入口（键入/粘贴/拖入/命令）不得产生事务；焦点块左边条不画。
+- 锁态三条同时成立：`EditorView.editable.of(false)`、`EditorState.changeFilter`（拒带 userEvent 的改文本）、
+  装饰层「零焦点例外」；锁态下**用户手势类**写入口（键入/粘贴/拖入/IME）不得改文本，
+  命令层写入口（F5 插入时间、查找栏替换全部）由 `irEditable(tab)` 这道闸自拒（Task 9）；
+  只改选区的事务与不带 userEvent 的程序化写**必须**照常通过（同源变更集 / 外部重载 / 副本还原）；
+  焦点块左边条不画。
 - 只读退化：`doc.readonly` 时循环只有 `A ⇄ B`，C 不可达。
 - 门槛：`autoPreview` 关档 ⇒ 那颗键不出现（DOM 里没有这颗按钮节点，而不是 `disabled`）。
 - 分层：那颗键的定位上下文是**面板壳**，判据不许出现 `position: fixed`（多面板会叠）。

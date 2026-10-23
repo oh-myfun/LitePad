@@ -25,7 +25,11 @@ import { clearTip } from "./shell/tooltip";
 import { logger } from "./core/logger";
 import { perfProfileFor } from "./editor/perf";
 import { renderBlocks } from "./markdown/pipeline";
-import { setIrBlocks } from "./markdown/live-render";
+import { setIrBlocks, liveRenderExtensions } from "./markdown/live-render";
+import { nextIrState, type IrState } from "./markdown/ir-state";
+import { EditorState, Transaction, type Extension } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
+import { gutterExtensions } from "./editor/editor";
 import { rightNeighborOf } from "./core/layout";
 import { renderPanelOps, renderPanelTabs, splitPanelWithTab, switchTab } from "./tabs";
 import { updateTocDrawer } from "./toc";
@@ -70,6 +74,9 @@ function renderMarkdownFor(panel: Panel, force = false): void {
   const preview = panel.preview;
   const tab = tabs.get(panel.activeTabId);
   if (!preview || !tab || !isMdTab(tab)) return;
+  // B352：开着即时渲染的那一格不重画整篇预览 —— 预览面本来就是藏的，而「每防抖一拍把整篇
+  // 重新 patch 一遍」正是 IR 这条路要避免的反目标。块表由同一条防抖里的 `refreshIr` 喂装饰层。
+  if (tab.liveRender === "ir") return;
   const doc = docOf(tab);
   preview.setBaseDir(doc.path ? dirname(doc.path) : null);
 
@@ -109,6 +116,103 @@ function refreshIr(tab: Tab): void {
   const spec = { effects: setIrBlocks.of(blocks) };
   if (view && view.state === tab.state) view.dispatch(spec);
   else tab.state = tab.state.update(spec).state;
+}
+
+/** 命令层的写闸门：只有「渲染 + 锁」这一态不许改文本（源码面与可写渲染态照旧）。 */
+export function irEditable(tab: Tab): boolean {
+  return tab.liveRender === "off" || !tab.irLocked;
+}
+
+/**
+ * 锁的真机制（计划增量 1）—— 两层各自成立，缺一不可：
+ *
+ * · `EditorView.editable.of(false)` 关掉 contenteditable ⇒ 键入、IME、粘贴、拖放都进不来；
+ * · `EditorState.changeFilter` 再挡**程序化**派发：只拒「改文本且带 `Transaction.userEvent` 标注」的那一类。
+ *
+ * 为什么不能只靠 `editable(false)` / `EditorState.readOnly`：那两条只管用户手势与 CM6 自带命令，
+ * 挡不住 `dispatch` —— 而 F5「插入时间/日期」（`force: true`）与查找栏「替换全部」正是程序化写
+ * （它们自己走 `irEditable` 这道闸，Task 9）。反过来，同源兄弟格的变更集、外部改文件后的重载、
+ * 热退出副本还原都**不带** userEvent ⇒ 天然放行，锁不会把这三条一起堵死。
+ * 只改选区的事务也放行：锁态下大纲跳转与查找栏移动光标仍然要能用。
+ */
+export function irExtensionsFor(s: IrState): Extension[] {
+  const locked = s.liveRender === "ir" && s.irLocked;
+  return [
+    EditorView.editable.of(!locked),
+    ...(locked
+      ? [
+          EditorState.changeFilter.of(
+            (tr) => !(tr.docChanged && tr.annotation(Transaction.userEvent)),
+          ),
+        ]
+      : []),
+  ];
+}
+
+/**
+ * 换态落地：把 `next` 这套 IR 状态装到这份实例上（悬浮键、直达命令、会话恢复共用这一发）。
+ *
+ * ⚠️ 顺序本身就是判据（`tests/ir-apply.test.ts` 钉住）：
+ *   读 v → 写状态 → 重配扩展 → setState → 换类 → 落位 → 重注册。
+ *   读 v 一旦排到写状态之后，`sideOfPanel` 按新状态判「哪一侧看得见」，读到的还是
+ *   被 `display:none` 归零的那一侧 ⇒ `keepV` 恒 1.00 ⇒ 落位把刚现形的一侧钉回文档顶部
+ *   （B293 那条真机台账，同一族的坑）。
+ */
+function applyIrState(panel: Panel, tab: Tab, next: IrState): void {
+  if (!panel.bodyEl) return;
+  const keepV = readVisibleV(panel);
+  // 换态不是编辑：装饰层上线/下线、编辑面开关都可能让 CM6 产生事务，一律不许置脏
+  setSuppressDirty(true);
+  const sourceEditor = panel.view;
+  const doc = docOf(tab);
+  const locked = next.liveRender === "ir" && next.irLocked;
+  const baseDir = doc?.path ? dirname(doc.path) : null;
+  try {
+    tab.liveRender = next.liveRender;
+    tab.irLocked = next.irLocked;
+    tab.state = tab.state.update({
+      effects: [
+        // 装饰层与锁的扩展同住 `comps.ir`：`editable`/`changeFilter` 是 facet 扩展，不是事务效果，
+        // 塞进 `effects` 里过不了类型；同槽换掉也保证「关态时锁的残留一起没了」。
+        tab.comps.ir.reconfigure([
+          ...liveRenderExtensions({ ir: next.liveRender === "ir", locked, baseDir }),
+          ...irExtensionsFor(next),
+        ]),
+        // 渲染态关掉整条 gutter（B352-5 裁定：块装饰下被盖住的源行不再发行号，
+        // 留着就是一栏说谎的跳号）；回源码态给回 M4 档位那份。
+        tab.comps.gutter.reconfigure(
+          next.liveRender === "ir"
+            ? []
+            : gutterExtensions(perfProfileFor(doc?.sizeClass ?? "normal")),
+        ),
+      ],
+    }).state;
+    panel.view?.setState(tab.state);
+    applyPanelMode(panel);
+    // 焦点给回编辑器只在「渲染且可写」那一态要：锁态点它没意义，源码面本来就有焦点。
+    // 必须排在 applyPanelMode 之后（隐藏元素 focus 静默失败，B190）。
+    if (!locked && next.liveRender === "ir") sourceEditor?.focus();
+    if (keepV !== null) landVisibleSideAtV(panel, keepV);
+    // 显隐/在册面跟着变了 ⇒ 重注册（B285/B310 那一族：漏了就剩一个被藏起来的锚点在拽对栏）
+    reconcileSyncRegistrations();
+  } finally {
+    setSuppressDirty(false);
+  }
+  // 块表紧跟着补一发：刚 reconfigure 出来的字段是空的，不喂就出现「按了键但画面不动」
+  refreshIr(tab);
+  scheduleSessionSave();
+}
+
+/** 悬浮锁键的那一下：三态循环的后继由 `nextIrState` 唯一决定，这里只管落地。 */
+function cycleIrState(tab: Tab): void {
+  const panel = getPanel(tab.panelId);
+  const doc = docOf(tab);
+  if (!panel || !panel.bodyEl || !doc) return;
+  applyIrState(
+    panel,
+    tab,
+    nextIrState({ liveRender: tab.liveRender, irLocked: tab.irLocked }, { readonly: doc.readonly }),
+  );
 }
 
 function scheduleMdRender(panelId: number): void {
@@ -291,6 +395,8 @@ export {
   renderMarkdownFor,
   scheduleMdRender,
   refreshIr,
+  applyIrState,
+  cycleIrState,
   toggleViewMode,
   openPreviewToSide,
   refreshViewModeButton,
