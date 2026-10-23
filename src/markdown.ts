@@ -33,7 +33,7 @@ import {
   toggleIrRenderState,
   type IrState,
 } from "./markdown/ir-state";
-import { EditorState, Transaction, type Extension } from "@codemirror/state";
+import { EditorState, Transaction, type Extension, type StateEffect } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { gutterExtensions } from "./editor/editor";
 import { rightNeighborOf } from "./core/layout";
@@ -163,35 +163,60 @@ export function irExtensionsFor(s: IrState): Extension[] {
  *   被 `display:none` 归零的那一侧 ⇒ `keepV` 恒 1.00 ⇒ 落位把刚现形的一侧钉回文档顶部
  *   （B293 那条真机台账，同一族的坑）。
  */
+/**
+ * 「这一套 IR 状态 ⇒ 两个 Compartment 的重配效果」——`applyIrState`（有 DOM 的那条路）与
+ * `restoreIrState`（会话恢复，还没有 DOM）共用这一份算法。
+ *
+ * 两处分开写就是 B304 那一族：一边改了另一边没改，键显示的状态与画面各说一套。
+ * 装饰层与锁的扩展同住 `comps.ir`：`editable` / `changeFilter` 是 facet 扩展，不是事务效果，
+ * 塞进 `effects` 里过不了类型；同槽换掉也保证「关态时锁的残留一起没了」。
+ */
+function irCompsEffects(tab: Tab, next: IrState): StateEffect<unknown>[] {
+  const doc = docOf(tab);
+  const locked = next.liveRender === "ir" && next.irLocked;
+  const baseDir = doc?.path ? dirname(doc.path) : null;
+  return [
+    tab.comps.ir.reconfigure([
+      ...liveRenderExtensions({ ir: next.liveRender === "ir", locked, baseDir }),
+      ...irExtensionsFor(next),
+    ]),
+    // 渲染态关掉整条 gutter（B352-5 裁定：块装饰下被盖住的源行不再发行号，
+    // 留着就是一栏说谎的跳号）；回源码态给回 M4 档位那份。
+    tab.comps.gutter.reconfigure(
+      next.liveRender === "ir" ? [] : gutterExtensions(perfProfileFor(doc?.sizeClass ?? "normal")),
+    ),
+  ];
+}
+
+/**
+ * 会话恢复路径：把盘上读到的两个字段装进这份实例。
+ *
+ * 为什么不能只写字段：`makeTabState` 给的是 `comps.ir.of([])`，扩展没上线时
+ * `liveRender = "ir"` 的实例会长出一颗「渲染·锁」的键、画面却是纯源码，而预览又被
+ * `renderMarkdownFor` 的 IR 闸门挡住 ⇒ 用户看到一片空白。此刻面板还没建、EditorView
+ * 还没挂，所以 `applyIrState` 那一半 DOM（落位 / 重注册 / 刷新键）在这里无从谈起 ——
+ * 那些排在 `mountView` 之后，由既有流程接管。
+ *
+ * 只读文档的 C 不可达：盘上写着「解锁」也按回锁着（与 `nextIrState` 同一条约束）。
+ */
+function restoreIrState(tab: Tab, next: IrState): void {
+  const irLocked = next.irLocked || docOf(tab).readonly;
+  tab.liveRender = next.liveRender;
+  tab.irLocked = irLocked;
+  tab.state = tab.state.update({ effects: irCompsEffects(tab, next) }).state;
+}
+
 function applyIrState(panel: Panel, tab: Tab, next: IrState): void {
   if (!panel.bodyEl) return;
   const keepV = readVisibleV(panel);
   // 换态不是编辑：装饰层上线/下线、编辑面开关都可能让 CM6 产生事务，一律不许置脏
   setSuppressDirty(true);
   const sourceEditor = panel.view;
-  const doc = docOf(tab);
   const locked = next.liveRender === "ir" && next.irLocked;
-  const baseDir = doc?.path ? dirname(doc.path) : null;
   try {
     tab.liveRender = next.liveRender;
     tab.irLocked = next.irLocked;
-    tab.state = tab.state.update({
-      effects: [
-        // 装饰层与锁的扩展同住 `comps.ir`：`editable`/`changeFilter` 是 facet 扩展，不是事务效果，
-        // 塞进 `effects` 里过不了类型；同槽换掉也保证「关态时锁的残留一起没了」。
-        tab.comps.ir.reconfigure([
-          ...liveRenderExtensions({ ir: next.liveRender === "ir", locked, baseDir }),
-          ...irExtensionsFor(next),
-        ]),
-        // 渲染态关掉整条 gutter（B352-5 裁定：块装饰下被盖住的源行不再发行号，
-        // 留着就是一栏说谎的跳号）；回源码态给回 M4 档位那份。
-        tab.comps.gutter.reconfigure(
-          next.liveRender === "ir"
-            ? []
-            : gutterExtensions(perfProfileFor(doc?.sizeClass ?? "normal")),
-        ),
-      ],
-    }).state;
+    tab.state = tab.state.update({ effects: irCompsEffects(tab, next) }).state;
     panel.view?.setState(tab.state);
     applyPanelMode(panel);
     // 焦点给回编辑器只在「渲染且可写」那一态要：锁态点它没意义，源码面本来就有焦点。
@@ -440,6 +465,7 @@ export {
   cycleIrState,
   toggleIrRender,
   toggleIrLock,
+  restoreIrState,
   toggleViewMode,
   openPreviewToSide,
   refreshViewModeButton,

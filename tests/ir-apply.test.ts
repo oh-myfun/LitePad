@@ -64,10 +64,18 @@ describe("B352-7 顺序判据：applyIrState 的落地顺序本身就是契约",
   });
 
   it("渲染态关掉整条 gutter（B352-5 的裁定），源码态给回档位那份", () => {
-    const body = fnBody(md, "applyIrState");
-    expect(body, "换态必须重配 comps.gutter").toMatch(/comps\.gutter\.reconfigure\(/);
-    expect(body, "渲染态那一支必须是空扩展").toMatch(
+    // B352-10：「状态 → 两个 Compartment 的重配」搬进了 `irCompsEffects`（会话恢复也要用同一份
+    // 算法，那时没有 DOM 那一半）。判据跟着搬到它身上，另加一条「换态确实走它」。
+    const effects = fnBody(md, "irCompsEffects");
+    expect(effects, "取到函数体了没？").toBeTruthy();
+    expect(effects, "必须重配 comps.gutter").toMatch(/comps\.gutter\.reconfigure\(/);
+    expect(effects, "渲染态那一支必须是空扩展").toMatch(
       /===\s*"ir"\s*\?\s*\[\]\s*:\s*gutterExtensions/,
+    );
+    expect(effects, "装饰层与锁同住 comps.ir 那一槽").toMatch(/comps\.ir\.reconfigure\(/);
+    const body = fnBody(md, "applyIrState");
+    expect(body, "换态不许自己再拼一份扩展（两份口径迟早分裂）").toMatch(
+      /irCompsEffects\(tab,\s*next\)/,
     );
   });
 

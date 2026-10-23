@@ -27,6 +27,9 @@ import { logger } from "../core/logger";
 import { LayoutNode, leaf } from "../core/layout";
 import { isMdTab, makeDoc, makeInstance, markDiskVersion, registerDoc } from "../doc-model";
 import { normalizeSizeClass } from "../editor/perf";
+// B352-10：即时渲染的恢复出口（写状态 + 装扩展都在里面）与那一道取值白名单
+import { restoreIrState } from "../markdown";
+import { coerceIrState } from "../markdown/ir-state";
 import {
   OpenedFile,
   newTab as ipcNewTab,
@@ -326,6 +329,12 @@ export async function restoreSession(): Promise<boolean> {
     if (isMdTab(inst) && (st.viewMode === "source" || st.viewMode === "preview")) {
       inst.viewMode = st.viewMode;
     }
+    // B352-10：恢复即时渲染的两个状态位。取值只经 `coerceIrState` 这一道白名单 —— 照抄上面
+    // `viewMode` 那种手写枚举就是第二份口径（B304 那一族），而 `liveRender` 的合法值将来还要加
+    // （`"wysiwyg"`）。装扩展与写状态都在 `restoreIrState` 里一次做完：只写字段的话，键会显示
+    // 「渲染·锁」而画面还是纯源码、预览又被 IR 闸门挡住 ⇒ 一片空白。
+    if (isMdTab(inst))
+      restoreIrState(inst, coerceIrState({ liveRender: st.liveRender, irLocked: st.irLocked }));
     // 恢复光标（实例独立）
     const lineNo = Math.min(Math.max(1, st.cursorLine || 1), inst.state.doc.lines);
     const line = inst.state.doc.line(lineNo);

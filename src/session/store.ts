@@ -36,6 +36,13 @@ export interface SessionTabRecord {
    * 同文档兄弟格那份对的记忆覆盖成顶部（B299 那一族）。落盘时只由**看得见那一侧**现采。
    */
   scrollV: number | null;
+  /**
+   * B352-10：即时渲染的两个状态位。`null` = 没记过（非 md 标签也写 null，与 `viewMode` 同口径），
+   * `"off"` 是「进过渲染、又退回源码」—— 两件事，混成一份就恢复不回用户离开时的样子。
+   */
+  liveRender: string | null;
+  /** 渲染态的锁位：`false` = 用户明确解过锁，`null` = 从没记过（恢复时回落 `true`，B302 同一个理由）。 */
+  irLocked: boolean | null;
 }
 
 /** 一个面板的会话记录：标签顺序 + 活动标签。 */
@@ -65,6 +72,8 @@ function blankRecord(tabId: number, docId: number): SessionTabRecord {
     backupId: null,
     syncMode: false,
     scrollV: null,
+    liveRender: null,
+    irLocked: null,
   };
 }
 
@@ -80,6 +89,8 @@ function toDisk(r: SessionTabRecord): TabSession {
     docId: r.docId,
     syncMode: r.syncMode,
     scrollV: r.scrollV,
+    liveRender: r.liveRender,
+    irLocked: r.irLocked,
   };
 }
 
@@ -174,6 +185,19 @@ class SessionStore {
   setScrollV(tabId: number, v: number | null): void {
     const r = this.recs.get(tabId);
     if (r) r.scrollV = v;
+  }
+
+  /**
+   * B352-10：即时渲染的模式位与锁位。唯一写点（B304 的口径：显示与行为两处写迟早分裂）。
+   *
+   * 值由 `refreshSession` 从活动态刷进来 —— 这份记录是**会话的出口**，不是视图的副本，
+   * 所以这里不校验取值（`"wysiwyg"` 之类由恢复侧的 `coerceIrState` 兜）。
+   */
+  setIr(tabId: number, liveRender: string | null, irLocked: boolean | null): void {
+    const r = this.recs.get(tabId);
+    if (!r) return;
+    r.liveRender = liveRender;
+    r.irLocked = irLocked;
   }
 
   // ---------------------------------------------------------------- 结构（面板 / 布局）
