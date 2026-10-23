@@ -1136,7 +1136,20 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     expect(drag, "拖拽默认光标与竖线一致").toMatch(/cursor:\s*ew-resize/);
     expect(cssCode, "不得残留 mac 档 col-resize").not.toContain("col-resize");
     expect(cssCode, "不得残留 mac 档 row-resize").not.toContain("row-resize");
-    expect(cssCode, "不得残留 nwse-resize（角手柄改用 all-scroll）").not.toContain("nwse-resize");
+    // B61 那条「角 = all-scroll、不得用斜向箭头」的**范围是分屏的角手柄**，不是全应用。
+    // ⚠️ 别把它写回 `expect(cssCode).not.toContain("nwse-resize")`：那是拿全应用禁令守一个
+    //    局部裁决 —— B353 它就顶过一次窗框四角，B356 用户点名「设置窗口四角的光标不合理」，
+    //    改回对角箭头之后禁令若还是全应用范围，就是把自己要做的东西判红。
+    //    分屏（gridview 2×2，一把手推两条互相垂直的 sash ⇒ 对角不唯一）恒用 all-scroll 这件事，
+    //    由下面那条正向断言 + 这里 scoped 的反向断言各守一半。
+    const cornerScope = [
+      ruleBlock(css, ".layout-corner"),
+      ruleBlock(css, "body.layout-dragging.layout-dragging-corner"),
+    ].join("\n");
+    expect(cornerScope, "要能定位到分屏角手柄那两条光标规则").not.toBe("");
+    expect(cornerScope, "分屏角手柄不得改用斜向箭头（网格里的角没有唯一对角）").not.toMatch(
+      /nwse-resize|nesw-resize/,
+    );
     expect(css, "上下分屏拖拽光标与横线一致").toMatch(
       /body\.layout-dragging\.layout-dragging-v\s*\{[^}]*ns-resize/,
     );
@@ -1149,6 +1162,26 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     );
     // 大纲分隔条与分屏分隔条同款（B28 约定）
     expect(previewCss, "大纲分隔条光标同款").toMatch(/\.side-resizer\s*\{[^}]*cursor:\s*ew-resize/);
+
+    // 自证：把分屏角手柄改成斜向箭头，两条断言都必须落空（否则 scoped 那条是恒真 ——
+    // 它「不再看全文件」之后，很容易悄悄变成一条谁都不违规的空断言）。
+    const BAD = css.replace(
+      /\.layout-corner\s*\{([^}]*)cursor:\s*all-scroll;/,
+      ".layout-corner {$1cursor: nwse-resize;",
+    );
+    expect(BAD, "替身必须真的改过角手柄").not.toBe(css);
+    expect(() => {
+      expect(BAD, "替身丢了 all-scroll 必须被抓到").toMatch(
+        /\.layout-corner\s*\{[^}]*cursor:\s*all-scroll/,
+      );
+    }).toThrow();
+    expect(() => {
+      const badScope = [
+        ruleBlock(BAD, ".layout-corner"),
+        ruleBlock(BAD, "body.layout-dragging.layout-dragging-corner"),
+      ].join("\n");
+      expect(badScope, "替身的斜向箭头必须被抓到").not.toMatch(/nwse-resize|nesw-resize/);
+    }).toThrow();
   });
 });
 

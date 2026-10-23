@@ -52,6 +52,12 @@
      对照 VS Code `base/browser/ui/menu/menu.ts`：那边菜单行是 `.action-menu-item { height: 24px }`，
      用户要的是「与菜单栏一致」⇒ 取本应用已有的 22px 这一档，不跟它换 24。 */
   --menu-item-h: 22px;
+  /* B356（用户点名「设置窗口顶部的搜索区改的紧凑点」）：设置页里**输入类控件**的高度档。
+     原先搜索框自己写 32px，而它下面几行的下拉触发器写 28px —— 同一张面板里两档并存，
+     这就是「不紧凑」的实质（不是数值大小本身，是没跟已有的那颗档位走）。
+     取已有的 28px（`.dropdown-trigger` 那一档），两边同引用这一颗：写死数值的话
+     改一处就分家（同上面 --menu-item-h 的由来）。 */
+  --input-h: 28px;
   /* B196：卡片几何的两档量，取值对齐 VS Code 的 floating panel 那一档
      （用户点名「拖拽区宽度、卡片与窗口边缘的宽度都参考 VS Code」）：
        · --card-gap = 两张卡片之间的空隙，同时也是**拖拽区**的宽度。
@@ -2211,9 +2217,14 @@ button:focus-visible {
    ⚠️ 角必须排在边**之后**：同特异性后写者胜，先写角就会被边盖住，角就拖不动了。
    ⚠️ 八条各自成规则（不合并选择器）：`cursor` 每一向都不同，合并就得给同一颗 cursor，
       四个方向的手感一起坏。判据按 data-edge 逐条查（tests/windowframe.test.ts）。
-   ⚠️ 四颗角一律 `all-scroll`（不是 nwse/nesw）：B61 已把「同时对角两向」这一档
-      在全应用定成 all-scroll（`.layout-corner` 同值，`tests/splitview.test.ts` 里
-      那条「不得残留 nwse-resize」守着它）。窗框另起一颗对角箭头就是两套口径。 */
+   四颗角用**对角箭头**（B356，用户点名「四个角落拖拽鼠标光标用的不太合理」）：
+   左上 / 右下 = `nwse-resize`，右上 / 左下 = `nesw-resize` —— 配对照 VS Code
+   `base/browser/ui/sash/sash.css:74-86` 那两条覆盖规则（横向 sash + `orthogonal-edge-north`
+   的 start 端 = 左上 = nwse，end 端 = 右上 = nesw）。
+   ⚠️ 别拿 B61 那条「角手柄 = all-scroll」套到窗框上：那条管的是**分屏**的正交角手柄
+   （gridview 的 2×2，一个把手同时推两条互相垂直的 sash ⇒ 对角不唯一，四向箭头才对）；
+   而窗框是**定尺盒子**的四条边（正是 `resizable.ts` 会去设 `orthogonal-edge-north/south`
+   那一形），每颗角只对应一条确定的对角线 ⇒ 斜向箭头才说得出「这一角往哪缩」。 */
 .win-resize {
   position: absolute;
   z-index: 1;
@@ -2256,7 +2267,7 @@ button:focus-visible {
   top: 0;
   width: 10px;
   height: 10px;
-  cursor: all-scroll;
+  cursor: nwse-resize;
 }
 
 .win-resize[data-edge="ne"] {
@@ -2264,7 +2275,7 @@ button:focus-visible {
   top: 0;
   width: 10px;
   height: 10px;
-  cursor: all-scroll;
+  cursor: nesw-resize;
 }
 
 .win-resize[data-edge="sw"] {
@@ -2272,7 +2283,7 @@ button:focus-visible {
   bottom: 0;
   width: 10px;
   height: 10px;
-  cursor: all-scroll;
+  cursor: nesw-resize;
 }
 
 .win-resize[data-edge="se"] {
@@ -2280,7 +2291,7 @@ button:focus-visible {
   bottom: 0;
   width: 10px;
   height: 10px;
-  cursor: all-scroll;
+  cursor: nwse-resize;
 }
 
 /* ---------- 统一设置页（B106：原「设置 → 首选项 / 快捷键」合并为三栏设置页） ---------- */
@@ -2293,8 +2304,11 @@ button:focus-visible {
 .settings-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: 6px;
+  /* B356 紧凑化：纵向 10 → 6px（= 左栏按钮列那一档，见 `.side-bar` 的 padding-top）。
+     横向**保持** 12px —— 它与标题栏 `.win-head` 的 `padding-left: 12px` 是同一条左边线，
+     搜索框与「设置」那两个字要左对齐；收到 8px 就变成两列参差。 */
+  padding: 6px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elevated);
 }
@@ -2303,10 +2317,12 @@ button:focus-visible {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 8px;
+  /* 6px 与 `.dropdown-trigger` 同值（那颗控件也在这一页里，图标与文字之间也是这个间距）。 */
+  gap: 6px;
   min-width: 0;
   padding: 0 10px;
-  height: 32px;
+  /* 原先自成一档 32px，比同页的下拉触发器（28px）大一档 ⇒ 收回来跟共用档位走。 */
+  height: var(--input-h);
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg);
@@ -3829,7 +3845,8 @@ body.tab-drag-active * {
   display: inline-flex;
 }
 
-/* 触发器：与设置页输入框 / 工具栏按键同一组 border / radius / bg / hover / focus 环 */
+/* 触发器：与设置页输入框 / 工具栏按键同一组 border / radius / bg / hover / focus 环，
+   高度也同取 `--input-h`（B356：那颗档就是从这里出来的，两处各写数字迟早分家）。 */
 .dropdown-trigger {
   display: inline-flex;
   align-items: center;
@@ -3837,7 +3854,7 @@ body.tab-drag-active * {
   gap: 6px;
   width: 100%;
   min-width: 150px;
-  height: 28px;
+  height: var(--input-h);
   padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: 6px;

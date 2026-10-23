@@ -256,24 +256,66 @@ describe("buildFrame（装上之后的那一下拖拽）", () => {
 describe("把手的鼠标形状（CSS 契约）", () => {
   it("八向各有对应 cursor，缺一个就那个方向手感不对", () => {
     const css = stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
-    // 四颗角一律 all-scroll：全应用「同时对角两向」就这一档（`.layout-corner` 同值，
-    // B61 定的；`tests/splitview.test.ts` 有一条「不得残留 nwse-resize」守着它）。
-    // 窗框自创一颗对角箭头 = 同一个动作两种光标 ⇒ 那条守卫会把它判红，判得对。
+    // 四颗角用**对角箭头**（B356，用户点名「四个角落拖拽鼠标光标用的不太合理」）。
+    // 逐向写死在这张表里 = 配对也被钉住：`nw`/`se` 是一条对角（nwse），`ne`/`sw` 是另一条
+    //（nesw），整体互换或单条写反都会红。配对的出处是 VS Code
+    // `base/browser/ui/sash/sash.css:74-86`（横向 sash + `orthogonal-edge-north`：start 端
+    // 在左 ⇒ nwse、end 端在右 ⇒ nesw；`-south` 反过来）。
+    // ⚠️ 别再退回 all-scroll：那是 B61 给**分屏正交角手柄**定的档（一把手推两条 sash，
+    //    对角不唯一），窗框每颗角只有一条对角线 ⇒ 四向箭头说不出「这一角往哪缩」。
     const want: Record<WinEdge, string> = {
       n: "ns-resize",
       s: "ns-resize",
       e: "ew-resize",
       w: "ew-resize",
-      ne: "all-scroll",
-      sw: "all-scroll",
-      nw: "all-scroll",
-      se: "all-scroll",
+      ne: "nesw-resize",
+      sw: "nesw-resize",
+      nw: "nwse-resize",
+      se: "nwse-resize",
     };
     for (const e of EDGES) {
       const block = new RegExp(`\\.win-resize\\[data-edge="${e}"\\]\\s*\\{([^}]*)\\}`).exec(css);
       expect(block, `.win-resize[data-edge="${e}"] 规则缺失`).toBeTruthy();
       expect(block![1], `${e} 向没写 cursor`).toContain(`cursor: ${want[e]}`);
     }
+  });
+
+  it("两条对角各归各的角，写反就是手感错（B356）", () => {
+    const css = stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
+    const cursorOf = (text: string, edge: WinEdge): string =>
+      new RegExp(`\\.win-resize\\[data-edge="${edge}"\\]\\s*\\{[^}]*cursor:\\s*([^;]+);`).exec(
+        text,
+      )?.[1] ?? "";
+    /** 三条配对不变量：同一条对角线上两颗角同档，两条对角之间不同档。 */
+    const pairs = (text: string) => ({
+      nwse: cursorOf(text, "nw") === cursorOf(text, "se"),
+      nesw: cursorOf(text, "ne") === cursorOf(text, "sw"),
+      distinct: cursorOf(text, "nw") !== cursorOf(text, "ne"),
+    });
+    expect(pairs(css).nwse, "左上与右下必须同档（同在西北—东南那条对角上）").toBe(true);
+    expect(pairs(css).nesw, "右上与左下必须同档（同在东北—西南那条对角上）").toBe(true);
+    expect(pairs(css).distinct, "两条对角必须是两种箭头（都写成同一档就等于没方向）").toBe(true);
+
+    // 反向对照：把左上与右上两颗角的箭头互换 ⇒ 两条配对不变量落空。
+    //（光有上一用例那张 want 表已经能抓到单点写错，这里钉的是「配对」这层语义，
+    //  它才是「光标不合理」的真正原因 —— 表一旦被人顺手改错，配对断言仍然会红。）
+    const SWAP = css
+      .replace(/(\.win-resize\[data-edge="nw"\]\s*\{[^}]*?)nwse-resize/, "$1nesw-resize")
+      .replace(/(\.win-resize\[data-edge="ne"\]\s*\{[^}]*?)nesw-resize/, "$1nwse-resize");
+    expect(SWAP, "替身必须真的互换过两颗角").not.toBe(css);
+    const bad = pairs(SWAP);
+    expect(bad.nwse, "互换后左上/右下必须被抓").toBe(false);
+    expect(bad.nesw, "互换后右上/左下必须被抓").toBe(false);
+    // ⚠️ distinct 抓不到互换（换完两条对角仍然互不相同）—— 它抓的是另一种退化：
+    const FLAT = css.replace(
+      /(\.win-resize\[data-edge="(?:nw|ne|sw|se)"\]\s*\{[^}]*?)cursor:\s*(?:nwse|nesw)-resize;/g,
+      "$1cursor: all-scroll;",
+    );
+    const flatCount = (FLAT.match(/cursor:\s*all-scroll/g) ?? []).length;
+    const baseCount = (css.match(/cursor:\s*all-scroll/g) ?? []).length;
+    expect(flatCount - baseCount, "替身必须真的抹平了四角（应多出 4 处 all-scroll）").toBe(4);
+    const flat = pairs(FLAT);
+    expect(flat.distinct, "四角全同一档（B353 那一版）必须由 distinct 抓到").toBe(false);
   });
 
   it("窗框必须脱流（fixed）且自己定位；标题栏不吃文本选中", () => {

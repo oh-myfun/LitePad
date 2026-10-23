@@ -1075,3 +1075,90 @@ describe("B305 通用页：最近打开保留数量", () => {
     expect(general).toContain('"上限"');
   });
 });
+
+// B356（用户点名「设置窗口顶部的搜索区改的紧凑点」）。
+// 病根不是「32px 太大」，而是同一张面板里输入类控件有**两档**：搜索框 32px、
+// 它下面几行的下拉触发器 28px。所以判据钉的是「同取一颗 token」+「顶部带总高有预算」，
+// 而不是把 28px 抄进第二条守卫里（抄了就等于允许两边各写各的）。
+describe("B356 设置窗口顶部搜索区紧凑", () => {
+  const css = readFileSync("src/styles/global.css", "utf-8");
+  /** 取某条规则里某条声明的原文（取不到返回空串）。 */
+  const declOf = (selector: string, prop: string): string =>
+    cssDecls(ruleBlock(css, selector)).match(new RegExp(`${prop}:\\s*[^;]*`))?.[0] ?? "";
+  /** 把 padding 的一到四值展开成 [上, 右, 下, 左]（够判这一页用到的写法）。 */
+  const boxOf = (padding: string): number[] => {
+    const n = padding
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((v) => Number.parseFloat(v));
+    if (n.length === 1) return [n[0], n[0], n[0], n[0]];
+    if (n.length === 2) return [n[0], n[1], n[0], n[1]];
+    if (n.length === 3) return [n[0], n[1], n[2], n[1]];
+    return [n[0], n[1], n[2], n[3]];
+  };
+
+  it("搜索框与下拉触发器同取 --input-h（一处一档，不再各写各的）", () => {
+    for (const sel of [".settings-search-wrap", ".dropdown-trigger"]) {
+      expect(declOf(sel, "height"), `${sel} 的高度必须引用 --input-h`).toBe(
+        "height: var(--input-h)",
+      );
+    }
+    // 展开后确实是 28px 那一档 —— 只判 token 名的话，token 被改成 40px 也照样绿。
+    const resolved = resolveCssVars(declOf(".settings-search-wrap", "height"), css);
+    expect(resolved, "--input-h 展开后必须是同页下拉那一档 28px").toBe("height: 28px");
+    // token 只许在 :root 定义一次（两处各定义 = 取值取决于谁后来）。
+    const defs = (css.match(/^\s*--input-h:/gm) ?? []).length;
+    expect(defs, "--input-h 只许在 :root 定义一次").toBe(1);
+  });
+
+  it("工具栏纵向收到 6px，横向保持 12px 与标题栏那条左边线对齐", () => {
+    const pad = boxOf(declOf(".settings-toolbar", "padding").replace(/^padding:\s*/, ""));
+    expect(pad[0], "上留白收到 6px（= 左栏按钮列那一档）").toBe(6);
+    expect(pad[2], "下留白与上对称").toBe(6);
+    // 横向不是随手写的：它与 .win-head 的 padding-left 是同一条左边线 —— 搜索框必须与
+    // 标题栏那两个字左对齐，收小一格就变成两列参差（这正是 B317 那一类「同一排要对齐」）。
+    const headLeft = boxOf(declOf(".win-head", "padding").replace(/^padding:\s*/, ""))[3];
+    expect(pad[1], "工具栏左留白必须与标题栏左留白同源同值").toBe(headLeft);
+    expect(pad[1], "左边线那一档是 12px").toBe(12);
+  });
+
+  it("顶部带总高有预算：标题栏 + 搜索行不超过 80px", () => {
+    const head = Number.parseFloat(declOf(".win-head", "height").replace(/^height:\s*/, ""));
+    const wrap = Number.parseFloat(
+      resolveCssVars(declOf(".settings-search-wrap", "height"), css).replace(/^height:\s*/, ""),
+    );
+    const pad = boxOf(declOf(".settings-toolbar", "padding").replace(/^padding:\s*/, ""));
+    const total = head + pad[0] + wrap + pad[2] + 1; // +1 = 工具栏下那条 1px 边框
+    // 改之前是 34 + 10 + 32 + 10 + 1 = 87，两行头部吃掉快半屏；这一档是产品事实。
+    expect(total, `顶部带实测 ${total}px，预算 80px`).toBeLessThanOrEqual(80);
+  });
+
+  it("反向验证：搜索框退回自成一档的 32px 必须被咬住", () => {
+    const BAD = css.replace(
+      /(\.settings-search-wrap\s*\{[^}]*?)height:\s*var\(--input-h\);/,
+      "$1height: 32px;",
+    );
+    expect(BAD, "替身必须真的写回过 32px").not.toBe(css);
+    // 咬法：替身已违反「同取 token」⇒ 正向那条断言在 BAD 上必须落空。
+    expect(() => {
+      const h = cssDecls(ruleBlock(BAD, ".settings-search-wrap")).match(/height:\s*[^;]*/)?.[0];
+      expect(h, "替身丢了 token 必须被抓到").toBe("height: var(--input-h)");
+    }).toThrow();
+  });
+
+  it("反向验证：工具栏横向跟着收到 8px（左边线断开）必须被咬住", () => {
+    const BAD = css.replace(
+      /(\.settings-toolbar\s*\{[^}]*?)padding:\s*6px 12px;/,
+      "$1padding: 6px 8px;",
+    );
+    expect(BAD, "替身必须真的改过横向留白").not.toBe(css);
+    expect(() => {
+      const pad = boxOf(
+        cssDecls(ruleBlock(BAD, ".settings-toolbar"))
+          .match(/padding:\s*[^;]*/)?.[0]
+          .replace(/^padding:\s*/, "") ?? "",
+      );
+      expect(pad[1], "替身与标题栏左边线对不上，必须被抓到").toBe(12);
+    }).toThrow();
+  });
+});
