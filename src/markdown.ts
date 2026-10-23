@@ -21,6 +21,7 @@ import {
 import { activeTab, docOf, getPanel } from "./core/panels";
 import { isMdTab, makeInstance } from "./doc-model";
 import { markActivePanel, sbLang, tocPanel } from "./ui";
+import { refreshIrLockKey } from "./shell/irlock";
 import { clearTip } from "./shell/tooltip";
 import { logger } from "./core/logger";
 import { perfProfileFor } from "./editor/perf";
@@ -60,6 +61,10 @@ function applyPanelMode(panel: Panel): void {
   // ⚠️ 别挪到 mousedown 路径上：重建 ops 会把按钮节点换掉，浏览器合成的 click 就
   //    派发不到它身上（B226）。applyPanelMode 的调用点全在 click / 恢复 / 分屏里，安全。
   renderPanelOps(panel.panelId);
+  // B352-8：那颗三态悬浮键也在这里呈现 —— 本方法是「视图模式落到 DOM 的唯一出口」，
+  // 键的字形/在场判定跟着同一发走，就不会出现「换了类没换键」（B228 那一族）。
+  // `applyIrState` 也经这里落 DOM，所以不再单独调一次（写点只留一处，B304 口径）。
+  refreshIrLockKey(panel);
 }
 
 /**

@@ -3430,6 +3430,43 @@ button:focus-visible {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  /* B352-8：即时渲染那颗悬浮键的定位上下文 = **面板壳**（不是视口）。
+     写 `position: fixed` 的话多面板分屏会一起叠在窗口右下角同一处。 */
+  position: relative;
+}
+
+/* 即时渲染的三态悬浮键（B352-8）：一颗键 carrying「渲不渲染 + 能不能写」，
+   位置照 VS Code 的 Markdown Editor 落在编辑区右下角。
+   状态只落在字形上（B166 口径），配色不参与；圆角跟共用 `--radius`（B336）。 */
+.ir-lock-key {
+  position: absolute;
+  /* 躲开竖向滚动条槽：`::-webkit-scrollbar` 宽 10px + 8px 呼吸 */
+  right: 18px;
+  bottom: 12px;
+  /* 面板壳内部的档位：盖住编辑面与预览面（两者都不设 z-index）。
+     浮层（转到行/查找栏 1000、菜单 2000、拖拽落点 20）都在文档级定位上下文里，
+     这一发的数值碰不到它们 —— 也就是永远压在浮层之下。 */
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  color: var(--fg);
+  cursor: pointer;
+  opacity: 0.82;
+  transition:
+    opacity var(--transition),
+    background-color var(--transition);
+}
+
+.ir-lock-key:hover {
+  opacity: 1;
+  background: var(--bg-hover);
 }
 
 .panel-host .cm-editor {

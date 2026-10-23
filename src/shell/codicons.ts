@@ -141,6 +141,11 @@ const IDS = {
   // —— 标签上的文件类型字形（10 个家族，见 src/shell/fileicons.ts）——
   markdown: "markdown",
   code: "code",
+  // —— 即时渲染的三态悬浮键（B352-8）——
+  // 一颗键三个态：源码 = `code`（没渲染），渲染·锁 = `lock`，渲染·可写 = `unlock`。
+  // 状态一律落在**字形**上（B166 口径：不靠配色表达开关）。
+  lock: "lock",
+  unlock: "unlock",
   json: "json",
   terminal: "terminal",
   tag: "tag",
