@@ -349,8 +349,8 @@ describe("bootstrap + drag-split smoke", () => {
   async function setThemeViaPreferences(mode: "light" | "dark" | "system"): Promise<void> {
     await openMenu("文件");
     await clickMenuItem("设置");
-    // 统一设置页默认停在「外观」分类，「主题」下拉直接可见
-    const items = [...document.querySelectorAll(".settings-panel .settings-item")];
+    // B323 起默认停在「通用」：外观那一页只是 hidden，DOM 里东西都在，jsdom 点得到
+    const items = [...document.querySelectorAll(".settings-window .settings-item")];
     const item = items.find((r) => r.querySelector(".settings-item-label")?.textContent === "主题");
     const dd = item?.querySelector(".dropdown") as HTMLElement | null;
     expect(dd, "设置页里应有「主题」下拉").toBeTruthy();
@@ -361,7 +361,7 @@ describe("bootstrap + drag-split smoke", () => {
     opt!.click();
     await tick(30);
     // 关掉模态弹窗，别影响后续用例
-    (document.querySelector(".settings-close") as HTMLButtonElement)?.click();
+    (document.querySelector(".win-head-close") as HTMLButtonElement)?.click();
     await tick(0);
   }
 
@@ -494,6 +494,40 @@ describe("bootstrap + drag-split smoke", () => {
 
     await setThemeViaPreferences("system");
     expect(themeModeOf(), "应能切回跟随系统").toBe("system");
+  });
+
+  it("B353：点侧栏底部那颗齿轮 ⇒ 开出带标题栏的设置窗口，关闭键在标题栏", async () => {
+    // 这条走的是**真按钮点击**，不是「装配函数被调用过」：登记过 ≠ 挂得上（见 B314-8
+    // 那颗死键 —— 静态契约全绿，屏上点不动）。整条链路是 index.html 的这颗键 →
+    // main.ts 的 setupSettingsEntry() → prefs.openSettingsDialog() → settingsdialog 的窗框。
+    const gear = document.getElementById("side-settings") as HTMLButtonElement;
+    expect(gear, "侧栏按钮列底部要有那颗齿轮").toBeTruthy();
+    expect(
+      gear.querySelector("i.codicon-gear"),
+      "字形由启动装配写入（HTML 里留空才是一处真相）",
+    ).toBeTruthy();
+    expect(document.querySelector(".settings-window"), "起手不该有设置窗").toBeNull();
+
+    gear.click();
+    await tick(60); // openSettingsDialog 先 await 本机字体枚举，再同步把各分类页建出来
+
+    const win = document.querySelector(".settings-window") as HTMLElement;
+    expect(win, "点齿轮必须开出设置窗").toBeTruthy();
+    // 窗框三样：标题栏（拖它移动）+ 关闭键（搬进标题栏，工具栏只剩搜索）+ 八向把手（缩它改尺寸）
+    expect(win.querySelector(".win-head .win-title")?.textContent, "标题栏要写着「设置」").toBe(
+      "设置",
+    );
+    expect(
+      win.querySelectorAll(".win-resize"),
+      "八向把手齐（缺一个方向就少一个手感）",
+    ).toHaveLength(8);
+    expect(win.querySelector(".win-head-close"), "关闭键归标题栏").toBeTruthy();
+    expect(win.style.left, "位置由窗框写 inline style（遮罩不再 flex 居中）").toMatch(/px$/);
+
+    (win.querySelector(".win-head-close") as HTMLButtonElement).click();
+    await tick(0);
+    expect(document.querySelector(".settings-window"), "标题栏那颗关闭键要真能关").toBeNull();
+    expect(capturedError, `开设置窗不该抛错：${String(capturedError)}`).toBeNull();
   });
 
   it("B79：主题档位必须写进 settings 才能存盘（回归：重启后变回深色）", async () => {

@@ -142,6 +142,7 @@ import {
   publishThemeMode,
   publishWindowKind,
   sanitizeKeymap,
+  setupSettingsEntry,
   showEncodingMenu,
   showEolMenu,
 } from "./prefs";
@@ -930,6 +931,8 @@ async function setupShell(): Promise<void> {
   applyPreviewWidth(settings?.preview_width ?? "full");
   applyEditorLineHeight(settings?.editor_line_height ?? 1.5);
   setupSideBar();
+  // B353：按钮列底部那颗「设置」（字形 + 点击）。它不是抽屉视图，不参与下面的展开区回放。
+  setupSettingsEntry();
   setupSideResizer();
   // B194 / B307 / B312：回放上次的展开区「开没开 + 开着的是哪一块」。
   // `persist = false` —— 只是把盘上的两格搬到 DOM。此刻登记进外壳的只有大纲那一块

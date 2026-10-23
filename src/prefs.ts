@@ -69,7 +69,8 @@ import {
 } from "./shell/keymap";
 import { showPopupMenu, type MenuItem } from "./shell/menu";
 import { PREVIEW_WIDTH_LABELS, showSettingsDialog } from "./shell/settingsdialog";
-import { refreshAll, sbEncoding, sbEol, showMessage } from "./ui";
+import { refreshAll, sbEncoding, sbEol, sideSettings, showMessage } from "./ui";
+import { CODICONS } from "./shell/codicons";
 import { level as currentLogLevel, logger, setLevelPersisted } from "./core/logger";
 // B305：最近打开的上限。与日志级别同一类 —— 值不在 `settings` 对象里，由 Rust 单点持有。
 import { applyRecentLimit, getRecentLimit } from "./recents/store";
@@ -717,6 +718,18 @@ async function openSettingsDialog(): Promise<void> {
   });
 }
 
+/**
+ * 装配侧栏按钮列底部那颗「设置」（B353，用户点名「侧边栏底部添加设置页面入口按钮」）。
+ *
+ * 只做两件事：填字形 + 挂点击。它**不是**一块抽屉视图，所以不进 `registerDrawerView`、
+ * 不参与互斥展开、也没有点亮态（`index.html` 里那颗因此不带 `aria-pressed`）——
+ * 与上面三颗同列不同职：那三颗切「看什么」，这一颗做一件事。
+ */
+function setupSettingsEntry(): void {
+  sideSettings.innerHTML = CODICONS.gear;
+  sideSettings.addEventListener("click", () => void openSettingsDialog());
+}
+
 async function persistSettings(): Promise<void> {
   if (!settings) return;
   try {
@@ -761,6 +774,7 @@ export {
   keyHint,
   loadPreferenceOptions,
   openSettingsDialog,
+  setupSettingsEntry,
   persistSettings,
   ensureSystemFonts,
 };

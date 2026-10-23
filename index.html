@@ -199,6 +199,20 @@
               aria-label="大纲"
               aria-pressed="false"
             ></button>
+            <!-- B353（用户点名「侧边栏底部添加设置页面入口按钮」）：这一列上三颗是
+                 **视图切换**（归 setDrawer 管点亮态，所以带 aria-pressed）；齿轮是
+                 **动作**（点开设置窗口，没有「开着/关着」这一档），所以：
+                   · 不带 aria-pressed —— 否则读屏器会念一个永远不变的「未按下」；
+                   · `margin-top: auto` 钉在列底（VS Code 活动栏把管理类动作放同一头）；
+                   · 不进 `registerDrawerView` —— 它不参与互斥展开。 -->
+            <button
+              id="side-settings"
+              class="side-btn side-btn-bottom"
+              type="button"
+              data-tip="设置"
+              data-tip-placement="right"
+              aria-label="设置"
+            ></button>
           </div>
           <!-- B307（方案乙）：两块展开区**共用一层外壳**。宽度、显隐、按钮列那条内部竖线、
                `toc_open` 落盘都归壳（`src/shell/drawer.ts` 的 `setDrawer` 是唯一出口）；

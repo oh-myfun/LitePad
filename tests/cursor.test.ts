@@ -3,7 +3,8 @@
 //
 // 起因（用户反馈）：设置页左栏的分类按钮 `cursor: default`，悬停有高亮、点得动，
 // 指针却是箭头 —— 观感上像「不可点」。顺带查出一处同类：设置页右上角关闭键
-// （`.settings-close`）也是 `default`，同样带 hover 高亮。
+// （`.settings-close`，B353 起搬进窗框标题栏、改名 `.win-head-close`）也是 `default`，
+// 同样带 hover 高亮。
 //
 // 约定（写在这里是为了能被机器守住，不只是注释）：
 //   · 全局已有 `button { cursor: pointer }`，所以**新增一个 button 天然是 hand**；
@@ -62,8 +63,8 @@ describe("B111 设置页：可点击元素必须是手型", () => {
       "左栏分类是按钮、有 hover 与选中态，指针必须是 hand",
     ).toContain("cursor: pointer");
     expect(
-      cssDecls(ruleBlock(css, ".settings-close")),
-      "关闭键有 hover 高亮，指针必须是 hand",
+      cssDecls(ruleBlock(css, ".win-head-close")),
+      "关闭键有 hover 高亮，指针必须是 hand（B353 起它住在窗框标题栏，类名跟着换）",
     ).toContain("cursor: pointer");
   });
 });

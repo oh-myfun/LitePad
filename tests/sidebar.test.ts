@@ -20,7 +20,10 @@ const src = (
   readFileSync("src/toc.ts", "utf-8") +
   "\n" +
   // B307：展开区的显隐出口搬到了外壳，这个拼接清单不含它就等于没盯。
-  readFileSync("src/shell/drawer.ts", "utf-8")
+  readFileSync("src/shell/drawer.ts", "utf-8") +
+  "\n" +
+  // B353：侧栏底部那颗「设置」的装配在 prefs.ts（它开的就是这一页的对话框）。
+  readFileSync("src/prefs.ts", "utf-8")
 ).replace(/\r\n/g, "\n");
 const icons = readFileSync("src/shell/codicons.ts", "utf-8").replace(/\r\n/g, "\n");
 
@@ -997,6 +1000,134 @@ describe("B198 整栏去留：切一次要落盘、启动要回放", () => {
 // ⚠️ jsdom 不做 CSS 级联 ⇒ 断言 `tocPanel.hidden === true` / 断言 class **全是假绿**，
 //    这条只能靠静态契约盯住。仓库里同类兜底已有 7 处（find-bar / find-row-replace /
 //    find-status / sync-btn / tooltip×3），`.toc-panel` 是漏掉的那一个。
+// ------------------------------------------------------- B353：按钮列底部那颗「设置」
+// 用户点名「侧边栏底部添加设置页面入口按钮」，并要「直接照着 vscode 做」。
+// VS Code 那一列把**管理类动作**放在活动栏的另一头（底部），字形用 `Codicon.gear`
+// （上游 `preferences/browser/preferencesIcons.ts`：`settingsMoreActionIcon = Codicon.gear`）。
+// 与上面三颗的分别是**职分**：那三颗切「看哪一块」（视图 ⇒ 归 setDrawer 管点亮态、
+// 带 aria-pressed），这一颗做一件事（动作 ⇒ 没有「开着」这一态，所以不带 aria-pressed）。
+describe("B353 侧栏底部「设置」入口：最后一颗 + 动作不是视图 + 沉到底", () => {
+  /** 取 #side-bar **里面**那一段（列的开标签之后到列尾；里面只有注释与 button，
+      没有嵌套 div ⇒ 第一个 </div> 就是列尾）。 */
+  function sideBarSeg(): string {
+    const attr = html.indexOf('id="side-bar"');
+    expect(attr, "要有 #side-bar").toBeGreaterThan(-1);
+    // ⚠️ 从开标签的 `>` 之后起：从 `id="side-bar"` 起会把这一列自己的 id 也当成第一颗键。
+    const open = html.indexOf(">", attr);
+    const end = html.indexOf("</div>", open);
+    expect(end, "要能取到列尾").toBeGreaterThan(open);
+    return html.slice(open + 1, end);
+  }
+
+  it("① 它是按钮列的**最后一颗**，顺序 = 资源管理器 / 最近打开 / 大纲 / 设置", () => {
+    const seg = sideBarSeg();
+    const ids = [...seg.matchAll(/id="(side-[a-z]+)"/g)].map((m) => m[1]);
+    expect(ids, "按钮列的读法顺序（上三颗切视图，最后一颗是动作）").toEqual([
+      "side-explorer",
+      "side-recent",
+      "side-outline",
+      "side-settings",
+    ]);
+  });
+
+  it("② 开标签：动作键的三件套齐（aria-label / data-tip / 沉底类），且**不带** aria-pressed", () => {
+    const btn = html.match(/<button\s+id="side-settings"[\s\S]*?>/)?.[0] ?? "";
+    expect(btn, "应能取到 #side-settings 开标签").toBeTruthy();
+    expect(btn, "图标键没有文字，必须自带 aria-label").toContain('aria-label="设置"');
+    expect(btn, "提示走自绘层（B350 按钮档：靠 data-tip + data-tip-placement 指右）").toContain(
+      'data-tip="设置"',
+    );
+    expect(btn, "提示方向朝右（这一列在最左边，朝左就出屏了）").toContain(
+      'data-tip-placement="right"',
+    );
+    expect(btn, "同款控件同档 + 沉底那一档").toContain('class="side-btn side-btn-bottom"');
+    // ⚠️ 没有 aria-pressed 才是对的：它不是一块能「开着」的视图。留着会让读屏器
+    //    永远念「未按下」，而 setDrawer 也绝不会去翻它（下面③钉住这一点）。
+    expect(btn, "动作键不许报按下态（没有开/关这一档）").not.toContain("aria-pressed");
+    expect(btn, "红线：图标只能从 codicons.ts 取，HTML 里不许内联 SVG").not.toMatch(/<svg/);
+  });
+
+  it("③ 装配只填字形 + 挂点击，且不进 registerDrawerView（不参与互斥展开）", () => {
+    const setup = src.match(/function setupSettingsEntry\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(setup, "应有 setupSettingsEntry").toBeTruthy();
+    expect(setup, "字形走 CODICONS.gear（VS Code 给设置用的那颗）").toContain(
+      "sideSettings.innerHTML = CODICONS.gear",
+    );
+    expect(setup, "点击要真的驱动 openSettingsDialog（不是空挂一个函数）").toMatch(
+      /sideSettings\.addEventListener\("click",\s*\(\)\s*=>\s*void openSettingsDialog\(\)\)/,
+    );
+    expect(setup, "它不是抽屉视图：这里不许出现 registerDrawerView").not.toMatch(
+      /registerDrawerView/,
+    );
+    expect(icons, "codicons.ts 要有 gear 这一颗").toMatch(/gear:\s*"gear"/);
+    const drawer = src.match(/function setDrawer\([\s\S]*?\n\}/)?.[0] ?? "";
+    const apply = src.match(/function applyView\([\s\S]*?\n\}/)?.[0] ?? "";
+    expect(drawer + apply, "外壳的显隐收口不得伸手管这颗键（否则就成了第四块视图）").not.toContain(
+      "sideSettings",
+    );
+  });
+
+  it("④ bootstrap 里真的调用装配，且排在按钮列之后", () => {
+    const iBar = src.indexOf("setupSideBar();");
+    const iSettings = src.indexOf("setupSettingsEntry();");
+    expect(iBar, "要装按钮列").toBeGreaterThan(-1);
+    expect(iSettings, "bootstrap 必须调用 setupSettingsEntry").toBeGreaterThan(-1);
+    expect(iSettings, "排在同列装配之后（同一批 DOM，装配次序照读法来）").toBeGreaterThan(iBar);
+  });
+
+  it("⑤ CSS：沉底靠 margin-top:auto，列的下留白与上留白对称", () => {
+    const bottom = cssDecls(ruleBlock(css, ".side-btn-bottom"));
+    expect(bottom, "flex 列里贴底只认 margin-top: auto（数上面有几颗都不管用）").toMatch(
+      /margin-top:\s*auto/,
+    );
+    const bar = cssDecls(ruleBlock(css, ".side-bar"));
+    const top = bar.match(/padding-top:\s*(\d+)px/)?.[1];
+    const btm = bar.match(/padding-bottom:\s*(\d+)px/)?.[1];
+    expect(top, "列要有上留白").toBeTruthy();
+    expect(btm, "必须有下留白，否则齿轮贴死卡片底边、与顶上那颗不对称").toBe(top);
+  });
+
+  it("⑥ 反向验证：摘掉 margin-top:auto（齿轮排第四、不贴底）必须被咬住", () => {
+    const BAD = css.replace(/(\.side-btn-bottom\s*\{[^}]*)margin-top:\s*auto;/, "$1");
+    expect(BAD, "替身必须真的摘掉过这条声明").not.toBe(css);
+    expect(() => {
+      expect(cssDecls(ruleBlock(BAD, ".side-btn-bottom")), "替身不再贴底，必须被抓到").toMatch(
+        /margin-top:\s*auto/,
+      );
+    }).toThrow();
+  });
+
+  it("⑦ 反向验证：把动作键写成视图键（补 aria-pressed）必须被咬住", () => {
+    const BAD = html.replace(
+      '<button\n              id="side-settings"',
+      '<button\n              id="side-settings"\n              aria-pressed="false"',
+    );
+    expect(BAD, "替身必须真的加过 aria-pressed").not.toBe(html);
+    expect(() => {
+      const btn = BAD.match(/<button\s+id="side-settings"[\s\S]*?>/)?.[0] ?? "";
+      expect(btn, "替身那条多余的按下态必须被抓到").not.toContain("aria-pressed");
+    }).toThrow();
+  });
+
+  it("⑧ 反向验证：点击接线换成别的（齿轮变成死键那一类）必须被咬住", () => {
+    const setup = src.match(/function setupSettingsEntry\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(setup, "先自证原句在").toContain("void openSettingsDialog()");
+    const BAD = src.replace(
+      'sideSettings.addEventListener("click", () => void openSettingsDialog());',
+      'sideSettings.addEventListener("click", () => void 0);',
+    );
+    expect(BAD, "替身必须真的把动作换掉了").not.toBe(src);
+    expect(() => {
+      expect(
+        BAD.match(/function setupSettingsEntry\(\)[\s\S]*?\n\}/)?.[0] ?? "",
+        "替身的空转点击必须被抓到",
+      ).toMatch(
+        /sideSettings\.addEventListener\("click",\s*\(\)\s*=>\s*void openSettingsDialog\(\)\)/,
+      );
+    }).toThrow();
+  });
+});
+
 describe("B207 `display` 压过 UA 的 `[hidden]`：凡写 display 又靠 hidden 收起的都得补一条", () => {
   // ⚠️ 两处都记在同一个表里：仓库里同类兜底已有 8 处（find-bar / find-row-replace /
   //    find-status / sync-btn / tooltip×3 / 这两条），它们是**同一个坑的多个实例** ——

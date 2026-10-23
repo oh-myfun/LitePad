@@ -118,13 +118,51 @@ describe("B106 统一设置页：三栏结构", () => {
   it("打开后是 顶部搜索 + 左侧分类 + 右侧内容 的三栏骨架", () => {
     showSettingsDialog(makeOpts());
     expect(document.querySelector(".settings-overlay"), "应有模态层").toBeTruthy();
-    expect(document.querySelector(".settings-panel"), "应有面板").toBeTruthy();
+    expect(document.querySelector(".settings-window"), "应有面板").toBeTruthy();
     expect(
       document.querySelector(".settings-toolbar .settings-search"),
       "应有顶部搜索框",
     ).toBeTruthy();
     expect(document.querySelector(".settings-nav"), "应有左侧分类导航").toBeTruthy();
     expect(document.querySelector(".settings-content"), "应有右侧内容区").toBeTruthy();
+  });
+
+  it("B353：外面套的是窗框 —— 标题栏 + 八向把手，尺寸位置只由窗框写 inline style", () => {
+    showSettingsDialog(makeOpts());
+    const win = document.querySelector(".settings-window") as HTMLElement;
+    expect(win, "应有设置窗").toBeTruthy();
+    expect(win.classList.contains("win-frame"), "面板本体必须就是那块窗框").toBe(true);
+    const head = win.querySelector(":scope > .win-head") as HTMLElement;
+    expect(head, "标题栏要是窗框的**直接**子节点（挂在里面就拖不动了）").toBeTruthy();
+    expect(
+      (head.querySelector(".win-title") as HTMLElement).textContent,
+      "标题栏要写着「设置」",
+    ).toBe("设置");
+    expect(head.querySelector(".win-head-close"), "关闭键搬进标题栏").toBeTruthy();
+    expect(
+      win.querySelector(".settings-toolbar .settings-close"),
+      "工具栏不该再留一颗关闭键（两处各一颗 = 两个权威）",
+    ).toBeNull();
+    expect(win.querySelectorAll(":scope > .win-resize"), "八向把手必须齐").toHaveLength(8);
+    expect(win.style.left, "位置由窗框写成 inline style").toMatch(/^-?\d+px$/);
+    expect(win.style.width, "尺寸同上，不靠 CSS").toMatch(/^\d+px$/);
+
+    // 反向盯 CSS 那一头：这一档尺寸原先就写在 `.settings-panel` 里，拖过一次之后
+    // 它会与窗框写的 inline style 打对台 ⇒ 类名换成 .settings-window 也不许再写几何。
+    const code = stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
+    for (const prop of ["width", "height", "left", "top", "margin"]) {
+      expect(
+        code,
+        `.settings-window 的规则里不得写 ${prop}（几何只许在 settingsdialog.ts 的默认矩形那一处）`,
+      ).not.toMatch(new RegExp(`\\.settings-window[^{}]*\\{[^}]*\\b${prop}:`));
+    }
+    const BAD = code + "\n.settings-window { width: 880px; }\n";
+    expect(BAD, "替身必须真的写回了几何").not.toBe(code);
+    expect(() => {
+      expect(BAD, "替身那份第二个权威必须被抓到").not.toMatch(
+        /\.settings-window[^{}]*\{[^}]*\bwidth:/,
+      );
+    }).toThrow();
   });
 
   it("左侧分类导航含 5 个分类（通用在前），默认停在「通用」", () => {
@@ -251,7 +289,7 @@ describe("B106 设置项：初值 + 即时回调", () => {
       "enc:GB18030",
     ]);
     // 即时生效模式：弹窗不因修改而关闭
-    expect(document.querySelector(".settings-panel")).toBeTruthy();
+    expect(document.querySelector(".settings-window")).toBeTruthy();
   });
 
   it("B108：「通用」分类承载自动保存 / 热退出，初值取自 getter，切换立即回调", () => {
@@ -323,19 +361,19 @@ describe("B106 设置页：搜索过滤 + 关闭", () => {
 
     // Esc 关窗
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
-    expect(document.querySelector(".settings-panel"), "Esc 应关窗").toBeNull();
+    expect(document.querySelector(".settings-window"), "Esc 应关窗").toBeNull();
 
     // 蒙层点击关窗（点面板内部不关）
     showSettingsDialog(makeOpts());
     const overlay = document.querySelector(".settings-overlay")!;
     (overlay as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    expect(document.querySelector(".settings-panel"), "点蒙层应关窗").toBeNull();
+    expect(document.querySelector(".settings-window"), "点蒙层应关窗").toBeNull();
 
     // 关闭按钮关窗
     showSettingsDialog(makeOpts());
-    const close = document.querySelector(".settings-close") as HTMLButtonElement;
+    const close = document.querySelector(".win-head-close") as HTMLButtonElement;
     close.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    expect(document.querySelector(".settings-panel"), "关闭按钮应关窗").toBeNull();
+    expect(document.querySelector(".settings-window"), "关闭按钮应关窗").toBeNull();
   });
 });
 
@@ -401,7 +439,7 @@ describe("B111 设置页：switch 组件 + 快捷键搜索框 Esc", () => {
 
     // 第一次 Esc：只清空，窗还在
     pressEscape();
-    expect(document.querySelector(".settings-panel"), "有内容时 Esc 不应关窗").toBeTruthy();
+    expect(document.querySelector(".settings-window"), "有内容时 Esc 不应关窗").toBeTruthy();
     expect(input.value, "Esc 应清空搜索框").toBe("");
     expect(
       document.querySelectorAll(".keymap-cmd").length,
@@ -410,14 +448,14 @@ describe("B111 设置页：switch 组件 + 快捷键搜索框 Esc", () => {
 
     // 第二次 Esc：关窗
     pressEscape();
-    expect(document.querySelector(".settings-panel"), "空框时 Esc 应关窗").toBeNull();
+    expect(document.querySelector(".settings-window"), "空框时 Esc 应关窗").toBeNull();
   });
 
   it("搜索框为空时 Esc 直接关窗（不会白吃一次按键）", () => {
     showSettingsDialog(makeOpts());
     gotoShortcuts();
     pressEscape();
-    expect(document.querySelector(".settings-panel")).toBeNull();
+    expect(document.querySelector(".settings-window")).toBeNull();
   });
 
   it("不在快捷键分类时 Esc 直接关窗（不被隐藏的搜索框吃掉）", () => {
@@ -426,7 +464,7 @@ describe("B111 设置页：switch 组件 + 快捷键搜索框 Esc", () => {
     input.value = "大纲";
     input.dispatchEvent(new Event("input"));
     pressEscape();
-    expect(document.querySelector(".settings-panel")).toBeNull();
+    expect(document.querySelector(".settings-window")).toBeNull();
   });
 
   it("守卫：设置页不再生成原生 checkbox，改用 src/shell/switch.ts", () => {

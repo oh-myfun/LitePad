@@ -1,14 +1,19 @@
 /**
  * 统一设置页（B106：把原「设置 → 首选项」与「设置 → 快捷键」两个弹窗合并成
  * 一个三栏设置页：顶部搜索 + 左侧分类导航 + 右侧设置项，并改名为「设置」。
- * 入口放到「文件 → 设置…」（见 menubar.ts）。
+ * 入口两处：「文件 → 设置…」（见 menubar.ts）与侧栏按钮列底部那颗齿轮
+ * （B353，见 prefs.ts 的 setupSettingsEntry）。
  *
- * 结构与类名参考 InkNote 的 Settings.tsx：
- *   settings-overlay > settings-panel >
- *     settings-toolbar(搜索 + 关闭) + settings-layout(settings-nav + settings-content)
+ * 结构与类名参考 InkNote 的 Settings.tsx，B353 起外面套一层**窗口壳**：
+ *   settings-overlay > win-frame.settings-window(标题栏「设置」+ 八向把手) > win-body >
+ *     settings-toolbar(搜索) + settings-layout(settings-nav + settings-content)
  * 分类：通用 / 外观 / 编辑器 / 新建文件 / 快捷键（快捷键复用 keymapdialog
  * 的改键逻辑，作为其中一个分类页）。B229 起原先那个独立的预览分类并入「编辑器」，
  * 预览侧两项（预览行距、预览布局宽度）在本页末尾的「预览」小分组里。
+ *
+ * B353（用户点名「参考 vscode 做成带标题栏可拖拽和可调整大小的设置窗口」）：
+ * 关闭键从工具栏搬进标题栏，尺寸与位置归窗框（原来是 `.settings-panel` 的
+ * `width: min(880px, 94vw)` 那一档，现在由 JS 的默认矩形给）。
  * B235：原先在这儿的「大纲宽度」已按用户要求删除 —— 大纲宽度改由左侧栏的
  * 拖拽分隔条单独控制，设置页不再有那一项。
  *
@@ -17,6 +22,7 @@
  */
 
 import { mountKeymapPage, type KeymapDialogOptions, type KeymapPageHandle } from "./keymapdialog";
+import { buildFrame, centeredRect, type WinViewport } from "./windowframe";
 import { createDropdown } from "./dropdown";
 import { createSwitch } from "./switch";
 // B235：`PreviewWidth` 是宽度档的类型（standard / wide / full）。
@@ -410,14 +416,32 @@ const CATEGORIES: Category[] = [
   },
 ];
 
+/** 默认尺寸沿用旧弹层那一档（原先写在 `.settings-panel` 的 `width/height` 里）；
+    实际打开时再按视口收，最小值归窗框（`WIN_MIN`）。 */
+const SETTINGS_W = 880;
+const SETTINGS_H = 640;
+
 export function showSettingsDialog(opts: SettingsDialogOptions): void {
   const overlay = document.createElement("div");
   overlay.className = "settings-overlay";
+  document.body.appendChild(overlay);
 
-  const panel = document.createElement("div");
-  panel.className = "settings-panel";
+  const viewport = (): WinViewport => ({ w: window.innerWidth, h: window.innerHeight });
+  const v0 = viewport();
+  // onClose 在建窗那一刻就要交出去，而 close() 的真身要等下面 keymapHandle 就位才写得成
+  // ⇒ 先占位、装配完再换（不占位就得把窗框建到函数末尾，标题栏会晚一帧才出现）。
+  let closeWindow = (): void => {};
+  const frame = buildFrame({
+    title: "设置",
+    // 四周各留 12px：顶满视口就看不出「这是一块浮着的窗」，也与遮罩的边距手感一致。
+    rect: centeredRect(v0, Math.min(SETTINGS_W, v0.w - 24), Math.min(SETTINGS_H, v0.h - 24)),
+    viewport,
+    onClose: () => closeWindow(),
+    className: "settings-window",
+    host: overlay,
+  });
 
-  // ---- 顶部工具栏：搜索 + 关闭 ----
+  // ---- 顶部工具栏：搜索（关闭键在标题栏，见上面的 buildFrame） ----
   const toolbar = document.createElement("div");
   toolbar.className = "settings-toolbar";
 
@@ -440,15 +464,7 @@ export function showSettingsDialog(opts: SettingsDialogOptions): void {
 
   searchWrap.append(searchIcon, search);
 
-  const closeBtn = document.createElement("button");
-  closeBtn.type = "button";
-  closeBtn.className = "settings-close";
-  closeBtn.setAttribute("aria-label", "关闭");
-  closeBtn.innerHTML =
-    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
-    '<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path></svg>';
-
-  toolbar.append(searchWrap, closeBtn);
+  toolbar.append(searchWrap);
 
   // ---- 主体：左侧导航 + 右侧内容 ----
   const layout = document.createElement("div");
@@ -461,9 +477,7 @@ export function showSettingsDialog(opts: SettingsDialogOptions): void {
   content.className = "settings-content";
 
   layout.append(nav, content);
-  panel.append(toolbar, layout);
-  overlay.appendChild(panel);
-  document.body.appendChild(overlay);
+  frame.body.append(toolbar, layout);
 
   // 每个分类页先建好，靠 hidden 切换（避免搜索时反复重建 keymap 页）
   const pages: Record<string, HTMLElement> = {};
@@ -572,7 +586,7 @@ export function showSettingsDialog(opts: SettingsDialogOptions): void {
     overlay.remove();
   };
 
-  closeBtn.addEventListener("click", close);
+  closeWindow = close;
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) close();
   });

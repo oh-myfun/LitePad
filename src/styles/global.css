@@ -1781,9 +1781,8 @@ button:focus-visible {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  /* B353：原来这里的 flex 居中已删 —— 窗框是 `position: fixed` + inline left/top，
+     居中规则对它不成立（拖过一次之后更不该被拉回正中）。遮罩只负责压暗与吃点击。 */
   z-index: 100;
 }
 
@@ -2117,11 +2116,12 @@ button:focus-visible {
   cursor: pointer;
 }
 
-/* ---------- 统一设置页（B106：原「设置 → 首选项 / 快捷键」合并为三栏设置页） ---------- */
-
-.settings-panel {
-  width: min(880px, 94vw);
-  height: min(640px, 88vh);
+/* ---------- 应用内浮层窗口（B353）：标题栏 + 八向把手 ----------
+   设置页从「居中弹层」升成「可拖拽、可缩放的窗口」所用的壳。装配与几何在
+   `src/shell/windowframe.ts`：位置尺寸由它写 inline style（拖过之后就不居中了），
+   这里只给静态形态 —— 所以**不要**在这里写 left/top/width/height。 */
+.win-frame {
+  position: fixed;
   display: flex;
   flex-direction: column;
   background: var(--bg-elevated);
@@ -2130,6 +2130,150 @@ button:focus-visible {
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.3);
   overflow: hidden;
 }
+
+/* 标题栏：底色与主窗口那条同颗（--bg-toolbar）—— 读起来就是「一个窗口」而不是
+   一块加了粗边的面板。`user-select: none` 是拖动的必要条件：按住一拖就选中
+   标题文字，松手还会留个蓝块。 */
+.win-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  height: 34px;
+  padding: 0 4px 0 12px;
+  background: var(--bg-toolbar);
+  border-bottom: 1px solid var(--border);
+  /* 不写 cursor：这里点了没反应（只有拖拽），继承 body 的箭头就是对的。
+     B111 的守卫只放行「置灰 / 纯展示 / 提示层」三处显式 `cursor: default`，
+     多写一条会把它判成违规 —— 而且「拖动手 = 手型」本身也是假 affordance。 */
+  user-select: none;
+}
+
+.win-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-ui);
+  color: var(--fg);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 关闭键：与面板头部那排（.panel-op）同一档方形图标键（22px、不铺底、hover 才亮）。
+   ⚠️ 同款控件一条规则：数值要与 `.panel-op` 一致，别在这里自创一档。
+   ⚠️ 类名带 `head`：主窗口标题栏那颗关闭键占用的是 id `#win-close`（index.html），
+      同名不同空间（id/class）在测试与选择器里极易看错，故这里叫 `.win-head-close`。 */
+.win-head-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.win-head-close:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+/* 内容槽：调用方的东西全塞这里，高度归它自己分（设置页是「搜索条 + 两栏」）。 */
+.win-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 八向把手：贴边的透明窄带（边 4px、角 10px —— 角要更宽，因为它是「既要对准边、
+   又要对准角」的那一档，VS Code 的 sash 也是角比边好抓）。
+   ⚠️ 角必须排在边**之后**：同特异性后写者胜，先写角就会被边盖住，角就拖不动了。
+   ⚠️ 八条各自成规则（不合并选择器）：`cursor` 每一向都不同，合并就得给同一颗 cursor，
+      四个方向的手感一起坏。判据按 data-edge 逐条查（tests/windowframe.test.ts）。
+   ⚠️ 四颗角一律 `all-scroll`（不是 nwse/nesw）：B61 已把「同时对角两向」这一档
+      在全应用定成 all-scroll（`.layout-corner` 同值，`tests/splitview.test.ts` 里
+      那条「不得残留 nwse-resize」守着它）。窗框另起一颗对角箭头就是两套口径。 */
+.win-resize {
+  position: absolute;
+  z-index: 1;
+}
+
+.win-resize[data-edge="n"] {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  cursor: ns-resize;
+}
+
+.win-resize[data-edge="s"] {
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  cursor: ns-resize;
+}
+
+.win-resize[data-edge="w"] {
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: ew-resize;
+}
+
+.win-resize[data-edge="e"] {
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: ew-resize;
+}
+
+.win-resize[data-edge="nw"] {
+  left: 0;
+  top: 0;
+  width: 10px;
+  height: 10px;
+  cursor: all-scroll;
+}
+
+.win-resize[data-edge="ne"] {
+  right: 0;
+  top: 0;
+  width: 10px;
+  height: 10px;
+  cursor: all-scroll;
+}
+
+.win-resize[data-edge="sw"] {
+  left: 0;
+  bottom: 0;
+  width: 10px;
+  height: 10px;
+  cursor: all-scroll;
+}
+
+.win-resize[data-edge="se"] {
+  right: 0;
+  bottom: 0;
+  width: 10px;
+  height: 10px;
+  cursor: all-scroll;
+}
+
+/* ---------- 统一设置页（B106：原「设置 → 首选项 / 快捷键」合并为三栏设置页） ---------- */
+
+/* B353：`.settings-panel` 那一档尺寸声明已删 —— 设置页现在套在 `.win-frame` 里，
+   宽/高/位置由 `src/shell/settingsdialog.ts` 的默认矩形给、再由窗框写 inline style
+   （拖过、缩过之后就不居中了，CSS 里的 `width: min(880px, 94vh)` 反而会成为第二个权威）。
+   底下这几条内部结构（工具栏 / 两栏 / 导航 / 内容）不变。 */
 
 .settings-toolbar {
   display: flex;
@@ -2178,24 +2322,8 @@ button:focus-visible {
   color: var(--fg-muted);
 }
 
-.settings-close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--fg-muted);
-  /* B111：可点击 ⇒ 一律手型（原本写的是 default，与「有点击效果就该是 hand」相悖）。 */
-  cursor: pointer;
-}
-
-.settings-close:hover {
-  background: var(--bg-hover);
-  color: var(--fg);
-}
+/* B353：原 `.settings-close` / `:hover` 两条已删 —— 关闭键从工具栏搬进了
+   窗框标题栏（`.win-head-close`，归 windowframe 装配），工具栏只剩搜索框。 */
 
 .settings-layout {
   flex: 1;
@@ -2688,6 +2816,9 @@ button:focus-visible {
   align-items: center;
   gap: 4px;
   padding-top: 6px;
+  /* B353：底部那颗「设置」靠 margin-top:auto 沉到底，它离下沿的距离要与上面那颗
+     离上沿的一样 —— 这一列上下不对称，齿轮就会贴死卡片底边。 */
+  padding-bottom: 6px;
   /* B201（用户第一轮点名、第二轮复核）：**按钮列 ↔ 展开区之间这条内部竖线必须画**。
      这是活动栏那个场景里本来就有的一条：VS Code 的活动栏（48px 按钮列）右侧一直有一条
      竖线把它和侧栏内容分开，收起侧栏只是让内容消失，那条线本身还在。
@@ -2729,6 +2860,15 @@ button:focus-visible {
    却还在按钮列里空占一格，点了也没反应。 */
 .side-btn[hidden] {
   display: none;
+}
+
+/* B353（用户点名「侧边栏底部添加设置页面入口按钮」）：把这一颗沉到列底。
+   `margin-top: auto` 是 flex 列里唯一「不管上面有几颗、都贴底」的写法 —— 上面三颗
+   是视图切换、这一颗是动作，两类之间那条空隙就是它们的关系（VS Code 活动栏同样把
+   管理类动作放在列的另一头）。
+   ⚠️ 上面任意一颗被隐藏（B306 的上限 0）不改这一颗的位置：它是贴底的，不是排第四。 */
+.side-btn-bottom {
+  margin-top: auto;
 }
 
 /* B202（用户点名「左栏按钮 hover、按下时也应该有不同背景色，参考 VS Code」）：

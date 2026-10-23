@@ -117,6 +117,9 @@ const explorerRefresh = el<HTMLButtonElement>("explorer-refresh");
 const explorerCollapse = el<HTMLButtonElement>("explorer-collapse");
 const explorerNewFile = el<HTMLButtonElement>("explorer-new-file");
 const explorerNewDir = el<HTMLButtonElement>("explorer-new-dir");
+// B353：按钮列底部那颗**设置**键。它是动作不是视图 —— 不进 `registerDrawerView`、
+// 没有 `aria-pressed`，点亮态与 `setDrawer` 无关（接线见 `prefs.ts` 的 setupSettingsEntry）。
+const sideSettings = el<HTMLButtonElement>("side-settings");
 const tocGrip = el("toc-grip");
 // B198：标题栏那颗整栏显隐键，与它收放的是 #main-row 这一整行（侧栏卡片 → 缝 → 编辑区）。
 const sidebarToggle = el<HTMLButtonElement>("sidebar-toggle");
@@ -420,6 +423,7 @@ export {
   explorerCollapse,
   explorerNewFile,
   explorerNewDir,
+  sideSettings,
   tocGrip,
   sidebarToggle,
   mainRow,

@@ -122,6 +122,10 @@ const IDS = {
   // 标题栏两颗新建：官方名 `new-file` / `new-folder`（带 + 号的那两颗）。
   newFile: "new-file",
   newFolder: "new-folder",
+  // —— 侧栏按钮列底部（B353 设置入口）——
+  // `gear` 就是 VS Code 给「设置」用的那一颗（上游 `preferencesIcons.ts` 的
+  // `settingsMoreActionIcon = Codicon.gear`）；按钮列底部放管理类动作也是它的位置。
+  gear: "gear",
   // —— 面板 / 标签 ——
   circleFilled: "circle-filled",
   // —— 标签区右侧的 Markdown 操作键（B224，对齐 VS Code 的 editor/title 动作）——
