@@ -37,8 +37,14 @@
   /* 相连标签的圆角总源（B123-2，用户裁决）：活动标签**顶部圆角**与**肩部反向
      圆弧**必须同半径 —— 对齐 VS Code connectedEditorTabs.css 的变量链
      （shoulder-radius = cap-radius，同源自 cornerRadius-small）。
-     改标签圆角只动这一个变量；pill 胶囊档的四角 4px 不走它（独立观感）。 */
+     改标签圆角只动这一个变量；pill 胶囊档的四角 4px 不走它（独立观感）。
+     B349 起这条链多两环（同样照抄 VS Code）：描边本身占厚度，所以**外**圆角要
+     比内圆角大一个 stroke，否则帽的圆弧与它的边框对不齐（VS Code 的
+     cap-radius = cornerRadius + strokeThickness、shoulder-radius = cap-radius）。 */
   --tab-radius: 5px;
+  --tab-stroke: 1px;
+  --tab-cap-radius: calc(var(--tab-radius) + var(--tab-stroke));
+  --tab-shoulder-radius: var(--tab-cap-radius);
   --transition: 120ms ease;
   /* B196：卡片几何的两档量，取值对齐 VS Code 的 floating panel 那一档
      （用户点名「拖拽区宽度、卡片与窗口边缘的宽度都参考 VS Code」）：
@@ -894,11 +900,23 @@ button:focus-visible {
   initial-value: #0000;
 }
 
-/* B116 去描边 + B120 去肩部：活动标签只靠底色区分 —— fill 取编辑器底色、
-   只有上方两角圆、侧边直线落到条带底（对齐用户 VS Code 的实拍形态）。 */
+/* B349（用户点名照 VS Code 最新版的相连档）：活动标签的**帽轮廓** —— 上 + 左 + 右描边、
+   **底边不封**（border-bottom-color: transparent）。fill 本来就下探到条带底缘
+   （inset 那 -3px 的舌片），于是它的底色把条带下沿那条线（.panel-head::after）盖出
+   一个开口 ⇒ 标签与下方编辑区连成一片，这正是「相连」二字的来由。
+   ⚠️ z-index 必须抬到 1：线与 fill 同在 `.panel-head` 这一层叠上下文里，线是 0，
+      不抬就盖不住（VS Code 同一条：container::after z-index 0 / active fill z-index 1）。
+   ⚠️ 外圆角取 --tab-cap-radius（= 内圆角 + 描边厚），沿用 --tab-radius 会让圆弧压不住边框。
+   ⚠️ 这一条**推翻 B116「活动标签去描边」**：那次撤掉的是四周同宽的整圈边框（连底边一起，
+      读起来像个方框）；这次画的是帽形轮廓 + 底边开口，与参考实现一致。
+      pill 档不受影响（下面那块里有 `border: none` 覆盖）。 */
 .tab-active .tab-fill {
   --tab-fill-bg: var(--tab-bg-active);
   background: var(--tab-fill-bg);
+  z-index: 1;
+  border: var(--tab-stroke) solid var(--border);
+  border-bottom-color: transparent;
+  border-radius: var(--tab-cap-radius) var(--tab-cap-radius) 0 0;
 }
 
 /* B119：connected 档不再有「悬停活动标签再亮一档」—— 对齐 VS Code：
@@ -936,35 +954,43 @@ button:focus-visible {
 
 /* B123：反向圆弧肩部 —— 构造逐条对标 connectedEditorTabs.css 的
    `.tab.active > .tab-fill::before/::after`：
-   伪元素坐在 fill 底部两外侧（半径 = --tab-radius，与顶部圆角**同源同值**，
-   VS Code 的 shoulder-radius = cap-radius 同一条变量链），
+   伪元素坐在 fill 底部两外侧（半径 = --tab-shoulder-radius = cap-radius，与帽顶
+   外圆角**同一条变量链**，VS Code 的 shoulder-radius = cap-radius），
    border-bottom-*-radius + `box-shadow: R/2 R/2 0 R/2 面色` 的**反弧技巧**——
    阴影矩形恰好盖住伪元素自身盒再外扩 R/2，圆角把内侧角抠成凹弧，
    露出的阴影就是贴着标签底部的反向圆弧肩部；阴影溢出伪元素盒的部分
    落在标签 fill 内侧与条带下方的编辑区里，与面色同色，天然无害，
    因此不需要 VS Code 的 clip-path: inset(0)。
-   颜色走 --tab-fill-bg：非焦点降档 / pill 提亮改这一个变量时肩部自动跟随。 */
+   颜色走 --tab-fill-bg：非焦点降档 / pill 提亮改这一个变量时肩部自动跟随。
+   B349：肩部也上轮廓 —— 与帽一致取 `--border` 描 `border-bottom` + 朝外那条竖边
+   （VS Code 的 `.tab-fill::before { border-right }` / `::after { border-left }`）。
+   ⚠️ 必须 `box-sizing: border-box`：默认 content-box 下 1px 边框会把伪元素撑大
+      一圈，反弧与帽侧边的接缝就错位（接缝错位在 1.5 倍缩放下表现为肩部多出一小截白）。 */
 .tab-active .tab-fill::before,
 .tab-active .tab-fill::after {
   content: "";
   position: absolute;
   bottom: 0;
-  width: var(--tab-radius);
-  height: var(--tab-radius);
+  box-sizing: border-box;
+  width: var(--tab-shoulder-radius);
+  height: var(--tab-shoulder-radius);
+  border-bottom: var(--tab-stroke) solid var(--border);
   pointer-events: none;
   transition: box-shadow 0.12s ease;
 }
 .tab-active .tab-fill::before {
   right: 100%;
-  border-bottom-right-radius: var(--tab-radius);
-  box-shadow: calc(var(--tab-radius) / 2) calc(var(--tab-radius) / 2) 0 calc(var(--tab-radius) / 2)
-    var(--tab-fill-bg);
+  border-right: var(--tab-stroke) solid var(--border);
+  border-bottom-right-radius: var(--tab-shoulder-radius);
+  box-shadow: calc(var(--tab-shoulder-radius) / 2) calc(var(--tab-shoulder-radius) / 2) 0
+    calc(var(--tab-shoulder-radius) / 2) var(--tab-fill-bg);
 }
 .tab-active .tab-fill::after {
   left: 100%;
-  border-bottom-left-radius: var(--tab-radius);
-  box-shadow: calc(var(--tab-radius) / -2) calc(var(--tab-radius) / 2) 0 calc(var(--tab-radius) / 2)
-    var(--tab-fill-bg);
+  border-left: var(--tab-stroke) solid var(--border);
+  border-bottom-left-radius: var(--tab-shoulder-radius);
+  box-shadow: calc(var(--tab-shoulder-radius) / -2) calc(var(--tab-shoulder-radius) / 2) 0
+    calc(var(--tab-shoulder-radius) / 2) var(--tab-fill-bg);
 }
 
 /* B123-3（用户裁决）：相连标签**贴边顶角不圆** —— 左右分屏时右侧区域最左
@@ -980,6 +1006,9 @@ button:focus-visible {
    无需担心顺序。 */
 .tab:first-child .tab-fill {
   border-top-left-radius: 0;
+  /* B349：贴边那一侧不描竖边 —— 帽的左边就压在条带 / 卡片左缘上，画出来是双线
+     （VS Code 同款：`.tab.active:first-child > .tab-fill { border-left-width: 0 }`）。 */
+  border-left-width: 0;
 }
 .tab:first-child .tab-fill::before {
   content: none;
@@ -1019,6 +1048,12 @@ button:focus-visible {
 :root[data-tab-style="pill"] .tab-active .tab-fill {
   /* 药丸无边框（B55）：活动/非活动的差异 = 底色 + 文字明度两档 */
   border: none;
+}
+:root[data-tab-style="pill"] .panel-head::after {
+  /* B349 的条带下沿线只属于相连档。药丸是「浮在条带上的独立胶囊」，没有与编辑区
+     衔接的开口可盖，画这条线就成了硬边 —— VS Code 的 pill 档同样把
+     --tabs-border-bottom-color 置透明。 */
+  content: none;
 }
 :root[data-tab-style="pill"] .tab-active:hover .tab-fill {
   /* B119：pill 档保留悬停提亮（VS Code 的 modernEditorTab.activeHoverBackground
@@ -3013,10 +3048,26 @@ button:focus-visible {
      头部整体跟随条带色，ops 不必再单独声明，将来加邻居也不会再错开。
      ⚠️ 别把 `--bg-status` 当「已删的历史变量」去复活：它现在已经不存在了。 */
   background: var(--tab-strip-bg);
-  /* B121：border-bottom 移除 —— 头部与编辑区之间的细线改画进 .panel-tabstrip
-     的背景（见该处 B121 注释）：border 在条带盒外，被 overflow 裁掉的舌片
-     够不着它，「活动标签下方无边框」做不出来；画在条带内部就能被舌片盖住。
-     ops 段没有标签，用自身 border-bottom 补齐同一根线（见 .panel-ops）。 */
+  /* B121：这条分界线**不许用 border-bottom** —— border 画在盒外，被条带 overflow
+     裁掉的舌片够不着它，「活动标签下方开口」就做不出来；画进盒内（下面的 ::after）
+     舌片才盖得住。B122 一度把这条线整个撤掉，B349 按用户点名的 VS Code 相连档补回。
+     ⚠️ 因此 head 必须是定位基准（::after 绝对定位贴底），且 ops 段不必再自己补线。 */
+  position: relative;
+}
+
+/* B349：条带下沿那条横贯线（标签段 + 右侧 ops 段一条线走完，对应 VS Code 的
+   `.tabs-and-actions-container::after`）。它坐在 head 盒内的最后 1px，
+   z-index 0 ⇒ 活动标签的 fill（z-index 1，底色 = 编辑区）从上面盖出一个开口。 */
+.panel-head::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--tab-stroke);
+  background: var(--border);
+  z-index: 0;
+  pointer-events: none;
 }
 
 .panel-tabstrip {
@@ -3041,10 +3092,8 @@ button:focus-visible {
   padding: 3px 4px 0 0;
   /* 标签条**表面色**（VS Code 的 editorGroupHeader.tabsBackground）：比编辑器背景差一档，
      活动标签则取编辑器背景色（见 .tab-active .tab-fill）——「哪块与编辑器连着」一眼可辨。
-     B122：条带下沿**不再画线**（B121 的渐变细线移除）——用户裁决「标签非活动区
-     下沿也没有边框」：条带与下方内容的分界就是两块底色的交界本身（VS Code 同款，
-     其条带 #202122 直接接内容 #121314，无中间线）；面板的整体轮廓交给
-     .layout-panel 的圆角卡片边框（见该处 B122 注释）。 */
+     B122 曾按用户裁决把条带下沿那条线整个撤掉；B349 又按用户点名的 VS Code 相连档补回，
+     线住在 `.panel-head::after`（画在盒内，才盖得住活动帽的开口），这里只留背景声明。 */
   background: var(--tab-strip-bg);
   min-width: 0;
   /* 拖拽 tab 的插入指示线（.tab-insert）以 strip 为定位基准 */

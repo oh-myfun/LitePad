@@ -319,8 +319,29 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     expect(activeFill, "底色必须引用该变量（而不是直接写死）").toContain(
       "background: var(--tab-fill-bg)",
     );
-    // B116：描边整体去掉（用户要求），活动标签只靠底色区分
-    expect(activeFill, "活动标签不得再描边（用户要求去边框）").not.toMatch(/border/);
+    // B349（用户点名照 VS Code 相连档）：活动标签要描**帽形轮廓** —— 上 + 左 + 右，
+    // 底边不封（开口与编辑区连成一片）。这推翻了 B116「活动标签去描边」：
+    // 那次撤的是四周同宽的整圈方框，不是这种带开口的轮廓。
+    expect(activeFill, "帽轮廓必须描边（上/左/右）").toMatch(
+      /border:\s*var\(--tab-stroke\)\s+solid\s+var\(--border\)/,
+    );
+    expect(activeFill, "底边必须不封 —— 开口靠它 + 下探的舌片盖住条带线").toContain(
+      "border-bottom-color: transparent",
+    );
+    expect(activeFill, "z-index 必须抬到 1，否则盖不住条带线（线是 0）").toMatch(/z-index:\s*1/);
+    expect(activeFill, "外圆角走 --tab-cap-radius（= 内圆角 + 描边厚）").toMatch(
+      /border-radius:\s*var\(--tab-cap-radius\) var\(--tab-cap-radius\) 0 0/,
+    );
+    // 反向对照（防恒真）：把底边封上（退回 B116 那种整圈方框）必须被同一条判据抓走
+    const BAD_CLOSED = css.replace(
+      "border-bottom-color: transparent;",
+      "border-bottom-color: var(--border);",
+    );
+    expect(BAD_CLOSED, "替身必须真的把底边封上了").toContain("border-bottom-color: var(--border);");
+    expect(
+      cssDecls(ruleBlock(BAD_CLOSED, ".tab-active .tab-fill")),
+      "封底那一版必须被判红",
+    ).not.toContain("border-bottom-color: transparent");
 
     const hoverFill = cssDecls(ruleBlock(css, ".tab:hover:not(.tab-active) .tab-fill"));
     expect(hoverFill, "悬停要有独立一档底色").toContain("var(--tab-bg-hover)");
@@ -338,34 +359,67 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     // 的 width/height/radius/阴影偏移全部引用它，改圆角只动一处。
     const rootBlock = ruleBlock(css, ":root");
     expect(rootBlock, "标签圆角单一来源变量必须在 :root 定义").toContain("--tab-radius: 5px");
-    // ⚠️ 不用 ruleBlock 取肩部：首条规则是群组选择器，`::after` 后恰好跟 `{`
-    // 会提前命中共享块 —— 直接正则 + 块内特征（left: 100%）锚定独立规则。
+    // B349：这条链往下多两环 —— 描边本身占厚度，外圆角 = 内圆角 + 描边，
+    // 肩部半径 = 外圆角（VS Code cap-radius = cornerRadius + strokeThickness、
+    // shoulder-radius = cap-radius）。判「同一条链」而不是判「数值相等」：
+    // 抄一遍 6px 的话改 --tab-radius 就三处不同步。
+    expect(rootBlock, "描边粗细也要 token 化（三处引用同一颗）").toContain("--tab-stroke: 1px");
+    expect(rootBlock, "外圆角 = 内圆角 + 描边").toContain(
+      "--tab-cap-radius: calc(var(--tab-radius) + var(--tab-stroke))",
+    );
+    expect(rootBlock, "肩部半径 = 外圆角").toContain(
+      "--tab-shoulder-radius: var(--tab-cap-radius)",
+    );
+    // 反向对照：把 shoulder 直接指回 --tab-radius（链断一环）必须被判红
+    const BAD_CHAIN = rootBlock.replace(
+      "--tab-shoulder-radius: var(--tab-cap-radius)",
+      "--tab-shoulder-radius: var(--tab-radius)",
+    );
+    expect(BAD_CHAIN, "替身必须真的断了一环").toContain("--tab-shoulder-radius: var(--tab-radius)");
+    expect(BAD_CHAIN, "断链的替身必须不再满足「肩部 = 外圆角」").not.toContain(
+      "--tab-shoulder-radius: var(--tab-cap-radius)",
+    );
     const fillBlock = cssDecls(ruleBlock(css, ".tab-fill"));
-    expect(fillBlock, "活动标签顶部圆角走 --tab-radius").toContain(
+    expect(fillBlock, "非活动标签的顶部圆角走 --tab-radius（它不描边，用内圆角）").toContain(
       "border-radius: var(--tab-radius) var(--tab-radius) 0 0",
     );
+    // ⚠️ 不用 ruleBlock 取肩部群组：首条规则是群组选择器，`::after` 后恰好跟 `{`
+    // 会提前命中共享块 —— 直接正则 + 块内特征（left: 100%）锚定独立规则。
     const shoulderGroup =
       css.match(
         /\.tab-active \.tab-fill::before,\s*\.tab-active \.tab-fill::after\s*\{[^}]*\}/,
       )?.[0] ?? "";
-    expect(shoulderGroup.replace(/\s+/g, " "), "两肩尺寸走 --tab-radius（与顶部同半径）").toContain(
-      "width: var(--tab-radius)",
+    const sg = shoulderGroup.replace(/\s+/g, " ");
+    expect(sg, "两肩尺寸走 --tab-shoulder-radius（= 外圆角那条链）").toContain(
+      "width: var(--tab-shoulder-radius)",
+    );
+    // B349：肩上也描轮廓。⚠️ 必须 border-box —— content-box 下 1px 边框把伪元素
+    // 撑大一圈，反弧与帽侧边的接缝错位（1.5 倍缩放下表现为肩部多出一小截）。
+    expect(sg, "肩部必须 border-box（否则边框把反弧撑偏 1px）").toContain("box-sizing: border-box");
+    expect(sg, "肩下沿要接上条带那条线").toContain(
+      "border-bottom: var(--tab-stroke) solid var(--border)",
     );
     const shoulderBefore = ruleBlock(css, ".tab-active .tab-fill::before").replace(/\s+/g, " ");
-    expect(shoulderBefore, "左肩反弧半径 = 顶部圆角半径").toContain(
-      "border-bottom-right-radius: var(--tab-radius)",
+    expect(shoulderBefore, "左肩反弧半径 = 外圆角半径").toContain(
+      "border-bottom-right-radius: var(--tab-shoulder-radius)",
+    );
+    expect(shoulderBefore, "左肩外侧描竖边（VS Code ::before { border-right }）").toContain(
+      "border-right: var(--tab-stroke) solid var(--border)",
     );
     expect(shoulderBefore, "左肩阴影偏移 = 半径一半（VS Code R/2 R/2 0 R/2 构造）").toContain(
-      "box-shadow: calc(var(--tab-radius) / 2)",
+      "box-shadow: calc(var(--tab-shoulder-radius) / 2)",
     );
     const shoulderAfter = (
       css.match(/\.tab-active \.tab-fill::after\s*\{[^}]*left: 100%[^}]*\}/)?.[0] ?? ""
     ).replace(/\s+/g, " ");
-    expect(shoulderAfter, "右肩反弧半径 = 顶部圆角半径（镜像）").toContain(
-      "border-bottom-left-radius: var(--tab-radius)",
+    expect(shoulderAfter, "右肩反弧半径 = 外圆角半径（镜像）").toContain(
+      "border-bottom-left-radius: var(--tab-shoulder-radius)",
+    );
+    expect(shoulderAfter, "右肩外侧描竖边（镜像 border-left）").toContain(
+      "border-left: var(--tab-stroke) solid var(--border)",
     );
     expect(shoulderAfter, "右肩阴影偏移镜像为负").toContain(
-      "box-shadow: calc(var(--tab-radius) / -2)",
+      "box-shadow: calc(var(--tab-shoulder-radius) / -2)",
     );
     expect(cssNoComments, "肩部不得用上底色的圆盘构造（B119 老做法）").not.toMatch(
       /\.tab-active \.tab-fill::(?:before|after)\s*\{[^}]*background/,
@@ -374,26 +428,33 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     // B123-3（用户裁决）：贴边顶角不圆 —— 分屏边界处（右侧区域最左标签）
     // 左上角没有圆角，左肩也免（反弧不冲着边界画）。右侧 4px 呼吸位
     // （B113-2）是有意不对称：末标签顶角不在边界上，圆角保留。
+    // B349 同一处再加一条：贴边那侧也不描竖边 —— 帽的左边正压在卡片左边框上，
+    // 画出来是双线（VS Code `.tab.active:first-child > .tab-fill { border-left-width: 0 }`）。
     const firstFill = cssDecls(ruleBlock(css, ".tab:first-child .tab-fill"));
     expect(firstFill, "首标签（贴边界侧）顶角必须不圆").toContain("border-top-left-radius: 0");
+    expect(firstFill, "首标签贴边那侧必须不描竖边").toContain("border-left-width: 0");
     const firstShoulder = cssDecls(ruleBlock(css, ".tab:first-child .tab-fill::before"));
     expect(firstShoulder, "首标签左肩必须免画（VS Code :first-child 同款）").toContain(
       "content: none",
     );
-    // 反向验证：贴边顶角回潮（0 改回圆角）必须被咬住
+    // 反向验证：贴边那一组回潮（改回圆角 + 补上左边框）必须被咬住。
+    // ⚠️ 用正则替身而不是整块字面量 replace —— 块里加了注释就会静默替不中，
+    //    于是「替身自证」那条先红，看起来像判据坏了（这一族坑见 pitfalls/）。
     const strippedCss = stripCssComments(css);
     const BAD_EDGE = strippedCss.replace(
-      ".tab:first-child .tab-fill {\n  border-top-left-radius: 0;\n}",
-      ".tab:first-child .tab-fill {\n  border-top-left-radius: var(--tab-radius);\n}",
+      /\.tab:first-child \.tab-fill\s*\{[^}]*\}/,
+      ".tab:first-child .tab-fill {\n  border-top-left-radius: var(--tab-radius);\n  border-left-width: var(--tab-stroke);\n}",
     );
-    expect(BAD_EDGE, "替身必须真的把贴边顶角改回了圆角").toContain(
+    expect(BAD_EDGE, "替身必须真的把贴边那两格改回去了").toContain(
       "border-top-left-radius: var(--tab-radius)",
     );
     expect(() => {
-      expect(
-        cssDecls(ruleBlock(BAD_EDGE, ".tab:first-child .tab-fill")),
-        "替身的贴边圆角必须被抓到",
-      ).toContain("border-top-left-radius: 0");
+      const bad = cssDecls(ruleBlock(BAD_EDGE, ".tab:first-child .tab-fill"));
+      expect(bad, "替身的贴边圆角必须被抓到").toContain("border-top-left-radius: 0");
+    }).toThrow();
+    expect(() => {
+      const bad = cssDecls(ruleBlock(BAD_EDGE, ".tab:first-child .tab-fill"));
+      expect(bad, "替身的贴边描边必须被抓到").toContain("border-left-width: 0");
     }).toThrow();
 
     // 三档底色 + 条带表面色，两套主题都要齐：缺一个就是某主题下某状态完全没反馈
@@ -421,9 +482,48 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     expect(themeBlock(css, "light"), "浅色活动标签仍取 --bg（纯白）").toContain(
       "--tab-bg-active: var(--bg);",
     );
-    // B122：ops 段同样无线（B121 的补线随条带细线一并退场）
+    // B349：条带下沿那条线由 `.panel-head::after` 一条通铺（标签段 + ops 段一起盖住），
+    // 所以 ops 段**自己**不许再有 border-bottom —— 两处画同一条线就是 2px。
     const ops = cssDecls(ruleBlock(css, ".panel-ops"));
-    expect(ops, "ops 段不得再有 border-bottom（B122 细线整体退场）").not.toContain("border-bottom");
+    expect(ops, "ops 段不得再有 border-bottom（线由 head::after 通铺）").not.toContain(
+      "border-bottom",
+    );
+    // ⚠️ 这条线必须画在 head 盒**内**（::after + bottom:0），不能用 border-bottom：
+    //    border 在盒外，被条带 overflow 裁掉的舌片够不着，「活动帽盖出开口」就做
+    //    不出来 —— B121 当年踩的就是这个，判据把它钉住。
+    // ⚠️ atLineStart：pill 档那条覆盖（`:root[data-tab-style="pill"] .panel-head::after`）
+    //    在文件里排在前面，不带这个参数取到的是它、不是基础规则。
+    const headLine = cssDecls(ruleBlock(css, ".panel-head::after", undefined, true));
+    expect(headLine, "条带下沿必须有那条横贯线（B349，参考 VS Code 相连档）").toBeTruthy();
+    expect(headLine, "线坐在 head 盒内的底缘").toMatch(/position:\s*absolute/);
+    expect(headLine, "线坐在 head 盒内的底缘（bottom:0）").toMatch(/bottom:\s*0/);
+    expect(headLine, "线厚 = 帽的描边厚（同一颗 token，别各写一个 1px）").toMatch(
+      /height:\s*var\(--tab-stroke\)/,
+    );
+    expect(headLine, "线与帽轮廓同色").toMatch(/background:\s*var\(--border\)/);
+    expect(headLine, "线必须在帽之下（帽 z-index 1 才盖得出开口）").toMatch(/z-index:\s*0/);
+    expect(headLine, "线不吃鼠标事件（它压在标签热区下沿）").toMatch(/pointer-events:\s*none/);
+    expect(
+      cssDecls(ruleBlock(css, ".panel-head", undefined, true)),
+      "head 必须是定位基准，否则 ::after 会飘到祖先盒上",
+    ).toMatch(/position:\s*relative/);
+    // 反向对照：把线挪回盒外（border-bottom 那一手）⇒ ::after 那条规则就没了，判据必须抓走
+    const headLineBlocks = (src: string): number =>
+      (src.match(/\.panel-head::after\s*\{[\s\S]*?\n\}/g) ?? []).length;
+    expect(headLineBlocks(css), "源里应有两条 `.panel-head::after`（基础画线 + pill 撤线）").toBe(
+      2,
+    );
+    const BAD_OUTER = css.replace(/\.panel-head::after\s*\{[\s\S]*?\n\}/g, "");
+    expect(headLineBlocks(BAD_OUTER), "替身必须真的把两条都摘掉").toBe(0);
+    expect(
+      ruleBlock(BAD_OUTER, ".panel-head::after", undefined, true),
+      "摘掉后必须取不到规则",
+    ).toBe("");
+    // 这条线只属于相连档：药丸是浮在条带上的胶囊，没有与编辑区衔接的开口可盖
+    expect(
+      cssDecls(ruleBlock(css, ':root[data-tab-style="pill"] .panel-head::after')),
+      "pill 档必须把这条线撤掉（否则胶囊行下多一道硬边）",
+    ).toMatch(/content:\s*none/);
     // B123：分屏分隔条静息恢复 --sep-line 细线、外框上移为大卡片 —— 契约见
     // 「编辑区大卡片外框（B123）」一节。
 
@@ -458,12 +558,12 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     // B113：connected 标签**相连**，不再靠 gap 撑缝（缝会让 fill 接不上，
     // 活动标签与编辑器之间就出现断口）；分隔感改由活动标签的凸起给出。
     expect(strip, "标签必须相连（gap 0），不能留缝隙").toMatch(/gap:\s*0/);
-    // B122：条带下沿不再画线（B121 的渐变细线移除）——条带与内容的分界就是
-    // 两块底色的交界本身；面板整体轮廓交给 .layout-panel 的圆角卡片边框
-    expect(strip, "条带表面必须是纯底色（下沿无线，B122）").toContain(
-      "background: var(--tab-strip-bg)",
+    // B122 曾把条带下沿的渐变细线整个撤掉；B349 按用户点名的 VS Code 相连档把线补回，
+    // 但**不补回渐变**（线是 `.panel-head::after` 的一格实色，见上一节判据）。
+    expect(strip, "条带表面必须是纯底色").toContain("background: var(--tab-strip-bg)");
+    expect(strip, "条带自己不许画底部细线（线在 head 的 ::after 上，通铺到 ops 段）").not.toContain(
+      "linear-gradient",
     );
-    expect(strip, "条带不得再画底部细线（B122）").not.toContain("linear-gradient");
     expect(
       strip,
       "内边距：上 3 / 右 4 / 下 0 / 左 0（B113-2：左侧不留白；B123-6 上间距 3px）",
@@ -538,7 +638,10 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
 
     // ② B123 反转：box-shadow 反弧从「禁止」变为「必须存在」——退化替身把
     //    肩部阴影整个摘掉（回到 B120 的直线侧边），正向契约必须咬住
-    const BAD_NO_SHOULDER = cssCode.replace(/box-shadow: calc\(var\(--tab-radius\)[^;]*;/g, "");
+    const BAD_NO_SHOULDER = cssCode.replace(
+      /box-shadow: calc\(var\(--tab-shoulder-radius\)[^;]*;/g,
+      "",
+    );
     expect(BAD_NO_SHOULDER, "替身必须真的摘掉了肩部阴影").not.toBe(cssCode);
     expect(() => {
       expect(stripCssComments(BAD_NO_SHOULDER), "摘掉肩部的替身必须被咬住").toMatch(
