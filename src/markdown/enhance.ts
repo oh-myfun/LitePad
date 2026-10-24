@@ -3,10 +3,9 @@ import { convertFileSrc } from "../ipc/api";
 /**
  * Markdown 渲染结果的**增强层**（B352-2 从 `PreviewPane` 抽出来）。
  *
- * 为什么单独成文件：即时渲染（IR）的块 widget 建好 DOM 后需要同样的四件事（相对路径图片、
- * KaTeX、Shiki、Mermaid），而「两份增强各写一遍」就是两份懒加载守卫必然漂移的开始。
- * 预览与 IR 都调这一个出口，`opts.bigDoc` 由调用方按自己的档位给（预览看整篇行数，
- * IR 的单个块永远不算大文档）。
+ * 单独成文件是为了别把四件事（相对路径图片、KaTeX、Shiki、Mermaid）的懒加载守卫
+ * 抄进每个渲染面 —— 多一处渲染面（现在与将来）都调这一个出口，
+ * `opts.bigDoc` 由调用方按自己的档位给。
  *
  * 懒加载：三个库都在**真的用到**时才 import（`.math-*-src` / `pre.md-code[data-lang]` /
  * `pre.mermaid-src` 任一存在），首屏不为它们付体积。

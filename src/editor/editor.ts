@@ -52,9 +52,8 @@ export function foldMarkerDOM(open: boolean): HTMLElement {
  * 左侧 gutter 的那一摞（行号 + 折叠槽）。
  *
  * 单独成函数并塞进 `comps.gutter`，是因为 `baseExtensions` 是**所有标签共享**的一份配置：
- * 硬编在里面的行号切不动，而即时渲染（B352）要求「这一份实例现在渲染 / 那一份还是源码」
- * 各走各的 gutter（spec §5）。M4 的档位门槛原样带过来 —— 行号是导航底线，任何档位都留；
- * 折叠槽按 `perf.folding` 给。
+ * 硬编在里面的行号切不动，而各份实例对 gutter 的要求可以不同。M4 的档位门槛原样带过来
+ * —— 行号是导航底线，任何档位都留；折叠槽按 `perf.folding` 给。
  */
 export function gutterExtensions(perf: PerfProfile): Extension[] {
   return [lineNumbers(), ...(perf.folding ? [foldGutter({ markerDOM: foldMarkerDOM })] : [])];
@@ -126,10 +125,8 @@ export interface TabCompartments {
   theme: Compartment;
   wrap: Compartment;
   lang: Compartment;
-  /** 左侧 gutter（行号 / 折叠槽）——即时渲染态要按实例换一份（B352） */
+  /** 左侧 gutter（行号 / 折叠槽） */
   gutter: Compartment;
-  /** 即时渲染那一层的槽（StateField + ViewPlugin 由 Task 6 注入；空槽 = 源码态） */
-  ir: Compartment;
 }
 
 export interface TabState {
@@ -157,16 +154,12 @@ export function makeTabState(
     wrap: new Compartment(),
     lang: new Compartment(),
     gutter: new Compartment(),
-    ir: new Compartment(),
   };
   const state = EditorState.create({
     doc,
     extensions: [
       ...baseExtensions(perf),
-      // ⚠️ `ir` 也要**带着初值进配置**：CM6 的 compartment 若没出现在初始 extensions 里，
-      // 之后 `comps.ir.of(x)` 不报错、但值被静默丢掉（Task 6 的装饰层就是这么「配了却没生效」的）。
       comps.gutter.of(gutterExtensions(perf)),
-      comps.ir.of([]),
       comps.wrap.of(env.wrap ? EditorView.lineWrapping : []),
       comps.theme.of(env.dark ? oneDark : []),
       comps.lang.of(perf.syntax ? (language ?? []) : []),

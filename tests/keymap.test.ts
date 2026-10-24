@@ -275,17 +275,8 @@ describe("命令表自检", () => {
    * `file.openFolder`：VS Code 给它的是 `Ctrl+K Ctrl+O` 那一族前缀键位，本应用没实现前缀键；
    * 而单占一颗 `Ctrl+Shift+F` 会抢走以后「在项目里查找」的位置 —— 菜单与命令面板都点得到，
    * 值得留着键位空位。用户在设置 ▸ 快捷键里自己绑是允许的（覆盖表按 id 存，与有无默认无关）。
-   *
-   * `view.liveRender` / `view.toggleLock`（B352-9）：即时渲染的两条直达命令。VS Code 的
-   * 「Toggle Markdown Read-only」在 Windows/Linux 同样没有默认键位，而 `Ctrl+Shift+E` 已归
-   * 资源管理器 —— 鼠标走编辑面右下角那颗键，键盘要一步到位时在设置里自绑。
    */
-  const NO_KEYS = new Set([
-    "file.openFolder",
-    "file.closeFolder",
-    "view.liveRender",
-    "view.toggleLock",
-  ]);
+  const NO_KEYS = new Set(["file.openFolder", "file.closeFolder"]);
 
   it("每个可编辑命令都有默认键位，或在 NO_KEYS 里写明不给的理由", () => {
     for (const cmd of COMMANDS) {

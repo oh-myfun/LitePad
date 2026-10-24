@@ -13,8 +13,7 @@ import { redo, selectAll, undo } from "@codemirror/commands";
 import { activePanel, activeTab, docOf, instancesOfDoc } from "./core/panels";
 import { closeTabById, newUntitled, switchTab } from "./tabs";
 import { syncCoordinator } from "./sync-scroll/wire";
-import { refreshViewModeButton, toggleIrLock, toggleIrRender, toggleViewMode } from "./markdown";
-import { irEditable } from "./markdown/ir-state";
+import { refreshViewModeButton, toggleViewMode } from "./markdown";
 import { doOpen, doSave, doSaveAll } from "./io/files";
 import { exportHtml, exportPdf } from "./io/export";
 import { ensureFindBar, openFindBar, retargetFindBar } from "./find/findbar";
@@ -90,14 +89,6 @@ function findStep(dir: 1 | -1): void {
 
 /** 时间/日期（F5，参考记事本）：在光标处插入 「HH:MM YYYY/M/D」。 */
 function insertTimeDate(): void {
-  // B352-9：F5 是 `force: true` 的**程序化** `dispatch`，那一发不带 `Transaction.userEvent`
-  // ⇒ 锁的 changeFilter 天然放行它（那条只管键入/粘贴/拖放）。所以这一发只能自己问锁，
-  // 闸必须排在派发之前 —— 排在后面等于没闸。
-  const tab = activeTab();
-  if (!tab || !irEditable(tab)) {
-    showMessage("即时渲染已锁定");
-    return;
-  }
   withView((view) => {
     const d = new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -126,12 +117,6 @@ async function pasteClipboard(): Promise<void> {
   if (!panel || !view) return;
   const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
   if (!tab) return;
-  // B352-11（评审 I3）：这一发是**程序化** `dispatch`，不带 `Transaction.userEvent` ⇒ 锁的
-  // changeFilter 天然放行它。反目标写的是「锁态下任何写路径（键入、粘贴、拖入、命令）都进不来」。
-  if (!irEditable(tab)) {
-    showMessage("即时渲染已锁定");
-    return;
-  }
   try {
     const text = await navigator.clipboard.readText();
     if (!view.dom.isConnected) return; // 异步间隙面板可能已关闭
@@ -149,15 +134,6 @@ async function pasteClipboard(): Promise<void> {
 
 /** 删除选区（Del）。 */
 function deleteSelection(): void {
-  // B352-11（评审 I3）：与粘贴同一形 —— 程序化 dispatch，changeFilter 不管它。
-  // 只问「这一块正看着的那份实例」，取不到实例时留给 `withView` 自己静默退回（别把「没有编辑器」
-  // 报成「被锁着」）。
-  const panel = activePanel();
-  const tab = panel && panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
-  if (tab && !irEditable(tab)) {
-    showMessage("即时渲染已锁定");
-    return;
-  }
   withView((view) => {
     const sel = view.state.selection.main;
     if (sel.empty) return;
@@ -521,16 +497,6 @@ function setupMenuBar(): void {
     onSelectAll: () => withView((v) => selectAll(v)),
     onTimeDate: () => insertTimeDate(),
     onToggleView: () => toggleViewMode(),
-    // B352-9：即时渲染两条直达命令。目标取「这一块正看着的那份实例」——与 toggleViewMode
-    // 同一口径（B228：不信任全局活动标签，从面板反查）。
-    onIrRender: () => {
-      const tab = activeTab();
-      if (tab) toggleIrRender(tab);
-    },
-    onIrLock: () => {
-      const tab = activeTab();
-      if (tab) toggleIrLock(tab);
-    },
     onOutline: () => toggleToc(),
     tocChecked: () => !tocPanel.hidden,
     onExplorer: () => toggleExplorer(),

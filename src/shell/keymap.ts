@@ -297,23 +297,6 @@ export const COMMANDS: CommandDef[] = [
 
   // ---- 视图 ----
   { id: "view.toggle", label: "切换 源码 / 预览", group: "视图", keys: ["Ctrl+/"] },
-  {
-    // B352-9：即时渲染的两条直达命令。与「打开文件夹」（B314）同一先例 —— 默认**不抢键位**，
-    // 菜单与命令面板都点得到，想要键位的人在设置里自己绑（Ctrl+Shift+E 已归资源管理器）。
-    // VS Code 的「Toggle Markdown Read-only」在 Windows/Linux 也没有默认键位，照它。
-    id: "view.liveRender",
-    label: "切换即时渲染",
-    group: "视图",
-    keys: [],
-    note: "只进/出渲染态，不动锁；只管能不能改的是下一条",
-  },
-  {
-    id: "view.toggleLock",
-    label: "解锁 / 上锁（即时渲染）",
-    group: "视图",
-    keys: [],
-    note: "渲染不变，只管能不能改；源码态点它会先进渲染并锁着",
-  },
   { id: "view.outline", label: "显示/隐藏大纲 TOC", group: "视图", keys: ["Ctrl+Shift+O"] },
   {
     // B314：与大纲那颗同族（一颗键管一块展开区的开合），键位取 VS Code 的 Explorer 那一颗。

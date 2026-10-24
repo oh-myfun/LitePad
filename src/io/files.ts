@@ -24,9 +24,6 @@ import {
   type Tab,
 } from "../core/app-state";
 import { claimVisibleHere } from "../sync-scroll/wire";
-import { irEditable } from "../markdown/ir-state";
-// B352-11（评审 C3）：整态重建之后按实例自己的 IR 字段补装渲染层与锁
-import { restoreIrState } from "../markdown";
 import {
   activePanel,
   activeTab,
@@ -108,14 +105,6 @@ function rebuildDocInstances(doc: Doc, text: string, keepCursor = false): void {
     );
     inst.state = made.state;
     inst.comps = made.comps;
-    // B352-11（评审 C3）：`makeTabState` 造的是**全新 compartment**、`comps.ir.of([])`，
-    // 而 `liveRender` 住在实例上、重建不碰它 ⇒ 不补这一发就是「渲染层与锁被静默拆掉，
-    // 那颗键却还画着锁」：画面退回纯源码、`editable` 回到默认能打字、`irEditable` 又拒绝 F5，
-    // 四个口径互相矛盾。外部改文件重载 / 切编码 / 热退出副本还原三条都走这里
-    // （Review Focus 2 点名的正是这三条：内容必须更新，装饰与锁也要跟着在）。
-    if (inst.liveRender !== "off") {
-      restoreIrState(inst, { liveRender: inst.liveRender, irLocked: inst.irLocked });
-    }
     if (keepCursor && head > 0) {
       const pos = Math.min(head, inst.state.doc.length);
       inst.state = inst.state.update({ selection: { anchor: pos } }).state;
@@ -315,13 +304,7 @@ function insertDroppedPath(path: string): void {
     void doOpen(path);
     return;
   }
-  // B352-11（评审 I3）：拖文件进编辑区 = 程序化插一行路径，不带 userEvent ⇒ 锁挡不住它。
   // 「没有视图」那一支上面已经退回「直接打开文件」，这里只管正看着的这份实例。
-  const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
-  if (tab && !irEditable(tab)) {
-    showMessage("即时渲染已锁定");
-    return;
-  }
   const view = panel.view.view;
   const pos = view.state.selection.main.head;
   view.dispatch({

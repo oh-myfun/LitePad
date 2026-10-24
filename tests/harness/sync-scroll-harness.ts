@@ -242,8 +242,6 @@ function makeTab(
     comps,
     state,
     viewMode,
-    liveRender: "off",
-    irLocked: true,
     scrollV: 1,
   };
   tabs.set(tab.tabId, tab);

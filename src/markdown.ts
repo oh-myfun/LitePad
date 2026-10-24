@@ -20,23 +20,12 @@ import {
 } from "./core/app-state";
 import { activeTab, docOf, getPanel } from "./core/panels";
 import { isMdTab, makeInstance } from "./doc-model";
-import { markActivePanel, sbLang, showMessage, tocPanel } from "./ui";
-import { refreshIrLockKey } from "./shell/irlock";
+import { markActivePanel, sbLang, tocPanel } from "./ui";
 import { clearTip } from "./shell/tooltip";
 import { logger } from "./core/logger";
 import { perfProfileFor } from "./editor/perf";
 import { renderBlocks } from "./markdown/pipeline";
-import { setIrBlocks, liveRenderExtensions } from "./markdown/live-render";
 import { flippedTaskMark, taskLineAt } from "./markdown/tasks";
-import {
-  nextIrState,
-  toggleIrLockState,
-  toggleIrRenderState,
-  type IrState,
-} from "./markdown/ir-state";
-import { EditorState, Transaction, type Extension, type StateEffect } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
-import { gutterExtensions } from "./editor/editor";
 import { rightNeighborOf } from "./core/layout";
 import { renderPanelOps, renderPanelTabs, splitPanelWithTab, switchTab } from "./tabs";
 import { updateTocDrawer } from "./toc";
@@ -59,6 +48,7 @@ function applyPanelMode(panel: Panel): void {
     // 用户主动切模式 → force，大文件也要渲染一次（降级不是禁用）
     renderMarkdownFor(panel, true);
   }
+  renderPanelOps(panel.panelId);
   // B228：这里是**视图模式落到 DOM 的唯一出口**，所以操作区也在这里刷。
   // 那颗切换键是**双字形开关**（预览态画 edit-code），而字形只在 renderPanelOps 里
   // 算一次 —— 以前 openPreviewToSide 是「先 rebuildLayout（此时标签还是 source）、
@@ -66,11 +56,6 @@ function applyPanelMode(panel: Panel): void {
   // 字形上（用户报的就是「显示的还是打开侧边前的切换按钮」）。挂在出口上就不会漏。
   // ⚠️ 别挪到 mousedown 路径上：重建 ops 会把按钮节点换掉，浏览器合成的 click 就
   //    派发不到它身上（B226）。applyPanelMode 的调用点全在 click / 恢复 / 分屏里，安全。
-  renderPanelOps(panel.panelId);
-  // B352-8：那颗三态悬浮键也在这里呈现 —— 本方法是「视图模式落到 DOM 的唯一出口」，
-  // 键的字形/在场判定跟着同一发走，就不会出现「换了类没换键」（B228 那一族）。
-  // `applyIrState` 也经这里落 DOM，所以不再单独调一次（写点只留一处，B304 口径）。
-  refreshIrLockKey(panel);
 }
 
 /**
@@ -85,9 +70,6 @@ function renderMarkdownFor(panel: Panel, force = false): void {
   const preview = panel.preview;
   const tab = tabs.get(panel.activeTabId);
   if (!preview || !tab || !isMdTab(tab)) return;
-  // B352：开着即时渲染的那一格不重画整篇预览 —— 预览面本来就是藏的，而「每防抖一拍把整篇
-  // 重新 patch 一遍」正是 IR 这条路要避免的反目标。块表由同一条防抖里的 `refreshIr` 喂装饰层。
-  if (tab.liveRender === "ir") return;
   const doc = docOf(tab);
   preview.setBaseDir(doc.path ? dirname(doc.path) : null);
 
@@ -112,71 +94,9 @@ function renderMarkdownFor(panel: Panel, force = false): void {
 }
 
 /**
- * 把当前块表灌进这份实例的即时渲染层（B352-6）。
- *
- * 与预览共用**同一个防抖写点**（见 `scheduleMdRender`）：另开一个定时器就是第二个口径，
- * 那族病（B304「显示与行为两套」）本仓已经栽过。
- * 可见实例走 `view.dispatch`（顺带由 `handleUpdate` 回写 `tab.state`）；
- * 没挂 view 的实例改状态快照，切回来就带得上。
- */
-function refreshIr(tab: Tab): void {
-  if (tab.liveRender === "off" || !isMdTab(tab)) return;
-  const blocks = renderBlocks(tab.state.doc.toString());
-  const view = getPanel(tab.panelId)?.view?.view;
-  // 只造一次事务规格：派发点可能有两个（挂着的 view / 状态快照），但块表只算一遍
-  const spec = { effects: setIrBlocks.of(blocks) };
-  if (view && view.state === tab.state) view.dispatch(spec);
-  else tab.state = tab.state.update(spec).state;
-}
-
-/**
- * 锁的真机制（计划增量 1）—— 两层各自成立，缺一不可：
- *
- * · `EditorView.editable.of(false)` 关掉 contenteditable ⇒ 键入、IME、粘贴、拖放都进不来；
- * · `EditorState.changeFilter` 再挡**程序化**派发：只拒「改文本且带 `Transaction.userEvent` 标注」的那一类。
- *
- * 为什么不能只靠 `editable(false)` / `EditorState.readOnly`：那两条只管用户手势与 CM6 自带命令，
- * 挡不住 `dispatch` —— 而 F5「插入时间/日期」（`force: true`）与查找栏「替换全部」正是程序化写
- * （它们自己走 `irEditable` 这道闸，Task 9）。反过来，同源兄弟格的变更集、外部改文件后的重载、
- * 热退出副本还原都**不带** userEvent ⇒ 天然放行，锁不会把这三条一起堵死。
- * 只改选区的事务也放行：锁态下大纲跳转与查找栏移动光标仍然要能用。
- */
-export function irExtensionsFor(s: IrState): Extension[] {
-  const locked = s.liveRender === "ir" && s.irLocked;
-  return [
-    EditorView.editable.of(!locked),
-    ...(locked
-      ? [
-          EditorState.changeFilter.of(
-            (tr) => !(tr.docChanged && tr.annotation(Transaction.userEvent)),
-          ),
-        ]
-      : []),
-  ];
-}
-
-/**
- * 换态落地：把 `next` 这套 IR 状态装到这份实例上（悬浮键、直达命令、会话恢复共用这一发）。
- *
- * ⚠️ 顺序本身就是判据（`tests/ir-apply.test.ts` 钉住）：
- *   读 v → 写状态 → 重配扩展 → setState → 换类 → 落位 → 重注册。
- *   读 v 一旦排到写状态之后，`sideOfPanel` 按新状态判「哪一侧看得见」，读到的还是
- *   被 `display:none` 归零的那一侧 ⇒ `keepV` 恒 1.00 ⇒ 落位把刚现形的一侧钉回文档顶部
- *   （B293 那条真机台账，同一族的坑）。
- */
-/**
- * 「这一套 IR 状态 ⇒ 两个 Compartment 的重配效果」——`applyIrState`（有 DOM 的那条路）与
- * `restoreIrState`（会话恢复，还没有 DOM）共用这一份算法。
- *
- * 两处分开写就是 B304 那一族：一边改了另一边没改，键显示的状态与画面各说一套。
- * 装饰层与锁的扩展同住 `comps.ir`：`editable` / `changeFilter` 是 facet 扩展，不是事务效果，
- * 塞进 `effects` 里过不了类型；同槽换掉也保证「关态时锁的残留一起没了」。
- */
-/**
  * B358：把渲染面点下的第 `index` 个勾选框翻回源码（预览岛的宿主入口）。
  *
- * ⚠️ 有意**不带 `Transaction.userEvent`**：锁的 changeFilter 只拒「带 userEvent 的写」，
- * 这一发要过闸 —— 用户拍板纯预览（锁着的渲染面）也允许点勾选框。只读文档在这里挡掉。
+ * 直接写文档：预览格是唯一渲染面，这里就是「组件操作」的落笔点；只读文档挡掉。
  */
 export function toggleTaskInTab(
   tabId: number,
@@ -195,136 +115,6 @@ export function toggleTaskInTab(
   });
 }
 
-function irCompsEffects(tab: Tab, next: IrState): StateEffect<unknown>[] {
-  const doc = docOf(tab);
-  const locked = next.liveRender === "ir" && next.irLocked;
-  const baseDir = doc?.path ? dirname(doc.path) : null;
-  return [
-    tab.comps.ir.reconfigure([
-      ...liveRenderExtensions({
-        ir: next.liveRender === "ir",
-        locked,
-        baseDir,
-        readonly: !!doc?.readonly,
-      }),
-      ...irExtensionsFor(next),
-    ]),
-    // 渲染态关掉整条 gutter（B352-5 裁定：块装饰下被盖住的源行不再发行号，
-    // 留着就是一栏说谎的跳号）；回源码态给回 M4 档位那份。
-    tab.comps.gutter.reconfigure(
-      next.liveRender === "ir" ? [] : gutterExtensions(perfProfileFor(doc?.sizeClass ?? "normal")),
-    ),
-  ];
-}
-
-/**
- * 会话恢复路径：把盘上读到的两个字段装进这份实例。
- *
- * 为什么不能只写字段：`makeTabState` 给的是 `comps.ir.of([])`，扩展没上线时
- * `liveRender = "ir"` 的实例会长出一颗「渲染·锁」的键、画面却是纯源码，而预览又被
- * `renderMarkdownFor` 的 IR 闸门挡住 ⇒ 用户看到一片空白。此刻面板还没建、EditorView
- * 还没挂，所以 `applyIrState` 那一半 DOM（落位 / 重注册 / 刷新键）在这里无从谈起 ——
- * 那些排在 `mountView` 之后，由既有流程接管。
- *
- * 只读文档的 C 不可达：盘上写着「解锁」也按回锁着（与 `nextIrState` 同一条约束）。
- */
-function restoreIrState(tab: Tab, next: IrState): void {
-  // 只读文档的 C 不可达：钳制必须**一起传进扩展**，只钳字段就是「键显示锁、编辑面还能打字」
-  const ir: IrState = {
-    liveRender: next.liveRender,
-    irLocked: next.irLocked || docOf(tab).readonly,
-  };
-  tab.liveRender = ir.liveRender;
-  tab.irLocked = ir.irLocked;
-  tab.state = tab.state.update({ effects: irCompsEffects(tab, ir) }).state;
-  // 块表紧跟着喂一发：生产里块表只有两个来源（换态末尾与 120ms 防抖），而防抖只由
-  // `textChanged` 排程 ⇒ 恢复既不换态也不改文本，两条都不走。少了这一发，重启后的渲染格
-  // 是一篇纯源码 + 一颗画着锁的键，而锁态打不进字 ⇒ 用户在这个状态里没有任何自救手段。
-  refreshIr(tab);
-}
-
-function applyIrState(panel: Panel, tab: Tab, next: IrState): void {
-  if (!panel.bodyEl) return;
-  const keepV = readVisibleV(panel);
-  // 换态不是编辑：装饰层上线/下线、编辑面开关都可能让 CM6 产生事务，一律不许置脏
-  setSuppressDirty(true);
-  const sourceEditor = panel.view;
-  const locked = next.liveRender === "ir" && next.irLocked;
-  try {
-    tab.liveRender = next.liveRender;
-    tab.irLocked = next.irLocked;
-    tab.state = tab.state.update({ effects: irCompsEffects(tab, next) }).state;
-    panel.view?.setState(tab.state);
-    applyPanelMode(panel);
-    // 焦点给回编辑器只在「渲染且可写」那一态要：锁态点它没意义，源码面本来就有焦点。
-    // 必须排在 applyPanelMode 之后（隐藏元素 focus 静默失败，B190）。
-    if (!locked && next.liveRender === "ir") sourceEditor?.focus();
-    if (keepV !== null) landVisibleSideAtV(panel, keepV);
-    // 显隐/在册面跟着变了 ⇒ 重注册（B285/B310 那一族：漏了就剩一个被藏起来的锚点在拽对栏）
-    reconcileSyncRegistrations();
-  } finally {
-    setSuppressDirty(false);
-  }
-  // 块表紧跟着补一发：刚 reconfigure 出来的字段是空的，不喂就出现「按了键但画面不动」
-  refreshIr(tab);
-  scheduleSessionSave();
-}
-
-/**
- * 三条入口（悬浮键的循环、两条直达命令、整态重建之后的重挂）共用的落地前缀。
- *
- * ⚠️ 状态的两个字段只许在 `applyIrState` / `restoreIrState` 里写，而且两者共用同一份
- * 「状态 → 扩展」算法（`irCompsEffects`）—— 少一道判断就会把 `.txt` 标签也拖进渲染态，
- * 少一次档位判断则能让命令面板给 20 MB 的文档打开 IR（B352-11 评审 I6：`renderMarkdownFor`
- * 被闸门早退、`refreshIr` 却每 120ms 整篇重算，那一发本来就是 M4 档位为了停掉它才设的）。
- */
-function applyIrToTab(tab: Tab, next: IrState): void {
-  const panel = getPanel(tab.panelId);
-  const doc = docOf(tab);
-  if (!panel || !panel.bodyEl || !isMdTab(tab) || !doc) return;
-  if (!perfProfileFor(doc.sizeClass).autoPreview) {
-    showMessage("文件较大，未启用即时渲染");
-    return;
-  }
-  applyIrState(panel, tab, next);
-}
-
-/** 悬浮锁键的那一下：三态循环的后继由 `nextIrState` 唯一决定，这里只管落地。 */
-function cycleIrState(tab: Tab): void {
-  const doc = docOf(tab);
-  if (!doc) return;
-  applyIrToTab(
-    tab,
-    nextIrState({ liveRender: tab.liveRender, irLocked: tab.irLocked }, { readonly: doc.readonly }),
-  );
-}
-
-/** 直达命令 `view.liveRender`：进/出渲染、锁态不动（映射住 `toggleIrRenderState`）。 */
-function toggleIrRender(tab: Tab): void {
-  const doc = docOf(tab);
-  if (!doc) return;
-  applyIrToTab(
-    tab,
-    toggleIrRenderState(
-      { liveRender: tab.liveRender, irLocked: tab.irLocked },
-      { readonly: doc.readonly },
-    ),
-  );
-}
-
-/** 直达命令 `view.toggleLock`：只翻锁（映射住 `toggleIrLockState`）。 */
-function toggleIrLock(tab: Tab): void {
-  const doc = docOf(tab);
-  if (!doc) return;
-  applyIrToTab(
-    tab,
-    toggleIrLockState(
-      { liveRender: tab.liveRender, irLocked: tab.irLocked },
-      { readonly: doc.readonly },
-    ),
-  );
-}
-
 function scheduleMdRender(panelId: number): void {
   const panel = getPanel(panelId);
   if (!panel) return;
@@ -332,8 +122,6 @@ function scheduleMdRender(panelId: number): void {
   panel.previewTimer = setTimeout(() => {
     panel.previewTimer = null;
     renderMarkdownFor(panel);
-    const tab = tabs.get(panel.activeTabId);
-    if (tab) refreshIr(tab);
     if (panel.panelId === activePanelId && !tocPanel.hidden) updateTocDrawer();
   }, 120) as unknown as number;
 }
@@ -504,18 +292,8 @@ export {
   applyPanelMode,
   renderMarkdownFor,
   scheduleMdRender,
-  refreshIr,
-  applyIrState,
-  cycleIrState,
-  toggleIrRender,
-  toggleIrLock,
-  restoreIrState,
   toggleViewMode,
   openPreviewToSide,
   refreshViewModeButton,
   dirname,
 };
-// 写闸门 `irEditable` 的定义住在叶子模块 `markdown/ir-state.ts`（无 DOM）：查找栏与
-// commands.ts 都要问它，而本模块反向 import 着 findbar ⇒ 定义放这边就是一张依赖环。
-// 这里只转一个出口，既有调用点（含 tests/ir-apply.test.ts）不必改 import。
-export { irEditable } from "./markdown/ir-state";

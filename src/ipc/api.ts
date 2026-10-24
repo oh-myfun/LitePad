@@ -576,19 +576,6 @@ export interface TabSession {
    */
   scrollV?: number | null;
   /**
-   * B352-10：即时渲染的模式位（`"off"` / `"ir"`）。
-   *
-   * `null` ＝「这一格从没进过渲染态」，与 `"off"`（进过、又退回源码）是两件事，
-   * 与 `viewMode` / `scrollV` 同一口径。非 md 标签恒写 `null`。
-   * 恢复时一律先过 `coerceIrState`：认不得的值（比如还没实现的 `"wysiwyg"`）退成 `off`。
-   */
-  liveRender?: string | null;
-  /**
-   * B352-10：渲染态的锁位。`false` ＝ 用户明确解过锁，`null` ＝ 从没记过（按「默认锁着」回落
-   * `true`）—— 两者在数据里必须分得开，理由同 `scrollV`（B302）与 `syncMode`（B304）。
-   */
-  irLocked?: boolean | null;
-  /**
    * B193：**仅 `satelliteTabs` 段使用** —— 这个标签当时属于哪个卫星窗口（窗口 label 作分组键）。
    *
    * 会话里卫星标签是一份扁平列表，少了它就只能「全部并回主窗口」（v1 行为），

@@ -163,9 +163,6 @@ export function refreshSession(): void {
       backupId: d.backupId,
     });
     sessionStore.setViewMode(t.tabId, isMdTab(t) ? t.viewMode : null);
-    // B352-10：即时渲染的两个状态位。非 md 写 null（与 viewMode 同口径 —— 留 "off" 就成了
-    // 「这块真的停在源码态」的假证据）。每轮只在这里刷一次，写点收在 `sessionStore.setIr`。
-    sessionStore.setIr(t.tabId, isMdTab(t) ? t.liveRender : null, isMdTab(t) ? t.irLocked : null);
     // B169：同步滚动开关是 `docSyncModes`（按文档记，B152）里的值，退出前刷进记录，
     // 落盘后重开时由 `restoreSession` 写回，让同步键点亮态与退出前一致。
     sessionStore.setSyncMode(t.tabId, docSyncOn(t.docId));

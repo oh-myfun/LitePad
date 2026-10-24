@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // B352-2 增强层抽成共享出口 `enhanceMarkdown(root, seq, opts)`。
 //
-// 为什么要抽：即时渲染（IR）的块 widget 建好 DOM 后需要同样的增强（公式 / 高亮 / 图表 /
+// 为什么要抽：渲染面建好 DOM 后需要同样的增强（公式 / 高亮 / 图表 /
 // 相对路径图片），否则 IR 里的代码块没颜色、公式还是 `$$…$$` 文本 —— 那会砸掉
 // 「IR 与只读预览观感一致」这个卖点。两处各写一份增强就是两份懒加载守卫必然漂移。
 //
@@ -122,11 +122,9 @@ describe("B352-2 结构判据：增强只有一份", () => {
       ).toBeGreaterThanOrEqual(3);
     });
 
-    it("两个调用点都把各自的 root 交出来（预览一格一发、IR 一块一发）", () => {
+    it("预览面按自己的 root 取号", () => {
       const pv = stripLineComments(readFileSync("src/markdown/preview.ts", "utf-8"));
-      const lr = stripLineComments(readFileSync("src/markdown/live-render.ts", "utf-8"));
       expect(pv, "预览按自己的根容器取号").toMatch(/nextEnhanceSeq\((this\.root|root)\)/);
-      expect(lr, "IR 按 widget 的根节点取号").toMatch(/nextEnhanceSeq\(outer\)/);
     });
   });
 

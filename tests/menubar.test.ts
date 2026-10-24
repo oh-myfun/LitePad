@@ -109,9 +109,6 @@ function makeCb(): MenuBarCallbacks {
     onSelectAll: noop,
     onTimeDate: noop,
     onToggleView: noop,
-    // B352-9：即时渲染两条直达命令的菜单出口（本文件只测结构，点击另有专门用例）
-    onIrRender: noop,
-    onIrLock: noop,
     onOutline: noop,
     tocChecked: () => true,
     onFoldAll: noop,

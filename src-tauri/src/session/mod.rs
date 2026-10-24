@@ -260,18 +260,6 @@ pub struct TabSession {
     /// 自己这一份，取不到才借同文档别的实例那一份。Rust 只透传，换算全在前端。
     #[serde(alias = "scroll_v")]
     pub scroll_v: Option<f64>,
-    /// B352-10：即时渲染的模式位（`"off"` / `"ir"`），仅 md 文件有意义。
-    ///
-    /// `None` ＝「这一格从没进过渲染态」（非 md 标签也写 `None`），与 `Some("off")`
-    /// （进过、又退回源码）是两件事 —— 与 `view_mode` / `scroll_v` 同一口径。
-    /// 认不得的值由前端恢复侧的 `coerceIrState` 兜，Rust 只透传。
-    #[serde(alias = "live_render")]
-    pub live_render: Option<String>,
-    /// B352-10：渲染态的锁位。⚠️ 必须是 `Option<bool>` 而不是 `bool`：
-    /// `Some(false)` ＝用户明确解过锁，`None` ＝从没记过（恢复时回落成「锁着」= 产品拍板的默认）。
-    /// 写成 `bool` 就把这两件事压成一个 `false`，用户关掉的锁会自己翻回去（B302/B304 那一族）。
-    #[serde(alias = "ir_locked")]
-    pub ir_locked: Option<bool>,
     /// B193：仅 `satellite_tabs` 段使用 —— 该标签当时属于哪个卫星窗口（label 作分组键）。
     /// `None` = 旧会话没写过这个字段，整批当作同一组。
     #[serde(alias = "owner")]
@@ -291,8 +279,6 @@ impl Default for TabSession {
             doc_id: None,
             sync_mode: false,
             scroll_v: None,
-            live_render: None,
-            ir_locked: None,
             owner: None,
         }
     }
@@ -539,51 +525,6 @@ mod tests {
         let out = serde_json::to_string(&state).unwrap();
         assert!(out.contains("\"scrollV\""), "落盘应为 scrollV：{out}");
         assert!(!out.contains("scroll_v"), "不应落 snake_case：{out}");
-    }
-
-    /// B352-10：会话要带即时渲染的两个状态位（`liveRender` / `irLocked`），Rust 只透传。
-    ///
-    /// 两个都必须 `Option`：`irLocked = Some(false)` 是「用户明确解过锁」，`None` 是「从没记过」
-    /// （恢复端据此回落成锁着）—— 与 `scroll_v` 的 `Some(1.0)` / `None` 完全同一个理由（B302）。
-    /// 两头都要钉：camelCase 读得进来、落得出去，旧会话缺字段归 `None`。
-    #[test]
-    fn session_carries_ir_fields() {
-        let json = r#"{
-          "panels": [
-            { "tabs": [
-                { "path": "a.md", "docId": 1, "liveRender": "ir", "irLocked": false },
-                { "path": "b.md", "docId": 2, "liveRender": null, "irLocked": null },
-                { "path": "c.md", "docId": 3 }
-              ], "active": 0 }
-          ],
-          "layout": { "kind": "leaf", "panelId": 0 },
-          "activePanel": 0
-        }"#;
-        let state: SessionState =
-            serde_json::from_str(json).expect("liveRender/irLocked 应能按 camelCase 读入");
-        let tabs = &state.panels[0].tabs;
-        assert_eq!(tabs[0].live_render.as_deref(), Some("ir"));
-        assert_eq!(tabs[0].ir_locked, Some(false), "明确解过锁要原样带回来");
-        assert_eq!(
-            tabs[1].live_render, None,
-            "显式 null = 非 md，与 \"off\" 是两件事"
-        );
-        assert_eq!(tabs[1].ir_locked, None);
-        assert_eq!(
-            tabs[2].live_render, None,
-            "旧会话没有这两个字段 ⇒ None，不能凭空当成某种模式"
-        );
-        assert_eq!(tabs[2].ir_locked, None);
-
-        let out = serde_json::to_string(&state).unwrap();
-        assert!(
-            out.contains("\"liveRender\"") && out.contains("\"irLocked\""),
-            "落盘应为 camelCase：{out}"
-        );
-        assert!(
-            !out.contains("live_render") && !out.contains("ir_locked"),
-            "不应落 snake_case：{out}"
-        );
     }
 
     /// 旧版本（B48 及更早）落盘的是 snake_case，升级后仍要能读出来。

@@ -3430,43 +3430,6 @@ button:focus-visible {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  /* B352-8：即时渲染那颗悬浮键的定位上下文 = **面板壳**（不是视口）。
-     写 `position: fixed` 的话多面板分屏会一起叠在窗口右下角同一处。 */
-  position: relative;
-}
-
-/* 即时渲染的三态悬浮键（B352-8）：一颗键 carrying「渲不渲染 + 能不能写」，
-   位置照 VS Code 的 Markdown Editor 落在编辑区右下角。
-   状态只落在字形上（B166 口径），配色不参与；圆角跟共用 `--radius`（B336）。 */
-.ir-lock-key {
-  position: absolute;
-  /* 躲开竖向滚动条槽：`::-webkit-scrollbar` 宽 10px + 8px 呼吸 */
-  right: 18px;
-  bottom: 12px;
-  /* 面板壳内部的档位：盖住编辑面与预览面（两者都不设 z-index）。
-     浮层（转到行/查找栏 1000、菜单 2000、拖拽落点 20）都在文档级定位上下文里，
-     这一发的数值碰不到它们 —— 也就是永远压在浮层之下。 */
-  z-index: 5;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-elevated);
-  color: var(--fg);
-  cursor: pointer;
-  opacity: 0.82;
-  transition:
-    opacity var(--transition),
-    background-color var(--transition);
-}
-
-.ir-lock-key:hover {
-  opacity: 1;
-  background: var(--bg-hover);
 }
 
 .panel-host .cm-editor {
@@ -3521,64 +3484,6 @@ button:focus-visible {
   background: var(--bg-hover);
   color: var(--accent);
   opacity: 1;
-}
-
-/* B352 即时渲染（IR）：焦点块那一行的左侧标识条。
-   光标所在的那一块露源码，靠这条内嵌左边线与「正在渲染」的其余块区分（Obsidian 同款做法，
-   VS Code 那边是 `markdown.editor.highlightActiveBlock`）。颜色走 token，不写死。 */
-.panel-host .cm-editor .cm-line.md-ir-focus-line {
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-
-/* B357：焦点行的字号沿用那一块渲染后的字阶 —— 点进标题块的那一下不该让字从 25px
-   掉回 14px（用户报的「编辑态字体变小」就是这一下）。比例 var 声明在 preview.css 的
-   :root，两边共用一份。⚠️ 正文档那条（无 hN 后缀）必须写在四条标题档**之前**：
-   焦点标题行同时挂着两个类，具体度相同靠顺序决胜。 */
-.panel-host .cm-editor .cm-line.md-ir-focus-line {
-  font-size: calc(var(--font-size, 14px) + 1px);
-}
-.panel-host .cm-editor .cm-line.md-ir-focus-h1 {
-  font-size: calc(var(--md-h1-scale) * (var(--font-size, 14px) + 1px));
-  font-weight: 600;
-}
-.panel-host .cm-editor .cm-line.md-ir-focus-h2 {
-  font-size: calc(var(--md-h2-scale) * (var(--font-size, 14px) + 1px));
-  font-weight: 600;
-}
-.panel-host .cm-editor .cm-line.md-ir-focus-h3 {
-  font-size: calc(var(--md-h3-scale) * (var(--font-size, 14px) + 1px));
-  font-weight: 600;
-}
-.panel-host .cm-editor .cm-line.md-ir-focus-h4 {
-  font-size: calc(var(--md-h4-scale) * (var(--font-size, 14px) + 1px));
-  font-weight: 600;
-}
-
-/* 块 widget 的容器：CM6 规定块级装饰不得带垂直 margin（带了自己会抖行高估计）。
-   节奏因此只能由**外层 padding** 承担（B352-11 评审 I4）：预览那条 `.md-block + .md-block`
-   跨不过 widget 边界（每颗 widget 里只有一个 `.md-block`），不补就是 IR 里块间 0px ——
-   正是 B319-A1 在预览里治好并专门留注释警告的「整页挤成一坨」。
-   两颗 widget 的根节点在 `.cm-content` 里互为兄弟（探针实测），所以 `+` 选得了。 */
-.panel-host .cm-editor .md-ir-block {
-  margin: 0;
-  /* ⚠️ 必须显式收回：widget 根挂在 `.cm-content` 里，而 CM6 给内容区定的是
-     `white-space: pre`（开软折行时 `pre-wrap`）—— 渲染 HTML 里 `<ul>` 与 `<li>` 之间、
-     段落内部的换行会被当成内容，实测列表项之间空 80px、一个三行源码段落渲染成三行，
-     与只读预览完全对不上（B352-11 真机台抓到）。`<pre>` 自己带 UA 的 `white-space: pre`，
-     代码块不受这一发影响。 */
-  white-space: normal;
-}
-.panel-host .cm-editor .md-ir-block + .md-ir-block {
-  padding-top: var(--md-flow);
-}
-.panel-host
-  .cm-editor
-  .md-ir-block:has(> .md-block > :is(h1, h2, h3))
-  + .md-ir-block:not(:has(> .md-block > :is(h1, h2, h3, h4, h5, h6))) {
-  padding-top: var(--md-after-head);
-}
-.panel-host .cm-editor .md-ir-block + .md-ir-block:has(> .md-block > :is(h1, h2, h3, h4, h5, h6)) {
-  padding-top: var(--md-head-flow);
 }
 
 /* 拖拽分隔条期间的全局态：禁选 + 按方向给光标。

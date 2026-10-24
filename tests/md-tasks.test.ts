@@ -8,14 +8,19 @@
 // 第 index 个就是它。块 DOM 里的勾选框个数由管线保证与任务行一致；对不上（换算不了）
 // 一律返回 null，调用方就地不动 —— 宁可点不动，也不能改错行。
 import { EditorState } from "@codemirror/state";
+import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
 import { taskLineAt } from "../src/markdown/tasks";
+import { fnBody, stripLineComments } from "./static";
 
 function doc(text: string) {
   return EditorState.create({ doc: text }).doc;
 }
+
+const md = stripLineComments(readFileSync("src/markdown.ts", "utf-8"));
+const pv = stripLineComments(readFileSync("src/markdown/preview.ts", "utf-8"));
 
 describe("B358 taskLineAt：块里第 N 个勾选框 ↔ 源码第 N 条任务行", () => {
   it("无序列表：两个勾选框各归各行，勾选态与方括号范围都对", () => {
@@ -54,10 +59,23 @@ describe("B358 taskLineAt：块里第 N 个勾选框 ↔ 源码第 N 条任务�
     const d = doc("普通段落\n");
     expect(taskLineAt(d, 1, 1, 0)).toBeNull();
   });
+});
 
-  it("区间以内的非任务块内容不参与计数（只认这个块的行区间）", () => {
-    const d = doc("- [ ] 外面\n\n普通段落\n\n- [x] 里面\n");
-    const inside = taskLineAt(d, 5, 5, 0)!;
-    expect(inside.line).toBe(5);
+describe("B359 起：预览格是唯一渲染面，宿主入口只走预览一条路", () => {
+  it("toggleTaskInTab 挡只读、没有别的写闸（用户拍板：纯预览也能勾）", () => {
+    const body = fnBody(md, "toggleTaskInTab");
+    expect(body, "取不到函数体说明出口没了").toBeTruthy();
+    expect(body, "只读文档不许写").toMatch(/doc\.readonly/);
+  });
+
+  it("预览面只把序号交回宿主，自己不换算（换算只住 tasks.ts 一处）", () => {
+    expect(pv, "预览侧用宿主入口").toMatch(/toggleTaskAt\(/);
+    expect(pv, "预览面不许自己数任务行").not.toMatch(/taskLineAt\(/);
+  });
+
+  it("宿主入口落在 tasks.ts 的共享映射与翻转记号上", () => {
+    const body = fnBody(md, "toggleTaskInTab");
+    expect(body, "行换算走共享映射").toMatch(/taskLineAt\(/);
+    expect(body, "翻转记号只住 tasks.ts").toMatch(/flippedTaskMark\(/);
   });
 });

@@ -97,11 +97,7 @@ import {
   refreshViewModeButton,
   applyPanelMode,
   openPreviewToSide,
-  cycleIrState,
-  toggleIrRender,
-  toggleIrLock,
 } from "./markdown";
-import { setIrCycleHandler } from "./shell/irlock";
 import { openFindBar } from "./find/findbar";
 import { setupSideBar, applySidebarVisible, toggleToc, updateTocDrawer } from "./toc";
 import { replayDrawer, setupSideResizer } from "./shell/drawer";
@@ -324,10 +320,6 @@ function handleUpdate(view: EditorView, update: ViewUpdate): void {
 // 把编辑器更新回调注入 doc-model（解耦：makeInstance 不再直接依赖 main 的 handleUpdate）
 setInstanceOnUpdate(handleUpdate);
 
-// 同款口子给即时渲染那颗悬浮键（B352-8）：键在 shell/irlock.ts，换态落地在 markdown.ts，
-// 两边互相 import 会成环 ⇒ 由这里把 `cycleIrState` 登记给键的 click 处理器。
-setIrCycleHandler(cycleIrState);
-
 // 把 main.ts 负责的四类渲染回调注入 ui.ts（避免 main ↔ ui 循环依赖）：
 // 状态刷新（refreshStatus/refreshAll/markActivePanel）会经这些引用回调 main 的实现。
 setRefreshViewModeButton(refreshViewModeButton);
@@ -527,18 +519,6 @@ function runShortcut(id: string): void {
     case "view.toggle":
       toggleViewMode();
       break;
-    // B352-9：即时渲染的两条直达命令（默认无键位，走命令面板/菜单/用户自绑）。
-    // 与 `toggleViewMode` 同一口径取「这一块正看着的那份实例」，不信任全局活动标签。
-    case "view.liveRender": {
-      const tab = activeTab();
-      if (tab) toggleIrRender(tab);
-      break;
-    }
-    case "view.toggleLock": {
-      const tab = activeTab();
-      if (tab) toggleIrLock(tab);
-      break;
-    }
     case "view.outline":
       toggleToc();
       break;

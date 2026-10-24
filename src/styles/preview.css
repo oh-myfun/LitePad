@@ -11,9 +11,9 @@
       写一个上限数字的话，超过就还是会被截住。 */
 /* B352-1：markdown 的**排版**规则与 `--md-*` token 挂在 `.md-rendered` 上，`.md-preview`
    退化成**容器**（自己滚 + 正文内边距 + 背景）。
-   为什么分开：即时渲染（IR）把每块的 HTML 装进 CodeMirror 的块 widget，那份 DOM 不在
-   `.md-preview` 底下 —— 前缀留在容器上 IR 就借不到排版，只能再抄一份样式，两份必然漂移。
-   预览根节点与导出件同时带这两个类（`markdown/preview.ts` 的 root、`markdown/exporter.ts`）。 */
+   为什么要分开：导出 HTML / 打印 article 与预览面共用同一份排版 —— 前缀留在容器上
+   导出件就借不到，只能再抄一份样式，两份必然漂移。预览根节点与导出件同时带这两个类
+   （`markdown/preview.ts` 的 root、`markdown/exporter.ts`）。 */
 .md-rendered {
   --md-fg: #1f2328;
   --md-bg: #ffffff;
@@ -83,13 +83,12 @@
   margin-bottom: 0;
 }
 
-/* B352-11（评审 I4）：岛间节奏的三个档位收在这一处 —— 预览与即时渲染（IR）共用同一批 token，
-   `.md-rendered` 两边都挂着，所以声明在它上面两边都读得到。
-   ⚠️ 此前这三条只写着 `var(--md-flow)` 之类的**兜底值**，全仓没有任何地方声明过它们，
-   于是「同一个观感档位」被抄在两个文件的兜底里；IR 那边要复用就只能再抄一遍。 */
+/* B352-11（评审 I4）：岛间节奏的三个档位收在这一处，声明在两边都挂着的 `.md-rendered` 上，
+   使用处只写 `var(--token)` —— 「同一个观感档位」不许在兜底里各抄一份。
+   ⚠️ 此前这三条只写着 `var(--md-flow)` 之类的**兜底值**，全仓没有任何地方声明过它们。 */
 :root {
-  /* 标题字阶（B357 从 `.md-rendered hN` 的裸 em 抽出来）：IR 的焦点行（global.css）
-     要用同一套比例，声明只住这一处。h5/h6 没有专门档（1em），不设变量。 */
+  /* 标题字阶（B357 从 `.md-rendered hN` 的裸 em 抽出来）：字号比例只声明这一处。
+     h5/h6 没有专门档（1em），不设变量。 */
   --md-h1-scale: 1.7;
   --md-h2-scale: 1.4;
   --md-h3-scale: 1.2;
