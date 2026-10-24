@@ -6,7 +6,7 @@
 // 免得契约只是把现状抄一遍（假绿）。
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { cssDecls, ruleBlock, themeBlock } from "./static";
+import { cssDecls, ruleBlock, stripCssComments, themeBlock } from "./static";
 
 // CRLF 归一：工作副本被翻成 CRLF 时，靠 `\n` 锚行的判据会一起失真（见 MEMORY）。
 const html = readFileSync("index.html", "utf-8").replace(/\r\n/g, "\n");
@@ -1176,4 +1176,29 @@ describe("B207 `display` 压过 UA 的 `[hidden]`：凡写 display 又靠 hidden
       }).toThrow();
     });
   }
+});
+
+// B363（用户：「边栏的按钮图标改到 20px，不要影响其他按钮」）：
+// codicon 基座是 16px（官方 codicon.css 的 `font: 16px/1 codicon`），
+// 只有按钮列这一族要放大 —— 必须挂在 `.side-btn .codicon` 上，不许去动基座或全站选择器。
+describe("B363 按钮列图标 20px（只影响边栏按钮）", () => {
+  it("`.side-btn .codicon` 显式 20px，且基座与其它按钮不受影响", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const rule = ruleBlock(css, ".side-btn .codicon");
+    expect(rule, "按钮列要有自己的图标字号规则").toBeTruthy();
+    expect(cssDecls(rule), "图标字号 20px").toMatch(/font-size:\s*20px/);
+    // 反向对照：退回 16px 的替身必须被同一条判据拒掉
+    const back = css.replace(/(\.side-btn \.codicon\s*\{[^}]*?font-size:\s*)20px/, "$116px");
+    expect(back, "替身必须真的改过字号").not.toBe(css);
+    expect(cssDecls(ruleBlock(back, ".side-btn .codicon"))).not.toMatch(/font-size:\s*20px/);
+    // 不许出现**不带 `.side-btn` 前缀**的全站 codicon 字号覆盖（那会连带所有按钮）
+    for (const src of [css]) {
+      const code = stripCssComments(src);
+      const offenders = [...code.matchAll(/([^{}]+)\{[^}]*font-size:\s*20px/g)]
+        .flatMap((m) => m[1].split(","))
+        .map((s) => s.trim().replace(/\s+/g, " "))
+        .filter((s) => s.includes(".codicon") && !s.includes(".side-btn"));
+      expect(offenders, "20px 只许挂在 .side-btn 下").toEqual([]);
+    }
+  });
 });

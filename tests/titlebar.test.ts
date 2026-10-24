@@ -373,16 +373,17 @@ describe("B97 自建标题栏", () => {
     expect(main, "位图要真的挂到元素上").toContain("appMark.style.backgroundImage");
   });
 
-  it("B222：标题栏那颗与打包图标同源（带底版），显示尺寸 16px（B325 用户改口径）", () => {
+  it("B222：标题栏那颗与打包图标同源（带底版），显示尺寸 20px（B363 用户改口径）", () => {
     const s = ruleBlock(css(), ".app-mark");
     // ⚠️ 反例一律排在正向断言之前：B219 的教训 —— 反例一旦被正向抢先报错，
     // 这条反向闸等于根本没验过（退化照样能「通过反向验证」）。
-    // 这颗的历史是 16 → 30 → 24 → 16：反向闸钉的是**上一版**那个数，不是最早的 16。
-    expect(s, "不许停在上一版那个 24px").not.toMatch(/(^|[^-])width:\s*24px/);
-    expect(s, "不许停在上一版那个 24px").not.toMatch(/(^|[^-])height:\s*24px/);
-    expect(s, "也不许停在上次那个 30px").not.toMatch(/(^|[^-])width:\s*30px/);
-    expect(s, "必须显式声明宽度").toContain("width: 16px");
-    expect(s, "必须显式声明高度").toContain("height: 16px");
+    // 这颗的历史是 16 → 30 → 24 → 16 → 20：反向闸钉的是**上一版**那个数。
+    expect(s, "不许停在上一版那个 16px").not.toMatch(/(^|[^-])width:\s*16px/);
+    expect(s, "不许停在上一版那个 16px").not.toMatch(/(^|[^-])height:\s*16px/);
+    expect(s, "也不许停在更早的 24px").not.toMatch(/(^|[^-])width:\s*24px/);
+    expect(s, "也不许停在更早的 30px").not.toMatch(/(^|[^-])width:\s*30px/);
+    expect(s, "必须显式声明宽度").toContain("width: 20px");
+    expect(s, "必须显式声明高度").toContain("height: 20px");
     expect(s, "带底版靠 contain 等比缩，不许拉伸").toContain("background-size: contain");
 
     // 带底版的唯一真相源是 make_icons.py（B222 换源图后由它出全套），不许手画一张丢进来
