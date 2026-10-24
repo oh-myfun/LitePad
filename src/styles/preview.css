@@ -559,13 +559,12 @@
 }
 /* B370：行节奏照 VS Code 的树：`workbench.tree.indent` 默认 **8px**、行高 22px。
    缩进只按 `--depth` 算（不套容器 padding，理由同 B314 那段注释）。
-   文件夹行不挂图标 —— VS Code 的 Seti 主题只定义文件图标，文件夹行就是「箭头 + 名字」；
-   文件行在同样的位置放 16px Seti 图标，于是文件夹名与文件图标天然对齐。 */
+   B373：文件夹行不挂图标（VS Code 的 Seti 主题只定义文件图标），文件行的图标槽**吃掉**
+   箭头槽那 22px —— 两行的名字因此从同一 x 起排（详见下面 `.explorer-twisty` / `.explorer-glyph`）。 */
 .explorer-row,
 .explorer-root,
 .explorer-note {
   position: relative;
-  isolation: isolate;
   display: flex;
   align-items: center;
   padding-left: calc(var(--depth, 0) * 8px);
@@ -594,33 +593,36 @@
   background: var(--pick-focus-bg);
   color: var(--pick-focus-fg);
 }
-/* B370：缩进引导线。VS Code 默认 `workbench.tree.renderIndentGuides = onHover`：
-   指针进树才显形，每层一根（从 16px 起、步长 8px）。
-   用逐行伪元素画而不是给容器铺一层底：缩进是逐行 `--depth` 算的，容器里没有层级结构。
-   `isolation: isolate` + `z-index: -1` 让线压在行底色之上、字形之下（不划穿箭头）。 */
-.explorer-row::before,
-.explorer-root::before,
-.explorer-note::before {
-  content: "";
+/* B373：缩进引导线照 VS Code `tree.css` 的 `.monaco-tl-indent`：
+   每行自己带一列绝对定位的线（左沿 16px、每根 8px、1px 描边），只画**祖先**那几根
+   ⇒ 深度 d 的行有 d-1 根；顶层的行没有线，最左那根正好落在上一层内容起点上。
+   显隐同 VS Code 默认 `workbench.tree.renderIndentGuides = onHover`：
+   指针进树才显示（inactive 40%），选中行的祖先链始终可见并用实色（active）。
+   ⚠️ 用真元素而不是 B370 那条渐变伪元素：每根线要能各自 active，一条渐变做不到。
+   ⚠️ active 那条必须排在后、选择器也不弱于 hover 那条，否则悬停时实色被 40% 盖掉。 */
+.explorer-indent {
   position: absolute;
-  z-index: -1;
   top: 0;
   bottom: 0;
   left: 16px;
-  width: calc(var(--depth, 0) * 8px);
-  background-image: repeating-linear-gradient(
-    to right,
-    color-mix(in srgb, var(--fg-muted, #656d76) 40%, transparent) 0 1px,
-    transparent 1px 8px
-  );
-  opacity: 0;
+  display: flex;
   pointer-events: none;
+}
+.explorer-guide {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 8px;
+  border-left: 1px solid transparent;
+  opacity: 0;
   transition: opacity 0.1s linear;
 }
-.explorer-tree:hover .explorer-row::before,
-.explorer-tree:hover .explorer-root::before,
-.explorer-tree:hover .explorer-note::before {
+.explorer-tree:hover .explorer-guide {
   opacity: 1;
+  border-left-color: var(--tree-guide-inactive, rgba(88, 88, 88, 0.4));
+}
+.explorer-tree .explorer-guide.is-active {
+  opacity: 1;
+  border-left-color: var(--tree-guide, #585858);
 }
 .explorer-row:focus-visible,
 .explorer-root:focus-visible {
@@ -637,25 +639,32 @@
   outline: 1px solid var(--accent, #0969da);
   outline-offset: -1px;
 }
-/* B370：折叠箭头槽照 VS Code `tree.css` 的 `.monaco-tl-twisty`：16px 宽 + 6px 右内边距、
-   10px 字形、视觉右移 3px。箭头只在目录行出现；文件行留同宽空槽，保证图标列对齐。 */
+/* B373：折叠箭头槽照 VS Code `tree.css` 的 `.monaco-tl-twistie`：**22px 布局宽**
+   = 16px 内容 + 6px 右内边距（本应用全局 border-box，所以写 22；VS Code 是 content-box
+   的 `width:16px` + `padding-right:6px`，量出来同为 22），字形 16px 居中，整格右移 3px。
+   B370 那版是 16px 总宽 + 10px 右对齐 —— 量 VS Code 的 DOM 才发现 `.codicon` 自己的
+   16px 盖过了 tree.css 的 10px，箭头应当更大、居中（旧版看着又小又贴右）。 */
 .explorer-twisty {
   flex: 0 0 auto;
-  width: 16px;
+  box-sizing: border-box;
+  width: 22px;
   padding-right: 6px;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: center;
   transform: translateX(3px);
 }
 .explorer-twisty .codicon {
-  font-size: 10px;
+  font-size: 16px;
 }
-/* 文件图标槽与箭头同宽（16px + 6px 右内边距，同 `.monaco-icon-label::before`）。
-   Seti 字形从槽位左沿起画；目录行不生成这一格，名字直接接在箭头槽后。 */
+/* B373：文件图标槽 = 箭头槽那 22px（16px 图标 + 6px 间距，同 `.monaco-icon-label::before`）。
+   **文件行不再先垫一个空箭头槽**：VS Code 的非可折叠行 twistie 宽 0，图标直接从内容
+   起点开始 —— 于是文件名与同层目录名对齐（旧版右移了整整一个箭头槽，正是用户点名的
+   「文件图标对齐方式」）。Seti 字形从槽位左沿起画，目录行不生成这一格。 */
 .explorer-glyph {
   flex: 0 0 auto;
-  width: 16px;
+  box-sizing: border-box;
+  width: 22px;
   padding-right: 6px;
   display: flex;
   align-items: center;

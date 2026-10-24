@@ -220,14 +220,6 @@ export function toggleExplorer(): void {
 
 // ---------------------------------------------------------------- 渲染
 
-function note(text: string, depth: number): HTMLElement {
-  const row = document.createElement("div");
-  row.className = "explorer-note";
-  row.style.setProperty("--depth", String(depth));
-  row.textContent = text;
-  return row;
-}
-
 /** 名字那一格。**一律 textContent**：文件名里可以有 `<`、`&`，拼 innerHTML 就是给自己造注入点
  *  （口径同 recents/panel.ts 的 `rowOf`）。 */
 function nameSpan(text: string): HTMLElement {
@@ -235,6 +227,74 @@ function nameSpan(text: string): HTMLElement {
   span.className = "explorer-name";
   span.textContent = text;
   return span;
+}
+
+/**
+ * B373 · 缩进引导线（VS Code `.monaco-tl-indent`）：每行自己带一列绝对定位的线，
+ * 左沿固定 16px、每层一根 8px，只画**祖先**那几根（depth-1 根）—— 顶层的行没有线。
+ * 每根线记着它对应哪位祖先，选中变化时只换颜色，不必重画整棵树（`paintActiveGuides`）。
+ */
+function guideColumn(path: string | null, depth: number): HTMLElement | null {
+  if (depth <= 1) return null;
+  const ancestors = path ? ancestorPaths(path) : [];
+  const active = activeGuidePaths();
+  const box = document.createElement("span");
+  box.className = "explorer-indent";
+  box.setAttribute("aria-hidden", "true");
+  for (let i = 0; i < depth - 1; i++) {
+    const line = document.createElement("span");
+    line.className = "explorer-guide";
+    const owner = ancestors[i];
+    if (owner) {
+      line.dataset.guideFor = owner;
+      if (active.has(owner)) line.classList.add("is-active");
+    }
+    box.append(line);
+  }
+  return box;
+}
+
+/** 从这一行往顶层数到根之前（不含根）：顺序 = 左→右，正好对上 VS Code 的祖先线列。 */
+function ancestorPaths(path: string): string[] {
+  const chain: string[] = [];
+  let cur = rows.get(path)?.dir;
+  while (cur && cur !== getRoot()) {
+    chain.unshift(cur);
+    cur = rows.get(cur)?.dir;
+  }
+  return chain;
+}
+
+/**
+ * VS Code 的「活动引导线」：焦点那条若是展开的目录就亮它自己（给它的孩子看），
+ * 否则亮它父亲。这里没有焦点概念，用选中的那一行对齐同一口径。
+ */
+function activeGuidePaths(): Set<string> {
+  const out = new Set<string>();
+  if (!selected) return out;
+  const r = rows.get(selected);
+  if (!r) return out; // 选中的是根那一行
+  out.add(r.kind === "dir" && isExpanded(selected) ? selected : r.dir);
+  return out;
+}
+
+/** 选中变了只换线的颜色（重画整棵树会丢焦点）；新建 / 改名 / 展开那几条重画路径直接带上态。 */
+function paintActiveGuides(): void {
+  const active = activeGuidePaths();
+  for (const line of explorerTree.querySelectorAll<HTMLElement>(".explorer-guide")) {
+    const owner = line.dataset.guideFor;
+    line.classList.toggle("is-active", !!owner && active.has(owner));
+  }
+}
+
+function note(text: string, depth: number): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "explorer-note";
+  row.style.setProperty("--depth", String(depth));
+  const guide = guideColumn(null, depth);
+  if (guide) row.append(guide);
+  row.append(text);
+  return row;
 }
 
 /** 改名用的输入框：预填当前名字、默认只选中**主名**（扩展名留着，与 VS Code 一致）。 */
@@ -268,12 +328,12 @@ function renameInput(e: FsEntry): HTMLElement {
   return input;
 }
 
-function inputRow(kind: Kind): HTMLElement {
+function inputRow(kind: Kind, depth: number): HTMLElement {
   const row = document.createElement("div");
   row.className = "explorer-row is-creating";
+  row.style.setProperty("--depth", String(depth));
   row.setAttribute("role", "treeitem");
-  const twisty = document.createElement("span");
-  twisty.className = "explorer-twisty";
+  row.setAttribute("aria-level", String(depth + 1));
   const input = document.createElement("input");
   input.className = "explorer-input";
   input.type = "text";
@@ -298,15 +358,15 @@ function inputRow(kind: Kind): HTMLElement {
   input.addEventListener("blur", () => {
     if (creating) void commitCreate(input.value);
   });
-  // B370：目录行不挂图标（VS Code 的 Seti 主题只给文件图标）；文件输入框用 Seti 缺省字形。
-  const parts: HTMLElement[] = [twisty];
-  if (kind === "file") {
-    const glyph = document.createElement("span");
-    glyph.className = "explorer-glyph";
-    glyph.innerHTML = fileIconHtml(null);
-    parts.push(glyph);
-  }
-  parts.push(input);
+  // B373：输入框落在**它将成为的那一层**，并占与同层行相同的那一格 22px ——
+  // 文件用 Seti 缺省字形（打字时看得出是文件），目录只留箭头槽（Seti 不画文件夹图标）。
+  const parts: HTMLElement[] = [];
+  const guide = guideColumn(null, depth);
+  if (guide) parts.push(guide);
+  const slot = document.createElement("span");
+  slot.className = kind === "file" ? "explorer-glyph" : "explorer-twisty";
+  if (kind === "file") slot.innerHTML = fileIconHtml(null);
+  parts.push(slot, input);
   row.append(...parts);
   queueMicrotask(() => input.focus());
   return row;
@@ -317,7 +377,7 @@ function renderChildren(host: HTMLElement, dir: string, depth: number): void {
   // 输入框长在该层最前，但**不取代**这一层的内容：以前这里直接 return，
   // 结果一按「新建」整层条目就消失，用户读作「文件被删了」。
   const creatingHere = creating && creating.dir === dir ? creating : null;
-  if (creatingHere) host.append(inputRow(creatingHere.kind));
+  if (creatingHere) host.append(inputRow(creatingHere.kind, depth));
   const kids = childrenOf(dir);
   if (isLoading(dir)) {
     host.append(note("读取中…", depth));
@@ -358,23 +418,18 @@ function renderEntry(e: FsEntry, dir: string, depth: number): HTMLElement {
   // 气泡压在鼠标下方，会盖住下面一两行，这与最近打开那排密行是同一种遮挡，可接受。
   setTextTip(row, e.path, { group: "explorer" });
 
-  const twisty = document.createElement("span");
-  twisty.className = "explorer-twisty";
-  if (kind === "dir") {
-    twisty.innerHTML = open ? CODICONS.chevronDown : CODICONS.chevronRight;
-  }
   const name = nameSpan(e.name);
-  // B370：目录行只有箭头 + 名字 —— VS Code 的 Seti 主题只定义文件图标，文件夹行本来
-  // 就没有图标（旧版给它挂 codicon 文件夹，反而与对标对象不一致）。文件行照旧走 Seti，
-  // 与标签 / 语言浮层同一个出口。
-  const parts: HTMLElement[] = [twisty];
-  if (kind === "file") {
-    const glyph = document.createElement("span");
-    glyph.className = "explorer-glyph";
-    glyph.innerHTML = fileIconHtml(detectLanguage(e.name).label);
-    parts.push(glyph);
-  }
-  parts.push(renaming?.path === e.path ? renameInput(e) : name);
+  // B373：文件行**不再留空箭头槽**（VS Code 的非可折叠行 twistie 宽 0，Seti 图标从内容
+  // 起点开始）—— 图标槽本身吃掉 22px，文件名才和同层的目录名从同一 x 起排。
+  // 目录行仍只有箭头 + 名字：Seti 主题不定义文件夹图标（B370 的口径）。
+  const parts: HTMLElement[] = [];
+  const guide = guideColumn(e.path, depth);
+  if (guide) parts.push(guide);
+  const slot = document.createElement("span");
+  slot.className = kind === "dir" ? "explorer-twisty" : "explorer-glyph";
+  if (kind === "dir") slot.innerHTML = open ? CODICONS.chevronDown : CODICONS.chevronRight;
+  else slot.innerHTML = fileIconHtml(detectLanguage(e.name).label);
+  parts.push(slot, renaming?.path === e.path ? renameInput(e) : name);
   row.append(...parts);
 
   if (kind === "dir") {
@@ -499,6 +554,7 @@ function select(path: string | null): void {
     el.setAttribute("aria-selected", String(on));
     el.tabIndex = on ? 0 : -1;
   }
+  paintActiveGuides();
 }
 
 /** 按路径找那一行的元素。不写 `querySelector("[data-path=\"…\"]")`：Windows 路径里的 `\`

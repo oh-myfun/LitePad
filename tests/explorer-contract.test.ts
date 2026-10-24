@@ -492,9 +492,10 @@ describe("B328/B329 侧栏那几格的下伸部（省略号那层不许切字）
   });
 });
 
-describe("B370 资源管理器行对齐 VS Code 的 Seti 树", () => {
+describe("B370/B373 资源管理器行对齐 VS Code 的 Seti 树", () => {
   // 这一族判的是「与 VS Code 同名的那几个量」：8px 缩进（workbench.tree.indent 默认）、
-  // 16+6 的箭头槽 / 图标槽、10px 箭头、选中行取 list.activeSelectionBackground。
+  // 16+6 的箭头槽 / 图标槽、16px 箭头、选中行取 list.activeSelectionBackground、
+  // 每层一根 8px 的缩进引导线。
   // 不展开 var()：`var(--depth, 0)` 会被 resolveCssVars 用 fallback 展开成 0，判据就空了。
   const sheet = stripCssComments(css);
 
@@ -506,23 +507,35 @@ describe("B370 资源管理器行对齐 VS Code 的 Seti 树", () => {
     expect(row, "旧的 12px 步长不许回潮").not.toMatch(/\*\s*12px/);
   });
 
-  it("箭头槽与图标槽都是 16px + 6px 右内边距；箭头 10px 字形", () => {
+  it("箭头槽与图标槽都是 22px（16 内容 + 6 右内边距），箭头 16px 字形居中", () => {
     const twisty = ruleBlock(sheet, ".explorer-twisty");
-    expect(twisty, "箭头槽宽").toMatch(/width:\s*16px/);
+    expect(twisty, "箭头槽总宽 = 16 + 6（全局 border-box）").toMatch(/width:\s*22px/);
+    expect(twisty).toMatch(/box-sizing:\s*border-box/);
     expect(twisty, "箭头与内容的间距").toMatch(/padding-right:\s*6px/);
     expect(twisty, "视觉右移 3px（VS Code 同款）").toMatch(/translateX\(3px\)/);
-    expect(ruleBlock(sheet, ".explorer-twisty .codicon")).toMatch(/font-size:\s*10px/);
+    expect(twisty, "字形居中（VS Code 的 .codicon 16px 盖过 tree.css 的 10px）").toMatch(
+      /justify-content:\s*center/,
+    );
+    const glyphChar = ruleBlock(sheet, ".explorer-twisty .codicon");
+    expect(glyphChar, "箭头字形 16px").toMatch(/font-size:\s*16px/);
+    expect(glyphChar, "B370 的 10px 已撤").not.toMatch(/font-size:\s*10px/);
     const glyph = ruleBlock(sheet, ".explorer-glyph");
-    expect(glyph, "图标槽与箭头槽同宽").toMatch(/width:\s*16px/);
+    expect(glyph, "图标槽与箭头槽同宽 ⇒ 文件名与目录名同一 x").toMatch(/width:\s*22px/);
+    expect(glyph).toMatch(/box-sizing:\s*border-box/);
     expect(glyph).toMatch(/padding-right:\s*6px/);
+    expect(twisty, "旧版 16px 总宽已撤").not.toMatch(/width:\s*16px/);
   });
 
-  it("目录行不再写 codicon 文件夹；文件行仍走 Seti", () => {
+  it("目录行不再写 codicon 文件夹；文件行仍走 Seti，且不再垫空箭头槽", () => {
     const panel = read("src/explorer/panel.ts");
     expect(panel, "目录行 / 根行的 folder 字形已撤").not.toMatch(/CODICONS\.folder\b/);
     expect(panel, "根行只剩箭头 + 名字 + 打开键").toContain("rootRow.append(rt, rn, explorerOpen)");
     expect(panel, "文件行仍走 Seti（按文件名检测语言）").toContain(
       "fileIconHtml(detectLanguage(e.name).label)",
+    );
+    // 一行只放一格 22px 槽：目录行是箭头、文件行是图标 —— 文件行不再垫空箭头槽。
+    expect(panel, "文件行与目录行各自只放一格 22px 槽").toContain(
+      'slot.className = kind === "dir" ? "explorer-twisty" : "explorer-glyph"',
     );
   });
 
@@ -537,18 +550,25 @@ describe("B370 资源管理器行对齐 VS Code 的 Seti 树", () => {
     expect(sel, "旧的 neutral 底已撤").not.toContain("--side-btn-active");
   });
 
-  it("缩进引导线：每层一根 8px 步长，指针进树才显形（VS Code 的 onHover）", () => {
-    const guide = ruleBlock(
-      sheet,
-      ".explorer-row::before, .explorer-root::before, .explorer-note::before",
-    );
-    expect(guide, "取不到引导线规则").toContain("repeating-linear-gradient");
-    expect(guide).toMatch(/width:\s*calc\(var\(--depth,\s*0\)\s*\*\s*8px\)/);
-    const hover = ruleBlock(
-      sheet,
-      ".explorer-tree:hover .explorer-row::before, .explorer-tree:hover .explorer-root::before, .explorer-tree:hover .explorer-note::before",
-    );
-    expect(hover, "引导线默认隐、悬停树才亮").toContain("opacity: 1");
+  it("缩进引导线照 VS Code：depth-1 根、左沿 16px、8px 步长、hover 才显 + active 实色", () => {
+    const indent = ruleBlock(sheet, ".explorer-indent");
+    expect(indent, "取不到引导线列").toContain("position: absolute");
+    expect(indent).toMatch(/left:\s*16px/);
+    expect(indent, "线不吃指针事件（否则行会变成两段可点区）").toContain("pointer-events: none");
+    const guide = ruleBlock(sheet, ".explorer-guide");
+    expect(guide).toMatch(/width:\s*8px/);
+    expect(guide).toContain("border-left: 1px solid transparent");
+    expect(guide, "默认隐").toMatch(/opacity:\s*0/);
+    const hover = ruleBlock(sheet, ".explorer-tree:hover .explorer-guide");
+    expect(hover, "指针进树才显（VS Code 的 onHover）").toContain("opacity: 1");
+    expect(hover, "非活动线走 @40% 那一档").toContain("--tree-guide-inactive");
+    const active = ruleBlock(sheet, ".explorer-tree .explorer-guide.is-active");
+    expect(active, "选中行的祖先链始终实色").toContain("--tree-guide");
+    expect(sheet, "B370 的渐变伪元素已撤").not.toContain(".explorer-row::before");
+    // 数量口径由面板决定：深度 d 画 d-1 根（顶层没有线，根不画）
+    const panel = read("src/explorer/panel.ts");
+    expect(panel).toContain("for (let i = 0; i < depth - 1; i++)");
+    expect(panel).toContain("if (depth <= 1) return null");
   });
 });
 

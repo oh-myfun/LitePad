@@ -520,7 +520,10 @@ describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘�
   });
 
   it("反向验证③：把手退回 12px（三点小到看不清可拖）必须被咬住", () => {
-    const BAD = preview.replace(/font-size:\s*16px/, "font-size: 12px");
+    // ⚠️ 退化必须**只换 `.toc-grip .codicon` 这一条**：早先写的是全文件第一处
+    // `font-size: 16px`，B373 给资源管理器箭头也写了 16px（排在它前面）之后，
+    // 替身改到的就是别人，断言没跑就被判「没抓到」——一条失效的闸。
+    const BAD = preview.replace(/(\.toc-grip \.codicon\s*\{[^}]*font-size:\s*)16px/, "$112px");
     expect(BAD, "替身必须真的缩小把手").not.toBe(preview);
     expect(() => {
       expect(ruleBlock(BAD, ".toc-grip .codicon"), "替身的小把手必须被抓到").toMatch(

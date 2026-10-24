@@ -122,6 +122,11 @@
   --side-btn-active: #3a3f45;
   --fg: #d8dbe0;
   --fg-muted: #8b9299;
+  /* B373：资源管理器缩进引导线，取值照 VS Code 的 `tree.indentGuidesStroke`
+     （暗色档 #585858）；指针悬停才显的那几条用同一色 @40%
+     （`tree.inactiveIndentGuidesStroke` = transparent(treeIndentGuidesStroke, 0.4)）。 */
+  --tree-guide: #585858;
+  --tree-guide-inactive: color-mix(in srgb, var(--tree-guide) 40%, transparent);
   --accent: #4c9ffe;
   --accent-fg: #ffffff;
   /* B366：居顶快速选择的**选中行**（照 VS Code quick input）：
@@ -239,6 +244,9 @@
   --side-btn-active: #d5d9de;
   --fg: #24292f;
   --fg-muted: #6a737d;
+  /* B373：同深色档，浅色取 VS Code `tree.indentGuidesStroke` 的 light 值 #a9a9a9。 */
+  --tree-guide: #a9a9a9;
+  --tree-guide-inactive: color-mix(in srgb, var(--tree-guide) 40%, transparent);
   --accent: #0969da;
   --accent-fg: #ffffff;
   /* B366：与深色档同源（VS Code 浅色档 list.activeSelectionBackground = #0060C0）。 */

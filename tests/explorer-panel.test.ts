@@ -242,17 +242,42 @@ describe("B314 资源管理器面板", () => {
       file.querySelector(".explorer-glyph .seti-icon")?.getAttribute("data-tone"),
       "文件图标走 Seti（B368），Markdown 是蓝色",
     ).toBe("blue");
-    // B370：行结构与 VS Code 对齐 —— 目录 = 箭头 + 名字；文件 = 箭头空槽 + 图标 + 名字。
-    // 目录不占图标槽，所以文件夹名与文件图标左沿对齐（不是与文件名对齐）。
+    // B370/B373：行结构与 VS Code 对齐 —— 目录 = 箭头 + 名字；文件 = Seti 图标 + 名字。
+    // 文件行**不再留空箭头槽**：图标槽本身吃掉箭头那 22px，两行的名字从同一 x 起排。
     expect(
       [...dir.children].map((el) => el.className),
       "目录行不该有图标槽",
     ).toEqual(["explorer-twisty", "explorer-name"]);
     expect(
       [...file.children].map((el) => el.className),
-      "文件行 = 箭头空槽 + Seti 图标 + 名字",
-    ).toEqual(["explorer-twisty", "explorer-glyph", "explorer-name"]);
+      "文件行 = Seti 图标 + 名字（没有空箭头槽）",
+    ).toEqual(["explorer-glyph", "explorer-name"]);
     expect(file.getAttribute("aria-level"), "子项比根深一层").toBe("2");
+  });
+
+  it("B373：深层行带祖先引导线（depth-1 根），选中行的祖先链是实色", async () => {
+    await click(rowAt("notes")); // 展开并选中目录
+    const deep = rowAt("deeper.md");
+    expect(deep.getAttribute("aria-level"), "notes 的子项深度 2").toBe("3");
+    expect(
+      [...deep.children].map((el) => el.className),
+      "深层文件行 = 引导线列 + 图标 + 名字",
+    ).toEqual(["explorer-indent", "explorer-glyph", "explorer-name"]);
+    const indent = deep.querySelector<HTMLElement>(".explorer-indent");
+    expect(indent, "深层行要有一列引导线").not.toBeNull();
+    const guides = [...(indent?.children ?? [])] as HTMLElement[];
+    expect(guides.length, "深度 2 ⇒ 只画祖先那 1 根（根不画）").toBe(1);
+    expect(guides[0].dataset.guideFor, "线记着它对应哪一层（active 靠它）").toBe(`${ROOT}\\notes`);
+    // 刚展开的目录被选中 ⇒ 它那一列（它的孩子行里那根线）是 active
+    expect(guides[0].classList.contains("is-active")).toBe(true);
+    expect(rowAt("notes").querySelector(".explorer-indent"), "顶层没有祖先线").toBeNull();
+
+    // 选中顶层文件 ⇒ active 换到根那一列（没有线可亮），notes 这根退回 inactive；
+    // 再选回深层文件 ⇒ 又亮起来。两发都不重画树，走的是 select 里的原位更新。
+    await click(rowAt("a.md"));
+    expect(guides[0].classList.contains("is-active")).toBe(false);
+    await click(rowAt("deeper.md"));
+    expect(guides[0].classList.contains("is-active")).toBe(true);
   });
 
   it("点目录 = 展开并读那一层；再点 = 收起", async () => {
@@ -351,6 +376,16 @@ describe("B314 资源管理器面板", () => {
     await click(ui.explorerNewFile);
     const input = ui.explorerTree.querySelector<HTMLInputElement>(".explorer-input");
     expect(input, "没画出输入框").toBeTruthy();
+    // B373：输入框落在它将成为的那一层，结构也跟同层的文件行一致（图标槽 + 输入框，
+    // 没有空箭头槽）—— 否则「新建」那一行会比同层名字缩进一截。
+    const row = input!.closest<HTMLElement>(".explorer-row")!;
+    expect(row.style.getPropertyValue("--depth"), "notes 的子层 = 深度 2").toBe("2");
+    expect([...row.children].map((el) => el.className)).toEqual([
+      "explorer-indent",
+      "explorer-glyph",
+      "explorer-input",
+    ]);
+    expect(row.querySelectorAll(".explorer-guide").length, "深度 2 画 1 根祖先线").toBe(1);
     input!.value = "新笔记.md";
     input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     await vi.waitFor(() =>
