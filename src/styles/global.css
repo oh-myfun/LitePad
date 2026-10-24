@@ -3712,6 +3712,114 @@ body.tab-drag-active * {
   display: none;
 }
 
+/* ---------- 居顶快速选择浮层（B365，照 VS Code quick input） ---------- */
+
+/* 几何照 VS Code `platform/quickinput/browser/media/quickInput.css`：
+   `.quick-input-widget { position:absolute; width:600px; left:50% }`，位置由
+   `quickInputController.layout()` 给 `top = titleBarOffset` —— 我们的标题栏高 34px，
+   所以就落在标题栏下沿，水平居中。层级夹在弹出菜单（1000）与提示（2000）之间：
+   浮层要盖住菜单，但不能盖住「菜单项也能弹」的提示层。 */
+.quick-pick {
+  position: fixed;
+  top: 34px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 600px;
+  max-width: calc(100vw - 32px);
+  z-index: 1500;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  font-size: var(--fs-ui);
+  overflow: hidden;
+}
+
+.quick-pick-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.quick-pick-search {
+  display: flex;
+  align-items: center;
+  color: var(--fg-muted);
+}
+
+.quick-pick-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--fs-ui);
+}
+
+.quick-pick-input::placeholder {
+  color: var(--fg-muted);
+}
+
+/* VS Code quick input 的列表上限是 20 行 × 22px；行高与菜单条目同源（B354）。
+   ⚠️ 写定值 440px 而不是 calc(20 * 22px)：calc 的乘法在旧 WebView2 上不认
+   （本项目按 chrome105 兜底），那条声明会被静默丢掉、列表一泻到底。 */
+.quick-pick-list {
+  max-height: 440px;
+  padding: 4px 6px 7px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.quick-pick-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--menu-item-h);
+  padding: 0 6px;
+  border-radius: 3px;
+  color: var(--fg);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.quick-pick-item.is-active {
+  background: var(--bg-hover);
+}
+
+.quick-pick-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+}
+
+.quick-pick-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quick-pick-desc {
+  margin-left: auto;
+  padding-left: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--fs-meta);
+  color: var(--fg-muted);
+}
+
+.quick-pick-empty {
+  padding: 8px 14px 10px;
+  color: var(--fg-muted);
+}
+
 /* ---------- 转到行浮层（Ctrl+G） ---------- */
 
 .goto-overlay {
@@ -3790,18 +3898,10 @@ body.tab-drag-active * {
   color: var(--fg);
 }
 
-/* B233：`.sb-btn-active` 与 `.sb-md-badge` 已随状态栏语言项「纯展示化」删除 ——
-   前者是那颗的预览态点亮底色，后者是「M↓」徽标，两者唯一的使用者都已不在。
-   ⚠️ 别加回来：那颗现在是纯文字，任何「看起来可点」的痕迹都是假 affordance。 */
-
-/* 语言/格式项（sb-lang）：纯展示，恒不可点 */
-.sb-lang {
-  cursor: default;
-}
-.sb-lang:hover {
-  background: transparent;
-  color: var(--fg-muted);
-}
+/* B233 删掉的 `.sb-btn-active`（预览态点亮）与 `.sb-md-badge`（「M↓」徽标）仍然不许回来：
+   B365 只把语言项**恢复成可点的按钮**（和编码键同款），它不承担视图切换，所以没有
+   「点亮」这一档。`.sb-lang` 也不再需要「恒不可点」的 cursor 覆盖 —— 可点就跟着
+   `button` 的手型走。 */
 
 .sb-message-error {
   color: var(--danger);

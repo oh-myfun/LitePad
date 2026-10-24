@@ -146,6 +146,7 @@ import {
   showEncodingMenu,
   showEolMenu,
 } from "./prefs";
+import { showLanguagePicker } from "./language-mode";
 import {
   changeFontSize,
   cycleTabInPanel,
@@ -244,6 +245,7 @@ import {
   winPin,
   sbEncoding,
   sbEol,
+  sbLang,
   showMessage,
   updatePositionOf,
   refreshTitle,
@@ -377,8 +379,9 @@ function bindEvents(): void {
     refreshSyncButton(tab);
   });
 
-  // B233：状态栏语言项不再兼视图切换器（见 refreshViewModeButton 的注释），
-  // 那颗纯展示、不挂 click。切换入口在标签区操作键 / Ctrl+/ / 菜单。
+  // B365：状态栏文件类型做成可点（推翻 B233 的纯展示）—— 点开居顶快速选择换语言模式。
+  // 仍然**不**在这颗上切视图：预览入口在标签区操作键 / Ctrl+/ / 菜单。
+  sbLang.addEventListener("click", () => showLanguagePicker());
   sbEncoding.addEventListener("click", () => void showEncodingMenu());
   sbEol.addEventListener("click", () => showEolMenu());
 

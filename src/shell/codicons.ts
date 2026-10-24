@@ -149,6 +149,10 @@ const IDS = {
   diff: "diff",
   tools: "tools",
   fileText: "file-text",
+  // —— B365 居顶快速选择（照 VS Code quick input）——
+  // 搜索框左侧的放大镜与选中项左侧的勾，都取官方字形，不手绘。
+  search: "search",
+  check: "check",
 } as const;
 
 /** 图标短名（上方 IDS 的键）。 */

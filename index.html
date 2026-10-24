@@ -342,9 +342,12 @@
         <span id="sb-message" class="sb-item sb-grow">就绪</span>
         <span id="sb-pos" class="sb-item">行 1, 列 1</span>
         <span id="sb-count" class="sb-item">0 个字符</span>
-        <!-- B233：语言/格式项纯展示（md 也不再来回切视图）⇒ 用 span 而非 button，
-             免得留个不可点的按钮语义。视图切换在标签区操作键 / Ctrl+/ / 菜单。 -->
-        <span id="sb-lang" class="sb-item">Plain Text</span>
+        <!-- B365（用户点名）：文件类型可点开切换 —— 默认按后缀自动匹配，匹配不到是纯文本；
+             未命名文件也能手动切成 Markdown 等类型，拿到高亮与预览入口。
+             浮层是自绘的居顶快速选择（VS Code quick input 同款），不走原生 select。 -->
+        <button id="sb-lang" class="sb-item sb-btn" data-tip="选择语言模式" aria-haspopup="dialog">
+          Plain Text
+        </button>
         <button id="sb-encoding" class="sb-item sb-btn" data-tip="点击可切换编码">UTF-8</button>
         <!-- data-tip 由 main.ts 的 refreshStatus() 按「是否混用行尾」动态写入 -->
         <button id="sb-eol" class="sb-item sb-btn">CRLF</button>

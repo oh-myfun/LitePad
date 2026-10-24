@@ -38,13 +38,13 @@ import {
   attachTabToPanel,
   getInstanceOnUpdate,
   isMdTab,
+  languageOfDoc,
   makeDoc,
   makeInstance,
   markClean,
   markDiskVersion,
   registerDoc,
 } from "../doc-model";
-import { detectLanguage } from "../editor/language";
 import { normalizeSizeClass, perfProfileFor } from "../editor/perf";
 import { makeTabState } from "../editor/editor";
 import {
@@ -91,7 +91,7 @@ import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-
  */
 function rebuildDocInstances(doc: Doc, text: string, keepCursor = false): void {
   const firstLine = text.split("\n", 1)[0] ?? "";
-  const lang = detectLanguage(doc.name === "未命名" ? null : doc.name, firstLine);
+  const lang = languageOfDoc(doc, firstLine);
   doc.langLabel = lang.label;
   // 档位必须跟着 doc 走：不传就回落 normal，大文件重载一次就把降级特性全开了
   const perf = perfProfileFor(doc.sizeClass);
@@ -442,7 +442,7 @@ async function saveDocCore(doc: Doc, inst: Tab, forceDialog: boolean): Promise<b
     discardBackupFor(doc);
     scheduleSessionSave();
 
-    const lang = detectLanguage(saved.name, text.split("\n", 1)[0]);
+    const lang = languageOfDoc(doc, text.split("\n", 1)[0]);
     if (lang.label !== doc.langLabel) {
       doc.langLabel = lang.label;
       // 语言变化广播到该文档的全部实例

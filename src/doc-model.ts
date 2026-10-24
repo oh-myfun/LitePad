@@ -15,7 +15,7 @@ import {
   isWrap,
   layout,
 } from "./core/app-state";
-import { detectLanguage } from "./editor/language";
+import { detectLanguage, languageInfoByLabel, type LanguageInfo } from "./editor/language";
 import { perfProfileFor, type SizeClass } from "./editor/perf";
 import { makeTabState } from "./editor/editor";
 import { eachLeaf } from "./core/layout";
@@ -68,6 +68,7 @@ function makeDoc(
     baselineEol: eol,
     external: false,
     langLabel: lang.label,
+    langOverride: null,
     sizeClass,
     backupId,
     backedUp: false,
@@ -79,10 +80,7 @@ function makeDoc(
 /** 为文档在指定面板创建一个实例（独立 CM6 状态，内容同源）。 */
 function makeInstance(doc: Doc, panelId: number, text: string): Tab {
   const firstLine = text.split("\n", 1)[0] ?? "";
-  const lang =
-    doc.name === "未命名" && !text
-      ? { label: "Plain Text", extension: null }
-      : detectLanguage(doc.name === "未命名" ? null : doc.name, firstLine);
+  const lang = languageOfDoc(doc, firstLine);
   const perf = perfProfileFor(doc.sizeClass);
   const { state, comps } = makeTabState(
     text,
@@ -163,9 +161,26 @@ function panelIdsInOrder(): number[] {
   return ids;
 }
 
-/** Markdown 文档判定（按文件名后缀）。纯谓词：tabs / 预览 / 菜单共用一份口径。 */
+/**
+ * B365：文档当前生效的语言。
+ *
+ * 顺序：手动覆盖（且是注册表里认得的标签）→ 文件名 / 首行自动检测。
+ * 未知覆盖值（旧数据 / 注册表删过标签）按自动处理，不让文档卡在「有覆盖但没高亮」。
+ */
+function languageOfDoc(doc: Doc, firstLine = ""): LanguageInfo {
+  const override = doc.langOverride ? languageInfoByLabel(doc.langOverride) : null;
+  if (override) return override;
+  return detectLanguage(doc.name === "未命名" ? null : doc.name, firstLine);
+}
+
+/** Markdown 文档判定（B365 起：手动类型优先，其次按文件名后缀）。纯谓词：tabs / 预览 / 菜单共用一份口径。 */
 function isMdDoc(doc: Doc | undefined | null): boolean {
-  return !!doc && /\.(md|markdown|mdown|mkd)$/i.test(doc.name);
+  if (!doc) return false;
+  // 只认注册表里存在的覆盖值；认不出就落回后缀判定（与 languageOfDoc 同口径）
+  if (doc.langOverride && languageInfoByLabel(doc.langOverride)) {
+    return doc.langOverride === "Markdown";
+  }
+  return /\.(md|markdown|mdown|mkd)$/i.test(doc.name);
 }
 
 function isMdTab(tab: Tab): boolean {
@@ -189,4 +204,5 @@ export {
   isMdDoc,
   isMdTab,
   isMdActive,
+  languageOfDoc,
 };

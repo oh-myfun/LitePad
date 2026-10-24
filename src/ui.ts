@@ -129,8 +129,8 @@ const sbPos = el("sb-pos");
 const sbCount = el("sb-count");
 const sbEncoding = el<HTMLButtonElement>("sb-encoding");
 const sbEol = el<HTMLButtonElement>("sb-eol");
-// B233：状态栏语言项是**纯展示**（md 也不再来回切视图）⇒ HTML 侧已改成 <span>。
-const sbLang = el<HTMLSpanElement>("sb-lang");
+// B365：语言项重新可点（推翻 B233 的纯展示口径）—— 点开居顶快速选择切语言模式。
+const sbLang = el<HTMLButtonElement>("sb-lang");
 
 const LOSSY_ABORT = Symbol("lossy-abort");
 

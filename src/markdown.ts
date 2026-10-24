@@ -21,7 +21,6 @@ import {
 import { activeTab, docOf, getPanel } from "./core/panels";
 import { isMdTab, makeInstance } from "./doc-model";
 import { markActivePanel, sbLang, tocPanel } from "./ui";
-import { clearTip } from "./shell/tooltip";
 import { logger } from "./core/logger";
 import { perfProfileFor } from "./editor/perf";
 import { renderBlocks } from "./markdown/pipeline";
@@ -270,22 +269,17 @@ function openPreviewToSide(panelId: number): void {
   scheduleSessionSave();
 }
 
-/** 状态栏语言/格式项：**纯展示**高亮语言名（记事本式）。
+/** 状态栏语言/格式项：显示当前生效的语言名（B365 起可点开浮层切换）。
  *
- * B233：md 原先在这颗上兼了「视图切换器」——显示「M↓ Markdown 语法/预览」、
- *  可点击切视图、预览态还点亮 `.sb-btn-active`。现在**一律只显示语言名**
- *  （md 就是 `langLabel` 的 "Markdown"），与其他格式完全一致：不带 `.sb-btn`、
- *  不带 `.sb-md-badge`、不随 `viewMode` 变、不挂切换提示、点了也没反应。
- *  用户明确要的是「和其他格式显示一样」，**预览态也不加任何额外标记**。
- *
- *  视图切换入口仍在别处（标签区操作键、Ctrl+/、菜单），这颗不再承担。
- *  ⚠️ 别再加回 `.sb-btn` / `sb-btn-active` / `sb-md-badge` 任一个 ——
- *     它们唯一的作用就是让这颗看起来可点，有专门的反向契约钉住。 */
+ * B233 曾把它做成**纯展示**（md 也不再来回切视图），那个口径只管「别在它上面切视图」；
+ * B365 用户点名要「像编码键一样可点、切换文件类型」，于是恢复按钮语义 —— 但这里仍
+ * **只显示语言名**，不掺视图模式（预览切换仍在标签区操作键 / Ctrl+/ / 菜单）。
+ * 禁用态与编码/行尾两颗同口径：没有活动文档就按不动。 */
 function refreshViewModeButton(): void {
   const tab = activeTab();
   const doc = tab ? docs.get(tab.docId) : undefined;
   sbLang.textContent = doc?.langLabel ?? "Plain Text";
-  clearTip(sbLang);
+  sbLang.disabled = !tab;
 }
 
 export {

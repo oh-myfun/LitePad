@@ -265,3 +265,37 @@ export function detectLanguage(fileName: string | null, firstLine?: string): Lan
 function toInfo(e: Entry): LanguageInfo {
   return { label: e.label, extension: e.parser ?? null };
 }
+
+/**
+ * B365：按注册表标签取语言（状态栏「文件类型」的手动覆盖用）。
+ * 未知标签返回 null —— 调用方据此回退自动检测，不把旧值当死值。
+ */
+export function languageInfoByLabel(label: string): LanguageInfo | null {
+  const hit = REGISTRY.find((e) => e.label === label);
+  return hit ? toInfo(hit) : null;
+}
+
+/** B365：状态栏浮层的语言清单 —— 直接取注册表顺序（常用语言在前），不另存第二张表。 */
+export const LANGUAGE_LABELS: readonly string[] = REGISTRY.map((e) => e.label);
+
+/** B365：「回到自动检测」那一项的名字（与语言标签同处一份清单，只有一个勾）。 */
+export const AUTO_LANGUAGE = "自动检测";
+
+export interface LanguageChoice {
+  label: string;
+  description?: string;
+  checked: boolean;
+}
+
+/**
+ * B365：状态栏「文件类型」浮层的条目。
+ * `override = null` ⇒ 自动检测打勾；手动值 ⇒ 对应语言打勾，且只有一项打勾。
+ * 未知覆盖值（旧会话/注册表删过标签）按自动显示 —— 与 languageOfDoc 的回退同口径。
+ */
+export function languageChoices(override: string | null): LanguageChoice[] {
+  const known = override && languageInfoByLabel(override) ? override : null;
+  return [
+    { label: AUTO_LANGUAGE, description: "按文件后缀自动识别", checked: known === null },
+    ...LANGUAGE_LABELS.map((label) => ({ label, checked: known === label })),
+  ];
+}

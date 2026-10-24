@@ -89,6 +89,12 @@ export interface Doc {
   external: boolean;
   langLabel: string;
   /**
+   * B365：用户手动指定的语言（语言注册表里的标签，如 "Markdown"）。
+   * `null` = 自动：按文件名 / 首行推断（见 `languageOfDoc`）。
+   * 与 `langLabel` 分工：这个记「用户选了什么」，`langLabel` 记「当前生效显示什么」。
+   */
+  langOverride: string | null;
+  /**
    * 已知磁盘版本：`file-changed` 事件里的 (mtimeMs, size) 与它相同 ⇒ 那次事件是
    * **自己保存激起的回声**，必须忽略；不同 ⇒ 真的被外部改了（VS Code 的 etag 同理）。
    *

@@ -96,30 +96,29 @@ vi.mock("../src/ipc/api", () => ({
 }));
 
 const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-describe("B233 状态栏语言项：真 DOM 上是纯展示", () => {
+describe("B365 状态栏文件类型：真 DOM 上是可点按钮", () => {
   beforeAll(async () => {
     await import("../src/main");
     await wait(300);
   });
 
-  it("标签是 SPAN、无 .sb-btn、文案只有语言名", () => {
+  it("标签是 BUTTON + .sb-btn，文案只有语言名", () => {
     const el = document.querySelector("#sb-lang") as HTMLElement | null;
     expect(el, "状态栏语言项应存在").toBeTruthy();
 
-    // ⚠️ 反向闸排在正向断言之前
-    // 纯展示：显示的是语言名，不带「M↓」徽标，也不含「语法/预览」字样
+    // 反向闸排在正向断言之前：这颗只切语言，不许再兼视图切换
     expect(el!.textContent ?? "", "不应再有 M↓ 徽标").not.toContain("M↓");
     expect(el!.textContent ?? "", "不再显示语法/预览字样").not.toMatch(/语法|预览/);
-    expect(el!.classList.contains("sb-btn"), "不该带 .sb-btn（那是可点样式）").toBe(false);
-    expect(el!.hasAttribute("tabindex"), "不该有 tabindex（不可聚焦）").toBe(false);
 
-    // 正向：标签是 SPAN（原为 BUTTON），文案是语言名
-    expect(el!.tagName, "元素应是 SPAN").toBe("SPAN");
+    // 正向：按钮（B365 推翻 B233 的 span），可点样式与提示齐全
+    expect(el!.tagName, "元素应是 BUTTON").toBe("BUTTON");
+    expect(el!.classList.contains("sb-btn"), "应带 .sb-btn（和编码键同款）").toBe(true);
+    expect(el!.getAttribute("data-tip")).toBe("选择语言模式");
     expect((el!.textContent ?? "").length, "应显示语言名").toBeGreaterThan(0);
   });
 
-  it("编码 / 行尾两颗仍是 BUTTON + .sb-btn（别一起改成纯展示）", () => {
-    // 对照组：证明上一条不是「所有状态栏项都被改成 span 了」
+  it("编码 / 行尾两颗仍是 BUTTON + .sb-btn（别一起改坏）", () => {
+    // 对照组：证明上一条不是「所有状态栏项都被改了一遍」
     for (const id of ["sb-encoding", "sb-eol"]) {
       const el = document.querySelector(`#${id}`) as HTMLElement | null;
       expect(el, `${id} 应存在`).toBeTruthy();
