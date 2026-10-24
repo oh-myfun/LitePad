@@ -263,14 +263,14 @@ describe("B352-6 事件放行与焦点行", () => {
     view.destroy();
   });
 
-  it("焦点行装饰只给露源码那一块的首行，类名 md-ir-focus-line", () => {
+  it("焦点行装饰覆盖露源码块的每一行（B357 复测：多行块只给首行，其余行字号掉档）", () => {
     const doc = "# Title\n\nline A\nline B\n";
     const { view, parent } = mount({ ir: true, locked: false }, doc);
     view.dispatch({ selection: { anchor: view.state.doc.line(3).from + 1 } });
     const focus = parent.querySelectorAll(".md-ir-focus-line");
-    expect(focus, "只该有一行带焦点标识").toHaveLength(1);
-    // 段落首行（第 3 行）渲染出来的那一行 DOM 带类名
-    expect(focus[0].textContent, "焦点标识落在段落首行的行盒上").toContain("line A");
+    expect(focus, "两行段落两行都要带焦点标识").toHaveLength(2);
+    expect(focus[0].textContent, "首行行盒带类名").toContain("line A");
+    expect(focus[1].textContent, "次行行盒也要带（字号跟着上）").toContain("line B");
     expect(
       parent.querySelectorAll(".md-ir-block"),
       "标题与列表都没被盖？只有标题该被盖",

@@ -99,8 +99,14 @@ export function irFocusLines(
   for (const b of blocks) {
     const range = blockRange(b, doc);
     if (!range) continue;
-    if (selections.some((s) => overlaps(range, s)))
-      lines.push({ line: b.lineStart, heading: headingLevelOf(b.html) });
+    if (!selections.some((s) => overlaps(range, s))) continue;
+    // ⚠️ 整块每一行都要带焦点标识：只给首行的话，多行块里其余行还是编辑器的
+    // 14px —— 用户在那几行上打字看到字「小一档」（B357 首修漏的正是这个）。
+    const heading = headingLevelOf(b.html);
+    const end = Math.min(b.lineEnd, doc.lines);
+    for (let no = Math.max(1, b.lineStart); no <= end; no++) {
+      lines.push({ line: no, heading });
+    }
   }
   return lines;
 }

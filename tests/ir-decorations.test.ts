@@ -133,10 +133,12 @@ describe("B352-3 irDecorationsFor：谁被渲染、谁露源码", () => {
 });
 
 describe("B352-3 irFocusLines：哪几行该画焦点标识（B357 起带块字阶）", () => {
-  it("给出与选区相交那些块的起始行；段落是正文档（heading 0）", () => {
+  it("焦点标识覆盖露源码块的**每一行** —— 多行块只给首行，其余行还是编辑器小字号（B357 用户复测抓到）", () => {
     const caret = doc.line(4).from;
     expect(irFocusLines(BLOCKS, [{ from: caret, to: caret }], doc, false)).toEqual([
       { line: 3, heading: 0 },
+      { line: 4, heading: 0 },
+      { line: 5, heading: 0 },
     ]);
   });
 
