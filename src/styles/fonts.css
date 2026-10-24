@@ -5,7 +5,8 @@
 
    ⚠️ `font-display` 取 `block` **不取 `swap`**：编辑器挂载时 CM6 会按**实测行高**把行号
    栏高度写成 px（B225），swap 会让首绘之后才换字体、行高一跳，视口锚点跟着漂。
-   block 的不可见期只到字体就绪为止，等宽那份 65KB、非等宽那份 556KB，都是小文件，等得起。
+   block 的不可见期只到字体就绪为止：等宽那份 65KB；非等宽那份 B369 起是全量 CJK
+   （约 4MB，本地文件、只解一次），仍远短于 block 的 3s 兜底上限。
    ⚠️ 家族名刻意与系统同名（"Cascadia Mono" / "Noto Sans SC"）：命中 `@font-face` 时
    浏览器优先用这里的内嵌文件，于是「内嵌」和「本机装了同名字体」走同一条栈，不会分叉。 */
 
@@ -43,9 +44,14 @@
        对齐照样成立，不会把等宽排版撑歪；
      · 顺序上它是**后声明**的那条，同一码位两条都覆盖时以后者为准，与 ASCII 那层不冲突。
 
-   ⚠️ unicode-range 按思源那份的**实际覆盖**写（实测：U+3000-303F 全中、U+4E00-9FFF
-   常用汉字 3755 个、U+FF00-FFEF 全角 96 个；日文假名与扩展 A 那份子集里没有）。
-   区内个别码位缺字形时浏览器会**逐字**往后回落，不会留豆腐块。 */
+   ⚠️ unicode-range 按思源那份的**实际覆盖**写。B227 的子集只收了 GB2312 一级 3755 个
+   汉字，区外的字（如「龘」）文件里没有，浏览器**逐字**回落到微软雅黑 —— 同一行中文
+   一半思源、一半雅黑，字形明显不是一家（B369：源码模式实测到的就是这个）。
+   B369 起换成源字体能提供的全部 BMP 中文：U+4E00-9FFF 20976 字（U+9FF0-9FFF 这
+   16 个 Unicode 13/14 新增字源字体版本没有）、扩展 A U+3400-4DBF 6582 字、
+   兼容表意 U+F900-FAFF 122 字（源字体自带的那部分），另含部首 / 笔画 / 假名 /
+   竖排与兼容形式 / 全角形式。各段的实测数见 `tests/embedded-font.test.ts`。
+   区内个别码位缺字形时浏览器仍会逐字往后回落，不会留豆腐块。 */
 
 @font-face {
   font-family: "Cascadia Mono";
@@ -53,7 +59,9 @@
   font-weight: 400;
   font-display: block;
   src: url("../assets/fonts/noto-sans-sc-regular.woff2") format("woff2");
-  unicode-range: U+3000-303F, U+4E00-9FFF, U+FF00-FFEF;
+  unicode-range:
+    U+2E80-2EFF, U+3000-303F, U+3040-30FF, U+31C0-31EF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF,
+    U+FE10-FE19, U+FE30-FE4F, U+FF00-FFEF;
 }
 
 @font-face {
