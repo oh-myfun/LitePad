@@ -1,6 +1,6 @@
 [package]
 name = "litepad"
-version = "0.24.11"
+version = "0.24.12"
 description = "LitePad - 极度轻量的 Markdown 文本编辑器"
 authors = ["LitePad"]
 edition = "2021"
