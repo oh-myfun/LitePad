@@ -88,6 +88,9 @@ describe("标签前置文件类型图标（B57 → B367 Seti）", () => {
     });
     expect(iconOf("Scala")).toEqual({ ch: "E086", tone: "red" });
     expect(iconOf("TOML")).toEqual({ ch: "E019", tone: "gray" });
+    // B371：Ignore 取 Seti languageIds.ignore 的 `_git`，Dotenv 取 `_config`。
+    expect(iconOf("Ignore")).toEqual({ ch: "E034", tone: "gray" });
+    expect(iconOf("Dotenv")).toEqual({ ch: "E019", tone: "gray" });
     expect(iconOf("Plain Text"), "Seti 没有纯文本字形，用其缺省文件").toEqual({
       ch: "E023",
       tone: "default",

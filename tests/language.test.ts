@@ -60,6 +60,123 @@ describe("detectLanguage", () => {
   });
 });
 
+describe("B371 点开头文件与 VS Code 关联表", () => {
+  it("点开头的忽略文件不再落到 Plain Text", () => {
+    for (const name of [
+      ".gitignore",
+      ".gitignore_global",
+      ".git-blame-ignore-revs",
+      ".npmignore",
+      ".vscodeignore",
+      ".copilotignore",
+      ".dockerignore",
+      ".eslintignore",
+      ".prettierignore",
+    ]) {
+      expect(detectLanguage(name).label, name).toBe("Ignore");
+    }
+    expect(detectLanguage("C:\\repo\\.gitignore").label).toBe("Ignore");
+    expect(detectLanguage("repo/.GITIGNORE").label).toBe("Ignore");
+  });
+
+  it("dotenv 家族：.env / .env.* / .flaskenv；.envrc 仍是 Shell", () => {
+    expect(detectLanguage(".env").label).toBe("Dotenv");
+    expect(detectLanguage(".env.local").label).toBe("Dotenv");
+    expect(detectLanguage(".env.production.local").label).toBe("Dotenv");
+    expect(detectLanguage("app.env").label).toBe("Dotenv");
+    expect(detectLanguage(".flaskenv").label).toBe("Dotenv");
+    expect(detectLanguage("user-dirs.dirs").label).toBe("Dotenv");
+    expect(detectLanguage(".envrc").label).toBe("Shell");
+    // VS Code 的关联是扩展名 ".env"，没有点前缀的 `env` 不算
+    expect(detectLanguage("env").label).toBe("Plain Text");
+  });
+
+  it("git / properties 配置走 Properties（VS Code 的 properties 家族）", () => {
+    for (const name of [
+      ".editorconfig",
+      ".gitconfig",
+      ".gitattributes",
+      ".gitmodules",
+      ".npmrc",
+      "app.conf",
+      "app.cfg",
+    ]) {
+      expect(detectLanguage(name).label, name).toBe("Properties");
+    }
+    expect(detectLanguage("C:\\Users\\me\\.config\\git\\config").label).toBe("Properties");
+    expect(detectLanguage("/repo/.git/config").label).toBe("Properties");
+  });
+
+  it("JSON 家族：无扩展名的 rc 文件", () => {
+    for (const name of [
+      ".eslintrc",
+      ".babelrc",
+      ".swcrc",
+      ".prettierrc",
+      ".watchmanconfig",
+      "tsconfig.base.json",
+      "composer.lock",
+      "app.js.map",
+      "app.css.map",
+    ]) {
+      expect(detectLanguage(name).label, name).toBe("JSON");
+    }
+  });
+
+  it("文件名通配：Dockerfile.* / Containerfile.* / Jenkinsfile*", () => {
+    expect(detectLanguage("Dockerfile.dev").label).toBe("Dockerfile");
+    expect(detectLanguage("Containerfile.ci").label).toBe("Dockerfile");
+    expect(detectLanguage("Jenkinsfile.dev").label).toBe("Groovy");
+  });
+
+  it("VS Code 的常见完整文件名", () => {
+    expect(detectLanguage("Gemfile").label).toBe("Ruby");
+    expect(detectLanguage("Rakefile").label).toBe("Ruby");
+    expect(detectLanguage("Vagrantfile").label).toBe("Ruby");
+    expect(detectLanguage("PKGBUILD").label).toBe("Shell");
+    expect(detectLanguage(".bashrc").label).toBe("Shell");
+    expect(detectLanguage(".zshrc").label).toBe("Shell");
+    expect(detectLanguage("Makefile").label).toBe("Makefile");
+    expect(detectLanguage("GNUmakefile").label).toBe("Makefile");
+    expect(detectLanguage("OCamlMakefile").label).toBe("Makefile");
+    expect(detectLanguage("docker-compose.yml").label).toBe("YAML");
+    expect(detectLanguage("compose.override.yml").label).toBe("YAML");
+  });
+
+  it("最长后缀胜出：.js.map 是 JSON，.h 归 C++（与 VS Code 一致）", () => {
+    expect(detectLanguage("app.js.map").label).toBe("JSON");
+    expect(detectLanguage("app.ts.map").label).toBe("JSON");
+    expect(detectLanguage("src/app.js").label).toBe("JavaScript");
+    expect(detectLanguage("a.h").label).toBe("C++");
+    expect(detectLanguage("a.hpp.in").label).toBe("C++");
+    expect(detectLanguage("a.i").label).toBe("C");
+    expect(detectLanguage("a.c").label).toBe("C");
+  });
+
+  it("关联不命中时才回落到 shebang / 魔数", () => {
+    expect(detectLanguage(".unknown", "#!/usr/bin/env bash").label).toBe("Shell");
+    expect(detectLanguage(".unknown", '<?xml version="1.0"?>').label).toBe("XML");
+    // 文件关联优先于 shebang（与 VS Code 同序）
+    expect(detectLanguage(".gitignore", "#!/bin/bash").label).toBe("Ignore");
+  });
+
+  it("Ignore 只把行首 # 认作注释（VS Code 的 ignore 语法）", async () => {
+    const { EditorState } = await import("@codemirror/state");
+    const { syntaxTree } = await import("@codemirror/language");
+    const state = EditorState.create({
+      doc: "# 注释\nnode_modules/\n # 缩进后不是注释\n",
+      extensions: [detectLanguage(".gitignore").extension!],
+    });
+    const comments: string[] = [];
+    syntaxTree(state).iterate({
+      enter(n) {
+        if (n.name === "comment") comments.push(state.doc.sliceString(n.from, n.to));
+      },
+    });
+    expect(comments).toEqual(["# 注释"]);
+  });
+});
+
 // 折叠服务为纯状态计算（无 DOM 依赖），沿用默认 node 环境
 describe("流式语言缩进折叠（回归：JSON 等除 Markdown 外全部不可折叠）", () => {
   it("JSON 嵌套块可折叠：缩进比本行深的连续块给出 fold 范围", async () => {

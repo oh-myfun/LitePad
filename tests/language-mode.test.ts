@@ -76,7 +76,7 @@ describe("B365 语言模式：自动检测 + 手动覆盖", () => {
     const auto = languageChoices(null);
     expect(auto[0]).toEqual({
       label: AUTO_LANGUAGE,
-      description: "按文件后缀自动识别",
+      description: "按文件名与后缀自动识别",
       checked: true,
     });
     expect(auto, "自动检测 + 注册表全量").toHaveLength(1 + LANGUAGE_LABELS.length);

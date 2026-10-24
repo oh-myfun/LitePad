@@ -50,13 +50,18 @@ import { r } from "@codemirror/legacy-modes/mode/r";
 import { gas } from "@codemirror/legacy-modes/mode/gas";
 
 /**
- * M1 语言注册表。
+ * M1 语言注册表（B371 起对齐 VS Code 的关联顺序）。
  *
- * 检测顺序（Notepad++ 风格）：
- *   1. 完整文件名（Dockerfile / Makefile / CMakeLists.txt …）
- *   2. 扩展名
- *   3. Shebang（首行 `#!` 推断解释器）
- *   4. 首行魔数（`<?xml` / `<!DOCTYPE html` …）
+ * 检测顺序（照 `src/vs/editor/common/services/languagesAssociations.ts`）：
+ *   1. 完整文件名（大小写不敏感）
+ *   2. 文件名通配（最长的一条胜出；含 `/` 的按整条路径匹配）
+ *   3. 扩展名后缀（最长的一条胜出，多段后缀如 `.js.map` / `.hpp.in` 也算一条）
+ *   4. Shebang（首行 `#!` 推断解释器；对应 VS Code 的 firstLine 档）
+ *   5. 首行魔数（`<?xml` / `<!DOCTYPE html` …）
+ *
+ * B371：扩展名不再用「最后一个点之后」推导 —— 那样 `.gitignore` / `.env` / `.bashrc`
+ * 的点在下标 0，`dot > 0` 一挡就全落空。VS Code 是拿 `endsWith('.gitignore')` 这种
+ * **后缀**比的，所以点开头的文件天然命中；这里改成同一口径。
  *
  * 高亮来源：Markdown 用 CM6 高阶包（增量解析），其余用 legacy-modes
  * StreamLanguage（行内流式解析，轻量、覆盖广）。PHP / Batch 等少数
@@ -64,14 +69,44 @@ import { gas } from "@codemirror/legacy-modes/mode/gas";
  */
 interface Entry {
   label: string;
+  /** 扩展名后缀（小写、不带前导点；可含多段，如 "js.map"） */
   exts?: string[];
   /** 完整文件名（小写比较，如 "dockerfile"、"cmakelists.txt"） */
   names?: string[];
+  /** 文件名通配（VS Code 的 filenamePatterns；含 "/" 的按整条路径匹配） */
+  patterns?: FilePattern[];
   /** 首行 shebang 匹配（如 /python/） */
   shebang?: RegExp;
   /** 首行魔数匹配（如 /<\?xml/） */
   magic?: RegExp;
   parser?: Extension | null;
+}
+
+interface FilePattern {
+  source: string;
+  re: RegExp;
+  onPath: boolean;
+}
+
+/** VS Code `filenamePatterns` 的最小实现：`*` 不跨目录、`**` 跨目录、`?` 单字符。 */
+function glob(source: string): FilePattern {
+  let re = "";
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === "*") {
+      if (source[i + 1] === "*") {
+        re += ".*";
+        i += 1;
+      } else {
+        re += "[^/]*";
+      }
+    } else if (ch === "?") {
+      re += "[^/]";
+    } else {
+      re += /[.+^${}()|[\]\\]/.test(ch) ? `\\${ch}` : ch;
+    }
+  }
+  return { source, re: new RegExp(`^${re}$`, "i"), onPath: source.includes("/") };
 }
 
 const stream = (p: Parameters<typeof StreamLanguage.define>[0]): Extension => [
@@ -121,85 +156,332 @@ const indentFoldService = foldService.of((state, lineStart) => {
   return found ? { from: line.to, to: end } : null;
 });
 
+/**
+ * B371：VS Code 的 ignore 语法全部内容就是「行首 `#` 算注释」
+ * （`extensions/git-base/syntaxes/ignore.tmLanguage.json`），照抄这一条；
+ * `!` 例外与 `/` 锚点保持文本色。
+ */
+const ignoreMode: Parameters<typeof StreamLanguage.define>[0] = {
+  token(stream) {
+    if (stream.sol() && stream.peek() === "#") {
+      stream.skipToEnd();
+      return "comment";
+    }
+    stream.skipToEnd();
+    return null;
+  },
+};
+
 const REGISTRY: Entry[] = [
-  { label: "Markdown", exts: ["md", "markdown", "mdown", "mkd"], parser: markdown() },
-  { label: "JSON", exts: ["json", "jsonc", "json5"], parser: stream(json) },
-  { label: "JavaScript", exts: ["js", "mjs", "cjs", "jsx"], parser: stream(javascript) },
+  {
+    label: "Markdown",
+    exts: [
+      "md",
+      "markdown",
+      "mdown",
+      "mkd",
+      "mkdn",
+      "mdwn",
+      "markdn",
+      "mdtxt",
+      "mdtext",
+      "ronn",
+      "workbook",
+    ],
+    parser: markdown(),
+  },
+  {
+    label: "JSON",
+    exts: [
+      "json",
+      "jsonc",
+      "json5",
+      // VS Code 把 JSONC 文件也记在 json 家族里；LitePad 原本就合并两档。
+      "bowerrc",
+      "jscsrc",
+      "webmanifest",
+      "js.map",
+      "css.map",
+      "ts.map",
+      "har",
+      "jslintrc",
+      "jsonld",
+      "geojson",
+      "ipynb",
+      "vuerc",
+      "eslintrc",
+      "jsfmtrc",
+      "jshintrc",
+      "swcrc",
+      "hintrc",
+      "babelrc",
+      "prettierrc",
+      "tsbuildinfo",
+      "code-profile",
+    ],
+    names: ["composer.lock", ".watchmanconfig", "bun.lock"],
+    parser: stream(json),
+  },
+  {
+    label: "JavaScript",
+    exts: ["js", "mjs", "cjs", "jsx", "es6", "pac"],
+    names: ["jakefile"],
+    parser: stream(javascript),
+  },
   { label: "TypeScript", exts: ["ts", "mts", "cts", "tsx"], parser: stream(typescript) },
   {
     label: "Python",
-    exts: ["py", "pyw", "pyi"],
+    exts: ["py", "pyw", "pyi", "rpy", "cpy", "gyp", "gypi", "ipy", "pyt"],
+    names: ["sconstruct", "sconscript"],
     shebang: /python/,
     parser: stream(python),
   },
   { label: "Rust", exts: ["rs"], parser: stream(rust) },
   { label: "Go", exts: ["go"], parser: stream(go) },
-  { label: "C", exts: ["c", "h"], parser: stream(c) },
+  { label: "C", exts: ["c", "i"], parser: stream(c) },
   {
     label: "C++",
-    exts: ["cpp", "cc", "cxx", "c++", "hpp", "hh", "hxx", "h++", "tpp", "ipp"],
+    // VS Code 把 `.h` 归 cpp（c 只留 .c/.i），这里跟上游走。
+    exts: [
+      "cpp",
+      "cc",
+      "cxx",
+      "c++",
+      "hpp",
+      "hh",
+      "hxx",
+      "h++",
+      "h",
+      "ipp",
+      "tpp",
+      "ii",
+      "ino",
+      "inl",
+      "ixx",
+      "mpp",
+      "mxx",
+      "txx",
+      "cppm",
+      "ccm",
+      "cxxm",
+      "c++m",
+      "hpp.in",
+      "h.in",
+    ],
     parser: stream(cpp),
   },
-  { label: "Java", exts: ["java"], parser: stream(java) },
-  { label: "C#", exts: ["cs"], parser: stream(csharp) },
+  { label: "Java", exts: ["java", "jav"], parser: stream(java) },
+  { label: "C#", exts: ["cs", "csx", "cake"], parser: stream(csharp) },
   { label: "Kotlin", exts: ["kt", "kts"], parser: stream(kotlin) },
   { label: "Scala", exts: ["scala", "sc"], parser: stream(scala) },
   { label: "Objective-C", exts: ["m", "mm"], parser: stream(objectiveC) },
   { label: "Swift", exts: ["swift"], parser: stream(swift) },
   { label: "Dart", exts: ["dart"], parser: stream(dart) },
-  { label: "Ruby", exts: ["rb", "erb"], shebang: /ruby/, parser: stream(ruby) },
-  { label: "Perl", exts: ["pl", "pm"], shebang: /perl/, parser: stream(perl) },
+  {
+    label: "Ruby",
+    exts: ["rb", "rbx", "rjs", "gemspec", "rake", "ru", "erb", "podspec", "rbi"],
+    names: [
+      "rakefile",
+      "gemfile",
+      "guardfile",
+      "podfile",
+      "capfile",
+      "cheffile",
+      "hobofile",
+      "vagrantfile",
+      "appraisals",
+      "rantfile",
+      "berksfile",
+      "berksfile.lock",
+      "thorfile",
+      "puppetfile",
+      "dangerfile",
+      "brewfile",
+      "fastfile",
+      "appfile",
+      "deliverfile",
+      "matchfile",
+      "scanfile",
+      "snapfile",
+      "gymfile",
+    ],
+    shebang: /ruby/,
+    parser: stream(ruby),
+  },
+  {
+    label: "Perl",
+    exts: ["pl", "pm", "pod", "t", "psgi"],
+    shebang: /perl/,
+    parser: stream(perl),
+  },
   { label: "Lua", exts: ["lua"], parser: stream(lua) },
   {
     label: "Shell",
-    exts: ["sh", "bash", "zsh", "ksh"],
+    exts: [
+      "sh",
+      "bash",
+      "bashrc",
+      "bash_aliases",
+      "bash_profile",
+      "bash_login",
+      "bash_logout",
+      "profile",
+      "ebuild",
+      "eclass",
+      "xprofile",
+      "xsession",
+      "xsessionrc",
+      "zsh",
+      "zshrc",
+      "zprofile",
+      "zlogin",
+      "zlogout",
+      "zshenv",
+      "zsh-theme",
+      "fish",
+      "ksh",
+      "csh",
+      "cshrc",
+      "tcshrc",
+      "yashrc",
+      "yash_profile",
+    ],
+    names: [
+      "apkbuild",
+      "pkgbuild",
+      ".envrc",
+      ".hushlogin",
+      "zshrc",
+      "zshenv",
+      "zlogin",
+      "zprofile",
+      "zlogout",
+      "bashrc_apple_terminal",
+      "zshrc_apple_terminal",
+    ],
     shebang: /\b(ba|z|k|dash)?sh\b/,
     parser: stream(shell),
   },
   {
     label: "PowerShell",
-    exts: ["ps1", "psm1", "psd1"],
+    exts: ["ps1", "psm1", "psd1", "pssc", "psrc"],
     shebang: /pwsh|powershell/i,
     parser: stream(powerShell),
   },
-  { label: "SQL", exts: ["sql"], parser: stream(standardSQL) },
+  { label: "SQL", exts: ["sql", "dsql"], parser: stream(standardSQL) },
   {
     label: "XML",
-    exts: ["xml", "svg", "xsl", "xslt", "plist"],
+    exts: [
+      "xml",
+      "svg",
+      "xsl",
+      "xslt",
+      "plist",
+      "xsd",
+      "dtd",
+      "csproj",
+      "fsproj",
+      "vbproj",
+      "vcxproj",
+      "props",
+      "targets",
+      "xaml",
+      "axaml",
+      "nuspec",
+      "csproj.user",
+      "props.user",
+      "targets.user",
+    ],
     magic: /<\?xml/,
     parser: stream(xml),
   },
   {
     label: "HTML",
-    exts: ["html", "htm", "xhtml"],
+    exts: ["html", "htm", "xhtml", "xht", "shtml", "jsp", "asp", "aspx", "ejs"],
     magic: /<!doctype html|<html[\s>]/i,
     parser: stream(html),
   },
   { label: "CSS", exts: ["css"], parser: stream(css) },
   { label: "Sass", exts: ["sass", "scss"], parser: stream(sCSS) },
   { label: "LESS", exts: ["less"], parser: stream(less) },
-  { label: "YAML", exts: ["yml", "yaml"], parser: stream(yaml) },
-  { label: "TOML", exts: ["toml"], parser: stream(toml) },
   {
-    label: "INI",
-    exts: ["ini", "cfg", "conf", "env", "gitconfig", "editorconfig"],
+    label: "YAML",
+    exts: ["yml", "yaml", "eyaml", "eyml", "cff", "winget"],
+    parser: stream(yaml),
+  },
+  { label: "TOML", exts: ["toml"], parser: stream(toml) },
+  { label: "INI", exts: ["ini"], parser: stream(properties) },
+  {
+    label: "Properties",
+    exts: [
+      "properties",
+      "conf",
+      "cfg",
+      "directory",
+      "gitattributes",
+      "gitconfig",
+      "gitmodules",
+      "editorconfig",
+      "repo",
+      "npmrc",
+    ],
+    names: ["gitconfig"],
+    patterns: [glob("**/.config/git/config"), glob("**/.git/config")],
     parser: stream(properties),
   },
-  { label: "Properties", exts: ["properties"], parser: stream(properties) },
-  { label: "Dockerfile", names: ["dockerfile"], exts: ["dockerfile"], parser: stream(dockerFile) },
+  {
+    label: "Ignore",
+    // 核心覆盖 git / npm / vscode / copilot；docker / eslint / prettier 是各家扩展的
+    // 常见关联（VS Code 装上对应扩展后同样识别），一并收纳。
+    names: [
+      ".gitignore",
+      ".gitignore_global",
+      ".git-blame-ignore-revs",
+      ".npmignore",
+      ".vscodeignore",
+      ".copilotignore",
+      ".dockerignore",
+      ".eslintignore",
+      ".prettierignore",
+      ".stylelintignore",
+      ".helmignore",
+      ".gcloudignore",
+    ],
+    exts: ["gitignore", "gitignore_global", "git-blame-ignore-revs", "npmignore"],
+    parser: stream(ignoreMode),
+  },
+  {
+    label: "Dotenv",
+    names: [".env", ".flaskenv", "user-dirs.dirs"],
+    exts: ["env"],
+    patterns: [glob(".env.*")],
+    parser: stream(properties),
+  },
+  {
+    label: "Dockerfile",
+    names: ["dockerfile", "containerfile"],
+    exts: ["dockerfile", "containerfile"],
+    patterns: [glob("Dockerfile.*"), glob("Containerfile.*")],
+    parser: stream(dockerFile),
+  },
   { label: "CMake", names: ["cmakelists.txt"], exts: ["cmake"], parser: stream(cmake) },
   { label: "Nginx", names: ["nginx.conf"], exts: ["nginx"], parser: stream(nginx) },
   { label: "NSIS", exts: ["nsi", "nsh"], parser: stream(nsis) },
-  { label: "Diff", exts: ["diff", "patch"], parser: stream(diff) },
+  { label: "Diff", exts: ["diff", "patch", "rej"], parser: stream(diff) },
   { label: "Haskell", exts: ["hs", "lhs"], parser: stream(haskell) },
   { label: "Pascal", exts: ["pas", "dpr", "dfm"], parser: stream(pascal) },
   { label: "Fortran", exts: ["f", "for", "f90", "f95", "f03", "f08"], parser: stream(fortran) },
   { label: "Julia", exts: ["jl"], shebang: /julia/, parser: stream(julia) },
-  { label: "Clojure", exts: ["clj", "cljs", "cljc", "edn"], parser: stream(clojure) },
+  {
+    label: "Clojure",
+    exts: ["clj", "cljs", "cljc", "cljx", "clojure", "edn"],
+    parser: stream(clojure),
+  },
   {
     label: "Groovy",
-    exts: ["groovy", "gradle", "jenkinsfile"],
+    exts: ["groovy", "gvy", "gradle", "jenkinsfile", "nf"],
     names: ["jenkinsfile"],
+    patterns: [glob("Jenkinsfile*")],
     parser: stream(groovy),
   },
   { label: "Erlang", exts: ["erl", "hrl"], parser: stream(erlang) },
@@ -208,14 +490,27 @@ const REGISTRY: Entry[] = [
   { label: "VBScript", exts: ["vbs"], parser: stream(vbScript) },
   { label: "Scheme", exts: ["scm", "ss", "sld", "rkt"], parser: stream(scheme) },
   { label: "Common Lisp", exts: ["lisp", "cl", "lsp"], parser: stream(commonLisp) },
-  { label: "CoffeeScript", exts: ["coffee"], parser: stream(coffeeScript) },
+  { label: "CoffeeScript", exts: ["coffee", "cson", "iced"], parser: stream(coffeeScript) },
   { label: "Octave", exts: ["oct"], shebang: /octave/, parser: stream(octave) },
-  { label: "R", exts: ["r", "rd"], shebang: /\brscript\b|\/r\b/, parser: stream(r) },
+  {
+    label: "R",
+    exts: ["r", "rd", "rhistory", "rprofile", "rt"],
+    shebang: /\brscript\b|\/r\b/,
+    parser: stream(r),
+  },
   { label: "Assembly", exts: ["s", "asm"], parser: stream(gas) },
   // 以下类型 legacy-modes 暂无高亮，状态栏仍显示正确标签
-  { label: "PHP", exts: ["php", "phtml", "php3"], shebang: /php/ },
+  {
+    label: "PHP",
+    exts: ["php", "phtml", "php3", "php4", "php5", "ctp"],
+    shebang: /php/,
+  },
   { label: "Batch", exts: ["bat", "cmd"] },
-  { label: "Makefile", names: ["makefile", "gnumakefile", "bsdmakefile"], exts: ["mk", "mak"] },
+  {
+    label: "Makefile",
+    names: ["makefile", "gnumakefile", "bsdmakefile", "ocamlmakefile"],
+    exts: ["mk", "mak"],
+  },
   { label: "Vue", exts: ["vue"] },
   { label: "Plain Text", exts: ["txt", "text", "log", "nfo"] },
 ];
@@ -230,30 +525,51 @@ const PLAIN: LanguageInfo = { label: "Plain Text", extension: null };
 
 export function detectLanguage(fileName: string | null, firstLine?: string): LanguageInfo {
   if (fileName) {
-    const base = fileName.split(/[\\/]/).pop()?.toLowerCase() ?? "";
+    const path = fileName.replace(/\\/g, "/").toLowerCase();
+    const base = path.split("/").pop() ?? "";
 
     // 1. 完整文件名
     const byName = REGISTRY.find((e) => e.names?.includes(base));
     if (byName) return toInfo(byName);
 
-    // 2. 扩展名
-    const dot = base.lastIndexOf(".");
-    const ext = dot > 0 ? base.slice(dot + 1) : "";
-    if (ext) {
-      const byExt = REGISTRY.find((e) => e.exts?.includes(ext));
-      if (byExt) return toInfo(byExt);
+    // 2. 文件名通配（最长的一条胜出，与 VS Code 同口径）
+    let byPattern: Entry | null = null;
+    let patternLen = 0;
+    for (const e of REGISTRY) {
+      for (const p of e.patterns ?? []) {
+        if (p.source.length <= patternLen) continue;
+        if (p.re.test(p.onPath ? path : base)) {
+          byPattern = e;
+          patternLen = p.source.length;
+        }
+      }
     }
+    if (byPattern) return toInfo(byPattern);
+
+    // 3. 扩展名后缀（最长的一条胜出；`.gitignore` / `.js.map` 都走这一档）
+    let byExt: Entry | null = null;
+    let extLen = 0;
+    for (const e of REGISTRY) {
+      for (const ext of e.exts ?? []) {
+        if (ext.length <= extLen) continue;
+        if (base.endsWith(`.${ext}`)) {
+          byExt = e;
+          extLen = ext.length;
+        }
+      }
+    }
+    if (byExt) return toInfo(byExt);
   }
 
   const line = (firstLine ?? "").trim();
 
-  // 3. Shebang
+  // 4. Shebang
   if (line.startsWith("#!")) {
     const hit = REGISTRY.find((e) => e.shebang?.test(line));
     if (hit) return toInfo(hit);
   }
 
-  // 4. 首行魔数
+  // 5. 首行魔数
   if (line) {
     const hit = REGISTRY.find((e) => e.magic?.test(line));
     if (hit) return toInfo(hit);
@@ -295,7 +611,7 @@ export interface LanguageChoice {
 export function languageChoices(override: string | null): LanguageChoice[] {
   const known = override && languageInfoByLabel(override) ? override : null;
   return [
-    { label: AUTO_LANGUAGE, description: "按文件后缀自动识别", checked: known === null },
+    { label: AUTO_LANGUAGE, description: "按文件名与后缀自动识别", checked: known === null },
     ...LANGUAGE_LABELS.map((label) => ({ label, checked: known === label })),
   ];
 }

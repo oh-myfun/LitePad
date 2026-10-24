@@ -65,6 +65,11 @@ const ICON_OF: Record<string, SetiIcon> = {
   TOML: { ch: "E019", tone: "gray" },
   INI: { ch: "E019", tone: "gray" },
   Properties: { ch: "E019", tone: "gray" },
+  // B371：VS Code Seti 的 languageIds.ignore 是 `_git`；.dockerignore/.npmignore 在主题里
+  // 另按文件名给 `_docker_1`/`_npm_1`，但本出口只按语言标签取，统一落 `_git`。
+  Ignore: { ch: "E034", tone: "gray" },
+  // B371：Seti 的 languageIds.dotenv 是 `_config`（与 Properties/TOML 同一颗）。
+  Dotenv: { ch: "E019", tone: "gray" },
   Dockerfile: { ch: "E025", tone: "blue" },
   CMake: { ch: "E05F", tone: "blue" },
   Nginx: { ch: "E023", tone: "default" },
