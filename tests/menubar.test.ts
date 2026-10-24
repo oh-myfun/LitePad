@@ -1457,3 +1457,22 @@ describe("B361 快捷键说明右对齐", () => {
     expect(ruleBlock(stripped, ".menu-kbd + .menu-arrow"), "替身里不该再有这条规则").toBe("");
   });
 });
+
+// B361 追补：右对齐靠 auto 外边距，但最宽那行（另存为 Ctrl+Shift+S）会与文字贴死 ——
+// 最小间距必须由 `.menu-kbd` 自己的左内边距给（内边距不影响右缘对齐）。
+describe("B361 快捷键与文字的最小间距", () => {
+  const cssCode = () => stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
+
+  it("`.menu-kbd` 带左内边距（≥12px），且不与 auto 外边距混用成固定间距", () => {
+    const s = cssCode();
+    const kbd = cssDecls(ruleBlock(s, ".menu-kbd"));
+    const pad = kbd.match(/padding-left:\s*(\d+)px/)?.[1];
+    expect(pad, "要有左内边距（间隔由内边距给，不靠外边距）").toBeTruthy();
+    expect(Number(pad), "至少 12px 才不贴字").toBeGreaterThanOrEqual(12);
+    expect(kbd, "右对齐仍旧靠 auto").toMatch(/margin-left:\s*auto/);
+    // 反向对照：把内边距摘掉，同一条判据必须落空
+    const stripped = s.replace(/(\.menu-kbd\s*\{[^}]*?)padding-left:\s*\d+px;/s, "$1");
+    expect(stripped, "替身必须真的删掉过内边距").not.toBe(s);
+    expect(cssDecls(ruleBlock(stripped, ".menu-kbd"))).not.toMatch(/padding-left:\s*\d+px/);
+  });
+});
