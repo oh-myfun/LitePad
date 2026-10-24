@@ -189,11 +189,12 @@
   （例：`.panel-op .codicon { font-size: 15px }`），不要给 svg 写 width/height——已经没有 svg 了。
 - **禁止手绘 SVG 充当图标**。codicon 里确无合适字形时，**先与用户商量**是否引入别的图标集，
   不得自行绘制、临时拼一个或改字号凑数。
-- **文件类型图标是这条红线的唯一例外（B367，用户确认）**：标签与状态栏语言浮层使用
-  VS Code 默认的 **Seti 文件图标主题**（`seti.woff` + 逐语言码位/色调，MIT，
-  许可见 `src/assets/fonts/seti-ui-LICENSE.txt`）。它仍然是**上游字体字形**、不是手绘；
+- **文件类型图标是这条红线的唯一例外（B367/B368，用户确认）**：标签、资源管理器的文件行与
+  状态栏语言浮层使用 VS Code 默认的 **Seti 文件图标主题**（`seti.woff` + 逐语言码位/色调，
+  MIT，许可见 `src/assets/fonts/seti-ui-LICENSE.txt`）。它仍然是**上游字体字形**、不是手绘；
   出口只有 `src/shell/fileicons.ts` 的 `fileIconHtml()`，消费方不得写死码位。
   九档色调走 `--seti-*`（浅深两套），字号 150% 与 VS Code 图标主题同口径。
+  目录/文件夹仍用 codicon（Seti 主题没有文件夹图标，VS Code 同样回落到 codicon）；
   按钮类图标**仍一律 codicon**，不因为这条例外改用 Seti。
 - 想浏览全部 639 颗字形：打开 `node_modules/@vscode/codicons/dist/codicon.html`。
 

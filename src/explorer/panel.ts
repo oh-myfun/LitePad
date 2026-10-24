@@ -24,7 +24,9 @@ import {
 } from "../ipc/api";
 import { doOpen } from "../io/files";
 import { noteOpened } from "../recents/store";
+import { detectLanguage } from "../editor/language";
 import { CODICONS } from "../shell/codicons";
+import { fileIconHtml } from "../shell/fileicons";
 import { activeDrawer, registerDrawerView, setDrawer } from "../shell/drawer";
 import { showPopupMenu, type MenuItem } from "../shell/menu";
 import { setTextTip } from "../shell/tooltip";
@@ -274,7 +276,8 @@ function inputRow(kind: Kind): HTMLElement {
   twisty.className = "explorer-twisty";
   const glyph = document.createElement("span");
   glyph.className = "explorer-glyph";
-  glyph.innerHTML = kind === "dir" ? CODICONS.folder : CODICONS.file;
+  // 还没输入名字 ⇒ 用 Seti 的缺省文件图标（B368；目录仍走 codicon，Seti 主题没有文件夹图标）。
+  glyph.innerHTML = kind === "dir" ? CODICONS.folder : fileIconHtml(null);
   const input = document.createElement("input");
   input.className = "explorer-input";
   input.type = "text";
@@ -357,8 +360,14 @@ function renderEntry(e: FsEntry, dir: string, depth: number): HTMLElement {
   }
   const glyph = document.createElement("span");
   glyph.className = "explorer-glyph";
+  // B368：文件图标与标签 / 语言浮层同一个 Seti 出口，按文件名自动检测语言取字形。
+  // 目录仍用 codicon —— Seti 主题本身不提供文件夹图标，VS Code 也是回落到 codicon。
   glyph.innerHTML =
-    kind === "dir" ? (open ? CODICONS.folderOpened : CODICONS.folder) : CODICONS.file;
+    kind === "dir"
+      ? open
+        ? CODICONS.folderOpened
+        : CODICONS.folder
+      : fileIconHtml(detectLanguage(e.name).label);
   const name = nameSpan(e.name);
   row.append(twisty, glyph, renaming?.path === e.path ? renameInput(e) : name);
 

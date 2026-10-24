@@ -235,7 +235,10 @@ describe("B314 资源管理器面板", () => {
     expect(dir.querySelector(".explorer-glyph")?.innerHTML).toContain("codicon-folder");
     const file = rowAt("a.md");
     expect(file.dataset.kind).toBe("file");
-    expect(file.querySelector(".explorer-glyph")?.innerHTML).toContain("codicon-file");
+    expect(
+      file.querySelector(".explorer-glyph .seti-icon")?.getAttribute("data-tone"),
+      "文件图标走 Seti（B368），Markdown 是蓝色",
+    ).toBe("blue");
     expect(file.getAttribute("aria-level"), "子项比根深一层").toBe("2");
   });
 
