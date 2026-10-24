@@ -1395,4 +1395,20 @@ describe("B354 菜单列表：行高与菜单栏同档 + 分割线填满宽度",
     expect(inset, "替身必须真的改回内缩").not.toBe(s);
     expect(horizOf(inset, ".menu-sep", "margin"), "替身横向又留白了，必须被抓到").not.toBe(0);
   });
+
+  // B360（用户：「菜单栏列表按钮宽度不要填满列表，两边稍微留点空隙」）：
+  // 推翻 B354 里「悬停色块一路通到面板两条边框」的观感 —— 分割线仍通到两边，
+  // 条目自己两侧各让 4px。⚠️ 不许写成 `width: 100%` + 左右 margin：本容器是
+  // `overflow-y: auto`，横向溢出会升级成横向滚动条（B354 踩过，见 `.popup-menu` 注释）。
+  it("④ 条目两侧各留 4px 空隙（width 退回 auto 让外边距有地方可让，不出横向溢出）", () => {
+    const s = cssCode();
+    const item = cssDecls(ruleBlock(s, ".popup-menu button", "display: flex"));
+    expect(horizOf(s, ".popup-menu button", "margin"), "条目左右各 4px").toBe(4);
+    expect(item, "满宽必须摘掉：100% 宽 + 外边距 = 横向溢出").not.toMatch(/width:\s*100%/);
+    expect(item, "宽度交还给 block 布局（auto = 扣掉外边距后的可用宽）").toMatch(/width:\s*auto/);
+    // 反向对照：把 margin 摘掉，同一条横向判据必须落空
+    const flush = s.replace(/(\.popup-menu button\s*\{[^}]*?)margin:\s*0 4px;/s, "$1");
+    expect(flush, "替身必须真的寄走过外边距").not.toBe(s);
+    expect(horizOf(flush, ".popup-menu button", "margin"), "贴边的替身必须被抓到").not.toBe(4);
+  });
 });

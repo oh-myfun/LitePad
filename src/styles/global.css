@@ -3777,8 +3777,8 @@ body.tab-drag-active * {
 
 /* B354（用户点名「菜单列表分割线宽度填满列表」）：容器**只留上下内边距**（VS Code 同款：
    `menu.ts` 的 `.monaco-menu .monaco-action-bar.vertical { padding: 4px 0 }`）——
-   于是分割线（以及条目本体）天然一路通到面板两条边框，文字的留白改由条目自己的
-   `padding: 0 9px` 给。
+   于是分割线天然一路通到面板两条边框。条目本体自 B360 起两侧各让 4px（见
+   `.popup-menu button`），文字的留白由条目自己的 `padding: 0 9px` 给。
    ⚠️ 别改回 `padding: 4px` 再用「分割线左右负外边距」凑：本容器是 `overflow-y: auto`
    （纵向滚动那条），负外边距会让内容横向溢出 ⇒ 浏览器补一条横向滚动条，
    顺带把 10px 的纵向滚动条槽也占上，线反而短了 10px（headless 实测：138 / 应为 148）。 */
@@ -3801,7 +3801,11 @@ body.tab-drag-active * {
 .popup-menu button {
   display: flex;
   align-items: center;
-  width: 100%;
+  /* B360（用户：「按钮宽度不要填满列表，两边稍微留点空隙」）：宽度交还给 block 布局，
+     左右各让 4px。⚠️ 别写回 `width: 100%` 再配左右 margin —— 本容器是 `overflow-y: auto`，
+     横向溢出会升级成横向滚动条（B354 的教训，见 `.popup-menu` 那条）。 */
+  width: auto;
+  margin: 0 4px;
   /* B354（用户点名「紧凑一点，高度与菜单栏按钮一致」）：行高与菜单栏那颗键同取
      `--menu-item-h`。纵向内边距必须归 0 —— 这一档是 border-box，留着 `5px` 就等于
      把 12px 的字挤进 22−10=12px 的内容盒里（正好卡住行盒，中文会被削上下沿）。
