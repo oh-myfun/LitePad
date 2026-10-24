@@ -17,6 +17,11 @@ pub mod recent;
 pub struct Settings {
     /// "system" | "light" | "dark"
     pub theme: String,
+    /// B377：VS Code 默认主题族（"2026" | "modern" | "plus" | "classic" | "hc"）。
+    ///
+    /// 只影响配色，不参与「深/浅」判定（那一档仍由 `theme` + 系统主题决定）。
+    /// 旧配置缺这一格 ⇒ `#[serde(default)]` 给默认 "2026"（本版起的默认配色）。
+    pub theme_family: String,
     /// 新建文件的默认行尾
     pub default_eol: String,
     /// 打开文件时编码识别失败后的兜底编码
@@ -101,6 +106,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             theme: "system".into(),
+            theme_family: "2026".into(),
             default_eol: "CRLF".into(),
             default_encoding: "UTF-8".into(),
             default_lang: String::new(),

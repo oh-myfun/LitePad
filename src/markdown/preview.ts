@@ -306,7 +306,10 @@ export class PreviewPane {
   retheme(): void {
     let dirty = false;
     for (const b of this.blocks) {
-      if (!b.html.includes("mermaid-src") || !b.el.querySelector(".md-mermaid")) continue;
+      // mermaid 与 Shiki 都只在渲染那一刻取色（前者读 dataset.theme，后者吃主题族的
+      // ThemeRegistration）⇒ 切明暗或切主题族时，已经画好的岛必须退回原始 html 重画。
+      // 正文 / 公式 / 代码底色跟着 CSS 变量走，不用惊动 DOM。
+      if (!b.el.querySelector(".md-mermaid, pre.shiki")) continue;
       b.el.innerHTML = b.html;
       dirty = true;
     }

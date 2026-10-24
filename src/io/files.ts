@@ -15,6 +15,7 @@ import {
   docs,
   isDark,
   isWrap,
+  themeFamily,
   panels,
   remotedTabs,
   tabs,
@@ -100,7 +101,7 @@ function rebuildDocInstances(doc: Doc, text: string, keepCursor = false): void {
     const made = makeTabState(
       text,
       lang.extension,
-      { dark: isDark, wrap: isWrap, perf },
+      { dark: isDark, family: themeFamily, wrap: isWrap, perf },
       getInstanceOnUpdate(),
     );
     inst.state = made.state;

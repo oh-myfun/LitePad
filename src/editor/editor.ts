@@ -22,6 +22,7 @@ import {
 import { findHighlight } from "./find";
 import { perfProfileFor, type PerfProfile } from "./perf";
 import { vscodeEditorTheme } from "./theme";
+import type { ThemeFamily } from "../theme/theme";
 import { CODICONS } from "../shell/codicons";
 
 export interface EditorHandle {
@@ -116,6 +117,8 @@ function baseExtensions(perf: PerfProfile): Extension[] {
 
 interface EditorStateEnv {
   dark: boolean;
+  /** B377：VS Code 主题族；缺省 = 2026（测试里的最小 env 不必逐处补） */
+  family?: ThemeFamily;
   wrap: boolean;
   /** M4 大文件分级档位；缺省 normal（新建/未命名文档） */
   perf?: PerfProfile;
@@ -161,7 +164,7 @@ export function makeTabState(
       ...baseExtensions(perf),
       comps.gutter.of(gutterExtensions(perf)),
       comps.wrap.of(env.wrap ? EditorView.lineWrapping : []),
-      comps.theme.of(vscodeEditorTheme(env.dark)),
+      comps.theme.of(vscodeEditorTheme(env.dark, env.family ?? "2026")),
       comps.lang.of(perf.syntax ? (language ?? []) : []),
       EditorView.updateListener.of((update) => {
         if (update.docChanged || update.selectionSet) {

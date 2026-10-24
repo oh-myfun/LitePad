@@ -15,16 +15,16 @@
    导出件就借不到，只能再抄一份样式，两份必然漂移。预览根节点与导出件同时带这两个类
    （`markdown/preview.ts` 的 root、`markdown/exporter.ts`）。 */
 .md-rendered {
-  /* B376：预览底色 / 文字取 VS Code Light Modern 的 editor.background /
-     editor.foreground；代码块 = textCodeBlock.background，链接 = textLink.foreground。
-     预览与源码共用同一档底色，切换模式不跳色。 */
-  --md-fg: #3b3b3b;
-  --md-bg: #ffffff;
-  --md-muted: #616161;
-  --md-border: #e5e5e5;
-  --md-code-bg: #f8f8f8;
-  --md-quote-bg: #f8f8f8;
-  --md-link: #005fb8;
+  /* B377：预览与源码共用同一颗主题 token（--bg / --fg / --border / --code-bg /
+     --link-fg），5 个主题族 × 深浅自动跟着走，这里不再有第二份色表。
+     兜底值 = 2026 浅色档：导出 HTML 只注入本文件、`:root` 不在里面。 */
+  --md-fg: var(--fg, #202020);
+  --md-bg: var(--bg, #ffffff);
+  --md-muted: var(--fg-muted, #606060);
+  --md-border: var(--border, #e5e5e5);
+  --md-code-bg: var(--code-bg, #eaeaea);
+  --md-quote-bg: var(--code-bg, #eaeaea);
+  --md-link: var(--link-fg, #0069cc);
 
   color: var(--md-fg);
   /* 预览字号跟随应用字号（--font-size 由 :root 提供，缩放/设置都改它）；
@@ -59,18 +59,8 @@
   line-height: 1.6;
 }
 
-:root[data-theme="dark"] .md-rendered {
-  /* B376：同 Light 档的语义，取 VS Code Dark Modern 的对应色（editor.background
-     #1F1F1F / editor.foreground #CCCCCC / textCodeBlock.background #2B2B2B /
-     textLink.foreground #4DAAFC）。 */
-  --md-fg: #cccccc;
-  --md-bg: #1f1f1f;
-  --md-muted: #9d9d9d;
-  --md-border: #2b2b2b;
-  --md-code-bg: #2b2b2b;
-  --md-quote-bg: #2b2b2b;
-  --md-link: #4daafc;
-}
+/* B377：深浅 / 主题族全由 `:root` 上的 token 决定，这里不再有深色覆盖块 ——
+   预览与源码必须永远同一颗底色，第二份色表就是漂移的源头。 */
 
 /* B235：宽度档由 main.ts 写在 **`:root`** 的 `--md-content-max` 上，这里靠继承取到。
    ⚠️ 注释里的「写在 `.md-preview` 上」是错的（B238 修的就是它）：写在那儿会与

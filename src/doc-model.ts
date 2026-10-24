@@ -14,6 +14,7 @@ import {
   takeInstId,
   isDark,
   isWrap,
+  themeFamily,
   layout,
 } from "./core/app-state";
 import { detectLanguage, languageInfoByLabel, type LanguageInfo } from "./editor/language";
@@ -100,7 +101,7 @@ function makeInstance(doc: Doc, panelId: number, text: string): Tab {
   const { state, comps } = makeTabState(
     text,
     lang.extension,
-    { dark: isDark, wrap: isWrap, perf },
+    { dark: isDark, family: themeFamily, wrap: isWrap, perf },
     instanceOnUpdate,
   );
   return {

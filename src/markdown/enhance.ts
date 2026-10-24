@@ -1,4 +1,6 @@
 import { convertFileSrc } from "../ipc/api";
+import { shikiThemeFor } from "./shiki-themes";
+import { normalizeFamily } from "../theme/theme";
 
 /**
  * Markdown 渲染结果的**增强层**（B352-2 从 `PreviewPane` 抽出来）。
@@ -120,9 +122,18 @@ export async function enhanceMarkdown(
           try {
             const html = await codeToHtml(code, {
               lang,
-              // B376：代码块也换回 VS Code 的 Dark+ / Light+ —— 与源码编辑区
-              // （src/editor/theme.ts）同一套 token 色，预览与源码读起来是同一主题。
-              themes: { light: "light-plus", dark: "dark-plus" },
+              // B377：代码块跟着主题族走（2026 / Modern / Plus / 经典 / 高对比度 × 深浅），
+              // 与源码编辑区共用 src/theme/syntax.ts 的同一份色表。
+              themes: {
+                light: shikiThemeFor(
+                  normalizeFamily(document.documentElement.dataset.themeFamily),
+                  false,
+                ),
+                dark: shikiThemeFor(
+                  normalizeFamily(document.documentElement.dataset.themeFamily),
+                  true,
+                ),
+              },
               // ⚠️ 默认的 `defaultColor: "light"` 会把浅色值写成**内联** `color` /
               //    `background-color:#fff`，内联压过类规则 ⇒ 深色主题下代码块仍是白底浅字
               //    （B321 用户报的「配色不随主题切换」）。关掉它，shiki 只留

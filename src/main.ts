@@ -42,6 +42,7 @@ import {
   applyTabActionReserve,
   applyTabStyle,
   applyUiFontFamily,
+  rethemePreviews,
 } from "./appearance";
 
 import {
@@ -177,7 +178,7 @@ import {
   installFileDropTarget,
   installTreeFileDropTarget,
 } from "./shell/filedrop";
-import { applyTheme, normalizeMode, watchSystemTheme } from "./theme/theme";
+import { applyTheme, normalizeFamily, normalizeMode, watchSystemTheme } from "./theme/theme";
 import {
   Tab,
   Doc,
@@ -188,6 +189,7 @@ import {
   activePanelId,
   settings,
   keymapOverrides,
+  themeFamily,
   themeMode,
   isDark,
   suppressDirty,
@@ -202,6 +204,7 @@ import {
   setActivePanelId,
   setSettings,
   setKeymapOverrides,
+  setThemeFamilyState,
   setThemeModeState,
   setIsDark,
   setIsWrap,
@@ -915,7 +918,8 @@ async function setupShell(): Promise<void> {
   void loadPreferenceOptions();
 
   setThemeModeState(normalizeMode(settings?.theme));
-  setIsDark(applyTheme(themeMode));
+  setThemeFamilyState(normalizeFamily(settings?.theme_family));
+  setIsDark(applyTheme(themeMode, themeFamily));
   // 档位写进 <html data-theme-mode>（B97 前由顶栏那颗主题按钮承担）
   publishThemeMode();
   // 标签样式写进 <html data-tab-style>（B114；必须在任何标签渲染前落地）
@@ -959,7 +963,10 @@ async function setupShell(): Promise<void> {
     (dark) => {
       if (dark !== isDark) {
         setIsDark(dark);
-        applyDarkToTabs(dark);
+        applyDarkToTabs(dark, themeFamily);
+        // mermaid / Shiki 只在渲染那一刻取色；系统明暗翻转也要重画一次
+        //（手动换档那条路在 prefs 里已经这么做了，这里补上同款）。
+        rethemePreviews();
       }
     },
   );

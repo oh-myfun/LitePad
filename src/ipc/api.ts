@@ -103,6 +103,13 @@ export type DrawerViewName = "toc" | "recent" | "explorer";
 
 export interface Settings {
   theme: string;
+  /**
+   * B377：VS Code 默认主题族（`2026` / `modern` / `plus` / `classic` / `hc`）。
+   *
+   * 可空是为了兼容旧配置与测试里的 Settings 替身：缺这格 ⇒ 前端按默认 `2026` 处理，
+   * 与 Rust 侧 `Settings::default()` 同一口径。
+   */
+  theme_family?: string;
   default_eol: string;
   default_encoding: string;
   /**

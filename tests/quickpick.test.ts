@@ -244,17 +244,17 @@ describe("B365 QuickPick 样式契约（VS Code quick input 同款几何）", ()
     expect(list).toMatch(/overflow-y:\s*auto/);
   });
 
-  it("B366 选中态复刻 VS Code：focusBackground 取 #04395E / #0060C0，白字", () => {
+  it("B366/B377 选中态复刻 VS Code：默认 2026 取 list.activeSelectionBackground", () => {
     const active = cssDecls(ruleBlock(css, ".quick-pick-item.is-active", undefined, true));
     expect(active, "聚焦行底色必须走专用 token").toMatch(/background:\s*var\(--pick-focus-bg\)/);
     expect(active, "聚焦行前景取白").toMatch(/color:\s*var\(--pick-focus-fg\)/);
-    // 取值是 VS Code `list.activeSelectionBackground` 的默认档（深/浅）。
+    // 2026 的 list.activeSelectionBackground / Foreground（深 #FFFFFF22 / 浅 #00000025）。
     const dark = themeBlock(css, "dark");
     const light = themeBlock(css, "light");
-    expect(dark).toMatch(/--pick-focus-bg:\s*#04395e/i);
-    expect(light).toMatch(/--pick-focus-bg:\s*#0060c0/i);
-    expect(dark).toMatch(/--pick-focus-fg:\s*#ffffff/i);
-    expect(light).toMatch(/--pick-focus-fg:\s*#ffffff/i);
+    expect(dark).toMatch(/--pick-focus-bg:\s*#ffffff22/i);
+    expect(light).toMatch(/--pick-focus-bg:\s*#00000025/i);
+    expect(dark).toMatch(/--pick-focus-fg:\s*#ededed/i);
+    expect(light).toMatch(/--pick-focus-fg:\s*#202020/i);
 
     // 反向对照：把聚焦底色退回普通 hover，同一条判据必须咬住。
     const BAD = css.replace(

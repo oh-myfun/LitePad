@@ -27,6 +27,7 @@ import { createDropdown } from "./dropdown";
 import { createSwitch } from "./switch";
 // B235：`PreviewWidth` 是宽度档的类型（standard / wide / full）。
 import type { PreviewWidth } from "../ipc/api";
+import type { ThemeFamily } from "../theme/theme";
 // B288：日志级别五档的类型（设置页下拉要用它收窄回调参数）。
 import { type LogLevel } from "../core/logger";
 
@@ -35,6 +36,9 @@ export type ThemeChoice = "system" | "light" | "dark";
 export interface SettingsDialogOptions {
   theme: () => ThemeChoice;
   onTheme: (mode: ThemeChoice) => void;
+  /** B377：VS Code 默认主题族（2026 / modern / plus / classic / hc）。 */
+  themeFamily: () => ThemeFamily;
+  onThemeFamily: (family: ThemeFamily) => void;
   /** 空串 = 内置默认字体栈 */
   fontFamily: () => string;
   onFontFamily: (family: string) => void;
@@ -346,6 +350,13 @@ const CATEGORIES: Category[] = [
     keywords: [
       "外观",
       "主题",
+      "内置主题",
+      "配色",
+      "2026",
+      "modern",
+      "plus",
+      "经典",
+      "高对比度",
       "浅色",
       "深色",
       "跟随系统",
@@ -891,6 +902,21 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
         ],
         opts.theme(),
         (v) => opts.onTheme(v as ThemeChoice),
+      ),
+    );
+    body.appendChild(
+      selectRow(
+        "内置主题",
+        "移植 VS Code 自带的默认配色（深浅各一套）：2026 是新版默认，Modern / Plus / 经典 是历代默认，高对比度为无障碍档。只换配色，不改变上面的明暗选择。",
+        [
+          { label: "VS Code 2026（默认）", value: "2026" },
+          { label: "VS Code Modern", value: "modern" },
+          { label: "VS Code Plus", value: "plus" },
+          { label: "VS Code 经典", value: "classic" },
+          { label: "VS Code 高对比度", value: "hc" },
+        ],
+        opts.themeFamily(),
+        (v) => opts.onThemeFamily(v as ThemeFamily),
       ),
     );
     body.appendChild(

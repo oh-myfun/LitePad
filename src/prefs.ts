@@ -17,6 +17,7 @@ import {
   isWrap,
   keymapOverrides,
   settings,
+  themeFamily,
   themeMode,
   windowKind,
   setEncodingOptions,
@@ -25,10 +26,11 @@ import {
   setIsWrap,
   setKeymapOverrides,
   setSuppressDirty,
+  setThemeFamilyState,
   setThemeModeState,
 } from "./core/app-state";
 import { activeTab, docOf, getPanel } from "./core/panels";
-import { applyTheme, type ThemeMode } from "./theme/theme";
+import { applyTheme, themeFamilyLabel, type ThemeFamily, type ThemeMode } from "./theme/theme";
 import { isDirtyVsBaseline, markClean, markDiskVersion } from "./doc-model";
 import { LANGUAGE_LABELS } from "./editor/language";
 import {
@@ -512,9 +514,9 @@ async function setThemeMode(mode: ThemeMode): Promise<void> {
   // 自己的字段，唯独主题漏了 —— 于是落盘永远是启动时那个 "system"，深色系统上解析成深色，
   // 表现为「主题设了、重启就丢」。写回之后紧跟的 persistSettings() 才真正把它存下去。
   if (settings) settings.theme = mode;
-  const dark = applyTheme(mode);
+  const dark = applyTheme(mode, themeFamily);
   if (dark !== isDark) {
-    applyDarkToTabs(dark);
+    applyDarkToTabs(dark, themeFamily);
     // ⚠️ `applyTheme` 已经把 `dataset.theme` 换成新档位了，所以这一发读到的是**新**主题；
     //    排在 `setIsDark` 前后都无所谓，但绝不能漏 —— 漏了 mermaid 图会停在旧配色。
     rethemePreviews();
@@ -523,6 +525,25 @@ async function setThemeMode(mode: ThemeMode): Promise<void> {
   publishThemeMode();
   await persistSettings();
   showMessage(mode === "system" ? "主题：跟随系统" : mode === "dark" ? "主题：深色" : "主题：浅色");
+}
+
+/**
+ * 主题族（设置页「外观 → 内置主题」）：2026 / Modern / Plus / 经典 / 高对比度。
+ *
+ * 明暗不变，只换配色和语法色：`applyTheme` 重写 data-theme-family 与首帧镜像，
+ * `applyDarkToTabs` 把每个标签的 CM6 主题 compartment 重配一遍（源码语法色跟着换），
+ * `rethemePreviews` 重画只取一次色的 mermaid / Shiki 代码块。
+ */
+async function setThemeFamily(family: ThemeFamily): Promise<void> {
+  setThemeFamilyState(family);
+  const dark = applyTheme(themeMode, family);
+  applyDarkToTabs(dark, family);
+  rethemePreviews();
+  setIsDark(dark);
+  publishThemeMode();
+  if (settings) settings.theme_family = family;
+  await persistSettings();
+  showMessage(`内置主题：${themeFamilyLabel(family)}`);
 }
 
 /** 新建文件的默认行尾（设置页「新建文件」分类）。 */
@@ -717,6 +738,8 @@ async function openSettingsDialog(): Promise<void> {
   showSettingsDialog({
     theme: () => themeMode,
     onTheme: (mode) => void setThemeMode(mode),
+    themeFamily: () => themeFamily,
+    onThemeFamily: (family) => void setThemeFamily(family),
     fontFamily: () => settings?.font_family ?? "",
     onFontFamily: (family) => void setFontFamily(family),
     // B227：代码字体（预览 code/pre），与正文那条分开设

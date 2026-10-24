@@ -24,6 +24,8 @@ function makeOpts(): SettingsDialogOptions {
   return {
     theme: () => "system",
     onTheme: noop,
+    themeFamily: () => "2026",
+    onThemeFamily: noop,
     fontFamily: () => "",
     onFontFamily: noop,
     // B227：代码字体 + 本机枚举清单（枚举空 ⇒ 退回内置手抄清单那份候选）
@@ -243,6 +245,7 @@ describe("B106 设置项：初值 + 即时回调", () => {
     showSettingsDialog(makeOpts());
     for (const [label, val] of [
       ["主题", "system"],
+      ["内置主题", "2026"],
       ["正文字体", ""],
       ["字号（px）", "14"],
       ["编辑器行距", "1.5"],
@@ -271,6 +274,7 @@ describe("B106 设置项：初值 + 即时回调", () => {
     const opts = makeOpts();
     const calls: string[] = [];
     opts.onTheme = (m) => calls.push(`theme:${m}`);
+    opts.onThemeFamily = (f) => calls.push(`family:${f}`);
     opts.onFontFamily = (f) => calls.push(`font:${f}`);
     opts.onFontSize = (px) => calls.push(`size:${px}`);
     opts.onEditorLineHeight = (v) => calls.push(`elh:${v}`);
@@ -286,6 +290,7 @@ describe("B106 设置项：初值 + 即时回调", () => {
     };
 
     fire("主题", "dark");
+    fire("内置主题", "classic");
     fire("正文字体", "Consolas");
     fire("字号（px）", "18");
     fire("编辑器行距", "1.8");
@@ -297,6 +302,7 @@ describe("B106 设置项：初值 + 即时回调", () => {
 
     expect(calls).toEqual([
       "theme:dark",
+      "family:classic",
       "font:Consolas",
       "size:18",
       "elh:1.8",

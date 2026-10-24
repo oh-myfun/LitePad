@@ -7,6 +7,7 @@
 import { EditorView } from "@codemirror/view";
 import { vscodeEditorTheme } from "./editor/theme";
 import type { PreviewWidth } from "./ipc/api";
+import type { ThemeFamily } from "./theme/theme";
 import { tabs, panels, setIsWrap } from "./core/app-state";
 
 /**
@@ -20,9 +21,9 @@ export function rethemePreviews(): void {
   for (const panel of panels.values()) panel.preview?.retheme();
 }
 
-export function applyDarkToTabs(dark: boolean): void {
+export function applyDarkToTabs(dark: boolean, family: ThemeFamily): void {
   for (const tab of tabs.values()) {
-    const effect = tab.comps.theme.reconfigure(vscodeEditorTheme(dark));
+    const effect = tab.comps.theme.reconfigure(vscodeEditorTheme(dark, family));
     const panel = panels.get(tab.panelId);
     if (panel?.view && panel.viewTabId === tab.tabId) {
       panel.view.view.dispatch({ effects: effect });

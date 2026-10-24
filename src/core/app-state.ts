@@ -15,7 +15,7 @@ import type { EncodingItem, Settings } from "../ipc/api";
 import type { PreviewPane } from "../markdown/preview";
 import type { KeymapOverrides } from "../shell/keymap";
 import { leaf, type LayoutNode } from "./layout";
-import type { ThemeMode } from "../theme/theme";
+import type { ThemeFamily, ThemeMode } from "../theme/theme";
 
 /** 面板：布局树叶子，持有独立 EditorView 与自己的标签列表。 */
 export interface Panel {
@@ -183,6 +183,9 @@ export let isDark = false;
 
 export let themeMode: ThemeMode = "system";
 
+/** B377：VS Code 默认主题族（2026 / modern / plus / classic / hc）。 */
+export let themeFamily: ThemeFamily = "2026";
+
 /**
  * 编码候选（B218）：`label` 原样传回后端，`group` 是它所属的语言组名
  * （菜单按这个 `group` 切块：首块内联铺开，之后的每组收成一条子菜单入口）。
@@ -255,6 +258,10 @@ export function setEncodingOptions(v: typeof encodingOptions): void {
 
 export function setThemeModeState(v: typeof themeMode): void {
   themeMode = v;
+}
+
+export function setThemeFamilyState(v: typeof themeFamily): void {
+  themeFamily = v;
 }
 
 export function setIsDark(v: typeof isDark): void {

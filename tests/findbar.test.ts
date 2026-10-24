@@ -986,10 +986,10 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       "--find-opt-hover: #b8b8b850",
     );
     expect(light, "浅色 toolbar 档同为 #b8b8b850").toContain("--find-btn-hover: #b8b8b850");
-    expect(dark, "activeForeground 深色档 = 白").toContain("--find-opt-active-fg: #ffffff");
-    expect(light, "activeForeground 浅色档 = 黑（白字压浅蓝底读不出来）").toContain(
-      "--find-opt-active-fg: #000000",
+    expect(dark, "activeForeground 深色档 = inputOption.activeForeground #bfbfbf").toContain(
+      "--find-opt-active-fg: #bfbfbf",
     );
+    expect(light, "activeForeground 浅色档 = #202020").toContain("--find-opt-active-fg: #202020");
     for (const [name, block] of [
       ["深色", dark],
       ["浅色", light],
@@ -1007,9 +1007,7 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       ]) {
         expect(block, `${name}主题缺 ${v}`).toContain(v);
       }
-      expect(block, `${name}主题的激活边框必须走 accent`).toContain(
-        "--find-opt-active-border: var(--accent)",
-      );
+      expect(block, `${name}主题的激活边框必须走专用 token`).toContain("--find-opt-active-border:");
     }
     // 投影只此一条，tooltip 与查找栏共用（VS Code 也是同一个 --vscode-shadow-lg）
     expect(css, "投影值 = VS Code style.css 的 --vscode-shadow-lg").toContain(

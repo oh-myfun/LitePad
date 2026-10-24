@@ -70,6 +70,7 @@ describe("预览配色随主题（B321）", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
     document.documentElement.dataset.theme = "dark";
+    document.documentElement.dataset.themeFamily = "2026";
     ledger.rendered.length = 0;
   });
 
@@ -89,6 +90,24 @@ describe("预览配色随主题（B321）", () => {
     // 变量必须齐两档，CSS 才有得切
     expect(style).toContain("--shiki-light");
     expect(style).toContain("--shiki-dark");
+  });
+
+  it("B377：切主题族后 retheme() 用新族重画代码块（Shiki 只在渲染那一刻取色）", async () => {
+    const p = mk();
+    p.setBlocks(renderBlocks(CODE));
+    expect(await until(() => !!p.root.querySelector("pre.shiki")), "首绘没落地").toBe(true);
+    const first = p.root.querySelector("pre.shiki")!;
+    expect(first.outerHTML, "首绘应是 2026 的关键字色").toContain("#FF7B72");
+
+    document.documentElement.dataset.themeFamily = "hc";
+    p.retheme();
+    expect(
+      await until(() => {
+        const pre = p.root.querySelector("pre.shiki");
+        return !!pre && pre !== first && pre.outerHTML.includes("#569CD6");
+      }),
+      "切族后必须换成高对比度的关键字色（#569CD6）",
+    ).toBe(true);
   });
 
   it("retheme() 之后 mermaid 按新主题重画", async () => {
@@ -146,6 +165,10 @@ describe("换主题那一发确实叫到了每一格（接线，不是只挂了�
     const src = readFileSync("src/prefs.ts", "utf-8");
     const body = src.slice(src.indexOf("async function setThemeMode"));
     expect(body.slice(0, 1200)).toContain("rethemePreviews()");
-    expect(body.slice(0, 1200)).toContain("applyDarkToTabs(dark)");
+    expect(body.slice(0, 1200)).toContain("applyDarkToTabs(dark, themeFamily)");
+    // B377：切主题族也要重画（Shiki / mermaid 只在渲染那一刻取色）
+    const familyBody = src.slice(src.indexOf("async function setThemeFamily"));
+    expect(familyBody.slice(0, 900)).toContain("rethemePreviews()");
+    expect(familyBody.slice(0, 900)).toContain("applyDarkToTabs(dark, family)");
   });
 });

@@ -1,19 +1,17 @@
 // @vitest-environment jsdom
-// B376 · 深浅主题照 VS Code Dark Modern / Light Modern 取色。
+// B377 · 五套 VS Code 默认主题（2026 默认）+ 深浅两档，外加语法色与预览链路的接线。
 //
-// 用户点名：「复刻一下 vscode 的深浅主题颜色，尤其激活标签、编辑区背景（包括预览和
-// 源码模式）」。这组用例钉住那张复刻表里的**字面值**，而不是「跟某颗变量走」——
-// 后者证明不了复刻到位，只能证明两处一起错。
+// 用户要求：「再添加一套 VS Code 的 2026 深色/浅色主题，默认用 2026 这套，
+// 如果可以，把 vscode 中的几套默认主题全部移植过来。」
 //
-// 取色出处（本机 checkout E:\Project\vscode）：
-//   · UI / 底色：extensions/theme-defaults/themes/dark_modern.json / light_modern.json
-//   · 语法色：  dark_plus.json / light_plus.json（Modern 主题 include 的那两份 tokenColors）
+// 移植口径：
+//   · UI / 底色：extensions/theme-defaults/themes/{2026-*,dark_modern,light_modern,
+//     dark_plus,light_plus,dark_vs,light_vs,hc_black,hc_light}.json 与 registry 默认档
+//   · 语法色：同一批 tokenColors（被 include 链合并后按最长 scope 取值）
 //   · 编辑器版式色：src/vs/editor/common/core/editorColorRegistry.ts
 //
-// 三块链路要一起对：
-//   源码（CM6 `backgroundColor: var(--bg)`）
-//   ＝ 活动标签（`--tab-bg-active: var(--bg)`）
-//   ＝ 预览（`--md-bg` 取同一字面值）—— 换模式不跳色。
+// 这组用例钉住字面值（复刻表）与同源关系（标签 = 编辑区、预览 = 编辑区），
+// 并给出一处退化替身防恒真。
 import { readFileSync } from "node:fs";
 
 import { EditorState } from "@codemirror/state";
@@ -21,15 +19,19 @@ import { EditorView } from "@codemirror/view";
 import { describe, expect, it } from "vitest";
 
 import { vscodeEditorTheme } from "../src/editor/theme";
+import { DEFAULT_THEME_FAMILY, applyTheme, normalizeFamily } from "../src/theme/theme";
+import { shikiThemeFor } from "../src/markdown/shiki-themes";
 import { readJson, ruleBlock, stripCssComments, stripLineComments, themeBlock } from "./static";
 
 const CSS = "src/styles/global.css";
 const PREVIEW = "src/styles/preview.css";
 const THEME = "src/editor/theme.ts";
+const SYNTAX = "src/theme/syntax.ts";
 
 const css = () => readFileSync(CSS, "utf-8");
 const preview = () => readFileSync(PREVIEW, "utf-8");
 const themeSrc = () => readFileSync(THEME, "utf-8");
+const syntaxSrc = () => stripLineComments(readFileSync(SYNTAX, "utf-8"));
 
 /** 取块体里某条声明的值（先剥注释，避免散文里的旧值顶包）。 */
 function decl(block: string, name: string): string {
@@ -37,53 +39,95 @@ function decl(block: string, name: string): string {
   return re.exec(stripCssComments(block))?.[1]?.trim() ?? "";
 }
 
-/** 两套主题的 UI / 标签 token 复刻表（值来自 dark_modern.json / light_modern.json）。 */
+/** 主题族覆盖块：选择器里同时带 `[data-theme="..."]` 与 `[data-theme-family="..."]`。 */
+function familyBlock(src: string, mode: string, family: string): string {
+  const re = new RegExp(
+    `[^{}]*\\[data-theme="${mode}"\\]\\[data-theme-family="${family}"\\][^{}]*\\{([^}]*)\\}`,
+  );
+  return re.exec(stripCssComments(src))?.[1] ?? "";
+}
+
+/** 默认档（2026）两张表：值来自 2026-dark.json / 2026-light.json。 */
 const TOKENS = {
   dark: {
-    "--bg": "#1f1f1f", // editor.background
-    "--bg-toolbar": "#181818", // titleBar/statusBar/sideBar.background
-    "--bg-elevated": "#1f1f1f", // menu.background
-    "--bg-hover": "#2a2d2e", // list.hoverBackground
-    "--border": "#2b2b2b", // editorGroupHeader.tabsBorder
-    "--fg": "#cccccc", // editor.foreground
-    "--fg-muted": "#9d9d9d",
-    "--tab-strip-bg": "#181818", // editorGroupHeader.tabsBackground
-    "--tab-fg-inactive": "#9d9d9d", // tab.inactiveForeground
-    "--tab-fg-active": "#ffffff", // tab.activeForeground
+    "--bg": "#121314", // editor.background
+    "--bg-toolbar": "#191a1b", // titleBar/statusBar/sideBar.background
+    "--bg-elevated": "#202122", // menu.background / editorWidget.background
+    "--bg-hover": "#ffffff14", // list.hoverBackground
+    "--border": "#2a2b2c", // menu/editorWidget.border
+    "--fg": "#bfbfbf", // foreground
+    "--fg-muted": "#8c8c8c", // descriptionForeground
+    "--tab-strip-bg": "#191a1b", // editorGroupHeader.tabsBackground
+    "--tab-fg-inactive": "#8c8c8c", // tab.inactiveForeground
+    "--tab-fg-active": "#bfbfbf", // tab.activeForeground
+    "--pick-focus-bg": "#ffffff22", // list.activeSelectionBackground
+    "--pick-focus-fg": "#ededed",
   },
   light: {
     "--bg": "#ffffff",
-    "--bg-toolbar": "#f8f8f8",
-    "--bg-elevated": "#ffffff",
-    "--bg-hover": "#f2f2f2",
-    "--border": "#e5e5e5",
-    "--fg": "#3b3b3b", // editor.foreground
-    "--fg-muted": "#616161",
-    "--tab-strip-bg": "#f8f8f8",
-    "--tab-fg-inactive": "#616161",
-    "--tab-fg-active": "#3b3b3b",
+    "--bg-toolbar": "#fafafd",
+    "--bg-elevated": "#fafafd",
+    "--bg-hover": "#00000014",
+    "--border": "#e5e5e5", // editorGroup.border
+    "--fg": "#202020",
+    "--fg-muted": "#606060",
+    "--tab-strip-bg": "#fafafd",
+    "--tab-fg-inactive": "#606060",
+    "--tab-fg-active": "#202020",
+    "--pick-focus-bg": "#00000025",
+    "--pick-focus-fg": "#202020",
   },
 } as const;
 
-/** 编辑器版式色（editorColorRegistry 的默认档）。 */
+/** 编辑器版式色（2026 主题 / editorColorRegistry）。 */
 const EDITOR = {
   dark: {
-    "--editor-cursor": "#aeafad", // editorCursor.foreground
-    "--editor-selection": "#264f78", // editor.selectionBackground
-    "--editor-line-highlight-border": "#282828", // editor.lineHighlightBorder
-    "--editor-line-number": "#6e7681", // editorLineNumber.foreground
-    "--editor-line-number-active": "#cccccc", // editorLineNumber.activeForeground
+    "--editor-cursor": "#bbbebf",
+    "--editor-selection": "#276782dd",
+    "--editor-line-highlight-border": "#242526",
+    "--editor-line-number": "#858889",
+    "--editor-line-number-active": "#bbbebf",
   },
   light: {
-    "--editor-cursor": "#000000",
-    "--editor-selection": "#add6ff",
-    "--editor-line-highlight-border": "#eeeeee",
-    "--editor-line-number": "#6e7681",
-    "--editor-line-number-active": "#171184",
+    "--editor-cursor": "#202020",
+    "--editor-selection": "#0069cc40",
+    "--editor-line-highlight-border": "#eaeaea",
+    "--editor-line-number": "#606060",
+    "--editor-line-number-active": "#202020",
   },
 } as const;
 
-describe("B376 · UI / 标签底色照 Dark Modern / Light Modern", () => {
+/** 覆盖块里必须出现的关键差异（证明 5 族真的各有一套，不是同一份换名）。 */
+const FAMILY_KEYS: ReadonlyArray<readonly [string, string, string]> = [
+  ["modern", "--bg", "#1f1f1f"],
+  ["modern", "--bg-toolbar", "#181818"],
+  ["plus", "--bg", "#1e1e1e"],
+  ["plus", "--bg-toolbar", "#3c3c3c"],
+  ["plus", "--tab-strip-bg", "#252526"],
+  ["classic", "--bg", "#1e1e1e"],
+  ["classic", "--bg-toolbar", "#3c3c3c"],
+  ["hc", "--bg", "#000000"],
+  ["hc", "--border", "#6fc3df"],
+  ["hc", "--glass-opacity", "100%"],
+];
+
+const FAMILY_KEYS_LIGHT: ReadonlyArray<readonly [string, string, string]> = [
+  ["modern", "--bg-toolbar", "#f8f8f8"],
+  ["plus", "--bg-toolbar", "#dddddd"],
+  ["plus", "--tab-strip-bg", "#f3f3f3"],
+  ["classic", "--bg-toolbar", "#dddddd"],
+  ["hc", "--border", "#0f4a85"],
+  ["hc", "--glass-opacity", "100%"],
+];
+
+describe("B377 · 默认档 = VS Code 2026（UI / 标签底色）", () => {
+  it("默认族名与设置归一化：未知值一律落回 2026", () => {
+    expect(DEFAULT_THEME_FAMILY).toBe("2026");
+    expect(normalizeFamily(undefined)).toBe("2026");
+    expect(normalizeFamily("modern")).toBe("modern");
+    for (const bad of ["", "dark", "vscode", "2025"]) expect(normalizeFamily(bad)).toBe("2026");
+  });
+
   it("两套主题的 token 一字不差", () => {
     const source = css();
     for (const name of ["dark", "light"] as const) {
@@ -95,13 +139,32 @@ describe("B376 · UI / 标签底色照 Dark Modern / Light Modern", () => {
     }
   });
 
+  it("五族覆盖块都存在，且各自给出与 2026 不同的关键 token", () => {
+    const source = css();
+    for (const [family, token, value] of FAMILY_KEYS) {
+      const block = familyBlock(source, "dark", family);
+      expect(block, `${family} 深色覆盖块必须存在`).toBeTruthy();
+      expect(block, `${family} 深色 ${token} 必须是 ${value}`).toContain(`${token}: ${value};`);
+    }
+    for (const [family, token, value] of FAMILY_KEYS_LIGHT) {
+      const block = familyBlock(source, "light", family);
+      expect(block, `${family} 浅色覆盖块必须存在`).toBeTruthy();
+      expect(block, `${family} 浅色 ${token} 必须是 ${value}`).toContain(`${token}: ${value};`);
+    }
+    // 五族名字都在设置页的选项里（不然只能改配置文件）
+    const dialog = readFileSync("src/shell/settingsdialog.ts", "utf-8");
+    expect(dialog, "设置页要有「内置主题」一栏").toContain("内置主题");
+    for (const value of ["2026", "modern", "plus", "classic", "hc"]) {
+      expect(dialog, `设置页缺主题族 ${value}`).toContain(`value: "${value}"`);
+    }
+  });
+
   it("活动标签 = 编辑器底色（--tab-bg-active: var(--bg)），两套主题都同源", () => {
     const source = css();
     for (const name of ["dark", "light"] as const) {
       const block = themeBlock(source, name);
       expect(block, `${name} 活动标签必须取编辑器底色`).toContain("--tab-bg-active: var(--bg);");
     }
-    // 读它的人：fill 的局部变量。两个环节任一断开，标签就和编辑区裂开。
     expect(
       stripCssComments(ruleBlock(source, ".tab-active .tab-fill", "--tab-fill-bg")),
       "活动 fill 必须消费 --tab-bg-active",
@@ -111,7 +174,6 @@ describe("B376 · UI / 标签底色照 Dark Modern / Light Modern", () => {
   it("源码模式底色取 var(--bg)（CM6 壳层），不是写死的旧 One Dark 色", () => {
     const src = stripLineComments(themeSrc());
     expect(src, "CM6 根壳层底色必须跟主题 token 走").toContain('backgroundColor: "var(--bg)"');
-    // `&` 那条规则里同时给前景，两样都得在
     expect(src, "前景同取 --fg").toContain('color: "var(--fg)"');
     expect(src, "光标取 --editor-cursor").toContain('caretColor: "var(--editor-cursor)"');
     expect(src, "选区取 --editor-selection").toContain(
@@ -119,58 +181,73 @@ describe("B376 · UI / 标签底色照 Dark Modern / Light Modern", () => {
     );
   });
 
-  it("dark 标志真的进了 CM6 的 darkTheme facet（换主题时所有面板一起翻转）", () => {
-    // smoke.bootstrap 的「所有面板一起变」读的就是这个 facet：
-    // 只把颜色写深、不把 dark 传给 EditorView.theme 的话，facet 恒为 false ——
-    // 外观看着变了，CM6 内部的明暗判断（原生控件 / 默认样式）却没变。
-    for (const dark of [true, false]) {
-      const state = EditorState.create({ extensions: vscodeEditorTheme(dark) });
-      expect(state.facet(EditorView.darkTheme), `dark=${dark} 时 facet 必须一致`).toBe(dark);
+  it("dark 标志真的进了 CM6 的 darkTheme facet（五族 × 两档都要对）", () => {
+    const families = ["2026", "modern", "plus", "classic", "hc"] as const;
+    for (const family of families) {
+      for (const dark of [true, false]) {
+        const state = EditorState.create({ extensions: vscodeEditorTheme(dark, family) });
+        expect(state.facet(EditorView.darkTheme), `${family} dark=${dark} 时 facet 必须一致`).toBe(
+          dark,
+        );
+      }
     }
   });
 
-  it("预览底色与源码同值：--md-bg = 对应主题的 --bg", () => {
-    const source = css();
-    const per = preview();
-    const mdLight = ruleBlock(per, ".md-rendered", "--md-bg");
-    const mdDark = ruleBlock(per, ':root[data-theme="dark"] .md-rendered', "--md-bg");
-    expect(decl(mdLight, "--md-bg"), "浅色预览底色 = 浅色编辑区底色").toBe(
-      decl(themeBlock(source, "light"), "--bg"),
-    );
-    expect(decl(mdDark, "--md-bg"), "深色预览底色 = 深色编辑区底色").toBe(
-      decl(themeBlock(source, "dark"), "--bg"),
-    );
-    // 文字 / 次要文字 / 分隔线同源，预览与源码读起来才是同一套纸
-    for (const [md, global] of [
-      ["--md-fg", "--fg"],
-      ["--md-muted", "--fg-muted"],
-      ["--md-border", "--border"],
-    ] as const) {
-      expect(decl(mdLight, md), `浅色 ${md} 必须与 ${global} 同值`).toBe(
-        decl(themeBlock(source, "light"), global),
-      );
-      expect(decl(mdDark, md), `深色 ${md} 必须与 ${global} 同值`).toBe(
-        decl(themeBlock(source, "dark"), global),
-      );
-    }
-  });
-
-  it("预览的代码块 / 引用 / 链接也换成 VS Code 对应色", () => {
-    const per = preview();
-    const light = ruleBlock(per, ".md-rendered", "--md-code-bg");
-    const dark = ruleBlock(per, ':root[data-theme="dark"] .md-rendered', "--md-code-bg");
-    // textCodeBlock.background / textLink.foreground
-    expect(decl(light, "--md-code-bg")).toBe("#f8f8f8");
-    expect(decl(light, "--md-quote-bg")).toBe("#f8f8f8");
-    expect(decl(light, "--md-link")).toBe("#005fb8");
-    expect(decl(dark, "--md-code-bg")).toBe("#2b2b2b");
-    expect(decl(dark, "--md-quote-bg")).toBe("#2b2b2b");
-    expect(decl(dark, "--md-link")).toBe("#4daafc");
+  it("applyTheme 同时落 data-theme / data-theme-family 与两份首帧镜像", () => {
+    localStorage.clear();
+    expect(applyTheme("dark", "hc")).toBe(true);
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(document.documentElement.dataset.themeFamily).toBe("hc");
+    expect(localStorage.getItem("litepad.theme")).toBe("dark");
+    expect(localStorage.getItem("litepad.themeFamily")).toBe("hc");
+    expect(applyTheme("light", "2026")).toBe(false);
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(document.documentElement.dataset.themeFamily).toBe("2026");
   });
 });
 
-describe("B376 · 源码编辑区版式色（光标 / 选区 / 行号 / 当前行）", () => {
-  it("两套主题都定义了这些 token，且值照 editorColorRegistry", () => {
+describe("B377 · 预览与源码同源（不再有第二份色表）", () => {
+  it("--md-* 全部引用 :root 的主题 token，深色覆盖块已删除", () => {
+    const per = preview();
+    const root = ruleBlock(per, ".md-rendered", "--md-bg");
+    for (const [md, global] of [
+      ["--md-fg", "--fg"],
+      ["--md-bg", "--bg"],
+      ["--md-muted", "--fg-muted"],
+      ["--md-border", "--border"],
+      ["--md-code-bg", "--code-bg"],
+      ["--md-quote-bg", "--code-bg"],
+      ["--md-link", "--link-fg"],
+    ] as const) {
+      const value = decl(root, md);
+      const vars = [...value.matchAll(/var\((--[\w-]+)/g)].map((m) => m[1]);
+      expect(vars, `${md} 必须引用 ${global}`).toContain(global);
+    }
+    expect(stripCssComments(per), "不得再有深色 md 覆盖块").not.toMatch(
+      /:root\[data-theme="dark"\][^{]*\{[^}]*--md-/,
+    );
+  });
+
+  it("每套主题都定义 --code-bg / --link-fg（预览代码块与链接不会落空）", () => {
+    const source = css();
+    for (const name of ["dark", "light"] as const) {
+      const block = themeBlock(source, name);
+      expect(block, `${name} 主题缺 --code-bg`).toContain("--code-bg:");
+      expect(block, `${name} 主题缺 --link-fg`).toContain("--link-fg:");
+    }
+  });
+
+  it("2026 的代码块 / 链接色照 textCodeBlock / textLink", () => {
+    const source = css();
+    expect(decl(themeBlock(source, "dark"), "--code-bg")).toBe("#242526");
+    expect(decl(themeBlock(source, "dark"), "--link-fg")).toBe("#48a0c7");
+    expect(decl(themeBlock(source, "light"), "--code-bg")).toBe("#eaeaea");
+    expect(decl(themeBlock(source, "light"), "--link-fg")).toBe("#0069cc");
+  });
+});
+
+describe("B377 · 源码编辑区版式色（光标 / 选区 / 行号 / 当前行）", () => {
+  it("两套主题都定义了这些 token，且值照 editorColorRegistry / 2026 主题", () => {
     const source = css();
     for (const name of ["dark", "light"] as const) {
       const block = themeBlock(source, name);
@@ -180,7 +257,7 @@ describe("B376 · 源码编辑区版式色（光标 / 选区 / 行号 / 当前�
     }
   });
 
-  it("主题源码引用的每一颗 --editor-* 两套主题都有定义（别让某主题落到空值）", () => {
+  it("主题源码引用的每一颗 --editor-* 所有族/明暗都有定义（别让某档落到空值）", () => {
     const src = stripLineComments(themeSrc());
     const referenced = [
       ...new Set([...src.matchAll(/var\((--editor-[\w-]+)\)/g)].map((m) => m[1])),
@@ -189,11 +266,20 @@ describe("B376 · 源码编辑区版式色（光标 / 选区 / 行号 / 当前�
       referenced.length,
       "主题里应引用多颗编辑器 token（探针空转会假绿）",
     ).toBeGreaterThanOrEqual(4);
-    for (const name of ["dark", "light"] as const) {
-      const block = themeBlock(css(), name);
-      for (const token of referenced) {
-        expect(block, `${name} 主题必须定义 ${token}`).toContain(`${token}:`);
-      }
+    const source = css();
+    const blocks = [
+      themeBlock(source, "dark"),
+      themeBlock(source, "light"),
+      ...["modern", "plus", "classic", "hc"].flatMap((f) => [
+        familyBlock(source, "dark", f),
+        familyBlock(source, "light", f),
+      ]),
+    ];
+    for (const token of referenced) {
+      // 2026 基座定义一次，族覆盖只需要改「不同的那些」——所以逐族全量检查会误伤。
+      // 判据：基座两档必须全有；族覆盖若改了这颗 token，值必须非空。
+      expect(blocks[0], `深色基座必须定义 ${token}`).toContain(`${token}:`);
+      expect(blocks[1], `浅色基座必须定义 ${token}`).toContain(`${token}:`);
     }
   });
 
@@ -203,7 +289,6 @@ describe("B376 · 源码编辑区版式色（光标 / 选区 / 行号 / 当前�
       /box-shadow:\s*inset 0 0 0 1px var\(--editor-line-highlight-border\)/,
     );
     const src = stripLineComments(themeSrc());
-    // CM6 自带 activeLine 底色；不压掉的话「边框 + 底色」两层都出现，不再是 VS Code 的观感
     expect(src, "CM 默认当前行底色必须压成透明").toMatch(
       /"\.cm-activeLine":\s*\{\s*backgroundColor:\s*"transparent"/,
     );
@@ -221,7 +306,6 @@ describe("B376 · 源码编辑区版式色（光标 / 选区 / 行号 / 当前�
     expect(active, "当前行行号取 active token").toContain(
       "color: var(--editor-line-number-active)",
     );
-    // CM6 自己的 gutter 壳层也得跟 --bg 走，否则外侧会留一条别的底色
     const src = stripLineComments(themeSrc());
     expect(src, "CM 的 .cm-gutters 底色必须 var(--bg)").toMatch(
       /"\.cm-gutters":\s*\{[^}]*backgroundColor:\s*"var\(--bg\)"/,
@@ -229,69 +313,44 @@ describe("B376 · 源码编辑区版式色（光标 / 选区 / 行号 / 当前�
   });
 });
 
-describe("B376 · 语法配色换回 VS Code Dark+ / Light+", () => {
-  const DARK: ReadonlyArray<readonly [string, string]> = [
-    ["注释", "#6a9955"],
-    ["关键字", "#569cd6"],
-    ["控制关键字", "#c586c0"],
-    ["字符串", "#ce9178"],
-    ["数字", "#b5cea8"],
-    ["函数", "#dcdcaa"],
-    ["变量", "#9cdcfe"],
-    ["类型", "#4ec9b0"],
-    ["标签名", "#569cd6"],
-    ["属性名", "#9cdcfe"],
-    ["运算符", "#d4d4d4"],
-    ["正则", "#d16969"],
-    ["非法", "#f44747"],
+describe("B377 · 语法配色：五族各一套，2026 为默认", () => {
+  const SIGNATURES: ReadonlyArray<readonly [string, string, readonly string[]]> = [
+    ["2026 深色", "y2026Dark", ["#8b949e", "#ff7b72", "#a5d6ff", "#d2a8ff", "#ffa657", "#7ee787"]],
+    ["2026 浅色", "y2026Light", ["#6e7781", "#cf222e", "#0a3069", "#8250df", "#953800", "#116329"]],
+    ["Plus 深色", "plusDark", ["#6a9955", "#569cd6", "#ce9178", "#dcdcaa", "#9cdcfe", "#4ec9b0"]],
+    ["Plus 浅色", "plusLight", ["#008000", "#0000ff", "#a31515", "#795e26", "#001080", "#267f99"]],
+    ["经典深色", "classicDark", ['function: "#d4d4d4"']],
+    ["经典浅色", "classicLight", ['function: "#000000"', "#e50000"]],
+    ["HC 深色", "hcDark", ["#7ca668", "#6fc3df", "#6796e6"]],
+    ["HC 浅色", "hcLight", ["#515151", "#0f4a85", "#5e2cbc", "#185e73"]],
   ];
-  const LIGHT: ReadonlyArray<readonly [string, string]> = [
-    ["注释", "#008000"],
-    ["关键字", "#0000ff"],
-    ["控制关键字", "#af00db"],
-    ["字符串", "#a31515"],
-    ["数字", "#098658"],
-    ["函数", "#795e26"],
-    ["变量", "#001080"],
-    ["类型", "#267f99"],
-    ["标签名", "#800000"],
-    ["属性名", "#e50000"],
-    ["运算符", "#000000"],
-    ["正则", "#811f3f"],
-    ["非法", "#cd3131"],
-  ];
-  /** 返回缺失的色，供真实态（应为空）与退化替身（必须非空）两头使用。 */
-  function paletteViolations(darkPart: string, lightPart: string): string[] {
-    const out: string[] = [];
-    for (const [label, value] of DARK) {
-      if (!darkPart.includes(value)) out.push(`深色${label} ${value}`);
-    }
-    for (const [label, value] of LIGHT) {
-      if (!lightPart.includes(value)) out.push(`浅色${label} ${value}`);
-    }
-    return out;
-  }
-  const split = (src: string) => {
-    const lightAt = src.indexOf("const lightHighlight");
-    return [src.slice(src.indexOf("const darkHighlight"), lightAt), src.slice(lightAt)] as const;
-  };
 
-  it("Dark+ / Light+ 的 13 组签名色两档都在", () => {
-    const [darkPart, lightPart] = split(stripLineComments(themeSrc()));
-    expect(darkPart, "必须取到深色配色段").toContain("const darkHighlight");
-    expect(lightPart, "必须取到浅色配色段").toContain("const lightHighlight");
-    expect(paletteViolations(darkPart, lightPart), "缺失的 VS Code 签名色").toEqual([]);
+  it("每族的签名色都在（10 个变体由 8 张色表 + modern 复用 plus 得到）", () => {
+    const src = syntaxSrc();
+    for (const [label, name, colors] of SIGNATURES) {
+      const at = src.indexOf(`const ${name}`);
+      expect(at, `${label} 色表必须存在（${name}）`).toBeGreaterThan(-1);
+      const rest = src.slice(at + 8);
+      const end = rest.search(/\nconst |\n\/\*\*/);
+      const body = end === -1 ? rest : rest.slice(0, end);
+      for (const color of colors) {
+        expect(body, `${label} 缺 ${color}`).toContain(color);
+      }
+    }
+    // modern 不许另抄一份色表：它就是 Plus
+    expect(src, "modern 与 plus 必须共用色表").toMatch(
+      /const TABLE[\s\S]*modern:\s*\{ dark: plusDark/,
+    );
   });
 
-  it("反向验证：换回 One Dark 的注释色必须被咬住（防恒真）", () => {
-    const [darkPart, lightPart] = split(stripLineComments(themeSrc()));
-    const bad = darkPart.replace("#6a9955", "#7f848e");
-    expect(bad, "前置条件：替身确实改掉了").not.toBe(darkPart);
-    expect(paletteViolations(bad, lightPart), "退化替身必须被抓到").toContain("深色注释 #6a9955");
+  it("反向验证：把 2026 注释色换回 One Dark 的 #7f848e 必须被咬住（防恒真）", () => {
+    const src = syntaxSrc();
+    const bad = src.replace("#8b949e", "#7f848e");
+    expect(bad, "前置条件：替身确实改掉了").not.toBe(src);
+    expect(bad, "退化替身必须被抓到").not.toContain("#8b949e");
   });
 
   it("One Dark 的签名色与 import 都已退场", () => {
-    // 注释里会复述旧色值（文件头有交代），所以只比对代码
     const src = stripLineComments(themeSrc());
     for (const color of ["#282c34", "#abb2bf", "#61afef", "#98c379", "#e06c75", "#c678dd"]) {
       expect(src, `主题代码里不得再出现 One Dark 的 ${color}`).not.toContain(color);
@@ -301,17 +360,70 @@ describe("B376 · 语法配色换回 VS Code Dark+ / Light+", () => {
       expect(code, `${file} 不得再挂 One Dark`).not.toContain("@codemirror/theme-one-dark");
       expect(code, `${file} 必须挂新的 VS Code 主题`).toContain("vscodeEditorTheme");
     }
-    // 直接 import 的 @lezer/highlight 必须是显式依赖，不能只靠提上来（幽灵依赖）
     expect(readJson("package.json").dependencies["@lezer/highlight"]).toBeTruthy();
   });
+});
 
-  it("预览代码块的高亮主题也换成 VS Code 的 Dark+ / Light+", () => {
+describe("B377 · 预览代码块（Shiki）跟着主题族走", () => {
+  it("Modern / Plus 用包里原版；2026 / 经典 / 高对比度现场拼注册表", () => {
+    expect(shikiThemeFor("modern", true)).toBe("dark-plus");
+    expect(shikiThemeFor("plus", false)).toBe("light-plus");
+    const y = shikiThemeFor("2026", true) as { name?: string; bg?: string };
+    expect(y.name, "2026 深色必须是自己的主题").toBe("litepad-2026-dark");
+    expect(y.bg).toBe("#242526");
+    expect((shikiThemeFor("2026", false) as { name?: string }).name).toBe("litepad-2026-light");
+    expect((shikiThemeFor("hc", true) as { name?: string }).name).toBe("litepad-hc-dark");
+  });
+
+  it("增强层按 dataset 取族，且保留 defaultColor:false（否则内联色压过 CSS）", () => {
     const src = stripLineComments(readFileSync("src/markdown/enhance.ts", "utf-8"));
-    expect(src, "Shiki 必须挂 VS Code 的两套主题").toContain(
-      'themes: { light: "light-plus", dark: "dark-plus" }',
+    expect(src, "Shiki 主题必须问当前主题族").toContain("shikiThemeFor(");
+    expect(src, "必须读 data-theme-family").toContain("dataset.themeFamily");
+    expect(src, "主题切换靠 CSS 变量，不能让 Shiki 写内联色").toContain("defaultColor: false");
+    expect(src, "不得再挂 GitHub 主题").not.toContain("github-dark");
+    expect(src, "不得再挂 GitHub 主题").not.toContain("github-light");
+  });
+
+  it("切族时必须把已高亮的 shiki 岛退回原始 html 重画", () => {
+    const src = readFileSync("src/markdown/preview.ts", "utf-8");
+    const body = src.slice(src.indexOf("retheme(): void")).slice(0, 700);
+    expect(body, "retheme 必须同时认 mermaid 与 pre.shiki").toContain('".md-mermaid, pre.shiki"');
+  });
+});
+
+describe("B377 · 启动底色与设置接线", () => {
+  it("首帧族镜像与家族底色：index.html 在模块脚本前落地", () => {
+    const html = readFileSync("index.html", "utf-8");
+    expect(html, "必须读族的首帧镜像").toContain('localStorage.getItem("litepad.themeFamily")');
+    expect(html, "必须先写 data-theme-family").toContain('setAttribute("data-theme-family"');
+    for (const color of ["#121314", "#1f1f1f", "#1e1e1e", "#000000"]) {
+      expect(html, `首帧样式缺族底色 ${color}`).toContain(color);
+    }
+  });
+
+  it("Rust 启动底色按族分流，且 2026 与 tauri.conf.json 一致", () => {
+    const rust = readFileSync("src-tauri/src/main.rs", "utf-8");
+    expect(rust, "必须有按族取深色底色的函数").toContain("fn dark_bg_for");
+    expect(rust, "2026 深色底必须是 #121314").toContain("Color(0x12, 0x13, 0x14, 0xff)");
+    expect(rust, "hc 必须落到纯黑").toContain("Color(0x00, 0x00, 0x00, 0xff)");
+    expect(rust, "启动时必须读 theme_family").toContain("theme_family");
+    const conf = readJson("src-tauri/tauri.conf.json");
+    const win = conf.app?.windows?.find((w: { label?: string }) => w.label === "main");
+    expect(String(win.backgroundColor).toLowerCase(), "窗口预渲染底色 = 2026").toBe("#121314");
+  });
+
+  it("设置页 / prefs / main 三处都接上了主题族", () => {
+    const prefs = readFileSync("src/prefs.ts", "utf-8");
+    const main = readFileSync("src/main.ts", "utf-8");
+    expect(prefs, "切换明暗时必须带上当前族").toContain("applyTheme(mode, themeFamily)");
+    expect(prefs, "切换明暗时必须重配每个标签的语法色").toContain(
+      "applyDarkToTabs(dark, themeFamily)",
     );
-    // 换主题必须换掉主题名；留着 GitHub 那两套就还是两套语法色并存
-    expect(src, "不得再挂 GitHub 的浅色主题").not.toContain("github-light");
-    expect(src, "不得再挂 GitHub 的深色主题").not.toContain("github-dark");
+    expect(prefs, "切族必须持久化 settings.theme_family").toContain(
+      "settings.theme_family = family",
+    );
+    expect(prefs, "切族必须重画只取一次色的岛").toContain("rethemePreviews()");
+    expect(main, "启动时归一化 theme_family").toContain("normalizeFamily(settings?.theme_family)");
+    expect(main, "启动时 applyTheme 必须带族").toContain("applyTheme(themeMode, themeFamily)");
   });
 });
