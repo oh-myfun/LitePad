@@ -23,6 +23,7 @@ import { Decoration, EditorView, WidgetType, type DecorationSet } from "@codemir
 
 import { enhanceMarkdown, nextEnhanceSeq } from "./enhance";
 import { irDecorationsFor, irFocusLines, shiftBlocks, type IrLineShift } from "./ir-decorations";
+import { flippedTaskMark, taskLineAt } from "./tasks";
 import type { MdBlock } from "./pipeline";
 
 const NO_BLOCKS: readonly MdBlock[] = [];
@@ -86,6 +87,8 @@ export interface IrWidgetSpec {
   editable: boolean;
   /** 相对路径图片的基准目录（预览同款，交给 `enhanceMarkdown`） */
   baseDir: string | null;
+  /** 文档只读 ⇒ 勾选框保持灰着（管线给的 disabled 不摘），点了也不会有事件 */
+  readonly: boolean;
 }
 
 export class IrBlockWidget extends WidgetType {
@@ -109,7 +112,8 @@ export class IrBlockWidget extends WidgetType {
       other.spec.lineEnd === this.spec.lineEnd &&
       other.spec.html === this.spec.html &&
       other.spec.editable === this.spec.editable &&
-      other.spec.baseDir === this.spec.baseDir
+      other.spec.baseDir === this.spec.baseDir &&
+      other.spec.readonly === this.spec.readonly
     );
   }
 
@@ -134,6 +138,36 @@ export class IrBlockWidget extends WidgetType {
     inner.dataset.lineEnd = String(this.spec.lineEnd);
     inner.innerHTML = this.spec.html;
     outer.appendChild(inner);
+    // 管线给的勾选框自带 `disabled`（只读文档安全的缺省）。可写的文档摘掉它 ——
+    // B358：渲染面上的勾选框是内容控件，锁态（B）也要能点，只读文档保持灰着。
+    if (!this.spec.readonly) {
+      for (const box of inner.querySelectorAll<HTMLInputElement>("input.md-task")) {
+        box.disabled = false;
+      }
+    }
+    // B358：点勾选框 = 翻转源码里那一行的 [ ]/[x]。映射只住 tasks.ts 一处。
+    outer.addEventListener("click", (e) => {
+      const box = (e.target as HTMLElement | null)?.closest?.("input.md-task");
+      if (!(box instanceof HTMLInputElement)) return;
+      // 只读文档的框带着 disabled —— 真浏览器不会给灰掉的控件派发 click，这里再挡一道，
+      // 不指望各引擎对「程序化派发给 disabled 控件」的行为一致（jsdom 就会派）。
+      if (box.disabled) return;
+      e.preventDefault();
+      const boxes = Array.from(outer.querySelectorAll<HTMLInputElement>("input.md-task"));
+      const info = taskLineAt(
+        view.state.doc,
+        this.spec.lineStart,
+        this.spec.lineEnd,
+        boxes.indexOf(box),
+      );
+      if (!info) return;
+      // ⚠️ 有意不带 `Transaction.userEvent`：锁的 changeFilter 只拒「带 userEvent 的写」，
+      // 这一发要能过闸 —— 用户拍板锁着的渲染态也允许点勾选框。四条命令层写入口的锁闸
+      // （评审 I3）管的是键盘/菜单路径，不管这一条；只读文档在上面就没解锁，进不来。
+      view.dispatch({
+        changes: { from: info.from, to: info.to, insert: flippedTaskMark(info.checked) },
+      });
+    });
     // 岛级增强与预览共用一份出口（Task 2）；失败自己吞掉。取号按**这一块**的根节点：
     // 一块一发，别块不许把它取消掉（B352-11 评审 C2，见 enhance.ts 那段注释）。
     void enhanceMarkdown(outer, nextEnhanceSeq(outer), {
@@ -145,6 +179,9 @@ export class IrBlockWidget extends WidgetType {
       outer.addEventListener("mousedown", (e) => {
         // 锁态压根不挂这个监听（`editable` 为假），所以这里不必再问锁 —— 也不许靠
         // `changeFilter` 兜：那条只管「文档改不改得动」，光标移动它挡不住。
+        // 点在勾选框上要让开：这一下的职责是「把光标落进块」，而那会当场把块拆回源码，
+        // 勾选框跟着被销毁 ⇒ click 永远到不了，B358 的切换在可写态就哑了。
+        if ((e.target as HTMLElement | null)?.closest?.("input.md-task")) return;
         const mouse = e as MouseEvent;
         mouse.preventDefault();
         const doc = view.state.doc;
@@ -165,6 +202,7 @@ export class IrBlockWidget extends WidgetType {
 interface IrLayerOptions {
   locked: boolean;
   baseDir: string | null;
+  readonly: boolean;
 }
 
 /**
@@ -175,7 +213,7 @@ interface IrLayerOptions {
  * 只能读状态。锁态与基准目录就这样跟着 `comps.ir` 的 reconfigure 一起换。
  */
 const irOptionsField = StateField.define<IrLayerOptions>({
-  create: () => ({ locked: true, baseDir: null }),
+  create: () => ({ locked: true, baseDir: null, readonly: false }),
   update: (v) => v,
 });
 
@@ -195,14 +233,18 @@ function buildDecorations(state: EditorState): DecorationSet {
           html: r.html,
           editable: !opts.locked,
           baseDir: opts.baseDir,
+          readonly: opts.readonly,
         }),
         block: true,
       }).range(r.from, r.to),
     );
   }
-  for (const line of irFocusLines(blocks, selections, doc, opts.locked)) {
-    if (line < 1 || line > doc.lines) continue;
-    decos.push(Decoration.line({ class: "md-ir-focus-line" }).range(doc.line(line).from));
+  for (const f of irFocusLines(blocks, selections, doc, opts.locked)) {
+    if (f.line < 1 || f.line > doc.lines) continue;
+    // B357：焦点行沿用那一块渲染后的字阶（标题块带 `md-ir-focus-hN`），点进标题
+    // 不该让字从 25px 掉回 14px —— 那一下是「编辑态字体变小」的本体。
+    const cls = f.heading > 0 ? `md-ir-focus-line md-ir-focus-h${f.heading}` : "md-ir-focus-line";
+    decos.push(Decoration.line({ class: cls }).range(doc.line(f.line).from));
   }
   return Decoration.set(decos, true);
 }
@@ -245,8 +287,14 @@ export function liveRenderExtensions(opts: {
   ir: boolean;
   locked: boolean;
   baseDir: string | null;
+  /** 文档只读（B358）：勾选框保持灰着 */
+  readonly?: boolean;
 }): Extension[] {
   if (!opts.ir) return [];
-  const layer: IrLayerOptions = { locked: opts.locked, baseDir: opts.baseDir };
+  const layer: IrLayerOptions = {
+    locked: opts.locked,
+    baseDir: opts.baseDir,
+    readonly: opts.readonly ?? false,
+  };
   return [irBlocksField, irOptionsField.init(() => layer), irDecorField];
 }

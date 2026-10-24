@@ -280,7 +280,11 @@ function createPanel(mode: "source" | "preview", docId: number, label: string): 
   strip.append(chip);
 
   const preview = new PreviewPane();
-  preview.setHost({ lineCount: () => text.split("\n").length });
+  preview.setHost({
+    lineCount: () => text.split("\n").length,
+    canWrite: () => false,
+    toggleTaskAt: () => {},
+  });
   preview.setBlocks(renderBlocks(text), { enhanced: false });
 
   host.append(head, editorBox, preview.root);
@@ -436,7 +440,11 @@ function install(): void {
     strip.append(el);
   }
   const preview0 = new PreviewPane();
-  preview0.setHost({ lineCount: () => window.__FIXTURE_LONG__.split("\n").length });
+  preview0.setHost({
+    lineCount: () => window.__FIXTURE_LONG__.split("\n").length,
+    canWrite: () => false,
+    toggleTaskAt: () => {},
+  });
   preview0.setBlocks(renderBlocks(window.__FIXTURE_LONG__), { enhanced: false });
   host0.append(preview0.root); // mode-source ⇒ CSS 隐藏它，但它照样会被注册
   const panel0: Panel = {

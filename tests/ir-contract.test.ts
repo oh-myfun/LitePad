@@ -32,6 +32,7 @@ const menubar = stripLineComments(readFileSync("src/shell/menubar.ts", "utf-8"))
 const findbar = stripLineComments(readFileSync("src/find/findbar.ts", "utf-8"));
 const md = stripLineComments(readFileSync("src/markdown.ts", "utf-8"));
 const filesSrc = stripLineComments(readFileSync("src/io/files.ts", "utf-8"));
+const liveSrc = stripLineComments(readFileSync("src/markdown/live-render.ts", "utf-8"));
 const exportSrc = stripLineComments(readFileSync("src/io/export.ts", "utf-8"));
 
 const SOURCE_LOCKED: IrState = { liveRender: "off", irLocked: true };
@@ -336,5 +337,31 @@ describe("B352-9 菜单那一下点击（登记 ≠ 挂线）", () => {
       "irRender",
       "irLock",
     ]);
+  });
+});
+
+describe("B358 勾选框切换：放行的写通道只有一个形状", () => {
+  it("toggleTaskInTab 挡只读、不问锁（用户拍板：纯预览也能勾）", () => {
+    const body = fnBody(md, "toggleTaskInTab");
+    expect(body, "取不到函数体说明出口没了").toBeTruthy();
+    expect(body, "只读文档不许写").toMatch(/doc\.readonly/);
+    expect(body, "这一条**有意**不问锁 —— 四条命令层闸（I3）管键盘/菜单，不管渲染面").not.toMatch(
+      /irEditable/,
+    );
+  });
+
+  it("两处渲染面的切换 dispatch 都不带 userEvent（带了你 changeFilter 就把它挡了）", () => {
+    expect(liveSrc, "widget 的 dispatch 不许标注 userEvent").not.toMatch(/userEvent/);
+    const body = fnBody(md, "toggleTaskInTab");
+    expect(body, "宿主入口的 dispatch 同样不带").not.toMatch(/userEvent/);
+  });
+
+  it("勾选框与源码行的换算只住 tasks.ts 一处（两个面共用，翻转记号同源）", () => {
+    const pv = stripLineComments(readFileSync("src/markdown/preview.ts", "utf-8"));
+    expect(liveSrc, "widget 侧用共享映射").toMatch(/taskLineAt\(/);
+    expect(pv, "预览侧只把序号交回宿主，自己不换算").toMatch(/toggleTaskAt\(/);
+    expect(pv, "预览面不许自己数任务行").not.toMatch(/taskLineAt\(/);
+    const body = fnBody(md, "toggleTaskInTab");
+    expect(body, "翻转记号只住 tasks.ts").toMatch(/flippedTaskMark\(/);
   });
 });

@@ -42,7 +42,8 @@ import {
   layoutArea,
 } from "../ui";
 import { renderSplitview, type PanelRenderData } from "../shell/splitview";
-import { attachTabToPanel, makeDoc, makeInstance, registerDoc } from "../doc-model";
+import { attachTabToPanel, isMdTab, makeDoc, makeInstance, registerDoc } from "../doc-model";
+import { toggleTaskInTab } from "../markdown";
 import { updateTocDrawer } from "../toc";
 import { retargetFindBar } from "../find/findbar";
 import { saveDocCore } from "../io/files";
@@ -255,6 +256,15 @@ export function rebuildLayout(): void {
       hostEl.appendChild(preview.root);
       preview.setHost({
         lineCount: () => p.view?.view.state.doc.lines ?? 0,
+        // B358：勾选框可点性跟着「这一格显示的那份文档」走；切换由 toggleTaskInTab 落地
+        canWrite: () => {
+          const t = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
+          const d = t ? docOf(t) : undefined;
+          return !!t && !!d && isMdTab(t) && !d.readonly;
+        },
+        toggleTaskAt: (lineStart, lineEnd, index) => {
+          if (p.viewTabId !== null) toggleTaskInTab(p.viewTabId, lineStart, lineEnd, index);
+        },
       });
       if (p.view) attachPasteHandler(p);
 

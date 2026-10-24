@@ -26,7 +26,7 @@ const outside = (s: EditorState): number => s.doc.line(s.doc.lines).from;
 
 let parents: HTMLElement[] = [];
 
-function mount(opts: { ir: boolean; locked: boolean }, doc = DOC) {
+function mount(opts: { ir: boolean; locked: boolean; readonly?: boolean }, doc = DOC) {
   const parent = document.createElement("div");
   document.body.appendChild(parent);
   parents.push(parent);
@@ -161,6 +161,7 @@ describe("B352-6 事件放行与焦点行", () => {
       html: "<h1>T</h1>",
       editable: true,
       baseDir: null,
+      readonly: false,
     });
     expect(w.ignoreEvent(new MouseEvent("mousedown")), "mousedown 要放行给编辑器以外的处理").toBe(
       true,
@@ -304,5 +305,63 @@ describe("B352-6 结构判据", () => {
     view.dispatch({ selection: { anchor: outside(view.state) } });
     expect(parent.querySelectorAll(".md-ir-block").length, "装饰确实生效了").toBeGreaterThan(0);
     expect(parent.querySelector(".cm-foldGutter"), "IR 层自己不该注入折叠槽").toBeNull();
+  });
+});
+
+describe("B358 勾选框点击切换（渲染面上直接点）", () => {
+  const TASK_DOC = "# T\n\n- [ ] 甲\n- [x] 乙\n";
+
+  function mountTask(locked: boolean, readonly = false) {
+    return mount({ ir: true, locked, readonly }, TASK_DOC);
+  }
+
+  function boxesOf(parent: HTMLElement): HTMLInputElement[] {
+    return [...parent.querySelectorAll<HTMLInputElement>("input.md-task")];
+  }
+
+  it("锁态（B）点第一个勾选框 ⇒ 源码那一行翻成 [x]（用户拍板：纯预览也能点）", () => {
+    const { view, parent } = mountTask(true);
+    view.dispatch({ selection: { anchor: outside(view.state) } });
+    const box = boxesOf(parent)[0];
+    expect(box.disabled, "可写文档的勾选框不该灰着").toBe(false);
+    box.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(view.state.doc.toString()).toContain("- [x] 甲");
+  });
+
+  it("可写态（C）点第二个 ⇒ [x] 翻回 [ ]；mousedown 在勾选框上不许把光标拽进块", () => {
+    const { view, parent } = mountTask(false);
+    view.dispatch({ selection: { anchor: outside(view.state) } });
+    const [first, second] = boxesOf(parent);
+    const anchorBefore = view.state.selection.main.from;
+    first.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(
+      view.state.selection.main.from,
+      "mousedown 让路：块拆了 click 就落空，切换在可写态会哑",
+    ).toBe(anchorBefore);
+    second.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(view.state.doc.toString()).toContain("- [ ] 乙");
+  });
+
+  it("只读文档：勾选框保持 disabled、点击不改文档", () => {
+    const { view, parent } = mountTask(true, true);
+    view.dispatch({ selection: { anchor: outside(view.state) } });
+    const box = boxesOf(parent)[0];
+    expect(box.disabled).toBe(true);
+    box.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(view.state.doc.toString()).toContain("- [ ] 甲");
+  });
+
+  it("readonly 参与复用口径：变了必须重造 DOM（disabled 是建 DOM 时定的）", () => {
+    const mk = (readonly: boolean) =>
+      new IrBlockWidget({
+        lineStart: 1,
+        lineEnd: 1,
+        html: "<p>x</p>",
+        editable: true,
+        baseDir: null,
+        readonly,
+      });
+    expect(mk(true).eq(mk(true))).toBe(true);
+    expect(mk(true).eq(mk(false)), "readonly 变了 eq 必须不命中").toBe(false);
   });
 });

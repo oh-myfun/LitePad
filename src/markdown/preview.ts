@@ -17,6 +17,10 @@ const LAZY_THRESHOLD_LINES = 5000; // 大文档：关闭 Mermaid/Shiki 自动渲
 export interface PreviewHost {
   /** 文档总行数（大文档降级判断用） */
   lineCount(): number;
+  /** 勾选框可不可以点（B358）：文档在且不是只读 */
+  canWrite(): boolean;
+  /** 把岛里第 index 个勾选框翻回源码（宿主拿得到编辑器视图；只读时宿主自己不动） */
+  toggleTaskAt(lineStart: number, lineEnd: number, index: number): void;
 }
 
 interface BlockNode {
@@ -57,9 +61,18 @@ export class PreviewPane {
     this.root.addEventListener("load", () => this.applyPending(), true);
     this.root.addEventListener("click", (e) => {
       const target = e.target as HTMLElement;
-      // 任务列表点击切换（预览态，不回写源码，M3 仅展示）
+      // B358：点勾选框 = 翻转源码（推翻 M3 的「仅展示」—— 用户拍板纯预览也要能勾）。
+      // 勾选框 ↔ 源码行的换算只住 tasks.ts，宿主拿视图来写。
       if (target instanceof HTMLInputElement && target.classList.contains("md-task")) {
         e.preventDefault();
+        if (target.disabled) return;
+        const island = target.closest<HTMLElement>(".md-block");
+        const lineStart = Number(island?.dataset.lineStart);
+        const lineEnd = Number(island?.dataset.lineEnd);
+        const index = [...(island?.querySelectorAll("input.md-task") ?? [])].indexOf(target);
+        if (island && Number.isFinite(lineStart) && Number.isFinite(lineEnd) && index >= 0) {
+          this.host?.toggleTaskAt(lineStart, lineEnd, index);
+        }
         return;
       }
       // 点击链接交给浏览器默认行为（锚点/脚注跳转）
@@ -129,6 +142,12 @@ export class PreviewPane {
     } else {
       this.root.scrollTop = prevScroll;
       this.declareOwnScroll();
+    }
+    // 勾选框按可写性解锁/灰掉（B358）：复用的岛不重建 DOM，所以每次 patch 后全量对一遍。
+    // 只读文档保持管线给的 disabled —— 点不动的键比谎报可点强。
+    const writable = this.host?.canWrite() ?? false;
+    for (const box of this.root.querySelectorAll<HTMLInputElement>("input.md-task")) {
+      box.disabled = !writable;
     }
     if (options.enhanced !== false) void this.enhance();
     // 重排后布局可能变化（图片/公式占位），按 pending 行再定位一次

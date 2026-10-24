@@ -81,21 +81,34 @@ export function irDecorationsFor(
   return out;
 }
 
+/** 焦点行描述：`heading` 1..6 = 标题字阶，0 = 正文档（B357 起焦点行要沿用块的字阶）。 */
+export interface IrFocusLine {
+  line: number;
+  heading: number;
+}
+
 /** 哪些块正被编辑（该画焦点标识）。锁态恒空 —— 那一态根本没有焦点块。 */
 export function irFocusLines(
   blocks: readonly MdBlock[],
   selections: readonly IrSelection[],
   doc: Text,
   locked: boolean,
-): number[] {
+): IrFocusLine[] {
   if (locked) return [];
-  const lines: number[] = [];
+  const lines: IrFocusLine[] = [];
   for (const b of blocks) {
     const range = blockRange(b, doc);
     if (!range) continue;
-    if (selections.some((s) => overlaps(range, s))) lines.push(b.lineStart);
+    if (selections.some((s) => overlaps(range, s)))
+      lines.push({ line: b.lineStart, heading: headingLevelOf(b.html) });
   }
   return lines;
+}
+
+/** 字阶只认块 html 开头的 `<hN>`（markdown-it 的产物是裸标签，属性也要认得）；列表、引用都不升级。 */
+function headingLevelOf(html: string): number {
+  const m = /^<h([1-6])(?=[\s>])/.exec(html);
+  return m ? Number(m[1]) : 0;
 }
 
 /** 一次改动对行号的影响：`from..to` 是改点覆盖的**旧**行号闭区间（纯插入时两者相等）。 */

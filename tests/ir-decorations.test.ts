@@ -132,10 +132,40 @@ describe("B352-3 irDecorationsFor：谁被渲染、谁露源码", () => {
   });
 });
 
-describe("B352-3 irFocusLines：哪几行该画焦点标识", () => {
-  it("给出与选区相交那些块的起始行", () => {
+describe("B352-3 irFocusLines：哪几行该画焦点标识（B357 起带块字阶）", () => {
+  it("给出与选区相交那些块的起始行；段落是正文档（heading 0）", () => {
     const caret = doc.line(4).from;
-    expect(irFocusLines(BLOCKS, [{ from: caret, to: caret }], doc, false)).toEqual([3]);
+    expect(irFocusLines(BLOCKS, [{ from: caret, to: caret }], doc, false)).toEqual([
+      { line: 3, heading: 0 },
+    ]);
+  });
+
+  it("标题块带自己的字阶 —— 点进标题那一下不该让字从 25px 掉回 14px（B357 用户报的病）", () => {
+    const caret = doc.line(1).from;
+    expect(irFocusLines(BLOCKS, [{ from: caret, to: caret }], doc, false)).toEqual([
+      { line: 1, heading: 1 },
+    ]);
+  });
+
+  it("字阶只认块 html 开头的 `<hN>`：列表、引用都不升级", () => {
+    const blocks = [
+      { lineStart: 1, lineEnd: 1, html: "<ul><li>one</li></ul>" },
+      { lineStart: 3, lineEnd: 3, html: "<blockquote><p>q</p></blockquote>" },
+      { lineStart: 5, lineEnd: 5, html: '<h3 deep="x">t</h3>' },
+    ];
+    const st = EditorState.create({ doc: "a\n\nb\n\nc\n" });
+    const caret1 = st.doc.line(1).from;
+    expect(irFocusLines(blocks, [{ from: caret1, to: caret1 }], st.doc, false)).toEqual([
+      { line: 1, heading: 0 },
+    ]);
+    const caret3 = st.doc.line(3).from;
+    expect(irFocusLines(blocks, [{ from: caret3, to: caret3 }], st.doc, false)).toEqual([
+      { line: 3, heading: 0 },
+    ]);
+    const caret5 = st.doc.line(5).from;
+    expect(irFocusLines(blocks, [{ from: caret5, to: caret5 }], st.doc, false)).toEqual([
+      { line: 5, heading: 3 },
+    ]);
   });
 
   it("锁态下没有焦点块", () => {

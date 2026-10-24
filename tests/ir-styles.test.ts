@@ -131,6 +131,19 @@ describe("B352-11 评审 I4：IR 的岛间节奏与预览同档位", () => {
     );
   });
 
+  it("标题字阶只声明一次（preview.css :root），IR 焦点行消费同一份（B357）", () => {
+    const pv = stripCssComments(readFileSync("src/styles/preview.css", "utf-8"));
+    for (const t of ["--md-h1-scale", "--md-h2-scale", "--md-h3-scale", "--md-h4-scale"]) {
+      // 走 split 计数，不走 `new RegExp`：字符串里的 `"\s"` 是恒等转义（eslint 也会打
+      // no-useless-escape），拼出来的正则会静默变成错的。
+      expect(pv.split(t + ":").length - 1, `${t} 声明次数`).toBe(1);
+      expect(g, `焦点行要吃 ${t}`).toContain(`var(${t})`);
+    }
+    // h1 的字号不许再是裸 em（改回裸 em 等于把两份比例重新分开）
+    expect(pv).toMatch(/\.md-rendered h1 \{[^}]*font-size: calc\(var\(--md-h1-scale\)/);
+    expect(pv, "焦点行字号不许写死倍数").not.toMatch(/md-ir-focus-h1[^{]*\{[^}]*1\.7/);
+  });
+
   it("判据有鉴别力：padding 换成 margin-top 的替身必须被 flowRule 拒掉", () => {
     const sub = g.replace("padding-top: var(--md-flow)", "margin-top: var(--md-flow)");
     expect(sub, "替身必须真的与原文不同，否则这条什么都没测").not.toBe(g);

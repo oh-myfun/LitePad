@@ -87,6 +87,15 @@
    `.md-rendered` 两边都挂着，所以声明在它上面两边都读得到。
    ⚠️ 此前这三条只写着 `var(--md-flow)` 之类的**兜底值**，全仓没有任何地方声明过它们，
    于是「同一个观感档位」被抄在两个文件的兜底里；IR 那边要复用就只能再抄一遍。 */
+:root {
+  /* 标题字阶（B357 从 `.md-rendered hN` 的裸 em 抽出来）：IR 的焦点行（global.css）
+     要用同一套比例，声明只住这一处。h5/h6 没有专门档（1em），不设变量。 */
+  --md-h1-scale: 1.7;
+  --md-h2-scale: 1.4;
+  --md-h3-scale: 1.2;
+  --md-h4-scale: 1.05;
+}
+
 .md-rendered {
   --md-flow: 0.7em;
   --md-after-head: 0.8em;
@@ -128,20 +137,22 @@
   line-height: 1.3;
 }
 .md-rendered h1 {
-  font-size: 1.7em;
+  /* 字阶抽成 :root 变量（B357）：IR 的焦点行要用同一套比例（global.css），
+     两处共用一份，别再各抄一个数。导出 HTML 只注入本文件，:root 在，照常生效。 */
+  font-size: calc(var(--md-h1-scale) * 1em);
   padding-bottom: 6px;
   border-bottom: 1px solid var(--md-border);
 }
 .md-rendered h2 {
-  font-size: 1.4em;
+  font-size: calc(var(--md-h2-scale) * 1em);
   padding-bottom: 5px;
   border-bottom: 1px solid var(--md-border);
 }
 .md-rendered h3 {
-  font-size: 1.2em;
+  font-size: calc(var(--md-h3-scale) * 1em);
 }
 .md-rendered h4 {
-  font-size: 1.05em;
+  font-size: calc(var(--md-h4-scale) * 1em);
 }
 
 .md-rendered p {

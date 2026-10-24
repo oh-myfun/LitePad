@@ -3530,6 +3530,30 @@ button:focus-visible {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
+/* B357：焦点行的字号沿用那一块渲染后的字阶 —— 点进标题块的那一下不该让字从 25px
+   掉回 14px（用户报的「编辑态字体变小」就是这一下）。比例 var 声明在 preview.css 的
+   :root，两边共用一份。⚠️ 正文档那条（无 hN 后缀）必须写在四条标题档**之前**：
+   焦点标题行同时挂着两个类，具体度相同靠顺序决胜。 */
+.panel-host .cm-editor .cm-line.md-ir-focus-line {
+  font-size: calc(var(--font-size, 14px) + 1px);
+}
+.panel-host .cm-editor .cm-line.md-ir-focus-h1 {
+  font-size: calc(var(--md-h1-scale) * (var(--font-size, 14px) + 1px));
+  font-weight: 600;
+}
+.panel-host .cm-editor .cm-line.md-ir-focus-h2 {
+  font-size: calc(var(--md-h2-scale) * (var(--font-size, 14px) + 1px));
+  font-weight: 600;
+}
+.panel-host .cm-editor .cm-line.md-ir-focus-h3 {
+  font-size: calc(var(--md-h3-scale) * (var(--font-size, 14px) + 1px));
+  font-weight: 600;
+}
+.panel-host .cm-editor .cm-line.md-ir-focus-h4 {
+  font-size: calc(var(--md-h4-scale) * (var(--font-size, 14px) + 1px));
+  font-weight: 600;
+}
+
 /* 块 widget 的容器：CM6 规定块级装饰不得带垂直 margin（带了自己会抖行高估计）。
    节奏因此只能由**外层 padding** 承担（B352-11 评审 I4）：预览那条 `.md-block + .md-block`
    跨不过 widget 边界（每颗 widget 里只有一个 `.md-block`），不补就是 IR 里块间 0px ——

@@ -27,6 +27,7 @@ import { logger } from "./core/logger";
 import { perfProfileFor } from "./editor/perf";
 import { renderBlocks } from "./markdown/pipeline";
 import { setIrBlocks, liveRenderExtensions } from "./markdown/live-render";
+import { flippedTaskMark, taskLineAt } from "./markdown/tasks";
 import {
   nextIrState,
   toggleIrLockState,
@@ -171,13 +172,41 @@ export function irExtensionsFor(s: IrState): Extension[] {
  * 装饰层与锁的扩展同住 `comps.ir`：`editable` / `changeFilter` 是 facet 扩展，不是事务效果，
  * 塞进 `effects` 里过不了类型；同槽换掉也保证「关态时锁的残留一起没了」。
  */
+/**
+ * B358：把渲染面点下的第 `index` 个勾选框翻回源码（预览岛的宿主入口）。
+ *
+ * ⚠️ 有意**不带 `Transaction.userEvent`**：锁的 changeFilter 只拒「带 userEvent 的写」，
+ * 这一发要过闸 —— 用户拍板纯预览（锁着的渲染面）也允许点勾选框。只读文档在这里挡掉。
+ */
+export function toggleTaskInTab(
+  tabId: number,
+  lineStart: number,
+  lineEnd: number,
+  index: number,
+): void {
+  const tab = tabs.get(tabId);
+  const panel = tab ? getPanel(tab.panelId) : undefined;
+  const doc = tab ? docOf(tab) : undefined;
+  if (!tab || !panel?.view || !doc || doc.readonly || !isMdTab(tab)) return;
+  const info = taskLineAt(tab.state.doc, lineStart, lineEnd, index);
+  if (!info) return;
+  panel.view.view.dispatch({
+    changes: { from: info.from, to: info.to, insert: flippedTaskMark(info.checked) },
+  });
+}
+
 function irCompsEffects(tab: Tab, next: IrState): StateEffect<unknown>[] {
   const doc = docOf(tab);
   const locked = next.liveRender === "ir" && next.irLocked;
   const baseDir = doc?.path ? dirname(doc.path) : null;
   return [
     tab.comps.ir.reconfigure([
-      ...liveRenderExtensions({ ir: next.liveRender === "ir", locked, baseDir }),
+      ...liveRenderExtensions({
+        ir: next.liveRender === "ir",
+        locked,
+        baseDir,
+        readonly: !!doc?.readonly,
+      }),
       ...irExtensionsFor(next),
     ]),
     // 渲染态关掉整条 gutter（B352-5 裁定：块装饰下被盖住的源行不再发行号，
