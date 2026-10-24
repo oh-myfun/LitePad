@@ -171,6 +171,16 @@ describe("B352-8 门槛：不满足时 DOM 里没有这颗键", () => {
     expect(keyOf()?.dataset.irState).toBe("source");
   });
 
+  it("只读文档进了 B 态：提示不许承诺「解锁」—— 那一按实际是回源码（真机台抓到）", () => {
+    const { panel, tab } = mountPanel("ro-tip.md", "normal", true);
+    tab.liveRender = "ir";
+    tab.irLocked = true;
+    refreshIrLockKey(panel);
+    const tip = keyOf()?.dataset.tip ?? "";
+    expect(tip, "只读 ⇒ C 不可达，说「解锁」是骗人").not.toContain("解锁");
+    expect(tip, "提示写的是点下去会怎样").toBe("回到源码");
+  });
+
   it("只读文档照旧给键（阅读态 B 正是它要的），但态名由状态机决定 —— 这里钉「节点在、画的是 source」", () => {
     const { panel } = mountPanel("ro.md", "normal", true);
     refreshIrLockKey(panel);

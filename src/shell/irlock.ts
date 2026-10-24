@@ -26,11 +26,21 @@ const GLYPH: Record<IrStateName, string> = {
 };
 
 /** 提示语写的是**点下去会怎样**（按钮档，带小尖尖那一族）。 */
+const TIP_BACK_TO_SOURCE = "回到源码";
 const TIP: Record<IrStateName, string> = {
   source: "开启即时渲染",
   "render-locked": "解锁：可在渲染里直接改",
-  "render-editable": "回到源码",
+  "render-editable": TIP_BACK_TO_SOURCE,
 };
+
+/**
+ * 只读文档在 B 态按下去回的是源码（C 不可达），所以那句「解锁」在这一形里是骗人的
+ * （B352-11 真机台抓到：提示写着解锁，按一下整篇退回源码）。
+ * 这里只挑文案，不算后继 —— 可达性仍然只有 `nextIrState` 一个来源。
+ */
+function tipFor(name: IrStateName, readonly: boolean): string {
+  return readonly && name === "render-locked" ? TIP_BACK_TO_SOURCE : TIP[name];
+}
 
 type CycleHandler = (tab: Tab) => void;
 
@@ -84,5 +94,5 @@ export function refreshIrLockKey(panel: Panel): void {
   btn.dataset.irState = name;
   // 只换字形、不塞文字（B348：删掉的「装饰」可能在撑布局）
   btn.innerHTML = GLYPH[name];
-  setTip(btn, TIP[name]);
+  setTip(btn, tipFor(name, !!doc?.readonly));
 }

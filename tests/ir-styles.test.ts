@@ -119,6 +119,18 @@ describe("B352-11 评审 I4：IR 的岛间节奏与预览同档位", () => {
     expect(g, "global.css 里不许声明 --md-* 节奏档位").not.toMatch(/(?:^|[;{\s])--md-flow\s*:/);
   });
 
+  it("岛根要把 white-space 收回 normal —— CM6 的 `.cm-content` 是 `pre`，标签间的换行会被当内容", () => {
+    // 真机台抓到（B352-11 Step 5）：IR 里 `<ul>` 与 `<li>` 之间那些换行各占一行，
+    // 列表项之间空出 80px，段落也从预览那一行变成三行 —— 与只读预览完全对不上观感。
+    const rule = g.match(/\.md-ir-block\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(rule, "widget 根要显式收回 white-space").toMatch(/white-space:\s*normal/);
+    const sub = g.replace("white-space: normal", "white-space: pre");
+    expect(sub, "替身必须真的与原文不同").not.toBe(g);
+    expect((sub.match(/\.md-ir-block\s*\{[^}]*\}/)?.[0] ?? "") + "x").not.toMatch(
+      /white-space:\s*normal/,
+    );
+  });
+
   it("判据有鉴别力：padding 换成 margin-top 的替身必须被 flowRule 拒掉", () => {
     const sub = g.replace("padding-top: var(--md-flow)", "margin-top: var(--md-flow)");
     expect(sub, "替身必须真的与原文不同，否则这条什么都没测").not.toBe(g);

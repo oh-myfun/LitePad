@@ -3537,6 +3537,12 @@ button:focus-visible {
    两颗 widget 的根节点在 `.cm-content` 里互为兄弟（探针实测），所以 `+` 选得了。 */
 .panel-host .cm-editor .md-ir-block {
   margin: 0;
+  /* ⚠️ 必须显式收回：widget 根挂在 `.cm-content` 里，而 CM6 给内容区定的是
+     `white-space: pre`（开软折行时 `pre-wrap`）—— 渲染 HTML 里 `<ul>` 与 `<li>` 之间、
+     段落内部的换行会被当成内容，实测列表项之间空 80px、一个三行源码段落渲染成三行，
+     与只读预览完全对不上（B352-11 真机台抓到）。`<pre>` 自己带 UA 的 `white-space: pre`，
+     代码块不受这一发影响。 */
+  white-space: normal;
 }
 .panel-host .cm-editor .md-ir-block + .md-ir-block {
   padding-top: var(--md-flow);
