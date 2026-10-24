@@ -52,6 +52,10 @@
      对照 VS Code `base/browser/ui/menu/menu.ts`：那边菜单行是 `.action-menu-item { height: 24px }`，
      用户要的是「与菜单栏一致」⇒ 取本应用已有的 22px 这一档，不跟它换 24。 */
   --menu-item-h: 22px;
+  /* B375：磨砂浮层的实底占比。取值照 VS Code `ModernUIFrostedGlassOpacity.Default`
+     （`services/layout/browser/layoutService.ts` = 80%，范围 50–100）——
+     菜单与快速选择共用这一颗，调一处两边一起变。 */
+  --glass-opacity: 80%;
   /* B356（用户点名「设置窗口顶部的搜索区改的紧凑点」）：设置页里**输入类控件**的高度档。
      原先搜索框自己写 32px，而它下面几行的下拉触发器写 28px —— 同一张面板里两档并存，
      这就是「不紧凑」的实质（不是数值大小本身，是没跟已有的那颗档位走）。
@@ -4162,6 +4166,28 @@ body.tab-drag-active * {
 /* 键盘 / 悬停高亮：与 .popup-menu 同款 hover 底色（应用菜单的高亮也走 JS 加的 active 类） */
 .dropdown-option.dd-active {
   background: var(--bg-hover);
+}
+
+/* ---------- 磨砂半透明浮层（B375，照 VS Code modernUI frostedGlass.css） ----------
+   用户点名「vscode 的下拉菜单有磨砂半透明效果」。VS Code 的取值：
+     · `background-color: color-mix(in srgb, 实底 <玻璃占比>, transparent)`；
+     · `backdrop-filter: blur(12px)`；
+     · 只在支持这项能力、系统没开「减弱透明效果」、且非强制色模式下启用
+       （`@supports (backdrop-filter: blur(12px)) and (background-color: color-mix(...))`
+       + `@media (prefers-reduced-transparency: no-preference) and (forced-colors: none)`）。
+   不满足时保留上面各浮层原来的实底，这条整块不生效。
+   ⚠️ VS Code 把模糊放在 `::before` 上、容器再开 `isolation: isolate`，是因为它的
+   菜单内容包在一层滚动容器里、阴影要挪到那层；LitePad 的菜单与子菜单都平铺挂
+   body（互不嵌套），直接给容器加模糊即可，不用复制那层壳。 */
+@supports (backdrop-filter: blur(12px)) and
+  (background-color: color-mix(in srgb, black 92%, transparent)) {
+  @media (prefers-reduced-transparency: no-preference) and (forced-colors: none) {
+    .popup-menu,
+    .quick-pick {
+      background: color-mix(in srgb, var(--bg-elevated) var(--glass-opacity, 80%), transparent);
+      backdrop-filter: blur(12px);
+    }
+  }
 }
 
 /* ---------- tooltip（B58：应用级提示层，取代原生 title） ----------

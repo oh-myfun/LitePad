@@ -267,6 +267,35 @@ describe("B365 QuickPick 样式契约（VS Code quick input 同款几何）", ()
     );
   });
 
+  it("B375 磨砂半透明：菜单 / 快速选择共用 VS Code 的 12px 模糊与 80% 实底", () => {
+    const glassDecls = (source: string): string =>
+      source.match(/\.popup-menu,\s*\.quick-pick\s*\{([^}]*)\}/)?.[1] ?? "";
+    const look = glassDecls(css);
+    expect(look, "两个浮层必须同一档玻璃（选择器缺一个都不行）").toBeTruthy();
+    expect(look, "VS Code frostedGlass.css 的模糊半径").toMatch(/backdrop-filter:\s*blur\(12px\)/);
+    expect(look, "实底占比取 ModernUIFrostedGlassOpacity.Default = 80%").toMatch(
+      /background:\s*color-mix\(in srgb, var\(--bg-elevated\) var\(--glass-opacity, 80%\), transparent\)/,
+    );
+    // 能力 / 可访问性兜底：不满足时整块不生效，退回上面那两条实底
+    expect(css).toMatch(
+      /@supports \(backdrop-filter: blur\(12px\)\) and\s+\(background-color: color-mix\(in srgb, black 92%, transparent\)\)/,
+    );
+    expect(css).toContain(
+      "@media (prefers-reduced-transparency: no-preference) and (forced-colors: none)",
+    );
+    expect(cssDecls(ruleBlock(css, ".popup-menu", undefined, true))).toMatch(
+      /background:\s*var\(--bg-elevated\)/,
+    );
+    expect(cssDecls(ruleBlock(css, ".quick-pick", undefined, true))).toMatch(
+      /background:\s*var\(--bg-elevated\)/,
+    );
+
+    // 反向对照：模糊半径一改，同一条判据必须咬住
+    const BAD = css.replace("backdrop-filter: blur(12px);", "backdrop-filter: blur(0px);");
+    expect(BAD, "替身必须真的改到玻璃声明").not.toBe(css);
+    expect(glassDecls(BAD)).not.toMatch(/backdrop-filter:\s*blur\(12px\)/);
+  });
+
   it("B366 条目图标 16px、字形走共用 .seti-icon；禁用项降透明度", () => {
     const icon = cssDecls(ruleBlock(css, ".quick-pick-icon", undefined, true));
     expect(icon).toMatch(/width:\s*16px/);
