@@ -920,9 +920,11 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     }
     expect(main, "窗口控制键必须从 CODICONS 取名取图").toContain("btn.innerHTML = CODICONS[name]");
 
-    // ---- ③ 文件类型字形也必须走 codicon（不得再自建手绘字形表） ----
+    // ---- ③ 文件类型图标是 B367 用户确认的例外：VS Code Seti 字体字形，不是手绘 ----
     const fi = readFileSync("src/shell/fileicons.ts", "utf-8");
-    expect(fi, "家族字形必须从 CODICONS 取").toContain("CODICONS[");
+    expect(fi, "文件类型图标必须是 Seti 字体元素").toContain('class="seti-icon"');
+    expect(fi, "字形必须是 Seti 字体码位").toContain("&#x");
+    expect(fi, "文件类型图标不得手绘 SVG").not.toContain("<svg");
     expect(fi, "不得再自建 GLYPHS 手绘表").not.toContain("GLYPHS");
 
     // ---- ④ 手绘豁免已全部收回（B97）----

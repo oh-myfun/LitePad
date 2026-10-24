@@ -1,142 +1,114 @@
-import { CODICONS, type CodiconName } from "./codicons";
-
 /**
- * 标签上的**文件类型图标**（B57）。
+ * 文件类型图标（B57 → B367）：直接用 VS Code 默认的 **Seti 文件图标主题**。
  *
- * 参考 VS Code：标签在名字前放一个 16px 的类型图标，标签带 `has-icon` 类，
- * 有图标时左侧内边距从 8px 收到 6px（图标自己撑出视觉留白）。
+ * 来源：VS Code 1.143.0 的 `extensions/theme-seti/icons/vs-seti-icon-theme.json`
+ * 与同目录 `seti.woff`（Seti UI，MIT，见 `assets/fonts/seti-ui-LICENSE.txt`）。
+ * 每个语言取的是 VS Code 按 languageId / 文件后缀查到的**同一颗字形和颜色**；
+ * Seti 没有专属图标的语言（Diff / Pascal / Fortran…）保留其缺省文件图标 `_default`。
  *
- * 差别在于图标从哪来：VS Code 有一整套「文件图标主题」（Seti 等，按文件名匹配几千个后缀），
- * LitePad 没有图标主题，于是按**语言家族**给 10 个字形。
+ * 字形是图标字体的码位（`&#xE060;` 这类 HTML 实体），不是手绘 SVG；
+ * `tests/fileicons.test.ts` 守着「注册表里每个语言都有条目」与字体/许可文件存在。
  *
- * 字形一律取 VS Code codicon（`./codicons`：短名 → 官方 `codicon-<id>` 的映射层）。
- * 🚩 红线：消费方**禁止手绘 SVG**（docs/conventions.md「图标」节）。
- * 10 个家族必须对 10 颗**互不相同**的 codicon ——
- * `tests/fileicons.test.ts` 的「十个家族应有十个不同字形」守着撞车。
- *
- * ⚠️ 家族仍按**语义最近**挑字形：codicon 没有「Python」「Rust」这类语言字形（那是文件图标
- *    主题的活），只有通用符号字形，所以映射是「家族 → 最像的通用符号」，不追求一一对应。
- *    家族配色（`.tab-icon[data-fam]` 的 CSS 变量，浅深两套）承担「哪一类」的辨识，
- *    字形承担「像什么」——两者合起来才是完整信息。
- *
- * ⚠️ 尺寸依据（VS Code 源码 `editorTabsControl.ts` 的原话）：
- *     modernUICompact: 28  // 20px tab + 4px top + 4px bottom padding
- *                          // (20px = minimum to fit 16px icon + 2px padding)
- * 即「16px 图标 + 上下各 2px = 20px」是**刚够放图标的下限**，24px（modernUI 常规档）
- * 才从容。B57 因此把药丸从 20px 提到 24px，标签栏 28 → 32px。
+ * 消费方：标签（`tabstrip.ts`）与状态栏语言浮层（`language-mode.ts`）共用本出口。
+ * 尺寸与配色都由 `.seti-icon` 的 CSS 统一给（`font-size: 150%`，与 VS Code 同口径）。
  */
 
-/** 语言家族。字形负责「像什么」，配色负责「哪一类」。 */
-export type FileFamily =
-  "md" | "code" | "brace" | "hash" | "tag" | "brk" | "db" | "diff" | "build" | "txt";
+/** Seti 的九档色调。深浅主题各一套色值，字形不随主题变。 */
+export type IconTone =
+  "blue" | "yellow" | "gray" | "red" | "orange" | "green" | "pink" | "purple" | "default";
+
+export interface SetiIcon {
+  /** Seti 字体码位（十六进制，不含 `&#x;` 包装） */
+  ch: string;
+  tone: IconTone;
+}
+
+/** VS Code Seti 的 `_default`：没有专属图标的语言用它。 */
+const DEFAULT_ICON: SetiIcon = { ch: "E023", tone: "default" };
 
 /**
- * 家族 → codicon 名（10 颗必须互不相同，见文件头）。
+ * 语言标签 → Seti 图标。
  *
- * 挑法（code / brace / brk 三兄弟最容易撞车，这里刻意拉开）：
- *   md    → markdown      官方就是 Markdown 记号
- *   code  → code          尖括号，动态语言（JS / TS / Vue）
- *   brace → json          花括号，结构化配置（JSON / YAML / CSS / TOML…）
- *   hash  → terminal      命令行框，脚本语言（Python / Shell / Ruby / Lua…）
- *   tag   → tag           标签，标记语言（HTML / XML / PHP）
- *   brk   → symbolClass   类符号，编译型 / 静态语言（C / C++ / Java / Rust…）
- *   db    → database      数据库圆柱（SQL）
- *   diff  → diff          左右两栏对照（Diff）
- *   build → tools         工具（Dockerfile / Makefile / CMake / Nginx…）
- *   txt   → fileText      纯文本
+ * VS Code 是按 languageId（以及少量文件后缀）查主题表；这里按 LitePad 的语言标签存一份
+ * 等价的摊平结果。`CMake` 取 `_makefile_3`（VS Code 对 `CMakeLists.txt` 的映射），
+ * `TOML` / `INI` / `Properties` 取 `_config`，`Scala` 取后缀映射的 `_scala`。
  */
-const FAM_ICON: Record<FileFamily, CodiconName> = {
-  md: "markdown",
-  code: "code",
-  brace: "json",
-  hash: "terminal",
-  tag: "tag",
-  brk: "symbolClass",
-  db: "database",
-  diff: "diff",
-  build: "tools",
-  txt: "fileText",
+const ICON_OF: Record<string, SetiIcon> = {
+  Markdown: { ch: "E060", tone: "blue" },
+  JSON: { ch: "E055", tone: "yellow" },
+  JavaScript: { ch: "E051", tone: "yellow" },
+  TypeScript: { ch: "E099", tone: "blue" },
+  Python: { ch: "E07B", tone: "blue" },
+  Rust: { ch: "E082", tone: "gray" },
+  Go: { ch: "E03A", tone: "blue" },
+  C: { ch: "E00C", tone: "blue" },
+  "C++": { ch: "E01A", tone: "blue" },
+  Java: { ch: "E050", tone: "red" },
+  "C#": { ch: "E00B", tone: "blue" },
+  Kotlin: { ch: "E058", tone: "orange" },
+  Scala: { ch: "E086", tone: "red" },
+  "Objective-C": { ch: "E00C", tone: "yellow" },
+  Swift: { ch: "E092", tone: "orange" },
+  Dart: { ch: "E021", tone: "blue" },
+  Ruby: { ch: "E081", tone: "red" },
+  Perl: { ch: "E06E", tone: "blue" },
+  Lua: { ch: "E05E", tone: "blue" },
+  Shell: { ch: "E089", tone: "green" },
+  PowerShell: { ch: "E074", tone: "blue" },
+  SQL: { ch: "E022", tone: "pink" },
+  XML: { ch: "E0A5", tone: "orange" },
+  HTML: { ch: "E048", tone: "orange" },
+  CSS: { ch: "E01D", tone: "blue" },
+  Sass: { ch: "E084", tone: "pink" },
+  LESS: { ch: "E059", tone: "blue" },
+  YAML: { ch: "E0A7", tone: "purple" },
+  TOML: { ch: "E019", tone: "gray" },
+  INI: { ch: "E019", tone: "gray" },
+  Properties: { ch: "E019", tone: "gray" },
+  Dockerfile: { ch: "E025", tone: "blue" },
+  CMake: { ch: "E05F", tone: "blue" },
+  Nginx: { ch: "E023", tone: "default" },
+  NSIS: { ch: "E023", tone: "default" },
+  Diff: { ch: "E023", tone: "default" },
+  Haskell: { ch: "E044", tone: "purple" },
+  Pascal: { ch: "E023", tone: "default" },
+  Fortran: { ch: "E023", tone: "default" },
+  Julia: { ch: "E056", tone: "purple" },
+  Clojure: { ch: "E013", tone: "green" },
+  Groovy: { ch: "E03D", tone: "green" },
+  Erlang: { ch: "E023", tone: "default" },
+  Tcl: { ch: "E023", tone: "default" },
+  "VB.NET": { ch: "E023", tone: "default" },
+  VBScript: { ch: "E023", tone: "default" },
+  Scheme: { ch: "E023", tone: "default" },
+  "Common Lisp": { ch: "E023", tone: "default" },
+  CoffeeScript: { ch: "E016", tone: "yellow" },
+  Octave: { ch: "E023", tone: "default" },
+  R: { ch: "E001", tone: "blue" },
+  Assembly: { ch: "E004", tone: "red" },
+  PHP: { ch: "E070", tone: "purple" },
+  Batch: { ch: "E0A2", tone: "blue" },
+  Makefile: { ch: "E05F", tone: "orange" },
+  Vue: { ch: "E09D", tone: "green" },
+  "Plain Text": { ch: "E023", tone: "default" },
 };
 
-/**
- * 语言标签 → 家族。键必须覆盖 `src/editor/language.ts` 注册表里的**全部** label，
- * 漏掉的会落到 `txt`（有 `fileicons.test.ts` 这样的用例守着，见回归测试）。
- */
-const FAMILY_OF: Record<FileFamily, string[]> = {
-  md: ["Markdown"],
-  code: ["JavaScript", "TypeScript", "Vue"],
-  brace: ["JSON", "CSS", "Sass", "LESS", "YAML", "TOML", "INI", "Properties"],
-  hash: [
-    "Python",
-    "Shell",
-    "PowerShell",
-    "Ruby",
-    "Perl",
-    "Lua",
-    "CoffeeScript",
-    "R",
-    "Octave",
-    "Julia",
-    "Batch",
-  ],
-  tag: ["HTML", "XML", "PHP"],
-  brk: [
-    "C",
-    "C++",
-    "Java",
-    "C#",
-    "Kotlin",
-    "Scala",
-    "Objective-C",
-    "Swift",
-    "Dart",
-    "Go",
-    "Rust",
-    "Groovy",
-    "Erlang",
-    "Tcl",
-    "VB.NET",
-    "VBScript",
-    "Scheme",
-    "Common Lisp",
-    "Haskell",
-    "Pascal",
-    "Fortran",
-    "Clojure",
-    "Assembly",
-  ],
-  db: ["SQL"],
-  diff: ["Diff"],
-  build: ["Dockerfile", "CMake", "Nginx", "NSIS", "Makefile"],
-  txt: ["Plain Text"],
-};
-
-/** 反查表：语言标签 → 家族（模块加载时建一次） */
-const LOOKUP = new Map<string, FileFamily>();
-for (const fam of Object.keys(FAMILY_OF) as FileFamily[]) {
-  for (const label of FAMILY_OF[fam]) LOOKUP.set(label, fam);
-}
-
-/** 语言标签 → 家族。未知语言（含 null）回落到 txt。 */
-export function familyOf(langLabel: string | null | undefined): FileFamily {
-  if (!langLabel) return "txt";
-  return LOOKUP.get(langLabel) ?? "txt";
+/** 语言标签 → 图标。未知语言（含 null）回落到 Seti 缺省文件图标。 */
+export function iconOf(langLabel: string | null | undefined): SetiIcon {
+  if (!langLabel) return DEFAULT_ICON;
+  return ICON_OF[langLabel] ?? DEFAULT_ICON;
 }
 
 /**
- * 家族 → 16px 的字形元素（`<i class="codicon codicon-…">` 的 HTML）。
- *
- * 颜色不由这里管：codicon 字形的 `::before` 继承 `color`，配色仍走 `.tab-icon[data-fam]`
- * 的 CSS 变量（浅深两套）。
- *
- * ⚠️ 尺寸也不由这里管：codicon.css 统一给 16px（`font: 16px/1 codicon`），
- *    要别的尺寸就在 CSS 里覆盖字号（B102 之前是给内联 SVG 改 width/height，已成历史）。
+ * 16px 的 Seti 字形元素。颜色走 `data-tone`（`.seti-icon[data-tone]` 取 `--seti-*`），
+ * 尺寸走 `.seti-icon` 的 `font-size: 150%`（VS Code 图标主题同款）。
  */
-export function fileIconHtml(fam: FileFamily): string {
-  return CODICONS[FAM_ICON[fam]];
+export function fileIconHtml(langLabel: string | null | undefined): string {
+  const icon = iconOf(langLabel);
+  return `<i class="seti-icon" data-tone="${icon.tone}" aria-hidden="true">&#x${icon.ch};</i>`;
 }
 
-/** 供测试断言「家族覆盖了多少种语言」用 */
+/** 有专属条目的语言（供测试核对注册表覆盖度） */
 export function knownLabels(): string[] {
-  return [...LOOKUP.keys()];
+  return Object.keys(ICON_OF);
 }

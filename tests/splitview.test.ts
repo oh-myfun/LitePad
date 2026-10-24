@@ -698,7 +698,10 @@ describe("B64/B91-2 拖拽影像：造出来交给系统绘制", () => {
     const copy = image.querySelector<HTMLElement>(".tab")!;
     expect(copy, "影像里必须有一个标签副本").not.toBeNull();
     expect(copy.querySelector(".tab-name")!.textContent, "文件名照搬").toBe("README.md");
-    expect(copy.querySelector<HTMLElement>(".tab-icon")!.dataset.fam, "类型图标照搬").toBe("md");
+    expect(
+      copy.querySelector(".tab-icon .seti-icon")?.getAttribute("data-tone"),
+      "类型图标照搬",
+    ).toBe("blue");
     expect(copy.classList.contains("tab-active"), "活动态配色照搬").toBe(true);
     // 副本必须与真标签可区分：留着 tabId 会让「按 tabId 查元素」的逻辑命中副本
     expect(copy.dataset.tabId, "副本不得保留 tabId").toBeUndefined();

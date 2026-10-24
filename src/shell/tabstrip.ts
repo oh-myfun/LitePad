@@ -1,6 +1,6 @@
 import { showPopupMenu } from "./menu";
 import { startTabDrag, type DragImageAnchor } from "./tabdnd";
-import { fileIconHtml, familyOf } from "./fileicons";
+import { fileIconHtml } from "./fileicons";
 import { CODICONS } from "./codicons";
 import { setTip, setTextTip } from "./tooltip";
 import { bindWheel, ensureOverlayScrollbar, syncOverlayScrollbar } from "./scrollbar";
@@ -252,14 +252,12 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   const tip = t.path ?? t.name;
   setTextTip(el, t.readonly ? `${tip} [只读]` : tip, { group: "tabstrip" });
 
-  // 文件类型图标（B57，参考 VS Code 的 .tab.has-icon）：
-  // 名字左边一个 16px 的家族字形，颜色由 data-fam 走 CSS 变量（浅深两套）。
-  const fam = familyOf(t.lang);
+  // 文件类型图标（B57，参考 VS Code 的 .tab.has-icon；B367 换成 Seti 字形）：
+  // 名字左边一个 16px 图标，颜色由图标自己的 data-tone 走 --seti-* 变量。
   const icon = document.createElement("span");
   icon.className = "tab-icon";
-  icon.dataset.fam = fam;
   icon.dataset.lang = t.lang ?? "";
-  icon.innerHTML = fileIconHtml(fam);
+  icon.innerHTML = fileIconHtml(t.lang);
   icon.setAttribute("aria-hidden", "true");
 
   const name = document.createElement("span");

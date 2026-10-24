@@ -17,18 +17,17 @@ import { perfProfileFor } from "./editor/perf";
 import { AUTO_LANGUAGE, languageChoices, languageInfoByLabel } from "./editor/language";
 import { applyPanelMode } from "./markdown";
 import { showQuickPick, quickPickIsOpen, closeQuickPick } from "./shell/quickpick";
-import { familyOf, fileIconHtml } from "./shell/fileicons";
+import { fileIconHtml } from "./shell/fileicons";
 import { refreshAll, sbLang } from "./ui";
 
 /**
- * 浮层条目：语言名 + 家族图标（与标签上的文件图标同一套 familyOf / fileIconHtml）。
+ * 浮层条目：语言名 + Seti 文件图标（与标签上的文件图标同一出口）。
  * 「自动检测」不是一种语言，不挂图标 —— 与 VS Code 语言选择器同款。
  */
 function languagePickItems(override: string | null) {
   return languageChoices(override).map((choice) => {
     if (choice.label === AUTO_LANGUAGE) return choice;
-    const fam = familyOf(choice.label);
-    return { ...choice, icon: fileIconHtml(fam), iconFamily: fam };
+    return { ...choice, icon: fileIconHtml(choice.label) };
   });
 }
 

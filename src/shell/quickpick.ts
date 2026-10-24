@@ -18,10 +18,8 @@ export interface QuickPickItem {
   description?: string;
   /** 当前项（显示勾） */
   checked?: boolean;
-  /** 左侧 16px 字形（codicon 的 HTML，来自 `CODICONS`）；缺省不留图标槽 */
+  /** 左侧 16px 图标的 HTML（缺省不留图标槽；配色跟图标自己的 data-tone 走） */
   icon?: string;
-  /** 图标配色家族，写到 `data-fam` 上走 `--ficon-*`（见 shell/fileicons.ts） */
-  iconFamily?: string;
   /** 分隔线：不是条目，不可高亮 / 不可选；空查询时显示，过滤时收掉 */
   separator?: boolean;
   /** 置灰不可选（仍显示；键盘跳过、点击不生效） */
@@ -141,7 +139,6 @@ function renderList(s: QuickPickState): void {
     if (item.icon) {
       const icon = document.createElement("span");
       icon.className = "quick-pick-icon";
-      if (item.iconFamily) icon.dataset.fam = item.iconFamily;
       icon.innerHTML = item.icon;
       row.append(icon);
     } else if (hasIcons) {

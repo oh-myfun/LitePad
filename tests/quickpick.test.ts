@@ -144,19 +144,21 @@ describe("B365 QuickPick：居顶快速选择浮层", () => {
 });
 
 describe("B366 条目图标 / 分隔线 / 禁用项", () => {
-  it("图标：有 icon 的条目渲染 .quick-pick-icon + data-fam；无图标项在图标列表里占位对齐", () => {
+  it("图标：有 icon 的条目渲染 .quick-pick-icon；无图标项在图标列表里占位对齐", () => {
     open([
       {
         label: "Markdown",
-        icon: '<i class="codicon codicon-markdown" aria-hidden="true"></i>',
-        iconFamily: "md",
+        icon: '<i class="seti-icon" data-tone="blue" aria-hidden="true">&#xE060;</i>',
       },
       { label: "自动检测" },
     ]);
     const icons = document.querySelectorAll<HTMLElement>(".quick-pick-icon");
     expect(icons, "每条都占图标槽（无图标的是空槽）").toHaveLength(2);
-    expect(icons[0].getAttribute("data-fam"), "配色走 data-fam").toBe("md");
-    expect(icons[0].innerHTML, "字形必须是 codicon").toContain("codicon-markdown");
+    expect(
+      icons[0].querySelector(".seti-icon")?.getAttribute("data-tone"),
+      "色调跟图标自己的 data-tone 走",
+    ).toBe("blue");
+    expect(icons[0].innerHTML, "字形必须是 Seti 字体元素").toContain("seti-icon");
     expect(icons[1].classList.contains("is-empty"), "无图标项要占位对齐").toBe(true);
     expect(icons[1].innerHTML).toBe("");
 
@@ -265,15 +267,13 @@ describe("B365 QuickPick 样式契约（VS Code quick input 同款几何）", ()
     );
   });
 
-  it("B366 条目图标 16px、家族配色与标签同源；禁用项降透明度", () => {
+  it("B366 条目图标 16px、字形走共用 .seti-icon；禁用项降透明度", () => {
     const icon = cssDecls(ruleBlock(css, ".quick-pick-icon", undefined, true));
     expect(icon).toMatch(/width:\s*16px/);
     expect(icon).toMatch(/flex:\s*0 0 16px/);
-    for (const fam of ["md", "code", "txt"]) {
-      expect(css, `缺 .quick-pick-icon[data-fam="${fam}"] 配色`).toContain(
-        `.quick-pick-icon[data-fam="${fam}"]`,
-      );
-    }
+    // B367：字形与色调在 .seti-icon 一处给，标签和浮层共用（不再有 data-fam 家族色）。
+    expect(css, "缺 Seti 字形组件").toContain(".seti-icon {");
+    expect(css, "缺 Seti 色调取色").toContain('.seti-icon[data-tone="blue"]');
     const disabled = cssDecls(ruleBlock(css, ".quick-pick-item.is-disabled", undefined, true));
     expect(disabled).toMatch(/opacity:/);
     expect(disabled).toMatch(/cursor:\s*default/);

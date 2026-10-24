@@ -299,20 +299,6 @@ export function fnBody(fileText: string, name: string): string {
   return fileText.slice(start, end + 2);
 }
 
-/** B57 文件类型图标的 10 个家族（与 src/shell/fileicons.ts 的 FileFamily 一一对应）。 */
-export const FILE_FAMILIES = [
-  "md",
-  "code",
-  "brace",
-  "hash",
-  "tag",
-  "brk",
-  "db",
-  "diff",
-  "build",
-  "txt",
-] as const;
-
 // 全仓库文本文件枚举（B36 改名残留检查用）：跳过构建产物 / 依赖 / 二进制。
 // ⚠️ `.tmp` 与 `generated-images` 同理：都是**永不入库、可随时整目录删掉**的临时落点
 //    （见 MEMORY.md「临时文件一律落在本项目内」），里面允许放历史副本 —— 历史副本里

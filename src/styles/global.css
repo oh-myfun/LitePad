@@ -153,19 +153,17 @@
   --tab-bg-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-strip-bg));
   --tab-bg-active: #282c34;
   --tab-bg-active-hover: #343940;
-  /* 标签文件类型图标的家族配色（B57）：十个家族各一色。
-     同一族内用同一个色相（形状负责细分），浅深两套取各自的中调，
-     保证在 #1b1d1f / #ffffff 两种底上都能看清。 */
-  --ficon-md: #4c9ffe;
-  --ficon-code: #e2c04d;
-  --ficon-brace: #e0913f;
-  --ficon-hash: #4fc08d;
-  --ficon-tag: #f47067;
-  --ficon-brk: #a78bfa;
-  --ficon-db: #e879b9;
-  --ficon-diff: #45b8c8;
-  --ficon-build: #9aa4ad;
-  --ficon-txt: #8b9299;
+  /* 文件类型图标的 Seti 色调（B367）：深色档，取值与 VS Code 默认 Seti 主题一致。
+     字形负责「哪个语言」，颜色是 Seti 的主题数据，不另造一套。 */
+  --seti-blue: #519aba;
+  --seti-yellow: #cbcb41;
+  --seti-gray: #6d8086;
+  --seti-red: #cc3e44;
+  --seti-orange: #e37933;
+  --seti-green: #8dc149;
+  --seti-pink: #f55385;
+  --seti-purple: #a074c4;
+  --seti-default: #d4d7d6;
   /* 滚动条配色（thumb 用半透明白，能压在任何区域背景上都协调） */
   --sb-thumb: rgba(255, 255, 255, 0.22);
   --sb-thumb-hover: rgba(255, 255, 255, 0.36);
@@ -256,17 +254,16 @@
   --tab-bg-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-strip-bg));
   --tab-bg-active: var(--bg);
   --tab-bg-active-hover: #e6e8eb;
-  /* 标签文件类型图标的家族配色（B57）：浅色底上要更深一档，否则发飘。 */
-  --ficon-md: #0969da;
-  --ficon-code: #9a6700;
-  --ficon-brace: #bc4c00;
-  --ficon-hash: #1a7f37;
-  --ficon-tag: #cf222e;
-  --ficon-brk: #6639ba;
-  --ficon-db: #bf3989;
-  --ficon-diff: #0d7d87;
-  --ficon-build: #57606a;
-  --ficon-txt: #6a737d;
+  /* 文件类型图标的 Seti 色调（B367）：浅色档取 Seti 主题的 light 变体，别拿深色档硬压。 */
+  --seti-blue: #498ba7;
+  --seti-yellow: #b7b73b;
+  --seti-gray: #627379;
+  --seti-red: #b8383d;
+  --seti-orange: #cc6d2e;
+  --seti-green: #7fae42;
+  --seti-pink: #dd4b78;
+  --seti-purple: #9068b0;
+  --seti-default: #bfc2c1;
   /* 滚动条配色（thumb 用半透明黑，浅色区域上可见且不刺眼） */
   --sb-thumb: rgba(0, 0, 0, 0.24);
   --sb-thumb-hover: rgba(0, 0, 0, 0.38);
@@ -1235,9 +1232,8 @@ button:focus-visible {
   white-space: nowrap;
 }
 
-/* 文件类型图标（B57，对应 VS Code 的 `.tab.has-icon`）：
-   名字左边一个 16px 的家族字形。字形负责「像什么」（见 shell/fileicons.ts），
-   颜色负责「哪一类」—— 走 --ficon-* 变量，浅深两套主题各一份。 */
+/* 文件类型图标（B57 → B367，对应 VS Code 的 `.tab.has-icon`）：
+   名字左边一个 16px 槽位，里面是 Seti 文件图标字体（见 shell/fileicons.ts）。 */
 .tab-icon {
   /* B113：同 .tab-name —— 必须浮在 .tab-fill 之上（absolute 的 fill 会盖住普通流） */
   position: relative;
@@ -1257,47 +1253,44 @@ button:focus-visible {
   opacity: 1;
 }
 
-/* B366：家族配色有两个消费方 —— 标签图标 + 居顶快速选择条目的图标。
-   同取一套 `--ficon-*` 变量，别各抄一份颜色（抄一份就迟早差一档）。 */
-.tab-icon[data-fam="md"],
-.quick-pick-icon[data-fam="md"] {
-  color: var(--ficon-md);
+/* B367：标签与语言浮层共用同一颗 `.seti-icon` 字形组件（VS Code Seti 文件图标主题）。
+   字号 150% 是图标主题的既定口径（`fileIconThemeData.ts` 给字体设 size = 150%），
+   在 12px 界面上约 18px；九档色调对应 Seti 的九种颜色，浅深主题各一套变量。 */
+.seti-icon {
+  display: inline-block;
+  font-family: "seti";
+  font-style: normal;
+  font-weight: 400;
+  font-size: 150%;
+  line-height: 1;
+  -webkit-font-smoothing: antialiased;
 }
-.tab-icon[data-fam="code"],
-.quick-pick-icon[data-fam="code"] {
-  color: var(--ficon-code);
+.seti-icon[data-tone="blue"] {
+  color: var(--seti-blue);
 }
-.tab-icon[data-fam="brace"],
-.quick-pick-icon[data-fam="brace"] {
-  color: var(--ficon-brace);
+.seti-icon[data-tone="yellow"] {
+  color: var(--seti-yellow);
 }
-.tab-icon[data-fam="hash"],
-.quick-pick-icon[data-fam="hash"] {
-  color: var(--ficon-hash);
+.seti-icon[data-tone="gray"] {
+  color: var(--seti-gray);
 }
-.tab-icon[data-fam="tag"],
-.quick-pick-icon[data-fam="tag"] {
-  color: var(--ficon-tag);
+.seti-icon[data-tone="red"] {
+  color: var(--seti-red);
 }
-.tab-icon[data-fam="brk"],
-.quick-pick-icon[data-fam="brk"] {
-  color: var(--ficon-brk);
+.seti-icon[data-tone="orange"] {
+  color: var(--seti-orange);
 }
-.tab-icon[data-fam="db"],
-.quick-pick-icon[data-fam="db"] {
-  color: var(--ficon-db);
+.seti-icon[data-tone="green"] {
+  color: var(--seti-green);
 }
-.tab-icon[data-fam="diff"],
-.quick-pick-icon[data-fam="diff"] {
-  color: var(--ficon-diff);
+.seti-icon[data-tone="pink"] {
+  color: var(--seti-pink);
 }
-.tab-icon[data-fam="build"],
-.quick-pick-icon[data-fam="build"] {
-  color: var(--ficon-build);
+.seti-icon[data-tone="purple"] {
+  color: var(--seti-purple);
 }
-.tab-icon[data-fam="txt"],
-.quick-pick-icon[data-fam="txt"] {
-  color: var(--ficon-txt);
+.seti-icon[data-tone="default"] {
+  color: var(--seti-default);
 }
 
 /* ● 与 × 共用的固定尺寸槽位（VS Code 行为）：
@@ -3845,7 +3838,7 @@ body.tab-drag-active * {
   color: var(--accent);
 }
 
-/* B366：条目图标（语言列表）—— 16px 固定槽；配色跟标签文件图标同一套家族变量。 */
+/* B366：条目图标（语言列表）—— 16px 固定槽；字形与色调由内部 .seti-icon 给（B367）。 */
 .quick-pick-icon {
   display: inline-flex;
   align-items: center;

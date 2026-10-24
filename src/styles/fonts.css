@@ -17,6 +17,19 @@
   src: url("../assets/fonts/cascadia-mono-regular.woff2") format("woff2");
 }
 
+/* B367：文件类型图标字体 —— VS Code 默认的 Seti 文件图标主题（`extensions/theme-seti`，
+   Seti UI by Jesse Weed，MIT；许可见同目录 `seti-ui-LICENSE.txt`）。
+   只用于「文件类型」这一种图标（标签 + 状态栏语言浮层），按钮图标仍一律走 codicon。
+   码位与颜色在 `src/shell/fileicons.ts`；`font-size: 150%` 的用法与 VS Code 图标主题一致
+   （见 `fileIconThemeData.ts` 对 `fonts[0].size` 的处理）。 */
+@font-face {
+  font-family: "seti";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("../assets/fonts/seti.woff") format("woff");
+}
+
 /* ⚠️ B236：上面那条**一个汉字字形都没有** —— 子集实测汉字 / 中文标点 / 全角形式
    命中数全为 0（源字体 `CascadiaMono.ttf` 本身不含汉字，子集化切不出不存在的字形）…
    结果是中英混排的注释、字符串里，汉字全部掉到 `font-family` 里再往后找的族上：

@@ -91,18 +91,17 @@ describe("B365 状态栏文件类型：可点开语言浮层（不是视图切�
     expect(code, ".sb-md-badge 规则已删").not.toContain(".sb-md-badge");
   });
 
-  it("B366 语言列表带文件家族图标（与标签同源；自动检测不挂图标）", () => {
+  it("B366 语言列表带文件类型图标（与标签同源；自动检测不挂图标）", () => {
     const lm = stripLineComments(languageMode);
-    expect(lm, "图标必须从 fileicons 的家族取得").toContain("familyOf(");
-    expect(lm, "字形必须取 fileIconHtml（不许手绘）").toContain("fileIconHtml(");
-    expect(lm, "家族要落到 data-fam 做配色").toContain("iconFamily");
-    expect(lm, "不许在语言浮层里手写 codicon 字形").not.toContain("codicon-");
+    expect(lm, "图标必须从 fileicons 的共用出口取得").toContain("fileIconHtml(choice.label)");
+    expect(lm, "不许在语言浮层里手写字形").not.toContain("codicon-");
+    expect(lm, "旧家族映射已撤").not.toContain("familyOf(");
     expect(lm, "自动检测不是语言，不挂图标").toMatch(/AUTO_LANGUAGE\)\s*return/);
 
     // 反向对照：把图标映射删掉，同一条判据必须咬住。
-    const BAD = languageMode.replace("icon: fileIconHtml(fam)", "icon: undefined");
+    const BAD = languageMode.replace("icon: fileIconHtml(choice.label)", "icon: undefined");
     expect(BAD, "替身必须真的改到图标映射").not.toBe(languageMode);
-    expect(stripLineComments(BAD)).not.toContain("icon: fileIconHtml(fam)");
+    expect(stripLineComments(BAD)).not.toContain("icon: fileIconHtml(choice.label)");
   });
 
   it("language-mode 落地纪律：全部实例热换语言，离开 md 退回源码", () => {
