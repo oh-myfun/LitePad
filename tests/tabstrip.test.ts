@@ -7,6 +7,7 @@ import {
   ruleBlock,
   stripLineComments,
   stripCssComments,
+  resolveCssVars,
   tabsAll,
 } from "./static";
 
@@ -114,6 +115,64 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
     const stripH = Number(strip.match(/height:\s*(\d+)px/)![1]);
     const tabH = Number(tabRule.match(/height:\s*(\d+)px/)![1]);
     expect(stripH - tabH, "上下间隙共 6px（3+3 对称，B123-6）").toBe(6);
+  });
+  it("B364：自绘滚动条压在活动标签之上，并让开条带下沿那条线（thumb 完整可见）", () => {
+    // 用户实测（标签条溢出、指针停在条带上）报了两件事：
+    //  ① 滚动条被活动标签挡住 —— 活动 fill 下探到条带底（B113 的 -3px 舌片），
+    //     原来没有 z-index 的滚动条被它整段盖住，滚到活动标签那一段像断了；
+    //  ② 下半截被裁掉 / 被边框挡住 —— thumb 原来贴条带最底缘（bottom: 0），
+    //     最下面 1px 正好与 `.panel-head::after` 那条横贯线重叠，被线盖成另一种颜色。
+    // 判据只锁**关系**（不锁具体层号），以后调层不会误伤；但「又被盖上」一定红。
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const zIndexOf = (src: string, selector: string): number => {
+      const decls = cssDecls(ruleBlock(src, selector, undefined, true));
+      return Number(decls.match(/z-index:\s*(-?\d+)/)?.[1] ?? NaN);
+    };
+    const fillZ = zIndexOf(css, ".tab-active .tab-fill");
+    expect(fillZ, "活动标签 fill 应有 z-index（B349 定的层）").not.toBeNaN();
+    expect(
+      zIndexOf(css, ".panel-tabstrip-scrollbar"),
+      "滚动条必须压在活动标签 fill 之上",
+    ).toBeGreaterThan(fillZ);
+    // 反相对照：把轨道打回 z-index: 0（活动 fill 就是 1）⇒ 同一条判据必须咬住
+    const BAD_COVER = css.replace(
+      /(\.panel-tabstrip-scrollbar \{[^}]*?)z-index:\s*-?\d+;/,
+      "$1z-index: 0;",
+    );
+    expect(BAD_COVER, "替身必须真的改到轨道的 z-index").not.toBe(css);
+    expect(
+      zIndexOf(BAD_COVER, ".panel-tabstrip-scrollbar"),
+      "被活动标签盖住的替身必须被咬住",
+    ).not.toBeGreaterThan(fillZ);
+
+    // 下沿让位：轨道 bottom 必须等于线的厚度（--tab-stroke），thumb 才能整条落在线上方。
+    // 判像素的守卫先展开 token（B337 的规矩）：改 token 值这条也要跟着算，不能只认名字。
+    const resolved = resolveCssVars(css);
+    const pxOf = (decls: string, prop: string): number =>
+      Number(decls.match(new RegExp(`(?:^|[;{\\s])${prop}:\\s*(-?[\\d.]+)px`))?.[1] ?? NaN);
+    const barBottom = pxOf(
+      cssDecls(ruleBlock(resolved, ".panel-tabstrip-scrollbar", undefined, true)),
+      "bottom",
+    );
+    const lineH = pxOf(
+      cssDecls(ruleBlock(resolved, ".panel-head::after", undefined, true)),
+      "height",
+    );
+    expect(lineH, "条带下沿线应有厚度（B349 的 --tab-stroke）").not.toBeNaN();
+    expect(barBottom, "整条轨道必须让开下沿线（thumb 不许压在线上）").toBeGreaterThanOrEqual(lineH);
+    // 反相对照：bottom 打回 0 ⇒ 轨道又贴到最底缘、最下面一格压回线上
+    const BAD_ON_LINE = resolved.replace(
+      /(\.panel-tabstrip-scrollbar \{[^}]*?)bottom:\s*[\d.]+px;/,
+      "$1bottom: 0px;",
+    );
+    expect(BAD_ON_LINE, "替身必须真的改到轨道的 bottom").not.toBe(resolved);
+    expect(
+      pxOf(
+        cssDecls(ruleBlock(BAD_ON_LINE, ".panel-tabstrip-scrollbar", undefined, true)),
+        "bottom",
+      ),
+      "贴着最底缘的替身必须被咬住",
+    ).toBeLessThan(lineH);
   });
   it("B56 标签不收缩 + 单标签名超长按 max-width 截断（标签栏横向滚动，不互相挤压）", () => {
     // 用户反馈（B56 原）：标签变多后标签被压窄，文件名被裁剪成「…」——根因是 .tab 上的

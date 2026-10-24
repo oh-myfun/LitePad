@@ -3323,8 +3323,16 @@ button:focus-visible {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0;
+  /* B364（用户实测）：轨道原来贴条带最底缘（bottom: 0），thumb 最下面 1px 正好压在
+     `.panel-head::after` 那条横贯线上，被线盖成另一种颜色 —— 看起来像下半截被裁掉。
+     抬高一格描边厚：thumb 整条落在线上方，线的通铺也不被打断。
+     两档同值：pill 档没有那条线，抬这一格同样不碍事。 */
+  bottom: var(--tab-stroke);
   height: 6px;
+  /* B364（用户实测）：活动标签的 fill 下探到条带底（B113 的 -3px 舌片），没有 z-index
+     的轨道会被它整段盖住，滚到活动标签那一段滚动条像断了。压在 fill 之上（B349 定的
+     层是 1），同时仍在 .tab-insert（6）之下 —— 拖拽插入线照旧最上。 */
+  z-index: 2;
   pointer-events: none;
   /* B125：默认隐藏（对齐 VS Code 标签条的 ScrollbarVisibility.Auto）。
      淡出走 800ms linear —— 与 VS Code `.invisible.fade` 同一条曲线；
