@@ -1,7 +1,7 @@
 // 编码菜单的两组纯函数叶子：BOM 目标判定 + 语言分组收口。
 // 这些函数只依赖 `MenuItem` 类型，不碰任何模块级状态，故抽成独立模块，
 // 方便单独单测、也避免 main.ts 继续膨胀（编码转换的「写盘出口」`convertDoc`
-// 与「菜单模型」`encodingMenuModel` 仍留在 main.ts，只在此消费本模块的叶子）。
+// 与「菜单模型」`encodingMenuModel` 在 prefs.ts，只在此消费本模块的叶子）。
 import { type MenuItem } from "./shell/menu";
 
 /** UTF-8 两档 —— 只有这两档之间才需要「添加 / 移除 BOM」这种就地操作。 */

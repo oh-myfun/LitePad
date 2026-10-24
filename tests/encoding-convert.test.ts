@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-// 编码完善与转换（B215 / B374）：
+// 编码完善与转换（B215 / B374 / B378）：
 // 1) 运行时：菜单栏「编码」一栏承载三组条目（解读编码 / 转换为 / BOM），
 //    都从 main 传进来的同一份模型渲染；行尾自 B374 起**不在编码菜单里**，
-//    切换与转换都在状态栏那颗行尾键的浮层（`showEolPicker`）。
-// 2) 静态：转换出口只有一个 `convertDoc`，它**先改 doc.encoding 再走保存**
-//    （顺序反了就等于绕过不可逆保护），状态栏那颗键只铺后端 `common` 标注的
-//    常用几条（B219），也不再有「四项硬编码兜底」这种跟后端对不上的清单。
+//    B378 起状态栏那颗行尾键只留一层：CRLF / LF / CR，选中即切换、保存时写盘
+//    （原先末条「转换行尾符」会再弹一份同样的列表，用户报「重复嵌套」）。
+// 2) 静态：编码 / BOM 的转换出口只有一个 `convertDoc`，它**先改 doc.encoding
+//    再走保存**（顺序反了就等于绕过不可逆保护）；状态栏那颗编码键只铺后端
+//    `common` 标注的常用几条（B219），也不再有「四项硬编码兜底」这种跟后端对不上的清单。
 import { describe, it, expect, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { fnBody, ruleBlock, topLevelFnBody } from "./static";
@@ -147,13 +148,14 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
     expect(group(model, "convertTo").length, "转换组条目数应与下发清单一致").toBe(1);
   });
 
-  it("转换只有一个出口 convertDoc，编码 / BOM / 行尾三条路都汇到它", () => {
+  it("转换只有一个出口 convertDoc（编码 / BOM）；行尾不再立即写盘", () => {
     const body = fnBody(main, "encodingMenuModel");
     // BOM 两项写成 convertDoc({ encoding: … })
     expect(body).toContain("convertDoc({ encoding:");
-    // 行尾转换挪到行尾浮层（B374），仍走同一个出口
+    // B378：行尾浮层只切换 `doc.eol`（保存时写盘），不许再叫转换出口
     const eol = fnBody(main, "showEolPicker");
-    expect(eol, "行尾转换走唯一出口").toContain("convertDoc({ eol: value })");
+    expect(eol, "行尾浮层不再走立即转换").not.toContain("convertDoc");
+    expect(eol, "行尾浮层不得再出现第二层入口").not.toContain('showEolPicker("');
     expect(main).toContain("async function convertDoc(");
     // 不许再冒出第二套转换函数（两套 = 写盘保护抄两遍，必有一遍漏）
     expect(main).not.toContain("function convertEncoding(");
@@ -175,7 +177,7 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
     expect(body).not.toContain("isDirtyVsBaseline(doc, null)");
   });
 
-  it("保存被拒时把编码/行尾字段退回（否则状态栏会对不上磁盘）", () => {
+  it("保存被拒时把编码字段退回（否则状态栏会对不上磁盘）", () => {
     const body = fnBody(main, "convertDoc");
     const atRollback = body.indexOf("doc.encoding = prevEnc");
     const atSave = body.indexOf("saveDocCore");
@@ -210,7 +212,7 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
     expect(main, "旧兜底清单应删除").not.toContain(stale);
   });
 
-  it("B366/B374：编码 / 行尾都走居顶快速选择；行尾转换只在行尾浮层里", () => {
+  it("B366/B374/B378：编码 / 行尾都走居顶快速选择；行尾只有一层切换", () => {
     for (const fn of ["showEncodingPicker", "showEolPicker"]) {
       const body = fnBody(main, fn);
       expect(body, `${fn} 必须用公共 QuickPick`).toContain("showQuickPick(");
@@ -220,7 +222,7 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
     const enc = fnBody(main, "showEncodingPicker");
     expect(enc, "锚点 = 状态栏编码键").toContain("anchor: sbEncoding");
     expect(enc, "BOM 两项的禁用态来自同一份菜单模型").toContain("model.bom");
-    // B374：编码浮层只谈编码，行尾转换不许再挂在这里
+    // B374：编码浮层只谈编码，行尾不许再挂在这里
     expect(enc, "编码浮层里不许出现行尾入口").not.toContain("showEolPicker");
     expect(enc, "编码浮层里不许出现行尾文案").not.toContain("转换行尾符");
 
@@ -228,11 +230,13 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
     expect(eol, "行尾候选用启动时预取的清单（点开不再走 IPC）").toContain("eolOptions");
     expect(eol).not.toContain("listEols");
     expect(eol, "行尾列表按当前值打勾").toContain("checked: value === doc.eol");
-    expect(eol, "set 档末条 = 行尾转换入口").toContain('label: "转换行尾符"');
-    // 真机抓到过：分隔线也占一个下标，用 values.length 当末条差一位，点了只关浮层
-    expect(eol, "末条下标按实际条目算").toContain("convertIndex = convert ? -1 : items.length - 1");
-    expect(eol, "转换入口再进 convert 那一屏").toContain('showEolPicker("convert", sbEol)');
-    expect(eol, "转换模式仍走唯一出口 convertDoc").toContain("convertDoc({ eol: value })");
+    // B378（用户报「行尾切换里又套一层行尾切换」）：末条入口与 convert 模式都删掉
+    expect(eol, "不许再出现「转换行尾符」末条").not.toContain("转换行尾符");
+    expect(eol, "不再有第二层 convert 模式").not.toContain("EolPickerMode");
+    expect(eol, "不再往列表里塞分隔线 + 末条").not.toContain("separator: true");
+    expect(eol, "onSelect 直接落 doc.eol").toContain("doc.eol = value");
+    // 点当前那一项不该把干净文档标脏
+    expect(eol, "同值不动作").toContain("value === doc.eol");
     // main 的接线必须换到新入口
     expect(main).toContain(
       'sbEncoding.addEventListener("click", () => void showEncodingPicker());',

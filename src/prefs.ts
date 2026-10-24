@@ -90,8 +90,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 // ---------------------------------------------------------------- 编码转换（B215）
 
 /**
- * 「转换为…」「添加/移除 BOM」「行尾符转换」三类的共同出口：把目标编码/行尾写进
- * doc，然后走**一次原位保存**。
+ * 「转换为…」「添加/移除 BOM」的共同出口：把目标编码写进 doc，然后走**一次原位保存**。
  *
  * 为什么复用保存、而不是另开一组转换命令：
  *   · 原子写、只读兜底、脏写检查（外部改过就不盖）、保存回声抑制，这些都已经在
@@ -100,17 +99,18 @@ import { ask } from "@tauri-apps/plugin-dialog";
  *     `saveDocCore` 会自己去 `checkEncodable` 拦下并弹确认。
  *     ⚠️ 所以**必须先写 `doc.encoding` 再调它**：顺序反了等于绕过不可逆保护。
  *
- * @param next 只写要变的那一侧（都不传 = 空操作，调用方不该这么调）。
+ * B378：行尾的「立即转换」入口随行尾浮层的嵌套屏一起删除 —— 行尾切换本身
+ * 会在保存时写盘，这里只保留编码这一侧。
+ *
  * @returns 是否真的启动了保存（false = 被前置条件/用户拒绝挡回，字段没动）。
  */
-async function convertDoc(next: { encoding?: string; eol?: string }): Promise<boolean> {
+async function convertDoc(next: { encoding: string }): Promise<boolean> {
   const tab = activeTab();
   const doc = tab ? docOf(tab) : undefined;
   if (!doc || !tab) return false;
 
-  const enc = next.encoding ?? doc.encoding;
-  const eol = next.eol ?? doc.eol;
-  if (enc === doc.encoding && eol === doc.eol) return false;
+  const enc = next.encoding;
+  if (enc === doc.encoding) return false;
 
   // 转换 = 写盘，未命名文档没有落点可写
   if (!doc.path) {
@@ -121,28 +121,25 @@ async function convertDoc(next: { encoding?: string; eol?: string }): Promise<bo
   // 正文要取**当前实例快照**：isDirtyVsBaseline 收到 null 会直接判脏（B112），
   // 传 null 等于干净的文档也弹「有未保存的修改」。
   if (isDirtyVsBaseline(doc, freshTextOfDoc(doc))) {
-    const ok = await ask(
-      `有未保存的修改，转换为 ${enc} / ${eol} 会立即写盘并覆盖这些修改。继续吗？`,
-      { title: "转换将写入磁盘", kind: "warning" },
-    );
+    const ok = await ask(`有未保存的修改，转换为 ${enc} 会立即写盘并覆盖这些修改。继续吗？`, {
+      title: "转换将写入磁盘",
+      kind: "warning",
+    });
     if (!ok) return false;
   }
 
   const prevEnc = doc.encoding;
-  const prevEol = doc.eol;
   doc.encoding = enc;
-  doc.eol = eol;
   const ok = await saveDocCore(doc, tab, false);
   if (!ok) {
     // 保存被拒 / 冲突未覆盖 / lossy 取消：字段必须退回，否则状态栏会显示一个
     // 跟磁盘对不上的编码，下一次保存才悄悄写错字节。
     doc.encoding = prevEnc;
-    doc.eol = prevEol;
     refreshAll();
     return false;
   }
-  showMessage(`已转换为 ${doc.encoding} / ${doc.eol}`);
-  logger.info("convert", `${doc.name} ${doc.encoding}/${doc.eol}`);
+  showMessage(`已转换为 ${doc.encoding}`);
+  logger.info("convert", `${doc.name} ${doc.encoding}`);
   return true;
 }
 
@@ -151,8 +148,9 @@ async function convertDoc(next: { encoding?: string; eol?: string }): Promise<bo
  *
  * ⚠️ 两边都从这里取，不接受第二份手抄的列表 —— 两份迟早差一项，而差的那一项
  *    表现就是「菜单里有、功能没接上」。
- * ⚠️ 行尾不在这份模型里（B374）：行尾不是编码。切换 / 转换都在状态栏那颗行尾键的
- *    浮层里（`showEolPicker`），把「转换行尾符」塞进编码菜单会让用户以为它改的是编码。
+ * ⚠️ 行尾不在这份模型里（B374）：行尾不是编码。切换在状态栏那颗行尾键的浮层里
+ *    （`showEolPicker`），把行尾塞进编码菜单会让用户以为它改的是编码。
+ *    B378 起行尾浮层只有一层（切换 → 保存时写盘），不再挂「立即转换」的嵌套屏。
  */
 function encodingMenuModel(): EncodingMenuModel {
   const tab = activeTab();
@@ -209,7 +207,7 @@ function focusEditorAfterPick(): void {
  * 只把**常用那几条**平铺在顶层，后面接 BOM 两项。状态栏是「顺手看一眼当前编码 +
  * 切到最常用的那几种」的地方，摊 40 条全量进去反而没人点得到。
  * 主菜单「编码」那条**不动**：那里才是全量。
- * ⚠️ 行尾不在这里（B374）：编码浮层只谈编码。「转换行尾符」在状态栏那颗行尾键的
+ * ⚠️ 行尾不在这里（B374）：编码浮层只谈编码。行尾切换在状态栏那颗行尾键的
  *    浮层里（`showEolPicker`）—— 那是行尾自己的菜单。
  *
  * ⚠️ 常用集只认后端下发的 `common` 字段（在 `encodingOptions` 上过滤），**不许**在
@@ -303,18 +301,16 @@ async function switchEncoding(label: string): Promise<void> {
   }
 }
 
-/** 行尾浮层的两种入口：只改 doc.eol（保存时生效） / 立即转换写盘。 */
-type EolPickerMode = "set" | "convert";
-
 /**
- * 行尾符号浮层（B366 / B374）：与编码 / 文件类型同款居顶快速选择。
+ * 行尾符号浮层（B366 / B374 / B378）：与编码 / 文件类型同款居顶快速选择。
  *
- * 两个入口都在这颗键下面 —— 行尾的事只找行尾：
- *   · `set`     —— 状态栏那颗键：只改 `doc.eol`，保存时生效（旧行为不变）；
- *                末条「转换行尾符」再进 `convert` 那一屏（B374 从编码浮层搬过来）。
- *   · `convert` —— 立即走 `convertDoc` 写盘（旧 B215 子菜单同口径）。
+ * 只有一层：CRLF / LF / CR，选中即切换并标脏，保存时写盘 —— 与 VS Code 状态栏同口径。
+ *
+ * B374 曾把「转换行尾符」从编码菜单搬到这里做末条，点进去又是一份同样的
+ * CRLF/LF/CR 列表（只是改成立即写盘）。用户当面报「重复的功能互相嵌套」⇒ B378 删除：
+ * 切换行尾本来就会在保存时写盘，不需要第二个入口重复问一遍。
  */
-function showEolPicker(mode: EolPickerMode = "set", anchor: HTMLElement = sbEol): void {
+function showEolPicker(anchor: HTMLElement = sbEol): void {
   if (quickPickIsOpen()) {
     closeQuickPick();
     return;
@@ -325,41 +321,19 @@ function showEolPicker(mode: EolPickerMode = "set", anchor: HTMLElement = sbEol)
 
   // 候选用启动时预取的那份（B219 同一口径）；IPC 失败时 core 已留内置三档。
   const values = eolOptions.length > 0 ? eolOptions : ["CRLF", "LF", "CR"];
-  const convert = mode === "convert";
   const items: QuickPickItem[] = values.map((value) => ({
     label: value,
     checked: value === doc.eol,
   }));
-  if (!convert) {
-    items.push(
-      { label: "", separator: true },
-      {
-        label: "转换行尾符",
-        description: doc.path ? "立即转换并写入磁盘" : "需要先保存到磁盘",
-        disabled: !doc.path,
-      },
-    );
-  }
-  // 末条垫在最后：分隔线也占一个下标，别拿 values.length 当它（差一位，点了只关浮层）。
-  const convertIndex = convert ? -1 : items.length - 1;
 
   showQuickPick({
-    placeholder: convert ? "选择要转换的行尾符" : "选择行尾符",
+    placeholder: "选择行尾符",
     items,
     activeIndex: Math.max(0, values.indexOf(doc.eol)),
     anchor,
     onSelect: (index) => {
-      // set 档的末条：进转换那一屏（选目标后立即写盘）
-      if (index === convertIndex) {
-        showEolPicker("convert", sbEol);
-        return;
-      }
       const value = values[index];
-      if (!value) return;
-      if (convert) {
-        void convertDoc({ eol: value });
-        return;
-      }
+      if (!value || value === doc.eol) return;
       doc.eol = value;
       doc.mixedEol = false;
       doc.dirty = true;
