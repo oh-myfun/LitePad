@@ -124,6 +124,11 @@
   --fg-muted: #8b9299;
   --accent: #4c9ffe;
   --accent-fg: #ffffff;
+  /* B366：居顶快速选择的**选中行**（照 VS Code quick input）：
+     `quickInputList.focusBackground` 默认取 `list.activeSelectionBackground`
+     —— 深色档 #04395E、浅色档 #0060C0，前景同组取白。 */
+  --pick-focus-bg: #04395e;
+  --pick-focus-fg: #ffffff;
   --danger: #f47067;
   --warn: #e2b341;
   /* 标签（B113 起对齐 VS Code 1.139 的 **Connected 相连标签**，不再是独立药丸）：
@@ -238,6 +243,9 @@
   --fg-muted: #6a737d;
   --accent: #0969da;
   --accent-fg: #ffffff;
+  /* B366：与深色档同源（VS Code 浅色档 list.activeSelectionBackground = #0060C0）。 */
+  --pick-focus-bg: #0060c0;
+  --pick-focus-fg: #ffffff;
   --danger: #cf222e;
   --warn: #9a6700;
   /* 标签（B113 Connected 相连标签，同深色档的说明）：条带取 VS Code 浅色档的
@@ -1249,34 +1257,46 @@ button:focus-visible {
   opacity: 1;
 }
 
-.tab-icon[data-fam="md"] {
+/* B366：家族配色有两个消费方 —— 标签图标 + 居顶快速选择条目的图标。
+   同取一套 `--ficon-*` 变量，别各抄一份颜色（抄一份就迟早差一档）。 */
+.tab-icon[data-fam="md"],
+.quick-pick-icon[data-fam="md"] {
   color: var(--ficon-md);
 }
-.tab-icon[data-fam="code"] {
+.tab-icon[data-fam="code"],
+.quick-pick-icon[data-fam="code"] {
   color: var(--ficon-code);
 }
-.tab-icon[data-fam="brace"] {
+.tab-icon[data-fam="brace"],
+.quick-pick-icon[data-fam="brace"] {
   color: var(--ficon-brace);
 }
-.tab-icon[data-fam="hash"] {
+.tab-icon[data-fam="hash"],
+.quick-pick-icon[data-fam="hash"] {
   color: var(--ficon-hash);
 }
-.tab-icon[data-fam="tag"] {
+.tab-icon[data-fam="tag"],
+.quick-pick-icon[data-fam="tag"] {
   color: var(--ficon-tag);
 }
-.tab-icon[data-fam="brk"] {
+.tab-icon[data-fam="brk"],
+.quick-pick-icon[data-fam="brk"] {
   color: var(--ficon-brk);
 }
-.tab-icon[data-fam="db"] {
+.tab-icon[data-fam="db"],
+.quick-pick-icon[data-fam="db"] {
   color: var(--ficon-db);
 }
-.tab-icon[data-fam="diff"] {
+.tab-icon[data-fam="diff"],
+.quick-pick-icon[data-fam="diff"] {
   color: var(--ficon-diff);
 }
-.tab-icon[data-fam="build"] {
+.tab-icon[data-fam="build"],
+.quick-pick-icon[data-fam="build"] {
   color: var(--ficon-build);
 }
-.tab-icon[data-fam="txt"] {
+.tab-icon[data-fam="txt"],
+.quick-pick-icon[data-fam="txt"] {
   color: var(--ficon-txt);
 }
 
@@ -3787,8 +3807,32 @@ body.tab-drag-active * {
   cursor: pointer;
 }
 
+/* B366：选中行照 VS Code quick input —— `quickInputList.focusBackground` 取
+   `list.activeSelectionBackground`（深 #04395E / 浅 #0060C0），前景白（见主题里
+   那两颗 `--pick-focus-*`）。悬停即聚焦（pointermove 改高亮），鼠标划过也是这一档。 */
 .quick-pick-item.is-active {
-  background: var(--bg-hover);
+  background: var(--pick-focus-bg);
+  color: var(--pick-focus-fg);
+}
+
+.quick-pick-item.is-active .quick-pick-check,
+.quick-pick-item.is-active .quick-pick-desc {
+  color: var(--pick-focus-fg);
+}
+
+.quick-pick-item.is-active .quick-pick-desc {
+  opacity: 0.85;
+}
+
+.quick-pick-item.is-disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.quick-pick-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
 }
 
 .quick-pick-check {
@@ -3799,6 +3843,16 @@ body.tab-drag-active * {
   width: 16px;
   height: 16px;
   color: var(--accent);
+}
+
+/* B366：条目图标（语言列表）—— 16px 固定槽；配色跟标签文件图标同一套家族变量。 */
+.quick-pick-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
 }
 
 .quick-pick-label {

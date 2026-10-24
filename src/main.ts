@@ -143,8 +143,8 @@ import {
   publishWindowKind,
   sanitizeKeymap,
   setupSettingsEntry,
-  showEncodingMenu,
-  showEolMenu,
+  showEncodingPicker,
+  showEolPicker,
 } from "./prefs";
 import { showLanguagePicker } from "./language-mode";
 import {
@@ -382,8 +382,9 @@ function bindEvents(): void {
   // B365：状态栏文件类型做成可点（推翻 B233 的纯展示）—— 点开居顶快速选择换语言模式。
   // 仍然**不**在这颗上切视图：预览入口在标签区操作键 / Ctrl+/ / 菜单。
   sbLang.addEventListener("click", () => showLanguagePicker());
-  sbEncoding.addEventListener("click", () => void showEncodingMenu());
-  sbEol.addEventListener("click", () => showEolMenu());
+  // B366：编码 / 行尾与文件类型同款居顶快速选择（照 VS Code quick input）。
+  sbEncoding.addEventListener("click", () => void showEncodingPicker());
+  sbEol.addEventListener("click", () => showEolPicker());
 
   // 全局快捷键：统一走 keymap 注册表（设置 → 快捷键 里可浏览 / 改键）。
   // 见 onGlobalKeydown 的注释：必须挂捕获阶段。

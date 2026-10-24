@@ -183,9 +183,9 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
     expect(body).not.toContain("UTF-16LE without BOM");
   });
 
-  it("状态栏那颗键的菜单只从启动时预取的那份清单取数（点开不再走 IPC）", () => {
-    const body = fnBody(main, "showEncodingMenu");
-    // BOM 两项、行尾符两项仍与主菜单同取一份模型
+  it("状态栏那颗键的清单只从启动时预取的那份取数（点开不再走 IPC）", () => {
+    const body = fnBody(main, "showEncodingPicker");
+    // BOM 两项仍与主菜单同取一份模型
     expect(body).toContain("encodingMenuModel()");
     // 旧的「点开才 await listEncodings() + 四项兜底」实现应已删除：
     // 那是**启动时就取好**的一份清单，点开菜单再取一次只会多一次 IPC 往返。
@@ -200,6 +200,29 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
     // 悄悄把菜单缩回四条 —— 而那时用户看得见的是「编码变少了」，不会有任何报错。
     const stale = '["UTF-8", "UTF-8 with BOM", "UTF-16LE", "GB18030"]';
     expect(main, "旧兜底清单应删除").not.toContain(stale);
+  });
+
+  it("B366：编码 / 行尾都走居顶快速选择（不再退回弹出菜单）", () => {
+    for (const fn of ["showEncodingPicker", "showEolPicker"]) {
+      const body = fnBody(main, fn);
+      expect(body, `${fn} 必须用公共 QuickPick`).toContain("showQuickPick(");
+      expect(body, `${fn} 不许退回 showPopupMenu`).not.toContain("showPopupMenu");
+      expect(body, `${fn} 要支持再点一下收起`).toContain("quickPickIsOpen()");
+    }
+    const enc = fnBody(main, "showEncodingPicker");
+    expect(enc, "锚点 = 状态栏编码键").toContain("anchor: sbEncoding");
+    expect(enc, "BOM 两项的禁用态来自同一份菜单模型").toContain("model.bom");
+    expect(enc, "行尾转换从编码浮层里进").toContain('showEolPicker("convert"');
+    const eol = fnBody(main, "showEolPicker");
+    expect(eol, "行尾候选用启动时预取的清单（点开不再走 IPC）").toContain("eolOptions");
+    expect(eol).not.toContain("listEols");
+    expect(eol, "行尾列表按当前值打勾").toContain("checked: value === doc.eol");
+    expect(eol, "转换模式仍走唯一出口 convertDoc").toContain("convertDoc({ eol: value })");
+    // main 的接线必须换到新入口
+    expect(main).toContain(
+      'sbEncoding.addEventListener("click", () => void showEncodingPicker());',
+    );
+    expect(main).toContain('sbEol.addEventListener("click", () => showEolPicker());');
   });
 
   it("状态栏那颗编码键限宽且能收缩（全量编码里最长的一条有二十个字符）", () => {
@@ -242,7 +265,7 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
   });
 
   it("B219：状态栏那颗键只铺常用几条（常用集来自后端 common，不许手抄白名单）", () => {
-    const body = fnBody(main, "showEncodingMenu");
+    const body = fnBody(main, "showEncodingPicker");
     // 反例一：别把编码那一组原样摊平 —— 全量 40 条平铺就是用户说的「显示完整列表」。
     //    ⚠️ 这条要排在正向判据前面：反例先红才能证明它咬得住，否则退化时被正向
     //       断言抢先报错，这条闸等于没验过。

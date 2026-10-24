@@ -12,7 +12,7 @@ import {
   showQuickPick,
   type QuickPickItem,
 } from "../src/shell/quickpick";
-import { cssDecls, ruleBlock } from "./static";
+import { cssDecls, ruleBlock, themeBlock } from "./static";
 
 const ITEMS: QuickPickItem[] = [
   { label: "自动检测", description: "按文件后缀自动识别" },
@@ -143,6 +143,76 @@ describe("B365 QuickPick：居顶快速选择浮层", () => {
   });
 });
 
+describe("B366 条目图标 / 分隔线 / 禁用项", () => {
+  it("图标：有 icon 的条目渲染 .quick-pick-icon + data-fam；无图标项在图标列表里占位对齐", () => {
+    open([
+      {
+        label: "Markdown",
+        icon: '<i class="codicon codicon-markdown" aria-hidden="true"></i>',
+        iconFamily: "md",
+      },
+      { label: "自动检测" },
+    ]);
+    const icons = document.querySelectorAll<HTMLElement>(".quick-pick-icon");
+    expect(icons, "每条都占图标槽（无图标的是空槽）").toHaveLength(2);
+    expect(icons[0].getAttribute("data-fam"), "配色走 data-fam").toBe("md");
+    expect(icons[0].innerHTML, "字形必须是 codicon").toContain("codicon-markdown");
+    expect(icons[1].classList.contains("is-empty"), "无图标项要占位对齐").toBe(true);
+    expect(icons[1].innerHTML).toBe("");
+
+    // 整表都没有图标（编码 / 行尾）⇒ 不留 22px 空槽，标签更靠左。
+    open([{ label: "UTF-8" }, { label: "GBK" }]);
+    expect(document.querySelectorAll(".quick-pick-icon")).toHaveLength(0);
+  });
+
+  it("分隔线：显示但不可选，键盘与回车都跳过；输入过滤时收掉", () => {
+    const items: QuickPickItem[] = [
+      { label: "UTF-8", checked: true },
+      { label: "GB18030" },
+      { label: "", separator: true },
+      { label: "添加 BOM" },
+    ];
+    const { onSelect } = open(items);
+    expect(document.querySelectorAll(".quick-pick-separator")).toHaveLength(1);
+    expect(
+      rows().map((r) => r.querySelector(".quick-pick-label")?.textContent),
+      "分隔线不是 .quick-pick-item",
+    ).toEqual(["UTF-8", "GB18030", "添加 BOM"]);
+    press("ArrowDown"); // GB18030
+    press("ArrowDown"); // 跳过分隔线 → 添加 BOM
+    expect(rows().at(-1)?.classList.contains("is-active")).toBe(true);
+    press("Enter");
+    expect(onSelect, "回车必须回传原始下标（分隔线在 2）").toHaveBeenCalledWith(3);
+
+    open(items);
+    type("bom");
+    expect(document.querySelectorAll(".quick-pick-separator"), "过滤时不留分隔线").toHaveLength(0);
+    expect(rows()).toHaveLength(1);
+  });
+
+  it("禁用项：仍显示、键盘跳过、点击不选中也不关浮层", () => {
+    const { onSelect } = open([
+      { label: "UTF-8" },
+      { label: "移除 BOM", disabled: true },
+      { label: "添加 BOM" },
+    ]);
+    expect(rows()[1].classList.contains("is-disabled")).toBe(true);
+    expect(rows()[1].getAttribute("aria-disabled")).toBe("true");
+    press("ArrowDown");
+    expect(rows()[2].classList.contains("is-active"), "键盘必须跳过禁用项").toBe(true);
+    rows()[1].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(widget(), "点禁用项不许关浮层").toBeTruthy();
+    press("Enter");
+    expect(onSelect).toHaveBeenCalledWith(2);
+  });
+
+  it("初始高亮可由 activeIndex 指定（编码 / 行尾按当前值开）", () => {
+    open([{ label: "UTF-8" }, { label: "GBK", checked: true }, { label: "UTF-16LE" }], 1);
+    expect(rows()[1].classList.contains("is-active")).toBe(true);
+  });
+});
+
 describe("B365 QuickPick 样式契约（VS Code quick input 同款几何）", () => {
   const css = readFileSync("src/styles/global.css", "utf-8");
   const zIndexOf = (selector: string): number => {
@@ -170,5 +240,42 @@ describe("B365 QuickPick 样式契约（VS Code quick input 同款几何）", ()
     const list = cssDecls(ruleBlock(css, ".quick-pick-list", undefined, true));
     expect(list).toMatch(/max-height:/);
     expect(list).toMatch(/overflow-y:\s*auto/);
+  });
+
+  it("B366 选中态复刻 VS Code：focusBackground 取 #04395E / #0060C0，白字", () => {
+    const active = cssDecls(ruleBlock(css, ".quick-pick-item.is-active", undefined, true));
+    expect(active, "聚焦行底色必须走专用 token").toMatch(/background:\s*var\(--pick-focus-bg\)/);
+    expect(active, "聚焦行前景取白").toMatch(/color:\s*var\(--pick-focus-fg\)/);
+    // 取值是 VS Code `list.activeSelectionBackground` 的默认档（深/浅）。
+    const dark = themeBlock(css, "dark");
+    const light = themeBlock(css, "light");
+    expect(dark).toMatch(/--pick-focus-bg:\s*#04395e/i);
+    expect(light).toMatch(/--pick-focus-bg:\s*#0060c0/i);
+    expect(dark).toMatch(/--pick-focus-fg:\s*#ffffff/i);
+    expect(light).toMatch(/--pick-focus-fg:\s*#ffffff/i);
+
+    // 反向对照：把聚焦底色退回普通 hover，同一条判据必须咬住。
+    const BAD = css.replace(
+      /(\.quick-pick-item\.is-active\s*\{[^}]*?background:\s*)var\(--pick-focus-bg\)/,
+      "$1var(--bg-hover)",
+    );
+    expect(BAD, "替身必须真的改到聚焦底色").not.toBe(css);
+    expect(cssDecls(ruleBlock(BAD, ".quick-pick-item.is-active", undefined, true))).not.toMatch(
+      /background:\s*var\(--pick-focus-bg\)/,
+    );
+  });
+
+  it("B366 条目图标 16px、家族配色与标签同源；禁用项降透明度", () => {
+    const icon = cssDecls(ruleBlock(css, ".quick-pick-icon", undefined, true));
+    expect(icon).toMatch(/width:\s*16px/);
+    expect(icon).toMatch(/flex:\s*0 0 16px/);
+    for (const fam of ["md", "code", "txt"]) {
+      expect(css, `缺 .quick-pick-icon[data-fam="${fam}"] 配色`).toContain(
+        `.quick-pick-icon[data-fam="${fam}"]`,
+      );
+    }
+    const disabled = cssDecls(ruleBlock(css, ".quick-pick-item.is-disabled", undefined, true));
+    expect(disabled).toMatch(/opacity:/);
+    expect(disabled).toMatch(/cursor:\s*default/);
   });
 });

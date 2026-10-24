@@ -1,7 +1,7 @@
 // 设置 / 编码 / 外观档位（从 main.ts 拆出，解耦第十六步 / #416-2）。
 //
-// 职责：编码与换行转换（convertDoc / switchEncoding / showEncodingMenu / showEolMenu /
-// encodingMenuModel）、状态栏菜单入口、主题档与窗口身份落 DOM（publishThemeMode /
+// 职责：编码与换行转换（convertDoc / switchEncoding / showEncodingPicker / showEolPicker /
+// encodingMenuModel）、状态栏快速选择入口、主题档与窗口身份落 DOM（publishThemeMode /
 // publishWindowKind）、字号字体行距预览宽度等档位 setter（set*）、设置对话框与偏好
 // 持久化（openSettingsDialog / persistSettings / loadPreferenceOptions / keymap）、
 // 当前字号读取（currentFontSize）。
@@ -10,6 +10,7 @@
 // 零外部函数依赖（无 DI）——依赖 core/* + ui + doc-model + appearance + ipc/api + shell/* + editor/*。
 
 import {
+  activePanelId,
   encodingOptions,
   eolOptions,
   isDark,
@@ -26,7 +27,7 @@ import {
   setSuppressDirty,
   setThemeModeState,
 } from "./core/app-state";
-import { activeTab, docOf } from "./core/panels";
+import { activeTab, docOf, getPanel } from "./core/panels";
 import { applyTheme, type ThemeMode } from "./theme/theme";
 import { isDirtyVsBaseline, markClean, markDiskVersion } from "./doc-model";
 import {
@@ -67,7 +68,13 @@ import {
   parseKey,
   type KeymapOverrides,
 } from "./shell/keymap";
-import { showPopupMenu, type MenuItem } from "./shell/menu";
+import type { MenuItem } from "./shell/menu";
+import {
+  closeQuickPick,
+  quickPickIsOpen,
+  showQuickPick,
+  type QuickPickItem,
+} from "./shell/quickpick";
 import { PREVIEW_WIDTH_LABELS, showSettingsDialog } from "./shell/settingsdialog";
 import { refreshAll, sbEncoding, sbEol, sideSettings, showMessage } from "./ui";
 import { CODICONS } from "./shell/codicons";
@@ -190,18 +197,27 @@ function encodingMenuModel(): EncodingMenuModel {
 
 // ---------------------------------------------------------------- 状态栏菜单
 
+/** 浮层收起后把焦点还给编辑区（与语言浮层同口径）。 */
+function focusEditorAfterPick(): void {
+  getPanel(activePanelId)?.view?.focus();
+}
+
 /**
- * 状态栏那颗「编码」键的菜单（B219）：只把**常用那几条**平铺在顶层，后面接 BOM 两项
- * 与「转换行尾符▸」。状态栏是「顺手看一眼当前编码 + 切到最常用的那几种」的地方，
- * 摊 40 条全量两级进去反而没人点得到。主菜单「编码」那条**不动**：那里才是全量。
+ * 状态栏那颗「编码」键（B366）：居顶快速选择，复用文件类型那颗键的形式（照 VS Code）。
+ *
+ * 只把**常用那几条**平铺在顶层，后面接 BOM 两项与「转换行尾符」。状态栏是
+ * 「顺手看一眼当前编码 + 切到最常用的那几种」的地方，摊 40 条全量进去反而没人点得到。
+ * 主菜单「编码」那条**不动**：那里才是全量。
  *
  * ⚠️ 常用集只认后端下发的 `common` 字段（在 `encodingOptions` 上过滤），**不许**在
- *    前端另写一份标签白名单 —— 又一张表，迟早差一条，差的表现就是「菜单里没有它」。
- * ⚠️ 这里也不再复用 `encodingMenuModel().encodedIn / convertTo`：那两路是给主菜单的
- *    摆法（首组内联 + 其余组子菜单），跟这里要的「常用平铺」不是一回事；BOM 与行尾
- *    符仍然同取 `encodingMenuModel()` 那一份，别在两边各写一遍。
+ *    前端另写一份标签白名单 —— 又一张表，迟早差一条，差的表现就是「列表里没有它」。
+ * ⚠️ BOM 两项与「转换行尾符」的可用性仍取 `encodingMenuModel()` 那一份，别在两边各写一遍。
  */
-function showEncodingMenu(): void {
+function showEncodingPicker(): void {
+  if (quickPickIsOpen()) {
+    closeQuickPick();
+    return;
+  }
   const tab = activeTab();
   const doc = tab ? docOf(tab) : undefined;
   if (!doc) return;
@@ -212,16 +228,45 @@ function showEncodingMenu(): void {
     .map((it) => ({
       label: it.label,
       checked: it.label === current,
-      onSelect: () => void switchEncoding(it.label),
     }));
   const model = encodingMenuModel();
-  showPopupMenu(sbEncoding, [
+  const bom = model.bom.map((it) => ({ label: it.label ?? "", disabled: it.disabled }));
+  const canWrite = !!doc.path;
+  const items: QuickPickItem[] = [
     ...common,
-    { separator: true },
-    ...model.bom,
-    { separator: true },
-    { label: "转换行尾符", submenu: model.eol },
-  ]);
+    { label: "", separator: true },
+    ...bom,
+    { label: "", separator: true },
+    {
+      label: "转换行尾符",
+      description: canWrite ? "转换后立即写入磁盘" : "需要先保存到磁盘",
+      disabled: !canWrite,
+    },
+  ];
+
+  showQuickPick({
+    placeholder: "选择文件编码",
+    items,
+    activeIndex: Math.max(
+      0,
+      items.findIndex((it) => it.checked),
+    ),
+    anchor: sbEncoding,
+    onSelect: (index) => {
+      if (index < common.length) {
+        const item = common[index];
+        if (item) void switchEncoding(item.label);
+        return;
+      }
+      const bomIndex = index - common.length - 1;
+      if (bomIndex >= 0 && bomIndex < model.bom.length) {
+        model.bom[bomIndex]?.onSelect?.();
+        return;
+      }
+      if (index === items.length - 1) showEolPicker("convert", sbEncoding);
+    },
+    onClose: focusEditorAfterPick,
+  });
 }
 
 async function switchEncoding(label: string): Promise<void> {
@@ -268,32 +313,53 @@ async function switchEncoding(label: string): Promise<void> {
   }
 }
 
-function showEolMenu(): void {
-  void (async () => {
-    let eols: string[];
-    try {
-      eols = await listEols();
-    } catch {
-      eols = ["CRLF", "LF", "CR"];
-    }
-    const tab = activeTab();
-    const doc = tab ? docOf(tab) : undefined;
-    if (!doc) return;
-    showPopupMenu(
-      sbEol,
-      eols.map((value) => ({
-        label: value,
-        checked: value === doc.eol,
-        onSelect: () => {
-          doc.eol = value;
-          doc.mixedEol = false;
-          doc.dirty = true;
-          refreshAll();
-          showMessage(`行尾已切换为 ${value}，保存时生效`);
-        },
-      })),
-    );
-  })();
+/** 行尾浮层的两种入口：只改 doc.eol（保存时生效） / 立即转换写盘。 */
+type EolPickerMode = "set" | "convert";
+
+/**
+ * 行尾符号浮层（B366）：与编码 / 文件类型同款居顶快速选择。
+ *
+ * 两种入口共用同一份列表与勾选口径：
+ *   · `set`     —— 状态栏那颗键：只改 `doc.eol`，保存时生效（旧行为不变）；
+ *   · `convert` —— 编码浮层里的「转换行尾符」：立即走 `convertDoc` 写盘（旧子菜单同口径）。
+ */
+function showEolPicker(mode: EolPickerMode = "set", anchor: HTMLElement = sbEol): void {
+  if (quickPickIsOpen()) {
+    closeQuickPick();
+    return;
+  }
+  const tab = activeTab();
+  const doc = tab ? docOf(tab) : undefined;
+  if (!doc) return;
+
+  // 候选用启动时预取的那份（B219 同一口径）；IPC 失败时 core 已留内置三档。
+  const values = eolOptions.length > 0 ? eolOptions : ["CRLF", "LF", "CR"];
+  const items: QuickPickItem[] = values.map((value) => ({
+    label: value,
+    checked: value === doc.eol,
+  }));
+  const convert = mode === "convert";
+
+  showQuickPick({
+    placeholder: convert ? "选择要转换的行尾符" : "选择行尾符",
+    items,
+    activeIndex: Math.max(0, values.indexOf(doc.eol)),
+    anchor,
+    onSelect: (index) => {
+      const value = values[index];
+      if (!value) return;
+      if (convert) {
+        void convertDoc({ eol: value });
+        return;
+      }
+      doc.eol = value;
+      doc.mixedEol = false;
+      doc.dirty = true;
+      refreshAll();
+      showMessage(`行尾已切换为 ${value}，保存时生效`);
+    },
+    onClose: focusEditorAfterPick,
+  });
 }
 
 /**
@@ -746,8 +812,8 @@ function currentFontSize(): number {
 export {
   convertDoc,
   encodingMenuModel,
-  showEncodingMenu,
-  showEolMenu,
+  showEncodingPicker,
+  showEolPicker,
   switchEncoding,
   publishThemeMode,
   publishWindowKind,

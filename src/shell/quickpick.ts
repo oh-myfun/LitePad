@@ -18,6 +18,14 @@ export interface QuickPickItem {
   description?: string;
   /** 当前项（显示勾） */
   checked?: boolean;
+  /** 左侧 16px 字形（codicon 的 HTML，来自 `CODICONS`）；缺省不留图标槽 */
+  icon?: string;
+  /** 图标配色家族，写到 `data-fam` 上走 `--ficon-*`（见 shell/fileicons.ts） */
+  iconFamily?: string;
+  /** 分隔线：不是条目，不可高亮 / 不可选；空查询时显示，过滤时收掉 */
+  separator?: boolean;
+  /** 置灰不可选（仍显示；键盘跳过、点击不生效） */
+  disabled?: boolean;
 }
 
 export interface QuickPickOptions {
@@ -41,9 +49,13 @@ interface QuickPickState {
   list: HTMLElement;
   empty: HTMLElement;
   items: QuickPickItem[];
-  /** 过滤后的原始下标 */
-  filtered: number[];
+  /** 过滤后仍要显示的原始下标（含 disabled，不含分隔线） */
+  visible: number[];
+  /** 过滤后可选中项的原始下标（键盘 / 回车只在它上面走） */
+  selectable: number[];
+  /** 高亮位置：`selectable` 的下标 */
   active: number;
+  query: string;
   opts: QuickPickOptions;
   onPointerDown: (e: Event) => void;
 }
@@ -64,59 +76,103 @@ export function closeQuickPick(): void {
 }
 
 function setActive(s: QuickPickState, pos: number, scroll = true): void {
-  if (pos < 0 || pos >= s.filtered.length) return;
+  if (pos < 0 || pos >= s.selectable.length) return;
   s.active = pos;
-  const rows = [...s.list.children];
-  rows.forEach((row, i) => row.classList.toggle("is-active", i === pos));
-  if (scroll) rows[pos]?.scrollIntoView?.({ block: "nearest" });
+  const index = String(s.selectable[pos]);
+  for (const row of s.list.children) {
+    if (row instanceof HTMLElement) row.classList.toggle("is-active", row.dataset.index === index);
+  }
+  if (scroll) {
+    s.list.querySelector<HTMLElement>(`[data-index="${index}"]`)?.scrollIntoView?.({
+      block: "nearest",
+    });
+  }
 }
 
 /** 过滤并重画列表；空查询恢复全量。高亮回到第一项（与 VS Code 一致）。 */
 function applyFilter(s: QuickPickState, query: string): void {
   const needle = query.trim().toLowerCase();
-  s.filtered = s.items
+  s.visible = s.items
     .map((_, i) => i)
+    .filter((i) => !s.items[i].separator)
     .filter((i) => !needle || s.items[i].label.toLowerCase().includes(needle));
-  s.active = s.filtered.length ? 0 : -1;
+  s.selectable = s.visible.filter((i) => !s.items[i].disabled);
+  s.active = s.selectable.length ? 0 : -1;
+  s.query = needle;
   renderList(s);
 }
 
 function renderList(s: QuickPickState): void {
   s.list.textContent = "";
-  s.filtered.forEach((index, pos) => {
-    const item = s.items[index];
+  const visible = new Set(s.visible);
+  const activeIndex = s.selectable[s.active];
+  // 列表里只要有一条带图标，其余条目也要占住 16px 图标槽（VS Code quick pick 同款对齐）；
+  // 整表无图标（编码 / 行尾）则不占，标签更靠左。
+  const hasIcons = s.items.some((item) => item.icon);
+  s.items.forEach((item, index) => {
+    if (item.separator) {
+      // 过滤时收掉分组线；空查询按原位置画一条（VS Code quick pick 同款）。
+      if (s.query) return;
+      const sep = document.createElement("div");
+      sep.className = "quick-pick-separator";
+      sep.setAttribute("role", "presentation");
+      s.list.append(sep);
+      return;
+    }
+    if (!visible.has(index)) return;
+
     const row = document.createElement("div");
     row.className = "quick-pick-item";
     row.dataset.index = String(index);
     row.setAttribute("role", "option");
     row.setAttribute("aria-selected", String(!!item.checked));
     if (item.checked) row.classList.add("is-checked");
-    if (pos === s.active) row.classList.add("is-active");
+    if (item.disabled) {
+      row.classList.add("is-disabled");
+      row.setAttribute("aria-disabled", "true");
+    }
+    if (index === activeIndex) row.classList.add("is-active");
 
     const check = document.createElement("span");
     check.className = "quick-pick-check";
     if (item.checked) check.innerHTML = CODICONS.check;
 
+    row.append(check);
+    if (item.icon) {
+      const icon = document.createElement("span");
+      icon.className = "quick-pick-icon";
+      if (item.iconFamily) icon.dataset.fam = item.iconFamily;
+      icon.innerHTML = item.icon;
+      row.append(icon);
+    } else if (hasIcons) {
+      const slot = document.createElement("span");
+      slot.className = "quick-pick-icon is-empty";
+      row.append(slot);
+    }
+
     const label = document.createElement("span");
     label.className = "quick-pick-label";
     label.textContent = item.label;
 
-    row.append(check, label);
+    row.append(label);
     if (item.description) {
       const desc = document.createElement("span");
       desc.className = "quick-pick-desc";
       desc.textContent = item.description;
       row.append(desc);
     }
-    row.addEventListener("pointermove", () => setActive(s, pos, false));
-    row.addEventListener("click", () => choose(s, index));
+    if (!item.disabled) {
+      row.addEventListener("pointermove", () => setActive(s, s.selectable.indexOf(index), false));
+      row.addEventListener("click", () => choose(s, index));
+    }
     s.list.append(row);
   });
-  s.empty.hidden = s.filtered.length > 0;
+  s.empty.hidden = s.visible.length > 0;
 }
 
 function choose(s: QuickPickState, index: number): void {
-  if (index < 0 || index >= s.items.length) return;
+  const item = s.items[index];
+  if (!item || item.separator || item.disabled) return;
   const onSelect = s.opts.onSelect;
   closeQuickPick();
   onSelect(index);
@@ -165,8 +221,10 @@ export function showQuickPick(opts: QuickPickOptions): void {
     list,
     empty,
     items: opts.items,
-    filtered: [],
+    visible: [],
+    selectable: [],
     active: -1,
+    query: "",
     opts,
     onPointerDown: (e) => {
       const target = e.target as Node;
@@ -184,7 +242,7 @@ export function showQuickPick(opts: QuickPickOptions): void {
       opts.items.findIndex((item) => item.checked),
     );
   applyFilter(s, "");
-  const startPos = s.filtered.indexOf(initial);
+  const startPos = s.selectable.indexOf(initial);
   if (startPos > 0) setActive(s, startPos, false);
 
   input.addEventListener("input", () => applyFilter(s, input.value));
@@ -192,7 +250,7 @@ export function showQuickPick(opts: QuickPickOptions): void {
     if (e.key === "ArrowDown") {
       e.preventDefault();
       e.stopPropagation();
-      setActive(s, Math.min(s.filtered.length - 1, s.active + 1));
+      setActive(s, Math.min(s.selectable.length - 1, s.active + 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       e.stopPropagation();
@@ -200,7 +258,7 @@ export function showQuickPick(opts: QuickPickOptions): void {
     } else if (e.key === "Enter") {
       e.preventDefault();
       e.stopPropagation();
-      const index = s.filtered[s.active];
+      const index = s.selectable[s.active];
       if (index !== undefined) choose(s, index);
     } else if (e.key === "Escape") {
       e.preventDefault();

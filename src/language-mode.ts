@@ -17,7 +17,20 @@ import { perfProfileFor } from "./editor/perf";
 import { AUTO_LANGUAGE, languageChoices, languageInfoByLabel } from "./editor/language";
 import { applyPanelMode } from "./markdown";
 import { showQuickPick, quickPickIsOpen, closeQuickPick } from "./shell/quickpick";
+import { familyOf, fileIconHtml } from "./shell/fileicons";
 import { refreshAll, sbLang } from "./ui";
+
+/**
+ * 浮层条目：语言名 + 家族图标（与标签上的文件图标同一套 familyOf / fileIconHtml）。
+ * 「自动检测」不是一种语言，不挂图标 —— 与 VS Code 语言选择器同款。
+ */
+function languagePickItems(override: string | null) {
+  return languageChoices(override).map((choice) => {
+    if (choice.label === AUTO_LANGUAGE) return choice;
+    const fam = familyOf(choice.label);
+    return { ...choice, icon: fileIconHtml(fam), iconFamily: fam };
+  });
+}
 
 /** 文档第一行（自动检测的 shebang / 魔数要用；会话恢复的文档也走这里）。 */
 function firstLineOf(docId: number): string {
@@ -71,7 +84,7 @@ export function showLanguagePicker(): void {
   if (!doc) return; // 无文档时那颗键是 disabled 的，这里兜底
 
   const docId = doc.tabId;
-  const items = languageChoices(doc.langOverride);
+  const items = languagePickItems(doc.langOverride);
   const activeIndex = Math.max(
     0,
     items.findIndex((item) => item.checked),

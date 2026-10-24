@@ -9,9 +9,9 @@
 // 约定（写在这里是为了能被机器守住，不只是注释）：
 //   · 全局已有 `button { cursor: pointer }`，所以**新增一个 button 天然是 hand**；
 //     出问题的一定是某条规则**显式覆盖**成了别的指针。
-//   · `cursor: default` **只允许**出现在「点了没反应」的元素上：置灰项（:disabled）、
-//     状态栏语言项（`.sb-lang`，B233 起纯展示、恒不可点）、提示层（`.tooltip`，本身
-//     `pointer-events: none`）。
+//   · `cursor: default` **只允许**出现在「点了没反应」的元素上：置灰项（原生 `:disabled`
+//     与组件自己的 `.is-disabled`，如 B366 的禁用快速选择项）、状态栏语言项（`.sb-lang`，
+//     B233 起纯展示、恒不可点）、提示层（`.tooltip`，本身 `pointer-events: none`）。
 //   · 分隔条 / 拖拽把手用 `ew-resize`、`ns-resize`、`all-scroll`，那是**语义光标**，
 //     不属于本约定（改它们反而是错的）—— 见下面白名单之外的处理。
 import { describe, it, expect } from "vitest";
@@ -43,8 +43,13 @@ function scanDefaultCursors(css: string): DefaultCursorScan {
       const sel = raw.trim().replace(/\s+/g, " ");
       if (!sel) continue;
       all.push(sel);
-      // 允许的三种「点了没反应」：置灰、状态栏语言项（B233 起纯展示）、提示层
-      const ok = sel.includes(":disabled") || sel.includes(".sb-lang") || sel.includes(".tooltip");
+      // 允许的「点了没反应」：置灰（原生 :disabled 与组件自己的 .is-disabled）、
+      // 状态栏语言项（B233 起纯展示）、提示层
+      const ok =
+        sel.includes(":disabled") ||
+        sel.includes(".is-disabled") ||
+        sel.includes(".sb-lang") ||
+        sel.includes(".tooltip");
       if (!ok) offenders.push(sel);
     }
   }
