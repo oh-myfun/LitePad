@@ -107,15 +107,21 @@
 :root[data-theme="dark"] {
   /* color-scheme 让 Chromium 的原生控件（滚动条、下拉、表单）按暗色渲染 */
   color-scheme: dark;
-  --bg: #1b1d1f;
-  --bg-toolbar: #1b1d1f;
+  /* B376：整块对齐 VS Code **Dark Modern**（`extensions/theme-defaults/themes/dark_modern.json`）：
+       --bg        = editor.background               #1F1F1F（源码与预览共用这一颗）
+       --bg-toolbar = titleBar/statusBar/sideBar.background #181818
+       --bg-elevated = menu.background               #1F1F1F
+       --bg-hover  = list.hoverBackground            #2A2D2E
+       --border    = editorGroupHeader.tabsBorder    #2B2B2B（活动标签帽线取这一颗） */
+  --bg: #1f1f1f;
+  --bg-toolbar: #181818;
   /* B204（用户点名「状态栏颜色和标题栏背景色一致」）：原来那颗独立的
      `--bg-status`（#17191b，比 --bg-toolbar 暗一档）**删了**；状态栏与标题栏现在同认
      `--bg-toolbar` 这一颗。深浅两档各定义一次，规则里只写变量名 —— 主题切换只动这一处。
      ⚠️ 别再补回一颗独立的状态栏底色：两条 chrome 各刷各的，正是这次要消掉的色差。 */
-  --bg-elevated: #26292d;
-  --bg-hover: #2f3338;
-  --border: #34383d;
+  --bg-elevated: #1f1f1f;
+  --bg-hover: #2a2d2e;
+  --border: #2b2b2b;
   /* B204：原来的 `--bg-status`（状态栏那颗，比 --bg-toolbar 暗一档 #17191b）**删掉了**
      —— 用户点名「状态栏颜色和标题栏背景色一致」。两条窗口 chrome 现在只认
      `--bg-toolbar` 这一颗：深浅两档各定义一次，状态栏直接引用它，不存在第二颗同源变量。
@@ -123,15 +129,22 @@
   /* B202：左栏按钮（.side-btn）的**点亮**与**按下**两档底色（悬停直接用上面的
      --bg-hover）。深浅各定义一次，规则里只写变量名 —— 主题切换时这一处就够。 */
   --side-btn-on: color-mix(in srgb, var(--accent) 18%, transparent);
-  --side-btn-active: #3a3f45;
-  --fg: #d8dbe0;
-  --fg-muted: #8b9299;
+  --side-btn-active: #2a2d2e;
+  --fg: #cccccc;
+  --fg-muted: #9d9d9d;
+  /* B376：源码编辑区（CM6）的颜色 token —— 取值照 VS Code Dark Modern 与
+     `src/vs/editor/common/core/editorColorRegistry.ts` 的默认档。 */
+  --editor-cursor: #aeafad; /* editorCursor.foreground */
+  --editor-selection: #264f78; /* editor.selectionBackground */
+  --editor-line-highlight-border: #282828; /* editor.lineHighlightBorder */
+  --editor-line-number: #6e7681; /* editorLineNumber.foreground（Dark Modern） */
+  --editor-line-number-active: #cccccc; /* editorLineNumber.activeForeground */
   /* B373：资源管理器缩进引导线，取值照 VS Code 的 `tree.indentGuidesStroke`
      （暗色档 #585858）；指针悬停才显的那几条用同一色 @40%
      （`tree.inactiveIndentGuidesStroke` = transparent(treeIndentGuidesStroke, 0.4)）。 */
   --tree-guide: #585858;
   --tree-guide-inactive: color-mix(in srgb, var(--tree-guide) 40%, transparent);
-  --accent: #4c9ffe;
+  --accent: #0078d4;
   --accent-fg: #ffffff;
   /* B366：居顶快速选择的**选中行**（照 VS Code quick input）：
      `quickInputList.focusBackground` 默认取 `list.activeSelectionBackground`
@@ -140,28 +153,22 @@
   --pick-focus-fg: #ffffff;
   --danger: #f47067;
   --warn: #e2b341;
-  /* 标签（B113 起对齐 VS Code 1.139 的 **Connected 相连标签**，不再是独立药丸）：
+  /* 标签（B113 起对齐 VS Code 的 **Connected 相连标签**，不再是独立药丸）：
      标签条是一条**连续的表面**，活动标签取**编辑器底色**、与下方编辑区融为一体
      （B121 最终形态：舌片同色 + 舌片下方无分割线），非活动标签透明。
      依据 `workbench/contrib/modernUI/browser/media/connectedEditorTabs.css`：
-       · 活动标签底色引用编辑器背景（VS Code 语义）；LitePad 取舍见下一条注释
-       · --modern-ui-connected-tab-strip-background = editorGroupHeader.tabsBackground
-     条带取深 #242629 / 浅 #F3F3F3 那一档。 */
-  --tab-strip-bg: #242629;
-  /* 非活动标签：透明（露出条带）；hover 只比条带抬一点点；活动 = 编辑器底色。
+       · 活动标签底色引用编辑器背景（VS Code 语义）—— B376 起直接取 var(--bg)；
+       · 条带 = editorGroupHeader.tabsBackground（Dark Modern #181818）；
+       · 非活动文字 = tab.inactiveForeground（#9D9D9D），
+         活动文字 = tab.activeForeground（#FFFFFF）。
      ⚠️ 三档必须拉开可感知的差距 —— hover 若与 active 同色就分不出「选中」和「划过」。
-     B119：hover 改用 VS Code connected 的口径（connectedEditorTabs.css:77）
-     color-mix(fg 6%, 条带色)——与旧写法 rgba(255,255,255,.05) 观感几乎一致，
-     但「混底色」比「叠半透明」确定性强（不依赖下面垫的是什么）。
-     B121（用户裁决，最终形态）：「标签激活时标签和编辑区颜色融为一体」——
-     深色活动标签取 oneDark 的 **#282c34**（editor.ts 挂 oneDark，内容区实际
-     底色就是它），舌片与编辑区同色连成一体；配合条带底部细线被舌片覆盖
-     （见 .panel-tabstrip 的 B121 注释），活动标签下方不再有边框。
-     （B120 曾按用户「深色凹槽」裁决取 var(--bg)，看到融合效果后定为 B121。）
-     浅色下编辑器无 oneDark，底色即 var(--bg) 纯白，同样融为一体。 */
+     B119：hover 走 VS Code connected 的口径（connectedEditorTabs.css）：color-mix(fg 6%, 条带色)。 */
+  --tab-strip-bg: #181818;
+  --tab-fg-inactive: #9d9d9d;
+  --tab-fg-active: #ffffff;
   --tab-bg-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-strip-bg));
-  --tab-bg-active: #282c34;
-  --tab-bg-active-hover: #343940;
+  --tab-bg-active: var(--bg);
+  --tab-bg-active-hover: #262626;
   /* 文件类型图标的 Seti 色调（B367）：深色档，取值与 VS Code 默认 Seti 主题一致。
      字形负责「哪个语言」，颜色是 Seti 的主题数据，不另造一套。 */
   --seti-blue: #519aba;
@@ -185,7 +192,7 @@
   /* 查找栏输入区底色。VS Code 的 `input.background` 与浮层底色是**反向拉开**的：
      深色档输入框比浮层更亮、浅色档比浮层更暗 —— 靠填充自己浮起来，不靠描边
      （vs `input.border` 深浅两档都是 null，即**无边框**）。 */
-  --find-field-bg: #2f3338;
+  --find-field-bg: #313131;
   /* 查找栏图标的两档悬停色，照抄 VS Code —— ⚠️ 两者**不是同一个值**：
      工具栏按钮（上一个、下一个、替换、关闭）走 toolbar.hoverBackground @0x50，
      输入框内开关（Aa、ab、.* 正则、选区、AB）走 inputOption.hoverBackground @0x80。
@@ -207,9 +214,9 @@
   --find-sash: color-mix(in srgb, var(--fg) 20%, transparent);
   --find-sash-hover: var(--accent);
   /* tooltip（B58，取代原生 title）。配色照搬 VS Code：
-     底色 = editorWidget.background（暗色 #252526），边框 = transparent(foreground, 0.2)，
+     底色 = editorWidget.background（Dark Modern #202020），边框 = transparent(foreground, 0.2)，
      shadow = --vscode-shadow-lg，键帽三色 = keybindingLabel.* 令牌。 */
-  --tip-bg: #26292d;
+  --tip-bg: #202020;
   --tip-border: color-mix(in srgb, var(--fg) 20%, transparent);
   --tip-shadow: var(--shadow-lg);
   --tip-key-bg: rgba(128, 128, 128, 0.17);
@@ -217,55 +224,64 @@
   --tip-key-border: rgba(51, 51, 51, 0.6);
   --tip-key-bottom: rgba(68, 68, 68, 0.6);
   /* 分隔条线色（B59，S5）：从通用 --border 里抽出来单独可调（分屏 .layout-sep 与
-     左栏 .side-resizer 共用，B28 要求两者同款）。深色取 VS Code editorGroup.border
-     的 #444444 档 —— 比通用边框略清晰，分屏边界更明确。 */
-  /* B121：#444444 → #2e3034。宽度本就是 1px CSS，但 150% 缩放下高对比色会被
-     抗锯齿糊成 ~2-3 物理像素的「粗线」；降对比后与两侧面板底色（#282c34 /
-     #1e2227）只差一档，观感对齐 VS Code editorGroup.border（#2b2b2b，几乎
-     隐形，拖拽悬停时另有高亮，B59）。 */
-  --sep-line: #2e3034;
+     左栏 .side-resizer 共用，B28 要求两者同款）。B376 起与 VS Code
+     editorGroupHeader.tabsBorder 同值（#2B2B2B，几乎隐形；拖拽悬停时另有高亮）。 */
+  --sep-line: #2b2b2b;
   /* 拖拽落点高亮的填充色（B60 回退为**浅蓝**）：B59 照搬 VS Code 的
      editorGroup.dropBackground（深灰 @0.5 / 浅蓝 @0.18），实测在 LitePad 上落点
      边界几乎看不出来，用户明确要求换回 B59 之前的浅蓝。取 accent @0.22 —— 填充与
      2px 描边同色，描边压在填充上叠加成约 @0.39，形成「淡蓝底 + 略深蓝边」。
-     ⚠️ 填充/描边必须同源（都走 --drop-fill），否则改主题只改一半。 */
-  --drop-fill: rgba(76, 159, 254, 0.22);
+     ⚠️ 填充/描边必须同源（都走 --drop-fill），否则改主题只改一半。
+     B376：accent 已换成 VS Code focusBorder #0078D4，这里同步取它的 RGB。 */
+  --drop-fill: rgba(0, 120, 212, 0.22);
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
+  /* B376：整块对齐 VS Code **Light Modern**（`extensions/theme-defaults/themes/light_modern.json`）：
+       --bg = editor.background #FFFFFF；--bg-toolbar = titleBar/statusBar/sideBar #F8F8F8；
+       --bg-hover = list.hoverBackground #F2F2F2；--border = tabsBorder #E5E5E5。 */
   --bg: #ffffff;
-  /* 浅色档 chrome 沉一档（#f6f7f8 压在纯白内容区上），标题栏与状态栏共用这一颗 ——
+  /* 浅色档 chrome 沉一档（#f8f8f8 压在纯白内容区上），标题栏与状态栏共用这一颗 ——
      与深色档同一判据（B204）。 */
-  --bg-toolbar: #f6f7f8;
+  --bg-toolbar: #f8f8f8;
   --bg-elevated: #ffffff;
-  --bg-hover: #e6e8eb;
-  --border: #dcdfe3;
+  --bg-hover: #f2f2f2;
+  --border: #e5e5e5;
   /* B202：左栏按钮（.side-btn）悬停 / 按下 / 点亮三档 —— 见那条规则里的同款说明。
      分成两颗变量而不是把色写死在规则里：深浅两档要各自跟着底色调，
      写死在规则里就要改两处，改漏一处就又变回「同一颗按钮两种底色」。 */
   --side-btn-on: color-mix(in srgb, var(--accent) 14%, transparent);
-  --side-btn-active: #d5d9de;
-  --fg: #24292f;
-  --fg-muted: #6a737d;
+  --side-btn-active: #e8e8e8;
+  --fg: #3b3b3b;
+  --fg-muted: #616161;
+  /* B376：源码编辑区（CM6）的颜色 token，同深色档的语义，取 Light Modern 值。 */
+  --editor-cursor: #000000;
+  --editor-selection: #add6ff;
+  --editor-line-highlight-border: #eeeeee;
+  --editor-line-number: #6e7681;
+  --editor-line-number-active: #171184;
   /* B373：同深色档，浅色取 VS Code `tree.indentGuidesStroke` 的 light 值 #a9a9a9。 */
   --tree-guide: #a9a9a9;
   --tree-guide-inactive: color-mix(in srgb, var(--tree-guide) 40%, transparent);
-  --accent: #0969da;
+  --accent: #005fb8;
   --accent-fg: #ffffff;
   /* B366：与深色档同源（VS Code 浅色档 list.activeSelectionBackground = #0060C0）。 */
   --pick-focus-bg: #0060c0;
   --pick-focus-fg: #ffffff;
   --danger: #cf222e;
   --warn: #9a6700;
-  /* 标签（B113 Connected 相连标签，同深色档的说明）：条带取 VS Code 浅色档的
-     editorGroupHeader.tabsBackground（#F3F3F3），活动标签 = 编辑器背景（纯白）。
-     非活动 = 透明；hover 压暗一档（浅色主题里「变亮」没有感知空间）。 */
-  --tab-strip-bg: #f3f3f3;
+  /* 标签（B113 Connected 相连标签，同深色档的说明）：条带取 VS Code Light Modern 的
+     editorGroupHeader.tabsBackground（#F8F8F8），活动标签 = 编辑器背景（纯白）。
+     非活动文字 = tab.inactiveForeground #616161，活动文字 = tab.activeForeground #3B3B3B；
+     hover 压暗一档（浅色主题里「变亮」没有感知空间）。 */
+  --tab-strip-bg: #f8f8f8;
+  --tab-fg-inactive: #616161;
+  --tab-fg-active: #3b3b3b;
   /* B119：hover 同深色档改 color-mix 口径（混入 6% 前景 ≈ 旧的 rgba(0,0,0,.05)） */
   --tab-bg-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-strip-bg));
   --tab-bg-active: var(--bg);
-  --tab-bg-active-hover: #e6e8eb;
+  --tab-bg-active-hover: #f2f2f2;
   /* 文件类型图标的 Seti 色调（B367）：浅色档取 Seti 主题的 light 变体，别拿深色档硬压。 */
   --seti-blue: #498ba7;
   --seti-yellow: #b7b73b;
@@ -285,7 +301,10 @@
   --find-match-active: rgba(255, 150, 0, 0.7);
   /* 浮层投影（同深色档：VS Code 的 shadow-lg 深浅两色共用一条） */
   --shadow-lg: 0 0 12px rgba(0, 0, 0, 0.14);
-  /* 查找栏输入区底色：浅色档压暗一档（浮层是纯白，输入框必须比它暗才分得开）。 */
+  /* 查找栏输入区底色：VS Code 的 input.background 是纯白，但我们的 `.find-bar`
+     走的是 `--bg-elevated`（浅色档也是纯白）—— 纯白压纯白、输入框又无边框，
+     不聚焦时整块消失。所以浅色档保留比浮层沉一档的 #f6f7f8（VS Code 的浮层本身
+     是 #F8F8F8，等价于「输入框白、浮层灰」，这里只是把灰放在输入框上）。 */
   --find-field-bg: #f6f7f8;
   /* 两档悬停色：浅色档 VS Code 给的**就是同一个值**（toolbar/inputOption 都是 #b8b8b850）。 */
   --find-btn-hover: #b8b8b850;
@@ -298,22 +317,21 @@
   /* 左缘宽度手柄（B80）：语义与深色档完全一致，只是 --fg 换了，color-mix 自己跟着走 */
   --find-sash: color-mix(in srgb, var(--fg) 20%, transparent);
   --find-sash-hover: var(--accent);
-  /* tooltip（B58）：浅色档底色取 VS Code 的 editorWidget.background = #F3F3F3
+  /* tooltip（B58）：浅色档底色取 VS Code Light Modern 的 editorWidget.background = #F8F8F8
      （**不是纯白** —— 纯白气泡压在白色编辑区上只剩一圈描边，浮不起来）。 */
-  --tip-bg: #f3f3f3;
+  --tip-bg: #f8f8f8;
   --tip-border: color-mix(in srgb, var(--fg) 20%, transparent);
   --tip-shadow: var(--shadow-lg);
   --tip-key-bg: rgba(221, 221, 221, 0.4);
   --tip-key-fg: #555555;
   --tip-key-border: rgba(204, 204, 204, 0.4);
   --tip-key-bottom: rgba(187, 187, 187, 0.4);
-  /* 分隔条线色（B59，S5）：浅色**沿用原 --border 值**。VS Code 浅色档是 #E7E7E7，
-     但那在 LitePad 更密的布局里几乎看不见，故不照搬（同 tooltip 的 max-width 一样，
-     属有意偏离，已记录在此）。 */
-  --sep-line: #dcdfe3;
-  /* 拖拽落点高亮填充（B60 回退浅蓝）：浅色档取 accent(#0969da) @0.22，同深色档。
+  /* 分隔条线色（B59，S5）：B376 起取 VS Code Light Modern 的 tabsBorder / editorGroup.border
+     #E5E5E5。 */
+  --sep-line: #e5e5e5;
+  /* 拖拽落点高亮填充（B60 回退浅蓝）：浅色档取 accent(#005FB8) @0.22，同深色档。
      B59 曾用 VS Code 的 #2677CB @0.18 —— 偏灰且太淡，落点不醒目。 */
-  --drop-fill: rgba(9, 105, 218, 0.22);
+  --drop-fill: rgba(0, 95, 184, 0.22);
 }
 
 /* ---------- 滚动条：全应用统一 + 随深浅色联动 ----------
@@ -437,7 +455,7 @@ body {
    （B223 用户点名「logo 右侧空白与左侧一致」，原先左 10px / 右 16px 已拉平）。
    源图**带底**（B222 起换羽毛图，见 main.ts），background-size:contain 只负责等比缩，
    别改成 cover：底图一撑就会切掉文档边角。
-   浅色主题下纸面偏白（--bg-toolbar #f6f7f8），靠纸面那道淡描边撑对比，观感请实机复核。 */
+   浅色主题下纸面偏白（--bg-toolbar #f8f8f8），靠纸面那道淡描边撑对比，观感请实机复核。 */
 .app-mark {
   flex: 0 0 auto;
   width: 20px;
@@ -889,8 +907,9 @@ button:focus-visible {
      仍靠横向滚动，不互相挤压（B56 原意保留）。截断效果见 .tab-name。 */
   max-width: 220px;
   border: none;
-  /* 非活动：文字降到 50% 前景（VS Code 的 color-mix 写法），底色全透明 */
-  color: color-mix(in srgb, var(--fg) 50%, transparent);
+  /* 非活动：取 VS Code tab.inactiveForeground（B376；原先用前景 50% 混色，
+     在 Dark Modern 下会比 #9D9D9D 更暗）。底色全透明。 */
+  color: var(--tab-fg-inactive);
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
@@ -933,11 +952,11 @@ button:focus-visible {
   background: var(--tab-bg-hover);
 }
 
-/* 活动标签：fill 抬到**编辑器底色**（--tab-bg-active：深色 = oneDark 的
-   #282c34，浅色 = var(--bg) 纯白 —— 都与下方编辑区同色），无边框、
-   只有上方两角圆、侧边直线落到条带底。 */
+/* 活动标签：fill 抬到**编辑器底色**（--tab-bg-active = var(--bg)，源码 / 预览
+   共用同一颗），文字取 tab.activeForeground（深色 #FFFFFF 比正文 #CCCCCC 亮一档），
+   无边框、只有上方两角圆、侧边直线落到条带底。 */
 .tab-active {
-  color: var(--fg);
+  color: var(--tab-fg-active);
 }
 
 /* B113-2：fill 的底色收进局部变量 --tab-fill-bg —— 非焦点降档（下方
@@ -3217,7 +3236,7 @@ button:focus-visible {
   content: "";
   position: absolute;
   inset: 0;
-  /* B60：浅蓝填充（accent @0.22，深 `#4c9ffe` / 浅 `#0969da`），**不描边**。
+  /* B60：浅蓝填充（accent @0.22，B376 起深 `#0078D4` / 浅 `#005FB8`），**不描边**。
      用户反馈轨迹：B59 照搬 VS Code 的 dropBackground（深灰@0.5 / 浅蓝@0.18）→
      看不清落点；改回浅蓝 + 2px 同色描边 → 反馈「不用描边」。故去掉 border，
      填充值保持用户认可的那一档（区域内侧观感与上一版一致，只是没了那圈深边）。
@@ -3496,22 +3515,27 @@ button:focus-visible {
   border-left-width: 2px;
 }
 
-/* ---------- 行号 gutter 主题化 ----------
-   CM 默认/oneDark 的 gutter 配色不跟随 app 主题变量；
+/* ---------- 行号 gutter / 当前行主题化 ----------
+   B376：照 VS Code 的编辑器口径 —— gutter 与编辑区同底色、无分隔线；
+   行号取 editorLineNumber.foreground，当前行号取 activeForeground；
+   当前行本身是一圈 editor.lineHighlightBorder（不是整行铺底）。
    这里用高优先级选择器统一走 CSS 变量，深浅色切换时联动。 */
 .panel-host .cm-editor .cm-gutters {
-  background: var(--bg-toolbar);
-  color: var(--fg-muted);
-  border-right: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--editor-line-number);
+  border-right: none;
   transition:
     background-color var(--transition),
-    color var(--transition),
-    border-color var(--transition);
+    color var(--transition);
 }
 
 .panel-host .cm-editor .cm-activeLineGutter {
-  background: var(--bg-hover);
-  color: var(--fg);
+  background: transparent;
+  color: var(--editor-line-number-active);
+}
+
+.panel-host .cm-editor .cm-activeLine {
+  box-shadow: inset 0 0 0 1px var(--editor-line-highlight-border);
 }
 
 /* 折叠图标（.cm-fold-marker 由 editor.ts 的 markerDOM 生成）：

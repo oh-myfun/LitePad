@@ -1007,11 +1007,23 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
       /\.layout-sep-h\s*>\s*\.layout-corner\s*\{[^}]*left:\s*-4px/,
     );
 
-    // ② 落点回退浅蓝：accent 系（深 #4c9ffe / 浅 #0969da）@0.22，不再用 VS Code 的灰
+    // ② 落点回退浅蓝：填充与描边同源 —— 取该主题的 --accent @0.22，不再用 VS Code 的灰。
+    //    B376 换过 accent 取值，所以这里按**同源关系**判（不抄某一档的 RGB）：
+    //    填色跟着 accent 走才叫「填充与描边同色」，抄死值只能证明两边一起过时。
     const darkTheme = themeBlock(css, "dark");
     const lightTheme = themeBlock(css, "light");
-    expect(darkTheme, "深色落点为 accent 浅蓝").toContain("--drop-fill: rgba(76, 159, 254, 0.22)");
-    expect(lightTheme, "浅色落点为 accent 浅蓝").toContain("--drop-fill: rgba(9, 105, 218, 0.22)");
+    const expectedFill = (block: string) => {
+      const hex = /--accent:\s*#([0-9a-fA-F]{6});/.exec(cssDecls(block))?.[1] ?? "";
+      expect(hex, "该主题必须给出 --accent").toHaveLength(6);
+      const rgb = [0, 2, 4].map((i) => Number.parseInt(hex.slice(i, i + 2), 16));
+      return `--drop-fill: rgba(${rgb.join(", ")}, 0.22)`;
+    };
+    expect(darkTheme, "深色落点 = accent @0.22").toContain(expectedFill(darkTheme));
+    expect(lightTheme, "浅色落点 = accent @0.22").toContain(expectedFill(lightTheme));
+    expect(
+      expectedFill(darkTheme),
+      "深浅两档 accent 必须不同（否则这条同源判据证不了两套主题）",
+    ).not.toBe(expectedFill(lightTheme));
     expect(darkTheme, "不得残留 VS Code 的深灰落点").not.toContain("rgba(83, 89, 93, 0.5)");
 
     // ③ 对齐联动：注册表 + 查找 + 双击复位转发（对标 sash.ts 的 linkedSash）

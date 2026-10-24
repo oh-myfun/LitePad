@@ -120,7 +120,9 @@ export async function enhanceMarkdown(
           try {
             const html = await codeToHtml(code, {
               lang,
-              themes: { light: "github-light", dark: "github-dark" },
+              // B376：代码块也换回 VS Code 的 Dark+ / Light+ —— 与源码编辑区
+              // （src/editor/theme.ts）同一套 token 色，预览与源码读起来是同一主题。
+              themes: { light: "light-plus", dark: "dark-plus" },
               // ⚠️ 默认的 `defaultColor: "light"` 会把浅色值写成**内联** `color` /
               //    `background-color:#fff`，内联压过类规则 ⇒ 深色主题下代码块仍是白底浅字
               //    （B321 用户报的「配色不随主题切换」）。关掉它，shiki 只留

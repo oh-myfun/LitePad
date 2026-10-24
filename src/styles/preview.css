@@ -15,13 +15,16 @@
    导出件就借不到，只能再抄一份样式，两份必然漂移。预览根节点与导出件同时带这两个类
    （`markdown/preview.ts` 的 root、`markdown/exporter.ts`）。 */
 .md-rendered {
-  --md-fg: #1f2328;
+  /* B376：预览底色 / 文字取 VS Code Light Modern 的 editor.background /
+     editor.foreground；代码块 = textCodeBlock.background，链接 = textLink.foreground。
+     预览与源码共用同一档底色，切换模式不跳色。 */
+  --md-fg: #3b3b3b;
   --md-bg: #ffffff;
-  --md-muted: #656d76;
-  --md-border: #d8dee4;
-  --md-code-bg: #f6f8fa;
-  --md-quote-bg: #f6f8fa;
-  --md-link: #0969da;
+  --md-muted: #616161;
+  --md-border: #e5e5e5;
+  --md-code-bg: #f8f8f8;
+  --md-quote-bg: #f8f8f8;
+  --md-link: #005fb8;
 
   color: var(--md-fg);
   /* 预览字号跟随应用字号（--font-size 由 :root 提供，缩放/设置都改它）；
@@ -57,13 +60,16 @@
 }
 
 :root[data-theme="dark"] .md-rendered {
-  --md-fg: #e6e8eb;
-  --md-bg: #1e2227;
-  --md-muted: #9aa4ae;
-  --md-border: #3a4149;
-  --md-code-bg: #262c33;
-  --md-quote-bg: #262c33;
-  --md-link: #539bf5;
+  /* B376：同 Light 档的语义，取 VS Code Dark Modern 的对应色（editor.background
+     #1F1F1F / editor.foreground #CCCCCC / textCodeBlock.background #2B2B2B /
+     textLink.foreground #4DAAFC）。 */
+  --md-fg: #cccccc;
+  --md-bg: #1f1f1f;
+  --md-muted: #9d9d9d;
+  --md-border: #2b2b2b;
+  --md-code-bg: #2b2b2b;
+  --md-quote-bg: #2b2b2b;
+  --md-link: #4daafc;
 }
 
 /* B235：宽度档由 main.ts 写在 **`:root`** 的 `--md-content-max` 上，这里靠继承取到。

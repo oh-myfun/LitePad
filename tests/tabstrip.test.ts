@@ -355,8 +355,11 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     expect(tab, "标签自身不得再上底色（底色归 .tab-fill）").not.toMatch(
       /background:\s*var\(--tab-bg/,
     );
-    expect(tab, "非活动文字降到 50% 前景（VS Code color-mix 写法）").toMatch(
-      /color:\s*color-mix\(in srgb, var\(--fg\) 50%, transparent\)/,
+    // B376 起非活动文字直接用 VS Code 的 tab.inactiveForeground
+    // （深 #9D9D9D / 浅 #616161），不再拿前景色兑 50% 透明 —— 那一版在深色下偏暗，
+    // 与 VS Code 实测值差着一档。两档的具体值由 tests/theme-vscode.test.ts 钉住。
+    expect(tab, "非活动文字取 tab.inactiveForeground token").toMatch(
+      /color:\s*var\(--tab-fg-inactive\)/,
     );
 
     const fill = cssDecls(ruleBlock(css, ".tab-fill"));
@@ -546,15 +549,18 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
         "--tab-bg-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-strip-bg));",
       );
     }
-    // B121（最终形态）：活动标签 = 编辑器底色，与编辑区融为一体 —— 深色取
-    // oneDark 的 #282c34（editor.ts 挂 oneDark，内容区实际底色），浅色 = var(--bg)。
-    // （B120 曾按「深色凹槽」取 var(--bg)，融合裁决后回正。）
-    expect(themeBlock(css, "dark"), "深色活动标签必须同编辑器底色（oneDark #282c34）").toContain(
-      "--tab-bg-active: #282c34;",
-    );
-    expect(themeBlock(css, "light"), "浅色活动标签仍取 --bg（纯白）").toContain(
-      "--tab-bg-active: var(--bg);",
-    );
+    // B121（最终形态）：活动标签 = 编辑器底色，与编辑区融为一体。
+    // B376 起两套主题都取 var(--bg)：源码底色换成了 VS Code 的 editor.background
+    // （深 #1f1f1f / 浅 #ffffff），这条「同源」判据不再依赖 One Dark 的具体色值 ——
+    // 改主题时只要两边都跟 --bg 走，活动标签就不会和编辑区裂开。
+    for (const [name, block] of [
+      ["深色", themeBlock(css, "dark")],
+      ["浅色", themeBlock(css, "light")],
+    ] as const) {
+      expect(block, `${name}活动标签必须同编辑器底色（var(--bg)，B121/B376）`).toContain(
+        "--tab-bg-active: var(--bg);",
+      );
+    }
     // B349：条带下沿那条线由 `.panel-head::after` 一条通铺（标签段 + ops 段一起盖住），
     // 所以 ops 段**自己**不许再有 border-bottom —— 两处画同一条线就是 2px。
     const ops = cssDecls(ruleBlock(css, ".panel-ops"));
@@ -1410,7 +1416,9 @@ describe("状态栏与标题栏同源（B204）", () => {
 
   it("反向验证②：把 --bg-status 当新变量加回来必须被咬住", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
-    const BAD = css.replace(/(--bg-toolbar:\s*#f6f7f8;)/, "$1\n  --bg-status: #eef0f2;");
+    // 不拿某个主题值当锚点（B376 换过配色，锚旧值会让替身构造静默失效）；
+    // 直接补一条独立的主题覆盖块 —— 与「日后有人加回这颗变量」的形状一致。
+    const BAD = `${css}\n:root[data-theme="light"] { --bg-status: #eef0f2; }\n`;
     expect(BAD, "替身必须真的补回那颗变量").not.toBe(css);
     expect(() => {
       expect(BAD, "独立的状态栏底色必须被抓到").not.toMatch(/--bg-status\s*:/);

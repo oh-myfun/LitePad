@@ -5,7 +5,7 @@
 // 抽离后 main.ts 的「外观」职责归零，便于独立单测（见 tests/appearance.test.ts 规划）。
 
 import { EditorView } from "@codemirror/view";
-import { oneDark as oneDarkTheme } from "@codemirror/theme-one-dark";
+import { vscodeEditorTheme } from "./editor/theme";
 import type { PreviewWidth } from "./ipc/api";
 import { tabs, panels, setIsWrap } from "./core/app-state";
 
@@ -22,7 +22,7 @@ export function rethemePreviews(): void {
 
 export function applyDarkToTabs(dark: boolean): void {
   for (const tab of tabs.values()) {
-    const effect = tab.comps.theme.reconfigure(dark ? oneDarkTheme : []);
+    const effect = tab.comps.theme.reconfigure(vscodeEditorTheme(dark));
     const panel = panels.get(tab.panelId);
     if (panel?.view && panel.viewTabId === tab.tabId) {
       panel.view.view.dispatch({ effects: effect });

@@ -1,6 +1,6 @@
 // B362 编辑器光标竖线粗细：CM6 默认的 `.cm-cursor` 是 `border-left: 1.2px`，
 // 在 125% 缩放下落在 1.5 设备像素上，等于一条半透明的灰线（用户：「光标竖线太细，加粗点」）。
-// 这里只加宽，不改颜色 —— 颜色仍由主题（oneDark / app 主题）决定。
+// 这里只加宽，不改颜色 —— 颜色仍由主题（B376 起是 VS Code 的 editorCursor.foreground，走 --editor-cursor）决定。
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";

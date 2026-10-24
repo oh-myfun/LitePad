@@ -7,7 +7,6 @@ import {
   selectSelectionMatches,
 } from "@codemirror/search";
 import { Compartment, EditorState, type Extension } from "@codemirror/state";
-import { oneDark } from "@codemirror/theme-one-dark";
 import {
   EditorView,
   crosshairCursor,
@@ -22,6 +21,7 @@ import {
 } from "@codemirror/view";
 import { findHighlight } from "./find";
 import { perfProfileFor, type PerfProfile } from "./perf";
+import { vscodeEditorTheme } from "./theme";
 import { CODICONS } from "../shell/codicons";
 
 export interface EditorHandle {
@@ -161,7 +161,7 @@ export function makeTabState(
       ...baseExtensions(perf),
       comps.gutter.of(gutterExtensions(perf)),
       comps.wrap.of(env.wrap ? EditorView.lineWrapping : []),
-      comps.theme.of(env.dark ? oneDark : []),
+      comps.theme.of(vscodeEditorTheme(env.dark)),
       comps.lang.of(perf.syntax ? (language ?? []) : []),
       EditorView.updateListener.of((update) => {
         if (update.docChanged || update.selectionSet) {

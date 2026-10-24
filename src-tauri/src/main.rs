@@ -18,7 +18,7 @@ use tauri::{Emitter, Manager, Theme};
 // 取值必须与 `src/styles/global.css` 的 `--bg` 一致（深浅两套），改样式时一起改。
 // `tauri.conf.json` 的 `backgroundColor` 是创建窗口时的兜底值（同样是深色），
 // 这里在 setup 阶段再按用户设置纠正一次。
-const BG_DARK: Color = Color(0x1b, 0x1d, 0x1f, 0xff);
+const BG_DARK: Color = Color(0x1f, 0x1f, 0x1f, 0xff);
 const BG_LIGHT: Color = Color(0xff, 0xff, 0xff, 0xff);
 
 /// 解析「该用哪套底色」：`theme=system` 时跟随系统，取不到就按浅色（Windows 默认）走。

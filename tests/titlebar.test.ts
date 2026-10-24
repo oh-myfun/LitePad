@@ -219,17 +219,25 @@ describe("B97 自建标题栏", () => {
       colorOf(s, ".title-dirty"),
       "标题栏那颗点必须与文档名同色（B343 定的 --dirty-mark 已被这条取代：他要的是「跟字一样」，不是白色）",
     ).toBe(name);
-    // ② 标签：标签名那一档的色是**跟着活动态换的**（非活动 = 50% 前景、活动 = 满前景），
-    //    所以「与字同色」在这一处只能写 inherit —— 抄一个固定值必然在其中那一档对不上。
+    // ② 标签：标签名那一档的色是**跟着活动态换的**（非活动 = tab.inactiveForeground、
+    //    活动 = tab.activeForeground），所以「与字同色」在这一处只能写 inherit ——
+    //    抄一个固定值必然在其中那一档对不上。
     expect(colorOf(s, ".tab-mark"), "标签那颗点要跟着标签名走 ⇒ 只能继承").toBe("inherit");
     // inherit 的前提有两条，缺一条它继承到的就不是标签名那一档：
     expect(
       colorOf(s, ".tab-name"),
       ".tab-name 自己不许声明颜色（否则 inherit 继承的是它父亲）",
     ).toBe("");
-    expect(colorOf(s, ".tab"), "标签行得有可继承的颜色来源（.tab 上那一档随活动态变的色）").toMatch(
-      /color-mix\(/,
+    const tabColor = colorOf(s, ".tab");
+    expect(tabColor, "标签行得有可继承的颜色来源（.tab 上那一档随活动态变的色）").toMatch(
+      /var\(--tab-fg-/,
     );
+    const tabActiveColor = colorOf(s, ".tab-active");
+    expect(tabActiveColor, "活动标签必须换成另一档 token").toMatch(/var\(--tab-fg-/);
+    expect(
+      tabActiveColor,
+      "活动/非活动不能是同一颗 token（否则 inherit 在两档下没有变化）",
+    ).not.toBe(tabColor);
     // ③ 那颗 token 已经零消费者 ⇒ 不许留在两套主题里当死变量
     for (const sel of [':root[data-theme="dark"]', ':root[data-theme="light"]']) {
       expect(cssDecls(ruleBlock(s, sel)), `${sel} 里不该再有 --dirty-mark`).not.toMatch(

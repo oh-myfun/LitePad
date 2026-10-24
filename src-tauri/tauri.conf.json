@@ -22,7 +22,7 @@
         "decorations": false,
         "center": true,
         "dragDropEnabled": false,
-        "backgroundColor": "#1b1d1f",
+        "backgroundColor": "#1f1f1f",
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu"
       }
     ],

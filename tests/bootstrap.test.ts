@@ -87,7 +87,7 @@ describe("B50 启动不得露出白色窗口（用户反馈：打开时先白屏
       confBg,
     );
 
-    // global.css: :root[data-theme="dark"] { --bg: #1b1d1f; }
+    // global.css: :root[data-theme="dark"] { --bg: #1f1f1f; }
     // 必须在**深色块体内**取 --bg：原先用 `[data-theme="dark"][\s\S]*?--bg:` 是非贪婪
     // 跨块匹配，深色块一旦丢了 --bg 就会一路扫进浅色块、拿浅色的值来比对（假绿）。
     const cssDark = /--bg:\s*#([0-9a-fA-F]{6})/.exec(themeBlock(css, "dark"));
