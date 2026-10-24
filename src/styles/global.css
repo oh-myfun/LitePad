@@ -3449,6 +3449,13 @@ button:focus-visible {
   min-height: 0;
 }
 
+/* B362（用户：「编辑器内光标竖线太细，加粗点」）：CM6 默认 `border-left: 1.2px`，
+   在 125% 缩放下只落 1.5 设备像素、看着像半透明灰线。只加宽、不碰颜色
+   （颜色仍归主题），也不重写整条 `border-left` —— 主题换色时这里不该抢。 */
+.panel-host .cm-editor .cm-cursor {
+  border-left-width: 2px;
+}
+
 /* ---------- 行号 gutter 主题化 ----------
    CM 默认/oneDark 的 gutter 配色不跟随 app 主题变量；
    这里用高优先级选择器统一走 CSS 变量，深浅色切换时联动。 */
