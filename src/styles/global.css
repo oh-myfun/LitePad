@@ -3801,10 +3801,13 @@ body.tab-drag-active * {
 .popup-menu button {
   display: flex;
   align-items: center;
-  /* B360（用户：「按钮宽度不要填满列表，两边稍微留点空隙」）：宽度交还给 block 布局，
-     左右各让 4px。⚠️ 别写回 `width: 100%` 再配左右 margin —— 本容器是 `overflow-y: auto`，
-     横向溢出会升级成横向滚动条（B354 的教训，见 `.popup-menu` 那条）。 */
-  width: auto;
+  /* B360（用户：「按钮宽度不要填满列表，两边稍微留点空隙」）：左右各让 4px。
+     ⚠️ 宽度必须显式扣掉外边距，两个原因各踩过一次：
+       · `width: 100%` + 左右 margin ⇒ 横向溢出，`overflow-y: auto` 的容器会冒出横向滚动条；
+       · `width: auto` ⇒ `button` 的 auto 宽是 **fit-content**（display:flex 也一样），
+         悬停色块按最长文字收窄、右边空一大截（B360 真机 PrintWindow：色块 67–238、
+         面板到 310）。 */
+  width: calc(100% - 8px);
   margin: 0 4px;
   /* B354（用户点名「紧凑一点，高度与菜单栏按钮一致」）：行高与菜单栏那颗键同取
      `--menu-item-h`。纵向内边距必须归 0 —— 这一档是 border-box，留着 `5px` 就等于

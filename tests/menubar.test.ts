@@ -1398,17 +1398,28 @@ describe("B354 菜单列表：行高与菜单栏同档 + 分割线填满宽度",
 
   // B360（用户：「菜单栏列表按钮宽度不要填满列表，两边稍微留点空隙」）：
   // 推翻 B354 里「悬停色块一路通到面板两条边框」的观感 —— 分割线仍通到两边，
-  // 条目自己两侧各让 4px。⚠️ 不许写成 `width: 100%` + 左右 margin：本容器是
-  // `overflow-y: auto`，横向溢出会升级成横向滚动条（B354 踩过，见 `.popup-menu` 注释）。
-  it("④ 条目两侧各留 4px 空隙（width 退回 auto 让外边距有地方可让，不出横向溢出）", () => {
+  // 条目自己两侧各让 4px。⚠️ 两条真机/规范约束：
+  //   · 不许 `width: 100%` + 左右 margin：本容器是 `overflow-y: auto`，横向溢出会升级成横向滚动条；
+  //   · 也不许 `width: auto`：`button` 的 auto 宽是 **fit-content**（display:flex 也一样），
+  //     实测悬停色块按最长文字收窄、右边空出 57px（B360 真机 PrintWindow 量出来的）。
+  //     宽度必须显式写成「100% 减掉两侧外边距」。
+  it("④ 条目两侧各留 4px 空隙（宽度显式扣掉外边距，两数必须耦合）", () => {
     const s = cssCode();
     const item = cssDecls(ruleBlock(s, ".popup-menu button", "display: flex"));
-    expect(horizOf(s, ".popup-menu button", "margin"), "条目左右各 4px").toBe(4);
-    expect(item, "满宽必须摘掉：100% 宽 + 外边距 = 横向溢出").not.toMatch(/width:\s*100%/);
-    expect(item, "宽度交还给 block 布局（auto = 扣掉外边距后的可用宽）").toMatch(/width:\s*auto/);
-    // 反向对照：把 margin 摘掉，同一条横向判据必须落空
-    const flush = s.replace(/(\.popup-menu button\s*\{[^}]*?)margin:\s*0 4px;/s, "$1");
-    expect(flush, "替身必须真的寄走过外边距").not.toBe(s);
-    expect(horizOf(flush, ".popup-menu button", "margin"), "贴边的替身必须被抓到").not.toBe(4);
+    const m = horizOf(s, ".popup-menu button", "margin");
+    expect(m, "条目左右各 4px").toBe(4);
+    const width = item.match(/width:\s*calc\(\s*100%\s*-\s*(\d+)px\s*\)/)?.[1];
+    expect(width, "宽度 = 100% 减掉两侧外边距（button 的 auto 是 fit-content）").toBeTruthy();
+    expect(Number(width), "扣掉的数必须正好是 2× 横向外边距").toBe(m! * 2);
+    expect(item, "满宽 + 外边距 = 横向溢出，必须摘掉").not.toMatch(/width:\s*100%/);
+    // 反向对照：外边距改成 8px 而宽度不动 ⇒ 耦合判据必须失配
+    const skewed = s.replace(/(\.popup-menu button\s*\{[^}]*?margin:\s*)0 4px;/s, "$10 8px;");
+    expect(skewed, "替身必须真的改过外边距").not.toBe(s);
+    const sw = cssDecls(ruleBlock(skewed, ".popup-menu button", "display: flex")).match(
+      /width:\s*calc\(\s*100%\s*-\s*(\d+)px\s*\)/,
+    )?.[1];
+    expect(Number(sw), "替身的宽度与外边距对不上，必须被抓到").not.toBe(
+      horizOf(skewed, ".popup-menu button", "margin")! * 2,
+    );
   });
 });
