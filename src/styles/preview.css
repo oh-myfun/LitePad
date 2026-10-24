@@ -547,7 +547,8 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 2px 0 8px;
+  /* B370：顶部不再留 2px —— VS Code 的树第一行贴着列表上沿。 */
+  padding: 0 0 8px;
   outline: none;
 }
 .explorer-children {
@@ -556,15 +557,18 @@
 .explorer-children[hidden] {
   display: none;
 }
-/* 一行：`--depth` 那一档 12px 的缩进照 VS Code 的 trees 节奏（他们给 8px 的行高增量 +
-   一层 6~12px 的 indent，窄栏里 12 刚好能看出「这是我点开的那一层的子项」）。 */
+/* B370：行节奏照 VS Code 的树：`workbench.tree.indent` 默认 **8px**、行高 22px。
+   缩进只按 `--depth` 算（不套容器 padding，理由同 B314 那段注释）。
+   文件夹行不挂图标 —— VS Code 的 Seti 主题只定义文件图标，文件夹行就是「箭头 + 名字」；
+   文件行在同样的位置放 16px Seti 图标，于是文件夹名与文件图标天然对齐。 */
 .explorer-row,
 .explorer-root,
 .explorer-note {
+  position: relative;
+  isolation: isolate;
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding-left: calc(6px + var(--depth, 0) * 12px);
+  padding-left: calc(var(--depth, 0) * 8px);
   padding-right: 6px;
   height: 22px;
   font-size: var(--fs-ui);
@@ -572,9 +576,6 @@
   color: var(--fg, #24292f);
   cursor: pointer;
   white-space: nowrap;
-}
-.explorer-root {
-  font-weight: 600;
 }
 /* B327：「打开文件夹」搬进根这一行（`renderTree` 把那颗键 append 进来），贴右只能靠 auto 边距
    —— 名字那截是 `flex: 1 1 auto` + 省略号，路径一长就把余量吃干，写固定 margin 会跟着漂。 */
@@ -585,9 +586,41 @@
 .explorer-root:hover {
   background: var(--bg-hover, #eee);
 }
+/* B370：选中行取 VS Code 的 `list.activeSelectionBackground`（与 B366 的快速选择同一颗
+   token：深 #04395E / 浅 #0060C0，前景白）。旧版用的是 --side-btn-active（中性底），
+   在深色里几乎看不出哪一行被选中。 */
 .explorer-row[aria-selected="true"],
 .explorer-root[aria-selected="true"] {
-  background: var(--side-btn-active, #d6d9dc);
+  background: var(--pick-focus-bg);
+  color: var(--pick-focus-fg);
+}
+/* B370：缩进引导线。VS Code 默认 `workbench.tree.renderIndentGuides = onHover`：
+   指针进树才显形，每层一根（从 16px 起、步长 8px）。
+   用逐行伪元素画而不是给容器铺一层底：缩进是逐行 `--depth` 算的，容器里没有层级结构。
+   `isolation: isolate` + `z-index: -1` 让线压在行底色之上、字形之下（不划穿箭头）。 */
+.explorer-row::before,
+.explorer-root::before,
+.explorer-note::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 0;
+  bottom: 0;
+  left: 16px;
+  width: calc(var(--depth, 0) * 8px);
+  background-image: repeating-linear-gradient(
+    to right,
+    color-mix(in srgb, var(--fg-muted, #656d76) 40%, transparent) 0 1px,
+    transparent 1px 8px
+  );
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s linear;
+}
+.explorer-tree:hover .explorer-row::before,
+.explorer-tree:hover .explorer-root::before,
+.explorer-tree:hover .explorer-note::before {
+  opacity: 1;
 }
 .explorer-row:focus-visible,
 .explorer-root:focus-visible {
@@ -604,24 +637,30 @@
   outline: 1px solid var(--accent, #0969da);
   outline-offset: -1px;
 }
+/* B370：折叠箭头槽照 VS Code `tree.css` 的 `.monaco-tl-twisty`：16px 宽 + 6px 右内边距、
+   10px 字形、视觉右移 3px。箭头只在目录行出现；文件行留同宽空槽，保证图标列对齐。 */
 .explorer-twisty {
-  flex: 0 0 14px;
+  flex: 0 0 auto;
+  width: 16px;
+  padding-right: 6px;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
+  transform: translateX(3px);
 }
 .explorer-twisty .codicon {
-  font-size: 12px;
+  font-size: 10px;
 }
+/* 文件图标槽与箭头同宽（16px + 6px 右内边距，同 `.monaco-icon-label::before`）。
+   Seti 字形从槽位左沿起画；目录行不生成这一格，名字直接接在箭头槽后。 */
 .explorer-glyph {
-  flex: 0 0 16px;
+  flex: 0 0 auto;
+  width: 16px;
+  padding-right: 6px;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   color: var(--fg-muted, #656d76);
-}
-.explorer-glyph .codicon {
-  font-size: 14px;
 }
 .explorer-name {
   flex: 1 1 auto;

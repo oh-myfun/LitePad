@@ -194,8 +194,8 @@
   MIT，许可见 `src/assets/fonts/seti-ui-LICENSE.txt`）。它仍然是**上游字体字形**、不是手绘；
   出口只有 `src/shell/fileicons.ts` 的 `fileIconHtml()`，消费方不得写死码位。
   九档色调走 `--seti-*`（浅深两套），字号 150% 与 VS Code 图标主题同口径。
-  目录/文件夹仍用 codicon（Seti 主题没有文件夹图标，VS Code 同样回落到 codicon）；
-  按钮类图标**仍一律 codicon**，不因为这条例外改用 Seti。
+  目录/文件夹**不挂图标**：Seti 主题本来就不定义文件夹图标，VS Code 的资源管理器里
+  文件夹行只有折叠箭头 + 名字（B370 对齐）；按钮类图标**仍一律 codicon**。
 - 想浏览全部 639 颗字形：打开 `node_modules/@vscode/codicons/dist/codicon.html`。
 
 ## 范围（明确不做）

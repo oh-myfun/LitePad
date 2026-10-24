@@ -232,13 +232,26 @@ describe("B314 资源管理器面板", () => {
     expect(dir.dataset.kind).toBe("dir");
     expect(dir.getAttribute("aria-expanded"), "默认收起").toBe("false");
     expect(dir.querySelector(".explorer-twisty")?.innerHTML).toContain("codicon-chevron-right");
-    expect(dir.querySelector(".explorer-glyph")?.innerHTML).toContain("codicon-folder");
+    expect(
+      dir.querySelector(".explorer-glyph"),
+      "B370：目录行没有图标（VS Code 的 Seti 主题只给文件配图标）",
+    ).toBeNull();
     const file = rowAt("a.md");
     expect(file.dataset.kind).toBe("file");
     expect(
       file.querySelector(".explorer-glyph .seti-icon")?.getAttribute("data-tone"),
       "文件图标走 Seti（B368），Markdown 是蓝色",
     ).toBe("blue");
+    // B370：行结构与 VS Code 对齐 —— 目录 = 箭头 + 名字；文件 = 箭头空槽 + 图标 + 名字。
+    // 目录不占图标槽，所以文件夹名与文件图标左沿对齐（不是与文件名对齐）。
+    expect(
+      [...dir.children].map((el) => el.className),
+      "目录行不该有图标槽",
+    ).toEqual(["explorer-twisty", "explorer-name"]);
+    expect(
+      [...file.children].map((el) => el.className),
+      "文件行 = 箭头空槽 + Seti 图标 + 名字",
+    ).toEqual(["explorer-twisty", "explorer-glyph", "explorer-name"]);
     expect(file.getAttribute("aria-level"), "子项比根深一层").toBe("2");
   });
 
@@ -248,7 +261,10 @@ describe("B314 资源管理器面板", () => {
     expect(names()).toContain("deeper.md");
     expect(h.calls, "展开时才读那一层").toContain(`${ROOT}\\notes`);
     expect(rowAt("notes").getAttribute("aria-expanded")).toBe("true");
-    expect(rowAt("notes").querySelector(".explorer-glyph")?.innerHTML).toContain("folder-opened");
+    expect(
+      rowAt("notes").querySelector(".explorer-glyph"),
+      "展开态也不挂图标：箭头方向才是状态，VS Code 的 Seti 主题同样只给文件配图标",
+    ).toBeNull();
 
     await click(rowAt("notes"));
     expect(store.isExpanded(`${ROOT}\\notes`)).toBe(false);
@@ -806,7 +822,7 @@ describe("B316 树内拖拽 = 移动", () => {
     const notes = rowAt("notes");
     over("notes", dt);
     fireDrag("dragleave", notes.querySelector(".explorer-name")!, dt, {
-      relatedTarget: notes.querySelector(".explorer-glyph"),
+      relatedTarget: notes.querySelector(".explorer-name"),
     });
     await vi.waitFor(() => expect(store.isExpanded(`${ROOT}\\notes`)).toBe(true), {
       timeout: 2000,

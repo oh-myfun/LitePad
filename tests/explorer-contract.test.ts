@@ -7,7 +7,7 @@
 // tests/explorer-store.test.ts 里用真骨架跑，不在这里重复。
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { resolveCssVars } from "./static";
+import { resolveCssVars, ruleBlock, stripCssComments } from "./static";
 
 const read = (p: string): string => readFileSync(p, "utf-8").replace(/\r\n/g, "\n");
 
@@ -489,6 +489,66 @@ describe("B328/B329 侧栏那几格的下伸部（省略号那层不许切字）
       2 * 4 + SIDE_LH * num(name, "font-size") + SIDE_LH * num(dir, "font-size"),
       "padding 留在 4px 那一档 = 每一行胖 4px",
     ).toBeGreaterThan(39);
+  });
+});
+
+describe("B370 资源管理器行对齐 VS Code 的 Seti 树", () => {
+  // 这一族判的是「与 VS Code 同名的那几个量」：8px 缩进（workbench.tree.indent 默认）、
+  // 16+6 的箭头槽 / 图标槽、10px 箭头、选中行取 list.activeSelectionBackground。
+  // 不展开 var()：`var(--depth, 0)` 会被 resolveCssVars 用 fallback 展开成 0，判据就空了。
+  const sheet = stripCssComments(css);
+
+  it("缩进 8px + 行高 22px；旧的 6 + depth×12 已撤", () => {
+    const row = ruleBlock(sheet, ".explorer-row, .explorer-root, .explorer-note");
+    expect(row, "取不到行规则").toContain("padding-left");
+    expect(row).toMatch(/padding-left:\s*calc\(var\(--depth,\s*0\)\s*\*\s*8px\)/);
+    expect(row).toMatch(/height:\s*22px/);
+    expect(row, "旧的 12px 步长不许回潮").not.toMatch(/\*\s*12px/);
+  });
+
+  it("箭头槽与图标槽都是 16px + 6px 右内边距；箭头 10px 字形", () => {
+    const twisty = ruleBlock(sheet, ".explorer-twisty");
+    expect(twisty, "箭头槽宽").toMatch(/width:\s*16px/);
+    expect(twisty, "箭头与内容的间距").toMatch(/padding-right:\s*6px/);
+    expect(twisty, "视觉右移 3px（VS Code 同款）").toMatch(/translateX\(3px\)/);
+    expect(ruleBlock(sheet, ".explorer-twisty .codicon")).toMatch(/font-size:\s*10px/);
+    const glyph = ruleBlock(sheet, ".explorer-glyph");
+    expect(glyph, "图标槽与箭头槽同宽").toMatch(/width:\s*16px/);
+    expect(glyph).toMatch(/padding-right:\s*6px/);
+  });
+
+  it("目录行不再写 codicon 文件夹；文件行仍走 Seti", () => {
+    const panel = read("src/explorer/panel.ts");
+    expect(panel, "目录行 / 根行的 folder 字形已撤").not.toMatch(/CODICONS\.folder\b/);
+    expect(panel, "根行只剩箭头 + 名字 + 打开键").toContain("rootRow.append(rt, rn, explorerOpen)");
+    expect(panel, "文件行仍走 Seti（按文件名检测语言）").toContain(
+      "fileIconHtml(detectLanguage(e.name).label)",
+    );
+  });
+
+  it("选中行用 VS Code 的 list.activeSelectionBackground（与 B366 同一颗 token）", () => {
+    const sel = ruleBlock(
+      sheet,
+      '.explorer-row[aria-selected="true"], .explorer-root[aria-selected="true"]',
+    );
+    expect(sel, "取不到选中规则").toBeTruthy();
+    expect(sel).toContain("var(--pick-focus-bg)");
+    expect(sel).toContain("var(--pick-focus-fg)");
+    expect(sel, "旧的 neutral 底已撤").not.toContain("--side-btn-active");
+  });
+
+  it("缩进引导线：每层一根 8px 步长，指针进树才显形（VS Code 的 onHover）", () => {
+    const guide = ruleBlock(
+      sheet,
+      ".explorer-row::before, .explorer-root::before, .explorer-note::before",
+    );
+    expect(guide, "取不到引导线规则").toContain("repeating-linear-gradient");
+    expect(guide).toMatch(/width:\s*calc\(var\(--depth,\s*0\)\s*\*\s*8px\)/);
+    const hover = ruleBlock(
+      sheet,
+      ".explorer-tree:hover .explorer-row::before, .explorer-tree:hover .explorer-root::before, .explorer-tree:hover .explorer-note::before",
+    );
+    expect(hover, "引导线默认隐、悬停树才亮").toContain("opacity: 1");
   });
 });
 

@@ -274,10 +274,6 @@ function inputRow(kind: Kind): HTMLElement {
   row.setAttribute("role", "treeitem");
   const twisty = document.createElement("span");
   twisty.className = "explorer-twisty";
-  const glyph = document.createElement("span");
-  glyph.className = "explorer-glyph";
-  // 还没输入名字 ⇒ 用 Seti 的缺省文件图标（B368；目录仍走 codicon，Seti 主题没有文件夹图标）。
-  glyph.innerHTML = kind === "dir" ? CODICONS.folder : fileIconHtml(null);
   const input = document.createElement("input");
   input.className = "explorer-input";
   input.type = "text";
@@ -302,7 +298,16 @@ function inputRow(kind: Kind): HTMLElement {
   input.addEventListener("blur", () => {
     if (creating) void commitCreate(input.value);
   });
-  row.append(twisty, glyph, input);
+  // B370：目录行不挂图标（VS Code 的 Seti 主题只给文件图标）；文件输入框用 Seti 缺省字形。
+  const parts: HTMLElement[] = [twisty];
+  if (kind === "file") {
+    const glyph = document.createElement("span");
+    glyph.className = "explorer-glyph";
+    glyph.innerHTML = fileIconHtml(null);
+    parts.push(glyph);
+  }
+  parts.push(input);
+  row.append(...parts);
   queueMicrotask(() => input.focus());
   return row;
 }
@@ -358,18 +363,19 @@ function renderEntry(e: FsEntry, dir: string, depth: number): HTMLElement {
   if (kind === "dir") {
     twisty.innerHTML = open ? CODICONS.chevronDown : CODICONS.chevronRight;
   }
-  const glyph = document.createElement("span");
-  glyph.className = "explorer-glyph";
-  // B368：文件图标与标签 / 语言浮层同一个 Seti 出口，按文件名自动检测语言取字形。
-  // 目录仍用 codicon —— Seti 主题本身不提供文件夹图标，VS Code 也是回落到 codicon。
-  glyph.innerHTML =
-    kind === "dir"
-      ? open
-        ? CODICONS.folderOpened
-        : CODICONS.folder
-      : fileIconHtml(detectLanguage(e.name).label);
   const name = nameSpan(e.name);
-  row.append(twisty, glyph, renaming?.path === e.path ? renameInput(e) : name);
+  // B370：目录行只有箭头 + 名字 —— VS Code 的 Seti 主题只定义文件图标，文件夹行本来
+  // 就没有图标（旧版给它挂 codicon 文件夹，反而与对标对象不一致）。文件行照旧走 Seti，
+  // 与标签 / 语言浮层同一个出口。
+  const parts: HTMLElement[] = [twisty];
+  if (kind === "file") {
+    const glyph = document.createElement("span");
+    glyph.className = "explorer-glyph";
+    glyph.innerHTML = fileIconHtml(detectLanguage(e.name).label);
+    parts.push(glyph);
+  }
+  parts.push(renaming?.path === e.path ? renameInput(e) : name);
+  row.append(...parts);
 
   if (kind === "dir") {
     const kids = document.createElement("div");
@@ -415,15 +421,13 @@ function renderTree(): void {
   const rt = document.createElement("span");
   rt.className = "explorer-twisty";
   rt.innerHTML = rootOpen ? CODICONS.chevronDown : CODICONS.chevronRight;
-  const rg = document.createElement("span");
-  rg.className = "explorer-glyph";
-  rg.innerHTML = rootOpen ? CODICONS.folderOpened : CODICONS.folder;
   const rn = document.createElement("span");
   rn.className = "explorer-name";
   rn.textContent = rootName;
   // B327：「打开文件夹」挂进根这一行的最右（换目录是跟这棵树走的事）。元素还是骨架里那一颗，
   // 监听与 data-tip 都在它身上，搬的只是位置；`replaceChildren` 每次把它摘下来，这里再挂回去。
-  rootRow.append(rt, rg, rn, explorerOpen);
+  // B370：根行与目录行同口径，不再挂文件夹图标（VS Code 的 Seti 主题没有文件夹图标）。
+  rootRow.append(rt, rn, explorerOpen);
   explorerTree.append(rootRow);
   const kids = document.createElement("div");
   kids.className = "explorer-children";
