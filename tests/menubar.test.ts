@@ -1423,3 +1423,37 @@ describe("B354 菜单列表：行高与菜单栏同档 + 分割线填满宽度",
     );
   });
 });
+
+// B361（用户：「菜单栏列表中快捷键说明右边对齐」）：
+// 条目是 flex 行（勾选位 → 文字 → 快捷键 → 子菜单箭头），快捷键要贴行的右沿。
+// `margin-left: auto` 把剩余空间全吃掉才叫「右对齐」；原来的固定 24px 只是「离文字远一点」，
+// 行与行之间的右沿会参差（真机上 Ctrl+N 与 Ctrl+Shift+S 的右边缘差 57px）。
+describe("B361 快捷键说明右对齐", () => {
+  const cssCode = () => stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
+
+  it("① `.menu-kbd` 用 auto 外边距吃满剩余空间（而不是固定间距）", () => {
+    const s = cssCode();
+    const kbd = cssDecls(ruleBlock(s, ".menu-kbd"));
+    expect(kbd, "快捷键贴行右沿").toMatch(/margin-left:\s*auto/);
+    expect(kbd, "不许退回固定间距（那就成了「离文字远一点」）").not.toMatch(/margin-left:\s*\d+px/);
+    // 反向对照：把 auto 换回旧的 24px，同一条判据必须落空
+    const old = s.replace(/(\.menu-kbd\s*\{[^}]*?margin-left:\s*)auto;/s, "$124px;");
+    expect(old, "替身必须真的改回固定间距").not.toBe(s);
+    expect(cssDecls(ruleBlock(old, ".menu-kbd"))).not.toMatch(/margin-left:\s*auto/);
+  });
+
+  it("② 同一行还有子菜单箭头时，箭头不许再抢 auto（两处 auto 会把空间平分）", () => {
+    const s = cssCode();
+    const rule = ruleBlock(s, ".menu-kbd + .menu-arrow");
+    expect(rule, "要有 kbd 后面的箭头规则").toBeTruthy();
+    expect(cssDecls(rule), "箭头紧跟右对齐的快捷键，不再各分一半空白").toMatch(
+      /margin-left:\s*0\b/,
+    );
+    // 子菜单父项（没有快捷键）仍然靠 auto 把箭头推到右边 —— 那条规则原样保留
+    expect(cssDecls(ruleBlock(s, ".menu-arrow"))).toMatch(/margin-left:\s*auto/);
+    // 反向对照：摘掉紧跟规则，替身就找不到它
+    const stripped = s.replace(/\.menu-kbd \+ \.menu-arrow\s*\{[^}]*\}/, "");
+    expect(stripped, "替身必须真的删掉过这条规则").not.toBe(s);
+    expect(ruleBlock(stripped, ".menu-kbd + .menu-arrow"), "替身里不该再有这条规则").toBe("");
+  });
+});

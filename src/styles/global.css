@@ -759,8 +759,11 @@ html[data-window-kind="satellite"] #sidebar-toggle {
    其余语言组收成带 chevron 的子菜单（.menu-arrow）。分组名本身由 Rust 的
    `Encoding::group()` 现取，前端不存第二张表。 */
 
+/* B361（用户：「快捷键说明右边对齐」）：条目是 flex 行（勾选位 → 文字 → 快捷键 → 箭头），
+   `auto` 吃掉剩余空间，快捷键才真正贴行右沿。原来的固定 24px 只是「离文字远一点」，
+   行与行之间右边缘会参差（真机：Ctrl+N 与 Ctrl+Shift+S 差 57px）。 */
 .menu-kbd {
-  margin-left: 24px;
+  margin-left: auto;
   font-size: var(--fs-meta);
   color: var(--fg-muted);
 }
@@ -772,6 +775,12 @@ html[data-window-kind="satellite"] #sidebar-toggle {
   margin-left: auto;
   padding-left: 18px;
   color: var(--fg-muted);
+}
+
+/* 同一行既有快捷键又有箭头时，空白已经由 `.menu-kbd` 的 auto 吃掉了；
+   箭头再 auto 会把空白**平分**，快捷键就停不到右沿。这条只跟在 `.menu-kbd` 后面生效。 */
+.menu-kbd + .menu-arrow {
+  margin-left: 0;
 }
 
 /* 子菜单那枚 chevron：取 14px —— 比 codicon 默认的 16px 收一点，菜单行只有二十来像素高，
