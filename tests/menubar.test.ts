@@ -74,7 +74,7 @@ const noop = (): void => {};
 
 function makeCb(): MenuBarCallbacks {
   return {
-    encodingMenu: () => ({ encodedIn: [], convertTo: [], bom: [], eol: [] }),
+    encodingMenu: () => ({ encodedIn: [], convertTo: [], bom: [] }),
     onNew: noop,
     onOpen: noop,
     // B314：打开文件夹 + 资源管理器开合

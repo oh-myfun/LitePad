@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-// 编码完善与转换（B215）：
-// 1) 运行时：菜单栏多出「编码」一栏，四组条目（解读编码 / 转换为 / BOM / 行尾符）
-//    都从 main 传进来的同一份模型渲染；
+// 编码完善与转换（B215 / B374）：
+// 1) 运行时：菜单栏「编码」一栏承载三组条目（解读编码 / 转换为 / BOM），
+//    都从 main 传进来的同一份模型渲染；行尾自 B374 起**不在编码菜单里**，
+//    切换与转换都在状态栏那颗行尾键的浮层（`showEolPicker`）。
 // 2) 静态：转换出口只有一个 `convertDoc`，它**先改 doc.encoding 再走保存**
 //    （顺序反了就等于绕过不可逆保护），状态栏那颗键只铺后端 `common` 标注的
 //    常用几条（B219），也不再有「四项硬编码兜底」这种跟后端对不上的清单。
@@ -36,10 +37,6 @@ function modelOf(pick: (m: EncodingMenuModel) => EncodingMenuModel): EncodingMen
     bom: [
       { label: "添加 BOM", disabled: true, onSelect: () => {} },
       { label: "移除 BOM", disabled: true, onSelect: () => {} },
-    ],
-    eol: [
-      { label: "CRLF", checked: true, onSelect: () => {} },
-      { label: "LF", onSelect: () => {} },
     ],
   };
   return pick(full);
@@ -114,7 +111,7 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
     expect(letters.length, "助记符数量应与菜单栏数一致").toBe(5);
   });
 
-  it("编码菜单渲染出四组：解读编码 / 转换为 / BOM / 行尾符", async () => {
+  it("编码菜单渲染出三组：解读编码 / 转换为 / BOM（B374 起行尾不在这里）", async () => {
     callbackWith(modelOf((m) => m));
     await openMenu("编码");
     expect(labelsOf([...document.querySelectorAll(".popup-menu")].at(-1)!)).toEqual([
@@ -122,11 +119,14 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
       "转换为",
       "添加 BOM",
       "移除 BOM",
-      "转换行尾符",
     ]);
+    // 反向闸：行尾入口不许再出现在编码菜单里（B374 用户点名）
+    expect(labelsOf([...document.querySelectorAll(".popup-menu")].at(-1)!)).not.toContain(
+      "转换行尾符",
+    );
   });
 
-  it("四组内容都从传入的模型来（改模型就改菜单，不存在第二份手抄列表）", async () => {
+  it("三组内容都从传入的模型来（改模型就改菜单，不存在第二份手抄列表）", async () => {
     callbackWith(modelOf((m) => m));
     await openMenu("编码");
     expect(labelsOf(await openSubmenu("解读编码"))).toEqual([
@@ -135,7 +135,6 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
       "ISO-2022-JP",
     ]);
     expect(labelsOf(await openSubmenu("转换为"))).toEqual(["Shift-JIS"]);
-    expect(labelsOf(await openSubmenu("转换行尾符"))).toEqual(["CRLF", "LF"]);
   });
 
   it("编码清单由「转换」那一组承载，条目数不写死", () => {
@@ -143,15 +142,18 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
     // 判据看的是**来源**：两组都从 encodingOptions 的下发结果里 map 出来
     const body = fnBody(main, "encodingMenuModel");
     expect(body).toContain("encodingOptions.map");
-    expect(body).toContain("eolOptions.map");
+    // 行尾不在这份模型里（B374）：出现 eolOptions 就是把两个概念又搅在一起了
+    expect(body).not.toContain("eolOptions");
     expect(group(model, "convertTo").length, "转换组条目数应与下发清单一致").toBe(1);
   });
 
   it("转换只有一个出口 convertDoc，编码 / BOM / 行尾三条路都汇到它", () => {
     const body = fnBody(main, "encodingMenuModel");
-    // BOM 两项与行尾各项都写成 convertDoc({ encoding: … }) / convertDoc({ eol: … })
+    // BOM 两项写成 convertDoc({ encoding: … })
     expect(body).toContain("convertDoc({ encoding:");
-    expect(body).toContain("convertDoc({ eol:");
+    // 行尾转换挪到行尾浮层（B374），仍走同一个出口
+    const eol = fnBody(main, "showEolPicker");
+    expect(eol, "行尾转换走唯一出口").toContain("convertDoc({ eol: value })");
     expect(main).toContain("async function convertDoc(");
     // 不许再冒出第二套转换函数（两套 = 写盘保护抄两遍，必有一遍漏）
     expect(main).not.toContain("function convertEncoding(");
@@ -165,6 +167,12 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
     expect(atAssign, "应先赋目标编码").toBeGreaterThan(-1);
     expect(atSave, "再走保存").toBeGreaterThan(-1);
     expect(atAssign).toBeLessThan(atSave);
+  });
+
+  it("脏判据拿当前正文：传 null 会恒判脏，干净文档也弹「有未保存的修改」", () => {
+    const body = fnBody(main, "convertDoc");
+    expect(body).toContain("isDirtyVsBaseline(doc, freshTextOfDoc(doc))");
+    expect(body).not.toContain("isDirtyVsBaseline(doc, null)");
   });
 
   it("保存被拒时把编码/行尾字段退回（否则状态栏会对不上磁盘）", () => {
@@ -202,7 +210,7 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
     expect(main, "旧兜底清单应删除").not.toContain(stale);
   });
 
-  it("B366：编码 / 行尾都走居顶快速选择（不再退回弹出菜单）", () => {
+  it("B366/B374：编码 / 行尾都走居顶快速选择；行尾转换只在行尾浮层里", () => {
     for (const fn of ["showEncodingPicker", "showEolPicker"]) {
       const body = fnBody(main, fn);
       expect(body, `${fn} 必须用公共 QuickPick`).toContain("showQuickPick(");
@@ -212,11 +220,18 @@ describe("B215：编码清单 + 转换（编码 / BOM / 行尾）", () => {
     const enc = fnBody(main, "showEncodingPicker");
     expect(enc, "锚点 = 状态栏编码键").toContain("anchor: sbEncoding");
     expect(enc, "BOM 两项的禁用态来自同一份菜单模型").toContain("model.bom");
-    expect(enc, "行尾转换从编码浮层里进").toContain('showEolPicker("convert"');
+    // B374：编码浮层只谈编码，行尾转换不许再挂在这里
+    expect(enc, "编码浮层里不许出现行尾入口").not.toContain("showEolPicker");
+    expect(enc, "编码浮层里不许出现行尾文案").not.toContain("转换行尾符");
+
     const eol = fnBody(main, "showEolPicker");
     expect(eol, "行尾候选用启动时预取的清单（点开不再走 IPC）").toContain("eolOptions");
     expect(eol).not.toContain("listEols");
     expect(eol, "行尾列表按当前值打勾").toContain("checked: value === doc.eol");
+    expect(eol, "set 档末条 = 行尾转换入口").toContain('label: "转换行尾符"');
+    // 真机抓到过：分隔线也占一个下标，用 values.length 当末条差一位，点了只关浮层
+    expect(eol, "末条下标按实际条目算").toContain("convertIndex = convert ? -1 : items.length - 1");
+    expect(eol, "转换入口再进 convert 那一屏").toContain('showEolPicker("convert", sbEol)');
     expect(eol, "转换模式仍走唯一出口 convertDoc").toContain("convertDoc({ eol: value })");
     // main 的接线必须换到新入口
     expect(main).toContain(

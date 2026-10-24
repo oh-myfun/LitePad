@@ -510,7 +510,7 @@ function setupMenuBar(): void {
     wrapChecked: () => isWrap,
     onToggleStatusbar: () => toggleStatusbar(),
     statusbarChecked: () => statusbarVisible,
-    // ---- 编码（B215：主菜单「编码」四组 + 状态栏那颗键同取这一份） ----
+    // ---- 编码（B215/B374：主菜单「编码」三组 + 状态栏那颗键同取这一份；行尾归行尾键） ----
     encodingMenu: () => encodingMenuModel(),
     // ---- 设置（B106：统一设置页，含原首选项与快捷键分类） ----
     // B239：开页前要 await 字体枚举，所以这里是 async 包 void（menubar 契约仍是无参无返回）

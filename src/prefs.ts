@@ -47,6 +47,7 @@ import {
   rethemePreviews,
 } from "./appearance";
 import { doOpen, rebuildDocInstances } from "./io/files";
+import { freshTextOfDoc } from "./tabs/lifecycle";
 import { cancelPendingBackup, discardAllBackups, discardBackupFor } from "./session/session";
 import { saveDocCore } from "./io/files";
 import {
@@ -114,8 +115,10 @@ async function convertDoc(next: { encoding?: string; eol?: string }): Promise<bo
     showMessage("该文件还没有关联磁盘路径，请先「另存为」保存一次再转换", true);
     return false;
   }
-  // 转换会盖掉没保存的修改：先问一句，别替用户做这个决定
-  if (isDirtyVsBaseline(doc, null)) {
+  // 转换会盖掉没保存的修改：先问一句，别替用户做这个决定。
+  // 正文要取**当前实例快照**：isDirtyVsBaseline 收到 null 会直接判脏（B112），
+  // 传 null 等于干净的文档也弹「有未保存的修改」。
+  if (isDirtyVsBaseline(doc, freshTextOfDoc(doc))) {
     const ok = await ask(
       `有未保存的修改，转换为 ${enc} / ${eol} 会立即写盘并覆盖这些修改。继续吗？`,
       { title: "转换将写入磁盘", kind: "warning" },
@@ -146,12 +149,13 @@ async function convertDoc(next: { encoding?: string; eol?: string }): Promise<bo
  *
  * ⚠️ 两边都从这里取，不接受第二份手抄的列表 —— 两份迟早差一项，而差的那一项
  *    表现就是「菜单里有、功能没接上」。
+ * ⚠️ 行尾不在这份模型里（B374）：行尾不是编码。切换 / 转换都在状态栏那颗行尾键的
+ *    浮层里（`showEolPicker`），把「转换行尾符」塞进编码菜单会让用户以为它改的是编码。
  */
 function encodingMenuModel(): EncodingMenuModel {
   const tab = activeTab();
   const doc = tab ? docOf(tab) : undefined;
   const current = doc?.encoding ?? "";
-  const currentEol = doc?.eol ?? "";
   // 没有活动文档时只有「解读编码」那一组还能操作，其余全置灰
   const canWrite = !!doc && !!doc.path;
 
@@ -187,13 +191,7 @@ function encodingMenuModel(): EncodingMenuModel {
       onSelect: () => void convertDoc({ encoding: removeTarget ?? current }),
     },
   ];
-  const eol = eolOptions.map((value) => ({
-    label: value,
-    checked: value === currentEol,
-    disabled: !canWrite,
-    onSelect: () => void convertDoc({ eol: value }),
-  }));
-  return { encodedIn, convertTo, bom, eol };
+  return { encodedIn, convertTo, bom };
 }
 
 // ---------------------------------------------------------------- 状态栏菜单
@@ -206,13 +204,15 @@ function focusEditorAfterPick(): void {
 /**
  * 状态栏那颗「编码」键（B366）：居顶快速选择，复用文件类型那颗键的形式（照 VS Code）。
  *
- * 只把**常用那几条**平铺在顶层，后面接 BOM 两项与「转换行尾符」。状态栏是
- * 「顺手看一眼当前编码 + 切到最常用的那几种」的地方，摊 40 条全量进去反而没人点得到。
+ * 只把**常用那几条**平铺在顶层，后面接 BOM 两项。状态栏是「顺手看一眼当前编码 +
+ * 切到最常用的那几种」的地方，摊 40 条全量进去反而没人点得到。
  * 主菜单「编码」那条**不动**：那里才是全量。
+ * ⚠️ 行尾不在这里（B374）：编码浮层只谈编码。「转换行尾符」在状态栏那颗行尾键的
+ *    浮层里（`showEolPicker`）—— 那是行尾自己的菜单。
  *
  * ⚠️ 常用集只认后端下发的 `common` 字段（在 `encodingOptions` 上过滤），**不许**在
  *    前端另写一份标签白名单 —— 又一张表，迟早差一条，差的表现就是「列表里没有它」。
- * ⚠️ BOM 两项与「转换行尾符」的可用性仍取 `encodingMenuModel()` 那一份，别在两边各写一遍。
+ * ⚠️ BOM 两项的可用性仍取 `encodingMenuModel()` 那一份，别在两边各写一遍。
  */
 function showEncodingPicker(): void {
   if (quickPickIsOpen()) {
@@ -232,18 +232,7 @@ function showEncodingPicker(): void {
     }));
   const model = encodingMenuModel();
   const bom = model.bom.map((it) => ({ label: it.label ?? "", disabled: it.disabled }));
-  const canWrite = !!doc.path;
-  const items: QuickPickItem[] = [
-    ...common,
-    { label: "", separator: true },
-    ...bom,
-    { label: "", separator: true },
-    {
-      label: "转换行尾符",
-      description: canWrite ? "转换后立即写入磁盘" : "需要先保存到磁盘",
-      disabled: !canWrite,
-    },
-  ];
+  const items: QuickPickItem[] = [...common, { label: "", separator: true }, ...bom];
 
   showQuickPick({
     placeholder: "选择文件编码",
@@ -262,9 +251,7 @@ function showEncodingPicker(): void {
       const bomIndex = index - common.length - 1;
       if (bomIndex >= 0 && bomIndex < model.bom.length) {
         model.bom[bomIndex]?.onSelect?.();
-        return;
       }
-      if (index === items.length - 1) showEolPicker("convert", sbEncoding);
     },
     onClose: focusEditorAfterPick,
   });
@@ -318,11 +305,12 @@ async function switchEncoding(label: string): Promise<void> {
 type EolPickerMode = "set" | "convert";
 
 /**
- * 行尾符号浮层（B366）：与编码 / 文件类型同款居顶快速选择。
+ * 行尾符号浮层（B366 / B374）：与编码 / 文件类型同款居顶快速选择。
  *
- * 两种入口共用同一份列表与勾选口径：
+ * 两个入口都在这颗键下面 —— 行尾的事只找行尾：
  *   · `set`     —— 状态栏那颗键：只改 `doc.eol`，保存时生效（旧行为不变）；
- *   · `convert` —— 编码浮层里的「转换行尾符」：立即走 `convertDoc` 写盘（旧子菜单同口径）。
+ *                末条「转换行尾符」再进 `convert` 那一屏（B374 从编码浮层搬过来）。
+ *   · `convert` —— 立即走 `convertDoc` 写盘（旧 B215 子菜单同口径）。
  */
 function showEolPicker(mode: EolPickerMode = "set", anchor: HTMLElement = sbEol): void {
   if (quickPickIsOpen()) {
@@ -335,11 +323,23 @@ function showEolPicker(mode: EolPickerMode = "set", anchor: HTMLElement = sbEol)
 
   // 候选用启动时预取的那份（B219 同一口径）；IPC 失败时 core 已留内置三档。
   const values = eolOptions.length > 0 ? eolOptions : ["CRLF", "LF", "CR"];
+  const convert = mode === "convert";
   const items: QuickPickItem[] = values.map((value) => ({
     label: value,
     checked: value === doc.eol,
   }));
-  const convert = mode === "convert";
+  if (!convert) {
+    items.push(
+      { label: "", separator: true },
+      {
+        label: "转换行尾符",
+        description: doc.path ? "立即转换并写入磁盘" : "需要先保存到磁盘",
+        disabled: !doc.path,
+      },
+    );
+  }
+  // 末条垫在最后：分隔线也占一个下标，别拿 values.length 当它（差一位，点了只关浮层）。
+  const convertIndex = convert ? -1 : items.length - 1;
 
   showQuickPick({
     placeholder: convert ? "选择要转换的行尾符" : "选择行尾符",
@@ -347,6 +347,11 @@ function showEolPicker(mode: EolPickerMode = "set", anchor: HTMLElement = sbEol)
     activeIndex: Math.max(0, values.indexOf(doc.eol)),
     anchor,
     onSelect: (index) => {
+      // set 档的末条：进转换那一屏（选目标后立即写盘）
+      if (index === convertIndex) {
+        showEolPicker("convert", sbEol);
+        return;
+      }
       const value = values[index];
       if (!value) return;
       if (convert) {

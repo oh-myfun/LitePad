@@ -10,10 +10,11 @@ import { closePopupMenu, showPopupMenu, type MenuItem } from "./menu";
  */
 
 /**
- * 主菜单「编码」四组条目（B215）。
+ * 主菜单「编码」三组条目（B215）。
  *
  * 由 `main.ts` 的 `encodingMenuModel()` 一处生成，主菜单与状态栏那颗键同取这份——
  * 两边各抄一份列表的话，迟早差一项，而差的那一项表现就是「菜单里有、功能没接上」。
+ * ⚠️ 行尾不在编码菜单里（B374）：切换 / 转换都在状态栏那颗行尾键的浮层里。
  */
 export interface EncodingMenuModel {
   /** 解读方式：重新载入以该编码解读，不碰磁盘。 */
@@ -22,8 +23,6 @@ export interface EncodingMenuModel {
   convertTo: MenuItem[];
   /** 添加 / 移除 BOM（就地切 UTF-8 的 BOM 位，不适用时置灰）。 */
   bom: MenuItem[];
-  /** 行尾符（立即按该行尾写盘）。 */
-  eol: MenuItem[];
 }
 
 export interface MenuBarCallbacks {
@@ -85,7 +84,7 @@ export interface MenuBarCallbacks {
   wrapChecked: () => boolean;
   onToggleStatusbar: () => void;
   /**
-   * 「编码 → 解读 / 转换 / BOM / 行尾」四组（B215）。
+   * 「编码 → 解读 / 转换 / BOM」三组（B215；行尾自 B374 起归状态栏那颗行尾键）。
    *
    * 每次展开重新求值：菜单点开那一刻的文档（活动标签换了、文档改过编码了）才是
    * 要显示的那一组 ✓ —— 像 `exportable()` 那样在求值里现取，别缓存。
@@ -218,7 +217,7 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
   {
     label: "编码",
     items: (cb) => {
-      // 一次取回四组，省得四遍回调；每组的项在展开时才求值（cb.encodingMenu() 内部）。
+      // 一次取回三组，省得三遍回调；每组的项在展开时才求值（cb.encodingMenu() 内部）。
       const model = cb.encodingMenu();
       return [
         { label: "解读编码", submenu: () => model.encodedIn },
@@ -226,8 +225,6 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
         { separator: true },
         // BOM 两项是叶子，直接摊开（就两条，不值得再套一层子菜单）
         ...model.bom,
-        { separator: true },
-        { label: "转换行尾符", submenu: () => model.eol },
       ];
     },
   },
