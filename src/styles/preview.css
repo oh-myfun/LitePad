@@ -181,6 +181,13 @@
 .md-rendered input.md-task {
   margin-right: 6px;
   vertical-align: middle;
+  /* B358 追补（用户口径）：默认 13px 的框衬着 15px 正文太小，放大一档（em 跟着字号/缩放走） */
+  width: 1.05em;
+  height: 1.05em;
+}
+/* hand 光标只给**可点的**框：只读文档灰着的框撒谎（B228 口径） */
+.md-rendered input.md-task:not(:disabled) {
+  cursor: pointer;
 }
 
 .md-rendered blockquote {

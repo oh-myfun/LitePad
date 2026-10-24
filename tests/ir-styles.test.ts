@@ -46,6 +46,15 @@ describe("B352-1 排版规则从容器里剥出来（.md-rendered）", () => {
     }
   });
 
+  it("任务清单勾选框：加大一档 + 可点的框用 hand 光标（B358 追补，用户口径）", () => {
+    const rule = css.match(/\.md-rendered input\.md-task\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(rule, "勾选框要有自己的尺寸档").toMatch(/width:\s*1\.05em/);
+    expect(rule).toMatch(/height:\s*1\.05em/);
+    const pointer =
+      css.match(/\.md-rendered input\.md-task:not\(:disabled\)\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(pointer, "可点的框 hand 光标；灰着的框不撒谎").toMatch(/cursor:\s*pointer/);
+  });
+
   it("三个渲染根节点都带上共用类", () => {
     const preview = stripLineComments(readFileSync("src/markdown/preview.ts", "utf-8"));
     expect(preview, "预览根节点 = 容器类 + 共用排版类").toMatch(
