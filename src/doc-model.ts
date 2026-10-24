@@ -9,6 +9,7 @@ import {
   type Tab,
   type Panel,
   docs,
+  settings,
   tabs,
   takeInstId,
   isDark,
@@ -35,6 +36,14 @@ export function getInstanceOnUpdate(): (view: EditorView, update: ViewUpdate) =>
   return instanceOnUpdate;
 }
 
+/**
+ * B372：新建空白文档的默认语言（设置页「新建文件 → 默认文档类型」）。
+ * 未知标签按未设置处理 —— 旧配置/注册表删过标签时不能把文档卡在死值上。
+ */
+function blankDocLanguage(label: string | null | undefined): LanguageInfo | null {
+  return label ? languageInfoByLabel(label) : null;
+}
+
 function makeDoc(
   tabId: number,
   text: string,
@@ -49,10 +58,16 @@ function makeDoc(
   backupId: string | null = null,
 ): Doc {
   const firstLine = text.split("\n", 1)[0] ?? "";
+  // B372：只有**空白未命名**这一形吃「新建默认类型」：已命名文件按文件名走，
+  // 带正文的未命名文档（会话恢复）不追溯改类型。设置值经注册表校验，
+  // 认不出就当没设（与 languageOfDoc 对未知覆盖值的回退同口径）。
+  const blank = name === "未命名" && !text;
+  const preferred = blank ? blankDocLanguage(settings?.default_lang) : null;
   const lang =
-    name === "未命名" && !text
+    preferred ??
+    (blank
       ? { label: "Plain Text", extension: null }
-      : detectLanguage(name === "未命名" ? null : name, firstLine);
+      : detectLanguage(name === "未命名" ? null : name, firstLine));
   return {
     tabId,
     path,
@@ -68,7 +83,7 @@ function makeDoc(
     baselineEol: eol,
     external: false,
     langLabel: lang.label,
-    langOverride: null,
+    langOverride: preferred?.label ?? null,
     sizeClass,
     backupId,
     backedUp: false,

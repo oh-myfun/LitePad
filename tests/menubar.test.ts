@@ -517,6 +517,7 @@ describe("设置项归属与接线（B42/B46）", () => {
     for (const fn of [
       "function setDefaultEol(",
       "function setDefaultEncoding(",
+      "function setDefaultLang(",
       "function setThemeMode(",
       "function setAutosave(",
       "function setHotExit(",

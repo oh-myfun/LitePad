@@ -264,7 +264,7 @@ describe("B230 下拉搜索", () => {
     );
   });
 
-  it("设置页的字体下拉开了 searchable，主题等小下拉没开", () => {
+  it("设置页的字体/语言长列表开了 searchable，主题等小下拉没开", () => {
     const src = readFileSync("src/shell/settingsdialog.ts", "utf-8");
     const fn = topLevelFnBody(src, "fontRow");
     expect(fn, "应能截到 fontRow 函数体").not.toBe("");
@@ -272,5 +272,8 @@ describe("B230 下拉搜索", () => {
     // 反向闸在前：通用 selectControl 不得被顺手打开搜索
     const sel = topLevelFnBody(src, "selectControl");
     expect(sel, "通用下拉不该开搜索").not.toContain("searchable");
+    // B372：语言 60+ 条，必须走带搜索的那条路
+    const lang = topLevelFnBody(src, "searchableSelectRow");
+    expect(lang, "语言长列表也应开 searchable").toContain("searchable: true");
   });
 });

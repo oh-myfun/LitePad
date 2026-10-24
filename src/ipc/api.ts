@@ -105,6 +105,12 @@ export interface Settings {
   theme: string;
   default_eol: string;
   default_encoding: string;
+  /**
+   * B372：新建空白文档的默认语言（对应 VS Code `files.defaultLanguage`）。
+   * 空串 = 不指定（未命名文档按 Plain Text 起）；注册表标签（如 "Markdown"）⇒
+   * 新文档直接进该语言。只作用于**空白未命名文档**，已命名文件仍按文件名检测。
+   */
+  default_lang: string;
   recent_files: string[];
   font_size: number;
   /** 编辑器等宽字体族名；空串 = 用内置默认栈（Cascadia Code / Consolas…） */

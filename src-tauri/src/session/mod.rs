@@ -21,6 +21,10 @@ pub struct Settings {
     pub default_eol: String,
     /// 打开文件时编码识别失败后的兜底编码
     pub default_encoding: String,
+    /// B372：新建空白文档的默认语言（VS Code `files.defaultLanguage`）。
+    /// 空串 = 不指定（未命名文档按纯文本起）；否则是前端语言注册表的标签。
+    /// 后端不校验取值 —— 未知标签由前端按自动处理（同 `tab_style` 的口径）。
+    pub default_lang: String,
     pub recent_files: Vec<String>,
     pub font_size: f64,
     /// 编辑器等宽字体族名；空串 = 用内置默认栈（Cascadia Code / Consolas…）
@@ -99,6 +103,7 @@ impl Default for Settings {
             theme: "system".into(),
             default_eol: "CRLF".into(),
             default_encoding: "UTF-8".into(),
+            default_lang: String::new(),
             recent_files: Vec::new(),
             font_size: 14.0,
             font_family: String::new(),
@@ -755,11 +760,19 @@ mod tests {
             s.hot_exit,
             "热退出默认开（VS Code files.hotExit 桌面默认 onExit）"
         );
+        assert!(
+            s.default_lang.is_empty(),
+            "B372：新建文档默认类型默认不指定（VS Code files.defaultLanguage 默认空）"
+        );
 
         // 老配置文件里没有 hot_exit —— 必须回落 true 而不是让整个配置读失败。
         let legacy = r#"{ "theme": "dark", "autosave": true }"#;
         let old: Settings = serde_json::from_str(legacy).expect("缺 hot_exit 也应能读入");
         assert!(old.hot_exit, "缺失 hot_exit 应回落 true");
+        assert!(
+            old.default_lang.is_empty(),
+            "缺失 default_lang 应回落空串（旧配置前向兼容）"
+        );
         assert!(
             old.autosave,
             "用户显式存过的 autosave=true 必须保留（不能被默认值覆盖）"

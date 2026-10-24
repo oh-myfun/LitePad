@@ -6,8 +6,9 @@
 //
 // 这里只测纯模型（doc-model + 语言注册表），菜单/浮层在 language-picker.test.ts。
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { isMdDoc, languageOfDoc, makeDoc } from "../src/doc-model";
+import { setSettings } from "../src/core/app-state";
 import {
   AUTO_LANGUAGE,
   LANGUAGE_LABELS,
@@ -96,5 +97,47 @@ describe("B365 语言模式：自动检测 + 手动覆盖", () => {
     const stale = languageChoices("NoSuchLanguage");
     expect(stale[0].checked, "未知覆盖值按自动显示（与 languageOfDoc 回退同口径）").toBe(true);
     expect(stale.filter((it) => it.checked)).toHaveLength(1);
+  });
+});
+
+afterEach(() => setSettings(null));
+
+describe("B372 新建空白文档的默认类型（files.defaultLanguage 口径）", () => {
+  it("设置为 Markdown ⇒ 空白未命名文档直接是 Markdown（高亮 + 预览闸）", () => {
+    setSettings({ default_lang: "Markdown" } as never);
+    const d = doc("未命名");
+    expect(d.langOverride).toBe("Markdown");
+    expect(d.langLabel).toBe("Markdown");
+    expect(languageOfDoc(d).label).toBe("Markdown");
+    expect(languageOfDoc(d).extension, "默认类型必须带高亮扩展").not.toBeNull();
+    expect(isMdDoc(d), "Markdown 默认类型应直接打开预览入口").toBe(true);
+  });
+
+  it("只作用于空白未命名文档：已命名文件与带正文的未命名文档都不动", () => {
+    setSettings({ default_lang: "Markdown" } as never);
+    const named = doc("a.rs", "fn main() {}");
+    expect(named.langOverride).toBeNull();
+    expect(languageOfDoc(named).label).toBe("Rust");
+
+    const restored = doc("未命名", "已经写下的内容");
+    expect(restored.langOverride, "会话恢复不追溯改类型").toBeNull();
+    expect(languageOfDoc(restored).label).toBe("Plain Text");
+  });
+
+  it("空值 / 未知标签按自动：空白文档仍是 Plain Text", () => {
+    setSettings({ default_lang: "NoSuchLanguage" } as never);
+    const d = doc("未命名");
+    expect(d.langOverride, "认不出的设置值不能卡成死值").toBeNull();
+    expect(d.langLabel).toBe("Plain Text");
+    expect(isMdDoc(d)).toBe(false);
+  });
+
+  it("显式选 Plain Text 也是覆盖：之后叫 a.md 不会漂回 Markdown", () => {
+    setSettings({ default_lang: "Plain Text" } as never);
+    const d = doc("未命名");
+    expect(d.langOverride).toBe("Plain Text");
+    d.name = "a.md";
+    expect(languageOfDoc(d).label).toBe("Plain Text");
+    expect(isMdDoc(d)).toBe(false);
   });
 });

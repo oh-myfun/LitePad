@@ -30,6 +30,7 @@ import {
 import { activeTab, docOf, getPanel } from "./core/panels";
 import { applyTheme, type ThemeMode } from "./theme/theme";
 import { isDirtyVsBaseline, markClean, markDiskVersion } from "./doc-model";
+import { LANGUAGE_LABELS } from "./editor/language";
 import {
   applyCodeFontFamily,
   applyDarkToTabs,
@@ -535,6 +536,14 @@ async function setDefaultEncoding(value: string): Promise<void> {
   showMessage(`新建文件默认编码：${value}`);
 }
 
+/** B372：新建空白文档的默认类型（设置页「新建文件」分类）。空串 = 自动（纯文本）。 */
+async function setDefaultLang(value: string): Promise<void> {
+  if (!settings) return;
+  settings.default_lang = value;
+  await persistSettings();
+  showMessage(value ? `新建文档类型：${value}` : "新建文档类型：自动（纯文本）");
+}
+
 /** 快捷键覆盖表变更（快捷键对话框 → 立即持久化）。 */
 async function applyKeymapOverrides(next: KeymapOverrides): Promise<void> {
   setKeymapOverrides(next);
@@ -729,6 +738,10 @@ async function openSettingsDialog(): Promise<void> {
     // 设置页那颗下拉只要 label（它是扁平一屏，不需要语言分组）
     encodingOptions: () => encodingOptions.map((e) => e.label),
     onDefaultEncoding: (v) => void setDefaultEncoding(v),
+    // B372：新建空白文档的默认类型（空串 = 自动 / 纯文本）
+    defaultLang: () => settings?.default_lang ?? "",
+    languageOptions: () => [...LANGUAGE_LABELS],
+    onDefaultLang: (v) => void setDefaultLang(v),
     // 「通用」分类：自动保存 / 热退出（原「文件」菜单的勾选项，B108 搬进设置页）
     autosave: () => settings?.autosave ?? false,
     onAutosave: (v) => void setAutosave(v),

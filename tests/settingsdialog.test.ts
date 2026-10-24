@@ -48,6 +48,10 @@ function makeOpts(): SettingsDialogOptions {
     defaultEncoding: () => "UTF-8",
     encodingOptions: () => ["UTF-8", "GB18030"],
     onDefaultEncoding: noop,
+    // B372：新建空白文档的默认类型（空串 = 自动 / 纯文本）
+    defaultLang: () => "",
+    languageOptions: () => ["Markdown", "Plain Text", "JSON"],
+    onDefaultLang: noop,
     autosave: () => false,
     onAutosave: noop,
     hotExit: () => true,
@@ -244,12 +248,23 @@ describe("B106 设置项：初值 + 即时回调", () => {
       ["编辑器行距", "1.5"],
       ["预览行距", "1.7"],
       ["预览布局宽度", "full"],
+      ["默认文档类型", ""],
       ["默认行尾", "CRLF"],
       ["默认编码", "UTF-8"],
     ] as const) {
       expect(rowValue(label), `「${label}」初值应为 ${val}`).toBe(val);
     }
     expect(rowValues("默认行尾")).toEqual(["CRLF", "LF", "CR"]);
+    expect(rowValues("默认文档类型"), "自动检测置顶，后接语言注册表").toEqual([
+      "",
+      "Markdown",
+      "Plain Text",
+      "JSON",
+    ]);
+    expect(
+      rowControl("默认文档类型").querySelector(".dropdown-search"),
+      "语言有 60+ 条，应带搜索框",
+    ).toBeTruthy();
   });
 
   it("任何控件 change 立即回调对应 setter", () => {
@@ -263,6 +278,7 @@ describe("B106 设置项：初值 + 即时回调", () => {
     opts.onPreviewWidth = (w) => calls.push(`pw:${w}`);
     opts.onDefaultEol = (e) => calls.push(`eol:${e}`);
     opts.onDefaultEncoding = (e) => calls.push(`enc:${e}`);
+    opts.onDefaultLang = (l) => calls.push(`lang:${l}`);
     showSettingsDialog(opts);
 
     const fire = (label: string, value: string): void => {
@@ -275,6 +291,7 @@ describe("B106 设置项：初值 + 即时回调", () => {
     fire("编辑器行距", "1.8");
     fire("预览行距", "2.1");
     fire("预览布局宽度", "standard");
+    fire("默认文档类型", "Markdown");
     fire("默认行尾", "LF");
     fire("默认编码", "GB18030");
 
@@ -285,6 +302,7 @@ describe("B106 设置项：初值 + 即时回调", () => {
       "elh:1.8",
       "plh:2.1",
       "pw:standard",
+      "lang:Markdown",
       "eol:LF",
       "enc:GB18030",
     ]);

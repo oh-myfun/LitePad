@@ -70,6 +70,10 @@ export interface SettingsDialogOptions {
   defaultEncoding: () => string;
   encodingOptions: () => string[];
   onDefaultEncoding: (value: string) => void;
+  /** B372：新建空白文档的默认语言标签（空串 = 自动 / 纯文本）。 */
+  defaultLang: () => string;
+  languageOptions: () => string[];
+  onDefaultLang: (value: string) => void;
   /** 自动保存：把脏文档写回**原文件**（B68 起默认关）。「通用」分类里的开关。 */
   autosave: () => boolean;
   onAutosave: (on: boolean) => void;
@@ -384,7 +388,21 @@ const CATEGORIES: Category[] = [
   {
     id: "file",
     label: "新建文件",
-    keywords: ["新建文件", "行尾", "编码", "默认行尾", "默认编码", "换行符", "eol"],
+    keywords: [
+      "新建文件",
+      "新建文档",
+      "文档类型",
+      "文件类型",
+      "默认类型",
+      "语言",
+      "行尾",
+      "编码",
+      "默认行尾",
+      "默认编码",
+      "换行符",
+      "eol",
+      "markdown",
+    ],
   },
   {
     id: "shortcuts",
@@ -653,6 +671,29 @@ function selectRow(
   onPick: (v: string) => void,
 ): HTMLElement {
   return settingsItem(label, desc, selectControl(options, current, onPick));
+}
+
+/**
+ * B372：长列表下拉（语言 60+ 条）—— 与字体下拉同款，开搜索框 + 列表限高。
+ * 通用 `selectControl` 保持无搜索（`tests/dropdown.test.ts` 有反向闸：
+ * 三五项的小下拉不该在展开时多一行搜索框）。
+ */
+function searchableSelectRow(
+  label: string,
+  desc: string,
+  options: { label: string; value: string }[],
+  current: string,
+  onPick: (v: string) => void,
+): HTMLElement {
+  const dd = createDropdown({
+    options: options.map((o) => ({ label: o.label, value: o.value })),
+    current,
+    onPick,
+    searchable: true,
+    searchPlaceholder: "搜索语言…",
+    ariaLabel: options.find((o) => o.value === current)?.label,
+  });
+  return settingsItem(label, desc, dd.root);
 }
 
 function numberSelectRow(
@@ -961,6 +1002,18 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
       ),
     );
   } else if (id === "file") {
+    body.appendChild(
+      searchableSelectRow(
+        "默认文档类型",
+        "新建空白文档时使用的文件类型；已命名文件仍按文件名自动识别。",
+        [
+          { label: "自动检测（纯文本）", value: "" },
+          ...opts.languageOptions().map((l) => ({ label: l, value: l })),
+        ],
+        opts.defaultLang(),
+        (v) => opts.onDefaultLang(v),
+      ),
+    );
     body.appendChild(
       selectRow(
         "默认行尾",
