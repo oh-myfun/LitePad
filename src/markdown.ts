@@ -20,7 +20,7 @@ import {
 } from "./core/app-state";
 import { activeTab, docOf, getPanel } from "./core/panels";
 import { isMdTab, makeInstance } from "./doc-model";
-import { markActivePanel, sbLang, tocPanel } from "./ui";
+import { markActivePanel, sbLang, showMessage, tocPanel } from "./ui";
 import { refreshIrLockKey } from "./shell/irlock";
 import { clearTip } from "./shell/tooltip";
 import { logger } from "./core/logger";
@@ -200,10 +200,18 @@ function irCompsEffects(tab: Tab, next: IrState): StateEffect<unknown>[] {
  * 只读文档的 C 不可达：盘上写着「解锁」也按回锁着（与 `nextIrState` 同一条约束）。
  */
 function restoreIrState(tab: Tab, next: IrState): void {
-  const irLocked = next.irLocked || docOf(tab).readonly;
-  tab.liveRender = next.liveRender;
-  tab.irLocked = irLocked;
-  tab.state = tab.state.update({ effects: irCompsEffects(tab, next) }).state;
+  // 只读文档的 C 不可达：钳制必须**一起传进扩展**，只钳字段就是「键显示锁、编辑面还能打字」
+  const ir: IrState = {
+    liveRender: next.liveRender,
+    irLocked: next.irLocked || docOf(tab).readonly,
+  };
+  tab.liveRender = ir.liveRender;
+  tab.irLocked = ir.irLocked;
+  tab.state = tab.state.update({ effects: irCompsEffects(tab, ir) }).state;
+  // 块表紧跟着喂一发：生产里块表只有两个来源（换态末尾与 120ms 防抖），而防抖只由
+  // `textChanged` 排程 ⇒ 恢复既不换态也不改文本，两条都不走。少了这一发，重启后的渲染格
+  // 是一篇纯源码 + 一颗画着锁的键，而锁态打不进字 ⇒ 用户在这个状态里没有任何自救手段。
+  refreshIr(tab);
 }
 
 function applyIrState(panel: Panel, tab: Tab, next: IrState): void {
@@ -234,14 +242,21 @@ function applyIrState(panel: Panel, tab: Tab, next: IrState): void {
 }
 
 /**
- * 三条入口（悬浮键的循环、两条直达命令）共用的落地前缀：反查这份实例所在的面板。
+ * 三条入口（悬浮键的循环、两条直达命令、整态重建之后的重挂）共用的落地前缀。
  *
- * ⚠️ 状态的两个字段只许在 `applyIrState` 里写 —— 入口只算「下一个态是什么」。
- * 少一道 `isMdTab` 判断就会把 `.txt` 标签也拖进渲染态（悬浮键自己有门槛，命令没有）。
+ * ⚠️ 状态的两个字段只许在 `applyIrState` / `restoreIrState` 里写，而且两者共用同一份
+ * 「状态 → 扩展」算法（`irCompsEffects`）—— 少一道判断就会把 `.txt` 标签也拖进渲染态，
+ * 少一次档位判断则能让命令面板给 20 MB 的文档打开 IR（B352-11 评审 I6：`renderMarkdownFor`
+ * 被闸门早退、`refreshIr` 却每 120ms 整篇重算，那一发本来就是 M4 档位为了停掉它才设的）。
  */
 function applyIrToTab(tab: Tab, next: IrState): void {
   const panel = getPanel(tab.panelId);
-  if (!panel || !panel.bodyEl || !isMdTab(tab) || !docOf(tab)) return;
+  const doc = docOf(tab);
+  if (!panel || !panel.bodyEl || !isMdTab(tab) || !doc) return;
+  if (!perfProfileFor(doc.sizeClass).autoPreview) {
+    showMessage("文件较大，未启用即时渲染");
+    return;
+  }
   applyIrState(panel, tab, next);
 }
 

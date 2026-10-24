@@ -79,3 +79,49 @@ describe("B352-6 IR 标识的样式（焦点块左边条 + 块 widget 容器）"
     expect(rule, "不许出现非零的 margin-top/bottom").not.toMatch(/margin-(top|bottom):\s*(?!0)/);
   });
 });
+
+describe("B352-11 评审 I4：IR 的岛间节奏与预览同档位", () => {
+  const g = stripCssComments(readFileSync("src/styles/global.css", "utf-8")).replace(/\s+/g, " ");
+
+  /** 通用那一档。命名出来是为了下面能用**同一把尺**量一份退化替身。 */
+  const flowRule = /\.md-ir-block \+ \.md-ir-block\s*\{[^}]*padding-top:\s*var\(--md-flow\)/;
+
+  /** 按「选择器含哪段 + 声明体含哪档」找规则：三条选择器都含 `.md-ir-block`，
+      只有第二个选择器和取值能把它们分开。 */
+  const grules = () =>
+    [...g.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sel: m[1].trim(), body: m[2].trim() }));
+
+  function grule(selMust: string, bodyMust: string): string {
+    const hit = grules().find((r) => r.sel.includes(selMust) && r.body.includes(bodyMust));
+    return hit?.sel ?? "";
+  }
+
+  it("三档节奏各有一条 padding-top，取值走 token 不带兜底", () => {
+    expect(g).toMatch(flowRule);
+    expect(
+      grule("+ .md-ir-block:not(", "padding-top: var(--md-after-head)"),
+      "标题下方收紧那一档",
+    ).toContain(":has(> .md-block > :is(h1, h2, h3))");
+    expect(
+      grule(".md-ir-block + .md-ir-block:has(", "padding-top: var(--md-head-flow)"),
+      "标题上方加大那一档",
+    ).toContain(":has(> .md-block > :is(h1, h2, h3, h4, h5, h6))");
+  });
+
+  it("两条特例排在通用那条之后（具体度相同，靠顺序决胜 —— 与预览同一口径）", () => {
+    const generic = g.indexOf(".md-ir-block + .md-ir-block {");
+    const headFlow = g.search(/\.md-ir-block \+ \.md-ir-block:has\(/);
+    expect(generic).toBeGreaterThanOrEqual(0);
+    expect(headFlow).toBeGreaterThan(generic);
+  });
+
+  it("档位只在 preview.css 声明，global.css 只读不抄（两份兜底必然漂移）", () => {
+    expect(g, "global.css 里不许声明 --md-* 节奏档位").not.toMatch(/(?:^|[;{\s])--md-flow\s*:/);
+  });
+
+  it("判据有鉴别力：padding 换成 margin-top 的替身必须被 flowRule 拒掉", () => {
+    const sub = g.replace("padding-top: var(--md-flow)", "margin-top: var(--md-flow)");
+    expect(sub, "替身必须真的与原文不同，否则这条什么都没测").not.toBe(g);
+    expect(sub).not.toMatch(flowRule);
+  });
+});

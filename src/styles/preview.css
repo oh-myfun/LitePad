@@ -83,6 +83,16 @@
   margin-bottom: 0;
 }
 
+/* B352-11（评审 I4）：岛间节奏的三个档位收在这一处 —— 预览与即时渲染（IR）共用同一批 token，
+   `.md-rendered` 两边都挂着，所以声明在它上面两边都读得到。
+   ⚠️ 此前这三条只写着 `var(--md-flow)` 之类的**兜底值**，全仓没有任何地方声明过它们，
+   于是「同一个观感档位」被抄在两个文件的兜底里；IR 那边要复用就只能再抄一遍。 */
+.md-rendered {
+  --md-flow: 0.7em;
+  --md-after-head: 0.8em;
+  --md-head-flow: 1.6em;
+}
+
 /* B319-A1：块间节奏声明在**岛与岛之间**。上面那两条清零是把岛内唯一子元素的上下
    margin 抹掉的（它既是 first 又是 last），而岛壳自己只有 `margin: 0 auto` ⇒ 岛之间
    实测 0px，整页挤成一坨。
@@ -90,13 +100,13 @@
       `.md-rendered .md-block:has(…)` 只有 (0,2,1)，会被通用那条整条盖掉。
       同理，标题上方那条排在通用那条**之后**（具体度相同，靠顺序决胜）。 */
 .md-rendered .md-block + .md-block {
-  margin-top: var(--md-flow, 0.7em);
+  margin-top: var(--md-flow);
 }
 .md-rendered .md-block:has(> :is(h1, h2, h3)) + .md-block:not(:has(> :is(h1, h2, h3, h4, h5, h6))) {
-  margin-top: var(--md-after-head, 0.8em);
+  margin-top: var(--md-after-head);
 }
 .md-rendered .md-block + .md-block:has(> :is(h1, h2, h3, h4, h5, h6)) {
-  margin-top: var(--md-head-flow, 1.6em);
+  margin-top: var(--md-head-flow);
 }
 /* ul/ol 只有 padding-left，`li` 的上下 margin 会一路穿出岛壳（实测漏出 4px），
    补这两条把岛壳重新收紧贴内容 —— 同步滚动的按行插值量的就是壳的矩形。 */

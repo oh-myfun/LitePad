@@ -11,18 +11,21 @@
 //    `tab.state`，而且算法与 `applyIrState` 共用同一份。
 import { beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { Compartment, EditorState } from "@codemirror/state";
+import { Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
 import { sessionStore } from "../src/session/store";
 import { coerceIrState, irStateName } from "../src/markdown/ir-state";
 import { setIrBlocks, irBlocksOf } from "../src/markdown/live-render";
 import { fnBody, stripLineComments } from "./static";
-import { docs, type Doc, type Tab } from "../src/core/app-state";
+import { makeDoc, makeInstance, registerDoc } from "../src/doc-model";
+import type { Tab } from "../src/core/app-state";
 
 const store = stripLineComments(readFileSync("src/session/store.ts", "utf-8"));
 const persist = stripLineComments(readFileSync("src/session/persist.ts", "utf-8"));
 const rebuild = stripLineComments(readFileSync("src/session/rebuild.ts", "utf-8"));
+const md = stripLineComments(readFileSync("src/markdown.ts", "utf-8"));
+const filesSrc = stripLineComments(readFileSync("src/io/files.ts", "utf-8"));
 const rust = readFileSync("src-tauri/src/session/mod.rs", "utf-8");
 
 let restoreIrState: typeof import("../src/markdown").restoreIrState;
@@ -44,25 +47,21 @@ function methodBody(src: string, name: string): string {
   return end < 0 ? "" : src.slice(at, end + 4);
 }
 
-/** 一份带真 Compartment 的实例（文档注册进 `docs`，因为 `docOf` 查不到是直接抛的）。 */
+const DOC_TEXT = "# a\n\n- x\n";
+let docSeq = 900;
+
+/**
+ * 真 md 文档 + 真实例（走生产那条 `makeDoc` / `makeInstance`，ir-lock-key 同款口径）。
+ *
+ * 自拼的 Tab 字面量在这一发上会各测到一半：`refreshIr` 先问 `isMdTab`（要 `docs` 里真有一份
+ * md 文档），`irCompsEffects` 又问 `docOf`（查不到是直接抛的），而 `makeTabState` 给的
+ * `comps.ir.of([])` 正是恢复要升级的那个初值 —— 三段都只在真实例上才是真判据。
+ */
 function fakeTab(readonly = false): Tab {
-  docs.set(999, { tabId: 999, readonly, path: null, sizeClass: "normal" } as unknown as Doc);
-  const ir = new Compartment();
-  const gutter = new Compartment();
-  const state = EditorState.create({
-    doc: "# a\n\n- x\n",
-    extensions: [ir.of([]), gutter.of([])],
-  });
-  return {
-    tabId: 1,
-    docId: 999,
-    panelId: 0,
-    comps: { ir, gutter },
-    state,
-    viewMode: "source",
-    liveRender: "off",
-    irLocked: true,
-  } as unknown as Tab;
+  const docId = ++docSeq;
+  const doc = makeDoc(docId, DOC_TEXT, `note-${docId}.md`, null, "UTF-8", "CRLF", readonly);
+  registerDoc(doc);
+  return makeInstance(doc, 0, DOC_TEXT);
 }
 
 describe("B352-10 会话记录：setIr 是唯一写点", () => {
@@ -167,6 +166,31 @@ describe("B352-10 恢复的那一刻就把扩展装上（不然画面与键各�
     expect(irBlocksOf(next.state).length, "块表进得来 = 装饰层真的在配置里").toBe(1);
   });
 
+  it("恢复自己就把块表喂上：不许留一个「等防抖到货」的空窗（锁态下用户没有自救手段）", () => {
+    const tab = fakeTab();
+    restoreIrState(tab, { liveRender: "ir", irLocked: true });
+    // 上一条例是自己手动 dispatch 了 `setIrBlocks` 才绿的 —— 那等于测试替生产补了缺的那一发。
+    // 生产里块表只有两个来源：`applyIrState` 末尾与 120ms 防抖（只由 textChanged 排程）。
+    // 恢复既不换态也不改文本 ⇒ 两条都不走：画面是一篇纯源码，而键画着锁、打不进字。
+    expect(irBlocksOf(tab.state).length, "装完扩展之后块表就得有东西").toBeGreaterThan(0);
+    expect(fnBody(md, "restoreIrState"), "那一发是 `refreshIr(tab)`（与换态同一出口）").toMatch(
+      /refreshIr\(tab\)/,
+    );
+  });
+
+  it("只读钳制必须连扩展一起钳：不许「键显示锁、编辑面可写」", () => {
+    const tab = fakeTab(true);
+    restoreIrState(tab, { liveRender: "ir", irLocked: false });
+    expect(tab.irLocked, "字段按回锁着").toBe(true);
+    // 同一个出口写的字段与装的扩展是两件事：只钳字段 = B304 那一族「显示与行为两套口径」
+    expect(tab.state.facet(EditorView.editable), "编辑面也得跟着关掉").toBe(false);
+    const tr = tab.state.update({
+      changes: { from: 0, insert: "Z" },
+      annotations: Transaction.userEvent.of("input"),
+    });
+    expect(tr.changes.empty, "changeFilter 同样要装上").toBe(true);
+  });
+
   it("读到 off（或非法值）：装饰层与锁一起下线，块表发了也不留", () => {
     const tab = fakeTab();
     restoreIrState(tab, coerceIrState({ liveRender: "wysiwyg", irLocked: null }));
@@ -176,11 +200,19 @@ describe("B352-10 恢复的那一刻就把扩展装上（不然画面与键各�
     });
     expect(irBlocksOf(next.state).length, "层没上线，块表无处可存").toBe(0);
   });
+});
 
-  it("只读文档的 C 不可达：盘上写着解锁，回来也得是锁着", () => {
-    const tab = fakeTab(true);
-    restoreIrState(tab, { liveRender: "ir", irLocked: false });
-    expect(tab.irLocked, "文档不可读时把锁按回 true（与 nextIrState 同一条约束）").toBe(true);
+describe("B352-11 评审 C3：整态重建不许把 IR 层静默拆掉", () => {
+  it("`rebuildDocInstances` 换掉 comps 之后必须补装 IR（外部重载 / 改编码 / 副本还原）", () => {
+    const body = fnBody(filesSrc, "rebuildDocInstances");
+    const swap = body.indexOf("inst.comps = made.comps");
+    const reapply = body.indexOf("restoreIrState(");
+    expect(swap, "取到那段了没？").toBeGreaterThan(-1);
+    expect(reapply, "重建之后要按实例自己的 IR 字段补一发").toBeGreaterThan(swap);
+    expect(
+      body.slice(reapply, reapply + 200),
+      "补的是这份实例当前的状态，不是硬套一个默认值",
+    ).toMatch(/liveRender:\s*inst\.liveRender/);
   });
 });
 

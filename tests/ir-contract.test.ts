@@ -30,6 +30,9 @@ const main = stripLineComments(readFileSync("src/main.ts", "utf-8"));
 const commands = stripLineComments(readFileSync("src/commands.ts", "utf-8"));
 const menubar = stripLineComments(readFileSync("src/shell/menubar.ts", "utf-8"));
 const findbar = stripLineComments(readFileSync("src/find/findbar.ts", "utf-8"));
+const md = stripLineComments(readFileSync("src/markdown.ts", "utf-8"));
+const filesSrc = stripLineComments(readFileSync("src/io/files.ts", "utf-8"));
+const exportSrc = stripLineComments(readFileSync("src/io/export.ts", "utf-8"));
 
 const SOURCE_LOCKED: IrState = { liveRender: "off", irLocked: true };
 const RENDER_LOCKED: IrState = { liveRender: "ir", irLocked: true };
@@ -150,7 +153,7 @@ describe("B352-9 接线：命令 → 落地只有那一条路", () => {
     expect(lock![1], "onIrLock 必须真调到 toggleIrLock").toMatch(/toggleIrLock\(/);
   });
 
-  it("查看菜单挂了两项，且各点各的回调", () => {
+  it("查看菜单挂了两项、快捷键提示取自注册表", () => {
     const block = menubar.slice(menubar.indexOf('label: "查看"'), menubar.indexOf('label: "编码"'));
     expect(block, "菜单项要接 onIrRender").toMatch(/onSelect:\s*cb\.onIrRender/);
     expect(block, "菜单项要接 onIrLock").toMatch(/onSelect:\s*cb\.onIrLock/);
@@ -189,6 +192,37 @@ describe("B352-9 锁态写入口：闸排在派生之前", () => {
       ).toBe(1);
     }
     expect(findbar, "拒绝要给查找栏状态文案").toContain("即时渲染已锁定");
+  });
+
+  // B352-11（评审 I3）：反目标写的是「锁态下**任何**写路径都必须进不来」，Review Focus 1 逐条
+  // 点名了 F5、替换全部、拖文件入编辑区、Ctrl+V 粘贴。Task 9 只补了点名的两条 —— 这四发同样是
+  // **不带 userEvent 的程序化 dispatch**，changeFilter 一律放行 ⇒ 锁着也能改文本（还置脏）。
+  // 这张清单本身就是判据的一部分：漏一条就是「入口没收全」。
+  it("全仓的程序化写入口都要问锁（清单：菜单粘贴/删除、拖入插路径、粘图）", () => {
+    const entries: [string, string, string][] = [
+      ["src/commands.ts", commands, "pasteClipboard"],
+      ["src/commands.ts", commands, "deleteSelection"],
+      ["src/io/files.ts", filesSrc, "insertDroppedPath"],
+      ["src/io/export.ts", exportSrc, "pasteImageToAssets"],
+    ];
+    for (const [file, src, name] of entries) {
+      const body = fnBody(src, name);
+      expect(body, `${file} 取到 ${name} 的函数体了没？`).toBeTruthy();
+      const gate = body.indexOf("irEditable(");
+      const dispatch = body.indexOf("dispatch(");
+      expect(gate, `${file} 的 ${name} 要问锁`).toBeGreaterThan(-1);
+      expect(dispatch, `${file} 的 ${name} 确实有派发`).toBeGreaterThan(-1);
+      expect(gate, `${file} 的 ${name}：闸要排在派发之前`).toBeLessThan(dispatch);
+      expect(body, `${file} 的 ${name}：拒绝不许静默`).toContain("即时渲染已锁定");
+    }
+  });
+
+  it("大文件档位的门槛只管住那颗键不够 —— 两条直达命令也要问 autoPreview", () => {
+    // 悬浮键有门槛（Task 8），但命令面板/菜单没有门槛可绕：给一份 20MB 的 .md 打开 IR，
+    // 预览闸门早退、`refreshIr` 却每 120ms 整篇 `renderBlocks` 一次 —— 那条路本来就是
+    // M4 档位为了「不跑这一发」才把自动预览停掉的。
+    const body = fnBody(md, "applyIrToTab");
+    expect(body, "命令侧要用同一份档位判据（不是再抄一份阈值）").toMatch(/autoPreview/);
   });
 
   it("irEditable 的定义全仓只有一处，且写入口从叶子模块取（不给 markdown 加反向依赖）", () => {

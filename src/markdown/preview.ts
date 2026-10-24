@@ -297,7 +297,7 @@ export class PreviewPane {
   /** 包装增强：无论成功/中断都要按 pending 行重定位一次（公式/Mermaid 会改变高度）。 */
   private async enhance(): Promise<void> {
     try {
-      await enhanceMarkdown(this.root, nextEnhanceSeq(), {
+      await enhanceMarkdown(this.root, nextEnhanceSeq(this.root), {
         bigDoc: this.bigDoc(),
         baseDir: this.baseDir,
       });

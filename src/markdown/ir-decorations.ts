@@ -97,3 +97,37 @@ export function irFocusLines(
   }
   return lines;
 }
+
+/** 一次改动对行号的影响：`from..to` 是改点覆盖的**旧**行号闭区间（纯插入时两者相等）。 */
+export interface IrLineShift {
+  from: number;
+  to: number;
+  deltaLines: number;
+}
+
+/**
+ * 打字之后把块表就地带正（B352-11 评审 I5）—— 不是整篇重算。
+ *
+ * 块表只由 120ms 防抖喂（重算整篇是这条路的反目标），而用户在 C 态里敲键盘是不停手的：
+ * 防抖一直被重置 ⇒ 块表一直是**旧行号**。旧行号配新文档 = 装饰盖到别的行上去，包括光标
+ * 正在写的那一行（那行本来该露源码）。所以在事务里改过行号就必须当场把块表对齐：
+ *
+ * · 与改点**相交**的那一块作废 —— 它的 `html` 已经描述不了新内容了，露源码等下一次防抖到货
+ *   （实践中就是光标所在那一块，而它在这一态本来就是源码）；
+ * · 完全在改点**之后**的块按行数增减平移；之前的块不动。
+ *
+ * 越界/倒挂的结果一律丢弃：宁可多露一行源码，也不发一个越界装饰（`blockRange` 那一条同源）。
+ */
+export function shiftBlocks(blocks: readonly MdBlock[], shifts: readonly IrLineShift[]): MdBlock[] {
+  if (shifts.length === 0) return [...blocks];
+  const out: MdBlock[] = [];
+  for (const b of blocks) {
+    if (shifts.some((s) => b.lineStart <= s.to && s.from <= b.lineEnd)) continue;
+    const delta = shifts.filter((s) => s.to < b.lineStart).reduce((n, s) => n + s.deltaLines, 0);
+    const lineStart = b.lineStart + delta;
+    const lineEnd = b.lineEnd + delta;
+    if (lineStart < 1 || lineEnd < lineStart) continue;
+    out.push({ ...b, lineStart, lineEnd });
+  }
+  return out;
+}

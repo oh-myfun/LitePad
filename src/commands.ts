@@ -126,6 +126,12 @@ async function pasteClipboard(): Promise<void> {
   if (!panel || !view) return;
   const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
   if (!tab) return;
+  // B352-11（评审 I3）：这一发是**程序化** `dispatch`，不带 `Transaction.userEvent` ⇒ 锁的
+  // changeFilter 天然放行它。反目标写的是「锁态下任何写路径（键入、粘贴、拖入、命令）都进不来」。
+  if (!irEditable(tab)) {
+    showMessage("即时渲染已锁定");
+    return;
+  }
   try {
     const text = await navigator.clipboard.readText();
     if (!view.dom.isConnected) return; // 异步间隙面板可能已关闭
@@ -143,6 +149,15 @@ async function pasteClipboard(): Promise<void> {
 
 /** 删除选区（Del）。 */
 function deleteSelection(): void {
+  // B352-11（评审 I3）：与粘贴同一形 —— 程序化 dispatch，changeFilter 不管它。
+  // 只问「这一块正看着的那份实例」，取不到实例时留给 `withView` 自己静默退回（别把「没有编辑器」
+  // 报成「被锁着」）。
+  const panel = activePanel();
+  const tab = panel && panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
+  if (tab && !irEditable(tab)) {
+    showMessage("即时渲染已锁定");
+    return;
+  }
   withView((view) => {
     const sel = view.state.selection.main;
     if (sel.empty) return;

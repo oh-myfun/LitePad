@@ -6,7 +6,7 @@
 // 头号反目标，`eq()` 命中时 CM6 必须复用同一个 DOM 节点，换块表时才许重造。
 import { describe, expect, it, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
 import {
@@ -187,6 +187,79 @@ describe("B352-6 事件放行与焦点行", () => {
     const block = parent.querySelector(".md-ir-block")!;
     block.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: 40, clientY: 12 }));
     expect(view.state.selection.main.head, "锁态下这次点击不该改选区").toBe(before);
+  });
+
+  // B352-11（评审 C1）：上面两条例都是一次成型于单一锁态 ⇒ 抓不到「同一视图里换了锁态、
+  // CM6 按 eq() 复用旧 DOM」这一形：`mousedown` 监听只在 `toDOM` 里挂，复用就不再有监听（解锁后
+  // 点块没反应），反方向则把旧监听留在节点上（锁态点块照样动选区）。判据打在**再配一次之后**的
+  // 那一次点击上，这才是用户手能点到的默认路径（A → B → 按那颗键解锁）。
+  it("同一视图里 B→C：旧块 DOM 必须重造，点块进编辑要真的生效", () => {
+    const ir = new Compartment();
+    const doc = "# a\n\n- x\n";
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    parents.push(parent);
+    const view = new EditorView({
+      state: EditorState.create({
+        doc,
+        extensions: [ir.of(liveRenderExtensions({ ir: true, locked: true, baseDir: null }))],
+      }),
+      parent,
+    });
+    view.dispatch({ effects: setIrBlocks.of(renderBlocks(doc)) });
+    expect(parent.querySelectorAll(".md-ir-block"), "锁态：两块都渲染").toHaveLength(2);
+
+    // 解锁（走生产那一发：同一个 compartment 里换扩展）
+    view.dispatch({
+      effects: ir.reconfigure(liveRenderExtensions({ ir: true, locked: false, baseDir: null })),
+    });
+    const blocks = parent.querySelectorAll(".md-ir-block");
+    // 光标还在第 1 行 ⇒ 那一块退回源码，第 3 行那块仍渲染
+    expect(blocks, "解锁后仍在渲染的那一块").toHaveLength(1);
+    blocks[0].dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, cancelable: true, clientX: 40, clientY: 12 }),
+    );
+    expect(
+      view.state.selection.main.head,
+      "解锁后点块必须把光标送进这一块（第 3 行行首）—— 复用旧 DOM 就没有监听",
+    ).toBe(doc.indexOf("- x"));
+
+    // 反方向：再锁回去，留在节点上的旧监听不许再动选区
+    view.dispatch({ selection: { anchor: 0 } });
+    view.dispatch({
+      effects: ir.reconfigure(liveRenderExtensions({ ir: true, locked: true, baseDir: null })),
+    });
+    const again = parent.querySelectorAll(".md-ir-block");
+    expect(again.length, "锁态两块").toBe(2);
+    for (const el of again) {
+      el.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, cancelable: true, clientX: 40, clientY: 12 }),
+      );
+    }
+    expect(view.state.selection.main.head, "锁态下点任何一块都不该动选区").toBe(0);
+    view.destroy();
+  });
+
+  it("基准目录变了也必须重造 DOM（相对路径图片不许停在上一份文档的目录）", () => {
+    const ir = new Compartment();
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    parents.push(parent);
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: "# a\n",
+        extensions: [ir.of(liveRenderExtensions({ ir: true, locked: true, baseDir: "D:\\one" }))],
+      }),
+      parent,
+    });
+    view.dispatch({ effects: setIrBlocks.of(renderBlocks("# a\n")) });
+    const first = parent.querySelector(".md-ir-block");
+    view.dispatch({
+      effects: ir.reconfigure(liveRenderExtensions({ ir: true, locked: true, baseDir: "D:\\two" })),
+    });
+    const second = parent.querySelector(".md-ir-block");
+    expect(second, "换目录后节点要是新的").not.toBe(first);
+    view.destroy();
   });
 
   it("焦点行装饰只给露源码那一块的首行，类名 md-ir-focus-line", () => {

@@ -23,19 +23,29 @@ import { convertFileSrc } from "../ipc/api";
  */
 let mmdUid = 0;
 
-/** 已发出的增强次数与最新那一次的序号；两者不等 ⇒ 手上这一发已经过期。 */
-let seqCounter = 0;
-let latestSeq = 0;
-
 /**
- * 开始一次增强，拿到这一发的序号。
+ * 「过期」判据的域：**每个 root 自己一发**，不是全窗口一张表。
  *
- * ⚠️ 每个异步段跑完都要拿 `seq !== latestSeq` 复检一次：过期就必须**立刻退出**，
- * 否则会把更新的渲染结果覆盖回旧内容（`renderMarkdownFor` 与 IR 的重画都可能在途中）。
+ * ⚠️ B352-11 评审 C2 推翻台账 Task 2 那条裁定（当时把两个计数器当成了同一件事）：
+ * `mmdUid` 必须全局（mermaid 的 render id 撞了会删掉别格刚插进 DOM 的 SVG），而 seq 的语义是
+ * 「**同一个容器**上后发的一发作废先发的那发」。提到模块级之后：IR 一次画 N 块、每块各发一发
+ * ⇒ 后一块把前 N-1 块一起取消，而那些节点又被 `eq()` 复用、再也轮不到重跑 ⇒ 代码块永远纯文本、
+ * 公式停在 `$$…$$`；主预览格 + 侧边预览格同时开时也是同一形互砍（搬家之前它是每格一个的
+ * `private mermaidSeq`，跨格互不影响）。
  */
-export function nextEnhanceSeq(): number {
-  latestSeq = ++seqCounter;
-  return latestSeq;
+const latestSeqByRoot = new WeakMap<HTMLElement, number>();
+let seqCounter = 0;
+
+/** 在 `root` 上开始一次增强。后续每次 `nextEnhanceSeq(root)` 都会作废这个 root 上在途的那一发。 */
+export function nextEnhanceSeq(root: HTMLElement): number {
+  const seq = ++seqCounter;
+  latestSeqByRoot.set(root, seq);
+  return seq;
+}
+
+/** 这一个 root 上不是最新的一发 ⇒ 每个 await 之后都要复检，过期就立刻退出。 */
+export function isEnhanceStale(root: HTMLElement, seq: number): boolean {
+  return latestSeqByRoot.get(root) !== seq;
 }
 
 export interface EnhanceOptions {
@@ -72,7 +82,7 @@ export async function enhanceMarkdown(
   if (maths.length > 0) {
     try {
       const katex = (await import("katex")).default;
-      if (seq !== latestSeq) return;
+      if (isEnhanceStale(root, seq)) return;
       for (const el of maths) {
         if (!el.isConnected) continue;
         const tex = el.textContent ?? "";
@@ -104,7 +114,7 @@ export async function enhanceMarkdown(
     if (needHighlight.length > 0) {
       try {
         const { codeToHtml } = await import("shiki");
-        if (seq !== latestSeq) return;
+        if (isEnhanceStale(root, seq)) return;
         for (const el of needHighlight) {
           const lang = el.dataset.lang!;
           const code = el.querySelector("code")?.textContent ?? "";
@@ -141,7 +151,7 @@ export async function enhanceMarkdown(
   if (mermaids.length > 0 && !opts.bigDoc) {
     try {
       const mermaid = (await import("mermaid")).default;
-      if (seq !== latestSeq) return;
+      if (isEnhanceStale(root, seq)) return;
       mermaid.initialize({
         startOnLoad: false,
         securityLevel: "strict",
@@ -152,7 +162,7 @@ export async function enhanceMarkdown(
         const id = `mmd-${++mmdUid}`;
         try {
           const { svg } = await mermaid.render(id, code);
-          if (!el.isConnected || seq !== latestSeq) return;
+          if (!el.isConnected || isEnhanceStale(root, seq)) return;
           const div = document.createElement("div");
           div.className = "md-mermaid";
           div.innerHTML = svg;

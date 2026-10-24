@@ -9,6 +9,7 @@ import { activeTab, docOf, panelOfTab } from "../core/panels";
 import { docs, tabs, type Tab } from "../core/app-state";
 import { isMdTab } from "../doc-model";
 import { dirname } from "../markdown";
+import { irEditable } from "../markdown/ir-state";
 import { buildExportHtml } from "../markdown/exporter";
 import { renderFull } from "../markdown/pipeline";
 import { printToPdf } from "../markdown/exporter";
@@ -88,6 +89,12 @@ function attachPasteHandler(panel: Panel): void {
 }
 
 async function pasteImageToAssets(panel: Panel, tab: Tab, file: File): Promise<void> {
+  // B352-11（评审 I3）：这一发**既往磁盘落文件、又往文档插一行**。闸要排在最前面 ——
+  // 锁着的时候连「为一次不会写进文档的粘贴而生成的 assets 文件」都不该发生。
+  if (!irEditable(tab)) {
+    showMessage("即时渲染已锁定");
+    return;
+  }
   try {
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();

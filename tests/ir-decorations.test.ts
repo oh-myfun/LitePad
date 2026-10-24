@@ -18,7 +18,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { irDecorationsFor, irFocusLines } from "../src/markdown/ir-decorations";
+import { irDecorationsFor, irFocusLines, shiftBlocks } from "../src/markdown/ir-decorations";
 import { stripLineComments } from "./static";
 
 /**
@@ -167,5 +167,59 @@ describe("B352-3 结构判据：这层保持纯净", () => {
     expect(body, "不许把两个概念合并成 intersects && !locked 这种一条式").not.toMatch(
       /intersects\s*&&\s*!locked|!locked\s*&&\s*intersects/,
     );
+  });
+});
+
+describe("B352-11（评审 I5）打字顶掉行号之后的块表", () => {
+  const B = (lineStart: number, lineEnd: number) => ({
+    lineStart,
+    lineEnd,
+    html: `<p>${lineStart}</p>`,
+  });
+
+  it("改点落在哪一块，那一块就作废（html 已经旧了），其后的块按行数平移", () => {
+    // 第 1 行行尾按一次回车 ⇒ 多出一行；第 3 行那块整体下移一行，**内容还是它自己的**
+    expect(shiftBlocks([B(1, 1), B(3, 3)], [{ from: 1, to: 1, deltaLines: 1 }])).toEqual([
+      { lineStart: 4, lineEnd: 4, html: "<p>3</p>" },
+    ]);
+  });
+
+  it("删掉一整行 ⇒ 相交那块作废，其后各块上移", () => {
+    expect(shiftBlocks([B(1, 1), B(3, 5)], [{ from: 1, to: 1, deltaLines: -1 }])).toEqual([
+      { lineStart: 2, lineEnd: 4, html: "<p>3</p>" },
+    ]);
+  });
+
+  it("改点落在两块之间的空行 ⇒ 两块都不动（没挨着内容，html 仍然对得上）", () => {
+    const blocks = [B(1, 1), B(3, 3)];
+    expect(shiftBlocks(blocks, [{ from: 2, to: 2, deltaLines: 0 }])).toEqual(blocks);
+  });
+
+  it("多个改点按各自的累计量平移（不是只算最后一条）", () => {
+    const blocks = [B(1, 1), B(3, 3), B(6, 6)];
+    // 第 1 行回车 +1；第 5 行删掉一行 -1 ⇒ 第 6 行那块两个改点都在它前面，净 0
+    expect(
+      shiftBlocks(blocks, [
+        { from: 1, to: 1, deltaLines: 1 },
+        { from: 5, to: 5, deltaLines: -1 },
+      ]),
+    ).toEqual([
+      { lineStart: 4, lineEnd: 4, html: "<p>3</p>" },
+      { lineStart: 6, lineEnd: 6, html: "<p>6</p>" },
+    ]);
+  });
+
+  it("行内改字（行数不变）只作废那一块，其余原样 —— 不许顺手全篇重算", () => {
+    const blocks = [B(1, 1), B(3, 3)];
+    expect(shiftBlocks(blocks, [{ from: 1, to: 1, deltaLines: 0 }])).toEqual([B(3, 3)]);
+  });
+
+  it("平移后行号倒挂或掉到 1 以下的块丢弃（宁可露源码，也不发一个越界装饰）", () => {
+    expect(shiftBlocks([B(2, 3)], [{ from: 1, to: 4, deltaLines: -3 }])).toEqual([]);
+  });
+
+  it("没有改点（纯选区移动）⇒ 块表一字不动", () => {
+    const blocks = [B(1, 1), B(3, 3)];
+    expect(shiftBlocks(blocks, [])).toEqual(blocks);
   });
 });

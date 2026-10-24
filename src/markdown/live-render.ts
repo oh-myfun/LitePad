@@ -22,7 +22,7 @@ import {
 import { Decoration, EditorView, WidgetType, type DecorationSet } from "@codemirror/view";
 
 import { enhanceMarkdown, nextEnhanceSeq } from "./enhance";
-import { irDecorationsFor, irFocusLines } from "./ir-decorations";
+import { irDecorationsFor, irFocusLines, shiftBlocks, type IrLineShift } from "./ir-decorations";
 import type { MdBlock } from "./pipeline";
 
 const NO_BLOCKS: readonly MdBlock[] = [];
@@ -34,9 +34,42 @@ const irBlocksField = StateField.define<readonly MdBlock[]>({
   create: () => NO_BLOCKS,
   update(value, tr: Transaction) {
     for (const e of tr.effects) if (e.is(setIrBlocks)) return e.value;
-    return value;
+    // 打字时防抖一直被重置 ⇒ 块表停在**旧行号**上，装饰会盖到别的行去（B352-11 评审 I5）。
+    // 当场按行数增减把它对齐：整篇重算是这条路明令禁止的（8.8ms @5,000 行 × 每一次按键）。
+    return tr.docChanged ? shiftBlocks(value, lineShiftsOf(tr)) : value;
   },
 });
+
+/** 一次事务对各块**旧行号**的影响（`shiftBlocks` 要的口径）。 */
+function lineShiftsOf(tr: Transaction): IrLineShift[] {
+  const oldDoc = tr.startState.doc;
+  const shifts: IrLineShift[] = [];
+  tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+    const count = (text: string): number => {
+      let n = 0;
+      for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) n++;
+      return n;
+    };
+    if (toA > fromA) {
+      // 删/换：旧区间 = 被吃掉的那几行；新区间 = 插入文本占的行数
+      const removed = count(oldDoc.sliceString(fromA, toA)) + 1;
+      const added = inserted.length > 0 ? count(inserted.toString()) + 1 : 0;
+      shifts.push({
+        from: oldDoc.lineAt(fromA).number,
+        to: oldDoc.lineAt(toA - 1).number,
+        deltaLines: added - removed,
+      });
+    } else {
+      // 纯插入：改点只占「落在哪一行」这一行；行数增减 = 插入文本里的换行数
+      shifts.push({
+        from: oldDoc.lineAt(fromA).number,
+        to: oldDoc.lineAt(fromA).number,
+        deltaLines: count(inserted.toString()),
+      });
+    }
+  });
+  return shifts;
+}
 
 /** 读块表。IR 关着（字段不在配置里）时给空表，不抛 —— 关态必须真的零参与。 */
 export function irBlocksOf(state: EditorState): readonly MdBlock[] {
@@ -61,14 +94,22 @@ export class IrBlockWidget extends WidgetType {
   }
 
   /**
-   * 比 (lineStart, lineEnd, html)：与预览的增量 patch 同一口径（B319 岛级复用的教训）。
-   * 命中 ⇒ CM6 复用同一个 DOM 节点 ⇒ 打字时其它块不重画、KaTeX/Mermaid 不重跑。
+   * 比 (lineStart, lineEnd, html) **加上这一发的装配口径**（editable / baseDir）：与预览的增量
+   * patch 同一口径（B319 岛级复用的教训）。命中 ⇒ CM6 复用同一个 DOM 节点 ⇒ 打字时其它块不重画、
+   * KaTeX/Mermaid 不重跑。
+   *
+   * ⚠️ 后两位不是保险，是承重（B352-11 评审 C1）：`mousedown`（「点块进编辑」那颗手势）只在
+   * `toDOM` 里按 `editable` 挂。少了它，默认流程 A→B→按那颗键解锁 就是「画面按 eq 复用旧节点、
+   * 而旧节点上没有监听」—— 解锁之后点任何一块都没反应；反方向（C→B）则把旧监听留在节点上，
+   * 锁态点块仍然动选区。`baseDir` 同理：文档改名/移动之后相对路径图片要按新目录重算。
    */
   override eq(other: IrBlockWidget): boolean {
     return (
       other.spec.lineStart === this.spec.lineStart &&
       other.spec.lineEnd === this.spec.lineEnd &&
-      other.spec.html === this.spec.html
+      other.spec.html === this.spec.html &&
+      other.spec.editable === this.spec.editable &&
+      other.spec.baseDir === this.spec.baseDir
     );
   }
 
@@ -93,8 +134,12 @@ export class IrBlockWidget extends WidgetType {
     inner.dataset.lineEnd = String(this.spec.lineEnd);
     inner.innerHTML = this.spec.html;
     outer.appendChild(inner);
-    // 岛级增强与预览共用一份出口（Task 2）；失败自己吞掉（enhanceMarkdown 内部已按 seq 早退）
-    void enhanceMarkdown(outer, nextEnhanceSeq(), { bigDoc: false, baseDir: this.spec.baseDir });
+    // 岛级增强与预览共用一份出口（Task 2）；失败自己吞掉。取号按**这一块**的根节点：
+    // 一块一发，别块不许把它取消掉（B352-11 评审 C2，见 enhance.ts 那段注释）。
+    void enhanceMarkdown(outer, nextEnhanceSeq(outer), {
+      bigDoc: false,
+      baseDir: this.spec.baseDir,
+    });
 
     if (this.spec.editable) {
       outer.addEventListener("mousedown", (e) => {

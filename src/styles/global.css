@@ -3530,9 +3530,25 @@ button:focus-visible {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
-/* 块 widget 的容器：CM6 规定块级装饰不得带垂直 margin（带了自己会抖行高估计）。 */
+/* 块 widget 的容器：CM6 规定块级装饰不得带垂直 margin（带了自己会抖行高估计）。
+   节奏因此只能由**外层 padding** 承担（B352-11 评审 I4）：预览那条 `.md-block + .md-block`
+   跨不过 widget 边界（每颗 widget 里只有一个 `.md-block`），不补就是 IR 里块间 0px ——
+   正是 B319-A1 在预览里治好并专门留注释警告的「整页挤成一坨」。
+   两颗 widget 的根节点在 `.cm-content` 里互为兄弟（探针实测），所以 `+` 选得了。 */
 .panel-host .cm-editor .md-ir-block {
   margin: 0;
+}
+.panel-host .cm-editor .md-ir-block + .md-ir-block {
+  padding-top: var(--md-flow);
+}
+.panel-host
+  .cm-editor
+  .md-ir-block:has(> .md-block > :is(h1, h2, h3))
+  + .md-ir-block:not(:has(> .md-block > :is(h1, h2, h3, h4, h5, h6))) {
+  padding-top: var(--md-after-head);
+}
+.panel-host .cm-editor .md-ir-block + .md-ir-block:has(> .md-block > :is(h1, h2, h3, h4, h5, h6)) {
+  padding-top: var(--md-head-flow);
 }
 
 /* 拖拽分隔条期间的全局态：禁选 + 按方向给光标。
