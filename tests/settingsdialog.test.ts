@@ -1311,13 +1311,18 @@ describe("B385 设置页「文件关联」分类（B386 三轮：纵向勾选列
     expect(page, "要挂「未生效」小标").toContain("settings-assoc-badge");
   });
 
-  it("B386 静态：关联清单是纵向列表（一格式一行），不是换行网格", () => {
+  it("B386 静态：关联清单是纵向勾选列表（一格式一行、限高滚动），不是换行网格", () => {
     const css = stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
     const list = ruleBlock(css, ".settings-assoc-list");
     expect(cssDecls(list), "清单要单列排").toContain("flex-direction: column");
     expect(cssDecls(list), "不许再回到 flex 换行网格").not.toContain("flex-wrap");
-    const item = ruleBlock(css, ".settings-assoc-item:hover");
-    expect(cssDecls(item), "行 hover 走列表高亮 token（VS Code 列表行同源）").toContain(
+    // 限高 + 滚动（别全展开把页面撑长）；行不许被 flex 收缩（收缩就没有滚动条了）
+    expect(cssDecls(list), "要限高").toMatch(/max-height:\s*\d+px/);
+    expect(cssDecls(list), "超高要自己滚").toContain("overflow-y: auto");
+    const item = ruleBlock(css, ".settings-assoc-item");
+    expect(cssDecls(item), "行高要钉死，别让 flex 列把 36 行压进限高里").toContain("flex: none");
+    const hover = ruleBlock(css, ".settings-assoc-item:hover");
+    expect(cssDecls(hover), "行 hover 走列表高亮 token（VS Code 列表行同源）").toContain(
       "--list-hover-bg",
     );
   });

@@ -3052,15 +3052,19 @@ button:focus-visible {
   outline: none;
 }
 
-/* B385/B386：文件关联分类 —— 勾选列表（一格式一行，native checkbox 用 accent 色跟主题走） */
+/* B385/B386：文件关联分类 —— 勾选列表（一格式一行，native checkbox 用 accent 色跟主题走）
+   B386 续：限高 12 行后自己滚，三十来个格式别把整页撑长 */
 .settings-assoc-list {
   display: flex;
   flex-direction: column;
+  max-height: 264px;
+  overflow-y: auto;
   padding: 2px 0;
 }
 
 .settings-assoc-item {
   display: flex;
+  flex: none;
   gap: 6px;
   align-items: center;
   height: 22px;
