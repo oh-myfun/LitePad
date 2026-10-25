@@ -26,7 +26,6 @@ const cssOf = (rel: string): string => stripCssComments(read(rel));
 const WHITELIST: readonly [string, string][] = [
   [":root", "token 的定义处（值必须写在这里，别处只准引用）"],
   [".codicon", "图标尺寸另有谱：codicon 用 `font:` 简写，字号由字形度量决定"],
-  [".find-badge", "徽标档（挂在开关右上角的计数，11px 会撑破那颗小圆片）"],
 ];
 
 /**

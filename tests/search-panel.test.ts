@@ -652,4 +652,22 @@ describe("B389 · 从命令/快捷键摊开（种子取活动视图选中的那�
     panel.openSearchView();
     expect(ui.searchInput.value).toBe("");
   });
+
+  it("「在文件中替换」那一发：同一个面板掀开替换行，焦点给替换框", () => {
+    visibleView("needle 在这里", 0, 6);
+    panel.openSearchView(true);
+    expect(drawer.activeDrawer(), "不另起一块面板：还是搜索这一块").toBe("search");
+    expect(ui.searchReplaceRow.hidden).toBe(false);
+    expect(ui.searchPanel.classList.contains("is-replace-shown")).toBe(true);
+    expect(ui.searchInput.value, "选区照样填进查找框（VS Code 两个框都种子化）").toBe("needle");
+    expect(document.activeElement, "焦点在替换框：那一发要改的是替换串").toBe(
+      ui.searchReplaceInput,
+    );
+  });
+
+  it("命令表把这两条键位给出去了（用户点名照 VS Code 的 Ctrl+Shift+F / H）", async () => {
+    const { commandById } = await import("../src/shell/keymap");
+    expect(commandById("edit.findInFiles")?.keys).toEqual(["Ctrl+Shift+F"]);
+    expect(commandById("edit.replaceInFiles")?.keys).toEqual(["Ctrl+Shift+H"]);
+  });
 });

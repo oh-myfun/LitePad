@@ -170,11 +170,18 @@ export function toggleSearch(): void {
  * 从命令 / 快捷键摊开搜索，并把当前选区灌进去（VS Code `workbench.action.findInFiles`
  * 的手感：按下去就已经把要搜的那词填好了）。框里已经有字时**不覆盖** —— 用户再按一次
  * 通常只是想回到那个面板，不是想丢掉刚打的那串。
+ *
+ * `showReplace` 那一档是「在文件中替换」（VS Code `workbench.action.replaceInFiles`）：
+ * 同一个面板，只是顺手把替换行掀开、焦点交给替换框 —— 另起一块面板就是两套口径了。
  */
-export function openSearchView(): void {
+export function openSearchView(showReplace = false): void {
   if (windowKind === "satellite") return;
   if (isSidebarOff()) applySidebarVisible(false);
   setDrawer("search");
+  if (showReplace) {
+    setReplaceShown(true);
+    searchReplaceInput.focus();
+  }
   const seed = selectedTextInActiveView();
   if (seed && !searchInput.value) {
     setQuery({ text: seed });

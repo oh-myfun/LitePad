@@ -64,6 +64,9 @@ export interface MenuBarCallbacks {
   onFindNext: () => void;
   onFindPrev: () => void;
   onReplace: () => void;
+  /** B389：跨文件那两条的落点是侧栏搜索视图，不是悬浮条（悬浮条只管当前这一份文档）。 */
+  onFindInFiles: () => void;
+  onReplaceInFiles: () => void;
   onGoto: () => void;
   onSelectAll: () => void;
   onTimeDate: () => void;
@@ -180,6 +183,15 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
       { label: withKey("查找下一个", cb.keyHint("edit.findNext")), onSelect: cb.onFindNext },
       { label: withKey("查找上一个", cb.keyHint("edit.findPrev")), onSelect: cb.onFindPrev },
       { label: withKey("替换", cb.keyHint("edit.replace")), onSelect: cb.onReplace },
+      // B389：跨文件那两条与上面两条并列（VS Code 的 Find 菜单同款次序），落点是侧栏搜索视图。
+      {
+        label: withKey("在文件中查找", cb.keyHint("edit.findInFiles")),
+        onSelect: cb.onFindInFiles,
+      },
+      {
+        label: withKey("在文件中替换", cb.keyHint("edit.replaceInFiles")),
+        onSelect: cb.onReplaceInFiles,
+      },
       { label: withKey("转到", cb.keyHint("edit.goto")), onSelect: cb.onGoto },
       { separator: true },
       { label: "全选\tCtrl+A", onSelect: cb.onSelectAll },

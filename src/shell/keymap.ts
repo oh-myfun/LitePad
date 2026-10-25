@@ -284,6 +284,11 @@ export const COMMANDS: CommandDef[] = [
   // ---- 编辑 ----
   { id: "edit.find", label: "查找", group: "编辑", keys: ["Ctrl+F"] },
   { id: "edit.replace", label: "替换", group: "编辑", keys: ["Ctrl+H"] },
+  // B389：跨文件那两条落在**侧栏搜索视图**（照 VS Code：`workbench.view.search` 与
+  // `workbench.action.replaceInFiles`）。⚠️ 键位字面量只许出现在这张表里 —— 分发的那处
+  // 只按 id 走、菜单那处只按 `keyHint(id)` 取，改一颗键才只用改这里。
+  { id: "edit.findInFiles", label: "在文件中查找", group: "编辑", keys: ["Ctrl+Shift+F"] },
+  { id: "edit.replaceInFiles", label: "在文件中替换", group: "编辑", keys: ["Ctrl+Shift+H"] },
   { id: "edit.findNext", label: "查找下一个", group: "编辑", keys: ["F3"] },
   { id: "edit.findPrev", label: "查找上一个", group: "编辑", keys: ["Shift+F3"] },
   {

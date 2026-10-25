@@ -235,8 +235,8 @@ import {
 } from "./explorer/panel";
 import { setupPathRewiring } from "./explorer/paths";
 // B389：侧栏搜索视图（第四块展开区）。`setupSearch` 装输入区、结果树，并把自己登记进外壳；
-// 键位入口（`edit.findInFiles` → `openSearchView`）排在下一发，此刻只有按钮列那颗能打开它。
-import { setupSearch } from "./search/panel";
+// `openSearchView` 是「在文件中查找 / 替换」那两条命令的落点。
+import { openSearchView, setupSearch } from "./search/panel";
 import { setRoot as setExplorerRoot } from "./explorer/store";
 import { initRecentsStore } from "./recents/store";
 import type { WindowScrollPosition } from "./core/events";
@@ -524,6 +524,12 @@ function runShortcut(id: string): void {
       break;
     case "edit.replace":
       openFindBar("replace");
+      break;
+    case "edit.findInFiles":
+      openSearchView();
+      break;
+    case "edit.replaceInFiles":
+      openSearchView(true);
       break;
     case "edit.findNext":
       findStep(1);

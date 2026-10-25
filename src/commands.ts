@@ -17,6 +17,8 @@ import { refreshViewModeButton, toggleViewMode } from "./markdown";
 import { doOpen, doSave, doSaveAll } from "./io/files";
 import { exportHtml, exportPdf } from "./io/export";
 import { ensureFindBar, openFindBar, retargetFindBar } from "./find/findbar";
+// B389：跨文件那两条命令的落点（菜单与快捷键都走这里）。
+import { openSearchView } from "./search/panel";
 import {
   currentFontSize,
   encodingMenuModel,
@@ -493,6 +495,8 @@ function setupMenuBar(): void {
     onFindNext: () => findStep(1),
     onFindPrev: () => findStep(-1),
     onReplace: () => openFindBar("replace"),
+    onFindInFiles: () => openSearchView(),
+    onReplaceInFiles: () => openSearchView(true),
     onGoto: () => openGotoLine(),
     onSelectAll: () => withView((v) => selectAll(v)),
     onTimeDate: () => insertTimeDate(),

@@ -105,6 +105,9 @@ function makeCb(): MenuBarCallbacks {
     onFindNext: noop,
     onFindPrev: noop,
     onReplace: noop,
+    // B389：跨文件那两条（落点是侧栏搜索视图，菜单层只测「挂没挂上入口」）
+    onFindInFiles: noop,
+    onReplaceInFiles: noop,
     onGoto: noop,
     onSelectAll: noop,
     onTimeDate: noop,
@@ -263,13 +266,16 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
       "查找下一个\tF3",
       "查找上一个\tShift+F3",
       "替换\tCtrl+H",
+      // B389（用户点名 ctrl+shift+f 开侧栏搜索）：跨文件那两条回到菜单里，
+      // 键位由命令表给 —— 这两条文案是 `withKey(...)` 现取的，不是写死的。
+      "在文件中查找\tCtrl+Shift+F",
+      "在文件中替换\tCtrl+Shift+H",
       "转到\tCtrl+G",
       "全选\tCtrl+A",
       "时间/日期\tF5",
     ]) {
       expect(texts, `编辑菜单应含「${t}」`).toContain(t);
     }
-    expect(texts, "不得再有「在文件中查找」").not.toContain("在文件中查找\tCtrl+Shift+F");
   });
 
   it("菜单条目一律不带省略号（用户 2026-10-20 点名去掉；新加的条目也照这条）", () => {
@@ -637,7 +643,7 @@ describe("查找入口统一（悬浮查找栏）", () => {
     expect(km, "F5 必须是 force（否则会被 WebView2 刷新吃掉）").toContain("force: true");
   });
 
-  it("B39/B40：查找范围不用下拉菜单，跨文档改为文档图标，且不做文件夹搜索", () => {
+  it("B39/B40 + B389：悬浮条只管当前文档，跨文档搬到侧栏搜索视图", () => {
     const src =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
@@ -651,18 +657,24 @@ describe("查找入口统一（悬浮查找栏）", () => {
     expect(src, "不得再出现 folder 范围入口").not.toContain('openFindBar("folder")');
     expect(src, "不得再调用读盘的跨文件搜索 IPC").not.toContain("searchFiles");
     expect(src, "不得再有默认搜索目录推导").not.toContain("defaultSearchDir");
-    expect(src, "不得再注册 Ctrl+Shift+F").not.toContain("Ctrl+Shift+F");
+    expect(src, "键位只在命令表里：这几处不许自己写死那串键").not.toContain("Ctrl+Shift+F");
 
     const barSrc = readFileSync("src/shell/findbar.ts", "utf-8");
     expect(barSrc, "查找栏不得再有 scope 概念").not.toContain("FindScope");
     expect(barSrc, "查找栏不得再有范围下拉").not.toContain("find-scope");
     expect(barSrc, "查找栏不得再有文件夹搜索控件").not.toContain("find-folder");
-    expect(barSrc, "跨文档必须保留（方案 C：文档图标按钮）").toContain("find-docs");
-    // ⚠️ B80 反转了这条：原先要求「结果列表必须保留」，用户实测要求「底下不要结果区」，
-    //    参考 VS Code（它的查找浮层里没有内联结果列表）后整个删掉 —— 总匹配数改由
-    //    文档图标右上角的徽标承载。
     expect(barSrc, "不得再有底部结果列表").not.toContain("find-results");
-    expect(barSrc, "总匹配数必须由徽标承载").toContain("find-badge");
+    // B389（用户点名「从悬浮条剥离多文档查找能力」）：跨文档那一档整个从悬浮条拿走 ——
+    // 文档图标、右上角徽标与查询对象里那一格都不许留着，否则屏上还挂着一颗点了没反应的开关。
+    // ⚠️ B80 那条「总匹配数必须由徽标承载」在此作废：徽标跟着它要的那份命中表一起没了。
+    expect(barSrc, "跨文档开关必须删除").not.toContain("find-docs");
+    expect(barSrc, "跨文档徽标必须删除").not.toContain("find-badge");
+    expect(barSrc, "查询对象里不许再有 allDocs 那一格").not.toContain("allDocs");
+    // 剥离 ≠ 砍掉能力：那一档要在侧栏那一块里真有人干活（读盘的递归搜索在模型层）。
+    const model = readFileSync("src/search/store.ts", "utf-8");
+    expect(model, "侧栏搜索必须接手跨文件搜索").toContain("searchInFolder");
+    const view = readFileSync("src/search/panel.ts", "utf-8");
+    expect(view, "那颗键的点击必须在视图自己这里挂上（B314-8）").toContain("sideSearch");
   });
 
   it("不得再存在第二套查找 UI（CM6 面板 / 独立查找窗口）", () => {
@@ -1147,15 +1159,15 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     );
   });
 
-  it("B86 三种查找范围共用同一套触发与计数逻辑（不再靠回车触发搜索）", () => {
-    // 事故：点亮「所有打开的文档」后既不刷新结果也不更新按钮，改搜索文本同样没反应，
+  it("B86 两种查找范围共用同一套触发与计数逻辑（不再靠回车触发搜索）", () => {
+    // 事故原貌（跨文档还在悬浮条里时）：点亮「所有打开的文档」后既不刷新结果也不更新按钮，
     // **必须再按一次回车**才搜。两个根因：
     //   ① 查找栏把跨文档做成**独立命令**（onSearchAll），只有回车会调它；
-    //   ② 主程序 `runFindInDocs` 刚写完计数，紧随其后的 `refreshFindCount()` 又因
-    //      `q.allDocs` 把它覆盖成「无内容」→ prev/next 被置灰，看起来就是「没触发」。
-    // 修法：搜索统一由「查询或范围变化」触发；计数统一由 `refreshFindCount()` 一个出口产出；
-    // 回车在三种范围里一律是步进（下一个 / 上一个）。
-    // 跨文档搜索函数已拆到 find/findbar.ts（#413）⇒ 拼进源
+    //   ② 主程序刚写完计数，紧随其后的 `refreshFindCount()` 又把它覆盖成「无内容」
+    //      → prev/next 被置灰，看起来就是「没触发」。
+    // B389 把跨文档那一档搬去侧栏之后，这两条根因的**修法**留成了这一栏的口径：
+    //   ① 搜索统一由「查询或范围变化」触发，回车一律是步进；
+    //   ② 计数统一由 `refreshFindCount()` 一个出口产出（源码态与预览态同一处）。
     const main = stripLineComments(
       readFileSync("src/main.ts", "utf-8") +
         "\n" +
@@ -1167,28 +1179,27 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     );
     const bar = stripLineComments(readFileSync("src/shell/findbar.ts", "utf-8"));
 
-    // ① 触发统一：回车不再按范围分叉
-    expect(bar, "回车在三种范围里一律是步进，不得再按 allDocs 分叉").not.toContain("q.allDocs");
+    // ① 触发统一：回车不再按范围分叉，也不再有跨文档专用的搜索入口
+    expect(bar, "回车 = 步进").toMatch(/if \(e\.key === "Enter"\)[\s\S]{0,240}?cb\.onStep\(1, q\)/);
     expect(bar, "查找栏不再有跨文档专用搜索入口").not.toContain("runSearch");
-    expect(main, "范围/查询变化必须统一重算跨文档命中").toMatch(
-      /if \(q\.allDocs\) runFindInDocs\(q\);/,
+    expect(bar, "范围只剩两种：查询对象里没有 allDocs").not.toContain("allDocs");
+
+    // ② 计数统一：两种范围都从 refreshFindCount 这一个出口写
+    const refresh = main.match(/function refreshFindCount\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(refresh, "计数只有一个出口：预览态与源码态都在这里").toContain("setCount");
+    expect(refresh, "有文本无命中显示「无匹配」").toContain("无匹配");
+    // ⚠️ 关键回归点：早先跨文档那一支一律写「无内容」，会顺带把 prev/next 置灰
+    expect(refresh, "有命中时必须给 N / M，不许一律写成「无内容」").toMatch(
+      /\$\{[^}]*\+ 1\} \/ \$\{/,
     );
 
-    // ② 计数统一：跨文档也走 refreshFindCount 这一个出口
-    const refresh = main.match(/function refreshFindCount\(\)[\s\S]*?\n\}/)?.[0] ?? "";
-    expect(refresh, "refreshFindCount 必须覆盖跨文档范围").toContain("q.allDocs");
-    expect(refresh, "跨文档有命中时计数 = 当前序号 / 总数").toMatch(/findHits\.length/);
-    expect(refresh, "跨文档有文本无命中时显示「无匹配」（与单文档一致）").toContain("无匹配");
-    // ⚠️ 关键回归点：早先这里一律写「无内容」，会顺带把 prev/next 置灰
-    expect(refresh, "跨文档不得一律写成「无内容」").not.toMatch(/q\.allDocs[\s\S]{0,200}无内容/);
-
-    // ③ 底部提示：跨文档不再写「共 N 处匹配，回车逐个跳转」
+    // ③ 底部提示：查找栏自己不写「共 N 处匹配，回车逐个跳转」这类话
     expect(main, "删除「共 N 处匹配，回车逐个跳转」提示").not.toContain("回车逐个跳转");
 
-    // ④ 步进后同样走那一个出口，不再自己写计数/状态行
-    const step = main.match(/function stepFindInDocs\([\s\S]*?\n\}/)?.[0] ?? "";
-    expect(step, "跨文档步进后必须走 refreshFindCount").toContain("refreshFindCount()");
-    expect(step, "跨文档步进不得再自己写状态行").not.toContain("setStatus");
+    // ④ B389：跨文档那一档的零件不许在这条链上复活（命中表 / 重算 / 步进函数）
+    expect(main, "跨文档命中表与步进函数必须删除").not.toMatch(
+      /findHits|runFindInDocs|stepFindInDocs|updateDocBadge/,
+    );
   });
 
   it("B79 主题：档位必须写回 settings 才存得下（B97 起入口只剩首选项）", () => {

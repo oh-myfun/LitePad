@@ -3,13 +3,15 @@
  *
  * 设计要点：
  * - **不绑定文件/面板**：挂在 #app 上，是应用级浮层；切换标签/面板/分屏都不会自动关闭。
- * - **一个入口干所有事**：查找、替换、跨文档查找都在这一栏里，编辑器内不再嵌 CM6 搜索面板。
+ * - **一个入口干所有事**：查找、替换都在这一栏里，编辑器内不再嵌 CM6 搜索面板。
+ *   ⚠️ **只管当前这一份文档**：跨文档 / 跨文件那一条 B389 起搬到左栏的搜索视图
+ *   （`src/search/panel.ts`，键位 `edit.findInFiles`）。原先这里那颗「所有打开的文档」
+ *   图标 + 右上角徽标 + 跨文档步进一起撤掉 —— 同一件事在两个地方各干一遍，
+ *   用户就得分清「这次搜的到底是哪儿」，而那边已经是 VS Code 的形状了。
  * - **钉在右上角**：去掉了可拖动的标题栏（方案 C），固定停靠编辑器右上，尽量少遮挡正文。
  * - **替换行可折叠**：主行永远是「查找」；点 chevron（或菜单「替换」）才展开替换行。
  *   chevron **绝对定位贴在浮层左缘**（VS Code 的 `.button.toggle` 同款），两行各留 17px 边距让位。
  * - **匹配选项改成图标开关**（Aa / ab / .* / 选区 / AB），嵌在输入框右内侧，激活态高亮。
- * - **跨文档收敛成一个文档图标**：不再用「复选框 + 查找全部按钮」，命中总数显示在
- *   图标**右上角的徽标**里（B80，见下）。
  * - 紧凑计数 `N / M`；无匹配变红。
  * - **样式逐条对齐 VS Code 的查找组件**：盒模型 / 工具按钮 / 计数 / 开关三态都照抄参考源码
  *   （见 `global.css` 该节的注释头），有意偏离处均已就地注明原因。
@@ -19,9 +21,8 @@
  *   官方码位 \eb85）。尺寸由官方样式统一给 16px，与 16px 图标位**零缩放**。
  * - **左侧宽度调节手柄**：VS Code 的 `.find-widget .monaco-sash`（findWidget.ts 的 `_resizeSash`），
  *   拖左缘改宽度、双击复原/最大化；宽度不写回磁盘（与 VS Code 一致，只活在本次会话）。
- * - ⚠️ **没有底部结果区**（B80 删）：VS Code 的查找浮层里也没有结果列表 —— 多文档搜索结果
- *   在那边去侧边栏的搜索视图，我们这一栏只把**总匹配数**交给文档按钮右上角的徽标，
- *   命中之间靠 Enter / 上下箭头跨文档步进（见 main.ts 的 `runFindInDocs` / `stepFindInDocs`）。
+ * - ⚠️ **没有底部结果区**（B80 删）：VS Code 的查找浮层里也没有结果列表 —— 多文件结果
+ *   在那边去侧边栏的搜索视图，这一栏只在计数格里念当前文档的「第几个 / 共几个」。
  *   原先那块「常驻占位的结果列表」是 B78 加的，用户实测反馈「底下不要添加结果区」，已移除。
  * - **不绑定快捷键**：VS Code 的 Alt+C/W/R/L/P 在 LitePad 不可用（菜单助记符与 B71 命令已占），
  *   故只在 UI 上做图标开关，不注册快捷键。
@@ -36,31 +37,16 @@ export interface FindBarQuery {
   caseSensitive: boolean;
   wholeWord: boolean;
   regexp: boolean;
-  /** 勾选「所有打开的文档」时为真：查找全部 / 全部替换作用于全部已打开文档 */
-  allDocs: boolean;
-  /** 在选区中查找：命中只限定在活动视图的当前选区（跨文档忽略） */
+  /** 在选区中查找：命中只限定在活动视图的当前选区 */
   inSelection: boolean;
   /** 保留大小写：替换时把命中词的大小写迁移到替换串 */
   preserveCase: boolean;
 }
 
-/** 一条命中（仅在已打开文档的内存快照里，不涉及磁盘文件）。 */
-export interface FindHit {
-  /** Rust tabId */
-  docId: number;
-  path: string;
-  name: string;
-  line: number;
-  col: number;
-  text: string;
-  from: number;
-  to: number;
-}
-
 export interface FindBarCallbacks {
   /** 查找内容 / 选项变化（主程序据此刷新高亮与计数） */
   onQueryChange: (q: FindBarQuery) => void;
-  /** 上一个 / 下一个（当前文档；跨文档范围时由主程序改为跨文档步进） */
+  /** 上一个 / 下一个（当前文档内，到头环绕） */
   onStep: (dir: 1 | -1, q: FindBarQuery) => void;
   onReplace: (q: FindBarQuery) => void;
   onReplaceAll: (q: FindBarQuery) => void;
@@ -76,11 +62,6 @@ export interface FindBarHandle {
   step(dir: 1 | -1): void;
   setCount(text: string, bad?: boolean): void;
   setStatus(text: string): void;
-  /**
-   * 跨文档徽标：`a/b` —— a = 当前命中所属文档的序号，b = 含结果的文档数。
-   * 传 (0,0) 或不点亮文档图标时徽标收起。
-   */
-  setDocIndex(a: number, b: number): void;
   focusFind(): void;
   focusReplace(): void;
   getQuery(): FindBarQuery;
@@ -157,13 +138,6 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   const selT = iconBtn("find-nav find-sel", "findSelection", "在选区中查找", "仅在当前选区中查找");
   selT.setAttribute("aria-pressed", "false");
 
-  // 跨文档：文档图标按钮（右上角徽标 = 跨文档命中的总匹配数）
-  const docsBtn = iconBtn("find-docs", "files", "所有打开的文档", "在全部已打开的文档中查找");
-  const badge = document.createElement("i");
-  badge.className = "find-badge";
-  badge.hidden = true;
-  docsBtn.appendChild(badge);
-
   const closeBtn = iconBtn("find-x", "close", "关闭", "关闭查找栏", "Esc");
 
   // ---- 左侧宽度调节手柄（= VS Code `.find-widget .monaco-sash`，findWidget.ts 的 _resizeSash）----
@@ -177,8 +151,8 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
 
   const rowMain = document.createElement("div");
   rowMain.className = "find-row find-row-main";
-  // 顺序照 VS Code：输入框 → 计数 → 上一个 → 下一个 → 选区开关 → （跨文档）→ 关闭
-  rowMain.append(chevron, field, count, prev, next, selT, docsBtn, closeBtn);
+  // 顺序照 VS Code：输入框 → 计数 → 上一个 → 下一个 → 选区开关 → 关闭
+  rowMain.append(chevron, field, count, prev, next, selT, closeBtn);
 
   // ---- 替换行（默认隐藏，chevron 展开）：替换输入框（内嵌 AB 保留大小写）+ 替换/全部替换 ----
   // ⚠️ 这里**不再需要左侧占位元素**：chevron 改为绝对定位贴在浮层左缘，
@@ -237,14 +211,6 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
 
   // ---- 选项状态（图标开关的源真值）----
   const opt = { case: false, word: false, regexp: false, selection: false, preserve: false };
-  /**
-   * 跨文档徽标的 `a/b` 源真值（a=当前文档序号，b=含结果文档数）。
-   * ⚠️ 必须自己存一份：查找栏是**懒建**的，主程序可能在它建出来之前就算好了命中文档；
-   * 若只把数字写在 DOM 里，「先搜出结果、再点亮图标」会渲染出一个空徽标。
-   */
-  let docA = 0;
-  let docB = 0;
-
   function query(): FindBarQuery {
     return {
       text: findInput.value,
@@ -252,7 +218,6 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
       caseSensitive: opt.case,
       wholeWord: opt.word,
       regexp: opt.regexp,
-      allDocs: docsBtn.classList.contains("on"),
       inSelection: opt.selection,
       preserveCase: opt.preserve,
     };
@@ -263,30 +228,6 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     btn.setAttribute("aria-pressed", on ? "true" : "false");
   }
 
-  /** 「在选区中查找」开关（工具栏那颗，不是输入框内嵌开关） */
-  function setSelection(on: boolean): void {
-    opt.selection = on;
-    syncToggle(selT, on);
-  }
-
-  /** 徽标文案：`a/b`（a=当前命中所属文档序号，b=含结果文档数）。 */
-  function badgeText(): string {
-    return docB > 0 ? `${docA}/${docB}` : "";
-  }
-
-  /** 徽标 = 跨文档 `a/b`；未点亮跨文档、或没有含结果的文档时收起。 */
-  function syncBadge(): void {
-    const on = docsBtn.classList.contains("on");
-    badge.textContent = badgeText();
-    badge.hidden = !(on && docB > 0);
-  }
-
-  /** 跨文档开关：翻 .on 之后必须走 syncAllDocs（徽标 / 占位提示都在那里） */
-  function setAllDocs(on: boolean): void {
-    docsBtn.classList.toggle("on", on);
-    syncAllDocs();
-  }
-
   /**
    * 状态行。**空文本时整行收起来**：
    * ⚠️ 不能只靠 `.find-status { min-height: 14px }` 养着一个空盒子 —— 主行下面会
@@ -295,23 +236,6 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   function setStatus(text: string): void {
     status.textContent = text;
     status.hidden = !text;
-  }
-
-  /**
-   * 跨文档范围切换：图标激活即搜索全部打开文档；熄灭时清掉上一次的总数。
-   * ⚠️ 09-20 统一触发逻辑后，**三种范围（当前文档 / 选区 / 全部打开文档）的触发方式完全一致**：
-   * 改文本、改选项、切范围都会立刻重算并刷新计数与按钮状态，回车一律是「下一个」。
-   * 所以不再需要「回车在全部已打开的文档中查找」这句专门提示，placeholder 只留一份。
-   */
-  function syncAllDocs(): void {
-    const on = docsBtn.classList.contains("on");
-    if (!on) {
-      // 熄灭跨文档：a/b 与提示一起清掉，别留下过期文案
-      docA = 0;
-      docB = 0;
-      setStatus("");
-    }
-    syncBadge();
   }
 
   function setReplaceExpanded(on: boolean): void {
@@ -332,24 +256,14 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     new ResizeObserver(() => syncWidths()).observe(field);
   }
 
-  findInput.addEventListener("input", () => {
-    // 查询一变，上一次的跨文档命中就作废：主程序会在 onQueryChange 里清掉它那份命中表，
-    // 徽标也必须跟着归零 —— 否则会一直挂着一个「上一串内容」搜出来的数字。
-    if (docsBtn.classList.contains("on")) {
-      docA = 0;
-      docB = 0;
-      syncBadge();
-    }
-    cb.onQueryChange(query());
-  });
+  findInput.addEventListener("input", () => cb.onQueryChange(query()));
   findInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
       const q = query();
-      // ⚠️ 09-20 起三种范围（当前文档 / 选区 / 全部打开文档）同一套逻辑：**回车一律是「下一个」**
-      // （Shift+回车上一个）。早先跨文档范围要「回车才触发搜索」，于是点亮文档图标、
-      // 改搜索文本都不会刷新结果，必须再按一次回车 —— 现在搜索由「查询或范围发生变化」
-      // 统一触发，主程序每次都会重算命中并刷新计数、徽标与 prev/next 的可用态。
+      // ⚠️ 09-20 起两种范围（当前文档 / 选区）同一套逻辑：**回车一律是「下一个」**
+      // （Shift+回车上一个）。搜索由「查询或范围发生变化」统一触发，主程序每次都会重算
+      // 命中并刷新计数与 prev/next 的可用态，不需要再按一次回车去「启动搜索」。
       if (e.shiftKey) cb.onStep(-1, q);
       else cb.onStep(1, q);
     } else if (e.key === "Escape") {
@@ -371,15 +285,6 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   next.addEventListener("click", () => cb.onStep(1, query()));
   doReplace.addEventListener("click", () => cb.onReplace(query()));
   doAll.addEventListener("click", () => cb.onReplaceAll(query()));
-  docsBtn.addEventListener("click", () => {
-    // ⚠️「在选区中查找」与「所有打开的文档」**互斥**：一个说「只搜光标选中的那一段」，
-    // 另一个说「搜全部已打开文档」，同时成立是自相矛盾的（VS Code 里这两个查找范围
-    // 也是二选一）。点亮一个就熄掉另一个。
-    const on = !docsBtn.classList.contains("on");
-    setAllDocs(on);
-    if (on && opt.selection) setSelection(false);
-    cb.onQueryChange(query());
-  });
   chevron.addEventListener("click", () => setReplaceExpanded(rowReplace.hidden));
 
   // ---- 左侧手柄：拖动改宽度 / 双击在「默认 ↔ 最大」间切换 ----
@@ -411,21 +316,15 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     if (w > 0) setBarWidth(w);
   });
 
-  /**
-   * 「在选区中查找」的开关动作。与跨文档互斥：点亮它就熄掉跨文档。
-   */
-  function toggleSelection(): void {
-    const on = !opt.selection;
-    setSelection(on);
-    if (on && docsBtn.classList.contains("on")) setAllDocs(false);
-  }
-
-  // 图标开关：点击翻转源真值 → 同步外观 → 通知主程序
+  // 图标开关：点击翻转源真值 → 同步外观 → 通知主程序。
+  // 「在选区中查找」也在这一组里：B389 起它不再要顺手熄掉互斥的跨文档开关，
+  // 于是与其它四颗同形（原先它为那一句互斥被单独拆出去写）。
   const toggleMap: Array<[HTMLButtonElement, keyof typeof opt]> = [
     [caseT, "case"],
     [wordT, "word"],
     [reT, "regexp"],
     [presT, "preserve"],
+    [selT, "selection"],
   ];
   for (const [btn, key] of toggleMap) {
     btn.addEventListener("click", () => {
@@ -434,11 +333,6 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
       cb.onQueryChange(query());
     });
   }
-  // 「在选区中查找」不在上面那组里：它还要顺手熄掉互斥的跨文档开关
-  selT.addEventListener("click", () => {
-    toggleSelection();
-    cb.onQueryChange(query());
-  });
 
   closeBtn.addEventListener("click", () => close());
   // Esc 关闭：捕获阶段拦截，避免冒泡到窗口级快捷键
@@ -458,7 +352,6 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
       setReplaceExpanded(true);
     }
     if (seed) findInput.value = seed;
-    syncAllDocs();
     // 浮层可见后才有布局：替换框宽度必须在这里再量一次
     // （首次打开时就展开替换行的路径走的是 setReplaceExpanded，它自己也量一次）
     syncWidths();
@@ -492,11 +385,6 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
       syncWidths();
     },
     setStatus,
-    setDocIndex: (a, b) => {
-      docA = a;
-      docB = b;
-      syncBadge();
-    },
     focusFind: () => {
       findInput.focus();
       findInput.select();

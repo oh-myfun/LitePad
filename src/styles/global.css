@@ -2304,8 +2304,7 @@ button:focus-visible {
    dashed focusBorder }`），换的是那条本来透明的 1px 边框 —— 外框尺寸不变。
    ⚠️ 别用 outline：outline 画在边框**外面**，会让开关视觉上胀 1px，
    一排开关在焦点移动时互相推挤。 */
-.find-toggle:focus-visible,
-.find-docs:focus-visible {
+.find-toggle:focus-visible {
   border-style: dashed;
   border-color: var(--accent);
   outline: none;
@@ -2414,61 +2413,6 @@ button:focus-visible {
   top: 5px;
   right: 4px;
   margin-left: 0;
-}
-
-/* 跨文档文档图标（B80：右上角徽标 = 跨文档命中的**总匹配数**）。
-   这是 LitePad 自加的能力 —— VS Code 的查找浮层里没有跨文档，它的多文件结果去侧边栏
-   搜索视图（所以我们这一栏**不再有结果列表**，见 findbar.ts 头部注释）。
-   它在语义上是**开关**而不是动作按钮，所以外壳照 .find-toggle 来（20×20 / 圆角 3px /
-   常态透明边框），激活态直接复用同一个三件套令牌。 */
-.find-docs {
-  position: relative;
-  width: 20px;
-  height: 20px;
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  margin-left: 4px;
-  padding: 1px;
-  border: 1px solid transparent;
-  border-radius: 3px;
-  background: none;
-  color: var(--fg-muted);
-  cursor: pointer;
-}
-.find-docs:hover {
-  background: var(--find-opt-hover);
-  color: var(--fg);
-}
-/* .find-docs:focus-visible 与 .find-toggle 合并声明（见上） */
-.find-docs.on {
-  background: var(--find-opt-active);
-  border-color: var(--find-opt-active-border);
-  color: var(--find-opt-active-fg);
-}
-/* ⚠️ 徽标必须**收在按钮盒内**（top/right = 0）。
-   原先写 `top:-6px; right:-6px` 会溢出到按钮外：既盖住右边的关闭按钮，
-   又在行里向上探出、看着像飘在外面。overflow 在这里是 visible 没被裁，
-   但那是运气（换 WebView2 版本/加 overflow 就会把数字裁掉）。
-   徽标是 LitePad 自加物，VS Code 无可对标项，取「不撑破 20px 按钮」的紧凑档。
-   数字超过 99 时由 findbar.ts 折成 `99+` —— 否则四位数会把徽标拉得比按钮还宽。 */
-.find-badge {
-  position: absolute;
-  top: 0;
-  right: 0;
-  font-size: 8px;
-  font-style: normal;
-  line-height: 9px;
-  min-width: 8px;
-  padding: 0 2px;
-  text-align: center;
-  border-radius: 5px;
-  background: var(--accent);
-  color: var(--accent-fg);
-  /* 只是标注，别抢按钮本身的点击 */
-  pointer-events: none;
 }
 
 /* 状态行（「共 N 处匹配」「已替换 N 处」「请输入查找内容」等）。

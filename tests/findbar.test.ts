@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 // 悬浮查找/替换栏行为测试（方案 C：对齐 VS Code 的紧凑浮层）。
-// 契约：①一个悬浮栏统一查找/替换/跨文档查找；②不绑定文件/面板——切换标签、分屏都不自动关闭；
-// ③跨文档收敛成一个文档图标（B80：右上角徽标 = 跨文档 a/b，不再有结果列表）；
-// ④钉在右上角、不再可拖动；⑤替换行可折叠；⑥匹配选项是图标开关（B80 起全部照搬 codicon）；
-// ⑦紧凑计数、无匹配变红。
+// 契约：①一个悬浮栏统一查找/替换 —— **只管当前这一份文档**（B389 起跨文档那一档在侧栏
+// 搜索视图，见 tests/search-panel.test.ts；那颗文档图标 + 右上角徽标已随之删除）；
+// ②不绑定文件/面板——切换标签、分屏都不自动关闭；
+// ③钉在右上角、不再可拖动；④替换行可折叠；⑤匹配选项是图标开关（B80 起全部照搬 codicon）；
+// ⑥紧凑计数、无匹配变红。
 import { describe, it, expect } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import { themeBlock, ruleBlock, stripCssComments, tabsAll } from "./static";
@@ -51,8 +52,6 @@ function mount(overrides: Partial<Parameters<typeof createFindBar>[1]> = {}) {
     tgl,
     lastQuery: () => lastQuery,
     toggles: () => [...dom.querySelectorAll<HTMLElement>(".find-toggle")],
-    docs: () => q<HTMLButtonElement>(".find-docs"),
-    badge: () => q<HTMLElement>(".find-badge"),
     // 「在选区中查找」B78 起从输入框内嵌开关（.find-toggle）挪到了 prev/next 之后，
     // 成了工具栏上的一颗 .find-sel —— 不再被 .find-toggle 选中。
     selBtn: () => q<HTMLButtonElement>(".find-sel"),
@@ -87,15 +86,15 @@ describe("悬浮查找栏：入口与范围", () => {
     expect(m.dom.querySelector(".find-scope"), "不得有范围下拉").toBeNull();
     expect(m.dom.querySelector("select"), "查找栏内不应有任何下拉菜单").toBeNull();
     expect(m.dom.querySelector(".find-folder"), "不得再有搜索目录输入").toBeNull();
-    // 跨文档能力收敛成文档图标按钮
-    expect(m.docs(), "必须有跨文档文档图标").toBeTruthy();
+    // B389：跨文档那一档已从悬浮条剥离（在侧栏搜索视图里）⇒ 这颗开关与徽标都不许还挂着
+    expect(m.dom.querySelector(".find-docs"), "不得再有跨文档开关").toBeNull();
+    expect(m.dom.querySelector(".find-badge"), "不得再有跨文档徽标").toBeNull();
   });
 
-  it("查询对象含 allDocs / inSelection / preserveCase，且不含 scope/folder", () => {
+  it("查询对象含 inSelection / preserveCase，且不含 scope/folder/allDocs", () => {
     const m = mount();
     m.bar.open();
     expect(Object.keys(m.lastQuery()!).sort()).toEqual([
-      "allDocs",
       "caseSensitive",
       "inSelection",
       "preserveCase",
@@ -119,81 +118,14 @@ describe("悬浮查找栏：入口与范围", () => {
     expect(m.lastQuery()?.text).toBe("abc");
   });
 
-  it("点击文档图标后：回车与单文档一致地走「下一个」，徽标显示 a/b", () => {
-    // 09-20 统一：搜索由「查询或范围变化」触发（onQueryChange），
-    // 回车在三种范围里**一律是步进**，不再有跨文档专用的搜索分支。
+  it("空文本时回车仍只是一次步进，不往底部状态行写提示", () => {
+    // B389 之前这条挂在「点亮文档图标」上：跨文档剥离后行为没变 —— 有没有命中由主程序
+    // 用计数区表达，查找栏不许自己往底部写一句「请输入查找内容」（另外两种范围也没写）。
     const m = mount();
     m.bar.open();
-    m.docs().click();
-    expect(m.lastQuery()?.allDocs, "点击后进入查询对象").toBe(true);
-    expect(m.docs().classList.contains("on"), "激活态高亮").toBe(true);
-    expect(m.calls, "激活范围本身就要通知主程序重算").toContain("change");
-
-    const input = m.q<HTMLInputElement>(".find-input");
-    input.value = "todo";
-    input.dispatchEvent(new Event("input"));
-    expect(m.calls, "改文本也要通知主程序重算").toContain("change");
-
-    key(input, "Enter");
-    expect(m.calls, "回车 = 下一个（与单文档同一套）").toContain("step:1");
-
-    // 主程序搜完把 a/b 回灌到徽标上（a=当前文档序号，b=含结果文档数）
-    m.bar.setDocIndex(1, 7);
-    expect(m.badge().textContent).toBe("1/7");
-    expect(m.badge().hidden).toBe(false);
-  });
-
-  it("跨文档空查询：回车同样只是步进，不再弹「请输入查找内容」", () => {
-    // 与单文档/选区一致：空文本时回车仍是一次步进，有没有命中由主程序用计数区表达，
-    // 不再由查找栏往底部状态行写提示（那条提示在另外两种范围里也没有）。
-    const m = mount();
-    m.bar.open();
-    m.docs().click();
     key(m.q<HTMLElement>(".find-input"), "Enter");
     expect(m.calls).toContain("step:1");
     expect(m.q(".find-status").hidden, "不再写底部状态行提示").toBe(true);
-  });
-
-  it("关闭跨文档后徽标收起（a/b 不再有意义）", () => {
-    const m = mount();
-    m.bar.open();
-    m.docs().click();
-    m.bar.setDocIndex(1, 3);
-    expect(m.badge().textContent).toBe("1/3");
-    expect(m.badge().hidden).toBe(false);
-
-    m.docs().click();
-    expect(m.lastQuery()?.allDocs).toBe(false);
-    expect(m.badge().hidden, "熄掉跨文档后徽标必须收起").toBe(true);
-  });
-
-  it("查询变更会作废上一次的跨文档 a/b，避免徽标挂着过期数字", () => {
-    const m = mount();
-    m.bar.open();
-    m.docs().click();
-    const input = m.q<HTMLInputElement>(".find-input");
-    input.value = "todo";
-    input.dispatchEvent(new Event("input"));
-    key(input, "Enter");
-    m.bar.setDocIndex(2, 4);
-    expect(m.badge().hidden).toBe(false);
-
-    input.value = "todo2";
-    input.dispatchEvent(new Event("input"));
-    expect(m.badge().hidden, "查询一变，旧数字必须作废").toBe(true);
-  });
-
-  it("跨文档徽标显示 a/b：a=当前文档序号，b=含结果文档数", () => {
-    const m = mount();
-    m.bar.open();
-    m.docs().click();
-    m.bar.setDocIndex(1, 3);
-    expect(m.badge().textContent).toBe("1/3");
-    m.bar.setDocIndex(2, 5);
-    expect(m.badge().textContent).toBe("2/5");
-    expect(m.badge().hidden).toBe(false);
-    m.bar.setDocIndex(0, 0);
-    expect(m.badge().hidden, "b=0 时收起").toBe(true);
   });
 
   it("种子文本在 open() 时写入并只同步一次查询", () => {
@@ -260,13 +192,11 @@ describe("悬浮查找栏：方案 C 的折叠替换行与图标开关", () => {
                 ? "next"
                 : el.classList.contains("find-sel")
                   ? "sel"
-                  : el.classList.contains("find-docs")
-                    ? "docs"
-                    : el.classList.contains("find-x")
-                      ? "close"
-                      : "?",
+                  : el.classList.contains("find-x")
+                    ? "close"
+                    : "?",
     );
-    expect(order).toEqual(["chevron", "field", "count", "prev", "next", "sel", "docs", "close"]);
+    expect(order).toEqual(["chevron", "field", "count", "prev", "next", "sel", "close"]);
   });
 
   it("图标开关用 aria-pressed 表达激活态", () => {
@@ -345,29 +275,18 @@ describe("悬浮查找栏：不绑定文件/面板", () => {
     expect(m.q(".find-count").classList.contains("find-count-bad")).toBe(true);
   });
 
-  it("B80：跨文档不再有底部结果区（对齐 VS Code 的查找浮层）", () => {
+  it("B80：查找栏不再有底部结果区（对齐 VS Code 的查找浮层）", () => {
     const m = mount();
     m.bar.open();
-    m.docs().click();
     expect(m.dom.querySelector(".find-results"), "结果区必须整个消失").toBeNull();
     expect(m.dom.querySelector(".find-empty")).toBeNull();
     expect(m.dom.querySelector(".find-hit")).toBeNull();
   });
-
-  it("B80：文档图标徽标 = 跨文档 a/b（点亮且有条数时才显示）", () => {
-    const m = mount();
-    m.bar.open();
-    expect(m.badge().hidden, "没搜过 → 收起").toBe(true);
-    m.bar.setDocIndex(1, 12);
-    expect(m.badge().hidden, "未点亮跨文档时徽标不显示").toBe(true);
-    m.docs().click();
-    expect(m.badge().textContent).toBe("1/12");
-    expect(m.badge().hidden).toBe(false);
-  });
 });
 
 // 用户实测反馈的三条：①浮层底部多一条空白 ②文档图标上的数字显示不出来 ③计数塌缩
-describe("B76：状态行不占位、徽标数字必有值、选区锚点冻结", () => {
+// ⚠️ ② 那一条随 B389 剥离跨文档一起作废（徽标与它要的那份命中表都没了），①③ 仍然要钉。
+describe("B76：状态行不占位、选区锚点冻结", () => {
   it("打开后状态行为空时必须收起（否则浮层底部吊一条空白）", () => {
     const m = mount();
     const status = m.q<HTMLElement>(".find-status");
@@ -382,35 +301,11 @@ describe("B76：状态行不占位、徽标数字必有值、选区锚点冻结"
     m.bar.setStatus("");
     expect(status.hidden, "文案清空后要重新收起").toBe(true);
   });
-
-  it("熄灭跨文档时，a/b 与状态行文案一起收掉", () => {
-    const m = mount();
-    m.bar.open();
-    m.docs().click(); // 点亮
-    m.bar.setDocIndex(1, 5);
-    m.bar.setStatus("共 5 处匹配，回车逐个跳转");
-    m.docs().click(); // 熄灭
-    expect(m.badge().hidden, "别留下过期的总数").toBe(true);
-    expect(m.q<HTMLElement>(".find-status").hidden, "别留下过期文案").toBe(true);
-  });
-
-  it("懒建后立刻点亮文档图标，a/b 回灌时徽标必须出得来", () => {
-    const m = mount();
-    m.bar.open();
-    // 关键：**不预先喂任何值**。查找栏是懒建的，主程序可能在它建出来之前/之后才算命中数，
-    // 所以徽标数字必须自己存一份源真值（只写 DOM 的话「先搜出结果、再点亮图标」会渲染出空徽标）。
-    m.docs().click();
-    const b = m.badge();
-    expect(b.hidden, "0 命中（b=0）不点亮徽标").toBe(true);
-    m.bar.setDocIndex(3, 23); // 主程序随后回灌真实 a/b
-    expect(b.textContent).toBe("3/23");
-    expect(b.hidden).toBe(false);
-  });
 });
 
 // B78：①左侧宽度手柄 ②替换行展开后折叠按钮变高 ③选区按钮移到箭头之后
-//      ④选区与跨文档互斥 ⑤两行输入框同宽 ⑥图标改为 codicon（B80 接续）
-describe("B78：左侧手柄 / 折叠按钮变高 / 选区与跨文档互斥 / 两框同宽", () => {
+//      ④选区那颗是开关（B389 起它与跨文档的互斥跟着没了对象）⑤两行输入框同宽 ⑥图标改为 codicon
+describe("B78：左侧手柄 / 折叠按钮变高 / 选区开关 / 两框同宽", () => {
   /** jsdom 没有布局，需要宽度的地方只能打桩 */
   const rect = (w: number): DOMRect =>
     ({
@@ -475,38 +370,18 @@ describe("B78：左侧手柄 / 折叠按钮变高 / 选区与跨文档互斥 / �
     expect(m.dom.classList.contains("replace-toggled")).toBe(false);
   });
 
-  it("选区查找与所有文档查找互斥：同一时间只能选一个", () => {
+  // B78 这一条原本是「选区 ↔ 跨文档」互斥；B389 把跨文档搬去侧栏之后，互斥没有对象了，
+  // 于是收窄成「选区那颗开关本身的状态怎么表达」—— 它仍然是工具栏上的开关，不是动作按钮。
+  it("选区查找那颗是开关：进查询对象、并用 .on / aria-pressed 表达", () => {
     const m = mount();
     m.bar.open();
-    m.docs().click();
-    expect(m.lastQuery()?.allDocs).toBe(true);
-    // 点亮选区 → 熄掉跨文档
     m.selBtn().click();
     expect(m.lastQuery()?.inSelection).toBe(true);
-    expect(m.lastQuery()?.allDocs, "点亮选区必须熄掉跨文档").toBe(false);
-    expect(m.docs().classList.contains("on")).toBe(false);
-    // 反过来：点亮跨文档 → 熄掉选区
-    m.docs().click();
-    expect(m.lastQuery()?.allDocs).toBe(true);
-    expect(m.lastQuery()?.inSelection, "点亮跨文档必须熄掉选区").toBe(false);
-    expect(m.selBtn().classList.contains("on")).toBe(false);
+    expect(m.selBtn().classList.contains("on")).toBe(true);
+    expect(m.selBtn().getAttribute("aria-pressed")).toBe("true");
+    m.selBtn().click();
+    expect(m.lastQuery()?.inSelection).toBe(false);
     expect(m.selBtn().getAttribute("aria-pressed")).toBe("false");
-  });
-
-  it("输入框内容清空后，跨文档总数一并归零", () => {
-    const m = mount();
-    m.bar.open();
-    m.docs().click();
-    const input = m.q<HTMLInputElement>(".find-input");
-    input.value = "todo";
-    input.dispatchEvent(new Event("input"));
-    key(input, "Enter");
-    m.bar.setDocIndex(1, 1);
-    expect(m.badge().textContent).toBe("1/1");
-    expect(m.badge().hidden).toBe(false);
-    input.value = "";
-    input.dispatchEvent(new Event("input"));
-    expect(m.badge().hidden, "清空输入后旧总数必须归零").toBe(true);
   });
 
   it("替换输入框与查找输入框同宽（JS 量出查找框宽度后写死）", () => {
@@ -539,24 +414,19 @@ describe("B78：左侧手柄 / 折叠按钮变高 / 选区与跨文档互斥 / �
     same(m.tgl("全词匹配"), CODICONS.wholeWord, "全词匹配");
     same(m.tgl("正则"), CODICONS.regex, "正则");
     same(m.tgl("保留大小写"), CODICONS.preserveCase, "保留大小写");
-    // 文档图标按钮里还挂着徽标（<i class="find-badge">），故用 toContain
-    expect(m.q<HTMLElement>(".find-docs").innerHTML, "文档图标 = files").toContain(CODICONS.files);
 
     // 每个图标按钮/开关都必须渲染出 codicon 字形元素，且不含任何文字字形
     const iconEls = [
       ...m.dom.querySelectorAll<HTMLElement>(
-        ".find-chevron, .find-nav, .find-x, .find-replace-one, .find-replace-all, .find-toggle, .find-docs",
+        ".find-chevron, .find-nav, .find-x, .find-replace-one, .find-replace-all, .find-toggle",
       ),
     ];
     expect(iconEls.length).toBeGreaterThan(10);
     for (const el of iconEls) {
-      // ⚠️ 徽标本身也是 <i>，但它不带 codicon 类 —— 用 `.codicon` 选才不会误判
       expect(
         el.querySelector("i.codicon"),
         `${el.className} 必须是 codicon 字形（<i class="codicon …">）`,
       ).toBeTruthy();
-      // 徽标是挂在文档图标里的数字，不算「文字字形」，先摘掉再判
-      el.querySelector(".find-badge")?.remove();
       expect(el.textContent?.trim(), `${el.className} 不得再有文字字形`).toBe("");
     }
     // 颜色随主题：字形的 ::before 继承 color，所以本体不能自带颜色
@@ -661,18 +531,20 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     );
     expect(preview, "预览命中必须复用编辑器高亮样式类").toContain("cm-find-match");
   });
-  it("B39/B40 查找范围：悬浮条不得有范围下拉与文件夹搜索（B389 起，读盘搜索归侧栏搜索视图）", () => {
-    // 用户要求：查找替换悬浮栏无需查找文件夹功能，也不用下拉菜单选择查找范围——
-    // 但「所有打开的文档」这个能力要保留。B73（方案 C）把它从勾选框收敛成
-    // 带打开文档数徽标的文档图标按钮（对齐 VS Code），能力不变、只是换了形态。
+  it("B39/B40 + B389 查找范围：悬浮条无范围下拉、无文件夹搜索、也无跨文档那一档", () => {
+    // 两条用户口径叠在这一条判据上：
+    //   · B39：查找替换悬浮栏无需查找文件夹功能，也不用下拉菜单选择查找范围；
+    //   · B389：跨文档那一档从悬浮条**剥离**，交给侧栏搜索视图（读盘的递归搜索在那边）。
     const bar = readFileSync("src/shell/findbar.ts", "utf-8");
     expect(bar, "查询对象不得再有 scope").not.toMatch(/\bscope\b/);
     expect(bar, "不得再有范围下拉控件").not.toContain("find-scope");
     expect(bar, "查找栏内不得出现任何 select 下拉").not.toContain('createElement("select")');
     expect(bar, "不得再有文件夹搜索控件").not.toContain("find-folder");
-    expect(bar, "跨文档能力必须保留（方案 C：文档图标按钮）").toContain("find-docs");
-    expect(bar, "文档图标必须带徽标（B80：跨文档命中的总匹配数）").toContain("find-badge");
-    expect(bar, "勾选态必须进入查询对象").toContain("allDocs");
+    // ⚠️ B73/B80 那两条「跨文档必须保留（文档图标按钮 / 徽标 / allDocs 那一格）」在此作废：
+    //    留着开关而把能力搬走，等于给用户一颗点了没反应的死键（B314-8 那一族）。
+    expect(bar, "跨文档开关必须删除").not.toContain("find-docs");
+    expect(bar, "跨文档徽标必须删除").not.toContain("find-badge");
+    expect(bar, "查询对象不得再有 allDocs 那一格").not.toContain("allDocs");
 
     const main =
       readFileSync("src/main.ts", "utf-8") +
@@ -686,9 +558,10 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       readFileSync("src/commands.ts", "utf-8");
     expect(main, "不得再调用读盘的跨文件搜索 IPC").not.toContain("searchFiles");
     expect(main, "不得再有默认搜索目录推导").not.toContain("defaultSearchDir");
-    expect(main, "不得再有 Ctrl+Shift+F 入口").not.toContain("Ctrl+Shift+F");
-    expect(main, "跨文档查找必须只扫内存快照").toContain("function searchOpenDocs(");
-    expect(main, "整行替换必须支持勾选后的跨文档分支").toContain("if (!q.allDocs) {");
+    expect(main, "不得再有 Ctrl+Shift+F 硬编码（键位只在命令表里）").not.toContain("Ctrl+Shift+F");
+    // B389：悬浮条这条链上不许再有任何「扫别的文档」的代码 —— 那一档在 src/search/*。
+    expect(main, "悬浮条不得再扫别的文档").not.toContain("function searchOpenDocs(");
+    expect(main, "悬浮条不得再有跨文档分支").not.toContain("q.allDocs");
 
     const api = readFileSync("src/ipc/api.ts", "utf-8");
     expect(api, "读盘搜索的 IPC 包装必须删除").not.toContain("search_files");
@@ -726,7 +599,6 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     expect(css, "标题栏的 move 光标必须移除").not.toContain("cursor: move");
     expect(css, "无匹配变红的样式必须存在").toContain(".find-count-bad");
     expect(css, "图标开关激活态必须高亮").toMatch(/\.find-toggle\.on\s*\{/);
-    expect(css, "文档图标徽标必须存在").toContain(".find-badge");
     // ⚠️ .find-row 是 display:flex，会盖掉 hidden 的 UA 样式 —— 折叠态必须显式 none
     expect(css, "折叠的替换行必须显式 display:none").toMatch(
       /\.find-row-replace\[hidden\]\s*\{[^}]*display:\s*none/,
@@ -757,9 +629,8 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       "applyPreserveCase(matched, q.replace)",
     );
   });
-  it("B76 查找栏三处报障：状态行不占位 / 徽标必有数字 / 选区锚点必须冻结", () => {
+  it("B76 查找栏报障：状态行不占位 / 选区锚点必须冻结", () => {
     const bar = readFileSync("src/shell/findbar.ts", "utf-8");
-    const css = readFileSync("src/styles/global.css", "utf-8");
     const main =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
@@ -776,28 +647,8 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     // 而正常打开查找栏时主程序**从不调 setStatus**，空盒子就一直占着位置。
     expect(bar, "状态行创建后就必须先收起").toMatch(/status\.hidden = true/);
     expect(bar, "状态行必须有「空文本即收起」的派生逻辑").toMatch(/status\.hidden = !text/);
-    expect(bar, "熄灭跨文档要连 a/b 一起清掉（别留下过期文案）").toMatch(
-      /docA = 0;\s*\n\s*docB = 0;/,
-    );
 
-    // ---- ② 文档图标上的数字显示不出来：徽标数字必须自己存一份源真值 ----
-    // 查找栏是懒建的，主程序要等搜完才知道总数；只把数字写进 DOM 的话，
-    // 「先搜出结果、再点亮图标」会渲染出一个空徽标。
-    // ⚠️ B80 起语义变了：徽标 = 跨文档命中的 **a/b**（a=当前文档序号，b=含结果文档数），
-    //    所以源真值叫 docA/docB，由主程序用 setDocIndex 回灌。
-    expect(bar, "徽标数字要自己存一份源真值").toMatch(/let docA = 0/);
-    const syncBadgeBody = bar.match(/function syncBadge\(\)[^{]*\{([\s\S]*?)\n {2}\}/)?.[1] ?? "";
-    expect(syncBadgeBody, "渲染时必须用记着的那份源真值").toMatch(
-      /badge\.textContent = badgeText\(\)/,
-    );
-    expect(bar, "徽标渲染成 a/b（a=当前文档序号，b=含结果文档数）").toMatch(
-      /docB > 0 \? `\$\{docA\}\/\$\{docB\}` : ""/,
-    );
-    expect(bar, "⚠️ 徽标不得再依赖 setDocCount（B78 旧语义已废弃）").not.toContain("setDocCount");
-    expect(bar, "徽标数字只能由主程序回灌").toMatch(/setDocIndex: \(a, b\) => \{/);
-    const badgeBlock = ruleBlock(css, ".find-badge");
-    expect(badgeBlock, "徽标必须收在按钮盒内，不得用负偏移溢出").not.toMatch(/\b(top|right):\s*-/);
-    expect(badgeBlock, "徽标只是标注，不得抢按钮的点击").toContain("pointer-events: none");
+    // ---- ②（已作废）徽标数字必有值：B389 剥离跨文档之后那颗徽标跟着没了 ----
 
     // ---- ③ 选区锚点必须冻结（点「下一个」后计数塌缩成 1 条）----
     // 根因：restrictMatches 每次实时读活动选区，而 stepFind 会把选区换成**命中本身**，
@@ -964,15 +815,11 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     expect(ruleBlock(css, ".find-toggle:hover"), "开关悬停必须用 --find-opt-hover").toContain(
       "var(--find-opt-hover)",
     );
-    expect(
-      ruleBlock(css, ".find-docs:hover"),
-      "文档图标属开关，也必须用 --find-opt-hover",
-    ).toContain("var(--find-opt-hover)");
 
     // ---- ⑧ 焦点环必须是**虚线边框**而不是 outline ----
     // outline 画在边框外面 → 开关会视觉上胀 1px，一排开关在焦点移动时互相推挤。
-    expect(css, "开关/文档图标的焦点环必须是虚线边框").toMatch(
-      /\.find-toggle:focus-visible,\s*\n\s*\.find-docs:focus-visible\s*\{[^}]*border-style:\s*dashed/,
+    expect(css, "开关的焦点环必须是虚线边框").toMatch(
+      /\.find-toggle:focus-visible\s*\{[^}]*border-style:\s*dashed/,
     );
     expect(css, "⚠️ 不得用 outline 画开关焦点环（会胀 1px）").not.toMatch(/outline:\s*1px dashed/);
 
@@ -1025,7 +872,7 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       /\.find-status\[hidden\]\s*\{[^}]*display:\s*none/,
     );
   });
-  it("B78 查找栏七处观感：宽度手柄 / 折叠按钮变高 / 选区按钮移位 / 两个范围互斥 / 结果区常驻 / 两框同宽 / 替换图标", () => {
+  it("B78 查找栏七处观感：宽度手柄 / 折叠按钮变高 / 选区按钮移位 / 选区那颗是开关 / 结果区不常驻 / 两框同宽 / 替换图标", () => {
     // 用户反馈的七条：①左侧有宽度调节手柄 ②替换区展开后折叠按钮变高
     // ③选区查找按钮在上下箭头之后 ④选区查找与所有文档查找互斥
     // ⑤结果区始终保留空位（输入为空也显示无结果）⑥查找与替换输入框同宽 ⑦替换图标改进
@@ -1072,8 +919,8 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     expect(bar, "选区开关必须是工具栏那颗 .find-sel，不再是 .find-toggle").toMatch(
       /const selT = iconBtn\("find-nav find-sel"/,
     );
-    expect(bar, "主行顺序必须是 …prev, next, selT…").toMatch(
-      /rowMain\.append\(chevron, field, count, prev, next, selT, docsBtn, closeBtn\)/,
+    expect(bar, "主行顺序必须是 …prev, next, selT, close").toMatch(
+      /rowMain\.append\(chevron, field, count, prev, next, selT, closeBtn\)/,
     );
     expect(css, "选区开关必须与 .find-nav 同尺寸（22×22 组里要有它）").toMatch(
       /\.find-nav,\s*\n\s*\.find-sel,/,
@@ -1088,28 +935,20 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       /border-color/,
     );
 
-    // ---- ④ 选区查找与所有文档查找互斥 ----
-    // 一个说「只搜光标选中的一段」，另一个说「搜全部已打开文档」，同时成立自相矛盾。
-    expect(bar, "点亮选区必须熄掉跨文档").toMatch(
-      /if \(on && docsBtn\.classList\.contains\("on"\)\) setAllDocs\(false\)/,
-    );
-    expect(bar, "点亮跨文档必须熄掉选区").toMatch(
-      /if \(on && opt\.selection\) setSelection\(false\)/,
-    );
+    // ---- ④（已作废）选区 ↔ 跨文档互斥：B389 把跨文档那一档整个搬走，互斥没了对象 ----
 
     // ---- ⑤ 结果区已删除（B80）----
     // 用户实测反馈「右边的结果区没有一直占位，底下不要添加结果区」，并要求参考 VS Code：
     // VS Code 的查找浮层（findWidget.css / findWidget.ts）**没有任何内联结果列表** ——
-    // 多文件结果在侧边栏的搜索视图里。我们这一栏只把总匹配数交给文档按钮的徽标。
+    // 多文件结果在侧边栏的搜索视图里（B389 起 LitePad 也照这个分工）。
     expect(css, "结果区样式必须删除").not.toContain(".find-results");
     expect(css, "空态占位样式必须删除").not.toContain(".find-empty");
     expect(css, "命中行样式必须删除").not.toContain(".find-hit");
     expect(bar, "查找栏不得再渲染结果区").not.toContain("find-results");
     expect(bar, "查找栏不得再持有命中表（命中表归主程序）").not.toMatch(/\bsetHits\b/);
     expect(bar, "查找栏不得再渲染「无结果」空态").not.toContain("无结果");
-    // 删掉列表后，命中之间靠 Enter / 上下箭头跨文档步进（主程序侧）
-    // ⚠️ 09-20 起跨文档**不再是命令**：搜索改由「查询/范围变化」统一触发（与另两种范围一致），
-    // 回车在三种范围里一律是步进 —— 查找栏因此不再需要 onSearchAll / runSearch。
+    // ⚠️ 09-20 起跨文档**不再是命令**：搜索由「查询/范围变化」统一触发，回车一律是步进
+    // —— 查找栏因此从来不需要 onSearchAll / runSearch，B389 剥离之后更是不必。
     expect(bar, "查找栏不得再持有跨文档搜索命令 onSearchAll").not.toMatch(/onSearchAll/);
     expect(bar, "查找栏不得再有跨文档专用的 runSearch 分支").not.toContain("runSearch");
 
@@ -1190,43 +1029,20 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       /\.find-sash:hover::before,\s*\n\s*\.find-sash\.active::before\s*\{\s*background:\s*var\(--find-sash-hover\)/,
     );
 
-    // ---- ② 底部结果区删除，跨文档 a/b 进文档图标徽标 ----
-    // （样式与 DOM 的删除已在 B78-⑤ 里断言，这里盯主程序的接线）
-    expect(main, "必须有「清空跨文档命中」的收口").toMatch(/function resetFindAll\(/);
-    expect(main, "跨文档查找必须把 a/b 回灌给徽标").toMatch(/updateDocBadge\(\)/);
+    // ---- ② 跨文档那一档 B389 起不在悬浮条里：这条链上不许再留任何命中表 ----
+    // （原先这一节断言的是「命中表 / a/b 徽标 / 跨文档步进」的接线，方向正好反过来。）
+    expect(main, "命中表与跨文档步进必须一起删干净").not.toMatch(
+      /resetFindAll|runFindInDocs|stepFindInDocs|updateDocBadge|findHits/,
+    );
     expect(main, "徽标数字不得再由「已打开文档数」喂（B78 旧语义）").not.toContain("setDocCount");
-    expect(main, "查询变更要重搜一次，让徽标跟着实时走").toMatch(
-      /if \(q\.allDocs\) runFindInDocs\(q\);/,
-    );
-    expect(main, "stepFind 必须把跨文档范围转给跨文档步进").toMatch(
-      /if \(q\.allDocs\) \{\s*\n\s*stepFindInDocs\(dir, q\);/,
-    );
-    expect(main, "跨文档步进要在命中表里前后环绕").toMatch(
-      /\(findHitIndex \+ dir \+ findHits\.length\) % findHits\.length/,
-    );
-    // ⚠️ 命中表不能再截断：它同时是「总匹配数」的来源，截断会让徽标少报数
-    const searchBody = main.match(/function searchOpenDocs\([\s\S]*?\n\}/)?.[0] ?? "";
-    expect(searchBody, "searchOpenDocs 不得再截断到 300 条").not.toMatch(/300/);
-    expect(searchBody, "必须扫全部已打开文档的内存快照").toMatch(
-      /for \(const doc of docs\.values\(\)\)/,
-    );
-    // ⚠️ 09-20 起跨文档不再是「带播报标记的命令」：范围/查询变化即重算（不带 announce），
-    // 且不再往底部状态行写「共 N 处匹配，回车逐个跳转」（另两种范围都没有这条提示）。
-    expect(main, "查询/范围变化必须统一重算跨文档命中").toMatch(
-      /if \(q\.allDocs\) runFindInDocs\(q\);/,
-    );
     expect(main, "「共 N 处匹配，回车逐个跳转」提示必须删除").not.toContain("回车逐个跳转");
     expect(main, "onOpenHit 回调必须删除（已经没有结果列表可点）").not.toContain("onOpenHit");
-    // 关栏即清：否则下次打开会带着上一次的总数
-    expect(main, "关栏时必须清空命中表").toMatch(
-      /clearFindHighlight\(\);\s*\n\s*resetFindAll\(\);/,
-    );
+    // 关栏只清高亮：那份命中表已经不存在，没什么可清的
+    expect(main, "关栏即清高亮").toMatch(/onClose: \(\) => clearFindHighlight\(\)/);
 
-    // ---- 查找栏侧：a/b 只由 setDocIndex 单点驱动，且不再有任何结果区痕迹 ----
-    expect(bar, "徽标只能由 setDocIndex 回灌").toMatch(/setDocIndex: \(a, b\) => \{/);
-    expect(bar, "查询一变就作废旧的 a/b（别挂着过期数字）").toMatch(/docA = 0;\s*\n\s*docB = 0;/);
-    expect(bar, "不得再有结果区 / 命中表的任何痕迹").not.toMatch(
-      /find-results|renderResults|setHits|setDocCount/,
+    // ---- 查找栏侧：不再有任何结果区 / 徽标 / 跨文档开关的痕迹 ----
+    expect(bar, "不得再有结果区 / 命中表 / 徽标的任何痕迹").not.toMatch(
+      /find-results|renderResults|setHits|setDocCount|syncBadge|setDocIndex|docsBtn/,
     );
   });
 });

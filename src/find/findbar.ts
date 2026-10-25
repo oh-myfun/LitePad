@@ -1,15 +1,16 @@
-// 悬浮查找 / 替换栏 + 跨文档搜索（从 main.ts 拆出，解耦第十二步 / #413）。
+// 悬浮查找 / 替换栏（从 main.ts 拆出，解耦第十二步 / #413）。
 //
-// 职责：查找栏句柄与开关（ensureFindBar / openFindBar / resetFindAll）、编辑器查找
+// 职责：查找栏句柄与开关（ensureFindBar / openFindBar）、编辑器查找
 // （applyFindQuery / stepFind / replaceCurrent / replaceAllInScope）、预览查找桥
-// （findSpecOf / applyPreviewFindToPanel）、跨文档搜索（searchOpenDocs / runFindInDocs /
-// openFindHit / updateDocBadge）、重定位（retargetFindBar）。
+// （findSpecOf / applyPreviewFindToPanel）、重定位（retargetFindBar）。
+// ⚠️ **只管当前这一份文档**：跨文档 / 跨文件搜索 B389 起在 `src/search/*`（侧栏搜索视图），
+// 这里不再持有命中表，也不再扫别的文档 —— 两处各扫一遍就会各报一个总数。
 // 零外部函数依赖——只依赖 core/* + ui + doc-model + tabs + shell/* + editor/*，
 // 对 main.ts 零反向依赖。（PreviewFindSpec 类型在此定义；markdown.ts 反向 import 它——
 // 仅类型，运行期无环。）
 
-import { docs, panels, tabs, type Panel } from "../core/app-state";
-import { activePanel, instancesOfDoc } from "../core/panels";
+import { panels, tabs, type Panel } from "../core/app-state";
+import { activePanel } from "../core/panels";
 import {
   buildFindQuery,
   clearFindQuery,
@@ -20,15 +21,9 @@ import {
   setFindQuery,
   type FindMatch,
 } from "../editor/find";
-import { isDirtyVsBaseline, isMdTab } from "../doc-model";
-import { freshTextOfDoc, renderPanelTabs, switchTab } from "../tabs";
-import { el, refreshTitle } from "../ui";
-import {
-  createFindBar,
-  type FindBarHandle,
-  type FindBarQuery,
-  type FindHit,
-} from "../shell/findbar";
+import { isMdTab } from "../doc-model";
+import { el } from "../ui";
+import { createFindBar, type FindBarHandle, type FindBarQuery } from "../shell/findbar";
 import { EditorView } from "@codemirror/view";
 
 /** 预览侧查找规格（M5 预览查找用）。 */
@@ -44,31 +39,9 @@ export type PreviewFindSpec = {
 /**
  * 查找入口：编辑器内不再嵌 CM6 搜索面板，查找/替换统一收敛到这一个应用级浮层
  * （不绑定文件/面板，切换标签、分屏都不会自动关闭）。
- * 按用户要求：范围不用下拉菜单——跨文档能力做成一个「所有打开的文档」勾选框；
- * 文件夹搜索整体不做（不读盘）。
+ * 按用户要求：范围不用下拉菜单，也不读盘 —— 跨文件那一条在侧栏搜索视图里（B389）。
  */
 let findBar: FindBarHandle | null = null;
-
-/**
- * 跨文档查找的命中表与游标（B80）。
- *
- * ⚠️ 命中表必须由主程序持有，不能放回查找栏：只有这里才知道怎么切标签、怎么把
- * 命中处选中并滚到视野中间（`openFindHit`）。查找栏那边只落一个**总数**，
- * 用来渲染文档图标右上角的徽标。
- *
- * 既然不再有结果列表，`findHits` 就只服务于**步进**：Enter / 上下箭头在跨文档范围下
- * 逐条跳转（VS Code 的多文件结果在侧边栏搜索视图里，我们这一栏等价于「按顺序走」）。
- */
-let findHits: FindHit[] = [];
-/** 当前停留的命中下标；-1 = 还没定位（下一次步进从表头/表尾开始） */
-let findHitIndex = -1;
-
-/** 清空跨文档命中（查询变了、关栏、熄掉跨文档开关时都要调）。 */
-function resetFindAll(bar: FindBarHandle | null = findBar): void {
-  findHits = [];
-  findHitIndex = -1;
-  bar?.setDocIndex(0, 0);
-}
 
 function ensureFindBar(): FindBarHandle {
   if (findBar) return findBar;
@@ -77,10 +50,7 @@ function ensureFindBar(): FindBarHandle {
     onStep: (dir, q) => stepFind(dir, q),
     onReplace: (q) => replaceCurrent(q),
     onReplaceAll: (q) => replaceAllInScope(q),
-    onClose: () => {
-      clearFindHighlight();
-      resetFindAll();
-    },
+    onClose: () => clearFindHighlight(),
   });
   return findBar;
 }
@@ -184,11 +154,6 @@ function applyFindQuery(q: FindBarQuery): void {
     p.view.view.dispatch({ effects: setFindQuery.of({ query, activeFrom: null, restrict: r }) });
   }
   applyPreviewFindEverywhere(q);
-  // 跨文档范围：查询一变，上一次的命中表就作废 —— 这里直接重搜一次，
-  // 让文档图标右上角的总数跟着实时走（与 VS Code 搜索视图「改选项即重跑」一致）。
-  // 非跨文档范围则把旧的命中表清掉，免得下次点亮开关时徽标挂着一个过期的数字。
-  if (q.allDocs) runFindInDocs(q);
-  else resetFindAll();
   refreshFindCount();
 }
 
@@ -237,16 +202,6 @@ function refreshFindCount(): void {
   const bar = findBar;
   if (!bar) return;
   const q = bar.getQuery();
-  // 跨文档范围：计数口径与「当前文档 / 选区」**完全一致** —— 有文本没命中 = 「无匹配」，
-  // 有命中 = 「当前序号 / 总数」（总数来自跨文档命中表，序号即 findHitIndex）。
-  // ⚠️ 早先这里一律写「无内容」（当时认为总数已在徽标上，会误导），副作用是
-  //    prev/next 被置灰、结果区看起来没更新 —— 用户反馈「激活多文件搜索没反应」的根因。
-  //    命中总数是「几个文档有结果」另有徽标 a/b，与这里的「第几个命中」不冲突。
-  if (q.allDocs) {
-    if (findHits.length === 0) bar.setCount(q.text ? "无匹配" : "");
-    else bar.setCount(`${(findHitIndex >= 0 ? findHitIndex : 0) + 1} / ${findHits.length}`);
-    return;
-  }
   // 预览态：计数与当前项来自预览高亮（预览可见文本与源码一一对应，步进以它为准）
   const panel = activePanel();
   const tab = panel ? tabs.get(panel.activeTabId) : undefined;
@@ -272,16 +227,8 @@ function refreshFindCount(): void {
   bar.setCount(`${idx + 1} / ${matches.length}`);
 }
 
-/**
- * 步进：当前文档范围内跳到上一个 / 下一个命中（到头环绕）。
- * ⚠️ 跨文档范围（点亮了文档图标）要转给 `stepFindInDocs` —— 命中表在主程序手里，
- * 这里的 `view` 只是活动编辑器，走不到别的文档去。
- */
+/** 步进：在当前文档范围内跳到上一个 / 下一个命中（到头环绕）。 */
 function stepFind(dir: 1 | -1, q: FindBarQuery): void {
-  if (q.allDocs) {
-    stepFindInDocs(dir, q);
-    return;
-  }
   const panel = activePanel();
   if (!panel) return;
   const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
@@ -359,8 +306,8 @@ function replaceCurrent(q: FindBarQuery): void {
 }
 
 /**
- * 全部替换。勾选「所有打开的文档」时遍历全部已打开文档（只改内存快照，
- * 落盘仍由各自的保存流程负责）；否则只改当前活动文档。
+ * 全部替换：只改当前活动文档。
+ * ⚠️ 跨文档 / 跨文件那一条在侧栏搜索视图里（`src/search/replace.ts`），这里不再管。
  */
 function replaceAllInScope(q: FindBarQuery): void {
   if (!q.text) {
@@ -373,183 +320,26 @@ function replaceAllInScope(q: FindBarQuery): void {
     return;
   }
 
-  if (!q.allDocs) {
-    const panel = activePanel();
-    const view = panel?.view?.view;
-    if (!panel || !view) return;
-    const matches = restrictMatches(findMatches(view.state, query), q);
-    if (matches.length === 0) {
-      findBar?.setStatus("无匹配");
-      return;
-    }
-    const changes = matches.map((m) => ({
-      from: m.from,
-      to: m.to,
-      insert: q.preserveCase
-        ? applyPreserveCase(view.state.sliceDoc(m.from, m.to), q.replace)
-        : q.replace,
-    }));
-    view.dispatch({ changes });
-    const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
-    if (tab) tab.state = view.state;
-    findBar?.setStatus(`已替换 ${matches.length} 处`);
-    refreshFindCount();
+  const panel = activePanel();
+  const view = panel?.view?.view;
+  if (!panel || !view) return;
+  const matches = restrictMatches(findMatches(view.state, query), q);
+  if (matches.length === 0) {
+    findBar?.setStatus("无匹配");
     return;
   }
-
-  let files = 0;
-  let total = 0;
-  for (const doc of docs.values()) {
-    if (doc.readonly) continue;
-    const insts = instancesOfDoc(doc.tabId);
-    if (insts.length === 0) continue;
-    const matches = findMatches(insts[0].state, query);
-    if (matches.length === 0) continue;
-    const changes = matches.map((m) => ({
-      from: m.from,
-      to: m.to,
-      insert: q.preserveCase
-        ? applyPreserveCase(insts[0].state.sliceDoc(m.from, m.to), q.replace)
-        : q.replace,
-    }));
-    // 优先派发给正挂在视图上的实例——由 syncDocInstances 广播到兄弟实例并置脏；
-    // 全部离屏时才直接改快照，并手动置脏
-    const visible = insts.find((t) => {
-      const p = panels.get(t.panelId);
-      return !!p?.view && p.viewTabId === t.tabId;
-    });
-    if (visible) {
-      const p = panels.get(visible.panelId)!;
-      p.view!.view.dispatch({ changes });
-      visible.state = p.view!.view.state;
-    } else {
-      for (const t of insts) t.state = t.state.update({ changes }).state;
-      // 离屏实例改完快照后同样按「是否偏离基线」判（B112）：替换词与被替换词恰好
-      // 相同时内容一字未变，不该挂上 ●。
-      if (!doc.dirty && isDirtyVsBaseline(doc, freshTextOfDoc(doc))) {
-        doc.dirty = true;
-        refreshTitle();
-        renderPanelTabs();
-      }
-    }
-    files++;
-    total += matches.length;
-  }
-  findBar?.setStatus(total === 0 ? "无匹配" : `已在 ${files} 个文档中替换 ${total} 处`);
+  const changes = matches.map((m) => ({
+    from: m.from,
+    to: m.to,
+    insert: q.preserveCase
+      ? applyPreserveCase(view.state.sliceDoc(m.from, m.to), q.replace)
+      : q.replace,
+  }));
+  view.dispatch({ changes });
+  const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
+  if (tab) tab.state = view.state;
+  findBar?.setStatus(`已替换 ${matches.length} 处`);
   refreshFindCount();
-}
-
-/**
- * 在所有已打开的文档中查找（直接扫内存里的标签快照，不读盘）。
- *
- * ⚠️ **不设条数上限**（B80 去掉结果列表后，原先那个「最多 300 条」的保护就没意义了）：
- * 返回数组既是步进的命中表，也是徽标上「总匹配数」的来源 —— 截断会让徽标少报数。
- */
-function searchOpenDocs(q: FindBarQuery): FindHit[] {
-  const query = buildFindQuery(findOptionsOf(q));
-  if (!query) return [];
-  const out: FindHit[] = [];
-  for (const doc of docs.values()) {
-    const inst = instancesOfDoc(doc.tabId)[0];
-    if (!inst) continue;
-    const state = inst.state;
-    for (const m of findMatches(state, query)) {
-      const line = state.doc.lineAt(m.from);
-      out.push({
-        docId: doc.tabId,
-        path: doc.path ?? "",
-        name: doc.name,
-        line: line.number,
-        col: m.from - line.from + 1,
-        text: line.text.trim().slice(0, 200),
-        from: m.from,
-        to: m.to,
-      });
-    }
-  }
-  return out;
-}
-
-/** 含结果的文档（按首次出现顺序去重），用于跨文档徽标的 b。 */
-function docsWithHits(): number[] {
-  const order: number[] = [];
-  for (const h of findHits) if (!order.includes(h.docId)) order.push(h.docId);
-  return order;
-}
-
-/** 跨文档徽标：a = 当前命中（findHitIndex）所属文档的序号，b = 含结果的文档数。 */
-function updateDocBadge(): void {
-  const docs = docsWithHits();
-  const b = docs.length;
-  let a = 0;
-  if (findHitIndex >= 0 && findHits[findHitIndex]) {
-    a = docs.indexOf(findHits[findHitIndex].docId) + 1;
-  } else if (b > 0) {
-    a = 1;
-  }
-  findBar?.setDocIndex(a, b);
-}
-
-/**
- * 跨文档查找：重算命中表 → 刷新徽标（`a/b`）。
- *
- * ⚠️ 09-20 起**只负责算，不负责显示**：计数与按钮状态一律交给 `refreshFindCount()`，
- * 与「当前文档」「选区」两种范围走同一个出口 —— 早先这里会顺手写 `setCount` 并播报一行
- * 「共 N 处匹配…」那条成功播报，结果 ① 那行提示在另外两种范围里都没有（不一致，已按用户
- * 要求删除）；② 写完还被紧随其后的 `refreshFindCount()` 覆盖成「无内容」，
- * 于是 prev/next 被置灰 —— 表现就是「点亮多文件搜索没反应」。
- */
-function runFindInDocs(q: FindBarQuery): void {
-  findHits = q.text ? searchOpenDocs(q) : [];
-  findHitIndex = -1;
-  updateDocBadge();
-}
-
-/**
- * 跨文档步进：在命中表里往前走 / 往后走（到头环绕），并把该命中处选中、滚到视野中间。
- *
- * 命中表为空有两种可能：①真的没命中；②用户没按回车、直接点箭头进来的。
- * 后者要先补搜一次 —— 否则「勾了文档图标点下一个没反应」。
- */
-function stepFindInDocs(dir: 1 | -1, q: FindBarQuery): void {
-  if (!q.text) {
-    refreshFindCount();
-    return;
-  }
-  if (findHits.length === 0) {
-    // 补搜一次：查询/范围变化时主程序已经搜过，这里兜的是「命中表被清掉又直接点箭头」的路径
-    runFindInDocs(q);
-    if (findHits.length === 0) {
-      refreshFindCount();
-      return;
-    }
-    findHitIndex = dir > 0 ? 0 : findHits.length - 1;
-  } else {
-    findHitIndex = (findHitIndex + dir + findHits.length) % findHits.length;
-  }
-  updateDocBadge();
-  openFindHit(findHits[findHitIndex]);
-  refreshFindCount();
-}
-
-/** 跳到某条命中：切到该文档并把命中处选中、滚到视野中间。 */
-function openFindHit(hit: FindHit): void {
-  const insts = instancesOfDoc(hit.docId);
-  if (insts.length === 0) return;
-  const target = insts[0];
-  switchTab(target.panelId, target.tabId);
-  // 活动实例：选中命中区间并滚到视野中间（本地动作，保持 y:"center"）。
-  const p = panels.get(target.panelId);
-  if (p?.view && p.viewTabId === target.tabId) {
-    p.view.view.dispatch({
-      selection: { anchor: hit.from, head: hit.to },
-      effects: EditorView.scrollIntoView(hit.from, { y: "center" }),
-    });
-    target.state = p.view.view.state;
-  } else {
-    target.state = target.state.update({ selection: { anchor: hit.from, head: hit.to } }).state;
-  }
-  activePanel()?.view?.focus();
 }
 
 /** 标签/面板切换后：浮层保持打开，把当前查询重新应用到新的活动视图。 */
@@ -566,7 +356,6 @@ export function getFindBar(): FindBarHandle | null {
 }
 
 export {
-  resetFindAll,
   ensureFindBar,
   openFindBar,
   applyFindQuery,
@@ -578,7 +367,5 @@ export {
   stepFind,
   replaceCurrent,
   replaceAllInScope,
-  searchOpenDocs,
-  openFindHit,
   retargetFindBar,
 };
