@@ -20,13 +20,52 @@ import { ruleBlock, cssDecls, stripCssComments, stripLineComments, resolveCssVar
 
 const noop = (): void => {};
 
-/** B385：设置页关联分类的内存夹具（jsdom 无 IPC / 注册表）。 */
-const ASSOC_FIXTURE: { ext: string; registered: boolean; isDefault: boolean }[] = [
-  { ext: "md", registered: true, isDefault: true },
-  { ext: "markdown", registered: false, isDefault: false },
-  { ext: "txt", registered: false, isDefault: false },
-  { ext: "log", registered: false, isDefault: false },
+/** B385：设置页关联分类的内存夹具（jsdom 无 IPC / 注册表）。
+ *  B385 二轮起预设是文本格式全家桶，夹具照 Rust CANDIDATE_EXTS 的量级造。 */
+const ASSOC_PRESET_EXTS = [
+  "md",
+  "markdown",
+  "txt",
+  "log",
+  "csv",
+  "tsv",
+  "json",
+  "yaml",
+  "yml",
+  "toml",
+  "ini",
+  "cfg",
+  "conf",
+  "env",
+  "properties",
+  "xml",
+  "html",
+  "htm",
+  "css",
+  "scss",
+  "less",
+  "js",
+  "ts",
+  "py",
+  "rs",
+  "go",
+  "java",
+  "c",
+  "cpp",
+  "h",
+  "cs",
+  "sh",
+  "bat",
+  "cmd",
+  "ps1",
+  "sql",
 ];
+const ASSOC_FIXTURE: { ext: string; registered: boolean; isDefault: boolean }[] =
+  ASSOC_PRESET_EXTS.map((ext) => ({
+    ext,
+    registered: ext === "md",
+    isDefault: ext === "md",
+  }));
 
 function makeOpts(): SettingsDialogOptions {
   return {
@@ -63,7 +102,8 @@ function makeOpts(): SettingsDialogOptions {
     languageOptions: () => ["Markdown", "Plain Text", "JSON"],
     onDefaultLang: noop,
     // B385：文件关联（jsdom 里不走真 IPC —— 假数据在内存里翻）
-    assocEntries: async () => ASSOC_FIXTURE,
+    // 照 Rust candidate_exts 的口径：按扩展名排序后返回
+    assocEntries: async () => [...ASSOC_FIXTURE].sort((a, b) => a.ext.localeCompare(b.ext)),
     onAssocSet: async (ext, on) => {
       // 照 Rust normalize_ext 的口径拒非法名（jsdom 里没有真 IPC / 注册表）
       const norm = ext.trim().replace(/^\.+/, "").toLowerCase();
@@ -522,7 +562,14 @@ describe("B111 设置页：switch 组件 + 快捷键搜索框 Esc", () => {
 
     const code = stripLineComments(readFileSync("src/shell/settingsdialog.ts", "utf-8"));
     expect(code, "设置页应引入 createSwitch").toContain('from "./switch"');
-    expect(code, "设置页不应再有原生 checkbox").not.toContain('type = "checkbox"');
+    // B385 二轮：关联网格是 native checkbox 的**唯一**豁免区（勾选语义），其余设置行
+    // 仍一律 switch —— 判据按形状切：fillAssocPage 之前不许有 checkbox。
+    const beforeAssoc = code.slice(0, code.indexOf("function fillAssocPage"));
+    expect(beforeAssoc, "设置行不应再有原生 checkbox（关联网格除外）").not.toContain(
+      'type = "checkbox"',
+    );
+    const assocCode = code.slice(code.indexOf("function fillAssocPage"));
+    expect(assocCode, "关联网格用 native checkbox + accent-color").toContain('type = "checkbox"');
     expect(code, "不应再残留 .settings-toggle").not.toContain("settings-toggle");
     expect(code, "Esc 处理必须先问 clearSearch").toContain("clearSearch()");
 
@@ -1135,7 +1182,7 @@ describe("B305 通用页：最近打开保留数量", () => {
 // 而不是把 28px 抄进第二条守卫里（抄了就等于允许两边各写各的）。
 
 // ---------------------------------------------------------------- B385 文件关联
-describe("B385 设置页「文件关联」分类", () => {
+describe("B385 设置页「文件关联」分类（B385 二轮：勾选网格）", () => {
   /** 切到文件关联分类（走真实那一下点击，别直呼内部函数）。 */
   function openAssoc(): void {
     const btn = document.querySelector<HTMLElement>('.settings-nav-item[data-cat="assoc"]');
@@ -1143,32 +1190,39 @@ describe("B385 设置页「文件关联」分类", () => {
     btn!.click();
   }
 
-  /** 等关联整表（异步 IPC）渲染出指定行。 */
-  async function waitRow(label: string): Promise<HTMLElement> {
+  /** 等关联整表（异步 IPC）渲染出指定格。 */
+  async function waitItem(ext: string): Promise<HTMLElement> {
     await vi.waitFor(() => {
-      const item = [...document.querySelectorAll(".settings-assoc-list .settings-item")].find(
-        (r) => r.querySelector(".settings-item-label")?.textContent === label,
-      );
-      expect(item, `行「${label}」应渲染出来`).toBeTruthy();
+      const el = document.querySelector<HTMLElement>(`.settings-assoc-item[data-ext="${ext}"]`);
+      expect(el, `格「${ext}」应渲染出来`).toBeTruthy();
     });
-    return [...document.querySelectorAll(".settings-assoc-list .settings-item")].find(
-      (r) => r.querySelector(".settings-item-label")?.textContent === label,
+    return document.querySelector<HTMLElement>(
+      `.settings-assoc-item[data-ext="${ext}"]`,
     ) as HTMLElement;
   }
 
-  it("整表异步渲染：四个候选格式逐行一个开关，.md 是已关联状态", async () => {
+  it("网格异步渲染：预设是文本格式全家桶（不止四种），.md 勾着", async () => {
     showSettingsDialog(makeOpts());
     openAssoc();
-    const md = await waitRow(".md");
-    expect(md.querySelector(".switch")?.getAttribute("aria-checked")).toBe("true");
-    // 状态要说清两档：「进了候选」≠「已是系统默认」
-    expect(md.textContent).toContain("系统默认打开方式");
-    await waitRow(".markdown");
-    await waitRow(".txt");
-    await waitRow(".log");
+    await waitItem("md");
+    await vi.waitFor(() => {
+      const n = document.querySelectorAll(".settings-assoc-item").length;
+      expect(
+        n,
+        "预设格式应是全家桶量级（≥ 20 种），不是一行一开关时代的四种",
+      ).toBeGreaterThanOrEqual(20);
+    });
+    const md = await waitItem("md");
+    expect(md.querySelector<HTMLInputElement>("input[type=checkbox]")!.checked).toBe(true);
+    expect(
+      md.querySelector(".settings-assoc-badge"),
+      "md 是系统默认 ⇒ 不该挂「未生效」",
+    ).toBeNull();
+    // 网格不是逐行开关
+    expect(document.querySelectorAll(".settings-assoc-item .switch").length).toBe(0);
   });
 
-  it("翻开关 ⇒ 走 onAssocSet 且行就地刷新（描述跟着新状态换）", async () => {
+  it("勾选 ⇒ 走 onAssocSet 且就地刷新；「非默认」的格要挂「未生效」小标", async () => {
     const opts = makeOpts();
     const calls: [string, boolean][] = [];
     opts.onAssocSet = async (ext, on) => {
@@ -1180,34 +1234,51 @@ describe("B385 设置页「文件关联」分类", () => {
     };
     showSettingsDialog(opts);
     openAssoc();
-    const txt = await waitRow(".txt");
-    txt.querySelector<HTMLButtonElement>(".switch")!.click();
+    const txt = await waitItem("txt");
+    txt.querySelector<HTMLInputElement>("input[type=checkbox]")!.click();
     await vi.waitFor(() => {
       expect(calls).toContainEqual(["txt", true]);
     });
     await vi.waitFor(() => {
-      const desc = [...document.querySelectorAll(".settings-assoc-list .settings-item")]
-        .find((r) => r.querySelector(".settings-item-label")?.textContent === ".txt")
-        ?.querySelector(".settings-item-desc")?.textContent;
-      // fixture 里 isDefault 恒 false ⇒ 开了之后必须是「候选但非默认」这一档的文案
-      expect(desc ?? "", "开了但非默认的行要明说「仍需系统确认」").toContain("候选");
+      const cur = document.querySelector<HTMLElement>('.settings-assoc-item[data-ext="txt"]');
+      // fixture 里 isDefault 恒 false ⇒ 勾上后必须挂「未生效」，把 UserChoice 口径亮出来
+      expect(cur?.querySelector(".settings-assoc-badge")?.textContent, "勾了但非默认要标出来").toBe(
+        "未生效",
+      );
     });
   });
 
-  it("自定义扩展名：提交走 onAssocSet，新行追加进列表；非法输入把错误显示出来", async () => {
+  it("自定义扩展名：提交走 onAssocSet、按字母序插进网格；非法输入把错误显示出来", async () => {
     showSettingsDialog(makeOpts());
     openAssoc();
-    await waitRow(".md");
+    await waitItem("md");
     const input = document.querySelector<HTMLInputElement>(".settings-assoc-input");
     expect(input, "应有自定义扩展名输入框").toBeTruthy();
     const addBtn = document.querySelector<HTMLButtonElement>(
       ".settings-assoc-add .settings-mini-btn",
     );
     expect(addBtn).toBeTruthy();
+    // 不在预设里的扩展名 ⇒ 走「插入」分支，且按字母序落在 bat 之前，不甩末尾
+    input!.value = "abc";
+    addBtn!.click();
+    await waitItem("abc");
+    const order = [...document.querySelectorAll(".settings-assoc-item")].map(
+      (el) => (el as HTMLElement).dataset.ext,
+    );
+    expect(order[0], "abc 按字母序排到最前").toBe("abc");
+    // 已在预设里的（csv）再添加 ⇒ 就地刷新，不得重复成两格
     input!.value = "csv";
     addBtn!.click();
-    await waitRow(".csv");
-    // 非法输入（带点/空格）会被 Rust 拒 ⇒ 前端要把错误落在输入行下面，而不是静默
+    await vi.waitFor(() => {
+      const n = document.querySelectorAll('.settings-assoc-item[data-ext="csv"]').length;
+      expect(n, "csv 不得重复").toBe(1);
+    });
+    // 等上一次提交收尾（按钮恢复可用）—— vi.waitFor 的首轮同步检查可能赶在
+    // .finally 之前放行，直接点会被 disabled 吞掉
+    await vi.waitFor(() => {
+      expect(addBtn!.disabled, "上次提交应已收尾").toBe(false);
+    });
+    // 非法输入（带空格）会被 Rust 拒 ⇒ 前端要把错误落在输入行下面，而不是静默
     input!.value = "a b";
     addBtn!.click();
     await vi.waitFor(() => {
@@ -1229,14 +1300,15 @@ describe("B385 设置页「文件关联」分类", () => {
     expect(cat).toContain('"默认应用"');
   });
 
-  it("静态：说明必须交代 UserChoice 口径（开了 ≠ 一定生效）与「还原旧关联」语义", () => {
+  it("静态：说明必须交代 UserChoice 口径（勾了 ≠ 一定生效）与「还原旧关联」语义", () => {
     const src = readFileSync("src/shell/settingsdialog.ts", "utf-8");
     const page = src.slice(
       src.indexOf("function fillAssocPage"),
       src.indexOf("function fillAssocPage") + 4000,
     );
-    expect(page, "要提系统默认应用设置").toContain("系统设置");
-    expect(page, "要提撤销还原").toContain("还原");
+    expect(page, "要给「系统默认应用」入口").toContain("系统默认应用");
+    expect(page, "要提取消还原").toContain("还原");
+    expect(page, "要挂「未生效」小标").toContain("settings-assoc-badge");
   });
 });
 

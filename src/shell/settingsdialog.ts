@@ -1096,50 +1096,73 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
  *
  * 注册表读写都走 IPC（`commands/assoc.rs`），本页只管状态展示：
  *   · 整表是**异步**拉的（注册表枚举不适合阻塞建页），先渲染说明与骨架；
- *   · 每行开关后用返回的那条就地重画自己（不整表重拉，别让用户看到闪动）；
- *   · 行文案把两种状态说清：只是「进了打开方式候选」还是「已是系统默认」
- *     —— UserChoice 被别的程序占着时前者 ≠ 双击生效，必须让用户看得出差别；
- *   · 自定义扩展名也收（Rust 侧校验；拒绝时把错误写在这一行下面）。
+ *   · 展示是**勾选网格**（B385 二轮，用户口径：预设格式扩成文本全家桶后
+ *     一行一条太长）；每格勾选后用返回的那条就地重画自己（不整表重拉）；
+ *   · 「注册了但不是系统默认」那档挂「未生效」小标 —— UserChoice 被别的程序
+ *     占着时勾了 ≠ 双击生效，必须让用户看得出差别；
+ *   · 自定义扩展名也收（Rust 侧校验；拒绝时把错误写在输入行下面）。
  */
 function fillAssocPage(body: HTMLElement, opts: SettingsDialogOptions): void {
   const hint = document.createElement("p");
   hint.className = "settings-page-desc";
   hint.textContent =
-    "打开后双击该格式的文件会用 LitePad 打开；撤销时会还原之前的打开方式。若 Windows 已为某格式记住「用户选择」，最终档在系统设置里确认。";
+    "勾选后双击该格式的文件会用 LitePad 打开；取消勾选会还原之前的打开方式。若 Windows 已为某格式记住「用户选择」，可能仍按原程序打开 —— 到「系统默认应用」里确认。";
   body.appendChild(hint);
 
+  // B385 二轮（用户口径）：预设格式扩成文本全家桶、展示从「一行一开关」改成
+  // **勾选网格** —— 三十来个格式一行一条会把页面拉得过长，网格一屏放得下。
   const list = document.createElement("div");
   list.className = "settings-assoc-list";
+  list.setAttribute("role", "group");
+  list.setAttribute("aria-label", "关联的文件格式");
   body.appendChild(list);
 
-  const entryDesc = (e: AssocEntry): string =>
-    e.registered && e.isDefault
-      ? "已关联，且是系统默认打开方式。"
-      : e.registered
-        ? "已加入「打开方式」候选；系统默认仍是别的程序，可点下方「系统默认应用」确认。"
-        : "未关联。";
-
+  /** 一格：native checkbox + `.ext`。注册了但不是系统默认的那档挂「未生效」小标
+   *  （UserChoice 被别的程序占着，见页面说明）。 */
   const renderEntry = (e: AssocEntry): HTMLElement => {
-    const el = toggleRow(`.${e.ext}`, entryDesc(e), e.registered, (v) => {
+    const label = document.createElement("label");
+    label.className = "settings-assoc-item";
+    label.dataset.ext = e.ext;
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = e.registered;
+    box.setAttribute("aria-label", `关联 .${e.ext}`);
+    const text = document.createElement("span");
+    text.textContent = `.${e.ext}`;
+    label.append(box, text);
+    if (e.registered && !e.isDefault) {
+      const badge = document.createElement("span");
+      badge.className = "settings-assoc-badge";
+      badge.textContent = "未生效";
+      label.appendChild(badge);
+    }
+    box.addEventListener("change", () => {
+      const want = box.checked;
+      box.disabled = true;
       void opts
-        .onAssocSet(e.ext, v)
-        .then((nu) => el.replaceWith(renderEntry(nu)))
+        .onAssocSet(e.ext, want)
+        .then((nu) => label.replaceWith(renderEntry(nu)))
         .catch(() => {
-          // 开关联失败（注册表被组策略锁住之类）：开关已经翻了，重画回真实状态
+          // 写注册表失败（被组策略锁住之类）：回滚到真实状态，勾不能停在假位置
           void opts.assocEntries().then((all) => {
             const cur = all.find((x) => x.ext === e.ext);
-            if (cur) el.replaceWith(renderEntry(cur));
+            if (cur) label.replaceWith(renderEntry(cur));
           });
+        })
+        .finally(() => {
+          box.disabled = false;
         });
     });
-    return el;
+    return label;
+  };
+
+  const renderAll = (entries: AssocEntry[]): void => {
+    list.textContent = "";
+    for (const e of entries) list.appendChild(renderEntry(e));
   };
   void opts
     .assocEntries()
-    .then((entries) => {
-      list.textContent = "";
-      for (const e of entries) list.appendChild(renderEntry(e));
-    })
+    .then(renderAll)
     .catch(() => {
       list.textContent = "";
       const err = document.createElement("p");
@@ -1177,11 +1200,18 @@ function fillAssocPage(body: HTMLElement, opts: SettingsDialogOptions): void {
       .onAssocSet(ext, true)
       .then((nu) => {
         input.value = "";
-        const exist = Array.from(list.children).find(
-          (el) => el.querySelector(".settings-item-label")?.textContent === `.${nu.ext}`,
-        );
+        const exist = list.querySelector<HTMLElement>(`[data-ext="${nu.ext}"]`);
         if (exist) exist.replaceWith(renderEntry(nu));
-        else list.appendChild(renderEntry(nu));
+        else {
+          // 网格按字母序排，插对位置再重画，别甩在末尾
+          const all = Array.from(list.querySelectorAll<HTMLElement>("[data-ext]")).map(
+            (el) => el.dataset.ext ?? "",
+          );
+          const at = all.findIndex((x) => x > nu.ext);
+          const el = renderEntry(nu);
+          if (at < 0) list.appendChild(el);
+          else list.insertBefore(el, list.children[at]);
+        }
       })
       .catch((err: unknown) => {
         errMsg.textContent = String(err instanceof Error ? err.message : err);

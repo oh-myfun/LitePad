@@ -3052,7 +3052,37 @@ button:focus-visible {
   outline: none;
 }
 
-/* B385：文件关联分类 —— 自定义扩展名的输入行 */
+/* B385：文件关联分类 —— 勾选网格（B385 二轮：一行一开关太长，改成 flex 换行的
+   复选格子，native checkbox 用 accent 色跟主题走） */
+.settings-assoc-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 2px 0;
+}
+
+.settings-assoc-item {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 96px;
+  cursor: pointer;
+  font-size: var(--fs-ui);
+  color: var(--fg);
+}
+
+.settings-assoc-item input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* 关联了但不是系统默认（UserChoice 被别的程序占着）—— 行内直说，别让人纳闷 */
+.settings-assoc-badge {
+  font-size: var(--fs-ui);
+  color: var(--fg-muted);
+}
+
+/* 自定义扩展名的输入行 */
 .settings-assoc-add {
   display: flex;
   gap: 6px;

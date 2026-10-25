@@ -37,9 +37,47 @@ const PROGID_PREFIX: &str = "LitePad.Assoc.";
 /// 撤销关联时「记着旧默认值」的存放处（ProgID 键下的一个 REG_SZ 值）。
 const PREV_VALUE: &str = "LitePad.Prev";
 
-/// 固定候选（覆盖安装包本来就注册的 md/markdown + 两种最常见的纯文本）。
-/// 用户自定义的扩展名注册后由枚举带出来，不存前端设置 —— 注册表是唯一权威。
-pub const CANDIDATE_EXTS: &[&str] = &["md", "markdown", "txt", "log"];
+/// 固定候选（B385 二轮扩容：常见**文本**格式全家桶 —— 关联只对这些有意义，
+/// 二进制格式不在其列）。用户自定义的扩展名注册后由枚举带出来，不存前端设置
+/// —— 注册表是唯一权威。
+pub const CANDIDATE_EXTS: &[&str] = &[
+    "md",
+    "markdown",
+    "txt",
+    "log",
+    "csv",
+    "tsv",
+    "json",
+    "yaml",
+    "yml",
+    "toml",
+    "ini",
+    "cfg",
+    "conf",
+    "env",
+    "properties",
+    "xml",
+    "html",
+    "htm",
+    "css",
+    "scss",
+    "less",
+    "js",
+    "ts",
+    "py",
+    "rs",
+    "go",
+    "java",
+    "c",
+    "cpp",
+    "h",
+    "cs",
+    "sh",
+    "bat",
+    "cmd",
+    "ps1",
+    "sql",
+];
 
 /// 一条关联的当前状态（字段 camelCase，口径同 `FsEntry`）。
 #[derive(Debug, Clone, Serialize)]
