@@ -22,6 +22,10 @@ vi.mock("../src/sync-scroll/wire", () => ({
 }));
 
 vi.mock("../src/ipc/api", () => ({
+  assocList: () => Promise.resolve([]),
+  assocSet: (ext: string, on: boolean) =>
+    Promise.resolve({ ext, registered: on, isDefault: false }),
+  assocOpenSystemSettings: () => Promise.resolve(),
   // 生产 Windows 上 convertFileSrc 给的是 `http://asset.localhost/…`（带 http: 前缀），
   // 正好落进「已经是绝对地址 ⇒ 不再重算」那条守卫 —— 这正是 I5 的坑，替身照实写。
   convertFileSrc: (p: string) => `http://asset.localhost/${p.replace(/[\\/]/g, "/")}`,

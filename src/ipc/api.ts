@@ -802,5 +802,32 @@ export function emitCrossWindow(event: string, payload: Record<string, unknown>)
   return emit(event, { ...payload, from: getCurrentWindow().label });
 }
 
+// ---------------------------------------------------------------- 文件关联（B385）
+
+/** 一条文件关联的当前状态（对应 Rust `assoc::AssocEntry`，字段 camelCase）。 */
+export interface AssocEntry {
+  /** 不带点的扩展名（"md"）。 */
+  ext: string;
+  /** LitePad 的 ProgID 是否注册在册（= 设置页开关的「开」）。 */
+  registered: boolean;
+  /** 系统默认打开方式是否指向我们（UserChoice 被别家占着时可能是 false）。 */
+  isDefault: boolean;
+}
+
+/** 设置页「文件关联」分类的整表状态（候选 = 固定清单 ∪ 本机已注册的自定义项）。 */
+export function assocList(): Promise<AssocEntry[]> {
+  return invoke<AssocEntry[]>("assoc_list");
+}
+
+/** 开 / 关一个扩展名的关联，返回刷新后的该条状态。 */
+export function assocSet(ext: string, on: boolean): Promise<AssocEntry> {
+  return invoke<AssocEntry>("assoc_set", { ext, on });
+}
+
+/** 打开系统「默认应用」设置页（UserChoice 档只能用户在那儿确认）。 */
+export function assocOpenSystemSettings(): Promise<void> {
+  return invoke<void>("assoc_open_system_settings");
+}
+
 /** 路径 → 前端 `src` 可用的 Tauri 资产 URL（统一收口再导出，避免散落 import）。 */
 export { convertFileSrc } from "@tauri-apps/api/core";

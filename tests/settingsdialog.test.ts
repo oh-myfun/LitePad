@@ -5,7 +5,7 @@
 // 3) 「快捷键」作为其中一个分类，复用 keymapdialog 的改键界面；
 // 4) 顶部搜索按分类过滤左侧导航；
 // 5) 关闭按钮 / Esc / 点蒙层都能关窗。
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import {
   showSettingsDialog,
@@ -19,6 +19,14 @@ import { DEFAULT_PRESET_ID, type KeymapOverrides } from "../src/shell/keymap";
 import { ruleBlock, cssDecls, stripCssComments, stripLineComments, resolveCssVars } from "./static";
 
 const noop = (): void => {};
+
+/** B385：设置页关联分类的内存夹具（jsdom 无 IPC / 注册表）。 */
+const ASSOC_FIXTURE: { ext: string; registered: boolean; isDefault: boolean }[] = [
+  { ext: "md", registered: true, isDefault: true },
+  { ext: "markdown", registered: false, isDefault: false },
+  { ext: "txt", registered: false, isDefault: false },
+  { ext: "log", registered: false, isDefault: false },
+];
 
 function makeOpts(): SettingsDialogOptions {
   return {
@@ -54,6 +62,24 @@ function makeOpts(): SettingsDialogOptions {
     defaultLang: () => "",
     languageOptions: () => ["Markdown", "Plain Text", "JSON"],
     onDefaultLang: noop,
+    // B385：文件关联（jsdom 里不走真 IPC —— 假数据在内存里翻）
+    assocEntries: async () => ASSOC_FIXTURE,
+    onAssocSet: async (ext, on) => {
+      // 照 Rust normalize_ext 的口径拒非法名（jsdom 里没有真 IPC / 注册表）
+      const norm = ext.trim().replace(/^\.+/, "").toLowerCase();
+      if (!norm || norm.length > 16 || !/^[0-9a-z_+~ -]*$/.test(norm) || norm.includes(" ")) {
+        throw new Error(`不支持的扩展名：${ext}`);
+      }
+      let e = ASSOC_FIXTURE.find((x) => x.ext === norm);
+      if (!e) {
+        e = { ext: norm, registered: false, isDefault: false };
+        ASSOC_FIXTURE.push(e);
+      }
+      e.registered = on;
+      e.isDefault = on && norm !== "txt";
+      return e;
+    },
+    onOpenDefaultApps: noop,
     autosave: () => false,
     onAutosave: noop,
     hotExit: () => true,
@@ -171,10 +197,10 @@ describe("B106 统一设置页：三栏结构", () => {
     }).toThrow();
   });
 
-  it("左侧分类导航含 5 个分类（通用在前），默认停在「通用」", () => {
+  it("左侧分类导航含 6 个分类（通用在前），默认停在「通用」", () => {
     showSettingsDialog(makeOpts());
     // B229：原「Markdown 预览」分类已并入「编辑器」，导航少一项。
-    expect(navItems()).toEqual(["通用", "外观", "编辑器", "新建文件", "快捷键"]);
+    expect(navItems()).toEqual(["通用", "外观", "编辑器", "新建文件", "文件关联", "快捷键"]);
     const pageByTitle = (t: string) =>
       [...document.querySelectorAll(".settings-page")].find(
         (p) => p.querySelector(".settings-page-title")?.textContent === t,
@@ -841,14 +867,14 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
     return [...body.querySelectorAll(".settings-item-label")].map((e) => e.textContent ?? "");
   }
 
-  it("导航不再有独立的「Markdown 预览」分类，只剩 5 项", () => {
+  it("导航不再有独立的「Markdown 预览」分类（B385 起多出「文件关联」共 6 项）", () => {
     showSettingsDialog(makeOpts());
-    expect(navItems()).toEqual(["通用", "外观", "编辑器", "新建文件", "快捷键"]);
+    expect(navItems()).toEqual(["通用", "外观", "编辑器", "新建文件", "文件关联", "快捷键"]);
     expect(navItems(), "独立预览分类必须已删除").not.toContain("Markdown 预览");
     expect(
       document.querySelectorAll(".settings-page").length,
       "分类页数应与导航一致（每分类恰好一页）",
-    ).toBe(5);
+    ).toBe(6);
   });
 
   it("编辑器页含 7 项，末尾是「预览」小分组下的预览行距 + 预览布局宽度", () => {
@@ -1107,6 +1133,113 @@ describe("B305 通用页：最近打开保留数量", () => {
 // 病根不是「32px 太大」，而是同一张面板里输入类控件有**两档**：搜索框 32px、
 // 它下面几行的下拉触发器 28px。所以判据钉的是「同取一颗 token」+「顶部带总高有预算」，
 // 而不是把 28px 抄进第二条守卫里（抄了就等于允许两边各写各的）。
+
+// ---------------------------------------------------------------- B385 文件关联
+describe("B385 设置页「文件关联」分类", () => {
+  /** 切到文件关联分类（走真实那一下点击，别直呼内部函数）。 */
+  function openAssoc(): void {
+    const btn = document.querySelector<HTMLElement>('.settings-nav-item[data-cat="assoc"]');
+    expect(btn, "导航里应有「文件关联」").toBeTruthy();
+    btn!.click();
+  }
+
+  /** 等关联整表（异步 IPC）渲染出指定行。 */
+  async function waitRow(label: string): Promise<HTMLElement> {
+    await vi.waitFor(() => {
+      const item = [...document.querySelectorAll(".settings-assoc-list .settings-item")].find(
+        (r) => r.querySelector(".settings-item-label")?.textContent === label,
+      );
+      expect(item, `行「${label}」应渲染出来`).toBeTruthy();
+    });
+    return [...document.querySelectorAll(".settings-assoc-list .settings-item")].find(
+      (r) => r.querySelector(".settings-item-label")?.textContent === label,
+    ) as HTMLElement;
+  }
+
+  it("整表异步渲染：四个候选格式逐行一个开关，.md 是已关联状态", async () => {
+    showSettingsDialog(makeOpts());
+    openAssoc();
+    const md = await waitRow(".md");
+    expect(md.querySelector(".switch")?.getAttribute("aria-checked")).toBe("true");
+    // 状态要说清两档：「进了候选」≠「已是系统默认」
+    expect(md.textContent).toContain("系统默认打开方式");
+    await waitRow(".markdown");
+    await waitRow(".txt");
+    await waitRow(".log");
+  });
+
+  it("翻开关 ⇒ 走 onAssocSet 且行就地刷新（描述跟着新状态换）", async () => {
+    const opts = makeOpts();
+    const calls: [string, boolean][] = [];
+    opts.onAssocSet = async (ext, on) => {
+      calls.push([ext, on]);
+      const e = ASSOC_FIXTURE.find((x) => x.ext === ext)!;
+      e.registered = on;
+      e.isDefault = false;
+      return e;
+    };
+    showSettingsDialog(opts);
+    openAssoc();
+    const txt = await waitRow(".txt");
+    txt.querySelector<HTMLButtonElement>(".switch")!.click();
+    await vi.waitFor(() => {
+      expect(calls).toContainEqual(["txt", true]);
+    });
+    await vi.waitFor(() => {
+      const desc = [...document.querySelectorAll(".settings-assoc-list .settings-item")]
+        .find((r) => r.querySelector(".settings-item-label")?.textContent === ".txt")
+        ?.querySelector(".settings-item-desc")?.textContent;
+      // fixture 里 isDefault 恒 false ⇒ 开了之后必须是「候选但非默认」这一档的文案
+      expect(desc ?? "", "开了但非默认的行要明说「仍需系统确认」").toContain("候选");
+    });
+  });
+
+  it("自定义扩展名：提交走 onAssocSet，新行追加进列表；非法输入把错误显示出来", async () => {
+    showSettingsDialog(makeOpts());
+    openAssoc();
+    await waitRow(".md");
+    const input = document.querySelector<HTMLInputElement>(".settings-assoc-input");
+    expect(input, "应有自定义扩展名输入框").toBeTruthy();
+    const addBtn = document.querySelector<HTMLButtonElement>(
+      ".settings-assoc-add .settings-mini-btn",
+    );
+    expect(addBtn).toBeTruthy();
+    input!.value = "csv";
+    addBtn!.click();
+    await waitRow(".csv");
+    // 非法输入（带点/空格）会被 Rust 拒 ⇒ 前端要把错误落在输入行下面，而不是静默
+    input!.value = "a b";
+    addBtn!.click();
+    await vi.waitFor(() => {
+      const err = [...document.querySelectorAll(".settings-item-desc")].map(
+        (d) => d.textContent ?? "",
+      );
+      expect(
+        err.some((t) => t.includes("扩展名")),
+        "非法扩展名的错误要可见",
+      ).toBe(true);
+    });
+  });
+
+  it("搜索关键词补齐：搜「关联」「打开方式」能命中本分类", () => {
+    const src = readFileSync("src/shell/settingsdialog.ts", "utf-8");
+    const cat = src.slice(src.indexOf('id: "assoc"'), src.indexOf('id: "shortcuts"'));
+    expect(cat).toContain('"文件关联"');
+    expect(cat).toContain('"打开方式"');
+    expect(cat).toContain('"默认应用"');
+  });
+
+  it("静态：说明必须交代 UserChoice 口径（开了 ≠ 一定生效）与「还原旧关联」语义", () => {
+    const src = readFileSync("src/shell/settingsdialog.ts", "utf-8");
+    const page = src.slice(
+      src.indexOf("function fillAssocPage"),
+      src.indexOf("function fillAssocPage") + 4000,
+    );
+    expect(page, "要提系统默认应用设置").toContain("系统设置");
+    expect(page, "要提撤销还原").toContain("还原");
+  });
+});
+
 describe("B356 设置窗口顶部搜索区紧凑", () => {
   const css = readFileSync("src/styles/global.css", "utf-8");
   /** 取某条规则里某条声明的原文（取不到返回空串）。 */

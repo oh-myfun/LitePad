@@ -61,6 +61,10 @@ const LEFT = { cursorLine: 30, scrollTop: 600 } as const;
 const RIGHT = { cursorLine: 2, scrollTop: 120 } as const;
 
 vi.mock("../src/ipc/api", () => ({
+  assocList: () => Promise.resolve([]),
+  assocSet: (ext: string, on: boolean) =>
+    Promise.resolve({ ext, registered: on, isDefault: false }),
+  assocOpenSystemSettings: () => Promise.resolve(),
   emitCrossWindow: vi.fn(async () => {}),
   convertFileSrc: (p: string) => `asset://${p}`,
   checkEncodable: () => Promise.resolve([]),

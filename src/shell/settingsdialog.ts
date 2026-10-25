@@ -26,7 +26,8 @@ import { buildFrame, centeredRect, type WinViewport } from "./windowframe";
 import { createDropdown } from "./dropdown";
 import { createSwitch } from "./switch";
 // B235：`PreviewWidth` 是宽度档的类型（standard / wide / full）。
-import type { PreviewWidth } from "../ipc/api";
+// B385：文件关联的条目状态类型。
+import type { AssocEntry, PreviewWidth } from "../ipc/api";
 import type { ThemeFamily } from "../theme/theme";
 // B288：日志级别五档的类型（设置页下拉要用它收窄回调参数）。
 import { type LogLevel } from "../core/logger";
@@ -120,6 +121,15 @@ export interface SettingsDialogOptions {
    */
   recentLimit: () => number;
   onRecentLimit: (limit: number) => void;
+  /**
+   * B385：文件关联。注册表是唯一权威（见 `commands/assoc.rs` 头部），设置页打开时
+   * 拉一次整表、每次开关后用返回的那条就地刷新 —— 值不进前端 `settings` 对象，
+   * 与 `recentLimit` 同款口径。
+   */
+  assocEntries: () => Promise<AssocEntry[]>;
+  onAssocSet: (ext: string, on: boolean) => Promise<AssocEntry>;
+  /** B385：打开系统「默认应用」设置页（UserChoice 档只能用户在那儿拍）。 */
+  onOpenDefaultApps: () => void;
 }
 
 /** 「本机没装」候选的标注后缀（选了会静默回落到内置等宽栈，看着像没反应）。 */
@@ -413,6 +423,24 @@ const CATEGORIES: Category[] = [
       "换行符",
       "eol",
       "markdown",
+    ],
+  },
+  {
+    id: "assoc",
+    label: "文件关联",
+    keywords: [
+      "文件关联",
+      "关联",
+      "默认打开",
+      "打开方式",
+      "双击打开",
+      "扩展名",
+      "后缀",
+      "格式",
+      "md",
+      "txt",
+      "log",
+      "默认应用",
     ],
   },
   {
@@ -1058,5 +1086,124 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
         (v) => opts.onDefaultEncoding(v),
       ),
     );
+  } else if (id === "assoc") {
+    fillAssocPage(body, opts);
   }
+}
+
+/**
+ * B385：「文件关联」分类页。
+ *
+ * 注册表读写都走 IPC（`commands/assoc.rs`），本页只管状态展示：
+ *   · 整表是**异步**拉的（注册表枚举不适合阻塞建页），先渲染说明与骨架；
+ *   · 每行开关后用返回的那条就地重画自己（不整表重拉，别让用户看到闪动）；
+ *   · 行文案把两种状态说清：只是「进了打开方式候选」还是「已是系统默认」
+ *     —— UserChoice 被别的程序占着时前者 ≠ 双击生效，必须让用户看得出差别；
+ *   · 自定义扩展名也收（Rust 侧校验；拒绝时把错误写在这一行下面）。
+ */
+function fillAssocPage(body: HTMLElement, opts: SettingsDialogOptions): void {
+  const hint = document.createElement("p");
+  hint.className = "settings-page-desc";
+  hint.textContent =
+    "打开后双击该格式的文件会用 LitePad 打开；撤销时会还原之前的打开方式。若 Windows 已为某格式记住「用户选择」，最终档在系统设置里确认。";
+  body.appendChild(hint);
+
+  const list = document.createElement("div");
+  list.className = "settings-assoc-list";
+  body.appendChild(list);
+
+  const entryDesc = (e: AssocEntry): string =>
+    e.registered && e.isDefault
+      ? "已关联，且是系统默认打开方式。"
+      : e.registered
+        ? "已加入「打开方式」候选；系统默认仍是别的程序，可点下方「系统默认应用」确认。"
+        : "未关联。";
+
+  const renderEntry = (e: AssocEntry): HTMLElement => {
+    const el = toggleRow(`.${e.ext}`, entryDesc(e), e.registered, (v) => {
+      void opts
+        .onAssocSet(e.ext, v)
+        .then((nu) => el.replaceWith(renderEntry(nu)))
+        .catch(() => {
+          // 开关联失败（注册表被组策略锁住之类）：开关已经翻了，重画回真实状态
+          void opts.assocEntries().then((all) => {
+            const cur = all.find((x) => x.ext === e.ext);
+            if (cur) el.replaceWith(renderEntry(cur));
+          });
+        });
+    });
+    return el;
+  };
+  void opts
+    .assocEntries()
+    .then((entries) => {
+      list.textContent = "";
+      for (const e of entries) list.appendChild(renderEntry(e));
+    })
+    .catch(() => {
+      list.textContent = "";
+      const err = document.createElement("p");
+      err.className = "settings-page-desc";
+      err.textContent = "读不到关联状态（注册表不可用）。";
+      list.appendChild(err);
+    });
+
+  // 自定义扩展名：输入 + 添加。校验在 Rust（normalize_ext），拒绝时错误落在输入行下。
+  const input = document.createElement("input");
+  input.className = "settings-assoc-input";
+  input.type = "text";
+  input.placeholder = "扩展名，如 csv";
+  input.setAttribute("aria-label", "自定义扩展名");
+  const add = document.createElement("button");
+  add.className = "settings-mini-btn";
+  add.type = "button";
+  add.textContent = "添加";
+  const control = document.createElement("div");
+  control.className = "settings-assoc-add";
+  control.append(input, add);
+  const errMsg = document.createElement("div");
+  errMsg.className = "settings-item-desc";
+  body.appendChild(
+    settingsItem("自定义扩展名", "不在清单里的格式也可以关联；不带点，如 csv。", control),
+  );
+  body.appendChild(errMsg);
+
+  const submit = (): void => {
+    const ext = input.value.trim();
+    if (!ext) return;
+    add.disabled = true;
+    errMsg.textContent = "";
+    opts
+      .onAssocSet(ext, true)
+      .then((nu) => {
+        input.value = "";
+        const exist = Array.from(list.children).find(
+          (el) => el.querySelector(".settings-item-label")?.textContent === `.${nu.ext}`,
+        );
+        if (exist) exist.replaceWith(renderEntry(nu));
+        else list.appendChild(renderEntry(nu));
+      })
+      .catch((err: unknown) => {
+        errMsg.textContent = String(err instanceof Error ? err.message : err);
+      })
+      .finally(() => {
+        add.disabled = false;
+      });
+  };
+  add.addEventListener("click", submit);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      submit();
+    }
+  });
+
+  body.appendChild(
+    buttonRow(
+      "系统默认应用",
+      "Windows 记住的「用户选择」哈希保护、别的程序改不了，最终档在系统设置里确认。",
+      "打开设置",
+      () => opts.onOpenDefaultApps(),
+    ),
+  );
 }

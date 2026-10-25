@@ -13,6 +13,10 @@ vi.mock("../src/sync-scroll/wire", () => ({
 }));
 
 vi.mock("../src/ipc/api", () => ({
+  assocList: () => Promise.resolve([]),
+  assocSet: (ext: string, on: boolean) =>
+    Promise.resolve({ ext, registered: on, isDefault: false }),
+  assocOpenSystemSettings: () => Promise.resolve(),
   convertFileSrc: (p: string) => `http://asset.localhost/${p}`,
 }));
 

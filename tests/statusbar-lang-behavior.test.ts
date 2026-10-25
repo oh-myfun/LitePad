@@ -60,6 +60,10 @@ const saved: unknown[] = [];
 //    **用例照样绿**，只是安静地降级成「空会话 + 日志打不出去」）。
 //    补法：复制 api.ts 的导出清单，别一个一个等报错来提醒。
 vi.mock("../src/ipc/api", () => ({
+  assocList: () => Promise.resolve([]),
+  assocSet: (ext: string, on: boolean) =>
+    Promise.resolve({ ext, registered: on, isDefault: false }),
+  assocOpenSystemSettings: () => Promise.resolve(),
   emitCrossWindow: vi.fn(async () => {}),
   convertFileSrc: (p: string) => `asset://${p}`,
   checkEncodable: () => Promise.resolve([]),

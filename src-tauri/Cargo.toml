@@ -1,6 +1,6 @@
 [package]
 name = "litepad"
-version = "0.24.33"
+version = "0.24.34"
 description = "LitePad - 极度轻量的 Markdown 文本编辑器"
 authors = ["LitePad"]
 edition = "2021"
@@ -26,6 +26,8 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 # 文件关联（双击 .md/.markdown 打开）：应用已运行时把路径转发给主窗口，避免多开。
 tauri-plugin-single-instance = "2"
+# B385 文件关联：HKCU\Software\Classes 下的 ProgID / 扩展名键读写（免管理员）。
+winreg = "0.55"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # 编码识别与转换：GB18030/GBK/Big5/Shift-JIS/EUC-KR/UTF-16/Windows-1252

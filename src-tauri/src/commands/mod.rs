@@ -10,6 +10,10 @@ pub mod recents;
 /// B314：资源管理器。名字不叫 `fs` —— 本模块自己 `use std::fs`，同名会撞 E0255。
 pub mod explorer;
 
+/// B385：文件关联（设置页「文件关联」分类）。注册表读写都在那儿，
+/// 这边的 argv 名单只问它要「本机接得住哪些扩展名」。
+pub mod assoc;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -175,10 +179,11 @@ pub fn disk_version(path: &Path) -> (i64, u64) {
 /// 队列由前端「就绪时取一次 + 收到 open-file 事件时再取一次」兜底，保证不漏文件。
 static PENDING_OPEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-/// 仅判断扩展名是否属于 LitePad 接管的文档类型（纯函数，可单测）。
-pub fn is_assoc_ext(name: &str) -> bool {
+/// 名单版判定：`exts` 来自 `assoc::openable_exts()`（基座 md/markdown ∪ 注册表枚举
+/// —— 用户在设置页自定义关联过的扩展名也算数）。
+fn openable_ext(exts: &std::collections::HashSet<String>, name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    lower.ends_with(".md") || lower.ends_with(".markdown")
+    exts.iter().any(|e| lower.ends_with(&format!(".{e}")))
 }
 
 /// 从命令行参数里挑出「应被 LitePad 接管的文档」：扩展名匹配且确实是存在的文件，
@@ -188,9 +193,11 @@ pub fn is_assoc_ext(name: &str) -> bool {
 /// 若直接 `Path::new(a).is_file()` 会按**进程**当前目录判断，与下面用 `cwd` 拼出的输出路径
 /// 不一致，导致「cwd 下存在、进程目录下不存在」的相对文件被误删（反之亦然）。
 pub fn assoc_args_to_open(argv: &[String], cwd: &str) -> Vec<String> {
+    // 名单整个调用取一次（一次注册表枚举），别按参数逐个查。
+    let exts = assoc::openable_exts();
     argv.iter()
         .filter_map(|a| {
-            if !is_assoc_ext(a) {
+            if !openable_ext(&exts, a) {
                 return None;
             }
             let p = std::path::Path::new(a.as_str());
@@ -1064,18 +1071,26 @@ mod tests {
 
     #[test]
     fn assoc_ext_recognizes_md_and_markdown() {
-        assert!(is_assoc_ext("readme.md"));
-        assert!(is_assoc_ext("readme.MD"));
-        assert!(is_assoc_ext("a/b/c.markdown"));
-        assert!(is_assoc_ext("A.MARKDOWN"));
+        let set: std::collections::HashSet<String> =
+            ["md", "markdown"].iter().map(|s| s.to_string()).collect();
+        assert!(openable_ext(&set, "readme.md"));
+        assert!(openable_ext(&set, "readme.MD"));
+        assert!(openable_ext(&set, "a/b/c.markdown"));
+        assert!(openable_ext(&set, "A.MARKDOWN"));
+        // 注册表名单里的自定义扩展名同样接得住
+        let mut custom = set;
+        custom.insert("txt".into());
+        assert!(openable_ext(&custom, "notes.txt"));
     }
 
     #[test]
     fn assoc_ext_rejects_other_types() {
-        assert!(!is_assoc_ext("notes.txt"));
-        assert!(!is_assoc_ext("image.png"));
-        assert!(!is_assoc_ext("noext"));
-        assert!(!is_assoc_ext("x.markdown.bak"));
+        let set: std::collections::HashSet<String> =
+            ["md", "markdown"].iter().map(|s| s.to_string()).collect();
+        assert!(!openable_ext(&set, "notes.txt"));
+        assert!(!openable_ext(&set, "image.png"));
+        assert!(!openable_ext(&set, "noext"));
+        assert!(!openable_ext(&set, "x.markdown.bak"));
     }
 
     // —— 文件关联：首启补抓（修复「双击 .md 但没打开」的核心逻辑） ——

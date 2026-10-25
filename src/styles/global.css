@@ -3052,6 +3052,34 @@ button:focus-visible {
   outline: none;
 }
 
+/* B385：文件关联分类 —— 自定义扩展名的输入行 */
+.settings-assoc-add {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.settings-assoc-input {
+  width: 140px;
+  height: var(--input-h, 28px);
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input, var(--bg-elevated));
+  color: var(--fg);
+  font-size: var(--fs-ui);
+  font-family: var(--font-ui);
+  outline: none;
+}
+
+.settings-assoc-input:focus {
+  border-color: var(--accent);
+}
+
+.settings-assoc-input::placeholder {
+  color: var(--fg-muted);
+}
+
 .settings-search::placeholder {
   color: var(--fg-muted);
 }

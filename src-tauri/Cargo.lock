@@ -2156,7 +2156,7 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
 name = "litepad"
-version = "0.24.33"
+version = "0.24.34"
 dependencies = [
  "base64 0.22.1",
  "chardetng",
@@ -2174,6 +2174,7 @@ dependencies = [
  "trash",
  "webview2-com",
  "windows 0.61.3",
+ "winreg",
 ]
 
 [[package]]

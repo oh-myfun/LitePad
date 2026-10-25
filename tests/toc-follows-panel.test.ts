@@ -63,6 +63,10 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 
 // 会话：左面板一个 Markdown，右面板一个纯文本（复现用户场景）
 vi.mock("../src/ipc/api", () => ({
+  assocList: () => Promise.resolve([]),
+  assocSet: (ext: string, on: boolean) =>
+    Promise.resolve({ ext, registered: on, isDefault: false }),
+  assocOpenSystemSettings: () => Promise.resolve(),
   emitCrossWindow: vi.fn(async () => {}),
   convertFileSrc: (p: string) => `asset://${p}`,
   checkEncodable: () => Promise.resolve([]),
