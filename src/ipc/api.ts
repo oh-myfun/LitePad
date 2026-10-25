@@ -824,6 +824,11 @@ export function assocSet(ext: string, on: boolean): Promise<AssocEntry> {
   return invoke<AssocEntry>("assoc_set", { ext, on });
 }
 
+/** 批量开关（设置页「全选 / 清除」）：一次 IPC 写完，返回每条的新状态。 */
+export function assocSetMany(exts: string[], on: boolean): Promise<AssocEntry[]> {
+  return invoke<AssocEntry[]>("assoc_set_many", { exts, on });
+}
+
 /** 打开系统「默认应用」设置页（UserChoice 档只能用户在那儿确认）。 */
 export function assocOpenSystemSettings(): Promise<void> {
   return invoke<void>("assoc_open_system_settings");

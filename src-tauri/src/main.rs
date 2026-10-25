@@ -304,6 +304,7 @@ fn main() {
             // B385 文件关联（设置页「文件关联」分类，见 commands/assoc.rs 头部）
             commands::assoc::assoc_list,
             commands::assoc::assoc_set,
+            commands::assoc::assoc_set_many,
             commands::assoc::assoc_open_system_settings,
             // B333：拖入的那一条是目录还是文件（落点在资源管理器那一块时决定换根还是打开）
             commands::explorer::is_dir,

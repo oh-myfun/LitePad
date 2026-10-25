@@ -119,6 +119,21 @@ function makeOpts(): SettingsDialogOptions {
       e.isDefault = on && norm !== "txt";
       return e;
     },
+    // B387：全选 / 清除 —— 照 Rust assoc_set_many 的口径逐条翻内存态
+    onAssocSetMany: async (exts, on) => {
+      const out = [];
+      for (const ext of exts) {
+        let e = ASSOC_FIXTURE.find((x) => x.ext === ext);
+        if (!e) {
+          e = { ext, registered: false, isDefault: false };
+          ASSOC_FIXTURE.push(e);
+        }
+        e.registered = on;
+        e.isDefault = on && ext !== "txt";
+        out.push(e);
+      }
+      return out;
+    },
     onOpenDefaultApps: noop,
     autosave: () => false,
     onAutosave: noop,
@@ -1255,7 +1270,7 @@ describe("B385 设置页「文件关联」分类（B386 三轮：纵向勾选列
     const input = document.querySelector<HTMLInputElement>(".settings-assoc-input");
     expect(input, "应有自定义扩展名输入框").toBeTruthy();
     const addBtn = document.querySelector<HTMLButtonElement>(
-      ".settings-assoc-add .settings-mini-btn",
+      ".settings-assoc-foot .settings-mini-btn",
     );
     expect(addBtn).toBeTruthy();
     // 不在预设里的扩展名 ⇒ 走「插入」分支，且按字母序落在 bat 之前，不甩末尾
@@ -1309,6 +1324,89 @@ describe("B385 设置页「文件关联」分类（B386 三轮：纵向勾选列
     expect(page, "要给「系统默认应用」入口").toContain("系统默认应用");
     expect(page, "要提取消还原").toContain("还原");
     expect(page, "要挂「未生效」小标").toContain("settings-assoc-badge");
+  });
+
+  it("B387 全选 / 清除：各发一次批量 IPC 摆向目标态，计数跟着真实勾选走", async () => {
+    const opts = makeOpts();
+    const batches: { exts: string[]; on: boolean }[] = [];
+    opts.onAssocSetMany = async (exts, on) => {
+      batches.push({ exts, on });
+      return exts.map((ext) => {
+        const e = ASSOC_FIXTURE.find((x) => x.ext === ext)!;
+        e.registered = on;
+        e.isDefault = false;
+        return e;
+      });
+    };
+    showSettingsDialog(opts);
+    openAssoc();
+    await waitItem("md");
+    // 前面几条用例会翻 ASSOC_FIXTURE 的内存态 ⇒ 这里按「渲染出来的当前勾选」算基准，
+    // 不写死初始数字（写死就是拿夹具顺序当判据，一改用例顺序就假红）。
+    const checkedExts = () =>
+      [
+        ...document.querySelectorAll<HTMLInputElement>(
+          '.settings-assoc-item input[type="checkbox"]',
+        ),
+      ]
+        .map((b) => (b.checked ? (b.closest("label") as HTMLElement).dataset.ext : null))
+        .filter((x): x is string => x !== null);
+    const total = document.querySelectorAll(".settings-assoc-item").length;
+    const already = new Set(checkedExts());
+    expect(total, "清单要有三十来种预设").toBeGreaterThanOrEqual(30);
+
+    const [allBtn, clearBtn] = [
+      ...document.querySelectorAll<HTMLButtonElement>(".settings-assoc-head .settings-mini-btn"),
+    ];
+    expect(allBtn.textContent).toBe("全选");
+    expect(clearBtn.textContent).toBe("清除");
+
+    allBtn.click();
+    await vi.waitFor(() => {
+      expect(checkedExts(), "全选后全部勾上").toHaveLength(total);
+    });
+    expect(batches, "全选只发**一次**批量 IPC（不是逐条 assoc_set）").toHaveLength(1);
+    expect(batches[0].on).toBe(true);
+    expect(
+      batches[0].exts.filter((e) => already.has(e)),
+      "已经勾着的不该重复写注册表",
+    ).toEqual([]);
+    expect(batches[0].exts).toHaveLength(total - already.size);
+    expect(document.querySelector(".settings-assoc-count")?.textContent).toBe(
+      `已关联 ${total} / ${total}`,
+    );
+
+    clearBtn.click();
+    await vi.waitFor(() => {
+      expect(checkedExts(), "清除后全部摘掉").toEqual([]);
+    });
+    expect(batches).toHaveLength(2);
+    expect(batches[1].on).toBe(false);
+    expect(batches[1].exts).toHaveLength(total);
+    expect(document.querySelector(".settings-assoc-count")?.textContent).toBe(
+      `已关联 0 / ${total}`,
+    );
+  });
+
+  it("B387 结构：操作头 / 清单 / 添加脚同在一个边框盒里（添加不再游离）", async () => {
+    showSettingsDialog(makeOpts());
+    openAssoc();
+    await waitItem("md");
+    const box = document.querySelector(".settings-assoc-box");
+    expect(box, "应有一个套住整块的清单盒").toBeTruthy();
+    for (const sel of [".settings-assoc-head", ".settings-assoc-list", ".settings-assoc-foot"]) {
+      expect(box!.querySelector(sel), `${sel} 必须长在盒子里`).toBeTruthy();
+    }
+    expect(document.querySelector(".settings-assoc-add"), "旧的独立添加行不再存在").toBeNull();
+
+    const css = stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
+    const boxRule = cssDecls(ruleBlock(css, ".settings-assoc-box"));
+    expect(boxRule, "盒体走共用描边 token").toContain("border: 1px solid var(--border)");
+    expect(boxRule, "圆角走共用 --radius").toContain("var(--radius)");
+    for (const sel of [".settings-assoc-head", ".settings-assoc-foot"]) {
+      const rule = cssDecls(ruleBlock(css, sel));
+      expect(rule, `${sel} 与清单之间要有一根分隔线`).toMatch(/border-(top|bottom): 1px solid/);
+    }
   });
 
   it("B386 静态：关联清单是纵向勾选列表（一格式一行、限高滚动），不是换行网格", () => {

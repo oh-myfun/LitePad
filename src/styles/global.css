@@ -3052,14 +3052,36 @@ button:focus-visible {
   outline: none;
 }
 
-/* B385/B386：文件关联分类 —— 勾选列表（一格式一行，native checkbox 用 accent 色跟主题走）
-   B386 续：限高 12 行后自己滚，三十来个格式别把整页撑长 */
+/* B385/B386/B387：文件关联分类 —— 带边框的多选清单盒
+   （操作头：全选 / 清除 + 计数 · 限高滚动的勾选列表 · 内联添加脚；三段共一个边框，
+   添加口不再游离在清单外面 —— 业界多选清单同款形） */
+.settings-assoc-box {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.settings-assoc-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-assoc-count {
+  margin-left: auto;
+  font-size: var(--fs-ui);
+  color: var(--fg-muted);
+}
+
+/* 一格式一行（B386）；限高 12 行后自己滚（B386 续） */
 .settings-assoc-list {
   display: flex;
   flex-direction: column;
   max-height: 264px;
   overflow-y: auto;
-  padding: 2px 0;
+  padding: 4px;
 }
 
 .settings-assoc-item {
@@ -3092,15 +3114,19 @@ button:focus-visible {
   color: var(--fg-muted);
 }
 
-/* 自定义扩展名的输入行 */
-.settings-assoc-add {
+/* 内联添加脚：贴在清单盒子底部，与列表共用边框 */
+.settings-assoc-foot {
   display: flex;
   gap: 6px;
   align-items: center;
+  padding: 6px;
+  border-top: 1px solid var(--border);
 }
 
 .settings-assoc-input {
-  width: 140px;
+  /* 添加脚里横向撑满（原来是清单外一行设置项里的 140px 小框） */
+  flex: 1;
+  min-width: 0;
   height: var(--input-h, 28px);
   padding: 0 8px;
   border: 1px solid var(--border);

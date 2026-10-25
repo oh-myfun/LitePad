@@ -305,6 +305,33 @@ pub fn assoc_set(ext: String, on: bool) -> Result<AssocEntry, String> {
     })
 }
 
+/// 批量开关（设置页「全选 / 清除」，B387）：**一次注册表句柄、一趟写完**，
+/// 返回每条的新状态。
+///
+/// 为什么不走前端循环 `assoc_set`：那样是 N 次 IPC + N 次开/关 `Software\Classes`
+/// 句柄，几十个体量下明显卡顿，而且中途任何一次失败，前端拿到的是一串各自独立的
+/// 结果、拼不回一张完整的表。这里失败即中止，返回 `Err`；前端重拉整表显示真实状态
+/// （已经写进去的那几条保持写进去的样子，不装作没发生）。
+#[tauri::command]
+pub fn assoc_set_many(exts: Vec<String>, on: bool) -> Result<Vec<AssocEntry>, String> {
+    let classes = classes_key()?;
+    let mut out = Vec::with_capacity(exts.len());
+    for raw in exts {
+        let ext = normalize_ext(&raw).ok_or_else(|| format!("不支持的扩展名：{raw}"))?;
+        if on {
+            register(&classes, &ext)?;
+        } else {
+            unregister(&classes, &ext)?;
+        }
+        out.push(AssocEntry {
+            is_default: is_default(&classes, &ext),
+            registered: is_registered(&classes, &ext),
+            ext,
+        });
+    }
+    Ok(out)
+}
+
 /// 打开系统「默认应用」设置页：UserChoice 被别的程序占着时，最终档只能用户自己在
 /// 那里拍（见模块头）。
 #[tauri::command]

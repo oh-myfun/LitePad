@@ -86,7 +86,7 @@ import { level as currentLogLevel, logger, setLevelPersisted } from "./core/logg
 // B305：最近打开的上限。与日志级别同一类 —— 值不在 `settings` 对象里，由 Rust 单点持有。
 import { applyRecentLimit, getRecentLimit } from "./recents/store";
 // B385：文件关联（注册表是唯一权威，设置页打开时拉整表，见 settingsdialog.fillAssocPage）。
-import { assocList, assocOpenSystemSettings, assocSet } from "./ipc/api";
+import { assocList, assocOpenSystemSettings, assocSet, assocSetMany } from "./ipc/api";
 import { ask } from "@tauri-apps/plugin-dialog";
 
 // ---------------------------------------------------------------- 编码转换（B215）
@@ -715,6 +715,7 @@ async function openSettingsDialog(): Promise<void> {
     // B385：文件关联。整表异步拉、开关就地刷新，值不进 settings 对象（注册表唯一权威）。
     assocEntries: () => assocList(),
     onAssocSet: (ext, on) => assocSet(ext, on),
+    onAssocSetMany: (exts, on) => assocSetMany(exts, on),
     onOpenDefaultApps: () => void assocOpenSystemSettings(),
     theme: () => themeMode,
     onTheme: (mode) => void setThemeMode(mode),

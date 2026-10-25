@@ -128,6 +128,8 @@ export interface SettingsDialogOptions {
    */
   assocEntries: () => Promise<AssocEntry[]>;
   onAssocSet: (ext: string, on: boolean) => Promise<AssocEntry>;
+  /** B387：全选 / 清除走批量（一次 IPC 写完），返回每条的新状态。 */
+  onAssocSetMany: (exts: string[], on: boolean) => Promise<AssocEntry[]>;
   /** B385：打开系统「默认应用」设置页（UserChoice 档只能用户在那儿拍）。 */
   onOpenDefaultApps: () => void;
 }
@@ -1096,8 +1098,11 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
  *
  * 注册表读写都走 IPC（`commands/assoc.rs`），本页只管状态展示：
  *   · 整表是**异步**拉的（注册表枚举不适合阻塞建页），先渲染说明与骨架；
- *   · 展示是**勾选列表**（B386 三轮，用户口径：一格式一行，网格太散）；每行勾选后
- *     用返回的那条就地重画自己（不整表重拉）；
+ *   · B387：清单套进一个**带边框的盒子**，三段一体 —— 操作头（全选 / 清除 + 已关联
+ *     计数）· 勾选列表 · 内联添加脚。业界多选清单（VS Code 快速选择、GitHub 标签
+ *     选择器）都是这个形：添加口长在清单自己身上，不再游离在列表下面。
+ *   · 一格式一行（B386 口径），限高 12 行后自己滚（B386 续）；每行勾选后用返回的
+ *     那条就地重画自己（不整表重拉）；
  *   · 「注册了但不是系统默认」那档挂「未生效」小标 —— UserChoice 被别的程序
  *     占着时勾了 ≠ 双击生效，必须让用户看得出差别；
  *   · 自定义扩展名也收（Rust 侧校验；拒绝时把错误写在输入行下面）。
@@ -1109,13 +1114,42 @@ function fillAssocPage(body: HTMLElement, opts: SettingsDialogOptions): void {
     "勾选后双击该格式的文件会用 LitePad 打开；取消勾选会还原之前的打开方式。若 Windows 已为某格式记住「用户选择」，可能仍按原程序打开 —— 到「系统默认应用」里确认。";
   body.appendChild(hint);
 
-  // B386 三轮（用户口径）：展示从「勾选网格」改回**纵向勾选列表** —— 一格式一行，
-  // 未生效徽章推到行尾，行 hover 走列表高亮 token。
+  // B387（用户口径：要有边框、要全选、添加别再和列表割裂）：整块套进一个边框盒，
+  // 里面三段一体 —— 操作头（全选 / 清除 + 已关联计数）· 勾选清单 · 内联添加脚。
+  // 形照业界多选清单（VS Code 快速选择、GitHub 标签选择器）。
+  const box = document.createElement("div");
+  box.className = "settings-assoc-box";
+  body.appendChild(box);
+
+  const head = document.createElement("div");
+  head.className = "settings-assoc-head";
+  const allBtn = document.createElement("button");
+  allBtn.type = "button";
+  allBtn.className = "settings-mini-btn";
+  allBtn.textContent = "全选";
+  const clearBtn = document.createElement("button");
+  clearBtn.type = "button";
+  clearBtn.className = "settings-mini-btn";
+  clearBtn.textContent = "清除";
+  const count = document.createElement("span");
+  count.className = "settings-assoc-count";
+  head.append(allBtn, clearBtn, count);
+  box.appendChild(head);
+
   const list = document.createElement("div");
   list.className = "settings-assoc-list";
   list.setAttribute("role", "group");
   list.setAttribute("aria-label", "关联的文件格式");
-  body.appendChild(list);
+  box.appendChild(list);
+
+  /** 计数与两个批量按钮的可用性，都以**清单当前渲染出来的勾选态**为准 ——
+   *  别另存一份「我以为的状态」，那是 B304 那类「显示与行为两套口径」的源头。 */
+  const syncCount = (): void => {
+    const boxes = Array.from(
+      list.querySelectorAll<HTMLInputElement>('.settings-assoc-item input[type="checkbox"]'),
+    );
+    count.textContent = `已关联 ${boxes.filter((b) => b.checked).length} / ${boxes.length}`;
+  };
 
   /** 一行：native checkbox + `.ext`。注册了但不是系统默认的那档挂「未生效」小标
    *  （UserChoice 被别的程序占着，见页面说明）。 */
@@ -1123,34 +1157,38 @@ function fillAssocPage(body: HTMLElement, opts: SettingsDialogOptions): void {
     const label = document.createElement("label");
     label.className = "settings-assoc-item";
     label.dataset.ext = e.ext;
-    const box = document.createElement("input");
-    box.type = "checkbox";
-    box.checked = e.registered;
-    box.setAttribute("aria-label", `关联 .${e.ext}`);
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.checked = e.registered;
+    check.setAttribute("aria-label", `关联 .${e.ext}`);
     const text = document.createElement("span");
     text.textContent = `.${e.ext}`;
-    label.append(box, text);
+    label.append(check, text);
     if (e.registered && !e.isDefault) {
       const badge = document.createElement("span");
       badge.className = "settings-assoc-badge";
       badge.textContent = "未生效";
       label.appendChild(badge);
     }
-    box.addEventListener("change", () => {
-      const want = box.checked;
-      box.disabled = true;
+    check.addEventListener("change", () => {
+      const want = check.checked;
+      check.disabled = true;
       void opts
         .onAssocSet(e.ext, want)
-        .then((nu) => label.replaceWith(renderEntry(nu)))
+        .then((nu) => {
+          label.replaceWith(renderEntry(nu));
+          syncCount();
+        })
         .catch(() => {
           // 写注册表失败（被组策略锁住之类）：回滚到真实状态，勾不能停在假位置
           void opts.assocEntries().then((all) => {
             const cur = all.find((x) => x.ext === e.ext);
             if (cur) label.replaceWith(renderEntry(cur));
+            syncCount();
           });
         })
         .finally(() => {
-          box.disabled = false;
+          check.disabled = false;
         });
     });
     return label;
@@ -1159,6 +1197,7 @@ function fillAssocPage(body: HTMLElement, opts: SettingsDialogOptions): void {
   const renderAll = (entries: AssocEntry[]): void => {
     list.textContent = "";
     for (const e of entries) list.appendChild(renderEntry(e));
+    syncCount();
   };
   void opts
     .assocEntries()
@@ -1171,24 +1210,59 @@ function fillAssocPage(body: HTMLElement, opts: SettingsDialogOptions): void {
       list.appendChild(err);
     });
 
-  // 自定义扩展名：输入 + 添加。校验在 Rust（normalize_ext），拒绝时错误落在输入行下。
+  /** 批量按钮在忙时整排锁住（含添加口），免得两次批量交错写注册表。 */
+  const setBusy = (busy: boolean): void => {
+    allBtn.disabled = busy;
+    clearBtn.disabled = busy;
+    add.disabled = busy;
+  };
+
+  /** 全选 / 清除：只把「当前勾选态 ≠ 目标态」的那批送进一次批量 IPC。 */
+  const applyMany = (on: boolean): void => {
+    const todo = Array.from(list.querySelectorAll<HTMLElement>("[data-ext]"))
+      .filter((el) => el.querySelector<HTMLInputElement>("input")!.checked !== on)
+      .map((el) => el.dataset.ext ?? "")
+      .filter(Boolean);
+    if (todo.length === 0) return;
+    setBusy(true);
+    opts
+      .onAssocSetMany(todo, on)
+      .then((rows) => {
+        for (const nu of rows) {
+          const el = list.querySelector<HTMLElement>(`[data-ext="${nu.ext}"]`);
+          if (el) el.replaceWith(renderEntry(nu));
+        }
+        syncCount();
+      })
+      .catch(() => {
+        // 批量中途失败：已写进去的那几条是真写了（Rust 侧不做回滚），
+        // 所以重拉整表把真实状态摆回来，别停在半截的假象上。
+        void opts.assocEntries().then(renderAll);
+      })
+      .finally(() => {
+        setBusy(false);
+      });
+  };
+  allBtn.addEventListener("click", () => applyMany(true));
+  clearBtn.addEventListener("click", () => applyMany(false));
+
+  // 内联添加脚（B387）：输入 + 添加都长在清单盒子里，不再单占一行设置项。
+  // 校验在 Rust（normalize_ext），拒绝时错误落在盒子下面。
   const input = document.createElement("input");
   input.className = "settings-assoc-input";
   input.type = "text";
-  input.placeholder = "扩展名，如 csv";
+  input.placeholder = "补一个扩展名，如 csv（不带点）";
   input.setAttribute("aria-label", "自定义扩展名");
   const add = document.createElement("button");
   add.className = "settings-mini-btn";
   add.type = "button";
   add.textContent = "添加";
-  const control = document.createElement("div");
-  control.className = "settings-assoc-add";
-  control.append(input, add);
+  const foot = document.createElement("div");
+  foot.className = "settings-assoc-foot";
+  foot.append(input, add);
+  box.appendChild(foot);
   const errMsg = document.createElement("div");
   errMsg.className = "settings-item-desc";
-  body.appendChild(
-    settingsItem("自定义扩展名", "不在清单里的格式也可以关联；不带点，如 csv。", control),
-  );
   body.appendChild(errMsg);
 
   const submit = (): void => {
@@ -1212,6 +1286,7 @@ function fillAssocPage(body: HTMLElement, opts: SettingsDialogOptions): void {
           if (at < 0) list.appendChild(el);
           else list.insertBefore(el, list.children[at]);
         }
+        syncCount();
       })
       .catch((err: unknown) => {
         errMsg.textContent = String(err instanceof Error ? err.message : err);
