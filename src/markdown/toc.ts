@@ -17,6 +17,9 @@ import { CODICONS } from "../shell/codicons";
  *     只在**自己被点**时才刷 —— 点扭角折掉一节、或折完最后一节，图标都得跟着翻。
  *     所以折叠态一变就对外报一声（`createTocList` 第二参），由调用方去刷按钮；
  *     报的出口只有 `applyFold` 一个，见下面那处 ⚠️。
+ *   · B388（用户点名「光标没有正好处在标题上时，大纲也要能高亮对应段落所在的标题项」）：
+ *     `render` 第二参从「光标正好落在那一行才亮」改成「光标**所在那一节**的标题行」——
+ *     见 `activeOutlineLine`。
  */
 
 export interface TocCallbacks {
@@ -291,15 +294,39 @@ function buildTocTree(entries: TocEntry[]): TocNode[] {
   return roots;
 }
 
+/**
+ * B388（用户点名「光标没有正好处在标题上时，大纲也要高亮所在段落的标题项」）：
+ * 光标行 ⇒ **它所在那一节**的标题行。
+ *
+ * 照 VS Code 的 `OutlineModel.getItemEnclosingPosition`（`outlineModel.ts:130`）：它顺着
+ * 「range 包住光标的子项」一层层往下钻，钻到底就是最深的那一个。这边的大纲条目是**按源码
+ * 行序排的扁平表**，子标题必然长在父标题行之后，所以「行号 ≤ 光标行的最大那一个」与那边
+ * 钻到底的落点是同一个 —— 不必给每条标题再造 range。
+ *
+ * ⚠️ 光标在**第一条标题之前**（YAML front matter、正文引言）⇒ 返回 `null`，一条都不亮。
+ *    那边同口径：那一段不属于任何 symbol，`activeElement` 是 undefined，大纲不会替用户
+ *    「猜」到第一条。
+ */
+export function activeOutlineLine(entries: TocEntry[], cursorLine: number): number | null {
+  let hit: number | null = null;
+  for (const entry of entries) {
+    if (entry.line <= cursorLine && (hit === null || entry.line > hit)) hit = entry.line;
+  }
+  return hit;
+}
+
 /** 大纲列表控制器（挂在 index.html 的 `#toc-list` 上）。 */
 export interface TocListHandle {
   /**
    * 重绘列表；`entries = null` = 当前文档类型不支持大纲，`[]` = 支持但没标题。
    *
+   * B388：第二参是**光标所在行**（不是「活动标题所在行」）—— 落在正文里也照亮所在那一节，
+   * 收口在 `activeOutlineLine` 一处。
+   *
    * `cb` 走参数而不是建表时传：光标一动就要重绘，而重绘时得用**刚跳到哪个实例**的
    * 上下文里的跳转逻辑，写死在建表那一步会指向过期的闭包。
    */
-  render(entries: TocEntry[] | null, activeLine: number, cb: TocCallbacks): void;
+  render(entries: TocEntry[] | null, cursorLine: number, cb: TocCallbacks): void;
   /** 全部折起（只留最外层标题） */
   collapseAll(): void;
   /** 全部展开 */
@@ -334,13 +361,16 @@ export function createTocList(list: HTMLElement, onFoldChange?: () => void): Toc
   const collapsed = new Set<string>();
   /** 最近一次 render 里所有「有子的节点」的 id —— 全量折叠/展开只认这一类。 */
   let branchIds: string[] = [];
-  /** B382：光标行节点的 id（可能多条同行的标题都算）—— 引导线 active 判据的源头。 */
+  /**
+   * B382：活动那一行的节点 id（同排多条标题都算）—— 引导线 active 判据的源头。
+   * B388 起这一行是**包住光标那一节**的标题行，不再是「光标正好站上去的那一行」。
+   */
   const activeIds = new Set<string>();
   /** B382：id → 父 id / 是否分支 —— 折叠变化时重算活动引导线要用，不必留着整棵树。 */
   const nodeMeta = new Map<string, { parent: string | null; branch: boolean }>();
 
   /**
-   * B382（照 explorer 的 `paintActiveGuides`）：光标行若是有子且摊开的分支就亮它自己
+   * B382（照 explorer 的 `paintActiveGuides`）：活动那一行若是有子且摊开的分支就亮它自己
    * （给它的孩子看），否则亮它的父亲。线早就随行建好了，这里只换 `is-active` 类，
    * 不重画 —— 折/展一变也要跟着刷（摊开的分支折上后，亮的那根该让给父亲）。
    */
@@ -388,7 +418,7 @@ export function createTocList(list: HTMLElement, onFoldChange?: () => void): Toc
     paintActiveGuides();
   };
 
-  const render = (entries: TocEntry[] | null, activeLine: number, cb: TocCallbacks): void => {
+  const render = (entries: TocEntry[] | null, cursorLine: number, cb: TocCallbacks): void => {
     // 重绘前记住滚动位置：光标一动就重绘，列表跳回顶部比不刷新还难受
     const keepScroll = list.scrollTop;
     list.textContent = "";
@@ -402,6 +432,9 @@ export function createTocList(list: HTMLElement, onFoldChange?: () => void): Toc
       list.appendChild(empty);
       return;
     }
+    // B388：高亮**包住光标那一节**的标题，不是「光标正好停在标题行上」的那一条。
+    // `null`（光标在第一条标题之前）落回光标行 —— 表里没有任何一条等于它，于是整排都不亮。
+    const activeLine = activeOutlineLine(entries, cursorLine) ?? cursorLine;
     const walk = (nodes: TocNode[], parent: HTMLElement, depth: number, chain: string[]): void => {
       for (const node of nodes) {
         const wrap = document.createElement("div");

@@ -5,7 +5,7 @@
 // 缩进靠嵌套）；③ 行为（扭角只折叠不跳转、全量折叠/展开、折叠态跨重渲染不丢）。
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { createTocList } from "../src/markdown/toc";
+import { createTocList, activeOutlineLine } from "../src/markdown/toc";
 import type { TocListHandle } from "../src/markdown/toc";
 import type { TocEntry } from "../src/markdown/pipeline";
 import { CODICONS } from "../src/shell/codicons";
@@ -422,7 +422,7 @@ describe("B205 折叠交互：扭角只折叠不跳转，全量键管全部", ()
       (list.querySelector(".toc-children") as HTMLElement).classList.contains("is-collapsed"),
     ).toBe(true);
 
-    // 光标动了 ⇒ 换 entry 数组 + 换 activeLine，重绘一遍
+    // 光标动了 ⇒ 换 entry 数组 + 换光标行，重绘一遍
     h.render([e(1, 1, "一"), e(2, 5, "一·子")], 5, { onJump: () => {} });
     expect(
       (list.querySelector(".toc-children") as HTMLElement).classList.contains("is-collapsed"),
@@ -524,5 +524,68 @@ describe("B214：手动折叠 / 展开后，顶部那颗全量键要跟着变", 
     expect(handler, "要能定位扭角 handler").toBeTruthy();
     expect(handler, "扭角只管折这一节，不许自己刷调用方").not.toContain("onFoldChange");
     expect(toc, "toc.ts 不必认识顶部那颗键（同步点只留一个）").not.toContain("tocToggleAll");
+  });
+});
+
+describe("B388：活动项 = 包住光标那一节的标题（光标不在标题行上也要亮）", () => {
+  /** 一(1) ─ 一·子(5)、二(9)；行 2~4 是「一」的正文，6~8 是「一·子」的正文。 */
+  const doc = [e(1, 1, "一"), e(2, 5, "一·子"), e(1, 9, "二")];
+
+  it("activeOutlineLine：取「行号 ≤ 光标的最大那一条」，光标在首条标题之前没有活动项", () => {
+    expect(activeOutlineLine(doc, 1), "光标正好在标题行上 ⇒ 就是它自己").toBe(1);
+    expect(activeOutlineLine(doc, 3), "落在上一节的正文里 ⇒ 那一节").toBe(1);
+    expect(activeOutlineLine(doc, 6), "落在二级节的正文里 ⇒ 最深的那一条").toBe(5);
+    expect(activeOutlineLine(doc, 8), "子节末尾（下一个同级标题之前）仍算子节").toBe(5);
+    expect(activeOutlineLine(doc, 9), "跳到下一条同级标题那行 ⇒ 换过去").toBe(9);
+    expect(activeOutlineLine(doc, 99), "文档尾部没有别的标题 ⇒ 最后一条").toBe(9);
+    expect(
+      activeOutlineLine([e(1, 4, "首条")], 2),
+      "光标在第一条标题之前（front matter）⇒ null，一条都不亮（VS Code 同口径）",
+    ).toBeNull();
+  });
+
+  it("render：高亮落在所在那一节，缩进引导线跟着点亮它的父亲", () => {
+    const list = mount();
+    const h = createTocList(list);
+    const activeTexts = () =>
+      Array.from(list.querySelectorAll(".toc-item.toc-active")).map((el) => el.textContent ?? "");
+
+    h.render(doc, 6, { onJump: () => {} });
+    expect(activeTexts(), "正文里只点亮所在那一节，而且是最深的「一·子」").toEqual(["一·子"]);
+
+    h.render(doc, 10, { onJump: () => {} });
+    expect(activeTexts(), "跨到「二」这一节 ⇒ 换一条").toEqual(["二"]);
+
+    h.render([e(1, 4, "首条")], 2, { onJump: () => {} });
+    expect(activeTexts(), "光标还没走到第一条标题 ⇒ 一条都不亮").toEqual([]);
+
+    // 引导线：活动项是叶子 ⇒ 亮它父亲那一根（B382 的口径，行号取自活动项而不是光标）
+    h.render([e(1, 1, "一"), e(2, 3, "甲"), e(3, 5, "甲·细")], 6, { onJump: () => {} });
+    const guides = Array.from(list.querySelectorAll<HTMLElement>(".toc-guide.is-active")).map(
+      (g) => g.dataset.tocId,
+    );
+    expect(guides, "光标在「甲·细」这一节里 ⇒ 点亮它的父亲「甲」那一根").toEqual(["h2-3"]);
+  });
+
+  it("接线契约：光标移动只在高亮行真的变了时才重绘，且只认活动面板", () => {
+    const main = readFileSync("src/main.ts", "utf-8");
+    const hook = main.match(/if \(update\.selectionSet[\s\S]*?\n {2}\}/)?.[0] ?? "";
+    expect(hook, "要能定位 handleUpdate 里那道上报闸").toBeTruthy();
+    expect(hook, "选区变化要上报给大纲").toContain("refreshTocAtCursor");
+    expect(hook, "非活动面板不许抢画大纲（tocEntries 是活动面板那份文档的）").toContain(
+      "panel.panelId === activePanelId",
+    );
+
+    const toc = readFileSync("src/toc.ts", "utf-8");
+    const gate = toc.match(/function refreshTocAtCursor[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(gate, "要能定位 refreshTocAtCursor").toBeTruthy();
+    expect(gate, "抽屉收着就什么都不做").toContain("tocPanel.hidden");
+    expect(gate, "判据是「高亮行变没变」，不是「光标动没动」").toContain("renderedActiveLine");
+    expect(gate, "跨过章节才真的重绘").toContain("updateTocDrawer");
+    // 重绘那一路必须把这两个数一起落下，否则这道闸永远判「变了」⇒ 每键一次全量重算
+    const paint = toc.match(/function updateTocDrawer[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(paint, "updateTocDrawer 要记下这一次点亮的是哪一行").toContain(
+      "renderedActiveLine = activeOutlineLine",
+    );
   });
 });

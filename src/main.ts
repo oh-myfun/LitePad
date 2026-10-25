@@ -100,7 +100,13 @@ import {
   openPreviewToSide,
 } from "./markdown";
 import { openFindBar } from "./find/findbar";
-import { setupSideBar, applySidebarVisible, toggleToc, updateTocDrawer } from "./toc";
+import {
+  setupSideBar,
+  applySidebarVisible,
+  toggleToc,
+  updateTocDrawer,
+  refreshTocAtCursor,
+} from "./toc";
 import { replayDrawer, setupSideResizer } from "./shell/drawer";
 import {
   scheduleSessionSave,
@@ -277,6 +283,11 @@ function handleUpdate(view: EditorView, update: ViewUpdate): void {
   const caretLine = view.state.doc.lineAt(caretPos);
   sessionStore.setCursor(tab.tabId, caretLine.number, caretPos - caretLine.from + 1);
   updatePositionOf(panel.panelId, view);
+  // B388：大纲的活动项跟的是「光标所在那一节」，光标点进正文、方向键走过章节都要跟着亮。
+  // 只在活动面板上报，且真跨过章节才会重绘（闸在 toc.ts 的 refreshTocAtCursor）。
+  if (update.selectionSet && panel.panelId === activePanelId) {
+    refreshTocAtCursor(caretLine.number);
+  }
   // 同步滚动不由这里推：位置联动只认 `scroll` 事件 + 期望账本（sync-scroll/coordinator），
   // 跨窗口那一份由协调器的外发口在「判成用户滚动」那一帧末尾发（B297）。
   // 文本是否真的变了：点击内容区、移动光标、切换视图、重新测量都会产生

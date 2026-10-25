@@ -1,8 +1,8 @@
 // 大纲 TOC / 侧栏（从 main.ts 拆出，解耦第十步 / #411）。
 //
-// 职责：大纲视图（updateTocDrawer / refreshTocToggleAll / toggleToc / tocListView
-// 控制器与 tocEntries 状态）+ 左栏**整栏**可见性（applySidebarVisible / isSidebarOff /
-// toggleSidebar / setupSideBar）。
+// 职责：大纲视图（updateTocDrawer / refreshTocAtCursor / refreshTocToggleAll / toggleToc
+// / tocListView 控制器与 tocEntries 状态）+ 左栏**整栏**可见性（applySidebarVisible /
+// isSidebarOff / toggleSidebar / setupSideBar）。
 // B307：展开区的开合、宽度与分隔条都搬到 `src/shell/drawer.ts`（外壳），这里只留
 // 「整栏在不在」这一层和大纲这一块视图自己。
 // 零外部函数依赖——只依赖 core/* + ui + shell/* + markdown/pipeline（TocEntry 类型），
@@ -26,11 +26,17 @@ import {
   tocPanel,
   tocToggleAll,
 } from "./ui";
-import { createTocList, type TocListHandle } from "./markdown/toc";
+import { createTocList, activeOutlineLine, type TocListHandle } from "./markdown/toc";
 import type { TocEntry } from "./markdown/pipeline";
 // ---------------------------------------------------------------- 大纲 TOC（M3）
 
 let tocEntries: TocEntry[] = [];
+
+/**
+ * B388：上一次重绘点亮的高亮行（`0` = 列表里没有任何一条是活动项）。
+ * 光标移动只在这个数**变了**的时候才值得重绘 —— 见 `refreshTocAtCursor`。
+ */
+let renderedActiveLine = 0;
 
 /**
  * B205：大纲列表控制器（**只建这一次**）。
@@ -158,6 +164,7 @@ function updateTocDrawer(): void {
   const tab = activeTab();
   if (!tab) {
     tocEntries = [];
+    renderedActiveLine = 0;
     tocListView.render(null, -1, { onJump: () => {} });
     // B209：分支列表随文档变，那颗合并键要跟着刷（换到没有标题的文档 ⇒ 回到「折叠」那一支）
     refreshTocToggleAll();
@@ -169,12 +176,15 @@ function updateTocDrawer(): void {
   const result = doc ? extractOutline(doc.name, tab.state.doc.toString()) : null;
   if (result === null) {
     tocEntries = [];
+    renderedActiveLine = 0;
     tocListView.render(null, -1, { onJump: () => {} });
     refreshTocToggleAll();
     return;
   }
   tocEntries = result;
   const cursorLine = tab.state.doc.lineAt(tab.state.selection.main.head).number;
+  // B388：记下「这一次点亮的是哪一行」，光标移动的兜底闸（refreshTocAtCursor）拿它比。
+  renderedActiveLine = activeOutlineLine(tocEntries, cursorLine) ?? 0;
   // B205：`createTocList` **只建一次**（建表那一刻它记下折叠态的容器），重绘只走
   //       render —— 光标一动就重绘，每次重建控制器会把用户折的节冲回全展开。
   //       ⚠️ `onJump` 保持内联在 render 的这一份参数里：tests/static.ts 的静态契约
@@ -208,6 +218,22 @@ function updateTocDrawer(): void {
   refreshTocToggleAll();
 }
 
+/**
+ * B388（用户点名「光标没有正好处在标题上时，大纲也要能高亮对应段落所在的标题项」）：
+ * 光标一动就问一声 —— 但**只有跨过章节边界**才真的重绘。
+ *
+ * 为什么不无条件重绘：`updateTocDrawer` 干的是「整份文档重取大纲 + 整个列表重建 DOM」，
+ * 而方向键每按一下都会走到这里（CM6 的 updateListener 认 `selectionSet`）。长文档里
+ * 那就是每键一次全量重算，而高亮行没变时重绘出来的样子与现在**一模一样**，纯属白做。
+ *
+ * ⚠️ 只许**活动面板**上报（main 的 handleUpdate 那一档）：`tocEntries` 是活动面板那份
+ *    文档的大纲，拿别的面板的光标行去比会误判成「跨了章节」，把大纲抢画成不相干的位置。
+ */
+function refreshTocAtCursor(line: number): void {
+  if (tocPanel.hidden) return;
+  if ((activeOutlineLine(tocEntries, line) ?? 0) !== renderedActiveLine) updateTocDrawer();
+}
+
 export {
   setupSideBar,
   refreshTocToggleAll,
@@ -216,4 +242,5 @@ export {
   toggleSidebar,
   toggleToc,
   updateTocDrawer,
+  refreshTocAtCursor,
 };

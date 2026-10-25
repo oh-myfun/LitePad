@@ -6,6 +6,7 @@
 // （不是点标签）走的是 onActivatePanel 路径，大纲因此停在上一份文档上。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
+import { EditorView } from "@codemirror/view";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -255,5 +256,50 @@ describe("大纲必须跟随活动面板的当前文档", () => {
     click(content(1));
     await wait(50);
     expect(tocItems(), "再次点击文本内容应再次清空").toEqual([]);
+  });
+});
+
+describe("B388：光标落进正文，大纲也要点亮所在那一节", () => {
+  it("编辑器选区变化带着高亮走，而不是只认「光标正好站在标题行上」", async () => {
+    await import("../src/main");
+    await wait(300);
+
+    const panels = Array.from(document.querySelectorAll(".layout-panel")) as HTMLElement[];
+    expect(panels.length, "应恢复两个面板").toBe(2);
+    // 用例之间共享模块状态：先把活动面板切回 md 那一格，再把抽屉重新摊开一次
+    // （摊开那一下走 onShow=updateTocDrawer，高亮的初值才算数）
+    activatePanel(panels[0]);
+    await wait(30);
+    const tocPanelEl = document.getElementById("toc-panel") as HTMLElement;
+    if (!tocPanelEl.hidden) {
+      await toggleTocViaMenu();
+      await wait(30);
+    }
+    await toggleTocViaMenu();
+    await wait(50);
+    expect(tocPanelEl.hidden, "大纲抽屉应已摊开").toBe(false);
+
+    const view = EditorView.findFromDOM(panels[0].querySelector(".cm-editor") as HTMLElement);
+    expect(view, "md 面板应挂着编辑器视图").toBeTruthy();
+
+    // 夹具 a.md = "# A标题\n\n正文A\n\n## A二级\n"
+    const activeTexts = () =>
+      Array.from(document.querySelectorAll("#toc-panel .toc-item.toc-active")).map(
+        (el) => el.textContent ?? "",
+      );
+
+    view!.dispatch({ selection: { anchor: view!.state.doc.line(5).from } });
+    await wait(30);
+    expect(activeTexts(), "光标在「## A二级」那一行 ⇒ 亮它自己").toEqual(["A二级"]);
+
+    view!.dispatch({ selection: { anchor: view!.state.doc.line(3).from } });
+    await wait(30);
+    expect(activeTexts(), "光标移到「正文A」⇒ 亮包住它的那一节「# A标题」").toEqual(["A标题"]);
+
+    view!.dispatch({ selection: { anchor: view!.state.doc.line(2).from } });
+    await wait(30);
+    expect(activeTexts(), "同一节里再挪一格 ⇒ 高亮仍是那一条（不跟着光标一闪一闪）").toEqual([
+      "A标题",
+    ]);
   });
 });
