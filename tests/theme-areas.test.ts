@@ -146,14 +146,14 @@ describe("B379 · 四个关键区域：分区域 token 与消费点", () => {
     }
   });
 
-  it("状态栏：自己的底 / 字 / 上沿 / 两档条目色，不再跟标题栏同源", () => {
+  it("状态栏：自己的底 / 字 / 两档条目色，且不画上沿线", () => {
     const source = css();
     const bar = rule(source, ".statusbar");
     expect(bar, "状态栏 = statusBar.background").toContain("background: var(--statusbar-bg)");
     expect(bar, "状态栏文字 = statusBar.foreground").toContain("color: var(--statusbar-fg)");
-    expect(bar, "上沿线 = statusBar.border（inset 不占布局）").toContain(
-      "box-shadow: inset 0 1px 0 var(--statusbar-border)",
-    );
+    // B381（用户点名）：VS Code 的 floating panels 把 statusBar.border 的上沿线关掉了。
+    expect(bar, "不得再画上沿线").not.toContain("box-shadow");
+    expect(source, "statusBar.border 的 token 已无消费者").not.toMatch(/--statusbar-border\s*:/);
     expect(rule(source, ".sb-btn:hover"), "条目悬停").toContain(
       "background: var(--statusbar-item-hover-bg)",
     );

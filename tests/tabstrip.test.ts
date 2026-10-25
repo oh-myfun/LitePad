@@ -1376,19 +1376,19 @@ describe("标签右键菜单分组与「打开文件所在目录」（B123-7）"
 // 用户原话：「状态栏颜色和标题栏背景色一致，或者统一为没有背景色」⇒ 选了「一致」。
 // B204 曾把状态栏并到标题栏那颗 `--bg-toolbar`（用户当时点名「两边同色」）。
 // B379 用户重新点名「状态栏……颜色和样式尽量和 vscode 保持一致」⇒ 状态栏恢复
-// 自己的 `statusBar.background / foreground / border`：Plus / 经典档是一条 #007ACC 蓝，
+// 自己的 `statusBar.background / foreground`：Plus / 经典档是一条 #007ACC 蓝，
 // 2026 / Modern 档才恰好与标题栏同色 —— 两者不再是同一颗变量。
+// B381（用户点名「状态栏不应该有边框线」）：VS Code 的 floating panels 把
+// statusBar.border 的上沿线关掉，这里也不画。
 describe("状态栏按 statusBar.* 取色（B379，推翻 B204 的同源裁决）", () => {
-  it("状态栏有自己的底 / 字 / 上沿线，独立的 --bg-status 仍然不许回来", () => {
+  it("状态栏有自己的底 / 字，不画上沿线，独立的 --bg-status 仍然不许回来", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
     const statusbar = cssDecls(ruleBlock(css, ".statusbar"));
     expect(statusbar, "状态栏底色 = statusBar.background").toContain(
       "background: var(--statusbar-bg)",
     );
     expect(statusbar, "状态栏前景 = statusBar.foreground").toContain("color: var(--statusbar-fg)");
-    expect(statusbar, "上沿线 = statusBar.border").toContain(
-      "box-shadow: inset 0 1px 0 var(--statusbar-border)",
-    );
+    expect(statusbar, "不得再画上沿线（B381）").not.toContain("box-shadow");
     expect(cssDecls(ruleBlock(css, ".title-bar")), "标题栏走 shellBackground").toContain(
       "background: var(--shell-bg)",
     );

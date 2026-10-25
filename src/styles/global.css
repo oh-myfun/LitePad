@@ -138,6 +138,11 @@
   --menubar-hover-bg: #242526; /* menubar.selectionBackground */
   --menubar-hover-fg: #bfbfbf; /* menubar.selectionForeground */
   --menubar-hover-border: transparent; /* 只有 HC 有 selectionBorder */
+  /* B381：菜单行（下拉列表）的选中/悬停。VS Code 的菜单组件用 list.hoverBackground
+     铺底、menu.selectionBorder 描边（只有 HC 有后者）—— 与菜单栏那颗键的 menubar.*
+     是两套 token，别混用。 */
+  --menu-selection-bg: #ffffff14; /* = list.hoverBackground */
+  --menu-selection-border: transparent; /* menu.selectionBorder（只有 HC 有值） */
   --toolbar-hover-bg: #5a5d5e50; /* toolbar.hoverBackground */
 
   --activitybar-bg: #191a1b;
@@ -181,7 +186,6 @@
 
   --statusbar-bg: #191a1b;
   --statusbar-fg: #8c8c8c;
-  --statusbar-border: #2a2b2c;
   --statusbar-item-hover-bg: #323233;
   --statusbar-item-active-bg: #4b4c4d;
 
@@ -198,7 +202,10 @@
   --editor-selection-highlight: #27678260;
   --editor-selection-highlight-border: transparent; /* 只有 HC 档有 */
   --editor-line-highlight-bg: #242526;
-  --editor-line-highlight-border: #282828;
+  /* B381：2026 定义了 lineHighlightBackground、没定义 lineHighlightBorder ⇒ VS Code
+     不画边框（currentLineHighlight.ts：有底色且主题未定义 border 时跳过 border）。 */
+  --editor-line-highlight-border: transparent;
+  --editor-line-highlight-border-width: 2px; /* 没底色的族画 2px；HC 才是 1px */
   --editor-bracket-match-bg: #0064001a;
   --editor-bracket-match-border: #888888;
   --editor-line-number: #858889;
@@ -277,6 +284,8 @@
   --menubar-hover-bg: #5a5d5e50;
   --menubar-hover-fg: #cccccc;
   --menubar-hover-border: transparent;
+  --menu-selection-bg: #2a2d2e; /* = list.hoverBackground */
+  --menu-selection-border: transparent;
   --toolbar-hover-bg: #5a5d5e50;
   --activitybar-bg: #181818;
   --activitybar-fg: #d7d7d7;
@@ -308,7 +317,6 @@
   --tab-bg-active-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-bg-active));
   --statusbar-bg: #181818;
   --statusbar-fg: #cccccc;
-  --statusbar-border: #2b2b2b;
   --statusbar-item-hover-bg: #f1f1f133;
   --statusbar-item-active-bg: #ffffff2e;
   --bg-elevated: #1f1f1f;
@@ -321,6 +329,7 @@
   --editor-selection-highlight-border: transparent;
   --editor-line-highlight-bg: transparent;
   --editor-line-highlight-border: #282828;
+  --editor-line-highlight-border-width: 2px;
   --editor-bracket-match-bg: #0064001a;
   --editor-bracket-match-border: #888888;
   --editor-line-number: #6e7681;
@@ -365,6 +374,8 @@
   --menubar-hover-bg: #5a5d5e50;
   --menubar-hover-fg: #cccccc;
   --menubar-hover-border: transparent;
+  --menu-selection-bg: #2a2d2e; /* = list.hoverBackground */
+  --menu-selection-border: transparent;
   --toolbar-hover-bg: #5a5d5e50;
   --activitybar-bg: #333333;
   --activitybar-fg: #ffffff;
@@ -395,7 +406,6 @@
   --tab-bg-active-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-bg-active));
   --statusbar-bg: #007acc;
   --statusbar-fg: #ffffff;
-  --statusbar-border: transparent;
   --statusbar-item-hover-bg: #ffffff1f;
   --statusbar-item-active-bg: #ffffff2e;
   --bg-elevated: #252526;
@@ -408,6 +418,7 @@
   --editor-selection-highlight-border: transparent;
   --editor-line-highlight-bg: transparent;
   --editor-line-highlight-border: #282828;
+  --editor-line-highlight-border-width: 2px;
   --editor-bracket-match-bg: #0064001a;
   --editor-bracket-match-border: #888888;
   --editor-line-number: #858585;
@@ -458,7 +469,9 @@
   --titlebar-close-hover: rgba(232, 17, 35, 0.9);
   --menubar-hover-bg: transparent;
   --menubar-hover-fg: #ffffff;
-  --menubar-hover-border: #6fc3df;
+  --menubar-hover-border: #f38518; /* activeContrastBorder = focusBorder（HC 是橙，不是 #6FC3DF） */
+  --menu-selection-bg: transparent; /* HC 菜单选中不铺底色（menu.ts: background: none） */
+  --menu-selection-border: #f38518; /* menu.selectionBorder = activeContrastBorder */
   --toolbar-hover-bg: transparent;
   --activitybar-bg: #000000;
   --activitybar-fg: #ffffff;
@@ -490,11 +503,10 @@
   --tab-bg-active-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-bg-active));
   --statusbar-bg: #000000;
   --statusbar-fg: #ffffff;
-  --statusbar-border: #6fc3df;
   --statusbar-item-hover-bg: #000000;
   --statusbar-item-active-bg: #ffffff2e;
   --bg-elevated: #000000;
-  --bg-hover: #ffffff1f;
+  --bg-hover: #ffffff1a; /* list.hoverBackground（hcDark = white 10%） */
   --border: #6fc3df;
   --editor-cursor: #ffffff;
   /* HC 的选中是**实底 + 强制前景**（hc_black 覆盖 selectionBackground #FFFFFF，
@@ -506,6 +518,7 @@
   --editor-selection-highlight-border: #f38518; /* activeContrastBorder = focusBorder */
   --editor-line-highlight-bg: transparent;
   --editor-line-highlight-border: #f38518; /* HC 的 lineHighlightBorder 是橙，不是 #6FC3DF */
+  --editor-line-highlight-border-width: 1px; /* HC 的边框宽度是 1px（其余族 2px） */
   --editor-bracket-match-bg: #0064001a;
   --editor-bracket-match-border: #6fc3df;
   --editor-line-number: #ffffff;
@@ -557,6 +570,8 @@
   --menubar-hover-bg: #eaeaea;
   --menubar-hover-fg: #202020;
   --menubar-hover-border: transparent;
+  --menu-selection-bg: #00000014; /* = list.hoverBackground */
+  --menu-selection-border: transparent;
   --toolbar-hover-bg: #b8b8b850;
 
   --activitybar-bg: #fafafd;
@@ -596,7 +611,6 @@
 
   --statusbar-bg: #fafafd;
   --statusbar-fg: #606060;
-  --statusbar-border: #f0f1f2;
   --statusbar-item-hover-bg: #e3e3e5;
   --statusbar-item-active-bg: #eeeeee;
 
@@ -610,7 +624,9 @@
   --editor-selection-highlight: #0069cc15;
   --editor-selection-highlight-border: transparent;
   --editor-line-highlight-bg: #eaeaea40;
-  --editor-line-highlight-border: #eeeeee;
+  /* 同深色档：2026 有底色、没定义 border ⇒ 不画边框。 */
+  --editor-line-highlight-border: transparent;
+  --editor-line-highlight-border-width: 2px;
   --editor-bracket-match-bg: #0064001a;
   --editor-bracket-match-border: #b9b9b9;
   --editor-line-number: #606060;
@@ -675,6 +691,8 @@
   --menubar-hover-bg: #b8b8b850;
   --menubar-hover-fg: #1e1e1e;
   --menubar-hover-border: transparent;
+  --menu-selection-bg: #f2f2f2; /* = list.hoverBackground */
+  --menu-selection-border: transparent;
   --toolbar-hover-bg: #b8b8b850;
   --activitybar-bg: #f8f8f8;
   --activitybar-fg: #1f1f1f;
@@ -706,7 +724,6 @@
   --tab-bg-active-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-bg-active));
   --statusbar-bg: #f8f8f8;
   --statusbar-fg: #3b3b3b;
-  --statusbar-border: #e5e5e5;
   --statusbar-item-hover-bg: #1f1f1f11;
   /* 浅色默认的按下档是 white 18%（theme.ts 的 light 分支），不是黑色——照抄默认值。 */
   --statusbar-item-active-bg: #ffffff2e;
@@ -720,6 +737,7 @@
   --editor-selection-highlight-border: transparent;
   --editor-line-highlight-bg: transparent;
   --editor-line-highlight-border: #eeeeee;
+  --editor-line-highlight-border-width: 2px;
   --editor-bracket-match-bg: #0064001a;
   --editor-bracket-match-border: #b9b9b9;
   --editor-line-number: #6e7681;
@@ -762,6 +780,8 @@
   --menubar-hover-bg: #b8b8b850;
   --menubar-hover-fg: #333333;
   --menubar-hover-border: transparent;
+  --menu-selection-bg: #e8e8e8; /* = list.hoverBackground */
+  --menu-selection-border: transparent;
   --toolbar-hover-bg: #b8b8b850;
   --activitybar-bg: #2c2c2c;
   --activitybar-fg: #ffffff;
@@ -792,7 +812,6 @@
   --tab-bg-active-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-bg-active));
   --statusbar-bg: #007acc;
   --statusbar-fg: #ffffff;
-  --statusbar-border: transparent;
   /* Light+/Visual Studio 没有覆盖这两颗 ⇒ 取 color registry 的浅色默认
      （hover = black 12%、active = white 18%）。 */
   --statusbar-item-hover-bg: #0000001f;
@@ -807,6 +826,7 @@
   --editor-selection-highlight-border: transparent;
   --editor-line-highlight-bg: transparent;
   --editor-line-highlight-border: #eeeeee;
+  --editor-line-highlight-border-width: 2px;
   --editor-bracket-match-bg: #0064001a;
   --editor-bracket-match-border: #b9b9b9;
   --editor-line-number: #237893;
@@ -860,7 +880,9 @@
   --titlebar-close-hover: #e81123;
   --menubar-hover-bg: transparent;
   --menubar-hover-fg: #292929;
-  --menubar-hover-border: #0f4a85;
+  --menubar-hover-border: #006bbd; /* activeContrastBorder = focusBorder（浅 HC 是蓝 #006BBD） */
+  --menu-selection-bg: transparent; /* HC 菜单选中不铺底色 */
+  --menu-selection-border: #006bbd; /* menu.selectionBorder = activeContrastBorder */
   --toolbar-hover-bg: transparent;
   --activitybar-bg: #ffffff;
   --activitybar-fg: #292929;
@@ -892,7 +914,6 @@
   --tab-bg-active-hover: #ffffff;
   --statusbar-bg: #ffffff;
   --statusbar-fg: #292929;
-  --statusbar-border: #0f4a85;
   --statusbar-item-hover-bg: #ffffff;
   --statusbar-item-active-bg: #0000002e;
   --editor-cursor: #0f4a85;
@@ -903,6 +924,7 @@
   --editor-selection-highlight-border: #006bbd; /* activeContrastBorder = focusBorder */
   --editor-line-highlight-bg: transparent;
   --editor-line-highlight-border: #0f4a85;
+  --editor-line-highlight-border-width: 1px; /* HC 的边框宽度是 1px（其余族 2px） */
   --editor-bracket-match-bg: #00000000;
   --editor-bracket-match-border: #0f4a85;
   --editor-line-number: #292929;
@@ -1446,10 +1468,8 @@ html[data-window-kind="satellite"] #sidebar-toggle {
   font-size: 14px;
 }
 
-.popup-menu button.has-submenu.submenu-open {
-  background: var(--bg-hover);
-  color: var(--fg);
-}
+/* B381：子菜单父项的「保持点亮」并入 `.popup-menu button:hover` 那条（同一套
+   menu.selection* token），不再单独写一份 —— 见弹出菜单那一节的 B381 规则。 */
 
 /* ---------- 图标按钮组样式已随顶栏快捷按钮一并移除 ----------
    原先 .toolbar-actions / .tool-btn 一套规则只服务于那 8 颗按钮；按钮搬走后
@@ -4153,10 +4173,12 @@ button:focus-visible {
 }
 
 /* ---------- 行号 gutter / 当前行主题化 ----------
-   B376：照 VS Code 的编辑器口径 —— gutter 与编辑区同底色、无分隔线；
-   行号取 editorLineNumber.foreground，当前行号取 activeForeground；
-   当前行本身是一圈 editor.lineHighlightBorder（不是整行铺底）。
-   这里用高优先级选择器统一走 CSS 变量，深浅色切换时联动。 */
+   B381：照 VS Code `currentLineHighlight.ts` 的**分档规则**：
+     · 主题有 lineHighlightBackground（2026 两档）⇒ 铺底色，**不画边框**；
+     · 没有底色（Modern / Plus / 经典）⇒ 画 2px 的 lineHighlightBorder；
+     · HC ⇒ 画 1px（HC 的边框宽度本来就收一档）。
+   底色/边框宽度全部走 token，这里不分族。gutter（margin）与正文层同色同框：
+   VS Code 的 renderLineHighlight 默认 "all"，当前行的行号格也一起点亮。 */
 .panel-host .cm-editor .cm-gutters {
   background: var(--bg);
   color: var(--editor-line-number);
@@ -4167,15 +4189,30 @@ button:focus-visible {
 }
 
 .panel-host .cm-editor .cm-activeLineGutter {
-  background: transparent;
+  /* B381：当前行的行号格跟着铺同一颗底色（2026 是 #242526，其余族 transparent）。 */
+  background: var(--editor-line-highlight-bg);
   color: var(--editor-line-number-active);
 }
 
+/* 行号槽那一圈：只框行号格（`.cm-lineNumbers`）。折叠槽是另一个 .cm-gutter，
+   两格都框会在中间多画一道竖线 —— VS Code 的 margin 是一整块，没有这道缝。 */
+.panel-host .cm-editor .cm-lineNumbers .cm-activeLineGutter {
+  box-shadow: inset 0 0 0 var(--editor-line-highlight-border-width)
+    var(--editor-line-highlight-border);
+}
+
 .panel-host .cm-editor .cm-activeLine {
-  /* B380：2026 档的当前行是「淡底 + 1px 描边」两颗（lineHighlightBackground /
-     lineHighlightBorder），其余档只有描边 —— token 已按族取好，这里不再分档。 */
   background: var(--editor-line-highlight-bg);
-  box-shadow: inset 0 0 0 1px var(--editor-line-highlight-border);
+  box-shadow: inset 0 0 0 var(--editor-line-highlight-border-width)
+    var(--editor-line-highlight-border);
+}
+
+/* VS Code 只在**空选区**时画正文这一层（currentLineHighlight.ts 的 `_selectionIsEmpty`）；
+   有选区时正文当前行高亮整个撤掉，行号槽那层照旧，从而不会和选区色叠在一起。
+   `:has` 在 chrome105+ 可用（本项目 WebView2 的兜底基线）。 */
+.panel-host .cm-editor:has(.cm-selectionBackground) .cm-activeLine {
+  background: transparent;
+  box-shadow: none;
 }
 
 /* B380：失焦时的选区取 editor.inactiveSelectionBackground（比聚焦时淡一档）。
@@ -4419,14 +4456,13 @@ body.tab-drag-active * {
   /* B204 曾把状态栏并到标题栏那颗 `--bg-toolbar`；**B379 推翻** —— 用户重新点名
      「状态栏……颜色和样式尽量和 vscode 保持一致」。VS Code 的状态栏有自己的
      `statusBar.background`：2026/Modern 档与标题栏同色，Plus/经典档却是一条
-     #007ACC 蓝，2026 浅色档的上下分界靠 `statusBar.border`。两处从此各用各的 token。
+     #007ACC 蓝。两处从此各用各的 token。
      ⚠️ 别把这条改回 `var(--bg-toolbar)`：五族里只有一半的档位两者同色。 */
   background: var(--statusbar-bg);
-  /* B122 曾按用户裁决撤掉上沿细线；B379 按 VS Code 补回 —— 它只有在该主题定义了
-     `statusBar.border` 时才画（Plus/经典档取 transparent ⇒ 这条阴影不可见，
-     与 VS Code 的「没定义就不画」同效）。用 inset 阴影而不是 border-top：
-     加了真边框会把 26px 的内容区压矮 1px，状态栏整行文字跟着上移。 */
-  box-shadow: inset 0 1px 0 var(--statusbar-border);
+  /* B381（用户点名「状态栏不应该有边框线」）：**不画上沿线**。VS Code 的 floating
+     panels（现代 UI 的浮动卡片外壳）在 floatingPanels.css 里把
+     `.statusbar.status-border-top::after { display: none }` 一并关掉 —— statusBar.border
+     在 2026/Modern 主题里虽然定义了色值，这种外壳下也不上台面。 */
   font-size: var(--fs-ui);
   color: var(--statusbar-fg);
   user-select: none;
@@ -4742,6 +4778,29 @@ body.tab-drag-active * {
   background: var(--bg);
   color: var(--fg);
   box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* B381（用户：「菜单选中/hover 样式复刻 vscode 对应主题」）：照 VS Code
+   `base/browser/ui/menu/menu.ts` 的菜单项口径 ——
+     · 非 HC：`list.hoverBackground` 铺底、无描边（defaultMenuStyles 的
+       selectionBackgroundColor 就是 listHoverBackground，不是 menu.selectionBackground）；
+     · HC：`background: none` + 一圈 `menu.selectionBorder`（= activeContrastBorder），
+       深色橙 #F38518 / 浅色蓝 #006BBD，offset -1px。
+   放在 `.menu-item-current` **之后**：悬停/键盘选中要压过「当前项」的常驻底色。 */
+.popup-menu button:hover:not(:disabled),
+.popup-menu button.has-submenu.submenu-open,
+.dropdown-option.dd-active {
+  background: var(--menu-selection-bg);
+  color: var(--fg);
+  outline: 1px solid var(--menu-selection-border);
+  outline-offset: -1px;
+}
+
+/* 置灰项即便被 hover 也不点亮（上面那条已排除 disabled，这里再兜一次键盘态）。 */
+.popup-menu button:disabled.dd-active,
+.popup-menu button:disabled.submenu-open {
+  background: transparent;
+  outline: none;
 }
 
 /* ---------- 自定义下拉（B108：替代原生 select，列表复用 .popup-menu 视觉） ---------- */

@@ -114,9 +114,10 @@ const AREA = {
     "--tab-fg-hover": "#bfbfbf", // tab.hoverForeground
     "--statusbar-bg": "#191a1b", // statusBar.background
     "--statusbar-fg": "#8c8c8c", // statusBar.foreground
-    "--statusbar-border": "#2a2b2c", // statusBar.border
     "--statusbar-item-hover-bg": "#323233", // statusBarItem.hoverBackground
     "--statusbar-item-active-bg": "#4b4c4d", // statusBarItem.activeBackground
+    "--menu-selection-bg": "#ffffff14", // list.hoverBackground（菜单项 hover 的底色）
+    "--menu-selection-border": "transparent", // menu.selectionBorder（只有 HC 有值）
   },
   light: {
     "--shell-bg": "#fafafd",
@@ -145,9 +146,10 @@ const AREA = {
     "--tab-fg-hover": "#202020",
     "--statusbar-bg": "#fafafd",
     "--statusbar-fg": "#606060",
-    "--statusbar-border": "#f0f1f2",
     "--statusbar-item-hover-bg": "#e3e3e5",
     "--statusbar-item-active-bg": "#eeeeee",
+    "--menu-selection-bg": "#00000014", // list.hoverBackground
+    "--menu-selection-border": "transparent",
   },
 } as const;
 
@@ -161,7 +163,9 @@ const EDITOR = {
     "--editor-selection-highlight": "#27678260",
     "--editor-selection-highlight-border": "transparent",
     "--editor-line-highlight-bg": "#242526",
-    "--editor-line-highlight-border": "#282828",
+    // B381：2026 有底色、没定义 lineHighlightBorder ⇒ VS Code 不画边框。
+    "--editor-line-highlight-border": "transparent",
+    "--editor-line-highlight-border-width": "2px",
     "--editor-bracket-match-bg": "#0064001a",
     "--editor-bracket-match-border": "#888888",
     "--editor-line-number": "#858889",
@@ -179,7 +183,9 @@ const EDITOR = {
     "--editor-selection-highlight": "#0069cc15",
     "--editor-selection-highlight-border": "transparent",
     "--editor-line-highlight-bg": "#eaeaea40",
-    "--editor-line-highlight-border": "#eeeeee",
+    // 同深色档：2026 浅色也不画当前行边框。
+    "--editor-line-highlight-border": "transparent",
+    "--editor-line-highlight-border-width": "2px",
     "--editor-bracket-match-bg": "#0064001a",
     "--editor-bracket-match-border": "#b9b9b9",
     "--editor-line-number": "#606060",
@@ -219,7 +225,11 @@ const FAMILY_KEYS: ReadonlyArray<readonly [string, string, string]> = [
   ["hc", "--editor-line-number-active", "#f38518"],
   ["hc", "--border", "#6fc3df"],
   ["hc", "--editor-split-border", "#6fc3df"],
-  ["hc", "--statusbar-border", "#6fc3df"],
+  // B381：HC 菜单选中 = 透明底 + activeContrastBorder（focusBorder 橙）。
+  ["hc", "--menu-selection-bg", "transparent"],
+  ["hc", "--menu-selection-border", "#f38518"],
+  ["hc", "--menubar-hover-border", "#f38518"],
+  ["hc", "--editor-line-highlight-border-width", "1px"],
   ["hc", "--glass-opacity", "100%"],
 ];
 
@@ -240,7 +250,11 @@ const FAMILY_KEYS_LIGHT: ReadonlyArray<readonly [string, string, string]> = [
   ["hc", "--editor-selection", "#0f4a85"],
   ["hc", "--editor-selection-fg", "#ffffff"],
   ["hc", "--editor-line-number-active", "#006bbd"],
-  ["hc", "--statusbar-border", "#0f4a85"],
+  // B381：浅 HC 的菜单选中 = 透明底 + activeContrastBorder（focusBorder 蓝）。
+  ["hc", "--menu-selection-bg", "transparent"],
+  ["hc", "--menu-selection-border", "#006bbd"],
+  ["hc", "--menubar-hover-border", "#006bbd"],
+  ["hc", "--editor-line-highlight-border-width", "1px"],
   ["hc", "--glass-opacity", "100%"],
 ];
 
@@ -410,21 +424,43 @@ describe("B377 · 源码编辑区版式色（光标 / 选区 / 行号 / 当前�
     }
   });
 
-  it("当前行 = lineHighlightBackground（2026 有淡底）+ 1px 边框（画在行盒内）", () => {
-    const rule = stripCssComments(ruleBlock(css(), ".panel-host .cm-editor .cm-activeLine"));
-    expect(rule, "当前行底色走 token（2026 是 #242526，其余族 transparent）").toContain(
-      "background: var(--editor-line-highlight-bg)",
+  it("当前行：2026 只有底色（无边框），Modern/Plus/经典 2px 边框，HC 1px", () => {
+    const source = css();
+    const rule = stripCssComments(ruleBlock(source, ".panel-host .cm-editor .cm-activeLine"));
+    expect(rule, "当前行底色走 token").toContain("background: var(--editor-line-highlight-bg)");
+    expect(rule, "边框宽度也走 token（非 HC 2px / HC 1px）").toContain(
+      "box-shadow: inset 0 0 0 var(--editor-line-highlight-border-width)",
     );
-    expect(rule, "当前行边框必须用 box-shadow 画在行盒内（不吃布局）").toMatch(
-      /box-shadow:\s*inset 0 0 0 1px var\(--editor-line-highlight-border\)/,
+    // 2026 有底色、主题没定义 border ⇒ 透明（不画）；其余族没有底色 ⇒ 2px 灰框。
+    expect(decl(themeBlock(source, "dark"), "--editor-line-highlight-border")).toBe("transparent");
+    expect(decl(themeBlock(source, "light"), "--editor-line-highlight-border")).toBe("transparent");
+    for (const [mode, color] of [
+      ["dark", "#282828"],
+      ["light", "#eeeeee"],
+    ] as const) {
+      for (const family of ["modern", "plus", "classic"]) {
+        const block = familyBlock(source, mode, family);
+        expect(decl(block, "--editor-line-highlight-bg"), `${mode}/${family} 不该有底色`).toBe(
+          "transparent",
+        );
+        expect(decl(block, "--editor-line-highlight-border"), `${mode}/${family}`).toBe(color);
+        expect(decl(block, "--editor-line-highlight-border-width"), `${mode}/${family}`).toBe(
+          "2px",
+        );
+      }
+    }
+    // 非空选区时正文这一层整个撤掉（VS Code currentLineHighlight.ts 的 _selectionIsEmpty）。
+    const hidden = stripCssComments(
+      ruleBlock(source, ".panel-host .cm-editor:has(.cm-selectionBackground) .cm-activeLine"),
     );
+    expect(hidden, "有选区时不画正文当前行").toContain("background: transparent");
     const src = stripLineComments(themeSrc());
     expect(src, "CM 默认当前行底色必须接上 token").toMatch(
       /"\.cm-activeLine":\s*\{\s*backgroundColor:\s*"var\(--editor-line-highlight-bg\)"/,
     );
   });
 
-  it("行号两档：常态 --editor-line-number、当前行 --editor-line-number-active", () => {
+  it("行号两档：常态 --editor-line-number、当前行 --editor-line-number-active + 同底色", () => {
     const source = css();
     const gutters = stripCssComments(ruleBlock(source, ".panel-host .cm-editor .cm-gutters"));
     expect(gutters, "行号槽与编辑区同底色").toContain("background: var(--bg)");
@@ -432,9 +468,21 @@ describe("B377 · 源码编辑区版式色（光标 / 选区 / 行号 / 当前�
     const active = stripCssComments(
       ruleBlock(source, ".panel-host .cm-editor .cm-activeLineGutter"),
     );
-    expect(active, "当前行行号提亮，但不另铺底色").toContain("background: transparent");
+    expect(active, "当前行的行号格跟着正文铺底色").toContain(
+      "background: var(--editor-line-highlight-bg)",
+    );
     expect(active, "当前行行号取 active token").toContain(
       "color: var(--editor-line-number-active)",
+    );
+    const box = stripCssComments(
+      ruleBlock(
+        source,
+        ".panel-host .cm-editor .cm-lineNumbers .cm-activeLineGutter",
+        "box-shadow",
+      ),
+    );
+    expect(box, "行号槽那一圈边框只画在行号格上（折叠槽另画会多一道竖线）").toContain(
+      "box-shadow: inset 0 0 0 var(--editor-line-highlight-border-width)",
     );
     const src = stripLineComments(themeSrc());
     expect(src, "CM 的 .cm-gutters 底色必须 var(--bg)").toMatch(
@@ -626,7 +674,7 @@ describe("B380 · 中间区域背景 / HC 边框 / 编辑器交互状态", () =>
     }
   });
 
-  it("HC 的 contrastBorder 补齐：标题栏 / 区块标题 / 卡片 / 分屏 / 条带 / 状态栏", () => {
+  it("HC 的 contrastBorder 补齐：标题栏 / 区块标题 / 卡片 / 分屏 / 条带", () => {
     const source = css();
     const tokens = [
       "--titlebar-border",
@@ -634,7 +682,6 @@ describe("B380 · 中间区域背景 / HC 边框 / 编辑器交互状态", () =>
       "--editor-card-border",
       "--editor-split-border",
       "--tabstrip-border",
-      "--statusbar-border",
       "--activitybar-border",
     ];
     for (const [mode, color] of [
@@ -701,12 +748,15 @@ describe("B380 · 中间区域背景 / HC 边框 / 编辑器交互状态", () =>
       "--editor-selection-highlight",
       "--editor-selection-highlight-border",
       "--editor-line-highlight-bg",
+      "--editor-line-highlight-border-width",
       "--editor-bracket-match-bg",
       "--editor-bracket-match-border",
       "--find-match",
       "--find-match-other",
       "--find-match-border",
       "--find-match-other-border",
+      "--menu-selection-bg",
+      "--menu-selection-border",
     ];
     for (const mode of ["dark", "light"] as const) {
       for (const family of ["2026", "modern", "plus", "classic", "hc"]) {
@@ -757,5 +807,67 @@ describe("B380 · 中间区域背景 / HC 边框 / 编辑器交互状态", () =>
     );
     expect(bad, "前置条件：替身确实改了").not.toBe(src);
     expect(bad, "退化替身不再满足「只有 hc 挂」").not.toContain('family === "hc" ?');
+  });
+});
+
+describe("B381 · 状态栏无描边 / 当前行分档 / 菜单选中色", () => {
+  it("状态栏不画上沿线：VS Code 的 floating panels 把 statusBar.border 关掉了", () => {
+    const source = css();
+    const bar = stripCssComments(ruleBlock(source, ".statusbar"));
+    expect(bar, "状态栏自己的底色/字色还在").toContain("background: var(--statusbar-bg)");
+    expect(bar, "不得再画上沿线").not.toContain("box-shadow");
+    expect(source, "statusBar.border 这颗 token 已无消费者，别再定义").not.toMatch(
+      /--statusbar-border\s*:/,
+    );
+    // 反向验证：把一条 box-shadow 塞回块体必须被上面那条咬住。
+    const bad = `${bar}\n  box-shadow: inset 0 1px 0 #2a2b2c;`;
+    expect(bad, "前置条件：替身确实塞回去了").toContain("box-shadow");
+  });
+
+  it("菜单行 hover/选中：非 HC 走 list.hoverBackground，HC 无底 + activeContrastBorder", () => {
+    const source = css();
+    const sel =
+      ".popup-menu button:hover:not(:disabled), .popup-menu button.has-submenu.submenu-open, .dropdown-option.dd-active";
+    const rule = stripCssComments(ruleBlock(source, sel));
+    expect(rule, "底色走 menu-selection token").toContain("background: var(--menu-selection-bg)");
+    expect(rule, "描边走 menu.selectionBorder").toContain(
+      "outline: 1px solid var(--menu-selection-border)",
+    );
+    expect(rule, "描边画在行盒内").toContain("outline-offset: -1px");
+    expect(stripCssComments(source), "旧的 submenu-open 规则不得再单独写一份").not.toMatch(
+      /\.popup-menu button\.has-submenu\.submenu-open\s*\{[^}]*background:\s*var\(--bg-hover\)/,
+    );
+    // 非 HC：底色 = list.hoverBackground（桌面版菜单组件用的是 defaultMenuStyles 的
+    // listHoverBackground，不是 menu.selectionBackground）；描边透明。
+    for (const [mode, family, bg] of [
+      ["dark", "2026", "#ffffff14"],
+      ["light", "2026", "#00000014"],
+      ["dark", "modern", "#2a2d2e"],
+      ["light", "modern", "#f2f2f2"],
+      ["dark", "plus", "#2a2d2e"],
+      ["light", "plus", "#e8e8e8"],
+      ["dark", "classic", "#2a2d2e"],
+      ["light", "classic", "#e8e8e8"],
+    ] as const) {
+      const block =
+        family === "2026" ? themeBlock(source, mode) : familyBlock(source, mode, family);
+      expect(decl(block, "--menu-selection-bg"), `${mode}/${family} 菜单底色`).toBe(bg);
+      expect(decl(block, "--menu-selection-border"), `${mode}/${family} 菜单描边`).toBe(
+        "transparent",
+      );
+    }
+    // HC：不铺底色，只画一圈 activeContrastBorder（= focusBorder）。
+    for (const [mode, border] of [
+      ["dark", "#f38518"],
+      ["light", "#006bbd"],
+    ] as const) {
+      const block = familyBlock(source, mode, "hc");
+      expect(decl(block, "--menu-selection-bg"), `${mode}/hc 菜单不铺底`).toBe("transparent");
+      expect(decl(block, "--menu-selection-border"), `${mode}/hc 菜单描边`).toBe(border);
+      expect(decl(block, "--menubar-hover-border"), `${mode}/hc 菜单栏描边`).toBe(border);
+    }
+    // 反向：把菜单行的底色换回通用 hover（B381 之前的写法），上面的 token 断言会落空。
+    const bad = rule.replace("background: var(--menu-selection-bg)", "background: var(--bg-hover)");
+    expect(bad, "前置条件：替身确实改了").not.toContain("background: var(--menu-selection-bg)");
   });
 });
