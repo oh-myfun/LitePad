@@ -170,7 +170,7 @@
   --list-selection-border: transparent;
 
   --editor-card-border: #2a2b2c; /* editor.border = surface.border (#2A2B2C) */
-  --editor-split-border: #444444; /* editorGroup.border 默认档 */
+  --editor-split-border: #ffffff17; /* editorGroup.border —— 2026 主题 include 了 dark_modern ⇒ #FFFFFF17（#444444 是没被覆盖时的基座回落档，2026 不落） */
 
   /* B380：条带取 `editorGroupHeader.tabsBackground`，不是 connectedTabsBackground。
      2026 Dark 里这一颗正是 #191A1B = 标题栏 = 状态栏 —— 三块连成一片；
@@ -597,7 +597,7 @@
   --list-selection-border: transparent;
 
   --editor-card-border: #e4e5e6; /* surface.border = editor.border */
-  --editor-split-border: #e7e7e7; /* editorGroup.border 默认档 */
+  --editor-split-border: #e5e5e5; /* editorGroup.border —— 2026 主题 include 了 light_modern ⇒ #E5E5E5（#E7E7E7 是回落档） */
 
   /* B380：tabsBackground（#FAFAFD）= 标题栏 = 状态栏，三块连成一片。 */
   --tab-strip-bg: #fafafd; /* editorGroupHeader.tabsBackground */

@@ -106,7 +106,7 @@ const AREA = {
     "--list-selection-border": "transparent", // HC 才有
     "--editor-fg": "#bbbebf", // editor.foreground
     "--editor-card-border": "#2a2b2c", // editor.border = surface.border
-    "--editor-split-border": "#444444", // editorGroup.border 默认档
+    "--editor-split-border": "#ffffff17", // editorGroup.border（2026 include dark_modern ⇒ #FFFFFF17）
     // B380：条带取 tabsBackground（= 标题栏 = 状态栏），不是 connectedTabsBackground。
     "--tab-strip-bg": "#191a1b", // editorGroupHeader.tabsBackground
     "--tabstrip-border": "#2a2b2c", // editorGroupHeader.tabsBorder
@@ -139,7 +139,7 @@ const AREA = {
     "--list-selection-border": "transparent",
     "--editor-fg": "#202020",
     "--editor-card-border": "#e4e5e6",
-    "--editor-split-border": "#e7e7e7",
+    "--editor-split-border": "#e5e5e5", // editorGroup.border（2026 include light_modern ⇒ #E5E5E5）
     "--tab-strip-bg": "#fafafd",
     "--tabstrip-border": "#f0f1f2",
     "--tab-fg-inactive": "#606060",
