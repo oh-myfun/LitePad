@@ -543,10 +543,11 @@
   /* B379：区块标题取 `sideBarSectionHeader.foreground`（与行内文字的 token 分开）。 */
   color: var(--sidebar-section-fg, #656d76);
 }
-/* B380：三块视图的标题栏共用一个下沿 —— vs `sideBarSectionHeader.border`
+/* B380：四块视图的标题栏共用一个下沿 —— vs `sideBarSectionHeader.border`
    （HC 档是 contrastBorder，其它档为 null ⇒ transparent，看不出来）。 */
 .recent-head,
 .explorer-head,
+.search-head,
 .toc-head {
   box-shadow: inset 0 -1px 0 var(--sidebar-section-border, transparent);
 }
@@ -771,6 +772,347 @@
 }
 .explorer-hint-btn .codicon {
   font-size: 14px;
+}
+
+/* ---------------------------------------------------------------- 搜索视图（B389）
+
+   逐条照 VS Code 的 `media/searchview.css` + `searchView.ts` 的 renderBody，几何值都写出处：
+     · 输入区外面那一圈 = `.search-widgets-container { margin:0 12px 0 2px; padding:6px 0 }`；
+     · 输入框高 26px（searchview.css 那条注明「height 也在 searchWidget.ts 里当常量用」）；
+     · 展开替换那根键 = `.toggle-replace-button`：绝对定位贴在输入区**左缘**、16px 宽、
+       整列高，两行各让 18px（`.search-container / .replace-container { margin-left:18px }`）；
+     · 替换行上边距 6px（`.replace-container { margin-top:6px }`）；
+     · 「⋯」那一截 = `.query-details`（左 18px）+ `.more`（25×16，贴在右缘 -2px），
+       两行 glob 平时 `display:none`，容器挂 `.more` 才露（`.query-details.more .file-types`）；
+     · 计数行 = `.messages { margin-top:-5px }` + `.message { padding:0 22px 8px }`，
+       颜色是 `search.resultsInfoForeground` —— 本应用没有这一格 token，落到「次要文本」
+       那一档 `--fg-muted`（同一读法：这不是正文，是说明）；
+     · 结果行 22px（`.filematch / .linematch { line-height:22px }`），与资源管理器 / 大纲
+       同一档行高；命中色复用编辑器查找高亮那两个 token（VS Code 那边也是同一个
+       `editor.findMatchHighlightBackground`）。
+   ⚠️ `[hidden]` 那几条兜底不能省（B207 那一族坑）：面板与替换行都写了 `display:flex`，
+      作者样式表压得过 UA 的 `[hidden] { display:none }`。 */
+.search-panel {
+  width: 100%;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  background: transparent;
+}
+.search-panel[hidden] {
+  display: none;
+}
+.search-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 4px 0 10px;
+  font-size: var(--fs-meta);
+  line-height: 1;
+}
+.search-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--sidebar-section-fg, #656d76);
+}
+.search-widgets {
+  position: relative;
+  flex: 0 0 auto;
+  box-sizing: content-box;
+  margin: 0 12px 0 2px;
+  padding: 6px 0;
+}
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  height: 26px;
+  /* 给左缘那根 16px 的展开键让位（VS Code 的 margin-left:18px） */
+  margin-left: 18px;
+}
+.search-row-replace {
+  margin-top: 6px;
+}
+.search-row[hidden],
+.search-row-replace[hidden] {
+  display: none;
+}
+.search-field {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 26px;
+}
+/* 正则语法错：输入框描一圈 error 色（VS Code 那边是 `inputOption.activeBorder` 那一族
+   的验证态 `findInput` 的 `.invalid`）。底色不动 —— 一动就把整框染红，读起来像出错了。 */
+.search-field.is-invalid {
+  outline: 1px solid var(--danger, #cf222e);
+  outline-offset: -1px;
+}
+.search-chevron {
+  position: absolute;
+  top: 6px;
+  left: 0;
+  width: 16px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+.search-chevron .codicon {
+  font-size: 14px;
+}
+.search-chevron:hover {
+  background: var(--toolbar-hover-bg, #eee);
+}
+.search-chevron:focus-visible {
+  outline: 2px solid var(--accent, #06c);
+  outline-offset: -2px;
+}
+/* 展开替换后那根键要长到把两行都罩住（VS Code 靠 `height:100%`；这里两行 + 6px 间距） */
+.search-panel.is-replace-shown .search-chevron {
+  height: 58px;
+}
+.search-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  box-sizing: border-box;
+  padding: 3px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg-muted, #656d76);
+  cursor: pointer;
+}
+.search-action:hover:not(:disabled) {
+  background: var(--toolbar-hover-bg, #eee);
+  color: var(--fg, #24292f);
+}
+.search-action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.search-action .codicon {
+  font-size: 16px;
+}
+.search-details {
+  position: relative;
+  min-height: 16px;
+  margin: 0 0 0 18px;
+}
+.search-more {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  width: 25px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  z-index: 2;
+}
+.search-more:hover {
+  background: var(--toolbar-hover-bg, #eee);
+}
+.search-more:focus-visible {
+  outline: 2px solid var(--accent, #06c);
+  outline-offset: -2px;
+}
+.search-glob {
+  display: none;
+}
+.search-details.is-more .search-glob {
+  display: block;
+}
+.search-glob h4 {
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  padding: 4px 0 0;
+  margin: 0;
+  font-size: var(--fs-meta);
+  font-weight: normal;
+  color: var(--fg-muted, #656d76);
+}
+.search-glob-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 25px;
+  padding: 2px 6px;
+  border: 1px solid var(--border, #d0d7de);
+  border-radius: 4px;
+  background: var(--find-field-bg, #f6f7f8);
+  color: var(--fg, #24292f);
+  font-size: var(--fs-ui);
+  font-family: var(--font-sans);
+  outline: none;
+}
+.search-glob-input:focus {
+  outline: 1px solid var(--accent, #06c);
+  outline-offset: -1px;
+}
+.search-count {
+  margin-top: -5px;
+  padding: 0 22px 8px;
+  cursor: default;
+  overflow-wrap: break-word;
+  font-size: var(--fs-ui);
+  line-height: 1.4;
+  color: var(--fg-muted, #656d76);
+}
+.search-count.is-bad {
+  color: var(--danger, #cf222e);
+}
+.search-results {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 0 8px;
+  outline: none;
+}
+.search-lines[hidden] {
+  display: none;
+}
+/* 两层行：文件行在缩进 1 层，命中行再深一层。槽宽一律照资源管理器那一套
+   （22px = 16px 内容 + 6px 右内边距，B373 实测 VS Code `tree.css` 的量）。 */
+.search-file,
+.search-line {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+  height: 22px;
+  padding: 0 6px 0 8px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-size: var(--fs-ui);
+  line-height: 1;
+  color: var(--sidebar-fg, #24292f);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.search-line {
+  padding-left: 16px;
+}
+.search-file:hover,
+.search-line:hover {
+  background: var(--list-hover-bg, #eee);
+  color: var(--list-hover-fg, inherit);
+}
+.search-file[aria-selected="true"],
+.search-line[aria-selected="true"] {
+  background: var(--list-inactive-bg);
+  color: var(--list-inactive-fg);
+}
+.search-results:focus-within .search-file[aria-selected="true"],
+.search-results:focus-within .search-line[aria-selected="true"] {
+  background: var(--list-active-bg);
+  color: var(--list-active-fg);
+}
+.search-file:focus-visible,
+.search-line:focus-visible {
+  outline: 1px solid var(--accent, #0969da);
+  outline-offset: -1px;
+}
+.search-twisty,
+.search-glyph {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 22px;
+  padding-right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.search-glyph {
+  justify-content: flex-start;
+  color: var(--fg-muted, #656d76);
+}
+.search-twisty .codicon {
+  font-size: 16px;
+}
+.search-filename {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* 下伸部：与 `.explorer-name` 同一档理由（clip 框要 ≥ 墨迹高度，别用 1） */
+  line-height: 1.5;
+}
+.search-rel {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.7;
+  font-size: var(--fs-meta);
+}
+.search-badge {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: var(--fs-meta);
+  color: var(--fg-muted, #656d76);
+}
+/* 命中行：行号 + 裁过的预览。`white-space: pre` 是必须的 —— 代码缩进不许被折掉
+   （VS Code `.linematch > .match { white-space:pre; text-overflow:ellipsis }`）。 */
+.search-linenum {
+  flex: 0 0 auto;
+  margin-left: 7px;
+  margin-right: 4px;
+  opacity: 0.7;
+  font-size: 0.9em;
+}
+.search-linetext {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+  font-family: var(--font-mono);
+  font-size: var(--fs-ui);
+  line-height: 1.5;
+}
+.search-hit {
+  background: var(--find-match-other);
+  outline: 1px solid var(--find-match-other-border);
+  outline-offset: -1px;
+}
+.search-note {
+  padding: 4px 10px;
+  font-size: var(--fs-ui);
+  color: var(--fg-muted, #656d76);
 }
 
 /* 大纲宽度分隔条（B195 改版）：**不再是贴着面板的一条细线** ——

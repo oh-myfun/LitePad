@@ -202,13 +202,18 @@ function schedule(): void {
   }, DEBOUNCE_MS);
 }
 
-/** 回车 / 点搜索键：不等去抖，立刻发。在飞的定时器要一起取消，否则会跑出第二次。 */
-export function runNow(): void {
+/**
+ * 回车 / 点搜索键：不等去抖，立刻发。在飞的定时器要一起取消，否则会跑出第二次。
+ *
+ * 回的是这一发的 promise：调用方里「替换完要重搜、然后把这一发的结果念出来」那一处
+ * 必须等重绘跑完，否则它写进计数行的那句话会被重绘盖掉（同 tick 内没人看得见）。
+ */
+export function runNow(): Promise<void> {
   if (timer !== null) {
     clearTimeout(timer);
     timer = null;
   }
-  void run();
+  return run();
 }
 
 /** 取消：作废在飞的那一发与没起的定时器（VS Code 搜索进行时输入框右边那颗「取消」）。 */
@@ -297,7 +302,9 @@ async function run(): Promise<void> {
     }
   } catch (e: unknown) {
     if (id !== seq) return;
-    error = String(e);
+    // 原话进计数行 —— 但 `String(new Error("…"))` 前面挂着「Error: 」那层壳：
+    // 那一层是 JS 的记账，不是给用户读的话。
+    error = e instanceof Error ? e.message : String(e);
     clearResults();
   } finally {
     // 只认自己这一发：旧回包不许把新一发的「正在搜索」熄掉（那会表现成转圈忽闪忽停）
@@ -407,8 +414,21 @@ function scanOpenDocs(): FileGroup[] {
       // 命中按位置升序回来，同一行只留第一条 ⇒ 与后端「一条命中 = 一行」同口径
       if (line.number === lastLine) continue;
       lastLine = line.number;
-      const cut = makePreview(line.text, m.from - line.from, m.to - m.from);
-      rows.push({ line: line.number, preview: cut.preview, start: cut.start, length: cut.length });
+      // CM 的位置是 **UTF-16 单元**，后端给的 `column` / `start` / `length` 是**字符**。
+      // 这里必须换算：不换算的话，一行里有 emoji 时列号会多算一格，
+      // 高亮与「点过去选中」都往后偏（emoji 之后每格都差一个单元）。
+      const unitStart = m.from - line.from;
+      const charStart = charLen(line.text.slice(0, unitStart));
+      const charSpan = charLen(line.text.slice(unitStart, m.to - line.from));
+      const cut = makePreview(line.text, charStart, charSpan);
+      rows.push({
+        line: line.number,
+        preview: cut.preview,
+        start: cut.start,
+        length: cut.length,
+        // 与后端同一口径：整行里的字符列号（1 起），跳过去按它摆光标
+        column: charStart + 1,
+      });
     }
     if (rows.length === 0) continue;
     out.push({
@@ -421,6 +441,11 @@ function scanOpenDocs(): FileGroup[] {
     });
   }
   return out;
+}
+
+/** 一段 UTF-16 文本里有几个字符（码位）：emoji 这类代理对算一个。 */
+function charLen(text: string): number {
+  return Array.from(text).length;
 }
 
 // ---------------------------------------------------------------- 折叠
@@ -461,6 +486,16 @@ export function summaryMessage(): string {
   const where = scope === "folder" ? `${files} 个文件` : `${files} 个打开的文档`;
   const base = `在 ${where}中发现 ${matches} 个结果`;
   return limitHit ? `${base}（已达 ${RESULT_CAP} 条上限，这不是全部）` : base;
+}
+
+/**
+ * 计数行此刻说的是**坏消息**吗（非法 / 后端报错 / 一条没搜着）。
+ * 界面要靠它决定那一行染不染红 —— 判据留在这里，视图不拿文案再猜一遍
+ * （「这句话里没有『发现』两个字」那种写法，改一次文案就悄悄失效）。
+ */
+export function isBadNews(): boolean {
+  if (query.text && running) return false;
+  return invalid || error !== "" || (!!query.text && matches === 0);
 }
 
 /** 范围说明那一截（盘上那一条不给额外话：根就在标题栏下面摆着）。 */

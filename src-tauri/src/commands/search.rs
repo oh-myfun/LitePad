@@ -44,6 +44,10 @@ const LEADING_CONTEXT: usize = 26;
 /// 一条命中 = **一行**（同一行里出现三次也只占一行，与 VS Code 的结果树同形：
 /// 那边 `previewOptions.matchLines` 默认 1）。`start` / `length` 是**字符**下标
 /// （不是字节），前端直接按它把预览切成「前 / 命中 / 后」三段画高亮。
+///
+/// ⚠️ `start` 是**预览里**的下标（预览可能被 `LEADING_CONTEXT` 裁过、补过省略号），
+/// 所以它不能拿来摆光标 —— 跳过去要用 `column`：命中在**整行**里的字符列号（1 起）。
+/// VS Code 那边也是两个数分开用的（渲染用裁过的预览，`rangeInFile` 用真区间）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchMatch {
@@ -51,6 +55,8 @@ pub struct SearchMatch {
     pub preview: String,
     pub start: u32,
     pub length: u32,
+    /// 命中在原始行里的字符列号（1 起）—— 点开这一条时按它选中命中本身。
+    pub column: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -436,6 +442,7 @@ fn search_one_file(
             preview,
             start: ps as u32,
             length: pl as u32,
+            column: (start + 1) as u32,
         });
     }
     if matches.is_empty() {
@@ -853,6 +860,42 @@ mod tests {
         assert!(text.chars().count() <= PREVIEW_CHARS);
         let (short, s2, l2) = make_preview("hello 世界", 6, 2);
         assert_eq!((short.as_str(), s2, l2), ("hello 世界", 6, 2));
+    }
+
+    /// B389 · `column` 是**整行**里的字符列号（1 起）：预览被裁过（补了省略号、高亮起点
+    /// 跟着挪）之后它仍要指着真实那一格。前端点一条命中要靠它把光标摆到命中上 ——
+    /// 拿 `start` 去摆会偏掉一个「上下文长度」。
+    #[test]
+    fn column_is_the_real_line_position_even_after_a_cut_preview() {
+        let dir = tmp("column");
+        put(
+            &dir,
+            "a.txt",
+            format!("{}needle{}", "x".repeat(100), "y".repeat(20)).as_bytes(),
+        );
+        let rep = search_folder(req(&dir, "needle")).expect("搜得到");
+        let m = &rep.files[0].matches[0];
+        assert!(m.preview.starts_with('…'), "预览确实被裁过");
+        assert_ne!(m.start, 100, "预览里那个起点已经不是行内列号了");
+        assert_eq!(m.column, 101, "整行里的字符列号，1 起");
+        assert_eq!(m.length, 6, "长度两边同一口径（被裁时才是 min）");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 中文列号按**字符**算，不按字节：VS Code 那边也是码位/字符口径，字节数会把光标
+    /// 推到后半格去。
+    #[test]
+    fn column_counts_characters_not_bytes() {
+        let dir = tmp("column-cjk");
+        put(&dir, "b.md", "第一章 needle 结尾\n".as_bytes());
+        let rep = search_folder(req(&dir, "needle")).expect("搜得到");
+        let m = &rep.files[0].matches[0];
+        assert_eq!(
+            m.column, 5,
+            "「第一章 」= 4 个字符，命中在第 5 个字符上（不是 10 字节）"
+        );
+        assert_eq!(m.preview.chars().nth(m.start as usize), Some('n'));
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

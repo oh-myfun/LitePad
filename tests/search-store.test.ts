@@ -51,7 +51,13 @@ import * as store from "../src/search/store";
 
 /** 盘上一条命中（Rust `SearchFileHit` 的线上形状）。 */
 function hit(path: string, rel: string, name: string, line: number, preview: string) {
-  return { path, rel, name, truncated: false, matches: [{ line, preview, start: 0, length: 2 }] };
+  return {
+    path,
+    rel,
+    name,
+    truncated: false,
+    matches: [{ line, preview, start: 0, length: 2, column: 1 }],
+  };
 }
 
 function report(files: unknown[], matches = 0, limitHit = false): unknown {
@@ -202,6 +208,41 @@ describe("B389 · 范围分流", () => {
     store.setQuery({ text: "aa" });
     await vi.advanceTimersByTimeAsync(300);
     expect(store.getGroups()).toEqual([]);
+  });
+});
+
+describe("B389 · 列号口径：字符列，不是 UTF-16 单元", () => {
+  // 点一条命中要把光标摆到**真**位置。两支的起点不同：后端算的是字符，
+  // CodeMirror 给的是 UTF-16 单元 ⇒ 只有内存那一支需要换算，而换算漏掉的话
+  // 「一行里有 emoji」时列号会多算，高亮与选中一起往后偏。
+  it("盘上那一支：后端给的三格原样透传，不做二次换算", async () => {
+    h.root = "E:\\root";
+    h.report = report(
+      [
+        {
+          path: "E:\\root\\a.md",
+          rel: "a.md",
+          name: "a.md",
+          truncated: false,
+          matches: [{ line: 1, preview: "😀😀 needle", start: 3, length: 6, column: 4 }],
+        },
+      ],
+      1,
+    );
+    store.setQuery({ text: "needle" });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(store.getGroups()[0].rows[0]).toMatchObject({ start: 3, length: 6, column: 4 });
+  });
+
+  it("内存那一支：emoji 占两个单元也只算一列", async () => {
+    openDoc(1, "E:\\a.md", "😀😀 needle 在后头\nneedle 在第一行");
+    store.setQuery({ text: "needle" });
+    await vi.advanceTimersByTimeAsync(300);
+    const rows = store.getGroups()[0].rows;
+    expect(rows.map((r) => r.column)).toEqual([4, 1]);
+    for (const r of rows) {
+      expect([...r.preview].slice(r.start, r.start + r.length).join("")).toBe("needle");
+    }
   });
 });
 

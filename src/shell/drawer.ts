@@ -105,7 +105,10 @@ export function setDrawer(view: DrawerView | null, persist = true): void {
 
 /** 盘上那格认不认：未知值（手改过文件 / 别的版本写的串）一律回落大纲，不许把壳搞崩。 */
 function viewFromSetting(raw: string | undefined): DrawerView {
-  return raw === "recent" || raw === "explorer" ? raw : "toc";
+  // B389：第四块「搜索」进白名单。⚠️ 漏一格的后果不是报错而是**静默回落大纲**：
+  // 用户上次开着搜索、下次启动开的是大纲，而 `drawer_view` 那一格照旧写着 "search"
+  // （收起时不覆盖），于是每次启动都错一块 —— 且没人说话。
+  return raw === "recent" || raw === "explorer" || raw === "search" ? raw : "toc";
 }
 
 /**

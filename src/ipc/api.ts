@@ -845,12 +845,15 @@ export function assocOpenSystemSettings(): Promise<void> {
  *
  * `start` / `length` 是 `preview` 里的**字符**下标（不是字节），面板直接按它把预览切成
  * 「前 / 命中 / 后」三段画高亮 —— 与 VS Code 的结果行同形。
+ * ⚠️ 摆光标要用 `column`（整行里的字符列号，1 起），**不是** `start`：预览可能带着
+ * 上下文一起裁过、还补了一个省略号格，两者差的正是那截上下文长度。
  */
 export interface SearchMatchRow {
   line: number;
   preview: string;
   start: number;
   length: number;
+  column: number;
 }
 
 /** 一个文件（结果树的第一层，对应 Rust `search::SearchFileHit`）。 */
@@ -889,7 +892,7 @@ export interface SearchArgs {
   maxResults?: number;
 }
 
-/** 在打开的文件夹里递归搜索（VS Code 搜索视图那一条：`Ctrl+Shift+F`）。 */
+/** 在打开的文件夹里递归搜索（VS Code 搜索视图那一条：「在文件中查找」）。 */
 export function searchInFolder(a: SearchArgs): Promise<SearchReport> {
   return invoke<SearchReport>("search_in_folder", {
     root: a.root,

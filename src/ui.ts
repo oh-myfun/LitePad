@@ -117,6 +117,30 @@ const explorerRefresh = el<HTMLButtonElement>("explorer-refresh");
 const explorerCollapse = el<HTMLButtonElement>("explorer-collapse");
 const explorerNewFile = el<HTMLButtonElement>("explorer-new-file");
 const explorerNewDir = el<HTMLButtonElement>("explorer-new-dir");
+// B389：侧栏第四块 —— 搜索。显隐与点亮态同归外壳 `setDrawer`，这里只交出节点本身
+// （口径同上面三块）。输入区那一截全是要接线的事件源，所以一颗都单独取出来：
+// ⚠️ 别在 panel.ts 里 `querySelector` 现找 —— 少了哪一颗只有等到用户点到才炸，
+//    而 `el()` 在模块求值期就抛，缺 id 当场暴露（这套纪律见文件头）。
+const sideSearch = el<HTMLButtonElement>("side-search");
+const searchPanel = el("search-panel");
+const searchResults = el("search-results");
+const searchCount = el("search-count");
+const searchInput = el<HTMLInputElement>("search-input");
+const searchCase = el<HTMLButtonElement>("search-case");
+const searchWord = el<HTMLButtonElement>("search-word");
+const searchRegex = el<HTMLButtonElement>("search-regex");
+const searchToggleReplace = el<HTMLButtonElement>("search-toggle-replace");
+const searchReplaceRow = el("search-replace-row");
+const searchReplaceInput = el<HTMLInputElement>("search-replace-input");
+const searchReplaceAll = el<HTMLButtonElement>("search-replace-all");
+const searchDetails = el("search-details");
+const searchDetailsToggle = el<HTMLButtonElement>("search-details-toggle");
+const searchInclude = el<HTMLInputElement>("search-include");
+const searchExclude = el<HTMLInputElement>("search-exclude");
+const searchRefresh = el<HTMLButtonElement>("search-refresh");
+const searchCollapseAll = el<HTMLButtonElement>("search-collapse-all");
+const searchClear = el<HTMLButtonElement>("search-clear");
+const searchStop = el<HTMLButtonElement>("search-stop");
 // B353：按钮列底部那颗**设置**键。它是动作不是视图 —— 不进 `registerDrawerView`、
 // 没有 `aria-pressed`，点亮态与 `setDrawer` 无关（接线见 `prefs.ts` 的 setupSettingsEntry）。
 const sideSettings = el<HTMLButtonElement>("side-settings");
@@ -423,6 +447,26 @@ export {
   explorerCollapse,
   explorerNewFile,
   explorerNewDir,
+  sideSearch,
+  searchPanel,
+  searchResults,
+  searchCount,
+  searchInput,
+  searchCase,
+  searchWord,
+  searchRegex,
+  searchToggleReplace,
+  searchReplaceRow,
+  searchReplaceInput,
+  searchReplaceAll,
+  searchDetails,
+  searchDetailsToggle,
+  searchInclude,
+  searchExclude,
+  searchRefresh,
+  searchCollapseAll,
+  searchClear,
+  searchStop,
   sideSettings,
   tocGrip,
   sidebarToggle,

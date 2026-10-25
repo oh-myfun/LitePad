@@ -83,7 +83,7 @@ describe("B201 左栏几何：卡片画完整一圈 + 按钮列内部分割线 +
     expect(seam, "点亮宽度就是缝本身那 4px").toMatch(/width:\s*var\(--card-gap\)/);
     expect(seam, "纯视觉反馈：不吃指针，别变成热区").toContain("pointer-events: none");
     expect(preview, "抓取区不得外溢（缝是 4px 就是 4px）").not.toMatch(
-      /\.side-resizer::before\s*\{[^}]*(?:\s|;)\s*left:\s*-|right:\s*-/,
+      /\.side-resizer::before\s*\{[^}]*(?:\s|;)\s*(?:left|right):\s*-/,
     );
     // 点亮 = sash.hoverBorder → focusBorder，即我们的 --accent
     const lit = preview.match(/\.side-resizer:hover::before[\s\S]{0,200}?\{[^}]*\}/)?.[0] ?? "";
@@ -431,7 +431,7 @@ describe("B196 卡片几何：拖拽区 = 卡片缝隙，卡片到窗口边缘�
       "pointer-events: none",
     );
     expect(preview, "不得再出现外溢式抓取热区（左右各撑 3px 那版，比 VS Code 宽一倍）").not.toMatch(
-      /\.side-resizer::before\s*\{[^}]*(?:\s|;)\s*left:\s*-|right:\s*-/,
+      /\.side-resizer::before\s*\{[^}]*(?:\s|;)\s*(?:left|right):\s*-/,
     );
   });
 
@@ -1051,8 +1051,11 @@ describe("B353 侧栏底部「设置」入口：最后一颗 + 动作不是视�
   it("① 它是按钮列的**最后一颗**，顺序 = 资源管理器 / 最近打开 / 大纲 / 设置", () => {
     const seg = sideBarSeg();
     const ids = [...seg.matchAll(/id="(side-[a-z]+)"/g)].map((m) => m[1]);
-    expect(ids, "按钮列的读法顺序（上三颗切视图，最后一颗是动作）").toEqual([
+    // B389：搜索键插在资源管理器之后 —— VS Code 活动栏的次序就是 Explorer → Search，
+    // 「在文件夹里搜」跟着那棵树走；上四颗切视图，最后一颗（设置）是动作。
+    expect(ids, "按钮列的读法顺序（上四颗切视图，最后一颗是动作）").toEqual([
       "side-explorer",
+      "side-search",
       "side-recent",
       "side-outline",
       "side-settings",

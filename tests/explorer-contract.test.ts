@@ -96,23 +96,30 @@ describe("B314 资源管理器跨层契约", () => {
     );
   });
 
-  it("外壳认得第三块：类型、回落判据、回放都要跟着走", () => {
-    expect(api, "DrawerViewName 要有 explorer").toContain(`"toc" | "recent" | "explorer"`);
-    expect(drawer, "盘上未知值回落大纲，但 explorer 必须认").toContain(
-      `raw === "recent" || raw === "explorer"`,
+  it("外壳认得第四块：类型、回落判据、回放都要跟着走", () => {
+    // B314 加 explorer、B389 加 search：白名单漏一格的后果不是报错，而是**静默回落大纲**
+    // （用户上次开着搜索，下次启动开的是大纲，而 `drawer_view` 照旧写着一串没人认的值）。
+    expect(api, "DrawerViewName 要有 explorer 与 search").toContain(
+      `"toc" | "recent" | "explorer" | "search"`,
     );
-    // 反向：只认 recent 的那一版必须被现在的判据拒掉
+    expect(drawer, "盘上未知值回落大纲，但 explorer / search 必须认").toContain(
+      `raw === "recent" || raw === "explorer" || raw === "search"`,
+    );
+    // 反向：只认到 explorer 的那一版必须被现在的判据拒掉
     const degraded = drawer.replace(
+      'raw === "recent" || raw === "explorer" || raw === "search" ? raw : "toc"',
       'raw === "recent" || raw === "explorer" ? raw : "toc"',
-      'raw === "recent" ? raw : "toc"',
     );
-    expect(degraded, "退化串要先自证原句还在").toContain('raw === "recent" ? raw : "toc"');
+    expect(degraded, "退化串要先自证原句还在").toContain(
+      'raw === "recent" || raw === "explorer" ? raw : "toc"',
+    );
+    expect(degraded, "退化掉的白名单不认 search ⇒ 判据必须落空").not.toContain('raw === "search"');
     expect(rustSettings, "Rust 那侧 drawer_view 仍是一串，不校验枚举").toContain(
       "pub drawer_view: String",
     );
   });
 
-  it("三块视图各自挂自己那颗按钮的点击（登记 ≠ 挂线，真机抓到过漏挂）", () => {
+  it("四块视图各自挂自己那颗按钮的点击（登记 ≠ 挂线，真机抓到过漏挂）", () => {
     // `registerDrawerView` 只管「显隐与亮灭怎么算」，点击监听归各视图自己挂。
     // 漏挂的表现是「那颗键看着正常、点下去毫无反应」，而 jsdom 那侧全是
     // 「程序里调 setDrawer 再断言亮灭」，照不出来 ⇒ 这一条按源码串钉住三块。
@@ -120,6 +127,8 @@ describe("B314 资源管理器跨层契约", () => {
       ["src/toc.ts", "sideOutline"],
       ["src/recents/panel.ts", "sideRecent"],
       ["src/explorer/panel.ts", "sideExplorer"],
+      // B389：搜索那颗（真机抓过 B314-8 的死键，这一条就是为了让它不能再发生一次）
+      ["src/search/panel.ts", "sideSearch"],
     ];
     for (const [file, ref] of wiring) {
       expect(read(file), `${ref} 必须挂 click（不然按钮列那颗是死的）`).toMatch(

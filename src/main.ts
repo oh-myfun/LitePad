@@ -234,6 +234,9 @@ import {
   toggleExplorer,
 } from "./explorer/panel";
 import { setupPathRewiring } from "./explorer/paths";
+// B389：侧栏搜索视图（第四块展开区）。`setupSearch` 装输入区、结果树，并把自己登记进外壳；
+// 键位入口（`edit.findInFiles` → `openSearchView`）排在下一发，此刻只有按钮列那颗能打开它。
+import { setupSearch } from "./search/panel";
 import { setRoot as setExplorerRoot } from "./explorer/store";
 import { initRecentsStore } from "./recents/store";
 import type { WindowScrollPosition } from "./core/events";
@@ -1222,6 +1225,10 @@ async function bootstrap(): Promise<void> {
     setupExplorer();
     const folderRoot = settings?.folder_root ?? "";
     if (folderRoot) setExplorerRoot(folderRoot);
+    // B389：搜索排在同一处、同样只给主窗口。它排在 `setExplorerRoot` 之后不是偶然 ——
+    // 搜索的范围判据问的就是资源管理器缓存里那个根（`store.ts` 的 `searchRoot`），
+    // 根先搬进来，第一次重绘才知道该说「搜文件夹」还是「只搜已打开的文档」。
+    setupSearch();
   }
 
   // 备份区孤儿清理：副本文件本身不含「属于哪个标签」的索引，认领全靠会话，

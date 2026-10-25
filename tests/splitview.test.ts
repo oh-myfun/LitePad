@@ -835,7 +835,7 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
       "pointer-events: none",
     );
     expect(previewCss, "侧栏抓取区不得外溢（= 缝本身 4px）").not.toMatch(
-      /\.side-resizer::before\s*\{[^}]*(?:\s|;)\s*left:\s*-|right:\s*-/,
+      /\.side-resizer::before\s*\{[^}]*(?:\s|;)\s*(?:left|right):\s*-/,
     );
     // 三点把手：静息淡（--fg-muted）→ **悬停/拖拽让位给 sash 高亮**（opacity: 0）
     // ⚠️ `\.toc-grip` 会先撞上前面的 `.side-resizer.is-off .toc-grip`（那条只有
@@ -982,7 +982,7 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     // B201：缝里那条线改成 VS Code sash 的口径 —— 平时什么都不画（本体透明），
     // ::before 悬停/拖拽才整条 4px 点亮，只当视觉反馈。
     expect(previewCss, "侧栏抓取区不外溢（抓取 = 缝 = 4px）").not.toMatch(
-      /\.side-resizer::before\s*\{[^}]*(?:\s|;)\s*left:\s*-|right:\s*-/,
+      /\.side-resizer::before\s*\{[^}]*(?:\s|;)\s*(?:left|right):\s*-/,
     );
     expect(previewCss, "seam 平时不常驻（B201：对齐 VS Code sash 默认态）").toMatch(
       /\.side-resizer::before\s*\{[^}]*background:\s*transparent/,

@@ -216,6 +216,20 @@
               aria-label="资源管理器"
               aria-pressed="false"
             ></button>
+            <!-- B389：搜索。插在资源管理器之后 —— VS Code 活动栏的次序就是 Explorer → Search，
+                 而「在文件夹里搜」这件事本来就跟着那棵树走（没打开文件夹时模型层退回搜
+                 已打开的文档，并在计数行下面说明这一点）。
+                 与另外三块互斥展开：点亮态与 `drawer_view` 归外壳 `setDrawer`（B307 那一层），
+                 ⚠️ 但**点击不在那一层** —— 见 B314-8 那条教训（登记视图 ≠ 挂按钮）。 -->
+            <button
+              id="side-search"
+              class="side-btn"
+              type="button"
+              data-tip="搜索"
+              data-tip-placement="right"
+              aria-label="搜索"
+              aria-pressed="false"
+            ></button>
             <!-- B305：「最近打开」。与另外两块互斥展开（同时只露一块）：互斥由外壳
                  `setDrawer(view)` 一处保证（见下面 #side-drawer），每颗键只管「轮到我没」。
                  首屏不写 hidden 之外的状态：名单是历史账，不像大纲那样跟着文档走。 -->
@@ -360,6 +374,165 @@
                    名字与路径都由 JS 画（src/explorer/panel.ts），全路径走文本档提示
                    （setTextTip：跟鼠标、不画尖尖），与标签 / 大纲 / 最近打开同一档。 -->
               <div id="explorer-tree" class="explorer-tree" role="tree" aria-label="文件树"></div>
+            </aside>
+            <!-- B389：搜索（「在文件中查找」那一块），展开区的第四块。结构与资源管理器同形（标题栏常驻 +
+                 列表滚动），差别全在**上半截**：VS Code 把输入区也放在这一列里 ——
+                 `searchView.ts` 的 renderBody 次序是 `.search-widgets-container`（搜索行 →
+                 替换行 → `.query-details`）→ `.messages` → 结果树。这里照它排，不发明
+                 「输入区浮在结果之上」那种改动。
+                 首屏 `hidden`：轮不到这块时由外壳 `setDrawer` 写 hidden（B307 那条纪律）。 -->
+            <aside id="search-panel" class="search-panel" hidden>
+              <div class="search-head">
+                <span class="search-title">搜索</span>
+                <button
+                  id="search-refresh"
+                  class="toc-head-btn"
+                  type="button"
+                  data-tip="重新搜索"
+                  aria-label="重新搜索"
+                ></button>
+                <!-- 全量键**一颗**切换（口径同大纲那颗 · B209）：字形 / aria-label / 提示
+                     三处同源，由 panel.ts 一处刷，不写死在骨架里。 -->
+                <button
+                  id="search-collapse-all"
+                  class="toc-head-btn"
+                  type="button"
+                  data-tip="全部折叠"
+                  aria-label="全部折叠"
+                  aria-pressed="false"
+                ></button>
+                <!-- 「清除搜索结果」用 `clear-all` 而不是资源管理器那颗 `trash`：
+                     那边删的是**账**（名单清干净），这边清的只是**这一屏**（盘上一个字节不动）。 -->
+                <button
+                  id="search-clear"
+                  class="toc-head-btn"
+                  type="button"
+                  data-tip="清除搜索结果"
+                  aria-label="清除搜索结果"
+                ></button>
+                <!-- 取消：只在「正在搜索」时露出来（VS Code 的 search-stop 在同一排随进度出现）。 -->
+                <button
+                  id="search-stop"
+                  class="toc-head-btn"
+                  type="button"
+                  data-tip="取消搜索"
+                  aria-label="取消搜索"
+                  hidden
+                ></button>
+              </div>
+              <div class="search-widgets">
+                <!-- 展开替换行那颗 chevron：VS Code 的 `.toggle-replace-button` 是一根**绝对定位
+                     贴在输入区左缘**的 16px 宽竖条（searchview.css），两行各留 18px 边距让位。
+                     与悬浮查找栏那颗同一做法，所以复用 `.find-chevron` 的观感、类名各走各的。 -->
+                <button
+                  id="search-toggle-replace"
+                  class="search-chevron"
+                  type="button"
+                  data-tip="切换替换"
+                  aria-label="展开替换"
+                  aria-expanded="false"
+                ></button>
+                <div class="search-row">
+                  <span class="find-field search-field">
+                    <input
+                      id="search-input"
+                      class="search-input"
+                      type="text"
+                      placeholder="搜索"
+                      spellcheck="false"
+                      aria-label="搜索"
+                    />
+                    <!-- 三档开关嵌在输入框右内侧（VS Code 的 `.controls`），激活态底色 + 边框 +
+                         字形三件套一起换（见 global.css `.find-toggle.on`）。 -->
+                    <span class="find-toggles">
+                      <button
+                        id="search-case"
+                        class="find-toggle"
+                        type="button"
+                        aria-pressed="false"
+                        aria-label="区分大小写"
+                      ></button>
+                      <button
+                        id="search-word"
+                        class="find-toggle"
+                        type="button"
+                        aria-pressed="false"
+                        aria-label="全词匹配"
+                      ></button>
+                      <button
+                        id="search-regex"
+                        class="find-toggle"
+                        type="button"
+                        aria-pressed="false"
+                        aria-label="使用正则表达式"
+                      ></button>
+                    </span>
+                  </span>
+                </div>
+                <div id="search-replace-row" class="search-row search-row-replace" hidden>
+                  <span class="find-field search-field">
+                    <input
+                      id="search-replace-input"
+                      class="search-input"
+                      type="text"
+                      placeholder="替换为"
+                      spellcheck="false"
+                      aria-label="替换为"
+                    />
+                  </span>
+                  <button
+                    id="search-replace-all"
+                    class="search-action"
+                    type="button"
+                    data-tip="全部替换"
+                    aria-label="全部替换"
+                  ></button>
+                </div>
+                <!-- 「⋯」+ 两行 glob = VS Code 的 `.query-details`：那颗键平时独占一条细行
+                     （贴在右缘），展开才让出「要包含的文件 / 要排除的文件」。 -->
+                <div id="search-details" class="search-details">
+                  <button
+                    id="search-details-toggle"
+                    class="search-more"
+                    type="button"
+                    data-tip="切换搜索筛选"
+                    aria-label="切换搜索筛选"
+                    aria-expanded="false"
+                  ></button>
+                  <div class="search-glob">
+                    <h4>要包含的文件</h4>
+                    <input
+                      id="search-include"
+                      class="search-glob-input"
+                      type="text"
+                      placeholder="例如 *.md, src/**/include"
+                      spellcheck="false"
+                      aria-label="要包含的文件"
+                    />
+                  </div>
+                  <div class="search-glob">
+                    <h4>要排除的文件</h4>
+                    <input
+                      id="search-exclude"
+                      class="search-glob-input"
+                      type="text"
+                      placeholder="例如 node_modules, *.log"
+                      spellcheck="false"
+                      aria-label="要排除的文件"
+                    />
+                  </div>
+                </div>
+                <!-- 计数行 = VS Code 的 `.messages > .message`（上沿 -5px、左右 22px 内缩、
+                     颜色走 `search.resultsInfoForeground`）。它说「搜到多少 / 在哪儿搜的」，
+                     与结果树里那一屏是两件事，所以留在树外面。 -->
+                <div id="search-count" class="search-count" role="status"></div>
+              </div>
+              <div
+                id="search-results"
+                class="search-results"
+                role="tree"
+                aria-label="搜索结果"
+              ></div>
             </aside>
           </div>
         </div>

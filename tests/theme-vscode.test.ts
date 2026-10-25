@@ -698,9 +698,10 @@ describe("B380 · 中间区域背景 / HC 边框 / 编辑器交互状态", () =>
       "box-shadow: inset 0 -1px 0 var(--titlebar-border)",
     );
     const heads = stripCssComments(
-      ruleBlock(preview(), ".recent-head, .explorer-head, .toc-head", "box-shadow"),
+      // B389 起是四块（搜索标题栏也在这一条里）：选择器列表按 preview.css 的书写顺序取。
+      ruleBlock(preview(), ".recent-head, .explorer-head, .search-head, .toc-head", "box-shadow"),
     );
-    expect(heads, "侧栏三块标题栏共用 sideBarSectionHeader.border").toContain(
+    expect(heads, "侧栏四块标题栏共用 sideBarSectionHeader.border").toContain(
       "box-shadow: inset 0 -1px 0 var(--sidebar-section-border, transparent)",
     );
     // 反向：把 HC 的 titleBar.border 换成 transparent，上面这条会落空（防恒真）
