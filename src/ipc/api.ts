@@ -98,8 +98,11 @@ export interface SavedFile {
  */
 export type PreviewWidth = "standard" | "wide" | "full";
 
-/** 左栏展开区里「此刻轮到哪一块」（B312；B314 加了第三块资源管理器）。外壳 `DrawerView` 是这个别名的再导出。 */
-export type DrawerViewName = "toc" | "recent" | "explorer";
+/**
+ * 左栏展开区里「此刻轮到哪一块」（B312；B314 加了第三块资源管理器；B389 加了第四块搜索）。
+ * 外壳 `DrawerView` 是这个别名的再导出。
+ */
+export type DrawerViewName = "toc" | "recent" | "explorer" | "search";
 
 export interface Settings {
   theme: string;
@@ -166,7 +169,8 @@ export interface Settings {
    */
   toc_open: boolean;
   /**
-   * B312：展开区**摊开的是哪一块**（`toc` 大纲 / `recent` 最近打开 / `explorer` 资源管理器）。
+   * B312：展开区**摊开的是哪一块**（`toc` 大纲 / `recent` 最近打开 / `explorer` 资源管理器
+   * / `search` 搜索）。
    *
    * 与 `toc_open` 是一对：那颗记「开没开」，这颗记「开着的是谁」。收起时**不覆盖**
    * 这一颗（保留最后一次摊开的那块）⇒ 拖分隔条拖回来、与下次启动都指向同一块。
@@ -832,6 +836,93 @@ export function assocSetMany(exts: string[], on: boolean): Promise<AssocEntry[]>
 /** 打开系统「默认应用」设置页（UserChoice 档只能用户在那儿确认）。 */
 export function assocOpenSystemSettings(): Promise<void> {
   return invoke<void>("assoc_open_system_settings");
+}
+
+// ---------------------------------------------------------------- 跨文件搜索（B389）
+
+/**
+ * 一条命中 = **一行**（对应 Rust `search::SearchMatch`，字段 camelCase）。
+ *
+ * `start` / `length` 是 `preview` 里的**字符**下标（不是字节），面板直接按它把预览切成
+ * 「前 / 命中 / 后」三段画高亮 —— 与 VS Code 的结果行同形。
+ */
+export interface SearchMatchRow {
+  line: number;
+  preview: string;
+  start: number;
+  length: number;
+}
+
+/** 一个文件（结果树的第一层，对应 Rust `search::SearchFileHit`）。 */
+export interface SearchFileRow {
+  /** 绝对路径：点开一条命中要拿它去开文件 */
+  path: string;
+  /** 相对搜索根的 posix 路径（文件行右边那截灰字显示它） */
+  rel: string;
+  name: string;
+  matches: SearchMatchRow[];
+  /** 这个文件的行被后端单文件上限裁过 ⇒ 文件行挂「…」 */
+  truncated: boolean;
+}
+
+/** 一次搜索的回包（对应 Rust `search::SearchReport`）。 */
+export interface SearchReport {
+  files: SearchFileRow[];
+  /** 匹配行总数（裁掉的那部分不算） */
+  matches: number;
+  /** 撞到后端总数 / 文件数上限才算 true ⇒ 才许说「这只是子集」 */
+  limitHit: boolean;
+  /** 实际扫过多少个候选文件 */
+  scanned: number;
+}
+
+export interface SearchArgs {
+  root: string;
+  query: string;
+  caseSensitive?: boolean;
+  wholeWord?: boolean;
+  regex?: boolean;
+  /** 逗号分隔的 glob（"要包含的文件"）；空串 / 省略 = 全收 */
+  include?: string;
+  /** 逗号分隔的 glob（"要排除的文件"）；空串 / 省略 = 不排 */
+  exclude?: string;
+  maxResults?: number;
+}
+
+/** 在打开的文件夹里递归搜索（VS Code 搜索视图那一条：`Ctrl+Shift+F`）。 */
+export function searchInFolder(a: SearchArgs): Promise<SearchReport> {
+  return invoke<SearchReport>("search_in_folder", {
+    root: a.root,
+    query: a.query,
+    caseSensitive: a.caseSensitive ?? false,
+    wholeWord: a.wholeWord ?? false,
+    regex: a.regex ?? false,
+    include: a.include ? a.include : null,
+    exclude: a.exclude ? a.exclude : null,
+    maxResults: a.maxResults ?? null,
+  });
+}
+
+/** 一条磁盘替换请求：查询三档必须与搜索时**同一份**（Rust `search::ReplaceItem`）。 */
+export interface ReplaceItem {
+  path: string;
+  query: string;
+  replacement: string;
+  caseSensitive: boolean;
+  wholeWord: boolean;
+  regex: boolean;
+}
+
+/** 替换的回包：一个文件失败不连坐别的，逐条进 `errors`。 */
+export interface ReplaceReport {
+  filesChanged: number;
+  occurrences: number;
+  errors: string[];
+}
+
+/** 把「没在编辑器里开着」的磁盘文件批量替换掉（保编码、保行尾、原子写）。 */
+export function replaceInFiles(items: ReplaceItem[]): Promise<ReplaceReport> {
+  return invoke<ReplaceReport>("replace_in_files", { items });
 }
 
 /** 路径 → 前端 `src` 可用的 Tauri 资产 URL（统一收口再导出，避免散落 import）。 */
