@@ -1096,8 +1096,8 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
  *
  * 注册表读写都走 IPC（`commands/assoc.rs`），本页只管状态展示：
  *   · 整表是**异步**拉的（注册表枚举不适合阻塞建页），先渲染说明与骨架；
- *   · 展示是**勾选网格**（B385 二轮，用户口径：预设格式扩成文本全家桶后
- *     一行一条太长）；每格勾选后用返回的那条就地重画自己（不整表重拉）；
+ *   · 展示是**勾选列表**（B386 三轮，用户口径：一格式一行，网格太散）；每行勾选后
+ *     用返回的那条就地重画自己（不整表重拉）；
  *   · 「注册了但不是系统默认」那档挂「未生效」小标 —— UserChoice 被别的程序
  *     占着时勾了 ≠ 双击生效，必须让用户看得出差别；
  *   · 自定义扩展名也收（Rust 侧校验；拒绝时把错误写在输入行下面）。
@@ -1109,15 +1109,15 @@ function fillAssocPage(body: HTMLElement, opts: SettingsDialogOptions): void {
     "勾选后双击该格式的文件会用 LitePad 打开；取消勾选会还原之前的打开方式。若 Windows 已为某格式记住「用户选择」，可能仍按原程序打开 —— 到「系统默认应用」里确认。";
   body.appendChild(hint);
 
-  // B385 二轮（用户口径）：预设格式扩成文本全家桶、展示从「一行一开关」改成
-  // **勾选网格** —— 三十来个格式一行一条会把页面拉得过长，网格一屏放得下。
+  // B386 三轮（用户口径）：展示从「勾选网格」改回**纵向勾选列表** —— 一格式一行，
+  // 未生效徽章推到行尾，行 hover 走列表高亮 token。
   const list = document.createElement("div");
   list.className = "settings-assoc-list";
   list.setAttribute("role", "group");
   list.setAttribute("aria-label", "关联的文件格式");
   body.appendChild(list);
 
-  /** 一格：native checkbox + `.ext`。注册了但不是系统默认的那档挂「未生效」小标
+  /** 一行：native checkbox + `.ext`。注册了但不是系统默认的那档挂「未生效」小标
    *  （UserChoice 被别的程序占着，见页面说明）。 */
   const renderEntry = (e: AssocEntry): HTMLElement => {
     const label = document.createElement("label");
@@ -1203,7 +1203,7 @@ function fillAssocPage(body: HTMLElement, opts: SettingsDialogOptions): void {
         const exist = list.querySelector<HTMLElement>(`[data-ext="${nu.ext}"]`);
         if (exist) exist.replaceWith(renderEntry(nu));
         else {
-          // 网格按字母序排，插对位置再重画，别甩在末尾
+          // 列表按字母序排，插对位置再重画，别甩在末尾
           const all = Array.from(list.querySelectorAll<HTMLElement>("[data-ext]")).map(
             (el) => el.dataset.ext ?? "",
           );

@@ -1182,7 +1182,7 @@ describe("B305 通用页：最近打开保留数量", () => {
 // 而不是把 28px 抄进第二条守卫里（抄了就等于允许两边各写各的）。
 
 // ---------------------------------------------------------------- B385 文件关联
-describe("B385 设置页「文件关联」分类（B385 二轮：勾选网格）", () => {
+describe("B385 设置页「文件关联」分类（B386 三轮：纵向勾选列表）", () => {
   /** 切到文件关联分类（走真实那一下点击，别直呼内部函数）。 */
   function openAssoc(): void {
     const btn = document.querySelector<HTMLElement>('.settings-nav-item[data-cat="assoc"]');
@@ -1309,6 +1309,17 @@ describe("B385 设置页「文件关联」分类（B385 二轮：勾选网格）
     expect(page, "要给「系统默认应用」入口").toContain("系统默认应用");
     expect(page, "要提取消还原").toContain("还原");
     expect(page, "要挂「未生效」小标").toContain("settings-assoc-badge");
+  });
+
+  it("B386 静态：关联清单是纵向列表（一格式一行），不是换行网格", () => {
+    const css = stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
+    const list = ruleBlock(css, ".settings-assoc-list");
+    expect(cssDecls(list), "清单要单列排").toContain("flex-direction: column");
+    expect(cssDecls(list), "不许再回到 flex 换行网格").not.toContain("flex-wrap");
+    const item = ruleBlock(css, ".settings-assoc-item:hover");
+    expect(cssDecls(item), "行 hover 走列表高亮 token（VS Code 列表行同源）").toContain(
+      "--list-hover-bg",
+    );
   });
 });
 

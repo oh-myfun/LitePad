@@ -591,8 +591,17 @@ export function languageInfoByLabel(label: string): LanguageInfo | null {
   return hit ? toInfo(hit) : null;
 }
 
-/** B365：状态栏浮层的语言清单 —— 直接取注册表顺序（常用语言在前），不另存第二张表。 */
-export const LANGUAGE_LABELS: readonly string[] = REGISTRY.map((e) => e.label);
+/**
+ * B365：状态栏浮层的语言清单；B386 照 VS Code 排序 —— 语言模式选择器在
+ * `languagesRegistry.getSortedRegisteredLanguageNames()` 里按语言名忽略大小写
+ * 字母序排（editorStatus.ts 的 picker 直接消费这份序），这里照抄同款比较。
+ * 「自动检测」不在这里，由 languageChoices 置顶。
+ */
+export const LANGUAGE_LABELS: readonly string[] = REGISTRY.map((e) => e.label).sort((a, b) => {
+  const al = a.toLowerCase();
+  const bl = b.toLowerCase();
+  return al < bl ? -1 : al > bl ? 1 : 0;
+});
 
 /** B365：「回到自动检测」那一项的名字（与语言标签同处一份清单，只有一个勾）。 */
 export const AUTO_LANGUAGE = "自动检测";

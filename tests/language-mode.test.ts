@@ -98,6 +98,14 @@ describe("B365 语言模式：自动检测 + 手动覆盖", () => {
     expect(stale[0].checked, "未知覆盖值按自动显示（与 languageOfDoc 回退同口径）").toBe(true);
     expect(stale.filter((it) => it.checked)).toHaveLength(1);
   });
+
+  it("B386：语言清单按 VS Code 口径排序 —— 忽略大小写字母序（languagesRegistry.ts:295）", () => {
+    const lower = LANGUAGE_LABELS.map((l) => l.toLowerCase());
+    const sorted = [...lower].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    expect(lower, "清单必须已是忽略大小写的字母序").toEqual(sorted);
+    // 浮层条目沿用同一份序，自动检测仍置顶
+    expect(languageChoices(null)[0].label).toBe(AUTO_LANGUAGE);
+  });
 });
 
 afterEach(() => setSettings(null));

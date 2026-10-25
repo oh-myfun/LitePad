@@ -3052,23 +3052,28 @@ button:focus-visible {
   outline: none;
 }
 
-/* B385：文件关联分类 —— 勾选网格（B385 二轮：一行一开关太长，改成 flex 换行的
-   复选格子，native checkbox 用 accent 色跟主题走） */
+/* B385/B386：文件关联分类 —— 勾选列表（一格式一行，native checkbox 用 accent 色跟主题走） */
 .settings-assoc-list {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px 14px;
+  flex-direction: column;
   padding: 2px 0;
 }
 
 .settings-assoc-item {
-  display: inline-flex;
+  display: flex;
   gap: 6px;
   align-items: center;
-  min-width: 96px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: var(--radius);
   cursor: pointer;
   font-size: var(--fs-ui);
   color: var(--fg);
+}
+
+.settings-assoc-item:hover {
+  background: var(--list-hover-bg);
+  color: var(--list-hover-fg);
 }
 
 .settings-assoc-item input[type="checkbox"] {
@@ -3078,6 +3083,7 @@ button:focus-visible {
 
 /* 关联了但不是系统默认（UserChoice 被别的程序占着）—— 行内直说，别让人纳闷 */
 .settings-assoc-badge {
+  margin-left: auto;
   font-size: var(--fs-ui);
   color: var(--fg-muted);
 }
