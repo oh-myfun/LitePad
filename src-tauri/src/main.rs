@@ -306,6 +306,9 @@ fn main() {
             commands::assoc::assoc_set,
             commands::assoc::assoc_set_many,
             commands::assoc::assoc_open_system_settings,
+            // B389 侧栏搜索（递归搜 + 磁盘批量替换，见 commands/search.rs 头部）
+            commands::search::search_in_folder,
+            commands::search::replace_in_files,
             // B333：拖入的那一条是目录还是文件（落点在资源管理器那一块时决定换根还是打开）
             commands::explorer::is_dir,
             commands::explorer::create_file,

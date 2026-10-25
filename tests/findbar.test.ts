@@ -661,7 +661,7 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     );
     expect(preview, "预览命中必须复用编辑器高亮样式类").toContain("cm-find-match");
   });
-  it("B39/B40 查找范围：不得有范围下拉与文件夹搜索，跨文档收敛为文档图标（方案 C）", () => {
+  it("B39/B40 查找范围：悬浮条不得有范围下拉与文件夹搜索（B389 起，读盘搜索归侧栏搜索视图）", () => {
     // 用户要求：查找替换悬浮栏无需查找文件夹功能，也不用下拉菜单选择查找范围——
     // 但「所有打开的文档」这个能力要保留。B73（方案 C）把它从勾选框收敛成
     // 带打开文档数徽标的文档图标按钮（对齐 VS Code），能力不变、只是换了形态。
@@ -699,7 +699,10 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     const rustMain = readFileSync("src-tauri/src/main.rs", "utf-8");
     expect(rustMain, "不得再注册 search_files 命令").not.toContain("commands::search_files");
     const cargo = readFileSync("src-tauri/Cargo.toml", "utf-8");
-    expect(cargo, "regex 依赖只服务于读盘搜索，应一并移除").not.toMatch(/^regex\s*=/m);
+    // B389 翻案（用户拍定「恢复 regex 依赖」）：侧栏搜索视图有正则那一档，依赖回来了 ——
+    // 但它只服务 `commands/search.rs` 那一条链路。上面那三条反断言盯的是**悬浮条不读盘**，
+    // 那一条口径没变（B39 用户原话：「查找替换悬浮栏无需查找文件夹功能」）。
+    expect(cargo, "侧栏搜索的正则档要 regex（B389 起）").toMatch(/^regex\s*=/m);
   });
   it("B73 查找栏方案 C：钉右上角（不可拖动）+ 图标开关 + 折叠替换行 + 紧凑计数", () => {
     // 用户从 A/B/C 三套预览方案里选了 C：对齐 VS Code 的紧凑浮层。

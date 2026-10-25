@@ -38,6 +38,10 @@ chardetng = "0.1"
 notify = "6"
 base64 = "0.22"
 trash = "5"
+# B389 侧栏搜索（`Ctrl+Shift+F`）：正则那一档与 include/exclude 的通配都吃这个。
+# B39 曾把它连同整条读盘搜索一起删掉（5.98MB → 5.5MB）；这次按 VS Code 搜索视图那形
+# 重新做进侧栏，用户拍定「恢复 regex 依赖」，exe 体积回到 +0.5MB 一档。
+regex = "1"
 
 # B91 文件拖入路径桥：直接操作 WebView2 取回真实路径（见 `src/dropbridge.rs`）。
 # ⚠️ 版本必须与 wry 0.55 用的**同一版**（0.38 / 0.61）：`ICoreWebView2*` 是 windows 类型，

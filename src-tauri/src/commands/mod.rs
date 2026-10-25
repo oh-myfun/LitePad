@@ -14,6 +14,9 @@ pub mod explorer;
 /// 这边的 argv 名单只问它要「本机接得住哪些扩展名」。
 pub mod assoc;
 
+/// B389：侧栏搜索（`Ctrl+Shift+F`）的读盘内核 —— 递归搜与「全部替换」的磁盘写回。
+pub mod search;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
