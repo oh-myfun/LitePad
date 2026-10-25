@@ -242,6 +242,30 @@ interface TocNode {
 }
 
 /**
+ * B382 · 缩进引导线（照 `explorer/panel.ts` 的 `guideColumn` / VS Code
+ * `.monaco-tl-indent`）：每行自己带一列绝对定位的线，左沿 16px、每根 8px，只画
+ * **祖先**那几根。深度对齐资源管理器的计法（最外层占根位 = depth 0）：
+ * h1 与它的直接子层（depth ≤ 1）不画线，depth ≥ 2 才有 depth-1 根 ——
+ * 与 explorer「根行与顶层条目无线」同形。
+ * 每根线记着它对应哪位祖先（`data-toc-id`），光标行的祖先链由 `paintActiveGuides`
+ * 点亮实色，与 explorer 选中行同一口径。
+ */
+function guideColumn(depth: number, chain: string[]): HTMLElement | null {
+  if (depth <= 1) return null;
+  const owners = chain.slice(1); // 去掉最外层（h1 占根位）⇒ 正好 depth-1 根
+  const box = document.createElement("span");
+  box.className = "toc-indent";
+  box.setAttribute("aria-hidden", "true");
+  for (const owner of owners) {
+    const line = document.createElement("span");
+    line.className = "toc-guide";
+    line.dataset.tocId = owner;
+    box.append(line);
+  }
+  return box;
+}
+
+/**
  * 把扁平的 `TocEntry[]`（按源码行序、只有 `level`）归纳成层级树。
  *
  * 靠 **level 单调** 归纳，而不是「level - 1 就是父」：各格式的 level 取值并不整齐
@@ -310,6 +334,31 @@ export function createTocList(list: HTMLElement, onFoldChange?: () => void): Toc
   const collapsed = new Set<string>();
   /** 最近一次 render 里所有「有子的节点」的 id —— 全量折叠/展开只认这一类。 */
   let branchIds: string[] = [];
+  /** B382：光标行节点的 id（可能多条同行的标题都算）—— 引导线 active 判据的源头。 */
+  const activeIds = new Set<string>();
+  /** B382：id → 父 id / 是否分支 —— 折叠变化时重算活动引导线要用，不必留着整棵树。 */
+  const nodeMeta = new Map<string, { parent: string | null; branch: boolean }>();
+
+  /**
+   * B382（照 explorer 的 `paintActiveGuides`）：光标行若是有子且摊开的分支就亮它自己
+   * （给它的孩子看），否则亮它的父亲。线早就随行建好了，这里只换 `is-active` 类，
+   * 不重画 —— 折/展一变也要跟着刷（摊开的分支折上后，亮的那根该让给父亲）。
+   */
+  const paintActiveGuides = (): void => {
+    const owners = new Set<string>();
+    for (const id of activeIds) {
+      const meta = nodeMeta.get(id);
+      if (!meta) continue;
+      if (meta.branch && !collapsed.has(id)) owners.add(id);
+      else if (meta.parent !== null) owners.add(meta.parent);
+    }
+    for (const line of list.querySelectorAll<HTMLElement>(".toc-guide")) {
+      line.classList.toggle(
+        "is-active",
+        line.dataset.tocId !== undefined && owners.has(line.dataset.tocId),
+      );
+    }
+  };
 
   /** 把 `collapsed` 这份状态刷到 DOM 上（同样只动这几个节点，不重建）。 */
   const applyFold = (): void => {
@@ -335,6 +384,8 @@ export function createTocList(list: HTMLElement, onFoldChange?: () => void): Toc
     //    这么来的）。放在这里还有一个好处：通知发出去时 DOM 已经刷完，调用方再问
     //    `allCollapsed()` 拿到的一定是新状态，不必再等一帧。
     onFoldChange?.();
+    // B382：折/展会改变「亮哪根线」的判据（摊开的分支折上 ⇒ 让给父亲），补刷一发。
+    paintActiveGuides();
   };
 
   const render = (entries: TocEntry[] | null, activeLine: number, cb: TocCallbacks): void => {
@@ -342,6 +393,8 @@ export function createTocList(list: HTMLElement, onFoldChange?: () => void): Toc
     const keepScroll = list.scrollTop;
     list.textContent = "";
     branchIds = [];
+    activeIds.clear();
+    nodeMeta.clear();
     if (entries === null || entries.length === 0) {
       const empty = document.createElement("div");
       empty.className = "toc-empty";
@@ -349,7 +402,7 @@ export function createTocList(list: HTMLElement, onFoldChange?: () => void): Toc
       list.appendChild(empty);
       return;
     }
-    const walk = (nodes: TocNode[], parent: HTMLElement): void => {
+    const walk = (nodes: TocNode[], parent: HTMLElement, depth: number, chain: string[]): void => {
       for (const node of nodes) {
         const wrap = document.createElement("div");
         wrap.className = "toc-node";
@@ -363,8 +416,18 @@ export function createTocList(list: HTMLElement, onFoldChange?: () => void): Toc
           node.entry.level +
           (node.entry.line === activeLine ? " toc-active" : "") +
           (node.branch ? " toc-branch" : "");
+        // B382：缩进照 explorer 走 `--depth`（每层 8px），不再靠嵌套容器的 margin ——
+        // 折叠时子容器整体 display:none，靠容器累加缩进的写法行高会随祖先开合抖动。
+        item.style.setProperty("--depth", String(depth));
+        item.setAttribute("aria-level", String(depth + 1));
         if (node.branch) item.setAttribute("aria-expanded", String(!collapsed.has(node.entry.id)));
         wrap.appendChild(item);
+
+        nodeMeta.set(node.entry.id, {
+          parent: chain.length > 0 ? chain[chain.length - 1] : null,
+          branch: node.branch,
+        });
+        if (node.entry.line === activeLine) activeIds.add(node.entry.id);
 
         if (node.branch) {
           const caret = document.createElement("i");
@@ -393,9 +456,9 @@ export function createTocList(list: HTMLElement, onFoldChange?: () => void): Toc
           item.appendChild(caret);
         } else {
           // B209（用户点名「同一层级最好左侧能对齐」）：叶子**也要占一格**等宽的槽。
-          // 只给分支挂 14px 的扭角列 ⇒ 同层里「有子的」文字被顶右 14px、「叶子」贴左，
+          // 只给分支挂扭角列 ⇒ 同层里「有子的」文字被顶右、「叶子」贴左，
           // 两条同一层的标题看着是错开的。VS Code 的 tree 每行都有 twisty 那一列，
-          // 叶子只是那一格为空 —— 这里同口径：**
+          // 叶子只是那一格为空 —— 这里同口径。
           // ⚠️ 类名必须**不是** `.toc-caret`：折叠逻辑靠「有没有扭角」判分支
           //    （`applyFold` 里 `caret` 为 null ⇒ 叶子），混用同一个类会把叶子也当分支。
           const slot = document.createElement("i");
@@ -403,6 +466,10 @@ export function createTocList(list: HTMLElement, onFoldChange?: () => void): Toc
           slot.setAttribute("aria-hidden", "true");
           item.appendChild(slot);
         }
+        // B382：引导线列（depth ≥ 2 才有）放在扭角之后 —— 绝对定位不吃布局，
+        // 但首格契约（扭角/占位槽是第一个子元素）保持不变。
+        const guide = guideColumn(depth, chain);
+        if (guide) item.appendChild(guide);
 
         const text = document.createElement("span");
         text.className = "toc-text";
@@ -421,12 +488,13 @@ export function createTocList(list: HTMLElement, onFoldChange?: () => void): Toc
           kids.className = "toc-children";
           if (collapsed.has(node.entry.id)) kids.classList.add("is-collapsed");
           wrap.appendChild(kids);
-          walk(node.children, kids);
+          walk(node.children, kids, depth + 1, [...chain, node.entry.id]);
         }
       }
     };
-    walk(buildTocTree(entries), list);
+    walk(buildTocTree(entries), list, 0, []);
     list.scrollTop = keepScroll;
+    paintActiveGuides();
   };
 
   return {

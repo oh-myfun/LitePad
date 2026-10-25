@@ -1019,10 +1019,14 @@ body.layout-dragging .toc-grip {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  /* 顶上留 4px：标题栏那条 28px 是实底，第一行标题贴着它下沿会显得挤 */
-  padding: 4px 0 8px;
+  /* B382：顶部不再留 4px —— 与资源管理器同口径（VS Code 的树第一行贴着列表上沿）。 */
+  padding: 0 0 8px;
 }
+/* B382：行节奏照资源管理器（= VS Code 的树）：22px 行高、缩进只按 `--depth` 算
+   （每层 8px，`workbench.tree.indent` 默认值；不套容器 margin —— 折叠时子容器整体
+   display:none，靠容器累加缩进的写法行高会随祖先开合抖动）。 */
 .toc-item {
+  position: relative;
   display: flex;
   align-items: center;
   width: 100%;
@@ -1031,9 +1035,14 @@ body.layout-dragging .toc-grip {
   background: none;
   cursor: pointer;
   font-size: var(--fs-ui);
-  color: inherit;
-  padding: 4px 12px 4px 8px;
+  line-height: 1;
+  height: 22px;
+  padding-left: calc(var(--depth, 0) * 8px);
+  padding-right: 6px;
   overflow: hidden;
+  white-space: nowrap;
+  /* B379：侧栏正文取 VS Code 的 `sideBar.foreground`（与资源管理器同一颗）。 */
+  color: var(--sidebar-fg, #24292f);
 }
 /* 标题文本独占剩下那一截：省略号必须挂在它身上 —— `text-overflow` 对 flex 容器本身
    不生效，挂在 .toc-item 上等于没写（B205 之前 .toc-item 是 block，挂得着）。 */
@@ -1043,6 +1052,9 @@ body.layout-dragging .toc-grip {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* B328：行那一族是 line-height: 1 ⇒ clip 框只有 12px，省略号那层会把 p/g/q/j 的
+     下伸部切掉 —— 与 `.explorer-name` 同一口径，撑这一格把裁切框放松到 18px。 */
+  line-height: 1.5;
 }
 .toc-item:hover {
   background: var(--list-hover-bg, #eee);
@@ -1054,49 +1066,74 @@ body.layout-dragging .toc-grip {
 }
 /* 扭角（chevron）：只有**有子节点**的标题才挂这一颗 —— 叶子不给（VS Code 的 twisty
    只挂在有子的节点上，给叶子留一颗空扭角只会把每行往右顶一格、还点不动）。
-   ⚠️ 缩进靠**嵌套**（`.toc-children` 的左外边距），不靠 level 分档：
-      h1/h2/... 的 padding-left 那一套（12/24/36/48）已经删了 —— 那版没有扭角列，
-      子层缩进只能拿 padding 去凑，凑出来的间距与扭角宽度对不上（扭角 14px vs 档距 12px）。 */
+   ⚠️ 缩进靠 `--depth`（B382，上面 .toc-item 那条），不靠嵌套 margin：
+      子层缩进由每行自己的 padding-left 算，扭角列只负责「这一行自己」的槽位。 */
 .toc-caret {
-  flex: 0 0 14px;
+  flex: 0 0 22px;
+  box-sizing: border-box;
+  width: 22px;
+  padding-right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateX(3px);
   line-height: 1;
-  color: var(--fg-muted, #656d76);
-  transition: color 0.1s ease-out;
 }
 /* B209（用户点名「同一层级最好左侧能对齐」）：**叶子也要占这一格**。
-   只给分支挂扭角列 ⇒ 同层里「有子的」被顶右 14px、「叶子」贴左，一层的标题看着错开。
+   只给分支挂扭角列 ⇒ 同层里「有子的」被顶右、「叶子」贴左，一层的标题看着错开。
    与 VS Code 的 tree 同口径：每行都有 twisty 那一列，叶子只是那一格里**没有字形**。
    ⚠️ 类名与 `.toc-caret` 分开是硬要求 —— 折叠逻辑靠「有没有 `.toc-caret`」判分支
       （`applyFold` 里查不到就是叶子），共用同一个类会把叶子也当成可折叠的分支。
    ⚠️ 列宽必须与 `.toc-caret` 逐字一致，改一处就要改另一处（否则对齐又没了）。 */
 .toc-caret-slot {
-  flex: 0 0 14px;
+  flex: 0 0 22px;
 }
 /* B208：字号写到**内层 .codicon** 上 —— `.toc-caret` 现在只是**占位列**（外层 <i>），
    字形是它里面那一颗；codicon.css 用 `font: 16px/1 codicon` 这个**简写**画字，写在占位
-   列上的 font-size 会被那条简写重置掉（写在 day 档 12px、字体渲染出来却是 16px）。
-   与空隙里那颗把手（.toc-grip .codicon）完全同款。 */
+   列上的 font-size 会被那条简写重置掉。
+   B382：16px 字形照 VS Code `.monaco-tl-twistie`，与 `.explorer-twisty` 同值 ——
+   不再是 12px 的小箭头。 */
 .toc-caret .codicon {
-  font-size: 12px;
+  font-size: 16px;
 }
-/* 悬停时扭角提一档：VS Code 树的 twisty 就是「静息淡、指上去才醒目」，
-   与 .toc-item:hover 铺底同一时刻发生，指针落哪一眼就知道。 */
-.toc-item:hover .toc-caret {
-  color: var(--sidebar-fg, #24292f);
-}
-.toc-caret + .toc-text,
-.toc-caret-slot + .toc-text {
-  /* 拐角下面那截标题贴着扭角走，别再空一格 */
-  padding-left: 2px;
-}
+/* B382：字色不再单独调档 —— 扭角继承行色（VS Code 的 twistie 就吃列表前景，
+   hover 时行色换成 list.hoverForeground，扭角自动跟着走），撤掉旧的 muted + hover 提亮。 */
 .toc-node > .toc-children {
-  /* 子层缩进 = 扭角列宽：子节点的扭角正好接在父节点扭角**后面**那格起头，
-     VS Code 的树就是这么对齐的（一排扭角竖着排下去，看着像一条缩进标尺）。 */
-  margin-left: 14px;
+  /* B382：子层缩进已由每行的 `--depth` 承担，容器只管分组（display:none 的开关还在它身上）。 */
+  min-width: 0;
 }
 .toc-children.is-collapsed {
   /* 折叠态：只切这一个容器的显隐，不重绘 —— 重绘会把列表滚回顶部（B205 注释在 toc.ts）。 */
   display: none;
+}
+/* B382：缩进引导线照 VS Code `tree.css` 的 `.monaco-tl-indent`（与 `.explorer-indent`
+   同值）：左沿 16px、每根 8px、1px 描边；h1 占根位 ⇒ depth ≥ 2 才有 depth-1 根。
+   显隐同 VS Code 默认 `workbench.tree.renderIndentGuides = onHover`：指针进列表才显示
+   （inactive 40%），光标行的祖先链始终可见并用实色（active）。
+   ⚠️ active 那条必须排在后、选择器也不弱于 hover 那条，否则悬停时实色被 40% 盖掉。 */
+.toc-indent {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 16px;
+  display: flex;
+  pointer-events: none;
+}
+.toc-guide {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 8px;
+  border-left: 1px solid transparent;
+  opacity: 0;
+  transition: opacity 0.1s linear;
+}
+.toc-list:hover .toc-guide {
+  opacity: 1;
+  border-left-color: var(--tree-guide-inactive, rgba(88, 88, 88, 0.4));
+}
+.toc-list .toc-guide.is-active {
+  opacity: 1;
+  border-left-color: var(--tree-guide, #585858);
 }
 .toc-empty {
   padding: 16px 12px;

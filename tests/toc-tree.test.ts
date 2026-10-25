@@ -85,7 +85,7 @@ describe("B205/B209 大纲标题栏：顶部「大纲」字样 + 全量折叠/�
     }).toThrow();
   });
 
-  it("CSS：面板上下两条（标题栏固着 + 列表滚动），缩进改由嵌套承担", () => {
+  it("CSS：面板上下两条（标题栏固着 + 列表滚动），行几何与资源管理器同款（B382）", () => {
     const css = readFileSync("src/styles/preview.css", "utf-8");
     const block = (sel: string): string =>
       css.match(new RegExp(sel.replace(".", "\\.") + "\\s*\\{[^}]*\\}"))?.[0] ?? "";
@@ -94,30 +94,47 @@ describe("B205/B209 大纲标题栏：顶部「大纲」字样 + 全量折叠/�
     expect(panel, "滚动归列表，面板只当容器").toContain("overflow: hidden");
     const list = block(".toc-list");
     expect(list, "列表要自己滚").toMatch(/overflow-y:\s*auto/);
-    // 缩进：level 分档那一套（12/24/36/48px）已经删了 —— 没有扭角列时它还能凑，
-    // 有扭角之后档距（12px）对不上扭角宽（14px），只能改靠 .toc-children 的左外边距。
+    // B382：与资源管理器同口径 —— 第一行贴着列表上沿（VS Code 的树就是这样）。
+    expect(list, "列表顶部不再留呼吸（贴上沿）").toMatch(/padding:\s*0 0 8px/);
+    // 缩进：level 分档那一套（12/24/36/48px）已经删了 —— B382 起缩进走每行自己的
+    // `--depth`（照 `.explorer-row` 的 `calc(var(--depth, 0) * 8px)`）。
     for (const sel of [".toc-h1", ".toc-h2", ".toc-h3", ".toc-h4", ".toc-h5", ".toc-h6"]) {
-      expect(css, `${sel} 不该再留 padding-left 分档缩进（B205 之后缩进走嵌套）`).not.toContain(
-        `${sel} {`,
-      );
+      expect(css, `${sel} 不该再留 padding-left 分档缩进`).not.toContain(`${sel} {`);
     }
+    const item = block(".toc-item");
+    expect(item, "行高照 VS Code 的树 22px").toMatch(/height:\s*22px/);
+    expect(item, "缩进按 --depth 算（与 .explorer-row 同式）").toMatch(
+      /padding-left:\s*calc\(var\(--depth, 0\) \* 8px\)/,
+    );
     const kids = block(".toc-children.is-collapsed");
     expect(kids, "折叠态必须真的藏起来").toMatch(/display:\s*none/);
-    expect(css, "扭角要有固定列宽（缩进标尺那一格）").toMatch(
-      /\.toc-caret\s*\{[^}]*flex:\s*0 0 \d+px/,
-    );
-    expect(css, "子层缩进要跟扭角列宽对齐").toMatch(
-      /\.toc-node > \.toc-children\s*\{[^}]*margin-left/,
-    );
-    // B209（用户点名「同一层级最好左侧能对齐」）：只给分支挂扭角列 ⇒ 同层里「有子的」
-    // 被顶右 14px、「叶子」贴左，一层的标题看着错开 ⇒ 叶子也要占一格等宽的槽。
-    const caretW = css.match(/\.toc-caret\s*\{[^}]*flex:\s*0 0 (\d+)px/)?.[1];
-    const slotW = css.match(/\.toc-caret-slot\s*\{[^}]*flex:\s*0 0 (\d+)px/)?.[1];
+    // B382：扭角槽照 VS Code `.monaco-tl-twistie` = 22px（16 字形 + 6 右内边距），
+    // 与 `.explorer-twisty` 同值；不再是 14px 的小列。
+    const caret = block(".toc-caret");
+    expect(caret, "扭角槽 22px").toMatch(/flex:\s*0 0 22px/);
+    const caretW = caret.match(/flex:\s*0 0 (\d+)px/)?.[1];
+    const slotW = block(".toc-caret-slot").match(/flex:\s*0 0 (\d+)px/)?.[1];
     expect(slotW, "叶子要有等宽的占位槽").toBeTruthy();
     expect(slotW, "槽宽必须与扭角列宽逐字一致（差一点对齐就没了）").toBe(caretW);
-    // 文本与槽之间的那截间距两种行都要有，否则叶子的文字会贴着槽
-    expect(css, "两种行的文本间距都要给").toMatch(
-      /\.toc-caret-slot \+ \.toc-text\s*\{[^}]*padding-left/,
+    expect(css, "字形 16px（照 .monaco-tl-twistie，不再是 12px）").toMatch(
+      /\.toc-caret \.codicon\s*\{[^}]*font-size:\s*16px/,
+    );
+    // B382：子层缩进归 `--depth`，容器不许再挂 margin（旧 14px 那套必须拆干净）。
+    expect(css, "子层容器不许再挂 margin-left（缩进已由 --depth 承担）").not.toMatch(
+      /\.toc-node > \.toc-children\s*\{[^}]*margin-left/,
+    );
+    // B382：缩进引导线照 `.explorer-indent/.explorer-guide`（VS Code `.monaco-tl-indent`）。
+    const indent = block(".toc-indent");
+    expect(indent, "引导线列绝对定位在左沿 16px").toMatch(/position:\s*absolute/);
+    expect(indent, "引导线列左沿 16px").toMatch(/left:\s*16px/);
+    const guide = block(".toc-guide");
+    expect(guide, "每根线 8px 宽、1px 描边").toMatch(/width:\s*8px/);
+    expect(guide, "每根线 1px 描边").toMatch(/border-left:\s*1px solid transparent/);
+    expect(block(".toc-list:hover .toc-guide"), "指针进列表才显示（onHover）").toMatch(
+      /opacity:\s*1/,
+    );
+    expect(css, "光标行祖先链的实色档要挂在 is-active 上").toMatch(
+      /\.toc-list \.toc-guide\.is-active\s*\{/,
     );
   });
 
@@ -244,6 +261,64 @@ describe("B205 大纲层级树：扭角只给有子的节点，缩进靠嵌套",
     h.render([], -1, { onJump: () => {} });
     expect(list.querySelector(".toc-empty")?.textContent).toBe("当前文档没有标题");
     expect(list.querySelectorAll(".toc-item").length, "空态不渲染任何标题行").toBe(0);
+  });
+});
+
+describe("B382 · 大纲行照资源管理器：--depth 缩进 + 缩进引导线", () => {
+  it("行上写 --depth（顶层 0、每深一层 +1）与 aria-level，h1/h2 与 explorer 根位/顶层同形", () => {
+    const list = mount();
+    const h = createTocList(list);
+    h.render([e(1, 1, "一"), e(2, 5, "一·子"), e(3, 9, "一·子·孙")], -1, { onJump: () => {} });
+    const rows = Array.from(list.querySelectorAll<HTMLElement>(".toc-item"));
+    expect(rows.map((r) => r.style.getPropertyValue("--depth"))).toEqual(["0", "1", "2"]);
+    expect(rows.map((r) => r.getAttribute("aria-level"))).toEqual(["1", "2", "3"]);
+  });
+
+  it("引导线只挂在 depth ≥ 2 的行上，每根记着自己的祖先（去掉 h1 根位 ⇒ 正好 depth-1 根）", () => {
+    const list = mount();
+    const h = createTocList(list);
+    h.render([e(1, 1, "一"), e(2, 5, "一·子"), e(3, 9, "一·子·孙"), e(4, 13, "曾孙")], -1, {
+      onJump: () => {},
+    });
+    const rows = Array.from(list.querySelectorAll<HTMLElement>(".toc-node"));
+    // ⚠️ 必须先取**自己那一行**的 .toc-item 再找：.toc-node 的子树里躺着整个子层，
+    //    直接 querySelector 会把 h3 的线算到 h1 头上。
+    const itemOf = (node: HTMLElement): HTMLElement =>
+      node.querySelector<HTMLElement>(":scope > .toc-item") as HTMLElement;
+    // h1（根位）与 h2（explorer 的「顶层条目」位）不画线 —— 与资源管理器同形
+    expect(itemOf(rows[0]).querySelector(".toc-indent"), "h1 不画线").toBeNull();
+    expect(itemOf(rows[1]).querySelector(".toc-indent"), "h2 不画线").toBeNull();
+    const g3 = itemOf(rows[2]).querySelectorAll<HTMLElement>(".toc-guide");
+    expect(g3.length, "h3 一根线").toBe(1);
+    expect(g3[0].dataset.tocId, "h3 那根线记着它的父层 h2").toBe("h2-5");
+    const g4 = itemOf(rows[3]).querySelectorAll<HTMLElement>(".toc-guide");
+    expect(g4.length, "h4 两根线（祖先链去根位）").toBe(2);
+    expect(
+      Array.from(g4).map((l) => l.dataset.tocId),
+      "从外往里 = h2、h3",
+    ).toEqual(["h2-5", "h3-9"]);
+  });
+
+  it("活动引导线：光标行是摊开的分支就亮自己，折叠后让给父亲（applyFold 里补刷）", () => {
+    const list = mount();
+    const h = createTocList(list);
+    // h1「一」> h2「一·子」> h3「孙」：光标落在 h2 上
+    h.render([e(1, 1, "一"), e(2, 5, "一·子"), e(3, 9, "孙")], 5, { onJump: () => {} });
+    const g3 = list
+      .querySelectorAll<HTMLElement>(".toc-node")[2]
+      .querySelector<HTMLElement>(".toc-guide");
+    expect(g3, "h3 行要有引导线").toBeTruthy();
+    // h2 是摊开的分支 ⇒ 亮它自己（h3 那根线的 owner 正是 h2）
+    expect(g3?.classList.contains("is-active"), "摊开的分支亮自己").toBe(true);
+    // 折上 h2 ⇒ 亮线让给父亲 h1（h3 的线 owner=h2 ⇒ 熄掉）
+    (list.querySelectorAll<HTMLElement>(".toc-caret")[1] as HTMLElement).click();
+    expect(g3?.classList.contains("is-active"), "分支折上后不再亮自己").toBe(false);
+    // 重绘（换光标到 h3）：h3 是叶子 ⇒ 亮它的父亲 h2
+    h.render([e(1, 1, "一"), e(2, 5, "一·子"), e(3, 9, "孙")], 9, { onJump: () => {} });
+    const g3b = list
+      .querySelectorAll<HTMLElement>(".toc-node")[2]
+      .querySelector<HTMLElement>(".toc-guide");
+    expect(g3b?.classList.contains("is-active"), "叶子的活动线亮父亲").toBe(true);
   });
 });
 
