@@ -61,7 +61,8 @@ export interface FileGroup {
   /** 一行一条（与 Rust `SearchMatch` 同形，`start` / `length` 是 `preview` 里的字符下标） */
   rows: SearchMatchRow[];
   truncated: boolean;
-  /** 这个路径此刻在编辑器里开着 ⇒ 替换走内存那一支；null = 只在盘上 */
+  /** 搜出这一屏那一刻它开在标签里 ⇒ 替换走内存那一支；null = 那一刻只在盘上。
+   *  ⚠️ 这是**快照**，不是「此刻」—— 点一条命中会把那个文件开出来。要问此刻归哪一批，走 `planReplace()`。 */
   docId: number | null;
 }
 
@@ -522,11 +523,20 @@ export function emptyMessage(): string {
  * ⚠️ 分组的理由不是好看：一个文件同时有两支会写两遍（先在标签里改、再被后端整份覆盖），
  *    而覆盖之后那份标签会变成「磁盘被外部改了」—— 用户看到的是自己刚改的东西被冲掉。
  *    正开着的**只走内存**，落盘交给它各自的保存流程。
+ *
+ * ⚠️ 分这一刀时**现场问一遍标签表**，不信 `groups[i].docId` 那份快照：点一条命中就把那个
+ *    文件开出来了（真机照出来过一次 —— 状态栏「c.ts 已在外部被修改，已自动载入最新内容」），
+ *    快照还挂着 null ⇒ 它会被当成「只在盘上」那一批整份写回去，脏的那份直接撞上冲突框。
  */
 export function planReplace(): ReplacePlan {
+  const byPath = openDocsByPath();
   const openDocs: FileGroup[] = [];
   const diskFiles: FileGroup[] = [];
-  for (const g of groups) (g.docId === null ? diskFiles : openDocs).push(g);
+  for (const g of groups) {
+    const id = byPath.get(normPath(g.path)) ?? null;
+    if (id === null) diskFiles.push(g);
+    else openDocs.push(g.docId === id ? g : { ...g, docId: id });
+  }
   const lines = groups.reduce((n, g) => n + g.rows.length, 0);
   return { openDocs, diskFiles, files: groups.length, lines };
 }

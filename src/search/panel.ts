@@ -451,7 +451,7 @@ async function replaceAll(): Promise<void> {
   let out: ReplaceOutcome | null = null;
   let failure = "";
   try {
-    out = await applyReplaceAll(getGroups(), q);
+    out = await applyReplaceAll(plan, q);
   } catch (e: unknown) {
     failure = e instanceof Error ? e.message : String(e);
   }

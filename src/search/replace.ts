@@ -19,7 +19,7 @@ import { isDirtyVsBaseline } from "../doc-model";
 import { freshTextOfDoc, renderPanelTabs } from "../tabs";
 import { replaceInFiles, type ReplaceItem } from "../ipc/api";
 import { refreshTitle } from "../ui";
-import type { FileGroup, SearchQueryState } from "./store";
+import type { FileGroup, ReplacePlan, SearchQueryState } from "./store";
 
 export interface ReplaceOutcome {
   /** 改动过的文件数（内存 + 盘两批一起算） */
@@ -111,21 +111,17 @@ async function replaceOnDisk(groups: FileGroup[], q: SearchQueryState): Promise<
 /**
  * 两批一起做完，并把结果合成一条能念的话。
  *
+ * ⚠️ 分组的活儿在 `planReplace()` 那一处（确认框念的也是它）—— 这里只按那一份写，
+ *    两处各分一遍就会各写各的（正开着的那一份被当成「只在盘上」整份覆盖，B389 真机照出来过）。
  * ⚠️ 盘的那一批发完**不**刷新结果树由调用方决定（要重跑一次搜索才知道现在还剩什么），
  *    这里只负责写与报 —— 视图与模型各管一层，别在这里回头改 DOM。
  */
 export async function applyReplaceAll(
-  groups: FileGroup[],
+  plan: ReplacePlan,
   q: SearchQueryState,
 ): Promise<ReplaceOutcome> {
-  const open = replaceInOpenDocs(
-    groups.filter((g) => g.docId !== null),
-    q,
-  );
-  const disk = await replaceOnDisk(
-    groups.filter((g) => g.docId === null),
-    q,
-  );
+  const open = replaceInOpenDocs(plan.openDocs, q);
+  const disk = await replaceOnDisk(plan.diskFiles, q);
   return {
     files: open.files + disk.files,
     occurrences: open.occurrences + disk.occurrences,

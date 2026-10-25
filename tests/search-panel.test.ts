@@ -599,6 +599,41 @@ describe("B389 · 全部替换（先确认，再分两批写）", () => {
     expect(ui.searchCount.textContent).toBe("已替换 2 处，改动 2 个文件");
   });
 
+  it("搜索**之后**才点开的那一条：走内存，不许被当成「只在盘上」写回去", async () => {
+    // 真机照出来的那一形（B389-7）：点一条命中 = 顺手把那个文件开出来了，而结果组里那份
+    // `docId` 快照还是 null ⇒ 替换时它被划进盘上那一批，整份覆盖之后标签撞上
+    // 「已在外部被修改」。分这一刀必须**现场问标签表**，确认框念的与实际写的同一份。
+    h.report = report(
+      [
+        fileHit("E:\\笔记\\a.md", "a.md", "a.md", [row(1, "aa 后来被点开", 0, 2, 1)]),
+        fileHit("E:\\笔记\\b.md", "b.md", "b.md", [row(1, "aa 在盘上", 0, 2, 1)]),
+      ],
+      2,
+    );
+    type(ui.searchInput, "aa");
+    type(ui.searchReplaceInput, "bb");
+    await settle();
+    expect(
+      store.getGroups().every((g) => g.docId === null),
+      "搜的时候两份都没开着",
+    ).toBe(true);
+
+    const { doc, inst } = openDoc(7, "E:\\笔记\\a.md", "aa 后来被点开");
+    h.replaceReport = { filesChanged: 1, occurrences: 1, errors: [] };
+    click(ui.searchReplaceAll);
+    await settle(0);
+
+    expect(inst.state.doc.toString(), "开着的这一份按内存那一支改").toBe("bb 后来被点开");
+    expect(doc.dirty).toBe(true);
+    expect(
+      h.replaced.map((i) => i.path),
+      "盘上那一批只剩真没开着的",
+    ).toEqual(["E:\\笔记\\b.md"]);
+    expect(h.askArgs[0][0], "确认框念的「几个没开在标签里」与实际写回同一份分组").toContain(
+      "其中 1 个没开在标签里",
+    );
+  });
+
   it("后端逐条报失败 ⇒ 原样念出来，不折叠成人话", async () => {
     // 只留盘上那一组：没有开着的 ⇒ 内存那一发不挡路，失败原话就是全部可念的东西
     h.report = report(
