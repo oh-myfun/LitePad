@@ -15,20 +15,33 @@ use tauri::{Emitter, Manager, Theme};
 // WebView2 渲染出第一帧之前的窗口底色（B50 启动白屏）。
 //
 // Chromium 默认一律用纯白填充这块区域，深色主题下就表现为「启动先白屏一下」。
-// 取值必须与 `src/styles/global.css` 的主题块一致（B377 起默认族是 VS Code 2026，
-// 深色 editor.background = #121314）；`theme_family` 选了别的族时按下面那张表纠正。
+// B379：整窗底色取 VS Code 的 **modernUI.shellBackground**（浮动卡片四周那层外壳色），
+// 与 `src/styles/global.css` 各主题块的 `--shell-bg` 同源；`theme_family` 选别的族时
+// 按下面两张表纠正。VS Code 的依据：`partsSplash.ts` 在 `modernUI === true` 时
+// splash 取 `modernUIShellBackground`（默认回落到 titleBar.activeBackground），
+// 而不是 editor.background。
 // `tauri.conf.json` 的 `backgroundColor` 是创建窗口时的兜底值（= 默认族深色），
 // 这里在 setup 阶段再按用户设置纠正一次。
-const BG_DARK: Color = Color(0x12, 0x13, 0x14, 0xff);
-const BG_LIGHT: Color = Color(0xff, 0xff, 0xff, 0xff);
+const BG_DARK: Color = Color(0x19, 0x1a, 0x1b, 0xff);
+const BG_LIGHT: Color = Color(0xfa, 0xfa, 0xfd, 0xff);
 
-/// B377：各主题族的深色编辑器底色（与 `src/styles/global.css` 各主题块的 `--bg` 同源）。
+/// B379：各主题族的深色外壳底色（与 `global.css` 各主题块的 `--shell-bg` 同源）。
 fn dark_bg_for(family: &str) -> Color {
     match family {
-        "modern" => Color(0x1f, 0x1f, 0x1f, 0xff),
-        "plus" | "classic" => Color(0x1e, 0x1e, 0x1e, 0xff),
+        "modern" => Color(0x18, 0x18, 0x18, 0xff),
+        "plus" | "classic" => Color(0x3c, 0x3c, 0x3c, 0xff),
         "hc" => Color(0x00, 0x00, 0x00, 0xff),
         _ => BG_DARK,
+    }
+}
+
+/// B379：各主题族的浅色外壳底色（同上，取 `--shell-bg`）。
+fn light_bg_for(family: &str) -> Color {
+    match family {
+        "modern" => Color(0xf8, 0xf8, 0xf8, 0xff),
+        "plus" | "classic" => Color(0xdd, 0xdd, 0xdd, 0xff),
+        "hc" => Color(0xff, 0xff, 0xff, 0xff),
+        _ => BG_LIGHT,
     }
 }
 
@@ -43,7 +56,7 @@ fn boot_background(win: &tauri::WebviewWindow) -> Color {
     if dark {
         dark_bg_for(&settings.theme_family)
     } else {
-        BG_LIGHT
+        light_bg_for(&settings.theme_family)
     }
 }
 

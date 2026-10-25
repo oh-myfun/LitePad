@@ -334,7 +334,7 @@ describe("大纲（TOC）静态契约", () => {
     expect(panel, "TOC 面板背景透明（露出父卡片的 --bg）").toMatch(/background:\s*transparent/);
     expect(panel, "不得再引用未定义的 --panel-bg").not.toContain("--panel-bg");
     const hover = ruleBlock(preview, ".toc-item:hover");
-    expect(hover, "TOC hover 必须用 --bg-hover").toContain("var(--bg-hover");
+    expect(hover, "TOC hover 必须用 list.hoverBackground（B379）").toContain("var(--list-hover-bg");
     const active = ruleBlock(preview, ".toc-item.toc-active");
     expect(active, "TOC 活动项必须用 --accent").toContain("var(--accent");
     const empty = ruleBlock(preview, ".toc-empty");

@@ -15,10 +15,13 @@
    导出件就借不到，只能再抄一份样式，两份必然漂移。预览根节点与导出件同时带这两个类
    （`markdown/preview.ts` 的 root、`markdown/exporter.ts`）。 */
 .md-rendered {
-  /* B377：预览与源码共用同一颗主题 token（--bg / --fg / --border / --code-bg /
+  /* B377：预览与源码共用同一颗主题 token（--bg / --editor-fg / --border / --code-bg /
      --link-fg），5 个主题族 × 深浅自动跟着走，这里不再有第二份色表。
+     B379：正文前景改用 `--editor-fg`（= VS Code `editor.foreground`）—— 预览是「编辑器里的
+     另一种视图」，应与源码正文同一颗；全应用正文色 `--fg` 是 workbench 的 foreground，
+     两档在 Plus 浅色里就不同值（#000000 vs #616161）。
      兜底值 = 2026 浅色档：导出 HTML 只注入本文件、`:root` 不在里面。 */
-  --md-fg: var(--fg, #202020);
+  --md-fg: var(--editor-fg, #202020);
   --md-bg: var(--bg, #ffffff);
   --md-muted: var(--fg-muted, #606060);
   --md-border: var(--border, #e5e5e5);
@@ -292,7 +295,8 @@
    否则 md 系列变量与面板背景变量在此作用域未定义，永远落到浅色 fallback，不随深浅色联动）
 
    B199（用户裁决「左边栏展开区背景和其他区域一致」）：面板**不再自带底色**，透明，
-   露的是父卡片 .side-shell 的 --bg（= 编辑区同色）。原先这条写 var(--bg-elevated)，
+   露的是父卡片 .side-shell 的 --sidebar-bg（B379 起侧栏有自己的 VS Code
+   `sideBar.background`，不再与编辑区共用）。原先这条写 var(--bg-elevated)，
    于是展开区比编辑区亮一档，左栏看着像另外一块东西 —— 那正是要修的现象。
    ⚠️ scrollbar 什么的照旧由根上的 color-scheme 管，删掉底色不影响滚动条配色。 */
 /* B307（方案乙）：展开区的**外壳**才是宽度与显隐的主人。
@@ -390,7 +394,8 @@
   white-space: nowrap;
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: var(--fg-muted, #656d76);
+  /* B379：区块标题取 `sideBarSectionHeader.foreground`（与行内文字的 token 分开）。 */
+  color: var(--sidebar-section-fg, #656d76);
 }
 .recent-list {
   flex: 1 1 auto;
@@ -415,10 +420,13 @@
   border: none;
   background: none;
   cursor: pointer;
-  color: var(--fg, #24292f);
+  /* B379：侧栏正文取 VS Code 的 `sideBar.foreground`。 */
+  color: var(--sidebar-fg, var(--fg, #24292f));
 }
 .recent-row:hover {
-  background: var(--bg-hover, #eee);
+  /* B379：侧栏列表行悬停取 VS Code `list.hover{Background,Foreground}`。 */
+  background: var(--list-hover-bg, #eee);
+  color: var(--list-hover-fg, var(--fg, #24292f));
 }
 .recent-line {
   flex: 1 1 auto;
@@ -477,8 +485,10 @@
   visibility: visible;
 }
 .recent-del:hover {
-  background: var(--side-btn-active, #d6d9dc);
-  color: var(--fg, #24292f);
+  /* B379：行内动作键悬停照 VS Code 的 `toolbar.hoverBackground` —— 用列表的悬停色会
+     把整行染成一条带，而这里亮的只是那颗 ×。 */
+  background: var(--toolbar-hover-bg, transparent);
+  color: var(--sidebar-fg, var(--fg, #24292f));
 }
 .recent-del .codicon {
   font-size: 14px;
@@ -530,7 +540,8 @@
   min-width: 0;
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: var(--fg-muted, #656d76);
+  /* B379：区块标题取 `sideBarSectionHeader.foreground`（与行内文字的 token 分开）。 */
+  color: var(--sidebar-section-fg, #656d76);
 }
 /* B317（用户点名）：还没打开文件夹时顶部那一排键收起 —— 五颗里有四颗要先得有一棵树，
    而「打开文件夹」那颗的出口就在下面的整宽按钮上。`display:none` 而不是 `hidden`：
@@ -568,7 +579,9 @@
   height: 22px;
   font-size: var(--fs-ui);
   line-height: 1;
-  color: var(--fg, #24292f);
+  /* B379：侧栏正文取 VS Code 的 `sideBar.foreground`（Plus 浅色 #616161、
+     2026 深色 #BFBFBF），不再借用全应用正文色。 */
+  color: var(--sidebar-fg, #24292f);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -579,15 +592,28 @@
 }
 .explorer-row:hover,
 .explorer-root:hover {
-  background: var(--bg-hover, #eee);
+  /* B379：VS Code 的 `list.hoverBackground` / `list.hoverForeground`。 */
+  background: var(--list-hover-bg, #eee);
+  color: var(--list-hover-fg, inherit);
 }
-/* B370：选中行取 VS Code 的 `list.activeSelectionBackground`（与 B366 的快速选择同一颗
-   token：深 #04395E / 浅 #0060C0，前景白）。旧版用的是 --side-btn-active（中性底），
-   在深色里几乎看不出哪一行被选中。 */
+/* B370：选中行取 VS Code 的列表选中色；B379 分成两档 —— VS Code 的
+   `list.activeSelection*` 只在**列表自己持有焦点**时生效，焦点一进编辑区就换成
+   `list.inactiveSelection*`（Plus 档 #04395E 亮蓝 → #37373D 灰）。
+   ⚠️ 顺序是「inactive 打底、:focus-within 覆盖成 active」—— 两条同特异度时后者必须
+      在文件里更靠后（它也确实在后面），否则点中那一瞬看不到蓝底。 */
 .explorer-row[aria-selected="true"],
 .explorer-root[aria-selected="true"] {
-  background: var(--pick-focus-bg);
-  color: var(--pick-focus-fg);
+  background: var(--list-inactive-bg);
+  color: var(--list-inactive-fg);
+}
+.explorer-tree:focus-within .explorer-row[aria-selected="true"],
+.explorer-tree:focus-within .explorer-root[aria-selected="true"] {
+  background: var(--list-active-bg);
+  color: var(--list-active-fg);
+  /* HC 档的选中态没有底色的那一半靠这圈描边区分（VS Code 的
+     `list.focusOutline` = activeContrastBorder）；其余族 token 取透明 ⇒ 不可见。 */
+  outline: 1px solid var(--list-selection-border, transparent);
+  outline-offset: -1px;
 }
 /* B373：缩进引导线照 VS Code `tree.css` 的 `.monaco-tl-indent`：
    每行自己带一列绝对定位的线（左沿 16px、每根 8px、1px 描边），只画**祖先**那几根
@@ -947,7 +973,8 @@ body.layout-dragging .toc-grip {
   white-space: nowrap;
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: var(--fg-muted, #656d76);
+  /* B379：区块标题取 `sideBarSectionHeader.foreground`（与行内文字的 token 分开）。 */
+  color: var(--sidebar-section-fg, #656d76);
 }
 /* 两颗全量键：小一号的方键，与标题栏 28px 等高条里的其余元素对齐。
    ⚠️ 与 `.side-btn` 不同款 —— 那颗 32px 是左栏**主**入口、占了整条按钮列的宽；
@@ -966,11 +993,9 @@ body.layout-dragging .toc-grip {
   color: var(--fg-muted, #656d76);
 }
 .toc-head-btn:hover {
-  background: var(--bg-hover, #eee);
-  color: var(--fg, #24292f);
-}
-.toc-head-btn:active {
-  background: var(--side-btn-active, #d6d9dc);
+  /* B379：视图标题栏的动作键照 VS Code 的 `toolbar.hoverBackground`。 */
+  background: var(--toolbar-hover-bg, #eee);
+  color: var(--sidebar-fg, var(--fg, #24292f));
 }
 .toc-head-btn:focus-visible {
   outline: 2px solid var(--accent, #06c);
@@ -1013,7 +1038,8 @@ body.layout-dragging .toc-grip {
   white-space: nowrap;
 }
 .toc-item:hover {
-  background: var(--bg-hover, #eee);
+  background: var(--list-hover-bg, #eee);
+  color: var(--list-hover-fg, inherit);
 }
 .toc-item.toc-active {
   color: var(--accent, #06c);
@@ -1049,7 +1075,7 @@ body.layout-dragging .toc-grip {
 /* 悬停时扭角提一档：VS Code 树的 twisty 就是「静息淡、指上去才醒目」，
    与 .toc-item:hover 铺底同一时刻发生，指针落哪一眼就知道。 */
 .toc-item:hover .toc-caret {
-  color: var(--fg, #24292f);
+  color: var(--sidebar-fg, #24292f);
 }
 .toc-caret + .toc-text,
 .toc-caret-slot + .toc-text {

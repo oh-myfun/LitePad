@@ -30,7 +30,7 @@ describe("B352-1 排版规则从容器里剥出来（.md-rendered）", () => {
     expect(defs, "B377：--md-* 只该有一份定义（全部引用 :root 主题 token）").toBe(1);
     expect(css, "容器类不得再带 token").not.toMatch(/\.md-preview\s*\{[^}]*--md-fg:/);
     expect(css, "预览 token 必须引用全局主题变量").toMatch(
-      /\.md-rendered\s*\{[^}]*--md-fg:\s*var\(--fg/,
+      /\.md-rendered\s*\{[^}]*--md-fg:\s*var\(--editor-fg/,
     );
     expect(css, "不得再有第二份深色色表").not.toMatch(
       /:root\[data-theme="dark"\][^{]*\{[^}]*--md-/,

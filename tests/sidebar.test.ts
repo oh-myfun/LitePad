@@ -49,7 +49,7 @@ describe("B201 左栏几何：卡片画完整一圈 + 按钮列内部分割线 +
 
   it("② 按钮列 ↔ 展开区之间这条内部分割线必须画（VS Code 活动栏同款）", () => {
     expect(declOf(css, ".side-bar", "border-right"), "按钮列右缘的内部竖线").toBe(
-      "border-right: 1px solid var(--sep-line)",
+      "border-right: 1px solid var(--activitybar-border)",
     );
     // 收起展开区时它得收掉：那时按钮列右缘正好贴着卡片右缘，
     // 两条 1px 边紧挨着 = 一条 2px 粗的线。
@@ -109,7 +109,7 @@ describe("B201 左栏几何：卡片画完整一圈 + 按钮列内部分割线 +
     expect(BAD2, "替身必须真的删掉那条线").not.toBe(css);
     expect(() => {
       expect(declOf(BAD2, ".side-bar", "border-right"), "内部竖线必须存在").toBe(
-        "border-right: 1px solid var(--sep-line)",
+        "border-right: 1px solid var(--activitybar-border)",
       );
     }).toThrow();
     expect(BAD, "替身必须真的删掉收起态那条").not.toBe(css);
@@ -123,7 +123,7 @@ describe("B201 左栏几何：卡片画完整一圈 + 按钮列内部分割线 +
   it("⑥ 反向验证：缝里的反馈退回常驻发丝线（缝里多画一条）必须被咬住", () => {
     const BAD = preview.replace(
       /(\.side-resizer::before\s*\{[^}]*)background:\s*transparent;/,
-      "$1background: var(--sep-line);",
+      "$1background: var(--editor-split-border);",
     );
     expect(BAD, "替身必须真的改成常驻线").not.toBe(preview);
     expect(() => {
@@ -204,8 +204,8 @@ describe("B195 侧栏结构：按钮列 → 展开区（外壳套两块视图）
 describe("B195 侧栏卡片样式", () => {
   it("侧栏是卡片，且边框/圆角与编辑区卡片**逐字同步**", () => {
     const shell = cssDecls(ruleBlock(css, ".side-shell"));
-    expect(shell, "侧栏卡片要有 1px 边框（与编辑区卡片同色）").toContain(
-      "border: 1px solid var(--tab-bg-hover)",
+    expect(shell, "侧栏卡片要有 1px 边框（surface.border，与编辑区卡片同色）").toContain(
+      "border: 1px solid var(--editor-card-border)",
     );
     expect(shell, "侧栏卡片圆角 8px").toContain("border-radius: 8px");
     expect(shell, "圆角要能裁掉内部的按钮列与展开区").toContain("overflow: hidden");
@@ -218,70 +218,84 @@ describe("B195 侧栏卡片样式", () => {
     }
   });
 
-  it("按钮列定宽常驻；常态不铺底，悬停/按下/点亮三档各有一色（B202）", () => {
+  it("按钮列 / 活动栏：底色、图标、悬停、点亮全部走 activityBar.*（B379）", () => {
     const bar = cssDecls(ruleBlock(css, ".side-bar"));
     expect(bar, "按钮列定宽（不随展开区宽度变化）").toMatch(/flex:\s*0 0 \d+px/);
-    // B199：按钮列**不再自己刷一档底色**（原先 --bg-toolbar，比展开区暗一档）。
-    // 整张卡片是一块面，两区间不靠描边分界；要改底色只改 .side-shell 那一处。
-    expect(bar, "按钮列不得自己铺底色（否则又变回浮起的浅色面板）").not.toMatch(/background/);
+    // B379 推翻 B199：活动栏在 VS Code 里有自己的底色（Plus 浅色甚至是深色的活动栏）
+    expect(bar, "活动栏 = activityBar.background").toContain("background: var(--activitybar-bg)");
+
+    const shell = cssDecls(ruleBlock(css, ".side-shell"));
+    expect(shell, "展开区 = sideBar.background").toContain("background: var(--sidebar-bg)");
+    expect(shell, "侧栏文字默认取 sideBar.foreground").toContain("color: var(--sidebar-fg)");
 
     const btn = cssDecls(ruleBlock(css, ".side-btn"));
     expect(btn, "常态不铺底").toContain("background: transparent");
-    expect(btn, "常态字形取 muted").toContain("color: var(--fg-muted)");
-
-    // 三档反馈：悬停淡底 / 按下更沉 / 点亮 accent —— 缺一档就成了「按下去没反应」
-    const hover = ruleBlock(css, ".side-btn:hover");
-    expect(hover, "悬停要铺底 =「这颗可点」").toMatch(/background:\s*var\(--bg-hover\)/);
-    expect(hover, "悬停同时把字形转亮").toMatch(/color:\s*var\(--fg\)/);
-    const on = ruleBlock(css, ".side-btn.is-on");
-    expect(on, "点亮 = 当前视图，给一档 accent 底").toMatch(/background:\s*var\(--side-btn-on\)/);
-    expect(on, "点亮时字形走 accent（比悬停那档纯白更有指向）").toMatch(/color:\s*var\(--accent\)/);
-    expect(css, "按下要更沉一档（VS Code 列表项 / 活动栏同款）").toMatch(
-      /\.side-btn:active\s*\{[^}]*background:\s*var\(--side-btn-active\)/,
+    expect(btn, "常态字形取 activityBar.inactiveForeground").toContain(
+      "color: var(--activitybar-inactive-fg)",
     );
-    // ⚠️ 顺序就是语义（同特异度后写者胜）：is-on 压住 hover、active 压住前两者。
+
+    // 两档反馈照 VS Code（活动栏没有单独的「按下」档）
+    const hover = ruleBlock(css, ".side-btn:hover");
+    expect(hover, "悬停 = activityBar.hoverBackground").toMatch(
+      /background:\s*var\(--activitybar-hover-bg\)/,
+    );
+    expect(hover, "悬停前景 = activityBar.hoverForeground").toMatch(
+      /color:\s*var\(--activitybar-hover-fg\)/,
+    );
+    const on = ruleBlock(css, ".side-btn.is-on");
+    expect(on, "点亮 = activityBar.activeBackground").toMatch(
+      /background:\s*var\(--activitybar-active-bg\)/,
+    );
+    expect(on, "点亮前景 = activityBar.activeForeground").toMatch(
+      /color:\s*var\(--activitybar-active-fg\)/,
+    );
+    expect(on, "HC 的选中框 = activityBar.activeBorder").toMatch(
+      /outline:\s*1px solid var\(--activitybar-active-border\)/,
+    );
+    expect(css, "不再造 VS Code 没有的「按下」档").not.toMatch(/\.side-btn:active\s*\{/);
+    // ⚠️ 顺序就是语义（同特异度后写者胜）：is-on 压住 hover。
     expect(css.indexOf(".side-btn.is-on {"), "is-on 必须排在 hover 之后").toBeGreaterThan(
       css.indexOf(".side-btn:hover {"),
     );
-    expect(css.indexOf(".side-btn:active {"), "active 必须压过 is-on").toBeGreaterThan(
-      css.indexOf(".side-btn.is-on {"),
-    );
 
-    // 两颗新变量深浅各定义一次，且取值真的不同（别复制粘贴漏改）
+    // 四颗 token 深浅各定义一次，且取值真的不同（别复制粘贴漏改）
     const dark = themeBlock(css, "dark");
     const light = themeBlock(css, "light");
     const val = (t: string, name: string) =>
       t.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1]?.trim() ?? "";
-    expect(dark, "深色档要给 --side-btn-on / --side-btn-active 各一档").toMatch(/--side-btn-on:/);
-    expect(dark, "深色档的按下色").toMatch(/--side-btn-active:/);
-    for (const name of ["--side-btn-on", "--side-btn-active"]) {
+    for (const name of [
+      "--activitybar-bg",
+      "--activitybar-inactive-fg",
+      "--activitybar-hover-bg",
+      "--activitybar-active-bg",
+    ]) {
       expect(val(light, name), `浅色档也要定义 ${name}`).not.toBe("");
       expect(val(dark, name), `${name} 深浅取值必须不同`).not.toBe(val(light, name));
     }
   });
 
-  it("反向验证：按钮键退回「只转亮字形」（悬停/按下没底色）必须被咬住", () => {
+  it("反向验证：按钮键退回「只转亮字形」（悬停没底色）必须被咬住", () => {
     const BAD = css.replace(
-      /(\.side-btn:hover\s*\{[^}]*)background:\s*var\(--bg-hover\);/,
+      /(\.side-btn:hover\s*\{[^}]*)background:\s*var\(--activitybar-hover-bg\);/,
       "$1background: transparent;",
     );
     expect(BAD, "替身必须真的摘掉悬停底色").not.toBe(css);
     expect(() => {
       expect(BAD.match(/\.side-btn:hover\s*\{[^}]*\}/)?.[0], "悬停底色必须还在").toMatch(
-        /background:\s*var\(--bg-hover\)/,
+        /background:\s*var\(--activitybar-hover-bg\)/,
       );
     }).toThrow();
   });
 
-  it("反向验证：按下那一档退掉（按住没反馈）必须被咬住", () => {
+  it("反向验证：点亮态退掉活动底（当前视图看不出来）必须被咬住", () => {
     const BAD = css.replace(
-      /(\.side-btn:active\s*\{[^}]*)background:\s*var\(--side-btn-active\);/,
+      /(\.side-btn\.is-on\s*\{[^}]*)background:\s*var\(--activitybar-active-bg\);/,
       "$1background: transparent;",
     );
-    expect(BAD, "替身必须真的退掉按下色").not.toBe(css);
+    expect(BAD, "替身必须真的退掉点亮色").not.toBe(css);
     expect(() => {
-      expect(BAD.match(/\.side-btn:active\s*\{[^}]*\}/)?.[0], "按下那一档必须还在").toMatch(
-        /background:\s*var\(--side-btn-active\)/,
+      expect(BAD.match(/\.side-btn\.is-on\s*\{[^}]*\}/)?.[0], "点亮那一档必须还在").toMatch(
+        /background:\s*var\(--activitybar-active-bg\)/,
       );
     }).toThrow();
   });
@@ -631,51 +645,63 @@ describe("B203 完全复制 VS Code 的左右栏间距 / 外框边距 / 拖拽�
   });
 });
 
-// ------------------------------------------------------- B199：卡片底色一致 + 三点把手调大
-// 用户点名两件事：①「左边栏展开区（目前只有大纲列表）背景和其他区域一致，参考 vscode」；
-// ②「拖拽区三个点调大」。
-// ① 的口径（用户裁决）：整张左栏卡片（按钮列 + 展开区）与编辑区**同一颗变量**（--bg）。
-//    VS Code 那边其实是 sideBar #252526 / editor #1E1E1E 亮一档（activityBar #333333 再亮
-//    一档），但 LitePad 这里用户点名要「一致」⇒ 两块卡片只靠 1px 边框 + 圆角分界。
-// ② 缝仍是 4px（B196/B197 的裁决不动），只把把手从 12px 调回 16px —— 竖排三点在整行
-//    高度里垂直居中，上下都够不着卡片边，横向也只有约 2px，不影响手感。
-describe("B199 卡片底色一致：左栏与编辑区同一颗变量，三点把手调回 16px", () => {
-  it("① 整张左栏卡片与编辑区同底色（都是 --bg）", () => {
-    const shell = cssDecls(ruleBlock(css, ".side-shell"));
-    expect(shell, "侧栏卡片底色 = --bg（与编辑区同色）").toContain("background: var(--bg)");
-    // 编辑区卡片（.layout-area）**没有自己的背景**，露的正是 body 的 --bg ——
-    // 所以「同色」的可判据是：这两处取的是同一颗变量，不是「颜色看着差不多」。
-    expect(
-      cssDecls(ruleBlock(css, ".layout-area")),
-      "编辑区卡片不许自带底色（自带了就又分出两块）",
-    ).not.toMatch(/background/);
-    expect(css, "body 的底就是 --bg（编辑区露的就是这一颗）").toMatch(
-      /body \{[\s\S]{0,200}?background: var\(--bg\)/,
+// ------------------------------------------------------- B379：分区域底色（推翻 B199 的单色裁决）
+// B199 曾按用户裁决把整张左栏与编辑区压成同一颗 --bg；B379 用户重新点名
+// 「侧边栏……颜色和样式尽量和 vscode 保持一致」⇒ 恢复 VS Code 的三层关系：
+//   shell（标题/状态栏）= --shell-bg、侧栏 = --sidebar-bg、编辑区 = --bg。
+// ② 缝仍是 4px（B196/B197 的裁决不动），三点把手 16px 不动。
+describe("B379 分区域底色：外壳 / 侧栏 / 编辑区各一颗 token", () => {
+  it("① 三块面各取自己的 VS Code token，不再合并成一颗", () => {
+    expect(cssDecls(ruleBlock(css, ".side-shell")), "侧栏卡片 = sideBar.background").toContain(
+      "background: var(--sidebar-bg)",
     );
+    expect(cssDecls(ruleBlock(css, ".layout-area")), "编辑区卡片 = editor.background").toContain(
+      "background: var(--bg)",
+    );
+    expect(cssDecls(ruleBlock(css, "html, body")), "整窗外壳 = shellBackground").toContain(
+      "background: var(--shell-bg)",
+    );
+    // 三颗 token 的深浅取值必须真的不同（别把三处写成同一颗的同义反复）
+    const dark = themeBlock(css, "dark");
+    const val = (name: string) => dark.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1]?.trim() ?? "";
+    const shell = val("--shell-bg");
+    const side = val("--sidebar-bg");
+    const editor = val("--bg");
+    for (const [label, v] of [
+      ["--shell-bg", shell],
+      ["--sidebar-bg", side],
+      ["--bg", editor],
+    ] as const) {
+      expect(v, `${label} 必须有值`).not.toBe("");
+    }
+    expect(new Set([shell, side, editor]).size, "三块面不能又是同一个色").toBeGreaterThan(1);
   });
 
-  it("② 展开区（大纲面板）+ 按钮列都不再刷第二档底色", () => {
+  it("② 展开区透明（露侧栏底色）；活动栏自有底色", () => {
     const panel = cssDecls(ruleBlock(preview, ".toc-panel"));
-    expect(panel, "TOC 面板要透明（露出父卡片的 --bg）").toMatch(/background:\s*transparent/);
+    expect(panel, "TOC 面板要透明（露出父卡片的 --sidebar-bg）").toMatch(
+      /background:\s*transparent/,
+    );
     expect(panel, "不许再刷 --bg-elevated —— 那正是「展开区浮起一块」的来源").not.toContain(
       "--bg-elevated",
     );
-    const bar = cssDecls(ruleBlock(css, ".side-bar"));
-    expect(bar, "按钮列也不许再刷 --bg-toolbar 那一档").not.toMatch(/--bg-/);
+    expect(cssDecls(ruleBlock(css, ".side-bar")), "按钮列 = activityBar.background").toContain(
+      "background: var(--activitybar-bg)",
+    );
   });
 
-  it("③ 反向验证①：卡片底色退回 --bg-elevated（又浮起一块）必须被咬住", () => {
+  it("③ 反向验证①：卡片底色退回 --bg（旧的单色裁决）必须被咬住", () => {
     const start = css.indexOf(".side-shell {");
     expect(start, "要能定位 .side-shell").toBeGreaterThan(-1);
     const end = css.indexOf("}", start);
     const BAD =
       css.slice(0, start) +
-      css.slice(start, end).replace("background: var(--bg);", "background: var(--bg-elevated);") +
+      css.slice(start, end).replace("background: var(--sidebar-bg);", "background: var(--bg);") +
       css.slice(end);
-    expect(BAD, "替身必须真的刷回抬高一档").not.toBe(css);
+    expect(BAD, "替身必须真的改回编辑区底色").not.toBe(css);
     expect(() => {
-      expect(cssDecls(ruleBlock(BAD, ".side-shell")), "替身的抬高一档底色必须被抓到").toContain(
-        "background: var(--bg)",
+      expect(cssDecls(ruleBlock(BAD, ".side-shell")), "替身的合并底色必须被抓到").toContain(
+        "background: var(--sidebar-bg)",
       );
     }).toThrow();
   });

@@ -87,14 +87,14 @@ describe("B50 启动不得露出白色窗口（用户反馈：打开时先白屏
       confBg,
     );
 
-    // global.css: :root[data-theme="dark"] { --bg: #1f1f1f; }
-    // 必须在**深色块体内**取 --bg：原先用 `[data-theme="dark"][\s\S]*?--bg:` 是非贪婪
-    // 跨块匹配，深色块一旦丢了 --bg 就会一路扫进浅色块、拿浅色的值来比对（假绿）。
-    const cssDark = /--bg:\s*#([0-9a-fA-F]{6})/.exec(themeBlock(css, "dark"));
-    expect(cssDark?.[1]?.toLowerCase(), "global.css 深色 --bg 必须同上").toBe(confBg);
+    // global.css: :root[data-theme="dark"] { --shell-bg: #191a1b; }
+    // B379：首帧露在外面的就是外壳（浮动卡片四周），所以取 --shell-bg，不再是 --bg。
+    // 必须在**深色块体内**取，否则块一旦丢值会一路扫进浅色块、拿浅色的值来比对（假绿）。
+    const cssDark = /--shell-bg:\s*#([0-9a-fA-F]{6})/.exec(themeBlock(css, "dark"));
+    expect(cssDark?.[1]?.toLowerCase(), "global.css 深色 --shell-bg 必须同上").toBe(confBg);
 
     // index.html 内联首屏样式必须同时覆盖深/浅两套
-    expect(html, "index.html 必须有内联首屏底色").toContain("background: #ffffff");
+    expect(html, "index.html 必须有内联首屏底色（2026 浅色外壳）").toContain("background: #fafafd");
     expect(html, "index.html 必须给出深色首屏底色").toContain(`background: #${confBg}`);
   });
 

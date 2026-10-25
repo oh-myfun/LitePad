@@ -539,14 +539,21 @@ describe("B370/B373 资源管理器行对齐 VS Code 的 Seti 树", () => {
     );
   });
 
-  it("选中行用 VS Code 的 list.activeSelectionBackground（与 B366 同一颗 token）", () => {
+  it("选中行按 VS Code 两档：树无焦点 = inactiveSelection，持焦点 = activeSelection（B379）", () => {
     const sel = ruleBlock(
       sheet,
       '.explorer-row[aria-selected="true"], .explorer-root[aria-selected="true"]',
     );
     expect(sel, "取不到选中规则").toBeTruthy();
-    expect(sel).toContain("var(--pick-focus-bg)");
-    expect(sel).toContain("var(--pick-focus-fg)");
+    expect(sel).toContain("background: var(--list-inactive-bg)");
+    expect(sel).toContain("color: var(--list-inactive-fg)");
+    const focused = ruleBlock(
+      sheet,
+      '.explorer-tree:focus-within .explorer-row[aria-selected="true"], .explorer-tree:focus-within .explorer-root[aria-selected="true"]',
+    );
+    expect(focused, "取不到持焦点那一档").toContain("background: var(--list-active-bg)");
+    expect(focused).toContain("color: var(--list-active-fg)");
+    expect(focused, "HC 的选中框").toContain("outline: 1px solid var(--list-selection-border");
     expect(sel, "旧的 neutral 底已撤").not.toContain("--side-btn-active");
   });
 

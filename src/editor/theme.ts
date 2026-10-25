@@ -7,8 +7,8 @@
 //
 // 语法色表在 `src/theme/syntax.ts`（预览里的 Shiki 代码块共用同一份）；
 // 本文件只管 CM6 壳层与把色表翻成 HighlightStyle。
-// UI 层全走 CSS 变量（--bg / --fg / --editor-*）：预览与源码共用同一颗底色 token，
-// 主题切换时 CM6 只需重配 dark 标志与语法色，颜色自己跟着变量走。
+// UI 层全走 CSS 变量（--bg / --editor-fg / --editor-* 等）：预览与源码共用同一颗
+// 底色 token，主题切换时 CM6 只需重配 dark 标志与语法色，颜色自己跟着变量走。
 
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import type { Extension } from "@codemirror/state";
@@ -25,7 +25,9 @@ function shellStyles(dark: boolean): Extension {
   return EditorView.theme(
     {
       "&": {
-        color: "var(--fg)",
+        // B379：编辑区正文取 `editor.foreground`（--editor-fg），与预览同一颗；
+        // 全应用正文色 --fg 属于 workbench，Plus 浅色里两档并不同值。
+        color: "var(--editor-fg)",
         backgroundColor: "var(--bg)",
       },
       ".cm-content": {

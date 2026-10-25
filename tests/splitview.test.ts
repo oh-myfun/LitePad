@@ -811,7 +811,9 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     // （B59 S5：线色从通用 --border 抽成 --sep-line；B122 曾短暂透明，
     //   B123 卡片上移到 .layout-area 后分屏边界回到卡片内部，静息细线恢复）
     const sepLine = ruleBlock(globalCss, ".layout-sep::after");
-    expect(sepLine, "分屏分隔条细线必须由伪元素画").toContain("background: var(--sep-line)");
+    expect(sepLine, "分屏分隔条细线必须由伪元素画").toContain(
+      "background: var(--editor-split-border)",
+    );
     expect(globalCss, "横向分隔条的细线几何").toMatch(/\.layout-sep-h::after\s*\{/);
     expect(globalCss, "纵向分隔条的细线几何").toMatch(/\.layout-sep-v::after\s*\{/);
 
@@ -914,19 +916,19 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
 
     // S5 线色抽成 --sep-line（B59）；B122 曾透明，B123 卡片上移到 .layout-area
     // 后分屏边界回到卡片内部，静息细线恢复；大纲分隔条同款共用，两套主题齐补
-    expect(css, "分屏分隔条线色走 --sep-line").toMatch(
-      /\.layout-sep::after\s*\{[^}]*background:\s*var\(--sep-line\)/,
+    expect(css, "分屏分隔条线色走 --editor-split-border").toMatch(
+      /\.layout-sep::after\s*\{[^}]*background:\s*var\(--editor-split-border\)/,
     );
     // B123：整个标签+编辑区是一张大卡片（.layout-area），面板本身无框
     const area = cssDecls(ruleBlock(css, ".layout-area"));
-    expect(area, "大卡片外框 1px（颜色=非活动 hover 色）").toContain(
-      "border: 1px solid var(--tab-bg-hover)",
+    expect(area, "大卡片外框 1px（surface.border）").toContain(
+      "border: 1px solid var(--editor-card-border)",
     );
     expect(area, "大卡片圆角 8px").toContain("border-radius: 8px");
     const panelCard = cssDecls(ruleBlock(css, ".layout-panel"));
     expect(panelCard, "面板本身不得再画卡片边框（B123 卡片上移）").not.toMatch(/border/);
-    // B195：大纲这一档已改走「空隙 + 三点把手」（见上一用例的 B28/B195 说明），
-    // 不再引用 --sep-line；分屏细线（卡片内部）继续用它，两套主题照补。
+    // B195：大纲这一档已改走「空隙 + 三点把手」；B379 起分屏细线取
+    // editorGroup.border（--editor-split-border），两套基座主题都要定义。
     const darkTheme = themeBlock(css, "dark");
     const lightTheme = themeBlock(css, "light");
     expect(darkTheme, "深色主题块必须找到").toBeTruthy();
@@ -935,7 +937,7 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
       ["dark", darkTheme],
       ["light", lightTheme],
     ] as const) {
-      expect(block, `${name} 主题必须有 --sep-line`).toContain("--sep-line:");
+      expect(block, `${name} 主题必须有 --editor-split-border`).toContain("--editor-split-border:");
       expect(block, `${name} 主题必须有 --drop-fill`).toContain("--drop-fill:");
     }
 

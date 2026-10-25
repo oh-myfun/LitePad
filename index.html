@@ -7,39 +7,56 @@
 
     <!-- B50 首屏着色：模块脚本还在下载/解析时，这段内联样式与脚本已经跑完，
          于是 WebView2 画出的第一帧就是主题底色而不是白板。
-         B377 起默认主题族是 VS Code 2026（深色 editor.background = #121314）；
-         配色必须与 src/styles/global.css 的默认主题块、src-tauri/src/main.rs 的
-         BG_DARK/BG_LIGHT、tauri.conf.json 的 backgroundColor 四处保持一致。 -->
+         B379：整窗底色按 VS Code 的 **modernUI.shellBackground**（浮动卡片四周露出的那层
+         外壳色）取，不再用 editor.background —— 见 VS Code `partsSplash.ts`
+         （`modernUI === true` 时 splash 取 shellBackground）。配色必须与
+         src/styles/global.css 的默认主题块、src-tauri/src/main.rs 的
+         BG_DARK/BG_LIGHT、tauri.conf.json 的 backgroundColor 四处保持一致。
+         默认族 = 2026。 -->
     <style>
       html,
       body {
         margin: 0;
-        background: #ffffff;
+        background: #fafafd;
       }
       /* 默认族 = 2026 */
       html[data-theme="dark"],
       html[data-theme="dark"] body {
-        background: #121314;
+        background: #191a1b;
       }
       html[data-theme-family="modern"][data-theme="dark"],
       html[data-theme-family="modern"][data-theme="dark"] body {
-        background: #1f1f1f;
+        background: #181818;
+      }
+      html[data-theme-family="modern"][data-theme="light"],
+      html[data-theme-family="modern"][data-theme="light"] body {
+        background: #f8f8f8;
       }
       html[data-theme-family="plus"][data-theme="dark"],
       html[data-theme-family="plus"][data-theme="dark"] body,
       html[data-theme-family="classic"][data-theme="dark"],
       html[data-theme-family="classic"][data-theme="dark"] body {
-        background: #1e1e1e;
+        background: #3c3c3c;
+      }
+      html[data-theme-family="plus"][data-theme="light"],
+      html[data-theme-family="plus"][data-theme="light"] body,
+      html[data-theme-family="classic"][data-theme="light"],
+      html[data-theme-family="classic"][data-theme="light"] body {
+        background: #dddddd;
       }
       html[data-theme-family="hc"][data-theme="dark"],
       html[data-theme-family="hc"][data-theme="dark"] body {
         background: #000000;
       }
+      html[data-theme-family="hc"][data-theme="light"],
+      html[data-theme-family="hc"][data-theme="light"] body {
+        background: #ffffff;
+      }
       /* 没拿到 data-theme（首次启动 / localStorage 不可用）时先跟系统 */
       @media (prefers-color-scheme: dark) {
         html:not([data-theme="light"]),
         html:not([data-theme="light"]) body {
-          background: #121314;
+          background: #191a1b;
         }
       }
     </style>

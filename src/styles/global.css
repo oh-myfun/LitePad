@@ -107,24 +107,77 @@
 :root[data-theme="dark"] {
   /* color-scheme 让 Chromium 的原生控件（滚动条、下拉、表单）按暗色渲染 */
   color-scheme: dark;
-  /* B377：默认档 = VS Code **2026 Dark**（`extensions/theme-defaults/themes/2026-dark.json`）：
-       --bg          = editor.background                    #121314（源码与预览共用这一颗）
-       --bg-toolbar  = titleBar/statusBar/sideBar.background #191A1B
-       --bg-elevated = menu.background / editorWidget        #202122
-       --bg-hover    = list.hoverBackground                  #FFFFFF14
-       --border      = menu/editorWidget.border              #2A2B2C */
-  --bg: #121314;
-  --bg-toolbar: #191a1b;
-  /* B204（用户点名「状态栏颜色和标题栏背景色一致」）：状态栏与标题栏**同认这一颗**，
-     别再补回独立的 --bg-status —— 两条 chrome 各刷各的就是当时要消掉的色差。 */
+  /* B379：分区域主题 token —— 每一块只认自己那几颗，换主题只改这张表。
+       统一出处（VS Code 1.143，`E:\Project\vscode`）：
+         · 外壳 / 标题栏 = modernUI.shellBackground（缺省 = titleBar.activeBackground）
+         · 活动栏 = modernActivityBar.background（= activityBar.background）
+         · 活动栏条目 = modernActivityBarItem.{hover,active}{Background,Foreground}
+         · 侧栏 = sideBar.background；列表行 = list.*（资源管理器 / 最近打开同源）
+         · 编辑区 = editor.background / editor.foreground
+         · 卡片边框 = editor.border / surface.border；分屏线 = editorGroup.border
+         · 标签条 = editorGroupHeader.connectedTabsBackground（缺省回 tabsBackground）
+         · 标签描边 = editorGroupHeader.tabsBorder；状态栏 = statusBar.*
+       ⚠️ B199「侧栏与编辑区同色」、B204「状态栏与标题栏同色」是单主题时代的裁决；
+          B379 用户点名按 VS Code 分区域取色 ⇒ 两条旧口径按主题真实值让位。 */
+  /* B377：默认档 = VS Code **2026 Dark**（`2026-dark.json`）。 */
+  --bg: #121314; /* editor.background */
+  --fg: #bfbfbf; /* foreground（workbench） */
+  --fg-muted: #8c8c8c; /* descriptionForeground */
+  --editor-fg: #bbbebf; /* editor.foreground */
+
+  --shell-bg: #191a1b; /* modernUI.shellBackground = titleBar.activeBackground */
+  --titlebar-fg: #8c8c8c; /* titleBar.activeForeground */
+  --titlebar-hover-bg: rgba(255, 255, 255, 0.1); /* titlebarpart.css 窗口控制 */
+  --titlebar-close-hover: rgba(232, 17, 35, 0.9);
+  --menubar-hover-bg: #242526; /* menubar.selectionBackground */
+  --menubar-hover-fg: #bfbfbf; /* menubar.selectionForeground */
+  --menubar-hover-border: transparent; /* 只有 HC 有 selectionBorder */
+  --toolbar-hover-bg: #5a5d5e50; /* toolbar.hoverBackground */
+
+  --activitybar-bg: #191a1b;
+  --activitybar-fg: #bfbfbf;
+  --activitybar-inactive-fg: #8c8c8c;
+  --activitybar-hover-bg: #ffffff14;
+  --activitybar-hover-fg: #bfbfbf;
+  --activitybar-active-bg: #2c2d2e;
+  --activitybar-active-fg: #ededed;
+  --activitybar-active-border: transparent;
+  --activitybar-border: #2a2b2c; /* modernActivityBar.border = surface.border */
+
+  --sidebar-bg: #191a1b;
+  --sidebar-fg: #bfbfbf;
+  --sidebar-section-fg: #bfbfbf;
+
+  --list-hover-bg: #ffffff14;
+  --list-hover-fg: #bfbfbf;
+  --list-active-bg: #ffffff22;
+  --list-active-fg: #ededed;
+  --list-inactive-bg: #2c2d2e;
+  --list-inactive-fg: #ededed;
+  --list-selection-border: transparent;
+
+  --editor-card-border: #2a2b2c; /* editor.border = surface.border (#2A2B2C) */
+  --editor-split-border: #444444; /* editorGroup.border 默认档 */
+
+  --tab-strip-bg: #202122; /* editorGroupHeader.connectedTabsBackground */
+  --tabstrip-border: #2a2b2c; /* editorGroupHeader.tabsBorder */
+  --tab-fg-inactive: #8c8c8c;
+  --tab-fg-active: #bfbfbf;
+  --tab-fg-hover: #bfbfbf;
+  --tab-bg-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-strip-bg));
+  --tab-bg-active: var(--bg);
+  --tab-bg-active-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-bg-active));
+
+  --statusbar-bg: #191a1b;
+  --statusbar-fg: #8c8c8c;
+  --statusbar-border: #2a2b2c;
+  --statusbar-item-hover-bg: #323233;
+  --statusbar-item-active-bg: #4b4c4d;
+
+  /* 兼容旧名：设置窗框、浮层等非四区域的地方仍引用 */
   --bg-elevated: #202122;
   --bg-hover: #ffffff14;
   --border: #2a2b2c;
-  /* B202：左栏按钮（.side-btn）的点亮 / 按下两档底色。 */
-  --side-btn-on: color-mix(in srgb, var(--accent) 18%, transparent);
-  --side-btn-active: #313233;
-  --fg: #bfbfbf;
-  --fg-muted: #8c8c8c;
   /* B376：源码编辑区（CM6）的颜色 token，取 2026 Dark 与 editorColorRegistry。 */
   --editor-cursor: #bbbebf;
   --editor-selection: #276782dd;
@@ -141,13 +194,6 @@
   --pick-focus-fg: #ededed;
   --danger: #f48771;
   --warn: #e5ba7d;
-  /* 相连标签（B113）：条带 = tabsBackground，活动标签 = 编辑器底色（B376 起 var(--bg)）。 */
-  --tab-strip-bg: #191a1b;
-  --tab-fg-inactive: #8c8c8c;
-  --tab-fg-active: #bfbfbf;
-  --tab-bg-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-strip-bg));
-  --tab-bg-active: var(--bg);
-  --tab-bg-active-hover: #121314;
   /* 文件类型图标的 Seti 色调（B367）：Seti 自带深浅两套，不跟主题族变。 */
   --seti-blue: #519aba;
   --seti-yellow: #cbcb41;
@@ -183,7 +229,6 @@
   --tip-key-fg: #bfbfbf;
   --tip-key-border: rgba(51, 51, 51, 0.6);
   --tip-key-bottom: rgba(68, 68, 68, 0.6);
-  --sep-line: #2a2b2c;
   /* 拖拽落点高亮（B60 回退浅蓝）：填充与 2px 描边同源，都取 accent @0.22。 */
   --drop-fill: color-mix(in srgb, var(--accent) 22%, transparent);
   /* 预览侧语义色：行内代码/代码块底色与链接色（preview.css 消费）。 */
@@ -196,13 +241,52 @@
 /* Dark Modern（B376 的取色原样保留；Modern 与 Plus 共用 Dark+ 语法色）。 */
 :root[data-theme="dark"][data-theme-family="modern"] {
   --bg: #1f1f1f;
-  --bg-toolbar: #181818;
+  --fg: #cccccc;
+  --fg-muted: #9d9d9d;
+  --editor-fg: #cccccc;
+  --shell-bg: #181818;
+  --titlebar-fg: #cccccc;
+  --titlebar-hover-bg: rgba(255, 255, 255, 0.1);
+  --titlebar-close-hover: rgba(232, 17, 35, 0.9);
+  --menubar-hover-bg: #5a5d5e50;
+  --menubar-hover-fg: #cccccc;
+  --menubar-hover-border: transparent;
+  --toolbar-hover-bg: #5a5d5e50;
+  --activitybar-bg: #181818;
+  --activitybar-fg: #d7d7d7;
+  --activitybar-inactive-fg: #868686;
+  --activitybar-hover-bg: #2a2d2e;
+  --activitybar-hover-fg: #cccccc;
+  --activitybar-active-bg: #37373d;
+  --activitybar-active-fg: #cccccc;
+  --activitybar-active-border: transparent;
+  --activitybar-border: #333333;
+  --sidebar-bg: #181818;
+  --sidebar-fg: #cccccc;
+  --sidebar-section-fg: #cccccc;
+  --list-hover-bg: #2a2d2e;
+  --list-hover-fg: #cccccc;
+  --list-active-bg: #04395e;
+  --list-active-fg: #ffffff;
+  --list-inactive-bg: #37373d;
+  --list-inactive-fg: #cccccc;
+  --list-selection-border: transparent;
+  --editor-card-border: #333333;
+  --editor-split-border: #ffffff17;
+  --tab-strip-bg: #2b2b2b; /* editorGroupHeader.connectedTabsBackground */
+  --tabstrip-border: #2b2b2b;
+  --tab-fg-inactive: #9d9d9d;
+  --tab-fg-active: #ffffff;
+  --tab-fg-hover: #cccccc;
+  --tab-bg-active-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-bg-active));
+  --statusbar-bg: #181818;
+  --statusbar-fg: #cccccc;
+  --statusbar-border: #2b2b2b;
+  --statusbar-item-hover-bg: #f1f1f133;
+  --statusbar-item-active-bg: #ffffff2e;
   --bg-elevated: #1f1f1f;
   --bg-hover: #2a2d2e;
   --border: #2b2b2b;
-  --side-btn-active: #2a2d2e;
-  --fg: #cccccc;
-  --fg-muted: #9d9d9d;
   --editor-cursor: #aeafad;
   --editor-selection: #264f78;
   --editor-line-highlight-border: #282828;
@@ -213,10 +297,6 @@
   --pick-focus-fg: #ffffff;
   --danger: #f85149;
   --warn: #cca700;
-  --tab-strip-bg: #181818;
-  --tab-fg-inactive: #9d9d9d;
-  --tab-fg-active: #ffffff;
-  --tab-bg-active-hover: #262626;
   --sb-thumb: rgba(255, 255, 255, 0.22);
   --sb-thumb-hover: rgba(255, 255, 255, 0.36);
   --sb-thumb-active: rgba(255, 255, 255, 0.46);
@@ -231,19 +311,59 @@
   --link-fg: #4daafc;
 }
 
-/* Dark+ 与 Dark (Visual Studio)：UI 完全同源（dark_vs.json 是 Plus 的 include 底），
-   只差语法色（见 src/editor/theme.ts）。标题栏取 registry 默认 #3C3C3C；
-   经典主题原生的蓝色状态栏不搬 —— B204 要求状态栏与标题栏同色。 */
+/* Dark+ 与 Dark (Visual Studio)：UI 几乎同源（dark_vs.json 是 Plus 的 include 底），
+   只差语法色（见 src/editor/theme.ts）与标签条那两三颗（见下面 classic 覆盖块）。
+   标题栏取 registry 默认 #3C3C3C；状态栏按 registry 默认 #007ACC ——
+   B204「状态栏与标题栏同色」被 B379 推翻，VS Code 的 Plus/经典档本来就是蓝的。 */
 :root[data-theme="dark"][data-theme-family="plus"],
 :root[data-theme="dark"][data-theme-family="classic"] {
   --bg: #1e1e1e;
-  --bg-toolbar: #3c3c3c;
+  --fg: #cccccc;
+  --fg-muted: #9d9d9d;
+  --editor-fg: #d4d4d4;
+  --shell-bg: #3c3c3c;
+  --titlebar-fg: #cccccc;
+  --titlebar-hover-bg: rgba(255, 255, 255, 0.1);
+  --titlebar-close-hover: rgba(232, 17, 35, 0.9);
+  --menubar-hover-bg: #5a5d5e50;
+  --menubar-hover-fg: #cccccc;
+  --menubar-hover-border: transparent;
+  --toolbar-hover-bg: #5a5d5e50;
+  --activitybar-bg: #333333;
+  --activitybar-fg: #ffffff;
+  --activitybar-inactive-fg: #ffffff66;
+  --activitybar-hover-bg: #2a2d2e;
+  --activitybar-hover-fg: #cccccc;
+  --activitybar-active-bg: #37373d;
+  --activitybar-active-fg: #cccccc;
+  --activitybar-active-border: transparent;
+  --activitybar-border: #3e3e3e;
+  --sidebar-bg: #252526;
+  --sidebar-fg: #cccccc;
+  --sidebar-section-fg: #cccccc;
+  --list-hover-bg: #2a2d2e;
+  --list-hover-fg: #cccccc;
+  --list-active-bg: #04395e;
+  --list-active-fg: #ffffff;
+  --list-inactive-bg: #37373d;
+  --list-inactive-fg: #cccccc;
+  --list-selection-border: transparent;
+  --editor-card-border: #3e3e3e;
+  --editor-split-border: #444444;
+  --tab-strip-bg: #252526; /* connectedTabsBackground 回落到 tabsBackground */
+  --tabstrip-border: #252526; /* tab.border 默认档（与条带同色 ⇒ 看不见描边） */
+  --tab-fg-inactive: #929292; /* tab.inactiveForeground 默认 = 白 50%，压在条带上 */
+  --tab-fg-active: #ffffff;
+  --tab-fg-hover: #cccccc;
+  --tab-bg-active-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-bg-active));
+  --statusbar-bg: #007acc;
+  --statusbar-fg: #ffffff;
+  --statusbar-border: transparent;
+  --statusbar-item-hover-bg: #ffffff1f;
+  --statusbar-item-active-bg: #ffffff2e;
   --bg-elevated: #252526;
   --bg-hover: #2a2d2e;
   --border: #303031;
-  --side-btn-active: #2a2d2e;
-  --fg: #d4d4d4;
-  --fg-muted: #9d9d9d;
   --editor-cursor: #aeafad;
   --editor-selection: #264f78;
   --editor-line-highlight-border: #282828;
@@ -254,10 +374,6 @@
   --pick-focus-fg: #ffffff;
   --danger: #f48771;
   --warn: #cca700;
-  --tab-strip-bg: #252526;
-  --tab-fg-inactive: #a6a6a6;
-  --tab-fg-active: #ffffff;
-  --tab-bg-active-hover: #1e1e1e;
   --sb-thumb: #79797966;
   --sb-thumb-hover: #79797999;
   --sb-thumb-active: #797979b3;
@@ -272,17 +388,64 @@
   --link-fg: #3794ff;
 }
 
+/* Dark (Visual Studio) 与 Dark+ 的差异：dark_vs.json 显式给了更亮的条带与
+   非活动标签色（#303031 / #A6A6A6），而 Dark+ 走 registry 默认的 #252526 / 白 50%。 */
+:root[data-theme="dark"][data-theme-family="classic"] {
+  --tab-strip-bg: #303031;
+  --tab-fg-inactive: #a6a6a6;
+  --border: #303031;
+}
+
 /* Dark High Contrast：纯黑表面 + #6FC3DF 描边；磨砂改实底（无障碍优先）。 */
 :root[data-theme="dark"][data-theme-family="hc"] {
   --glass-opacity: 100%;
   --bg: #000000;
-  --bg-toolbar: #000000;
+  --fg: #ffffff;
+  --fg-muted: #ffffff;
+  --editor-fg: #ffffff;
+  --shell-bg: #000000;
+  --titlebar-fg: #ffffff;
+  --titlebar-hover-bg: rgba(255, 255, 255, 0.1);
+  --titlebar-close-hover: rgba(232, 17, 35, 0.9);
+  --menubar-hover-bg: transparent;
+  --menubar-hover-fg: #ffffff;
+  --menubar-hover-border: #6fc3df;
+  --toolbar-hover-bg: transparent;
+  --activitybar-bg: #000000;
+  --activitybar-fg: #ffffff;
+  --activitybar-inactive-fg: #ffffff;
+  --activitybar-hover-bg: #ffffff1a;
+  --activitybar-hover-fg: #ffffff;
+  --activitybar-active-bg: transparent;
+  --activitybar-active-fg: #ffffff;
+  --activitybar-active-border: #6fc3df;
+  --activitybar-border: #6fc3df;
+  --sidebar-bg: #000000;
+  --sidebar-fg: #ffffff;
+  --sidebar-section-fg: #ffffff;
+  --list-hover-bg: #ffffff1a;
+  --list-hover-fg: #ffffff;
+  --list-active-bg: transparent;
+  --list-active-fg: #ffffff;
+  --list-inactive-bg: transparent;
+  --list-inactive-fg: #ffffff;
+  --list-selection-border: #6fc3df;
+  --editor-card-border: #6fc3df;
+  --editor-split-border: #6fc3df;
+  --tab-strip-bg: #000000;
+  --tabstrip-border: #6fc3df;
+  --tab-fg-inactive: #ffffff;
+  --tab-fg-active: #ffffff;
+  --tab-fg-hover: #ffffff;
+  --tab-bg-active-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-bg-active));
+  --statusbar-bg: #000000;
+  --statusbar-fg: #ffffff;
+  --statusbar-border: #6fc3df;
+  --statusbar-item-hover-bg: #000000;
+  --statusbar-item-active-bg: #ffffff2e;
   --bg-elevated: #000000;
   --bg-hover: #ffffff1f;
   --border: #6fc3df;
-  --side-btn-active: #383a49;
-  --fg: #ffffff;
-  --fg-muted: #ffffff;
   --editor-cursor: #ffffff;
   --editor-selection: rgba(111, 195, 223, 0.45);
   --editor-line-highlight-border: #6fc3df;
@@ -295,10 +458,6 @@
   --pick-focus-fg: #000000;
   --danger: #f48771;
   --warn: #ffd700;
-  --tab-strip-bg: #000000;
-  --tab-fg-inactive: #ffffff;
-  --tab-fg-active: #ffffff;
-  --tab-bg-active-hover: #000000;
   --sb-thumb: #ffffff99;
   --sb-thumb-hover: #ffffffb3;
   --sb-thumb-active: #ffffffcc;
@@ -321,19 +480,65 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
-  /* B377：默认档 = VS Code **2026 Light**（`2026-light.json`）：
-       --bg = editor.background #FFFFFF；--bg-toolbar = titleBar/statusBar/sideBar #FAFAFD；
-       --bg-elevated = menu/editorWidget #FAFAFD；--bg-hover = list.hoverBackground #00000014；
-       --border = editorGroup.border #E5E5E5。 */
-  --bg: #ffffff;
-  --bg-toolbar: #fafafd;
+  /* B379：分区域 token（出处同深色基座注释）。默认档 = VS Code **2026 Light**。 */
+  --bg: #ffffff; /* editor.background */
+  --fg: #202020; /* foreground（workbench） */
+  --fg-muted: #606060; /* descriptionForeground */
+  --editor-fg: #202020; /* editor.foreground */
+
+  --shell-bg: #fafafd; /* modernUI.shellBackground = titleBar.activeBackground */
+  --titlebar-fg: #606060;
+  --titlebar-hover-bg: rgba(0, 0, 0, 0.1);
+  --titlebar-close-hover: rgba(232, 17, 35, 0.9);
+  --menubar-hover-bg: #eaeaea;
+  --menubar-hover-fg: #202020;
+  --menubar-hover-border: transparent;
+  --toolbar-hover-bg: #b8b8b850;
+
+  --activitybar-bg: #fafafd;
+  --activitybar-fg: #202020;
+  --activitybar-inactive-fg: #606060;
+  --activitybar-hover-bg: #00000014;
+  --activitybar-hover-fg: #202020;
+  --activitybar-active-bg: #dadada99;
+  --activitybar-active-fg: #202020;
+  --activitybar-active-border: transparent;
+  --activitybar-border: #e4e5e6; /* surface.border（2026 浅色显式值） */
+
+  --sidebar-bg: #fafafd;
+  --sidebar-fg: #202020;
+  --sidebar-section-fg: #202020;
+
+  --list-hover-bg: #00000014;
+  --list-hover-fg: #202020;
+  --list-active-bg: #00000025;
+  --list-active-fg: #202020;
+  --list-inactive-bg: #dadada99;
+  --list-inactive-fg: #202020;
+  --list-selection-border: transparent;
+
+  --editor-card-border: #e4e5e6; /* surface.border = editor.border */
+  --editor-split-border: #e7e7e7; /* editorGroup.border 默认档 */
+
+  --tab-strip-bg: #eaeaea; /* editorGroupHeader.connectedTabsBackground */
+  --tabstrip-border: #f0f1f2;
+  --tab-fg-inactive: #606060;
+  --tab-fg-active: #202020;
+  --tab-fg-hover: #202020;
+  --tab-bg-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-strip-bg));
+  --tab-bg-active: var(--bg);
+  --tab-bg-active-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-bg-active));
+
+  --statusbar-bg: #fafafd;
+  --statusbar-fg: #606060;
+  --statusbar-border: #f0f1f2;
+  --statusbar-item-hover-bg: #e3e3e5;
+  --statusbar-item-active-bg: #eeeeee;
+
+  /* 兼容旧名：设置窗框、浮层等非四区域的地方仍引用 */
   --bg-elevated: #fafafd;
   --bg-hover: #00000014;
   --border: #e5e5e5;
-  --side-btn-on: color-mix(in srgb, var(--accent) 14%, transparent);
-  --side-btn-active: #d6d6d6;
-  --fg: #202020;
-  --fg-muted: #606060;
   --editor-cursor: #202020;
   --editor-selection: #0069cc40;
   --editor-line-highlight-border: #eaeaea;
@@ -347,12 +552,6 @@
   --pick-focus-fg: #202020;
   --danger: #ad0707;
   --warn: #667309;
-  --tab-strip-bg: #fafafd;
-  --tab-fg-inactive: #606060;
-  --tab-fg-active: #202020;
-  --tab-bg-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-strip-bg));
-  --tab-bg-active: var(--bg);
-  --tab-bg-active-hover: #ffffff;
   --seti-blue: #498ba7;
   --seti-yellow: #b7b73b;
   --seti-gray: #627379;
@@ -383,7 +582,6 @@
   --tip-key-fg: #555555;
   --tip-key-border: rgba(204, 204, 204, 0.4);
   --tip-key-bottom: rgba(187, 187, 187, 0.4);
-  --sep-line: #e5e5e5;
   --drop-fill: color-mix(in srgb, var(--accent) 22%, transparent);
   --code-bg: #eaeaea;
   --link-fg: #0069cc;
@@ -392,13 +590,53 @@
 /* Light Modern（B376 原样保留）。 */
 :root[data-theme="light"][data-theme-family="modern"] {
   --bg: #ffffff;
-  --bg-toolbar: #f8f8f8;
+  --fg: #3b3b3b;
+  --fg-muted: #3b3b3b;
+  --editor-fg: #3b3b3b;
+  --shell-bg: #f8f8f8;
+  --titlebar-fg: #1e1e1e;
+  --titlebar-hover-bg: rgba(0, 0, 0, 0.1);
+  --titlebar-close-hover: rgba(232, 17, 35, 0.9);
+  --menubar-hover-bg: #b8b8b850;
+  --menubar-hover-fg: #1e1e1e;
+  --menubar-hover-border: transparent;
+  --toolbar-hover-bg: #b8b8b850;
+  --activitybar-bg: #f8f8f8;
+  --activitybar-fg: #1f1f1f;
+  --activitybar-inactive-fg: #616161;
+  --activitybar-hover-bg: #f2f2f2;
+  --activitybar-hover-fg: #3b3b3b;
+  --activitybar-active-bg: #e4e6f1;
+  --activitybar-active-fg: #3b3b3b;
+  --activitybar-active-border: transparent;
+  --activitybar-border: #e2e2e2;
+  --sidebar-bg: #f8f8f8;
+  --sidebar-fg: #3b3b3b;
+  --sidebar-section-fg: #3b3b3b;
+  --list-hover-bg: #f2f2f2;
+  --list-hover-fg: #3b3b3b;
+  --list-active-bg: #e8e8e8;
+  --list-active-fg: #000000;
+  --list-inactive-bg: #e4e6f1;
+  --list-inactive-fg: #3b3b3b;
+  --list-selection-border: transparent;
+  --editor-card-border: #e2e2e2;
+  --editor-split-border: #e5e5e5;
+  --tab-strip-bg: #e5e5e5; /* editorGroupHeader.connectedTabsBackground */
+  --tabstrip-border: #e5e5e5;
+  --tab-fg-inactive: #616161;
+  --tab-fg-active: #3b3b3b;
+  --tab-fg-hover: #3b3b3b;
+  --tab-bg-active-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-bg-active));
+  --statusbar-bg: #f8f8f8;
+  --statusbar-fg: #3b3b3b;
+  --statusbar-border: #e5e5e5;
+  --statusbar-item-hover-bg: #1f1f1f11;
+  /* 浅色默认的按下档是 white 18%（theme.ts 的 light 分支），不是黑色——照抄默认值。 */
+  --statusbar-item-active-bg: #ffffff2e;
   --bg-elevated: #ffffff;
   --bg-hover: #f2f2f2;
   --border: #e5e5e5;
-  --side-btn-active: #e8e8e8;
-  --fg: #3b3b3b;
-  --fg-muted: #616161;
   --editor-cursor: #000000;
   --editor-selection: #add6ff;
   --editor-line-highlight-border: #eeeeee;
@@ -409,10 +647,6 @@
   --pick-focus-fg: #ffffff;
   --danger: #cf222e;
   --warn: #9a6700;
-  --tab-strip-bg: #f8f8f8;
-  --tab-fg-inactive: #616161;
-  --tab-fg-active: #3b3b3b;
-  --tab-bg-active-hover: #f2f2f2;
   --sb-thumb: rgba(0, 0, 0, 0.24);
   --sb-thumb-hover: rgba(0, 0, 0, 0.38);
   --sb-thumb-active: rgba(0, 0, 0, 0.5);
@@ -432,13 +666,54 @@
 :root[data-theme="light"][data-theme-family="plus"],
 :root[data-theme="light"][data-theme-family="classic"] {
   --bg: #ffffff;
-  --bg-toolbar: #dddddd;
+  --fg: #616161;
+  --fg-muted: #717171;
+  --editor-fg: #000000;
+  --shell-bg: #dddddd;
+  --titlebar-fg: #333333;
+  --titlebar-hover-bg: rgba(0, 0, 0, 0.1);
+  --titlebar-close-hover: rgba(232, 17, 35, 0.9);
+  --menubar-hover-bg: #b8b8b850;
+  --menubar-hover-fg: #333333;
+  --menubar-hover-border: transparent;
+  --toolbar-hover-bg: #b8b8b850;
+  --activitybar-bg: #2c2c2c;
+  --activitybar-fg: #ffffff;
+  --activitybar-inactive-fg: #ffffff66;
+  --activitybar-hover-bg: #e8e8e8;
+  --activitybar-hover-fg: #616161;
+  --activitybar-active-bg: #e4e6f1;
+  --activitybar-active-fg: #616161;
+  --activitybar-active-border: transparent;
+  --activitybar-border: #dddddd; /* modernActivityBar.border = surface.border */
+  --sidebar-bg: #f3f3f3;
+  --sidebar-fg: #616161;
+  --sidebar-section-fg: #616161;
+  --list-hover-bg: #e8e8e8;
+  --list-hover-fg: #616161;
+  --list-active-bg: #0060c0;
+  --list-active-fg: #ffffff;
+  --list-inactive-bg: #e4e6f1;
+  --list-inactive-fg: #616161;
+  --list-selection-border: transparent;
+  --editor-card-border: #dddddd; /* surface.border = 15% fg over sideBar */
+  --editor-split-border: #e7e7e7;
+  --tab-strip-bg: #f3f3f3; /* Light+ 走 registry 默认的 #F3F3F3 */
+  --tabstrip-border: #f3f3f3; /* tab.border 默认档（与条带同色 ⇒ 看不见描边） */
+  --tab-fg-inactive: #6d6d6d; /* tab.inactiveForeground 默认 = #333 70%，压在条带上 */
+  --tab-fg-active: #333333;
+  --tab-fg-hover: #616161;
+  --tab-bg-active-hover: color-mix(in srgb, var(--fg) 6%, var(--tab-bg-active));
+  --statusbar-bg: #007acc;
+  --statusbar-fg: #ffffff;
+  --statusbar-border: transparent;
+  /* Light+/Visual Studio 没有覆盖这两颗 ⇒ 取 color registry 的浅色默认
+     （hover = black 12%、active = white 18%）。 */
+  --statusbar-item-hover-bg: #0000001f;
+  --statusbar-item-active-bg: #ffffff2e;
   --bg-elevated: #ffffff;
   --bg-hover: #e8e8e8;
   --border: #d8d8d8;
-  --side-btn-active: #e8e8e8;
-  --fg: #000000;
-  --fg-muted: #717171;
   --editor-cursor: #000000;
   --editor-selection: #add6ff;
   --editor-line-highlight-border: #eeeeee;
@@ -449,10 +724,6 @@
   --pick-focus-fg: #ffffff;
   --danger: #a1260d;
   --warn: #bf8803;
-  --tab-strip-bg: #f3f3f3;
-  --tab-fg-inactive: #616161;
-  --tab-fg-active: #333333;
-  --tab-bg-active-hover: #ececec;
   --sb-thumb: #64646466;
   --sb-thumb-hover: #64646499;
   --sb-thumb-active: #646464b3;
@@ -468,17 +739,64 @@
   --link-fg: #006ab1;
 }
 
+/* Light (Visual Studio) 的差异：light_vs.json 显式给了 #E8E8E8 条带与 #616161
+   非活动标签；Light+ 走 registry 默认 #F3F3F3 / #333 70%。 */
+:root[data-theme="light"][data-theme-family="classic"] {
+  --tab-strip-bg: #e8e8e8;
+  --tab-fg-inactive: #616161;
+  --border: #d8d8d8;
+}
+
 /* Light High Contrast：纯白表面 + #0F4A85 描边；磨砂改实底。 */
 :root[data-theme="light"][data-theme-family="hc"] {
   --glass-opacity: 100%;
   --bg: #ffffff;
-  --bg-toolbar: #ffffff;
   --bg-elevated: #ffffff;
   --bg-hover: #0f4a851a;
   --border: #0f4a85;
-  --side-btn-active: #dddddd;
   --fg: #292929;
   --fg-muted: #292929;
+  --editor-fg: #292929;
+  --shell-bg: #ffffff;
+  --titlebar-fg: #292929;
+  --titlebar-hover-bg: #0f4a851a;
+  --titlebar-close-hover: #e81123;
+  --menubar-hover-bg: transparent;
+  --menubar-hover-fg: #292929;
+  --menubar-hover-border: #0f4a85;
+  --toolbar-hover-bg: transparent;
+  --activitybar-bg: #ffffff;
+  --activitybar-fg: #292929;
+  --activitybar-inactive-fg: #292929;
+  --activitybar-hover-bg: #0f4a851a;
+  --activitybar-hover-fg: #292929;
+  --activitybar-active-bg: transparent;
+  --activitybar-active-fg: #292929;
+  --activitybar-active-border: #0f4a85;
+  --activitybar-border: #0f4a85;
+  --sidebar-bg: #ffffff;
+  --sidebar-fg: #292929;
+  --sidebar-section-fg: #292929;
+  --list-hover-bg: #0f4a851a;
+  --list-hover-fg: #292929;
+  --list-active-bg: #0f4a851a;
+  --list-active-fg: #292929;
+  --list-inactive-bg: #0f4a851a;
+  --list-inactive-fg: #292929;
+  --list-selection-border: #0f4a85;
+  --editor-card-border: #0f4a85;
+  --editor-split-border: #0f4a85;
+  --tab-strip-bg: #ffffff;
+  --tabstrip-border: #0f4a85;
+  --tab-fg-inactive: #292929;
+  --tab-fg-active: #292929;
+  --tab-fg-hover: #292929;
+  --tab-bg-active-hover: #ffffff;
+  --statusbar-bg: #ffffff;
+  --statusbar-fg: #292929;
+  --statusbar-border: #0f4a85;
+  --statusbar-item-hover-bg: #ffffff;
+  --statusbar-item-active-bg: #0000002e;
   --editor-cursor: #292929;
   --editor-selection: rgba(15, 74, 133, 0.35);
   --editor-line-highlight-border: #0f4a85;
@@ -491,10 +809,6 @@
   --pick-focus-fg: #ffffff;
   --danger: #b5200d;
   --warn: #bf8803;
-  --tab-strip-bg: #ffffff;
-  --tab-fg-inactive: #292929;
-  --tab-fg-active: #292929;
-  --tab-bg-active-hover: #ffffff;
   --sb-thumb: #0f4a8566;
   --sb-thumb-hover: #0f4a8599;
   --sb-thumb-active: #0f4a85b3;
@@ -579,7 +893,9 @@ body {
   overflow: hidden;
   font-family: var(--font-ui);
   font-size: var(--font-size);
-  background: var(--bg);
+  /* 整窗底色 = VS Code 的 modernUI.shellBackground（标题栏 / 侧栏 / 状态栏各另有自己的
+     底色；这里只是它们没盖住时的兜底）。 */
+  background: var(--shell-bg);
   color: var(--fg);
   -webkit-font-smoothing: antialiased;
 }
@@ -619,7 +935,7 @@ body {
      同样的右侧净留白（B223 用户点名「logo 右侧空白与左侧一致」）；两侧各写一个数，
      改了一边就是「左疏右密」。右端不留：关闭键要贴到窗口边缘。 */
   padding-left: var(--title-mark-pad);
-  background: var(--bg-toolbar);
+  background: var(--shell-bg);
   /* B123-7：去掉下沿边框线 —— 编辑区大卡片（.layout-area）自带外框，
      标题栏再画一条会形成双线，视觉上显得框上加框。 */
   user-select: none;
@@ -636,7 +952,7 @@ body {
    （B223 用户点名「logo 右侧空白与左侧一致」，原先左 10px / 右 16px 已拉平）。
    源图**带底**（B222 起换羽毛图，见 main.ts），background-size:contain 只负责等比缩，
    别改成 cover：底图一撑就会切掉文档边角。
-   浅色主题下纸面偏白（--bg-toolbar #f8f8f8），靠纸面那道淡描边撑对比，观感请实机复核。 */
+   浅色主题下纸面偏白（--shell-bg：2026 #FAFAFD / Modern #F8F8F8），靠纸面那道淡描边撑对比，观感请实机复核。 */
 .app-mark {
   flex: 0 0 auto;
   width: 20px;
@@ -684,7 +1000,10 @@ body {
 
 .title-text {
   font-size: var(--title-text-size);
-  color: var(--fg-muted);
+  /* B379：标题栏的前景走自己的 token（VS Code `titleBar.activeForeground`），
+     不再借用全应用正文色 —— 五族里这两颗并不总是同值（Plus 深色正文 #CCCCCC、
+     标题栏也是 #CCCCCC，经典浅色正文 #616161、标题栏 #333333）。 */
+  color: var(--titlebar-fg);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -708,9 +1027,9 @@ body {
   align-items: center;
   margin-left: 3px;
   /* B345：与文档名同一颗色（用户点名「未保存原点颜色改成和字体颜色一致」）。
-     这一行里唯一的字就是名字，所以「字体颜色」= `.title-text` 取的那颗 `--fg-muted`，
-     两处必须写成同一颗 —— 各写各的就会有一天不同色。 */
-  color: var(--fg-muted);
+     这一行里唯一的字就是名字，所以「字体颜色」= `.title-text` 取的那颗 `--titlebar-fg`
+     （B379 起标题栏有自己的一颗），两处必须写成同一颗 —— 各写各的就会有一天不同色。 */
+  color: var(--titlebar-fg);
 }
 
 .title-dirty[hidden] {
@@ -733,7 +1052,7 @@ body {
    （`<i class="codicon codicon-link codicon-unlink">`）+ 这里用**标题栏底色**的小杠
    把 link 中间那根连接杆（官方路径 y=7..8 的横杠，x=5..11）抹掉。
    用户在「去杠 / 叠斜线」两个方案里挑了去杠；斜线方案（unpin 的路数）被否。
-   ⚠️ 抹杠色必须是标题栏的底色（--bg-toolbar）：这颗键只活在标题栏里，
+   ⚠️ 抹杠色必须是标题栏的底色（--shell-bg）：这颗键只活在标题栏里，
       跟着主题走；别用 currentColor —— 那会把链环一起「擦」不出来。
    ⚠️ 补丁范围（x 4.4→11.6）两端都收在链环之内：y=7..8 这一行链环的笔画只出现在
       x≈2..3 与 x≈13..14（C 口朝内，中段是空的），补丁盖不到它们。 */
@@ -747,7 +1066,7 @@ body {
   top: 6.9px;
   width: 7.2px;
   height: 2.2px;
-  background: var(--bg-toolbar);
+  background: var(--shell-bg);
 }
 
 /* ---------- 标题栏工具键（B99 / B103） ----------
@@ -819,20 +1138,37 @@ body {
   padding: 0;
   border: 0;
   border-radius: 0;
-  color: var(--fg-muted);
+  /* B379：标题栏里的字与图标共用 `titleBar.activeForeground`。
+     三族的悬停色各不相同（VS Code 分给三颗 token），见下面三条。 */
+  color: var(--titlebar-fg);
   background: transparent;
 }
 
-.win-btn:hover,
-.title-btn:hover,
+/* 三族的悬停各按 VS Code 的口径取色（B379，推翻 B103「三族共用一条 hover」）：
+   · 窗口控制三键 → `titleBar.buttonBackground` 的悬停档（深色白 10% / 浅色黑 10%）；
+   · 标题栏工具键 → `toolbar.hoverBackground`（#5A5D5E50 / #B8B8B850）；
+   · 菜单栏按钮 → `menubar.selection{Background,Foreground,Border}`，选中的那条菜单
+     也停在同一档（VS Code 打开菜单期间那颗按钮一直亮着）。 */
+.win-btn:hover {
+  background: var(--titlebar-hover-bg);
+  color: var(--titlebar-fg);
+}
+
+.title-btn:hover {
+  background: var(--toolbar-hover-bg);
+  color: var(--titlebar-fg);
+}
+
 .menu-btn:hover,
 .menu-btn.menu-open {
-  background: var(--bg-hover);
-  color: var(--fg);
+  background: var(--menubar-hover-bg);
+  color: var(--menubar-hover-fg);
+  /* HC 档 `menubar.selectionBorder` 是一圈实线；其余族取透明 ⇒ 这圈看不见。 */
+  box-shadow: inset 0 0 0 1px var(--menubar-hover-border);
 }
 
 .win-btn-close:hover {
-  background: #e81123;
+  background: var(--titlebar-close-hover);
   color: #ffffff;
 }
 
@@ -845,10 +1181,11 @@ body {
 
 /* 钉住态（B102 / B166）：字形直接反映状态（pinned / pin 切换），`.is-on` 的
    强调色**保留** —— 用户最终拍板「还是保留 .is-on 配色」，字形与配色是两层信息。
-   图标规则必须排在 hover 之后（同特异度后写者胜），否则悬停色盖掉点亮色。 */
+   图标规则必须排在 hover 之后（同特异度后写者胜），否则悬停色盖掉点亮色。
+   ⚠️ B379 起本态**不再清掉悬停铺底**：VS Code 的开关型工具键在点亮时照样有
+      `toolbar.hoverBackground`（点亮改的是字形，不是底色）。 */
 .title-btn.is-on {
-  background: transparent;
-  color: var(--fg-muted);
+  color: var(--titlebar-fg);
 }
 .title-btn.is-on .codicon {
   color: var(--accent);
@@ -924,14 +1261,13 @@ html[data-window-kind="satellite"] #sidebar-toggle {
    —— 拆成三条规则必然各自漂移（圆角 / hover 底色 / 尺寸只要有一处忘了同步，
    标题栏里就会出现「两种按钮」），所以这里只留一条。
 
-   ⚠️ 这族的观感**刻意不跟** `.win-btn, .title-btn, .menu-btn` 那批走 —— 用户要
-      「方形、干脆没有按钮背景，hover 与同步状态全靠图标颜色提示」。于是：
-        · 常态与悬停**都不铺底**（逐条覆盖 `.title-btn:hover` 的 `--bg-hover`）；
-        · 颜色照样变，只是落在**图标**上：常态 `--fg-muted` → hover `--fg`
-          （按钮上那条 `color` 被 `.codicon` 继承下去）→ 开启态由
-          `.title-btn.is-on .codicon` 取 `--accent`（那条特异度 0-2-0，盖得住 hover）。
-        · 尺寸从「46px 满高方键」改成 24×24 的方形图标键 —— 四键那边保持满高不变
-          （B103 的口径），这里要的是「一枚方形图标」，不是「一颗占半截标题栏的按钮」。
+   ⚠️ B379 用户口径：「hover 等颜色和样式尽量和 vscode 保持一致」—— VS Code 标题栏
+      右侧的工具图标（布局键等）悬停时铺的是 `toolbar.hoverBackground`
+      （深色 #5A5D5E50 / 浅色 #B8B8B850，HC 档透明）。B157 那版「悬停只换图标颜色、
+      不铺底」被本轮覆盖，四键与上面那条 `.title-btn:hover` 同源（不必再逐条写）
+      —— 这里只保留**尺寸**上的差异：24×24 的方形图标键，而非 46px 满高方键。
+   ⚠️ 颜色照样落在**图标**上：常态 `--titlebar-fg` → 开启态由
+      `.title-btn.is-on .codicon` 取 `--accent`（特异度 0-2-0，盖得住 hover）。
    ⚠️ 本块必须留在共用声明与 `:hover` **之后**：下面这些选择器都是 0-1-0 或 0-2-0，
       同特异度下写在前头就会被 46px 与悬停底色压回去。 */
 .sync-btn,
@@ -945,14 +1281,6 @@ html[data-window-kind="satellite"] #sidebar-toggle {
   margin-right: 3px;
   border-radius: 3px;
   background: transparent;
-}
-
-.sync-btn:hover,
-.title-btn.pin-btn:hover,
-.title-btn.upd-btn:hover,
-.title-btn.layout-btn:hover {
-  background: transparent;
-  color: var(--fg);
 }
 
 /* （B103 已删：菜单按钮曾用 .mnemonic 给首字加下划线标助记符。
@@ -1126,7 +1454,8 @@ button:focus-visible {
 }
 
 .tab:hover:not(.tab-active) {
-  color: var(--fg);
+  /* B379：VS Code 的非活动标签悬停前景（`tab.hoverForeground`），五族各有取值。 */
+  color: var(--tab-fg-hover);
 }
 
 .tab:hover:not(.tab-active) .tab-fill {
@@ -1165,7 +1494,10 @@ button:focus-visible {
   --tab-fill-bg: var(--tab-bg-active);
   background: var(--tab-fill-bg);
   z-index: 1;
-  border: var(--tab-stroke) solid var(--border);
+  /* B379：帽轮廓取 `editorGroupHeader.tabsBorder`（--tabstrip-border），落到条带
+     下沿那条横线的**同一颗** token —— 以前它们共用 --border，五族落地后条带边框
+     与浮层/输入框边框本来就不是同一个值。 */
+  border: var(--tab-stroke) solid var(--tabstrip-border);
   /* B351（用户实测「肩部边框线和编辑区的边框线差了一个像素」）：底边开口必须用
      **零宽**，不能用 `border-bottom-color: transparent` 冒充 —— 透明的底边框照样占位，
      而肩部伪元素（下面那块）的 `bottom: 0` 锚的是 fill 的 **padding box** 底，就被这一格
@@ -1189,7 +1521,7 @@ button:focus-visible {
    ⚠️ 必须覆盖的是 --tab-fill-bg 而不是 background —— 降档只改背景的话，
    引用该变量的其他规则（pill 悬停提亮等）会与标签底色脱节。 */
 .layout-panel:not(.layout-panel-active) .tab-active {
-  color: var(--fg-muted);
+  color: var(--tab-fg-inactive);
 }
 .layout-panel:not(.layout-panel-active) .tab-active .tab-fill,
 .layout-panel:not(.layout-panel-active) .tab-active:hover .tab-fill {
@@ -1231,20 +1563,20 @@ button:focus-visible {
   box-sizing: border-box;
   width: var(--tab-shoulder-radius);
   height: var(--tab-shoulder-radius);
-  border-bottom: var(--tab-stroke) solid var(--border);
+  border-bottom: var(--tab-stroke) solid var(--tabstrip-border);
   pointer-events: none;
   transition: box-shadow 0.12s ease;
 }
 .tab-active .tab-fill::before {
   right: 100%;
-  border-right: var(--tab-stroke) solid var(--border);
+  border-right: var(--tab-stroke) solid var(--tabstrip-border);
   border-bottom-right-radius: var(--tab-shoulder-radius);
   box-shadow: calc(var(--tab-shoulder-radius) / 2) calc(var(--tab-shoulder-radius) / 2) 0
     calc(var(--tab-shoulder-radius) / 2) var(--tab-fill-bg);
 }
 .tab-active .tab-fill::after {
   left: 100%;
-  border-left: var(--tab-stroke) solid var(--border);
+  border-left: var(--tab-stroke) solid var(--tabstrip-border);
   border-bottom-left-radius: var(--tab-shoulder-radius);
   box-shadow: calc(var(--tab-shoulder-radius) / -2) calc(var(--tab-shoulder-radius) / 2) 0
     calc(var(--tab-shoulder-radius) / 2) var(--tab-fill-bg);
@@ -2389,7 +2721,7 @@ button:focus-visible {
   overflow: hidden;
 }
 
-/* 标题栏：底色与主窗口那条同颗（--bg-toolbar）—— 读起来就是「一个窗口」而不是
+/* 标题栏：底色与主窗口那条同颗（--shell-bg）—— 读起来就是「一个窗口」而不是
    一块加了粗边的面板。`user-select: none` 是拖动的必要条件：按住一拖就选中
    标题文字，松手还会留个蓝块。 */
 .win-head {
@@ -2399,7 +2731,7 @@ button:focus-visible {
   flex: 0 0 auto;
   height: 34px;
   padding: 0 4px 0 12px;
-  background: var(--bg-toolbar);
+  background: var(--shell-bg);
   border-bottom: 1px solid var(--border);
   /* 不写 cursor：这里点了没反应（只有拖拽），继承 body 的箭头就是对的。
      B111 的守卫只放行「置灰 / 纯展示 / 提示层」三处显式 `cursor: default`，
@@ -3039,20 +3371,24 @@ button:focus-visible {
    ⚠️ 空隙由 .side-resizer 自己撑开（preview.css），这里**不要**再给 #main-row 加 gap，
       否则空隙会翻倍、且收起左栏时（分隔条隐藏）间距还会跳变。
 
-   B199（用户裁决「左边栏展开区背景和其他区域一致」）：底色从 --bg-elevated 换成
-   **--bg = 与编辑区完全同色**。编辑区卡片（.layout-area）没有自己的背景，露的是
-   body 的 --bg，所以「同色」在这里是**同一颗变量**，不是「相近」—— 两张卡片于是只有
-   1px 边框 + 圆角分界，左栏不再是一块浮在窗口上的浅色面板。
-   ⚠️ 别顺手又改回 --bg-elevated：那会让展开区比编辑区亮一档（那档在 VS Code 是侧栏
-      #252526 vs 编辑器 #1E1E1E，方向对，但 LitePad 这里用户点名要「一致」）。 */
+   B199（用户裁决「左边栏展开区背景和其他区域一致」）把底色定成 --bg；**B379 推翻**：
+   用户重新点名「侧边栏……颜色和样式尽量和 vscode 保持一致」⇒ 侧栏取 VS Code 的
+   `sideBar.background`（--sidebar-bg），与编辑区 `editor.background`（--bg）是两颗
+   token。2026 档是 #191A1B vs #121314，Plus 档是 #252526 vs #1E1E1E —— 这正是
+   VS Code 里两块面的真实关系，别再合并回一颗。
+   边框取 `surface.border`（--editor-card-border），与编辑区卡片同一颗（VS Code 的
+   `editor.border` / `modernPanel.border` 都解析到 surface.border）。
+   ⚠️ 别顺手又改回 --bg-elevated：那会让展开区和浮层同色，浮层就浮不起来了。 */
 .side-shell {
   flex: 0 0 auto;
   display: flex;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--tab-bg-hover);
+  border: 1px solid var(--editor-card-border);
   border-radius: 8px;
-  background: var(--bg);
+  background: var(--sidebar-bg);
+  /* B379：侧栏里的文字（大纲行、资源管理器行、标题）默认取 `sideBar.foreground`。 */
+  color: var(--sidebar-fg);
   /* B201（用户第二轮裁决）：这张卡**四条边照旧画完整一圈** —— 朝缝的那条右边框
      （border-right）是卡片轮廓的一部分，不能让位。原先跟着 VS Code floatingPanels.css
      那句 *gives up its border* 一起抹掉是**用错了场景**：那句话说的是活动栏 ↔ 侧栏
@@ -3074,9 +3410,11 @@ button:focus-visible {
   display: none;
 }
 
-/* 按钮列：常驻，也**不再自己铺底色** —— B199 起整张左栏卡片（按钮列 + 展开区）与编辑区
-   同色，一块面的内部不靠描边分界。想调这一列的底色，改 .side-shell 那一处就够
-   （它会透过来）；单独给按钮列刷一档，就会又变回「浮起的浅色面板」。 */
+/* 按钮列：B379 起有自己的底色 —— VS Code 的 `activityBar.background`
+   （modern UI 取 `modernActivityBar.background`）。2026 档与侧栏同为 #191A1B，
+   Plus 档是 #333333 vs 侧栏 #252526，浅色 Plus 甚至是 #2C2C2C 的深色活动栏 ——
+   所以它**不能**再靠「透出 .side-shell 的底色」来画（B199 那版的做法）。
+   右侧那条内部分隔线取 `activityBar.border`（--activitybar-border）。 */
 .side-bar {
   flex: 0 0 40px;
   display: flex;
@@ -3084,6 +3422,8 @@ button:focus-visible {
   align-items: center;
   gap: 4px;
   padding-top: 6px;
+  /* B379：活动栏自己有底色（VS Code `activityBar.background`），不再透出卡片底色。 */
+  background: var(--activitybar-bg);
   /* B353：底部那颗「设置」靠 margin-top:auto 沉到底，它离下沿的距离要与上面那颗
      离上沿的一样 —— 这一列上下不对称，齿轮就会贴死卡片底边。 */
   padding-bottom: 6px;
@@ -3097,7 +3437,7 @@ button:focus-visible {
         那时按钮列右缘正好贴着卡片右缘，两条 1px 边会**紧挨着变成 2px 粗的一条线**。
         用 is-collapsed 而不是 `[hidden]` 选择器，是为了让显隐继续由
         setDrawer 一处收口（B195 的口径：开合态不许散在 CSS 里）。 */
-  border-right: 1px solid var(--sep-line);
+  border-right: 1px solid var(--activitybar-border);
 }
 
 /* 展开区折着：按钮列右缘那条内部竖线收掉（理由见上面 .side-bar 的 B201 注释）。
@@ -3119,7 +3459,7 @@ button:focus-visible {
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: var(--fg-muted);
+  color: var(--activitybar-inactive-fg);
 }
 
 /* B306（用户点名「上限设为 0 时自动隐藏左栏中的最近打开」）：`display: flex` 是作者样式，
@@ -3139,23 +3479,17 @@ button:focus-visible {
   margin-top: auto;
 }
 
-/* B202（用户点名「左栏按钮 hover、按下时也应该有不同背景色，参考 VS Code」）：
-   三档反馈，对齐 VS Code activity bar 那套（hoverBackground → 按下更沉一档 /
-   打开这个视图时 activeBackground 给一档淡 accent）：
-     · 常态 = 不铺底（点着的按钮不该在卡片面上多出一块方块）；
-     · **悬停** =「这颗可点」：淡底 --bg-hover + 字形转 --fg；
-     · **按下**（`:active`）= 更沉一档 --side-btn-active —— VS Code 的列表项 / 活动栏
-       按下也是比悬停更实的一档，不然按住鼠标毫无反馈，看着像按不动；
-     · **点亮**（展开区开着 = 当前视图）= 一档淡 accent 底 + accent 字形
-       （视图开着本身已经是最强的状态反馈，强调色比灰色更指向「这一项在用」）。
+/* B202（用户点名「左栏按钮 hover、按下时也应该有不同背景色，参考 VS Code」）；
+   B379 按 VS Code 活动栏（`activityBar.*`）重排成两档 —— 浏览器里点下去那一瞬本来就
+   同时处在 hover 里，VS Code 也没有单独的「按下」色，硬造一档只会比上游多一种反馈：
+     · 常态 = `activityBar.inactiveForeground`（--activitybar-inactive-fg）；
+     · **悬停** = `activityBar.hover{Background,Foreground}`；
+     · **点亮**（展开区开着 = 当前视图）= `activityBar.active{Background,Foreground}`
+       + `activeBorder` 那圈框（HC 档是实线，其余族取透明 ⇒ 看不见）。
    一条规则管到底（同款控件一条规则），后续侧栏再加按钮只需往这里加选择器。
 
-   ⚠️ **顺序 = hover → is-on → active**（同特异度后写者胜），两处都不能调：
-      · is-on 压过 hover —— 点亮时（鼠标恰好停在这颗上）不该被灰色悬停底盖掉 accent；
-      · active 压过前两者 —— 按下这一瞬**总是**该更沉，不管这颗点没点亮。
-   ⚠️ 这不是推翻 B195「按钮列不铺底」：B195 说的是**整列**（.side-bar）不自己刷底色、
-      卡片是一块面；这里说的是**可点控件**该有的反馈。标题栏那批方形键
-      （.title-btn.pin-btn 等）刻意不铺底是另一码事（B157 用户点名），两者别合并。 */
+   ⚠️ **顺序 = hover → is-on**（同特异度后写者胜）：点亮时（鼠标恰好停在这颗上）
+      不该被灰色悬停底盖掉活动态。 */
 /* B363（用户：「边栏的按钮图标改到 20px，不要影响其他按钮」）：codicon 基座是官方
    codicon.css 给的 16px，这里只把按钮列这一族放大。⚠️ 必须挂 `.side-btn` 前缀：
    写成 `.codicon { font-size: 20px }` 会连带标题栏、面板操作区、菜单箭头等全站图标。 */
@@ -3164,17 +3498,15 @@ button:focus-visible {
 }
 
 .side-btn:hover {
-  background: var(--bg-hover);
-  color: var(--fg);
+  background: var(--activitybar-hover-bg);
+  color: var(--activitybar-hover-fg);
 }
 
 .side-btn.is-on {
-  background: var(--side-btn-on);
-  color: var(--accent);
-}
-
-.side-btn:active {
-  background: var(--side-btn-active);
+  background: var(--activitybar-active-bg);
+  color: var(--activitybar-active-fg);
+  outline: 1px solid var(--activitybar-active-border);
+  outline-offset: -1px;
 }
 
 .layout-area {
@@ -3186,8 +3518,10 @@ button:focus-visible {
   /* B123（用户裁决，修正 B122）：**整个「标签 + 编辑区」一张大卡片** ——
      卡片从每个分屏面板（B122）上移到全部分屏共用的容器上；分屏边界落在
      卡片**内部**，边界处自然没有任何圆角（用户点名）。实拍用户 VS Code：
-     卡片边框 1px #2a2b2c（= 非活动标签 hover 色，用户 B122 点名的判据不变）、
      外圆角约 6px、状态栏在卡片外面。overflow: hidden 原本就有，正好裁圆角。
+     B379：卡片底色显式取编辑区底色（`editor.background` = --bg）—— body 改成
+     整窗外壳色（--shell-bg）之后，不写这一条卡片就会露出标题栏那一档的底色。
+     边框取 `surface.border`（--editor-card-border），与侧栏卡片同一颗。
 
      B201（用户第二轮裁决）：这张卡**四条边照旧画完整一圈**，朝缝的左边框（border-left）
      是卡片轮廓的一部分，**不让位**（与 .side-shell 的 border-right 对称，两处缺一不可）。
@@ -3196,8 +3530,9 @@ button:focus-visible {
      ⚠️ 想改卡片轮廓：改这一处就要同时改 .side-shell 那一处，两个要**成对**改
         （border 与 border-radius 已逐字同步，见 .side-shell 上方的注释）。
      缝中央那条 hover 才亮的亮条 = VS Code sash 的 hover 反馈（见 preview.css 的 .side-resizer）。 */
-  border: 1px solid var(--tab-bg-hover);
+  border: 1px solid var(--editor-card-border);
   border-radius: 8px;
+  background: var(--bg);
 }
 
 .layout-split {
@@ -3217,7 +3552,7 @@ button:focus-visible {
 
 /* 分隔条（B60：**不占布局**的浮层，对齐 VS Code sash）。
    B59 之前是 `flex: 0 0 7px` 的透明占位 —— 它本身看不见，却把两侧内容**撑开** 7px，
-   中间露出祖先底色（标签栏与两条 chrome 同走 --bg-toolbar、编辑区是 --bg），于是在标签栏那一横排
+   中间露出祖先底色（标签栏与标题/状态栏各有各的 token、编辑区是 --bg），于是在标签栏那一横排
    看起来就是一条 7px 粗带。VS Code 的 sash 是 absolute 浮层、完全不占位
    （sash.css，--vscode-sash-size: 4px），所以边界永远只是一条细线。
    这里两者兼得：元素本身 flex 基准 0（不占位），7px 命中区由 ::before 向两侧各溢出
@@ -3240,10 +3575,11 @@ button:focus-visible {
   position: absolute;
   /* B123：静息细线恢复（B122 曾透明）—— 卡片上移到 .layout-area（一张大卡）
      之后，分屏边界落在卡片内部，不再有「相邻卡片边框」当分界，实拍用户
-     VS Code 的分屏边界就是一条 1px #272829 细线（≈ --sep-line #2e3034，
-     B121 用户已认可的降对比档），贯穿条带与编辑区全程。
+     VS Code 的分屏边界就是一条 1px 细线，贯穿条带与编辑区全程。
+     B379：取 `editorGroup.border`（--editor-split-border），与卡片外框的
+     surface.border 分开 —— VS Code 这两颗本来就不是同一个值。
      悬停/拖拽的 accent 高亮规则不受影响（B59/B60 照旧）。 */
-  background: var(--sep-line);
+  background: var(--editor-split-border);
   transition:
     background var(--transition),
     width var(--transition),
@@ -3487,7 +3823,8 @@ button:focus-visible {
   right: 0;
   bottom: 0;
   height: var(--tab-stroke);
-  background: var(--border);
+  /* B379：与活动标签帽轮廓同一颗 token（--tabstrip-border = tabsBorder）。 */
+  background: var(--tabstrip-border);
   z-index: 0;
   pointer-events: none;
 }
@@ -3663,8 +4000,9 @@ button:focus-visible {
 }
 
 .panel-op:hover {
-  background: var(--bg-hover);
-  color: var(--fg);
+  /* B379：标签条右侧的动作键照 VS Code 的 `toolbar.hoverBackground`（与标题栏工具键同源）。 */
+  background: var(--toolbar-hover-bg);
+  color: var(--tab-fg-hover);
 }
 
 .panel-op:disabled {
@@ -3921,19 +4259,19 @@ body.tab-drag-active * {
   height: 26px;
   flex: 0 0 26px;
   padding: 0 8px;
-  /* B204：底色**不是**自己那颗（已删），直接引用标题栏那颗 `--bg-toolbar` ——
-     用户点名「状态栏颜色和标题栏背景色一致」。两条窗口 chrome 同源 ⇒ 以后改主题
-     只动 `--bg-toolbar` 一处，不会又分裂成两种底色。
-     ⚠️ 别退回 `background: var(--bg-status)`（那颗不存在 = 空值失效，状态栏会整个
-        透明、露 body 底；也别自己新写一颗色值）。 */
-  background: var(--bg-toolbar);
-  /* B122：border-top 移除（用户裁决「状态栏上面没有细线」）—— 与上方内容的
-     分界就是底色交界本身；VS Code 实拍同款（其状态栏上沿 #373737 ≈ 自身
-     #383838，肉眼无形）。卡片下边框（.layout-panel）承担轮廓职责。
-     ⚠️ B204 之后两条 chrome 同色，这条「底色交界」在状态栏上沿已经**不再有对比** ——
-        上下分界改由卡片下边框（.layout-area 的下沿）承担，这正是当初就写在旁边的依据。 */
+  /* B204 曾把状态栏并到标题栏那颗 `--bg-toolbar`；**B379 推翻** —— 用户重新点名
+     「状态栏……颜色和样式尽量和 vscode 保持一致」。VS Code 的状态栏有自己的
+     `statusBar.background`：2026/Modern 档与标题栏同色，Plus/经典档却是一条
+     #007ACC 蓝，2026 浅色档的上下分界靠 `statusBar.border`。两处从此各用各的 token。
+     ⚠️ 别把这条改回 `var(--bg-toolbar)`：五族里只有一半的档位两者同色。 */
+  background: var(--statusbar-bg);
+  /* B122 曾按用户裁决撤掉上沿细线；B379 按 VS Code 补回 —— 它只有在该主题定义了
+     `statusBar.border` 时才画（Plus/经典档取 transparent ⇒ 这条阴影不可见，
+     与 VS Code 的「没定义就不画」同效）。用 inset 阴影而不是 border-top：
+     加了真边框会把 26px 的内容区压矮 1px，状态栏整行文字跟着上移。 */
+  box-shadow: inset 0 1px 0 var(--statusbar-border);
   font-size: var(--fs-ui);
-  color: var(--fg-muted);
+  color: var(--statusbar-fg);
   user-select: none;
 }
 
@@ -4157,9 +4495,15 @@ body.tab-drag-active * {
   text-overflow: ellipsis;
 }
 
+/* B379：状态栏条目两档，照 VS Code `statusBarItem.{hover,active}Background`。
+   浅色 2026 档两者都很淡（#E3E3E5 / #EEEEEE），Plus 档是压在蓝底上的 12%/18% 白。 */
 .sb-btn:hover {
-  background: var(--bg-hover);
-  color: var(--fg);
+  background: var(--statusbar-item-hover-bg);
+  color: var(--statusbar-fg);
+}
+
+.sb-btn:active {
+  background: var(--statusbar-item-active-bg);
 }
 
 /* B233 删掉的 `.sb-btn-active`（预览态点亮）与 `.sb-md-badge`（「M↓」徽标）仍然不许回来：

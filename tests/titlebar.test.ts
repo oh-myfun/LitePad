@@ -118,8 +118,11 @@ describe("B97 自建标题栏", () => {
     // ⚠️ 判据要写成「一组选择器后紧跟 {」：只判 `.win-btn {` 会在合并成
     //    `.win-btn, .title-btn {` 之后永远为真/假得莫名其妙（这次就是先红的）。
     expect(s, "必须有窗口控制键规则").toMatch(/\.win-btn,\s*\.title-btn,\s*\.menu-btn\s*\{/);
-    // 关闭键悬停的红底是 Windows 的系统约定，不是随手挑的颜色
-    expect(s, "关闭键悬停必须是系统约定的红底").toMatch(/\.win-btn-close:hover\s*\{[^}]*#e81123/);
+    // 关闭键悬停的红底是 Windows 的系统约定，不是随手挑的颜色（B379 起走主题 token，
+    // 取值在 global.css 的主题表里，逐族可调）
+    expect(s, "关闭键悬停必须是系统约定的红底").toMatch(
+      /\.win-btn-close:hover\s*\{[^}]*var\(--titlebar-close-hover\)/,
+    );
     // 钉住态只高亮图标（.codicon），整按钮不点亮；图标规则必须排在 hover 之后
     // （同特异度后写者胜），否则悬停的继承色会盖掉图标高亮。
     // B166：字形改成 pinned / pin 切换，但这层配色**保留**（用户拍板）。
@@ -693,10 +696,18 @@ describe("B97 自建标题栏", () => {
     expect(shared, "宽度与三键一致（46px）").toMatch(/width:\s*46px/);
     expect(shared, "高度撑满标题栏").toMatch(/height:\s*100%/);
     expect(shared, "无圆角（与窗口控制键同款）").toMatch(/border-radius:\s*0/);
-    // 悬停也得共用，否则三键亮、置顶键 / 菜单键不亮
-    expect(s, "悬停底色必须共用").toMatch(
-      /\.win-btn:hover,\s*\.title-btn:hover,\s*\.menu-btn:hover/,
-    );
+    // B379：几何仍共用一条声明，但**悬停色分家** —— 窗口控制 = titleBar 按钮悬停、
+    // 工具键 = toolbar.hoverBackground、菜单键 = menubar.selection*（VS Code 三处本就不同）。
+    const hovers = [
+      [".win-btn:hover", "--titlebar-hover-bg"],
+      [".title-btn:hover", "--toolbar-hover-bg"],
+      [".menu-btn:hover, .menu-btn.menu-open", "--menubar-hover-bg"],
+    ] as const;
+    for (const [sel, token] of hovers) {
+      expect(cssDecls(ruleBlock(s, sel)), `${sel} 的悬停底色`).toContain(
+        `background: var(${token})`,
+      );
+    }
     // 退化对照：把共享宽度改回旧的 30px，判据必须判出来（防止写成恒真）
     const regressed = s.replace(
       /(\.win-btn,\s*\.title-btn,\s*\.menu-btn\s*\{[^}]*?width:\s*)46px/,

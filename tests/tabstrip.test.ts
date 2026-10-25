@@ -385,7 +385,7 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     // 底边不封（开口与编辑区连成一片）。这推翻了 B116「活动标签去描边」：
     // 那次撤的是四周同宽的整圈方框，不是这种带开口的轮廓。
     expect(activeFill, "帽轮廓必须描边（上/左/右）").toMatch(
-      /border:\s*var\(--tab-stroke\)\s+solid\s+var\(--border\)/,
+      /border:\s*var\(--tab-stroke\)\s+solid\s+var\(--tabstrip-border\)/,
     );
     // B351（用户实测「肩部边框线和编辑区的边框线差了一个像素」）：开口必须用
     // **零宽底边框**，不能用 `border-bottom-color: transparent` —— 透明的底边框照样占位，
@@ -411,7 +411,7 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     // 反向对照②：把底边整个封上（退回 B116 那种方框）也要被判红
     const BAD_CLOSED = css.replace(
       "border-bottom-width: 0;",
-      "border-bottom: var(--tab-stroke) solid var(--border);",
+      "border-bottom: var(--tab-stroke) solid var(--tabstrip-border);",
     );
     expect(BAD_CLOSED, "替身必须真的把底边封上了").not.toBe(css);
     expect(
@@ -473,14 +473,14 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     // 撑大一圈，反弧与帽侧边的接缝错位（1.5 倍缩放下表现为肩部多出一小截）。
     expect(sg, "肩部必须 border-box（否则边框把反弧撑偏 1px）").toContain("box-sizing: border-box");
     expect(sg, "肩下沿要接上条带那条线").toContain(
-      "border-bottom: var(--tab-stroke) solid var(--border)",
+      "border-bottom: var(--tab-stroke) solid var(--tabstrip-border)",
     );
     const shoulderBefore = ruleBlock(css, ".tab-active .tab-fill::before").replace(/\s+/g, " ");
     expect(shoulderBefore, "左肩反弧半径 = 外圆角半径").toContain(
       "border-bottom-right-radius: var(--tab-shoulder-radius)",
     );
     expect(shoulderBefore, "左肩外侧描竖边（VS Code ::before { border-right }）").toContain(
-      "border-right: var(--tab-stroke) solid var(--border)",
+      "border-right: var(--tab-stroke) solid var(--tabstrip-border)",
     );
     expect(shoulderBefore, "左肩阴影偏移 = 半径一半（VS Code R/2 R/2 0 R/2 构造）").toContain(
       "box-shadow: calc(var(--tab-shoulder-radius) / 2)",
@@ -492,7 +492,7 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
       "border-bottom-left-radius: var(--tab-shoulder-radius)",
     );
     expect(shoulderAfter, "右肩外侧描竖边（镜像 border-left）").toContain(
-      "border-left: var(--tab-stroke) solid var(--border)",
+      "border-left: var(--tab-stroke) solid var(--tabstrip-border)",
     );
     expect(shoulderAfter, "右肩阴影偏移镜像为负").toContain(
       "box-shadow: calc(var(--tab-shoulder-radius) / -2)",
@@ -579,7 +579,9 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     expect(headLine, "线厚 = 帽的描边厚（同一颗 token，别各写一个 1px）").toMatch(
       /height:\s*var\(--tab-stroke\)/,
     );
-    expect(headLine, "线与帽轮廓同色").toMatch(/background:\s*var\(--border\)/);
+    expect(headLine, "线与帽轮廓同色（tabsBorder）").toMatch(
+      /background:\s*var\(--tabstrip-border\)/,
+    );
     expect(headLine, "线必须在帽之下（帽 z-index 1 才盖得出开口）").toMatch(/z-index:\s*0/);
     expect(headLine, "线不吃鼠标事件（它压在标签热区下沿）").toMatch(/pointer-events:\s*none/);
     expect(
@@ -1162,7 +1164,7 @@ describe("编辑区大卡片外框（B123，修正 B122：卡片上移到整个�
     // 大卡片三件套落在 .layout-area（VS Code 的 .part.editor 同款）
     const area = cssDecls(ruleBlock(css, ".layout-area"));
     expect(area, "大卡片外框必须是 1px 卡片边框（颜色=非活动 hover 色）").toContain(
-      "border: 1px solid var(--tab-bg-hover)",
+      "border: 1px solid var(--editor-card-border)",
     );
     expect(area, "卡片圆角 8px（VS Code cornerRadius-large）").toContain("border-radius: 8px");
     expect(area, "overflow hidden 裁出圆角（VS Code 同款）").toContain("overflow: hidden");
@@ -1172,18 +1174,20 @@ describe("编辑区大卡片外框（B123，修正 B122：卡片上移到整个�
     expect(panel, "面板不得再画卡片边框（B123 卡片上移）").not.toMatch(/border/);
     expect(panel, "面板不得再有圆角").not.toContain("border-radius");
 
-    // 状态栏上沿无线（状态栏在卡片外面）
+    // 状态栏上沿不在卡片里（状态栏在卡片外面）
     const statusbar = cssDecls(ruleBlock(css, ".statusbar"));
-    expect(statusbar, "状态栏不得再画 border-top").not.toContain("border-top");
-    // B204：状态栏底色 = 标题栏那颗（用户点名「两边同色」），不是自己那颗旧变量
-    expect(statusbar, "状态栏底色必须引用 --bg-toolbar（与标题栏同源）").toContain(
-      "background: var(--bg-toolbar)",
+    expect(statusbar, "状态栏不得再画 border-top（B379 用 inset 阴影画上沿线）").not.toContain(
+      "border-top",
+    );
+    // B379：状态栏有自己的底色（statusBar.background），不再跟标题栏同源
+    expect(statusbar, "状态栏底色必须引用 --statusbar-bg").toContain(
+      "background: var(--statusbar-bg)",
     );
 
-    // 分屏边界恢复静息细线（大卡片内部，实拍 VS Code #272829 ≈ --sep-line）
+    // 分屏边界恢复静息细线（大卡片内部，editorGroup.border）
     const sep = ruleBlock(css, ".layout-sep::after");
-    expect(sep, "分屏分隔条静息必须画 --sep-line 细线（B123）").toContain(
-      "background: var(--sep-line)",
+    expect(sep, "分屏分隔条静息必须画 --editor-split-border 细线").toContain(
+      "background: var(--editor-split-border)",
     );
     // 悬停/拖拽高亮不受影响（B59/B60）：accent + 加宽
     const hl = css.match(/\.layout-sep:hover::after,[\s\S]{0,80}?\{[^}]*\}/)?.[0] ?? "";
@@ -1206,15 +1210,15 @@ describe("编辑区大卡片外框（B123，修正 B122：卡片上移到整个�
     expect(sepBlock(BAD_SEP), "替身自证：静息透明已被塞回").toContain("background: transparent");
     expect(() => {
       expect(sepBlock(BAD_SEP), "替身的静息透明必须被抓到").toContain(
-        "background: var(--sep-line)",
+        "background: var(--editor-split-border)",
       );
     }).toThrow();
 
     // 反向验证②：大卡片边框退潮（layout-area 丢边框）必须被咬住
-    // ⚠️ 必须**只在 .layout-area 块内**替换：B195 起 .side-shell 用同一条边框声明
+    // ⚠️ 必须**只在 .layout-area 块内**替换：.side-shell 用同一条边框声明
     //    （两张卡片必须逐字同步），全局首处替换会打在侧栏卡片上、这条就假绿了。
     const BAD_AREA = css.replace(
-      /(\.layout-area\s*\{[^}]*)border: 1px solid var\(--tab-bg-hover\);/,
+      /(\.layout-area\s*\{[^}]*)border: 1px solid var\(--editor-card-border\);/,
       "$1border: none;",
     );
     expect(BAD_AREA, "替身必须真的摘掉了大卡片边框").not.toBe(css);
@@ -1222,19 +1226,14 @@ describe("编辑区大卡片外框（B123，修正 B122：卡片上移到整个�
       expect(
         cssDecls(ruleBlock(BAD_AREA, ".layout-area")),
         "替身缺失的大卡片边框必须被抓到",
-      ).toContain("border: 1px solid var(--tab-bg-hover)");
+      ).toContain("border: 1px solid var(--editor-card-border)");
     }).toThrow();
 
     // 反向验证③：状态栏 border-top 回潮必须被咬住
-    // ⚠️ B204 顺带修的两个坑（都是「替身空转 ⇒ 反验证假绿」）：
-    //    ① 锚点从 `background: var(--bg-status);` 换成了 `var(--bg-toolbar)` —— 旧那颗
-    //       变量已随「状态栏/标题栏同色」删掉，锚在它上面 replace 就是空转；
-    //    ② **不能用字符串锚 `background: var(--bg-toolbar);`** —— 那串在 .title-bar
-    //       先出现，String.replace 只中第一处 ⇒ 改到的是标题栏，.statusbar 还是干净的
-    //       ⇒ 下面的 not.toContain 照样通过 ⇒ toThrow 落空。必须按选择器锚。
+    // ⚠️ 锚点必须按选择器取（B379 状态栏自己那颗 `--statusbar-bg` 只在这里出现）。
     const BAD_SB = css.replace(
-      /(\.statusbar\s*\{[^}]*)background:\s*var\(--bg-toolbar\);/,
-      "$1background: var(--bg-toolbar);\n  border-top: 1px solid var(--border);",
+      /(\.statusbar\s*\{[^}]*)background:\s*var\(--statusbar-bg\);/,
+      "$1background: var(--statusbar-bg);\n  border-top: 1px solid var(--border);",
     );
     expect(BAD_SB, "替身必须真的给状态栏塞上边线").not.toBe(css);
     expect(() => {
@@ -1375,48 +1374,48 @@ describe("标签右键菜单分组与「打开文件所在目录」（B123-7）"
 
 // ------------------------------------------------------- B204：状态栏与标题栏同底色
 // 用户原话：「状态栏颜色和标题栏背景色一致，或者统一为没有背景色」⇒ 选了「一致」。
-// 两条窗口 chrome 原来各刷各的：标题栏 --bg-toolbar（深 #1b1d1f / 浅 #f6f7f8）、
-// 状态栏 --bg-status（深 #17191b / 浅 #eef0f2），状态栏一律比标题栏**暗一档** ——
-// 就为了这点差色，用户看着像「两条 chrome 调子不一致」。
-// 收敛方式：**删掉 --bg-status 这颗变量**，状态栏直接引用 --bg-toolbar。
-// 比「把 --bg-status 的值改成 var(--bg-toolbar)」更彻底 —— 那还留着两颗名字不同的
-// 同源变量，日后有人改了 `--bg-status:` 那一行还以为在改状态栏，其实改的是别名。
-describe("状态栏与标题栏同源（B204）", () => {
-  it("状态栏与标题栏共用 --bg-toolbar，独立的 --bg-status 已删", () => {
+// B204 曾把状态栏并到标题栏那颗 `--bg-toolbar`（用户当时点名「两边同色」）。
+// B379 用户重新点名「状态栏……颜色和样式尽量和 vscode 保持一致」⇒ 状态栏恢复
+// 自己的 `statusBar.background / foreground / border`：Plus / 经典档是一条 #007ACC 蓝，
+// 2026 / Modern 档才恰好与标题栏同色 —— 两者不再是同一颗变量。
+describe("状态栏按 statusBar.* 取色（B379，推翻 B204 的同源裁决）", () => {
+  it("状态栏有自己的底 / 字 / 上沿线，独立的 --bg-status 仍然不许回来", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
     const statusbar = cssDecls(ruleBlock(css, ".statusbar"));
-    expect(statusbar, "状态栏底色 = 标题栏那颗").toContain("background: var(--bg-toolbar)");
-    expect(cssDecls(ruleBlock(css, ".title-bar")), "标题栏底色还是同一颗").toContain(
-      "background: var(--bg-toolbar)",
+    expect(statusbar, "状态栏底色 = statusBar.background").toContain(
+      "background: var(--statusbar-bg)",
     );
-    // ⚠️ 判「不许有 --bg-status」而不是「不许有这个色值」：
-    //    旧值 #17191b / #eef0f2 换颗别的名头照样会漂回来，变量名才是源头。
-    expect(css, "不得再定义 --bg-status（两条 chrome 同源，第二颗就是日后色差的种子）").not.toMatch(
-      /--bg-status\s*:/,
+    expect(statusbar, "状态栏前景 = statusBar.foreground").toContain("color: var(--statusbar-fg)");
+    expect(statusbar, "上沿线 = statusBar.border").toContain(
+      "box-shadow: inset 0 1px 0 var(--statusbar-border)",
     );
-    // 且不许出现「另一颗同义变量指向它」的写法（别名会让改的人以为改的是另一处）
+    expect(cssDecls(ruleBlock(css, ".title-bar")), "标题栏走 shellBackground").toContain(
+      "background: var(--shell-bg)",
+    );
+    // ⚠️ 旧的那颗独立变量仍不许复活：它没有映射到任何 VS Code token，加了就是第三套口径。
+    expect(css, "不得再定义 --bg-status").not.toMatch(/--bg-status\s*:/);
     expect(css, "不许留 --xxx: var(--bg-status) 这种别名懒政").not.toMatch(
       /--[\w-]+\s*:\s*var\(--bg-status\)/,
     );
   });
 
-  it("反向验证①：状态栏刷回自己那颗独立底色必须被咬住", () => {
+  it("反向验证①：状态栏退回标题栏那颗（B204 旧口径）必须被咬住", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
     const BAD = css.replace(
-      /(\.statusbar\s*\{[^}]*)background:\s*var\(--bg-toolbar\);/,
-      "$1background: var(--bg-status);",
+      /(\.statusbar\s*\{[^}]*)background:\s*var\(--statusbar-bg\);/,
+      "$1background: var(--bg-toolbar);",
     );
-    expect(BAD, "替身必须真的刷回独立底色").not.toBe(css);
+    expect(BAD, "替身必须真的退回共用底色").not.toBe(css);
     expect(() => {
-      expect(cssDecls(ruleBlock(BAD, ".statusbar")), "替身必须不再与标题栏同源").toContain(
-        "background: var(--bg-toolbar)",
+      expect(cssDecls(ruleBlock(BAD, ".statusbar")), "替身必须不再取 statusBar token").toContain(
+        "background: var(--statusbar-bg)",
       );
     }).toThrow();
   });
 
   it("反向验证②：把 --bg-status 当新变量加回来必须被咬住", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
-    // 不拿某个主题值当锚点（B376 换过配色，锚旧值会让替身构造静默失效）；
+    // 不拿某个主题值当锚点（B376/B379 换过配色，锚旧值会让替身构造静默失效）；
     // 直接补一条独立的主题覆盖块 —— 与「日后有人加回这颗变量」的形状一致。
     const BAD = `${css}\n:root[data-theme="light"] { --bg-status: #eef0f2; }\n`;
     expect(BAD, "替身必须真的补回那颗变量").not.toBe(css);
