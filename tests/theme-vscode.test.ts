@@ -107,7 +107,8 @@ const AREA = {
     "--editor-fg": "#bbbebf", // editor.foreground
     "--editor-card-border": "#2a2b2c", // editor.border = surface.border
     "--editor-split-border": "#444444", // editorGroup.border 默认档
-    "--tab-strip-bg": "#202122", // editorGroupHeader.connectedTabsBackground
+    // B380：条带取 tabsBackground（= 标题栏 = 状态栏），不是 connectedTabsBackground。
+    "--tab-strip-bg": "#191a1b", // editorGroupHeader.tabsBackground
     "--tabstrip-border": "#2a2b2c", // editorGroupHeader.tabsBorder
     "--tab-fg-inactive": "#8c8c8c", // tab.inactiveForeground
     "--tab-fg-hover": "#bfbfbf", // tab.hoverForeground
@@ -138,7 +139,7 @@ const AREA = {
     "--editor-fg": "#202020",
     "--editor-card-border": "#e4e5e6",
     "--editor-split-border": "#e7e7e7",
-    "--tab-strip-bg": "#eaeaea",
+    "--tab-strip-bg": "#fafafd",
     "--tabstrip-border": "#f0f1f2",
     "--tab-fg-inactive": "#606060",
     "--tab-fg-hover": "#202020",
@@ -150,23 +151,43 @@ const AREA = {
   },
 } as const;
 
-/** 编辑器版式色（2026 主题 / editorColorRegistry）。 */
+/** 编辑器版式色（2026 主题 / editorColorRegistry；B380 扩到选中与查找的全套状态）。 */
 const EDITOR = {
   dark: {
     "--editor-fg": "#bbbebf", // editor.foreground
     "--editor-cursor": "#bbbebf",
     "--editor-selection": "#276782dd",
-    "--editor-line-highlight-border": "#242526",
+    "--editor-inactive-selection": "#2767826e", // transparent(selection, .5)
+    "--editor-selection-highlight": "#27678260",
+    "--editor-selection-highlight-border": "transparent",
+    "--editor-line-highlight-bg": "#242526",
+    "--editor-line-highlight-border": "#282828",
+    "--editor-bracket-match-bg": "#0064001a",
+    "--editor-bracket-match-border": "#888888",
     "--editor-line-number": "#858889",
     "--editor-line-number-active": "#bbbebf",
+    "--find-match": "#27678290", // 当前命中
+    "--find-match-other": "#27678280", // 其余命中
+    "--find-match-border": "transparent",
+    "--find-match-other-border": "transparent",
   },
   light: {
     "--editor-fg": "#202020",
     "--editor-cursor": "#202020",
     "--editor-selection": "#0069cc40",
-    "--editor-line-highlight-border": "#eaeaea",
+    "--editor-inactive-selection": "#0069cc20",
+    "--editor-selection-highlight": "#0069cc15",
+    "--editor-selection-highlight-border": "transparent",
+    "--editor-line-highlight-bg": "#eaeaea40",
+    "--editor-line-highlight-border": "#eeeeee",
+    "--editor-bracket-match-bg": "#0064001a",
+    "--editor-bracket-match-border": "#b9b9b9",
     "--editor-line-number": "#606060",
     "--editor-line-number-active": "#202020",
+    "--find-match": "#0069cc40",
+    "--find-match-other": "#0069cc1a",
+    "--find-match-border": "transparent",
+    "--find-match-other-border": "transparent",
   },
 } as const;
 
@@ -175,7 +196,9 @@ const FAMILY_KEYS: ReadonlyArray<readonly [string, string, string]> = [
   ["modern", "--bg", "#1f1f1f"],
   ["modern", "--shell-bg", "#181818"],
   ["modern", "--sidebar-bg", "#181818"],
-  ["modern", "--tab-strip-bg", "#2b2b2b"],
+  ["modern", "--workspace-bg", "#181818"],
+  ["modern", "--titlebar-border", "transparent"],
+  ["modern", "--tab-strip-bg", "#181818"],
   ["modern", "--statusbar-bg", "#181818"],
   ["plus", "--bg", "#1e1e1e"],
   ["plus", "--shell-bg", "#3c3c3c"],
@@ -184,8 +207,16 @@ const FAMILY_KEYS: ReadonlyArray<readonly [string, string, string]> = [
   ["plus", "--statusbar-bg", "#007acc"],
   ["classic", "--bg", "#1e1e1e"],
   ["classic", "--shell-bg", "#3c3c3c"],
-  ["classic", "--tab-strip-bg", "#303031"],
+  // B380：条带仍是 tabsBackground #252526，#303031 是 tabsBorder（下沿描边）。
+  ["classic", "--tab-strip-bg", "#252526"],
+  ["classic", "--tabstrip-border", "#303031"],
   ["hc", "--bg", "#000000"],
+  ["hc", "--workspace-bg", "#000000"],
+  ["hc", "--titlebar-border", "#6fc3df"],
+  ["hc", "--sidebar-section-border", "#6fc3df"],
+  ["hc", "--editor-selection", "#ffffff"],
+  ["hc", "--editor-selection-fg", "#000000"],
+  ["hc", "--editor-line-number-active", "#f38518"],
   ["hc", "--border", "#6fc3df"],
   ["hc", "--editor-split-border", "#6fc3df"],
   ["hc", "--statusbar-border", "#6fc3df"],
@@ -194,15 +225,21 @@ const FAMILY_KEYS: ReadonlyArray<readonly [string, string, string]> = [
 
 const FAMILY_KEYS_LIGHT: ReadonlyArray<readonly [string, string, string]> = [
   ["modern", "--shell-bg", "#f8f8f8"],
-  ["modern", "--tab-strip-bg", "#e5e5e5"],
+  ["modern", "--tab-strip-bg", "#f8f8f8"],
   ["modern", "--statusbar-bg", "#f8f8f8"],
   ["plus", "--shell-bg", "#dddddd"],
   ["plus", "--sidebar-bg", "#f3f3f3"],
   ["plus", "--tab-strip-bg", "#f3f3f3"],
   ["plus", "--statusbar-bg", "#007acc"],
   ["classic", "--shell-bg", "#dddddd"],
-  ["classic", "--tab-strip-bg", "#e8e8e8"],
+  ["classic", "--tab-strip-bg", "#f3f3f3"],
+  ["classic", "--tabstrip-border", "#d8d8d8"],
   ["hc", "--border", "#0f4a85"],
+  ["hc", "--titlebar-border", "#0f4a85"],
+  ["hc", "--sidebar-section-border", "#0f4a85"],
+  ["hc", "--editor-selection", "#0f4a85"],
+  ["hc", "--editor-selection-fg", "#ffffff"],
+  ["hc", "--editor-line-number-active", "#006bbd"],
   ["hc", "--statusbar-border", "#0f4a85"],
   ["hc", "--glass-opacity", "100%"],
 ];
@@ -373,14 +410,17 @@ describe("B377 · 源码编辑区版式色（光标 / 选区 / 行号 / 当前�
     }
   });
 
-  it("当前行是 VS Code 的 1px 边框（不是整行铺底色）", () => {
+  it("当前行 = lineHighlightBackground（2026 有淡底）+ 1px 边框（画在行盒内）", () => {
     const rule = stripCssComments(ruleBlock(css(), ".panel-host .cm-editor .cm-activeLine"));
+    expect(rule, "当前行底色走 token（2026 是 #242526，其余族 transparent）").toContain(
+      "background: var(--editor-line-highlight-bg)",
+    );
     expect(rule, "当前行边框必须用 box-shadow 画在行盒内（不吃布局）").toMatch(
       /box-shadow:\s*inset 0 0 0 1px var\(--editor-line-highlight-border\)/,
     );
     const src = stripLineComments(themeSrc());
-    expect(src, "CM 默认当前行底色必须压成透明").toMatch(
-      /"\.cm-activeLine":\s*\{\s*backgroundColor:\s*"transparent"/,
+    expect(src, "CM 默认当前行底色必须接上 token").toMatch(
+      /"\.cm-activeLine":\s*\{\s*backgroundColor:\s*"var\(--editor-line-highlight-bg\)"/,
     );
   });
 
@@ -405,13 +445,22 @@ describe("B377 · 源码编辑区版式色（光标 / 选区 / 行号 / 当前�
 
 describe("B377 · 语法配色：五族各一套，2026 为默认", () => {
   const SIGNATURES: ReadonlyArray<readonly [string, string, readonly string[]]> = [
-    ["2026 深色", "y2026Dark", ["#8b949e", "#ff7b72", "#a5d6ff", "#d2a8ff", "#ffa657", "#7ee787"]],
-    ["2026 浅色", "y2026Light", ["#6e7781", "#cf222e", "#0a3069", "#8250df", "#953800", "#116329"]],
+    [
+      "2026 深色",
+      "y2026Dark",
+      // B380：普通标识符取 variable.other #c9d1d9（#ffa657 只留给 changed/参数那一档）。
+      ["#8b949e", "#ff7b72", "#a5d6ff", "#d2a8ff", 'variable: "#c9d1d9"', "#7ee787"],
+    ],
+    [
+      "2026 浅色",
+      "y2026Light",
+      ["#6e7781", "#cf222e", "#0a3069", "#8250df", 'variable: "#1f2328"', "#116329"],
+    ],
     ["Plus 深色", "plusDark", ["#6a9955", "#569cd6", "#ce9178", "#dcdcaa", "#9cdcfe", "#4ec9b0"]],
     ["Plus 浅色", "plusLight", ["#008000", "#0000ff", "#a31515", "#795e26", "#001080", "#267f99"]],
-    ["经典深色", "classicDark", ['function: "#d4d4d4"']],
-    ["经典浅色", "classicLight", ['function: "#000000"', "#e50000"]],
-    ["HC 深色", "hcDark", ["#7ca668", "#6fc3df", "#6796e6"]],
+    ["经典深色", "classicDark", ['function: "#d4d4d4"', 'variable: "#d4d4d4"']],
+    ["经典浅色", "classicLight", ['function: "#000000"', 'variable: "#000000"']],
+    ["HC 深色", "hcDark", ["#7ca668", "#6fc3df", "#6796e6", 'atom: "#569cd6"']],
     ["HC 浅色", "hcLight", ["#515151", "#0f4a85", "#5e2cbc", "#185e73"]],
   ];
 
@@ -511,7 +560,7 @@ describe("B377 · 启动底色与设置接线", () => {
     expect(String(win.backgroundColor).toLowerCase(), "窗口预渲染底色 = 2026").toBe("#191a1b");
   });
 
-  it("设置页 / prefs / main 三处都接上了主题族", () => {
+  it("设置页 / prefs / main 三处都接上了主题族（B380 仍成立）", () => {
     const prefs = readFileSync("src/prefs.ts", "utf-8");
     const main = readFileSync("src/main.ts", "utf-8");
     expect(prefs, "切换明暗时必须带上当前族").toContain("applyTheme(mode, themeFamily)");
@@ -524,5 +573,189 @@ describe("B377 · 启动底色与设置接线", () => {
     expect(prefs, "切族必须重画只取一次色的岛").toContain("rethemePreviews()");
     expect(main, "启动时归一化 theme_family").toContain("normalizeFamily(settings?.theme_family)");
     expect(main, "启动时 applyTheme 必须带族").toContain("applyTheme(themeMode, themeFamily)");
+  });
+});
+
+describe("B380 · 中间区域背景 / HC 边框 / 编辑器交互状态", () => {
+  /** 某族某档自己的那套声明：2026 = 基座块；其余 = 族覆盖块（classic 的两块拼在一起）。 */
+  function variantBlock(source: string, mode: "dark" | "light", family: string): string {
+    return family === "2026" ? themeBlock(source, mode) : familyBlock(source, mode, family);
+  }
+
+  it("中间区域显式取 --workspace-bg（= 外壳色），不再只靠 body 兜底", () => {
+    const source = css();
+    for (const mode of ["dark", "light"] as const) {
+      const base = themeBlock(source, mode);
+      expect(decl(base, "--workspace-bg"), `${mode} 必须有中间区域底色`).toBeTruthy();
+      expect(decl(base, "--workspace-bg"), `${mode} 的中间区域 = 外壳`).toBe(
+        decl(base, "--shell-bg"),
+      );
+      expect(decl(base, "--workspace-bg")).toBe(mode === "dark" ? "#191a1b" : "#fafafd");
+    }
+    const row = stripCssComments(ruleBlock(source, "#main-row"));
+    expect(row, "#main-row 必须显式铺中间区域底色").toContain("background: var(--workspace-bg)");
+    // 五族都要有这一颗（漏一族会退回到 body 的兜底，主题就没法单独调它）
+    for (const mode of ["dark", "light"] as const) {
+      for (const family of ["modern", "plus", "classic", "hc"]) {
+        const block = variantBlock(source, mode, family);
+        expect(decl(block, "--workspace-bg"), `${mode}/${family}`).toBeTruthy();
+        expect(decl(block, "--workspace-bg"), `${mode}/${family} 与外壳同源`).toBe(
+          decl(block, "--shell-bg"),
+        );
+      }
+    }
+  });
+
+  it("2026 / Modern 的标签条 = 标题栏 = 状态栏（用户点名的中间断档）", () => {
+    const source = css();
+    for (const mode of ["dark", "light"] as const) {
+      for (const family of ["2026", "modern"]) {
+        const block = variantBlock(source, mode, family);
+        const strip = decl(block, "--tab-strip-bg");
+        expect(strip, `${mode}/${family} 条带`).toBeTruthy();
+        expect(strip, `${mode}/${family} 条带必须 = 外壳（标题栏）`).toBe(
+          decl(block, "--shell-bg"),
+        );
+        expect(strip, `${mode}/${family} 条带必须 = 状态栏`).toBe(decl(block, "--statusbar-bg"));
+      }
+    }
+    // 2026/Modern 的 tabsBackground 就是标题栏那一颗；connectedTabsBackground 不再上台面。
+    for (const color of ["#202122", "#2b2b2b", "#eaeaea", "#e5e5e5"]) {
+      expect(decl(themeBlock(source, "dark"), "--tab-strip-bg")).not.toBe(color);
+      expect(decl(themeBlock(source, "light"), "--tab-strip-bg")).not.toBe(color);
+    }
+  });
+
+  it("HC 的 contrastBorder 补齐：标题栏 / 区块标题 / 卡片 / 分屏 / 条带 / 状态栏", () => {
+    const source = css();
+    const tokens = [
+      "--titlebar-border",
+      "--sidebar-section-border",
+      "--editor-card-border",
+      "--editor-split-border",
+      "--tabstrip-border",
+      "--statusbar-border",
+      "--activitybar-border",
+    ];
+    for (const [mode, color] of [
+      ["dark", "#6fc3df"],
+      ["light", "#0f4a85"],
+    ] as const) {
+      const block = familyBlock(source, mode, "hc");
+      for (const token of tokens) {
+        expect(decl(block, token), `${mode}/hc 的 ${token}`).toBe(color);
+      }
+    }
+    const title = stripCssComments(ruleBlock(source, ".title-bar", "box-shadow"));
+    expect(title, "标题栏下沿必须消费 titleBar.border").toContain(
+      "box-shadow: inset 0 -1px 0 var(--titlebar-border)",
+    );
+    const heads = stripCssComments(
+      ruleBlock(preview(), ".recent-head, .explorer-head, .toc-head", "box-shadow"),
+    );
+    expect(heads, "侧栏三块标题栏共用 sideBarSectionHeader.border").toContain(
+      "box-shadow: inset 0 -1px 0 var(--sidebar-section-border, transparent)",
+    );
+    // 反向：把 HC 的 titleBar.border 换成 transparent，上面这条会落空（防恒真）
+    const bad = familyBlock(source, "dark", "hc").replace(
+      "--titlebar-border: #6fc3df;",
+      "--titlebar-border: transparent;",
+    );
+    expect(bad, "前置条件：替身确实改了").not.toContain("--titlebar-border: #6fc3df;");
+  });
+
+  it("编辑器状态色：非活动选区 / 同词高亮 / 括号配对 / 查找两类命中都接线", () => {
+    const source = css();
+    const inactive = stripCssComments(
+      ruleBlock(source, ".panel-host .cm-editor:not(.cm-focused) .cm-selectionBackground"),
+    );
+    expect(inactive, "失焦选区取 editor.inactiveSelectionBackground").toContain(
+      "background: var(--editor-inactive-selection)",
+    );
+    const sel = stripCssComments(ruleBlock(source, ".panel-host .cm-editor .cm-selectionMatch"));
+    expect(sel, "同词高亮取 selectionHighlightBackground").toContain(
+      "background: var(--editor-selection-highlight)",
+    );
+    expect(sel, "HC 的同词高亮还有一圈 activeContrastBorder").toContain(
+      "outline: 1px solid var(--editor-selection-highlight-border)",
+    );
+    const bracket = stripCssComments(
+      ruleBlock(source, ".panel-host .cm-editor .cm-matchingBracket", "background"),
+    );
+    expect(bracket, "配对括号底色").toContain("background: var(--editor-bracket-match-bg)");
+    expect(bracket, "配对括号描边").toContain("var(--editor-bracket-match-border)");
+    const other = stripCssComments(ruleBlock(source, ".cm-find-match", "background"));
+    expect(other, "其余命中去 findMatchHighlightBackground").toContain(
+      "background: var(--find-match-other)",
+    );
+    expect(other, "其余命中的 HC 描边").toContain("var(--find-match-other-border)");
+    const active = stripCssComments(ruleBlock(source, ".cm-find-match-active", "background"));
+    expect(active, "当前命中去 findMatchBackground").toContain("background: var(--find-match)");
+    expect(active, "当前命中的 HC 描边").toContain("outline-color: var(--find-match-border)");
+  });
+
+  it("每个变体都定义了这批编辑器状态 token（漏一族会落空）", () => {
+    const source = css();
+    const tokens = [
+      "--editor-inactive-selection",
+      "--editor-selection-highlight",
+      "--editor-selection-highlight-border",
+      "--editor-line-highlight-bg",
+      "--editor-bracket-match-bg",
+      "--editor-bracket-match-border",
+      "--find-match",
+      "--find-match-other",
+      "--find-match-border",
+      "--find-match-other-border",
+    ];
+    for (const mode of ["dark", "light"] as const) {
+      for (const family of ["2026", "modern", "plus", "classic", "hc"]) {
+        // 族覆盖只声明「与基座不同的那些」，所以查「有没有定义」要把基座一起算上。
+        const block = `${themeBlock(source, mode)}\n${variantBlock(source, mode, family)}`;
+        for (const token of tokens) {
+          expect(block, `${mode}/${family} 缺 ${token}`).toContain(`${token}:`);
+        }
+      }
+    }
+  });
+
+  it("HC 的 selectionForeground 由装饰层压过语法色；其它族不挂这一层", () => {
+    const src = stripLineComments(themeSrc());
+    expect(src, "HC 专属扩展必须只在 hc 族挂").toContain(
+      '...(family === "hc" ? [hcSelectionForeground] : [])',
+    );
+    expect(src, "装饰层的类名").toContain('class: "cm-hc-selection"');
+    const rule = stripCssComments(
+      ruleBlock(
+        css(),
+        ".panel-host .cm-editor .cm-hc-selection, .panel-host .cm-editor .cm-hc-selection *",
+      ),
+    );
+    expect(rule, "必须连后代语法 span 一起换色").toContain("color: var(--editor-selection-fg)");
+
+    const mount = (family: "hc" | "2026") =>
+      new EditorView({
+        state: EditorState.create({
+          doc: "hello world",
+          selection: { anchor: 0, head: 5 },
+          extensions: vscodeEditorTheme(true, family),
+        }),
+        parent: document.body,
+      });
+    const hc = mount("hc");
+    expect(hc.contentDOM.querySelectorAll(".cm-hc-selection").length, "HC 选区要挂标记").toBe(1);
+    expect(hc.contentDOM.querySelector(".cm-hc-selection")?.textContent).toBe("hello");
+    hc.destroy();
+    const y = mount("2026");
+    expect(y.contentDOM.querySelectorAll(".cm-hc-selection").length, "2026 不挂").toBe(0);
+    y.destroy();
+
+    // 反向验证：把条件去掉（所有族都挂）必须被上面第一条咬住
+    const bad = src.replace(
+      '...(family === "hc" ? [hcSelectionForeground] : [])',
+      "...[hcSelectionForeground]",
+    );
+    expect(bad, "前置条件：替身确实改了").not.toBe(src);
+    expect(bad, "退化替身不再满足「只有 hc 挂」").not.toContain('family === "hc" ?');
   });
 });

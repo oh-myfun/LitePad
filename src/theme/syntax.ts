@@ -104,7 +104,10 @@ const y2026Dark: SyntaxPalette = {
   languageConst: "#569cd6",
   atom: "#79c0ff",
   function: "#d2a8ff",
-  variable: "#ffa657",
+  // 2026 的 `variable`（#ffa657）只覆盖参数一类；普通标识符是 `variable.other`
+  // #c9d1d9。CM6 的 variableName 分不出这两档，取占多数的那一档 —— 否则整篇标识符
+  // 都是橙色（B380 对照 VS Code 2026 Dark 后修正）。
+  variable: "#c9d1d9",
   property: "#c9d1d9",
   type: "#4ec9b0",
   tag: "#7ee787",
@@ -132,8 +135,8 @@ const y2026Light: SyntaxPalette = {
   languageConst: "#0000ff",
   atom: "#0550ae",
   function: "#8250df",
-  // 2026-light.json 里 `variable` 是 #953800；extract 时分号规则会误把它顶掉。
-  variable: "#953800",
+  // 同深色档：`variable` #953800 是参数；普通标识符 `variable.other` #1f2328。
+  variable: "#1f2328",
   property: "#1f2328",
   type: "#267f99",
   tag: "#116329",
@@ -158,6 +161,10 @@ const classicDark: SyntaxPalette = {
   control: "#569cd6",
   atom: "#d4d4d4",
   function: "#d4d4d4",
+  // dark_vs 不单独给变量 / 属性着色 ⇒ TextMate 回落到 editor.foreground #D4D4D4
+  // （B380 修：原先从 Dark+ 继承了 #9CDCFE，整篇标识符偏蓝）。
+  variable: "#d4d4d4",
+  property: "#d4d4d4",
   type: "#d4d4d4",
   escape: "#d4d4d4",
   link: "#3794ff",
@@ -168,8 +175,9 @@ const classicLight: SyntaxPalette = {
   control: "#0000ff",
   atom: "#000000",
   function: "#000000",
-  variable: "#e50000",
-  property: "#e50000",
+  // light_vs 的回落前景是 #000000（B380 修：原先继承的 #E50000 是属性选择器那一档）。
+  variable: "#000000",
+  property: "#000000",
   type: "#000000",
   escape: "#000000",
   link: "#006ab1",
@@ -178,7 +186,9 @@ const classicLight: SyntaxPalette = {
 const hcDark: SyntaxPalette = {
   ...plusDark,
   comment: "#7ca668",
-  atom: "#ffffff",
+  // hc_black 的 constant.language / storage / keyword 都是 #569cd6；
+  // B380 修：原先的 #FFFFFF 把 true/false/null 与常量混成了正文色。
+  atom: "#569cd6",
   escape: "#569cd6",
   link: "#6fc3df",
   heading: "#6796e6",

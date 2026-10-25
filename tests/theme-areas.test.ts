@@ -122,7 +122,8 @@ describe("B379 · 四个关键区域：分区域 token 与消费点", () => {
     expect(rule(source, ".layout-sep::after"), "分屏线 = editorGroup.border").toContain(
       "background: var(--editor-split-border)",
     );
-    expect(rule(source, ".panel-head"), "标签条表面 = connectedTabsBackground").toContain(
+    // B380：条带表面 = editorGroupHeader.tabsBackground（读 token，不钉具体色值）。
+    expect(rule(source, ".panel-head"), "标签条表面 = tabsBackground").toContain(
       "background: var(--tab-strip-bg)",
     );
     expect(

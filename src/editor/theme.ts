@@ -13,7 +13,13 @@
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import type { Extension } from "@codemirror/state";
 import { tags } from "@lezer/highlight";
-import { EditorView } from "@codemirror/view";
+import {
+  Decoration,
+  EditorView,
+  ViewPlugin,
+  type DecorationSet,
+  type ViewUpdate,
+} from "@codemirror/view";
 import { syntaxPalette, type SyntaxPalette } from "../theme/syntax";
 import type { ThemeFamily } from "../theme/theme";
 
@@ -40,10 +46,11 @@ function shellStyles(dark: boolean): Extension {
         {
           backgroundColor: "var(--editor-selection)",
         },
-      // VS Code 的当前行是**一圈 1px 边框**（editor.lineHighlightBorder），
-      // 不是整行底色；边框那条在 global.css 里画（要压过 CM 基础主题的层叠顺序）。
+      // B380：当前行 = lineHighlightBackground（多数主题透明）+
+      // lineHighlightBorder 的一圈 1px 边框；边框那条在 global.css 里画
+      // （要压过 CM 基础主题的层叠顺序），这里只把底色也接上 token。
       ".cm-activeLine": {
-        backgroundColor: "transparent",
+        backgroundColor: "var(--editor-line-highlight-bg)",
       },
       ".cm-gutters": {
         backgroundColor: "var(--bg)",
@@ -140,7 +147,39 @@ const STYLES: Record<ThemeFamily, { dark: HighlightStyle; light: HighlightStyle 
   hc: { dark: styleOf(syntaxPalette("hc", true)), light: styleOf(syntaxPalette("hc", false)) },
 };
 
+// HC 的 selectionForeground（hc_black #000000 / hc_light #FFFFFF）必须压过语法色。
+// 背景是选择层（在文字下面），改不了文字颜色 ⇒ 只能给选中的每一段挂一个 mark 装饰，
+// 由 global.css 的 `.cm-hc-selection, .cm-hc-selection *` 统一换色（含后代 token span）。
+const hcSelectionMark = Decoration.mark({ class: "cm-hc-selection" });
+
+function hcSelectionSet(view: EditorView): DecorationSet {
+  const ranges = view.state.selection.ranges
+    .filter((r) => r.from < r.to)
+    .map((r) => hcSelectionMark.range(r.from, r.to));
+  return Decoration.set(ranges, true);
+}
+
+const hcSelectionForeground = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    constructor(view: EditorView) {
+      this.decorations = hcSelectionSet(view);
+    }
+    update(u: ViewUpdate) {
+      if (u.selectionSet || u.docChanged || u.viewportChanged) {
+        this.decorations = hcSelectionSet(u.view);
+      }
+    }
+  },
+  { decorations: (v) => v.decorations },
+);
+
 /** 一组主题扩展：壳层 + 对应主题族/明暗的语法配色（Compartment 里的一整份）。 */
 export function vscodeEditorTheme(dark: boolean, family: ThemeFamily = "2026"): Extension {
-  return [shellStyles(dark), syntaxHighlighting(STYLES[family][dark ? "dark" : "light"])];
+  return [
+    shellStyles(dark),
+    syntaxHighlighting(STYLES[family][dark ? "dark" : "light"]),
+    // 只有 HC 档有 selectionForeground；切到别的族时随 Compartment 重配自动撤掉。
+    ...(family === "hc" ? [hcSelectionForeground] : []),
+  ];
 }

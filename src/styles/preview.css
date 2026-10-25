@@ -543,6 +543,13 @@
   /* B379：区块标题取 `sideBarSectionHeader.foreground`（与行内文字的 token 分开）。 */
   color: var(--sidebar-section-fg, #656d76);
 }
+/* B380：三块视图的标题栏共用一个下沿 —— vs `sideBarSectionHeader.border`
+   （HC 档是 contrastBorder，其它档为 null ⇒ transparent，看不出来）。 */
+.recent-head,
+.explorer-head,
+.toc-head {
+  box-shadow: inset 0 -1px 0 var(--sidebar-section-border, transparent);
+}
 /* B317（用户点名）：还没打开文件夹时顶部那一排键收起 —— 五颗里有四颗要先得有一棵树，
    而「打开文件夹」那颗的出口就在下面的整宽按钮上。`display:none` 而不是 `hidden`：
    这一排是 flex 子项，留着 `hidden` 还得配一条兜底（同类坑见 `.recent-panel[hidden]`），

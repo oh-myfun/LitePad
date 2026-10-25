@@ -126,6 +126,12 @@
   --editor-fg: #bbbebf; /* editor.foreground */
 
   --shell-bg: #191a1b; /* modernUI.shellBackground = titleBar.activeBackground */
+  /* B380：中间区域（两张卡片之外的工作区底）显式取外壳色。
+     VS Code 的 floating-panels 只有侧栏是卡片，编辑区本身满铺；LitePad 两张都是卡片，
+     卡片外那一圈与卡片之间必须画同一颗外壳色，否则 body 的兜底一旦被谁盖掉就断档。 */
+  --workspace-bg: #191a1b; /* = modernUI.shellBackground */
+  /* B380：titleBar.border —— 非 HC 档 VS Code 不给色（不画），HC 档取 contrastBorder。 */
+  --titlebar-border: transparent;
   --titlebar-fg: #8c8c8c; /* titleBar.activeForeground */
   --titlebar-hover-bg: rgba(255, 255, 255, 0.1); /* titlebarpart.css 窗口控制 */
   --titlebar-close-hover: rgba(232, 17, 35, 0.9);
@@ -147,6 +153,8 @@
   --sidebar-bg: #191a1b;
   --sidebar-fg: #bfbfbf;
   --sidebar-section-fg: #bfbfbf;
+  /* B380：sideBarSectionHeader.border = contrastBorder（只有 HC 档有值）。 */
+  --sidebar-section-border: transparent;
 
   --list-hover-bg: #ffffff14;
   --list-hover-fg: #bfbfbf;
@@ -159,7 +167,10 @@
   --editor-card-border: #2a2b2c; /* editor.border = surface.border (#2A2B2C) */
   --editor-split-border: #444444; /* editorGroup.border 默认档 */
 
-  --tab-strip-bg: #202122; /* editorGroupHeader.connectedTabsBackground */
+  /* B380：条带取 `editorGroupHeader.tabsBackground`，不是 connectedTabsBackground。
+     2026 Dark 里这一颗正是 #191A1B = 标题栏 = 状态栏 —— 三块连成一片；
+     connectedTabsBackground 的 #202122 会在中间横着切出一条带（用户点名「断档」）。 */
+  --tab-strip-bg: #191a1b; /* editorGroupHeader.tabsBackground */
   --tabstrip-border: #2a2b2c; /* editorGroupHeader.tabsBorder */
   --tab-fg-inactive: #8c8c8c;
   --tab-fg-active: #bfbfbf;
@@ -178,10 +189,18 @@
   --bg-elevated: #202122;
   --bg-hover: #ffffff14;
   --border: #2a2b2c;
-  /* B376：源码编辑区（CM6）的颜色 token，取 2026 Dark 与 editorColorRegistry。 */
+  /* B376：源码编辑区（CM6）的颜色 token，取 2026 Dark 与 editorColorRegistry。
+     B380：选中 / 非活动选中 / 选中同词 / 当前行 / 括号配对 / 查找命中全部照 VS Code
+     （出处：2026-dark.json 的 editor.* 与 editorColorRegistry 的默认值）。 */
   --editor-cursor: #bbbebf;
   --editor-selection: #276782dd;
-  --editor-line-highlight-border: #242526;
+  --editor-inactive-selection: #2767826e; /* transparent(selection, .5) */
+  --editor-selection-highlight: #27678260;
+  --editor-selection-highlight-border: transparent; /* 只有 HC 档有 */
+  --editor-line-highlight-bg: #242526;
+  --editor-line-highlight-border: #282828;
+  --editor-bracket-match-bg: #0064001a;
+  --editor-bracket-match-border: #888888;
   --editor-line-number: #858889;
   --editor-line-number-active: #bbbebf;
   /* B373：资源管理器缩进引导线（tree.indentGuidesStroke 的深色默认值）。 */
@@ -208,9 +227,14 @@
   --sb-thumb: #a8a9aa85;
   --sb-thumb-hover: #a8a9aa90;
   --sb-thumb-active: #a8a9aa9c;
-  /* 查找命中高亮：findMatchHighlightBackground / findMatchBackground。 */
-  --find-match: #27678280;
-  --find-match-active: #27678290;
+  /* 查找命中高亮（B380 按 VS Code 的语义收口）：
+       --find-match        = editor.findMatchBackground（当前项）
+       --find-match-other  = editor.findMatchHighlightBackground（其余命中）
+     边框两颗只有 HC 档取值（findMatchBorder / findMatchHighlightBorder）。 */
+  --find-match: #27678290;
+  --find-match-other: #27678280;
+  --find-match-border: transparent;
+  --find-match-other-border: transparent;
   --shadow-lg: 0 0 12px rgba(0, 0, 0, 0.14);
   /* 查找栏输入区 = input.background；开关三态 = inputOption.*。 */
   --find-field-bg: #191a1b;
@@ -245,6 +269,8 @@
   --fg-muted: #9d9d9d;
   --editor-fg: #cccccc;
   --shell-bg: #181818;
+  --workspace-bg: #181818; /* = modernUI.shellBackground */
+  --titlebar-border: transparent;
   --titlebar-fg: #cccccc;
   --titlebar-hover-bg: rgba(255, 255, 255, 0.1);
   --titlebar-close-hover: rgba(232, 17, 35, 0.9);
@@ -273,7 +299,8 @@
   --list-selection-border: transparent;
   --editor-card-border: #333333;
   --editor-split-border: #ffffff17;
-  --tab-strip-bg: #2b2b2b; /* editorGroupHeader.connectedTabsBackground */
+  /* B380：取 tabsBackground（#181818）= 标题栏 = 状态栏，三块连成一片。 */
+  --tab-strip-bg: #181818; /* editorGroupHeader.tabsBackground */
   --tabstrip-border: #2b2b2b;
   --tab-fg-inactive: #9d9d9d;
   --tab-fg-active: #ffffff;
@@ -289,7 +316,13 @@
   --border: #2b2b2b;
   --editor-cursor: #aeafad;
   --editor-selection: #264f78;
+  --editor-inactive-selection: #3a3d41;
+  --editor-selection-highlight: #add6ff26;
+  --editor-selection-highlight-border: transparent;
+  --editor-line-highlight-bg: transparent;
   --editor-line-highlight-border: #282828;
+  --editor-bracket-match-bg: #0064001a;
+  --editor-bracket-match-border: #888888;
   --editor-line-number: #6e7681;
   --editor-line-number-active: #cccccc;
   --accent: #0078d4;
@@ -300,8 +333,10 @@
   --sb-thumb: rgba(255, 255, 255, 0.22);
   --sb-thumb-hover: rgba(255, 255, 255, 0.36);
   --sb-thumb-active: rgba(255, 255, 255, 0.46);
-  --find-match: #ea5c0033;
-  --find-match-active: #ea5c0055;
+  --find-match: #9e6a03; /* Dark Modern 显式覆盖 findMatchBackground */
+  --find-match-other: #ea5c0055;
+  --find-match-border: transparent;
+  --find-match-other-border: transparent;
   --find-field-bg: #313131;
   --find-opt-active: #2489db82;
   --find-opt-active-border: #2488db;
@@ -322,6 +357,8 @@
   --fg-muted: #9d9d9d;
   --editor-fg: #d4d4d4;
   --shell-bg: #3c3c3c;
+  --workspace-bg: #3c3c3c; /* = modernUI.shellBackground */
+  --titlebar-border: transparent;
   --titlebar-fg: #cccccc;
   --titlebar-hover-bg: rgba(255, 255, 255, 0.1);
   --titlebar-close-hover: rgba(232, 17, 35, 0.9);
@@ -366,7 +403,13 @@
   --border: #303031;
   --editor-cursor: #aeafad;
   --editor-selection: #264f78;
+  --editor-inactive-selection: #3a3d41;
+  --editor-selection-highlight: #add6ff26;
+  --editor-selection-highlight-border: transparent;
+  --editor-line-highlight-bg: transparent;
   --editor-line-highlight-border: #282828;
+  --editor-bracket-match-bg: #0064001a;
+  --editor-bracket-match-border: #888888;
   --editor-line-number: #858585;
   --editor-line-number-active: #c6c6c6;
   --accent: #007acc;
@@ -377,8 +420,10 @@
   --sb-thumb: #79797966;
   --sb-thumb-hover: #79797999;
   --sb-thumb-active: #797979b3;
-  --find-match: #ea5c0033;
-  --find-match-active: #ea5c0055;
+  --find-match: #515c6a; /* registry 默认的 findMatchBackground */
+  --find-match-other: #ea5c0055;
+  --find-match-border: transparent;
+  --find-match-other-border: transparent;
   --find-field-bg: #3c3c3c;
   --find-opt-active: #2489db82;
   --find-opt-active-border: #2488db;
@@ -388,10 +433,12 @@
   --link-fg: #3794ff;
 }
 
-/* Dark (Visual Studio) 与 Dark+ 的差异：dark_vs.json 显式给了更亮的条带与
-   非活动标签色（#303031 / #A6A6A6），而 Dark+ 走 registry 默认的 #252526 / 白 50%。 */
+/* Dark (Visual Studio) 与 Dark+ 的差异：dark_vs.json 显式给了更亮的**下沿描边**与
+   非活动标签色（tabsBorder #303031 / #A6A6A6），条带底色本身仍是 registry 默认
+   #252526 —— B380 把条带与描边拆成两颗，别再把 #303031 当条带底色。 */
 :root[data-theme="dark"][data-theme-family="classic"] {
-  --tab-strip-bg: #303031;
+  --tab-strip-bg: #252526;
+  --tabstrip-border: #303031;
   --tab-fg-inactive: #a6a6a6;
   --border: #303031;
 }
@@ -404,6 +451,8 @@
   --fg-muted: #ffffff;
   --editor-fg: #ffffff;
   --shell-bg: #000000;
+  --workspace-bg: #000000; /* = modernUI.shellBackground */
+  --titlebar-border: #6fc3df; /* titleBar.border = contrastBorder */
   --titlebar-fg: #ffffff;
   --titlebar-hover-bg: rgba(255, 255, 255, 0.1);
   --titlebar-close-hover: rgba(232, 17, 35, 0.9);
@@ -423,6 +472,7 @@
   --sidebar-bg: #000000;
   --sidebar-fg: #ffffff;
   --sidebar-section-fg: #ffffff;
+  --sidebar-section-border: #6fc3df; /* sideBarSectionHeader.border */
   --list-hover-bg: #ffffff1a;
   --list-hover-fg: #ffffff;
   --list-active-bg: transparent;
@@ -447,10 +497,19 @@
   --bg-hover: #ffffff1f;
   --border: #6fc3df;
   --editor-cursor: #ffffff;
-  --editor-selection: rgba(111, 195, 223, 0.45);
-  --editor-line-highlight-border: #6fc3df;
+  /* HC 的选中是**实底 + 强制前景**（hc_black 覆盖 selectionBackground #FFFFFF，
+     selectionForeground #000000）—— 前景由 theme.ts 的 cm-hc-selection 装饰层压上去。 */
+  --editor-selection: #ffffff;
+  --editor-selection-fg: #000000;
+  --editor-inactive-selection: #ffffffb3; /* transparent(selection, .7) */
+  --editor-selection-highlight: transparent; /* HC 档为 null */
+  --editor-selection-highlight-border: #f38518; /* activeContrastBorder = focusBorder */
+  --editor-line-highlight-bg: transparent;
+  --editor-line-highlight-border: #f38518; /* HC 的 lineHighlightBorder 是橙，不是 #6FC3DF */
+  --editor-bracket-match-bg: #0064001a;
+  --editor-bracket-match-border: #6fc3df;
   --editor-line-number: #ffffff;
-  --editor-line-number-active: #ffffff;
+  --editor-line-number-active: #f38518; /* 默认 activeForeground = activeContrastBorder */
   --tree-guide: #ffffff;
   --accent: #6fc3df;
   --accent-fg: #000000;
@@ -461,8 +520,11 @@
   --sb-thumb: #ffffff99;
   --sb-thumb-hover: #ffffffb3;
   --sb-thumb-active: #ffffffcc;
-  --find-match: #6fc3df33;
-  --find-match-active: #6fc3df66;
+  /* HC 的查找命中没有底色（registry hc = null），只靠一圈 activeContrastBorder 橙框。 */
+  --find-match: transparent;
+  --find-match-other: transparent;
+  --find-match-border: #f38518;
+  --find-match-other-border: #f38518;
   --find-field-bg: #000000;
   --find-btn-hover: #ffffff1f;
   --find-opt-hover: #ffffff33;
@@ -487,6 +549,8 @@
   --editor-fg: #202020; /* editor.foreground */
 
   --shell-bg: #fafafd; /* modernUI.shellBackground = titleBar.activeBackground */
+  --workspace-bg: #fafafd; /* = modernUI.shellBackground */
+  --titlebar-border: transparent;
   --titlebar-fg: #606060;
   --titlebar-hover-bg: rgba(0, 0, 0, 0.1);
   --titlebar-close-hover: rgba(232, 17, 35, 0.9);
@@ -520,7 +584,8 @@
   --editor-card-border: #e4e5e6; /* surface.border = editor.border */
   --editor-split-border: #e7e7e7; /* editorGroup.border 默认档 */
 
-  --tab-strip-bg: #eaeaea; /* editorGroupHeader.connectedTabsBackground */
+  /* B380：tabsBackground（#FAFAFD）= 标题栏 = 状态栏，三块连成一片。 */
+  --tab-strip-bg: #fafafd; /* editorGroupHeader.tabsBackground */
   --tabstrip-border: #f0f1f2;
   --tab-fg-inactive: #606060;
   --tab-fg-active: #202020;
@@ -541,7 +606,13 @@
   --border: #e5e5e5;
   --editor-cursor: #202020;
   --editor-selection: #0069cc40;
-  --editor-line-highlight-border: #eaeaea;
+  --editor-inactive-selection: #0069cc20;
+  --editor-selection-highlight: #0069cc15;
+  --editor-selection-highlight-border: transparent;
+  --editor-line-highlight-bg: #eaeaea40;
+  --editor-line-highlight-border: #eeeeee;
+  --editor-bracket-match-bg: #0064001a;
+  --editor-bracket-match-border: #b9b9b9;
   --editor-line-number: #606060;
   --editor-line-number-active: #202020;
   --tree-guide: #a9a9a9;
@@ -564,8 +635,10 @@
   --sb-thumb: #646464c0;
   --sb-thumb-hover: #646464d0;
   --sb-thumb-active: #646464e0;
-  --find-match: #0069cc1a;
-  --find-match-active: #0069cc40;
+  --find-match: #0069cc40;
+  --find-match-other: #0069cc1a;
+  --find-match-border: transparent;
+  --find-match-other-border: transparent;
   --shadow-lg: 0 0 12px rgba(0, 0, 0, 0.14);
   --find-field-bg: #ffffff;
   --find-btn-hover: #b8b8b850;
@@ -594,6 +667,8 @@
   --fg-muted: #3b3b3b;
   --editor-fg: #3b3b3b;
   --shell-bg: #f8f8f8;
+  --workspace-bg: #f8f8f8; /* = modernUI.shellBackground */
+  --titlebar-border: transparent;
   --titlebar-fg: #1e1e1e;
   --titlebar-hover-bg: rgba(0, 0, 0, 0.1);
   --titlebar-close-hover: rgba(232, 17, 35, 0.9);
@@ -622,7 +697,8 @@
   --list-selection-border: transparent;
   --editor-card-border: #e2e2e2;
   --editor-split-border: #e5e5e5;
-  --tab-strip-bg: #e5e5e5; /* editorGroupHeader.connectedTabsBackground */
+  /* B380：tabsBackground（#F8F8F8）= 标题栏 = 状态栏，三块连成一片。 */
+  --tab-strip-bg: #f8f8f8; /* editorGroupHeader.tabsBackground */
   --tabstrip-border: #e5e5e5;
   --tab-fg-inactive: #616161;
   --tab-fg-active: #3b3b3b;
@@ -639,7 +715,13 @@
   --border: #e5e5e5;
   --editor-cursor: #000000;
   --editor-selection: #add6ff;
+  --editor-inactive-selection: #e5ebf1;
+  --editor-selection-highlight: #add6ff80;
+  --editor-selection-highlight-border: transparent;
+  --editor-line-highlight-bg: transparent;
   --editor-line-highlight-border: #eeeeee;
+  --editor-bracket-match-bg: #0064001a;
+  --editor-bracket-match-border: #b9b9b9;
   --editor-line-number: #6e7681;
   --editor-line-number-active: #171184;
   --accent: #005fb8;
@@ -650,8 +732,10 @@
   --sb-thumb: rgba(0, 0, 0, 0.24);
   --sb-thumb-hover: rgba(0, 0, 0, 0.38);
   --sb-thumb-active: rgba(0, 0, 0, 0.5);
-  --find-match: rgba(255, 214, 0, 0.55);
-  --find-match-active: rgba(255, 150, 0, 0.7);
+  --find-match: #a8ac94; /* registry 默认的 findMatchBackground */
+  --find-match-other: #ea5c0055;
+  --find-match-border: transparent;
+  --find-match-other-border: transparent;
   /* 纯白输入框压在纯白浮层上会整块消失（无边框）⇒ 保留 B376 那档灰。 */
   --find-field-bg: #f6f7f8;
   --find-opt-active: color-mix(in srgb, var(--accent) 20%, transparent);
@@ -670,6 +754,8 @@
   --fg-muted: #717171;
   --editor-fg: #000000;
   --shell-bg: #dddddd;
+  --workspace-bg: #dddddd; /* = modernUI.shellBackground */
+  --titlebar-border: transparent;
   --titlebar-fg: #333333;
   --titlebar-hover-bg: rgba(0, 0, 0, 0.1);
   --titlebar-close-hover: rgba(232, 17, 35, 0.9);
@@ -716,7 +802,13 @@
   --border: #d8d8d8;
   --editor-cursor: #000000;
   --editor-selection: #add6ff;
+  --editor-inactive-selection: #e5ebf1;
+  --editor-selection-highlight: #add6ff80;
+  --editor-selection-highlight-border: transparent;
+  --editor-line-highlight-bg: transparent;
   --editor-line-highlight-border: #eeeeee;
+  --editor-bracket-match-bg: #0064001a;
+  --editor-bracket-match-border: #b9b9b9;
   --editor-line-number: #237893;
   --editor-line-number-active: #0b216f;
   --accent: #007acc;
@@ -727,8 +819,10 @@
   --sb-thumb: #64646466;
   --sb-thumb-hover: #64646499;
   --sb-thumb-active: #646464b3;
-  --find-match: #ea5c0033;
-  --find-match-active: #ea5c0055;
+  --find-match: #a8ac94; /* registry 默认的 findMatchBackground */
+  --find-match-other: #ea5c0055;
+  --find-match-border: transparent;
+  --find-match-other-border: transparent;
   /* 同 Modern 浅色档：输入框与浮层都是纯白，留一档灰撑出边界。 */
   --find-field-bg: #f3f3f3;
   --find-opt-active: #bed6ed;
@@ -739,10 +833,11 @@
   --link-fg: #006ab1;
 }
 
-/* Light (Visual Studio) 的差异：light_vs.json 显式给了 #E8E8E8 条带与 #616161
-   非活动标签；Light+ 走 registry 默认 #F3F3F3 / #333 70%。 */
+/* Light (Visual Studio) 的差异：light_vs.json 显式给了 #D8D8D8 的**下沿描边**与
+   #616161 非活动标签；条带底色仍是 registry 默认 #F3F3F3（B380 把两颗拆开）。 */
 :root[data-theme="light"][data-theme-family="classic"] {
-  --tab-strip-bg: #e8e8e8;
+  --tab-strip-bg: #f3f3f3;
+  --tabstrip-border: #d8d8d8;
   --tab-fg-inactive: #616161;
   --border: #d8d8d8;
 }
@@ -758,6 +853,8 @@
   --fg-muted: #292929;
   --editor-fg: #292929;
   --shell-bg: #ffffff;
+  --workspace-bg: #ffffff; /* = modernUI.shellBackground */
+  --titlebar-border: #0f4a85; /* titleBar.border = contrastBorder */
   --titlebar-fg: #292929;
   --titlebar-hover-bg: #0f4a851a;
   --titlebar-close-hover: #e81123;
@@ -777,6 +874,7 @@
   --sidebar-bg: #ffffff;
   --sidebar-fg: #292929;
   --sidebar-section-fg: #292929;
+  --sidebar-section-border: #0f4a85; /* sideBarSectionHeader.border */
   --list-hover-bg: #0f4a851a;
   --list-hover-fg: #292929;
   --list-active-bg: #0f4a851a;
@@ -797,11 +895,18 @@
   --statusbar-border: #0f4a85;
   --statusbar-item-hover-bg: #ffffff;
   --statusbar-item-active-bg: #0000002e;
-  --editor-cursor: #292929;
-  --editor-selection: rgba(15, 74, 133, 0.35);
+  --editor-cursor: #0f4a85;
+  --editor-selection: #0f4a85;
+  --editor-selection-fg: #ffffff;
+  --editor-inactive-selection: #0f4a8580; /* transparent(selection, .5) */
+  --editor-selection-highlight: transparent;
+  --editor-selection-highlight-border: #006bbd; /* activeContrastBorder = focusBorder */
+  --editor-line-highlight-bg: transparent;
   --editor-line-highlight-border: #0f4a85;
+  --editor-bracket-match-bg: #00000000;
+  --editor-bracket-match-border: #0f4a85;
   --editor-line-number: #292929;
-  --editor-line-number-active: #292929;
+  --editor-line-number-active: #006bbd; /* 默认 activeForeground = activeContrastBorder */
   --tree-guide: #0f4a85;
   --accent: #0f4a85;
   --accent-fg: #ffffff;
@@ -812,8 +917,10 @@
   --sb-thumb: #0f4a8566;
   --sb-thumb-hover: #0f4a8599;
   --sb-thumb-active: #0f4a85b3;
-  --find-match: #0f4a8533;
-  --find-match-active: #0f4a8566;
+  --find-match: transparent;
+  --find-match-other: transparent;
+  --find-match-border: #006bbd;
+  --find-match-other-border: #006bbd;
   --find-field-bg: #f2f2f2;
   --find-btn-hover: #0f4a851a;
   --find-opt-hover: #0f4a8533;
@@ -936,8 +1043,11 @@ body {
      改了一边就是「左疏右密」。右端不留：关闭键要贴到窗口边缘。 */
   padding-left: var(--title-mark-pad);
   background: var(--shell-bg);
-  /* B123-7：去掉下沿边框线 —— 编辑区大卡片（.layout-area）自带外框，
-     标题栏再画一条会形成双线，视觉上显得框上加框。 */
+  /* B123-7：非 HC 档去掉下沿边框线 —— 编辑区大卡片自带外框，再画一条会双线。
+     B380：HC 档例外（`titleBar.border` = contrastBorder）—— VS Code 高对比主题
+     的标题栏下沿本来就有一根实线，缺了它「三个区域」的分界就只剩颜色、没有结构。
+     用 inset 阴影画：非 HC 是 transparent（看不见），也不占 34px 的高度。 */
+  box-shadow: inset 0 -1px 0 var(--titlebar-border);
   user-select: none;
 }
 
@@ -2355,14 +2465,18 @@ button:focus-visible {
   display: none;
 }
 
-/* 编辑器内的查找命中高亮（由悬浮查找栏驱动） */
+/* 编辑器内的查找命中高亮（由悬浮查找栏驱动）。
+   B380：其余命中 = findMatchHighlightBackground（--find-match-other），当前项 =
+   findMatchBackground（--find-match）；边框只有 HC 档给色（activeContrastBorder），
+   非 HC 是 transparent ⇒ 看起来就是 VS Code 的方块命中，没有额外描边与圆角。 */
 .cm-find-match {
-  background: var(--find-match);
-  border-radius: 2px;
+  background: var(--find-match-other);
+  outline: 1px solid var(--find-match-other-border);
+  outline-offset: -1px;
 }
 .cm-find-match-active {
-  background: var(--find-match-active);
-  outline: 1px solid var(--accent);
+  background: var(--find-match);
+  outline-color: var(--find-match-border);
 }
 
 /* ---------- 设置对话框 ---------- */
@@ -3351,6 +3465,10 @@ button:focus-visible {
      ⚠️ 留白放在 #main-row 上而不是各卡片自己的 margin：两张卡片同处一行，
         各写 margin 迟早有一张漏写，间距就会在收起左栏时跳变；这里只有一处源头。 */
   padding: 0 var(--card-edge) var(--card-edge);
+  /* B380：中间区域的底色**显式**画在这里（不再只靠 body 兜底）。
+     VS Code 的标题栏 / 状态栏 / 工作区外壳是同一个 `modernUI.shellBackground`；
+     2026 与 Modern 档三块因此连成一片，Plus/经典/HC 档各按自己的表取值。 */
+  background: var(--workspace-bg);
 }
 
 #side-drawer {
@@ -4054,7 +4172,46 @@ button:focus-visible {
 }
 
 .panel-host .cm-editor .cm-activeLine {
+  /* B380：2026 档的当前行是「淡底 + 1px 描边」两颗（lineHighlightBackground /
+     lineHighlightBorder），其余档只有描边 —— token 已按族取好，这里不再分档。 */
+  background: var(--editor-line-highlight-bg);
   box-shadow: inset 0 0 0 1px var(--editor-line-highlight-border);
+}
+
+/* B380：失焦时的选区取 editor.inactiveSelectionBackground（比聚焦时淡一档）。
+   drawSelection 画的层在 `.cm-selectionLayer` 里，聚焦与否看根节点的 `.cm-focused`。 */
+.panel-host .cm-editor:not(.cm-focused) .cm-selectionBackground {
+  background: var(--editor-inactive-selection);
+}
+
+/* B380：与选中词相同的其它出现 = editor.selectionHighlightBackground；
+   HC 档底色为 null，只留一圈 activeContrastBorder。CM6 的类名是 .cm-selectionMatch。 */
+.panel-host .cm-editor .cm-selectionMatch {
+  background: var(--editor-selection-highlight);
+  outline: 1px solid var(--editor-selection-highlight-border);
+  outline-offset: -1px;
+}
+
+/* B380：括号配对 = editorBracketMatch.background / border（VS Code 的默认值
+   本来就是「淡绿底 + 灰框」，CM6 自带的绿色/红色与它不同色，这里统一接管；
+   配不上的括号在 VS Code 里没有专门底色，CM6 默认的红底一并撤掉）。 */
+.panel-host .cm-editor .cm-matchingBracket {
+  background: var(--editor-bracket-match-bg);
+  outline: 1px solid var(--editor-bracket-match-border);
+  outline-offset: -1px;
+  color: inherit;
+}
+
+.panel-host .cm-editor .cm-nonmatchingBracket {
+  background: transparent;
+  outline: none;
+}
+
+/* B380：HC 的 selectionForeground —— 白底/深蓝底上的字必须整段换色（含语法色），
+   否则选中后就看不见了。装饰层由 theme.ts 的 HC 选区插件挂上。 */
+.panel-host .cm-editor .cm-hc-selection,
+.panel-host .cm-editor .cm-hc-selection * {
+  color: var(--editor-selection-fg);
 }
 
 /* 折叠图标（.cm-fold-marker 由 editor.ts 的 markerDOM 生成）：
