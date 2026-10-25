@@ -3765,20 +3765,24 @@ button:focus-visible {
   cursor: n-resize;
 }
 
+/* B384：静息线必须落在**设备像素**上。以前是 `width:1px; transform:translateX(-50%)`
+   骑在边界正中 —— 变换过的盒子不做设备像素对齐，比例带小数（居中 50% 是重灾区，
+   B346 的 2/3 档一样）时 1px 线会摊成 2–3 根半透明设备列，看着比 VS Code 粗。
+   改成由 splitview.ts 的吸附逻辑写两颗变量：dw = 1/devicePixelRatio（严格 1 个设备
+   像素宽）、dx 把线挪到最近的设备列 —— 真机四比例实测恒为 1 根实色列。
+   JS 未跑时的回落档（0px/1px，即贴边 1px）只是偶尔宽一档，不会骑线发糊。 */
 .layout-sep-h::after {
   top: 0;
   bottom: 0;
-  left: 0;
-  width: 1px;
-  transform: translateX(-50%);
+  left: var(--sep-dx, 0px);
+  width: var(--sep-dw, 1px);
 }
 
 .layout-sep-v::after {
   left: 0;
   right: 0;
-  top: 0;
-  height: 1px;
-  transform: translateY(-50%);
+  top: var(--sep-dx, 0px);
+  height: var(--sep-dw, 1px);
 }
 
 /* B59 S1：悬停与**拖拽中**同色。只写 :hover 时，鼠标一旦滑出命中区高亮就消失，
@@ -3791,14 +3795,18 @@ button:focus-visible {
 .layout-sep.linked::after {
   background: var(--accent);
 }
+/* 激活 4px 以边界为中心（对标 VS Code sash 本体就跨在边界上），不用吸附变量 ——
+   瞬态高亮，宽度随相位差一列与 VS Code 同款，无碍。 */
 .layout-sep-h:hover::after,
 .layout-sep-h.resizing::after,
 .layout-sep-h.linked::after {
+  left: -2px;
   width: 4px;
 }
 .layout-sep-v:hover::after,
 .layout-sep-v.resizing::after,
 .layout-sep-v.linked::after {
+  top: -2px;
   height: 4px;
 }
 

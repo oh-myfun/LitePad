@@ -19,6 +19,7 @@ import {
   commitTabDrop,
   refreshPanelOps,
   renderSplitview,
+  sepSnap,
   type PanelRenderData,
   type SplitviewCallbacks,
 } from "../src/shell/splitview";
@@ -986,14 +987,25 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
     expect(previewCss, "seam 平时不常驻（B201：对齐 VS Code sash 默认态）").toMatch(
       /\.side-resizer::before\s*\{[^}]*background:\s*transparent/,
     );
-    // 视觉线：静息 1px（VS Code editorGroup.border），激活 4px（--vscode-sash-size）
-    expect(css, "静息线 1px").toMatch(/\.layout-sep-h::after\s*\{[^}]*width:\s*1px/);
-    expect(css, "静息线 1px（横线）").toMatch(/\.layout-sep-v::after\s*\{[^}]*height:\s*1px/);
+    // 视觉线：静息 = 1 设备像素（--sep-dw，B384 吸附），激活 4px（--vscode-sash-size）
+    expect(css, "静息线宽走 --sep-dw（B384 吸附设备像素）").toMatch(
+      /\.layout-sep-h::after\s*\{[^}]*width:\s*var\(--sep-dw/,
+    );
+    expect(css, "静息线宽走 --sep-dw（横线）").toMatch(
+      /\.layout-sep-v::after\s*\{[^}]*height:\s*var\(--sep-dw/,
+    );
+    // B384：不得再用 transform 骑边界 —— 变换盒不做设备像素对齐，小数比例下发糊
+    expect(css, "静息线不骑边界（无 transform）").not.toMatch(
+      /\.layout-sep-h::after\s*\{[^}]*transform/,
+    );
+    expect(css, "静息线落点走 --sep-dx").toMatch(
+      /\.layout-sep-h::after\s*\{[^}]*left:\s*var\(--sep-dx/,
+    );
     expect(css, "激活涨到 4px").toMatch(
-      /\.layout-sep-h:hover::after,[\s\S]{0,160}?\{\s*width:\s*4px/,
+      /\.layout-sep-h:hover::after,[\s\S]{0,160}?\{[^}]*width:\s*4px/,
     );
     expect(css, "激活涨到 4px（横线）").toMatch(
-      /\.layout-sep-v:hover::after,[\s\S]{0,160}?\{\s*height:\s*4px/,
+      /\.layout-sep-v:hover::after,[\s\S]{0,160}?\{[^}]*height:\s*4px/,
     );
     // B195：侧栏那一档不涨线，改「三点把手让位」（悬停 / 拖拽中同一口径 ——
     // B203 从 VS Code sashHandles.css 对到号的：hover / active 时 grip 淡出，
@@ -1238,6 +1250,41 @@ describe("分屏：面板操作栏与分隔条（B54）", () => {
     expect(Number(m![1]), "命中区至少 7px（原先是 5px 兼当视觉条）").toBeGreaterThanOrEqual(7);
     expect(css, "悬停高亮落在伪元素上").toMatch(/\.layout-sep:hover::after/);
     expect(css, "细线由伪元素画").toMatch(/\.layout-sep-h::after\s*\{/);
+  });
+  it("B384 吸附：边界落在任何小数位置，静息线都收成 1 个设备像素", () => {
+    // 真机四比例实测（.tmp/b384c-check.py）：骑边界时 2–3 根半透明列，吸附后恒 1 根。
+    // dx 把线挪到最近的设备列边界、w = 1/dpr —— 两者合起来线的两端恰好压在设备格点上。
+    for (const dpr of [1, 1.25, 1.5, 2]) {
+      for (const at of [0, 235.17, 318.15, 465.66668701171875, 619.64, 937.5]) {
+        const { dx, w } = sepSnap(at, dpr);
+        const left = at + dx; // 吸附后的线左缘（CSS px）
+        expect(left * dpr, `dpr=${dpr} at=${at} 左缘必须落在设备格点`).toBeCloseTo(
+          Math.round(left * dpr),
+          6,
+        );
+        expect(w * dpr, `dpr=${dpr} 线宽必须是 1 个设备像素`).toBeCloseTo(1, 6);
+        expect(Math.abs(dx), `dpr=${dpr} at=${at} 偏移不得超过半个设备像素`).toBeLessThanOrEqual(
+          0.5 / dpr + 1e-9,
+        );
+      }
+    }
+    // 真机档位抽查：465.667px @1.5 → 吸附到第 699 根设备列
+    expect(sepSnap(465.66668701171875, 1.5)).toEqual({
+      dx: 699 / 1.5 - 465.66668701171875,
+      w: 1 / 1.5,
+    });
+  });
+  it("B384 接线：比例一动就重吸附（applyTarget 内调 snapSepLine），渲染后整体吸附", () => {
+    const src = readFileSync("src/shell/splitview.ts", "utf-8");
+    expect(src, "applyTarget 必须跟手重吸附").toMatch(
+      /function applyTarget\([\s\S]{0,400}?snapSepLine\(/,
+    );
+    expect(src, "renderSplitview 渲染后要整体吸附一轮").toMatch(
+      /root\.appendChild\([\s\S]{0,200}?snapAllSeps\(root\)/,
+    );
+    expect(src, "窗口缩放走 ResizeObserver 兜住重吸附").toMatch(
+      /ResizeObserver[\s\S]{0,120}?snapAllSeps/,
+    );
   });
 });
 

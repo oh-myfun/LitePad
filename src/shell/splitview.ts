@@ -134,7 +134,23 @@ export function renderSplitview(
   // 让同一棵树的链号恒定（渲染结果可复现，断言与调试都不依赖绘制次数）。
   chainSeq = 0;
   root.appendChild(build(tree, [], cb, panelData).el);
+  // B384：静息线设备像素吸附（见 sepSnap）。追加后立即算一发，再 rAF 复核 ——
+  // flex 分布在追加后仍可能被样式/字体加载微调。
+  snapAllSeps(root);
+  requestAnimationFrame(() => snapAllSeps(root));
+  // 窗口缩放 / 跨屏拖动会挪动边界但不重建 DOM —— 用 RO 兜住重吸附。
+  // jsdom 没有 ResizeObserver，静默跳过（契约测试只判源码形状）。
+  if (typeof ResizeObserver === "function") {
+    sepRO ??= new ResizeObserver(() => {
+      if (svRoot) snapAllSeps(svRoot);
+    });
+    sepRO.disconnect();
+    sepRO.observe(root);
+  }
 }
+
+/** 布局区根的吸附观察器（renderSplitview 反复观察同一根元素，跨渲染复用）。 */
+let sepRO: ResizeObserver | null = null;
 
 /** 当前布局回调（单一布局区；指针拖拽的落点提交需要访问 onDropTabToPanel）。 */
 let svCallbacks: SplitviewCallbacks | null = null;
@@ -791,6 +807,8 @@ function pctFor(t: ResizeTarget, x: number, y: number): number {
 function applyTarget(t: ResizeTarget, pct: number): void {
   t.aEl.style.flexBasis = `${pct}%`;
   t.bEl.style.flexBasis = `${100 - pct}%`;
+  // B384：比例一动边界就挪，吸附跟手重算（角手柄的双目标也各走一遍 applyTarget）
+  snapSepLine(targetElOf(t));
 }
 
 /** 拖拽模式：h/v 决定 `body.layout-dragging` 叠加的光标修饰类；corner = 斜向。 */
@@ -910,4 +928,31 @@ function attachResize(handle: HTMLElement, targets: ResizeTarget[], mode: Resize
 /** 分隔条元素（`.at-min`/`.at-max` 只能落在分隔条本体上，角手柄上没有样式）。 */
 function targetElOf(t: ResizeTarget): HTMLElement {
   return sashOfTarget(t)?.handle ?? (t.aEl.parentElement as HTMLElement);
+}
+
+// ---------------------------------------------------------------- 静息线设备像素吸附（B384）
+// `.layout-sep::after` 那条细线以前是 1px + transform 骑在边界正中；变换盒不做设备
+// 像素对齐，比例带小数时（用户实测：居中）线会摊成 2–3 根半透明设备列，看着变粗。
+// 这里改成 JS 吸附：线宽定成 1 个**设备**像素（1/dpr CSS px），落点挪到最近的设备列
+// 边界 —— 真机四比例实测（.tmp/b384c-check.py）：现状 2–3 列糊线，吸附后恒 1 根实色列。
+
+/** 纯几何（jsdom 可测）：边界位置 at（CSS px）→ 相对偏移 dx 与线宽 w（CSS px）。 */
+export function sepSnap(at: number, dpr: number): { dx: number; w: number } {
+  const k = Math.round(at * dpr);
+  return { dx: k / dpr - at, w: 1 / dpr };
+}
+
+function snapSepLine(sep: HTMLElement): void {
+  const h = sep.classList.contains("layout-sep-h");
+  const r = sep.getBoundingClientRect();
+  // 交叉轴为 0 = 浏览器还没摆盘（未挂载/隐藏），此时坐标无意义，别写坏变量
+  const cross = h ? r.height : r.width;
+  if (!(cross > 0)) return;
+  const { dx, w } = sepSnap(h ? r.left : r.top, window.devicePixelRatio || 1);
+  sep.style.setProperty("--sep-dx", `${dx}px`);
+  sep.style.setProperty("--sep-dw", `${w}px`);
+}
+
+function snapAllSeps(root: HTMLElement): void {
+  root.querySelectorAll<HTMLElement>(".layout-sep").forEach(snapSepLine);
 }
