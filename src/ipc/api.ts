@@ -578,10 +578,14 @@ export interface TabSession {
    */
   docId?: number | null;
   /**
-   * B169：同步滚动开关（按文档记，B152）。落盘后重新打开时写回前端 `docSyncModes`，
-   * 让同步键点亮态与退出前一致。`undefined` = 旧会话没有这个字段 → 当作没开过。
+   * B169：同步滚动开关（按文档记，B152）。恢复时经唯一写点 `setDocSyncMode` 写回
+   * `docSyncModes` —— 它管的不只是标题栏那颗键的点亮态，协调器每一发广播先问它。
+   *
+   * ⚠️ 三态缺一不可：`false` = 用户明确关掉过（B297：两头都要写），`null` / `undefined`
+   * = 这份文档**从没记过** ⇒ 按开着缺省（`docSyncOn`）。Rust 侧收成 `bool` 时缺键会变成
+   * `false`（B392），旧版会话升上来就把同步静默关了。
    */
-  syncMode?: boolean;
+  syncMode?: boolean | null;
   /**
    * B302：这一格**上次被看到时**的共享坐标 `v`（源码行号 + 小数）。
    *
