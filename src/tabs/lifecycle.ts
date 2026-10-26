@@ -60,6 +60,7 @@ import type { ChangeSet } from "@codemirror/state";
 // B391 spike：装饰预览面（`Settings.deco_preview` 开着才用得上；调用点全在
 // `isDecoPreviewEnabled` 分支里，静态守卫由 tests/spike-deco-wiring.test.ts ① 钉住）。
 import { createDecoMirror, mirrorChanges, reseedDecoMirror } from "../spike/deco/mirror";
+import { EditorScrollAnchor } from "../sync-scroll/anchor";
 import { renderPanelTabs, renderPanelOps, panelDataOf } from "./render";
 import {
   exitMaximize,
@@ -137,6 +138,14 @@ export function rebuildLayout(): void {
       p.view.view.destroy();
       p.view = null;
       p.viewTabId = null;
+    }
+    // 装饰面与编辑器视图同寿（评审 I1）：CM6 在 `document` 上挂 `selectionchange`、
+    // 还开 MutationObserver / 两个 ResizeObserver，只有 `destroy()` 会摘。
+    // 这里不拆的话，每次重建（分屏 / 拖出 / 关面板 / 会话恢复）都漏一颗**活着**的视图，
+    // 而且新的那颗紧接着被 `mountView` 建出来 —— 光标每动一下都要跑一遍旧视图的处理器。
+    if (p.decoMirror) {
+      p.decoMirror.dispose();
+      p.decoMirror = null;
     }
   }
 
@@ -266,7 +275,7 @@ export function rebuildLayout(): void {
         const decoHost = document.createElement("div");
         decoHost.className = "md-preview md-deco-host";
         hostEl.appendChild(decoHost);
-        p.decoMirror = createDecoMirror(decoHost, decoTextOf(p));
+        p.decoMirror = createDecoMirror(decoHost, decoTextOf(p), decoDocIdOf(p));
       } else {
         const preview = new PreviewPane();
         p.preview = preview;
@@ -751,6 +760,12 @@ function decoTextOf(panel: Panel): string {
   return t?.state.doc.toString() ?? "";
 }
 
+/** 这一格此刻该显示的那份文档编号（装饰面的归属戳记源）。 */
+function decoDocIdOf(panel: Panel): number {
+  const t = tabs.get(panel.viewTabId ?? panel.activeTabId);
+  return t?.docId ?? 0;
+}
+
 /**
  * 把这一格的装饰面重新播种到它**现在该显示**的那份文档 —— 换标签 / 关掉相邻标签接班
  * 那一形。同文档的增量编辑不走这里，走 `syncDecoMirrors` 的 ChangeSet 桥
@@ -758,7 +773,7 @@ function decoTextOf(panel: Panel): string {
  */
 export function refreshDecoMirror(panel: Panel): void {
   if (!panel.decoMirror) return;
-  reseedDecoMirror(panel.decoMirror, decoTextOf(panel));
+  reseedDecoMirror(panel.decoMirror, decoTextOf(panel), decoDocIdOf(panel));
 }
 
 /**
@@ -766,14 +781,24 @@ export function refreshDecoMirror(panel: Panel): void {
  *
  * 与 `syncDocInstances` 同口径：内容靠 ChangeSet 对齐，不共享 state。回声与幽灵写回
  * 都归 `mirrorChanges` 判，这里只管寻址。
+ *
+ * 两道自己的闸（评审 I5）：
+ *   · **归属闸**：`panel.decoMirror.docId` 是镜像**实际装着**的那篇文档。换显示而没
+ *     重新播种（`tabs/split.ts` / `io/files.ts` 两处还没接线）留下的就是「面板说 doc1、
+ *     镜像躺着另一篇」，而 `ChangeSet` 只比长度 ⇒ 等长时会被套上别人的变更。
+ *   · **认领**：写完整态面要在同一同步栈里按「落在哪就是哪」登记进账本，否则那一面
+ *     自己的裁剪无人认领 ⇒ 被判成用户滚动广播回源码（Review Focus 第 2 条那个抖动）。
  */
 export function syncDecoMirrors(srcTab: Tab, changes: ChangeSet): void {
   if (changes.empty) return;
   for (const p of panels.values()) {
-    if (!p.decoMirror) continue;
+    const mirror = p.decoMirror;
+    if (!mirror || mirror.docId !== srcTab.docId) continue;
     const shown = tabs.get(p.viewTabId ?? p.activeTabId);
     if (!shown || shown.docId !== srcTab.docId) continue;
-    mirrorChanges(p.decoMirror.view, changes);
+    if (mirrorChanges(mirror.view, changes) !== "applied") continue;
+    const here = new EditorScrollAnchor(mirror.view).getV();
+    syncCoordinator.expectSurfaceV(mirror.view.scrollDOM, here, here);
   }
 }
 

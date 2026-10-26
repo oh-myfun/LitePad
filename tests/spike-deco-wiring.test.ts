@@ -280,4 +280,92 @@ describe("B391-5 装饰预览接进面板模型", () => {
     await wait(1800);
     expect(saved.length, "真实编辑应且只应触发一次自动保存").toBe(1);
   });
+
+  /**
+   * ④⑤⑥ 是最终评审抓出来的三条（评审 Important #1 与 #5）。三条都按**行为**判，
+   * 不按源码文本判 —— 写它们的时候生产代码还没改，所以每条都先红过一次：
+   * ④ 旧镜像没被 destroy（重建一次漏一颗活视图，CM6 的 `selectionchange` 是挂在
+   *    `document` 上的，只有 `destroy()` 会摘）；⑤ 桥只看长度，等长的另一篇文档
+   *    会被套上别人的变更；⑥ 桥写完整态面却没在账本里认领，那一面自己的裁剪会被
+   *    判成「用户滚动」广播回源码（Review Focus 第 2 条那个「位置抖动」）。
+   */
+  it("④ rebuildLayout 之前必须拆掉旧的装饰实例", async () => {
+    await import("../src/main");
+    const { panels } = await import("../src/core/app-state");
+    const { rebuildLayout } = await import("../src/tabs");
+    const p = [...panels.values()][0];
+    const first = p.decoMirror;
+    expect(first, "开关开着时这一格应有装饰实例").toBeTruthy();
+
+    // `EditorView.destroyed` 是私有字段（tsc 拦），所以按「`destroy()` 有没有被调到」判：
+    // 包住原型方法、记下 every receiver —— 旧的那颗必须出现在里面。
+    // 判别力先证过一次：加这行守卫之前，第一版按 `view.destroyed` 读到的就是 `false`。
+    const destroyed: unknown[] = [];
+    const orig = EditorView.prototype.destroy;
+    const spy = vi.spyOn(EditorView.prototype, "destroy").mockImplementation(function (
+      this: EditorView,
+    ) {
+      destroyed.push(this);
+      return orig.call(this);
+    });
+
+    rebuildLayout();
+    spy.mockRestore();
+
+    expect(
+      destroyed,
+      "旧装饰视图必须 destroy（CM6 的 selectionchange 挂在 document 上，只有 destroy() 会摘）",
+    ).toContain(first!.view);
+    expect(p.decoMirror, "重建后这一格应有新的装饰实例").toBeTruthy();
+    expect(p.decoMirror).not.toBe(first);
+  });
+
+  it("⑤ 镜像躺着别的文档时桥必须拒收（等长也不会被写出花）", async () => {
+    await import("../src/main");
+    const { panels, tabs } = await import("../src/core/app-state");
+    const { syncDecoMirrors } = await import("../src/tabs");
+    const { reseedDecoMirror } = await import("../src/spike/deco/mirror");
+    const p = [...panels.values()].find((x) => x.decoMirror)!;
+    const mirror = p.decoMirror!;
+    const shown = tabs.get(p.viewTabId ?? p.activeTabId)!;
+    const srcView = EditorView.findFromDOM(
+      document.querySelector(".panel-editor .cm-editor") as HTMLElement,
+    )!;
+    const other = "x".repeat(srcView.state.doc.length);
+    // 换显示但没重新播种那一形（`tabs/split.ts` / `io/files.ts` 两处还没接线）留下的状态：
+    // 面板说的是 doc1，镜像里躺着的是**另一篇等长**文档。
+    reseedDecoMirror(mirror, other, 999);
+    const tr = srcView.state.update({ changes: { from: 0, insert: "Y" } });
+
+    syncDecoMirrors(shown, tr.changes);
+
+    expect(mirror.view.state.doc.toString(), "桥不得把别人的文档的变更套进这颗镜像").toBe(other);
+  });
+
+  it("⑥ 桥写进镜像之后必须在账本里认领那一发", async () => {
+    await import("../src/main");
+    const { panels, tabs } = await import("../src/core/app-state");
+    const { syncDecoMirrors } = await import("../src/tabs");
+    const { syncCoordinator } = await import("../src/sync-scroll/wire");
+    const { reseedDecoMirror } = await import("../src/spike/deco/mirror");
+    const p = [...panels.values()].find((x) => x.decoMirror)!;
+    const mirror = p.decoMirror!;
+    const shown = tabs.get(p.viewTabId ?? p.activeTabId)!;
+    const srcView = EditorView.findFromDOM(
+      document.querySelector(".panel-editor .cm-editor") as HTMLElement,
+    )!;
+    reseedDecoMirror(mirror, srcView.state.doc.toString(), shown.docId); // 回到同文档同文
+    const before = mirror.view.state.doc.toString();
+    const spy = vi.spyOn(syncCoordinator, "expectSurfaceV");
+    const tr = srcView.state.update({ changes: { from: 0, insert: "Z" } });
+
+    syncDecoMirrors(shown, tr.changes);
+    const claimed = spy.mock.calls.some(([el]) => el === mirror.view.scrollDOM);
+    spy.mockRestore();
+
+    expect(mirror.view.state.doc.toString(), "前置：这一发应真的写进了镜像").not.toBe(before);
+    expect(claimed, "写完整态面要按「落在哪就是哪」认领，否则它的裁剪被当作用户滚动广播回去").toBe(
+      true,
+    );
+  });
 });

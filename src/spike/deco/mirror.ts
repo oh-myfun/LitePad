@@ -12,6 +12,15 @@ import { livePreview } from "./livePreview";
 
 export interface DecoMirror {
   view: EditorView;
+  /**
+   * 这颗镜像**实际躺着**哪份文档。
+   *
+   * ⚠️ 不能拿「面板此刻显示的文档」当它：换显示而没重新播种那一形（`tabs/split.ts`
+   * 分屏接班、`io/files.ts` 重开同一文件）留下的就是这个状态 —— 面板说 doc1、镜像里
+   * 躺着另一篇。而 `ChangeSet.length` 只比长度，两篇等长时长道闸放行、`changes.apply`
+   * 按位置把别人的文档套进来（评审 I5；`tests/spike-deco-wiring.test.ts` ⑤ 钉住）。
+   */
+  docId: number;
   dispose(): void;
 }
 
@@ -75,11 +84,12 @@ function mirrorState(doc: string): EditorState {
   });
 }
 
-/** 在 `parent` 里建一个只读装饰面实例（Task 5 由面板模型持有它）。 */
-export function createDecoMirror(parent: HTMLElement, doc: string): DecoMirror {
+/** 在 `parent` 里建一个只读装饰面实例（Task 5 由面板模型持有它）。`docId` 是它装着的那篇文档。 */
+export function createDecoMirror(parent: HTMLElement, doc: string, docId: number): DecoMirror {
   const view = new EditorView({ state: mirrorState(doc), parent });
   return {
     view,
+    docId,
     dispose: () => view.destroy(),
   };
 }
@@ -91,7 +101,12 @@ export function createDecoMirror(parent: HTMLElement, doc: string): DecoMirror {
  * 文本一致时直接返回：`view.setState` 会把 `scrollDOM.scrollTop` 归零（与本仓库
  * 记过的那条「结构性滚动来源」同源），白白多发一次跳。
  */
-export function reseedDecoMirror(mirror: DecoMirror, text: string): void {
-  if (mirror.view.state.doc.toString() === text) return;
+export function reseedDecoMirror(mirror: DecoMirror, text: string, docId: number): void {
+  // 戳记先跟着走：文本一致但归属变了（同一篇内容被注册成另一份文档）也要认出来。
+  const sameText = mirror.view.state.doc.toString() === text;
+  mirror.docId = docId;
+  // 文本一致时不 setState：`view.setState` 会把 `scrollDOM.scrollTop` 归零（与本仓库
+  // 记过的那条「结构性滚动来源」同源），白白多发一次跳。
+  if (sameText) return;
   mirror.view.setState(mirrorState(text));
 }
