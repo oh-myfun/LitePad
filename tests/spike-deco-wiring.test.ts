@@ -201,11 +201,17 @@ describe("B391-5 装饰预览接进面板模型", () => {
     // ⚠️ 条件用 lazy `.+?` 而不是 `[^)]*`：`isDecoPreviewEnabled(settings)` 自带一层括号，
     //    后者会在第一个 `)` 处截断、再要求紧跟 `{`，于是**永远匹配不上**（第一版就栽在这儿：
     //    守卫数到 0 个分支，测试红得像是「没接线」，其实是判据自己写错了）。
-    const guarded: Array<[number, number]> = [];
+    const guarded: Array<[number, number, string]> = [];
     const re = /if\s*\((.+?)\)\s*\{/g;
+    // 分支条件允许两种写法：① 直接问闸；② 问 `shouldMountDecoPreview`（B391F-3 起
+    // 挂载点还要问「是不是 Markdown」「档位让不让自动预览」两条，三条挤在一个条件里
+    // 就没法被谓词级判据量到）。**间接那一跳必须被证明是诚实的** —— 见下面两条断言：
+    // 谓词本体要正向问闸、开关关着就 return false，否则这一路就是绕过闸的口子。
+    const asksGate = (cond: string) =>
+      (cond.includes("isDecoPreviewEnabled") || cond.includes("shouldMountDecoPreview(")) &&
+      !/!\s*(isDecoPreviewEnabled|shouldMountDecoPreview)/.test(cond);
     for (let m = re.exec(src); m !== null; m = re.exec(src)) {
-      const cond = m[1];
-      if (!cond.includes("isDecoPreviewEnabled") || /!\s*isDecoPreviewEnabled/.test(cond)) continue;
+      if (!asksGate(m[1])) continue;
       const open = m.index + m[0].length - 1;
       let depth = 0;
       let end = src.length;
@@ -219,9 +225,19 @@ describe("B391-5 装饰预览接进面板模型", () => {
           }
         }
       }
-      guarded.push([open, end]);
+      guarded.push([open, end, m[1]]);
     }
     expect(guarded.length, "应存在 isDecoPreviewEnabled 为真的分支").toBeGreaterThan(0);
+
+    if (guarded.some(([, , cond]) => cond.includes("shouldMountDecoPreview("))) {
+      const at = src.indexOf("export function shouldMountDecoPreview");
+      expect(at, "挂载点走谓词，而谓词不在本文件里 ⇒ 闸链断了").toBeGreaterThan(-1);
+      const body = src.slice(at, src.indexOf("\n}", at));
+      expect(
+        body.includes("!isDecoPreviewEnabled(settings)") && body.includes("return false"),
+        "谓词本体必须「开关关着就 return false」，否则分支条件绕过了那道闸",
+      ).toBe(true);
+    }
 
     let idx = src.indexOf("createDecoMirror(");
     while (idx !== -1) {
@@ -367,5 +383,118 @@ describe("B391-5 装饰预览接进面板模型", () => {
     expect(claimed, "写完整态面要按「落在哪就是哪」认领，否则它的裁剪被当作用户滚动广播回去").toBe(
       true,
     );
+  });
+});
+
+/**
+ * B391F-1 · 装饰面必须吃编辑器的三条排版 token。
+ *
+ * 装饰面宿主 `.md-deco-host` 是 `.panel-host` 的直接子节点、**不在 `.panel-editor` 里**，
+ * 而这三条规则的选择器全都以 `.panel-host .panel-editor` 打头 ⇒ 字号 / 字体 / 行距一条没落到它身上。
+ * 真机量出来的后果：同一篇 5001 行、同一 `clientHeight` 667，源码格 `scrollHeight=90296`、
+ * 装饰面 `scrollHeight=69019` ⇒ 行距 18.05px vs 13.80px —— 同一份文档两套几何，
+ * 「relayout 后顶边差一行」（P2-4）就是这笔几何差的零头。所以这一条不是美观问题，是落位问题。
+ */
+describe("B391F-1 装饰面吃编辑器排版 token", () => {
+  /** 抹掉注释再按 `selector { body }` 拆块（注释里的散文会喂假判据）。 */
+  function cssBlocks(): { sel: string; body: string }[] {
+    const raw = readFileSync("src/styles/global.css", "utf-8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const out: { sel: string; body: string }[] = [];
+    for (const m of raw.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      out.push({ sel: m[1].trim(), body: m[2] });
+    }
+    return out;
+  }
+
+  const coversDeco = (decl: string) =>
+    cssBlocks().some(
+      (b) =>
+        b.body.includes(decl) &&
+        b.sel.split(",").some((s) => s.includes(".md-deco-host") && s.includes(".cm-")),
+    );
+
+  for (const [name, decl] of [
+    ["字号", "font-size: var(--font-size)"],
+    ["字体", "var(--font-code)"],
+    ["行距", "line-height: var(--editor-line-height"],
+  ] as const) {
+    it(`${name}：有一条把该声明给到 .md-deco-host 里 .cm-* 的规则`, () => {
+      expect(coversDeco(decl), `global.css 里没有覆盖装饰面宿主的「${decl}」规则`).toBe(true);
+    });
+  }
+});
+
+/**
+ * B391F-3 · 挂载装饰面的三道闸（spike 结果文档⑤切片 11 那一形）。
+ *
+ * 走谓词而不是整窗启动：jsdom 里造一篇 `.txt` 与一份 `huge` 文档的**真**面板成本，
+ * 全花在装配夹具上，判据本身一个字都不多。谓词在 `lifecycle.ts` 里，
+ * `mountView` 那条分支只调它 —— 闸少一处，判据才量得到全部。
+ */
+describe("B391F-3 装饰面挂载的三道闸", () => {
+  let docSeq = 9100;
+
+  async function tabOf(name: string, sizeClass: "normal" | "large" | "huge") {
+    const { docs } = await import("../src/core/app-state");
+    const { makeDoc, makeInstance, registerDoc } = await import("../src/doc-model");
+    const doc = makeDoc(
+      ++docSeq,
+      "# 标题\n\n正文",
+      name,
+      `E:\\tmp\\${name}`,
+      "UTF-8",
+      "LF",
+      false,
+      sizeClass,
+    );
+    registerDoc(doc);
+    return { tab: makeInstance(doc, 0, "# 标题\n\n正文"), docId: doc.tabId, docs };
+  }
+
+  async function setDeco(on: boolean): Promise<void> {
+    const { settings } = await import("../src/core/app-state");
+    settings!.deco_preview = on;
+  }
+
+  it("开关关着 ⇒ 一篇普通 .md 也不挂（`src/spike/**` 不进运行路径）", async () => {
+    const { tab } = await tabOf("a.md", "normal");
+    const { shouldMountDecoPreview } = await import("../src/tabs/lifecycle");
+    await setDeco(false);
+    expect(shouldMountDecoPreview(tab)).toBe(false);
+  });
+
+  it("开关开着 + Markdown + normal ⇒ 挂", async () => {
+    const { tab } = await tabOf("b.md", "normal");
+    const { shouldMountDecoPreview } = await import("../src/tabs/lifecycle");
+    await setDeco(true);
+    expect(shouldMountDecoPreview(tab), "这一形是装饰面的正题，判 false 就等于把功能关了").toBe(
+      true,
+    );
+  });
+
+  for (const cls of ["large", "huge"] as const) {
+    it(`开关开着 + Markdown + ${cls} 档 ⇒ 不挂（生产那一档是「停用自动预览 + 给提示」）`, async () => {
+      const { tab } = await tabOf(`c-${cls}.md`, cls);
+      const { shouldMountDecoPreview } = await import("../src/tabs/lifecycle");
+      await setDeco(true);
+      expect(shouldMountDecoPreview(tab)).toBe(false);
+    });
+  }
+
+  it("开关开着 + 非 Markdown（.txt）⇒ 不挂（装饰面吃 markdown 语法树）", async () => {
+    const { tab } = await tabOf("d.txt", "normal");
+    const { shouldMountDecoPreview } = await import("../src/tabs/lifecycle");
+    await setDeco(true);
+    expect(shouldMountDecoPreview(tab)).toBe(false);
+  });
+
+  it("孤儿实例（文档不在册）⇒ 不挂，且**不许抛**", async () => {
+    const { shouldMountDecoPreview } = await import("../src/tabs/lifecycle");
+    await setDeco(true);
+    const ghost = await tabOf("e.md", "normal");
+    ghost.docs.delete(ghost.docId); // 抽掉文档记录：`docOf` 这一形会抛
+    expect(() => shouldMountDecoPreview(ghost.tab)).not.toThrow();
+    expect(shouldMountDecoPreview(ghost.tab)).toBe(false);
+    expect(shouldMountDecoPreview(undefined), "空面板没有活动标签 ⇒ 同样不挂").toBe(false);
   });
 });

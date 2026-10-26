@@ -53,6 +53,7 @@ import { saveDocCore } from "../io/files";
 import { attachPasteHandler } from "../io/export";
 import { showSaveConfirmDialog } from "../shell/saveconfirm";
 import { createEditor } from "../editor/editor";
+import { normalizeSizeClass, perfProfileFor } from "../editor/perf";
 import { PreviewPane } from "../markdown/preview";
 import { logViewport } from "../core/viewport";
 import { closeTab as ipcCloseTab, newTab as ipcNewTab } from "../ipc/api";
@@ -96,6 +97,30 @@ export async function closeTabsSequentially(ids: number[]): Promise<void> {
 }
 
 // ---------------------------------------------------------------- 布局渲染
+
+/**
+ * B391F-3 · 这一格到底挂不挂 CM6 装饰面 —— 三条都得问，缺一条就能把应用拖死。
+ *
+ * 抽成函数（而不是把三个条件摊在 `mountView` 里）只为一件事：让「非 Markdown / 大文档
+ * 不许挂装饰面」这两条能被真判据钉住 —— 摊在挂载点里就得整窗启动才测得到，
+ * 而 jsdom 里造一份 `.txt` 标签 + 一份 `huge` 文档的成本远高于测这个谓词。
+ *
+ * 三条各挡什么：
+ *   · **开关**：`isDecoPreviewEnabled` 仍是全仓唯一读 `deco_preview` 的地方（闸只有一个，
+ *     判据 ① 才数得清调用点）；
+ *   · **是不是 Markdown**：装饰面吃的是 markdown 语法树，一篇 `.txt` 挂上去等于每颗键
+ *     全篇重 parse 却什么也不画；
+ *   · **档位让不让自动预览**：>2MB / >20MB 两档生产是「停用自动预览 + 给提示」
+ *     （`markdown.ts` 里 `renderMarkdownFor` 那一闸），装饰面照挂就是绕过降级。
+ *     落回派生 DOM 那条分支，提示与口径都跟主干一致。
+ */
+export function shouldMountDecoPreview(tab: Tab | undefined): boolean {
+  if (!tab || !isDecoPreviewEnabled(settings)) return false;
+  if (!isMdTab(tab)) return false;
+  // 问 `docs.get` 而不是 `docOf`：后者查不到就抛，而「挂载点拿到一颗孤儿实例」这一形
+  // 不该把整次 `mountView` 带崩（那条路上还有落位与重注册在后面）。
+  return perfProfileFor(normalizeSizeClass(docs.get(tab.docId)?.sizeClass)).autoPreview;
+}
 
 /**
  * 本轮重建期间「各文档此刻的共享位置」（B293 · 方案 A 的跨重建版），由 `rebuildLayout`
@@ -271,7 +296,10 @@ export function rebuildLayout(): void {
       // 开着 ⇒ CM6 装饰面（同文档的第 N 份**只读**实例）；关着 ⇒ 现方案的派生 DOM。
       // 宿主仍挂 `.md-preview`：`preview.css` 的 `.panel-host.mode-*` 那三条显隐规则认的
       // 就是这颗类 ⇒ 装饰面不需要自己再实现一遍「源码 / 分屏 / 纯预览」的切换。
-      if (isDecoPreviewEnabled(settings)) {
+      //
+      // ⚠️ B391F-3：这道分支还要问「是不是 Markdown」「档位让不让自动预览」两条，
+      //   三条的取舍与理由都写在 `shouldMountDecoPreview` 上（那里也是判据所在）。
+      if (shouldMountDecoPreview(tab)) {
         const decoHost = document.createElement("div");
         decoHost.className = "md-preview md-deco-host";
         hostEl.appendChild(decoHost);

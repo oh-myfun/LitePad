@@ -12,6 +12,17 @@
 
 export type SizeClass = "normal" | "large" | "huge";
 
+/**
+ * 预览侧的「大文档」行数阈值：超过它就不自动跑 Shiki / Mermaid（公式便宜，仍算）。
+ *
+ * 与上面那三档**不是一条轴**：`sizeClass` 是 Rust 按**字节**判的编辑器降级，这一条是
+ * 预览按**行数**判的渲染降级（5000 行的 md 可以只有几百 KB，两边都不该替对方说话）。
+ * B391F-3 起两条渲染实现共用这一个数：派生 DOM（`markdown/preview.ts`）与 CM6 装饰面
+ * （`spike/deco/codeBlockWidget.ts`）—— 两边阈值漂移过一次，装饰面写死 `bigDoc:false`，
+ * 结果同一篇 5001 行文档装饰面比现方案多跑一整轮 Shiki（spike 结果文档①P3-2 那条不对称）。
+ */
+export const LAZY_THRESHOLD_LINES = 5000;
+
 export interface PerfProfile {
   sizeClass: SizeClass;
   /** 语法高亮（最贵：增量解析整篇文档） */

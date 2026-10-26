@@ -11,6 +11,7 @@
 
 import { WidgetType, type EditorView } from "@codemirror/view";
 import { enhanceMarkdown, nextEnhanceSeq } from "../../markdown/enhance";
+import { LAZY_THRESHOLD_LINES } from "../../editor/perf";
 
 export class CodeBlockWidget extends WidgetType {
   constructor(
@@ -50,7 +51,13 @@ export class CodeBlockWidget extends WidgetType {
     wrap.appendChild(pre);
 
     const seq = nextEnhanceSeq(wrap);
-    enhanceMarkdown(wrap, seq, { bigDoc: false, baseDir: null })
+    // B391F-3：大文档那一档与派生 DOM 共用同一个阈值（原先这里写死 `false`，
+    // 结果同一篇 5001 行文档，装饰面比现方案多跑一整轮 Shiki —— spike 结果文档①P3-2
+    // 那条不对称）。行数就在手上，不必为此把 opts 一路穿到 buildPreviewSets。
+    enhanceMarkdown(wrap, seq, {
+      bigDoc: view.state.doc.lines > LAZY_THRESHOLD_LINES,
+      baseDir: null,
+    })
       .then(() => {
         // 高亮回来的那一发可能改了行高，让 CM 重新量一次
         view.requestMeasure();

@@ -4,6 +4,7 @@ import type { MdBlock } from "./pipeline";
 import type { PreviewScrollSurface } from "../sync-scroll/preview";
 import { PreviewScrollAnchor } from "../sync-scroll/preview";
 import { syncCoordinator } from "../sync-scroll/wire";
+import { LAZY_THRESHOLD_LINES } from "../editor/perf";
 
 /**
  * Markdown 预览面板（M3）：
@@ -11,8 +12,6 @@ import { syncCoordinator } from "../sync-scroll/wire";
  * - 增强走 `./enhance` 的共享出口（B352-2：IR 的块 widget 调同一个，防两份懒加载守卫各漂一半）
  * - 本地定位：按源行号滚动（大纲跳转 / 转到行），异步重排后按待定位行重落
  */
-
-const LAZY_THRESHOLD_LINES = 5000; // 大文档：关闭 Mermaid/Shiki 自动渲染
 
 export interface PreviewHost {
   /** 文档总行数（大文档降级判断用） */

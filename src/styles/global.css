@@ -4462,7 +4462,12 @@ body.tab-drag-active * {
    ⇒ 规则匹配不到元素，B225 那两条设置照样是死代码（字号 / 字体 / 行距全不生效）。
    同一个坑的 `.editor-host { … }` / `.editor-host .cm-scroller { … }` 两条仍在下面（死规则，
    与 preview.css 的 `.panel-host .panel-editor .cm-scroller` 重复），本次不动，留待单独清理。 */
-.panel-host .panel-editor .cm-editor {
+.panel-host .panel-editor .cm-editor,
+/* B391F-1：装饰预览面（`.md-deco-host`）也是 CM6 编辑器，但它挂在 `.panel-host` 下、
+   **不在 `.panel-editor` 里** ⇒ 下面三条 token 一条都吃不到，同一篇文档在两面按两套
+   几何排版（真机实测行距 13.80 vs 源码格 18.05px，`scrollHeight` 69019 vs 90296）。
+   这不是好不好看的问题：同步滚动按「顶边那一视觉行的字符位置」对齐，两套行盒 ⇒ 必差行。 */
+.panel-host .md-deco-host .cm-editor {
   height: 100%;
   /* B225：--font-size 由 main.ts 的 applyFontSize 写在 :root 上。字号是继承属性，
      而 CM6 的 .cm-scroller 只重设了 font-family 与 line-height、**没重设 font-size**
@@ -4487,7 +4492,11 @@ body.tab-drag-active * {
    所以 CM6 源码侧但凡给 fontFamily 补上 !important（tests/editor-css.test.ts 有
    反向契约盯着），这个覆盖就会失效。 */
 .panel-host .panel-editor .cm-editor,
-.panel-host .panel-editor .cm-editor .cm-scroller {
+.panel-host .panel-editor .cm-editor .cm-scroller,
+/* B391F-1：同上 —— 装饰面不吃 `--font-code` 的话，它与源码格就不是同一套字面宽度，
+   逐行对齐（B300 的 `topPos` / `setVAt` 按字符位置落位）在两面量到的行盒边界必然错开。 */
+.panel-host .md-deco-host .cm-editor,
+.panel-host .md-deco-host .cm-editor .cm-scroller {
   font-family: var(--font-code), var(--font-mono);
 }
 
@@ -4497,7 +4506,12 @@ body.tab-drag-active * {
    ⚠️ 行号栏那条不能省：.cm-gutterElement 的高度由 CM6 按实测行高写死（px），
    不跟着改 line-height 的话数字会贴着格子顶边、不与正文对齐。 */
 .panel-host .panel-editor .cm-content,
-.panel-host .panel-editor .cm-gutterElement {
+.panel-host .panel-editor .cm-gutterElement,
+/* B391F-1：行距这一条是三面里最贵的 —— 它直接决定 `scrollHeight` 与「顶边那一视觉行」
+   落在第几行。真机实测：同一篇 5001 行、同一 `clientHeight` 667，源码格 `scrollHeight=90296`
+   （行距 18.05px）而装饰面 69019（13.80px）⇒ 同一份文档两套几何，relayout 后顶边差一行。 */
+.panel-host .md-deco-host .cm-content,
+.panel-host .md-deco-host .cm-gutterElement {
   line-height: var(--editor-line-height, 1.5);
 }
 
