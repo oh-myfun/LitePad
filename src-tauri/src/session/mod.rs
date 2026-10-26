@@ -100,6 +100,13 @@ pub struct Settings {
     /// **空串 = 走内置默认**（发布版 info、debug 构建 debug），旧配置文件没有这个
     /// 字段时反序列化为空串，行为与加字段之前一致。
     pub log_level: String,
+    /// B391 spike：Markdown 预览格改用 CM6 装饰面（InkNote 式 Live Preview）。
+    /// **默认 false = 现方案**（`pipeline` → `PreviewPane` 派生 DOM）。
+    ///
+    /// 归设置不归会话：它是「这个窗口怎么显示预览」的口径，不属于某份文档 ——
+    /// 与 `word_wrap` / `preview_line_height` 同一层。旧配置缺这格 ⇒ 容器级
+    /// `#[serde(default)]` 给 `false`，行为与加字段之前逐字一致。
+    pub deco_preview: bool,
 }
 
 impl Default for Settings {
@@ -135,6 +142,7 @@ impl Default for Settings {
             tab_style: "connected".into(),
             tab_action_reserve_space: true,
             log_level: String::new(),
+            deco_preview: false,
         }
     }
 }
@@ -633,6 +641,30 @@ mod tests {
             "缺失应回落 true（VS Code 默认）"
         );
         assert!(Settings::default().tab_action_reserve_space);
+    }
+
+    /// B391 spike：Settings 新增 `deco_preview`。两头都要过 ——
+    /// ① 老配置缺这格必须回落 **false**（现方案），否则 `load()` 整体失败、
+    ///    用户全部偏好一起丢；② 写 `true` 必须原样读回来，否则这颗开关
+    ///    在设置里翻开、下次启动静默关回去（真机台也没法把它打开）。
+    #[test]
+    fn settings_deco_preview_defaults_off_and_round_trips() {
+        let missing: Settings =
+            serde_json::from_str(r#"{ "theme": "dark" }"#).expect("缺 deco_preview 也应能读入");
+        assert!(
+            !missing.deco_preview,
+            "缺失应回落 false（spike 开关默认关着）"
+        );
+        assert!(!Settings::default().deco_preview);
+
+        let on: Settings = serde_json::from_str(r#"{ "deco_preview": true }"#).expect("应能读入");
+        assert!(on.deco_preview, "显式 true 必须原样读回");
+        assert!(
+            serde_json::to_string(&on)
+                .unwrap()
+                .contains("\"deco_preview\":true"),
+            "落盘字段应为 snake_case deco_preview"
+        );
     }
 
     /// B312：老配置缺 `drawer_view` 必须回落 `"toc"`（容器级 `#[serde(default)]`），

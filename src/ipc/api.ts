@@ -217,6 +217,15 @@ export interface Settings {
    * `workbench.editor.tabActionReserveSpace`，默认 true）。false = 紧凑档。
    */
   tab_action_reserve_space: boolean;
+  /**
+   * B391 spike：Markdown 预览格改用 **CM6 装饰面**（InkNote 式 Live Preview 那套
+   * `buildPreviewSets` + widget）替代现方案的派生 DOM（`pipeline` → `PreviewPane`）。
+   * 默认 `false` = 现方案，行为与加这颗键之前逐字一致。
+   *
+   * 可空而不是必填，与 `theme_family` 同一套理由：旧配置与测试里的 Settings 替身
+   * 都不必跟着长这格，缺它即「关」。
+   */
+  deco_preview?: boolean;
 }
 
 /**

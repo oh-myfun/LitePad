@@ -85,6 +85,7 @@ import {
   focusPanelByDelta,
   toggleMaximizePanel,
   closeTabById,
+  syncDecoMirrors,
   newUntitled,
   setApplyPanelMode,
   setOpenPreviewToSide,
@@ -368,6 +369,10 @@ function syncDocInstances(src: Tab, changes: ChangeSet): void {
         other.state = other.state.update({ changes }).state;
       }
     }
+    // B391 spike：装饰预览面不是 `Tab` 实例，进不了上面那个遍历 ⇒ 用同一个 ChangeSet
+    // 再走一遍它自己那份桥。回环由 `mirrorChanges` 的同步闸判（与 `syncingDocId` 同一
+    // 个道理、两套互不干涉：那颗闸管的是「别再广播给兄弟实例」，这颗管「别把镜像写回源」）。
+    syncDecoMirrors(src, changes);
   } finally {
     setSyncingDocId(null);
   }

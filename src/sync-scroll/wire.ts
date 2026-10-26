@@ -116,6 +116,13 @@ export function faceOf(
     if (!view) return null;
     return { anchor: new EditorScrollAnchor(view), el: view.scrollDOM, label };
   }
+  // B391 spike：开关开着 ⇒ 这一格预览侧是 CM6 装饰面，它和源码侧**同一种滚动面**
+  // （一样的行盒、一样的 `scrollTop`），照源码侧那条注册即可；`PreviewScrollAnchor`
+  // 那套「按派生 DOM 的块高换算」在这里既没必要也无从下手。
+  const deco = panel.decoMirror?.view;
+  if (deco) {
+    return { anchor: new EditorScrollAnchor(deco), el: deco.scrollDOM, label };
+  }
   const preview = panel.preview;
   if (!preview) return null;
   const root = preview.root;

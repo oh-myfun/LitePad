@@ -13,6 +13,7 @@ import type { EditorHandle, TabCompartments } from "../editor/editor";
 import type { SizeClass } from "../editor/perf";
 import type { EncodingItem, Settings } from "../ipc/api";
 import type { PreviewPane } from "../markdown/preview";
+import type { DecoMirror } from "../spike/deco/mirror";
 import type { KeymapOverrides } from "../shell/keymap";
 import { leaf, type LayoutNode } from "./layout";
 import type { ThemeFamily, ThemeMode } from "../theme/theme";
@@ -28,6 +29,17 @@ export interface Panel {
   viewTabId: number | null;
   /** Markdown 预览（面板挂载后创建） */
   preview: PreviewPane | null;
+  /**
+   * B391 spike：`deco_preview` 开着时，这一格预览侧的那份 CM6 装饰面实例。
+   *
+   * 与 `preview` **互斥**：`lifecycle.ts` 的挂载点按 `isDecoPreviewEnabled` 二选一，
+   * 开关关着 ⇒ 这一格恒为缺省（`src/spike/**` 不进运行路径）。
+   * 写成**可选**而不是必填：必填要逼 8 处 Panel 字面量各补一行 `decoMirror: null`
+   * （split.ts / rebuild.ts / main.ts 都在内），spike 不想动那么多生产点；
+   * 「缺省 = 关着」本来就是这颗键想要的语义。
+   * 类型用 `import type` 引：编译期就擦掉，不给生产状态模块留一条指向 spike 的运行时边。
+   */
+  decoMirror?: DecoMirror | null;
   /** 预览渲染防抖定时器 */
   previewTimer: number | null;
   /** splitview 传入的宿主元素（.panel-host） */
@@ -201,6 +213,25 @@ export let eolOptions: string[] = ["CRLF", "LF", "CR"];
 export let keymapOverrides: KeymapOverrides = {};
 
 export let settings: Settings | null = null;
+
+/**
+ * B391 spike：**唯一**读 `deco_preview` 的地方（`Settings` 上那颗开关）。
+ *
+ * 所有分支（构造预览侧 / 注册滚动面 / 回写兄弟实例）一律问它，不许自己
+ * `settings.deco_preview` —— 「开关关着 ⇒ `src/spike/**` 不进运行路径」这条约束
+ * 靠的就是「闸只有一个」，tests/spike-deco-wiring.test.ts ① 才可能用一条静态守卫
+ * 数清每个 `createDecoMirror` 调用点都在闸后。
+ *
+ * ⚠️ 放本模块而不是 `ipc/api.ts` 或 `prefs.ts`：
+ * ① `ipc/api.ts` 被 12 份启动测试整模块 `vi.mock` 掉（本仓库的既有配方），新导出漏进
+ *    那份清单的代价是「bootstrap 抛 TypeError ⇒ 那 12 份文件一起红」（实测 54 例）；
+ *    放在没人 mock 的状态模块里，闸门在测试里**伪造不了**，判据才真有鉴别力。
+ * ② `prefs.ts` 已经 import `tabs/lifecycle.ts`（`freshTextOfDoc`），反向再指回去
+ *    就是本仓库花十几步拆掉的那种环。
+ */
+export function isDecoPreviewEnabled(current: Settings | null | undefined): boolean {
+  return current?.deco_preview === true;
+}
 
 export let activePanelId = 0;
 

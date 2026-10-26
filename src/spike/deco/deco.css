@@ -142,3 +142,20 @@
 :root[data-theme="dark"] .md-deco .md-code-widget pre.shiki span {
   color: var(--shiki-dark);
 }
+
+/* —— 面板宿主（Task 5 接线）——————————————————————————————————————————————————————
+   装饰面这一格挂的是 `.md-preview.md-deco-host`：借现方案那颗类是为了直接吃
+   `.panel-host.mode-*` 的三条显隐规则（源码 / 分屏 / 纯预览），不必再实现一遍切换。
+   但 `.md-preview` 本身是「自己滚 + 正文边距」的容器，装饰面里滚的是 CM6 的
+   `.cm-scroller` ⇒ 外层要改成「不滚、无边距、竖着铺满」，否则两层滚动条 + 双份边距。 */
+.md-preview.md-deco-host {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  min-height: 0;
+}
+.md-deco-host > .cm-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+}

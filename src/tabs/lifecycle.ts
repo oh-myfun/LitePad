@@ -7,6 +7,8 @@
 
 import {
   type Doc,
+  type Panel,
+  type Tab,
   tabs,
   docs,
   panels,
@@ -19,6 +21,7 @@ import {
   setNextPanelId,
   setSuppressDirty,
   settings,
+  isDecoPreviewEnabled,
 } from "../core/app-state";
 import { getPanel, activePanel, panelOfTab, docOf, instancesOfDoc } from "../core/panels";
 import {
@@ -53,6 +56,10 @@ import { createEditor } from "../editor/editor";
 import { PreviewPane } from "../markdown/preview";
 import { logViewport } from "../core/viewport";
 import { closeTab as ipcCloseTab, newTab as ipcNewTab } from "../ipc/api";
+import type { ChangeSet } from "@codemirror/state";
+// B391 spike：装饰预览面（`Settings.deco_preview` 开着才用得上；调用点全在
+// `isDecoPreviewEnabled` 分支里，静态守卫由 tests/spike-deco-wiring.test.ts ① 钉住）。
+import { createDecoMirror, mirrorChanges, reseedDecoMirror } from "../spike/deco/mirror";
 import { renderPanelTabs, renderPanelOps, panelDataOf } from "./render";
 import {
   exitMaximize,
@@ -251,21 +258,32 @@ export function rebuildLayout(): void {
         if (panelId === activePanelId) p.view.focus();
       }
 
-      const preview = new PreviewPane();
-      p.preview = preview;
-      hostEl.appendChild(preview.root);
-      preview.setHost({
-        lineCount: () => p.view?.view.state.doc.lines ?? 0,
-        // B358：勾选框可点性跟着「这一格显示的那份文档」走；切换由 toggleTaskInTab 落地
-        canWrite: () => {
-          const t = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
-          const d = t ? docOf(t) : undefined;
-          return !!t && !!d && isMdTab(t) && !d.readonly;
-        },
-        toggleTaskAt: (lineStart, lineEnd, index) => {
-          if (p.viewTabId !== null) toggleTaskInTab(p.viewTabId, lineStart, lineEnd, index);
-        },
-      });
+      // —— B391 spike：预览侧的两种实现，由 `Settings.deco_preview` 二选一 ————————
+      // 开着 ⇒ CM6 装饰面（同文档的第 N 份**只读**实例）；关着 ⇒ 现方案的派生 DOM。
+      // 宿主仍挂 `.md-preview`：`preview.css` 的 `.panel-host.mode-*` 那三条显隐规则认的
+      // 就是这颗类 ⇒ 装饰面不需要自己再实现一遍「源码 / 分屏 / 纯预览」的切换。
+      if (isDecoPreviewEnabled(settings)) {
+        const decoHost = document.createElement("div");
+        decoHost.className = "md-preview md-deco-host";
+        hostEl.appendChild(decoHost);
+        p.decoMirror = createDecoMirror(decoHost, decoTextOf(p));
+      } else {
+        const preview = new PreviewPane();
+        p.preview = preview;
+        hostEl.appendChild(preview.root);
+        preview.setHost({
+          lineCount: () => p.view?.view.state.doc.lines ?? 0,
+          // B358：勾选框可点性跟着「这一格显示的那份文档」走；切换由 toggleTaskInTab 落地
+          canWrite: () => {
+            const t = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
+            const d = t ? docOf(t) : undefined;
+            return !!t && !!d && isMdTab(t) && !d.readonly;
+          },
+          toggleTaskAt: (lineStart, lineEnd, index) => {
+            if (p.viewTabId !== null) toggleTaskInTab(p.viewTabId, lineStart, lineEnd, index);
+          },
+        });
+      }
       if (p.view) attachPasteHandler(p);
 
       applyPanelMode(p);
@@ -374,6 +392,9 @@ export function switchTab(panelId: number, tabId: number): void {
   setSuppressDirty(true);
   view.setState(tab.state);
   setSuppressDirty(false);
+  // B391 spike：这一格换了文档，装饰面得跟着重新播种（它不是 Tab 实例，
+  // 不在 `syncDocInstances` 的兄弟遍历里，换标签那一刻没人推它）。
+  refreshDecoMirror(panel);
   // ⚠️ 焦点必须排在钉位置**之前**（B145）：`focus()` 会把光标滚进视野，而光标往往
   // 不在刚还原出来的可视区里 —— 排在后面等于把刚钉好的位置顶掉。
   view.focus();
@@ -595,6 +616,7 @@ export async function closeTabById(tabId: number): Promise<void> {
     setSuppressDirty(true);
     view.setState(nextTab.state);
     setSuppressDirty(false);
+    refreshDecoMirror(panel); // 同上：换的是这一格显示的文档，装饰面要跟着播种
     // 末尾统一重注册锚点并按新 docId 上锁（见上方注释）；覆盖本函数未显式上锁的空档。
     reconcileSyncRegistrations();
   }
@@ -635,6 +657,10 @@ export function disposePanel(panelId: number): void {
   panel.view = null;
   panel.viewTabId = null;
   panel.preview = null;
+  // B391 spike：装饰面是**真的 EditorView**（自带 StateField 与监听），不像预览 DOM
+  // 那样宿主一扔就完事 ⇒ 必须显式 destroy，否则每调一次分屏就漏一棵视图树。
+  panel.decoMirror?.dispose();
+  panel.decoMirror = null;
   panels.delete(panelId);
 
   if (activePanelId === panelId) {
@@ -715,6 +741,40 @@ export function freshTextOfDoc(doc: Doc): string | null {
   }
   const any = instancesOfDoc(doc.tabId)[0];
   return any ? any.state.doc.toString() : null;
+}
+
+// ------------------------------------------------------- B391 spike · 装饰预览面
+
+/** 这一格此刻该显示的那份文档正文（装饰面的播种源）。 */
+function decoTextOf(panel: Panel): string {
+  const t = tabs.get(panel.viewTabId ?? panel.activeTabId);
+  return t?.state.doc.toString() ?? "";
+}
+
+/**
+ * 把这一格的装饰面重新播种到它**现在该显示**的那份文档 —— 换标签 / 关掉相邻标签接班
+ * 那一形。同文档的增量编辑不走这里，走 `syncDecoMirrors` 的 ChangeSet 桥
+ * （桥那边基线一致才有意义，换了文档必然被判 `skipped-stale`）。
+ */
+export function refreshDecoMirror(panel: Panel): void {
+  if (!panel.decoMirror) return;
+  reseedDecoMirror(panel.decoMirror, decoTextOf(panel));
+}
+
+/**
+ * 把某实例的一发变更映射进**所有显示同一文档**的装饰面。
+ *
+ * 与 `syncDocInstances` 同口径：内容靠 ChangeSet 对齐，不共享 state。回声与幽灵写回
+ * 都归 `mirrorChanges` 判，这里只管寻址。
+ */
+export function syncDecoMirrors(srcTab: Tab, changes: ChangeSet): void {
+  if (changes.empty) return;
+  for (const p of panels.values()) {
+    if (!p.decoMirror) continue;
+    const shown = tabs.get(p.viewTabId ?? p.activeTabId);
+    if (!shown || shown.docId !== srcTab.docId) continue;
+    mirrorChanges(p.decoMirror.view, changes);
+  }
 }
 
 /** 拖拽标签落在 tab 区（B27）：同面板调整顺序，跨面板移动到该插入位置。

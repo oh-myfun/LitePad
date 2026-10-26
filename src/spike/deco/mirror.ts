@@ -60,9 +60,9 @@ export function mirrorChanges(
   return "applied";
 }
 
-/** 在 `parent` 里建一个只读装饰面实例（Task 5 由面板模型持有它）。 */
-export function createDecoMirror(parent: HTMLElement, doc: string): DecoMirror {
-  const state = EditorState.create({
+/** 装饰面实例的 state：只读 + markdown + livePreview。新建与重新播种共用一份，别写两遍。 */
+function mirrorState(doc: string): EditorState {
+  return EditorState.create({
     doc,
     extensions: [
       EditorView.editable.of(false),
@@ -73,9 +73,25 @@ export function createDecoMirror(parent: HTMLElement, doc: string): DecoMirror {
       EditorView.lineWrapping,
     ],
   });
-  const view = new EditorView({ state, parent });
+}
+
+/** 在 `parent` 里建一个只读装饰面实例（Task 5 由面板模型持有它）。 */
+export function createDecoMirror(parent: HTMLElement, doc: string): DecoMirror {
+  const view = new EditorView({ state: mirrorState(doc), parent });
   return {
     view,
     dispose: () => view.destroy(),
   };
+}
+
+/**
+ * 把镜像**重新播种**成 `text` —— 面板换文档 / 接班那一形（此时两侧不再是同一基线，
+ * 走 `mirrorChanges` 会被判 `skipped-stale`）。同文档的增量编辑一律走桥，不走这里。
+ *
+ * 文本一致时直接返回：`view.setState` 会把 `scrollDOM.scrollTop` 归零（与本仓库
+ * 记过的那条「结构性滚动来源」同源），白白多发一次跳。
+ */
+export function reseedDecoMirror(mirror: DecoMirror, text: string): void {
+  if (mirror.view.state.doc.toString() === text) return;
+  mirror.view.setState(mirrorState(text));
 }
