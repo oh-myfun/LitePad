@@ -191,4 +191,24 @@ B300 的逐行对齐（`topPos` / `setVAt`）**天然继承**，现方案反而�
 它同时证明了：**装饰面天然继承 B300 逐行对齐**，这是替换方案里唯一一条现方案拿不到的好处。
 如果以后要在预览格里做「就地编辑」，从这块种子起，而不是从整条替换起。
 
+---
+
+## ⑦ 分支状态
+
+`spike/b391-inknote-deco-preview` **保留在本地，不合并、不推送、不出包、无版本推进** ——
+结论是一句话：**这条替换路线不成立，别再往「整格替换」上投人；要看的东西已经落进本文⑤的
+切片清单和⑥的那块种子里。**
+
+自检（结案时实测）：
+
+- `git log --oneline main..HEAD | wc -l` = **7**（计划 1 + 实现 5 + 本文档 1）
+- `git log --oneline HEAD..main | wc -l` = **0**（不落后于主干）
+- `git diff --stat main...HEAD -- src/markdown src/styles` = **空**
+  —— 生产渲染链路与样式表一行没动；碰到的生产文件只有 `src/core/app-state.ts`（+31，
+  `isDecoPreviewEnabled` 那个闸）、`src/tabs/lifecycle.ts`（+90/−15，全在开关分支里）、
+  `src/sync-scroll/wire.ts`（+7，`faceOf` 的装饰分支）、`src/main.ts`（+5，镜像桥一行）、
+  `src/ipc/api.ts`（+9）与 `src-tauri/src/session/mod.rs`（+32，含 round-trip 测试）
+- 关着 `deco_preview` 时全量门禁与主干一致：114 文件 / 1839 测试通过、`tsc` / `eslint` /
+  `prettier` 干净、`cargo test session::` 36 通过
+
 台账里所有 `Ruling:` 行随本文一并交给最终评审。
