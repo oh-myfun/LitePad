@@ -128,6 +128,19 @@ vi.mock("../src/ipc/api", () => ({
               scrollV: 7.75,
               syncMode: false,
             },
+            // e.md 这份文档的线形状是 B392 之后的**三态**：`syncMode: null` = 「从没记过」
+            // （旧版会话压根没这个键，Rust 透传成 null），前端必须按**开着**缺省 ⇒
+            // 面板1 那一格没记过位置时可以借兄弟格的 12.25（与上面 d.md 那条成对照）。
+            {
+              path: "e.md",
+              docId: 201,
+              encoding: "UTF-8",
+              eol: "LF",
+              cursorLine: 6,
+              cursorCol: 1,
+              scrollV: 12.25,
+              syncMode: null,
+            },
           ],
         },
         // 面板1：两个标签 —— c.md **没记过位置**（也没有同文档的兄弟格可借），
@@ -161,6 +174,16 @@ vi.mock("../src/ipc/api", () => ({
               cursorCol: 1,
               scrollV: null,
               syncMode: false,
+            },
+            {
+              path: "e.md",
+              docId: 201,
+              encoding: "UTF-8",
+              eol: "LF",
+              cursorLine: 1,
+              cursorCol: 1,
+              scrollV: null,
+              syncMode: null,
             },
           ],
         },
@@ -334,6 +357,22 @@ describe("B302 · 位置随会话回来：每格各存各的 + 文档级兜底",
     ]);
   });
 
+  it("线形状是 null（旧会话压根没这个键）⇒ 同步按「没记过 = 开」缺省（B392）", () => {
+    // Rust 侧把 `sync_mode` 收成 `bool` 时，缺键经容器级 `#[serde(default)]` 变成 `false` ⇒
+    // 恢复那一步（唯一写点 `setDocSyncMode`）把这篇文档的同步**从头关掉**，而显示与行为此刻
+    // 一致（两边都关），用户只觉得「同步怎么不灵了」。Rust 现在透传三态，前端拿到 `null`
+    // 必须走「没记过」那一条 ⇒ 开着，于是面板1 那格（自己没记过位置）借得到兄弟格的 12.25
+    // —— 与上面 d.md 那条（关着 ⇒ 不许借）正好成对照。
+    expect(docSyncOn(201), "null 不是 false：这份文档的同步得是开着").toBe(true);
+    expect(syncCoordinator.isOn("201"), "协调器也得跟着开（B304：点亮态与行为不许分家）").toBe(
+      true,
+    );
+    expect(scrollVsOfDoc("e.md"), "两格都落在 12.25：一格是自己的、一格是借来的").toEqual([
+      expect.closeTo(12.25, 5),
+      expect.closeTo(12.25, 5),
+    ]);
+  });
+
   it("恢复出来的开关必须把协调器一起翻（B304：显示关着、行为还在同步）", () => {
     // 真机 23:23:01：会话里这份文档每一条记录都是 `syncMode:false`，按钮按 `docSyncOn` 显示成
     // 灭的，而协调器仍按缺省「开」在广播（日志连着 `帧广播 doc=2` + `广播写[P2:editor]`，中间
@@ -393,13 +432,18 @@ describe("B129 会话恢复：面板激活标签 + 每标签光标", () => {
     const activeTexts = Array.from(p0.querySelectorAll(".tab")).map(
       (t) => t.classList.contains("tab-active") || t.getAttribute("aria-selected") === "true",
     );
-    expect(activeTexts, "面板0 的第二个标签（b.md）应是激活项").toEqual([false, true, false]);
+    expect(activeTexts, "面板0 的第二个标签（b.md）应是激活项").toEqual([
+      false,
+      true,
+      false,
+      false,
+    ]);
     // 面板1 第一个是激活项（第二个是 b.md 的第二格，从没记过位置那份）
     expect(
       Array.from(panels()[1].querySelectorAll(".tab")).map(
         (t) => t.classList.contains("tab-active") || t.getAttribute("aria-selected") === "true",
       ),
-    ).toEqual([true, false, false]);
+    ).toEqual([true, false, false, false]);
     // 视图显示的也该是激活那个：面板0 = b.md
     const shown = views().find((v) => panels()[0].contains(v.dom))!;
     expect(docNameOf(shown), "面板0 显示的应是 b.md").toBe("b.md");

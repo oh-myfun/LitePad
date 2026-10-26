@@ -267,12 +267,16 @@ pub struct TabSession {
     /// 旧版本落盘的会话没有这个字段，反序列化为 `None`，行为与 B69 之前一致。
     #[serde(alias = "doc_id")]
     pub doc_id: Option<u64>,
-    /// B169：同步滚动开关（按文档记，B152）。⚠️ 同步滚动逻辑已整体清除（重构）——
-    /// 这个字段现在只搬运标题栏那颗键的**点亮态**（按键 inert，不产生任何联动），
-    /// 落盘后重新打开时写回前端 `docSyncModes`，让键的点亮态与退出前一致。
-    /// `false` = 没开过（旧会话没有这个字段也走默认）。
+    /// B169：同步滚动开关（按文档记，B152）。恢复时经**唯一写点** `setDocSyncMode` 写回
+    /// 前端 `docSyncModes`；它管的不只是标题栏那颗键的点亮态 —— 协调器每一发广播都要先问它。
+    ///
+    /// ⚠️ 类型必须是 `Option<bool>`：`None` = 「这份文档从没记过」，前端按**开着**缺省
+    /// （`core/app-state.ts` 的 `docSyncOn`），`Some(false)` = 用户明确关掉过（B297：两头都要写）。
+    /// 收成 `bool` 时缺键会经容器级 `#[serde(default)]` 反序列化成 `false`（B392），
+    /// 旧版会话升上来 ⇒ 同步滚动**静默变关**，而且显示与行为一致，用户只当「同步不灵了」。
+    /// Rust 只透传这三态，缺省口径由前端定。
     #[serde(alias = "sync_mode")]
-    pub sync_mode: bool,
+    pub sync_mode: Option<bool>,
     /// B302：这一格上次被看到时的共享坐标 `v`（源码行号 + 小数，与宽度无关）。
     ///
     /// `None` ＝「这一格从没被看到过」，与 `Some(1.0)`（就停在顶部）是两件事：恢复时先取
@@ -296,7 +300,7 @@ impl Default for TabSession {
             view_mode: None,
             backup_id: None,
             doc_id: None,
-            sync_mode: false,
+            sync_mode: None,
             scroll_v: None,
             owner: None,
         }
@@ -544,6 +548,51 @@ mod tests {
         let out = serde_json::to_string(&state).unwrap();
         assert!(out.contains("\"scrollV\""), "落盘应为 scrollV：{out}");
         assert!(!out.contains("scroll_v"), "不应落 snake_case：{out}");
+    }
+
+    /// B392：`syncMode` **缺键不许读成「关着」**。
+    ///
+    /// 前端口径是「没记过 = 开」（`core/app-state.ts` 的 `docSyncOn`），而恢复时
+    /// `setDocSyncMode(docId, st.syncMode !== false)` 是这篇文档同步开关的**唯一写点**。
+    /// Rust 侧若把缺键收成 `false`，旧版会话升上来 ⇒ 同步滚动**静默变关**：协调器帧在
+    /// `isOn` 那道闸直接 return，界面上开关与行为此刻还一致（两边都关），用户只会觉得
+    /// 「同步怎么不灵了」。B391 spike 的真机台第一轮那批 FAIL 全是这么造出来的。
+    ///
+    /// 判据问的是**透传给前端的那份线形状**（前端只看得见 JSON），不是 Rust 字段类型。
+    #[test]
+    fn legacy_session_without_sync_mode_is_not_read_as_off() {
+        let json = r#"{
+          "panels": [
+            { "tabs": [
+                { "path": "a.md", "docId": 1 },
+                { "path": "b.md", "docId": 2, "syncMode": false },
+                { "path": "c.md", "docId": 3, "syncMode": true },
+                { "path": "d.md", "docId": 4, "sync_mode": false }
+              ], "active": 0 }
+          ],
+          "layout": { "kind": "leaf", "panelId": 0 },
+          "activePanel": 0
+        }"#;
+        let state: SessionState = serde_json::from_str(json).expect("会话应能按 camelCase 读入");
+        let wire = |i: usize| -> serde_json::Value {
+            serde_json::to_value(&state.panels[0].tabs[i]).unwrap()
+        };
+        assert_ne!(
+            wire(0)["syncMode"],
+            serde_json::json!(false),
+            "缺键（没记过）透传回前端不许变成一个 false —— 前端拿到 false 就是关"
+        );
+        assert_eq!(
+            wire(1)["syncMode"],
+            serde_json::json!(false),
+            "记了 false 必须还是关着（B297：两头都要写，否则用户关掉的开关自己翻回去）"
+        );
+        assert_eq!(wire(2)["syncMode"], serde_json::json!(true));
+        assert_eq!(
+            wire(3)["syncMode"],
+            serde_json::json!(false),
+            "旧版 snake_case 的 sync_mode 仍要认"
+        );
     }
 
     /// 旧版本（B48 及更早）落盘的是 snake_case，升级后仍要能读出来。
