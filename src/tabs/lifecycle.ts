@@ -45,7 +45,7 @@ import { renderSplitview, type PanelRenderData } from "../shell/splitview";
 import { attachTabToPanel, isMdTab, makeDoc, makeInstance, registerDoc } from "../doc-model";
 import { toggleTaskInTab } from "../markdown";
 import { updateTocDrawer } from "../toc";
-import { retargetFindBar } from "../find/findbar";
+import { retargetFindBar, relayoutFindBar } from "../find/findbar";
 import { saveDocCore } from "../io/files";
 import { attachPasteHandler } from "../io/export";
 import { showSaveConfirmDialog } from "../shell/saveconfirm";
@@ -307,6 +307,10 @@ export function rebuildLayout(): void {
       reconcileSyncRegistrations();
     },
   });
+  // B389-9：上面那次重建把整棵面板树换了一批新元素，悬浮查找栏的锚点（活动面板的
+  // `.panel-host`）跟着换了对象，它自己的 ResizeObserver 盯的还是已脱离文档那一格。
+  // 新树此刻已在文档里 ⇒ 在这里点名让它重新量一次并钉回右上。
+  relayoutFindBar();
 }
 
 // updateRatio 已移到 src/core/layout.ts（与 build 的路径约定对齐，B26 修复）

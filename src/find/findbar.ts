@@ -350,6 +350,16 @@ function retargetFindBar(): void {
   if (findBar?.isOpen()) findBar.retarget();
 }
 
+/**
+ * 布局重画后重新钉一次浮层（B389-9）。
+ * `renderSplitview` 每次都 `root.textContent = ""` 整棵重建 ⇒ 浮层盯着的那格 `.panel-host`
+ * 成了脱离文档的旧元素，它自己那台 ResizeObserver 再也收不到信号。必须由布局重建方在
+ * **新树进文档之后**点名一次（放在渲染回调里不够：回调跑在 append 之前，那时量到全是 0）。
+ */
+function relayoutFindBar(): void {
+  findBar?.relayout();
+}
+
 /** findBar 是本模块私有可变量（ensureFindBar 会重建）⇒ 以 getter 供外部读。 */
 export function getFindBar(): FindBarHandle | null {
   return findBar;
@@ -368,4 +378,5 @@ export {
   replaceCurrent,
   replaceAllInScope,
   retargetFindBar,
+  relayoutFindBar,
 };

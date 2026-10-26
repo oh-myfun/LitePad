@@ -8,7 +8,9 @@
  *   （`src/search/panel.ts`，键位 `edit.findInFiles`）。原先这里那颗「所有打开的文档」
  *   图标 + 右上角徽标 + 跨文档步进一起撤掉 —— 同一件事在两个地方各干一遍，
  *   用户就得分清「这次搜的到底是哪儿」，而那边已经是 VS Code 的形状了。
- * - **钉在右上角**：去掉了可拖动的标题栏（方案 C），固定停靠编辑器右上，尽量少遮挡正文。
+ * - **钉在当前面板编辑区的右上角**（B389-9 起照 VS Code 的几何定位，见 `findBarAnchor`）：
+ *   去掉了可拖动的标题栏（方案 C），浮层不再钉窗口右上角压住标题栏/标签条，而是落进编辑区里，
+ *   顶边 = 编辑区顶 +4px，右边让开竖向滚动条。
  * - **替换行可折叠**：主行永远是「查找」；点 chevron（或菜单「替换」）才展开替换行。
  *   chevron **绝对定位贴在浮层左缘**（VS Code 的 `.button.toggle` 同款），两行各留 17px 边距让位。
  * - **匹配选项改成图标开关**（Aa / ab / .* / 选区 / AB），嵌在输入框右内侧，激活态高亮。
@@ -59,12 +61,85 @@ export interface FindBarHandle {
   isOpen(): boolean;
   /** 切换标签/面板后重新把当前查询应用到新的活动视图（栏本身保持打开） */
   retarget(): void;
+  /** 布局变了（面板整棵重建 / 分屏 / 侧栏宽 / 窗口缩放）：按当前活动面板重新钉一次位置 */
+  relayout(): void;
   step(dir: 1 | -1): void;
   setCount(text: string, bad?: boolean): void;
   setStatus(text: string): void;
   focusFind(): void;
   focusReplace(): void;
   getQuery(): FindBarQuery;
+}
+
+// ---------------------------------------------------------------- 定位几何（照 VS Code）
+
+/** 浮层初始宽度 = VS Code 的 `FIND_WIDGET_INITIAL_WIDTH`（findWidget.ts:80，419px）。 */
+export const FIND_BAR_INITIAL_WIDTH = 419;
+/** 拖动 / 收窄的下限：再窄就摆不下一整行按钮（VS Code 用三档 CSS 断点砍按钮，我们砍不了）。 */
+export const FIND_BAR_MIN_WIDTH = 360;
+/** VS Code `.find-widget { margin-top: 4px }` 配 `overlayWidgets` 的 `setTop(0)` ⇒ 顶边离编辑区顶 4px。 */
+export const FIND_BAR_TOP_GAP = 4;
+/** VS Code `maxRight = 2 * verticalScrollbarWidth + minimapWidth`（overlayWidgets.ts 的 `_renderWidget`）。
+    它的 2× 是「正文滚动条 + 并排对比槽」两根；LitePad 只有一根 10px 竖向滚动条、没有 minimap，
+    所以等价档位就是 10px —— 浮层不许盖住滚动条（那是唯一能拖的东西）。 */
+export const FIND_BAR_SCROLLBAR_GUTTER = 10;
+/** VS Code `_updateReactiveLayout` 那句注释：「the minimal left offset of findwidget is 15px」。 */
+export const FIND_BAR_LEFT_RESERVE = 15;
+
+/** 编辑区（活动面板的 `.panel-host`）相对视口的位置 —— 只有这三项参与定位。 */
+export interface FindBarHostRect {
+  top: number;
+  left: number;
+  width: number;
+}
+
+export interface FindBarAnchor {
+  top: number;
+  right: number;
+  width: number;
+  maxWidth: number;
+}
+
+/**
+ * 浮层该钉在哪：把「编辑区矩形 + 视口宽 + 想要的宽度」折成 `position: fixed` 的四个值。
+ *
+ * ⚠️ `right` 是**从视口右缘往里量**的，所以除了滚动条槽，还得把编辑区自身离窗口右缘的那截
+ *    （面板外边距 / 侧栏在右之类的情形）一起算进去 —— 这就是 `innerWidth - (left + width)`。
+ *    写成纯函数是因为 jsdom 没有布局：真机上量到的矩形只能靠台子核像素，
+ *    而这条换算本身（+4 / 让开滚动条 / 不越过左缘 15px）必须能在测试里判。
+ */
+export function findBarAnchor(
+  host: FindBarHostRect,
+  innerWidth: number,
+  width: number,
+): FindBarAnchor {
+  const right = innerWidth - (host.left + host.width) + FIND_BAR_SCROLLBAR_GUTTER;
+  /**
+   * VS Code 原式：`editorWidth − 2×滚动条 − minimap − 15`（`_updateReactiveLayout`）。
+   * ⚠️ **不兜下限**：真机量到过 —— 分屏 + 侧栏摊开时活动格只剩 316px，兜到 360 就把浮层
+   *    的左缘顶出编辑区、压进隔壁那一格。VS Code 窄到装不下是靠三档 CSS 断点砍按钮，
+   *    我们没有那三档 ⇒ 宁可让浮层跟着格宽缩（行内是 flex，输入框 `min-width:60px` 先让，
+   *    关闭键绝对定位在右缘不受挤压），也不许它越界。
+   */
+  const maxWidth = host.width - FIND_BAR_SCROLLBAR_GUTTER - FIND_BAR_LEFT_RESERVE;
+  const floor = Math.min(FIND_BAR_MIN_WIDTH, maxWidth);
+  return {
+    top: host.top + FIND_BAR_TOP_GAP,
+    right,
+    width: Math.min(Math.max(width, floor), maxWidth),
+    maxWidth,
+  };
+}
+
+/** 活动面板的编辑区矩形；量不到（jsdom 无布局 / 面板还没建）就返回 null，调用方跳过定位。 */
+function activeHostRect(): FindBarHostRect | null {
+  const host =
+    document.querySelector<HTMLElement>(".layout-panel-active .panel-host") ??
+    document.querySelector<HTMLElement>(".panel-host");
+  if (!host) return null;
+  const r = host.getBoundingClientRect();
+  if (r.width <= 0 || r.height <= 0) return null;
+  return { top: r.top, left: r.left, width: r.width };
 }
 
 /**
@@ -187,9 +262,12 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   host.appendChild(dom);
 
   // ---- 宽度（由左侧手柄调节；不落盘，与 VS Code 一样只在本次会话内有效）----
-  const DEFAULT_W = 470;
-  const MIN_W = 360;
-  const availableW = (): number => Math.max(MIN_W, window.innerWidth - 32);
+  /**
+   * 想要的宽度（拖手柄 / 双击改它）。定位时再按编辑区宽夹一次 ——
+   * 夹完**不写回来**：VS Code 用 CSS `max-width` 做到「编辑区窄了就压扁、宽了自动还原」，
+   * 把夹后的值当源真值会在拖大窗口后丢掉用户调过的那一档。
+   */
+  let barWidth = FIND_BAR_INITIAL_WIDTH;
 
   /**
    * 替换输入框**写死成查找输入框的宽度**（= VS Code 展开替换行/拖完手柄后做的
@@ -204,9 +282,52 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     replField.style.width = `${Math.round(w)}px`;
   }
 
-  function setBarWidth(w: number): void {
-    dom.style.width = `${Math.round(Math.min(Math.max(w, MIN_W), availableW()))}px`;
+  /**
+   * 重新钉一次：读活动面板编辑区的矩形，换算成 `top / right / width / maxWidth` 写进内联样式。
+   * 量不到布局（jsdom、面板还没建）时**什么都不写**，让 global.css 里那组兜底值生效。
+   */
+  function relayout(): void {
+    if (dom.hidden) return; // 收起状态没有布局可言，等下一次 open() 再钉
+    const area = activeHostRect();
+    if (!area) return;
+    const a = findBarAnchor(area, window.innerWidth, barWidth);
+    dom.style.top = `${a.top}px`;
+    dom.style.right = `${a.right}px`;
+    dom.style.maxWidth = `${a.maxWidth}px`;
+    dom.style.width = `${a.width}px`;
     syncWidths();
+  }
+
+  function setBarWidth(w: number): void {
+    barWidth = w;
+    relayout();
+  }
+
+  /** 「可用最大宽度」= 双击放大那一档（B389-9 起跟着编辑区宽走，不再是整窗宽）。 */
+  function maxBarWidth(): number {
+    const area = activeHostRect();
+    if (!area) return Math.max(FIND_BAR_MIN_WIDTH, window.innerWidth - 32);
+    return findBarAnchor(area, window.innerWidth, Number.POSITIVE_INFINITY).maxWidth;
+  }
+
+  // ---- 盯着编辑区：它一变（分屏、拖分割线、侧栏宽、窗口 resize、面板最大化）就重新钉 ----
+  // 只盯**当前活动面板**那一格：RO 不吃「位置变了但尺寸没变」，那种情形由 retarget() 补一发。
+  // jsdom 没有 ResizeObserver ⇒ 整段跳过，测试路径靠 open()/retarget() 里的显式调用。
+  let hostEl: Element | null = null;
+  let hostRO: ResizeObserver | null = null;
+  function watchHost(): void {
+    if (typeof ResizeObserver !== "function") return;
+    const next =
+      document.querySelector<HTMLElement>(".layout-panel-active .panel-host") ??
+      document.querySelector<HTMLElement>(".panel-host");
+    if (next === hostEl) return;
+    hostRO?.disconnect();
+    hostEl = next;
+    hostRO = null;
+    if (hostEl) {
+      hostRO = new ResizeObserver(() => relayout());
+      hostRO.observe(hostEl);
+    }
   }
 
   // ---- 选项状态（图标开关的源真值）----
@@ -292,8 +413,8 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     if (e.button !== 0) return;
     e.preventDefault();
     const startX = e.clientX;
-    // 浮层钉在右上角：手柄在**左**缘，往左拖 = 变宽，故用 (startX - currentX)
-    const startW = dom.getBoundingClientRect().width || DEFAULT_W;
+    // 浮层钉在编辑区右上角：手柄在**左**缘，往左拖 = 变宽，故用 (startX - currentX)
+    const startW = dom.getBoundingClientRect().width || barWidth;
     sash.classList.add("active");
     const move = (ev: PointerEvent) => setBarWidth(startW + (startX - ev.clientX));
     const up = () => {
@@ -305,15 +426,17 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     window.addEventListener("pointerup", up);
   });
   sash.addEventListener("dblclick", () => {
-    // 同 VS Code 的 onDidReset：还没调过宽度就放大到可用宽度，调过了就复原
-    const cur = dom.getBoundingClientRect().width || DEFAULT_W;
-    setBarWidth(Math.abs(cur - DEFAULT_W) < 1 ? availableW() : DEFAULT_W);
+    // 同 VS Code 的 onDidReset：还没调过宽度就放大到可用宽度，调过了就复原。
+    // ⚠️ 比较的是**想要的宽度** `barWidth`，不是量到的那一档：量到的会被编辑区宽夹住，
+    //    窄格里「夹后的实际宽」永远不等于 419 ⇒ 拿它当判据的话这一键就只会复原、再也放不大。
+    setBarWidth(
+      Math.abs(barWidth - FIND_BAR_INITIAL_WIDTH) < 1 ? maxBarWidth() : FIND_BAR_INITIAL_WIDTH,
+    );
   });
-  // 窗口尺寸变了，写死的替换框宽度要重新量一次（可用最大宽度也会跟着变）
+  // 窗口尺寸变了：编辑区矩形要重量一次（RO 也会到，这里保底同 VS Code 的 onConfigurationChanged）
   window.addEventListener("resize", () => {
-    syncWidths();
-    const w = dom.getBoundingClientRect().width;
-    if (w > 0) setBarWidth(w);
+    watchHost();
+    relayout();
   });
 
   // 图标开关：点击翻转源真值 → 同步外观 → 通知主程序。
@@ -352,9 +475,11 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
       setReplaceExpanded(true);
     }
     if (seed) findInput.value = seed;
-    // 浮层可见后才有布局：替换框宽度必须在这里再量一次
-    // （首次打开时就展开替换行的路径走的是 setReplaceExpanded，它自己也量一次）
-    syncWidths();
+    // 浮层可见后才有布局：先认领当前活动面板那一格，再按它的矩形钉一次位置
+    // （`relayout()` 里带着重量替换框宽度；首次打开就展开替换行的路径由
+    //   setReplaceExpanded 自己量一次）
+    watchHost();
+    relayout();
     cb.onQueryChange(query());
   }
 
@@ -368,8 +493,18 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     open,
     close,
     isOpen: () => !dom.hidden,
+    relayout: () => {
+      if (dom.hidden) return;
+      watchHost();
+      relayout();
+    },
     retarget: () => {
-      if (!dom.hidden) cb.onQueryChange(query());
+      // 换面板 = 换锚点：`.layout-panel-active` 那一格挪走了，位置与宽度都要重算
+      if (!dom.hidden) {
+        watchHost();
+        relayout();
+        cb.onQueryChange(query());
+      }
     },
     step: (dir) => cb.onStep(dir, query()),
     setCount: (t, bad) => {

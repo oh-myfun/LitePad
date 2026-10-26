@@ -2087,12 +2087,15 @@ button:focus-visible {
   opacity: 0.5;
 }
 
-/* ---------- 悬浮查找 / 替换栏（方案 C：钉右上角的紧凑浮层） ----------
-   本节的尺寸与配色**逐条对齐 VS Code 的查找组件**，改动前先看这三份参考：
+/* ---------- 悬浮查找 / 替换栏（方案 C：钉在编辑区右上的紧凑浮层） ----------
+   本节的尺寸与配色**逐条对齐 VS Code 的查找组件**，改动前先看这几份参考：
      · docs/vscode-reference/src/vs/editor/contrib/find/browser/findWidget.css（浮层盒模型 / 工具按钮 / 计数）
      · docs/vscode-reference/src/vs/base/browser/ui/findinput/findInput.css（输入框内嵌开关的定位）
      · docs/vscode-reference/src/vs/base/browser/ui/toggle/toggle.css（开关本体尺寸）
    配色令牌见 src/vs/platform/theme/common/colors/{editorColors,inputColors}.ts。
+   ⚠️ **定位**不在这节里：B389-9 起由 `src/shell/findbar.ts` 的 `findBarAnchor` 按活动面板
+      编辑区的矩形算（顶边 +4px、右边让开滚动条、初始宽 419）；下面 `.find-bar` 里那组
+      top/right/width 只是量不到布局时的兜底。
    ⚠️ 有意偏离 VS Code 的地方都在下面逐条注明了原因，别当成漏抄。 */
 
 /* 盒模型折算：VS Code 的 `.find-widget` 把它自己的高度**由 JS 写死**成
@@ -2104,13 +2107,16 @@ button:focus-visible {
    用户实测的「拖拽高亮条错位」正是这个（B80）。工具提示挂在 body 上，不受这里裁切影响。 */
 .find-bar {
   position: fixed;
-  /* 钉在编辑器右上，尽量少遮挡正文（不再支持拖动 / 记忆位置）。
-     ⚠️ 这个 position 同时是 chevron 与关闭按钮**绝对定位的定位基准**。
-     整体往右上角再挪一点（top 8→6、right 16→10），更贴角、少挡正文。 */
-  right: 10px;
-  top: 6px;
+  /* ⚠️ 下面这三条（top / right / width）只是**量不到布局时的兜底**：真正的定位由
+     `shell/findbar.ts` 的 `relayout()` 按活动面板编辑区的矩形写内联样式
+     （B389-9 起照 VS Code：顶边 = 编辑区顶 +4px，右边让开竖向滚动条，宽 419）。
+     浮层钉在编辑区右上，尽量少遮挡正文，也不再压住标题栏与标签条。
+     ⚠️ 这个 position 同时是 chevron 与关闭按钮**绝对定位的定位基准**，别改成 static。 */
+  right: 14px;
+  top: 68px;
   z-index: 60;
-  width: 470px;
+  /* = VS Code `FIND_WIDGET_INITIAL_WIDTH`（findWidget.ts:80） */
+  width: 419px;
   max-width: calc(100vw - 24px);
   display: flex;
   flex-direction: column;
