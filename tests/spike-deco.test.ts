@@ -4,7 +4,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import type { DecorationSet } from "@codemirror/view";
-import { docState } from "./spike-deco-helpers";
+import { docState, lastChanges, trackedView, watchBroadcast } from "./spike-deco-helpers";
 import {
   frontMatterRange,
   isUnclosedFenceLine,
@@ -12,6 +12,7 @@ import {
 } from "../src/spike/deco/codeFence";
 import { CodeBlockWidget } from "../src/spike/deco/codeBlockWidget";
 import { livePreview } from "../src/spike/deco/livePreview";
+import { isMirrorSyncing, mirrorChanges } from "../src/spike/deco/mirror";
 import { applySelection, buildPreviewSets, revealFilterRange } from "../src/spike/deco/previewSets";
 
 // B391 spike · Task 1 —— 装饰集构建与 reveal 过滤（移植自 InkNote src/editor.ts）。
@@ -203,5 +204,73 @@ describe("B391-3 一个块 widget 打通原子区间", () => {
     } finally {
       view.destroy();
     }
+  });
+});
+
+describe("B391-4 只读镜像视图与 ChangeSet 桥", () => {
+  /** 两个各持独立 EditorState 的同文档视图（与 LitePad 的多实例模型同形）。 */
+  function twoViews(text = "第一行\n第二行\n第三行\n") {
+    const mk = () =>
+      trackedView(
+        EditorState.create({
+          doc: text,
+          extensions: [markdown({ base: markdownLanguage }), livePreview({ readOnly: true })],
+        }),
+        document.createElement("div"),
+      );
+    return { src: mk(), dst: mk() };
+  }
+
+  it("① 文本未变的事务不回写（幽灵 docChanged）", () => {
+    const { src, dst } = twoViews();
+    const before = dst.state.doc.toString();
+    src.dispatch({ selection: { anchor: 7 } }); // 仅选区，changes 为空
+    expect(mirrorChanges(dst, lastChanges(src))).toBe("skipped-identical");
+    expect(dst.state.doc.toString()).toBe(before);
+  });
+
+  it("② 镜像写入不会被当成用户编辑再广播回去（无回声环）", () => {
+    const { src, dst } = twoViews();
+    const seen: string[] = [];
+    const off = watchBroadcast(dst, (update) => {
+      // 天真桥法：dst 每发一次 update 就镜像回 src —— 回声闸必须把这一发判掉
+      seen.push(isMirrorSyncing() ? "镜像写入" : "dst 自发广播");
+      seen.push("回写 " + mirrorChanges(src, update.changes));
+    });
+    src.dispatch({ changes: { from: 0, insert: "x" } });
+    mirrorChanges(dst, lastChanges(src));
+    off();
+    expect(seen).toEqual(["镜像写入", "回写 skipped-echo"]);
+    expect(src.state.doc.toString().startsWith("xx")).toBe(false);
+    expect(src.state.doc.toString().startsWith("x")).toBe(true);
+  });
+
+  it("③ 镜像后两侧文本一致，且没有偷偷写 dst 的 scrollTop", () => {
+    const { src, dst } = twoViews();
+    let scrollWrites = 0;
+    let scrollValue = 0;
+    Object.defineProperty(dst.scrollDOM, "scrollTop", {
+      configurable: true,
+      get: () => scrollValue,
+      set: (v: number) => {
+        scrollWrites++;
+        scrollValue = v;
+      },
+    });
+    src.dispatch({ changes: { from: 0, insert: "改一版" } });
+    expect(mirrorChanges(dst, lastChanges(src))).toBe("applied");
+    expect(dst.state.doc.toString()).toBe(src.state.doc.toString());
+    // 落点是同步滚动的事，回写层一只管内容
+    expect(scrollWrites).toBe(0);
+  });
+
+  it("④ 基线不一致的陈旧 changeset 不硬套（会写出花来）", () => {
+    const { src, dst } = twoViews();
+    // dst 已经不是 src 那一刻的文档：拿 src 的 changes 直接 apply 会按位置乱改
+    dst.dispatch({ changes: { from: 0, insert: "另一版" } });
+    const afterDst = dst.state.doc.toString();
+    src.dispatch({ changes: { from: 0, insert: "改一版" } });
+    expect(mirrorChanges(dst, lastChanges(src))).toBe("skipped-stale");
+    expect(dst.state.doc.toString()).toBe(afterDst);
   });
 });

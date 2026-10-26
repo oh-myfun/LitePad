@@ -64,15 +64,27 @@ export function watchBroadcast(view: EditorView, cb: (update: ViewUpdate) => voi
   };
 }
 
-/** 建一个可跟踪变更的视图（Task 4 起两个视图都要走它）。 */
+/**
+ * 建一个可跟踪变更的视图（Task 4 起两个视图都要走它）。
+ *
+ * ⚠️ 两条踩过的坑，别改回去：
+ * 1. `EditorView.updateListener` 是 **state facet**（@codemirror/view dist:8032
+ *    `for (let listener of this.state.facet(updateListener))`）。挂在 EditorView
+ *    的 config extensions 里、或塞进 `state.update({ extensions })`（不是合法的
+ *    TransactionConfig 字段，会被静默丢掉）都收不到任何 update
+ *    —— 探针 .tmp/b391-listener-probe.mjs 的 A/C/D 三路全是 `[]`。
+ *    唯一可行的「先建视图、后加配置」是 `StateEffect.appendConfig`（F 路实测通）。
+ * 2. 装配置的那一发事务自己也会走一遍监听器，`recorded` 里会留下一份
+ *    「空 changes」。不抹掉的话，纯选区那条测试即使监听器整个失效也能读到一份
+ *    恰好为空的 changes 而假绿 —— 所以装完立刻 delete。
+ */
 export function trackedView(
   state: EditorState,
   parent: HTMLElement,
   extra: Extension[] = [],
 ): EditorView {
-  return new EditorView({
-    state,
-    parent,
-    extensions: [trackChangesExt(), ...extra],
-  });
+  const view = new EditorView({ state, parent, extensions: extra });
+  view.dispatch({ effects: StateEffect.appendConfig.of(trackChangesExt()) });
+  recorded.delete(view);
+  return view;
 }
