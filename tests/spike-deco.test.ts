@@ -1,5 +1,8 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import type { EditorState } from "@codemirror/state";
+import { EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
+import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import type { DecorationSet } from "@codemirror/view";
 import { docState } from "./spike-deco-helpers";
 import {
@@ -7,6 +10,8 @@ import {
   isUnclosedFenceLine,
   previewSyntaxTree,
 } from "../src/spike/deco/codeFence";
+import { CodeBlockWidget } from "../src/spike/deco/codeBlockWidget";
+import { livePreview } from "../src/spike/deco/livePreview";
 import { applySelection, buildPreviewSets, revealFilterRange } from "../src/spike/deco/previewSets";
 
 // B391 spike · Task 1 —— 装饰集构建与 reveal 过滤（移植自 InkNote src/editor.ts）。
@@ -154,5 +159,49 @@ describe("B391-2 未闭合围栏与 front matter 两道防吞", () => {
     expect(isUnclosedFenceLine("  ~~~ mermaid")).toBe(true);
     expect(isUnclosedFenceLine("``")).toBe(false);
     expect(isUnclosedFenceLine("正文 ```")).toBe(false);
+  });
+});
+
+describe("B391-3 一个块 widget 打通原子区间", () => {
+  it("eq 比长度与内容、不比绝对位置", () => {
+    const a = new CodeBlockWidget(10, 40, "x", "ts");
+    expect(a.eq(new CodeBlockWidget(90, 120, "x", "ts"))).toBe(true); // 位置不同、内容同 ⇒ 复用 DOM
+    expect(a.eq(new CodeBlockWidget(10, 41, "x", "ts"))).toBe(false); // 长度不同 ⇒ 重建
+    expect(a.eq(new CodeBlockWidget(10, 40, "y", "ts"))).toBe(false); // 内容不同 ⇒ 重建
+    expect(a.eq(new CodeBlockWidget(10, 40, "x", "rs"))).toBe(false); // 语言不同 ⇒ 重建
+  });
+
+  it("只读装饰面仍把整行围栏代码挂成原子块", () => {
+    const state = docState("前文\n```ts\nlet a = 1\n```\n后文\n");
+    const { atomicBlocks } = buildPreviewSets(state, previewSyntaxTree(state));
+    const fenceFrom = state.doc.line(2).from;
+    const fenceTo = state.doc.line(4).to;
+    expect(atomicBlocks).toEqual([{ from: fenceFrom, to: fenceTo }]);
+  });
+
+  it("livePreview 提供装饰源、widget DOM 与原子区间", () => {
+    const state = EditorState.create({
+      doc: "前文\n```ts\nlet a = 1\n```\n后文\n",
+      extensions: [markdown({ base: markdownLanguage }), livePreview({ readOnly: true })],
+    });
+    const view = new EditorView({ state, parent: document.body });
+    try {
+      // 两份源：行装饰 + 可见静态装饰（`provide` 里两条 `decorations.from`）
+      expect(view.state.facet(EditorView.decorations).length).toBe(2);
+      // 围栏代码换成了 widget DOM，里面是可被 Shiki 认领的 pre.md-code[data-lang]
+      const pre = view.dom.querySelector<HTMLElement>("pre.md-code");
+      expect(pre?.dataset.lang).toBe("ts");
+      expect(pre?.textContent).toContain("let a = 1");
+      // 原子区间：整块给一个 mark，光标以块为单位跳过
+      const atomic = view.state.facet(EditorView.atomicRanges)[0](view);
+      expect(atomic.size).toBe(1);
+      const spans: [number, number][] = [];
+      atomic.between(0, view.state.doc.length, (from, to) => {
+        spans.push([from, to]);
+      });
+      expect(spans).toEqual([[view.state.doc.line(2).from, view.state.doc.line(4).to]]);
+    } finally {
+      view.destroy();
+    }
   });
 });

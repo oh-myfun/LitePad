@@ -1,0 +1,144 @@
+/* B391 spike · 装饰面（InkNote 式 CM6 装饰预览）的样式。
+ *
+ * ⚠️ 只消费既有主题 token（--fg / --fg-muted / --link-fg / --code-bg / --border），
+ *    不写死字面量色值：B337/B342/B347 那批字阶与 CJK 抬升口径不许被绕过。
+ * 全部规则挂在 `.md-deco`（livePreview 通过 editorAttributes 打在编辑器根上）之下，
+ * 源码那一格与现方案的预览格都不受牵连。
+ *
+ * 空行**不折叠**：折叠会改变行盒高度，而同步滚动的共享坐标 `v` 的小数就是按块高算的
+ * —— 两侧几何口径必须一致，否则同一份文档在源码格与装饰格里落不到同一像素（B300 的教训）。
+ */
+
+.md-deco .cm-line {
+  position: relative;
+}
+
+/* —— 标题：上方留白 + 字阶（em ⇒ 跟随编辑器字号一起缩放）—— */
+.md-deco .cm-line.md-heading {
+  font-weight: 600;
+}
+.md-deco .cm-line.md-heading-1 {
+  padding-top: 1.1em;
+  font-size: 1.5em;
+}
+.md-deco .cm-line.md-heading-2 {
+  padding-top: 0.95em;
+  font-size: 1.25em;
+}
+.md-deco .cm-line.md-heading-3 {
+  padding-top: 0.8em;
+  font-size: 1.1em;
+}
+.md-deco .cm-line.md-heading-4,
+.md-deco .cm-line.md-heading-5,
+.md-deco .cm-line.md-heading-6 {
+  padding-top: 0.65em;
+}
+/* 光标压进来时 `#` 会显形（reveal），把它压成不抢眼的灰 */
+.md-deco .cm-md-heading-mark {
+  color: var(--fg-muted);
+}
+
+/* —— 引用：竖线贴行首，正文右移 —— */
+.md-deco .cm-line.md-blockquote {
+  color: var(--fg-muted);
+  padding-left: 1.6em;
+}
+.md-deco .cm-line.md-blockquote::before {
+  content: "";
+  position: absolute;
+  left: 0.3em;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--border);
+  pointer-events: none;
+}
+
+/* —— 列表：标记由 CSS 画，源码里的 `-`/`1.` 永不显形 ——
+   ⚠️ 两颗 `--editor-*` 名字是**移植来的行内 style 引用的**（previewSets 的 ListItem
+   分支直接抄 InkNote：`padding-left: calc(var(--editor-padding-x) + …)`）。
+   LitePad 没有这两颗 token ⇒ 不在这里补上的话，嵌套列表的缩进整条失效（骨架页实测）。
+   正式化时要么在此定义，要么把内联 style 改成 LitePad 自己的几何口径。 */
+.md-deco {
+  --editor-padding-x: 4px;
+  --editor-list-marker-offset: 1.5em;
+}
+.md-deco .cm-line.md-list-item {
+  padding-left: calc(
+    var(--editor-padding-x) + var(--md-list-marker-width, var(--editor-list-marker-offset))
+  );
+}
+.md-deco .cm-line.md-list-item.md-bullet-list:not(.md-task-item)::before {
+  content: "•";
+  position: absolute;
+  left: var(--md-list-marker-left, var(--editor-padding-x));
+  color: var(--fg-muted);
+  font-weight: 600;
+  pointer-events: none;
+}
+.md-deco .cm-line.md-list-item.md-ordered-list:not(.md-task-item)::before {
+  /* 用源码里的真实序号（`3.` 显示 3），没有时才不画 */
+  content: var(--md-marker, "");
+  position: absolute;
+  left: var(--md-list-marker-left, var(--editor-padding-x));
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.md-deco .cm-line.md-task-item {
+  padding-left: calc(var(--editor-padding-x) + var(--editor-list-marker-offset));
+}
+.md-deco .cm-line.md-task-item::before {
+  content: "";
+  position: absolute;
+  left: var(--md-list-marker-left, var(--editor-padding-x));
+  top: 0.45em;
+  width: 1em;
+  height: 1em;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  box-sizing: border-box;
+}
+.md-deco .cm-line.md-task-done {
+  color: var(--fg-muted);
+}
+.md-deco .cm-line.md-task-done::after {
+  content: "✓";
+  position: absolute;
+  left: calc(var(--md-list-marker-left, var(--editor-padding-x)) + 0.15em);
+  top: 0.35em;
+  color: var(--fg-muted);
+  font-size: 0.85em;
+}
+
+/* —— 链接 —— */
+.md-deco .cm-md-link {
+  color: var(--link-fg);
+  text-decoration: underline;
+}
+
+/* —— 围栏代码 widget —— */
+.md-deco .md-code-widget {
+  margin: 0.6em 0;
+}
+/* ⚠️ 选择器不能钉在 `pre.md-code` 上：`enhanceMarkdown` 的高亮那一发是
+   `el.replaceWith(shiki 产出的 <pre class="shiki">)`，`data-lang` 那个节点会被换掉。
+   盒子样式要挂在 widget 里的 `pre`（换完还在）。 */
+.md-deco .md-code-widget pre {
+  margin: 0;
+  padding: 0.7em 0.9em;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 0.9em;
+  line-height: 1.5;
+}
+/* Shiki 双主题：与 preview.css 同一口径（`--shiki-light/--shiki-dark` 由 enhance 写进 span） */
+.md-deco .md-code-widget pre.shiki span {
+  color: var(--shiki-light);
+}
+:root[data-theme="dark"] .md-deco .md-code-widget pre.shiki span {
+  color: var(--shiki-dark);
+}

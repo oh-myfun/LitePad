@@ -12,6 +12,7 @@ import { Decoration, type DecorationSet } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import type { Tree, SyntaxNodeRef } from "@lezer/common";
 import { frontMatterRange } from "./codeFence";
+import { CodeBlockWidget } from "./codeBlockWidget";
 
 /** 一个整块替换的源码区间。 */
 export interface BlockRange {
@@ -64,6 +65,20 @@ const NEVER_REVEAL = { from: 1, to: 0 };
 
 /** 任务项：兼容标准无序/有序形式，也兼容单独 `[x] 文本` 的简写。 */
 const TASK_LINE_RE = /^(\s*(?:(?:[-*+]|\d+[.)])\s+)?)\[([ xX])\](\s|$)/;
+
+/** 围栏的信息串（```ts 里的 `ts`） */
+function fencedCodeInfo(node: SyntaxNodeRef, doc: EditorState["doc"]): string {
+  const info = node.node.getChild("CodeInfo");
+  return info ? doc.sliceString(info.from, info.to) : "";
+}
+
+/** 围栏正文（多个 CodeText 片段拼回来） */
+function fencedCodeText(node: SyntaxNodeRef, doc: EditorState["doc"]): string {
+  return node.node
+    .getChildren("CodeText")
+    .map((child) => doc.sliceString(child.from, child.to))
+    .join("");
+}
 
 /**
  * 构建与光标无关的装饰。
@@ -303,6 +318,8 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
       if (n === "FencedCode") {
         // 未闭合的围栏按 CommonMark 会一直吃到文末，挂成块级替换会把整篇文档吞掉
         if (node.node.getChildren("CodeMark").length < 2) return;
+        const lang = fencedCodeInfo(node, doc).trim().toLowerCase();
+        const code = fencedCodeText(node, doc);
         const block = coversWholeLines(from, to);
         if (!block) {
           // 缩进在列表里的围栏代码块：只隐藏围栏，不做块级替换
@@ -315,6 +332,7 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
             // Task 3 在这里换成真正的 CodeBlockWidget（Shiki 高亮）；
             // spike 的 Task 1 只验「整行覆盖判定 + 原子区间」这两件事。
             block: true,
+            widget: new CodeBlockWidget(from, to, code, lang),
             ...blockReveal(from, to),
           }).range(from, to),
         );
