@@ -73,6 +73,7 @@ import {
 import { LOSSY_ABORT, refreshAll, showMessage } from "../ui";
 import { TEXT_FILTERS } from "./filters";
 import { reclaimRemoted } from "../multiwindow/windows";
+import { refreshDecoMirror } from "../spike/deco/panelBridge";
 import {
   applyDiskContent,
   discardBackupFor,
@@ -119,6 +120,7 @@ function rebuildDocInstances(doc: Doc, text: string, keepCursor = false): void {
       panel.view.setState(inst.state);
       setSuppressDirty(false);
       panel.viewTabId = inst.tabId;
+      refreshDecoMirror(panel); // B391F-2：重载换了正文，装饰面要跟着播种（不补就停在旧文档）
       // 「它就停在这儿也是我造成的」⇒ 认领**看得见那一侧**（隐藏侧恒 0，按它认领会连带吞掉
       // 现形后被扶到的那一发）。顺带把这份标签的位置快照认账成现实：重载换过正文之后，
       // 旧 `scrollV` 指向的行已经不是那一处了，留着它下次切标签会硬灌回一个错位置。

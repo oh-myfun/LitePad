@@ -7,7 +7,6 @@
 
 import {
   type Doc,
-  type Panel,
   type Tab,
   tabs,
   docs,
@@ -60,7 +59,8 @@ import { closeTab as ipcCloseTab, newTab as ipcNewTab } from "../ipc/api";
 import type { ChangeSet } from "@codemirror/state";
 // B391 spike：装饰预览面（`Settings.deco_preview` 开着才用得上；调用点全在
 // `isDecoPreviewEnabled` 分支里，静态守卫由 tests/spike-deco-wiring.test.ts ① 钉住）。
-import { createDecoMirror, mirrorChanges, reseedDecoMirror } from "../spike/deco/mirror";
+import { createDecoMirror, mirrorChanges } from "../spike/deco/mirror";
+import { decoDocIdOf, decoTextOf, refreshDecoMirror } from "../spike/deco/panelBridge";
 import { EditorScrollAnchor } from "../sync-scroll/anchor";
 import { renderPanelTabs, renderPanelOps, panelDataOf } from "./render";
 import {
@@ -781,28 +781,9 @@ export function freshTextOfDoc(doc: Doc): string | null {
 }
 
 // ------------------------------------------------------- B391 spike · 装饰预览面
-
-/** 这一格此刻该显示的那份文档正文（装饰面的播种源）。 */
-function decoTextOf(panel: Panel): string {
-  const t = tabs.get(panel.viewTabId ?? panel.activeTabId);
-  return t?.state.doc.toString() ?? "";
-}
-
-/** 这一格此刻该显示的那份文档编号（装饰面的归属戳记源）。 */
-function decoDocIdOf(panel: Panel): number {
-  const t = tabs.get(panel.viewTabId ?? panel.activeTabId);
-  return t?.docId ?? 0;
-}
-
-/**
- * 把这一格的装饰面重新播种到它**现在该显示**的那份文档 —— 换标签 / 关掉相邻标签接班
- * 那一形。同文档的增量编辑不走这里，走 `syncDecoMirrors` 的 ChangeSet 桥
- * （桥那边基线一致才有意义，换了文档必然被判 `skipped-stale`）。
- */
-export function refreshDecoMirror(panel: Panel): void {
-  if (!panel.decoMirror) return;
-  reseedDecoMirror(panel.decoMirror, decoTextOf(panel), decoDocIdOf(panel));
-}
+// 「播种装饰面」那三样（正文源 / 归属源 / refreshDecoMirror）住在
+// `spike/deco/panelBridge.ts` —— `io/files.ts` 重载那一形也要用它，
+// 而本模块已经 import 了 `io/files.ts`，留在这里是条环。
 
 /**
  * 把某实例的一发变更映射进**所有显示同一文档**的装饰面。

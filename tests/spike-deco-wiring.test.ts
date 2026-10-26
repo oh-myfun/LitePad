@@ -425,6 +425,32 @@ describe("B391F-1 装饰面吃编辑器排版 token", () => {
 });
 
 /**
+ * B391F-2 · 四条同形路径的播种守卫。
+ *
+ * 不变量：**谁给面板的 view 换 state，谁就得给这一格的装饰面播种一次**。
+ * 装饰面不是 Tab 实例，不在 `syncDocInstances` 的兄弟遍历里 —— 换完 state 不播种，
+ * 镜像就停在旧文档上，而桥的归属闸（判据 ⑤）会正确地拒收别人的变更，
+ * 于是症状是「预览面显示一篇旧文、再也不跟着动」（数据不坏，但那一格死了）。
+ * 静态数一遍是这里最划算的判据：漏接线的那一形在 jsdom 里造齐四条真路径的成本太高。
+ */
+describe("B391F-2 换 state 必播种装饰面", () => {
+  for (const f of ["src/tabs/lifecycle.ts", "src/tabs/split.ts", "src/io/files.ts"]) {
+    it(`${f}：refreshDecoMirror 的发数不少于 view.setState 的发数`, () => {
+      const src = readFileSync(f, "utf-8")
+        .replace(/\/\*[\s\S]*?\*\//g, "") // 注释里提到函数名不算接线
+        .replace(/^\s*\/\/.*$/gm, "");
+      const sets = (src.match(/view\.setState\(/g) ?? []).length;
+      const seeds = (src.match(/refreshDecoMirror\(/g) ?? []).length;
+      expect(sets, `${f} 一条 setState 都没有 ⇒ 判据空转，先确认扫描点没搬走`).toBeGreaterThan(0);
+      expect(
+        seeds,
+        `${f}：${sets} 发 view.setState，只有 ${seeds} 发装饰面播种`,
+      ).toBeGreaterThanOrEqual(sets);
+    });
+  }
+});
+
+/**
  * B391F-3 · 挂载装饰面的三道闸（spike 结果文档⑤切片 11 那一形）。
  *
  * 走谓词而不是整窗启动：jsdom 里造一篇 `.txt` 与一份 `huge` 文档的**真**面板成本，

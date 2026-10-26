@@ -47,6 +47,7 @@ import { newTab as ipcNewTab } from "../ipc/api";
 import { renderPanelTabs } from "./render";
 import { rebuildLayout, disposePanel, freshTextOfDoc, pruneEmptyPanels } from "./lifecycle";
 import { landVisibleSideAtV, readVisibleV } from "../sync-scroll/wire";
+import { refreshDecoMirror } from "../spike/deco/panelBridge";
 import { applyPanelMode, scheduleSessionSave } from "./deps";
 
 /**
@@ -103,6 +104,7 @@ export function splitActivePanel(panelId: number, dir: "h" | "v"): void {
         setSuppressDirty(true);
         view.setState(prev.state);
         setSuppressDirty(false);
+        refreshDecoMirror(panel); // B391F-2：接班换了文档，装饰面要跟着播种（不补就是停在旧文）
         view.focus();
         applyPanelMode(panel);
         landVisibleSideAtV(panel, prev.scrollV);
