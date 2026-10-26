@@ -53,13 +53,13 @@
 
 ## 技术栈
 
-| 层 | 选型 |
-| --- | --- |
-| 外壳 | Tauri 2 |
-| 前端 | Vite 6 + TypeScript |
-| 编辑内核 | CodeMirror 6 |
+| 层       | 选型                                                     |
+| -------- | -------------------------------------------------------- |
+| 外壳     | Tauri 2                                                  |
+| 前端     | Vite 6 + TypeScript                                      |
+| 编辑内核 | CodeMirror 6                                             |
 | Markdown | markdown-it + GFM 插件；Shiki / KaTeX / Mermaid 按需加载 |
-| 编码 | encoding_rs + chardetng |
+| 编码     | encoding_rs + chardetng                                  |
 
 ---
 
