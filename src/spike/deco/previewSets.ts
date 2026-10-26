@@ -2,10 +2,12 @@
 // 本机参照：E:\Project\InkNote\InkNote
 //
 // B391 spike · 装饰集构建。范围按 spike 计划收窄：只搬「行装饰 + 标记隐藏 +
-// 整行覆盖判定」三类，块级 widget（表格 / 公式 / mermaid / 图片 / front matter /
-// HTML 块）与 lezer 不认的方言（==高亮==、<u>、非标准任务项）一律不搬。
-// 未闭合围栏的 `CodeMark < 2` 防吞闸**故意留白**：那是 Task 2 的交付物，
-// 现在搬进来，Task 2 的测试就没有红基线了。
+// 整行覆盖判定」三类。块级 widget 里围栏代码（Task 3）与公式 / mermaid / 表格
+// （B391F-4，见 `richWidgets.ts`）已接；lezer 不认的方言（`==高亮==`、`<u>`、脚注）
+// 与 front matter 摘要仍未搬 —— 那几条在派生 DOM 那一侧也是「原样吐字」，
+// 补齐的排期跟着 B394 的覆盖面清单走。
+// 未闭合围栏的 `CodeMark < 2` 防吞闸：`FencedCode` 分支里那道判据就是它，
+// Task 2 的测试靠它拿红基线，别当冗余删掉。
 
 import { EditorState, type Range } from "@codemirror/state";
 import { Decoration, type DecorationSet } from "@codemirror/view";
@@ -13,6 +15,7 @@ import { syntaxTree } from "@codemirror/language";
 import type { Tree, SyntaxNodeRef } from "@lezer/common";
 import { frontMatterRange } from "./codeFence";
 import { CodeBlockWidget } from "./codeBlockWidget";
+import { MathWidget, MermaidWidget, TableWidget, scanMath } from "./richWidgets";
 
 /** 一个整块替换的源码区间。 */
 export interface BlockRange {
@@ -90,6 +93,14 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
   const lineDecos: Range<Decoration>[] = [];
   const decos: Range<Decoration>[] = [];
   const atomicBlocks: BlockRange[] = [];
+  /**
+   * 已经被**整段接管**的区间（围栏代码 / 行内代码 / 表格）。
+   *
+   * 两个用途：① 公式扫描要跳过它们（`` `$x$` `` 里的 `$` 不是公式）；
+   * ② 装饰不许重叠 —— 表格 widget 已经吃下那几行，再往里塞一发数学 widget
+   *   会让 `Decoration.set(…, true)` 直接抛（SpanTree 不接受交叠区间）。
+   */
+  const occupied: BlockRange[] = [];
   const doc = state.doc;
   const syntax = tree ?? syntaxTree(state);
   const fm = frontMatterRange(state);
@@ -196,6 +207,7 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
       }
 
       if (n === "InlineCode") {
+        occupied.push({ from, to });
         hideChildren(node, "CodeMark");
         return;
       }
@@ -318,6 +330,7 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
       if (n === "FencedCode") {
         // 未闭合的围栏按 CommonMark 会一直吃到文末，挂成块级替换会把整篇文档吞掉
         if (node.node.getChildren("CodeMark").length < 2) return;
+        occupied.push({ from, to });
         const lang = fencedCodeInfo(node, doc).trim().toLowerCase();
         const code = fencedCodeText(node, doc);
         const block = coversWholeLines(from, to);
@@ -327,12 +340,33 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
           return;
         }
         atomicBlocks.push({ from, to });
+        // ```mermaid 在派生 DOM 那一侧走的是「占位 pre → enhance 画 SVG」，
+        // 装饰面照同一条路（`MermaidWidget`），不引第二套渲染器；
+        // 其余语言仍是 Shiki 只读 widget。
+        const widget =
+          lang === "mermaid"
+            ? new MermaidWidget(from, to, code)
+            : new CodeBlockWidget(from, to, code, lang);
         decos.push(
           Decoration.replace({
-            // Task 3 在这里换成真正的 CodeBlockWidget（Shiki 高亮）；
-            // spike 的 Task 1 只验「整行覆盖判定 + 原子区间」这两件事。
             block: true,
-            widget: new CodeBlockWidget(from, to, code, lang),
+            widget,
+            ...blockReveal(from, to),
+          }).range(from, to),
+        );
+        return;
+      }
+
+      if (n === "Table") {
+        // 表格整块换成只读 `<table>`，内容由 `renderFull` 现产 —— 与派生 DOM 那张
+        // 是同一份渲染器出的，对齐（`:---:`）也一并跟着 markdown-it，不在这里重算一遍。
+        occupied.push({ from, to });
+        if (!coversWholeLines(from, to)) return;
+        atomicBlocks.push({ from, to });
+        decos.push(
+          Decoration.replace({
+            block: true,
+            widget: new TableWidget(from, to, doc.sliceString(from, to)),
             ...blockReveal(from, to),
           }).range(from, to),
         );
@@ -340,6 +374,25 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
       }
     },
   });
+
+  // —— 数学：lezer 没有数学节点，只能按文本扫（照 InkNote 的 `scanMath`）——————————
+  // 排在语法树遍历**之后**，因为「代码里不算公式」这道闸要拿上面收集到的 `occupied`。
+  const inTaken = (a: number, b: number) => occupied.some((r) => a < r.to && b > r.from);
+  for (const m of scanMath(doc, inTaken)) {
+    const wholeLine = m.block && coversWholeLines(m.from, m.to);
+    if (wholeLine) atomicBlocks.push({ from: m.from, to: m.to });
+    occupied.push({ from: m.from, to: m.to });
+    decos.push(
+      Decoration.replace({
+        block: wholeLine,
+        widget: new MathWidget(m.from, m.to, m.tex, wholeLine),
+        ...blockReveal(m.from, m.to),
+      }).range(m.from, m.to),
+    );
+  }
+  // 数学那一批发在遍历之后 ⇒ 数组不再按位置有序，而 `Decoration.set(…, true)`
+  // 要求已排序（乱序直接抛）。按起点排一次，等价于「谁在前谁先建」。
+  decos.sort((a, b) => a.from - b.from);
 
   // 标记 Markdown 空行，供组件边界和相邻块样式识别。
   // 空行本身仍保留正常行高，确保连续回车时光标会真实向下移动。

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import type { DecorationSet } from "@codemirror/view";
+import type { DecorationSet, WidgetType } from "@codemirror/view";
 import { docState, lastChanges, trackedView, watchBroadcast } from "./spike-deco-helpers";
 import {
   frontMatterRange,
@@ -11,6 +11,7 @@ import {
   previewSyntaxTree,
 } from "../src/spike/deco/codeFence";
 import { CodeBlockWidget } from "../src/spike/deco/codeBlockWidget";
+import { MathWidget, MermaidWidget, TableWidget } from "../src/spike/deco/richWidgets";
 import { livePreview } from "../src/spike/deco/livePreview";
 import { isMirrorSyncing, mirrorChanges } from "../src/spike/deco/mirror";
 import { applySelection, buildPreviewSets, revealFilterRange } from "../src/spike/deco/previewSets";
@@ -272,5 +273,100 @@ describe("B391-4 只读镜像视图与 ChangeSet 桥", () => {
     src.dispatch({ changes: { from: 0, insert: "改一版" } });
     expect(mirrorChanges(dst, lastChanges(src))).toBe("skipped-stale");
     expect(dst.state.doc.toString()).toBe(afterDst);
+  });
+});
+
+/**
+ * B391F-4 · 块级富构造（公式 / mermaid / 表格）接进装饰集。
+ *
+ * 判据按「挂上去的是哪一颗 widget、占不占整行、进不进原子区间」三件事问 ——
+ * 这三样决定了同步滚动的逐行对齐与行高图会不会被新构造带偏，
+ * 而「画得好不好看」归真机那一轮（`.tmp/b391-check.py` 的能力清单）。
+ */
+describe("B391F-4 公式 / mermaid / 表格的装饰集", () => {
+  function widgets(text: string) {
+    const state = docState(text);
+    const { statics, atomicBlocks } = buildPreviewSets(state, previewSyntaxTree(state));
+    const out: { from: number; to: number; block: boolean; w: WidgetType | null }[] = [];
+    statics.between(0, state.doc.length, (from, to, value) => {
+      const spec = value.spec as { widget?: WidgetType; block?: boolean };
+      if (spec.widget) out.push({ from, to, block: Boolean(spec.block), w: spec.widget ?? null });
+    });
+    return { state, out, atomic: atomicBlocks.length };
+  }
+
+  it("整行表格换成一个块级 TableWidget，并记进原子区间", () => {
+    const { out, atomic } = widgets("| 甲 | 乙 |\n|:---|---:|\n| 1 | 2 |\n\n正文\n");
+    expect(out).toHaveLength(1);
+    expect(out[0].w).toBeInstanceOf(TableWidget);
+    expect(out[0].block, "表格占满整行 ⇒ 必须是 block widget").toBe(true);
+    expect(atomic).toBe(1);
+  });
+
+  it("$$ 独占整行 ⇒ 块级 MathWidget；$…$ 在句子里 ⇒ 行内 MathWidget", () => {
+    const block = widgets("$$\nx^2\n$$\n");
+    expect(block.out[0].w).toBeInstanceOf(MathWidget);
+    expect(block.out[0].block).toBe(true);
+    expect(block.atomic, "块级公式整块原子化，光标不许落进去").toBe(1);
+
+    const inline = widgets("质能方程 $E = mc^2$ 很有名。\n");
+    expect(inline.out).toHaveLength(1);
+    expect(inline.out[0].w).toBeInstanceOf(MathWidget);
+    expect(inline.out[0].block, "行内公式不许挂成 block widget（会把整行劈开）").toBe(false);
+    expect(inline.atomic).toBe(0);
+    expect((inline.out[0].w as MathWidget).tex).toBe("E = mc^2");
+  });
+
+  it("```mermaid 走 MermaidWidget，其余语言仍走 CodeBlockWidget", () => {
+    const { out } = widgets("```mermaid\ngraph TD; A-->B\n```\n\n```ts\nlet a = 1\n```\n");
+    expect(out).toHaveLength(2);
+    expect(out[0].w).toBeInstanceOf(MermaidWidget);
+    expect(out[1].w).toBeInstanceOf(CodeBlockWidget);
+    expect((out[0].w as MermaidWidget).code).toContain("graph TD");
+  });
+
+  it("代码里的 $ 不算公式：行内代码与围栏各挡一刀", () => {
+    const inlineCode = widgets("价格是 `$5 到 $10` 之间。\n");
+    expect(
+      inlineCode.out.filter((x) => x.w instanceof MathWidget),
+      "行内代码里的 $…$ 不算公式",
+    ).toHaveLength(0);
+    const fenced = widgets("```\n$$\nx^2\n$$\n```\n");
+    expect(
+      fenced.out.filter((x) => x.w instanceof MathWidget),
+      "围栏代码里的 $$ 不算公式",
+    ).toHaveLength(0);
+    expect(fenced.out[0].w).toBeInstanceOf(CodeBlockWidget);
+  });
+
+  it("表格里的 $x$ 不重复挂数学 widget（装饰交叠会让 Decoration.set 直接抛）", () => {
+    expect(() => widgets("| 甲 | 乙 |\n|---|---|\n| $x$ | 2 |\n")).not.toThrow();
+    const { out } = widgets("| 甲 | 乙 |\n|---|---|\n| $x$ | 2 |\n");
+    expect(out.map((x) => x.w?.constructor.name)).toEqual(["TableWidget"]);
+  });
+
+  it("金额那一形不被误判成公式（InkNote 同口径的保守规则）", () => {
+    expect(widgets("价格 $5 到 $10 元\n").out).toHaveLength(0);
+  });
+
+  it("真视图里：表格画出 <table>，公式留下可被 KaTeX 认领的占位", () => {
+    const state = EditorState.create({
+      doc: "| 甲 | 乙 |\n|---|---|\n| 1 | 2 |\n\n行内 $a+b$ 与 $$\nx^2\n$$\n",
+      extensions: [markdown({ base: markdownLanguage }), livePreview({ readOnly: true })],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    try {
+      expect(
+        view.dom.querySelector("table.md-deco-table, .md-table-widget table"),
+        "表格要真画出 <table>",
+      ).toBeTruthy();
+      expect(
+        view.dom.querySelectorAll(".math-inline-src, .math-display-src").length,
+        "两处数学占位都等 enhance 认领",
+      ).toBeGreaterThanOrEqual(2);
+      expect(view.dom.querySelector(".mermaid-src"), "本篇没有 mermaid").toBeNull();
+    } finally {
+      view.destroy();
+    }
   });
 });

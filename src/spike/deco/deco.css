@@ -143,12 +143,97 @@
   color: var(--shiki-dark);
 }
 
-/* —— 面板宿主（Task 5 接线）——————————————————————————————————————————————————————
-   装饰面这一格挂的是 `.md-preview.md-deco-host`：借现方案那颗类是为了直接吃
-   `.panel-host.mode-*` 的三条显隐规则（源码 / 分屏 / 纯预览），不必再实现一遍切换。
-   但 `.md-preview` 本身是「自己滚 + 正文边距」的容器，装饰面里滚的是 CM6 的
-   `.cm-scroller` ⇒ 外层要改成「不滚、无边距、竖着铺满」，否则两层滚动条 + 双份边距。 */
-.md-preview.md-deco-host {
+/* —— B391F-4 · 块级富构造（公式 / mermaid / 表格）——————————————————————————————
+   三样的 DOM 都由 `richWidgets.ts` 产出，占位类名与派生 DOM 那一侧**同一套**
+   （`.math-*-src` / `pre.mermaid-src` / `<table>`），所以 KaTeX 与 mermaid 的成品样式
+   直接复用 `preview.css` 里那几条（它们钉在 `.md-rendered` 下 —— 装饰面宿主带着
+   `.md-preview`，但**没有** `.md-rendered`，故这里各补一条同口径的）。 */
+.md-deco .md-math-widget {
+  display: inline-block;
+}
+.md-deco .md-math-widget.md-math-block {
+  display: block;
+  margin: 12px 0;
+  text-align: center;
+  overflow-x: auto;
+}
+.md-deco .md-math-empty {
+  color: var(--fg-muted);
+  font-style: italic;
+}
+.md-deco .math-inline,
+.md-deco .math-display {
+  color: var(--fg);
+}
+.md-deco .math-inline-src,
+.md-deco .math-display-src {
+  font-family: var(--font-code, monospace);
+  color: var(--fg-muted);
+}
+.md-deco .md-mermaid-widget {
+  margin: 12px 0;
+  text-align: center;
+  overflow-x: auto;
+}
+.md-deco .md-mermaid-widget .md-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+/* mermaid 画失败 / 大文档档位不自动画 ⇒ 留源码，样式照代码块那一档（别让它裸奔） */
+.md-deco .md-mermaid-widget pre.mermaid-src,
+.md-deco .md-mermaid-widget .mermaid-error {
+  text-align: left;
+  margin: 0;
+  padding: 0.7em 0.9em;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 0.9em;
+  line-height: 1.5;
+  white-space: pre;
+}
+/* 表格：几何与 preview.css 的 `.md-rendered table` 同值（同一张表两处不像，
+   对标矩阵就没法读）。`--md-border` 只在那颗类下定义，这里改用全局 `--border`。 */
+.md-deco .md-table-widget {
+  margin: 12px 0;
+}
+.md-deco .md-table-widget table {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.md-deco .md-table-widget th,
+.md-deco .md-table-widget td {
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+}
+.md-deco .md-table-widget th {
+  background: var(--code-bg);
+  font-weight: 600;
+}
+
+装饰面这一格挂的是
+  `.md-preview.md-deco-host`：借现方案那颗类是为了直接吃
+  `.panel-host.mode-*`
+  的三条显隐规则（源码
+  /
+  分屏
+  /
+  纯预览），不必再实现一遍切换。
+  但
+  `.md-preview`
+  本身是「自己滚
+  + 正文边距」的容器，装饰面里滚的是
+  CM6
+  的
+  `.cm-scroller`
+  ⇒
+  外层要改成「不滚、无边距、竖着铺满」，否则两层滚动条
+  + 双份边距。
+  */
+  .md-preview.md-deco-host {
   display: flex;
   flex-direction: column;
   padding: 0;

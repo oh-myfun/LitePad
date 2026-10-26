@@ -1,0 +1,243 @@
+// B391F-4 · 装饰面的块级富构造：公式 / mermaid / 表格。
+//
+// 形状照 InkNote 的 `editor/widgets/{math,mermaid,table}.ts`（本机参照
+// E:\Project\InkNote\InkNote），**渲染器不照**：InkNote 在 widget 里直调
+// `katex.renderToString` 与 `mermaid.render`，LitePad 这两发已经有唯一出口
+// `markdown/enhance.enhanceMarkdown`（B352-2 抽它就是为了「别把四件事抄进每个渲染面」）。
+// 所以这里的 widget 只负责「把源码区间换成一个占位节点 + 请 enhance 来认领」：
+//
+//   · 公式 → `.math-inline-src` / `.math-display-src`（KaTeX，懒加载）
+//   · mermaid → `pre.mermaid-src`（懒加载 mermaid，`bigDoc` 档位照旧不画）
+//   · 表格 → `renderFull()` 直接产出与派生 DOM **同一张** `<table>`（含 `:---:` 对齐）
+//
+// 三条都因此与现方案共享同一份主题口径（Shiki 双主题、`--shiki-light/dark`、
+// 大文档降级），不会出现「预览格两种实现各渲染各的」那种漂移。
+//
+// ⚠️ 与 InkNote 的有意差异：它的 math/table widget 带就地编辑（`editableSource` +
+// `visualActions`，合计 ~840 行）。装饰面这一格是**只读镜像**，写回要走反向的 ChangeSet 桥，
+// 那是另一件事（B391F-7），这里一行都不搬。
+
+import { WidgetType, type EditorView } from "@codemirror/view";
+import type { Text } from "@codemirror/state";
+import { enhanceMarkdown, nextEnhanceSeq } from "../../markdown/enhance";
+import { renderFull } from "../../markdown/pipeline";
+import { LAZY_THRESHOLD_LINES } from "../../editor/perf";
+
+/** 大文档档位与派生 DOM 共用一个阈值（超过就不自动跑 mermaid / Shiki）。 */
+function bigDocOf(view: EditorView): boolean {
+  return view.state.doc.lines > LAZY_THRESHOLD_LINES;
+}
+
+/**
+ * 请 `enhanceMarkdown` 把这一个 widget 里的占位认领掉，画完之后让 CM6 重量一次行高。
+ *
+ * `requestMeasure` 不是可选的：KaTeX / mermaid 都是异步落地的，落地那一发把一行
+ * 变成三行高，不重新测量的话 `scrollHeight` 与行号图都停在估算值上 ——
+ * 那正是派生 DOM 那条线当年 B272/B282 那一族「底部留白 / 滚不到顶」的来源。
+ */
+function enhanceThenMeasure(el: HTMLElement, view: EditorView): void {
+  const seq = nextEnhanceSeq(el);
+  enhanceMarkdown(el, seq, { bigDoc: bigDocOf(view), baseDir: null })
+    .then(() => view.requestMeasure())
+    .catch(() => {
+      /* 加载失败就停在占位文本（与预览格同一口径） */
+    });
+}
+
+/** 公式：行内 `$…$` 与块级 `$$…$$`（`block` 由扫描器按「是否占满整行」定）。 */
+export class MathWidget extends WidgetType {
+  constructor(
+    readonly from: number,
+    readonly to: number,
+    readonly tex: string,
+    readonly block: boolean,
+  ) {
+    super();
+  }
+
+  /** 只比内容与形状，不比绝对位置：上方编辑会挪位置，比位置等于每敲一键重建一遍。 */
+  eq(other: MathWidget): boolean {
+    return (
+      other.tex === this.tex &&
+      other.block === this.block &&
+      other.to - other.from === this.to - this.from
+    );
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const wrap = document.createElement(this.block ? "div" : "span");
+    wrap.className = this.block ? "md-block md-math-widget md-math-block" : "md-math-widget";
+    const ph = document.createElement("span");
+    ph.className = this.block ? "math-display-src" : "math-inline-src";
+    ph.textContent = this.tex;
+    wrap.appendChild(ph);
+    if (!this.tex.trim()) {
+      // 空公式（`$$` 连写 / `$ $`）enhance 会跳过，这里给一个不撒谎的占位
+      wrap.classList.add("md-math-empty");
+      ph.textContent = this.block ? "$$" : "$$";
+    } else {
+      enhanceThenMeasure(wrap, view);
+    }
+    return wrap;
+  }
+
+  ignoreEvent(): boolean {
+    return true;
+  }
+}
+
+/** mermaid 围栏：占位 `pre.mermaid-src` 交给 enhance 里那一发懒 import 画成 SVG。 */
+export class MermaidWidget extends WidgetType {
+  constructor(
+    readonly from: number,
+    readonly to: number,
+    readonly code: string,
+  ) {
+    super();
+  }
+
+  eq(other: MermaidWidget): boolean {
+    return other.code === this.code && other.to - other.from === this.to - this.from;
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const wrap = document.createElement("div");
+    wrap.className = "md-block md-mermaid-widget";
+    const pre = document.createElement("pre");
+    pre.className = "mermaid-src";
+    pre.textContent = this.code;
+    wrap.appendChild(pre);
+    enhanceThenMeasure(wrap, view);
+    return wrap;
+  }
+
+  ignoreEvent(): boolean {
+    return false;
+  }
+}
+
+/** 表格：只读渲染，产物与派生 DOM 预览**同一张表**（走 `renderFull`）。 */
+export class TableWidget extends WidgetType {
+  constructor(
+    readonly from: number,
+    readonly to: number,
+    readonly src: string,
+  ) {
+    super();
+  }
+
+  eq(other: TableWidget): boolean {
+    return other.src === this.src && other.to - other.from === this.to - this.from;
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const wrap = document.createElement("div");
+    wrap.className = "md-block md-table-widget";
+    // `renderFull` 吃的是这一段的 markdown 源码 ⇒ 表头/对齐/单元格里的行内构造
+    // 都与整篇渲染时一致；表格里嵌的公式/代码块再由 enhance 认领。
+    wrap.innerHTML = renderFull(this.src);
+    enhanceThenMeasure(wrap, view);
+    return wrap;
+  }
+
+  ignoreEvent(): boolean {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------- 公式扫描
+// 移植自 InkNote src/editor/widgets/math.ts:160-244（`scanMath`）。
+// lezer 的 markdown 没有数学节点，所以这一类只能按文本扫。
+
+export interface MathRange {
+  from: number;
+  to: number;
+  tex: string;
+  block: boolean;
+}
+
+const isSpace = (c: string | undefined): boolean => c === undefined || /\s/.test(c);
+const isDigit = (c: string | undefined): boolean => c !== undefined && /[0-9]/.test(c);
+
+function occupiesWholeLines(doc: Text, from: number, to: number): boolean {
+  return doc.lineAt(from).from === from && doc.lineAt(to).to === to;
+}
+
+/**
+ * 扫描文档中的数学公式区间（排除代码里）。
+ *
+ * 行内公式采用与 Typora 一致的保守规则，避免把金额当成公式：开定界符后必须紧跟
+ * 非空白、闭定界符前必须是非空白、闭定界符后不能紧跟数字（`价格 $5 到 $10 元` 不算）。
+ * 与 `markdown/pipeline.ts` 那条 markdown-it 内联规则同口径 —— 两种预览实现
+ * 对「什么算公式」的答案必须一致，否则对标矩阵里这一行永远对不平。
+ */
+export function scanMath(
+  doc: Text,
+  inCode: (from: number, to: number) => boolean,
+  sourceText?: string,
+): MathRange[] {
+  const text = sourceText ?? doc.sliceString(0, doc.length);
+  const results: MathRange[] = [];
+  let i = 0;
+
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === "\\") {
+      i += 2; // 跳过转义（含 \$）
+      continue;
+    }
+    if (ch !== "$") {
+      i++;
+      continue;
+    }
+    if (text[i + 1] === "$") {
+      const close = text.indexOf("$$", i + 2);
+      if (close < 0) {
+        i += 2;
+        continue;
+      }
+      const from = i;
+      const to = close + 2;
+      if (!inCode(from, to)) {
+        results.push({
+          from,
+          to,
+          tex: text.slice(from + 2, close).trim(),
+          block: occupiesWholeLines(doc, from, to),
+        });
+      }
+      i = to;
+      continue;
+    }
+    if (isSpace(text[i + 1])) {
+      i++;
+      continue;
+    }
+    let j = i + 1;
+    let close = -1;
+    while (j < text.length) {
+      const c = text[j];
+      if (c === "\n") break;
+      if (c === "\\") {
+        j += 2;
+        continue;
+      }
+      if (c === "$") {
+        if (!isSpace(text[j - 1]) && !isDigit(text[j + 1])) close = j;
+        break;
+      }
+      j++;
+    }
+    if (close < 0) {
+      i++;
+      continue;
+    }
+    const from = i;
+    const to = close + 1;
+    if (!inCode(from, to)) {
+      results.push({ from, to, tex: text.slice(from + 1, close).trim(), block: false });
+    }
+    i = to;
+  }
+  return results;
+}
