@@ -130,8 +130,6 @@
      VS Code 的 floating-panels 只有侧栏是卡片，编辑区本身满铺；LitePad 两张都是卡片，
      卡片外那一圈与卡片之间必须画同一颗外壳色，否则 body 的兜底一旦被谁盖掉就断档。 */
   --workspace-bg: #191a1b; /* = modernUI.shellBackground */
-  /* B380：titleBar.border —— 非 HC 档 VS Code 不给色（不画），HC 档取 contrastBorder。 */
-  --titlebar-border: transparent;
   --titlebar-fg: #8c8c8c; /* titleBar.activeForeground */
   --titlebar-hover-bg: rgba(255, 255, 255, 0.1); /* titlebarpart.css 窗口控制 */
   --titlebar-close-hover: rgba(232, 17, 35, 0.9);
@@ -170,6 +168,10 @@
   --list-selection-border: transparent;
 
   --editor-card-border: #2a2b2c; /* editor.border = surface.border (#2A2B2C) */
+  /* B390：卡片上沿单独一颗键。两张卡的顶边紧贴 34px 标题栏下沿，HC 档要能不画；
+     非 HC 档 = 卡片外框同色（照常画满四边，B201 的口径）。默认值走 var() 引用，
+     所以每一族只需覆盖 --editor-card-border，不必各抄一遍上沿用色。 */
+  --editor-card-border-top: var(--editor-card-border);
   --editor-split-border: #ffffff17; /* editorGroup.border —— 2026 主题 include 了 dark_modern ⇒ #FFFFFF17（#444444 是没被覆盖时的基座回落档，2026 不落） */
 
   /* B380：条带取 `editorGroupHeader.tabsBackground`，不是 connectedTabsBackground。
@@ -277,7 +279,6 @@
   --editor-fg: #cccccc;
   --shell-bg: #181818;
   --workspace-bg: #181818; /* = modernUI.shellBackground */
-  --titlebar-border: transparent;
   --titlebar-fg: #cccccc;
   --titlebar-hover-bg: rgba(255, 255, 255, 0.1);
   --titlebar-close-hover: rgba(232, 17, 35, 0.9);
@@ -367,7 +368,6 @@
   --editor-fg: #d4d4d4;
   --shell-bg: #3c3c3c;
   --workspace-bg: #3c3c3c; /* = modernUI.shellBackground */
-  --titlebar-border: transparent;
   --titlebar-fg: #cccccc;
   --titlebar-hover-bg: rgba(255, 255, 255, 0.1);
   --titlebar-close-hover: rgba(232, 17, 35, 0.9);
@@ -463,7 +463,6 @@
   --editor-fg: #ffffff;
   --shell-bg: #000000;
   --workspace-bg: #000000; /* = modernUI.shellBackground */
-  --titlebar-border: #6fc3df; /* titleBar.border = contrastBorder */
   --titlebar-fg: #ffffff;
   --titlebar-hover-bg: rgba(255, 255, 255, 0.1);
   --titlebar-close-hover: rgba(232, 17, 35, 0.9);
@@ -494,6 +493,10 @@
   --list-inactive-fg: #ffffff;
   --list-selection-border: #6fc3df;
   --editor-card-border: #6fc3df;
+  /* B390（用户点名）：高对比档**不画卡片上沿**。contrastBorder 太抢眼，而两张卡的顶边
+     正贴在 34px 标题栏下沿 ⇒ 肉眼读成「标题栏带了一圈边框」。透明只去颜色，1px 边框盒
+     照留（改宽度会把卡片内容整体上提 1px）。标题栏自己的下沿线同轮一并摘掉。 */
+  --editor-card-border-top: transparent;
   --editor-split-border: #6fc3df;
   --tab-strip-bg: #000000;
   --tabstrip-border: #6fc3df;
@@ -563,7 +566,6 @@
 
   --shell-bg: #fafafd; /* modernUI.shellBackground = titleBar.activeBackground */
   --workspace-bg: #fafafd; /* = modernUI.shellBackground */
-  --titlebar-border: transparent;
   --titlebar-fg: #606060;
   --titlebar-hover-bg: rgba(0, 0, 0, 0.1);
   --titlebar-close-hover: rgba(232, 17, 35, 0.9);
@@ -597,6 +599,7 @@
   --list-selection-border: transparent;
 
   --editor-card-border: #e4e5e6; /* surface.border = editor.border */
+  --editor-card-border-top: var(--editor-card-border); /* B390：见深色档那条的说明 */
   --editor-split-border: #e5e5e5; /* editorGroup.border —— 2026 主题 include 了 light_modern ⇒ #E5E5E5（#E7E7E7 是回落档） */
 
   /* B380：tabsBackground（#FAFAFD）= 标题栏 = 状态栏，三块连成一片。 */
@@ -684,7 +687,6 @@
   --editor-fg: #3b3b3b;
   --shell-bg: #f8f8f8;
   --workspace-bg: #f8f8f8; /* = modernUI.shellBackground */
-  --titlebar-border: transparent;
   --titlebar-fg: #1e1e1e;
   --titlebar-hover-bg: rgba(0, 0, 0, 0.1);
   --titlebar-close-hover: rgba(232, 17, 35, 0.9);
@@ -773,7 +775,6 @@
   --editor-fg: #000000;
   --shell-bg: #dddddd;
   --workspace-bg: #dddddd; /* = modernUI.shellBackground */
-  --titlebar-border: transparent;
   --titlebar-fg: #333333;
   --titlebar-hover-bg: rgba(0, 0, 0, 0.1);
   --titlebar-close-hover: rgba(232, 17, 35, 0.9);
@@ -874,7 +875,6 @@
   --editor-fg: #292929;
   --shell-bg: #ffffff;
   --workspace-bg: #ffffff; /* = modernUI.shellBackground */
-  --titlebar-border: #0f4a85; /* titleBar.border = contrastBorder */
   --titlebar-fg: #292929;
   --titlebar-hover-bg: #0f4a851a;
   --titlebar-close-hover: #e81123;
@@ -905,6 +905,7 @@
   --list-inactive-fg: #292929;
   --list-selection-border: #0f4a85;
   --editor-card-border: #0f4a85;
+  --editor-card-border-top: transparent; /* B390：见深色 HC 那档的说明 */
   --editor-split-border: #0f4a85;
   --tab-strip-bg: #ffffff;
   --tabstrip-border: #0f4a85;
@@ -1065,11 +1066,13 @@ body {
      改了一边就是「左疏右密」。右端不留：关闭键要贴到窗口边缘。 */
   padding-left: var(--title-mark-pad);
   background: var(--shell-bg);
-  /* B123-7：非 HC 档去掉下沿边框线 —— 编辑区大卡片自带外框，再画一条会双线。
-     B380：HC 档例外（`titleBar.border` = contrastBorder）—— VS Code 高对比主题
-     的标题栏下沿本来就有一根实线，缺了它「三个区域」的分界就只剩颜色、没有结构。
-     用 inset 阴影画：非 HC 是 transparent（看不见），也不占 34px 的高度。 */
-  box-shadow: inset 0 -1px 0 var(--titlebar-border);
+  /* B123-7：非 HC 档不画下沿线 —— 编辑区大卡片自带外框，再画一条就是双线。
+     B380 曾按 VS Code 的 `titleBar.border`（HC = contrastBorder，深 #6fc3df / 浅 #0f4a85）
+     给 HC 补了一根 `box-shadow: inset 0 -1px 0`；**B390 用户翻案：高对比主题也不需要
+     标题栏的整体边框** ⇒ 那一根连同 `--titlebar-border` 一起摘掉。
+     区域分界仍靠 B380 补的另外几根：侧栏四块标题栏、编辑区卡片外框、分屏线、条带。
+     ⚠️ 别再以任何形式（`border-bottom` / `box-shadow`）给它加线：判据在
+     `tests/tabstrip.test.ts` 的「标题栏下沿边框线移除」那条，两种画法都咬。 */
   user-select: none;
 }
 
@@ -3567,6 +3570,7 @@ button:focus-visible {
   min-height: 0;
   overflow: hidden;
   border: 1px solid var(--editor-card-border);
+  border-top-color: var(--editor-card-border-top); /* B390：HC 档这颗 = transparent */
   border-radius: 8px;
   background: var(--sidebar-bg);
   /* B379：侧栏里的文字（大纲行、资源管理器行、标题）默认取 `sideBar.foreground`。 */
@@ -3713,6 +3717,7 @@ button:focus-visible {
         （border 与 border-radius 已逐字同步，见 .side-shell 上方的注释）。
      缝中央那条 hover 才亮的亮条 = VS Code sash 的 hover 反馈（见 preview.css 的 .side-resizer）。 */
   border: 1px solid var(--editor-card-border);
+  border-top-color: var(--editor-card-border-top); /* B390：HC 档这颗 = transparent */
   border-radius: 8px;
   background: var(--bg);
 }

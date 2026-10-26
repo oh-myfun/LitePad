@@ -1352,23 +1352,26 @@ describe("标签右键菜单分组与「打开文件所在目录」（B123-7）"
     }).toThrow();
   });
 
-  it("标题栏下沿边框线移除（B123-7：编辑区大卡片自带外框，标题栏不再画线）", () => {
+  it("标题栏不画任何下沿线（B123-7 去 border-bottom · B390 连 HC 那根 box-shadow 也摘）", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
-    expect(ruleBlock(css, ".title-bar"), ".title-bar 不得再画 border-bottom").not.toContain(
-      "border-bottom",
-    );
+    // 判据按**形状**而不是某一根声明：B380 那次就是绕开这条只盯 `border-bottom` 的判据，
+    // 用 `box-shadow: inset 0 -1px 0` 给 HC 补了一根线（用户 B390 点名要去掉）。
+    const 画线 = /border-bottom|box-shadow/;
+    expect(ruleBlock(css, ".title-bar"), ".title-bar 不得画下沿线").not.toMatch(画线);
 
-    // 反向验证：边框回潮必须被咬住
-    const BAD = css.replace(
-      ".title-bar {",
-      ".title-bar {\n  border-bottom: 1px solid var(--border);",
-    );
-    expect(BAD, "替身必须真的塞回了边框").not.toBe(css);
-    expect(() => {
-      expect(ruleBlock(BAD, ".title-bar"), "替身的标题栏边框必须被抓到").not.toContain(
-        "border-bottom",
-      );
-    }).toThrow();
+    // 反向验证：两种画法回潮都必须被咬住
+    for (const 塞回的 of [
+      "  border-bottom: 1px solid var(--border);",
+      "  box-shadow: inset 0 -1px 0 var(--titlebar-border);",
+    ]) {
+      const BAD = css.replace(".title-bar {", `.title-bar {\n${塞回的}`);
+      expect(BAD, "替身必须真的塞回了线").not.toBe(css);
+      expect(() => {
+        expect(ruleBlock(BAD, ".title-bar"), `替身塞的「${塞回的.trim()}」必须被抓到`).not.toMatch(
+          画线,
+        );
+      }).toThrow();
+    }
   });
 });
 

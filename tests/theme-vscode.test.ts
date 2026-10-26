@@ -203,7 +203,6 @@ const FAMILY_KEYS: ReadonlyArray<readonly [string, string, string]> = [
   ["modern", "--shell-bg", "#181818"],
   ["modern", "--sidebar-bg", "#181818"],
   ["modern", "--workspace-bg", "#181818"],
-  ["modern", "--titlebar-border", "transparent"],
   ["modern", "--tab-strip-bg", "#181818"],
   ["modern", "--statusbar-bg", "#181818"],
   ["plus", "--bg", "#1e1e1e"],
@@ -218,7 +217,7 @@ const FAMILY_KEYS: ReadonlyArray<readonly [string, string, string]> = [
   ["classic", "--tabstrip-border", "#303031"],
   ["hc", "--bg", "#000000"],
   ["hc", "--workspace-bg", "#000000"],
-  ["hc", "--titlebar-border", "#6fc3df"],
+  // B390：`--titlebar-border` 连标题栏那根线一起摘掉（用户：HC 也不需要标题栏整体边框）。
   ["hc", "--sidebar-section-border", "#6fc3df"],
   ["hc", "--editor-selection", "#ffffff"],
   ["hc", "--editor-selection-fg", "#000000"],
@@ -245,7 +244,6 @@ const FAMILY_KEYS_LIGHT: ReadonlyArray<readonly [string, string, string]> = [
   ["classic", "--tab-strip-bg", "#f3f3f3"],
   ["classic", "--tabstrip-border", "#d8d8d8"],
   ["hc", "--border", "#0f4a85"],
-  ["hc", "--titlebar-border", "#0f4a85"],
   ["hc", "--sidebar-section-border", "#0f4a85"],
   ["hc", "--editor-selection", "#0f4a85"],
   ["hc", "--editor-selection-fg", "#ffffff"],
@@ -674,10 +672,9 @@ describe("B380 · 中间区域背景 / HC 边框 / 编辑器交互状态", () =>
     }
   });
 
-  it("HC 的 contrastBorder 补齐：标题栏 / 区块标题 / 卡片 / 分屏 / 条带", () => {
+  it("HC 的 contrastBorder 补齐：区块标题 / 卡片 / 分屏 / 条带（标题栏除外，B390）", () => {
     const source = css();
     const tokens = [
-      "--titlebar-border",
       "--sidebar-section-border",
       "--editor-card-border",
       "--editor-split-border",
@@ -692,11 +689,10 @@ describe("B380 · 中间区域背景 / HC 边框 / 编辑器交互状态", () =>
       for (const token of tokens) {
         expect(decl(block, token), `${mode}/hc 的 ${token}`).toBe(color);
       }
+      // B390（用户翻案 B380 那根）：HC 也不给标题栏画线 ⇒ 那颗 token 整个从表里摘掉，
+      // 不许留一颗「哪都不消费」的 titleBar.border 骗后来人以为还有这根线。
+      expect(decl(block, "--titlebar-border"), `${mode}/hc 不许再有 titleBar.border`).toBe("");
     }
-    const title = stripCssComments(ruleBlock(source, ".title-bar", "box-shadow"));
-    expect(title, "标题栏下沿必须消费 titleBar.border").toContain(
-      "box-shadow: inset 0 -1px 0 var(--titlebar-border)",
-    );
     const heads = stripCssComments(
       // B389 起是四块（搜索标题栏也在这一条里）：选择器列表按 preview.css 的书写顺序取。
       ruleBlock(preview(), ".recent-head, .explorer-head, .search-head, .toc-head", "box-shadow"),
@@ -704,12 +700,56 @@ describe("B380 · 中间区域背景 / HC 边框 / 编辑器交互状态", () =>
     expect(heads, "侧栏四块标题栏共用 sideBarSectionHeader.border").toContain(
       "box-shadow: inset 0 -1px 0 var(--sidebar-section-border, transparent)",
     );
-    // 反向：把 HC 的 titleBar.border 换成 transparent，上面这条会落空（防恒真）
+    // 反向：把 HC 的 sideBarSectionHeader.border 换成 transparent，上面两条会落空（防恒真）
     const bad = familyBlock(source, "dark", "hc").replace(
-      "--titlebar-border: #6fc3df;",
-      "--titlebar-border: transparent;",
+      "--sidebar-section-border: #6fc3df;",
+      "--sidebar-section-border: transparent;",
     );
-    expect(bad, "前置条件：替身确实改了").not.toContain("--titlebar-border: #6fc3df;");
+    expect(bad, "前置条件：替身确实改了").not.toContain("--sidebar-section-border: #6fc3df;");
+  });
+
+  it("B390：两张卡的上沿单独一颗键 —— 非 HC 照画、HC 透明（标题栏下不许有线）", () => {
+    const source = css();
+    // 消费点：卡片顶边不再跟着 `border:` 简写走，改吃独立的 --editor-card-border-top。
+    // 为什么要拆（用户原话「高对比主题中标题栏不需要整体边框，目前标题栏下面会有一条线」）：
+    // 标题栏自己的下沿线（B380 的 box-shadow）这一轮已整个摘掉，肉眼看到的那根其实是
+    // `.side-shell` / `.layout-area` 的**上沿边框** —— 两张卡的顶边正贴在 34px 标题栏下沿，
+    // 非 HC 档那颗与底同色系看不出来，HC 档是 contrastBorder，一眼读成「标题栏带了一圈框」。
+    for (const sel of [".side-shell", ".layout-area"]) {
+      const block = stripCssComments(ruleBlock(source, sel, "border-top-color"));
+      expect(block, `${sel} 必须存在且消费上沿键`).toBeTruthy();
+      expect(block, `${sel} 的上沿取 --editor-card-border-top`).toContain(
+        "border-top-color: var(--editor-card-border-top)",
+      );
+      expect(block, `${sel} 的其余三边仍走 --editor-card-border（B201 的完整轮廓）`).toContain(
+        "border: 1px solid var(--editor-card-border)",
+      );
+    }
+    // 表：默认档（2026/Modern/Plus/Classic）的上沿 = 外框同色，靠 var() 引用不各抄一份
+    for (const mode of ["dark", "light"] as const) {
+      const base = themeBlock(source, mode);
+      expect(decl(base, "--editor-card-border-top"), `${mode} 默认档上沿必须 = 外框那颗`).toBe(
+        "var(--editor-card-border)",
+      );
+    }
+    // HC：上沿透明。只去颜色、留 1px 边框盒 ⇒ 卡片内容与几何一点不动（改成 0 宽会把整张卡上提 1px）
+    for (const [mode, color] of [
+      ["dark", "#6fc3df"],
+      ["light", "#0f4a85"],
+    ] as const) {
+      const hc = familyBlock(source, mode, "hc");
+      expect(decl(hc, "--editor-card-border-top"), `${mode}/hc 不许画卡片上沿`).toBe("transparent");
+      expect(decl(hc, "--editor-card-border"), `${mode}/hc 其余三边仍是 contrastBorder`).toBe(
+        color,
+      );
+    }
+    // 反向（防恒真）：把 HC 的透明换回颜色 ⇒ 上面那条必须落空
+    const bad = familyBlock(source, "dark", "hc").replace(
+      "--editor-card-border-top: transparent;",
+      "--editor-card-border-top: #6fc3df;",
+    );
+    expect(bad, "前置条件：替身确实改了").not.toContain("--editor-card-border-top: transparent;");
+    expect(decl(bad, "--editor-card-border-top"), "替身必须被咬住").not.toBe("transparent");
   });
 
   it("编辑器状态色：非活动选区 / 同词高亮 / 括号配对 / 查找两类命中都接线", () => {
