@@ -11,6 +11,7 @@ import { EditorState, type Range } from "@codemirror/state";
 import { Decoration, type DecorationSet } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import type { Tree, SyntaxNodeRef } from "@lezer/common";
+import { frontMatterRange } from "./codeFence";
 
 /** 一个整块替换的源码区间。 */
 export interface BlockRange {
@@ -76,6 +77,8 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
   const atomicBlocks: BlockRange[] = [];
   const doc = state.doc;
   const syntax = tree ?? syntaxTree(state);
+  const fm = frontMatterRange(state);
+  const fmEnd = fm ? fm.to : 0;
 
   const hide = (from: number, to: number, reveal?: BlockRange) => {
     if (to <= from) return;
@@ -128,6 +131,10 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
       const from = node.from;
       const to = node.to;
 
+      // front matter 整段跳过 lezer 在这里的误判（`---` 会被解析成
+      // HorizontalRule + SetextHeading）。判据必须是 `to <= fmEnd`：
+      // 根节点的 from 也是 0，用 from 比较会直接中止整棵树的遍历。
+      if (fm && to <= fmEnd) return false;
       if (HEADINGS.has(n)) {
         addLineClass(doc.lineAt(from).from, `md-heading md-heading-${headingLevel(n)}`);
         for (const c of node.node.getChildren("HeaderMark")) {
@@ -294,6 +301,8 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
       }
 
       if (n === "FencedCode") {
+        // 未闭合的围栏按 CommonMark 会一直吃到文末，挂成块级替换会把整篇文档吞掉
+        if (node.node.getChildren("CodeMark").length < 2) return;
         const block = coversWholeLines(from, to);
         if (!block) {
           // 缩进在列表里的围栏代码块：只隐藏围栏，不做块级替换

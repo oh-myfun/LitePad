@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { EditorState } from "@codemirror/state";
 import type { DecorationSet } from "@codemirror/view";
 import { docState } from "./spike-deco-helpers";
+import {
+  frontMatterRange,
+  isUnclosedFenceLine,
+  previewSyntaxTree,
+} from "../src/spike/deco/codeFence";
 import { applySelection, buildPreviewSets, revealFilterRange } from "../src/spike/deco/previewSets";
 
 // B391 spike · Task 1 —— 装饰集构建与 reveal 过滤（移植自 InkNote src/editor.ts）。
@@ -119,5 +124,35 @@ describe("B391-1 applySelection", () => {
     const line2 = state.doc.line(2).from;
     expect(after.filter(([, , cls]) => cls === "").length).toBeGreaterThan(0);
     expect(after.every(([from]) => from >= line2 || from < state.doc.line(1).to)).toBe(true);
+  });
+});
+
+describe("B391-2 未闭合围栏与 front matter 两道防吞", () => {
+  it("未闭合围栏不得把整篇吞成一个块", () => {
+    const state = docState("标题\n```\n半截代码\n后面还有三大段\n");
+    const { atomicBlocks } = buildPreviewSets(state, previewSyntaxTree(state));
+    expect(atomicBlocks).toEqual([]);
+  });
+
+  it("frontmatter 的开头 --- 不被判成整行块替换，且整段不加装饰", () => {
+    const state = docState("---\ntitle: x\n---\n正文\n");
+    const fm = frontMatterRange(state);
+    expect(fm).toEqual({ from: 0, to: 17 });
+    const { atomicBlocks, statics, lines } = buildPreviewSets(state, previewSyntaxTree(state));
+    expect(atomicBlocks.some((b) => b.from === 0)).toBe(false);
+    // 真判据：整段 front matter（含闭合 `---`）里不许有任何装饰。
+    // 少了这道闸，lezer 会把 `title: x` + `---` 判成 SetextHeading2 ⇒ 第 2 行被画成标题。
+    expect(tuples(statics).filter(([from]) => from < fm!.to)).toEqual([]);
+    expect(lineClasses(lines, state, 2)).toEqual([]);
+  });
+
+  it("isUnclosedFenceLine 只认行首 ≤3 空格的 ≥3 个 ` 或 ~", () => {
+    expect(isUnclosedFenceLine("```")).toBe(true);
+    expect(isUnclosedFenceLine("~~~")).toBe(true);
+    expect(isUnclosedFenceLine("   ```ts")).toBe(true);
+    expect(isUnclosedFenceLine("    ```")).toBe(false); // 4 空格起是缩进代码
+    expect(isUnclosedFenceLine("  ~~~ mermaid")).toBe(true);
+    expect(isUnclosedFenceLine("``")).toBe(false);
+    expect(isUnclosedFenceLine("正文 ```")).toBe(false);
   });
 });
