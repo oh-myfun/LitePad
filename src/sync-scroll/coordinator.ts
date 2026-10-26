@@ -374,6 +374,11 @@ export class SyncScrollCoordinator {
   }
 
   private scheduleFrame(): void {
+    // 合并的代价（B393 记档，别再当新发现）：这一发帧若**永不** fire，`rafId` 就永远非 null ⇒
+    // 后续每一发驱动都被合并掉，联动与 B302 落盘通知一起静默停住。本机造不出那个触发态
+    // （`SW_MINIMIZE` / `SW_HIDE` 两挡下 `document.hidden` 都还是 False、帧照跑 ——
+    // `.tmp/b393-raf.py` 的 M1/M2），所以按「推迟 ≠ 丢失」的现有语义留着，不自愈重排；
+    // 报警的两条线在台子 R③ 与 `tests/sync-scroll-deferred-frame.test.ts`。
     if (this.rafId !== null) return; // 合并同一帧内多次滚动（last-writer-wins）
     this.rafId = this.schedule(() => {
       this.rafId = null;
