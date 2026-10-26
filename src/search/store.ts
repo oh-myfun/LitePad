@@ -217,19 +217,8 @@ export function runNow(): Promise<void> {
   return run();
 }
 
-/** 取消：作废在飞的那一发与没起的定时器（VS Code 搜索进行时输入框右边那颗「取消」）。 */
-export function cancel(): void {
-  if (timer !== null) {
-    clearTimeout(timer);
-    timer = null;
-  }
-  seq += 1;
-  running = false;
-  notify();
-}
-
 /**
- * 清空查询与结果（关抽屉、以及「清除搜索」那一条）。
+ * 清空查询与结果（关抽屉、以及「清除搜索结果」那一条）。
  *
  * ⚠️ 连 `seq` 一起加一：清屏那一刻若还有回包在飞，它到达时按旧代号被丢弃，
  *    否则「清了又自己长回来」—— 与 `explorer/store.ts` 换根作废同一族症状。

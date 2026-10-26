@@ -158,12 +158,10 @@ const IDS = {
   //   与快速选择那颗小放大镜不是一颗，别混用；
   // · `ellipsis` = 「切换搜索详情」那颗 ⋯（`search-details` → `ellipsis`）；
   // · `clearAll` = 「清除搜索结果」（`search-clear-results` → `clear-all`），与垃圾桶
-  //   （`trash`，最近打开那颗「清空全部」）不同款：那边删的是**账**，这边清的只是**这一屏**；
-  // · `searchStop` = 搜索进行中的「取消」（`search-stop` → `search-stop`），只在在飞时露出来。
+  //   （`trash`，最近打开那颗「清空全部」）不同款：那边删的是**账**，这边清的只是**这一屏**。
   searchLarge: "search-large",
   ellipsis: "ellipsis",
   clearAll: "clear-all",
-  searchStop: "search-stop",
 } as const;
 
 /** 图标短名（上方 IDS 的键）。 */

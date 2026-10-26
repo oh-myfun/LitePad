@@ -358,20 +358,22 @@ describe("B389 · 输入区与模型同源", () => {
     expect(ui.searchCount.classList.contains("is-bad")).toBe(true);
   });
 
-  it("在飞时取消键露脸；点它 ⇒ 回包后到也不画进这一屏", async () => {
+  it("在飞时计数行念「正在搜索…」；按清除 ⇒ 旧回包后到也不许把结果长回来", async () => {
+    // 取消键已摘（B389 收尾：这一发搜得快到按不着，留着一颗只会让人以为它坏了）。
+    // 「作废在飞那一发」这件事仍然有人管 —— 走 `clearAll()` 那条（它跟取消一样加 `seq`）。
     h.gated.add("aa");
     type(ui.searchInput, "aa");
     await settle();
-    expect(ui.searchStop.hidden, "正在搜索 ⇒ 取消键该在").toBe(false);
     expect(ui.searchCount.textContent).toBe("正在搜索…");
+    expect(document.getElementById("search-stop"), "那颗取消键已从骨架上摘掉").toBeNull();
 
-    click(ui.searchStop);
-    expect(ui.searchStop.hidden, "取消之后立刻收起").toBe(true);
+    click(ui.searchClear);
     h.release.get("aa")?.(
       report([fileHit("E:\\笔记\\a.md", "a.md", "a.md", [row(1, "aa", 0, 2, 1)])], 1),
     );
     await settle(0);
     expect(files(), "旧回包不许把结果长回来").toEqual([]);
+    expect(ui.searchCount.textContent).toBe("");
   });
 
   it("点清除 ⇒ 输入框、结果、计数行一起归零（不留「屏上还写着、模型里已空」）", async () => {

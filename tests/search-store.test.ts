@@ -291,18 +291,6 @@ describe("B389 · 去抖与在飞只认自己", () => {
     expect(store.summaryMessage()).toBe("在 1 个文件中发现 1 个结果");
   });
 
-  it("取消：在飞的那一发作废，回包落地也不画", async () => {
-    h.root = "E:\\root";
-    h.gated.add("aa");
-    store.setQuery({ text: "aa" });
-    await vi.advanceTimersByTimeAsync(300);
-    store.cancel();
-    expect(store.isRunning(), "取消之后不该还说「正在搜索」").toBe(false);
-    h.release.get("aa")?.(report([hit("E:\\a.md", "a.md", "a.md", 1, "aa")], 1));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(store.getGroups()).toEqual([]);
-  });
-
   it("空串：不发 IPC、立刻清空结果与文案", async () => {
     h.root = "E:\\root";
     h.report = report([hit("E:\\a.md", "a.md", "a.md", 1, "aa")], 1);

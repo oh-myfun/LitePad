@@ -852,12 +852,24 @@
   flex: 1 1 auto;
   min-width: 0;
   min-height: 26px;
+  /* 这两个框要**看得见边界**（与下面两行 glob 框同款：1px `--border`）。悬浮查找栏那两层
+     无边框是有意的 —— 它浮在编辑器正文上，靠底色就能分；侧栏这块跟面板一个底色，
+     没边框就看不出哪一截是能打字的。`box-sizing: border-box` 在 `.find-field` 那儿已经定了
+     ⇒ 加了边框行高不变（26px 是总高）。 */
+  border: 1px solid var(--border, #d0d7de);
+}
+/* 焦点与非法都只改**这一圈边框**（VS Code 的输入框就一根线）：再叠一层 outline 会描出
+   内外两道环。⚠️ 非法那条写在后面 ⇒ 同一特异度按源次序赢过焦点那条（`.search-panel`
+   那一截是为了跟 `.find-field:focus-within`（global.css，悬浮条共用）打平时凑够特异度的）。 */
+.search-panel .find-field:focus-within {
+  outline: none;
+  border-color: var(--accent, #06c);
 }
 /* 正则语法错：输入框描一圈 error 色（VS Code 那边是 `inputOption.activeBorder` 那一族
    的验证态 `findInput` 的 `.invalid`）。底色不动 —— 一动就把整框染红，读起来像出错了。 */
-.search-field.is-invalid {
-  outline: 1px solid var(--danger, #cf222e);
-  outline-offset: -1px;
+.search-panel .search-field.is-invalid {
+  outline: none;
+  border-color: var(--danger, #cf222e);
 }
 .search-chevron {
   position: absolute;

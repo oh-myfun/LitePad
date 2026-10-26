@@ -140,7 +140,6 @@ const searchExclude = el<HTMLInputElement>("search-exclude");
 const searchRefresh = el<HTMLButtonElement>("search-refresh");
 const searchCollapseAll = el<HTMLButtonElement>("search-collapse-all");
 const searchClear = el<HTMLButtonElement>("search-clear");
-const searchStop = el<HTMLButtonElement>("search-stop");
 // B353：按钮列底部那颗**设置**键。它是动作不是视图 —— 不进 `registerDrawerView`、
 // 没有 `aria-pressed`，点亮态与 `setDrawer` 无关（接线见 `prefs.ts` 的 setupSettingsEntry）。
 const sideSettings = el<HTMLButtonElement>("side-settings");
@@ -466,7 +465,6 @@ export {
   searchRefresh,
   searchCollapseAll,
   searchClear,
-  searchStop,
   sideSettings,
   tocGrip,
   sidebarToggle,

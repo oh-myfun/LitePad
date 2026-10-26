@@ -36,7 +36,6 @@ import {
   searchReplaceRow,
   searchRegex,
   searchResults,
-  searchStop,
   searchToggleReplace,
   searchWord,
   sideSearch,
@@ -49,7 +48,6 @@ import { setTextTip } from "../shell/tooltip";
 import { EditorView } from "@codemirror/view";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
-  cancel,
   clearAll,
   collapseAll,
   emptyMessage,
@@ -58,7 +56,6 @@ import {
   getQuery,
   isCollapsed,
   isInvalid,
-  isRunning,
   onSearchChange,
   planReplace,
   runNow,
@@ -93,7 +90,6 @@ export function setupSearch(): void {
   searchRefresh.innerHTML = CODICONS.refresh;
   searchCollapseAll.innerHTML = CODICONS.collapseAll;
   searchClear.innerHTML = CODICONS.clearAll;
-  searchStop.innerHTML = CODICONS.searchStop;
 
   registerDrawerView("search", {
     panel: searchPanel,
@@ -137,7 +133,6 @@ export function setupSearch(): void {
   searchInclude.addEventListener("input", () => setQuery({ include: searchInclude.value }));
   searchExclude.addEventListener("input", () => setQuery({ exclude: searchExclude.value }));
   searchRefresh.addEventListener("click", () => void runNow());
-  searchStop.addEventListener("click", () => cancel());
   searchClear.addEventListener("click", () => {
     clearAll();
     selected = null;
@@ -220,7 +215,7 @@ function allCollapsed(): boolean {
   return groups.length > 0 && groups.every((g) => isCollapsed(g.path));
 }
 
-/** 把模型里的状态搬到控件上：三档亮灭、⋯ 开合、两行 glob、计数行、取消键、非法标红。 */
+/** 把模型里的状态搬到控件上：三档亮灭、⋯ 开合、两行 glob、计数行、非法标红。 */
 function syncControls(): void {
   const q = getQuery();
   syncToggle(searchCase, q.caseSensitive);
@@ -238,7 +233,6 @@ function syncControls(): void {
   const bad = isInvalid();
   searchInput.closest(".search-field")?.classList.toggle("is-invalid", bad);
   searchRegex.classList.toggle("is-bad", bad);
-  searchStop.hidden = !isRunning();
   searchReplaceAll.disabled = replacing || getGroups().length === 0;
 
   const folded = allCollapsed();
