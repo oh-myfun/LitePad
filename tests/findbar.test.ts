@@ -570,6 +570,19 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     expect(main, "stepFind 必须有预览分支（在预览高亮里步进）").toMatch(
       /stepFind[\s\S]{0,400}?viewMode === "preview" && panel\.preview/,
     );
+    // B391F-5：装饰预览面（`Settings.deco_preview`）开着时 `PreviewPane` 压根不被构造，
+    // 只认 `p.preview` 的那三条各等于空转（Ctrl+F 死键）。装饰面是 CM6 视图，
+    // 查找走编辑器内核 —— 但**必须有人把查询送到那颗 view 上**。
+    expect(main, "applyPreviewFindToPanel 必须有装饰面分支").toMatch(
+      /applyPreviewFindToPanel[\s\S]{0,900}?p\.decoMirror/,
+    );
+    expect(main, "步进与计数必须问「看得见那一面」（隐藏那颗写不进 scrollTop）").toMatch(
+      /function findFaceOf[\s\S]{0,500}?p\.decoMirror/,
+    );
+    expect(main, "stepFind 应经 findFaceOf").toMatch(/stepFind[\s\S]{0,900}?findFaceOf\(panel\)/);
+    expect(main, "clearFindHighlight 也要清装饰面（关栏不许留残影）").toMatch(
+      /clearFindHighlight[\s\S]{0,300}?decoMirror[\s\S]{0,60}?clearFindQuery/,
+    );
     const preview = readFileSync("src/markdown/preview.ts", "utf-8");
     expect(preview, "PreviewPane 必须提供 applyFind/stepFind/findState").toMatch(
       /applyFind\(|stepFind\(|findState\(/,

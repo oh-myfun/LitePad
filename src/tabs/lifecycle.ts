@@ -303,7 +303,21 @@ export function rebuildLayout(): void {
         const decoHost = document.createElement("div");
         decoHost.className = "md-preview md-deco-host";
         hostEl.appendChild(decoHost);
-        p.decoMirror = createDecoMirror(decoHost, decoTextOf(p), decoDocIdOf(p));
+        // B391F-5：装饰面上的那颗勾选框。写点仍是 `markdown.ts` 那颗唯一的
+        // `toggleTaskInTab`，但按**文档行号**调（行起=行止、岛内序号 0）——
+        // 现方案那套「渲染面里第 N 个 .md-task」的换算在 B394-2 上把勾写到了别的行，
+        // 而行号没有中间量，也就没有换算可错。
+        p.decoMirror = createDecoMirror(decoHost, decoTextOf(p), decoDocIdOf(p), {
+          onToggleTask: (line) => {
+            const t = tabs.get(p.viewTabId ?? p.activeTabId);
+            if (t) toggleTaskInTab(t.tabId, line, line, 0);
+          },
+          canToggleTask: () => {
+            const t = tabs.get(p.viewTabId ?? p.activeTabId);
+            const d = t ? docOf(t) : undefined;
+            return !!t && !!d && isMdTab(t) && !d.readonly;
+          },
+        });
       } else {
         const preview = new PreviewPane();
         p.preview = preview;

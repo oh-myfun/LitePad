@@ -4,7 +4,13 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import type { DecorationSet, WidgetType } from "@codemirror/view";
-import { docState, lastChanges, trackedView, watchBroadcast } from "./spike-deco-helpers";
+import {
+  docState,
+  lastChanges,
+  trackedView,
+  watchBroadcast,
+  clickTaskBox,
+} from "./spike-deco-helpers";
 import {
   frontMatterRange,
   isUnclosedFenceLine,
@@ -13,6 +19,7 @@ import {
 import { CodeBlockWidget } from "../src/spike/deco/codeBlockWidget";
 import { MathWidget, MermaidWidget, TableWidget } from "../src/spike/deco/richWidgets";
 import { livePreview } from "../src/spike/deco/livePreview";
+import { taskClick } from "../src/spike/deco/taskClick";
 import { isMirrorSyncing, mirrorChanges } from "../src/spike/deco/mirror";
 import { applySelection, buildPreviewSets, revealFilterRange } from "../src/spike/deco/previewSets";
 
@@ -365,6 +372,89 @@ describe("B391F-4 公式 / mermaid / 表格的装饰集", () => {
         "两处数学占位都等 enhance 认领",
       ).toBeGreaterThanOrEqual(2);
       expect(view.dom.querySelector(".mermaid-src"), "本篇没有 mermaid").toBeNull();
+    } finally {
+      view.destroy();
+    }
+  });
+});
+
+/**
+ * B391F-5 · 勾选框。
+ *
+ * 现方案的那颗勾（B358）认的是「渲染面里第 N 个 `.md-task`」，而 N 是在**岛**内数的
+ * —— B394-2 就是这套序号换算写错了行（点第二个勾，`- [x]` 落到了空的那一行）。
+ * 装饰面天然不需要这个中间量：它就是源码那份文档的第 N 份实例，点的哪一行有行号，
+ * 所以这里**按行号回调**，把岛内序号这条支路整个绕开。
+ */
+describe("B391F-5 装饰面点勾按行号交回宿主", () => {
+  function mountTasks(doc: string, opts: Parameters<typeof taskClick>[0]): EditorView {
+    const state = EditorState.create({
+      doc,
+      extensions: [
+        markdown({ base: markdownLanguage }),
+        livePreview({ readOnly: true }),
+        taskClick(opts),
+      ],
+    });
+    return new EditorView({ state, parent: document.createElement("div") });
+  }
+
+  it("点第 N 行的方框 ⇒ 回调收到那一行的**文档行号**（不是列表内序号）", () => {
+    const hits: number[] = [];
+    const view = mountTasks("- 普通项\n- [ ] 未勾选\n  - [x] 嵌套已勾选\n", {
+      onToggleTask: (n) => hits.push(n),
+    });
+    try {
+      const rows = Array.from(view.dom.querySelectorAll<HTMLElement>(".cm-line.md-task-item"));
+      expect(rows.length, "两颗方框都应画出来").toBe(2);
+      clickTaskBox(rows[0], "40px", 20);
+      clickTaskBox(rows[1], "80px", 64);
+      // 行 2 / 行 3：若实现按「第几个任务项」报，拿到的是 0/1；按 DOM 行序报是 1/2
+      expect(hits, "嵌套项缩进不同也必须认得出自己那一行").toEqual([2, 3]);
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("点正文（方框热区之外）不算点勾", () => {
+    const hits: number[] = [];
+    const view = mountTasks("- [ ] 未勾选\n", { onToggleTask: (n) => hits.push(n) });
+    try {
+      const row = view.dom.querySelector<HTMLElement>(".cm-line.md-task-item")!;
+      clickTaskBox(row, "40px", 260);
+      expect(hits, "正文上的一下应当照常落光标，不是翻勾").toEqual([]);
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("canToggleTask 说不许写 ⇒ 一发回调都不发（点不动的键不许谎报可点）", () => {
+    const hits: number[] = [];
+    const view = mountTasks("- [ ] 未勾选\n", {
+      onToggleTask: (n) => hits.push(n),
+      canToggleTask: () => false,
+    });
+    try {
+      clickTaskBox(view.dom.querySelector<HTMLElement>(".cm-line.md-task-item")!, "40px", 20);
+      expect(hits).toEqual([]);
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("列表外的裸 `[ ]` 不画方框：装饰面只认 lezer 的 Task 节点（B394-3 那一形不存在）", () => {
+    const hits: number[] = [];
+    const view = mountTasks("正文一行\n\n[ ] 这不是列表里的任务\n", {
+      onToggleTask: (n) => hits.push(n),
+    });
+    try {
+      expect(
+        view.dom.querySelectorAll(".cm-line.md-task-item").length,
+        "裸 `[ ]` 不是列表项 ⇒ 不许画那颗点不动的方框",
+      ).toBe(0);
+      const lines = view.dom.querySelectorAll<HTMLElement>(".cm-line");
+      clickTaskBox(lines[lines.length - 1], "40px", 20);
+      expect(hits).toEqual([]);
     } finally {
       view.destroy();
     }

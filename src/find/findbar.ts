@@ -172,15 +172,57 @@ function findSpecOf(q: FindBarQuery): PreviewFindSpec {
 }
 
 function applyPreviewFindToPanel(p: Panel, spec: PreviewFindSpec): void {
-  if (!p.preview) return;
   const tab = tabs.get(p.activeTabId);
   if (!tab || !isMdTab(tab) || tab.viewMode === "source") return;
-  p.preview.applyFind(spec);
+  if (p.preview) {
+    p.preview.applyFind(spec);
+    return;
+  }
+  // B391F-5 · 装饰面那一格：`mountView` 开着 `deco_preview` 时压根不构造 `PreviewPane`，
+  // 于是这条路径过去停在函数第一行 `if (!p.preview) return` ⇒ 预览格里 Ctrl+F 是空操作
+  // （结果文档② 评审 I8）。装饰面是 CM6 视图，命中高亮就是编辑器那套内核。
+  const deco = p.decoMirror;
+  if (!deco) return;
+  deco.view.dispatch({
+    effects: setFindQuery.of({
+      query: buildFindQuery(findOptionsOfSpec(spec)),
+      activeFrom: null,
+      restrict: null,
+    }),
+  });
+}
+
+/** `PreviewFindSpec` → 编辑器查找内核的选项；null（= 清除）给空串，`buildFindQuery` 认它。 */
+function findOptionsOfSpec(spec: PreviewFindSpec) {
+  return spec
+    ? {
+        search: spec.text,
+        caseSensitive: spec.caseSensitive,
+        wholeWord: spec.wholeWord,
+        regexp: spec.regexp,
+      }
+    : { search: "", caseSensitive: false, wholeWord: false, regexp: false };
+}
+
+/**
+ * 步进与计数该问哪颗 view。
+ *
+ * 装饰面可见时必须是镜像：隐藏那颗（源码格）在 jsdom 与真机上写 `scrollTop` 都不生效
+ * —— 「命中跳过去了但看不见」就是问错了 face（台账记过的「只认 clientHeight>0 那一面」）。
+ * 现方案没有这个问题，它的预览侧走 `panel.preview` 那条分支。
+ */
+function findFaceOf(p: Panel): EditorView | null {
+  const tab = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
+  if (!p.preview && tab && isMdTab(tab) && tab.viewMode !== "source" && p.decoMirror) {
+    return p.decoMirror.view;
+  }
+  return p.view?.view ?? null;
 }
 
 function clearFindHighlight(): void {
   for (const p of panels.values()) {
     if (p.view) clearFindQuery(p.view.view);
+    if (p.decoMirror) clearFindQuery(p.decoMirror.view);
     p.preview?.applyFind(null);
   }
 }
@@ -215,7 +257,7 @@ function refreshFindCount(): void {
     }
     return;
   }
-  const view = panel?.view?.view;
+  const view = panel ? findFaceOf(panel) : null;
   if (!view) return;
   const query = buildFindQuery(findOptionsOf(q));
   const matches = restrictMatches(findMatches(view.state, query), q);
@@ -242,8 +284,10 @@ function stepFind(dir: 1 | -1, q: FindBarQuery): void {
     refreshFindCount();
     return;
   }
-  const view = panel.view?.view;
-  if (!view) return;
+  const srcView = panel.view?.view;
+  if (!srcView) return;
+  // 装饰面开着 ⇒ 步进要落在**看得见**的那颗 view（隐藏那颗写不进 scrollTop）
+  const view = findFaceOf(panel) ?? srcView;
   const query = buildFindQuery(findOptionsOf(q));
   const matches = restrictMatches(findMatches(view.state, query), q);
   if (matches.length === 0) {
@@ -252,7 +296,7 @@ function stepFind(dir: 1 | -1, q: FindBarQuery): void {
   }
   const idx = nextMatchIndex(matches, view.state.selection.main.head, dir);
   const m = matches[idx];
-  view.dispatch({
+  const step = {
     selection: { anchor: m.from, head: m.to },
     effects: [
       EditorView.scrollIntoView(m.from, { y: "center" }),
@@ -263,8 +307,12 @@ function stepFind(dir: 1 | -1, q: FindBarQuery): void {
         restrict: currentFindRestrict(q),
       }),
     ],
-  });
-  if (tab) tab.state = view.state;
+  };
+  view.dispatch(step);
+  // 两棵 view 各持一份 state（同文档第 N 份实例的口径），源码那颗也得跟上：
+  // 否则切回源码态时光标还停在原地，而 `tab.state` 必须是源码那份，不能是镜像的。
+  if (view !== srcView) srcView.dispatch(step);
+  if (tab) tab.state = srcView.state;
   findBar?.setCount(`${idx + 1} / ${matches.length}`);
 }
 

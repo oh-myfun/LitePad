@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { EditorView } from "@codemirror/view";
+import { clickTaskBox } from "./spike-deco-helpers";
 
 beforeAll(() => {
   const html = readFileSync("index.html", "utf-8");
@@ -522,5 +523,90 @@ describe("B391F-3 装饰面挂载的三道闸", () => {
     expect(() => shouldMountDecoPreview(ghost.tab)).not.toThrow();
     expect(shouldMountDecoPreview(ghost.tab)).toBe(false);
     expect(shouldMountDecoPreview(undefined), "空面板没有活动标签 ⇒ 同样不挂").toBe(false);
+  });
+});
+
+/**
+ * B391F-5 · 装饰面要把「预览格原有的两项能力」接回来。
+ *
+ * 结果文档②评审 I8 记的是同一件事的两种死法：`deco_preview` 开着时 `mountView`
+ * 压根不构造 `PreviewPane` ⇒ `applyPreviewFindToPanel` 第一行 `if (!p.preview) return`
+ * 直接空转（Ctrl+F 在预览格里成了死键），B358 那颗可点的勾选框也不在场。
+ * 装饰面不需要「等价机器」—— 它本身就是 CM6 视图：查找复用编辑器那套内核
+ * （`editor/find.ts` 的 `findHighlight`），点勾把行号交回 `markdown.ts` 那颗唯一写点。
+ */
+describe("B391F-5 装饰面的查找与点勾", () => {
+  /** 取回那颗真启动出来的装饰面板（前面几条用例已经把应用起来了）。 */
+  async function decoPanel() {
+    await import("../src/main");
+    const { panels, tabs } = await import("../src/core/app-state");
+    const p = [...panels.values()].find((x) => x.decoMirror);
+    expect(p, "应先有一颗带装饰面的面板（开关开着 + .md）").toBeTruthy();
+    const tab = tabs.get(p!.viewTabId ?? p!.activeTabId)!;
+    if (tab.viewMode === "source") await toggleView(1);
+    expect(tab.viewMode, "前置：这一格应显示装饰预览面").not.toBe("source");
+    return { p: p!, tab, view: p!.decoMirror!.view };
+  }
+
+  it("⑦ 查找命中必须画在装饰面上，关查找栏要清掉（曾是空操作）", async () => {
+    const { p, view } = await decoPanel();
+    const { applyPreviewFindToPanel, clearFindHighlight } = await import("../src/find/findbar");
+    expect(p.preview, "前置：开着装饰面时不该有 PreviewPane").toBeFalsy();
+
+    applyPreviewFindToPanel(p, {
+      text: "line",
+      caseSensitive: false,
+      wholeWord: false,
+      regexp: false,
+    });
+    expect(view.dom.querySelectorAll(".cm-find-match").length, "命中应高亮在装饰面里").toBe(1);
+
+    clearFindHighlight();
+    expect(view.dom.querySelectorAll(".cm-find-match").length, "关栏后装饰面不该留残影").toBe(0);
+  });
+
+  it("⑧ 步进在装饰面上跳到命中，并把它标成当前项", async () => {
+    const { view } = await decoPanel();
+    const { stepFind } = await import("../src/find/findbar");
+    const q = {
+      text: "line",
+      replace: "",
+      caseSensitive: false,
+      wholeWord: false,
+      regexp: false,
+      inSelection: false,
+      preserveCase: false,
+    };
+    stepFind(1, q);
+    const at = view.state.selection.main;
+    expect(view.state.sliceDoc(at.from, at.to), "步进应把选区落在装饰面文档里的那处命中").toBe(
+      "line",
+    );
+    expect(view.dom.querySelectorAll(".cm-find-match-active").length).toBe(1);
+  });
+
+  it("⑨ 点装饰面的勾写进源码那颗 view，并经桥跟回镜像", async () => {
+    const { p, tab, view } = await decoPanel();
+    const { reseedDecoMirror } = await import("../src/spike/deco/mirror");
+    const srcView = EditorView.findFromDOM(
+      document.querySelector(".panel-editor .cm-editor") as HTMLElement,
+    )!;
+    // ⑤⑥ 那两条故意把两侧基线错开过（镜像里多一个没落到源码的 `Z`）⇒ 这一条从「同文」
+    // 起测，否则桥的过期闸会正当拒收，判据量的就不是点勾了。
+    reseedDecoMirror(p.decoMirror!, srcView.state.doc.toString(), tab.docId);
+    srcView.dispatch({ changes: { from: srcView.state.doc.length, insert: "\n- [ ] 打勾行\n" } });
+    await wait(60);
+    expect(view.state.doc.toString(), "前置：桥应把新行带进装饰面").toContain("- [ ] 打勾行");
+
+    const row = view.dom.querySelector<HTMLElement>(".cm-line.md-task-item");
+    expect(row, "任务行应画出方框那一行（.md-task-item）").toBeTruthy();
+    clickTaskBox(row!, "40px", 20);
+    await wait(60);
+
+    expect(srcView.state.doc.toString(), "点勾必须落到源码那颗 view").toContain("- [x] 打勾行");
+    expect(
+      view.state.doc.toString(),
+      "写完的源码要经桥跟回装饰面（否则用户看见的还是没勾）",
+    ).toContain("- [x] 打勾行");
   });
 });

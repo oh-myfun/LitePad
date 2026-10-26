@@ -88,3 +88,33 @@ export function trackedView(
   recorded.delete(view);
   return view;
 }
+
+/**
+ * 给任务行摆出方框的几何，并点它一下（B391F-5 点勾判据用）。
+ *
+ * jsdom 没有布局引擎：`getBoundingClientRect()` 全 0、`paddingLeft` 读不到样式表，
+ * 于是「方框在哪个像素」这件事必须由测试自己钉死 —— 配方照抄 InkNote 的
+ * `editor.integration.test.ts`（它同样在无布局环境里点这颗勾）。
+ * `padding = 编辑区左内边距 + 标记位宽`（deco.css 就是这么写的），所以
+ * 方框左沿 = `padding − markerOffset`，热区在它右侧十几像素内。
+ */
+export function clickTaskBox(line: HTMLElement, padding: string, clientX = 20): void {
+  line.style.paddingLeft = padding;
+  line.style.fontSize = "16px";
+  line.style.setProperty("--editor-list-marker-offset", "1.35em");
+  line.getBoundingClientRect = () =>
+    ({
+      x: 0,
+      y: 0,
+      top: 0,
+      right: 400,
+      bottom: 20,
+      left: 0,
+      width: 400,
+      height: 20,
+      toJSON: () => ({}),
+    }) as DOMRect;
+  line.dispatchEvent(
+    new MouseEvent("mousedown", { bubbles: true, button: 0, clientX, clientY: 10 }),
+  );
+}

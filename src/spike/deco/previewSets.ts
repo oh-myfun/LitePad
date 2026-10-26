@@ -66,8 +66,12 @@ function blockReveal(_from: number, _to: number) {
 /** 永不显形：列表符号、引用标记这类「Typora 里根本看不到源码」的标记。 */
 const NEVER_REVEAL = { from: 1, to: 0 };
 
-/** 任务项：兼容标准无序/有序形式，也兼容单独 `[x] 文本` 的简写。 */
-const TASK_LINE_RE = /^(\s*(?:(?:[-*+]|\d+[.)])\s+)?)\[([ xX])\](\s|$)/;
+/**
+ * 任务项：兼容标准无序/有序形式，也兼容单独 `[x] 文本` 的简写。
+ * 导出给 `taskClick.ts` —— 点勾命中的那一行必须用**画方框时同一条**正则判定，
+ * 否则会出现「行上有方框、点上说这不是任务行」的死键。
+ */
+export const TASK_LINE_RE = /^(\s*(?:(?:[-*+]|\d+[.)])\s+)?)\[([ xX])\](\s|$)/;
 
 /** 围栏的信息串（```ts 里的 `ts`） */
 function fencedCodeInfo(node: SyntaxNodeRef, doc: EditorState["doc"]): string {
