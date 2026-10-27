@@ -143,6 +143,41 @@ describe("B397-2 标题与行内代码把 InkNote 的类名挂到**内容区**",
     expect(rangesOf(buildPreviewSets(state).statics, "cm-md-h1")).toEqual([[line.from, line.to]]);
   });
 
+  it("光标落在标题正文里：字阶类不随光标显隐（否则整行字缩回正文大小）", () => {
+    const base = docState("## 标题正文\n");
+    const line = base.doc.line(1);
+    const state = base.update({ selection: { anchor: line.from + 4 } }).state;
+    const visible = applySelection(buildPreviewSets(state).statics, state);
+    expect(rangesOf(visible, "cm-md-h2")).toEqual([[line.from + 3, line.to]]);
+  });
+
+  it("光标落在行内代码里：chip 的类也留着（InkNote 那边它是 highlight style）", () => {
+    const base = docState("前 `code` 后\n");
+    const at = base.doc.toString().indexOf("code");
+    const state = base.update({ selection: { anchor: at + 1 } }).state;
+    const visible = applySelection(buildPreviewSets(state).statics, state);
+    expect(rangesOf(visible, "cm-md-code")).toEqual([[at, at + 4]]);
+  });
+
+  it("对照组：光标压进标题行，`##` 那截的藏标记照旧让位 —— 滤镜没被整体关掉", () => {
+    const base = docState("## 标题正文\n");
+    const line = base.doc.line(1);
+    const state = base.update({ selection: { anchor: line.from + 4 } }).state;
+    // 「真窗口」= revealTo > 0（`blockReveal` 是 (1,0) 这种永不显形的哨兵值）
+    const windows = (set: DecorationSet) => {
+      let n = 0;
+      const it = set.iter();
+      while (it.value) {
+        if (((it.value.spec as { revealTo?: number } | null)?.revealTo ?? 0) > 0) n += 1;
+        it.next();
+      }
+      return n;
+    };
+    const statics = buildPreviewSets(state).statics;
+    expect(windows(statics)).toBeGreaterThan(0);
+    expect(windows(applySelection(statics, state))).toBe(0);
+  });
+
   it("行内代码：chip 类只罩内容，两个反引号不算（App.css:1343-1350 的形状）", () => {
     const state = docState("看 `code body` 这里\n");
     const line = state.doc.line(1);

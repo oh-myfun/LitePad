@@ -254,7 +254,14 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
         }
         if (headTo > headFrom) {
           decos.push(
-            Decoration.mark({ class: `cm-md-h${headingLevel(n)}` }).range(headFrom, headTo),
+            // 字阶类**不随光标显隐**：`applySelection` 会把光标落在区间内的装饰滤掉，
+            // 这颗一掉，光标进标题那一刻整行字缩回正文大小（真机 M-14a 抓到的读数）。
+            // InkNote 那边 `.cm-md-hN` 是 highlight style（editor.ts:91 一带），天然不过滤；
+            // `blockReveal` 就是本仓「永不显形」的窗口（head<1 || head>0 恒真）。
+            Decoration.mark({ class: `cm-md-h${headingLevel(n)}`, ...blockReveal(from, to) }).range(
+              headFrom,
+              headTo,
+            ),
           );
         }
         return;
@@ -293,7 +300,13 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
           const innerFrom = ticks[0].to;
           const innerTo = ticks[ticks.length - 1].from;
           if (innerTo > innerFrom) {
-            decos.push(Decoration.mark({ class: "cm-md-code" }).range(innerFrom, innerTo));
+            // 同字阶类：chip 的底色/描边不随光标显隐（InkNote 里它是 highlight style）
+            decos.push(
+              Decoration.mark({ class: "cm-md-code", ...blockReveal(from, to) }).range(
+                innerFrom,
+                innerTo,
+              ),
+            );
           }
         }
         hideChildren(node, "CodeMark");
@@ -416,19 +429,26 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
         hideChildren(node, "LinkTitle");
         // 引用式链接 [文字][ref] 的 [ref] 也要藏
         hideChildren(node, "LinkLabel");
-        decos.push(Decoration.mark({ class: "cm-md-link" }).range(from, to));
+        // 链接色不随光标显隐（地址那几截由上面的 hideChildren 负责显形）
+        decos.push(
+          Decoration.mark({ class: "cm-md-link", ...blockReveal(from, to) }).range(from, to),
+        );
         return;
       }
 
       if (n === "Autolink") {
         // <https://x> 的尖括号要藏掉
         hideChildren(node, "LinkMark");
-        decos.push(Decoration.mark({ class: "cm-md-link" }).range(from, to));
+        decos.push(
+          Decoration.mark({ class: "cm-md-link", ...blockReveal(from, to) }).range(from, to),
+        );
         return;
       }
 
       if (n === "URL" && node.node.parent?.name === "Paragraph") {
-        decos.push(Decoration.mark({ class: "cm-md-link" }).range(from, to));
+        decos.push(
+          Decoration.mark({ class: "cm-md-link", ...blockReveal(from, to) }).range(from, to),
+        );
         return;
       }
 
