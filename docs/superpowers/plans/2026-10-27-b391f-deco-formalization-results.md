@@ -169,6 +169,7 @@ FAILS=7  MEASURED=20
 ## ⑦ 分支自检（本文档落地后）
 
 - `git log --oneline main..HEAD | wc -l` = **17**（spike 11 + 本轮 6：合主干 1 · 实现 4 · 本文档 1）
+  —— ⑧ 那一档落在后面（实现 1 · bump 1 · 头注 1 · 本文档这一笔 1），连同本笔数到 **23**
 - `git log --oneline HEAD..main | wc -l` = **0**（不落后于主干）
 - 装饰面之外碰到的生产文件共 11 个，每一个都是「接线」而不是「改渲染链路」：
   `core/app-state.ts`（闸门谓词）· `editor/perf.ts`（导出共用 `LAZY_THRESHOLD_LINES`）·
@@ -180,3 +181,63 @@ FAILS=7  MEASURED=20
   `src/sync-scroll/anchor.ts` / `src/sync-scroll/coordinator.ts` **一行未动** ——
   本轮所有修法都在开关分支与 `src/spike/**` 里，落点精度那条病灶（③A）就在这几个未动的文件里。
 - 关着 `deco_preview` 时全量门禁与主干一致：**115 文件 / 1872 测试通过** · `tsc -b` / eslint / prettier 干净
+
+---
+
+## ⑧ B391F-8 · 手感档（镜像可写 + 双向桥）——2026-10-27 追加
+
+用户口径：**「把镜像改可写 + 双向桥，先摸手感」**。这一档只回答一个问题：
+**「在预览面里直接打字」这件事手感如何**，不改上面那份 go/no-go 结论。
+
+### 落的三处
+
+- `spike/deco/mirror.ts`：`DecoMirrorOpts` 加 `editable` / `onMirrorEdit`；`mirrorState` 在可写时
+  摘掉 `editable(false)` 与 `State.readOnly(true)` 并把 `livePreview` 换成**光标显形**那一档；
+  新增 `mirrorToSource`（反向桥，三道闸与正向同口径：回声 / 同文 / 过期）。
+  镜像那颗的 `EditorView.updateListener` **必须待在 `mirrorState` 的 extensions 里**
+  ——它是 state facet，挂 view config 静默收不到任何东西。
+- `tabs/lifecycle.ts`：挂载点传 `editable: true` + `onMirrorEdit: (changes) => mirrorToSource(...)`；
+  落不进源码的三种形（非 Markdown / 只读文档 / 两侧基线不一致）一律 `refreshDecoMirror(p)`
+  把预览面拉回权威那份 —— 不许留一份「源码里没有的字」在预览面上。
+- **权威仍是源码那颗 view**：键入套回源码后，置脏 / 自动保存 / 大纲 / 会话快照 / 跨窗口广播
+  全由源码那颗既有的 `handleUpdate` 走 ⇒ 下游**一行没改**（这是这一档最想要的性质，
+  改动面越小，手感验得越干净）。
+
+### 判据（都有鉴别力，靠三条变异探针钉住）
+
+| 变异 | 红的那条 |
+| --- | --- |
+| 摘掉宿主接线（`editable` + `onMirrorEdit` 整块） | wiring ⑩ |
+| 摘掉反向桥的「过期」闸 | 单测 ② |
+| 摘掉 `editBridge` 的两道回声闸 | 单测 ⑥ + wiring ⑩ |
+
+门禁：**115 文件 / 1879 例绿** · `tsc -b` / eslint / prettier 干净。
+
+### 真机 `.tmp/b396-check.py` → FAILS=0
+
+左源码格 / 右装饰格，键入打进**装饰面**（CDP `Input.insertText` 走 beforeinput）：
+`contenteditable=true` · 装饰面里恰好一份（无回声双写）· 同一发落进源码那颗并经
+`syncDocInstances` 出现在左格兄弟实例 · 脏位亮 · 连打 4 字两面各一份 · 来回换面两次不丢不多 ·
+可写面上能力回归全绿（表格 / 公式 / mermaid / Shiki / 任务框 / Ctrl+F / 点勾「恰好只动那一行」）。
+
+**性能这一档没有拿到同尺结论**：5000 行夹具上打的是 `avg=17.99ms p95=16.80ms`
+（驱动自证 20/20 有效），但与上面 P3-2 那轮的 `37.57ms` **落点、焦点面、光标位置都不同**，
+只能读成「可写化没把击键顶到阈值之上」，不许报成改善；要同尺得复跑 `.tmp/b395-check.py`
+（单实例插件 ⇒ 台子与用户那扇不能并行，本轮没跑）。第一遍那个漂亮的 `16.66ms` 是**打空键**
+的量（点击落在 widget 格里、`'字'` 出现 0 次）—— 已把「性能读数必须带驱动自证」写进台子规则。
+
+### 这一档证明与没证明的
+
+- 证明了：双向桥在真机上不抖、不双写、不吃下游；「源码那颗当唯一权威」这条口径可以在
+  不重写保存/大纲/会话的前提下把就地编辑先摸出来。
+- 没碰：**③A 落点精度**（`lineBlockAt` 对没量过的行给估算高度）与 **③B 击键同尺对比**
+  都还在原处 —— 手感好不等于那两条病灶好了。
+- 已知洞：块级 widget（代码 / 表格 / 公式 / mermaid）**仍是只读岛**；镜像那颗没有 `history()`，
+  Ctrl+Z 走的是应用级快捷键 → 活动面板**源码那颗**的历史（理论一致，**未机器证**，待亲验）；
+  设置页里没有 `deco_preview` 这一项（只能改 JSON）。
+
+### 交付状态
+
+分支 `spike/b391-inknote-deco-preview`：`e268459`（实现）· `a1303f1`（**v0.24.46**）· `d001ef2`（头注）。
+产物 `src-tauri/target/release/bundle/nsis/LitePad_0.24.46_x64-setup.exe`。
+**仍未合并、未推送、未发版**；主干侧停在 v0.24.44（`caa3f00`）同样未推送。
