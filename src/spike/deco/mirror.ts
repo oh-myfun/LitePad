@@ -21,6 +21,14 @@ export interface DecoMirrorOpts {
   onToggleTask?: (line: number) => void;
   /** 只读文档 / 非 Markdown 时返回 false：点了不许有反应（B228 口径）。 */
   canToggleTask?: () => boolean;
+  /**
+   * 镜像可写（B391F-8「摸手感」那一档）。
+   * 开着 = 摘掉 `editable(false)` 与 `State.readOnly(true)`，并把 `livePreview` 的
+   * 光标显形打开 —— 但**权威仍是源码那颗 view**，镜像的键入经 `onMirrorEdit` 交回宿主。
+   */
+  editable?: boolean;
+  /** 镜像里真打字了（桥写进来的那一发不算）。宿主拿它去调 `mirrorToSource`。 */
+  onMirrorEdit?: (changes: ChangeSet) => void;
 }
 
 export interface DecoMirror {
@@ -64,10 +72,9 @@ export function isMirrorSyncing(): boolean {
  * 也正因为这道闸问的是 dst，参数里不留 src：计划原先写的 `mirrorChanges(src, dst, changes)`
  * 里 src 是个纯摆设（台账 Task 4 有 Ruling）。
  */
-export function mirrorChanges(
-  dst: EditorView,
-  changes: ChangeSet,
-): "applied" | "skipped-identical" | "skipped-echo" | "skipped-stale" {
+export type BridgeStatus = "applied" | "skipped-identical" | "skipped-echo" | "skipped-stale";
+
+export function mirrorChanges(dst: EditorView, changes: ChangeSet): BridgeStatus {
   if (syncing) return "skipped-echo";
   if (changes.empty) return "skipped-identical";
   if (changes.length !== dst.state.doc.length) return "skipped-stale";
@@ -86,16 +93,62 @@ export function mirrorChanges(
   return "applied";
 }
 
-/** 装饰面实例的 state：只读 + markdown + livePreview。新建与重新播种共用一份，别写两遍。 */
+/**
+ * 反向桥：把**镜像里**打的那一发套回源码那颗 view。
+ *
+ * 三道闸与 `mirrorChanges` 同口径（回声 / 同文 / 过期），方向反过来问的目标也反过来：
+ * `changes.length` 要比的是**源码此刻**的长度。写源码期间把 `syncing` 抬起，
+ * 于是源码自己的监听再调正向桥时会被 `skipped-echo` 挡掉 —— 少了这一抬，
+ * 「打一个字多两个字」就是这里的第一个病灶。
+ */
+export function mirrorToSource(src: EditorView, changes: ChangeSet): BridgeStatus {
+  if (syncing) return "skipped-echo";
+  if (changes.empty) return "skipped-identical";
+  if (changes.length !== src.state.doc.length) return "skipped-stale";
+  if (changes.apply(src.state.doc).eq(src.state.doc)) return "skipped-identical";
+
+  syncing = true;
+  try {
+    src.dispatch({ changes, userEvent: "mirror" });
+  } finally {
+    syncing = false;
+  }
+  return "applied";
+}
+
+/**
+ * 装饰面实例的 state：新建与重新播种共用一份，别写两遍。
+ *
+ * `editable`（B391F-8 的可写镜像）问的是「谁落笔」：开着也只表示**这颗 view 能打字**，
+ * 权威仍是源码那颗 —— 键入经 `onMirrorEdit` → `mirrorToSource` 套回源码，
+ * 下游（置脏 / 自动保存 / 大纲 / 同步滚动）一行不改。
+ */
 function mirrorState(doc: string, opts: DecoMirrorOpts): EditorState {
+  const editable = opts.editable === true;
+  // ⚠️ 这一发监听必须待在 extensions 里，不能事后挂到 view 的 config 上：
+  // `EditorView.updateListener` 是 state facet（台账「CM6 六条接口硬事实」第 1 条），
+  // 挂 config 或 `state.update({ extensions })` 都静默收不到任何东西。
+  // 两道闸缺一不可：`isMirrorSyncing()` 挡正向桥那一发（回声在源头就不报），
+  // `userEvent: "mirror"` 挡「同步期之外程序化写进镜像」的那一发。
+  const editBridge = opts.onMirrorEdit
+    ? EditorView.updateListener.of((update) => {
+        if (!update.docChanged || isMirrorSyncing()) return;
+        const tr = update.transactions.find((t) => t.docChanged);
+        if (!tr || tr.isUserEvent("mirror")) return;
+        opts.onMirrorEdit?.(update.changes);
+      })
+    : [];
+
   return EditorState.create({
     doc,
     extensions: [
-      EditorView.editable.of(false),
-      EditorState.readOnly.of(true),
+      // B391F-8：可写（IR 手感）与只读共用这一份构造，缺省仍是只读镜像。
+      editable ? [] : [EditorView.editable.of(false), EditorState.readOnly.of(true)],
       markdown({ base: markdownLanguage }),
       draftFences,
-      livePreview({ readOnly: true }),
+      // 可写 ⇒ 光标压住标记才显形源码（Typora 那一半机械）；只读 ⇒ 标记永不显形。
+      livePreview({ readOnly: !editable }),
+      editBridge,
       // B391F-5：装饰面是 CM6 视图，查找就直接用编辑器那套内核 —— 现方案给预览格
       // 另写了一台 DOM 命中机（`markdown/preview.ts` 的 applyFind），而开关开着时
       // 那台机器压根没被构造 ⇒ 预览格里 Ctrl+F 曾是空操作（结果文档② 评审 I8）。
@@ -108,7 +161,7 @@ function mirrorState(doc: string, opts: DecoMirrorOpts): EditorState {
   });
 }
 
-/** 在 `parent` 里建一个只读装饰面实例（Task 5 由面板模型持有它）。`docId` 是它装着的那篇文档。 */
+/** 在 `parent` 里建一个装饰面实例（Task 5 由面板模型持有它）。`docId` 是它装着的那篇文档。 */
 export function createDecoMirror(
   parent: HTMLElement,
   doc: string,

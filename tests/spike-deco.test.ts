@@ -20,7 +20,12 @@ import { CodeBlockWidget } from "../src/spike/deco/codeBlockWidget";
 import { MathWidget, MermaidWidget, TableWidget } from "../src/spike/deco/richWidgets";
 import { livePreview } from "../src/spike/deco/livePreview";
 import { taskClick } from "../src/spike/deco/taskClick";
-import { isMirrorSyncing, mirrorChanges } from "../src/spike/deco/mirror";
+import {
+  createDecoMirror,
+  isMirrorSyncing,
+  mirrorChanges,
+  mirrorToSource,
+} from "../src/spike/deco/mirror";
 import { applySelection, buildPreviewSets, revealFilterRange } from "../src/spike/deco/previewSets";
 
 // B391 spike · Task 1 —— 装饰集构建与 reveal 过滤（移植自 InkNote src/editor.ts）。
@@ -457,6 +462,129 @@ describe("B391F-5 装饰面点勾按行号交回宿主", () => {
       expect(hits).toEqual([]);
     } finally {
       view.destroy();
+    }
+  });
+});
+
+/**
+ * B391F-8 · 可写镜像与双向桥（「摸手感」那一档）。
+ *
+ * 手感 = 在预览面里直接打字，Typora 那种「光标压住标记才显形源码」。
+ * 这与「整格替换」的区别只在一件事：**谁是权威**。这里定的口径是
+ * 源码那颗 view 仍是唯一落笔点，装饰面的一发键入经反向桥套回源码，
+ * 再由正向桥把同一篇带回来 —— 于是置脏 / 自动保存 / 大纲 / 同步滚动
+ * 这些「认 `tab.state`」的下游一行都不用改（改动面越小，手感验得越干净）。
+ *
+ * 反向桥的三道闸与正向**同口径**，不是复制粘贴的巧合：
+ * 回声（另一侧自己写回来的那一发）/ 同文（幽灵 docChanged）/ 过期（基线不一致）。
+ * ⚠️ 少了「过期」那一闸，两篇等长的文档会互相把别人的变更按位置套进来
+ *    —— 正向那一条已经红过一次（`spike-deco-wiring.test.ts` ⑤），反向同理。
+ */
+describe("B391F-8 可写镜像与双向桥", () => {
+  function parent() {
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    return el;
+  }
+
+  /** 源码那颗（普通可写视图）+ 装饰面那颗（可写镜像），同文档两个独立 state。 */
+  function pair(text = "- [ ] 第一行\n\n**粗体**文字\n", opts: object = {}) {
+    const src = trackedView(
+      EditorState.create({
+        doc: text,
+        extensions: [markdown({ base: markdownLanguage })],
+      }),
+      parent(),
+    );
+    const mirror = createDecoMirror(parent(), text, 7, { editable: true, ...opts });
+    return { src, mirror };
+  }
+
+  it("① 镜像键入套回源码；同一发不再被正向桥塞回来（无回声）", () => {
+    const { src, mirror } = pair();
+    const tr = mirror.view.state.update({
+      changes: { from: 0, insert: "X" },
+      userEvent: "input.type",
+    });
+    mirror.view.dispatch(tr);
+    expect(mirrorToSource(src, tr.changes), "反向应判 applied").toBe("applied");
+    expect(src.state.doc.toString(), "源码必须拿到那一发").toBe("X- [ ] 第一行\n\n**粗体**文字\n");
+
+    // 源码收到后，它自己的监听会照例调正向桥。镜像已经带着这一发了 ⇒ 只能被跳过，
+    // 绝不能再加一遍（那就是「打一个字多两个字」的抖法）。
+    const status = mirrorChanges(mirror.view, tr.changes);
+    expect(status, "正向桥必须认这一发是同文/回声").not.toBe("applied");
+    expect(mirror.view.state.doc.toString(), "镜像不得被写第二遍").toBe(src.state.doc.toString());
+    mirror.dispose();
+  });
+
+  it("② 基线不一致的那一发不硬套（反向过期闸）", () => {
+    const { src, mirror } = pair();
+    src.dispatch({ changes: { from: 0, insert: "别篇长文" } }); // 源码单方面变长 ⇒ 两侧基线不一致
+    const tr = mirror.view.state.update({ changes: { from: 0, insert: "Z" } });
+    mirror.view.dispatch(tr);
+    const before = src.state.doc.toString();
+    expect(mirrorToSource(src, tr.changes), "等长都不该套，何况不等长").toBe("skipped-stale");
+    expect(src.state.doc.toString(), "过期的一发不许写进源码").toBe(before);
+    mirror.dispose();
+  });
+
+  it("③ 文本没变的一发不算编辑（反向同文闸 · 幽灵 docChanged）", () => {
+    const { src, mirror } = pair();
+    // 删一个字符再在同一处插回同一个字符：`changes.empty` 是 false（确实落笔了），
+    // 前后文本却一模一样 —— 正向那侧的幽灵 docChanged 在反向同样会出现。
+    const tr = mirror.view.state.update({
+      changes: [
+        { from: 0, insert: "-" },
+        { from: 0, to: 1 },
+      ],
+    });
+    mirror.view.dispatch(tr);
+    expect(mirrorToSource(src, tr.changes)).toBe("skipped-identical");
+    mirror.dispose();
+  });
+
+  it("④ editable 镜像真的是可写视图（contenteditable 与只读 facet 都要摘掉）", () => {
+    const { mirror } = pair();
+    try {
+      expect(mirror.view.state.facet(EditorState.readOnly), "readOnly facet 必须为假").toBe(false);
+      expect(mirror.view.contentDOM.getAttribute("contenteditable"), "DOM 要真能打字").toBe("true");
+    } finally {
+      mirror.dispose();
+    }
+  });
+
+  it("⑤ 光标压住标记才显形源码（Typora 那一半机械）", () => {
+    const { mirror } = pair();
+    try {
+      const view = mirror.view;
+      const mark = view.state.doc.toString().indexOf("**");
+      expect(view.dom.textContent.includes("**"), "前置：光标不在标记上时源码不该露出来").toBe(
+        false,
+      );
+      view.dispatch({ selection: { anchor: mark + 1 } });
+      expect(view.dom.textContent.includes("**"), "光标进 **…** 内部就该看见源码").toBe(true);
+    } finally {
+      mirror.dispose();
+    }
+  });
+
+  it("⑥ 桥写进来的那一发不触发反向回调（回声在源头就被挡）", () => {
+    const edits: number[] = [];
+    const mirror = createDecoMirror(parent(), "第一行\n第二行\n", 9, {
+      editable: true,
+      onMirrorEdit: (changes) => edits.push(changes.length),
+    });
+    try {
+      // 正向桥：把源码的一发套进镜像（`syncing` 期间 + userEvent:"mirror"）
+      const tr = mirror.view.state.update({ changes: { from: 0, insert: "Q" } });
+      mirrorChanges(mirror.view, tr.changes);
+      expect(edits, "桥写入不该被当成「用户在镜像里编辑」").toEqual([]);
+      // 真打字：该报
+      mirror.view.dispatch({ changes: { from: 0, insert: "W" }, userEvent: "input.type" });
+      expect(edits.length, "键入必须交回宿主一次").toBe(1);
+    } finally {
+      mirror.dispose();
     }
   });
 });

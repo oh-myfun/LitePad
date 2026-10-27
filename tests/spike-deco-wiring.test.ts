@@ -609,4 +609,38 @@ describe("B391F-5 装饰面的查找与点勾", () => {
       "写完的源码要经桥跟回装饰面（否则用户看见的还是没勾）",
     ).toContain("- [x] 打勾行");
   });
+
+  /**
+   * B391F-8 · 在装饰面里直接打字。
+   *
+   * 这条测的是「权威有没有换人」：键入落在镜像那颗 view 上，但**必须经反向桥套回源码
+   * 那颗**，于是置脏 / 自动保存 / 大纲 / 会话快照这些认 `tab.state` 的下游一行都不用改
+   * 也照样走。`d.dirty = false` 那一戳是让判据有鉴别力用的 —— 反向桥整个拆掉时，
+   * 源码不会变、脏位不会亮，这条就红。
+   */
+  it("⑩ 装饰面里打的那一发套回源码那颗，且不被正向桥写第二遍", async () => {
+    const { p, tab, view } = await decoPanel();
+    const { reseedDecoMirror } = await import("../src/spike/deco/mirror");
+    const { docs } = await import("../src/core/app-state");
+    const srcView = EditorView.findFromDOM(
+      document.querySelector(".panel-editor .cm-editor") as HTMLElement,
+    )!;
+    // 前面的用例故意错开过两侧基线（⑤⑥ 那个没落到源码的 `Z`）⇒ 从同文起测。
+    reseedDecoMirror(p.decoMirror!, srcView.state.doc.toString(), tab.docId);
+
+    const d = docs.get(tab.docId)!;
+    d.dirty = false;
+    view.dispatch(
+      view.state.update({ changes: { from: 0, insert: "手感" }, userEvent: "input.type" }),
+    );
+    await wait(60);
+
+    const count = (s: string) => s.split("手感").length - 1;
+    expect(count(srcView.state.doc.toString()), "反向桥必须把键入套回源码那颗").toBe(1);
+    expect(count(view.state.doc.toString()), "回声不得把镜像写第二遍").toBe(1);
+    expect(tab.state.doc.toString(), "tab.state 是下游唯一的读源，必须跟着源码走").toBe(
+      view.state.doc.toString(),
+    );
+    expect(d.dirty, "源码那颗的既有置脏路径要吃到这一发（下游一行不改）").toBe(true);
+  });
 });

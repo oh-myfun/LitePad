@@ -59,7 +59,7 @@ import { closeTab as ipcCloseTab, newTab as ipcNewTab } from "../ipc/api";
 import type { ChangeSet } from "@codemirror/state";
 // B391 spike：装饰预览面（`Settings.deco_preview` 开着才用得上；调用点全在
 // `isDecoPreviewEnabled` 分支里，静态守卫由 tests/spike-deco-wiring.test.ts ① 钉住）。
-import { createDecoMirror, mirrorChanges } from "../spike/deco/mirror";
+import { createDecoMirror, mirrorChanges, mirrorToSource } from "../spike/deco/mirror";
 import { decoDocIdOf, decoTextOf, refreshDecoMirror } from "../spike/deco/panelBridge";
 import { EditorScrollAnchor } from "../sync-scroll/anchor";
 import { renderPanelTabs, renderPanelOps, panelDataOf } from "./render";
@@ -316,6 +316,22 @@ export function rebuildLayout(): void {
             const t = tabs.get(p.viewTabId ?? p.activeTabId);
             const d = t ? docOf(t) : undefined;
             return !!t && !!d && isMdTab(t) && !d.readonly;
+          },
+          // B391F-8「摸手感」那一档：装饰面能吃键入，但**权威仍是源码那颗 view** ——
+          // 键入经 `mirrorToSource` 套回源码，置脏 / 自动保存 / 大纲 / 会话快照这些
+          // 认 `tab.state` 的下游全由源码那颗的 handleUpdate 走，一行不用改。
+          editable: true,
+          onMirrorEdit: (changes) => {
+            const src = p.view?.view;
+            const t = tabs.get(p.viewTabId ?? p.activeTabId);
+            const d = t ? docOf(t) : undefined;
+            // 没处落笔的三种形：源码那颗不在位、显示的不是 Markdown、文档只读。
+            if (!src || !t || !d || !isMdTab(t) || d.readonly) {
+              refreshDecoMirror(p);
+              return;
+            }
+            // 两侧基线不一致（反向桥的过期闸）也是同一处置。
+            if (mirrorToSource(src, changes) !== "applied") refreshDecoMirror(p);
           },
         });
       } else {
