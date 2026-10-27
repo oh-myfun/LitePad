@@ -38,6 +38,7 @@ import { logger } from "../core/logger";
 import {
   attachTabToPanel,
   getInstanceOnUpdate,
+  isMdDoc,
   isMdTab,
   languageOfDoc,
   makeDoc,
@@ -46,7 +47,7 @@ import {
   markDiskVersion,
   registerDoc,
 } from "../doc-model";
-import { normalizeSizeClass, perfProfileFor } from "../editor/perf";
+import { normalizeSizeClass, perfProfileForDoc } from "../editor/perf";
 import { makeTabState } from "../editor/editor";
 import {
   checkEncodable,
@@ -96,7 +97,8 @@ function rebuildDocInstances(doc: Doc, text: string, keepCursor = false): void {
   const lang = languageOfDoc(doc, firstLine);
   doc.langLabel = lang.label;
   // 档位必须跟着 doc 走：不传就回落 normal，大文件重载一次就把降级特性全开了
-  const perf = perfProfileFor(doc.sizeClass);
+  // B398：Markdown 在 large 档也装语言扩展（装饰面的原料），与 makeInstance 同口径
+  const perf = perfProfileForDoc(doc.sizeClass, isMdDoc(doc));
   for (const inst of instancesOfDoc(doc.tabId)) {
     const head = keepCursor ? inst.state.selection.main.head : 0;
     const made = makeTabState(

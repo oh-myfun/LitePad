@@ -452,29 +452,38 @@ describe("B397-1 一颗 view 两档：deco 形态下没有第二颗 view", () =>
  * 否则「绕闸」和「问闸」在调用点上长得一样。
  */
 /**
- * B397-5 · 大文件落进装饰格：预览侧**就地换臂**。
+ * B398 · 大文件落进装饰格：**装饰臂不换**（与 VS Code 同口径，只按视口解析）。
  *
- * 体积闸挡下的是「这一份文档此刻开不开装饰」，而挂载点只问得到建格那一刻那一份 ⇒
- * 同一格先开小文件、再打开大文件，旧形态是「装饰被闸关掉、派生预览又不在这一格」＝
- * 预览模式一片没有说明的裸源码。InkNote 与 VS Code 都不出现这一形（前者一臂到底、
- * 靠 parse 预算降级；后者降级在 model 层，预览照渲染）⇒ 这里判这一格跟着文档换臂。
+ * B397-5 判的是「大文件就地换派生 DOM 那一臂」。B398 把 2–20MB 的 Markdown 放回装饰臂：
+ * `livePreview` 的语法树只解析到「视口 + 前瞻」，每键成本与源码档同一量级（3.2MB 夹具
+ * 实测 5–7ms），于是换臂这条判据的载体只剩三类：非 Markdown、开关关着、`huge`（>20MB）。
+ * 甲 判大文件**不换臂**（用户问出来的那一条）；乙 用一篇 `.txt` 走完整往返（换臂与换回）；
+ * 丙 判 `huge` 仍换臂（VS Code 的 20MB 阈值）。
  */
-describe("B397-5 大文件落进装饰格：预览侧换臂", () => {
-  async function largeMdInPanel(p: Awaited<ReturnType<typeof mdPanelInPreview>>["p"]) {
+describe("B398 大文件落进装饰格：装饰臂不换", () => {
+  let seq = 9700;
+
+  async function tabInPanel(
+    p: Awaited<ReturnType<typeof mdPanelInPreview>>["p"],
+    name: string,
+    cls: "normal" | "large" | "huge",
+  ) {
     const { makeDoc, makeInstance, registerDoc, attachTabToPanel } =
       await import("../src/doc-model");
     const doc = makeDoc(
-      9611,
-      "# 大文件\n\n正文",
-      "big.md",
-      "E:\\tmp\\big.md",
+      ++seq,
+      "# 文档\n\n正文",
+      name,
+      `E:\\tmp\\${name}`,
       "UTF-8",
       "LF",
       false,
-      "large",
+      cls,
     );
     registerDoc(doc);
-    const tab = makeInstance(doc, p.panelId, "# 大文件\n\n正文");
+    const tab = makeInstance(doc, p.panelId, "# 文档\n\n正文");
+    // 建实例的缺省档是源码；这里量的是「大文件进预览档」那一形
+    tab.viewMode = "preview";
     attachTabToPanel(tab, p);
     return { tab, doc };
   }
@@ -494,53 +503,80 @@ describe("B397-5 大文件落进装饰格：预览侧换臂", () => {
   async function restore(
     p: Awaited<ReturnType<typeof mdPanelInPreview>>["p"],
     small: Awaited<ReturnType<typeof mdPanelInPreview>>["tab"],
-    big: { tab: { tabId: number }; doc: { tabId: number } },
+    extra: { tab: { tabId: number }; doc: { tabId: number } },
   ) {
     // 把这一格还给后续用例：换回小文件 + 摘掉临时文档（清理放 finally，红的时候也不污染下一例）
     await switchTo(p, small);
     const { tabs, docs } = await import("../src/core/app-state");
-    tabs.delete(big.tab.tabId);
-    docs.delete(big.doc.tabId);
-    p.tabs = p.tabs.filter((id) => id !== big.tab.tabId);
+    tabs.delete(extra.tab.tabId);
+    docs.delete(extra.doc.tabId);
+    p.tabs = p.tabs.filter((id) => id !== extra.tab.tabId);
   }
 
-  it("甲 切到大文件：派生预览就地挂上、`.deco-face` 摘掉、装饰收起", async () => {
+  it("甲 切到大文件：仍走装饰臂（`.deco-face` 在、装饰挂在这颗 view 上、没有派生预览）", async () => {
     const { p, tab } = await mdPanelInPreview();
-    const big = await largeMdInPanel(p);
+    const big = await tabInPanel(p, "big.md", "large");
     try {
       await switchTo(p, big.tab);
 
-      expect(p.preview, "大文件 ⇒ 派生预览那一臂在场").not.toBeNull();
-      expect(p.preview!.root.parentElement, "派生预览要真进 DOM").toBe(p.bodyEl);
-      expect(p.bodyEl!.classList.contains("deco-face")).toBe(false);
+      expect(p.preview, "B398：大文件同走装饰臂 ⇒ 派生预览不该被构造").toBeNull();
+      expect(p.bodyEl!.querySelector(".md-preview"), "派生 DOM 那一臂的根不在 DOM 里").toBeNull();
+      expect(p.bodyEl!.classList.contains("deco-face")).toBe(true);
       expect(
         panelEditor().dom.classList.contains("md-deco"),
-        "同一颗 view 上已经装着的装饰要摘干净（大文件不许再全篇同步 parse）",
-      ).toBe(false);
+        "大文件的装饰要真装在这颗 view 上（只解析视口，不是不解析）",
+      ).toBe(true);
       expect(tab.viewMode, "前置：小文件那张仍是预览档（切换不动它）").toBe("preview");
     } finally {
       await restore(p, tab, big);
     }
   });
 
-  it("乙 切回小文件：派生预览摘掉、`.deco-face` 回来、装饰重新装在这颗 view 上", async () => {
+  it("乙 非 Markdown 落进装饰格：换派生预览那一臂，切回小文件再换回来", async () => {
     const { p, tab } = await mdPanelInPreview();
-    const big = await largeMdInPanel(p);
+    const txt = await tabInPanel(p, "note.txt", "normal");
     try {
-      await switchTo(p, big.tab);
-      expect(p.preview, "前置：先落在派生那一臂").not.toBeNull();
+      await switchTo(p, txt.tab);
+
+      expect(p.preview, "非 Markdown ⇒ 派生预览那一臂在场").not.toBeNull();
+      expect(p.preview!.root.parentElement, "派生预览要真进 DOM").toBe(p.bodyEl);
+      expect(p.bodyEl!.classList.contains("deco-face")).toBe(false);
+      expect(
+        panelEditor().dom.classList.contains("md-deco"),
+        "同一颗 view 上已经装着的装饰要摘干净（.txt 没有 markdown 语法树可用）",
+      ).toBe(false);
 
       await switchTo(p, tab);
 
-      expect(p.preview, "小文件 ⇒ 派生预览必须收走（留着 applyDecoFace 会一行不碰）").toBeNull();
+      expect(
+        p.preview,
+        "换回 Markdown ⇒ 派生预览必须收走（留着 applyDecoFace 会一行不碰）",
+      ).toBeNull();
       expect(p.bodyEl!.querySelector(".md-preview"), "DOM 里也不许留残根").toBeNull();
       expect(p.bodyEl!.classList.contains("deco-face")).toBe(true);
       expect(
         panelEditor().dom.classList.contains("md-deco"),
-        "切回小文件 ⇒ 装饰重新落在这颗 view 上",
+        "换回 Markdown ⇒ 装饰重新落在这颗 view 上",
       ).toBe(true);
     } finally {
-      await restore(p, tab, big);
+      await restore(p, tab, txt);
+    }
+  });
+
+  it("丙 huge 档（>20MB）仍换臂：与 VS Code 的 LARGE_FILE_SIZE_THRESHOLD 同口径", async () => {
+    const { p, tab } = await mdPanelInPreview();
+    const huge = await tabInPanel(p, "huge.md", "huge");
+    try {
+      await switchTo(p, huge.tab);
+
+      expect(p.preview, "huge ⇒ 派生预览").not.toBeNull();
+      expect(p.bodyEl!.classList.contains("deco-face")).toBe(false);
+      expect(
+        panelEditor().dom.classList.contains("md-deco"),
+        "huge 档不许再装装饰（整篇解析与重建都到了几百毫秒级）",
+      ).toBe(false);
+    } finally {
+      await restore(p, tab, huge);
     }
   });
 });
@@ -726,14 +762,22 @@ describe("B391F-3 装饰档挂载的三道闸", () => {
     );
   });
 
-  for (const cls of ["large", "huge"] as const) {
-    it(`开关开着 + Markdown + ${cls} 档 ⇒ 不挂（生产那一档是「停用自动预览 + 给提示」）`, async () => {
-      const { tab } = await tabOf(`c-${cls}.md`, cls);
-      const { shouldMountDecoPreview } = await import("../src/spike/deco/eligibility");
-      await setDeco(true);
-      expect(shouldMountDecoPreview(tab)).toBe(false);
-    });
-  }
+  it("开关开着 + Markdown + large 档 ⇒ 挂（B398：只解析视口，2–20MB 与源码档同一量级）", async () => {
+    const { tab } = await tabOf("c-large.md", "large");
+    const { shouldMountDecoPreview } = await import("../src/spike/deco/eligibility");
+    await setDeco(true);
+    expect(
+      shouldMountDecoPreview(tab),
+      "这一档正是 B398 放回来的，判 false 就把大文件又挡在外面",
+    ).toBe(true);
+  });
+
+  it("开关开着 + Markdown + huge 档 ⇒ 不挂（>20MB 回派生预览，与 VS Code 同口径）", async () => {
+    const { tab } = await tabOf("c-huge.md", "huge");
+    const { shouldMountDecoPreview } = await import("../src/spike/deco/eligibility");
+    await setDeco(true);
+    expect(shouldMountDecoPreview(tab)).toBe(false);
+  });
 
   it("开关开着 + 非 Markdown（.txt）⇒ 不挂（装饰吃 markdown 语法树）", async () => {
     const { tab } = await tabOf("d.txt", "normal");

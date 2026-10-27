@@ -18,7 +18,7 @@ import {
   layout,
 } from "./core/app-state";
 import { detectLanguage, languageInfoByLabel, type LanguageInfo } from "./editor/language";
-import { perfProfileFor, type SizeClass } from "./editor/perf";
+import { perfProfileForDoc, type SizeClass } from "./editor/perf";
 import { makeTabState } from "./editor/editor";
 import { eachLeaf } from "./core/layout";
 import { activeTab } from "./core/panels";
@@ -97,7 +97,8 @@ function makeDoc(
 function makeInstance(doc: Doc, panelId: number, text: string): Tab {
   const firstLine = text.split("\n", 1)[0] ?? "";
   const lang = languageOfDoc(doc, firstLine);
-  const perf = perfProfileFor(doc.sizeClass);
+  // B398：Markdown 在 large 档也装语言扩展（装饰面的原料），见 perfProfileForDoc
+  const perf = perfProfileForDoc(doc.sizeClass, isMdDoc(doc));
   const { state, comps } = makeTabState(
     text,
     lang.extension,

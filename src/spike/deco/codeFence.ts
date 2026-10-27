@@ -51,7 +51,10 @@ export const draftFences = StateField.define<readonly number[]>({
       const line = tr.newDoc.lineAt(head);
       if (head === line.to && isUnclosedFenceLine(line.text) && !positions.includes(line.from)) {
         const oldPos = tr.changes.invertedDesc.mapPos(line.from);
-        let node = previewSyntaxTree(tr.startState).resolveInner(oldPos, 1);
+        // 光标的树一定是解析过的（视口优先）⇒ 问 `syntaxTree` 就够；
+        // B398 之前这里用 `previewSyntaxTree`（强制全文 parse）—— 大文件每敲一个围栏字符
+        // 都要吃 100ms 的预算，正是「大文件开不了装饰面」的一半原因。
+        let node = syntaxTree(tr.startState).resolveInner(oldPos, 1);
         let inCode = false;
         for (; node.parent; node = node.parent) {
           if (node.name === "FencedCode" || node.name === "CodeBlock") inCode = true;
@@ -66,12 +69,17 @@ export const draftFences = StateField.define<readonly number[]>({
 /**
  * 给预览用的语法树：等长空格抹掉输入中的围栏后重 parse。
  *
- * `ensureSyntaxTree(..., 100)` 是另一件要紧事：长文档初始化时 Lezer 可能只同步解析
- * 前半段，直接拿那棵临时树构建装饰，靠后的围栏代码就永久停在源码态。
+ * **只解析到 `to`**（缺省整篇，测试与离线场景照旧）：B398 起装饰面传的是
+ * 「视口末端 + 前瞻」，预算 20ms —— 大文件不再为了一屏装饰去同步 parse 全篇。
+ * 视口之外的部分由 CM6 的 parseWorker 在空闲时推进，推进后装饰面会重建（见 livePreview）。
+ *
+ * 有 draft 时仍是整篇离线 parse（`parser.parse`）：抹掉那几行才拿得到正确结构，
+ * 而 draft 只在「敲完围栏标记、还没按回车」的一瞬存在（keymap 的 `openBlockOnEnter`
+ * 会把它换掉）—— 不是稳态成本。
  */
-export function previewSyntaxTree(state: EditorState): Tree {
+export function previewSyntaxTree(state: EditorState, to = state.doc.length, budget = 100): Tree {
   const drafts = state.field(draftFences, false) ?? [];
-  if (!drafts.length) return ensureSyntaxTree(state, state.doc.length, 100) ?? syntaxTree(state);
+  if (!drafts.length) return ensureSyntaxTree(state, to, budget) ?? syntaxTree(state);
   let text = state.doc.toString();
   for (const from of drafts) {
     const line = state.doc.lineAt(from);

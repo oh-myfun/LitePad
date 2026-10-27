@@ -8,7 +8,7 @@
 import { docs, isDecoPreviewEnabled, settings } from "../../core/app-state";
 import type { Tab } from "../../core/app-state";
 import { isMdTab } from "../../doc-model";
-import { normalizeSizeClass, perfProfileFor } from "../../editor/perf";
+import { normalizeSizeClass } from "../../editor/perf";
 
 /**
  * B391F-3 · 三条都得问，缺一条就能把应用拖死。
@@ -18,14 +18,16 @@ import { normalizeSizeClass, perfProfileFor } from "../../editor/perf";
  *     判据才数得清调用点）；
  *   · **是不是 Markdown**：装饰吃的是 markdown 语法树，一篇 `.txt` 开档等于每颗键
  *     全篇重 parse 却什么也不画；
- *   · **档位让不让自动预览**：>2MB / >20MB 两档生产是「停用自动预览 + 给提示」，
- *     装饰档照开就是绕过降级（InkNote 的 `previewSyntaxTree` 强制全文同步 parse，
- *     大文档那一档正是它的代价所在）。
+ *   · **体积档**：B398 起只挡 `huge`（>20MB），与 VS Code 的
+ *     `LARGE_FILE_SIZE_THRESHOLD` 同口径。2–20MB 的 Markdown 照开 —— 装饰的语法树
+ *     只解析到「视口 + 前瞻」（`livePreview.ts`），每键成本与源码档同一量级
+ *     （3.2MB 夹具实测 5–7ms）。`huge` 档仍然回派生预览：那里的整篇重建与解析
+ *     都到了几百毫秒级，VS Code 在 20MB 也已经停掉令牌化。
  */
 export function shouldMountDecoPreview(tab: Tab | undefined): boolean {
   if (!tab || !isDecoPreviewEnabled(settings)) return false;
   if (!isMdTab(tab)) return false;
   // 问 `docs.get` 而不是 `docOf`：后者查不到就抛，而「拿到一颗孤儿实例」这一形
   // 不该把整次换档带崩。
-  return perfProfileFor(normalizeSizeClass(docs.get(tab.docId)?.sizeClass)).autoPreview;
+  return normalizeSizeClass(docs.get(tab.docId)?.sizeClass) !== "huge";
 }

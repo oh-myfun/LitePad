@@ -80,3 +80,20 @@ export function perfProfileFor(cls: SizeClass): PerfProfile {
       };
   }
 }
+
+/**
+ * B398 · 这一份文档的档位，Markdown 在 `large` 档例外：**语言扩展照装**。
+ *
+ * 理由（照 VS Code 的取舍）：`syntax:false` 原本是把「增量解析整篇」当最大开销省掉，
+ * 但 CM6 的解析是**视口优先**的 —— 打开时只解析头 3000 字符，之后按视口推进
+ * （`@codemirror/language` 的 parseWorker）。而 Markdown 的语法树还是所见即所得
+ * 装饰面的原料（装饰只解析到视口 + 前瞻，见 `spike/deco/livePreview.ts`）⇒ 大文件
+ * 没有解析器就等于没有装饰面。`huge`（>20MB）照关：与 VS Code 的
+ * `LARGE_FILE_SIZE_THRESHOLD` 同口径，那里它连令牌化都停了。
+ *
+ * 只影响「装不装语言扩展」；折叠 / 括号匹配 / 选中匹配那三条仍按原档位关着。
+ */
+export function perfProfileForDoc(cls: SizeClass, markdown: boolean): PerfProfile {
+  const base = perfProfileFor(cls);
+  return markdown && !base.syntax && cls !== "huge" ? { ...base, syntax: true } : base;
+}

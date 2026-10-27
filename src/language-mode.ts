@@ -12,8 +12,8 @@
 
 import { activePanelId, docs, panels, tabs } from "./core/app-state";
 import { activeTab, docOf, getPanel, instancesOfDoc } from "./core/panels";
-import { isMdTab, languageOfDoc } from "./doc-model";
-import { perfProfileFor } from "./editor/perf";
+import { isMdDoc, isMdTab, languageOfDoc } from "./doc-model";
+import { perfProfileForDoc } from "./editor/perf";
 import { AUTO_LANGUAGE, languageChoices, languageInfoByLabel } from "./editor/language";
 import { applyPanelMode } from "./markdown";
 import { showQuickPick, quickPickIsOpen, closeQuickPick } from "./shell/quickpick";
@@ -51,7 +51,8 @@ export function applyLanguageMode(docId: number, label: string | null): void {
   const lang = languageOfDoc(doc, firstLineOf(docId));
   doc.langLabel = lang.label;
 
-  const perf = perfProfileFor(doc.sizeClass);
+  // B398：Markdown 在 large 档也装语言扩展（装饰面的原料），与 makeInstance 同口径
+  const perf = perfProfileForDoc(doc.sizeClass, isMdDoc(doc));
   const extension = perf.syntax ? (lang.extension ?? []) : [];
   for (const inst of instancesOfDoc(docId)) {
     const effect = inst.comps.lang.reconfigure(extension);
