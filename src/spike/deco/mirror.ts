@@ -1,8 +1,11 @@
-// B391 spike · 只读镜像视图与 ChangeSet 桥。
+// B391 spike · 装饰面镜像视图与双向 ChangeSet 桥。
 //
 // 参照 LitePad 自己的多实例口径（src/main.ts:328 `syncDocInstances`、:356 定义）：
 // 同一文档的每份实例各持一个 `EditorState`，内容靠把同一个 `ChangeSet` 映射过去对齐，
 // **不是**共享 state。装饰预览因此只是「同文档的第 N 份实例」，不需要新造多视图机制。
+//
+// 缺省这颗镜像是只读的；`editable`（B391F-8 手感档）让它能吃键入，但权威仍在源码那颗
+// —— 反向那一发经 `mirrorToSource` 套回去，正向桥随即把它认成回声/同文，不会写第二遍。
 
 import { EditorState, type ChangeSet } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
