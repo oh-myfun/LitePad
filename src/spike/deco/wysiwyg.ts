@@ -57,5 +57,8 @@ export function decoLock(readonly: boolean): Extension {
     EditorState.readOnly.of(true),
     EditorView.editable.of(false),
     EditorState.transactionFilter.of((tr) => (tr.docChanged ? [] : tr)),
+    // 样式侧要知道「这一把锁现在落着」（藏光标、收工具栏）：CM6 会把多颗
+    // editorAttributes 的 class 合并，所以这颗与 livePreview 的 `md-deco` 并存
+    EditorView.editorAttributes.of({ class: "md-deco--readonly" }),
   ];
 }

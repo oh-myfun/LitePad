@@ -15,7 +15,9 @@ import { syntaxTree } from "@codemirror/language";
 import type { Tree, SyntaxNodeRef } from "@lezer/common";
 import { frontMatterRange } from "./codeFence";
 import { CodeBlockWidget } from "./codeBlockWidget";
-import { MathWidget, MermaidWidget, TableWidget, scanMath } from "./richWidgets";
+import { MathWidget, MermaidWidget, scanMath } from "./richWidgets";
+import { parseTable } from "./tableData";
+import { TableWidget } from "./tableWidget";
 
 /** 一个整块替换的源码区间。 */
 export interface BlockRange {
@@ -388,15 +390,17 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
       }
 
       if (n === "Table") {
-        // 表格整块换成只读 `<table>`，内容由 `renderFull` 现产 —— 与派生 DOM 那张
-        // 是同一份渲染器出的，对齐（`:---:`）也一并跟着 markdown-it，不在这里重算一遍。
+        // 表格整块换成**可编辑**的 `<table>`（B397-3b）：格内容由手写的 `parseTable` 拆，
+        // 语法树只负责「这一段是表」。对齐（`:---:`）跟着走 —— 回写时它住在分隔行里，
+        // 不拆出来再写回去就等于打字把用户的对齐档位冲掉。
         occupied.push({ from, to });
         if (!coversWholeLines(from, to)) return;
         atomicBlocks.push({ from, to });
+        const { header, rows, aligns } = parseTable({ from, to }, doc);
         decos.push(
           Decoration.replace({
             block: true,
-            widget: new TableWidget(from, to, doc.sliceString(from, to)),
+            widget: new TableWidget(from, to, header, rows, aligns),
             ...blockReveal(from, to),
           }).range(from, to),
         );

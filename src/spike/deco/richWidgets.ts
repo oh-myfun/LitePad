@@ -1,6 +1,6 @@
-// B391F-4 · 装饰面的块级富构造：公式 / mermaid / 表格。
+// B391F-4 · 装饰面的块级富构造：公式 / mermaid。
 //
-// 形状照 InkNote 的 `editor/widgets/{math,mermaid,table}.ts`（本机参照
+// 形状照 InkNote 的 `editor/widgets/{math,mermaid}.ts`（本机参照
 // E:\Project\InkNote\InkNote），**渲染器不照**：InkNote 在 widget 里直调
 // `katex.renderToString` 与 `mermaid.render`，LitePad 这两发已经有唯一出口
 // `markdown/enhance.enhanceMarkdown`（B352-2 抽它就是为了「别把四件事抄进每个渲染面」）。
@@ -8,19 +8,19 @@
 //
 //   · 公式 → `.math-inline-src` / `.math-display-src`（KaTeX，懒加载）
 //   · mermaid → `pre.mermaid-src`（懒加载 mermaid，`bigDoc` 档位照旧不画）
-//   · 表格 → `renderFull()` 直接产出与派生 DOM **同一张** `<table>`（含 `:---:` 对齐）
 //
-// 三条都因此与现方案共享同一份主题口径（Shiki 双主题、`--shiki-light/dark`、
+// 两条都因此与现方案共享同一份主题口径（Shiki 双主题、`--shiki-light/dark`、
 // 大文档降级），不会出现「预览格两种实现各渲染各的」那种漂移。
 //
-// ⚠️ 与 InkNote 的有意差异：它的 math/table widget 带就地编辑（`editableSource` +
-// `visualActions`，合计 ~840 行）。装饰面这一格是**只读镜像**，写回要走反向的 ChangeSet 桥，
-// 那是另一件事（B391F-7），这里一行都不搬。
+// ⚠️ 表格不在这个文件里了：B397-3b 把它换成**可就地编辑**的那一颗（`tableWidget.ts`），
+// 内容由手写的 `parseTable` 拆格而不是 `renderFull` —— 写回源码要按格改，整段 HTML 做不到。
+//
+// ⚠️ 与 InkNote 的有意差异：它的 math/mermaid widget 带源码区就地编辑
+// （`editableSource` + `.md-block-source` 那一层显隐），这里两条还是只读占位。
 
 import { WidgetType, type EditorView } from "@codemirror/view";
 import type { Text } from "@codemirror/state";
 import { enhanceMarkdown, nextEnhanceSeq } from "../../markdown/enhance";
-import { renderFull } from "../../markdown/pipeline";
 import { LAZY_THRESHOLD_LINES } from "../../editor/perf";
 
 /** 大文档档位与派生 DOM 共用一个阈值（超过就不自动跑 mermaid / Shiki）。 */
@@ -107,35 +107,6 @@ export class MermaidWidget extends WidgetType {
     pre.className = "mermaid-src";
     pre.textContent = this.code;
     wrap.appendChild(pre);
-    enhanceThenMeasure(wrap, view);
-    return wrap;
-  }
-
-  ignoreEvent(): boolean {
-    return false;
-  }
-}
-
-/** 表格：只读渲染，产物与派生 DOM 预览**同一张表**（走 `renderFull`）。 */
-export class TableWidget extends WidgetType {
-  constructor(
-    readonly from: number,
-    readonly to: number,
-    readonly src: string,
-  ) {
-    super();
-  }
-
-  eq(other: TableWidget): boolean {
-    return other.src === this.src && other.to - other.from === this.to - this.from;
-  }
-
-  toDOM(view: EditorView): HTMLElement {
-    const wrap = document.createElement("div");
-    wrap.className = "md-block md-table-widget";
-    // `renderFull` 吃的是这一段的 markdown 源码 ⇒ 表头/对齐/单元格里的行内构造
-    // 都与整篇渲染时一致；表格里嵌的公式/代码块再由 enhance 认领。
-    wrap.innerHTML = renderFull(this.src);
     enhanceThenMeasure(wrap, view);
     return wrap;
   }

@@ -342,6 +342,61 @@ describe("B397-2 块级 widget：与正文左缘对齐，且一条纵向 margin 
     );
   });
 
+  it("B397-3b 表格：描边/圆角/底色回到 .md-table-body 那一层，根只剩纵向留白（App.css:2288-2298）", () => {
+    const root = ruleBlock(css, ".md-deco .md-table-widget", "5px 0 7px");
+    expect(root, "视觉盒子放内层：根元素带描边就等于把 B397-2 那层壳又拆了").not.toMatch(/border:/);
+    expect(root).not.toMatch(/background:/);
+    const body = ruleBlock(css, ".md-deco .md-table-body");
+    expect(body).toMatch(/border:\s*1px solid var\(--md-panel-border\)/);
+    expect(body).toMatch(/border-radius:\s*var\(--md-component-radius\)/);
+    expect(body).toMatch(/overflow-x:\s*auto/);
+  });
+
+  it("B397-3b 工具栏：槽常驻 18px 不顶表格、按钮 20×18、聚焦才现身（App.css:2383-2426）", () => {
+    const slot = ruleBlock(css, ".md-deco .md-table-toolbar-slot");
+    expect(slot).toMatch(/height:\s*18px/);
+    expect(slot).toMatch(/pointer-events:\s*none/);
+    const bar = ruleBlock(css, ".md-deco .md-table-toolbar", "display: flex");
+    expect(bar).toMatch(/opacity:\s*0/);
+    expect(bar).toMatch(/visibility:\s*hidden/);
+    expect(css).toMatch(/\.md-deco \.md-table-widget--focused \.md-table-toolbar/);
+    expect(css).toMatch(/\.md-deco \.md-table-widget:focus-within \.md-table-toolbar/);
+    const btn = ruleBlock(css, ".md-deco .md-table-toolbar-btn");
+    expect(btn).toMatch(/width:\s*20px/);
+    expect(btn).toMatch(/height:\s*18px/);
+    expect(btn).toMatch(/border-radius:\s*4px/);
+    expect(
+      ruleBlock(css, ".md-deco .md-table-toolbar-menu", "min-width: 140px"),
+      "菜单阴影走 LitePad 的 --shadow-lg，不抄 InkNote 的字面量黑",
+    ).toMatch(/box-shadow:\s*var\(--shadow-lg\)/);
+  });
+
+  it("B397-3b 打字那一格按真实换行排；框选那一档底色不许透出表头（App.css:2318 / 2356-2360）", () => {
+    expect(ruleBlock(css, '.md-deco .md-table-widget [contenteditable="true"]:focus')).toMatch(
+      /white-space:\s*pre-wrap/,
+    );
+    const selected = ruleBlock(
+      css,
+      ".md-deco .md-table-widget th.md-table-cell-selected, .md-deco .md-table-widget td.md-table-cell-selected",
+    );
+    expect(selected).toMatch(/background:\s*color-mix\(/);
+    expect(selected).toMatch(/!important/);
+  });
+
+  it("B397-3b 只读那一把锁有 CSS 读数点：藏光标、收工具栏与语言下拉、留静态语言名（App.css:1142-1155）", () => {
+    expect(css).toMatch(/\.md-deco--readonly \.cm-content\s*\{\s*caret-color:\s*transparent/);
+    expect(css).toMatch(
+      /\.md-deco--readonly \.md-table-toolbar,\s*\.md-deco--readonly \.md-codeblock-lang,\s*\.md-deco--readonly \.md-codeblock-language-control::after\s*\{\s*display:\s*none/,
+    );
+    expect(css).toMatch(
+      /\.md-deco--readonly \.md-codeblock-language-label\s*\{\s*display:\s*inline-block/,
+    );
+    // 同特异度靠先后定胜负：静态标签那条排在 `display: none` 之后才生效
+    expect(css.indexOf(".md-deco--readonly .md-codeblock-language-label")).toBeGreaterThan(
+      css.indexOf(".md-deco .md-codeblock-language-label"),
+    );
+  });
+
   it("公式块级档 18px/14px 留白、mermaid 盒 20px 留白（App.css 数学段 / 图表段）", () => {
     const math = ruleBlock(css, ".md-deco .md-math-widget.md-math-block");
     expect(math).toMatch(/padding:\s*18px 14px/);

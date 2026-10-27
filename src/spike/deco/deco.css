@@ -486,12 +486,16 @@
   display: none;
 }
 
-/* ---------- 表格（App.css:2287-2325） ----------
-   LitePad 这张表由 `renderFull` 现产 ⇒ 与派生 DOM **同一份渲染器**（含 `:---:` 对齐）；
-   InkNote 的 `.md-table-body` 那层壳在这里就是 widget 根本身（少一层 DOM，声明合并到它）。 */
+/* ---------- 表格（App.css:2287-2325 / 2356-2380 / 2383-2484） ----------
+   B397-3b 起这张表由 `tableWidget.ts` 现产（可就地编辑），DOM 层级也照它：
+   根 `.md-table-widget` 只管纵向留白，**描边/圆角/底色在 `.md-table-body` 那一层**
+   （旧 deco.css 把这四样合并到根上，是因为那时 widget 少一层壳）。 */
 .md-deco .md-table-widget {
   position: relative;
   padding: 5px 0 7px;
+  cursor: text;
+}
+.md-deco .md-table-body {
   overflow-x: auto;
   border: 1px solid var(--md-panel-border);
   border-radius: var(--md-component-radius);
@@ -517,6 +521,10 @@
   user-select: text;
   cursor: text;
 }
+/* 打字时按真实换行排（源码里那 `<br>` 在编辑态是换行，见 editableCellText）。 */
+.md-deco .md-table-widget [contenteditable="true"]:focus {
+  white-space: pre-wrap;
+}
 .md-deco .md-table-widget th:last-child,
 .md-deco .md-table-widget td:last-child {
   border-right: none;
@@ -528,17 +536,141 @@
   background: var(--md-panel-bg);
   font-weight: 650;
 }
+/* 框选：不透明统一底色，不能透出表头底色（App.css:2356-2360）。 */
+.md-deco .md-table-widget th.md-table-cell-selected,
+.md-deco .md-table-widget td.md-table-cell-selected {
+  background: color-mix(in srgb, var(--md-accent) 16%, var(--bg)) !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--md-accent) 28%, transparent);
+}
 .md-deco .md-table-widget td code,
 .md-deco .md-table-widget th code {
   background: var(--md-panel-bg);
   padding: 1px 4px;
-  border-radius: 4px;
+  border-radius: 3px;
   font-family: var(--md-code-font);
-  font-size: 0.9em;
+  font-size: 0.88em;
 }
 .md-deco .md-table-widget td del,
 .md-deco .md-table-widget th del {
   color: var(--md-muted);
+}
+.md-deco .md-table-widget td mark,
+.md-deco .md-table-widget th mark {
+  background: color-mix(in srgb, var(--md-accent) 22%, var(--bg));
+  color: var(--md-fg);
+  border-radius: 2px;
+  padding: 0 2px;
+}
+/* 格内链接：`data-href` 而不是 `href`（点了不把 WebView 导航走，B394-1 那一族）。 */
+.md-deco .md-table-link {
+  color: var(--link-fg);
+  text-decoration: none;
+}
+
+/* 工具栏常驻但平时隐去：显隐按钮时表格不跳动，也不覆盖前一段（App.css:2383-2413）。
+   `--focused` 由 widget 自己在交互时加（`:focus-within` 兜住「刚 Tab 进格子」那一发）。 */
+.md-deco .md-table-toolbar-slot {
+  position: relative;
+  height: 18px;
+  max-height: 18px;
+  z-index: 5;
+  pointer-events: none;
+  overflow: visible;
+}
+.md-deco .md-table-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0;
+  width: fit-content;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  user-select: none;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.md-deco .md-table-widget--focused .md-table-toolbar,
+.md-deco .md-table-widget:focus-within .md-table-toolbar {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+.md-deco .md-table-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--md-muted);
+  cursor: pointer;
+}
+.md-deco .md-table-toolbar-btn:hover {
+  background: color-mix(in srgb, var(--md-fg) 8%, transparent);
+  color: var(--md-fg);
+}
+.md-deco .md-table-toolbar-delete {
+  margin-left: 2px;
+}
+.md-deco .md-table-toolbar-delete:hover {
+  /* InkNote 这里写死 #e5484d；LitePad 有 `--danger`（五族各有取值）⇒ 颜色按文件头那条规矩回 token */
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+.md-deco .md-table-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+}
+.md-deco .md-table-toolbar-dropdown {
+  position: relative;
+}
+.md-deco .md-table-toolbar-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 140px;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-lg);
+  z-index: 10;
+}
+.md-deco .md-table-toolbar-menu.is-open {
+  display: block;
+}
+.md-deco .md-table-toolbar-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--md-fg);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.md-deco .md-table-toolbar-menu button:hover {
+  background: var(--bg-hover);
+}
+.md-deco .md-table-toolbar-menu-danger {
+  color: var(--danger);
+}
+.md-deco .md-table-toolbar-menu-danger:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 /* ---------- 公式（App.css 数学段） ----------
@@ -605,4 +737,34 @@
   font-size: 0.85em;
   line-height: 1.55;
   white-space: pre;
+}
+
+/* ---------- 只读那一把锁（App.css:1142-1155 的 `.editor-host--readonly`） ----------
+   与档位正交：装饰照常，只是不能打字 ⇒ 光标藏掉、编辑用的零件收起来，留一个静态语言名。
+   `md-deco--readonly` 由 `decoLock(true)` 通过 `EditorView.editorAttributes` 打上
+   （CM6 会把多颗 editorAttributes 的 class 合并，见 view/dist combineAttrs）。
+   ⚠️ 这一段必须在文件**末尾**：`.md-deco .md-codeblock-language-label { display: none }`
+   与它同为 (0,2,0)，靠先后定胜负。 */
+.md-deco--readonly .cm-content {
+  caret-color: transparent;
+}
+.md-deco--readonly [contenteditable="true"] {
+  caret-color: transparent;
+}
+.md-deco--readonly .md-table-toolbar,
+.md-deco--readonly .md-codeblock-lang,
+.md-deco--readonly .md-codeblock-language-control::after {
+  display: none;
+}
+.md-deco--readonly .md-codeblock-language-label {
+  display: inline-block;
+  padding: 0 8px;
+  color: var(--md-muted);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 22px;
+}
+/* 任务清单的方框在只读档仍然可点（B358 的勾是显式放行的写操作）。 */
+.md-deco--readonly .cm-line.md-task-item::before {
+  cursor: pointer;
 }

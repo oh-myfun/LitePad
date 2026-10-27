@@ -10,7 +10,8 @@ import {
   previewSyntaxTree,
 } from "../src/spike/deco/codeFence";
 import { CodeBlockWidget } from "../src/spike/deco/codeBlockWidget";
-import { MathWidget, MermaidWidget, TableWidget } from "../src/spike/deco/richWidgets";
+import { MathWidget, MermaidWidget } from "../src/spike/deco/richWidgets";
+import { TableWidget } from "../src/spike/deco/tableWidget";
 import { livePreview, wysiwygInstalled } from "../src/spike/deco/livePreview";
 import { decoFace, decoLock } from "../src/spike/deco/wysiwyg";
 import { taskClick } from "../src/spike/deco/taskClick";
