@@ -560,13 +560,21 @@ describe("B377 · 预览代码块（Shiki）跟着主题族走", () => {
     expect((shikiThemeFor("hc", true) as { name?: string }).name).toBe("litepad-hc-dark");
   });
 
-  it("增强层按 dataset 取族，且保留 defaultColor:false（否则内联色压过 CSS）", () => {
-    const src = stripLineComments(readFileSync("src/markdown/enhance.ts", "utf-8"));
+  it("上色层按 dataset 取族，且保留 defaultColor:false（否则内联色压过 CSS）", () => {
+    // B397-3：那一发从 enhance.ts 搬进 `markdown/highlight.ts`（装饰面要「只换内容不换节点」），
+    // 判据跟着搬家，性质一条没摘。
+    const src = stripLineComments(readFileSync("src/markdown/highlight.ts", "utf-8"));
+    const enhance = stripLineComments(readFileSync("src/markdown/enhance.ts", "utf-8"));
     expect(src, "Shiki 主题必须问当前主题族").toContain("shikiThemeFor(");
     expect(src, "必须读 data-theme-family").toContain("dataset.themeFamily");
     expect(src, "主题切换靠 CSS 变量，不能让 Shiki 写内联色").toContain("defaultColor: false");
-    expect(src, "不得再挂 GitHub 主题").not.toContain("github-dark");
-    expect(src, "不得再挂 GitHub 主题").not.toContain("github-light");
+    for (const [name, text] of [
+      ["highlight.ts", src],
+      ["enhance.ts", enhance],
+    ]) {
+      expect(text, `${name} 不得再挂 GitHub 主题`).not.toContain("github-dark");
+      expect(text, `${name} 不得再挂 GitHub 主题`).not.toContain("github-light");
+    }
   });
 
   it("切族时必须把已高亮的 shiki 岛退回原始 html 重画", () => {

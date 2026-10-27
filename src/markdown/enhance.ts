@@ -1,6 +1,5 @@
 import { convertFileSrc } from "../ipc/api";
-import { shikiThemeFor } from "./shiki-themes";
-import { normalizeFamily } from "../theme/theme";
+import { highlightCodeHtml } from "./highlight";
 
 /**
  * Markdown 渲染结果的**增强层**（B352-2 从 `PreviewPane` 抽出来）。
@@ -113,47 +112,23 @@ export async function enhanceMarkdown(
       (el) => el.dataset.highlighted !== "1" && el.dataset.lang && el.dataset.lang !== "mermaid",
     );
     if (needHighlight.length > 0) {
-      try {
-        const { codeToHtml } = await import("shiki");
-        if (isEnhanceStale(root, seq)) return;
-        for (const el of needHighlight) {
-          const lang = el.dataset.lang!;
-          const code = el.querySelector("code")?.textContent ?? "";
-          try {
-            const html = await codeToHtml(code, {
-              lang,
-              // B377：代码块跟着主题族走（2026 / Modern / Plus / 经典 / 高对比度 × 深浅），
-              // 与源码编辑区共用 src/theme/syntax.ts 的同一份色表。
-              themes: {
-                light: shikiThemeFor(
-                  normalizeFamily(document.documentElement.dataset.themeFamily),
-                  false,
-                ),
-                dark: shikiThemeFor(
-                  normalizeFamily(document.documentElement.dataset.themeFamily),
-                  true,
-                ),
-              },
-              // ⚠️ 默认的 `defaultColor: "light"` 会把浅色值写成**内联** `color` /
-              //    `background-color:#fff`，内联压过类规则 ⇒ 深色主题下代码块仍是白底浅字
-              //    （B321 用户报的「配色不随主题切换」）。关掉它，shiki 只留
-              //    `--shiki-light/--shiki-dark` 变量，切换交回 preview.css。
-              defaultColor: false,
-            });
-            if (!el.isConnected) continue;
-            const holder = document.createElement("div");
-            holder.innerHTML = html;
-            const pre = holder.firstElementChild;
-            if (pre) {
-              el.replaceWith(pre);
-              (pre as HTMLElement).dataset.highlighted = "1";
-            }
-          } catch {
-            el.dataset.highlighted = "1"; // 不支持的语言保持纯文本
-          }
+      if (isEnhanceStale(root, seq)) return;
+      for (const el of needHighlight) {
+        const lang = el.dataset.lang!;
+        const code = el.querySelector("code")?.textContent ?? "";
+        const html = await highlightCodeHtml(code, lang);
+        if (!html) {
+          el.dataset.highlighted = "1"; // 不支持的语言保持纯文本
+          continue;
         }
-      } catch {
-        // shiki 加载失败保持纯文本
+        if (!el.isConnected) continue;
+        const holder = document.createElement("div");
+        holder.innerHTML = html;
+        const pre = holder.firstElementChild;
+        if (pre) {
+          el.replaceWith(pre);
+          (pre as HTMLElement).dataset.highlighted = "1";
+        }
       }
     }
   }

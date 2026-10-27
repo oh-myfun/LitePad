@@ -318,7 +318,7 @@
 
 /* ---------- 块级 widget 的公共外壳（App.css:1487-1503） ----------
    与正文左缘对齐；**禁止纵向 margin**（见文件头第 1 条）。 */
-.md-deco .md-code-widget,
+.md-deco .md-codeblock-widget,
 .md-deco .md-table-widget,
 .md-deco .md-mermaid-widget,
 .md-deco .md-math-block {
@@ -327,48 +327,163 @@
   margin: 0 var(--editor-padding-x);
 }
 
-/* ---------- 围栏代码 ----------
-   InkNote 的内盒是「框 + 行号栏 + 语言下拉」三件一套（.md-codeblock-box / -gutter / -lang），
-   LitePad 这块 DOM 还没有那两件（B397-3 搬 editableSource/table/codeBlock 时一起落）。
-   所以这里照抄**已存在的那部分**数值：外层的纵向留白、内盒的描边/圆角/底色、代码字阶与行高。
-   `padding` 顶部暂用 12px 而不是 InkNote 的 34px —— 那多出来的 22px 是给语言下拉留的位，
-   DOM 里没有它就得留一块空洞。 */
-.md-deco .md-code-widget {
+/* ---------- 围栏代码（App.css:1546-1599 / 1646-1661 / 3601-3660） ----------
+   三件一套：外层只管纵向留白、内盒负责描边、行号栏与语言下拉贴在盒内。
+   ⚠️ 视觉盒必须在**内层**（`.md-codeblock-box`）：根元素带 margin 会让 CM6 的高度图
+   算不准（rect 不含外边距），这条与文件头第 1 条同源。 */
+.md-deco .md-codeblock-widget {
   position: relative;
   min-width: 0;
   padding: 8px 0;
   cursor: text;
 }
-/* ⚠️ 选择器不能钉在 `pre.md-code` 上：`enhanceMarkdown` 的高亮那一发是
-   `el.replaceWith(shiki 产出的 <pre class="shiki">)`，`data-lang` 那个节点会被换掉。
-   盒子样式要挂在 widget 里的 `pre`（换完还在）。 */
-.md-deco .md-code-widget pre {
-  margin: 0;
-  padding: 12px 16px;
+.md-deco .md-codeblock-box {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
   border: 1px solid var(--md-panel-border);
   border-radius: var(--md-component-radius);
+  overflow: hidden;
   background: var(--md-panel-bg);
   box-shadow: var(--md-component-shadow);
+}
+.md-deco .md-codeblock-gutter {
+  flex: none;
+  padding: 34px 10px 12px 14px;
+  text-align: right;
+  white-space: pre;
+  user-select: none;
+  color: var(--md-faint);
+  font-family: var(--md-code-font);
+  font-size: 0.85em;
+  line-height: 1.55;
+  border-right: 1px solid var(--md-panel-border);
+}
+.md-deco .md-codeblock-widget pre {
+  flex: 1 1 0;
+  width: 0;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
   overflow-x: auto;
   overflow-y: hidden;
+}
+/* 上内距 34px 是给语言下拉留的位置（InkNote 同一条）—— 那一格现在真有了。 */
+.md-deco .md-codeblock-widget code {
+  display: block;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
+  padding: 34px 16px 12px;
+  min-height: 1.6em;
+  outline: none;
+  white-space: pre;
   font-family: var(--md-code-font);
   font-size: 0.85em;
   line-height: 1.55;
   color: var(--md-fg);
-  white-space: pre;
 }
-.md-deco .md-code-widget pre code {
-  display: block;
-  min-height: 1.6em;
-  font: inherit;
-  color: inherit;
+.md-deco .md-codeblock-widget code:focus {
+  outline: none;
 }
-/* Shiki 双主题：与 preview.css 同一口径（`--shiki-light/--shiki-dark` 由 enhance 写进 span） */
-.md-deco .md-code-widget pre.shiki span {
+/* Shiki 双主题：与 preview.css 同一口径（`--shiki-light/--shiki-dark` 由上色那一发写进 span） */
+.md-deco .md-codeblock-widget pre.shiki span {
   color: var(--shiki-light);
 }
-:root[data-theme="dark"] .md-deco .md-code-widget pre.shiki span {
+:root[data-theme="dark"] .md-deco .md-codeblock-widget pre.shiki span {
   color: var(--shiki-dark);
+}
+
+.md-deco .md-codeblock-header {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  padding: 0;
+  border-radius: 6px;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.md-deco .md-codeblock-widget:hover .md-codeblock-header,
+.md-deco .md-codeblock-widget.md-block--editing .md-codeblock-header {
+  opacity: 1;
+  pointer-events: auto;
+}
+.md-deco .md-codeblock-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 9px;
+  font-size: 11px;
+  font-family: var(--font-ui);
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--md-panel-bg) 88%, var(--bg));
+  color: var(--md-muted);
+  box-shadow: none;
+  cursor: pointer;
+}
+.md-deco .md-codeblock-copy:hover {
+  background: color-mix(in srgb, var(--md-panel-bg) 82%, var(--bg));
+  color: var(--md-fg);
+}
+.md-deco .md-codeblock-copy:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+/* 语言下拉在盒内左上角，与右上角的复制键组成一行轻量工具。 */
+.md-deco .md-codeblock-language-control {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  z-index: 2;
+  line-height: 1;
+}
+.md-deco .md-codeblock-language-control::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 5px;
+  height: 5px;
+  border-right: 1px solid var(--md-muted);
+  border-bottom: 1px solid var(--md-muted);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+.md-deco .md-codeblock-lang {
+  max-width: 132px;
+  height: 22px;
+  padding: 0 22px 0 8px;
+  border: 0;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--md-panel-bg) 72%, transparent);
+  color: var(--md-muted);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+}
+.md-deco .md-codeblock-lang:hover {
+  color: var(--md-fg);
+  background: var(--md-panel-bg);
+}
+.md-deco .md-codeblock-lang:focus {
+  outline: none;
+  box-shadow: none;
+}
+/* 语言名平时由下拉自己显示；这颗粒只给只读档留一个静态标签的位置（InkNote 同一条）。 */
+.md-deco .md-codeblock-language-label {
+  display: none;
 }
 
 /* ---------- 表格（App.css:2287-2325） ----------

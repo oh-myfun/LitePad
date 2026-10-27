@@ -187,3 +187,48 @@ Delete` 的表格处理；`markdownKeymap` 必须排在 `defaultKeymap` 前。
   「形状跟共用 token 走」的一般口味，仅限文档面。
 - **没做**运行中的 InkNote 像素并排：数值判据直接来自它的样式表（比截图更硬），
   而拉起另一个应用会动它的会话状态。观感对照用的是 LitePad 自己的截图。
+
+## ⑦ B397-3a 落地记录（块级可编辑 · 代码块那一格）
+
+**落成的形状**：`src/spike/deco/{blockRange,editableSource}.ts` 两份机械照搬 InkNote
+（区间记账 + 就地编辑，剥不掉什么——它们本来就不带 i18n/Tauri），`codeBlockWidget.ts`
+换成 InkNote 的三件一套（外层留白 / 内盒描边 / 行号栏 + 语言下拉 + plaintext-only 可编辑区），
+`deco.css` 的代码段跟着换成 `.md-codeblock-*` 那一族（上内距 12px → **34px**，那 22px
+就是给语言下拉留的位，⑥ 里记的这条偏差到此销账）。
+
+**这一片的命门是 `updateDOM`**：CM6 在 `eq()` 判不等时先试 `updateDOM(dom, view, oldWidget)`，
+返回 false 才重建 DOM（`@codemirror/view/dist/index.js:2566-2568` 的 pass 1）。打字 ⇒ 块内容变
+⇒ `eq()` 必然为假 ⇒ 没有 `updateDOM` 就是「每敲一键整块换新、光标被打掉」。LitePad 原来那颗
+widget 恰好没有它（B391 那会儿是只读的，不需要活下来）。真机 T-3 判的就是这条：
+键入之后 `code` 还是同一颗且仍持有焦点。
+
+**真机抓到的三件事（单元测试全绿也照样错）**：
+
+1. **jsdom 的 `contentEditable` setter 不落属性** ⇒ `focus()` 是空操作、`getAttribute` 读不到
+   ⇒ 焦点类判据在测试里全是假阴性。实现里把值镜像进属性（真浏览器里本来就是反射属性，零成本）。
+2. **上色那一发会把 `<code>` 整颗换掉**（Shiki 产出的是整个 `<pre>`）⇒ 换完必须把
+   `data-block-source="1"` + `contenteditable` 重新贴回新的那颗，否则块从这一刻起再也进不去。
+   台子 T-0b 专判「换完只剩一颗可编辑标记、就在可见那颗上」。
+3. **第一发点击进不去，要点两下**：CM6 的 `eventBelongsToEditor`（4867 行）只被观察到的变更
+   与按键路径调用，mousedown 不在其中 ⇒ 编辑器没聚焦时第一下由 CM 拿走（焦点给 `.cm-content`、
+   光标落进块里）。**这条与上游同形**（InkNote 底下是同一颗 CM6），台子改成「第二发点击」后绿。
+   要不要做成「第一发就进」归 B397-4 的点击/键位那一族一起判，这里不偷偷改行为。
+
+**与 InkNote 的一处有意差异**：它每敲一键同步跑一次 hljs 上色；LitePad 的高亮器是 Shiki
+（异步 + 懒加载 + 双主题），逐键跑等于把 B391F-6 刚压下来的击键成本再抬回去 ⇒ 改成
+**打字期间纯文本、退出编辑/外部改动时才上色**，上色那一发先看 `wrap.contains(activeElement)`，
+焦点在块里就不动 DOM。
+
+**顺带**：Shiki 取值从 `enhanceMarkdown` 抽成 `src/markdown/highlight.ts`（装饰面要
+「只换内容不换节点」，enhance 那条 `el.replaceWith()` 会把正在打字的元素拆了）。
+两条跟着搬家的守卫判据没有降格：`enhance-shared` 那条从「住在 enhance.ts」改成
+**全仓 `src/markdown` 只许出现一次 `import("shiki")`**（比原来更严），`theme-vscode`
+那条改成读 `highlight.ts` 并对两个文件同时禁 GitHub 主题。
+
+**判据**：`tests/spike-deco-blockedit.test.ts` 21 条 + 样式 40 条；真机
+`.tmp/b397-check.py` **FAILS=0 / 87 PASS**（新增 T-0b..T-8 一族：点击→键入→回写→
+DOM 不换→光标在块内→Esc 退出→换语言写回 info string）。全量门禁 117 文件 / 1943 例。
+
+**这一格里还没做的**：表格 widget 的可编辑（InkNote `table.ts` 1726 行，单元格
+contenteditable + 增删行列 + `showCellSource/showCellRendered`）与公式/mermaid 的
+`.md-block-source` 显形机制 —— 仍挂在 #226 名下，下一片做。

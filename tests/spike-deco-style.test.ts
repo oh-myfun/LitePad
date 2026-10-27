@@ -279,7 +279,7 @@ describe("B397-2 块级 widget：与正文左缘对齐，且一条纵向 margin 
   it("根元素用 margin: 0 padding-x 对齐正文（App.css:1487-1503）", () => {
     const roots = ruleBlock(
       css,
-      ".md-deco .md-code-widget, .md-deco .md-table-widget, .md-deco .md-mermaid-widget, .md-deco .md-math-block",
+      ".md-deco .md-codeblock-widget, .md-deco .md-table-widget, .md-deco .md-mermaid-widget, .md-deco .md-math-block",
     );
     expect(roots).toMatch(/box-sizing:\s*border-box/);
     expect(roots).toMatch(/max-width:\s*calc\(100% - 2 \* var\(--editor-padding-x\)\)/);
@@ -295,15 +295,35 @@ describe("B397-2 块级 widget：与正文左缘对齐，且一条纵向 margin 
     }
   });
 
-  it("代码块：外层只管纵向留白，内盒带描边圆角底色（App.css:1546-1563）", () => {
-    expect(ruleBlock(css, ".md-deco .md-code-widget", "8px 0")).toMatch(/padding:\s*8px 0/);
-    const pre = ruleBlock(css, ".md-deco .md-code-widget pre");
-    expect(pre).toMatch(/border:\s*1px solid var\(--md-panel-border\)/);
-    expect(pre).toMatch(/border-radius:\s*var\(--md-component-radius\)/);
-    expect(pre).toMatch(/background:\s*var\(--md-panel-bg\)/);
-    expect(pre).toMatch(/font-size:\s*0\.85em/);
-    expect(pre).toMatch(/line-height:\s*1\.55/);
-    expect(pre).toMatch(/white-space:\s*pre/);
+  it("代码块：外层只管纵向留白，视觉盒在**内层**（App.css:1546-1563）", () => {
+    expect(ruleBlock(css, ".md-deco .md-codeblock-widget", "8px 0")).toMatch(/padding:\s*8px 0/);
+    const box = ruleBlock(css, ".md-deco .md-codeblock-box");
+    expect(box).toMatch(/display:\s*flex/);
+    expect(box).toMatch(/border:\s*1px solid var\(--md-panel-border\)/);
+    expect(box).toMatch(/border-radius:\s*var\(--md-component-radius\)/);
+    expect(box).toMatch(/background:\s*var\(--md-panel-bg\)/);
+    expect(box, "描边画在 pre 上会让行号栏那条分隔线对不齐盒子圆角").not.toMatch(/margin/);
+  });
+
+  it("代码块：行号栏 + 语言下拉 + 可编辑区三件一套，上内距 34px 是给下拉留的位（App.css:1564-1599）", () => {
+    const gutter = ruleBlock(css, ".md-deco .md-codeblock-gutter");
+    expect(gutter).toMatch(/padding:\s*34px 10px 12px 14px/);
+    expect(gutter).toMatch(/border-right:\s*1px solid var\(--md-panel-border\)/);
+    expect(gutter).toMatch(/user-select:\s*none/);
+    const code = ruleBlock(css, ".md-deco .md-codeblock-widget code");
+    expect(code).toMatch(/padding:\s*34px 16px 12px/);
+    expect(code).toMatch(/font-size:\s*0\.85em/);
+    expect(code).toMatch(/line-height:\s*1\.55/);
+    expect(code).toMatch(/white-space:\s*pre/);
+    expect(ruleBlock(css, ".md-deco .md-codeblock-widget pre")).toMatch(/padding:\s*0/);
+    expect(ruleBlock(css, ".md-deco .md-codeblock-lang")).toMatch(/height:\s*22px/);
+    expect(ruleBlock(css, ".md-deco .md-codeblock-language-control")).toMatch(
+      /position:\s*absolute/,
+    );
+    const header = ruleBlock(css, ".md-deco .md-codeblock-header");
+    expect(header).toMatch(/opacity:\s*0/);
+    expect(header).toMatch(/pointer-events:\s*none/);
+    expect(css).toMatch(/\.md-codeblock-widget\.md-block--editing \.md-codeblock-header/);
   });
 
   it("表格：单元格 8px/13px、表头 650、separate 描边（App.css:2299-2325）", () => {

@@ -11,7 +11,7 @@
 //   · 结构层静态判「三个动态 import 只住在 enhance.ts」「两个计数器在模块级」。
 //     过期 seq 早退那条**只能静态判** —— 要触发它得先 await 一次真动态 import，
 //     在 jsdom 里等于把 3.5MB 的 mermaid 拉进来，不值得。
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -74,12 +74,23 @@ describe("B352-2 结构判据：增强只有一份", () => {
   const pv = stripLineComments(readFileSync("src/markdown/preview.ts", "utf-8"));
   const en = stripLineComments(readFileSync("src/markdown/enhance.ts", "utf-8"));
 
+  // B397-3 搬家：shiki 那一发从 enhance.ts 挪进 `markdown/highlight.ts`（装饰面的代码块要
+  // 「只换内容不换节点」，enhance 那条 `replaceWith` 会把正在打字的元素拆掉）。
+  // 判据因此从「住在 enhance.ts」改成「全仓只出现一次」—— 比原来更严：再搬一次、
+  // 或者在别处抄第二份，都会红。
   for (const lib of ["katex", "shiki", "mermaid"]) {
-    it(`${lib} 的动态 import 只住在 enhance.ts`, () => {
+    it(`${lib} 的动态 import 只有一处，且 preview.ts 里一份都不许有`, () => {
       expect(pv, `preview.ts 不该再自己 import("${lib}")`).not.toMatch(
         new RegExp(`import\\("${lib}"\\)`),
       );
-      expect(en, `enhance.ts 里要有 ${lib}`).toMatch(new RegExp(`import\\("${lib}"\\)`));
+      const hits = readdirSync("src/markdown")
+        .filter((f) => f.endsWith(".ts"))
+        .filter((f) =>
+          stripLineComments(readFileSync(`src/markdown/${f}`, "utf-8")).includes(
+            `import("${lib}")`,
+          ),
+        );
+      expect(hits.length, `${lib} 的动态 import 应当只有一处，实际：${hits.join(", ")}`).toBe(1);
     });
   }
 
