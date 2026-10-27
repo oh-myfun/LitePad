@@ -174,55 +174,24 @@ function findSpecOf(q: FindBarQuery): PreviewFindSpec {
 function applyPreviewFindToPanel(p: Panel, spec: PreviewFindSpec): void {
   const tab = tabs.get(p.activeTabId);
   if (!tab || !isMdTab(tab) || tab.viewMode === "source") return;
-  if (p.preview) {
-    p.preview.applyFind(spec);
-    return;
-  }
-  // B391F-5 · 装饰面那一格：`mountView` 开着 `deco_preview` 时压根不构造 `PreviewPane`，
-  // 于是这条路径过去停在函数第一行 `if (!p.preview) return` ⇒ 预览格里 Ctrl+F 是空操作
-  // （结果文档② 评审 I8）。装饰面是 CM6 视图，命中高亮就是编辑器那套内核。
-  const deco = p.decoMirror;
-  if (!deco) return;
-  deco.view.dispatch({
-    effects: setFindQuery.of({
-      query: buildFindQuery(findOptionsOfSpec(spec)),
-      activeFrom: null,
-      restrict: null,
-    }),
-  });
-}
-
-/** `PreviewFindSpec` → 编辑器查找内核的选项；null（= 清除）给空串，`buildFindQuery` 认它。 */
-function findOptionsOfSpec(spec: PreviewFindSpec) {
-  return spec
-    ? {
-        search: spec.text,
-        caseSensitive: spec.caseSensitive,
-        wholeWord: spec.wholeWord,
-        regexp: spec.regexp,
-      }
-    : { search: "", caseSensitive: false, wholeWord: false, regexp: false };
+  // B397-1 · 这一条只服务**派生 DOM**那一臂。装饰那一臂（`deco_preview` 开着）预览侧就是
+  // `p.view.view` 那颗 view，`applyFindQuery` 上面那个「遍历面板发 `setFindQuery`」的循环
+  // 已经把它覆盖了；在这里再发一发给的是同一颗 view，只会把那条循环刚钉上的选区限制
+  // （`restrict`）冲掉 ⇒ 选中一段再 Ctrl+F 变成全文高亮。
+  if (!p.preview) return;
+  p.preview.applyFind(spec);
 }
 
 /**
- * 步进与计数该问哪颗 view。
- *
- * 装饰面可见时必须是镜像：隐藏那颗（源码格）在 jsdom 与真机上写 `scrollTop` 都不生效
- * —— 「命中跳过去了但看不见」就是问错了 face（台账记过的「只认 clientHeight>0 那一面」）。
- * 现方案没有这个问题，它的预览侧走 `panel.preview` 那条分支。
+ * 「步进与计数该问哪颗 view」以前要一个 `findFaceOf` 来回答，因为装饰那一臂有第二颗 view，
+ * 而隐藏那颗写不进 `scrollTop`（台账：只认 `clientHeight>0` 那一面）。B397-1 之后这个问题
+ * 没有了：一格只有一颗 view，档位换的是 Compartment ⇒ 调用点直接读 `panel.view.view`，
+ * 它现形时就是看得见的那一面。派生 DOM 那一臂的预览侧仍走 `panel.preview` 那条分支。
  */
-function findFaceOf(p: Panel): EditorView | null {
-  const tab = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
-  if (!p.preview && tab && isMdTab(tab) && tab.viewMode !== "source" && p.decoMirror) {
-    return p.decoMirror.view;
-  }
-  return p.view?.view ?? null;
-}
 
 function clearFindHighlight(): void {
   for (const p of panels.values()) {
     if (p.view) clearFindQuery(p.view.view);
-    if (p.decoMirror) clearFindQuery(p.decoMirror.view);
     p.preview?.applyFind(null);
   }
 }
@@ -257,7 +226,7 @@ function refreshFindCount(): void {
     }
     return;
   }
-  const view = panel ? findFaceOf(panel) : null;
+  const view = panel?.view?.view ?? null;
   if (!view) return;
   const query = buildFindQuery(findOptionsOf(q));
   const matches = restrictMatches(findMatches(view.state, query), q);
@@ -274,7 +243,9 @@ function stepFind(dir: 1 | -1, q: FindBarQuery): void {
   const panel = activePanel();
   if (!panel) return;
   const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
-  // 预览态：在预览高亮里步进 + 滚动到命中处（隐藏编辑器收不到滚动）
+  // 预览态：在预览高亮里步进 + 滚动到命中处（隐藏编辑器收不到滚动）。
+  // 装饰那一臂不走这里 —— 它 `panel.preview === null`，落到下面那颗 view 上，而那颗
+  // view 此刻正是**看得见**的一面（B397-1：一格只有一颗 view，档位换的是 Compartment）。
   if (tab && isMdTab(tab) && tab.viewMode === "preview" && panel.preview) {
     if (!q.text) {
       findBar?.setCount("");
@@ -284,10 +255,8 @@ function stepFind(dir: 1 | -1, q: FindBarQuery): void {
     refreshFindCount();
     return;
   }
-  const srcView = panel.view?.view;
-  if (!srcView) return;
-  // 装饰面开着 ⇒ 步进要落在**看得见**的那颗 view（隐藏那颗写不进 scrollTop）
-  const view = findFaceOf(panel) ?? srcView;
+  const view = panel.view?.view;
+  if (!view) return;
   const query = buildFindQuery(findOptionsOf(q));
   const matches = restrictMatches(findMatches(view.state, query), q);
   if (matches.length === 0) {
@@ -309,10 +278,7 @@ function stepFind(dir: 1 | -1, q: FindBarQuery): void {
     ],
   };
   view.dispatch(step);
-  // 两棵 view 各持一份 state（同文档第 N 份实例的口径），源码那颗也得跟上：
-  // 否则切回源码态时光标还停在原地，而 `tab.state` 必须是源码那份，不能是镜像的。
-  if (view !== srcView) srcView.dispatch(step);
-  if (tab) tab.state = srcView.state;
+  if (tab) tab.state = view.state;
   findBar?.setCount(`${idx + 1} / ${matches.length}`);
 }
 

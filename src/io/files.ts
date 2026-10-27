@@ -63,6 +63,7 @@ import { needsChoice, showFileDropChoice } from "../shell/filedrop";
 import { noteOpened } from "../recents/store";
 import { showSaveConflictDialog } from "../shell/conflictdialog";
 import {
+  applyPanelMode,
   freshTextOfDoc,
   moveTabToStrip,
   rebuildLayout,
@@ -73,7 +74,6 @@ import {
 import { LOSSY_ABORT, refreshAll, showMessage } from "../ui";
 import { TEXT_FILTERS } from "./filters";
 import { reclaimRemoted } from "../multiwindow/windows";
-import { refreshDecoMirror } from "../spike/deco/panelBridge";
 import {
   applyDiskContent,
   discardBackupFor,
@@ -120,7 +120,12 @@ function rebuildDocInstances(doc: Doc, text: string, keepCursor = false): void {
       panel.view.setState(inst.state);
       setSuppressDirty(false);
       panel.viewTabId = inst.tabId;
-      refreshDecoMirror(panel); // B391F-2：重载换了正文，装饰面要跟着播种（不补就停在旧文档）
+      // B397-1 · 换 state 之后必须把「这一格现在露哪一面、开哪一档」重新落一遍：
+      // `makeTabState` 建出来的两份 compartment 都从**空**起步，重载不换面板、没人再走
+      // `applyPanelMode`，装饰那一臂就悄悄退回源码档（预览格一片裸文本）。派生那一臂也顺带
+      // 拿到重渲染（`setState` 不派发 update，预览原来要等下一次击键才跟上磁盘那份）。
+      // 排在 `claimVisibleHere` **之前**：换档会改内容高度，认领的必须是换完之后的位置。
+      applyPanelMode(panel);
       // 「它就停在这儿也是我造成的」⇒ 认领**看得见那一侧**（隐藏侧恒 0，按它认领会连带吞掉
       // 现形后被扶到的那一发）。顺带把这份标签的位置快照认账成现实：重载换过正文之后，
       // 旧 `scrollV` 指向的行已经不是那一处了，留着它下次切标签会硬灌回一个错位置。

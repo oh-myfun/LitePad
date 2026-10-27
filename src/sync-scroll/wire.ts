@@ -99,7 +99,12 @@ const owedLanding = new Map<number, number>();
 export function sideOfPanel(panel: Panel): SyncSide {
   const tab = tabs.get(panel.viewTabId ?? panel.activeTabId);
   const mode = tab && isMdTab(tab) ? tab.viewMode : "source";
-  return mode === "preview" ? "preview" : "editor";
+  // B397-1 · 装饰那一臂（`deco_preview` 开着 ⇒ `panel.preview === null`）**只有一个面**：
+  // 预览态现形的是编辑器那颗 view 本身。所以「可见侧」要按**实际存在的滚动面**回答，
+  // 不能只按视图模式回答 —— 否则 `faceOf(preview)` 返回 null，这一格压根不注册进协调器，
+  // 症状是「装饰格里滚动谁都不跟着动、切回来位置也不对」（`landVisibleSideAtV` 只会留一条
+  // 「无滚动面」的 trace，没有报错）。
+  return mode === "preview" && panel.preview ? "preview" : "editor";
 }
 
 /**
@@ -116,13 +121,8 @@ export function faceOf(
     if (!view) return null;
     return { anchor: new EditorScrollAnchor(view), el: view.scrollDOM, label };
   }
-  // B391 spike：开关开着 ⇒ 这一格预览侧是 CM6 装饰面，它和源码侧**同一种滚动面**
-  // （一样的行盒、一样的 `scrollTop`），照源码侧那条注册即可；`PreviewScrollAnchor`
-  // 那套「按派生 DOM 的块高换算」在这里既没必要也无从下手。
-  const deco = panel.decoMirror?.view;
-  if (deco) {
-    return { anchor: new EditorScrollAnchor(deco), el: deco.scrollDOM, label };
-  }
+  // B397-1：装饰那一臂的「预览侧」不再是一颗第二 view —— 它就是上面那条 `side === "editor"`
+  // 拿到的那颗（`sideOfPanel` 因此也跟着回答 editor）。这里只剩派生 DOM 一条路。
   const preview = panel.preview;
   if (!preview) return null;
   const root = preview.root;

@@ -570,19 +570,29 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     expect(main, "stepFind 必须有预览分支（在预览高亮里步进）").toMatch(
       /stepFind[\s\S]{0,400}?viewMode === "preview" && panel\.preview/,
     );
-    // B391F-5：装饰预览面（`Settings.deco_preview`）开着时 `PreviewPane` 压根不被构造，
-    // 只认 `p.preview` 的那三条各等于空转（Ctrl+F 死键）。装饰面是 CM6 视图，
-    // 查找走编辑器内核 —— 但**必须有人把查询送到那颗 view 上**。
-    expect(main, "applyPreviewFindToPanel 必须有装饰面分支").toMatch(
-      /applyPreviewFindToPanel[\s\S]{0,900}?p\.decoMirror/,
+    // B397-1：装饰那一臂（`Settings.deco_preview` 开着）**没有第二颗 view** —— 预览档现形的
+    // 就是 `panel.view.view`，而 `applyFindQuery` 上面那个「遍历面板发 `setFindQuery`」的循环
+    // 已经把查询送到它身上了。原来这三条判据（装饰面分支 / `findFaceOf` 问看得见那一面 /
+    // 清装饰面）是为镜像写的，载体没了；产品性质「预览格里 Ctrl+F 不是死键、关栏不留残影」
+    // 换到 tests/spike-deco-wiring.test.ts 戊·庚 两条**行为**判据上重钉（真启动 + 真 view）。
+    // 这里留两条静态判据，管住这一臂特有的两个坑：
+    //   · `applyPreviewFindToPanel` 对装饰那一臂必须**什么都不做** —— 它若再发一发
+    //     `setFindQuery`，就把 `applyFindQuery` 刚钉上的选区限制（`restrict`）冲掉了；
+    //   · 全仓不许有人再去找「第二面」（`decoMirror` 这类机械不许被搬回来）。
+    expect(main, "applyPreviewFindToPanel 对装饰那一臂必须早退（只服务派生 DOM）").toMatch(
+      /applyPreviewFindToPanel[\s\S]{0,700}?if \(!p\.preview\) return/,
     );
-    expect(main, "步进与计数必须问「看得见那一面」（隐藏那颗写不进 scrollTop）").toMatch(
-      /function findFaceOf[\s\S]{0,500}?p\.decoMirror/,
+    const findSrc = readFileSync("src/find/findbar.ts", "utf-8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    expect(findSrc, "一格一颗 view ⇒ 不该再有人定义 findFaceOf").not.toMatch(/function findFaceOf/);
+    expect(findSrc, "步进与计数直接问这一格那颗 view（`panel.view?.view`）").toMatch(
+      /panel\??\.view\?\.view/,
     );
-    expect(main, "stepFind 应经 findFaceOf").toMatch(/stepFind[\s\S]{0,900}?findFaceOf\(panel\)/);
-    expect(main, "clearFindHighlight 也要清装饰面（关栏不许留残影）").toMatch(
-      /clearFindHighlight[\s\S]{0,300}?decoMirror[\s\S]{0,60}?clearFindQuery/,
+    expect(main, "clearFindHighlight 要清掉每一格那颗 view（关栏不许留残影）").toMatch(
+      /clearFindHighlight[\s\S]{0,300}?p\.view[\s\S]{0,80}?clearFindQuery/,
     );
+    expect(findSrc, "镜像那套机械不许被搬回查找层").not.toContain("decoMirror");
     const preview = readFileSync("src/markdown/preview.ts", "utf-8");
     expect(preview, "PreviewPane 必须提供 applyFind/stepFind/findState").toMatch(
       /applyFind\(|stepFind\(|findState\(/,

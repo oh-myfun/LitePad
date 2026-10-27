@@ -13,7 +13,6 @@ import type { EditorHandle, TabCompartments } from "../editor/editor";
 import type { SizeClass } from "../editor/perf";
 import type { EncodingItem, Settings } from "../ipc/api";
 import type { PreviewPane } from "../markdown/preview";
-import type { DecoMirror } from "../spike/deco/mirror";
 import type { KeymapOverrides } from "../shell/keymap";
 import { leaf, type LayoutNode } from "./layout";
 import type { ThemeFamily, ThemeMode } from "../theme/theme";
@@ -27,19 +26,12 @@ export interface Panel {
   /** 视图当前实际显示的实例 id（与 activeTabId 可能短暂不一致：
    *  调用方先改 activeTabId 再 rebuild 时，快照回写必须按它寻址，防串档） */
   viewTabId: number | null;
-  /** Markdown 预览（面板挂载后创建） */
-  preview: PreviewPane | null;
-  /**
-   * B391 spike：`deco_preview` 开着时，这一格预览侧的那份 CM6 装饰面实例。
+  /** Markdown 预览（面板挂载后创建）
    *
-   * 与 `preview` **互斥**：`lifecycle.ts` 的挂载点按 `isDecoPreviewEnabled` 二选一，
-   * 开关关着 ⇒ 这一格恒为缺省（`src/spike/**` 不进运行路径）。
-   * 写成**可选**而不是必填：必填要逼 8 处 Panel 字面量各补一行 `decoMirror: null`
-   * （split.ts / rebuild.ts / main.ts 都在内），spike 不想动那么多生产点；
-   * 「缺省 = 关着」本来就是这颗键想要的语义。
-   * 类型用 `import type` 引：编译期就擦掉，不给生产状态模块留一条指向 spike 的运行时边。
-   */
-  decoMirror?: DecoMirror | null;
+   * B397-1 · 装饰那一臂（`Settings.deco_preview` 开着）**不会创建它**：那一臂的预览侧就是
+   * `view` 那颗 view 本身，档位由 Compartment 换。下游一律按 `preview === null` 分臂，
+   * 不要再假设「面板一定有 PreviewPane」。 */
+  preview: PreviewPane | null;
   /** 预览渲染防抖定时器 */
   previewTimer: number | null;
   /** splitview 传入的宿主元素（.panel-host） */
@@ -217,10 +209,10 @@ export let settings: Settings | null = null;
 /**
  * B391 spike：**唯一**读 `deco_preview` 的地方（`Settings` 上那颗开关）。
  *
- * 所有分支（构造预览侧 / 注册滚动面 / 回写兄弟实例）一律问它，不许自己
+ * 所有分支（预览侧挂哪一臂 / 档位换不换 extension）一律问它，不许自己
  * `settings.deco_preview` —— 「开关关着 ⇒ `src/spike/**` 不进运行路径」这条约束
  * 靠的就是「闸只有一个」，tests/spike-deco-wiring.test.ts ① 才可能用一条静态守卫
- * 数清每个 `createDecoMirror` 调用点都在闸后。
+ * 数清每个 spike 入口都在闸后。
  *
  * ⚠️ 放本模块而不是 `ipc/api.ts` 或 `prefs.ts`：
  * ① `ipc/api.ts` 被 12 份启动测试整模块 `vi.mock` 掉（本仓库的既有配方），新导出漏进

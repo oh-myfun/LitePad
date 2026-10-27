@@ -1529,6 +1529,13 @@ body.layout-dragging .toc-grip {
   flex: 1 1 100%;
   min-width: 0;
 }
+/* B397-1 · 所见即所得那一臂（`Settings.deco_preview` 开着才挂得上）：这一格没有
+   `.md-preview`，预览态现形的那一面**就是** `.panel-editor` 里那颗 view（装饰档由
+   `applyDecoFace` 换 Compartment 决定）。所以上一条「预览态藏编辑器」在这臂里要就地
+   作废 —— 藏掉它等于预览格一片空白。用多一颗 `.deco-face` 抬特异度，不改动主干那两条。 */
+.panel-host.deco-face.mode-preview .panel-editor {
+  display: flex;
+}
 
 /* 打印 / PDF 导出 */
 #print-root {

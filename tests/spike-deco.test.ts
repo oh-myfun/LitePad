@@ -1,16 +1,9 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import type { DecorationSet, WidgetType } from "@codemirror/view";
-import {
-  docState,
-  lastChanges,
-  trackedView,
-  watchBroadcast,
-  clickTaskBox,
-} from "./spike-deco-helpers";
 import {
   frontMatterRange,
   isUnclosedFenceLine,
@@ -18,17 +11,14 @@ import {
 } from "../src/spike/deco/codeFence";
 import { CodeBlockWidget } from "../src/spike/deco/codeBlockWidget";
 import { MathWidget, MermaidWidget, TableWidget } from "../src/spike/deco/richWidgets";
-import { livePreview } from "../src/spike/deco/livePreview";
+import { livePreview, wysiwygInstalled } from "../src/spike/deco/livePreview";
+import { decoFace, decoLock } from "../src/spike/deco/wysiwyg";
 import { taskClick } from "../src/spike/deco/taskClick";
-import {
-  createDecoMirror,
-  isMirrorSyncing,
-  mirrorChanges,
-  mirrorToSource,
-} from "../src/spike/deco/mirror";
 import { applySelection, buildPreviewSets, revealFilterRange } from "../src/spike/deco/previewSets";
+import { docState, clickTaskBox } from "./spike-deco-helpers";
 
 // B391 spike · Task 1 —— 装饰集构建与 reveal 过滤（移植自 InkNote src/editor.ts）。
+// B397-1 —— 一档装配：`decoFace()` 是预览档，`decoLock()` 是那把与档位正交的只读锁。
 
 /** 装饰集的可比形状：端点 + class，不比对象身份。 */
 function tuples(set: DecorationSet): [number, number, string][] {
@@ -196,7 +186,7 @@ describe("B391-3 一个块 widget 打通原子区间", () => {
   it("livePreview 提供装饰源、widget DOM 与原子区间", () => {
     const state = EditorState.create({
       doc: "前文\n```ts\nlet a = 1\n```\n后文\n",
-      extensions: [markdown({ base: markdownLanguage }), livePreview({ readOnly: true })],
+      extensions: [markdown({ base: markdownLanguage }), livePreview(), decoLock(true)],
     });
     const view = new EditorView({ state, parent: document.body });
     try {
@@ -220,71 +210,99 @@ describe("B391-3 一个块 widget 打通原子区间", () => {
   });
 });
 
-describe("B391-4 只读镜像视图与 ChangeSet 桥", () => {
-  /** 两个各持独立 EditorState 的同文档视图（与 LitePad 的多实例模型同形）。 */
-  function twoViews(text = "第一行\n第二行\n第三行\n") {
-    const mk = () =>
-      trackedView(
-        EditorState.create({
-          doc: text,
-          extensions: [markdown({ base: markdownLanguage }), livePreview({ readOnly: true })],
-        }),
-        document.createElement("div"),
-      );
-    return { src: mk(), dst: mk() };
-  }
-
-  it("① 文本未变的事务不回写（幽灵 docChanged）", () => {
-    const { src, dst } = twoViews();
-    const before = dst.state.doc.toString();
-    src.dispatch({ selection: { anchor: 7 } }); // 仅选区，changes 为空
-    expect(mirrorChanges(dst, lastChanges(src))).toBe("skipped-identical");
-    expect(dst.state.doc.toString()).toBe(before);
-  });
-
-  it("② 镜像写入不会被当成用户编辑再广播回去（无回声环）", () => {
-    const { src, dst } = twoViews();
-    const seen: string[] = [];
-    const off = watchBroadcast(dst, (update) => {
-      // 天真桥法：dst 每发一次 update 就镜像回 src —— 回声闸必须把这一发判掉
-      seen.push(isMirrorSyncing() ? "镜像写入" : "dst 自发广播");
-      seen.push("回写 " + mirrorChanges(src, update.changes));
+/**
+ * B397-1 · 两档装配（替代原「B391-4 只读镜像视图与 ChangeSet 桥」）。
+ *
+ * 原来这一节判的是桥的四道闸（幽灵 docChanged / 回声 / 内容对齐 / 过期基线）—— 被测对象是
+ * 「两颗 view 之间那份机械」。「一格一颗 view」之后它整个没有对象了，而它守的**产品性质**
+ * 一条没丢，只是换了载体：
+ *   · 「切视图不改内容、不置脏、不写盘」⇒ spike-deco-wiring 己（真启动 + Ctrl+/ 二十回）
+ *   · 「同文档两格内容对齐」⇒ 主干 `syncDocInstances` 那一族（tests/multi-instance-* 等）
+ *   · 「换档不许把对端位置甩掉」⇒ 落位与账本那一族 + 真机台（B397-5）
+ * 这一节因此只管装配本身：档位装上/摘下、只读那把锁的性质，以及 `wysiwygInstalled`
+ * 这颗早退判据认不认得出来 —— 认不出来就是每次 `applyPanelMode` 都全篇重 parse 一遍。
+ */
+describe("B397-1 两档装配：预览档与只读锁", () => {
+  it("① 预览档默认是可写的：readOnly facet 假、contenteditable 真、打字进得去", () => {
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: "**粗体**文字\n",
+        extensions: [markdown({ base: markdownLanguage }), decoFace()],
+      }),
+      parent: document.createElement("div"),
     });
-    src.dispatch({ changes: { from: 0, insert: "x" } });
-    mirrorChanges(dst, lastChanges(src));
-    off();
-    expect(seen).toEqual(["镜像写入", "回写 skipped-echo"]);
-    expect(src.state.doc.toString().startsWith("xx")).toBe(false);
-    expect(src.state.doc.toString().startsWith("x")).toBe(true);
+    try {
+      expect(view.state.facet(EditorState.readOnly), "可写档不该带 readOnly").toBe(false);
+      expect(view.contentDOM.getAttribute("contenteditable"), "DOM 要真能打字").toBe("true");
+      view.dispatch({ changes: { from: 0, insert: "手感" }, userEvent: "input.type" });
+      expect(view.state.doc.toString().startsWith("手感"), "键入必须真的落进这一份文档").toBe(true);
+    } finally {
+      view.destroy();
+    }
   });
 
-  it("③ 镜像后两侧文本一致，且没有偷偷写 dst 的 scrollTop", () => {
-    const { src, dst } = twoViews();
-    let scrollWrites = 0;
-    let scrollValue = 0;
-    Object.defineProperty(dst.scrollDOM, "scrollTop", {
-      configurable: true,
-      get: () => scrollValue,
-      set: (v: number) => {
-        scrollWrites++;
-        scrollValue = v;
-      },
+  it("② 只读锁挡的不只是键入：程序化 dispatch 的 docChanged 同样进不去", () => {
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: "**粗体**文字\n",
+        extensions: [markdown({ base: markdownLanguage }), decoFace(), decoLock(true)],
+      }),
+      parent: document.createElement("div"),
     });
-    src.dispatch({ changes: { from: 0, insert: "改一版" } });
-    expect(mirrorChanges(dst, lastChanges(src))).toBe("applied");
-    expect(dst.state.doc.toString()).toBe(src.state.doc.toString());
-    // 落点是同步滚动的事，回写层一只管内容
-    expect(scrollWrites).toBe(0);
+    try {
+      expect(view.state.facet(EditorState.readOnly), "只读档要真带上 facet").toBe(true);
+      expect(view.contentDOM.getAttribute("contenteditable"), "DOM 不许是可写的").toBe("false");
+      view.dispatch({ changes: { from: 0, insert: "X" }, userEvent: "input.type" });
+      expect(view.state.doc.toString(), "键入被挡").toBe("**粗体**文字\n");
+      // 程序化写也要挡：这是 InkNote 那把 `transactionFilter` 的口径（LitePad 里唯一的
+      // 合法写点 `toggleTaskInTab` 在更上游就被 `doc.readonly` 判掉了，不会走到这里）
+      view.dispatch({ changes: { from: 0, insert: "Y" } });
+      expect(view.state.doc.toString(), "绕不过去的锁才算锁").toBe("**粗体**文字\n");
+    } finally {
+      view.destroy();
+    }
   });
 
-  it("④ 基线不一致的陈旧 changeset 不硬套（会写出花来）", () => {
-    const { src, dst } = twoViews();
-    // dst 已经不是 src 那一刻的文档：拿 src 的 changes 直接 apply 会按位置乱改
-    dst.dispatch({ changes: { from: 0, insert: "另一版" } });
-    const afterDst = dst.state.doc.toString();
-    src.dispatch({ changes: { from: 0, insert: "改一版" } });
-    expect(mirrorChanges(dst, lastChanges(src))).toBe("skipped-stale");
-    expect(dst.state.doc.toString()).toBe(afterDst);
+  it("③ 只读只关编辑，不关所见即所得（InkNote：readOnly 时装饰反而更彻底）", () => {
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: "# 标题\n\n**粗体**文字\n",
+        extensions: [markdown({ base: markdownLanguage }), decoFace(), decoLock(true)],
+      }),
+      parent: document.createElement("div"),
+    });
+    try {
+      expect(view.dom.classList.contains("md-deco"), "装饰类要在这颗 view 上").toBe(true);
+      // 只读时不做「光标行才显形」的裁剪 ⇒ 标记一律藏起来（`visiblePreview` 那一条）
+      expect(view.dom.textContent.includes("**"), "只读档不该把 ** 显出来").toBe(false);
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("④ 换档不换 view：同一颗 view 上摘下/装上装饰，文档一字不动", () => {
+    const preview = new Compartment();
+    const lock = new Compartment();
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: "**粗体**文字\n",
+        extensions: [markdown({ base: markdownLanguage }), preview.of([]), lock.of([])],
+      }),
+      parent: document.createElement("div"),
+    });
+    try {
+      const text = view.state.doc.toString();
+      expect(wysiwygInstalled(view.state), "源码档：档位是空的").toBe(false);
+      view.dispatch({ effects: [preview.reconfigure(decoFace()), lock.reconfigure([])] });
+      expect(wysiwygInstalled(view.state), "预览档：装上了").toBe(true);
+      expect(view.dom.classList.contains("md-deco")).toBe(true);
+      view.dispatch({ effects: [preview.reconfigure([]), lock.reconfigure(decoLock(true))] });
+      expect(wysiwygInstalled(view.state), "回源码档：摘干净").toBe(false);
+      expect(view.dom.classList.contains("md-deco"), "装饰类不许留在裸编辑上").toBe(false);
+      expect(view.state.doc.toString(), "换档三次，文档一字没动").toBe(text);
+    } finally {
+      view.destroy();
+    }
   });
 });
 
@@ -364,7 +382,7 @@ describe("B391F-4 公式 / mermaid / 表格的装饰集", () => {
   it("真视图里：表格画出 <table>，公式留下可被 KaTeX 认领的占位", () => {
     const state = EditorState.create({
       doc: "| 甲 | 乙 |\n|---|---|\n| 1 | 2 |\n\n行内 $a+b$ 与 $$\nx^2\n$$\n",
-      extensions: [markdown({ base: markdownLanguage }), livePreview({ readOnly: true })],
+      extensions: [markdown({ base: markdownLanguage }), decoFace(), decoLock(true)],
     });
     const view = new EditorView({ state, parent: document.createElement("div") });
     try {
@@ -388,18 +406,14 @@ describe("B391F-4 公式 / mermaid / 表格的装饰集", () => {
  *
  * 现方案的那颗勾（B358）认的是「渲染面里第 N 个 `.md-task`」，而 N 是在**岛**内数的
  * —— B394-2 就是这套序号换算写错了行（点第二个勾，`- [x]` 落到了空的那一行）。
- * 装饰面天然不需要这个中间量：它就是源码那份文档的第 N 份实例，点的哪一行有行号，
+ * 所见即所得天然不需要这个中间量：显示面就是文档本身，点的哪一行有行号，
  * 所以这里**按行号回调**，把岛内序号这条支路整个绕开。
  */
-describe("B391F-5 装饰面点勾按行号交回宿主", () => {
+describe("B391F-5 所见即所得点勾按行号交回宿主", () => {
   function mountTasks(doc: string, opts: Parameters<typeof taskClick>[0]): EditorView {
     const state = EditorState.create({
       doc,
-      extensions: [
-        markdown({ base: markdownLanguage }),
-        livePreview({ readOnly: true }),
-        taskClick(opts),
-      ],
+      extensions: [markdown({ base: markdownLanguage }), livePreview(), taskClick(opts)],
     });
     return new EditorView({ state, parent: document.createElement("div") });
   }
@@ -407,7 +421,7 @@ describe("B391F-5 装饰面点勾按行号交回宿主", () => {
   it("点第 N 行的方框 ⇒ 回调收到那一行的**文档行号**（不是列表内序号）", () => {
     const hits: number[] = [];
     const view = mountTasks("- 普通项\n- [ ] 未勾选\n  - [x] 嵌套已勾选\n", {
-      onToggleTask: (n) => hits.push(n),
+      onToggleTask: (_view, n) => hits.push(n),
     });
     try {
       const rows = Array.from(view.dom.querySelectorAll<HTMLElement>(".cm-line.md-task-item"));
@@ -423,7 +437,7 @@ describe("B391F-5 装饰面点勾按行号交回宿主", () => {
 
   it("点正文（方框热区之外）不算点勾", () => {
     const hits: number[] = [];
-    const view = mountTasks("- [ ] 未勾选\n", { onToggleTask: (n) => hits.push(n) });
+    const view = mountTasks("- [ ] 未勾选\n", { onToggleTask: (_view, n) => hits.push(n) });
     try {
       const row = view.dom.querySelector<HTMLElement>(".cm-line.md-task-item")!;
       clickTaskBox(row, "40px", 260);
@@ -436,7 +450,7 @@ describe("B391F-5 装饰面点勾按行号交回宿主", () => {
   it("canToggleTask 说不许写 ⇒ 一发回调都不发（点不动的键不许谎报可点）", () => {
     const hits: number[] = [];
     const view = mountTasks("- [ ] 未勾选\n", {
-      onToggleTask: (n) => hits.push(n),
+      onToggleTask: (_view, n) => hits.push(n),
       canToggleTask: () => false,
     });
     try {
@@ -450,7 +464,7 @@ describe("B391F-5 装饰面点勾按行号交回宿主", () => {
   it("列表外的裸 `[ ]` 不画方框：装饰面只认 lezer 的 Task 节点（B394-3 那一形不存在）", () => {
     const hits: number[] = [];
     const view = mountTasks("正文一行\n\n[ ] 这不是列表里的任务\n", {
-      onToggleTask: (n) => hits.push(n),
+      onToggleTask: (_view, n) => hits.push(n),
     });
     try {
       expect(
@@ -467,97 +481,22 @@ describe("B391F-5 装饰面点勾按行号交回宿主", () => {
 });
 
 /**
- * B391F-8 · 可写镜像与双向桥（「摸手感」那一档）。
+ * B397-1 · Typora 那一半机械（原 B391F-8 里唯一与「镜像」无关的判据，搬过来单独钉住）。
  *
- * 手感 = 在预览面里直接打字，Typora 那种「光标压住标记才显形源码」。
- * 这与「整格替换」的区别只在一件事：**谁是权威**。这里定的口径是
- * 源码那颗 view 仍是唯一落笔点，装饰面的一发键入经反向桥套回源码，
- * 再由正向桥把同一篇带回来 —— 于是置脏 / 自动保存 / 大纲 / 同步滚动
- * 这些「认 `tab.state`」的下游一行都不用改（改动面越小，手感验得越干净）。
- *
- * 反向桥的三道闸与正向**同口径**，不是复制粘贴的巧合：
- * 回声（另一侧自己写回来的那一发）/ 同文（幽灵 docChanged）/ 过期（基线不一致）。
- * ⚠️ 少了「过期」那一闸，两篇等长的文档会互相把别人的变更按位置套进来
- *    —— 正向那一条已经红过一次（`spike-deco-wiring.test.ts` ⑤），反向同理。
+ * 双向桥随镜像一起没了：权威从来只有一份，就不存在「把键入套回源码」这件事。
+ * 但「光标压住标记才显形源码」是所见即所得档自己的性质，它决定用户敢不敢在预览档里落笔，
+ * 所以判据一字未改，只把载体从镜像换成一颗可写的所见即所得 view。
  */
-describe("B391F-8 可写镜像与双向桥", () => {
-  function parent() {
-    const el = document.createElement("div");
-    document.body.appendChild(el);
-    return el;
-  }
-
-  /** 源码那颗（普通可写视图）+ 装饰面那颗（可写镜像），同文档两个独立 state。 */
-  function pair(text = "- [ ] 第一行\n\n**粗体**文字\n", opts: object = {}) {
-    const src = trackedView(
-      EditorState.create({
-        doc: text,
-        extensions: [markdown({ base: markdownLanguage })],
+describe("B397-1 可写档的标记显形", () => {
+  it("光标不在标记上时源码藏着；压进 **…** 内部就显形", () => {
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: "- [ ] 第一行\n\n**粗体**文字\n",
+        extensions: [markdown({ base: markdownLanguage }), decoFace()],
       }),
-      parent(),
-    );
-    const mirror = createDecoMirror(parent(), text, 7, { editable: true, ...opts });
-    return { src, mirror };
-  }
-
-  it("① 镜像键入套回源码；同一发不再被正向桥塞回来（无回声）", () => {
-    const { src, mirror } = pair();
-    const tr = mirror.view.state.update({
-      changes: { from: 0, insert: "X" },
-      userEvent: "input.type",
+      parent: document.createElement("div"),
     });
-    mirror.view.dispatch(tr);
-    expect(mirrorToSource(src, tr.changes), "反向应判 applied").toBe("applied");
-    expect(src.state.doc.toString(), "源码必须拿到那一发").toBe("X- [ ] 第一行\n\n**粗体**文字\n");
-
-    // 源码收到后，它自己的监听会照例调正向桥。镜像已经带着这一发了 ⇒ 只能被跳过，
-    // 绝不能再加一遍（那就是「打一个字多两个字」的抖法）。
-    const status = mirrorChanges(mirror.view, tr.changes);
-    expect(status, "正向桥必须认这一发是同文/回声").not.toBe("applied");
-    expect(mirror.view.state.doc.toString(), "镜像不得被写第二遍").toBe(src.state.doc.toString());
-    mirror.dispose();
-  });
-
-  it("② 基线不一致的那一发不硬套（反向过期闸）", () => {
-    const { src, mirror } = pair();
-    src.dispatch({ changes: { from: 0, insert: "别篇长文" } }); // 源码单方面变长 ⇒ 两侧基线不一致
-    const tr = mirror.view.state.update({ changes: { from: 0, insert: "Z" } });
-    mirror.view.dispatch(tr);
-    const before = src.state.doc.toString();
-    expect(mirrorToSource(src, tr.changes), "等长都不该套，何况不等长").toBe("skipped-stale");
-    expect(src.state.doc.toString(), "过期的一发不许写进源码").toBe(before);
-    mirror.dispose();
-  });
-
-  it("③ 文本没变的一发不算编辑（反向同文闸 · 幽灵 docChanged）", () => {
-    const { src, mirror } = pair();
-    // 删一个字符再在同一处插回同一个字符：`changes.empty` 是 false（确实落笔了），
-    // 前后文本却一模一样 —— 正向那侧的幽灵 docChanged 在反向同样会出现。
-    const tr = mirror.view.state.update({
-      changes: [
-        { from: 0, insert: "-" },
-        { from: 0, to: 1 },
-      ],
-    });
-    mirror.view.dispatch(tr);
-    expect(mirrorToSource(src, tr.changes)).toBe("skipped-identical");
-    mirror.dispose();
-  });
-
-  it("④ editable 镜像真的是可写视图（contenteditable 与只读 facet 都要摘掉）", () => {
-    const { mirror } = pair();
     try {
-      expect(mirror.view.state.facet(EditorState.readOnly), "readOnly facet 必须为假").toBe(false);
-      expect(mirror.view.contentDOM.getAttribute("contenteditable"), "DOM 要真能打字").toBe("true");
-    } finally {
-      mirror.dispose();
-    }
-  });
-
-  it("⑤ 光标压住标记才显形源码（Typora 那一半机械）", () => {
-    const { mirror } = pair();
-    try {
-      const view = mirror.view;
       const mark = view.state.doc.toString().indexOf("**");
       expect(view.dom.textContent.includes("**"), "前置：光标不在标记上时源码不该露出来").toBe(
         false,
@@ -565,26 +504,7 @@ describe("B391F-8 可写镜像与双向桥", () => {
       view.dispatch({ selection: { anchor: mark + 1 } });
       expect(view.dom.textContent.includes("**"), "光标进 **…** 内部就该看见源码").toBe(true);
     } finally {
-      mirror.dispose();
-    }
-  });
-
-  it("⑥ 桥写进来的那一发不触发反向回调（回声在源头就被挡）", () => {
-    const edits: number[] = [];
-    const mirror = createDecoMirror(parent(), "第一行\n第二行\n", 9, {
-      editable: true,
-      onMirrorEdit: (changes) => edits.push(changes.length),
-    });
-    try {
-      // 正向桥：把源码的一发套进镜像（`syncing` 期间 + userEvent:"mirror"）
-      const tr = mirror.view.state.update({ changes: { from: 0, insert: "Q" } });
-      mirrorChanges(mirror.view, tr.changes);
-      expect(edits, "桥写入不该被当成「用户在镜像里编辑」").toEqual([]);
-      // 真打字：该报
-      mirror.view.dispatch({ changes: { from: 0, insert: "W" }, userEvent: "input.type" });
-      expect(edits.length, "键入必须交回宿主一次").toBe(1);
-    } finally {
-      mirror.dispose();
+      view.destroy();
     }
   });
 });

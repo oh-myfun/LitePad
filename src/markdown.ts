@@ -30,11 +30,57 @@ import { renderPanelOps, renderPanelTabs, splitPanelWithTab, switchTab } from ".
 import { updateTocDrawer } from "./toc";
 import { landVisibleSideAtV, readVisibleV, reconcileSyncRegistrations } from "./sync-scroll/wire";
 import { scheduleSessionSave } from "./session/session";
+// B397-1：一颗 view 两档 ⇒ 「视图模式落到 DOM 的唯一出口」也是「档位落到 state 的唯一出口」，
+// 所以这两个 extension 构造器在这里点名。本模块头部那条「只依赖 core/*+ui+shell/*+doc-model+
+// editor/*+markdown/preview」的边界因此多了一个口子 —— 口子只过 `deco_preview` 开关为真的路径。
+import { EditorState } from "@codemirror/state";
+import { decoFace, decoLock } from "./spike/deco/wysiwyg";
+import { shouldMountDecoPreview } from "./spike/deco/eligibility";
+import { wysiwygInstalled } from "./spike/deco/livePreview";
 // #413 find 拆出 ⇒ MarkdownDeps 全清，预览查找桥改直接 import（find/findbar 反向只取本模块的
 // PreviewFindSpec 类型——等等，类型已归 find/findbar，这里只取值，无类型回边）
 import { applyPreviewFindToPanel, findSpecOf, getFindBar } from "./find/findbar";
 
 // ---------------------------------------------------------------- Markdown 预览（M3）
+
+/**
+ * B397-1 · 把「这一格是哪一档」落到那颗**唯一**的 view 上。
+ *
+ * 形态照 InkNote：`previewCompartment.reconfigure(previewExt(mode))`（editor.ts:1370）+
+ * 只读是同一颗 view 上的另一把锁（:1391-1399）。**换档不换 view**，所以一格只有一份文档 ——
+ * 镜像那颗（以及它的 ChangeSet 桥、归属闸、重新播种）整块没有了，「预览面显示一篇旧文」
+ * 这一类病灶连存在的余地都没有。
+ *
+ * 两道早退各挡什么：
+ *   · `panel.preview` 在场 ⇒ 这一格挂的是派生 DOM 那一臂（开关关着，或挂载时文档不 eligible），
+ *     档位在它身上没有意义，一行都不许碰；
+ *   · `panel.viewTabId !== tab.tabId` ⇒ view 上挂的不是这一份实例（接班在途），
+ *     此时改档位会写到别人身上。
+ *
+ * 已开着就不再 reconfigure：`livePreview` 的 StateField 是模块级单例，reconfigure 等于销毁重建
+ * ⇒ 全篇重 parse 一遍，而 applyPanelMode 在每次布局重建、每次换标签都要跑。
+ */
+function applyDecoFace(panel: Panel, tab: Tab | undefined, mode: string): void {
+  if (panel.preview) return;
+  const handle = panel.view;
+  if (!handle || !tab || panel.viewTabId !== tab.tabId) return;
+  const on = mode === "preview" && shouldMountDecoPreview(tab);
+  // `docs.get` 而不是 `docOf`：孤儿实例不该把这一次换档带崩（与 `shouldMountDecoPreview` 同口径）
+  const readonly = docs.get(tab.docId)?.readonly === true;
+  const view = handle.view;
+  if (wysiwygInstalled(view.state) === on && view.state.facet(EditorState.readOnly) === readonly) {
+    return;
+  }
+  view.dispatch({
+    effects: [
+      tab.comps.preview.reconfigure(on ? decoFace() : []),
+      // 只读锁只在这一步生效：源码档保持主干现状（那里从来没有过锁，本轮不动它）
+      tab.comps.lock.reconfigure(on ? decoLock(readonly) : []),
+    ],
+  });
+  // 档位跟着这一份实例走（`tab.state` 是下游唯一读源），换标签回来时才是自己那一档
+  tab.state = view.state;
+}
 
 /** 应用面板视图模式：源码 / 分屏 / 纯预览（非 md 标签强制源码）。 */
 function applyPanelMode(panel: Panel): void {
@@ -43,6 +89,7 @@ function applyPanelMode(panel: Panel): void {
   const mode = tab && isMdTab(tab) ? tab.viewMode : "source";
   panel.bodyEl.classList.remove("mode-source", "mode-split", "mode-preview");
   panel.bodyEl.classList.add("mode-" + mode);
+  applyDecoFace(panel, tab, mode);
   if (mode !== "source") {
     // 用户主动切模式 → force，大文件也要渲染一次（降级不是禁用）
     renderMarkdownFor(panel, true);

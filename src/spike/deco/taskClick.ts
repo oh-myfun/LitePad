@@ -2,25 +2,28 @@
 // 命中判定移植自 InkNote (MIT, Copyright (c) 2026 likehao19) src/editor.ts:1223-1293
 // 本机参照：E:\Project\InkNote\InkNote
 //
-// 与 InkNote 的**一处**关键差别：它那颗 view 自己就能写，所以命中后直接
-// `view.dispatch({changes})`；装饰面是只读镜像，写必须回到宿主那棵源码 view。
-// 因此这里交出去的是**文档行号**而不是「岛内第几个勾选框」。这不是省事 ——
-// 现方案按「渲染面里第 N 个 `.md-task`」换算（`markdown/tasks.ts`），那套序号在
-// B394-2 上把勾写到了别的行（点第二个勾，`- [x]` 落到了空任务行上）。行号没有
-// 中间量，也就没有换算可错；写点仍然是 `markdown.ts` 那颗唯一的 `toggleTaskInTab`。
+// 与 InkNote 保留的一处口径差别：命中后交出去的是**文档行号**，不是「岛内第几个勾选框」。
+// 这不是省事 —— 现方案按「渲染面里第 N 个 `.md-task`」换算（`markdown/tasks.ts`），那套序号在
+// B394-2 上把勾写到了别的行（点第二个勾，`- [x]` 落到了空任务行上）。行号没有中间量，
+// 也就没有换算可错；写点仍然是 `markdown.ts` 那颗唯一的 `toggleTaskInTab`。
+// B397-1 之后这颗 view 自己就写得动（与 InkNote 同构），行号这一条仍不改：写点只有一颗。
 
 import type { Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { TASK_LINE_RE } from "./previewSets";
 
 export interface DecoTaskHandlers {
-  /** 点中第 `line` 行的方框 ⇒ 宿主去翻那一行的 `[ ]` / `[x]`。 */
-  onToggleTask: (line: number) => void;
+  /**
+   * 点中第 `line` 行的方框 ⇒ 宿主去翻那一行的 `[ ]` / `[x]`。
+   * 带上 `view`：装饰档活在**每份实例**自己的 state 里，一颗 view 对一个标签，
+   * 宿主要靠它认出被点的是哪一格（多面板挂着同一篇文档时，「活动面板」不等于被点那一格）。
+   */
+  onToggleTask: (view: EditorView, line: number) => void;
   /**
    * 这一格现在许不许写（只读文档要挡）。
    * 不给就当作一直许 —— 写点自己还有 `doc.readonly` 那道闸，这里只多不少。
    */
-  canToggleTask?: () => boolean;
+  canToggleTask?: (view: EditorView) => boolean;
 }
 
 /** 方框的视觉左沿：`padding-left − 标记位宽`（deco.css 就是把方框画在这个差值上）。 */
@@ -68,8 +71,8 @@ export function taskClick(handlers: DecoTaskHandlers): Extension {
       const onBox = event.clientX >= checkboxLeft - 6 && event.clientX <= checkboxLeft + 20;
       if (!onBrackets && !onBox) return false;
 
-      if (handlers.canToggleTask && !handlers.canToggleTask()) return false;
-      handlers.onToggleTask(line.number);
+      if (handlers.canToggleTask && !handlers.canToggleTask(view)) return false;
+      handlers.onToggleTask(view, line.number);
       event.preventDefault();
       return true;
     },

@@ -130,6 +130,14 @@ export interface TabCompartments {
   lang: Compartment;
   /** 左侧 gutter（行号 / 折叠槽） */
   gutter: Compartment;
+  /**
+   * B397-1 · 所见即所得档（InkNote 的 `previewCompartment` 同位物）。
+   * 值 = `decoFace()`（预览档）或 `[]`（源码档）—— **换档不换 view**，
+   * 所以一格一份文档，不存在「镜像那份文本漂在别处」的可能。
+   */
+  preview: Compartment;
+  /** B397-1 · 只读锁（与档位正交）：`decoLock(doc.readonly)`。 */
+  lock: Compartment;
 }
 
 export interface TabState {
@@ -157,6 +165,8 @@ export function makeTabState(
     wrap: new Compartment(),
     lang: new Compartment(),
     gutter: new Compartment(),
+    preview: new Compartment(),
+    lock: new Compartment(),
   };
   const state = EditorState.create({
     doc,
@@ -166,6 +176,11 @@ export function makeTabState(
       comps.wrap.of(env.wrap ? EditorView.lineWrapping : []),
       comps.theme.of(vscodeEditorTheme(env.dark, env.family ?? "2026")),
       comps.lang.of(perf.syntax ? (language ?? []) : []),
+      // B397-1：两把档位的锁都从「空」起步 —— 唯一的刷点是 `applyPanelMode`
+      // （视图模式落到 DOM 的出口），它按 `tab.viewMode` + `doc.readonly` 决定值。
+      // 在这里预读 viewMode 会造出第二个权威（会话恢复时 viewMode 还没落到标签上）。
+      comps.preview.of([]),
+      comps.lock.of([]),
       EditorView.updateListener.of((update) => {
         if (update.docChanged || update.selectionSet) {
           onUpdate(update.view, update);

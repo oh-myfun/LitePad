@@ -7,7 +7,6 @@
 
 import {
   type Doc,
-  type Tab,
   tabs,
   docs,
   panels,
@@ -20,7 +19,6 @@ import {
   setNextPanelId,
   setSuppressDirty,
   settings,
-  isDecoPreviewEnabled,
 } from "../core/app-state";
 import { getPanel, activePanel, panelOfTab, docOf, instancesOfDoc } from "../core/panels";
 import {
@@ -52,16 +50,12 @@ import { saveDocCore } from "../io/files";
 import { attachPasteHandler } from "../io/export";
 import { showSaveConfirmDialog } from "../shell/saveconfirm";
 import { createEditor } from "../editor/editor";
-import { normalizeSizeClass, perfProfileFor } from "../editor/perf";
 import { PreviewPane } from "../markdown/preview";
 import { logViewport } from "../core/viewport";
 import { closeTab as ipcCloseTab, newTab as ipcNewTab } from "../ipc/api";
-import type { ChangeSet } from "@codemirror/state";
-// B391 spike：装饰预览面（`Settings.deco_preview` 开着才用得上；调用点全在
-// `isDecoPreviewEnabled` 分支里，静态守卫由 tests/spike-deco-wiring.test.ts ① 钉住）。
-import { createDecoMirror, mirrorChanges, mirrorToSource } from "../spike/deco/mirror";
-import { decoDocIdOf, decoTextOf, refreshDecoMirror } from "../spike/deco/panelBridge";
-import { EditorScrollAnchor } from "../sync-scroll/anchor";
+// B397-1 · 装饰那一臂的唯一入口谓词（`Settings.deco_preview` 开着才为真）。
+// 「这一格预览侧挂哪一臂」只在这里问一次；「这一档开不开装饰」由 `applyPanelMode` 每格问。
+import { shouldMountDecoPreview } from "../spike/deco/eligibility";
 import { renderPanelTabs, renderPanelOps, panelDataOf } from "./render";
 import {
   exitMaximize,
@@ -97,30 +91,6 @@ export async function closeTabsSequentially(ids: number[]): Promise<void> {
 }
 
 // ---------------------------------------------------------------- 布局渲染
-
-/**
- * B391F-3 · 这一格到底挂不挂 CM6 装饰面 —— 三条都得问，缺一条就能把应用拖死。
- *
- * 抽成函数（而不是把三个条件摊在 `mountView` 里）只为一件事：让「非 Markdown / 大文档
- * 不许挂装饰面」这两条能被真判据钉住 —— 摊在挂载点里就得整窗启动才测得到，
- * 而 jsdom 里造一份 `.txt` 标签 + 一份 `huge` 文档的成本远高于测这个谓词。
- *
- * 三条各挡什么：
- *   · **开关**：`isDecoPreviewEnabled` 仍是全仓唯一读 `deco_preview` 的地方（闸只有一个，
- *     判据 ① 才数得清调用点）；
- *   · **是不是 Markdown**：装饰面吃的是 markdown 语法树，一篇 `.txt` 挂上去等于每颗键
- *     全篇重 parse 却什么也不画；
- *   · **档位让不让自动预览**：>2MB / >20MB 两档生产是「停用自动预览 + 给提示」
- *     （`markdown.ts` 里 `renderMarkdownFor` 那一闸），装饰面照挂就是绕过降级。
- *     落回派生 DOM 那条分支，提示与口径都跟主干一致。
- */
-export function shouldMountDecoPreview(tab: Tab | undefined): boolean {
-  if (!tab || !isDecoPreviewEnabled(settings)) return false;
-  if (!isMdTab(tab)) return false;
-  // 问 `docs.get` 而不是 `docOf`：后者查不到就抛，而「挂载点拿到一颗孤儿实例」这一形
-  // 不该把整次 `mountView` 带崩（那条路上还有落位与重注册在后面）。
-  return perfProfileFor(normalizeSizeClass(docs.get(tab.docId)?.sizeClass)).autoPreview;
-}
 
 /**
  * 本轮重建期间「各文档此刻的共享位置」（B293 · 方案 A 的跨重建版），由 `rebuildLayout`
@@ -163,14 +133,6 @@ export function rebuildLayout(): void {
       p.view.view.destroy();
       p.view = null;
       p.viewTabId = null;
-    }
-    // 装饰面与编辑器视图同寿（评审 I1）：CM6 在 `document` 上挂 `selectionchange`、
-    // 还开 MutationObserver / 两个 ResizeObserver，只有 `destroy()` 会摘。
-    // 这里不拆的话，每次重建（分屏 / 拖出 / 关面板 / 会话恢复）都漏一颗**活着**的视图，
-    // 而且新的那颗紧接着被 `mountView` 建出来 —— 光标每动一下都要跑一遍旧视图的处理器。
-    if (p.decoMirror) {
-      p.decoMirror.dispose();
-      p.decoMirror = null;
     }
   }
 
@@ -292,48 +254,15 @@ export function rebuildLayout(): void {
         if (panelId === activePanelId) p.view.focus();
       }
 
-      // —— B391 spike：预览侧的两种实现，由 `Settings.deco_preview` 二选一 ————————
-      // 开着 ⇒ CM6 装饰面（同文档的第 N 份**只读**实例）；关着 ⇒ 现方案的派生 DOM。
-      // 宿主仍挂 `.md-preview`：`preview.css` 的 `.panel-host.mode-*` 那三条显隐规则认的
-      // 就是这颗类 ⇒ 装饰面不需要自己再实现一遍「源码 / 分屏 / 纯预览」的切换。
-      //
-      // ⚠️ B391F-3：这道分支还要问「是不是 Markdown」「档位让不让自动预览」两条，
-      //   三条的取舍与理由都写在 `shouldMountDecoPreview` 上（那里也是判据所在）。
+      // —— B397-1：预览侧的两种实现，由 `Settings.deco_preview` 二选一 ————————
+      // 开着 ⇒ **同一颗 view 换档**（所见即所得），这一格没有第二面；关着 ⇒ 现方案的派生 DOM。
+      // 这一臂只在 bodyEl 上留一颗记号 `.deco-face`：`preview.css` 那三条
+      // `.panel-host.mode-*` 规则写的是「预览态藏 `.panel-editor`、显 `.md-preview`」，
+      // 而在这一臂里现形的那一面就是编辑器自己 ⇒ 那一条要就地作废（样式见 preview.css）。
+      // 至于「这一份文档此刻开不开装饰」不在挂载点决定 —— 那是 `applyPanelMode` →
+      // `applyDecoFace` 每格每次都问的活（换标签、换文档、外部重载都在它里面过）。
       if (shouldMountDecoPreview(tab)) {
-        const decoHost = document.createElement("div");
-        decoHost.className = "md-preview md-deco-host";
-        hostEl.appendChild(decoHost);
-        // B391F-5：装饰面上的那颗勾选框。写点仍是 `markdown.ts` 那颗唯一的
-        // `toggleTaskInTab`，但按**文档行号**调（行起=行止、岛内序号 0）——
-        // 现方案那套「渲染面里第 N 个 .md-task」的换算在 B394-2 上把勾写到了别的行，
-        // 而行号没有中间量，也就没有换算可错。
-        p.decoMirror = createDecoMirror(decoHost, decoTextOf(p), decoDocIdOf(p), {
-          onToggleTask: (line) => {
-            const t = tabs.get(p.viewTabId ?? p.activeTabId);
-            if (t) toggleTaskInTab(t.tabId, line, line, 0);
-          },
-          canToggleTask: () => {
-            const t = tabs.get(p.viewTabId ?? p.activeTabId);
-            const d = t ? docOf(t) : undefined;
-            return !!t && !!d && isMdTab(t) && !d.readonly;
-          },
-          // B391F-8「摸手感」那一档：装饰面能吃键入，但**权威仍是源码那颗 view** ——
-          // 键入经 `mirrorToSource` 套回源码，置脏 / 自动保存 / 大纲 / 会话快照这些
-          // 认 `tab.state` 的下游全由源码那颗的 handleUpdate 走，一行不用改。
-          editable: true,
-          onMirrorEdit: (changes) => {
-            const src = p.view?.view;
-            const t = tabs.get(p.viewTabId ?? p.activeTabId);
-            const d = t ? docOf(t) : undefined;
-            // 没处落笔的三种形：源码那颗不在位、显示的不是 Markdown、文档只读。
-            if (!src || !t || !d || !isMdTab(t) || d.readonly) {
-              refreshDecoMirror(p);
-              return;
-            }
-            // 两侧基线不一致（反向桥的过期闸）也是同一处置。
-            if (mirrorToSource(src, changes) !== "applied") refreshDecoMirror(p);
-          },
-        });
+        hostEl.classList.add("deco-face");
       } else {
         const preview = new PreviewPane();
         p.preview = preview;
@@ -459,9 +388,8 @@ export function switchTab(panelId: number, tabId: number): void {
   setSuppressDirty(true);
   view.setState(tab.state);
   setSuppressDirty(false);
-  // B391 spike：这一格换了文档，装饰面得跟着重新播种（它不是 Tab 实例，
-  // 不在 `syncDocInstances` 的兄弟遍历里，换标签那一刻没人推它）。
-  refreshDecoMirror(panel);
+  // B397-1：这一格换了文档，**不再需要给第二面播种** —— 档位就在这一颗 view 的 state 里，
+  // 下面那发 `applyPanelMode` 按新标签的 `viewMode` + 只读性把它刷到位。
   // ⚠️ 焦点必须排在钉位置**之前**（B145）：`focus()` 会把光标滚进视野，而光标往往
   // 不在刚还原出来的可视区里 —— 排在后面等于把刚钉好的位置顶掉。
   view.focus();
@@ -683,8 +611,8 @@ export async function closeTabById(tabId: number): Promise<void> {
     setSuppressDirty(true);
     view.setState(nextTab.state);
     setSuppressDirty(false);
-    refreshDecoMirror(panel); // 同上：换的是这一格显示的文档，装饰面要跟着播种
     // 末尾统一重注册锚点并按新 docId 上锁（见上方注释）；覆盖本函数未显式上锁的空档。
+    // 档位（B397-1）不在这里点名：下面那发无条件的 `applyPanelMode` 就是它的出口。
     reconcileSyncRegistrations();
   }
   applyPanelMode(panel);
@@ -724,10 +652,6 @@ export function disposePanel(panelId: number): void {
   panel.view = null;
   panel.viewTabId = null;
   panel.preview = null;
-  // B391 spike：装饰面是**真的 EditorView**（自带 StateField 与监听），不像预览 DOM
-  // 那样宿主一扔就完事 ⇒ 必须显式 destroy，否则每调一次分屏就漏一棵视图树。
-  panel.decoMirror?.dispose();
-  panel.decoMirror = null;
   panels.delete(panelId);
 
   if (activePanelId === panelId) {
@@ -810,36 +734,10 @@ export function freshTextOfDoc(doc: Doc): string | null {
   return any ? any.state.doc.toString() : null;
 }
 
-// ------------------------------------------------------- B391 spike · 装饰预览面
-// 「播种装饰面」那三样（正文源 / 归属源 / refreshDecoMirror）住在
-// `spike/deco/panelBridge.ts` —— `io/files.ts` 重载那一形也要用它，
-// 而本模块已经 import 了 `io/files.ts`，留在这里是条环。
-
-/**
- * 把某实例的一发变更映射进**所有显示同一文档**的装饰面。
- *
- * 与 `syncDocInstances` 同口径：内容靠 ChangeSet 对齐，不共享 state。回声与幽灵写回
- * 都归 `mirrorChanges` 判，这里只管寻址。
- *
- * 两道自己的闸（评审 I5）：
- *   · **归属闸**：`panel.decoMirror.docId` 是镜像**实际装着**的那篇文档。换显示而没
- *     重新播种（`tabs/split.ts` / `io/files.ts` 两处还没接线）留下的就是「面板说 doc1、
- *     镜像躺着另一篇」，而 `ChangeSet` 只比长度 ⇒ 等长时会被套上别人的变更。
- *   · **认领**：写完整态面要在同一同步栈里按「落在哪就是哪」登记进账本，否则那一面
- *     自己的裁剪无人认领 ⇒ 被判成用户滚动广播回源码（Review Focus 第 2 条那个抖动）。
- */
-export function syncDecoMirrors(srcTab: Tab, changes: ChangeSet): void {
-  if (changes.empty) return;
-  for (const p of panels.values()) {
-    const mirror = p.decoMirror;
-    if (!mirror || mirror.docId !== srcTab.docId) continue;
-    const shown = tabs.get(p.viewTabId ?? p.activeTabId);
-    if (!shown || shown.docId !== srcTab.docId) continue;
-    if (mirrorChanges(mirror.view, changes) !== "applied") continue;
-    const here = new EditorScrollAnchor(mirror.view).getV();
-    syncCoordinator.expectSurfaceV(mirror.view.scrollDOM, here, here);
-  }
-}
+// ------------------------------------------------------- B397-1 · 所见即所得档
+// 这里原先住着 `syncDecoMirrors`（把一发变更映射进所有显示同一文档的**只读镜像**）。
+// 镜像那颗 view 被拆掉之后，同文档的多实例对齐回主干那一条路（`main.ts` 的
+// `syncDocInstances`）—— 装饰档活在每份实例自己的 state 里，没有第二面要喂。
 
 /** 拖拽标签落在 tab 区（B27）：同面板调整顺序，跨面板移动到该插入位置。
  *  beforeTabId=null 表示追加到末尾。不会分屏。 */

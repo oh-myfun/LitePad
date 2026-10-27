@@ -1,10 +1,16 @@
 // @vitest-environment jsdom
-// B391 spike · Task 5 —— 装饰预览接进面板模型（`Settings.deco_preview` 开关隔离）。
+// B397 · 所见即所得那一臂接进面板模型（`Settings.deco_preview` 开关隔离）。
+//
+// 前身是 B391 spike 的 Task 5 那份文件。B397-1 把「预览侧第二颗 view（只读镜像）」整个拆掉
+// 之后，这里判的东西跟着换了一次口径：**一格一颗 view，档位是它身上的 Compartment**。
+// 于是原来那些「两侧」判据（桥、归属闸、账本认领、播种）没有了被测对象，逐条改写成了
+// 「同一颗 view 的档位」判据 —— 产品性质一条没丢：打字进得去、只读进不去、点勾能改、
+// 查找落在当前这一颗、换档不换 view、换文档不吃上一篇的画、开关关着整条路不可达。
 //
 // 三条判据的形状抄自 tests/view-switch-noedit.test.ts（本仓库唯一能在 jsdom 里
 // 真启动 `src/main.ts` 的那份配方：26 个 ipc/api 导出不许缺，缺一个 bootstrap 就
-// 以 TypeError 死掉）。这里刻意**不打桩**装饰面本身：它走的是真 `createDecoMirror`，
-// 于是「开关开着 ⇒ 这一格预览侧真的是 CM6 装饰面」是被真启动证明的，不是被我 mock 证明的。
+// 以 TypeError 死掉）。这里刻意**不打桩**装饰本身：它走的是真 `decoFace()`，
+// 于是「开关开着 ⇒ 这一格预览档真的是所见即所得」是被真启动证明的，不是被我 mock 证明的。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { EditorView } from "@codemirror/view";
@@ -77,7 +83,8 @@ vi.mock("../src/ipc/api", () => ({
       ],
     }),
   // 唯一与 view-switch-noedit 不同的地方：这颗开关是开的。
-  // 关着的那一路已由那份文件真启动覆盖（它的 loadSettings 没有这个键 ⇒ undefined ⇒ 假）。
+  // 关着的那一路已由那份文件真启动覆盖（它的 loadSettings 没有这个键 ⇒ undefined ⇒ 假），
+  // 这里另有一条「运行时关掉 ⇒ 下一发换档就把装饰摘干净」的用例（壬）补上开关的另一臂。
   loadSettings: () =>
     Promise.resolve({
       theme: "light",
@@ -132,10 +139,8 @@ vi.mock("../src/ipc/api", () => ({
   restoreBackup: () => Promise.resolve(null),
   discardBackup: () => Promise.resolve(),
   discardOrphanBackups: () => Promise.resolve(0),
-  // ---- 配方抄自 view-switch-noedit.test.ts，但那份文件写于 B305/B314/B315/B389 之前：
-  //      ipc/api 后来又长了 27 个导出。缺一个不会红，只会在日志里留一条
-  //      「首帧名单没取到 / take failed」的 warn —— 那是**静默降级**，不是健康。
-  //      按本仓库既有的「api.ts 加导出要同步补 vi.mock」规矩补齐。----
+  // ⚠️ 这里**没有** `isDecoPreviewEnabled`：那颗闸门住在 `core/app-state.ts`（没有一份测试
+  // mock 过那个模块），所以这份文件测的是「真闸门读真设置」——闸门被 mock 掉的绿不算绿。
   clearRecents: () => Promise.resolve(),
   copyEntry: () => Promise.resolve(true),
   createDir: () => Promise.resolve(null),
@@ -163,8 +168,6 @@ vi.mock("../src/ipc/api", () => ({
   setRecentLimit: () => Promise.resolve(),
   takePendingFiles: () => Promise.resolve([]),
   windowPayload: () => Promise.resolve(null),
-  // ⚠️ 这里**没有** `isDecoPreviewEnabled`：那颗闸门住在 `core/app-state.ts`（没有一份测试
-  // mock 过那个模块），所以这份文件测的是「真闸门读真设置」——闸门被 mock 掉的绿不算绿。
 }));
 
 // B57 起 ● 是矢量字形且槽位恒定存在（靠 opacity 显隐），脏状态改看 tab-dirty 类。
@@ -185,138 +188,231 @@ async function toggleView(times: number): Promise<void> {
   }
 }
 
-describe("B391-5 装饰预览接进面板模型", () => {
-  /**
-   * ① 静态守卫：`createDecoMirror(` 的每一个调用点都必须落在
-   * `isDecoPreviewEnabled(...)` 为**真**的那个分支块里（按大括号配平取块体，不按行号猜）。
-   *
-   * 这条不需要启动应用，也不必等 Task 5 的实现跑起来 —— 它是「关掉开关 ⇒ src/spike
-   * 整个不可达」这条 Global Constraint 的唯一机械证明。
-   */
-  it("① 关着时不构造装饰实例（每个 createDecoMirror 调用点都在开关分支内）", () => {
-    const src = readFileSync("src/tabs/lifecycle.ts", "utf-8");
-    const callsites = src.split("createDecoMirror(").length - 1;
-    expect(callsites, "预览构造点应改走 createDecoMirror").toBeGreaterThan(0);
+/** 抹掉注释再取源码（注释里提到函数名不算接线）。 */
+function codeOf(f: string): string {
+  return readFileSync(f, "utf-8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+}
 
-    // 收集所有「条件里正向问 isDecoPreviewEnabled」的 if 块体。
-    // ⚠️ 条件用 lazy `.+?` 而不是 `[^)]*`：`isDecoPreviewEnabled(settings)` 自带一层括号，
-    //    后者会在第一个 `)` 处截断、再要求紧跟 `{`，于是**永远匹配不上**（第一版就栽在这儿：
-    //    守卫数到 0 个分支，测试红得像是「没接线」，其实是判据自己写错了）。
-    const guarded: Array<[number, number, string]> = [];
-    const re = /if\s*\((.+?)\)\s*\{/g;
-    // 分支条件允许两种写法：① 直接问闸；② 问 `shouldMountDecoPreview`（B391F-3 起
-    // 挂载点还要问「是不是 Markdown」「档位让不让自动预览」两条，三条挤在一个条件里
-    // 就没法被谓词级判据量到）。**间接那一跳必须被证明是诚实的** —— 见下面两条断言：
-    // 谓词本体要正向问闸、开关关着就 return false，否则这一路就是绕过闸的口子。
-    const asksGate = (cond: string) =>
-      (cond.includes("isDecoPreviewEnabled") || cond.includes("shouldMountDecoPreview(")) &&
-      !/!\s*(isDecoPreviewEnabled|shouldMountDecoPreview)/.test(cond);
-    for (let m = re.exec(src); m !== null; m = re.exec(src)) {
-      if (!asksGate(m[1])) continue;
-      const open = m.index + m[0].length - 1;
-      let depth = 0;
-      let end = src.length;
-      for (let i = open; i < src.length; i++) {
-        if (src[i] === "{") depth++;
-        else if (src[i] === "}") {
-          depth--;
-          if (depth === 0) {
-            end = i;
-            break;
-          }
-        }
-      }
-      guarded.push([open, end, m[1]]);
-    }
-    expect(guarded.length, "应存在 isDecoPreviewEnabled 为真的分支").toBeGreaterThan(0);
+const panelEditor = (): EditorView =>
+  EditorView.findFromDOM(document.querySelector(".panel-editor .cm-editor") as HTMLElement)!;
 
-    if (guarded.some(([, , cond]) => cond.includes("shouldMountDecoPreview("))) {
-      const at = src.indexOf("export function shouldMountDecoPreview");
-      expect(at, "挂载点走谓词，而谓词不在本文件里 ⇒ 闸链断了").toBeGreaterThan(-1);
-      const body = src.slice(at, src.indexOf("\n}", at));
-      expect(
-        body.includes("!isDecoPreviewEnabled(settings)") && body.includes("return false"),
-        "谓词本体必须「开关关着就 return false」，否则分支条件绕过了那道闸",
-      ).toBe(true);
-    }
+/**
+ * 取回那颗真启动出来的面板，并确保它停在预览（所见即所得）档。
+ *
+ * 「档」是 view 身上的 Compartment，而换档的唯一出口是 `applyPanelMode` ⇒ 这里刻意只按
+ * 真实用户手势（Ctrl+/）切档，不直接 dispatch 扩展，免得测的是我自己搭的架子。
+ */
+async function mdPanelInPreview() {
+  await import("../src/main");
+  await wait(200);
+  const { panels, tabs } = await import("../src/core/app-state");
+  const p = [...panels.values()].find((x) => x.view);
+  expect(p, "应有一颗带编辑器实例的面板").toBeTruthy();
+  const tab = tabs.get(p!.viewTabId ?? p!.activeTabId)!;
+  if (tab.viewMode !== "preview") await toggleView(1);
+  expect(tab.viewMode, "前置：这一格应在预览（所见即所得）档").toBe("preview");
+  return { p: p!, tab, view: panelEditor() };
+}
 
-    let idx = src.indexOf("createDecoMirror(");
-    while (idx !== -1) {
-      expect(
-        guarded.some(([from, to]) => idx > from && idx < to),
-        `调用点 ${idx} 不在开关分支内`,
-      ).toBe(true);
-      idx = src.indexOf("createDecoMirror(", idx + 1);
-    }
-  });
-
-  it("② 开关开着：这一格预览侧的 DOM 是 .cm-editor，不是 .md-rendered", async () => {
-    await import("../src/main");
-    await wait(300);
-
-    const decoHost = document.querySelector(".panel-host .md-deco-host");
-    expect(decoHost, "开关开着 ⇒ 预览侧应挂装饰面宿主").not.toBeNull();
-    expect(decoHost?.querySelector(".cm-editor"), "装饰面宿主里应是 CM6 视图").not.toBeNull();
+/**
+ * B397-1 · 形态判据（用户 2026-10-27 的口径）。
+ *
+ * 「那个独立的只读形态完全没必要 —— 把所见即所得禁用编辑自然就是只读，效果也能一致。」
+ * InkNote 全仓 `new EditorView` 只出现一次（`src/editor.ts:1466`），模式切换是
+ * `previewCompartment.reconfigure`（:1370），只读是同一颗 view 上的
+ * `readOnly` + `editable` + `transactionFilter`（:1391-1399）。
+ */
+describe("B397-1 一颗 view 两档：deco 形态下没有第二颗 view", () => {
+  it("甲 预览档只有一颗 view，装饰挂在这颗上，派生 DOM 那一臂整个不在", async () => {
+    const { p } = await mdPanelInPreview();
     expect(
-      document.querySelectorAll(".panel-host .md-deco-host .md-rendered").length,
-      "装饰面里不该再出现派生 DOM（.md-rendered 是现方案的预览根）",
+      document.querySelectorAll(".panel-host .cm-editor").length,
+      "一格一颗 view ⇒ 总数应等于面板数，镜像那颗必须没了",
+    ).toBe(document.querySelectorAll(".panel-host").length);
+    const dom = document.querySelector(".panel-host .cm-editor")!;
+    expect(dom.classList.contains("md-deco"), "预览档的装饰类应挂在**这颗** editor 上").toBe(true);
+    expect(p.preview, "装饰那一臂不该构造 PreviewPane").toBeNull();
+    expect(
+      document.querySelectorAll(".panel-host .md-preview, .panel-host .md-rendered").length,
+      "装饰那一臂里不该再出现派生 DOM（.md-preview / .md-rendered 是现方案的预览根）",
     ).toBe(0);
-    // 现方案那颗 PreviewPane 不该还挂在树上（开关开着时它整个不该被构造）
-    expect(document.querySelectorAll(".panel-host .md-preview.md-rendered").length).toBe(0);
   });
 
-  it("③ 连切 20 次视图：不置脏、不排程写盘；真编辑才走一次自动保存", async () => {
-    // 源码侧那颗 view 必须按 `.panel-editor` 取：装饰面也是 .cm-editor，
-    // 用裸 `.cm-editor` 会先撞上预览侧那一颗（DOM 顺序：editor 在前，但 mode-* 一藏
-    // 就等于换了一棵树可查）。
-    const srcView = EditorView.findFromDOM(
-      document.querySelector(".panel-editor .cm-editor") as HTMLElement,
-    )!;
-    expect(srcView, "源码侧编辑器应在").toBeTruthy();
-    const before = srcView.state.doc.toString();
-    expect(saved.length, "启动后不应写盘").toBe(0);
-
-    await toggleView(20);
-    expect(srcView.state.doc.toString(), "切换视图不得改内容").toBe(before);
+  it("己 连切 20 次视图：不置脏、不排程写盘（档位事务不是编辑）", async () => {
+    await mdPanelInPreview();
+    const view = panelEditor();
+    const before = view.state.doc.toString();
+    saved.length = 0;
+    await toggleView(2); // 预览 → 源码 → 预览（一整圈）
+    for (let i = 0; i < 9; i++) await toggleView(2);
+    await wait(1800);
+    expect(view.state.doc.toString(), "切换视图不得改内容").toBe(before);
     expect(dirty(), "切换 20 次视图不得置脏").toBe(false);
     expect(saved.length, "切换视图不得写盘（幽灵 docChanged 必须被判掉）").toBe(0);
-
-    // 装饰面此刻显示的必须还是同一篇（镜像跟着换文档重新播种过）
-    const decoView = EditorView.findFromDOM(
-      document.querySelector(".md-deco-host .cm-editor") as HTMLElement,
-    )!;
-    expect(decoView.state.doc.toString(), "装饰面应与源码同文").toBe(before);
-
-    // ---- 真编辑：置脏 + 一次自动保存 + 镜像跟着变（回写桥在真路径上通）----
-    srcView.dispatch({ changes: { from: 0, insert: "X" } });
-    await wait(50);
-    expect(dirty(), "真实编辑必须置脏").toBe(true);
-    expect(decoView.state.doc.toString(), "编辑必须经 ChangeSet 桥镜像进装饰面").toBe(
-      srcView.state.doc.toString(),
-    );
-    await wait(1800);
-    expect(saved.length, "真实编辑应且只应触发一次自动保存").toBe(1);
   });
 
-  /**
-   * ④⑤⑥ 是最终评审抓出来的三条（评审 Important #1 与 #5）。三条都按**行为**判，
-   * 不按源码文本判 —— 写它们的时候生产代码还没改，所以每条都先红过一次：
-   * ④ 旧镜像没被 destroy（重建一次漏一颗活视图，CM6 的 `selectionchange` 是挂在
-   *    `document` 上的，只有 `destroy()` 会摘）；⑤ 桥只看长度，等长的另一篇文档
-   *    会被套上别人的变更；⑥ 桥写完整态面却没在账本里认领，那一面自己的裁剪会被
-   *    判成「用户滚动」广播回源码（Review Focus 第 2 条那个「位置抖动」）。
-   */
-  it("④ rebuildLayout 之前必须拆掉旧的装饰实例", async () => {
-    await import("../src/main");
-    const { panels } = await import("../src/core/app-state");
-    const { rebuildLayout } = await import("../src/tabs");
-    const p = [...panels.values()][0];
-    const first = p.decoMirror;
-    expect(first, "开关开着时这一格应有装饰实例").toBeTruthy();
+  it("乙 换档不换 view：源码档与预览档是同一个 EditorView 对象", async () => {
+    const { view } = await mdPanelInPreview();
+    await toggleView(1); // 预览 → 源码
+    const back = panelEditor();
+    expect(back, "切档不许重建 view（重建就意味着两份 state）").toBe(view);
+    expect(back.dom.classList.contains("md-deco"), "源码档不该带装饰类（档位换了，载体没换）").toBe(
+      false,
+    );
+  });
 
-    // `EditorView.destroyed` 是私有字段（tsc 拦），所以按「`destroy()` 有没有被调到」判：
-    // 包住原型方法、记下 every receiver —— 旧的那颗必须出现在里面。
-    // 判别力先证过一次：加这行守卫之前，第一版按 `view.destroyed` 读到的就是 `false`。
+  it("丙 预览档打的字切回源码还在（没有第二份文本可漂）", async () => {
+    const { view } = await mdPanelInPreview();
+    view.dispatch({ changes: { from: 0, insert: "同源" }, userEvent: "input.type" });
+    await toggleView(1);
+    expect(view.state.doc.toString().startsWith("同源"), "换档后仍是这一份文档").toBe(true);
+  });
+
+  it("丁 只读是与档位正交的另一把锁：装饰照常、docChanged 进不去", async () => {
+    const { tab, view } = await mdPanelInPreview();
+    const { docs } = await import("../src/core/app-state");
+    docs.get(tab.docId)!.readonly = true;
+    await toggleView(2); // 换两回档 ⇒ 把「视图模式落到 DOM」那一发出口走一遍，只读锁跟着刷上去
+    const before = view.state.doc.toString();
+    view.dispatch({ changes: { from: 0, insert: "X" }, userEvent: "input.type" });
+    expect(view.state.doc.toString(), "只读文档在预览档也不许落笔").toBe(before);
+    expect(
+      view.dom.classList.contains("md-deco"),
+      "只读只关编辑，不关所见即所得（InkNote：readOnly 时装饰反而更彻底）",
+    ).toBe(true);
+    docs.get(tab.docId)!.readonly = false;
+    await toggleView(2);
+    view.dispatch({ changes: { from: 0, insert: "Y" }, userEvent: "input.type" });
+    expect(view.state.doc.toString(), "解除只读后同一颗 view 要能写").toContain("Y");
+  });
+
+  it("戊 查找落在这颗 view 上（Ctrl+F 在预览格里不是死键）", async () => {
+    const { view } = await mdPanelInPreview();
+    const { applyFindQuery, clearFindHighlight } = await import("../src/find/findbar");
+    const q = {
+      text: "line",
+      replace: "",
+      caseSensitive: false,
+      wholeWord: false,
+      regexp: false,
+      inSelection: false,
+      preserveCase: false,
+    };
+    applyFindQuery(q);
+    expect(view.dom.querySelectorAll(".cm-find-match").length, "命中应画在唯一那颗 view 里").toBe(
+      1,
+    );
+    clearFindHighlight();
+    expect(view.dom.querySelectorAll(".cm-find-match").length, "关栏不许留残影").toBe(0);
+  });
+
+  it("庚 步进在这一颗 view 上跳到命中并标成当前项", async () => {
+    const { view } = await mdPanelInPreview();
+    const { stepFind } = await import("../src/find/findbar");
+    stepFind(1, {
+      text: "line",
+      replace: "",
+      caseSensitive: false,
+      wholeWord: false,
+      regexp: false,
+      inSelection: false,
+      preserveCase: false,
+    });
+    const at = view.state.selection.main;
+    expect(view.state.sliceDoc(at.from, at.to), "步进应把选区落在这一颗 view 的文档里").toBe(
+      "line",
+    );
+    expect(view.dom.querySelectorAll(".cm-find-match-active").length).toBe(1);
+  });
+
+  it("辛 点这一颗 view 的勾直接改它的文档（点勾落在显示那一面）", async () => {
+    const { view } = await mdPanelInPreview();
+    view.dispatch({
+      changes: { from: view.state.doc.length, insert: "\n- [ ] 打勾行\n" },
+      userEvent: "input.type",
+    });
+    await wait(60);
+    const row = view.dom.querySelector<HTMLElement>(".cm-line.md-task-item");
+    const seen = Array.from(view.dom.querySelectorAll<HTMLElement>(".cm-line")).map(
+      (el) => el.className,
+    );
+    expect(
+      row,
+      `任务行应画出方框那一行（.md-task-item）；文档=${JSON.stringify(
+        view.state.doc.toString(),
+      )} 行=${JSON.stringify(seen)}`,
+    ).toBeTruthy();
+    clickTaskBox(row!, "40px", 20);
+    await wait(60);
+    expect(view.state.doc.toString(), "点勾必须落在显示的那颗 view 上").toContain("- [x] 打勾行");
+  });
+
+  it("壬 运行时关掉开关 ⇒ 下一发换档就把装饰摘干净（`src/spike/**` 不进运行路径）", async () => {
+    const { view } = await mdPanelInPreview();
+    const { settings } = await import("../src/core/app-state");
+    settings!.deco_preview = false;
+    try {
+      await toggleView(2); // 走两回出口：源码档一次、预览档一次
+      expect(
+        view.dom.classList.contains("md-deco"),
+        "开关关着 ⇒ 预览档也不许挂装饰（判据问的是闸，不是缓存）",
+      ).toBe(false);
+    } finally {
+      settings!.deco_preview = true;
+    }
+  });
+
+  it("癸 换文档 ⇒ 档位跟着新文档重落，不吃上一篇的画（原「桥的归属闸」这一形）", async () => {
+    const { p, tab } = await mdPanelInPreview();
+    const { docs, tabs } = await import("../src/core/app-state");
+    const { makeDoc, makeInstance, registerDoc, attachTabToPanel } =
+      await import("../src/doc-model");
+    const { applyPanelMode } = await import("../src/markdown");
+    const view = panelEditor();
+
+    const txtDoc = makeDoc(
+      9521,
+      "纯文本一篇",
+      "note.txt",
+      "E:\\tmp\\note.txt",
+      "UTF-8",
+      "LF",
+      false,
+      "normal",
+    );
+    registerDoc(txtDoc);
+    const txt = makeInstance(txtDoc, p.panelId, "纯文本一篇");
+    attachTabToPanel(txt, p);
+    p.viewTabId = txt.tabId;
+    p.view!.setState(txt.state);
+    applyPanelMode(p);
+    expect(
+      view.dom.classList.contains("md-deco"),
+      "换到 .txt ⇒ 这一格退回裸编辑（装饰类不许留着）",
+    ).toBe(false);
+
+    p.activeTabId = tab.tabId;
+    p.viewTabId = tab.tabId;
+    p.view!.setState(tab.state);
+    applyPanelMode(p);
+    expect(
+      view.dom.classList.contains("md-deco"),
+      "换回 md 的预览档 ⇒ 装饰要重新落上（档位不落就是预览格一片裸文本）",
+    ).toBe(true);
+    expect(view.state.doc.toString(), "显示的是这一份文档，不是上一篇").toBe(
+      tab.state.doc.toString(),
+    );
+    tabs.delete(txt.tabId);
+    docs.delete(txtDoc.tabId);
+    p.tabs = p.tabs.filter((id) => id !== txt.tabId);
+  });
+
+  it("子 重建布局后，新那一份 view 重新落上档位", async () => {
+    await mdPanelInPreview();
+    const { rebuildLayout } = await import("../src/tabs");
+    const old = panelEditor();
     const destroyed: unknown[] = [];
     const orig = EditorView.prototype.destroy;
     const spy = vi.spyOn(EditorView.prototype, "destroy").mockImplementation(function (
@@ -325,79 +421,130 @@ describe("B391-5 装饰预览接进面板模型", () => {
       destroyed.push(this);
       return orig.call(this);
     });
-
     rebuildLayout();
     spy.mockRestore();
-
-    expect(
-      destroyed,
-      "旧装饰视图必须 destroy（CM6 的 selectionchange 挂在 document 上，只有 destroy() 会摘）",
-    ).toContain(first!.view);
-    expect(p.decoMirror, "重建后这一格应有新的装饰实例").toBeTruthy();
-    expect(p.decoMirror).not.toBe(first);
-  });
-
-  it("⑤ 镜像躺着别的文档时桥必须拒收（等长也不会被写出花）", async () => {
-    await import("../src/main");
-    const { panels, tabs } = await import("../src/core/app-state");
-    const { syncDecoMirrors } = await import("../src/tabs");
-    const { reseedDecoMirror } = await import("../src/spike/deco/mirror");
-    const p = [...panels.values()].find((x) => x.decoMirror)!;
-    const mirror = p.decoMirror!;
-    const shown = tabs.get(p.viewTabId ?? p.activeTabId)!;
-    const srcView = EditorView.findFromDOM(
-      document.querySelector(".panel-editor .cm-editor") as HTMLElement,
-    )!;
-    const other = "x".repeat(srcView.state.doc.length);
-    // 换显示但没重新播种那一形（`tabs/split.ts` / `io/files.ts` 两处还没接线）留下的状态：
-    // 面板说的是 doc1，镜像里躺着的是**另一篇等长**文档。
-    reseedDecoMirror(mirror, other, 999);
-    const tr = srcView.state.update({ changes: { from: 0, insert: "Y" } });
-
-    syncDecoMirrors(shown, tr.changes);
-
-    expect(mirror.view.state.doc.toString(), "桥不得把别人的文档的变更套进这颗镜像").toBe(other);
-  });
-
-  it("⑥ 桥写进镜像之后必须在账本里认领那一发", async () => {
-    await import("../src/main");
-    const { panels, tabs } = await import("../src/core/app-state");
-    const { syncDecoMirrors } = await import("../src/tabs");
-    const { syncCoordinator } = await import("../src/sync-scroll/wire");
-    const { reseedDecoMirror } = await import("../src/spike/deco/mirror");
-    const p = [...panels.values()].find((x) => x.decoMirror)!;
-    const mirror = p.decoMirror!;
-    const shown = tabs.get(p.viewTabId ?? p.activeTabId)!;
-    const srcView = EditorView.findFromDOM(
-      document.querySelector(".panel-editor .cm-editor") as HTMLElement,
-    )!;
-    reseedDecoMirror(mirror, srcView.state.doc.toString(), shown.docId); // 回到同文档同文
-    const before = mirror.view.state.doc.toString();
-    const spy = vi.spyOn(syncCoordinator, "expectSurfaceV");
-    const tr = srcView.state.update({ changes: { from: 0, insert: "Z" } });
-
-    syncDecoMirrors(shown, tr.changes);
-    const claimed = spy.mock.calls.some(([el]) => el === mirror.view.scrollDOM);
-    spy.mockRestore();
-
-    expect(mirror.view.state.doc.toString(), "前置：这一发应真的写进了镜像").not.toBe(before);
-    expect(claimed, "写完整态面要按「落在哪就是哪」认领，否则它的裁剪被当作用户滚动广播回去").toBe(
-      true,
+    expect(destroyed, "旧 view 必须 destroy（CM6 的 selectionchange 挂在 document 上）").toContain(
+      old,
     );
+    const next = panelEditor();
+    expect(next).not.toBe(old);
+    expect(
+      next.dom.classList.contains("md-deco"),
+      "重建后这一格仍是所见即所得（档位由唯一出口重新落，不靠镜像播种）",
+    ).toBe(true);
   });
 });
 
 /**
- * B391F-1 · 装饰面必须吃编辑器的三条排版 token。
+ * B397-1 · 静态守卫：spike 的入口必须全在闸后。
  *
- * 装饰面宿主 `.md-deco-host` 是 `.panel-host` 的直接子节点、**不在 `.panel-editor` 里**，
- * 而这三条规则的选择器全都以 `.panel-host .panel-editor` 打头 ⇒ 字号 / 字体 / 行距一条没落到它身上。
- * 真机量出来的后果：同一篇 5001 行、同一 `clientHeight` 667，源码格 `scrollHeight=90296`、
- * 装饰面 `scrollHeight=69019` ⇒ 行距 18.05px vs 13.80px —— 同一份文档两套几何，
- * 「relayout 后顶边差一行」（P2-4）就是这笔几何差的零头。所以这一条不是美观问题，是落位问题。
+ * 原来是数 `createDecoMirror(` 的调用点是否落在 `isDecoPreviewEnabled` 分支里。那颗构造器
+ * 随镜像一起没了，但这条 Global Constraint 一个字都没变：**开关关着 ⇒ 所见即所得不进运行路径**。
+ * 现在管事的是两个入口，各按它自己的形状问：
+ *   · **挂哪一臂**（`tabs/lifecycle.ts`）：只有一条 `if (shouldMountDecoPreview(tab))`，
+ *     判据数调用点是否就在那条正向问谓词的分支上；
+ *   · **装不装扩展**（`markdown.ts`）：只有一发 `reconfigure`，判据问「它的开关表达式必含
+ *     谓词」+「这两颗装配器各只出现一次」（多一处就是一个不问闸的新入口）。
+ * `main.ts` 那颗 `setDecoHooks()` 是唯一在闸**外**跑的 spike 符号，它只存两枚闭包、
+ * 不装扩展 ⇒ 关着时没有代码路径会调到它们（壬 那条行为判据量的就是这件事）。
+ *
+ * 间接那一跳必须被证明是诚实的 —— `shouldMountDecoPreview` 本体要正向问闸，
+ * 否则「绕闸」和「问闸」在调用点上长得一样。
  */
-describe("B391F-1 装饰面吃编辑器排版 token", () => {
-  /** 抹掉注释再按 `selector { body }` 拆块（注释里的散文会喂假判据）。 */
+describe("B397-1 守卫 · spike 入口都在闸后", () => {
+  it("lifecycle.ts：预览侧挂哪一臂只有一个入口，且它正向问谓词", () => {
+    const src = codeOf("src/tabs/lifecycle.ts");
+    const callsites: number[] = [];
+    for (let i = src.indexOf("shouldMountDecoPreview("); i !== -1;) {
+      callsites.push(i);
+      i = src.indexOf("shouldMountDecoPreview(", i + 1);
+    }
+    expect(callsites.length, "挂载入口没了 ⇒ 判据空转，先确认扫描点没搬走").toBeGreaterThan(0);
+    for (const at of callsites) {
+      expect(
+        /if\s*\(\s*shouldMountDecoPreview\(/.test(src.slice(at - 14, at + 30)),
+        `偏移 ${at} 的入口调用点没挂在正向问谓词的分支上`,
+      ).toBe(true);
+    }
+    expect(src, "这一臂只该由谓词分臂，不许再自己读开关").not.toContain("isDecoPreviewEnabled");
+  });
+
+  it("markdown.ts：装配装饰扩展的唯一入口必含谓词，且装配器各只出现一次", () => {
+    const src = codeOf("src/markdown.ts");
+    expect(src, "`on` 里摘掉谓词 = 绕过「是不是 Markdown / 档位让不让」两道闸").toMatch(
+      /const on = [^\n]*&& shouldMountDecoPreview\(tab\)/,
+    );
+    for (const name of ["decoFace(", "decoLock("]) {
+      const n = (src.match(new RegExp(name.replace("(", "\\("), "g")) ?? []).length;
+      expect(n, `多一处 ${name} 就是一个不问闸的新入口`).toBe(1);
+    }
+  });
+
+  it("谓词本体必须「开关关着就 return false」，否则分支条件绕过了那道闸", () => {
+    const src = codeOf("src/spike/deco/eligibility.ts");
+    expect(src, "入口谓词不许搬家").toContain("export function shouldMountDecoPreview");
+    expect(src.includes("!isDecoPreviewEnabled(settings)") && src.includes("return false")).toBe(
+      true,
+    );
+  });
+
+  it("镜像那一类机械不许被搬回来（一格一颗 view 是形态，不是偏好）", () => {
+    const prod = [
+      "src/markdown.ts",
+      "src/main.ts",
+      "src/tabs/lifecycle.ts",
+      "src/core/app-state.ts",
+    ];
+    for (const f of prod) {
+      const src = codeOf(f);
+      for (const name of [
+        "createDecoMirror",
+        "syncDecoMirrors",
+        "refreshDecoMirror",
+        "decoMirror",
+      ]) {
+        expect(src, `${f} 里不该再出现 ${name}`).not.toContain(name);
+      }
+    }
+    expect(
+      codeOf("src/styles/global.css"),
+      "global.css 里 `.md-deco-host` 那批覆盖随镜像一起作废（恢复它等于恢复两套行盒）",
+    ).not.toContain(".md-deco-host");
+  });
+});
+
+/**
+ * B397-1 · 「谁给面板的 view 换 state，谁就得让档位重新落一次」。
+ *
+ * 原来是 `refreshDecoMirror` 播种；一颗 view 两档之后要落的不再是镜像，而是**档位**：
+ * `makeTabState` 建出来的 compartment 从空起步，换完 state 不重落，预览格就退回裸文本，
+ * 而且没有任何报错（数据不坏，那一格只是不再所见即所得）。
+ * 静态数一遍仍是这里最划算的判据：漏接线的那一形在 jsdom 里造齐四条真路径成本太高。
+ */
+describe("B397-1 换 state 必重落档位", () => {
+  for (const f of ["src/tabs/lifecycle.ts", "src/tabs/split.ts", "src/io/files.ts"]) {
+    it(`${f}：applyPanelMode 的发数不少于 view.setState 的发数`, () => {
+      const src = codeOf(f);
+      const sets = (src.match(/view\.setState\(/g) ?? []).length;
+      const lands = (src.match(/applyPanelMode\(/g) ?? []).length;
+      expect(sets, `${f} 一条 setState 都没有 ⇒ 判据空转，先确认扫描点没搬走`).toBeGreaterThan(0);
+      expect(
+        lands,
+        `${f}：${sets} 发 view.setState，只有 ${lands} 发档位重落`,
+      ).toBeGreaterThanOrEqual(sets);
+    });
+  }
+});
+
+/**
+ * B391F-1 · 同一颗 view ⇒ 天然同一套几何。
+ *
+ * 原来这一节判的是「装饰面宿主 `.md-deco-host` 不在 `.panel-editor` 里，三条排版 token
+ * 一条都吃不到」（真机实测：同一篇 5001 行，源码格行距 18.05px、镜像 13.80px ⇒ 逐行对齐必差一行）。
+ * 镜像没了，那个结构性病灶也没了：装饰就挂在拿这三条 token 的那颗 view 上。
+ * 所以判据换成问「token 还在不在」+「两套几何的那个载体是不是真没了」。
+ */
+describe("B397-1 所见即所得吃编辑器自己的排版 token", () => {
   function cssBlocks(): { sel: string; body: string }[] {
     const raw = readFileSync("src/styles/global.css", "utf-8").replace(/\/\*[\s\S]*?\*\//g, "");
     const out: { sel: string; body: string }[] = [];
@@ -407,11 +554,11 @@ describe("B391F-1 装饰面吃编辑器排版 token", () => {
     return out;
   }
 
-  const coversDeco = (decl: string) =>
+  const onPanelEditor = (decl: string) =>
     cssBlocks().some(
       (b) =>
         b.body.includes(decl) &&
-        b.sel.split(",").some((s) => s.includes(".md-deco-host") && s.includes(".cm-")),
+        b.sel.split(",").some((s) => s.includes(".panel-editor") && s.includes(".cm-")),
     );
 
   for (const [name, decl] of [
@@ -419,46 +566,32 @@ describe("B391F-1 装饰面吃编辑器排版 token", () => {
     ["字体", "var(--font-code)"],
     ["行距", "line-height: var(--editor-line-height"],
   ] as const) {
-    it(`${name}：有一条把该声明给到 .md-deco-host 里 .cm-* 的规则`, () => {
-      expect(coversDeco(decl), `global.css 里没有覆盖装饰面宿主的「${decl}」规则`).toBe(true);
+    it(`${name}：有一条把该声明给到 .panel-editor 里 .cm-* 的规则（装饰挂的就是这颗 view）`, () => {
+      expect(onPanelEditor(decl), `global.css 里没有覆盖 .panel-editor 的「${decl}」规则`).toBe(
+        true,
+      );
     });
   }
+
+  it("预览态不许把 .panel-editor 藏掉（藏了 = 装饰那一臂一片空白）", () => {
+    const raw = readFileSync("src/styles/preview.css", "utf-8").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(raw).toContain(".panel-host.mode-preview .panel-editor");
+    expect(
+      raw,
+      "deco 那一臂要用 .panel-host.deco-face.mode-preview .panel-editor 把它抬回来",
+    ).toMatch(/\.panel-host\.deco-face\.mode-preview \.panel-editor\s*\{[^}]*display:\s*flex/);
+  });
 });
 
 /**
- * B391F-2 · 四条同形路径的播种守卫。
+ * B391F-3 · 挂哪一臂的三道闸（切片 11 那一形，原样保留）。
  *
- * 不变量：**谁给面板的 view 换 state，谁就得给这一格的装饰面播种一次**。
- * 装饰面不是 Tab 实例，不在 `syncDocInstances` 的兄弟遍历里 —— 换完 state 不播种，
- * 镜像就停在旧文档上，而桥的归属闸（判据 ⑤）会正确地拒收别人的变更，
- * 于是症状是「预览面显示一篇旧文、再也不跟着动」（数据不坏，但那一格死了）。
- * 静态数一遍是这里最划算的判据：漏接线的那一形在 jsdom 里造齐四条真路径的成本太高。
- */
-describe("B391F-2 换 state 必播种装饰面", () => {
-  for (const f of ["src/tabs/lifecycle.ts", "src/tabs/split.ts", "src/io/files.ts"]) {
-    it(`${f}：refreshDecoMirror 的发数不少于 view.setState 的发数`, () => {
-      const src = readFileSync(f, "utf-8")
-        .replace(/\/\*[\s\S]*?\*\//g, "") // 注释里提到函数名不算接线
-        .replace(/^\s*\/\/.*$/gm, "");
-      const sets = (src.match(/view\.setState\(/g) ?? []).length;
-      const seeds = (src.match(/refreshDecoMirror\(/g) ?? []).length;
-      expect(sets, `${f} 一条 setState 都没有 ⇒ 判据空转，先确认扫描点没搬走`).toBeGreaterThan(0);
-      expect(
-        seeds,
-        `${f}：${sets} 发 view.setState，只有 ${seeds} 发装饰面播种`,
-      ).toBeGreaterThanOrEqual(sets);
-    });
-  }
-});
-
-/**
- * B391F-3 · 挂载装饰面的三道闸（spike 结果文档⑤切片 11 那一形）。
- *
+ * 谓词搬到了 `src/spike/deco/eligibility.ts` —— 一颗 view 两档之后「开不开装饰」每次换档都
+ * 要问一遍（`applyPanelMode` 也问它），留在 lifecycle 里就得让 markdown 反向 import 过去。
  * 走谓词而不是整窗启动：jsdom 里造一篇 `.txt` 与一份 `huge` 文档的**真**面板成本，
- * 全花在装配夹具上，判据本身一个字都不多。谓词在 `lifecycle.ts` 里，
- * `mountView` 那条分支只调它 —— 闸少一处，判据才量得到全部。
+ * 全花在装配夹具上，判据本身一个字都不多。
  */
-describe("B391F-3 装饰面挂载的三道闸", () => {
+describe("B391F-3 装饰档挂载的三道闸", () => {
   let docSeq = 9100;
 
   async function tabOf(name: string, sizeClass: "normal" | "large" | "huge") {
@@ -485,16 +618,16 @@ describe("B391F-3 装饰面挂载的三道闸", () => {
 
   it("开关关着 ⇒ 一篇普通 .md 也不挂（`src/spike/**` 不进运行路径）", async () => {
     const { tab } = await tabOf("a.md", "normal");
-    const { shouldMountDecoPreview } = await import("../src/tabs/lifecycle");
+    const { shouldMountDecoPreview } = await import("../src/spike/deco/eligibility");
     await setDeco(false);
     expect(shouldMountDecoPreview(tab)).toBe(false);
   });
 
   it("开关开着 + Markdown + normal ⇒ 挂", async () => {
     const { tab } = await tabOf("b.md", "normal");
-    const { shouldMountDecoPreview } = await import("../src/tabs/lifecycle");
+    const { shouldMountDecoPreview } = await import("../src/spike/deco/eligibility");
     await setDeco(true);
-    expect(shouldMountDecoPreview(tab), "这一形是装饰面的正题，判 false 就等于把功能关了").toBe(
+    expect(shouldMountDecoPreview(tab), "这一形是装饰档的正题，判 false 就等于把功能关了").toBe(
       true,
     );
   });
@@ -502,21 +635,21 @@ describe("B391F-3 装饰面挂载的三道闸", () => {
   for (const cls of ["large", "huge"] as const) {
     it(`开关开着 + Markdown + ${cls} 档 ⇒ 不挂（生产那一档是「停用自动预览 + 给提示」）`, async () => {
       const { tab } = await tabOf(`c-${cls}.md`, cls);
-      const { shouldMountDecoPreview } = await import("../src/tabs/lifecycle");
+      const { shouldMountDecoPreview } = await import("../src/spike/deco/eligibility");
       await setDeco(true);
       expect(shouldMountDecoPreview(tab)).toBe(false);
     });
   }
 
-  it("开关开着 + 非 Markdown（.txt）⇒ 不挂（装饰面吃 markdown 语法树）", async () => {
+  it("开关开着 + 非 Markdown（.txt）⇒ 不挂（装饰吃 markdown 语法树）", async () => {
     const { tab } = await tabOf("d.txt", "normal");
-    const { shouldMountDecoPreview } = await import("../src/tabs/lifecycle");
+    const { shouldMountDecoPreview } = await import("../src/spike/deco/eligibility");
     await setDeco(true);
     expect(shouldMountDecoPreview(tab)).toBe(false);
   });
 
   it("孤儿实例（文档不在册）⇒ 不挂，且**不许抛**", async () => {
-    const { shouldMountDecoPreview } = await import("../src/tabs/lifecycle");
+    const { shouldMountDecoPreview } = await import("../src/spike/deco/eligibility");
     await setDeco(true);
     const ghost = await tabOf("e.md", "normal");
     ghost.docs.delete(ghost.docId); // 抽掉文档记录：`docOf` 这一形会抛
@@ -527,120 +660,22 @@ describe("B391F-3 装饰面挂载的三道闸", () => {
 });
 
 /**
- * B391F-5 · 装饰面要把「预览格原有的两项能力」接回来。
+ * B397-1 · 「可见侧」必须按**实际存在的滚动面**回答。
  *
- * 结果文档②评审 I8 记的是同一件事的两种死法：`deco_preview` 开着时 `mountView`
- * 压根不构造 `PreviewPane` ⇒ `applyPreviewFindToPanel` 第一行 `if (!p.preview) return`
- * 直接空转（Ctrl+F 在预览格里成了死键），B358 那颗可点的勾选框也不在场。
- * 装饰面不需要「等价机器」—— 它本身就是 CM6 视图：查找复用编辑器那套内核
- * （`editor/find.ts` 的 `findHighlight`），点勾把行号交回 `markdown.ts` 那颗唯一写点。
+ * 派生那一臂有两个面（`.panel-editor` / `.md-preview`），谁看得见由 `tab.viewMode` 说了算；
+ * 装饰那一臂只有一个面 —— 预览档现形的就是编辑器那颗 view。`sideOfPanel` 若照旧按 viewMode
+ * 回答 preview，`faceOf` 就返回 null ⇒ 这一格整个不注册进协调器，症状是「装饰格里滚动谁都不
+ * 跟着动、切回来位置不对」，而日志里只留一条「无滚动面」。
  */
-describe("B391F-5 装饰面的查找与点勾", () => {
-  /** 取回那颗真启动出来的装饰面板（前面几条用例已经把应用起来了）。 */
-  async function decoPanel() {
-    await import("../src/main");
-    const { panels, tabs } = await import("../src/core/app-state");
-    const p = [...panels.values()].find((x) => x.decoMirror);
-    expect(p, "应先有一颗带装饰面的面板（开关开着 + .md）").toBeTruthy();
-    const tab = tabs.get(p!.viewTabId ?? p!.activeTabId)!;
-    if (tab.viewMode === "source") await toggleView(1);
-    expect(tab.viewMode, "前置：这一格应显示装饰预览面").not.toBe("source");
-    return { p: p!, tab, view: p!.decoMirror!.view };
-  }
-
-  it("⑦ 查找命中必须画在装饰面上，关查找栏要清掉（曾是空操作）", async () => {
-    const { p, view } = await decoPanel();
-    const { applyPreviewFindToPanel, clearFindHighlight } = await import("../src/find/findbar");
-    expect(p.preview, "前置：开着装饰面时不该有 PreviewPane").toBeFalsy();
-
-    applyPreviewFindToPanel(p, {
-      text: "line",
-      caseSensitive: false,
-      wholeWord: false,
-      regexp: false,
-    });
-    expect(view.dom.querySelectorAll(".cm-find-match").length, "命中应高亮在装饰面里").toBe(1);
-
-    clearFindHighlight();
-    expect(view.dom.querySelectorAll(".cm-find-match").length, "关栏后装饰面不该留残影").toBe(0);
-  });
-
-  it("⑧ 步进在装饰面上跳到命中，并把它标成当前项", async () => {
-    const { view } = await decoPanel();
-    const { stepFind } = await import("../src/find/findbar");
-    const q = {
-      text: "line",
-      replace: "",
-      caseSensitive: false,
-      wholeWord: false,
-      regexp: false,
-      inSelection: false,
-      preserveCase: false,
-    };
-    stepFind(1, q);
-    const at = view.state.selection.main;
-    expect(view.state.sliceDoc(at.from, at.to), "步进应把选区落在装饰面文档里的那处命中").toBe(
-      "line",
-    );
-    expect(view.dom.querySelectorAll(".cm-find-match-active").length).toBe(1);
-  });
-
-  it("⑨ 点装饰面的勾写进源码那颗 view，并经桥跟回镜像", async () => {
-    const { p, tab, view } = await decoPanel();
-    const { reseedDecoMirror } = await import("../src/spike/deco/mirror");
-    const srcView = EditorView.findFromDOM(
-      document.querySelector(".panel-editor .cm-editor") as HTMLElement,
-    )!;
-    // ⑤⑥ 那两条故意把两侧基线错开过（镜像里多一个没落到源码的 `Z`）⇒ 这一条从「同文」
-    // 起测，否则桥的过期闸会正当拒收，判据量的就不是点勾了。
-    reseedDecoMirror(p.decoMirror!, srcView.state.doc.toString(), tab.docId);
-    srcView.dispatch({ changes: { from: srcView.state.doc.length, insert: "\n- [ ] 打勾行\n" } });
-    await wait(60);
-    expect(view.state.doc.toString(), "前置：桥应把新行带进装饰面").toContain("- [ ] 打勾行");
-
-    const row = view.dom.querySelector<HTMLElement>(".cm-line.md-task-item");
-    expect(row, "任务行应画出方框那一行（.md-task-item）").toBeTruthy();
-    clickTaskBox(row!, "40px", 20);
-    await wait(60);
-
-    expect(srcView.state.doc.toString(), "点勾必须落到源码那颗 view").toContain("- [x] 打勾行");
-    expect(
-      view.state.doc.toString(),
-      "写完的源码要经桥跟回装饰面（否则用户看见的还是没勾）",
-    ).toContain("- [x] 打勾行");
-  });
-
-  /**
-   * B391F-8 · 在装饰面里直接打字。
-   *
-   * 这条测的是「权威有没有换人」：键入落在镜像那颗 view 上，但**必须经反向桥套回源码
-   * 那颗**，于是置脏 / 自动保存 / 大纲 / 会话快照这些认 `tab.state` 的下游一行都不用改
-   * 也照样走。`d.dirty = false` 那一戳是让判据有鉴别力用的 —— 反向桥整个拆掉时，
-   * 源码不会变、脏位不会亮，这条就红。
-   */
-  it("⑩ 装饰面里打的那一发套回源码那颗，且不被正向桥写第二遍", async () => {
-    const { p, tab, view } = await decoPanel();
-    const { reseedDecoMirror } = await import("../src/spike/deco/mirror");
-    const { docs } = await import("../src/core/app-state");
-    const srcView = EditorView.findFromDOM(
-      document.querySelector(".panel-editor .cm-editor") as HTMLElement,
-    )!;
-    // 前面的用例故意错开过两侧基线（⑤⑥ 那个没落到源码的 `Z`）⇒ 从同文起测。
-    reseedDecoMirror(p.decoMirror!, srcView.state.doc.toString(), tab.docId);
-
-    const d = docs.get(tab.docId)!;
-    d.dirty = false;
-    view.dispatch(
-      view.state.update({ changes: { from: 0, insert: "手感" }, userEvent: "input.type" }),
-    );
-    await wait(60);
-
-    const count = (s: string) => s.split("手感").length - 1;
-    expect(count(srcView.state.doc.toString()), "反向桥必须把键入套回源码那颗").toBe(1);
-    expect(count(view.state.doc.toString()), "回声不得把镜像写第二遍").toBe(1);
-    expect(tab.state.doc.toString(), "tab.state 是下游唯一的读源，必须跟着源码走").toBe(
-      view.state.doc.toString(),
-    );
-    expect(d.dirty, "源码那颗的既有置脏路径要吃到这一发（下游一行不改）").toBe(true);
+describe("B397-1 一面之格没有 preview 侧", () => {
+  it("预览档但没有 PreviewPane ⇒ sideOfPanel 答 editor", async () => {
+    const { sideOfPanel, faceOf } = await import("../src/sync-scroll/wire");
+    const { tabs } = await import("../src/core/app-state");
+    const p = (await mdPanelInPreview()).p;
+    const tab = tabs.get(p.viewTabId ?? p.activeTabId)!;
+    expect(tab.viewMode, "前置：这一格在预览档").toBe("preview");
+    expect(p.preview, "前置：装饰那一臂没有 PreviewPane").toBeNull();
+    expect(sideOfPanel(p), "只有一个面 ⇒ 可见侧只能是 editor").toBe("editor");
+    expect(faceOf(p, "editor"), "editor 侧必须量得出面").not.toBeNull();
   });
 });

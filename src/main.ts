@@ -85,7 +85,6 @@ import {
   focusPanelByDelta,
   toggleMaximizePanel,
   closeTabById,
-  syncDecoMirrors,
   newUntitled,
   setApplyPanelMode,
   setOpenPreviewToSide,
@@ -99,7 +98,10 @@ import {
   refreshViewModeButton,
   applyPanelMode,
   openPreviewToSide,
+  toggleTaskInTab,
 } from "./markdown";
+// B397-1：所见即所得档交回宿主的两个动作（点勾 / 许不许写）在这里注入。
+import { setDecoHooks } from "./spike/deco/wysiwyg";
 import { openFindBar } from "./find/findbar";
 import {
   setupSideBar,
@@ -353,6 +355,35 @@ setToggleViewMode(toggleViewMode);
 setDiscardBackupFor(discardBackupFor);
 setScheduleSessionSave(scheduleSessionSave);
 
+/**
+ * 被点的那一颗 view 属于哪一格显示的实例。
+ *
+ * 不能拿「活动面板」凑：多面板挂着同一篇文档（分屏 / 拖出去过）时，被点的那一格
+ * 未必是活动那一格，写错格 = 勾翻在另一份实例上（那份实例的 view 还会立刻显出来）。
+ */
+function panelViewTab(view: EditorView): Tab | undefined {
+  for (const p of panels.values()) {
+    if (p.view?.view === view) return tabs.get(p.viewTabId ?? p.activeTabId);
+  }
+  return undefined;
+}
+
+// B397-1 · 所见即所得档交回宿主的两个动作。装饰扩展活在**标签的 state** 里（一颗 view
+// 轮流承载多份实例），所以只能晚绑定，不能在构造期闭包面板引用。
+setDecoHooks({
+  // 按**文档行号**调（行起=行止、岛内序号 0）：现方案那套「渲染面里第 N 个 `.md-task`」
+  // 的换算在 B394-2 上把勾写到了别的行，而行号没有中间量，也就没有换算可错。
+  onToggleTask: (view, line) => {
+    const t = panelViewTab(view);
+    if (t) toggleTaskInTab(t.tabId, line, line, 0);
+  },
+  canToggleTask: (view) => {
+    const t = panelViewTab(view);
+    const d = t ? docs.get(t.docId) : undefined;
+    return !!t && !!d && isMdTab(t) && !d.readonly;
+  },
+});
+
 /** 把某实例的内容变更广播到同文档的其他实例（内容同源，内存一份）。 */
 function syncDocInstances(src: Tab, changes: ChangeSet): void {
   if (changes.empty) return;
@@ -369,10 +400,10 @@ function syncDocInstances(src: Tab, changes: ChangeSet): void {
         other.state = other.state.update({ changes }).state;
       }
     }
-    // B391 spike：装饰预览面不是 `Tab` 实例，进不了上面那个遍历 ⇒ 用同一个 ChangeSet
-    // 再走一遍它自己那份桥。回环由 `mirrorChanges` 的同步闸判（与 `syncingDocId` 同一
-    // 个道理、两套互不干涉：那颗闸管的是「别再广播给兄弟实例」，这颗管「别把镜像写回源」）。
-    syncDecoMirrors(src, changes);
+    // B397-1：这里**不再需要**给装饰预览面补一发桥 —— 所见即所得是每份实例自己的
+    // `previewCompartment` 里的一档，跟着上面那个遍历一起变。原先那颗独立的只读镜像
+    // 不是 `Tab` 实例、进不了这个遍历，才需要 `syncDecoMirrors` 补第二遍（连同它的
+    // 归属闸、回声闸、重新播种），现在那一整类机械没有服务对象了。
   } finally {
     setSyncingDocId(null);
   }

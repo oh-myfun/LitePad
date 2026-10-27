@@ -1,6 +1,6 @@
 import type { Extension } from "@codemirror/state";
 import { foldService, StreamLanguage } from "@codemirror/language";
-import { markdown } from "@codemirror/lang-markdown";
+import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import {
   c,
   cpp,
@@ -188,7 +188,12 @@ const REGISTRY: Entry[] = [
       "ronn",
       "workbook",
     ],
-    parser: markdown(),
+    // B397-1 · `base: markdownLanguage` 而不是缺省：`markdown()` 不带 base 时默认落到
+    // **commonmarkLanguage**（lang-markdown 源码里那个 `base: { parser } = commonmarkLanguage`），
+    // 而 commonmark 没有 Task / Table / Strikethrough / Autolink ⇒ 所见即所得档永远画不出
+    // 任务清单方框与表格（`previewSets` 判的是 lezer 的 `Task` / `Table` 节点名）。
+    // InkNote 用的正是 `markdown({ base: markdownLanguage })`（editor.ts:1400），照抄。
+    parser: markdown({ base: markdownLanguage }),
   },
   {
     label: "JSON",
