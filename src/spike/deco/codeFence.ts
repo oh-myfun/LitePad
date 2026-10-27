@@ -18,6 +18,13 @@ import type { Tree } from "@lezer/common";
 /** 行首 ≤3 空格 + ≥3 个 `` ` `` 或 `~`（4 空格起是缩进代码，不算围栏）。 */
 const FENCE_LINE_RE = /^ {0,3}(?:`{3,}|~{3,})/;
 
+/**
+ * **一整行恰好是围栏**（InkNote 同名常量，原样搬）：捕获标记与信息串。
+ * 与上面那条宽松判据分工不同：draft 记账只问「这行像不像围栏的开头」，
+ * 「行尾回车开门」必须拿到闭合标记的原文。
+ */
+export const CODE_FENCE = /^(`{3,}|~{3,})([^\s`~]*)\s*$/;
+
 export function isUnclosedFenceLine(text: string): boolean {
   return FENCE_LINE_RE.test(text);
 }

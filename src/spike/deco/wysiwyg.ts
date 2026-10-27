@@ -10,6 +10,7 @@
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { draftFences } from "./codeFence";
+import { decoKeymap } from "./keymap";
 import { livePreview } from "./livePreview";
 import { taskClick } from "./taskClick";
 
@@ -41,6 +42,8 @@ export function decoFace(): Extension {
       onToggleTask: (view, line) => hooks.onToggleTask(view, line),
       canToggleTask: (view) => hooks.canToggleTask(view),
     }),
+    // B397-4b · 编辑模式的键位（续列表 / 组件边界回车 / 方向键进组件）
+    decoKeymap(),
   ];
 }
 
