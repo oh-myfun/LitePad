@@ -1,6 +1,7 @@
 import type { Extension } from "@codemirror/state";
 import { foldService, StreamLanguage } from "@codemirror/language";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { markdownFormatExtensions } from "../spike/deco/format";
 import {
   c,
   cpp,
@@ -193,7 +194,11 @@ const REGISTRY: Entry[] = [
     // 而 commonmark 没有 Task / Table / Strikethrough / Autolink ⇒ 所见即所得档永远画不出
     // 任务清单方框与表格（`previewSets` 判的是 lezer 的 `Task` / `Table` 节点名）。
     // InkNote 用的正是 `markdown({ base: markdownLanguage })`（editor.ts:1400），照抄。
-    parser: markdown({ base: markdownLanguage }),
+    //
+    // B397-4d · 格式动作与键位（Ctrl+B / 标题 / 任务 / 引用 / 代码块 / 公式 / 表格）挂在
+    // 语言档里：InkNote 是全局装一次（它只编辑 Markdown），而 LitePad 的标签可能是
+    // .json/.py —— 键位必须跟着「这份文档是 Markdown」走。
+    parser: [markdown({ base: markdownLanguage }), markdownFormatExtensions()],
   },
   {
     label: "JSON",
