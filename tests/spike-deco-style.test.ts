@@ -444,6 +444,13 @@ describe("B397-2 块级 widget：与正文左缘对齐，且一条纵向 margin 
     );
   });
 
+  it("B397-4a 脚注引用是编号上标，定义卡片字号再小一档（App.css:1356-1362 / 2515-2520）", () => {
+    const sup = ruleBlock(css, ".md-deco .cm-md-footnote");
+    expect(sup).toMatch(/vertical-align:\s*super/);
+    expect(sup).toMatch(/font-size:\s*0\.75em/);
+    expect(sup).toMatch(/color:\s*var\(--md-accent\)/);
+  });
+
   it("B397-4a 三颗新块级根与正文左缘对齐（同一张禁纵向 margin 的名单）", () => {
     const roots = ruleBlock(
       css,

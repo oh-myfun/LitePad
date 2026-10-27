@@ -136,10 +136,43 @@ describe("B397-4a 链接定义", () => {
     expect(wrap!.hasAttribute("data-block-len")).toBe(true);
   });
 
-  it("脚注定义 `[^1]:` 不折成链接定义", () => {
+  it("脚注定义 `[^1]:` 折成脚注卡片，不当链接定义折", () => {
+    // lezer 把 `[^1]: 正文` 也解析成 LinkReference（URL 子节点就是正文）⇒ 两支抢同一行。
+    // InkNote 的分工：链接定义那一支跳过 `^`，脚注由文末那趟文本扫描接管。
     const view = decoView(FOOTNOTE_DOC);
-    expect(view.dom.querySelector(".md-metadata-widget")).toBeNull();
-    expect(view.dom.textContent).toContain("[^1]: 脚注正文");
+    expect(view.dom.querySelector(".md-metadata-reference")).toBeNull();
+    const wrap = view.dom.querySelector<HTMLElement>(".md-metadata-footnote");
+    expect(wrap, "脚注定义没画成脚注卡片，这条判据就是空转").toBeTruthy();
+    expect(wrap!.querySelector(".md-metadata-preview")!.textContent).toBe("脚注 1 · 脚注正文");
+  });
+
+  it("行内 `[^1]` 画成编号上标；光标压进去才显形源码", () => {
+    const doc = ["正文[^1]", "", "[^1]: 脚注正文"].join("\n");
+    const view = decoView(doc);
+    const sup = view.dom.querySelector<HTMLElement>("sup.cm-md-footnote");
+    expect(sup, "装饰档没画出脚注上标，这条判据就是空转").toBeTruthy();
+    expect(sup!.textContent).toBe("1");
+
+    view.dispatch({ selection: { anchor: doc.indexOf("[^1]") } });
+    expect(view.dom.querySelector("sup.cm-md-footnote")).toBeNull();
+    expect(view.dom.textContent).toContain("[^1]");
+  });
+
+  it("编号按首次出现排；代码里的 `[^x]` 不算脚注", () => {
+    const doc = ["甲[^b] 乙[^a]", "", "[^a]: 一", "", "[^b]: 二", "", "`[^c]` 不是脚注"].join("\n");
+    const view = decoView(doc);
+    const sups = Array.from(view.dom.querySelectorAll("sup.cm-md-footnote")).map(
+      (el) => el.textContent,
+    );
+    expect(sups).toEqual(["1", "2"]);
+    const cards = Array.from(view.dom.querySelectorAll(".md-metadata-footnote")).map(
+      (el) => el.querySelector(".md-metadata-preview")!.textContent,
+    );
+    // 编号按**行内首次出现**排：[^b] 先出现 ⇒ 1 号，[^a] ⇒ 2 号。定义块按文档顺序排，
+    // 所以卡片上的编号是 2、1（不是 1、2）——这正是「编号跟引用走、不跟定义走」。
+    expect(cards).toEqual(["脚注 2 · 一", "脚注 1 · 二"]);
+    // 行内代码里的 `[^c]` 原样留着（反引号本身由 InlineCode 那一支藏掉）
+    expect(view.dom.textContent).toContain("[^c]");
   });
 
   it("点预览进入源码编辑（源码区显形）", () => {

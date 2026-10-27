@@ -829,6 +829,14 @@
   cursor: text;
 }
 
+/* 脚注引用（App.css:1356-1362）：编号上标；定义那张卡片走 `.md-metadata-footnote`。 */
+.md-deco .cm-md-footnote {
+  vertical-align: super;
+  font-size: 0.75em;
+  color: var(--md-accent);
+  padding: 0 1px;
+}
+
 /* 分割线「选中」只留键盘状态，不改视觉（点一下不闪边框）。 */
 .md-deco .md-block--selected {
   background: transparent;

@@ -568,6 +568,73 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
       }).range(m.from, m.to),
     );
   }
+  // —— 脚注：lezer 把 `[^1]: 正文` 也解析成 LinkReference（URL 子节点就是正文），
+  // 所以脚注不按语法树走，照 InkNote 同一条：按全文文本扫，编号按「首次出现」排。
+  // 定义行整行换成脚注卡片，行内引用换成编号上标（光标压进去显形源码）。
+  const fnRe = /\[\^([^\]\n]+)\]/g;
+  const footnoteText = doc.toString();
+  const footnoteNumbers = new Map<string, number>();
+  const footnoteMatches: { index: number; label: string; raw: string }[] = [];
+  let fnm: RegExpExecArray | null;
+  while ((fnm = fnRe.exec(footnoteText))) {
+    const label = normalizeLinkLabel(fnm[1]);
+    footnoteMatches.push({ index: fnm.index, label, raw: fnm[0] });
+    // 第一趟：定义行上的 `[^x]` 不给编号（否则定义先出现就会抢走 1 号）
+    if (
+      !/^\s{0,3}\[\^([^\]]+)\]:/.test(doc.lineAt(fnm.index).text) &&
+      !footnoteNumbers.has(label)
+    ) {
+      footnoteNumbers.set(label, footnoteNumbers.size + 1);
+    }
+  }
+  for (const match of footnoteMatches) {
+    if (!footnoteNumbers.has(match.label)) {
+      footnoteNumbers.set(match.label, footnoteNumbers.size + 1);
+    }
+  }
+
+  const foldedFootnoteLines = new Set<number>();
+  for (const match of footnoteMatches) {
+    const number = footnoteNumbers.get(match.label) ?? 1;
+    const from = match.index;
+    const to = from + match.raw.length;
+    if (fm && from < fmEnd) continue;
+    if (inTaken(from, to)) continue; // 代码里的 `[^x]` 不是脚注
+
+    const line = doc.lineAt(from);
+    const definition = /^\s{0,3}\[\^([^\]]+)\]:\s*(.*)$/.exec(line.text);
+    if (definition && normalizeLinkLabel(definition[1]) === match.label) {
+      if (foldedFootnoteLines.has(line.number)) continue;
+      foldedFootnoteLines.add(line.number);
+      occupied.push({ from: line.from, to: line.to });
+      atomicBlocks.push({ from: line.from, to: line.to });
+      decos.push(
+        Decoration.replace({
+          block: true,
+          widget: new EditableMetadataWidget(
+            line.from,
+            line.to,
+            line.text,
+            `脚注 ${number} · ${definition[2]}`,
+            "footnote",
+          ),
+          ...blockReveal(line.from, line.to),
+        }).range(line.from, line.to),
+      );
+      continue;
+    }
+    // 定义行已被整行接管时不再往里塞行内替换（区间交叠会让 Decoration.set 直接抛）
+    if (foldedFootnoteLines.has(line.number)) continue;
+    occupied.push({ from, to });
+    decos.push(
+      Decoration.replace({
+        widget: new InlinePreviewWidget(from, to, String(number), "cm-md-footnote", "sup"),
+        revealFrom: from,
+        revealTo: to,
+      }).range(from, to),
+    );
+  }
+
   // 数学那一批发在遍历之后 ⇒ 数组不再按位置有序，而 `Decoration.set(…, true)`
   // 要求已排序（乱序直接抛）。按起点排一次，等价于「谁在前谁先建」。
   decos.sort((a, b) => a.from - b.from);
