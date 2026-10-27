@@ -324,7 +324,8 @@
 .md-deco .md-math-block,
 .md-deco .md-hr-widget,
 .md-deco .md-metadata-widget,
-.md-deco .md-html-widget {
+.md-deco .md-html-widget,
+.md-deco .md-image-widget {
   box-sizing: border-box;
   max-width: calc(100% - 2 * var(--editor-padding-x));
   margin: 0 var(--editor-padding-x);
@@ -740,6 +741,59 @@
   font-size: 0.85em;
   line-height: 1.55;
   white-space: pre;
+}
+
+/* ---------- 图片（App.css:1507-1542） ----------
+   块级图整行接管（figure，点击选中）；行内图跟着文字走（span，点击露源码）。
+   路径提示那条在 InkNote 里是 rgba(0,0,0,.72) + #fff —— 本仓禁字面量色值 ⇒ 回接 token。 */
+.md-deco .md-image-widget {
+  position: relative;
+  padding: 8px 0;
+  text-align: center;
+  cursor: text;
+}
+.md-deco .md-image-widget img {
+  max-width: 100%;
+  border: 1px solid var(--md-panel-border);
+  border-radius: var(--md-component-radius);
+  box-shadow: none;
+  vertical-align: middle;
+}
+.md-deco .md-image-inline {
+  display: inline-block;
+  vertical-align: middle;
+}
+.md-deco .md-image-inline img {
+  max-width: 100%;
+  max-height: 12em;
+  border-radius: 3px;
+}
+.md-deco .md-image-path-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  max-width: calc(100% - 24px);
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  color: var(--md-fg);
+  font-size: 11px;
+  font-family: var(--md-code-font);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+.md-deco .md-image-widget:hover .md-image-path-hint {
+  opacity: 1;
+}
+.md-deco .md-image-error {
+  color: var(--md-muted);
+  font-size: 0.85em;
 }
 
 /* ---------- 分割线（App.css:1684-1705） ----------

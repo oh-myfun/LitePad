@@ -24,6 +24,8 @@ import {
 import { MathWidget, MermaidWidget, scanMath } from "./richWidgets";
 import { parseTable } from "./tableData";
 import { TableWidget } from "./tableWidget";
+import { assetBase, resolveAssetPath } from "./assets";
+import { ImageWidget, parseImage } from "./imageWidget";
 
 /** 一个整块替换的源码区间。 */
 export interface BlockRange {
@@ -163,6 +165,8 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
   const fm = frontMatterRange(state);
   const fmEnd = fm ? fm.to : 0;
   const linkDefinitions = collectLinkDefinitions(syntax, doc);
+  // 文档所在目录（图片的相对路径要用它拼成绝对路径）；没装装饰档的那份 state 里没有这个字段
+  const assetPath = state.field(assetBase, false) ?? null;
 
   const hide = (from: number, to: number, reveal?: BlockRange) => {
     if (to <= from) return;
@@ -425,6 +429,30 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
 
       if (n === "URL" && node.node.parent?.name === "Paragraph") {
         decos.push(Decoration.mark({ class: "cm-md-link" }).range(from, to));
+        return;
+      }
+
+      if (n === "Image") {
+        const { alt, url, title } = parseImage(node, doc, linkDefinitions);
+        // 行内图片必须用行内装饰，否则会把整行从中间截断
+        const block = coversWholeLines(from, to);
+        occupied.push({ from, to });
+        if (block) atomicBlocks.push({ from, to });
+        decos.push(
+          Decoration.replace({
+            widget: new ImageWidget(
+              from,
+              to,
+              url,
+              alt,
+              resolveAssetPath(assetPath, url),
+              !block,
+              title,
+            ),
+            block,
+            ...(block ? blockReveal(from, to) : null),
+          }).range(from, to),
+        );
         return;
       }
 

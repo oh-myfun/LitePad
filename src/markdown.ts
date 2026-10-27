@@ -37,6 +37,7 @@ import { EditorState } from "@codemirror/state";
 import { decoFace, decoLock } from "./spike/deco/wysiwyg";
 import { shouldMountDecoPreview } from "./spike/deco/eligibility";
 import { wysiwygInstalled } from "./spike/deco/livePreview";
+import { assetBase, setAssetBase } from "./spike/deco/assets";
 // #413 find 拆出 ⇒ MarkdownDeps 全清，预览查找桥改直接 import（find/findbar 反向只取本模块的
 // PreviewFindSpec 类型——等等，类型已归 find/findbar，这里只取值，无类型回边）
 import { applyPreviewFindToPanel, findSpecOf, getFindBar } from "./find/findbar";
@@ -66,18 +67,26 @@ function applyDecoFace(panel: Panel, tab: Tab | undefined, mode: string): void {
   if (!handle || !tab || panel.viewTabId !== tab.tabId) return;
   const on = mode === "preview" && shouldMountDecoPreview(tab);
   // `docs.get` 而不是 `docOf`：孤儿实例不该把这一次换档带崩（与 `shouldMountDecoPreview` 同口径）
-  const readonly = docs.get(tab.docId)?.readonly === true;
+  const doc = docs.get(tab.docId);
+  const readonly = doc?.readonly === true;
+  // B397-4c · 图片相对路径的基准：跟着**这一份文档**走，换标签要重发。
+  // 传的是文档路径本身而不是目录 —— `resolveAssetPath` 的契约与 InkNote 一致（进来的是 md 文件路径）
+  const assetPath = doc?.path ?? null;
   const view = handle.view;
-  if (wysiwygInstalled(view.state) === on && view.state.facet(EditorState.readOnly) === readonly) {
-    return;
+  const installed = wysiwygInstalled(view.state);
+  const baseChanged = installed && (view.state.field(assetBase, false) ?? null) !== assetPath;
+
+  const effects = [];
+  if (installed !== on) effects.push(tab.comps.preview.reconfigure(on ? decoFace() : []));
+  // 只读锁只在这一步生效：源码档保持主干现状（那里从来没有过锁，本轮不动它）
+  if (view.state.facet(EditorState.readOnly) !== readonly) {
+    effects.push(tab.comps.lock.reconfigure(on ? decoLock(readonly) : []));
   }
-  view.dispatch({
-    effects: [
-      tab.comps.preview.reconfigure(on ? decoFace() : []),
-      // 只读锁只在这一步生效：源码档保持主干现状（那里从来没有过锁，本轮不动它）
-      tab.comps.lock.reconfigure(on ? decoLock(readonly) : []),
-    ],
-  });
+  if (effects.length) view.dispatch({ effects });
+  // 基准目录单独一发：与 reconfigure 同发时，刚装上的字段收不到这一颗 effect
+  if (on && (!installed || baseChanged)) {
+    view.dispatch({ effects: setAssetBase.of(assetPath) });
+  }
   // 档位跟着这一份实例走（`tab.state` 是下游唯一读源），换标签回来时才是自己那一档
   tab.state = view.state;
 }

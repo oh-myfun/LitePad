@@ -15,6 +15,7 @@
 
 import { EditorState, StateField, type Extension } from "@codemirror/state";
 import { Decoration, EditorView, type DecorationSet } from "@codemirror/view";
+import { assetBase, setAssetBase } from "./assets";
 import { applySelection, buildPreviewSets, type BlockRange, type PreviewSets } from "./previewSets";
 import { previewSyntaxTree, setDraftFences } from "./codeFence";
 import "./deco.css";
@@ -57,7 +58,7 @@ function buildLive(state: EditorState): LivePreviewState {
 const livePreviewField = StateField.define<LivePreviewState>({
   create: (state) => buildLive(state),
   update(value, tr) {
-    if (tr.docChanged || tr.effects.some((e) => e.is(setDraftFences))) {
+    if (tr.docChanged || tr.effects.some((e) => e.is(setDraftFences) || e.is(setAssetBase))) {
       return buildLive(tr.state);
     }
     // 只读锁换了也要重建：`visible` 的过滤口径跟着 facet 走，不重建就把上一把锁的读数留下
@@ -78,7 +79,8 @@ const livePreviewField = StateField.define<LivePreviewState>({
 });
 
 export function livePreview(): Extension {
-  return livePreviewField;
+  // `assetBase` 与本字段同生共死（只在这一档里存在）；重建由 `setAssetBase` 触发
+  return [assetBase, livePreviewField];
 }
 
 /** 这一档装在这份 state 上吗（换档前问一句，避免无谓的 reconfigure 重 parse 全篇）。 */

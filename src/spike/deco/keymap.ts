@@ -30,6 +30,7 @@ import { enterAdjacentBlock, focusBlockStartingAt } from "./editableSource";
 const BOUNDARY_BLOCKS = [
   ".md-codeblock-widget",
   ".md-table-widget",
+  ".md-image-widget",
   ".md-mermaid-widget",
   ".md-hr-widget",
   ".md-math-block",

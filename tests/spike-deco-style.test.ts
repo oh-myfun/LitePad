@@ -451,6 +451,24 @@ describe("B397-2 块级 widget：与正文左缘对齐，且一条纵向 margin 
     expect(sup).toMatch(/color:\s*var\(--md-accent\)/);
   });
 
+  it("B397-4c 图片：块级图 8px 留白 + 描边圆角，行内图跟文字走，路径提示 hover 才现身", () => {
+    const block = ruleBlock(css, ".md-deco .md-image-widget", "8px 0");
+    expect(block).toMatch(/padding:\s*8px 0/);
+    expect(block).toMatch(/text-align:\s*center/);
+    const img = ruleBlock(css, ".md-deco .md-image-widget img");
+    expect(img).toMatch(/max-width:\s*100%/);
+    expect(img).toMatch(/border:\s*1px solid var\(--md-panel-border\)/);
+    expect(ruleBlock(css, ".md-deco .md-image-inline")).toMatch(/display:\s*inline-block/);
+    expect(ruleBlock(css, ".md-deco .md-image-inline img")).toMatch(/max-height:\s*12em/);
+    const hint = ruleBlock(css, ".md-deco .md-image-path-hint", "opacity: 0");
+    expect(hint).toMatch(/opacity:\s*0/);
+    expect(hint).toMatch(/pointer-events:\s*none/);
+    expect(css).toMatch(
+      /\.md-deco \.md-image-widget:hover \.md-image-path-hint\s*\{\s*opacity:\s*1/,
+    );
+    expect(ruleBlock(css, ".md-deco .md-image-error")).toMatch(/color:\s*var\(--md-muted\)/);
+  });
+
   it("B397-4a 三颗新块级根与正文左缘对齐（同一张禁纵向 margin 的名单）", () => {
     const roots = ruleBlock(
       css,
