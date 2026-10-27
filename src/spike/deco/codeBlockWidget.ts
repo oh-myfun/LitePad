@@ -103,6 +103,8 @@ export class CodeBlockWidget extends WidgetType {
     readonly to: number,
     readonly code: string,
     readonly lang: string,
+    /** 缩进式代码块（四空格）：回写时补缩进，绝不能把它变成围栏 */
+    readonly indented = false,
   ) {
     super();
   }
@@ -117,11 +119,19 @@ export class CodeBlockWidget extends WidgetType {
     return (
       other.to - other.from === this.to - this.from &&
       other.code === this.code &&
-      other.lang === this.lang
+      other.lang === this.lang &&
+      other.indented === this.indented
     );
   }
 
   private serialize(code: string, lang: string): string {
+    if (this.indented && !lang.trim()) {
+      return code
+        .replace(/\n+$/, "")
+        .split("\n")
+        .map((line) => `    ${line}`)
+        .join("\n");
+    }
     return `\`\`\`${lang.trim()}\n${code.replace(/\n+$/, "")}\n\`\`\``;
   }
 
@@ -157,6 +167,7 @@ export class CodeBlockWidget extends WidgetType {
   toDOM(view: EditorView): HTMLElement {
     const wrap = document.createElement("div");
     wrap.className = "md-block md-codeblock-widget";
+    wrap.dataset.codeIndented = this.indented ? "1" : "0";
     stampBlockRange(wrap, this.from, this.to);
 
     // 外层只负责纵向留白，视觉盒子放内层：根元素带 margin 会让 CM 的高度图算不准
@@ -291,6 +302,8 @@ export class CodeBlockWidget extends WidgetType {
     const select = dom.querySelector<HTMLSelectElement>(".md-codeblock-lang");
     const gutter = dom.querySelector<HTMLElement>(".md-codeblock-gutter");
     if (!codeEl || !select || !gutter) return false;
+    // 缩进式 ↔ 围栏式：回写函数是 toDOM 时闭包进去的，复用 DOM 会拿旧口径序列化 ⇒ 必须重建
+    if ((dom.dataset.codeIndented === "1") !== this.indented) return false;
 
     stampBlockRange(dom, this.from, this.to);
 

@@ -403,6 +403,55 @@ describe("B397-2 块级 widget：与正文左缘对齐，且一条纵向 margin 
     expect(math).toMatch(/overflow-x:\s*auto/);
     expect(ruleBlock(css, ".md-deco .md-mermaid-widget .md-mermaid")).toMatch(/padding:\s*20px/);
   });
+
+  it("B397-4a 分割线：上下一律 8px 留白，线走 --md-strong-border 渐隐（App.css:1684-1697）", () => {
+    expect(ruleBlock(css, ".md-deco .md-hr-widget", "8px 0")).toMatch(/padding:\s*8px 0/);
+    const line = ruleBlock(css, ".md-deco .md-hr-line");
+    expect(line).toMatch(/height:\s*1px/);
+    expect(line).toMatch(/linear-gradient\(/);
+    expect(line).toMatch(/var\(--md-strong-border\)/);
+    expect(line).toMatch(/pointer-events:\s*none/);
+  });
+
+  it("B397-4a 块内源码区：平时 display:none，editing 那一颗类才显形（App.css:2495-2512）", () => {
+    const source = ruleBlock(css, ".md-deco .md-block-source", "display: none");
+    expect(source).toMatch(/display:\s*none/);
+    expect(source).toMatch(/font-family:\s*var\(--md-code-font\)/);
+    expect(source).toMatch(/padding:\s*8px 10px/);
+    expect(source, "InkNote 的 margin-bottom 不搬：块级 widget 禁纵向 margin").not.toMatch(
+      /margin-bottom/,
+    );
+    expect(ruleBlock(css, ".md-deco .md-block--editing .md-block-source")).toMatch(
+      /display:\s*block/,
+    );
+    const hidden = ruleBlock(
+      css,
+      ".md-deco .md-block--editing > .md-metadata-preview, .md-deco .md-block--editing > .md-html-preview",
+    );
+    expect(hidden).toMatch(/display:\s*none/);
+  });
+
+  it("B397-4a 链接定义 / HTML 预览：左边一道 accent 竖线、虚线框（App.css:2515-2543）", () => {
+    const meta = ruleBlock(css, ".md-deco .md-metadata-preview");
+    expect(meta).toMatch(/border-left:\s*3px solid var\(--md-accent\)/);
+    expect(meta).toMatch(/background:\s*var\(--md-quote-bg\)/);
+    expect(meta).toMatch(/font-size:\s*0\.88em/);
+    const html = ruleBlock(css, ".md-deco .md-html-preview");
+    expect(html).toMatch(/border:\s*1px dashed var\(--md-panel-border\)/);
+    expect(html).toMatch(/padding:\s*10px 12px/);
+    expect(ruleBlock(css, ".md-deco .md-metadata-footnote .md-metadata-preview")).toMatch(
+      /font-size:\s*0\.82em/,
+    );
+  });
+
+  it("B397-4a 三颗新块级根与正文左缘对齐（同一张禁纵向 margin 的名单）", () => {
+    const roots = ruleBlock(
+      css,
+      ".md-deco .md-hr-widget, .md-deco .md-metadata-widget, .md-deco .md-html-widget",
+    );
+    expect(roots).toMatch(/margin:\s*0 var\(--editor-padding-x\)/);
+    expect(roots).toMatch(/max-width:\s*calc\(100% - 2 \* var\(--editor-padding-x\)\)/);
+  });
 });
 
 describe("B397-2 守卫：镜像那一臂的宿主类不再回来", () => {

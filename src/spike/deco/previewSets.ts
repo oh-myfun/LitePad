@@ -1,11 +1,11 @@
 // 移植自 InkNote (MIT, Copyright (c) 2026 likehao19) src/editor.ts:105-898
 // 本机参照：E:\Project\InkNote\InkNote
 //
-// B391 spike · 装饰集构建。范围按 spike 计划收窄：只搬「行装饰 + 标记隐藏 +
-// 整行覆盖判定」三类。块级 widget 里围栏代码（Task 3）与公式 / mermaid / 表格
-// （B391F-4，见 `richWidgets.ts`）已接；lezer 不认的方言（`==高亮==`、`<u>`、脚注）
-// 与 front matter 摘要仍未搬 —— 那几条在派生 DOM 那一侧也是「原样吐字」，
-// 补齐的排期跟着 B394 的覆盖面清单走。
+// B391 spike · 装饰集构建。块级 widget 的覆盖面：围栏代码（B397-3a）、公式 / mermaid
+// （B391F-4，见 `richWidgets.ts`）、表格（B397-3b，见 `tableWidget.ts`）、
+// 缩进代码 / 链接定义 / HTML 块 / 分割线（B397-4a，见 `miscWidgets.ts`）。
+// 仍未搬：图片（要先把本地路径解析定下来，与 B394-4 同一件事）、以及 lezer 不认的方言
+// （`==高亮==`、`<u>`、脚注正文 —— 那几条得先扩 parser，不是装饰层能单独补的）。
 // 未闭合围栏的 `CodeMark < 2` 防吞闸：`FencedCode` 分支里那道判据就是它，
 // Task 2 的测试靠它拿红基线，别当冗余删掉。
 
@@ -15,6 +15,12 @@ import { syntaxTree } from "@codemirror/language";
 import type { Tree, SyntaxNodeRef } from "@lezer/common";
 import { frontMatterRange } from "./codeFence";
 import { CodeBlockWidget } from "./codeBlockWidget";
+import {
+  EditableMetadataWidget,
+  HrWidget,
+  HtmlBlockWidget,
+  InlinePreviewWidget,
+} from "./miscWidgets";
 import { MathWidget, MermaidWidget, scanMath } from "./richWidgets";
 import { parseTable } from "./tableData";
 import { TableWidget } from "./tableWidget";
@@ -89,6 +95,51 @@ function fencedCodeText(node: SyntaxNodeRef, doc: EditorState["doc"]): string {
     .join("");
 }
 
+interface LinkDefinition {
+  url: string;
+  title: string;
+}
+
+/** 链接定义的查表口径（照 InkNote）：去首尾空白、空格折叠、忽略大小写。 */
+function normalizeLinkLabel(label: string): string {
+  return label.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/** `"title"` / `'title'` / `(title)` 三种引法都去掉最外层。 */
+function linkTitleText(raw: string): string {
+  if (raw.length >= 2 && /["'(]/.test(raw[0])) return raw.slice(1, -1);
+  return raw;
+}
+
+/** `[ref]: url "title"` 定义表；脚注定义（标签以 `^` 开头）不是链接定义。 */
+function collectLinkDefinitions(tree: Tree, doc: EditorState["doc"]): Map<string, LinkDefinition> {
+  const definitions = new Map<string, LinkDefinition>();
+  tree.iterate({
+    enter(node) {
+      if (node.name !== "LinkReference") return;
+      const label = node.node.getChild("LinkLabel");
+      const url = node.node.getChild("URL");
+      if (!label || !url) return false;
+      const rawLabel = doc.sliceString(label.from + 1, label.to - 1);
+      if (rawLabel.startsWith("^")) return false;
+      const title = node.node.getChild("LinkTitle");
+      definitions.set(normalizeLinkLabel(rawLabel), {
+        url: doc.sliceString(url.from, url.to).replace(/^<|>$/g, ""),
+        title: title ? linkTitleText(doc.sliceString(title.from, title.to)) : "",
+      });
+      return false;
+    },
+  });
+  return definitions;
+}
+
+/** `&amp;` → `&`：借 textarea 的解码，不手写实体表。 */
+function decodeEntity(raw: string): string {
+  const textarea = document.createElement("textarea");
+  textarea.innerHTML = raw;
+  return textarea.value;
+}
+
 /**
  * 构建与光标无关的装饰。
  *
@@ -111,6 +162,7 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
   const syntax = tree ?? syntaxTree(state);
   const fm = frontMatterRange(state);
   const fmEnd = fm ? fm.to : 0;
+  const linkDefinitions = collectLinkDefinitions(syntax, doc);
 
   const hide = (from: number, to: number, reveal?: BlockRange) => {
     if (to <= from) return;
@@ -261,6 +313,23 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
         return;
       }
 
+      if (n === "Entity") {
+        // `&amp;` 画成 `&`；光标压进这一小段时显形源码（行内小件，不整行接管）
+        decos.push(
+          Decoration.replace({
+            widget: new InlinePreviewWidget(
+              from,
+              to,
+              decodeEntity(doc.sliceString(from, to)),
+              "md-entity",
+            ),
+            revealFrom: from,
+            revealTo: to,
+          }).range(from, to),
+        );
+        return;
+      }
+
       if (n === "HardBreak") {
         hide(from, Math.max(from, to - 1), { from, to });
         return;
@@ -356,6 +425,81 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
 
       if (n === "URL" && node.node.parent?.name === "Paragraph") {
         decos.push(Decoration.mark({ class: "cm-md-link" }).range(from, to));
+        return;
+      }
+
+      if (n === "LinkReference") {
+        // 脚注定义（`[^1]: …`）不上这条：它有自己的渲染位，按链接定义折起来就看不见了
+        const labelNode = node.node.getChild("LinkLabel");
+        const rawLabel = labelNode ? doc.sliceString(labelNode.from + 1, labelNode.to - 1) : "";
+        if (rawLabel.startsWith("^")) return false;
+        if (!coversWholeLines(from, to)) return false;
+        const definition = linkDefinitions.get(normalizeLinkLabel(rawLabel));
+        occupied.push({ from, to });
+        atomicBlocks.push({ from, to });
+        decos.push(
+          Decoration.replace({
+            block: true,
+            widget: new EditableMetadataWidget(
+              from,
+              to,
+              doc.sliceString(from, to),
+              `链接定义 · ${rawLabel} → ${definition?.url ?? ""}`,
+              "reference",
+            ),
+            ...blockReveal(from, to),
+          }).range(from, to),
+        );
+        return false;
+      }
+
+      if (n === "HTMLBlock") {
+        if (!coversWholeLines(from, to)) return false;
+        occupied.push({ from, to });
+        atomicBlocks.push({ from, to });
+        decos.push(
+          Decoration.replace({
+            block: true,
+            widget: new HtmlBlockWidget(from, to, doc.sliceString(from, to)),
+            ...blockReveal(from, to),
+          }).range(from, to),
+        );
+        return false;
+      }
+
+      if (n === "CodeBlock") {
+        // 缩进式代码块（四空格）：lezer 只给出正文节点，行首缩进不在节点里，
+        // 所以整行接管；回写时补回四空格（`CodeBlockWidget.indented`）。
+        const blockFrom = doc.lineAt(from).from;
+        const blockTo = doc.lineAt(to).to;
+        if (!coversWholeLines(blockFrom, blockTo)) return false;
+        const code = node.node
+          .getChildren("CodeText")
+          .map((child) => doc.sliceString(child.from, child.to))
+          .join("");
+        occupied.push({ from: blockFrom, to: blockTo });
+        atomicBlocks.push({ from: blockFrom, to: blockTo });
+        decos.push(
+          Decoration.replace({
+            block: true,
+            widget: new CodeBlockWidget(blockFrom, blockTo, code, "", true),
+            ...blockReveal(blockFrom, blockTo),
+          }).range(blockFrom, blockTo),
+        );
+        return false;
+      }
+
+      if (n === "HorizontalRule") {
+        if (!coversWholeLines(from, to)) return;
+        occupied.push({ from, to });
+        atomicBlocks.push({ from, to });
+        decos.push(
+          Decoration.replace({
+            block: true,
+            widget: new HrWidget(from, to),
+            ...blockReveal(from, to),
+          }).range(from, to),
+        );
         return;
       }
 

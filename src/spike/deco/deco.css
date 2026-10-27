@@ -321,7 +321,10 @@
 .md-deco .md-codeblock-widget,
 .md-deco .md-table-widget,
 .md-deco .md-mermaid-widget,
-.md-deco .md-math-block {
+.md-deco .md-math-block,
+.md-deco .md-hr-widget,
+.md-deco .md-metadata-widget,
+.md-deco .md-html-widget {
   box-sizing: border-box;
   max-width: calc(100% - 2 * var(--editor-padding-x));
   margin: 0 var(--editor-padding-x);
@@ -737,6 +740,108 @@
   font-size: 0.85em;
   line-height: 1.55;
   white-space: pre;
+}
+
+/* ---------- 分割线（App.css:1684-1705） ----------
+   线是独立视觉节点：上下留白归根的 padding，点击落到相邻可见段落（bindBlockBoundaryCursor）。 */
+.md-deco .md-hr-widget {
+  padding: 8px 0;
+  background: none;
+  border: none;
+  cursor: text;
+}
+.md-deco .md-hr-line {
+  display: block;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--md-strong-border) 12%,
+    var(--md-strong-border) 88%,
+    transparent
+  );
+  pointer-events: none;
+}
+/* 标题自身已有上留白；紧跟分割线时去掉重复间距，线条上下视觉才对称。 */
+.md-deco .md-hr-widget + .cm-line.md-heading,
+.md-deco .md-hr-widget + .cm-line.md-blank-line + .cm-line.md-heading {
+  padding-top: 0;
+}
+
+/* ---------- 块内源码区 / 链接定义 / HTML 块（App.css:2495-2580） ----------
+   两段式：平时显示渲染结果，点一下挂 `.md-block--editing` —— 同一位置换成源码区。
+   ⚠️ InkNote 的 `.md-block-source` 带 `margin-bottom: 8px`；LitePad 禁纵向 margin
+   （文件头第 1 条）⇒ 那一条不搬，间距由根上的 `padding: 6px 0` 给。 */
+.md-deco .md-metadata-widget,
+.md-deco .md-html-widget {
+  padding: 6px 0;
+  cursor: text;
+}
+.md-deco .md-block-source {
+  display: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--md-code-font);
+  font-size: 0.85em;
+  line-height: 1.55;
+  padding: 8px 10px;
+  border: 1px solid var(--md-panel-border);
+  border-radius: calc(var(--md-component-radius) - 2px);
+  background: var(--md-panel-bg);
+  color: var(--md-muted);
+  outline: none;
+  tab-size: 2;
+  text-align: left;
+}
+.md-deco .md-block-source:focus {
+  border-color: var(--md-panel-border);
+  box-shadow: none;
+}
+.md-deco .md-block--editing .md-block-source {
+  display: block;
+  color: var(--md-fg);
+}
+.md-deco .md-metadata-preview {
+  padding: 8px 11px;
+  border: 1px solid var(--md-panel-border);
+  border-left: 3px solid var(--md-accent);
+  border-radius: 0 calc(var(--md-component-radius) - 2px) calc(var(--md-component-radius) - 2px) 0;
+  background: var(--md-quote-bg);
+  color: var(--md-muted);
+  font-size: 0.88em;
+}
+.md-deco .md-metadata-footnote .md-metadata-preview {
+  font-size: 0.82em;
+}
+.md-deco .md-html-preview {
+  min-height: 1.55em;
+  overflow-x: auto;
+  padding: 10px 12px;
+  border: 1px dashed var(--md-panel-border);
+  border-radius: var(--md-component-radius);
+  background: color-mix(in srgb, var(--md-panel-bg) 55%, transparent);
+}
+.md-deco .md-block--editing > .md-metadata-preview,
+.md-deco .md-block--editing > .md-html-preview {
+  display: none;
+}
+.md-deco .md-entity {
+  cursor: text;
+}
+
+/* 分割线「选中」只留键盘状态，不改视觉（点一下不闪边框）。 */
+.md-deco .md-block--selected {
+  background: transparent;
+  border-radius: var(--md-component-radius);
+  box-shadow: none;
+}
+.md-deco .md-hr-widget:focus,
+.md-deco .md-metadata-widget:focus-within,
+.md-deco .md-html-widget:focus-within {
+  outline: none;
+}
+.md-deco .md-block-source:focus {
+  outline: none;
 }
 
 /* ---------- 只读那一把锁（App.css:1142-1155 的 `.editor-host--readonly`） ----------
