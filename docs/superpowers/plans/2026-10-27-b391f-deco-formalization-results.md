@@ -163,3 +163,20 @@ FAILS=7  MEASURED=20
 3. 所以：**继续不合并、不推送、不出包**。要看效果就用 `.tmp/b383-target/release/litepad.exe`
    （本轮真机判据跑的就是它），在配置里写 `"deco_preview": true` 即得装饰预览面。
    若仍要一个安装包去给旁人看，说一声，我按规矩先 bump 再 `scripts/build-all.sh`。
+
+---
+
+## ⑦ 分支自检（本文档落地后）
+
+- `git log --oneline main..HEAD | wc -l` = **17**（spike 11 + 本轮 6：合主干 1 · 实现 4 · 本文档 1）
+- `git log --oneline HEAD..main | wc -l` = **0**（不落后于主干）
+- 装饰面之外碰到的生产文件共 11 个，每一个都是「接线」而不是「改渲染链路」：
+  `core/app-state.ts`（闸门谓词）· `editor/perf.ts`（导出共用 `LAZY_THRESHOLD_LINES`）·
+  `find/findbar.ts`（三条「看得见那一面」分支）· `io/files.ts` / `tabs/split.ts`（各补一发播种）·
+  `ipc/api.ts` / `main.ts`（桥与开关）· `markdown/preview.ts`（只把本地常量换成 import）·
+  `styles/global.css`（三条排版规则各补一条 `.md-deco-host` 选择器）· `sync-scroll/wire.ts`（`faceOf` 装饰分支）·
+  `tabs/lifecycle.ts`（挂载分支与镜像生命周期）
+- `src/markdown/pipeline.ts` / `src/markdown/enhance.ts` / `src/markdown/tasks.ts` /
+  `src/sync-scroll/anchor.ts` / `src/sync-scroll/coordinator.ts` **一行未动** ——
+  本轮所有修法都在开关分支与 `src/spike/**` 里，落点精度那条病灶（③A）就在这几个未动的文件里。
+- 关着 `deco_preview` 时全量门禁与主干一致：**115 文件 / 1872 测试通过** · `tsc -b` / eslint / prettier 干净
