@@ -167,6 +167,11 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
       if (fm && to <= fmEnd) return false;
       if (HEADINGS.has(n)) {
         addLineClass(doc.lineAt(from).from, `md-heading md-heading-${headingLevel(n)}`);
+        // 字阶类挂**正文**而不是整行：`font-size` 写在行元素上会连 `padding-top: 1.1em`
+        // 的 em 基准一起放大（标题上方多出一整行），显形出来的 `#` 也会跟着变大 ——
+        // InkNote 那边这两件事分别归 `.cm-md-hN`（highlight style）与 `.cm-line.md-heading-N`。
+        let headFrom = from;
+        let headTo = to;
         for (const c of node.node.getChildren("HeaderMark")) {
           decos.push(
             Decoration.mark({ class: "cm-md-heading-mark", ...blockReveal(c.from, c.to) }).range(
@@ -177,11 +182,22 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
           // ATX：`## ` 在行首；Setext：`===` 单独占下一行，连同换行一起吃掉
           if (c.from > from) {
             hide(c.from - 1, c.to, { from, to });
+            // 独占一行的标记（Setext 下划线）之后不算正文；同一行的收尾 `#` 不算边界。
+            // 切在**换行符之前**：那个 `\n` 已经被上面那发 hide 吃掉了，把它算进字阶区间
+            // 只会让 mark 跨行徒增一段无效范围。
+            const markLine = doc.lineAt(c.from);
+            if (markLine.from > headFrom) headTo = Math.min(headTo, markLine.from - 1);
           } else {
             let end = c.to;
             if (end < to && doc.sliceString(end, end + 1) === " ") end++;
             hide(c.from, end, { from, to });
+            headFrom = Math.max(headFrom, end);
           }
+        }
+        if (headTo > headFrom) {
+          decos.push(
+            Decoration.mark({ class: `cm-md-h${headingLevel(n)}` }).range(headFrom, headTo),
+          );
         }
         return;
       }
@@ -212,6 +228,16 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
 
       if (n === "InlineCode") {
         occupied.push({ from, to });
+        // chip 的形状（底色/描边/内距）只归内容：反引号显形时跟着放大就成了「框里有框」。
+        // 取法与 Subscript 那一支同形 —— 第一枚 CodeMark 之后、最后一枚之前。
+        const ticks = node.node.getChildren("CodeMark");
+        if (ticks.length >= 2) {
+          const innerFrom = ticks[0].to;
+          const innerTo = ticks[ticks.length - 1].from;
+          if (innerTo > innerFrom) {
+            decos.push(Decoration.mark({ class: "cm-md-code" }).range(innerFrom, innerTo));
+          }
+        }
         hideChildren(node, "CodeMark");
         return;
       }

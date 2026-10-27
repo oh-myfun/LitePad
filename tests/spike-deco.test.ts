@@ -120,6 +120,53 @@ describe("B391-1 装饰集构建", () => {
   });
 });
 
+describe("B397-2 标题与行内代码把 InkNote 的类名挂到**内容区**", () => {
+  /** 静态装饰里某个 class 的区间（同名可以有多处，全给）。 */
+  function rangesOf(statics: DecorationSet, cls: string): [number, number][] {
+    return tuples(statics)
+      .filter(([, , c]) => c === cls)
+      .map(([f, t]) => [f, t]);
+  }
+
+  it("ATX：字阶类只罩正文（`## ` 那一截不算）—— 字号挂行元素会顶掉 padding-top 的 em 基准", () => {
+    const state = docState("## 标题正文\n");
+    const line = state.doc.line(1);
+    expect(rangesOf(buildPreviewSets(state).statics, "cm-md-h2")).toEqual([
+      [line.from + 3, line.to],
+    ]);
+  });
+
+  it("Setext：正文只到本行为止，下一行的 `====` 不许被字阶类罩住", () => {
+    const state = docState("标题\n====\n下一段\n");
+    const line = state.doc.line(1);
+    expect(rangesOf(buildPreviewSets(state).statics, "cm-md-h1")).toEqual([[line.from, line.to]]);
+  });
+
+  it("行内代码：chip 类只罩内容，两个反引号不算（App.css:1343-1350 的形状）", () => {
+    const state = docState("看 `code body` 这里\n");
+    const line = state.doc.line(1);
+    expect(rangesOf(buildPreviewSets(state).statics, "cm-md-code")).toEqual([
+      [line.from + 3, line.from + 12],
+    ]);
+  });
+
+  it("真视图里这些类落到 DOM 上（判据不许只活在装饰数据里）", () => {
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: "## 标题正文\n\n看 `code body` 这里\n",
+        extensions: [markdown({ base: markdownLanguage }), decoFace(), decoLock(true)],
+      }),
+      parent: document.createElement("div"),
+    });
+    try {
+      expect(view.dom.querySelector(".cm-md-h2")?.textContent).toBe("标题正文");
+      expect(view.dom.querySelector(".cm-md-code")?.textContent).toBe("code body");
+    } finally {
+      view.destroy();
+    }
+  });
+});
+
 describe("B391-1 applySelection", () => {
   it("光标压住的标记被过滤掉，其它行的标记保留", () => {
     const state = docState("**粗体** 与 *斜体*\n第二行 **另一处粗体**\n");
