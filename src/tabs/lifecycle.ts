@@ -7,6 +7,7 @@
 
 import {
   type Doc,
+  type Panel,
   tabs,
   docs,
   panels,
@@ -255,31 +256,8 @@ export function rebuildLayout(): void {
       }
 
       // —— B397-1：预览侧的两种实现，由 `Settings.deco_preview` 二选一 ————————
-      // 开着 ⇒ **同一颗 view 换档**（所见即所得），这一格没有第二面；关着 ⇒ 现方案的派生 DOM。
-      // 这一臂只在 bodyEl 上留一颗记号 `.deco-face`：`preview.css` 那三条
-      // `.panel-host.mode-*` 规则写的是「预览态藏 `.panel-editor`、显 `.md-preview`」，
-      // 而在这一臂里现形的那一面就是编辑器自己 ⇒ 那一条要就地作废（样式见 preview.css）。
-      // 至于「这一份文档此刻开不开装饰」不在挂载点决定 —— 那是 `applyPanelMode` →
-      // `applyDecoFace` 每格每次都问的活（换标签、换文档、外部重载都在它里面过）。
-      if (shouldMountDecoPreview(tab)) {
-        hostEl.classList.add("deco-face");
-      } else {
-        const preview = new PreviewPane();
-        p.preview = preview;
-        hostEl.appendChild(preview.root);
-        preview.setHost({
-          lineCount: () => p.view?.view.state.doc.lines ?? 0,
-          // B358：勾选框可点性跟着「这一格显示的那份文档」走；切换由 toggleTaskInTab 落地
-          canWrite: () => {
-            const t = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
-            const d = t ? docOf(t) : undefined;
-            return !!t && !!d && isMdTab(t) && !d.readonly;
-          },
-          toggleTaskAt: (lineStart, lineEnd, index) => {
-            if (p.viewTabId !== null) toggleTaskInTab(p.viewTabId, lineStart, lineEnd, index);
-          },
-        });
-      }
+      // B397-5：这一臂不再在挂载点定死 —— 跟着**视图实际显示的那份文档**走，见 `ensurePreviewArm`。
+      ensurePreviewArm(p);
       if (p.view) attachPasteHandler(p);
 
       applyPanelMode(p);
@@ -330,6 +308,51 @@ export function rebuildLayout(): void {
 // updateRatio 已移到 src/core/layout.ts（与 build 的路径约定对齐，B26 修复）
 
 // ---------------------------------------------------------------- 标签操作
+
+/**
+ * B397-5 · 预览侧用哪一臂：**按视图实际显示的那份文档问**，不再是挂载点一次性定死。
+ *
+ * 为什么改：体积闸（`shouldMountDecoPreview` 的第三道）挡下的是「这一份文档此刻开不开装饰」，
+ * 而挂载点只问得到「建格那一刻的那一份」。同一格先开小文件、再在同一条标签栏里打开大文件，
+ * 装饰档被闸关掉、派生预览又不在这一格 ⇒ 预览模式里只剩一片没有说明的裸源码。
+ * InkNote 与 VS Code 都不出现这一形（InkNote 一臂到底，靠 `ensureSyntaxTree` 的 100ms 预算
+ * 降级；VS Code 的降级在 model 层关 tokenization，预览照渲染），而 LitePad 的体积闸是既有
+ * 产品策略（>2MB 停用自动预览 + 提示）⇒ 解法是**就地换臂**：大文件用派生 DOM 那一臂，
+ * 它本来就会给提示、也在用户显式切预览时手动渲染一次。
+ *
+ * 两条臂的记号：`.deco-face`（preview.css 用它作废「预览态藏 .panel-editor」）；
+ * `p.preview` 在场 = 派生那一臂（`applyDecoFace` 见到它就一行不碰）。
+ */
+export function ensurePreviewArm(p: Panel): void {
+  const hostEl = p.bodyEl;
+  if (!hostEl) return;
+  const tab = tabs.get(p.viewTabId ?? p.activeTabId);
+  if (shouldMountDecoPreview(tab)) {
+    if (p.preview) {
+      p.preview.root.remove();
+      p.preview = null;
+    }
+    hostEl.classList.add("deco-face");
+    return;
+  }
+  hostEl.classList.remove("deco-face");
+  if (p.preview) return;
+  const preview = new PreviewPane();
+  p.preview = preview;
+  hostEl.appendChild(preview.root);
+  preview.setHost({
+    lineCount: () => p.view?.view.state.doc.lines ?? 0,
+    // B358：勾选框可点性跟着「这一格显示的那份文档」走；切换由 toggleTaskInTab 落地
+    canWrite: () => {
+      const t = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
+      const d = t ? docOf(t) : undefined;
+      return !!t && !!d && isMdTab(t) && !d.readonly;
+    },
+    toggleTaskAt: (lineStart, lineEnd, index) => {
+      if (p.viewTabId !== null) toggleTaskInTab(p.viewTabId, lineStart, lineEnd, index);
+    },
+  });
+}
 
 export function switchTab(panelId: number, tabId: number): void {
   const panel = getPanel(panelId);

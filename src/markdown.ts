@@ -26,7 +26,13 @@ import { perfProfileFor } from "./editor/perf";
 import { renderBlocks } from "./markdown/pipeline";
 import { flippedTaskMark, taskLineAt } from "./markdown/tasks";
 import { rightNeighborOf } from "./core/layout";
-import { renderPanelOps, renderPanelTabs, splitPanelWithTab, switchTab } from "./tabs";
+import {
+  ensurePreviewArm,
+  renderPanelOps,
+  renderPanelTabs,
+  splitPanelWithTab,
+  switchTab,
+} from "./tabs";
 import { updateTocDrawer } from "./toc";
 import { landVisibleSideAtV, readVisibleV, reconcileSyncRegistrations } from "./sync-scroll/wire";
 import { scheduleSessionSave } from "./session/session";
@@ -62,10 +68,12 @@ import { applyPreviewFindToPanel, findSpecOf, getFindBar } from "./find/findbar"
  * ⇒ 全篇重 parse 一遍，而 applyPanelMode 在每次布局重建、每次换标签都要跑。
  */
 function applyDecoFace(panel: Panel, tab: Tab | undefined, mode: string): void {
-  if (panel.preview) return;
   const handle = panel.view;
   if (!handle || !tab || panel.viewTabId !== tab.tabId) return;
-  const on = mode === "preview" && shouldMountDecoPreview(tab);
+  // B397-5：`panel.preview` 在场 = 这一格此刻走**派生 DOM 那一臂**（大文件 / 开关关着 /
+  // 非 Markdown），装饰档不许装 —— 以前这里是「early return」，改成并进 `on` 的判据：
+  // 运行时关掉开关那一发要能把已经装着的装饰摘干净（壬 那条判据量的就是这个）。
+  const on = !panel.preview && mode === "preview" && shouldMountDecoPreview(tab);
   // `docs.get` 而不是 `docOf`：孤儿实例不该把这一次换档带崩（与 `shouldMountDecoPreview` 同口径）
   const doc = docs.get(tab.docId);
   const readonly = doc?.readonly === true;
@@ -98,6 +106,9 @@ function applyPanelMode(panel: Panel): void {
   const mode = tab && isMdTab(tab) ? tab.viewMode : "source";
   panel.bodyEl.classList.remove("mode-source", "mode-split", "mode-preview");
   panel.bodyEl.classList.add("mode-" + mode);
+  // B397-5：预览侧用哪一臂按**视图实际显示的那份文档**问（大文件就地换派生 DOM 那一臂）。
+  // 必须排在 applyDecoFace 之前：`p.preview` 在场时 applyDecoFace 一行不碰。
+  ensurePreviewArm(panel);
   applyDecoFace(panel, tab, mode);
   if (mode !== "source") {
     // 用户主动切模式 → force，大文件也要渲染一次（降级不是禁用）

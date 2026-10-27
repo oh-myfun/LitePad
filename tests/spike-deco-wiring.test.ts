@@ -451,6 +451,100 @@ describe("B397-1 一颗 view 两档：deco 形态下没有第二颗 view", () =>
  * 间接那一跳必须被证明是诚实的 —— `shouldMountDecoPreview` 本体要正向问闸，
  * 否则「绕闸」和「问闸」在调用点上长得一样。
  */
+/**
+ * B397-5 · 大文件落进装饰格：预览侧**就地换臂**。
+ *
+ * 体积闸挡下的是「这一份文档此刻开不开装饰」，而挂载点只问得到建格那一刻那一份 ⇒
+ * 同一格先开小文件、再打开大文件，旧形态是「装饰被闸关掉、派生预览又不在这一格」＝
+ * 预览模式一片没有说明的裸源码。InkNote 与 VS Code 都不出现这一形（前者一臂到底、
+ * 靠 parse 预算降级；后者降级在 model 层，预览照渲染）⇒ 这里判这一格跟着文档换臂。
+ */
+describe("B397-5 大文件落进装饰格：预览侧换臂", () => {
+  async function largeMdInPanel(p: Awaited<ReturnType<typeof mdPanelInPreview>>["p"]) {
+    const { makeDoc, makeInstance, registerDoc, attachTabToPanel } =
+      await import("../src/doc-model");
+    const doc = makeDoc(
+      9611,
+      "# 大文件\n\n正文",
+      "big.md",
+      "E:\\tmp\\big.md",
+      "UTF-8",
+      "LF",
+      false,
+      "large",
+    );
+    registerDoc(doc);
+    const tab = makeInstance(doc, p.panelId, "# 大文件\n\n正文");
+    attachTabToPanel(tab, p);
+    return { tab, doc };
+  }
+
+  /** 真的走一次换文档（`setState` + `viewTabId`），和 癸 / switchTab 同形。 */
+  async function switchTo(
+    p: Awaited<ReturnType<typeof mdPanelInPreview>>["p"],
+    tab: { tabId: number; state: Parameters<EditorView["setState"]>[0] },
+  ) {
+    const { applyPanelMode } = await import("../src/markdown");
+    p.activeTabId = tab.tabId;
+    p.viewTabId = tab.tabId;
+    p.view!.setState(tab.state);
+    applyPanelMode(p);
+  }
+
+  async function restore(
+    p: Awaited<ReturnType<typeof mdPanelInPreview>>["p"],
+    small: Awaited<ReturnType<typeof mdPanelInPreview>>["tab"],
+    big: { tab: { tabId: number }; doc: { tabId: number } },
+  ) {
+    // 把这一格还给后续用例：换回小文件 + 摘掉临时文档（清理放 finally，红的时候也不污染下一例）
+    await switchTo(p, small);
+    const { tabs, docs } = await import("../src/core/app-state");
+    tabs.delete(big.tab.tabId);
+    docs.delete(big.doc.tabId);
+    p.tabs = p.tabs.filter((id) => id !== big.tab.tabId);
+  }
+
+  it("甲 切到大文件：派生预览就地挂上、`.deco-face` 摘掉、装饰收起", async () => {
+    const { p, tab } = await mdPanelInPreview();
+    const big = await largeMdInPanel(p);
+    try {
+      await switchTo(p, big.tab);
+
+      expect(p.preview, "大文件 ⇒ 派生预览那一臂在场").not.toBeNull();
+      expect(p.preview!.root.parentElement, "派生预览要真进 DOM").toBe(p.bodyEl);
+      expect(p.bodyEl!.classList.contains("deco-face")).toBe(false);
+      expect(
+        panelEditor().dom.classList.contains("md-deco"),
+        "同一颗 view 上已经装着的装饰要摘干净（大文件不许再全篇同步 parse）",
+      ).toBe(false);
+      expect(tab.viewMode, "前置：小文件那张仍是预览档（切换不动它）").toBe("preview");
+    } finally {
+      await restore(p, tab, big);
+    }
+  });
+
+  it("乙 切回小文件：派生预览摘掉、`.deco-face` 回来、装饰重新装在这颗 view 上", async () => {
+    const { p, tab } = await mdPanelInPreview();
+    const big = await largeMdInPanel(p);
+    try {
+      await switchTo(p, big.tab);
+      expect(p.preview, "前置：先落在派生那一臂").not.toBeNull();
+
+      await switchTo(p, tab);
+
+      expect(p.preview, "小文件 ⇒ 派生预览必须收走（留着 applyDecoFace 会一行不碰）").toBeNull();
+      expect(p.bodyEl!.querySelector(".md-preview"), "DOM 里也不许留残根").toBeNull();
+      expect(p.bodyEl!.classList.contains("deco-face")).toBe(true);
+      expect(
+        panelEditor().dom.classList.contains("md-deco"),
+        "切回小文件 ⇒ 装饰重新落在这颗 view 上",
+      ).toBe(true);
+    } finally {
+      await restore(p, tab, big);
+    }
+  });
+});
+
 describe("B397-1 守卫 · spike 入口都在闸后", () => {
   it("lifecycle.ts：预览侧挂哪一臂只有一个入口，且它正向问谓词", () => {
     const src = codeOf("src/tabs/lifecycle.ts");
