@@ -48,7 +48,14 @@
   `doOpen` 开标签、纯锚点就地滚（认 `#标题` 与 `#h-标题` 两种写法）；派生预览的 click 委托与
   装饰面的 `mousedown` 都会 `preventDefault`，**WebView 永不导航**。Markdown 开 `html: true`
   后由 `src/markdown/sanitize.ts` 消毒（删 script/style/iframe 等 + `on*` + 危险协议；`style`
-  只给 `<span>` 留颜色/圆角，照 VS Code 的允许表）。
+  按展示类属性白名单放行 —— 颜色/边框/间距/字号/对齐/宽高/table 属性，`position`/`display`/
+  `z-index`/`transform`/`url()` 不放，B402）。
+- **HTML 块与预览同源**（B402）：装饰面的 `HtmlBlockWidget` 容器多挂一个 `.md-rendered`，
+  表格线/段落间距/标题下边框/链接色直接吃派生预览那份规则；deco.css 只把字号/行距/颜色压回
+  继承，并撤掉 InkNote 的虚线卡片（VS Code 预览里原始 HTML 就是正文）。行内
+  `kbd/mark/u/sub/sup/b/i/s/span[style=color]` 由 `previewSets` 的 `HTMLTag` 分支渲染
+  （成对藏标签 + 挂样式类），未知标签与未闭合标签保持源码。⚠️ 标题字阶只在 mark 上写**一次**，
+  后代一律 `inherit` —— 两条都写 em 会连乘（h1 曾实测 51.6px）。
 - ⚠️ **页面级拖放监听一律挂捕获阶段并 `stopPropagation`**：编辑器（CodeMirror 6）会在自己的
   DOM 上吃 `drop` —— 标签拖拽时把载荷里的可读文本插进正文，文件拖入时直接用 `FileReader`
   把**文件内容**读出来插进当前文档。监听挂冒泡阶段时它比页面级监听先跑，等到我们的处理器，

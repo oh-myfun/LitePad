@@ -194,6 +194,8 @@ describe("B397-4a HTML 块", () => {
     const preview = wrap!.querySelector<HTMLElement>(".md-html-preview")!;
     expect(preview.querySelector(".x")!.textContent).toBe("hi");
     expect(preview.innerHTML).not.toContain("onclick");
+    // B402：HTML 块借派生预览的排版（表线 / 段落间距 / 标题线），只多挂一个类
+    expect(preview.classList.contains("md-rendered")).toBe(true);
   });
 
   it("`<script>` 与 `javascript:` 链接都进不了预览", () => {

@@ -81,17 +81,28 @@
 .md-rendered .md-block > :last-child {
   margin-bottom: 0;
 }
+/* B402：装饰面的 HTML 块也挂了 `.md-rendered`（排版借用）—— 它没有 `.md-block` 岛壳，
+   首末子元素同样要贴边，否则块顶/块底会多出一截外边距，跟相邻正文行对不齐。 */
+.md-html-preview.md-rendered > :first-child {
+  margin-top: 0;
+}
+.md-html-preview.md-rendered > :last-child {
+  margin-bottom: 0;
+}
 
 /* B352-11（评审 I4）：岛间节奏的三个档位收在这一处，声明在两边都挂着的 `.md-rendered` 上，
    使用处只写 `var(--token)` —— 「同一个观感档位」不许在兜底里各抄一份。
    ⚠️ 此前这三条只写着 `var(--md-flow)` 之类的**兜底值**，全仓没有任何地方声明过它们。 */
 :root {
   /* 标题字阶（B357 从 `.md-rendered hN` 的裸 em 抽出来）：字号比例只声明这一处。
-     h5/h6 没有专门档（1em），不设变量。 */
+     B402：h5/h6 补上显式档位（VS Code 预览的 0.875/0.85）—— 此前没写，落到浏览器
+     默认的 0.83/0.67，h6 明显偏小、h5 也比 VS Code 小一档。 */
   --md-h1-scale: 1.7;
   --md-h2-scale: 1.4;
   --md-h3-scale: 1.2;
   --md-h4-scale: 1.05;
+  --md-h5-scale: 0.875;
+  --md-h6-scale: 0.85;
 }
 
 .md-rendered {
@@ -151,6 +162,12 @@
 }
 .md-rendered h4 {
   font-size: calc(var(--md-h4-scale) * 1em);
+}
+.md-rendered h5 {
+  font-size: calc(var(--md-h5-scale) * 1em);
+}
+.md-rendered h6 {
+  font-size: calc(var(--md-h6-scale) * 1em);
 }
 
 .md-rendered p {

@@ -653,3 +653,57 @@ describe("B401 列表符号分级 / 空格收口 / 链接落点", () => {
     expect(href).toBe("https://d.example");
   });
 });
+
+describe("B402 行内 HTML 按 VS Code 预览渲染", () => {
+  function mount(doc: string): EditorView {
+    const state = EditorState.create({
+      doc,
+      extensions: [markdown({ base: markdownLanguage }), livePreview()],
+    });
+    return new EditorView({ state, parent: document.createElement("div") });
+  }
+
+  it("白名单标签成对藏掉、中间文字挂样式（源码里的标签字符不显形）", () => {
+    const view = mount(
+      "行内 <kbd>Ctrl</kbd> 与 <mark>高亮</mark> 与 <u>下划线</u> 与 <sub>下</sub><sup>上</sup>\n",
+    );
+    try {
+      const text = view.dom.querySelector(".cm-content")!.textContent ?? "";
+      expect(text, "开标签不许留源码").not.toContain("<kbd>");
+      expect(text, "闭标签不许留源码").not.toContain("</kbd>");
+      expect(text).not.toContain("<mark>");
+      expect(view.dom.querySelector(".cm-md-inline-kbd")!.textContent).toBe("Ctrl");
+      expect(view.dom.querySelector(".cm-md-inline-mark")!.textContent).toBe("高亮");
+      expect(view.dom.querySelector(".cm-md-inline-underline")!.textContent).toBe("下划线");
+      expect(view.dom.querySelector(".md-sub")!.textContent).toBe("下");
+      expect(view.dom.querySelector(".md-sup")!.textContent).toBe("上");
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("`<span style>` 只认颜色类属性；定位类属性不认", () => {
+    const view = mount('A <span style="color:#ff0000; position:absolute">红</span> B\n');
+    try {
+      const span = view.dom.querySelector<HTMLElement>(".cm-md-inline-span")!;
+      expect(span.textContent).toBe("红");
+      const style = span.getAttribute("style") ?? "";
+      // 浏览器会把颜色写法归一（#ff0000 → rgb(255, 0, 0)），两种都算对
+      expect(style).toMatch(/color:\s*(?:rgb\(255,\s*0,\s*0\)|#ff0000)/);
+      expect(style, "position 不许进内联样式").not.toContain("position");
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("未知标签 / 没闭合的标签保持源码显形（猜错了比不画更糟）", () => {
+    const view = mount("A <foo>bar</foo> 与 <kbd>没闭合\n");
+    try {
+      const text = view.dom.querySelector(".cm-content")!.textContent ?? "";
+      expect(text).toContain("<foo>");
+      expect(text).toContain("<kbd>");
+    } finally {
+      view.destroy();
+    }
+  });
+});

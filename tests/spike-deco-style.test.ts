@@ -128,13 +128,19 @@ describe("B397-2 壳层：正文归正文字体，留白画在行上", () => {
 describe("B397-2 标题：字阶挂在行内 mark 上，行元素只管上方留白", () => {
   for (const [cls, size, weight] of HEADING_SCALE) {
     it(`${cls} = ${size} / ${weight}（App.css:1308-1313）`, () => {
-      // filter 是必需的：取色那条大列表（h1…h6 + 各自的 `*`）里也含这一对选择器，
-      // 不指定「块体里有 font-size」就会抓到列表那条而不是字阶那条。
-      const body = ruleBlock(css, `.md-deco .${cls}, .md-deco .${cls} *`, "font-size");
+      const body = ruleBlock(css, `.md-deco .${cls}`, "font-size");
       expect(body).toContain(`font-size: ${size}`);
       expect(body).toContain(`font-weight: ${weight}`);
     });
   }
+
+  it("B402：后代只 `inherit` —— 再写一遍 em 会与 mark 连乘（h1 真机实测 51.6px）", () => {
+    for (const [cls] of HEADING_SCALE) {
+      const inner = ruleBlock(css, `.md-deco .${cls} *`, "font-size");
+      expect(inner, `${cls} 的后代只许 inherit 字号`).toMatch(/font-size:\s*inherit/);
+      expect(inner, `${cls} 的后代不许再写字号档位`).not.toMatch(/font-size:\s*[\d.]+em/);
+    }
+  });
 
   it("带 `*` 的那一支是必需的：语法高亮的 tags.heading 会给内层 span 写 bold", () => {
     for (const [cls] of HEADING_SCALE) {
@@ -185,6 +191,16 @@ describe("B397-2 行内构造：代码 chip、链接、引用竖线", () => {
     expect(body).toMatch(/background:\s*var\(--md-panel-bg\)/);
   });
 
+  it("B402 行内 HTML 的样式档（kbd / mark / sub / sup 不再只是空类）", () => {
+    expect(ruleBlock(css, ".md-deco .cm-md-inline-kbd")).toMatch(
+      /font-family:\s*var\(--md-code-font\)/,
+    );
+    expect(ruleBlock(css, ".md-deco .cm-md-inline-mark")).toMatch(/background-color:\s*Mark/);
+    expect(ruleBlock(css, ".md-deco .md-sub, .md-deco .md-sup")).toMatch(/line-height:\s*0/);
+    expect(ruleBlock(css, ".md-deco .md-sub", "vertical-align")).toMatch(/vertical-align:\s*sub/);
+    expect(ruleBlock(css, ".md-deco .md-sup", "vertical-align")).toMatch(/vertical-align:\s*super/);
+  });
+
   it("链接默认不带下划线、悬停才画（App.css:1351-1352），且必须连内层 span 一起压", () => {
     // theme.ts 的 tags.link 自带 underline，那一层在 mark **里面** ⇒ 只写外层等于没写
     //（真机第一轮截图里那条下划线就是它）。判据按列表选择器问，别只问外层那颗类。
@@ -212,12 +228,19 @@ describe("B397-2 行内构造：代码 chip、链接、引用竖线", () => {
       const n = cls.slice(-1);
       const mark = ruleBlock(
         css,
-        `.md-deco .cm-line.md-heading-${n} .cm-md-heading-mark, ` +
-          `.md-deco .cm-line.md-heading-${n} .cm-md-heading-mark *`,
+        `.md-deco .cm-line.md-heading-${n} .cm-md-heading-mark`,
+        "font-size",
       );
       expect(mark, `h${n} 的 # 字号要等于标题`).toMatch(
         new RegExp(`font-size:\\s*${size.replace(".", "\\.")}`),
       );
+      // B402：`#` 里的语法 span 只 inherit（与标题正文同一个连乘坑）
+      const inner = ruleBlock(
+        css,
+        `.md-deco .cm-line.md-heading-${n} .cm-md-heading-mark *`,
+        "font-size",
+      );
+      expect(inner, `h${n} 的 # 后代只许 inherit`).toMatch(/font-size:\s*inherit/);
     }
     // 颜色仍是淡灰（标记不抢正文），只是字阶跟过去
     expect(css).toMatch(/\.cm-md-heading-mark \*[\s\S]{0,200}color:[^;]*--md-faint/);
@@ -268,15 +291,21 @@ describe("B397-2 列表与任务项：标记由 CSS 画", () => {
     expect(css).toMatch(/counter-increment:\s*md-olist/);
   });
 
-  it("B401 任务方框跟正文同字号（1em）并在行盒里垂直居中", () => {
+  it("B401 任务方框跟正文同字号（1em）；B402 纵向贴**首行**中线（折行不再居中）", () => {
     const box = ruleBlock(css, ".md-deco .cm-line.md-task-item::before");
     expect(box).toMatch(/width:\s*1em/);
     expect(box).toMatch(/height:\s*1em/);
     expect(box).toMatch(/border:\s*0\.11em solid var\(--md-strong-border\)/);
     expect(box).toMatch(/border-radius:\s*0\.21em/);
-    expect(box).toMatch(/top:\s*50%/);
-    expect(box).toMatch(/transform:\s*translateY\(-50%\)/);
+    expect(box).toMatch(/top:\s*var\(--md-task-box-top\)/);
+    expect(box, "`top: 50%` 在多行任务里会把方框放到整块中段").not.toMatch(/top:\s*50%/);
+    expect(box).not.toMatch(/translateY/);
     expect(box).toMatch(/cursor:\s*pointer/);
+    // 首行中线 = lh/2 − 0.5em（方框 1em）；行距只读用户的 --editor-line-height，不另立一份
+    const line = ruleBlock(css, ".md-deco .cm-line.md-task-item", "--md-task-box-top");
+    expect(line).toMatch(
+      /--md-task-box-top:\s*calc\(var\(--editor-line-height,\s*1\.5\)\s*\*\s*0\.5em\s*-\s*0\.5em\)/,
+    );
   });
 
   it("勾是两根 em 口径的边转 45°，不是字符 ✓", () => {
@@ -286,6 +315,8 @@ describe("B397-2 列表与任务项：标记由 CSS 画", () => {
     expect(check).toMatch(/height:\s*0\.64em/);
     expect(check).toMatch(/border-width:\s*0 0\.13em 0\.13em 0/);
     expect(check).toMatch(/transform:\s*rotate\(45deg\)/);
+    // B402：勾跟方框共用同一个纵向锚点，折行时一起留在首行
+    expect(check).toMatch(/top:\s*calc\(var\(--md-task-box-top\)\s*\+\s*0\.17em\)/);
     expect(ruleBlock(css, ".md-deco .cm-line.md-task-done::before")).toMatch(
       /background:\s*var\(--md-accent\)/,
     );
@@ -469,14 +500,17 @@ describe("B397-2 块级 widget：与正文左缘对齐，且一条纵向 margin 
     expect(hidden).toMatch(/display:\s*none/);
   });
 
-  it("B397-4a 链接定义 / HTML 预览：左边一道 accent 竖线、虚线框（App.css:2515-2543）", () => {
+  it("B397-4a 链接定义卡片；B402 HTML 块改 VS Code 口径（不套卡片、借预览排版）", () => {
     const meta = ruleBlock(css, ".md-deco .md-metadata-preview");
     expect(meta).toMatch(/border-left:\s*3px solid var\(--md-accent\)/);
     expect(meta).toMatch(/background:\s*var\(--md-quote-bg\)/);
     expect(meta).toMatch(/font-size:\s*0\.88em/);
     const html = ruleBlock(css, ".md-deco .md-html-preview");
-    expect(html).toMatch(/border:\s*1px dashed var\(--md-panel-border\)/);
-    expect(html).toMatch(/padding:\s*10px 12px/);
+    expect(html, "InkNote 的虚线卡片撤掉：VS Code 预览里原始 HTML 就是正文").not.toMatch(/dashed/);
+    expect(html).not.toMatch(/padding:/);
+    expect(html).toMatch(/min-height:\s*1\.55em/);
+    // 排版借派生预览那一套（miscWidgets 给容器挂 .md-rendered），根上只压回继承
+    expect(ruleBlock(css, ".md-deco .md-html-preview.md-rendered")).toMatch(/font-size:\s*inherit/);
     expect(ruleBlock(css, ".md-deco .md-metadata-footnote .md-metadata-preview")).toMatch(
       /font-size:\s*0\.82em/,
     );

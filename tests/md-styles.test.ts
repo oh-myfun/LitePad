@@ -83,13 +83,23 @@ describe("B357 标题字阶 token（IR 已移除，token 与消费方保留）",
   const g = stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
 
   it("字阶只声明一次（preview.css :root），别处只读不抄（两份比例必然漂移）", () => {
-    for (const t of ["--md-h1-scale", "--md-h2-scale", "--md-h3-scale", "--md-h4-scale"]) {
+    for (const t of [
+      "--md-h1-scale",
+      "--md-h2-scale",
+      "--md-h3-scale",
+      "--md-h4-scale",
+      // B402：h5/h6 补上显式档位（此前没写，落到浏览器默认的 0.83/0.67）
+      "--md-h5-scale",
+      "--md-h6-scale",
+    ]) {
       // 走 split 计数，不走 `new RegExp`：字符串里的 `"\s"` 是恒等转义（eslint 也会打
       // no-useless-escape），拼出来的正则会静默变成错的。
       expect(css.split(t + ":").length - 1, `${t} 声明次数`).toBe(1);
     }
     // h1 的字号不许再是裸 em（改回裸 em 等于把比例写回调用点）
     expect(css).toMatch(/\.md-rendered h1 \{[^}]*font-size: calc\(var\(--md-h1-scale\)/);
+    expect(css).toMatch(/\.md-rendered h5 \{[^}]*font-size: calc\(var\(--md-h5-scale\)/);
+    expect(css).toMatch(/\.md-rendered h6 \{[^}]*font-size: calc\(var\(--md-h6-scale\)/);
     expect(g, "global.css 不许声明 --md-* 档位").not.toMatch(
       /(?:^|[;{\s])--md-(?:flow|h\d-scale)\s*:/,
     );

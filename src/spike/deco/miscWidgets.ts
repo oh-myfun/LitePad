@@ -152,7 +152,10 @@ export class HtmlBlockWidget extends WidgetType {
     source.textContent = this.html;
 
     const preview = document.createElement("div");
-    preview.className = "md-html-preview";
+    // B402：HTML 块借用派生预览的排版（`.md-rendered` 那一套规则）—— VS Code 的预览里
+    // 原始 HTML 就是正文，表线/段落间距/标题线与预览面同源；编辑面只在 deco.css 里
+    // 把字号/行距/颜色压回继承。
+    preview.className = "md-html-preview md-rendered";
     sanitizeHtmlInto(preview, this.html);
     wrap.append(source, preview);
     bindBlockBoundaryCursor(wrap, preview);

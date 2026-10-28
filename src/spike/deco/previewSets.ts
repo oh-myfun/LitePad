@@ -98,6 +98,44 @@ function blockReveal(_from: number, _to: number) {
 const NEVER_REVEAL = { from: 1, to: 0 };
 
 /**
+ * 行内 HTML（B402）：只渲染「有样式意义」的那几个标签 —— 在 VS Code 的预览里它们就是
+ * 普通 HTML，样式取浏览器默认值；装饰面没有元素可挂，用 class 复刻同一份默认值。
+ * 其余标签（`<img>` / 自定义组件 / 未知标签）保持源码显形：猜错了比不画更糟。
+ */
+const INLINE_HTML: Record<string, string> = {
+  kbd: "cm-md-inline-kbd",
+  mark: "cm-md-inline-mark",
+  u: "cm-md-inline-underline",
+  sub: "md-sub",
+  sup: "md-sup",
+  b: "cm-md-inline-bold",
+  strong: "cm-md-inline-bold",
+  i: "cm-md-inline-italic",
+  em: "cm-md-inline-italic",
+  s: "cm-md-inline-strike",
+  del: "cm-md-inline-strike",
+  span: "cm-md-inline-span",
+};
+
+/** `<span style="color:…">` 只认这两条能安全落到内联样式的属性（与 sanitize 同口径）。 */
+function inlineHtmlStyle(attrs: string): Record<string, string> | null {
+  const m = /style\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(attrs);
+  if (!m) return null;
+  const raw = m[1] ?? m[2] ?? "";
+  const kept: string[] = [];
+  for (const decl of raw.split(";")) {
+    const i = decl.indexOf(":");
+    if (i < 0) continue;
+    const prop = decl.slice(0, i).trim().toLowerCase();
+    const value = decl.slice(i + 1).trim();
+    if (prop !== "color" && prop !== "background-color") continue;
+    if (!/^(?:#[0-9a-f]{3,8}|[a-z]{3,20})$/i.test(value)) continue;
+    kept.push(`${prop}:${value}`);
+  }
+  return kept.length ? { style: kept.join(";") } : null;
+}
+
+/**
  * 任务项：兼容标准无序/有序形式，也兼容单独 `[x] 文本` 的简写。
  * 导出给 `taskClick.ts` —— 点勾命中的那一行必须用**画方框时同一条**正则判定，
  * 否则会出现「行上有方框、点上说这不是任务行」的死键。
@@ -181,6 +219,11 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
    *   会让 `Decoration.set(…, true)` 直接抛（SpanTree 不接受交叠区间）。
    */
   const occupied: BlockRange[] = [];
+  /** 行内 HTML 的开标签栈（按标签名各自配对：`<b><i>x</i></b>` 不能错配）。 */
+  const inlineHtmlOpen = new Map<
+    string,
+    { from: number; to: number; style: Record<string, string> | null }[]
+  >();
   const doc = state.doc;
   const syntax = tree ?? syntaxTree(state);
   const fm = frontMatterRange(state);
@@ -370,6 +413,41 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
 
       if (n === "HardBreak") {
         hide(from, Math.max(from, to - 1), { from, to });
+        return;
+      }
+
+      if (n === "HTMLTag") {
+        // 行内 HTML（B402）：白名单内的标签成对藏掉、中间文字挂上对应样式；
+        // 光标压进这个元素时两个标签一起显形（与 ** 粗体标记同一套露出口径）。
+        // ⚠️ 表格 / 围栏 / 行内代码已经被整段接管（widget），里面的标签不许再插装饰。
+        if (occupied.some((r) => from >= r.from && to <= r.to)) return;
+        const raw = doc.sliceString(from, to);
+        const m = /^<\s*(\/?)\s*([a-zA-Z][\w-]*)([\s\S]*?)\/?>$/.exec(raw);
+        if (!m) return;
+        const name = m[2].toLowerCase();
+        const cls = INLINE_HTML[name];
+        if (!cls) return;
+        if (m[1]) {
+          const open = inlineHtmlOpen.get(name)?.pop();
+          if (!open) return;
+          const reveal = { from: open.from, to };
+          hide(open.from, open.to, reveal);
+          hide(from, to, reveal);
+          if (from > open.to) {
+            decos.push(
+              Decoration.mark({
+                class: cls,
+                ...(open.style ? { attributes: open.style } : {}),
+                ...blockReveal(open.from, to),
+              }).range(open.to, from),
+            );
+          }
+        } else {
+          inlineHtmlOpen.set(name, [
+            ...(inlineHtmlOpen.get(name) ?? []),
+            { from, to, style: name === "span" ? inlineHtmlStyle(m[3] ?? "") : null },
+          ]);
+        }
         return;
       }
 

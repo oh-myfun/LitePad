@@ -8,19 +8,94 @@
 const DROP_ELEMENTS = "script,style,iframe,object,embed,link,meta,base";
 const URL_ATTRS = ["href", "src", "xlink:href", "action", "formaction"];
 
-// VS Code 的 Markdown 预览只给 `<span>` 留几条无害的样式（颜色 / 圆角）；
-// 其它元素上的 style 一律剥掉 —— 排版靠文档自己的 CSS，不靠内联样式改应用骨架。
-const SPAN_STYLE_OK = [
-  /^color:#[0-9a-f]{3,8}$/i,
-  /^background-color:#[0-9a-f]{3,8}$/i,
-  /^border-radius:\d+px$/i,
-];
+// 内联样式（B402）：VS Code 的预览**不剥** style（CSP 只挡脚本），所以从网页复制来的
+// HTML 能保住原样。这里按「只影响这一段怎么画」放行；能定位到应用骨架上的
+// （position / display / z-index / transform / inset / overflow / float / behavior…）
+// 一个不放。url() 也拦：内联样式不该触发外部请求。
+const STYLE_PROP_OK = new Set([
+  "color",
+  "background",
+  "background-color",
+  "border",
+  "border-color",
+  "border-style",
+  "border-width",
+  "border-radius",
+  "border-top",
+  "border-right",
+  "border-bottom",
+  "border-left",
+  "border-collapse",
+  "border-spacing",
+  "padding",
+  "padding-top",
+  "padding-right",
+  "padding-bottom",
+  "padding-left",
+  "margin",
+  "margin-top",
+  "margin-right",
+  "margin-bottom",
+  "margin-left",
+  "font",
+  "font-size",
+  "font-weight",
+  "font-style",
+  "font-family",
+  "line-height",
+  "letter-spacing",
+  "text-align",
+  "text-decoration",
+  "text-indent",
+  "vertical-align",
+  "white-space",
+  "list-style-type",
+  "opacity",
+  "width",
+  "height",
+  "max-width",
+  "max-height",
+  "table-layout",
+]);
 
-function keepSpanStyle(raw: string): string | null {
-  const kept = raw
-    .split(";")
-    .map((d) => d.trim().replace(/\s+/g, ""))
-    .filter((d) => d && SPAN_STYLE_OK.some((re) => re.test(d)));
+/** 按顶层 `;` 切声明：`rgb(1;2)` / `url(a;b)` 里的分号不能切。 */
+function splitDeclarations(raw: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let quote = "";
+  let start = 0;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (quote) {
+      if (ch === quote && raw[i - 1] !== "\\") quote = "";
+      continue;
+    }
+    if (ch === "'" || ch === '"') quote = ch;
+    else if (ch === "(") depth++;
+    else if (ch === ")") depth = Math.max(0, depth - 1);
+    else if (ch === ";" && depth === 0) {
+      out.push(raw.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(raw.slice(start));
+  return out;
+}
+
+function keepStyle(raw: string): string | null {
+  const kept: string[] = [];
+  for (const decl of splitDeclarations(raw)) {
+    const colon = decl.indexOf(":");
+    if (colon < 0) continue;
+    const prop = decl.slice(0, colon).trim().toLowerCase();
+    const value = decl
+      .slice(colon + 1)
+      .trim()
+      .replace(/\s+/g, " ");
+    if (!STYLE_PROP_OK.has(prop) || !value) continue;
+    if (/url\s*\(|expression\s*\(|behavior|javascript:|@import/i.test(value)) continue;
+    kept.push(`${prop}:${value}`);
+  }
   return kept.length ? kept.join(";") : null;
 }
 
@@ -37,7 +112,7 @@ export function sanitizeHtmlInto(target: Element, html: string): void {
         .join("");
       if (name.startsWith("on")) el.removeAttribute(attr.name);
       if (name === "style") {
-        const kept = el.tagName === "SPAN" ? keepSpanStyle(attr.value) : null;
+        const kept = keepStyle(attr.value);
         if (kept) el.setAttribute("style", kept);
         else el.removeAttribute(attr.name);
       }

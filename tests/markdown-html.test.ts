@@ -42,13 +42,29 @@ describe("B401 HTML 渲染", () => {
     expect(clean).not.toMatch(/javascript:/i);
   });
 
-  it("SPAN 的少数无害内联样式留着（VS Code 口径），其它元素的 style 剥掉", () => {
+  it("B402 内联样式按「展示类」白名单放行，定位/执行类一律剥掉", () => {
     const clean = sanitizeHtmlString(
-      '<span style="color:#ff0000; position:absolute">红</span><div style="color:#ff0000">块</div>',
+      '<span style="color:#ff0000; position:absolute">红</span>' +
+        '<div style="color:#ff0000; z-index:9; background-image:url(https://x/a.png)">块</div>',
     );
+    // VS Code 的预览不剥 style（CSP 只挡脚本）⇒ 复制来的 HTML 靠它保形
     expect(clean).toContain('<span style="color:#ff0000">红</span>');
+    expect(clean).toContain('style="color:#ff0000"');
     expect(clean).not.toContain("position:absolute");
-    expect(clean).not.toMatch(/<div style=/);
+    expect(clean).not.toContain("z-index");
+    expect(clean, "内联样式不该触发外部请求").not.toContain("url(");
+  });
+
+  it("B402 复制来的排版样式保住（边框 / 对齐 / 尺寸 / text-align）", () => {
+    const clean = sanitizeHtmlString(
+      '<table style="border-collapse:collapse"><tr><td style="border:1px solid #ccc; padding:4px">甲</td></tr></table>' +
+        '<div style="text-align:center; width:50%">中</div>',
+    );
+    expect(clean).toContain("border-collapse:collapse");
+    expect(clean).toContain("border:1px solid #ccc");
+    expect(clean).toContain("padding:4px");
+    expect(clean).toContain("text-align:center");
+    expect(clean).toContain("width:50%");
   });
 
   it("任务列表的 task-item 挂在 li 上（不是被丢掉的 hidden paragraph）", () => {
