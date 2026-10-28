@@ -21,7 +21,7 @@
 | 编辑器    | `src/editor/`（CodeMirror 6 封装）、`src/shell/find.ts`、`src/find/findbar.ts`（悬浮查找/替换栏，只管当前文档）、`src/search/`（侧栏搜索视图：store 范围与分组 / panel 视图 / replace 两路写回，B389）、`src/io/files.ts`（打开/保存/文件拖入）、`src/io/export.ts`（导出 HTML/PDF + 图片粘贴）、`outline` | 编辑、查找、大纲、文件 IO                                       |
 | 外壳/UI   | `src/shell/`（menubar / tooltip / zoom / preferencesdialog / keymap / keymapdialog / splitview / tabstrip / scrollbar——tabstrip 的滚轮与 B117 自绘悬浮滚动条已拆出 scrollbar.ts，纯叶子零反向依赖）、`src/appearance.ts`（`apply*`：把档位落到 DOM）、`src/prefs.ts`（`set*`：改设置 → 持久化 → 调 apply*；含编码转换与设置对话框）、`src/commands.ts`（命令层：编辑菜单动作 / 折叠 / 转到行 / 查看档位 / 标题栏+菜单栏装配 / 查找替换入口 / 视图批处理）、`src/encoding.ts`（编码菜单纯函数叶子）、`src/doc-model.ts`（文档/标签/实例纯模型操作 + 工厂）、`src/ui.ts`（启动计时 / DOM 句柄 / 基础访问 / 状态呈现服务簇）、`src/tabs/`（标签/面板/布局操作 + 标签栏渲染；P3 批次按职责拆为 render/lifecycle/split/deps 四子模块 + index 门面）、`src/markdown.ts`（Markdown 预览：视图模式切换 / 渲染调度 / 视图模式按钮）、`src/toc.ts`（大纲 TOC 抽屉 + 侧栏可见性/宽度） | 菜单、标题栏与窗口控制、提示、缩放、设置、快捷键、布局、标签栏、主题/字号/字体/预览宽度、编码菜单、文档模型、状态呈现、标签与面板操作、Markdown 预览、大纲与侧栏 |
 | 预览      | `src/editor/preview/`                                                                                              | Markdown 渲染与预览内查找                                      |
-| 窗口      | `src-tauri/src/windows.rs`；`src/multiwindow/windows.ts`（标签搬出/回收、拖拽出窗、跨窗口同源同步）                  | 主窗口 + 卫星窗口（多窗口）                                    |
+| 窗口      | `src-tauri/src/windows.rs`；`src-tauri/src/filedrag.rs`（Ctrl+拖标签 → OLE 拖出成文件，B400）；`src/multiwindow/windows.ts`（标签搬出/回收、拖拽出窗、跨窗口同源同步）                  | 主窗口 + 卫星窗口（多窗口）                                    |
 | 构建/打包 | `src-tauri/tauri.conf.json`、`build.rs`、`scripts/release.sh`、`scripts/make_icons.py`（图标产物链，源图 = `docs/LitePad.png`） | 版本、图标、NSIS                                               |
 
 ## 各关注点一句话
@@ -39,6 +39,10 @@
   （正文绝不广播，标签快照可能几十 MB）。文件拖入另走一路：页面内 HTML5 拖放 + 路径桥（关掉
   wry 的原生拖放处理器后，用 WebView2 的 `postMessageWithAdditionalObjects` 换回真实路径，见
   `src-tauri/src/dropbridge.rs`），拿到路径之后仍由 `onDragDropEvent` 的 drop 分支接管。
+  **拖出成文件**（B400）是第三条路：**Ctrl+拖动标签**不走 HTML5（`preventDefault` 掐掉），
+  改由 `src-tauri/src/filedrag.rs` 在主线程起一次 OLE 拖拽（`IDataObject` 供 `CF_HDROP` +
+  `Preferred DropEffect = COPY`），VS Code / 资源管理器这些外部应用才收得到真文件；
+  脏文档先存盘再起拖，普通拖动（排序 / 跨格 / 跨窗口 / 开新窗）一行不动。
 - ⚠️ **页面级拖放监听一律挂捕获阶段并 `stopPropagation`**：编辑器（CodeMirror 6）会在自己的
   DOM 上吃 `drop` —— 标签拖拽时把载荷里的可读文本插进正文，文件拖入时直接用 `FileReader`
   把**文件内容**读出来插进当前文档。监听挂冒泡阶段时它比页面级监听先跑，等到我们的处理器，
