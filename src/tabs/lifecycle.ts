@@ -48,6 +48,8 @@ import { toggleTaskInTab } from "../markdown";
 import { updateTocDrawer } from "../toc";
 import { retargetFindBar, relayoutFindBar } from "../find/findbar";
 import { saveDocCore } from "../io/files";
+// B400：Ctrl+拖动标签把这份文档当系统文件拖出去
+import { dragTabAsFile } from "../io/filedrag";
 import { attachPasteHandler } from "../io/export";
 import { showSaveConfirmDialog } from "../shell/saveconfirm";
 import { createEditor } from "../editor/editor";
@@ -205,6 +207,11 @@ export function rebuildLayout(): void {
       if (inst) duplicateTabToPanel(tabId, inst.panelId);
     },
     onDuplicateToSibling: (tabId) => duplicateTabToSibling(tabId),
+    // B400：Ctrl+拖动标签 ⇒ 把这份文档当系统文件拖给外部应用
+    onDragTabFile: (tabId) => {
+      const t = tabs.get(tabId);
+      if (t) void dragTabAsFile(t);
+    },
     onReorderTab: (panelId, from, to) => reorderTabInPanel(panelId, from, to),
     // B71：右键「左右/上下分屏」与双击标签最大化（splitview 首次构建标签栏时也要有）
     onSplitTab: (panelId, tabId, dir) => splitPanelWithTab(panelId, dir, tabId, false, true),

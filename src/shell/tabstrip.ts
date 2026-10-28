@@ -50,6 +50,11 @@ export interface TabstripCallbacks {
   onCopyPath?: (tabId: number) => void;
   /** B123-7：在资源管理器中打开文件所在目录并选中该文件（explorer /select,） */
   onRevealInFolder?: (tabId: number) => void;
+  /**
+   * B400：Ctrl+拖动标签 ⇒ 把这份文档当**系统文件**拖出去（交给原生侧起 OLE 拖拽）。
+   * 只有带磁盘路径的标签才走这条；普通拖动仍是 HTML5（排序 / 跨格 / 跨窗口 / 开新窗）。
+   */
+  onDragFileOut?: (tabId: number) => void;
   /** 同源复制：在本面板内复制一个标签实例（同文档多实例，内容同步） */
   onDuplicateTab?: (tabId: number) => void;
   /** 同源复制到视觉相邻面板（左右分屏对照源码/预览的快捷入口） */
@@ -407,6 +412,15 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
     const onCloseBtn = e.target instanceof Element && e.target.closest(".tab-close") !== null;
     if (onCloseBtn) {
       e.preventDefault();
+      return;
+    }
+    // B400：Ctrl+拖动 = 把这份文档当**文件**拖给外部应用（VS Code / 资源管理器 / 记事本）。
+    // 外部应用不认 HTML5 的那套数据，只认系统的 CF_HDROP ⇒ 这条手势必须整条让给原生侧：
+    // `preventDefault` 掐掉浏览器的拖拽，由 `onDragFileOut` 起一次 OLE 拖拽。
+    // 没有磁盘路径的标签（未命名）退回普通拖拽 —— 拖不出文件，但还能拖来拖去。
+    if (e.ctrlKey && t.path && cb.onDragFileOut) {
+      e.preventDefault();
+      cb.onDragFileOut(t.tabId);
       return;
     }
     startTabDrag(

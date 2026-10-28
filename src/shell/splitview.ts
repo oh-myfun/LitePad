@@ -71,6 +71,8 @@ export interface SplitviewCallbacks {
   onCloseOtherTab?: (panelId: number, tabId: number) => void;
   onCloseRightTabs?: (panelId: number, tabId: number) => void;
   onCopyTabPath?: (tabId: number) => void;
+  /** B400：Ctrl+拖动标签 ⇒ 把这份文档当系统文件拖出去（见 tabstrip.ts 的同名字段） */
+  onDragTabFile?: (tabId: number) => void;
   /** 同源复制标签实例（本面板内 / 相邻面板） */
   onDuplicateTab?: (tabId: number) => void;
   onDuplicateToSibling?: (tabId: number) => void;
@@ -534,6 +536,7 @@ function buildPanel(
     onCloseOther: (tabId) => cb.onCloseOtherTab?.(panelId, tabId),
     onCloseRight: (tabId) => cb.onCloseRightTabs?.(panelId, tabId),
     onCopyPath: (tabId) => cb.onCopyTabPath?.(tabId),
+    onDragFileOut: cb.onDragTabFile ? (tabId) => cb.onDragTabFile?.(tabId) : undefined,
     onDuplicateTab: (tabId) => cb.onDuplicateTab?.(tabId),
     onDuplicateToSibling: (tabId) => cb.onDuplicateToSibling?.(tabId),
     // B71：右键「左右/上下分屏」。panelId 由闭包带上（tabstrip 只认 tabId）

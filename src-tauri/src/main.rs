@@ -5,6 +5,8 @@ mod backup;
 mod commands;
 mod core;
 mod dropbridge;
+// B400：标签拖出成文件（OLE 拖放 + CF_HDROP），与 dropbridge 的「拖入」是一对
+mod filedrag;
 mod session;
 mod window_icon;
 mod windows;
@@ -321,6 +323,8 @@ fn main() {
             windows::open_satellite_window,
             commands::watchdog_start_drag,
             commands::toggle_devtools,
+            // B400：Ctrl+拖动标签 ⇒ 把这份文档当系统文件拖给外部应用（VS Code / 资源管理器）
+            filedrag::start_file_drag,
         ])
         .build(tauri::generate_context!())
         .expect("LitePad 启动失败")

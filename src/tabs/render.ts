@@ -32,6 +32,7 @@ import {
   maximizedPanelId,
 } from "./split";
 import { invoke } from "@tauri-apps/api/core";
+import { dragTabAsFile } from "../io/filedrag";
 
 export function renderPanelTabs(onlyPanelId?: number): void {
   for (const p of panels.values()) {
@@ -116,6 +117,11 @@ export function tabstripCallbacks(p: Panel): TabstripCallbacks {
       scheduleSessionSave();
     },
     onNew: () => void newUntitled(),
+    // B400：Ctrl+拖标签 → 原生 OLE 拖拽（CF_HDROP），落点交给外部应用（VS Code 等）。
+    onDragFileOut: (tabId) => {
+      const t = tabs.get(tabId);
+      if (t) void dragTabAsFile(t);
+    },
   };
 }
 

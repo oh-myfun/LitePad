@@ -1,6 +1,6 @@
 [package]
 name = "litepad"
-version = "0.24.50"
+version = "0.24.51"
 description = "LitePad - 极度轻量的 Markdown 文本编辑器"
 authors = ["LitePad"]
 edition = "2021"
@@ -50,7 +50,25 @@ regex = "1"
 webview2-com = "0.38"
 # B192：标题栏拖动看门狗（Rust 侧，绕开 Tauri #10767 残余竞态）需要 Win32 消息 /
 # 键盘状态 API。这两个 feature 与 webview2-com/wry 已启用的模块取并集，不会重复编译。
-windows = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_Graphics_Gdi"] }
+windows = { version = "0.61", features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_Graphics_Gdi",
+    # B400 拖出成文件（filedrag.rs）：OLE 拖放循环（DoDragDrop / IDropSource）、
+    # CF_HDROP 载荷（DROPFILES + 全局内存）、以及「只复制」那一条私有格式。
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Ole",
+    "Win32_System_Memory",
+    "Win32_System_DataExchange",
+    "Win32_System_SystemServices",
+    "Win32_UI_Shell",
+] }
+# B400：`#[implement(IDataObject, IDropSource)]` 生成的代码以 `::windows_core::` 引用该
+# crate（宏不认 `windows::core` 这条重导出），所以必须有同名直接依赖；版本与上面的
+# `windows` 对齐（0.61 带 0.61.x）。纯手写 vtable 能绕开它，但那一份机械不值得自养。
+windows-core = "0.61"
 
 # 发布档位（日常交付：`scripts/build-all.sh` 走这一档）。
 #
