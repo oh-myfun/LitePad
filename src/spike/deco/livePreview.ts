@@ -143,7 +143,13 @@ const livePreviewField = StateField.define<LivePreviewState>({
   provide: (f) => [
     EditorView.decorations.from(f, (v) => v.lines),
     EditorView.decorations.from(f, (v) => v.visible),
-    EditorView.atomicRanges.of((view) => atomicBlockRanges(view.state.field(f).atomicBlocks)),
+    // B406：光标已经落进某块内部（图片块点开会显形）时，这块不能再算原子区间 ——
+    // 否则鼠标点选/方向键都被「整块跳」吞掉，源码看得见却改不了。
+    EditorView.atomicRanges.of((view) => {
+      const sets = view.state.field(f).atomicBlocks;
+      const head = view.state.selection.main.head;
+      return atomicBlockRanges(sets.filter((b) => head < b.from || head > b.to));
+    }),
     EditorView.editorAttributes.of({ class: "md-deco" }),
   ],
 });

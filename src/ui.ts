@@ -350,6 +350,9 @@ function refreshAll(): void {
   refreshViewModeButtonRef();
   updateTocDrawerRef();
   renderPanelTabsRef();
+  // B406：保存 / 另存为 / 资源管理器改名之后，文档路径都会经这里刷新 ⇒
+  // 图片相对路径的基准（assetBase）也挂在这个统一出口上。
+  refreshDecoAssetBasesRef();
   // B224：md 两颗键跟着活动面板 / 活动标签走，任何全局刷新都要同步一遍
   // （开/关标签、复制实例、会话恢复都可能改变「活动面板的标签是不是 md」）。
   renderPanelOpsRef();
@@ -392,6 +395,8 @@ let refreshViewModeButtonRef: () => void = () => {};
 let updateTocDrawerRef: () => void = () => {};
 let renderPanelTabsRef: (onlyPanelId?: number) => void = () => {};
 let renderPanelOpsRef: (onlyPanelId?: number) => void = () => {};
+// B406：markdown.ts 的图片基准刷新（文档路径变了要重发 setAssetBase）
+let refreshDecoAssetBasesRef: () => void = () => {};
 
 export function setRefreshViewModeButton(fn: () => void): void {
   refreshViewModeButtonRef = fn;
@@ -407,6 +412,10 @@ export function setRenderPanelTabs(fn: (onlyPanelId?: number) => void): void {
 
 export function setRenderPanelOps(fn: (onlyPanelId?: number) => void): void {
   renderPanelOpsRef = fn;
+}
+
+export function setRefreshDecoAssetBases(fn: () => void): void {
+  refreshDecoAssetBasesRef = fn;
 }
 
 export {

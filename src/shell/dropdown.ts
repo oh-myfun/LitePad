@@ -10,7 +10,11 @@
  *     当前项沿用 `.menu-item-current`（左侧 accent 色条 + 背景），与活动标签/
  *     应用菜单「当前项」同一个观感。
  *   · 定位用 `position: fixed` + 视口坐标（和 `.popup-menu` 一致，避免被模态
- *     滚动容器裁切）；下方放不下自动翻到上方。
+ *     滚动容器裁切）；下方放不下自动翻到上方，右侧放不下往左收。
+ *   · B405：展开时**把列表挂到 body**（与应用的菜单/子菜单同一口径）。编辑器里
+ *     `.cm-scroller` 带 `z-index: 0` 的层叠上下文，列表留在 DOM 里无论 z-index
+ *     多高都压不过外壳与其它组件；挂 body 才真的「显示在所有组件之上」。
+ *     关闭时收回（并移出 body），关闭态的 DOM 结构与旧版一致。
  *   · B230：**按上下可用空间动态限高**，且只有选项区滚动、搜索框钉在顶部。
  *     旧版靠 `.popup-menu` 的 `max-height: calc(100vh - 16px)` 兜着，可列表被限到
  *     接近整屏高时「翻到上方」的判据（`r.top - 4 - listH > 0`）恒为假 ⇒ 永远向下放、
@@ -221,8 +225,12 @@ export function createDropdown(opts: DropdownOptions): DropdownHandle {
     const cap = Math.max(MIN_LIST_H, window.innerHeight - minTop - VIEWPORT_MARGIN);
     list.style.maxHeight = `${Math.min(maxH, cap)}px`;
 
-    list.style.left = `${r.left}px`;
     list.style.minWidth = `${Math.max(r.width, 120)}px`;
+    // B405：代码块的语言按钮在盒子右侧，贴着视口右缘展开会溢出 —— 右放不下就往左收。
+    // jsdom 里 offsetWidth 恒 0，这时保持旧读数（r.left），别凭空挪位。
+    const width = list.offsetWidth;
+    const left = width > 0 ? Math.min(r.left, window.innerWidth - width - VIEWPORT_MARGIN) : r.left;
+    list.style.left = `${Math.max(VIEWPORT_MARGIN, left)}px`;
     if (below >= above) {
       list.style.top = `${r.bottom + gap}px`;
       list.style.transform = "";
@@ -245,6 +253,9 @@ export function createDropdown(opts: DropdownOptions): DropdownHandle {
     query = "";
     if (searchInput) searchInput.value = "";
     renderList();
+    // B405：挂到 body（见文件头）—— 关闭态仍留在触发器里，旧用例/结构不变
+    document.body.appendChild(list);
+    list.classList.add("open");
     positionList();
     const items = matched();
     const idx = items.findIndex((o) => o.value === value);
@@ -259,6 +270,9 @@ export function createDropdown(opts: DropdownOptions): DropdownHandle {
     open = false;
     trigger.setAttribute("aria-expanded", "false");
     root.classList.remove("open");
+    list.classList.remove("open");
+    // 收回触发器（关闭态结构与旧版一致）；真正销毁由 destroy 负责
+    root.appendChild(list);
     document.removeEventListener("mousedown", onDocMouseDown, true);
     document.removeEventListener("keydown", onKeyDown, true);
   }
@@ -282,7 +296,9 @@ export function createDropdown(opts: DropdownOptions): DropdownHandle {
   }
 
   function onDocMouseDown(e: MouseEvent): void {
-    if (!root.contains(e.target as Node)) closeList();
+    const target = e.target as Node;
+    // 展开时列表挂在 body，不在 root 里 —— 两处都要问
+    if (!root.contains(target) && !list.contains(target)) closeList();
   }
 
   function onKeyDown(e: KeyboardEvent): void {
@@ -352,6 +368,10 @@ export function createDropdown(opts: DropdownOptions): DropdownHandle {
     });
   }
 
+  // 列表展开后挂在 body，不再经过触发器的上级；自己挡一次冒泡，别把按键漏给全局快捷键。
+  // ⚠️ 必须是冒泡阶段：捕获阶段在列表上 stopPropagation 会连搜索框的按键一起掐掉。
+  list.addEventListener("keydown", (e) => e.stopPropagation());
+
   renderTrigger();
   renderList();
   root.append(trigger, list);
@@ -364,6 +384,9 @@ export function createDropdown(opts: DropdownOptions): DropdownHandle {
       renderTrigger();
       renderList();
     },
-    destroy: () => closeList(),
+    destroy: () => {
+      closeList();
+      list.remove();
+    },
   };
 }

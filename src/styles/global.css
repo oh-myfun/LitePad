@@ -3517,6 +3517,63 @@ button:focus-visible {
   color: var(--fg);
 }
 
+/* ---------- 图片编辑弹窗（B406：照 InkNote ImageInsertDialog 的两栏表单） ---------- */
+
+.image-dialog {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 440px;
+  background: var(--bg-elevated);
+}
+
+.image-dialog-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.image-dialog-label {
+  flex: 0 0 64px;
+  font-size: var(--fs-ui);
+  color: var(--fg-muted);
+}
+
+.image-dialog-control {
+  flex: 1 1 auto;
+  display: flex;
+  min-width: 0;
+  gap: 6px;
+}
+
+.image-dialog-control > input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: var(--fs-ui);
+  outline: none;
+}
+
+.image-dialog-control > input:focus {
+  border-color: var(--accent);
+}
+
+.image-dialog-actions {
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.image-dialog .save-confirm-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* ---------- 分屏布局 ---------- */
 
 #main-row {
@@ -4919,8 +4976,10 @@ body.tab-drag-active * {
 /* B230：展开态改成 flex 纵向列 —— 搜索框钉在顶部固定，**只有选项区滚动**。
    之前是整块 .popup-menu 自己滚（overflow-y: auto），max-height 接近 100vh 时
    positionList 的「翻到上方」条件恒为假，列表永远向下放、超出视口底部被裁掉。
-   现在滚动下沉到 .dropdown-options，max-height 由 JS 按上下可用空间动态给。 */
-.dropdown.open .dropdown-list {
+   现在滚动下沉到 .dropdown-options，max-height 由 JS 按上下可用空间动态给。
+   B405：展开时列表挂到 body（撑出编辑器的层叠上下文）⇒ 展开态类挂在列表自己身上，
+   不再能以 `.dropdown.open` 做祖先判据。 */
+.dropdown-list.open {
   display: flex;
   flex-direction: column;
   /* 覆盖 .popup-menu 的 overflow-y: auto —— 滚动权交给 .dropdown-options，

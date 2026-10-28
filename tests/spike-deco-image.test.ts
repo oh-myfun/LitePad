@@ -8,12 +8,17 @@
 //
 // ⚠️ 基准目录是 state 里的一颗字段（`setAssetBase`）。换文档必须让它重建 ——
 // widget 的 `eq()` 会复用 DOM，不复用就停在上一份文档的目录。
+//
+// B406 新增两组判据：
+//   · `resolveAssetPath` 的边界（`..` / `file:///` / UNC / 扩展长度前缀）；
+//   · 点图显形源码、悬浮编辑键 → 弹窗回写。
 
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { describe, expect, it } from "vitest";
-import { setAssetBase } from "../src/spike/deco/assets";
+import { afterEach, describe, expect, it } from "vitest";
+import { resolveAssetPath, setAssetBase } from "../src/spike/deco/assets";
+import { imageMarkdown } from "../src/spike/deco/imageWidget";
 import { buildPreviewSets } from "../src/spike/deco/previewSets";
 import { decoFace, decoLock } from "../src/spike/deco/wysiwyg";
 
@@ -40,6 +45,10 @@ function atomicTexts(view: EditorView): string[] {
 }
 
 const BLOCK_DOC = ["甲", "", "![示例图](pic.png)", "", "乙"].join("\n");
+
+afterEach(() => {
+  document.body.innerHTML = "";
+});
 
 describe("B397-4c 地址解析：相对路径按文档目录拼，网页图原样", () => {
   it("块级图：figure + img，alt 与地址都在", () => {
@@ -78,6 +87,39 @@ describe("B397-4c 地址解析：相对路径按文档目录拼，网页图原�
   });
 });
 
+describe("B406 地址解析边界", () => {
+  const md = "C:\\docs\\笔记.md";
+
+  it("`..` 段要折平（asset 协议不认带 `..` 的地址）", () => {
+    expect(resolveAssetPath(md, "../pics/甲.png")).toBe("C:\\pics\\甲.png");
+    expect(resolveAssetPath(md, ".\\sub\\..\\pic.png")).toBe("C:\\docs\\pic.png");
+  });
+
+  it("`file:///` 还原成本地路径再按绝对路径走", () => {
+    expect(resolveAssetPath(md, "file:///C:/pics/a.png")).toBe("C:\\pics\\a.png");
+    expect(resolveAssetPath(md, "file:///C:/pics/a%20b.png")).toBe("C:\\pics\\a b.png");
+  });
+
+  it("UNC / 扩展长度前缀是绝对路径，不拿文档目录去拼", () => {
+    expect(resolveAssetPath(md, "\\\\server\\share\\a.png")).toBe("\\\\server\\share\\a.png");
+    expect(resolveAssetPath(md, "//server/share/a.png")).toBe("\\\\server\\share\\a.png");
+    expect(resolveAssetPath(md, "\\\\?\\C:\\pics\\a.png")).toBe("C:\\pics\\a.png");
+    expect(resolveAssetPath("\\\\?\\C:\\docs\\笔记.md", "pic.png")).toBe("C:\\docs\\pic.png");
+  });
+
+  it("正斜杠文档路径按 `/` 拼", () => {
+    expect(resolveAssetPath("C:/docs/笔记.md", "./pics/a.png")).toBe("C:/docs/pics/a.png");
+    expect(resolveAssetPath("C:/docs/笔记.md", "../a.png")).toBe("C:/a.png");
+  });
+
+  it("imageMarkdown：地址含空格/括号套尖括号，alt 的 ] 转义", () => {
+    expect(imageMarkdown("图", "a b.png")).toBe("![图](<a b.png>)");
+    expect(imageMarkdown("图", "a(1).png")).toBe("![图](<a(1).png>)");
+    expect(imageMarkdown("图", "a.png", "提示")).toBe('![图](a.png "提示")');
+    expect(imageMarkdown("a]b", "a.png")).toBe("![a\\]b](a.png)");
+  });
+});
+
 describe("B397-4c 块级 / 行内两档", () => {
   it("块级图整行接管 ⇒ 原子块；行内图不进原子块", () => {
     expect(atomicTexts(decoView(BLOCK_DOC))).toEqual(["![示例图](pic.png)"]);
@@ -105,5 +147,63 @@ describe("B397-4c 块级 / 行内两档", () => {
     const view = decoView('![示例图](pic.png "这是提示")');
     const img = view.dom.querySelector<HTMLImageElement>(".md-image-widget img")!;
     expect(img.hasAttribute("title"), "原生 title 在红线里").toBe(false);
+  });
+});
+
+describe("B406 图片块编辑", () => {
+  it("光标落进图片块 ⇒ 装饰让位，露出 Markdown 原文；离开后恢复", () => {
+    const view = decoView(BLOCK_DOC);
+    const from = BLOCK_DOC.indexOf("![");
+    expect(view.dom.querySelector(".md-image-widget")).toBeTruthy();
+    view.dispatch({ selection: { anchor: from + 2 } });
+    expect(view.dom.querySelector(".md-image-widget"), "光标在块内时还画组件").toBeFalsy();
+    expect(view.dom.textContent).toContain("![示例图](pic.png)");
+    view.dispatch({ selection: { anchor: 0 } });
+    expect(view.dom.querySelector(".md-image-widget"), "光标离开后没恢复渲染").toBeTruthy();
+  });
+
+  it("只读档不显形（预览里点图不翻源码）", () => {
+    const view = decoView(BLOCK_DOC, true);
+    const from = BLOCK_DOC.indexOf("![");
+    view.dispatch({ selection: { anchor: from + 2 } });
+    expect(view.dom.querySelector(".md-image-widget")).toBeTruthy();
+  });
+
+  it("点图片 = 把光标送进块内", () => {
+    const view = decoView(BLOCK_DOC);
+    const wrap = view.dom.querySelector<HTMLElement>(".md-image-widget")!;
+    wrap.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    const range = buildPreviewSets(view.state).atomicBlocks[0];
+    expect(view.state.selection.main.head).toBeGreaterThanOrEqual(range.from);
+    expect(view.state.selection.main.head).toBeLessThanOrEqual(range.to);
+  });
+
+  it("悬浮编辑键：打开弹窗，确认后整块回写（title 原样保留）", async () => {
+    const view = decoView('![示例图](pic.png "标题")');
+    const btn = view.dom.querySelector<HTMLButtonElement>(".md-image-edit-btn");
+    expect(btn, "编辑键没画出来，这条判据就是空转").toBeTruthy();
+    expect(btn!.querySelector(".codicon"), "图标必须走 codicon").toBeTruthy();
+
+    btn!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    expect(view.dom.querySelector(".md-image-widget"), "点编辑键不该翻源码").toBeTruthy();
+    btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    const dialog = document.querySelector<HTMLElement>(".image-dialog");
+    expect(dialog, "弹窗没挂到 body 上").toBeTruthy();
+    const alt = dialog!.querySelector<HTMLInputElement>("#image-dialog-alt")!;
+    const path = dialog!.querySelector<HTMLInputElement>("#image-dialog-path")!;
+    expect(alt.value).toBe("示例图");
+    expect(path.value).toBe("pic.png");
+
+    alt.value = "新图";
+    alt.dispatchEvent(new Event("input", { bubbles: true }));
+    path.value = "pics/new 图.png";
+    path.dispatchEvent(new Event("input", { bubbles: true }));
+    dialog!.querySelector<HTMLButtonElement>(".image-dialog-confirm")!.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(view.state.doc.toString()).toBe('![新图](<pics/new 图.png> "标题")');
+    expect(document.querySelector(".image-dialog"), "确认后弹窗没关").toBeFalsy();
   });
 });

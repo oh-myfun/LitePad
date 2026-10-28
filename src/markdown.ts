@@ -108,6 +108,25 @@ function applyDecoFace(panel: Panel, tab: Tab | undefined, mode: string): void {
   tab.state = view.state;
 }
 
+/**
+ * B406 · 文档路径换了（保存 / 另存为 / 资源管理器改名）⇒ 图片相对路径的基准跟着换。
+ *
+ * 挂在 `refreshAll` 上（ui.ts 的 DI 钩子）：保存与改名两条路都会走它。基准没变就
+ * 不 dispatch —— 这一发在每次刷新里是空转，但只有路径真变的那一次才有成本。
+ */
+export function refreshDecoAssetBases(): void {
+  for (const inst of tabs.values()) {
+    const panel = panels.get(inst.panelId);
+    if (!panel?.view || panel.viewTabId !== inst.tabId) continue;
+    const view = panel.view.view;
+    if (!wysiwygInstalled(view.state)) continue;
+    const assetPath = docs.get(inst.docId)?.path ?? null;
+    if ((view.state.field(assetBase, false) ?? null) === assetPath) continue;
+    view.dispatch({ effects: setAssetBase.of(assetPath) });
+    inst.state = view.state;
+  }
+}
+
 /** 应用面板视图模式：源码 / 分屏 / 纯预览（非 md 标签强制源码）。 */
 function applyPanelMode(panel: Panel): void {
   if (!panel.bodyEl) return;

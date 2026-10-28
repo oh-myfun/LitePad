@@ -764,24 +764,41 @@ describe("B404 光标行：勾选框 / 引用竖线让位给源码", () => {
     try {
       view.dispatch({ selection: { anchor: 0 } });
       expect(text(view), "光标行要看见源码方括号").toContain("[ ]");
+      // B405：任务行前面的 `-` 也要一起显形、一起可编辑
+      expect(text(view), "任务行要看见 `- [ ]` 整段源码").toContain("- [ ]");
       expect(lineOf(view, "md-task-item").classList.contains("md-reveal-marker")).toBe(true);
       view.dispatch({ selection: { anchor: view.state.doc.line(3).from } });
       expect(text(view), "离开后源码收回").not.toContain("[ ]");
+      expect(text(view), "离开后 `-` 也收回").not.toContain("- ");
       expect(lineOf(view, "md-task-item").classList.contains("md-reveal-marker")).toBe(false);
     } finally {
       view.destroy();
     }
   });
 
-  it("光标在引用行 ⇒ `>` 显形；列表符号照旧永不显形", () => {
-    const view = mount("> 引用\n\n- 列表\n");
+  it("光标在引用行 ⇒ `>` 显形；光标在列表项 ⇒ `-` / `1.` 显形（B405）", () => {
+    const view = mount("> 引用\n\n- 列表\n\n1. 有序\n\n正文\n");
     try {
       view.dispatch({ selection: { anchor: 0 } });
       expect(text(view), "引用行要看见 `>`").toContain(">");
       expect(lineOf(view, "md-blockquote").classList.contains("md-reveal-marker")).toBe(true);
-      // 列表的 `-` 是另一条口径（B401：永不显形），光标压上去也不许露
-      view.dispatch({ selection: { anchor: view.state.doc.line(3).from } });
-      expect(text(view), "列表符号不因光标显形").not.toContain("-");
+
+      const bullet = view.state.doc.line(3);
+      view.dispatch({ selection: { anchor: bullet.from } });
+      expect(text(view), "光标行要看见 `-`").toContain("- 列表");
+      expect(
+        lineOf(view, "md-list-item").classList.contains("md-reveal-marker"),
+        "列表项行要挂 md-reveal-marker",
+      ).toBe(true);
+      expect(text(view), "非光标行的序号不因别处显形而露").not.toContain("1. 有序");
+
+      const ordered = view.state.doc.line(5);
+      view.dispatch({ selection: { anchor: ordered.from } });
+      expect(text(view), "有序项要看见 `1.`").toContain("1. 有序");
+
+      view.dispatch({ selection: { anchor: view.state.doc.line(7).from } });
+      expect(text(view), "离开后 `-` 收回").not.toContain("- 列表");
+      expect(text(view), "离开后 `1.` 收回").not.toContain("1. 有序");
     } finally {
       view.destroy();
     }

@@ -30,9 +30,11 @@ function open(over: Partial<Parameters<typeof createDropdown>[0]> = {}) {
   const dd = make(over);
   document.body.appendChild(dd.root);
   (dd.root.querySelector(".dropdown-trigger") as HTMLButtonElement).click();
-  const list = dd.root.querySelector(".dropdown-list") as HTMLElement;
-  const search = dd.root.querySelector(".dropdown-search") as HTMLInputElement | null;
-  const optionsBox = dd.root.querySelector(".dropdown-options") as HTMLElement | null;
+  // B405：展开时列表挂到 body —— 取**最后**一颗（同一用例里可能开过多个下拉）
+  const lists = document.querySelectorAll<HTMLElement>(".dropdown-list");
+  const list = lists[lists.length - 1];
+  const search = list.querySelector<HTMLInputElement>(".dropdown-search");
+  const optionsBox = list.querySelector<HTMLElement>(".dropdown-options");
   return { root: dd.root, list, search, optionsBox: optionsBox ?? list };
 }
 
@@ -166,7 +168,7 @@ describe("B230 下拉限高：不再顶出视口", () => {
   it("静态：只有 .dropdown-options 滚动，搜索框所在层不滚", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
     // 展开态必须覆盖 .popup-menu 的 overflow-y: auto，否则整体滚动把搜索框卷走
-    const open = cssDecls(ruleBlock(css, ".dropdown.open .dropdown-list"));
+    const open = cssDecls(ruleBlock(css, ".dropdown-list.open"));
     expect(open, "展开态应显式 overflow: hidden").toContain("overflow: hidden");
     expect(open, "展开态应改成 flex 纵列").toContain("flex-direction: column");
     expect(open, "展开态应有 max-height 兜底").toContain("max-height");
@@ -259,9 +261,26 @@ describe("B230 下拉搜索", () => {
     trigger.click(); // 再开
     expect(root.classList.contains("open"), "应已重新展开").toBe(true);
     expect(search.value, "重新展开应清空搜索词").toBe("");
-    expect(root.querySelectorAll(".dropdown-option").length, "重新展开应显示全量选项").toBe(
-      FONT_OPTS.length,
-    );
+    expect(
+      document.querySelectorAll(".dropdown-list .dropdown-option").length,
+      "重新展开应显示全量选项",
+    ).toBe(FONT_OPTS.length);
+  });
+
+  it("B405 展开时列表挂 body，关闭后收回触发器（撑出编辑器的层叠上下文）", () => {
+    const { list, root } = open();
+    expect(list.parentElement, "展开时列表应在 body 下").toBe(document.body);
+    expect(list.classList.contains("open")).toBe(true);
+    const trigger = root.querySelector(".dropdown-trigger") as HTMLButtonElement;
+    trigger.click(); // 关闭
+    expect(list.classList.contains("open"), "关闭时摘掉展开态类").toBe(false);
+    expect(root.querySelector(".dropdown-list"), "关闭态列表收回触发器里").toBe(list);
+  });
+
+  it("B405 静态：显隐判据挂在列表自己身上（挂 body 后祖先选择器失效）", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    expect(css).toContain(".dropdown-list.open");
+    expect(css, "旧祖先判据已失效，别留双份").not.toContain(".dropdown.open .dropdown-list");
   });
 
   it("设置页的字体/语言长列表开了 searchable，主题等小下拉没开", () => {

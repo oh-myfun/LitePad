@@ -219,6 +219,23 @@ export function exitBlock(view: EditorView, wrap: HTMLElement, before = false): 
   view.focus();
 }
 
+/**
+ * B405 · 焦点进了块内编辑区 ⇒ 把编辑器选区停到这一块的起点。
+ *
+ * 就地编辑用的是组件自己的 contenteditable，焦点搬家**不经过 CodeMirror** ⇒ 选区还留在
+ * 上一个 markdown 块上，`visible` 装饰不重建，那一块就一直停在显形的源码态（用户报的
+ * 「光标从 markdown 块切到 HTML 块，上一块没变回渲染样式」）。停一次选区，滤镜按新光标
+ * 走一遍，上一块自然收回。只动选区、不 `view.focus()`，块里的光标不受影响。
+ */
+function parkSelectionAtBlock(view: EditorView, wrap: HTMLElement): void {
+  const range = currentBlockRange(view, wrap);
+  if (!range) return;
+  const sel = view.state.selection.main;
+  const inside =
+    sel.empty && sel.head >= range.from && sel.head < Math.max(range.to, range.from + 1);
+  if (!inside) view.dispatch({ selection: { anchor: range.from } });
+}
+
 export interface SourceEditingOptions {
   /** 可编辑源码区（可能在 updateDOM 后被替换，所以用取值函数）。 */
   source: () => HTMLElement | null;
@@ -274,9 +291,11 @@ export function attachSourceEditing(wrap: HTMLElement, opts: SourceEditingOption
 
   wrap.addEventListener("focusin", (event) => {
     if (!inSource(event)) return;
-    if (viewOf()?.state.readOnly) return;
+    const view = viewOf();
+    if (!view || view.state.readOnly) return;
     wrap.classList.add("md-block--editing");
     opts.onEditingChange?.(true);
+    parkSelectionAtBlock(view, wrap);
   });
 
   wrap.addEventListener("focusout", (event) => {

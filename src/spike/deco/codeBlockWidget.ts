@@ -196,9 +196,6 @@ export class CodeBlockWidget extends WidgetType {
     paintCode(codeEl, this.code);
     pre.appendChild(codeEl);
 
-    box.appendChild(gutter);
-    box.appendChild(pre);
-
     const header = document.createElement("div");
     header.className = "md-codeblock-header";
     header.setAttribute("contenteditable", "false");
@@ -230,6 +227,9 @@ export class CodeBlockWidget extends WidgetType {
       current,
       ariaLabel: "代码语言",
       className: "md-codeblock-lang",
+      // B405：语言表二十多项，按用户要求带搜索（与设置页字体/语言下拉同一套）
+      searchable: true,
+      searchPlaceholder: "搜索语言…",
       onPick: applyLang,
     });
     // 焦点归下拉：块里那层「点盒内留白就落光标」不许把焦点拽回代码区；
@@ -258,11 +258,16 @@ export class CodeBlockWidget extends WidgetType {
       }, 1200);
     });
 
-    header.appendChild(copyBtn);
+    // B405：照 vditor 的代码块 —— 顶部一条工具行，语言按钮与复制键并排放在右侧。
+    // 工具行在行号栏**之上**（`.md-codeblock-body` 才是 行号栏 + 代码区），
+    // 语言按钮与展开列表都不会压到行号竖线上。
     languageControl.appendChild(dropdown.root);
     languageControl.appendChild(languageLabel);
-    box.appendChild(header);
-    box.appendChild(languageControl);
+    header.append(languageControl, copyBtn);
+    const body = document.createElement("div");
+    body.className = "md-codeblock-body";
+    body.append(gutter, pre);
+    box.append(header, body);
     bindBlockBoundaryCursor(wrap, box);
 
     attachSourceEditing(wrap, {

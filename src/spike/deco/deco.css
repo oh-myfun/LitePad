@@ -375,14 +375,19 @@
 }
 
 /* B404 · 光标压住的这一行把 CSS 画的标记收掉，给刚显形的源码让位：
-   勾选框/对勾 → `[ ]` / `[x]`，引用竖线 → `>`。行类由 previewSets.revealMarkerLine
-   只挂在「可写 + 光标行是任务行/引用行」上（只读档标记永远折着，不加）。
-   左内距同时收回正文起点 —— 标记已经回到行内，再留着标记槽就是白缩进。 */
-.md-deco .cm-line.md-task-item.md-reveal-marker,
+   勾选框/对勾 → `[ ]` / `[x]`，列表符点/序号 → `-` / `1.`，引用竖线 → `>`。
+   行类由 previewSets.revealMarkerLine 只挂在「可写 + 光标行是列表项/引用行」上
+   （只读档标记永远折着，不加）。
+   左内距收到标记槽左沿：嵌套列表的 padding-left 住在行内 style（ListItem 分支的
+   indentStyle），普通规则压不住 ⇒ 这一条必须 !important。`--md-list-marker-left`
+   在嵌套行上正好是 marker 的左沿，顶层没有它就退回 padding-x。 */
+.md-deco .cm-line.md-list-item.md-reveal-marker {
+  padding-left: var(--md-list-marker-left, var(--editor-padding-x)) !important;
+}
 .md-deco .cm-line.md-blockquote.md-reveal-marker {
   padding-left: var(--editor-padding-x);
 }
-.md-deco .cm-line.md-task-item.md-reveal-marker::before,
+.md-deco .cm-line.md-list-item.md-reveal-marker::before,
 .md-deco .cm-line.md-task-item.md-reveal-marker::after,
 .md-deco .cm-line.md-blockquote.md-reveal-marker::before {
   display: none;
@@ -404,7 +409,9 @@
     var(--md-list-marker-left, var(--editor-padding-x)) +
       (var(--md-list-marker-width, var(--editor-list-marker-offset)) - 0.3em) / 2
   );
-  top: 50%;
+  /* B405：贴**首行**行盒中线（与任务方框同一口径）—— 折行列表项仍是一个 `.cm-line`，
+     `top: 50%` 会把符点放到整块中段，看着悬在第二/三行。 */
+  top: calc(var(--editor-line-height, 1.5) * 0.5em);
   width: 0.3em;
   height: 0.3em;
   transform: translateY(-50%);
@@ -524,6 +531,7 @@
 .md-deco .md-codeblock-box {
   position: relative;
   display: flex;
+  flex-direction: column;
   width: 100%;
   min-width: 0;
   border: 1px solid var(--md-panel-border);
@@ -532,9 +540,15 @@
   background: var(--md-panel-bg);
   box-shadow: var(--md-component-shadow);
 }
+/* B405：工具行与「行号栏 + 代码区」分成上下两层（照 vditor 的代码块工具条）。
+   行号竖线从这一层开始画，语言按钮与展开列表都不会压到它。 */
+.md-deco .md-codeblock-body {
+  display: flex;
+  min-width: 0;
+}
 .md-deco .md-codeblock-gutter {
   flex: none;
-  padding: 34px 10px 12px 14px;
+  padding: 12px 10px 12px 14px;
   text-align: right;
   white-space: pre;
   user-select: none;
@@ -554,13 +568,13 @@
   overflow-x: auto;
   overflow-y: hidden;
 }
-/* 上内距 34px 是给语言下拉留的位置（InkNote 同一条）—— 那一格现在真有了。 */
+/* B405：语言按钮搬进顶部工具行 ⇒ 代码区不再需要 34px 的「预留位」。 */
 .md-deco .md-codeblock-widget code {
   display: block;
   box-sizing: border-box;
   width: max-content;
   min-width: 100%;
-  padding: 34px 16px 12px;
+  padding: 12px 16px 12px;
   min-height: 1.6em;
   outline: none;
   white-space: pre;
@@ -580,24 +594,18 @@
   color: var(--shiki-dark);
 }
 
+/* B405：顶部工具行（照 vditor 的代码块工具条）—— 语言按钮与复制键并排靠右。
+   整行在「行号栏 + 代码区」之上，按钮与展开列表都不会压到行号竖线。
+   工具行常驻（语言按钮要一直看得见），只有复制键仍按旧口径悬停/编辑时现身。 */
 .md-deco .md-codeblock-header {
-  position: absolute;
-  top: 4px;
-  right: 6px;
-  z-index: 1;
   display: flex;
   align-items: center;
-  padding: 0;
-  border-radius: 6px;
+  justify-content: flex-end;
+  gap: 4px;
+  height: 30px;
+  padding: 0 8px;
   background: transparent;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.12s ease;
-}
-.md-deco .md-codeblock-widget:hover .md-codeblock-header,
-.md-deco .md-codeblock-widget.md-block--editing .md-codeblock-header {
-  opacity: 1;
-  pointer-events: auto;
+  user-select: none;
 }
 .md-deco .md-codeblock-copy {
   display: inline-flex;
@@ -613,6 +621,14 @@
   color: var(--md-muted);
   box-shadow: none;
   cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.md-deco .md-codeblock-widget:hover .md-codeblock-copy,
+.md-deco .md-codeblock-widget.md-block--editing .md-codeblock-copy {
+  opacity: 1;
+  pointer-events: auto;
 }
 .md-deco .md-codeblock-copy:hover {
   background: color-mix(in srgb, var(--md-panel-bg) 82%, var(--bg));
@@ -623,37 +639,23 @@
   box-shadow: none;
 }
 
-/* 语言下拉在盒内左上角，与右上角的复制键组成一行轻量工具。 */
+/* 语言选择：应用下拉（B108）的触发器，外观与复制键同一档按钮 —— 无边框、无常驻底色，
+   悬停时亮一下；自带的 chevron 就是唯一那颗箭头（B405 之前由 ::after 另画一颗）。 */
 .md-deco .md-codeblock-language-control {
-  position: absolute;
-  top: 8px;
-  left: 10px;
-  z-index: 2;
+  display: flex;
+  align-items: center;
   line-height: 1;
 }
-.md-deco .md-codeblock-language-control::after {
-  content: "";
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 5px;
-  height: 5px;
-  border-right: 1px solid var(--md-muted);
-  border-bottom: 1px solid var(--md-muted);
-  transform: rotate(45deg);
-  pointer-events: none;
-}
-/* B404：语言选择是应用自己的下拉（B108），这里只把触发器收成代码块头部那一档尺寸。
-   `min-width: 0 / width: auto` 必须显式写：`.dropdown-trigger` 是 150px 宽的大表单控件。 */
+/* `min-width: 0 / width: auto` 必须显式写：`.dropdown-trigger` 是 150px 宽的大表单控件。 */
 .md-deco .md-codeblock-lang {
   min-width: 0;
   width: auto;
-  max-width: 132px;
-  height: 22px;
-  padding: 0 22px 0 8px;
+  max-width: 180px;
+  height: 26px;
+  padding: 0 8px;
   border: 0;
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--md-panel-bg) 72%, transparent);
+  border-radius: 6px;
+  background: transparent;
   color: var(--md-muted);
   font-family: var(--font-ui);
   font-size: 11px;
@@ -663,16 +665,20 @@
 }
 .md-deco .md-codeblock-lang:hover {
   color: var(--md-fg);
-  background: var(--md-panel-bg);
+  background: color-mix(in srgb, var(--md-panel-bg) 88%, var(--bg));
 }
 .md-deco .md-codeblock-lang:focus {
   outline: none;
   box-shadow: none;
 }
-/* 箭头由 `.md-codeblock-language-control::after` 画（代码块头部那一档的位置），
-   下拉组件自带的 codicon 箭头在这里是第二颗，收掉。 */
+.md-deco .md-codeblock-lang .dd-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .md-deco .md-codeblock-lang .dd-caret {
-  display: none;
+  color: var(--md-muted);
+  font-size: 12px;
 }
 /* 语言名平时由下拉自己显示；这颗粒只给只读档留一个静态标签的位置（InkNote 同一条）。 */
 .md-deco .md-codeblock-language-label {
@@ -947,6 +953,57 @@
   border-radius: var(--md-component-radius);
   box-shadow: none;
   vertical-align: middle;
+  cursor: pointer;
+}
+/* 图片框架收缩到图片本身：悬浮编辑键贴着图的右上角，而不是整行右缘（B406）。 */
+.md-deco .md-image-frame {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  /* inline-block 的基线会给图下面多留几像素 ⇒ 高度图与真实盒子对不上 */
+  line-height: 0;
+}
+.md-deco .md-image-frame img {
+  display: block;
+}
+/* 编辑键贴在图片右外侧：小图（几十像素）时压在图上会盖住图心，点图就变成开弹窗（B406 真机）。
+   编辑器左右各有 48px 内边距，按钮 26px + 8px 间隙放得下。 */
+.md-deco .md-image-edit-btn {
+  position: absolute;
+  top: 4px;
+  left: calc(100% + 8px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--md-panel-border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  color: var(--md-fg);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+.md-deco .md-image-edit-btn:hover {
+  background: var(--bg-hover);
+}
+.md-deco .md-image-edit-btn .codicon {
+  font-size: 14px;
+}
+.md-deco .md-image-widget:hover .md-image-edit-btn,
+.md-deco .md-image-widget:focus-within .md-image-edit-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* 预览档（锁着）只读：点图不翻源码，编辑键也不出现。 */
+.md-deco--readonly .md-image-widget img {
+  cursor: default;
+}
+.md-deco--readonly .md-image-edit-btn {
+  display: none;
 }
 .md-deco .md-image-inline {
   display: inline-block;
@@ -979,6 +1036,16 @@
 }
 .md-deco .md-image-widget:hover .md-image-path-hint {
   opacity: 1;
+}
+.md-deco .md-image-frame .md-image-error {
+  display: block;
+  padding: 10px 14px;
+  border: 1px dashed var(--md-panel-border);
+  border-radius: var(--md-component-radius);
+  font-family: var(--md-code-font);
+}
+.md-deco .md-image-widget--error .md-image-path-hint {
+  display: none;
 }
 .md-deco .md-image-error {
   color: var(--md-muted);
@@ -1127,8 +1194,7 @@
   caret-color: transparent;
 }
 .md-deco--readonly .md-table-toolbar,
-.md-deco--readonly .md-codeblock-lang,
-.md-deco--readonly .md-codeblock-language-control::after {
+.md-deco--readonly .md-codeblock-lang {
   display: none;
 }
 .md-deco--readonly .md-codeblock-language-label {
@@ -1137,7 +1203,7 @@
   color: var(--md-muted);
   font-family: var(--font-ui);
   font-size: 11px;
-  line-height: 22px;
+  line-height: 26px;
 }
 /* B399：锁着的档里点勾不翻（预览档与只读文档都算锁着，B358 的「写操作放行」作废）⇒
    别再给可点的手势。「预览只是禁止编辑的编辑模式」——手势也得跟着说这句话。 */

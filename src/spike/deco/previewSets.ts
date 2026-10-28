@@ -94,6 +94,18 @@ function blockReveal(_from: number, _to: number) {
   return { revealFrom: 1, revealTo: 0 };
 }
 
+/**
+ * B406 · 图片块是唯一**跟着光标显形**的块：点图进来就是为了改这行 Markdown。
+ * 只读档在 `visiblePreview` 就早退（不做 reveal 过滤）⇒ 预览里点击不会露源码。
+ *
+ * ⚠️ 窗口去掉首尾两个字符：文档打开时选区默认在 0，图片恰好是第一行时 `head == from`；
+ * 键盘越过原子块时又会停在 `to`。若两端算「在块内」，这两种**并非想编辑**的落点都会
+ * 让图片一打开就变源码。真正的点击由 ImageWidget 把选区送到 `from + 2`（alt 起点）。
+ */
+function imageReveal(from: number, to: number) {
+  return { revealFrom: from + 1, revealTo: to - 1 };
+}
+
 /** 永不显形：列表符号、引用标记这类「Typora 里根本看不到源码」的标记。 */
 const NEVER_REVEAL = { from: 1, to: 0 };
 
@@ -458,13 +470,13 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
         // 正文会被剩下的空格顶开，看着就是「符号与内容的间距忽大忽小」。
         // B404：勾选框（TaskMarker）例外 —— 光标压住这一行时让位给源码 `[ ]` / `[x]`，
         // 方框那一侧由 `md-reveal-marker` 收掉（CSS 画的标记不能只靠选区过滤）。
+        // B405：光标压住这一行时，`-` / `1.`（ListMark）与 `[ ]` / `[x]`（TaskMarker）
+        // 一起显形 —— 编辑态能直接改这一整段源码。离开这一行仍走「标记由 CSS 画」的
+        // Typora 口径（`NEVER_REVEAL` 那一档现已没有 ListMark 用它，但保留给别的标记）。
         let end = to;
         while (end < doc.length && doc.sliceString(end, end + 1) === " ") end++;
-        const reveal =
-          n === "TaskMarker"
-            ? { from: doc.lineAt(from).from, to: doc.lineAt(from).to }
-            : NEVER_REVEAL;
-        hide(from, end, reveal);
+        const line = doc.lineAt(from);
+        hide(from, end, { from: line.from, to: line.to });
         return;
       }
 
@@ -603,7 +615,7 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
               title,
             ),
             block,
-            ...(block ? blockReveal(from, to) : null),
+            ...(block ? imageReveal(from, to) : null),
           }).range(from, to),
         );
         return;
@@ -866,18 +878,20 @@ export function revealFilterRange(state: EditorState): {
 }
 
 /**
- * B404 · 光标行那一颗行类：CSS 画的标记（勾选框 / 引用竖线）要让位给刚显形的源码。
+ * B404 · 光标行那一颗行类：CSS 画的标记（勾选框 / 列表符点 / 引用竖线）要让位给刚显形的源码。
  *
- * 只在「可写 + 光标行是任务行或引用行」时给 —— 标记的 hide 装饰带了行范围
+ * 只在「可写 + 光标行是列表项或引用行」时给 —— 标记的 hide 装饰带了行范围
  * （`revealFrom/revealTo`），过滤只能让字符显形，收不掉伪元素；伪元素归这颗类管。
+ * B405：普通无序/有序列表项也算（光标压住那一项时 `-` / `1.` 显形）。
  * 只读档不显形（`visiblePreview` 直接回 statics），也就不加。
  */
 export function revealMarkerLine(state: EditorState): Range<Decoration> | null {
   if (state.facet(EditorState.readOnly)) return null;
   const line = state.doc.lineAt(state.selection.main.head);
-  const task = TASK_LINE_RE.test(line.text);
+  // B405：普通无序/有序列表项也算 —— 光标压住那一项时它的 `-` / `1.` 显形
+  const list = /^[ \t]*(?:[-*+]|\d+[.)])(?:[ \t]+|$)/.test(line.text);
   const quote = /^[ \t]*(?:>[ \t]?)+/.test(line.text);
-  if (!task && !quote) return null;
+  if (!list && !quote) return null;
   return Decoration.line({ class: "md-reveal-marker" }).range(line.from);
 }
 

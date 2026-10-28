@@ -97,6 +97,7 @@ import {
   toggleViewMode,
   toggleDecoEdit,
   refreshViewModeButton,
+  refreshDecoAssetBases,
   applyPanelMode,
   openPreviewToSide,
   toggleTaskInTab,
@@ -273,6 +274,7 @@ import {
   setUpdateTocDrawer,
   setRenderPanelTabs,
   setRenderPanelOps,
+  setRefreshDecoAssetBases,
 } from "./ui";
 
 /** 编辑事务（来自任意面板的 view）：快照写回 + 脏标记 + 同源实例同步。 */
@@ -349,6 +351,7 @@ setRefreshViewModeButton(refreshViewModeButton);
 setUpdateTocDrawer(updateTocDrawer);
 setRenderPanelTabs(renderPanelTabs);
 setRenderPanelOps(renderPanelOps);
+setRefreshDecoAssetBases(refreshDecoAssetBases);
 // 把 markdown / session 的动作注入 tabs（打破 tabs↔markdown / tabs↔session 循环依赖）
 setApplyPanelMode(applyPanelMode);
 setOpenPreviewToSide(openPreviewToSide);

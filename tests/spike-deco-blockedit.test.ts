@@ -26,6 +26,7 @@ import {
   stampBlockRange,
 } from "../src/spike/deco/blockRange";
 import {
+  beginSourceEditing,
   caretTextOffset,
   clickedOnBlockPadding,
   enterAdjacentBlock,
@@ -340,11 +341,17 @@ describe("B397-3 代码块 widget：打字进得去、DOM 不被换、只读进�
       ".md-codeblock-widget .md-codeblock-lang",
     )!;
     trigger.click();
-    const list = view.dom.querySelector<HTMLElement>(".md-codeblock-widget .dropdown-list")!;
+    // B405：展开列表挂 body（撑出 `.cm-scroller` 的层叠上下文），不在 widget 里
+    const list = document.querySelector<HTMLElement>(".dropdown-list")!;
+    expect(list.parentElement, "B405：语言列表应挂在 body 下").toBe(document.body);
+    const search = list.querySelector<HTMLInputElement>(".dropdown-search");
+    expect(search, "B405：语言列表要带搜索框").toBeTruthy();
+    search!.value = "pyth";
+    search!.dispatchEvent(new Event("input", { bubbles: true }));
     const opt = [...list.querySelectorAll<HTMLButtonElement>(".dropdown-option")].find(
       (b) => b.dataset.value === "python",
     );
-    expect(opt, "展开列表里要有 python（B404 换成自定义下拉）").toBeDefined();
+    expect(opt, "搜索 pyth 后仍要有 python（B404 换成自定义下拉，B405 加搜索）").toBeDefined();
     opt!.click();
     expect(view.state.doc.toString()).toContain("```python\nexport const a = 1;\n```");
     // 只换语言那一路不重写代码（光标保住），但 <pre data-lang> 与高亮要跟上新语言
@@ -380,5 +387,30 @@ describe("B397-3 代码块 widget：打字进得去、DOM 不被换、只读进�
     await tick(30);
     expect(wrap.classList.contains("md-block--editing")).toBe(false);
     view.destroy();
+  });
+});
+
+describe("B405 块内焦点：编辑器选区跟着落位", () => {
+  const HTML_DOC = ["**重点**照旧", "", "<div>", "<p>块</p>", "</div>", "", "尾行"].join("\n");
+
+  it("焦点进 HTML 块 ⇒ 选区落到块起点，上一块 markdown 收回渲染样式", () => {
+    const view = decoView(HTML_DOC);
+    try {
+      // 光标压在 `**重点**` 里 ⇒ 这一行显形源码（前提）
+      view.dispatch({ selection: { anchor: 2 } });
+      expect(view.dom.textContent, "前提：光标行已显形").toContain("**重点**");
+      const wrap = view.dom.querySelector<HTMLElement>(".md-html-widget");
+      expect(wrap, "夹具应画出 HTML 块 widget").not.toBeNull();
+      const source = wrap!.querySelector<HTMLElement>('.md-block-source[data-block-source="1"]')!;
+      // 用户那一手：点 HTML 块的渲染结果 ⇒ 只聚焦组件里的 contenteditable，
+      // 不经过 CodeMirror ⇒ 选区必须由 focusin 那条钩子补一发
+      beginSourceEditing(wrap!, source, false);
+      source.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      const range = currentBlockRange(view, wrap!)!;
+      expect(view.state.selection.main.head, "选区应停在 HTML 块起点").toBe(range.from);
+      expect(view.dom.textContent, "上一块应收回渲染样式").not.toContain("**重点**");
+    } finally {
+      view.destroy();
+    }
   });
 });

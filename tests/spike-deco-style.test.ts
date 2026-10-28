@@ -284,6 +284,10 @@ describe("B397-2 列表与任务项：标记由 CSS 画", () => {
     expect(bullet).toMatch(/content:\s*""/);
     expect(bullet).toMatch(/width:\s*0\.3em/);
     expect(bullet).toMatch(/height:\s*0\.3em/);
+    // B405：符点贴**首行**行盒中线（与任务方框同一口径）；`top: 50%` 在折行列表项里
+    // 会把符点放到整块中段
+    expect(bullet).toMatch(/top:\s*calc\(var\(--editor-line-height,\s*1\.5\)\s*\*\s*0\.5em\)/);
+    expect(bullet).not.toMatch(/top:\s*50%/);
     const level = (n: number) =>
       ruleBlock(
         css,
@@ -350,11 +354,18 @@ describe("B397-2 列表与任务项：标记由 CSS 画", () => {
     );
   });
 
-  it("B404 光标行收掉 CSS 画的标记（勾选框 → [ ]、引用竖线 → >），左内距同时收回", () => {
-    const reveal = ruleBlock(css, ".md-deco .cm-line.md-task-item.md-reveal-marker");
-    expect(reveal).toMatch(/padding-left:\s*var\(--editor-padding-x\)/);
+  it("B404/B405 光标行收掉 CSS 画的标记（勾选框 → [ ]、列表 → -、引用竖线 → >），左内距收回", () => {
+    // B405：列表项（任务 / 无序 / 有序）统一走这一条；嵌套档的行内 padding-left
+    // 只有 !important 压得住，收回位置取 marker 左沿
+    const reveal = ruleBlock(css, ".md-deco .cm-line.md-list-item.md-reveal-marker");
+    expect(reveal).toMatch(
+      /padding-left:\s*var\(--md-list-marker-left,\s*var\(--editor-padding-x\)\)\s*!important/,
+    );
+    expect(ruleBlock(css, ".md-deco .cm-line.md-blockquote.md-reveal-marker")).toMatch(
+      /padding-left:\s*var\(--editor-padding-x\)/,
+    );
     for (const sel of [
-      ".md-deco .cm-line.md-task-item.md-reveal-marker::before",
+      ".md-deco .cm-line.md-list-item.md-reveal-marker::before",
       ".md-deco .cm-line.md-task-item.md-reveal-marker::after",
       ".md-deco .cm-line.md-blockquote.md-reveal-marker::before",
     ]) {
@@ -399,32 +410,36 @@ describe("B397-2 块级 widget：与正文左缘对齐，且一条纵向 margin 
     expect(box, "描边画在 pre 上会让行号栏那条分隔线对不齐盒子圆角").not.toMatch(/margin/);
   });
 
-  it("代码块：行号栏 + 语言下拉 + 可编辑区三件一套，上内距 34px 是给下拉留的位（App.css:1564-1599）", () => {
+  it("代码块：行号栏 + 顶部工具行两层（B405 照 vditor 的代码块工具条）", () => {
     const gutter = ruleBlock(css, ".md-deco .md-codeblock-gutter");
-    expect(gutter).toMatch(/padding:\s*34px 10px 12px 14px/);
+    // B405：语言按钮搬进顶部工具行 ⇒ 行号栏不再需要 34px 的「预留位」
+    expect(gutter).toMatch(/padding:\s*12px 10px 12px 14px/);
     expect(gutter).toMatch(/border-right:\s*1px solid var\(--md-panel-border\)/);
     expect(gutter).toMatch(/user-select:\s*none/);
+    expect(ruleBlock(css, ".md-deco .md-codeblock-body"), "行号栏+代码区要在工具行下面").toMatch(
+      /display:\s*flex/,
+    );
     const code = ruleBlock(css, ".md-deco .md-codeblock-widget code");
-    expect(code).toMatch(/padding:\s*34px 16px 12px/);
+    expect(code).toMatch(/padding:\s*12px 16px 12px/);
     expect(code).toMatch(/font-size:\s*0\.85em/);
     expect(code).toMatch(/line-height:\s*1\.55/);
     expect(code).toMatch(/white-space:\s*pre/);
     expect(ruleBlock(css, ".md-deco .md-codeblock-widget pre")).toMatch(/padding:\s*0/);
+    // 工具行常驻（语言按钮要一直可见）；复制键仍按悬停/编辑显现
+    const header = ruleBlock(css, ".md-deco .md-codeblock-header");
+    expect(header, "工具行不再绝对定位（否则会压在行号栏上）").not.toMatch(/position:\s*absolute/);
+    expect(header).toMatch(/justify-content:\s*flex-end/);
+    expect(ruleBlock(css, ".md-deco .md-codeblock-copy")).toMatch(/opacity:\s*0/);
+    expect(css).toMatch(/\.md-codeblock-widget:hover \.md-codeblock-copy/);
     const lang = ruleBlock(css, ".md-deco .md-codeblock-lang");
-    expect(lang).toMatch(/height:\s*22px/);
-    // B404：触发器换成应用的下拉组件 —— `.dropdown-trigger` 那份 150px/28px 的大表单尺寸
-    // 必须被这两条压回去，否则代码块头部会撑出一颗大按钮
+    // B404：`.dropdown-trigger` 那份 150px/28px 的大表单尺寸必须被压回去
     expect(lang).toMatch(/min-width:\s*0/);
     expect(lang).toMatch(/width:\s*auto/);
-    // 箭头只留 `.md-codeblock-language-control::after` 那一颗
-    expect(ruleBlock(css, ".md-deco .md-codeblock-lang .dd-caret")).toMatch(/display:\s*none/);
-    expect(ruleBlock(css, ".md-deco .md-codeblock-language-control")).toMatch(
-      /position:\s*absolute/,
-    );
-    const header = ruleBlock(css, ".md-deco .md-codeblock-header");
-    expect(header).toMatch(/opacity:\s*0/);
-    expect(header).toMatch(/pointer-events:\s*none/);
-    expect(css).toMatch(/\.md-codeblock-widget\.md-block--editing \.md-codeblock-header/);
+    // B405：按钮样式（与复制键同一档 26px、无边框），自带 chevron 是唯一箭头
+    expect(lang).toMatch(/height:\s*26px/);
+    expect(lang).toMatch(/background:\s*transparent/);
+    expect(ruleBlock(css, ".md-deco .md-codeblock-language-control")).toMatch(/display:\s*flex/);
+    expect(ruleBlock(css, ".md-deco .md-codeblock-lang .dd-caret")).not.toMatch(/display:\s*none/);
   });
 
   it("表格：单元格 8px/13px、表头 650、separate 描边（App.css:2299-2325）", () => {
@@ -494,7 +509,7 @@ describe("B397-2 块级 widget：与正文左缘对齐，且一条纵向 margin 
       /\.md-deco--readonly \.cm-line\.md-task-item::before\s*\{\s*cursor:\s*default/,
     );
     expect(css).toMatch(
-      /\.md-deco--readonly \.md-table-toolbar,\s*\.md-deco--readonly \.md-codeblock-lang,\s*\.md-deco--readonly \.md-codeblock-language-control::after\s*\{\s*display:\s*none/,
+      /\.md-deco--readonly \.md-table-toolbar,\s*\.md-deco--readonly \.md-codeblock-lang\s*\{\s*display:\s*none/,
     );
     expect(css).toMatch(
       /\.md-deco--readonly \.md-codeblock-language-label\s*\{\s*display:\s*inline-block/,
@@ -578,6 +593,23 @@ describe("B397-2 块级 widget：与正文左缘对齐，且一条纵向 margin 
       /\.md-deco \.md-image-widget:hover \.md-image-path-hint\s*\{\s*opacity:\s*1/,
     );
     expect(ruleBlock(css, ".md-deco .md-image-error")).toMatch(/color:\s*var\(--md-muted\)/);
+  });
+
+  it("B406 图片编辑：frame 收缩到图、悬浮编辑键、只读档收起、错误提示进 frame", () => {
+    const frame = ruleBlock(css, ".md-deco .md-image-frame");
+    expect(frame).toMatch(/display:\s*inline-block/);
+    expect(frame).toMatch(/line-height:\s*0/);
+    const btn = ruleBlock(css, ".md-deco .md-image-edit-btn");
+    expect(btn).toMatch(/position:\s*absolute/);
+    expect(btn).toMatch(/opacity:\s*0/);
+    expect(btn).toMatch(/pointer-events:\s*none/);
+    expect(css).toMatch(
+      /\.md-deco \.md-image-widget:hover \.md-image-edit-btn,[\s\S]*?\.md-deco \.md-image-widget:focus-within \.md-image-edit-btn\s*\{\s*opacity:\s*1;\s*pointer-events:\s*auto/,
+    );
+    expect(ruleBlock(css, ".md-deco--readonly .md-image-edit-btn")).toMatch(/display:\s*none/);
+    expect(ruleBlock(css, ".md-deco .md-image-frame .md-image-error")).toMatch(
+      /border:\s*1px dashed var\(--md-panel-border\)/,
+    );
   });
 
   it("B397-4a 三颗新块级根与正文左缘对齐（同一张禁纵向 margin 的名单）", () => {
