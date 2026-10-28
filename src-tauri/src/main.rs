@@ -7,6 +7,8 @@ mod core;
 mod dropbridge;
 // B400：标签拖出成文件（OLE 拖放 + CF_HDROP），与 dropbridge 的「拖入」是一对
 mod filedrag;
+// B401：预览里的外部链接交系统浏览器（只放 http/https/mailto）
+mod opener;
 mod session;
 mod window_icon;
 mod windows;
@@ -325,6 +327,8 @@ fn main() {
             commands::toggle_devtools,
             // B400：Ctrl+拖动标签 ⇒ 把这份文档当系统文件拖给外部应用（VS Code / 资源管理器）
             filedrag::start_file_drag,
+            // B401：预览里的 http(s)/mailto 链接 ⇒ 系统默认浏览器（WebView 不许自己导航）
+            opener::open_external,
         ])
         .build(tauri::generate_context!())
         .expect("LitePad 启动失败")

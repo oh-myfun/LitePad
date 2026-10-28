@@ -14,7 +14,11 @@
 // 进入编辑靠 `md-block--editing` 这一颗类（deco.css 里那组规则的存在理由）。
 
 import { EditorView, WidgetType } from "@codemirror/view";
+import { dirOf, followLink } from "../../markdown/links";
+import { sanitizeHtmlInto } from "../../markdown/sanitize";
+import { assetBase } from "./assets";
 import { bindBlockBoundaryCursor, bindBlockClickEdit, stampBlockRange } from "./blockRange";
+import { decoHooks } from "./hooks";
 import {
   attachBlockSelection,
   attachSourceEditing,
@@ -123,39 +127,6 @@ export class EditableMetadataWidget extends WidgetType {
   }
 }
 
-/**
- * 把一段 HTML 安全地放进预览区。
- *
- * 与 InkNote 同一条：先解析、再删掉能执行/能外链的节点与属性。LitePad 的
- * markdown-it 那一臂是 `html: false`（原样吐字），所以这段只服务编辑模式里的 HTML 块。
- */
-function renderSafeHtml(target: HTMLElement, html: string): void {
-  const parsed = new DOMParser().parseFromString(html, "text/html");
-  parsed
-    .querySelectorAll("script,style,iframe,object,embed,link,meta,base")
-    .forEach((el) => el.remove());
-  parsed.querySelectorAll<HTMLElement>("*").forEach((el) => {
-    for (const attr of Array.from(el.attributes)) {
-      const name = attr.name.toLowerCase();
-      // 先剥掉所有 ≤ U+0020 的字符再判协议：`java\nscript:` 是 classic 混淆手法
-      // （InkNote 写的是 /[\u0000-\u0020]+/g，这里按码位过滤，免得踩 no-control-regex 那条 lint）
-      const value = Array.from(attr.value.trim())
-        .filter((ch) => ch.charCodeAt(0) > 0x20)
-        .join("");
-      if (name.startsWith("on") || name === "style") el.removeAttribute(attr.name);
-      if (
-        ["href", "src", "xlink:href", "action", "formaction"].includes(name) &&
-        (/^(?:javascript|vbscript):/i.test(value) ||
-          (/^data:/i.test(value) &&
-            !(name === "src" && /^data:image\/(?:png|gif|jpe?g|webp);/i.test(value))))
-      ) {
-        el.removeAttribute(attr.name);
-      }
-    }
-  });
-  target.replaceChildren(...Array.from(parsed.body.childNodes));
-}
-
 /** HTML 块：默认显示渲染结果（已消毒），点它改源码。 */
 export class HtmlBlockWidget extends WidgetType {
   constructor(
@@ -182,14 +153,14 @@ export class HtmlBlockWidget extends WidgetType {
 
     const preview = document.createElement("div");
     preview.className = "md-html-preview";
-    renderSafeHtml(preview, this.html);
+    sanitizeHtmlInto(preview, this.html);
     wrap.append(source, preview);
     bindBlockBoundaryCursor(wrap, preview);
 
     attachSourceEditing(wrap, {
       source: () => source,
       toMarkdown: (text) => text.replace(/\n+$/, ""),
-      onInput: (text) => renderSafeHtml(preview, text),
+      onInput: (text) => sanitizeHtmlInto(preview, text),
       indentOnTab: true,
     });
     preview.addEventListener("mousedown", (event) => {
@@ -197,6 +168,21 @@ export class HtmlBlockWidget extends WidgetType {
       if (target.closest("a,button,input,select,textarea")) return;
       event.preventDefault();
       beginSourceEditing(wrap, source, false);
+    });
+    // B401：HTML 块里的 `<a href>` 同样不许把 WebView 导航走；纯锚点（`#id`）放给默认行为。
+    preview.addEventListener("click", (event) => {
+      const anchor = (event.target as HTMLElement | null)?.closest?.(
+        "a[href]",
+      ) as HTMLAnchorElement | null;
+      if (!anchor) return;
+      const href = anchor.getAttribute("href") ?? "";
+      if (href.startsWith("#")) return;
+      event.preventDefault();
+      const docPath = EditorView.findFromDOM(wrap)?.state.field(assetBase, false) ?? null;
+      followLink(href, {
+        baseDir: docPath ? dirOf(docPath) : null,
+        openLocal: decoHooks().openLocalFile,
+      });
     });
     return wrap;
   }
@@ -208,7 +194,7 @@ export class HtmlBlockWidget extends WidgetType {
     stampBlockRange(dom, this.from, this.to);
     if (document.activeElement !== source) {
       source.textContent = this.html;
-      renderSafeHtml(preview, this.html);
+      sanitizeHtmlInto(preview, this.html);
     }
     EditorView.findFromDOM(dom)?.requestMeasure();
     return true;

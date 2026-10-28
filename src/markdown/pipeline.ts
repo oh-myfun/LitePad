@@ -1,5 +1,6 @@
 import MarkdownIt from "markdown-it";
 import footnote from "markdown-it-footnote";
+import { sanitizeHtmlString } from "./sanitize";
 
 /**
  * Markdown 渲染管线（M3）：
@@ -50,7 +51,9 @@ interface InlineState {
 }
 
 function createMd(): MdInstance {
-  const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
+  // B401：`html: true` —— VS Code 的 Markdown 预览同样渲染原始 HTML。安全由两个出口
+  // （renderBlocks / renderFull）统一走 `sanitize.ts` 兜住；生成出来的标签不重复消毒。
+  const md = new MarkdownIt({ html: true, linkify: true, breaks: false });
   md.use(footnote);
 
   // ---------- 任务列表（GFM）：[ ] / [x] → checkbox ----------
@@ -69,7 +72,17 @@ function createMd(): MdInstance {
       const box = new state.Token("html_inline", "", 0);
       box.content = `<input type="checkbox" class="md-task" disabled${checked ? " checked" : ""}> `;
       children.unshift(box);
-      tokens[i - 1].attrJoin("class", "task-item");
+      // B401：`task-item` 要挂在 **li** 上（旧写法挂在紧贴的 paragraph_open 上，
+      // 而紧凑列表的 paragraph_open 是 hidden、渲染时整个被丢掉 ⇒ 那条
+      // `.md-rendered li.task-item { list-style:none; margin-left:-20px }` 从来没生效，
+      // 勾选框就落在列表符号那一格里，看着跟文字对不齐）。
+      for (let j = i - 1; j >= 0; j--) {
+        if (tokens[j].type === "list_item_open") {
+          tokens[j].attrJoin("class", "task-item");
+          break;
+        }
+        if (tokens[j].type === "list_item_close") break;
+      }
     }
     return true;
   });
@@ -181,10 +194,17 @@ export function renderBlocks(src: string): MdBlock[] {
     }
   }
 
+  // B401：只有**源码里出现类标签片段**的块才走消毒（DOMParser 不是免费的，
+  // 普通 Markdown 每次敲键都过一遍会白吃一份开销）；生成出来的标签本身不需要。
+  const srcLines = /<[A-Za-z!/?]/.test(src) ? src.split("\n") : null;
   const blocks: MdBlock[] = [];
   for (const g of groups) {
     // 区间修正：用 close token 之后的边界；map[1] 为 exclusive，转 inclusive
-    const html = md.renderer.render(g.tokens, md.options, env);
+    let html = md.renderer.render(g.tokens, md.options, env);
+    if (srcLines) {
+      const raw = srcLines.slice(g.map[0], g.map[1]).join("\n");
+      if (/<[A-Za-z!/?]/.test(raw)) html = sanitizeHtmlString(html);
+    }
     blocks.push({ lineStart: g.map[0] + 1, lineEnd: Math.max(g.map[1], g.map[0] + 1), html });
   }
   // ⚠️ B268：末块的 `lineEnd` 必须覆盖到**文档末行**（`doc.lines`），而非 markdown-it 给的
@@ -224,5 +244,6 @@ export function extractToc(src: string): TocEntry[] {
 
 /** 一次性全量渲染（导出 HTML 用）。 */
 export function renderFull(src: string): string {
-  return md.render(src, {});
+  const html = md.render(src, {});
+  return /<[A-Za-z!/?]/.test(src) ? sanitizeHtmlString(html) : html;
 }

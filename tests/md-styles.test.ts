@@ -48,10 +48,16 @@ describe("B352-1 排版规则从容器里剥出来（.md-rendered）", () => {
     }
   });
 
-  it("任务清单勾选框：加大一档 + 可点的框用 hand 光标（B358 追补，用户口径）", () => {
+  it("任务清单勾选框：跟正文同字号 + 行盒中心对齐 + 可点的框用 hand 光标", () => {
     const rule = css.match(/\.md-rendered input\.md-task\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(rule, "勾选框要有自己的尺寸档").toMatch(/width:\s*1\.05em/);
-    expect(rule).toMatch(/height:\s*1\.05em/);
+    expect(rule, "B401：方框 1em（不再是固定 1.05em）").toMatch(/width:\s*1em/);
+    expect(rule).toMatch(/height:\s*1em/);
+    expect(rule, "input 不继承字号 ⇒ 必须显式 inherit，否则 1em 是 13.33px").toMatch(
+      /font-size:\s*inherit/,
+    );
+    expect(rule, "B401 真机量：-0.18em 时方框中心比行盒中心低 2.4px").toMatch(
+      /vertical-align:\s*-0\.06em/,
+    );
     const pointer =
       css.match(/\.md-rendered input\.md-task:not\(:disabled\)\s*\{[^}]*\}/)?.[0] ?? "";
     expect(pointer, "可点的框 hand 光标；灰着的框不撒谎").toMatch(/cursor:\s*pointer/);

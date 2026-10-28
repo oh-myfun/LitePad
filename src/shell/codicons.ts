@@ -138,6 +138,10 @@ const IDS = {
   //    ⚠️ 别写成「一颗 + .is-on 配色」：状态落在颜色上，暗色主题下几乎分不出来。
   preview: "preview",
   editCode: "edit-code",
+  // B401 · 页面内那颗「预览 ↔ 编辑」悬浮键（B399）：编辑档画 eye（点了看），
+  // 预览档画 edit（点了写）—— 字形仍是「点了会去的那一档」。
+  eye: "eye",
+  edit: "edit",
   // —— 标签上的文件类型字形（10 个家族，见 src/shell/fileicons.ts）——
   markdown: "markdown",
   code: "code",

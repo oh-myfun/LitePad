@@ -92,7 +92,7 @@ describe("B391-1 装饰集构建", () => {
     // 引用的两行都要挂上（`lineDecoAll`），否则竖线只画半截
     expect(lineClasses(lines, state, 3)).toContain("md-blockquote");
     expect(lineClasses(lines, state, 4)).toContain("md-blockquote");
-    expect(lineClasses(lines, state, 6)).toContain("md-list-item md-bullet-list");
+    expect(lineClasses(lines, state, 6).join(" ")).toContain("md-list-item md-bullet-list");
     expect(lineClasses(lines, state, 9)).toContain("md-list-item md-ordered-list");
     // 有序列表把源码里真实的序号交给 CSS（3. 就显示 3，不让计数器重排成 1）
     expect(lineClasses(lines, state, 10).join(" ")).toContain("md-ordered-list");
@@ -589,5 +589,67 @@ describe("B397-1 可写档的标记显形", () => {
     } finally {
       view.destroy();
     }
+  });
+});
+
+describe("B401 列表符号分级 / 空格收口 / 链接落点", () => {
+  it("多级无序列表按深度挂 md-bullet-1/2/3（disc → circle → square → 循环）", () => {
+    const state = docState("- 一\n  - 二\n    - 三\n      - 四\n");
+    const { lines } = buildPreviewSets(state);
+    expect(lineClasses(lines, state, 1).join(" ")).toContain("md-bullet-1");
+    expect(lineClasses(lines, state, 2).join(" ")).toContain("md-bullet-2");
+    expect(lineClasses(lines, state, 3).join(" ")).toContain("md-bullet-3");
+    expect(lineClasses(lines, state, 4).join(" ")).toContain("md-bullet-1");
+  });
+
+  it("列表标记后的**所有**空格都藏掉（多打空格不再把正文推开）", () => {
+    // "-   正文"：mark 是 "-"，后面三个空格都必须被 replace 覆盖
+    const state = docState("-   正文\n");
+    const { statics } = buildPreviewSets(state);
+    const line = state.doc.line(1);
+    for (let i = 1; i <= 3; i++) {
+      let covered = false;
+      statics.between(line.from + i, line.from + i + 1, () => {
+        covered = true;
+      });
+      expect(covered, `第 ${i + 1} 个字符（空格）应被藏`).toBe(true);
+    }
+  });
+
+  it("嵌套列表的作者缩进整段藏掉（缩进只听 CSS 的 depth 档）", () => {
+    const state = docState("- 一\n  - 二\n");
+    const { statics } = buildPreviewSets(state);
+    const l2 = state.doc.line(2);
+    let covered = false;
+    const it = statics.iter();
+    while (it.value) {
+      if (it.from === l2.from && it.to === l2.from + 2) covered = true;
+      it.next();
+    }
+    expect(covered, "行首两个空格要整段 replace").toBe(true);
+  });
+
+  it("链接的落点写在 data-href 上（没有真 href，WebView 导航不走）", () => {
+    const state = docState("[甲](https://a.example) 与 [乙](b.md) 与 <https://c.example>\n");
+    const { statics } = buildPreviewSets(state);
+    const hrefs: string[] = [];
+    const it = statics.iter();
+    while (it.value) {
+      const spec = it.value.spec as { class?: string; attributes?: Record<string, string> };
+      if (spec.class === "cm-md-link") hrefs.push(spec.attributes?.["data-href"] ?? "");
+      it.next();
+    }
+    expect(hrefs).toEqual(["https://a.example", "b.md", "https://c.example"]);
+  });
+
+  it("引用式链接也能拿到定义里的地址", () => {
+    const state = docState("见 [丙][r]。\n\n[r]: https://d.example\n");
+    const { statics } = buildPreviewSets(state);
+    let href = "";
+    statics.between(0, state.doc.line(1).to, (_f, _t, value) => {
+      const spec = value.spec as { class?: string; attributes?: Record<string, string> };
+      if (spec.class === "cm-md-link") href = spec.attributes?.["data-href"] ?? "";
+    });
+    expect(href).toBe("https://d.example");
   });
 });

@@ -101,8 +101,8 @@ import {
   openPreviewToSide,
   toggleTaskInTab,
 } from "./markdown";
-// B397-1：所见即所得档交回宿主的两个动作（点勾 / 许不许写）在这里注入。
-import { setDecoHooks } from "./spike/deco/wysiwyg";
+// B397-1：所见即所得档交回宿主的动作（点勾 / 许不许写 / 本地链接开标签）在这里注入。
+import { setDecoHooks } from "./spike/deco/hooks";
 import { openFindBar } from "./find/findbar";
 import {
   setupSideBar,
@@ -384,6 +384,10 @@ setDecoHooks({
     // B399：预览档是「禁止编辑的编辑模式」—— 点勾也是一次写，锁着的档位里不许发生。
     // （transactionFilter 会丢掉那一发，但先在这里挡住，免得画一次「点了没反应」。）
     return !!t && !!d && isMdTab(t) && !d.readonly && t.viewMode !== "preview";
+  },
+  // B401：装饰面里的本地链接（Ctrl+点击 / HTML 块里的锚点）开进一个标签，与拖入/打开同一条漏斗
+  openLocalFile: (path) => {
+    void doOpen(path);
   },
 });
 

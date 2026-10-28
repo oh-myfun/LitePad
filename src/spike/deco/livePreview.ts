@@ -37,7 +37,10 @@ import {
 } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import type { Tree } from "@lezer/common";
+import { anchorCandidates, dirOf, followLink } from "../../markdown/links";
+import { extractToc } from "../../markdown/pipeline";
 import { assetBase, setAssetBase } from "./assets";
+import { decoHooks } from "./hooks";
 import { applySelection, buildPreviewSets, type BlockRange, type PreviewSets } from "./previewSets";
 import { previewSyntaxTree, setDraftFences } from "./codeFence";
 import "./deco.css";
@@ -159,10 +162,49 @@ const viewportSync = ViewPlugin.fromClass(
   },
 );
 
+/**
+ * B401 · 链接的点击口径：编辑档 Ctrl+点击、预览档（锁着）普通点击就开。
+ *
+ * 装饰面里的链接只是**文字 + data-href**（previewSets 的 Link 分支），从来没有真 `<a>`；
+ * 这里补上「点了去哪儿」。编辑档不抢普通点击 —— 那一下是放光标/选字。
+ */
+/** 装饰面没有 DOM id：按大纲的 slug 认出那一节，把光标送过去并滚到顶。 */
+function revealAnchor(view: EditorView, id: string): void {
+  const want = anchorCandidates(id);
+  const hit = extractToc(view.state.doc.toString()).find((t) => want.includes(t.id));
+  if (!hit) return;
+  const line = view.state.doc.line(Math.min(hit.line, view.state.doc.lines));
+  view.dispatch({
+    selection: { anchor: line.from },
+    effects: EditorView.scrollIntoView(line.from, { y: "start" }),
+  });
+}
+
+const linkClick = EditorView.domEventHandlers({
+  mousedown(event, view) {
+    if (event.button !== 0) return false;
+    const el = (event.target as HTMLElement | null)?.closest?.(
+      ".cm-md-link[data-href]",
+    ) as HTMLElement | null;
+    if (!el) return false;
+    const locked = view.state.facet(EditorState.readOnly);
+    if (!locked && !event.ctrlKey) return false;
+    const href = el.getAttribute("data-href") ?? "";
+    const docPath = view.state.field(assetBase, false) ?? null;
+    event.preventDefault();
+    const target = followLink(href, {
+      baseDir: docPath ? dirOf(docPath) : null,
+      openLocal: decoHooks().openLocalFile,
+    });
+    if (target.kind === "anchor") revealAnchor(view, target.id);
+    return true;
+  },
+});
+
 /** 所见即所得档的装饰扩展（进 `previewCompartment`，源码档换成了空）。 */
 export function livePreview(): Extension {
   // `assetBase` 与本字段同生共死（只在这一档里存在）；重建由 `setAssetBase` 触发
-  return [assetBase, viewWindow, livePreviewField, viewportSync];
+  return [assetBase, viewWindow, livePreviewField, viewportSync, linkClick];
 }
 
 /** 这一档装在这份 state 上吗（换档前问一句，避免无谓的 reconfigure 重 parse 全篇）。 */

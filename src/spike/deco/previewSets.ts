@@ -59,6 +59,27 @@ function headingLevel(name: string): number {
   return m ? Number(m[1]) : 1;
 }
 
+/** 链接的落点（B401）：`data-href` 要跟着装饰一起给出去，Ctrl+点击才知道开哪儿。 */
+function linkHref(
+  node: SyntaxNodeRef,
+  doc: EditorState["doc"],
+  definitions: Map<string, LinkDefinition>,
+): string {
+  const url = node.node.getChild("URL");
+  if (url) return doc.sliceString(url.from, url.to);
+  const label = node.node.getChild("LinkLabel");
+  if (label) {
+    const raw = doc.sliceString(label.from + 1, label.to - 1);
+    return definitions.get(normalizeLinkLabel(raw))?.url ?? "";
+  }
+  return "";
+}
+
+/** 多级无序列表的档位：disc → circle → square 循环（与 VS Code 预览同名同序）。 */
+function bulletLevel(depth: number): number {
+  return ((Math.max(1, depth) - 1) % 3) + 1;
+}
+
 /** 真正把标记从排版里拿掉（透明字符仍会占位，会在链接后留下大片空白） */
 const HIDE_MARK = Decoration.replace({});
 
@@ -353,9 +374,11 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
       }
 
       if (n === "ListMark" || n === "TaskMarker") {
-        // 与 Typora 一致：列表符号与复选框的源码永不显形，由 CSS 画出来
+        // 与 Typora 一致：列表符号与复选框的源码永不显形，由 CSS 画出来。
+        // B401：标记后的**所有**空格一并藏掉 —— 只藏一个的话，`-  item`（多打空格）的
+        // 正文会被剩下的空格顶开，看着就是「符号与内容的间距忽大忽小」。
         let end = to;
-        if (doc.sliceString(end, end + 1) === " ") end++;
+        while (end < doc.length && doc.sliceString(end, end + 1) === " ") end++;
         hide(from, end, NEVER_REVEAL);
         return;
       }
@@ -380,12 +403,19 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
         const firstLine = doc.lineAt(from);
         const lastLine = doc.lineAt(to);
         const ordered = parent?.name === "OrderedList";
+        const mark = node.node.getChild("ListMark");
+
+        // 嵌套档的缩进只认 CSS 的 depth 档位：作者在标记前多打的空格一律藏掉。
+        // 留着重叠就会「2 空格 vs 4 空格」的同类项左沿对不齐（B401 用户报的那条）。
+        if (mark && mark.from > firstLine.from) {
+          const lead = doc.sliceString(firstLine.from, mark.from);
+          if (/^[ \t]+$/.test(lead)) hide(firstLine.from, mark.from, NEVER_REVEAL);
+        }
 
         // 有序列表显示源码里真实的序号（`3.` 就该显示 3，而不是 CSS 计数器从 1 重排）
         let markerStyle = "";
-        if (ordered) {
-          const mark = node.node.getChild("ListMark");
-          const raw = mark ? doc.sliceString(mark.from, mark.to) : "";
+        if (ordered && mark) {
+          const raw = doc.sliceString(mark.from, mark.to);
           const safe = raw.replace(/[^0-9.)]/g, "");
           if (safe) {
             // 1.、10.、100. 不能共用固定宽度，否则两位数起会挤出正文左缘。
@@ -394,11 +424,13 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
           }
         }
 
-        // 每行只挂一条带 style 的行装饰，避免多条装饰的 style 互相覆盖
+        // 每行只挂一条带 style 的行装饰，避免多条装饰的 style 互相覆盖。
+        // 无序列表的符号等级走类名（CSS 画形状）—— 字体里的 • ◦ ▪ 墨迹大小不一，
+        // 居中后「符号↔正文」的间隙会忽大忽小（B401 用户报的那条）。
         const firstClasses = ordered
           ? "md-list-item md-ordered-list"
           : parent?.name === "BulletList"
-            ? "md-list-item md-bullet-list"
+            ? `md-list-item md-bullet-list md-bullet-${bulletLevel(depth)}`
             : "md-list-item";
         addLineClass(
           firstLine.from,
@@ -429,9 +461,16 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
         hideChildren(node, "LinkTitle");
         // 引用式链接 [文字][ref] 的 [ref] 也要藏
         hideChildren(node, "LinkLabel");
-        // 链接色不随光标显隐（地址那几截由上面的 hideChildren 负责显形）
+        // 链接色不随光标显隐（地址那几截由上面的 hideChildren 负责显形）。
+        // B401：落点写在 data-href 上 —— Ctrl+点击要知道开哪儿，而真正的 href 不能给
+        // （给了 WebView 就会自己导航，正是这次要修的那个病）。
+        const href = linkHref(node, doc, linkDefinitions);
         decos.push(
-          Decoration.mark({ class: "cm-md-link", ...blockReveal(from, to) }).range(from, to),
+          Decoration.mark({
+            class: "cm-md-link",
+            ...(href ? { attributes: { "data-href": href } } : null),
+            ...blockReveal(from, to),
+          }).range(from, to),
         );
         return;
       }
@@ -439,15 +478,24 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
       if (n === "Autolink") {
         // <https://x> 的尖括号要藏掉
         hideChildren(node, "LinkMark");
+        const href = linkHref(node, doc, linkDefinitions) || doc.sliceString(from + 1, to - 1);
         decos.push(
-          Decoration.mark({ class: "cm-md-link", ...blockReveal(from, to) }).range(from, to),
+          Decoration.mark({
+            class: "cm-md-link",
+            attributes: { "data-href": href },
+            ...blockReveal(from, to),
+          }).range(from, to),
         );
         return;
       }
 
       if (n === "URL" && node.node.parent?.name === "Paragraph") {
         decos.push(
-          Decoration.mark({ class: "cm-md-link", ...blockReveal(from, to) }).range(from, to),
+          Decoration.mark({
+            class: "cm-md-link",
+            attributes: { "data-href": doc.sliceString(from, to) },
+            ...blockReveal(from, to),
+          }).range(from, to),
         );
         return;
       }

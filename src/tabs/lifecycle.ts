@@ -47,7 +47,7 @@ import { attachTabToPanel, isMdTab, makeDoc, makeInstance, registerDoc } from ".
 import { toggleTaskInTab } from "../markdown";
 import { updateTocDrawer } from "../toc";
 import { retargetFindBar, relayoutFindBar } from "../find/findbar";
-import { saveDocCore } from "../io/files";
+import { doOpen, saveDocCore } from "../io/files";
 // B400：Ctrl+拖动标签把这份文档当系统文件拖出去
 import { dragTabAsFile } from "../io/filedrag";
 import { attachPasteHandler } from "../io/export";
@@ -357,6 +357,10 @@ export function ensurePreviewArm(p: Panel): void {
     },
     toggleTaskAt: (lineStart, lineEnd, index) => {
       if (p.viewTabId !== null) toggleTaskInTab(p.viewTabId, lineStart, lineEnd, index);
+    },
+    // B401：预览里点本地链接 ⇒ 与菜单/拖入同一条打开漏斗（外部链接由 links 模块自己交系统浏览器）
+    openLocalFile: (path) => {
+      void doOpen(path);
     },
   });
 }

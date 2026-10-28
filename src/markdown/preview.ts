@@ -1,4 +1,5 @@
 import { enhanceMarkdown, nextEnhanceSeq } from "./enhance";
+import { anchorCandidates, followLink } from "./links";
 
 import type { MdBlock } from "./pipeline";
 import type { PreviewScrollSurface } from "../sync-scroll/preview";
@@ -20,6 +21,8 @@ export interface PreviewHost {
   canWrite(): boolean;
   /** 把岛里第 index 个勾选框翻回源码（宿主拿得到编辑器视图；只读时宿主自己不动） */
   toggleTaskAt(lineStart: number, lineEnd: number, index: number): void;
+  /** B401：本地链接开进一个标签（外部链接由 links 模块直接交系统浏览器） */
+  openLocalFile?: (path: string) => void;
 }
 
 interface BlockNode {
@@ -74,8 +77,18 @@ export class PreviewPane {
         }
         return;
       }
-      // 点击链接交给浏览器默认行为（锚点/脚注跳转）
-      if (target.closest("a")) return;
+      // B401：链接绝不能交回浏览器默认行为 —— WebView 一导航，整个应用就被那个网页
+      // 顶掉且退不回来。外链交系统浏览器、本地文件开标签、纯锚点在预览里就地滚。
+      const anchor = target.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (anchor) {
+        e.preventDefault();
+        const result = followLink(anchor.getAttribute("href") ?? "", {
+          baseDir: this.baseDir,
+          openLocal: (path) => this.host?.openLocalFile?.(path),
+        });
+        if (result.kind === "anchor") this.scrollToAnchor(result.id);
+        return;
+      }
     });
   }
 
@@ -390,6 +403,13 @@ export class PreviewPane {
    * 登记的是**当前读回**的 `v`（不是想要的目标行）：这一发的语义是「它停在这儿也是我
    * 造成的」，位置由内容决定，我们不该替它承诺去哪儿。
    */
+  /** 纯锚点链接（`#标题`）：在预览里滚到那一块，不碰 WebView 的导航。 */
+  private scrollToAnchor(id: string): void {
+    const want = new Set(anchorCandidates(id));
+    const el = [...this.root.querySelectorAll<HTMLElement>("[id]")].find((n) => want.has(n.id));
+    el?.scrollIntoView?.({ block: "start" });
+  }
+
   private declareOwnScroll(): void {
     const anchor = new PreviewScrollAnchor(this.scrollSurface());
     // 这两处都是「刚写完，它停在这儿也是我造成的」⇒ 不假设该落在哪儿，意图与落点同值。

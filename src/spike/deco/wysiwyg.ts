@@ -10,28 +10,10 @@
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { draftFences } from "./codeFence";
+import { decoHooks } from "./hooks";
 import { decoKeymap } from "./keymap";
 import { livePreview } from "./livePreview";
 import { taskClick } from "./taskClick";
-
-export interface DecoHooks {
-  /** 用户点中第 `line` 行（**文档行号**，1 起）的方框。宿主写的是这一颗 view 那份文档的那一行。 */
-  onToggleTask: (view: EditorView, line: number) => void;
-  /** 这一格现在许不许写（只读文档 / 非 Markdown ⇒ false，点了不许有反应，B228 口径）。 */
-  canToggleTask: (view: EditorView) => boolean;
-}
-
-// 装饰扩展活在**标签的 EditorState** 里（多标签共用一颗 view），比任何一个面板都长寿
-// ⇒ 回调只能晚绑定，不能像挂载点那样闭包面板引用。
-let hooks: DecoHooks = {
-  onToggleTask: () => {},
-  canToggleTask: () => true,
-};
-
-/** 组合根（main.ts）注入：把「点勾写哪一行」「这一格许不许写」交给宿主。 */
-export function setDecoHooks(next: DecoHooks): void {
-  hooks = next;
-}
 
 /** 预览档（源码档换成了空数组）。 */
 export function decoFace(): Extension {
@@ -39,8 +21,8 @@ export function decoFace(): Extension {
     draftFences,
     livePreview(),
     taskClick({
-      onToggleTask: (view, line) => hooks.onToggleTask(view, line),
-      canToggleTask: (view) => hooks.canToggleTask(view),
+      onToggleTask: (view, line) => decoHooks().onToggleTask(view, line),
+      canToggleTask: (view) => decoHooks().canToggleTask(view),
     }),
     // B397-4b · 编辑模式的键位（续列表 / 组件边界回车 / 方向键进组件）
     decoKeymap(),

@@ -146,7 +146,9 @@ describe("B397-2 标题：字阶挂在行内 mark 上，行元素只管上方留
 
   it("字号不许挪到行元素上：padding-top 的 em 基准会被字号顶掉", () => {
     for (let level = 1; level <= 6; level++) {
-      const body = ruleBlock(css, `.md-deco .cm-line.md-heading-${level}`);
+      // B401：同前缀还有「标题里的 # 跟标题同字阶」那条规则（选择器更长），
+      // 用 padding-top 当过滤词，只取行元素自己那条。
+      const body = ruleBlock(css, `.md-deco .cm-line.md-heading-${level}`, "padding-top");
       expect(body, `md-heading-${level} 只管 padding-top`).not.toMatch(/font-size/);
       expect(body).toMatch(/padding-top:/);
     }
@@ -205,6 +207,22 @@ describe("B397-2 行内构造：代码 chip、链接、引用竖线", () => {
     expect(body).toMatch(/font-family:\s*var\(--font-body\)/);
   });
 
+  it("B401 光标压进标题时 `#` 与标题同字阶（有意偏离 InkNote 的 400/正文大小）", () => {
+    for (const [cls, size] of HEADING_SCALE) {
+      const n = cls.slice(-1);
+      const mark = ruleBlock(
+        css,
+        `.md-deco .cm-line.md-heading-${n} .cm-md-heading-mark, ` +
+          `.md-deco .cm-line.md-heading-${n} .cm-md-heading-mark *`,
+      );
+      expect(mark, `h${n} 的 # 字号要等于标题`).toMatch(
+        new RegExp(`font-size:\\s*${size.replace(".", "\\.")}`),
+      );
+    }
+    // 颜色仍是淡灰（标记不抢正文），只是字阶跟过去
+    expect(css).toMatch(/\.cm-md-heading-mark \*[\s\S]{0,200}color:[^;]*--md-faint/);
+  });
+
   it("引用竖线画在 padding-x 处并贴满行盒上下（相邻行连成整条线，App.css:1404-1415）", () => {
     const bar = ruleBlock(css, ".md-deco .cm-line.md-blockquote::before");
     expect(bar).toMatch(/left:\s*var\(--editor-padding-x\)/);
@@ -219,13 +237,25 @@ describe("B397-2 行内构造：代码 chip、链接、引用竖线", () => {
 });
 
 describe("B397-2 列表与任务项：标记由 CSS 画", () => {
-  it("圆点用 `•`、序号用源码里的真实序号，两者都占 marker-width（App.css:1421-1445）", () => {
+  it("圆点画成 disc/circle/square 三档、序号用源码里的真实序号，都占 marker-width", () => {
     const bullet = ruleBlock(
       css,
       ".md-deco .cm-line.md-list-item.md-bullet-list:not(.md-task-item)::before",
     );
-    expect(bullet).toMatch(/content:\s*"•"/);
-    expect(bullet).toMatch(/width:\s*var\(--md-list-marker-width,/);
+    // B401：符号由字体改成「画」（三档同一 0.3em 盒子）—— 字体里的 • ◦ ▪ 墨迹
+    // 大小不一，居中后符号↔正文的间隙会忽大忽小
+    expect(bullet).toMatch(/content:\s*""/);
+    expect(bullet).toMatch(/width:\s*0\.3em/);
+    expect(bullet).toMatch(/height:\s*0\.3em/);
+    const level = (n: number) =>
+      ruleBlock(
+        css,
+        `.md-deco .cm-line.md-list-item.md-bullet-list.md-bullet-${n}:not(.md-task-item)::before`,
+      );
+    expect(level(1)).toMatch(/border-radius:\s*50%/);
+    expect(level(2)).toMatch(/border:\s*0\.075em solid/);
+    expect(level(2)).toMatch(/background:\s*transparent/);
+    expect(level(3)).toMatch(/border-radius:\s*0\.03em/);
     const ordered = ruleBlock(
       css,
       ".md-deco .cm-line.md-list-item.md-ordered-list:not(.md-task-item)::before",
@@ -238,22 +268,23 @@ describe("B397-2 列表与任务项：标记由 CSS 画", () => {
     expect(css).toMatch(/counter-increment:\s*md-olist/);
   });
 
-  it("任务方框 14×14 / 1.5px 描边 / top .45em（App.css:1449-1462）", () => {
+  it("B401 任务方框跟正文同字号（1em）并在行盒里垂直居中", () => {
     const box = ruleBlock(css, ".md-deco .cm-line.md-task-item::before");
-    expect(box).toMatch(/width:\s*14px/);
-    expect(box).toMatch(/height:\s*14px/);
-    expect(box).toMatch(/border:\s*1\.5px solid var\(--md-strong-border\)/);
-    expect(box).toMatch(/border-radius:\s*3px/);
-    expect(box).toMatch(/top:\s*0\.45em/);
+    expect(box).toMatch(/width:\s*1em/);
+    expect(box).toMatch(/height:\s*1em/);
+    expect(box).toMatch(/border:\s*0\.11em solid var\(--md-strong-border\)/);
+    expect(box).toMatch(/border-radius:\s*0\.21em/);
+    expect(box).toMatch(/top:\s*50%/);
+    expect(box).toMatch(/transform:\s*translateY\(-50%\)/);
     expect(box).toMatch(/cursor:\s*pointer/);
   });
 
-  it("勾是两根 1.8px 的边转 45°，不是字符 ✓（App.css:1473-1485）", () => {
+  it("勾是两根 em 口径的边转 45°，不是字符 ✓", () => {
     const check = ruleBlock(css, ".md-deco .cm-line.md-task-done::after");
     expect(check).not.toMatch(/content:\s*"[^"]+"/);
-    expect(check).toMatch(/width:\s*5px/);
-    expect(check).toMatch(/height:\s*9px/);
-    expect(check).toMatch(/border-width:\s*0 1\.8px 1\.8px 0/);
+    expect(check).toMatch(/width:\s*0\.36em/);
+    expect(check).toMatch(/height:\s*0\.64em/);
+    expect(check).toMatch(/border-width:\s*0 0\.13em 0\.13em 0/);
     expect(check).toMatch(/transform:\s*rotate\(45deg\)/);
     expect(ruleBlock(css, ".md-deco .cm-line.md-task-done::before")).toMatch(
       /background:\s*var\(--md-accent\)/,

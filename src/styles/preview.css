@@ -169,6 +169,17 @@
   margin: 10px 0;
   padding-left: 26px;
 }
+/* B401：多级无序列表的符号显式分级（disc → circle → square，与 VS Code 预览同序），
+   每一级缩进与上一级的正文左缘对齐。 */
+.md-rendered ul {
+  list-style-type: disc;
+}
+.md-rendered ul ul {
+  list-style-type: circle;
+}
+.md-rendered ul ul ul {
+  list-style-type: square;
+}
 .md-rendered li {
   margin: 4px 0;
 }
@@ -177,11 +188,16 @@
   margin-left: -20px;
 }
 .md-rendered input.md-task {
-  margin-right: 6px;
-  vertical-align: middle;
-  /* B358 追补（用户口径）：默认 13px 的框衬着 15px 正文太小，放大一档（em 跟着字号/缩放走） */
-  width: 1.05em;
-  height: 1.05em;
+  /* B401：方框跟正文同字号，方框中心压到正文行盒中心。
+     ⚠️ `input` **不继承父级字号**：不写 `font-size: inherit` 时 1em 取的是 input 默认
+     13.33px，方框比 15px 的正文小一圈（真机量到 13.33 vs 15）；`-0.18em` 那版中心又
+     比行盒中心低 2.4px。尺寸/位移都用 em —— 字号、缩放、主题换档时跟着走。 */
+  width: 1em;
+  height: 1em;
+  font-size: inherit;
+  margin: 0 0.5em 0 0;
+  vertical-align: -0.06em;
+  accent-color: var(--accent);
 }
 /* hand 光标只给**可点的**框：只读文档灰着的框撒谎（B228 口径） */
 .md-rendered input.md-task:not(:disabled) {
@@ -1504,13 +1520,13 @@ body.layout-dragging .toc-grip {
 }
 
 /* B399 · 预览档（禁编辑）↔ 编辑档的**页面内悬浮键**（用户口径 2026-10-28）。
-   只在装饰面（两种所见即所得档）里出现，位置固定在编辑区右下角 —— 与右上角的查找浮层
-   错开，也不进标签条（标签条那颗双字形开关管的是源码 ↔ 预览）。字形/提示由
+   B401：搬到编辑区**左上角**（用户点名），字形改 eye / edit。只在装饰面（两种所见即所得档）
+   里出现，不进标签条（标签条那颗双字形开关管的是源码 ↔ 预览）。字形/提示由
    `markdown.ts:syncDecoEditFab` 按档位写，这里只管样子；配色全部走共用 token。 */
 .deco-edit-fab {
   position: absolute;
-  right: 16px;
-  bottom: 16px;
+  left: 16px;
+  top: 16px;
   z-index: 20;
   display: inline-flex;
   align-items: center;

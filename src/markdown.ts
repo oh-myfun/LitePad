@@ -321,8 +321,8 @@ function toggleDecoEdit(target?: Tab): void {
  *
  * 显隐口径：Markdown + 装饰臂在场（`shouldMountDecoPreview` 且没有派生预览）+ 不在源码档
  * + 文档可写。派生臂那一边（`.md-preview`）不能编辑，留着这颗键等于给用户一个假入口。
- * 字形照本仓的双字形开关口径：**画的是点了会去的那一档** —— 预览档画 `edit-code`（去编辑），
- * 编辑档画 `preview`（回预览）。
+ * 字形照本仓的双字形开关口径：**画的是点了会去的那一档** —— 预览档画 `edit`（去编辑），
+ * 编辑档画 `eye`（回预览）。B401 起按钮在编辑区**左上角**（用户口径）。
  */
 function syncDecoEditFab(panel: Panel, tab: Tab | undefined, mode: string): void {
   const host = panel.bodyEl;
@@ -350,7 +350,7 @@ function syncDecoEditFab(panel: Panel, tab: Tab | undefined, mode: string): void
   fab.hidden = !show;
   if (!show || !tab) return;
   const editing = tab.viewMode === "edit";
-  fab.innerHTML = editing ? CODICONS.preview : CODICONS.editCode;
+  fab.innerHTML = editing ? CODICONS.eye : CODICONS.edit;
   fab.dataset.mode = tab.viewMode;
   const label = editing ? "预览" : "编辑";
   setTip(fab, label, { key: "Ctrl+E" });
