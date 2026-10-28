@@ -56,6 +56,16 @@
   `kbd/mark/u/sub/sup/b/i/s/span[style=color]` 由 `previewSets` 的 `HTMLTag` 分支渲染
   （成对藏标签 + 挂样式类），未知标签与未闭合标签保持源码。⚠️ 标题字阶只在 mark 上写**一次**，
   后代一律 `inherit` —— 两条都写 em 会连乘（h1 曾实测 51.6px）。
+- **链接指针跟着「会不会跳」走**（B403）：装饰面链接平时 `cursor: text`，预览档（只读）与
+  编辑档按住 Ctrl 时才 `pointer`；修饰键是 `livePreview` 里 `linkHotMod` 喂的一颗
+  `md-deco--link-hot`（keydown/keyup/blur + `view.dom` 的 pointermove 校准）。派生预览的
+  `<a href>` 本来就是 pointer。
+- **光标行让位给源码**（B404）：`TaskMarker`/`QuoteMark` 的 hide 装饰带**所属行范围**的 reveal
+  窗口，光标压住那一行就露 `[ ]`/`[x]`/`>`；伪元素没法被选区过滤 ⇒ `visible` 集补一颗
+  `md-reveal-marker` 行类收掉 CSS 画的方框/竖线与标记槽内距。`taskClick` 在「可写 + 光标就在
+  这一行」时让路（那一下是放光标），其它行与预览档照旧点一下翻一行。代码块语言下拉换成 B108
+  的 `createDropdown`（原生 select 的展开列表是系统画的）；列表的 fixed 定位要以上沿
+  `#title-bar` 下沿为界，否则会钻到自建标题栏背后。
 - ⚠️ **页面级拖放监听一律挂捕获阶段并 `stopPropagation`**：编辑器（CodeMirror 6）会在自己的
   DOM 上吃 `drop` —— 标签拖拽时把载荷里的可读文本插进正文，文件拖入时直接用 `FileReader`
   把**文件内容**读出来插进当前文档。监听挂冒泡阶段时它比页面级监听先跑，等到我们的处理器，

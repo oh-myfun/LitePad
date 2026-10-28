@@ -41,7 +41,13 @@ import { anchorCandidates, dirOf, followLink } from "../../markdown/links";
 import { extractToc } from "../../markdown/pipeline";
 import { assetBase, setAssetBase } from "./assets";
 import { decoHooks } from "./hooks";
-import { applySelection, buildPreviewSets, type BlockRange, type PreviewSets } from "./previewSets";
+import {
+  applySelection,
+  buildPreviewSets,
+  revealMarkerLine,
+  type BlockRange,
+  type PreviewSets,
+} from "./previewSets";
 import { previewSyntaxTree, setDraftFences } from "./codeFence";
 import "./deco.css";
 
@@ -77,7 +83,12 @@ function atomicBlockRanges(sets: readonly BlockRange[]): DecorationSet {
 
 /** 只读 = 不做光标显形过滤（标记永远折着），与 InkNote `visiblePreview` 同口径。 */
 function visiblePreview(statics: DecorationSet, state: EditorState): DecorationSet {
-  return state.facet(EditorState.readOnly) ? statics : applySelection(statics, state);
+  if (state.facet(EditorState.readOnly)) return statics;
+  const filtered = applySelection(statics, state);
+  // B404：标记字符由上面的过滤显形，CSS 画的方框/竖线由这颗行类收掉。
+  // 行装饰允许由插件来源给（CM6 只禁块级装饰），所以并进同一份 visible 就行。
+  const markerLine = revealMarkerLine(state);
+  return markerLine ? filtered.update({ add: [markerLine] }) : filtered;
 }
 
 /**
@@ -201,10 +212,45 @@ const linkClick = EditorView.domEventHandlers({
   },
 });
 
+/**
+ * B403 · 指针形状跟着「这一下会不会跳」走：预览档（锁着）常开、编辑档只有按着 Ctrl
+ * 才是 pointer。CSS 看不见修饰键，这里把键盘/指针上的真实状态喂成 `--link-hot` 一颗类：
+ * 修饰键的按下/抬起听 window（焦点在别处也收得到），鼠标一移动再按事件的 ctrlKey 校准一次，
+ * 丢焦点一律收回 —— 不然松开 Ctrl 后指针会一直停在 hand 上骗人。
+ */
+const linkHotMod = ViewPlugin.fromClass(
+  class {
+    private set(on: boolean): void {
+      this.view.dom.classList.toggle("md-deco--link-hot", on);
+    }
+    private onKey = (e: KeyboardEvent): void => {
+      // 只认修饰键本身：按着 Ctrl 打别的字不能把类清掉
+      if (e.key === "Control" || e.key === "Meta") this.set(e.type === "keydown");
+    };
+    private onPointer = (e: PointerEvent): void => {
+      this.set(e.ctrlKey || e.metaKey);
+    };
+    private clear = (): void => this.set(false);
+    constructor(private view: EditorView) {
+      window.addEventListener("keydown", this.onKey, true);
+      window.addEventListener("keyup", this.onKey, true);
+      window.addEventListener("blur", this.clear);
+      this.view.dom.addEventListener("pointermove", this.onPointer, true);
+    }
+    destroy(): void {
+      window.removeEventListener("keydown", this.onKey, true);
+      window.removeEventListener("keyup", this.onKey, true);
+      window.removeEventListener("blur", this.clear);
+      this.view.dom.removeEventListener("pointermove", this.onPointer, true);
+      this.clear();
+    }
+  },
+);
+
 /** 所见即所得档的装饰扩展（进 `previewCompartment`，源码档换成了空）。 */
 export function livePreview(): Extension {
   // `assetBase` 与本字段同生共死（只在这一档里存在）；重建由 `setAssetBase` 触发
-  return [assetBase, viewWindow, livePreviewField, viewportSync, linkClick];
+  return [assetBase, viewWindow, livePreviewField, viewportSync, linkClick, linkHotMod];
 }
 
 /** 这一档装在这份 state 上吗（换档前问一句，避免无谓的 reconfigure 重 parse 全篇）。 */

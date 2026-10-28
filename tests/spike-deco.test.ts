@@ -707,3 +707,95 @@ describe("B402 行内 HTML 按 VS Code 预览渲染", () => {
     }
   });
 });
+
+describe("B403 链接指针跟着 Ctrl 走（`--link-hot`）", () => {
+  it("按下 Ctrl 挂类，松开 / 失焦收回；按着 Ctrl 打别的字不清", () => {
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: "见 [示例](https://a.example)。\n",
+        extensions: [markdown({ base: markdownLanguage }), livePreview()],
+      }),
+      parent: document.createElement("div"),
+    });
+    const hot = (): boolean => view.dom.classList.contains("md-deco--link-hot");
+    const key = (type: string, k: string): boolean =>
+      window.dispatchEvent(new KeyboardEvent(type, { key: k }));
+    try {
+      expect(hot()).toBe(false);
+      key("keydown", "Control");
+      expect(hot(), "按下 Ctrl").toBe(true);
+      key("keydown", "a");
+      expect(hot(), "按着 Ctrl 打别的字").toBe(true);
+      key("keyup", "Control");
+      expect(hot(), "松开 Ctrl").toBe(false);
+      key("keydown", "Control");
+      window.dispatchEvent(new Event("blur"));
+      expect(hot(), "窗口失焦").toBe(false);
+      // 窗口刚拿到焦点时键盘事件收不到，指针移动那一下按事件自带的状态校准
+      view.dom.dispatchEvent(new MouseEvent("pointermove", { ctrlKey: true }));
+      expect(hot(), "指针带 ctrlKey 进来").toBe(true);
+      view.dom.dispatchEvent(new MouseEvent("pointermove", { ctrlKey: false }));
+      expect(hot(), "指针不带 ctrlKey").toBe(false);
+    } finally {
+      view.destroy();
+    }
+  });
+});
+
+describe("B404 光标行：勾选框 / 引用竖线让位给源码", () => {
+  function mount(doc: string, readonly = false): EditorView {
+    const state = EditorState.create({
+      doc,
+      extensions: [
+        markdown({ base: markdownLanguage }),
+        decoFace(),
+        ...(readonly ? [decoLock(true)] : []),
+      ],
+    });
+    return new EditorView({ state, parent: document.createElement("div") });
+  }
+  const text = (view: EditorView): string =>
+    view.dom.querySelector(".cm-content")!.textContent ?? "";
+  const lineOf = (view: EditorView, cls: string): HTMLElement =>
+    view.dom.querySelector<HTMLElement>(`.cm-line.${cls}`)!;
+
+  it("光标在任务行 ⇒ `[ ]` 显形、方框让位；离开 ⇒ 收回", () => {
+    const view = mount("- [ ] 未勾\n\n正文\n");
+    try {
+      view.dispatch({ selection: { anchor: 0 } });
+      expect(text(view), "光标行要看见源码方括号").toContain("[ ]");
+      expect(lineOf(view, "md-task-item").classList.contains("md-reveal-marker")).toBe(true);
+      view.dispatch({ selection: { anchor: view.state.doc.line(3).from } });
+      expect(text(view), "离开后源码收回").not.toContain("[ ]");
+      expect(lineOf(view, "md-task-item").classList.contains("md-reveal-marker")).toBe(false);
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("光标在引用行 ⇒ `>` 显形；列表符号照旧永不显形", () => {
+    const view = mount("> 引用\n\n- 列表\n");
+    try {
+      view.dispatch({ selection: { anchor: 0 } });
+      expect(text(view), "引用行要看见 `>`").toContain(">");
+      expect(lineOf(view, "md-blockquote").classList.contains("md-reveal-marker")).toBe(true);
+      // 列表的 `-` 是另一条口径（B401：永不显形），光标压上去也不许露
+      view.dispatch({ selection: { anchor: view.state.doc.line(3).from } });
+      expect(text(view), "列表符号不因光标显形").not.toContain("-");
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("只读档（预览）不做显形：标记照旧折着，方框照旧画", () => {
+    const view = mount("- [ ] 未勾\n\n> 引用\n", true);
+    try {
+      view.dispatch({ selection: { anchor: 0 } });
+      expect(text(view)).not.toContain("[ ]");
+      expect(text(view)).not.toContain(">");
+      expect(view.dom.querySelector(".md-reveal-marker")).toBeNull();
+    } finally {
+      view.destroy();
+    }
+  });
+});

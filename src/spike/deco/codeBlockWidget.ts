@@ -17,6 +17,7 @@
 // 「就地编辑」就退化成「点一下跳回源码」。
 
 import { EditorView, WidgetType } from "@codemirror/view";
+import { createDropdown, type DropdownHandle } from "../../shell/dropdown";
 import { highlightCodeHtml } from "../../markdown/highlight";
 import { LAZY_THRESHOLD_LINES } from "../../editor/perf";
 import { currentBlockRange, stampBlockRange, bindBlockBoundaryCursor } from "./blockRange";
@@ -96,6 +97,12 @@ function paintGutter(gutter: HTMLElement, code: string): void {
   for (let i = 1; i <= lines; i++) text += (i > 1 ? "\n" : "") + i;
   if (gutter.textContent !== text) gutter.textContent = text;
 }
+
+/**
+ * B404：每块 widget 的语言下拉句柄。按 DOM 反查（不挂在 widget 实例上）——
+ * 同一颗实例的 `toDOM` 可能给不同 DOM，`updateDOM` / `destroy` 拿到的永远是当前那一个。
+ */
+const dropdowns = new WeakMap<HTMLElement, { handle: DropdownHandle; values: Set<string> }>();
 
 export class CodeBlockWidget extends WidgetType {
   constructor(
@@ -200,36 +207,39 @@ export class CodeBlockWidget extends WidgetType {
     languageControl.className = "md-codeblock-language-control";
     languageControl.setAttribute("contenteditable", "false");
 
-    const select = document.createElement("select");
-    select.className = "md-codeblock-lang";
     const current = normalizeLang(this.lang);
-    const options = LANGUAGE_OPTIONS.includes(current)
+    const values = LANGUAGE_OPTIONS.includes(current)
       ? LANGUAGE_OPTIONS
       : [...LANGUAGE_OPTIONS, current];
-    for (const value of options) {
-      const opt = document.createElement("option");
-      opt.value = value;
-      opt.textContent = langLabel(value);
-      if (value === current) opt.selected = true;
-      select.appendChild(opt);
-    }
-    select.value = current;
-    const languageLabel = document.createElement("span");
-    languageLabel.className = "md-codeblock-language-label";
-    languageLabel.textContent = langLabel(current);
-    select.addEventListener("mousedown", (e) => e.stopPropagation());
-    select.addEventListener("change", () => {
+    const applyLang = (value: string): void => {
       const v = EditorView.findFromDOM(wrap);
       const range = v && currentBlockRange(v, wrap);
       if (!v || !range) return;
       if (v.state.readOnly) return;
       const code = sourceText(wrap.querySelector('[data-block-source="1"]') ?? codeEl);
       v.dispatch({
-        changes: { from: range.from, to: range.to, insert: this.serialize(code, select.value) },
+        changes: { from: range.from, to: range.to, insert: this.serialize(code, value) },
         userEvent: "input.codeblock",
       });
       v.focus();
+    };
+    // B404：换成应用自己的下拉（B108）。原生 `<select>` 的展开列表是系统画的 ——
+    // 深色主题里一块白底黑字，与 `.popup-menu` 那一套菜单完全两个世界。
+    const dropdown = createDropdown({
+      options: values.map((value) => ({ label: langLabel(value), value })),
+      current,
+      ariaLabel: "代码语言",
+      className: "md-codeblock-lang",
+      onPick: applyLang,
     });
+    // 焦点归下拉：块里那层「点盒内留白就落光标」不许把焦点拽回代码区；
+    // 键盘事件也不许漏给 CM6（Enter 在列表里是选中，不是插换行）。
+    dropdown.root.addEventListener("mousedown", (e) => e.stopPropagation());
+    dropdown.root.addEventListener("keydown", (e) => e.stopPropagation(), true);
+    dropdowns.set(wrap, { handle: dropdown, values: new Set(values) });
+    const languageLabel = document.createElement("span");
+    languageLabel.className = "md-codeblock-language-label";
+    languageLabel.textContent = langLabel(current);
 
     const copyBtn = document.createElement("button");
     copyBtn.type = "button";
@@ -249,7 +259,7 @@ export class CodeBlockWidget extends WidgetType {
     });
 
     header.appendChild(copyBtn);
-    languageControl.appendChild(select);
+    languageControl.appendChild(dropdown.root);
     languageControl.appendChild(languageLabel);
     box.appendChild(header);
     box.appendChild(languageControl);
@@ -258,7 +268,7 @@ export class CodeBlockWidget extends WidgetType {
     attachSourceEditing(wrap, {
       // 上色那一发会把 `<code>` 整个换掉 ⇒ 每次现查，不闭包旧节点
       source: () => wrap.querySelector<HTMLElement>('[data-block-source="1"]'),
-      toMarkdown: (text) => this.serialize(text, select.value),
+      toMarkdown: (text) => this.serialize(text, dropdown.getValue()),
       onInput: (text) => {
         // 打字期间只修行号栏：上色留给退出编辑那一发（见文件头第 1 条）
         paintGutter(gutter, text);
@@ -266,7 +276,7 @@ export class CodeBlockWidget extends WidgetType {
       onEditingChange: (editing) => {
         if (editing) return;
         const live = wrap.querySelector<HTMLElement>('[data-block-source="1"]');
-        if (live) this.paintHighlight(view, wrap, live, select.value);
+        if (live) this.paintHighlight(view, wrap, live, dropdown.getValue());
       },
       indentOnTab: true,
       exitOnTrailingBlankLine: true,
@@ -285,7 +295,8 @@ export class CodeBlockWidget extends WidgetType {
         return;
       }
       const target = event.target as HTMLElement;
-      if (target.closest(".md-codeblock-header")) return;
+      // 语言下拉自己管焦点（B404）：这一层再抢就是把刚打开的下拉关掉
+      if (target.closest(".md-codeblock-header, .md-codeblock-language-control")) return;
       if (!box.contains(target)) return;
       if (live.contains(target) || target === live) return;
       event.preventDefault();
@@ -299,9 +310,9 @@ export class CodeBlockWidget extends WidgetType {
 
   updateDOM(dom: HTMLElement, view: EditorView): boolean {
     const codeEl = dom.querySelector<HTMLElement>('[data-block-source="1"]');
-    const select = dom.querySelector<HTMLSelectElement>(".md-codeblock-lang");
+    const dd = dropdowns.get(dom);
     const gutter = dom.querySelector<HTMLElement>(".md-codeblock-gutter");
-    if (!codeEl || !select || !gutter) return false;
+    if (!codeEl || !dd || !gutter) return false;
     // 缩进式 ↔ 围栏式：回写函数是 toDOM 时闭包进去的，复用 DOM 会拿旧口径序列化 ⇒ 必须重建
     if ((dom.dataset.codeIndented === "1") !== this.indented) return false;
 
@@ -310,20 +321,21 @@ export class CodeBlockWidget extends WidgetType {
     const lang = normalizeLang(this.lang);
     const languageLabel = dom.querySelector<HTMLElement>(".md-codeblock-language-label");
     if (languageLabel) languageLabel.textContent = langLabel(lang);
-    if (select.value !== lang) {
-      if (!Array.from(select.options).some((o) => o.value === lang)) {
-        const opt = document.createElement("option");
-        opt.value = lang;
-        opt.textContent = langLabel(lang);
-        select.appendChild(opt);
-      }
-      select.value = lang;
+    // 源码里换了语言：选项表内就同步触发器文字；表外的（新语言）列表长不出来 ⇒ 重建 DOM
+    if (dd.handle.getValue() !== lang) {
+      if (!dd.values.has(lang)) return false;
+      dd.handle.setValue(lang);
     }
 
     // 正在输入的元素不能重写，否则光标会被打掉
+    const pre = codeEl.closest("pre");
     if (document.activeElement !== codeEl && sourceText(codeEl) !== this.code) {
       paintCode(codeEl, this.code);
       paintGutter(gutter, this.code);
+      this.paintHighlight(view, dom, codeEl, this.lang);
+    } else if (pre && pre.dataset.lang !== (lang || "text") && document.activeElement !== codeEl) {
+      // 只换了语言（代码没动）：代码不重写、光标保住，但高亮得按新语言重来
+      pre.dataset.lang = lang || "text";
       this.paintHighlight(view, dom, codeEl, this.lang);
     }
     return true;
@@ -332,5 +344,13 @@ export class CodeBlockWidget extends WidgetType {
   /** 组件内交互自理；点在外层留白上的鼠标事件交还编辑器定位光标。 */
   ignoreEvent(event: Event): boolean {
     return !clickedOnBlockPadding(event, "md-codeblock-widget");
+  }
+
+  /** DOM 被 CM6 摘掉时把下拉的 document 监听一并收回来（B404）。 */
+  destroy(dom: HTMLElement): void {
+    const dd = dropdowns.get(dom);
+    if (!dd) return;
+    dropdowns.delete(dom);
+    dd.handle.destroy();
   }
 }

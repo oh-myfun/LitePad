@@ -37,6 +37,11 @@ import {
 } from "../src/spike/deco/editableSource";
 import { decoFace, decoLock } from "../src/spike/deco/wysiwyg";
 
+// jsdom 不实现 scrollIntoView（语言下拉展开时 `setActive` 会调）—— 显式打桩成 no-op
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = (): void => {};
+}
+
 const FENCE_DOC = ["# 头", "```ts", "export const a = 1;", "```", "尾行"].join("\n");
 
 /** 建一颗真装了所见即所得档的 view（装饰档的 widget 只有在这颗上才存在）。 */
@@ -228,9 +233,13 @@ describe("B397-3 代码块 widget：打字进得去、DOM 不被换、只读进�
     expect(wrap!.querySelector(".md-codeblock-gutter")!.getAttribute("contenteditable")).toBe(
       "false",
     );
-    const select = wrap!.querySelector<HTMLSelectElement>(".md-codeblock-lang");
-    expect(select, "语言下拉是代码块 34px 上内距的存在理由，没它就不该留那块空").not.toBeNull();
-    expect(select!.value).toBe("ts");
+    const lang = wrap!.querySelector<HTMLButtonElement>(".md-codeblock-lang");
+    expect(lang, "语言下拉是代码块 34px 上内距的存在理由，没它就不该留那块空").not.toBeNull();
+    // B404：不再是原生 select —— 展开列表要跟应用菜单同一套视觉（B108 的组件）
+    expect(lang!.tagName, "B404 语言下拉换成应用自己的下拉组件").toBe("BUTTON");
+    expect(lang!.classList.contains("dropdown-trigger")).toBe(true);
+    expect(wrap!.querySelector("select"), "原生 select 必须一个不剩").toBeNull();
+    expect(lang!.closest(".dropdown")!.getAttribute("data-value")).toBe("ts");
     expect(wrap!.querySelector("button.md-codeblock-copy")).not.toBeNull();
     view.destroy();
   });
@@ -327,10 +336,21 @@ describe("B397-3 代码块 widget：打字进得去、DOM 不被换、只读进�
   it("语言下拉改档 ⇒ 围栏 info string 跟着改（源码仍是唯一权威）", () => {
     const view = decoView(FENCE_DOC);
     parkCaretAt(view, "尾行");
-    const select = view.dom.querySelector<HTMLSelectElement>(".md-codeblock-widget select")!;
-    select.value = "python";
-    select.dispatchEvent(new Event("change", { bubbles: true }));
+    const trigger = view.dom.querySelector<HTMLButtonElement>(
+      ".md-codeblock-widget .md-codeblock-lang",
+    )!;
+    trigger.click();
+    const list = view.dom.querySelector<HTMLElement>(".md-codeblock-widget .dropdown-list")!;
+    const opt = [...list.querySelectorAll<HTMLButtonElement>(".dropdown-option")].find(
+      (b) => b.dataset.value === "python",
+    );
+    expect(opt, "展开列表里要有 python（B404 换成自定义下拉）").toBeDefined();
+    opt!.click();
     expect(view.state.doc.toString()).toContain("```python\nexport const a = 1;\n```");
+    // 只换语言那一路不重写代码（光标保住），但 <pre data-lang> 与高亮要跟上新语言
+    expect(view.dom.querySelector<HTMLElement>(".md-codeblock-widget pre")!.dataset.lang).toBe(
+      "python",
+    );
     view.destroy();
   });
 

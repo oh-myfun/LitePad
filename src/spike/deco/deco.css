@@ -344,6 +344,14 @@
 .md-deco .cm-md-link:hover * {
   text-decoration: underline;
 }
+/* 指针只承诺「这一下会跳」：预览档锁着 ⇒ 普通点击就开；编辑档要按着 Ctrl（B403）。
+   `--link-hot` 由 livePreview 的修饰键追踪挂/摘，CSS 自己看不见键盘。 */
+.md-deco--readonly .cm-md-link,
+.md-deco--readonly .cm-md-link *,
+.md-deco--link-hot .cm-md-link,
+.md-deco--link-hot .cm-md-link * {
+  cursor: pointer;
+}
 
 /* ---------- 引用：竖线与正文左缘对齐，文字右移（App.css:1399-1415） ---------- */
 .md-deco .cm-line.md-blockquote {
@@ -364,6 +372,20 @@
   background: var(--md-quote-border);
   border-radius: 0;
   pointer-events: none;
+}
+
+/* B404 · 光标压住的这一行把 CSS 画的标记收掉，给刚显形的源码让位：
+   勾选框/对勾 → `[ ]` / `[x]`，引用竖线 → `>`。行类由 previewSets.revealMarkerLine
+   只挂在「可写 + 光标行是任务行/引用行」上（只读档标记永远折着，不加）。
+   左内距同时收回正文起点 —— 标记已经回到行内，再留着标记槽就是白缩进。 */
+.md-deco .cm-line.md-task-item.md-reveal-marker,
+.md-deco .cm-line.md-blockquote.md-reveal-marker {
+  padding-left: var(--editor-padding-x);
+}
+.md-deco .cm-line.md-task-item.md-reveal-marker::before,
+.md-deco .cm-line.md-task-item.md-reveal-marker::after,
+.md-deco .cm-line.md-blockquote.md-reveal-marker::before {
+  display: none;
 }
 
 /* ---------- 列表：标记由 CSS 画，源码里的 `-` / `1.` 永不显形 ---------- */
@@ -621,7 +643,11 @@
   transform: rotate(45deg);
   pointer-events: none;
 }
+/* B404：语言选择是应用自己的下拉（B108），这里只把触发器收成代码块头部那一档尺寸。
+   `min-width: 0 / width: auto` 必须显式写：`.dropdown-trigger` 是 150px 宽的大表单控件。 */
 .md-deco .md-codeblock-lang {
+  min-width: 0;
+  width: auto;
   max-width: 132px;
   height: 22px;
   padding: 0 22px 0 8px;
@@ -642,6 +668,11 @@
 .md-deco .md-codeblock-lang:focus {
   outline: none;
   box-shadow: none;
+}
+/* 箭头由 `.md-codeblock-language-control::after` 画（代码块头部那一档的位置），
+   下拉组件自带的 codicon 箭头在这里是第二颗，收掉。 */
+.md-deco .md-codeblock-lang .dd-caret {
+  display: none;
 }
 /* 语言名平时由下拉自己显示；这颗粒只给只读档留一个静态标签的位置（InkNote 同一条）。 */
 .md-deco .md-codeblock-language-label {

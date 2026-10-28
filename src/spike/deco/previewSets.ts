@@ -333,10 +333,11 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
 
       if (n === "QuoteMark") {
         // 只有第一行的 `>` 是 Blockquote 的直接子节点，后续行的 QuoteMark
-        // 嵌在 Paragraph / List 里，getChildren 拿不到 ⇒ 必须在遍历里单独处理
+        // 嵌在 Paragraph / List 里，getChildren 拿不到 ⇒ 必须在遍历里单独处理。
+        // B404：光标压住这一行时 `>` 显形（竖线由 revealMarkerLine 让位）。
         let end = to;
         if (doc.sliceString(end, end + 1) === " ") end++;
-        hide(from, end, NEVER_REVEAL);
+        hide(from, end, { from: doc.lineAt(from).from, to: doc.lineAt(from).to });
         return;
       }
 
@@ -452,12 +453,18 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
       }
 
       if (n === "ListMark" || n === "TaskMarker") {
-        // 与 Typora 一致：列表符号与复选框的源码永不显形，由 CSS 画出来。
+        // 与 Typora 一致：列表符号由 CSS 画出来、源码永不显形。
         // B401：标记后的**所有**空格一并藏掉 —— 只藏一个的话，`-  item`（多打空格）的
         // 正文会被剩下的空格顶开，看着就是「符号与内容的间距忽大忽小」。
+        // B404：勾选框（TaskMarker）例外 —— 光标压住这一行时让位给源码 `[ ]` / `[x]`，
+        // 方框那一侧由 `md-reveal-marker` 收掉（CSS 画的标记不能只靠选区过滤）。
         let end = to;
         while (end < doc.length && doc.sliceString(end, end + 1) === " ") end++;
-        hide(from, end, NEVER_REVEAL);
+        const reveal =
+          n === "TaskMarker"
+            ? { from: doc.lineAt(from).from, to: doc.lineAt(from).to }
+            : NEVER_REVEAL;
+        hide(from, end, reveal);
         return;
       }
 
@@ -856,6 +863,22 @@ export function revealFilterRange(state: EditorState): {
   const head = state.selection.main.head;
   const line = state.doc.lineAt(head);
   return { head, filterFrom: line.from, filterTo: line.to };
+}
+
+/**
+ * B404 · 光标行那一颗行类：CSS 画的标记（勾选框 / 引用竖线）要让位给刚显形的源码。
+ *
+ * 只在「可写 + 光标行是任务行或引用行」时给 —— 标记的 hide 装饰带了行范围
+ * （`revealFrom/revealTo`），过滤只能让字符显形，收不掉伪元素；伪元素归这颗类管。
+ * 只读档不显形（`visiblePreview` 直接回 statics），也就不加。
+ */
+export function revealMarkerLine(state: EditorState): Range<Decoration> | null {
+  if (state.facet(EditorState.readOnly)) return null;
+  const line = state.doc.lineAt(state.selection.main.head);
+  const task = TASK_LINE_RE.test(line.text);
+  const quote = /^[ \t]*(?:>[ \t]?)+/.test(line.text);
+  if (!task && !quote) return null;
+  return Decoration.line({ class: "md-reveal-marker" }).range(line.from);
 }
 
 /**

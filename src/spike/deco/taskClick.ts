@@ -8,7 +8,7 @@
 // 也就没有换算可错；写点仍然是 `markdown.ts` 那颗唯一的 `toggleTaskInTab`。
 // B397-1 之后这颗 view 自己就写得动（与 InkNote 同构），行号这一条仍不改：写点只有一颗。
 
-import type { Extension } from "@codemirror/state";
+import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { TASK_LINE_RE } from "./previewSets";
 
@@ -61,6 +61,16 @@ export function taskClick(handlers: DecoTaskHandlers): Extension {
       const line = view.state.doc.lineAt(at);
       const m = TASK_LINE_RE.exec(line.text);
       if (!m) return false;
+
+      // B404：可写档里光标正压在这一行时，方框已让位给源码 `[ ]` —— 这一下是放光标/选字，
+      // 不翻勾。预览档（只读）标记永远折着，方框照旧可点；其它行也照旧「点一下翻一行」。
+      const head = view.state.selection.main.head;
+      if (
+        !view.state.facet(EditorState.readOnly) &&
+        view.state.doc.lineAt(head).number === line.number
+      ) {
+        return false;
+      }
 
       const bracketFrom = line.from + m[1].length;
       const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });

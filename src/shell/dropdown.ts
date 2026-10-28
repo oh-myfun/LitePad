@@ -209,11 +209,16 @@ export function createDropdown(opts: DropdownOptions): DropdownHandle {
   function positionList(): void {
     const r = trigger.getBoundingClientRect();
     const gap = 4;
+    // B404：自建标题栏是 webview 里的一层 DOM，不是系统 chrome —— 只按视口算「上面放得下」
+    // 会把列表顶到标题栏背后去（代码块在文档中段时必现）。可用区的上边界取标题栏下沿。
+    const chrome =
+      document.querySelector<HTMLElement>("#title-bar")?.getBoundingClientRect().bottom ?? 0;
+    const minTop = Math.max(VIEWPORT_MARGIN, chrome + VIEWPORT_MARGIN);
     const below = window.innerHeight - r.bottom - gap - VIEWPORT_MARGIN;
-    const above = r.top - gap - VIEWPORT_MARGIN;
+    const above = r.top - gap - minTop;
     const maxH = Math.max(MIN_LIST_H, Math.max(below, above));
     // 视口本身太矮（比 MIN_LIST_H 还小）时不能再撑高，否则又顶出去了
-    const cap = Math.max(MIN_LIST_H, window.innerHeight - VIEWPORT_MARGIN * 2);
+    const cap = Math.max(MIN_LIST_H, window.innerHeight - minTop - VIEWPORT_MARGIN);
     list.style.maxHeight = `${Math.min(maxH, cap)}px`;
 
     list.style.left = `${r.left}px`;
@@ -227,7 +232,7 @@ export function createDropdown(opts: DropdownOptions): DropdownHandle {
     // ⚠️ 这里**不必**再按 above 单独收一道：只有 above > below 才会翻，
     // 而此时 maxH = max(MIN_LIST_H, above) 已经等于 above（只有视口比
     // MIN_LIST_H 还矮时才被 cap 兜住）。两种写法同值，别重复收。
-    list.style.top = `${Math.max(VIEWPORT_MARGIN, r.top - gap)}px`;
+    list.style.top = `${Math.max(minTop, r.top - gap)}px`;
     list.style.transform = "translateY(-100%)";
   }
 

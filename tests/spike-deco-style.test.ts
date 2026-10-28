@@ -212,6 +212,20 @@ describe("B397-2 行内构造：代码 chip、链接、引用竖线", () => {
     );
   });
 
+  it("B403 能跳的时候才是 pointer：预览档常开 / 编辑档按着 Ctrl", () => {
+    // 编辑档的基态还是文本光标 —— 那一下点下去是放光标/选字，不是跳
+    expect(ruleBlock(css, ".md-deco .cm-md-link, .md-deco .cm-md-link *")).toMatch(
+      /cursor:\s*text/,
+    );
+    // 能跳的两档才给 hand；`--link-hot` 是 livePreview 的修饰键追踪挂上去的。
+    // ⚠️ `ruleBlock` 只回块体，选择器本身要回原始 CSS 里问（空白归一后再比）
+    const hot = ruleBlock(css, ".md-deco--readonly .cm-md-link");
+    expect(hot).toMatch(/cursor:\s*pointer/);
+    const flat = css.replace(/\s+/g, " ");
+    expect(flat, "预览档常开").toContain(".md-deco--readonly .cm-md-link *");
+    expect(flat, "编辑档按着 Ctrl").toContain(".md-deco--link-hot .cm-md-link *");
+  });
+
   it("标题取色也压到内层（语法色 tags.heading 在那一层）", () => {
     const body = ruleBlock(
       css,
@@ -335,6 +349,24 @@ describe("B397-2 列表与任务项：标记由 CSS 画", () => {
       /padding-left: calc\(var\(--editor-padding-x\) \+ var\(--editor-list-marker-offset\)\)/,
     );
   });
+
+  it("B404 光标行收掉 CSS 画的标记（勾选框 → [ ]、引用竖线 → >），左内距同时收回", () => {
+    const reveal = ruleBlock(css, ".md-deco .cm-line.md-task-item.md-reveal-marker");
+    expect(reveal).toMatch(/padding-left:\s*var\(--editor-padding-x\)/);
+    for (const sel of [
+      ".md-deco .cm-line.md-task-item.md-reveal-marker::before",
+      ".md-deco .cm-line.md-task-item.md-reveal-marker::after",
+      ".md-deco .cm-line.md-blockquote.md-reveal-marker::before",
+    ]) {
+      expect(ruleBlock(css, sel).replace(/\s+/g, " "), sel).toMatch(/display: none/);
+    }
+  });
+
+  it("B404 删除线只挂在勾选行（未勾选的任务不许被划掉）", () => {
+    // 完成态才加 `.md-task-done`；基态那两条规则里不许出现删除线
+    expect(ruleBlock(css, ".md-deco .cm-line.md-task-item")).not.toMatch(/line-through/);
+    expect(ruleBlock(css, ".md-deco .cm-line.md-task-item::before")).not.toMatch(/line-through/);
+  });
 });
 
 describe("B397-2 块级 widget：与正文左缘对齐，且一条纵向 margin 都没有", () => {
@@ -378,7 +410,14 @@ describe("B397-2 块级 widget：与正文左缘对齐，且一条纵向 margin 
     expect(code).toMatch(/line-height:\s*1\.55/);
     expect(code).toMatch(/white-space:\s*pre/);
     expect(ruleBlock(css, ".md-deco .md-codeblock-widget pre")).toMatch(/padding:\s*0/);
-    expect(ruleBlock(css, ".md-deco .md-codeblock-lang")).toMatch(/height:\s*22px/);
+    const lang = ruleBlock(css, ".md-deco .md-codeblock-lang");
+    expect(lang).toMatch(/height:\s*22px/);
+    // B404：触发器换成应用的下拉组件 —— `.dropdown-trigger` 那份 150px/28px 的大表单尺寸
+    // 必须被这两条压回去，否则代码块头部会撑出一颗大按钮
+    expect(lang).toMatch(/min-width:\s*0/);
+    expect(lang).toMatch(/width:\s*auto/);
+    // 箭头只留 `.md-codeblock-language-control::after` 那一颗
+    expect(ruleBlock(css, ".md-deco .md-codeblock-lang .dd-caret")).toMatch(/display:\s*none/);
     expect(ruleBlock(css, ".md-deco .md-codeblock-language-control")).toMatch(
       /position:\s*absolute/,
     );
