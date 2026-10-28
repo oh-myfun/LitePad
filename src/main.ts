@@ -95,6 +95,7 @@ import {
 import {
   scheduleMdRender,
   toggleViewMode,
+  toggleDecoEdit,
   refreshViewModeButton,
   applyPanelMode,
   openPreviewToSide,
@@ -380,7 +381,9 @@ setDecoHooks({
   canToggleTask: (view) => {
     const t = panelViewTab(view);
     const d = t ? docs.get(t.docId) : undefined;
-    return !!t && !!d && isMdTab(t) && !d.readonly;
+    // B399：预览档是「禁止编辑的编辑模式」—— 点勾也是一次写，锁着的档位里不许发生。
+    // （transactionFilter 会丢掉那一发，但先在这里挡住，免得画一次「点了没反应」。）
+    return !!t && !!d && isMdTab(t) && !d.readonly && t.viewMode !== "preview";
   },
 });
 
@@ -496,6 +499,11 @@ function shortcutApplies(id: string): boolean {
   switch (id) {
     case "view.toggle":
       return isMdActive();
+    // B399：只在「装饰面」里成立（源码档没有预览/编辑之分）；不成时不抢键。
+    case "view.toggleEdit": {
+      const t = activeTab();
+      return !!t && isMdTab(t) && t.viewMode !== "source";
+    }
     case "panel.splitH":
     case "panel.splitV":
     case "panel.close":
@@ -581,6 +589,9 @@ function runShortcut(id: string): void {
       break;
     case "view.toggle":
       toggleViewMode();
+      break;
+    case "view.toggleEdit":
+      toggleDecoEdit();
       break;
     case "view.outline":
       toggleToc();

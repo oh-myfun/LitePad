@@ -13,6 +13,7 @@
 // 于是「开关开着 ⇒ 这一格预览档真的是所见即所得」是被真启动证明的，不是被我 mock 证明的。
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
+import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { clickTaskBox } from "./spike-deco-helpers";
 
@@ -211,7 +212,8 @@ async function mdPanelInPreview() {
   const p = [...panels.values()].find((x) => x.view);
   expect(p, "应有一颗带编辑器实例的面板").toBeTruthy();
   const tab = tabs.get(p!.viewTabId ?? p!.activeTabId)!;
-  if (tab.viewMode !== "preview") await toggleView(1);
+  // B399：三档之后 Ctrl+/ 只走「源码 ↔ 预览」⇒ 从编辑档回来要按两下（编辑→源码→预览）
+  for (let i = 0; i < 2 && tab.viewMode !== "preview"; i++) await toggleView(1);
   expect(tab.viewMode, "前置：这一格应在预览（所见即所得）档").toBe("preview");
   return { p: p!, tab, view: panelEditor() };
 }
@@ -263,29 +265,46 @@ describe("B397-1 一颗 view 两档：deco 形态下没有第二颗 view", () =>
     );
   });
 
-  it("丙 预览档打的字切回源码还在（没有第二份文本可漂）", async () => {
-    const { view } = await mdPanelInPreview();
+  it("丙 编辑档打的字切回源码还在（没有第二份文本可漂）", async () => {
+    const { tab, view } = await mdPanelInPreview();
+    const { toggleDecoEdit } = await import("../src/markdown");
+    // B399：打字这一发必须在**编辑档**（预览档是禁编辑的所见即所得）
+    toggleDecoEdit();
+    expect(tab.viewMode, "前置：先进编辑档").toBe("edit");
     view.dispatch({ changes: { from: 0, insert: "同源" }, userEvent: "input.type" });
-    await toggleView(1);
+    await toggleView(1); // 编辑 → 源码（Ctrl+/）
     expect(view.state.doc.toString().startsWith("同源"), "换档后仍是这一份文档").toBe(true);
   });
 
-  it("丁 只读是与档位正交的另一把锁：装饰照常、docChanged 进不去", async () => {
+  it("丁 两把锁各管一段：预览档禁编辑，文档只读连编辑档也不许落笔", async () => {
     const { tab, view } = await mdPanelInPreview();
     const { docs } = await import("../src/core/app-state");
+    const { toggleDecoEdit } = await import("../src/markdown");
+
+    // ① 预览档本身就是一把锁（B399：与 doc.readonly 无关）
+    view.dispatch({ changes: { from: 0, insert: "P" }, userEvent: "input.type" });
+    expect(view.state.doc.toString(), "预览档不许落笔").not.toContain("P");
+
+    // ② 文档只读：装饰照常，但编辑档也进不去
     docs.get(tab.docId)!.readonly = true;
-    await toggleView(2); // 换两回档 ⇒ 把「视图模式落到 DOM」那一发出口走一遍，只读锁跟着刷上去
+    await toggleView(2); // 走两回出口，把只读性刷到这颗 view 上
     const before = view.state.doc.toString();
     view.dispatch({ changes: { from: 0, insert: "X" }, userEvent: "input.type" });
-    expect(view.state.doc.toString(), "只读文档在预览档也不许落笔").toBe(before);
+    expect(view.state.doc.toString(), "只读文档在预览档不许落笔").toBe(before);
     expect(
       view.dom.classList.contains("md-deco"),
       "只读只关编辑，不关所见即所得（InkNote：readOnly 时装饰反而更彻底）",
     ).toBe(true);
+    toggleDecoEdit();
+    expect(tab.viewMode, "只读文档没有编辑档（那颗悬浮键也不出现）").toBe("preview");
+
+    // ③ 解除只读 + 编辑档 ⇒ 同一颗 view 能写
     docs.get(tab.docId)!.readonly = false;
     await toggleView(2);
+    toggleDecoEdit();
+    expect(tab.viewMode).toBe("edit");
     view.dispatch({ changes: { from: 0, insert: "Y" }, userEvent: "input.type" });
-    expect(view.state.doc.toString(), "解除只读后同一颗 view 要能写").toContain("Y");
+    expect(view.state.doc.toString(), "解除只读 + 编辑档 ⇒ 同一颗 view 要能写").toContain("Y");
   });
 
   it("戊 查找落在这颗 view 上（Ctrl+F 在预览格里不是死键）", async () => {
@@ -329,6 +348,9 @@ describe("B397-1 一颗 view 两档：deco 形态下没有第二颗 view", () =>
 
   it("辛 点这一颗 view 的勾直接改它的文档（点勾落在显示那一面）", async () => {
     const { view } = await mdPanelInPreview();
+    const { toggleDecoEdit } = await import("../src/markdown");
+    // B399：点勾是一次写 ⇒ 要先在编辑档（预览档里这颗勾按不动，另有判据钉住）
+    toggleDecoEdit();
     view.dispatch({
       changes: { from: view.state.doc.length, insert: "\n- [ ] 打勾行\n" },
       userEvent: "input.type",
@@ -451,6 +473,121 @@ describe("B397-1 一颗 view 两档：deco 形态下没有第二颗 view", () =>
  * 间接那一跳必须被证明是诚实的 —— `shouldMountDecoPreview` 本体要正向问闸，
  * 否则「绕闸」和「问闸」在调用点上长得一样。
  */
+/**
+ * B399 · 三档里的「预览 = 禁编辑」与那颗**页面内悬浮键**。
+ *
+ * 用户口径（2026-10-28）：「预览和编辑态切换通过页面内悬浮按钮，可参考 InkNote 的单按键
+ * 切换或者 VS Code 的 switch 切换。」此前（B397/B398）预览档还是可写的 —— 那是与口径
+ * 相差的最后一格；这一族判据把「预览禁编辑、编辑同脸可写、悬浮键往返、Ctrl+E 同款、
+ * 会话记得住」逐条钉住。
+ */
+describe("B399 预览 / 编辑两档与那颗悬浮键", () => {
+  const fab = (): HTMLButtonElement | null =>
+    document.querySelector<HTMLButtonElement>(".panel-host .deco-edit-fab");
+
+  it("甲 预览档：悬浮键在场、画的是「去编辑」；点一下进编辑档并解锁", async () => {
+    const { tab, view } = await mdPanelInPreview();
+    const el = fab();
+    expect(el, "装饰面里应有那颗悬浮键").toBeTruthy();
+    expect(el!.hidden, "预览档要看得见").toBe(false);
+    expect(el!.dataset.mode, "预览档").toBe("preview");
+    expect(el!.getAttribute("aria-label"), "画的是点了会去的那一档").toContain("编辑");
+    expect(view.state.facet(EditorState.readOnly), "预览 = 禁编辑").toBe(true);
+
+    el!.click();
+    await wait(60);
+    expect(tab.viewMode, "点一下进编辑档").toBe("edit");
+    expect(fab()!.dataset.mode).toBe("edit");
+    expect(fab()!.getAttribute("aria-label"), "编辑档画的是回预览").toContain("预览");
+    expect(view.state.facet(EditorState.readOnly), "编辑档解掉预览那把锁").toBe(false);
+    const before = view.state.doc.toString();
+    view.dispatch({ changes: { from: 0, insert: "E" }, userEvent: "input.type" });
+    expect(view.state.doc.toString(), "编辑档写得进去").not.toBe(before);
+  });
+
+  it("乙 编辑档再点一下回预览档：不换 view、写不进去", async () => {
+    const { tab, view } = await mdPanelInPreview();
+    fab()!.click();
+    await wait(60);
+    expect(tab.viewMode).toBe("edit");
+    const before = view.state.doc.toString();
+    fab()!.click();
+    await wait(60);
+    expect(tab.viewMode, "回到预览档").toBe("preview");
+    expect(panelEditor(), "换档不换 view（这颗键换的只是锁）").toBe(view);
+    expect(view.state.facet(EditorState.readOnly), "预览档又锁上了").toBe(true);
+    view.dispatch({ changes: { from: 0, insert: "N" }, userEvent: "input.type" });
+    expect(view.state.doc.toString(), "预览档写不进去").toBe(before);
+  });
+
+  it("丙 源码档没有这颗键（它只管预览 ↔ 编辑）", async () => {
+    const { view } = await mdPanelInPreview();
+    expect(fab()!.hidden, "前置：预览档它在").toBe(false);
+    await toggleView(1); // 预览 → 源码
+    expect(panelEditor(), "前置：换档不换 view").toBe(view);
+    expect(fab()!.hidden, "源码档不该出现").toBe(true);
+  });
+
+  it("丁 Ctrl+E 与悬浮键同一动作（照 VS Code markdown.editor.toggleLocked）", async () => {
+    const { tab } = await mdPanelInPreview();
+    const ctrlE = () =>
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "e", ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+    ctrlE();
+    await wait(60);
+    expect(tab.viewMode, "Ctrl+E 进编辑档").toBe("edit");
+    ctrlE();
+    await wait(60);
+    expect(tab.viewMode, "再按一下回预览档").toBe("preview");
+  });
+
+  it("戊 Ctrl+/ 仍是源码 ↔ 预览：从编辑档按一下回源码，再按一下落在锁着的预览", async () => {
+    const { tab } = await mdPanelInPreview();
+    const { toggleDecoEdit } = await import("../src/markdown");
+    toggleDecoEdit();
+    expect(tab.viewMode).toBe("edit");
+    await toggleView(1);
+    expect(tab.viewMode, "编辑档 → 源码").toBe("source");
+    await toggleView(1);
+    expect(tab.viewMode, "源码 → 预览（锁着的，不是编辑档）").toBe("preview");
+  });
+
+  it("己 会话把三档如实落盘（edit 不许被降级成 preview）", async () => {
+    const { tab } = await mdPanelInPreview();
+    const { toggleDecoEdit } = await import("../src/markdown");
+    const { snapshotSession } = await import("../src/session/persist");
+    toggleDecoEdit();
+    expect(tab.viewMode).toBe("edit");
+    const snap = snapshotSession();
+    const rec = snap.panels.flatMap((p) => p.tabs).find((t) => t.path.endsWith("a.md"));
+    expect(rec, "前置：夹具标签在快照里").toBeTruthy();
+    expect(rec!.viewMode, "落盘的档位就是 edit").toBe("edit");
+  });
+
+  it("庚 预览档点得进焦点（读的那一档要能选字复制），编辑档不带这颗 tabindex", async () => {
+    const { view } = await mdPanelInPreview();
+    expect(
+      view.contentDOM.getAttribute("tabindex"),
+      "contenteditable=false 的元素 focus() 是空操作 ⇒ 没有 tabindex 就点不进焦点（B399 真机抓到）",
+    ).toBe("0");
+    expect(view.contentDOM.getAttribute("contenteditable"), "打字仍然进不去").toBe("false");
+    view.focus();
+    expect(document.activeElement, "有 tabindex 才能聚焦（Ctrl+A / Ctrl+C 的前提）").toBe(
+      view.contentDOM,
+    );
+    expect(view.dom.classList.contains("cm-focused"), "聚焦后落 cm-focused").toBe(true);
+
+    const { toggleDecoEdit } = await import("../src/markdown");
+    toggleDecoEdit();
+    expect(
+      view.contentDOM.getAttribute("tabindex"),
+      "编辑档靠 contenteditable 自己可聚焦，这颗 tabindex 必须摘掉",
+    ).toBeNull();
+    expect(view.contentDOM.getAttribute("contenteditable"), "编辑档能打字").toBe("true");
+  });
+});
+
 /**
  * B398 · 大文件落进装饰格：**装饰臂不换**（与 VS Code 同口径，只按视口解析）。
  *

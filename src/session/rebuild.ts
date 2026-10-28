@@ -322,8 +322,11 @@ export async function restoreSession(): Promise<boolean> {
     // 同一路径出现在多个面板：各建一个同源实例（内容自动同步）
     const inst = makeInstance(doc, panelId, src.text);
     tabs.set(inst.tabId, inst);
-    // 恢复 Markdown 视图模式（旧版 "split" 映射回 source）
-    if (isMdTab(inst) && (st.viewMode === "source" || st.viewMode === "preview")) {
+    // 恢复 Markdown 视图模式（旧版 "split" 映射回 source；B399 起多一档 "edit"）
+    if (
+      isMdTab(inst) &&
+      (st.viewMode === "source" || st.viewMode === "preview" || st.viewMode === "edit")
+    ) {
       inst.viewMode = st.viewMode;
     }
     // 恢复光标（实例独立）

@@ -1499,6 +1499,48 @@ body.layout-dragging .toc-grip {
 .panel-host {
   display: flex;
   min-height: 0;
+  /* B399：页面内那颗「预览 ↔ 编辑」悬浮键的定位基准 */
+  position: relative;
+}
+
+/* B399 · 预览档（禁编辑）↔ 编辑档的**页面内悬浮键**（用户口径 2026-10-28）。
+   只在装饰面（两种所见即所得档）里出现，位置固定在编辑区右下角 —— 与右上角的查找浮层
+   错开，也不进标签条（标签条那颗双字形开关管的是源码 ↔ 预览）。字形/提示由
+   `markdown.ts:syncDecoEditFab` 按档位写，这里只管样子；配色全部走共用 token。 */
+.deco-edit-fab {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  color: var(--fg-muted);
+  box-shadow: var(--shadow-lg);
+  cursor: pointer;
+  opacity: 0.85;
+  transition:
+    opacity var(--transition),
+    color var(--transition),
+    background var(--transition);
+}
+.deco-edit-fab:hover {
+  opacity: 1;
+  color: var(--fg);
+  background: var(--toolbar-hover-bg);
+}
+/* display:inline-flex 会盖掉 hidden 的 UA 样式 —— 与 .find-bar[hidden] 同一类坑 */
+.deco-edit-fab[hidden] {
+  display: none;
+}
+.deco-edit-fab .codicon {
+  font-size: 16px;
 }
 .panel-host .panel-editor {
   flex: 1 1 100%;

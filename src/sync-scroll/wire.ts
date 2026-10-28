@@ -69,7 +69,11 @@ function surfaceOf(el: HTMLElement, label: string): CoordinatedSurface {
   return { events: el, label };
 }
 
-/** 面板的两侧之一。`viewMode` 只有 source / preview 两档 ⇒ 一格同时只有一侧看得见。 */
+/**
+ * 面板的两侧之一 ⇒ 一格同时只有一侧看得见。
+ * B399 起 `viewMode` 有三档，但 `edit` 与 `preview` 是同一张装饰面、同一个滚动面
+ * ⇒ 这里仍只有两侧（`edit` 按 `editor` 侧算，见 `sideOfPanel`）。
+ */
 export type SyncSide = "editor" | "preview";
 
 /** 「算不算没落进去」的判定容差（源码行）：与协调器账本同一档，只用来决定要不要重试。 */

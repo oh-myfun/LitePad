@@ -302,6 +302,15 @@ export const COMMANDS: CommandDef[] = [
 
   // ---- 视图 ----
   { id: "view.toggle", label: "切换 源码 / 预览", group: "视图", keys: ["Ctrl+/"] },
+  {
+    // B399：预览档（禁编辑）↔ 编辑档。键位照 VS Code 富 Markdown 编辑器的
+    // `markdown.editor.toggleLocked`（`Toggle Markdown Read-only`，macOS 是 cmd+e）。
+    id: "view.toggleEdit",
+    label: "切换 预览 / 编辑",
+    group: "视图",
+    keys: ["Ctrl+E"],
+    note: "只对所见即所得的文档面成立；与页面内那颗悬浮键同一动作",
+  },
   { id: "view.outline", label: "显示/隐藏大纲 TOC", group: "视图", keys: ["Ctrl+Shift+O"] },
   {
     // B314：与大纲那颗同族（一颗键管一块展开区的开合），键位取 VS Code 的 Explorer 那一颗。

@@ -915,6 +915,13 @@
 .md-deco--readonly .cm-content {
   caret-color: transparent;
 }
+/* B399 · 预览档是「禁止编辑的编辑模式」：`editable=false` 只挡输入，CM6 仍会在聚焦时
+   把光标柱画出来（基础主题 `&.cm-focused > .cm-scroller > .cm-cursorLayer .cm-cursor
+   { display:block }`，与可编辑性无关）⇒ 点一下文档就看到一条竖线，读起来像能打字。
+   锁着的档连这一层都不画；选择（复制）走的是另一层 `.cm-selectionLayer`，不受影响。 */
+.md-deco--readonly .cm-cursorLayer {
+  display: none;
+}
 .md-deco--readonly [contenteditable="true"] {
   caret-color: transparent;
 }
@@ -931,7 +938,8 @@
   font-size: 11px;
   line-height: 22px;
 }
-/* 任务清单的方框在只读档仍然可点（B358 的勾是显式放行的写操作）。 */
+/* B399：锁着的档里点勾不翻（预览档与只读文档都算锁着，B358 的「写操作放行」作废）⇒
+   别再给可点的手势。「预览只是禁止编辑的编辑模式」——手势也得跟着说这句话。 */
 .md-deco--readonly .cm-line.md-task-item::before {
-  cursor: pointer;
+  cursor: default;
 }

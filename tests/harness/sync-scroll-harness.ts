@@ -225,12 +225,7 @@ const docLongId = 1;
 const docShortId = 2;
 const fixtureText = () => ({ long: window.__FIXTURE_LONG__, short: window.__FIXTURE_SHORT__ });
 
-function makeTab(
-  docId: number,
-  text: string,
-  panelId: number,
-  viewMode: "source" | "preview",
-): Tab {
+function makeTab(docId: number, text: string, panelId: number, viewMode: Tab["viewMode"]): Tab {
   const env = { dark: false, wrap: true, perf: perfProfileFor("normal") };
   const { state, comps } = makeTabState(text, markdown(), env, () => {});
   // viewMode 必须与面板的 mode-* 类一致：生产的可见性由它决定（applyPanelMode 就是

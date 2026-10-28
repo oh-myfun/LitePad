@@ -47,6 +47,8 @@ import { assetBase, setAssetBase } from "./spike/deco/assets";
 // #413 find 拆出 ⇒ MarkdownDeps 全清，预览查找桥改直接 import（find/findbar 反向只取本模块的
 // PreviewFindSpec 类型——等等，类型已归 find/findbar，这里只取值，无类型回边）
 import { applyPreviewFindToPanel, findSpecOf, getFindBar } from "./find/findbar";
+import { CODICONS } from "./shell/codicons";
+import { setTip } from "./shell/tooltip";
 
 // ---------------------------------------------------------------- Markdown 预览（M3）
 
@@ -73,10 +75,15 @@ function applyDecoFace(panel: Panel, tab: Tab | undefined, mode: string): void {
   // B397-5：`panel.preview` 在场 = 这一格此刻走**派生 DOM 那一臂**（大文件 / 开关关着 /
   // 非 Markdown），装饰档不许装 —— 以前这里是「early return」，改成并进 `on` 的判据：
   // 运行时关掉开关那一发要能把已经装着的装饰摘干净（壬 那条判据量的就是这个）。
-  const on = !panel.preview && mode === "preview" && shouldMountDecoPreview(tab);
+  //
+  // B399：两种所见即所得档（`preview` / `edit`）是**同一张脸** —— 都装 `decoFace()`，
+  // 差别只在锁。用户口径：「预览模式只是禁止编辑的编辑模式」。
+  const on = !panel.preview && mode !== "source" && shouldMountDecoPreview(tab);
   // `docs.get` 而不是 `docOf`：孤儿实例不该把这一次换档带崩（与 `shouldMountDecoPreview` 同口径）
   const doc = docs.get(tab.docId);
   const readonly = doc?.readonly === true;
+  // 锁 = 文档只读（哪一档都不许写）或预览档（B399：预览 = 禁编辑的编辑模式）
+  const locked = readonly || mode === "preview";
   // B397-4c · 图片相对路径的基准：跟着**这一份文档**走，换标签要重发。
   // 传的是文档路径本身而不是目录 —— `resolveAssetPath` 的契约与 InkNote 一致（进来的是 md 文件路径）
   const assetPath = doc?.path ?? null;
@@ -86,9 +93,11 @@ function applyDecoFace(panel: Panel, tab: Tab | undefined, mode: string): void {
 
   const effects = [];
   if (installed !== on) effects.push(tab.comps.preview.reconfigure(on ? decoFace() : []));
-  // 只读锁只在这一步生效：源码档保持主干现状（那里从来没有过锁，本轮不动它）
-  if (view.state.facet(EditorState.readOnly) !== readonly) {
-    effects.push(tab.comps.lock.reconfigure(on ? decoLock(readonly) : []));
+  // 锁只挂在装饰面上：离开装饰面必须把锁摘干净 —— B399 起预览档也上锁，切回源码档
+  // 不摘就等于把源码档也锁死。源码档自己的只读仍按主干旧口径（这里不新增行为）。
+  const hasLock = view.state.facet(EditorState.readOnly) === true;
+  if (on ? hasLock !== locked : hasLock) {
+    effects.push(tab.comps.lock.reconfigure(on ? decoLock(locked) : []));
   }
   if (effects.length) view.dispatch({ effects });
   // 基准目录单独一发：与 reconfigure 同发时，刚装上的字段收不到这一颗 effect
@@ -105,11 +114,15 @@ function applyPanelMode(panel: Panel): void {
   const tab = tabs.get(panel.activeTabId);
   const mode = tab && isMdTab(tab) ? tab.viewMode : "source";
   panel.bodyEl.classList.remove("mode-source", "mode-split", "mode-preview");
-  panel.bodyEl.classList.add("mode-" + mode);
+  // B399：`preview` 与 `edit` 是同一张脸（装饰面），DOM 上都落 `mode-preview`；
+  // 两档的差别只在 `tab.comps.lock`（见 applyDecoFace）。
+  panel.bodyEl.classList.add("mode-" + (mode === "edit" ? "preview" : mode));
   // B397-5：预览侧用哪一臂按**视图实际显示的那份文档**问（大文件就地换派生 DOM 那一臂）。
   // 必须排在 applyDecoFace 之前：`p.preview` 在场时 applyDecoFace 一行不碰。
   ensurePreviewArm(panel);
   applyDecoFace(panel, tab, mode);
+  // B399：页面内那颗悬浮的「预览 ↔ 编辑」切换键，跟着同一份档位状态刷
+  syncDecoEditFab(panel, tab, mode);
   if (mode !== "source") {
     // 用户主动切模式 → force，大文件也要渲染一次（降级不是禁用）
     renderMarkdownFor(panel, true);
@@ -211,7 +224,9 @@ function toggleViewMode(target?: Tab): void {
   if (!tab || !isMdTab(tab)) return;
   const panel = getPanel(tab.panelId);
   if (!panel || !panel.bodyEl) return;
-  const toPreview = tab.viewMode !== "preview";
+  // B399：三档之后这颗键仍按 InkNote 的口径「源码 ↔ 预览」：
+  // 从源码进的是**预览档（禁编辑）**，从预览/编辑都回源码（编辑档的开关在悬浮键 / Ctrl+E）。
+  const toPreview = tab.viewMode === "source";
   // 切换视图本身不是编辑：隐藏/恢复编辑器可能让 CM6 产生事务，这里一律不置脏
   setSuppressDirty(true);
   // B190：切回源码后要把焦点给回编辑器（预览态期间它是 `display:none`，拿不住焦点，
@@ -257,6 +272,89 @@ function toggleViewMode(target?: Tab): void {
   // B224：切换键是双字形开关（预览态画 edit-code），字形必须跟着 viewMode 走
   renderPanelOps();
   scheduleSessionSave();
+}
+
+/**
+ * B399 · 页面内悬浮键：预览档（禁编辑）↔ 编辑档（同一张脸，解掉锁）。
+ *
+ * 用户口径（2026-10-28）：「预览和编辑态切换通过页面内悬浮按钮，可参考 InkNote 的单按键
+ * 切换或者 VS Code 的 switch 切换。」VS Code 那一侧的对应物是富 Markdown 编辑器的
+ * `markdown.editor.toggleLocked`（`Toggle Markdown Read-only`，macOS 绑 cmd+e）——
+ * 这里也留一颗同键位 Ctrl+E（`view.toggleEdit`）。
+ *
+ * 只在这两档之间切：源码档不归它管（那颗键在标签区操作区，管的是源码 ↔ 预览）。
+ * 换的是 Compartment 不是 view ⇒ 位置要自己扶：先读 `v`、切档、落位、重注册，与
+ * `toggleViewMode` 同一套纪律（B293 / B285）。切档本身不是编辑 ⇒ 全程抑制置脏。
+ */
+function toggleDecoEdit(target?: Tab): void {
+  const tab = target ?? activeTab();
+  if (!tab || !isMdTab(tab) || tab.viewMode === "source") return;
+  const panel = getPanel(tab.panelId);
+  if (!panel || !panel.bodyEl) return;
+  // 只对装饰那一臂成立：派生 DOM 预览（开关关着 / 非 md / huge）没有可编辑形态
+  if (!shouldMountDecoPreview(tab) || panel.preview) return;
+  const toEdit = tab.viewMode === "preview";
+  if (toEdit && docs.get(tab.docId)?.readonly === true) return; // 只读文档没有编辑档
+  setSuppressDirty(true);
+  const keepV = readVisibleV(panel);
+  tab.viewMode = toEdit ? "edit" : "preview";
+  try {
+    applyPanelMode(panel);
+    if (keepV !== null) landVisibleSideAtV(panel, keepV);
+    reconcileSyncRegistrations();
+  } finally {
+    setSuppressDirty(false);
+  }
+  // 进入编辑档：焦点直接交给编辑器（用户点这颗键就是要接着写）；补一拍的理由同 B190 ——
+  // WebView2 在手势结束时会把焦点收回 body。
+  if (toEdit && panel.view) {
+    const handle = panel.view;
+    handle.focus();
+    setTimeout(() => handle.focus(), 0);
+  }
+  renderPanelOps(panel.panelId);
+  scheduleSessionSave();
+}
+
+/**
+ * B399 · 那颗悬浮键的显隐与字形（唯一刷点是 `applyPanelMode`，与档位同源）。
+ *
+ * 显隐口径：Markdown + 装饰臂在场（`shouldMountDecoPreview` 且没有派生预览）+ 不在源码档
+ * + 文档可写。派生臂那一边（`.md-preview`）不能编辑，留着这颗键等于给用户一个假入口。
+ * 字形照本仓的双字形开关口径：**画的是点了会去的那一档** —— 预览档画 `edit-code`（去编辑），
+ * 编辑档画 `preview`（回预览）。
+ */
+function syncDecoEditFab(panel: Panel, tab: Tab | undefined, mode: string): void {
+  const host = panel.bodyEl;
+  if (!host) return;
+  let fab = host.querySelector<HTMLButtonElement>(".deco-edit-fab");
+  if (!fab) {
+    fab = document.createElement("button");
+    fab.type = "button";
+    fab.className = "deco-edit-fab";
+    fab.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const t = tabs.get(panel.viewTabId ?? panel.activeTabId);
+      if (t) toggleDecoEdit(t);
+    });
+    host.appendChild(fab);
+  }
+  const doc = tab ? docs.get(tab.docId) : undefined;
+  const show =
+    !!tab &&
+    panel.viewTabId === tab.tabId &&
+    mode !== "source" &&
+    !panel.preview &&
+    shouldMountDecoPreview(tab) &&
+    doc?.readonly !== true;
+  fab.hidden = !show;
+  if (!show || !tab) return;
+  const editing = tab.viewMode === "edit";
+  fab.innerHTML = editing ? CODICONS.preview : CODICONS.editCode;
+  fab.dataset.mode = tab.viewMode;
+  const label = editing ? "预览" : "编辑";
+  setTip(fab, label, { key: "Ctrl+E" });
+  fab.setAttribute("aria-label", `${label}（Ctrl+E）`);
 }
 
 /**
@@ -354,6 +452,7 @@ export {
   renderMarkdownFor,
   scheduleMdRender,
   toggleViewMode,
+  toggleDecoEdit,
   openPreviewToSide,
   refreshViewModeButton,
   dirname,

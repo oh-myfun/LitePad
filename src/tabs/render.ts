@@ -145,8 +145,9 @@ export function panelDataOf(p: Panel): PanelRenderData {
     maximized: maximizedPanelId === p.panelId,
     collapsed: maximizedPanelId !== null && maximizedPanelId !== p.panelId,
     // B224：标签区右侧那两颗 Markdown 键。mdPreview 决定切换键的字形与文案。
+    // B399：预览 / 编辑两档都是装饰面 ⇒ 那颗键都画 `edit-code`（点了回源码）。
     md,
-    mdPreview: md && act!.viewMode === "preview",
+    mdPreview: md && act!.viewMode !== "source",
   };
 }
 

@@ -325,7 +325,10 @@ function adoptTransferredTabs(incoming: SatelliteTab[], panelId = activePanelId)
     }
     doc.backedUp = st.backedUp;
     const inst = makeInstance(doc, panel.panelId, st.text);
-    if (isMdTab(inst) && st.viewMode === "preview") inst.viewMode = "preview";
+    // B399：三档都要带过去（"edit" 也是装饰面的一种档位，漏掉它就等于降级成源码）
+    if (isMdTab(inst) && (st.viewMode === "preview" || st.viewMode === "edit")) {
+      inst.viewMode = st.viewMode;
+    }
     const lineNo = Math.min(Math.max(1, st.cursorLine || 1), inst.state.doc.lines);
     const line = inst.state.doc.line(lineNo);
     const pos = line.from + Math.min(Math.max(0, (st.cursorCol || 1) - 1), line.length);

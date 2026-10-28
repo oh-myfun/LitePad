@@ -59,6 +59,11 @@ export function decoLock(readonly: boolean): Extension {
   return [
     EditorState.readOnly.of(true),
     EditorView.editable.of(false),
+    // `editable(false)` 把 `.cm-content` 写成 `contenteditable=false`，而 CM6 聚焦靠的正是
+    // 点下去 `focus()` 那一下（`handleMouseDown` → `focusPreventScroll(contentDOM)`）——
+    // 不可编辑又没有 tabindex 的元素 `focus()` 是空操作 ⇒ 预览档点不进焦点，
+    // Ctrl+A / Ctrl+C / 键盘滚动全废。给个 tabindex，读的那一档照样能选字复制（B399 真机抓到）。
+    EditorView.contentAttributes.of({ tabindex: "0" }),
     EditorState.transactionFilter.of((tr) => (tr.docChanged ? [] : tr)),
     // 样式侧要知道「这一把锁现在落着」（藏光标、收工具栏）：CM6 会把多颗
     // editorAttributes 的 class 合并，所以这颗与 livePreview 的 `md-deco` 并存

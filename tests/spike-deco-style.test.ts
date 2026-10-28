@@ -385,6 +385,13 @@ describe("B397-2 块级 widget：与正文左缘对齐，且一条纵向 margin 
 
   it("B397-3b 只读那一把锁有 CSS 读数点：藏光标、收工具栏与语言下拉、留静态语言名（App.css:1142-1155）", () => {
     expect(css).toMatch(/\.md-deco--readonly \.cm-content\s*\{\s*caret-color:\s*transparent/);
+    // B399：可编辑性关掉之后 CM6 仍会在聚焦时画光标柱（与 editable 无关）⇒ 锁着的档
+    // 把整层 `.cm-cursorLayer` 藏掉；选择走另一层，不受影响。
+    expect(css).toMatch(/\.md-deco--readonly \.cm-cursorLayer\s*\{\s*display:\s*none/);
+    // B399：锁着的档点勾不翻 ⇒ 方框不再给可点的手势（B358 那条「只读仍可点」作废）。
+    expect(css).toMatch(
+      /\.md-deco--readonly \.cm-line\.md-task-item::before\s*\{\s*cursor:\s*default/,
+    );
     expect(css).toMatch(
       /\.md-deco--readonly \.md-table-toolbar,\s*\.md-deco--readonly \.md-codeblock-lang,\s*\.md-deco--readonly \.md-codeblock-language-control::after\s*\{\s*display:\s*none/,
     );

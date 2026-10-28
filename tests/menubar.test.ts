@@ -112,6 +112,7 @@ function makeCb(): MenuBarCallbacks {
     onSelectAll: noop,
     onTimeDate: noop,
     onToggleView: noop,
+    onToggleEdit: noop,
     onOutline: noop,
     tocChecked: () => true,
     onFoldAll: noop,

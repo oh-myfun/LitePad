@@ -71,6 +71,8 @@ export interface MenuBarCallbacks {
   onSelectAll: () => void;
   onTimeDate: () => void;
   onToggleView: () => void;
+  /** B399：预览档（禁编辑）↔ 编辑档；与页面内悬浮键、Ctrl+E 同一动作。 */
+  onToggleEdit: () => void;
   onOutline: () => void;
   /** 大纲抽屉展开态（勾选显示） */
   tocChecked: () => boolean;
@@ -202,6 +204,12 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
     label: "查看",
     items: (cb) => [
       { label: withKey("切换 源码 / 预览", cb.keyHint("view.toggle")), onSelect: cb.onToggleView },
+      // B399：源码档这一条按不动（动作只在装饰面上成立），菜单不置灰、点它不做事的成本
+      // 比维护一份「这一档有没有装饰面」的勾选态低；键位分发那一侧同样不抢键。
+      {
+        label: withKey("切换 预览 / 编辑", cb.keyHint("view.toggleEdit")),
+        onSelect: cb.onToggleEdit,
+      },
       {
         label: withKey("大纲 TOC", cb.keyHint("view.outline")),
         checked: cb.tocChecked(),

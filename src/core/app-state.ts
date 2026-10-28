@@ -49,8 +49,14 @@ export interface Tab {
   panelId: number;
   comps: TabCompartments;
   state: EditorState;
-  /** Markdown 视图（仅 .md 有效）：源码 / 预览（实例独立，可左源码右预览对照） */
-  viewMode: "source" | "preview";
+  /**
+   * Markdown 视图（仅 .md 有效），三档（B399）：
+   *   · `source`  源码模式（无装饰，可写）；
+   *   · `preview` 预览模式（装饰面 + 禁止编辑，与 VS Code 的 Markdown 预览同义）；
+   *   · `edit`    编辑模式（同一张装饰面，只是把锁解开）。
+   * 后两档是**同一张脸**：DOM 上都落 `mode-preview`，差别只在 `tab.comps.lock`。
+   */
+  viewMode: "source" | "preview" | "edit";
   /**
    * 这份实例自己的视口位置，用同步滚动的共享坐标 `v`（源码行号 + 小数）。
    *
