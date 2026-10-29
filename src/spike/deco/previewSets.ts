@@ -654,7 +654,7 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
         decos.push(
           Decoration.replace({
             block: true,
-            widget: new HtmlBlockWidget(from, to, doc.sliceString(from, to)),
+            widget: new HtmlBlockWidget(from, to, doc.sliceString(from, to), assetPath),
             ...blockReveal(from, to),
           }).range(from, to),
         );

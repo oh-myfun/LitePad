@@ -549,7 +549,7 @@
 }
 .md-deco .md-codeblock-gutter {
   flex: none;
-  padding: 12px 10px 12px 14px;
+  padding: 6px 10px 10px 14px;
   text-align: right;
   white-space: pre;
   user-select: none;
@@ -575,7 +575,7 @@
   box-sizing: border-box;
   width: max-content;
   min-width: 100%;
-  padding: 12px 16px 12px;
+  padding: 6px 16px 10px;
   min-height: 1.6em;
   outline: none;
   white-space: pre;
@@ -595,16 +595,16 @@
   color: var(--shiki-dark);
 }
 
-/* B405：顶部工具行（照 vditor 的代码块工具条）—— 语言按钮与复制键并排靠右。
-   整行在「行号栏 + 代码区」之上，按钮与展开列表都不会压到行号竖线。
-   工具行常驻（语言按钮要一直看得见），只有复制键仍按旧口径悬停/编辑时现身。 */
+/* B405：顶部工具行（照 vditor 的代码块工具条）。
+   B409：语言按钮挪到**左侧**、复制键留右（`space-between`），并把工具行与代码区
+   的顶部内距收窄 —— 原来的 30 + 12 给了一种「块顶空一大片」的观感。 */
 .md-deco .md-codeblock-header {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 4px;
-  height: 30px;
-  padding: 0 8px;
+  height: 24px;
+  padding: 0 6px;
   background: transparent;
   user-select: none;
 }
@@ -612,8 +612,8 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
-  padding: 0 9px;
+  height: 20px;
+  padding: 0 7px;
   font-size: 11px;
   font-family: var(--font-ui);
   border: 0;
@@ -652,8 +652,8 @@
   min-width: 0;
   width: auto;
   max-width: 180px;
-  height: 26px;
-  padding: 0 8px;
+  height: 20px;
+  padding: 0 6px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -671,6 +671,13 @@
 .md-deco .md-codeblock-lang:focus {
   outline: none;
   box-shadow: none;
+}
+.md-deco .md-codeblock-lang .dd-main {
+  gap: 4px;
+}
+/* 工具行只有 24px 高；150% 的图标字号在这里压到 13px，免得上沿顶出盒子。 */
+.md-deco .md-codeblock-lang .seti-icon {
+  font-size: 13px;
 }
 .md-deco .md-codeblock-lang .dd-label {
   overflow: hidden;

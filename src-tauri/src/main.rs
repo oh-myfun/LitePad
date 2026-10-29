@@ -64,6 +64,82 @@ fn boot_background(win: &tauri::WebviewWindow) -> Color {
     }
 }
 
+/// B408：多开判据 —— dev 构建默认多开；环境变量可显式覆盖（两个都设时 MULTI 优先）。
+///
+/// 开多开就是**不注册单实例插件**：每个进程各自开窗、各自转关联文件，互不探测。
+/// 配合 dev 构建的独立配置目录（`LitePad-dev`），开发实例与已安装版可以同时开着。
+fn multi_instance_allowed() -> bool {
+    multi_instance_from(
+        cfg!(debug_assertions),
+        std::env::var_os("LITEPAD_MULTI_INSTANCE"),
+        std::env::var_os("LITEPAD_SINGLE_INSTANCE"),
+    )
+}
+
+fn multi_instance_from(
+    dev_build: bool,
+    force_multi: Option<std::ffi::OsString>,
+    force_single: Option<std::ffi::OsString>,
+) -> bool {
+    fn on(value: &Option<std::ffi::OsString>) -> bool {
+        value
+            .as_deref()
+            .and_then(|v| v.to_str())
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    }
+    if on(&force_multi) {
+        return true;
+    }
+    if on(&force_single) {
+        return false;
+    }
+    dev_build
+}
+
+/// 单实例转发（双击关联文件且**应用已在运行**时走这里）。
+///
+/// Windows 以 `"litepad.exe" "<path>"` 启动新进程；单实例插件把它探测到后转发进来，
+/// 挑出应接管的 .md/.markdown 路径入队并通知已运行的主窗口。（首启没有运行中实例、
+/// 不会走到这里，那条路径由 `capture_boot_assoc_files` 在 main 启动期补抓。）
+fn on_second_instance(app: &tauri::AppHandle, argv: Vec<String>, cwd: String) {
+    let files = commands::assoc_args_to_open(&argv, &cwd);
+    if files.is_empty() {
+        return;
+    }
+    commands::push_pending_files(files.clone());
+    // 应用已运行时：拉起主窗口并转发事件（前端据此开新标签）
+    if let Some(win) = app.get_webview_window("main") {
+        // B313 三句各管一件事，少一句就回到「文件开了、窗口还在任务栏里」：
+        //   · `unminimize` —— tao 的 `set_focus` 在缓存标记说「还最小化」时是**空操作**
+        //     （守卫是 visible && !minimized && !foreground），而 `show()` 也不还原最小化；
+        //   · `show` —— 窗口被藏起来时（非最小化）把它放回可见态；
+        //   · 排队补一发 `set_focus` —— unminimize 的真实动作（改标记 + SW_RESTORE）排在
+        //     事件循环的任务队列里，此刻同步读到的标记还是「最小化」。这条闭包排在它后面，
+        //     那时标记已清，`set_focus` 才真走到 force_window_active：先 SetForegroundWindow，
+        //     被前台锁挡下再用一次 Alt 键输入抢回前台权限 —— 双击方是 Explorer，
+        //     前台权限不在本进程手上，那记兜底才是「提到顶部」真正生效的那一步。
+        let _ = win.unminimize();
+        let _ = win.show();
+        let later = win.clone();
+        let _ = win.run_on_main_thread(move || {
+            let _ = later.set_focus();
+        });
+        core::logging::log(
+            core::logging::Level::Info,
+            "assoc",
+            &format!("单实例转发 {} 个文件 · 已请求还原并激活主窗口", files.len()),
+        );
+    } else {
+        core::logging::log(
+            core::logging::Level::Warn,
+            "assoc",
+            "单实例转发时找不到主窗口（label=main）",
+        );
+    }
+    let _ = app.emit("open-file", serde_json::json!({ "paths": files }));
+}
+
 fn main() {
     // 启动计时基准（端到端耗时诊断用）
     let _ = commands::BOOT.set(std::time::Instant::now());
@@ -87,52 +163,25 @@ fn main() {
     //    本进程这里的 push 随退出而丢弃，不会重复打开。
     commands::capture_boot_assoc_files();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         // B107 应用内自动更新：updater 负责「检查/下载/验签/安装」，process 提供 relaunch。
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
-            // 双击关联文件且**应用已在运行**时，Windows 以 `"litepad.exe" "<path>"`
-            // 启动新进程；单实例插件把它探测到后转发到这里，挑出应接管的 .md/.markdown
-            // 路径入队并通知已运行的主窗口。（首启没有运行中实例、不会走到这里，
-            // 那条路径由 `capture_boot_assoc_files` 在 main 启动期补抓。）
-            let files = commands::assoc_args_to_open(&argv, &cwd);
-            if files.is_empty() {
-                return;
-            }
-            commands::push_pending_files(files.clone());
-            // 应用已运行时：拉起主窗口并转发事件（前端据此开新标签）
-            if let Some(win) = app.get_webview_window("main") {
-                // B313 三句各管一件事，少一句就回到「文件开了、窗口还在任务栏里」：
-                //   · `unminimize` —— tao 的 `set_focus` 在缓存标记说「还最小化」时是**空操作**
-                //     （守卫是 visible && !minimized && !foreground），而 `show()` 也不还原最小化；
-                //   · `show` —— 窗口被藏起来时（非最小化）把它放回可见态；
-                //   · 排队补一发 `set_focus` —— unminimize 的真实动作（改标记 + SW_RESTORE）排在
-                //     事件循环的任务队列里，此刻同步读到的标记还是「最小化」。这条闭包排在它后面，
-                //     那时标记已清，`set_focus` 才真走到 force_window_active：先 SetForegroundWindow，
-                //     被前台锁挡下再用一次 Alt 键输入抢回前台权限 —— 双击方是 Explorer，
-                //     前台权限不在本进程手上，那记兜底才是「提到顶部」真正生效的那一步。
-                let _ = win.unminimize();
-                let _ = win.show();
-                let later = win.clone();
-                let _ = win.run_on_main_thread(move || {
-                    let _ = later.set_focus();
-                });
-                core::logging::log(
-                    core::logging::Level::Info,
-                    "assoc",
-                    &format!("单实例转发 {} 个文件 · 已请求还原并激活主窗口", files.len()),
-                );
-            } else {
-                core::logging::log(
-                    core::logging::Level::Warn,
-                    "assoc",
-                    "单实例转发时找不到主窗口（label=main）",
-                );
-            }
-            let _ = app.emit("open-file", serde_json::json!({ "paths": files }));
-        }))
+        .plugin(tauri_plugin_process::init());
+    // B408 多开：dev 构建默认不装单实例插件（开发实例可以和已安装版同时开着），
+    // `LITEPAD_MULTI_INSTANCE=1` / `LITEPAD_SINGLE_INSTANCE=1` 可显式指定。
+    // 已安装版照旧单实例：双击关联文件转发到已在跑的主实例。
+    let builder = if multi_instance_allowed() {
+        core::logging::log(
+            core::logging::Level::Info,
+            "app",
+            "多开模式：本实例不参与单实例转发（开发/测试）",
+        );
+        builder
+    } else {
+        builder.plugin(tauri_plugin_single_instance::init(on_second_instance))
+    };
+    builder
         .manage(commands::AppState {
             // B305：名单开局就从盘上读进来（读不到 / 坏了都回落默认，绝不因为名单文件
             // 损坏而让应用起不来 —— 口径同 `session::load`）。
@@ -341,4 +390,44 @@ fn main() {
                 core::logging::flush_pending(std::time::Duration::from_millis(400));
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::multi_instance_from;
+
+    #[test]
+    fn dev_build_allows_multi_instance() {
+        assert!(multi_instance_from(true, None, None));
+    }
+
+    #[test]
+    fn release_build_stays_single_instance() {
+        assert!(!multi_instance_from(false, None, None));
+    }
+
+    #[test]
+    fn env_can_force_multi_in_release() {
+        assert!(multi_instance_from(false, Some("1".into()), None));
+    }
+
+    #[test]
+    fn env_can_force_single_in_dev() {
+        assert!(!multi_instance_from(true, None, Some("1".into())));
+    }
+
+    #[test]
+    fn multi_flag_wins_when_both_set() {
+        assert!(multi_instance_from(
+            false,
+            Some("true".into()),
+            Some("1".into())
+        ));
+    }
+
+    #[test]
+    fn empty_or_other_values_are_ignored() {
+        assert!(!multi_instance_from(false, Some("".into()), None));
+        assert!(multi_instance_from(true, None, Some("0".into())));
+    }
 }

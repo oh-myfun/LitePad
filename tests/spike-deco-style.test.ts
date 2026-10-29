@@ -412,15 +412,15 @@ describe("B397-2 块级 widget：与正文左缘对齐，且一条纵向 margin 
 
   it("代码块：行号栏 + 顶部工具行两层（B405 照 vditor 的代码块工具条）", () => {
     const gutter = ruleBlock(css, ".md-deco .md-codeblock-gutter");
-    // B405：语言按钮搬进顶部工具行 ⇒ 行号栏不再需要 34px 的「预留位」
-    expect(gutter).toMatch(/padding:\s*12px 10px 12px 14px/);
+    // B405：语言按钮搬进顶部工具行 ⇒ 行号栏不再需要 34px 的「预留位」；B409 再把顶距收窄
+    expect(gutter).toMatch(/padding:\s*6px 10px 10px 14px/);
     expect(gutter).toMatch(/border-right:\s*1px solid var\(--md-panel-border\)/);
     expect(gutter).toMatch(/user-select:\s*none/);
     expect(ruleBlock(css, ".md-deco .md-codeblock-body"), "行号栏+代码区要在工具行下面").toMatch(
       /display:\s*flex/,
     );
     const code = ruleBlock(css, ".md-deco .md-codeblock-widget code");
-    expect(code).toMatch(/padding:\s*12px 16px 12px/);
+    expect(code).toMatch(/padding:\s*6px 16px 10px/);
     expect(code).toMatch(/font-size:\s*0\.85em/);
     expect(code).toMatch(/line-height:\s*1\.55/);
     expect(code).toMatch(/white-space:\s*pre/);
@@ -428,15 +428,16 @@ describe("B397-2 块级 widget：与正文左缘对齐，且一条纵向 margin 
     // 工具行常驻（语言按钮要一直可见）；复制键仍按悬停/编辑显现
     const header = ruleBlock(css, ".md-deco .md-codeblock-header");
     expect(header, "工具行不再绝对定位（否则会压在行号栏上）").not.toMatch(/position:\s*absolute/);
-    expect(header).toMatch(/justify-content:\s*flex-end/);
+    // B409：语言按钮在左、复制键在右
+    expect(header).toMatch(/justify-content:\s*space-between/);
     expect(ruleBlock(css, ".md-deco .md-codeblock-copy")).toMatch(/opacity:\s*0/);
     expect(css).toMatch(/\.md-codeblock-widget:hover \.md-codeblock-copy/);
     const lang = ruleBlock(css, ".md-deco .md-codeblock-lang");
     // B404：`.dropdown-trigger` 那份 150px/28px 的大表单尺寸必须被压回去
     expect(lang).toMatch(/min-width:\s*0/);
     expect(lang).toMatch(/width:\s*auto/);
-    // B405：按钮样式（与复制键同一档 26px、无边框），自带 chevron 是唯一箭头
-    expect(lang).toMatch(/height:\s*26px/);
+    // B405：按钮样式（与复制键同一档、无边框），自带 chevron 是唯一箭头；B409 高度收到 20px
+    expect(lang).toMatch(/height:\s*20px/);
     expect(lang).toMatch(/background:\s*transparent/);
     expect(ruleBlock(css, ".md-deco .md-codeblock-language-control")).toMatch(/display:\s*flex/);
     expect(ruleBlock(css, ".md-deco .md-codeblock-lang .dd-caret")).not.toMatch(/display:\s*none/);

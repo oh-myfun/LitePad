@@ -16,7 +16,7 @@
 import { EditorView, WidgetType } from "@codemirror/view";
 import { dirOf, followLink } from "../../markdown/links";
 import { sanitizeHtmlInto } from "../../markdown/sanitize";
-import { assetBase } from "./assets";
+import { assetBase, assetUrl, resolveAssetPath } from "./assets";
 import { bindBlockBoundaryCursor, bindBlockClickEdit, stampBlockRange } from "./blockRange";
 import { decoHooks } from "./hooks";
 import {
@@ -127,18 +127,40 @@ export class EditableMetadataWidget extends WidgetType {
   }
 }
 
+/** HTML 块里的 `<img src>`：相对路径按文档目录拼成可加载地址（B409）。
+ *
+ *  HTML 块里的 `<img src="./screenshots/a.png">` 是照文档目录写的，WebView 会把它
+ *  当成「应用自身的相对地址」去加载 ⇒ 一路 404。与 Markdown 图片同一口径
+ *  （`resolveAssetPath` + `assetUrl`）。已带协议的地址不碰：`asset:` / `blob:` 是
+ *  别处（或上一发）已经处理好的，http/data 本来就不该拼。
+ */
+function resolveHtmlImages(root: HTMLElement, mdPath: string | null): void {
+  root.querySelectorAll<HTMLImageElement>("img[src]").forEach((img) => {
+    const src = img.getAttribute("src") ?? "";
+    // ⚠️ 只放过「已经是可加载地址」的那几种：`C:\shots\a.png` 也带冒号，别一刀切掉
+    if (!src || /^(?:https?|data|blob|asset):/i.test(src) || src.startsWith("//")) return;
+    img.setAttribute("src", assetUrl(resolveAssetPath(mdPath, src)));
+  });
+}
+
 /** HTML 块：默认显示渲染结果（已消毒），点它改源码。 */
 export class HtmlBlockWidget extends WidgetType {
   constructor(
     readonly from: number,
     readonly to: number,
     readonly html: string,
+    /** 文档路径（HTML 里的相对图片按它拼）；换文档时 eq 必须判不等，DOM 才会重解析 */
+    readonly mdPath: string | null = null,
   ) {
     super();
   }
 
   eq(other: HtmlBlockWidget): boolean {
-    return other.to - other.from === this.to - this.from && other.html === this.html;
+    return (
+      other.to - other.from === this.to - this.from &&
+      other.html === this.html &&
+      other.mdPath === this.mdPath
+    );
   }
 
   toDOM(): HTMLElement {
@@ -156,14 +178,18 @@ export class HtmlBlockWidget extends WidgetType {
     // 原始 HTML 就是正文，表线/段落间距/标题线与预览面同源；编辑面只在 deco.css 里
     // 把字号/行距/颜色压回继承。
     preview.className = "md-html-preview md-rendered";
-    sanitizeHtmlInto(preview, this.html);
+    const renderPreview = (html: string): void => {
+      sanitizeHtmlInto(preview, html);
+      resolveHtmlImages(preview, this.mdPath);
+    };
+    renderPreview(this.html);
     wrap.append(source, preview);
     bindBlockBoundaryCursor(wrap, preview);
 
     attachSourceEditing(wrap, {
       source: () => source,
       toMarkdown: (text) => text.replace(/\n+$/, ""),
-      onInput: (text) => sanitizeHtmlInto(preview, text),
+      onInput: renderPreview,
       indentOnTab: true,
     });
     preview.addEventListener("mousedown", (event) => {
@@ -199,6 +225,9 @@ export class HtmlBlockWidget extends WidgetType {
       source.textContent = this.html;
       sanitizeHtmlInto(preview, this.html);
     }
+    // 换文档（assetBase 变了）而 HTML 文本没变：eq() 判不等走进 updateDOM，
+    // 这里把图片地址按新文档目录重解析一次（已解析过的 asset: 地址会被跳过）。
+    resolveHtmlImages(preview, this.mdPath);
     EditorView.findFromDOM(dom)?.requestMeasure();
     return true;
   }

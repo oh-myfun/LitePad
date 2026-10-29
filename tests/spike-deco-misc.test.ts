@@ -14,6 +14,8 @@ import { EditorView } from "@codemirror/view";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { describe, expect, it } from "vitest";
 import { CodeBlockWidget } from "../src/spike/deco/codeBlockWidget";
+import { assetBase, setAssetBase } from "../src/spike/deco/assets";
+import { HtmlBlockWidget } from "../src/spike/deco/miscWidgets";
 import { buildPreviewSets } from "../src/spike/deco/previewSets";
 import { decoFace, decoLock } from "../src/spike/deco/wysiwyg";
 
@@ -251,5 +253,72 @@ describe("B397-4a 实体字符", () => {
     view.dispatch({ selection: { anchor: doc.indexOf("&amp;") } });
     expect(view.dom.querySelector(".md-entity")).toBeNull();
     expect(view.dom.textContent).toContain("&amp;");
+  });
+});
+
+describe("B409 HTML 块：相对路径图片按文档目录解析", () => {
+  // 路径一律用正斜杠拼：`resolveAssetPath` 的分隔符跟随原路径，断言里不必和反斜杠转义打架
+  const MD = "E:/docs/LitePad.md";
+  const IMG_DOC = [
+    '<p><img src="screenshots/a.png"><img src="./pics/../shots/b.png"></p>',
+    '<img src="https://example.com/x.png"><img src="data:image/png;base64,AAA">',
+    "",
+    "乙",
+  ].join("\n");
+
+  /** 按 assetBase 建一颗装了装饰档的 state（setAssetBase 是 StateEffect）。 */
+  function stateWithBase(doc: string, mdPath: string | null): EditorState {
+    const base = EditorState.create({
+      doc,
+      extensions: [markdown({ base: markdownLanguage }), assetBase],
+    });
+    return base.update({ effects: setAssetBase.of(mdPath) }).state;
+  }
+
+  it("装饰集把文档路径喂给 HTML 块 widget（eq 也认它）", () => {
+    const doc = IMG_DOC;
+    let widget: HtmlBlockWidget | null = null;
+    buildPreviewSets(stateWithBase(doc, MD)).statics.between(0, doc.length, (_from, _to, deco) => {
+      const w = (deco as unknown as { spec?: { widget?: unknown } }).spec?.widget;
+      if (w instanceof HtmlBlockWidget) widget = w;
+    });
+    expect(widget, "装饰档没画 HTML 块组件").not.toBeNull();
+    expect(widget!.mdPath).toBe(MD);
+    // 换文档：同一段 HTML 的 widget 必须判不等，否则 DOM 被复用、图还停在上一份目录
+    const other = new HtmlBlockWidget(0, doc.length, doc, "E:/elsewhere/x.md");
+    expect(widget!.eq(other)).toBe(false);
+  });
+
+  it("预览 DOM：相对路径拼成文档目录下的绝对路径，带协议的不碰", () => {
+    const html =
+      '<img src="screenshots/a.png"><img src="./pics/../shots/b.png"><img src="https://x/y.png"><img src="data:image/png;base64,AAA"><img src="C:/shots/c.png">';
+    const dom = new HtmlBlockWidget(0, html.length, html, MD).toDOM();
+    const srcs = [...dom.querySelectorAll("img")].map((img) => img.getAttribute("src"));
+    // jsdom 里 convertFileSrc 会抛 ⇒ assetUrl 原样返回路径；拼路径这一半才是判据
+    expect(srcs[0]).toBe("E:/docs/screenshots/a.png");
+    expect(srcs[1], "`..` 段要折叠").toBe("E:/docs/shots/b.png");
+    expect(srcs[2], "http(s) 不碰").toBe("https://x/y.png");
+    expect(srcs[3], "data: 不碰").toBe("data:image/png;base64,AAA");
+    expect(srcs[4], "Windows 绝对路径（盘符带冒号）不许被当成协议跳过").toBe("C:/shots/c.png");
+  });
+
+  it("换文档复用 DOM（updateDOM）：图片地址跟着新目录走", () => {
+    const html = '<img src="screenshots/a.png">';
+    const first = new HtmlBlockWidget(0, html.length, html, MD);
+    const dom = first.toDOM();
+    expect(dom.querySelector("img")!.getAttribute("src")).toBe("E:/docs/screenshots/a.png");
+    const moved = new HtmlBlockWidget(0, html.length, html, "E:/other/README.md");
+    moved.updateDOM(dom);
+    expect(dom.querySelector("img")!.getAttribute("src")).toBe("E:/other/screenshots/a.png");
+  });
+
+  it("源码里改图地址 ⇒ 预览重解析（onInput 那条路）", () => {
+    const html = '<img src="a.png">';
+    const widget = new HtmlBlockWidget(0, html.length, html, MD);
+    const dom = widget.toDOM();
+    const source = dom.querySelector<HTMLElement>(".md-block-source")!;
+    source.textContent = '<img src="b.png">';
+    source.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    expect(dom.querySelector("img")!.getAttribute("src")).toBe("E:/docs/b.png");
   });
 });

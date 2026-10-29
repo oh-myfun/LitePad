@@ -33,6 +33,8 @@ export interface DropdownOption {
   value: string;
   /** 选项右侧的补充说明（muted），可选。 */
   note?: string;
+  /** 选项前的图标（HTML 片段，如 `fileIconHtml()` 的 Seti 字形），可选（B409）。 */
+  icon?: string;
   disabled?: boolean;
 }
 
@@ -130,18 +132,33 @@ export function createDropdown(opts: DropdownOptions): DropdownHandle {
     );
   }
 
-  function currentLabel(): string {
-    return opts.options.find((o) => o.value === value)?.label ?? "";
+  function currentOption(): DropdownOption | undefined {
+    return opts.options.find((o) => o.value === value);
+  }
+
+  /** 图标 + 标签编成一组：触发器里 `space-between` 才不会把图标和文字拆开（B409）。 */
+  function optionMain(o: DropdownOption | undefined, text: string): HTMLElement {
+    const main = document.createElement("span");
+    main.className = "dd-main";
+    if (o?.icon) {
+      const icon = document.createElement("span");
+      icon.className = "dd-icon";
+      icon.innerHTML = o.icon;
+      main.appendChild(icon);
+    }
+    const label = document.createElement("span");
+    label.className = "dd-label";
+    label.textContent = text;
+    main.appendChild(label);
+    return main;
   }
 
   function renderTrigger(): void {
-    const label = document.createElement("span");
-    label.className = "dd-label";
-    label.textContent = currentLabel();
     const caret = document.createElement("span");
     caret.className = "dd-caret codicon codicon-chevron-down";
     caret.setAttribute("aria-hidden", "true");
-    trigger.replaceChildren(label, caret);
+    const current = currentOption();
+    trigger.replaceChildren(optionMain(current, current?.label ?? ""), caret);
     root.dataset.value = value;
   }
 
@@ -169,10 +186,7 @@ export function createDropdown(opts: DropdownOptions): DropdownHandle {
       btn.dataset.value = o.value;
       if (o.disabled) btn.disabled = true;
 
-      const label = document.createElement("span");
-      label.className = "dd-label";
-      label.textContent = o.label;
-      btn.appendChild(label);
+      btn.appendChild(optionMain(o, o.label));
 
       if (o.note) {
         const note = document.createElement("span");

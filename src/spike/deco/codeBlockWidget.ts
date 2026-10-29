@@ -17,7 +17,8 @@
 // 「就地编辑」就退化成「点一下跳回源码」。
 
 import { EditorView, WidgetType } from "@codemirror/view";
-import { createDropdown, type DropdownHandle } from "../../shell/dropdown";
+import { createDropdown, type DropdownHandle, type DropdownOption } from "../../shell/dropdown";
+import { fileIconHtml } from "../../shell/fileicons";
 import { highlightCodeHtml } from "../../markdown/highlight";
 import { LAZY_THRESHOLD_LINES } from "../../editor/perf";
 import { currentBlockRange, stampBlockRange, bindBlockBoundaryCursor } from "./blockRange";
@@ -29,49 +30,105 @@ import {
   sourceText,
 } from "./editableSource";
 
-/** 语言下拉里的候选项（照 InkNote 那份表；LitePad 的 Shiki 认不出的会停在纯文本）。 */
-export const LANGUAGE_OPTIONS = [
-  "",
-  "bash",
-  "c",
-  "cpp",
-  "csharp",
-  "css",
-  "diff",
-  "go",
-  "html",
-  "ini",
-  "java",
-  "javascript",
-  "json",
-  "markdown",
-  "mermaid",
-  "php",
-  "python",
-  "ruby",
-  "rust",
-  "sql",
-  "toml",
-  "typescript",
-  "xml",
-  "yaml",
+/** 语言条目：`value` 写进围栏 info string（Shiki 的语言 id）；`label` 与语言模式同一个名字。 */
+interface CodeLanguage {
+  value: string;
+  label: string;
+  /** 图标按语言模式里的名字取（`fileIconHtml`）；缺省同 label。 */
+  iconLabel?: string;
+}
+
+/**
+ * 代码块语言表（B409）：顺序与 `src/editor/language.ts` 的注册表一致，只收 Shiki 认得
+ * id 的那些（在 `@shikijs/langs` 全集里逐条试过；Octave / VBScript 没有对应语法，不进表）。
+ * 图标按语言标签取 —— 与状态栏语言模式、标签页是同一颗 Seti 字形。
+ */
+const CODE_LANGUAGES: readonly CodeLanguage[] = [
+  { value: "", label: "纯文本", iconLabel: "Plain Text" },
+  { value: "markdown", label: "Markdown" },
+  { value: "json", label: "JSON" },
+  { value: "javascript", label: "JavaScript" },
+  { value: "typescript", label: "TypeScript" },
+  { value: "python", label: "Python" },
+  { value: "rust", label: "Rust" },
+  { value: "go", label: "Go" },
+  { value: "c", label: "C" },
+  { value: "cpp", label: "C++" },
+  { value: "java", label: "Java" },
+  { value: "csharp", label: "C#" },
+  { value: "kotlin", label: "Kotlin" },
+  { value: "scala", label: "Scala" },
+  { value: "objective-c", label: "Objective-C" },
+  { value: "swift", label: "Swift" },
+  { value: "dart", label: "Dart" },
+  { value: "ruby", label: "Ruby" },
+  { value: "perl", label: "Perl" },
+  { value: "lua", label: "Lua" },
+  { value: "shellscript", label: "Shell" },
+  { value: "powershell", label: "PowerShell" },
+  { value: "sql", label: "SQL" },
+  { value: "xml", label: "XML" },
+  { value: "html", label: "HTML" },
+  { value: "css", label: "CSS" },
+  { value: "sass", label: "Sass" },
+  { value: "less", label: "LESS" },
+  { value: "yaml", label: "YAML" },
+  { value: "toml", label: "TOML" },
+  { value: "ini", label: "INI" },
+  { value: "properties", label: "Properties" },
+  { value: "dockerfile", label: "Dockerfile" },
+  { value: "cmake", label: "CMake" },
+  { value: "nginx", label: "Nginx" },
+  { value: "diff", label: "Diff" },
+  { value: "haskell", label: "Haskell" },
+  { value: "pascal", label: "Pascal" },
+  { value: "fortran-fixed-form", label: "Fortran" },
+  { value: "julia", label: "Julia" },
+  { value: "clojure", label: "Clojure" },
+  { value: "groovy", label: "Groovy" },
+  { value: "erlang", label: "Erlang" },
+  { value: "tcl", label: "Tcl" },
+  { value: "vb", label: "VB.NET" },
+  { value: "scheme", label: "Scheme" },
+  { value: "common-lisp", label: "Common Lisp" },
+  { value: "coffeescript", label: "CoffeeScript" },
+  { value: "r", label: "R" },
+  { value: "asm", label: "Assembly" },
+  { value: "php", label: "PHP" },
+  { value: "bat", label: "Batch" },
+  { value: "make", label: "Makefile" },
+  { value: "vue", label: "Vue" },
+  { value: "mermaid", label: "Mermaid" },
 ];
 
-const LANGUAGE_LABELS: Record<string, string> = {
-  cpp: "C++",
-  csharp: "C#",
-  javascript: "JavaScript",
-  typescript: "TypeScript",
-  json: "JSON",
-  html: "HTML",
-  css: "CSS",
-  sql: "SQL",
-  xml: "XML",
-  yaml: "YAML",
-  toml: "TOML",
-  ini: "INI",
-  php: "PHP",
-  go: "Go",
+/** 围栏里常见的别名 ⇒ 表内条目。只影响显示与选中项，**不改写**源码里原有的写法。 */
+const LANGUAGE_ALIAS: Record<string, string> = {
+  bash: "shellscript",
+  sh: "shellscript",
+  zsh: "shellscript",
+  shell: "shellscript",
+  console: "shellscript",
+  js: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
+  jsx: "javascript",
+  ts: "typescript",
+  tsx: "typescript",
+  py: "python",
+  rb: "ruby",
+  rs: "rust",
+  cs: "csharp",
+  "c#": "csharp",
+  "c++": "cpp",
+  objc: "objective-c",
+  yml: "yaml",
+  md: "markdown",
+  ps1: "powershell",
+  docker: "dockerfile",
+  makefile: "make",
+  text: "",
+  plaintext: "",
+  plain: "",
 };
 
 function normalizeLang(info: string): string {
@@ -81,8 +138,18 @@ function normalizeLang(info: string): string {
   return raw;
 }
 
+function entryOf(lang: string): CodeLanguage | undefined {
+  const canonical = LANGUAGE_ALIAS[lang] ?? lang;
+  return CODE_LANGUAGES.find((entry) => entry.value === canonical);
+}
+
 function langLabel(lang: string): string {
-  return LANGUAGE_LABELS[lang] ?? (lang || "纯文本");
+  return entryOf(lang)?.label ?? (lang || "纯文本");
+}
+
+function langIcon(lang: string): string {
+  const entry = entryOf(lang);
+  return fileIconHtml(entry?.iconLabel ?? entry?.label ?? "Plain Text");
 }
 
 /** 把代码写进元素（纯文本）；结尾换行补一个空文本节点，否则最后一行点不进去。 */
@@ -205,14 +272,24 @@ export class CodeBlockWidget extends WidgetType {
     languageControl.setAttribute("contenteditable", "false");
 
     const current = normalizeLang(this.lang);
-    const values = LANGUAGE_OPTIONS.includes(current)
-      ? LANGUAGE_OPTIONS
-      : [...LANGUAGE_OPTIONS, current];
+    const canonical = entryOf(current)?.value ?? current;
+    const options: DropdownOption[] = CODE_LANGUAGES.map((entry) => ({
+      label: entry.label,
+      value: entry.value,
+      icon: fileIconHtml(entry.iconLabel ?? entry.label),
+    }));
+    // 围栏里写着表外的语言（` ```foo `）：补一条，让触发器和列表都显示得出它的原名
+    if (!entryOf(current) && current) {
+      options.push({ label: current, value: current, icon: langIcon(current) });
+    }
+    /** 用户点过列表没有 —— 没点过时回写继续用源码里原来的写法（`ts` 不会被改成 `typescript`）。 */
+    let picked = false;
     const applyLang = (value: string): void => {
       const v = EditorView.findFromDOM(wrap);
       const range = v && currentBlockRange(v, wrap);
       if (!v || !range) return;
       if (v.state.readOnly) return;
+      picked = true;
       const code = sourceText(wrap.querySelector('[data-block-source="1"]') ?? codeEl);
       v.dispatch({
         changes: { from: range.from, to: range.to, insert: this.serialize(code, value) },
@@ -223,11 +300,11 @@ export class CodeBlockWidget extends WidgetType {
     // B404：换成应用自己的下拉（B108）。原生 `<select>` 的展开列表是系统画的 ——
     // 深色主题里一块白底黑字，与 `.popup-menu` 那一套菜单完全两个世界。
     const dropdown = createDropdown({
-      options: values.map((value) => ({ label: langLabel(value), value })),
-      current,
+      options,
+      current: canonical,
       ariaLabel: "代码语言",
       className: "md-codeblock-lang",
-      // B405：语言表二十多项，按用户要求带搜索（与设置页字体/语言下拉同一套）
+      // B405：语言表七十来项，按用户要求带搜索（与设置页字体/语言下拉同一套）
       searchable: true,
       searchPlaceholder: "搜索语言…",
       onPick: applyLang,
@@ -236,7 +313,7 @@ export class CodeBlockWidget extends WidgetType {
     // 键盘事件也不许漏给 CM6（Enter 在列表里是选中，不是插换行）。
     dropdown.root.addEventListener("mousedown", (e) => e.stopPropagation());
     dropdown.root.addEventListener("keydown", (e) => e.stopPropagation(), true);
-    dropdowns.set(wrap, { handle: dropdown, values: new Set(values) });
+    dropdowns.set(wrap, { handle: dropdown, values: new Set(options.map((o) => o.value)) });
     const languageLabel = document.createElement("span");
     languageLabel.className = "md-codeblock-language-label";
     languageLabel.textContent = langLabel(current);
@@ -273,7 +350,7 @@ export class CodeBlockWidget extends WidgetType {
     attachSourceEditing(wrap, {
       // 上色那一发会把 `<code>` 整个换掉 ⇒ 每次现查，不闭包旧节点
       source: () => wrap.querySelector<HTMLElement>('[data-block-source="1"]'),
-      toMarkdown: (text) => this.serialize(text, dropdown.getValue()),
+      toMarkdown: (text) => this.serialize(text, picked ? dropdown.getValue() : this.lang),
       onInput: (text) => {
         // 打字期间只修行号栏：上色留给退出编辑那一发（见文件头第 1 条）
         paintGutter(gutter, text);
@@ -324,12 +401,14 @@ export class CodeBlockWidget extends WidgetType {
     stampBlockRange(dom, this.from, this.to);
 
     const lang = normalizeLang(this.lang);
+    // 别名（`ts` / `bash`）按表内条目的规范 id 与列表对表，源码里的写法不动
+    const canonical = entryOf(lang)?.value ?? lang;
     const languageLabel = dom.querySelector<HTMLElement>(".md-codeblock-language-label");
     if (languageLabel) languageLabel.textContent = langLabel(lang);
-    // 源码里换了语言：选项表内就同步触发器文字；表外的（新语言）列表长不出来 ⇒ 重建 DOM
-    if (dd.handle.getValue() !== lang) {
-      if (!dd.values.has(lang)) return false;
-      dd.handle.setValue(lang);
+    // 源码里换了语言：选项表内就同步触发器；表外的（新语言）列表长不出来 ⇒ 重建 DOM
+    if (dd.handle.getValue() !== canonical) {
+      if (!dd.values.has(canonical)) return false;
+      dd.handle.setValue(canonical);
     }
 
     // 正在输入的元素不能重写，否则光标会被打掉

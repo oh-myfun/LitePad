@@ -240,7 +240,8 @@ describe("B397-3 代码块 widget：打字进得去、DOM 不被换、只读进�
     expect(lang!.tagName, "B404 语言下拉换成应用自己的下拉组件").toBe("BUTTON");
     expect(lang!.classList.contains("dropdown-trigger")).toBe(true);
     expect(wrap!.querySelector("select"), "原生 select 必须一个不剩").toBeNull();
-    expect(lang!.closest(".dropdown")!.getAttribute("data-value")).toBe("ts");
+    // B409：别名在列表里落到规范条目（`ts` ⇒ TypeScript），源码写法不变
+    expect(lang!.closest(".dropdown")!.getAttribute("data-value")).toBe("typescript");
     expect(wrap!.querySelector("button.md-codeblock-copy")).not.toBeNull();
     view.destroy();
   });
@@ -342,7 +343,9 @@ describe("B397-3 代码块 widget：打字进得去、DOM 不被换、只读进�
     )!;
     trigger.click();
     // B405：展开列表挂 body（撑出 `.cm-scroller` 的层叠上下文），不在 widget 里
-    const list = document.querySelector<HTMLElement>(".dropdown-list")!;
+    // B409：同文件前面还留着别的 view 的关闭态列表 ⇒ 按「展开态」认那一颗
+    const list = document.querySelector<HTMLElement>(".dropdown-list.open")!;
+    expect(list, "展开的语言列表必须存在").not.toBeNull();
     expect(list.parentElement, "B405：语言列表应挂在 body 下").toBe(document.body);
     const search = list.querySelector<HTMLInputElement>(".dropdown-search");
     expect(search, "B405：语言列表要带搜索框").toBeTruthy();
@@ -409,6 +412,68 @@ describe("B405 块内焦点：编辑器选区跟着落位", () => {
       const range = currentBlockRange(view, wrap!)!;
       expect(view.state.selection.main.head, "选区应停在 HTML 块起点").toBe(range.from);
       expect(view.dom.textContent, "上一块应收回渲染样式").not.toContain("**重点**");
+    } finally {
+      view.destroy();
+    }
+  });
+});
+
+describe("B409 代码块语言下拉：图标 + 左置 + 语言表扩容", () => {
+  it("工具行里语言选择在左、复制键在右（DOM 序 + 样式各管一半）", () => {
+    const view = decoView(FENCE_DOC);
+    try {
+      parkCaretAt(view, "尾行");
+      const header = view.dom.querySelector<HTMLElement>(".md-codeblock-header")!;
+      const lang = header.querySelector<HTMLElement>(".md-codeblock-language-control")!;
+      const copy = header.querySelector<HTMLElement>(".md-codeblock-copy")!;
+      expect(header.firstElementChild, "语言选择必须是工具行第一颗").toBe(lang);
+      expect(
+        lang.compareDocumentPosition(copy) & Node.DOCUMENT_POSITION_FOLLOWING,
+        "复制键排在语言选择之后",
+      ).toBeTruthy();
+      // 触发器里图标 + 文字编组，图标取自 Seti（与语言模式同一颗）
+      const trigger = lang.querySelector<HTMLElement>(".md-codeblock-lang")!;
+      const icon = trigger.querySelector<HTMLElement>(".dd-icon .seti-icon");
+      expect(icon, "触发器要有 Seti 图标").not.toBeNull();
+      expect(trigger.querySelector(".dd-main .dd-label")!.textContent).toBe("TypeScript");
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("展开列表：语言表扩到五十项以上，每行带图标，搜索仍命中", () => {
+    const view = decoView(FENCE_DOC);
+    try {
+      parkCaretAt(view, "尾行");
+      (view.dom.querySelector(".md-codeblock-lang") as HTMLButtonElement).click();
+      const list = document.querySelector<HTMLElement>(".dropdown-list.open")!;
+      const rows = () => [...list.querySelectorAll<HTMLButtonElement>(".dropdown-option")];
+      expect(rows().length, "语言表至少 50 项（B409 从 24 项扩容）").toBeGreaterThanOrEqual(50);
+      for (const row of rows()) {
+        expect(row.querySelector(".dd-icon .seti-icon"), "每行都要有图标").not.toBeNull();
+      }
+      const values = rows().map((r) => r.dataset.value);
+      for (const id of ["rust", "dockerfile", "shellscript", "fortran-fixed-form", "vue"]) {
+        expect(values, `语言表缺 ${id}`).toContain(id);
+      }
+      const search = list.querySelector<HTMLInputElement>(".dropdown-search")!;
+      search.value = "coffee";
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+      expect(rows().map((r) => r.dataset.value)).toEqual(["coffeescript"]);
+      expect(search.value, "搜索框还在（同一次展开里不丢）").toBe("coffee");
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("围栏写的是别名（```sh）⇒ 触发器显示 Shell + 图标，列表里落 shellscript 条目", () => {
+    const view = decoView(["# 头", "```sh", "echo hi", "```", "尾行"].join("\n"));
+    try {
+      parkCaretAt(view, "尾行");
+      const trigger = view.dom.querySelector<HTMLElement>(".md-codeblock-lang")!;
+      expect(trigger.querySelector(".dd-label")!.textContent).toBe("Shell");
+      expect(trigger.querySelector(".dd-icon .seti-icon")).not.toBeNull();
+      expect(trigger.closest(".dropdown")!.getAttribute("data-value")).toBe("shellscript");
     } finally {
       view.destroy();
     }

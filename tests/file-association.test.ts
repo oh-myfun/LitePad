@@ -10,10 +10,10 @@ const main = readFileSync("src-tauri/src/main.rs", "utf-8").replace(/\r\n/g, "\n
 const files = readFileSync("src/io/files.ts", "utf-8").replace(/\r\n/g, "\n");
 const boot = readFileSync("src/main.ts", "utf-8").replace(/\r\n/g, "\n");
 
-/** 单实例回调那一段（从插件注册到 emit 为止）。 */
+/** 单实例回调那一段（B408 起回调抽成具名函数：从 `fn on_second_instance` 到 emit 为止）。 */
 function callbackBody(): string {
-  const i = main.indexOf("tauri_plugin_single_instance::init(");
-  expect(i, "单实例插件必须装着（否则双击是第二个进程、开成两份）").toBeGreaterThan(-1);
+  const i = main.indexOf("fn on_second_instance(");
+  expect(i, "单实例回调必须还在（否则装了插件也没人接路径）").toBeGreaterThan(-1);
   const j = main.indexOf('app.emit("open-file"', i);
   expect(j, "回调末尾要广播 open-file").toBeGreaterThan(i);
   return main.slice(i, j);
@@ -21,6 +21,10 @@ function callbackBody(): string {
 
 describe("B313 双击关联文件：主窗口回前台", () => {
   it("入队 → 还原 → 显示 → 排队补焦点 → 广播，五步都在且次序对", () => {
+    // B408 起插件注册在「非多开」那一路：多开模式不装它（dev 构建默认多开）
+    expect(main, "单实例那一路仍要装插件并接上同一个回调").toContain(
+      "builder.plugin(tauri_plugin_single_instance::init(on_second_instance))",
+    );
     const body = callbackBody();
     const at = (needle: string, why: string): number => {
       const k = body.indexOf(needle);
@@ -45,7 +49,7 @@ describe("B313 双击关联文件：主窗口回前台", () => {
     // 老写法在最小化时是**空操作**（tao 的守卫要求 !minimized），这正是用户报的症状。
     // 判据先自证有鉴别力：把当前实现改回老写法，第一条必须落空。
     const body = callbackBody();
-    const ORIG = "let _ = win.unminimize();\n                let _ = win.show();";
+    const ORIG = "let _ = win.unminimize();\n        let _ = win.show();";
     expect(body, "退化串要先自证原句还在").toContain(ORIG);
     const oldShape = body
       .replace(ORIG, "let _ = win.show();")
@@ -59,7 +63,7 @@ describe("B313 双击关联文件：主窗口回前台", () => {
   });
 
   it("找不到主窗口时要留一行日志（「双击没反应」唯一的线索）", () => {
-    const body = main.slice(main.indexOf("tauri_plugin_single_instance::init("));
+    const body = main.slice(main.indexOf("fn on_second_instance("));
     const tail = body.slice(0, body.indexOf('app.emit("open-file"'));
     expect(tail, "else 分支要记一条 Warn").toMatch(/Level::Warn[\s\S]{0,200}找不到主窗口/);
     expect(tail, "成功那一路也要记（Info 档在发布版可见）").toMatch(

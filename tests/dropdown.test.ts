@@ -296,3 +296,54 @@ describe("B230 下拉搜索", () => {
     expect(lang, "语言长列表也应开 searchable").toContain("searchable: true");
   });
 });
+
+describe("B409 选项图标：触发器与列表都画", () => {
+  const ICON_OPTS: DropdownOption[] = [
+    { label: "纯文本", value: "", icon: '<i class="seti-icon" data-tone="default">&#xE023;</i>' },
+    {
+      label: "TypeScript",
+      value: "typescript",
+      icon: '<i class="seti-icon" data-tone="blue">&#xE099;</i>',
+    },
+  ];
+
+  it("触发器：图标与文字编在一组，图标在文字前面", () => {
+    const dd = createDropdown({ options: ICON_OPTS, current: "typescript", onPick: () => {} });
+    document.body.appendChild(dd.root);
+    const trigger = dd.root.querySelector<HTMLElement>(".dropdown-trigger")!;
+    const main = trigger.querySelector<HTMLElement>(".dd-main");
+    expect(main, "图标 + 标签要编组（触发器是 space-between）").not.toBeNull();
+    expect(main!.firstElementChild?.className, "图标在前").toBe("dd-icon");
+    expect(main!.firstElementChild!.querySelector(".seti-icon")).not.toBeNull();
+    expect(main!.querySelector(".dd-label")!.textContent).toBe("TypeScript");
+    // 触发器类名与值照旧（老下拉不受影响）
+    expect(dd.root.dataset.value).toBe("typescript");
+  });
+
+  it("列表每行也带图标；没有 icon 的选项不多出空槽", () => {
+    const dd = createDropdown({ options: ICON_OPTS, current: "", onPick: () => {} });
+    document.body.appendChild(dd.root);
+    (dd.root.querySelector(".dropdown-trigger") as HTMLButtonElement).click();
+    const list = document.querySelector<HTMLElement>(".dropdown-list.open")!;
+    const rows = [...list.querySelectorAll<HTMLButtonElement>(".dropdown-option")];
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.querySelector(".dd-main .dd-icon .seti-icon"), "每行都有图标").not.toBeNull();
+    }
+    // 文字仍是行文本（老用例按 textContent 认项）—— ⚠️ 图标的字形是 PUA 码位，
+    // textContent 里会多出那一颗，按 `.dd-label` 认
+    expect(rows.map((r) => r.querySelector(".dd-label")!.textContent)).toEqual([
+      "纯文本",
+      "TypeScript",
+    ]);
+  });
+
+  it("静态：图标组的样式在（触发器 flex、图标槽固定 16px）", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    expect(ruleBlock(css, ".dropdown-trigger .dd-main")).toMatch(/display:\s*inline-flex/);
+    expect(ruleBlock(css, ".dropdown-trigger .dd-main")).toMatch(/flex:\s*1 1 auto/);
+    const icon = ruleBlock(css, ".dd-icon");
+    expect(icon).toMatch(/flex:\s*0 0 16px/);
+    expect(icon).toMatch(/width:\s*16px/);
+  });
+});

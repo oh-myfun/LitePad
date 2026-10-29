@@ -147,7 +147,8 @@ impl Default for Settings {
     }
 }
 
-/// 配置根目录：默认 `%APPDATA%\LitePad`，可用 **`LITEPAD_CONFIG_DIR`** 整体覆盖。
+/// 配置根目录：发布版默认 `%APPDATA%\LitePad`，dev 构建默认 `%APPDATA%\LitePad-dev`，
+/// 两者都可用 **`LITEPAD_CONFIG_DIR`** 整体覆盖。
 ///
 /// ## 为什么必须能覆盖（不是"顺手加个 env"）
 ///
@@ -160,18 +161,25 @@ pub fn config_dir() -> Option<PathBuf> {
     pick_config_dir(
         std::env::var_os("LITEPAD_CONFIG_DIR"),
         std::env::var_os("APPDATA"),
+        cfg!(debug_assertions),
     )
 }
 
 /// 纯函数版（不读全局环境，便于断言）：覆盖优先，且**空串不算覆盖**
 /// （环境变量被设成空是很常见的手滑，静默当成"指向当前目录"会写得到处都是）。
+///
+/// B408：dev 构建（`npm run tauri dev` / 直接 cargo build）默认落 `LitePad-dev` ——
+/// 开发时的会话、设置、最近打开、日志、备份都**不碰已安装版**的 `%APPDATA%\LitePad`。
+/// 这样开发实例可以和用户正在用的安装版同时开着，互不覆盖。
 fn pick_config_dir(
     override_dir: Option<std::ffi::OsString>,
     appdata: Option<std::ffi::OsString>,
+    dev_build: bool,
 ) -> Option<PathBuf> {
     match override_dir {
         Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
-        _ => appdata.map(|d| PathBuf::from(d).join("LitePad")),
+        _ => appdata
+            .map(|d| PathBuf::from(d).join(if dev_build { "LitePad-dev" } else { "LitePad" })),
     }
 }
 
@@ -440,7 +448,8 @@ mod tests {
         assert_eq!(
             pick_config_dir(
                 Some(r"E:\p\.tmp\shot\config".into()),
-                Some(r"C:\Roaming".into())
+                Some(r"C:\Roaming".into()),
+                false
             ),
             Some(PathBuf::from(r"E:\p\.tmp\shot\config"))
         );
@@ -450,14 +459,32 @@ mod tests {
     fn config_dir_empty_override_is_not_an_override() {
         // 环境变量被设成空串是常见手滑，静默当成「指向当前目录」会写得到处都是。
         assert_eq!(
-            pick_config_dir(Some("".into()), Some(r"C:\Roaming".into())),
+            pick_config_dir(Some("".into()), Some(r"C:\Roaming".into()), false),
             Some(PathBuf::from(r"C:\Roaming").join("LitePad"))
         );
     }
 
     #[test]
     fn config_dir_without_appdata_is_none() {
-        assert_eq!(pick_config_dir(None, None), None);
+        assert_eq!(pick_config_dir(None, None, false), None);
+    }
+
+    /// B408：dev 构建默认用 `LitePad-dev`，与已安装版的 `LitePad` 分开；
+    /// 显式覆盖仍然最优先（截图/台子把一切写进 `.tmp` 的口子不能丢）。
+    #[test]
+    fn config_dir_dev_build_uses_separate_leaf() {
+        assert_eq!(
+            pick_config_dir(None, Some(r"C:\Roaming".into()), true),
+            Some(PathBuf::from(r"C:\Roaming").join("LitePad-dev"))
+        );
+        assert_eq!(
+            pick_config_dir(
+                Some(r"E:\p\.tmp\shot\config".into()),
+                Some(r"C:\Roaming".into()),
+                true
+            ),
+            Some(PathBuf::from(r"E:\p\.tmp\shot\config"))
+        );
     }
 
     /// B144：`log_level` 是**后加**的设置项，旧配置文件里没有这个字段。

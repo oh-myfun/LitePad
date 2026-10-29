@@ -4962,6 +4962,33 @@ body.tab-drag-active * {
   white-space: nowrap;
 }
 
+/* B409：图标 + 文字编成一组。触发器是 `space-between`，不编组会把图标和文字拆到两头
+   （代码块语言下拉的 Seti 图标就是这么进来的）。 */
+.dropdown-trigger .dd-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.dropdown-option .dd-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 16px 固定槽（与 `.quick-pick-icon` 同一口径），字形与色调由内部 `.seti-icon` 给。 */
+.dd-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+}
+
 .dropdown-trigger .dd-caret {
   flex: 0 0 auto;
   color: var(--fg-muted);
