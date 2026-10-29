@@ -120,7 +120,7 @@ describe("B391-1 装饰集构建", () => {
     expect(tuples(first.lines).length).toBeGreaterThan(5);
   });
 
-  it("B410 删除线只落在 `[x]` 那一行：未勾选各形状都不许挂 md-task-done", () => {
+  it("B410/B411 勾选标记只落在 `[x]` 那一行：未勾选各形状都不许挂 md-task-done", () => {
     const doc = [
       "- [ ] 未勾",
       "- [x] 已勾",

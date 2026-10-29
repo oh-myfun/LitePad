@@ -477,10 +477,10 @@
   pointer-events: auto;
   cursor: pointer;
 }
+/* B411（用户口径更正）：勾选只压淡 + 方框填色 + 打勾，**不画删除线**。
+   删除线要贯穿整行（折行会横穿每一行），勾完还得读正文的场合没法用；勾选的信号由方框和压淡承担。 */
 .md-deco .cm-line.md-task-done {
   color: var(--md-muted);
-  text-decoration: line-through;
-  text-decoration-color: var(--md-strong-border);
 }
 .md-deco .cm-line.md-task-done::before {
   border-color: var(--md-accent);

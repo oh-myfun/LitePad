@@ -340,11 +340,10 @@ describe("B397-2 列表与任务项：标记由 CSS 画", () => {
     );
   });
 
-  it("完成项压淡并画删除线（App.css:1464-1468）", () => {
+  it("完成项只压淡、不画删除线（B411 用户口径）", () => {
     const done = ruleBlock(css, ".md-deco .cm-line.md-task-done");
-    expect(done).toMatch(/text-decoration:\s*line-through/);
-    expect(done).toMatch(/text-decoration-color:\s*var\(--md-strong-border\)/);
     expect(done).toMatch(/color:\s*var\(--md-muted\)/);
+    expect(done, "勾选也不许画删除线").not.toMatch(/text-decoration/);
   });
 
   it("任务行左内距保持 padding-x + marker-offset（taskClick 的命中判据算的就是这个差）", () => {
@@ -373,10 +372,15 @@ describe("B397-2 列表与任务项：标记由 CSS 画", () => {
     }
   });
 
-  it("B404 删除线只挂在勾选行（未勾选的任务不许被划掉）", () => {
-    // 完成态才加 `.md-task-done`；基态那两条规则里不许出现删除线
+  it("B411 任务行两档都不画删除线（勾没勾都不许被划掉）", () => {
+    // 勾选的信号只有：方框填色 + 打勾 + 整行压淡（`.md-task-done` 只管颜色）
     expect(ruleBlock(css, ".md-deco .cm-line.md-task-item")).not.toMatch(/line-through/);
     expect(ruleBlock(css, ".md-deco .cm-line.md-task-item::before")).not.toMatch(/line-through/);
+    expect(ruleBlock(css, ".md-deco .cm-line.md-task-done")).not.toMatch(/line-through/);
+    expect(
+      ruleBlock(css, ".md-deco .cm-line.md-task-done::before") +
+        ruleBlock(css, ".md-deco .cm-line.md-task-done::after"),
+    ).not.toMatch(/line-through/);
   });
 });
 
