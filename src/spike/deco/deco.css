@@ -974,12 +974,16 @@
 .md-deco .md-image-frame img {
   display: block;
 }
-/* 编辑键贴在图片右外侧：小图（几十像素）时压在图上会盖住图心，点图就变成开弹窗（B406 真机）。
-   编辑器左右各有 48px 内边距，按钮 26px + 8px 间隙放得下。 */
+/* 编辑键贴图片**右上角内侧**（与路径提示同一路数：悬浮才现形，B410）。
+   ⚠️ 曾经放在图片右外侧 `left: calc(100% + 8px)`：宽图撑满正文时按钮落进编辑器右内距，
+   已经在 widget 根盒之外 —— 指针从图上往按钮走、跨过根盒边缘那一瞬 `:hover` 丢失，
+   `pointer-events` 退回 none，按钮原地消失，永远点不到（用户报的「点不到」）。
+   放进图里就没有这段「悬停真空」；按钮浮在图上，补一层 shadow 保证压在深色截图上仍看得清。 */
 .md-deco .md-image-edit-btn {
   position: absolute;
-  top: 4px;
-  left: calc(100% + 8px);
+  top: 6px;
+  right: 6px;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -989,6 +993,7 @@
   border: 1px solid var(--md-panel-border);
   border-radius: 6px;
   background: color-mix(in srgb, var(--bg) 82%, transparent);
+  box-shadow: var(--shadow-lg);
   color: var(--md-fg);
   cursor: pointer;
   opacity: 0;

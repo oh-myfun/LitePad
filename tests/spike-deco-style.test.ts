@@ -604,6 +604,11 @@ describe("B397-2 块级 widget：与正文左缘对齐，且一条纵向 margin 
     expect(btn).toMatch(/position:\s*absolute/);
     expect(btn).toMatch(/opacity:\s*0/);
     expect(btn).toMatch(/pointer-events:\s*none/);
+    // B410：编辑键必须在图片**里侧**右上角 —— 放到图右侧外面时，宽图撑满正文会让按钮
+    // 落进编辑器内距（widget 根盒之外）：指针从图上移过去的途中悬停丢失、按钮当场消失。
+    expect(btn).toMatch(/right:\s*\d+px/);
+    expect(btn, "按钮不许再放到图右外侧（悬停真空 ⇒ 点不到）").not.toMatch(/left:\s*calc\(100%/);
+    expect(btn).toMatch(/z-index:\s*1/);
     expect(css).toMatch(
       /\.md-deco \.md-image-widget:hover \.md-image-edit-btn,[\s\S]*?\.md-deco \.md-image-widget:focus-within \.md-image-edit-btn\s*\{\s*opacity:\s*1;\s*pointer-events:\s*auto/,
     );

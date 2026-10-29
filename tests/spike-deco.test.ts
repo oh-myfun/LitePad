@@ -119,6 +119,37 @@ describe("B391-1 装饰集构建", () => {
     expect(tuples(first.statics).length).toBeGreaterThan(10);
     expect(tuples(first.lines).length).toBeGreaterThan(5);
   });
+
+  it("B410 删除线只落在 `[x]` 那一行：未勾选各形状都不许挂 md-task-done", () => {
+    const doc = [
+      "- [ ] 未勾",
+      "- [x] 已勾",
+      "  - [ ] 嵌套未勾",
+      "  - [x] 嵌套已勾",
+      "* [ ] 星号未勾",
+      "1. [ ] 有序未勾",
+      "2. [x] 有序已勾",
+      "> - [ ] 引用未勾",
+      "",
+    ].join("\n");
+    const state = docState(doc);
+    const { lines } = buildPreviewSets(state);
+    const rows = [
+      [1, false],
+      [2, true],
+      [3, false],
+      [4, true],
+      [5, false],
+      [6, false],
+      [7, true],
+      [8, false],
+    ] as const;
+    for (const [n, done] of rows) {
+      const cls = lineClasses(lines, state, n).join(" | ");
+      expect(cls, `第 ${n} 行必须是任务行`).toContain("md-task-item");
+      expect(cls.includes("md-task-done"), `第 ${n} 行 done 标记应=${done}`).toBe(done);
+    }
+  });
 });
 
 describe("B397-2 标题与行内代码把 InkNote 的类名挂到**内容区**", () => {
