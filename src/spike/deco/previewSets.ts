@@ -13,8 +13,9 @@ import { EditorState, type Range } from "@codemirror/state";
 import { Decoration, type DecorationSet } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import type { Tree, SyntaxNodeRef } from "@lezer/common";
-import { frontMatterRange } from "./codeFence";
+import { frontMatterBody, frontMatterRange } from "./codeFence";
 import { CodeBlockWidget } from "./codeBlockWidget";
+import { FrontMatterWidget, looksLikeFrontMatter } from "./frontmatterWidget";
 import {
   EditableMetadataWidget,
   HrWidget,
@@ -746,10 +747,33 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
     },
   });
 
+  // —— YAML front matter（B407，照 InkNote 的 FrontMatterWidget）——————————————
+  // 语法树里这一段已被整段跳过（lezer 判成 HorizontalRule + SetextHeading），这里单独
+  // 补一块可编辑的 YAML 盒；覆盖区间去掉闭合行后的那个换行才是整行区间。
+  // 两条 `---` 之间没有任何 `key:` 的（文档开头的分割线）不折 —— 照 InkNote 的防吞判据。
+  if (fm) {
+    const fmTo = fm.to > 0 && doc.sliceString(fm.to - 1, fm.to) === "\n" ? fm.to - 1 : fm.to;
+    const body = frontMatterBody(state, fm);
+    if (coversWholeLines(fm.from, fmTo) && looksLikeFrontMatter(body)) {
+      occupied.push({ from: fm.from, to: fmTo });
+      atomicBlocks.push({ from: fm.from, to: fmTo });
+      decos.push(
+        Decoration.replace({
+          block: true,
+          widget: new FrontMatterWidget(fm.from, fmTo, body),
+          ...blockReveal(fm.from, fmTo),
+        }).range(fm.from, fmTo),
+      );
+    }
+  }
+
   // —— 数学：lezer 没有数学节点，只能按文本扫（照 InkNote 的 `scanMath`）——————————
   // 排在语法树遍历**之后**，因为「代码里不算公式」这道闸要拿上面收集到的 `occupied`。
   const inTaken = (a: number, b: number) => occupied.some((r) => a < r.to && b > r.from);
   for (const m of scanMath(doc, inTaken)) {
+    // front matter 里的 `$` 不算公式（InkNote 同一条闸）：那一整段已由 YAML 块接管，
+    // 再塞一颗行内公式的替换装饰会与块替换交叠 ⇒ `Decoration.set` 直接抛。
+    if (fm && m.from < fmEnd) continue;
     const wholeLine = m.block && coversWholeLines(m.from, m.to);
     if (wholeLine) atomicBlocks.push({ from: m.from, to: m.to });
     occupied.push({ from: m.from, to: m.to });

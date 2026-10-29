@@ -358,6 +358,12 @@ export function attachSourceEditing(wrap: HTMLElement, opts: SourceEditingOption
     schedule();
   });
 
+  // 只读档：键盘那条路有 keydown 挡着，但 IME 组合与程序化 insertText 不走 keydown ——
+  // 它们会先改 DOM（文档没变、画面上却凭空多字）。拦在 beforeinput 才是共同入口。
+  wrap.addEventListener("beforeinput", (event) => {
+    if (viewOf()?.state.readOnly) event.preventDefault();
+  });
+
   wrap.addEventListener("keydown", (event) => {
     const el = inSource(event);
     if (!el) return;

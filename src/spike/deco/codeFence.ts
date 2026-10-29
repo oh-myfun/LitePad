@@ -108,3 +108,16 @@ export function frontMatterRange(state: EditorState): { from: number; to: number
   }
   return null;
 }
+
+/**
+ * B407 · front matter 的 YAML 正文（去掉首尾围栏行、去掉闭合行后的那个换行）。
+ *
+ * 块组件拿它做可编辑文本；回写时再包回 `---\n…\n---`。空集（两条围栏贴着）返回空串。
+ */
+export function frontMatterBody(state: EditorState, range: { from: number; to: number }): string {
+  const doc = state.doc;
+  const first = doc.lineAt(range.from);
+  const last = doc.lineAt(range.to > range.from ? range.to - 1 : range.to);
+  if (last.number <= first.number) return "";
+  return doc.sliceString(first.to + 1, last.from).replace(/\n$/, "");
+}

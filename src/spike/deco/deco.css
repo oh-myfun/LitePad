@@ -512,6 +512,7 @@
 .md-deco .md-hr-widget,
 .md-deco .md-metadata-widget,
 .md-deco .md-html-widget,
+.md-deco .md-frontmatter-widget,
 .md-deco .md-image-widget {
   box-sizing: border-box;
   max-width: calc(100% - 2 * var(--editor-padding-x));
@@ -1159,6 +1160,36 @@
   padding: 0 1px;
 }
 
+/* ---------- YAML Front Matter（App.css:2635-2655，B407） ----------
+   照 InkNote：一根标签 + 一块**常显**的 YAML 文本区（不是「点开才露源码」的两段式）。
+   `.md-frontmatter-source` 把 `.md-block-source` 的 display:none、边框、底色压回去 ——
+   智能体技能 SKILL.md 的 name/description 打开就该看见，不该藏在「点一下」后面。 */
+.md-deco .md-frontmatter-widget {
+  padding: 8px 0;
+  cursor: text;
+}
+.md-deco .md-frontmatter-box {
+  padding: 10px 12px 4px;
+  border: 1px solid var(--md-panel-border);
+  border-radius: var(--md-component-radius);
+  background: var(--md-panel-bg);
+  box-shadow: var(--md-component-shadow);
+}
+.md-deco .md-frontmatter-label {
+  margin: 0 0 6px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--md-faint);
+  user-select: none;
+}
+.md-deco .md-frontmatter-source {
+  display: block;
+  margin: 0;
+  padding: 0 0 6px;
+  border: none;
+  background: transparent;
+}
+
 /* 分割线「选中」只留键盘状态，不改视觉（点一下不闪边框）。 */
 .md-deco .md-block--selected {
   background: transparent;
@@ -1167,7 +1198,8 @@
 }
 .md-deco .md-hr-widget:focus,
 .md-deco .md-metadata-widget:focus-within,
-.md-deco .md-html-widget:focus-within {
+.md-deco .md-html-widget:focus-within,
+.md-deco .md-frontmatter-widget:focus-within {
   outline: none;
 }
 .md-deco .md-block-source:focus {

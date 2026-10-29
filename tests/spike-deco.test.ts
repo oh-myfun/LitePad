@@ -226,15 +226,22 @@ describe("B391-2 未闭合围栏与 front matter 两道防吞", () => {
     expect(atomicBlocks).toEqual([]);
   });
 
-  it("frontmatter 的开头 --- 不被判成整行块替换，且整段不加装饰", () => {
+  it("B407：frontmatter 折成 YAML 盒（一块原子块），lezer 的 SetextHeading 误判仍被挡住", () => {
     const state = docState("---\ntitle: x\n---\n正文\n");
     const fm = frontMatterRange(state);
     expect(fm).toEqual({ from: 0, to: 17 });
     const { atomicBlocks, statics, lines } = buildPreviewSets(state, previewSyntaxTree(state));
-    expect(atomicBlocks.some((b) => b.from === 0)).toBe(false);
-    // 真判据：整段 front matter（含闭合 `---`）里不许有任何装饰。
-    // 少了这道闸，lezer 会把 `title: x` + `---` 判成 SetextHeading2 ⇒ 第 2 行被画成标题。
-    expect(tuples(statics).filter(([from]) => from < fm!.to)).toEqual([]);
+    // 整段折成一块（覆盖到闭合 `---` 的末尾，不含它后面的换行）
+    expect(atomicBlocks).toContainEqual({ from: 0, to: 16 });
+    // 唯一一颗装饰就是这块的替换 widget —— 少了跳过那道闸，
+    // lezer 会把 `title: x` + `---` 判成 SetextHeading2 ⇒ 第 2 行被画成标题。
+    const starts: number[] = [];
+    const it = statics.iter();
+    while (it.value) {
+      starts.push(it.from);
+      it.next();
+    }
+    expect(starts).toEqual([0]);
     expect(lineClasses(lines, state, 2)).toEqual([]);
   });
 
