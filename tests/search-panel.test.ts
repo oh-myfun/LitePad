@@ -212,6 +212,7 @@ function openDoc(docId: number, path: string, text: string) {
     view: null,
     viewTabId: null,
     bodyEl: null,
+    diffSurface: null,
   });
   appState.setActivePanelId(0);
   return { doc, inst };
@@ -695,6 +696,7 @@ describe("B389 · 从命令/快捷键摊开（种子取活动视图选中的那�
       view: { view: { state, focus: () => {} } } as never,
       viewTabId: 0,
       bodyEl: null,
+      diffSurface: null,
     });
     appState.setActivePanelId(0);
   }
@@ -1021,6 +1023,7 @@ describe("B420 · 点结果行要跳到位（结果里的 docId 只是快照）"
       view: null,
       viewTabId: null,
       bodyEl: null,
+      diffSurface: null,
     });
     appState.setActivePanelId(0);
     seedA();

@@ -51,6 +51,9 @@ import { dragTabAsFile } from "../io/filedrag";
 import { attachPasteHandler } from "../io/export";
 import { showSaveConfirmDialog } from "../shell/saveconfirm";
 import { createEditor } from "../editor/editor";
+// B461 · 差异旁路（挂在 `.panel-host` 里、`.panel-editor` 之前的那颗只读左栏）：
+// 一处挂、一处拆 —— 其余按 `panel.view` 寻址的代码一概不问 kind。
+import { disposeDiffSurface, syncDiffSurface } from "../diff/surface";
 import { logViewport } from "../core/viewport";
 import { closeTab as ipcCloseTab, newTab as ipcNewTab } from "../ipc/api";
 import { renderPanelTabs, renderPanelOps, panelDataOf } from "./render";
@@ -109,6 +112,11 @@ export function rebuildLayout(): void {
   // 必须按 viewTabId（视图实际显示的实例）回写：调用方可能已改 activeTabId
   // 而视图仍显示旧标签——按 activeTabId 回写会把旧文档串进新活动标签。
   for (const p of panels.values()) {
+    // B461 · 拆旁路（**无条件**）：下面 `renderSplitview` 会把整棵面板 DOM 换掉，左栏那颗
+    // view 不跟着 destroy 就成了指向已脱离文档的孤儿；它与 `p.view` 同生共死，但判据不该
+    // 反过来依赖 `p.view` 在不在 —— `disposeDiffSurface` 自己把 DOM、`is-diff` 类与
+    // `panel.diffSurface` 一并归零，没有旁路时是空转。
+    disposeDiffSurface(p);
     if (p.view) {
       const shown = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
       if (shown) {
@@ -258,6 +266,11 @@ export function rebuildLayout(): void {
       }
 
       if (p.view) attachPasteHandler(p);
+
+      // B461 · 差异旁路（左栏那颗只读 view + 一栏之内的分割线）：判据收敛在
+      // `syncDiffSurface` 那一处，「不一致才动手」。排在 `applyPanelMode` **之前**：
+      // 档位落 DOM 与查找栏锚点都只认 `.panel-editor`，旁路先就位它们才量到最终形状。
+      syncDiffSurface(p);
 
       applyPanelMode(p);
       // —— 同步滚动 v1 · 重建后的落位（与 `rebuildLayout` 销毁前那次快照配成一对）————————
@@ -450,6 +463,7 @@ export async function newUntitled(): Promise<void> {
       view: null,
       viewTabId: null,
       bodyEl: null,
+      diffSurface: null,
     });
     panel = panels.get(0);
   }
@@ -624,6 +638,8 @@ export function disposePanel(panelId: number): void {
     if (t) t.state = panel.view.view.state;
     panel.view.view.destroy();
   }
+  // B461 · 这一格的差异旁路跟着一起拆（不留指向已销毁 view 的 surface，也不留孤儿 DOM）
+  disposeDiffSurface(panel);
   panel.view = null;
   panel.viewTabId = null;
   panels.delete(panelId);

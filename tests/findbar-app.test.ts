@@ -75,6 +75,7 @@ function openDoc(
     view: { view } as never,
     viewTabId: tabId,
     bodyEl: null,
+    diffSurface: null,
   });
   app.setActivePanelId(0);
   return { tab, view };

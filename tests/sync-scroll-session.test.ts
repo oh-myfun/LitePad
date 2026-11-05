@@ -154,6 +154,7 @@ function panelWith(panelId: number, tab: Tab, heights: number[], scrollTop: numb
     viewTabId: tab.tabId,
     view: { view } as never,
     bodyEl: null,
+    diffSurface: null,
   };
   panels.set(panelId, p);
   tabs.set(tab.tabId, tab);
@@ -169,6 +170,7 @@ function emptyPanel(panelId: number, tab: Tab): Panel {
     viewTabId: tab.tabId,
     view: null,
     bodyEl: null,
+    diffSurface: null,
   };
   panels.set(panelId, p);
   tabs.set(tab.tabId, tab);

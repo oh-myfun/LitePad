@@ -11,6 +11,8 @@
 import type { EditorState } from "@codemirror/state";
 import type { EditorHandle, TabCompartments } from "../editor/editor";
 import type { SizeClass } from "../editor/perf";
+import type { DiffSpec } from "../diff/model";
+import type { DiffSurface } from "../diff/surface";
 import type { EncodingItem, Settings } from "../ipc/api";
 import type { KeymapOverrides } from "../shell/keymap";
 import { leaf, type LayoutNode } from "./layout";
@@ -27,6 +29,15 @@ export interface Panel {
   viewTabId: number | null;
   /** splitview 传入的宿主元素（.panel-host） */
   bodyEl: HTMLElement | null;
+  /**
+   * B461 · 这一格当前的**差异旁路**（左栏那颗只读 view + 分割线），没有则 `null`。
+   *
+   * ⚠️ 它不是第二颗「面板的 view」：`view` 继续是右栏、继续是那份文档本身
+   * （脏点 / Ctrl+S / 撤销栈 / 会话快照按它寻址的代码一行都不加分支 —— 设计稿 ⑧·1 的落点）。
+   * 生命周期只有「一处挂、一处拆」：挂点 `tabs/lifecycle.ts` 的 `mountView`，
+   * 拆点 `rebuildLayout` 的销毁循环与 `disposePanel`。
+   */
+  diffSurface: DiffSurface | null;
 }
 
 /** 标签实例：文档在某面板中的一份视图（独立光标/撤销历史/视图模式）。
@@ -48,6 +59,20 @@ export interface Tab {
    * 后两档是**同一张脸**：DOM 上都落 `mode-preview`，差别只在 `tab.comps.lock`。
    */
   viewMode: "source" | "preview" | "edit";
+  /**
+   * B461 · 这份实例是普通编辑器还是差异标签。**建实例时给死，之后不改**。
+   *
+   * `diff` 这一支只是「这一格挂着旁路」的记账位：所有按 `panel.view` 寻址的老逻辑
+   * （脏点、保存、落位、会话）走的仍是**右栏那份文档本身**，因此不需要问 kind；
+   * 只有「该不该挂 / 拆左栏旁路」「标签标题怎么拼」这一类才读它。
+   * 会话里的旧标签缺这个键 ⇒ 一律按 `"editor"`（B392 纪律：没记过不许读成任何一种状态）。
+   */
+  kind: "editor" | "diff";
+  /**
+   * B461 · 差异标签的输入描述（`kind === "diff"` 时非空，其余恒 `null`）。
+   * 存的是「两侧正文怎么取到」，不是正文本身 —— 见 `src/diff/model.ts` 的 `DiffSpec`。
+   */
+  diff: DiffSpec | null;
   /**
    * 这份实例自己的视口位置，用同步滚动的共享坐标 `v`（源码行号 + 小数）。
    *

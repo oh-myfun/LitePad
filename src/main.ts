@@ -20,6 +20,8 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 import "katex/dist/katex.min.css";
 import "./styles/preview.css";
+// B461 · 差异面样式（两栏并排 + 分割线；随本轮逐任务在同一处加长）。
+import "./diff/diff.css";
 
 // 标题栏左上角的软件图标（B99）：**直接引 exe 用的那份源图**，不往前端目录另存副本 ——
 // 应用图标只有一个真相（scripts/gen_icons.py → src-tauri/icons/，bundle.icon 也取它），
@@ -790,6 +792,7 @@ async function initSatelliteWindow(me: WindowPayload | null): Promise<void> {
     view: null,
     viewTabId: null,
     bodyEl: null,
+    diffSurface: null,
   });
   setActivePanelId(0);
 
@@ -1253,6 +1256,7 @@ async function bootstrap(): Promise<void> {
       view: null,
       viewTabId: null,
       bodyEl: null,
+      diffSurface: null,
     });
     const defEncoding = settings?.default_encoding ?? "UTF-8";
     const defEol = settings?.default_eol ?? "CRLF";

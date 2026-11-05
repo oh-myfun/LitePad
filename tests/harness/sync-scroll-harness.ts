@@ -227,6 +227,9 @@ function makeTab(docId: number, text: string, panelId: number, viewMode: Tab["vi
     comps,
     state,
     viewMode,
+    // B461：台子里这些都是普通编辑器标签（差异标签的落位判据归 tests/diff-surface.test.ts）。
+    kind: "editor",
+    diff: null,
     scrollV: 1,
   };
   tabs.set(tab.tabId, tab);
@@ -272,6 +275,7 @@ function createPanel(mode: "source" | "preview", docId: number, label: string): 
     view,
     viewTabId: tab.tabId,
     bodyEl: host,
+    diffSurface: null,
   };
   panels.set(panelId, panel);
   return panel;
@@ -403,6 +407,7 @@ function install(): void {
     view: view0,
     viewTabId: tabLong.tabId,
     bodyEl: host0,
+    diffSurface: null,
   };
   panels.set(0, panel0);
 

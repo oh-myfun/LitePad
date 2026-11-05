@@ -114,6 +114,10 @@ function makeInstance(doc: Doc, panelId: number, text: string): Tab {
     comps,
     state,
     viewMode: "source",
+    // B461：这一支仍是普通编辑器标签（差异标签走 `makeDiffInstance`，Task 5 拥有）。
+    // `kind` 在这里给死、之后不改；`diff` 初值 `null` ⇒ 老路径一个字都不用问。
+    kind: "editor",
+    diff: null,
     scrollV: 1,
   };
 }

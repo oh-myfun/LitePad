@@ -1,0 +1,47 @@
+/**
+ * B461 · 差异面样式。
+ *
+ * Task 1 只有这一格：**两栏并排的骨架 + 一根只管这一栏之内的分割线**。
+ * 两侧改动行底色 / 对侧占位块 / 中间指示带归 Task 3，折叠占位条归 Task 7，侧栏条目行归 Task 9 ——
+ * 都往这个文件里加，不再另开一份（颜色一律吃 `global.css` 那三颗主题无关的
+ * `--diff-add` / `--diff-mod` / `--diff-del`，B458 续轮定稿，不许新增第四颗）。
+ *
+ * ⚠️ `.panel-host` 的基础规则（`global.css:4472`）是**竖排** flex（编辑器在上、占位行在下），
+ * 这里按 `.is-diff` 翻成横排；特异度 0-2-0 压得过基规则的 0-1-0，与 import 先后无关。
+ * ⚠️ 同一格里还可能出现 `.md-preview-bar`（`src/markdown.ts` 的悬浮键 / 编辑档占位条）。
+ * 差异标签**恒为源码档**（设计稿 ⑥：装饰面会把「到底改了哪个字符」藏起来），而那一根只在
+ * 非源码档现身、且占位形态要等 `md-bar-docked` 才吃布局位 ⇒ 差异格里它始终是 `[hidden]`
+ * （`preview.css:1733` 的 `display:none`），不会变成横排的第三列。真把布局挤坏了再来这里补刀，
+ * 别去改 md 那一套的 CSS。
+ */
+
+/* 两栏并排：左 = 只读对照栏，右 = 那份文档本身（`.panel-editor`）。各占一半起步。 */
+.panel-host.is-diff {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+}
+
+/* 右栏必须能收缩到内容宽度以下（`min-width: 0`）：否则长行会把分割线顶出可见区。 */
+.panel-host.is-diff .panel-editor {
+  flex: 1 1 50%;
+  min-width: 0;
+}
+
+.diff-original {
+  flex: 1 1 50%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* 分割线只管**一栏之内**（splitview 那套 sash 管的是面板树，两者不复用）。
+   4px 与 B383 定稿的分屏线同宽，hover 才上色：常态要隐形，不抢内容的注意力。 */
+.diff-sash {
+  flex: 0 0 4px;
+  cursor: col-resize;
+  background: transparent;
+}
+
+.diff-sash:hover {
+  background: var(--accent);
+}
