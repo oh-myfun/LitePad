@@ -1,12 +1,13 @@
-// Markdown 预览（从 main.ts 拆出，解耦第九步 / #410）。
+// Markdown 预览/编辑（从 main.ts 拆出，解耦第九步 / #410）。
 //
-// 职责：面板视图模式（源码 / 分屏 / 纯预览）的切换与落点（applyPanelMode / toggleViewMode /
-// openPreviewToSide）、Markdown 渲染调度（renderMarkdownFor / scheduleMdRender）、
+// 职责：面板视图模式（源码 / 预览 / 编辑）的切换与落点（applyPanelMode / toggleViewMode /
+// togglePreviewEdit / openPreviewToSide）、装饰面（CM6 decorations）的装卸与锁、
 // 视图模式按钮呈现（refreshViewModeButton）、路径工具（dirname）。
-// 只依赖 core/* + ui + shell/* + doc-model + editor/* + markdown/preview，
-// 对 main.ts 零反向依赖。
 //
-// session（#412）/ find（#413）/ toc（#411）拆出后已全部换成直接 import——本模块无 DI。
+// B412：旧的派生 DOM 预览臂已整体删除 —— 除源码档外只有这一张面：
+// `preview`（禁编辑）与 `edit`（可写）是同一颗 view、同一张装饰脸，差别只在锁。
+//
+// 只依赖 core/* + ui + shell/* + doc-model + editor/* + preview/*，对 main.ts 零反向依赖。
 
 import {
   activePanelId,
@@ -20,66 +21,58 @@ import {
 } from "./core/app-state";
 import { activeTab, docOf, getPanel } from "./core/panels";
 import { isMdTab, makeInstance } from "./doc-model";
-import { markActivePanel, sbLang, tocPanel } from "./ui";
-import { logger } from "./core/logger";
-import { perfProfileFor } from "./editor/perf";
-import { renderBlocks } from "./markdown/pipeline";
+import { markActivePanel, sbLang } from "./ui";
 import { flippedTaskMark, taskLineAt } from "./markdown/tasks";
 import { rightNeighborOf } from "./core/layout";
-import {
-  ensurePreviewArm,
-  renderPanelOps,
-  renderPanelTabs,
-  splitPanelWithTab,
-  switchTab,
-} from "./tabs";
-import { updateTocDrawer } from "./toc";
+import { renderPanelOps, renderPanelTabs, splitPanelWithTab, switchTab } from "./tabs";
 import { landVisibleSideAtV, readVisibleV, reconcileSyncRegistrations } from "./sync-scroll/wire";
 import { scheduleSessionSave } from "./session/session";
-// B397-1：一颗 view 两档 ⇒ 「视图模式落到 DOM 的唯一出口」也是「档位落到 state 的唯一出口」，
-// 所以这两个 extension 构造器在这里点名。本模块头部那条「只依赖 core/*+ui+shell/*+doc-model+
-// editor/*+markdown/preview」的边界因此多了一个口子 —— 口子只过 `deco_preview` 开关为真的路径。
 import { EditorState } from "@codemirror/state";
-import { decoFace, decoLock } from "./spike/deco/wysiwyg";
-import { shouldMountDecoPreview } from "./spike/deco/eligibility";
-import { wysiwygInstalled } from "./spike/deco/livePreview";
-import { assetBase, setAssetBase } from "./spike/deco/assets";
-// #413 find 拆出 ⇒ MarkdownDeps 全清，预览查找桥改直接 import（find/findbar 反向只取本模块的
-// PreviewFindSpec 类型——等等，类型已归 find/findbar，这里只取值，无类型回边）
-import { applyPreviewFindToPanel, findSpecOf, getFindBar } from "./find/findbar";
+import { previewFace, previewLock } from "./preview/wysiwyg";
+import { shouldMountPreview } from "./preview/eligibility";
+import { wysiwygInstalled } from "./preview/livePreview";
+import { assetBase, setAssetBase } from "./preview/assets";
+import { gutterDiffBaseline, refreshGutterDiff } from "./editor/gutterDiff";
 import { CODICONS } from "./shell/codicons";
 import { setTip } from "./shell/tooltip";
+import {
+  ensureFormatToolbar,
+  historyToolbarState,
+  syncFormatToolbarState,
+} from "./preview/formatToolbar";
+// B447：工具条左侧那三颗（撤销 / 恢复 / 保存）的落点。撤销走**当前实例**的 view，
+// 保存与 Ctrl+S 同一个 `doSave(false)` —— 不另开第二条写盘路（B430 那条 watch 幂等才有效）。
+import { redo, undo } from "@codemirror/commands";
+import type { EditorView } from "@codemirror/view";
+import { doSave } from "./io/files";
+// B417：预览档（禁编辑）里把悬浮查找条的替换入口收掉 —— 档位落到 DOM 的出口在这里，
+// 所以这一发也挂在这里（换档后替换键的亮灭与文档能不能写同一时刻生效）。
+import { syncFindBarReplaceable } from "./find/findbar";
 
-// ---------------------------------------------------------------- Markdown 预览（M3）
+// ---------------------------------------------------------------- Markdown 面（M3）
 
 /**
  * B397-1 · 把「这一格是哪一档」落到那颗**唯一**的 view 上。
  *
- * 形态照 InkNote：`previewCompartment.reconfigure(previewExt(mode))`（editor.ts:1370）+
- * 只读是同一颗 view 上的另一把锁（:1391-1399）。**换档不换 view**，所以一格只有一份文档 ——
- * 镜像那颗（以及它的 ChangeSet 桥、归属闸、重新播种）整块没有了，「预览面显示一篇旧文」
- * 这一类病灶连存在的余地都没有。
+ * 形态照 InkNote：`previewCompartment.reconfigure(previewExt(mode))`
+ * + 只读是同一颗 view 上的另一把锁。**换档不换 view**，所以一格只有一份文档。
  *
- * 两道早退各挡什么：
- *   · `panel.preview` 在场 ⇒ 这一格挂的是派生 DOM 那一臂（开关关着，或挂载时文档不 eligible），
- *     档位在它身上没有意义，一行都不许碰；
- *   · `panel.viewTabId !== tab.tabId` ⇒ view 上挂的不是这一份实例（接班在途），
- *     此时改档位会写到别人身上。
+ * 早退只挡一种情况：`panel.viewTabId !== tab.tabId` ⇒ view 上挂的不是这一份实例
+ * （接班在途），此时改档位会写到别人身上。
  *
  * 已开着就不再 reconfigure：`livePreview` 的 StateField 是模块级单例，reconfigure 等于销毁重建
  * ⇒ 全篇重 parse 一遍，而 applyPanelMode 在每次布局重建、每次换标签都要跑。
  */
-function applyDecoFace(panel: Panel, tab: Tab | undefined, mode: string): void {
+function applyPreviewFace(panel: Panel, tab: Tab | undefined, mode: string): void {
   const handle = panel.view;
   if (!handle || !tab || panel.viewTabId !== tab.tabId) return;
-  // B397-5：`panel.preview` 在场 = 这一格此刻走**派生 DOM 那一臂**（大文件 / 开关关着 /
-  // 非 Markdown），装饰档不许装 —— 以前这里是「early return」，改成并进 `on` 的判据：
-  // 运行时关掉开关那一发要能把已经装着的装饰摘干净（壬 那条判据量的就是这个）。
+  // B412：只剩这一张面。非 md / 不具备条件的文档在 `shouldMountPreview` 之外，
+  // 而调用方只在 md 标签上问到这里（applyPanelMode 已按 isMdTab 判过）。
   //
-  // B399：两种所见即所得档（`preview` / `edit`）是**同一张脸** —— 都装 `decoFace()`，
+  // B399：两种所见即所得档（`preview` / `edit`）是**同一张脸** —— 都装 `previewFace()`，
   // 差别只在锁。用户口径：「预览模式只是禁止编辑的编辑模式」。
-  const on = !panel.preview && mode !== "source" && shouldMountDecoPreview(tab);
-  // `docs.get` 而不是 `docOf`：孤儿实例不该把这一次换档带崩（与 `shouldMountDecoPreview` 同口径）
+  const on = mode !== "source" && shouldMountPreview(tab);
+  // `docs.get` 而不是 `docOf`：孤儿实例不该把这一次换档带崩（与 `shouldMountPreview` 同口径）
   const doc = docs.get(tab.docId);
   const readonly = doc?.readonly === true;
   // 锁 = 文档只读（哪一档都不许写）或预览档（B399：预览 = 禁编辑的编辑模式）
@@ -92,12 +85,12 @@ function applyDecoFace(panel: Panel, tab: Tab | undefined, mode: string): void {
   const baseChanged = installed && (view.state.field(assetBase, false) ?? null) !== assetPath;
 
   const effects = [];
-  if (installed !== on) effects.push(tab.comps.preview.reconfigure(on ? decoFace() : []));
+  if (installed !== on) effects.push(tab.comps.preview.reconfigure(on ? previewFace() : []));
   // 锁只挂在装饰面上：离开装饰面必须把锁摘干净 —— B399 起预览档也上锁，切回源码档
   // 不摘就等于把源码档也锁死。源码档自己的只读仍按主干旧口径（这里不新增行为）。
   const hasLock = view.state.facet(EditorState.readOnly) === true;
   if (on ? hasLock !== locked : hasLock) {
-    effects.push(tab.comps.lock.reconfigure(on ? decoLock(locked) : []));
+    effects.push(tab.comps.lock.reconfigure(on ? previewLock(locked) : []));
   }
   if (effects.length) view.dispatch({ effects });
   // 基准目录单独一发：与 reconfigure 同发时，刚装上的字段收不到这一颗 effect
@@ -114,7 +107,7 @@ function applyDecoFace(panel: Panel, tab: Tab | undefined, mode: string): void {
  * 挂在 `refreshAll` 上（ui.ts 的 DI 钩子）：保存与改名两条路都会走它。基准没变就
  * 不 dispatch —— 这一发在每次刷新里是空转，但只有路径真变的那一次才有成本。
  */
-export function refreshDecoAssetBases(): void {
+export function refreshPreviewAssetBases(): void {
   for (const inst of tabs.values()) {
     const panel = panels.get(inst.panelId);
     if (!panel?.view || panel.viewTabId !== inst.tabId) continue;
@@ -127,26 +120,43 @@ export function refreshDecoAssetBases(): void {
   }
 }
 
-/** 应用面板视图模式：源码 / 分屏 / 纯预览（非 md 标签强制源码）。 */
+/**
+ * B458 · 基线换了而正文没换（保存 / 改名 / 以磁盘为准重载）⇒ 让行号右侧那列 diff 标注去重算。
+ *
+ * 也挂在 `refreshAll` 上（与上面 `refreshPreviewAssetBases` 同一个出口）：CM6 不会因为
+ * `doc.baseline` 被改写而自己醒，用户按完 Ctrl+S 若没再动键盘，橙绿色就僵在行号上摘不掉。
+ * 记着的基线与 doc 的一致就跳过 ⇒ 这一发在每次刷新里对绝大多数实例是空转。
+ * 隐藏实例不进这里（它没有 view），等它被挂载时插件自己补第一发刷新。
+ */
+export function refreshGutterDiffBaselines(): void {
+  for (const inst of tabs.values()) {
+    const panel = panels.get(inst.panelId);
+    if (!panel?.view || panel.viewTabId !== inst.tabId) continue;
+    const view = panel.view.view;
+    const doc = docs.get(inst.docId);
+    if (!doc) continue;
+    const recorded = gutterDiffBaseline(view.state);
+    if (recorded === undefined || recorded === doc.baseline) continue;
+    view.dispatch({ effects: refreshGutterDiff.of(null) });
+    inst.state = view.state;
+  }
+}
+
+/** 应用面板视图模式：源码 / 预览 / 编辑（非 md 标签强制源码）。 */
 function applyPanelMode(panel: Panel): void {
   if (!panel.bodyEl) return;
   const tab = tabs.get(panel.activeTabId);
   const mode = tab && isMdTab(tab) ? tab.viewMode : "source";
-  panel.bodyEl.classList.remove("mode-source", "mode-split", "mode-preview");
+  panel.bodyEl.classList.remove("mode-source", "mode-preview");
   // B399：`preview` 与 `edit` 是同一张脸（装饰面），DOM 上都落 `mode-preview`；
-  // 两档的差别只在 `tab.comps.lock`（见 applyDecoFace）。
+  // 两档的差别只在 `tab.comps.lock`（见 applyPreviewFace）。
   panel.bodyEl.classList.add("mode-" + (mode === "edit" ? "preview" : mode));
-  // B397-5：预览侧用哪一臂按**视图实际显示的那份文档**问（大文件就地换派生 DOM 那一臂）。
-  // 必须排在 applyDecoFace 之前：`p.preview` 在场时 applyDecoFace 一行不碰。
-  ensurePreviewArm(panel);
-  applyDecoFace(panel, tab, mode);
+  applyPreviewFace(panel, tab, mode);
   // B399：页面内那颗悬浮的「预览 ↔ 编辑」切换键，跟着同一份档位状态刷
-  syncDecoEditFab(panel, tab, mode);
-  if (mode !== "source") {
-    // 用户主动切模式 → force，大文件也要渲染一次（降级不是禁用）
-    renderMarkdownFor(panel, true);
-  }
+  syncPreviewEditFab(panel, tab, mode);
   renderPanelOps(panel.panelId);
+  // B417：档位变了 ⇒ 悬浮查找条的替换可用性跟着变（预览 = 禁编辑 = 不许替换）
+  syncFindBarReplaceable();
   // B228：这里是**视图模式落到 DOM 的唯一出口**，所以操作区也在这里刷。
   // 那颗切换键是**双字形开关**（预览态画 edit-code），而字形只在 renderPanelOps 里
   // 算一次 —— 以前 openPreviewToSide 是「先 rebuildLayout（此时标签还是 source）、
@@ -157,42 +167,7 @@ function applyPanelMode(panel: Panel): void {
 }
 
 /**
- * 全量重渲染某面板预览（增量 patch 由 PreviewPane 内部处理）。
- *
- * M4：`force = false`（输入防抖触发的自动渲染）时，大文件档位会直接跳过——
- * 每敲一个字就重渲染几十 MB 的 Markdown 会把界面拖死。
- * 用户**显式**切到预览/分屏模式时传 `force = true`，仍然照常渲染：
- * 降级不等于禁用，用户明确要看的时候必须给得出来。
- */
-function renderMarkdownFor(panel: Panel, force = false): void {
-  const preview = panel.preview;
-  const tab = tabs.get(panel.activeTabId);
-  if (!preview || !tab || !isMdTab(tab)) return;
-  const doc = docOf(tab);
-  preview.setBaseDir(doc.path ? dirname(doc.path) : null);
-
-  if (!force && !perfProfileFor(doc.sizeClass).autoPreview) {
-    // 「预览怎么不跟着更新」是最常被问的一类问题。这里留一条（info 而非 debug：
-    // 触发条件是大文件，不是每次敲键），下次看日志就知道是档位把渲染挡住了。
-    logger.info("preview", `auto preview off for ${doc.sizeClass} (${doc.name})`);
-    preview.setBlocks([]);
-    preview.setNotice(
-      doc.sizeClass === "huge"
-        ? "文件很大（>20 MB）：已停用自动预览。切到「预览」模式可手动渲染一次。"
-        : "文件较大（>2 MB）：已停用自动预览。切到「预览」模式可手动渲染一次。",
-    );
-    return;
-  }
-  preview.setNotice(null);
-
-  preview.setBlocks(renderBlocks(tab.state.doc.toString()));
-  // 重渲染重建了 block DOM，查找高亮随之丢失——重放当前查询（B30）
-  const fb = getFindBar();
-  if (fb?.isOpen()) applyPreviewFindToPanel(panel, findSpecOf(fb.getQuery()));
-}
-
-/**
- * B358：把渲染面点下的第 `index` 个勾选框翻回源码（预览岛的宿主入口）。
+ * B358：把渲染面点下的第 `index` 个勾选框翻回源码（预览/编辑面的宿主入口）。
  *
  * 直接写文档：预览格是唯一渲染面，这里就是「组件操作」的落笔点；只读文档挡掉。
  */
@@ -211,17 +186,6 @@ export function toggleTaskInTab(
   panel.view.view.dispatch({
     changes: { from: info.from, to: info.to, insert: flippedTaskMark(info.checked) },
   });
-}
-
-function scheduleMdRender(panelId: number): void {
-  const panel = getPanel(panelId);
-  if (!panel) return;
-  if (panel.previewTimer !== null) clearTimeout(panel.previewTimer);
-  panel.previewTimer = setTimeout(() => {
-    panel.previewTimer = null;
-    renderMarkdownFor(panel);
-    if (panel.panelId === activePanelId && !tocPanel.hidden) updateTocDrawer();
-  }, 120) as unknown as number;
 }
 
 function dirname(p: string): string {
@@ -305,13 +269,12 @@ function toggleViewMode(target?: Tab): void {
  * 换的是 Compartment 不是 view ⇒ 位置要自己扶：先读 `v`、切档、落位、重注册，与
  * `toggleViewMode` 同一套纪律（B293 / B285）。切档本身不是编辑 ⇒ 全程抑制置脏。
  */
-function toggleDecoEdit(target?: Tab): void {
+function togglePreviewEdit(target?: Tab): void {
   const tab = target ?? activeTab();
   if (!tab || !isMdTab(tab) || tab.viewMode === "source") return;
   const panel = getPanel(tab.panelId);
   if (!panel || !panel.bodyEl) return;
-  // 只对装饰那一臂成立：派生 DOM 预览（开关关着 / 非 md / huge）没有可编辑形态
-  if (!shouldMountDecoPreview(tab) || panel.preview) return;
+  if (!shouldMountPreview(tab)) return;
   const toEdit = tab.viewMode === "preview";
   if (toEdit && docs.get(tab.docId)?.readonly === true) return; // 只读文档没有编辑档
   setSuppressDirty(true);
@@ -336,44 +299,95 @@ function toggleDecoEdit(target?: Tab): void {
 }
 
 /**
+ * B447 · 三颗历史键（撤销 / 恢复 / 保存）的可用态刷点。
+ *
+ * 两个调用方：档位出口 `syncPreviewEditFab`（切档 / 切标签那一刻）与文本变化
+ * `main.handleUpdate`（打第一个字那一刻）。只接前者的话，「撤销」会一路灰着直到用户
+ * 切一次档才亮 —— 那就是「按了没反应」的另一半。
+ */
+export function refreshHistoryTools(
+  view: EditorView | null,
+  dirty: boolean,
+  host: HTMLElement | null,
+): void {
+  const tools = host?.querySelector<HTMLElement>(".md-preview-tools");
+  if (!tools) return;
+  syncFormatToolbarState(tools, historyToolbarState(view, dirty));
+}
+
+/**
  * B399 · 那颗悬浮键的显隐与字形（唯一刷点是 `applyPanelMode`，与档位同源）。
  *
- * 显隐口径：Markdown + 装饰臂在场（`shouldMountDecoPreview` 且没有派生预览）+ 不在源码档
- * + 文档可写。派生臂那一边（`.md-preview`）不能编辑，留着这颗键等于给用户一个假入口。
+ * 显隐口径：Markdown + 装饰面在场 + 不在源码档 + 文档可写。
  * 字形照本仓的双字形开关口径：**画的是点了会去的那一档** —— 预览档画 `edit`（去编辑），
- * 编辑档画 `eye`（回预览）。B401 起按钮在编辑区**左上角**（用户口径）。
+ * 编辑档画 `lock`（点了锁上回预览）。B441 起这颗键就住在格式工具条的最左一颗。
  */
-function syncDecoEditFab(panel: Panel, tab: Tab | undefined, mode: string): void {
+function syncPreviewEditFab(panel: Panel, tab: Tab | undefined, mode: string): void {
   const host = panel.bodyEl;
   if (!host) return;
-  let fab = host.querySelector<HTMLButtonElement>(".deco-edit-fab");
-  if (!fab) {
+  let bar = host.querySelector<HTMLElement>(".md-preview-bar");
+  let fab = bar?.querySelector<HTMLButtonElement>(".md-preview-fab") ?? null;
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.className = "md-preview-bar";
     fab = document.createElement("button");
     fab.type = "button";
-    fab.className = "deco-edit-fab";
+    fab.className = "md-preview-fab";
     fab.addEventListener("click", (e) => {
       e.stopPropagation();
       const t = tabs.get(panel.viewTabId ?? panel.activeTabId);
-      if (t) toggleDecoEdit(t);
+      if (t) togglePreviewEdit(t);
     });
-    host.appendChild(fab);
+    bar.appendChild(fab);
+    // B431：编辑档把切换键展开成格式工具条。工具条与键同住 `.md-preview-bar`，
+    // 显隐由 `is-expanded` 驱动（B442 起是 `display` 两档，动画按用户要求移除）。
+    ensureFormatToolbar(bar, () => panel.view?.view ?? null, {
+      // 撤销 / 恢复吃**这一格当前实例**的 view（同一文档挂两格时各撤各的）。
+      onUndo: () => {
+        const v = panel.view?.view;
+        if (v) undo(v);
+      },
+      onRedo: () => {
+        const v = panel.view?.view;
+        if (v) redo(v);
+      },
+      // 与 Ctrl+S / 菜单「保存」同一发（`doSave(false)`）：另开一条写盘路会绕过 B430 的
+      // watch 幂等闸，保存回声又会把「外部修改」误弹一次。
+      onSave: () => void doSave(false),
+    });
+    host.appendChild(bar);
   }
+  if (!fab) return;
   const doc = tab ? docs.get(tab.docId) : undefined;
   const show =
     !!tab &&
     panel.viewTabId === tab.tabId &&
     mode !== "source" &&
-    !panel.preview &&
-    shouldMountDecoPreview(tab) &&
+    shouldMountPreview(tab) &&
     doc?.readonly !== true;
+  bar.hidden = !show;
   fab.hidden = !show;
+  refreshHistoryTools(panel.view?.view ?? null, doc?.dirty === true, host);
+  const editing = !!tab && tab.viewMode === "edit";
+  // B442（用户口径，推翻 B439 的「两档统一悬浮」）：只有**编辑档**占位 —— 外壳挂
+  // `md-bar-docked` 改竖排，条成为编辑器顶部一行（正文从条下面开始，不需要量让位）；
+  // 预览档就是左上角一颗纯悬浮键，正文顶部不留白。
+  host.classList.toggle("md-bar-docked", show && editing);
   if (!show || !tab) return;
-  const editing = tab.viewMode === "edit";
-  fab.innerHTML = editing ? CODICONS.eye : CODICONS.edit;
+  // B445（用户点名）：字形从 eye / edit 换成锁形一对 —— 这颗键管的正是「能不能写」，
+  // 锁比眼睛直白。B450（用户再点名）：预览档那一半换回 `edit`（要点的是「去编辑」这件事，
+  // 一把开着的锁说不清），编辑档仍画 `lock`。方向不动：仍是**点了会去的那一档**。
+  fab.innerHTML = editing ? CODICONS.lock : CODICONS.edit;
   fab.dataset.mode = tab.viewMode;
   const label = editing ? "预览" : "编辑";
   setTip(fab, label, { key: "Ctrl+E" });
   fab.setAttribute("aria-label", `${label}（Ctrl+E）`);
+  bar.classList.toggle("is-expanded", editing);
+  const tools = bar.querySelector<HTMLElement>(".md-preview-tools");
+  if (tools) {
+    tools.inert = !editing;
+    tools.setAttribute("aria-hidden", editing ? "false" : "true");
+  }
 }
 
 /**
@@ -468,10 +482,8 @@ function refreshViewModeButton(): void {
 
 export {
   applyPanelMode,
-  renderMarkdownFor,
-  scheduleMdRender,
   toggleViewMode,
-  toggleDecoEdit,
+  togglePreviewEdit,
   openPreviewToSide,
   refreshViewModeButton,
   dirname,

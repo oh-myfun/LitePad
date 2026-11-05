@@ -97,14 +97,16 @@ function rebuildDocInstances(doc: Doc, text: string, keepCursor = false): void {
   const lang = languageOfDoc(doc, firstLine);
   doc.langLabel = lang.label;
   // 档位必须跟着 doc 走：不传就回落 normal，大文件重载一次就把降级特性全开了
-  // B398：Markdown 在 large 档也装语言扩展（装饰面的原料），与 makeInstance 同口径
+  // B398/B412：Markdown 哪一档都装语言扩展（装饰面的原料），与 makeInstance 同口径
   const perf = perfProfileForDoc(doc.sizeClass, isMdDoc(doc));
   for (const inst of instancesOfDoc(doc.tabId)) {
     const head = keepCursor ? inst.state.selection.main.head : 0;
     const made = makeTabState(
       text,
       lang.extension,
-      { dark: isDark, family: themeFamily, wrap: isWrap, perf },
+      // B458：与 makeInstance 同一个基线读取口（重载后 `doc.baseline` 由 markClean 换新，
+      // 这一列下一次刷新就跟着清空）。
+      { dark: isDark, family: themeFamily, wrap: isWrap, perf, baseline: () => doc.baseline },
       getInstanceOnUpdate(),
     );
     inst.state = made.state;

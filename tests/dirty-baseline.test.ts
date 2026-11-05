@@ -93,7 +93,6 @@ vi.mock("../src/ipc/api", () => ({
       // 关掉自动保存：本文件只验脏标记，写盘时机不在这里掺和
       autosave: false,
       toc_width: 240,
-      preview_line_height: 1.7,
     }),
   logEvent: () => {},
   newTab: () =>

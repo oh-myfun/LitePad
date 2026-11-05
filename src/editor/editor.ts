@@ -20,6 +20,7 @@ import {
   type ViewUpdate,
 } from "@codemirror/view";
 import { findHighlight } from "./find";
+import { gutterDiff } from "./gutterDiff";
 import { perfProfileFor, type PerfProfile } from "./perf";
 import { vscodeEditorTheme } from "./theme";
 import type { ThemeFamily } from "../theme/theme";
@@ -122,6 +123,12 @@ interface EditorStateEnv {
   wrap: boolean;
   /** M4 大文件分级档位；缺省 normal（新建/未命名文档） */
   perf?: PerfProfile;
+  /**
+   * B458：这份文档**上一次保存的正文**（`doc.baseline`）的读取口 —— gutter 那列 diff 标注的基线。
+   * 走函数是因为基线的写点散在模型层（保存 / 外部重载 / 换编码 / 会话恢复…），拉一手比
+   * 要求每一处都记得派发一发「基线变了」可靠。不给 = 没得比 ⇒ 那一列空着。
+   */
+  baseline?: () => string | null;
 }
 
 export interface TabCompartments {
@@ -132,11 +139,11 @@ export interface TabCompartments {
   gutter: Compartment;
   /**
    * B397-1 · 所见即所得档（InkNote 的 `previewCompartment` 同位物）。
-   * 值 = `decoFace()`（预览档）或 `[]`（源码档）—— **换档不换 view**，
+   * 值 = `previewFace()`（预览档）或 `[]`（源码档）—— **换档不换 view**，
    * 所以一格一份文档，不存在「镜像那份文本漂在别处」的可能。
    */
   preview: Compartment;
-  /** B397-1 · 只读锁（与档位正交）：`decoLock(doc.readonly)`。 */
+  /** B397-1 · 只读锁（与档位正交）：`previewLock(doc.readonly)`。 */
   lock: Compartment;
 }
 
@@ -173,6 +180,9 @@ export function makeTabState(
     extensions: [
       ...baseExtensions(perf),
       comps.gutter.of(gutterExtensions(perf)),
+      // B458：未保存改动的行级标注（折叠符号右侧那 4px）。排在 gutter 那一摞之后 ⇒ 它是
+      // 最右一列；挂在这里而不是 compartment 里，因为它的状态与刷新与档位无关。
+      gutterDiff(env.baseline),
       comps.wrap.of(env.wrap ? EditorView.lineWrapping : []),
       comps.theme.of(vscodeEditorTheme(env.dark, env.family ?? "2026")),
       comps.lang.of(perf.syntax ? (language ?? []) : []),

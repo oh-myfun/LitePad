@@ -97,12 +97,14 @@ function makeDoc(
 function makeInstance(doc: Doc, panelId: number, text: string): Tab {
   const firstLine = text.split("\n", 1)[0] ?? "";
   const lang = languageOfDoc(doc, firstLine);
-  // B398：Markdown 在 large 档也装语言扩展（装饰面的原料），见 perfProfileForDoc
+  // B398/B412：Markdown 哪一档都装语言扩展（装饰面的原料），见 perfProfileForDoc
   const perf = perfProfileForDoc(doc.sizeClass, isMdDoc(doc));
   const { state, comps } = makeTabState(
     text,
     lang.extension,
-    { dark: isDark, family: themeFamily, wrap: isWrap, perf },
+    // B458：基线走**读取口**，不是快照 —— `doc.baseline` 在保存/重载后会被整体换掉，
+    // gutter 那列 diff 每次刷新都来问一次，因此保存之后标记自然清空，不必在写点补派发。
+    { dark: isDark, family: themeFamily, wrap: isWrap, perf, baseline: () => doc.baseline },
     instanceOnUpdate,
   );
   return {
