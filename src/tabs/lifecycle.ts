@@ -44,9 +44,8 @@ import {
 import { renderSplitview, type PanelRenderData } from "../shell/splitview";
 import { attachTabToPanel, makeDoc, makeInstance, registerDoc } from "../doc-model";
 // B461：差异面的入口（模型层；`src/diff/model.ts` 不回指渲染层，故此处不构成新循环）。
-import { openBaselineDiff, openFileDiff } from "../diff/model";
-// B461 Task 6：B 档「选择以进行比较」的窗口级状态（标签与显隐的真相在 compare.ts）。
-import { clearCompareSelection, compareSelection, toggleCompareSelection } from "../diff/compare";
+// B461 Task 6 那一对「选择以进行比较」的回调在下面的 `compareTabCallbacks`（`tabs/render.ts`）。
+import { openBaselineDiff } from "../diff/model";
 import { updateTocDrawer } from "../toc";
 import { retargetFindBar, relayoutFindBar } from "../find/findbar";
 import { saveDocCore } from "../io/files";
@@ -60,7 +59,7 @@ import { createEditor } from "../editor/editor";
 import { disposeDiffSurface, syncDiffSurface } from "../diff/surface";
 import { logViewport } from "../core/viewport";
 import { closeTab as ipcCloseTab, newTab as ipcNewTab } from "../ipc/api";
-import { renderPanelTabs, renderPanelOps, panelDataOf } from "./render";
+import { compareTabCallbacks, renderPanelTabs, renderPanelOps, panelDataOf } from "./render";
 import {
   exitMaximize,
   toggleMaximizePanel,
@@ -220,29 +219,9 @@ export function rebuildLayout(): void {
       const inst = tabs.get(tabId);
       if (inst) void openBaselineDiff(inst.docId);
     },
-    // B461 Task 6：B 档「选择以进行比较」那一对 —— 同样是两个 producer 之一（首建那一发）。
-    // 只给主窗口：比较选择是窗口级状态，卫星窗口没有资源管理器树跟它配对 ⇒ 两颗都不给，
-    // tabstrip 那一组整条退场（splitview 侧按「回调没给 ⇒ 传 undefined」条件转发）。
-    onSelectToCompare:
-      windowKind === "satellite"
-        ? undefined
-        : (tabId) => {
-            const t = tabs.get(tabId);
-            const doc = t && docs.get(t.docId);
-            if (doc?.path) toggleCompareSelection(doc.path);
-          },
-    onCompareWith:
-      windowKind === "satellite"
-        ? undefined
-        : (tabId) => {
-            // 点击时刻才取选中态（弹层条目不许吃建数组那一刻的旧值）。
-            const sel = compareSelection();
-            const t = tabs.get(tabId);
-            const doc = t && docs.get(t.docId);
-            if (!sel || !doc?.path) return;
-            void openFileDiff(sel, doc.path);
-            clearCompareSelection();
-          },
+    // B461 Task 6：B 档「选择以进行比较」那一对 —— 与 `tabs/render.ts` 的 `tabstripCallbacks`
+    // 展开**同一颗**构造器（窗口缺席那道闸只在它那一处写，两个 producer 不会各说各话）。
+    ...compareTabCallbacks(),
     // B400：Ctrl+拖动标签 ⇒ 把这份文档当系统文件拖给外部应用
     onDragTabFile: (tabId) => {
       const t = tabs.get(tabId);

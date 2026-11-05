@@ -27,6 +27,8 @@ import {
   resolveCommand,
 } from "../src/shell/keymap";
 
+import { clearCompareSelection, compareSelection } from "../src/diff/compare";
+
 const srcOf = (p: string): string => readFileSync(p, "utf-8").replace(/\r\n/g, "\n");
 
 function key(init: KeyboardEventInit): KeyboardEvent {
@@ -384,14 +386,25 @@ describe("B461 · B 档标签右键两条的接线（Task 6 Step 5）", () => {
     expect(ts).toMatch(/t\.path && cb\.onSelectToCompare && cb\.onCompareWith/);
     expect(ts, "标签与显隐的真相只许在 diff/compare.ts 一处").toMatch(/compareMenuItems\(/);
 
-    // ② 两个 producer：同一颗 windowKind 闸（卫星 ⇒ `undefined` ⇒ 整组缺席）。
+    // ② 那颗共享构造器 + 两个 producer 各展开一次（Task 6 评审 Important 1：这一段
+    //    原先在两个文件里逐字复制，行为改一次要改两处）。判据只认**形状**：
+    //    窗口那道闸住在构造器里，两个 producer 必须都是「展开它」而不是各写一遍。
+    const builder = stripLineComments(fnBody(srcOf("src/tabs/render.ts"), "compareTabCallbacks"));
+    expect(builder, "两颗回调的标签/动作只在 compareTabCallbacks 一处给").toMatch(
+      /onSelectToCompare:/,
+    );
+    expect(builder).toMatch(/onCompareWith:/);
+    expect(builder, "「选择以进行比较」落进比较状态机").toMatch(/toggleCompareSelection\(/);
+    expect(builder, "「与 X 比较」真的去开那张 B 档差异").toMatch(/openFileDiff\(/);
+    const gates = builder.match(/windowKind === "satellite"\s*\?\s*undefined\s*:/g) ?? [];
+    expect(
+      gates,
+      "卫星窗口 ⇒ 两颗都不给（both-or-neither：缺席是机制上的，不是画出来点不动）",
+    ).toHaveLength(2);
     for (const p of ["src/tabs/render.ts", "src/tabs/lifecycle.ts"]) {
       const src = stripLineComments(srcOf(p));
-      expect(src, `${p} 必须给「选择以进行比较」`).toMatch(
-        /onSelectToCompare:\s*windowKind === "satellite"\s*\?\s*undefined\s*:/,
-      );
-      expect(src, `${p} 必须给「与 X 比较」`).toMatch(
-        /onCompareWith:\s*windowKind === "satellite"\s*\?\s*undefined\s*:/,
+      expect(src, `${p} 必须展开那颗共享的比较回调（不许再抄一份）`).toMatch(
+        /\.\.\.\s*compareTabCallbacks\(\)/,
       );
     }
 
@@ -423,5 +436,19 @@ describe("B461 · B 档标签右键两条的接线（Task 6 Step 5）", () => {
     const main = render.tabstripCallbacks(bare);
     expect(main.onSelectToCompare, "主窗口：两条都在").toBeTypeOf("function");
     expect(main.onCompareWith, "主窗口：两条都在").toBeTypeOf("function");
+
+    // 抽成 `compareTabCallbacks` 之后，静态判据钉的是「两个 producer 都展开它」⇒ 这一发
+    // 再跑一次**展开产物**的函数体：点「选择以进行比较」真的把那条落进窗口级选择里
+    // （按标签找到它那份文档的路径，与 explorer 右键同一颗状态机）。
+    clearCompareSelection();
+    appState.docs.clear();
+    appState.tabs.clear();
+    const doc = docModel.makeDoc(91, "正文", "pick.md", "D:\\pick.md", "UTF-8", "LF", false);
+    appState.docs.set(doc.tabId, doc);
+    const inst = docModel.makeInstance(doc, 0, "正文");
+    appState.tabs.set(inst.tabId, inst);
+    main.onSelectToCompare!(inst.tabId);
+    expect(compareSelection(), "回调体跟着展开走，不是一颗空壳").toBe("D:\\pick.md");
+    clearCompareSelection();
   });
 });

@@ -1,6 +1,9 @@
 // B461 · B 档「选择以进行比较」的窗口级状态与那一对菜单标签。
 //
-// 设计稿 ⑩·1：B 档先选一条（右栏），再右键另一条（左栏对照物）→ 开一张只读差异。
+// 两击手势：先在一条上点「选择以进行比较」把它设成**对照物（左栏）**，再到另一条上点
+// 「与 X 比较」开一张只读差异 —— 被点的那一条是右栏（可编辑、脏归它那一侧）。
+// ⚠️ 谁先点只是这一层的手势约定，设计稿 ⑩·1 里**没有**这一条（它只定死「左栏是只读对比
+//    缓冲、右栏就是那份文档本身」）⇒ 别把次序安到它名下，也别按注释改代码里的左右。
 // 这一模块只管两件事，且都跟渲染层无关（纯状态 + 标签文案），所以能进 node 环境单测：
 //   1) 一个模块级的「当前选中路径」小状态机（选/换/取消）；
 //   2) 「选择以进行比较」/「与 X 比较」这一对条目的**标签与显隐**逻辑 —— explorer 树与
@@ -11,10 +14,10 @@
 
 import type { MenuItem } from "../shell/menu";
 
-/** 「当前拿来当右栏的那条路径」；null = 没选中。整个窗口一份（模块级，与 app-state 那几颗同形）。 */
+/** 「当前选作**左栏对照物**的那条路径」；null = 没选中。整个窗口一份（模块级，与 app-state 那几颗同形）。 */
 let selected: string | null = null;
 
-/** 现在选中作为对照右栏的那条路径（未选中 ⇒ null）。 */
+/** 现在选中作为对照左栏的那条路径（未选中 ⇒ null）。 */
 export function compareSelection(): string | null {
   return selected;
 }
@@ -37,8 +40,9 @@ export function baseName(path: string): string {
 
 /**
  * 那一对条目落下去时要做的两件侧效应（由 explorer / tabstrip 注入，compare.ts 自己不碰模型层）。
- * - `onSelectToCompare`：把这条设成右栏（走 `toggleCompareSelection`）。
- * - `onCompareWith`：拿 `leftPath` 当左栏、`rightPath` 当右栏开一张 B 档差异。
+ * - `onSelectToCompare`：把这条设成**左栏对照物**（走 `toggleCompareSelection`）。
+ * - `onCompareWith`：`leftPath`（就是上面选中的那条）当左栏、`rightPath`（被点的这条）当
+ *   右栏，开一张 B 档差异。
  */
 export interface CompareActions {
   onSelectToCompare(path: string): void;

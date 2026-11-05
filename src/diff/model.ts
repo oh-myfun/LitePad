@@ -29,11 +29,13 @@ export interface DiffSpec {
   tier: DiffTier;
   /** 右栏 = 这份文档的另一个实例（可编辑、脏归它） */
   docId: number;
-  /** 左栏正文的读取口。A 档实时读 `doc.baseline`；B 档闭包持有一份只读对比缓冲 */
+  /** 左栏正文的读取口。A 档实时读 `doc.baseline`；B 档按设计稿 ⑩·1：那条 path 开着就读
+   *  那份文档的现值，没开着才读一次盘（闭包持有的只读对比缓冲）。 */
   leftText: () => string;
   leftName: string;
   rightName: string;
-  /** B 档左栏的文件路径（「刷新」要重读盘）；A 档为 null */
+  /** B 档左栏的文件路径；A 档为 null。Task 8 的「刷新」只有**没开着**那一路才有缓冲要重读
+   *  —— 开着那一栏就是那份文档自己，跟着它的键入走，没有第二份真相可刷。 */
   leftPath: string | null;
 }
 
@@ -90,6 +92,16 @@ export function setDiffRenderHooks(next: DiffRenderHooks): void {
 }
 
 /**
+ * 那份文档**此刻在屏幕上那一份**正文（唯一的一处取法 —— 右栏与「已开着的左栏」都读它）。
+ *
+ * 取现有实例的现值而不是 `doc.baseline`：用户可能改了还没存，差异面要显示的就是他屏幕上
+ * 那一份。包成读取口交给 `spec.leftText`，于是它跟着那一格的键入走，不是打开那一刻的抄本。
+ */
+function liveTextOf(doc: Doc): string {
+  return instancesOfDoc(doc.tabId)[0]?.state.doc.toString() ?? doc.baseline ?? "";
+}
+
+/**
  * 把一张差异标签挂到指定面板（Task 6 的「任选两文件」也走这一处，只差 spec）。
  *
  * 顺序照仓库既定的那条「新标签进面板」链路（`src/io/files.ts:227` 同形）：
@@ -98,10 +110,8 @@ export function setDiffRenderHooks(next: DiffRenderHooks): void {
  * （Task 1 接的那三个点），不重排就只有一颗 view 挂在数据层里、界面上看不见。
  */
 export function attachDiffTab(doc: Doc, spec: DiffSpec, panelId: number): Tab {
-  // 右栏那份正文取**现有实例的现值**，不是 `doc.baseline`：用户可能改了还没存，
-  // 差异标签要显示的就是他屏幕上那一份（脏归文档，Ctrl+S 仍走主干那条链）。
-  const text = instancesOfDoc(doc.tabId)[0]?.state.doc.toString() ?? doc.baseline ?? "";
-  const tab = makeDiffInstance(doc, panelId, text, spec);
+  // 右栏那份正文取**现有实例的现值**，不是 `doc.baseline`（脏归文档，Ctrl+S 仍走主干那条链）。
+  const tab = makeDiffInstance(doc, panelId, liveTextOf(doc), spec);
   const panel = panels.get(panelId);
   if (panel) attachTabToPanel(tab, panel);
   hooks.rebuildLayout();
@@ -215,14 +225,67 @@ function findDocByPath(pathNorm: string): Doc | null {
 }
 
 /**
+ * 读一次「只读对比缓冲」的正文（B 档左栏那一路）。
+ *
+ * 读不成把原因原样说出来并交回 `null`，由调用方决定「不开这一张 / 什么都不换」——
+ * 两处调用方必须同一个口径：一处闷着不响、一处弹说明，用户学到的就是两套规矩。
+ */
+async function readCompareSnapshot(path: string): Promise<string | null> {
+  try {
+    return (await readCompareText(path)).text;
+  } catch (e) {
+    hooks.showMessage(String(e), true);
+    return null;
+  }
+}
+
+/**
+ * 按路径拿到那份文档：在册直接复用，不在册走主干那条 `doOpen`（复用 / 跨窗口取回那些
+ * 既有语义全部白送）。`openFileDiff` 的右栏与 `swapDiffInputs` 的新右栏都问这一颗。
+ *
+ * 拿不到 ⇒ 交回 `null`；`doOpen` 失败时自己已经说过原因，这里不叠第二句。
+ */
+async function openDocForPath(path: string): Promise<Doc | null> {
+  const pathNorm = normPath(path);
+  const found = findDocByPath(pathNorm);
+  if (found) return found;
+  const { doOpen } = await import("../io/files");
+  const openedTabId = await doOpen(path);
+  if (openedTabId === null) return null;
+  const opened = findDocByPath(pathNorm);
+  if (opened) return opened;
+  // doOpen 报的是**标签** id：复用既有文档那一支时按标签反查那份 doc。
+  const t = tabs.get(openedTabId);
+  return t ? (docs.get(t.docId) ?? null) : null;
+}
+
+/**
+ * B 档左栏的正文读取口（设计稿 ⑩·1 那句「若那个 path 恰好已经开着，直接复用它的正文，
+ * 不再读一遍盘」在这里落地；裁决 R33）。
+ *
+ * - 已经开着 ⇒ 交一个读那份文档**现值**的读取口（与右栏同一颗 `liveTextOf`）：屏幕上两侧
+ *   显示的就是用户正在看的那两份内容，盘上那份脏改动不会被偷偷当成对照物。
+ * - 没开着 ⇒ 读一次盘当只读对比缓冲（不注册监听、不进在场广播、不进最近打开）。
+ *
+ * 交回 `null` = 盘也读不成（那句说明已由 `readCompareSnapshot` 说过）。
+ * Task 8 的「刷新」只需要在**没开着**那一路重读盘换掉这份缓冲；开着那一路跟着那份文档走。
+ */
+async function compareLeftTextReader(path: string): Promise<(() => string) | null> {
+  const openDoc = findDocByPath(normPath(path));
+  if (openDoc) return () => liveTextOf(openDoc);
+  const snapshot = await readCompareSnapshot(path);
+  return snapshot === null ? null : () => snapshot;
+}
+
+/**
  * B 档：任选两个文件开一张只读差异（设计稿 ⑩·1）。
  *
  * 口径：
- * - **右栏必须是那份文档本身**：在册就复用它的 doc（不重读盘、不另立文档），
- *   不在册走主干那条 `doOpen`（复用/跨窗口取回那些既有语义全部白送）。
- * - **左栏是只读对比缓冲**：`readCompareText` 读一次盘，文本闭包进 `spec.leftText`；
- *   它不进文档登记表、不装监听 ⇒ 「刷新」那颗键（Task 8）按 `spec.leftPath` 重读后
- *   走 surface 的 retarget 换掉这份快照，模型这一侧不留第二份真相。
+ * - **右栏必须是那份文档本身**：`openDocForPath` —— 在册就复用它的 doc（不重读盘、不另立
+ *   文档），不在册走主干那条 `doOpen`。
+ * - **左栏是只读对比缓冲**（`compareLeftTextReader`）：那个 path 恰好已经开着就**直接复用
+ *   它的正文**（读取口跟着那一格走，不再读一遍盘），没开着才 `readCompareText` 读一次盘。
+ *   两条都不进文档登记表、不装监听 ⇒ 没有「外部已修改」那一路弹窗。
  * - 同一对文件只留一张（R32，与 A 档同形）：再点一次把它露出来。
  *
  * `io/files` 用动态 import：它顺着 `ui.ts` 摸 DOM，静态引会把 node 环境的模型层单测炸掉。
@@ -235,20 +298,8 @@ export async function openFileDiff(leftPath: string, rightPath: string): Promise
     return null;
   }
 
-  // 右栏：在册的那份文档优先；不在册才开进来（doOpen 失败自己会说，这里不叠第二句）。
-  let rightDoc = findDocByPath(rightNorm);
-  if (!rightDoc) {
-    const { doOpen } = await import("../io/files");
-    const openedTabId = await doOpen(rightPath);
-    if (openedTabId === null) return null;
-    rightDoc = findDocByPath(rightNorm);
-    if (!rightDoc) {
-      // doOpen 报的是**标签** id：复用既有文档那一支时按标签反查那份 doc。
-      const t = tabs.get(openedTabId);
-      rightDoc = t ? (docs.get(t.docId) ?? null) : null;
-    }
-    if (!rightDoc) return null;
-  }
+  const rightDoc = await openDocForPath(rightPath);
+  if (!rightDoc) return null;
 
   const existing = findFilesDiffTab(leftNorm, rightDoc.tabId);
   if (existing) {
@@ -258,17 +309,12 @@ export async function openFileDiff(leftPath: string, rightPath: string): Promise
     return existing.tabId;
   }
 
-  let holder = "";
-  try {
-    holder = (await readCompareText(leftPath)).text;
-  } catch (e) {
-    hooks.showMessage(String(e), true);
-    return null;
-  }
+  const leftText = await compareLeftTextReader(leftPath);
+  if (!leftText) return null;
   const spec: DiffSpec = {
     tier: "files",
     docId: rightDoc.tabId,
-    leftText: () => holder,
+    leftText,
     leftName: baseName(leftPath),
     rightName: rightDoc.name,
     leftPath,
@@ -280,10 +326,10 @@ export async function openFileDiff(leftPath: string, rightPath: string): Promise
  * 「交换左右」的换算（Task 8 那颗键调它；A 档那一项置灰不调）。
  *
  * 只对 B 档有意义：A 档交换 = 把「还没存盘的改动」变成对照物，破坏「右栏就是那份
- * 文档本身」这条反目标 ⇒ 原样交回。B 档：拿原左栏路径开成新右栏（`doOpen`，复用
- * 主干那条找已有 doc 的路），拿原右栏**磁盘上的**内容（读盘，不含未存盘改动）当新
- * 左栏快照，算出一份**新 spec** 交回；`tab.diff` 的落笔与 surface 的 retarget 归调用方
- * （模型不认识渲染层）。
+ * 文档本身」这条反目标 ⇒ 原样交回。B 档：拿原左栏路径那份文档当新右栏（`openDocForPath`，
+ * 复用主干那条找已有 doc 的路），新左栏走 `compareLeftTextReader`（原右栏那份 doc 就在册
+ * ⇒ 交的是它的现值读取口，不读盘），算出一份**新 spec** 交回；`tab.diff` 的落笔与 surface
+ * 的 retarget 归调用方（模型不认识渲染层）。
  */
 export async function swapDiffInputs(spec: DiffSpec): Promise<DiffSpec> {
   if (spec.tier !== "files" || !spec.leftPath) return spec;
@@ -294,26 +340,15 @@ export async function swapDiffInputs(spec: DiffSpec): Promise<DiffSpec> {
   // 下面 `oldRightDoc.name` 会带着「possibly null」发红（Task 6 门禁真抓到过）。
   if (!oldRightDoc || !oldRightPath) return spec;
 
-  const { doOpen } = await import("../io/files");
-  const newRightTabId = await doOpen(spec.leftPath);
-  let newRightDoc = findDocByPath(normPath(spec.leftPath));
-  if (!newRightDoc && newRightTabId !== null) {
-    const t = tabs.get(newRightTabId);
-    newRightDoc = t ? (docs.get(t.docId) ?? null) : null;
-  }
+  const newRightDoc = await openDocForPath(spec.leftPath);
   if (!newRightDoc) return spec; // 开不出来 ⇒ 什么都不换（doOpen 已经说过原因）
 
-  let holder = "";
-  try {
-    holder = (await readCompareText(oldRightPath)).text;
-  } catch (e) {
-    hooks.showMessage(String(e), true);
-    return spec;
-  }
+  const leftText = await compareLeftTextReader(oldRightPath);
+  if (!leftText) return spec;
   return {
     tier: "files",
     docId: newRightDoc.tabId,
-    leftText: () => holder,
+    leftText,
     leftName: oldRightDoc.name,
     rightName: newRightDoc.name,
     leftPath: oldRightPath,

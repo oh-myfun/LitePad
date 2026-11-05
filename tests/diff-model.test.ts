@@ -12,7 +12,7 @@
 // 不是快照）—— 那条不由单测判，由 Task 5 的「Ctrl+S 自己清空」用例判。
 import { describe, expect, it, vi } from "vitest";
 import { docs, panels, tabs, type Doc } from "../src/core/app-state";
-import { makeDiffInstance, makeDoc } from "../src/doc-model";
+import { makeDiffInstance, makeDoc, makeInstance } from "../src/doc-model";
 import { gutterDiffBaseline, hasGutterDiff } from "../src/editor/gutterDiff";
 import {
   canOpenAgainstBaseline,
@@ -260,6 +260,44 @@ describe("B461 · openFileDiff（Task 6 Step 6）", () => {
     expect(readCompareTextMock).toHaveBeenCalledTimes(1); // 复用路径不再读盘
     expect(switched).toEqual([first]);
     expect(panels.get(0)!.tabs).toHaveLength(1); // 面板里仍只有那一张
+  });
+});
+
+describe("B461 · R33：左栏那条已经开着 ⇒ 复用它的正文，不再读一遍盘", () => {
+  it("B461 · 左路径在册 ⇒ 不调 readCompareText；左栏读取口交的是那一格的**现值**并跟着键入走", async () => {
+    mountPanel0();
+    // 用户开着 a.md 且改了还没存：屏幕上那一格才是他要对照的东西（设计稿 ⑩·1
+    // 「若那个 path 恰好已经开着，直接复用它的正文，不再读一遍盘」）。
+    const aDoc = makeDoc(21, "甲\n盘上那份", "a.md", "D:/a.md", "UTF-8", "LF", false);
+    docs.set(aDoc.tabId, aDoc);
+    const aInst = makeInstance(aDoc, 0, "甲\n改过还没存");
+    tabs.set(aInst.tabId, aInst);
+    const bDoc = makeDoc(22, "乙", "b.md", "D:/b.md", "UTF-8", "LF", false);
+    docs.set(bDoc.tabId, bDoc);
+    setDiffRenderHooks({
+      rebuildLayout: () => {},
+      refreshAll: () => {},
+      renderPanelTabs: () => {},
+      showMessage: () => {},
+      switchTab: () => {},
+    });
+    readCompareTextMock.mockReset().mockResolvedValue(compareSnap("甲\n盘上那份"));
+
+    const id = (await openFileDiff("D:/a.md", "D:/b.md"))!;
+    expect(
+      readCompareTextMock,
+      "那个 path 已经开着 ⇒ 不许再读一遍盘（读到的还是用户屏幕上没有的那一份）",
+    ).not.toHaveBeenCalled();
+    const leftText = tabs.get(id)!.diff!.leftText;
+    expect(leftText(), "左栏 = 那一格此刻的正文，不是盘上那一份").toBe("甲\n改过还没存");
+
+    // 规格要的是「读那份文档的现值」，不是「打开那一刻抄一份」：那一格敲字，左栏跟着变。
+    aInst.state = aInst.state.update({
+      changes: { from: 0, to: aInst.state.doc.length, insert: "甲\n改成第三版" },
+    }).state;
+    expect(leftText(), "读取口吃的是活的实例正文（快照会把差异冻在打开那一刻）").toBe(
+      "甲\n改成第三版",
+    );
   });
 });
 

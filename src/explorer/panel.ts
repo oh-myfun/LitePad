@@ -1175,7 +1175,8 @@ function menuFor(path: string): MenuItem[] {
     push({ label: "粘贴\tCtrl+V", disabled: !clip, onSelect: () => void doPaste() });
   }
   if (kind === "file") {
-    // B461 · B 档那一对（VS Code 形）：先「选择以进行比较」点右栏，再到对照文件上点「与 X 比较」。
+    // B461 · B 档那一对（VS Code 形）：先「选择以进行比较」把这条设成**左栏对照物**，
+    // 再到另一条上点「与 X 比较」（那条是右栏）。次序是这一层的手势约定，不是设计稿规定的。
     // 标签与显隐的真相在 `diff/compare.ts`（与标签右键同一颗），这里只接侧效应。
     push(
       ...compareMenuItems(path, {
