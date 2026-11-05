@@ -1,0 +1,1406 @@
+/* B397-2 · 所见即所得那一档的排版 —— 几何/字阶/间距**照抄 InkNote**，颜色接 LitePad token。
+ *
+ * 本机参照 E:\Project\InkNote\InkNote\src\App.css：
+ *   宿主 token 层 1156-1182 · 壳层 1250-1299 · 行内构造 1301-1503 · 代码块 1544-1661 · 表格 2287-2361
+ *   （InkNote 自己也是「形状写死、颜色走变量」，所以「数值照抄 + 颜色换 token」不是折中，是照搬。）
+ *
+ * 三条硬规矩，都在 InkNote 那边踩过才写进注释的：
+ *   1. **块级 widget 根禁止 margin-top/bottom**：CM6 用 `getBoundingClientRect().height` 测块高
+ *      （不含外边距），纵向 margin 会让高度图逐块累积误差，越往下点击定位偏得越多
+ *      ⇒ 纵向间距一律用 padding。（这条把本文件前身 deco.css 里 `margin: 12px 0` 那三处一并作废。）
+ *   2. **空行不折叠**：折叠改变行盒高度，而同步滚动的共享坐标 `v` 的小数按块高算 —— 源码档与
+ *      装饰档两套行盒 ⇒ 逐行对齐必差（B300 的教训）。
+ *   3. **选择器根是 `.md-preview-face`**（livePreview 用 `EditorView.editorAttributes` 打在 `.cm-editor`
+ *      上）；凡是要压过 global.css 里 B225/B231 那几条 `.panel-host .panel-editor .cm-*`
+ *      （(0,3,0)/(0,4,0)）的覆盖，祖先链必须写全 —— 光靠 `.md-preview-face` 会输给它们。
+ *
+ * 行距**不在这里定**：LitePad 的 `--editor-line-height` 是用户设置项（B225），装饰档沿用同一颗，
+ * 换档只换字形与形状，不许把用户设的行距顶掉。InkNote 的 1.75 是它那边的缺省设置值，不是样式。
+ */
+
+/* ---------- 宿主 token 层（InkNote App.css:1156-1182 的形状档位 + LitePad 的取色） ---------- */
+.panel-host .panel-editor .cm-editor.md-preview-face {
+  /* 形状：逐条照抄 InkNote */
+  --editor-padding-x: 48px;
+  --editor-block-indent: 16px;
+  --editor-quote-bar: 3px;
+  --editor-list-marker-offset: 1.35em;
+  --md-component-radius: 9px;
+  --md-component-shadow: none;
+  /* 颜色：InkNote 同名变量的取值来源，换成 LitePad 的主题 token（五族 × 深浅自动跟着走）。
+     那批 `--editor-*` 名字**必须留着** —— previewSets 的 ListItem 分支把
+     `calc(var(--editor-padding-x) + …)` 直接写在行内 style 上（那是照抄 InkNote 的），
+     这里不定义，嵌套列表的缩进整条失效。 */
+  --md-accent: var(--accent);
+  --md-panel-bg: var(--code-bg);
+  --md-panel-border: var(--border);
+  --md-quote-border: var(--accent); /* InkNote 的 --md-quote-border = var(--md-accent) */
+  --md-quote-bg: color-mix(in srgb, var(--accent) 4%, transparent);
+  --md-fg: var(--editor-fg); /* B379 口径：预览是「编辑器里的另一种视图」，与源码正文同一颗 */
+  --md-muted: var(--fg-muted);
+  --md-faint: var(--editor-line-number); /* InkNote --fg-faint 的最近档（比 muted 更淡的一档） */
+  --md-strong-border: color-mix(in srgb, var(--fg-muted) 55%, var(--border)); /* --border-strong */
+  --md-code-font: var(--font-code);
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* ---------- 壳层 ---------- */
+
+/* 正文走**正文字体**（InkNote 的文档面用 --editor-font-family/--font-ui 画，LitePad 里同一颗
+   语义是 --font-body —— 源码那一档仍归代码字体，B231 的口径不动）。
+   ⚠️ 祖先链写全：global.css 那条「编辑器 = 代码字体」是 (0,4,0)（含 .cm-scroller 那一支）。 */
+.panel-host .panel-editor .cm-editor.md-preview-face,
+.panel-host .panel-editor .cm-editor.md-preview-face .cm-scroller {
+  font-family: var(--font-body);
+}
+
+/* 组件自己管横向滚动 ⇒ 正文不产生第二条横滚动条（App.css:1602）。 */
+.panel-host .panel-editor .cm-editor.md-preview-face .cm-scroller {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.panel-host .panel-editor .cm-editor.md-preview-face .cm-content {
+  /* B413/B414（用户 2026-10-29）：「文件顶部和底部存在额外的大块空白高度」。
+     照 VS Code markdown.css：`html,body { padding: 0 26px }` + `body { padding-top: 1em }`
+     ⇒ 顶上只留 1em、底下 0（B413 那版是 16px 上下）。首/末块自己的内距另由下面两条清掉。 */
+  padding: 1em 0 0;
+  /* 居中宽度吃用户那档「正文宽度」设置（B235 写在 :root 的 --md-content-max）；
+     没设过时才回落到 InkNote 的 95vw。 */
+  max-width: var(--md-content-max, 95vw);
+  margin: 0 auto;
+  color: var(--md-fg);
+  caret-color: var(--editor-cursor);
+}
+
+/* B414：文首/文末贴边 —— VS Code 预览里首元素没有自身的上留白、末元素没有自身的下留白。
+   行元素本身不带纵向内距，这两条管的是**块级 widget**（frontmatter 6px、代码块 8px…）。 */
+.md-preview-face .cm-content > .md-block:first-child {
+  padding-top: 0;
+}
+.md-preview-face .cm-content > :last-child {
+  padding-bottom: 0;
+}
+
+/* 正文的左右留白画在**行**上（InkNote 同一条）：CM6 量块高/文本左沿都读 .cm-line 的
+   padding，画在这里点击定位才跟着走（view/dist:9328 那段就是在读 paddingLeft）。 */
+/* ⚠️ 特异度必须停在 (0,2,0)：这一条用的是 `padding` **简写**（padding-top/bottom 归 0），而
+   `.md-preview-face .cm-line.md-heading-N { padding-bottom }` 与
+   `.md-preview-face .cm-line.md-blockquote { padding-left }` 这些构造规则是 (0,3,0)。
+   把祖先链写全成 (0,5,0) 的话它们整条输给这一句
+   ⇒ 标题下留白、引用缩进、列表缩进全部失效（真机第一轮读到的正是 padTop=0、
+   引用/列表左内距都等于裸的 48px）。只有 font-family 那条才需要写全祖先链
+   —— 它要压过 global.css 的 (0,4,0)（B231 的「编辑器 = 代码字体」）。 */
+.md-preview-face .cm-line {
+  position: relative;
+  padding: 0 var(--editor-padding-x);
+  /* B459 · 行首「标记槽」有多宽（正文行没有）。这一颗数是唯一的权威：左内距、负 text-indent、
+     占位件的宽度全从它派生 —— CM6 铺选区色带时读的是 `paddingLeft + min(0, textIndent)`，
+     两者不同源就会错位一档（用户报的「行首少一段」）。 */
+  --md-lead: 0px;
+  user-select: text;
+}
+
+/* 文档面不画行号栏（InkNote `.editor-host .cm-gutters { display: none }`）。
+   ⚠️ 别顺手改成「源码档也藏」：行号是 VS Code 那套外壳的一部分，只有这一档是文档。 */
+.panel-host .panel-editor .cm-editor.md-preview-face .cm-gutters {
+  display: none;
+}
+
+/* 当前行那一圈描边/底色（B380 照 VS Code 画的）在文档面里没有对应物 ⇒ 撤掉。 */
+.panel-host .cm-editor.md-preview-face .cm-activeLine,
+.panel-host .cm-editor.md-preview-face .cm-activeLineGutter {
+  background: transparent;
+  box-shadow: none;
+}
+
+/* ---------- 标题 ---------- */
+
+/* 字阶/字重/字距照抄 InkNote 的 1.92/720/-.025em 那一组。
+   ⚠️ 这些类挂在**行内 mark**（previewSets 的 HEADINGS 分支）上而不是行元素上 —— 与行元素
+   同一条声明会连 `padding-top` 的 em 基准一起放大（1.1em × 1.92 = 标题上方多出一整行）。
+   ⚠️ 每一组都带 `*` 那一支：语法高亮（theme.ts 的 tags.heading / tags.link）在 mark **里面**
+   另起一层 span，只写外层的话颜色与下划线会被它盖住（真机第一轮就是这样：判据读外层读到
+   none / --editor-fg，截图里标题仍是语法蓝、链接仍带下划线 ⇒ 判据没鉴别力）。 */
+.md-preview-face .cm-md-h1,
+.md-preview-face .cm-md-h1 *,
+.md-preview-face .cm-md-h2,
+.md-preview-face .cm-md-h2 *,
+.md-preview-face .cm-md-h3,
+.md-preview-face .cm-md-h3 *,
+.md-preview-face .cm-md-h4,
+.md-preview-face .cm-md-h4 *,
+.md-preview-face .cm-md-h5,
+.md-preview-face .cm-md-h5 *,
+.md-preview-face .cm-md-h6,
+.md-preview-face .cm-md-h6 * {
+  font-family: var(--font-body);
+  color: var(--md-fg);
+}
+/* B402：字阶只在 mark 上写**一次**，后代一律 inherit。
+   ⚠️ B401 那版两条都写 `font-size: 1.92em`：`*` 那条是相对**父级 mark 的 1.92em** 再乘一遍，
+   语法高亮那层 span 实测 1.92² × 14 = 51.61px —— 用户报的「标题字号太大」就是它。
+   基准：InkNote 编辑面 1.92/1.52/1.27（15px 正文）、VS Code 预览 2/1.5/1.25（14px 正文），
+   本仓正文 14px ⇒ 26.88/21.28/17.78 与两边同档。 */
+.md-preview-face .cm-md-h1 {
+  font-size: 1.92em;
+  font-weight: 720;
+  letter-spacing: -0.025em;
+}
+.md-preview-face .cm-md-h1 * {
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+}
+.md-preview-face .cm-md-h2 {
+  font-size: 1.52em;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+.md-preview-face .cm-md-h2 * {
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+}
+.md-preview-face .cm-md-h3 {
+  font-size: 1.27em;
+  font-weight: 650;
+}
+.md-preview-face .cm-md-h3 * {
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+}
+.md-preview-face .cm-md-h4 {
+  font-size: 1.12em;
+  font-weight: 600;
+}
+.md-preview-face .cm-md-h4 * {
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+}
+.md-preview-face .cm-md-h5 {
+  font-size: 1.02em;
+  font-weight: 600;
+}
+.md-preview-face .cm-md-h5 * {
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+}
+.md-preview-face .cm-md-h6 {
+  font-size: 0.95em;
+  font-weight: 600;
+  color: var(--md-muted);
+}
+.md-preview-face .cm-md-h6 * {
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  color: var(--md-muted);
+}
+
+/* 光标压进来时 `#` 显形：压成不抢眼的灰（InkNote 用 !important 顶语法色，这里同理）。 */
+.md-preview-face .cm-md-heading-mark,
+.md-preview-face .cm-md-heading-mark * {
+  color: color-mix(in srgb, var(--md-faint) 68%, transparent) !important;
+  font-weight: 400 !important;
+  letter-spacing: 0;
+}
+
+/* B401：`#` 的字号/字重要跟标题一致（用户点名；InkNote 那边是正文大小 + 400）。
+   只统一字阶，颜色仍是淡灰 —— 它是标记，不是正文。
+   B402：同标题正文一样，后代只 inherit（`*` 再写一遍 em 会和 mark 连乘）。 */
+.md-preview-face .cm-line.md-heading-1 .cm-md-heading-mark {
+  font-size: 1.92em;
+  font-weight: 720 !important;
+  letter-spacing: -0.025em;
+}
+.md-preview-face .cm-line.md-heading-1 .cm-md-heading-mark * {
+  font-size: inherit;
+  font-weight: 720 !important;
+  letter-spacing: inherit;
+}
+.md-preview-face .cm-line.md-heading-2 .cm-md-heading-mark {
+  font-size: 1.52em;
+  font-weight: 700 !important;
+  letter-spacing: -0.015em;
+}
+.md-preview-face .cm-line.md-heading-2 .cm-md-heading-mark * {
+  font-size: inherit;
+  font-weight: 700 !important;
+  letter-spacing: inherit;
+}
+.md-preview-face .cm-line.md-heading-3 .cm-md-heading-mark {
+  font-size: 1.27em;
+  font-weight: 650 !important;
+}
+.md-preview-face .cm-line.md-heading-3 .cm-md-heading-mark * {
+  font-size: inherit;
+  font-weight: 650 !important;
+  letter-spacing: inherit;
+}
+.md-preview-face .cm-line.md-heading-4 .cm-md-heading-mark {
+  font-size: 1.12em;
+  font-weight: 600 !important;
+}
+.md-preview-face .cm-line.md-heading-4 .cm-md-heading-mark * {
+  font-size: inherit;
+  font-weight: 600 !important;
+  letter-spacing: inherit;
+}
+.md-preview-face .cm-line.md-heading-5 .cm-md-heading-mark {
+  font-size: 1.02em;
+  font-weight: 600 !important;
+}
+.md-preview-face .cm-line.md-heading-5 .cm-md-heading-mark * {
+  font-size: inherit;
+  font-weight: 600 !important;
+  letter-spacing: inherit;
+}
+.md-preview-face .cm-line.md-heading-6 .cm-md-heading-mark {
+  font-size: 0.95em;
+  font-weight: 600 !important;
+}
+.md-preview-face .cm-line.md-heading-6 .cm-md-heading-mark * {
+  font-size: inherit;
+  font-weight: 600 !important;
+  letter-spacing: inherit;
+}
+
+/* B414（用户 2026-10-29）：标题留白改成「上 0 / 下按级递减」，对齐 VS Code 预览的口径
+   （`h1..h6 { margin-top: 24px; margin-bottom: 16px }`，但标题上方在本仓由源码空行负责）。
+   ⚠️ 只能用 padding —— .cm-line 的高度是用 rect 量的，margin 不计入。
+   ⚠️ 空行不折叠（文件头第 2 条）⇒ 下留白是**叠在**源码空行（真机 ≈21px）之上的「额外量」，
+      所以「总间距」= 21px + 下表值；标题后没空行时表值就是全部间距。 */
+.md-preview-face .cm-line.md-heading {
+  padding-top: 0;
+}
+.md-preview-face .cm-line.md-heading-1 {
+  padding-bottom: 12px;
+}
+.md-preview-face .cm-line.md-heading-2 {
+  padding-bottom: 9px;
+}
+.md-preview-face .cm-line.md-heading-3 {
+  padding-bottom: 6px;
+}
+.md-preview-face .cm-line.md-heading-4 {
+  padding-bottom: 3px;
+}
+/* h5/h6 不加：源码空行本身就是它们那一档的下间距。
+   （B414 计划里的「紧贴前文补 24px」按用户口径撤掉了 —— 标题上留白一律 0。） */
+
+/* 空行保留正常行高（见文件头第 2 条）：InkNote 这条只兜底「不许塌」，不改行距。 */
+.md-preview-face .cm-line.md-blank-line {
+  min-height: 1em;
+  height: auto;
+  line-height: inherit;
+  overflow: visible;
+}
+
+/* ---------- 行内构造 ---------- */
+
+.md-preview-face .cm-md-code {
+  background: var(--md-panel-bg);
+  padding: 0.14em 0.42em;
+  border: 1px solid var(--md-panel-border);
+  border-radius: 5px;
+  font-family: var(--md-code-font);
+  font-size: 0.88em;
+}
+
+/* ---------- 行内 HTML（B402） ----------
+   VS Code 的预览里这些标签就是普通 HTML，样式取浏览器默认值；装饰面没有元素可挂，
+   用 class 复刻同一份默认值（`<kbd>` 等本来就没有别的样式）。 */
+.md-preview-face .cm-md-inline-kbd {
+  font-family: var(--md-code-font);
+  font-size: 0.9em;
+}
+/* B440 · `==高亮==` 与行内 `<mark>` 同一档：两处共用这一条规则，别各画一套
+   （取色仍走系统色 `Mark` / `MarkText`，与 B402 那档一致）。 */
+.md-preview-face .cm-md-inline-mark,
+.md-preview-face .cm-md-mark {
+  background-color: Mark;
+  color: MarkText;
+}
+.md-preview-face .cm-md-inline-underline {
+  text-decoration: underline;
+}
+.md-preview-face .cm-md-inline-bold {
+  font-weight: 700;
+}
+.md-preview-face .cm-md-inline-italic {
+  font-style: italic;
+}
+.md-preview-face .cm-md-inline-strike {
+  text-decoration: line-through;
+}
+/* `H~2~O` / `<sub>` 同一档（此前只有类、没有样式 ⇒ 下标跟正文一样大）。
+   `line-height: 0` 与 VS Code 的 `sub, sup { line-height: 0 }` 同口径：不许撑高行盒。 */
+.md-preview-face .md-sub,
+.md-preview-face .md-sup {
+  font-size: 0.83em;
+  line-height: 0;
+}
+.md-preview-face .md-sub {
+  vertical-align: sub;
+}
+.md-preview-face .md-sup {
+  vertical-align: super;
+}
+
+/* 链接色跟 LitePad 的 --link-fg（派生 DOM 那一臂的 `.md-rendered a` 用的就是它）——
+   两臂不同色就等于「同一篇文档两种预览」，那条漂移 B352 之前就修过。
+   默认不画下划线，悬停才画（InkNote 同口径）。
+   ⚠️ 带 `*`：theme.ts 给 tags.link 写了 `text-decoration: underline`，那一层 span 在
+   mark **里面** —— 只写外层的话下划线照旧露出来（真机第一轮截图里就是它）。 */
+.md-preview-face .cm-md-link,
+.md-preview-face .cm-md-link * {
+  color: var(--link-fg);
+  text-decoration: none;
+  cursor: text;
+}
+.md-preview-face .cm-md-link:hover,
+.md-preview-face .cm-md-link:hover * {
+  text-decoration: underline;
+}
+/* 指针只承诺「这一下会跳」：预览档锁着 ⇒ 普通点击就开；编辑档要按着 Ctrl（B403）。
+   `--link-hot` 由 livePreview 的修饰键追踪挂/摘，CSS 自己看不见键盘。 */
+.md-preview-face--readonly .cm-md-link,
+.md-preview-face--readonly .cm-md-link *,
+.md-preview-face--readonly .cm-md-footnote[data-fn-jump],
+.md-preview-face--link-hot .cm-md-link,
+.md-preview-face--link-hot .cm-md-link *,
+.md-preview-face--link-hot .cm-md-footnote[data-fn-jump] {
+  cursor: pointer;
+}
+
+/* ---------- 引用：竖线与正文左缘对齐，文字右移（App.css:1399-1415） ---------- */
+.md-preview-face .cm-line.md-blockquote {
+  color: var(--md-muted);
+  --md-lead: calc(var(--editor-quote-bar) + var(--editor-block-indent));
+  padding-left: calc(var(--editor-padding-x) + var(--md-lead));
+  background: none;
+}
+.md-preview-face .cm-line.md-blockquote::before {
+  content: "";
+  position: absolute;
+  left: var(--editor-padding-x);
+  /* 每个源码行都有一条行装饰；贴齐行盒上下边缘后，相邻行连成整条竖线 */
+  top: 0;
+  bottom: 0;
+  width: var(--editor-quote-bar);
+  background: var(--md-quote-border);
+  border-radius: 0;
+  pointer-events: none;
+}
+
+/* B404 · 光标压住的这一行把 CSS 画的标记收掉，给刚显形的源码让位：
+   勾选框/对勾 → `[ ]` / `[x]`，列表符点/序号 → `-` / `1.`，引用竖线 → `>`。
+   行类由 previewSets.revealMarkerLine 只挂在「可写 + 光标行是列表项/引用行」上
+   （只读档标记永远折着，不加）。
+   左内距收到标记槽左沿：嵌套列表的 --md-lead 住在行内 style（ListItem 分支的
+   indentStyle），普通规则压不住 ⇒ 这一条必须 !important。`--md-list-marker-left`
+   在嵌套行上正好是 marker 的左沿，顶层没有它就退回 padding-x。
+   B459：text-indent 也要一起归 0 —— 显形档的行首就是源码本身，没有「槽」可让位，
+   留着那份负缩进会把源码顶到正文左沿外面去。 */
+.md-preview-face .cm-line.md-list-item.md-reveal-marker,
+.md-preview-face .cm-line.md-task-item.md-reveal-marker {
+  padding-left: var(--md-list-marker-left, var(--editor-padding-x)) !important;
+  text-indent: 0 !important;
+}
+.md-preview-face .cm-line.md-blockquote.md-reveal-marker {
+  padding-left: var(--editor-padding-x);
+  text-indent: 0;
+}
+.md-preview-face .cm-line.md-list-item.md-reveal-marker::before,
+.md-preview-face .cm-line.md-task-item.md-reveal-marker::after,
+.md-preview-face .cm-line.md-blockquote.md-reveal-marker::before {
+  display: none;
+}
+
+/* ---------- 列表：标记由 CSS 画，源码里的 `-` / `1.` 折进「槽」里 ---------- */
+.md-preview-face .cm-line.md-list-item {
+  --md-lead: var(--md-list-marker-width, var(--editor-list-marker-offset));
+  padding-left: calc(var(--editor-padding-x) + var(--md-lead));
+}
+
+/* B459 · 带槽的那一行（行首真有 `-` / `1.` / `[ ]` / `>` 才挂得上这颗类，见 previewSets
+   的 leadSlot）把槽宽同时写成负缩进：
+     · 续行的对齐仍由左内距管（text-indent 只管首行）；
+     · CM6 那颗 `paddingLeft + min(0, textIndent)` 落回正文左沿 ⇒ 选区色带从标记的左沿起，
+       行首不再少一段，段落行开头那截字也不再被吃掉；
+     · 首行正文原本的位置由 `.md-mark-slot` 那颗占位件补回来。
+   ⚠️ 只挂在带槽的行上：列表项里「续行的源码行」没有标记可折，给它吃负缩进会把整行顶歪。 */
+.md-preview-face .cm-line.md-lead-slot {
+  text-indent: calc(-1 * var(--md-lead));
+}
+.md-preview-face .md-mark-slot {
+  display: inline-block;
+  width: var(--md-lead);
+  /* 高度必须 0：行盒高了半档，同步滚动的逐行对齐跟着偏（B300 那一账）。 */
+  height: 0;
+}
+.md-preview-face .cm-line.md-list-item.md-bullet-list:not(.md-task-item)::before {
+  /* B401：符号改成「画」的（同 VS Code 预览的 disc / circle / square）——
+     字体里的 • ◦ ▪ 三个字墨迹大小不一，居中后「符号↔正文」的间隙看着忽大忽小。
+     三档共用同一个 0.3em 盒子，字号/行距变了跟着走。 */
+  content: "";
+  position: absolute;
+  left: calc(
+    var(--md-list-marker-left, var(--editor-padding-x)) +
+      (var(--md-list-marker-width, var(--editor-list-marker-offset)) - 0.3em) / 2
+  );
+  /* B405：贴**首行**行盒中线（与任务方框同一口径）—— 折行列表项仍是一个 `.cm-line`，
+     `top: 50%` 会把符点放到整块中段，看着悬在第二/三行。 */
+  top: calc(var(--editor-line-height, 1.5) * 0.5em);
+  width: 0.3em;
+  height: 0.3em;
+  transform: translateY(-50%);
+  background: var(--md-muted);
+  pointer-events: none;
+}
+.md-preview-face .cm-line.md-list-item.md-bullet-list.md-bullet-1:not(.md-task-item)::before {
+  border-radius: 50%;
+}
+.md-preview-face .cm-line.md-list-item.md-bullet-list.md-bullet-2:not(.md-task-item)::before {
+  /* ⚠️ 这三条必须比上面那条基础规则更具体：只写 .md-bullet-2 会被基础规则的
+     `background` 盖回实心（第一版真机就是这么画成一坨的）。 */
+  border-radius: 50%;
+  border: 0.075em solid var(--md-muted);
+  background: transparent;
+  box-sizing: border-box;
+}
+.md-preview-face .cm-line.md-list-item.md-bullet-list.md-bullet-3:not(.md-task-item)::before {
+  border-radius: 0.03em;
+}
+.md-preview-face .cm-content {
+  counter-reset: md-olist;
+}
+.md-preview-face .cm-line.md-list-item.md-ordered-list:not(.md-task-item) {
+  counter-increment: md-olist;
+}
+.md-preview-face .cm-line.md-list-item.md-ordered-list:not(.md-task-item)::before {
+  /* 用源码里的真实序号（`3.` 显示 3），没有才退回计数器 */
+  content: var(--md-marker, counter(md-olist) ".");
+  position: absolute;
+  left: var(--md-list-marker-left, var(--editor-padding-x));
+  width: var(--md-list-marker-width, var(--editor-list-marker-offset));
+  text-align: left;
+  color: var(--md-muted);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+/* 任务项：方框 14×14，勾是白描的两根边旋转 45°。
+   ⚠️ 行左内距必须保持 `padding-x + marker-offset`：taskClick 的命中判据算的就是
+   `paddingLeft − markerOffset`（那个差值正是方框左沿），改了 CSS 就得同步改判据。
+   B459：这条排在 `.md-list-item` 之后 ⇒ 任务行的槽宽以这一条为准（顶层任务没有
+   `--md-list-marker-width`，两条算出来同一个数；嵌套档的行内 style 才压得住）。 */
+.md-preview-face .cm-line.md-task-item {
+  /* B402：方框贴**首行**行盒中线，不是整块中线 —— `.cm-line` 折行后仍是一个元素
+     （高 = N 行），原先的 `top: 50%` 会把方框放到第二/三行去（用户报的「折行时勾选框
+     不要居中」）。行距是用户设置（--editor-line-height，无单位）⇒
+     首行中线 = lh/2 − 方框半高（0.5em）。只读这个变量，绝不在这里声明它（B225）。 */
+  --md-task-box-top: calc(var(--editor-line-height, 1.5) * 0.5em - 0.5em);
+  --md-lead: var(--editor-list-marker-offset);
+  padding-left: calc(var(--editor-padding-x) + var(--md-lead));
+}
+.md-preview-face .cm-line.md-task-item::before {
+  content: "";
+  position: absolute;
+  left: var(--md-list-marker-left, var(--editor-padding-x));
+  /* B401：方框跟正文同字号（1em）—— 写死 14px 在换了字号之后就与文字对不上。
+     B402：纵向位置走 `--md-task-box-top`（首行中线），不再用 50% + translateY。 */
+  top: var(--md-task-box-top);
+  width: 1em;
+  height: 1em;
+  border: 0.11em solid var(--md-strong-border);
+  border-radius: 0.21em;
+  background: var(--bg);
+  box-sizing: border-box;
+  pointer-events: auto;
+  cursor: pointer;
+}
+/* B411（用户口径更正）：勾选只压淡 + 方框填色 + 打勾，**不画删除线**。
+   删除线要贯穿整行（折行会横穿每一行），勾完还得读正文的场合没法用；勾选的信号由方框和压淡承担。 */
+.md-preview-face .cm-line.md-task-done {
+  color: var(--md-muted);
+}
+.md-preview-face .cm-line.md-task-done::before {
+  border-color: var(--md-accent);
+  background: var(--md-accent);
+}
+.md-preview-face .cm-line.md-task-done::after {
+  content: "";
+  position: absolute;
+  /* B401：跟着方框的 em 口径走 —— 原先写死的 4px/0.62em 是按 14px 字号配的，
+     字号一变勾就偏出框外。B402：纵向锚点跟方框同一个变量（首行中线）——
+     方框顶 + 0.17em（1em 方框里 0.64em 勾的居中留白，与旧值同源）。 */
+  left: calc(var(--md-list-marker-left, var(--editor-padding-x)) + 0.29em);
+  top: calc(var(--md-task-box-top) + 0.17em);
+  width: 0.36em;
+  height: 0.64em;
+  border: solid var(--accent-fg);
+  border-width: 0 0.13em 0.13em 0;
+  transform: rotate(45deg);
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+/* ---------- 块级 widget 的公共外壳（App.css:1487-1503） ----------
+   与正文左缘对齐；**禁止纵向 margin**（见文件头第 1 条）。 */
+.md-preview-face .md-codeblock-widget,
+.md-preview-face .md-table-widget,
+.md-preview-face .md-diagram-widget,
+.md-preview-face .md-math-block,
+.md-preview-face .md-hr-widget,
+.md-preview-face .md-metadata-widget,
+.md-preview-face .md-html-widget,
+.md-preview-face .md-frontmatter-widget,
+.md-preview-face .md-image-widget {
+  box-sizing: border-box;
+  max-width: calc(100% - 2 * var(--editor-padding-x));
+  margin: 0 var(--editor-padding-x);
+}
+
+/* ---------- 围栏代码（App.css:1546-1599 / 1646-1661 / 3601-3660） ----------
+   三件一套：外层只管纵向留白、内盒负责描边、行号栏与语言下拉贴在盒内。
+   ⚠️ 视觉盒必须在**内层**（`.md-codeblock-box`）：根元素带 margin 会让 CM6 的高度图
+   算不准（rect 不含外边距），这条与文件头第 1 条同源。 */
+.md-preview-face .md-codeblock-widget {
+  position: relative;
+  min-width: 0;
+  padding: 8px 0;
+  cursor: text;
+}
+.md-preview-face .md-codeblock-box {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--md-panel-border);
+  border-radius: var(--md-component-radius);
+  overflow: hidden;
+  background: var(--md-panel-bg);
+  box-shadow: var(--md-component-shadow);
+}
+/* B405：工具行与「行号栏 + 代码区」分成上下两层（照 vditor 的代码块工具条）。
+   行号竖线从这一层开始画，语言按钮与展开列表都不会压到它。 */
+.md-preview-face .md-codeblock-body {
+  display: flex;
+  min-width: 0;
+}
+.md-preview-face .md-codeblock-gutter {
+  flex: none;
+  padding: 6px 10px 10px 14px;
+  text-align: right;
+  white-space: pre;
+  user-select: none;
+  color: var(--md-faint);
+  font-family: var(--md-code-font);
+  font-size: 0.85em;
+  line-height: 1.55;
+  border-right: 1px solid var(--md-panel-border);
+}
+.md-preview-face .md-codeblock-widget pre {
+  flex: 1 1 0;
+  width: 0;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+/* B405：语言按钮搬进顶部工具行 ⇒ 代码区不再需要 34px 的「预留位」。 */
+.md-preview-face .md-codeblock-widget code {
+  display: block;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
+  padding: 6px 16px 10px;
+  min-height: 1.6em;
+  outline: none;
+  white-space: pre;
+  font-family: var(--md-code-font);
+  font-size: 0.85em;
+  line-height: 1.55;
+  color: var(--md-fg);
+}
+.md-preview-face .md-codeblock-widget code:focus {
+  outline: none;
+}
+/* Shiki 双主题：与 preview.css 同一口径（`--shiki-light/--shiki-dark` 由上色那一发写进 span） */
+.md-preview-face .md-codeblock-widget pre.shiki span {
+  color: var(--shiki-light);
+}
+:root[data-theme="dark"] .md-preview-face .md-codeblock-widget pre.shiki span {
+  color: var(--shiki-dark);
+}
+
+/* B405：顶部工具行（照 vditor 的代码块工具条）。
+   B409：语言按钮挪到**左侧**、复制键留右（`space-between`），并把工具行与代码区
+   的顶部内距收窄 —— 原来的 30 + 12 给了一种「块顶空一大片」的观感。 */
+.md-preview-face .md-codeblock-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  height: 24px;
+  padding: 0 6px;
+  background: transparent;
+  user-select: none;
+}
+.md-preview-face .md-codeblock-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  padding: 0 7px;
+  font-size: 11px;
+  font-family: var(--font-ui);
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--md-panel-bg) 88%, var(--bg));
+  color: var(--md-muted);
+  box-shadow: none;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.md-preview-face .md-codeblock-widget:hover .md-codeblock-copy,
+.md-preview-face .md-codeblock-widget.md-block--editing .md-codeblock-copy {
+  opacity: 1;
+  pointer-events: auto;
+}
+.md-preview-face .md-codeblock-copy:hover {
+  background: color-mix(in srgb, var(--md-panel-bg) 82%, var(--bg));
+  color: var(--md-fg);
+}
+.md-preview-face .md-codeblock-copy:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+/* 语言选择：应用下拉（B108）的触发器，外观与复制键同一档按钮 —— 无边框、无常驻底色，
+   悬停时亮一下；自带的 chevron 就是唯一那颗箭头（B405 之前由 ::after 另画一颗）。 */
+.md-preview-face .md-codeblock-language-control {
+  display: flex;
+  align-items: center;
+  line-height: 1;
+}
+/* `min-width: 0 / width: auto` 必须显式写：`.dropdown-trigger` 是 150px 宽的大表单控件。 */
+.md-preview-face .md-codeblock-lang {
+  min-width: 0;
+  width: auto;
+  max-width: 180px;
+  height: 20px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--md-muted);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+}
+.md-preview-face .md-codeblock-lang:hover {
+  color: var(--md-fg);
+  background: color-mix(in srgb, var(--md-panel-bg) 88%, var(--bg));
+}
+.md-preview-face .md-codeblock-lang:focus {
+  outline: none;
+  box-shadow: none;
+}
+.md-preview-face .md-codeblock-lang .dd-main {
+  gap: 4px;
+}
+/* 工具行只有 24px 高；150% 的图标字号在这里压到 13px，免得上沿顶出盒子。 */
+.md-preview-face .md-codeblock-lang .seti-icon {
+  font-size: 13px;
+}
+.md-preview-face .md-codeblock-lang .dd-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.md-preview-face .md-codeblock-lang .dd-caret {
+  color: var(--md-muted);
+  font-size: 12px;
+}
+/* 语言名平时由下拉自己显示；这颗粒只给只读档留一个静态标签的位置（InkNote 同一条）。 */
+.md-preview-face .md-codeblock-language-label {
+  display: none;
+}
+
+/* ---------- 表格（App.css:2287-2325 / 2356-2380 / 2383-2484） ----------
+   B397-3b 起这张表由 `tableWidget.ts` 现产（可就地编辑），DOM 层级也照它：
+   根 `.md-table-widget` 只管纵向留白，**描边/圆角/底色在 `.md-table-body` 那一层**
+   （旧 deco.css 把这四样合并到根上，是因为那时 widget 少一层壳）。 */
+.md-preview-face .md-table-widget {
+  position: relative;
+  padding: 5px 0 7px;
+  cursor: text;
+  /* B456 同类遗漏（真机对照量到的，不是图种）：宽表格同样按 max-content 把 `.cm-content` 撑宽
+     （1294 vs 可视 1161）⇒ 同屏每张卡片跟着变宽。下面那颗 `.md-table-body` 本来就带
+     `overflow-x: auto` 接这一格，只差把这一层的固有宽度关掉。 */
+  contain: inline-size;
+}
+.md-preview-face .md-table-body {
+  overflow-x: auto;
+  border: 1px solid var(--md-panel-border);
+  border-radius: var(--md-component-radius);
+  background: color-mix(in srgb, var(--bg) 96%, var(--code-bg));
+  box-shadow: var(--md-component-shadow);
+}
+.md-preview-face .md-table-widget table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.95em;
+}
+.md-preview-face .md-table-widget th,
+.md-preview-face .md-table-widget td {
+  border: none;
+  border-right: 1px solid var(--md-panel-border);
+  border-bottom: 1px solid var(--md-panel-border);
+  padding: 8px 13px;
+  outline: none;
+  min-width: 3em;
+  min-height: 1.5em;
+  vertical-align: top;
+  user-select: text;
+  cursor: text;
+}
+/* 打字时按真实换行排（源码里那 `<br>` 在编辑态是换行，见 editableCellText）。 */
+.md-preview-face .md-table-widget [contenteditable="true"]:focus {
+  white-space: pre-wrap;
+}
+.md-preview-face .md-table-widget th:last-child,
+.md-preview-face .md-table-widget td:last-child {
+  border-right: none;
+}
+.md-preview-face .md-table-widget tr:last-child td {
+  border-bottom: none;
+}
+.md-preview-face .md-table-widget th {
+  background: var(--md-panel-bg);
+  font-weight: 650;
+}
+/* 框选：不透明统一底色，不能透出表头底色（App.css:2356-2360）。 */
+.md-preview-face .md-table-widget th.md-table-cell-selected,
+.md-preview-face .md-table-widget td.md-table-cell-selected {
+  background: color-mix(in srgb, var(--md-accent) 16%, var(--bg)) !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--md-accent) 28%, transparent);
+}
+.md-preview-face .md-table-widget td code,
+.md-preview-face .md-table-widget th code {
+  background: var(--md-panel-bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: var(--md-code-font);
+  font-size: 0.88em;
+}
+.md-preview-face .md-table-widget td del,
+.md-preview-face .md-table-widget th del {
+  color: var(--md-muted);
+}
+.md-preview-face .md-table-widget td mark,
+.md-preview-face .md-table-widget th mark {
+  background: color-mix(in srgb, var(--md-accent) 22%, var(--bg));
+  color: var(--md-fg);
+  border-radius: 2px;
+  padding: 0 2px;
+}
+/* 格内链接：`data-href` 而不是 `href`（点了不把 WebView 导航走，B394-1 那一族）。 */
+.md-preview-face .md-table-link {
+  color: var(--link-fg);
+  text-decoration: none;
+}
+
+/* 工具栏常驻但平时隐去：显隐按钮时表格不跳动，也不覆盖前一段（App.css:2383-2413）。
+   `--focused` 由 widget 自己在交互时加（`:focus-within` 兜住「刚 Tab 进格子」那一发）。 */
+.md-preview-face .md-table-toolbar-slot {
+  position: relative;
+  height: 18px;
+  max-height: 18px;
+  z-index: 5;
+  pointer-events: none;
+  overflow: visible;
+}
+.md-preview-face .md-table-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0;
+  width: fit-content;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  user-select: none;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.md-preview-face .md-table-widget--focused .md-table-toolbar,
+.md-preview-face .md-table-widget:focus-within .md-table-toolbar {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+.md-preview-face .md-table-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--md-muted);
+  cursor: pointer;
+}
+.md-preview-face .md-table-toolbar-btn:hover {
+  background: color-mix(in srgb, var(--md-fg) 8%, transparent);
+  color: var(--md-fg);
+}
+.md-preview-face .md-table-toolbar-delete {
+  margin-left: 2px;
+}
+.md-preview-face .md-table-toolbar-delete:hover {
+  /* InkNote 这里写死 #e5484d；LitePad 有 `--danger`（五族各有取值）⇒ 颜色按文件头那条规矩回 token */
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+.md-preview-face .md-table-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+}
+.md-preview-face .md-table-toolbar-dropdown {
+  position: relative;
+}
+.md-preview-face .md-table-toolbar-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 140px;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-lg);
+  z-index: 10;
+}
+.md-preview-face .md-table-toolbar-menu.is-open {
+  display: block;
+}
+.md-preview-face .md-table-toolbar-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--md-fg);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.md-preview-face .md-table-toolbar-menu button:hover {
+  background: var(--bg-hover);
+}
+.md-preview-face .md-table-toolbar-menu-danger {
+  color: var(--danger);
+}
+.md-preview-face .md-table-toolbar-menu-danger:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+/* ---------- 公式（App.css 数学段） ----------
+   LitePad 的 KaTeX 由 `enhanceMarkdown` 认领：`.math-*-src` 占位换成 `span.math-inline` /
+   `span.math-display` ⇒ 形状给 widget 根，成品居中/取色给那两个类。 */
+.md-preview-face .md-math-widget {
+  padding: 0 2px;
+  cursor: text;
+}
+.md-preview-face .md-math-widget.md-math-block {
+  padding: 18px 14px;
+  overflow-x: auto;
+  border-radius: var(--md-component-radius);
+  background: color-mix(in srgb, var(--md-panel-bg) 65%, transparent);
+  text-align: center;
+}
+.md-preview-face .math-inline,
+.md-preview-face .math-display {
+  color: var(--md-fg);
+}
+.md-preview-face .math-display {
+  padding: 4px 0;
+}
+.md-preview-face .math-inline-src,
+.md-preview-face .math-display-src {
+  font-family: var(--md-code-font);
+  color: var(--md-muted);
+}
+.md-preview-face .md-math-empty {
+  color: var(--md-faint);
+  font-size: 0.85em;
+}
+
+/* ---------- 图种（B452：mermaid / 脑图 / Graphviz / Flowchart / PlantUML 共用这一张卡片） ---------- */
+.md-preview-face .md-diagram-widget {
+  padding: 8px 0;
+  text-align: center;
+  cursor: text;
+  /* B456 · 块 widget 的固有宽度必须与内容**脱钩**。图一宽（宽 mermaid / 40 类的 ECharts）就把
+     `.cm-content` 撑到 3077px（可视才 1161）⇒ 同屏每张卡片都跟着变宽，钉在卡片右沿的三颗键跑到
+     窗口外面（用户：「宽度超出编辑区，右边三键看不到，且连带同屏中的卡片都出现宽度异常」）。
+     上面那条 `max-width: 100%` 顶不住 —— 那 100% 量的正是这张已经被撑宽的卡片。 */
+  contain: inline-size;
+}
+.md-preview-face .md-diagram-widget .md-diagram {
+  display: block;
+  padding: 20px;
+  border: 1px solid var(--md-panel-border);
+  border-radius: var(--md-component-radius);
+  background: var(--md-panel-bg);
+  box-shadow: var(--md-component-shadow);
+  /* B455-5：原来这里是 `overflow-x: auto`（图太宽就横滚）。现在平移缩放接管了这一格
+     ⇒ 改成 hidden（`position: relative` 是给右上角那三颗键定位用的）。 */
+  position: relative;
+  overflow: hidden;
+}
+/* 画好的成品落在这一格里，变换只搬它（按键在卡片上，不跟着图飘）。
+   原点钉左上角：缩放锚点算的就是「指针相对这一格左上角」的距离。 */
+.md-preview-face .md-diagram-canvas {
+  transform-origin: 0 0;
+  cursor: grab;
+}
+.md-preview-face .md-diagram--panning .md-diagram-canvas {
+  cursor: grabbing;
+}
+/* 右上角三颗键：放大 / 缩小 / 复位（用户点名）。刻意不做「悬停才出现」——
+   图一旦放大了，就得一直有路可退。 */
+.md-preview-face .md-diagram-zoom {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 2px;
+}
+.md-preview-face .md-diagram-zoom button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--md-panel-border);
+  border-radius: var(--md-component-radius);
+  background: var(--md-panel-bg);
+  color: var(--md-muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+.md-preview-face .md-diagram-zoom button:hover {
+  color: var(--md-fg);
+  background: var(--md-panel-bg);
+}
+.md-preview-face .md-diagram-widget .md-diagram svg,
+.md-preview-face .md-diagram-widget .md-diagram img {
+  max-width: 100%;
+  height: auto;
+}
+/* B452-2 · 脑图（markmap）：它按**容器尺寸**排版再自己 fit ⇒ 这一格必须有真实高度，
+   上面那条 `height:auto`（给 mermaid 那种自带固有尺寸的图）在这里等于 0 高、整块空白。 */
+.md-preview-face .md-diagram-widget .md-diagram--mindmap {
+  height: 340px;
+  overflow: hidden;
+}
+.md-preview-face .md-diagram-widget .md-diagram--mindmap .md-diagram-canvas,
+.md-preview-face .md-diagram-widget .md-diagram--mindmap svg {
+  width: 100%;
+  height: 100%;
+}
+/* markmap 的默认色写在它自己注入的 `.markmap` 那一档上（文字 #333、圆点 #fff…），
+   挂在宿主根上的自定义属性会被这条后代规则盖掉 ⇒ 覆盖必须打在 `.markmap` 本身。 */
+.md-preview-face .md-diagram-widget .md-diagram--mindmap .markmap {
+  --markmap-text-color: var(--md-fg);
+  --markmap-code-bg: var(--md-panel-bg);
+  --markmap-circle-open-bg: var(--md-panel-bg);
+  --markmap-a-color: var(--md-accent);
+}
+/* B455-7 · WaveDrom 的取色**不在这里**：每一发波形画在自己的 shadow root 里（皮肤那张 CSS 与
+   它两百多颗写死的 id 都关在那棵树内，不外溢）。文档样式跨不进 shadow 边界，所以那几条
+   `text` / `.s1…` / `.muted` 的覆盖改由 `markdown/diagrams.ts` 的 `wavedromInk()` 挂在树内 ——
+   自定义属性（`--md-*`）能穿进 shadow，取色口径与别的图种一致。暗档还得多管八颗：皮肤的
+   `.s7`–`.s14`（数据格）是为白纸调的粉彩，贴在深色卡片上泛白，得按调色板压深一档（B457-4）。 */
+
+/* B434 · 就地编辑：点图浮出源码框（与 metadata / HTML 块同一条 `.md-block--editing`；
+   源码区的边框/底色/显隐全由共享的 `.md-block-source` 给）。
+   B454：原来这里还有一条 `.md-diagram-inner { display: none }`（图整块顶掉）⇒ 脑图的源码就是
+   一串 `- 项目`，图一藏等于盲改（用户：「脑图未支持编辑」）。现在源码在上、图留在下面跟着活。 */
+/* 画失败 / bigDoc 档位不自动画 ⇒ 留源码，样式照代码块那一档（别让它裸奔） */
+.md-preview-face .md-diagram-widget pre.diagram-src,
+.md-preview-face .md-diagram-widget .diagram-error {
+  text-align: left;
+  margin: 0;
+  padding: 12px 16px;
+  border: 1px solid var(--md-panel-border);
+  border-radius: var(--md-component-radius);
+  background: var(--md-panel-bg);
+  overflow-x: auto;
+  font-family: var(--md-code-font);
+  font-size: 0.85em;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+/* ---------- 图片（App.css:1507-1542） ----------
+   块级图整行接管（figure，点击选中）；行内图跟着文字走（span，点击露源码）。
+   路径提示那条在 InkNote 里是 rgba(0,0,0,.72) + #fff —— 本仓禁字面量色值 ⇒ 回接 token。 */
+.md-preview-face .md-image-widget {
+  position: relative;
+  padding: 8px 0;
+  text-align: center;
+  cursor: text;
+}
+.md-preview-face .md-image-widget img {
+  max-width: 100%;
+  border: 1px solid var(--md-panel-border);
+  border-radius: var(--md-component-radius);
+  box-shadow: none;
+  vertical-align: middle;
+  cursor: pointer;
+}
+/* 图片框架收缩到图片本身：悬浮编辑键贴着图的右上角，而不是整行右缘（B406）。 */
+.md-preview-face .md-image-frame {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  /* inline-block 的基线会给图下面多留几像素 ⇒ 高度图与真实盒子对不上 */
+  line-height: 0;
+}
+.md-preview-face .md-image-frame img {
+  display: block;
+}
+/* 编辑键贴图片**右上角内侧**（与路径提示同一路数：悬浮才现形，B410）。
+   ⚠️ 曾经放在图片右外侧 `left: calc(100% + 8px)`：宽图撑满正文时按钮落进编辑器右内距，
+   已经在 widget 根盒之外 —— 指针从图上往按钮走、跨过根盒边缘那一瞬 `:hover` 丢失，
+   `pointer-events` 退回 none，按钮原地消失，永远点不到（用户报的「点不到」）。
+   放进图里就没有这段「悬停真空」；按钮浮在图上，补一层 shadow 保证压在深色截图上仍看得清。 */
+.md-preview-face .md-image-edit-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--md-panel-border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  box-shadow: var(--shadow-lg);
+  color: var(--md-fg);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+.md-preview-face .md-image-edit-btn:hover {
+  background: var(--bg-hover);
+}
+.md-preview-face .md-image-edit-btn .codicon {
+  font-size: 14px;
+}
+.md-preview-face .md-image-widget:hover .md-image-edit-btn,
+.md-preview-face .md-image-widget:focus-within .md-image-edit-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* 预览档（锁着）只读：点图不翻源码，编辑键也不出现。 */
+.md-preview-face--readonly .md-image-widget img {
+  cursor: default;
+}
+.md-preview-face--readonly .md-image-edit-btn {
+  display: none;
+}
+.md-preview-face .md-image-inline {
+  display: inline-block;
+  vertical-align: middle;
+}
+.md-preview-face .md-image-inline img {
+  max-width: 100%;
+  max-height: 12em;
+  border-radius: 3px;
+}
+.md-preview-face .md-image-path-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  max-width: calc(100% - 24px);
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  color: var(--md-fg);
+  font-size: 11px;
+  font-family: var(--md-code-font);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+.md-preview-face .md-image-widget:hover .md-image-path-hint {
+  opacity: 1;
+}
+.md-preview-face .md-image-frame .md-image-error {
+  display: block;
+  padding: 10px 14px;
+  border: 1px dashed var(--md-panel-border);
+  border-radius: var(--md-component-radius);
+  font-family: var(--md-code-font);
+}
+.md-preview-face .md-image-widget--error .md-image-path-hint {
+  display: none;
+}
+.md-preview-face .md-image-error {
+  color: var(--md-muted);
+  font-size: 0.85em;
+}
+
+/* ---------- 分割线（App.css:1684-1705） ----------
+   线是独立视觉节点：上下留白归根的 padding，点击落到相邻可见段落（bindBlockBoundaryCursor）。 */
+.md-preview-face .md-hr-widget {
+  padding: 8px 0;
+  background: none;
+  border: none;
+  cursor: text;
+}
+.md-preview-face .md-hr-line {
+  display: block;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--md-strong-border) 12%,
+    var(--md-strong-border) 88%,
+    transparent
+  );
+  pointer-events: none;
+}
+/* B414：标题上留白一律 0 ⇒ 原先「紧跟分割线的标题去重复上留白」那条已无对象，删除。 */
+
+/* ---------- 块内源码区 / 链接定义 / HTML 块（App.css:2495-2580） ----------
+   两段式：平时只见渲染结果，点一下挂 `.md-block--editing` ⇒ 源码区浮在最上面。
+   B454：源码区浮上来，**渲染结果不收起**（用户「所有图表编辑时统一预览 + 源码同时显示，参考
+   inknote 那样」+「一起」）—— 脑图 / 脚注定义这类源码看不出结构，藏掉等于盲改。
+   ⚠️ InkNote 的 `.md-block-source` 带 `margin-bottom: 8px`；LitePad 禁纵向 margin
+   （文件头第 1 条）⇒ 那一条不搬，间距由根上的 `padding: 6px 0` 给。 */
+.md-preview-face .md-metadata-widget,
+.md-preview-face .md-html-widget {
+  padding: 6px 0;
+  cursor: text;
+}
+.md-preview-face .md-block-source {
+  display: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--md-code-font);
+  font-size: 0.85em;
+  line-height: 1.55;
+  padding: 8px 10px;
+  border: 1px solid var(--md-panel-border);
+  border-radius: calc(var(--md-component-radius) - 2px);
+  background: var(--md-panel-bg);
+  color: var(--md-muted);
+  outline: none;
+  tab-size: 2;
+  text-align: left;
+}
+.md-preview-face .md-block-source:focus {
+  border-color: var(--md-panel-border);
+  box-shadow: none;
+}
+.md-preview-face .md-block--editing .md-block-source {
+  display: block;
+  color: var(--md-fg);
+}
+.md-preview-face .md-metadata-preview {
+  padding: 8px 11px;
+  border: 1px solid var(--md-panel-border);
+  border-left: 3px solid var(--md-accent);
+  border-radius: 0 calc(var(--md-component-radius) - 2px) calc(var(--md-component-radius) - 2px) 0;
+  background: var(--md-quote-bg);
+  color: var(--md-muted);
+}
+/* 小字只压「元信息」那两行（标题 / 单行定义），B449 起卡片还会带一段正文 ——
+   正文字阶跟着编辑器走，写在这一层就把正文一起缩成 0.82em 了。 */
+.md-preview-face .md-metadata-title {
+  display: block;
+  font-size: 0.88em;
+}
+.md-preview-face .md-metadata-footnote .md-metadata-title {
+  font-size: 0.82em;
+}
+/* 脚注定义的多段正文（B449）：渲染进卡片，排版借派生预览那一套（`.md-rendered`）。
+   ⚠️ `white-space: normal` 与 HTML 块同一发 —— CM6 的 `.cm-content` 是 pre-wrap，
+   会一路继承进 widget，markdown-it 标签之间的换行会变成可见空行。 */
+.md-preview-face .md-metadata-body {
+  white-space: normal;
+  padding-top: 6px;
+  border-top: 1px solid var(--md-panel-border);
+  color: var(--md-fg);
+}
+/* B450 · 点行内上标跳过来时闪一下（落点在长文档里不闪一下，用户只看见画面动了）。
+   只走 box-shadow：它不占布局 ⇒ 不会把 CM6 的块高图顶偏一像素（这里禁纵向 margin 同一条理由）。
+   900ms 后由 `livePreview.jumpToFootnote` 摘掉那颗类，常驻就成了「这张被选中」的假信号。 */
+.md-preview-face .md-metadata--jump {
+  animation: md-metadata-jump 0.9s ease-out 1;
+}
+@keyframes md-metadata-jump {
+  from {
+    box-shadow: 0 0 0 2px var(--md-accent);
+  }
+  to {
+    box-shadow: 0 0 0 2px transparent;
+  }
+}
+/* HTML 块（B402）：VS Code 的预览里原始 HTML 就是**文档正文的一部分** ——
+   不再套 InkNote 那张虚线卡片（边框/底色/内边距全撤），排版直接借用派生预览那一套：
+   `miscWidgets` 给容器多挂一个 `.md-rendered`，表格线、段落间距、标题线、链接色
+   与预览面同源（一份规则两处用，不另抄第二套）。
+   根上只压三件事：字号/行距/颜色跟随编辑器 —— 预览根会 +1px、行距 1.7，
+   放进编辑面就跟上下两行不齐。首末子元素贴边的规则与 `.md-block` 同款，
+   写在 preview.css 里（这里禁纵向 margin）。 */
+.md-preview-face .md-html-preview {
+  min-height: 1.55em;
+  overflow-x: auto;
+}
+.md-preview-face .md-html-preview.md-rendered {
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+  /* ⚠️ CM6 的 `.cm-content` 是 `white-space: pre-wrap`，会一路继承进 widget ——
+     HTML 源码里标签之间的换行会变成可见空行（B402 真机量到 h2↔段落 43px，其中 21px
+     就是这个假空行）。预览里没有这一层，这里必须压回 normal。 */
+  white-space: normal;
+}
+/* B454（用户「所有图表编辑时统一预览 + 源码同时显示，参考 inknote 那样」+「一起」）：编辑态
+   不再藏渲染结果 —— 源码框浮在上面，卡片 / HTML 留在下面跟着活重画。 */
+.md-preview-face .md-entity {
+  cursor: text;
+}
+
+/* 脚注引用（App.css:1356-1362）：编号上标；定义那张卡片走 `.md-metadata-footnote`。 */
+.md-preview-face .cm-md-footnote {
+  vertical-align: super;
+  font-size: 0.75em;
+  color: var(--md-accent);
+  padding: 0 1px;
+}
+
+/* ---------- YAML Front Matter（App.css:2635-2655，B407） ----------
+   照 InkNote：一根标签 + 一块**常显**的 YAML 文本区（不是「点开才露源码」的两段式）。
+   `.md-frontmatter-source` 把 `.md-block-source` 的 display:none、边框、底色压回去 ——
+   智能体技能 SKILL.md 的 name/description 打开就该看见，不该藏在「点一下」后面。 */
+.md-preview-face .md-frontmatter-widget {
+  padding: 8px 0;
+  cursor: text;
+}
+.md-preview-face .md-frontmatter-box {
+  padding: 10px 12px 4px;
+  border: 1px solid var(--md-panel-border);
+  border-radius: var(--md-component-radius);
+  background: var(--md-panel-bg);
+  box-shadow: var(--md-component-shadow);
+}
+.md-preview-face .md-frontmatter-label {
+  margin: 0 0 6px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--md-faint);
+  user-select: none;
+}
+.md-preview-face .md-frontmatter-source {
+  display: block;
+  margin: 0;
+  padding: 0 0 6px;
+  border: none;
+  background: transparent;
+}
+
+/* 分割线「选中」只留键盘状态，不改视觉（点一下不闪边框）。 */
+.md-preview-face .md-block--selected {
+  background: transparent;
+  border-radius: var(--md-component-radius);
+  box-shadow: none;
+}
+.md-preview-face .md-hr-widget:focus,
+.md-preview-face .md-metadata-widget:focus-within,
+.md-preview-face .md-html-widget:focus-within,
+.md-preview-face .md-frontmatter-widget:focus-within {
+  outline: none;
+}
+.md-preview-face .md-block-source:focus {
+  outline: none;
+}
+
+/* ---------- 只读那一把锁（App.css:1142-1155 的 `.editor-host--readonly`） ----------
+   与档位正交：装饰照常，只是不能打字 ⇒ 光标藏掉、编辑用的零件收起来，留一个静态语言名。
+   `md-preview-face--readonly` 由 `previewLock(true)` 通过 `EditorView.editorAttributes` 打上
+   （CM6 会把多颗 editorAttributes 的 class 合并，见 view/dist combineAttrs）。
+   ⚠️ 这一段必须在文件**末尾**：`.md-preview-face .md-codeblock-language-label { display: none }`
+   与它同为 (0,2,0)，靠先后定胜负。 */
+.md-preview-face--readonly .cm-content {
+  caret-color: transparent;
+}
+/* B399 · 预览档是「禁止编辑的编辑模式」：`editable=false` 只挡输入，CM6 仍会在聚焦时
+   把光标柱画出来（基础主题 `&.cm-focused > .cm-scroller > .cm-cursorLayer .cm-cursor
+   { display:block }`，与可编辑性无关）⇒ 点一下文档就看到一条竖线，读起来像能打字。
+   锁着的档连这一层都不画；选择（复制）走的是另一层 `.cm-selectionLayer`，不受影响。 */
+.md-preview-face--readonly .cm-cursorLayer {
+  display: none;
+}
+.md-preview-face--readonly [contenteditable="true"] {
+  caret-color: transparent;
+}
+.md-preview-face--readonly .md-table-toolbar,
+.md-preview-face--readonly .md-codeblock-lang {
+  display: none;
+}
+.md-preview-face--readonly .md-codeblock-language-label {
+  display: inline-block;
+  padding: 0 8px;
+  color: var(--md-muted);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 26px;
+}
+/* B399：锁着的档里点勾不翻（预览档与只读文档都算锁着，B358 的「写操作放行」作废）⇒
+   别再给可点的手势。「预览只是禁止编辑的编辑模式」——手势也得跟着说这句话。 */
+.md-preview-face--readonly .cm-line.md-task-item::before {
+  cursor: default;
+}

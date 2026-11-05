@@ -185,9 +185,6 @@ function host(): HTMLElement {
 function view(): EditorView | undefined {
   return EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement) ?? undefined;
 }
-function previewRoot(): HTMLElement | null {
-  return document.querySelector(".md-preview") as HTMLElement | null;
-}
 function tabEls(): HTMLElement[] {
   return Array.from(document.querySelectorAll(".tab")) as HTMLElement[];
 }
@@ -226,10 +223,10 @@ describe("B130 同源多实例：代码 / 预览各自回各的", () => {
       `活动实例应回到预览态，实际 class=${h.className}`,
     ).toBe(true);
     expect(h.classList.contains("mode-source")).toBe(false);
-    // 预览容器得真有内容（渲染过），不能是个空壳
-    const pv = previewRoot();
-    expect(pv, "应渲染出预览容器").toBeTruthy();
-    expect(pv!.textContent ?? "", "预览里应有渲染出来的正文").toContain("正文第");
+    // B412：预览档就是这颗编辑器 view（装饰脸），不能是一片裸文本
+    const dom = document.querySelector(".panel-editor .cm-editor")!;
+    expect(dom.classList.contains("md-preview-face"), "预览档要装上装饰脸").toBe(true);
+    expect(dom.textContent ?? "", "预览面里应有正文").toContain("正文第");
   });
 
   it("切到看代码的那个实例：回到源码态，且光标是它自己的那一行", async () => {
@@ -239,49 +236,26 @@ describe("B130 同源多实例：代码 / 预览各自回各的", () => {
     expect(cursorLine(), "源码实例的光标应是第 6 行").toBe(CURSOR.source);
   });
 
-  it("切回预览实例：又变回预览，光标是它自己的，且视口不被重渲染冲掉", async () => {
-    // 先把预览滚到一个非 0 位置（此刻虽在源码态，预览节点仍在 DOM 里，jsdom 无视
-    // display:none）：0 ⇒ 0 的断言恒真、没有鉴别力，必须让「setBlocks 没收住
-    // replaceChildren 前的 scrollTop」这条真的会红。
-    previewRoot()!.scrollTop = 500;
-    clickTab(tabEls()[1]); // 切回预览实例：applyPanelMode → setBlocks 整块重渲染
+  it("切回预览实例：又变回预览，光标是它自己的", async () => {
+    clickTab(tabEls()[1]); // 切回预览实例
     await wait(60);
     expect(host().classList.contains("mode-preview"), "应回到预览态").toBe(true);
     expect(cursorLine(), "预览实例的光标应是第 14 行").toBe(CURSOR.preview);
     expect(
-      previewRoot()!.scrollTop,
-      "切回预览重渲染后视口应接住（replaceChildren 会清零 scrollTop）",
-    ).toBe(500);
+      document.querySelector(".panel-editor .cm-editor")!.classList.contains("md-preview-face"),
+      "预览档换回来仍要带着装饰脸",
+    ).toBe(true);
   });
 
   // B322：双击预览某一块**不再**翻回源码（用户要求去掉 B319-A3 那一下）。
-  // 端到端反向守卫：这一格必须稳稳停在预览态 —— 顺序那套落位逻辑（B301/B293 交汇点）
-  // 随功能一起退场，别再有人为了「双击」把 landVisibleSideAtV 补回来。
-  it("双击预览里某一块：仍停在预览态，光标也不动", async () => {
-    clickTab(tabEls()[1]); // 先站到「看预览」的那个实例上
-    await wait(60);
-    expect(host().classList.contains("mode-preview"), "前置：这一格应是预览态").toBe(true);
-
-    const src = Array.from(
-      { length: 40 },
-      (_, i) => `# 标题 ${i + 1}\n\n正文第 ${i + 1} 段。`,
-    ).join("\n\n");
-    const want = "正文第 7 段。";
-    const wantLine = src.split("\n").indexOf(want) + 1; // 由正文独立算出，不读 dataset
-    const island = Array.from(previewRoot()!.querySelectorAll<HTMLElement>(".md-block")).find(
-      (el) => (el.textContent ?? "").includes(want),
-    );
-    expect(island, `预览里应找得到「${want}」那一块`).toBeTruthy();
-    expect(
-      wantLine,
-      "前置：那一块不该停在第 1 行，否则「光标没动」这条判据没有鉴别力",
-    ).toBeGreaterThan(1);
-
-    const lineBefore = cursorLine();
-    island!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-    await wait(120);
-
-    expect(host().classList.contains("mode-preview"), "双击之后仍应是预览态").toBe(true);
-    expect(cursorLine(), "光标不该被那一下挪走").toBe(lineBefore);
+  // B412 换载体后继续守：装饰面里不许再出现双击挂点。
+  it("装饰面没有双击翻源码的挂点", () => {
+    for (const f of [
+      "src/markdown.ts",
+      "src/preview/livePreview.ts",
+      "src/preview/previewSets.ts",
+    ]) {
+      expect(readFileSync(f, "utf-8"), `${f} 里不该再出现 dblclick`).not.toContain("dblclick");
+    }
   });
 });

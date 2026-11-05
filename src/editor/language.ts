@@ -1,7 +1,9 @@
 import type { Extension } from "@codemirror/state";
 import { foldService, StreamLanguage } from "@codemirror/language";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { markdownFormatExtensions } from "../spike/deco/format";
+import { MARK_SYNTAX } from "../preview/markSyntax";
+import { FOOTNOTE_SYNTAX } from "../preview/footnoteSyntax";
+import { markdownFormatExtensions } from "../preview/format";
 import {
   c,
   cpp,
@@ -198,7 +200,16 @@ const REGISTRY: Entry[] = [
     // B397-4d · 格式动作与键位（Ctrl+B / 标题 / 任务 / 引用 / 代码块 / 公式 / 表格）挂在
     // 语言档里：InkNote 是全局装一次（它只编辑 Markdown），而 LitePad 的标签可能是
     // .json/.py —— 键位必须跟着「这份文档是 Markdown」走。
-    parser: [markdown({ base: markdownLanguage }), markdownFormatExtensions()],
+    //
+    // B440 · `extensions: [MARK_SYNTAX]`：`==高亮==` 是 lezer 不认的方言（GFM 没有它），
+    // 语法树里没节点 ⇒ 装饰层既藏不掉那两枚 `==`，也挂不上底色。用户报的「高亮语法没有
+    // 渲染」根因就在这儿，不在装饰层。
+    // B444 · `FOOTNOTE_SYNTAX` 同一处补：脚注引用被 inline Link 吞成引用式链接（下划线），
+    // 脚注定义的缩进正文被判成缩进代码块（范围异常）。
+    parser: [
+      markdown({ base: markdownLanguage, extensions: [MARK_SYNTAX, FOOTNOTE_SYNTAX] }),
+      markdownFormatExtensions(),
+    ],
   },
   {
     label: "JSON",

@@ -17,9 +17,7 @@ export type SizeClass = "normal" | "large" | "huge";
  *
  * 与上面那三档**不是一条轴**：`sizeClass` 是 Rust 按**字节**判的编辑器降级，这一条是
  * 预览按**行数**判的渲染降级（5000 行的 md 可以只有几百 KB，两边都不该替对方说话）。
- * B391F-3 起两条渲染实现共用这一个数：派生 DOM（`markdown/preview.ts`）与 CM6 装饰面
- * （`spike/deco/codeBlockWidget.ts`）—— 两边阈值漂移过一次，装饰面写死 `bigDoc:false`，
- * 结果同一篇 5001 行文档装饰面比现方案多跑一整轮 Shiki（spike 结果文档①P3-2 那条不对称）。
+ * B412 起只剩装饰面一个消费方（`preview/codeBlockWidget.ts` 与 `preview/richWidgets.ts`）。
  */
 export const LAZY_THRESHOLD_LINES = 5000;
 
@@ -35,8 +33,6 @@ export interface PerfProfile {
   selectionMatches: boolean;
   /** 当前行 / 行号槽高亮 */
   activeLine: boolean;
-  /** Markdown 是否自动渲染预览（改为手动切换才渲染） */
-  autoPreview: boolean;
 }
 
 /** 未知值一律按 normal 处理：宁可多给特性，也不要误降级。 */
@@ -55,7 +51,6 @@ export function perfProfileFor(cls: SizeClass): PerfProfile {
         bracketMatching: false,
         selectionMatches: false,
         activeLine: true,
-        autoPreview: false,
       };
     case "huge":
       return {
@@ -66,7 +61,6 @@ export function perfProfileFor(cls: SizeClass): PerfProfile {
         selectionMatches: false,
         // 当前行高亮在超大文档下也会带来额外的重绘，一并关掉
         activeLine: false,
-        autoPreview: false,
       };
     default:
       return {
@@ -76,24 +70,26 @@ export function perfProfileFor(cls: SizeClass): PerfProfile {
         bracketMatching: true,
         selectionMatches: true,
         activeLine: true,
-        autoPreview: true,
       };
   }
 }
 
 /**
- * B398 · 这一份文档的档位，Markdown 在 `large` 档例外：**语言扩展照装**。
+ * B398 · 这一份文档的档位，Markdown 一律**装语言扩展**（哪一档都装）。
  *
  * 理由（照 VS Code 的取舍）：`syntax:false` 原本是把「增量解析整篇」当最大开销省掉，
  * 但 CM6 的解析是**视口优先**的 —— 打开时只解析头 3000 字符，之后按视口推进
  * （`@codemirror/language` 的 parseWorker）。而 Markdown 的语法树还是所见即所得
- * 装饰面的原料（装饰只解析到视口 + 前瞻，见 `spike/deco/livePreview.ts`）⇒ 大文件
- * 没有解析器就等于没有装饰面。`huge`（>20MB）照关：与 VS Code 的
- * `LARGE_FILE_SIZE_THRESHOLD` 同口径，那里它连令牌化都停了。
+ * 装饰面的原料（装饰只解析到视口 + 前瞻，见 `preview/livePreview.ts`）⇒ 大文件
+ * 没有解析器就等于没有装饰面。
+ *
+ * B412：旧派生 DOM 预览臂删除后，预览只剩这一张面 ⇒ `huge` 也照装（用户拍板
+ * 「新面全接」）。不装的话 20MB+ 的 md 打开只有裸源码，「预览」名存实亡。
+ * 代价与 large 同量级：解析从视口起步，跳到底部时才会往前铺。
  *
  * 只影响「装不装语言扩展」；折叠 / 括号匹配 / 选中匹配那三条仍按原档位关着。
  */
 export function perfProfileForDoc(cls: SizeClass, markdown: boolean): PerfProfile {
   const base = perfProfileFor(cls);
-  return markdown && !base.syntax && cls !== "huge" ? { ...base, syntax: true } : base;
+  return markdown && !base.syntax ? { ...base, syntax: true } : base;
 }

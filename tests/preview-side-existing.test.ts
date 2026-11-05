@@ -108,7 +108,6 @@ vi.mock("../src/ipc/api", () => ({
       autosave: false,
       hot_exit: false,
       toc_width: 240,
-      preview_line_height: 1.7,
     }),
   logEvent: () => {},
   newTab: () => {
@@ -170,7 +169,7 @@ function panelText(panelId: number): string {
 /**
  * 按 aria-label 取面板操作区里的一颗键。
  * ⚠️ **不能按下标取**：面板操作区最多三颗 —— 「打开侧边预览」+「切换到源码/预览」
- * （这两颗**只给活动面板且活动标签是 md**，见 panelDataOf）+「移除该分屏」。
+ * （这两颗**只给活动面板且活动标签是 md**，见 panelDataOf）+ 组菜单「…」（B422）。
  * 下标会随「是否活动面板」「是不是 md」漂移 ⇒ 索引写死必错（我第一版就栽在这）。
  */
 function panelOp(panelId: number, label: string): HTMLElement | null {
@@ -209,11 +208,11 @@ describe("B232 侧边预览开在已有文档的右面板：切回源码必须�
       document.querySelectorAll(`.layout-panel[data-panel-id="2"] .tab`),
     ).map((t) => (t.textContent ?? "").replace(/[●×]/g, "").trim());
     expect(names.length, "右面板应多出一份标签").toBe(2);
-    // 预览态：面板 body 带 mode-preview（编辑器隐藏、预览可见）
+    // 预览态：面板 body 带 mode-preview（B412：预览 / 编辑 / 源码共用这一颗编辑器）
     const body = document.querySelector(`.layout-panel[data-panel-id="2"] .mode-preview`);
     expect(body, "右面板新增那份应是预览态（这条是 B228 已经修好的部分）").toBeTruthy();
-    // 预览渲染的正是 md 的正文
-    const previewText = body?.querySelector(".md-preview")?.textContent ?? "";
+    // 预览面渲染的正是 md 的正文
+    const previewText = body?.querySelector(".cm-editor")?.textContent ?? "";
     expect(previewText, "预览里应是 md 的正文").toContain("md 的正文");
     // ⚠️ 这一条是本 bug 的核心断言（B232）：右面板新增的那份，**编辑器里装的
     // 也必须是 md** —— 旧写法下这里还是 json，标签条却已经显示成 md 了。

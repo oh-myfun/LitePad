@@ -9,7 +9,12 @@ import { readFileSync } from "node:fs";
 import { javascript } from "@codemirror/lang-javascript";
 import { undo } from "@codemirror/commands";
 import { createEditor, makeTabState } from "../src/editor/editor";
-import { normalizeSizeClass, perfProfileFor, type SizeClass } from "../src/editor/perf";
+import {
+  normalizeSizeClass,
+  perfProfileFor,
+  perfProfileForDoc,
+  type SizeClass,
+} from "../src/editor/perf";
 
 const NOOP = (): void => {};
 const CLASSES: SizeClass[] = ["normal", "large", "huge"];
@@ -59,7 +64,6 @@ describe("M4 perf：各档位关掉什么", () => {
       bracketMatching: true,
       selectionMatches: true,
       activeLine: true,
-      autoPreview: true,
     });
   });
 
@@ -69,9 +73,8 @@ describe("M4 perf：各档位关掉什么", () => {
     expect(p.folding).toBe(false);
     expect(p.bracketMatching).toBe(false);
     expect(p.selectionMatches).toBe(false);
-    // 当前行高亮很便宜，保留；预览不再自动渲染
+    // 当前行高亮很便宜，保留
     expect(p.activeLine).toBe(true);
-    expect(p.autoPreview).toBe(false);
   });
 
   it("huge 在 large 基础上再关当前行高亮", () => {
@@ -79,15 +82,14 @@ describe("M4 perf：各档位关掉什么", () => {
     expect(p.syntax).toBe(false);
     expect(p.folding).toBe(false);
     expect(p.activeLine).toBe(false);
-    expect(p.autoPreview).toBe(false);
   });
 
   it("档位单调递增：文件越大，特性只减不增", () => {
     const flags = (p: ReturnType<typeof perfProfileFor>) =>
-      [p.syntax, p.folding, p.bracketMatching, p.selectionMatches, p.activeLine, p.autoPreview]
+      [p.syntax, p.folding, p.bracketMatching, p.selectionMatches, p.activeLine]
         .map((b) => (b ? 1 : 0))
         .join("");
-    expect(flags(perfProfileFor("normal"))).toBe("111111");
+    expect(flags(perfProfileFor("normal"))).toBe("11111");
     // 按位串比较：每降一档，只允许把 1 变 0
     for (const [hi, lo] of [
       ["normal", "large"],
@@ -126,6 +128,15 @@ describe("M4 编辑器：语言扩展按档位注入", () => {
   it("不传 perf 时按 normal 处理（新建文档不受影响）", () => {
     const { state } = makeTabState("const a = 1;", javascript(), { dark: false, wrap: true }, NOOP);
     expect(state.languageDataAt<string>("commentTokens", 0).length).toBeGreaterThan(0);
+  });
+
+  it("B412：Markdown 哪一档都装解析器（大文件不装 = 预览只剩裸源码）", () => {
+    for (const cls of CLASSES) {
+      expect(perfProfileForDoc(cls, true).syntax, `${cls} 的 md 必须带语法树`).toBe(true);
+      // 非 md 仍按原档位降级（这条轴没被顺手放宽）
+      expect(perfProfileForDoc(cls, false).syntax).toBe(perfProfileFor(cls).syntax);
+    }
+    expect(perfProfileForDoc("huge", false).syntax, "huge 非 md 照旧不解析").toBe(false);
   });
 });
 
@@ -202,12 +213,12 @@ describe("M4 大文件分级：降级而不是拒绝（原先 20 MB 直接打不
     expect(ed, "折叠必须受档位控制").toMatch(/perf\.folding/);
   });
 
-  it("大文件停用自动预览，但手动切预览仍可渲染（降级不是禁用）", () => {
+  it("B412：预览不再有「自动 / 手动」之分（旧派生预览臂已删除）", () => {
     const src =
       readFileSync("src/main.ts", "utf-8") + "\n" + readFileSync("src/markdown.ts", "utf-8");
-    expect(src).toMatch(/function renderMarkdownFor\(panel: Panel, force = false\)/);
-    expect(src).toMatch(/perfProfileFor\(doc\.sizeClass\)\.autoPreview/);
-    // 用户主动切模式时必须传 force=true
-    expect(src).toMatch(/renderMarkdownFor\(panel, true\)/);
+    expect(src, "旧预览调度器不许被搬回来").not.toContain("renderMarkdownFor");
+    expect(src, "`autoPreview` 闸随旧臂一起删除").not.toMatch(/\.autoPreview/);
+    const perf = readFileSync("src/editor/perf.ts", "utf-8");
+    expect(perf, "档位类型里也不该再有 autoPreview").not.toContain("autoPreview");
   });
 });

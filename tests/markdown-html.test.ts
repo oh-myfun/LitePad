@@ -77,6 +77,6 @@ describe("B401 HTML 渲染", () => {
     const html = renderFull("- [x] 完成\n\n$E=mc^2$\n\n```mermaid\ngraph TD; A-->B;\n```\n");
     expect(html).toContain('class="md-task"');
     expect(html).toContain('class="math-inline-src"');
-    expect(html).toContain('class="mermaid-src"');
+    expect(html).toContain('class="diagram-src mermaid-src"');
   });
 });

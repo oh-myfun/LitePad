@@ -20,7 +20,7 @@ function doc(text: string) {
 }
 
 const md = stripLineComments(readFileSync("src/markdown.ts", "utf-8"));
-const pv = stripLineComments(readFileSync("src/markdown/preview.ts", "utf-8"));
+const taskClick = stripLineComments(readFileSync("src/preview/taskClick.ts", "utf-8"));
 
 describe("B358 taskLineAt：块里第 N 个勾选框 ↔ 源码第 N 条任务行", () => {
   it("无序列表：两个勾选框各归各行，勾选态与方括号范围都对", () => {
@@ -61,16 +61,16 @@ describe("B358 taskLineAt：块里第 N 个勾选框 ↔ 源码第 N 条任务�
   });
 });
 
-describe("B359 起：预览格是唯一渲染面，宿主入口只走预览一条路", () => {
+describe("B359 起：渲染面只有装饰面一张，宿主入口只走一条路", () => {
   it("toggleTaskInTab 挡只读、没有别的写闸（用户拍板：纯预览也能勾）", () => {
     const body = fnBody(md, "toggleTaskInTab");
     expect(body, "取不到函数体说明出口没了").toBeTruthy();
     expect(body, "只读文档不许写").toMatch(/doc\.readonly/);
   });
 
-  it("预览面只把序号交回宿主，自己不换算（换算只住 tasks.ts 一处）", () => {
-    expect(pv, "预览侧用宿主入口").toMatch(/toggleTaskAt\(/);
-    expect(pv, "预览面不许自己数任务行").not.toMatch(/taskLineAt\(/);
+  it("装饰面只把行号交回宿主，自己不换算（换算只住 tasks.ts 一处）", () => {
+    expect(taskClick, "装饰面用宿主入口").toMatch(/onToggleTask\(/);
+    expect(taskClick, "装饰面不许自己数任务行").not.toMatch(/taskLineAt\(/);
   });
 
   it("宿主入口落在 tasks.ts 的共享映射与翻转记号上", () => {

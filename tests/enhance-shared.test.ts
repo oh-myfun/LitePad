@@ -71,16 +71,17 @@ describe("B352-2 enhanceMarkdown 共享出口", () => {
 });
 
 describe("B352-2 结构判据：增强只有一份", () => {
-  const pv = stripLineComments(readFileSync("src/markdown/preview.ts", "utf-8"));
   const en = stripLineComments(readFileSync("src/markdown/enhance.ts", "utf-8"));
+  // B412：旧派生 DOM 预览臂已删除，第二个调用方换成装饰面的块级 widget。
+  const widgets = stripLineComments(readFileSync("src/preview/richWidgets.ts", "utf-8"));
 
   // B397-3 搬家：shiki 那一发从 enhance.ts 挪进 `markdown/highlight.ts`（装饰面的代码块要
   // 「只换内容不换节点」，enhance 那条 `replaceWith` 会把正在打字的元素拆掉）。
   // 判据因此从「住在 enhance.ts」改成「全仓只出现一次」—— 比原来更严：再搬一次、
   // 或者在别处抄第二份，都会红。
   for (const lib of ["katex", "shiki", "mermaid"]) {
-    it(`${lib} 的动态 import 只有一处，且 preview.ts 里一份都不许有`, () => {
-      expect(pv, `preview.ts 不该再自己 import("${lib}")`).not.toMatch(
+    it(`${lib} 的动态 import 只有一处，装饰 widget 里一份都不许有`, () => {
+      expect(widgets, `widget 不该自己 import("${lib}")，一律请 enhance 认领`).not.toMatch(
         new RegExp(`import\\("${lib}"\\)`),
       );
       const hits = readdirSync("src/markdown")
@@ -95,10 +96,15 @@ describe("B352-2 结构判据：增强只有一份", () => {
   }
 
   it("两个计数器在模块级 —— 但**只有 id 计数器该全局**（seq 分域见下一段）", () => {
+    // B452：id 计数器跟着渲染器一起搬进 `diagrams.ts`（五类图共用一颗），判据跟着换文件读。
+    const dg = stripLineComments(readFileSync("src/markdown/diagrams.ts", "utf-8"));
     expect(
-      en,
-      "mermaid render id 计数器在模块级（每格各数一份会撞 id、把别格刚画好的 SVG 删掉）",
-    ).toMatch(/^let mmdUid\s*=\s*0/m);
+      dg,
+      "图 render id 计数器在模块级（每格各数一份会撞 id、把别格刚画好的 SVG 删掉）",
+    ).toMatch(/^let renderUid\s*=\s*0/m);
+    expect(en, "enhance 里不许再留第二颗 id 计数器（撞 id 的杀伤力见 B319）").not.toMatch(
+      /^let mmdUid\s*=/m,
+    );
     expect(en, "seq 计数器仍在模块级（只是个发号器）").toMatch(/^let seqCounter\s*=\s*0/m);
   });
 
@@ -133,14 +139,17 @@ describe("B352-2 结构判据：增强只有一份", () => {
       ).toBeGreaterThanOrEqual(3);
     });
 
-    it("预览面按自己的 root 取号", () => {
-      const pv = stripLineComments(readFileSync("src/markdown/preview.ts", "utf-8"));
-      expect(pv, "预览按自己的根容器取号").toMatch(/nextEnhanceSeq\((this\.root|root)\)/);
+    it("装饰 widget 按自己的 root 取号", () => {
+      expect(widgets, "每个 widget 按自己的根容器取号").toMatch(/nextEnhanceSeq\(el\)/);
     });
   });
 
-  it("预览那边只剩薄包装（不再自己数 seq）", () => {
-    expect(pv, "PreviewPane 里不该再有 mermaidSeq 字段").not.toMatch(/private mermaidSeq/);
-    expect(pv, "预览调的是共享出口").toMatch(/enhanceMarkdown\(/);
+  it("两个渲染调用方都是薄包装（不再自己数 seq）", () => {
+    expect(widgets, "widget 里不该留自己的 mermaid 序号字段").not.toMatch(/mermaidSeq/);
+    expect(widgets, "widget 调的是共享出口").toMatch(/enhanceMarkdown\(/);
+    expect(
+      readdirSync("src/markdown").includes("preview.ts"),
+      "B412：旧派生 DOM 预览臂已删除，`markdown/preview.ts` 不许被搬回来",
+    ).toBe(false);
   });
 });

@@ -1,0 +1,750 @@
+// @vitest-environment node
+// B397-2 · 样式对标的判据：装饰那一档的排版数值必须与 InkNote 的编辑面一致，
+// 取色必须回接 LitePad 的主题 token。
+//
+// 为什么每条都写死数字（而不是只判「有没有这条规则」）：用户这次的口径是
+// 「装饰面需要对标 InkNote 的样式，不要自己重新开发」—— 上一版 preview 被点名的就是
+// 「看起来和 InkNote 完全不同」。少了这层数值闸，改回自己的一套档位测试照样绿。
+//
+// 数值来源：E:\Project\InkNote\InkNote\src\App.css（本机参照，行号写在每条 it 里）。
+import { readFileSync } from "node:fs";
+
+import { describe, expect, it } from "vitest";
+
+import { ruleBlock, stripCssComments } from "./static";
+
+// ⚠️ 一律读**剥掉注释**的文本：文件头那几条说明里复述了旧值（`margin: 12px 0`、
+// InkNote 的 1.75 行距），不剥注释的话 `not.toMatch` 会被自己的文档误伤（tests/static.ts
+// 那段注释讲的就是这个坑）。
+const css = stripCssComments(readFileSync("src/preview/preview.css", "utf-8"));
+
+/** InkNote 的标题字阶（App.css:1308-1313）：类名 → [字号, 字重]。 */
+const HEADING_SCALE: [string, string, string][] = [
+  ["cm-md-h1", "1.92em", "720"],
+  ["cm-md-h2", "1.52em", "700"],
+  ["cm-md-h3", "1.27em", "650"],
+  ["cm-md-h4", "1.12em", "600"],
+  ["cm-md-h5", "1.02em", "600"],
+  ["cm-md-h6", "0.95em", "600"],
+];
+
+describe("B397-2 宿主 token 层：形状照抄 InkNote，颜色回接 LitePad", () => {
+  const host = ruleBlock(
+    css,
+    ".panel-host .panel-editor .cm-editor.md-preview-face",
+    "--editor-padding-x",
+  );
+
+  it("几何档位逐条是 InkNote 的数（App.css:1159-1165）", () => {
+    expect(host).toMatch(/--editor-padding-x:\s*48px/);
+    expect(host).toMatch(/--editor-block-indent:\s*16px/);
+    expect(host).toMatch(/--editor-quote-bar:\s*3px/);
+    expect(host).toMatch(/--editor-list-marker-offset:\s*1\.35em/);
+    expect(host).toMatch(/--md-component-radius:\s*9px/);
+  });
+
+  it("取色一律引用 LitePad 的主题 token，不许抄 InkNote 的字面量色值", () => {
+    for (const token of [
+      "--md-accent",
+      "--md-panel-bg",
+      "--md-panel-border",
+      "--md-fg",
+      "--md-muted",
+      "--md-faint",
+      "--md-code-font",
+    ]) {
+      expect(host, `${token} 必须由 var(--…) 定义`).toMatch(
+        new RegExp(`${token}:\\s*var\\(--[a-z-]+`),
+      );
+    }
+    expect(css, "preview.css 里不许出现十六进制色值").not.toMatch(/#[0-9a-fA-F]{3,8}/);
+    expect(css, "preview.css 里不许出现 rgb()/rgba()").not.toMatch(/\brgba?\(/);
+  });
+
+  it("previewSets 行内 style 引用的那两颗 token 有定义（缺了嵌套列表缩进整条失效）", () => {
+    expect(host).toMatch(/--editor-padding-x:/);
+    expect(host).toMatch(/--editor-list-marker-offset:/);
+  });
+});
+
+describe("B397-2 壳层：正文归正文字体，留白画在行上", () => {
+  it("文档面走正文字体（--font-body），且把祖先链写全压过 global.css 的代码字体那条", () => {
+    const body = ruleBlock(
+      css,
+      ".panel-host .panel-editor .cm-editor.md-preview-face, .panel-host .panel-editor .cm-editor.md-preview-face .cm-scroller",
+    );
+    expect(body).toMatch(/font-family:\s*var\(--font-body\)/);
+    expect(body, "不许写成 var(--font-code)：那等于没换档").not.toMatch(/var\(--font-code\)/);
+  });
+
+  it("正文左右留白画在 .cm-line 上，且**只到 (0,2,0)**（更高就吃掉构造规则的留白）", () => {
+    const line = ruleBlock(css, ".md-preview-face .cm-line");
+    expect(line).toMatch(/position:\s*relative/);
+    expect(line).toMatch(/padding:\s*0 var\(--editor-padding-x\)/);
+    // 这一条是 `padding` 简写 ⇒ 谁特异度高于它，谁的 padding-top/padding-left 就没了。
+    // 真机第一轮（B397-2）读到的正是 padTop=0、引用与列表左内距等于裸 48px —— 那条判据就钉在这里。
+    expect(css, "不许给这条行留白补祖先链").not.toMatch(
+      /\.panel-host\s+\.panel-editor\s+\.cm-editor\.md-preview-face\s+\.cm-line\s*\{/,
+    );
+    // 构造规则（标题下留白）必须活着 —— 被那行 shorthand 整条盖掉就是 B397-2 的老 bug
+    expect(ruleBlock(css, ".md-preview-face .cm-line.md-heading-1")).toMatch(
+      /padding-bottom:\s*12px/,
+    );
+    expect(ruleBlock(css, ".md-preview-face .cm-line.md-blockquote")).toMatch(/padding-left:/);
+  });
+
+  it("上下留白 + 居中宽度在 .cm-content 上，宽度档仍吃用户的正文宽度设置", () => {
+    const content = ruleBlock(
+      css,
+      ".panel-host .panel-editor .cm-editor.md-preview-face .cm-content",
+    );
+    // B414（用户 2026-10-29）：照 VS Code markdown.css —— `body { padding-top: 1em }`、
+    // 底部 0（B413 那版是 16px 上下）。
+    expect(content).toMatch(/padding:\s*1em 0 0/);
+    expect(content, "InkNote 那组大留白不许被加回来").not.toMatch(/clamp\(32px/);
+    expect(content).toMatch(/max-width:\s*var\(--md-content-max,/);
+    expect(content).toMatch(/margin:\s*0 auto/);
+  });
+
+  it("B414：文首/文末贴边 —— 块级 widget 打头不带上内距、收尾不带下内距", () => {
+    expect(
+      ruleBlock(css, ".md-preview-face .cm-content > .md-block:first-child"),
+      "首块 widget（frontmatter / 代码块）的上内距要清掉",
+    ).toMatch(/padding-top:\s*0/);
+    expect(
+      ruleBlock(css, ".md-preview-face .cm-content > :last-child"),
+      "末块 widget 的下内距要清掉",
+    ).toMatch(/padding-bottom:\s*0/);
+  });
+
+  it("正文行距不在这里定：不许把 InkNote 的 1.75 顶掉用户的编辑器行距设置", () => {
+    // 组件内部（代码块 1.55）自己管自己的行高，那是 InkNote 的数；**正文**那三层不许出现行距声明。
+    const body = [
+      ruleBlock(
+        css,
+        ".panel-host .panel-editor .cm-editor.md-preview-face .cm-scroller",
+        "overflow",
+      ),
+      ruleBlock(css, ".panel-host .panel-editor .cm-editor.md-preview-face .cm-content"),
+      ruleBlock(css, ".md-preview-face .cm-line"),
+    ].join("\n");
+    expect(body, "行距归 --editor-line-height（B225 的用户设置），样式里不许写死").not.toMatch(
+      /line-height/,
+    );
+    expect(css).not.toMatch(/--editor-line-height:/);
+  });
+
+  it("文档面不画行号栏、不画当前行那一圈（InkNote 1287 / 1391 段）", () => {
+    const gutters = ruleBlock(
+      css,
+      ".panel-host .panel-editor .cm-editor.md-preview-face .cm-gutters",
+    );
+    expect(gutters).toMatch(/display:\s*none/);
+    const active = ruleBlock(css, ".panel-host .cm-editor.md-preview-face .cm-activeLine");
+    expect(active).toMatch(/background:\s*transparent/);
+    expect(active).toMatch(/box-shadow:\s*none/);
+  });
+
+  it("横向滚动交给组件自己管，正文不产生第二条横滚动条（App.css:1602）", () => {
+    const scroller = ruleBlock(
+      css,
+      ".panel-host .panel-editor .cm-editor.md-preview-face .cm-scroller",
+      "overflow-x",
+    );
+    expect(scroller).toMatch(/overflow-x:\s*hidden/);
+    expect(scroller).toMatch(/overflow-y:\s*auto/);
+  });
+});
+
+describe("B397-2 标题：字阶挂在行内 mark 上，行元素只管上方留白", () => {
+  for (const [cls, size, weight] of HEADING_SCALE) {
+    it(`${cls} = ${size} / ${weight}（App.css:1308-1313）`, () => {
+      const body = ruleBlock(css, `.md-preview-face .${cls}`, "font-size");
+      expect(body).toContain(`font-size: ${size}`);
+      expect(body).toContain(`font-weight: ${weight}`);
+    });
+  }
+
+  it("B402：后代只 `inherit` —— 再写一遍 em 会与 mark 连乘（h1 真机实测 51.6px）", () => {
+    for (const [cls] of HEADING_SCALE) {
+      const inner = ruleBlock(css, `.md-preview-face .${cls} *`, "font-size");
+      expect(inner, `${cls} 的后代只许 inherit 字号`).toMatch(/font-size:\s*inherit/);
+      expect(inner, `${cls} 的后代不许再写字号档位`).not.toMatch(/font-size:\s*[\d.]+em/);
+    }
+  });
+
+  it("带 `*` 的那一支是必需的：语法高亮的 tags.heading 会给内层 span 写 bold", () => {
+    for (const [cls] of HEADING_SCALE) {
+      expect(css, `${cls} 必须有配对的 * 选择器`).toMatch(
+        new RegExp("\\.md-preview-face \\." + cls + " \\*\\s*(,|\\{)"),
+      );
+    }
+  });
+
+  it("字号不许挪到行元素上：行元素那几条只管留白", () => {
+    const base = ruleBlock(css, ".md-preview-face .cm-line.md-heading");
+    expect(base, "标题行上留白统一归零").toMatch(/padding-top:\s*0/);
+    expect(base).not.toMatch(/font-size/);
+    for (let level = 1; level <= 4; level++) {
+      const body = ruleBlock(
+        css,
+        `.md-preview-face .cm-line.md-heading-${level}`,
+        "padding-bottom",
+      );
+      expect(body, `md-heading-${level} 只管下留白`).toMatch(/padding-bottom:/);
+      expect(body).not.toMatch(/font-size/);
+    }
+  });
+
+  it("B414：上留白归零，下留白按级递减（h1 12 / h2 9 / h3 6 / h4 3；h5-h6 不吃）", () => {
+    for (const [level, px] of [
+      [1, "12px"],
+      [2, "9px"],
+      [3, "6px"],
+      [4, "3px"],
+    ] as const) {
+      expect(
+        ruleBlock(css, `.md-preview-face .cm-line.md-heading-${level}`),
+        `h${level} 下留白`,
+      ).toMatch(new RegExp(`padding-bottom:\\s*${px}`));
+    }
+    // h5/h6 不加：源码空行本身就是它们那一档的下间距（别把阶梯写成「每级都有值」）
+    expect(css, "h5/h6 不该有下留白规则").not.toMatch(/\.md-heading-[56]\s*\{[^}]*padding-bottom/);
+    // 旧的 em 上留白阶梯已作废，别被加回来
+    expect(css, "InkNote 那组上留白阶梯已作废").not.toMatch(/padding-top:\s*1\.1em/);
+  });
+
+  it("`#` 显形时压成不抢眼的灰（App.css:1314-1319 的 !important 口径）", () => {
+    const body = ruleBlock(
+      css,
+      ".md-preview-face .cm-md-heading-mark, .md-preview-face .cm-md-heading-mark *",
+    );
+    expect(body).toMatch(/font-weight:\s*400\s*!important/);
+    expect(body).toMatch(/color:\s*color-mix\(in srgb,\s*var\(--md-faint\)\s*68%/);
+  });
+
+  it("空行不折叠（折叠改变行盒高度 ⇒ 同步滚动逐行对齐必差，B300）", () => {
+    const blank = ruleBlock(css, ".md-preview-face .cm-line.md-blank-line");
+    expect(blank).toMatch(/min-height:\s*1em/);
+    expect(blank).not.toMatch(/height:\s*0/);
+    expect(blank).not.toMatch(/display:\s*none/);
+  });
+});
+
+describe("B397-2 行内构造：代码 chip、链接、引用竖线", () => {
+  it("行内代码是带描边的小 chip（App.css:1343-1350）", () => {
+    const body = ruleBlock(css, ".md-preview-face .cm-md-code");
+    expect(body).toMatch(/padding:\s*0\.14em 0\.42em/);
+    expect(body).toMatch(/border-radius:\s*5px/);
+    expect(body).toMatch(/font-size:\s*0\.88em/);
+    expect(body).toMatch(/border:\s*1px solid var\(--md-panel-border\)/);
+    expect(body).toMatch(/background:\s*var\(--md-panel-bg\)/);
+  });
+
+  it("B402 行内 HTML 的样式档（kbd / mark / sub / sup 不再只是空类）", () => {
+    expect(ruleBlock(css, ".md-preview-face .cm-md-inline-kbd")).toMatch(
+      /font-family:\s*var\(--md-code-font\)/,
+    );
+    expect(ruleBlock(css, ".md-preview-face .cm-md-inline-mark")).toMatch(
+      /background-color:\s*Mark/,
+    );
+    expect(ruleBlock(css, ".md-preview-face .md-sub, .md-preview-face .md-sup")).toMatch(
+      /line-height:\s*0/,
+    );
+    expect(ruleBlock(css, ".md-preview-face .md-sub", "vertical-align")).toMatch(
+      /vertical-align:\s*sub/,
+    );
+    expect(ruleBlock(css, ".md-preview-face .md-sup", "vertical-align")).toMatch(
+      /vertical-align:\s*super/,
+    );
+  });
+
+  it("链接默认不带下划线、悬停才画（App.css:1351-1352），且必须连内层 span 一起压", () => {
+    // theme.ts 的 tags.link 自带 underline，那一层在 mark **里面** ⇒ 只写外层等于没写
+    //（真机第一轮截图里那条下划线就是它）。判据按列表选择器问，别只问外层那颗类。
+    const body = ruleBlock(css, ".md-preview-face .cm-md-link, .md-preview-face .cm-md-link *");
+    expect(body).toMatch(/text-decoration:\s*none/);
+    expect(body).toMatch(/color:\s*var\(--link-fg\)/);
+    expect(
+      ruleBlock(css, ".md-preview-face .cm-md-link:hover, .md-preview-face .cm-md-link:hover *"),
+    ).toMatch(/text-decoration:\s*underline/);
+  });
+
+  it("B403 能跳的时候才是 pointer：预览档常开 / 编辑档按着 Ctrl", () => {
+    // 编辑档的基态还是文本光标 —— 那一下点下去是放光标/选字，不是跳
+    expect(ruleBlock(css, ".md-preview-face .cm-md-link, .md-preview-face .cm-md-link *")).toMatch(
+      /cursor:\s*text/,
+    );
+    // 能跳的两档才给 hand；`--link-hot` 是 livePreview 的修饰键追踪挂上去的。
+    // ⚠️ `ruleBlock` 只回块体，选择器本身要回原始 CSS 里问（空白归一后再比）
+    const hot = ruleBlock(css, ".md-preview-face--readonly .cm-md-link");
+    expect(hot).toMatch(/cursor:\s*pointer/);
+    const flat = css.replace(/\s+/g, " ");
+    expect(flat, "预览档常开").toContain(".md-preview-face--readonly .cm-md-link *");
+    expect(flat, "编辑档按着 Ctrl").toContain(".md-preview-face--link-hot .cm-md-link *");
+  });
+
+  it("标题取色也压到内层（语法色 tags.heading 在那一层）", () => {
+    const body = ruleBlock(
+      css,
+      ".md-preview-face .cm-md-h1, .md-preview-face .cm-md-h1 *, .md-preview-face .cm-md-h2, .md-preview-face .cm-md-h2 *," +
+        " .md-preview-face .cm-md-h3, .md-preview-face .cm-md-h3 *, .md-preview-face .cm-md-h4, .md-preview-face .cm-md-h4 *," +
+        " .md-preview-face .cm-md-h5, .md-preview-face .cm-md-h5 *, .md-preview-face .cm-md-h6, .md-preview-face .cm-md-h6 *",
+    );
+    expect(body).toMatch(/color:\s*var\(--md-fg\)/);
+    expect(body).toMatch(/font-family:\s*var\(--font-body\)/);
+  });
+
+  it("B401 光标压进标题时 `#` 与标题同字阶（有意偏离 InkNote 的 400/正文大小）", () => {
+    for (const [cls, size] of HEADING_SCALE) {
+      const n = cls.slice(-1);
+      const mark = ruleBlock(
+        css,
+        `.md-preview-face .cm-line.md-heading-${n} .cm-md-heading-mark`,
+        "font-size",
+      );
+      expect(mark, `h${n} 的 # 字号要等于标题`).toMatch(
+        new RegExp(`font-size:\\s*${size.replace(".", "\\.")}`),
+      );
+      // B402：`#` 里的语法 span 只 inherit（与标题正文同一个连乘坑）
+      const inner = ruleBlock(
+        css,
+        `.md-preview-face .cm-line.md-heading-${n} .cm-md-heading-mark *`,
+        "font-size",
+      );
+      expect(inner, `h${n} 的 # 后代只许 inherit`).toMatch(/font-size:\s*inherit/);
+    }
+    // 颜色仍是淡灰（标记不抢正文），只是字阶跟过去
+    expect(css).toMatch(/\.cm-md-heading-mark \*[\s\S]{0,200}color:[^;]*--md-faint/);
+  });
+
+  it("引用竖线画在 padding-x 处并贴满行盒上下（相邻行连成整条线，App.css:1404-1415）", () => {
+    const bar = ruleBlock(css, ".md-preview-face .cm-line.md-blockquote::before");
+    expect(bar).toMatch(/left:\s*var\(--editor-padding-x\)/);
+    expect(bar).toMatch(/top:\s*0/);
+    expect(bar).toMatch(/bottom:\s*0/);
+    expect(bar).toMatch(/width:\s*var\(--editor-quote-bar\)/);
+    expect(bar).toMatch(/background:\s*var\(--md-quote-border\)/);
+    const text = ruleBlock(css, ".md-preview-face .cm-line.md-blockquote");
+    expect(text).toMatch(/padding-left:/);
+    expect(text).toMatch(/color:\s*var\(--md-muted\)/);
+  });
+});
+
+describe("B397-2 列表与任务项：标记由 CSS 画", () => {
+  it("圆点画成 disc/circle/square 三档、序号用源码里的真实序号，都占 marker-width", () => {
+    const bullet = ruleBlock(
+      css,
+      ".md-preview-face .cm-line.md-list-item.md-bullet-list:not(.md-task-item)::before",
+    );
+    // B401：符号由字体改成「画」（三档同一 0.3em 盒子）—— 字体里的 • ◦ ▪ 墨迹
+    // 大小不一，居中后符号↔正文的间隙会忽大忽小
+    expect(bullet).toMatch(/content:\s*""/);
+    expect(bullet).toMatch(/width:\s*0\.3em/);
+    expect(bullet).toMatch(/height:\s*0\.3em/);
+    // B405：符点贴**首行**行盒中线（与任务方框同一口径）；`top: 50%` 在折行列表项里
+    // 会把符点放到整块中段
+    expect(bullet).toMatch(/top:\s*calc\(var\(--editor-line-height,\s*1\.5\)\s*\*\s*0\.5em\)/);
+    expect(bullet).not.toMatch(/top:\s*50%/);
+    const level = (n: number) =>
+      ruleBlock(
+        css,
+        `.md-preview-face .cm-line.md-list-item.md-bullet-list.md-bullet-${n}:not(.md-task-item)::before`,
+      );
+    expect(level(1)).toMatch(/border-radius:\s*50%/);
+    expect(level(2)).toMatch(/border:\s*0\.075em solid/);
+    expect(level(2)).toMatch(/background:\s*transparent/);
+    expect(level(3)).toMatch(/border-radius:\s*0\.03em/);
+    const ordered = ruleBlock(
+      css,
+      ".md-preview-face .cm-line.md-list-item.md-ordered-list:not(.md-task-item)::before",
+    );
+    expect(ordered).toMatch(/content:\s*var\(--md-marker,\s*counter\(md-olist\)\s*"\."\)/);
+    expect(ordered).toMatch(/font-variant-numeric:\s*tabular-nums/);
+    expect(ruleBlock(css, ".md-preview-face .cm-content", "counter-reset")).toMatch(
+      /counter-reset:\s*md-olist/,
+    );
+    expect(css).toMatch(/counter-increment:\s*md-olist/);
+  });
+
+  it("B401 任务方框跟正文同字号（1em）；B402 纵向贴**首行**中线（折行不再居中）", () => {
+    const box = ruleBlock(css, ".md-preview-face .cm-line.md-task-item::before");
+    expect(box).toMatch(/width:\s*1em/);
+    expect(box).toMatch(/height:\s*1em/);
+    expect(box).toMatch(/border:\s*0\.11em solid var\(--md-strong-border\)/);
+    expect(box).toMatch(/border-radius:\s*0\.21em/);
+    expect(box).toMatch(/top:\s*var\(--md-task-box-top\)/);
+    expect(box, "`top: 50%` 在多行任务里会把方框放到整块中段").not.toMatch(/top:\s*50%/);
+    expect(box).not.toMatch(/translateY/);
+    expect(box).toMatch(/cursor:\s*pointer/);
+    // 首行中线 = lh/2 − 0.5em（方框 1em）；行距只读用户的 --editor-line-height，不另立一份
+    const line = ruleBlock(css, ".md-preview-face .cm-line.md-task-item", "--md-task-box-top");
+    expect(line).toMatch(
+      /--md-task-box-top:\s*calc\(var\(--editor-line-height,\s*1\.5\)\s*\*\s*0\.5em\s*-\s*0\.5em\)/,
+    );
+  });
+
+  it("勾是两根 em 口径的边转 45°，不是字符 ✓", () => {
+    const check = ruleBlock(css, ".md-preview-face .cm-line.md-task-done::after");
+    expect(check).not.toMatch(/content:\s*"[^"]+"/);
+    expect(check).toMatch(/width:\s*0\.36em/);
+    expect(check).toMatch(/height:\s*0\.64em/);
+    expect(check).toMatch(/border-width:\s*0 0\.13em 0\.13em 0/);
+    expect(check).toMatch(/transform:\s*rotate\(45deg\)/);
+    // B402：勾跟方框共用同一个纵向锚点，折行时一起留在首行
+    expect(check).toMatch(/top:\s*calc\(var\(--md-task-box-top\)\s*\+\s*0\.17em\)/);
+    expect(ruleBlock(css, ".md-preview-face .cm-line.md-task-done::before")).toMatch(
+      /background:\s*var\(--md-accent\)/,
+    );
+  });
+
+  it("完成项只压淡、不画删除线（B411 用户口径）", () => {
+    const done = ruleBlock(css, ".md-preview-face .cm-line.md-task-done");
+    expect(done).toMatch(/color:\s*var\(--md-muted\)/);
+    expect(done, "勾选也不许画删除线").not.toMatch(/text-decoration/);
+  });
+
+  it("任务行左内距保持 padding-x + marker-offset（taskClick 的命中判据算的就是这个差）", () => {
+    const item = ruleBlock(css, ".md-preview-face .cm-line.md-task-item").replace(/\s+/g, " ");
+    // B459 之后这一档缩进由 `--md-lead` 一处给数（padding / 负缩进 / 占位件宽同源），
+    // 判据跟着改读那颗数：值仍必须正好是 marker 槽宽，否则方框左沿与 taskClick 的命中区错位。
+    expect(item).toMatch(/--md-lead:\s*var\(--editor-list-marker-offset\)/);
+    expect(item).toMatch(
+      /padding-left:\s*calc\(\s*var\(--editor-padding-x\)\s*\+\s*var\(--md-lead\)\s*\)/,
+    );
+  });
+
+  it("B404/B405 光标行收掉 CSS 画的标记（勾选框 → [ ]、列表 → -、引用竖线 → >），左内距收回", () => {
+    // B405：列表项（任务 / 无序 / 有序）统一走这一条；嵌套档的行内 padding-left
+    // 只有 !important 压得住，收回位置取 marker 左沿
+    const reveal = ruleBlock(css, ".md-preview-face .cm-line.md-list-item.md-reveal-marker");
+    expect(reveal).toMatch(
+      /padding-left:\s*var\(--md-list-marker-left,\s*var\(--editor-padding-x\)\)\s*!important/,
+    );
+    expect(ruleBlock(css, ".md-preview-face .cm-line.md-blockquote.md-reveal-marker")).toMatch(
+      /padding-left:\s*var\(--editor-padding-x\)/,
+    );
+    for (const sel of [
+      ".md-preview-face .cm-line.md-list-item.md-reveal-marker::before",
+      ".md-preview-face .cm-line.md-task-item.md-reveal-marker::after",
+      ".md-preview-face .cm-line.md-blockquote.md-reveal-marker::before",
+    ]) {
+      expect(ruleBlock(css, sel).replace(/\s+/g, " "), sel).toMatch(/display: none/);
+    }
+  });
+
+  it("B411 任务行两档都不画删除线（勾没勾都不许被划掉）", () => {
+    // 勾选的信号只有：方框填色 + 打勾 + 整行压淡（`.md-task-done` 只管颜色）
+    expect(ruleBlock(css, ".md-preview-face .cm-line.md-task-item")).not.toMatch(/line-through/);
+    expect(ruleBlock(css, ".md-preview-face .cm-line.md-task-item::before")).not.toMatch(
+      /line-through/,
+    );
+    expect(ruleBlock(css, ".md-preview-face .cm-line.md-task-done")).not.toMatch(/line-through/);
+    expect(
+      ruleBlock(css, ".md-preview-face .cm-line.md-task-done::before") +
+        ruleBlock(css, ".md-preview-face .cm-line.md-task-done::after"),
+    ).not.toMatch(/line-through/);
+  });
+});
+
+describe("B397-2 块级 widget：与正文左缘对齐，且一条纵向 margin 都没有", () => {
+  it("根元素用 margin: 0 padding-x 对齐正文（App.css:1487-1503）", () => {
+    const roots = ruleBlock(
+      css,
+      ".md-preview-face .md-codeblock-widget, .md-preview-face .md-table-widget, .md-preview-face .md-diagram-widget, .md-preview-face .md-math-block",
+    );
+    expect(roots).toMatch(/box-sizing:\s*border-box/);
+    expect(roots).toMatch(/max-width:\s*calc\(100% - 2 \* var\(--editor-padding-x\)\)/);
+    expect(roots).toMatch(/margin:\s*0 var\(--editor-padding-x\)/);
+  });
+
+  it("全文件没有任何纵向 margin / 非 0 起手的 margin（CM6 块高图会逐块累积误差）", () => {
+    expect(css).not.toMatch(/margin-(top|bottom)/);
+    const margins = [...css.matchAll(/margin\s*:\s*([^;]+);/g)].map((m) => m[1].trim());
+    expect(margins.length).toBeGreaterThan(2);
+    for (const value of margins) {
+      expect(value, `块级根不许写纵向 margin：margin: ${value}`).toMatch(/^0(\s|;|$)/);
+    }
+  });
+
+  it("代码块：外层只管纵向留白，视觉盒在**内层**（App.css:1546-1563）", () => {
+    expect(ruleBlock(css, ".md-preview-face .md-codeblock-widget", "8px 0")).toMatch(
+      /padding:\s*8px 0/,
+    );
+    const box = ruleBlock(css, ".md-preview-face .md-codeblock-box");
+    expect(box).toMatch(/display:\s*flex/);
+    expect(box).toMatch(/border:\s*1px solid var\(--md-panel-border\)/);
+    expect(box).toMatch(/border-radius:\s*var\(--md-component-radius\)/);
+    expect(box).toMatch(/background:\s*var\(--md-panel-bg\)/);
+    expect(box, "描边画在 pre 上会让行号栏那条分隔线对不齐盒子圆角").not.toMatch(/margin/);
+  });
+
+  it("代码块：行号栏 + 顶部工具行两层（B405 照 vditor 的代码块工具条）", () => {
+    const gutter = ruleBlock(css, ".md-preview-face .md-codeblock-gutter");
+    // B405：语言按钮搬进顶部工具行 ⇒ 行号栏不再需要 34px 的「预留位」；B409 再把顶距收窄
+    expect(gutter).toMatch(/padding:\s*6px 10px 10px 14px/);
+    expect(gutter).toMatch(/border-right:\s*1px solid var\(--md-panel-border\)/);
+    expect(gutter).toMatch(/user-select:\s*none/);
+    expect(
+      ruleBlock(css, ".md-preview-face .md-codeblock-body"),
+      "行号栏+代码区要在工具行下面",
+    ).toMatch(/display:\s*flex/);
+    const code = ruleBlock(css, ".md-preview-face .md-codeblock-widget code");
+    expect(code).toMatch(/padding:\s*6px 16px 10px/);
+    expect(code).toMatch(/font-size:\s*0\.85em/);
+    expect(code).toMatch(/line-height:\s*1\.55/);
+    expect(code).toMatch(/white-space:\s*pre/);
+    expect(ruleBlock(css, ".md-preview-face .md-codeblock-widget pre")).toMatch(/padding:\s*0/);
+    // 工具行常驻（语言按钮要一直可见）；复制键仍按悬停/编辑显现
+    const header = ruleBlock(css, ".md-preview-face .md-codeblock-header");
+    expect(header, "工具行不再绝对定位（否则会压在行号栏上）").not.toMatch(/position:\s*absolute/);
+    // B409：语言按钮在左、复制键在右
+    expect(header).toMatch(/justify-content:\s*space-between/);
+    expect(ruleBlock(css, ".md-preview-face .md-codeblock-copy")).toMatch(/opacity:\s*0/);
+    expect(css).toMatch(/\.md-codeblock-widget:hover \.md-codeblock-copy/);
+    const lang = ruleBlock(css, ".md-preview-face .md-codeblock-lang");
+    // B404：`.dropdown-trigger` 那份 150px/28px 的大表单尺寸必须被压回去
+    expect(lang).toMatch(/min-width:\s*0/);
+    expect(lang).toMatch(/width:\s*auto/);
+    // B405：按钮样式（与复制键同一档、无边框），自带 chevron 是唯一箭头；B409 高度收到 20px
+    expect(lang).toMatch(/height:\s*20px/);
+    expect(lang).toMatch(/background:\s*transparent/);
+    expect(ruleBlock(css, ".md-preview-face .md-codeblock-language-control")).toMatch(
+      /display:\s*flex/,
+    );
+    expect(ruleBlock(css, ".md-preview-face .md-codeblock-lang .dd-caret")).not.toMatch(
+      /display:\s*none/,
+    );
+  });
+
+  it("表格：单元格 8px/13px、表头 650、separate 描边（App.css:2299-2325）", () => {
+    expect(ruleBlock(css, ".md-preview-face .md-table-widget", "5px 0 7px")).toMatch(
+      /padding:\s*5px 0 7px/,
+    );
+    expect(ruleBlock(css, ".md-preview-face .md-table-widget table")).toMatch(
+      /border-collapse:\s*separate/,
+    );
+    const cell = ruleBlock(
+      css,
+      ".md-preview-face .md-table-widget th, .md-preview-face .md-table-widget td",
+    );
+    expect(cell).toMatch(/padding:\s*8px 13px/);
+    expect(cell).toMatch(/min-width:\s*3em/);
+    expect(cell).toMatch(/vertical-align:\s*top/);
+    expect(ruleBlock(css, ".md-preview-face .md-table-widget th", "font-weight: 650")).toMatch(
+      /font-weight:\s*650/,
+    );
+  });
+
+  it("B397-3b 表格：描边/圆角/底色回到 .md-table-body 那一层，根只剩纵向留白（App.css:2288-2298）", () => {
+    const root = ruleBlock(css, ".md-preview-face .md-table-widget", "5px 0 7px");
+    expect(root, "视觉盒子放内层：根元素带描边就等于把 B397-2 那层壳又拆了").not.toMatch(/border:/);
+    expect(root).not.toMatch(/background:/);
+    const body = ruleBlock(css, ".md-preview-face .md-table-body");
+    expect(body).toMatch(/border:\s*1px solid var\(--md-panel-border\)/);
+    expect(body).toMatch(/border-radius:\s*var\(--md-component-radius\)/);
+    expect(body).toMatch(/overflow-x:\s*auto/);
+  });
+
+  it("B397-3b 工具栏：槽常驻 18px 不顶表格、按钮 20×18、聚焦才现身（App.css:2383-2426）", () => {
+    const slot = ruleBlock(css, ".md-preview-face .md-table-toolbar-slot");
+    expect(slot).toMatch(/height:\s*18px/);
+    expect(slot).toMatch(/pointer-events:\s*none/);
+    const bar = ruleBlock(css, ".md-preview-face .md-table-toolbar", "display: flex");
+    expect(bar).toMatch(/opacity:\s*0/);
+    expect(bar).toMatch(/visibility:\s*hidden/);
+    expect(css).toMatch(/\.md-preview-face \.md-table-widget--focused \.md-table-toolbar/);
+    expect(css).toMatch(/\.md-preview-face \.md-table-widget:focus-within \.md-table-toolbar/);
+    const btn = ruleBlock(css, ".md-preview-face .md-table-toolbar-btn");
+    expect(btn).toMatch(/width:\s*20px/);
+    expect(btn).toMatch(/height:\s*18px/);
+    expect(btn).toMatch(/border-radius:\s*4px/);
+    expect(
+      ruleBlock(css, ".md-preview-face .md-table-toolbar-menu", "min-width: 140px"),
+      "菜单阴影走 LitePad 的 --shadow-lg，不抄 InkNote 的字面量黑",
+    ).toMatch(/box-shadow:\s*var\(--shadow-lg\)/);
+  });
+
+  it("B397-3b 打字那一格按真实换行排；框选那一档底色不许透出表头（App.css:2318 / 2356-2360）", () => {
+    expect(
+      ruleBlock(css, '.md-preview-face .md-table-widget [contenteditable="true"]:focus'),
+    ).toMatch(/white-space:\s*pre-wrap/);
+    const selected = ruleBlock(
+      css,
+      ".md-preview-face .md-table-widget th.md-table-cell-selected, .md-preview-face .md-table-widget td.md-table-cell-selected",
+    );
+    expect(selected).toMatch(/background:\s*color-mix\(/);
+    expect(selected).toMatch(/!important/);
+  });
+
+  it("B397-3b 只读那一把锁有 CSS 读数点：藏光标、收工具栏与语言下拉、留静态语言名（App.css:1142-1155）", () => {
+    expect(css).toMatch(
+      /\.md-preview-face--readonly \.cm-content\s*\{\s*caret-color:\s*transparent/,
+    );
+    // B399：可编辑性关掉之后 CM6 仍会在聚焦时画光标柱（与 editable 无关）⇒ 锁着的档
+    // 把整层 `.cm-cursorLayer` 藏掉；选择走另一层，不受影响。
+    expect(css).toMatch(/\.md-preview-face--readonly \.cm-cursorLayer\s*\{\s*display:\s*none/);
+    // B399：锁着的档点勾不翻 ⇒ 方框不再给可点的手势（B358 那条「只读仍可点」作废）。
+    expect(css).toMatch(
+      /\.md-preview-face--readonly \.cm-line\.md-task-item::before\s*\{\s*cursor:\s*default/,
+    );
+    expect(css).toMatch(
+      /\.md-preview-face--readonly \.md-table-toolbar,\s*\.md-preview-face--readonly \.md-codeblock-lang\s*\{\s*display:\s*none/,
+    );
+    expect(css).toMatch(
+      /\.md-preview-face--readonly \.md-codeblock-language-label\s*\{\s*display:\s*inline-block/,
+    );
+    // 同特异度靠先后定胜负：静态标签那条排在 `display: none` 之后才生效
+    expect(css.indexOf(".md-preview-face--readonly .md-codeblock-language-label")).toBeGreaterThan(
+      css.indexOf(".md-preview-face .md-codeblock-language-label"),
+    );
+  });
+
+  it("公式块级档 18px/14px 留白、图表卡片 20px 留白（App.css 数学段 / 图表段）", () => {
+    const math = ruleBlock(css, ".md-preview-face .md-math-widget.md-math-block");
+    expect(math).toMatch(/padding:\s*18px 14px/);
+    expect(math).toMatch(/overflow-x:\s*auto/);
+    expect(ruleBlock(css, ".md-preview-face .md-diagram-widget .md-diagram")).toMatch(
+      /padding:\s*20px/,
+    );
+  });
+
+  it("B397-4a 分割线：上下一律 8px 留白，线走 --md-strong-border 渐隐（App.css:1684-1697）", () => {
+    expect(ruleBlock(css, ".md-preview-face .md-hr-widget", "8px 0")).toMatch(/padding:\s*8px 0/);
+    const line = ruleBlock(css, ".md-preview-face .md-hr-line");
+    expect(line).toMatch(/height:\s*1px/);
+    expect(line).toMatch(/linear-gradient\(/);
+    expect(line).toMatch(/var\(--md-strong-border\)/);
+    expect(line).toMatch(/pointer-events:\s*none/);
+  });
+
+  it("B397-4a 块内源码区：平时 display:none，editing 那一颗类才显形（App.css:2495-2512）", () => {
+    const source = ruleBlock(css, ".md-preview-face .md-block-source", "display: none");
+    expect(source).toMatch(/display:\s*none/);
+    expect(source).toMatch(/font-family:\s*var\(--md-code-font\)/);
+    expect(source).toMatch(/padding:\s*8px 10px/);
+    expect(source, "InkNote 的 margin-bottom 不搬：块级 widget 禁纵向 margin").not.toMatch(
+      /margin-bottom/,
+    );
+    expect(ruleBlock(css, ".md-preview-face .md-block--editing .md-block-source")).toMatch(
+      /display:\s*block/,
+    );
+    // B454（用户「所有图表编辑时统一使用预览 + 源码同时显示的方式」）：编辑态只**加**出源码框，
+    // 渲染结果不许再整块收 —— 源码框浮在上面，卡片 / HTML 留在下面跟着活重画。原来这两条
+    // `display: none` 规则就是「点进去只见源码」的那一手，已删。
+    for (const sel of [
+      ".md-preview-face .md-block--editing > .md-metadata-preview",
+      ".md-preview-face .md-block--editing > .md-html-preview",
+    ]) {
+      expect(ruleBlock(css, sel), `${sel} 还在被编辑态收起`).toBe("");
+    }
+    for (const m of css.matchAll(/\.md-block--editing[^{]*\{[^}]*\}/g)) {
+      expect(m[0], "编辑态的任何一条规则都不许 display:none 掉渲染结果").not.toMatch(
+        /display:\s*none/,
+      );
+    }
+  });
+
+  it("B397-4a 链接定义卡片；B402 HTML 块改 VS Code 口径（不套卡片、借预览排版）", () => {
+    const meta = ruleBlock(css, ".md-preview-face .md-metadata-preview");
+    expect(meta).toMatch(/border-left:\s*3px solid var\(--md-accent\)/);
+    expect(meta).toMatch(/background:\s*var\(--md-quote-bg\)/);
+    // B449：小字压在「元信息那一行」上，不压整张卡片 —— 卡片还会带一段渲染出来的定义体，
+    // 字号写在容器上会把正文一起缩两档。
+    expect(meta, "字号不该写在容器上（正文要跟着编辑器字阶）").not.toMatch(/font-size/);
+    expect(ruleBlock(css, ".md-preview-face .md-metadata-title")).toMatch(/font-size:\s*0\.88em/);
+    const html = ruleBlock(css, ".md-preview-face .md-html-preview");
+    expect(html, "InkNote 的虚线卡片撤掉：VS Code 预览里原始 HTML 就是正文").not.toMatch(/dashed/);
+    expect(html).not.toMatch(/padding:/);
+    expect(html).toMatch(/min-height:\s*1\.55em/);
+    // 排版借派生预览那一套（miscWidgets 给容器挂 .md-rendered），根上只压回继承
+    expect(ruleBlock(css, ".md-preview-face .md-html-preview.md-rendered")).toMatch(
+      /font-size:\s*inherit/,
+    );
+    expect(ruleBlock(css, ".md-preview-face .md-metadata-footnote .md-metadata-title")).toMatch(
+      /font-size:\s*0\.82em/,
+    );
+    // 脚注正文那一截：与 HTML 块同一条坑 —— CM6 的 pre-wrap 会继承进 widget
+    expect(ruleBlock(css, ".md-preview-face .md-metadata-body")).toMatch(/white-space:\s*normal/);
+  });
+
+  it("B397-4a 脚注引用是编号上标，定义卡片字号再小一档（App.css:1356-1362 / 2515-2520）", () => {
+    const sup = ruleBlock(css, ".md-preview-face .cm-md-footnote");
+    expect(sup).toMatch(/vertical-align:\s*super/);
+    expect(sup).toMatch(/font-size:\s*0\.75em/);
+    expect(sup).toMatch(/color:\s*var\(--md-accent\)/);
+  });
+
+  it("B397-4c 图片：块级图 8px 留白 + 描边圆角，行内图跟文字走，路径提示 hover 才现身", () => {
+    const block = ruleBlock(css, ".md-preview-face .md-image-widget", "8px 0");
+    expect(block).toMatch(/padding:\s*8px 0/);
+    expect(block).toMatch(/text-align:\s*center/);
+    const img = ruleBlock(css, ".md-preview-face .md-image-widget img");
+    expect(img).toMatch(/max-width:\s*100%/);
+    expect(img).toMatch(/border:\s*1px solid var\(--md-panel-border\)/);
+    expect(ruleBlock(css, ".md-preview-face .md-image-inline")).toMatch(/display:\s*inline-block/);
+    expect(ruleBlock(css, ".md-preview-face .md-image-inline img")).toMatch(/max-height:\s*12em/);
+    const hint = ruleBlock(css, ".md-preview-face .md-image-path-hint", "opacity: 0");
+    expect(hint).toMatch(/opacity:\s*0/);
+    expect(hint).toMatch(/pointer-events:\s*none/);
+    expect(css).toMatch(
+      /\.md-preview-face \.md-image-widget:hover \.md-image-path-hint\s*\{\s*opacity:\s*1/,
+    );
+    expect(ruleBlock(css, ".md-preview-face .md-image-error")).toMatch(
+      /color:\s*var\(--md-muted\)/,
+    );
+  });
+
+  it("B406 图片编辑：frame 收缩到图、悬浮编辑键、只读档收起、错误提示进 frame", () => {
+    const frame = ruleBlock(css, ".md-preview-face .md-image-frame");
+    expect(frame).toMatch(/display:\s*inline-block/);
+    expect(frame).toMatch(/line-height:\s*0/);
+    const btn = ruleBlock(css, ".md-preview-face .md-image-edit-btn");
+    expect(btn).toMatch(/position:\s*absolute/);
+    expect(btn).toMatch(/opacity:\s*0/);
+    expect(btn).toMatch(/pointer-events:\s*none/);
+    // B410：编辑键必须在图片**里侧**右上角 —— 放到图右侧外面时，宽图撑满正文会让按钮
+    // 落进编辑器内距（widget 根盒之外）：指针从图上移过去的途中悬停丢失、按钮当场消失。
+    expect(btn).toMatch(/right:\s*\d+px/);
+    expect(btn, "按钮不许再放到图右外侧（悬停真空 ⇒ 点不到）").not.toMatch(/left:\s*calc\(100%/);
+    expect(btn).toMatch(/z-index:\s*1/);
+    expect(css).toMatch(
+      /\.md-preview-face \.md-image-widget:hover \.md-image-edit-btn,[\s\S]*?\.md-preview-face \.md-image-widget:focus-within \.md-image-edit-btn\s*\{\s*opacity:\s*1;\s*pointer-events:\s*auto/,
+    );
+    expect(ruleBlock(css, ".md-preview-face--readonly .md-image-edit-btn")).toMatch(
+      /display:\s*none/,
+    );
+    expect(ruleBlock(css, ".md-preview-face .md-image-frame .md-image-error")).toMatch(
+      /border:\s*1px dashed var\(--md-panel-border\)/,
+    );
+  });
+
+  it("B397-4a 三颗新块级根与正文左缘对齐（同一张禁纵向 margin 的名单）", () => {
+    const roots = ruleBlock(
+      css,
+      ".md-preview-face .md-hr-widget, .md-preview-face .md-metadata-widget, .md-preview-face .md-html-widget",
+    );
+    expect(roots).toMatch(/margin:\s*0 var\(--editor-padding-x\)/);
+    expect(roots).toMatch(/max-width:\s*calc\(100% - 2 \* var\(--editor-padding-x\)\)/);
+  });
+});
+
+describe("B397-2 守卫：镜像那一臂的宿主类不再回来", () => {
+  it("preview.css 里已无 .md-preview-face-host / .md-preview 容器（B397-1 拆掉第二颗 view 后没有宿主了）", () => {
+    expect(css).not.toMatch(/md-preview-face-host/);
+    // ⚠️ 不能写 `not.toMatch(/\.md-preview/)`：装饰面的根类就叫 `.md-preview-face`，
+    // 那条会把整个文件误伤 ⇒ 只认「后面不跟 -/字母」的那一个容器类。
+    expect(css).not.toMatch(/\.md-preview(?![\w-])/);
+  });
+
+  it("装饰规则一律以 `.md-preview-face` 为根（源码那一格与派生 DOM 那一臂都不受牵连）", () => {
+    // `@keyframes` 里没有选择器可言（帧名全局、套不进 `.md-preview-face`），先把整块摘掉，
+    // 剩下的才是「一条装饰规则该挂在谁的根下」这件事的判据。
+    const decos = css.replace(/@keyframes[^{]*\{(?:[^{}]|\{[^{}]*\})*\}/g, "");
+    const rules = decos.split("}").filter((block) => block.includes("{"));
+    const naked = rules
+      .map((block) => block.split("{")[0].trim())
+      .filter((selector) => selector && !/\.md-preview-face|:root\[data-theme/.test(selector));
+    expect(naked, `这些选择器没挂在 .md-preview-face 下：${naked.join(" | ")}`).toEqual([]);
+  });
+});

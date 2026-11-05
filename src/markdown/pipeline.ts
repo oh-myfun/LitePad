@@ -1,5 +1,6 @@
 import MarkdownIt from "markdown-it";
 import footnote from "markdown-it-footnote";
+import { diagramClass, diagramKindOf } from "./diagrams";
 import { sanitizeHtmlString } from "./sanitize";
 
 /**
@@ -87,6 +88,60 @@ function createMd(): MdInstance {
     return true;
   });
 
+  // ---------- 高亮：`==文字==` → `<mark>`（B440，与装饰面 markSyntax.ts 同一口径）----------
+  // markdown-it 只内置 `~~删除线~~`，`==` 得自己接。走它自己的分隔符机制（`scanDelims` 出
+  // can_open / can_close，ruler2 的 `balance_pairs` 负责配对），于是：
+  // · `1 == 2` 两侧都是空格 ⇒ 不算高亮；
+  // · `==**粗**==` 里的粗体仍能正常嵌进去（自己扫结尾会把它压成纯文本）；
+  // · 只认恰好两枚 —— 三枚以上（`===`）按 CommonMark 是 Setext 标题下划线，装饰面那条
+  //   lezer 规则也是这么挡的，两臂不许各有一套。
+  const MARK_EQ = 0x3d; /* '=' */
+  md.inline.ruler.before("strikethrough", "mark", (state, silent) => {
+    if (silent || state.src.charCodeAt(state.pos) !== MARK_EQ) return false;
+    const scanned = state.scanDelims(state.pos, true);
+    if (scanned.length !== 2) return false;
+    const token = state.push("text", "", 0);
+    token.content = "==";
+    state.delimiters.push({
+      marker: MARK_EQ,
+      length: 0,
+      token: state.tokens.length - 1,
+      end: -1,
+      open: scanned.can_open,
+      close: scanned.can_close,
+    });
+    state.pos += scanned.length;
+    return true;
+  });
+
+  md.inline.ruler2.before("strikethrough", "mark", (state) => {
+    // 配对完成后把成对的那两发 text token 换成 mark 开/闭标签（strikethrough_postProcess 同形）。
+    const convert = (delimiters: typeof state.delimiters) => {
+      for (let i = 0; i < delimiters.length; i++) {
+        const opener = delimiters[i];
+        if (opener.marker !== MARK_EQ || opener.end === -1) continue;
+        const closer = delimiters[opener.end];
+        const open = state.tokens[opener.token];
+        open.type = "mark_open";
+        open.tag = "mark";
+        open.nesting = 1;
+        open.markup = "==";
+        open.content = "";
+        const close = state.tokens[closer.token];
+        close.type = "mark_close";
+        close.tag = "mark";
+        close.nesting = -1;
+        close.markup = "==";
+        close.content = "";
+      }
+    };
+    convert(state.delimiters);
+    for (const meta of state.tokens_meta) {
+      if (meta?.delimiters) convert(meta.delimiters);
+    }
+    return true;
+  });
+
   // ---------- 数学占位：$...$ / $$...$$ → span（增强阶段用 KaTeX 替换）----------
   function mathPlaceholder(state: InlineState, silent: boolean): boolean {
     const src = state.src;
@@ -117,12 +172,14 @@ function createMd(): MdInstance {
   }
   md.inline.ruler.before("escape", "math", mathPlaceholder);
 
-  // ---------- Mermaid 围栏 → 占位 pre（增强阶段用 Mermaid 替换）----------
+  // ---------- 图种围栏 → 占位 pre（增强阶段按 `data-diagram` 分派给对应渲染器）----------
   md.renderer.rules.fence = (tokens, idx) => {
     const token = tokens[idx];
     const info = (token.info || "").trim().split(/\s+/)[0].toLowerCase();
-    if (info === "mermaid") {
-      return `<pre class="mermaid-src">${md.utils.escapeHtml(token.content)}</pre>`;
+    const kind = diagramKindOf(info);
+    if (kind) {
+      const cls = diagramClass(kind, "diagram-src", "mermaid-src");
+      return `<pre class="${cls}" data-diagram="${kind}">${md.utils.escapeHtml(token.content)}</pre>`;
     }
     const inner = `<code class="language-${md.utils.escapeHtml(info)}">${md.utils.escapeHtml(token.content)}</code>`;
     return `<pre class="md-code" data-lang="${md.utils.escapeHtml(info)}">${inner}</pre>`;
@@ -246,4 +303,15 @@ export function extractToc(src: string): TocEntry[] {
 export function renderFull(src: string): string {
   const html = md.render(src, {});
   return /<[A-Za-z!/?]/.test(src) ? sanitizeHtmlString(html) : html;
+}
+
+/**
+ * B449 · 编辑面卡片里的一小段 Markdown（脚注定义的多段正文）。
+ *
+ * 与 `renderFull` 同一台 markdown-it，差别只有一处：**一律消毒**。导出那路可以按
+ * 「源码里有没有尖括号」再决定要不要消毒，这段 HTML 要插进应用自己的 DOM（脚注卡片里），
+ * 没有第二个出口兜着。
+ */
+export function renderFragment(src: string): string {
+  return sanitizeHtmlString(md.render(src, {}));
 }

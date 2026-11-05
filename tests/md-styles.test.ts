@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { stripCssComments, stripLineComments } from "./static";
+import { stripCssComments } from "./static";
 
 const css = stripCssComments(readFileSync("src/styles/preview.css", "utf-8"));
 
@@ -43,8 +43,14 @@ describe("B352-1 排版规则从容器里剥出来（.md-rendered）", () => {
   });
 
   it("既有类名的规则一条都没被顺手删掉", () => {
-    for (const cls of ["md-block", "md-task", "md-mermaid", "md-preview-notice"]) {
+    for (const cls of ["md-block", "md-task", "md-mermaid"]) {
       expect(css, `.${cls} 的规则还在`).toContain(`.${cls}`);
+    }
+    // 公式只活在应用内的装饰面（`preview/preview.css`）—— 那张表也钉一条，别两边都丢
+    // B452：装饰面的图表卡片改名成通用 `md-diagram`（mermaid 的旧类名仍在 DOM 上，但样式只有一份）
+    const face = stripCssComments(readFileSync("src/preview/preview.css", "utf-8"));
+    for (const cls of ["md-block", "md-task", "md-diagram", "md-math-widget"]) {
+      expect(face, `.${cls} 的规则还在装饰面表里`).toContain(`.${cls}`);
     }
   });
 
@@ -63,11 +69,7 @@ describe("B352-1 排版规则从容器里剥出来（.md-rendered）", () => {
     expect(pointer, "可点的框 hand 光标；灰着的框不撒谎").toMatch(/cursor:\s*pointer/);
   });
 
-  it("三个渲染根节点都带上共用类", () => {
-    const preview = stripLineComments(readFileSync("src/markdown/preview.ts", "utf-8"));
-    expect(preview, "预览根节点 = 容器类 + 共用排版类").toMatch(
-      /className\s*=\s*"md-preview md-rendered"/,
-    );
+  it("剩下的两个渲染根节点都带上共用类（应用内那一面是编辑器，不吃这张表）", () => {
     const exporter = readFileSync("src/markdown/exporter.ts", "utf-8");
     expect(exporter, "打印导出的 article 也带共用排版类").toMatch(
       /className\s*=\s*"md-preview md-rendered"/,
@@ -76,6 +78,15 @@ describe("B352-1 排版规则从容器里剥出来（.md-rendered）", () => {
     expect(exporter, "导出 HTML 模板的 <article> 带共用排版类").toMatch(
       /class="md-preview md-rendered md-export-body"/,
     );
+    // B402：装饰面的 HTML 块借用同一份排版（它没有岛壳）
+    const misc = readFileSync("src/preview/miscWidgets.ts", "utf-8");
+    expect(misc, "HTML 块 widget 也带共用排版类").toMatch(
+      /className\s*=\s*"md-html-preview md-rendered"/,
+    );
+    expect(
+      readFileSync("src/markdown.ts", "utf-8"),
+      "B412：旧派生 DOM 预览臂已删除，应用内不再有第三个渲染根",
+    ).not.toContain("PreviewPane");
   });
 });
 
