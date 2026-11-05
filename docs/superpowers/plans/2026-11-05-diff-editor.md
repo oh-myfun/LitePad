@@ -21,6 +21,8 @@
 - 全量门禁：`npx vitest run --no-file-parallelism > .tmp/b461-test.log 2>&1`，读日志里的 `Test Files` / `Tests` 两行定性（**管道后的 exit code 不是被测程序的**）。
 - 其余门禁：`npm run lint > .tmp/b461-lint.log 2>&1`、`npm run format:check`、`npx tsc --noEmit`。Rust 侧：`(cd src-tauri && cargo test --release) > .tmp/b461-cargo.log 2>&1`（读 `test result:` 行）。
 - 差异内核的预算与延迟沿用 B458 那一批常数：`LCS_CELL_BUDGET = 250_000`、`ALIGN_PAIR_BUDGET = 20_000`、`DIFF_REFRESH_MS = 200`（现在在 `src/editor/gutterDiff.ts:51/135/235`，Task 2 把它们收进 `src/diff/align.ts` 一处定义）。
+- **差异格两栏一律不折行**（预审 R19 补进约束；设计稿与计划原文都没写这一格，而它是 ⑥「两侧行行对齐」成立的前提）：`word_wrap` 出厂默认是**开**的（`src-tauri/src/session/mod.rs` 与 `src/main.ts`），两栏宽度又各自不同 ⇒ 同一行长文的视觉行数天然不等。挂 surface 时把右栏那颗 wrap 关掉、detach 时还原，左栏从一开始就不装 `lineWrapping`。于是「一行 = 一个视觉行」严格成立，占位块高度用 `count * view.defaultLineHeight` 才是对的（不做按对侧实测行的复杂方案 —— 用户 B398 定过「参考 vscode，不要弄这么复杂」）。代价：差异格里长行要横向滚，这是明写的取舍，不是遗漏。
+- 底色与「当前行」高亮**不许打特异度战**：改动行底色走 `background-image`（叠在 `background-color` 上），不许靠压过 `.cm-activeLine` 的特异度来实现（预审 R21）。
 - 颜色**只吃主题无关的三颗**：`--diff-add #72c892`、`--diff-mod #e5ba7d`、`--diff-del #e5534b`（`src/styles/global.css:4612-4614`）。**不许**再借 `--warn` / `--danger`（B458 续轮已定死这三颗与明暗档无关），**不许**新增第四颗 diff 色。
 - **对外文案不许写「复刻 VS Code」**：设计稿 ⑤ 已定死「侧栏的块级差异列表」是 LitePad 自己的设计（VS Code 没有这一物），这一列与那一块只能叫「差异」；只有标题拼接、动作键分组这类**真照源码抄**的部分可以在代码注释里点名出处。
 - 主 UI 文本 12px；提示只有两档 —— 按钮用 `setTip(el, text, { detail })`（带尖尖）、文本行用 `setTextTip(el, text, { group })`（不带），取值全在 `src/shell/tooltip.ts`。

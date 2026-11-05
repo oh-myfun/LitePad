@@ -136,6 +136,12 @@ const faceBlocks = Facet.define<() => DiffBlock[], () => DiffBlock[]>({
  * 样式段里写 `em` 或写数字都会跟着字阶复利 —— 两栏的逐行对齐立刻分家（`src/preview/` 那些
  * 块 widget 栽过两次）。块级身份由装饰那颗 `block: true` 定（本版 CM6 的 `WidgetType`
  * 没有 `block` 口，装饰 spec 是唯一入口），并且不许带竖向 margin（同一条文档）。
+ *
+ * ⚠️ 「`count` 行 = `count × 行高`」这条等式成立的前提是**一个文档行 = 一个视觉行**，
+ * 也就是差异格两栏都不折行（R19，由 `surface.ts` 在挂旁路那一刻保证：右栏的折行被关掉、
+ * 左栏从一开始就不装）。折行一开，这几行在对侧折出来的视觉行比 `count` 多 ⇒ 占位块矮了，
+ * 两栏的行就错开；那一头要靠按对侧实测行高来对齐（VS Code 的做法），B398 已经裁掉：
+ * 「参考 vscode，不要弄这么复杂」。
  */
 export class DiffGapWidget extends WidgetType {
   constructor(readonly count: number) {

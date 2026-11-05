@@ -65,13 +65,21 @@ function clampShare(share: number): number {
  * 机制一律复用仓库现成的那一族（`previewLock`，`src/preview/wysiwyg.ts:39-49`），不自造锁。
  * 行号（`lineNumbers()`）给：两侧都要能按行号读位置。
  *
+ * `theme` 给的是**右栏那颗 state 里主题 Compartment 的现值**（预审 R22）：两栏必须叠在同一颗
+ * 基色上，18% 的改动色才在两半看着是同一个颜色，而左栏那一半原先**一颗主题都没装** ⇒ 画在页面
+ * 底色上。取现值而不是在这儿再配一份：明暗与主题族的权威只有编辑器那一处（硬写 CSS 底色同样
+ * 是第二处真相，dark / HC 族必然跟着错）。位置排在 `lineNumbers()` 之后 —— 与右栏
+ * （`makeTabState` 里 gutter 在前、主题在后）同一层叠顺序。
+ *
  * `face` 是这一臂装饰（`faceComp.of(diffFace("original", …))`，Task 3）：**CompartmentInstance
  * 必须出现在 state 的扩展清单里**，之后 `faceComp.reconfigure()` 才管得到它（CM6 的
  * `flatten` 只走 base 里出现过的 Compartment，没出现的那一发 reconfigure 是静默空转）。
  * `retarget` 走的是整态换 state，所以那一臂也只能靠这里带进去 —— 换进来的那颗 state
  * 若不含它，「交换左右」之后左栏就没有底色了。折叠不在这里（归 Task 7）。
+ *
+ * ⚠️ 这一栏**不装折行**（R19，见 `createDiffSurface` 里那一手）：折行从一开始就不进来。
  */
-function leftState(spec: DiffSpec, face: Extension): EditorState {
+function leftState(spec: DiffSpec, face: Extension, theme: Extension): EditorState {
   return EditorState.create({
     doc: spec.leftText(),
     extensions: [
@@ -80,6 +88,7 @@ function leftState(spec: DiffSpec, face: Extension): EditorState {
       EditorView.contentAttributes.of({ tabindex: "0" }),
       EditorState.transactionFilter.of((tr) => (tr.docChanged ? [] : tr)),
       lineNumbers(),
+      theme,
       face,
     ],
   });
@@ -146,6 +155,55 @@ export function createDiffSurface(
   /** 右栏那颗 view（`Panel.view` 的本身）：装上/摘掉这一臂都按它寻址，不跟着 `panel.view` 漂。 */
   const right = panel.view?.view ?? null;
   /**
+   * 这一格现在挂的那张标签（与 `wantedSpec` 同一寻址）：**两栏的折行与主题都从它身上取现值**。
+   * 这两件事的权威各自只有一处（`makeTabState` 的 `comps.wrap` / `comps.theme`，
+   * `src/editor/editor.ts:186-187`），差异面只是借用同一个出口读一遍 —— 不另配一份。
+   */
+  const comps = tabs.get(panel.viewTabId ?? panel.activeTabId)?.comps ?? null;
+  /**
+   * 左栏的主题 = 右栏那颗 state 里主题 Compartment 的**现值**（预审 R22）。
+   *
+   * 为什么必须在 state 里装主题而不能在 CSS 里给 `.diff-original` 硬写一颗底色：两半的 18%
+   * 改动色是**透明**的，叠在不同基色上就不是同一个颜色（左栏那一半原先直接画在页面底色上）；
+   * 而硬写一份 = 第二处「当前主题是什么」的真相，dark / HC 族必然跟着错。取现值同样意味着
+   * 「同一套」是**结构**上的同一套（`{ dark }` 那一参与主题族都由编辑器那一处定）。
+   *
+   * 读不到（没有右栏 / 那颗 Compartment 不在那份配置里）就交空扩展，与装主题之前一致，不抛错。
+   */
+  const themeOf = (): Extension => {
+    if (!right || !comps) return [];
+    return comps.theme.get(right.state) ?? [];
+  };
+  /**
+   * 折行（R19：差异格两栏一律不折行）。
+   *
+   * 为什么必须关：设计稿 ⑥ 的头条是**两侧行行对齐**。折行一开，一个文档行就不止一个视觉行，
+   * 而两栏宽度各自不同（还可拖）⇒ 同一行长文在两栏折出的行数天然不等，两栏的高度从第一条长行
+   * 起就分家 —— 跳块（Task 4）与肉眼比对同时错位。三条推论：
+   *   · **不给左栏镜像装上折行**（两栏宽度不同 ⇒ 「两边都折」永远不可能行行对齐）；
+   *   · **不做** VS Code 那套按对侧实测行高来对齐的机制（B398 用户定过「参考 vscode，
+   *     不要弄这么复杂」）；
+   *   · 关折行之后「一行 = 一个视觉行」严格成立 ⇒ `face.ts` 里 `count * view.defaultLineHeight`
+   *     那颗占位高度才是准的。
+   * 代价明写：差异格里长行要横向滚 —— 这是取舍，不是遗漏。
+   *
+   * 落点：那颗 wrap Compartment 在右栏的实例上，与设置项**同一个出口**（`applyWrapToTabs` 走的
+   * 就是它）⇒ attach 关掉、dispose 还回它**原来那个值**（出厂就关着的人，detach 之后仍是关着）。
+   */
+  let wrapComp: Compartment | null = null;
+  let wrapWas: Extension | undefined;
+  if (right && comps) {
+    // 读出 `undefined` = 这颗 Compartment 根本不在那份配置里（面板显示的不是这张标签的 state）
+    // ⇒ 这一手整段跳过：给配置里没有的 Compartment 发 reconfigure 等于凭空往 state 里装一颗。
+    const previous = comps.wrap.get(right.state);
+    if (previous !== undefined) {
+      wrapComp = comps.wrap;
+      wrapWas = previous;
+    }
+  }
+  const wrapOff = wrapComp ? [wrapComp.reconfigure([])] : [];
+  const wrapBack = wrapComp && wrapWas !== undefined ? [wrapComp.reconfigure(wrapWas)] : [];
+  /**
    * 「现在这批块是什么」的唯一一份答案（设计稿 ⑥ 的同源口径）。
    *
    * 两臂各问各的读取口，但 diff 只该算一遍 ⇒ 按两侧正文缓存：正文没变就交回同一摞块，
@@ -164,7 +222,7 @@ export function createDiffSurface(
   };
   const left = new EditorView({
     parent: originalEl,
-    state: leftState(current, leftFace.of(diffFace("original", blocksOf))),
+    state: leftState(current, leftFace.of(diffFace("original", blocksOf)), themeOf()),
   });
   const detachSash = attachSashDrag(originalEl, sashEl);
 
@@ -184,17 +242,21 @@ export function createDiffSurface(
   };
 
   if (right) {
+    // 一发事务里两件一起办：关掉这一栏的折行（R19）+ 装上右侧那一臂。
     right.dispatch({
-      effects: StateEffect.appendConfig.of(
-        rightFace.of([
-          diffFace("modified", blocksOf),
-          // 键入落点：`updateListener` 是 state facet，只能这样并进来（仓库同形先例
-          // `tests/preview-face-helpers.ts:71-76`：塞进 `state.update({extensions})` 会被静默丢掉）。
-          EditorView.updateListener.of((update) => {
-            if (update.docChanged) refreshOriginal();
-          }),
-        ]),
-      ),
+      effects: [
+        ...wrapOff,
+        StateEffect.appendConfig.of(
+          rightFace.of([
+            diffFace("modified", blocksOf),
+            // 键入落点：`updateListener` 是 state facet，只能这样并进来（仓库同形先例
+            // `tests/preview-face-helpers.ts:71-76`：塞进 `state.update({extensions})` 会被静默丢掉）。
+            EditorView.updateListener.of((update) => {
+              if (update.docChanged) refreshOriginal();
+            }),
+          ]),
+        ),
+      ],
     });
   }
 
@@ -209,7 +271,8 @@ export function createDiffSurface(
       // （「换输入」看着像没反应）。`setState` 是换 state 不是发事务，天然不受那道闸牵连。
       // 那一臂靠 `leftFace.of(...)` 随 state 一起进去（换 state 会把旧 config 整个换掉），
       // `create` 按新的 `blocksOf()` 现算 ⇒ 左栏不必再发 refreshDiff。
-      left.setState(leftState(current, leftFace.of(diffFace("original", blocksOf))));
+      // 主题同样重新读一遍现值（右栏那颗 state 才是权威：换输入时它可能已经换过档）。
+      left.setState(leftState(current, leftFace.of(diffFace("original", blocksOf)), themeOf()));
       // 右栏的块跟着换了（它吃的是同一份 `blocksOf`），但它自己没有 docChanged ⇒ 点名一次。
       right?.dispatch({ effects: refreshDiff.of(null) });
     },
@@ -218,8 +281,8 @@ export function createDiffSurface(
       // 右栏那颗 view **不随旁路销毁**（它是那份文档本身）⇒ 这一臂必须精准摘掉，
       // 否则底色与占位块会留在一张普通编辑器标签上。CompartmentInstance 已在 base 里，
       // `reconfigure([])` 就把它清空；那颗 view 已经 destroy 过的话这一发是空转（CM6 内部
-      // 的 `destroyed` 分支），不抛错。
-      right?.dispatch({ effects: rightFace.reconfigure([]) });
+      // 的 `destroyed` 分支），不抛错。折行跟着还回 attach 之前的那个值（R19）。
+      right?.dispatch({ effects: [rightFace.reconfigure([]), ...wrapBack] });
       detachSash();
       left.destroy();
       originalEl.remove();

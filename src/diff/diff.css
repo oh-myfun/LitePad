@@ -109,23 +109,41 @@
 /* 底色：三颗主题无关 token 的 18% 低透明度版（明暗同一套色 ⇒ HC 档靠既有 token 自己跟上）。
    顺带把「这一行的指示带用哪颗」挂成 `--diff-edge` ⇒ 下面那几条按栏定向的规则不必再认 kind。
    ⚠️ 它**不是第四颗色**：值恒等于那三颗之一（判据钉在 `tests/diff-face.test.ts`）。
-   ⚠️ 特异度刻意做到 0-4-0（`:is()` 取两支里最高的那颗）：当前行那层底色是
-   `.panel-host .cm-editor .cm-activeLine`（0-3-0，`global.css:4521`），压不过它的话
-   光标停在哪一行，那一行的改动色就整行消失 —— 而靠 import 先后压它太脆（上面
-   `.panel-host.is-diff.md-bar-docked` 那条注释讲的正是同一种脆）。 */
-.panel-host.is-diff :is(.diff-original, .panel-editor) .cm-line.diff-line-insert {
+   ⚠️ 底色走 `background-image`（`linear-gradient(c, c)` 是一颗纯色层），**不碰** `background`
+   / `background-color`（R21）：那两个属性是当前行的 —— `.panel-host .cm-editor .cm-activeLine`
+   （0-3-0，`global.css:4521`），而 2026 两档的当前行**只有底色一种**指示（`global.css:4493-4497`）。
+   在同一条声明里抢同一个属性，就只能靠加码特异度压它，压赢的代价是「光标停在哪一行、那一行的
+   当前行高亮整个消失」。`background-image` 天然叠在同一元素的 background-color 之上、文字之下，
+   两层同时在，零层叠战争（仓库同形先例：B425 的 `.panel-host .cm-editor .cm-line.cm-find-range`，
+   `global.css:2556`）。选择器因此停在 0-4-0 —— 与 B425 那颗同档；原先 `:is(.diff-original,
+   .panel-editor)` 那半档是为压当前行加的（那是 0-5-0，注释里写的 0-4-0 与实际不符），这一族
+   不再需要压谁：两栏由 `.is-diff` 那道闸管，不必再进选择器。
+   ⚠️ 同 0-4-0 的那颗 `.panel-host .cm-editor:has(.cm-selectionBackground) .cm-activeLine`
+   （`global.css:4530`）里 `background: transparent` 是**简写**，会把 `background-image` 一起重置掉
+   ⇒ 这一族的赢面靠 `diff.css` 排在 `global.css` **之后**（`src/main.ts` 的 import 顺序），
+   那是 load-bearing 的先后，判据钉在 `tests/diff-face.test.ts` 里，不只写在这里。 */
+.panel-host.is-diff .cm-line.diff-line-insert {
   --diff-edge: var(--diff-add);
-  background: color-mix(in srgb, var(--diff-add) 18%, transparent);
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--diff-add) 18%, transparent),
+    color-mix(in srgb, var(--diff-add) 18%, transparent)
+  );
 }
 
-.panel-host.is-diff :is(.diff-original, .panel-editor) .cm-line.diff-line-modify {
+.panel-host.is-diff .cm-line.diff-line-modify {
   --diff-edge: var(--diff-mod);
-  background: color-mix(in srgb, var(--diff-mod) 18%, transparent);
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--diff-mod) 18%, transparent),
+    color-mix(in srgb, var(--diff-mod) 18%, transparent)
+  );
 }
 
-.panel-host.is-diff :is(.diff-original, .panel-editor) .cm-line.diff-line-delete {
+.panel-host.is-diff .cm-line.diff-line-delete {
   --diff-edge: var(--diff-del);
-  background: color-mix(in srgb, var(--diff-del) 18%, transparent);
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--diff-del) 18%, transparent),
+    color-mix(in srgb, var(--diff-del) 18%, transparent)
+  );
 }
 
 /* 三条纪律，改这一段之前先读完（R15：两栏量度不同 ⇒ 逐行对齐全歪）：

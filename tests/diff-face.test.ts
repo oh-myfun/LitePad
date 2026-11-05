@@ -144,6 +144,20 @@ const rowOrder = (view: EditorView): string[] =>
   [...view.contentDOM.children].map((el) => (el.classList.contains("diff-gap") ? "gap" : "line"));
 
 /**
+ * 这一颗 state 到底装没装折行（R19 的判据）。
+ *
+ * 判的是 **state facet**，不是 `view.lineWrapping` 那颗 getter —— 后者读的是量出来的
+ * `white-space`（`heightOracle`），jsdom 没有布局引擎 ⇒ 恒为「没折行」，绿与不绿都不说明问题。
+ * `EditorView.lineWrapping` 的实际落点是 contentAttributes 上那颗类名（CM6 自己也是这么猜的），
+ * 于是「扩展在不在 state 里」这件事在 jsdom 里是**看得到**的 —— 看得到的恰恰是要钉的那件事：
+ * 一个文档行是否只对应一个视觉行。像素级的两栏等高仍归 Task 11 真机台。
+ */
+const wrapsLines = (state: EditorState): boolean =>
+  state
+    .facet(EditorView.contentAttributes)
+    .some((attr) => typeof attr !== "function" && attr.class === "cm-lineWrapping");
+
+/**
  * 单独装一臂的最小现场（不经 surface）：`blocks` 给数组或读取口都行。
  *
  * 默认正文按 `del` 那一对喂（简报 Step 3 的 `mountFace("modified", del)` 就是这个形状）；
@@ -271,12 +285,16 @@ describe("B461 · surface 给两颗 view 各装一臂（预审 R1）", () => {
    * 复刻 `src/tabs/lifecycle.ts` 的 `mountView` 那几步（同 `tests/diff-surface.test.ts`）：
    * 建 `.panel-host` → 建 `.panel-editor` → 挂右栏那颗 view → 交给**生产的** `createDiffSurface`。
    * 两臂的装法本身是生产代码，这里没有第二份实现。
+   *
+   * `env` 只两颗键：**折行缺省开**（与出厂 `word_wrap: true` 同形 —— 关掉才是异常路径）、
+   * 明暗缺省浅（主题那条要能拿 dark 档当判别位）。
    */
-  function mountHost(): {
+  function mountHost(env: { dark?: boolean; wrap?: boolean } = {}): {
     panel: Panel;
     right: EditorView;
     left: EditorView;
     surface: DiffSurface;
+    tab: Tab;
   } {
     const hostEl = document.createElement("div");
     hostEl.className = "panel-host";
@@ -287,7 +305,11 @@ describe("B461 · surface 给两颗 view 各装一臂（预审 R1）", () => {
     const { state, comps } = makeTabState(
       "A\nZ",
       null,
-      { dark: false, wrap: true, perf: perfProfileFor("normal") },
+      {
+        dark: env.dark ?? false,
+        wrap: env.wrap ?? true,
+        perf: perfProfileFor("normal"),
+      },
       () => {},
     );
     const tab: Tab = {
@@ -319,7 +341,7 @@ describe("B461 · surface 给两颗 view 各装一臂（预审 R1）", () => {
       if (panel.diffSurface === surface) surface.dispose();
     });
     live.push(() => view.view.destroy());
-    return { panel, right: view.view, left: surface.left, surface };
+    return { panel, right: view.view, left: surface.left, surface, tab };
   }
 
   it("B461 · 起手两侧就都有交代：左栏真行涂色、右栏补出同高的空位", () => {
@@ -363,6 +385,49 @@ describe("B461 · surface 给两颗 view 各装一臂（预审 R1）", () => {
     expect(panel.view, "右栏那颗 view 本身不受牵连").not.toBeNull();
     expect(right.state.doc.toString()).toBe("A\nZ");
   });
+
+  it("B461 · 差异格两栏一律不折行（R19）：attach 关掉右栏、左栏从一开始就不装、detach 原样还", () => {
+    // 设计稿 ⑥ 的头条约束（两侧行行对齐）靠这一条才成立：折行一开，一个文档行就不止一个
+    // 视觉行，而两栏**宽度各自不同** ⇒ 同一行长文的视觉行数天然不等（「两边都折」也救不回来），
+    // 两栏的高度从第一条长行起就分家 —— 跳块与肉眼比对同时错位。
+    // ⚠️ 「同一行在两栏的视觉 y 是否真的一致」是**像素**判据，jsdom 没有布局引擎 ⇒ 归 Task 11
+    // 真机台。这里钉的是「扩展在不在 state 里」—— 它恰恰是那条像素等式的前提。
+    const { right, left, surface, tab } = mountHost();
+    expect(wrapsLines(tab.state), "前置：出厂 `word_wrap: true` ⇒ 右栏快照确实装了折行").toBe(true);
+    expect(wrapsLines(right.state), "挂上旁路那一刻，右栏的折行被关掉").toBe(false);
+    expect(wrapsLines(left.state), "左栏从一开始就不装折行").toBe(false);
+    surface.dispose();
+    expect(wrapsLines(right.state), "拆掉旁路把折行还回去（那颗 view 是文档本身）").toBe(true);
+  });
+
+  it("B461 · 还原的是「它原来那个值」，不是无条件打开（出厂就关着的用户）", () => {
+    const { right, surface, tab } = mountHost({ wrap: false });
+    expect(wrapsLines(tab.state), "前置：这位用户本来就关着折行").toBe(false);
+    expect(wrapsLines(right.state)).toBe(false);
+    surface.dispose();
+    expect(wrapsLines(right.state), "detach 之后仍然是关着 —— 旁路不许替用户改设置").toBe(false);
+  });
+
+  it("B461 · 左栏吃的是与右栏**同一套**主题扩展（R22：不在差异面另配一份，也不在 CSS 硬写底色）", () => {
+    // 判据落在 facet 上：`EditorView.darkTheme` 只有 `EditorView.theme(spec, { dark })` 那一颗
+    // 会给它 `true`。左栏原先**一颗主题都没装** ⇒ 这里读到 false（红），而「装错了档」（dark/light
+    // 取反、或另配一份与右栏不同族的）同样读到不等。
+    const { right, left } = mountHost({ dark: true });
+    expect(right.state.facet(EditorView.darkTheme), "前置：右栏这套确实是 dark 档").toBe(true);
+    expect(
+      left.state.facet(EditorView.darkTheme),
+      "左栏装的是同一套（`{ dark }` 那一参跟着走）",
+    ).toBe(true);
+  });
+
+  it("B461 · 主题取自编辑器那颗出口，差异面里不另配一份（第二处真相闸）", () => {
+    // 「同一套」只能靠**同一个出口**成立：取右栏那颗 state 里 theme Compartment 的现值。
+    // 在这里再调一次主题构造器 = 第二份「当前主题是什么」（明暗与族都得重读一遍设置），
+    // 设置页改主题后左栏必然落后 ⇒ 那颗构造器的标识符都不许出现在这个文件里。
+    const code = stripLineComments(srcOf("src/diff/surface.ts"));
+    expect(code, "从左栏那颗 view 的 theme Compartment 现值取").toMatch(/comps\.theme\.get\(/);
+    expect(code, "编辑器那套主题构造器不许被差异面第二次调用").not.toMatch(/themeBuilder/);
+  });
 });
 
 describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
@@ -398,6 +463,60 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
     expect(new Set(aliases.map((m) => m[1]))).toEqual(new Set(["add", "mod", "del"]));
     const loose = [...s.matchAll(/--diff-edge\s*:\s*([^;]+);/g)];
     for (const m of loose) expect(m[1].trim()).toMatch(/^var\(--diff-(add|mod|del)\)$/);
+  });
+
+  it("B461 · 底色不打特异度战：走 background-image 叠层，与当前行底色共存（R21）", () => {
+    const code = css();
+    const kindToToken: Record<string, string> = {
+      insert: "--diff-add",
+      modify: "--diff-mod",
+      delete: "--diff-del",
+    };
+    for (const [kind, token] of Object.entries(kindToToken)) {
+      // 选择器 = `.panel-host.is-diff .cm-line.diff-line-X`（0-4-0，与 global.css 里 B425 那颗
+      // `.panel-host .cm-editor .cm-line.cm-find-range` 同形 —— 仓库给「整行叠一层透明色」定的就是这一档）。
+      const block = ruleBlock(code, `.panel-host.is-diff .cm-line.diff-line-${kind}`);
+      expect(block, `底色规则得真在（判不到东西的 not.toMatch 是假绿）`).not.toBe("");
+      expect(block).toMatch(/background-image:\s*linear-gradient\(/);
+      expect(block).toContain(`color-mix(in srgb, var(${token}) 18%, transparent)`);
+      // 关键的一条：这一族**不碰** `background` / `background-color`。那两个属性是
+      // `.cm-activeLine` 的（0-3-0，global.css:4521）—— 同一条声明里抢同一个属性，就只能靠
+      // 加码特异度压它，压赢的代价是光标停在哪一行、那一行的当前行高亮整个消失（2026 两档
+      // 的当前行**只有底色**一种指示，见 global.css:4493-4497）。叠在 background-image 上
+      // 两层同时在，零层叠战争。
+      expect(block, "不许再声明 background 简写/长写：那才是与当前行抢同一个属性").not.toMatch(
+        /(^|[\s;{])background(-color)?\s*:/,
+      );
+    }
+    // `:is(.diff-original, .panel-editor)` 那半档加码（0-5-0）已撤：两栏由 `.is-diff` 那道闸管，
+    // 不必再进选择器 —— 它是「压过 .cm-activeLine」留下的遗产，而这一族不再需要压谁。
+    expect(section(), "不许留着为压当前行而加的 :is()").not.toContain(":is(");
+    // 同特异度（与 global.css:4530 那颗 :has(.cm-selectionBackground) 的 0-4-0）时靠**文件先后**
+    // 定输赢：那条 `background: transparent` 的简写会把 background-image 一起重置掉。
+    // 先后是 load-bearing 的，所以钉在判据里，而不是留在注释里。
+    const main = srcOf("src/main.ts");
+    expect(
+      main.indexOf("styles/global.css"),
+      "前置：global.css 确实在 import 链里",
+    ).toBeGreaterThan(-1);
+    expect(
+      main.indexOf("styles/global.css"),
+      "diff.css 必须排在 global.css **之后**（否则当前行有选区时底色会被那条简写抹掉）",
+    ).toBeLessThan(main.indexOf("diff/diff.css"));
+  });
+
+  it("B461 · 左栏那半的底色归主题：CSS 里不硬写第二处真相（R22）", () => {
+    const code = css();
+    // 原先左栏什么都没有 ⇒ 那一半画在页面底色上，18% 的改动色两栏叠的根本不是同一颗基色。
+    // 修法是把主题扩展装进左栏那颗 state（surface.ts），**不是**在这里补 `background` —— 硬写
+    // 一份就等于埋下第二处「当前主题是什么」的真相，dark/HC 族必然跟着错。
+    for (const sel of [".diff-original", ".diff-original .cm-editor"]) {
+      const block = ruleBlock(code, sel);
+      expect(block, `规则得真在（${sel}）`).not.toBe("");
+      expect(block, "左栏那一族的底色/字色由主题扩展给，样式段不许硬写").not.toMatch(
+        /(^|[\s;{])(background|color)(-color)?\s*:/,
+      );
+    }
   });
 
   it("B461 · 占位块走 135deg 斜纹，且不吃 em、不添竖向留白（R15）", () => {
