@@ -146,8 +146,6 @@ export interface Settings {
    * 热退出只写 LitePad 自己的备份区（原文件一个字节都不动）。
    */
   hot_exit: boolean;
-  /** Markdown 预览行距（1.0–2.5） */
-  preview_line_height: number;
   /**
    * B235：预览**正文内容区**的宽度档位（`standard` / `wide` / `full`，默认 `full`）。
    *
@@ -187,16 +185,19 @@ export interface Settings {
    */
   sidebar_off: boolean;
   /**
-   * B314：资源管理器当前打开的**文件夹根路径**（空串 = 没有）。
+   * B424：资源管理器打开的**文件夹根路径列表**（顺序 = 左栏从上到下；空表 = 没开文件夹）。
    *
    * 归设置不归会话，理由与 `toc_open` 同一套（见 `session/mod.rs` 那一段）：它是**窗口级
    * 外观状态**，不属于某份文档。反过来放会话里会变成「打开一份新文件，根目录跟着那份
-   * 文档的会话走」，而用户期望的是「我上次在看哪个文件夹」。
+   * 文档的会话走」，而用户期望的是「我上次在看哪些文件夹」。
    * ⚠️ 只存根路径，**不存展开态**：一棵树的展开态是「这一轮浏览的临时足迹」，
    * 存下来只会让下次启动先画半屏、再去盘上把每一层要开的目录挨个读一遍。
-   * 旧配置缺这格 ⇒ Rust 侧 `#[serde(default)]` 给空串（读不出来就当没开文件夹）。
+   * ⚠️ 老配置的单根 `folder_root` 不在这里：迁移只在 Rust `load()` 里做一次（`migrated()`），
+   * 前端拿到的**永远**是这张表 —— 两处各认一次老字段，迟早一边迁完一边没迁。这一格 `#[serde(default)]` ⇒ 旧配置缺它时读到空表，
+   * 再被老字段填上。移除全部目录后落盘的是 `[]`，而 Rust 那个老字段 `skip_serializing_if`
+   * 是空串 ⇒ 谁也不会把删掉的根复活回来。
    */
-  folder_root: string;
+  folder_roots: string[];
   /**
    * 快捷键覆盖表：命令 id → 键位串（如 `file.save: "Ctrl+S"`）。
    * 空串表示显式解绑；缺项表示用 COMMANDS 里的默认键位。
@@ -218,14 +219,25 @@ export interface Settings {
    */
   tab_action_reserve_space: boolean;
   /**
-   * B391 spike：Markdown 预览格改用 **CM6 装饰面**（InkNote 式 Live Preview 那套
-   * `buildPreviewSets` + widget）替代现方案的派生 DOM（`pipeline` → `PreviewPane`）。
-   * 默认 `false` = 现方案，行为与加这颗键之前逐字一致。
-   *
-   * 可空而不是必填，与 `theme_family` 同一套理由：旧配置与测试里的 Settings 替身
-   * 都不必跟着长这格，缺它即「关」。
+   * B426（用户「搜索的排除设置和忽略文件要能在设置窗口中进行设置」）：**应用级**排除模式，
+   * 逗号或换行分隔的 glob。照 VS Code `search.exclude` 的定位 —— 它与搜索面板「⋯」里那框
+   * **叠加**（那边是这一次搜索的临时追加，VS Code 自己也只把它存进视图状态、不写设置）。
    */
-  deco_preview?: boolean;
+  search_exclude: string;
+  /**
+   * B426：「忽略文件」= 递归读 `.gitignore` / `.ignore`（VS Code `search.useIgnoreFiles`，默认开）。
+   * ⚠️ `null` = **老配置里没这一格** ⇒ 消费方按「开」处理（口径同 B392：没记过 ≠ 关着）。
+   */
+  search_use_ignore_files: boolean | null;
+  /**
+   * B452-5：PlantUML 在线服务器 —— ```plantuml 的图交给这台服务器画（本机不装 Java）。
+   * 空串 = 用内置默认那台（`src/markdown/diagrams.ts` 的 `PLANTUML_SERVER_DEFAULT`）。
+   *
+   * ⚠️ 收成普通 `string`、默认空串，不用 `Option`（B392 那一族）：「没记过」与「用户清空
+   * 这一格」要落到的地方是同一个（默认服务器），两档合一档才是这里对的行为 —— 给它单开
+   * 一档只会多出一个说不清差别的设置状态。
+   */
+  plantuml_server: string;
 }
 
 /**
@@ -262,9 +274,9 @@ export function listRecents(): Promise<RecentEntry[]> {
  * 「用户打开了一份文件 / 一个文件夹」⇒ 记一笔（Rust 侧 LRU 顶到最前，上限**每类各一份**）。
  *
  * ⚠️ 只由**打开这个动作**调用：文件走 `src/io/files.ts` 的 `doOpen`，文件夹走
- * `src/explorer/panel.ts` 的 `openFolder`。会话恢复会让路径出现在屏上，却没人打开它
- * （用户裁决「恢复不算打开」），而恢复走 `session/rebuild` 直接调 `open_file`、启动回放根
- * 走 `store.setRoot` —— 都不经这两扇，所以这里不需要「启动那一会儿别记」的时间窗或旗标。
+ * `src/explorer/panel.ts` 的 `addFolder`。会话恢复会让路径出现在屏上，却没人打开它
+ * （用户裁决「恢复不算打开」），而恢复走 `session/rebuild` 直接调 `open_file`、启动回放那几根
+ * 走 `store.setRoots` —— 都不经这两扇，所以这里不需要「启动那一会儿别记」的时间窗或旗标。
  *
  * 回包是**变更后的完整名单**（`forgetRecent` / `clearRecents` 同），视图直接拿它重画，
  * 不必再 `listRecents` 一次 —— 少一次往返就少一次读到中间态的机会。
@@ -369,19 +381,85 @@ export function renameEntry(root: string, path: string, newName: string): Promis
   return invoke<FsEntry>("rename_entry", { root, path, newName });
 }
 
-/** 复制一份到 `destDir`（目录整棵跟着走；撞名自动加后缀 `x (2).ext`）。 */
-export function copyEntry(root: string, src: string, destDir: string): Promise<FsEntry> {
-  return invoke<FsEntry>("copy_entry", { root, src, destDir });
+/**
+ * 复制一份到 `destDir`（目录整棵跟着走；撞名自动加后缀 `x (2).ext`）。
+ *
+ * `root` 是**源**归属的那一根，`destRoot` 是**目标层**归属的那一根 —— 多根（B424）下
+ * 这俩可以不同，跨根粘贴正是用户要的那一形（B427）。两道闸各管各的地盘，谁都没放宽。
+ */
+export function copyEntry(
+  root: string,
+  src: string,
+  destDir: string,
+  destRoot: string,
+): Promise<FsEntry> {
+  return invoke<FsEntry>("copy_entry", { root, src, destDir, destRoot });
 }
 
-/** 挪走到 `destDir`（同层是空操作 → 报错；跨卷时 Rust 退化成「复制整份成功后再删原件」）。 */
-export function moveEntry(root: string, src: string, destDir: string): Promise<FsEntry> {
-  return invoke<FsEntry>("move_entry", { root, src, destDir });
+/** 挪走到 `destDir`（同层是空操作 → 报错；跨卷时 Rust 退化成「复制整份成功后再删原件」）。锚点口径同 `copyEntry`。 */
+export function moveEntry(
+  root: string,
+  src: string,
+  destDir: string,
+  destRoot: string,
+): Promise<FsEntry> {
+  return invoke<FsEntry>("move_entry", { root, src, destDir, destRoot });
 }
 
 /** 送进**系统回收站**（可反悔；本应用没有「永久删除」这个入口）。 */
 export function deleteEntry(root: string, path: string): Promise<void> {
   return invoke<void>("delete_entry", { root, path });
+}
+
+/**
+ * 资源管理器过滤框的一条名字命中（Rust `commands/search.rs` 的 `NameHit`）。
+ * `rel` 是**相对根、posix 分隔**的路径 —— 前端靠它同步造出祖先链（不为每一层再发 `list_dir`）。
+ */
+export interface NameHit {
+  name: string;
+  path: string;
+  rel: string;
+  isDir: boolean;
+}
+
+export interface NameScan {
+  hits: NameHit[];
+  /** 撞了「最多回 1000 条」或整棵扫描预算 ⇒ true（前端如实提示，不假装搜全了） */
+  truncated: boolean;
+}
+
+export interface NameFilterArgs {
+  caseSensitive: boolean;
+  wholeWord: boolean;
+  regex: boolean;
+  /**
+   * 设置页「搜索 → 要排除的文件」那串 glob。**总闸在面板那侧**：只有「排除」开着时
+   * 才把它交出来（口径同 `search/store.ts` 的 `mergeGlobs(useExcludes ? … : "")`）。
+   */
+  exclude: string;
+  /** 「排除」那颗键：点文件 / 噪声目录 / 忽略清单一起管（与侧栏搜索的总闸同义） */
+  useExcludes: boolean;
+  /** 「忽略」那颗键：只关 `.gitignore` / `.ignore` 这一层（有效判据 `useExcludes && useIgnoreFiles`） */
+  useIgnoreFiles: boolean;
+}
+
+/**
+ * 资源管理器顶部过滤框（B427）：在**一根**根目录下按名字整棵找（含没展开过的层）。
+ *
+ * 与 `searchInFolder` 的区别只在匹配对象：那边读文件内容，这边只认名字、**不读盘上的字节**，
+ * 所以大仓库也快。排除 / 忽略两层与搜索共用同一套 Rust 实现，两个键的含义逐字一致。
+ */
+export function filterTree(root: string, query: string, a: NameFilterArgs): Promise<NameScan> {
+  return invoke<NameScan>("filter_tree", {
+    root,
+    query,
+    caseSensitive: a.caseSensitive,
+    wholeWord: a.wholeWord,
+    regex: a.regex,
+    exclude: a.exclude,
+    useExcludes: a.useExcludes,
+    useIgnoreFiles: a.useIgnoreFiles,
+  });
 }
 
 /**
@@ -902,6 +980,10 @@ export interface SearchArgs {
   include?: string;
   /** 逗号分隔的 glob（"要排除的文件"）；空串 / 省略 = 不排 */
   exclude?: string;
+  /** B421：「使用排除设置与忽略文件」那颗键；省略 = 开（老调用点行为不变） */
+  useExcludes?: boolean;
+  /** B426：设置里那颗「跟随 .gitignore / .ignore」；省略 = 开（老调用点行为不变） */
+  useIgnoreFiles?: boolean;
   maxResults?: number;
 }
 
@@ -915,6 +997,8 @@ export function searchInFolder(a: SearchArgs): Promise<SearchReport> {
     regex: a.regex ?? false,
     include: a.include ? a.include : null,
     exclude: a.exclude ? a.exclude : null,
+    useExcludes: a.useExcludes ?? true,
+    useIgnoreFiles: a.useIgnoreFiles ?? true,
     maxResults: a.maxResults ?? null,
   });
 }
@@ -927,6 +1011,12 @@ export interface ReplaceItem {
   caseSensitive: boolean;
   wholeWord: boolean;
   regex: boolean;
+  /** B417：替换串按命中原文迁移大小写（Rust 侧 `preserve_case`） */
+  preserveCase?: boolean;
+  /** B419：只替换这一处（1 起算的字符行列，同 `SearchMatch.line/column`）；
+   *  两个都不给 = 整份文件全换。只给一个按「全换」处理。 */
+  line?: number;
+  column?: number;
 }
 
 /** 替换的回包：一个文件失败不连坐别的，逐条进 `errors`。 */

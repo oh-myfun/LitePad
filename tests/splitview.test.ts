@@ -24,6 +24,7 @@ import {
   type SplitviewCallbacks,
 } from "../src/shell/splitview";
 import { zoneOf } from "../src/dnd/geometry";
+import { closePopupMenu } from "../src/shell/menu";
 import { eachLeaf, leaf, type LayoutNode } from "../src/core/layout";
 import { CODICONS } from "../src/shell/codicons";
 import { renderTabstrip } from "../src/shell/tabstrip";
@@ -60,7 +61,6 @@ function mount(tree: LayoutNode, overrides: Partial<SplitviewCallbacks> = {}): M
     onActivatePanel: () => {},
     onActivateTab: () => {},
     onCloseTab: () => {},
-    onClosePanel: () => {},
     onRatioChange,
     onDropTabToPanel: onDrop,
     mountView: () => {},
@@ -1217,10 +1217,12 @@ describe("分屏 / 分隔条静态契约（从 regressions 拆出）", () => {
 });
 
 describe("分屏：面板操作栏与分隔条（B54）", () => {
-  it("面板操作栏只剩「移除分屏」，分屏按钮已去掉（分屏仍走拖拽与菜单）", () => {
+  it("面板操作栏只剩组菜单「…」，分屏按钮已去掉（分屏仍走拖拽与菜单）", () => {
     const sv = readFileSync("src/shell/splitview.ts", "utf-8");
     expect(sv, "不得再用 ⨯ 文本字形").not.toContain('textContent = "⨯"');
-    expect(sv, "必须保留移除分屏按钮").toContain("CODICONS.close");
+    // B422（用户）：那颗 × 换成了 VS Code 组标题的「…」，关组进菜单里叫「解散组」。
+    expect(sv, "必须保留组菜单那颗「…」").toContain("CODICONS.ellipsis");
+    expect(sv, "操作区不得再挂关分屏的 ×").not.toContain("CODICONS.close,");
     expect(sv, "不得再有左右分屏按钮").not.toContain("splitH");
     expect(sv, "不得再有上下分屏按钮").not.toContain("splitV");
     expect(sv, "面板渲染不得再调 onSplitPanel").not.toContain("onSplitPanel");
@@ -1301,7 +1303,6 @@ describe("B224：标签区右侧的 Markdown 操作键", () => {
       onActivatePanel: () => {},
       onActivateTab: () => {},
       onCloseTab: () => {},
-      onClosePanel: () => {},
       onRatioChange: () => {},
       onDropTabToPanel: () => {},
       mountView: () => {},
@@ -1326,7 +1327,7 @@ describe("B224：标签区右侧的 Markdown 操作键", () => {
     expect(CODICONS.editCode).toMatch(/codicon-edit-code/);
   });
 
-  it("md 活动面板：两颗键都在，且排在「移除分屏」之前", () => {
+  it("md 活动面板：两颗键都在，且排在组菜单「…」之前", () => {
     const { root } = mountMd({ ...base, md: true });
     const btns = [...opsOf(root, 1).querySelectorAll("button")];
     const labels = btns.map((b) => b.getAttribute("aria-label"));
@@ -1337,7 +1338,9 @@ describe("B224：标签区右侧的 Markdown 操作键", () => {
     expect(btns.some((b) => b.querySelector(".codicon-preview"))).toBe(true);
     const idxOpen = labels.indexOf("打开侧边预览（在右侧分屏中打开预览）");
     const idxToggle = labels.indexOf("切换到预览（Ctrl+/）");
-    const idxClose = labels.findIndex((l) => l?.startsWith("移除该分屏"));
+    // B422：最右那颗从「移除该分屏」× 换成了组菜单「…」（关组进菜单里叫「解散组」）
+    const idxClose = labels.findIndex((l) => l === "更多操作");
+    expect(idxClose, "组菜单键要在").toBeGreaterThan(-1);
     expect(idxOpen, "md 键要贴着标签区").toBeLessThan(idxClose);
     expect(idxToggle).toBeLessThan(idxClose);
   });
@@ -1369,6 +1372,74 @@ describe("B224：标签区右侧的 Markdown 操作键", () => {
     const open = btns.find((b) => b.getAttribute("aria-label")?.startsWith("打开侧边预览"))!;
     open.click();
     expect(cb.onOpenPreviewToSide).toHaveBeenCalledWith(1);
+  });
+
+  it("B422：最右那颗换成组菜单「…」（× 进了菜单），点开就是送进来的条目", () => {
+    const onCloseAll = vi.fn();
+    const { root } = mountMd({
+      ...base,
+      groupMenu: [
+        { label: "全部关闭", onSelect: onCloseAll },
+        { separator: true },
+        { label: "解散组", disabled: true, onSelect: () => {} },
+      ],
+    });
+    const btns = [...opsOf(root, 1).querySelectorAll("button")];
+    const more = btns.at(-1)!;
+    expect(more.getAttribute("aria-label"), "键的的名字要说清是「更多操作」").toBe("更多操作");
+    expect(
+      more.querySelector(".codicon-ellipsis"),
+      "字形 = VS Code 的 More Actions",
+    ).not.toBeNull();
+    expect(more.getAttribute("aria-haspopup")).toBe("menu");
+    expect(
+      btns.some((b) => b.querySelector(".codicon-close")),
+      "关分屏那条已经进菜单了，操作区不许再挂一颗 ×",
+    ).toBe(false);
+
+    more.click();
+    const menu = document.querySelector(".popup-menu");
+    expect(menu, "点一下要弹出菜单").toBeTruthy();
+    const items = [...menu!.querySelectorAll("button")];
+    expect(items.map((b) => b.textContent?.trim())).toContain("全部关闭");
+    const dismiss = items.find((b) => b.textContent?.trim() === "解散组")!;
+    expect(dismiss.disabled, "唯一面板那条要跟着置灰（旧 × 的 disabled 同口径）").toBe(true);
+    items.find((b) => b.textContent?.trim() === "全部关闭")!.click();
+    expect(onCloseAll, "菜单项点得动、且只点一次算一次").toHaveBeenCalledTimes(1);
+    closePopupMenu();
+  });
+
+  it("B422：再点一次收起（点锚点自己不算「点外面」）", () => {
+    const { root } = mountMd({ ...base, groupMenu: [{ label: "全部关闭", onSelect: () => {} }] });
+    const more = [...opsOf(root, 1).querySelectorAll("button")].at(-1)!;
+    more.click();
+    expect(document.querySelector(".popup-menu"), "先得有菜单").toBeTruthy();
+    more.click();
+    expect(document.querySelector(".popup-menu"), "再点一次要收起").toBeNull();
+  });
+
+  it("B422：没给条目就不弹（空菜单是个会闪一下的空白框）", () => {
+    const { root } = mountMd(base);
+    const more = [...opsOf(root, 1).querySelectorAll("button")].at(-1)!;
+    more.click();
+    expect(document.querySelector(".popup-menu")).toBeNull();
+  });
+
+  it("B422：groupMenu 给函数 ⇒ 每点一次重算一次（渲染时的快照会过期）", () => {
+    // 真机抓到的一形：操作区只在结构变化时重建，菜单条目若按渲染时算死，改脏一张标签后
+    // 点「关闭已保存」就会把**刚改脏的那张**也关进三选一弹窗。
+    let n = 0;
+    const build = vi.fn(() => [{ label: `第 ${++n} 次`, onSelect: () => {} }]);
+    const { root } = mountMd({ ...base, groupMenu: build });
+    const more = [...opsOf(root, 1).querySelectorAll("button")].at(-1)!;
+
+    more.click();
+    expect(document.querySelector(".popup-menu")!.textContent).toContain("第 1 次");
+    closePopupMenu();
+    more.click();
+    expect(document.querySelector(".popup-menu")!.textContent).toContain("第 2 次");
+    expect(build, "条目必须在点击那一刻求值").toHaveBeenCalledTimes(2);
+    closePopupMenu();
   });
 
   it("refreshPanelOps 局部重建：显隐 / 字形都能翻面，且不重建标签条", () => {

@@ -252,15 +252,17 @@ export const COMMANDS: CommandDef[] = [
     label: "打开文件夹",
     group: "文件",
     keys: [],
-    note: "打开后左栏资源管理器会摊开；再次选择会换根",
+    note: "打开后左栏资源管理器会摊开；再次选择是**追加**一根（B424，已有那条不重复加）",
   },
   {
     // B331：与「打开文件夹」配成一对。同样默认不抢键位。
+    // B424：文案换成「移除全部目录」，命令 id 留着 `file.closeFolder` —— 用户自己配过的
+    // 键位挂在 id 上，改文案不该把键位弄丢（改 id 才会）。
     id: "file.closeFolder",
-    label: "关闭文件夹",
+    label: "移除全部目录",
     group: "文件",
     keys: [],
-    note: "清掉资源管理器的根并记住下次启动不再回放；已打开的标签不受影响",
+    note: "清掉资源管理器那几根并记住下次启动不再回放；已打开的标签不受影响",
   },
   { id: "file.save", label: "保存", group: "文件", keys: ["Ctrl+S"] },
   { id: "file.saveAs", label: "另存为", group: "文件", keys: ["Ctrl+Shift+S"] },

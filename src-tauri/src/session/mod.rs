@@ -49,8 +49,6 @@ pub struct Settings {
     /// 确认框，下次启动还原成未保存标签（对应 VS Code `files.hotExit`）。
     /// B68 起默认 **true**，对齐 VS Code 桌面版的 `onExit`。
     pub hot_exit: bool,
-    /// Markdown 预览行距（1.0–2.5，默认 1.7）
-    pub preview_line_height: f64,
     /// B235：预览**正文内容区**的宽度档位（`standard` / `wide` / `full`，默认 `full`）。
     ///
     /// ⚠️ 这是**正文居中宽度**（原先硬编码在 `preview.css` 的 `max-width: 860px`），
@@ -76,12 +74,42 @@ pub struct Settings {
     /// `toc_open` 管「卡片里的展开区开没开」—— 整栏收起时展开区的开合值照旧留着，
     /// 重新露出时回到用户上次的样子。
     pub sidebar_off: bool,
-    /// B314：资源管理器的**文件夹根路径**（空串 = 没开）。
+    /// B314 → B424：**旧的单根字段**，只为把老配置读上来而留，前端不再认识它
+    /// （`src/ipc/api.ts` 的 `Settings` 里已删）。
+    ///
+    /// 权威从这一格换到 `folder_roots`。`load` 里做一次迁移（老配置单根 ⇒ 多根的第一项）。
+    /// ⚠️ 前端不再带这一格 ⇒ 任何一次落盘都会把它抹掉（容器级 `#[serde(default)]` 给空串，
+    /// 加上 `skip_serializing_if` 就写不出文件）。这正是要的效果：否则「用户把目录全移除了」
+    /// 之后，下一次启动那格老值又把目录复活（B392 / B304 那一族：空表与缺格是两件事）。
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub folder_root: String,
+    /// B424（用户「资源管理器支持打开多个目录」）：**全部**文件夹根，顺序 = 侧栏从上到下
+    /// （空表 = 没开文件夹）。
     ///
     /// 与 `toc_open` / `drawer_view` 同一层：窗口级外观状态归设置，不归某份文档的会话。
     /// 只存根、不存展开态 —— 展开态是这一轮浏览的临时足迹，存下来下次启动要先画半屏
-    /// 再挨个读每层目录，得不偿失。旧配置缺这格 ⇒ 容器级 `#[serde(default)]` 给空串。
-    pub folder_root: String,
+    /// 再挨个读每层目录，得不偿失。旧配置缺这格 ⇒ 容器级 `#[serde(default)]` 给空表。
+    #[serde(default)]
+    pub folder_roots: Vec<String>,
+    /// B426（用户「搜索的排除设置和忽略文件要能在设置窗口中进行设置」）：**应用级**排除模式，
+    /// 逗号 / 换行分隔的 glob。定位照 VS Code 的 `search.exclude`：它与搜索面板「⋯」里那框
+    /// **叠加**（那框是这一次搜索的临时追加，VS Code 也只把它存进视图状态、不写设置）。
+    /// 后端不解释内容，只存取 —— 合法性与合并都在前端 `search/store.ts` 的 `mergeGlobs`。
+    #[serde(default)]
+    pub search_exclude: String,
+    /// B426：「忽略文件」= 递归读 `.gitignore` / `.ignore`（VS Code `search.useIgnoreFiles`）。
+    /// ⚠️ `Option<bool>`：`None` = **老配置里没这一格** ⇒ 消费方按「开」处理。
+    /// 直接收成 `bool` 会把缺键读成 false，等于给用户悄悄把忽略清单停了（B392 那一族）。
+    #[serde(default)]
+    pub search_use_ignore_files: Option<bool>,
+    /// B452-5（用户拍板：PlantUML 走在线服务器，vditor 同款）：那台服务器的地址。
+    ///
+    /// 空串 = 用前端内置默认（`src/markdown/diagrams.ts` 的 `PLANTUML_SERVER_DEFAULT`）。
+    /// 后端不校验 URL 合法性（照 `search_exclude` 的口径：内容语义归前端），也不给它单开
+    /// `Option` 一档 —— 这里「没记过」与「用户清空」要落到同一个地方（默认那台），
+    /// 与 B392 那一族（缺键读成 false 会**改变行为**）不是同一件事。
+    #[serde(default)]
+    pub plantuml_server: String,
     /// 快捷键覆盖表：命令 id → 键位串（空串 = 显式解绑）。
     /// 后端不解释内容，只负责存取；合法性由前端 keymap 模块过滤。
     pub keymap: HashMap<String, String>,
@@ -100,13 +128,6 @@ pub struct Settings {
     /// **空串 = 走内置默认**（发布版 info、debug 构建 debug），旧配置文件没有这个
     /// 字段时反序列化为空串，行为与加字段之前一致。
     pub log_level: String,
-    /// B391 spike：Markdown 预览格改用 CM6 装饰面（InkNote 式 Live Preview）。
-    /// **默认 false = 现方案**（`pipeline` → `PreviewPane` 派生 DOM）。
-    ///
-    /// 归设置不归会话：它是「这个窗口怎么显示预览」的口径，不属于某份文档 ——
-    /// 与 `word_wrap` / `preview_line_height` 同一层。旧配置缺这格 ⇒ 容器级
-    /// `#[serde(default)]` 给 `false`，行为与加字段之前逐字一致。
-    pub deco_preview: bool,
 }
 
 impl Default for Settings {
@@ -129,7 +150,6 @@ impl Default for Settings {
             // 自动保存会写脏用户的文件，热退出只写自己的备份区。
             autosave: false,
             hot_exit: true,
-            preview_line_height: 1.7,
             // B235：默认「全宽」—— 用户明确要的是不限宽，正文铺满预览区。
             preview_width: "full".into(),
             toc_width: 240.0,
@@ -137,12 +157,18 @@ impl Default for Settings {
             drawer_view: "toc".into(),
             sidebar_off: false,
             folder_root: String::new(),
+            folder_roots: Vec::new(),
+            // B426：默认「不额外排除、跟随忽略文件」。`None` 是「没记过」，前端按开处理 ——
+            // 写 `Some(true)` 会让落盘文件凭空多一格且与缺键等价（两套口径，B304 那一族）。
+            search_exclude: String::new(),
+            search_use_ignore_files: None,
+            // B452-5：空串 = 用前端内置那台默认服务器（与「没记过」同一档，见字段注释）。
+            plantuml_server: String::new(),
             keymap: HashMap::new(),
             keymap_preset: "default".into(),
             tab_style: "connected".into(),
             tab_action_reserve_space: true,
             log_level: String::new(),
-            deco_preview: false,
         }
     }
 }
@@ -188,6 +214,17 @@ pub fn settings_path() -> Option<PathBuf> {
     config_dir().map(|d| d.join("settings.json"))
 }
 
+/// B424：老配置的**单根**读上来时迁成多根的第一项。
+///
+/// 只在读的时候做一次：`folder_roots` 已经有内容（哪怕是空表落不下去的那种「用户全移除了」
+/// —— 那种情况老字段也已经没了）就不动它，迁移不许覆盖用户后来的选择。
+fn migrated(mut s: Settings) -> Settings {
+    if s.folder_roots.is_empty() && !s.folder_root.is_empty() {
+        s.folder_roots = vec![std::mem::take(&mut s.folder_root)];
+    }
+    s
+}
+
 /// 读取配置；任何异常都静默回落默认值，绝不让配置损坏导致启动失败。
 ///
 /// ⚠️ 「静默」只针对调用方：这里仍然记一条 warn（B144）。之前是连日志都没有的 ——
@@ -196,7 +233,7 @@ pub fn load() -> Settings {
     if let Some(path) = settings_path() {
         match fs::read_to_string(&path) {
             Ok(content) => match serde_json::from_str::<Settings>(&content) {
-                Ok(settings) => return settings,
+                Ok(settings) => return migrated(settings),
                 Err(e) => logging::log(
                     Level::Warn,
                     "settings",
@@ -719,30 +756,6 @@ mod tests {
         assert!(Settings::default().tab_action_reserve_space);
     }
 
-    /// B391 spike：Settings 新增 `deco_preview`。两头都要过 ——
-    /// ① 老配置缺这格必须回落 **false**（现方案），否则 `load()` 整体失败、
-    ///    用户全部偏好一起丢；② 写 `true` 必须原样读回来，否则这颗开关
-    ///    在设置里翻开、下次启动静默关回去（真机台也没法把它打开）。
-    #[test]
-    fn settings_deco_preview_defaults_off_and_round_trips() {
-        let missing: Settings =
-            serde_json::from_str(r#"{ "theme": "dark" }"#).expect("缺 deco_preview 也应能读入");
-        assert!(
-            !missing.deco_preview,
-            "缺失应回落 false（spike 开关默认关着）"
-        );
-        assert!(!Settings::default().deco_preview);
-
-        let on: Settings = serde_json::from_str(r#"{ "deco_preview": true }"#).expect("应能读入");
-        assert!(on.deco_preview, "显式 true 必须原样读回");
-        assert!(
-            serde_json::to_string(&on)
-                .unwrap()
-                .contains("\"deco_preview\":true"),
-            "落盘字段应为 snake_case deco_preview"
-        );
-    }
-
     /// B312：老配置缺 `drawer_view` 必须回落 `"toc"`（容器级 `#[serde(default)]`），
     /// 否则 load() 整体失败、用户全部偏好一起丢。
     #[test]
@@ -752,6 +765,48 @@ mod tests {
         let s: Settings = serde_json::from_str(json).expect("缺 drawer_view 也应能读入");
         assert_eq!(s.drawer_view, "toc", "缺失应回落大纲");
         assert_eq!(Settings::default().drawer_view, "toc");
+    }
+
+    /// B426（用户「搜索的排除设置和忽略文件要能在设置窗口中进行设置」）：
+    /// 新增的两格都必须**缺得起** —— 老配置缺键不能整体读不上来。
+    /// ⚠️ `search_use_ignore_files` 用 `Option<bool>`：缺键 = 没记过 ⇒ 消费方按「开」处理，
+    ///    读成 `false` 就是把用户的忽略清单静默停掉（B392 同一课的第二次）。
+    #[test]
+    fn settings_search_exclude_and_ignore_files_default() {
+        let json = r#"{ "theme": "dark" }"#;
+        let s: Settings = serde_json::from_str(json).expect("缺 search_* 两格也应能读入");
+        assert_eq!(s.search_exclude, "");
+        assert_eq!(s.search_use_ignore_files, None, "没记过 ≠ 关着");
+        assert_eq!(Settings::default().search_use_ignore_files, None);
+
+        let typed = Settings {
+            search_exclude: "dist/**, *.tmp".into(),
+            search_use_ignore_files: Some(false),
+            ..Settings::default()
+        };
+        let text = serde_json::to_string(&typed).expect("存得出去");
+        let back: Settings = serde_json::from_str(&text).expect("读得上来");
+        assert_eq!(back.search_exclude, "dist/**, *.tmp");
+        assert_eq!(back.search_use_ignore_files, Some(false));
+    }
+
+    /// B452-5：PlantUML 服务器地址。老配置缺这一格必须读得上来且落回「空串 = 用内置默认那台」；
+    /// 用户填的那串原样存回去（后端不解释 URL）。
+    #[test]
+    fn settings_plantuml_server_default_and_round_trip() {
+        let s: Settings =
+            serde_json::from_str(r#"{ "theme": "dark" }"#).expect("缺 plantuml_server 也应能读入");
+        assert_eq!(s.plantuml_server, "", "缺格 = 空串 ⇒ 前端用默认服务器");
+        assert_eq!(Settings::default().plantuml_server, "");
+
+        let typed = Settings {
+            plantuml_server: "https://my.server/plantuml".into(),
+            ..Settings::default()
+        };
+        let back: Settings =
+            serde_json::from_str(&serde_json::to_string(&typed).expect("存得出去"))
+                .expect("读得上来");
+        assert_eq!(back.plantuml_server, "https://my.server/plantuml");
     }
 
     /// B312：落盘字段名必须是 drawer_view（前端 Settings 按同名读写）。
@@ -769,23 +824,61 @@ mod tests {
         );
     }
 
-    /// B314：资源管理器的根路径。老配置缺这格必须回落**空串**（= 没开文件夹），
-    /// 否则 load() 整体失败、用户全部偏好一起丢（口径同 drawer_view）。
+    /// B314 → B424：资源管理器的根。四件事都要钉住：
+    ///  ① 老配置缺 `folder_roots` ⇒ 空表（不许整体读失败，否则用户全部偏好一起丢）；
+    ///  ② 只有老单根那一格 ⇒ `migrated` 把它挪成第一项，并且**清掉老字段**（两格说同一件
+    ///     事就是「该信哪一格」的开始）；
+    ///  ③ 两格都有 ⇒ 迁移不许覆盖用户后来的选择；
+    ///  ④ 「把目录全移除了」落的是空表 ⇒ 读回来还是空表，老值不许把它复活（B392 那一族：
+    ///     空表与缺格是两件事，但这里两格都得是空才算真没开）。
     #[test]
-    fn settings_folder_root_round_trip_and_falls_back_to_empty() {
-        let s: Settings =
-            serde_json::from_str(r#"{ "theme": "dark" }"#).expect("缺 folder_root 也应能读入");
-        assert_eq!(s.folder_root, "", "缺失应回落空串（没有根 = 树是空的）");
-        assert_eq!(Settings::default().folder_root, "");
+    fn settings_folder_roots_round_trip_and_migrates_legacy_single_root() {
+        let bare: Settings =
+            serde_json::from_str(r#"{ "theme": "dark" }"#).expect("缺 folder_roots 也应能读入");
+        assert!(bare.folder_roots.is_empty(), "缺失应回落空表（没开文件夹）");
+        assert!(Settings::default().folder_roots.is_empty());
 
-        let with = Settings {
+        let legacy = migrated(Settings {
             folder_root: r"C:\笔记".into(),
             ..Settings::default()
-        };
-        let out = serde_json::to_string(&with).unwrap();
+        });
+        assert_eq!(
+            legacy.folder_roots,
+            vec![r"C:\笔记".to_string()],
+            "老单根要迁成第一项"
+        );
+        assert_eq!(legacy.folder_root, "", "迁完必须清掉老字段");
+
+        let both = migrated(Settings {
+            folder_root: r"C:\旧".into(),
+            folder_roots: vec![r"C:\甲".into(), r"C:\乙".into()],
+            ..Settings::default()
+        });
+        assert_eq!(
+            both.folder_roots,
+            vec![r"C:\甲".to_string(), r"C:\乙".to_string()],
+            "已经有列表了就不该再问老字段"
+        );
+
+        let cleared = serde_json::to_string(&Settings::default()).unwrap();
         assert!(
-            out.contains("\"folder_root\":\"C:\\\\笔记\""),
-            "落盘字段应为 snake_case folder_root：{out}"
+            !cleared.contains("\"folder_root\":"),
+            "空串的老字段不该再落盘（注意别拿 folder_roots 也含这段子串当证据）：{cleared}"
+        );
+        let back: Settings = serde_json::from_str(&cleared).unwrap();
+        assert!(
+            migrated(back).folder_roots.is_empty(),
+            "移除全部目录不许被老值复活"
+        );
+
+        let one = serde_json::to_string(&Settings {
+            folder_roots: vec![r"C:\甲".into()],
+            ..Settings::default()
+        })
+        .unwrap();
+        assert!(
+            one.contains("\"folder_roots\":[\"C:\\\\甲\"]"),
+            "落盘字段应为 snake_case folder_roots：{one}"
         );
     }
 

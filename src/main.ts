@@ -37,7 +37,6 @@ import {
   applyEditorLineHeight,
   applyFontFamily,
   applyFontSize,
-  applyPreviewLineHeight,
   applyPreviewWidth,
   applyTabActionReserve,
   applyTabStyle,
@@ -93,24 +92,26 @@ import {
   setScheduleSessionSave,
 } from "./tabs";
 import {
-  scheduleMdRender,
   toggleViewMode,
-  toggleDecoEdit,
+  togglePreviewEdit,
   refreshViewModeButton,
-  refreshDecoAssetBases,
+  refreshPreviewAssetBases,
+  refreshGutterDiffBaselines,
   applyPanelMode,
   openPreviewToSide,
   toggleTaskInTab,
+  refreshHistoryTools,
 } from "./markdown";
 // B397-1：所见即所得档交回宿主的动作（点勾 / 许不许写 / 本地链接开标签）在这里注入。
-import { setDecoHooks } from "./spike/deco/hooks";
-import { openFindBar } from "./find/findbar";
+import { setPreviewHooks } from "./preview/hooks";
+import { openFindBar, refreshFindOnSelectionChange } from "./find/findbar";
 import {
   setupSideBar,
   applySidebarVisible,
   toggleToc,
   updateTocDrawer,
   refreshTocAtCursor,
+  scheduleTocRefresh,
 } from "./toc";
 import { replayDrawer, setupSideResizer } from "./shell/drawer";
 import {
@@ -226,9 +227,8 @@ import {
 import { EVT_APP_QUIT, EVT_DOC_OPEN_RESYNC, EVT_WINDOW_CLOSED } from "./core/events";
 // B305：最近打开（store = 与 Rust 之间的那份缓存，panel = 左栏那块展开区）。
 import { setupRecentsPanel } from "./recents/panel";
-// B314：资源管理器。`setupExplorer` 装键并登记成外壳的第三块；`setRoot` 只把盘上那个根
-// 搬进 store（**不走 panel 的 `openFolder`** —— 那条会顺手 saveSettings，而启动回放不该
-// 把读到的值再写一遍，口径同 B312 的 `persist = false`）。
+// B314：资源管理器。`setupExplorer` 装键并登记成外壳的第三块；启动回放那几根的搬法见
+// 下面 `setExplorerRoots` 那一处（为什么不走 panel 那几扇，那边写着）。
 import {
   claimExplorerDrop,
   clearExplorerDropHover,
@@ -242,7 +242,7 @@ import { setupPathRewiring } from "./explorer/paths";
 // B389：侧栏搜索视图（第四块展开区）。`setupSearch` 装输入区、结果树，并把自己登记进外壳；
 // `openSearchView` 是「在文件中查找 / 替换」那两条命令的落点。
 import { openSearchView, setupSearch } from "./search/panel";
-import { setRoot as setExplorerRoot } from "./explorer/store";
+import { setRoots as setExplorerRoots } from "./explorer/store";
 import { initRecentsStore } from "./recents/store";
 import type { WindowScrollPosition } from "./core/events";
 import { activePanel, activeTab, instancesOfDoc } from "./core/panels";
@@ -274,7 +274,8 @@ import {
   setUpdateTocDrawer,
   setRenderPanelTabs,
   setRenderPanelOps,
-  setRefreshDecoAssetBases,
+  setRefreshPreviewAssetBases,
+  setRefreshGutterDiff,
 } from "./ui";
 
 /** 编辑事务（来自任意面板的 view）：快照写回 + 脏标记 + 同源实例同步。 */
@@ -296,18 +297,20 @@ function handleUpdate(view: EditorView, update: ViewUpdate): void {
   // 只在活动面板上报，且真跨过章节才会重绘（闸在 toc.ts 的 refreshTocAtCursor）。
   if (update.selectionSet && panel.panelId === activePanelId) {
     refreshTocAtCursor(caretLine.number);
+    // B419：查找栏开着且「在选区中查找」时，用户换选区 = 换了搜索范围，结果跟着刷新
+    // （我们自己的步进 / 替换也会改选区，那条路在 findbar.ts 里被 dispatchOwn 的闸按住）。
+    refreshFindOnSelectionChange();
   }
   // 同步滚动不由这里推：位置联动只认 `scroll` 事件 + 期望账本（sync-scroll/coordinator），
   // 跨窗口那一份由协调器的外发口在「判成用户滚动」那一帧末尾发（B297）。
   // 文本是否真的变了：点击内容区、移动光标、切换视图、重新测量都会产生
   // update 但前后文本完全一致——那不是编辑。
-  // 关键：md 预览重渲染**只**在文本真变化时才排程。若按「任意 update」排程，
-  // 大纲跳转的 dispatch（仅改选区）也会在 120ms 后全量重渲染预览 →
-  // replaceChildren 把 scrollTop 清零，跳转落点被冲掉（B23「跳转位置不准」）。
+  // 关键：大纲重取**只**在文本真变化时才排程。若按「任意 update」排程，
+  // 大纲跳转的 dispatch（仅改选区）也会在 120ms 后重绘列表。
   const before = update.startState.doc.toString();
   const now = update.state.doc.toString();
   const textChanged = update.docChanged && before !== now;
-  if (textChanged && isMdTab(tab)) scheduleMdRender(panel.panelId);
+  if (textChanged && isMdTab(tab) && panel.panelId === activePanelId) scheduleTocRefresh();
   if (update.docChanged && syncingDocId !== tab.docId) {
     // 只有**文本内容真的变了**才算用户修改。
     // 切换 源码/预览（编辑器被隐藏再显示）、点击内容区、重新测量等场景，
@@ -336,6 +339,9 @@ function handleUpdate(view: EditorView, update: ViewUpdate): void {
     // 变更要广播过去，否则两个窗口各编各的、最后谁保存谁赢。
     if (textChanged) broadcastDocChange(tab.docId, update.changes, update.startState.doc.length);
   }
+  // B447：工具条那三颗跟着「这一发事务」亮灭 —— 打第一个字撤销才亮、撤到底恢复才亮、
+  // 内容回到基线保存才灰。另一发刷点在 markdown.syncPreviewEditFab（切档 / 切标签那一刻）。
+  if (update.docChanged) refreshHistoryTools(view, doc.dirty, panel.bodyEl);
   if (!suppressDirty) {
     scheduleSessionSave();
   }
@@ -351,7 +357,9 @@ setRefreshViewModeButton(refreshViewModeButton);
 setUpdateTocDrawer(updateTocDrawer);
 setRenderPanelTabs(renderPanelTabs);
 setRenderPanelOps(renderPanelOps);
-setRefreshDecoAssetBases(refreshDecoAssetBases);
+setRefreshPreviewAssetBases(refreshPreviewAssetBases);
+// B458：行号右侧那列 diff 标注的基线校对（保存 / 改名会把 `doc.baseline` 整体换掉）。
+setRefreshGutterDiff(refreshGutterDiffBaselines);
 // 把 markdown / session 的动作注入 tabs（打破 tabs↔markdown / tabs↔session 循环依赖）
 setApplyPanelMode(applyPanelMode);
 setOpenPreviewToSide(openPreviewToSide);
@@ -374,7 +382,7 @@ function panelViewTab(view: EditorView): Tab | undefined {
 
 // B397-1 · 所见即所得档交回宿主的两个动作。装饰扩展活在**标签的 state** 里（一颗 view
 // 轮流承载多份实例），所以只能晚绑定，不能在构造期闭包面板引用。
-setDecoHooks({
+setPreviewHooks({
   // 按**文档行号**调（行起=行止、岛内序号 0）：现方案那套「渲染面里第 N 个 `.md-task`」
   // 的换算在 B394-2 上把勾写到了别的行，而行号没有中间量，也就没有换算可错。
   onToggleTask: (view, line) => {
@@ -598,7 +606,7 @@ function runShortcut(id: string): void {
       toggleViewMode();
       break;
     case "view.toggleEdit":
-      toggleDecoEdit();
+      togglePreviewEdit();
       break;
     case "view.outline":
       toggleToc();
@@ -696,17 +704,35 @@ function showFatalError(err: unknown): void {
     /* ignore */
   }
   try {
+    // B453-2：与 index.html 里那段内联脚本**同一张卡** —— 右下角、带关闭键。原来那条
+    // `left:0;top:0;right:0` 的红带横贯顶边，把标题栏、菜单和标签带全压住了。
+    // 两处各自建卡（内联那段要在打包产物加载之前就能报错），取值必须一致，见
+    // tests/boot-error-overlay.test.ts 的⑥。
     let box = document.getElementById("boot-error-overlay");
     if (!box) {
       box = document.createElement("div");
       box.id = "boot-error-overlay";
       box.style.cssText =
-        "position:fixed;left:0;top:0;right:0;z-index:2147483647;max-height:60vh;overflow:auto;" +
-        "padding:12px 16px;background:#1a0000;color:#ffb3b3;border-bottom:2px solid #ff4d4d;" +
-        "font:13px/1.5 Consolas,Menlo,monospace;white-space:pre-wrap;";
+        "position:fixed;right:12px;bottom:12px;z-index:2147483647;" +
+        "max-width:min(520px,60vw);max-height:45vh;overflow:auto;" +
+        "padding:10px 30px 10px 12px;background:#1a0000;color:#ffb3b3;" +
+        "border:1px solid #ff4d4d;border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.45);" +
+        "font:12px/1.5 Consolas,Menlo,monospace;white-space:pre-wrap;";
+      const text = document.createElement("div");
+      text.className = "boot-error-text";
+      const close = document.createElement("button");
+      close.type = "button";
+      close.textContent = "×";
+      close.setAttribute("aria-label", "关闭提示（错误仍会写进日志）");
+      close.style.cssText =
+        "position:absolute;right:6px;top:4px;width:20px;height:20px;padding:0;border:0;" +
+        "background:transparent;color:#ffb3b3;font:16px/20px Consolas,Menlo,monospace;cursor:pointer;";
+      close.onclick = () => box?.remove();
+      box.append(text, close);
       document.body.appendChild(box);
     }
-    box.textContent += "⚠ LitePad 启动出错：\n" + msg + "\n\n";
+    const target = box.querySelector<HTMLElement>(".boot-error-text") ?? box;
+    target.textContent += "⚠ LitePad 启动出错：\n" + msg + "\n\n";
   } catch {
     /* ignore */
   }
@@ -763,8 +789,6 @@ async function initSatelliteWindow(me: WindowPayload | null): Promise<void> {
     activeTabId: -1,
     view: null,
     viewTabId: null,
-    preview: null,
-    previewTimer: null,
     bodyEl: null,
   });
   setActivePanelId(0);
@@ -1007,7 +1031,6 @@ async function setupShell(): Promise<void> {
   // B347：界面字体（只有外壳）。与另两栏一样必须在首绘前落地 —— 它动的是行盒里
   // 基线的位置，晚一步就是「标题栏/标签先跳一下再对齐」。
   applyUiFontFamily(settings?.ui_font_family ?? "");
-  applyPreviewLineHeight(settings?.preview_line_height ?? 1.7);
   // B235：预览正文宽度档（缺省「全宽」）。改了它不影响任何测量 ——
   // 宽度只影响换行位置，不动视口锚点。
   applyPreviewWidth(settings?.preview_width ?? "full");
@@ -1229,8 +1252,6 @@ async function bootstrap(): Promise<void> {
       activeTabId: -1,
       view: null,
       viewTabId: null,
-      preview: null,
-      previewTimer: null,
       bodyEl: null,
     });
     const defEncoding = settings?.default_encoding ?? "UTF-8";
@@ -1281,12 +1302,14 @@ async function bootstrap(): Promise<void> {
     setupRecentsPanel();
     // B314：资源管理器排在同一处（同样只给主窗口，同样是「登记晚于启动回放」那一形 ——
     // 外壳在 `registerDrawerView` 里补写当前开合态，见 drawer.ts 那条 ⚠️）。
-    // 根只在盘上真有值时才搬：空串走一遍 setRoot 等于白读一次盘、还留一条「读不了：」的错误。
     setupExplorer();
-    const folderRoot = settings?.folder_root ?? "";
-    if (folderRoot) setExplorerRoot(folderRoot);
-    // B389：搜索排在同一处、同样只给主窗口。它排在 `setExplorerRoot` 之后不是偶然 ——
-    // 搜索的范围判据问的就是资源管理器缓存里那个根（`store.ts` 的 `searchRoot`），
+    // B424：整张表一次交过去（空表就不发：白走一遍 setRoots 等于清一次缓存 + notify 一次）。
+    // ⚠️ 走 store 而不走 panel 的 `addFolder` —— 后者会顺手 `saveSettings`，而启动回放不该
+    // 把刚读到的值再写一遍（口径同 B312 的 `persist = false`），也不该把它记进最近名单。
+    const folderRoots = settings?.folder_roots ?? [];
+    if (folderRoots.length > 0) setExplorerRoots(folderRoots);
+    // B389：搜索排在同一处、同样只给主窗口。它排在 `setExplorerRoots` 之后不是偶然 ——
+    // 搜索的范围判据问的就是资源管理器缓存里那几根（`store.ts` 的 `searchRoots`），
     // 根先搬进来，第一次重绘才知道该说「搜文件夹」还是「只搜已打开的文档」。
     setupSearch();
   }

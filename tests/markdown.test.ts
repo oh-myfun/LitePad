@@ -74,9 +74,10 @@ describe("markdown pipeline", () => {
     expect(html).toContain('class="math-display-src"');
   });
 
-  it("Mermaid 围栏输出占位 pre", () => {
+  it("图围栏输出占位 pre（B452：通用类 + mermaid 的历史类，data-diagram 认图种）", () => {
     const html = renderFull("```mermaid\ngraph TD; A-->B;\n```\n");
-    expect(html).toContain('class="mermaid-src"');
+    expect(html).toContain('class="diagram-src mermaid-src"');
+    expect(html).toContain('data-diagram="mermaid"');
     expect(html).not.toContain("<code");
   });
 

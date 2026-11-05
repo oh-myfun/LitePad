@@ -43,6 +43,12 @@ const IDS = {
   wholeWord: "whole-word",
   regex: "regex",
   preserveCase: "preserve-case",
+  // B421：侧栏搜索「要排除的文件」框里那颗「使用排除设置与忽略文件」
+  // （VS Code `ExcludePatternInputWidget.renderSubcontrols` 的 `useExcludesAndIgnoreFiles`）。
+  exclude: "exclude",
+  // B427：资源管理器过滤框里那颗「跟随 .gitignore / .ignore」。上游这版 codicon 没有
+  // `git-ignore`（包内 `codicon-git-ignore:before` 零命中），取 `eye-closed` 读作「不看那些」。
+  eyeClosed: "eye-closed",
   close: "close",
   files: "files",
   // —— 自定义标题栏的窗口控制（B97）——
@@ -126,6 +132,9 @@ const IDS = {
   // `gear` 就是 VS Code 给「设置」用的那一颗（上游 `preferencesIcons.ts` 的
   // `settingsMoreActionIcon = Codicon.gear`）；按钮列底部放管理类动作也是它的位置。
   gear: "gear",
+  // B437 设置窗标题栏：用户点名「是 settings，不是 gear」—— codicon 里这是两颗
+  // 不同的字形（settings 带横档的滑杆钮，gear 是纯齿轮）。
+  settings: "settings",
   // —— 面板 / 标签 ——
   circleFilled: "circle-filled",
   // —— 标签区右侧的 Markdown 操作键（B224，对齐 VS Code 的 editor/title 动作）——
@@ -138,10 +147,15 @@ const IDS = {
   //    ⚠️ 别写成「一颗 + .is-on 配色」：状态落在颜色上，暗色主题下几乎分不出来。
   preview: "preview",
   editCode: "edit-code",
-  // B401 · 页面内那颗「预览 ↔ 编辑」悬浮键（B399）：编辑档画 eye（点了看），
-  // 预览档画 edit（点了写）—— 字形仍是「点了会去的那一档」。
-  eye: "eye",
+  // `edit` 现在的消费方是图片块那颗「编辑图片」键（B410）。页面内「预览 ↔ 编辑」
+  // 切换键 B445 起改锁形一对（见下面 `lock` / `unlock`）—— `eye` 随之零调用点，
+  // 按本文件的红线删掉（留着会在改版时静默腐坏）。
   edit: "edit",
+  // B418 · 面板最大化后的「还原面板」：取 `screen-normal`（两个错开的方框，
+  // VS Code 给「还原编辑器组大小」用的就是它，见 auxiliaryEditorPart.ts 的
+  // `icon: Codicon.screenNormal`）。窗口标题栏那颗「向下还原」仍用
+  // chrome-restore —— 那是**窗口**的还原，与**面板**是两件事，别合并。
+  screenNormal: "screen-normal",
   // —— 标签上的文件类型字形（10 个家族，见 src/shell/fileicons.ts）——
   markdown: "markdown",
   code: "code",
@@ -166,6 +180,47 @@ const IDS = {
   searchLarge: "search-large",
   ellipsis: "ellipsis",
   clearAll: "clear-all",
+  // B417 ·「仅在打开的编辑器中搜索」那颗开关：VS Code `patternInputWidget.ts` 的
+  // `useSearchInEditorsBox` 用的就是 `Codicon.book`（`codicon-book`，官方字体自带）。
+  book: "book",
+  // —— B444 · Markdown 格式工具条（用户点名「工具条按钮图标尽量使用 codicon」）——
+  // 这一族取代 B431 的 Vditor SVG sprite（`shell/vditorIcons.ts` 已随之删除）。
+  // B446（用户看了「就近替身」仍要改）：公式 / 下划线 / 上标 / 下标四颗**不再借字形**，
+  // 改走 `shell/toolbarMarks.ts` 里按同笔补画的四枚（官方 746 颗里确无这四件事的字形）。
+  // 当时借来的 `symbol-numeric`（⌗）、`graph`（柱状图）、`type-hierarchy-super/sub` 全部
+  // 撤册（红线：不躺零调用点的 id）；`whole-word` 留着 —— 查找栏与资源管理器过滤框那颗
+  // 「全词」开关还在用，只是不再当下划线的替身。
+  textSize: "text-size", // 标题：一大一小两个 A = 字阶
+  listUnordered: "list-unordered",
+  listOrdered: "list-ordered",
+  tasklist: "tasklist", // 任务列表（带勾的那一行行）
+  quote: "quote", // 引用：一对引号
+  horizontalRule: "horizontal-rule",
+  listTree: "list-tree", // 插入目录：分级缩进的条目
+  table: "table",
+  // B448 · Mermaid 那颗 `type-hierarchy` 下册：它画的是**圆节点**的组织图，而 mermaid
+  // 流程图是方框 + 折线箭头 —— 用户点名「调整」。补画册多收第 5 枚 `flowchart`，
+  // 于是这里不留零调用点的 id（红线）。
+  // B450 · `indent` 跟着下册：用户点名缩进两颗要「文本编辑器里常用的那种」形状（四行字 +
+  // 一支箭头），codicon 那颗不是 ⇒ 两颗都进补画册（`indent` / `outdent`），
+  // 减少缩进也不再靠镜像凑。
+  bold: "bold",
+  italic: "italic",
+  strikethrough: "strikethrough",
+  bracket: "bracket", // 行内代码：`|`
+  paintcan: "paintcan", // 高亮：一罐漆
+  fileMedia: "file-media", // 图片：纸上那座小山
+  // B445 · 页面内那颗「预览 ↔ 编辑」切换键（B401 起在工具条里，是这一组最左一颗）。
+  // 字形是「点了会去的那一档」：编辑档（可写）画 `lock` = 点了锁上进预览。
+  // B450（用户点名）预览档改画 `edit` = 点了进编辑 —— 原先那颗 `unlock` 随之下册（红线：
+  // 不留零调用点的 id），「开锁」这层意思由那颗铅笔直接说出来了。
+  lock: "lock",
+  // B447 · 工具条左侧那组「历史」三颗。**官方册里有 `redo`、有 `save`，独独没有 `undo`**
+  // （逐条对过 `@vscode/codicons/dist/codicon.csv`）—— 用户拍板不为此再画一枚字形，
+  // 撤销那颗直接用 `redo` 配 `.md-preview-tool--flip` 水平镜像：同一颗、同尺寸、天然成对。
+  // 于是 `undo` 这颗**没有**独立短名（写了就是零调用点的 id，红线不让）。
+  redo: "redo",
+  save: "save",
 } as const;
 
 /** 图标短名（上方 IDS 的键）。 */

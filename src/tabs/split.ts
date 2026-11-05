@@ -75,8 +75,6 @@ export function splitActivePanel(panelId: number, dir: "h" | "v"): void {
     activeTabId: -1,
     view: null,
     viewTabId: null,
-    preview: null,
-    previewTimer: null,
     bodyEl: null,
   });
   if (tab) {
@@ -265,8 +263,6 @@ export function moveGroupToPanel(
     activeTabId: src.activeTabId,
     view: null,
     viewTabId: null,
-    preview: null,
-    previewTimer: null,
     bodyEl: null,
   });
   for (const id of moved) {
@@ -359,8 +355,6 @@ export function splitPanelWithTab(
       activeTabId: inst.tabId,
       view: null,
       viewTabId: null,
-      preview: null,
-      previewTimer: null,
       bodyEl: null,
     });
     tabs.set(inst.tabId, inst);
@@ -381,8 +375,6 @@ export function splitPanelWithTab(
     activeTabId: tabId,
     view: null,
     viewTabId: null,
-    preview: null,
-    previewTimer: null,
     bodyEl: null,
   });
   const rest = src.tabs.filter((id) => id !== tabId);

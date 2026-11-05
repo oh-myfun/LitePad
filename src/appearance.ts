@@ -9,16 +9,23 @@ import { vscodeEditorTheme } from "./editor/theme";
 import type { PreviewWidth } from "./ipc/api";
 import type { ThemeFamily } from "./theme/theme";
 import { tabs, panels, setIsWrap } from "./core/app-state";
+import { rethemeWidgets, wysiwygInstalled } from "./preview/livePreview";
 
 /**
- * 主题翻了 ⇒ 让每一格的预览把「只在渲染那一刻取色」的东西重画一次（mermaid）。
+ * 主题翻了 ⇒ 让每一块装饰面重建（mermaid 的 `theme:` 只在渲染那一刻读一次）。
  *
- * 正文 / 公式 / 代码配色都跟着 CSS 变量走，样式自己换就够了，不必惊动 DOM；
- * mermaid 的 `theme:` 是渲染时读 `dataset.theme` 定死的，而岛级增量会复用那块
- * （它的 html 没变）⇒ 不显式重画，切主题后图永远停在旧配色（B321 用户报的那条）。
+ * 正文 / 公式 / 代码配色都跟着 CSS 变量走，样式自己换就够了；mermaid 的配色是
+ * `render` 那一刻按 `dataset.theme` 定死的，而 widget DOM 只要 `eq()` 判等就会被复用
+ * ⇒ 不显式重画，切主题后图永远停在旧配色（B321 用户报的那条；B412 起由装饰面的
+ * `rethemeWidgets` 承接，旧预览臂已删除）。
  */
 export function rethemePreviews(): void {
-  for (const panel of panels.values()) panel.preview?.retheme();
+  for (const tab of tabs.values()) {
+    const panel = panels.get(tab.panelId);
+    if (!panel?.view || panel.viewTabId !== tab.tabId) continue;
+    if (!wysiwygInstalled(panel.view.view.state)) continue;
+    rethemeWidgets(panel.view.view);
+  }
 }
 
 export function applyDarkToTabs(dark: boolean, family: ThemeFamily): void {
@@ -50,11 +57,6 @@ export function applyWrapToTabs(wrap: boolean): void {
 
 export function applyFontSize(px: number): void {
   document.documentElement.style.setProperty("--font-size", `${px}px`);
-}
-
-export function applyPreviewLineHeight(value: number): void {
-  const v = Math.min(2.5, Math.max(1, Number(value) || 1.7));
-  document.documentElement.style.setProperty("--md-line-height", String(v));
 }
 
 /** B235：预览**正文内容区**的宽度档 → 具体 px 值。

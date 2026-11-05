@@ -8,6 +8,7 @@ import {
   type TabViewData,
 } from "./tabstrip";
 import { startTabDrag, type TabDragPayload } from "./tabdnd";
+import { showPopupMenu, popupMenuAnchor, closePopupMenu, type MenuItem } from "./menu";
 import { setTip } from "./tooltip";
 import { zoneOf, DropZone } from "../dnd/geometry";
 
@@ -58,13 +59,24 @@ export interface PanelRenderData {
   md?: boolean;
   /** B224：活动标签当前是**预览态**（决定切换键画 `edit-code` 还是 `preview`） */
   mdPreview?: boolean;
+  /**
+   * B422（用户「标签区右边的关闭按钮改成 vscode 那种菜单按钮」）：组标题「…」菜单的条目，
+   * 判据全在 `tabs/render.ts`（VS Code 的 `MenuId.EditorTitle` 同一家族：显示已打开的编辑器 /
+   * 分屏 / 全部关闭 / 关闭已保存 / 最大化组 / 解散组）。这里只管弹，不参与判断 ——
+   * 判据散在两处就会跟标签条各说各话（B224 同一条教训）。
+   * ⚠️ 给**函数**而不是数组：条目里的脏标记、组数、最大化态都是**当下**的事实，而操作区
+   * 只在结构变化时重建。真机抓到过一形：改脏一张标签后点「关闭已保存」，菜单还拿着改脏
+   * **之前**算的那份名单 ⇒ 把刚改脏的那张一起关进三选一弹窗。渲染时的快照必然过期。
+   */
+  groupMenu?: MenuItem[] | (() => MenuItem[]);
 }
 
 export interface SplitviewCallbacks {
   onActivatePanel: (panelId: number) => void;
   onActivateTab: (panelId: number, tabId: number) => void;
   onCloseTab: (tabId: number) => void;
-  onClosePanel: (panelId: number) => void;
+  // B422：原先这里是 `onClosePanel`（× 那颗键的回调）；关组现在走组菜单，
+  // 由 `tabs/render.ts` 直接调 `closePanelById` —— 壳层不再挂这条动作。
   /** 拖拽结束回写比例；path 为树路径（0=左/上，1=右/下） */
   onRatioChange: (path: number[], ratio: number) => void;
   /** 标签栏扩展交互（右键菜单/拖拽排序/双击新建） */
@@ -554,10 +566,10 @@ function buildPanel(
     onNew: () => cb.onNewTab?.(panelId),
   });
 
-  // 面板操作栏：仅保留「移除该分屏」⨯。
+  // 面板操作栏：md 两颗（活动面板 + md 才给）+ 组菜单「…」。
   // B54 起去掉左右/上下分屏按钮——分屏改为把标签拖到面板边缘完成（zoneOf +
-  // 拖拽落点），按钮重复且占位。⨯ 仅移除该分屏（标签并入相邻面板），不关文档，
-  // 唯一面板时禁用。
+  // 拖拽落点），按钮重复且占位。B422（用户）起最右那颗 × 「移除该分屏」换成
+  // VS Code 组标题的「…」，关组那条动作进菜单叫「解散组」（唯一面板时置灰）。
   // B71：**拖标签栏空白处 = 拖整组**（VS Code `onGroupDragStart` 要求
   // `e.target === tabsContainer`，也就是只能从标签之间的空隙起手）。
   // 起手点判据必须是「事件目标就是容器本身」——命中任何 .tab 都归单标签拖拽
@@ -607,9 +619,9 @@ function buildPanel(
  *   ① 打开侧边预览（`open-preview`）：只有活动面板且活动标签是 Markdown 才有；
  *   ② 源码 / 预览切换：**双字形开关**，`mdPreview` 决定画 `edit-code`（预览态）还是
  *      `preview`（源码态），tooltip / aria-label 跟着换 —— 与置顶 / 同步滚动同口径；
- *   ③ 还原面板（仅最大化中）+ 移除分屏 ⨯（原有）。
+ *   ③ 还原面板（仅最大化中）+ 组菜单「…」（B422，原先是移除分屏 ⨯）。
  * ⚠️ 顺序刻意：md 两颗**紧贴标签区**（VS Code 的 editor/title 动作也在那一头），
- *    ⨯ 仍钉在最右 —— 文档级操作靠标签，系统级操作（关分屏）靠边。
+ *    「…」仍钉在最右 —— 文档级操作靠标签，系统级操作（关组）靠边。
  */
 function buildPanelOps(data: PanelRenderData, cb: SplitviewCallbacks): HTMLElement {
   const ops = document.createElement("div");
@@ -650,28 +662,44 @@ function buildPanelOps(data: PanelRenderData, cb: SplitviewCallbacks): HTMLEleme
     );
   }
 
-  const closeP = mkOp(
-    CODICONS.close,
-    "移除该分屏",
-    data.closeDetail ?? (data.canClose === false ? undefined : "标签并入相邻面板"),
-    () => cb.onClosePanel(data.panelId),
-  );
-  closeP.disabled = data.canClose === false;
-  if (data.canClose === false) {
-    setTip(closeP, "唯一面板不可移除", { detail: "退出请用窗口关闭或菜单「退出」" });
-    closeP.setAttribute("aria-label", "唯一面板不可移除（退出请用窗口关闭或菜单「退出」）");
-  }
+  // B422（用户）：这里原先是一颗 ×「移除该分屏」，现在换成 VS Code 组标题那颗「…」
+  // （`MenuId.EditorTitle` 的 More Actions）。关组这条动作没丢，只是搬进菜单里叫「解散组」，
+  // 唯一面板时置灰 —— 与旧 × 的 disabled 同一口径（判据在 `tabs/render.ts` 的菜单里算）。
+  const more = document.createElement("button");
+  more.type = "button";
+  more.className = "panel-op";
+  more.innerHTML = CODICONS.ellipsis;
+  setTip(more, "更多操作", { detail: "关闭 / 分屏 / 最大化 / 解散组" });
+  more.setAttribute("aria-label", "更多操作");
+  more.setAttribute("aria-haspopup", "menu");
+  more.addEventListener("click", (e) => {
+    e.stopPropagation();
+    // 再点一次 = 收起（`anchorToggle` 只保证点自己不算「点外面」，收得由这里自己判）
+    if (popupMenuAnchor() === more) {
+      closePopupMenu();
+      return;
+    }
+    // 条目在**点击这一刻**才求值（`groupMenu` 给函数时的口径，见 PanelRenderData 的注释）：
+    // 操作区只在结构变化时重建，脏标记 / 组数这些每按一次键都可能变。
+    const src = data.groupMenu ?? [];
+    const items = typeof src === "function" ? src() : src;
+    if (items.length === 0) return;
+    showPopupMenu(more, items, undefined, { anchorToggle: true });
+  });
 
   // B71：最大化中的面板才多一个「还原」按钮 —— 未最大化时不占位（B54 的精简原则），
   // 但最大化后必须有一个**看得见**的退路：另一侧被挤成 0，只靠快捷键容易让人以为丢了。
+  // B418（用户）：字形从 chrome-restore 换成 screen-normal —— 那是 VS Code 给
+  // 「还原编辑器组」用的那一颗（auxiliaryEditorPart.ts 的 `Codicon.screenNormal`）；
+  // chrome-restore 留给窗口标题栏那颗「向下还原」，两件事不共字形。
   if (data.maximized) {
     ops.append(
-      mkOp(CODICONS.chromeRestore, "还原面板", "恢复最大化前的分屏比例", () =>
+      mkOp(CODICONS.screenNormal, "还原面板", "恢复最大化前的分屏比例", () =>
         cb.onToggleMaximizePanel?.(data.panelId),
       ),
     );
   }
-  ops.append(closeP);
+  ops.append(more);
   return ops;
 }
 

@@ -23,6 +23,7 @@ import {
   type WinRect,
   type WinEdge,
 } from "../src/shell/windowframe";
+import { CODICONS } from "../src/shell/codicons";
 
 const VP = { w: 1000, h: 800 };
 const r = (x: number, y: number, w: number, h: number): WinRect => ({ x, y, w, h });
@@ -192,6 +193,34 @@ describe("buildFrame（装上之后的那一下拖拽）", () => {
     expect(frame.root.style.height).toBe("640px");
   });
 
+  it("B437：传 icon 时标题栏在标题前面画一颗图标；不传就没有", () => {
+    const withIcon = buildFrame({
+      title: "设置",
+      rect: r(0, 0, 520, 360),
+      viewport: () => VP,
+      onClose: () => {},
+      host,
+      icon: CODICONS.settings,
+    });
+    const icon = withIcon.head.querySelector(".win-title-icon") as HTMLElement;
+    expect(icon, "传了 icon 就要有图标节点").toBeTruthy();
+    expect(withIcon.head.children[0]).toBe(icon);
+    expect(icon.innerHTML, "字形要是传进来的那份 codicon").toContain("codicon-settings");
+    expect(
+      withIcon.head.querySelector(".win-title-icon + .win-title"),
+      "图标紧贴标题",
+    ).toBeTruthy();
+
+    const plain = buildFrame({
+      title: "键位",
+      rect: r(0, 0, 520, 360),
+      viewport: () => VP,
+      onClose: () => {},
+      host,
+    });
+    expect(plain.head.querySelector(".win-title-icon"), "没传 icon 就别画空壳").toBeNull();
+  });
+
   it("拖标题栏 ⇒ left/top 跟上，且尺寸不变", () => {
     drag(frame.head, [200, 90], [260, 130]);
     expect(frame.rect()).toEqual({ x: 120, y: 120, w: 880, h: 640 });
@@ -324,5 +353,14 @@ describe("把手的鼠标形状（CSS 契约）", () => {
     expect(frame, "窗框要 fixed 才能脱离遮罩的 flex 居中").toContain("position: fixed");
     const head = /\.win-head\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
     expect(head, "拖标题栏时不能顺手选中文字").toContain("user-select: none");
+  });
+
+  it("B437：标题图标有样式（不吃压缩、颜色跟主题 token）", () => {
+    const css = stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
+    const icon = /\.win-title-icon\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(icon, "图标槽不许被标题挤扁").toContain("flex: 0 0 auto");
+    expect(icon, "颜色跟共用 token 走").toContain("var(--fg-muted");
+    // 字号不许写裸 px（B337 契约）—— codicon 基类自带 16px/1，继承它的就行
+    expect(icon, "不许有裸 font-size（B337）").not.toContain("font-size");
   });
 });

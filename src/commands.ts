@@ -13,7 +13,7 @@ import { redo, selectAll, undo } from "@codemirror/commands";
 import { activePanel, activeTab, docOf, instancesOfDoc } from "./core/panels";
 import { closeTabById, newUntitled, switchTab } from "./tabs";
 import { syncCoordinator } from "./sync-scroll/wire";
-import { refreshViewModeButton, toggleDecoEdit, toggleViewMode } from "./markdown";
+import { refreshViewModeButton, togglePreviewEdit, toggleViewMode } from "./markdown";
 import { doOpen, doSave, doSaveAll } from "./io/files";
 import { exportHtml, exportPdf } from "./io/export";
 import { ensureFindBar, openFindBar, retargetFindBar } from "./find/findbar";
@@ -501,7 +501,7 @@ function setupMenuBar(): void {
     onSelectAll: () => withView((v) => selectAll(v)),
     onTimeDate: () => insertTimeDate(),
     onToggleView: () => toggleViewMode(),
-    onToggleEdit: () => toggleDecoEdit(),
+    onToggleEdit: () => togglePreviewEdit(),
     onOutline: () => toggleToc(),
     tocChecked: () => !tocPanel.hidden,
     onExplorer: () => toggleExplorer(),

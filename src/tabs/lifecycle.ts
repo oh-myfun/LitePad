@@ -7,7 +7,6 @@
 
 import {
   type Doc,
-  type Panel,
   tabs,
   docs,
   panels,
@@ -43,22 +42,17 @@ import {
   layoutArea,
 } from "../ui";
 import { renderSplitview, type PanelRenderData } from "../shell/splitview";
-import { attachTabToPanel, isMdTab, makeDoc, makeInstance, registerDoc } from "../doc-model";
-import { toggleTaskInTab } from "../markdown";
+import { attachTabToPanel, makeDoc, makeInstance, registerDoc } from "../doc-model";
 import { updateTocDrawer } from "../toc";
 import { retargetFindBar, relayoutFindBar } from "../find/findbar";
-import { doOpen, saveDocCore } from "../io/files";
+import { saveDocCore } from "../io/files";
 // B400：Ctrl+拖动标签把这份文档当系统文件拖出去
 import { dragTabAsFile } from "../io/filedrag";
 import { attachPasteHandler } from "../io/export";
 import { showSaveConfirmDialog } from "../shell/saveconfirm";
 import { createEditor } from "../editor/editor";
-import { PreviewPane } from "../markdown/preview";
 import { logViewport } from "../core/viewport";
 import { closeTab as ipcCloseTab, newTab as ipcNewTab } from "../ipc/api";
-// B397-1 · 装饰那一臂的唯一入口谓词（`Settings.deco_preview` 开着才为真）。
-// 「这一格预览侧挂哪一臂」只在这里问一次；「这一档开不开装饰」由 `applyPanelMode` 每格问。
-import { shouldMountDecoPreview } from "../spike/deco/eligibility";
 import { renderPanelTabs, renderPanelOps, panelDataOf } from "./render";
 import {
   exitMaximize,
@@ -177,7 +171,8 @@ export function rebuildLayout(): void {
     },
     onActivateTab: (panelId, tabId) => switchTab(panelId, tabId),
     onCloseTab: (tabId) => void closeTabById(tabId),
-    onClosePanel: (panelId) => void closePanelById(panelId),
+    // B422：关组改由组菜单「解散组」直接调 `closePanelById`（见 tabs/render.ts 的 groupMenuOf），
+    // 壳层的 onClosePanel 一并摘掉 —— 留着就是一条没人按的接线。
     onRatioChange: (path, ratio) => {
       // 拖分隔条 = 用户要自己摆布局 → 退出最大化（否则快照与手摆的比例互相打架）
       exitMaximize();
@@ -262,9 +257,6 @@ export function rebuildLayout(): void {
         if (panelId === activePanelId) p.view.focus();
       }
 
-      // —— B397-1：预览侧的两种实现，由 `Settings.deco_preview` 二选一 ————————
-      // B397-5：这一臂不再在挂载点定死 —— 跟着**视图实际显示的那份文档**走，见 `ensurePreviewArm`。
-      ensurePreviewArm(p);
       if (p.view) attachPasteHandler(p);
 
       applyPanelMode(p);
@@ -315,55 +307,6 @@ export function rebuildLayout(): void {
 // updateRatio 已移到 src/core/layout.ts（与 build 的路径约定对齐，B26 修复）
 
 // ---------------------------------------------------------------- 标签操作
-
-/**
- * B397-5 · 预览侧用哪一臂：**按视图实际显示的那份文档问**，不再是挂载点一次性定死。
- *
- * 为什么改：体积闸（`shouldMountDecoPreview` 的第三道）挡下的是「这一份文档此刻开不开装饰」，
- * 而挂载点只问得到「建格那一刻的那一份」。同一格先开小文件、再在同一条标签栏里打开大文件，
- * 装饰档被闸关掉、派生预览又不在这一格 ⇒ 预览模式里只剩一片没有说明的裸源码。
- * InkNote 与 VS Code 都不出现这一形（InkNote 一臂到底，靠 `ensureSyntaxTree` 的 100ms 预算
- * 降级；VS Code 的降级在 model 层关 tokenization，预览照渲染），而 LitePad 的体积闸是既有
- * 产品策略（>2MB 停用自动预览 + 提示）⇒ 解法是**就地换臂**：大文件用派生 DOM 那一臂，
- * 它本来就会给提示、也在用户显式切预览时手动渲染一次。
- *
- * 两条臂的记号：`.deco-face`（preview.css 用它作废「预览态藏 .panel-editor」）；
- * `p.preview` 在场 = 派生那一臂（`applyDecoFace` 见到它就一行不碰）。
- */
-export function ensurePreviewArm(p: Panel): void {
-  const hostEl = p.bodyEl;
-  if (!hostEl) return;
-  const tab = tabs.get(p.viewTabId ?? p.activeTabId);
-  if (shouldMountDecoPreview(tab)) {
-    if (p.preview) {
-      p.preview.root.remove();
-      p.preview = null;
-    }
-    hostEl.classList.add("deco-face");
-    return;
-  }
-  hostEl.classList.remove("deco-face");
-  if (p.preview) return;
-  const preview = new PreviewPane();
-  p.preview = preview;
-  hostEl.appendChild(preview.root);
-  preview.setHost({
-    lineCount: () => p.view?.view.state.doc.lines ?? 0,
-    // B358：勾选框可点性跟着「这一格显示的那份文档」走；切换由 toggleTaskInTab 落地
-    canWrite: () => {
-      const t = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
-      const d = t ? docOf(t) : undefined;
-      return !!t && !!d && isMdTab(t) && !d.readonly;
-    },
-    toggleTaskAt: (lineStart, lineEnd, index) => {
-      if (p.viewTabId !== null) toggleTaskInTab(p.viewTabId, lineStart, lineEnd, index);
-    },
-    // B401：预览里点本地链接 ⇒ 与菜单/拖入同一条打开漏斗（外部链接由 links 模块自己交系统浏览器）
-    openLocalFile: (path) => {
-      void doOpen(path);
-    },
-  });
-}
 
 export function switchTab(panelId: number, tabId: number): void {
   const panel = getPanel(panelId);
@@ -506,8 +449,6 @@ export async function newUntitled(): Promise<void> {
       activeTabId: -1,
       view: null,
       viewTabId: null,
-      preview: null,
-      previewTimer: null,
       bodyEl: null,
     });
     panel = panels.get(0);
@@ -677,7 +618,7 @@ export function disposePanel(panelId: number): void {
   const newTree = removePanel(layout, panelId);
   if (newTree) setLayout(newTree);
 
-  // 销毁残留的编辑器视图（预览 DOM 随 rebuildLayout 清空，监听器一并回收）
+  // 销毁残留的编辑器视图（DOM 随 rebuildLayout 清空，监听器一并回收）
   if (panel.view) {
     const t = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
     if (t) t.state = panel.view.view.state;
@@ -685,7 +626,6 @@ export function disposePanel(panelId: number): void {
   }
   panel.view = null;
   panel.viewTabId = null;
-  panel.preview = null;
   panels.delete(panelId);
 
   if (activePanelId === panelId) {

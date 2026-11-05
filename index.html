@@ -323,17 +323,18 @@
             <!-- B314：资源管理器。结构与上面两块同形（标题栏常驻 + 列表重绘），
                  差异都在「行」上：树的一行要带**层级缩进**与**折叠箭头**，所以这里是一棵
                  `role="tree"` 的树，不是清单。
-                 标题栏四颗键：刷新 / 全部折叠 / 新建文件 / 新建目录 —— 全部只用 codicon
-                 + aria-label（口径同上两块的垃圾桶与全量键）。
+                 标题栏四颗键：新建文件 / 新建目录 / 打开文件夹 / 全部折叠 —— 全部只用 codicon
+                 + aria-label（口径同上两块的垃圾桶与全量键）。刷新不在这排里：多根之后它有主语，
+                 长在**每一根那一行**的最右（B424）。
                  首屏 `hidden`：轮不到这块时由外壳 `setDrawer` 写 hidden（B307 那条纪律），
                  HTML 里的初值只是「还没回放」的临时态。 -->
             <aside id="explorer-panel" class="explorer-panel" hidden>
               <div class="explorer-head">
                 <span id="explorer-title" class="explorer-title">资源管理器</span>
-                <!-- B315 排这一排的动线是「造东西 → 整理当前这棵树」；B327 把「打开文件夹」
-                     从排头挪到下面**根目录那一行的最右**（换目录是跟这棵树走的事，跟着根行走
-                     才顺手）。骨架里它仍留在这一排的最右，只当**歇脚处**：没有根目录时
-                     `renderTree` 把它放回这里，而 `.no-root` 那条 CSS 会把整排收起。 -->
+                <!-- B315 排这一排的动线是「造东西 → 整理当前这棵树」。
+                     B424（用户点名「刷新按钮和打开文件夹按钮互换」）：「打开文件夹」回到这一排
+                     —— 多根之后它不再跟着某一棵根行走（有好几根，挂哪一根都不对），而**每根行
+                     自带一颗刷新**（刷新得有主语：点哪根刷哪根）。这一排因此只剩四颗。 -->
                 <button
                   id="explorer-new-file"
                   class="toc-head-btn"
@@ -349,11 +350,11 @@
                   aria-label="新建目录"
                 ></button>
                 <button
-                  id="explorer-refresh"
+                  id="explorer-open"
                   class="toc-head-btn"
                   type="button"
-                  data-tip="刷新"
-                  aria-label="刷新"
+                  data-tip="打开文件夹"
+                  aria-label="打开文件夹"
                 ></button>
                 <button
                   id="explorer-collapse"
@@ -362,15 +363,66 @@
                   data-tip="全部折叠"
                   aria-label="全部折叠"
                 ></button>
-                <button
-                  id="explorer-open"
-                  class="toc-head-btn"
-                  type="button"
-                  data-tip="打开文件夹"
-                  aria-label="打开文件夹"
-                ></button>
               </div>
-              <!-- 根目录那一行（VS Code 一样：根是树的第一个节点，永远在）。
+              <!-- B427：顶部「按名字过滤」（用户点名「参考搜索输入框」）。五颗键全在框内：
+                   三颗匹配开关 + 排除键（B428：忽略文件并进这一颗，不再另设独立开关）
+                   + 清除（有字才显形）。
+                   框里 Esc：有字先清字，没字才让按键冒泡（与侧栏搜索框同口径）。 -->
+              <div class="explorer-filter" role="search">
+                <span class="find-field explorer-filter-field">
+                  <input
+                    id="explorer-filter-input"
+                    class="search-input explorer-filter-input"
+                    type="text"
+                    placeholder="按名字过滤"
+                    spellcheck="false"
+                    aria-label="按名字过滤"
+                  />
+                  <span class="find-toggles">
+                    <button
+                      id="explorer-filter-case"
+                      class="find-toggle"
+                      type="button"
+                      data-tip="区分大小写"
+                      aria-pressed="false"
+                      aria-label="区分大小写"
+                    ></button>
+                    <button
+                      id="explorer-filter-word"
+                      class="find-toggle"
+                      type="button"
+                      data-tip="全词匹配"
+                      aria-pressed="false"
+                      aria-label="全词匹配"
+                    ></button>
+                    <button
+                      id="explorer-filter-regex"
+                      class="find-toggle"
+                      type="button"
+                      data-tip="使用正则表达式"
+                      aria-pressed="false"
+                      aria-label="使用正则表达式"
+                    ></button>
+                    <button
+                      id="explorer-filter-excludes"
+                      class="find-toggle"
+                      type="button"
+                      data-tip="使用排除设置与忽略文件"
+                      aria-pressed="true"
+                      aria-label="使用排除设置与忽略文件"
+                    ></button>
+                    <button
+                      id="explorer-filter-clear"
+                      class="find-toggle explorer-filter-clear"
+                      type="button"
+                      data-tip="清除过滤"
+                      aria-label="清除过滤"
+                      hidden
+                    ></button>
+                  </span>
+                </span>
+              </div>
+              <!-- 每一根一行（VS Code / InkNote 一样：根是树的第一个节点）。
                    名字与路径都由 JS 画（src/explorer/panel.ts），全路径走文本档提示
                    （setTextTip：跟鼠标、不画尖尖），与标签 / 大纲 / 最近打开同一档。 -->
               <div id="explorer-tree" class="explorer-tree" role="tree" aria-label="文件树"></div>
@@ -440,6 +492,7 @@
                         id="search-case"
                         class="find-toggle"
                         type="button"
+                        data-tip="区分大小写"
                         aria-pressed="false"
                         aria-label="区分大小写"
                       ></button>
@@ -447,6 +500,7 @@
                         id="search-word"
                         class="find-toggle"
                         type="button"
+                        data-tip="全词匹配"
                         aria-pressed="false"
                         aria-label="全词匹配"
                       ></button>
@@ -454,6 +508,7 @@
                         id="search-regex"
                         class="find-toggle"
                         type="button"
+                        data-tip="使用正则表达式"
                         aria-pressed="false"
                         aria-label="使用正则表达式"
                       ></button>
@@ -470,6 +525,17 @@
                       spellcheck="false"
                       aria-label="替换为"
                     />
+                    <!-- B417：保留大小写开关（VS Code 替换框里的 AB，同一颗 codicon） -->
+                    <span class="find-toggles">
+                      <button
+                        id="search-preserve-case"
+                        class="find-toggle"
+                        type="button"
+                        data-tip="保留大小写"
+                        aria-pressed="false"
+                        aria-label="保留大小写"
+                      ></button>
+                    </span>
                   </span>
                   <button
                     id="search-replace-all"
@@ -492,32 +558,61 @@
                   ></button>
                   <div class="search-glob">
                     <h4>要包含的文件</h4>
-                    <input
-                      id="search-include"
-                      class="search-glob-input"
-                      type="text"
-                      placeholder="例如 *.md, src/**/include"
-                      spellcheck="false"
-                      aria-label="要包含的文件"
-                    />
+                    <!-- B417：照 VS Code `patternInputWidget.renderSubcontrols` 的
+                         `useSearchInEditorsBox`（Codicon.book）—— 开关嵌在「要包含的文件」
+                         输入框右内侧，打开后只搜已打开的编辑器（含未保存改动）。 -->
+                    <span class="search-glob-field">
+                      <input
+                        id="search-include"
+                        class="search-glob-input"
+                        type="text"
+                        placeholder="例如 *.md, src/**/include"
+                        spellcheck="false"
+                        aria-label="要包含的文件"
+                      />
+                      <button
+                        id="search-open-editors"
+                        class="find-toggle search-glob-toggle"
+                        type="button"
+                        data-tip="仅在打开的编辑器中搜索"
+                        aria-pressed="false"
+                        aria-label="仅在打开的编辑器中搜索"
+                      ></button>
+                    </span>
                   </div>
                   <div class="search-glob">
                     <h4>要排除的文件</h4>
-                    <input
-                      id="search-exclude"
-                      class="search-glob-input"
-                      type="text"
-                      placeholder="例如 node_modules, *.log"
-                      spellcheck="false"
-                      aria-label="要排除的文件"
-                    />
+                    <!-- B421：照 VS Code `ExcludePatternInputWidget.renderSubcontrols` 的
+                         `useExcludesAndIgnoreFiles`（Codicon.exclude）—— 关掉后不读 `.gitignore` /
+                         `.ignore`、也不跳点文件与 node_modules 这类噪声目录。 -->
+                    <span class="search-glob-field">
+                      <input
+                        id="search-exclude"
+                        class="search-glob-input"
+                        type="text"
+                        placeholder="例如 node_modules, *.log"
+                        spellcheck="false"
+                        aria-label="要排除的文件"
+                      />
+                      <button
+                        id="search-use-excludes"
+                        class="find-toggle search-glob-toggle"
+                        type="button"
+                        data-tip="使用排除设置与忽略文件"
+                        aria-pressed="true"
+                        aria-label="使用排除设置与忽略文件"
+                      ></button>
+                    </span>
                   </div>
                 </div>
-                <!-- 计数行 = VS Code 的 `.messages > .message`（上沿 -5px、左右 22px 内缩、
-                     颜色走 `search.resultsInfoForeground`）。它说「搜到多少 / 在哪儿搜的」，
-                     与结果树里那一屏是两件事，所以留在树外面。 -->
-                <div id="search-count" class="search-count" role="status"></div>
               </div>
+              <!-- 计数行 = VS Code 的 `.messages > .message`（上沿 -5px、左右 22px 内缩、
+                   颜色走 `search.resultsInfoForeground`）。它说「搜到多少 / 在哪儿搜的」，
+                   与结果树里那一屏是两件事，所以留在树外面。
+                   ⚠️ B417：它必须是 `.search-widgets` 的**兄弟**（VS Code 的 `.messages`
+                   同样是 `.search-widgets-container` 的兄弟）。嵌在里面时那条 -5px 上沿
+                   压进了「要排除的文件」输入框 —— 真机截图里计数行第一行被输入框咬掉一截。 -->
+              <div id="search-count" class="search-count" role="status"></div>
               <div
                 id="search-results"
                 class="search-results"
@@ -577,21 +672,45 @@
           }
           return false;
         }
+        // B453-2（用户）：红条改成**右下角一张可关掉的卡**。原来那条 `left:0;top:0;right:0`
+        // 横贯顶边的红带把标题栏、菜单和标签带一起压住了 —— 报错本来是要人去处理的，结果
+        // 连窗口键都点不到。收进右下角 + 给一颗关闭键，错误照样一眼看得见。
+        function ensureTextBox() {
+          var box = document.getElementById("boot-error-overlay");
+          if (box) return box.querySelector(".boot-error-text") || box;
+          box = document.createElement("div");
+          box.id = "boot-error-overlay";
+          box.style.cssText =
+            "position:fixed;right:12px;bottom:12px;z-index:2147483647;" +
+            "max-width:min(520px,60vw);max-height:45vh;overflow:auto;" +
+            "padding:10px 30px 10px 12px;background:#1a0000;color:#ffb3b3;" +
+            "border:1px solid #ff4d4d;border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.45);" +
+            "font:12px/1.5 Consolas,Menlo,monospace;white-space:pre-wrap;";
+          var text = document.createElement("div");
+          text.className = "boot-error-text";
+          var close = document.createElement("button");
+          close.type = "button";
+          close.textContent = "×";
+          close.setAttribute("aria-label", "关闭提示（错误仍会写进日志）");
+          close.style.cssText =
+            "position:absolute;right:6px;top:4px;width:20px;height:20px;padding:0;border:0;" +
+            "background:transparent;color:#ffb3b3;font:16px/20px Consolas,Menlo,monospace;cursor:pointer;";
+          close.onclick = function () {
+            // 关掉后计数复位：再冒出新错误还能重新露出来，不至于关一次就哑掉。
+            lines = 0;
+            capped = false;
+            if (box.parentNode) box.parentNode.removeChild(box);
+          };
+          box.append(text, close);
+          (document.body || document.documentElement).appendChild(box);
+          return text;
+        }
         function showError(msg) {
           try {
             // 同一条只渲染一次：重复文本堆在覆盖层里没有信息量，只会把屏幕顶穿。
             if (seen[msg]) return;
             seen[msg] = true;
-            var box = document.getElementById("boot-error-overlay");
-            if (!box) {
-              box = document.createElement("div");
-              box.id = "boot-error-overlay";
-              box.style.cssText =
-                "position:fixed;left:0;top:0;right:0;z-index:2147483647;max-height:60vh;overflow:auto;" +
-                "padding:12px 16px;background:#1a0000;color:#ffb3b3;border-bottom:2px solid #ff4d4d;" +
-                "font:13px/1.5 Consolas,Menlo,monospace;white-space:pre-wrap;";
-              (document.body || document.documentElement).appendChild(box);
-            }
+            var box = ensureTextBox();
             // 条数封顶：再往后指路到日志，别让覆盖层无限长。
             if (lines >= MAX_LINES) {
               if (!capped) {

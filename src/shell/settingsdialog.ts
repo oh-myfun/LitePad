@@ -9,7 +9,7 @@
  *     settings-toolbar(搜索) + settings-layout(settings-nav + settings-content)
  * 分类：通用 / 外观 / 编辑器 / 新建文件 / 快捷键（快捷键复用 keymapdialog
  * 的改键逻辑，作为其中一个分类页）。B229 起原先那个独立的预览分类并入「编辑器」，
- * 预览侧两项（预览行距、预览布局宽度）在本页末尾的「预览」小分组里。
+ * 预览侧剩下的「预览布局宽度」在本页末尾的「预览」小分组里（B413 删了预览行距）。
  *
  * B353（用户点名「参考 vscode 做成带标题栏可拖拽和可调整大小的设置窗口」）：
  * 关闭键从工具栏搬进标题栏，尺寸与位置归窗框（原来是 `.settings-panel` 的
@@ -23,8 +23,11 @@
 
 import { mountKeymapPage, type KeymapDialogOptions, type KeymapPageHandle } from "./keymapdialog";
 import { buildFrame, centeredRect, type WinViewport } from "./windowframe";
+import { CODICONS } from "./codicons";
 import { createDropdown } from "./dropdown";
 import { createSwitch } from "./switch";
+// B452-5：PlantUML 那格要把「留空用哪台」写进占位 ⇒ 从唯一权威拿，不在这里再抄一遍地址。
+import { PLANTUML_SERVER_DEFAULT } from "../markdown/diagrams";
 // B235：`PreviewWidth` 是宽度档的类型（standard / wide / full）。
 // B385：文件关联的条目状态类型。
 import type { AssocEntry, PreviewWidth } from "../ipc/api";
@@ -59,8 +62,6 @@ export interface SettingsDialogOptions {
   onFontSize: (px: number) => void;
   editorLineHeight: () => number;
   onEditorLineHeight: (value: number) => void;
-  previewLineHeight: () => number;
-  onPreviewLineHeight: (value: number) => void;
   /**
    * B235：预览正文宽度档（`standard` / `wide` / `full`）。
    *
@@ -132,6 +133,28 @@ export interface SettingsDialogOptions {
   onAssocSetMany: (exts: string[], on: boolean) => Promise<AssocEntry[]>;
   /** B385：打开系统「默认应用」设置页（UserChoice 档只能用户在那儿拍）。 */
   onOpenDefaultApps: () => void;
+  /**
+   * B426：搜索「排除的文件」（应用级、持久）。
+   *
+   * ⚠️ 与侧栏搜索面板里那框**不是同一个东西**：面板那框是本次搜索的临时叠加项，
+   *    这一项存在 `settings.search_exclude` 里、每次搜索都吃（两边由 store 的
+   *    `mergeGlobs` 合并）。值就是用户写的那串模式，逗号或换行分隔 —— 本页不改写、
+   *    不校验（校验在 Rust 侧按模式用）。
+   */
+  searchExclude: () => string;
+  onSearchExclude: (value: string) => void;
+  /**
+   * B426：搜索是否跟随 `.gitignore` / `.ignore`（VS Code `search.useIgnoreFiles` 同款）。
+   * getter 的缺省是**开**：老配置没这个键 ≠ 用户关过它（B392 那一族的口径）。
+   */
+  searchUseIgnoreFiles: () => boolean;
+  onSearchUseIgnoreFiles: (on: boolean) => void;
+  /**
+   * B452-5：PlantUML 在线服务器（```plantuml 的图由它画，本机不装 Java 也能看）。
+   * 空串 = 用前端内置默认那台 ⇒ 页上必须把默认那台写出来（占位），否则用户不知道留空是什么结果。
+   */
+  plantumlServer: () => string;
+  onPlantumlServer: (value: string) => void;
 }
 
 /** 「本机没装」候选的标注后缀（选了会静默回落到内置等宽栈，看着像没反应）。 */
@@ -301,9 +324,6 @@ export function fontOptionsFor(
   return out;
 }
 
-/** 预览行距候选（倍数），沿用原菜单三档。 */
-export const PREVIEW_LINE_HEIGHT_OPTIONS = [1.3, 1.7, 2.1];
-
 /**
  * B235：预览**正文内容区**宽度三档（顺序即渲染顺序）。
  *
@@ -385,7 +405,8 @@ const CATEGORIES: Category[] = [
     id: "editor",
     label: "编辑器",
     // B229：原先那个独立的预览分类已并入本页，所以预览侧的关键词也归到这儿
-    // ——否则搜「预览行距」「大纲」会一个分类都命中不了。
+    // ——否则搜「预览布局宽度」「大纲」会一个分类都命中不了。
+    // B413：删了「预览行距」那一项 ⇒ 关键词也一并撤掉（搜一个不存在的项更糟）。
     keywords: [
       "编辑器",
       "字体",
@@ -396,7 +417,6 @@ const CATEGORIES: Category[] = [
       "编辑器行距",
       "markdown",
       "预览",
-      "预览行距",
       // B235：设置项换成了「预览布局宽度」⇒ 关键词同步跟着换。
       // 「宽度」「全宽」「宽屏」都补上，用户按**结果**搜比按设置项名搜更自然。
       "预览布局宽度",
@@ -406,6 +426,9 @@ const CATEGORIES: Category[] = [
       "大纲",
       "目录",
       "toc",
+      // B452-5：PlantUML 服务器也在本页（只管预览渲染的项都归这儿）⇒ 搜不到就是没有。
+      "plantuml",
+      "服务器",
     ],
   },
   {
@@ -443,6 +466,27 @@ const CATEGORIES: Category[] = [
       "txt",
       "log",
       "默认应用",
+    ],
+  },
+  {
+    id: "search",
+    label: "搜索",
+    // B426：用户话里的两个名词是「排除设置」「忽略文件」⇒ 这两串必须各能命中，
+    // 否则顶部搜索输「忽略」会一个分类都列不出来。
+    keywords: [
+      "搜索",
+      "排除",
+      "要排除的文件",
+      "忽略",
+      "忽略文件",
+      "过滤",
+      "exclude",
+      "ignore",
+      "gitignore",
+      "node_modules",
+      "通配",
+      "模式",
+      "glob",
     ],
   },
   {
@@ -492,6 +536,8 @@ export function showSettingsDialog(opts: SettingsDialogOptions): void {
   let closeWindow = (): void => {};
   const frame = buildFrame({
     title: "设置",
+    // B437：标题栏带 codicon settings 图标（用户口径：是 settings，不是 gear）。
+    icon: CODICONS.settings,
     // 四周各留 12px：顶满视口就看不出「这是一块浮着的窗」，也与遮罩的边距手感一致。
     rect: centeredRect(v0, Math.min(SETTINGS_W, v0.w - 24), Math.min(SETTINGS_H, v0.h - 24)),
     viewport,
@@ -1032,18 +1078,11 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
         (v) => opts.onEditorLineHeight(v),
       ),
     );
-    // B229：预览侧的两项从原预览分类并到本页，末尾加个小分组标题，
-    // 免得 6 行平铺时看不出哪两项只管预览。分组标题是纯装饰，不进搜索关键词。
+    // B229：预览侧的项从原预览分类并到本页，末尾加个小分组标题，
+    // 免得平铺时看不出这一项只管预览。分组标题是纯装饰，不进搜索关键词。
+    // B413（用户 2026-10-29）：删掉「预览行距」——预览 / 编辑面跟编辑器同一颗
+    // `--editor-line-height`，那一项只管导出件，已经名不副实。
     body.appendChild(groupTitle("预览"));
-    body.appendChild(
-      numberSelectRow(
-        "预览行距",
-        PREVIEW_LINE_HEIGHT_OPTIONS,
-        opts.previewLineHeight(),
-        (v) => `${v} 倍`,
-        (v) => opts.onPreviewLineHeight(v),
-      ),
-    );
     body.appendChild(
       selectRow(
         "预览布局宽度",
@@ -1055,6 +1094,17 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
         // `selectRow` 的回调签名是 `string`（它不认枚举）⇒ 在这里收窄回档位类型，
         // 别把 `as PreviewWidth` 甩到别处去。
         (v) => opts.onPreviewWidth(v as PreviewWidth),
+      ),
+    );
+    // B452-5：```plantuml 的图没有纯 JS 渲染器 ⇒ 交给一台在线服务器画。地址是用户能改的
+    // 一格（自搭 / 换官方），留空就用内置默认那台 —— 占位里把默认写出来，别让人猜。
+    body.appendChild(
+      inputRow(
+        "PlantUML 服务器",
+        "渲染 ```plantuml 代码块的服务器地址；留空用默认那台。离线或地址不对时，代码块原样显示源码。",
+        opts.plantumlServer(),
+        `留空 = ${PLANTUML_SERVER_DEFAULT}`,
+        (v) => opts.onPlantumlServer(v),
       ),
     );
   } else if (id === "file") {
@@ -1090,7 +1140,91 @@ function fillPage(id: string, body: HTMLElement, opts: SettingsDialogOptions): v
     );
   } else if (id === "assoc") {
     fillAssocPage(body, opts);
+  } else if (id === "search") {
+    fillSearchPage(body, opts);
   }
+}
+
+/**
+ * B426：一行「文案 + 多行文本域」（设置页里唯一一格能写一串模式的控件）。
+ *
+ * ⚠️ 提交走 `change`（失焦）而不是 `input`：这一项落盘会连带重跑一发搜索，每按一键
+ *    就跑一次等于把打字变成搜索按钮 —— 与 B344 那一族「打字触重活」同一个坑。
+ */
+function textareaRow(
+  label: string,
+  desc: string,
+  value: string,
+  onCommit: (v: string) => void,
+): HTMLElement {
+  const box = document.createElement("textarea");
+  box.className = "settings-textarea";
+  box.rows = 3;
+  // 模式串被浏览器拼写检查划一串红波浪线很吵（`**` / `/*` 没有一个算词）
+  box.spellcheck = false;
+  box.value = value;
+  // 说明写在 .settings-item-label 里，不是 <label for> ⇒ 无障碍名得单独给
+  box.setAttribute("aria-label", label);
+  box.placeholder = "dist/**, *.tmp";
+  box.addEventListener("change", () => onCommit(box.value));
+  return settingsItem(label, desc, box);
+}
+
+/**
+ * B452-5：一行「文案 + 单行输入框」（URL 这类一行放得下的值）。
+ *
+ * 提交口径与 `textareaRow` 同一刀：走 `change`（失焦）不走 `input` —— 每按一键写盘一次
+ * 是 B344 那一族「打字触重活」。URL 没有「一行一个」的写法，所以不必是多行框。
+ */
+function inputRow(
+  label: string,
+  desc: string,
+  value: string,
+  placeholder: string,
+  onCommit: (v: string) => void,
+): HTMLElement {
+  const box = document.createElement("input");
+  box.type = "text";
+  box.className = "settings-input";
+  // URL 里全是 `/` 和 `-`，浏览器的拼写检查会划一串红波浪线
+  box.spellcheck = false;
+  box.value = value;
+  box.placeholder = placeholder;
+  // 说明写在 .settings-item-label 里，不是 <label for> ⇒ 无障碍名得单独给
+  box.setAttribute("aria-label", label);
+  box.addEventListener("change", () => onCommit(box.value));
+  return settingsItem(label, desc, box);
+}
+
+/**
+ * B426：「搜索」分类页。
+ *
+ * 只放**持久**的两件事。侧栏搜索面板展开的那两框（包含 / 排除）与那颗总闸是
+ * 本次搜索的临时项，不在这页里 —— 照 VS Code 那一刀：`search.exclude` /
+ * `search.useIgnoreFiles` 进设置，视图里那框只是 `folderExclusions` 临时叠加。
+ */
+function fillSearchPage(body: HTMLElement, opts: SettingsDialogOptions): void {
+  const hint = document.createElement("p");
+  hint.className = "settings-page-desc";
+  hint.textContent = "这两项每次搜索都吃，重启也在；搜索面板里展开的那两框只影响当前这一次搜索。";
+  body.appendChild(hint);
+
+  body.appendChild(
+    textareaRow(
+      "要排除的文件",
+      "跳过匹配这些模式的文件或目录，逗号或换行分隔（如 dist/**, *.tmp）；与搜索面板「排除的文件」那框里的内容叠加生效。",
+      opts.searchExclude(),
+      (v) => opts.onSearchExclude(v),
+    ),
+  );
+  body.appendChild(
+    toggleRow(
+      "忽略文件",
+      "跟随项目里的 .gitignore 与 .ignore。关掉后忽略清单不再挡路，但点文件与 node_modules 之类噪声目录仍由面板那颗「使用排除设置与忽略文件」管。",
+      opts.searchUseIgnoreFiles(),
+      (v) => opts.onSearchUseIgnoreFiles(v),
+    ),
+  );
 }
 
 /**

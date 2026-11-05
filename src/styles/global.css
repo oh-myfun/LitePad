@@ -236,14 +236,28 @@
   --sb-thumb: #a8a9aa85;
   --sb-thumb-hover: #a8a9aa90;
   --sb-thumb-active: #a8a9aa9c;
-  /* 查找命中高亮（B380 按 VS Code 的语义收口）：
+  /* 查找命中高亮（B380 按 VS Code 的语义收口；B425 在这一族动了三档）：
        --find-match        = editor.findMatchBackground（当前项）
        --find-match-other  = editor.findMatchHighlightBackground（其余命中）
-     边框两颗只有 HC 档取值（findMatchBorder / findMatchHighlightBorder）。 */
+     边框两颗原本只有 HC 档取值（findMatchBorder / findMatchHighlightBorder）。
+     ⚠️ B425（用户「搜索结果选区内和选区外的高亮效果区分要明显一点，平时选择文本出现的
+     自动高亮也一样」）—— 量出来的病灶（都合成到 --bg 上算 RGB 距离）：
+       · 其余命中 #27678280 与「选中同词的自动高亮」#27678260 同色相同一族，浅色档只差
+         Δ5.9 ⇒ 屏上看不出这一层淡蓝到底是命中还是自动高亮；改成 VS Code **其余各族都在用**
+         的橙 #ea5c0055（`editorColors.ts` 里 findMatchHighlightBackground 的注册默认值，
+         dark_modern/plus/classic 就是它）—— 两档从此跨色相。
+       · 当前项 vs 其余命中只差 Δ8.8 ⇒ 给当前项一圈描边：VS Code 的 `.currentFindMatch`
+         本来就是 `border: 2px solid findMatchBorder`，只是该色非 HC 注册成 null 才不画。
+         这里取该族 focusBorder（`--accent`），HC 两档照旧用它们自己的 activeContrastBorder。
+       · 范围带 `--find-range` 是 LitePad 从来没画过的那一层（VS Code 的
+         `editor.findRangeHighlightBackground`，findDecorations 的 `_FIND_SCOPE_DECORATION`
+         是 isWholeLine）—— 没有它，「在选区中查找」只有结果、没有「这一片才是范围」。 */
   --find-match: #27678290;
-  --find-match-other: #27678280;
-  --find-match-border: transparent;
+  --find-match-other: #ea5c0055;
+  --find-match-border: var(--accent);
   --find-match-other-border: transparent;
+  --find-range: #ffffff13; /* 2026-dark.json 的显式值 */
+  --find-range-border: transparent;
   --shadow-lg: 0 0 12px rgba(0, 0, 0, 0.14);
   /* 查找栏输入区 = input.background；开关三态 = inputOption.*。 */
   --find-field-bg: #191a1b;
@@ -345,8 +359,12 @@
   --sb-thumb-active: rgba(255, 255, 255, 0.46);
   --find-match: #9e6a03; /* Dark Modern 显式覆盖 findMatchBackground */
   --find-match-other: #ea5c0055;
-  --find-match-border: transparent;
+  /* B425：当前项的描边非 HC 也画（取该族 focusBorder）；范围带走 editorColors.ts 的
+     注册默认 #3a3d4166 —— dark_vs / dark_plus / dark_modern 都没覆盖 findRangeHighlight。 */
+  --find-match-border: var(--accent);
   --find-match-other-border: transparent;
+  --find-range: #3a3d4166;
+  --find-range-border: transparent;
   --find-field-bg: #313131;
   --find-opt-active: #2489db82;
   --find-opt-active-border: #2488db;
@@ -433,8 +451,11 @@
   --sb-thumb-active: #797979b3;
   --find-match: #515c6a; /* registry 默认的 findMatchBackground */
   --find-match-other: #ea5c0055;
-  --find-match-border: transparent;
+  /* B425：与 modern 同一走法（这两族的 findRangeHighlight 也没被主题覆盖 ⇒ 注册默认）。 */
+  --find-match-border: var(--accent);
   --find-match-other-border: transparent;
+  --find-range: #3a3d4166;
+  --find-range-border: transparent;
   --find-field-bg: #3c3c3c;
   --find-opt-active: #2489db82;
   --find-opt-active-border: #2488db;
@@ -541,6 +562,10 @@
   --find-match-other: transparent;
   --find-match-border: #f38518;
   --find-match-other-border: #f38518;
+  /* B425：HC 档 findRangeHighlightBackground 注册成 null（不画底），只有一圈
+     findRangeHighlightBorder = transparent(activeContrastBorder, 0.4) ⇒ alpha 0.4。 */
+  --find-range: transparent;
+  --find-range-border: #f3851866;
   --find-field-bg: #000000;
   --find-btn-hover: #ffffff1f;
   --find-opt-hover: #ffffff33;
@@ -654,10 +679,14 @@
   --sb-thumb: #646464c0;
   --sb-thumb-hover: #646464d0;
   --sb-thumb-active: #646464e0;
+  /* B425：同深色档 —— 其余命中跨到橙（2026 原值 #0069cc1a 与自动高亮 #0069cc15 只差 Δ5.9，
+     而当前项 #0069cc40 干脆与选区同色），当前项一圈该族 focusBorder，范围带取 2026-light.json。 */
   --find-match: #0069cc40;
-  --find-match-other: #0069cc1a;
-  --find-match-border: transparent;
+  --find-match-other: #ea5c0055;
+  --find-match-border: var(--accent);
   --find-match-other-border: transparent;
+  --find-range: #00000015;
+  --find-range-border: transparent;
   --shadow-lg: 0 0 12px rgba(0, 0, 0, 0.14);
   --find-field-bg: #ffffff;
   --find-btn-hover: #b8b8b850;
@@ -754,8 +783,11 @@
   --sb-thumb-active: rgba(0, 0, 0, 0.5);
   --find-match: #a8ac94; /* registry 默认的 findMatchBackground */
   --find-match-other: #ea5c0055;
-  --find-match-border: transparent;
+  /* B425：当前项描边取该族 focusBorder；范围带走注册默认 #b4b4b44d（这两族都没覆盖它）。 */
+  --find-match-border: var(--accent);
   --find-match-other-border: transparent;
+  --find-range: #b4b4b44d;
+  --find-range-border: transparent;
   /* 纯白输入框压在纯白浮层上会整块消失（无边框）⇒ 保留 B376 那档灰。 */
   --find-field-bg: #f6f7f8;
   --find-opt-active: color-mix(in srgb, var(--accent) 20%, transparent);
@@ -842,8 +874,11 @@
   --sb-thumb-active: #646464b3;
   --find-match: #a8ac94; /* registry 默认的 findMatchBackground */
   --find-match-other: #ea5c0055;
-  --find-match-border: transparent;
+  /* B425：当前项描边取该族 focusBorder；范围带走注册默认 #b4b4b44d（这两族都没覆盖它）。 */
+  --find-match-border: var(--accent);
   --find-match-other-border: transparent;
+  --find-range: #b4b4b44d;
+  --find-range-border: transparent;
   /* 同 Modern 浅色档：输入框与浮层都是纯白，留一档灰撑出边界。 */
   --find-field-bg: #f3f3f3;
   --find-opt-active: #bed6ed;
@@ -944,6 +979,9 @@
   --find-match-other: transparent;
   --find-match-border: #006bbd;
   --find-match-other-border: #006bbd;
+  /* B425：与深 HC 同一走法 —— 底色 null 不画，只有一圈 transparent(activeContrastBorder, .4)。 */
+  --find-range: transparent;
+  --find-range-border: #006bbd66;
   --find-field-bg: #f2f2f2;
   --find-btn-hover: #0f4a851a;
   --find-opt-hover: #0f4a8533;
@@ -958,6 +996,49 @@
   --code-bg: #ffffff;
   --link-fg: #0f4a85;
 }
+
+/* B419 · 搜索命中数徽标（VS Code 的 `badge.background` / `badge.foreground`）。
+   几何在 preview.css 的 `.search-badge`；这里只给颜色，每族一份（与上面那批分区域
+   token 同源：2026 取 2026-*.json 的显式值，Modern 取 dark/light_modern.json，
+   Plus / 经典 / HC 取 `miscColors.ts` 的注册默认值 —— 那几族没有显式定义）。 */
+:root {
+  --badge-bg: #307e9f;
+  --badge-fg: #ffffff;
+}
+:root[data-theme="dark"][data-theme-family="modern"] {
+  --badge-bg: #616161;
+  --badge-fg: #f8f8f8;
+}
+:root[data-theme="dark"][data-theme-family="plus"],
+:root[data-theme="dark"][data-theme-family="classic"] {
+  --badge-bg: #4d4d4d;
+  --badge-fg: #ffffff;
+}
+:root[data-theme="dark"][data-theme-family="hc"] {
+  --badge-bg: #000000;
+  --badge-fg: #ffffff;
+}
+:root[data-theme="light"] {
+  --badge-bg: #0069cc;
+  --badge-fg: #ffffff;
+}
+:root[data-theme="light"][data-theme-family="modern"] {
+  --badge-bg: #cccccc;
+  --badge-fg: #3b3b3b;
+}
+:root[data-theme="light"][data-theme-family="plus"],
+:root[data-theme="light"][data-theme-family="classic"] {
+  --badge-bg: #c4c4c4;
+  --badge-fg: #333333;
+}
+:root[data-theme="light"][data-theme-family="hc"] {
+  --badge-bg: #0f4a85;
+  --badge-fg: #ffffff;
+}
+
+/* B458 · 未保存改动标注的三颗色**不在这里**：明暗要一致，所以它们定义在主题无关的 `:root`
+   里一次到位（见下面「未保存改动的行级标注」那段）。族覆盖与明暗基座表都不许再写这三颗 ——
+   浅色的 `--warn` 是橄榄绿 #667309，借过来两档必然不一致（用户 2026-11-04 定稿）。 */
 
 /* ---------- 滚动条：全应用统一 + 随深浅色联动 ----------
    WebView2 默认滚动条是 Windows 系统样式，深色界面里会出现一条浅色亮条；
@@ -2170,6 +2251,16 @@ button:focus-visible {
   background: var(--find-btn-hover);
   color: var(--fg);
 }
+/* B419（用户）：预览档禁用替换时，这颗「展开替换行」的键要明确按不动 —— 压淡 + 去掉
+   悬停提亮与手型指针。`:disabled:hover` 必须单列一条：上一条 `.find-chevron:hover`
+   特异度同为 (0,2,0)，靠后写才盖得住。 */
+.find-chevron:disabled,
+.find-chevron:disabled:hover {
+  background: transparent;
+  color: var(--fg-muted);
+  opacity: 0.4;
+  cursor: default;
+}
 /* B102 起图标改用官方 codicon **字体**（`<i class="codicon …">`）：尺寸由 codicon.css
    统一给 16px（`font: 16px/1 codicon`），原来「按容器把 svg 归到 16×16」这批规则作废。
    只有要改字号的地方才需要写规则（见 `.panel-op .codicon`）。 */
@@ -2441,7 +2532,10 @@ button:focus-visible {
 /* 编辑器内的查找命中高亮（由悬浮查找栏驱动）。
    B380：其余命中 = findMatchHighlightBackground（--find-match-other），当前项 =
    findMatchBackground（--find-match）；边框只有 HC 档给色（activeContrastBorder），
-   非 HC 是 transparent ⇒ 看起来就是 VS Code 的方块命中，没有额外描边与圆角。 */
+   非 HC 是 transparent ⇒ 看起来就是 VS Code 的方块命中，没有额外描边与圆角。
+   B425：两档底色在 2026 族只差一档 alpha ⇒ 当前项这圈描边非 HC 也画（取该族
+   focusBorder，见上面 B425 那段），照 VS Code 的 `.currentFindMatch` 2px 结构，
+   但用 outline 不用 border —— border + padding 会把字符往前推，outline 不吃布局。 */
 .cm-find-match {
   background: var(--find-match-other);
   outline: 1px solid var(--find-match-other-border);
@@ -2449,7 +2543,19 @@ button:focus-visible {
 }
 .cm-find-match-active {
   background: var(--find-match);
-  outline-color: var(--find-match-border);
+  outline: 2px solid var(--find-match-border);
+  outline-offset: 0;
+}
+
+/* B425 · 「在选区中查找」的范围带（VS Code editor.findRangeHighlightBackground，
+   findDecorations 的 `_FIND_SCOPE_DECORATION` 是整行）。
+   用 background-image 画，不用伪元素：伪元素带定位会盖到文字上面（定位子元素在
+   普通流内容之后绘制），而 `background-image` 天然叠在同一元素的 background-color
+   之上、文字之下，零布局影响 —— 当前行底色（--editor-line-highlight-bg）与带子
+   因此能同时看见，谁也不吃掉谁。HC 档底色注册成 null ⇒ 只有一圈边框。 */
+.panel-host .cm-editor .cm-line.cm-find-range {
+  background-image: linear-gradient(var(--find-range), var(--find-range));
+  box-shadow: inset 0 0 0 1px var(--find-range-border);
 }
 
 /* ---------- 设置对话框 ---------- */
@@ -2458,8 +2564,13 @@ button:focus-visible {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.4);
-  /* B353：原来这里的 flex 居中已删 —— 窗框是 `position: fixed` + inline left/top，
-     居中规则对它不成立（拖过一次之后更不该被拉回正中）。遮罩只负责压暗与吃点击。 */
+  /* B353 曾把这里的 flex 居中删掉（理由是 `.win-frame` 自带 fixed + inline 定位）。
+     但改版后仍有一批弹窗只有 `.settings-dialog`（未保存确认 / 键位冲突 / 图片编辑…）——
+     它们**没有**任何定位规则，删了居中就全落到视口左上角（B415 用户报的就是它）。
+     补回 flex：`position: fixed` 的子元素不参与 flex 布局，设置窗与图片弹窗不受影响。 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
   z-index: 100;
 }
 
@@ -2836,6 +2947,17 @@ button:focus-visible {
   text-overflow: ellipsis;
 }
 
+/* B437 · 标题栏图标（设置窗传 CODICONS.gear）：flex:none 不吃标题压缩，
+   颜色跟 muted token。字号不写 —— codicon 基类（.codicon[class*=codicon-]）就是 16px/1，
+   这里再写裸 px 会撞 B337 字阶契约（chrome CSS 不许有白名单外的裸 font-size）。 */
+.win-title-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--fg-muted);
+}
+
 /* 关闭键：与面板头部那排（.panel-op）同一档方形图标键（22px、不铺底、hover 才亮）。
    ⚠️ 同款控件一条规则：数值要与 `.panel-op` 一致，别在这里自创一档。
    ⚠️ 类名带 `head`：主窗口标题栏那颗关闭键占用的是 id `#win-close`（index.html），
@@ -3096,6 +3218,57 @@ button:focus-visible {
 }
 
 .settings-assoc-input::placeholder {
+  color: var(--fg-muted);
+}
+
+/* B426：设置页「搜索 → 要排除的文件」那一格（多行模式清单）。
+   取色全走 token（与同页输入框同源，B379 口径）；宽度是控件自身的尺寸档，
+   不是窗框几何 —— 横向拉伸会把 `.settings-item` 那两列网格撑破 ⇒ 只许纵向。 */
+.settings-textarea {
+  width: 340px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input, var(--bg-elevated));
+  color: var(--fg);
+  font-size: var(--fs-ui);
+  font-family: var(--font-ui);
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+}
+
+.settings-textarea:focus {
+  border-color: var(--accent);
+}
+
+.settings-textarea::placeholder {
+  color: var(--fg-muted);
+}
+
+/* B452-5：设置页的单行输入框（URL 这类一行放得下的值）。
+   与上面 `.settings-textarea` 同一套取色（B379 口径：一律走 token，不写死色值），
+   高度与同页下拉/开关那一档对齐，宽度 340px 与多行框同尺寸。 */
+.settings-input {
+  width: 340px;
+  min-width: 0;
+  height: var(--input-h, 28px);
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input, var(--bg-elevated));
+  color: var(--fg);
+  font-size: var(--fs-ui);
+  font-family: var(--font-ui);
+  outline: none;
+}
+
+.settings-input:focus {
+  border-color: var(--accent);
+}
+
+.settings-input::placeholder {
   color: var(--fg-muted);
 }
 
@@ -4222,6 +4395,36 @@ button:focus-visible {
   flex: 0 0 auto;
   /* B122：B121 的 border-bottom 补线随条带细线一并移除 —— 条带与内容之间
      不再有任何线（见 .panel-tabstrip 的 B122 注释）。 */
+  /* B418：给左侧那条渐变（::before）一个定位基准，并抬到标签的 fill / 文件名
+     之上（标签内部那些 z-index 1 与 ops 同层，DOM 顺序让 ops 后画 —— 抬一层更稳）。
+     ⚠️ 抬到 1 仍低于滚动条（2）与拖拽插入线（6）：渐变不吃 thumb、也不压插入线。 */
+  position: relative;
+  z-index: 1;
+}
+
+/* B418（用户）：标签条右侧按钮与左侧标签之间的过渡 —— 照紧凑档关闭键那颗
+   渐变垫底（B118）的同一手法：条带最后 14px 铺「透明 → 条带底色」，
+   被裁半截的标签在按钮前渐隐，而不是一刀切断。
+   ⚠️ 只在**右侧还有内容被裁着**时出现（`is-overflow-right`，由 scrollbar.ts 的
+      syncOverlayScrollbar 维护）：标签放得下、或已经滚到最右时收掉 —— 否则会把
+      最后一个完整标签自己的右缘咬掉一截。与 B118「× 悬浮在文字上时才有垫」同口径。
+   ⚠️ bottom 让出 1px：`.panel-head::after` 那条通铺线不许被渐变吃掉。
+   ⚠️ 渐变住在 .panel-ops 的左侧（right: 100%），不放进标签条：条带是滚动容器，
+     绝对定位子元素会随内容滚走（B117 同款坑）。 */
+.panel-ops::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: var(--tab-stroke);
+  right: 100%;
+  width: 14px;
+  background: linear-gradient(to right, transparent, var(--tab-strip-bg));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition);
+}
+.panel-tabstrip-wrap.is-overflow-right + .panel-ops::before {
+  opacity: 1;
 }
 
 /* 面板操作按钮：B54 起只剩「移除分屏」⨯（左右/上下分屏按钮已去掉，
@@ -4371,7 +4574,8 @@ button:focus-visible {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  padding-right: 5px;
+  /* B458：5px 留白让出 4px 给未保存改动那列标注（箭头到正文的间距 = 1px + 4px，一毫不变）。 */
+  padding-right: 1px;
   cursor: pointer;
 }
 
@@ -4394,6 +4598,57 @@ button:focus-visible {
   background: var(--bg-hover);
   color: var(--accent);
   opacity: 1;
+}
+
+/* ---------- B458 · 未保存改动的行级标注（源码模式） ----------
+   基线 = 上一次保存的正文（与标签上那颗未保存原点同一个值）⇒ 保存后整片清空。
+   三颗色定义在**主题无关**的 `:root` 里（用户 2026-11-04：浅色档与深色档用同一套），
+   所以五族十张表一律解析到同一组值；红那颗在原先警示红 #f48771 的基础上加深。
+   宽 4px 正好落在折叠箭头原先那 5px 留白里（上面把 padding-right 收到 1px ⇒ 总宽不变，
+   存不存盘正文都不会左右跳一格）。
+   落位（方案 B + 方案 A）：橙/绿铺满自己那一行；红属于**被删块后面那一行**的上边缘，
+   跨接缝上下各 4px 并压在它们之上 ⇒ 橙让掉最后 4px、绿让掉最前 4px，那道缝归红独占。 */
+:root {
+  --diff-add: #72c892;
+  --diff-mod: #e5ba7d;
+  --diff-del: #e5534b;
+}
+
+.panel-host .cm-editor .cm-diffGutter {
+  min-width: 4px;
+  /* 缝要越过行格的上下沿，CM6 给每列的 overflow: hidden 得关掉。 */
+  overflow: visible;
+}
+
+.panel-host .cm-editor .cm-diffGutter .cm-gutterElement {
+  position: relative;
+}
+
+.panel-host .cm-editor .cm-diffGutter .cm-diff-add {
+  background: var(--diff-add);
+}
+
+.panel-host .cm-editor .cm-diffGutter .cm-diff-mod {
+  background: var(--diff-mod);
+}
+
+.panel-host .cm-editor .cm-diffGutter .cm-gutterElement.cm-diff-del-top::after,
+.panel-host .cm-editor .cm-diffGutter .cm-gutterElement.cm-diff-del-bottom::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  width: 4px;
+  height: 8px;
+  background: var(--diff-del);
+  z-index: 3;
+}
+
+.panel-host .cm-editor .cm-diffGutter .cm-gutterElement.cm-diff-del-top::after {
+  top: -4px;
+}
+
+.panel-host .cm-editor .cm-diffGutter .cm-gutterElement.cm-diff-del-bottom::after {
+  bottom: -4px;
 }
 
 /* 拖拽分隔条期间的全局态：禁选 + 按方向给光标。
@@ -4519,7 +4774,7 @@ body.tab-drag-active * {
    ⇒ 规则匹配不到元素，B225 那两条设置照样是死代码（字号 / 字体 / 行距全不生效）。
    同一个坑的 `.editor-host { … }` / `.editor-host .cm-scroller { … }` 两条仍在下面（死规则，
    与 preview.css 的 `.panel-host .panel-editor .cm-scroller` 重复），本次不动，留待单独清理。 */
-/* B397-1：这里曾为装饰预览面（镜像）补过三条 `.md-deco-host …` 同声明的覆盖（B391F-1，
+/* B397-1：这里曾为装饰预览面（镜像）补过三条 `.md-preview-face-host …` 同声明的覆盖（B391F-1，
    症状是「预览面与源码格两套行盒 ⇒ 逐行对齐必差一行」）。一颗 view 两档之后装饰就挂在
    `.panel-editor .cm-editor` 自己身上，下面这三条天然生效，那批选择器连同宿主一起作废。 */
 .panel-host .panel-editor .cm-editor {
@@ -4876,6 +5131,33 @@ body.tab-drag-active * {
   width: 16px;
   flex: 0 0 16px;
   color: var(--accent);
+}
+
+/* B447 · 菜单项行首的字形格（工具条折进下拉的那些子项）。
+   ⚠️ 定宽 16px 是硬要求：不传 icon 的菜单**根本不建这个元素**（见 menu.ts），
+   所以传与不传混在同一条菜单里时，标签左沿会错开半格 —— 定宽把它钉死。 */
+.popup-menu button .menu-icon {
+  width: 16px;
+  flex: 0 0 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-muted);
+}
+
+/* 字号挂在 `.codicon` 内层（codicon.css 用 `font` 简写、自带 font-size，父级写多少都
+   不算数 —— 同 `.menu-arrow` 那条的 B208 教训）。
+   ⚠️ 选择器照 `.menu-arrow .codicon` 那一族的**短写法**：写成
+   `.popup-menu button .menu-icon .codicon` 看着更精确，实际会被 B337 那条按选择器
+   子串过滤的「`.popup-menu` 字号」自证判据扫进去 ⇒ 一条图标声明冒充文字字阶。 */
+.menu-icon .codicon {
+  font-size: 16px;
+}
+
+.menu-icon svg {
+  width: 16px;
+  height: 16px;
+  display: block;
 }
 
 /* 置灰的菜单项（B97）：不可点，也不该有悬停高亮 ——
@@ -5297,4 +5579,17 @@ body.tab-drag-active * {
   .tooltip.fade-in {
     animation: none;
   }
+}
+
+/* B452-4 · flowchart.js 的临时测量格：它靠 raphael 的 `getBBox()` 量节点上的字，
+   所以这一格必须真的参与布局 —— 不能 `display:none`（那样照样量到 0）。
+   绝对定位甩到屏幕外：占布局但不占位置，也就不影响 CM6 的块高测量。
+   这条在 global.css 而不是 preview.css：B397-2 那道守卫要求 preview.css 每条规则都挂在
+   `.md-preview-face` 下，而这一格是「渲染器自己用一下」的一次性件、兜底那一形还会挂到 body
+   （见 `diagrams.ts` 的 `measuringMount`），本来就不属于预览面的排版。 */
+.md-diagram-measure {
+  position: absolute;
+  top: 0;
+  left: -99999px;
+  white-space: nowrap;
 }

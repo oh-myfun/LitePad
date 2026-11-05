@@ -211,11 +211,28 @@ export function renderTabstrip(
   // 无条件拽回来——活动标签在可视区外的右侧（新开文件的常态）时表现为「滚不动」。
   if (activeIdx >= 0 && activeId !== entry.lastActiveId) {
     ensureVisible(host, els[activeIdx]);
+    // B415：整树重建时这一发常常跑在**新树进文档之前**（clientWidth 0 ⇒ ensureVisible
+    // 静默退出），而 `lastActiveId` 照样记了账 ⇒ 之后同一颗 host 的重绘全被门控挡住，
+    // 新开的标签就永远停在可视区外。布局落定后再认一次：按 data-tab-id 重新找元素
+    //（中间可能又重绘过一批节点），已经可见时 ensureVisible 自会不动。
+    const target = activeId;
+    queueMicrotask(() => {
+      if (host.isConnected) ensureTabVisible(host, target);
+    });
   }
   entry.lastActiveId = activeId;
 
   ensureOverlayScrollbar(host);
   syncOverlayScrollbar(host);
+}
+
+/**
+ * B415：把某颗标签滚进它所在标签条的可视区（活动标签换了以后的补位，与拖入落点后的
+ * 显形共用这一发）。元素按 `data-tab-id` 现查 —— 调用方手里的节点可能已被重绘换掉。
+ */
+export function ensureTabVisible(host: HTMLElement, tabId: number): void {
+  const el = host.querySelector<HTMLElement>(`.tab[data-tab-id="${tabId}"]`);
+  if (el) ensureVisible(host, el);
 }
 
 /**

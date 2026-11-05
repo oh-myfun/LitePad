@@ -39,7 +39,6 @@ import {
   applyEditorLineHeight,
   applyFontFamily,
   applyFontSize,
-  applyPreviewLineHeight,
   applyPreviewWidth,
   applyTabActionReserve,
   applyTabStyle,
@@ -87,6 +86,9 @@ import { level as currentLogLevel, logger, setLevelPersisted } from "./core/logg
 import { applyRecentLimit, getRecentLimit } from "./recents/store";
 // B385：文件关联（注册表是唯一权威，设置页打开时拉整表，见 settingsdialog.fillAssocPage）。
 import { assocList, assocOpenSystemSettings, assocSet, assocSetMany } from "./ipc/api";
+// B426：设置页「搜索」那一页改的两格由 store **现读**（`diskArgs` 每次问一次 settings），
+// 这里只负责补一发重搜，免得结果屏停在旧排除集上看着像「改了没反应」。
+import { rerunAfterSettingsChange } from "./search/store";
 import { ask } from "@tauri-apps/plugin-dialog";
 
 // ---------------------------------------------------------------- 编码转换（B215）
@@ -384,14 +386,6 @@ function scheduleFontSizeSave(): void {
   }, 400) as unknown as number;
 }
 
-/** 预览行距：写 :root 上的 --md-line-height，`.md-rendered` 通过 var() 生效。 */
-
-/** 未知档位一律落「全宽」（B235 的默认口径，也是最不容易显得窄的那档）。 */
-
-/** 预览正文宽度：写 :root 上的 --md-content-max，`.md-rendered .md-block` 通过 var() 生效。 */
-
-/** 编辑器行距：写 :root 上的 --editor-line-height，.cm-content 通过 var() 生效。 */
-
 /**
  * B227：本机字体清单缓存（Rust `list_fonts`）。
  *
@@ -546,6 +540,60 @@ async function setDefaultLang(value: string): Promise<void> {
   showMessage(value ? `新建文档类型：${value}` : "新建文档类型：自动（纯文本）");
 }
 
+/**
+ * B426：应用级「搜索排除模式」（设置页「搜索 → 要排除的文件」）。
+ *
+ * 存的是用户写的那串原样（只 trim）：切分与语义都在 Rust 侧（`commands/search.rs`
+ * 的 `WalkFilter`），与面板那框的合并只在 store 的 `mergeGlobs` 一处 —— 这里再校验
+ * 一遍就是第二张判据表，迟早跟 Rust 分家。
+ *
+ * ⚠️ 同值直接返回：文本域的提交点是 `change`（失焦），焦点每挪一次都会发一发；
+ *    不挡这一发就等于每次挪焦点重写一遍设置 + 重跑一整场搜索。
+ */
+async function setSearchExclude(value: string): Promise<void> {
+  if (!settings) return;
+  const next = value.trim();
+  if (settings.search_exclude === next) return;
+  settings.search_exclude = next;
+  await persistSettings();
+  rerunAfterSettingsChange();
+  showMessage(next ? "搜索排除已更新" : "搜索排除已清空");
+}
+
+/**
+ * B426：搜索跟不跟 `.gitignore` / `.ignore`（VS Code `search.useIgnoreFiles` 同款）。
+ *
+ * 落盘写**明确的 true/false**：`null` 只属于「老配置里没这一格」那一档（B392 的
+ * 「没记过 ≠ 关着」）；用户一旦拍过板，存下来的就该是他拍的那个值。
+ */
+async function setSearchUseIgnoreFiles(on: boolean): Promise<void> {
+  if (!settings) return;
+  settings.search_use_ignore_files = on;
+  await persistSettings();
+  rerunAfterSettingsChange();
+  showMessage(on ? "搜索将跟随 .gitignore / .ignore" : "搜索不再跟随 .gitignore / .ignore");
+}
+
+/**
+ * B452-5：PlantUML 在线服务器（设置页「编辑器 → 预览」那一格）。
+ *
+ * 存用户写的那串原样（只 trim）：URL 合法性不在这里判 —— 画不出来时渲染器按 `img.onerror`
+ * reject，那一格退回源码块（与离线同一口径），比在这里拦一次弹窗更有用。
+ * 空串 = 用 `diagrams.ts` 的内置默认那台（「没记过」与「清空」同一档，见 api.ts 字段注释）。
+ *
+ * ⚠️ 同值直接返回：提交点是 `change`（失焦），焦点每挪一次都会发一发（同 `setSearchExclude`）。
+ */
+async function setPlantumlServer(value: string): Promise<void> {
+  if (!settings) return;
+  const next = value.trim();
+  if (settings.plantuml_server === next) return;
+  settings.plantuml_server = next;
+  await persistSettings();
+  // 已画在屏上的那张图是按旧地址取回来的（`<img>` 的 src 定死在渲染那一刻）⇒ 重画一遍。
+  rethemePreviews();
+  showMessage(next ? "PlantUML 服务器已更新" : "PlantUML 服务器已恢复默认");
+}
+
 /** 快捷键覆盖表变更（快捷键对话框 → 立即持久化）。 */
 async function applyKeymapOverrides(next: KeymapOverrides): Promise<void> {
   setKeymapOverrides(next);
@@ -596,16 +644,6 @@ async function setHotExit(on: boolean): Promise<void> {
   if (!on) discardAllBackups();
   await persistSettings();
   showMessage(on ? "已启用热退出（关窗不再询问，未保存内容下次启动还原）" : "已停用热退出");
-}
-
-/** Markdown 预览行距（查看菜单三档）。 */
-async function setPreviewLineHeight(value: number): Promise<void> {
-  applyPreviewLineHeight(value);
-  if (settings) {
-    settings.preview_line_height = value;
-    await persistSettings();
-  }
-  showMessage(`预览行距 ${value}`);
 }
 
 /** B235：预览正文内容区宽度档（设置页三选）。管的是**正文居中宽度**，不是分屏比例。 */
@@ -717,6 +755,16 @@ async function openSettingsDialog(): Promise<void> {
     onAssocSet: (ext, on) => assocSet(ext, on),
     onAssocSetMany: (exts, on) => assocSetMany(exts, on),
     onOpenDefaultApps: () => void assocOpenSystemSettings(),
+    // B426：「搜索」分类 —— 持久排除模式 + 跟不跟忽略清单。这两格就存在 `settings`
+    // 里（store 的 `diskArgs` 每次现读同一份 ⇒ 改完即时生效，不需要启动回放那一套）。
+    searchExclude: () => settings?.search_exclude ?? "",
+    onSearchExclude: (v) => void setSearchExclude(v),
+    searchUseIgnoreFiles: () => settings?.search_use_ignore_files ?? true,
+    onSearchUseIgnoreFiles: (v) => void setSearchUseIgnoreFiles(v),
+    // B452-5：PlantUML 服务器（```plantuml 的图由它画）。空串 = 内置默认那台，
+    // 由渲染器兜（`diagrams.ts`），这里不重复写一遍那个地址 —— 两处默认值迟早分家。
+    plantumlServer: () => settings?.plantuml_server ?? "",
+    onPlantumlServer: (v) => void setPlantumlServer(v),
     theme: () => themeMode,
     onTheme: (mode) => void setThemeMode(mode),
     themeFamily: () => themeFamily,
@@ -735,8 +783,6 @@ async function openSettingsDialog(): Promise<void> {
     onFontSize: (px) => void setFontSizeValue(px),
     editorLineHeight: () => settings?.editor_line_height ?? 1.5,
     onEditorLineHeight: (v) => void setEditorLineHeight(v),
-    previewLineHeight: () => settings?.preview_line_height ?? 1.7,
-    onPreviewLineHeight: (v) => void setPreviewLineHeight(v),
     // B235：预览正文宽度档（顶掉了原先的「大纲宽度」设置项）
     previewWidth: () => normalizePreviewWidth(settings?.preview_width),
     onPreviewWidth: (v) => void setPreviewWidth(v),
@@ -845,7 +891,8 @@ export {
   setThemeMode,
   setDefaultEol,
   setDefaultEncoding,
-  setPreviewLineHeight,
+  setSearchExclude,
+  setSearchUseIgnoreFiles,
   setPreviewWidth,
   setFontFamily,
   setCodeFontFamily,

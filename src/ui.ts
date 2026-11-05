@@ -113,10 +113,19 @@ const explorerPanel = el("explorer-panel");
 const explorerTitle = el<HTMLSpanElement>("explorer-title");
 const explorerTree = el("explorer-tree");
 const explorerOpen = el<HTMLButtonElement>("explorer-open");
-const explorerRefresh = el<HTMLButtonElement>("explorer-refresh");
+// B424：头部那一排的「刷新」没有了 —— 多根之下刷新得有主语，改成每根行自带一颗（JS 造）。
 const explorerCollapse = el<HTMLButtonElement>("explorer-collapse");
 const explorerNewFile = el<HTMLButtonElement>("explorer-new-file");
 const explorerNewDir = el<HTMLButtonElement>("explorer-new-dir");
+// B427：头部下面那条「按名字过滤」：输入框 + 三颗匹配开关 + 排除键 + 清除。
+// B428（用户点名）：排除键旁那颗独立的「跟随 .gitignore / .ignore」删了 —— 语义被
+// 「使用排除设置与忽略文件」整颗包含。
+const explorerFilterInput = el<HTMLInputElement>("explorer-filter-input");
+const explorerFilterCase = el<HTMLButtonElement>("explorer-filter-case");
+const explorerFilterWord = el<HTMLButtonElement>("explorer-filter-word");
+const explorerFilterRegex = el<HTMLButtonElement>("explorer-filter-regex");
+const explorerFilterExcludes = el<HTMLButtonElement>("explorer-filter-excludes");
+const explorerFilterClear = el<HTMLButtonElement>("explorer-filter-clear");
 // B389：侧栏第四块 —— 搜索。显隐与点亮态同归外壳 `setDrawer`，这里只交出节点本身
 // （口径同上面三块）。输入区那一截全是要接线的事件源，所以一颗都单独取出来：
 // ⚠️ 别在 panel.ts 里 `querySelector` 现找 —— 少了哪一颗只有等到用户点到才炸，
@@ -133,10 +142,14 @@ const searchToggleReplace = el<HTMLButtonElement>("search-toggle-replace");
 const searchReplaceRow = el("search-replace-row");
 const searchReplaceInput = el<HTMLInputElement>("search-replace-input");
 const searchReplaceAll = el<HTMLButtonElement>("search-replace-all");
+const searchPreserveCase = el<HTMLButtonElement>("search-preserve-case");
+const searchOpenEditors = el<HTMLButtonElement>("search-open-editors");
 const searchDetails = el("search-details");
 const searchDetailsToggle = el<HTMLButtonElement>("search-details-toggle");
 const searchInclude = el<HTMLInputElement>("search-include");
 const searchExclude = el<HTMLInputElement>("search-exclude");
+/** B421：「使用排除设置与忽略文件」那颗键（嵌在排除框右内侧，VS Code 同款位置）。 */
+const searchUseExcludes = el<HTMLButtonElement>("search-use-excludes");
 const searchRefresh = el<HTMLButtonElement>("search-refresh");
 const searchCollapseAll = el<HTMLButtonElement>("search-collapse-all");
 const searchClear = el<HTMLButtonElement>("search-clear");
@@ -352,7 +365,10 @@ function refreshAll(): void {
   renderPanelTabsRef();
   // B406：保存 / 另存为 / 资源管理器改名之后，文档路径都会经这里刷新 ⇒
   // 图片相对路径的基准（assetBase）也挂在这个统一出口上。
-  refreshDecoAssetBasesRef();
+  refreshPreviewAssetBasesRef();
+  // B458：保存 / 改名之后 `doc.baseline` 已经是新正文，而行号右侧那列 diff 标注只认 CM6 的
+  // 事务 —— 补一发「去问一次基线」，否则按完 Ctrl+S 不动键盘，橙绿色就摘不掉。
+  refreshGutterDiffRef();
   // B224：md 两颗键跟着活动面板 / 活动标签走，任何全局刷新都要同步一遍
   // （开/关标签、复制实例、会话恢复都可能改变「活动面板的标签是不是 md」）。
   renderPanelOpsRef();
@@ -396,7 +412,9 @@ let updateTocDrawerRef: () => void = () => {};
 let renderPanelTabsRef: (onlyPanelId?: number) => void = () => {};
 let renderPanelOpsRef: (onlyPanelId?: number) => void = () => {};
 // B406：markdown.ts 的图片基准刷新（文档路径变了要重发 setAssetBase）
-let refreshDecoAssetBasesRef: () => void = () => {};
+let refreshPreviewAssetBasesRef: () => void = () => {};
+// B458：markdown.ts 的 diff 标注基线校对（doc.baseline 被换成新正文要重算那一列）
+let refreshGutterDiffRef: () => void = () => {};
 
 export function setRefreshViewModeButton(fn: () => void): void {
   refreshViewModeButtonRef = fn;
@@ -414,8 +432,12 @@ export function setRenderPanelOps(fn: (onlyPanelId?: number) => void): void {
   renderPanelOpsRef = fn;
 }
 
-export function setRefreshDecoAssetBases(fn: () => void): void {
-  refreshDecoAssetBasesRef = fn;
+export function setRefreshPreviewAssetBases(fn: () => void): void {
+  refreshPreviewAssetBasesRef = fn;
+}
+
+export function setRefreshGutterDiff(fn: () => void): void {
+  refreshGutterDiffRef = fn;
 }
 
 export {
@@ -451,10 +473,15 @@ export {
   explorerTitle,
   explorerTree,
   explorerOpen,
-  explorerRefresh,
   explorerCollapse,
   explorerNewFile,
   explorerNewDir,
+  explorerFilterInput,
+  explorerFilterCase,
+  explorerFilterWord,
+  explorerFilterRegex,
+  explorerFilterExcludes,
+  explorerFilterClear,
   sideSearch,
   searchPanel,
   searchResults,
@@ -467,10 +494,13 @@ export {
   searchReplaceRow,
   searchReplaceInput,
   searchReplaceAll,
+  searchPreserveCase,
+  searchOpenEditors,
   searchDetails,
   searchDetailsToggle,
   searchInclude,
   searchExclude,
+  searchUseExcludes,
   searchRefresh,
   searchCollapseAll,
   searchClear,

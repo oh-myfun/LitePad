@@ -281,24 +281,32 @@ describe("B161 子窗口可以关掉唯一的面板（= 关窗，不交回主窗
     expect(atSat, "卫星那一档要排在放行判据之前").toBeLessThan(atBail);
   });
 
-  it("⨯ 的显隐：主窗口唯一面板仍禁用，卫星窗口可关；副标题要说清后果", () => {
-    // B224：面板渲染数据的组装抽进了 panelDataOf（rebuildLayout 与 renderPanelOps
-    // 共用这一份口径，md 键的标记也在这里），锚点跟着函数走。
-    const at = src.indexOf("function panelDataOf(");
-    expect(at, "要能定位面板渲染数据的组装处").toBeGreaterThan(-1);
-    const block = src.slice(at, at + 900);
+  it("解散组的显隐：主窗口唯一面板置灰，卫星窗口可关且改口「关闭子窗口」", () => {
+    // B422：这两格判据原先长在 × 的 disabled / 副标题上，现在抽成 `panelCloseFact` ——
+    // 渲染快照与「点『…」那一刻算的组菜单」共用同一份口径（两处各写一遍必然漂移）。
+    const at = src.indexOf("function panelCloseFact(");
+    expect(at, "要能定位「这一格能不能解散」的判据处").toBeGreaterThan(-1);
+    const block = src.slice(at, at + 700);
     expect(block, "卫星窗口唯一的面板也能关").toMatch(
-      /canClose: countLeaves\(layout\) > 1 \|\| windowKind === "satellite"/,
+      /canClose = countLeaves\(layout\) > 1 \|\| windowKind === "satellite"/,
     );
-    expect(block, "卫星唯一面板要换个副标题（不是「并入相邻面板」）").toMatch(
-      /closeDetail:\s*\n\s*windowKind === "satellite"/,
+    expect(block, "卫星唯一面板要说清后果（关的是窗口，不是并入）").toMatch(
+      /closeDetail\s*=[\s\S]*?关闭该子窗口（其中的文件不会交回主窗口）/,
     );
-    expect(block, "副标题要说清是关窗、不交回主窗口").toMatch(
-      /关闭该子窗口（其中的文件不会交回主窗口）/,
+    const menu = src.slice(src.indexOf("function groupMenuOf("));
+    expect(menu, "组菜单要认 closeDetail（卫星唯一面板改口「关闭子窗口」）").toMatch(
+      /closeDetail \? "关闭子窗口" : "解散组"/,
     );
-    // 渲染侧真要用上这个字段，否则只是摆设
-    const view = readFileSync("src/shell/splitview.ts", "utf-8");
-    expect(view, "渲染侧要认 closeDetail").toMatch(/data\.closeDetail \?\?/);
+    expect(menu, "唯一面板那条要在菜单里置灰（旧 × 的 disabled 同口径）").toMatch(
+      /disabled: !canClose/,
+    );
+    // 同源判据：渲染快照不许自己再算一遍这两格（B422 抽函数就是为了钉这一条）
+    const pd = src.slice(
+      src.indexOf("function panelDataOf("),
+      src.indexOf("function panelCloseFact("),
+    );
+    expect(pd, "panelDataOf 要改用 panelCloseFact 取值").toMatch(/panelCloseFact\(\)/);
+    expect(pd, "判据本身不许留在快照里重写").not.toMatch(/countLeaves\(layout\) > 1 \|\|/);
   });
 });
 

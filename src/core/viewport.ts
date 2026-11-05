@@ -24,7 +24,6 @@ export function logViewport(where: string, panel?: Panel): void {
   const view = p.view?.view;
   const t = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
   const mode = t?.viewMode ?? "-";
-  const root = p.preview?.root;
-  const shown = mode === "preview" ? root?.scrollTop : view?.scrollDOM.scrollTop;
+  const shown = view?.scrollDOM.scrollTop;
   logger.debug("viewport", `${where} tab=${t?.tabId ?? "-"} 模式=${mode} 视图=${shown ?? "-"}`);
 }

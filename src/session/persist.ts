@@ -595,6 +595,12 @@ export async function resolveExternalChange(tabId: number): Promise<void> {
   const doc = docs.get(tabId);
   if (!doc || !doc.path) return;
 
+  // B430：保存自己的回声可能比 `save_file` 的返回先到 —— 事件那一刻
+  // `doc.diskMtimeMs` 还是旧版本，因此排进了防抖；等防抖到点，save 已经收尾并
+  // 更新了已知版本。这里用**当前**版本再验一次（与 `handleFileChanged` 同一判据）：
+  // 对得上就是自家回声，连读盘都不该做，更不能弹「外部修改」框。
+  if (payload.mtimeMs === doc.diskMtimeMs && payload.size === doc.diskSize) return;
+
   externalBusy.add(tabId);
   try {
     await resolveExternalChangeCore(doc, payload);

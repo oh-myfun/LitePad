@@ -7,7 +7,12 @@
 //   标签固定宽 100px、间距 2px、标签栏可视宽 VIEW_W；
 //   scrollLeft 按真实浏览器语义**钳制**在 [0, scrollWidth-clientWidth]。
 import { describe, it, expect, afterAll, beforeAll, afterEach, vi } from "vitest";
-import { renderTabstrip, type TabViewData, type TabstripCallbacks } from "../src/shell/tabstrip";
+import {
+  renderTabstrip,
+  ensureTabVisible,
+  type TabViewData,
+  type TabstripCallbacks,
+} from "../src/shell/tabstrip";
 
 /** B125：jsdom 没有 ResizeObserver，这里记下回调供用例手动触发（模拟面板宽度变化）。 */
 const roCallbacks: Array<() => void> = [];
@@ -230,6 +235,34 @@ describe("B53 滚动定位：活动标签要看得见，但不乱跳", () => {
     // 只剩 2 个标签，内容 202 < 250 → 浏览器会把 scrollLeft 钳回 0
     renderTabstrip(host, tabs(2, 1), cb());
     expect(host.scrollLeft, "内容不再溢出时必须回到起点").toBe(0);
+  });
+});
+
+describe("B415 打开文件后活动标签必须滚进可视区", () => {
+  it("渲染时还没布局（clientWidth 0），布局落定后补一发定位", async () => {
+    // 整树重建时 renderTabstrip 跑在新树进文档之前 —— clientWidth 读回 0，
+    // ensureVisible 静默退出，但 lastActiveId 已记账 ⇒ 后续重绘全被门控挡住。
+    VIEW_W = 0;
+    const host = document.createElement("div");
+    host.className = "panel-tabstrip";
+    document.body.appendChild(host);
+    renderTabstrip(host, tabs(6, 5), cb());
+    expect(host.scrollLeft, "未布局时只能不动").toBe(0);
+
+    VIEW_W = 250;
+    await Promise.resolve(); // 微任务：布局完成后的补发
+    expect(host.scrollLeft, "布局落定后活动标签必须自己滚进来").toBe(360);
+  });
+
+  it("ensureTabVisible 按 tabId 现查元素（拖入落点后的显形）", () => {
+    const { host } = mount(6, 0);
+    expect(host.scrollLeft).toBe(0);
+    ensureTabVisible(host, 6); // 末位标签 offsetLeft 510，右缘 610 → 需滚 360
+    expect(host.scrollLeft).toBe(360);
+    ensureTabVisible(host, 1); // 已不可见 → 滚回起点
+    expect(host.scrollLeft).toBe(0);
+    ensureTabVisible(host, 999); // 不存在的标签：不动、不抛
+    expect(host.scrollLeft).toBe(0);
   });
 });
 
@@ -461,5 +494,40 @@ describe("B125 标签区滚动条：自动隐藏 + 跟随面板宽度自适应�
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("B418 标签条右缘渐变开关（is-overflow-right）", () => {
+  const wrapOf = (host: HTMLElement): HTMLElement => host.parentElement!;
+  const flag = (host: HTMLElement): boolean => wrapOf(host).classList.contains("is-overflow-right");
+
+  it("右侧还有标签被裁时挂上；滚到最右收掉（最后一个标签完整露出来了）", () => {
+    const { host } = mount(6); // 6×100+5×2=610 > 250
+    expect(flag(host), "初始在左端：右侧至少有一个半截标签").toBe(true);
+
+    // jsdom 里程序化改 scrollLeft 不会自动派发 scroll（真实浏览器会）—— 手动补一发。
+    const scroll = (): void => {
+      host.dispatchEvent(new Event("scroll"));
+    };
+    host.scrollLeft = 360; // 钳到最右
+    scroll();
+    expect(flag(host), "滚到最右后渐变必须收（否则咬掉末标签的右缘）").toBe(false);
+
+    host.scrollLeft = 100;
+    scroll();
+    expect(flag(host), "回到中途又该出现").toBe(true);
+  });
+
+  it("放得下就永远不出现", () => {
+    const { host } = mount(2); // 202 ≤ 250
+    expect(flag(host), "没有溢出就没有可裁的标签").toBe(false);
+  });
+
+  it("面板变宽到装得下时，ResizeObserver 那一发也要收掉", () => {
+    const { host } = mount(6);
+    expect(flag(host)).toBe(true);
+    VIEW_W = 700;
+    for (const cb of roCallbacks) cb();
+    expect(flag(host), "拖宽分屏/窗口后不再溢出 ⇒ 渐变收").toBe(false);
   });
 });

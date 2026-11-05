@@ -128,6 +128,8 @@ export interface FrameOptions {
   host: HTMLElement;
   /** 额外类名，如 `settings-window`（尺寸档与内容样式归调用方） */
   className?: string;
+  /** 标题栏图标（B437，传 codicon HTML，如 `CODICONS.gear`；不传就不画） */
+  icon?: string;
 }
 
 export interface WinFrame {
@@ -151,6 +153,12 @@ export function buildFrame(o: FrameOptions): WinFrame {
 
   const head = document.createElement("div");
   head.className = "win-head";
+  if (o.icon) {
+    const icon = document.createElement("span");
+    icon.className = "win-title-icon";
+    icon.innerHTML = o.icon;
+    head.appendChild(icon);
+  }
   const title = document.createElement("span");
   title.className = "win-title";
   title.textContent = o.title;

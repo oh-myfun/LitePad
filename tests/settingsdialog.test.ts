@@ -86,8 +86,6 @@ function makeOpts(): SettingsDialogOptions {
     onFontSize: noop,
     editorLineHeight: () => 1.5,
     onEditorLineHeight: noop,
-    previewLineHeight: () => 1.7,
-    onPreviewLineHeight: noop,
     // B235：顶掉了原先的 sideWidth / onTocWidth（设置页不再有「大纲宽度」那一项）
     previewWidth: () => "full",
     onPreviewWidth: noop,
@@ -152,6 +150,15 @@ function makeOpts(): SettingsDialogOptions {
     //（名单存 recents.json，那张表没有权威窗口，见 src-tauri/src/session/recent.rs 头部）。
     recentLimit: () => 20,
     onRecentLimit: noop,
+    // B426：设置窗口里的「搜索」分类 —— 应用级排除模式（与面板那框叠加）+
+    // 「跟随 .gitignore / .ignore」那颗开关（缺省 = 开）。
+    searchExclude: () => "dist/**, *.tmp",
+    onSearchExclude: noop,
+    searchUseIgnoreFiles: () => true,
+    onSearchUseIgnoreFiles: noop,
+    // B452-5：PlantUML 在线服务器（```plantuml 的图由它画；空串 = 内置默认那台）
+    plantumlServer: () => "",
+    onPlantumlServer: noop,
     keymap: {
       overrides: {} as KeymapOverrides,
       onChange: noop,
@@ -227,6 +234,10 @@ describe("B106 统一设置页：三栏结构", () => {
     ).toBe("设置");
     expect(head.querySelector(".win-head-close"), "关闭键搬进标题栏").toBeTruthy();
     expect(
+      head.querySelector(".win-title-icon")?.innerHTML,
+      "B437：标题栏要有 codicon settings 图标（用户口径：是 settings，不是 gear）",
+    ).toContain("codicon-settings");
+    expect(
       win.querySelector(".settings-toolbar .settings-close"),
       "工具栏不该再留一颗关闭键（两处各一颗 = 两个权威）",
     ).toBeNull();
@@ -252,10 +263,18 @@ describe("B106 统一设置页：三栏结构", () => {
     }).toThrow();
   });
 
-  it("左侧分类导航含 6 个分类（通用在前），默认停在「通用」", () => {
+  it("左侧分类导航含 7 个分类（通用在前），默认停在「通用」", () => {
     showSettingsDialog(makeOpts());
-    // B229：原「Markdown 预览」分类已并入「编辑器」，导航少一项。
-    expect(navItems()).toEqual(["通用", "外观", "编辑器", "新建文件", "文件关联", "快捷键"]);
+    // B229：原「Markdown 预览」分类已并入「编辑器」；B426：多出「搜索」一格。
+    expect(navItems()).toEqual([
+      "通用",
+      "外观",
+      "编辑器",
+      "新建文件",
+      "文件关联",
+      "搜索",
+      "快捷键",
+    ]);
     const pageByTitle = (t: string) =>
       [...document.querySelectorAll(".settings-page")].find(
         (p) => p.querySelector(".settings-page-title")?.textContent === t,
@@ -330,7 +349,6 @@ describe("B106 设置项：初值 + 即时回调", () => {
       ["正文字体", ""],
       ["字号（px）", "14"],
       ["编辑器行距", "1.5"],
-      ["预览行距", "1.7"],
       ["预览布局宽度", "full"],
       ["默认文档类型", ""],
       ["默认行尾", "CRLF"],
@@ -359,7 +377,6 @@ describe("B106 设置项：初值 + 即时回调", () => {
     opts.onFontFamily = (f) => calls.push(`font:${f}`);
     opts.onFontSize = (px) => calls.push(`size:${px}`);
     opts.onEditorLineHeight = (v) => calls.push(`elh:${v}`);
-    opts.onPreviewLineHeight = (v) => calls.push(`plh:${v}`);
     opts.onPreviewWidth = (w) => calls.push(`pw:${w}`);
     opts.onDefaultEol = (e) => calls.push(`eol:${e}`);
     opts.onDefaultEncoding = (e) => calls.push(`enc:${e}`);
@@ -375,7 +392,6 @@ describe("B106 设置项：初值 + 即时回调", () => {
     fire("正文字体", "Consolas");
     fire("字号（px）", "18");
     fire("编辑器行距", "1.8");
-    fire("预览行距", "2.1");
     fire("预览布局宽度", "standard");
     fire("默认文档类型", "Markdown");
     fire("默认行尾", "LF");
@@ -387,7 +403,6 @@ describe("B106 设置项：初值 + 即时回调", () => {
       "font:Consolas",
       "size:18",
       "elh:1.8",
-      "plh:2.1",
       "pw:standard",
       "lang:Markdown",
       "eol:LF",
@@ -929,17 +944,25 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
     return [...body.querySelectorAll(".settings-item-label")].map((e) => e.textContent ?? "");
   }
 
-  it("导航不再有独立的「Markdown 预览」分类（B385 起多出「文件关联」共 6 项）", () => {
+  it("导航不再有独立的「Markdown 预览」分类（B426 起含「搜索」共 7 项）", () => {
     showSettingsDialog(makeOpts());
-    expect(navItems()).toEqual(["通用", "外观", "编辑器", "新建文件", "文件关联", "快捷键"]);
+    expect(navItems()).toEqual([
+      "通用",
+      "外观",
+      "编辑器",
+      "新建文件",
+      "文件关联",
+      "搜索",
+      "快捷键",
+    ]);
     expect(navItems(), "独立预览分类必须已删除").not.toContain("Markdown 预览");
     expect(
       document.querySelectorAll(".settings-page").length,
       "分类页数应与导航一致（每分类恰好一页）",
-    ).toBe(6);
+    ).toBe(7);
   });
 
-  it("编辑器页含 7 项，末尾是「预览」小分组下的预览行距 + 预览布局宽度", () => {
+  it("编辑器页含 7 项，「预览」小分组下是预览布局宽度 + PlantUML 服务器（B413 删了预览行距）", () => {
     showSettingsDialog(makeOpts());
     const body = pageBody("编辑器");
     expect(rowLabels(body), "编辑器页的项顺序").toEqual([
@@ -949,21 +972,22 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
       "代码字体",
       "字号（px）",
       "编辑器行距",
-      "预览行距",
       "预览布局宽度",
+      // B452-5：PlantUML 服务器只管预览里 ```plantuml 那一块 ⇒ 跟着「预览」分组
+      "PlantUML 服务器",
     ]);
 
     const groups = [...body.querySelectorAll(".settings-group-title")].map((e) => e.textContent);
     expect(groups, "应有且只有一个「预览」小分组标题").toEqual(["预览"]);
 
-    // 分组标题必须落在两项预览设置**之前**（否则分组等于没分组）
+    // 分组标题必须落在预览设置**之前**（否则分组等于没分组）
     const kids = [...body.children] as HTMLElement[];
     const gi = kids.findIndex((el) => el.classList.contains("settings-group-title"));
-    const pi = kids.findIndex((el) => rowLabels(el).includes("预览行距"));
     const di = kids.findIndex((el) => rowLabels(el).includes("预览布局宽度"));
     expect(gi, "分组标题应存在").toBeGreaterThanOrEqual(0);
-    expect(pi, "预览行距行应存在").toBeGreaterThan(gi);
-    expect(di, "预览布局宽度行应存在").toBeGreaterThan(pi);
+    expect(di, "预览布局宽度行应存在").toBeGreaterThan(gi);
+    const pi = kids.findIndex((el) => rowLabels(el).includes("PlantUML 服务器"));
+    expect(pi, "PlantUML 服务器行应存在").toBeGreaterThan(gi);
   });
 
   it("B235：预览正文宽度由 CSS 变量驱动，三档值正确（全宽=不限宽）", () => {
@@ -1083,21 +1107,16 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
     ).toBeTruthy();
   });
 
-  it("预览两项仍走原 setter（没因搬家丢回调）", () => {
+  it("预览布局宽度仍走原 setter（没因搬家丢回调；B413 起预览侧只剩这一项）", () => {
     const seen: string[] = [];
     showSettingsDialog({
       ...makeOpts(),
-      onPreviewLineHeight: (v) => seen.push(`lh:${v}`),
       onPreviewWidth: (v) => seen.push(`pw:${v}`),
     });
     // ⚠️ 必须挑**与初值不同**的值：dropdown 与原生 <select> 一致，重选当前项不回调
-    // （makeOpts 的默认正是 1.7 / "full"）。
-    pickRow("预览行距", "2.1");
+    // （makeOpts 的默认正是 "full"）。
     pickRow("预览布局宽度", "standard");
-    expect(seen, "预览行距走 onPreviewLineHeight、宽度走 onPreviewWidth").toEqual([
-      "lh:2.1",
-      "pw:standard",
-    ]);
+    expect(seen, "宽度走 onPreviewWidth").toEqual(["pw:standard"]);
   });
 
   it("静态：源码里不再有 markdown 分类与分支，预览关键词已并入 editor", () => {
@@ -1115,7 +1134,7 @@ describe("B229「Markdown 预览」分类并入「编辑器」", () => {
     expect(start, "应能找到 editor 分类项").toBeGreaterThanOrEqual(0);
     expect(end, "editor 分类项应在 file 分类项之前").toBeGreaterThan(start);
     const editorBlock = src.slice(start, end);
-    for (const kw of ["预览行距", "预览布局宽度", "markdown", "大纲", "toc"]) {
+    for (const kw of ["预览布局宽度", "markdown", "大纲", "toc"]) {
       expect(editorBlock, `editor 分类关键词应含「${kw}」`).toContain(`"${kw}"`);
     }
     // B235：大纲宽度那项已删 ⇒ 关键词也不该再有它（留着会让搜「宽度」命中一个不存在的项）
@@ -1506,5 +1525,206 @@ describe("B356 设置窗口顶部搜索区紧凑", () => {
       );
       expect(pad[1], "替身与标题栏左边线对不上，必须被抓到").toBe(12);
     }).toThrow();
+  });
+});
+
+/**
+ * B426（用户 2026-10-31）：「搜索的排除设置和忽略文件要能在设置窗口中进行设置」。
+ *
+ * 分工照 VS Code 那一刀切（证据见 `docs/superpowers/plans/2026-10-31-b426-results.md`）：
+ *   · 侧栏搜索面板里 include / exclude 那两框 + 那颗总闸 = **本次搜索临时**，不写回设置；
+ *   · 这一页存的是**应用级、持久**的两件事：排除模式（`search_exclude`，与面板那框叠加）
+ *     和跟不跟 `.gitignore` / `.ignore` 走（`search_use_ignore_files`，缺省 = 开）。
+ */
+describe("B426 设置页「搜索」分类：排除模式 + 忽略文件", () => {
+  function searchBody(): HTMLElement {
+    const page = [...document.querySelectorAll(".settings-page")].find(
+      (p) => p.querySelector(".settings-page-title")?.textContent === "搜索",
+    ) as HTMLElement | undefined;
+    if (!page) throw new Error("没有「搜索」分类页");
+    return page.querySelector(".settings-page-body") as HTMLElement;
+  }
+
+  /** 按标签文本取「搜索」页里的那一行（.settings-item）。 */
+  function item(label: string): HTMLElement {
+    const row = [...searchBody().querySelectorAll(".settings-item")].find(
+      (r) => r.querySelector(".settings-item-label")?.textContent === label,
+    );
+    expect(row, `「搜索」页应有「${label}」这一行`).toBeTruthy();
+    return row as HTMLElement;
+  }
+
+  function excludeBox(): HTMLTextAreaElement {
+    const box = item("要排除的文件").querySelector(".settings-item-control textarea");
+    expect(box, "排除模式应是一个文本域").toBeTruthy();
+    return box as HTMLTextAreaElement;
+  }
+
+  it("「搜索」页两行的顺序 = 要排除的文件 → 忽略文件", () => {
+    showSettingsDialog(makeOpts());
+    expect(
+      [...searchBody().querySelectorAll(".settings-item-label")].map((e) => e.textContent),
+      "搜索页的项顺序",
+    ).toEqual(["要排除的文件", "忽略文件"]);
+    expect(searchBody().querySelector(".settings-page-desc"), "页头应有一句说明").toBeTruthy();
+  });
+
+  it("排除框是多行文本域：初值取自 opts.searchExclude()，change 把 DOM 里那串交回 onSearchExclude", () => {
+    const calls: string[] = [];
+    showSettingsDialog({ ...makeOpts(), onSearchExclude: (v) => calls.push(v) });
+    const box = excludeBox();
+    // 单行 input 装不下「一行一个模式」那种写法（与 Rust 侧按 , / 换行 切分同口径）
+    expect(box.tagName, "排除框必须是 TEXTAREA").toBe("TEXTAREA");
+    expect(box.value, "初值应取自 getter").toBe("dist/**, *.tmp");
+    // 文案是 .settings-item-label，不是 <label for> ⇒ 无障碍名要单独给
+    expect(box.getAttribute("aria-label"), "文本域要有无障碍名").toBe("要排除的文件");
+
+    box.value = "node_modules/**";
+    // ⚠️ 提交走 change（失焦）而不是 input：每按一键就写盘 + 重搜一场，是 B344 那一族
+    //    「打字触重活」的口子。这里反向钉一次：input 不许惊动回调。
+    box.dispatchEvent(new Event("input"));
+    expect(calls, "按键途中不该回调（每键写盘太重）").toEqual([]);
+
+    box.dispatchEvent(new Event("change"));
+    expect(calls, "change 应把**框里那串**交回去（不是初值）").toEqual(["node_modules/**"]);
+  });
+
+  it("「忽略文件」是自绘 switch：初值取自 opts.searchUseIgnoreFiles()，点一下交回 false", () => {
+    const calls: boolean[] = [];
+    showSettingsDialog({ ...makeOpts(), onSearchUseIgnoreFiles: (v) => calls.push(v) });
+    const sw = item("忽略文件").querySelector(".switch") as HTMLElement | null;
+    expect(sw, "忽略文件应是自绘 .switch（设置行一律 switch）").toBeTruthy();
+    expect(sw!.tagName, "switch 外壳应是 button（白拿键盘与焦点环）").toBe("BUTTON");
+    expect(sw!.getAttribute("role")).toBe("switch");
+    expect(sw!.getAttribute("aria-checked"), "夹具给 true ⇒ 应显示开着").toBe("true");
+    sw!.click();
+    expect(calls, "点击应回调 false").toEqual([false]);
+    expect(sw!.getAttribute("aria-checked"), "状态与 aria-checked 同步").toBe("false");
+  });
+
+  it("顶部搜索：「忽略」「排除」都该落在「搜索」分类（关键词漏一条就是搜不到）", () => {
+    showSettingsDialog(makeOpts());
+    const box = document.querySelector(".settings-search") as HTMLInputElement;
+    for (const q of ["忽略", "排除"]) {
+      box.value = q;
+      box.dispatchEvent(new Event("input"));
+      const visible = navItems().filter((_, i) => {
+        return !(document.querySelectorAll(".settings-nav-item")[i] as HTMLElement).hidden;
+      });
+      expect(visible, `搜「${q}」应命中「搜索」分类`).toEqual(["搜索"]);
+    }
+  });
+
+  it("CSS：.settings-textarea 取色全走 token，且只许纵向拉伸", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const decls = cssDecls(ruleBlock(css, ".settings-textarea"));
+    expect(decls, "缺少 .settings-textarea 规则块").not.toBe("");
+    expect(decls, "边框走 --border").toContain("var(--border)");
+    expect(decls, "底色与同页输入框同一 token").toContain("var(--bg-input, var(--bg-elevated))");
+    expect(decls, "文字色走 --fg").toContain("color: var(--fg)");
+    expect(decls, "字体走 token，不写死家族名").toContain("font-family: var(--font");
+    // 横向拉伸会把整行设置项撑破；纵向留给人把模式一行一行铺开
+    expect(decls, "只许纵向拉伸").toContain("resize: vertical");
+    expect(decls, "不许写死颜色").not.toMatch(/#[0-9a-fA-F]{3,8}\b|\brgba?\(/);
+  });
+
+  it("静态接线：prefs.ts 读这两个字段（缺格按默认），写时落盘 + 补一发重搜", () => {
+    const prefs = readFileSync("src/prefs.ts", "utf-8");
+    // 读：search_use_ignore_files 的缺省是**开** —— 「没记过 ≠ 关着」（B392 那一族）。
+    expect(prefs, "排除模式应读 settings.search_exclude").toContain(
+      'searchExclude: () => settings?.search_exclude ?? ""',
+    );
+    expect(prefs, "忽略文件应读 settings.search_use_ignore_files 且缺省为开").toContain(
+      "searchUseIgnoreFiles: () => settings?.search_use_ignore_files ?? true",
+    );
+    for (const name of ["setSearchExclude", "setSearchUseIgnoreFiles"]) {
+      const start = prefs.indexOf(`async function ${name}(`);
+      expect(start, `prefs.ts 应有 ${name}()`).toBeGreaterThanOrEqual(0);
+      const body = prefs.slice(start, prefs.indexOf("\n}", start));
+      expect(body, `${name} 必须写回 settings 并落盘`).toContain("persistSettings()");
+      // 设置改了而结果屏还挂着旧排除集 = 用户以为「改了没反应」
+      expect(body, `${name} 改完要补一发重搜`).toContain("rerunAfterSettingsChange()");
+    }
+  });
+});
+
+/**
+ * B452-5（用户拍板：PlantUML 走在线服务器，vditor 同款）：服务器地址是**设置里的一格**，
+ * 所以它必须能在设置窗口里改 —— 落点跟「预览布局宽度」同页（只管预览渲染的项都在「编辑器」）。
+ */
+describe("B452-5 设置页「PlantUML 服务器」", () => {
+  function editorBody(): HTMLElement {
+    const page = [...document.querySelectorAll(".settings-page")].find(
+      (p) => p.querySelector(".settings-page-title")?.textContent === "编辑器",
+    ) as HTMLElement | undefined;
+    if (!page) throw new Error("没有「编辑器」分类页");
+    return page.querySelector(".settings-page-body") as HTMLElement;
+  }
+
+  function box(): HTMLInputElement {
+    const row = [...editorBody().querySelectorAll(".settings-item")].find(
+      (r) => r.querySelector(".settings-item-label")?.textContent === "PlantUML 服务器",
+    );
+    expect(row, "「编辑器」页应有「PlantUML 服务器」这一行").toBeTruthy();
+    const input = row!.querySelector(".settings-item-control input");
+    expect(input, "服务器地址是单行输入框").toBeTruthy();
+    return input as HTMLInputElement;
+  }
+
+  it("单行输入框：初值取自 opts.plantumlServer()，占位写明留空用哪台", () => {
+    showSettingsDialog({ ...makeOpts(), plantumlServer: () => "https://k.example/plantuml" });
+    const input = box();
+    expect(input.value, "初值应取自 getter").toBe("https://k.example/plantuml");
+    expect(input.getAttribute("aria-label"), "文案在 label 里 ⇒ 无障碍名要单独给").toBe(
+      "PlantUML 服务器",
+    );
+    expect(input.placeholder, "留空 = 用内置默认那台，得把这台写出来").toContain("plantuml.com");
+  });
+
+  it("提交走 change（失焦）：打字途中不写盘", () => {
+    const calls: string[] = [];
+    showSettingsDialog({ ...makeOpts(), onPlantumlServer: (v) => calls.push(v) });
+    const input = box();
+    input.value = "https://my.server/plantuml";
+    input.dispatchEvent(new Event("input"));
+    expect(calls, "按键途中不该回调").toEqual([]);
+    input.dispatchEvent(new Event("change"));
+    expect(calls, "change 应把框里那串交回去").toEqual(["https://my.server/plantuml"]);
+  });
+
+  it("顶部搜索：搜「plantuml」命中「编辑器」分类（关键词漏一条就是搜不到）", () => {
+    showSettingsDialog(makeOpts());
+    const search = document.querySelector(".settings-search") as HTMLInputElement;
+    search.value = "plantuml";
+    search.dispatchEvent(new Event("input"));
+    const visible = navItems().filter((_, i) => {
+      return !(document.querySelectorAll(".settings-nav-item")[i] as HTMLElement).hidden;
+    });
+    expect(visible, "搜「plantuml」应命中「编辑器」分类").toEqual(["编辑器"]);
+  });
+
+  it("静态接线：prefs.ts 读 settings.plantuml_server，写时 trim + 同值不重写 + 落盘", () => {
+    const prefs = readFileSync("src/prefs.ts", "utf-8");
+    expect(prefs, "应读 settings.plantuml_server").toContain(
+      'plantumlServer: () => settings?.plantuml_server ?? ""',
+    );
+    const start = prefs.indexOf("async function setPlantumlServer(");
+    expect(start, "prefs.ts 应有 setPlantumlServer()").toBeGreaterThanOrEqual(0);
+    const body = prefs.slice(start, prefs.indexOf("\n}", start));
+    expect(body, "必须写回 settings 并落盘").toContain("persistSettings()");
+    // 文本域每失焦都发一发 change：不挡同值 = 每次挪焦点重写一遍设置
+    expect(body, "同值要早退（同 setSearchExclude 那一族）").toContain("=== next");
+    // 已经画在屏上的图是按旧地址取回来的 ⇒ 换完服务器必须重画一遍，否则「改了没反应」
+    expect(body, "换服务器要重画已画出的图").toContain("rethemePreviews()");
+  });
+
+  it("CSS：.settings-input 取色全走 token，不许写死色值", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const decls = cssDecls(ruleBlock(css, ".settings-input"));
+    expect(decls, "缺少 .settings-input 规则块").not.toBe("");
+    expect(decls, "边框走 --border").toContain("var(--border)");
+    expect(decls, "底色与同页输入框同一 token").toContain("var(--bg-input, var(--bg-elevated))");
+    expect(decls).toContain("color: var(--fg)");
+    expect(decls, "不许写死颜色").not.toMatch(/#[0-9a-fA-F]{3,8}\b|\brgba?\(/);
   });
 });

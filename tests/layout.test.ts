@@ -446,7 +446,12 @@ describe("B71 面板操作补齐（移动标签 / 切焦点 / 右键分屏 / 最
 
   it("最大化态必须有看得见的退路：还原按钮 + 双击标签", () => {
     // 另一侧被挤成 0，只给快捷键的话用户会以为面板丢了。
+    // B418：面板还原取 screen-normal（VS Code 给「还原编辑器组」的那一颗）；
+    // chrome-restore 只属于窗口标题栏那颗「向下还原」，这里不许再回去。
     expect(sv, "仅最大化时追加还原按钮（未最大化不占位）").toMatch(
+      /if \(data\.maximized\)[\s\S]{0,300}CODICONS\.screenNormal/,
+    );
+    expect(sv, "面板还原不得复用窗口那颗 chrome-restore").not.toMatch(
       /if \(data\.maximized\)[\s\S]{0,300}CODICONS\.chromeRestore/,
     );
     expect(sv, "按钮文案要说明恢复比例").toContain("还原面板");

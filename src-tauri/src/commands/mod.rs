@@ -17,6 +17,7 @@ pub mod assoc;
 /// B389：侧栏搜索（`Ctrl+Shift+F`）的读盘内核 —— 递归搜与「全部替换」的磁盘写回。
 pub mod search;
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -57,6 +58,8 @@ pub struct AppState {
     pub next_id: Mutex<u64>,
     pub watcher: Mutex<Option<RecommendedWatcher>>,
     pub recents: Mutex<Recents>,
+    /// B430：已挂上监视的路径（幂等闸，见 `watch_file`）。取消监听时同步销账。
+    pub watched: Mutex<HashSet<PathBuf>>,
 }
 
 fn alloc_id(state: &AppState) -> Result<u64, String> {
@@ -76,6 +79,14 @@ pub fn is_self_owned_path(path: &Path, config_dir: &Path) -> bool {
     path.starts_with(config_dir)
 }
 
+/// B430：同一个路径只允许挂一次监视。返回 `true` = 这次归你挂。
+///
+/// 抽成纯函数是为了单测能按住这条不变量：notify 6.1.1 对重复 watch **不报错**
+/// （直接覆盖表项，旧句柄 / 挂起的异步请求就此泄漏），幂等只能由我们自己做。
+fn claim_watch(seen: &mut HashSet<PathBuf>, path: &Path) -> bool {
+    seen.insert(path.to_path_buf())
+}
+
 fn watch_file(state: &AppState, path: &Path) {
     // ⚠️ 自家数据文件一律**不监听**（B150）。`session.json` 是 LitePad 自己写的，
     // 可它同样能作为一个标签被打开 —— 一旦被监听，我们每次写会话都会激起
@@ -93,12 +104,30 @@ fn watch_file(state: &AppState, path: &Path) {
             return;
         }
     }
+    // B430：同一路径只挂一次。Windows 上「监视一个文件」= 打开父目录 +
+    // ReadDirectoryChangesW（notify 的实现），在慢卷上一次约 1 秒；`save_file`
+    // 每一发都走到这里，路径没变时这一步纯属自伤（还会泄漏旧 watch）。
+    let claimed = match state.watched.lock() {
+        Ok(mut seen) => {
+            if !claim_watch(&mut seen, path) {
+                logging::log(
+                    Level::Trace,
+                    "watcher",
+                    &format!("已在监听，跳过重挂：{}", path.display()),
+                );
+                return;
+            }
+            true
+        }
+        // 锁坏了也别把保存拖死：照旧去挂，只是不记账
+        Err(_) => false,
+    };
+    let mut watched = false;
     let guard = state.watcher.lock();
     if let Ok(mut bag) = guard {
         if let Some(w) = bag.as_mut() {
-            // 重复 watch 同一路径会报错，忽略即可
             match w.watch(path, notify::RecursiveMode::NonRecursive) {
-                Ok(()) => {}
+                Ok(()) => watched = true,
                 // 文件被外部删了 / 没在监听 = 监听器本来就该跟着失效，不吵。
                 // ⚠️ `notify::Error` 的 kind 是**公开字段 + 枚举**（不是 `ErrorKind::NotFound`
                 // 那种 std 风格），写成 `e.kind()` 编译不过。
@@ -112,9 +141,19 @@ fn watch_file(state: &AppState, path: &Path) {
             }
         }
     }
+    // 没挂上就把账位退回来：文件重建 / watcher 晚初始化之后还要能重试。
+    if claimed && !watched {
+        if let Ok(mut seen) = state.watched.lock() {
+            seen.remove(path);
+        }
+    }
 }
 
 fn unwatch_file(state: &AppState, path: &Path) {
+    // B430：先销账再取消监视 —— 否则重开 / 改名回同一路径时会被幂等闸挡掉。
+    if let Ok(mut seen) = state.watched.lock() {
+        seen.remove(path);
+    }
     let guard = state.watcher.lock();
     if let Ok(mut bag) = guard {
         if let Some(w) = bag.as_mut() {
@@ -933,6 +972,61 @@ mod tests {
         assert!(
             body.contains("return;"),
             "过滤后要直接 return，不能「watch 了再不管」"
+        );
+    }
+
+    /// B430：保存每发都会走到 `watch_file`；同一路径第二次必须**不再**交给 notify。
+    ///
+    /// 事故：notify 6.1.1 对重复 watch 不报错，而是直接覆盖表项（旧句柄 / 挂起的
+    /// 异步请求就此泄漏）；而 Windows 上「监视一个文件」= 打开父目录 +
+    /// ReadDirectoryChangesW。在慢卷（本机 E: 是 ReFS 虚拟盘）上一次约 1 秒，
+    /// 于是每发 Ctrl+S 都被这一步拖住。
+    #[test]
+    fn watch_claim_is_idempotent() {
+        let mut seen = std::collections::HashSet::new();
+        let p = PathBuf::from(r"E:\Project\todo.md");
+        assert!(claim_watch(&mut seen, &p), "第一次要挂");
+        assert!(
+            !claim_watch(&mut seen, &p),
+            "同一路径第二次不许再挂（慢卷上一次 ~1s，还会泄漏旧 watch）"
+        );
+        assert!(
+            claim_watch(&mut seen, Path::new(r"E:\Project\other.md")),
+            "别的路径照挂"
+        );
+    }
+
+    /// 幂等闸必须真的接在 `watch_file` 里 —— 纯函数绿了不代表调用方用了它（同 B150）。
+    #[test]
+    fn watch_file_claims_before_notify() {
+        let src = std::fs::read_to_string("src/commands/mod.rs").expect("读不到源码");
+        let body = src
+            .split("fn watch_file(state: &AppState")
+            .nth(1)
+            .and_then(|rest| rest.split("fn ").next())
+            .expect("找不到 watch_file 函数体");
+        let claim = body
+            .find("claim_watch(")
+            .expect("watch_file 必须用 claim_watch 记账");
+        let notify = body
+            .find(".watch(path")
+            .expect("watch_file 必须调 notify 的 watch");
+        assert!(
+            claim < notify,
+            "先记账再挂监视，否则重复 watch 照样打到 notify"
+        );
+    }
+
+    /// 取消监听要把账销掉：重开同一路径 / 改名回来时才有资格再挂一次。
+    #[test]
+    fn unwatch_file_clears_the_claim() {
+        let state = AppState::default();
+        let p = PathBuf::from(r"E:\Project\todo.md");
+        state.watched.lock().unwrap().insert(p.clone());
+        unwatch_file(&state, &p);
+        assert!(
+            !state.watched.lock().unwrap().contains(&p),
+            "取消监听后必须销账，否则下次再 watch 会被幂等闸挡掉"
         );
     }
 

@@ -1427,3 +1427,35 @@ describe("状态栏按 statusBar.* 取色（B379，推翻 B204 的同源裁决�
     }).toThrow();
   });
 });
+
+describe("B418 标签条右侧按钮与标签之间的渐变过渡", () => {
+  const css = readFileSync("src/styles/global.css", "utf-8");
+
+  it("右缘铺「透明 → 条带底色」的渐变，且只在右侧还有标签被裁时出现", () => {
+    // 用户口径：照紧凑档关闭键那颗渐变垫底（B118），让被裁的半截标签在按钮前渐隐。
+    const fade = cssDecls(ruleBlock(css, ".panel-ops::before"));
+    expect(fade, "应有 .panel-ops::before 规则").toBeTruthy();
+    expect(fade, "渐变从透明过渡到条带底色（同 B118 的手法）").toContain(
+      "linear-gradient(to right, transparent, var(--tab-strip-bg))",
+    );
+    expect(fade, "渐变铺在按钮左侧（right: 100%），不压按钮本身").toMatch(/right:\s*100%/);
+    expect(fade, "未触发时不可见").toMatch(/opacity:\s*0/);
+    expect(fade, "不吃点击").toContain("pointer-events: none");
+    expect(fade, "让出条带下沿那 1px 通铺线").toMatch(/bottom:\s*var\(--tab-stroke\)/);
+    expect(fade, "淡入淡出走共用档位").toMatch(/transition:\s*opacity\s+var\(--transition\)/);
+    // 反向：基础规则里不许是常显 —— 常显会把最后一个完整标签自己的右缘咬掉一截。
+    expect(fade, "不得在基础规则里常显").not.toMatch(/opacity:\s*1/);
+
+    const shown = cssDecls(
+      ruleBlock(css, ".panel-tabstrip-wrap.is-overflow-right + .panel-ops::before"),
+    );
+    expect(shown, "溢出到右侧（还有标签被裁）时才挂出来").toMatch(/opacity:\s*1/);
+  });
+
+  it("渐变要有定位基准、且不被标签的 fill / 文件名压住", () => {
+    const ops = cssDecls(ruleBlock(css, ".panel-ops"));
+    expect(ops, "::before 以 .panel-ops 为定位基准").toMatch(/position:\s*relative/);
+    // 标签内部的 fill / 文件名各自 z-index: 1；ops 后画 + 抬到 1 保证盖得住。
+    expect(ops, "抬一层盖住标签内容").toMatch(/z-index:\s*1/);
+  });
+});

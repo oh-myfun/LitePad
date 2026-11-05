@@ -12,8 +12,9 @@
 /* B352-1：markdown 的**排版**规则与 `--md-*` token 挂在 `.md-rendered` 上，`.md-preview`
    退化成**容器**（自己滚 + 正文内边距 + 背景）。
    为什么要分开：导出 HTML / 打印 article 与预览面共用同一份排版 —— 前缀留在容器上
-   导出件就借不到，只能再抄一份样式，两份必然漂移。预览根节点与导出件同时带这两个类
-   （`markdown/preview.ts` 的 root、`markdown/exporter.ts`）。 */
+   导出件就借不到，只能再抄一份样式，两份必然漂移。B412：应用内的预览面是编辑器上的
+   装饰层，带 `.md-rendered` 的只剩导出件（`markdown/exporter.ts`）与 HTML 块 widget
+   （`md-html-preview md-rendered` 那一颗）；`.md-preview` 容器同样只剩导出在用。 */
 .md-rendered {
   /* B377：预览与源码共用同一颗主题 token（--bg / --editor-fg / --border / --code-bg /
      --link-fg），5 个主题族 × 深浅自动跟着走，这里不再有第二份色表。
@@ -33,8 +34,8 @@
   /* 预览字号跟随应用字号（--font-size 由 :root 提供，缩放/设置都改它）；
      导出 HTML 只注入本文件，所以要给 14px 兜底 */
   font-size: calc(var(--font-size, 14px) + 1px);
-  /* 行距由设置驱动（--md-line-height 设在 :root 上），缺省 1.7 */
-  line-height: var(--md-line-height, 1.7);
+  /* B413：行距设置已删，这里直接落常数 1.7（导出 HTML 只注入本文件，没有 :root 可继承） */
+  line-height: 1.7;
   /* B231：预览正文走**正文字体**（--font-body，B227 那版是「编辑器字体」那项）。
      B231 起源码区归代码字体，正文与代码彻底分开。
      显式写一遍（而不只是继承 body）是为了**导出 HTML**：导出只注入本文件、:root 不在
@@ -43,23 +44,13 @@
   word-wrap: break-word;
 }
 
-/* 容器：只负责「这一格自己滚、留正文边距、铺底色」。 */
+/* 容器：只负责「这一格自己滚、留正文边距、铺底色」。
+   B412：应用内的预览档已不再有独立容器（预览 / 编辑 / 源码共用一颗编辑器 view），
+   这条只剩**导出 HTML** 在用（`exporter.ts` 的 `<article class="md-preview md-rendered">`）。 */
 .md-preview {
   overflow-y: auto;
   padding: 16px 24px 48px;
   background: var(--md-bg);
-}
-
-/* M4：大文件停用自动预览时的占位说明（PreviewPane.setNotice）。
-   用 muted 色 + 左侧竖线，与正文区分开，避免被当成文档内容。 */
-.md-preview-notice {
-  margin-bottom: 12px;
-  padding: 8px 12px;
-  border-left: 3px solid var(--md-border);
-  background: var(--md-code-bg);
-  color: var(--md-muted);
-  font-size: var(--fs-ui);
-  line-height: 1.6;
 }
 
 /* B377：深浅 / 主题族全由 `:root` 上的 token 决定，这里不再有深色覆盖块 ——
@@ -591,6 +582,37 @@
 .explorer-panel.no-root .toc-head-btn {
   display: none;
 }
+/* B427：顶部「按名字过滤」那条 —— 与搜索视图的搜索行同一套 `.find-field`
+   （填充式、开关嵌在框内）。左内缩 10px 与 `.explorer-head` 的标题对齐。
+   没根时整条收起：没有树可过滤，空框只会让人以为坏了。 */
+.explorer-filter {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 0 8px 6px 10px;
+}
+.explorer-panel.no-root .explorer-filter {
+  display: none;
+}
+/* B428（用户点名「文件过滤输入框边框缺失」）：与侧栏搜索那个框同款 —— 这一截跟面板
+   一个底色，没 1px `--border` 就看不出哪一截是能打字的。`box-sizing: border-box` 在
+   `.find-field` 那儿已经定了 ⇒ 加边框不改总高（26px 是总高）。 */
+.explorer-filter-field {
+  flex: 1 1 auto;
+  min-height: 26px;
+  border: 1px solid var(--border, #d0d7de);
+}
+/* 焦点只换**这一圈边框**的颜色，不叠 outline（口径同 `.search-panel .find-field:focus-within`；
+   多一层 `.explorer-filter` 是为了压过 global.css 里悬浮条共用的那条 outline）。 */
+.explorer-filter .find-field:focus-within {
+  outline: none;
+  border-color: var(--accent, #06c);
+}
+/* 清除键有字才显形（面板写 `hidden`）。`.find-toggle` 自己声明了 `display: flex`，
+   会盖过 UA 的 `[hidden] { display: none }` ⇒ 必须在这里补一条更特异的。 */
+.explorer-filter-clear[hidden] {
+  display: none;
+}
 .explorer-tree {
   flex: 1 1 auto;
   min-height: 0;
@@ -626,8 +648,9 @@
   cursor: pointer;
   white-space: nowrap;
 }
-/* B327：「打开文件夹」搬进根这一行（`renderTree` 把那颗键 append 进来），贴右只能靠 auto 边距
-   —— 名字那截是 `flex: 1 1 auto` + 省略号，路径一长就把余量吃干，写固定 margin 会跟着漂。 */
+/* B424：每根行自带那颗**刷新**贴右（键由 `rootRefreshBtn` 造）。
+   B327 立的规矩照用：根行是 flex、名字那截 `flex: 1 1 auto` + 省略号，路径一长就把余量吃干，
+   写固定 margin 会跟着漂 —— 只有 auto 边距能保证「永远在最右」。 */
 .explorer-root .toc-head-btn {
   margin-left: auto;
 }
@@ -996,6 +1019,18 @@
 .search-details.is-more .search-glob {
   display: block;
 }
+/* B417：「仅在打开的编辑器中搜索」那颗开关嵌在包含输入框右内侧（VS Code 的 `.controls` 同款做法）。
+   输入框自己画边框（`.search-glob-input`），所以这里只做定位，不再套一层 `.find-field`。 */
+.search-glob-field {
+  position: relative;
+  display: block;
+}
+.search-glob-toggle {
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  transform: translateY(-50%);
+}
 .search-glob h4 {
   text-overflow: ellipsis;
   overflow: hidden;
@@ -1019,12 +1054,21 @@
   font-family: var(--font-sans);
   outline: none;
 }
+/* 28px 让位给右内侧那颗开关（包含框 = 仅在打开的编辑器，排除框 = 使用排除设置与忽略文件，
+   都在 `.search-glob-field` 里）。没带开关的输入框不能再吃这块内距 —— 那是文字进不去的死区。 */
+.search-glob-field .search-glob-input {
+  padding-right: 28px;
+}
 .search-glob-input:focus {
   outline: 1px solid var(--accent, #06c);
   outline-offset: -1px;
 }
+/* B417：计数行是 `.search-widgets` 的**兄弟**（VS Code `.messages` 与
+   `.search-widgets-container` 的关系）；-5px 上沿只吃进输入区底部那 6px 内距，
+   不再压进「要排除的文件」输入框（那是嵌在 widgets 里时真机截图抓到的遮挡）。
+   左右外边距与 `.search-widgets` 同款，计数行与输入框对齐。 */
 .search-count {
-  margin-top: -5px;
+  margin: -5px 12px 0 2px;
   padding: 0 22px 8px;
   cursor: default;
   overflow-wrap: break-word;
@@ -1045,6 +1089,45 @@
 .search-lines[hidden] {
   display: none;
 }
+/* B424：多根时结果按根分节。节那一层只是**容器**（不改行本身的形状），
+   行头不可点、不画箭头（能折的是文件那一层，口径与那颗全折键一致）。 */
+.search-section .search-file {
+  padding-left: 16px;
+}
+.search-section .search-line {
+  padding-left: 24px;
+}
+.search-root {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  box-sizing: border-box;
+  height: 22px;
+  padding: 0 6px 0 4px;
+  font-size: var(--fs-ui);
+  line-height: 1;
+  color: var(--sidebar-section-fg, #656d76);
+  cursor: default;
+  white-space: nowrap;
+}
+.search-root-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+.search-root-path {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl; /* 长路径优先看得见**末尾**（那一截才是这一根自己）：与最近打开同一手法 */
+  color: var(--fg-muted, #656d76);
+}
+/* 节头的数字不在这儿定样式：那一格同时挂 `.search-badge`（见下面徽标那段），
+   几何、颜色与右撑一处给 —— 这里再写一份 `color` 就会与每族 `--badge-fg` 漂移。 */
 /* 两层行：文件行在缩进 1 层，命中行再深一层。槽宽一律照资源管理器那一套
    （22px = 16px 内容 + 6px 右内边距，B373 实测 VS Code `tree.css` 的量）。 */
 .search-file,
@@ -1114,7 +1197,11 @@
   line-height: 1.5;
 }
 .search-rel {
-  flex: 0 1 auto;
+  /* B423（用户「替换/删除按钮要靠右对齐」）：这一格要吃掉剩余宽度。
+     原先是 `0 1 auto`（只缩不长）⇒ 撑右沿的活全压在徽标的 `margin-left: auto` 上，
+     而徽标在悬停时让位给动作键（B419）⇒ 一让位就没人撑了，两颗键停在文件名后面
+     （真机量到距行右沿 49px）。命中行没这问题：那边的文本格本来就是 `1 1 auto`。 */
+  flex: 1 1 auto;
   min-width: 0;
   margin-left: 6px;
   overflow: hidden;
@@ -1123,12 +1210,77 @@
   opacity: 0.7;
   font-size: var(--fs-meta);
 }
+/* B419 · 命中数 = VS Code 的 count badge（`monaco-count-badge` 的几何：18px 高、
+   11px 字号、11px 圆角、左右 5px）；底色/前景取 `badge.background/foreground`
+   两族 token（每套主题各一份，见 global.css 的主题块）。
+   ⚠️ 字号走 `--fs-meta`（本项目的 11px 档），不写裸数值（B337 的字阶契约）。
+   ⚠️ `line-height` 写死 18px 而不是照抄 11px：那边是给 3px 上下内距留的，
+      这里整行只有 22px，盒高 = 行高才能把字压在徽标正中。 */
 .search-badge {
   flex: 0 0 auto;
   margin-left: auto;
-  padding-left: 8px;
+  margin-right: 2px;
+  box-sizing: border-box;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 11px;
+  background: var(--badge-bg);
+  color: var(--badge-fg);
   font-size: var(--fs-meta);
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+/* 动作键出现时徽标让位（VS Code：窄栏里 hover / 聚焦就 `display: none` 掉
+   `.monaco-count-badge` 给 action bar 腾地方）。 */
+.search-file:hover > .search-badge,
+.search-file:focus-within > .search-badge,
+.search-line:hover > .search-badge,
+.search-line:focus-within > .search-badge {
+  display: none;
+}
+/* 行内动作（B417，照 VS Code `MenuId.SearchActionMenu` 的 inline 组）：平时收起，
+   悬停 / 行拿到焦点时露出（VS Code 的 `.monaco-action-bar` 也是 hover 才 display）。
+   键本体 20×20、字形 14px —— 与查找栏的开关同一档，塞得进 22px 的行。 */
+.search-row-actions {
+  display: none;
+  flex: 0 0 auto;
+  align-items: center;
+  margin-left: 4px;
+}
+/* B419：命中行同一套（每条结果也有替换 / 清除）。 */
+.search-file:hover .search-row-actions,
+.search-file:focus-within .search-row-actions,
+.search-line:hover .search-row-actions,
+.search-line:focus-within .search-row-actions {
+  display: inline-flex;
+}
+.search-rowbtn {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 2px;
+  border: none;
+  border-radius: 3px;
+  background: none;
   color: var(--fg-muted, #656d76);
+  cursor: pointer;
+}
+.search-rowbtn:hover {
+  background: var(--toolbar-hover-bg, #eee);
+  color: var(--fg, #24292f);
+}
+.search-rowbtn:focus-visible {
+  outline: 1px solid var(--accent, #0969da);
+  outline-offset: -1px;
+}
+.search-rowbtn .codicon {
+  font-size: 14px;
 }
 /* 命中行：行号 + 裁过的预览。`white-space: pre` 是必须的 —— 代码缩进不许被折掉
    （VS Code `.linematch > .match { white-space:pre; text-overflow:ellipsis }`）。 */
@@ -1391,6 +1543,15 @@ body.layout-dragging .toc-grip {
   background: var(--toolbar-hover-bg, #eee);
   color: var(--sidebar-fg, var(--fg, #24292f));
 }
+/* B428：头部那颗折叠键在「没有可折的东西」时**禁用**（禁用是明说的状态，
+   不是按下去没反应的死键）。悬停也不亮 —— 亮着就像还能点。 */
+.toc-head-btn:disabled,
+.toc-head-btn:disabled:hover {
+  background: transparent;
+  color: var(--fg-muted, #656d76);
+  opacity: 0.45;
+  cursor: default;
+}
 .toc-head-btn:focus-visible {
   outline: 2px solid var(--accent, #06c);
   outline-offset: -2px;
@@ -1535,27 +1696,90 @@ body.layout-dragging .toc-grip {
   /* B399：页面内那颗「预览 ↔ 编辑」悬浮键的定位基准 */
   position: relative;
 }
+/* B442 · 编辑档：外壳改竖排 —— 工具条占一行（整宽 = 编辑区宽），编辑器吃剩下的高度。
+   条在 `.cm-scroller` **之外** ⇒ 首行天然落在它下面，不必再量「让位距离」。 */
+.panel-host.md-bar-docked {
+  flex-direction: column;
+}
 
-/* B399 · 预览档（禁编辑）↔ 编辑档的**页面内悬浮键**（用户口径 2026-10-28）。
-   B401：搬到编辑区**左上角**（用户点名），字形改 eye / edit。只在装饰面（两种所见即所得档）
+/* B399 · 预览档（禁编辑）↔ 编辑档的页面内切换键（用户口径 2026-10-28）。
+   B401：搬到编辑区左上角，字形改 eye / edit。只在装饰面（两种所见即所得档）
    里出现，不进标签条（标签条那颗双字形开关管的是源码 ↔ 预览）。字形/提示由
-   `markdown.ts:syncDecoEditFab` 按档位写，这里只管样子；配色全部走共用 token。 */
-.deco-edit-fab {
+   `markdown.ts:syncPreviewEditFab` 按档位写，这里只管样子；配色全部走共用 token。
+   B441：切换键与工具条同住这一层壳，键就是框里的第一颗按钮（自己不带框/底/影）。
+   B442（用户口径，推翻 B439 的「两档统一悬浮 + 实测让位 padding」）：
+   **预览档** = 下面这条基规则 —— 左上角纯悬浮键一颗（`fit-content` 正好裹住它），
+   正文顶部**不加任何留白**（键浮在正文上）；
+   **编辑档** = 再叠一条 `.md-bar-docked` 覆盖 —— 同一条改成编辑器顶部的固定占位行
+   （整宽、方角、无浮层影、下边缘一根边框线）。两档都不再有展开/收起动画。 */
+.md-preview-bar {
   position: absolute;
   left: 16px;
   top: 16px;
   z-index: 20;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
+  gap: 0;
+  box-sizing: border-box;
+  width: fit-content;
+  max-width: calc(100% - 32px);
   padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-elevated);
-  color: var(--fg-muted);
   box-shadow: var(--shadow-lg);
+}
+/* display:inline-flex 会盖掉 hidden 的 UA 样式 —— 与 .find-bar[hidden] 同一类坑 */
+.md-preview-bar[hidden] {
+  display: none;
+}
+/* B442 · 编辑档的占位条：整宽 + 下沿一根线，底色跟编辑区同一颗（条读起来像编辑器
+   的一部分，分界靠那根线而不是靠浮层影）。四边描边 / 圆角 / 影 / 定位全在这里撤掉。 */
+.panel-host.md-bar-docked .md-preview-bar {
+  position: static;
+  /* ⚠️ 条是 `syncPreviewEditFab` 往 host **最后** appendChild 进来的 ⇒ 竖排下不写
+     `order:-1` 就掉到编辑器**底下**（真机第一轮实测 bar.top=699 = 编辑器下沿）。
+     ⚠️ `width:auto` 同理必带：基规则是 `fit-content`（预览档那层框只裹键），
+     不顶掉的话占位档只铺到内容宽（真机实测 671 ≠ 编辑区 1170）。 */
+  order: -1;
+  flex: 0 0 auto;
+  width: auto;
+  max-width: none;
+  min-height: 30px;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--bg);
+  box-shadow: none;
+  /* B444 · 两个「不遮挡 / 不特殊」的口径：
+     · `z-index: auto` —— 基规则那颗 20 是给**悬浮档**用的（键要浮在正文上）。占位档
+       继承它会建层叠上下文：`z-index` 对 **flex 项即使 `position: static` 也生效**，
+       于是条压住了分隔条（`.layout-sep` 只有 z-index 5）的命中区，真机
+       `elementFromPoint` 在分屏线顶端读到的是 `.md-preview-bar` ⇒ 顶上那截拖不动。
+     · `align-items: flex-start` —— 基规则是居中。窄格里 21 颗按钮换行成两排，居中的
+       切换键就掉在两排中间的真空里（真机 fab.top=77.7 vs tool0.top=62.7），读起来像
+       「工具条左边另一颗独立居中按钮」。顶对齐后它就是**第一排的第一颗**，与其它按钮同排。 */
+  z-index: auto;
+  align-items: flex-start;
+  /* B445（用户点名「工具栏按钮居中」）：整组（切换键 + 21 颗按钮）在条里水平居中，
+     键仍是这一组的最左一颗。悬浮档不写：那层框是 `fit-content`，只裹一颗键。 */
+  justify-content: center;
+}
+/* B441：切换键 = 那一条里的**第一颗按钮**（与 `.md-preview-tool` 同尺寸同样子）——
+   自己不带框/底/影，否则看上去就是「工具条左边另一颗独立按钮」（用户报的那条）。 */
+.md-preview-fab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--fg-muted);
   cursor: pointer;
   opacity: 0.85;
   transition:
@@ -1563,17 +1787,92 @@ body.layout-dragging .toc-grip {
     color var(--transition),
     background var(--transition);
 }
-.deco-edit-fab:hover {
+.md-preview-fab:hover {
   opacity: 1;
   color: var(--fg);
   background: var(--toolbar-hover-bg);
 }
 /* display:inline-flex 会盖掉 hidden 的 UA 样式 —— 与 .find-bar[hidden] 同一类坑 */
-.deco-edit-fab[hidden] {
+.md-preview-fab[hidden] {
   display: none;
 }
-.deco-edit-fab .codicon {
+.md-preview-fab .codicon {
   font-size: 16px;
+}
+/* B431 · 编辑档的格式工具条（照 InkNote 段落 / 格式两份菜单）。
+   B442：显隐改成 `display` 两档（预览档 `none` ⇒ 既不占位也点不着，不再需要
+   pointer-events / opacity / max-width 那一套），展开 / 收起动画按用户要求移除。 */
+.md-preview-tools {
+  display: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.md-preview-bar.is-expanded .md-preview-tools {
+  display: flex;
+  /* 与切换键之间留一颗按钮的缝（基规则 gap:0 ⇒ 预览档那层框正好裹住键） */
+  padding-left: 2px;
+}
+.md-preview-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.md-preview-tool:hover:not(:disabled) {
+  color: var(--fg);
+  background: var(--toolbar-hover-bg);
+}
+/* B447 · 三颗历史键的灰态：与菜单项置灰同一档（0.4 + default 指针，见 global.css 的
+   `.popup-menu button:disabled`）。**灰 ≠ 没** —— 不藏键，用户才看得出「这条命令此刻
+   存在、只是没有可撤 / 可存的东西」。灰的是原生 `disabled`，点击根本不发事件。 */
+.md-preview-tool:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* B444：字形改 codicon 字体（`@vscode/codicons` 的 `.codicon` 基线是 16px/1），
+   这里显式写一遍与切换键同一口径，尺寸不靠包里的默认值撑着。 */
+.md-preview-tool .codicon {
+  font-size: 16px;
+}
+/* B447 · 撤销那颗 = `redo` 水平镜像（官方册里有 `redo`、独独没有 `undo`，用户拍板不
+   为此再画一枚字形）。镜像只在这一颗类上，恢复那颗照常画。 */
+.md-preview-tool--flip .codicon {
+  transform: scaleX(-1);
+}
+/* B446 · 那四枚补画的标记（公式 / 下划线 / 上标 / 下标）与 codicon 同格同寸：
+   16 网格画到 16px，`currentColor` 跟着按钮字色走，两轨并排看不出谁是被画出来的。 */
+.md-preview-tool svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+/* 下拉箭头用三角画，不借字号（B337 契约：chrome 里不许出现裸 font-size）。 */
+.md-preview-tool-caret {
+  width: 0;
+  height: 0;
+  margin-left: 2px;
+  border-left: 3px solid transparent;
+  border-right: 3px solid transparent;
+  border-top: 4px solid currentColor;
+}
+.md-preview-tool-sep {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 16px;
+  margin: 0 3px;
+  background: var(--border);
 }
 .panel-host .panel-editor {
   flex: 1 1 100%;
@@ -1594,23 +1893,8 @@ body.layout-dragging .toc-grip {
 .panel-host .panel-editor .cm-scroller {
   overflow: auto;
 }
-.panel-host.mode-source .md-preview {
-  display: none;
-}
-.panel-host.mode-preview .panel-editor {
-  display: none;
-}
-.panel-host.mode-preview .md-preview {
-  flex: 1 1 100%;
-  min-width: 0;
-}
-/* B397-1 · 所见即所得那一臂（`Settings.deco_preview` 开着才挂得上）：这一格没有
-   `.md-preview`，预览态现形的那一面**就是** `.panel-editor` 里那颗 view（装饰档由
-   `applyDecoFace` 换 Compartment 决定）。所以上一条「预览态藏编辑器」在这臂里要就地
-   作废 —— 藏掉它等于预览格一片空白。用多一颗 `.deco-face` 抬特异度，不改动主干那两条。 */
-.panel-host.deco-face.mode-preview .panel-editor {
-  display: flex;
-}
+/* B412：源码 / 预览 / 编辑三档共用这一颗编辑器 view（预览 = 禁编辑的编辑模式），
+   不再有「预览态藏编辑器」的规则 —— 藏掉它等于预览格一片空白。 */
 
 /* 打印 / PDF 导出 */
 #print-root {

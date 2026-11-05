@@ -171,9 +171,15 @@ const EDITOR = {
     "--editor-line-number": "#858889",
     "--editor-line-number-active": "#bbbebf",
     "--find-match": "#27678290", // 当前命中
-    "--find-match-other": "#27678280", // 其余命中
-    "--find-match-border": "transparent",
+    // B425（用户「区分要明显一点」）：2026 表里「其余命中」与「选中同词的自动高亮」同色相
+    // 同族（浅色 Δ5.9）、当前项与其余命中只差 Δ8.8 ⇒ 其余命中跨到 VS Code 其它各族都在用
+    // 的橙（editorColors.ts 的注册默认），当前项靠该族 focusBorder 的一圈描边。
+    "--find-match-other": "#ea5c0055",
+    "--find-match-border": "var(--accent)",
     "--find-match-other-border": "transparent",
+    // B425 · LitePad 以前根本没画过这一层（VS Code 的 findDecorations `_FIND_SCOPE_DECORATION`）。
+    "--find-range": "#ffffff13", // editor.findRangeHighlightBackground（2026-dark.json 显式值）
+    "--find-range-border": "transparent",
   },
   light: {
     "--editor-fg": "#202020",
@@ -191,9 +197,13 @@ const EDITOR = {
     "--editor-line-number": "#606060",
     "--editor-line-number-active": "#202020",
     "--find-match": "#0069cc40",
-    "--find-match-other": "#0069cc1a",
-    "--find-match-border": "transparent",
+    // B425：浅色档里 2026 的「其余命中」#0069cc1a 与自动高亮 #0069cc15 只差 Δ5.9，
+    // 当前项 #0069cc40 更是与选区同值 ⇒ 同一套换档（橙 + focusBorder 描边）。
+    "--find-match-other": "#ea5c0055",
+    "--find-match-border": "var(--accent)",
     "--find-match-other-border": "transparent",
+    "--find-range": "#00000015", // 2026-light.json 的显式值
+    "--find-range-border": "transparent",
   },
 } as const;
 
@@ -210,6 +220,12 @@ const FAMILY_KEYS: ReadonlyArray<readonly [string, string, string]> = [
   ["plus", "--sidebar-bg", "#252526"],
   ["plus", "--tab-strip-bg", "#252526"],
   ["plus", "--statusbar-bg", "#007acc"],
+  // B425 · 搜索范围带：2026 有自己的显式值（见上面 EDITOR 表），其余族走注册默认；
+  // HC 底色 null 不画，只留一圈 transparent(activeContrastBorder, 0.4)。
+  ["modern", "--find-range", "#3a3d4166"],
+  ["plus", "--find-range", "#3a3d4166"],
+  ["hc", "--find-range", "transparent"],
+  ["hc", "--find-range-border", "#f3851866"],
   ["classic", "--bg", "#1e1e1e"],
   ["classic", "--shell-bg", "#3c3c3c"],
   // B380：条带仍是 tabsBackground #252526，#303031 是 tabsBorder（下沿描边）。
@@ -240,6 +256,10 @@ const FAMILY_KEYS_LIGHT: ReadonlyArray<readonly [string, string, string]> = [
   ["plus", "--sidebar-bg", "#f3f3f3"],
   ["plus", "--tab-strip-bg", "#f3f3f3"],
   ["plus", "--statusbar-bg", "#007acc"],
+  // B425：浅色档同一套（带子 = 注册默认 #b4b4b44d，HC 只有蓝边）。
+  ["modern", "--find-range", "#b4b4b44d"],
+  ["hc", "--find-range", "transparent"],
+  ["hc", "--find-range-border", "#006bbd66"],
   ["classic", "--shell-bg", "#dddddd"],
   ["classic", "--tab-strip-bg", "#f3f3f3"],
   ["classic", "--tabstrip-border", "#d8d8d8"],
@@ -577,10 +597,19 @@ describe("B377 · 预览代码块（Shiki）跟着主题族走", () => {
     }
   });
 
-  it("切族时必须把已高亮的 shiki 岛退回原始 html 重画", () => {
-    const src = readFileSync("src/markdown/preview.ts", "utf-8");
-    const body = src.slice(src.indexOf("retheme(): void")).slice(0, 700);
-    expect(body, "retheme 必须同时认 mermaid 与 pre.shiki").toContain('".md-mermaid, pre.shiki"');
+  it("切族时必须让已画好的 mermaid / 公式 widget 重画（B412：走装饰面的主题代数）", () => {
+    // B412 之前这一发是 PreviewPane.retheme() 直接换 innerHTML；旧预览臂删掉之后，
+    // 重画靠「换代 ⇒ widget 判不等 ⇒ CM6 重建 DOM」，判据跟着换载体，性质一条没摘。
+    const rich = stripLineComments(readFileSync("src/preview/richWidgets.ts", "utf-8"));
+    expect(rich, "主题代数住在 widget 家里").toContain("widgetThemeGen");
+    expect(rich, "eq() 不比代数 ⇒ mermaid 永远停在旧配色").toMatch(/other\.gen === this\.gen/);
+    const live = stripLineComments(readFileSync("src/preview/livePreview.ts", "utf-8"));
+    expect(live, "重画靠一发 StateEffect 重算装饰").toContain("refreshWidgets");
+    expect(live, "换代与派发必须在同一发入口里做完").toMatch(
+      /export function rethemeWidgets\([\s\S]{0,200}bumpWidgetThemeGen\(\)[\s\S]{0,120}refreshWidgets\.of/,
+    );
+    const app = stripLineComments(readFileSync("src/appearance.ts", "utf-8"));
+    expect(app, "切主题时逐格调装饰面的重画入口").toMatch(/rethemeWidgets\(panel\.view\.view\)/);
   });
 });
 
@@ -787,7 +816,12 @@ describe("B380 · 中间区域背景 / HC 边框 / 编辑器交互状态", () =>
     expect(other, "其余命中的 HC 描边").toContain("var(--find-match-other-border)");
     const active = stripCssComments(ruleBlock(source, ".cm-find-match-active", "background"));
     expect(active, "当前命中去 findMatchBackground").toContain("background: var(--find-match)");
-    expect(active, "当前命中的 HC 描边").toContain("outline-color: var(--find-match-border)");
+    // B425：这一圈描边非 HC 也画（VS Code 的 `.currentFindMatch` 本来就是 2px border，
+    // 只是该色非 HC 注册成 null；LitePad 让它取该族 focusBorder）。用 outline 不用 border
+    // —— border + padding 会把字符往前推，outline 不吃布局。
+    expect(active, "当前命中有一圈 2px 描边").toContain(
+      "outline: 2px solid var(--find-match-border)",
+    );
   });
 
   it("每个变体都定义了这批编辑器状态 token（漏一族会落空）", () => {
@@ -804,6 +838,8 @@ describe("B380 · 中间区域背景 / HC 边框 / 编辑器交互状态", () =>
       "--find-match-other",
       "--find-match-border",
       "--find-match-other-border",
+      "--find-range",
+      "--find-range-border",
       "--menu-selection-bg",
       "--menu-selection-border",
     ];

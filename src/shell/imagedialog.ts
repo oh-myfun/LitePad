@@ -20,6 +20,8 @@ export interface ImageDialogOptions {
   alt: string;
   /** 预填的图片地址（Markdown 里原样的那一段，不是解析后的绝对路径）。 */
   path: string;
+  /** 弹窗标题；B431 起工具条也要「插入图片」（缺省仍是 B406 的「编辑图片」）。 */
+  title?: string;
   /** 浏览按钮；测试可注入，缺省走系统文件选择器。 */
   browse?: () => Promise<string | null>;
 }
@@ -52,7 +54,7 @@ export function showImageDialog(opts: ImageDialogOptions): Promise<ImageDialogRe
 
     const title = document.createElement("div");
     title.className = "save-confirm-title";
-    title.textContent = "编辑图片";
+    title.textContent = opts.title ?? "编辑图片";
 
     const altField = document.createElement("div");
     altField.className = "image-dialog-field";

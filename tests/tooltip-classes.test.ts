@@ -107,8 +107,10 @@ describe("文本类逐个经 setTextTip", () => {
     ["src/shell/tabstrip.ts", "el", "tip"], // 标签：全路径（只读时尾巴上 [只读]）
     ["src/markdown/toc.ts", "item", "第 ${node.entry.line} 行"], // 大纲：行号
     ["src/recents/panel.ts", "row", "e.path"], // 最近打开：全路径
-    ["src/explorer/panel.ts", "row", "e.path"], // 资源管理器树行（B350 前是原生 title）
-    ["src/explorer/panel.ts", "rootRow", "root"], // 树根那一行
+    // 资源管理器树行（B350 前是原生 title）。B427 起常规树与过滤结果共用 `rowOf()` 画行，
+    // 文案那一位换成了它的形参 `path`（同样是**全路径**，不是名字）。
+    ["src/explorer/panel.ts", "row", 'path, { group: "explorer" }'],
+    ["src/explorer/panel.ts", "el", "root"], // 树根那一行（B424：每根一行，元素局部名是 el）
     ["src/shell/commandpalette.ts", "row", "item.note"], // 命令面板行的说明
     ["src/shell/keymapdialog.ts", "name", "cmd.note"], // 键位表那列命令说明
   ];
@@ -124,7 +126,7 @@ describe("文本类逐个经 setTextTip", () => {
 
   it("反向：退回 setTip 的替身必须抠不到", () => {
     const src = readFileSync("src/explorer/panel.ts", "utf-8");
-    const regressed = src.replace("setTextTip(row, e.path", 'setTip(row, e.path, { group: "x" ');
+    const regressed = src.replace("setTextTip(row, path", 'setTip(row, path, { group: "x" ');
     expect(regressed, "替身必须真的替换过").not.toBe(src);
     expect(callOf(regressed, "setTextTip", "row")).toBe("");
   });
@@ -155,5 +157,53 @@ describe("全应用不再有原生 title", () => {
       expect(src, `${f} 应引用 setTip`).toMatch(/import\s*\{[^}]*\bsetTip\b[^}]*\}\s*from/);
       expect(src, `${f} 是按钮，不该用文本档`).not.toMatch(/setTextTip\(/);
     }
+  });
+});
+
+// B427 · 用户报：「搜索边栏中，搜索输入框中的三个小按钮缺失tooltip。」
+// 同族缺口其实五颗（替换框的「保留大小写」、展开区的「仅在打开的编辑器中搜索」与
+// 「使用排除设置与忽略文件」也一样没写）。判据按**形状**判、不写名单：侧栏里每一颗
+// `.find-toggle` 都必须带非空 `data-tip` —— 以后加一颗新的忘了写也会被咬住（B353/B356 的教训）。
+describe("B427 · 侧栏搜索里每一颗 .find-toggle 都自带提示", () => {
+  const html = readFileSync("index.html", "utf-8").replace(/\r\n/g, "\n");
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const toggles = [...doc.querySelectorAll<HTMLElement>(".find-toggle")];
+  const tipsOf = (root: Document): string[] =>
+    [...root.querySelectorAll<HTMLElement>(".find-toggle")]
+      .filter((b) => !(b.getAttribute("data-tip") ?? "").trim())
+      .map((b) => b.id || "(无 id)");
+  const tipOf = (id: string): string => doc.getElementById(id)?.getAttribute("data-tip") ?? "";
+
+  it("侧栏里每一颗开关都有提示（先数一遍夹具，免得对着空集放行）", () => {
+    expect(toggles.length, "侧栏搜索至少五颗 .find-toggle").toBeGreaterThanOrEqual(5);
+    expect(tipsOf(doc), "这几颗没有提示（悬停什么也不会出现）").toEqual([]);
+  });
+
+  it("三颗匹配开关的提示与悬浮查找栏同字（同一颗开关，两处口径不许分家）", () => {
+    // 悬浮查找栏那三颗在 `findbar.ts` 里是 `toggle(图标, aria 名, 提示)`；按**图标**配对，
+    // 不按顺序也不按 aria 名 —— 那边正则那颗的 aria 名叫「正则」，这边叫「使用正则表达式」。
+    const bar = readFileSync("src/shell/findbar.ts", "utf-8");
+    const barTips = new Map(
+      [...bar.matchAll(/toggle\("(\w+)", "[^"]*", "([^"]*)"\)/g)].map((m) => [m[1], m[2]]),
+    );
+    const pairs: [string, string][] = [
+      ["search-case", "caseSensitive"],
+      ["search-word", "wholeWord"],
+      ["search-regex", "regex"],
+    ];
+    for (const [id, icon] of pairs) {
+      const fromBar = barTips.get(icon);
+      expect(fromBar, `findbar.ts 里找不到图标 ${icon} 那颗`).toBeTruthy();
+      expect(tipOf(id), `${id} 的提示要与悬浮查找栏那颗 ${icon} 同字`).toBe(fromBar);
+    }
+  });
+
+  it("反向：把一颗的 data-tip 抠掉，判据必须抓到（证明它真有鉴别力）", () => {
+    // B427 之后「使用正则表达式」这句提示在 index.html 里有两处（侧栏搜索 + 资源管理器过滤框），
+    // 所以替身要**锚在那颗 id 上**抠，按文案裸替换会抠错行、把判据验成另一颗。
+    const broken = html.replace(/(id="search-regex"[\s\S]*?)data-tip="使用正则表达式"/, "$1");
+    expect(broken, "替身必须真的改动了原文").not.toBe(html);
+    const doc2 = new DOMParser().parseFromString(broken, "text/html");
+    expect(tipsOf(doc2)).toEqual(["search-regex"]);
   });
 });

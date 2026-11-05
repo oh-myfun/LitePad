@@ -3,6 +3,12 @@ import { hideTip } from "./tooltip";
 
 export interface MenuItem {
   label?: string;
+  /**
+   * 行首字形（B447）：`CODICONS.<name>` / `TOOLBAR_MARKS.<name>` 那一层产出的元素串。
+   * 只在「同一条菜单里每项都带、且靠中文标签认不出」时传 —— 工具条折进下拉的
+   * 上标 / 下标 / Σ 就是这一形。不传则**不留格**（老菜单一行都不变）。
+   */
+  icon?: string;
   checked?: boolean;
   /** 显示为分隔线（忽略其他字段） */
   separator?: boolean;
@@ -217,6 +223,16 @@ function fillMenu(menu: HTMLElement, items: MenuItem[], opts?: PopupMenuOptions)
     textEl.className = "menu-label";
     textEl.textContent = text ?? "";
 
+    // 字形格（B447）：只有传了 icon 才建 —— 不传就一格不留，老菜单的标签左沿不动。
+    const head: HTMLElement[] = [check];
+    if (item.icon) {
+      const iconEl = document.createElement("span");
+      iconEl.className = "menu-icon";
+      iconEl.setAttribute("aria-hidden", "true");
+      iconEl.innerHTML = item.icon;
+      head.push(iconEl);
+    }
+
     const sub = resolveSubmenu(item);
 
     if (sub) {
@@ -227,10 +243,10 @@ function fillMenu(menu: HTMLElement, items: MenuItem[], opts?: PopupMenuOptions)
       // `.menu-arrow .codicon` 内层：codicon.css 用的是 `font` 简写，自带 font-size，
       // 父级写多少都不算数。
       arrow.innerHTML = CODICONS.chevronRight;
-      btn.append(check, textEl, arrow);
+      btn.append(...head, textEl, arrow);
       btn.classList.add("has-submenu");
     } else {
-      btn.append(check, textEl);
+      btn.append(...head, textEl);
       if (shortcut) {
         const kbd = document.createElement("span");
         kbd.className = "menu-kbd";

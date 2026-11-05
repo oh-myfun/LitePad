@@ -20,10 +20,18 @@ import { isMdTab } from "../doc-model";
 import { countLeaves } from "../core/layout";
 import { renderTabstrip, type TabViewData, type TabstripCallbacks } from "../shell/tabstrip";
 import { refreshPanelOps, type PanelRenderData } from "../shell/splitview";
+import { type MenuItem } from "../shell/menu";
+import { showQuickPick } from "../shell/quickpick";
 import { showMessage, layoutArea } from "../ui";
 import { openTabsInNewWindow, returnTabToMain } from "../multiwindow/windows";
 import { scheduleSessionSave } from "./deps";
-import { switchTab, closeTabById, closeTabsSequentially, newUntitled } from "./lifecycle";
+import {
+  switchTab,
+  closeTabById,
+  closeTabsSequentially,
+  closePanelById,
+  newUntitled,
+} from "./lifecycle";
 import {
   duplicateTabToPanel,
   duplicateTabToSibling,
@@ -135,18 +143,15 @@ export function panelDataOf(p: Panel): PanelRenderData {
   // 活动组）：非活动面板不给 md 标记，splitview 那边就一颗都不建。
   const act = p.panelId === activePanelId ? activeTab() : undefined;
   const md = !!act && isMdTab(act);
-  return {
+  // B161 / B422：这一格能不能解散、解散等不等于关窗 —— 口径在 `panelCloseFact`
+  // （渲染快照与组菜单同源，别处不再算一遍）。
+  const { canClose, closeDetail } = panelCloseFact();
+  const data: PanelRenderData = {
     panelId: p.panelId,
     active: p.panelId === activePanelId,
     tabs: tabViewDataOf(p),
-    // B161：卫星窗口唯一的面板**可以**关 —— 关面板 = 关窗（B188 起不再把标签交回主窗口，
-    // 文档由主窗口那份隐藏实例接着管，未保存内容靠热退出副本兜住）。主窗口仍然不许关唯一
-    // 面板（关了就没地方放标签）。
-    canClose: countLeaves(layout) > 1 || windowKind === "satellite",
-    closeDetail:
-      windowKind === "satellite" && countLeaves(layout) <= 1
-        ? "关闭该子窗口（其中的文件不会交回主窗口）"
-        : undefined,
+    canClose,
+    closeDetail,
     // B71：被最大化挤扁的一侧要真的收成 0（CSS 里 .layout-panel 有 min-width）
     maximized: maximizedPanelId === p.panelId,
     collapsed: maximizedPanelId !== null && maximizedPanelId !== p.panelId,
@@ -155,6 +160,115 @@ export function panelDataOf(p: Panel): PanelRenderData {
     md,
     mdPreview: md && act!.viewMode !== "source",
   };
+  // B422：组菜单送**函数**而不是算好的数组 —— 点「…」那一刻才按模型算（脏标记、组数、
+  // 最大化态都在那时候取值）。操作区只在结构变化时重建，快照活不过下一次击键。
+  data.groupMenu = () => groupMenuOf(p);
+  return data;
+}
+
+/**
+ * 「这一格能不能被解散 / 解散它等于关窗」两格判据（B161）。
+ *
+ * `panelDataOf`（渲染快照）与 `groupMenuOf`（点击时算的菜单）都要用 —— 抽出来一处定义，
+ * 否则两边各写一遍迟早漂移（菜单说能解散、快照说不能，就是 B224 那条教训的又一形）。
+ */
+function panelCloseFact(): { canClose: boolean; closeDetail?: string } {
+  const canClose = countLeaves(layout) > 1 || windowKind === "satellite";
+  const closeDetail =
+    windowKind === "satellite" && countLeaves(layout) <= 1
+      ? "关闭该子窗口（其中的文件不会交回主窗口）"
+      : undefined;
+  return { canClose, closeDetail };
+}
+
+/**
+ * 组标题「…」菜单（B422，用户「标签区右边的关闭按钮改成 vscode 那种菜单按钮」）。
+ *
+ * 条目与分组顺序照 VS Code `editor.contribution.ts` 的 `MenuId.EditorTitle`：
+ * `3_open`（Show Opened Editors）→ `4_split`（Split Editor Right/Down）→
+ * `5_close`（Close All / Close Saved）→ `8_group_operations`（Maximize Group / 我们的解散组）。
+ * 「解散组」= 旧 × 那条动作（标签并入相邻格后摘掉这一格）；VS Code 的组菜单里没有它
+ * （那边叫 Close Group、挂在标签右键），LitePad 把它收进来正好补上那颗被换掉的 ×。
+ * 「Unsplit Group」是终端那边的词，编辑器组不用它命名。
+ * ⚠️ 本函数由 `panelDataOf` 包成**函数**送给 splitview，点「…」那一刻才跑（口径见
+ * `PanelRenderData.groupMenu` 的注释）。
+ */
+function groupMenuOf(p: Panel): MenuItem[] {
+  const dirtyOf = (tabId: number): boolean => !!docs.get(tabs.get(tabId)?.docId ?? -1)?.dirty;
+  const items: MenuItem[] = [];
+  // 本面板自己的活动标签：分屏动作要以它为源（点的是这一格的菜单，不是全局活动格）
+  const own = p.tabs.includes(p.activeTabId) ? p.activeTabId : (p.tabs[0] ?? null);
+  const multi = countLeaves(layout) > 1;
+  const { canClose, closeDetail } = panelCloseFact();
+
+  if (p.tabs.length > 0) {
+    items.push({ label: "显示已打开的编辑器", onSelect: () => showGroupEditors(p) });
+    items.push({ separator: true });
+  }
+  if (own !== null) {
+    items.push({
+      label: "左右分屏",
+      onSelect: () => splitPanelWithTab(p.panelId, "h", own, false, true),
+    });
+    items.push({
+      label: "上下分屏",
+      onSelect: () => splitPanelWithTab(p.panelId, "v", own, false, true),
+    });
+    items.push({ separator: true });
+  }
+  // 两条关闭动作的名单在**选中那一刻**再取一遍：菜单开着的时候用户还能敲字、还能切标签，
+  // 按开菜单时的快照关档就是把「刚改脏的那张」当成已保存关掉了（真机抓到过）。
+  const savedNow = (): number[] => p.tabs.filter((id) => !dirtyOf(id));
+  items.push({
+    label: "全部关闭",
+    disabled: p.tabs.length === 0,
+    onSelect: () => void closeTabsSequentially([...p.tabs]),
+  });
+  items.push({
+    label: "关闭已保存",
+    disabled: savedNow().length === 0,
+    onSelect: () => void closeTabsSequentially(savedNow()),
+  });
+  if (multi || maximizedPanelId === p.panelId) {
+    items.push({ separator: true });
+    items.push({
+      label: maximizedPanelId === p.panelId ? "取消最大化组" : "最大化组",
+      onSelect: () => toggleMaximizePanel(p.panelId),
+    });
+  }
+  items.push({ separator: true });
+  items.push({
+    // 卫星窗口只有一格时没有宿主可并 —— 那条路本来就是「关掉这个子窗口」
+    // （B161；判据与旧 × 的副标题同源，见 `panelCloseFact`）。
+    label: closeDetail ? "关闭子窗口" : "解散组",
+    disabled: !canClose,
+    onSelect: () => void closePanelById(p.panelId),
+  });
+  return items;
+}
+
+/** 「显示已打开的编辑器」= VS Code 的 `SHOW_EDITORS_IN_GROUP`：本组标签的快速选择。 */
+function showGroupEditors(p: Panel): void {
+  const list = p.tabs
+    .map((id) => tabs.get(id))
+    .filter((t): t is Tab => !!t)
+    .map((t) => {
+      const doc = docs.get(t.docId);
+      return {
+        tabId: t.tabId,
+        label: doc?.name ?? "?",
+        description: doc?.path ?? "",
+        checked: t.tabId === p.activeTabId,
+      };
+    });
+  showQuickPick({
+    placeholder: "显示已打开的编辑器",
+    items: list.map((e) => ({ label: e.label, description: e.description, checked: e.checked })),
+    onSelect: (index) => {
+      const hit = list[index];
+      if (hit) switchTab(p.panelId, hit.tabId);
+    },
+  });
 }
 
 /** 只重建各面板的操作区（B224）：md 两颗键跟着活动面板与视图模式走，

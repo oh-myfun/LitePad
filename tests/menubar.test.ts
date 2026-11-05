@@ -142,7 +142,7 @@ afterEach(() => {
 });
 
 describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
-  it("B331：「关闭文件夹」的亮灭跟着「有没有根」两头走", async () => {
+  it("B331/B424：「移除全部目录」的亮灭跟着「有没有根」两头走", async () => {
     // 两头都量：只测「灰」会被「永远灰」糊过去，只测「亮」会被「永远亮」糊过去。
     const build = async (hasRoot: boolean) => {
       closePopupMenu(); // 上一轮的弹层还挂着 ⇒ 不关掉就会 find 到旧那一层的条目
@@ -151,9 +151,9 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
       createMenuBar(host, { ...makeCb(), hasFolderRoot: () => hasRoot });
       await clickMenuBtn(host, "文件");
       const item = [...document.querySelectorAll<HTMLButtonElement>(".popup-menu button")].find(
-        (b) => b.textContent?.includes("关闭文件夹"),
+        (b) => b.textContent?.includes("移除全部目录"),
       );
-      expect(item, "文件菜单里要有「关闭文件夹」这一条").toBeTruthy();
+      expect(item, "文件菜单里要有「移除全部目录」这一条").toBeTruthy();
       return item!;
     };
     expect((await build(false)).disabled, "没开文件夹 ⇒ 置灰").toBe(true);
@@ -483,7 +483,6 @@ describe("设置项归属与接线（B42/B46）", () => {
       "正文字体",
       "字号",
       "编辑器行距",
-      "预览行距",
       "大纲宽度",
       "默认行尾",
       "默认编码",
@@ -528,7 +527,8 @@ describe("设置项归属与接线（B42/B46）", () => {
       "function setThemeMode(",
       "function setAutosave(",
       "function setHotExit(",
-      "function setPreviewLineHeight(",
+      "function setPreviewWidth(",
+      // B413：`setPreviewLineHeight(` 已随「预览行距」设置项一起删除（行距只剩编辑器那一档）。
       // B235：`setTocWidthValue(` 已随设置页那个「大纲宽度」下拉一起删除 ——
       //   调大纲宽度现在只有左侧栏拖拽分隔条一条路（`setupSideResizer` 的 onChange
       //   里自带「夹取 → 回写 settings.toc_width」）。反向闸钉住它别被加回来。
@@ -824,7 +824,6 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
       "正文字体",
       "字号",
       "编辑器行距",
-      "预览行距",
       "大纲宽度",
       "新建文件",
       "默认行尾",

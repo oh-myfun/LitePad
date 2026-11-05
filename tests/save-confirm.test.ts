@@ -163,3 +163,26 @@ describe("B236 样式", () => {
     expect(detail).toContain("overflow-wrap: anywhere");
   });
 });
+
+describe("B415 遮罩负责居中（弹窗不许落到视口左上角）", () => {
+  const ruleOf = (sel: string): string => {
+    const i = CSS.indexOf(sel);
+    expect(i, `找不到 ${sel}`).toBeGreaterThanOrEqual(0);
+    const open = CSS.indexOf("{", i);
+    return CSS.slice(open + 1, CSS.indexOf("}", open));
+  };
+
+  it(".settings-overlay 用 flex 居中（.settings-dialog 一族自身没有定位）", () => {
+    const overlay = ruleOf(".settings-overlay");
+    expect(overlay).toContain("display: flex");
+    expect(overlay).toContain("align-items: center");
+    expect(overlay).toContain("justify-content: center");
+    // 反向闸：框体没有任何 position —— 居中只能由遮罩给
+    expect(ruleOf(".save-confirm-dialog")).not.toMatch(/position\s*:/);
+  });
+
+  it("fixed 定位的子窗不受 flex 影响（设置窗 / 图片弹窗自己定位）", () => {
+    expect(ruleOf(".win-frame")).toContain("position: fixed");
+    expect(ruleOf(".image-dialog")).toContain("position: fixed");
+  });
+});

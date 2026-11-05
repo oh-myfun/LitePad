@@ -116,8 +116,6 @@ export async function restoreSession(): Promise<boolean> {
         activeTabId: -1,
         view: null,
         viewTabId: null,
-        preview: null,
-        previewTimer: null,
         bodyEl: null,
       });
       idMap.set(idx, realId);

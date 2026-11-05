@@ -362,6 +362,8 @@ fn main() {
             // B389 侧栏搜索（递归搜 + 磁盘批量替换，见 commands/search.rs 头部）
             commands::search::search_in_folder,
             commands::search::replace_in_files,
+            // B427 资源管理器过滤框（只认名字、整棵走一遍；与搜索共用排除/忽略两层的实现）
+            commands::search::filter_tree,
             // B333：拖入的那一条是目录还是文件（落点在资源管理器那一块时决定换根还是打开）
             commands::explorer::is_dir,
             commands::explorer::create_file,

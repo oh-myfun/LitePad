@@ -1,10 +1,10 @@
 /**
  * 同步滚动真机验证台的页内宿主。
  *
- * 它不是 mock：编辑器、预览、协调器、注册接线全部 import 真实生产模块
- * （`src/editor/editor.ts` / `src/markdown/preview.ts` / `src/markdown/pipeline.ts`
- * / `src/sync-scroll/*` / `src/core/app-state.ts`），由 esbuild 打成 IIFE 在真实
- * Chromium 里跑，从而拿到 jsdom 永远拿不到的东西——**真实布局与真实滚动事件**。
+ * 它不是 mock：编辑器、协调器、注册接线全部 import 真实生产模块
+ * （`src/editor/editor.ts` / `src/sync-scroll/*` / `src/core/app-state.ts`），
+ * 由 esbuild 打成 IIFE 在真实 Chromium 里跑，从而拿到 jsdom 永远拿不到的东西
+ * —— **真实布局与真实滚动事件**。
  *
  * 为什么不接 Tauri 产物：本仓库已实测记录 WebView2 不吃
  * `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`、Tauri 也不转发 `--remote-debugging-port`
@@ -12,16 +12,13 @@
  * 「真实浏览器 + CDP 派发真实鼠标」在本仓库已由 `docs/split-view-plan.md` 的取证方法
  * 验证可行，这里沿用它，只把被测面从 splitview 换成滚动同步。
  *
- * DOM 形状刻意复刻生产：`mountView`（`src/tabs/lifecycle.ts:198-219`）给**每个面板**
- * 都同时挂 `.panel-editor` 与 `.md-preview`，再靠 `.panel-host.mode-*` 的 CSS 藏掉
- * 其中一个（`src/styles/preview.css:632-640`）。所以「可见面板里也存在着一个被隐藏的
- * 锚点」是线上真实状态，必须一并复现，否则验证台看不见那一路的失败。
+ * DOM 形状刻意复刻生产：B412 起**一格只有一颗编辑器 view**（源码 / 预览 / 编辑三档
+ * 共用），预览档不再另挂 `.md-preview` 派生容器。所以「同文档两格 = 两个编辑器滚动面」
+ * 就是线上真实状态。
  *
  * 复刻的结构性滚动来源（线上「自动跳变 / 调回顶部」的全部来源）：
- *   1. `view.setState(别的文档)` 归零 `scrollDOM.scrollTop` —— 同 `lifecycle.ts:279`；
- *   2. `PreviewPane.setBlocks()` 重画之后同栈复原 `scrollTop`（B319 起是岛级就地补丁，
- *      不再是 `replaceChildren` 清零）—— 同 `preview.ts` 的 `setBlocks`；
- *   3. 每次结构性操作后调真实 `reconcileSyncRegistrations()` —— 同 `lifecycle.ts:330`。
+ *   1. `view.setState(别的文档)` 归零 `scrollDOM.scrollTop` —— 同 `lifecycle.ts`；
+ *   2. 每次结构性操作后调真实 `reconcileSyncRegistrations()` —— 同 `mountView` 末尾。
  * 没搬过来的是会话 / IPC / 菜单那一圈，它们不参与滚动。
  */
 
@@ -30,8 +27,6 @@ import "../../src/styles/preview.css";
 import { markdown } from "@codemirror/lang-markdown";
 import { createEditor, makeTabState } from "../../src/editor/editor";
 import { perfProfileFor } from "../../src/editor/perf";
-import { PreviewPane } from "../../src/markdown/preview";
-import { renderBlocks } from "../../src/markdown/pipeline";
 import { panels, tabs, type Panel, type Tab } from "../../src/core/app-state";
 import { isMdTab, makeDoc, registerDoc } from "../../src/doc-model";
 import {
@@ -51,7 +46,6 @@ import {
   applyEditorLineHeight,
   applyFontFamily,
   applyFontSize,
-  applyPreviewLineHeight,
   applyPreviewWidth,
   applyTabActionReserve,
   applyTabStyle,
@@ -71,14 +65,10 @@ export interface HarnessApi {
   /** 切到该面板标签条上第 index 个标签（复刻 lifecycle.switchTab 的调用序列）。 */
   switchTab(panelId: number, index: number): void;
   /**
-   * 预览整块重渲染（编辑 / 重载触发的那条路径）。
-   * 返回同栈前后的 scrollTop 与高度，用来区分「setBlocks 没把位置扶回去」与
-   * 「扶回去了、随后被别的什么东西改掉」——这两种的修法完全不同。
+   * B412：旧「预览整块重渲染」路径随派生 DOM 臂一起删除，本方法恒返回 null
+   * （保留签名只为探针那几条场景能继续编译 / 走空分支）。
    */
-  rerenderPreview(panelId: number): {
-    before: { top: number; sh: number; ch: number };
-    after: { top: number; sh: number; ch: number };
-  } | null;
+  rerenderPreview(panelId: number): null;
   /** 该文档的 B152 开关。 */
   setSyncEnabled(docId: string, on: boolean): void;
   docIds(): { long: number; short: number };
@@ -245,8 +235,8 @@ function makeTab(docId: number, text: string, panelId: number, viewMode: Tab["vi
 
 /**
  * 建一格面板，形状与生产的 `mountView` 一致：
- * `.panel-host.mode-X` > `.panel-head`(`.panel-tabstrip`) + `.panel-editor`(真实 CM6) + `.md-preview`。
- * 两个视口都建，靠 CSS 藏一个——这样「被隐藏但仍被注册的锚点」这个线上状态也被复现。
+ * `.panel-host.mode-X` > `.panel-head`(`.panel-tabstrip`) + `.panel-editor`(真实 CM6)。
+ * B412 起预览档没有第二份 DOM —— 预览 / 编辑 / 源码三档共用这一颗 view。
  */
 function createPanel(mode: "source" | "preview", docId: number, label: string): Panel {
   const text = docId === docLongId ? window.__FIXTURE_LONG__ : window.__FIXTURE_SHORT__;
@@ -272,15 +262,7 @@ function createPanel(mode: "source" | "preview", docId: number, label: string): 
   chip.textContent = label;
   strip.append(chip);
 
-  const preview = new PreviewPane();
-  preview.setHost({
-    lineCount: () => text.split("\n").length,
-    canWrite: () => false,
-    toggleTaskAt: () => {},
-  });
-  preview.setBlocks(renderBlocks(text), { enhanced: false });
-
-  host.append(head, editorBox, preview.root);
+  host.append(head, editorBox);
   document.getElementById("layout")!.append(host);
 
   const panel: Panel = {
@@ -289,37 +271,20 @@ function createPanel(mode: "source" | "preview", docId: number, label: string): 
     activeTabId: tab.tabId,
     view,
     viewTabId: tab.tabId,
-    preview,
-    previewTimer: null,
     bodyEl: host,
   };
   panels.set(panelId, panel);
   return panel;
 }
 
-/**
- * 生产 `renderMarkdownFor` 的净效果（`markdown.ts:89`：`preview.setBlocks(renderBlocks(正文))`）。
- *
- * ⚠️ 刻意**不传** `{ enhanced: false }`：生产那条路就是默认走 `enhance()`，而 `enhance()`
- * （代码高亮 / mermaid / 图片）是在 `setBlocks` **之后**才异步改变块高的。台子早先为了跑得快
- * 把它关掉，于是「落位发生在块高定局之前」这一族缺陷在台子里根本不存在 —— 用户报的
- * 「跳变从来没被扶回过，最后还是错的」正对着这个盲区（S21 就是来验它的）。
- */
-function renderMarkdownMirror(panel: Panel): void {
-  if (!panel.preview) return;
-  const text = panel.view?.view.state.doc.toString() ?? "";
-  panel.preview.setBlocks(renderBlocks(text));
-}
-
-/** 生产 `applyPanelMode`（`markdown.ts:39-48`）的镜像：换 `mode-*` 类，非源码态强制重渲染。 */
+/** 生产 `applyPanelMode`（`markdown.ts`）的镜像：只换 `mode-*` 类（B412 起没有第二面可切）。 */
 function applyPanelModeMirror(panel: Panel): void {
   const host = panel.bodyEl;
   if (!host) return;
   const tab = tabs.get(panel.activeTabId);
   const mode = tab && isMdTab(tab) ? tab.viewMode : "source";
-  host.classList.remove("mode-source", "mode-split", "mode-preview");
-  host.classList.add(`mode-${mode}`);
-  if (mode !== "source") renderMarkdownMirror(panel);
+  host.classList.remove("mode-source", "mode-preview");
+  host.classList.add(`mode-${mode === "edit" ? "preview" : mode}`);
 }
 
 /**
@@ -401,7 +366,6 @@ function install(): void {
   applyFontSize(14);
   applyFontFamily("");
   applyCodeFontFamily("");
-  applyPreviewLineHeight(1.7);
   applyPreviewWidth("full");
   applyEditorLineHeight(1.5);
 
@@ -432,22 +396,12 @@ function install(): void {
     el.textContent = name;
     strip.append(el);
   }
-  const preview0 = new PreviewPane();
-  preview0.setHost({
-    lineCount: () => window.__FIXTURE_LONG__.split("\n").length,
-    canWrite: () => false,
-    toggleTaskAt: () => {},
-  });
-  preview0.setBlocks(renderBlocks(window.__FIXTURE_LONG__), { enhanced: false });
-  host0.append(preview0.root); // mode-source ⇒ CSS 隐藏它，但它照样会被注册
   const panel0: Panel = {
     panelId: 0,
     tabs: [tabLong.tabId, tabShort.tabId],
     activeTabId: tabLong.tabId,
     view: view0,
     viewTabId: tabLong.tabId,
-    preview: preview0,
-    previewTimer: null,
     bodyEl: host0,
   };
   panels.set(0, panel0);
@@ -494,18 +448,10 @@ function install(): void {
         );
       reconcileSyncRegistrations();
     },
-    rerenderPreview(panelId) {
-      const panel = panels.get(panelId);
-      if (!panel?.preview) return null;
-      const root = panel.preview.root;
-      const before = { top: root.scrollTop, sh: root.scrollHeight, ch: root.clientHeight };
-      const text = panel.view?.view.state.doc.toString() ?? window.__FIXTURE_LONG__;
-      panel.preview.setBlocks(renderBlocks(text), { enhanced: false });
-      // 同栈读回来：能区分「setBlocks 自己没把位置扶回去」与「扶回去了、随后被人改掉」。
-      return {
-        before,
-        after: { top: root.scrollTop, sh: root.scrollHeight, ch: root.clientHeight },
-      };
+    rerenderPreview() {
+      // B412：预览与编辑共用同一颗 view，旧「整块重渲染」路径已不存在 ——
+      // 这里只回报 null，探针据此跳过这一支。
+      return null;
     },
     addPreviewPanel() {
       // 同 `openPreviewToSide` 的「右侧没有面板」那一支（B310）：生产的副本**不是**按预览态

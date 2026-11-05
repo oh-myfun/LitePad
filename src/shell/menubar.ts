@@ -131,8 +131,9 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
         onSelect: cb.onOpenFolder,
       },
       {
-        // B331：与上一颗配成一对。没开文件夹时置灰（点亮它 = 把盘上那一格写空一次）。
-        label: withKey("关闭文件夹", cb.keyHint("file.closeFolder")),
+        // B331：与上一颗配成一对。B424 改名「移除全部目录」（命令 id 与键位覆盖照旧）。
+        // 没开目录时置灰（点亮它 = 把盘上那一格写空一次）。
+        label: withKey("移除全部目录", cb.keyHint("file.closeFolder")),
         disabled: !cb.hasFolderRoot(),
         onSelect: cb.onCloseFolder,
       },

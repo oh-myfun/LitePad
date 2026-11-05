@@ -105,7 +105,6 @@ vi.mock("../src/ipc/api", () => ({
       autosave: false,
       hot_exit: true,
       toc_width: 240,
-      preview_line_height: 1.7,
     }),
   logEvent: () => {},
   // 每个空文档都要一个新文档 ID；返回递增 id 便于区分
