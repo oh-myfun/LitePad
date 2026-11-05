@@ -19,12 +19,12 @@
 
 import { Compartment, EditorState, StateEffect, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
-import { isWrap, panels, tabs, type Panel } from "../core/app-state";
+import { docs, isWrap, panels, tabs, type Panel } from "../core/app-state";
 import { landVisibleSideAtV } from "../sync-scroll/wire";
 import { DIFF_REFRESH_MS } from "./align";
 import { blockAt, diffBlocks, type DiffBlock } from "./blocks";
 import { diffFace, refreshDiff } from "./face";
-import { notifyDiffBlocks, type DiffSide, type DiffSpec } from "./model";
+import { canOpenAgainstBaseline, notifyDiffBlocks, type DiffSide, type DiffSpec } from "./model";
 
 /**
  * 右栏那一臂共用的**一个具名槽**（预审 R1 说「Compartment 由本模块创建」；Task 5 把它收成一颗，
@@ -590,7 +590,15 @@ export function diffSurfaceOf(panel: Panel | undefined | null): DiffSurface | nu
 function wantedSpec(panel: Panel): DiffSpec | null {
   if (!panel.view || !panel.bodyEl) return null;
   const tab = tabs.get(panel.viewTabId ?? panel.activeTabId);
-  return tab && tab.kind === "diff" ? tab.diff : null;
+  const spec = tab && tab.kind === "diff" ? tab.diff : null;
+  // A 档再问一次那道闸（评审 R31）：挂着的时候基线可以被**抹掉** —— 资源管理器把正开着
+  // 差异面的文件删进回收站 ⇒ `orphan()` 置 `doc.baseline = null` 并调 `refreshAll()`。
+  // 那颗读取口于是交出 `""`，`reassert` ③ 忠实地把左栏换成空文档，右栏每一行都被判成
+  // 「新增」：一张全绿的脸。那一档没有「原样」可比 ⇒ 正确的样子是没这一排。
+  if (spec?.tier === "baseline" && !canOpenAgainstBaseline(docs.get(spec.docId) ?? null)) {
+    return null;
+  }
+  return spec;
 }
 
 /**

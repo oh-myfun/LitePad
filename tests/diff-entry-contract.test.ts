@@ -110,17 +110,18 @@ describe("B461 · 差异步进两条命令进表（Task 4 Step 5/6）", () => {
 
   it("B461 · 上下文闸与分发接在 main.ts：不成时不抢键，成时走 surface 的 step(±1)", () => {
     const main = srcOf("src/main.ts");
-    const gate = fnBody(main, "shortcutApplies");
+    // 注释里那些「与置灰/不抢键同源」的话不许进判据 ⇒ 先剥行注释再按形状匹配。
+    const gate = stripLineComments(fnBody(main, "shortcutApplies"));
     expect(gate, "两条命令共用同一个闸（写成两行 case  fallthrough）").toMatch(
       /case "diff\.nextChange":\s*\n\s*case "diff\.prevChange":/,
     );
     expect(gate).toMatch(/return diffTabActive\(\)/);
     // 闸的判据本身：活动面板**挂着旁路**且显示的那张标签是差异标签
-    const helper = fnBody(main, "diffTabActive");
+    const helper = stripLineComments(fnBody(main, "diffTabActive"));
     expect(helper).toMatch(/diffSurfaceOf\(/);
     expect(helper).toMatch(/kind\s*===\s*"diff"/);
     // 分发：按的是当前活动面板的那颗 surface
-    const run = fnBody(main, "runShortcut");
+    const run = stripLineComments(fnBody(main, "runShortcut"));
     expect(run).toMatch(/case "diff\.nextChange":/);
     expect(run).toMatch(/diffSurfaceOf\(activePanel\(\)\)\?\.step\(1\)/);
     expect(run).toMatch(/diffSurfaceOf\(activePanel\(\)\)\?\.step\(-1\)/);
@@ -226,12 +227,17 @@ describe("B461 · A 档「与上次保存比较」进表与三条入口（Task 5
 
   it("B461 · 三条入口共用同一颗判据：键盘闸 / 菜单置灰 / 标签右键都问 baselineDiffTarget", () => {
     // ① 键盘：不成时**不抢键**（把 Ctrl+Shift+D 还给系统），成时按活动标签的 docId 开。
+    // 命令面板那一路不经过这道闸 ⇒ 分发自己必须把「开不出」说出来，否则用户只看到没反应。
     const main = srcOf("src/main.ts");
-    expect(fnBody(main, "shortcutApplies")).toMatch(
+    expect(stripLineComments(fnBody(main, "shortcutApplies"))).toMatch(
       /case "diff\.openAgainstSaved":\s*\n\s*return baselineDiffTarget\(\) !== null;/,
     );
-    expect(fnBody(main, "runShortcut")).toMatch(
+    const openRun = stripLineComments(fnBody(main, "runShortcut"));
+    expect(openRun).toMatch(
       /case "diff\.openAgainstSaved":\s*\{[\s\S]{0,160}?baselineDiffTarget\(\);[\s\S]{0,120}?openBaselineDiff\(target\)/,
+    );
+    expect(openRun, "面板那一途的落点：闸判空 ⇒ 说出那句说明（文案仍只有模型那一份）").toMatch(
+      /showMessage\(BASELINE_UNKNOWN_MESSAGE, true\)/,
     );
     // ② 菜单：置灰判据与①同一颗函数，文案走 keyHint(id)。
     const commands = srcOf("src/commands.ts");
@@ -257,11 +263,13 @@ describe("B461 · A 档「与上次保存比较」进表与三条入口（Task 5
     expect(diffModel.canOpenAgainstBaseline({ baseline: null } as Doc)).toBe(false);
     expect(diffModel.canOpenAgainstBaseline(null)).toBe(false);
     const seen: string[] = [];
+    const switched: number[] = [];
     diffModel.setDiffRenderHooks({
       rebuildLayout: () => {},
       refreshAll: () => {},
       renderPanelTabs: () => {},
       showMessage: (text) => seen.push(text),
+      switchTab: (panelId, tabId) => switched.push(panelId, tabId),
     });
     const doc = openDocWithBaseline("甲\n乙\n丙", "甲\n乙\n丙");
     // 磁盘上没这份文档的「原样」（新建/未保存）⇒ 那一档没有可比对的东西。
@@ -274,6 +282,7 @@ describe("B461 · A 档「与上次保存比较」进表与三条入口（Task 5
       appState.panels.get(0)!.tabs.length,
       "不许悄悄开出一张空的差异标签（面板那排还是原来那一颗）",
     ).toBe(1);
+    expect(switched, "开不出 ⇒ 谁也不许被切过去").toEqual([]);
   });
 
   it("B461 · 存盘后 diffBlocks 收到的是新基线 ⇒ 块数归零（不靠任何一处手动派发）", async () => {
@@ -310,6 +319,34 @@ describe("B461 · A 档「与上次保存比较」进表与三条入口（Task 5
       render.tabViewDataOf(appState.panels.get(0)!).map((r) => r.dirty),
       "保存 ⇒ 两颗点一起没（同源才可能同步）",
     ).toEqual([false, false]);
+  });
+
+  it("B461 · 同一个 docId 第二次「与上次保存比较」⇒ 复用那一张，不叠两张同名标签", async () => {
+    // 「新开一张」（用户拍板 ④·6）说的是**相对原文标签**新开，不是每点一次多一张。
+    // 复用时若那张还没露出来，走 `switchTab` 那同一条激活路（模型不自己写 activeTabId）。
+    const switched: number[] = [];
+    diffModel.setDiffRenderHooks({
+      rebuildLayout: () => {},
+      refreshAll: () => {},
+      renderPanelTabs: () => {},
+      showMessage: () => {},
+      switchTab: (_panelId, tabId) => switched.push(tabId),
+    });
+    const doc = openDocWithBaseline("甲\n乙\n丙", "甲\n乙改\n丙");
+    const first = (await diffModel.openBaselineDiff(doc.tabId))!;
+    // 用户切回原文标签再按一次：那一颗差异标签还在册，只是没露出来。
+    // 按 `tabs[0]` 回指而不是 `doc.tabId` —— 夹具把 Doc 的 id 写死成 7，它会和新分配的
+    // 差异标签撞号，用 docId 当「另一颗标签」是假的前提。
+    const panel = appState.panels.get(0)!;
+    panel.activeTabId = panel.tabs[0];
+    const second = (await diffModel.openBaselineDiff(doc.tabId))!;
+    expect(second, "连按两次 Ctrl+Shift+D 不该在标签条上留下两张一模一样的差异标签").toBe(first);
+    expect(appState.panels.get(0)!.tabs, "原标签 + 那一张差异 = 两颗").toHaveLength(2);
+    expect(
+      appState.tabs.get(first)!.kind,
+      "复用的那颗仍然就是差异那颗（不是把原标签改了个 kind）",
+    ).toBe("diff");
+    expect(switched, "复用要把它露出来，而不是原地不动让用户以为没反应").toEqual([first]);
   });
 
   it("B461 · 差异面的接线点：hooks 从 main.ts 注入（模型层不许 import 渲染层）", () => {

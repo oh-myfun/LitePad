@@ -97,6 +97,15 @@ function tabWithKind(kind: "editor" | "diff"): Tab {
     { dark: false, wrap: true, perf: perfProfileFor("normal") },
     () => {},
   );
+  if (kind === "diff") {
+    // A 档那道闸（评审 R31）会回 `docs` 问「这份文档的基线还在吗」⇒ 合成的差异标签得有真身：
+    // 生产里这张标签只能由 `attachDiffTab(真 Doc)` 建出，`spec()` 那颗 docId=100 因此必须在册。
+    // 顺带把上一张用例留在 100 号上的 Doc（可能已被置成 `baseline = null`）换掉 —— 用例之间
+    // 不许隔空互相影响。
+    const doc = makeDoc(100, "右栏正文\n它的第二行", "a.md", null, "UTF-8", "LF", false);
+    doc.baseline = "左栏正文\n它的第二行";
+    docs.set(100, doc);
+  }
   return {
     tabId: nextTabId++,
     docId: 100,
@@ -894,6 +903,22 @@ describe("B461 · 基线实时与判据接全（Task 5 R13/R14 + R20）", () => 
     expect(diffSurfaceOf(panel), "补基线不靠重建旁路").toBe(s);
     expect(s.left.state.doc.toString()).toBe("甲\n乙改\n丙");
     expect(s.blocks()).toEqual([]);
+  });
+
+  it("B461 · 基线被抹掉（文件删进回收站 ⇒ orphan 把 `baseline` 置 null）⇒ 旁路拆掉，不许把整篇画成新增", () => {
+    // Review Focus 1 的另一半：开那一张的时候问过闸，**挂着的时候没人再问**。
+    // `orphan()`（`src/explorer/paths.ts`）把 `doc.baseline` 置 null 并调 `refreshAll()` ⇒
+    // 那颗读取口交出 `""`，`reassert` ③ 忠实地把左栏换成空文档 —— 右栏每一行都被判成「新增」，
+    // 一张全绿的差异面。那一档根本没有「原样」可比 ⇒ 正确的样子是没这一排。
+    const { panel, doc } = mountLiveBaselinePair("甲\n乙\n丙", "甲\n乙改\n丙");
+    expect(diffSurfaceOf(panel), "前置：这一格现在挂着旁路").not.toBeNull();
+    doc.baseline = null; // 「只知道它脏、不知道原样是啥」
+    refreshDiffSurfaces(); // `refreshAll` 那条统一出口，与保存同一条路
+    expect(diffSurfaceOf(panel), "基线未知 ⇒ 该无（把整篇画成新增 = 一张会说谎的脸）").toBeNull();
+    expect(
+      panel.bodyEl!.querySelectorAll(".diff-original"),
+      "旁路那颗 view 与那一排占位都不许留着",
+    ).toHaveLength(0);
   });
 
   it("B461 · Step 5 同形路径：换标签不换面板也挂/拆；摘掉时折行还回**设置**的值而不是被回写漏掉的快照（R23-1）", () => {

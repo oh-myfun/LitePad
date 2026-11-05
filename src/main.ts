@@ -80,6 +80,7 @@ import {
   renderPanelTabs,
   renderPanelOps,
   rebuildLayout,
+  switchTab,
   closePanelById,
   splitActivePanel,
   moveActiveTabByDelta,
@@ -259,7 +260,12 @@ import { logViewport } from "./core/viewport";
 // 而差异格的折行/主题必须跟着设置重新assert一次（裁决 R23-2）。
 import { diffSurfaceOf, refreshDiffSurfaces } from "./diff/surface";
 // B461 Task 5：A 档的入口（建标签）与那道闸（不抢键的判据）。
-import { baselineDiffTarget, openBaselineDiff, setDiffRenderHooks } from "./diff/model";
+import {
+  BASELINE_UNKNOWN_MESSAGE,
+  baselineDiffTarget,
+  openBaselineDiff,
+  setDiffRenderHooks,
+} from "./diff/model";
 import {
   bootMark,
   reportBoot,
@@ -379,6 +385,9 @@ setDiffRenderHooks({
   refreshAll,
   renderPanelTabs,
   showMessage,
+  // 复用路径（评审 R31）：同一份文档的差异面只留一张，再点一次走既有那条激活链
+  //（快照写回 + 落位 + 会话），模型不自己写 `activeTabId`。
+  switchTab,
 });
 // 把 markdown / session 的动作注入 tabs（打破 tabs↔markdown / tabs↔session 循环依赖）
 setApplyPanelMode(applyPanelMode);
@@ -688,9 +697,12 @@ function runShortcut(id: string): void {
       break;
     // B461 Task 5：A 档 —— 与上次保存比较，新开一张差异标签（原标签继续开着，用户拍板 ④·6）。
     // 寻址走 `baselineDiffTarget()` 那一颗（与置灰/不抢键同源），这里不再自己判 kind/基线。
+    // 开不出时**必须出声**：命令面板那一路不经过 `shortcutApplies` 闸，静默 break 会让用户
+    // 以为「这条命令坏了」；那句说明的文案归模型所有（`BASELINE_UNKNOWN_MESSAGE` 只有一份）。
     case "diff.openAgainstSaved": {
       const target = baselineDiffTarget();
-      if (target !== null) void openBaselineDiff(target);
+      if (target === null) showMessage(BASELINE_UNKNOWN_MESSAGE, true);
+      else void openBaselineDiff(target);
       break;
     }
     case "panel.splitH":

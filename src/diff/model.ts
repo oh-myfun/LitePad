@@ -12,7 +12,7 @@
 // 分工：`tier: "baseline"` 归 Task 5（与上次保存比较），`tier: "files"` 归 Task 6（任选两文件）；
 // 块级计算与对齐归 Task 2；两侧底色与占位块归 Task 3。
 
-import { activePanelId, docs, panels, type Doc, type Tab } from "../core/app-state";
+import { activePanelId, docs, panels, tabs, type Doc, type Tab } from "../core/app-state";
 import { activeTab, instancesOfDoc } from "../core/panels";
 import { attachTabToPanel, makeDiffInstance } from "../doc-model";
 
@@ -72,12 +72,15 @@ interface DiffRenderHooks {
   refreshAll(): void;
   renderPanelTabs(panelId: number): void;
   showMessage(text: string, isError?: boolean): void;
+  /** 把已在册的那张差异标签露出来（复用路径；模型不自己写 `activeTabId`，那条顺序纪律在 lifecycle）。 */
+  switchTab(panelId: number, tabId: number): void;
 }
 let hooks: DiffRenderHooks = {
   rebuildLayout: () => {},
   refreshAll: () => {},
   renderPanelTabs: () => {},
   showMessage: () => {},
+  switchTab: () => {},
 };
 
 export function setDiffRenderHooks(next: DiffRenderHooks): void {
@@ -118,18 +121,44 @@ export function baselineDiffTarget(): number | null {
   return canOpenAgainstBaseline(doc) ? doc.tabId : null;
 }
 
+/** 这份文档现在那张 A 档差异标签（同一文档只留一张 ⇒ 连按不会在标签条上叠同名标签）。 */
+function findBaselineDiffTab(docId: number): Tab | null {
+  for (const t of tabs.values()) {
+    if (t.kind === "diff" && t.docId === docId && t.diff?.tier === "baseline") return t;
+  }
+  return null;
+}
+
+/**
+ * 「开不出 A 档」那句说明。
+ *
+ * 三处出口共用一句：模型被直接调用时、以及命令面板那一路（它不经过 `shortcutApplies` 闸，
+ * `main.ts` 得自己把话说出来）。写两遍同样的中文，就会有一遍改了另一遍没改。
+ */
+export const BASELINE_UNKNOWN_MESSAGE = "这份文档还没有可比对的已保存版本";
+
 /**
  * A 档：与上次保存比较，开到活动面板（设计稿 ⑥·A 档 + 用户拍板 ④·6「新开一张」）。
  *
  * 第一行就是那道闸：`doc.baseline === null` 时任何一行都无从判增删，打开只会把整屏刷成
  * 绿色（Review Focus 1）。菜单/右键那两处也问同一颗 `canOpenAgainstBaseline` ⇒ 置灰与
  * 兜底同源，不会出现「点得动但什么也没有」。
+ *
+ * 「新开一张」相对的是**原文标签**，不是每点一次多一张：同一份文档的差异面只留一张，
+ * 再点一次就把它露出来（两张一字不差的标签除了占位不携带任何信息）。
  */
 export async function openBaselineDiff(docId: number): Promise<number | null> {
   const doc = docs.get(docId) ?? null;
   if (!canOpenAgainstBaseline(doc)) {
-    hooks.showMessage("这份文档还没有可比对的已保存版本", true);
+    hooks.showMessage(BASELINE_UNKNOWN_MESSAGE, true);
     return null;
+  }
+  const existing = findBaselineDiffTab(doc.tabId);
+  if (existing) {
+    const panel = panels.get(existing.panelId);
+    if (panel && panel.activeTabId !== existing.tabId)
+      hooks.switchTab(existing.panelId, existing.tabId);
+    return existing.tabId;
   }
   const spec: DiffSpec = {
     tier: "baseline",
