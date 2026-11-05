@@ -565,6 +565,61 @@ pub async fn open_file(
     })
 }
 
+/// 「与文件比较」（tier B）用的只读文本缓冲。
+///
+/// 与 `OpenedFile` 的区别：这是临时快照，不带 tab_id、不注册文档、不装监听，
+/// 前端拿到后只喂给差异编辑器，绝不进标签生命周期。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompareText {
+    pub path: String,
+    pub name: String,
+    /// 已归一化到 LF 的文本
+    pub text: String,
+    pub encoding: String,
+    pub size_class: String,
+}
+
+/// 只读地读一个文件的内容，供「选择以进行比较 / 与 X 比较」（tier B）使用。
+///
+/// 复用 `open_file` 的读管线（定档→读字节→二进制拒绝→编码识别→解码→归一 LF），
+/// 但不接 `State`、不写 `state.docs`、不调 `watch_file`／`note_opened`／`alloc_id`：
+/// 比对是只读动作，不该把文件塞进文档登记表，也不该给它装磁盘监听。
+#[tauri::command]
+pub async fn read_compare_text(path: String) -> Result<CompareText, String> {
+    let target = PathBuf::from(&path);
+
+    let meta = fs::metadata(&target).map_err(|e| format!("无法访问文件：{}", e))?;
+    let class = doc::size_class(meta.len()).ok_or_else(|| {
+        format!(
+            "文件过大（{:.1} MB）。当前版本支持 {} MB 以内的文件。",
+            meta.len() as f64 / 1024.0 / 1024.0,
+            doc::SIZE_HUGE_MAX / 1024 / 1024
+        )
+    })?;
+
+    let bytes = fs::read(&target).map_err(|e| format!("读取失败：{}", e))?;
+    if doc::is_probably_binary(&bytes) {
+        return Err("这看起来是二进制文件，暂不支持打开。".into());
+    }
+
+    let enc = codec::detect(&bytes);
+    let decoded = codec::decode(&bytes, enc);
+    // 只读快照：两边都归一到 LF 再比对，行尾信息无需回传前端。
+    let text = eol::to_lf(&decoded.text);
+
+    Ok(CompareText {
+        path: target.to_string_lossy().into_owned(),
+        name: target
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        text,
+        encoding: enc.label().into(),
+        size_class: class.as_str().into(),
+    })
+}
+
 /// 以指定编码重新载入某标签（覆盖用户在状态栏切换编码的场景）。
 #[tauri::command]
 pub async fn reload_file(
@@ -951,6 +1006,32 @@ mod tests {
 
     // 串行化所有触碰 PENDING_OPEN 全局队列的测试，避免并行下互相抢文件。
     static PENDING_LOCK: Mutex<()> = Mutex::new(());
+
+    /// 按函数名切出那段命令体（照上面 `watch_file` 两条现成测试同一种切法：先按 `fn 名字(`
+    /// 切开 —— 带左括号才不会撞上「同一命令名前缀的测试函数名」那种假命中，再截到下一个
+    /// `fn `；不另创第二套切法）。找不到就 panic，让「取不到」直接让测试发红。
+    fn command_body<'a>(src: &'a str, name: &str) -> &'a str {
+        src.split(&format!("fn {name}("))
+            .nth(1)
+            .and_then(|rest| rest.split("fn ").next())
+            .unwrap_or_else(|| panic!("找不到 {name} 的函数体"))
+    }
+
+    /// B461 Task 6：新命令 `read_compare_text` 走的是「只读盘、不记账」那一路（设计稿 ⑩·1）。
+    /// 它的函数体里不许出现任何一处文档登记（`watch_file` 装监听 / `state.docs` 记账 /
+    /// `note_opened` 进最近打开 / `alloc_id` 发 id），否则 B 档左栏就变成一份正常 doc：
+    /// 会弹「外部已修改」、进跨窗口在场广播、进最近打开。签名不取 `State` 已经从结构上
+    /// 断了 `state.docs` / `alloc_id`；这一发源码守卫把「别调那两个动作」也钉住，正向断言
+    /// 复用同一套解码（`codec::decode`）。
+    #[test]
+    fn read_compare_text_不注册文档也不装监听() {
+        let src = std::fs::read_to_string("src/commands/mod.rs").expect("读不到源码");
+        let body = command_body(&src, "read_compare_text");
+        assert!(body.contains("codec::decode"), "要复用同一套解码");
+        for banned in ["watch_file", "state.docs", "note_opened", "alloc_id"] {
+            assert!(!body.contains(banned), "只读对比缓冲不许 {banned}");
+        }
+    }
 
     /// B150：`watch_file` 必须真的带上了自家路径过滤。
     ///

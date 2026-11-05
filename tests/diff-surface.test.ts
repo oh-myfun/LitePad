@@ -38,6 +38,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { EditorView } from "@codemirror/view";
+import { EditorState } from "@codemirror/state";
 import { fnBody, ruleBlock, stripCssComments, stripLineComments } from "./static";
 import {
   docs,
@@ -1076,5 +1077,79 @@ describe("B461 · 基线实时与判据接全（Task 5 R13/R14 + R20）", () => 
     expect(main).toContain("setRefreshDiffSurfaces(refreshDiffSurfaces)");
     expect(main).toContain("setDiffRenderHooks(");
     expect(srcOf("src/tabs/render.ts")).toMatch(/act\.kind !== "diff"/);
+  });
+});
+
+// --------------------------------------------------------------------------- #
+// Task 6 —— B 档（files tier）：左栏那颗只读栏的锁**随旁路一起继承**，不分档位。
+//
+// 这条先写下来时就该是绿的：`createDiffSurface` 的只读锁（`EditorState.readOnly` +
+// `editable(false)` + `contentAttributes` + 丢 docChanged 的 `transactionFilter`）是
+// **spec 无关**的（Task 3 落地时就没按档位分叉）⇒ B 档不需要新代码，也**不许**需要。
+// 它钉的是这条不变量本身：以后谁给旁路加档位分叉、把 files 档的左栏做成可写的，这里发红。
+// --------------------------------------------------------------------------- #
+
+/** 与 `mountDiffPair` 同形的一格，但 spec 是 B 档（files tier：左栏来自另一条路径的只读快照）。 */
+function mountedBFilesSurface(): DiffSurface {
+  const hostEl = document.createElement("div");
+  hostEl.className = "panel-host";
+  document.body.appendChild(hostEl);
+  const editorEl = document.createElement("div");
+  editorEl.className = "panel-editor";
+  hostEl.appendChild(editorEl);
+  const doc = makeDoc(100, "右栏正文\n它的第二行", "b.md", "D:/b.md", "UTF-8", "LF", false);
+  docs.set(doc.tabId, doc);
+  const { state, comps } = makeTabState(
+    "右栏正文\n它的第二行",
+    null,
+    { dark: false, wrap: true, perf: perfProfileFor("normal") },
+    () => {},
+  );
+  const diff: DiffSpec = {
+    tier: "files",
+    docId: doc.tabId,
+    leftText: () => "左栏正文\n它的第二行",
+    leftName: "a.md",
+    rightName: "b.md",
+    leftPath: "D:/a.md",
+  };
+  const tab: Tab = {
+    tabId: nextTabId++,
+    docId: doc.tabId,
+    panelId: 0,
+    comps,
+    state,
+    viewMode: "source",
+    kind: "diff",
+    diff,
+    scrollV: 1,
+  };
+  tabs.set(tab.tabId, tab);
+  const panel: Panel = {
+    panelId: 0,
+    tabs: [tab.tabId],
+    activeTabId: tab.tabId,
+    view: createEditor(editorEl, state),
+    viewTabId: tab.tabId,
+    bodyEl: hostEl,
+    diffSurface: null,
+  };
+  const s = createDiffSurface(hostEl, panel, diff);
+  live.push(() => disposeDiffSurface(panel));
+  return s;
+}
+
+describe("B461 · B 档左栏继承只读锁（Task 6 Step 6）", () => {
+  it("B461 · 左栏那颗视图真的写不进去，但选得了字", () => {
+    const s = mountedBFilesSurface();
+    const before = s.left.state.doc.toString();
+    expect(s.left.state.facet(EditorState.readOnly)).toBe(true);
+    s.left.dispatch({ changes: { from: 0, insert: "X" } });
+    expect(s.left.state.doc.toString(), "裸派发进不去（锁是行为，不只 facet）").toBe(before);
+    // `editable(false)` 写出的那颗属性必须是 false（`contentEditable` 属性读取不许是 "true"）
+    expect(s.left.contentDOM.getAttribute("contenteditable")).toBe("false");
+    expect(s.left.contentDOM.contentEditable).not.toBe("true");
+    expect(s.left.contentDOM.getAttribute("tabindex"), "点得进焦点才选得了字").toBe("0");
+    s.dispose();
   });
 });

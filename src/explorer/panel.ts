@@ -24,6 +24,8 @@ import {
   type FsEntry,
 } from "../ipc/api";
 import { doOpen } from "../io/files";
+import { clearCompareSelection, compareMenuItems, toggleCompareSelection } from "../diff/compare";
+import { openFileDiff } from "../diff/model";
 import { noteOpened } from "../recents/store";
 import { detectLanguage } from "../editor/language";
 import { CODICONS } from "../shell/codicons";
@@ -1171,6 +1173,19 @@ function menuFor(path: string): MenuItem[] {
     );
   } else {
     push({ label: "粘贴\tCtrl+V", disabled: !clip, onSelect: () => void doPaste() });
+  }
+  if (kind === "file") {
+    // B461 · B 档那一对（VS Code 形）：先「选择以进行比较」点右栏，再到对照文件上点「与 X 比较」。
+    // 标签与显隐的真相在 `diff/compare.ts`（与标签右键同一颗），这里只接侧效应。
+    push(
+      ...compareMenuItems(path, {
+        onSelectToCompare: (p) => toggleCompareSelection(p),
+        onCompareWith: (left, right) => {
+          void openFileDiff(left, right);
+          clearCompareSelection();
+        },
+      }),
+    );
   }
   push({ label: "复制路径", onSelect: () => doCopyPath(path) });
   push({ label: "在资源管理器中显示", onSelect: () => void doReveal(path) });

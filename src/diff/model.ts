@@ -15,6 +15,8 @@
 import { activePanelId, docs, panels, tabs, type Doc, type Tab } from "../core/app-state";
 import { activeTab, instancesOfDoc } from "../core/panels";
 import { attachTabToPanel, makeDiffInstance } from "../doc-model";
+import { readCompareText } from "../ipc/api";
+import { baseName } from "./compare";
 
 /** 数据来源档位：`baseline` = 文档 vs 它上次保存的正文；`files` = 任选两个文件。 */
 export type DiffTier = "baseline" | "files";
@@ -121,12 +123,30 @@ export function baselineDiffTarget(): number | null {
   return canOpenAgainstBaseline(doc) ? doc.tabId : null;
 }
 
-/** 这份文档现在那张 A 档差异标签（同一文档只留一张 ⇒ 连按不会在标签条上叠同名标签）。 */
-function findBaselineDiffTab(docId: number): Tab | null {
+/**
+ * 两张档的「已经开过就复用」共用一颗寻址口（R32：不 copy-paste 两遍循环）。
+ * 谓词自己判 tier / docId / leftPath，这里只管扫在册标签。
+ */
+function findDiffTab(match: (t: Tab) => boolean): Tab | null {
   for (const t of tabs.values()) {
-    if (t.kind === "diff" && t.docId === docId && t.diff?.tier === "baseline") return t;
+    if (t.kind === "diff" && match(t)) return t;
   }
   return null;
+}
+
+/** 这份文档现在那张 A 档差异标签（同一文档只留一张 ⇒ 连按不会在标签条上叠同名标签）。 */
+function findBaselineDiffTab(docId: number): Tab | null {
+  return findDiffTab((t) => t.docId === docId && t.diff?.tier === "baseline");
+}
+
+/** 这对文件现在那张 B 档差异标签（左 = 同一路径归一后相同，右 = 同一份文档）。 */
+function findFilesDiffTab(leftNorm: string, rightDocId: number): Tab | null {
+  return findDiffTab(
+    (t) =>
+      t.docId === rightDocId &&
+      t.diff?.tier === "files" &&
+      normPath(t.diff.leftPath ?? "\u0000") === leftNorm,
+  );
 }
 
 /**
@@ -171,6 +191,133 @@ export async function openBaselineDiff(docId: number): Promise<number | null> {
     leftPath: null,
   };
   return attachDiffTab(doc, spec, activePanelId).tabId;
+}
+
+/** 「两个路径指的是同一个文件」那句说明（判同看的是归一化后的写法，不是用户点进来的原样）。 */
+const SAME_FILES_MESSAGE = "两个文件相同，不必比较";
+
+/**
+ * 路径寻址的归一化口径：与 `search/store.ts` / `explorer/panel.ts` 的 `normPath` 同一把尺
+ * （分隔符折成 `\`、去尾、折叠大小写）。这三处各留一份一行函数，是仓库既定的口径
+ * —— 改口径要三处一起改，比造一个跨模块小工具拖出一条依赖边划算。
+ */
+function normPath(p: string): string {
+  return p.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+}
+
+/** 按路径（归一化后）找在册文档；未落盘的文档没有路径，天然不参与。 */
+function findDocByPath(pathNorm: string): Doc | null {
+  if (!pathNorm) return null;
+  for (const d of docs.values()) {
+    if (d.path && normPath(d.path) === pathNorm) return d;
+  }
+  return null;
+}
+
+/**
+ * B 档：任选两个文件开一张只读差异（设计稿 ⑩·1）。
+ *
+ * 口径：
+ * - **右栏必须是那份文档本身**：在册就复用它的 doc（不重读盘、不另立文档），
+ *   不在册走主干那条 `doOpen`（复用/跨窗口取回那些既有语义全部白送）。
+ * - **左栏是只读对比缓冲**：`readCompareText` 读一次盘，文本闭包进 `spec.leftText`；
+ *   它不进文档登记表、不装监听 ⇒ 「刷新」那颗键（Task 8）按 `spec.leftPath` 重读后
+ *   走 surface 的 retarget 换掉这份快照，模型这一侧不留第二份真相。
+ * - 同一对文件只留一张（R32，与 A 档同形）：再点一次把它露出来。
+ *
+ * `io/files` 用动态 import：它顺着 `ui.ts` 摸 DOM，静态引会把 node 环境的模型层单测炸掉。
+ */
+export async function openFileDiff(leftPath: string, rightPath: string): Promise<number | null> {
+  const leftNorm = normPath(leftPath);
+  const rightNorm = normPath(rightPath);
+  if (leftNorm === rightNorm) {
+    hooks.showMessage(SAME_FILES_MESSAGE, true);
+    return null;
+  }
+
+  // 右栏：在册的那份文档优先；不在册才开进来（doOpen 失败自己会说，这里不叠第二句）。
+  let rightDoc = findDocByPath(rightNorm);
+  if (!rightDoc) {
+    const { doOpen } = await import("../io/files");
+    const openedTabId = await doOpen(rightPath);
+    if (openedTabId === null) return null;
+    rightDoc = findDocByPath(rightNorm);
+    if (!rightDoc) {
+      // doOpen 报的是**标签** id：复用既有文档那一支时按标签反查那份 doc。
+      const t = tabs.get(openedTabId);
+      rightDoc = t ? (docs.get(t.docId) ?? null) : null;
+    }
+    if (!rightDoc) return null;
+  }
+
+  const existing = findFilesDiffTab(leftNorm, rightDoc.tabId);
+  if (existing) {
+    const panel = panels.get(existing.panelId);
+    if (panel && panel.activeTabId !== existing.tabId)
+      hooks.switchTab(existing.panelId, existing.tabId);
+    return existing.tabId;
+  }
+
+  let holder = "";
+  try {
+    holder = (await readCompareText(leftPath)).text;
+  } catch (e) {
+    hooks.showMessage(String(e), true);
+    return null;
+  }
+  const spec: DiffSpec = {
+    tier: "files",
+    docId: rightDoc.tabId,
+    leftText: () => holder,
+    leftName: baseName(leftPath),
+    rightName: rightDoc.name,
+    leftPath,
+  };
+  return attachDiffTab(rightDoc, spec, activePanelId).tabId;
+}
+
+/**
+ * 「交换左右」的换算（Task 8 那颗键调它；A 档那一项置灰不调）。
+ *
+ * 只对 B 档有意义：A 档交换 = 把「还没存盘的改动」变成对照物，破坏「右栏就是那份
+ * 文档本身」这条反目标 ⇒ 原样交回。B 档：拿原左栏路径开成新右栏（`doOpen`，复用
+ * 主干那条找已有 doc 的路），拿原右栏**磁盘上的**内容（读盘，不含未存盘改动）当新
+ * 左栏快照，算出一份**新 spec** 交回；`tab.diff` 的落笔与 surface 的 retarget 归调用方
+ * （模型不认识渲染层）。
+ */
+export async function swapDiffInputs(spec: DiffSpec): Promise<DiffSpec> {
+  if (spec.tier !== "files" || !spec.leftPath) return spec;
+  const oldRightDoc = docs.get(spec.docId);
+  const oldRightPath = oldRightDoc?.path ?? "";
+  // doc 不在册（标签被拆了）或没落盘 ⇒ 交换无从谈起，原样交回。
+  // ⚠️ `!oldRightDoc` 这一问同时是给 tsc 的收窄依据 —— 只判 `oldRightPath` 的话
+  // 下面 `oldRightDoc.name` 会带着「possibly null」发红（Task 6 门禁真抓到过）。
+  if (!oldRightDoc || !oldRightPath) return spec;
+
+  const { doOpen } = await import("../io/files");
+  const newRightTabId = await doOpen(spec.leftPath);
+  let newRightDoc = findDocByPath(normPath(spec.leftPath));
+  if (!newRightDoc && newRightTabId !== null) {
+    const t = tabs.get(newRightTabId);
+    newRightDoc = t ? (docs.get(t.docId) ?? null) : null;
+  }
+  if (!newRightDoc) return spec; // 开不出来 ⇒ 什么都不换（doOpen 已经说过原因）
+
+  let holder = "";
+  try {
+    holder = (await readCompareText(oldRightPath)).text;
+  } catch (e) {
+    hooks.showMessage(String(e), true);
+    return spec;
+  }
+  return {
+    tier: "files",
+    docId: newRightDoc.tabId,
+    leftText: () => holder,
+    leftName: oldRightDoc.name,
+    rightName: newRightDoc.name,
+    leftPath: oldRightPath,
+  };
 }
 
 /**

@@ -90,6 +90,12 @@ export interface SplitviewCallbacks {
   onDuplicateToSibling?: (tabId: number) => void;
   /** B461：标签右键「与上次保存比较」（置灰判据随 `TabViewData.canDiffAgainstSaved` 走）。 */
   onDiffAgainstSaved?: (tabId: number) => void;
+  /**
+   * B461 Task 6：B 档标签右键「选择以进行比较」那一对。**两颗都给这一组才转发**（见
+   * `renderTabstrip` 调用处的条件包装）—— 卫星窗口没接 ⇒ 整组缺席，不许包出一颗永不为空的函数。
+   */
+  onSelectToCompare?: (tabId: number) => void;
+  onCompareWith?: (tabId: number) => void;
   onReorderTab?: (panelId: number, fromTabId: number, toTabId: number) => void;
   /** B71：标签右键「左右/上下分屏」——复制一份到新面板（VS Code 的 Split Right/Down） */
   onSplitTab?: (panelId: number, tabId: number, dir: "h" | "v") => void;
@@ -554,6 +560,10 @@ function buildPanel(
     onDuplicateTab: (tabId) => cb.onDuplicateTab?.(tabId),
     onDuplicateToSibling: (tabId) => cb.onDuplicateToSibling?.(tabId),
     onDiffAgainstSaved: (tabId) => cb.onDiffAgainstSaved?.(tabId),
+    // B461 Task 6：B 档那一对走**条件转发**（照 `onDragTabFile` / `onOpenInNewWindow` 那形）：
+    // 无条件包装会包出一颗永不为空的函数，「回调缺席 ⇒ 整组缺席」在首建这条路上就失真了。
+    onSelectToCompare: cb.onSelectToCompare ? (tabId) => cb.onSelectToCompare?.(tabId) : undefined,
+    onCompareWith: cb.onCompareWith ? (tabId) => cb.onCompareWith?.(tabId) : undefined,
     // B71：右键「左右/上下分屏」。panelId 由闭包带上（tabstrip 只认 tabId）
     onSplitH: (tabId) => cb.onSplitTab?.(panelId, tabId, "h"),
     onSplitV: (tabId) => cb.onSplitTab?.(panelId, tabId, "v"),

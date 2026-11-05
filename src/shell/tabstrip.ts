@@ -4,6 +4,8 @@ import { fileIconHtml } from "./fileicons";
 import { CODICONS } from "./codicons";
 import { setTip, setTextTip } from "./tooltip";
 import { bindWheel, ensureOverlayScrollbar, syncOverlayScrollbar } from "./scrollbar";
+// B461 Task 6：B 档「选择以进行比较」那一对的标签与显隐真相（纯状态模块，不拖渲染层）。
+import { compareMenuItems } from "../diff/compare";
 
 /**
  * 标签栏渲染：纯函数式全量重绘（标签数量小，简单可靠）。
@@ -67,6 +69,14 @@ export interface TabstripCallbacks {
    * （没接上装配的那一路 —— 卫星窗口 —— 整条退场，比留一颗永远点不动的键好）。
    */
   onDiffAgainstSaved?: (tabId: number) => void;
+  /**
+   * B461 Task 6：B 档「选择以进行比较」那一条（把这份文档设成比较选择）。与
+   * `onCompareWith` **成对给**：两颗都没给（卫星窗口 —— 比较选择是窗口级状态，
+   * 子窗口没有资源管理器树跟它配对）⇒ 那一对整组退场，与 A 档那条同一手法。
+   */
+  onSelectToCompare?: (tabId: number) => void;
+  /** B461 Task 6：B 档「与 X 比较」那一条（拿当前比较选择当左栏、这条标签当右栏开差异）。 */
+  onCompareWith?: (tabId: number) => void;
   /** 同源复制到视觉相邻面板（左右分屏对照源码/预览的快捷入口） */
   onDuplicateToSibling?: (tabId: number) => void;
   /** 把该标签分屏到新面板（左右 / 上下）。对标 VS Code 标签右键的 Split Right/Down */
@@ -404,6 +414,17 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
         ? [{ label: "移回主窗口", onSelect: () => cb.onReturnToMain?.(t.tabId) }]
         : []),
       { separator: true },
+      // B461 Task 6：B 档「选择以进行比较」那一对（VS Code 形）。标签与显隐的真相在
+      // `diff/compare.ts`（explorer 右键同一颗，按点开那一刻的选中态求值），这里只接回调。
+      // 两颗回调**都给**这一组才存在 —— 卫星窗口没接（比较选择是窗口级状态，子窗口没有
+      // 资源管理器树跟它配对）⇒ 整组退场，与 A 档那条同一手法；没落盘的标签（`t.path`
+      // 缺省）盘上无文件可读，同样不给。
+      ...(t.path && cb.onSelectToCompare && cb.onCompareWith
+        ? compareMenuItems(t.path, {
+            onSelectToCompare: () => cb.onSelectToCompare?.(t.tabId),
+            onCompareWith: () => cb.onCompareWith?.(t.tabId),
+          })
+        : []),
       ...(t.path && cb.onRevealInFolder
         ? [
             {

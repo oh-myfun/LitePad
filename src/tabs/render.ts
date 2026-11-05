@@ -42,7 +42,9 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { dragTabAsFile } from "../io/filedrag";
 // B461：差异面的标题与「与上次保存比较」这条动作（模型在 diff/model，渲染层只问它要判据）。
-import { canOpenAgainstBaseline, diffTitleOf, openBaselineDiff } from "../diff/model";
+import { canOpenAgainstBaseline, diffTitleOf, openBaselineDiff, openFileDiff } from "../diff/model";
+// B461 Task 6：B 档「选择以进行比较」的窗口级状态（标签与显隐的真相在 compare.ts）。
+import { clearCompareSelection, compareSelection, toggleCompareSelection } from "../diff/compare";
 
 export function renderPanelTabs(onlyPanelId?: number): void {
   for (const p of panels.values()) {
@@ -118,6 +120,30 @@ export function tabstripCallbacks(p: Panel): TabstripCallbacks {
       const t = tabs.get(tabId);
       if (t) void openBaselineDiff(t.docId);
     },
+    // B461 Task 6：B 档「选择以进行比较」那一对。只给主窗口 —— 比较选择是**窗口级**状态，
+    // 卫星窗口没有资源管理器树跟它配对（两击手势凑不齐）⇒ 两颗都没给，tabstrip 那一组
+    // 整条退场（与 A 档 `onDiffAgainstSaved` 同一手法，判据在 `shell/tabstrip.ts`）。
+    // 动作与 explorer 右键同源：状态与标签在 `diff/compare.ts`，开差异在 `diff/model.ts`。
+    onSelectToCompare:
+      windowKind === "satellite"
+        ? undefined
+        : (tabId) => {
+            const t = tabs.get(tabId);
+            const doc = t && docs.get(t.docId);
+            if (doc?.path) toggleCompareSelection(doc.path);
+          },
+    onCompareWith:
+      windowKind === "satellite"
+        ? undefined
+        : (tabId) => {
+            // 点击时刻才取选中态（弹层条目不许吃建数组那一刻的旧值）。
+            const sel = compareSelection();
+            const t = tabs.get(tabId);
+            const doc = t && docs.get(t.docId);
+            if (!sel || !doc?.path) return;
+            void openFileDiff(sel, doc.path);
+            clearCompareSelection();
+          },
     // 左右 / 上下分屏：**复制**而非移动（与 VS Code 一致 —— Split 是同一文档开两份，
     // 移动另有 "Move Editor into Next Group"）。用 copy=true 也顺带避开了
     // splitPanelWithTab 在「源面板只剩这一个标签」时留下空面板的问题。

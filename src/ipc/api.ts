@@ -51,6 +51,21 @@ export interface OpenedFile {
 }
 
 /**
+ * 「与文件比较」（B461 · B 档）用的只读文本快照（对应 Rust `CompareText`，`rename_all = "camelCase"`）。
+ *
+ * 与 `OpenedFile` 的区别：这是临时对照缓冲 —— 没有 `tabId`、不注册文档、不装文件监听。
+ * 左栏喂给它就够，差异标签本身仍挂在右栏那份文档上。
+ */
+export interface CompareText {
+  path: string;
+  name: string;
+  /** 已归一化到 LF 的文本 */
+  text: string;
+  encoding: string;
+  sizeClass: string;
+}
+
+/**
  * 外部修改事件（`file-changed`）。
  *
  * ⚠️ 认文档靠 `tabId` 而不是路径：监听用的是规范化后的绝对路径，
@@ -477,6 +492,11 @@ export function newTab(encoding?: string | null): Promise<TabInfo> {
 
 export function openFile(path: string, encoding?: string | null): Promise<OpenedFile> {
   return invoke<OpenedFile>("open_file", { path, encoding: encoding ?? null });
+}
+
+/** 只读地读一个文件当对照缓冲（B461 · B 档「与文件比较」），不注册文档、不装监听。 */
+export function readCompareText(path: string): Promise<CompareText> {
+  return invoke<CompareText>("read_compare_text", { path });
 }
 
 /** 取走并清空 Rust 侧「文件关联待打开队列」（首次启动带参 / 收到 open-file 事件时各调一次）。 */

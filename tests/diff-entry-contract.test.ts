@@ -364,3 +364,64 @@ describe("B461 · A 档「与上次保存比较」进表与三条入口（Task 5
     expect(model).toMatch(/hooks\.rebuildLayout\(\)/);
   });
 });
+
+// ── Task 6 · B 档「选择以进行比较」：标签右键那两条的接线 ────────────────────────
+//
+// 这一族钉的是**标签右键那一路**（explorer 那一路的标签与显隐真相由 `diff/compare.ts`
+// 直接被单测判，见 `tests/diff-model.test.ts`）。Task 5 的教训：这一发菜单有**两个
+// producer**（`tabs/render.ts` 的 `tabstripCallbacks` 与 `tabs/lifecycle.ts` 供给
+// splitview 首建那一发的回调组），只接一个 ⇒ 另一条路上的入口永远隐形。
+// 卫星窗口的要求与 A 档不同：比较选择是**窗口级**状态，卫星窗口没有资源管理器树跟它
+// 配对（「先选一条再点另一条」的两击手势凑不齐）⇒ 两条按现有那形（回调没给）整组缺席，
+// 不是「出现但点不动」。
+describe("B461 · B 档标签右键两条的接线（Task 6 Step 5）", () => {
+  it("B461 · 两个 producer + splitview 条件转发都接上；卫星窗口整组缺席走 windowKind 闸", () => {
+    // ① tabstrip：两颗回调都是**可选**，那一对只在两颗都给时存在；标签走 compare.ts 那颗
+    //    真相（不许在标签条这一处再写一遍「选择以进行比较」）。
+    const ts = srcOf("src/shell/tabstrip.ts");
+    expect(ts).toMatch(/onSelectToCompare\?:\s*\(tabId: number\) => void/);
+    expect(ts).toMatch(/onCompareWith\?:\s*\(tabId: number\) => void/);
+    expect(ts).toMatch(/t\.path && cb\.onSelectToCompare && cb\.onCompareWith/);
+    expect(ts, "标签与显隐的真相只许在 diff/compare.ts 一处").toMatch(/compareMenuItems\(/);
+
+    // ② 两个 producer：同一颗 windowKind 闸（卫星 ⇒ `undefined` ⇒ 整组缺席）。
+    for (const p of ["src/tabs/render.ts", "src/tabs/lifecycle.ts"]) {
+      const src = stripLineComments(srcOf(p));
+      expect(src, `${p} 必须给「选择以进行比较」`).toMatch(
+        /onSelectToCompare:\s*windowKind === "satellite"\s*\?\s*undefined\s*:/,
+      );
+      expect(src, `${p} 必须给「与 X 比较」`).toMatch(
+        /onCompareWith:\s*windowKind === "satellite"\s*\?\s*undefined\s*:/,
+      );
+    }
+
+    // ③ splitview 首建那一发：**条件转发**（照 `onDragTabFile` / `onOpenInNewWindow` 那形）。
+    //    无条件包装（`(tabId) => cb.x?.(tabId)`）会包出一颗永不为空的函数，
+    //    「回调缺席 ⇒ 整组缺席」在这条路上就失真了 —— 那正是 A 档那条在首建路上的老坑。
+    const sv = srcOf("src/shell/splitview.ts");
+    expect(sv).toMatch(/onSelectToCompare\?:\s*\(tabId: number\) => void/);
+    expect(sv).toMatch(/onCompareWith\?:\s*\(tabId: number\) => void/);
+    expect(sv).toMatch(
+      /onSelectToCompare:\s*cb\.onSelectToCompare\s*\?\s*\(tabId\) =>\s*cb\.onSelectToCompare\?\.\(tabId\)\s*:\s*undefined/,
+    );
+    expect(sv).toMatch(
+      /onCompareWith:\s*cb\.onCompareWith\s*\?\s*\(tabId\) =>\s*cb\.onCompareWith\?\.\(tabId\)\s*:\s*undefined/,
+    );
+  });
+
+  it("B461 · 真调 tabstripCallbacks：卫星窗口两颗都是 undefined，主窗口两颗都在", () => {
+    // ① 与 ② 的静态判据只说明形状，这一发跑的是真产物：缺席必须是**机制**上的缺席。
+    const bare = { panelId: 0, tabs: [], activeTabId: -1 } as never;
+    appState.setWindowKind("satellite");
+    try {
+      const sat = render.tabstripCallbacks(bare);
+      expect(sat.onSelectToCompare, "卫星窗口：回调根本没给").toBeUndefined();
+      expect(sat.onCompareWith, "卫星窗口：回调根本没给").toBeUndefined();
+    } finally {
+      appState.setWindowKind("main");
+    }
+    const main = render.tabstripCallbacks(bare);
+    expect(main.onSelectToCompare, "主窗口：两条都在").toBeTypeOf("function");
+    expect(main.onCompareWith, "主窗口：两条都在").toBeTypeOf("function");
+  });
+});
