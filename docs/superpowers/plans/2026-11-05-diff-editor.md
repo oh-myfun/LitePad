@@ -14,7 +14,8 @@
 
 以下为**每个任务都隐含遵守**的约束，取值逐字取自设计稿与仓库既有纪律：
 
-- **未经用户显式指示不得 commit / push / tag / bump 版本**。本计划每个任务以「跑绿门禁」收尾，**不含提交步骤**；收尾产物是可运行的代码 + 绿的测试，不是 commit。
+- **在 `feat/b461-diff-editor` 上逐任务提交**（用户选定该分支时的原话口径是「分支让逐任务提交、最终评审与回滚都自成一块」⇒ 分支上的 commit 已获授权，逐任务评审包也依赖它）。**仍然禁止**：`git push`、打 tag、bump 版本号、改 `package.json`/`Cargo.toml`/`tauri.conf.json` 的版本字段、跑发布链（`scripts/release.sh`）—— 这些只在用户显式指示时做。`docs/zh_CN.md` 保持未跟踪、不入库。
+- 每一笔提交都要过仓库自己的 pre-commit 钩子（prettier + eslint + `tsc -b` + `cargo fmt --check`）：提交前先 `npm run format:check` 与（动了 Rust 时）`cd src-tauri && cargo fmt --all --check`。**不许用 `--no-verify` 绕过钩子**。
 - `docs/zh_CN.md` **不修改、不提交**。
 - 源文件**只用 Edit/Write 工具改**，不许用 python/sed 原地 replace。
 - 全量门禁：`npx vitest run --no-file-parallelism > .tmp/b461-test.log 2>&1`，读日志里的 `Test Files` / `Tests` 两行定性（**管道后的 exit code 不是被测程序的**）。
