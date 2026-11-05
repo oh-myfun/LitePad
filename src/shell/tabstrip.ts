@@ -40,6 +40,11 @@ export interface TabViewData {
   path?: string;
   /** 存在其他分屏面板（右键「复制到相邻面板」的显示条件） */
   hasSibling?: boolean;
+  /**
+   * B461 Task 5：这份文档现在**有没有**可比的已保存版本（右键那一条的置灰判据）。
+   * 缺省（没给）按「没有」处理 —— 宁可点不动并写明原因，也不开一张每行都刷绿的标签。
+   */
+  canDiffAgainstSaved?: boolean;
 }
 
 export interface TabstripCallbacks {
@@ -57,6 +62,11 @@ export interface TabstripCallbacks {
   onDragFileOut?: (tabId: number) => void;
   /** 同源复制：在本面板内复制一个标签实例（同文档多实例，内容同步） */
   onDuplicateTab?: (tabId: number) => void;
+  /**
+   * B461 Task 5：A 档「与上次保存比较」。给了这一颗，右键菜单里那一条才存在
+   * （没接上装配的那一路 —— 卫星窗口 —— 整条退场，比留一颗永远点不动的键好）。
+   */
+  onDiffAgainstSaved?: (tabId: number) => void;
   /** 同源复制到视觉相邻面板（左右分屏对照源码/预览的快捷入口） */
   onDuplicateToSibling?: (tabId: number) => void;
   /** 把该标签分屏到新面板（左右 / 上下）。对标 VS Code 标签右键的 Split Right/Down */
@@ -354,6 +364,19 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
         onSelect: () => cb.onCloseRight?.(t.tabId),
       },
       { separator: true },
+      // B461 Task 5：A 档「与上次保存比较」。**只在给了回调的那一路出现**（卫星窗口的
+      // 标签条由别处装配，没接这一发就整条退场，比留一颗永远点不动的键好）。
+      // 置灰时**文案自己说明**为什么点不动 —— `MenuItem` 没有 tooltip 字段，
+      // 设计稿 ⑩·3 要的那句「给个说明」用这一形落地。
+      ...(cb.onDiffAgainstSaved
+        ? [
+            {
+              label: t.canDiffAgainstSaved ? "与上次保存比较" : "与上次保存比较（基线未知）",
+              disabled: !t.canDiffAgainstSaved,
+              onSelect: () => cb.onDiffAgainstSaved?.(t.tabId),
+            },
+          ]
+        : []),
       {
         label: "复制标签",
         onSelect: () => cb.onDuplicateTab?.(t.tabId),

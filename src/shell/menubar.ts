@@ -79,6 +79,12 @@ export interface MenuBarCallbacks {
   /** B314：资源管理器那一块是否正摊着（判据与 `tocChecked` 同一处：外壳的当前视图）。 */
   explorerChecked: () => boolean;
   onExplorer: () => void;
+  /**
+   * B461 Task 5：A 档「与上次保存比较」能不能开（置灰判据）。
+   * 与键盘上下文闸、标签右键、`openBaselineDiff` 第一行同一颗判据（`baselineDiffTarget`）。
+   */
+  canDiffAgainstSaved: () => boolean;
+  onDiffAgainstSaved: () => void;
   onFoldAll: () => void;
   onUnfoldAll: () => void;
   onZoomIn: () => void;
@@ -224,6 +230,14 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
         onSelect: cb.onExplorer,
       },
       { separator: true },
+      // B461：A 档「与上次保存比较」的菜单归宿 —— LitePad 没有「文档」菜单，设计稿那一格
+      // 落到「查看」这一族。基线未知时**置灰**（Review Focus 1）：那一档没有「原样」可比，
+      // 打开只会把每一行刷成绿色。判据与键盘那条闸、标签右键那一条同源。
+      {
+        label: withKey("与上次保存比较", cb.keyHint("diff.openAgainstSaved")),
+        disabled: !cb.canDiffAgainstSaved(),
+        onSelect: cb.onDiffAgainstSaved,
+      },
       { label: withKey("折叠全部", cb.keyHint("view.foldAll")), onSelect: cb.onFoldAll },
       { label: withKey("展开全部", cb.keyHint("view.unfoldAll")), onSelect: cb.onUnfoldAll },
       { separator: true },

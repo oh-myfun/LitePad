@@ -33,6 +33,7 @@ import { shouldMountPreview } from "./preview/eligibility";
 import { wysiwygInstalled } from "./preview/livePreview";
 import { assetBase, setAssetBase } from "./preview/assets";
 import { gutterDiffBaseline, refreshGutterDiff } from "./editor/gutterDiff";
+import { syncDiffSurface } from "./diff/surface";
 import { CODICONS } from "./shell/codicons";
 import { setTip } from "./shell/tooltip";
 import {
@@ -164,6 +165,11 @@ function applyPanelMode(panel: Panel): void {
   // 字形上（用户报的就是「显示的还是打开侧边前的切换按钮」）。挂在出口上就不会漏。
   // ⚠️ 别挪到 mousedown 路径上：重建 ops 会把按钮节点换掉，浏览器合成的 click 就
   //    派发不到它身上（B226）。applyPanelMode 的调用点全在 click / 恢复 / 分屏里，安全。
+  //
+  // B461（裁决 R13 / R14）：差异旁路的挂/拆也挂在这一个出口上 ——「换标签但不换面板」
+  // 那三条同形路径（`switchTab` / 关掉活动标签后激活相邻的 / 布局重建）都收敛到这里，
+  // 而且**必须排在 DOM 就位之后**（渲染回调跑在 append 之前那条老坑：早动手量不到、挂不上）。
+  syncDiffSurface(panel);
 }
 
 /**

@@ -32,8 +32,14 @@ export interface CommandPaletteOptions {
   onClose?: () => void;
 }
 
-/** 结果上限：命令表再长也不该渲染几百个节点。 */
-const MAX_ROWS = 40;
+/**
+ * 结果上限：命令表再长也不该渲染几百个节点。
+ *
+ * ⚠️ 这一档必须**高于注册表长度**：`.palette-list` 本来就带 `overflow-y: auto`，空查询时截断
+ * 不会省下滚动，只会把尾部那几条（B461 之后是 `panel.toggleMaximize`）从默认视图里**删掉** ——
+ * 用户看不见、也数不清自己少了什么。改这一颗数字时先看 `COMMANDS.length`。
+ */
+const MAX_ROWS = 64;
 
 /** 面板在 DOM 中的宿主 class，供全局快捷键分发判断「面板是否开着」。 */
 export const PALETTE_OPEN_CLASS = "palette-open";

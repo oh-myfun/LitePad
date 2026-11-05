@@ -369,6 +369,9 @@ function refreshAll(): void {
   // B458：保存 / 改名之后 `doc.baseline` 已经是新正文，而行号右侧那列 diff 标注只认 CM6 的
   // 事务 —— 补一发「去问一次基线」，否则按完 Ctrl+S 不动键盘，橙绿色就摘不掉。
   refreshGutterDiffRef();
+  // B461（裁决 R20）：同一件事的差异面版本 —— 保存那条路不经过 `applyPanelMode`，而左栏那份
+  // **文档**是挂上时的快照，基线换了它不会自己醒 ⇒ 在这个统一出口补一遍（遍历在册面板）。
+  refreshDiffSurfacesRef();
   // B224：md 两颗键跟着活动面板 / 活动标签走，任何全局刷新都要同步一遍
   // （开/关标签、复制实例、会话恢复都可能改变「活动面板的标签是不是 md」）。
   renderPanelOpsRef();
@@ -415,6 +418,10 @@ let renderPanelOpsRef: (onlyPanelId?: number) => void = () => {};
 let refreshPreviewAssetBasesRef: () => void = () => {};
 // B458：markdown.ts 的 diff 标注基线校对（doc.baseline 被换成新正文要重算那一列）
 let refreshGutterDiffRef: () => void = () => {};
+// B461（裁决 R20）：diff/surface.ts 的旁路刷新 —— 与上面那一颗同一件事（「基线换了，
+// 让还在显示的面板重算一遍」），但走的是另一套寻址：差异旁路挂在**面板**上，而保存那条路
+// 不经过 `applyPanelMode`，所以要在 `refreshAll()` 这个统一出口点一次名。
+let refreshDiffSurfacesRef: () => void = () => {};
 
 export function setRefreshViewModeButton(fn: () => void): void {
   refreshViewModeButtonRef = fn;
@@ -438,6 +445,10 @@ export function setRefreshPreviewAssetBases(fn: () => void): void {
 
 export function setRefreshGutterDiff(fn: () => void): void {
   refreshGutterDiffRef = fn;
+}
+
+export function setRefreshDiffSurfaces(fn: () => void): void {
+  refreshDiffSurfacesRef = fn;
 }
 
 export {

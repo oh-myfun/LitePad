@@ -12,9 +12,10 @@
 //
 // ⚠️ `Alt+F5` / `Shift+Alt+F5` 是 VS Code「Go to Next/Previous Change」的实拍键位，
 // 这条来历记在代码注释里就够了 —— 用户可见文案一律不写「复刻」二字（本产品的既定口径）。
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { collectTextFiles, fnBody } from "./static";
+import { type Doc } from "../src/core/app-state";
+import { collectTextFiles, fnBody, stripLineComments } from "./static";
 import {
   COMMANDS,
   commandById,
@@ -51,10 +52,12 @@ describe("B461 · 差异步进两条命令进表（Task 4 Step 5/6）", () => {
       group: "差异",
       keys: ["Shift+Alt+F5"],
     });
-    // 本任务只加这两条（其余那一族归 Task 8）⇒ 表里 `diff.` 打头的命令到此为止。
+    // 表里 `diff.` 打头的命令到此为止：Task 4 那两条步进 + Task 5 的 A 档入口
+    //（标题栏那一族仍归 Task 8 ⇒ 多出一条没人认领的就要发红）。
     expect(COMMANDS.filter((c) => c.id.startsWith("diff.")).map((c) => c.id)).toEqual([
       "diff.nextChange",
       "diff.prevChange",
+      "diff.openAgainstSaved",
     ]);
   });
 
@@ -134,5 +137,193 @@ describe("B461 · 差异步进两条命令进表（Task 4 Step 5/6）", () => {
     expect(hits, "分发那处只按 id 走、菜单那处只按 keyHint(id) 取 ⇒ 改一颗键只用改这张表").toEqual([
       "src/shell/keymap.ts",
     ]);
+  });
+});
+
+// ── Task 5 · A 档「与上次保存比较」：入口三条 + 基线实时 ──────────────────────────
+//
+// 上面那一族钉的是**键**，这一族钉的是**入口**：菜单、标签右键、键盘三条路是不是真接在同
+// 一颗判据上，以及设计稿 ③ 那句硬约定 —— 左栏读的是**活的**基线，Ctrl+S 之后块自己没了，
+// 不靠任何一处「记得」补派发。
+//
+// ⚠️ 这条链一路 import 到 `src/ui.ts`，那颗模块在**求值时**就 `el("#layout-area")` 逐个取
+// 节点、取不到直接抛 ⇒ 与 `explorer-paths.test.ts` 同款：先把 index.html 的骨架铺进
+// document，再 dynamic import。写成静态 import 会在铺 DOM 之前求值，整个文件加载失败。
+let appState: typeof import("../src/core/app-state");
+let docModel: typeof import("../src/doc-model");
+let render: typeof import("../src/tabs/render");
+let diffModel: typeof import("../src/diff/model");
+let diffBlocksMod: typeof import("../src/diff/blocks");
+
+beforeAll(async () => {
+  const html = readFileSync("index.html", "utf-8");
+  const body = (html.match(/<body>([\s\S]*)<\/body>/)?.[1] ?? "").replace(
+    /<script[\s\S]*?<\/script>/g,
+    "",
+  );
+  document.body.innerHTML = body;
+  [appState, docModel, render, diffModel, diffBlocksMod] = await Promise.all([
+    import("../src/core/app-state"),
+    import("../src/doc-model"),
+    import("../src/tabs/render"),
+    import("../src/diff/model"),
+    import("../src/diff/blocks"),
+  ]);
+});
+
+/**
+ * 铺一份「正开着、且改过一行」的文档：文档 + 原标签实例 + 面板都得是真的。
+ * `openBaselineDiff` 右栏那份正文读的是**活的实例文档**（`instancesOfDoc(...)[0]`），
+ * 拿 `{}` 冒充标签，测的就是我自己搭的假象而不是屏上那一格。
+ */
+function openDocWithBaseline(baseline: string, text: string, name = "note.md"): Doc {
+  appState.docs.clear();
+  appState.tabs.clear();
+  appState.panels.clear();
+  const doc = docModel.makeDoc(7, baseline, name, "D:\\note.md", "UTF-8", "LF", false);
+  appState.docs.set(doc.tabId, doc);
+  const inst = docModel.makeInstance(doc, 0, text);
+  appState.tabs.set(inst.tabId, inst);
+  appState.panels.set(0, {
+    panelId: 0,
+    tabs: [inst.tabId],
+    activeTabId: inst.tabId,
+    view: null,
+    preview: null,
+    previewTimer: null,
+    bodyEl: null,
+  } as never);
+  // 脏不脏走产品那颗判据（B112），测试不自定一套 ⇒ `doc.dirty` 与标签上那颗点是同一件事。
+  doc.dirty = docModel.isDirtyVsBaseline(doc, text);
+  return doc;
+}
+
+describe("B461 · A 档「与上次保存比较」进表与三条入口（Task 5 Step 6/7）", () => {
+  it("B461 · 表里多出第三条：id / label / group / 键位逐字，且这颗键位本应用没人占", () => {
+    expect(commandById("diff.openAgainstSaved")).toMatchObject({
+      id: "diff.openAgainstSaved",
+      label: "与上次保存比较",
+      group: "差异",
+      keys: ["Ctrl+Shift+D"],
+    });
+    expect(effectiveKeys("diff.openAgainstSaved", {})).toEqual(["Ctrl+Shift+D"]);
+    expect(owners("Ctrl+Shift+D")).toEqual(["diff.openAgainstSaved"]);
+    expect(duplicateKeys({}), "加了第三条之后整张表仍一处重复都没有").toEqual([]);
+    expect(resolveCommand(key({ code: "D", key: "D", ctrlKey: true, shiftKey: true }), {})).toBe(
+      "diff.openAgainstSaved",
+    );
+  });
+
+  it("B461 · Ctrl+Shift+D 的字面量也只许出现在 keymap.ts 这一处", () => {
+    const hits = collectTextFiles("src")
+      .filter((p) => p.endsWith(".ts"))
+      .map((p) => p.replace(/\\/g, "/"))
+      .filter((p) => /Ctrl\+Shift\+D/.test(readFileSync(p, "utf-8").replace(/\r\n/g, "\n")));
+    expect(hits, "分发按 id、菜单按 keyHint(id) 取 ⇒ 改这颗键只用改这张表").toEqual([
+      "src/shell/keymap.ts",
+    ]);
+  });
+
+  it("B461 · 三条入口共用同一颗判据：键盘闸 / 菜单置灰 / 标签右键都问 baselineDiffTarget", () => {
+    // ① 键盘：不成时**不抢键**（把 Ctrl+Shift+D 还给系统），成时按活动标签的 docId 开。
+    const main = srcOf("src/main.ts");
+    expect(fnBody(main, "shortcutApplies")).toMatch(
+      /case "diff\.openAgainstSaved":\s*\n\s*return baselineDiffTarget\(\) !== null;/,
+    );
+    expect(fnBody(main, "runShortcut")).toMatch(
+      /case "diff\.openAgainstSaved":\s*\{[\s\S]{0,160}?baselineDiffTarget\(\);[\s\S]{0,120}?openBaselineDiff\(target\)/,
+    );
+    // ② 菜单：置灰判据与①同一颗函数，文案走 keyHint(id)。
+    const commands = srcOf("src/commands.ts");
+    expect(commands).toMatch(
+      /canDiffAgainstSaved:\s*\(\)\s*=>\s*baselineDiffTarget\(\)\s*!==\s*null/,
+    );
+    const mb = srcOf("src/shell/menubar.ts");
+    expect(mb).toMatch(/withKey\("与上次保存比较",\s*cb\.keyHint\("diff\.openAgainstSaved"\)\)/);
+    expect(mb).toMatch(/disabled:\s*!cb\.canDiffAgainstSaved\(\)/);
+    // ③ 标签右键：判据随快照走（`TabViewData.canDiffAgainstSaved`），置灰时文案自己说明为什么点不动。
+    const ts = srcOf("src/shell/tabstrip.ts");
+    expect(ts).toMatch(/disabled:\s*!t\.canDiffAgainstSaved/);
+    expect(ts).toMatch(/与上次保存比较"[\s\S]{0,30}与上次保存比较（基线未知）"/);
+    // 两个 producer 必须给同一颗菜单：splitview 首次构建那一发漏了回调，那条就永远不出现。
+    expect(srcOf("src/tabs/render.ts")).toMatch(/onDiffAgainstSaved:/);
+    expect(srcOf("src/tabs/lifecycle.ts")).toMatch(/onDiffAgainstSaved:/);
+    expect(srcOf("src/shell/splitview.ts")).toMatch(
+      /onDiffAgainstSaved:\s*\(tabId\)\s*=>\s*cb\.onDiffAgainstSaved\?\.\(tabId\)/,
+    );
+  });
+
+  it("Review Focus 1 · 基线未知 ⇒ 闸为假；openBaselineDiff 一句说明、不新开一张", async () => {
+    expect(diffModel.canOpenAgainstBaseline({ baseline: null } as Doc)).toBe(false);
+    expect(diffModel.canOpenAgainstBaseline(null)).toBe(false);
+    const seen: string[] = [];
+    diffModel.setDiffRenderHooks({
+      rebuildLayout: () => {},
+      refreshAll: () => {},
+      renderPanelTabs: () => {},
+      showMessage: (text) => seen.push(text),
+    });
+    const doc = openDocWithBaseline("甲\n乙\n丙", "甲\n乙\n丙");
+    // 磁盘上没这份文档的「原样」（新建/未保存）⇒ 那一档没有可比对的东西。
+    doc.baseline = null;
+    expect(await diffModel.openBaselineDiff(doc.tabId)).toBeNull();
+    expect(seen, "置灰/不抢键之外，直接调模型也要给出那句说明").toEqual([
+      "这份文档还没有可比对的已保存版本",
+    ]);
+    expect(
+      appState.panels.get(0)!.tabs.length,
+      "不许悄悄开出一张空的差异标签（面板那排还是原来那一颗）",
+    ).toBe(1);
+  });
+
+  it("B461 · 存盘后 diffBlocks 收到的是新基线 ⇒ 块数归零（不靠任何一处手动派发）", async () => {
+    const doc = openDocWithBaseline("甲\n乙\n丙", "甲\n乙改\n丙");
+    const newTabId = await diffModel.openBaselineDiff(doc.tabId);
+    expect(newTabId, "基线已知 ⇒ 开得出这一张").not.toBeNull();
+    const tab = appState.tabs.get(newTabId!)!;
+    expect(tab.kind).toBe("diff");
+    expect(diffBlocksMod.diffBlocks(tab.diff!.leftText(), "甲\n乙改\n丙")).toHaveLength(1);
+    docModel.markClean(doc, "甲\n乙改\n丙"); // 保存成功那一步（主干那条链，无差异面分支）
+    expect(
+      diffBlocksMod.diffBlocks(tab.diff!.leftText(), "甲\n乙改\n丙"),
+      "左栏那颗读取口吃的是活的 `doc.baseline` ⇒ 保存之后不必有人记得补派发",
+    ).toEqual([]);
+  });
+
+  it("B461 · A 档两张标签：脏点同源，标题各说各话（差异那张写「上次保存的 …」）", async () => {
+    const doc = openDocWithBaseline("甲\n乙\n丙", "甲\n乙改\n丙");
+    const newTabId = (await diffModel.openBaselineDiff(doc.tabId))!;
+    const tab = appState.tabs.get(newTabId)!;
+    expect(tab.docId, "差异那张不另立文档：它和原标签同指一份 `docs` 条目").toBe(doc.tabId);
+    const rows = render.tabViewDataOf(appState.panels.get(0)!);
+    expect(
+      rows.map((r) => r.dirty),
+      "两颗脏点是同一个 `doc.dirty`（不存在哪张才代表未保存）",
+    ).toEqual([doc.dirty, doc.dirty]);
+    expect(
+      rows.map((r) => r.name),
+      "两张一字不差的标签 = 数不清的哪颗是差异面",
+    ).toEqual(["note.md", "上次保存的 note.md ↔ note.md"]);
+    expect(rows.every((r) => r.canDiffAgainstSaved)).toBe(true);
+    docModel.markClean(doc, "甲\n乙改\n丙");
+    expect(
+      render.tabViewDataOf(appState.panels.get(0)!).map((r) => r.dirty),
+      "保存 ⇒ 两颗点一起没（同源才可能同步）",
+    ).toEqual([false, false]);
+  });
+
+  it("B461 · 差异面的接线点：hooks 从 main.ts 注入（模型层不许 import 渲染层）", () => {
+    // `src/ui.ts` 在模块求值时取 DOM ⇒ 数据层一旦 import 它，任何 node 环境的纯函数测试
+    // 都加载不起来（Task 5 真踩过）。渲染出口全部由装配层**注入**：模型只认那颗缝。
+    const main = srcOf("src/main.ts");
+    expect(main).toMatch(
+      /setDiffRenderHooks\(\{[\s\S]{0,160}?rebuildLayout[\s\S]{0,160}?showMessage/,
+    );
+    expect(main).toMatch(/setRefreshDiffSurfaces\(refreshDiffSurfaces\)/);
+    const model = stripLineComments(srcOf("src/diff/model.ts"));
+    expect(model, "模型层的 import 表里不许出现 ui / tabs / markdown").not.toMatch(
+      /from "\.\.\/(ui|tabs|markdown)"/,
+    );
+    expect(model).toMatch(/hooks\.rebuildLayout\(\)/);
   });
 });

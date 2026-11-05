@@ -255,7 +255,11 @@ import {
 } from "./sync-scroll/wire";
 import { logViewport } from "./core/viewport";
 // B461 Task 4：差异步进按的那一格旁路（`step(±1)` 与上下文闸都从这颗寻址口走）。
-import { diffSurfaceOf } from "./diff/surface";
+// Task 5 起这里还导出 `refreshDiffSurfaces` —— 外观那两颗 setter 只认识 main，
+// 而差异格的折行/主题必须跟着设置重新assert一次（裁决 R23-2）。
+import { diffSurfaceOf, refreshDiffSurfaces } from "./diff/surface";
+// B461 Task 5：A 档的入口（建标签）与那道闸（不抢键的判据）。
+import { baselineDiffTarget, openBaselineDiff, setDiffRenderHooks } from "./diff/model";
 import {
   bootMark,
   reportBoot,
@@ -280,6 +284,7 @@ import {
   setRenderPanelOps,
   setRefreshPreviewAssetBases,
   setRefreshGutterDiff,
+  setRefreshDiffSurfaces,
 } from "./ui";
 
 /** 编辑事务（来自任意面板的 view）：快照写回 + 脏标记 + 同源实例同步。 */
@@ -364,6 +369,17 @@ setRenderPanelOps(renderPanelOps);
 setRefreshPreviewAssetBases(refreshPreviewAssetBases);
 // B458：行号右侧那列 diff 标注的基线校对（保存 / 改名会把 `doc.baseline` 整体换掉）。
 setRefreshGutterDiff(refreshGutterDiffBaselines);
+// B461（裁决 R20）：同一件事的差异面版本 —— 保存那条路不经过 `applyPanelMode`，
+// 左栏那份文档不会自己醒，挂在这条统一出口上补一遍。
+setRefreshDiffSurfaces(refreshDiffSurfaces);
+// B461 Task 5：差异标签建好之后要「让界面认它」，而 `diff/model` 不许认识渲染层
+// （它被 `doc-model` 与 `core/app-state` 依赖，反向 import 要么成环、要么把 DOM 拉进 node 环境）。
+setDiffRenderHooks({
+  rebuildLayout,
+  refreshAll,
+  renderPanelTabs,
+  showMessage,
+});
 // 把 markdown / session 的动作注入 tabs（打破 tabs↔markdown / tabs↔session 循环依赖）
 setApplyPanelMode(applyPanelMode);
 setOpenPreviewToSide(openPreviewToSide);
@@ -541,6 +557,11 @@ function shortcutApplies(id: string): boolean {
     case "diff.nextChange":
     case "diff.prevChange":
       return diffTabActive();
+    // B461 Task 5：A 档的入口。基线未知时**不抢键**（设计稿 ⑩·3：点不动的那一发要有个说法，
+    // 菜单与右键那两处走置灰，键盘这一处走「当没这个键」）。判据与那两处同一颗
+    // `baselineDiffTarget` ⇒ 不会出现「这里点得动、那里点不动」。
+    case "diff.openAgainstSaved":
+      return baselineDiffTarget() !== null;
     case "panel.splitH":
     case "panel.splitV":
     case "panel.close":
@@ -665,6 +686,13 @@ function runShortcut(id: string): void {
     case "diff.prevChange":
       diffSurfaceOf(activePanel())?.step(-1);
       break;
+    // B461 Task 5：A 档 —— 与上次保存比较，新开一张差异标签（原标签继续开着，用户拍板 ④·6）。
+    // 寻址走 `baselineDiffTarget()` 那一颗（与置灰/不抢键同源），这里不再自己判 kind/基线。
+    case "diff.openAgainstSaved": {
+      const target = baselineDiffTarget();
+      if (target !== null) void openBaselineDiff(target);
+      break;
+    }
     case "panel.splitH":
       if (activePanel()) void splitActivePanel(activePanelId, "h");
       break;

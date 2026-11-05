@@ -37,15 +37,26 @@
 //     谁都判不中时兜底 ⇒ 跳过去之后 `activeIndex()` 不再读成 -1。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import type { EditorView } from "@codemirror/view";
+import { EditorView } from "@codemirror/view";
 import { fnBody, ruleBlock, stripCssComments, stripLineComments } from "./static";
-import { panels, tabs, type Panel, type Tab } from "../src/core/app-state";
+import {
+  docs,
+  panels,
+  setIsWrap,
+  tabs,
+  type Doc,
+  type Panel,
+  type Tab,
+} from "../src/core/app-state";
 import { createEditor, makeTabState } from "../src/editor/editor";
 import { perfProfileFor } from "../src/editor/perf";
+import { makeDoc, markClean } from "../src/doc-model";
+import { applyDarkToTabs, applyWrapToTabs } from "../src/appearance";
 import {
   createDiffSurface,
   disposeDiffSurface,
   diffSurfaceOf,
+  refreshDiffSurfaces,
   syncDiffSurface,
   type DiffSurface,
 } from "../src/diff/surface";
@@ -794,5 +805,251 @@ describe("B461 · 键入期只映射不重算（Task 4 Step 3/4 + 裁决 R24）"
       /cache\.(left|right)\s*===/,
     );
     expect(code, "延迟只 import 那颗常数，不留第二份 200").not.toMatch(/,\s*200\s*\)/);
+  });
+});
+
+// --------------------------------------------------------------------------- #
+// Task 5 —— A 档接全：换标签不换面板的挂/拆（R13/R14）、基线实时（R20）、
+// 折行/主题/双 surface 三处漂移（R23）。
+//
+// 挂/拆的判据本身走**生产的** `syncDiffSurface`（`applyPanelMode` 末尾点的那一次名，
+// 在单测里就直接点这一处 —— 两条路是同一个出口）。
+// --------------------------------------------------------------------------- #
+
+/** 与 `mountDiffPair` 同形的一格，但左栏吃**活基线**：`leftText` 读 `docs` 里的 `doc.baseline`。 */
+function mountLiveBaselinePair(
+  baseline: string,
+  rightText: string,
+): { panel: Panel; s: DiffSurface; doc: Doc } {
+  const doc = makeDoc(100, rightText, "a.md", null, "UTF-8", "LF", false);
+  doc.baseline = baseline; // 「打开后又改了」：当前正文是 rightText，基线仍停在 baseline
+  docs.set(doc.tabId, doc);
+  const hostEl = document.createElement("div");
+  hostEl.className = "panel-host";
+  document.body.appendChild(hostEl);
+  const editorEl = document.createElement("div");
+  editorEl.className = "panel-editor";
+  hostEl.appendChild(editorEl);
+  const { state, comps } = makeTabState(
+    rightText,
+    null,
+    { dark: false, wrap: true, perf: perfProfileFor("normal") },
+    () => {},
+  );
+  const diff: DiffSpec = {
+    tier: "baseline",
+    docId: doc.tabId,
+    leftText: () => docs.get(doc.tabId)?.baseline ?? "",
+    leftName: doc.name,
+    rightName: doc.name,
+    leftPath: null,
+  };
+  const tab: Tab = {
+    tabId: nextTabId++,
+    docId: doc.tabId,
+    panelId: 0,
+    comps,
+    state,
+    viewMode: "source",
+    kind: "diff",
+    diff,
+    scrollV: 1,
+  };
+  tabs.set(tab.tabId, tab);
+  const panel: Panel = {
+    panelId: 0,
+    tabs: [tab.tabId],
+    activeTabId: tab.tabId,
+    view: createEditor(editorEl, state),
+    viewTabId: tab.tabId,
+    bodyEl: hostEl,
+    diffSurface: null,
+  };
+  // 注册进册：`refreshDiffSurfaces`（refreshAll 那一条统一出口）遍历的是这份全局 panels。
+  panels.set(panel.panelId, panel);
+  const s = createDiffSurface(hostEl, panel, diff);
+  live.push(() => disposeDiffSurface(panel));
+  return { panel, s, doc };
+}
+
+describe("B461 · 基线实时与判据接全（Task 5 R13/R14 + R20）", () => {
+  it("B461 · R20：存盘（markClean）⇒ 左栏那份文档被重设成新基线，块表归零，全程没一处手动派发", () => {
+    const { s, doc } = mountLiveBaselinePair("甲\n乙\n丙", "甲\n乙改\n丙");
+    expect(s.blocks(), "前置：挂上时就差着一行").toHaveLength(1);
+    markClean(doc, "甲\n乙改\n丙"); // 保存成功那一步：只换 doc.baseline，不给编辑器发事务
+    refreshDiffSurfaces(); // refreshAll 的统一出口（保存路径不经过 applyPanelMode）
+    expect(
+      s.left.state.doc.toString(),
+      "左栏必须换成新基线 —— 只重派 effects（refreshDiff）画不出：那颗文档还是旧的",
+    ).toBe("甲\n乙改\n丙");
+    expect(s.blocks(), "基线与正文一致 ⇒ 一块都没有（存盘即清空）").toEqual([]);
+  });
+
+  it("B461 · R20：同标签再点名不重建，但基线漂移照样补上（applyPanelMode 出口的判据）", () => {
+    const { panel, s, doc } = mountLiveBaselinePair("甲\n乙\n丙", "甲\n乙改\n丙");
+    syncDiffSurface(panel);
+    expect(diffSurfaceOf(panel), "一致 ⇒ 一个字都不动（防每发刷新都重建）").toBe(s);
+    markClean(doc, "甲\n乙改\n丙");
+    syncDiffSurface(panel);
+    expect(diffSurfaceOf(panel), "补基线不靠重建旁路").toBe(s);
+    expect(s.left.state.doc.toString()).toBe("甲\n乙改\n丙");
+    expect(s.blocks()).toEqual([]);
+  });
+
+  it("B461 · Step 5 同形路径：换标签不换面板也挂/拆；摘掉时折行还回**设置**的值而不是被回写漏掉的快照（R23-1）", () => {
+    setIsWrap(true); // 用户设置：开着折行（差异格里被强制关掉的那一发不许冒充他的设置）
+    const { panel } = mountLiveBaselinePair("甲\n乙\n丙", "甲\n乙改\n丙");
+    const diffTab = tabs.get(panel.viewTabId!)!;
+    expect(
+      diffTab.comps.wrap.get(panel.view!.view.state),
+      "前置：旁路挂着时这一栏折行是关的",
+    ).toEqual([]);
+    // `switchTab` 切出时同形回写：强制关掉的折行就这样漏进了标签快照。
+    diffTab.state = panel.view!.view.state;
+    const editorTab = tabWithKind("editor");
+    tabs.set(editorTab.tabId, editorTab);
+    panel.tabs.push(editorTab.tabId);
+    // 换到普通标签（三条同形路径之一）⇒ 旁路该拆
+    panel.activeTabId = editorTab.tabId;
+    panel.viewTabId = editorTab.tabId;
+    syncDiffSurface(panel);
+    expect(diffSurfaceOf(panel), "显示的不是差异标签 ⇒ 该无").toBeNull();
+    // 换回差异标签：view 切到那份**漏了折行关闭**的快照，再点名
+    panel.view!.setState(diffTab.state);
+    panel.activeTabId = diffTab.tabId;
+    panel.viewTabId = diffTab.tabId;
+    syncDiffSurface(panel);
+    expect(diffSurfaceOf(panel), "换标签不换面板 ⇒ 该挂").not.toBeNull();
+    // 再换走、拆掉 ⇒ 旧判据（从 view.state 记现值）会还回「关着」，用户的折行再也回不来
+    panel.activeTabId = editorTab.tabId;
+    panel.viewTabId = editorTab.tabId;
+    syncDiffSurface(panel);
+    expect(
+      diffTab.comps.wrap.get(panel.view!.view.state),
+      "R23-1：还值的权威是设置，不是那颗被回写漏掉的快照",
+    ).toBe(EditorView.lineWrapping);
+  });
+
+  it("B461 · R23-2：差异格挂着时折行被重新打开 ⇒ 同一个 syncDiffSurface 入口把强制关压回去", () => {
+    const { panel } = mountLiveBaselinePair("甲\n乙\n丙", "甲\n乙改\n丙");
+    const diffTab = tabs.get(panel.viewTabId!)!;
+    setIsWrap(true);
+    applyWrapToTabs(true); // 设置那一发：同一颗 Compartment 在 live surface 之下被重配
+    expect(
+      diffTab.comps.wrap.get(panel.view!.view.state),
+      "设置那一发末尾补的那一遍要真的压回去（`refreshDiffSurfaces` 那条接线）",
+    ).toEqual([]);
+    // 再手动发一次**同样的漂移**（`applyWrapToTabs` 里就是这一手），但不跟着点
+    // `refreshDiffSurfaces` —— 那一发的接线由上面那一条与下面的接线点位用例分别钉住；
+    // 这里要单独证的是 `reassert` 自己认不认得出这层漂移（`applyPanelMode` 那一条出口）。
+    panel.view!.view.dispatch({
+      effects: diffTab.comps.wrap.reconfigure(EditorView.lineWrapping),
+    });
+    expect(
+      diffTab.comps.wrap.get(panel.view!.view.state),
+      "前置：刚翻回来是开的（两栏又分家了）",
+    ).toBe(EditorView.lineWrapping);
+    syncDiffSurface(panel); // 与 `applyPanelMode` 末尾同形：一致分支现在得把漂移补上
+    expect(
+      diffTab.comps.wrap.get(panel.view!.view.state),
+      "翻设置之后差异格仍不许折行（行行对齐是设计稿 ⑥ 的头条）",
+    ).toEqual([]);
+  });
+
+  it("B461 · R23-2：差异格挂着时翻主题 ⇒ 左栏按现值重配，两栏不许叠在不同基色上", () => {
+    const { panel, s } = mountLiveBaselinePair("甲\n乙\n丙", "甲\n乙改\n丙");
+    const diffTab = tabs.get(panel.viewTabId!)!;
+    // 前置：这一格现在两张都是亮色。判据取 `EditorView.darkTheme` 那一颗 facet，不取 DOM
+    // 类名 —— CM6 把基础亮/暗样式写成 `StyleModule.newName()` 生成的随机类名（没有 `cm-dark`
+    // 这种稳定名可读），而这一颗 facet 才是「两张 view 叠在同一套基色上」的权威读数
+    //（`src/editor/theme.ts` 的 `shellStyles` 那段注释把这一点记过一遍，B376 的回归点）。
+    expect(s.left.state.facet(EditorView.darkTheme), "前置：左栏亮色").toBeFalsy();
+    expect(panel.view!.view.state.facet(EditorView.darkTheme), "前置：右栏亮色").toBeFalsy();
+
+    applyDarkToTabs(true, "2026"); // 设置那一发：右栏那颗主题 Compartment 换成暗色
+    syncDiffSurface(panel); // 与 `applyPanelMode` 末尾同形：一致分支现在得把漂移补上
+
+    expect(panel.view!.view.state.facet(EditorView.darkTheme), "前置：右栏真翻了暗色").toBeTruthy();
+    // 判据是**两栏同一颗**：18% 的改动色是透明的，叠在不同基色上就不是同一个颜色（R22）。
+    expect(
+      s.left.state.facet(EditorView.darkTheme),
+      "右栏翻了暗色而左栏还停在亮色 ⇒ 半深半浅的一张脸",
+    ).toBeTruthy();
+    expect(
+      s.left.state.facet(EditorView.darkTheme),
+      "两栏读到的必须是同一个值（左栏吃右栏的现值，不是自己再配一份）",
+    ).toBe(panel.view!.view.state.facet(EditorView.darkTheme));
+    expect(
+      diffTab.comps.theme.get(panel.view!.view.state),
+      "右栏的主题 Compartment 有现值",
+    ).not.toBe(undefined);
+  });
+
+  it("B461 · R23-3：同一格第二次 createDiffSurface ⇒ 先拆在任那颗，不许两颗 live surface 叠着", () => {
+    setIsWrap(true);
+    const { panel, s: first } = mountLiveBaselinePair("甲\n乙\n丙", "甲\n乙改\n丙");
+    const second = createDiffSurface(panel.bodyEl as HTMLElement, panel, {
+      ...first.spec(),
+      leftText: () => "换了一份基线",
+    });
+    expect(second).not.toBe(first);
+    expect(panel.diffSurface, "记账位指的是新那一份").toBe(second);
+    expect(
+      first.left.dom.parentElement,
+      "旧左栏那颗 view 真被 destroy（CM6 destroy 会摘掉自己的 DOM）",
+    ).toBeNull();
+    expect(panel.bodyEl!.querySelectorAll(".diff-original"), "一格只许一排旁路").toHaveLength(1);
+    const diffTab = tabs.get(panel.viewTabId!)!;
+    expect(diffTab.comps.wrap.get(panel.view!.view.state), "新那一份的强制关还在").toEqual([]);
+    second.dispose();
+    expect(
+      diffTab.comps.wrap.get(panel.view!.view.state),
+      "还值的是新那一份（旧那一份若在，会把这一手踩成它的现值）",
+    ).toBe(EditorView.lineWrapping);
+  });
+
+  it("B461 · 换标签再换回来不许留下第二张底色面（拆之前回写进快照的那一臂必须摘掉）", () => {
+    const { panel } = mountLiveBaselinePair("甲\n乙\n丙", "甲\n乙改\n丙");
+    const diffTab = tabs.get(panel.viewTabId!)!;
+    // `switchTab` 切出时的同形回写：快照里带着 surface#1 那一臂（provider 读的是它的旧块表）。
+    diffTab.state = panel.view!.view.state;
+    panel.activeTabId = -1;
+    panel.viewTabId = -1; // 寻址已经离开这张标签（拆点只认「该不该有」）
+    syncDiffSurface(panel); // 拆
+    // 再显示它：setState 吃的正是那份快照，然后重挂。
+    panel.view!.setState(diffTab.state);
+    panel.activeTabId = diffTab.tabId;
+    panel.viewTabId = diffTab.tabId;
+    syncDiffSurface(panel);
+    const s2 = diffSurfaceOf(panel);
+    expect(s2, "换回来该重挂").not.toBeNull();
+    // 把正文改成与基线一致 ⇒ 现 surface 重算成空块表。
+    panel.view!.view.dispatch({ changes: { from: 3, to: 4 } }); // 删掉「改」⇒「甲\n乙\n丙」
+    s2!.syncBlocks();
+    expect(s2!.blocks(), "现这一份算出来是空的").toEqual([]);
+    expect(
+      panel.view!.view.dom.querySelectorAll(".cm-line[class*='diff-line-']").length,
+      "旧那一臂的 provider 还读着拆掉前的块表 ⇒ 快照不摘臂就是永久画错行",
+    ).toBe(0);
+  });
+
+  it("B461 · 接线点位：applyPanelMode 末尾 / 两颗外观 setter / refreshAll 统一出口 / md 两颗键退场", () => {
+    // ⚠️ 判据取**剥掉行注释**的函数体：`fnBody` 里残留的说明文字会替实现「过关」
+    //（`tests/diff-surface.test.ts:294` 那条反向纪律，Task 4 一轮真踩过）。
+    expect(fnBody(stripLineComments(srcOf("src/markdown.ts")), "applyPanelMode")).toContain(
+      "syncDiffSurface(panel)",
+    );
+    const appearance = stripLineComments(srcOf("src/appearance.ts"));
+    expect(fnBody(appearance, "applyWrapToTabs")).toContain("refreshDiffSurfaces()");
+    expect(fnBody(appearance, "applyDarkToTabs")).toContain("refreshDiffSurfaces()");
+    const ui = srcOf("src/ui.ts");
+    expect(
+      fnBody(ui, "refreshAll"),
+      "保存路径没有 applyPanelMode ⇒ 基线补色挂在这条统一出口",
+    ).toContain("refreshDiffSurfacesRef()");
+    const main = srcOf("src/main.ts");
+    expect(main).toContain("setRefreshDiffSurfaces(refreshDiffSurfaces)");
+    expect(main).toContain("setDiffRenderHooks(");
+    expect(srcOf("src/tabs/render.ts")).toMatch(/act\.kind !== "diff"/);
   });
 });

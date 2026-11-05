@@ -10,6 +10,7 @@ import type { PreviewWidth } from "./ipc/api";
 import type { ThemeFamily } from "./theme/theme";
 import { tabs, panels, setIsWrap } from "./core/app-state";
 import { rethemeWidgets, wysiwygInstalled } from "./preview/livePreview";
+import { refreshDiffSurfaces } from "./diff/surface";
 
 /**
  * 主题翻了 ⇒ 让每一块装饰面重建（mermaid 的 `theme:` 只在渲染那一刻读一次）。
@@ -39,6 +40,9 @@ export function applyDarkToTabs(dark: boolean, family: ThemeFamily): void {
       tab.state = tab.state.update({ effects: effect }).state;
     }
   }
+  // B461（裁决 R23-2）：差异格左栏吃的是「挂上那一刻右栏的主题现值」，上面这一手只换了右半
+  // ⇒ 旁路还挂着时两半的 18% 改动色叠在不同基色上，看着就不是同一个颜色。补一遍旁路。
+  refreshDiffSurfaces();
 }
 
 export function applyWrapToTabs(wrap: boolean): void {
@@ -53,6 +57,9 @@ export function applyWrapToTabs(wrap: boolean): void {
       tab.state = tab.state.update({ effects: effect }).state;
     }
   }
+  // B461（裁决 R19 / R23-2）：差异格两栏一律不折行 —— 行行对齐是设计稿 ⑥ 的头条，而这一手
+  // 重配的正是同一颗 Compartment ⇒ 旁路还挂着时它会把右半重新打开、只有左半不跟着折。
+  refreshDiffSurfaces();
 }
 
 export function applyFontSize(px: number): void {

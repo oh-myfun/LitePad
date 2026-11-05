@@ -41,6 +41,8 @@ import {
 } from "./split";
 import { invoke } from "@tauri-apps/api/core";
 import { dragTabAsFile } from "../io/filedrag";
+// B461：差异面的标题与「与上次保存比较」这条动作（模型在 diff/model，渲染层只问它要判据）。
+import { canOpenAgainstBaseline, diffTitleOf, openBaselineDiff } from "../diff/model";
 
 export function renderPanelTabs(onlyPanelId?: number): void {
   for (const p of panels.values()) {
@@ -61,7 +63,12 @@ export function tabViewDataOf(p: Panel): TabViewData[] {
       const doc = docs.get(t.docId);
       return {
         tabId: t.tabId,
-        name: doc?.name ?? "?",
+        // B461（裁决 R27）：差异标签的名字必须从它自己的 spec 现拼 —— 它和原文档共用
+        // `docId`，照 `doc.name` 画就会出现两张一字不差的标签，谁也数不清哪颗是差异面。
+        name:
+          t.kind === "diff" && t.diff
+            ? diffTitleOf(t.diff, t.diff.leftName === t.diff.rightName)
+            : (doc?.name ?? "?"),
         dirty: doc?.dirty ?? false,
         readonly: doc?.readonly ?? false,
         active: t.tabId === p.activeTabId,
@@ -70,6 +77,8 @@ export function tabViewDataOf(p: Panel): TabViewData[] {
         lang: doc?.langLabel,
         path: doc?.path ?? undefined,
         hasSibling: countLeaves(layout) > 1,
+        // B461：右键那条的置灰判据随快照走 —— 菜单点开那一刻的基线才是要显示的基线。
+        canDiffAgainstSaved: canOpenAgainstBaseline(doc ?? null),
       };
     });
 }
@@ -104,6 +113,11 @@ export function tabstripCallbacks(p: Panel): TabstripCallbacks {
     },
     onDuplicateTab: (tabId) => duplicateTabToPanel(tabId, p.panelId),
     onDuplicateToSibling: (tabId) => duplicateTabToSibling(tabId),
+    // B461：右键「与上次保存比较」—— 新那一张开到**活动面板**（模型那一头定的口径）。
+    onDiffAgainstSaved: (tabId) => {
+      const t = tabs.get(tabId);
+      if (t) void openBaselineDiff(t.docId);
+    },
     // 左右 / 上下分屏：**复制**而非移动（与 VS Code 一致 —— Split 是同一文档开两份，
     // 移动另有 "Move Editor into Next Group"）。用 copy=true 也顺带避开了
     // splitPanelWithTab 在「源面板只剩这一个标签」时留下空面板的问题。
@@ -142,7 +156,10 @@ export function panelDataOf(p: Panel): PanelRenderData {
   // md 两颗键只给**活动面板**（用户拍定，对齐 VS Code 的 editor/title 动作只出现在
   // 活动组）：非活动面板不给 md 标记，splitview 那边就一颗都不建。
   const act = p.panelId === activePanelId ? activeTab() : undefined;
-  const md = !!act && isMdTab(act);
+  // B461：差异档不给 md 那两颗键 —— 差异视图**恒源码档**（设计稿 ⑥），而它的 `docId`
+  // 就是原标签那份文档，`isMdTab` 天然为真 ⇒ 必须另外问一句 kind，否则「查看」那颗键
+  // 会在一张差异标签上出现，点下去把这一格换回预览、旁路就悬在半空。
+  const md = !!act && isMdTab(act) && act.kind !== "diff";
   // B161 / B422：这一格能不能解散、解散等不等于关窗 —— 口径在 `panelCloseFact`
   // （渲染快照与组菜单同源，别处不再算一遍）。
   const { canClose, closeDetail } = panelCloseFact();

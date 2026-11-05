@@ -24,7 +24,7 @@ import { BlockType, EditorView, type BlockInfo, type WidgetType } from "@codemir
 import { createEditor, makeTabState } from "../src/editor/editor";
 import { perfProfileFor } from "../src/editor/perf";
 import { stripCssComments, stripLineComments, ruleBlock } from "./static";
-import { tabs, type Panel, type Tab } from "../src/core/app-state";
+import { isWrap, setIsWrap, tabs, type Panel, type Tab } from "../src/core/app-state";
 import { createDiffSurface, type DiffSurface } from "../src/diff/surface";
 import { diffBlocks, type DiffBlock } from "../src/diff/blocks";
 import type { DiffSide, DiffSpec } from "../src/diff/model";
@@ -401,12 +401,38 @@ describe("B461 · surface 给两颗 view 各装一臂（预审 R1）", () => {
     expect(wrapsLines(right.state), "拆掉旁路把折行还回去（那颗 view 是文档本身）").toBe(true);
   });
 
-  it("B461 · 还原的是「它原来那个值」，不是无条件打开（出厂就关着的用户）", () => {
-    const { right, surface, tab } = mountHost({ wrap: false });
-    expect(wrapsLines(tab.state), "前置：这位用户本来就关着折行").toBe(false);
-    expect(wrapsLines(right.state)).toBe(false);
-    surface.dispose();
-    expect(wrapsLines(right.state), "detach 之后仍然是关着 —— 旁路不许替用户改设置").toBe(false);
+  it("B461 · 还原的是「用户那一颗设置」，不是无条件打开（设置里就关着的用户）", () => {
+    // 裁决 R23-1（Task 3 评审抓出、Task 5 落地）把还值的权威从「attach 时 view 里的现值」换成
+    // **设置**那一颗：`switchTab` 切出时会把「差异格强制关掉」的那一发回写进标签快照，读现值就会
+    // 把开着换行的用户悄悄改成关着。生产里每一张标签的 wrap Compartment 都由 `isWrap` 派生
+    //（`makeInstance` 的 `env.wrap` + `applyWrapToTabs` 的写回）⇒ 「本来就关着」这一形只能由
+    // 设置来表达；「快照关着而设置开着」是一条到得了测试、到不了用户的路径。
+    const was = isWrap;
+    setIsWrap(false);
+    try {
+      const { right, surface, tab } = mountHost({ wrap: false });
+      expect(wrapsLines(tab.state), "前置：这位用户本来就关着折行").toBe(false);
+      expect(wrapsLines(right.state)).toBe(false);
+      surface.dispose();
+      expect(wrapsLines(right.state), "detach 之后仍然是关着 —— 旁路不许替用户改设置").toBe(false);
+    } finally {
+      setIsWrap(was);
+    }
+  });
+
+  it("B461 · 差异面挂着期间改了设置 ⇒ detach 还的是**改过之后**那一颗（不许还过期值）", () => {
+    // 同一颗权威的另一面：`wrapBack` 若是在 attach 那一刻算好的数组，挂着期间用户把「自动换行」
+    // 打开，拆掉旁路时还回去的就是那份**过期**的关 ⇒ 设置说开着、这一格从此不折行（两口径，B458 同族）。
+    const was = isWrap;
+    setIsWrap(false);
+    try {
+      const { right, surface } = mountHost({ wrap: false });
+      setIsWrap(true); // 用户此刻在设置里打开换行（`applyWrapToTabs` 走的是同一颗 Compartment）
+      surface.dispose();
+      expect(wrapsLines(right.state), "还值必须在落笔那一刻读设置").toBe(true);
+    } finally {
+      setIsWrap(was);
+    }
   });
 
   it("B461 · 左栏吃的是与右栏**同一套**主题扩展（R22：不在差异面另配一份，也不在 CSS 硬写底色）", () => {

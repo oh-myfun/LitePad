@@ -23,6 +23,7 @@ import { makeTabState } from "./editor/editor";
 import { eachLeaf } from "./core/layout";
 import { activeTab } from "./core/panels";
 import type { EditorView, ViewUpdate } from "@codemirror/view";
+import type { DiffSpec } from "./diff/model";
 
 /** makeInstance 创建 CM6 状态时用的更新回调（由 main 在启动时注入）。 */
 let instanceOnUpdate: (view: EditorView, update: ViewUpdate) => void = () => {};
@@ -114,10 +115,47 @@ function makeInstance(doc: Doc, panelId: number, text: string): Tab {
     comps,
     state,
     viewMode: "source",
-    // B461：这一支仍是普通编辑器标签（差异标签走 `makeDiffInstance`，Task 5 拥有）。
+    // B461：这一支是普通编辑器标签（差异标签走下面的 `makeDiffInstance`，Task 5 已接全）。
     // `kind` 在这里给死、之后不改；`diff` 初值 `null` ⇒ 老路径一个字都不用问。
     kind: "editor",
     diff: null,
+    scrollV: 1,
+  };
+}
+
+/**
+ * B461 · `makeInstance` 的孪生：为**差异标签**在指定面板建一份实例（Task 5）。
+ *
+ * 与 `makeInstance` 只差两处，而这两处都是设计稿的指名：
+ *   · **不传 `baseline` 读取口** —— `gutterDiff()` 拿不到基线时「整列空着、但仍占那 4px」
+ *     是 `gutterDiff.ts` 写明的既定行为（列宽与标记有无无关 ⇒ 正文不因存盘左右跳）。
+ *     那一列**只在原标签画**：差异编辑器本身就是那一格的展开（设计稿 ⑥）。
+ *   · **`viewMode` 钉死 `source`** —— 差异视图恒源码档（设计稿 ⑥）：折叠标记会把
+ *     「到底改了哪个字符」藏起来，而差异视图存在的意义正是答这一问。
+ *
+ * 右栏这一份仍是**这份文档的可写实例**（`instanceOnUpdate` 照挂）：脏归文档、
+ * Ctrl+S 走主干那条保存链，一行分支都不加（设计稿 ⑧·1 的落点）。
+ */
+function makeDiffInstance(doc: Doc, panelId: number, text: string, spec: DiffSpec): Tab {
+  const firstLine = text.split("\n", 1)[0] ?? "";
+  const lang = languageOfDoc(doc, firstLine);
+  const perf = perfProfileForDoc(doc.sizeClass, isMdDoc(doc));
+  const { state, comps } = makeTabState(
+    text,
+    lang.extension,
+    // ⚠️ env 里**没有** `baseline` 这一项（与上面 makeInstance 的唯一实质差别）。
+    { dark: isDark, family: themeFamily, wrap: isWrap, perf },
+    instanceOnUpdate,
+  );
+  return {
+    tabId: takeInstId(),
+    docId: doc.tabId,
+    panelId,
+    comps,
+    state,
+    viewMode: "source",
+    kind: "diff",
+    diff: spec,
     scrollV: 1,
   };
 }
@@ -218,6 +256,7 @@ function isMdActive(): boolean {
 export {
   makeDoc,
   makeInstance,
+  makeDiffInstance,
   isDirtyVsBaseline,
   markClean,
   markDiskVersion,

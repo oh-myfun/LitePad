@@ -494,7 +494,7 @@ it("B461 · jumpTo(1) 把左右光标分别落在各自那块的起始行", () =
 });
 it("B461 · 跳块不许调 syncCoordinator.syncTo（同一文档的别的面板不该跟着跳）", () => {
   expect(srcOf("src/diff/surface.ts")).not.toMatch(/syncTo\s*\(/);
-  expect(srcOf("src/diff/surface.ts")).toContain("claimVisibleHere(");
+  expect(srcOf("src/diff/surface.ts")).toContain("landVisibleSideAtV(");
 });
 it("B461 · step(1) 往后找、末块之后夹住；step(-1) 往回", () => {
   const s = mountedSurfaceWithThreeBlocks();

@@ -12,8 +12,11 @@
 // 不是快照）—— 那条不由单测判，由 Task 5 的「Ctrl+S 自己清空」用例判。
 import { describe, expect, it } from "vitest";
 import type { Doc } from "../src/core/app-state";
+import { makeDiffInstance, makeDoc } from "../src/doc-model";
+import { gutterDiffBaseline, hasGutterDiff } from "../src/editor/gutterDiff";
 import {
   canOpenAgainstBaseline,
+  diffTitleOf,
   notifyDiffBlocks,
   setDiffBlocksListener,
   type DiffSpec,
@@ -71,5 +74,44 @@ describe("B461 · 块数变化的通知槽", () => {
     expect(a).toEqual([]);
     expect(b).toEqual([1]);
     setDiffBlocksListener(null);
+  });
+});
+
+// --------------------------------------------------------------------------- #
+// Task 5 —— A 档（与上次保存比较）：标题拼接
+// --------------------------------------------------------------------------- #
+
+describe("B461 · diffTitleOf（Task 5 Step 1）", () => {
+  it("B461 · 标题是「旧 ↔ 新」；两侧同名时左栏补描述（照 VS Code 的 ForceDescription）", () => {
+    const files: DiffSpec = {
+      tier: "files",
+      docId: 1,
+      leftText: () => "",
+      leftName: "a.md",
+      rightName: "b.md",
+      leftPath: "D:/a.md",
+    };
+    expect(diffTitleOf(files, false)).toBe("a.md ↔ b.md");
+    const same: DiffSpec = {
+      ...files,
+      tier: "baseline",
+      leftName: "a.md",
+      rightName: "a.md",
+      leftPath: null,
+    };
+    expect(diffTitleOf(same, true)).toBe("上次保存的 a.md ↔ a.md");
+  });
+});
+
+describe("B461 · makeDiffInstance（Task 5 Step 2）", () => {
+  it("B461 · 差异标签那一份实例拿不到基线读取口 ⇒ 那列空着但仍占 4px", () => {
+    const doc = makeDoc(7, "甲\n乙\n丙", "a.md", null, "UTF-8", "LF", false);
+    const panelId = 0;
+    const s = spec();
+    const made = makeDiffInstance(doc, panelId, "甲\n乙改\n丙", s);
+    expect(hasGutterDiff(made.state)).toBe(true); // 列还在（正文不因存盘左右跳）
+    expect(gutterDiffBaseline(made.state)).toBeNull(); // 没处问基线 ⇒ 整片不画
+    expect(made.kind).toBe("diff");
+    expect(made.diff).toBe(s);
   });
 });

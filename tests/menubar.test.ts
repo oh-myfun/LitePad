@@ -86,6 +86,9 @@ function makeCb(): MenuBarCallbacks {
     recentSubmenu: () => [],
     onExplorer: noop,
     explorerChecked: () => false,
+    // B461：A 档那一条的置灰判据与动作（默认「能开」，专门用例里再改判据）。
+    canDiffAgainstSaved: () => true,
+    onDiffAgainstSaved: noop,
     onSave: noop,
     onSaveAs: noop,
     onSaveAll: noop,

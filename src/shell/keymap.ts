@@ -339,10 +339,14 @@ export const COMMANDS: CommandDef[] = [
   // ---- 差异（B461）----
   // 这两颗是 VS Code「Go to Next / Previous Change」的同款键位（`Alt+F5` / `Shift+Alt+F5`），
   // 在本应用此前无人占用 ⇒ 只按 F5 那一家分档：裸 `F5` 仍是「插入时间/日期」。
-  // ⚠️ 本任务只落这一对步进键；标题栏那几颗动作键与其余 `diff.*` 命令归 Task 8。
+  // ⚠️ 步进这一对归 Task 4；标题栏那几颗动作键与其余 `diff.*` 命令归 Task 8。
   // 键位字面量只许出现在这张表里 —— 分发那处只按 id 走、菜单那处只按 `keyHint(id)` 取。
   { id: "diff.nextChange", label: "下一个差异", group: "差异", keys: ["Alt+F5"] },
   { id: "diff.prevChange", label: "上一个差异", group: "差异", keys: ["Shift+Alt+F5"] },
+  // Task 5：A 档「与上次保存比较」。`Ctrl+Shift+D` 在本应用此前无人占用（用例里用
+  // `owners()` 断过），与 VS Code 的「Compare with Saved」不同键但同族（VS Code 那两颗
+  // 走的是命令面板，没有默认键位）。
+  { id: "diff.openAgainstSaved", label: "与上次保存比较", group: "差异", keys: ["Ctrl+Shift+D"] },
 
   // ---- 面板 ----
   { id: "panel.splitH", label: "左右分屏", group: "面板", keys: ["Alt+Shift+ArrowRight"] },

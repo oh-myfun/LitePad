@@ -43,6 +43,8 @@ import {
 } from "../ui";
 import { renderSplitview, type PanelRenderData } from "../shell/splitview";
 import { attachTabToPanel, makeDoc, makeInstance, registerDoc } from "../doc-model";
+// B461：差异面的入口（模型层；`src/diff/model.ts` 不回指渲染层，故此处不构成新循环）。
+import { openBaselineDiff } from "../diff/model";
 import { updateTocDrawer } from "../toc";
 import { retargetFindBar, relayoutFindBar } from "../find/findbar";
 import { saveDocCore } from "../io/files";
@@ -210,6 +212,12 @@ export function rebuildLayout(): void {
       if (inst) duplicateTabToPanel(tabId, inst.panelId);
     },
     onDuplicateToSibling: (tabId) => duplicateTabToSibling(tabId),
+    // B461：右键「与上次保存比较」—— 首次构建标签栏（splitview）也要有，与
+    // `tabs/render.ts` 的 `tabstripCallbacks` 同一颗动作，别处不再算一遍基线。
+    onDiffAgainstSaved: (tabId) => {
+      const inst = tabs.get(tabId);
+      if (inst) void openBaselineDiff(inst.docId);
+    },
     // B400：Ctrl+拖动标签 ⇒ 把这份文档当系统文件拖给外部应用
     onDragTabFile: (tabId) => {
       const t = tabs.get(tabId);

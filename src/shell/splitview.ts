@@ -88,6 +88,8 @@ export interface SplitviewCallbacks {
   /** 同源复制标签实例（本面板内 / 相邻面板） */
   onDuplicateTab?: (tabId: number) => void;
   onDuplicateToSibling?: (tabId: number) => void;
+  /** B461：标签右键「与上次保存比较」（置灰判据随 `TabViewData.canDiffAgainstSaved` 走）。 */
+  onDiffAgainstSaved?: (tabId: number) => void;
   onReorderTab?: (panelId: number, fromTabId: number, toTabId: number) => void;
   /** B71：标签右键「左右/上下分屏」——复制一份到新面板（VS Code 的 Split Right/Down） */
   onSplitTab?: (panelId: number, tabId: number, dir: "h" | "v") => void;
@@ -551,6 +553,7 @@ function buildPanel(
     onDragFileOut: cb.onDragTabFile ? (tabId) => cb.onDragTabFile?.(tabId) : undefined,
     onDuplicateTab: (tabId) => cb.onDuplicateTab?.(tabId),
     onDuplicateToSibling: (tabId) => cb.onDuplicateToSibling?.(tabId),
+    onDiffAgainstSaved: (tabId) => cb.onDiffAgainstSaved?.(tabId),
     // B71：右键「左右/上下分屏」。panelId 由闭包带上（tabstrip 只认 tabId）
     onSplitH: (tabId) => cb.onSplitTab?.(panelId, tabId, "h"),
     onSplitV: (tabId) => cb.onSplitTab?.(panelId, tabId, "v"),

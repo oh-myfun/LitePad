@@ -54,6 +54,9 @@ import { closeFolder, promptOpenFolder, toggleExplorer } from "./explorer/panel"
 import { hasRoot } from "./explorer/store";
 import { recentMenuItems } from "./recents/panel";
 import { isMdActive } from "./doc-model";
+// B461 Task 5：A 档（与上次保存比较）的模型出口 —— 判据与建标签都在 `diff/model`，
+// 这一层只负责「菜单/命令面板点下来之后把它接到线上」。
+import { baselineDiffTarget, openBaselineDiff } from "./diff/model";
 import { EditorView } from "@codemirror/view";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
@@ -506,6 +509,13 @@ function setupMenuBar(): void {
     tocChecked: () => !tocPanel.hidden,
     onExplorer: () => toggleExplorer(),
     explorerChecked: () => !explorerPanel.hidden,
+    // B461 Task 5：A 档「与上次保存比较」。置灰判据与键位那条闸同一颗 `baselineDiffTarget`
+    // ⇒ 菜单点得动的时刻，键盘那一条也一定点得动（不会出现两处各算一遍、其中一处算歪）。
+    canDiffAgainstSaved: () => baselineDiffTarget() !== null,
+    onDiffAgainstSaved: () => {
+      const target = baselineDiffTarget();
+      if (target !== null) void openBaselineDiff(target);
+    },
     onFoldAll: () => foldOperation(true),
     onUnfoldAll: () => foldOperation(false),
     onZoomIn: () => void changeFontSize(1),

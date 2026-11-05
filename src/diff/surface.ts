@@ -19,12 +19,25 @@
 
 import { Compartment, EditorState, StateEffect, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
-import { tabs, type Panel } from "../core/app-state";
+import { isWrap, panels, tabs, type Panel } from "../core/app-state";
 import { landVisibleSideAtV } from "../sync-scroll/wire";
 import { DIFF_REFRESH_MS } from "./align";
 import { blockAt, diffBlocks, type DiffBlock } from "./blocks";
 import { diffFace, refreshDiff } from "./face";
 import { notifyDiffBlocks, type DiffSide, type DiffSpec } from "./model";
+
+/**
+ * 右栏那一臂共用的**一个具名槽**（预审 R1 说「Compartment 由本模块创建」；Task 5 把它收成一颗，
+ * 原因是下面这条真实路径）。
+ *
+ * CM6 的 Compartment 值是**按 state** 存的，同一颗槽在两栏各自的 state 里各持各的值，互不干扰。
+ * 而「换标签再换回来」这条路会把**上一颗 surface 的槽值**连同标签快照一起被 `setState` 回活视图
+ * （`src/tabs/lifecycle.ts` 切出时同形回写 `tab.state = view.state`）：那时若新 surface 再
+ * `appendConfig` 一颗自己的新槽，活视图上就同时挂着两臂 —— 旧那臂的 provider 还闭包着拆掉前的
+ * 块表，底色就永久画在错误的行上，而且没人再摘得掉它（拆的是新那一条）。
+ * 共用一颗槽 ⇒ 重挂就是「把这一槽换成我的 provider」，旧臂天然不存在第二份。
+ */
+const rightFaceSlot = new Compartment();
 
 /** 一张差异标签挂在面板上的旁路 surface。 */
 export interface DiffSurface {
@@ -39,7 +52,7 @@ export interface DiffSurface {
   /** 这一格现在那一批块（唯一一份答案：两侧底色、占位块、侧栏条目、跳块都吃它） */
   blocks(): DiffBlock[];
   /**
-   * 两侧同时落位；索引越界夹到首/末块；先 unfoldAround 目标（Task 7 补实现，此时为 no-op）。
+   * 两侧同时落位到各自那段的起始行；索引越界夹到首/末块；先 unfoldAround 目标（Task 7 补实现，此时为 no-op）。
    * 右栏那一发走**同步落位 + 同栈认领**（裁决 R25，见实现处的注释）。
    */
   jumpTo(index: number): void;
@@ -56,6 +69,18 @@ export interface DiffSurface {
   ignoreTrimWhitespace(): boolean;
   /** 翻转后立刻 syncBlocks()（开关改的是「同一份正文算出来的块」，两栏自己跟上） */
   setIgnoreTrimWhitespace(on: boolean): void;
+  /**
+   * 把这一格**已经漂移**的三件事补回「差异格该有的样子」（裁决 R20 / R22 / R23，内部口）。
+   *
+   * 只有 `syncDiffSurface` 点它：那张标签还是这一格现在露出的那张（`spec()` 对得上）时，
+   * 旁路不重建，但下面三条可能在无人认领的期间被改坏 ——
+   *   · 右栏的**折行**被设置页重新打开（`applyWrapToTabs` 重配的是同一颗 Compartment）；
+   *   · 右栏的**主题**被换掉（`applyDarkToTabs` 同上），而左栏吃的是挂上那一刻的现值；
+   *   · `doc.baseline` 被就地换成新正文（保存 / 以磁盘为准重载），而左栏那份**文档**还是旧的。
+   * 第三条最狠：块表是按新基线算的、左栏正文还是旧基线 ⇒ 装饰会画在错的那几行上，且屏上
+   * 看不出所以然（B458 那轮「基线换了而标注没换」的同形病）。
+   */
+  reassert(): void;
   dispose(): void;
 }
 
@@ -114,17 +139,18 @@ function lineStartOf(view: EditorView, line: number): number {
  * 机制一律复用仓库现成的那一族（`previewLock`，`src/preview/wysiwyg.ts:39-49`），不自造锁。
  * 行号（`lineNumbers()`）给：两侧都要能按行号读位置。
  *
- * `theme` 给的是**右栏那颗 state 里主题 Compartment 的现值**（预审 R22）：两栏必须叠在同一颗
- * 基色上，18% 的改动色才在两半看着是同一个颜色，而左栏那一半原先**一颗主题都没装** ⇒ 画在页面
- * 底色上。取现值而不是在这儿再配一份：明暗与主题族的权威只有编辑器那一处（硬写 CSS 底色同样
- * 是第二处真相，dark / HC 族必然跟着错）。位置排在 `lineNumbers()` 之后 —— 与右栏
- * （`makeTabState` 里 gutter 在前、主题在后）同一层叠顺序。
+ * `theme` 给的是**右栏那颗 state 里主题 Compartment 的现值**（预审 R22），并且包在
+ * `themeSlot` 里 —— Task 5 之后主题会在设置页被换掉（`applyDarkToTabs`），那时靠重建整颗
+ * state 来跟色太重，靠 `reconfigure` 换槽值就够；不包槽就等于把「左栏吃什么色」冻在挂上那一刻。
+ * 两栏必须叠在同一颗基色上，18% 的改动色才在两半看着是同一个颜色。取现值而不是在这儿再配
+ * 一份：明暗与主题族的权威只有编辑器那一处（硬写 CSS 底色同样是第二处真相，dark / HC 族必错）。
+ * 位置排在 `lineNumbers()` 之后 —— 与右栏（`makeTabState` 里 gutter 在前、主题在后）同一层叠顺序。
  *
  * `face` 是这一臂装饰（`faceComp.of(diffFace("original", …))`，Task 3）：**CompartmentInstance
  * 必须出现在 state 的扩展清单里**，之后 `faceComp.reconfigure()` 才管得到它（CM6 的
  * `flatten` 只走 base 里出现过的 Compartment，没出现的那一发 reconfigure 是静默空转）。
- * `retarget` 走的是整态换 state，所以那一臂也只能靠这里带进去 —— 换进来的那颗 state
- * 若不含它，「交换左右」之后左栏就没有底色了。折叠不在这里（归 Task 7）。
+ * `retarget` 与「补基线」走的都是整态换 state，所以那一臂也只能靠这里带进去 —— 换进来的那颗
+ * state 若不含它，「交换左右」之后左栏就没有底色了。折叠不在这里（归 Task 7）。
  *
  * ⚠️ 这一栏**不装折行**（R19，见 `createDiffSurface` 里那一手）：折行从一开始就不进来。
  */
@@ -180,6 +206,10 @@ function attachSashDrag(originalEl: HTMLElement, sashEl: HTMLElement): () => voi
  * `opts.ignoreTrimWhitespace` 从 Task 3 起**消费**：它改变的是「同一份正文算出来的块」，
  * 而块只在这里算一次再交给两臂 ⇒ 开关一拨，两侧底色与侧栏条目自己跟上（设计稿 ⑥ 的同源）。
  * 开关本身归 Task 8 那颗图标键，缺省不设 = 不忽略，与 B458 那 4px 一列的口径一致。
+ *
+ * ⚠️ 一格**只许一排旁路**（裁决 R23-3）：进来先拆在任的那颗。不拆的话两颗 live surface 共用
+ * 右栏那一槽与那颗 wrap Compartment，先 dispose 的那颗会把折行还成「它读到的现值」，把还挂着
+ * 的那颗踩坏（底色与占位块也会在同一个 reconfigure 口上互相覆盖）。
  */
 export function createDiffSurface(
   hostEl: HTMLElement,
@@ -187,6 +217,7 @@ export function createDiffSurface(
   spec: DiffSpec,
   opts: { ignoreTrimWhitespace?: boolean } = {},
 ): DiffSurface {
+  disposeDiffSurface(panel);
   hostEl.classList.add("is-diff");
   const originalEl = document.createElement("div");
   originalEl.className = "diff-original";
@@ -198,9 +229,10 @@ export function createDiffSurface(
   hostEl.insertBefore(sashEl, originalEl.nextSibling);
 
   let current = spec;
-  /** 两臂各自的 Compartment（预审 R1：本任务创建、attach 那一刻装上、dispose 时摘掉）。 */
+  /** 左栏那一臂的槽（随 state 进去；`retarget` / 补基线换 state 时重新带上，见 `leftState`）。 */
   const leftFace = new Compartment();
-  const rightFace = new Compartment();
+  /** 左栏主题的槽（R22 取现值 + R23-2 换主题时 `reconfigure` 换掉，不重建整颗 state）。 */
+  const themeSlot = new Compartment();
   /** 右栏那颗 view（`Panel.view` 的本身）：装上/摘掉这一臂都按它寻址，不跟着 `panel.view` 漂。 */
   const right = panel.view?.view ?? null;
   /**
@@ -209,6 +241,7 @@ export function createDiffSurface(
    * `src/editor/editor.ts:186-187`），差异面只是借用同一个出口读一遍 —— 不另配一份。
    */
   const comps = tabs.get(panel.viewTabId ?? panel.activeTabId)?.comps ?? null;
+
   /**
    * 左栏的主题 = 右栏那颗 state 里主题 Compartment 的**现值**（预审 R22）。
    *
@@ -223,6 +256,9 @@ export function createDiffSurface(
     if (!right || !comps) return [];
     return comps.theme.get(right.state) ?? [];
   };
+  /** 挂上/最近一次补色时读到的主题，`reassert` 拿它比「右栏现在吃的是哪颗」。 */
+  let lastTheme: Extension = themeOf();
+
   /**
    * 折行（R19：差异格两栏一律不折行）。
    *
@@ -237,21 +273,26 @@ export function createDiffSurface(
    * 代价明写：差异格里长行要横向滚 —— 这是取舍，不是遗漏。
    *
    * 落点：那颗 wrap Compartment 在右栏的实例上，与设置项**同一个出口**（`applyWrapToTabs` 走的
-   * 就是它）⇒ attach 关掉、dispose 还回它**原来那个值**（出厂就关着的人，detach 之后仍是关着）。
+   * 就是它）⇒ attach 关掉、dispose 还回**设置**里的那一颗。
+   *
+   * ⚠️ 还值为什么读 `isWrap` 而不是读 attach 时那份现值（裁决 R23-1）：`switchTab` 切出时会把
+   * **当前 view state** 回写进 `tab.state`（`src/tabs/lifecycle.ts`），被差异格强制关掉的那一发
+   * 就这样漏进标签快照；下一次 attach 若从 state 读「他原来开着吗」，读到的是 `[]` —— 用户的
+   * 自动换行设置在这个标签上就再也回不来了。设置的权威只有 `isWrap` 那一颗。
    */
   let wrapComp: Compartment | null = null;
-  let wrapWas: Extension | undefined;
   if (right && comps) {
     // 读出 `undefined` = 这颗 Compartment 根本不在那份配置里（面板显示的不是这张标签的 state）
     // ⇒ 这一手整段跳过：给配置里没有的 Compartment 发 reconfigure 等于凭空往 state 里装一颗。
-    const previous = comps.wrap.get(right.state);
-    if (previous !== undefined) {
-      wrapComp = comps.wrap;
-      wrapWas = previous;
-    }
+    if (comps.wrap.get(right.state) !== undefined) wrapComp = comps.wrap;
   }
   const wrapOff = wrapComp ? [wrapComp.reconfigure([])] : [];
-  const wrapBack = wrapComp && wrapWas !== undefined ? [wrapComp.reconfigure(wrapWas)] : [];
+  // ⚠️ **函数**而不是在 attach 那一刻算好的数组：这一发在 dispose 时才落地，而 `isWrap` 可能在
+  // 差异面挂着期间被用户改掉（那颗设置 setter 会先 `applyWrapToTabs` 再 `refreshDiffSurfaces`）。
+  // 提前捕获就等于还回一份过期值 —— 正是 R23-1 要避免的两口径病，只是换了个方向。
+  const wrapBack = () =>
+    wrapComp ? [wrapComp.reconfigure(isWrap ? EditorView.lineWrapping : [])] : [];
+
   /**
    * 「忽略首尾空白」的现值（设计稿 ⑥ 那颗开关）。
    *
@@ -280,7 +321,11 @@ export function createDiffSurface(
   stored = computeBlocks();
   const left = new EditorView({
     parent: originalEl,
-    state: leftState(current, leftFace.of(diffFace("original", () => stored)), themeOf()),
+    state: leftState(
+      current,
+      leftFace.of(diffFace("original", () => stored)),
+      themeSlot.of(lastTheme),
+    ),
   });
   const detachSash = attachSashDrag(originalEl, sashEl);
 
@@ -301,6 +346,22 @@ export function createDiffSurface(
     writeBackRight();
     // Task 9 的侧栏面板从这里领新块表（surface **不 import** 面板模块 —— 单槽注册口，R6）。
     notifyDiffBlocks(current);
+  };
+
+  /**
+   * 左栏那份文档跟着基线走（裁决 R20 的落笔处）。
+   *
+   * `leftText` 是**读取口**，所以块表自己会跟上（`computeBlocks` 现读）；但左栏那颗 view 的
+   * **文档**是挂上那一刻写进去的一份快照，基线被就地换掉（Ctrl+S / 以磁盘为准重载）之后它还是旧的
+   * ⇒ 下一发 `refreshDiff` 会用**新基线**算出的块去给**旧正文**上色。换文档只有 `setState` 这一条
+   * 合法路（`dispatch({changes})` 会被 `leftState` 那道硬闸整发丢掉），换完再补一发 `syncBlocks()`。
+   */
+  const resetLeftDoc = (): void => {
+    lastTheme = themeOf();
+    left.setState(
+      leftState(current, leftFace.of(diffFace("original", () => stored)), themeSlot.of(lastTheme)),
+    );
+    syncBlocks();
   };
 
   /** 右栏光标行（权威侧 = 右栏，设计稿 ⑩·2：左栏有选区也不参与）。 */
@@ -408,24 +469,51 @@ export function createDiffSurface(
     }, DIFF_REFRESH_MS);
   };
 
+  /** 右栏那一臂的内容：装饰 + 键入落点（`updateListener` 是 state facet，只能并进来）。 */
+  const rightArm = (): Extension => [
+    diffFace("modified", () => stored),
+    // 仓库同形先例 `tests/preview-face-helpers.ts:71-76`：塞进 `state.update({extensions})`
+    // 会被静默丢掉，必须走 effect。
+    EditorView.updateListener.of((update) => {
+      if (update.docChanged) scheduleSync();
+    }),
+  ];
+
   if (right) {
-    // 一发事务里两件一起办：关掉这一栏的折行（R19）+ 装上右侧那一臂。
+    // 一发事务里两件一起办：关掉这一栏的折行（R19）+ 把右栏那一槽换成本 surface 的臂。
+    // 槽已在配置里 ⇒ `reconfigure`（顺带把上一颗 surface 留在快照里的旧 provider 顶掉，
+    // 见 `rightFaceSlot` 的注释）；第一次挂 ⇒ `appendConfig` 把槽本身带进配置。
+    const slotPresent = rightFaceSlot.get(right.state) !== undefined;
     right.dispatch({
       effects: [
         ...wrapOff,
-        StateEffect.appendConfig.of(
-          rightFace.of([
-            diffFace("modified", () => stored),
-            // 键入落点：`updateListener` 是 state facet，只能这样并进来（仓库同形先例
-            // `tests/preview-face-helpers.ts:71-76`：塞进 `state.update({extensions})` 会被静默丢掉）。
-            EditorView.updateListener.of((update) => {
-              if (update.docChanged) scheduleSync();
-            }),
-          ]),
-        ),
+        ...(slotPresent
+          ? [rightFaceSlot.reconfigure(rightArm())]
+          : [StateEffect.appendConfig.of(rightFaceSlot.of(rightArm()))]),
       ],
     });
   }
+
+  /**
+   * 补漂移（R20 / R22 / R23-2 的落笔处）。判据一律是「现值 ≠ 我挂上时那个样子」，
+   * 一致就一个字节都不动 —— 这一发挂在 `applyPanelMode` 与 `refreshAll` 两条统一出口上，
+   * 每次刷新都跑，空转必须是便宜的。
+   */
+  const reassert = (): void => {
+    // ① 折行：只有被重新打开时才压回去（设置那一发刚落地时 `applyWrapToTabs` 之后就是这一手）。
+    if (right && wrapComp && comps && comps.wrap.get(right.state) === EditorView.lineWrapping) {
+      right.dispatch({ effects: wrapOff });
+      writeBackRight();
+    }
+    // ② 主题：右栏换了色，左栏必须吃同一颗 —— 两半的 18% 改动色叠在不同基色上就不是同一个颜色。
+    const themeNow = themeOf();
+    if (themeNow !== lastTheme) {
+      lastTheme = themeNow;
+      left.dispatch({ effects: themeSlot.reconfigure(themeNow) });
+    }
+    // ③ 基线：`doc.baseline` 被就地换掉 ⇒ 左栏那份文档得跟上，否则新基线的块画在旧正文上。
+    if (left.state.doc.toString() !== current.leftText()) resetLeftDoc();
+  };
 
   const surface: DiffSurface = {
     left,
@@ -439,9 +527,7 @@ export function createDiffSurface(
       // 那一臂靠 `leftFace.of(...)` 随 state 一起进去（换 state 会把旧 config 整个换掉）；
       // provider 交回的是 `stored`，所以新块表由紧随其后的那一发 `syncBlocks()` 现算 ——
       // 这里不再自己 `diffBlocks`，也不另发 refreshDiff（重算只有一条路：R24）。
-      // 主题同样重新读一遍现值（右栏那颗 state 才是权威：换输入时它可能已经换过档）。
-      left.setState(leftState(current, leftFace.of(diffFace("original", () => stored)), themeOf()));
-      syncBlocks();
+      resetLeftDoc();
     },
     syncBlocks,
     blocks: () => stored,
@@ -455,13 +541,14 @@ export function createDiffSurface(
       // 立刻重算（不等防抖）：这是用户点下来的一发动作，不是键入。
       syncBlocks();
     },
+    reassert,
     dispose: () => {
       cancelSync();
       // 右栏那颗 view **不随旁路销毁**（它是那份文档本身）⇒ 这一臂必须精准摘掉，
-      // 否则底色与占位块会留在一张普通编辑器标签上。CompartmentInstance 已在 base 里，
-      // `reconfigure([])` 就把它清空；那颗 view 已经 destroy 过的话这一发是空转（CM6 内部
-      // 的 `destroyed` 分支），不抛错。折行跟着还回 attach 之前的那个值（R19）。
-      right?.dispatch({ effects: [rightFace.reconfigure([]), ...wrapBack] });
+      // 否则底色与占位块会留在一张普通编辑器标签上。槽值清成空 ⇒ 键入监听与两臂装饰一起走。
+      // 那颗 view 已经 destroy 过的话这一发是空转（CM6 内部的 `destroyed` 分支），不抛错。
+      // 折行跟着还回**设置**里的那一颗（R19 + R23-1：读 `isWrap`，不读被同形回写污染的快照）。
+      right?.dispatch({ effects: [rightFaceSlot.reconfigure([]), ...wrapBack()] });
       detachSash();
       left.destroy();
       originalEl.remove();
@@ -496,7 +583,8 @@ export function diffSurfaceOf(panel: Panel | undefined | null): DiffSurface | nu
  * 这一格现在**该不该**有旁路，以及它该吃哪份 spec（不该有就返回 `null`）。
  *
  * 认「视图实际显示的那张标签」（`viewTabId`，缺省才落回 `activeTabId`）：旁路是挂在那颗
- * 右栏 view 旁边的对照物，跟着实际露出来的内容走才不会「显示 A、对照 B」。
+ * 右栏 view 旁边的对照物，跟着实际露出来的内容走才不会「显示 A、对照 B」（预审 R13，
+ * 与 B232/B355 那条「按 `viewTabId` 寻址，否则会写到别人身上」同口径）。
  * `panel.view` 不在（空面板 / 已拆）时也一律不给 —— 没有右栏就没有可比的那一侧。
  */
 function wantedSpec(panel: Panel): DiffSpec | null {
@@ -506,17 +594,22 @@ function wantedSpec(panel: Panel): DiffSpec | null {
 }
 
 /**
- * 挂/拆的**唯一**判据入口：现状与「该不该有」不一致才动手。
+ * 挂/拆/补的**唯一**判据入口（Task 5 把三条同形路径接全：换标签不换面板、切档、重建布局）。
  *
- * Task 1 接的三个点都在 `src/tabs/lifecycle.ts`：`mountView`（挂载那一刻挂）与
- * `rebuildLayout` 的销毁循环、`disposePanel`（拆）。Task 5 会把「换标签不换面板」那条同形路
- * 也接进来（`applyPanelMode` 的末尾 —— DOM 已就位那一刻）。
+ * 调用点（裁决 R13 / R14）：
+ *   · `src/markdown.ts` 的 `applyPanelMode` **末尾**（DOM 已就位那一刻 —— 渲染回调跑在
+ *     append 之前那条老坑：早动手就量不到、也挂不上）；
+ *   · `src/tabs/lifecycle.ts` 的 `mountView` / `rebuildLayout` / `disposePanel`（Task 1 接的）；
+ *   · `refreshDiffSurfaces()`（`ui.ts` 的 `refreshAll` 统一出口，保存路径不经 `applyPanelMode`）。
  * `switchTab` **不加** kind 分支：它已经靠 `rebuildLayout` / `setState` 两条路走，
  * 分支加在那里等于把 B232/B355 那两条顺序纪律再搅一遍。
  *
  * ⚠️ 判「是不是这张标签的旁路」用 spec 的**对象身份**：`tab.diff` 与 `surface.spec()` 必须
  * 指向同一个对象（Task 6 的「交换左右」走 `retarget`，那边要同步把新 spec 写回 `tab.diff`）。
  * 对不上就重建 —— 宁可重建，也不许把 A 标签的对照物留在 B 标签上。
+ *
+ * 一致时**不是**直接返回：还要走一发 `reassert()` 把「设置页换了折行/主题」与「基线被就地
+ * 换掉」这三处漂移补上（R20 / R23）。这一发是读值比较，空转很便宜。
  */
 export function syncDiffSurface(panel: Panel): void {
   const want = wantedSpec(panel);
@@ -526,8 +619,21 @@ export function syncDiffSurface(panel: Panel): void {
     return;
   }
   if (have) {
-    if (have.spec() === want) return; // 一致 ⇒ 一个字都不动（防每发刷新都重建）
+    if (have.spec() === want) {
+      have.reassert();
+      return;
+    }
     disposeDiffSurface(panel);
   }
   createDiffSurface(panel.bodyEl as HTMLElement, panel, want);
+}
+
+/**
+ * 全窗口补一遍（`ui.ts` 的 `refreshAll` 出口，与 `refreshGutterDiffBaselines` 同一位、同一理）：
+ * `doc.baseline` 被换掉时 CM6 不会自己醒，保存那条路又不经过 `applyPanelMode`。
+ * 遍历的是在册面板 —— 隐藏实例（没有 `panel.view`）天然被 `wantedSpec` 闸掉，等它被挂载时
+ * 由 `syncDiffSurface` 自己补第一发。
+ */
+export function refreshDiffSurfaces(): void {
+  for (const panel of panels.values()) syncDiffSurface(panel);
 }
