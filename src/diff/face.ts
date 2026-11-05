@@ -9,9 +9,11 @@
 //
 // 分两半：
 //   · `sideLineMarks` / `sideGaps` 是纯函数（一栏 ↔ 一批行/缝），单测直接钉向量；
-//   · `diffFace(side, blocks)` 是挂到 view 上的那一臂（`StateField` + `ViewPlugin`），
-//     把纯函数的结果誊成 CM6 装饰。键入期不重算（只 `value.map(tr.changes)`），
-//     停手 `DIFF_REFRESH_MS` 才重算一次 —— 与 `gutterDiffField` 同一条纪律（B398）。
+//   · `diffFace(side, blocks)` 是挂到 view 上的那一臂（就一颗 `StateField`，装饰由它 provide），
+//     把纯函数的结果誊成 CM6 装饰。键入期不重算（只 `value.map(tr.changes)`），而
+//     「什么时候该重算」由持有两颗 view 的 `surface.ts` 定（停手 `DIFF_REFRESH_MS` 一发
+//     `refreshDiff`）—— 与 `gutterDiffField` 同一条纪律（B398），但**本文件自己不排定时器**
+//     （R24：防抖只许有一份）。
 
 import {
   Facet,
@@ -22,8 +24,7 @@ import {
   type RangeSet,
   type Text,
 } from "@codemirror/state";
-import { Decoration, EditorView, ViewPlugin, WidgetType, type ViewUpdate } from "@codemirror/view";
-import { DIFF_REFRESH_MS } from "./align";
+import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DiffBlock, DiffKind } from "./blocks";
 import type { DiffSide } from "./model";
 
@@ -108,9 +109,13 @@ export function sideGaps(blocks: DiffBlock[], side: DiffSide): SideGap[] {
 /**
  * 「按 provider 现在给的这批块重画一次」。
  *
- * 谁发：① 本栏自己那发防抖（正文动了，停手 `DIFF_REFRESH_MS` 之后纠偏），
- * ② `surface.ts` 那一发 —— **对栏**那颗 view 看不见这边的键入，只能由持有两颗 view 的
- * surface 补，两侧才会同一刻同源。正文没动而基线动了那一类（存盘、外部重载）同样发这一发。
+ * 谁发：**只有 `surface.ts` 那一处** —— 它持有两颗 view，键入停手 `DIFF_REFRESH_MS` 之后
+ * 自己重算一次块表，再把这一发同时点进两侧（对栏那颗 view 看不见这边的键入，两侧才会
+ * 同一刻同源）。正文没动而基线动了那一类（存盘、外部重载、换输入）也发这一发。
+ *
+ * ⚠️ 本文件**自己不排定时器**（裁决 R24）：原先这一臂里藏着一颗同款防抖，与 surface 那颗
+ * 并存在 ⇒ 同一次停手把 `diffBlocks` 算两遍。防抖只许有一份，而那份的主人是持有两颗 view
+ * 的 surface；`diffFace` 于是只认「点名重画」，不认「什么时候该重画」。
  *
  * 与 `refreshGutterDiff` 同形：CM6 不会自己醒，得点名。
  */
@@ -223,42 +228,13 @@ const diffFaceField = StateField.define<RangeSet<Decoration>>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
-/** 本栏正文自己动了 ⇒ 停手 `DIFF_REFRESH_MS` 再按 provider 重算一次（只发给自己那一栏）。 */
-const faceRefresher = ViewPlugin.fromClass(
-  class {
-    private timer: ReturnType<typeof setTimeout> | null = null;
-
-    constructor(private view: EditorView) {}
-
-    update(update: ViewUpdate): void {
-      if (update.docChanged) this.schedule();
-    }
-
-    destroy(): void {
-      this.cancel();
-    }
-
-    private cancel(): void {
-      if (this.timer !== null) clearTimeout(this.timer);
-      this.timer = null;
-    }
-
-    private schedule(): void {
-      this.cancel();
-      this.timer = setTimeout(() => {
-        this.timer = null;
-        this.view.dispatch({ effects: refreshDiff.of(null) });
-      }, DIFF_REFRESH_MS);
-    }
-  },
-);
-
 /**
  * 一臂装饰：装在**某一栏**那颗 view 上，吃 `blocks()` 交出来的块。
  *
  * 用法（预审 R1）：两颗 view 各装一臂、各自 `side`，由 `surface.ts` 在挂旁路那一刻通过自己
- * 创建的 `Compartment` 装上/拆掉。本文件不建 view、不认识文档模型。
+ * 创建的 `Compartment` 装上/拆掉。本文件不建 view、不认识文档模型，也**不排任何定时器**
+ * （重画的时机归 surface，见 `refreshDiff` 那一段）。
  */
 export function diffFace(side: DiffSide, blocks: () => DiffBlock[]): Extension {
-  return [faceSide.of(side), faceBlocks.of(blocks), diffFaceField, faceRefresher];
+  return [faceSide.of(side), faceBlocks.of(blocks), diffFaceField];
 }

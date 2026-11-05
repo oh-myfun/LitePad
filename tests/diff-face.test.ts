@@ -93,9 +93,10 @@ describe("B461 · sideLineMarks / sideGaps：一块在两栏各落在哪些行",
 /**
  * 现场清单：用例结束统一拆。
  *
- * ⚠️ 必须 `destroy` / `dispose`，不能只把 `document.body` 清空就完事 —— 那一臂的 ViewPlugin
- * 里有一颗防抖计时器，插件不 destroy 就没人取消它，下一发 `refreshDiff` 会打在已经作废的
- * 视图上（`gutterDiffView` 同形）。
+ * ⚠️ 必须 `destroy` / `dispose`，不能只把 `document.body` 清空就完事：装进 view 的那一臂
+ * 与 surface 的防抖计时器都靠拆这一手收口（R24 之后**只有 surface 那一颗**定时器；原先
+ * `face.ts` 在自己那一臂里还藏着一颗，插件不 destroy 就没人取消它，下一发会打在已经作废的
+ * 视图上 —— 那一颗已随 R24 摘掉，这条纪律留着是因为拆现场这件事本身没变）。
  */
 const live: Array<() => void> = [];
 

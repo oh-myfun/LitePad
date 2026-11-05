@@ -254,6 +254,8 @@ import {
   setDocSyncMode,
 } from "./sync-scroll/wire";
 import { logViewport } from "./core/viewport";
+// B461 Task 4：差异步进按的那一格旁路（`step(±1)` 与上下文闸都从这颗寻址口走）。
+import { diffSurfaceOf } from "./diff/surface";
 import {
   bootMark,
   reportBoot,
@@ -508,6 +510,20 @@ function onGlobalKeydown(e: KeyboardEvent): void {
 }
 
 /**
+ * 这一格现在显示的到底是不是一张差异标签（B461 Task 4 的上下文闸）。
+ *
+ * 两个条件都要：这一格**挂着旁路**（`diffSurfaceOf` 拿得到那颗 surface，两栏同屏才有可比的东西），
+ * 而且**露出来的那张**标签是 `kind: "diff"`（按 `viewTabId` 寻址，与 `wantedSpec` 同一个口径 ——
+ * 差异标签只挂在实际显示那一侧旁边）。任一条不成 ⇒ 不抢键，把用户按下的那一发原样还给系统。
+ */
+function diffTabActive(): boolean {
+  const panel = activePanel();
+  if (!panel || !diffSurfaceOf(panel)) return false;
+  const tab = tabs.get(panel.viewTabId ?? panel.activeTabId);
+  return !!tab && tab.kind === "diff";
+}
+
+/**
  * 少数命令只在特定上下文成立；不成立时**不抢键**，把事件还给编辑器。
  * 典型是 Ctrl+/：CodeMirror 用它切换注释（JSON/JS 等格式很有用），
  * 只有 Markdown 才把它当「源码 / 预览切换」。
@@ -521,6 +537,10 @@ function shortcutApplies(id: string): boolean {
       const t = activeTab();
       return !!t && isMdTab(t) && t.viewMode !== "source";
     }
+    // B461：差异步进只在「这一格正显示一张差异标签」时成立（设计稿 ⑩·2 的权威侧那一格）。
+    case "diff.nextChange":
+    case "diff.prevChange":
+      return diffTabActive();
     case "panel.splitH":
     case "panel.splitV":
     case "panel.close":
@@ -636,6 +656,14 @@ function runShortcut(id: string): void {
       break;
     case "view.zoomReset":
       void changeFontSize(null);
+      break;
+    // B461：差异步进。闸（`shortcutApplies`）已经保证这一格挂着旁路，`?.` 只是兜
+    // 命令面板那一路（面板里点得到，但当时那一格可能已经不是差异标签）。
+    case "diff.nextChange":
+      diffSurfaceOf(activePanel())?.step(1);
+      break;
+    case "diff.prevChange":
+      diffSurfaceOf(activePanel())?.step(-1);
       break;
     case "panel.splitH":
       if (activePanel()) void splitActivePanel(activePanelId, "h");

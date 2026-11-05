@@ -25,9 +25,14 @@
 //
 // ⚠️ 「拿源码文本当结构判据」是本仓库的既定契约层（`explorer-contract` / `gutter-diff-wiring` /
 // `sync-scroll-sequence` / `gutter-diff-style` 同形），钉的是跨文件不变量，不是实现细节。
-import { beforeEach, describe, expect, it } from "vitest";
+//
+// Task 4 在下面追加的那一块钉的是**跳块与步进**：两侧同时落位到各自那段的起始行、落位走
+// 既有「显式落位」那一类（认领这一发造成的滚动，绝不 `syncTo` 广播给同文档的别的面板）、
+// 键入期只映射不重算（停手 `DIFF_REFRESH_MS` 才算一次，且全差异面只有 surface 那一颗定时器）。
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { fnBody, ruleBlock, stripCssComments } from "./static";
+import type { EditorView } from "@codemirror/view";
+import { fnBody, ruleBlock, stripCssComments, stripLineComments } from "./static";
 import { tabs, type Panel, type Tab } from "../src/core/app-state";
 import { createEditor, makeTabState } from "../src/editor/editor";
 import { perfProfileFor } from "../src/editor/perf";
@@ -36,7 +41,10 @@ import {
   disposeDiffSurface,
   diffSurfaceOf,
   syncDiffSurface,
+  type DiffSurface,
 } from "../src/diff/surface";
+import { DIFF_REFRESH_MS } from "../src/diff/align";
+import { setDiffBlocksListener } from "../src/diff/model";
 import type { DiffSpec } from "../src/diff/model";
 
 const srcOf = (p: string): string => readFileSync(p, "utf-8").replace(/\r\n/g, "\n");
@@ -288,5 +296,285 @@ describe("B461 · 差异标签的落点（Task 1）", () => {
     expect(life).toMatch(/disposeDiffSurface\(panel\)/); // disposePanel 拆旁路
     expect(fnBody(life, "switchTab")).not.toMatch(/kind\s*===\s*"diff"|syncDiffSurface/);
     expect(srcOf("src/main.ts")).toMatch(/diff\/diff\.css/); // 样式接进 import 链
+  });
+});
+
+// --------------------------------------------------------------------------- #
+// Task 4 —— 跳块、步进与「落位绕开同步滚动」
+// --------------------------------------------------------------------------- #
+
+/**
+ * 现场清单：本块建的旁路在 `afterEach` 统一拆。
+ *
+ * ⚠️ 与 `tests/diff-face.test.ts` 同一纪律：surface 里那颗防抖计时器只有 `dispose()` 会
+ * `clearTimeout`（R24 之后全差异面**只有这一颗**），不拆就会带着未触发的定时器出这条用例，
+ * 下一发 `syncBlocks` 打在已经作废的视图上。
+ */
+const live: Array<() => void> = [];
+
+/** 左栏正文由调用方给死的一张差异标签的输入描述（右栏正文归那颗既有的 view）。 */
+function specOf(leftText: string): DiffSpec {
+  return {
+    tier: "baseline",
+    docId: 100,
+    leftText: () => leftText,
+    leftName: "a.md（上次保存）",
+    rightName: "a.md",
+    leftPath: null,
+  };
+}
+
+/**
+ * 一挂就位的差异格：`.panel-host` + `.panel-editor` + 右栏那颗既有的 view + 生产的旁路。
+ *
+ * 走的是 `mountView` 那几步的同形复刻（与本文件 Task 1 那三条一致）：判据本身是生产代码，
+ * 测试里不写第二份挂法。`tab.state` 一起带上，是为了 `syncBlocks` / `jumpTo` 那条
+ * 「右栏快照回写」的路**真的有个标签可写**（写成 `null` 就只是空转，判不到东西）。
+ */
+function mountDiffPair(leftText: string, rightText: string): { panel: Panel; s: DiffSurface } {
+  const hostEl = document.createElement("div");
+  hostEl.className = "panel-host";
+  document.body.appendChild(hostEl);
+  const editorEl = document.createElement("div");
+  editorEl.className = "panel-editor";
+  hostEl.appendChild(editorEl);
+  const { state, comps } = makeTabState(
+    rightText,
+    null,
+    { dark: false, wrap: true, perf: perfProfileFor("normal") },
+    () => {},
+  );
+  const diff = specOf(leftText);
+  const tab: Tab = {
+    tabId: nextTabId++,
+    docId: 100,
+    panelId: 0,
+    comps,
+    state,
+    viewMode: "source",
+    kind: "diff",
+    diff,
+    scrollV: 1,
+  };
+  tabs.set(tab.tabId, tab);
+  const panel: Panel = {
+    panelId: 0,
+    tabs: [tab.tabId],
+    activeTabId: tab.tabId,
+    view: createEditor(editorEl, state),
+    viewTabId: tab.tabId,
+    bodyEl: hostEl,
+    diffSurface: null,
+  };
+  const s = createDiffSurface(hostEl, panel, diff);
+  // 走**生产的**拆法：用例里已经 `s.dispose()` 过的那一格，`panel.diffSurface` 早已归零，
+  // 这里就是空转（不许在已经 destroy 的左栏上再 destroy 一次）。
+  live.push(() => disposeDiffSurface(panel));
+  return { panel, s };
+}
+
+/** 三块（两侧都非空 ⇒ 每块都落在真行上）：基线 1–9，当前改了第 1、4、8 行。 */
+function mountedSurfaceWithThreeBlocks(): { panel: Panel; s: DiffSurface } {
+  return mountDiffPair("1\n2\n3\n4\n5\n6\n7\n8\n9", "1A\n2\n3\n4B\n5\n6\n7\n8C\n9");
+}
+
+/** 打一个字（走真那条 `dispatch`，与 CM 的输入处理同一个入口）。 */
+function typeChar(view: EditorView, ch: string): void {
+  view.dispatch({ changes: { from: view.state.selection.main.head, insert: ch } });
+}
+
+const advance = (ms: number): Promise<unknown> => vi.advanceTimersByTimeAsync(ms);
+
+/**
+ * 「块表重算了几次」的计数口 —— 由**测试自己**包一层（简报 Step 4 明令生产代码里不许留计数器）。
+ *
+ * 包的正是 `notifyDiffBlocks` 那一格注册槽：`syncBlocks()` 每跑一次广播一次（Task 9 的侧栏
+ * 面板也从这里领新块表），于是读数就是「重算了几遍」，而不是「我记得调了几次」。
+ */
+function countSyncBlocks(): () => number {
+  let n = 0;
+  setDiffBlocksListener(() => {
+    n += 1;
+  });
+  return () => n;
+}
+
+afterEach(() => {
+  for (const stop of live.splice(0)) stop();
+  setDiffBlocksListener(null);
+  vi.useRealTimers();
+});
+
+describe("B461 · 跳块与步进（Task 4）", () => {
+  it("B461 · jumpTo(1) 把左右光标分别落在各自那块的起始行", () => {
+    const { panel, s } = mountDiffPair("1\n2\n3\n4\n5", "1\n2\n3A\n4\n5B");
+    s.syncBlocks();
+    expect(s.blocks()).toHaveLength(2);
+    s.jumpTo(1);
+    const rightLine = panel.view!.view.state.doc.lineAt(
+      panel.view!.view.state.selection.main.head,
+    ).number;
+    const leftLine = s.left.state.doc.lineAt(s.left.state.selection.main.head).number;
+    expect(rightLine).toBe(5); // modifiedStart
+    expect(leftLine).toBe(5); // originalStart
+  });
+
+  it("B461 · 跳块不许调 syncCoordinator.syncTo（同一文档的别的面板不该跟着跳）", () => {
+    expect(srcOf("src/diff/surface.ts")).not.toMatch(/syncTo\s*\(/);
+    expect(srcOf("src/diff/surface.ts")).toContain("claimVisibleHere(");
+  });
+
+  it("B461 · step(1) 往后找、末块之后夹住；step(-1) 往回", () => {
+    const { s } = mountedSurfaceWithThreeBlocks();
+    s.jumpTo(0);
+    expect(s.activeIndex()).toBe(0);
+    s.step(1);
+    expect(s.activeIndex()).toBe(1);
+    s.step(1);
+    s.step(1);
+    s.step(1);
+    expect(s.activeIndex()).toBe(2);
+    s.step(-1);
+    expect(s.activeIndex()).toBe(1);
+  });
+
+  it("B461 · activeIndex 只认右栏光标（左栏那一侧再点也不抢权威，设计稿 ⑩·2）", () => {
+    const { panel, s } = mountedSurfaceWithThreeBlocks();
+    const rightCaretTo = (line: number): void => {
+      panel.view!.view.dispatch({
+        selection: { anchor: panel.view!.view.state.doc.line(line).from },
+      });
+    };
+    s.jumpTo(1);
+    expect(s.activeIndex()).toBe(1);
+    // 左栏光标跑到别的一块上：权威仍是右栏 ⇒ 读数不许变（⑩·2 那条闸门）
+    s.left.dispatch({ selection: { anchor: s.left.state.doc.line(9).from } });
+    expect(s.activeIndex(), "左栏光标不参与").toBe(1);
+    // 右栏光标挪到两块之间（谁都没包住）⇒ -1
+    rightCaretTo(2);
+    expect(s.activeIndex(), "光标在块外 ⇒ 没有那块").toBe(-1);
+  });
+
+  it("B461 · jumpTo 索引越界夹到首/末块（不环绕）", () => {
+    const { panel, s } = mountedSurfaceWithThreeBlocks();
+    const line = (): number =>
+      panel.view!.view.state.doc.lineAt(panel.view!.view.state.selection.main.head).number;
+    s.jumpTo(99);
+    expect(line(), "往后越界 ⇒ 末块（右栏第 8 行）").toBe(8);
+    s.jumpTo(-5);
+    expect(line(), "往前越界 ⇒ 首块（右栏第 1 行）").toBe(1);
+  });
+
+  it("B461 · 空段落两侧都落「块前缘那行的行首」，行号越界夹到本栏末行", () => {
+    // 只在右栏末尾多打一行 ⇒ 这是一块 insert：左栏那一侧是**空段**（original 4..3）。
+    // 落点按 `end + 1` = 第 4 行，而左栏只有 3 行 ⇒ 夹到末行（那一发不许抛，也不许落空）。
+    const { panel, s } = mountDiffPair("A\nB\nC", "A\nB\nC\nD");
+    s.syncBlocks();
+    expect(s.blocks()).toHaveLength(1);
+    expect(s.blocks()[0].kind).toBe("insert");
+    s.jumpTo(0);
+    expect(s.left.state.doc.lineAt(s.left.state.selection.main.head).number).toBe(3);
+    expect(panel.view!.view.state.doc.lineAt(panel.view!.view.state.selection.main.head).number)
+      // 右栏那一侧非空 ⇒ 落自己那段的起始行
+      .toBe(4);
+  });
+
+  it("B461 · 删掉的行（右栏空段）不留「按上一个差异原地不动」的死角", () => {
+    // 两块：第 2 行是**改**（两侧都有真行），第 4 行是**删掉的**（右栏那一侧是空段 4..3，
+    // 落点 `modifiedEnd + 1` = 第 4 行 —— 正是光标站的那一行）。
+    const { panel, s } = mountDiffPair("1\n2\n3\nX\n5", "1\n2Z\n3\n5");
+    const line = (): number =>
+      panel.view!.view.state.doc.lineAt(panel.view!.view.state.selection.main.head).number;
+    const leftLine = (): number => s.left.state.doc.lineAt(s.left.state.selection.main.head).number;
+    expect(s.blocks().map((b) => b.kind)).toEqual(["modify", "delete"]);
+    s.jumpTo(1);
+    expect(leftLine(), "左栏那一行就是被删掉的 X").toBe(4);
+    expect(line(), "那道删除缝在右栏落在块前缘那行的**下一行**").toBe(4);
+    expect(s.activeIndex(), "空段包不住自己的落点 ⇒ 谁都没包住").toBe(-1);
+    s.step(-1);
+    expect(line(), "往回必须真动起来（改块在右栏第 2 行），不许落回同一行").toBe(2);
+    expect(s.activeIndex()).toBe(0);
+    s.step(1);
+    expect(line(), "再往前又是那道删除缝").toBe(4);
+  });
+
+  it("B461 · syncBlocks / jumpTo 都把右栏那一发写回标签快照（切走再回来不丢状态）", () => {
+    const { panel, s } = mountedSurfaceWithThreeBlocks();
+    const tab = tabs.get(panel.viewTabId!)!;
+    s.syncBlocks();
+    expect(tab.state, "syncBlocks 之后快照就是那颗 view 的现态").toBe(panel.view!.view.state);
+    s.jumpTo(2);
+    expect(tab.state, "落位那一发（改了选区）同样回写").toBe(panel.view!.view.state);
+    expect(tab.state.selection.main.head, "回写的必须是**落位之后**那一份").toBe(
+      panel.view!.view.state.selection.main.head,
+    );
+  });
+
+  it("B461 · setIgnoreTrimWhitespace 一拨就立刻重算并广播（不等防抖）", () => {
+    const { s } = mountDiffPair("1\n  2  \n3", "1\n2\n3");
+    const calls = countSyncBlocks();
+    expect(s.ignoreTrimWhitespace(), "缺省不忽略，与 B458 那 4px 一列同口径").toBe(false);
+    s.syncBlocks();
+    expect(s.blocks(), "关着时那行缩进就是改动").toHaveLength(1);
+    s.setIgnoreTrimWhitespace(true);
+    expect(s.ignoreTrimWhitespace()).toBe(true);
+    expect(s.blocks(), "忽略首尾空白之后两份正文等价 ⇒ 没有块").toHaveLength(0);
+    expect(calls(), "翻开关 = 用户的一发动作 ⇒ 立刻广播，不排定时器").toBe(2);
+    s.setIgnoreTrimWhitespace(true);
+    expect(calls(), "同一个值再拨一次不重算").toBe(2);
+  });
+});
+
+describe("B461 · 键入期只映射不重算（Task 4 Step 3/4 + 裁决 R24）", () => {
+  it("B461 · 连打 20 发只在停手后算一次（同 B458 那条口径）", async () => {
+    vi.useFakeTimers();
+    const { panel, s } = mountedSurfaceWithThreeBlocks();
+    const calls = countSyncBlocks();
+    expect(calls(), "挂上旁路那一刻不广播（块表已现算好交给两臂）").toBe(0);
+    for (let i = 0; i < 20; i++) typeChar(panel.view!.view, "x");
+    expect(calls(), "键入期只把装饰跟着改动映射，一次都不重算").toBe(0);
+    await advance(DIFF_REFRESH_MS - 1);
+    expect(calls(), "差一毫秒也没到点").toBe(0);
+    await advance(1);
+    expect(calls(), "停手到点才算那一次").toBe(1);
+    expect(s.blocks().length, "重算吃的是**打完字之后**那两份正文").toBeGreaterThan(0);
+    s.dispose();
+  });
+
+  it("B461 · 到点就收口：没有第二次键入，就不会有第二次重算", async () => {
+    vi.useFakeTimers();
+    const { panel, s } = mountedSurfaceWithThreeBlocks();
+    const calls = countSyncBlocks();
+    panel.view!.view.dispatch({ changes: { from: 0, insert: "x" } });
+    panel.view!.view.dispatch({ changes: { from: 0, insert: "y" } });
+    await advance(DIFF_REFRESH_MS);
+    expect(calls()).toBe(1);
+    await advance(DIFF_REFRESH_MS);
+    expect(calls(), "定时器不自己续期（否则会每 200ms 重算一遍全量）").toBe(1);
+    s.dispose();
+  });
+
+  it("B461 · dispose 之后那颗定时器就没了（不许在已拆的视图上重算）", async () => {
+    vi.useFakeTimers();
+    const { panel, s } = mountedSurfaceWithThreeBlocks();
+    const calls = countSyncBlocks();
+    panel.view!.view.dispatch({ changes: { from: 0, insert: "x" } });
+    s.dispose();
+    await advance(DIFF_REFRESH_MS * 3);
+    expect(calls(), "dispose 里 clearTimeout 那一发必须真生效").toBe(0);
+  });
+
+  it("B461 · 防抖只此一家（R24）：face.ts 不排定时器，块表也不拿全文串做比较", () => {
+    const face = stripLineComments(srcOf("src/diff/face.ts"));
+    expect(face, "臂内那颗 200ms 定时器已摘：重算只由 surface 那一处驱动").not.toMatch(
+      /setTimeout|setInterval|ViewPlugin/,
+    );
+    expect(face, "摘掉定时器之后 face.ts 连那颗常数都不需要了").not.toMatch(/from "\.\/align"/);
+    const code = stripLineComments(srcOf("src/diff/surface.ts"));
+    expect(code.match(/setTimeout\(/g) ?? [], "surface 是全差异面唯一的一颗定时器").toHaveLength(1);
+    expect(code, "不许再拿两份全文串比较当缓存：syncBlocks 自己就是那一份答案").not.toMatch(
+      /cache\.(left|right)\s*===/,
+    );
+    expect(code, "延迟只 import 那颗常数，不留第二份 200").not.toMatch(/,\s*200\s*\)/);
   });
 });

@@ -20,10 +20,11 @@
 import { Compartment, EditorState, StateEffect, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import { tabs, type Panel } from "../core/app-state";
+import { claimVisibleHere } from "../sync-scroll/wire";
 import { DIFF_REFRESH_MS } from "./align";
-import { diffBlocks, type DiffBlock } from "./blocks";
+import { blockAt, diffBlocks, type DiffBlock } from "./blocks";
 import { diffFace, refreshDiff } from "./face";
-import type { DiffSpec } from "./model";
+import { notifyDiffBlocks, type DiffSide, type DiffSpec } from "./model";
 
 /** 一张差异标签挂在面板上的旁路 surface。 */
 export interface DiffSurface {
@@ -33,6 +34,19 @@ export interface DiffSurface {
   spec(): DiffSpec;
   /** B 档「交换左右」就地换输入用（不换 tabId；Task 6 拥有调用者） */
   retarget(spec: DiffSpec): void;
+  /** 现读左右两份正文 → diffBlocks → 给两颗 view 各发 refreshDiff */
+  syncBlocks(): void;
+  /** 这一格现在那一批块（唯一一份答案：两侧底色、占位块、侧栏条目、跳块都吃它） */
+  blocks(): DiffBlock[];
+  /** 两侧同时落位；索引越界夹到首/末块；先 unfoldAround 目标（Task 7 补实现，此时为 no-op） */
+  jumpTo(index: number): void;
+  /** 以右栏光标行为起点找下一/上一块 */
+  step(dir: 1 | -1): void;
+  /** 右栏光标包住的那块；没有 ⇒ -1 */
+  activeIndex(): number;
+  ignoreTrimWhitespace(): boolean;
+  /** 翻转后立刻 syncBlocks()（开关改的是「同一份正文算出来的块」，两栏自己跟上） */
+  setIgnoreTrimWhitespace(on: boolean): void;
   dispose(): void;
 }
 
@@ -42,6 +56,29 @@ const MAX_SHARE = 85;
 
 function clampShare(share: number): number {
   return Math.min(MAX_SHARE, Math.max(MIN_SHARE, share));
+}
+
+/**
+ * 落位的那一行（1-based）：非空段落落自己那段的起始行；**空段**（`start > end`，
+ * 即这一侧根本没有真行）落「块前缘那行的行首」= `end + 1`（设计稿 ⑥·面板，与
+ * `blocks.ts` 的空段表示法同一口径 —— 那里恒有 `start = end + 1`）。
+ */
+function landingLine(b: DiffBlock, side: DiffSide): number {
+  const start = side === "modified" ? b.modifiedStart : b.originalStart;
+  const end = side === "modified" ? b.modifiedEnd : b.originalEnd;
+  return start > end ? end + 1 : start;
+}
+
+/**
+ * 某一行的行首位置，行号越界就夹到本栏的首/末行。
+ *
+ * 为什么必须夹：块表是按 provider 那一份正文算的，而**对栏可能先动了一步**（右栏刚打进去
+ * 一行、左栏的基线还没跟上），那一发的落点行号就不在这份文档里。`doc.line(n)` 越界是直接
+ * 抛错，落位这一族里最坏的写法就是把一发异常丢进用户的按键链路。
+ */
+function lineStartOf(view: EditorView, line: number): number {
+  const n = Math.min(Math.max(line, 1), view.state.doc.lines);
+  return view.state.doc.line(n).from;
 }
 
 /**
@@ -204,40 +241,143 @@ export function createDiffSurface(
   const wrapOff = wrapComp ? [wrapComp.reconfigure([])] : [];
   const wrapBack = wrapComp && wrapWas !== undefined ? [wrapComp.reconfigure(wrapWas)] : [];
   /**
+   * 「忽略首尾空白」的现值（设计稿 ⑥ 那颗开关）。
+   *
+   * 它改变的是「同一份正文算出来的块」，而块只在这里算一次再交给两臂 ⇒ 开关一拨，
+   * 两侧底色、占位块与侧栏条目自己跟上（同源口径）。缺省不设 = 不忽略，与 B458
+   * 那 4px 一列一致；那颗图标键归 Task 8。
+   */
+  let ignoreWs = opts.ignoreTrimWhitespace ?? false;
+  /**
    * 「现在这批块是什么」的唯一一份答案（设计稿 ⑥ 的同源口径）。
    *
-   * 两臂各问各的读取口，但 diff 只该算一遍 ⇒ 按两侧正文缓存：正文没变就交回同一摞块，
-   * 变了才现算（`diffBlocks` 是纯函数，两份输入一致绝无第二种结果）。Review Focus 5
-   * 「两份 3MB 级内容同屏不许冻界面」靠的是这一格，而不是「谁记得少调一次」。
+   * 只有一份、只在 `syncBlocks()` 与挂上旁路那一刻算：两臂的读取口交回的是**这同一摞**
+   * （`face.ts` 的 provider 是函数，不是快照），侧栏面板（Task 9）经 `notifyDiffBlocks`
+   * 领到的也是它。于是「同刻跟上」不会有第二份真相，也不需要再拿两份全文串做比较来
+   * 判「正文动过没有」—— 那一格缓存连同臂内那颗防抖一起由裁决 R24 撤掉：
+   * **谁重算由 surface 这一处定**，别处只消费结果。
    */
-  let cache: { left: string; right: string; blocks: DiffBlock[] } | null = null;
-  const blocksOf = (): DiffBlock[] => {
+  let stored: DiffBlock[] = [];
+  const computeBlocks = (): DiffBlock[] =>
     // 没有右栏 = 没有可比的那一侧（`wantedSpec` 已经闸过，这里只兜直接调用那条测试路）。
-    if (!right) return [];
-    const leftText = current.leftText();
-    const rightText = right.state.doc.toString();
-    if (cache && cache.left === leftText && cache.right === rightText) return cache.blocks;
-    cache = { left: leftText, right: rightText, blocks: diffBlocks(leftText, rightText, opts) };
-    return cache.blocks;
-  };
+    right
+      ? diffBlocks(current.leftText(), right.state.doc.toString(), {
+          ignoreTrimWhitespace: ignoreWs,
+        })
+      : [];
+  stored = computeBlocks();
   const left = new EditorView({
     parent: originalEl,
-    state: leftState(current, leftFace.of(diffFace("original", blocksOf)), themeOf()),
+    state: leftState(current, leftFace.of(diffFace("original", () => stored)), themeOf()),
   });
   const detachSash = attachSashDrag(originalEl, sashEl);
 
-  // 对栏那颗 view 看不见这一栏的键入 ⇒ 停手 `DIFF_REFRESH_MS` 由这一头补它一发「重算」。
-  // 本栏自己那一发在 `face.ts` 的插件里（同一颗常数）⇒ 这里只发左栏，两边不重复算。
-  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-  const cancelRefresh = (): void => {
-    if (refreshTimer !== null) clearTimeout(refreshTimer);
-    refreshTimer = null;
+  /** 右栏那颗 view 的 state 回写进标签快照（与 `handleUpdate` / `lifecycle` 同一个寻址）。 */
+  const writeBackRight = (): void => {
+    if (!right) return;
+    const tab = tabs.get(panel.viewTabId ?? panel.activeTabId);
+    if (tab) tab.state = right.state;
   };
-  const refreshOriginal = (): void => {
-    cancelRefresh();
-    refreshTimer = setTimeout(() => {
-      refreshTimer = null;
-      left.dispatch({ effects: refreshDiff.of(null) });
+
+  /** 现读左右两份正文 → diffBlocks → 给两颗 view 各发 refreshDiff → 广播新块表。 */
+  const syncBlocks = (): void => {
+    stored = computeBlocks();
+    // 两颗都要点名：装饰层不会自己醒（`refreshDiff` 与 `refreshGutterDiff` 同形），
+    // 而对栏那颗 view **看不见**这一栏的键入 ⇒ 只有持有两颗 view 的这一处能一起发。
+    left.dispatch({ effects: refreshDiff.of(null) });
+    right?.dispatch({ effects: refreshDiff.of(null) });
+    writeBackRight();
+    // Task 9 的侧栏面板从这里领新块表（surface **不 import** 面板模块 —— 单槽注册口，R6）。
+    notifyDiffBlocks(current);
+  };
+
+  /** 右栏光标行（权威侧 = 右栏，设计稿 ⑩·2：左栏有选区也不参与）。 */
+  const rightCaretLine = (): number => {
+    if (!right) return 0;
+    return right.state.doc.lineAt(right.state.selection.main.head).number;
+  };
+
+  /** 右栏光标包住的那块；没有 ⇒ -1。 */
+  const activeIndex = (): number => {
+    if (!right) return -1;
+    return blockAt(stored, "modified", rightCaretLine());
+  };
+
+  /**
+   * 两侧同时落位到各自那段的起始行（设计稿 ⑥·面板）。
+   *
+   * 索引越界夹到首/末块（不环绕 —— 走到头再按一次就是停在那一块，与「跳过头」比环绕好懂）。
+   * 落位走既有**显式落位**那一类：selection + `scrollIntoView` 一发带过去，不靠 scroll 猜，
+   * 也不许把这一发广播给同文档的其它视口（B290 起的纪律：滚动是**结果**信号）。
+   */
+  const jumpTo = (index: number): void => {
+    if (stored.length === 0) return;
+    const b = stored[Math.min(Math.max(index, 0), stored.length - 1)];
+    // Task 7 的「折叠未改动区」在这里补 `unfoldAround`（目标行被折进收起区时先展开那段再落）；
+    // 本轮还没有折叠，那一发天然是 no-op ⇒ 位置留在这句话上，不预先建空抽象。
+    const at = lineStartOf(left, landingLine(b, "original"));
+    left.dispatch({
+      selection: { anchor: at },
+      effects: EditorView.scrollIntoView(at, { y: "start" }),
+    });
+    if (!right) return;
+    const to = lineStartOf(right, landingLine(b, "modified"));
+    right.dispatch({
+      selection: { anchor: to },
+      effects: EditorView.scrollIntoView(to, { y: "start" }),
+    });
+    writeBackRight();
+    // 认领这下发起的滚动（照 `src/io/files.ts:136` 的先例）：落位改的是视口位置，
+    // 不认领就会被协调器当作用户滚动，把同一份文档的别的面板一起拽走。
+    claimVisibleHere(panel);
+  };
+
+  /**
+   * 以右栏光标行为起点找下一/上一块。
+   *
+   * 判据是**位置**而不是「当前序号 ±1」：光标停在两块之间（`activeIndex()` 为 -1）时，
+   * 往后的意思就是「起点还在光标之后的第一块」，往回的是「终点已越过光标的那一块」，
+   * 于是从任何位置按下去都有确定的一发，不需要为 -1 另设一套。
+   *
+   * ⚠️ 往回那一支多一条「落点就是当前这一行 ⇒ 跳过」：删掉的行在右栏**没有真行**，
+   * 空段的落点 `end + 1` 恰好就是光标站着的那一行，落回去就是原地不动 —— 用户按的是
+   * 「上一个差异」，那就得继续往前找到真会动的那一块为止（往那一支不会出这情况：
+   * 候选的起点本来就严格在光标之后）。
+   */
+  const step = (dir: 1 | -1): void => {
+    if (!right || stored.length === 0) return;
+    const from = rightCaretLine();
+    const landsAt = (b: DiffBlock): number =>
+      right.state.doc.lineAt(lineStartOf(right, landingLine(b, "modified"))).number;
+    let target = -1;
+    if (dir === 1) {
+      target = stored.findIndex((b) => b.modifiedStart > from);
+    } else {
+      for (let i = stored.length - 1; i >= 0; i--) {
+        if (stored[i].modifiedEnd < from && landsAt(stored[i]) !== from) {
+          target = i;
+          break;
+        }
+      }
+    }
+    // 走到头 ⇒ 夹到末块/首块（与 `jumpTo` 的越界同一口径），不环绕。
+    jumpTo(target < 0 ? (dir === 1 ? stored.length - 1 : 0) : target);
+  };
+
+  // 键入期只映射不重算：`update.docChanged` 只重置定时器，停手 `DIFF_REFRESH_MS` 才走
+  // `syncBlocks()` 那一发（与 `gutterDiffField` 同一条纪律，B398）。这颗定时器是**全差异面
+  // 唯一的一颗**（裁决 R24：`face.ts` 原先在自己那一臂里还藏了一颗，两把同时跑就是
+  // 一次停手算两遍），所以它一响就得把**两颗** view 都带上（对栏看不见这边的键入）。
+  let syncTimer: ReturnType<typeof setTimeout> | null = null;
+  const cancelSync = (): void => {
+    if (syncTimer !== null) clearTimeout(syncTimer);
+    syncTimer = null;
+  };
+  const scheduleSync = (): void => {
+    cancelSync();
+    syncTimer = setTimeout(() => {
+      syncTimer = null;
+      syncBlocks();
     }, DIFF_REFRESH_MS);
   };
 
@@ -248,11 +388,11 @@ export function createDiffSurface(
         ...wrapOff,
         StateEffect.appendConfig.of(
           rightFace.of([
-            diffFace("modified", blocksOf),
+            diffFace("modified", () => stored),
             // 键入落点：`updateListener` 是 state facet，只能这样并进来（仓库同形先例
             // `tests/preview-face-helpers.ts:71-76`：塞进 `state.update({extensions})` 会被静默丢掉）。
             EditorView.updateListener.of((update) => {
-              if (update.docChanged) refreshOriginal();
+              if (update.docChanged) scheduleSync();
             }),
           ]),
         ),
@@ -269,15 +409,27 @@ export function createDiffSurface(
       // 既不给对照缓冲留撤销历史，也不走 `dispatch({changes})` 那条「写文档」的路。
       // ⚠️ 必须用 `setState`：`dispatch({changes})` 如今会被 leftState 那道硬闸整发丢掉
       // （「换输入」看着像没反应）。`setState` 是换 state 不是发事务，天然不受那道闸牵连。
-      // 那一臂靠 `leftFace.of(...)` 随 state 一起进去（换 state 会把旧 config 整个换掉），
-      // `create` 按新的 `blocksOf()` 现算 ⇒ 左栏不必再发 refreshDiff。
+      // 那一臂靠 `leftFace.of(...)` 随 state 一起进去（换 state 会把旧 config 整个换掉）；
+      // provider 交回的是 `stored`，所以新块表由紧随其后的那一发 `syncBlocks()` 现算 ——
+      // 这里不再自己 `diffBlocks`，也不另发 refreshDiff（重算只有一条路：R24）。
       // 主题同样重新读一遍现值（右栏那颗 state 才是权威：换输入时它可能已经换过档）。
-      left.setState(leftState(current, leftFace.of(diffFace("original", blocksOf)), themeOf()));
-      // 右栏的块跟着换了（它吃的是同一份 `blocksOf`），但它自己没有 docChanged ⇒ 点名一次。
-      right?.dispatch({ effects: refreshDiff.of(null) });
+      left.setState(leftState(current, leftFace.of(diffFace("original", () => stored)), themeOf()));
+      syncBlocks();
+    },
+    syncBlocks,
+    blocks: () => stored,
+    jumpTo,
+    step,
+    activeIndex,
+    ignoreTrimWhitespace: () => ignoreWs,
+    setIgnoreTrimWhitespace: (on) => {
+      if (ignoreWs === on) return;
+      ignoreWs = on;
+      // 立刻重算（不等防抖）：这是用户点下来的一发动作，不是键入。
+      syncBlocks();
     },
     dispose: () => {
-      cancelRefresh();
+      cancelSync();
       // 右栏那颗 view **不随旁路销毁**（它是那份文档本身）⇒ 这一臂必须精准摘掉，
       // 否则底色与占位块会留在一张普通编辑器标签上。CompartmentInstance 已在 base 里，
       // `reconfigure([])` 就把它清空；那颗 view 已经 destroy 过的话这一发是空转（CM6 内部
@@ -303,9 +455,14 @@ export function disposeDiffSurface(panel: Panel): void {
   surface.dispose();
 }
 
-/** 这一格当前的旁路（Task 4/7/8/9 都按它寻址）。 */
-export function diffSurfaceOf(panel: Panel): DiffSurface | null {
-  return panel.diffSurface ?? null;
+/**
+ * 这一格当前的旁路（Task 4/7/8/9 都按它寻址）。
+ *
+ * 参数容忍 `undefined`：分发那一头的 `activePanel()` 本来就可能是「没有活动面板」，
+ * 那一发读到的就是 `null`，调用方一律 `?.` —— 比在每个调用点先 `if (p)` 再取干净。
+ */
+export function diffSurfaceOf(panel: Panel | undefined | null): DiffSurface | null {
+  return panel?.diffSurface ?? null;
 }
 
 /**
