@@ -64,14 +64,47 @@ export function diffBlocks(
   return regions.map((r) => toBlock(head, r));
 }
 
-/** 这一侧区间的「命中」判定：含端点包含；空段（start > end）时块前缘那一行也算。 */
+/** 这一侧的起止行（1-based 含端点；`start > end` ⇒ 该侧是空段）。 */
+function spanOf(b: DiffBlock, side: DiffSide): { start: number; end: number } {
+  return side === "modified"
+    ? { start: b.modifiedStart, end: b.modifiedEnd }
+    : { start: b.originalStart, end: b.originalEnd };
+}
+
+/** 这一侧是不是空段（这一侧根本没有真行）。 */
+function isEmptySide(b: DiffBlock, side: DiffSide): boolean {
+  const { start, end } = spanOf(b, side);
+  return start > end;
+}
+
+/**
+ * 这一侧区间的「命中」判定：含端点包含；空段（start > end）时块前缘那一行也算。
+ *
+ * ⚠️ 这一条是**第一优先**的命中判据，永远排在 R26 那条兜底之前 —— 顺序倒了就会出现
+ * 「相邻两块抢同一行、读数来回跳」。
+ */
 function covers(b: DiffBlock, side: DiffSide, line: number): boolean {
-  const start = side === "modified" ? b.modifiedStart : b.originalStart;
-  const end = side === "modified" ? b.modifiedEnd : b.originalEnd;
+  const { start, end } = spanOf(b, side);
   // 空段没有「之内」可言：光标停在这一行时语义是「改动发生在它后面」（Task 9 跟随靠这格），
-  // 于是只有 start - 1（= end，恒差一格）算命中；start 之后那一行不算。
+  // 于是只有 start - 1（= end，恒差一格）算命中；start 之后那一行不算（那一行交给兜底，见下）。
   if (start > end) return line === start - 1;
   return line >= start && line <= end;
+}
+
+/**
+ * 兜底命中（裁决 R26）：空段那一侧的**落点行** —— 也就是 `start`（= `end + 1`，恒等）。
+ *
+ * 为什么需要它：跳块的落位规则说空段落 `end + 1`（`surface.ts` 的 `landingLine`），而现有
+ * 命中规则只认 `start - 1`（= `end`）⇒ 两条天然差一行 ⇒ 刚跳到「删掉的行」那一块之后，
+ * 权威侧（右栏）的光标其实停在落点行上，`blockAt` 却报 -1：侧栏丢掉刚跳过去那一条的高亮，
+ * 贴文首的删除块更惨 —— 它的 `start - 1` 是**第 0 行**，任何真光标都撞不上。
+ * 裁决保留落位规则（那才是唯一合法的），改的是这一头的查询口。
+ *
+ * 判错代价（计划里写明，看得见、一处改动可回滚）：光标停在一段删除**之后**那一行时，
+ * 高亮的可能是那一道删除而不是「这一行自己」。
+ */
+function coversLanding(b: DiffBlock, side: DiffSide, line: number): boolean {
+  return isEmptySide(b, side) && line === spanOf(b, side).start;
 }
 
 /**
@@ -79,7 +112,10 @@ function covers(b: DiffBlock, side: DiffSide, line: number): boolean {
  *
  * 空段那一侧用「块前缘」也算命中 —— 面板光标停在删除块前面那行时得亮对的那条，
  * 返回 -1 就不许亮（Task 9 的跟随口径）。
+ * 现有规则**谁都判不中**时，才轮到 R26 那条「空段的落点行」兜底（一次遍历判不中才走第二次，
+ * 命中的优先次序不改）。
  */
 export function blockAt(blocks: DiffBlock[], side: DiffSide, line: number): number {
-  return blocks.findIndex((b) => covers(b, side, line));
+  const hit = blocks.findIndex((b) => covers(b, side, line));
+  return hit >= 0 ? hit : blocks.findIndex((b) => coversLanding(b, side, line));
 }

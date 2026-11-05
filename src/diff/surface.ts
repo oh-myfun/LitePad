@@ -20,7 +20,7 @@
 import { Compartment, EditorState, StateEffect, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import { tabs, type Panel } from "../core/app-state";
-import { claimVisibleHere } from "../sync-scroll/wire";
+import { landVisibleSideAtV } from "../sync-scroll/wire";
 import { DIFF_REFRESH_MS } from "./align";
 import { blockAt, diffBlocks, type DiffBlock } from "./blocks";
 import { diffFace, refreshDiff } from "./face";
@@ -38,11 +38,20 @@ export interface DiffSurface {
   syncBlocks(): void;
   /** 这一格现在那一批块（唯一一份答案：两侧底色、占位块、侧栏条目、跳块都吃它） */
   blocks(): DiffBlock[];
-  /** 两侧同时落位；索引越界夹到首/末块；先 unfoldAround 目标（Task 7 补实现，此时为 no-op） */
+  /**
+   * 两侧同时落位；索引越界夹到首/末块；先 unfoldAround 目标（Task 7 补实现，此时为 no-op）。
+   * 右栏那一发走**同步落位 + 同栈认领**（裁决 R25，见实现处的注释）。
+   */
   jumpTo(index: number): void;
   /** 以右栏光标行为起点找下一/上一块 */
   step(dir: 1 | -1): void;
-  /** 右栏光标包住的那块；没有 ⇒ -1 */
+  /**
+   * 右栏光标包住的那块；没有 ⇒ -1。
+   *
+   * 「包住」按 `blockAt` 的口径算，含 R26 那条兜底：空段（删除块在右栏那一侧）的**落点行**
+   * 在没有别的块命中时也算这一块的 —— 于是「刚跳过去的那一块」不会因为差一行而读成 -1，
+   * 侧栏的高亮与 `step` 的起点都跟着对得上。
+   */
   activeIndex(): number;
   ignoreTrimWhitespace(): boolean;
   /** 翻转后立刻 syncBlocks()（开关改的是「同一份正文算出来的块」，两栏自己跟上） */
@@ -62,6 +71,9 @@ function clampShare(share: number): number {
  * 落位的那一行（1-based）：非空段落落自己那段的起始行；**空段**（`start > end`，
  * 即这一侧根本没有真行）落「块前缘那行的行首」= `end + 1`（设计稿 ⑥·面板，与
  * `blocks.ts` 的空段表示法同一口径 —— 那里恒有 `start = end + 1`）。
+ *
+ * 裁决 R26 把这一条**原样保留**：贴文首的删除块上「块前缘」是第 0 行，落位规则是唯一合法的
+ * 那一个 ⇒ 改的是查询口（`blockAt` 认空段的落点行作兜底），不是这一头。
  */
 function landingLine(b: DiffBlock, side: DiffSide): number {
   const start = side === "modified" ? b.modifiedStart : b.originalStart;
@@ -307,8 +319,20 @@ export function createDiffSurface(
    * 两侧同时落位到各自那段的起始行（设计稿 ⑥·面板）。
    *
    * 索引越界夹到首/末块（不环绕 —— 走到头再按一次就是停在那一块，与「跳过头」比环绕好懂）。
-   * 落位走既有**显式落位**那一类：selection + `scrollIntoView` 一发带过去，不靠 scroll 猜，
-   * 也不许把这一发广播给同文档的其它视口（B290 起的纪律：滚动是**结果**信号）。
+   *
+   * ⚠️ 两颗 view 的落法**不一样**，这是裁决 R25 定的，不是手滑：
+   *   · **左栏**（旁路那颗）走 `EditorView.scrollIntoView`：它不在同步滚动那套注册口里
+   *     （两份**不同**的内容，见文件头），那一发晚一帧落位也没人记账 ⇒ 普通派发就够。
+   *   · **右栏**（`Panel.view` 那颗 = 这份文档本身，在册）必须**同步写完再认领**：CM6 的
+   *     `scrollIntoView` 只把 `scrollTarget` 存下来，真正写 `scrollTop` 排在 `measure()` 里
+   *     （下一帧）⇒ 紧跟其后的认领读到的是**跳之前**的位置，账本就把「跳之前」登记成意图；
+   *     下一帧真实的落位回声进来时既不是那个意图也不是那个像素 ⇒ 判成「用户自己滚的」⇒
+   *     广播给同文档的其它视口（正是设计稿 ⑥/⑩·3 明令禁的那一发）。
+   *     走的是仓库那条**真落位口** `landVisibleSideAtV`（同步写 + 同栈登记意图与真实落点 +
+   *     没落进去就逐帧重试到收口；`markdown.ts` / `tabs/lifecycle.ts` / `tabs/split.ts`
+   *     的所有落位都用它）。原来那个「认领我此刻停在哪」的口（`wire.ts` 里那颗 `claim…`）
+   *     的语义是「我已经把位置写好了」，不许弯成「位置即将写好」⇒ 这条路里不用它，
+   *     由上面那条真落位口自己登记（`tests/diff-surface.test.ts` 有守卫钉着这一手）。
    */
   const jumpTo = (index: number): void => {
     if (stored.length === 0) return;
@@ -322,14 +346,12 @@ export function createDiffSurface(
     });
     if (!right) return;
     const to = lineStartOf(right, landingLine(b, "modified"));
-    right.dispatch({
-      selection: { anchor: to },
-      effects: EditorView.scrollIntoView(to, { y: "start" }),
-    });
+    right.dispatch({ selection: { anchor: to } });
     writeBackRight();
-    // 认领这下发起的滚动（照 `src/io/files.ts:136` 的先例）：落位改的是视口位置，
-    // 不认领就会被协调器当作用户滚动，把同一份文档的别的面板一起拽走。
-    claimVisibleHere(panel);
+    // 共享坐标 `v` 给的是落点那一行（整数 = 「那一行的行顶贴容器顶」，与 `y: "start"` 同一档
+    // 语义），`at` 给的是同一行的行首字符位置：两格宽度不同也能按字符对齐（B300），
+    // 量不到矩形时锚点自己退回按 `v` 的比例落位。
+    landVisibleSideAtV(panel, right.state.doc.lineAt(to).number, 0, to);
   };
 
   /**
@@ -343,6 +365,11 @@ export function createDiffSurface(
    * 空段的落点 `end + 1` 恰好就是光标站着的那一行，落回去就是原地不动 —— 用户按的是
    * 「上一个差异」，那就得继续往前找到真会动的那一块为止（往那一支不会出这情况：
    * 候选的起点本来就严格在光标之后）。
+   *
+   * ⚠️ 这条与裁决 R26 各管一头，**不许混**：R26 改的是「光标停在那一行时那块算不算 active」
+   * （读数），这条管的是「按下去之后到底动没动」（动作）。两条撞在同一行上正是设计意图：
+   * 读数说「你在这块」，动作说「这块已经去过了，再往前找」。摘掉这条 ⇒ 往回原地不动；
+   * 摘掉 R26 那条兜底 ⇒ 刚跳过去的块丢掉高亮（都有专门用例）。
    */
   const step = (dir: 1 | -1): void => {
     if (!right || stored.length === 0) return;

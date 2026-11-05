@@ -6,7 +6,7 @@
 // （照 VS Code 的空段表示法，Task 3 的占位块据此落位）。
 // 对齐不在这里算 —— 与 4px gutter 列同源，都走 `alignLines`（设计稿约束 ⑥）。
 import { describe, expect, it } from "vitest";
-import { blockAt, diffBlocks } from "../src/diff/blocks";
+import { blockAt, diffBlocks, type DiffBlock } from "../src/diff/blocks";
 
 describe("B461 · diffBlocks：块级出口的六种形", () => {
   it("B461 · 连续改动并成一块；两块之间隔着未改动行就分成两块", () => {
@@ -84,11 +84,68 @@ describe("B461 · blockAt：包住这一行的块序号（Task 9 面板跟随光
     // 删除块（右段空）：光标停在被删块后面那一行**前面**的那一行（A = 第 1 行）要亮这条。
     const dels = diffBlocks("A\n删1\n删2\nZ", "A\nZ");
     expect(blockAt(dels, "modified", 1)).toBe(0);
-    expect(blockAt(dels, "modified", 2), "Z 本身不在块里").toBe(-1);
     expect(blockAt(dels, "original", 3)).toBe(0);
     // 插入块（左段空）：同一条口径。
     const inss = diffBlocks("A\nZ", "A\n新1\n新2\nZ");
     expect(blockAt(inss, "original", 1)).toBe(0);
     expect(blockAt(inss, "modified", 2)).toBe(0);
+  });
+
+  // 裁决 R26（Task 4 评审后）：落位规则说空段落「`end + 1`」那一行，而现有命中规则只认
+  // 「`start - 1`」（= `end`）那一行 —— 两条天然差一行 ⇒ 刚跳过去的那一块在侧栏里丢高亮。
+  // 裁决保留落位规则（贴文首的删除块上 `start - 1` 会算出第 0 行，落位规则是唯一合法的），
+  // 改的是查询口：空段那一侧**再**接受 `line === start`，但只作为「现有规则谁都判不中」时的
+  // 兜底 ⇒ 命中的优先次序一个字都不许倒过来。
+  it("R26 · 空段的落点行（`start`）算命中，但只在现有规则判不中时兜底", () => {
+    const dels = diffBlocks("A\n删1\n删2\nZ", "A\nZ");
+    expect(dels[0]).toMatchObject({ kind: "delete", modifiedStart: 2, modifiedEnd: 1 });
+    expect(blockAt(dels, "modified", 1), "块前缘那一行照旧命中（现有规则不动）").toBe(0);
+    // 这一发是本次要修的：Z 那一行就是删除块的落点行 ⇒ 从「谁都没包住」改成归那道删除缝。
+    // 代价计划里写明了：光标停在一段删除之后那一行时，高亮的是那一道删除。
+    expect(blockAt(dels, "modified", 2), "空段的落点行 = 那块（R26 兜底）").toBe(0);
+    const inss = diffBlocks("A\nZ", "A\n新1\n新2\nZ");
+    expect(blockAt(inss, "original", 2), "插入块左栏那一侧同口径").toBe(0);
+    // 兜底只兜**落点那一行**，不许把整段空段之后的区域都吞掉。
+    expect(blockAt(inss, "original", 3), "落点之后第二行仍然谁都没包住").toBe(-1);
+  });
+
+  it("R26 · 贴文首的删除块：现有那条命中行是第 0 行（不存在），只有兜底认得它的落点", () => {
+    const head = diffBlocks("X\nA\nB", "A\nB");
+    expect(head[0]).toMatchObject({ kind: "delete", modifiedStart: 1, modifiedEnd: 0 });
+    // 现有规则的命中行在这儿是 `start - 1` = **第 0 行** —— 任何真光标都撞不上去（这也正是
+    // 裁决保留落位规则 `end + 1` 的理由：贴文首的删除块上 `start - 1` 会算出第 0 行）。
+    expect(blockAt(head, "modified", 1), "落位就落在第 1 行 ⇒ 兜底必须认得，否则侧栏高亮必丢").toBe(
+      0,
+    );
+    expect(blockAt(head, "modified", 2), "兜底只兜落点那一行").toBe(-1);
+  });
+
+  it("R26 兜底不许改命中的优先次序：那一行真被别的块包住时仍然归那一块", () => {
+    // 手工搭一块表（`diffBlocks` 的产物里两块之间必隔未改动行，撞不上，所以这里直接摆形状）：
+    // 第 0 块是空段（modified 3..2 ⇒ 落点行 3），第 1 块把第 3 行**真包在里面**。
+    const empty: DiffBlock = {
+      kind: "delete",
+      originalStart: 1,
+      originalEnd: 1,
+      modifiedStart: 3,
+      modifiedEnd: 2,
+      added: 0,
+      removed: 1,
+      offset: 0,
+    };
+    const real: DiffBlock = {
+      kind: "modify",
+      originalStart: 3,
+      originalEnd: 3,
+      modifiedStart: 3,
+      modifiedEnd: 4,
+      added: 1,
+      removed: 0,
+      offset: 0,
+    };
+    // 两块**谁都不让谁**：把空段那条摆前面也判给真包住它的那一块 ⇒ 相邻两块不会抢同一行。
+    expect(blockAt([empty, real], "modified", 3)).toBe(1);
+    expect(blockAt([real, empty], "modified", 3)).toBe(0);
+    expect(blockAt([empty], "modified", 3), "没有别块时才轮到兜底").toBe(0);
   });
 });

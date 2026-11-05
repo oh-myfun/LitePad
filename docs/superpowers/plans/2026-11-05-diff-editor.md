@@ -516,6 +516,11 @@ Expected: FAIL —— `s.syncBlocks is not a function`。
 
 `activeIndex()` = `blockAt(blocks(), "modified", 右栏光标行)` —— 左栏光标**不参与**（设计稿 ⑩·2：权威侧是右栏）。
 
+> **更正（Task 4 评审后由控制方补，裁决 R25/R26）**
+>
+> 1. **R25：`claimVisibleHere` 认领不了 `scrollIntoView` 那一发。** CM6 把 `scrollIntoView` 效果存成 `scrollTarget`，真正的 `scrollTop` 写在 `measure()` 里、由 `requestAnimationFrame` 排到下一帧 ⇒ 紧跟其后的 `claimVisibleHere` 读到的是**跳之前**的位置，把「跳之前」登记成意图；下一帧真实的滚动回声进来时对不上账，就被判成「用户自己滚的」而**广播给同文档的其它视口** —— 正好撞设计稿 ⑥/⑩·3 那句「不许把这一发广播」。（`src/io/files.ts:136` 那个先例之所以成立，是因为那里写位置与认领同一帧：位置已经落定。）改法：落位必须**同步写完再认领** —— 走仓库现成的 `landVisibleSideAtV(panel, v, …, at)`（`src/sync-scroll/wire.ts:307+`：同步写 + 同栈登记意图与真实落点 + 逐帧重试，`markdown.ts` / `tabs/lifecycle.ts` 的所有真落位都用它），或者自己同步写 `scrollDOM.scrollTop` 之后按写完的值登记。判据要能区分「认领的是写完之后的值」，像素级的抑制仍归 Task 11 真机台。
+> 2. **R26：跳到删除块之后 `activeIndex()` 读 -1。** 两条规则天然差一行：空段落点 `end + 1`，而 `blockAt` 对空段只认 `start - 1`（= `end`）⇒ 刚跳过去的那一块在侧栏里失去高亮，`step(-1)` 也会把这一块整个跳过。裁决：**保留落位规则不动**（`end + 1` 在贴文首的删除块上是唯一合法落点，`start - 1` 会算出第 0 行），改 `blockAt` —— 空段那一侧除现有的 `start - 1` 外，**再接受 `line === start` 作为命中，但只在现有规则谁都判不中时兜底**（不改变既有命中的优先次序，避免相邻两块抢同一行时口径来回跳）。判错代价：光标停在一段删除之后那一行时，侧栏高亮的可能是上一块而不是这一块的邻位 —— 看得见、一处改动可回滚。
+
 - [ ] **Step 3: 写会失败的测试 —— 键入期只映射不重算**
 
 ```ts

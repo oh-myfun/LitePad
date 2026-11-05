@@ -29,11 +29,17 @@
 // Task 4 在下面追加的那一块钉的是**跳块与步进**：两侧同时落位到各自那段的起始行、落位走
 // 既有「显式落位」那一类（认领这一发造成的滚动，绝不 `syncTo` 广播给同文档的别的面板）、
 // 键入期只映射不重算（停手 `DIFF_REFRESH_MS` 才算一次，且全差异面只有 surface 那一颗定时器）。
+// 修复轮 1 按裁决补进这一块的两条口径：
+//   · **R25** —— 落位必须**同步写完再向账本认领**（走 `landVisibleSideAtV`）：登记进去的意图
+//     必须是写完之后读回的那一个位置，紧随其后的落位回声必须被判成「自己那一发」而不是
+//     「用户滚动·广播」；
+//   · **R26** —— 空段（删除块在权威侧那一栏）的**落点行**也算那一块的命中，但只在现有规则
+//     谁都判不中时兜底 ⇒ 跳过去之后 `activeIndex()` 不再读成 -1。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import type { EditorView } from "@codemirror/view";
 import { fnBody, ruleBlock, stripCssComments, stripLineComments } from "./static";
-import { tabs, type Panel, type Tab } from "../src/core/app-state";
+import { panels, tabs, type Panel, type Tab } from "../src/core/app-state";
 import { createEditor, makeTabState } from "../src/editor/editor";
 import { perfProfileFor } from "../src/editor/perf";
 import {
@@ -46,6 +52,8 @@ import {
 import { DIFF_REFRESH_MS } from "../src/diff/align";
 import { setDiffBlocksListener } from "../src/diff/model";
 import type { DiffSpec } from "../src/diff/model";
+import type { ScrollAnchor } from "../src/sync-scroll/anchor";
+import { reconcileSyncRegistrations, syncCoordinator } from "../src/sync-scroll/wire";
 
 const srcOf = (p: string): string => readFileSync(p, "utf-8").replace(/\r\n/g, "\n");
 
@@ -399,10 +407,107 @@ function countSyncBlocks(): () => number {
   return () => n;
 }
 
+// --------------------------------------------------------------------------- #
+// R25 取证用的「量得出来的布局」与「同文档的第二个视口」
+// --------------------------------------------------------------------------- #
+
+/** 一帧（`tests/setup.ts` 把 rAF 换成 `setTimeout(0)` ⇒ 这一拍就是下一帧）。 */
+const nextFrame = (): Promise<unknown> => new Promise((r) => setTimeout(r, 0));
+
+/** 本文件临时注册进协调器的假视口（`afterEach` 统一注销）。 */
+const spyHandles: Array<ReturnType<typeof syncCoordinator.register>> = [];
+
+/**
+ * 给**真的**那颗 view 装一层「量得出来的假布局」（R25 那条判据用）。
+ *
+ * jsdom 没有布局引擎：`scrollTop` 的 setter 是空操作、`getBoundingClientRect()` 恒 0 ⇒
+ * 「同步写完再按写完的值认领」这一手在这台环境里既写不进去也读不回来，判据就成了空话。
+ * 补三件事：
+ *   · `scrollDOM.scrollTop` 存得住（`Object.defineProperty` 顶掉 jsdom 那对空桩，与
+ *     `tests/sync-scroll-landing-conceal.test.ts:68` 同一手法）；
+ *   · `lineBlockAt` / `lineBlockAtHeight` 按 `linePx` 逐行换算 —— 生产的 `EditorScrollAnchor`
+ *     问的就这两颗（`src/sync-scroll/anchor.ts:104-152`），CM6 内部走的是 `viewState` 那一份，
+ *     实例上的这一发覆盖不动它 ⇒ 装饰与映射照旧按真那条路跑；
+ *   · **不**动 `getBoundingClientRect`（高度恒 0）⇒ `setVAt` 走 `lineBlockAt(pos).top` 那一支、
+ *     `topPos()` 交回 null ⇒ 落位「一次就收口」（`stuckAtTop` 为假、`attempt` 为 0）⇒ 本用例
+ *     既不排重试链，也不会把那半截 `visibility: hidden` 带进来。
+ * 像素级「目标行贴容器顶」量不到，仍归 Task 11 真机台（设计稿 ⑦·②）。
+ */
+function installFakeLayout(
+  view: EditorView,
+  linePx: number,
+): { px: () => number; put: (px: number) => void } {
+  const el = view.scrollDOM;
+  let px = 0;
+  Object.defineProperty(el, "scrollTop", {
+    configurable: true,
+    get: () => px,
+    set: (next: number) => {
+      px = Math.max(0, next);
+    },
+  });
+  const block = (line: number) => {
+    const doc = view.state.doc;
+    const n = Math.min(Math.max(line, 1), doc.lines);
+    return { from: doc.line(n).from, top: (n - 1) * linePx, height: linePx, bottom: n * linePx };
+  };
+  // 生产的 `EditorScrollAnchor` 只读 `from` / `top` / `height`（`src/sync-scroll/anchor.ts:104-152`），
+  // 这里交的就是那一小撮字段 —— CM6 那颗 `BlockInfo` 是带 getter 的类，伪造不出完整一颗，
+  // 所以过一层 cast 而不是把那些用不着的字段也编出来（编了反而是在假装有布局）。
+  const asBlockFn = (fn: (arg: number) => ReturnType<typeof block>) =>
+    fn as unknown as EditorView["lineBlockAt"];
+  view.lineBlockAt = asBlockFn((pos: number) => block(view.state.doc.lineAt(pos).number));
+  view.lineBlockAtHeight = asBlockFn((height: number) => block(Math.floor(height / linePx) + 1));
+  return { px: () => px, put: (next: number) => (px = next) };
+}
+
+/**
+ * 把这一格按**生产那条注册口**登记进协调器（`reconcileSyncRegistrations` 只认全局 `panels`，
+ * 而本文件的测试面板是手搓的）：注册出来的锚点与落位口都用生产那两份，不写第二套。
+ */
+function registerPanel(panel: Panel): void {
+  panels.set(panel.panelId, panel);
+  reconcileSyncRegistrations();
+}
+
+/**
+ * 同一文档的**第二个视口**：「这一发有没有被广播出去」的唯一证据就是它被 `setV` 写过几次。
+ * 假锚点（生产那颗 `EditorScrollAnchor` 要真布局才量得动，这里只当接收端）。
+ */
+function spyPane(docId: string, linePx: number): { calls: number[] } {
+  const el = document.createElement("div");
+  let px = 0;
+  Object.defineProperty(el, "scrollTop", {
+    configurable: true,
+    get: () => px,
+    set: (next: number) => {
+      px = Math.max(0, next);
+    },
+  });
+  const calls: number[] = [];
+  const anchor: ScrollAnchor = {
+    getV: () => 1 + px / linePx,
+    setV: (v: number) => {
+      calls.push(Number(v.toFixed(2)));
+      px = (v - 1) * linePx;
+      return v;
+    },
+  };
+  spyHandles.push(
+    syncCoordinator.register(anchor, docId, { events: el, label: "P9:editor(同文档第二视口)" }),
+  );
+  return { calls };
+}
+
 afterEach(() => {
   for (const stop of live.splice(0)) stop();
+  for (const h of spyHandles.splice(0)) syncCoordinator.unregister(h);
   setDiffBlocksListener(null);
   vi.useRealTimers();
+  // 协调器是**模块级单例**（`wire.ts` 那颗）：本文件里注册进去的面板与假视口必须在这里退场，
+  // 否则下一发用例的广播对象清单里还挂着上一发那颗已 destroy 的 view。
+  panels.clear();
+  reconcileSyncRegistrations();
 });
 
 describe("B461 · 跳块与步进（Task 4）", () => {
@@ -421,7 +526,66 @@ describe("B461 · 跳块与步进（Task 4）", () => {
 
   it("B461 · 跳块不许调 syncCoordinator.syncTo（同一文档的别的面板不该跟着跳）", () => {
     expect(srcOf("src/diff/surface.ts")).not.toMatch(/syncTo\s*\(/);
-    expect(srcOf("src/diff/surface.ts")).toContain("claimVisibleHere(");
+    // 简报这一行钉的字面量原本是 `claimVisibleHere(`。裁决 R25 把「落位认领」这条路换成了
+    // 仓库那条**真落位口**（`landVisibleSideAtV`：同步写 + 同栈登记意图与真实落点 + 逐帧重试），
+    // 钉的还是同一件事 ——「这一发滚动必须向账本认领」，只是认领的口换了。
+    // `claimVisibleHere(` 于是反过来成了禁项：它的语义是「认领我已经写好的位置」，接在
+    // `scrollIntoView` 之后就是把「已经写好」弯成「即将发生」（⇒ 见下面那条 R25 用例）。
+    const code = stripLineComments(srcOf("src/diff/surface.ts"));
+    expect(code, "落位必须走仓库那条同步写 + 同栈登记的口").toContain("landVisibleSideAtV(");
+    // ⚠️ `stripLineComments` 只剥「整行 `//`」，JSDoc 块注释里的标识符照样参与比对
+    // （与本文件 `:289` 那条同一纪律）⇒ 源码里要提那个口就换个写法，别把说明判成实现。
+    expect(code, "R25：不许再按「即将发生」的位置认领").not.toMatch(/claimVisibleHere/);
+    // 两颗 view 都仍要落位：左栏那颗不在注册口里 ⇒ 它那一发就是普通派发（无需认领），
+    // 所以 `scrollIntoView` 只剩左栏这一处；右栏那一处换成了同步落位。
+    expect(code.match(/scrollIntoView\(/g) ?? [], "只有左栏那一发还走 scrollIntoView").toHaveLength(
+      1,
+    );
+  });
+
+  it("B461 · R25：跳块登记的意图是**写完之后**读回的那一个位置，不是跳之前的", () => {
+    const { panel, s } = mountDiffPair("1\n2\n3\n4\n5", "1\n2\n3A\n4\n5B");
+    s.syncBlocks();
+    const view = panel.view!.view;
+    const lay = installFakeLayout(view, 20);
+    registerPanel(panel);
+    lay.put(20); // 用户先把这一格滚到第 2 行 —— 那是**跳之前**的位置
+    expect(s.blocks()[1].modifiedStart, "前置：目标块在右栏第 5 行").toBe(5);
+    s.jumpTo(1);
+    expect(
+      lay.px(),
+      "落位必须**同步**写进 scrollTop（scrollIntoView 排在下一帧，认领赶不上）",
+    ).toBe(80);
+    expect(
+      syncCoordinator.pendingExpectation(view.scrollDOM),
+      "账本里那笔意图必须是写完之后的落点（第 5 行），不是跳之前的第 2 行",
+    ).toBeCloseTo(5, 2);
+  });
+
+  it("B461 · R25：落位回声被判成自己那一发，不广播给同文档的第二个视口", async () => {
+    const { panel, s } = mountDiffPair("1\n2\n3\n4\n5", "1\n2\n3A\n4\n5B");
+    s.syncBlocks();
+    const view = panel.view!.view;
+    const el = view.scrollDOM;
+    const lay = installFakeLayout(view, 20);
+    registerPanel(panel);
+    const other = spyPane("100", 20);
+    lay.put(20);
+    s.jumpTo(1);
+    // 真实浏览器里，写完 `scrollTop` 之后由浏览器在下一拍派发这一发的 `scroll` 回声，
+    // 报的就是刚落到的那一个像素（旧代码把**跳之前**的位置登记成意图 ⇒ 这一发既不是意图
+    // 也不是落点像素 ⇒ 账本判成「被人挪走→用户滚动·广播」，正是设计稿 ⑥/⑩·3 禁的那一下）。
+    lay.put(80);
+    el.dispatchEvent(new Event("scroll"));
+    await nextFrame();
+    expect(other.calls, "跳块这一发不许被当成用户滚动广播给同文档的别的面板").toEqual([]);
+    // 反向闸（上面那条不是靠把账本焊死做出来的）：用户真的把这一格挪到别处 ⇒ 照旧联动。
+    lay.put(60);
+    el.dispatchEvent(new Event("scroll"));
+    await nextFrame();
+    expect(other.calls, "用户滚动仍然要广播 ⇒ 抑制不是锁").toEqual([4]);
+    // 多视口**像素级**抑制（两格宽度不同、回声真实落点差几个像素）jsdom 量不到 ⇒
+    // 那一档仍是 Task 11 真机台的验收项（设计稿 ⑩·3 的多视口那条）。
   });
 
   it("B461 · step(1) 往后找、末块之后夹住；step(-1) 往回", () => {
@@ -490,12 +654,66 @@ describe("B461 · 跳块与步进（Task 4）", () => {
     s.jumpTo(1);
     expect(leftLine(), "左栏那一行就是被删掉的 X").toBe(4);
     expect(line(), "那道删除缝在右栏落在块前缘那行的**下一行**").toBe(4);
-    expect(s.activeIndex(), "空段包不住自己的落点 ⇒ 谁都没包住").toBe(-1);
+    // 裁决 R26：落位规则（`end + 1`）与 `blockAt` 的空段命中行（`start - 1`）本来差一行 ⇒
+    // 刚跳过去的那一块读成 -1，侧栏高亮丢掉。现在空段的**落点行**也算命中（兜底），
+    // 于是「跳过去的就是 active」这一条成立。
+    expect(s.activeIndex(), "R26：落点行兜底命中 ⇒ 刚跳过去的那一块就是 active").toBe(1);
     s.step(-1);
     expect(line(), "往回必须真动起来（改块在右栏第 2 行），不许落回同一行").toBe(2);
     expect(s.activeIndex()).toBe(0);
     s.step(1);
     expect(line(), "再往前又是那道删除缝").toBe(4);
+    expect(s.activeIndex(), "R26：再跳回来 active 仍然是那道删除（往返读数一致）").toBe(1);
+  });
+
+  it("B461 · R26：step(-1) 从删除缝之后落回那一块，读数就是那一块（不再被跳过）", () => {
+    // 与上面那条相反的一头：光标停在删除缝**之后**（第 6 行），按「上一个差异」。
+    // 这一支本来就不会「原地不动」（落点行 4 ≠ 光标行 6），`step` 早就把这一块当候选；
+    // R26 之前坏在**读数**上 —— 落过去之后 `blockAt` 认不出第 4 行，读数是 -1，
+    // 于是侧栏与「以 active 为起点再步进」那条路都当这一块不存在（= 这一块被跳过了）。
+    const { panel, s } = mountDiffPair("1\n2\n3\nX\n5\n6\n7", "1\n2Z\n3\n5\n6\n7");
+    const line = (): number =>
+      panel.view!.view.state.doc.lineAt(panel.view!.view.state.selection.main.head).number;
+    expect(s.blocks().map((b) => b.kind)).toEqual(["modify", "delete"]);
+    panel.view!.view.dispatch({
+      selection: { anchor: panel.view!.view.state.doc.line(6).from },
+    });
+    expect(s.activeIndex(), "前置：第 6 行谁都没包住（兜底只兜落点那一行）").toBe(-1);
+    s.step(-1);
+    expect(line(), "往回落在删除块的落点行（第 4 行）").toBe(4);
+    expect(s.activeIndex(), "R26：那一块报得出自己 ⇒ step(-1) 不再把它跳过").toBe(1);
+  });
+
+  it("B461 · R26：贴文首的删除块跳过去之后 active 读数不丢（落点行是第 1 行）", () => {
+    // 删除发生在**文档第一行**：右栏那一侧是空段 1..0 ⇒ 落位规则给的落点行是 1，
+    // 而「块前缘那一行」在那儿是第 0 行（不存在）⇒ 只有兜底认得它。
+    const { panel, s } = mountDiffPair("X\nA\nB", "A\nB");
+    expect(s.blocks().map((b) => b.kind)).toEqual(["delete"]);
+    s.jumpTo(0);
+    expect(
+      panel.view!.view.state.doc.lineAt(panel.view!.view.state.selection.main.head).number,
+    ).toBe(1);
+    expect(s.activeIndex(), "贴文首的删除块：落点行必须仍报出那一块，否则侧栏高亮必丢").toBe(0);
+  });
+
+  it("B461 · R26 兜底与既有命中规则不打架：两块之间那一行归删除块，块内行归自己", () => {
+    const { panel, s } = mountDiffPair("1\n2\n3\nX\n5\n6\n7", "1\n2Z\n3\n5\n6\n7");
+    const rightCaretTo = (line: number): void => {
+      panel.view!.view.dispatch({
+        selection: { anchor: panel.view!.view.state.doc.line(line).from },
+      });
+    };
+    expect(s.blocks().map((b) => b.kind)).toEqual(["modify", "delete"]);
+    // 块内行（第 2 行是改块）走现有规则 ⇒ 0；空段前缘（第 3 行）也走现有规则 ⇒ 1；
+    // 空段落点（第 4 行）走兜底 ⇒ 1；落点之后（第 5 行）谁都不沾 ⇒ -1。
+    rightCaretTo(2);
+    expect(s.activeIndex()).toBe(0);
+    rightCaretTo(3);
+    expect(s.activeIndex(), "块前缘那一行照旧命中（现有规则不动）").toBe(1);
+    rightCaretTo(4);
+    expect(s.activeIndex(), "落点行 = 兜底").toBe(1);
+    rightCaretTo(5);
+    expect(s.activeIndex(), "兜底只兜那一行，不许把后面都吞了").toBe(-1);
   });
 
   it("B461 · syncBlocks / jumpTo 都把右栏那一发写回标签快照（切走再回来不丢状态）", () => {
