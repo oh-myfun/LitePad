@@ -67,7 +67,6 @@ function mount(tabs: TabSpec[] = []) {
     onActivatePanel: () => {},
     onActivateTab: () => {},
     onCloseTab: () => {},
-    onClosePanel: () => {},
     onRatioChange: () => {},
     onMoveTabToStrip,
     onDropTabToPanel,

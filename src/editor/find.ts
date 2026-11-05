@@ -1,5 +1,5 @@
 import { SearchQuery } from "@codemirror/search";
-import { EditorState, StateEffect, StateField, type Extension } from "@codemirror/state";
+import { EditorState, StateEffect, StateField, type Extension, type Text } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView } from "@codemirror/view";
 
 /**
@@ -167,9 +167,59 @@ const findDecorations = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
+/**
+ * 「在选区中查找」那一层的范围带（B425）。
+ *
+ * VS Code 的对应物是 `findDecorations.ts` 的 `_FIND_SCOPE_DECORATION`
+ * （className `findScope`、**isWholeLine**，取色 `editor.findRangeHighlightBackground`）——
+ * 只把命中筛掉不算完，得让人看见「这一片才是搜索范围」。终点正好落在某行行首时那一行
+ * 不算（VS Code 对 `endColumn === 1` 同一处理：否则选区末尾会把下一行也涂上）。
+ */
+export function scopeLineStarts(
+  doc: Text,
+  restrict: { from: number; to: number } | null,
+): number[] {
+  if (!restrict) return [];
+  const len = doc.length;
+  const from = Math.max(0, Math.min(restrict.from, len));
+  const to = Math.max(from, Math.min(restrict.to, len));
+  if (to <= from) return [];
+  const tail = doc.lineAt(to).from === to ? to - 1 : to;
+  const starts: number[] = [];
+  for (let n = doc.lineAt(from).number; n <= doc.lineAt(tail).number; n++) {
+    starts.push(doc.line(n).from);
+  }
+  return starts;
+}
+
+const rangeLine = Decoration.line({ class: "cm-find-range" });
+
+/**
+ * 范围带单独一颗 StateField：行装饰与**同一行行首**起手的区间装饰（命中）挤进同一个
+ * `Decoration.set` 会撞交叠检查（previewSets 那边踩过，注释里写着）。
+ * `EditorView.decorations` 是多值 facet，多挂一颗就行。
+ */
+const findRangeField = StateField.define<DecorationSet>({
+  create: (state) =>
+    Decoration.set(
+      scopeLineStarts(state.doc, state.field(findField).restrict).map((from) =>
+        rangeLine.range(from),
+      ),
+    ),
+  update(deco, tr) {
+    const f = tr.state.field(findField);
+    const queryChanged = tr.effects.some((e) => e.is(setFindQuery));
+    if (!tr.docChanged && !queryChanged) return deco;
+    return Decoration.set(
+      scopeLineStarts(tr.state.doc, f.restrict).map((from) => rangeLine.range(from)),
+    );
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
 /** 每个标签的 EditorState 都要挂载本扩展（高亮随快照走）。 */
 export function findHighlight(): Extension {
-  return [findField, findDecorations];
+  return [findField, findDecorations, findRangeField];
 }
 
 /** 把查询应用到视图（高亮 + 当前项）。 */

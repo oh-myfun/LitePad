@@ -13,16 +13,21 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { EditorState } from "@codemirror/state";
+import { ruleBlock, stripCssComments } from "./static";
 
 const h = vi.hoisted(() => ({
-  /** 资源管理器那个根（`getRoot` 的替身返回值）；空串 = 没打开文件夹。 */
-  root: "",
+  /** 资源管理器那几根（B424：`getRoots` 的替身返回值）；空表 = 没打开文件夹。 */
+  roots: [] as string[],
   /** `searchInFolder` 每一发的入参。 */
   calls: [] as Record<string, unknown>[],
   /** 这些查询串先不答，resolve 存 `release` —— 用例据此演示「在飞」。 */
   gated: new Set<string>(),
   release: new Map<string, (report: unknown) => void>(),
   report: { files: [], matches: 0, limitHit: false, scanned: 0 } as unknown,
+  /** 某一根**自己**的回包（B424：扇出要能指定「这一根搜到了什么」，其余照 `report`）。 */
+  byRoot: new Map<string, unknown>(),
+  /** 这些根发的那一发失败（B424：只让一根失败，另几根照旧）。 */
+  failRoots: new Set<string>(),
   /** 非空 ⇒ `searchInFolder` 按这个理由失败。 */
   fail: "",
   /** `replaceInFiles` 收到的条目（只有**没开在标签里**的那些该出现在这儿）。 */
@@ -30,6 +35,10 @@ const h = vi.hoisted(() => ({
   replaceReport: { filesChanged: 0, occurrences: 0, errors: [] as string[] },
   /** `doOpen` 被点的路径（盘上那条命中）。 */
   opened: [] as string[],
+  /** `doOpen` 成功时替身要不要顺手把文档/标签建出来（B420：模拟「重开成功」）。 */
+  openMakes: null as ((path: string) => void) | null,
+  /** `doOpen` 的返回值 —— **实例 id**（照真实契约，见上面 `doOpen` 替身的注释）。 */
+  openInstId: null as number | null,
   /** `switchTab` 的调用（面板 id, 实例 id）。 */
   switched: [] as [number, number][],
   /** `saveSettings` 落到盘上的快照。 */
@@ -39,8 +48,12 @@ const h = vi.hoisted(() => ({
   askArgs: [] as [string, Record<string, unknown>][],
 }));
 
-// 根只有一个出口：面板问 store，store 问这里 —— 不留第二份「当前文件夹」。
-vi.mock("../src/explorer/store", () => ({ getRoot: () => h.root }));
+// B424：面板问的是「那几根」⇒ 这里换整表替身；`ownerOf`（归哪一节的判据）用**真身**，
+// 假一个判据去测用它分出来的树，测的就不是判据本身了。
+vi.mock("../src/explorer/store", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../src/explorer/store")>();
+  return { ...real, getRoots: () => h.roots };
+});
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -69,7 +82,12 @@ vi.mock("../src/io/files", async (importOriginal) => {
     ...real,
     doOpen: (path: string) => {
       h.opened.push(path);
-      return Promise.resolve(null);
+      // ⚠️ 忠实契约：真实 `doOpen` 回的是**新开/激活那份实例的 tabId**（`io/files.ts:246`
+      //    `return tab.tabId`，实例 id 来自 `takeInstId()`），**不是**文档 id —— 两套计数器
+      //    各走各的（JS 侧 `core/app-state.ts:293`，Rust 侧 `commands/mod.rs:62`）。
+      //    替身早先直接回文档 id，正好把「拿返回值当 docId 用」这一病灶盖住了。
+      h.openMakes?.(path);
+      return Promise.resolve(h.openInstId ?? null);
     },
   };
 });
@@ -90,15 +108,17 @@ vi.mock("../src/ipc/api", async (importOriginal) => {
   const real = await importOriginal<typeof import("../src/ipc/api")>();
   return {
     ...real,
-    searchInFolder: (a: { query: string }) => {
+    searchInFolder: (a: { query: string; root: string }) => {
       h.calls.push(a as unknown as Record<string, unknown>);
-      if (h.fail) return Promise.reject(new Error(h.fail));
+      if (h.fail || h.failRoots.has(a.root)) {
+        return Promise.reject(new Error(h.fail || `这一根读不了：${a.root}`));
+      }
       if (h.gated.has(a.query)) {
         return new Promise((resolve) => {
           h.release.set(a.query, resolve);
         });
       }
-      return Promise.resolve(h.report);
+      return Promise.resolve(h.byRoot.get(a.root) ?? h.report);
     },
     replaceInFiles: (items: Record<string, unknown>[]) => {
       h.replaced.push(...items);
@@ -191,8 +211,6 @@ function openDoc(docId: number, path: string, text: string) {
     activeTabId: inst.tabId,
     view: null,
     viewTabId: null,
-    preview: null,
-    previewTimer: null,
     bodyEl: null,
   });
   appState.setActivePanelId(0);
@@ -229,15 +247,19 @@ beforeEach(() => {
   vi.useFakeTimers();
   appState.setWindowKind("main");
   appState.setSettings({ toc_open: false, drawer_view: "toc", toc_width: 240 } as never);
-  h.root = "E:\\笔记";
+  h.roots = ["E:\\笔记"];
   h.calls = [];
   h.gated = new Set();
   h.release = new Map();
   h.report = report([], 0);
+  h.byRoot = new Map();
+  h.failRoots = new Set();
   h.fail = "";
   h.replaced = [];
   h.replaceReport = { filesChanged: 0, occurrences: 0, errors: [] };
   h.opened = [];
+  h.openMakes = null;
+  h.openInstId = null;
   h.switched = [];
   h.saved = [];
   h.askAnswer = true;
@@ -248,7 +270,16 @@ beforeEach(() => {
   document.getElementById("main-row")?.classList.remove("is-sidebar-off");
   // ⚠️ 三档不跟着 `clearAll` 走（那是「清除搜索」，VS Code 也只清查询、留着 Aa/ab/.*），
   //    所以用例之间必须自己把它们放回灭的 —— 不然上一条留下的档位会改变这一条的分支。
-  store.setQuery({ caseSensitive: false, wholeWord: false, regexp: false });
+  // B417：新增的「仅在打开的编辑器」与「保留大小写」同属查询态的开关，一样要归位。
+  if (ui.searchPanel.classList.contains("is-replace-shown")) click(ui.searchToggleReplace);
+  store.setQuery({
+    caseSensitive: false,
+    wholeWord: false,
+    regexp: false,
+    onlyOpenEditors: false,
+    preserveCase: false,
+    useExcludes: true,
+  });
   store.clearAll();
   drawer.setDrawer(null, false);
 });
@@ -429,7 +460,7 @@ describe("B389 · 结果树", () => {
     ).toBe("");
     expect(files()[1].querySelector(".search-rel")?.textContent).toBe("子目录\\b.md");
     expect(files()[0].querySelector(".search-badge")?.textContent).toBe("2");
-    expect(ui.searchCount.textContent).toBe("在 2 个文件中发现 3 个结果");
+    expect(ui.searchCount.textContent).toBe("在 2 个文件中找到 3 个结果");
 
     const hit = lineAt("a.md", 2);
     expect(hit.querySelector(".search-linenum")?.textContent).toBe("2");
@@ -472,7 +503,7 @@ describe("B389 · 结果树", () => {
   });
 
   it("点一条**开着的**命中：切标签 + 把选区摆到那六个字符（emoji 那行按字符列换算）", async () => {
-    h.root = "E:\\笔记";
+    h.roots = ["E:\\笔记"];
     const { inst } = openDoc(7, "E:\\笔记\\a.md", "😀 中文 needle 尾巴");
     h.report = report(
       [fileHit("E:\\笔记\\a.md", "a.md", "a.md", [row(1, "😀 中文 needle 尾巴", 5, 6, 6)])],
@@ -506,13 +537,13 @@ describe("B389 · 结果树", () => {
   });
 
   it("没打开文件夹 ⇒ 画的是内存快照，并说明这一屏搜的是哪儿（用户口径第一条）", async () => {
-    h.root = "";
+    h.roots = [];
     openDoc(3, "E:\\别处\\c.md", "标题\n这里 aa 没保存");
     type(ui.searchInput, "aa");
     await settle();
     expect(h.calls, "兜底那一支读内存，一次 IPC 都不发").toEqual([]);
     expect(files().length).toBe(1);
-    expect(ui.searchCount.textContent).toBe("在 1 个打开的文档中发现 1 个结果");
+    expect(ui.searchCount.textContent).toBe("在 1 个文件中找到 1 个结果");
     expect(ui.searchResults.querySelector(".search-note")?.textContent).toContain("没有打开文件夹");
   });
 
@@ -663,8 +694,6 @@ describe("B389 · 从命令/快捷键摊开（种子取活动视图选中的那�
       activeTabId: 0,
       view: { view: { state, focus: () => {} } } as never,
       viewTabId: 0,
-      preview: null,
-      previewTimer: null,
       bodyEl: null,
     });
     appState.setActivePanelId(0);
@@ -706,5 +735,518 @@ describe("B389 · 从命令/快捷键摊开（种子取活动视图选中的那�
     const { commandById } = await import("../src/shell/keymap");
     expect(commandById("edit.findInFiles")?.keys).toEqual(["Ctrl+Shift+F"]);
     expect(commandById("edit.replaceInFiles")?.keys).toEqual(["Ctrl+Shift+H"]);
+  });
+});
+
+describe("B417 · 仅在打开的编辑器中搜索 / 保留大小写 / 结果行动作", () => {
+  /** 两个文件：a.md 开在标签里、b.md 只在盘上；共三行命中。 */
+  function seedTwoGroups(): void {
+    h.report = report(
+      [
+        fileHit("E:\\笔记\\a.md", "a.md", "a.md", [
+          row(2, "第一处 aa 在此", 4, 2, 5),
+          row(5, "第二处 aa 在此", 4, 2, 5),
+        ]),
+        fileHit("E:\\笔记\\b.md", "b.md", "b.md", [row(1, "aa 只有一处", 0, 2, 1)]),
+      ],
+      3,
+    );
+  }
+
+  it("计数行是输入区的**兄弟**（嵌在 .search-widgets 里时 -5px 上沿会压进排除输入框）", () => {
+    expect(ui.searchCount.closest(".search-widgets"), "B417 真机照到的遮挡根因").toBeNull();
+    expect(ui.searchCount.previousElementSibling?.classList.contains("search-widgets")).toBe(true);
+    // 视觉上的契约：-5px 上沿只许可吃进输入区底部那 6px 内距
+    expect(ui.searchCount.classList.contains("search-count")).toBe(true);
+  });
+
+  it("「仅在打开的编辑器中搜索」：不读盘，搜的是打开文档的内存快照（未保存改动也算）", async () => {
+    openDoc(3, "E:\\笔记\\c.md", "标题\n这里 aa 没保存");
+    click(ui.searchOpenEditors);
+    expect(ui.searchOpenEditors.classList.contains("on")).toBe(true);
+    expect(ui.searchOpenEditors.getAttribute("aria-pressed")).toBe("true");
+    type(ui.searchInput, "aa");
+    await settle();
+    expect(h.calls, "这一档一次 IPC 都不发").toEqual([]);
+    expect(files().length).toBe(1);
+    expect(ui.searchCount.textContent).toBe("在 1 个文件中找到 1 个结果");
+
+    click(ui.searchOpenEditors);
+    await settle();
+    expect(h.calls.length, "关掉 ⇒ 回到盘上那一支").toBe(1);
+  });
+
+  it("「保留大小写」：开着的文档按命中原文迁移（Foo / FOO / foo 各有各的结果）", async () => {
+    const { inst } = openDoc(7, "E:\\笔记\\a.md", "Foo foo FOO");
+    h.report = report(
+      [fileHit("E:\\笔记\\a.md", "a.md", "a.md", [row(1, "Foo foo FOO", 0, 3, 1)])],
+      1,
+    );
+    type(ui.searchInput, "foo");
+    type(ui.searchReplaceInput, "bar");
+    await settle();
+    click(ui.searchPreserveCase);
+    expect(ui.searchPreserveCase.getAttribute("aria-pressed")).toBe("true");
+    click(ui.searchReplaceAll);
+    await settle(0);
+    expect(inst.state.doc.toString()).toBe("Bar bar BAR");
+  });
+
+  it("盘上那一批把 preserveCase 一起带下去（两侧同一套规则）", async () => {
+    h.report = report([fileHit("E:\\笔记\\b.md", "b.md", "b.md", [row(1, "foo", 0, 3, 1)])], 1);
+    type(ui.searchInput, "foo");
+    type(ui.searchReplaceInput, "bar");
+    await settle();
+    click(ui.searchPreserveCase);
+    click(ui.searchReplaceAll);
+    await settle(0);
+    expect(h.replaced[0]).toMatchObject({ preserveCase: true });
+  });
+
+  it("文件行的清除键：只清这一屏（盘上一个字节不碰），计数跟着少一组", async () => {
+    seedTwoGroups();
+    type(ui.searchInput, "aa");
+    await settle();
+    expect(files().length).toBe(2);
+    const dismiss = files()[0].querySelector<HTMLElement>('[data-act="dismiss"]');
+    expect(dismiss, "清除键常驻（不随替换行开合）").not.toBeNull();
+    click(dismiss!);
+    expect(files().length).toBe(1);
+    expect(ui.searchCount.textContent).toBe("在 1 个文件中找到 1 个结果");
+    expect(h.replaced).toEqual([]);
+  });
+
+  it("在文件中全部替换：只在替换行摊开时出现，点它只改这一份并重搜", async () => {
+    const { inst, doc } = openDoc(7, "E:\\笔记\\a.md", "aa 在标签里");
+    seedTwoGroups();
+    type(ui.searchInput, "aa");
+    type(ui.searchReplaceInput, "bb");
+    await settle();
+    expect(
+      files()[0].querySelector('[data-act="replace-file"]'),
+      "替换行收起时没有这颗键（VS Code 的 ReplaceActiveKey 同款）",
+    ).toBeNull();
+
+    click(ui.searchToggleReplace);
+    const btn = files()[0].querySelector<HTMLElement>('[data-act="replace-file"]');
+    expect(btn).not.toBeNull();
+    click(btn!);
+    await settle(0);
+    expect(h.askArgs.length).toBe(1);
+    expect(h.askArgs[0][0]).toContain("1 个文件");
+    expect(inst.state.doc.toString()).toBe("bb 在标签里");
+    expect(doc.dirty).toBe(true);
+    expect(h.replaced, "别的文件不跟着动").toEqual([]);
+    expect(h.calls.length, "换完必须重搜一次").toBe(2);
+    expect(ui.searchCount.textContent).toBe("已替换 1 处，改动 1 个文件");
+  });
+});
+
+describe("B419 · 命中数徽标 / 命中行动作 / 计数文案", () => {
+  /** 两个文件：a.md 两行命中，b.md 一行；共三行。 */
+  function seedTwoGroups(): void {
+    h.report = report(
+      [
+        fileHit("E:\\笔记\\a.md", "a.md", "a.md", [
+          row(2, "第一处 aa 在此", 4, 2, 5),
+          row(5, "第二处 aa 在此", 4, 2, 5),
+        ]),
+        fileHit("E:\\笔记\\b.md", "b.md", "b.md", [row(1, "aa 只有一处", 0, 2, 1)]),
+      ],
+      3,
+    );
+  }
+
+  it("文件行的命中数是徽标；动作键出现时由 CSS 让位（照 VS Code searchview.css / countBadge.css）", async () => {
+    seedTwoGroups();
+    type(ui.searchInput, "aa");
+    await settle();
+    expect(files()[0].querySelector(".search-badge")?.textContent).toBe("2");
+    const css = stripCssComments(readFileSync("src/styles/preview.css", "utf-8"));
+    expect(
+      ruleBlock(css, ".search-file:hover > .search-badge", "display"),
+      "悬停文件行时徽标必须让位给动作键（否则两者挤在同一格）",
+    ).toContain("display: none");
+    expect(
+      ruleBlock(css, ".search-badge", "border-radius"),
+      "圆角胶囊 = countBadge 的形状",
+    ).toBeTruthy();
+    expect(ruleBlock(css, ".search-badge", "font-variant-numeric")).toContain("tabular-nums");
+  });
+
+  it("命中行两颗键：替换键只在替换行摊开时出现（ReplaceActiveKey），清除键常在", async () => {
+    seedTwoGroups();
+    type(ui.searchInput, "aa");
+    await settle();
+    const line = lineAt("a.md", 2);
+    expect(line.querySelector('[data-act="dismiss-match"]'), "清除键常在").not.toBeNull();
+    expect(
+      line.querySelector('[data-act="replace-match"]'),
+      "替换区收起时没有这颗键（与文件行那颗同一条 when）",
+    ).toBeNull();
+
+    click(ui.searchToggleReplace);
+    const line2 = lineAt("a.md", 2);
+    expect(line2.querySelector('[data-act="replace-match"]')).not.toBeNull();
+    expect(line2.querySelector('[data-act="dismiss-match"]')).not.toBeNull();
+  });
+
+  it("点命中行的清除键：只摘这一条，文件组与原文件都不动", async () => {
+    seedTwoGroups();
+    type(ui.searchInput, "aa");
+    await settle();
+    click(lineAt("a.md", 2).querySelector('[data-act="dismiss-match"]')!);
+    expect(files().length, "还有一条命中，文件组不能整组消失").toBe(2);
+    expect(files()[0].querySelector(".search-badge")?.textContent).toBe("1");
+    expect(() => lineAt("a.md", 2), "被清掉的那一行不在了").toThrow();
+    expect(ui.searchCount.textContent).toBe("在 2 个文件中找到 2 个结果");
+    expect(h.replaced, "清除只是这一屏的事，盘上一个字节不碰").toEqual([]);
+  });
+
+  it("点命中行的替换键（开着的文档）：只换这一处，改内存并置脏，不发 IPC", async () => {
+    const { inst, doc } = openDoc(7, "E:\\笔记\\a.md", "aa 第一处\naa 第二处");
+    h.report = report(
+      [
+        fileHit("E:\\笔记\\a.md", "a.md", "a.md", [
+          row(1, "aa 第一处", 0, 2, 1),
+          row(2, "aa 第二处", 0, 2, 1),
+        ]),
+      ],
+      2,
+    );
+    type(ui.searchInput, "aa");
+    type(ui.searchReplaceInput, "bb");
+    await settle();
+    click(ui.searchToggleReplace);
+    click(lineAt("a.md", 2).querySelector('[data-act="replace-match"]')!);
+    await settle(0);
+    expect(inst.state.doc.toString(), "只有第二行那一处换了").toBe("aa 第一处\nbb 第二处");
+    expect(doc.dirty).toBe(true);
+    expect(h.replaced, "开着的文档只改内存，落盘交给保存流程").toEqual([]);
+    expect(ui.searchCount.textContent).toBe("已替换 1 处，改动 1 个文件");
+  });
+
+  it("点命中行的替换键（只在盘上）：line / column 一起带下去，后端只动那一处", async () => {
+    h.report = report(
+      [fileHit("E:\\笔记\\b.md", "b.md", "b.md", [row(3, "aa 只有一处", 0, 2, 1)])],
+      1,
+    );
+    h.replaceReport = { filesChanged: 1, occurrences: 1, errors: [] };
+    type(ui.searchInput, "aa");
+    type(ui.searchReplaceInput, "bb");
+    await settle();
+    click(ui.searchToggleReplace);
+    click(lineAt("b.md", 3).querySelector('[data-act="replace-match"]')!);
+    await settle(0);
+    expect(h.replaced.length).toBe(1);
+    expect(h.replaced[0]).toMatchObject({ path: "E:\\笔记\\b.md", line: 3, column: 1 });
+    expect(ui.searchCount.textContent).toBe("已替换 1 处，改动 1 个文件");
+  });
+});
+
+describe("B420 · 点结果行要跳到位（结果里的 docId 只是快照）", () => {
+  const A = "E:\\笔记\\a.md";
+  const TEXT = "第一行\n第二行 aa 在此";
+
+  /** a.md 一条命中：第 2 行「第二行 aa 在此」里的 aa（列 5、长 2）。 */
+  function seedA(): void {
+    h.report = report([fileHit(A, "a.md", "a.md", [row(2, "第二行 aa 在此", 4, 2, 5)])], 1);
+  }
+
+  function assertLanded(state: EditorState): void {
+    const sel = state.selection.main;
+    expect(state.doc.lineAt(sel.head).number, "光标落在命中那一行").toBe(2);
+    expect(state.sliceDoc(sel.from, sel.to), "选中的就是命中本身").toBe("aa");
+  }
+
+  it("开着的文档：点命中 ⇒ 切过去并选中那一处（主路径钉住）", async () => {
+    const { inst } = openDoc(7, A, TEXT);
+    seedA();
+    type(ui.searchInput, "aa");
+    await settle();
+    click(lineAt("a.md", 2));
+    await settle(0);
+    assertLanded(inst.state);
+    expect(h.switched.at(-1)).toEqual([0, inst.tabId]);
+    expect(h.opened, "开着的文档不必重新开").toEqual([]);
+  });
+
+  it("搜完之后把标签关了（docId 快照还在）：现场问表查不着 ⇒ 走 doOpen 重开再跳", async () => {
+    openDoc(7, A, TEXT);
+    seedA();
+    type(ui.searchInput, "aa");
+    await settle();
+    // 用户把 a.md 关了：doc 记录还在（`docs` 没删），`tabs` 里那份实例没了
+    appState.tabs.delete(70);
+    appState.panels.get(0)!.tabs = [];
+    // 重开成功：建出文档 7 + 那份实例 70，替身**回实例 id**（`openDoc` 里 `tabId = docId*10`，
+    // 与真实 `makeInstance` 的 `takeInstId()` 同一形：实例 id 与文档 id 不是一个空间）。
+    h.openMakes = () => {
+      openDoc(7, A, TEXT);
+    };
+    h.openInstId = 70;
+    click(lineAt("a.md", 2));
+    await settle(0);
+    expect(h.opened, "旧快照不能当「它还开着」用").toEqual([A]);
+    assertLanded(appState.tabs.get(70)!.state);
+  });
+
+  it("用户报的那一形：文件从没开过，**第一次**点就要开出来并落到命中行", async () => {
+    // `docs` 里压根没这条 ⇒ `openDocIdFor` 回 null ⇒ 走 doOpen。
+    // doOpen 成功建出文档 9 + 实例 90，并**回实例 id 90**（真实契约）。
+    // 拿这个返回值当 docId 用 ⇒ `visibleInstancesOfDoc(90)` 空 ⇒ 静默 return：
+    // 文件开了、没定位，用户得再点一次才跳（第二次才走得到已开那一支）。
+    h.openMakes = () => {
+      openDoc(9, A, TEXT);
+    };
+    h.openInstId = 90;
+    seedA();
+    type(ui.searchInput, "aa");
+    await settle();
+    click(lineAt("a.md", 2));
+    await settle(0);
+    expect(h.opened).toEqual([A]);
+    assertLanded(appState.tabs.get(90)!.state);
+  });
+
+  it("命中的文档开在另一个分屏格：那一格成为活动格，用户眼前才看得见跳转", async () => {
+    const { inst } = openDoc(7, A, TEXT);
+    // 把它挪到右格；左格留个空面板并保持为活动格（真机复现时就是这一支「点了没反应」）
+    appState.panels.get(0)!.tabs = [];
+    inst.panelId = 1;
+    appState.panels.set(1, {
+      panelId: 1,
+      tabs: [inst.tabId],
+      activeTabId: inst.tabId,
+      view: null,
+      viewTabId: null,
+      bodyEl: null,
+    });
+    appState.setActivePanelId(0);
+    seedA();
+    type(ui.searchInput, "aa");
+    await settle();
+    click(lineAt("a.md", 2));
+    await settle(0);
+    expect(appState.activePanelId, "活动格要跟着挪到文档所在那一格").toBe(1);
+    expect(h.switched.at(-1)).toEqual([1, inst.tabId]);
+    assertLanded(inst.state);
+  });
+});
+
+describe("B423 · 结果行的「替换 / 清除」要贴右沿", () => {
+  it("撑右沿的活交给灰字路径那格（徽标悬停会让位，靠它撑就会漏）", () => {
+    const css = stripCssComments(readFileSync("src/styles/preview.css", "utf-8"));
+    expect(
+      ruleBlock(css, ".search-rel", "flex"),
+      "灰字格必须带 grow：徽标悬停藏起来时，动作条才不会停在文件名后面",
+    ).toMatch(/1\s+1\s+auto/);
+    const actions = ruleBlock(css, ".search-row-actions", "margin-left") ?? "";
+    expect(
+      actions.match(/margin-left:[^;]*/)?.[0] ?? "",
+      "动作条自己不吃 auto 边距（两处都撑 = 徽标在时又被推到中间）",
+    ).not.toContain("auto");
+  });
+});
+
+describe("B421 · 排除文件框的「使用排除设置与忽略文件」", () => {
+  it("排除框里有这颗键（exclude 字形），右侧让位只给带键的框", () => {
+    const css = stripCssComments(readFileSync("src/styles/preview.css", "utf-8"));
+    expect(
+      ruleBlock(css, ".search-glob-field .search-glob-input", "padding-right"),
+      "带键的框右边要让出那颗 20px 的开关",
+    ).toContain("28px");
+    expect(
+      ruleBlock(css, ".search-glob-input", "padding") ?? "",
+      "基础档不带 28px —— 没有键的输入框不许留死区",
+    ).not.toContain("28px");
+    const btn = ui.searchUseExcludes;
+    expect(btn.closest(".search-glob-field"), "键要嵌在带让位的那层壳里").not.toBeNull();
+    expect(btn.closest(".search-glob")?.querySelector("h4")?.textContent).toBe("要排除的文件");
+    expect(btn.classList.contains("search-glob-toggle")).toBe(true);
+    expect(btn.getAttribute("aria-pressed"), "默认开着（与 VS Code 同）").toBe("true");
+    expect(btn.innerHTML).toContain("codicon-exclude");
+  });
+
+  it("点一下：模型灭掉、重搜把 useExcludes=false 带下去、说明行提示已关闭", async () => {
+    h.report = report([fileHit("E:\\笔记\\a.md", "a.md", "a.md", [row(1, "aa", 0, 2, 1)])], 1);
+    type(ui.searchInput, "aa");
+    await settle();
+    expect(h.calls.at(-1), "默认把「用排除设置与忽略文件」带给后端").toMatchObject({
+      useExcludes: true,
+    });
+    click(ui.searchUseExcludes);
+    await settle();
+    expect(store.getQuery().useExcludes).toBe(false);
+    expect(ui.searchUseExcludes.getAttribute("aria-pressed")).toBe("false");
+    expect(ui.searchUseExcludes.classList.contains("on")).toBe(false);
+    expect(h.calls.at(-1), "关掉后这一格必须跟着变（否则屏上开关与后端两套口径）").toMatchObject({
+      useExcludes: false,
+    });
+    expect(ui.searchResults.textContent).toContain("排除设置与忽略文件已关闭");
+  });
+});
+
+describe("B424 · 结果树按打开的那几根分节", () => {
+  const rootRows = (): HTMLElement[] => [
+    ...ui.searchResults.querySelectorAll<HTMLElement>(".search-root"),
+  ];
+  const sectionOf = (name: string): HTMLElement => {
+    const box = [...ui.searchResults.querySelectorAll<HTMLElement>(".search-section")].find(
+      (b) => b.querySelector(".search-root-name")?.textContent === name,
+    );
+    if (!box) throw new Error(`没有这一节：${name}`);
+    return box;
+  };
+
+  it("两根并排 ⇒ 一节一根，节头念「名字 + 灰字父目录 + 几个文件」，文件行在节里", async () => {
+    h.roots = ["E:\\笔记", "D:\\工作"];
+    h.byRoot.set(
+      "E:\\笔记",
+      report([fileHit("E:\\笔记\\a.md", "a.md", "a.md", [row(1, "aa", 0, 2, 1)])], 1),
+    );
+    h.byRoot.set(
+      "D:\\工作",
+      report(
+        [
+          fileHit("D:\\工作\\b.md", "b.md", "b.md", [row(1, "aa", 0, 2, 1)]),
+          fileHit("D:\\工作\\c.md", "c.md", "c.md", [row(2, "aa", 0, 2, 1)]),
+        ],
+        2,
+      ),
+    );
+    type(ui.searchInput, "aa");
+    await settle();
+    expect(
+      h.calls.map((c) => c.root),
+      "每根一发",
+    ).toEqual(["E:\\笔记", "D:\\工作"]);
+    expect(rootRows().map((r) => r.querySelector(".search-root-name")?.textContent)).toEqual([
+      "笔记",
+      "工作",
+    ]);
+    expect(sectionOf("笔记").querySelector(".search-root-path")?.textContent).toBe("E:\\");
+    expect(
+      [...sectionOf("笔记").querySelectorAll(".search-file")].map(
+        (f) => f.querySelector(".search-filename")?.textContent,
+      ),
+    ).toEqual(["a.md"]);
+    expect(sectionOf("工作").querySelector(".search-root-count")?.textContent).toBe("2");
+    expect(ui.searchCount.textContent).toBe("在 3 个文件中找到 3 个结果");
+  });
+
+  it("只有一节 ⇒ 不套容器、不画节头（单根时那一行只是把标题栏下面那句话重念一遍）", async () => {
+    h.roots = ["E:\\笔记"];
+    h.report = report([fileHit("E:\\笔记\\a.md", "a.md", "a.md", [row(1, "aa", 0, 2, 1)])], 1);
+    type(ui.searchInput, "aa");
+    await settle();
+    expect(rootRows(), "一节时不该有节头").toHaveLength(0);
+    expect(ui.searchResults.querySelectorAll(".search-section")).toHaveLength(0);
+    expect(files().map((f) => f.querySelector(".search-filename")?.textContent)).toEqual(["a.md"]);
+    // 反向：文件行仍是 `#search-results` 的**直接**子节点 —— B423 那套贴右沿的几何靠的就是这一层
+    expect(files()[0]?.parentElement).toBe(ui.searchResults);
+  });
+
+  it("没归进任何一根的（含没存过盘的）自成最后一节，标题念「单独打开的文件」", async () => {
+    h.roots = ["E:\\笔记"];
+    h.report = report([fileHit("E:\\笔记\\a.md", "a.md", "a.md", [row(1, "aa", 0, 2, 1)])], 1);
+    openDoc(5, "D:\\别处\\b.md", "这里 aa 在根外");
+    type(ui.searchInput, "aa");
+    await settle();
+    expect(rootRows().map((r) => r.querySelector(".search-root-name")?.textContent)).toEqual([
+      "笔记",
+      "单独打开的文件",
+    ]);
+    const lonely = sectionOf("单独打开的文件");
+    expect(
+      [...lonely.querySelectorAll<HTMLElement>(".search-file")].map((f) => f.dataset.path),
+    ).toEqual(["D:\\别处\\b.md"]);
+    expect(lonely.querySelector(".search-root-path"), "那一节没有路径可念").toBeNull();
+  });
+
+  it("某一根没搜成：那一节整个缺席，说明行点名叫出是哪一根", async () => {
+    h.roots = ["E:\\笔记", "E:\\挡住的"];
+    h.failRoots.add("E:\\挡住的");
+    h.byRoot.set(
+      "E:\\笔记",
+      report([fileHit("E:\\笔记\\a.md", "a.md", "a.md", [row(1, "aa", 0, 2, 1)])], 1),
+    );
+    type(ui.searchInput, "aa");
+    await settle();
+    expect(
+      rootRows().map((r) => r.querySelector(".search-root-name")?.textContent),
+      "搜过两根 ⇒ 剩下那一节也得有头（不画就是「这些是哪个文件夹里的」）",
+    ).toEqual(["笔记"]);
+    expect(ui.searchResults.textContent).toContain("「挡住的」没搜成");
+    expect(ui.searchCount.classList.contains("is-bad"), "另一根有结果 ⇒ 计数行不染红").toBe(false);
+  });
+
+  it("节里的文件行照旧能点：折/展与跳一条命中都走原来的路", async () => {
+    h.roots = ["E:\\笔记", "D:\\工作"];
+    h.byRoot.set(
+      "E:\\笔记",
+      report([fileHit("E:\\笔记\\a.md", "a.md", "a.md", [row(1, "aa 命中", 0, 2, 1)])], 1),
+    );
+    h.byRoot.set("D:\\工作", report([], 0));
+    type(ui.searchInput, "aa");
+    await settle();
+    openDoc(9, "E:\\笔记\\a.md", "aa 命中");
+    click(lineAt("a.md", 1));
+    await settle(0);
+    expect(h.switched, "跳过去 = 切到那份实例").toEqual([[0, 90]]);
+    expect(h.opened, "已经开着的不再去盘上开一遍").toEqual([]);
+  });
+});
+
+describe("B426 · 节头那个数字改用徽标盒", () => {
+  /** 两根，第二根两个文件 ⇒ 节头计数 = 2，与文件行的命中数徽标同屏可比。 */
+  async function seedTwoRoots(): Promise<void> {
+    h.roots = ["E:\\笔记", "D:\\工作"];
+    h.byRoot.set(
+      "E:\\笔记",
+      report([fileHit("E:\\笔记\\a.md", "a.md", "a.md", [row(1, "aa", 0, 2, 1)])], 1),
+    );
+    h.byRoot.set(
+      "D:\\工作",
+      report(
+        [
+          fileHit("D:\\工作\\b.md", "b.md", "b.md", [row(1, "aa", 0, 2, 1)]),
+          fileHit("D:\\工作\\c.md", "c.md", "c.md", [row(2, "aa", 0, 2, 1)]),
+        ],
+        2,
+      ),
+    );
+    type(ui.searchInput, "aa");
+    await settle();
+  }
+
+  const badgeOf = (name: string): HTMLElement => {
+    const box = [...document.querySelectorAll<HTMLElement>(".search-section")].find(
+      (b) => b.querySelector(".search-root-name")?.textContent === name,
+    );
+    const cell = box?.querySelector<HTMLElement>(".search-root-count");
+    if (!cell) throw new Error(`这一节没有计数格：${name}`);
+    return cell;
+  };
+
+  it("节头的数字挂 `.search-badge`（与文件行同一颗盒），同时留着 `search-root-count`", async () => {
+    await seedTwoRoots();
+    expect(badgeOf("笔记").textContent, "一节一个文件").toBe("1");
+    const count = badgeOf("工作");
+    expect(count.classList.contains("search-badge"), "同一档徽标，不是另一套自制胶囊").toBe(true);
+    expect(count.textContent, "值仍是这一节的文件数（B424 口径）").toBe("2");
+    expect(
+      document.querySelectorAll(".search-root > .search-badge"),
+      "两节两头各一颗",
+    ).toHaveLength(2);
+  });
+
+  it("颜色与几何只由 `.search-badge` 一处定义（节头不许自己写死，否则主题一换就漂移）", () => {
+    const css = stripCssComments(readFileSync("src/styles/preview.css", "utf-8"));
+    expect(
+      ruleBlock(css, ".search-root-count", "color") ?? "",
+      "节头那格不许再自带 color —— 徽标前景由 --badge-fg 每族一份",
+    ).not.toMatch(/^\s*color:/m);
+    expect(ruleBlock(css, ".search-badge", "background")).toContain("var(--badge-bg)");
   });
 });

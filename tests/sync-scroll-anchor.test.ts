@@ -322,4 +322,8 @@ describe("EditorScrollAnchor · 视觉行位置（B300 逐行对齐）", () => {
     expect(() => a.setVAt!(150)).not.toThrow();
     expect(plain.scrollDOM.scrollTop).toBe(10); // 第 2 行的块顶（兜底）
   });
+
+  // B442：编辑档的工具条改成滚动容器**之外**的布局行（.panel-host.md-bar-docked 竖排），
+  // 预览档那颗键纯悬浮且不推动正文 ⇒ 「顶边被浮层占掉一条带」这个前提没了，
+  // 锚点的顶边就是容器顶 —— EditorScrollAnchor 的 inset 形参随之删除。
 });

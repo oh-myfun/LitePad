@@ -31,6 +31,10 @@ function mount(overrides: Partial<Parameters<typeof createFindBar>[1]> = {}) {
       lastQuery = q;
       calls.push("change");
     },
+    onReplaceTextChange: (q) => {
+      lastQuery = q;
+      calls.push("replaceText");
+    },
     onStep: (dir, q) => {
       lastQuery = q;
       calls.push(`step:${dir}`);
@@ -554,34 +558,10 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       readFileSync("src/markdown.ts", "utf-8") +
       "\n" +
       readFileSync("src/commands.ts", "utf-8");
-    expect(main, "applyFindQuery 必须同步预览高亮").toContain("applyPreviewFindEverywhere(q)");
-    // 重放必须发生在 renderMarkdownFor **函数体内**。
-    // 早期这里按「renderMarkdownFor 后 600 字符内」匹配，M4 给该函数加了
-    // 大文件降级分支后距离超限就误报——按函数体截取才稳。
-    const rmStart = main.indexOf("function renderMarkdownFor");
-    expect(rmStart, "应能定位 renderMarkdownFor").toBeGreaterThan(-1);
-    const rmBody = main.slice(rmStart, main.indexOf("\nfunction ", rmStart + 10));
-    expect(rmBody, "重渲染后必须重放预览高亮").toContain(
-      "applyPreviewFindToPanel(panel, findSpecOf(fb.getQuery()))",
-    );
-    expect(main, "clearFindHighlight 必须同时清预览高亮").toMatch(
-      /clearFindHighlight[\s\S]{0,200}?applyFind\(null\)/,
-    );
-    expect(main, "stepFind 必须有预览分支（在预览高亮里步进）").toMatch(
-      /stepFind[\s\S]{0,400}?viewMode === "preview" && panel\.preview/,
-    );
-    // B397-1：装饰那一臂（`Settings.deco_preview` 开着）**没有第二颗 view** —— 预览档现形的
-    // 就是 `panel.view.view`，而 `applyFindQuery` 上面那个「遍历面板发 `setFindQuery`」的循环
-    // 已经把查询送到它身上了。原来这三条判据（装饰面分支 / `findFaceOf` 问看得见那一面 /
-    // 清装饰面）是为镜像写的，载体没了；产品性质「预览格里 Ctrl+F 不是死键、关栏不留残影」
-    // 换到 tests/spike-deco-wiring.test.ts 戊·庚 两条**行为**判据上重钉（真启动 + 真 view）。
-    // 这里留两条静态判据，管住这一臂特有的两个坑：
-    //   · `applyPreviewFindToPanel` 对装饰那一臂必须**什么都不做** —— 它若再发一发
-    //     `setFindQuery`，就把 `applyFindQuery` 刚钉上的选区限制（`restrict`）冲掉了；
-    //   · 全仓不许有人再去找「第二面」（`decoMirror` 这类机械不许被搬回来）。
-    expect(main, "applyPreviewFindToPanel 对装饰那一臂必须早退（只服务派生 DOM）").toMatch(
-      /applyPreviewFindToPanel[\s\S]{0,700}?if \(!p\.preview\) return/,
-    );
+    // B412：旧派生 DOM 预览臂已删除 ⇒ 查找只剩「这一格那颗 view」一条路。
+    // 装饰档里高亮就画在同一颗 view 上，`applyFindQuery` 的「遍历面板发 setFindQuery」
+    // 已经把查询送到每一格；这里钉住那几件不该再被搬回来的事。
+    expect(main, "applyFindQuery 不许再往第二面发查询").not.toContain("applyPreviewFindEverywhere");
     const findSrc = readFileSync("src/find/findbar.ts", "utf-8")
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^\s*\/\/.*$/gm, "");
@@ -593,11 +573,6 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       /clearFindHighlight[\s\S]{0,300}?p\.view[\s\S]{0,80}?clearFindQuery/,
     );
     expect(findSrc, "镜像那套机械不许被搬回查找层").not.toContain("decoMirror");
-    const preview = readFileSync("src/markdown/preview.ts", "utf-8");
-    expect(preview, "PreviewPane 必须提供 applyFind/stepFind/findState").toMatch(
-      /applyFind\(|stepFind\(|findState\(/,
-    );
-    expect(preview, "预览命中必须复用编辑器高亮样式类").toContain("cm-find-match");
   });
   it("B39/B40 + B389 查找范围：悬浮条无范围下拉、无文件夹搜索、也无跨文档那一档", () => {
     // 两条用户口径叠在这一条判据上：
@@ -721,15 +696,22 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
     // ---- ③ 选区锚点必须冻结（点「下一个」后计数塌缩成 1 条）----
     // 根因：restrictMatches 每次实时读活动选区，而 stepFind 会把选区换成**命中本身**，
     // 于是第二次步进的范围就只剩这一个命中。
-    // 最有效的一条判据：活动选区**只允许被读一次**（在播种锚点处）。
+    // 最有效的一条判据：活动选区**只允许在「重取锚点」那两处**读 —— 播种（开关打开 /
+    // 重开 / 换文档）与 B419 的「用户换了选区」；范围判定绝不实时读。
     const withoutDecl = main.replace(/function activeSelectionRange\(\)[^{]*\{[\s\S]*?\n\}/, "");
     const liveReads = [...withoutDecl.matchAll(/activeSelectionRange\(\)/g)];
-    expect(liveReads, "activeSelectionRange 只允许在播种锚点时读一次").toHaveLength(1);
+    expect(liveReads, "实时选区只许在重取锚点处读（播种 + B419 选区变化）").toHaveLength(2);
     const seedBody =
       main.match(/function seedFindSelectionAnchor\(\)[^{]*\{([\s\S]*?)\n\}/)?.[1] ?? "";
-    expect(seedBody, "那唯一一次读取必须在 seedFindSelectionAnchor 里").toContain(
+    expect(seedBody, "那两处之一必须在 seedFindSelectionAnchor 里").toContain(
       "activeSelectionRange()",
     );
+    const selRefreshBody =
+      main.match(/function refreshFindOnSelectionChange\(\)[^{]*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    expect(selRefreshBody, "B419：选区变化时先确认有选区，再重取锚点").toContain(
+      "activeSelectionRange()",
+    );
+    expect(selRefreshBody).toContain("seedFindSelectionAnchor()");
     expect(main, "判断范围一律读冻结锚点").toContain("currentFindRestrict(q)");
     expect(main, "不得再出现「实时取选区当范围」的写法").not.toMatch(
       /restrict:\s*q\.inSelection \? activeSelectionRange\(\)/,
@@ -744,6 +726,12 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
       /findSelectionAnchor\?\.docId !== activeTabIdOf\(\)\) seedFindSelectionAnchor\(\)/,
     );
     expect(main, "F3 那条 retarget 必须走同一处判断").toMatch(/else retargetFindBar\(\);/);
+    // B419（用户）：悬浮条开着且有查找内容时，用户在活动编辑器里换选区 = 换了搜索范围，
+    // 结果要重跑。接线点在 main.ts 的 update.selectionSet 那一格（与大纲同一处上报）。
+    const appMain = readFileSync("src/main.ts", "utf-8");
+    expect(appMain, "活动面板的选区变化必须通知查找栏").toMatch(
+      /update\.selectionSet[\s\S]{0,500}refreshFindOnSelectionChange\(\)/,
+    );
   });
   it("B77 查找栏外观对齐 VS Code：盒模型折算 / 扁平按钮 / 两档悬停 / 虚焦环", () => {
     // 用户要求「参考 VS Code 优化搜索悬浮框」。已按 docs/vscode-reference 里的
@@ -1241,5 +1229,47 @@ describe("B389-9：查找栏定位照 VS Code", () => {
       /(^|[^-])left:\s*\d+px/,
     );
     expect(bar).toMatch(/position:\s*fixed/);
+  });
+});
+
+// B417：预览档（禁编辑）里替换没有落点 —— 浮层这一层只负责「门关没关」。
+// 判定在 `find/findbar.ts`（看 viewMode），这里钉的是关上门之后的行为：
+// 替换行收起、chevron 压住并换提示、Ctrl+H 的 focusReplace 退回查找框。
+describe("B417：预览档禁用替换（浮层自己的那一半）", () => {
+  it("setReplaceEnabled(false)：收起 + 压住 + 换提示；focusReplace 落回查找框", () => {
+    const m = mount();
+    m.bar.open();
+    m.bar.setReplaceEnabled(false);
+    expect(m.chevron().disabled).toBe(true);
+    expect(m.chevron().getAttribute("aria-disabled")).toBe("true");
+    expect(m.chevron().dataset.tip).toBe("预览模式下不可替换");
+    m.chevron().click(); // 压住的键不响应，替换行不许被掀开
+    expect(m.replaceRow().hidden).toBe(true);
+    m.bar.focusReplace();
+    expect(document.activeElement).toBe(m.q(".find-input"));
+  });
+
+  it("取回可写档 ⇒ 展开键恢复、替换行照旧能开", () => {
+    const m = mount();
+    m.bar.open();
+    m.bar.setReplaceEnabled(false);
+    m.bar.setReplaceEnabled(true);
+    expect(m.chevron().disabled).toBe(false);
+    expect(m.chevron().dataset.tip).toBe("展开或折叠替换");
+    m.chevron().click();
+    expect(m.replaceRow().hidden).toBe(false);
+  });
+});
+
+// B419（用户）：预览档禁用替换时，左缘那颗展开键要有明确的「按不动」观感。
+describe("B419：禁用的展开键要有禁用观感（不是只有 disabled 属性）", () => {
+  it("CSS：压淡 + 去掉悬停提亮与手型指针", () => {
+    const css = stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
+    const off = ruleBlock(css, ".find-chevron:disabled");
+    expect(off, "禁用态必须压淡").toMatch(/opacity:\s*0?\.\d+/);
+    expect(off, "不许再挂手型指针").toContain("cursor: default");
+    expect(css, "悬停提亮要在 :disabled:hover 上被按掉（两条同特异度，靠后写才盖得住）").toMatch(
+      /\.find-chevron:disabled:hover\s*\{[^}]*background:\s*transparent/,
+    );
   });
 });

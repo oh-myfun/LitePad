@@ -818,6 +818,22 @@ describe("帧广播把视觉行位置一起带走（B300 · 逐行对齐）", ()
     expect(b.setVCalls).toEqual([]);
   });
 
+  it("B416：对方顶边指着文档第一行（at=0）⇒ 走 setV 落到各自绝对顶部，不按字符对齐", () => {
+    // 文首没有「上一行」可对：按字符对齐在预览面会落进 `.cm-content` 上内距 / 标题盒里
+    // （真机 setVAt(0) ⇒ 29.33px），而大纲跳第一标题走 setV 停在 0。两条路必须同口径。
+    const sch = makeScheduler();
+    const co = new SyncScrollCoordinator(sch.schedule);
+    const driver = makeRowPane(WIDE, 0); // 驱动面就在文首：topPos = 0
+    const other = makeRowPane(NARROW, 3); // 对栏停在别处
+    co.register(driver.anchor, "r5", driver.surface);
+    co.register(other.anchor, "r5", other.surface);
+    driver.scroll();
+    sch.flush();
+    expect(other.setVAtCalls, "文首不许按字符对齐").toEqual([]);
+    expect(other.setVCalls, "按 v 落到自己的顶部").toEqual([1.0]);
+    expect(other.at()).toBe(0);
+  });
+
   it("对面只有 v、没有 pos（老版本 / 预览面）⇒ 照旧按 v 写", () => {
     const sch = makeScheduler();
     const co = new SyncScrollCoordinator(sch.schedule);

@@ -1,15 +1,13 @@
 // 悬浮查找 / 替换栏（从 main.ts 拆出，解耦第十二步 / #413）。
 //
 // 职责：查找栏句柄与开关（ensureFindBar / openFindBar）、编辑器查找
-// （applyFindQuery / stepFind / replaceCurrent / replaceAllInScope）、预览查找桥
-// （findSpecOf / applyPreviewFindToPanel）、重定位（retargetFindBar）。
+// （applyFindQuery / stepFind / replaceCurrent / replaceAllInScope）、重定位（retargetFindBar）。
 // ⚠️ **只管当前这一份文档**：跨文档 / 跨文件搜索 B389 起在 `src/search/*`（侧栏搜索视图），
 // 这里不再持有命中表，也不再扫别的文档 —— 两处各扫一遍就会各报一个总数。
 // 零外部函数依赖——只依赖 core/* + ui + doc-model + tabs + shell/* + editor/*，
-// 对 main.ts 零反向依赖。（PreviewFindSpec 类型在此定义；markdown.ts 反向 import 它——
-// 仅类型，运行期无环。）
+// 对 main.ts 零反向依赖。B412 起预览/编辑档与源码共用同一颗 view，没有第二颗要单独送高亮。
 
-import { panels, tabs, type Panel } from "../core/app-state";
+import { panels, tabs } from "../core/app-state";
 import { activePanel } from "../core/panels";
 import {
   buildFindQuery,
@@ -21,18 +19,9 @@ import {
   setFindQuery,
   type FindMatch,
 } from "../editor/find";
-import { isMdTab } from "../doc-model";
 import { el } from "../ui";
 import { createFindBar, type FindBarHandle, type FindBarQuery } from "../shell/findbar";
 import { EditorView } from "@codemirror/view";
-
-/** 预览侧查找规格（M5 预览查找用）。 */
-export type PreviewFindSpec = {
-  text: string;
-  caseSensitive: boolean;
-  wholeWord: boolean;
-  regexp: boolean;
-} | null;
 
 // ---------------------------------------------------------------- 悬浮查找 / 替换栏
 
@@ -43,10 +32,24 @@ export type PreviewFindSpec = {
  */
 let findBar: FindBarHandle | null = null;
 
+/**
+ * B419（用户）：本轮「已替换 N 处」的累计数 —— 单次替换连点要累加。
+ * 查询 / 替换串 / 搜索范围（选区）/ 当前文档任何一项变了都清零：那时上一发说的
+ * 已经不是这一批匹配了。清零点只有 `clearReplaceStatus()` 一个，别分散写。
+ */
+let replacedCount = 0;
+
+function clearReplaceStatus(): void {
+  replacedCount = 0;
+  findBar?.setStatus("");
+}
+
 function ensureFindBar(): FindBarHandle {
   if (findBar) return findBar;
   findBar = createFindBar(el("app"), {
     onQueryChange: (q) => applyFindQuery(q),
+    // B419：替换串一变，累计数就作废（替换串不参与匹配，不必重跑搜索）。
+    onReplaceTextChange: () => clearReplaceStatus(),
     onStep: (dir, q) => stepFind(dir, q),
     onReplace: (q) => replaceCurrent(q),
     onReplaceAll: (q) => replaceAllInScope(q),
@@ -58,11 +61,33 @@ function ensureFindBar(): FindBarHandle {
 /** 打开查找栏（种子一般为当前选中的文本）。 */
 function openFindBar(focus: "find" | "replace" = "find"): void {
   const bar = ensureFindBar();
+  const canReplace = replaceAllowedHere();
+  bar.setReplaceEnabled(canReplace);
   // 重开时按当前选区重新播种（用户可能刚重新选了一段）
   if (findSelectionOn) seedFindSelectionAnchor();
-  bar.open(selectedTextInActiveView(), focus === "replace");
-  if (focus === "replace") bar.focusReplace();
+  bar.open(selectedTextInActiveView(), focus === "replace" && canReplace);
+  if (focus === "replace" && canReplace) bar.focusReplace();
   else bar.focusFind();
+  // B417：预览档里按「在文件中替换」只能落到查找，并说清楚为什么没掀开替换行
+  if (focus === "replace" && !canReplace) bar.setStatus("预览模式下不可替换");
+}
+
+/**
+ * B417：这一档文档允不允许替换。预览档是「禁编辑的编辑模式」（B399）——文档锁着，
+ * 替换没有落点；源码档与非 markdown 文档都照旧。
+ */
+function replaceAllowedHere(): boolean {
+  const p = activePanel();
+  const t = p && p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
+  return t?.viewMode !== "preview";
+}
+
+/**
+ * 把「当前文档能不能替换」同步到浮层上。三个入口：打开查找栏、换标签 / 换面板
+ * （`retargetFindBar`）、档位切换（`markdown.ts` 的 `applyPanelMode` 这一发出口）。
+ */
+function syncFindBarReplaceable(): void {
+  findBar?.setReplaceEnabled(replaceAllowedHere());
 }
 
 /** 活动视图当前选中的文本（单行且非空才作为查找种子）。 */
@@ -108,7 +133,8 @@ function activeTabIdOf(): number | null {
  *
  * ⚠️ 为什么不能每次实时读选区：`stepFind()` 步进时会把编辑器选区设成**命中本身**，
  * 于是第二次点「下一个」时范围就塌缩成「只剩这一个命中」（用户实测反馈）。
- * 因此锚点只在**用户动作**时播种：开关由关→开、重开查找栏、切换文档；
+ * 因此锚点只在**用户动作**时播种：开关由关→开、重开查找栏、切换文档，以及 B419 起
+ * 用户在编辑器里换了选区（拖选 / 键盘扩选 / Ctrl+A / 大纲跳转后的选段）。
  * 导航（上/下一个、替换）全程只读，不改。
  *
  * 同时记住所属标签 id：切文档后旧偏移量没有意义，必须重取。
@@ -135,8 +161,26 @@ function currentFindRestrict(q: FindBarQuery): { from: number; to: number } | nu
   return { from: a.from, to: a.to };
 }
 
+/**
+ * B419：我们自己发的步进 / 单次替换会把选区换成命中本身 —— 那不是「用户换了搜索范围」，
+ * 不许据此重取锚点。dispatch 是同步的（updateListener 就在里面跑），一个布尔够用。
+ */
+let suppressSelectionRefresh = false;
+
+function dispatchOwn(view: EditorView, spec: Parameters<EditorView["dispatch"]>[0]): void {
+  suppressSelectionRefresh = true;
+  try {
+    view.dispatch(spec);
+  } finally {
+    suppressSelectionRefresh = false;
+  }
+}
+
 /** 把查询写到全部可见视图（高亮同步；离屏实例不参与高亮）。 */
 function applyFindQuery(q: FindBarQuery): void {
+  // B417/B419：任何一次查询变更（打字 / 换选项 / 换文档 / 重开 / 换搜索范围）都让
+  // 「已替换 N 处」退场 —— 那句话说的是上一发，留着就成了一条与实际匹配无关的残留。
+  clearReplaceStatus();
   const query = buildFindQuery(findOptionsOf(q));
   // 开关刚被打开 / 关掉 → 播种或清除锚点。只有用户点开关会改 inSelection，
   // 导航不会，所以冻结的锚点不会被步进改掉的选区带偏。
@@ -153,46 +197,40 @@ function applyFindQuery(q: FindBarQuery): void {
     const r = p === active ? restrict : null;
     p.view.view.dispatch({ effects: setFindQuery.of({ query, activeFrom: null, restrict: r }) });
   }
-  applyPreviewFindEverywhere(q);
   refreshFindCount();
 }
 
-/** 预览态查找高亮：md 预览面板（源码模式由编辑器装饰覆盖）。 */
-function applyPreviewFindEverywhere(q: FindBarQuery): void {
-  const spec = findSpecOf(q);
-  for (const p of panels.values()) {
-    applyPreviewFindToPanel(p, spec);
-  }
-}
-
-function findSpecOf(q: FindBarQuery): PreviewFindSpec {
-  return q.text
-    ? { text: q.text, caseSensitive: q.caseSensitive, wholeWord: q.wholeWord, regexp: q.regexp }
-    : null;
-}
-
-function applyPreviewFindToPanel(p: Panel, spec: PreviewFindSpec): void {
-  const tab = tabs.get(p.activeTabId);
-  if (!tab || !isMdTab(tab) || tab.viewMode === "source") return;
-  // B397-1 · 这一条只服务**派生 DOM**那一臂。装饰那一臂（`deco_preview` 开着）预览侧就是
-  // `p.view.view` 那颗 view，`applyFindQuery` 上面那个「遍历面板发 `setFindQuery`」的循环
-  // 已经把它覆盖了；在这里再发一发给的是同一颗 view，只会把那条循环刚钉上的选区限制
-  // （`restrict`）冲掉 ⇒ 选中一段再 Ctrl+F 变成全文高亮。
-  if (!p.preview) return;
-  p.preview.applyFind(spec);
+/**
+ * B419（用户）：活动编辑器的选区**被用户换了**（拖选 / 键盘扩选 / Ctrl+A / 大纲跳转后的选段）。
+ *
+ * 查找栏开着、有查找内容、且勾着「在选区中查找」时，选区就是搜索范围 —— 范围变了结果
+ * 必须跟着刷新，否则计数还是旧选区里那一套。
+ *
+ * 两条边界：
+ *  · 空选区（点一下正文、跳到某行）**不动**：那不是「换了个更小的范围」，把锚点清掉会让
+ *    结果突然扩回全文、与亮着的开关对不上（B304 那类「显示与行为两套口径」）。保留上一个
+ *    非空选区当范围。
+ *  · 我们自己的步进 / 替换也会改选区，那条路已被 `dispatchOwn` 的闸按住（见上）。
+ */
+function refreshFindOnSelectionChange(): void {
+  if (suppressSelectionRefresh) return;
+  const bar = findBar;
+  if (!bar?.isOpen()) return;
+  const q = bar.getQuery();
+  if (!q.text || !q.inSelection) return;
+  if (!activeSelectionRange()) return;
+  seedFindSelectionAnchor();
+  applyFindQuery(q);
 }
 
 /**
- * 「步进与计数该问哪颗 view」以前要一个 `findFaceOf` 来回答，因为装饰那一臂有第二颗 view，
- * 而隐藏那颗写不进 `scrollTop`（台账：只认 `clientHeight>0` 那一面）。B397-1 之后这个问题
- * 没有了：一格只有一颗 view，档位换的是 Compartment ⇒ 调用点直接读 `panel.view.view`，
- * 它现形时就是看得见的那一面。派生 DOM 那一臂的预览侧仍走 `panel.preview` 那条分支。
+ * 「步进与计数该问哪颗 view」：一格只有一颗 view，档位换的是 Compartment
+ * ⇒ 调用点直接读 `panel.view.view`，它现形时就是看得见的那一面。
  */
 
 function clearFindHighlight(): void {
   for (const p of panels.values()) {
     if (p.view) clearFindQuery(p.view.view);
-    p.preview?.applyFind(null);
   }
 }
 
@@ -213,19 +251,7 @@ function refreshFindCount(): void {
   const bar = findBar;
   if (!bar) return;
   const q = bar.getQuery();
-  // 预览态：计数与当前项来自预览高亮（预览可见文本与源码一一对应，步进以它为准）
   const panel = activePanel();
-  const tab = panel ? tabs.get(panel.activeTabId) : undefined;
-  if (panel && tab && isMdTab(tab) && tab.viewMode === "preview" && panel.preview) {
-    const st = panel.preview.findState();
-    if (st.count === 0) {
-      bar.setCount(q.text ? "无匹配" : "无内容");
-    } else {
-      const cur = st.active >= 0 ? st.active : 0;
-      bar.setCount(`${cur + 1} / ${st.count}`);
-    }
-    return;
-  }
   const view = panel?.view?.view ?? null;
   if (!view) return;
   const query = buildFindQuery(findOptionsOf(q));
@@ -242,19 +268,6 @@ function refreshFindCount(): void {
 function stepFind(dir: 1 | -1, q: FindBarQuery): void {
   const panel = activePanel();
   if (!panel) return;
-  const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
-  // 预览态：在预览高亮里步进 + 滚动到命中处（隐藏编辑器收不到滚动）。
-  // 装饰那一臂不走这里 —— 它 `panel.preview === null`，落到下面那颗 view 上，而那颗
-  // view 此刻正是**看得见**的一面（B397-1：一格只有一颗 view，档位换的是 Compartment）。
-  if (tab && isMdTab(tab) && tab.viewMode === "preview" && panel.preview) {
-    if (!q.text) {
-      findBar?.setCount("");
-      return;
-    }
-    panel.preview.stepFind(dir);
-    refreshFindCount();
-    return;
-  }
   const view = panel.view?.view;
   if (!view) return;
   const query = buildFindQuery(findOptionsOf(q));
@@ -277,7 +290,8 @@ function stepFind(dir: 1 | -1, q: FindBarQuery): void {
       }),
     ],
   };
-  view.dispatch(step);
+  dispatchOwn(view, step);
+  const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
   if (tab) tab.state = view.state;
   findBar?.setCount(`${idx + 1} / ${matches.length}`);
 }
@@ -302,7 +316,7 @@ function replaceCurrent(q: FindBarQuery): void {
   const matched = view.state.sliceDoc(target.from, target.to);
   const insert = q.preserveCase ? applyPreserveCase(matched, q.replace) : q.replace;
   const nextFrom = target.from + insert.length;
-  view.dispatch({
+  dispatchOwn(view, {
     changes: { from: target.from, to: target.to, insert },
     selection: { anchor: nextFrom },
     effects: [
@@ -316,7 +330,10 @@ function replaceCurrent(q: FindBarQuery): void {
   });
   if (tab) tab.state = view.state;
   refreshFindCount();
-  findBar?.setStatus("已替换 1 处");
+  // B419（用户）：单次替换连点要累计 —— 「已替换 1 处」→「已替换 2 处」…
+  // 查询 / 替换串 / 范围 / 文档一变就由 clearReplaceStatus() 清零。
+  replacedCount += 1;
+  findBar?.setStatus(`已替换 ${replacedCount} 处`);
 }
 
 /**
@@ -349,10 +366,12 @@ function replaceAllInScope(q: FindBarQuery): void {
       ? applyPreserveCase(view.state.sliceDoc(m.from, m.to), q.replace)
       : q.replace,
   }));
-  view.dispatch({ changes });
+  dispatchOwn(view, { changes });
   const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
   if (tab) tab.state = view.state;
-  findBar?.setStatus(`已替换 ${matches.length} 处`);
+  // B419：与单次替换同一个累计口径（这一发换了几处就加几处）。
+  replacedCount += matches.length;
+  findBar?.setStatus(`已替换 ${replacedCount} 处`);
   refreshFindCount();
 }
 
@@ -361,6 +380,8 @@ function retargetFindBar(): void {
   // 换了文档 → 旧锚点的偏移量作废，按新文档的选区重取；
   // 同一文档时**不动**锚点（否则 F3 步进后的「命中选区」会被当成新锚点）。
   if (findSelectionOn && findSelectionAnchor?.docId !== activeTabIdOf()) seedFindSelectionAnchor();
+  // B417：换到预览档的文档 ⇒ 替换入口立即收掉（换回来再放出去）
+  syncFindBarReplaceable();
   if (findBar?.isOpen()) findBar.retarget();
 }
 
@@ -383,9 +404,6 @@ export {
   ensureFindBar,
   openFindBar,
   applyFindQuery,
-  applyPreviewFindEverywhere,
-  findSpecOf,
-  applyPreviewFindToPanel,
   clearFindHighlight,
   refreshFindCount,
   stepFind,
@@ -393,4 +411,6 @@ export {
   replaceAllInScope,
   retargetFindBar,
   relayoutFindBar,
+  syncFindBarReplaceable,
+  refreshFindOnSelectionChange,
 };

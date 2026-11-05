@@ -11,7 +11,6 @@ import { readFileSync } from "node:fs";
 const md = readFileSync("src/markdown.ts", "utf-8");
 const life = readFileSync("src/tabs/lifecycle.ts", "utf-8");
 const wire = readFileSync("src/sync-scroll/wire.ts", "utf-8");
-const syncPreview = readFileSync("src/sync-scroll/preview.ts", "utf-8");
 const win = readFileSync("src/multiwindow/windows.ts", "utf-8");
 const split = readFileSync("src/tabs/split.ts", "utf-8");
 const files = readFileSync("src/io/files.ts", "utf-8");
@@ -200,7 +199,7 @@ describe("落位这个动作本身 · 写下去必须同栈认领", () => {
     expect(b).toContain("expectSurfaceV(face.el, byPos ? landed : v, landed)");
     // B300：按字符位置对齐那一发，**意图必须记成自己读回的 v**（两格宽度不同时同一个字符
     // 各自算出的 v 本来就不等，记成对方的就会被判成「没兑现」而补写回去，逐行对齐被自己拆掉）
-    expect(b).toContain("const byPos = at !== null && !!face.anchor.setVAt;");
+    expect(b).toContain("const byPos = at !== null && at > 0 && !!face.anchor.setVAt;");
   });
 
   it("claimVisibleHere 认领的是读回的当前位置（意图 = 落点），不是假设的目标", () => {
@@ -278,17 +277,14 @@ describe("切标签序列 · 两端都按「当前可见那一侧」读写", () 
   });
 });
 
-describe("预览的异步补定位 · 写在协调器栈外也要回登记", () => {
-  it("未铺开时排下一帧，落定后才回登记（还在延迟状态时不登记，免得把补定位判成用户滚动）", () => {
-    const b = bodyOf(syncPreview, "private scheduleRetry(");
-    expect(b).toContain("this.deferred = true");
-    expect(b).toContain("if (!this.deferred) this.declare?.(retry, landed)");
-  });
-
-  it("回登记口由 wire 注入，并且注册与落位用的是同一个构造方式（faceOf）", () => {
-    expect(bodyOf(wire, "export function faceOf(")).toContain(
-      "expectSurfaceV(root, intent, landed)",
-    );
+describe("B412 · 一格一张面：注册与落位走同一个构造入口", () => {
+  it("faceOf 只剩编辑器一面；注册与落位都用它", () => {
+    const face = bodyOf(wire, "export function faceOf(");
+    expect(face, "B412：旧预览臂已删除，faceOf 里不该再有 preview 分支").not.toContain('"preview"');
+    expect(
+      face,
+      "唯一那张面 = 编辑器滚动面（B442：编辑档工具条是容器外的布局行，没有让位 inset）",
+    ).toContain("new EditorScrollAnchor(view)");
     expect(bodyOf(wire, "export function reconcileSyncRegistrations()")).toContain(
       "faceOf(p, sideOfPanel(p))",
     );

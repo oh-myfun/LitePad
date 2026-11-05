@@ -27,6 +27,12 @@ const h = vi.hoisted(() => ({
   revealed: [] as string[],
   /** 让某条写操作报错的开关。 */
   failOn: new Set<string>(),
+  /** B427：过滤框发出的每一发（`root` / `query` / 两层的开关都在 `opts` 里）。 */
+  filtered: [] as { root: string; query: string; opts: Record<string, unknown> }[],
+  /** 每个根该回哪些名字命中（键 = 根路径）。 */
+  filterHits: new Map<string, { name: string; path: string; rel: string; isDir: boolean }[]>(),
+  /** 非空 ⇒ 每一发过滤都以这条错误拒绝（验「正则写坏了」那一档的呈现）。 */
+  filterFail: "",
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -114,6 +120,12 @@ vi.mock("../src/ipc/api", async (importOriginal) => {
     // B333：这一条是不是目录 —— 假实现按「夹具认得这一层」答，与 listDir 同一份账，
     // 免得两个假各说一套（那正是契约测试最容易被假夹具糊过去的地方）。
     isDir: (path: string) => Promise.resolve(h.dirs.has(path)),
+    // B427：过滤框的唯一数据源（实盘整棵扫在 Rust 那边，前端只认这条回包）。
+    filterTree: (root: string, query: string, opts: Record<string, unknown>) => {
+      h.filtered.push({ root, query, opts });
+      if (h.filterFail) return Promise.reject(new Error(h.filterFail));
+      return Promise.resolve({ hits: h.filterHits.get(root) ?? [], truncated: false });
+    },
     saveSettings: () => Promise.resolve(),
   };
 });
@@ -161,6 +173,13 @@ beforeAll(async () => {
 
 const ROOT = "E:\\笔记";
 
+/**
+ * 夹具（B424）：store 只有多根口径了，而这一批用例的主语多半是「就开这一根」。
+ * 逐条写 `setRoots([ROOT])` 三十遍只会把 diff 撑大、把真正的判据埋得更深。
+ */
+const openRoots = (...list: string[]): void => store.setRoots(list);
+const theRoot = (): string => store.getRoots()[0] ?? "";
+
 function rows(): HTMLElement[] {
   return [...ui.explorerTree.querySelectorAll<HTMLElement>(".explorer-row, .explorer-root")];
 }
@@ -180,6 +199,26 @@ async function click(el: Element): Promise<void> {
   await vi.waitFor(() => expect(true).toBe(true));
 }
 
+/**
+ * B427：把过滤框按回「空 + 三档关 + 两层开」。
+ * 过滤态是**模块级**的 —— 上一条用例留下的字或开关会把这一条画成过滤结果。
+ */
+function resetFilterBox(): void {
+  ui.explorerFilterInput.value = "";
+  ui.explorerFilterInput.dispatchEvent(new Event("input"));
+  const wants: [HTMLButtonElement, boolean][] = [
+    [ui.explorerFilterCase, false],
+    [ui.explorerFilterWord, false],
+    [ui.explorerFilterRegex, false],
+    [ui.explorerFilterExcludes, true],
+  ];
+  for (const [btn, want] of wants) {
+    if ((btn.getAttribute("aria-pressed") === "true") !== want) {
+      btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    }
+  }
+}
+
 beforeEach(async () => {
   // 上一条用例如果在中途断言失败，`creating` / `renaming` 就漏在模块里 —— 于是整棵树被画成
   // 输入框，下面 `setRoot` 那句等「a.md」会超时，一条真失败变成三十条噪音。先把输入框按掉。
@@ -195,6 +234,10 @@ beforeEach(async () => {
   h.deleted.length = 0;
   h.revealed.length = 0;
   h.failOn.clear();
+  h.filtered.length = 0;
+  h.filterHits.clear();
+  h.filterFail = "";
+  resetFilterBox();
   h.pick = null;
   store.clearClipboard();
   menu.closePopupMenu();
@@ -205,9 +248,9 @@ beforeEach(async () => {
     ["a.md", false],
   ]);
   h.dirs.set(`${ROOT}\\notes`, [["deeper.md", false]]);
-  store.setRoot("");
+  store.setRoots([]);
   await vi.waitFor(() => expect(ui.explorerTree.textContent).toContain("还没有打开文件夹"));
-  store.setRoot(ROOT);
+  store.setRoots([ROOT]);
   await vi.waitFor(() => expect(names()).toContain("a.md"));
 });
 
@@ -302,9 +345,9 @@ describe("B314 资源管理器面板", () => {
   });
 
   it("没打开过文件夹时给一句提示加一颗入口键，点了走目录选择器", async () => {
-    store.setRoot("");
+    store.setRoots([]);
     await vi.waitFor(() => expect(ui.explorerTree.textContent).toContain("还没有打开文件夹"));
-    expect(store.getRoot(), "空串不该发一次注定失败的读盘").toBe("");
+    expect(theRoot(), "空串不该发一次注定失败的读盘").toBe("");
     expect(
       h.calls.filter((c) => c === ""),
       "不许对空路径发 IPC",
@@ -317,31 +360,46 @@ describe("B314 资源管理器面板", () => {
     expect(ui.explorerPanel.classList.contains("no-root")).toBe(true);
     h.pick = ROOT;
     await click(btn!);
-    await vi.waitFor(() => expect(store.getRoot()).toBe(ROOT));
+    await vi.waitFor(() => expect(theRoot()).toBe(ROOT));
     expect(names()).toContain("a.md");
     expect(ui.explorerPanel.classList.contains("no-root"), "有了根就得把那排放回来").toBe(false);
   });
 
-  it("B327：打开键住在根那一行的最右，点它只换目录、不翻根行的面", async () => {
+  it("B424：刷新键搬到每一根那一行，点它只刷这一根、不翻根行的面", async () => {
     const rootRow = rowAt("笔记");
-    const btn = rootRow.querySelector<HTMLElement>("#explorer-open");
-    expect(btn, "打开键该被挂进根目录那一行").toBeTruthy();
-    const expandedBefore = rootRow.getAttribute("aria-expanded");
+    const btn = rootRow.querySelector<HTMLElement>(".explorer-root-refresh");
+    expect(btn, "根行该自带一颗刷新").toBeTruthy();
+    expect(
+      ui.explorerOpen.closest(".explorer-tree"),
+      "「打开文件夹」该在头部那一排（多根之后它不再跟着某一棵根行走）",
+    ).toBeNull();
+    const expandedBefore = rowAt("笔记").getAttribute("aria-expanded");
 
-    // 目录选择器回**同一个**根：这样「根行有没有被翻一次面」才是唯一读得出来的东西。
-    h.pick = ROOT;
     await click(btn!);
-    await vi.waitFor(() => expect(store.getRoot()).toBe(ROOT));
+    await vi.waitFor(() => expect(h.calls).toContain(ROOT));
     expect(
       rowAt("笔记").getAttribute("aria-expanded"),
       "树是委托点击 —— 没挡掉按钮的话，这一发会顺带把根折叠/展开一遍",
     ).toBe(expandedBefore);
   });
 
-  it("刷新键重读展开着的层；全部折叠收掉子目录但留着根", async () => {
+  it("B424：两根并排 = 两行根行 + 各自顶层，名单顺序就是屏幕顺序", async () => {
+    const 第二根 = "E:\\工作";
+    h.dirs.set(第二根, [["q.md", false]]);
+    openRoots(ROOT, 第二根);
+    await vi.waitFor(() =>
+      expect(names()).toEqual(["笔记", "notes", "b.md", "a.md", "工作", "q.md"]),
+    );
+    expect(ui.explorerTree.querySelectorAll(".explorer-root"), "每根一行").toHaveLength(2);
+    expect(ui.explorerTree.querySelectorAll(".explorer-root-refresh"), "每根一颗刷新").toHaveLength(
+      2,
+    );
+  });
+
+  it("刷新重读根与展开着的层；全部折叠收掉子目录但留着根", async () => {
     await click(rowAt("notes"));
     h.calls.length = 0;
-    await click(ui.explorerRefresh);
+    await click(rowAt("笔记").querySelector<HTMLElement>(".explorer-root-refresh")!);
     await vi.waitFor(() => expect(h.calls).toContain(`${ROOT}\\notes`));
 
     await click(ui.explorerCollapse);
@@ -468,7 +526,7 @@ describe("B314 资源管理器面板", () => {
 
   it("外壳记「这一块开着」并落盘（B312 那两格在这里继续成立）", () => {
     drawer.setDrawer("explorer");
-    expect(store.getRoot()).toBe(ROOT);
+    expect(theRoot()).toBe(ROOT);
     drawer.setDrawer(null);
     drawer.setDrawer("explorer");
     expect(ui.explorerPanel.hidden).toBe(false);
@@ -544,15 +602,30 @@ describe("B315 右键菜单与常规操作", () => {
     expect(menuItem("重命名").disabled, "快捷键提示挂在标签里（\\t 那一段）").toBe(false);
   });
 
-  it("右键根那一行：改名 / 复制 / 删除都不给，换成刷新与全部折叠", async () => {
+  it("右键根那一行：改名 / 复制 / 删除都不给，换成刷新这一根、移除目录与全部折叠", async () => {
     await rightClick(rowAt("笔记"));
     const got = labels();
     expect(got, "根就是整棵树，删了面板就空了").not.toContain("删除");
     expect(got).not.toContain("重命名");
     expect(got).not.toContain("复制");
     expect(got).toContain("新建文件");
-    expect(got).toContain("刷新");
+    expect(got).toContain("刷新该文件夹");
+    expect(got, "B424：移除目录是这一行自己的一条动作").toContain("移除目录");
     expect(got).toContain("全部折叠");
+  });
+
+  it("B424：「移除目录」只从名单里摘掉这一根，另一根与已开标签都不动", async () => {
+    const 第二根 = "E:\\工作";
+    h.dirs.set(第二根, [["q.md", false]]);
+    openRoots(ROOT, 第二根);
+    await vi.waitFor(() => expect(names()).toContain("q.md"));
+
+    await rightClick(rowAt("笔记"));
+    await pick("移除目录");
+
+    await vi.waitFor(() => expect(store.getRoots()).toEqual([第二根]));
+    expect(names(), "另一根照旧画着").toEqual(expect.arrayContaining(["工作", "q.md"]));
+    expect(h.opened, "移除目录不发任何开文件/关标签的动作").toEqual([]);
   });
 
   it("菜单点删除 → 走 delete IPC，那一行从屏幕上消失", async () => {
@@ -930,14 +1003,14 @@ describe("B333 拖一条目录落到资源管理器那一块 = 打开这个文�
     h.dirs.set(OTHER, [["x.md", false]]);
   });
 
-  it("单条目录 + 落点在面板里 ⇒ 换根、摊开资源管理器、这一发算认领", async () => {
+  it("单条目录 + 落点在面板里 ⇒ 追加一根、摊开资源管理器、这一发算认领", async () => {
     drawer.setDrawer(null, false);
 
     const taken = await panel.claimExplorerDrop([OTHER], 10, 10, overPanel);
 
     expect(taken, "认领了就轮不到「当文件打开」那一路").toBe(true);
-    expect(store.getRoot()).toBe(OTHER);
-    expect(drawer.activeDrawer(), "VS Code 的口径：换完根要把资源管理器摊开").toBe("explorer");
+    expect(store.getRoots(), "B424：拖进来是**追加**，原来那根不许被换掉").toEqual([ROOT, OTHER]);
+    expect(drawer.activeDrawer(), "VS Code 的口径：加完根要把资源管理器摊开").toBe("explorer");
     expect(h.opened, "目录不该被当成文件去读盘").toEqual([]);
     await vi.waitFor(() => expect(names()).toContain("x.md"));
   });
@@ -946,21 +1019,28 @@ describe("B333 拖一条目录落到资源管理器那一块 = 打开这个文�
     const taken = await panel.claimExplorerDrop([OTHER], 400, 300, overEditor);
 
     expect(taken).toBe(false);
-    expect(store.getRoot(), "不该被拖到编辑区的目录悄悄换掉根").toBe(ROOT);
+    expect(theRoot(), "不该被拖到编辑区的目录悄悄换掉根").toBe(ROOT);
   });
 
   it("单条**文件**落到那一块 ⇒ 不认领：后端判假，交回原来那一路", async () => {
     const taken = await panel.claimExplorerDrop([`${ROOT}\\a.md`], 10, 10, overPanel);
 
     expect(taken).toBe(false);
-    expect(store.getRoot()).toBe(ROOT);
+    expect(theRoot()).toBe(ROOT);
   });
 
-  it("一次拖进来好几条 ⇒ 不认领：换根只能有一个，不猜用户想开哪个", async () => {
+  it("一次拖进来好几条目录 ⇒ 全部追加（B424：多根了，不用替用户猜开哪一个）", async () => {
     const taken = await panel.claimExplorerDrop([OTHER, `${ROOT}\\notes`], 10, 10, overPanel);
 
+    expect(taken).toBe(true);
+    expect(store.getRoots()).toEqual([ROOT, OTHER, `${ROOT}\\notes`]);
+  });
+
+  it("目录混着文件 ⇒ 不认领：交回开文件那一路，那一路的行为是完整的", async () => {
+    const taken = await panel.claimExplorerDrop([OTHER, `${ROOT}\\a.md`], 10, 10, overPanel);
+
     expect(taken).toBe(false);
-    expect(store.getRoot()).toBe(ROOT);
+    expect(store.getRoots(), "半认领 = 屏上多出一根谁也没打算开的目录").toEqual([ROOT]);
   });
 
   it("子窗口 ⇒ 不认领：它没有左边栏，落盘会把主窗口的根抹掉", async () => {
@@ -969,7 +1049,7 @@ describe("B333 拖一条目录落到资源管理器那一块 = 打开这个文�
     try {
       const taken = await panel.claimExplorerDrop([OTHER], 10, 10, overPanel);
       expect(taken).toBe(false);
-      expect(store.getRoot()).toBe(ROOT);
+      expect(theRoot()).toBe(ROOT);
     } finally {
       appState.setWindowKind("main");
     }
@@ -990,16 +1070,18 @@ describe("B333 拖一条目录落到资源管理器那一块 = 打开这个文�
   });
 });
 
-describe("B331 关闭文件夹", () => {
-  it("点「关闭文件夹」⇒ 根清空、设置里那一格跟着清空、树回初屏", async () => {
+describe("B331 关闭文件夹（B424 后 = 移除全部目录）", () => {
+  it("点那颗 ⇒ 根清空、设置里那张表跟着清空、树回初屏", async () => {
     const appState = await import("../src/core/app-state");
-    appState.setSettings({ folder_root: ROOT } as never);
+    appState.setSettings({ folder_roots: [ROOT] } as never);
     expect(names(), "前置条件：这单是在「已经开着文件夹」的状态下开始的").toContain("a.md");
 
     await panel.closeFolder();
 
-    expect(store.getRoot(), "根要真的清掉（不是只把树折叠起来）").toBe("");
-    expect(appState.settings?.folder_root, "设置里留着的还是旧根 ⇒ 下次启动又回放回来").toBe("");
+    expect(theRoot(), "根要真的清掉（不是只把树折叠起来）").toBe("");
+    expect(appState.settings?.folder_roots, "设置里留着的还是旧根 ⇒ 下次启动又回放回来").toEqual(
+      [],
+    );
     await vi.waitFor(() =>
       expect(ui.explorerPanel.classList.contains("no-root"), "回初屏那颗整宽「打开文件夹」").toBe(
         true,
@@ -1009,14 +1091,210 @@ describe("B331 关闭文件夹", () => {
 
   it("子窗口里那颗什么都不做：它没有左边栏，落盘会把主窗口的根抹掉", async () => {
     const appState = await import("../src/core/app-state");
-    appState.setSettings({ folder_root: ROOT } as never);
+    appState.setSettings({ folder_roots: [ROOT] } as never);
     appState.setWindowKind("satellite");
     try {
       await panel.closeFolder();
-      expect(store.getRoot(), "子窗口不许动根").toBe(ROOT);
-      expect(appState.settings?.folder_root, "更不许替主窗口写盘").toBe(ROOT);
+      expect(theRoot(), "子窗口不许动根").toBe(ROOT);
+      expect(appState.settings?.folder_roots, "更不许替主窗口写盘").toEqual([ROOT]);
     } finally {
       appState.setWindowKind("main");
     }
+  });
+});
+
+// B427 · 顶部按名字过滤（用户口径：全量匹配、结果仍树状、框内带排除 / 忽略 + 清除、框内 Esc 可清）。
+// 这一组全部**经过真实的事件**（input / click / keydown）走一遍：`registerDrawerView` 与
+// 各种 helper 只登记不接管点击，漏挂线只有这条路径照得出（B314-8 的教训）。
+describe("B427 · 顶部过滤框", () => {
+  const hit = (rel: string, isDir = false) => ({
+    name: rel.split("/").pop() ?? rel,
+    path: `${ROOT}\\${rel.split("/").join("\\")}`,
+    rel,
+    isDir,
+  });
+
+  function type(text: string): void {
+    ui.explorerFilterInput.value = text;
+    ui.explorerFilterInput.dispatchEvent(new Event("input"));
+  }
+
+  it("敲字 ⇒ 攒一小段就发一发，命中按树画（深层命中把祖先补出来）", async () => {
+    h.filterHits.set(ROOT, [hit("notes/deeper.md")]);
+    type("deep");
+    await vi.waitFor(() => expect(h.filtered.length).toBe(1));
+    expect(h.filtered[0].query).toBe("deep");
+    expect(h.filtered[0].root).toBe(ROOT);
+    expect(h.filtered[0].opts).toMatchObject({
+      caseSensitive: false,
+      wholeWord: false,
+      regex: false,
+      useExcludes: true,
+      useIgnoreFiles: true,
+    });
+    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    expect(names(), "祖先补出来了").toContain("notes");
+    expect(h.calls, "过滤不读 list_dir（命中树是合成出来的）").not.toContain(`${ROOT}\\notes`);
+  });
+
+  it("点过滤结果里的文件 = 打开它（行是真能用的，不是贴图）", async () => {
+    h.filterHits.set(ROOT, [hit("notes/deeper.md")]);
+    type("deep");
+    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    await click(rowAt("deeper.md"));
+    expect(h.opened).toContain(`${ROOT}\\notes\\deeper.md`);
+  });
+
+  it("点目录收起 ⇒ 子孙藏掉；再点就回来（纯视图，不读盘）", async () => {
+    h.filterHits.set(ROOT, [hit("notes/deeper.md")]);
+    type("deep");
+    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    await click(rowAt("notes"));
+    expect(names(), "收起 notes 之后只剩它自己").toEqual(["笔记", "notes"]);
+    await click(rowAt("notes"));
+    expect(names()).toContain("deeper.md");
+    expect(h.calls, "开合不读盘").not.toContain(`${ROOT}\\notes`);
+  });
+
+  it("三颗匹配开关点亮后，下一发查询带上开关（点一下就重跑）", async () => {
+    h.filterHits.set(ROOT, [hit("notes/deeper.md")]);
+    type("deep");
+    await vi.waitFor(() => expect(h.filtered.length).toBe(1));
+    await click(ui.explorerFilterCase);
+    await vi.waitFor(() => expect(h.filtered.length).toBe(2));
+    expect(h.filtered[1].opts).toMatchObject({ caseSensitive: true });
+    expect(ui.explorerFilterCase.getAttribute("aria-pressed")).toBe("true");
+    expect(ui.explorerFilterCase.classList.contains("on")).toBe(true);
+    await click(ui.explorerFilterRegex);
+    await vi.waitFor(() => expect(h.filtered.length).toBe(3));
+    expect(h.filtered[2].opts).toMatchObject({ regex: true });
+  });
+
+  it("只剩「排除」一颗：关掉 = 排除设置与忽略文件一起关（用户点名去掉第二颗）", async () => {
+    expect(
+      document.querySelector("#explorer-filter-ignores"),
+      "「跟随 .gitignore / .ignore」那颗已并进「使用排除设置与忽略文件」",
+    ).toBeNull();
+    h.filterHits.set(ROOT, []);
+    type("deep");
+    await vi.waitFor(() => expect(h.filtered.length).toBe(1));
+    expect(h.filtered[0].opts).toMatchObject({ useExcludes: true, useIgnoreFiles: true });
+    await click(ui.explorerFilterExcludes);
+    await vi.waitFor(() => expect(h.filtered.length).toBe(2));
+    expect(
+      h.filtered[1].opts,
+      "一颗键管两层：关掉时忽略文件也跟着停（不再有独立开关）",
+    ).toMatchObject({ useExcludes: false, useIgnoreFiles: false });
+  });
+
+  it("设置里的搜索排除跟着「排除」那口总闸走（与侧栏搜索同一发）", async () => {
+    // 按钮叫「使用排除设置与忽略文件」⇒ 设置页那串持久排除必须真被吃进来；
+    // 侧栏搜索的同一发是 `mergeGlobs(useExcludes ? settings.search_exclude : "")`，
+    // 这里只钉交给 Rust 的那一格，剪枝本身由 Rust 单测负责。
+    const appState = await import("../src/core/app-state");
+    appState.setSettings({ search_exclude: "*.log, excl" } as never);
+    try {
+      h.filterHits.set(ROOT, []);
+      type("note");
+      await vi.waitFor(() => expect(h.filtered.length).toBe(1));
+      expect(h.filtered[0].opts).toMatchObject({
+        exclude: "*.log, excl",
+        useExcludes: true,
+      });
+      await click(ui.explorerFilterExcludes);
+      await vi.waitFor(() => expect(h.filtered.length).toBe(2));
+      expect(h.filtered[1].opts).toMatchObject({
+        exclude: "",
+        useExcludes: false,
+        useIgnoreFiles: false,
+      });
+    } finally {
+      appState.setSettings(null);
+    }
+  });
+
+  it("Esc：有字先清字并回到常规树；没字那一下不吞掉", async () => {
+    h.filterHits.set(ROOT, [hit("notes/deeper.md")]);
+    type("deep");
+    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    const ev = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    ui.explorerFilterInput.dispatchEvent(ev);
+    expect(ev.defaultPrevented, "有字 ⇒ 这一下归框管").toBe(true);
+    expect(ui.explorerFilterInput.value).toBe("");
+    await vi.waitFor(() => expect(names()).toContain("a.md"));
+    const ev2 = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    ui.explorerFilterInput.dispatchEvent(ev2);
+    expect(ev2.defaultPrevented, "空框上的 Esc 让给外层").toBe(false);
+  });
+
+  it("清除键：有字才显形，点一下清空并回到常规树", async () => {
+    h.filterHits.set(ROOT, [hit("notes/deeper.md")]);
+    expect(ui.explorerFilterClear.hidden).toBe(true);
+    type("deep");
+    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    expect(ui.explorerFilterClear.hidden).toBe(false);
+    await click(ui.explorerFilterClear);
+    expect(ui.explorerFilterInput.value).toBe("");
+    expect(ui.explorerFilterClear.hidden).toBe(true);
+    await vi.waitFor(() => expect(names()).toContain("a.md"));
+  });
+
+  it("没有命中就直说；正则写坏了把 Rust 那句原话贴出来", async () => {
+    h.filterHits.set(ROOT, []);
+    type("zzz");
+    await vi.waitFor(() => expect(ui.explorerTree.textContent).toContain("没有匹配的名字"));
+    h.filterFail = "正则无效：regex parse error";
+    type("([");
+    await vi.waitFor(() => expect(ui.explorerTree.textContent).toContain("过滤失败：正则无效"));
+    h.filterFail = "";
+  });
+
+  it("两根都开着 ⇒ 每根各画一段（根行常驻，命中挂在各自根下）", async () => {
+    const R2 = "D:\\另一根";
+    h.dirs.set(R2, [["other.md", false]]);
+    h.filterHits.set(ROOT, [hit("notes/deeper.md")]);
+    h.filterHits.set(R2, [
+      { name: "other.md", path: `${R2}\\other.md`, rel: "other.md", isDir: false },
+    ]);
+    openRoots(ROOT, R2);
+    await vi.waitFor(() => expect(store.getRoots()).toHaveLength(2));
+    type("deep");
+    await vi.waitFor(() => expect(h.filtered.length).toBe(2));
+    expect(h.filtered.map((f) => f.root).sort()).toEqual([R2, ROOT].sort());
+    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    expect(names()).toContain("另一根");
+  });
+
+  it("过滤态里顶部「全部折叠」收的是命中树；再点一下全展开（图标/文案跟着换）", async () => {
+    h.filterHits.set(ROOT, [hit("notes/deeper.md")]);
+    type("deep");
+    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    const foldLabel = (): string | null => ui.explorerCollapse.getAttribute("aria-label");
+    expect(foldLabel(), "起手是「全部折叠」口径").toBe("全部折叠");
+
+    await click(ui.explorerCollapse);
+    expect(names(), "收起命中树里的目录 ⇒ 只剩根与顶层目录行").toEqual(["笔记", "notes"]);
+    expect(foldLabel(), "已经全收 ⇒ 这颗键下一秒说的是「展开」").toBe("全部展开");
+    expect(ui.explorerCollapse.getAttribute("aria-pressed")).toBe("true");
+
+    await click(ui.explorerCollapse);
+    expect(names(), "再点一下：命中行全回来").toContain("deeper.md");
+    expect(foldLabel()).toBe("全部折叠");
+    expect(ui.explorerCollapse.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("命中里没有可折的目录 ⇒ 那颗键禁用（不做按下去没反应的死键）", async () => {
+    // ⚠️ 不能拿 `a.md` 当命中：常规树里本来就有它，`waitFor(names().toContain("a.md"))`
+    // 会立刻放行（还在常规态），断言就对着上一帧的按钮放空了。用一个只活在命中里的名字。
+    h.filterHits.set(ROOT, [hit("only.md")]);
+    type("only");
+    await vi.waitFor(() => expect(names()).toContain("only.md"));
+    expect(ui.explorerCollapse.disabled, "全是根级文件，没东西可折").toBe(true);
+
+    // 回到常规树 ⇒ 有目录了，键要活过来；文案也回到「全部折叠」
+    const ev = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    ui.explorerFilterInput.dispatchEvent(ev);
+    await vi.waitFor(() => expect(ui.explorerCollapse.disabled).toBe(false));
+    expect(ui.explorerCollapse.getAttribute("aria-label")).toBe("全部折叠");
   });
 });

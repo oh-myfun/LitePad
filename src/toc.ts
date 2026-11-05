@@ -234,6 +234,16 @@ function refreshTocAtCursor(line: number): void {
   if ((activeOutlineLine(tocEntries, line) ?? 0) !== renderedActiveLine) updateTocDrawer();
 }
 
+/** 编辑防抖后重取大纲（B412：旧预览臂删掉后，正文变更改触发的唯一重活就是这一发）。 */
+let tocRefreshTimer: number | null = null;
+function scheduleTocRefresh(): void {
+  if (tocRefreshTimer !== null) clearTimeout(tocRefreshTimer);
+  tocRefreshTimer = setTimeout(() => {
+    tocRefreshTimer = null;
+    updateTocDrawer();
+  }, 120) as unknown as number;
+}
+
 export {
   setupSideBar,
   refreshTocToggleAll,
@@ -243,4 +253,5 @@ export {
   toggleToc,
   updateTocDrawer,
   refreshTocAtCursor,
+  scheduleTocRefresh,
 };

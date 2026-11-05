@@ -1,5 +1,5 @@
 // @vitest-environment node
-// B314 · 资源管理器的缓存层（`src/explorer/store.ts`）。
+// B314 / B315 / B424 · 资源管理器的缓存层（`src/explorer/store.ts`）。
 //
 // 纯逻辑 + 假 IPC：这一层不碰 DOM，所以不需要 jsdom 骨架（口径同 tests/recents-store.test.ts）。
 // `listDir` 换成可控的假实现，测试才能指定「哪一层报错」「哪一回后到」。
@@ -15,6 +15,10 @@ const h = vi.hoisted(() => ({
   pending: new Map<string, (listing: unknown) => void>(),
   /** B315：写操作各记一笔（`改名 E:\a.md -> b.md` 这种形状，用例按前缀判）。 */
   ops: [] as string[],
+  /** B424：写操作收到的**锚点**（IPC 的 `root` 参数）—— 多根下「该由哪一根管」的判据。 */
+  anchors: [] as string[],
+  /** B427：复制 / 移动收到的**目标层锚点**（IPC 的 `destRoot`）—— 跨根粘贴时它 ≠ `anchors`。 */
+  destAnchors: [] as string[],
   /** 让某个写操作报错，键 = rename / copy / move / delete。 */
   failOn: new Set<string>(),
 }));
@@ -57,22 +61,28 @@ vi.mock("../src/ipc/api", async (importOriginal) => {
       }
       return Promise.resolve(toListing(path, kids));
     },
-    renameEntry: (_root: string, path: string, newName: string) => {
+    renameEntry: (root: string, path: string, newName: string) => {
+      h.anchors.push(root);
       h.ops.push(`rename ${path} -> ${newName}`);
       if (h.failOn.has("rename")) return Promise.reject(new Error("这一层里已经有 它了"));
       return Promise.resolve(mk(parentOf(path), newName, h.dirs.has(path)));
     },
-    copyEntry: (_root: string, src: string, destDir: string) => {
+    copyEntry: (root: string, src: string, destDir: string, destRoot: string) => {
+      h.anchors.push(root);
+      h.destAnchors.push(destRoot);
       h.ops.push(`copy ${src} -> ${destDir}`);
       if (h.failOn.has("copy")) return Promise.reject(new Error("复制不了"));
       return Promise.resolve(mk(destDir, base(src), h.dirs.has(src)));
     },
-    moveEntry: (_root: string, src: string, destDir: string) => {
+    moveEntry: (root: string, src: string, destDir: string, destRoot: string) => {
+      h.anchors.push(root);
+      h.destAnchors.push(destRoot);
       h.ops.push(`move ${src} -> ${destDir}`);
       if (h.failOn.has("move")) return Promise.reject(new Error("挪不动"));
       return Promise.resolve(mk(destDir, base(src), h.dirs.has(src)));
     },
-    deleteEntry: (_root: string, path: string) => {
+    deleteEntry: (root: string, path: string) => {
+      h.anchors.push(root);
       h.ops.push(`delete ${path}`);
       return h.failOn.has("delete") ? Promise.reject(new Error("送不进回收站")) : Promise.resolve();
     },
@@ -89,6 +99,8 @@ async function load(): Promise<typeof import("../src/explorer/store")> {
   vi.resetModules();
   h.calls.length = 0;
   h.ops.length = 0;
+  h.anchors.length = 0;
+  h.destAnchors.length = 0;
   h.failOn.clear();
   h.dirs.clear();
   h.gated.clear();
@@ -100,13 +112,17 @@ beforeEach(async () => {
   store = await load();
 });
 
+/** 单根形状的夹具：这一批用例的主语都是「只开一根」（多根的_cases 在最后一个 describe 里）。 */
+const openOne = (path: string): void => store.setRoots([path]);
+const theOne = (): string => store.getRoots()[0] ?? "";
+
 describe("B314 资源管理器缓存层", () => {
   it("换根立刻读根那一层，且只有根（没展开的目录一次都不读）", async () => {
     h.dirs.set("E:\\笔记", [
       { name: "a.md", isDir: false },
       { name: "子目录", isDir: true },
     ]);
-    store.setRoot("E:\\笔记");
+    openOne("E:\\笔记");
     await vi.waitFor(() => expect(store.childrenOf("E:\\笔记")).toBeTruthy());
     expect(h.calls, "只该读了根这一层").toEqual(["E:\\笔记"]);
     expect(store.childrenOf("E:\\笔记")?.map((e) => e.name)).toEqual(["a.md", "子目录"]);
@@ -116,7 +132,7 @@ describe("B314 资源管理器缓存层", () => {
   it("展开时才读那一层；折叠不删缓存", async () => {
     h.dirs.set("E:\\根", [{ name: "d", isDir: true }]);
     h.dirs.set("E:\\根\\d", [{ name: "x.md", isDir: false }]);
-    store.setRoot("E:\\根");
+    openOne("E:\\根");
     await vi.waitFor(() => expect(store.childrenOf("E:\\根")).toBeTruthy());
 
     await store.toggleDir("E:\\根\\d");
@@ -131,20 +147,20 @@ describe("B314 资源管理器缓存层", () => {
   it("同一层被并发点开两次只发一次 IPC（双击快不该读两遍）", async () => {
     h.dirs.set("E:\\根", [{ name: "d", isDir: true }]);
     h.dirs.set("E:\\根\\d", [{ name: "x.md", isDir: false }]);
-    store.setRoot("E:\\根");
+    openOne("E:\\根");
     await vi.waitFor(() => expect(store.childrenOf("E:\\根")).toBeTruthy());
     await Promise.all([store.toggleDir("E:\\根\\d"), store.toggleDir("E:\\根\\d")]);
     expect(h.calls.filter((c) => c === "E:\\根\\d")).toHaveLength(1);
   });
 
-  it("换根之后旧那一发才落地也不许画：代际一判就丢", async () => {
+  it("换根之后旧那一发才落地也不许画：不再归任何一根就丢", async () => {
     h.dirs.set("E:\\旧", [{ name: "旧文件.md", isDir: false }]);
     h.dirs.set("E:\\新", [{ name: "新文件.md", isDir: false }]);
     h.gated.add("E:\\旧");
-    store.setRoot("E:\\旧"); // 这一发被扣住在飞
+    openOne("E:\\旧"); // 这一发被扣住在飞
     expect(store.isLoading("E:\\旧")).toBe(true);
 
-    store.setRoot("E:\\新");
+    openOne("E:\\新");
     await vi.waitFor(() => expect(store.childrenOf("E:\\新")).toBeTruthy());
 
     // 现在才让**旧那一发**回来：测的是「后到」，不是「压根没发」
@@ -153,7 +169,7 @@ describe("B314 资源管理器缓存层", () => {
     late!(toListing("E:\\旧", h.dirs.get("E:\\旧")!));
     await vi.waitFor(() => expect(store.isLoading("E:\\旧")).toBe(false));
 
-    expect(store.getRoot()).toBe("E:\\新");
+    expect(theOne()).toBe("E:\\新");
     expect(
       store.childrenOf("E:\\旧"),
       "旧根的回包一落地就会被画进新树（用户读作「换了文件夹却没换」）",
@@ -167,7 +183,7 @@ describe("B314 资源管理器缓存层", () => {
       { name: "挡住的", isDir: true },
     ]);
     h.dirs.set("E:\\根\\能读", [{ name: "ok.md", isDir: false }]);
-    store.setRoot("E:\\根");
+    openOne("E:\\根");
     await vi.waitFor(() => expect(store.childrenOf("E:\\根")).toBeTruthy());
 
     await store.toggleDir("E:\\根\\挡住的");
@@ -181,7 +197,7 @@ describe("B314 资源管理器缓存层", () => {
 
   it("读失败过的层再展开能恢复（错误不是永久的）", async () => {
     h.dirs.set("E:\\根", [{ name: "d", isDir: true }]);
-    store.setRoot("E:\\根");
+    openOne("E:\\根");
     await vi.waitFor(() => expect(store.childrenOf("E:\\根")).toBeTruthy());
 
     await store.toggleDir("E:\\根\\d");
@@ -196,12 +212,12 @@ describe("B314 资源管理器缓存层", () => {
   it("刷新重读根与每个展开层，展开态保留", async () => {
     h.dirs.set("E:\\根", [{ name: "d", isDir: true }]);
     h.dirs.set("E:\\根\\d", [{ name: "x.md", isDir: false }]);
-    store.setRoot("E:\\根");
+    openOne("E:\\根");
     await vi.waitFor(() => expect(store.childrenOf("E:\\根")).toBeTruthy());
     await store.toggleDir("E:\\根\\d");
     h.calls.length = 0;
 
-    await store.refresh();
+    await store.refreshRoot("E:\\根");
     expect([...h.calls].sort()).toEqual(["E:\\根", "E:\\根\\d"].sort());
     expect(store.isExpanded("E:\\根\\d"), "刷新不许把用户的展开态抹了").toBe(true);
   });
@@ -209,7 +225,7 @@ describe("B314 资源管理器缓存层", () => {
   it("新建之后只重读那一个目录，不刷整棵树", async () => {
     h.dirs.set("E:\\根", [{ name: "d", isDir: true }]);
     h.dirs.set("E:\\根\\d", [{ name: "x.md", isDir: false }]);
-    store.setRoot("E:\\根");
+    openOne("E:\\根");
     await vi.waitFor(() => expect(store.childrenOf("E:\\根")).toBeTruthy());
     await store.toggleDir("E:\\根\\d");
     h.calls.length = 0;
@@ -222,7 +238,7 @@ describe("B314 资源管理器缓存层", () => {
     expect(store.hasRoot(), "没打开过文件夹 = 没有根").toBe(false);
     h.dirs.set("E:\\根", [{ name: "d", isDir: true }]);
     h.dirs.set("E:\\根\\d", [{ name: "x.md", isDir: false }]);
-    store.setRoot("E:\\根");
+    openOne("E:\\根");
     await vi.waitFor(() => expect(store.childrenOf("E:\\根")).toBeTruthy());
     await store.toggleDir("E:\\根\\d");
 
@@ -232,14 +248,14 @@ describe("B314 资源管理器缓存层", () => {
     expect(store.hasRoot()).toBe(true);
   });
 
-  it("空串是「没有文件夹」那一态：清干净就行，不许发一次注定失败的读盘", async () => {
+  it("空表是「没有文件夹」那一态：清干净就行，不许发一次注定失败的读盘", async () => {
     h.dirs.set("E:\\根", [{ name: "a.md", isDir: false }]);
-    store.setRoot("E:\\根");
+    openOne("E:\\根");
     await vi.waitFor(() => expect(store.childrenOf("E:\\根")).toBeTruthy());
 
-    store.setRoot("");
+    store.setRoots([]);
     expect(store.hasRoot()).toBe(false);
-    expect(store.getRoot()).toBe("");
+    expect(theOne()).toBe("");
     expect(store.childrenOf("E:\\根"), "换到「没有」要清空缓存").toBeUndefined();
     await Promise.resolve();
     expect(
@@ -253,7 +269,7 @@ describe("B314 资源管理器缓存层", () => {
     const seen: number[] = [];
     store.onExplorerChange(() => seen.push(store.childrenOf("E:\\根")?.length ?? -1));
     h.dirs.set("E:\\根", [{ name: "a.md", isDir: false }]);
-    store.setRoot("E:\\根");
+    openOne("E:\\根");
     await vi.waitFor(() => expect(seen).toContain(1));
   });
 });
@@ -268,7 +284,7 @@ describe("B315 缓存层的动作与剪贴板", () => {
   /** 起一个根、等它读出来，顺手挂上「路径改写」的探针。 */
   async function boot(kids: { name: string; isDir: boolean }[]): Promise<Change[]> {
     h.dirs.set(R, kids);
-    store.setRoot(R);
+    openOne(R);
     await vi.waitFor(() => expect(store.childrenOf(R)).toBeTruthy());
     const seen: Change[] = [];
     store.onPathsChanged((c) => seen.push(...c));
@@ -298,7 +314,7 @@ describe("B315 缓存层的动作与剪贴板", () => {
     const d = P(R, "d");
     h.dirs.set(R, [{ name: "d", isDir: true }]);
     h.dirs.set(d, [{ name: "x.md", isDir: false }]);
-    store.setRoot(R);
+    openOne(R);
     await vi.waitFor(() => expect(store.childrenOf(R)).toBeTruthy());
     await store.toggleDir(d);
     expect(store.isExpanded(d)).toBe(true);
@@ -388,7 +404,7 @@ describe("B316 缓存层：拖到某一层 = 移动", () => {
       { name: "子", isDir: true },
     ]);
     h.dirs.set(sub, []);
-    store.setRoot(R);
+    openOne(R);
     await vi.waitFor(() => expect(store.childrenOf(R)).toBeTruthy());
     const seen: { from: string; to: string | null }[] = [];
     store.onPathsChanged((c) => seen.push(...c));
@@ -404,12 +420,186 @@ describe("B316 缓存层：拖到某一层 = 移动", () => {
 
   it("移动失败：不广播、错误原样透传（面板那句「挪不动」要有出处）", async () => {
     h.dirs.set(R, [{ name: "a.md", isDir: false }]);
-    store.setRoot(R);
+    openOne(R);
     await vi.waitFor(() => expect(store.childrenOf(R)).toBeTruthy());
     const seen: unknown[] = [];
     store.onPathsChanged((c) => seen.push(...c));
     h.failOn.add("move");
     await expect(store.moveTo(P(R, "a.md"), R, P(R, "子"))).rejects.toThrow("挪不动");
     expect(seen).toEqual([]);
+  });
+});
+
+describe("B424 多根", () => {
+  const P = (...segs: string[]): string => segs.join("\\");
+  const 甲 = "E:\\甲";
+  const 乙 = "D:\\乙";
+
+  it("追加：各读自己那一层，顺序 = 名单顺序 = 屏幕从上到下", async () => {
+    h.dirs.set(甲, [{ name: "a.md", isDir: false }]);
+    h.dirs.set(乙, [{ name: "b.md", isDir: false }]);
+    expect(store.addRoot(甲)).toBe(true);
+    expect(store.addRoot(乙)).toBe(true);
+    await vi.waitFor(() => expect(store.childrenOf(乙)).toBeTruthy());
+    expect(store.getRoots()).toEqual([甲, 乙]);
+    expect(h.calls.sort()).toEqual([甲, 乙].sort());
+  });
+
+  it("去重：同一目录的另一种写法（`/` 与尾斜杠）不算第二根，且报「没加上」", () => {
+    expect(store.addRoot(甲)).toBe(true);
+    expect(store.addRoot(`${甲}\\`), "尾斜杠是同一个目录").toBe(false);
+    expect(store.addRoot(甲.replace(/\\/g, "/")), "分隔符另一种写法也是同一个目录").toBe(false);
+    expect(store.getRoots()).toEqual([甲]);
+    expect(store.addRoot(""), "空串不是一根").toBe(false);
+  });
+
+  it("换根作废改判「还归不归某一根」：加一根不许打掉另外几根在飞的读包", async () => {
+    h.dirs.set(甲, [{ name: "a.md", isDir: false }]);
+    h.gated.add(甲);
+    h.dirs.set(乙, [{ name: "b.md", isDir: false }]);
+    store.addRoot(甲);
+    store.addRoot(乙); // ← 旧的「全局代际」写法在这里会把甲那一发一起作废掉
+    await vi.waitFor(() => expect(store.childrenOf(乙)).toBeTruthy());
+
+    const late = h.pending.get(甲);
+    expect(late, "甲那一发还该在飞（不该被乙那一次追加牵连）").toBeTruthy();
+    late!(toListing(甲, h.dirs.get(甲)!));
+    await vi.waitFor(() => expect(store.childrenOf(甲)).toBeTruthy());
+    expect(store.childrenOf(甲)?.map((e) => e.name)).toEqual(["a.md"]);
+  });
+
+  it("移除一根：只掉它名下的缓存与展开态，另一根一层都不许被抹", async () => {
+    const 甲子 = P(甲, "子");
+    const 乙子 = P(乙, "子");
+    h.dirs.set(甲, [{ name: "子", isDir: true }]);
+    h.dirs.set(甲子, [{ name: "a.md", isDir: false }]);
+    h.dirs.set(乙, [{ name: "子", isDir: true }]);
+    h.dirs.set(乙子, [{ name: "b.md", isDir: false }]);
+    store.setRoots([甲, 乙]);
+    await vi.waitFor(() => expect(store.childrenOf(乙)).toBeTruthy());
+    await store.toggleDir(甲子);
+    await store.toggleDir(乙子);
+
+    store.removeRoot(甲);
+    expect(store.getRoots(), "移除 = 从名单里摘掉这一根").toEqual([乙]);
+    expect(store.childrenOf(甲), "它自己那一层的缓存要掉").toBeUndefined();
+    expect(store.childrenOf(甲子), "它下层的缓存也要掉").toBeUndefined();
+    expect(store.expandedPaths(), "展开态也只清它名下的").toEqual([乙子]);
+    expect(store.childrenOf(乙子), "另一根读过的层不许被牵连").toBeTruthy();
+  });
+
+  it("移除不存在的根 = 空操作（不改名单、不重发读盘）", async () => {
+    h.dirs.set(甲, [{ name: "a.md", isDir: false }]);
+    store.setRoots([甲]);
+    await vi.waitFor(() => expect(store.childrenOf(甲)).toBeTruthy());
+    h.calls.length = 0;
+    store.removeRoot("E:\\没开过");
+    expect(store.getRoots()).toEqual([甲]);
+    expect(h.calls, "什么都没移除就不该再发一次读盘").toEqual([]);
+  });
+
+  it("setRoots 去重并滤掉空串（启动回放拿到的旧配置可能带野值）", () => {
+    store.setRoots([甲, `${甲}/`, "", 乙]);
+    expect(store.getRoots()).toEqual([甲, 乙]);
+  });
+
+  it("rootOf：嵌套根取最里层，不归任何一根给 null", async () => {
+    const 里 = P(甲, "子");
+    h.dirs.set(甲, [{ name: "子", isDir: true }]);
+    h.dirs.set(里, [{ name: "a.md", isDir: false }]);
+    store.setRoots([甲, 里]);
+    expect(store.rootOf(P(里, "a.md")), "两层都是根 ⇒ 最里层那根管").toBe(里);
+    expect(store.rootOf(P(甲, "别的.md"))).toBe(甲);
+    expect(store.rootOf(里), "根本身算界内（与 Rust 的 guard_within 同口径）").toBe(里);
+    expect(store.rootOf("C:\\别处"), "不归任何一根").toBeNull();
+    expect(store.rootOf("E:\\甲兄弟\\x.md"), "前缀像但不是那一层（不许把「甲」当根）").toBeNull();
+  });
+
+  it("refreshRoot 只刷那一根与它名下展开的层（另一根的在飞与缓存都不动）", async () => {
+    h.dirs.set(甲, [{ name: "d", isDir: true }]);
+    h.dirs.set(P(甲, "d"), [{ name: "a.md", isDir: false }]);
+    h.dirs.set(乙, [{ name: "e", isDir: true }]);
+    h.dirs.set(P(乙, "e"), [{ name: "b.md", isDir: false }]);
+    store.setRoots([甲, 乙]);
+    await vi.waitFor(() => expect(store.childrenOf(乙)).toBeTruthy());
+    await store.toggleDir(P(甲, "d"));
+    await store.toggleDir(P(乙, "e"));
+    h.calls.length = 0;
+
+    await store.refreshRoot(甲);
+    expect([...h.calls].sort()).toEqual([甲, P(甲, "d")].sort());
+  });
+
+  it("写操作的锚点 = 这条路径自己归属的那一根（跨根粘贴各认各的地盘）", async () => {
+    const 乙文件 = P(乙, "b.md");
+    h.dirs.set(甲, [{ name: "a.md", isDir: false }]);
+    h.dirs.set(乙, [{ name: "b.md", isDir: false }]);
+    store.setRoots([甲, 乙]);
+    await vi.waitFor(() => expect(store.childrenOf(乙)).toBeTruthy());
+
+    await store.renameEntryAt(乙, 乙文件, "c.md");
+    expect(h.anchors, "改名该由乙这根管").toEqual([乙]);
+    store.setClipboard("copy", [{ path: 乙文件, dir: 乙 }]);
+    await store.pasteInto(P(甲, "新层"));
+    expect(
+      h.anchors[h.anchors.length - 1],
+      "源在乙 ⇒ 锚点也是乙（目标层由 destDir 自己带着）",
+    ).toBe(乙);
+  });
+
+  it("锚点找不到归属那一根时传空串 ⇒ 后端那句「还没有打开文件夹」，而不是悄悄写进别的地盘", async () => {
+    h.dirs.set(甲, [{ name: "a.md", isDir: false }]);
+    store.setRoots([甲]);
+    await store.renameEntryAt("C:\\别处", "C:\\别处\\x.md", "y.md").catch(() => undefined);
+    expect(h.anchors, "不归任何一根 ⇒ 交空串，判据留给 Rust").toEqual([""]);
+  });
+});
+
+describe("B427 · 跨根复制 / 剪切 / 粘贴各认各的锚点", () => {
+  const P = (...segs: string[]): string => segs.join("\\");
+  const 甲 = "E:\\甲";
+  const 乙 = "D:\\乙";
+
+  /** 两根各一层，都读到缓存。 */
+  async function boot(): Promise<void> {
+    h.dirs.set(甲, [{ name: "a.md", isDir: false }]);
+    h.dirs.set(乙, [{ name: "b.md", isDir: false }]);
+    store.setRoots([甲, 乙]);
+    await vi.waitFor(() => expect(store.childrenOf(乙)).toBeTruthy());
+  }
+
+  it("从乙根复制到甲根的某一层：源锚点 = 乙、目标锚点 = 甲（B424 那句注释兑现了）", async () => {
+    await boot();
+    const 源 = P(乙, "b.md");
+    const 目标层 = P(甲, "新层");
+    store.setClipboard("copy", [{ path: 源, dir: 乙 }]);
+    await store.pasteInto(目标层);
+    expect(h.anchors, "源那条归乙").toEqual([乙]);
+    expect(h.destAnchors, "目标层归甲 —— 传乙会被 Rust 拒成「不在已打开的文件夹内」").toEqual([甲]);
+  });
+
+  it("剪切跨根粘贴走的是同一对锚点（move 不是第二条路）", async () => {
+    await boot();
+    const 源 = P(乙, "b.md");
+    store.setClipboard("cut", [{ path: 源, dir: 乙 }]);
+    await store.pasteInto(P(甲, "新层"));
+    expect(h.anchors).toEqual([乙]);
+    expect(h.destAnchors).toEqual([甲]);
+  });
+
+  it("B316 拖到别根的一层 = 同一条 move，两个锚点各归各", async () => {
+    await boot();
+    const 源 = P(乙, "b.md");
+    await store.moveTo(源, 乙, P(甲, "新层"));
+    expect(h.anchors).toEqual([乙]);
+    expect(h.destAnchors).toEqual([甲]);
+  });
+
+  it("目标层不归任何一根 ⇒ 目标锚点交空串，由 Rust 按界外拒", async () => {
+    await boot();
+    store.setClipboard("copy", [{ path: P(乙, "b.md"), dir: 乙 }]);
+    await store.pasteInto("C:\\没在这几根里\\层");
+    expect(h.anchors).toEqual([乙]);
+    expect(h.destAnchors, "认不出归属不许拿源根顶上去 —— 那正好把守卫改成放行").toEqual([""]);
   });
 });

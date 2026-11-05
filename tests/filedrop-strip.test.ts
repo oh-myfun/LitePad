@@ -64,7 +64,6 @@ function mount(): void {
     onActivatePanel: () => {},
     onActivateTab: () => {},
     onCloseTab: () => {},
-    onClosePanel: () => {},
     onRatioChange: () => {},
     onMoveTabToStrip: () => {},
     onDropTabToPanel: () => {},

@@ -1,5 +1,6 @@
 /**
- * B314 / B315 · 资源管理器的**缓存层**：根、懒读到的每一层、展开态，外加剪贴板与四个动作。
+ * B314 / B315 / B424 · 资源管理器的**缓存层**：打开的哪几根、懒读到的每一层、展开态，
+ * 外加剪贴板与四个动作。
  *
  * 职责边界照 `src/recents/store.ts` 那一刀：**判定归 Rust，画归面板，本模块只管这一份缓存
  * 与「动完盘之后该刷哪几层」**。不拼路径、不校验名字、不排序（那些在 `commands/explorer.rs`），
@@ -10,13 +11,23 @@
  *
  * 1. **懒加载**：`children` 只装「被展开过的那几层」。一次读整棵树在盘符根上会把进程卡死，
  *    而展开态天然是浅的 —— 用户看的永远是几条路径。
- * 2. **换根要作废在飞的那一发**（`generation`）：连点两次「打开文件夹」，旧那一发的回包
- *    后到就会把上一个目录的顶层画进新树里（用户读作「我明明换了文件夹，列表还是旧的」）。
- *    口径同 `recents/store.ts` 的 `requestSeq`。
+ * 2. **过期的回包一律作废**（B424 起改判据，见下面第 5 条）：连点两次「打开文件夹」，
+ *    旧那一发的回包后到就会把上一个目录的顶层画进新树里（用户读作「我明明换了文件夹，
+ *    列表还是旧的」）。
  * 3. **一层读失败不许拖垮整棵树**：目录可能被权限策略挡住、正被别的进程删、或是个断掉的
  *    重组点。失败只记在这一条路径上（`failed`），面板画一句能读的话，别的分支照旧。
  * 4. **盘上改了什么，得广播出去**（`onPathsChanged`）：改名 / 挪走 / 删掉动的都是
  *    「正在编辑器里开着的那份文档」的地盘。缓存层不 import 文档层 —— 谁拥有事实谁通知别人。
+ *
+ * 5.（B424）**多根**：`roots` 是一张表，顺序 = 侧栏从上到下（照 InkNote 的 `folderPaths`，
+ *    也照 VS Code 的多根工作区）。每一层缓存的 key 都是**绝对路径**，所以多根不需要把
+ *    `children` 拆成「每根一份」—— 一套 Map 装得下，归属由 `rootOf` 现算。
+ *    作废判据从「全局代际」换成了「这条路径还归不归某一根管」：加一根不该把另外几根
+ *    在飞的读包一起打掉（那正是代际计数器在多根下的失效方式），而移除一根时，它名下
+ *    每一层自然无人认领 ⇒ 回包落地前被拒。
+ *    ⚠️ 移除一根**只动缓存**：已打开的标签一个都不关（VS Code 从工作区移除文件夹、
+ *    InkNote 的 `handleRemoveWorkspaceFolder` 都是这个口径 —— 动的是「在哪儿看」，
+ *    不是「手里有什么」）。
  */
 import { copyEntry, deleteEntry, listDir, moveEntry, renameEntry, type FsEntry } from "../ipc/api";
 
@@ -24,14 +35,13 @@ import { copyEntry, deleteEntry, listDir, moveEntry, renameEntry, type FsEntry }
 const children = new Map<string, FsEntry[]>();
 /** 目录路径 → 读失败的原因文案。留着它才能显示「这一层读不了」而不是「这一层是空的」。 */
 const failed = new Map<string, string>();
-/** 展开着的目录路径。根不算展开（它那一层总是画出来）。 */
+/** 展开着的目录路径（根自己不算：根那一行的开合归面板，见 `rootsOpen`）。 */
 const expanded = new Set<string>();
 /** 正在读的路径，防同一层被并发读两次（双击快、或刷新撞上展开）。 */
 const loading = new Set<string>();
 
-let root = "";
-/** 在飞的那一发属于哪一代。换根 = 代际 +1，旧回包一律作废。 */
-let generation = 0;
+/** B424：打开着的根，顺序 = 侧栏从上到下。空表 = 没有文件夹。 */
+let roots: string[] = [];
 
 const subscribers = new Set<() => void>();
 
@@ -46,28 +56,114 @@ export function onExplorerChange(cb: () => void): () => void {
   };
 }
 
-export function getRoot(): string {
-  return root;
+/**
+ * 比对用的口径：分隔符统一成 `\`、去掉尾部斜杠、折叠大小写。
+ * 与面板里 `samePath`（B333 的落点判据）以及 Rust 的 `within` 同一套语义 —— Windows
+ * 路径大小写不敏感，同一目录可能以两种写法进来。
+ */
+function asKey(p: string): string {
+  return p.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
 }
 
 /**
- * 换根：清空**全部**缓存与展开态，并作废在飞的回包。
+ * 这一条路径归 `list` 里哪一根管？纯函数（不读上面那份 `roots`）—— 搜索结果分组那边也要
+ * 同一把尺子，两处各写一遍前缀规则迟早漂移（B304 那一族的教训）。
  *
- * ⚠️ 清空是必须的：`children` 的 key 是绝对路径，换根后旧 key 理论上不会再撞上，
- * 但「E:\\a 的下层」这种路径在新根里可能真存在（用户选了同一个盘的另一层），
- * 留着旧那一层就会画出根本没读过的东西。缓存与真相同源，才谈得上懒加载。
+ * 嵌套根（`D:\a` 与 `D:\a\b` 都开着）取**最里层**那一根：这一发的返回值直接当 IPC 的
+ * `root` 参数用，而 Rust 的 `guard_within` 只认传进去的那一根 —— 取最外层会把「其实属于
+ * 内层」的操作算到外层地盘上，边界就糊了。
  */
-export function setRoot(path: string): void {
-  generation += 1;
-  root = path;
-  children.clear();
-  failed.clear();
-  expanded.clear();
-  loading.clear();
-  // 空串 = 「没有文件夹」这一态：清干净就够，不该再发一次注定失败的读盘（错误列表里
-  // 挂一条「读不了：」会让用户以为程序坏了，而那其实是「没开」）。
-  if (path) void loadDir(path);
+export function ownerOf(path: string, list: string[]): string | null {
+  const p = asKey(path);
+  if (!p) return null;
+  let hit: string | null = null;
+  for (const r of list) {
+    const k = asKey(r);
+    if (!k) continue;
+    if (p === k || p.startsWith(`${k}\\`)) {
+      if (!hit || k.length > asKey(hit).length) hit = r;
+    }
+  }
+  return hit;
+}
+
+/** 这一条路径归当前那几根里的哪一根（判据见 `ownerOf`）。 */
+export function rootOf(path: string): string | null {
+  return ownerOf(path, roots);
+}
+
+export function getRoots(): string[] {
+  return [...roots];
+}
+
+/** 只有「有根」才算可用（卫星窗口、以及从没打开过文件夹的主窗口都该是 false）。 */
+export function hasRoot(): boolean {
+  return roots.length > 0;
+}
+
+/**
+ * 换掉整张表：启动回放、「移除全部目录」走这一扇。
+ *
+ * 清空是必须的：`children` 的 key 是绝对路径，新名单里没有的那一根留下的层继续被画出来，
+ * 等于「树里还看得见一个我已经移除了的目录」。缓存与真相同源，才谈得上懒加载。
+ */
+export function setRoots(list: string[]): void {
+  roots = dedupe(list);
+  dropUnowned();
+  for (const r of roots) void loadDir(r);
   notify();
+}
+
+/**
+ * 追加一根（B424：「打开文件夹」不再是换根，而是加一根 —— 照 InkNote 的
+ * `addWorkspaceFolders`）。已经在表里（同一路径的另一种写法也算）⇒ 不去重成两条，
+ * 返回 false 让调用方知道「这一次什么都没加」。
+ */
+export function addRoot(path: string): boolean {
+  if (!path) return false;
+  const key = asKey(path);
+  if (roots.some((r) => asKey(r) === key)) return false;
+  roots = [...roots, path];
+  void loadDir(path);
+  notify();
+  return true;
+}
+
+/**
+ * 移除一根。⚠️ 只清它名下那些不再被任何根认领的缓存，**不关任何标签**：
+ * 移除的是「在哪儿看」，不是「手里开着什么」。
+ */
+export function removeRoot(path: string): void {
+  const key = asKey(path);
+  const next = roots.filter((r) => asKey(r) !== key);
+  if (next.length === roots.length) return;
+  roots = next;
+  dropUnowned();
+  notify();
+}
+
+/** 把已经不属于任何一根的缓存 / 展开态 / 在飞标记一并扔掉（多根下的「作废在飞的那一发」）。 */
+function dropUnowned(): void {
+  for (const map of [children, failed]) {
+    for (const p of [...map.keys()]) if (!rootOf(p)) map.delete(p);
+  }
+  for (const set of [expanded, loading]) {
+    for (const p of [...set]) if (!rootOf(p)) set.delete(p);
+  }
+}
+
+/** 去重（保留第一次出现的位置）：同一目录以 `D:\a` 与 `D:/a\\` 进来只算一根。 */
+function dedupe(list: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const p of list) {
+    if (!p) continue;
+    const key = asKey(p);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+  }
+  return out;
 }
 
 export function childrenOf(path: string): FsEntry[] | undefined {
@@ -90,28 +186,29 @@ export function expandedPaths(): string[] {
   return [...expanded];
 }
 
-/** 读一层并写进缓存。同一层并发只发一次；回包只认自己那一代。 */
+/** 读一层并写进缓存。同一层并发只发一次；回包只认「这条路径还在某根名下」。 */
 export async function loadDir(path: string): Promise<void> {
   if (loading.has(path)) return;
-  const gen = generation;
   loading.add(path);
   notify();
   try {
     const listing = await listDir(path);
-    if (gen !== generation) return;
+    // 在飞的这一发落回来时，这一层可能已经被「移除目录 / 换表」打掉：画出来就是
+    // 一屏谁也没打开过的目录。归属现算，不需要额外记代际。
+    if (!rootOf(path)) return;
     children.set(path, listing.entries);
     failed.delete(path);
     if (listing.truncated) {
       failed.set(path, `这一层太多，只显示前 ${listing.entries.length} 条`);
     }
   } catch (e: unknown) {
-    if (gen !== generation) return;
+    if (!rootOf(path)) return;
     // 旧的那一层要一起扔掉：留着它，面板就会在新错误旁边继续画旧内容（半真半假的一屏）。
     children.delete(path);
     failed.set(path, String(e));
   } finally {
     loading.delete(path);
-    if (gen === generation) notify();
+    if (rootOf(path)) notify();
   }
 }
 
@@ -134,13 +231,17 @@ export function collapseAll(): void {
   notify();
 }
 
-/** 全部展开的目录挨个重读，展开态保留。外部改了文件（别的程序建的）之后点刷新。 */
-export async function refresh(): Promise<void> {
-  // 根 + 每个展开着的目录。用 `expandedPaths()` 的快照：加载中又展开的话，那一层由
-  // `toggleDir` 自己负责读，不该被这一次刷新漏算或重复算。
-  const paths = [root, ...expandedPaths()].filter((p) => p);
-  for (const p of paths) {
-    loading.delete(p); // 刷新要绕过「正在读」那道闸，否则撞上在飞那一发就永远刷不动
+/**
+ * 刷新**一根**：它自己那一层 + 它名下每个展开着的目录，展开态保留。
+ * 侧栏每根行上那颗刷新键走这一扇（外部改了文件之后）。别的根不受影响 ——
+ * 一次点击只该重读用户盯着的那一棵。
+ */
+export async function refreshRoot(path: string): Promise<void> {
+  const key = asKey(path);
+  const dirs = [path, ...expandedPaths().filter((p) => asKey(rootOf(p) ?? "") === key)];
+  for (const p of dirs) {
+    // 刷新要绕过「正在读」那道闸，否则撞上在飞那一发就永远刷不动
+    loading.delete(p);
     await loadDir(p);
   }
 }
@@ -149,11 +250,6 @@ export async function refresh(): Promise<void> {
 export async function refreshDir(path: string): Promise<void> {
   loading.delete(path);
   await loadDir(path);
-}
-
-/** 只有「有根」才算可用（卫星窗口、以及从没打开过文件夹的主窗口都该是 false）。 */
-export function hasRoot(): boolean {
-  return root !== "";
 }
 
 // ---------------------------------------------------------------- B315 剪贴板与动作层
@@ -216,11 +312,20 @@ function notifyPaths(changes: PathChange[]): void {
 }
 
 /**
+ * B424：IPC 那几发的 `root` / `destRoot` 参数 = **这条路径自己归属的那一根**（不是「第一个根」，
+ * 也不是整棵树的并集）。Rust 的 `guard_within`（源）与 `guard_dest`（目标）各拿一个锚点划地盘；
+ * 传错了就是一条读得懂的报错（空串 ⇒「不在已打开的文件夹内」），而不是把东西悄悄写进别的地盘。
+ */
+function anchorFor(path: string): string {
+  return rootOf(path) ?? "";
+}
+
+/**
  * 改名。`dir` 由调用方给（面板手里有每一行的父亲），缓存层**不做路径字符串手术**。
  * 撞名报错由 Rust 判；报错时什么都不动，所以这里也不刷、也不广播。
  */
 export async function renameEntryAt(dir: string, path: string, newName: string): Promise<FsEntry> {
-  const made = await renameEntry(root, path, newName);
+  const made = await renameEntry(anchorFor(path), path, newName);
   notifyPaths([{ from: path, to: made.path }]);
   await refreshDir(dir);
   return made;
@@ -228,7 +333,7 @@ export async function renameEntryAt(dir: string, path: string, newName: string):
 
 /** 送进回收站。成功后广播 `to = null`，让打开着的那份变「未保存」。 */
 export async function trashAt(dir: string, path: string): Promise<void> {
-  await deleteEntry(root, path);
+  await deleteEntry(anchorFor(path), path);
   notifyPaths([{ from: path, to: null }]);
   // 被删的那条如果正展开着，它那层的缓存要一起掉（留着会画出一棵不存在于盘上的子树）
   expanded.delete(path);
@@ -244,19 +349,25 @@ export async function trashAt(dir: string, path: string): Promise<void> {
  *   得跟着换路径，而一条失败不该把已经挪好的几条留在旧账上）；
  * · 剪切的语义是「一次搬完就清空」，复制则留着 —— 与 VS Code 一致：连着往两个
  *   文件夹粘贴同一份副本是常规操作。
+ *
+ * 锚点取**源条目自己**归属的那一根，目标层另报**它自己归属的那一根**（B427）：
+ * 多根下「从甲根复制到乙根」是常规操作，Rust 那两道闸各管各的地盘。
+ * ⚠️ 目标锚点不许拿源根顶上去 —— 那正好把守卫改成放行（甲根被当成乙根的许可证）。
  */
 export async function pasteInto(destDir: string): Promise<FsEntry[]> {
   const clip = clipboard;
   if (!clip) return [];
   const made: FsEntry[] = [];
   const changes: PathChange[] = [];
+  const destAnchor = anchorFor(destDir);
   const touched = new Set<string>([destDir, ...clip.items.map((i) => i.dir)]);
   try {
     for (const item of clip.items) {
+      const anchor = anchorFor(item.path);
       const one =
         clip.mode === "copy"
-          ? await copyEntry(root, item.path, destDir)
-          : await moveEntry(root, item.path, destDir);
+          ? await copyEntry(anchor, item.path, destDir, destAnchor)
+          : await moveEntry(anchor, item.path, destDir, destAnchor);
       made.push(one);
       if (clip.mode === "cut") changes.push({ from: item.path, to: one.path });
     }
@@ -280,7 +391,7 @@ export async function pasteInto(destDir: string): Promise<FsEntry[]> {
  * 所以那条判据留在面板那侧：同层就不发这一发。
  */
 export async function moveTo(path: string, srcDir: string, destDir: string): Promise<FsEntry> {
-  const made = await moveEntry(root, path, destDir);
+  const made = await moveEntry(anchorFor(path), path, destDir, anchorFor(destDir));
   notifyPaths([{ from: path, to: made.path }]);
   await refreshDir(srcDir);
   if (srcDir !== destDir) await refreshDir(destDir);

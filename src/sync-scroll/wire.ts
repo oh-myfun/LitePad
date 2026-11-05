@@ -2,15 +2,13 @@
  * 同步滚动 v1 —— 运行时接线（T4）。
  *
  * 单一协调器单例 + 一个 reconciler：每次面板/标签/视图模式变化后，把当前**看得见**的
- * 编辑器与预览按各自文档 id 注册进协调器（同 docId 的 editor+preview+其它面板
- * 共享一组锚点）。reconciler 先解绑旧句柄再重注册，是唯一的注册 chokepoint，避免去
- * 改动每处创建/销毁 EditorView / PreviewPane 的站点。
+ * 编辑器按各自文档 id 注册进协调器（同 docId 的所有编辑器共享一组锚点）。reconciler 先
+ * 解绑旧句柄再重注册，是唯一的注册 chokepoint，避免去改动每处创建/销毁 EditorView 的站点。
  *
- * ⚠️ 只注册看得见的那一侧。生产里每个面板同时挂着 `.panel-editor` 与 `.md-preview`，
- * 靠 `.panel-host.mode-*` 的 CSS 藏掉其中一个（`src/styles/preview.css:632-640`），
- * 而那个类名由 `tab.viewMode` 决定。被藏起来的那一侧 `getV()` 只能报 1.0、`setV()`
- * 只能挂 pending：注册进去等于引入一个「永远读不准、现形时又补发滚动」的幽灵锚点
- * —— B285 那类「没显示的预览标签与显示的标签位置不一致」就是它。
+ * B412：每个面板只剩**一颗** EditorView —— 源码 / 预览 / 编辑三档是同一颗 view 的三种装束
+ * （`tab.viewMode` + `previewFace`），旧派生 DOM 预览面已删。于是这里也**不再有**「藏起来
+ * 的那一侧」：那类被藏的面只会报 1.0、现形时补发滚动（B285 的幽灵锚点）随第二面一起消失，
+ * `sideOfPanel()` 恒答 editor。
  * 可见性按**状态**判（与 `applyPanelMode` 同源那条规则），不按 DOM 矩形判，理由写在
  * `reconcileSyncRegistrations` 的注释里。
  *
@@ -33,12 +31,10 @@ import {
   windowLabel,
   type Panel,
 } from "../core/app-state";
-import { isMdTab } from "../doc-model";
 import { logger } from "../core/logger";
 import { sessionStore } from "../session/store";
 import type { WindowScrollPosition } from "../core/events";
 import { EditorScrollAnchor, type ScrollAnchor } from "./anchor";
-import { PreviewScrollAnchor } from "./preview";
 import { SyncScrollCoordinator, type AnchorHandle, type CoordinatedSurface } from "./coordinator";
 
 /**
@@ -100,15 +96,10 @@ const owedLanding = new Map<number, number>();
  * 与 `applyPanelMode` 写 `mode-*` 类那条规则同源；不按 DOM 矩形判（理由见
  * `reconcileSyncRegistrations` 的注释）。
  */
-export function sideOfPanel(panel: Panel): SyncSide {
-  const tab = tabs.get(panel.viewTabId ?? panel.activeTabId);
-  const mode = tab && isMdTab(tab) ? tab.viewMode : "source";
-  // B397-1 · 装饰那一臂（`deco_preview` 开着 ⇒ `panel.preview === null`）**只有一个面**：
-  // 预览态现形的是编辑器那颗 view 本身。所以「可见侧」要按**实际存在的滚动面**回答，
-  // 不能只按视图模式回答 —— 否则 `faceOf(preview)` 返回 null，这一格压根不注册进协调器，
-  // 症状是「装饰格里滚动谁都不跟着动、切回来位置也不对」（`landVisibleSideAtV` 只会留一条
-  // 「无滚动面」的 trace，没有报错）。
-  return mode === "preview" && panel.preview ? "preview" : "editor";
+export function sideOfPanel(_panel: Panel): SyncSide {
+  // B412：旧的派生 DOM 预览臂已删除，预览 / 编辑两档与源码共用同一颗 view
+  // ⇒ 一格只有一个滚动面（编辑器那颗），不存在第二侧。
+  return "editor";
 }
 
 /**
@@ -123,22 +114,13 @@ export function faceOf(
   if (side === "editor") {
     const view = panel.view?.view;
     if (!view) return null;
+    // B442：编辑档那条工具条是**滚动容器之外**的布局行（`.panel-host.md-bar-docked`
+    // 改竖排），预览档那颗键纯悬浮且不推动正文 ⇒ 两侧都不存在「顶边被浮层占掉」的
+    // 让位量，锚点的顶边就是容器顶。B438 那套实测 inset（`--fab-inset` / faceOf 量
+    // 条的下沿）随占位改造一起退场 —— 留着它反而会把落位线压到条下面一行。
     return { anchor: new EditorScrollAnchor(view), el: view.scrollDOM, label };
   }
-  // B397-1：装饰那一臂的「预览侧」不再是一颗第二 view —— 它就是上面那条 `side === "editor"`
-  // 拿到的那颗（`sideOfPanel` 因此也跟着回答 editor）。这里只剩派生 DOM 一条路。
-  const preview = panel.preview;
-  if (!preview) return null;
-  const root = preview.root;
-  return {
-    anchor: new PreviewScrollAnchor(preview.scrollSurface(), (intent, landed) =>
-      // 「没铺开 ⇒ 下一帧补定位」这条异步支线写在协调器调用栈之外，落定后回登记，
-      // 否则那一发 `scroll` 无人认领 ⇒ 被判成用户滚动广播出去。
-      syncCoordinator.expectSurfaceV(root, intent, landed),
-    ),
-    el: root,
-    label,
-  };
+  return null;
 }
 
 /**
@@ -352,7 +334,9 @@ export function landVisibleSideAtV(
   // 面能按字符对齐就按字符对齐，**意图登记成它自己读回的 v**：两格算出的 v 本来就不等，
   // 登记成对方的那个就会被判成「没兑现」而补写回去 —— 逐行对齐会被自己拆掉（B290 那一族
   // 换了个方向复发）。只有 `v`（老对端 / 预览面）时走原来的按比例落位。
-  const byPos = at !== null && !!face.anchor.setVAt;
+  // B416：`at === 0`（对方顶边指着文档第一行）同样走 `v` —— 文首没有「上一行」可对，
+  // 两侧各自的绝对顶部才是共同答案（按字符对齐会停在 `.cm-content` 上内距 / 标题盒里）。
+  const byPos = at !== null && at > 0 && !!face.anchor.setVAt;
   const landed = byPos ? face.anchor.setVAt!(at!) : face.anchor.setV(v);
   syncCoordinator.expectSurfaceV(face.el, byPos ? landed : v, landed);
   // 「量不量得出来」决定这一发是**落定**还是**承诺**（B299 · 真机 sat-3）：预览那条

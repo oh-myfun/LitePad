@@ -325,6 +325,102 @@ impl WalkFilter {
     }
 }
 
+// ---------------------------------------------------------------- 忽略文件（B421）
+
+/// 一份 `.gitignore` / `.ignore` 解出来的规则。
+///
+/// 口径是 gitignore 的**可用子集**（glob 与上面的 include/exclude 同一套 `*` `**` `?`）：
+///   · `#` 注释与空行跳过；`!` 取反，**后出现的规则盖前面的**（同 git：最后一条命中的算数）；
+///   · 结尾 `/` 只对目录生效；
+///   · 含 `/`（含开头 `/`）的锚定在**这份 ignore 文件所在目录**，其余按名字 / 任一层匹配；
+///   · 不支持 `{a,b}` 与 `[...]`（与 include/exclude 的偏差一致，见计划文档）。
+struct IgnoreRule {
+    negate: bool,
+    dir_only: bool,
+    re: Regex,
+}
+
+struct IgnoreFile {
+    /// 相对搜索根的 posix 目录；根 = 空串
+    base: String,
+    rules: Vec<IgnoreRule>,
+}
+
+fn parse_ignore(text: &str, base: &str) -> IgnoreFile {
+    let mut rules = Vec::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (negate, rest) = match line.strip_prefix('!') {
+            Some(r) => (true, r),
+            None => (false, line),
+        };
+        let dir_only = rest.ends_with('/');
+        let pat = rest.trim_end_matches('/').trim_start_matches('/');
+        if pat.is_empty() {
+            continue;
+        }
+        let body = glob_body(pat);
+        let anchored = rest.starts_with('/') || pat.contains('/');
+        let source = if anchored {
+            format!("^{body}$")
+        } else {
+            format!("(?:^|.*/){body}(?:$|/.*)")
+        };
+        if let Ok(re) = Regex::new(&source) {
+            rules.push(IgnoreRule {
+                negate,
+                dir_only,
+                re,
+            });
+        }
+    }
+    IgnoreFile {
+        base: base.to_string(),
+        rules,
+    }
+}
+
+/// 把某一层目录的 `.gitignore`、`.ignore` 压进栈。
+/// 先 `.gitignore` 后 `.ignore`：同层里 `.ignore` 的规则排在后面 ⇒ 它能盖过 `.gitignore`
+/// （ripgrep / VS Code 的优先级也是 `.ignore` 更高）。
+fn push_ignores(dir: &Path, rel: &str, stack: &mut Vec<IgnoreFile>) {
+    for name in [".gitignore", ".ignore"] {
+        if let Ok(text) = fs::read_to_string(dir.join(name)) {
+            let file = parse_ignore(&text, rel);
+            if !file.rules.is_empty() {
+                stack.push(file);
+            }
+        }
+    }
+}
+
+/// 这条相对路径是不是被某一层的 ignore 规则忽略（后命中的规则覆盖先前的）。
+fn is_ignored(stack: &[IgnoreFile], rel: &str, is_dir: bool) -> bool {
+    let mut ignored = false;
+    for file in stack {
+        let sub = if file.base.is_empty() {
+            rel
+        } else {
+            match rel.strip_prefix(file.base.as_str()) {
+                Some(rest) if rest.starts_with('/') => &rest[1..],
+                _ => continue,
+            }
+        };
+        for rule in &file.rules {
+            if rule.dir_only && !is_dir {
+                continue;
+            }
+            if rule.re.is_match(sub) {
+                ignored = !rule.negate;
+            }
+        }
+    }
+    ignored
+}
+
 // ---------------------------------------------------------------- 走目录
 
 fn rel_posix(root: &Path, path: &Path) -> String {
@@ -336,10 +432,18 @@ fn rel_posix(root: &Path, path: &Path) -> String {
 
 /// 递归收集候选文件。`budget` 是「还能收多少个文件」的余量，撞上限就停 ——
 /// 与 `list_dir` 的 `MAX_ENTRIES` 同一口径：**宁可少给，不可卡住**（那边是单层，这边是整棵）。
+///
+/// B421：`use_excludes` 就是「使用排除设置与忽略文件」那颗键 —— 关掉时不跳点文件/噪声目录、
+/// 也不读 `.gitignore` / `.ignore`，只留用户显式写的 include / exclude。
+/// B426：`use_ignores` 是那一项**单独**可关的一层（设置窗口里那颗开关）：只管要不要读
+/// 忽略清单，不动点文件 / 噪声目录（那两样仍归总闸）。
 fn collect_files(
     dir: &Path,
     root: &Path,
     filter: &WalkFilter,
+    ignores: &mut Vec<IgnoreFile>,
+    use_excludes: bool,
+    use_ignores: bool,
     out: &mut Vec<(PathBuf, String)>,
     budget: &mut usize,
     hit_cap: &mut bool,
@@ -348,6 +452,37 @@ fn collect_files(
         *hit_cap = true;
         return;
     }
+    let rel_dir = rel_posix(root, dir);
+    let mark = ignores.len();
+    if use_excludes && use_ignores {
+        // B426：这一层单独可关（栈空时下面两处 `is_ignored` 自然全不命中 ⇒ 不用另外改判据）。
+        push_ignores(dir, &rel_dir, ignores);
+    }
+    collect_entries(
+        dir,
+        root,
+        filter,
+        ignores,
+        use_excludes,
+        use_ignores,
+        out,
+        budget,
+        hit_cap,
+    );
+    ignores.truncate(mark);
+}
+
+fn collect_entries(
+    dir: &Path,
+    root: &Path,
+    filter: &WalkFilter,
+    ignores: &mut Vec<IgnoreFile>,
+    use_excludes: bool,
+    use_ignores: bool,
+    out: &mut Vec<(PathBuf, String)>,
+    budget: &mut usize,
+    hit_cap: &mut bool,
+) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -360,18 +495,32 @@ fn collect_files(
         let Ok(ft) = entry.file_type() else { continue };
         let name = entry.file_name().to_string_lossy().into_owned();
         if ft.is_dir() {
-            if name.starts_with('.') || is_noise_dir(&name) {
+            let rel = rel_posix(root, &path);
+            if use_excludes && (name.starts_with('.') || is_noise_dir(&name)) {
                 continue;
             }
-            let rel = rel_posix(root, &path);
+            if use_excludes && is_ignored(ignores, &rel, true) {
+                continue;
+            }
             if filter.prunes_dir(&rel) {
                 continue;
             }
-            collect_files(&path, root, filter, out, budget, hit_cap);
+            collect_files(
+                &path,
+                root,
+                filter,
+                ignores,
+                use_excludes,
+                use_ignores,
+                out,
+                budget,
+                hit_cap,
+            );
         } else if ft.is_file() {
-            if name.starts_with('.') {
+            if use_excludes && name.starts_with('.') {
                 // 点文件（`.gitignore` / `.env`）：资源管理器照实显示，搜索先跳过 ——
-                // 那一类文件里搜「token」几乎每次都命中配置噪声。include 里点名要它才给。
+                // 那一类文件里搜「token」几乎每次都命中配置噪声。要搜它们就把
+                // 「使用排除设置与忽略文件」关掉。
                 continue;
             }
             let Ok(meta) = entry.metadata() else { continue };
@@ -379,6 +528,9 @@ fn collect_files(
                 continue;
             }
             let rel = rel_posix(root, &path);
+            if use_excludes && is_ignored(ignores, &rel, false) {
+                continue;
+            }
             if !filter.accepts(&rel) {
                 continue;
             }
@@ -386,6 +538,190 @@ fn collect_files(
             *budget -= 1;
         }
     }
+}
+
+// ---------------------------------------------------------------- B427 · 资源管理器过滤框
+
+/// 过滤一次最多回多少条名字命中。侧栏一屏画不了更多，且这一路是**整棵**扫
+/// （叶子层也要找），不设上限等于把一棵大仓库整个搬进 JSON。
+const MAX_NAME_HITS: usize = 1_000;
+/// 整棵扫描的条目预算（目录也算一条）：与搜索那 2 万个文件同一口径 ——
+/// **宁可少给，不可卡住**（用户在大仓库上敲一个字母，不该让界面等到扫完才反应）。
+const MAX_NAME_NODES: usize = 50_000;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NameHit {
+    pub name: String,
+    pub path: String,
+    /// 相对根的 posix 路径 —— 前端靠它**同步**出祖先链（不为每一层再发一次 `list_dir`）。
+    pub rel: String,
+    #[serde(rename = "isDir")]
+    pub is_dir: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NameScan {
+    pub hits: Vec<NameHit>,
+    pub truncated: bool,
+}
+
+/// 一次过滤的完整入参（命令壳负责把 Tauri 的散参收成一格，单测直接调 `filter_names`）。
+struct NameRequest {
+    root: PathBuf,
+    query: String,
+    case_sensitive: bool,
+    whole_word: bool,
+    use_regex: bool,
+    /// 设置页「搜索 → 要排除的文件」那串（逗号分隔的 glob）。与侧栏搜索同一把尺子：
+    /// 命中就整条不要。**总闸不在这里** —— 面板只在「排除」开着时把它交出来
+    /// （口径同 `search/store.ts` 的 `mergeGlobs(useExcludes ? … : "")`）。
+    exclude: Option<String>,
+    /// 「排除」那颗键：点文件 / 噪声目录 / 忽略清单，三样一起管（与侧栏搜索的总闸同义）。
+    use_excludes: bool,
+    /// 「忽略」那颗键：只关 `.gitignore` / `.ignore` 这一层（有效判据 `use_excludes && use_ignores`）。
+    use_ignores: bool,
+}
+
+struct NameWalk<'a> {
+    root: &'a Path,
+    matcher: &'a LineMatcher,
+    exclude: &'a [Regex],
+    use_excludes: bool,
+    use_ignores: bool,
+    hits: Vec<NameHit>,
+    truncated: bool,
+    nodes_left: usize,
+}
+
+impl NameWalk<'_> {
+    fn walk(&mut self, dir: &Path, ignores: &mut Vec<IgnoreFile>) {
+        let rel_dir = rel_posix(self.root, dir);
+        let mark = ignores.len();
+        if self.use_excludes && self.use_ignores {
+            push_ignores(dir, &rel_dir, ignores);
+        }
+        let Ok(entries) = fs::read_dir(dir) else {
+            ignores.truncate(mark);
+            return;
+        };
+        for entry in entries.flatten() {
+            if self.hits.len() >= MAX_NAME_HITS || self.nodes_left == 0 {
+                self.truncated = true;
+                break;
+            }
+            self.nodes_left -= 1;
+            let Ok(ft) = entry.file_type() else { continue };
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let path = entry.path();
+            let is_dir = ft.is_dir();
+            // 三层排除照抄侧栏搜索的 `collect_entries`（同一个「排除」键，两处口径不许分家）。
+            if self.use_excludes && name.starts_with('.') {
+                continue;
+            }
+            let rel = rel_posix(self.root, &path);
+            // 用户排除串（设置页那串 glob）：文件按 rel 直接测；目录多测一遍 `rel/`，
+            // 让 `excl` 这种「整目录」的写法在**进目录之前**就剪掉（照 `prunes_dir`）。
+            if self.use_excludes
+                && self
+                    .exclude
+                    .iter()
+                    .any(|r| r.is_match(&rel) || (is_dir && r.is_match(&format!("{rel}/"))))
+            {
+                continue;
+            }
+            if self.use_excludes && is_ignored(ignores, &rel, is_dir) {
+                continue;
+            }
+            if is_dir && self.use_excludes && is_noise_dir(&name) {
+                continue;
+            }
+            // 只匹配**名字**（用户口径「过滤显示匹配名字的文件或文件夹」），不读内容。
+            if !(self.matcher)(&name).is_empty() {
+                self.hits.push(NameHit {
+                    name,
+                    path: path.to_string_lossy().into_owned(),
+                    rel: rel.clone(),
+                    is_dir,
+                });
+                if self.hits.len() >= MAX_NAME_HITS {
+                    self.truncated = true;
+                    break;
+                }
+            }
+            // ⚠️ 没命中的目录**照样要下去**：过滤是全量匹配，用户没展开过的那几层里
+            // 一样可能有命中的名字（这正是这个功能要解决的事）。
+            if is_dir {
+                self.walk(&path, ignores);
+            }
+        }
+        ignores.truncate(mark);
+    }
+}
+
+/// 同步的过滤主体：校验 → 整棵走一遍 → 按相对路径排（拆出来只为可测）。
+fn filter_names(req: NameRequest) -> Result<NameScan, String> {
+    if !req.root.is_dir() {
+        return Err(format!("文件夹不存在：{:?}", req.root));
+    }
+    let query = req.query.trim();
+    if query.is_empty() {
+        return Ok(NameScan {
+            hits: Vec::new(),
+            truncated: false,
+        });
+    }
+    let matcher = build_matcher(query, req.case_sensitive, req.whole_word, req.use_regex)?;
+    let exclude = compile_globs(req.exclude.as_deref())?;
+    let mut walk = NameWalk {
+        root: &req.root,
+        matcher: &matcher,
+        exclude: &exclude,
+        use_excludes: req.use_excludes,
+        use_ignores: req.use_ignores,
+        hits: Vec::new(),
+        truncated: false,
+        nodes_left: MAX_NAME_NODES,
+    };
+    let mut ignores: Vec<IgnoreFile> = Vec::new();
+    walk.walk(&req.root, &mut ignores);
+    let mut hits = walk.hits;
+    hits.sort_by(|a, b| a.rel.cmp(&b.rel));
+    Ok(NameScan {
+        hits,
+        truncated: walk.truncated,
+    })
+}
+
+/// 资源管理器顶部过滤框（B427）：在**一根**根目录下按名字整棵找。
+///
+/// 与 `search_in_folder` 的区别只在匹配对象：那边读文件内容、这边只认名字，
+/// 所以**不读盘上的字节**（大仓库也快），命中数上限也小得多。
+/// 排除 / 忽略两层与那边共用同一套实现（`use_excludes` / `use_ignore_files` 两个键的含义逐字一致）。
+#[tauri::command]
+pub async fn filter_tree(
+    root: String,
+    query: String,
+    case_sensitive: Option<bool>,
+    whole_word: Option<bool>,
+    regex: Option<bool>,
+    exclude: Option<String>,
+    use_excludes: Option<bool>,
+    use_ignore_files: Option<bool>,
+) -> Result<NameScan, String> {
+    let req = NameRequest {
+        root: PathBuf::from(&root),
+        query,
+        case_sensitive: case_sensitive.unwrap_or(false),
+        whole_word: whole_word.unwrap_or(false),
+        use_regex: regex.unwrap_or(false),
+        exclude,
+        use_excludes: use_excludes.unwrap_or(true),
+        use_ignores: use_ignore_files.unwrap_or(true),
+    };
+    tauri::async_runtime::spawn_blocking(move || filter_names(req))
+        .await
+        .map_err(|e| format!("过滤任务失败：{e}"))?
 }
 
 /// 抢一个结果名额。⚠️ 不许写成 `if load()==0 {break}; fetch_sub(1)`：
@@ -467,6 +803,13 @@ struct SearchRequest {
     use_regex: bool,
     include: Option<String>,
     exclude: Option<String>,
+    /// B421：「使用排除设置与忽略文件」那颗键（默认开）。
+    /// 关掉 = 不跳点文件/噪声目录、也不读 `.gitignore` / `.ignore`，只留显式的 include/exclude。
+    use_excludes: bool,
+    /// B426：设置窗口里那颗「跟随 `.gitignore` / `.ignore`」（VS Code `search.useIgnoreFiles`）。
+    /// 只关掉**忽略清单这一层**：点文件与噪声目录仍归 `use_excludes` 那颗总闸管。
+    /// 有效判据是 `use_excludes && use_ignores` —— 总闸关了时这层本来就不该读。
+    use_ignores: bool,
     cap: usize,
 }
 
@@ -499,10 +842,14 @@ fn search_folder(req: SearchRequest) -> Result<SearchReport, String> {
     let mut budget = MAX_FILES;
     let mut file_cap_hit = false;
     let mut candidates = Vec::new();
+    let mut ignores: Vec<IgnoreFile> = Vec::new();
     collect_files(
         &req.root,
         &req.root,
         &filter,
+        &mut ignores,
+        req.use_excludes,
+        req.use_ignores,
         &mut candidates,
         &mut budget,
         &mut file_cap_hit,
@@ -556,6 +903,8 @@ pub async fn search_in_folder(
     include: Option<String>,
     exclude: Option<String>,
     max_results: Option<usize>,
+    use_excludes: Option<bool>,
+    use_ignore_files: Option<bool>,
 ) -> Result<SearchReport, String> {
     let req = SearchRequest {
         root: PathBuf::from(&root),
@@ -566,6 +915,10 @@ pub async fn search_in_folder(
         use_regex: regex.unwrap_or(false),
         include,
         exclude,
+        // 缺省 = 开（老前端没带这一格时行为与 B421 之前逐字一致）
+        use_excludes: use_excludes.unwrap_or(true),
+        // 同上（B426）：老前端没带 ⇒ 跟随忽略文件；缺键也不许读成「关着」。
+        use_ignores: use_ignore_files.unwrap_or(true),
     };
     tauri::async_runtime::spawn_blocking(move || search_folder(req))
         .await
@@ -588,6 +941,24 @@ pub struct ReplaceItem {
     pub whole_word: bool,
     #[serde(default)]
     pub regex: bool,
+    /// B417：替换串按命中原文迁移大小写（与前端 `editor/find.ts` 的 `preserveCase` 同规则）
+    #[serde(default)]
+    pub preserve_case: bool,
+    /// B419：只替换**一处**。给了 `line` + `column`（1 起算的字符行列，与结果树的
+    /// `SearchMatch.line/column` 同一套口径）时只动那一处；不给 = 整份文件全换。
+    /// 两个字段必须同时给才生效（只给一个按「全换」处理 —— 半截位置没有语义）。
+    #[serde(default)]
+    pub line: Option<u32>,
+    #[serde(default)]
+    pub column: Option<u32>,
+}
+
+/// `ReplaceItem` 里的「只动这一处」：`(line, column)`，缺一个都算不指定。
+fn target_of(item: &ReplaceItem) -> Option<(u32, u32)> {
+    match (item.line, item.column) {
+        (Some(l), Some(c)) if l > 0 && c > 0 => Some((l, c)),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -599,6 +970,41 @@ pub struct ReplaceReport {
     pub errors: Vec<String>,
 }
 
+/// B417 · 保留大小写：把**命中原文**的大小写迁移到替换串上。
+///
+/// 规则与前端 `src/editor/find.ts` 的 `preserveCase` 逐条一致（两侧各有一份是必须的：
+/// 内存那一批走 TS、盘上这一批走 Rust，两处规则一歪就是「同一屏替换出两种结果」）：
+///   · 原文全小写 ⇒ 替换串全小写；原文全大写 ⇒ 全大写；
+///   · 原文首字母大写且其余全小写（Title Case）⇒ 替换串首字母大写、其余小写；
+///   · 混合（"ConCat"）原样不动。
+fn preserve_case(matched: &str, replacement: &str) -> String {
+    if replacement.is_empty() {
+        return String::new();
+    }
+    let has_upper = matched.chars().any(|c| c.is_uppercase());
+    let has_lower = matched.chars().any(|c| c.is_lowercase());
+    if !has_upper {
+        return replacement.to_lowercase();
+    }
+    if !has_lower {
+        return replacement.to_uppercase();
+    }
+    let mut it = matched.chars();
+    let first = it.next().unwrap_or(' ');
+    let rest_has_upper = it.any(|c| c.is_uppercase());
+    if first.is_uppercase() && !rest_has_upper {
+        let lower = replacement.to_lowercase();
+        let mut chars = lower.chars();
+        let Some(head) = chars.next() else {
+            return lower;
+        };
+        let mut out: String = head.to_uppercase().collect();
+        out.extend(chars);
+        return out;
+    }
+    replacement.to_string()
+}
+
 /// 字面量替换（逐字符扫，保留未命中部分原样）。
 fn replace_literal(
     text: &str,
@@ -606,6 +1012,8 @@ fn replace_literal(
     to: &str,
     case_sensitive: bool,
     whole_word: bool,
+    preserve: bool,
+    at: Option<(u32, u32)>,
 ) -> (String, usize) {
     let hay: Vec<char> = text.chars().collect();
     let needle: Vec<char> = query.chars().map(|c| fold(c, case_sensitive)).collect();
@@ -615,17 +1023,40 @@ fn replace_literal(
     let folded: Vec<char> = hay.iter().map(|c| fold(*c, case_sensitive)).collect();
     let mut out = String::with_capacity(text.len());
     let mut i = 0usize;
+    // 1 起算的行列：后端自己算出每一处匹配的位置，再与结果树那一套 `line/column` 对上。
+    let mut line = 1u32;
+    let mut col = 1u32;
     let mut n = 0usize;
     while i < hay.len() {
         if i + needle.len() <= hay.len()
             && folded[i..i + needle.len()] == needle[..]
             && (!whole_word || word_bounded(&folded, i, i + needle.len()))
+            && at.map_or(true, |(l, c)| (line, col) == (l, c))
         {
-            out.push_str(to);
+            if preserve {
+                let matched: String = hay[i..i + needle.len()].iter().collect();
+                out.push_str(&preserve_case(&matched, to));
+            } else {
+                out.push_str(to);
+            }
+            for k in i..i + needle.len() {
+                if hay[k] == '\n' {
+                    line += 1;
+                    col = 1;
+                } else {
+                    col += 1;
+                }
+            }
             i += needle.len();
             n += 1;
         } else {
             out.push(hay[i]);
+            if hay[i] == '\n' {
+                line += 1;
+                col = 1;
+            } else {
+                col += 1;
+            }
             i += 1;
         }
     }
@@ -658,11 +1089,44 @@ fn replace_regex(
     to: &str,
     case_sensitive: bool,
     whole_word: bool,
+    preserve: bool,
+    at: Option<(u32, u32)>,
 ) -> Result<(String, usize), String> {
     let re = Regex::new(&regex_pattern(query, case_sensitive, whole_word))
         .map_err(|e| format!("正则无效：{e}"))?;
-    let count = re.find_iter(text).count();
-    Ok((re.replace_all(text, to).into_owned(), count))
+    if at.is_none() && !preserve {
+        let count = re.find_iter(text).count();
+        return Ok((re.replace_all(text, to).into_owned(), count));
+    }
+    // 逐条走闭包：保留大小写要按**整段命中**迁移；`at` 那一档还要按位置挑出唯一一处
+    //（其余命中原样抄回，一个字都不动）。
+    let hit = std::cell::Cell::new(false);
+    let out = re.replace_all(text, |caps: &regex::Captures| -> String {
+        let whole = caps.get(0).map(|m| m.as_str()).unwrap_or("");
+        let start = caps.get(0).map(|m| m.start()).unwrap_or(0);
+        if let Some((l, c)) = at {
+            let pre = &text[..start];
+            let line = pre.matches('\n').count() as u32 + 1;
+            let col = pre.rsplit('\n').next().unwrap_or("").chars().count() as u32 + 1;
+            if (line, col) != (l, c) {
+                return whole.to_string();
+            }
+            hit.set(true);
+        }
+        let mut expanded = String::new();
+        caps.expand(to, &mut expanded);
+        if preserve {
+            preserve_case(whole, &expanded)
+        } else {
+            expanded
+        }
+    });
+    let count = if at.is_some() {
+        hit.get() as usize
+    } else {
+        re.find_iter(text).count()
+    };
+    Ok((out.into_owned(), count))
 }
 
 /// 同步的替换主体（拆出来只为可测，理由同 `search_folder`）。
@@ -697,6 +1161,8 @@ fn replace_files(items: Vec<ReplaceItem>) -> ReplaceReport {
         //    「本来就是 LF」，替换一次就把整份文件的行尾悄悄改掉。
         let dominant = eol::analyze(&decoded.text).dominant;
         let original = eol::to_lf(&decoded.text);
+        // B419：结果行那颗「替换」只动这一处（行/列都是 1 起算的字符位置）。
+        let at = target_of(&item);
         let (replaced, n) = if item.regex {
             match replace_regex(
                 &original,
@@ -704,6 +1170,8 @@ fn replace_files(items: Vec<ReplaceItem>) -> ReplaceReport {
                 &item.replacement,
                 item.case_sensitive,
                 item.whole_word,
+                item.preserve_case,
+                at,
             ) {
                 Ok(v) => v,
                 Err(e) => {
@@ -718,6 +1186,8 @@ fn replace_files(items: Vec<ReplaceItem>) -> ReplaceReport {
                 &item.replacement,
                 item.case_sensitive,
                 item.whole_word,
+                item.preserve_case,
+                at,
             )
         };
         if n == 0 {
@@ -789,6 +1259,8 @@ mod tests {
             use_regex: false,
             include: None,
             exclude: None,
+            use_excludes: true,
+            use_ignores: true,
             cap: MAX_MATCHES,
         }
     }
@@ -982,6 +1454,83 @@ mod tests {
     }
 
     #[test]
+    fn gitignore_prunes_ignored_paths_and_honours_negation() {
+        let dir = tmp("ignores");
+        put(&dir, ".gitignore", "out/\n*.log\n!keep.log\n".as_bytes());
+        put(&dir, "a.md", "针 在正文\n".as_bytes());
+        put(&dir, "out/hidden.md", "针 在忽略目录\n".as_bytes());
+        put(&dir, "noise.log", "针 在忽略后缀\n".as_bytes());
+        put(&dir, "keep.log", "针 被取反放回来\n".as_bytes());
+        let rep = search_folder(req(&dir, "针")).expect("搜得到");
+        assert_eq!(
+            rels(&rep),
+            vec!["a.md", "keep.log"],
+            "`out/` 整目录剪掉、`*.log` 命中后被 `!keep.log` 翻回来"
+        );
+        assert_eq!(rep.matches, 2);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn nested_gitignore_only_applies_below_its_own_directory() {
+        let dir = tmp("nested-ignores");
+        put(&dir, "docs/.gitignore", "draft.md\n".as_bytes());
+        put(&dir, "docs/draft.md", "针 在子目录的忽略里\n".as_bytes());
+        put(&dir, "docs/keep.md", "针 子目录正文\n".as_bytes());
+        put(
+            &dir,
+            "draft.md",
+            "针 根上的同名文件不受子目录规则管\n".as_bytes(),
+        );
+        let rep = search_folder(req(&dir, "针")).expect("搜得到");
+        assert_eq!(rels(&rep), vec!["docs/keep.md", "draft.md"]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn disabling_excludes_searches_ignored_hidden_and_noise_paths() {
+        let dir = tmp("no-excludes");
+        put(&dir, ".gitignore", "ignored.md\n".as_bytes());
+        put(&dir, "ignored.md", "针 被 gitignore 忽略\n".as_bytes());
+        put(&dir, ".env", "针 在点文件里\n".as_bytes());
+        put(&dir, "node_modules/pkg.md", "针 在噪声目录里\n".as_bytes());
+        let on = search_folder(req(&dir, "针")).expect("默认开着排除");
+        assert_eq!(rels(&on), Vec::<String>::new(), "三样都该被排除");
+        let mut off = req(&dir, "针");
+        off.use_excludes = false;
+        let rep = search_folder(off).expect("关掉排除也能搜");
+        assert_eq!(
+            rels(&rep),
+            vec![".env", "ignored.md", "node_modules/pkg.md"],
+            "关掉后点文件 / 忽略文件 / 噪声目录一起放回来（路径序）"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// B426（用户「搜索的排除设置和忽略文件要能在设置窗口中进行设置」）：
+    /// 「忽略文件」得能**单独**关 —— 关掉只停 `.gitignore` / `.ignore` 这一层，
+    /// 点文件与噪声目录仍归那颗总闸管。两件事合成一颗键，用户就没法只关其中一件。
+    #[test]
+    fn ignore_files_switch_leaves_dot_and_noise_excluded() {
+        let dir = tmp("ignore-switch");
+        put(&dir, ".gitignore", "secret.md\n".as_bytes());
+        put(&dir, "secret.md", "针 在忽略清单里\n".as_bytes());
+        put(&dir, "note.md", "针 在正文\n".as_bytes());
+        let on = search_folder(req(&dir, "针")).expect("默认跟随忽略文件");
+        assert_eq!(rels(&on), vec!["note.md"], "`.gitignore` 里那一条该被挡掉");
+
+        let mut off = req(&dir, "针");
+        off.use_ignores = false;
+        let rep = search_folder(off).expect("关掉忽略文件也搜得动");
+        assert_eq!(
+            rels(&rep),
+            vec!["note.md", "secret.md"],
+            "忽略清单不再挡路（点文件仍按总闸处理）"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn search_decodes_legacy_chinese_instead_of_lossy_utf8() {
         // 中文笔记是这编辑器的主场景：GBK 的文件用 lossy UTF-8 解码就永远搜不到。
         let dir = tmp("gbk");
@@ -1009,6 +1558,9 @@ mod tests {
             case_sensitive: false,
             whole_word: false,
             regex: false,
+            preserve_case: false,
+            line: None,
+            column: None,
         };
         let rep = replace_files(vec![item(dir.join("keep.gbk")), item(dir.join("none.md"))]);
         assert_eq!(
@@ -1035,12 +1587,69 @@ mod tests {
     #[test]
     fn replace_regex_expands_groups_and_literal_treats_dots_literally() {
         assert_eq!(
-            replace_regex("ab", "(a)(b)", "$2$1", false, false).unwrap(),
+            replace_regex("ab", "(a)(b)", "$2$1", false, false, false, None).unwrap(),
             ("ba".into(), 1)
         );
         assert_eq!(
-            replace_literal("a.b axb", "a.b", "X", false, false),
+            replace_literal("a.b axb", "a.b", "X", false, false, false, None),
             ("X axb".into(), 1)
+        );
+    }
+
+    #[test]
+    fn replace_one_match_only_touches_the_given_position() {
+        // B419：结果行那颗「替换」只动这一处。位置口径 = 1 起算的字符行列，
+        // 与 `SearchMatch.line/column` 同一套（搜索也是按字符列报的）。
+        let text = "甲 乙\n甲 丙\n甲 丁";
+        assert_eq!(
+            replace_literal(text, "甲", "乙", false, false, false, Some((2, 1))),
+            ("甲 乙\n乙 丙\n甲 丁".into(), 1),
+            "只换第 2 行那一处"
+        );
+        assert_eq!(
+            replace_literal(text, "甲", "乙", false, false, false, Some((9, 1))),
+            (text.into(), 0),
+            "位置对不上任何命中 ⇒ 一个字都不动"
+        );
+        assert_eq!(
+            replace_regex("ab ab", "(a)(b)", "$2$1", false, false, false, Some((1, 4))).unwrap(),
+            ("ab ba".into(), 1),
+            "正则档同口径：只换第 4 列那一处"
+        );
+        // 只给了一半位置 ⇒ 没有语义，按「全换」处理。
+        let half = ReplaceItem {
+            path: "x".into(),
+            query: "甲".into(),
+            replacement: "乙".into(),
+            case_sensitive: false,
+            whole_word: false,
+            regex: false,
+            preserve_case: false,
+            line: Some(2),
+            column: None,
+        };
+        assert_eq!(target_of(&half), None);
+    }
+
+    #[test]
+    fn preserve_case_migrates_the_matched_word_case() {
+        // 规则与前端 `editor/find.ts` 的 `preserveCase` 逐条对齐。
+        assert_eq!(preserve_case("foo", "bar"), "bar");
+        assert_eq!(preserve_case("FOO", "bar"), "BAR");
+        assert_eq!(preserve_case("Foo", "bAr"), "Bar");
+        assert_eq!(preserve_case("fOo", "bar"), "bar");
+        assert_eq!(
+            replace_literal("Foo FOO foo", "foo", "bar", false, false, true, None),
+            ("Bar BAR bar".into(), 3)
+        );
+        assert_eq!(
+            replace_regex("Foo FOO", "(f)(oo)", "$2$1", false, false, true, None).unwrap(),
+            ("Oof OOF".into(), 2)
+        );
+        // 不走那一档时原样（旧行为）
+        assert_eq!(
+            replace_literal("Foo FOO foo", "foo", "bar", false, false, false, None),
+            ("bar bar bar".into(), 3)
         );
     }
 
@@ -1055,11 +1664,169 @@ mod tests {
             case_sensitive: false,
             whole_word: false,
             regex: false,
+            preserve_case: false,
+            line: None,
+            column: None,
         };
         let rep = replace_files(vec![item(dir.join("missing.md")), item(dir.join("ok.md"))]);
         assert_eq!(rep.files_changed, 1, "坏一条不许连坐");
         assert_eq!(rep.errors.len(), 1, "{:?}", rep.errors);
         assert!(rep.errors[0].contains("读不了"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // ---------------------------- B427 · 资源管理器过滤框（按名字整棵找）
+
+    fn name_req(dir: &Path, query: &str) -> NameRequest {
+        NameRequest {
+            root: dir.to_path_buf(),
+            query: query.into(),
+            case_sensitive: false,
+            whole_word: false,
+            use_regex: false,
+            exclude: None,
+            use_excludes: true,
+            use_ignores: true,
+        }
+    }
+
+    fn named(scan: &NameScan) -> Vec<&str> {
+        scan.hits.iter().map(|h| h.rel.as_str()).collect()
+    }
+
+    #[test]
+    fn filter_tree_finds_names_in_never_expanded_layers() {
+        // 用户报的那一形：只看得到根那一层，命中在第三层深处 —— 也得找出来。
+        let dir = tmp("filter-deep");
+        put(&dir, "根下.md", b"");
+        put(&dir, "子/孙/深处的命中.md", b"");
+        put(&dir, "子/别的.md", b"");
+        let scan = filter_names(name_req(&dir, "命中")).unwrap();
+        assert_eq!(named(&scan), vec!["子/孙/深处的命中.md"], "深层命中要找到");
+        assert!(!scan.truncated);
+        // 目录名同样算命中（用户口径「文件或文件夹」）
+        let scan = filter_names(name_req(&dir, "孙")).unwrap();
+        assert_eq!(named(&scan), vec!["子/孙"], "目录名也算");
+        assert!(scan.hits[0].is_dir);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn filter_tree_honours_case_word_and_regex_flags() {
+        let dir = tmp("filter-flags");
+        put(&dir, "README.md", b"");
+        put(&dir, "readme-old.md", b"");
+        put(&dir, "第2篇.md", b"");
+        put(&dir, "第10篇.md", b"");
+
+        let mut req = name_req(&dir, "readme");
+        req.case_sensitive = true;
+        let scan = filter_names(req).unwrap();
+        assert_eq!(
+            named(&scan),
+            vec!["readme-old.md"],
+            "大小写开关打开时 README.md 不该命中，小写那条照旧"
+        );
+
+        // 全词：`md` 在 `README.md` 里不是整词（`.` 两侧都算词边界外的分隔）——
+        // 换个能判开的夹具：`笔记` 在 `我的笔记.md` 里是整词，在 `笔记A.md` 里不是。
+        put(&dir, "我的笔记.md", b"");
+        put(&dir, "笔记A.md", b"");
+        let mut req = name_req(&dir, "笔记");
+        req.whole_word = true;
+        let scan = filter_names(req).unwrap();
+        assert_eq!(named(&scan), vec!["我的笔记.md"], "全词只认独占的词");
+
+        let mut req = name_req(&dir, r"^第\d+篇");
+        req.use_regex = true;
+        let scan = filter_names(req).unwrap();
+        assert_eq!(
+            named(&scan),
+            vec!["第10篇.md", "第2篇.md"],
+            "正则按名字匹配"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn filter_tree_layers_match_the_sidebar_search() {
+        let dir = tmp("filter-layers");
+        put(&dir, "普通.md", b"");
+        put(&dir, ".点文件.md", b"");
+        put(&dir, "node_modules/包里的.md", b"");
+        put(&dir, "secret.md", b"");
+        put(&dir, ".gitignore", b"secret.md\n");
+
+        // 默认：点文件 / 噪声目录 / 忽略清单三层都挡
+        let scan = filter_names(name_req(&dir, "md")).unwrap();
+        assert_eq!(named(&scan), vec!["普通.md"], "三层默认都该挡");
+
+        // 关「排除」= 三层一起放开（总闸）
+        let mut req = name_req(&dir, "md");
+        req.use_excludes = false;
+        let scan = filter_names(req).unwrap();
+        assert!(
+            named(&scan).contains(&".点文件.md"),
+            "关掉排除后点文件要出现"
+        );
+        assert!(
+            named(&scan).contains(&"node_modules/包里的.md"),
+            "噪声目录也随之放开"
+        );
+        assert!(named(&scan).contains(&"secret.md"), "忽略清单也随之不读");
+
+        // 只关「忽略」那层：点文件与 node_modules 仍然挡（与侧栏搜索那颗键同口径）
+        let mut req = name_req(&dir, "md");
+        req.use_ignores = false;
+        let scan = filter_names(req).unwrap();
+        let got = named(&scan);
+        assert!(
+            got.contains(&"secret.md"),
+            "不读 .gitignore ⇒ secret 能搜到"
+        );
+        assert!(!got.contains(&".点文件.md"), "点文件仍归总闸管");
+        assert!(!got.iter().any(|r| r.starts_with("node_modules/")));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn filter_tree_applies_the_exclude_settings() {
+        // 设置页「搜索 → 要排除的文件」那一串，过滤框与侧栏搜索同一把尺子：
+        // 命中就整条不要；目录在**进之前**就剪掉（`rel/` 那一下，口径同 `prunes_dir`）。
+        // 总闸（`use_excludes`）把不把关在面板那侧（store 只在开着时把串交出来），
+        // 这边拿到什么就挡什么 —— 两层各管各的，不在这儿做第二张判据表。
+        let dir = tmp("filter-exclude");
+        put(&dir, "keep-note.md", b"");
+        put(&dir, "skip-note.log", b"");
+        put(&dir, "excl/内层-note.md", b"");
+        put(&dir, "src/内层-note.md", b"");
+
+        let mut req = name_req(&dir, "note");
+        req.exclude = Some("*.log, excl".into());
+        let scan = filter_names(req).unwrap();
+        assert_eq!(
+            named(&scan),
+            vec!["keep-note.md", "src/内层-note.md"],
+            "后缀与整目录两形都要挡住，别的目录不受牵连"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn filter_tree_is_capped_and_says_so() {
+        let dir = tmp("filter-cap");
+        let n = MAX_NAME_HITS + 5;
+        for i in 0..n {
+            put(&dir, &format!("命中{i}.md"), b"");
+        }
+        let scan = filter_names(name_req(&dir, "命中")).unwrap();
+        assert_eq!(scan.hits.len(), MAX_NAME_HITS, "撞上限就停");
+        assert!(scan.truncated, "裁过要如实说");
+        assert_eq!(
+            filter_names(name_req(&dir, "   ")).unwrap().hits.len(),
+            0,
+            "空查询不扫"
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 }

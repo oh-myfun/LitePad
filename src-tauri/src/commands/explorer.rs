@@ -13,9 +13,10 @@
 //!     两段。前端递一个已经拼好的全路径的话，`..`、`\\`、盘符这些就得靠前端记得滤 ——
 //!     而在系统边界上「别人传进来的名字」必须由收下它的那一方校验（口径同 `save_file`
 //!     只认自己发过的路径，其余一律不猜）。
-//!   · **写操作的 target 一律要在根之内**（`guard_within`）：剪贴板那份路径存在前端，
-//!     一旦记错层，「粘贴」就会把东西写进根外的目录，而用户只在树里看 —— 看不见 ≠ 没发生。
-//!     这一道不是防恶意，是防我们自己的簿记出错。
+//!   · **写操作的 target 一律要在它归属的那根之内**（`guard_within` / `guard_dest`）：
+//!     剪贴板那份路径存在前端，一旦记错层，「粘贴」就会把东西写进根外的目录，而用户只在树里看 ——
+//!     看不见 ≠ 没发生。这一道不是防恶意，是防我们自己的簿记出错。
+//!     B427 之后源与目标各有锚点（多根下跨根粘贴是常规操作），两道闸各管各的地盘、都没放宽。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -311,6 +312,38 @@ fn guard_within(root: &str, path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// **目标层**那道闸（B427）。
+///
+/// 为什么不复用上面那条：多根（B424）之后，「从甲根复制到乙根的某一层」是常规操作，
+/// 而源与目标分属两块地盘。拿源根去量目标 ⇒ 每一次跨根粘贴都被拒成
+/// 「这条路径不在当前文件夹内」（用户报的那一形）。
+/// 所以这里收的是**目标自己归属的那一根**：源由 `guard_within` 看源根，目标由本函数看目标根，
+/// 两道闸一道都不放宽 —— 只是各管各的地盘。
+/// 空串（前端认不出这层属于哪根，比如那层刚从树上被移除）按界外拒。
+fn guard_dest(dest_root: &str, dest: &Path) -> Result<(), String> {
+    if dest_root.is_empty() || has_parent(dest) || !within(Path::new(dest_root), dest) {
+        return Err(format!(
+            "目标层不在已打开的文件夹内：{}",
+            dest.to_string_lossy()
+        ));
+    }
+    Ok(())
+}
+
+/// 收下目标层：先验归属、再验它真的在盘上。
+///
+/// ⚠️ 这个顺序是故意的：归属错了 = 我们自己的簿记出错，那句更该先响。反过来先问
+/// 「存不存在」，一条越界的目标（`根B\..\别处` 那种还没建出来的一层）会被
+/// 「目录不存在」盖掉 —— 用户读成「那层没了」，实际是该拒的界外写。
+fn dest_dir_of(dest_root: &str, dest_dir: &str) -> Result<PathBuf, String> {
+    let dest = Path::new(dest_dir);
+    guard_dest(dest_root, dest)?;
+    if !dest.is_dir() {
+        return Err(format!("目标不是目录，或它已经不存在：{dest_dir}"));
+    }
+    Ok(dest.to_path_buf())
+}
+
 /// 把 `名字.扩展名` 拆成 `(名字, 扩展名)`；点开头的整体（`.gitignore`）算**没扩展名**，
 /// 否则 `.gitignore` 加后缀会变成 `. (2)gitignore` 那种没人认得的东西。
 fn split_ext(name: &str) -> (String, String) {
@@ -409,18 +442,21 @@ pub fn rename_entry(root: String, path: String, new_name: String) -> Result<FsEn
 }
 
 /// 复制一份到 `dest_dir`（同名自动加后缀）。目录走 `copy_tree`。
+///
+/// `root` 管源、`dest_root` 管目标（见 `guard_dest`）：跨根粘贴时这俩是两根不同的文件夹。
 #[tauri::command]
-pub fn copy_entry(root: String, src: String, dest_dir: String) -> Result<FsEntry, String> {
+pub fn copy_entry(
+    root: String,
+    src: String,
+    dest_dir: String,
+    dest_root: String,
+) -> Result<FsEntry, String> {
     let (from, name, _parent) = checked_src(&root, &src)?;
-    let dest = Path::new(&dest_dir);
-    if !dest.is_dir() {
-        return Err(format!("目标不是目录，或它已经不存在：{dest_dir}"));
-    }
-    guard_within(&root, dest)?;
-    refuse_self_contained(&from, dest)?;
+    let dest = dest_dir_of(&dest_root, &dest_dir)?;
+    refuse_self_contained(&from, &dest)?;
     // 复制**允许**就地复制（同层会拿到 `x (2).ext`）：Ctrl+C / Ctrl+V 在同一层里
     // 造一份副本是 VS Code 的正经用法，不是误操作。只有**移动**才拒同层（那是空操作）。
-    let final_name = unique_in(dest, &name);
+    let final_name = unique_in(&dest, &name);
     let target = dest.join(&final_name);
     copy_tree(&from, &target)?;
     Ok(entry_of(final_name, &target, from.is_dir()))
@@ -429,19 +465,21 @@ pub fn copy_entry(root: String, src: String, dest_dir: String) -> Result<FsEntry
 /// 挪走到 `dest_dir`（同名自动加后缀）。同卷 `fs::rename` 一发搞定；
 /// 跨卷（`D:\` → `C:\`）它报「not the same device」，那时才退化成**先复制、
 /// 复制整份成功后再删原件** —— 顺序反了就是拿用户的数据赌一次 IO。
+/// 跨根挪动（B427）走的是同一条路：两根同卷时 `fs::rename` 直接成，跨卷自动落进退路。
 #[tauri::command]
-pub fn move_entry(root: String, src: String, dest_dir: String) -> Result<FsEntry, String> {
+pub fn move_entry(
+    root: String,
+    src: String,
+    dest_dir: String,
+    dest_root: String,
+) -> Result<FsEntry, String> {
     let (from, name, parent) = checked_src(&root, &src)?;
-    let dest = Path::new(&dest_dir);
-    if !dest.is_dir() {
-        return Err(format!("目标不是目录，或它已经不存在：{dest_dir}"));
-    }
-    guard_within(&root, dest)?;
-    refuse_self_contained(&from, dest)?;
-    if norm(&parent) == norm(dest) {
+    let dest = dest_dir_of(&dest_root, &dest_dir)?;
+    refuse_self_contained(&from, &dest)?;
+    if norm(&parent) == norm(&dest) {
         return Err("要挪的东西就在这层里".into());
     }
-    let final_name = unique_in(dest, &name);
+    let final_name = unique_in(&dest, &name);
     let target = dest.join(&final_name);
     match fs::rename(&from, &target) {
         Ok(()) => Ok(entry_of(final_name, &target, target.is_dir())),
@@ -782,6 +820,8 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    // ⚠️ 下面这几条都是**单根**夹具 ⇒ 第四发 `dest_root` 传的就是同一根。
+    // 跨根那几条（B427）在文件末尾，那里源根与目标根是两个不同的临时目录。
     #[test]
     fn copy_entry_duplicates_without_touching_the_source() {
         let dir = fixture("copy");
@@ -789,7 +829,7 @@ mod tests {
         let a = dir.join("a.md").to_string_lossy().into_owned();
         let notes = dir.join("notes").to_string_lossy().into_owned();
 
-        let made = copy_entry(root.clone(), a.clone(), notes.clone()).unwrap();
+        let made = copy_entry(root.clone(), a.clone(), notes.clone(), root.clone()).unwrap();
         assert!(made.path.ends_with("a.md"), "去别的层用原名");
         assert!(dir.join("a.md").exists(), "复制不是移动，原件一条都不许少");
         assert_eq!(
@@ -798,7 +838,7 @@ mod tests {
         );
 
         // 就地复制（粘回它自己所在的那一层）是 VS Code 的正经用法 ⇒ 允许，加后缀
-        let deep = copy_entry(root.clone(), notes.clone(), root.clone()).unwrap();
+        let deep = copy_entry(root.clone(), notes.clone(), root.clone(), root.clone()).unwrap();
         assert!(
             deep.path.ends_with("notes (2)"),
             "同层复制 = 加后缀那份：{}",
@@ -820,9 +860,15 @@ mod tests {
         let root = dir.to_string_lossy().into_owned();
         let notes = dir.join("notes").to_string_lossy().into_owned();
         let into_own_child = dir.join("notes").join("子").to_string_lossy().into_owned();
-        let err = copy_entry(root.clone(), notes.clone(), into_own_child.clone()).unwrap_err();
+        let err = copy_entry(
+            root.clone(),
+            notes.clone(),
+            into_own_child.clone(),
+            root.clone(),
+        )
+        .unwrap_err();
         assert!(err.contains("它自己里面"), "错误要能读：{err}");
-        let err = move_entry(root, notes, into_own_child).unwrap_err();
+        let err = move_entry(root.clone(), notes, into_own_child, root).unwrap_err();
         assert!(err.contains("它自己里面"), "移动那条同拒：{err}");
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -834,17 +880,20 @@ mod tests {
         let src = dir.join("a.md").to_string_lossy().into_owned();
         let into = dir.join("notes").to_string_lossy().into_owned();
 
-        let made = move_entry(root.clone(), src.clone(), into.clone()).unwrap();
+        let made = move_entry(root.clone(), src.clone(), into.clone(), root.clone()).unwrap();
         assert!(!dir.join("a.md").exists(), "挪走之后原处该空");
         assert_eq!(fs::read_to_string(&made.path).unwrap(), "A");
 
         fs::write(dir.join("notes").join("a.md"), "占位").unwrap();
-        let again = move_entry(root.clone(), src.clone(), into.clone()).unwrap_err();
+        let again = move_entry(root.clone(), src.clone(), into.clone(), root.clone()).unwrap_err();
         assert!(
             again.contains("已经不存在"),
             "挪一个不在的东西要报错：{again}"
         );
-        assert!(move_entry(root, src, into).is_err(), "同层挪动没有意义");
+        assert!(
+            move_entry(root.clone(), src, into, root).is_err(),
+            "同层挪动没有意义"
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -853,9 +902,10 @@ mod tests {
         let dir = fixture("move2");
         let root = dir.to_string_lossy().into_owned();
         let made = move_entry(
-            root,
+            root.clone(),
             dir.join("a.md").to_string_lossy().into_owned(),
             dir.join("notes").to_string_lossy().into_owned(),
+            root,
         )
         .unwrap();
         assert!(made.path.ends_with("a.md"), "notes 里没有 a.md");
@@ -884,5 +934,115 @@ mod tests {
         assert!(escape.exists(), "被拒的那条要原样留在盘上");
         let _ = fs::remove_file(&escape);
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // ---------------------------- B427 · 跨根复制 / 移动
+
+    /// 两根都开着（B424 的多根）：`根A/a.md` 与 `根B/inbox/`，回 `(根A, 根B)`。
+    fn two_roots(tag: &str) -> (PathBuf, PathBuf) {
+        let a = tmp(&format!("{tag}-a"));
+        let b = tmp(&format!("{tag}-b"));
+        fs::write(a.join("a.md"), "A").unwrap();
+        fs::create_dir(b.join("inbox")).unwrap();
+        (a, b)
+    }
+
+    #[test]
+    fn copy_entry_cross_root_lands_in_the_other_opened_folder() {
+        let (ra, rb) = two_roots("copy-x");
+        let made = copy_entry(
+            ra.to_string_lossy().into_owned(),
+            ra.join("a.md").to_string_lossy().into_owned(),
+            rb.join("inbox").to_string_lossy().into_owned(),
+            rb.to_string_lossy().into_owned(),
+        )
+        .expect("两根都开着，跨根复制是用户报的那一形");
+        assert!(
+            Path::new(&made.path).starts_with(&rb),
+            "副本要在乙根里：{}",
+            made.path
+        );
+        assert_eq!(fs::read_to_string(&made.path).unwrap(), "A");
+        assert!(
+            ra.join("a.md").exists(),
+            "复制不是移动：甲根那条一个字都不许动"
+        );
+        fs::remove_dir_all(&ra).unwrap();
+        fs::remove_dir_all(&rb).unwrap();
+    }
+
+    #[test]
+    fn move_entry_cross_root_relocates_and_leaves_nothing_behind() {
+        let (ra, rb) = two_roots("move-x");
+        let made = move_entry(
+            ra.to_string_lossy().into_owned(),
+            ra.join("a.md").to_string_lossy().into_owned(),
+            rb.join("inbox").to_string_lossy().into_owned(),
+            rb.to_string_lossy().into_owned(),
+        )
+        .expect("跨根移动同属用户报的那一形");
+        assert!(
+            !ra.join("a.md").exists(),
+            "挪走之后甲根那处该空（剪切不是复制）"
+        );
+        assert_eq!(fs::read_to_string(&made.path).unwrap(), "A");
+        fs::remove_dir_all(&ra).unwrap();
+        fs::remove_dir_all(&rb).unwrap();
+    }
+
+    #[test]
+    fn dest_anchor_governs_the_dest_and_a_wrong_one_still_refuses() {
+        // ⚠️ 这一条盯的是「放宽」走过头：目标那道闸还在，只是**归属换了另一个锚点**。
+        let (ra, rb) = two_roots("anchor-x");
+        fs::create_dir(ra.join("inbox")).unwrap();
+        let src = ra.join("a.md").to_string_lossy().into_owned();
+        let inbox_a = ra.join("inbox").to_string_lossy().into_owned();
+
+        let err = copy_entry(
+            ra.to_string_lossy().into_owned(),
+            src.clone(),
+            inbox_a.clone(),
+            rb.to_string_lossy().into_owned(),
+        )
+        .expect_err("目标在甲根却报乙根做锚点 ⇒ 该拒");
+        assert!(err.contains("已打开的文件夹"), "错误要能读：{err}");
+
+        let made = copy_entry(
+            ra.to_string_lossy().into_owned(),
+            src,
+            inbox_a,
+            ra.to_string_lossy().into_owned(),
+        )
+        .expect("锚点传对了就该放行");
+        assert!(made.path.ends_with("a.md"));
+
+        let err = copy_entry(
+            ra.to_string_lossy().into_owned(),
+            ra.join("a.md").to_string_lossy().into_owned(),
+            rb.join("inbox").to_string_lossy().into_owned(),
+            String::new(),
+        )
+        .expect_err("认不出归属的一律按界外拒");
+        assert!(err.contains("已打开的文件夹"), "错误要能读：{err}");
+        fs::remove_dir_all(&ra).unwrap();
+        fs::remove_dir_all(&rb).unwrap();
+    }
+
+    #[test]
+    fn cross_root_dest_outside_its_own_anchor_is_refused() {
+        // `..` 那一路（目标层还没建出来时 canonicalize 会失败）跨根照样要拦住。
+        let (ra, rb) = two_roots("escape-x");
+        let escape = rb.join("..").join("litepad-fs-escape-dest");
+        let err = copy_entry(
+            ra.to_string_lossy().into_owned(),
+            ra.join("a.md").to_string_lossy().into_owned(),
+            escape.to_string_lossy().into_owned(),
+            rb.to_string_lossy().into_owned(),
+        )
+        .expect_err("带 .. 的目标跨根也要拦");
+        assert!(err.contains("已打开的文件夹"), "错误要能读：{err}");
+        assert!(!escape.exists(), "被拒的那条不许顺手在根外建出来");
+        fs::remove_dir_all(&ra).unwrap();
+        fs::remove_dir_all(&rb).unwrap();
     }
 }

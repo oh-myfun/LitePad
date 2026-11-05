@@ -58,7 +58,8 @@ function setEntries(next: RecentEntry[]): void {
  * 记一笔「用户打开了这一条」。两个调用点，各管一类：
  *   · `io/files.ts` 的 `doOpen` —— 所有**打开文件**动作共用的漏斗（文件对话框、拖放、
  *     文件关联、点名单那一行、设置页打开日志）；
- *   · `explorer/panel.ts` 的 `openFolder` —— **打开文件夹**（B332；启动回放根走 store.setRoot，
+ *   · `explorer/panel.ts` 的 `addFolder` —— **追加一个文件夹根**（B332；启动回放那几根走
+ *     store.setRoots，
  *     不经这一扇，所以「恢复不算打开」那条裁决对两类都成立，不需要额外旗标）。
  *
  * 回包是变更后的完整名单，直接进缓存；`requestSeq` 那道闸照样适用（连点两行名单时，

@@ -292,29 +292,34 @@ describe("B332 · 两类条目：kind 两端对齐 + 文件夹的记入点", () 
     expect(n, "两处（记入后、改上限后）都得裁，漏一处就是「上限改了但名单没跟着瘦」").toBe(2);
   });
 
-  it("文件夹的记入点在 openFolder，且空串（关闭文件夹）不记", () => {
-    const at = explorer.indexOf("export async function openFolder(");
-    expect(at, "找不到 openFolder 的声明").toBeGreaterThan(-1);
+  it("B332/B424：文件夹的记入点在 addFolder，且「没追加成功」与「移除」都不记", () => {
+    const at = explorer.indexOf("export async function addFolder(");
+    expect(at, "找不到 addFolder 的声明（B424 前它叫 openFolder）").toBeGreaterThan(-1);
     const body = explorer.slice(at, explorer.indexOf("\n}", at) + 2);
-    expect(body, "换根要记一条 folder").toContain('noteOpened(path, "folder")');
-    expect(body, "关闭文件夹传的是空串：记了就是「被我关掉的东西出现在最近打开里」").toMatch(
-      /if \(path\) noteOpened/,
-    );
+    expect(body, "追加一根要记一条 folder").toContain('noteOpened(path, "folder")');
+    // B424 的空串守卫换了形状：不再是「关掉文件夹传的是空串」，而是「store 没收下就不记」——
+    // 已经在表里的一根被重复点开 ⇒ 一次没发生的追加不该把 LRU 顶到最前。
+    expect(body, "没加成（已在表里）不许记，也不许落盘").toMatch(/if \(!addRoot\(path\)\) return/);
     // 自证判据有牙：抹掉那道守卫，上面那条必须落空
-    const degraded = body.replace(
-      'if (path) noteOpened(path, "folder");',
-      'noteOpened(path, "folder");',
-    );
+    const degraded = body.replace("if (!addRoot(path)) return false;", "addRoot(path);");
     expect(degraded, "退化替身必须真的改了地方").not.toEqual(body);
-    expect(degraded).not.toMatch(/if \(path\) noteOpened/);
+    expect(degraded).not.toMatch(/if \(!addRoot\(path\)\) return/);
+    // 「移除全部目录」那一扇压根不记：移除的东西出现在「最近打开」里读起来像程序在骗人。
+    const rmAt = explorer.indexOf("export async function closeFolder(");
+    expect(rmAt, "找不到 closeFolder 的声明").toBeGreaterThan(-1);
+    expect(
+      explorer.slice(rmAt, explorer.indexOf("\n}", rmAt) + 2),
+      "移除那一扇不该 noteOpened",
+    ).not.toContain("noteOpened");
   });
 
-  it("启动回放那一发不记：它走 store.setRoot，压根不经 openFolder", () => {
-    const at = boot.indexOf("setExplorerRoot(folderRoot)");
-    expect(at, "回放置根要用 store 的 setRoot（B308 那条裁决的落点）").toBeGreaterThan(-1);
+  it("启动回放那一发不记：它走 store.setRoots，压根不经 addFolder", () => {
+    // B424：多根 ⇒ 回放置根一次把整张表交过去（`setExplorerRoots`），追加那一扇才是 `addFolder`。
+    const at = boot.indexOf("setExplorerRoots(folderRoots)");
+    expect(at, "回放置根要用 store 的 setRoots（B308 那条裁决的落点）").toBeGreaterThan(-1);
     expect(
       boot.slice(at - 400, at + 200),
-      "回放附近出现 openFolder( ⇒ 每次开机都把当前根顶到最近名单最前，LRU 就废了",
-    ).not.toContain("openFolder(");
+      "回放附近出现 addFolder( ⇒ 每次开机都把当前根顶到最近名单最前，LRU 就废了",
+    ).not.toContain("addFolder(");
   });
 });

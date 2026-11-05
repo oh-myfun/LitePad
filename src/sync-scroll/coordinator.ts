@@ -244,11 +244,10 @@ export class SyncScrollCoordinator {
    * 报的就是 `landedV`，把它记成意图等于把它判成用户滚动 ⇒ 对栏被拽到落点上。
    * 「落在哪就是哪」的场景（重载 / 整态重建 / 预览重渲染）两个值传同一个即可。
    *
-   * 需要它的四类调用点（漏一类就复现一条「自动跳变」）：
-   *   - `switchTab()` / `split.ts`：CM6 `setState` 归零 + 位置恢复；
-   *   - `io/files.ts` 重载、`multiwindow/windows.ts` 整态重建：`setState` 归零重排；
-   *   - `PreviewPane.setBlocks()`：`replaceChildren` 清零再同栈复原；
-   *   - `PreviewPane.applySyncToLine()` / `applyPending()`：大纲跳转、图片/增强后的补定位。
+   * 需要它的调用点（漏一类就复现一条「自动跳变」）：CM6 `setState` 归零后的恢复（切标签 /
+   * 分屏接班 / `io/files.ts` 重载 / `multiwindow/windows.ts` 整态重建）、换面与换档的落位、
+   * 大纲跳转与图片/增强后的补定位 —— 都收在 `wire.ts` 那两发登记入口里。B412 之前还有
+   * 派生预览面的 `setBlocks` / `applySyncToLine` 两条，随旧预览臂一起删除。
    *
    * 按**滚动面**寻址（不是按锚点对象）：`reconcileSyncRegistrations()` 每次都新建锚点，
    * 承诺必须活过那轮重建。登记也不要求这一格当前在册——被 CSS 藏着的格子的显隐时机
@@ -423,7 +422,12 @@ export class SyncScrollCoordinator {
    * 承诺会被改写成那个错位置、再也追不上——那正是历代「到底两侧对不齐」的形态。
    */
   private writeTo(e: InternalEntry, v: number, at: number | null = null): number {
-    const byPos = at !== null && at !== undefined && !!e.anchor.setVAt;
+    // B416：`at === 0` 是「对方顶边指着文档第一行」。那一发要走 `setV`，落到**两侧各自的
+    // 绝对顶部**（各露各的 `.cm-content` 上内距）。按字符对齐在文首是错的：预览面 char 0
+    // 的行内盒顶比行顶低一截（标题的 `#` 折起来后坐标落在正文盒上），真机落点是
+    // `setVAt(0) ⇒ 29.33px`，而大纲点第一个标题（`setV(1.00)`）停在 0 —— 用户报的
+    // 「滚轮到顶，预览却不在顶部」就差在这一刀。
+    const byPos = at !== null && at !== undefined && at > 0 && !!e.anchor.setVAt;
     if (byPos && e.anchor.topPos?.() === at) return e.anchor.getV(); // 已经在那一视觉行 ⇒ 一个字节都不写
     const before = e.anchor.getV();
     if (!byPos && Math.abs(before - v) <= V_EPS) return before;

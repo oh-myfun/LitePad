@@ -160,7 +160,7 @@ beforeEach(() => {
   appState.docs.clear();
   appState.tabs.clear();
   appState.panels.clear();
-  store.setRoot(ROOT);
+  store.setRoots([ROOT]);
 });
 
 describe("B315 路径改写的纯判据", () => {

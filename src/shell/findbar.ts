@@ -48,6 +48,8 @@ export interface FindBarQuery {
 export interface FindBarCallbacks {
   /** 查找内容 / 选项变化（主程序据此刷新高亮与计数） */
   onQueryChange: (q: FindBarQuery) => void;
+  /** B419：替换串变化。替换串不参与匹配，主程序只用它清掉「已替换 N 处」的累计。 */
+  onReplaceTextChange: (q: FindBarQuery) => void;
   /** 上一个 / 下一个（当前文档内，到头环绕） */
   onStep: (dir: 1 | -1, q: FindBarQuery) => void;
   onReplace: (q: FindBarQuery) => void;
@@ -66,6 +68,8 @@ export interface FindBarHandle {
   step(dir: 1 | -1): void;
   setCount(text: string, bad?: boolean): void;
   setStatus(text: string): void;
+  /** B417：预览档（禁编辑）里把替换入口整个收掉；恢复可写时再放出来。 */
+  setReplaceEnabled(on: boolean): void;
   focusFind(): void;
   focusReplace(): void;
   getQuery(): FindBarQuery;
@@ -332,6 +336,8 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
 
   // ---- 选项状态（图标开关的源真值）----
   const opt = { case: false, word: false, regexp: false, selection: false, preserve: false };
+  /** 当前这一档文档允不允许替换（B417：预览档＝禁编辑，替换没有落点）。 */
+  let replaceEnabled = true;
   function query(): FindBarQuery {
     return {
       text: findInput.value,
@@ -360,6 +366,8 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   }
 
   function setReplaceExpanded(on: boolean): void {
+    // B417：禁用的档里不许从任何入口把替换行掀开（Ctrl+H / 展开键都走这里）
+    if (on && !replaceEnabled) on = false;
     rowReplace.hidden = !on;
     // VS Code 用同一个类名（`.replaceToggled`）把 chevron 拉高，这里照搬：
     // 展开后折叠按钮从 25px 长成 53px，把两行输入框都罩住（见 global.css）。
@@ -367,6 +375,20 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
     chevron.innerHTML = on ? CODICONS.chevronDown : CODICONS.chevronRight;
     chevron.setAttribute("aria-label", on ? "折叠替换" : "展开替换");
     if (on) syncWidths();
+  }
+
+  /**
+   * B417：预览档（禁编辑）里禁用替换 —— 替换行收起、左缘那颗 chevron 压住，
+   * 提示换成「预览模式下不可替换」；取回可写档再放出来。
+   * ⚠️ 判定在调用方（`find/findbar.ts` 看 `viewMode`），这一层只管「此刻让不让」。
+   */
+  function setReplaceEnabled(on: boolean): void {
+    if (replaceEnabled === on) return;
+    replaceEnabled = on;
+    chevron.disabled = !on;
+    chevron.setAttribute("aria-disabled", String(!on));
+    setTip(chevron, on ? "展开或折叠替换" : "预览模式下不可替换", { group: "findbar" });
+    if (!on) setReplaceExpanded(false);
   }
 
   // ⚠️ 光在「展开时量一次」不够：计数的位数会变（`.find-count:empty` 让空计数不占宽度），
@@ -378,6 +400,8 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
   }
 
   findInput.addEventListener("input", () => cb.onQueryChange(query()));
+  // B419：替换串不参与匹配（不必重跑搜索），但变了以后「已替换 N 处」说的就不是这一批了。
+  replaceInput.addEventListener("input", () => cb.onReplaceTextChange(query()));
   findInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
@@ -520,11 +544,18 @@ export function createFindBar(host: HTMLElement, cb: FindBarCallbacks): FindBarH
       syncWidths();
     },
     setStatus,
+    setReplaceEnabled,
     focusFind: () => {
       findInput.focus();
       findInput.select();
     },
     focusReplace: () => {
+      // 禁用的档里焦点不许落到收起的替换框上（那等于把键盘送进一个看不见的输入框）
+      if (!replaceEnabled) {
+        findInput.focus();
+        findInput.select();
+        return;
+      }
       setReplaceExpanded(true);
       replaceInput.focus();
       replaceInput.select();

@@ -16,7 +16,7 @@ import { doOpen } from "../io/files";
 import { CODICONS } from "../shell/codicons";
 import { activeDrawer, registerDrawerView, setDrawer } from "../shell/drawer";
 import { setTextTip } from "../shell/tooltip";
-import { openFolder } from "../explorer/panel";
+import { addFolder } from "../explorer/panel";
 import { applySidebarVisible, isSidebarOff } from "../toc";
 import { recentClear, recentList, recentPanel, sideRecent, showMessage } from "../ui";
 import {
@@ -86,8 +86,8 @@ export function showRecentPanel(): void {
  *
  * 两段：文件夹在上、文件在下（用户点名，与 VS Code 的 Open Recent 同序），各取前 10 条。
  * 名单可以有 50+50 条，菜单不是用来翻到底的 —— 底部那颗「更多...」才是入口。
- * 点文件夹条目 = 换根（走 `openFolder`，顺手记一条新的 LRU）；点文件条目 = 打开（`doOpen`，
- * 与面板里点那一行走的是同一扇）。
+ * 点文件夹条目 = 追加一根（B424：走 `addFolder`，已经在名单里就什么都不做）；点文件条目 =
+ * 打开（`doOpen`，与面板里点那一行走的是同一扇）。
  */
 export function recentMenuItems(): MenuItem[] {
   const list = getRecents();
@@ -103,7 +103,7 @@ export function recentMenuItems(): MenuItem[] {
   }
   const items: MenuItem[] = [];
   for (const e of folders)
-    items.push({ label: menuLabelFor(e.name, e.path), onSelect: () => void openFolder(e.path) });
+    items.push({ label: menuLabelFor(e.name, e.path), onSelect: () => void addFolder(e.path) });
   if (folders.length > 0 && files.length > 0) items.push({ separator: true });
   for (const e of files)
     items.push({ label: menuLabelFor(e.name, e.path), onSelect: () => void doOpen(e.path) });

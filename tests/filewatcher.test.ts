@@ -227,6 +227,22 @@ describe("B87 文件监听：外部修改要真的刷新内容（VS Code 三态 
         /if \(externalPending\.has\(tabId\)\) void resolveExternalChange\(tabId\);/,
       );
     });
+
+    it("B430：防抖到点了要再验一次已知版本 —— 自己保存的回声不许再读盘 / 弹框", () => {
+      // 事故：保存的回声可能比 save_file 的返回先到 —— 事件那一刻 doc.diskMtimeMs
+      // 还是旧版本，于是排进防抖；等防抖到点，save 已经收尾并更新了已知版本。
+      // 只在事件到达时验一次不够，防抖回调里必须用**当前**版本再验一次。
+      const resolve = topLevelFnBody(main, "async function resolveExternalChange(tabId: number)");
+      expect(resolve, "取不到 resolveExternalChange").toBeTruthy();
+      const recheck = resolve.indexOf("payload.mtimeMs === doc.diskMtimeMs");
+      expect(recheck, "必须复验已知版本").toBeGreaterThan(-1);
+      const taken = resolve.indexOf("externalPending.delete(tabId)");
+      expect(recheck, "复验必须在取出 pending 之后").toBeGreaterThan(taken);
+      const busy = resolve.indexOf("externalBusy.add(tabId)");
+      expect(recheck, "复验必须在读盘 / 弹框之前（否则回声照样读盘并顶掉编辑器）").toBeLessThan(
+        busy,
+      );
+    });
   });
 
   describe("D 档：外部刷新不该顺手改掉用户的编码 / 行尾", () => {

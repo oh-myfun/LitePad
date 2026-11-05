@@ -7,7 +7,7 @@
 // tests/explorer-store.test.ts 里用真骨架跑，不在这里重复。
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { resolveCssVars, ruleBlock, stripCssComments } from "./static";
+import { cssDecls, fnBody, resolveCssVars, ruleBlock, stripCssComments } from "./static";
 
 const read = (p: string): string => readFileSync(p, "utf-8").replace(/\r\n/g, "\n");
 
@@ -23,13 +23,14 @@ const keymap = read("src/shell/keymap.ts");
 const menubar = read("src/shell/menubar.ts");
 const boot = read("src/main.ts");
 
+// B424：`explorer-refresh` 不在这份名单里了 —— 刷新从头部搬进**每一根那一行**（由 JS 现造，
+// 所以它既没有骨架 id，也不该有：头部只留一颗「打开文件夹」）。
 const IDS = [
   "side-explorer",
   "explorer-panel",
   "explorer-title",
   "explorer-tree",
   "explorer-open",
-  "explorer-refresh",
   "explorer-collapse",
   "explorer-new-file",
   "explorer-new-dir",
@@ -56,10 +57,27 @@ describe("B314 资源管理器跨层契约", () => {
     expect(read("src-tauri/src/commands/mod.rs")).not.toMatch(/^pub mod fs;/m);
   });
 
-  it("`folder_root` 两栈都有、默认为空串（旧配置缺这格也要能读出来）", () => {
-    expect(api, "前端 Settings 要有 folder_root").toContain("folder_root: string;");
-    expect(rustSettings, "Rust Settings 要有 folder_root").toContain("pub folder_root: String");
-    expect(rustSettings, "默认必须是空串（没开文件夹）").toContain("folder_root: String::new()");
+  it("`folder_roots` 两栈都有、默认为空表（旧配置缺这格也要能读出来）", () => {
+    expect(api, "前端 Settings 要有 folder_roots").toContain("folder_roots: string[];");
+    expect(rustSettings, "Rust Settings 要有 folder_roots").toContain(
+      "pub folder_roots: Vec<String>",
+    );
+    expect(rustSettings, "缺这格必须回落空表（不许整体读失败）").toContain(
+      "#[serde(default)]\n    pub folder_roots",
+    );
+    expect(rustSettings, "默认必须是空表（没开文件夹）").toContain("folder_roots: Vec::new()");
+  });
+
+  it("B424：老单根字段只读不写 —— 迁移做一次，删掉的根不许被老字段复活", () => {
+    expect(rustSettings, "老字段还得留着（要读得进旧配置）").toContain("pub folder_root: String");
+    expect(rustSettings, "但空串时不能再落盘（否则移除全部目录会被自己写回去）").toContain(
+      '#[serde(skip_serializing_if = "String::is_empty")]\n    pub folder_root',
+    );
+    expect(rustSettings, "load() 要过一遍迁移").toContain("return migrated(settings)");
+    expect(rustSettings, "迁移是老值进表 + 清掉老字段").toContain(
+      "s.folder_roots = vec![std::mem::take(&mut s.folder_root)];",
+    );
+    expect(api, "前端不再认识老字段（类型里没有它）").not.toContain("folder_root: string;");
   });
 
   it("DOM id 三处齐全：骨架里有、ui.ts 取了、也导出了", () => {
@@ -69,7 +87,6 @@ describe("B314 资源管理器跨层契约", () => {
       ["explorer-title", "explorerTitle"],
       ["explorer-tree", "explorerTree"],
       ["explorer-open", "explorerOpen"],
-      ["explorer-refresh", "explorerRefresh"],
       ["explorer-collapse", "explorerCollapse"],
       ["explorer-new-file", "explorerNewFile"],
       ["explorer-new-dir", "explorerNewDir"],
@@ -155,12 +172,12 @@ describe("B314 资源管理器跨层契约", () => {
     expect(boot, "runShortcut 要接 view.explorer").toContain(`case "view.explorer"`);
   });
 
-  it("B331「关闭文件夹」四条入口齐全，且没开文件夹时置灰", () => {
+  it("B331「移除全部目录」四条入口齐全，且没开目录时置灰（B424 只改文案不改命令 id）", () => {
     // 菜单位置：紧跟在「打开文件夹」后面 —— 这两颗是一对，隔开了就找不到「关掉」在哪。
     const openAt = menubar.indexOf('withKey("打开文件夹"');
-    const closeAt = menubar.indexOf('withKey("关闭文件夹"');
+    const closeAt = menubar.indexOf('withKey("移除全部目录"');
     expect(openAt, "取不到「打开文件夹」那一条").toBeGreaterThanOrEqual(0);
-    expect(closeAt, "文件菜单缺「关闭文件夹」").toBeGreaterThan(openAt);
+    expect(closeAt, "文件菜单缺「移除全部目录」").toBeGreaterThan(openAt);
     // 置灰判据：无根时点亮它 = 「关掉一个没开着的文件夹」，还会顺手把盘上那一格写空。
     const item = menubar.slice(closeAt, closeAt + 220);
     expect(item, "无根时不许点亮").toMatch(/disabled:\s*!cb\.hasFolderRoot\(\)/);
@@ -168,6 +185,11 @@ describe("B314 资源管理器跨层契约", () => {
       item,
       "onSelect 只许走 panel.closeFolder（换根三件事的漏斗在那边，别在菜单里再写一份）",
     ).toMatch(/onSelect:\s*cb\.onCloseFolder/);
+    // B424：文案可以改，命令 id 不许改 —— 用户自己配过的键位覆盖按 id 认，改了就成了哑键。
+    expect(item, "菜单那一颗问的仍是 file.closeFolder 的键位").toContain(
+      'cb.keyHint("file.closeFolder")',
+    );
+    expect(keymap, "命令表里的 label 跟着文案走").toContain(`label: "移除全部目录"`);
     // 两端都要有：接口声明 + commands.ts 的实装（漏一侧 = tsc 先炸，但漏的是**判据**这一侧时
     // 只有这里看得见 —— 接口写了、实装随手 `() => {}` 也能过编译）。
     expect(menubar).toMatch(/hasFolderRoot:\s*\(\)\s*=>\s*boolean;/);
@@ -189,10 +211,10 @@ describe("B314 资源管理器跨层契约", () => {
     const at = boot.indexOf("setupExplorer();");
     expect(at, "没装配 ⇒ 那颗键点了没东西").toBeGreaterThan(-1);
     expect(boot.slice(at - 600, at), "子窗口没有左边栏").toContain('windowKind === "main"');
-    expect(boot.indexOf("setExplorerRoot(folderRoot)"), "根要在登记之后才搬").toBeGreaterThan(at);
-    expect(boot.slice(at, at + 600), "空串不发读盘").toContain("if (folderRoot)");
-    expect(boot, "启动回放走 store.setRoot，不走会落盘的 openFolder").toContain(
-      "setExplorerRoot(folderRoot)",
+    expect(boot.indexOf("setExplorerRoots(folderRoots)"), "根要在登记之后才搬").toBeGreaterThan(at);
+    expect(boot.slice(at, at + 600), "空表不发读盘").toContain("if (folderRoots.length > 0)");
+    expect(boot, "启动回放走 store.setRoots，不走会落盘的 addFolder").toContain(
+      "setExplorerRoots(folderRoots)",
     );
     expect(boot, "openFolder 那条才是会写设置的，启动期不许用").not.toMatch(
       /setupExplorer\(\);[\s\S]{0,400}[^p]openFolder\(/,
@@ -201,7 +223,7 @@ describe("B314 资源管理器跨层契约", () => {
 
   it("打开文件夹之后要落盘、且顺手把这一块摊开（VS Code 的口径）", () => {
     const panel = read("src/explorer/panel.ts");
-    expect(panel, "换根要写 settings.folder_root").toContain("settings.folder_root = path");
+    expect(panel, "换根要写 settings.folder_roots").toContain("settings.folder_roots =");
     expect(panel, "写完要落盘").toContain("saveSettings(settings)");
     expect(panel, "选完文件夹就把这一块摊开").toContain(`setDrawer("explorer")`);
     expect(panel, "子窗口空转（藏在 display:none 里开一块 = 死键 + 脏落盘）").toContain(
@@ -229,10 +251,18 @@ describe("B315 路径改写的跨层契约", () => {
 
   it("`destDir` / `newName` 这类跨语言参数名要逐字对上 Rust 的下划线写法", () => {
     expect(api).toContain(`invoke<FsEntry>("rename_entry", { root, path, newName })`);
-    expect(api).toContain(`invoke<FsEntry>("copy_entry", { root, src, destDir })`);
-    expect(api).toContain(`invoke<FsEntry>("move_entry", { root, src, destDir })`);
+    expect(api).toContain(`invoke<FsEntry>("copy_entry", { root, src, destDir, destRoot })`);
+    expect(api).toContain(`invoke<FsEntry>("move_entry", { root, src, destDir, destRoot })`);
     expect(rustCmds).toContain("new_name: String");
     expect(rustCmds).toContain("dest_dir: String");
+    // B427：目标层自己那根锚点。少一端的表现是「参数是 undefined」——
+    // Rust 收不到 `dest_root` 就直接按界外拒，用户只看见粘贴失败。
+    expect(rustCmds).toContain("dest_root: String");
+    for (const fn of ["copy_entry", "move_entry"]) {
+      const at = rustCmds.indexOf(`pub fn ${fn}(`);
+      expect(at, `Rust 侧要 pub fn ${fn}`).toBeGreaterThan(-1);
+      expect(rustCmds.slice(at, at + 260), `${fn} 要收 dest_root`).toContain("dest_root: String");
+    }
   });
 
   it("对账模块挂在每一扇窗口上，而不是只挂在主窗口那一支", () => {
@@ -246,13 +276,8 @@ describe("B315 路径改写的跨层契约", () => {
     );
   });
 
-  it("顶部那一排：造东西 → 整理这棵树（B327 起打开键不在这排里）", () => {
-    const order = [
-      "explorer-new-file",
-      "explorer-new-dir",
-      "explorer-refresh",
-      "explorer-collapse",
-    ];
+  it("顶部那一排：造东西 → 加一根 → 整理这棵树（B424 起刷新不在这排里，打开键回来了）", () => {
+    const order = ["explorer-new-file", "explorer-new-dir", "explorer-open", "explorer-collapse"];
     const inOrder = (src: string): boolean => {
       let prev = -1;
       for (const id of order) {
@@ -266,32 +291,44 @@ describe("B315 路径改写的跨层契约", () => {
     expect(inOrder(html), "顶部那一排次序漂了").toBe(true);
     // 自证判据有鉴别力：把「新建文件」那一颗抹掉，上面那条必须落空
     expect(inOrder(html.replace('id="explorer-new-file"', 'id="explorer-zzz"'))).toBe(false);
-    // 反向闸：打开键在**骨架里**只是歇脚处（无根时它回到头部被 no-root 收起），
-    // 屏上它该在根那一行 —— 所以头部那一排的次序里不许再算它。
-    const head = html.slice(
-      html.indexOf('class="explorer-head"'),
-      html.indexOf('id="explorer-tree"'),
+    // 反向闸：头部那一排不许还挂着一颗刷新 —— 多根之后「刷新」得有主语（点哪根刷哪根），
+    // 一颗没有主语的刷新键会退化成「只刷第一根」或「刷整棵树」，两者都不是用户点它时想要的。
+    // ⚠️ 先抹掉 HTML 注释：上面那段散文里「刷新」二字出现了好几回，留着它这条就能被喂假。
+    // B427 起头部下面多了一条过滤框（`class="explorer-filter"`）—— 切片止在它那里，
+    // 否则过滤框里那六颗开关会被数进「头部那一排」。
+    const head = html
+      .slice(html.indexOf('class="explorer-head"'), html.indexOf('class="explorer-filter"'))
+      .replace(/<!--[\s\S]*?-->/g, "");
+    expect(head, "头部的刷新键已搬进每一根那一行").not.toMatch(/刷新/);
+    expect(head.match(/<button/g) ?? [], "头部就是四颗键，第五颗多半是漏搬回来的刷新").toHaveLength(
+      4,
     );
-    expect(
-      head.indexOf('id="explorer-open"') < head.indexOf('id="explorer-new-file"'),
-      "打开键不许还排在最左（那正是被搬走的那一颗）",
-    ).toBe(false);
   });
 
-  it("B327：打开键搬进根目录那一行的最右，且不许被当成「点了那一行」", () => {
+  it("B424：刷新键搬进每一根那一行的最右，而打开键常驻头部（两枚键换了个主语）", () => {
     const panel = read("src/explorer/panel.ts");
-    // 1) 有根 ⇒ 元素被挂到根行；无根 ⇒ 放回头部那一排（no-root 的 CSS 收起整排）
-    expect(panel, "有根时要把打开键挂进根行").toMatch(/rootRow\.append\([\s\S]*explorerOpen\)/);
-    expect(panel, "无根时要放回头部那一排").toMatch(
-      /\.explorer-head[\s\S]{0,120}append\(explorerOpen\)/,
+    // 1) 每根一行、每根自带一颗刷新：刷新的主语就是它所在那一根。
+    expect(panel, "根行要挂自己那颗刷新键").toMatch(
+      /el\.append\(\s*rt,\s*rn,\s*rootRefreshBtn\(root\)\s*\)/,
     );
-    // 2) 贴右靠一条 margin-left:auto（根行是 flex，名字那截 flex:1 已经吃掉余量，
+    expect(panel, "那颗键刷的是这一根（不是整棵树）").toContain("refreshRoot(root)");
+    expect(panel, "逐根画行：名单顺序 = 屏幕顺序").toContain(
+      "explorerTree.append(rootRow(root, open), rootChildren(root, open))",
+    );
+    // 2) 头部那颗「打开文件夹」从此常驻（不再被搬来搬去），且它是**多选 + 追加**。
+    expect(panel, "打开键挂在头部那颗上").toContain(
+      'explorerOpen.addEventListener("click", () => void promptOpenFolder())',
+    );
+    expect(panel, "目录选择器要开多选（一次加几根是常态）").toContain(
+      "openDialog({ directory: true, multiple: true })",
+    );
+    // 3) 贴右靠一条 margin-left:auto（根行是 flex，名字那截 flex:1 已经吃掉余量，
     //    但省略号一收就漏出空隙 —— 只有 auto 边距能保证「永远在最右」）
     expect(css, "根行里那颗键要贴右").toMatch(
       /\.explorer-root \.toc-head-btn\s*\{[^}]*margin-left:\s*auto/,
     );
-    // 3) 树是**委托**点击（`explorerTree.addEventListener("click", onRowClick)`），按钮搬进来
-    //    之后一发点击会同时命中「开目录」与「折叠根」两件事 ⇒ 委托那一路必须先挡掉按钮。
+    // 4) 树是**委托**点击（`explorerTree.addEventListener("click", onRowClick)`），按钮搬进来
+    //    之后一发点击会同时命中「刷新这一根」与「折叠根」两件事 ⇒ 委托那一路必须先挡掉按钮。
     const click = panel.slice(
       panel.indexOf("function onRowClick"),
       panel.indexOf("async function activateDir"),
@@ -304,6 +341,15 @@ describe("B315 路径改写的跨层契约", () => {
       ),
       "右键也不该在按钮上弹出那一行的菜单",
     ).toContain('closest("button")');
+    // 5) 根行右键菜单的两条新增项：刷新这一根 + 从名单里摘掉这一根。
+    const rootMenu = panel.slice(
+      panel.indexOf('label: "刷新该文件夹"'),
+      panel.indexOf('label: "刷新该文件夹"') + 400,
+    );
+    expect(rootMenu, "「移除目录」紧跟着「刷新该文件夹」").toContain('label: "移除目录"');
+    expect(rootMenu, "移除走的是 panel.removeFolder，不在菜单里另写一份").toContain(
+      "removeFolder(path)",
+    );
   });
 
   it("名单只由发起方改，回收站那条走「删掉」而不是「改写成空」", () => {
@@ -538,9 +584,13 @@ describe("B370/B373 资源管理器行对齐 VS Code 的 Seti 树", () => {
   it("目录行不再写 codicon 文件夹；文件行仍走 Seti，且不再垫空箭头槽", () => {
     const panel = read("src/explorer/panel.ts");
     expect(panel, "目录行 / 根行的 folder 字形已撤").not.toMatch(/CODICONS\.folder\b/);
-    expect(panel, "根行只剩箭头 + 名字 + 打开键").toContain("rootRow.append(rt, rn, explorerOpen)");
+    expect(panel, "根行只剩箭头 + 名字 + 自己那颗刷新键（B424）").toContain(
+      "el.append(rt, rn, rootRefreshBtn(root))",
+    );
+    // B427：画行抽成了 `rowOf(path, name, …)`（常规树与过滤结果共用一份几何），
+    // 所以这里按它的形参名判 —— 「文件行按**文件名**检测语言」这一条意图不变。
     expect(panel, "文件行仍走 Seti（按文件名检测语言）").toContain(
-      "fileIconHtml(detectLanguage(e.name).label)",
+      "fileIconHtml(detectLanguage(name).label)",
     );
     // 一行只放一格 22px 槽：目录行是箭头、文件行是图标 —— 文件行不再垫空箭头槽。
     expect(panel, "文件行与目录行各自只放一格 22px 槽").toContain(
@@ -610,5 +660,40 @@ describe("B333 拖入文件夹换根：命令名两端 + 那一发接线", () =>
     expect(exPanel, "面板要真的切这个类").toContain('toggle("is-drop-hover"');
     expect(boot, "悬停回调里要点亮它").toContain("markExplorerDropHover(x, y)");
     expect(boot, "清场回调里要收掉它（否则会留在屏幕上）").toContain("clearExplorerDropHover()");
+  });
+});
+
+// B428 · 用户三条：过滤框只留一颗「排除设置与忽略文件」、输入框要看得见边框、
+// 过滤态顶部那颗折叠键要真的收/开命中树。行为在 panel 测试里走真事件，这里钉样式与静态接线。
+describe("B428 过滤框：一颗排除键 + 看得见的边框 + 折叠键按命中树算", () => {
+  const panel = read("src/explorer/panel.ts");
+
+  it("「跟随 .gitignore / .ignore」那颗并进了「使用排除设置与忽略文件」，三处一起消失", () => {
+    expect(html, "骨架里不许再有第二颗").not.toContain('id="explorer-filter-ignores"');
+    expect(ui, "ui refs 不许再交出来").not.toContain("explorerFilterIgnores");
+    expect(panel, "面板不许再接线").not.toContain("explorerFilterIgnores");
+    // 留下的那颗仍写着**完整语义**（提示与 aria 同文；「包含了右边跟随 ignore」是用户点名的）
+    const start = html.indexOf('id="explorer-filter-excludes"');
+    const btn = html.slice(start, html.indexOf('id="explorer-filter-clear"', start));
+    expect(btn, "取不到那颗排除键").toContain('data-tip="使用排除设置与忽略文件"');
+    expect(btn).toContain('aria-label="使用排除设置与忽略文件"');
+  });
+
+  it("过滤输入框有 1px 边框；焦点只换那根线的颜色（不再叠 outline）", () => {
+    const field = cssDecls(ruleBlock(css, ".explorer-filter-field"));
+    expect(field, "preview.css 里要有 .explorer-filter-field").toBeTruthy();
+    expect(field, "没边框就看不出哪一截是能打字的（与 .search-field 同口径）").toMatch(
+      /border:\s*1px solid var\(--border/,
+    );
+    expect(field, "加了边框行高不变：总高仍是那条 26px").toMatch(/min-height:\s*26px/);
+    const focus = cssDecls(ruleBlock(css, ".explorer-filter .find-field:focus-within"));
+    expect(focus, "聚焦那条要盖掉 .find-field 的 outline").toMatch(/outline:\s*none/);
+    expect(focus).toMatch(/border-color:\s*var\(--accent/);
+  });
+
+  it("过滤态那颗折叠键走 `filterCollapsed` 那一册（不许去动常规树的 expand 缓存）", () => {
+    const body = fnBody(panel, "collapseAllHere");
+    expect(body, "没找到 collapseAllHere").toContain("filterOn()");
+    expect(body, "过滤态收的是命中树").toContain("filterCollapsed");
   });
 });

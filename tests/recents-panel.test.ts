@@ -118,9 +118,9 @@ describe("B305 最近打开面板", () => {
     expect(labels).not.toContain("a11.md");
   });
 
-  it("B332：点菜单里的文件夹条目 = 换根（走 openFolder），点文件条目 = 打开", async () => {
+  it("B332/B424：点菜单里的文件夹条目 = 追加一根（走 addFolder），点文件条目 = 打开", async () => {
     const explorer = await import("../src/explorer/panel");
-    const spy = vi.spyOn(explorer, "openFolder").mockResolvedValue(undefined);
+    const spy = vi.spyOn(explorer, "addFolder").mockResolvedValue(true);
     h.entries = [
       { path: "D:\\工作\\报价", name: "报价", openedAt: Date.now(), kind: "folder" },
       { path: "C:\\notes\\a.md", name: "a.md", openedAt: Date.now() },

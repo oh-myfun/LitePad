@@ -105,7 +105,6 @@ vi.mock("../src/ipc/api", () => ({
       default_eol: "CRLF",
       autosave: true,
       toc_width: 240,
-      preview_line_height: 1.7,
     }),
   logEvent: () => {},
   newTab: () =>
