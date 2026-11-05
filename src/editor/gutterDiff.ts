@@ -25,6 +25,7 @@ import {
   type Range,
 } from "@codemirror/state";
 import { EditorView, GutterMarker, ViewPlugin, gutter, type ViewUpdate } from "@codemirror/view";
+import { alignLines, DIFF_REFRESH_MS, splitLines } from "../diff/align";
 
 /**
  * 一行在 gutter 里的交代。
@@ -41,157 +42,18 @@ export interface DiffMark {
 }
 
 /**
- * LCS 的格子预算：替换区「基线行数 × 当前行数」超过它就不再逐行对齐，整段按下标配对
- * （配得上的算橙、当前多出来的算绿、基线多出来的并成一道缝）。
- *
- * 为什么要预算：前后缀修剪已经把日常编辑（改一行、插几行、删几行）压成很小的中间段，
- * 但「全选再粘一篇」会把整篇留在中间 —— 6 万 × 6 万的 DP 会冻住界面。那种情形下逐行对齐
- * 也讲不出更多道理，退化路径同样给出「每行都有交代」的结果。
- */
-const LCS_CELL_BUDGET = 250_000;
-
-/** 一块「基线的若干行 ↔ 当前的若干行」的替换区（下标都是修剪后中间段内的 0-based）。 */
-interface Region {
-  aStart: number;
-  aLen: number;
-  bStart: number;
-  bLen: number;
-}
-
-/**
- * 按行切开。
- *
- * `""` 当「**没有一行**」而不是「一个空行」：新建文档（基线是空串）打上两行字该是两格绿，
- * 而不是一道红缝加两格绿。其余保留结尾那个空段 —— 它记的正是「最后一个换行之后什么都没有」，
- * 于是「删掉末尾的换行」如实成一道缝（基线多出一条空行）、「补一个换行」如实成一格绿。
- */
-function splitLines(text: string): string[] {
-  return text === "" ? [] : text.split("\n");
-}
-
-/** 最长公共子序列的锚点（成对下标，升序）；超预算返回空 = 整段当一个替换区。 */
-function lcsAnchors(a: string[], b: string[]): Array<[number, number]> {
-  if (a.length * b.length > LCS_CELL_BUDGET) return [];
-  const w = b.length + 1;
-  const dp = new Uint32Array((a.length + 1) * w);
-  for (let i = a.length - 1; i >= 0; i--) {
-    for (let j = b.length - 1; j >= 0; j--) {
-      dp[i * w + j] =
-        a[i] === b[j]
-          ? dp[(i + 1) * w + j + 1] + 1
-          : Math.max(dp[(i + 1) * w + j], dp[i * w + j + 1]);
-    }
-  }
-  const anchors: Array<[number, number]> = [];
-  let i = 0;
-  let j = 0;
-  while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) {
-      anchors.push([i, j]);
-      i++;
-      j++;
-    } else if (dp[(i + 1) * w + j] >= dp[i * w + j + 1]) {
-      i++;
-    } else {
-      j++;
-    }
-  }
-  return anchors;
-}
-
-/** 锚点之间剩下的那些行才是替换区（没有锚点 ⇒ 整段一个区，即预算外的退化路径）。 */
-function alignRegions(a: string[], b: string[]): Region[] {
-  const out: Region[] = [];
-  let ia = 0;
-  let ib = 0;
-  const push = (ma: number, mb: number): void => {
-    if (ma > ia || mb > ib) out.push({ aStart: ia, aLen: ma - ia, bStart: ib, bLen: mb - ib });
-  };
-  for (const [ma, mb] of lcsAnchors(a, b)) {
-    push(ma, mb);
-    ia = ma + 1;
-    ib = mb + 1;
-  }
-  push(a.length, b.length);
-  return out;
-}
-
-/**
- * 两行有多「像」：公共前缀 + 公共后缀的字符数。
- *
- * 只要够把「改了行尾一个字」（3+0）与「整行换掉」（0）分开就行 —— 用不着编辑距离那种精度。
- */
-function similarity(a: string, b: string): number {
-  if (a === b) return a.length * 2;
-  const min = Math.min(a.length, b.length);
-  let p = 0;
-  while (p < min && a[p] === b[p]) p++;
-  let s = 0;
-  while (s < min - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s++;
-  return p + s;
-}
-
-/** 错位搜索的格子预算：超了就退回「从区首逐行配对」的老口径（不猜，也别把界面冻住）。 */
-const ALIGN_PAIR_BUDGET = 20_000;
-
-/**
- * 区里两边行数不等 ⇒ 把**少的那一侧**贴到**多的那一侧**哪个错位上：取逐行相似度总和最大的 `o`
- * （并列取最小的 `o` ⇒ 与「从区首配对」的老口径同形）。
- *
- * 为什么需要它：真机第一轮抓到「删两行 + 紧接着那一行又改了」画成「橙在第 3 行、红缝在第 4 行」——
- * 纯按下标配对会把被删块的第一行当成被改的那一行，于是缝掉到下一格。按相似错位一挑就对了：
- * `丁后行` ↔ `丁后行Y` 远比 `丙一去` ↔ `丁后行Y` 像 ⇒ 橙与缝都归 `丁后行Y` 那一行。
- *
- * ⚠️ 两边的**行数都要显式传**：本区的行数 ≠ 整个中段的行数。第一版拿 `short.length` 当本区行数，
- * 中段里另有一处改动时 span 就算成负数 ⇒ 永远退回老口径，而单测恰好挑不出（那条里两个数相等）。
- */
-function alignOffset(
-  long: string[],
-  longFrom: number,
-  longLen: number,
-  short: string[],
-  shortFrom: number,
-  shortLen: number,
-): number {
-  const span = longLen - shortLen;
-  if (span <= 0 || (span + 1) * shortLen > ALIGN_PAIR_BUDGET) return 0;
-  let best = 0;
-  let bestScore = -1;
-  for (let o = 0; o <= span; o++) {
-    let score = 0;
-    for (let k = 0; k < shortLen; k++)
-      score += similarity(long[longFrom + o + k], short[shortFrom + k]);
-    if (score > bestScore) {
-      bestScore = score;
-      best = o;
-    }
-  }
-  return best;
-}
-
-/**
  * 基线正文 vs 当前正文 ⇒ 当前文档每一行的标记（按行号升序）。
  *
- * 先掐掉首尾相同的行（日常编辑的改动都挤在中间一小块），只对中间那段做行级对齐，
- * 于是代价与**改动范围**同阶、与文档行数无关 —— B398 那条口径。
+ * 对齐走 `alignLines`（差异面的块级出口共用同一颗对齐器 —— 设计稿约束 ⑥「同源」）；
+ * 前后缀修剪在它内部完成，代价与**改动范围**同阶、与文档行数无关 —— B398 那条口径。
+ * 4px 这一列不接 `ignoreTrimWhitespace`：口径不动，差异编辑器的开关只影响差异编辑器。
  */
 export function lineDiff(baseline: string, current: string): DiffMark[] {
   if (baseline === current) return [];
   const a = splitLines(baseline);
   const b = splitLines(current);
-
-  let head = 0;
-  while (head < a.length && head < b.length && a[head] === b[head]) head++;
-  let tail = 0;
-  while (
-    tail < a.length - head &&
-    tail < b.length - head &&
-    a[a.length - 1 - tail] === b[b.length - 1 - tail]
-  )
-    tail++;
-
-  const midA = a.slice(head, a.length - tail);
-  const midB = b.slice(head, b.length - tail);
+  // tail 这里用不上：标记只落在当前文档的行号上，基线侧的行数另有对齐器记账。
+  const { head, regions } = alignLines(a, b, false);
 
   const marks = new Map<number, DiffMark>();
   const put = (line: number): DiffMark => {
@@ -209,20 +71,19 @@ export function lineDiff(baseline: string, current: string): DiffMark[] {
     else put(1).seam = "top";
   };
 
-  for (const r of alignRegions(midA, midB)) {
+  for (const r of regions) {
     const bLine = (k: number): number => head + r.bStart + k + 1;
     const paired = Math.min(r.aLen, r.bLen);
     if (r.aLen > r.bLen) {
-      // 基线多出来那些行是被删掉的：按相似错位切成「配对窗口前面」与「后面」两段，各画一道缝。
-      const o = alignOffset(midA, r.aStart, r.aLen, midB, r.bStart, r.bLen);
+      // 基线多出来那些行是被删掉的：按相似错位（对齐器就地算好的 r.offset）
+      // 切成「配对窗口前面」与「后面」两段，各画一道缝。
       for (let k = 0; k < r.bLen; k++) put(bLine(k)).modified = true;
-      if (o > 0 && r.bLen > 0) put(bLine(0)).seam = "top";
-      if (r.aLen - r.bLen - o > 0) seamAfter(head + r.bStart + r.bLen);
+      if (r.offset > 0 && r.bLen > 0) put(bLine(0)).seam = "top";
+      if (r.aLen - r.bLen - r.offset > 0) seamAfter(head + r.bStart + r.bLen);
     } else if (r.bLen > r.aLen) {
       // 当前多出来那些行是新增（绿）：配得上的那几行算改（橙），前后配不上的算新增。
-      const o = alignOffset(midB, r.bStart, r.bLen, midA, r.aStart, r.aLen);
       for (let k = 0; k < r.bLen; k++)
-        put(bLine(k))[k >= o && k < o + paired ? "modified" : "added"] = true;
+        put(bLine(k))[k >= r.offset && k < r.offset + paired ? "modified" : "added"] = true;
     } else {
       for (let k = 0; k < r.bLen; k++) put(bLine(k)).modified = true;
     }
@@ -230,9 +91,6 @@ export function lineDiff(baseline: string, current: string): DiffMark[] {
 
   return [...marks.values()].sort((x, y) => x.line - y.line);
 }
-
-/** 键入停下多久之后重算全量：够躲开一段连续击键，又短到「刚停手就看到标记跟上」。 */
-const DIFF_REFRESH_MS = 200;
 
 /** 一行一格：颜色与缝都写进 class，画与让位归 CSS（方案 A）。 */
 class DiffColumnMarker extends GutterMarker {
