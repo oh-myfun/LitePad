@@ -10,9 +10,12 @@
  * 这里按 `.is-diff` 翻成横排；特异度 0-2-0 压得过基规则的 0-1-0，与 import 先后无关。
  * ⚠️ 同一格里还可能出现 `.md-preview-bar`（`src/markdown.ts` 的悬浮键 / 编辑档占位条）。
  * 差异标签**恒为源码档**（设计稿 ⑥：装饰面会把「到底改了哪个字符」藏起来），而那一根只在
- * 非源码档现身、且占位形态要等 `md-bar-docked` 才吃布局位 ⇒ 差异格里它始终是 `[hidden]`
- * （`preview.css:1733` 的 `display:none`），不会变成横排的第三列。真把布局挤坏了再来这里补刀，
+ * 非源码档现身 ⇒ 差异格里它始终是 `[hidden]`（`preview.css:1733` 的 `display:none`），
+ * 不会变成横排的第三列；`md-bar-docked` 那个「占位行」形态若与 `is-diff` 同时落上，方向由
+ * 下面那条 0-3-0 的规则钉成横排（不靠 import 先后）。真把布局挤坏了再来这里补刀，
  * 别去改 md 那一套的 CSS。
+ * ⚠️ 左栏那一族（`.diff-original` 起）必须是右栏 `.panel-editor` 那套几何 + 字量度链的**复刻**，
+ * 两栏量度不同 ⇒ 逐行对齐全歪（Task 2/3 的地基），细节见那一族的头注。
  */
 
 /* 两栏并排：左 = 只读对照栏，右 = 那份文档本身（`.panel-editor`）。各占一半起步。 */
@@ -22,16 +25,71 @@
   align-items: stretch;
 }
 
+/* `is-diff` × `md-bar-docked`（`preview.css:1701` 那条把外壳翻回**竖排**）：两条都是 0-2-0，
+   谁赢取决于 import 先后 —— 那种依赖太脆（样式表一改顺序就静默变形）。差异标签**恒源码档**
+   （`syncPreviewEditFab` 的 `show` 恒假 ⇒ `md-bar-docked` 本来落不上），真落上了也不许把左右
+   两栏叠成上下两截，所以这里用 0-3-0 把方向钉死。条本身仍是 `[hidden]`（`preview.css:1733`），
+   不吃横排的槽位。 */
+.panel-host.is-diff.md-bar-docked {
+  flex-direction: row;
+}
+
 /* 右栏必须能收缩到内容宽度以下（`min-width: 0`）：否则长行会把分割线顶出可见区。 */
 .panel-host.is-diff .panel-editor {
   flex: 1 1 50%;
   min-width: 0;
 }
 
+/* 左栏 = 一颗完整的编辑器 view ⇒ 吃的必须是与 `.panel-editor` **同一套**几何链
+   （`preview.css:1877-1895`）+ 同一套字量度（`global.css:4780-4817`）。
+   少一样就是真机上的两种死法：
+     · 缺 `display:flex` / `flex-direction:column` / `min-height:0` ⇒ flex 项的 `min-height:auto`
+       等于内容高度，`.diff-original` 被整篇文档撑开、被 `.panel-host` 的 `overflow:hidden`
+       裁掉，滚都滚不动（右栏那条规则的原注记的就是这个坑）；
+     · 缺字阶 / 字体 / 行高那三条 ⇒ 两栏行盒量度不同，Task 2/3 的逐行对齐在真机上必差，
+       后面每一个按行落位的判据都跟着歪（`global.css:4777-4779` 那条 B397-1 注释讲的正是
+       「两套行盒 ⇒ 逐行对齐必差一行」）。
+   `overflow: hidden` 留着：横向溢出由 `.cm-scroller` 自己滚，这一格只负责不许把分割线顶走。 */
 .diff-original {
   flex: 1 1 50%;
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 与 `.panel-host .panel-editor .cm-editor` 同声明：吃满列高 + 用户设定的字阶。
+   字号是继承属性，而 `.cm-scroller` 只重设字体与行高、没重设 font-size ⇒ 这一条能一路传到
+   正文与行号（`global.css:4782-4786`）。 */
+.diff-original .cm-editor {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  font-size: var(--font-size);
+}
+
+/* 字体必须**同时**写 `.cm-scroller`：CM6 基础主题给它写了 `font-family: monospace`，
+   正文与行号都在它里面 ⇒ 只挂 `.cm-editor` 传不下去（`global.css:4794-4803`）。
+   这两条成员分别 (0,2,0) / (0,3,0)，都强过 CM6 那条单类 (0,1,0)；右栏同族那两条是
+   (0,3,0) / (0,4,0) —— 特异度不同不要紧，取的是**同一份 token**（判据钉的是取值同形）。 */
+.diff-original .cm-editor,
+.diff-original .cm-editor .cm-scroller {
+  font-family: var(--font-code), var(--font-mono);
+}
+
+/* 行距只给 `.cm-content` 与 `.cm-gutterElement` 两条，不给 `.cm-editor` 整棵（浮层会被撑变形）。
+   行号栏那条不能省：`.cm-gutterElement` 的高度由 CM6 按实测行高写死，不跟着走数字会贴顶
+   （`global.css:4809-4816`）。 */
+.diff-original .cm-content,
+.diff-original .cm-gutterElement {
+  line-height: var(--editor-line-height, 1.5);
+}
+
+/* CM 基础主题只设了 `overflow-x: auto` ⇒ 双轴滚动显式声明，与右栏那条同口径
+   （`preview.css:1891-1894`）。缺了它左栏纵向滚不动。 */
+.diff-original .cm-scroller {
+  overflow: auto;
 }
 
 /* 分割线只管**一栏之内**（splitview 那套 sash 管的是面板树，两者不复用）。

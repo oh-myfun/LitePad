@@ -38,23 +38,36 @@ function clampShare(share: number): number {
 }
 
 /**
- * 左栏那颗 view 的 state —— 只读要**两手一起给**（简报 Step 5）：
+ * 左栏那颗 view 的 state —— 只读**不是**「两手」，是三道一起给（R12：「左栏只读」是设计稿 ⑤
+ * 的事实项、⑦·⑤ 的验收对象）：
  *   · `EditorView.editable(false)`：内容 DOM 落 `contenteditable="false"` ⇒ 敲字进不去。
- *     光靠这一手还不够 —— B399 记过：只给 `editable(false)` 会让 `focus()` 空操作、选不出字。
  *   · `EditorState.readOnly`：CM6 的口径是「**commands 与扩展**在动手之前问这一颗」
  *     （`@codemirror/state` 的 `readOnly` 文档原话），它**不**否决裸 `view.dispatch`。
+ *   · `EditorState.transactionFilter`（丢掉 `docChanged`）：这一道才兑现绑定约束那句
+ *     「任何事务都不许改动它的文档」。少了它，前两道只是「看起来不能打字」——
+ *     查找替换、脚本改文档、任何后来接上这颗 view 的写点都能直接重写基线正文。
  *
- * ⚠️ 所以「别的模块程序化写不进去」这一句不成立，别照着它设计：真要挡裸派发，仓库既有
- * 那一手是 `previewLock`（`EditorState.readOnly` + 丢 `docChanged` 的 `transactionFilter`，
- * 见 `src/preview/wysiwyg.ts:39`）。这一格暂时不需要：那颗 view 不进 doc 记账、不进协调器、
- * 也不在任何按 `panel.view` 寻址的路径上，今天没有裸派发方；等 Task 3/6 真出现写点再上那道闸。
+ * 加 `EditorView.contentAttributes` 那颗 `tabindex: "0"`：`editable(false)` 把 contentDOM 写成
+ * `contenteditable=false`，而 CM6 聚焦靠的正是点下去那一下 `focus()` —— 不可编辑又没有
+ * tabindex 的元素 `focus()` 是空操作 ⇒ 左栏点不进焦点、选不出字、复制不了（⑦·⑤ 要的正是
+ * 「选得中才复制得了」）。`src/preview/wysiwyg.ts:44-48` 把「两道都必要」记过一遍，这里同方。
  *
+ * ⚠️ 闸只管「改文档」，非 `docChanged` 的事务原样放行：Task 3 的装饰走 effects、Task 4 的
+ * 落位走 selection 与滚动 —— 整片 `[]` 等于把那两件事一起锁死。
+ *
+ * 机制一律复用仓库现成的那一族（`previewLock`，`src/preview/wysiwyg.ts:39-49`），不自造锁。
  * 行号（`lineNumbers()`）给：两侧都要能按行号读位置。装饰面与折叠不在这里（预审 R1）。
  */
 function leftState(spec: DiffSpec): EditorState {
   return EditorState.create({
     doc: spec.leftText(),
-    extensions: [EditorState.readOnly.of(true), EditorView.editable.of(false), lineNumbers()],
+    extensions: [
+      EditorState.readOnly.of(true),
+      EditorView.editable.of(false),
+      EditorView.contentAttributes.of({ tabindex: "0" }),
+      EditorState.transactionFilter.of((tr) => (tr.docChanged ? [] : tr)),
+      lineNumbers(),
+    ],
   });
 }
 
@@ -123,6 +136,8 @@ export function createDiffSurface(
       current = next;
       // 换输入 = 换**文档**，不是往当前文档里改：整态换一颗干净的只读 state，
       // 既不给对照缓冲留撤销历史，也不走 `dispatch({changes})` 那条「写文档」的路。
+      // ⚠️ 必须用 `setState`：`dispatch({changes})` 如今会被 leftState 那道硬闸整发丢掉
+      // （「换输入」看着像没反应）。`setState` 是换 state 不是发事务，天然不受那道闸牵连。
       left.setState(leftState(current));
     },
     dispose: () => {
