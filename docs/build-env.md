@@ -41,6 +41,29 @@ node node_modules/@tauri-apps/cli/tauri.js build
   才打开，否则 exe 去连 dev server（`ERR_CONNECTION_REFUSED`）。要跑/打包一律 `tauri build`。
 - 链接前杀掉运行中的 `litepad.exe`（被占用会 `os error 32`）。
 
+## 开发调试（dev 构建）
+
+日常开发调试跑 **debug 构建**，不要为调试去编 release 包 —— release 只在
+`npm run build:all` / `scripts/release.sh` 交付链路里出（口径见 `docs/conventions.md`
+§开发调试与发布构建）。
+
+```sh
+npm run tauri dev        # Vite 1420 + debug 构建；默认多开，配置落 %APPDATA%\LitePad-dev
+```
+
+- **与已安装版并存**：debug 构建不注册单实例插件（默许多开），配置目录也是独立的
+  `%APPDATA%\LitePad-dev`，所以开发实例可以和已安装版同时开着，互不覆盖。
+- **一个能独立跑的 debug exe**（不依赖 dev server，供真机台/脚本拉起）：
+
+  ```sh
+  node node_modules/vite/bin/vite.js build                        # 先备好 dist/
+  (cd src-tauri && cargo build --features tauri/custom-protocol)  # → src-tauri/target/debug/litepad.exe
+  ```
+
+  它仍是 debug profile（默认多开），只是前端走嵌入的 `dist/`，不走 dev server。
+- **测试用的配置目录一律指到项目内**：`LITEPAD_CONFIG_DIR=<仓库>/.tmp/<case>/config`，
+  不碰用户的 `%APPDATA%\LitePad`。
+
 ## WebView2 运行库
 
 - **MSVC 下无需任何额外操作**：`webview2-com` 把 WebView2 loader **静态链进 exe**，运行时不依赖外部的 `WebView2Loader.dll`。仓库里也**没有**这个文件，请勿自作主张补 `bundle.resources` 的 resource map，否则 `tauri build` 会因找不到源文件而失败。

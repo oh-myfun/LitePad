@@ -39,13 +39,14 @@
 - GFM：表格、删除线、任务列表、脚注
 - 实时预览增量更新，大纲点击即在预览中定位
 - 大纲 TOC 抽屉，点击即跳转
-- 数学公式（KaTeX）、代码高亮（Shiki）、Mermaid 图表，用到才加载
+- 数学公式（KaTeX）、代码高亮（Shiki）、图表（Mermaid / 脑图 / Graphviz / Flowchart / ECharts / 五线谱 / WaveDrom，PlantUML 交给在线服务器画），用到才加载
+- 图表可滚轮缩放、拖拽平移，右上角放大 / 缩小 / 复位；点图就地改源码，边改边重画
 - 粘贴截图自动存入 `assets/` 并插入相对链接
 - 导出为自包含单文件 HTML，或经系统打印输出 PDF
 
 **界面**
 
-- 浅色 / 深色 / 跟随系统；字号、编辑器字体、行距、预览行距均可调
+- 浅色 / 深色 / 跟随系统；字号、编辑器字体、行距均可调
 - 菜单栏并入标题栏（右侧是最小化 / 最大化 / 关闭），底部状态栏（行列 / 字符数 / 语言 / 编码 / 行尾）
 - 全部命令都能在命令面板里搜到，不用翻菜单
 - 快捷键可重新绑定，自带冲突检测与一键恢复默认
@@ -53,13 +54,13 @@
 
 ## 技术栈
 
-| 层       | 选型                                                     |
-| -------- | -------------------------------------------------------- |
-| 外壳     | Tauri 2                                                  |
-| 前端     | Vite 6 + TypeScript                                      |
-| 编辑内核 | CodeMirror 6                                             |
-| Markdown | markdown-it + GFM 插件；Shiki / KaTeX / Mermaid 按需加载 |
-| 编码     | encoding_rs + chardetng                                  |
+| 层       | 选型                                                                                                                            |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| 外壳     | Tauri 2                                                                                                                         |
+| 前端     | Vite 6 + TypeScript                                                                                                             |
+| 编辑内核 | CodeMirror 6                                                                                                                    |
+| Markdown | markdown-it + GFM 插件；Shiki / KaTeX / Mermaid / markmap / Graphviz(wasm) / flowchart.js / ECharts / abcjs / WaveDrom 按需加载 |
+| 编码     | encoding_rs + chardetng                                                                                                         |
 
 ---
 

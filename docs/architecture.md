@@ -45,21 +45,21 @@
   脏文档先存盘再起拖，普通拖动（排序 / 跨格 / 跨窗口 / 开新窗）一行不动。
 - **链接与原始 HTML**（B401）：链接一律先过 `src/markdown/links.ts` 分类 —— 外链走
   `src-tauri/src/opener.rs`（`ShellExecuteW`，Rust 侧只放 http/https/mailto）、本地文件走
-  `doOpen` 开标签、纯锚点就地滚（认 `#标题` 与 `#h-标题` 两种写法）；派生预览的 click 委托与
-  装饰面的 `mousedown` 都会 `preventDefault`，**WebView 永不导航**。Markdown 开 `html: true`
+  `doOpen` 开标签、纯锚点就地滚（认 `#标题` 与 `#h-标题` 两种写法）；预览面的 `mousedown`
+  （`src/preview/livePreview.ts` 的 `linkClick`）一律 `preventDefault`，**WebView 永不导航**。
+  Markdown 开 `html: true`
   后由 `src/markdown/sanitize.ts` 消毒（删 script/style/iframe 等 + `on*` + 危险协议；`style`
   按展示类属性白名单放行 —— 颜色/边框/间距/字号/对齐/宽高/table 属性，`position`/`display`/
   `z-index`/`transform`/`url()` 不放，B402）。
 - **HTML 块与预览同源**（B402）：装饰面的 `HtmlBlockWidget` 容器多挂一个 `.md-rendered`，
-  表格线/段落间距/标题下边框/链接色直接吃派生预览那份规则；deco.css 只把字号/行距/颜色压回
+  表格线/段落间距/标题下边框/链接色直接吃同一份排版规则；preview.css 只把字号/行距/颜色压回
   继承，并撤掉 InkNote 的虚线卡片（VS Code 预览里原始 HTML 就是正文）。行内
   `kbd/mark/u/sub/sup/b/i/s/span[style=color]` 由 `previewSets` 的 `HTMLTag` 分支渲染
   （成对藏标签 + 挂样式类），未知标签与未闭合标签保持源码。⚠️ 标题字阶只在 mark 上写**一次**，
   后代一律 `inherit` —— 两条都写 em 会连乘（h1 曾实测 51.6px）。
 - **链接指针跟着「会不会跳」走**（B403）：装饰面链接平时 `cursor: text`，预览档（只读）与
   编辑档按住 Ctrl 时才 `pointer`；修饰键是 `livePreview` 里 `linkHotMod` 喂的一颗
-  `md-deco--link-hot`（keydown/keyup/blur + `view.dom` 的 pointermove 校准）。派生预览的
-  `<a href>` 本来就是 pointer。
+  `md-preview-face--link-hot` 类（keydown/keyup/blur + `view.dom` 的 pointermove 校准）。
 - **光标行让位给源码**（B404）：`TaskMarker`/`QuoteMark` 的 hide 装饰带**所属行范围**的 reveal
   窗口，光标压住那一行就露 `[ ]`/`[x]`/`>`；伪元素没法被选区过滤 ⇒ `visible` 集补一颗
   `md-reveal-marker` 行类收掉 CSS 画的方框/竖线与标记槽内距。`taskClick` 在「可写 + 光标就在

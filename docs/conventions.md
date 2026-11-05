@@ -60,6 +60,23 @@
 **CHANGELOG.md**：由 `scripts/gen-changelog.sh` 从 Conventional Commit 自动生成，
 `release.sh` 发布时自动刷新并进同一个 release 提交，**不要手改**。
 
+## 开发调试与发布构建（用户 2026-10-29 定）
+
+- **日常开发/调试一律跑 dev 构建**，不碰已安装版：dev 构建默认**多开**（不注册单实例插件）、
+  配置目录默认 `%APPDATA%\LitePad-dev`，所以开发实例可以和用户正在用的安装版**同时开着**
+  （真机实测：同 identifier 两个进程各建各的窗口，互不拦截）。
+- **自动化测试/真机台的配置目录一律进项目 `.tmp/`**：
+  `LITEPAD_CONFIG_DIR=E:/Project/LitePad/.tmp/<case>/config`。会话、设置、最近打开、日志、备份
+  全部跟着搬走；不许碰用户真实的 `%APPDATA%\LitePad`，也别依赖互动开发用的 `LitePad-dev` 缺省
+  —— 测试要能在任何机器上重来。
+- **release 构建只在交付/发布链路里做**：`bash scripts/build-all.sh`（出包）与
+  `bash scripts/release.sh <版本>`（发布）。日常开发不构建、不运行 release 包。
+  release 包默认单实例；`LITEPAD_MULTI_INSTANCE=1` 显式放开、`LITEPAD_SINGLE_INSTANCE=1` 显式收紧
+  （两个都设时 MULTI 优先），其它取值忽略。
+- 例外（这些本来就属交付动作，仍用 release 产物）：`docs/screenshots/` 刷新、安装包验收、
+  「release 口径」的性能同尺测量；pre-push 钩子的本地 release 构建保留（只编译、不运行）。
+- 任何脚本都**不许杀用户正在跑的实例**：台子只结束自己记录过 PID 的进程，找不到自己的窗口就中止。
+
 ## 测试与验证
 
 - **每个 bug 必须补回归测试、与修复同一提交**，且**改完先反向验证**：把修复还原一次，确认用例真会红
@@ -164,16 +181,17 @@
   （`.gitignore` / `.prettierignore` / eslint `ignores` / `tsconfig.include` / 测试里的 `SKIP_DIRS`），
   否则探针会误伤无关守卫。
 
-## 视口位置（已移除）
+## 视口位置（旧机制已移除 · B302 后重做）
 
 ⚠️ **本节描述的整套机制（位置记忆 / 还原）已随同步滚动重构整体删除**：`pinScrollTop` /
 `recordScroll` / `rememberViewScroll` / `measureAndKeepScroll` / `restoringViewport` /
 `restoreViewScroll` / `clearPendingSync` / `t.scrollTop` 像素槽 / CM6 测量补偿收尾
 （B134 / B139 / B142 / B145 / B146 / B148 / B151 那一路）全部不复存在，别再到代码里找它们。
 
-现状：滚动位置只活在 DOM 上，切标签 / 重建布局后**不再记忆与还原**；预览侧只保留
-按源行号的本地定位（大纲跳转 / 转到行，`PreviewPane.syncToLine`）。会话只落光标
-（`cursor_line` / `cursor_col`），重启后保证光标可见，不恢复滚动位置。
+现状（B302 之后重做的）：滚动位置由同步滚动账本管（`src/sync-scroll/*`）—— 每格记
+`scrollV`（与宽度无关的块高比例），切标签 / 重建布局 / 跨窗口 / 会话恢复都走同一条落位链
+（`landVisibleSideAtV`）。B412 起预览不再是派生 DOM，源码 / 预览 / 编辑三档共用一颗
+EditorView，大纲跳转与「转到行」也落在同一颗 view 上。
 
 若将来要重做「位置记忆」，这是全新设计（用户已明确「换个思路」），不要参照本节旧口径。
 
@@ -186,9 +204,43 @@
   （给出 `<i class="codicon codicon-<id>"></i>`），**不得在消费方写死字形或码位**。
   加一颗图标就在 `codicons.ts` 的 `IDS` 里加一条，并给它一个真实调用点。
 - 尺寸默认由官方样式统一给 16px；要别的尺寸就在 CSS 里改 `.codicon` 的 `font-size`
-  （例：`.panel-op .codicon { font-size: 15px }`），不要给 svg 写 width/height——已经没有 svg 了。
+  （例：`.panel-op .codicon { font-size: 15px }`）。补画轨那几枚 svg 同口径：由消费方 CSS
+  给 16×16（见 `.md-preview-tool svg`），标记本身只画形状、不带尺寸。
 - **禁止手绘 SVG 充当图标**。codicon 里确无合适字形时，**先与用户商量**是否引入别的图标集，
   不得自行绘制、临时拼一个或改字号凑数。
+- **例外（B446，用户 2026-11-01 拍板「按同笔补画」）**：Markdown 格式工具条里
+  公式 Σ / 下划线 U / 上标 x² / 下标 x₂ 四枚，官方 746 颗确无对应字形（B444 曾就近取
+  `#` / `ab` / UML 层级图，用户看了仍要改）。这四枚画在 16 网格、`currentColor` 跟字色，
+  出口只有 `src/shell/toolbarMarks.ts` 的 `TOOLBAR_MARKS`，取用一律经
+  `formatToolbar.ts` 的 `toolbarIcon()`；**只收有调用点的标记**，与 `codicons.ts` 同纪律。
+  其余按钮一律 codicon，不破例。B448（用户点名「调整 Mermaid 图表按钮图标」）加第 5 枚
+  `flowchart`：`type-hierarchy` 画的是**圆节点**的组织图，不是 mermaid 那种方框 + 折线箭头
+  ⇒ 那颗短名随之下册（红线：不躺零调用点的 id）。B450 加三枚，补画册共 **8 枚**：
+  `indent` / `outdent`（经典文本编辑器的「行 + 箭头」缩进对，官方册只有一根孤线的 `indent`
+  用户点名不用）与 `footnote`（`[^n]` 角标）；`indent` 的 codicon 字形随之下册。
+  同一轮给补画册定了**笔形**：16 网格一律 `fill="none"` + 根元素 `stroke-width="1.4"`
+  （第一版 Σ 是实心填充、笔画等效 2.2 厚 ⇒ 在同排 codicon 旁明显粗一档）；相邻两笔之间
+  要留出可辨识的缝（第一版 U 的弧底离底线只剩 0.8 单位，16px 下糊成一坨）；墨迹不许贴
+  16 边框、小笔画要认得出（第一版上/下标的小「2」是折线硬拼，读起来像「7」）。
+  改完必须目视结案：`.tmp/b448-ink.py` 把任意一组 SVG 在真机里按 16px 与 96px 各画一遍。
+  镜像**只剩撤销一颗**（`redo` 反着画，`.md-preview-tool--flip` 一条 CSS `transform`）——
+  官方册里独独没有 undo；B450 起 `outdent` 有了自己的字形，不再靠 `indent` 翻转。
+- **Markdown 格式工具条（B431→B444→B446→B447→B448→B450）**：分组
+  `[撤销 恢复 保存] │ [预览↔编辑切换键] │ 段落 7 │ 插入 6 │ 格式 4` = 可见 21 颗
+  （插入组 B450 加「脚注」：光标处写 `[^n]`、文末补定义行，编号避开已用过的；
+  （段落组里 B448 加了「增加缩进 / 减少缩进」两颗，一级 = **两个空格**，与
+  `buildMarkdownToc` 的 `"  "`、大纲侧 `Math.floor(indent / 2)` 同一口径；它们与编辑器
+  Tab 吃的 `indentUnit`（4 空格）不是一回事，所以这两颗**不带**键位提示），
+  组界各一根 `.md-preview-tool-sep`（第一根在切换键之后 —— 那颗键自己占一组）。
+  同类型的成对项与低频的块级插入折成下拉（`列表▾` / `公式·图表▾` / `更多格式▾`），
+  折叠一律复用 `showPopupMenu(anchor, items, undefined, { anchorToggle: true })` ——
+  **不新造菜单机制**；下拉子项各带字形（`MenuItem.icon`，不传就不建那一格、不留空位）。
+  图标两轨：默认 codicon，上述八枚走补画轨；B431 那套 Vditor SVG sprite 仍算整类删除。
+  切换键是双字形开关（B450 定稿）：预览档画 `edit`（点了进编辑）、编辑档画 `lock`
+  （点了锁上进预览），与置顶 / 同步滚动那几颗同一条「字形 = 点了会去的那一档」。
+  三颗历史键的可用态吃 `undoDepth` / `redoDepth` + `doc.dirty`，刷点两处（档位出口
+  `syncPreviewEditFab` 与文本变化 `handleUpdate`）；灰态用原生 `disabled`，与菜单项同档
+  （0.4 不透明度），**灰而不藏**。
 - **文件类型图标是这条红线的唯一例外（B367/B368，用户确认）**：标签、资源管理器的文件行与
   状态栏语言浮层使用 VS Code 默认的 **Seti 文件图标主题**（`seti.woff` + 逐语言码位/色调，
   MIT，许可见 `src/assets/fonts/seti-ui-LICENSE.txt`）。它仍然是**上游字体字形**、不是手绘；

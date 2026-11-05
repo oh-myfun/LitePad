@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # LitePad 全量构建：前端构建 + 测试 + release 发布产物（exe + NSIS 安装包）。
 #
-# 项目约定：每次编译都要把发布版本也编译出来，日常交付用本脚本。
+# 项目约定（用户 2026-10-29 定）：本脚本与 `release.sh` 是 **release 的唯一构建入口**，
+#   只在交付/发布时跑。日常开发调试跑 dev 构建（`npm run tauri dev`；需要一个独立 exe 时
+#   用 debug + `--features tauri/custom-protocol`），不要为调试编 release 包。
+#   详见 docs/conventions.md §开发调试与发布构建。
 #
 # ⚠️ B330（用户 2026-10-22 收回主动权）：**本脚本不动版本号**。推档由交付方在跑本脚本
 #   **之前**显式做（patch 自决；minor / major 先问用户）。旧做法是把 +patch 挂在末尾，
