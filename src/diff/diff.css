@@ -1,9 +1,9 @@
 /**
  * B461 · 差异面样式。
  *
- * Task 1 只有这一格：**两栏并排的骨架 + 一根只管这一栏之内的分割线**。
- * 两侧改动行底色 / 对侧占位块 / 中间指示带归 Task 3，折叠占位条归 Task 7，侧栏条目行归 Task 9 ——
- * 都往这个文件里加，不再另开一份（颜色一律吃 `global.css` 那三颗主题无关的
+ * Task 1 那一格是**两栏并排的骨架 + 一根只管这一栏之内的分割线**；Task 3 追加
+ * 两侧改动行底色 / 对侧占位块 / 中间指示带（下面那一段）。折叠占位条归 Task 7，
+ * 侧栏条目行归 Task 9 —— 都往这个文件里加，不再另开一份（颜色一律吃 `global.css` 那三颗主题无关的
  * `--diff-add` / `--diff-mod` / `--diff-del`，B458 续轮定稿，不许新增第四颗）。
  *
  * ⚠️ `.panel-host` 的基础规则（`global.css:4472`）是**竖排** flex（编辑器在上、占位行在下），
@@ -102,4 +102,101 @@
 
 .diff-sash:hover {
   background: var(--accent);
+}
+
+/* ---------- Task 3 · 两侧行底色 / 中间指示带 / 对侧占位块 ---------- */
+
+/* 底色：三颗主题无关 token 的 18% 低透明度版（明暗同一套色 ⇒ HC 档靠既有 token 自己跟上）。
+   顺带把「这一行的指示带用哪颗」挂成 `--diff-edge` ⇒ 下面那几条按栏定向的规则不必再认 kind。
+   ⚠️ 它**不是第四颗色**：值恒等于那三颗之一（判据钉在 `tests/diff-face.test.ts`）。
+   ⚠️ 特异度刻意做到 0-4-0（`:is()` 取两支里最高的那颗）：当前行那层底色是
+   `.panel-host .cm-editor .cm-activeLine`（0-3-0，`global.css:4521`），压不过它的话
+   光标停在哪一行，那一行的改动色就整行消失 —— 而靠 import 先后压它太脆（上面
+   `.panel-host.is-diff.md-bar-docked` 那条注释讲的正是同一种脆）。 */
+.panel-host.is-diff :is(.diff-original, .panel-editor) .cm-line.diff-line-insert {
+  --diff-edge: var(--diff-add);
+  background: color-mix(in srgb, var(--diff-add) 18%, transparent);
+}
+
+.panel-host.is-diff :is(.diff-original, .panel-editor) .cm-line.diff-line-modify {
+  --diff-edge: var(--diff-mod);
+  background: color-mix(in srgb, var(--diff-mod) 18%, transparent);
+}
+
+.panel-host.is-diff :is(.diff-original, .panel-editor) .cm-line.diff-line-delete {
+  --diff-edge: var(--diff-del);
+  background: color-mix(in srgb, var(--diff-del) 18%, transparent);
+}
+
+/* 三条纪律，改这一段之前先读完（R15：两栏量度不同 ⇒ 逐行对齐全歪）：
+   · `position: relative` 只给**要挂绝对定位元素的这几颗**，不给 `.cm-line` 整族；
+   · 带子走绝对定位的伪元素，**不许**用 border / padding / margin：那一圈会把行盒撑高
+     （或撑宽 ⇒ 换行数跟着变），两栏的行就错开了；占位块的高度一律由 widget 按
+     `view.defaultLineHeight` 写 inline，这一段里也不许出现 `em`（`.cm-content` 是
+     `pre-wrap`，em 制高会跟着用户字阶复利）；
+   · **不许**用 box-shadow 画带子：当前行那圈描边用的就是 box-shadow，同一元素上
+     后写的整条顶掉先写的，两条不可能叠。 */
+.panel-host.is-diff .cm-line[class*="diff-line-"],
+.panel-host.is-diff .cm-line.diff-edge-top,
+.panel-host.is-diff .cm-content .diff-gap {
+  position: relative;
+}
+
+/* 中间指示带：4px 实色贴**靠中线那一侧**，一整块改动在自己那一侧连成一条。 */
+.panel-host.is-diff .cm-line[class*="diff-line-"]::before,
+.panel-host.is-diff .cm-content .diff-gap::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 4px;
+  height: 100%;
+  background: var(--diff-edge);
+}
+
+.panel-host.is-diff .diff-original .cm-line[class*="diff-line-"]::before,
+.panel-host.is-diff .diff-original .cm-content .diff-gap::before {
+  right: 0;
+}
+
+.panel-host.is-diff .panel-editor .cm-line[class*="diff-line-"]::before,
+.panel-host.is-diff .panel-editor .cm-content .diff-gap::before {
+  left: 0;
+}
+
+/* 一块的起点（`diff-edge-top` 只发在该块在本侧的第一行）：从竖带上往中线方向压一道
+   4px 高的横头，肉眼扫中线就能找到块头。只往水平方向长 ⇒ 不吃行盒高度。 */
+.panel-host.is-diff .cm-line.diff-edge-top::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 16px;
+  height: 4px;
+  background: var(--diff-edge);
+}
+
+.panel-host.is-diff .diff-original .cm-line.diff-edge-top::after {
+  right: 0;
+}
+
+.panel-host.is-diff .panel-editor .cm-line.diff-edge-top::after {
+  left: 0;
+}
+
+/* 对侧占位块：本侧缺的是**新增**的行（左栏）就吃 add，缺的是**被删**的行（右栏）就吃 del ——
+   方向由所在栏定，widget 自己不必知道 kind，所以 `class="diff-gap"` 一颗就够。
+   斜纹是 135deg 的一道道实色条（同样只吃 `--diff-edge`，不引入第四颗色）。 */
+.panel-host.is-diff .diff-original .cm-content .diff-gap {
+  --diff-edge: var(--diff-add);
+}
+
+.panel-host.is-diff .panel-editor .cm-content .diff-gap {
+  --diff-edge: var(--diff-del);
+}
+
+.diff-gap {
+  background-image: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--diff-edge) 22%, transparent) 0 6px,
+    transparent 6px 12px
+  );
 }
