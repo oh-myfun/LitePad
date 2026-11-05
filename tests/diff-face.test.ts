@@ -29,7 +29,18 @@ import { createDiffSurface, type DiffSurface } from "../src/diff/surface";
 import { diffBlocks, type DiffBlock } from "../src/diff/blocks";
 import type { DiffSide, DiffSpec } from "../src/diff/model";
 import { DIFF_REFRESH_MS } from "../src/diff/align";
-import { DiffGapWidget, diffFace, refreshDiff, sideGaps, sideLineMarks } from "../src/diff/face";
+import {
+  DIFF_CONTEXT_LINES,
+  DIFF_MIN_UNCHANGED_LINES,
+  DIFF_REVEAL_LINES,
+  DiffGapWidget,
+  diffFace,
+  foldCandidates,
+  refreshDiff,
+  setFoldedRanges,
+  sideGaps,
+  sideLineMarks,
+} from "../src/diff/face";
 
 const srcOf = (p: string): string => readFileSync(p, "utf-8").replace(/\r\n/g, "\n");
 
@@ -272,78 +283,89 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
   });
 });
 
-describe("B461 · surface 给两颗 view 各装一臂（预审 R1）", () => {
-  const diffSpec = (): DiffSpec => ({
+// --------------------------------------------------------------------------- #
+// 一挂就位的差异格（Task 3 的两臂用例与 Task 7 的折叠用例共用**同一份**现场搭法）
+// --------------------------------------------------------------------------- #
+
+/**
+ * 复刻 `src/tabs/lifecycle.ts` 的 `mountView` 那几步（同 `tests/diff-surface.test.ts`）：
+ * 建 `.panel-host` → 建 `.panel-editor` → 挂右栏那颗 view → 交给**生产的** `createDiffSurface`。
+ * 两臂的装法本身是生产代码，这里没有第二份实现。
+ *
+ * `env` 四颗键：**折行缺省开**（与出厂 `word_wrap: true` 同形 —— 关掉才是异常路径）、
+ * 明暗缺省浅（主题那条要能拿 dark 档当判别位）、左右两份正文（Task 7 的折叠用例要换正文）。
+ */
+function mountSurfacePair(
+  env: { left?: string; right?: string; dark?: boolean; wrap?: boolean } = {},
+): {
+  panel: Panel;
+  right: EditorView;
+  left: EditorView;
+  surface: DiffSurface;
+  tab: Tab;
+  initialState: EditorState;
+} {
+  const leftText = env.left ?? "A\n删1\n删2\nZ";
+  const rightText = env.right ?? "A\nZ";
+  const spec: DiffSpec = {
     tier: "baseline",
     docId: 100,
-    leftText: () => "A\n删1\n删2\nZ",
+    leftText: () => leftText,
     leftName: "a.md（上次保存）",
     rightName: "a.md",
     leftPath: null,
+  };
+  const hostEl = document.createElement("div");
+  hostEl.className = "panel-host";
+  document.body.appendChild(hostEl);
+  const editorEl = document.createElement("div");
+  editorEl.className = "panel-editor";
+  hostEl.appendChild(editorEl);
+  const { state, comps } = makeTabState(
+    rightText,
+    null,
+    {
+      dark: env.dark ?? false,
+      wrap: env.wrap ?? true,
+      perf: perfProfileFor("normal"),
+    },
+    () => {},
+  );
+  const tab: Tab = {
+    tabId: 1,
+    docId: 100,
+    panelId: 0,
+    comps,
+    state,
+    viewMode: "source",
+    kind: "diff",
+    diff: spec,
+    scrollV: 1,
+  };
+  tabs.set(tab.tabId, tab);
+  const view = createEditor(editorEl, state);
+  const panel: Panel = {
+    panelId: 0,
+    tabs: [tab.tabId],
+    activeTabId: tab.tabId,
+    view,
+    viewTabId: tab.tabId,
+    bodyEl: hostEl,
+    diffSurface: null,
+  };
+  const surface = createDiffSurface(hostEl, panel, spec);
+  // 先拆旁路（它会往右栏发一发 reconfigure），再拆那颗 view —— 反过来的话
+  // dispose 就只能在已经 destroy 的视图上派发。
+  live.push(() => {
+    if (panel.diffSurface === surface) surface.dispose();
   });
+  live.push(() => view.view.destroy());
+  return { panel, right: view.view, left: surface.left, surface, tab, initialState: state };
+}
 
-  /**
-   * 复刻 `src/tabs/lifecycle.ts` 的 `mountView` 那几步（同 `tests/diff-surface.test.ts`）：
-   * 建 `.panel-host` → 建 `.panel-editor` → 挂右栏那颗 view → 交给**生产的** `createDiffSurface`。
-   * 两臂的装法本身是生产代码，这里没有第二份实现。
-   *
-   * `env` 只两颗键：**折行缺省开**（与出厂 `word_wrap: true` 同形 —— 关掉才是异常路径）、
-   * 明暗缺省浅（主题那条要能拿 dark 档当判别位）。
-   */
-  function mountHost(env: { dark?: boolean; wrap?: boolean } = {}): {
-    panel: Panel;
-    right: EditorView;
-    left: EditorView;
-    surface: DiffSurface;
-    tab: Tab;
-  } {
-    const hostEl = document.createElement("div");
-    hostEl.className = "panel-host";
-    document.body.appendChild(hostEl);
-    const editorEl = document.createElement("div");
-    editorEl.className = "panel-editor";
-    hostEl.appendChild(editorEl);
-    const { state, comps } = makeTabState(
-      "A\nZ",
-      null,
-      {
-        dark: env.dark ?? false,
-        wrap: env.wrap ?? true,
-        perf: perfProfileFor("normal"),
-      },
-      () => {},
-    );
-    const tab: Tab = {
-      tabId: 1,
-      docId: 100,
-      panelId: 0,
-      comps,
-      state,
-      viewMode: "source",
-      kind: "diff",
-      diff: diffSpec(),
-      scrollV: 1,
-    };
-    tabs.set(tab.tabId, tab);
-    const view = createEditor(editorEl, state);
-    const panel: Panel = {
-      panelId: 0,
-      tabs: [tab.tabId],
-      activeTabId: tab.tabId,
-      view,
-      viewTabId: tab.tabId,
-      bodyEl: hostEl,
-      diffSurface: null,
-    };
-    const surface = createDiffSurface(hostEl, panel, diffSpec());
-    // 先拆旁路（它会往右栏发一发 reconfigure），再拆那颗 view —— 反过来的话
-    // dispose 就只能在已经 destroy 的视图上派发。
-    live.push(() => {
-      if (panel.diffSurface === surface) surface.dispose();
-    });
-    live.push(() => view.view.destroy());
-    return { panel, right: view.view, left: surface.left, surface, tab };
-  }
+describe("B461 · surface 给两颗 view 各装一臂（预审 R1）", () => {
+  /** Task 3 那一批用例的现场：正文沿用「删两行」那一对，一字不改。 */
+  const mountHost = (env: { dark?: boolean; wrap?: boolean } = {}) => mountSurfacePair(env);
 
   it("B461 · 起手两侧就都有交代：左栏真行涂色、右栏补出同高的空位", () => {
     const { left, right } = mountHost();
@@ -393,8 +415,11 @@ describe("B461 · surface 给两颗 view 各装一臂（预审 R1）", () => {
     // 两栏的高度从第一条长行起就分家 —— 跳块与肉眼比对同时错位。
     // ⚠️ 「同一行在两栏的视觉 y 是否真的一致」是**像素**判据，jsdom 没有布局引擎 ⇒ 归 Task 11
     // 真机台。这里钉的是「扩展在不在 state 里」—— 它恰恰是那条像素等式的前提。
-    const { right, left, surface, tab } = mountHost();
-    expect(wrapsLines(tab.state), "前置：出厂 `word_wrap: true` ⇒ 右栏快照确实装了折行").toBe(true);
+    const { right, left, surface, initialState } = mountSurfacePair();
+    expect(
+      wrapsLines(initialState),
+      "前置：出厂 `word_wrap: true` ⇒ 那颗初始 state 确实装了折行",
+    ).toBe(true);
     expect(wrapsLines(right.state), "挂上旁路那一刻，右栏的折行被关掉").toBe(false);
     expect(wrapsLines(left.state), "左栏从一开始就不装折行").toBe(false);
     surface.dispose();
@@ -460,11 +485,17 @@ describe("B461 · surface 给两颗 view 各装一臂（预审 R1）", () => {
 describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
   const css = (): string => stripCssComments(srcOf("src/diff/diff.css"));
 
-  /** 只取 Task 3 那一段（从 `.diff-line-insert` 起）：前面那一格是 Task 1 的两栏骨架。 */
+  /**
+   * 只取 Task 3 那一段（`.diff-line-insert` → Task 7 的折条规则之前）：前面那一格是 Task 1
+   * 的两栏骨架。折条是**外壳**不是差异态（它自己不许吃那三颗色），所以它的色由下面 Task 7
+   * 那一条单独判 —— 两段的 token 清单天然不同， census 必须分段做，不许把整份文件一锅端。
+   */
   const section = (): string => {
     const code = css();
     const at = code.indexOf(".diff-line-insert");
-    return at < 0 ? "" : code.slice(at);
+    if (at < 0) return "";
+    const end = code.indexOf(".diff-fold-bar");
+    return end < 0 ? code.slice(at) : code.slice(at, end);
   };
 
   it("B461 · 这一段一个裸十六进制都不许有，色值只走那三颗 token", () => {
@@ -557,5 +588,314 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
     expect(gap).not.toMatch(/(^|[\s;{])(margin|padding)(-top|-bottom)?\s*:/);
     expect(gap).not.toMatch(/\d*\.?\d+em\b/);
     expect(gap, "高度是 widget 写 inline 的，样式段不钉死它").not.toMatch(/height\s*:/);
+  });
+});
+
+// --------------------------------------------------------------------------- #
+// Task 7 —— 折叠未改动区（默认不折 + 三颗动作）
+//
+// 分层与前面两格同规矩：
+//   1) `foldCandidates` 是纯函数（候选长度与「折中间、上下各留 3 行」的算术），向量直接钉；
+//   2) surface 的开关状态 + 三颗动作 + `unfoldAround`（默认关 ⇒ 一段都不折）；
+//   3) 折条与 `display: none` 的画法走 DOM；样式段的色链走源码文本。
+//
+// ⚠️ 折叠后「两栏仍然逐行对齐」是像素判据（真机上折条那一行占多高、被折行的行号是否真消失，
+// 只有量得出来）⇒ 归 Task 11 那台。这里钉的是行数、类名、文案、落位与「哪些行被折起来」的算术。
+// --------------------------------------------------------------------------- #
+
+/** 连号的行清单：`seq(1, 3, "u")` ⇒ `["u1","u2","u3"]`（用来搭长正文的现场）。 */
+function seq(from: number, to: number, mark: string): string[] {
+  const out: string[] = [];
+  for (let i = from; i <= to; i++) out.push(`${mark}${i}`);
+  return out;
+}
+
+/** 三块，块之间各隔 **30 行**未改动（两侧行号重合，按行口算最不容易看错）。 */
+const THREE_LEFT = ["甲一", ...seq(1, 30, "未改"), "乙一", ...seq(1, 30, "另笔"), "尾一"].join(
+  "\n",
+);
+const THREE_RIGHT = ["乙二", ...seq(1, 30, "未改"), "丙二", ...seq(1, 30, "另笔"), "丁二"].join(
+  "\n",
+);
+
+/** 简报 Step 1 的那一座现场：三块 + 两段够长的未改动区 ⇒ 候选恰两段。 */
+function mountedSurfaceWithThreeBlocks(): DiffSurface {
+  return mountSurfacePair({ left: THREE_LEFT, right: THREE_RIGHT }).surface;
+}
+
+/** 任意两份正文的一格（「太短不折」那一条要用）。 */
+function mountedSurface(leftText: string, rightText: string): DiffSurface {
+  return mountSurfacePair({ left: leftText, right: rightText }).surface;
+}
+
+/** 左栏那一列的第 `index` 颗折条（DOM 顺序 = 行号顺序），点它。 */
+function clickFoldBar(s: DiffSurface, index: number): void {
+  const bars = s.left.contentDOM.querySelectorAll<HTMLElement>(".diff-fold-bar");
+  expect(bars.length, `现场得有折条（第 ${index} 颗点不到就是判据空转）`).toBeGreaterThan(index);
+  bars[index].dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+}
+
+/** 一批行区间一共折了多少行。 */
+const hiddenTotal = (ranges: Array<{ from: number; to: number }>): number =>
+  ranges.reduce((sum, r) => sum + (r.to - r.from + 1), 0);
+
+/**
+ * 「这一次点击揭示了多少行」= 全部候选折起来的行数 − 现在还折着的行数。
+ *
+ * 为什么这么算：jsdom 没有布局引擎，`scrollIntoView` 到底落没落到位量不出来（那一条归真机台 ③），
+ * 而**行数**是两个公开读数（`blocks()` 与 `foldRanges()`）的差 ⇒ 判得到「一次点击最多展开
+ * `DIFF_REVEAL_LINES × 2` 行」这条预算。反证：把点击写成「一颗都不留」（showAll）就是 48 行 ⇒ 红。
+ */
+function revealedLines(s: DiffSurface): number {
+  const all = foldCandidates(s.blocks(), "original", s.left.state.doc.lines);
+  return hiddenTotal(all) - hiddenTotal(s.foldRanges());
+}
+
+/** 光标现在落在第几行（1-based）。 */
+const caretLineOf = (view: EditorView): number =>
+  view.state.doc.lineAt(view.state.selection.main.head).number;
+
+describe("B461 · foldCandidates：未改动区的候选算术（纯函数）", () => {
+  it("B461 · 候选 = 未改动区 > 阈值；折掉中间、上下各留 DIFF_CONTEXT_LINES 行", () => {
+    const n9 = seq(1, 9, "短");
+    const n10 = seq(1, 10, "长");
+    // 三块（第 1、11、22 行改了）⇒ 中间两段未改动区：9 行（恰等于阈值，不折）与 10 行（折）。
+    const blocks = diffBlocks(
+      ["甲1", ...n9, "乙1", ...n10, "丙1"].join("\n"),
+      ["乙2", ...n9, "丙2", ...n10, "丁2"].join("\n"),
+    );
+    expect(blocks).toHaveLength(3);
+    expect(9).toBe(DIFF_MIN_UNCHANGED_LINES + 2 * DIFF_CONTEXT_LINES);
+    expect(foldCandidates(blocks, "modified", 22)).toEqual([{ run: 2, from: 15, to: 18 }]);
+    // 首块之前 / 末块之后那两段也是未改动区：这里都是空的 ⇒ 一段候选都不多
+    expect(foldCandidates(blocks, "original", 22)).toEqual([{ run: 2, from: 15, to: 18 }]);
+  });
+
+  it("B461 · 三块之间那两段 30 行的未改动区都是候选（两栏行号重合时两侧同形）", () => {
+    const blocks = diffBlocks(THREE_LEFT, THREE_RIGHT);
+    expect(blocks).toHaveLength(3);
+    expect(foldCandidates(blocks, "modified", 63)).toEqual([
+      { run: 1, from: 5, to: 28 },
+      { run: 2, from: 36, to: 59 },
+    ]);
+  });
+});
+
+describe("B461 · 折叠未改动区（Task 7：默认不折 + 三颗动作）", () => {
+  it("B461 · 未改动区够长才成为折叠候选；开关默认关 ⇒ 折起来 0 段", () => {
+    const s = mountedSurfaceWithThreeBlocks();
+    expect(s.collapseUnchanged()).toBe(false);
+    expect(s.foldRanges()).toEqual([]);
+    s.setCollapseUnchanged(true);
+    expect(s.foldRanges()).toHaveLength(2); // 三块之间那两段长的未改动区
+    s.showAllUnchanged();
+    expect(s.foldRanges()).toEqual([]);
+    s.collapseAllUnchanged();
+    expect(s.foldRanges()).toHaveLength(2);
+  });
+
+  it("B461 · 太短的未改动区不折（<= 3 行 ⇒ 折了反而更难读）", () => {
+    const shortGapsA = "1\n2\n3\n4\n5\n6\n7\n8\n9";
+    const shortGapsB = "1A\n2\n3\n4B\n5\n6\n7\n8C\n9";
+    const s = mountedSurface(shortGapsA, shortGapsB);
+    expect(s.blocks(), "前置：两段未改动区各 2、3 行 ⇒ 都不够长").toHaveLength(3);
+    s.collapseAllUnchanged();
+    expect(s.foldRanges()).toEqual([]);
+    // 反向闸：阈值那一头真的折得动（否则上面的 `toEqual([])` 是靠「什么都折不动」蒙过去的）
+    const s2 = mountedSurfaceWithThreeBlocks();
+    s2.collapseAllUnchanged();
+    expect(s2.foldRanges()).toHaveLength(2);
+  });
+
+  it("B461 · 跳块前先展开目标所在的折区 ⇒ 落点不会落进被折起来的行里", () => {
+    const s = mountedSurfaceWithThreeBlocks();
+    s.setCollapseUnchanged(true);
+    s.jumpTo(1);
+    const landed = s.left.state.doc.lineAt(s.left.state.selection.main.head).number;
+    expect(s.foldRanges().some((r) => r.from <= landed && landed <= r.to)).toBe(false);
+    // 落点 32 在折区 36 之前，却在 28 + DIFF_REVEAL_LINES 之内 ⇒ 按简报的规则那一段必须一起摘掉，
+    // 而后面那段照旧折着（不许「跳一次就全展开」）。
+    expect(landed).toBe(32);
+    expect(s.foldRanges()).toEqual([{ from: 36, to: 59 }]);
+  });
+
+  it("B461 · 点折条 = 就地展开，并按 DIFF_REVEAL_LINES 上下各揭示 20 行", () => {
+    const s = mountedSurfaceWithThreeBlocks();
+    s.collapseAllUnchanged();
+    const before = s.foldRanges().length;
+    clickFoldBar(s, 0);
+    expect(s.foldRanges().length).toBe(before - 1);
+    expect(revealedLines(s)).toBeLessThanOrEqual(DIFF_REVEAL_LINES * 2);
+  });
+
+  it("B461 · 点折条把揭示窗口的第一行当落点（窗口 = 折区上下各再让出 DIFF_REVEAL_LINES 行）", () => {
+    const s = mountedSurfaceWithThreeBlocks();
+    s.collapseAllUnchanged();
+    clickFoldBar(s, 1); // 第二颗折条在本栏第 36 行，那一段未改动区从第 33 行起
+    expect(caretLineOf(s.left)).toBe(36 - DIFF_CONTEXT_LINES - DIFF_REVEAL_LINES);
+    expect(s.foldRanges(), "摘掉的只是点下去那一条，另一条照旧折着").toEqual([{ from: 5, to: 28 }]);
+  });
+
+  it("B461 · 折条文案「展开 N 行未改动的内容」，N = 这一段被折起来的行数", () => {
+    const { surface: s, right } = mountSurfacePair({ left: THREE_LEFT, right: THREE_RIGHT });
+    s.collapseAllUnchanged();
+    const bars = [...s.left.contentDOM.querySelectorAll<HTMLElement>(".diff-fold-bar")];
+    expect(bars).toHaveLength(2);
+    for (const bar of bars) expect(bar.textContent).toBe("展开 24 行未改动的内容");
+    expect(
+      right.contentDOM.querySelectorAll(".diff-fold-bar"),
+      "两栏都得有折条（各自那一列都点得开）",
+    ).toHaveLength(2);
+    // ⚠️ 不数「一共有几行被抹掉」：jsdom 没有布局引擎，CM6 只画视口里那几行（实测只画得到
+    // 前一段的一部分）⇒ 数总数会跟着视口抖。这里判**边界**：上下文那三行照旧看得见，第 5 行起没了。
+    expect(
+      lineElOf(s.left, 4).className,
+      "上下各留 DIFF_CONTEXT_LINES 行：第 4 行还在",
+    ).not.toContain("diff-folded");
+    expect(lineElOf(s.left, 5).className, "折区从第 5 行起").toContain("diff-folded");
+  });
+
+  it("B461 · 两侧行轴不同 ⇒ 折区按 side 各换算一份（不许只算右栏）", () => {
+    const leftText = ["甲", ...seq(1, 30, "未改"), "乙", ...seq(1, 30, "另笔")].join("\n");
+    const rightText = [
+      "甲一",
+      "甲二",
+      "甲三",
+      ...seq(1, 30, "未改"),
+      "乙改",
+      ...seq(1, 30, "另笔"),
+    ].join("\n");
+    const { surface: s, right } = mountSurfacePair({ left: leftText, right: rightText });
+    s.collapseAllUnchanged();
+    // 首块在右栏占 3 行（左栏 1 行）⇒ 右栏的行号比左栏整体低 2 格：左栏折区 5..28 ⇒ 右栏 7..30
+    expect(foldCandidates(s.blocks(), "original", 62)).toEqual([
+      { run: 1, from: 5, to: 28 },
+      { run: 2, from: 36, to: 59 },
+    ]);
+    expect(s.foldRanges(), "读数是右栏行轴").toEqual([
+      { from: 7, to: 30 },
+      { from: 38, to: 61 },
+    ]);
+    // 同一行号在两栏的折叠态**不一样**（左栏第 5 行已经折进去，右栏那一行还是上下文）：
+    // 这一条判的就是「各换算一份」，只算右栏的话左栏第 5 行会跟着右栏一起不折（画错一整段）。
+    expect(lineElOf(s.left, 5).className, "左栏行轴：第 5 行起折起来").toContain("diff-folded");
+    expect(lineElOf(s.left, 4).className, "上下文那 3 行照旧看得见").not.toContain("diff-folded");
+    expect(lineElOf(right, 5).className, "右栏行轴：第 5 行还没进折区").not.toContain(
+      "diff-folded",
+    );
+    expect(lineElOf(right, 7).className, "右栏从第 7 行起才折").toContain("diff-folded");
+  });
+
+  it("B461 · 右栏选区落进折区 ⇒ 那一段自己展开（CM6 里 display:none 的行仍在文档里）", () => {
+    const { surface: s, right } = mountSurfacePair({ left: THREE_LEFT, right: THREE_RIGHT });
+    s.collapseAllUnchanged();
+    expect(s.foldRanges()).toHaveLength(2);
+    right.dispatch({ selection: { anchor: right.state.doc.line(10).from } });
+    expect(s.foldRanges(), "光标落到 5..28 那一段里 ⇒ 那一段摘掉，另一段不许被牵连").toEqual([
+      { from: 36, to: 59 },
+    ]);
+  });
+
+  it("B461 · 拆旁路把折叠一起带走（底色那一条纪律同形：既有的 view 不许留着 display:none 的行）", () => {
+    const { surface: s, right } = mountSurfacePair({ left: THREE_LEFT, right: THREE_RIGHT });
+    s.collapseAllUnchanged();
+    expect(lineElOf(right, 5).className, "前置：第 5 行在这一臂里被折起来了").toContain(
+      "diff-folded",
+    );
+    expect(right.contentDOM.querySelectorAll(".diff-fold-bar").length).toBeGreaterThan(0);
+    s.dispose();
+    expect(right.contentDOM.querySelectorAll(".cm-line.diff-folded")).toHaveLength(0);
+    expect(right.contentDOM.querySelectorAll(".diff-fold-bar")).toHaveLength(0);
+    expect(s.foldRanges()).toEqual([]);
+  });
+
+  it("B461 · 折叠只走既有那一臂、与 settings 无关（第二颗 Compartment 与用户默认都不许有）", () => {
+    // 折叠态要进右栏那颗**既有的** view，只能靠 `diffFace` 那一臂里的 StateEffect：再
+    // `appendConfig` 一颗新槽就是把 Task 5 抓过的「上一臂的 provider 还活着」那一场病重新埋回来。
+    const code = stripLineComments(srcOf("src/diff/surface.ts"));
+    expect(
+      code.match(/appendConfig\.of\(/g) ?? [],
+      "全文件只许那颗共用槽的 appendConfig（JSDoc 里提它不算一发调用）",
+    ).toHaveLength(1);
+    expect(code, "本轮不做用户默认 ⇒ 开关不进设置那一格（也不进那颗模块）").not.toMatch(
+      /from "\.\.\/prefs"|persistSettings/,
+    );
+    const face = stripLineComments(srcOf("src/diff/face.ts"));
+    expect(face, "折叠态是 StateEffect ⇒ 才能骑在同一臂上进既有 view").toContain(
+      "setFoldedRanges = StateEffect.define",
+    );
+  });
+
+  it("B461 · 折叠态骑在 diffFace 那一臂上：一发 setFoldedRanges 就有点位与折条（不另开一臂）", () => {
+    // 单独装的那一臂**没带**折条出口（出口只有 surface 那一处挂）⇒ 点下去空转，
+    // 装饰层自己不许把折叠态摘掉（那才是第二份真相）。
+    const { view, lineEl } = mountFace("modified", [], "A\n1\n2\n3\n4\nB");
+    expect(lineEl(2).className).not.toContain("diff-folded");
+    view.dispatch({ effects: setFoldedRanges.of([{ from: 2, to: 4 }]) });
+    for (const n of [2, 3, 4]) expect(lineEl(n).className).toContain("diff-folded");
+    expect(lineEl(5).className, "含端点：第 5 行不在折区里").not.toContain("diff-folded");
+    const bars = [...view.contentDOM.querySelectorAll<HTMLElement>(".diff-fold-bar")];
+    expect(bars).toHaveLength(1);
+    expect(bars[0].textContent).toBe("展开 3 行未改动的内容");
+    expect(bars[0].style.height, "折条自己占一行高（R18：inline 按 defaultLineHeight 写）").toBe(
+      `${LINE_HEIGHT}px`,
+    );
+    bars[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(
+      view.contentDOM.querySelectorAll(".diff-fold-bar"),
+      "没有出口就什么都不改（不许装饰层自己拿一份折叠态）",
+    ).toHaveLength(1);
+  });
+
+  it("B461 · 折叠不许改左栏那颗文档（硬只读那道闸不因为折叠松动）", () => {
+    const s = mountedSurfaceWithThreeBlocks();
+    s.collapseAllUnchanged();
+    const before = s.left.state.doc.toString();
+    s.left.dispatch({ changes: { from: 0, insert: "X" } });
+    expect(s.left.state.doc.toString(), "折起来的是**画法**，不是删掉的行").toBe(before);
+  });
+});
+
+describe("B461 · 折条样式（Task 7 追加那一段）", () => {
+  const code = (): string => stripCssComments(srcOf("src/diff/diff.css"));
+  /** Task 7 那一段：从 `.diff-fold-bar` 起到文件末尾（Task 3 那一段的 token 清单由另一条判）。 */
+  const foldSection = (): string => {
+    const s = code();
+    const at = s.indexOf(".diff-fold-bar");
+    return at < 0 ? "" : s.slice(at);
+  };
+
+  it("B461 · 折条吃的是外壳 token：一个裸十六进制都不许有，也不许借第四颗 diff 色", () => {
+    const s = foldSection();
+    expect(s, "锚点规则得真在（截空了后面的判据全是假绿）").not.toBe("");
+    expect(s).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    expect(s, "折条是外壳不是差异态 ⇒ 不许吃 --diff-*（更没有第四颗色）").not.toMatch(/--diff-/);
+    expect(s, "也不许借 --warn / --danger").not.toMatch(/--(warn|danger)\b/);
+    const tokens = new Set([...s.matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1]));
+    expect([...tokens].sort()).toEqual(["--bg-hover", "--border", "--fg", "--fg-muted"]);
+    expect(s, "明暗两档都靠这几颗自己跟上").toContain("var(--bg-hover)");
+  });
+
+  it("B461 · 折条一行高：高度由 widget 写 inline，样式段不钉死、不添竖向留白、不吃 em", () => {
+    const bar = ruleBlock(code(), ".panel-host.is-diff .diff-fold-bar");
+    expect(bar, "规则得真在（判不到东西的 not.toMatch 是假绿）").not.toBe("");
+    expect(bar).not.toMatch(/(^|[\s;{])(margin|padding)(-top|-bottom)?\s*:/);
+    expect(bar).not.toMatch(/\d*\.?\d+em\b/);
+    expect(
+      bar,
+      "高度是 widget 按 defaultLineHeight 写 inline 的（R15/R18 同一条纪律）",
+    ).not.toMatch(/height\s*:/);
+    expect(bar).toContain("cursor: pointer");
+  });
+
+  it("B461 · 折起来的行走 display:none，而行号栏那几格一起消失（否则数字会挤成一坨）", () => {
+    const s = foldSection();
+    const hidden = ruleBlock(code(), ".panel-host.is-diff .cm-line.diff-folded");
+    expect(hidden, "折起来的行 = 这一行不占任何视觉高度").toContain("display: none");
+    expect(s, "线装饰的类不会自动落到 gutter 元素上 ⇒ 折行的行号必须单独抹掉").toContain(
+      ".cm-gutterElement",
+    );
+    const gutter = ruleBlock(code(), ".panel-host.is-diff .cm-gutterElement.diff-folded-gutter");
+    expect(gutter).toContain("display: none");
   });
 });

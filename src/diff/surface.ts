@@ -23,8 +23,20 @@ import { docs, isWrap, panels, tabs, type Panel } from "../core/app-state";
 import { landVisibleSideAtV } from "../sync-scroll/wire";
 import { DIFF_REFRESH_MS } from "./align";
 import { blockAt, diffBlocks, type DiffBlock } from "./blocks";
-import { diffFace, refreshDiff } from "./face";
+import {
+  DIFF_CONTEXT_LINES,
+  DIFF_REVEAL_LINES,
+  diffFace,
+  foldCandidates,
+  onFoldBarClick,
+  refreshDiff,
+  setFoldedRanges,
+  type FoldRange,
+} from "./face";
 import { canOpenAgainstBaseline, notifyDiffBlocks, type DiffSide, type DiffSpec } from "./model";
+
+/** 两栏的寻址口径（折叠态要按 `side` 各换算一份，见 `foldedFor`）。 */
+const SIDES: DiffSide[] = ["original", "modified"];
 
 /**
  * 右栏那一臂共用的**一个具名槽**（预审 R1 说「Compartment 由本模块创建」；Task 5 把它收成一颗，
@@ -52,7 +64,7 @@ export interface DiffSurface {
   /** 这一格现在那一批块（唯一一份答案：两侧底色、占位块、侧栏条目、跳块都吃它） */
   blocks(): DiffBlock[];
   /**
-   * 两侧同时落位到各自那段的起始行；索引越界夹到首/末块；先 unfoldAround 目标（Task 7 补实现，此时为 no-op）。
+   * 两侧同时落位到各自那段的起始行；索引越界夹到首/末块；落位前先 `unfoldAround` 目标那一行。
    * 右栏那一发走**同步落位 + 同栈认领**（裁决 R25，见实现处的注释）。
    */
   jumpTo(index: number): void;
@@ -69,6 +81,23 @@ export interface DiffSurface {
   ignoreTrimWhitespace(): boolean;
   /** 翻转后立刻 syncBlocks()（开关改的是「同一份正文算出来的块」，两栏自己跟上） */
   setIgnoreTrimWhitespace(on: boolean): void;
+  /**
+   * 「折叠未改动区」这一格现在开着没有（Task 7）。
+   *
+   * 开关是 **surface 上的状态**，不进设置（本轮不做用户默认）：它的寿命就是这一格旁路的寿命，
+   * 拆掉旁路就没了，换一张差异标签也是新的。
+   */
+  collapseUnchanged(): boolean;
+  /** 开 ⇒ 把当前够长的未改动区全折上；关 ⇒ 清空（两栏一起，同一发） */
+  setCollapseUnchanged(on: boolean): void;
+  /** 三颗动作之一：够长的未改动区全折上（开关跟着打开） */
+  collapseAllUnchanged(): void;
+  /** 三颗动作之一：全展开（开关跟着关掉 —— 再重算也不许偷偷折回来） */
+  showAllUnchanged(): void;
+  /** 当前真的折起来的行区间（右栏行轴） */
+  foldRanges(): Array<{ from: number; to: number }>;
+  /** 落位/揭示前先把包住（或紧邻）这一行的折区展开 */
+  unfoldAround(line: number): void;
   /**
    * 把这一格**已经漂移**的三件事补回「差异格该有的样子」（裁决 R20 / R22 / R23，内部口）。
    *
@@ -150,7 +179,8 @@ function lineStartOf(view: EditorView, line: number): number {
  * 必须出现在 state 的扩展清单里**，之后 `faceComp.reconfigure()` 才管得到它（CM6 的
  * `flatten` 只走 base 里出现过的 Compartment，没出现的那一发 reconfigure 是静默空转）。
  * `retarget` 与「补基线」走的都是整态换 state，所以那一臂也只能靠这里带进去 —— 换进来的那颗
- * state 若不含它，「交换左右」之后左栏就没有底色了。折叠不在这里（归 Task 7）。
+ * state 若不含它，「交换左右」之后左栏就没有底色了。折叠（Task 7）也在这同一臂里
+ * （`diffFace` 现在带着 `diffFoldField` + 折条出口 ⇒ 换 state 时折叠面跟着进去，不必另装）。
  *
  * ⚠️ 这一栏**不装折行**（R19，见 `createDiffSurface` 里那一手）：折行从一开始就不进来。
  */
@@ -319,14 +349,6 @@ export function createDiffSurface(
         })
       : [];
   stored = computeBlocks();
-  const left = new EditorView({
-    parent: originalEl,
-    state: leftState(
-      current,
-      leftFace.of(diffFace("original", () => stored)),
-      themeSlot.of(lastTheme),
-    ),
-  });
   const detachSash = attachSashDrag(originalEl, sashEl);
 
   /** 右栏那颗 view 的 state 回写进标签快照（与 `handleUpdate` / `lifecycle` 同一个寻址）。 */
@@ -336,14 +358,192 @@ export function createDiffSurface(
     if (tab) tab.state = right.state;
   };
 
-  /** 现读左右两份正文 → diffBlocks → 给两颗 view 各发 refreshDiff → 广播新块表。 */
+  // ---- Task 7 · 折叠未改动区（默认不折；开关与「折着哪几段」只活在这一格） ----
+  /** 开关（缺省关 = 一段都不折）。不进设置，也不跨标签活：旁路拆掉就没了。 */
+  let foldOn = false;
+  /**
+   * 手动展开过的未改动区（按**段序号**记账：首块之前 0、两块之间按前一块的序号、末块之后 = 块数）。
+   *
+   * 为什么记「展开过」而不是记「折起来」：开关开着 = 政策「够长的未改动区就折」，而键入之后
+   * 块表会变 —— 记展开过 ⇒ 新长出来的未改动区自己会折上（与开关的语义一致），而用户刚点开的那
+   * 一段不会被偷偷折回去。段序号会随块增减错位（块被拆成两块时展开记录跟着挪），这是本轮的
+   * 已知边界，写进结果文档的「已知限制」。
+   */
+  const expandedRuns = new Set<number>();
+
+  const lineCountOf = (side: DiffSide): number =>
+    side === "modified" ? (right?.state.doc.lines ?? 0) : left.state.doc.lines;
+
+  /** 这一栏此刻真的折着哪几段（候选一律由 `diffBlocks` 交出来的块推出 —— 同源）。 */
+  const foldedFor = (side: DiffSide): FoldRange[] =>
+    foldOn
+      ? foldCandidates(stored, side, lineCountOf(side)).filter((r) => !expandedRuns.has(r.run))
+      : [];
+
+  /** 发进那一臂的形态（只带本栏行轴的行号；`run` 是 surface 自己的记账抓手）。 */
+  const foldPointsFor = (side: DiffSide): Array<{ from: number; to: number }> =>
+    foldedFor(side).map(({ from, to }) => ({ from, to }));
+
+  /**
+   * 两栏一起点名：按现在的块表重画一次，并把「现在折着这些段」一起发进去。
+   *
+   * ⚠️ 两发必须在**同一次派发**里（`refreshDiff` 与 `setFoldedRanges`）：块表刚换、底色已经跟着
+   * 新块走而折区还停在旧块上，那一帧画出来的就是错的那几行 —— 三处同刻跟上靠的是同一发事务。
+   */
+  const refreshArms = (): void => {
+    const foldOf = (side: DiffSide): StateEffect<unknown>[] => [
+      refreshDiff.of(null),
+      setFoldedRanges.of(foldPointsFor(side)),
+    ];
+    left.dispatch({ effects: foldOf("original") });
+    right?.dispatch({ effects: foldOf("modified") });
+    writeBackRight();
+  };
+
+  /**
+   * 落位/揭示前把「包住（或紧邻）这一行」的折区展开（简报 Step 3 的规则：
+   * 凡 `from <= line <= to + DIFF_REVEAL_LINES` 的段都摘掉）。
+   *
+   * ⚠️ 两栏的行轴各查各的（`SIDES` 那一圈）：同一行号在左右两栏指的是不同的行，
+   * 只按右栏摘 ⇒ 左栏的落点还能落进被 `display: none` 的行里。
+   */
+  const unfoldAroundLines = (lines: number[]): void => {
+    if (!foldOn) return;
+    const drop: number[] = [];
+    for (const side of SIDES) {
+      for (const r of foldedFor(side)) {
+        if (drop.includes(r.run)) continue;
+        if (lines.some((line) => r.from <= line && line <= r.to + DIFF_REVEAL_LINES)) {
+          drop.push(r.run);
+        }
+      }
+    }
+    if (drop.length === 0) return;
+    for (const run of drop) expandedRuns.add(run);
+    refreshArms();
+  };
+
+  const unfoldAround = (line: number): void => unfoldAroundLines([line]);
+
+  /**
+   * 三处「谁让光标走进折区」的兜底（简报 Step 3 那条 ⚠️ 风险的正面处理）：
+   * CM6 里 `display: none` 的行**仍在文档里** ⇒ 键入/点击/`ArrowDown` 都可能把插入符送进
+   * 被折起来的那几行。落位之前有 `unfoldAround`，而**用户自己走进去**这一路只能靠右栏的
+   * `updateListener` 检查 —— 那一段当场展开，别让它带着看不见的光标继续打字。
+   */
+  const unfoldUnderCaret = (): void => {
+    if (!right || !foldOn) return;
+    const line = rightCaretLine();
+    const hit = foldedFor("modified").find((r) => line >= r.from && line <= r.to);
+    if (!hit) return;
+    expandedRuns.add(hit.run);
+    refreshArms();
+  };
+
+  /**
+   * 把某一栏落到第 `line` 行（裁决 R25 的落笔处，两颗 view 的落法**不一样**，这不是手滑）：
+   *   · **左栏**（旁路那颗）走 `EditorView.scrollIntoView`：它不在同步滚动那套注册口里
+   *     （两份**不同**的内容，见文件头），那一发晚一帧落位也没人记账 ⇒ 普通派发就够。
+   *   · **右栏**（`Panel.view` 那颗 = 这份文档本身，在册）必须**同步写完再认领**：CM6 的
+   *     `scrollIntoView` 只把 `scrollTarget` 存下来，真正写 `scrollTop` 排在 `measure()` 里
+   *     （下一帧）⇒ 紧跟其后的认领读到的是**跳之前**的位置，账本就把「跳之前」登记成意图；
+   *     下一帧真实的落位回声进来时既不是那个意图也不是那个像素 ⇒ 判成「用户自己滚的」⇒
+   *     广播给同文档的其它视口（正是设计稿 ⑥/⑩·3 明令禁的那一发）。
+   *     走的是仓库那条**真落位口** `landVisibleSideAtV`（同步写 + 同栈登记意图与真实落点 +
+   *     没落进去就逐帧重试到收口；`markdown.ts` / `tabs/lifecycle.ts` / `tabs/split.ts`
+   *     的所有落位都用它）。原来那个「认领我此刻停在哪」的口（`wire.ts` 里那颗）的语义是
+   *     「我已经把位置写好了」，不许弯成「位置即将写好」⇒ 这条路里不用它，
+   *     由上面那条真落位口自己登记（`tests/diff-surface.test.ts` 有守卫钉着这一手）。
+   *
+   * 共享坐标 `v` 给的是落点那一行（整数 = 「那一行的行顶贴容器顶」，与 `y: "start"` 同一档
+   * 语义），`at` 给的是同一行的行首字符位置：两格宽度不同也能按字符对齐（B300），
+   * 量不到矩形时锚点自己退回按 `v` 的比例落位。
+   */
+  const landSide = (side: DiffSide, line: number): void => {
+    const view = side === "original" ? left : right;
+    if (!view) return;
+    const at = lineStartOf(view, line);
+    if (side === "original") {
+      view.dispatch({
+        selection: { anchor: at },
+        effects: EditorView.scrollIntoView(at, { y: "start" }),
+      });
+      return;
+    }
+    view.dispatch({ selection: { anchor: at } });
+    writeBackRight();
+    landVisibleSideAtV(panel, view.state.doc.lineAt(at).number, 0, at);
+  };
+
+  /**
+   * 折条被点（两臂带进来的都是这一颗，各自认自己那一栏）：就地展开那一段，
+   * 再把「上下各 `DIFF_REVEAL_LINES` 行」的揭示窗口第一行落到视野顶上。
+   *
+   * ⚠️ 揭示只做**本栏**：左栏那颗不在同步滚动那套注册口里，两栏本来就是各滚各的
+   * （点一栏的折条把另一栏也滚走，等于偷偷给它发明一条同步规则）。
+   */
+  const expandFold = (side: DiffSide, from: number): void => {
+    const hit = foldedFor(side).find((r) => r.from === from);
+    if (!hit) return;
+    expandedRuns.add(hit.run);
+    refreshArms();
+    landSide(side, Math.max(1, hit.from - DIFF_CONTEXT_LINES - DIFF_REVEAL_LINES));
+  };
+
+  /** 两栏各自的折条出口（身份固定，见 `leftArm` 的那条 ⚠️）。 */
+  const onOriginalFoldClick = (from: number): void => expandFold("original", from);
+  const onModifiedFoldClick = (from: number): void => expandFold("modified", from);
+
+  /**
+   * 三颗动作 + 开关（简报 Interfaces 的那四颗）。
+   *
+   * ⚠️ 每一颗都以 `refreshArms()` 收口：改了状态就两栏一起点名，别留给下一次重算去补 ——
+   * 「谁重算由 surface 这一处定」（R24），而这里改的是**画法**，不是块表。
+   */
+  const setCollapseUnchanged = (on: boolean): void => {
+    if (foldOn === on) return;
+    foldOn = on;
+    // 开关拨过去 = 重新按当前块表折一遍 / 全部放开；手动展开过的那几笔不跨开关记账
+    //（开着又关掉再打开，用户要的是「照现在的正文重来一次」，不是把上次那些段一条条对上）。
+    expandedRuns.clear();
+    refreshArms();
+  };
+  const collapseAllUnchanged = (): void => {
+    foldOn = true;
+    expandedRuns.clear();
+    refreshArms();
+  };
+  const showAllUnchanged = (): void => {
+    // 连开关一起关：只清空折区而开关留着的下一发，「全部展开」会被重算偷偷折回去。
+    foldOn = false;
+    expandedRuns.clear();
+    refreshArms();
+  };
+
+  /**
+   * 左栏那一臂（**排在折叠块之后**：`onFoldBarClick` 那颗回调得先有身份）。
+   *
+   * ⚠️ 回调取的是 `onOriginalFoldClick` 这一颗**固定**的函数而不是每次现做一条闭包：
+   * `DiffFoldWidget.eq` 比回调身份，换一颗就等于每次重画折条的 DOM；更要紧的是换出去的
+   * 那颗闭包可能已经属于上一颗 surface（与右栏共用槽那种病同形）。
+   * 挂 state 与 `resetLeftDoc` 换 state 都走这一处，两栏臂的组成只有一份定义。
+   */
+  const leftArm = (): Extension => [
+    diffFace("original", () => stored),
+    onFoldBarClick(onOriginalFoldClick),
+  ];
+  const left = new EditorView({
+    parent: originalEl,
+    state: leftState(current, leftFace.of(leftArm()), themeSlot.of(lastTheme)),
+  });
+
+  /** 现读左右两份正文 → diffBlocks → 给两颗 view 各发 refreshDiff（+ 折叠态）→ 广播新块表。 */
   const syncBlocks = (): void => {
     stored = computeBlocks();
     // 两颗都要点名：装饰层不会自己醒（`refreshDiff` 与 `refreshGutterDiff` 同形），
     // 而对栏那颗 view **看不见**这一栏的键入 ⇒ 只有持有两颗 view 的这一处能一起发。
-    left.dispatch({ effects: refreshDiff.of(null) });
-    right?.dispatch({ effects: refreshDiff.of(null) });
-    writeBackRight();
+    // 折叠态同一次派发跟上：候选来自**同一份** `stored`，两栏与侧栏才不会各说各话。
+    refreshArms();
     // Task 9 的侧栏面板从这里领新块表（surface **不 import** 面板模块 —— 单槽注册口，R6）。
     notifyDiffBlocks(current);
   };
@@ -358,9 +558,7 @@ export function createDiffSurface(
    */
   const resetLeftDoc = (): void => {
     lastTheme = themeOf();
-    left.setState(
-      leftState(current, leftFace.of(diffFace("original", () => stored)), themeSlot.of(lastTheme)),
-    );
+    left.setState(leftState(current, leftFace.of(leftArm()), themeSlot.of(lastTheme)));
     syncBlocks();
   };
 
@@ -381,38 +579,20 @@ export function createDiffSurface(
    *
    * 索引越界夹到首/末块（不环绕 —— 走到头再按一次就是停在那一块，与「跳过头」比环绕好懂）。
    *
-   * ⚠️ 两颗 view 的落法**不一样**，这是裁决 R25 定的，不是手滑：
-   *   · **左栏**（旁路那颗）走 `EditorView.scrollIntoView`：它不在同步滚动那套注册口里
-   *     （两份**不同**的内容，见文件头），那一发晚一帧落位也没人记账 ⇒ 普通派发就够。
-   *   · **右栏**（`Panel.view` 那颗 = 这份文档本身，在册）必须**同步写完再认领**：CM6 的
-   *     `scrollIntoView` 只把 `scrollTarget` 存下来，真正写 `scrollTop` 排在 `measure()` 里
-   *     （下一帧）⇒ 紧跟其后的认领读到的是**跳之前**的位置，账本就把「跳之前」登记成意图；
-   *     下一帧真实的落位回声进来时既不是那个意图也不是那个像素 ⇒ 判成「用户自己滚的」⇒
-   *     广播给同文档的其它视口（正是设计稿 ⑥/⑩·3 明令禁的那一发）。
-   *     走的是仓库那条**真落位口** `landVisibleSideAtV`（同步写 + 同栈登记意图与真实落点 +
-   *     没落进去就逐帧重试到收口；`markdown.ts` / `tabs/lifecycle.ts` / `tabs/split.ts`
-   *     的所有落位都用它）。原来那个「认领我此刻停在哪」的口（`wire.ts` 里那颗 `claim…`）
-   *     的语义是「我已经把位置写好了」，不许弯成「位置即将写好」⇒ 这条路里不用它，
-   *     由上面那条真落位口自己登记（`tests/diff-surface.test.ts` 有守卫钉着这一手）。
+   * ⚠️ 落位之前先 `unfoldAroundLines` 两侧各自那一行（Task 7 那一发，位置就钉在这里）：
+   * 目标行被折进收起区时，`display: none` 的行仍在文档里 ⇒ 光标会「落到看不见的那一行」，
+   * 而用户看到的是停在别处。两栏的行轴不同 ⇒ 两侧各查一遍，别只查右栏。
+   *
+   * 两颗 view 的落法不一样（左栏普通派发 / 右栏同步写 + 同栈认领，裁决 R25）—— 那一手的
+   * 完整理由写在 `landSide` 上，跳块与点折条共用它，不各写一份。
    */
   const jumpTo = (index: number): void => {
     if (stored.length === 0) return;
     const b = stored[Math.min(Math.max(index, 0), stored.length - 1)];
-    // Task 7 的「折叠未改动区」在这里补 `unfoldAround`（目标行被折进收起区时先展开那段再落）；
-    // 本轮还没有折叠，那一发天然是 no-op ⇒ 位置留在这句话上，不预先建空抽象。
-    const at = lineStartOf(left, landingLine(b, "original"));
-    left.dispatch({
-      selection: { anchor: at },
-      effects: EditorView.scrollIntoView(at, { y: "start" }),
-    });
-    if (!right) return;
-    const to = lineStartOf(right, landingLine(b, "modified"));
-    right.dispatch({ selection: { anchor: to } });
-    writeBackRight();
-    // 共享坐标 `v` 给的是落点那一行（整数 = 「那一行的行顶贴容器顶」，与 `y: "start"` 同一档
-    // 语义），`at` 给的是同一行的行首字符位置：两格宽度不同也能按字符对齐（B300），
-    // 量不到矩形时锚点自己退回按 `v` 的比例落位。
-    landVisibleSideAtV(panel, right.state.doc.lineAt(to).number, 0, to);
+    const lines = [landingLine(b, "original"), landingLine(b, "modified")];
+    unfoldAroundLines(lines);
+    landSide("original", lines[0]);
+    landSide("modified", lines[1]);
   };
 
   /**
@@ -469,13 +649,18 @@ export function createDiffSurface(
     }, DIFF_REFRESH_MS);
   };
 
-  /** 右栏那一臂的内容：装饰 + 键入落点（`updateListener` 是 state facet，只能并进来）。 */
+  /** 右栏那一臂的内容：装饰 + 折条出口 + 键入落点（`updateListener` 是 state facet，只能并进来）。 */
   const rightArm = (): Extension => [
     diffFace("modified", () => stored),
+    onFoldBarClick(onModifiedFoldClick),
     // 仓库同形先例 `tests/preview-face-helpers.ts:71-76`：塞进 `state.update({extensions})`
     // 会被静默丢掉，必须走 effect。
     EditorView.updateListener.of((update) => {
       if (update.docChanged) scheduleSync();
+      // 折叠期光标可能走进 `display: none` 的那几行（简报 Step 3 那条 ⚠️ 风险的另一半：
+      // 落位之前有 `unfoldAround`，用户自己走进去这一路只能在这里补）。只认选区动过 ⇒
+      // 每一发键入不必再查一遍折区（键入那一条走 `scheduleSync`，重算时会一并把折叠态刷新）。
+      if (update.selectionSet) unfoldUnderCaret();
     }),
   ];
 
@@ -493,6 +678,10 @@ export function createDiffSurface(
       ],
     });
   }
+  // 换标签再换回来那一趟：`switchTab` 的同形回写会把**上一颗 surface 的折叠态**留在标签快照里
+  //（`diffFoldField` 是模块级那颗，槽换挂时值不重建）⇒ 挂上这一刻必须按这一颗的口径重发一次
+  // 折叠态（关着 ⇒ 两份空清单 = 把快照里那些 `display: none` 的行放回来）。
+  refreshArms();
 
   /**
    * 补漂移（R20 / R22 / R23-2 的落笔处）。判据一律是「现值 ≠ 我挂上时那个样子」，
@@ -534,6 +723,12 @@ export function createDiffSurface(
     jumpTo,
     step,
     activeIndex,
+    collapseUnchanged: () => foldOn,
+    setCollapseUnchanged,
+    collapseAllUnchanged,
+    showAllUnchanged,
+    foldRanges: () => foldPointsFor("modified"),
+    unfoldAround,
     ignoreTrimWhitespace: () => ignoreWs,
     setIgnoreTrimWhitespace: (on) => {
       if (ignoreWs === on) return;
@@ -544,6 +739,10 @@ export function createDiffSurface(
     reassert,
     dispose: () => {
       cancelSync();
+      // 折叠状态跟着这一格退场（那颗 view 上的 `display: none` 已经随臂摘掉了，读口再报着
+      // 折区就是两份真相 —— 拆掉的 surface 从此只报「没折」）。
+      foldOn = false;
+      expandedRuns.clear();
       // 右栏那颗 view **不随旁路销毁**（它是那份文档本身）⇒ 这一臂必须精准摘掉，
       // 否则底色与占位块会留在一张普通编辑器标签上。槽值清成空 ⇒ 键入监听与两臂装饰一起走。
       // 那颗 view 已经 destroy 过的话这一发是空转（CM6 内部的 `destroyed` 分支），不抛错。

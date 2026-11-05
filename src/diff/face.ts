@@ -17,14 +17,21 @@
 
 import {
   Facet,
+  RangeSet,
   StateEffect,
   StateField,
   type Extension,
   type Range,
-  type RangeSet,
   type Text,
+  type Transaction,
 } from "@codemirror/state";
-import { Decoration, EditorView, WidgetType } from "@codemirror/view";
+import {
+  Decoration,
+  EditorView,
+  gutterLineClass,
+  GutterMarker,
+  WidgetType,
+} from "@codemirror/view";
 import type { DiffBlock, DiffKind } from "./blocks";
 import type { DiffSide } from "./model";
 
@@ -229,12 +236,271 @@ const diffFaceField = StateField.define<RangeSet<Decoration>>({
 });
 
 /**
- * 一臂装饰：装在**某一栏**那颗 view 上，吃 `blocks()` 交出来的块。
+ * 一臂装饰：装在**某一栏**那颗 view 上，吃 `blocks()` 交出来的块，并且带着折叠的那一臂。
  *
  * 用法（预审 R1）：两颗 view 各装一臂、各自 `side`，由 `surface.ts` 在挂旁路那一刻通过自己
  * 创建的 `Compartment` 装上/拆掉。本文件不建 view、不认识文档模型，也**不排任何定时器**
  * （重画的时机归 surface，见 `refreshDiff` 那一段）。
+ *
+ * 折叠（Task 7）就骑在**同一臂**里：`diffFoldField` 的值由 `setFoldedRanges` 那一发写入，
+ * 于是它进得了右栏那颗既有的 view，而不必再 `appendConfig` 一颗新槽 —— 那颗槽就是 Task 5
+ * 抓过的「上一臂还活着」那一场病的病根（见 `surface.ts` 的 `rightFaceSlot` 注）。
  */
 export function diffFace(side: DiffSide, blocks: () => DiffBlock[]): Extension {
-  return [faceSide.of(side), faceBlocks.of(blocks), diffFaceField];
+  return [faceSide.of(side), faceBlocks.of(blocks), diffFaceField, diffFoldField];
 }
+
+// --------------------------------------------------------------------------- #
+// Task 7 · 折叠未改动区（折起来的行 + 占位条）
+// --------------------------------------------------------------------------- #
+
+/**
+ * 折叠的三颗常量与 `vscode` 的 `diffEditor` 那一组同名同值（照源码抄来：
+ * `editor.contrib.diffEditor` 的 `diffEditor.hideUnchangedRegions.contextLineCount 3` /
+ * `minimumLineCount 3` / `revealLineCount 20`）。用户可见的文案里不提名处。
+ */
+export const DIFF_CONTEXT_LINES = 3;
+export const DIFF_MIN_UNCHANGED_LINES = 3;
+/** 点折条展开时，上下各揭示这么多行。 */
+export const DIFF_REVEAL_LINES = 20;
+
+/** 一段未改动行在本栏的位置（`run` = 它是第几段：首块之前 0，两块之间按前一块的序号，末块之后 = 块数）。 */
+export interface UnchangedRun {
+  run: number;
+  start: number;
+  end: number;
+}
+
+/** 一段**折起来**的行（`run` 带上是为了让 surface 能按段记账；`from`/`to` 含端点，本栏行轴）。 */
+export interface FoldRange {
+  run: number;
+  from: number;
+  to: number;
+}
+
+/** 发进某一臂的折叠态（只带行号：段序号是 surface 那一侧的记账口径，装饰层不认）。 */
+export const setFoldedRanges = StateEffect.define<Array<{ from: number; to: number }>>();
+
+/**
+ * 折条被点（**每一栏一条**：臂里带上的是那一栏自己的回调）。
+ *
+ * 为什么交回调用而不是让 widget 自己发 `setFoldedRanges`：折起来的是哪些段只有 surface 知道
+ * （它的开关状态 + 手动展开过的段号才是那一份真相）。装饰层自己摘一段就等于第二份真相 ——
+ * 下一发 `syncBlocks` 按 surface 那份清单重发，被摘的那一段立刻又折回来。
+ */
+const faceFoldClick = Facet.define<(from: number) => void, ((from: number) => void) | null>({
+  combine: (values) => values[0] ?? null,
+});
+
+/** 挂上「折条被点了」的出口（与两臂一起进 state；拆臂就没了）。 */
+export function onFoldBarClick(fn: (from: number) => void): Extension {
+  return faceFoldClick.of(fn);
+}
+
+/**
+ * 本栏的每一段未改动行（升序）。
+ *
+ * **候选只从 `diffBlocks` 的产物推**（设计稿 ⑥ 的同源：三处同刻跟上靠的就是这一条）——
+ * 相邻两块之间、首块之前、末块之后那几行就是「两边一字不差」的那一段，别处不许再对
+ * 「哪些行是未改动的」另算一遍（所以这里只读块的本栏区间，不读正文、不碰对齐器）。
+ *
+ * 空段（`start > end`，那一侧没有真行）自己不会造出未改动行：它的 `start = end + 1`
+ * 正好落在下一段的边界上，于是 `prev` 取 `end` 之后下一段从 `end + 1` 起 —— 与
+ * `blocks.ts` 的空段表示法同一口径，不会把落点那一行重复算进两段里。
+ */
+export function unchangedRuns(
+  blocks: DiffBlock[],
+  side: DiffSide,
+  totalLines: number,
+): UnchangedRun[] {
+  const out: UnchangedRun[] = [];
+  let prev = 0; // 上一块在本栏的结束行（0 = 还没走到块）
+  for (let i = 0; i < blocks.length; i++) {
+    const { start, end } = ownRange(blocks[i], side);
+    if (prev + 1 <= start - 1) out.push({ run: i, start: prev + 1, end: start - 1 });
+    prev = Math.max(prev, end);
+  }
+  if (prev + 1 <= totalLines) out.push({ run: blocks.length, start: prev + 1, end: totalLines });
+  return out;
+}
+
+/**
+ * 折叠候选（本栏行轴）：长度 **> `DIFF_MIN_UNCHANGED_LINES + 2 * DIFF_CONTEXT_LINES`** 才折，
+ * 折掉中间、上下各留 `DIFF_CONTEXT_LINES` 行（阈值照源码那一组：3 + 2×3 ⇒ 9 行不折、10 行才折）。
+ *
+ * 两侧的**段长天然相等**（两块之间的那些行是配对了的相同行），所以「够不够长」这一问不分栏；
+ * 分栏的是**行号**（两块之间一旦有长短不等的块，两栏的行轴就错开）⇒ 候选与折区必须按 `side`
+ * 各换算一份，不许只算右栏。
+ */
+export function foldCandidates(
+  blocks: DiffBlock[],
+  side: DiffSide,
+  totalLines: number,
+): FoldRange[] {
+  const out: FoldRange[] = [];
+  for (const run of unchangedRuns(blocks, side, totalLines)) {
+    if (run.end - run.start + 1 <= DIFF_MIN_UNCHANGED_LINES + 2 * DIFF_CONTEXT_LINES) continue;
+    out.push({
+      run: run.run,
+      from: run.start + DIFF_CONTEXT_LINES,
+      to: run.end - DIFF_CONTEXT_LINES,
+    });
+  }
+  return out;
+}
+
+/**
+ * 折起来的那一段之上的**占位条**：一行高（与它替掉的那些行不同，它自己必须占一格），
+ * 文案「展开 N 行未改动的内容」，点它 = 展开这一段。
+ *
+ * ⚠️ 高度与 `DiffGapWidget` 同一条纪律（R15/R18）：只按 `view.defaultLineHeight` 写 inline，
+ * 样式段里不许出现 `height` / `em` / 竖向 margin —— 两栏各折同样多的行，折条也各占一行，
+ * 逐行对齐才不塌。
+ *
+ * ⚠️ `eq` 比**回调身份**（除了 from/to）：右栏那一臂是跨 surface 共用的同一颗槽，换挂时
+ * 装饰层不会自己重建；不比回调的话，新 surface 挂上后点折条会叫到上一颗（已 dispose 的）
+ * surface 身上 —— 与 Task 5 那个「旧 provider 还闭包着旧块表」同形，只是换了个抓手。
+ */
+export class DiffFoldWidget extends WidgetType {
+  constructor(
+    readonly from: number,
+    readonly to: number,
+    readonly onExpand: ((from: number) => void) | null,
+  ) {
+    super();
+  }
+
+  get hidden(): number {
+    return this.to - this.from + 1;
+  }
+
+  eq(other: WidgetType): boolean {
+    return (
+      other instanceof DiffFoldWidget &&
+      other.from === this.from &&
+      other.to === this.to &&
+      other.onExpand === this.onExpand
+    );
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const el = document.createElement("div");
+    el.className = "diff-fold-bar";
+    el.style.height = `${view.defaultLineHeight}px`;
+    el.textContent = `展开 ${this.hidden} 行未改动的内容`;
+    el.addEventListener("click", (event) => {
+      event.preventDefault();
+      // 单独装一臂（不带出口）时点下去就是空转：折叠态的清单只由 surface 那一份真相发进来，
+      // 装饰层自己摘一段等于第二份真相（下一次重算又把它折回去）。
+      this.onExpand?.(this.from);
+    });
+    return el;
+  }
+
+  /** 折条吃点击，但**不吃光标**：点到它不该把插入符搬进被折起来的那几行里。 */
+  ignoreEvent(event: Event): boolean {
+    return event.type !== "click" && event.type !== "mousedown";
+  }
+}
+
+/** 折起来的行在行号栏那一格上的类（线装饰的类**不会**自动落到 gutter 元素上，得自己发标记）。 */
+class FoldGutterMarker extends GutterMarker {
+  elementClass = "diff-folded-gutter";
+
+  eq(other: GutterMarker): boolean {
+    return other instanceof FoldGutterMarker;
+  }
+
+  toString(): string {
+    return "";
+  }
+}
+
+const foldGutterMarker = new FoldGutterMarker();
+
+/** 夹到本栏真实存在的行号（块是按 provider 那份正文算的，本栏正文可能先动了一步）。 */
+function clampLine(line: number, totalLines: number): number {
+  return Math.min(Math.max(line, 1), totalLines);
+}
+
+/** 折区 → 一摞行装饰（`display: none` 的那些行）+ 起点的折条。 */
+function buildFoldFace(
+  doc: Text,
+  folds: FoldPoint[],
+  onExpand: ((from: number) => void) | null,
+): RangeSet<Decoration> {
+  const ranges: Range<Decoration>[] = [];
+  for (const fold of folds) {
+    const from = clampLine(fold.from, doc.lines);
+    const to = clampLine(fold.to, doc.lines);
+    if (from > to) continue;
+    // 折条恒发（出口没挂上时点下去是空转）：折叠态是**看得见的状态**，不该因为没人接就把
+    // 那几行抹掉却连条都不留。
+    ranges.push(
+      Decoration.widget({
+        widget: new DiffFoldWidget(from, to, onExpand),
+        block: true,
+        side: -1,
+      }).range(doc.line(from).from),
+    );
+    for (let line = from; line <= to; line++) {
+      ranges.push(Decoration.line({ class: "diff-folded" }).range(doc.line(line).from));
+    }
+  }
+  return Decoration.set(ranges, true);
+}
+
+/** 折叠态的形状 = `setFoldedRanges` 交进来的那一份（行号，本栏行轴）。 */
+interface FoldPoint {
+  from: number;
+  to: number;
+}
+
+/** 折起来的行 → 行号栏的类（不抹掉的话那一串数字会在 0 高的格子里挤成一坨）。 */
+function buildFoldGutter(doc: Text, folds: FoldPoint[]): RangeSet<GutterMarker> {
+  const ranges: Range<GutterMarker>[] = [];
+  for (const fold of folds) {
+    for (
+      let line = clampLine(fold.from, doc.lines);
+      line <= clampLine(fold.to, doc.lines);
+      line++
+    ) {
+      ranges.push(foldGutterMarker.range(doc.line(line).from));
+    }
+  }
+  return RangeSet.of(ranges, true);
+}
+
+/**
+ * 键入期把折区跟着改动走（与 `diffFaceField` 里 `value.map(tr.changes)` 同一条纪律）：
+ * 行号按位置换算（起点贴前、终点贴后），换算完空了的段丢掉。这一手只管「到点之前别画错行」，
+ * 真正的重算还是 surface 那一发 `syncBlocks`（那里会按新块表重发 `setFoldedRanges`）。
+ */
+function mapFolds(value: FoldPoint[], tr: Transaction): FoldPoint[] {
+  const doc = tr.startState.doc;
+  const out: FoldPoint[] = [];
+  for (const fold of value) {
+    const a = tr.changes.mapPos(doc.line(clampLine(fold.from, doc.lines)).from, -1);
+    const b = tr.changes.mapPos(doc.line(clampLine(fold.to, doc.lines)).to, 1);
+    const from = tr.newDoc.lineAt(a).number;
+    const to = tr.newDoc.lineAt(b).number;
+    if (from <= to) out.push({ from, to });
+  }
+  return out;
+}
+
+/** 折叠态那一臂的字段（`{from,to}` 是本栏行轴的行号，与 `setFoldedRanges` 交进来的同一份）。 */
+const diffFoldField = StateField.define<FoldPoint[]>({
+  create: () => [],
+  update(value, tr) {
+    for (const e of tr.effects) if (e.is(setFoldedRanges)) return e.value;
+    // 没发过点名那一发就只跟着改动映射：折不折、折哪几段都由 surface 定（这一臂不自己拿主意）。
+    return tr.docChanged ? mapFolds(value, tr) : value;
+  },
+  provide: (f) => [
+    EditorView.decorations.compute([f, "doc"], (state) =>
+      buildFoldFace(state.doc, state.field(f), state.facet(faceFoldClick)),
+    ),
+    gutterLineClass.compute([f, "doc"], (state) => buildFoldGutter(state.doc, state.field(f))),
+  ],
+});
