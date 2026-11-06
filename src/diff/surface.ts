@@ -19,7 +19,7 @@
 
 import { Compartment, EditorState, StateEffect, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
-import { docs, isWrap, panels, tabs, type Panel } from "../core/app-state";
+import { activePanelId, docs, isWrap, panels, tabs, type Panel } from "../core/app-state";
 import { landVisibleSideAtV } from "../sync-scroll/wire";
 import { DIFF_REFRESH_MS } from "./align";
 import { blockAt, diffBlocks, type DiffBlock } from "./blocks";
@@ -908,6 +908,11 @@ export function syncDiffSurface(panel: Panel): void {
     disposeDiffSurface(panel);
   }
   createDiffSurface(panel.bodyEl as HTMLElement, panel, want);
+  // B461 · Task 9（裁决 R41）：**挂上**旁路那一刻就广播一次。
+  // 不等下一次 `syncBlocks` 的理由：切回那张差异标签走的是「重建旁路」，块表在构造那一刻已经
+  // 算好而没人再广播 ⇒ 侧栏那一列要等用户打一个字才回来。**拆**那一头不广播 —— 设计稿 ⑩·2
+  // 定的是「光标离开差异标签时高亮保持最后那块」，抹掉它就是让用户丢了参照。
+  if (panel.panelId === activePanelId) notifyDiffBlocks(want);
 }
 
 /**

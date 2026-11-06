@@ -1048,14 +1048,16 @@ describe("B353 侧栏底部「设置」入口：最后一颗 + 动作不是视�
     return html.slice(open + 1, end);
   }
 
-  it("① 它是按钮列的**最后一颗**，顺序 = 资源管理器 / 最近打开 / 大纲 / 设置", () => {
+  it("① 它是按钮列的**最后一颗**，顺序 = 资源管理器 / 搜索 / 差异 / 最近打开 / 大纲 / 设置", () => {
     const seg = sideBarSeg();
     const ids = [...seg.matchAll(/id="(side-[a-z]+)"/g)].map((m) => m[1]);
     // B389：搜索键插在资源管理器之后 —— VS Code 活动栏的次序就是 Explorer → Search，
-    // 「在文件夹里搜」跟着那棵树走；上四颗切视图，最后一颗（设置）是动作。
-    expect(ids, "按钮列的读法顺序（上四颗切视图，最后一颗是动作）").toEqual([
+    // 「在文件夹里搜」跟着那棵树走；上五颗切视图，最后一颗（设置）是动作。
+    // B461：差异键排在搜索之后（VS Code 活动栏 Explorer → Search → 差异那一段）。
+    expect(ids, "按钮列的读法顺序（上五颗切视图，最后一颗是动作）").toEqual([
       "side-explorer",
       "side-search",
+      "side-diff",
       "side-recent",
       "side-outline",
       "side-settings",
@@ -1177,6 +1179,12 @@ describe("B207 `display` 压过 UA 的 `[hidden]`：凡写 display 又靠 hidden
       file: "preview.css",
       css: preview,
       why: "收起展开区（B207）：漏了就是「左栏折叠不起来」+「分割线区域空隙太大」",
+    },
+    {
+      sel: ".diff-panel",
+      file: "preview.css",
+      css: preview,
+      why: "B461 第五块「差异」同样是 display:flex + hidden 收起：漏了就是切走这一块它还占着一片",
     },
     {
       sel: ".settings-nav-item",

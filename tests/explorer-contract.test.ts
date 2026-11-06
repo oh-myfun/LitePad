@@ -113,39 +113,41 @@ describe("B314 资源管理器跨层契约", () => {
     );
   });
 
-  it("外壳认得第四块：类型、回落判据、回放都要跟着走", () => {
-    // B314 加 explorer、B389 加 search：白名单漏一格的后果不是报错，而是**静默回落大纲**
-    // （用户上次开着搜索，下次启动开的是大纲，而 `drawer_view` 照旧写着一串没人认的值）。
-    expect(api, "DrawerViewName 要有 explorer 与 search").toContain(
-      `"toc" | "recent" | "explorer" | "search"`,
+  it("外壳认得每一块：类型、回落判据、回放都要跟着走", () => {
+    // B314 加 explorer、B389 加 search、B461 加 diff：白名单漏一格的后果不是报错，而是
+    // **静默回落大纲**（用户上次开着搜索，下次启动开的是大纲，而 `drawer_view` 照旧写着一串没人认的值）。
+    // ⚠️ 判据按「每一员都在白名单里」的形状写，不钉整行原文：那一行会随名单增长被 prettier
+    //    折行（B461 这一发就折了），钉原文的退化构造于是悄悄空转（改名单反而测不到）。
+    expect(api, "DrawerViewName 要有 explorer / search / diff").toContain(
+      `"toc" | "recent" | "explorer" | "search" | "diff"`,
     );
-    expect(drawer, "盘上未知值回落大纲，但 explorer / search 必须认").toContain(
-      `raw === "recent" || raw === "explorer" || raw === "search"`,
-    );
-    // 反向：只认到 explorer 的那一版必须被现在的判据拒掉
-    const degraded = drawer.replace(
-      'raw === "recent" || raw === "explorer" || raw === "search" ? raw : "toc"',
-      'raw === "recent" || raw === "explorer" ? raw : "toc"',
-    );
-    expect(degraded, "退化串要先自证原句还在").toContain(
-      'raw === "recent" || raw === "explorer" ? raw : "toc"',
-    );
+    const guard = /function viewFromSetting[\s\S]*?\n\}/.exec(drawer)?.[0] ?? "";
+    for (const n of ["explorer", "search", "diff"]) {
+      expect(guard, `白名单必须认 ${n}（漏一格就是静默回落大纲）`).toContain(`raw === "${n}"`);
+    }
+    // 反向：摘掉 search 那一格 ⇒ 上面那条必须落空。
+    // ⚠️ 按**行**摘（名单一长 prettier 就把 `||` 折到下一行），不按整句原文替换 ——
+    //    钉原文的退化构造会在名单增长那天悄悄空转（B461 这一发就踩到）。
+    const degraded = guard.replace(/^\s*raw === "search" \|\|\n/m, "");
+    expect(degraded, "退化串要先自证原句还在").not.toBe(guard);
     expect(degraded, "退化掉的白名单不认 search ⇒ 判据必须落空").not.toContain('raw === "search"');
     expect(rustSettings, "Rust 那侧 drawer_view 仍是一串，不校验枚举").toContain(
       "pub drawer_view: String",
     );
   });
 
-  it("四块视图各自挂自己那颗按钮的点击（登记 ≠ 挂线，真机抓到过漏挂）", () => {
+  it("各块视图各自挂自己那颗按钮的点击（登记 ≠ 挂线，真机抓到过漏挂）", () => {
     // `registerDrawerView` 只管「显隐与亮灭怎么算」，点击监听归各视图自己挂。
     // 漏挂的表现是「那颗键看着正常、点下去毫无反应」，而 jsdom 那侧全是
-    // 「程序里调 setDrawer 再断言亮灭」，照不出来 ⇒ 这一条按源码串钉住三块。
+    // 「程序里调 setDrawer 再断言亮灭」，照不出来 ⇒ 这一条按源码串钉住每一块。
     const wiring: [string, string][] = [
       ["src/toc.ts", "sideOutline"],
       ["src/recents/panel.ts", "sideRecent"],
       ["src/explorer/panel.ts", "sideExplorer"],
       // B389：搜索那颗（真机抓过 B314-8 的死键，这一条就是为了让它不能再发生一次）
       ["src/search/panel.ts", "sideSearch"],
+      // B461：第五块「差异」那颗 —— 同一族的死键风险，名单跟着视图数长
+      ["src/diff/panel.ts", "sideDiff"],
     ];
     for (const [file, ref] of wiring) {
       expect(read(file), `${ref} 必须挂 click（不然按钮列那颗是死的）`).toMatch(

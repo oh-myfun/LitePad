@@ -245,6 +245,9 @@ import { setupPathRewiring } from "./explorer/paths";
 // B389：侧栏搜索视图（第四块展开区）。`setupSearch` 装输入区、结果树，并把自己登记进外壳；
 // `openSearchView` 是「在文件中查找 / 替换」那两条命令的落点。
 import { openSearchView, setupSearch } from "./search/panel";
+// B461 · Task 9：左栏第五块「差异」。`setupDiffPanel` 装那颗键 + 登记进外壳 + 领块表通知；
+// `refreshDiffAtCursor` 是光标跟随那一路（三条早退与「问结果不问事件」那颗闸都在它里面）。
+import { refreshDiffAtCursor, setupDiffPanel } from "./diff/panel";
 import { setRoots as setExplorerRoots } from "./explorer/store";
 import { initRecentsStore } from "./recents/store";
 import type { WindowScrollPosition } from "./core/events";
@@ -314,6 +317,10 @@ function handleUpdate(view: EditorView, update: ViewUpdate): void {
   // 只在活动面板上报，且真跨过章节才会重绘（闸在 toc.ts 的 refreshTocAtCursor）。
   if (update.selectionSet && panel.panelId === activePanelId) {
     refreshTocAtCursor(caretLine.number);
+    // B461 · Task 9：差异那一列跟的是**右栏**光标（左栏那颗只读 view 根本没有这一发监听，
+    // 所以「左栏有选区也不许抢高亮」是结构上成立，不是这里判出来的）。三条早退与那颗闸
+    // 都在 `diff/panel.ts` 的 `refreshDiffAtCursor` 里。
+    refreshDiffAtCursor();
     // B419：查找栏开着且「在选区中查找」时，用户换选区 = 换了搜索范围，结果跟着刷新
     // （我们自己的步进 / 替换也会改选区，那条路在 findbar.ts 里被 dispatchOwn 的闸按住）。
     refreshFindOnSelectionChange();
@@ -1404,6 +1411,10 @@ async function bootstrap(): Promise<void> {
     // 搜索的范围判据问的就是资源管理器缓存里那几根（`store.ts` 的 `searchRoots`），
     // 根先搬进来，第一次重绘才知道该说「搜文件夹」还是「只搜已打开的文档」。
     setupSearch();
+    // B461 · Task 9：第五块「差异」排在同一处、同样只给主窗口（卫星窗没有左栏按钮列）。
+    // 它认的是活动面板的旁路，所以没有「根先搬进来」那一类先后要求，登记晚于启动回放也照样
+    // 由 `registerDrawerView` 补写当前开合态。
+    setupDiffPanel();
   }
 
   // 备份区孤儿清理：副本文件本身不含「属于哪个标签」的索引，认领全靠会话，

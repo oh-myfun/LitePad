@@ -108,7 +108,15 @@ function viewFromSetting(raw: string | undefined): DrawerView {
   // B389：第四块「搜索」进白名单。⚠️ 漏一格的后果不是报错而是**静默回落大纲**：
   // 用户上次开着搜索、下次启动开的是大纲，而 `drawer_view` 那一格照旧写着 "search"
   // （收起时不覆盖），于是每次启动都错一块 —— 且没人说话。
-  return raw === "recent" || raw === "explorer" || raw === "search" ? raw : "toc";
+  // B461 起这一行**逐员点名**（含 `toc` 自己）：`tests/diff-drawer-contract.test.ts` 拿
+  // `DrawerViewName` 的名单来比这一行，靠默认值兜住的成员数不出漏了谁。
+  return raw === "toc" ||
+    raw === "recent" ||
+    raw === "explorer" ||
+    raw === "search" ||
+    raw === "diff"
+    ? raw
+    : "toc";
 }
 
 /**

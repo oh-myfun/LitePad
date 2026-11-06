@@ -1216,7 +1216,8 @@
    ⚠️ 字号走 `--fs-meta`（本项目的 11px 档），不写裸数值（B337 的字阶契约）。
    ⚠️ `line-height` 写死 18px 而不是照抄 11px：那边是给 3px 上下内距留的，
       这里整行只有 22px，盒高 = 行高才能把字压在徽标正中。 */
-.search-badge {
+.search-badge,
+.diff-count {
   flex: 0 0 auto;
   margin-left: auto;
   margin-right: 2px;
@@ -1231,6 +1232,11 @@
   line-height: 18px;
   text-align: center;
   font-variant-numeric: tabular-nums;
+}
+/* B461：第五块的计数徽标在「这一格不是差异编辑器」时是**空串** —— 空徽标不许画成一颗
+   18px 的空胶囊（那是「数到 0」与「没得数」两套读法共用一个形状）。 */
+.diff-count:empty {
+  display: none;
 }
 /* 动作键出现时徽标让位（VS Code：窄栏里 hover / 聚焦就 `display: none` 掉
    `.monaco-count-badge` 给 action bar 腾地方）。 */
@@ -1895,6 +1901,123 @@ body.layout-dragging .toc-grip {
 }
 /* B412：源码 / 预览 / 编辑三档共用这一颗编辑器 view（预览 = 禁编辑的编辑模式），
    不再有「预览态藏编辑器」的规则 —— 藏掉它等于预览格一片空白。 */
+
+/* ---------------------------------------------------------------------------
+   B461 · Task 9：侧栏第五块「差异」（`src/diff/panel.ts` 画，一块一行）。
+   宽度 / 显隐 / 那条内部竖线都归外壳 `.side-drawer`（B307），这里只管内部排布：
+   头部常驻（28px，与 `.toc-head` 同一档）+ 列表滚动（22px 行高 = VS Code 的树）。
+   ⚠️ 写了 `display` 就必须配一条 `[hidden]` 兜底（B207 那个坑：作者样式表压过 UA 的
+      `[hidden]`，与权重无关；jsdom 不做级联 ⇒ 只能靠 tests/sidebar.test.ts 那张表钉住）。
+   --------------------------------------------------------------------------- */
+.diff-panel {
+  width: 100%;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  background: transparent;
+}
+.diff-panel[hidden] {
+  display: none;
+}
+/* 头部与 `.toc-head` / `.explorer-head` 同一款：11px muted 的「区块标题」读法。 */
+.diff-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 4px 0 10px;
+  font-size: var(--fs-meta);
+  line-height: 1;
+}
+.diff-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--sidebar-section-fg, #656d76);
+}
+.diff-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 0 8px;
+}
+/* 一行 = 一块：图标 / 正文摘要 / 计数徽标 / 行区间。行高 22px（VS Code 的树那一档），
+   `line-height: 1` 与 `.toc-item` 同款 —— 摘要那一截自己撑 1.5 把下伸部放开（B328）。 */
+.diff-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  box-sizing: border-box;
+  height: 22px;
+  padding: 0 6px 0 4px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: var(--fs-ui);
+  line-height: 1;
+  color: var(--sidebar-fg, #24292f);
+}
+.diff-item:hover {
+  background: var(--list-hover-bg, #eee);
+  color: var(--list-hover-fg, inherit);
+}
+.diff-item:focus-visible {
+  outline: 1px solid var(--accent, #06c);
+  outline-offset: -1px;
+}
+.diff-item.diff-active {
+  color: var(--accent, #06c);
+  font-weight: 600;
+}
+.diff-icon {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
+/* 三族形状各自取差异面那三颗 token（与两栏底色同一个来源，不新发明颜色）。 */
+.diff-item[data-kind="insert"] .diff-icon {
+  color: var(--diff-add);
+}
+.diff-item[data-kind="delete"] .diff-icon {
+  color: var(--diff-del);
+}
+.diff-item[data-kind="modify"] .diff-icon {
+  color: var(--diff-mod);
+}
+.diff-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.5;
+}
+.diff-badge {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted, #656d76);
+}
+.diff-lines {
+  flex: 0 0 auto;
+  font-size: var(--fs-meta);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted, #656d76);
+}
+.diff-empty {
+  padding: 16px 12px;
+  font-size: var(--fs-ui);
+  color: var(--fg-muted, #656d76);
+}
 
 /* 打印 / PDF 导出 */
 #print-root {

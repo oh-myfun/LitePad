@@ -114,10 +114,10 @@ export interface SavedFile {
 export type PreviewWidth = "standard" | "wide" | "full";
 
 /**
- * 左栏展开区里「此刻轮到哪一块」（B312；B314 加了第三块资源管理器；B389 加了第四块搜索）。
- * 外壳 `DrawerView` 是这个别名的再导出。
+ * 左栏展开区里「此刻轮到哪一块」（B312；B314 加了第三块资源管理器；B389 加了第四块搜索；
+ * B461 加第五块差异）。外壳 `DrawerView` 是这个别名的再导出。
  */
-export type DrawerViewName = "toc" | "recent" | "explorer" | "search";
+export type DrawerViewName = "toc" | "recent" | "explorer" | "search" | "diff";
 
 export interface Settings {
   theme: string;

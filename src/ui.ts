@@ -153,6 +153,12 @@ const searchUseExcludes = el<HTMLButtonElement>("search-use-excludes");
 const searchRefresh = el<HTMLButtonElement>("search-refresh");
 const searchCollapseAll = el<HTMLButtonElement>("search-collapse-all");
 const searchClear = el<HTMLButtonElement>("search-clear");
+// B461：侧栏第五块 —— 差异。口径同上面四块：外壳只管显隐与点亮，节点从这里交出去，
+// **点击挂在自己模块里**。头部是静态结构，重绘只碰计数与列表两颗。
+const sideDiff = el<HTMLButtonElement>("side-diff");
+const diffPanel = el("diff-panel");
+const diffCount = el("diff-count");
+const diffList = el("diff-list");
 // B353：按钮列底部那颗**设置**键。它是动作不是视图 —— 不进 `registerDrawerView`、
 // 没有 `aria-pressed`，点亮态与 `setDrawer` 无关（接线见 `prefs.ts` 的 setupSettingsEntry）。
 const sideSettings = el<HTMLButtonElement>("side-settings");
@@ -515,6 +521,10 @@ export {
   searchRefresh,
   searchCollapseAll,
   searchClear,
+  sideDiff,
+  diffPanel,
+  diffCount,
+  diffList,
   sideSettings,
   tocGrip,
   sidebarToggle,

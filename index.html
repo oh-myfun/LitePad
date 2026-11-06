@@ -230,6 +230,19 @@
               aria-label="搜索"
               aria-pressed="false"
             ></button>
+            <!-- B461：第五颗「差异」。插在搜索之后、最近打开之前 —— 上半列是「这份文档/这些
+                 文件的东西」（资源管理器 → 搜索 → 差异），下半列是「历史与设置」。
+                 ⚠️ 与另外四块一样：点亮态与 `drawer_view` 归外壳 `setDrawer`，**点击不在那一层**
+                    （B314-8 那条教训：登记视图 ≠ 挂按钮）。 -->
+            <button
+              id="side-diff"
+              class="side-btn"
+              type="button"
+              data-tip="差异"
+              data-tip-placement="right"
+              aria-label="差异"
+              aria-pressed="false"
+            ></button>
             <!-- B305：「最近打开」。与另外两块互斥展开（同时只露一块）：互斥由外壳
                  `setDrawer(view)` 一处保证（见下面 #side-drawer），每颗键只管「轮到我没」。
                  首屏不写 hidden 之外的状态：名单是历史账，不像大纲那样跟着文档走。 -->
@@ -619,6 +632,17 @@
                 role="tree"
                 aria-label="搜索结果"
               ></div>
+            </aside>
+            <!-- B461：侧栏第五块 —— 差异项。一块改动一行（不是每处 +/- 一行，照 VS Code 那一列
+                 「Changes」的读法），点一行 = 两侧同时落到那一段。
+                 ⚠️ 头部常驻、列表才重绘（B205 那条纪律，与上面四块同形）：计数那颗徽标跟着块数翻，
+                    重绘只清 `#diff-list`。 -->
+            <aside id="diff-panel" class="diff-panel" hidden>
+              <div id="diff-head" class="diff-head">
+                <span id="diff-title" class="diff-title">差异</span>
+                <span id="diff-count" class="diff-count" role="status"></span>
+              </div>
+              <div id="diff-list" class="diff-list"></div>
             </aside>
           </div>
         </div>
