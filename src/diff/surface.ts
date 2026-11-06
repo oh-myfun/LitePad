@@ -28,6 +28,7 @@ import {
   DIFF_REVEAL_LINES,
   diffFace,
   foldCandidates,
+  foldedRangesIn,
   onFoldBarClick,
   refreshDiff,
   setFoldedRanges,
@@ -371,14 +372,63 @@ export function createDiffSurface(
    */
   const expandedRuns = new Set<number>();
 
-  const lineCountOf = (side: DiffSide): number =>
-    side === "modified" ? (right?.state.doc.lines ?? 0) : left.state.doc.lines;
+  const lineCountOf = (side: DiffSide): number => viewOf(side)?.state.doc.lines ?? 0;
+
+  /** 某一栏那颗 view（右栏可能是「没有右栏」那条兜底路 ⇒ 调用处一律允许读不到）。 */
+  const viewOf = (side: DiffSide): EditorView | null => (side === "original" ? left : right);
+
+  /** 某一栏的光标行（1-based；两栏的行轴各查各的）。 */
+  const caretLineOf = (side: DiffSide): number => {
+    const view = viewOf(side);
+    if (!view) return 0;
+    return view.state.doc.lineAt(view.state.selection.main.head).number;
+  };
 
   /** 这一栏此刻真的折着哪几段（候选一律由 `diffBlocks` 交出来的块推出 —— 同源）。 */
   const foldedFor = (side: DiffSide): FoldRange[] =>
     foldOn
       ? foldCandidates(stored, side, lineCountOf(side)).filter((r) => !expandedRuns.has(r.run))
       : [];
+
+  /**
+   * 把「画面那一段」（一个行号或一段行号，本栏行轴）对回候选清单里的**那一段**。
+   *
+   * ⚠️ 不许按行号**精确**比对（修复轮 Important 2 抓的那一条）：折条带上来的 `from` 是它画上去
+   * 那一刻的行号，而候选清单按现在的 `stored` 现算 —— 两者中间隔着一发键入就差几行（清单停在
+   * 旧正文的行号上，画面与光标却跟着改动往前走，差的正是「上面插进来／并上来的那几行」）。
+   * 精确比对 ⇒ `hit` 为 `undefined` ⇒ 点下去/查下去都**静默空转**：不报错、不展开，什么也不发生；
+   * 防抖之后画法自己跟上，被吞掉的那一次点击却追不回来。
+   * 两步走：① 整个落进某一段（含端点）就是那一段；② 否则取**间隔最小**的那一段（间隔 0 =
+   * 有重叠）—— 宁可展开隔壁那一段，也不许点下去什么都不发生（下一次重算会把行号对上）。
+   */
+  const matchRun = (side: DiffSide, from: number, to = from): FoldRange | null => {
+    const cands = foldedFor(side);
+    const gapOf = (r: FoldRange): number => Math.max(r.from - to, from - r.to, 0);
+    let best: FoldRange | null = null;
+    for (const r of cands) {
+      if (r.from <= from && to <= r.to) return r;
+      if (best === null || gapOf(r) < gapOf(best)) best = r;
+    }
+    return best;
+  };
+
+  /**
+   * 画面上真的折着的那一段对回候选清单 ⇒ 记下**那一段**（`run`）。
+   *
+   * 查的是 `foldedRangesIn`（画法自己），不是候选清单：键入之后两者行号不同一份（见 `matchRun`）；
+   * 而「摘掉哪一段」还得回清单去记（`expandedRuns` 记的是段序号，不是行号）。
+   * @returns 有没有真摘掉一段（没有 ⇒ 调用方不必点名）
+   */
+  const unfoldRunUnderLine = (side: DiffSide, line: number): boolean => {
+    const view = viewOf(side);
+    if (!view || line < 1) return false;
+    const painted = foldedRangesIn(view.state);
+    if (!painted.some((r) => line >= r.from && line <= r.to)) return false;
+    const hit = matchRun(side, line);
+    if (!hit || expandedRuns.has(hit.run)) return false;
+    expandedRuns.add(hit.run);
+    return true;
+  };
 
   /** 发进那一臂的形态（只带本栏行轴的行号；`run` 是 surface 自己的记账抓手）。 */
   const foldPointsFor = (side: DiffSide): Array<{ from: number; to: number }> =>
@@ -430,14 +480,38 @@ export function createDiffSurface(
    * CM6 里 `display: none` 的行**仍在文档里** ⇒ 键入/点击/`ArrowDown` 都可能把插入符送进
    * 被折起来的那几行。落位之前有 `unfoldAround`，而**用户自己走进去**这一路只能靠右栏的
    * `updateListener` 检查 —— 那一段当场展开，别让它带着看不见的光标继续打字。
+   *
+   * ⚠️ 两颗入口都得查（修复轮 Important 1）：翻开关/`collapseAllUnchanged` **不动选区**，
+   * 而差异文件里未改动的行占绝大多数 ⇒ 「光标正停在那一段里」是最常见的落点，只听
+   * `updateListener` 这一发永远够不着 ⇒ 见 `guardCaretsUnderFolds`。
+   * ⚠️ 查的是**画面上**那一段（`unfoldRunUnderLine`），不是候选清单：一发只映射选区的键入
+   * （按 Delete 把折区第一行并上来）会把折区压到 stationary 的光标上，那一刻候选清单的行号
+   * 还停在旧正文上，按清单查会读到「没盖住」而屏幕上那一行就是看不见。
    */
   const unfoldUnderCaret = (): void => {
-    if (!right || !foldOn) return;
-    const line = rightCaretLine();
-    const hit = foldedFor("modified").find((r) => line >= r.from && line <= r.to);
-    if (!hit) return;
-    expandedRuns.add(hit.run);
-    refreshArms();
+    if (!foldOn) return;
+    let dropped = false;
+    for (const side of SIDES) {
+      if (unfoldRunUnderLine(side, caretLineOf(side))) dropped = true;
+    }
+    if (dropped) refreshArms();
+  };
+
+  /**
+   * 开关那两颗入口动手**之前**补的那一手（Important 1 的第一路）：按将要画出去的那份候选清单
+   * 查两侧各自的光标行，盖住光标那一段先记进 `expandedRuns`（只记账，不派发 —— 收口还是
+   * 调用方那一发 `refreshArms()`，两栏同一次派发这一条不许破）。
+   *
+   * 左栏也查：它硬只读、打字进不去，但它**可选可聚焦**（R12 那一手），光标同样会停在
+   * 未改动的那一段里；那一栏没有监听（文档不会自己动），就借这两颗入口与右栏那一发兜住。
+   */
+  const guardCaretsUnderFolds = (): void => {
+    if (!foldOn) return;
+    for (const side of SIDES) {
+      const line = caretLineOf(side);
+      const hit = foldedFor(side).find((r) => line >= r.from && line <= r.to);
+      if (hit) expandedRuns.add(hit.run);
+    }
   };
 
   /**
@@ -481,13 +555,17 @@ export function createDiffSurface(
    *
    * ⚠️ 揭示只做**本栏**：左栏那颗不在同步滚动那套注册口里，两栏本来就是各滚各的
    * （点一栏的折条把另一栏也滚走，等于偷偷给它发明一条同步规则）。
+   *
+   * ⚠️ 那一段靠 `matchRun` 认（修复轮 Important 2）：折条带下来的行号是**它自己画上去那一刻**
+   * 的那一份，候选清单则是按现在的 `stored` 现算的 —— 两者中间隔着一发键入就差几行，
+   * 按行号精确比对 ⇒ `undefined` ⇒ 点下去静默空转（不报错、不展开，什么也不发生）。
    */
   const expandFold = (side: DiffSide, from: number): void => {
-    const hit = foldedFor(side).find((r) => r.from === from);
+    const hit = matchRun(side, from);
     if (!hit) return;
     expandedRuns.add(hit.run);
     refreshArms();
-    landSide(side, Math.max(1, hit.from - DIFF_CONTEXT_LINES - DIFF_REVEAL_LINES));
+    landSide(side, Math.max(1, from - DIFF_CONTEXT_LINES - DIFF_REVEAL_LINES));
   };
 
   /** 两栏各自的折条出口（身份固定，见 `leftArm` 的那条 ⚠️）。 */
@@ -499,6 +577,8 @@ export function createDiffSurface(
    *
    * ⚠️ 每一颗都以 `refreshArms()` 收口：改了状态就两栏一起点名，别留给下一次重算去补 ——
    * 「谁重算由 surface 这一处定」（R24），而这里改的是**画法**，不是块表。
+   * ⚠️ 两颗「折起来」的入口在点名之前先 `guardCaretsUnderFolds()`（Important 1 的第一路：
+   * 翻开关不动选区 ⇒ 监听那一发够不着，而光标停在未改动区里是最常见的位置）。
    */
   const setCollapseUnchanged = (on: boolean): void => {
     if (foldOn === on) return;
@@ -506,11 +586,13 @@ export function createDiffSurface(
     // 开关拨过去 = 重新按当前块表折一遍 / 全部放开；手动展开过的那几笔不跨开关记账
     //（开着又关掉再打开，用户要的是「照现在的正文重来一次」，不是把上次那些段一条条对上）。
     expandedRuns.clear();
+    guardCaretsUnderFolds();
     refreshArms();
   };
   const collapseAllUnchanged = (): void => {
     foldOn = true;
     expandedRuns.clear();
+    guardCaretsUnderFolds();
     refreshArms();
   };
   const showAllUnchanged = (): void => {
@@ -563,10 +645,7 @@ export function createDiffSurface(
   };
 
   /** 右栏光标行（权威侧 = 右栏，设计稿 ⑩·2：左栏有选区也不参与）。 */
-  const rightCaretLine = (): number => {
-    if (!right) return 0;
-    return right.state.doc.lineAt(right.state.selection.main.head).number;
-  };
+  const rightCaretLine = (): number => caretLineOf("modified");
 
   /** 右栏光标包住的那块；没有 ⇒ -1。 */
   const activeIndex = (): number => {
@@ -658,9 +737,16 @@ export function createDiffSurface(
     EditorView.updateListener.of((update) => {
       if (update.docChanged) scheduleSync();
       // 折叠期光标可能走进 `display: none` 的那几行（简报 Step 3 那条 ⚠️ 风险的另一半：
-      // 落位之前有 `unfoldAround`，用户自己走进去这一路只能在这里补）。只认选区动过 ⇒
-      // 每一发键入不必再查一遍折区（键入那一条走 `scheduleSync`，重算时会一并把折叠态刷新）。
-      if (update.selectionSet) unfoldUnderCaret();
+      // 落位之前有 `unfoldAround`，用户自己走进去这一路只能在这里补）。
+      // ⚠️ `selectionSet` **一颗不够**（修复轮 Important 1 抓的第二路）：CM6 那一颗只认「这一发
+      // 事务显式换了选区」—— 打字与程序化改文档时选区是被**映射**的，它是 false，而一发把折区
+      // 压到光标上的改动（例如在折区上面那格上下文行的行尾按 Delete 并上来一行）正是这一类。
+      // 两颗都听：`unfoldUnderCaret` 一进来就按 `foldOn` 早退，关着折叠时键入那一头分文不花；
+      // 开着折叠时它只读几段行号与一次 `lineAt`，真正的重算仍旧排在防抖那一发（R24 不动）。
+      if (update.selectionSet || update.docChanged) unfoldUnderCaret();
+      // 左栏没有这一颗监听：那颗 view 的文档被硬闸钉住、不会自己动，光标停进折区也只是
+      // 「选区看不见」（读不动的栏，打字那一条害处不成立）⇒ 它那一头由 `guardCaretsUnderFolds`
+      // （两颗开关入口）与 `unfoldAroundLines`（落位）兜住。
     }),
   ];
 

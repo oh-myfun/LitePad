@@ -20,6 +20,7 @@ import {
   RangeSet,
   StateEffect,
   StateField,
+  type EditorState,
   type Extension,
   type Range,
   type Text,
@@ -278,6 +279,12 @@ export interface FoldRange {
   to: number;
 }
 
+/** 折起来的行在臂里的形态（只有行号：画法与段序号都不归装饰层管）。 */
+export interface FoldPoint {
+  from: number;
+  to: number;
+}
+
 /** 发进某一臂的折叠态（只带行号：段序号是 surface 那一侧的记账口径，装饰层不认）。 */
 export const setFoldedRanges = StateEffect.define<Array<{ from: number; to: number }>>();
 
@@ -426,7 +433,7 @@ function clampLine(line: number, totalLines: number): number {
 /** 折区 → 一摞行装饰（`display: none` 的那些行）+ 起点的折条。 */
 function buildFoldFace(
   doc: Text,
-  folds: FoldPoint[],
+  folds: readonly FoldPoint[],
   onExpand: ((from: number) => void) | null,
 ): RangeSet<Decoration> {
   const ranges: Range<Decoration>[] = [];
@@ -450,14 +457,8 @@ function buildFoldFace(
   return Decoration.set(ranges, true);
 }
 
-/** 折叠态的形状 = `setFoldedRanges` 交进来的那一份（行号，本栏行轴）。 */
-interface FoldPoint {
-  from: number;
-  to: number;
-}
-
 /** 折起来的行 → 行号栏的类（不抹掉的话那一串数字会在 0 高的格子里挤成一坨）。 */
-function buildFoldGutter(doc: Text, folds: FoldPoint[]): RangeSet<GutterMarker> {
+function buildFoldGutter(doc: Text, folds: readonly FoldPoint[]): RangeSet<GutterMarker> {
   const ranges: Range<GutterMarker>[] = [];
   for (const fold of folds) {
     for (
@@ -489,18 +490,72 @@ function mapFolds(value: FoldPoint[], tr: Transaction): FoldPoint[] {
   return out;
 }
 
+/**
+ * 折叠态那一臂的值：**清单**（行号）加上**由它算出来的两份画法**。
+ *
+ * ⚠️ 画法只在 `setFoldedRanges` 那一发里重建（修复轮 Important 3）：`buildFoldFace` /
+ * `buildFoldGutter` 每折一行分配一条 `Decoration.line`（外加一颗 gutter 标记），拿它当
+ * `compute([f, "doc"])` 的函数体就等于**每键 O(折起来的行数)** 的分配，而 Tier A 是活着的
+ * 编辑面 —— 与本文件头「键入期不重算（只 `value.map(tr.changes)`）」那条纪律直接对冲。
+ * 键入期三份一起交给映射：清单按行号换算（`mapFolds`，几笔），画法由 CM6 映射（不重新分配），
+ * 于是折条上那份行号清单与它替掉的那几行的行数要等下一次点名才跟着新块表走（已知限制）。
+ */
+interface FoldFace {
+  folds: FoldPoint[];
+  lines: RangeSet<Decoration>;
+  gutter: RangeSet<GutterMarker>;
+}
+
+/** 一份都没有 = 一段都没折（建 state 与拆臂之后都是这一份）。 */
+const emptyFoldFace: FoldFace = { folds: [], lines: RangeSet.empty, gutter: RangeSet.empty };
+
+/** 清单 → 画法（只在点名那一发跑：这一发是 O(折起来的行数) 的分配）。 */
+function foldFaceOf(
+  doc: Text,
+  folds: readonly FoldPoint[],
+  onExpand: ((from: number) => void) | null,
+): FoldFace {
+  return {
+    folds: folds.map(({ from, to }) => ({ from, to })),
+    lines: buildFoldFace(doc, folds, onExpand),
+    gutter: buildFoldGutter(doc, folds),
+  };
+}
+
 /** 折叠态那一臂的字段（`{from,to}` 是本栏行轴的行号，与 `setFoldedRanges` 交进来的同一份）。 */
-const diffFoldField = StateField.define<FoldPoint[]>({
-  create: () => [],
+const diffFoldField = StateField.define<FoldFace>({
+  create: () => emptyFoldFace,
   update(value, tr) {
-    for (const e of tr.effects) if (e.is(setFoldedRanges)) return e.value;
-    // 没发过点名那一发就只跟着改动映射：折不折、折哪几段都由 surface 定（这一臂不自己拿主意）。
-    return tr.docChanged ? mapFolds(value, tr) : value;
+    for (const e of tr.effects) {
+      if (e.is(setFoldedRanges)) {
+        return foldFaceOf(tr.state.doc, e.value, tr.state.facet(faceFoldClick));
+      }
+    }
+    if (!tr.docChanged) return value;
+    // 键入期：清单与画法一起映射，不重算（画法这一头 CM6 自己管，见 `FoldFace` 那条 ⚠️）。
+    return {
+      folds: mapFolds(value.folds, tr),
+      lines: value.lines.map(tr.changes),
+      gutter: value.gutter.map(tr.changes),
+    };
   },
   provide: (f) => [
-    EditorView.decorations.compute([f, "doc"], (state) =>
-      buildFoldFace(state.doc, state.field(f), state.facet(faceFoldClick)),
-    ),
-    gutterLineClass.compute([f, "doc"], (state) => buildFoldGutter(state.doc, state.field(f))),
+    EditorView.decorations.from(f, (v) => v.lines),
+    gutterLineClass.from(f, (v) => v.gutter),
   ],
 });
+
+/**
+ * 某一栏**现在真的画着**哪几段折区（本栏行轴，跟着改动映射过 ⇒ 与屏幕同一份）。
+ *
+ * surface 查「光标掉进 `display: none` 的行没有」必须读这一份，而不是按候选清单现算：
+ * 清单是按**上一份块表**的行号算的，画上去的那一段是跟着改动一路映射的，两者差的正是
+ * 「上面插进去（或并上来）的那几行」—— 按清单查会读到「没盖住光标」，而屏幕上那一行
+ * 就是看不见（修复轮 Important 1 抓的第二路）。
+ *
+ * ⚠️ 这是**读**，不是第二份真相：折不折、折哪几段仍旧只由 surface 那一发 `setFoldedRanges`
+ * 写进来（R24 同口径），这一颗只是那份画法自己的投影，臂拆了就读到空。
+ */
+export function foldedRangesIn(state: EditorState): readonly FoldPoint[] {
+  return state.field(diffFoldField, false)?.folds ?? [];
+}

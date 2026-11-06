@@ -33,6 +33,7 @@ import {
   DIFF_CONTEXT_LINES,
   DIFF_MIN_UNCHANGED_LINES,
   DIFF_REVEAL_LINES,
+  DiffFoldWidget,
   DiffGapWidget,
   diffFace,
   foldCandidates,
@@ -635,20 +636,23 @@ function clickFoldBar(s: DiffSurface, index: number): void {
   bars[index].dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
 }
 
-/** 一批行区间一共折了多少行。 */
-const hiddenTotal = (ranges: Array<{ from: number; to: number }>): number =>
-  ranges.reduce((sum, r) => sum + (r.to - r.from + 1), 0);
-
 /**
- * 「这一次点击揭示了多少行」= 全部候选折起来的行数 − 现在还折着的行数。
- *
- * 为什么这么算：jsdom 没有布局引擎，`scrollIntoView` 到底落没落到位量不出来（那一条归真机台 ③），
- * 而**行数**是两个公开读数（`blocks()` 与 `foldRanges()`）的差 ⇒ 判得到「一次点击最多展开
- * `DIFF_REVEAL_LINES × 2` 行」这条预算。反证：把点击写成「一颗都不留」（showAll）就是 48 行 ⇒ 红。
+ * 顶部六颗「改一行」的小块（每块之间只隔 3 行上下文，一段都够不上折的阈值）+ 中段 **100 行**
+ * 未改动 + 尾段 30 行未改动 ⇒ 候选两段，其中**第一段折起来 94 行**，比 `2 * DIFF_REVEAL_LINES`
+ * 还多。这一座现场是为「点折条到底展开多少」那一条准备的：整段展开（94 行）与「有界揭示
+ * （40 行预算）」这两条路在这里才真的分得开 —— 在 24 行那段上两条都绿，判不出方向。
+ * 每一处改动在两栏都只占一行 ⇒ 两栏行号重合，按行口算最不容易看错。
  */
-function revealedLines(s: DiffSurface): number {
-  const all = foldCandidates(s.blocks(), "original", s.left.state.doc.lines);
-  return hiddenTotal(all) - hiddenTotal(s.foldRanges());
+function longRunsPair(): { left: string; right: string } {
+  const left: string[] = [];
+  const right: string[] = [];
+  for (let i = 1; i <= 5; i++) {
+    left.push(`改${i}一`, `定${i}甲`, `定${i}乙`, `定${i}丙`);
+    right.push(`改${i}二`, `定${i}甲`, `定${i}乙`, `定${i}丙`);
+  }
+  left.push("改6一", ...seq(1, 100, "长未改"), "尾一", ...seq(1, 30, "另笔"), "末一");
+  right.push("改6二", ...seq(1, 100, "长未改"), "尾二", ...seq(1, 30, "另笔"), "末二");
+  return { left: left.join("\n"), right: right.join("\n") };
 }
 
 /** 光标现在落在第几行（1-based）。 */
@@ -719,13 +723,30 @@ describe("B461 · 折叠未改动区（Task 7：默认不折 + 三颗动作）",
     expect(s.foldRanges()).toEqual([{ from: 36, to: 59 }]);
   });
 
-  it("B461 · 点折条 = 就地展开，并按 DIFF_REVEAL_LINES 上下各揭示 20 行", () => {
-    const s = mountedSurfaceWithThreeBlocks();
+  it("B461 · 点折条 = 就地展开那一段，并按 DIFF_REVEAL_LINES 上下各揭示 20 行", () => {
+    const { surface: s, left } = mountSurfacePair(longRunsPair());
     s.collapseAllUnchanged();
-    const before = s.foldRanges().length;
+    const runs = foldCandidates(s.blocks(), "original", left.state.doc.lines);
+    expect(runs, "现场：两段候选（94 行那一段与 24 行那一段），两侧行号重合").toEqual([
+      { run: 6, from: 25, to: 118 },
+      { run: 7, from: 126, to: 149 },
+    ]);
+    expect(
+      runs[0].to - runs[0].from + 1,
+      "现场：点下去那一段折起来的行数比 2 × DIFF_REVEAL_LINES 还多 ⇒ 这一座现场才分得开两条路",
+    ).toBeGreaterThan(2 * DIFF_REVEAL_LINES);
+
     clickFoldBar(s, 0);
-    expect(s.foldRanges().length).toBe(before - 1);
-    expect(revealedLines(s)).toBeLessThanOrEqual(DIFF_REVEAL_LINES * 2);
+    // 简报那句「按 `DIFF_REVEAL_LINES` 上下各揭示这么多行」判的是**落位窗口**，不是「一次只准放开
+    // 40 行」：折条的文案明写「展开 94 行未改动的内容」，只做半截展开就是让文案说谎，而
+    // `expandedRuns` 记的是**段**、不是段里剩下的那半截。原那条 `<= 2 * DIFF_REVEAL_LINES` 的行数
+    // 预算判据在这一座现场上必然与它打架（94 > 40），判的从来不是「展开这一段」⇒ 撤掉；
+    // 揭示窗口那一半由下面那颗落点判据钉住（它才是简报要的东西）。上面 :734 那条
+    // 「这一段比 2×REVEAL 还长」的前置留着，它让「落到窗口第一行」与「落到段尾」两种写法分得开。
+    expect(s.foldRanges(), "整段摘掉，另一段照旧折着（不许一次点击把所有段都放开）").toEqual([
+      { from: 126, to: 149 },
+    ]);
+    expect(caretLineOf(s.left)).toBe(runs[0].from - DIFF_CONTEXT_LINES - DIFF_REVEAL_LINES);
   });
 
   it("B461 · 点折条把揭示窗口的第一行当落点（窗口 = 折区上下各再让出 DIFF_REVEAL_LINES 行）", () => {
@@ -794,6 +815,95 @@ describe("B461 · 折叠未改动区（Task 7：默认不折 + 三颗动作）",
     expect(s.foldRanges(), "光标落到 5..28 那一段里 ⇒ 那一段摘掉，另一段不许被牵连").toEqual([
       { from: 36, to: 59 },
     ]);
+  });
+
+  it("B461 · 开关那两颗入口动手之前先看光标：光标落在未改动区里 ⇒ 那一段不许折（display:none 会抹掉光标）", () => {
+    // 简报 Step 3 那条 ⚠️ 的第一路：翻开关**不动选区** ⇒ `selectionSet` 一辈子不响，而差异文件里
+    // 未改动的行占绝大多数 ⇒ 「光标正停在那一段里」是最常见的落点，不是边角。
+    const { surface: s, right } = mountSurfacePair({ left: THREE_LEFT, right: THREE_RIGHT });
+    right.dispatch({ selection: { anchor: right.state.doc.line(10).from } });
+    expect(caretLineOf(right), "前置：第 10 行落在候选 5..28 之内").toBe(10);
+    expect(s.foldRanges(), "前置：开关还没开 ⇒ 一段都不折").toEqual([]);
+
+    s.setCollapseUnchanged(true);
+    expect(
+      lineElOf(right, 10).className,
+      "光标那一行不许被 `display: none` 盖掉（屏上看不见的那一行正是光标所在）",
+    ).not.toContain("diff-folded");
+    expect(s.foldRanges(), "另一段照旧折着（不许一翻开关就全展开）").toEqual([
+      { from: 36, to: 59 },
+    ]);
+
+    // 第二颗入口（三颗动作里的 collapseAllUnchanged）同一条纪律：两棵入口都得补这一手。
+    const pair2 = mountSurfacePair({ left: THREE_LEFT, right: THREE_RIGHT });
+    pair2.right.dispatch({ selection: { anchor: pair2.right.state.doc.line(10).from } });
+    pair2.surface.collapseAllUnchanged();
+    expect(
+      lineElOf(pair2.right, 10).className,
+      "collapseAllUnchanged 同样不许盖住光标那一行",
+    ).not.toContain("diff-folded");
+    expect(pair2.surface.foldRanges()).toEqual([{ from: 36, to: 59 }]);
+  });
+
+  it("B461 · 一发**只映射选区**的键入把折区压到光标上 ⇒ 也跟着展开（selectionSet 对键入是 false）", () => {
+    // 简报 Step 3 那条 ⚠️ 的第二路：光标停在折区上面那格上下文行的行尾（看得见的一行），
+    // 按 Delete 把折区第一行并上来 —— 折区起点被往上吸到光标那一行，而这一发事务只映射了
+    // 选区（`selectionSet` 为 false），只听那一颗的兜底整条够不着。
+    const { surface: s, right } = mountSurfacePair({ left: THREE_LEFT, right: THREE_RIGHT });
+    s.collapseAllUnchanged();
+    const at = right.state.doc.line(4).to;
+    right.dispatch({ selection: { anchor: at } });
+    expect(lineElOf(right, 4).className, "前置：第 4 行是留出来的上下文行，看得见").not.toContain(
+      "diff-folded",
+    );
+
+    right.dispatch({ changes: { from: at, to: right.state.doc.line(5).from } });
+    expect(caretLineOf(right), "前置：并行之后的光标落在合并出来的第 4 行").toBe(4);
+    expect(
+      lineElOf(right, 4).className,
+      "折区被那一发键入压到光标那一行上 ⇒ 当场展开，不许留着一行看不见的光标",
+    ).not.toContain("diff-folded");
+    expect(s.foldRanges(), "摘掉的只是压上来那一段，另一段照旧").toEqual([{ from: 36, to: 59 }]);
+  });
+
+  it("B461 · 键入之后、重算之前那一段里折条也点得开（点击不许被吞掉）", () => {
+    // 折条带下来的 `from` 是**跟着改动映射过**的行号，而候选清单是按上一份块表算的 ⇒ 两者差的
+    // 正是「上面插进去的那几行」。按行号精确比对 ⇒ `hit` 为 undefined ⇒ 点下去什么都不发生，
+    // 而且不报错（防抖之后画法自己跟上，被吞掉的那一次点击却追不回来）。
+    const { surface: s, right } = mountSurfacePair({ left: THREE_LEFT, right: THREE_RIGHT });
+    s.collapseAllUnchanged();
+    expect(s.foldRanges(), "前置：两段候选都折着").toHaveLength(2);
+    right.dispatch({ changes: { from: 0, insert: "补一行\n" } });
+    const bars = [...right.contentDOM.querySelectorAll<HTMLElement>(".diff-fold-bar")];
+    expect(bars.length, "前置：右栏得画出折条").toBeGreaterThan(0);
+
+    bars[0].dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(s.foldRanges(), "点下去必须真展开那一段（行号差一行也算点的是那一段）").toHaveLength(1);
+    expect(s.foldRanges()[0].from, "摘掉的是点下去那一段，留下的是另一段").toBeGreaterThanOrEqual(
+      30,
+    );
+  });
+
+  it("B461 · 键入期折叠装饰只跟着改动映射、不逐键重建（face.ts 文件头那条纪律对折叠一样成立）", () => {
+    // `diffFaceField` 守的是「键入期只 `value.map(tr.changes)`」；折叠那一臂原先每键都要
+    // `buildFoldFace` / `buildFoldGutter`，那是**每键 O(折起来的行数)** 次 `Decoration.line`
+    // 分配。判据落在「同一颗 widget 实例 / 同一条折条 DOM」上：逐键重建就换实例、就重画 DOM。
+    const { surface: s, right } = mountSurfacePair({ left: THREE_LEFT, right: THREE_RIGHT });
+    s.collapseAllUnchanged();
+    const barBefore = right.contentDOM.querySelector<HTMLElement>(".diff-fold-bar");
+    const widgetBefore = firstBlockWidget(right);
+    expect(barBefore, "现场：右栏得画出折条").not.toBeNull();
+    expect(widgetBefore?.widget, "现场：那条折条是 DiffFoldWidget").toBeInstanceOf(DiffFoldWidget);
+
+    right.dispatch({ changes: { from: 0, insert: "补一行\n" } });
+    const barAfter = right.contentDOM.querySelector<HTMLElement>(".diff-fold-bar");
+    expect(barAfter, "映射之后折条照旧在（跟着改动走，不是没画）").not.toBeNull();
+    expect(barAfter, "同一颗 DOM：装饰集由 CM6 跟着改动映射 ⇒ 不逐键重建 widget 与行装饰").toBe(
+      barBefore,
+    );
+    expect(firstBlockWidget(right)?.widget, "同一颗 widget 实例：重建才会换实例").toBe(
+      widgetBefore?.widget,
+    );
   });
 
   it("B461 · 拆旁路把折叠一起带走（底色那一条纪律同形：既有的 view 不许留着 display:none 的行）", () => {
