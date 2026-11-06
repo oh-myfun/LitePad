@@ -37,6 +37,13 @@ export interface DiffSpec {
   /** B 档左栏的文件路径；A 档为 null。Task 8 的「刷新」只有**没开着**那一路才有缓冲要重读
    *  —— 开着那一栏就是那份文档自己，跟着它的键入走，没有第二份真相可刷。 */
   leftPath: string | null;
+  /**
+   * 「刷新」那颗键用：把上面那份**只读对比缓冲**重读一次盘（换掉闭包里的 holder）。
+   *
+   * 只在「左栏那个 path 没在册」那一路才给：另外两条路（A 档的活基线、B 档那份已经开着的文档）
+   * 读的就是现值，没有第二份要刷 —— 不给，调用方就不必假装刷了。
+   */
+  leftReload?: () => Promise<void>;
 }
 
 /**
@@ -241,7 +248,8 @@ async function readCompareSnapshot(path: string): Promise<string | null> {
 
 /**
  * 按路径拿到那份文档：在册直接复用，不在册走主干那条 `doOpen`（复用 / 跨窗口取回那些
- * 既有语义全部白送）。`openFileDiff` 的右栏与 `swapDiffInputs` 的新右栏都问这一颗。
+ * 既有语义全部白送）。`openFileDiff` 的右栏问的就是这一颗（「交换左右」那条在
+ * `diff/actions.ts` 里走的是同一颗 —— 它换的是**那一份文档**，不是 spec）。
  *
  * 拿不到 ⇒ 交回 `null`；`doOpen` 失败时自己已经说过原因，这里不叠第二句。
  */
@@ -265,16 +273,32 @@ async function openDocForPath(path: string): Promise<Doc | null> {
  *
  * - 已经开着 ⇒ 交一个读那份文档**现值**的读取口（与右栏同一颗 `liveTextOf`）：屏幕上两侧
  *   显示的就是用户正在看的那两份内容，盘上那份脏改动不会被偷偷当成对照物。
- * - 没开着 ⇒ 读一次盘当只读对比缓冲（不注册监听、不进在场广播、不进最近打开）。
+ *   这一路**不给** `reload`：现值本来就是活的，再读一遍盘等于把用户没存的那些行偷偷换掉。
+ * - 没开着 ⇒ 读一次盘当只读对比缓冲（不注册监听、不进在场广播、不进最近打开），并交出
+ *   那颗「重读一次盘」的手 —— Task 8 那颗「刷新」键只有这一路真有事可做。
  *
  * 交回 `null` = 盘也读不成（那句说明已由 `readCompareSnapshot` 说过）。
- * Task 8 的「刷新」只需要在**没开着**那一路重读盘换掉这份缓冲；开着那一路跟着那份文档走。
  */
-async function compareLeftTextReader(path: string): Promise<(() => string) | null> {
+async function compareLeftTextReader(
+  path: string,
+): Promise<{ leftText: () => string; leftReload?: () => Promise<void> } | null> {
   const openDoc = findDocByPath(normPath(path));
-  if (openDoc) return () => liveTextOf(openDoc);
+  if (openDoc) return { leftText: () => liveTextOf(openDoc) };
   const snapshot = await readCompareSnapshot(path);
-  return snapshot === null ? null : () => snapshot;
+  if (snapshot === null) return null;
+  // `let` 而不是 `const`：那颗「重读一次盘」的手换的就是这个 holder（闭包交出去的是读取口，
+  // 不是那一刻的值）。分开写还有一层用处：`holder: string` 的收窄跟着声明走，
+  // 若让 `let holder = await …` 直接带成 `string | null`，读取口就要为一句永不发生的 null 辩解。
+  let holder: string = snapshot;
+  return {
+    leftText: () => holder,
+    leftReload: async () => {
+      const next = await readCompareSnapshot(path);
+      // 读不成（文件被删 / 占用）⇒ 留着上一份：把对照物换成空串会让右栏整片判成「新增」，
+      // 那是设计稿 ⑩·3 明令不许画的那张全绿脸。
+      if (next !== null) holder = next;
+    },
+  };
 }
 
 /**
@@ -309,50 +333,18 @@ export async function openFileDiff(leftPath: string, rightPath: string): Promise
     return existing.tabId;
   }
 
-  const leftText = await compareLeftTextReader(leftPath);
-  if (!leftText) return null;
+  const left = await compareLeftTextReader(leftPath);
+  if (!left) return null;
   const spec: DiffSpec = {
     tier: "files",
     docId: rightDoc.tabId,
-    leftText,
+    leftText: left.leftText,
+    leftReload: left.leftReload,
     leftName: baseName(leftPath),
     rightName: rightDoc.name,
     leftPath,
   };
   return attachDiffTab(rightDoc, spec, activePanelId).tabId;
-}
-
-/**
- * 「交换左右」的换算（Task 8 那颗键调它；A 档那一项置灰不调）。
- *
- * 只对 B 档有意义：A 档交换 = 把「还没存盘的改动」变成对照物，破坏「右栏就是那份
- * 文档本身」这条反目标 ⇒ 原样交回。B 档：拿原左栏路径那份文档当新右栏（`openDocForPath`，
- * 复用主干那条找已有 doc 的路），新左栏走 `compareLeftTextReader`（原右栏那份 doc 就在册
- * ⇒ 交的是它的现值读取口，不读盘），算出一份**新 spec** 交回；`tab.diff` 的落笔与 surface
- * 的 retarget 归调用方（模型不认识渲染层）。
- */
-export async function swapDiffInputs(spec: DiffSpec): Promise<DiffSpec> {
-  if (spec.tier !== "files" || !spec.leftPath) return spec;
-  const oldRightDoc = docs.get(spec.docId);
-  const oldRightPath = oldRightDoc?.path ?? "";
-  // doc 不在册（标签被拆了）或没落盘 ⇒ 交换无从谈起，原样交回。
-  // ⚠️ `!oldRightDoc` 这一问同时是给 tsc 的收窄依据 —— 只判 `oldRightPath` 的话
-  // 下面 `oldRightDoc.name` 会带着「possibly null」发红（Task 6 门禁真抓到过）。
-  if (!oldRightDoc || !oldRightPath) return spec;
-
-  const newRightDoc = await openDocForPath(spec.leftPath);
-  if (!newRightDoc) return spec; // 开不出来 ⇒ 什么都不换（doOpen 已经说过原因）
-
-  const leftText = await compareLeftTextReader(oldRightPath);
-  if (!leftText) return spec;
-  return {
-    tier: "files",
-    docId: newRightDoc.tabId,
-    leftText,
-    leftName: oldRightDoc.name,
-    rightName: newRightDoc.name,
-    leftPath: oldRightPath,
-  };
 }
 
 /**

@@ -204,7 +204,8 @@ describe("B461 · 差异标签的落点（Task 1）", () => {
     hostEl.className = "panel-host";
     document.body.appendChild(hostEl);
     const panel = freshPanel();
-    const surface = createDiffSurface(hostEl, panel, spec());
+    let baseline = "左栏正文\n它的第二行";
+    const surface = createDiffSurface(hostEl, panel, spec({ leftText: () => baseline }));
     const left = surface.left;
     const original = left.state.doc.toString();
     expect(original, "前置：左栏吃的是 spec.leftText()").toBe("左栏正文\n它的第二行");
@@ -236,16 +237,19 @@ describe("B461 · 差异标签的落点（Task 1）", () => {
     expect(document.activeElement, "焦点落点 = 那颗可读栏的 contentDOM").toBe(left.contentDOM);
 
     expect(surface.spec().leftName).toBe("a.md（上次保存）");
-    // retarget（Task 6 的「交换左右」用它）：换输入、不换那颗 view 本身 —— 整态换 state
-    // 不是事务，不受上面那道硬闸牵连（这正是它比 `dispatch({changes})` 合适的地方）。
+    // 换正文 = 整态换 state，不是事务 ⇒ 不受上面那道硬闸牵连（这正是它比 `dispatch({changes})`
+    // 合适的地方）。走的是 A 档那条真路：`doc.baseline` 被就地换掉（保存 / 以磁盘为准重载）之后
+    // `reassert` ③ 发现「左栏那份文档 ≠ 读取口现在的值」⇒ `resetLeftDoc` 把新正文换进去。
+    // 「交换左右」不在这儿（裁决 R38：右栏那颗 view 就是那份文档本身，就地换 spec 会把两栏
+    // 变成同一份内容 ⇒ 差异清零），它开的是**另一张**标签。
     const before = surface.left;
-    surface.retarget(spec({ leftText: () => "换过来了" }));
+    baseline = "换过来了";
+    surface.reassert();
     expect(surface.left).toBe(before);
-    expect(surface.left.state.doc.toString()).toContain("换过来了");
-    expect(surface.spec().leftText()).toBe("换过来了");
-    // 换过输入之后闸还在（闸是 state 自带的，不随 retarget 掉）
+    expect(surface.left.state.doc.toString()).toBe("换过来了");
+    // 换过正文之后闸还在（闸是 state 自带的，不随换 state 掉）
     surface.left.dispatch({ changes: { from: 0, insert: "X" } });
-    expect(surface.left.state.doc.toString(), "retarget 之后硬闸照样一字不改").toBe("换过来了");
+    expect(surface.left.state.doc.toString(), "换 state 之后硬闸照样一字不改").toBe("换过来了");
     surface.dispose();
     expect(panel.diffSurface).toBeNull(); // dispose 自己把 panel 上的记账清掉（防悬空）
   });

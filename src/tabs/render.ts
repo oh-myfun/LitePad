@@ -43,6 +43,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { dragTabAsFile } from "../io/filedrag";
 // B461：差异面的标题与「与上次保存比较」这条动作（模型在 diff/model，渲染层只问它要判据）。
 import { canOpenAgainstBaseline, diffTitleOf, openBaselineDiff, openFileDiff } from "../diff/model";
+// B461 Task 8：图标键与组菜单那三条的**唯一**落点（两份 switch 必然漂移 —— Task 6 的教训同形）。
+import { applyDiffAction } from "../diff/actions";
+import { diffSurfaceOf } from "../diff/surface";
 // B461 Task 6：B 档「选择以进行比较」的窗口级状态（标签与显隐的真相在 compare.ts）。
 import { clearCompareSelection, compareSelection, toggleCompareSelection } from "../diff/compare";
 
@@ -218,11 +221,30 @@ export function panelDataOf(p: Panel): PanelRenderData {
     // B399：预览 / 编辑两档都是装饰面 ⇒ 那颗键都画 `edit-code`（点了回源码）。
     md,
     mdPreview: md && act!.viewMode !== "source",
+    // B461 Task 8：差异图标键的三份现值（没有旁路 ⇒ `undefined` ⇒ 那一支一颗都不建）。
+    diff: diffKeysOf(p),
   };
   // B422：组菜单送**函数**而不是算好的数组 —— 点「…」那一刻才按模型算（脏标记、组数、
   // 最大化态都在那时候取值）。操作区只在结构变化时重建，快照活不过下一次击键。
   data.groupMenu = () => groupMenuOf(p);
   return data;
+}
+
+/**
+ * 这一格差异图标键的三份现值（B461 Task 8）。
+ *
+ * 读的是 **surface** 而不是标签上的 spec：`ignoreTrimWhitespace` / `collapseUnchanged` 是运行时
+ * 状态（R24 同口径：只有那一颗持有），`swappable` 问的是档位。没有旁路 ⇒ 交 `undefined`，
+ * splitview 那一支一颗都不建 —— 差异标签还在册但这一格没挂对照物时，画一排点不动的键才是真坑。
+ */
+function diffKeysOf(p: Panel): PanelRenderData["diff"] {
+  const surface = diffSurfaceOf(p);
+  if (!surface) return undefined;
+  return {
+    ignoreTrimWhitespace: surface.ignoreTrimWhitespace(),
+    collapseUnchanged: surface.collapseUnchanged(),
+    swappable: surface.spec().tier === "files",
+  };
 }
 
 /**
@@ -294,6 +316,28 @@ function groupMenuOf(p: Panel): MenuItem[] {
       label: maximizedPanelId === p.panelId ? "取消最大化组" : "最大化组",
       onSelect: () => toggleMaximizePanel(p.panelId),
     });
+  }
+  // B461 Task 8：这一格挂着旁路 ⇒ 「⋯」里多三条（顺序照 VS Code：交换左右 → 折叠一对 → 刷新，
+  // 都排在「解散组」那一节之前）。判据一律**现在**读 surface：整张菜单在点击那一刻才组装，
+  // 提前快照会把折叠开关的现状冻在重建操作区的那一刻（B422 那条教训的又一形）。
+  const diffSurface = diffSurfaceOf(p);
+  if (diffSurface) {
+    const swappable = diffSurface.spec().tier === "files";
+    const folded = diffSurface.collapseUnchanged();
+    items.push({ separator: true });
+    items.push({
+      // A 档没有「两份文件」可换（左栏是那份文档的上一次保存）⇒ 置灰；`MenuItem` 没有
+      // tooltip 字段，那句说法按仓库口径写进标签本身（与「与上次保存比较（基线未知）」同形）。
+      label: swappable ? "交换左右" : "交换左右（左栏是上次保存的正文）",
+      disabled: !swappable,
+      onSelect: () => applyDiffAction(p.panelId, "swap"),
+    });
+    items.push({
+      // 两颗动作共用一颗入口：折着 ⇒「全部展开」，没折 ⇒「全部折叠」（explorer 那颗同口径）。
+      label: folded ? "全部展开" : "全部折叠",
+      onSelect: () => applyDiffAction(p.panelId, folded ? "showAll" : "collapseAll"),
+    });
+    items.push({ label: "刷新", onSelect: () => applyDiffAction(p.panelId, "refresh") });
   }
   items.push({ separator: true });
   items.push({

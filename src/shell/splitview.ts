@@ -1,5 +1,7 @@
 import type { LayoutNode } from "../core/layout";
+import { keymapOverrides } from "../core/app-state";
 import { CODICONS } from "./codicons";
+import { keyHint } from "./keymap";
 import {
   GROUP_IMAGE_ANCHOR,
   createGroupDragImage,
@@ -35,6 +37,15 @@ import { zoneOf, DropZone } from "../dnd/geometry";
  *   3 段 = 1/3 与 1/2、4 段 = 1/4 · 1/3 · 1/2（逐层累乘后每格等宽）。
  */
 
+/**
+ * B461 Task 8：差异标题栏那八颗动作的**名字**（落点只有一份 —— `src/diff/actions.ts`）。
+ *
+ * 这里只声明"有哪几颗"，不判"点了做什么"：图标键、命令面板、组菜单三条入口都把这个 id
+ * 交出去，两处各写一份 switch 必然漂移（Task 6 那条逐字复制的教训同一个形状）。
+ */
+export type DiffAction =
+  "prev" | "next" | "whitespace" | "collapse" | "collapseAll" | "showAll" | "swap" | "refresh";
+
 export interface PanelRenderData {
   panelId: number;
   active: boolean;
@@ -59,6 +70,18 @@ export interface PanelRenderData {
   md?: boolean;
   /** B224：活动标签当前是**预览态**（决定切换键画 `edit-code` 还是 `preview`） */
   mdPreview?: boolean;
+  /**
+   * B461 Task 8：这一格**挂着差异旁路**时的三份现值（图标键的显隐与 toggled 态都从这儿来）。
+   *
+   * 为什么由调用方给而不是这里现算：`ignoreTrimWhitespace` / `collapseUnchanged` 的真相只有
+   * surface 那一颗（R24 同口径），而 `swappable` 说的是「这一档能不能交换」—— 判据在模型那边。
+   * 不给 = 这一格没有那四颗键（旁路拆掉之后不许留一排点不动的按钮）。
+   */
+  diff?: {
+    ignoreTrimWhitespace: boolean;
+    collapseUnchanged: boolean;
+    swappable: boolean;
+  };
   /**
    * B422（用户「标签区右边的关闭按钮改成 vscode 那种菜单按钮」）：组标题「…」菜单的条目，
    * 判据全在 `tabs/render.ts`（VS Code 的 `MenuId.EditorTitle` 同一家族：显示已打开的编辑器 /
@@ -136,6 +159,14 @@ export interface SplitviewCallbacks {
   onOpenPreviewToSide?: (panelId: number) => void;
   /** B224：活动标签在**源码 / 预览**之间切一次（复用 Ctrl+/ 那条路径）。 */
   onTogglePreview?: (panelId: number) => void;
+  /**
+   * B461 Task 8：差异标题栏那四颗图标键的出口（动作名见 `DiffAction`，落点只有
+   * `src/diff/actions.ts` 那一份 switch）。
+   *
+   * ⚠️ 给的是**这颗键自己那一格**的 panelId：md 那两颗键踩过同一形（B228 —— 把 panelId
+   * 换成全局活动面板，点左格的键就把右格的文档拽过去切了档）。
+   */
+  onDiffAction?: (panelId: number, action: DiffAction) => void;
 }
 
 export function renderSplitview(
@@ -628,12 +659,13 @@ function buildPanel(
 }
 
 /**
- * 面板操作区（`.panel-ops`）：B224 起最多三颗 ——
- *   ① 打开侧边预览（`open-preview`）：只有活动面板且活动标签是 Markdown 才有；
- *   ② 源码 / 预览切换：**双字形开关**，`mdPreview` 决定画 `edit-code`（预览态）还是
- *      `preview`（源码态），tooltip / aria-label 跟着换 —— 与置顶 / 同步滚动同口径；
+ * 面板操作区（`.panel-ops`）：
+ *   ① md 两颗（B224）—— 打开侧边预览（`open-preview`）+ 源码/预览切换；只有活动面板且
+ *      活动标签是 Markdown 才有；
+ *   ② 差异四颗（B461 Task 8）—— `arrow-up` / `arrow-down`（上/下一个差异，**不是**左右箭头）、
+ *      `whitespace` 与 `map`（两颗**带 toggled 状态**的开关，见 `mkOp` 的 `pressed`）；
  *   ③ 还原面板（仅最大化中）+ 组菜单「…」（B422，原先是移除分屏 ⨯）。
- * ⚠️ 顺序刻意：md 两颗**紧贴标签区**（VS Code 的 editor/title 动作也在那一头），
+ * ⚠️ 顺序刻意：文档级操作**紧贴标签区**（VS Code 的 editor/title 动作也在那一头），
  *    「…」仍钉在最右 —— 文档级操作靠标签，系统级操作（关组）靠边。
  */
 function buildPanelOps(data: PanelRenderData, cb: SplitviewCallbacks): HTMLElement {
@@ -644,6 +676,8 @@ function buildPanelOps(data: PanelRenderData, cb: SplitviewCallbacks): HTMLEleme
     text: string,
     detail: string | undefined,
     onClick: () => void,
+    /** 开关那颗键的按下态（`undefined` = 这颗不是开关，一个属性都不加）。 */
+    pressed?: boolean,
   ): HTMLButtonElement => {
     const b = document.createElement("button");
     b.className = "panel-op";
@@ -651,6 +685,12 @@ function buildPanelOps(data: PanelRenderData, cb: SplitviewCallbacks): HTMLEleme
     // B58：提示走自绘层。图标按钮没有文本，aria-label 必须显式给。
     setTip(b, text, { detail });
     b.setAttribute("aria-label", detail ? `${text}（${detail}）` : text);
+    if (pressed !== undefined) {
+      // 与 `explorer/panel.ts` 的 `syncCollapseButton` 同口径：`aria-pressed` 与 `.on` 一起给，
+      // 读屏器与眼睛拿到的是同一件事（只给一个就会出现「看着亮着、读屏说没按下」）。
+      b.setAttribute("aria-pressed", String(pressed));
+      if (pressed) b.classList.add("on");
+    }
     b.addEventListener("click", (e) => {
       e.stopPropagation();
       onClick();
@@ -671,6 +711,38 @@ function buildPanelOps(data: PanelRenderData, cb: SplitviewCallbacks): HTMLEleme
         data.mdPreview ? "切换到源码" : "切换到预览",
         "Ctrl+/",
         () => cb.onTogglePreview?.(data.panelId),
+      ),
+    );
+  }
+
+  // B461 Task 8：差异旁路挂着的那一格给这四颗（`data.diff` 由 `panelDataOf` 从 surface 现读，
+  // 旁路拆掉就不给 ⇒ 显隐走「建不建」，与 md 那一支同一手法）。
+  if (data.diff) {
+    const d = data.diff;
+    ops.append(
+      mkOp(CODICONS.arrowUp, "上一个差异", keyHint("diff.prevChange", keymapOverrides), () =>
+        cb.onDiffAction?.(data.panelId, "prev"),
+      ),
+      mkOp(CODICONS.arrowDown, "下一个差异", keyHint("diff.nextChange", keymapOverrides), () =>
+        cb.onDiffAction?.(data.panelId, "next"),
+      ),
+      // toggled 判据**取反**（设计稿 ⑤ 那一行：上游那颗 action 的 `toggled` 就是
+      // `!config.diffEditor.ignoreTrimWhitespace`）：「忽略首尾空白」开着 ⇒ 这颗没按下；
+      // 把它关掉 ⇒ 按下态说的是「现在连空白都比」。
+      mkOp(
+        CODICONS.whitespace,
+        "忽略首尾空白",
+        undefined,
+        () => cb.onDiffAction?.(data.panelId, "whitespace"),
+        !d.ignoreTrimWhitespace,
+      ),
+      mkOp(
+        CODICONS.map,
+        // 这颗的文案跟着状态翻（读作「点下去会怎样」），与 md 切换那颗同口径。
+        d.collapseUnchanged ? "显示未改动的内容" : "折叠未改动的内容",
+        undefined,
+        () => cb.onDiffAction?.(data.panelId, "collapse"),
+        d.collapseUnchanged,
       ),
     );
   }

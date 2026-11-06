@@ -57,6 +57,8 @@ import { createEditor } from "../editor/editor";
 // B461 · 差异旁路（挂在 `.panel-host` 里、`.panel-editor` 之前的那颗只读左栏）：
 // 一处挂、一处拆 —— 其余按 `panel.view` 寻址的代码一概不问 kind。
 import { disposeDiffSurface, syncDiffSurface } from "../diff/surface";
+// B461 Task 8：差异图标键的出口（八条动作的 switch 只在 `diff/actions.ts` 那一份）。
+import { applyDiffAction } from "../diff/actions";
 import { logViewport } from "../core/viewport";
 import { closeTab as ipcCloseTab, newTab as ipcNewTab } from "../ipc/api";
 import { compareTabCallbacks, renderPanelTabs, renderPanelOps, panelDataOf } from "./render";
@@ -247,6 +249,9 @@ export function rebuildLayout(): void {
     },
     // B224：标签区右侧那两颗 Markdown 键（只在活动面板渲染，见 panelDataOf）
     onOpenPreviewToSide: (panelId) => openPreviewToSide(panelId),
+    // B461 Task 8：差异图标键 —— 转调那颗唯一的落点（`runShortcut` 与组菜单那三条走的是同一颗，
+    // 两处各写一份 switch 必然漂移）。
+    onDiffAction: (panelId, action) => applyDiffAction(panelId, action),
     onTogglePreview: (panelId) => {
       // B228：先取**这颗键自己那一栏**的标签再切，别碰全局活动面板。
       // ⚠️ 以前这里是「面板不是活动的就先把活动面板拽过去，然后无参切换」两步 ——

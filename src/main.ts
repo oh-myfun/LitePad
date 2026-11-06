@@ -259,6 +259,8 @@ import { logViewport } from "./core/viewport";
 // Task 5 起这里还导出 `refreshDiffSurfaces` —— 外观那两颗 setter 只认识 main，
 // 而差异格的折行/主题必须跟着设置重新assert一次（裁决 R23-2）。
 import { diffSurfaceOf, refreshDiffSurfaces } from "./diff/surface";
+// B461 Task 8：那六条动作命令的分发口（八条动作的 switch 只有这一份，见该文件头注）。
+import { applyDiffCommand } from "./diff/actions";
 // B461 Task 5：A 档的入口（建标签）与那道闸（不抢键的判据）。
 import {
   BASELINE_UNKNOWN_MESSAGE,
@@ -562,9 +564,17 @@ function shortcutApplies(id: string): boolean {
       const t = activeTab();
       return !!t && isMdTab(t) && t.viewMode !== "source";
     }
-    // B461：差异步进只在「这一格正显示一张差异标签」时成立（设计稿 ⑩·2 的权威侧那一格）。
+    // B461：差异步进与标题栏那六条动作键，只在「这一格正显示一张差异标签」时成立
+    //（设计稿 ⑩·2 的权威侧那一格）。那六条没有默认键位 ⇒ 这道闸管的是**用户自己绑了键**
+    // 那一发（`keymap.ts` 的表允许改键）：不成时不抢键，把事件原样还给编辑器。
     case "diff.nextChange":
     case "diff.prevChange":
+    case "diff.toggleWhitespace":
+    case "diff.toggleCollapse":
+    case "diff.collapseAll":
+    case "diff.showAll":
+    case "diff.swapSides":
+    case "diff.refresh":
       return diffTabActive();
     // B461 Task 5：A 档的入口。基线未知时**不抢键**（设计稿 ⑩·3：点不动的那一发要有个说法，
     // 菜单与右键那两处走置灰，键盘这一处走「当没这个键」）。判据与那两处同一颗
@@ -694,6 +704,16 @@ function runShortcut(id: string): void {
       break;
     case "diff.prevChange":
       diffSurfaceOf(activePanel())?.step(-1);
+      break;
+    // B461 Task 8：标题栏那六条动作。分发口只转调 `applyDiffCommand`（八条动作的 switch 只有
+    // `diff/actions.ts` 那一份）—— 这里再抄一遍 id→动作，两条入口迟早各说各话。
+    case "diff.toggleWhitespace":
+    case "diff.toggleCollapse":
+    case "diff.collapseAll":
+    case "diff.showAll":
+    case "diff.swapSides":
+    case "diff.refresh":
+      applyDiffCommand(activePanelId, id);
       break;
     // B461 Task 5：A 档 —— 与上次保存比较，新开一张差异标签（原标签继续开着，用户拍板 ④·6）。
     // 寻址走 `baselineDiffTarget()` 那一颗（与置灰/不抢键同源），这里不再自己判 kind/基线。

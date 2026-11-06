@@ -20,7 +20,6 @@ import {
   notifyDiffBlocks,
   openFileDiff,
   setDiffRenderHooks,
-  swapDiffInputs,
   setDiffBlocksListener,
   type DiffSpec,
 } from "../src/diff/model";
@@ -301,16 +300,58 @@ describe("B461 · R33：左栏那条已经开着 ⇒ 复用它的正文，不再
   });
 });
 
-describe("B461 · swapDiffInputs 的档位闸（Task 6 Step 6）", () => {
-  it("B461 · A 档不许交换（反目标：右栏必须是那份文档本身）⇒ 原样交回", async () => {
-    const baseline: DiffSpec = {
-      tier: "baseline",
-      docId: 1,
-      leftText: () => "",
-      leftName: "a.md",
-      rightName: "a.md",
-      leftPath: null,
-    };
-    expect(await swapDiffInputs(baseline)).toBe(baseline);
+describe("B461 · 只读对比缓冲那颗「刷新」（Task 8 Step 5）", () => {
+  const hooksNoop = () =>
+    setDiffRenderHooks({
+      rebuildLayout: () => {},
+      refreshAll: () => {},
+      renderPanelTabs: () => {},
+      showMessage: () => {},
+      switchTab: () => {},
+    });
+
+  it("B461 · 左栏没开着 ⇒ spec 交出 leftReload；重读拿到新那份，盘读不成留着上一份", async () => {
+    mountPanel0();
+    const bDoc = makeDoc(31, "乙", "b.md", "D:/b.md", "UTF-8", "LF", false);
+    docs.set(bDoc.tabId, bDoc);
+    hooksNoop();
+    readCompareTextMock.mockReset().mockResolvedValue(compareSnap("盘上第一版"));
+    const id = (await openFileDiff("D:/a.md", "D:/b.md"))!;
+    const spec = tabs.get(id)!.diff!;
+    expect(spec.leftText()).toBe("盘上第一版");
+    expect(
+      spec.leftReload,
+      "没在册那一路才有缓冲要重读 ⇒ 这颗必须给（否则「刷新」是颗死键）",
+    ).toBeTypeOf("function");
+
+    readCompareTextMock.mockResolvedValue(compareSnap("盘上第二版"));
+    await spec.leftReload!();
+    expect(spec.leftText(), "重读一次盘：holder 换掉，读取口跟着交新的那份").toBe("盘上第二版");
+
+    readCompareTextMock.mockRejectedValue(new Error("文件被占用"));
+    await spec.leftReload!();
+    expect(
+      spec.leftText(),
+      "读不成 ⇒ 留着上一份：换成空串会把右栏整片判成「新增」（设计稿 ⑩·3 禁的那张全绿脸）",
+    ).toBe("盘上第二版");
+  });
+
+  it("B461 · 左栏已经开着 ⇒ 不给 leftReload（现值就是那份文档，没有第二份真相可刷）", async () => {
+    mountPanel0();
+    const aDoc = makeDoc(32, "甲", "a.md", "D:/a.md", "UTF-8", "LF", false);
+    docs.set(aDoc.tabId, aDoc);
+    const aInst = makeInstance(aDoc, 0, "甲\n改过还没存");
+    tabs.set(aInst.tabId, aInst);
+    const bDoc = makeDoc(33, "乙", "b.md", "D:/b.md", "UTF-8", "LF", false);
+    docs.set(bDoc.tabId, bDoc);
+    hooksNoop();
+    readCompareTextMock.mockReset();
+
+    const id = (await openFileDiff("D:/a.md", "D:/b.md"))!;
+    expect(
+      tabs.get(id)!.diff!.leftReload,
+      "那一格正在被用户编辑 ⇒ 重读盘会把没存的那些行偷偷换掉，这颗不许给",
+    ).toBeUndefined();
+    expect(readCompareTextMock).not.toHaveBeenCalled();
   });
 });

@@ -56,10 +56,8 @@ const rightFaceSlot = new Compartment();
 export interface DiffSurface {
   /** 左栏那颗只读视图（测试与 Task 4/7 的落位都直接按它寻址） */
   readonly left: EditorView;
-  /** 当前输入描述（可交换 ⇒ 是取值口，不是冻结字段；预审 R3） */
+  /** 当前输入描述（A/B 两档的读取口都从这儿取） */
   spec(): DiffSpec;
-  /** B 档「交换左右」就地换输入用（不换 tabId；Task 6 拥有调用者） */
-  retarget(spec: DiffSpec): void;
   /** 现读左右两份正文 → diffBlocks → 给两颗 view 各发 refreshDiff */
   syncBlocks(): void;
   /** 这一格现在那一批块（唯一一份答案：两侧底色、占位块、侧栏条目、跳块都吃它） */
@@ -102,8 +100,9 @@ export interface DiffSurface {
   /**
    * 把这一格**已经漂移**的三件事补回「差异格该有的样子」（裁决 R20 / R22 / R23，内部口）。
    *
-   * 只有 `syncDiffSurface` 点它：那张标签还是这一格现在露出的那张（`spec()` 对得上）时，
-   * 旁路不重建，但下面三条可能在无人认领的期间被改坏 ——
+   * 点它的两处：`syncDiffSurface`（每次刷新都跑）与「刷新」那颗动作（Task 8 · 裁决 R37，
+   * 读口刚换过快照 ⇒ 靠这一手把左栏那份文档跟上）。那张标签还是这一格现在露出的那张
+   * （`spec()` 对得上）时，旁路不重建，但下面三条可能在无人认领的期间被改坏 ——
    *   · 右栏的**折行**被设置页重新打开（`applyWrapToTabs` 重配的是同一颗 Compartment）；
    *   · 右栏的**主题**被换掉（`applyDarkToTabs` 同上），而左栏吃的是挂上那一刻的现值；
    *   · `doc.baseline` 被就地换成新正文（保存 / 以磁盘为准重载），而左栏那份**文档**还是旧的。
@@ -179,8 +178,8 @@ function lineStartOf(view: EditorView, line: number): number {
  * `face` 是这一臂装饰（`faceComp.of(diffFace("original", …))`，Task 3）：**CompartmentInstance
  * 必须出现在 state 的扩展清单里**，之后 `faceComp.reconfigure()` 才管得到它（CM6 的
  * `flatten` 只走 base 里出现过的 Compartment，没出现的那一发 reconfigure 是静默空转）。
- * `retarget` 与「补基线」走的都是整态换 state，所以那一臂也只能靠这里带进去 —— 换进来的那颗
- * state 若不含它，「交换左右」之后左栏就没有底色了。折叠（Task 7）也在这同一臂里
+ * `reassert` 补基线走的是整态换 state，所以那一臂也只能靠这里带进去 —— 换进来的那颗
+ * state 若不含它，左栏就没有底色了。折叠（Task 7）也在这同一臂里
  * （`diffFace` 现在带着 `diffFoldField` + 折条出口 ⇒ 换 state 时折叠面跟着进去，不必另装）。
  *
  * ⚠️ 这一栏**不装折行**（R19，见 `createDiffSurface` 里那一手）：折行从一开始就不进来。
@@ -259,8 +258,8 @@ export function createDiffSurface(
   hostEl.insertBefore(originalEl, hostEl.firstChild);
   hostEl.insertBefore(sashEl, originalEl.nextSibling);
 
-  let current = spec;
-  /** 左栏那一臂的槽（随 state 进去；`retarget` / 补基线换 state 时重新带上，见 `leftState`）。 */
+  const current = spec;
+  /** 左栏那一臂的槽（随 state 进去；`reassert` 补基线换 state 时重新带上，见 `leftState`）。 */
   const leftFace = new Compartment();
   /** 左栏主题的槽（R22 取现值 + R23-2 换主题时 `reconfigure` 换掉，不重建整颗 state）。 */
   const themeSlot = new Compartment();
@@ -793,17 +792,6 @@ export function createDiffSurface(
   const surface: DiffSurface = {
     left,
     spec: () => current,
-    retarget: (next) => {
-      current = next;
-      // 换输入 = 换**文档**，不是往当前文档里改：整态换一颗干净的只读 state，
-      // 既不给对照缓冲留撤销历史，也不走 `dispatch({changes})` 那条「写文档」的路。
-      // ⚠️ 必须用 `setState`：`dispatch({changes})` 如今会被 leftState 那道硬闸整发丢掉
-      // （「换输入」看着像没反应）。`setState` 是换 state 不是发事务，天然不受那道闸牵连。
-      // 那一臂靠 `leftFace.of(...)` 随 state 一起进去（换 state 会把旧 config 整个换掉）；
-      // provider 交回的是 `stored`，所以新块表由紧随其后的那一发 `syncBlocks()` 现算 ——
-      // 这里不再自己 `diffBlocks`，也不另发 refreshDiff（重算只有一条路：R24）。
-      resetLeftDoc();
-    },
     syncBlocks,
     blocks: () => stored,
     jumpTo,
@@ -898,7 +886,8 @@ function wantedSpec(panel: Panel): DiffSpec | null {
  * 分支加在那里等于把 B232/B355 那两条顺序纪律再搅一遍。
  *
  * ⚠️ 判「是不是这张标签的旁路」用 spec 的**对象身份**：`tab.diff` 与 `surface.spec()` 必须
- * 指向同一个对象（Task 6 的「交换左右」走 `retarget`，那边要同步把新 spec 写回 `tab.diff`）。
+ * 指向同一个对象（换一张差异标签就是换一颗 spec —— 「交换左右」那一发开的是**另一张**标签，
+ * 裁决 R38，所以这里没有「就地换 spec」那条形路可对身份）。
  * 对不上就重建 —— 宁可重建，也不许把 A 标签的对照物留在 B 标签上。
  *
  * 一致时**不是**直接返回：还要走一发 `reassert()` 把「设置页换了折行/主题」与「基线被就地

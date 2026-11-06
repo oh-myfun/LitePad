@@ -339,7 +339,7 @@ export const COMMANDS: CommandDef[] = [
   // ---- 差异（B461）----
   // 这两颗是 VS Code「Go to Next / Previous Change」的同款键位（`Alt+F5` / `Shift+Alt+F5`），
   // 在本应用此前无人占用 ⇒ 只按 F5 那一家分档：裸 `F5` 仍是「插入时间/日期」。
-  // ⚠️ 步进这一对归 Task 4；标题栏那几颗动作键与其余 `diff.*` 命令归 Task 8。
+  // ⚠️ 步进这一对归 Task 4，标题栏那六颗动作键归 Task 8（下面那组 `keys: []` 的）。
   // 键位字面量只许出现在这张表里 —— 分发那处只按 id 走、菜单那处只按 `keyHint(id)` 取。
   { id: "diff.nextChange", label: "下一个差异", group: "差异", keys: ["Alt+F5"] },
   { id: "diff.prevChange", label: "上一个差异", group: "差异", keys: ["Shift+Alt+F5"] },
@@ -347,6 +347,17 @@ export const COMMANDS: CommandDef[] = [
   // `owners()` 断过），与 VS Code 的「Compare with Saved」不同键但同族（VS Code 那两颗
   // 走的是命令面板，没有默认键位）。
   { id: "diff.openAgainstSaved", label: "与上次保存比较", group: "差异", keys: ["Ctrl+Shift+D"] },
+  // Task 8：标题栏与「⋯」里那六条。**全部不给默认键位**（`keys: []`）：
+  //   · VS Code 那几颗也是只有命令、没有默认键（`Alt+F5` 那一族已被上面两条步进占住）；
+  //   · 抢一颗键位就得先证明本应用无人占用（上面那三条都配了 `owners()` 那条用例），
+  //     而这六条的日常入口是图标键与组菜单，键盘不是主路。
+  // 命令面板点得到 ⇒ `main.ts` 的分发必须认这六个 id（表里躺着一条没人分发的命令 = 死键）。
+  { id: "diff.toggleWhitespace", label: "忽略首尾空白", group: "差异", keys: [] },
+  { id: "diff.toggleCollapse", label: "折叠未改动的内容", group: "差异", keys: [] },
+  { id: "diff.collapseAll", label: "全部折叠未改动的内容", group: "差异", keys: [] },
+  { id: "diff.showAll", label: "全部展开未改动的内容", group: "差异", keys: [] },
+  { id: "diff.swapSides", label: "交换左右", group: "差异", keys: [] },
+  { id: "diff.refresh", label: "刷新差异", group: "差异", keys: [] },
 
   // ---- 面板 ----
   { id: "panel.splitH", label: "左右分屏", group: "面板", keys: ["Alt+Shift+ArrowRight"] },

@@ -276,8 +276,22 @@ describe("命令表自检", () => {
    * `Ctrl+Shift+E` 已经被「资源管理器」占了，而 `Ctrl+Shift+F` B389 起归「在文件中查找」
    * （用户点名照 VS Code 的侧栏搜索）⇒ 这一发就留在菜单与命令面板里，不硬抢一颗键位。
    * 用户在设置 ▸ 快捷键里自己绑是允许的（覆盖表按 id 存，与有无默认无关）。
+   *
+   * B461 Task 8 那六条差异动作键（`toggleWhitespace` / `toggleCollapse` / `collapseAll` /
+   * `showAll` / `swapSides` / `refresh`）同理不给：上游那几条本来就只有命令、没有默认键位，
+   * 而 `Alt+F5` 这一族已被上面两条步进占住 ⇒ 再抢一颗就得先证明本应用无人占用（上面那三条
+   * 都配了 `owners()` 那条用例）。它们的日常入口是标题栏的图标键与「⋯」那三条。
    */
-  const NO_KEYS = new Set(["file.openFolder", "file.closeFolder"]);
+  const NO_KEYS = new Set([
+    "file.openFolder",
+    "file.closeFolder",
+    "diff.toggleWhitespace",
+    "diff.toggleCollapse",
+    "diff.collapseAll",
+    "diff.showAll",
+    "diff.swapSides",
+    "diff.refresh",
+  ]);
 
   it("每个可编辑命令都有默认键位，或在 NO_KEYS 里写明不给的理由", () => {
     for (const cmd of COMMANDS) {

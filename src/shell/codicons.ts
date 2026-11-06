@@ -221,6 +221,13 @@ const IDS = {
   // 于是 `undo` 这颗**没有**独立短名（写了就是零调用点的 id，红线不让）。
   redo: "redo",
   save: "save",
+  // —— 差异标题栏（B461 Task 8）——
+  // 只补**真有调用点**的两颗（本文件那条红线）：`arrow-up` / `arrow-down` 上方查找栏那族已有。
+  // 上游 `swapDiffEditors` 的 `arrow-swap` 与折叠两颗动作的 `fold` / `unfold` 本轮**不进册**：
+  // 那三条在 VS Code 只出现在「⋯」菜单里、靠中文标签认，LitePad 的菜单条目也一律不带字形
+  // （`MenuItem.icon` 的口径是「同组每项都带、且标签认不出」才给）⇒ 写了就是零调用点的 id。
+  whitespace: "whitespace", // 「忽略首尾空白」（带 toggled 状态的那颗）
+  map: "map", // 「折叠 / 显示未改动的内容」
 } as const;
 
 /** 图标短名（上方 IDS 的键）。 */
