@@ -158,6 +158,12 @@ const faceBlocks = Facet.define<() => DiffBlock[], () => DiffBlock[]>({
  * 左栏从一开始就不装）。折行一开，这几行在对侧折出来的视觉行比 `count` 多 ⇒ 占位块矮了，
  * 两栏的行就错开；那一头要靠按对侧实测行高来对齐（VS Code 的做法），B398 已经裁掉：
  * 「参考 vscode，不要弄这么复杂」。
+ *
+ * ⚠️ 缺口行**只有中性斜纹、行号槽没有对应色条**：VS Code 的 alignment view zone 会连
+ * `marginDomNode` 一起染上 `gutter-delete` / `gutter-insert`，而 CM6 的块级 widget 只能
+ * 落在 `.cm-content` 里、伸不进 gutter。要补那根色条就得把缺口拆成逐行装饰 + 假行号，
+ * 等于把「视觉行 ≠ 文档行」带进整条对齐链 —— 代价远大于一根色条，故按现状保留，
+ * 不再为此改渲染结构。
  */
 export class DiffGapWidget extends WidgetType {
   constructor(readonly count: number) {
