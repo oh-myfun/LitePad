@@ -453,6 +453,12 @@ export function reconcileSyncRegistrations(): void {
   for (const p of panels.values()) {
     const tab = tabs.get(p.viewTabId ?? p.activeTabId);
     if (!tab) continue;
+    // B461：差异标签**不进**同步滚动在册（设计稿反目标「这里是两份内容」+ ⑦⑥）。
+    // 右栏虽是那份文档本身，但这一格的滚动属于「对照」语境 —— 进册就会被当成同文档的
+    // 另一个视口把位置广播出去，把普通标签的记忆改写成差异栏的位置。真机取证：
+    // 12:58:24 差异栏 Ctrl+End ⇒ `外发 doc=1 v=33.00`；随后关掉差异标签，接班标签
+    // 按被改写的 scrollV 落到 664.7px（⑦⑥「不触发同步滚动」正是这一条）。
+    if (tab.kind === "diff") continue;
     const docId = String(tab.docId);
     // 走 `faceOf` 而不是在这里自己 new 锚点：预览锚点那条「未铺开 ⇒ 下一帧补定位」的异步
     // 支线需要回登记口，两处必须用同一个构造方式，否则注册出来的锚点没有这个口。

@@ -587,6 +587,16 @@ describe("B461 · 跳块与步进（Task 4）", () => {
     ).toBeCloseTo(5, 2);
   });
 
+  it("B461 · 差异标签不进同步滚动在册（设计稿反目标；⑦⑥ 真机抓到的外发）", () => {
+    const { panel } = mountDiffPair("1\n2\n3\n4\n5", "1\n2\n3A\n4\n5B");
+    registerPanel(panel);
+    expect(
+      syncCoordinator.currentV("100"),
+      "差异右栏一进册，它就被当成「同一文档的另一个视口」：滚动会按 doc 广播出去，" +
+        "接班标签的 scrollV 跟着被改写（真机 12:58:24 外发 v=33，关标签后原标签停在 664.7px）",
+    ).toBeNull();
+  });
+
   it("B461 · R25：落位回声被判成自己那一发，不广播给同文档的第二个视口", async () => {
     const { panel, s } = mountDiffPair("1\n2\n3\n4\n5", "1\n2\n3A\n4\n5B");
     s.syncBlocks();
@@ -604,11 +614,14 @@ describe("B461 · 跳块与步进（Task 4）", () => {
     el.dispatchEvent(new Event("scroll"));
     await nextFrame();
     expect(other.calls, "跳块这一发不许被当成用户滚动广播给同文档的别的面板").toEqual([]);
-    // 反向闸（上面那条不是靠把账本焊死做出来的）：用户真的把这一格挪到别处 ⇒ 照旧联动。
+    // B461 反目标（「这里是两份内容」）+ ⑦⑥：差异面根本不进同步在册 ⇒ 用户滚动同样不外发。
+    // 「抑制不是锁」那张反向闸由普通标签自己兜（`tests/sync-scroll-sequence.test.ts`）；
+    // 这里钉的是差异面永不成为同文档的共享位置权威 —— 真机 12:58:24 正是这一发把接班
+    // 标签的 scrollV 写成 33，关掉差异标签后原标签停在 664.7px。
     lay.put(60);
     el.dispatchEvent(new Event("scroll"));
     await nextFrame();
-    expect(other.calls, "用户滚动仍然要广播 ⇒ 抑制不是锁").toEqual([4]);
+    expect(other.calls, "差异面的用户滚动也不该广播").toEqual([]);
     // 多视口**像素级**抑制（两格宽度不同、回声真实落点差几个像素）jsdom 量不到 ⇒
     // 那一档仍是 Task 11 真机台的验收项（设计稿 ⑩·3 的多视口那条）。
   });
