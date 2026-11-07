@@ -9,8 +9,7 @@
  * 打进真实 Chromium，用 CDP 派发**真实**滚轮 / 鼠标 / 键盘事件，再读真实布局出来判定。
  *
  * 为什么不接 Tauri 产物：本仓库实测过 WebView2 不吃
- * `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`、Tauri 也不转发 `--remote-debugging-port`
- * （`.workbuddy/memory/2026-10-02.md`、`2026-09-14.md`），CDP 接不上被测进程。
+ * `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`、Tauri 也不转发 `--remote-debugging-port`；
  * 「真实浏览器 + CDP 派发真实鼠标」这条路在本仓库 `docs/split-view-plan.md` 的取证方法
  * 里已经跑通，这里沿用它，只把被测面从 splitview 换成滚动同步。
  *

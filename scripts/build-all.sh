@@ -50,7 +50,7 @@ else
   echo "    （npm 不可用，改直调 node_modules 入口）"
 fi
 
-# WorkBuddy 会话的 safe-delete 钩子会拦截 vite 清空 dist/assets（>50 个文件），
+# 智能体会话的 safe-delete 钩子会拦截 vite 清空 dist/assets（>50 个文件），
 # 导致会话内构建失败；此开关在本脚本进程树内禁用该钩子（用户桌面环境无钩子，无副作用）
 export CODEBUDDY_SAFE_DELETE_ENABLED=0
 

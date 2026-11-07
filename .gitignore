@@ -16,7 +16,7 @@ generated-images/
 
 # 项目内临时文件统一落点：日志、探针/一次性脚本、CDP profile、对照副本、临时下载。
 # ⚠️ 临时文件一律写这里，**不要写全局目录**（`%TEMP%`、`/tmp`、`~/.workbuddy/`）——
-#    规则见 .workbuddy/memory/MEMORY.md「临时文件一律落在本项目内」。
+#    规则见 AGENTS.md 与 .agents/rules/index.md「临时文件」。
 .tmp/
 
 # VS Code 参考源码（第三方 MIT 只读副本）—— 整个目录不入库，仅 LICENSE.txt（MIT 署名）留库。
@@ -42,9 +42,14 @@ __pycache__/
 # 发布资产（setup.exe / .exe.sig / latest.json）由 tauri build 直接产出在
 # target/release/bundle/nsis/（已被上方 target/ 忽略），CI 从该目录上传，不在项目根另留副本。
 
-# 智能体运行时 / 记忆 / 技能目录（.workbuddy）—— 整个不入库，仅留本地磁盘。
+# 智能体规则 / 记忆目录（.agents）—— 整个不入库，仅留本地磁盘。
+# 历史由本地快照分支 agents-local 保留（scripts/backup-agents.sh）。
 # ⚠️ 操作用 `git rm --cached`（只动索引）；绝不对本目录跑 `git rm`/`rmdir` 或 `rm`，
-#    否则 agent 运行时整棵从磁盘消失（见 .workbuddy/memory 红线）。
-# ⚠️ 入库忽略后，慎用 `git clean -fdx`——它会按忽略规则把 .workbuddy 从磁盘一并删除。
-.workbuddy/
+#    否则运行时可能把整棵目录从磁盘清空（见 .agents/rules/memory-hygiene.md）。
+# ⚠️ 入库忽略后，慎用 `git clean -fdx`——它会按忽略规则把 .agents 从磁盘一并删除。
+.agents/
+
+# Graphify 知识图谱产物（graph.html / graph.json / GRAPH_REPORT.md 等）——纯本地生成，
+# 可由 `graphify extract .` 随时重建，不入库。
+graphify-out/
 

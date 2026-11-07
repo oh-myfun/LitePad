@@ -576,7 +576,7 @@ git commit -m "feat(recents): 设置页保留数量 · 启动装配与上限即�
 ### Task 8: 全量门禁、出包与真机复现
 
 **Files:**
-- Modify: `.workbuddy/memory/open-items/backlog.md`（把「窗口零标签时显示最近列表（读法二）」登记为后续）
+- Modify: `.agents/open-items/backlog.md`（把「窗口零标签时显示最近列表（读法二）」登记为后续）
 - Test: 无新增（跑既有门禁）
 
 **Interfaces:**
@@ -615,4 +615,4 @@ Expected: 产物生成（安装器路径打印在末尾）。
 
 - [ ] **Step 5: 登记后续**
 
-把「窗口零标签时显示最近列表（读法二）」写进 `.workbuddy/memory/open-items/backlog.md`。**那个目录不在 git 里**（记忆区，不是仓库文件），所以这一步没有提交 —— 不许为了「有提交才算了」把它塞进 `docs/`。本轮工作到此处结束：不推送、不打 tag、不 bump 版本（发布等用户显式要求）。
+把「窗口零标签时显示最近列表（读法二）」写进 `.agents/open-items/backlog.md`。**那个目录不在 git 里**（记忆区，不是仓库文件），所以这一步没有提交 —— 不许为了「有提交才算了」把它塞进 `docs/`。本轮工作到此处结束：不推送、不打 tag、不 bump 版本（发布等用户显式要求）。

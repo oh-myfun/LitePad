@@ -115,7 +115,7 @@ export function stripCssComments(css: string): string {
 //   要取列表规则就把完整列表写进 selector。旧写法 `\{[^}]*\}` 的两个坑（注释里
 //   有 `}` 会截断、块内注释复述标识符会假绿）都靠剥注释 + 数花括号解决。
 // TODO(backlog): 仓库里还有少量复杂旧写法（`[^{]*` 跨段 / matchAll 计数 /
-//   `css.replace` 退化构造）保留原样，见 .workbuddy/memory/open-items/backlog.md。
+//   `css.replace` 退化构造）保留原样，见 .agents/open-items/backlog.md。
 export function ruleBlock(
   css: string,
   selector: string,
@@ -301,7 +301,7 @@ export function fnBody(fileText: string, name: string): string {
 
 // 全仓库文本文件枚举（B36 改名残留检查用）：跳过构建产物 / 依赖 / 二进制。
 // ⚠️ `.tmp` 与 `generated-images` 同理：都是**永不入库、可随时整目录删掉**的临时落点
-//    （见 MEMORY.md「临时文件一律落在本项目内」），里面允许放历史副本 —— 历史副本里
+//    （见 AGENTS.md「临时文件一律落在本项目内」），里面允许放历史副本 —— 历史副本里
 //    提到旧名是「对过去的记录」，不是会泄漏到产品里的命名残留。少了这条，
 //    往 .tmp/ 扔一个引用旧名的探针脚本就会把全仓改名守卫判红（09-18 B72 推送时实测）。
 const SKIP_DIRS = new Set([
@@ -313,9 +313,9 @@ const SKIP_DIRS = new Set([
   ".tmp",
   "generated-images",
   ".vite",
-  // 内部智能体目录（skills/memory），不随产品发布，且体积庞大；
+  // 内部智能体目录（rules/ref/pitfalls 等），不随产品发布，且体积庞大；
   // 全仓库文本扫描在此跳过以保 pre-push 门禁稳定（内存文件豁免也覆盖不到的慢路径）。
-  ".workbuddy",
+  ".agents",
   // 计划执行的台账 / 测试日志（git 忽略，`.superpowers/sdd/.gitignore` 的 `*`）。
   // 它抓的是 vitest 原文 ⇒ 必然含本守卫那条用例的**名字本身**（旧名在名字里）
   // ⇒ 谁跑一次任务级测试，谁就把全仓改名守卫判红（B352-3 实测：task-2-tests.log）。

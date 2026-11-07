@@ -7,8 +7,8 @@
  * —— **真实布局与真实滚动事件**。
  *
  * 为什么不接 Tauri 产物：本仓库已实测记录 WebView2 不吃
- * `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`、Tauri 也不转发 `--remote-debugging-port`
- * （见 `.workbuddy/memory/2026-10-02.md`、`2026-09-14.md`），CDP 接不上被测进程。
+ * `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`、Tauri 也不转发 `--remote-debugging-port`，
+ * CDP 接不上被测进程。
  * 「真实浏览器 + CDP 派发真实鼠标」在本仓库已由 `docs/split-view-plan.md` 的取证方法
  * 验证可行，这里沿用它，只把被测面从 splitview 换成滚动同步。
  *

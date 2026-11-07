@@ -16,9 +16,8 @@ describe("仓库整洁：更名残留检查", () => {
       // 本文件自己必然出现旧名（规则定义处：正则 + 说明），不算残留。
       if (rel === "tests/repo-hygiene.test.ts") continue;
       // 记忆/归档类文件豁免：它们必须能写下「原名是 LiteMD」这一历史事实
-      // （如 .workbuddy/memory/MEMORY.md 的更名说明、LiteMD-Space-Archive.md 的空间归档），
-      // 属于对过去的记录，不是会泄漏到产品里的命名残留。
-      if (rel.startsWith(".workbuddy/")) continue;
+      // （如 .agents/ 里的历史说明），属于对过去的记录，不是会泄漏到产品里的命名残留。
+      if (rel.startsWith(".agents/")) continue;
       if (/[Ll]ite[Mm][Dd]/.test(readFileSync(f, "utf-8"))) offenders.push(rel);
     }
     expect(offenders, "以下文件仍含 LiteMD/litemd 残留").toEqual([]);

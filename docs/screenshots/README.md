@@ -104,7 +104,7 @@ AdditionalBrowserArguments` 写不进去（`New-Item` 报成功但 `Test-Path` �
 ## 注意
 
 - 会话恢复相关字段若出现「重启后光标回到第 1 行 / 预览模式丢失」，多半是 Rust `TabSession`
-  的 serde 命名与前端不一致（详见 `.workbuddy/memory/ref/architecture-detail.md`），
+  的 serde 命名与前端不一致（详见 `.agents/ref/architecture-detail.md`），
   而不是截图脚本的问题。
 - 本机显示缩放为 150%，`--size` 按**物理像素**处理，所以成品就是 1600×1000。
 - 演示会话引用的文件路径必须真实存在，否则会话恢复会开出一个错误标签；

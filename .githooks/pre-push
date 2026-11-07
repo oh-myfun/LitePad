@@ -195,7 +195,7 @@ else
 fi
 
 # 记忆卫生（--warn 档：只报告不阻断 —— 代码推送不该被文档状态卡死，但必须看得见告警）
-# 判据与删除口径：.workbuddy/memory/rules/index.md「记忆卫生」
-[ -d .workbuddy/memory ] && bash scripts/memory-hygiene.sh --warn
+# 判据与删除口径：.agents/rules/memory-hygiene.md
+[ -d .agents ] && bash scripts/memory-hygiene.sh --warn
 
 echo "✓ pre-push 通过"
