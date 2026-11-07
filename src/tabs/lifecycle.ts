@@ -366,10 +366,10 @@ export function switchTab(panelId: number, tabId: number): void {
     // 换走之前先把**这一份**的视口位置按 `v`（源码行轴，宽度无关）快照下来，
     // 切回来时原样扶回去。必须在读 `getV()` 之后才写 state：两者取的是同一个当前视图。
     //
-    // ⚠️ 读的是**当前看得见那一侧**，不是编辑器：预览态的标签里 `.panel-editor` 是
-    // `display:none`（preview.css:635-637），它的 `scrollTop` 恒 0 ⇒ 按编辑器读会把
-    // 「1.0」当成这份标签的位置存起来，切回来自然弹回顶部（真机日志：
-    // `切换 · 还原窗口内 tab=4 模式=preview 视图=0`；台子 S19 钉的就是这一条）。
+    // ⚠️ 读的是 `readVisibleV`，不是直接按 DOM：落位链在途的那几帧，DOM 还停在写入被裁到的
+    // 那一处（通常就是顶部 1.00），这时候按 DOM 快照就会把「在途意图」当成这份标签的位置存
+    // 起来，切回来自然弹回顶部（真机日志：`切换 · 还原窗口内 tab=4 模式=preview 视图=0`；
+    // 台子 S19 钉的就是这一条）。量不出坐标的面也交回标签记忆，不拿兜底 1.0 当真。
     const live = readVisibleV(panel);
     if (live !== null) shownTab.scrollV = live;
     shownTab.state = panel.view.view.state;

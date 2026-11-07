@@ -268,7 +268,7 @@ export function createDiffSurface(
   /**
    * 这一格现在挂的那张标签（与 `wantedSpec` 同一寻址）：**两栏的折行与主题都从它身上取现值**。
    * 这两件事的权威各自只有一处（`makeTabState` 的 `comps.wrap` / `comps.theme`，
-   * `src/editor/editor.ts:186-187`），差异面只是借用同一个出口读一遍 —— 不另配一份。
+   * `src/editor/editor.ts`），差异面只是借用同一个出口读一遍 —— 不另配一份。
    */
   const comps = tabs.get(panel.viewTabId ?? panel.activeTabId)?.comps ?? null;
 

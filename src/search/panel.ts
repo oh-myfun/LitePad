@@ -581,9 +581,9 @@ async function jumpToLine(el: HTMLElement): Promise<void> {
   if (docId !== null && visibleInstancesOfDoc(docId).length === 0) docId = null;
   if (docId === null) {
     // ⚠️ **别信 `doOpen` 的返回值**：它回的是新开那份**实例**的 tabId
-    //    （`io/files.ts:246` `return tab.tabId`，来自 `takeInstId()`），而下面要的
+    //    （`io/files.ts` 的 `doOpen` 里 `return tab.tabId`，来自 `takeInstId()`），而下面要的
     //    `visibleInstancesOfDoc` 按 `Tab.docId` 匹配 —— 两套计数器各走各的（JS 侧
-    //    `core/app-state.ts:293`、Rust 侧 `commands/mod.rs:62`），撞上号时是巧合，
+    //    `core/app-state.ts` 的实例号分配、Rust 侧 `commands/mod.rs` 的分配），撞上号时是巧合，
     //    错号时就是「文件开了、没定位」，用户得再点一次。开完**现问一次表**。
     if ((await doOpen(path)) === null) return;
     docId = openDocIdFor(path);

@@ -1,7 +1,7 @@
 # LitePad 贡献者约定
 
-> 团队约定（非契约）。更深的「改代码前必须知道」不变量见 `.workbuddy/memory/ref/architecture-detail.md`，
-> 硬性红线目录见 `.workbuddy/memory/rules/index.md`。
+> 团队约定（非契约）。更深的「改代码前必须知道」不变量见 `.agents/ref/architecture-detail.md`，
+> 硬性红线目录见 `.agents/rules/index.md`。
 
 ## 提交与版本
 
@@ -81,7 +81,7 @@
 
 - **每个 bug 必须补回归测试、与修复同一提交**，且**改完先反向验证**：把修复还原一次，确认用例真会红
   （运行时 → `tests/smoke.bootstrap.test.ts`；配置/样式 → 对应模块的静态契约用例，如 `tests/findbar.test.ts`；
-  Rust wire/序列化 → 内联 `#[cfg(test)] mod tests`）。流程见技能 `litepad-reverse-verify`。
+  Rust wire/序列化 → 内联 `#[cfg(test)] mod tests`）。流程见 `.agents/rules/testing.md`。
 - **反向验证本身也是测试用例**，优先写成 `tests/reverse-verify.test.ts` 里的对照用例：
   把错误写法复刻成一个「退化实现」并断言它**确实坏掉**，再与真实实现的基准用例对照 ——
   两者结果不同，才说明正向用例不是恒真。它不改源码、随 `npm test` 一起跑；
@@ -93,7 +93,7 @@
   例：会话里存 px 而 px 与行高、文档长度耦合 ⇒ 直接读 `src/main.ts` 的存取链路即可定性。
   CDP / 截图只在**代码与测试都推不出来**时兜底（如交互态 hover 的视觉、真实窗口行为），
   且视觉类问题默认**交给用户本人验证**，不写像素级判图脚本。
-  取证踩过的坑记进项目的坑点记录（`.workbuddy/memory/pitfalls/`），别重复踩。
+  取证踩过的坑记进 `.agents/pitfalls/`，别重复踩。
 
 ## 运行日志（B144）
 
@@ -152,14 +152,14 @@
 
 ## 同源多实例（B149）
 
-- **同一文件打开多份时，光标与滚动位置默认不互相关联**（用户拍板，`tests/multi-instance-scope.test.ts`
-  把这条基线钉住）：`syncDocInstances` 只派发 `{ changes }`（纯文本），光标 / 视口 / 视图模式
-  各实例各归各的。
-- ⚠️ **同步滚动模式（B152）已在重构中整体清除**（`sync-scroll.ts` / 位置记忆 / 跨窗广播均已删除）：
-  标题栏那颗键保留可见但 **inert**，点击只翻转 `docSyncModes` 与自身字形，不产生任何联动。
-  `docSyncModes` 现在只是这颗键的状态存储（随会话 / 卫星标签载荷搬运点亮态），不是待恢复的功能开关。
-- 「同源」只到文本这一层就够：两份实例的光标互不干涉，用户完全可以一边看代码一边
-  对照预览翻到不同位置 —— 那正是同文件多实例的用途（B130 的恢复口径同源）。
+- **同一文件打开多份时，光标各归各的**：`syncDocInstances` 只派发 `{ changes }`（纯文本），
+  光标 / 视图模式不在其中，各实例各归各的。
+- **滚动位置按该文档的同步滚动开关联动**（B152，默认开）：`docSyncModes` 按**文档**记，
+  唯一写点是 `setDocSyncMode`，写的时候同时驱动 `src/sync-scroll/*` 的协调器并跨窗口广播；
+  关 → 同 docId 的各视口各滚各的（即 B149 当初钉的基线）。
+- 协调器只认 `scroll` 事件 + 期望账本，判定与跨窗口外发都在 `src/sync-scroll/coordinator.ts`；
+  旧的单体 `sync-scroll.ts` 与派生 DOM 预览臂都已不在代码里（分别由 `src/sync-scroll/*` 与
+  B412 的单 view 方案取代），别再到代码里找它们。
 
 ## README 与文档
 
@@ -248,7 +248,7 @@ EditorView，大纲跳转与「转到行」也落在同一颗 view 上。
   九档色调走 `--seti-*`（浅深两套），字号 150% 与 VS Code 图标主题同口径。
   目录/文件夹**不挂图标**：Seti 主题本来就不定义文件夹图标，VS Code 的资源管理器里
   文件夹行只有折叠箭头 + 名字（B370 对齐）；按钮类图标**仍一律 codicon**。
-- 想浏览全部 639 颗字形：打开 `node_modules/@vscode/codicons/dist/codicon.html`。
+- 想浏览 codicon 的全部字形：打开 `node_modules/@vscode/codicons/dist/codicon.html`。
 
 ## 范围（明确不做）
 

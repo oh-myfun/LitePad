@@ -43,7 +43,7 @@ import { SyncScrollCoordinator, type AnchorHandle, type CoordinatedSurface } fro
  * 前缀里的窗口身份不是装饰：多个窗口共用同一个 `litepad.log`，而 `P1:editor` 这种标签是
  * **每窗口各自**的 panelId —— 真机 14:19:51 那段跨窗口拖出，两份 `重建前快照` 混在一起，
  * 分不清是「同一格被重建两轮」还是「两个窗口各建一轮」，只能靠时间戳猜。
- * `windowLabel` 由 `main.ts:997` 在启动的第一件事就写好（B71 ④），所以除最早那几行外都有。
+ * `windowLabel` 由 `main.ts` 启动引导的第一件事写好（B71 ④），所以除最早那几行外都有。
  */
 export function syncTrace(msg: string): void {
   logger.trace("sync", `[${windowLabel}] ${msg}`);
@@ -371,7 +371,7 @@ export function landVisibleSideAtV(
   // `scroll` 照样派发、CM6 照样量行高（换成 `display:none` 就全塌了，那正是隐藏侧落不进位的成因）；
   // 收口（或到上限认现状）时**在写下这一位的同一个同步栈里**取消隐藏 —— 藏/露之间没有绘制机会，
   // 于是露出来的第一帧就是收口后的位置。同一个手法已用在悬浮查找上
-  // （`src/shell/tooltip.ts:377` 「用 visibility 挡住这一帧的 (0,0) 位置；同一帧内就摆好，不会闪」）。
+  // （`src/shell/tooltip.ts` 里「用 visibility 挡住这一帧的 (0,0) 位置；同一帧内就摆好，不会闪」那条）。
   // 判据只有「读回的 v 等不等得到意图」：不猜时间、不数帧。
   if (retry) {
     // B296：链在途 ⇒ 这一格的位置记在「欠它的那一个 v」上，谁都不许在这几帧里按 DOM 快照

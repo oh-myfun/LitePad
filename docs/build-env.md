@@ -1,7 +1,7 @@
 # LitePad 构建与环境指南
 
 > 贡献者向。本机/CI 工具链为 **Windows + MSVC**（Visual Studio 2022「使用 C++ 的桌面开发」工作负载 + Windows SDK）。
-> 团队内部的开发沙箱特殊坑见 `.workbuddy/memory/ref/session-env.md`（不进本文件）。
+> 团队内部的开发沙箱特殊坑见 `.agents/ref/session-env.md`（不进本文件）。
 
 ## 工具链
 
@@ -18,7 +18,7 @@
 标准入口：
 
 ```sh
-npm install                 # 装依赖（vitest 固定 4.1.11）
+npm install                 # 装依赖
 npm run build:all           # tsc -> vite -> vitest -> cargo build+test -> tauri build
 ```
 
@@ -61,6 +61,7 @@ npm run tauri dev        # Vite 1420 + debug 构建；默认多开，配置落 %
   ```
 
   它仍是 debug profile（默认多开），只是前端走嵌入的 `dist/`，不走 dev server。
+
 - **测试用的配置目录一律指到项目内**：`LITEPAD_CONFIG_DIR=<仓库>/.tmp/<case>/config`，
   不碰用户的 `%APPDATA%\LitePad`。
 
@@ -87,10 +88,10 @@ Rust 构建缓存里烙死了绝对路径。改目录名后 `cargo build/test` �
 
 ## CI / Release
 
-| workflow | 触发 | 做什么 |
-|---|---|---|
-| `ci.yml` | push `main`、PR、手动 | format:check → lint → tsc → vite build → vitest → cargo test |
-| `release.yml` | push `v*` tag、手动 | 构建 NSIS → 建 GitHub Release 并附安装包 |
+| workflow      | 触发                  | 做什么                                                       |
+| ------------- | --------------------- | ------------------------------------------------------------ |
+| `ci.yml`      | push `main`、PR、手动 | format:check → lint → tsc → vite build → vitest → cargo test |
+| `release.yml` | push `v*` tag、手动   | 构建 NSIS → 建 GitHub Release 并附安装包                     |
 
 - **只推 main 不会发布**：`git push origin main` 之后还要 `git push origin v<版本>`（只推当版
   tag；把历史 tag 整串带上去会让旧版本各触发一次 Release 去抢 Latest）。
@@ -105,12 +106,13 @@ Rust 构建缓存里烙死了绝对路径。改目录名后 `cargo build/test` �
 
 ## 界面截图（README / docs）
 
-唯一入口是 `scripts/capture-screenshots.py`（BitBlt 抓真实窗口，可见外框裁剪）：
+唯一入口是 `bash scripts/shot.sh`（包装 `scripts/capture-screenshots.py`，负责挑 Python
+解释器并设好 safe-delete 环境）：
 
 ```sh
-python scripts/capture-screenshots.py          # 拍 main → docs/screenshots/
-python scripts/capture-screenshots.py --list   # 看有哪些配方
-python scripts/capture-screenshots.py --keep   # 保留演示会话（排查用）
+bash scripts/shot.sh                # 拍默认配方 → docs/screenshots/
+bash scripts/shot.sh --list         # 看有哪些配方
+bash scripts/shot.sh --keep         # 保留演示会话（排查用）
 ```
 
 前提：`src-tauri/target/release/litepad.exe` 必须是**当前代码**编译出来的。任何一次 `git push`

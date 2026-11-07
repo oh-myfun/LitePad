@@ -138,8 +138,9 @@ pub fn file_name_of(path: &str) -> String {
 /// 名单条目的**身份键**：canonicalize → 剥 `\\?\` verbatim 前缀 → Windows 上小写。
 ///
 /// ⚠️ 为什么必须绕这一圈：`open_file` 用 canonical 结果判重，却把**原始输入路径**返回给
-/// 前端（`commands/mod.rs:450`），于是同一个文件可能以 `C:\Dir\A.md` 与 `c:\dir\a.md`
-/// 两种写法进名单 —— 不收敛就会出现「同一个文件占两格、清掉一格另一格还在」。
+/// 前端（`commands/mod.rs` 的 `open_file` 返回 `OpenedFile.path`），于是同一个文件可能以
+/// `C:\Dir\A.md` 与 `c:\dir\a.md` 两种写法进名单 —— 不收敛就会出现「同一个文件占两格、
+/// 清掉一格另一格还在」。
 /// 文件已被外部删除时 canonicalize 失败，退回原串：条目照样记得下来，下次列名单由
 /// `drop_missing` 剔掉。
 pub fn key_of(path: &str) -> String {
@@ -519,7 +520,7 @@ mod tests {
     #[test]
     fn windows_paths_differing_only_in_case_or_verbatim_prefix_share_one_entry() {
         // Rust 侧 open_file 用 canonicalize 的结果判重，返回给前端的却是**原始输入路径**
-        // （commands/mod.rs:450）⇒ 同一文件可能以两种写法进名单。键必须收敛到一格。
+        // （`commands/mod.rs` 的 `open_file`）⇒ 同一文件可能以两种写法进名单。键必须收敛到一格。
         assert_eq!(
             key_of(r"\\?\C:\Dir\A.md"),
             key_of(r"C:\Dir\A.md"),
