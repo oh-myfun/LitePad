@@ -29,6 +29,7 @@ import {
 import {
   Decoration,
   EditorView,
+  gutter,
   gutterLineClass,
   GutterMarker,
   WidgetType,
@@ -36,10 +37,10 @@ import {
 import type { DiffBlock, DiffKind } from "./blocks";
 import type { DiffSide } from "./model";
 
-/** 一行之上的交代：落在第几行、是什么形。 */
+/** 一行之上的交代：落在第几行、在这一侧是删除行还是新增行。 */
 export interface SideMark {
   line: number;
-  kind: DiffKind;
+  kind: Extract<DiffKind, "insert" | "delete">;
 }
 
 /** 这一侧要补出的空位：落在第 `afterLine` 行之后、占 `count` 行。 */
@@ -68,16 +69,18 @@ function segLen({ start, end }: { start: number; end: number }): number {
 /**
  * 这一栏要涂底色的那些行（按行号升序）。
  *
- * `modify` 两侧都标、`insert` 只标 modified 侧、`delete` 只标 original 侧 ——
- * 「删掉的行在右栏根本没有真行，新增的行在左栏根本没有真行」正是设计稿 ⑥ 那一屏的语义。
+ * 分成两侧看，**没有「修改行」这一档**（与 VS Code 的同栏语义一致）：
+ * 原稿一侧的每一行都是「被删掉的行」，新稿一侧的每一行都是「新增的行」；
+ * 改块在两边各自涂成删除 / 新增，而不是另造一颗第三种颜色。
+ *
+ * 空段那一侧没有真行（`start > end`），循环自然不发。
  */
 export function sideLineMarks(blocks: DiffBlock[], side: DiffSide): SideMark[] {
+  const kind = side === "original" ? "delete" : "insert";
   const out: SideMark[] = [];
   for (const b of blocks) {
-    if (b.kind === "insert" && side !== "modified") continue;
-    if (b.kind === "delete" && side !== "original") continue;
     const { start, end } = ownRange(b, side);
-    for (let line = start; line <= end; line++) out.push({ line, kind: b.kind });
+    for (let line = start; line <= end; line++) out.push({ line, kind });
   }
   return out;
 }
@@ -182,21 +185,14 @@ export class DiffGapWidget extends WidgetType {
  * 一批块誊成这一栏的装饰。
  *
  * 只做**行号 → 位置**的换算（含越界丢弃：块是按 provider 那份正文算的，本栏正文可能已经
- * 先动了一步），一行只发一条 `Decoration.line`（CM6 的行装饰必须是零点区间，且两条同线
- * 不如一条并起来干净），所以块起点的 `diff-edge-top` 并进底色那一条的 class 里。
+ * 先动了一步），一行只发一条 `Decoration.line`。没有块头横条，也没有第三种「修改行」配色：
+ * VS Code 的分侧语义就是原稿删、新稿增。
  */
 function buildFace(doc: Text, side: DiffSide, blocks: DiffBlock[]): RangeSet<Decoration> {
   const classes = new Map<number, string>();
   for (const m of sideLineMarks(blocks, side)) {
     if (m.line < 1 || m.line > doc.lines) continue;
     classes.set(m.line, `diff-line-${m.kind}`);
-  }
-  for (const b of blocks) {
-    const { start, end } = ownRange(b, side);
-    // 空段那一侧没有真行（那一头的交代是占位块自己的斜纹），起点的横头就不必发。
-    if (start > end || start < 1 || start > doc.lines) continue;
-    const below = classes.get(start);
-    classes.set(start, below ? `${below} diff-edge-top` : "diff-edge-top");
   }
 
   const ranges: Range<Decoration>[] = [];
@@ -220,20 +216,127 @@ function buildFace(doc: Text, side: DiffSide, blocks: DiffBlock[]): RangeSet<Dec
   return Decoration.set(ranges, true);
 }
 
-const diffFaceField = StateField.define<RangeSet<Decoration>>({
+/**
+ * 行号槽左侧的 `+` / `−` 记号（VS Code 的 `insert-sign` / `delete-sign`）。
+ *
+ * VS Code 用两个 margin：`linesDecorationsClassName` 画记号、`marginClassName` 给行号槽上色。
+ * 这里对应两颗标记：带 `toDOM` 的管记号槽，带 `elementClass` 的管行号槽；两者由同一份
+ * `sideLineMarks` 生成，行号永远一致。
+ */
+class DiffSignMarker extends GutterMarker {
+  constructor(readonly kind: "insert" | "delete") {
+    super();
+  }
+
+  eq(other: GutterMarker): boolean {
+    return other instanceof DiffSignMarker && other.kind === this.kind;
+  }
+
+  toDOM(): HTMLElement {
+    const el = document.createElement("span");
+    el.className = `diff-sign diff-sign-${this.kind}`;
+    el.textContent = this.kind === "delete" ? "\u2212" : "+";
+    return el;
+  }
+
+  toString(): string {
+    return `sign-${this.kind}`;
+  }
+}
+
+/**
+ * 只给行号槽上色的那颗标记（不带 `toDOM`）。
+ *
+ * 记号槽自己已经有一颗带字形的标记；若把「底色类」也做在同一颗上，`gutterLineClass` 会让
+ * 记号槽再把同一颗标记渲染一次（CM6 把 `markers` 与行级类标记并在一起），一行就出两道 `−`。
+ * 拆成两颗：一颗管字形、一颗管类名，行号槽与记号槽各拿到自己需要的那一半。
+ */
+class DiffGutterMarker extends GutterMarker {
+  readonly elementClass: string;
+
+  constructor(readonly kind: "insert" | "delete") {
+    super();
+    this.elementClass = `diff-gutter-${kind}`;
+  }
+
+  eq(other: GutterMarker): boolean {
+    return other instanceof DiffGutterMarker && other.kind === this.kind;
+  }
+
+  toString(): string {
+    return `gutter-${this.kind}`;
+  }
+}
+
+const insertSign = new DiffSignMarker("insert");
+const deleteSign = new DiffSignMarker("delete");
+const insertGutter = new DiffGutterMarker("insert");
+const deleteGutter = new DiffGutterMarker("delete");
+
+/** 这一栏的记号（行号与底色同一份来源，越界丢弃口径同上）。 */
+function buildSigns(doc: Text, side: DiffSide, blocks: DiffBlock[]): RangeSet<GutterMarker> {
+  const ranges: Range<GutterMarker>[] = [];
+  for (const m of sideLineMarks(blocks, side)) {
+    if (m.line < 1 || m.line > doc.lines) continue;
+    const marker = m.kind === "delete" ? deleteSign : insertSign;
+    ranges.push(marker.range(doc.line(m.line).from));
+  }
+  return RangeSet.of(ranges, true);
+}
+
+/** 行号槽（以及记号槽）的底色类；与记号同一份行号。 */
+function buildGutterClasses(
+  doc: Text,
+  side: DiffSide,
+  blocks: DiffBlock[],
+): RangeSet<GutterMarker> {
+  const ranges: Range<GutterMarker>[] = [];
+  for (const m of sideLineMarks(blocks, side)) {
+    if (m.line < 1 || m.line > doc.lines) continue;
+    const marker = m.kind === "delete" ? deleteGutter : insertGutter;
+    ranges.push(marker.range(doc.line(m.line).from));
+  }
+  return RangeSet.of(ranges, true);
+}
+
+/** 装饰那一臂的三份画法：整行底色 + 行号槽底类 + 记号槽字形。 */
+interface FaceValue {
+  lines: RangeSet<Decoration>;
+  gutterClasses: RangeSet<GutterMarker>;
+  signs: RangeSet<GutterMarker>;
+}
+
+function buildFaceValue(doc: Text, side: DiffSide, blocks: DiffBlock[]): FaceValue {
+  return {
+    lines: buildFace(doc, side, blocks),
+    gutterClasses: buildGutterClasses(doc, side, blocks),
+    signs: buildSigns(doc, side, blocks),
+  };
+}
+
+const diffFaceField = StateField.define<FaceValue>({
   // 建 state 时按 provider 现算一次：这一臂只随差异标签而建，不像 `gutterDiffField`
   // 那样压在「每切一次标签都要过」的那条路上。
-  create: (state) => buildFace(state.doc, state.facet(faceSide), state.facet(faceBlocks)()),
+  create: (state) => buildFaceValue(state.doc, state.facet(faceSide), state.facet(faceBlocks)()),
   update(value, tr) {
     for (const e of tr.effects) {
       if (e.is(refreshDiff)) {
-        return buildFace(tr.state.doc, tr.state.facet(faceSide), tr.state.facet(faceBlocks)());
+        return buildFaceValue(tr.state.doc, tr.state.facet(faceSide), tr.state.facet(faceBlocks)());
       }
     }
     // 键入期：装饰跟着改动走，不重算（与 `gutterDiffField` 同一纪律）。
-    return tr.docChanged ? value.map(tr.changes) : value;
+    return tr.docChanged
+      ? {
+          lines: value.lines.map(tr.changes),
+          gutterClasses: value.gutterClasses.map(tr.changes),
+          signs: value.signs.map(tr.changes),
+        }
+      : value;
   },
-  provide: (f) => EditorView.decorations.from(f),
+  provide: (f) => [
+    EditorView.decorations.from(f, (v) => v.lines),
+    gutterLineClass.from(f, (v) => v.gutterClasses),
+  ],
 });
 
 /**
@@ -248,7 +351,18 @@ const diffFaceField = StateField.define<RangeSet<Decoration>>({
  * 抓过的「上一臂还活着」那一场病的病根（见 `surface.ts` 的 `rightFaceSlot` 注）。
  */
 export function diffFace(side: DiffSide, blocks: () => DiffBlock[]): Extension {
-  return [faceSide.of(side), faceBlocks.of(blocks), diffFaceField, diffFoldField];
+  return [
+    faceSide.of(side),
+    faceBlocks.of(blocks),
+    diffFaceField,
+    diffFoldField,
+    // 记号槽在 DOM 里排在行号之后，靠样式段的 `order: -1` 挪到行号左侧（VS Code 的
+    // `linesDecorationsClassName` 也在行号左侧），不必为排序再拆一颗 Compartment。
+    gutter({
+      class: "cm-diffSigns",
+      markers: (view) => view.state.field(diffFaceField, false)?.signs ?? RangeSet.empty,
+    }),
+  ];
 }
 
 // --------------------------------------------------------------------------- #

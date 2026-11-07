@@ -9,7 +9,8 @@
 // ⚠️ 左栏那颗 view **不进同步滚动那套注册口**：那套的语义是「同一文档的两个视口」，
 // 而这里是两份**不同**的内容（设计稿 ② 的反目标）；跳块的落位走既有「显式落位」那一类（Task 4）。
 //
-// 两臂的装饰面（Task 3：两侧行底色 / 对侧占位块 / 中间指示带）**在这里装上，但不在这里建**：
+// 两臂的装饰面（Task 3：两侧行底色 / 行号槽记号 / 对侧占位块）与右缘差异概览**在这里装上，
+// 但不在这里建**：
 // `face.ts` 出 `diffFace(side, blocks)`，本模块只管「哪颗 view 装哪一臂、什么时候装/拆」，
 // 并把「现在这批块是什么」那一读取口交出去（预审 R1：两颗 Compartment 由本模块自己创建，
 // `makeTabState` / `makeDiffInstance` 的扩展清单一个字都不改）。
@@ -32,6 +33,7 @@ import {
   onFoldBarClick,
   refreshDiff,
   setFoldedRanges,
+  sideGaps,
   type FoldRange,
 } from "./face";
 import { canOpenAgainstBaseline, notifyDiffBlocks, type DiffSide, type DiffSpec } from "./model";
@@ -258,6 +260,19 @@ export function createDiffSurface(
   hostEl.insertBefore(originalEl, hostEl.firstChild);
   hostEl.insertBefore(sashEl, originalEl.nextSibling);
 
+  // 右缘 30px 的差异概览（VS Code 的 `diffOverview`）：左列原稿（删除色）、右列新稿（新增色），
+  // 外加一颗视口滑块。放在 `.panel-editor` 之后 ⇒ 是 host 的最后一个 flex 子项，不吃正文宽度。
+  const overviewEl = document.createElement("div");
+  overviewEl.className = "diff-overview";
+  const originalRulerEl = document.createElement("div");
+  originalRulerEl.className = "diff-overview-ruler diff-overview-original";
+  const modifiedRulerEl = document.createElement("div");
+  modifiedRulerEl.className = "diff-overview-ruler diff-overview-modified";
+  const viewportEl = document.createElement("div");
+  viewportEl.className = "diff-viewport";
+  overviewEl.append(originalRulerEl, modifiedRulerEl, viewportEl);
+  hostEl.appendChild(overviewEl);
+
   const current = spec;
   /** 左栏那一臂的槽（随 state 进去；`reassert` 补基线换 state 时重新带上，见 `leftState`）。 */
   const leftFace = new Compartment();
@@ -447,6 +462,9 @@ export function createDiffSurface(
     left.dispatch({ effects: foldOf("original") });
     right?.dispatch({ effects: foldOf("modified") });
     writeBackRight();
+    // 概览条的色块吃块表 + 折叠态，与两臂同一次收口；右栏的 scrollTop 可能刚被折条改掉，
+    // 视口滑块顺便复算一帧。
+    renderOverview();
   };
 
   /**
@@ -617,6 +635,116 @@ export function createDiffSurface(
     parent: originalEl,
     state: leftState(current, leftFace.of(leftArm()), themeSlot.of(lastTheme)),
   });
+
+  /**
+   * 概览条的行轴：VS Code 的 overview ruler 画在**视图坐标**里（对齐占位块与折叠都计入），
+   * 所以两列在同一高度上的色块才对得齐。这里同样把「文档行 → 视觉行」算出来：
+   *   · 占位块：`sideGaps` 每段吃掉 `count` 行（两侧总行数因此相等）；
+   *   · 折叠：被折的 `to - from` 行被一条折条顶替，净少 `to - from` 行。
+   * 未改动的块不会落进折区（折区候选本身就是未改动区），因此块的跨度不必再剪折叠。
+   */
+  const visualAxis = (side: DiffSide): { total: number; rowOf: (line: number) => number } => {
+    const view = viewOf(side);
+    const gaps = sideGaps(stored, side);
+    const folds = view ? foldedRangesIn(view.state) : [];
+    const total =
+      (view?.state.doc.lines ?? 0) +
+      gaps.reduce((n, g) => n + g.count, 0) -
+      folds.reduce((n, f) => n + Math.max(f.to - f.from, 0), 0);
+    const rowOf = (line: number): number =>
+      line +
+      gaps.reduce((n, g) => n + (g.afterLine < line ? g.count : 0), 0) -
+      folds.reduce((n, f) => n + (line > f.to ? Math.max(f.to - f.from, 0) : 0), 0);
+    return { total, rowOf };
+  };
+
+  const paintRuler = (side: DiffSide, ruler: HTMLElement): void => {
+    ruler.replaceChildren();
+    const { total, rowOf } = visualAxis(side);
+    if (total <= 0) return;
+    for (const b of stored) {
+      const start = side === "modified" ? b.modifiedStart : b.originalStart;
+      const end = side === "modified" ? b.modifiedEnd : b.originalEnd;
+      const len = end - start + 1;
+      if (len <= 0) continue;
+      const mark = document.createElement("div");
+      mark.className = "diff-overview-mark";
+      mark.style.top = `${((rowOf(start) - 1) / total) * 100}%`;
+      mark.style.height = `${(len / total) * 100}%`;
+      ruler.appendChild(mark);
+    }
+  };
+
+  const renderViewport = (): void => {
+    const scroller = right?.scrollDOM;
+    if (!scroller) return;
+    const { scrollTop, scrollHeight, clientHeight } = scroller;
+    if (scrollHeight <= 0 || clientHeight <= 0) {
+      viewportEl.style.height = "0";
+      return;
+    }
+    const height = Math.max((clientHeight / scrollHeight) * 100, 2);
+    const span = Math.max(scrollHeight - clientHeight, 0);
+    const top = span > 0 ? (scrollTop / span) * Math.max(100 - height, 0) : 0;
+    viewportEl.style.top = `${top}%`;
+    viewportEl.style.height = `${height}%`;
+  };
+
+  /** 概览条重画：批块、折叠、主题换壳都从这一颗口子收口（调用方统一在 `refreshArms`）。 */
+  const renderOverview = (): void => {
+    paintRuler("original", originalRulerEl);
+    paintRuler("modified", modifiedRulerEl);
+    renderViewport();
+  };
+
+  /**
+   * 概览条兼作右栏的纵向滚动条（原生那条已由 `diff.css` 收成 0 宽）。
+   * 指针按下即跳到对应高度、拖动连续跟手；滚轮转发给右栏 —— VS Code 的 `diffOverview`
+   * 也是把 pointerdown / wheel 直接交给 modified editor 的滚动机构。
+   */
+  const scrollToClientY = (clientY: number): void => {
+    const scroller = right?.scrollDOM;
+    if (!scroller) return;
+    const rect = overviewEl.getBoundingClientRect();
+    if (rect.height <= 0) return;
+    const ratio = Math.min(Math.max((clientY - rect.top) / rect.height, 0), 1);
+    scroller.scrollTop = ratio * Math.max(scroller.scrollHeight - scroller.clientHeight, 0);
+  };
+  let draggingOverview = false;
+  const onOverviewDown = (e: PointerEvent): void => {
+    draggingOverview = true;
+    overviewEl.setPointerCapture?.(e.pointerId);
+    scrollToClientY(e.clientY);
+  };
+  const onOverviewMove = (e: PointerEvent): void => {
+    if (draggingOverview) scrollToClientY(e.clientY);
+  };
+  const onOverviewUp = (e: PointerEvent): void => {
+    draggingOverview = false;
+    if (overviewEl.hasPointerCapture?.(e.pointerId)) overviewEl.releasePointerCapture(e.pointerId);
+  };
+  const onOverviewWheel = (e: WheelEvent): void => {
+    const scroller = right?.scrollDOM;
+    if (!scroller) return;
+    e.preventDefault();
+    scroller.scrollTop += e.deltaY;
+  };
+  const onRightScroll = (): void => renderViewport();
+  overviewEl.addEventListener("pointerdown", onOverviewDown);
+  overviewEl.addEventListener("pointermove", onOverviewMove);
+  overviewEl.addEventListener("pointerup", onOverviewUp);
+  overviewEl.addEventListener("pointercancel", onOverviewUp);
+  overviewEl.addEventListener("wheel", onOverviewWheel, { passive: false });
+  right?.scrollDOM.addEventListener("scroll", onRightScroll, { passive: true });
+  const detachOverview = (): void => {
+    overviewEl.removeEventListener("pointerdown", onOverviewDown);
+    overviewEl.removeEventListener("pointermove", onOverviewMove);
+    overviewEl.removeEventListener("pointerup", onOverviewUp);
+    overviewEl.removeEventListener("pointercancel", onOverviewUp);
+    overviewEl.removeEventListener("wheel", onOverviewWheel);
+    right?.scrollDOM.removeEventListener("scroll", onRightScroll);
+    overviewEl.remove();
+  };
 
   /** 现读左右两份正文 → diffBlocks → 给两颗 view 各发 refreshDiff（+ 折叠态）→ 广播新块表。 */
   const syncBlocks = (): void => {
@@ -823,6 +951,7 @@ export function createDiffSurface(
       // 折行跟着还回**设置**里的那一颗（R19 + R23-1：读 `isWrap`，不读被同形回写污染的快照）。
       right?.dispatch({ effects: [rightFaceSlot.reconfigure([]), ...wrapBack()] });
       detachSash();
+      detachOverview();
       left.destroy();
       originalEl.remove();
       sashEl.remove();
