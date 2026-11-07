@@ -102,7 +102,93 @@ def single_session(tabs, active=0):
             "layout": {"kind": "leaf", "panelId": 0}, "activePanel": 0}
 
 
-# README 只用一张图（docs/conventions.md：开头只放一张 main.png），所以只维护 main。
+def diff_tab(path, left_path, line=1, doc_id=1):
+    """B 档差异标签：右栏 `path`，左栏 `left_path`（字段见 `src/ipc/api.ts` 的 TabSession）。
+
+    `kind` 必须是显式 `"diff"`：会话恢复只认这一个值，缺键会被当成普通编辑器标签
+    （`diff/model.ts:diffKindOf` 的三态口径）。
+    """
+    return dict(tab(path, "source", line, doc_id), kind="diff", diffLeftPath=left_path)
+
+
+# 差异配方的演示文件：写进项目内 `.tmp/shot/demo`，每次重拍都重建 —— 内容即真相，
+# 不依赖仓库里某个恰好「改过几行」的文件。左边 before.ts、右边 after.ts，四类块都齐：
+#   改行（两侧同色）、纯插入（左栏斜纹）、纯删除（右栏斜纹）、函数整体替换。
+DEMO_DIR = os.path.join(SHOT_DIR, "demo")
+DIFF_BEFORE = os.path.join(DEMO_DIR, "before.ts")
+DIFF_AFTER = os.path.join(DEMO_DIR, "after.ts")
+DIFF_BEFORE_TEXT = "\n".join([
+    'import { readFile } from "fs/promises";',
+    'import { join } from "path";',
+    "",
+    "export interface Options {",
+    "  root: string;",
+    "  encoding: string;",
+    "  maxLines: number;",
+    "  verbose: boolean;",
+    "}",
+    "",
+    "export function defaults(): Options {",
+    "  return {",
+    "    root: cwd(),",
+    '    encoding: "utf-8",',
+    "    maxLines: 5000,",
+    "    verbose: false,",
+    "  };",
+    "}",
+    "",
+    "export function clamp(text, max) {",
+    r'  return text.split("\n").slice(0, max);',
+    "}",
+    "",
+    "export async function readText(path) {",
+    "  const buf = await readFile(join(root, path));",
+    '  return buf.toString("utf-8");',
+    "}",
+    "",
+    "export function isLarge(text) {",
+    r'  return text.split("\n").length > 5000;',
+    "}",
+])
+DIFF_AFTER_TEXT = "\n".join([
+    'import { readFile } from "fs/promises";',
+    'import { basename, join } from "path";',
+    "",
+    "export interface Options {",
+    "  root: string;",
+    "  encoding: string;",
+    '  theme: "light" | "dark";',
+    "  strict: boolean;",
+    "  verbose: boolean;",
+    "}",
+    "",
+    "export function defaults(): Options {",
+    "  return {",
+    "    root: cwd(),",
+    '    encoding: "utf-8",',
+    '    theme: "dark",',
+    "    strict: true,",
+    "    verbose: false,",
+    "  };",
+    "}",
+    "",
+    "export async function readText(path) {",
+    "  try {",
+    "    const buf = await readFile(join(root, path));",
+    '    return buf.toString("utf-8");',
+    "  } catch (err) {",
+    '    throw new Error(`读不到 ${basename(path)}`);',
+    "  }",
+    "}",
+    "",
+    "export function sizeOf(text) {",
+    "  return new TextEncoder().encode(text).length;",
+    "}",
+])
+
+
+# 根 README 开头只放 main.png；差异编辑器那张 diff.png 归 `docs/screenshots/README.md`
+# 的表格，两处都要提到（改配方就同步改那份 README 的复现命令）。
 # 要补拍「设置」里的弹窗，加一条 recipe 并用 clicks 摆状态即可，例如：
 #
 #   {
@@ -125,6 +211,13 @@ RECIPES = [
             tab(MD, "preview", 1, 4),
         ),
     },
+    {
+        "name": "diff",
+        "what": "差异编辑器：before.ts ↔ after.ts（删/增行、对侧斜纹、右缘概览）",
+        "theme": "dark",
+        "files": {"before.ts": DIFF_BEFORE_TEXT, "after.ts": DIFF_AFTER_TEXT},
+        "session": lambda: single_session([diff_tab(DIFF_AFTER, DIFF_BEFORE, 1, 1)]),
+    },
 ]
 
 
@@ -142,8 +235,29 @@ def pids_alive(exe="litepad.exe"):
     return sc.pids_by_exe(exe)
 
 
+def litepad_webview_pids():
+    """只挑 LitePad 自己的 WebView2 进程（命令行里带 `com.litepad.app`）。
+
+    ⚠️ 不能像以前那样 `taskkill /IM msedgewebview2.exe /T` 一刀切：本机上同时有
+    Windows 搜索、小组件、PowerToys Peek 的 WebView2 在跑，那一刀等于替用户关掉
+    别的应用。孤儿进程（litepad 已经被硬杀）认不出父进程，但都带着自己的
+    `--user-data-dir=...\\com.litepad.app\\EBWebView`，按这个挑最稳。
+    """
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" | "
+             "Where-Object { $_.CommandLine -like '*com.litepad.app*' } | "
+             "Select-Object -ExpandProperty ProcessId"],
+            capture_output=True, text=True, timeout=30,
+        ).stdout
+    except Exception:
+        return []
+    return sorted({int(x) for x in out.split() if x.strip().isdigit()})
+
+
 def stop_app():
-    """先温和再强杀；连带清掉 msedgewebview2 孤儿进程（它们会占住用户数据目录）。"""
+    """先温和再强杀；连带清掉**属于 LitePad 的** WebView2 孤儿进程（它们会占住用户数据目录）。"""
     if pids_alive():
         subprocess.run(["taskkill", "/IM", "litepad.exe", "/T"], capture_output=True)
         for _ in range(12):
@@ -152,7 +266,8 @@ def stop_app():
             time.sleep(0.25)
         if pids_alive():
             subprocess.run(["taskkill", "/F", "/IM", "litepad.exe", "/T"], capture_output=True)
-    subprocess.run(["taskkill", "/F", "/IM", "msedgewebview2.exe", "/T"], capture_output=True)
+    for pid in litepad_webview_pids():
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True)
     for _ in range(20):
         if not pids_alive():
             break
@@ -199,6 +314,13 @@ def write_demo_config(recipe):
         json.dump(base, f, ensure_ascii=False, indent=2)
     with open(SESSION, "w", encoding="utf-8") as f:
         json.dump(recipe["session"](), f, ensure_ascii=False, indent=2)
+    # 配方自带的演示文件（差异格要一对真实文件）：每次重写，内容以脚本里的常量为准。
+    files = recipe.get("files") or {}
+    if files:
+        os.makedirs(DEMO_DIR, exist_ok=True)
+        for name, text in files.items():
+            with open(os.path.join(DEMO_DIR, name), "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
 
 
 # ---------------------------------------------------------------- 窗口操作
