@@ -38,6 +38,9 @@ let drawer: typeof import("../src/shell/drawer");
 let mod: typeof import("../src/diff/panel");
 let ui: typeof import("../src/ui");
 
+/** 装配**完成那一刻**列表里是什么（`beforeEach` 会清列表 ⇒ 这一格必须抓在清之前）。 */
+let initialListText = "";
+
 beforeAll(async () => {
   const html = readFileSync("index.html", "utf-8");
   const body = (html.match(/<body>([\s\S]*)<\/body>/)?.[1] ?? "").replace(
@@ -53,6 +56,7 @@ beforeAll(async () => {
   // 装配**只跑一次**：`registerDrawerView` 按名字进 Map（重复登记是换同一份 spec），
   // 而那颗键的 click 是往节点上加监听 —— 跑两遍就是点一次翻两回。
   mod.setupDiffPanel();
+  initialListText = ui.diffList.textContent ?? "";
 });
 
 function spec(over: Partial<DiffSpec> = {}): DiffSpec {
@@ -215,6 +219,15 @@ describe("B461 · diffRowsOf 纯函数（一块一行）", () => {
   it("B461 · 空态两句分场景，不许一片白", () => {
     expect(mod.emptyTextFor("notDiff")).toBe("当前标签不是差异编辑器");
     expect(mod.emptyTextFor("noBlocks")).toBe("两份内容一致 —— 没有差异项");
+  });
+});
+
+describe("B461 · 装配那一刻就画（boot 还原出来的抽屉不等用户点一下）", () => {
+  it("B461 · setupDiffPanel 落地即写出空态：抽屉开着而列表一片白 = 用户以为功能坏了", () => {
+    // 病根：`setDrawer` 的 boot 回放先跑（那时本视图还没登记，`onShow` 落在空处），
+    // 而 `registerDrawerView` 只管显隐与亮灭 —— 不补这一发，还原出来就是白板（真机 A-00 抓到）。
+    expect(initialListText).not.toBe("");
+    expect(initialListText).toContain(mod.emptyTextFor("notDiff"));
   });
 });
 

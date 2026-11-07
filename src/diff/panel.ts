@@ -232,4 +232,7 @@ export function setupDiffPanel(): void {
   });
   sideDiff.addEventListener("click", () => toggleDiff());
   setDiffBlocksListener(() => updateDiffDrawer());
+  // boot 回放（`setDrawer` 那条）跑在本视图登记**之前**，`onShow` 落在空处；
+  // `registerDrawerView` 只管显隐 ⇒ 不在这里补一发，还原出「差异」块就是一片白（真机 A-00）。
+  updateDiffDrawer();
 }
