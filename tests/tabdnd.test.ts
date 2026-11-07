@@ -649,7 +649,9 @@ describe("标签拖拽静态契约（从 regressions 拆出）", () => {
     // 诉求）。B91 关掉那个开关（文件拖入改走路径桥），B91-2 顺势把标签拖拽换回
     // HTML5 DnD —— 影像交给系统绘制，跟出窗口、压在别的应用上都在。
     const ts = readFileSync("src/shell/tabstrip.ts", "utf-8");
-    expect(ts.includes("draggable = true"), "标签必须可拖（HTML5 DnD 的入口）").toBe(true);
+    // B461 Task 10：判据从钉死 `= true` 那一行原文改成问「入口开着、且只按 isDiff 关」——
+    // 差异标签是**显式例外**（跨面板/跨窗口搬移本轮没定义语义，设计稿 ⑧·3），普通标签照旧可拖。
+    expect(ts, "标签必须可拖（HTML5 DnD 的入口）").toMatch(/el\.draggable = !t\.isDiff;/);
     expect(ts.includes('addEventListener("dragstart"'), "必须监听 dragstart").toBe(true);
     expect(ts.includes("startTabDrag("), "起拖必须走传输层（写载荷 + 交影像）").toBe(true);
     // 旧指针编排那套入口必须彻底消失，否则两套运输会互相打架
@@ -682,9 +684,10 @@ describe("标签拖拽静态契约（从 regressions 拆出）", () => {
     const tsCode = stripComments(ts);
     const dndCode = stripComments(dnd);
 
-    // ① 标签元素必须可拖（`draggable = true`），起手写载荷 + 交影像 —— 只测 tabdnd 的
-    //    setDragImage 会漏掉这层接线（没人调它照样「测试通过」）
-    expect(tsCode, "标签元素可拖").toMatch(/el\.draggable = true;/);
+    // ① 标签元素必须可拖（`draggable` 开着），起手写载荷 + 交影像 —— 只测 tabdnd 的
+    //    setDragImage 会漏掉这层接线（没人调它照样「测试通过」）。
+    //    B461 Task 10：差异标签是显式例外（`!t.isDiff`），判据跟着这一形走而不是钉死 `= true`。
+    expect(tsCode, "标签元素可拖").toMatch(/el\.draggable = !t\.isDiff;/);
     expect(tsCode, "起手写载荷并交出影像").toMatch(
       /startTabDrag\([\s\S]{0,200}?createTabDragImage\(el\),\s*\n\s*TAB_IMAGE_ANCHOR,/,
     );

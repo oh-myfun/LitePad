@@ -328,6 +328,16 @@ pub struct TabSession {
     /// 自己这一份，取不到才借同文档别的实例那一份。Rust 只透传，换算全在前端。
     #[serde(alias = "scroll_v")]
     pub scroll_v: Option<f64>,
+    /// B461：这一条记录是哪种标签 —— `Some("diff")` = 差异编辑器，`None` = 普通编辑器标签。
+    ///
+    /// ⚠️ 必须是 `Option`（B392 同一课）：旧会话压根没这个键，收成 `String` 会让缺键变成
+    /// 空串甚至读失败；前端只认显式的 `"diff"`（`diff/model.ts` 的 `diffKindOf`）。
+    /// **不挂** `skip_serializing_if`：普通标签也要显式落 `null`，「没记过」与「记了是普通
+    /// 标签」在盘上分得开，下一次改判据时才有据可依。Rust 只透传，不解释取值。
+    pub kind: Option<String>,
+    /// B461：B 档差异的左栏文件路径（右栏就是 `path` 那份文档）；A 档与普通标签都是 `None`。
+    /// 左栏只是只读对比缓冲，后端不读它、不校验它，原样透传给前端。
+    pub diff_left_path: Option<String>,
     /// B193：仅 `satellite_tabs` 段使用 —— 该标签当时属于哪个卫星窗口（label 作分组键）。
     /// `None` = 旧会话没写过这个字段，整批当作同一组。
     #[serde(alias = "owner")]
@@ -347,6 +357,8 @@ impl Default for TabSession {
             doc_id: None,
             sync_mode: None,
             scroll_v: None,
+            kind: None,
+            diff_left_path: None,
             owner: None,
         }
     }
@@ -612,6 +624,68 @@ mod tests {
         let out = serde_json::to_string(&state).unwrap();
         assert!(out.contains("\"scrollV\""), "落盘应为 scrollV：{out}");
         assert!(!out.contains("scroll_v"), "不应落 snake_case：{out}");
+    }
+
+    /// B461：差异标签的两格会话字段。四件事都要钉住：
+    ///  ① 旧会话缺 `kind` / `diffLeftPath` ⇒ 透传回前端是 `null`（不许变成 `"diff"`，
+    ///     也不许整格消失 —— 前端 `diffKindOf` 只认显式的 `"diff"`）；
+    ///  ② A 档记 `kind:"diff"` + `diffLeftPath:null`，B 档记那条左栏路径，各自原样回来；
+    ///  ③ 落盘字段名是 camelCase（前端按同名读写），且 `null` **显式落盘**；
+    ///  ④ 后端不解释取值：认不出的串原样透传，由前端回落成普通标签。
+    #[test]
+    fn session_carries_diff_kind_and_left_path() {
+        let json = r#"{
+          "panels": [
+            { "tabs": [
+                { "path": "a.md", "docId": 1 },
+                { "path": "a.md", "docId": 1, "kind": "diff", "diffLeftPath": null },
+                { "path": "b.md", "docId": 2, "kind": "diff", "diffLeftPath": "E:\\cmp\\left.md" },
+                { "path": "c.md", "docId": 3, "kind": "weird" }
+              ], "active": 0 }
+          ],
+          "layout": { "kind": "leaf", "panelId": 0 },
+          "activePanel": 0
+        }"#;
+        let state: SessionState =
+            serde_json::from_str(json).expect("差异两格应能按 camelCase 读入");
+        let wire = |i: usize| -> serde_json::Value {
+            serde_json::to_value(&state.panels[0].tabs[i]).unwrap()
+        };
+        assert_eq!(state.panels[0].tabs[0].kind, None, "旧会话缺键 ⇒ None");
+        assert_eq!(
+            wire(0)["kind"],
+            serde_json::json!(null),
+            "缺键也要显式落 null"
+        );
+        assert_eq!(
+            wire(0)["diffLeftPath"],
+            serde_json::json!(null),
+            "缺键也要显式落 null（不许 skip_serializing_if 把整格抹掉）"
+        );
+        assert_eq!(wire(1)["kind"], serde_json::json!("diff"));
+        assert_eq!(
+            wire(1)["diffLeftPath"],
+            serde_json::json!(null),
+            "A 档没有左栏路径"
+        );
+        assert_eq!(
+            wire(2)["diffLeftPath"],
+            serde_json::json!("E:\\cmp\\left.md")
+        );
+        assert_eq!(
+            wire(3)["kind"],
+            serde_json::json!("weird"),
+            "后端不校验取值，认不出的串原样透传（前端回落普通标签）"
+        );
+
+        let out = serde_json::to_string(&state).unwrap();
+        assert!(
+            out.contains("\"diffLeftPath\""),
+            "落盘应为 camelCase：{out}"
+        );
+        assert!(!out.contains("diff_left_path"), "不应落 snake_case：{out}");
+        assert_eq!(TabSession::default().kind, None);
+        assert_eq!(TabSession::default().diff_left_path, None);
     }
 
     /// B392：`syncMode` **缺键不许读成「关着」**。

@@ -84,6 +84,8 @@ export function tabViewDataOf(p: Panel): TabViewData[] {
         hasSibling: countLeaves(layout) > 1,
         // B461：右键那条的置灰判据随快照走 —— 菜单点开那一刻的基线才是要显示的基线。
         canDiffAgainstSaved: canOpenAgainstBaseline(doc ?? null),
+        // B461 Task 10：搬移那五条与拖拽手势的显隐判据（设计稿 ⑧·3）。
+        isDiff: t.kind === "diff",
       };
     });
 }

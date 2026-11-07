@@ -963,3 +963,120 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     );
   });
 });
+
+// ---------------------------------------------------------------- Task 10 · 会话与禁搬移
+//
+// 这一组判的是「线接没接上」，跨 7 个文件；行为那一头在 tests/diff-session.test.ts。
+// 结构判据都配一发**退化自证**（把被判的那一句摘掉，判据必须落空）—— 否则一条永远为真的
+// `toContain` 只是在测我自己写的字符串（仓库既定的反假绿纪律）。
+describe("B461 · Task 10 会话字段与禁搬移的跨文件接线", () => {
+  // 先剥整行注释：本项目删一套接线时习惯留一行注释交代去向，拿原文判「有没有这一句」
+  // 会被变更史喂成假绿（tests/static.ts 那条纪律的同一形）。
+  const read = (p: string) => stripLineComments(readFileSync(p, "utf-8"));
+
+  it("两格会话字段只有**一处**写点，且问的是 Tab 自己的 kind / diff.leftPath", () => {
+    const writers = collectTextFiles("src").filter((p) =>
+      read(p).includes("sessionStore.setDiff("),
+    );
+    expect(
+      writers.map((p) => p.replace(/\\/g, "/")),
+      "写点分裂就是 B304 那一课",
+    ).toEqual(["src/session/persist.ts"]);
+    const call = read("src/session/persist.ts").match(/sessionStore\.setDiff\(([^;]*)\);/)?.[1];
+    expect(call, "取不到那一发 setDiff").toBeTruthy();
+    expect(call).toContain('t.kind === "diff"');
+    expect(call).toContain("t.diff?.leftPath");
+  });
+
+  it("toDisk 两格都带上，blankRecord 初值是 null（不许 undefined 混进落盘形状）", () => {
+    const store = read("src/session/store.ts");
+    const disk = fnBody(store, "toDisk");
+    expect(disk).toContain("kind: r.kind");
+    expect(disk).toContain("diffLeftPath: r.diffLeftPath");
+    const blank = fnBody(store, "blankRecord");
+    expect(blank).toContain("kind: null");
+    expect(blank).toContain("diffLeftPath: null");
+    // 退化自证：把 toDisk 里那一格摘掉，上面那条必须落空。
+    expect(disk.replace("kind: r.kind,", "")).not.toContain("kind: r.kind");
+  });
+
+  it("恢复问模型层要 spec，按它选孪生构造器（不自己拼第二份 spec 字面量）", () => {
+    const rebuild = read("src/session/rebuild.ts");
+    const body = fnBody(rebuild, "buildInstance");
+    expect(body, "取不到 buildInstance").toBeTruthy();
+    expect(body).toContain("await restoreDiffSpec(st, doc)");
+    expect(body).toContain("makeDiffInstance(doc, panelId, src.text, diffSpec)");
+    expect(body, "回落那一支仍在（差异开不出来不许把文件丢掉）").toContain(
+      "makeInstance(doc, panelId, src.text)",
+    );
+    expect(body, "不许在这里自己拼 tier/docId/leftText（那是模型层的真相）").not.toContain(
+      'tier: "baseline"',
+    );
+    // 两处调用都得 await：漏一处就是「拿 Promise 当 Tab 用」，恢复出来的标签全是空的。
+    expect(rebuild).toContain("await buildInstance(st, panel.panelId)");
+    expect(rebuild).toContain("await buildInstance(st, -1)");
+  });
+
+  it("标签条那五条搬移项与拖拽手势都问 isDiff，判据由 render 一处产出", () => {
+    const strip = read("src/shell/tabstrip.ts");
+    expect(strip).toContain("el.draggable = !t.isDiff");
+    for (const label of ["复制到相邻面板", "左右分屏", "上下分屏", "在新窗口打开", "移回主窗口"]) {
+      // 每一条所在的那一组展开都得带闸：按「这一条之前最近的那个条件」判。
+      const at = strip.indexOf(`label: "${label}"`);
+      expect(at, `取不到「${label}」`).toBeGreaterThan(-1);
+      const before = strip.slice(Math.max(0, at - 220), at);
+      expect(before, `「${label}」那一组没带 !t.isDiff 闸`).toContain("!t.isDiff");
+    }
+    const render = read("src/tabs/render.ts");
+    expect(render, "isDiff 只在快照这一处产出").toContain('isDiff: t.kind === "diff"');
+    const producers = collectTextFiles("src").filter((p) => /isDiff:/.test(read(p)));
+    expect(producers.map((p) => p.replace(/\\/g, "/"))).toEqual(["src/tabs/render.ts"]);
+    // 退化自证：那个「往前 220 字」的窗口判据最容易空转（窗口里随便一处 !t.isDiff 就绿）。
+    // 把五处闸全摘掉之后，上面那圈必须至少有一条落空 —— 否则它测的是我自己写的字符串。
+    const degraded = strip.replaceAll("!t.isDiff && ", "");
+    expect(degraded, "退化串要先自证原句还在").not.toBe(strip);
+    const gated = (src: string) =>
+      ["复制到相邻面板", "左右分屏", "上下分屏", "在新窗口打开", "移回主窗口"].every((label) => {
+        const at = src.indexOf(`label: "${label}"`);
+        return at > -1 && src.slice(Math.max(0, at - 220), at).includes("!t.isDiff");
+      });
+    expect(gated(strip)).toBe(true);
+    expect(gated(degraded), "闸摘掉之后判据必须落空").toBe(false);
+  });
+
+  it("四颗跨面板搬移入口共用一句拒绝，跨窗口那颗也有闸", () => {
+    const split = read("src/tabs/split.ts");
+    for (const name of [
+      "splitActivePanel",
+      "moveTabToPanel",
+      "moveGroupToPanel",
+      "splitPanelWithTab",
+    ]) {
+      const body = fnBody(split, name);
+      expect(body, `取不到 ${name}`).toBeTruthy();
+      expect(body, `${name} 没问拒绝那一颗`).toContain("refusesDiffMove");
+    }
+    const guard = fnBody(split, "refusesDiffMove");
+    expect(guard, "拒绝要说一次原因（静默不动 = 死键）").toContain("showMessage(");
+    expect(guard).toContain('tabs.get(tabId)?.kind !== "diff"');
+    const windows = read("src/multiwindow/windows.ts");
+    const lend = fnBody(windows, "openTabsInNewWindow");
+    expect(lend, "整组拖到桌面绕过标签自己的 draggable ⇒ 这颗漏斗也要有闸").toContain(
+      'tabs.get(id)?.kind === "diff"',
+    );
+  });
+
+  it("关差异标签在摘除之前先拆旁路（判据用 spec 身份，与 syncDiffSurface 同一把尺）", () => {
+    const body = fnBody(read("src/tabs/lifecycle.ts"), "closeTabById");
+    const disposeAt = body.indexOf("disposeDiffSurface(panel)");
+    const deleteAt = body.indexOf("tabs.delete(tabId)");
+    expect(disposeAt, "closeTabById 里要有拆旁路那一发").toBeGreaterThan(-1);
+    expect(deleteAt).toBeGreaterThan(-1);
+    expect(disposeAt, "拆旁路必须排在摘除标签之前").toBeLessThan(deleteAt);
+    const guard = body.slice(body.lastIndexOf("if (", disposeAt), disposeAt);
+    expect(guard).toContain('tab.kind === "diff"');
+    expect(guard, "按 spec 身份认，不按 viewTabId 猜").toContain(
+      "panel.diffSurface?.spec() === tab.diff",
+    );
+  });
+});

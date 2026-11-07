@@ -206,6 +206,13 @@ function reclaimRemoted(tabId: number, panelId = activePanelId): void {
  * 反向（先摘再建）在建窗失败时会让标签凭空消失，用户没有任何补救手段。
  */
 async function openTabsInNewWindow(tabIds: number[], spot?: WindowSpot | null): Promise<void> {
+  // B461 Task 10（设计稿 ⑧·3）：差异标签跨窗口认领/搬移本轮没定义语义 ⇒ 整发拒绝。
+  // 右键那两条与单标签拖拽已经缺席，这里挡的是**整组**拖到桌面那一路（它绕过标签自己的
+  // draggable）。说一次原因，不做静默死键。
+  if (tabIds.some((id) => tabs.get(id)?.kind === "diff")) {
+    showMessage("差异编辑器暂不支持跨窗口搬移", true);
+    return;
+  }
   const snapshots = tabIds
     .map((id) => transferSnapshotOf(id))
     .filter((s): s is SatelliteTab => s !== null);

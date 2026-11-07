@@ -25,7 +25,18 @@ import { getPanel } from "../core/panels";
 import { logViewport } from "../core/viewport";
 import { logger } from "../core/logger";
 import { LayoutNode, leaf } from "../core/layout";
-import { isMdTab, makeDoc, makeInstance, markDiskVersion, registerDoc } from "../doc-model";
+import {
+  isMdTab,
+  makeDiffInstance,
+  makeDoc,
+  makeInstance,
+  markDiskVersion,
+  registerDoc,
+} from "../doc-model";
+// B461 Task 10：差异标签恢复成差异实例 —— spec 由模型层给（与「打开差异」共用同一颗），
+// 拿不到就回落普通编辑器标签。恢复流程自己建实例，不走 openBaselineDiff/openFileDiff：
+// 那两颗会落到活动格、还会把光标/视口/同步开关这一整套恢复口径复制第二遍。
+import { restoreDiffSpec } from "../diff/model";
 import { normalizeSizeClass } from "../editor/perf";
 import {
   OpenedFile,
@@ -285,7 +296,7 @@ export async function restoreSession(): Promise<boolean> {
    * 交给窗口前的暂存态；等 `openTabsInNewWindow` 接手后经 `remoteTabLocally`
    * 登记成「已借出」，才会进会话的 `satelliteTabs` 段。
    */
-  function buildInstance(st: TabSession, panelId: number): Tab | null {
+  async function buildInstance(st: TabSession, panelId: number): Promise<Tab | null> {
     const hit = restoredCache.get(identityOf(st));
     if (!hit) return null;
     const src = hit.data;
@@ -318,8 +329,13 @@ export async function restoreSession(): Promise<boolean> {
       }
       registerDoc(doc);
     }
-    // 同一路径出现在多个面板：各建一个同源实例（内容自动同步）
-    const inst = makeInstance(doc, panelId, src.text);
+    // 同一路径出现在多个面板：各建一个同源实例（内容自动同步）。
+    // B461：差异标签走它的孪生构造器（不传基线读取口 ⇒ 右栏不画那 4px 标注列、viewMode
+    // 钉死源码档）。spec 拿不到就回落普通实例 —— 文件本身不许因为差异开不出来就丢掉。
+    const diffSpec = await restoreDiffSpec(st, doc);
+    const inst = diffSpec
+      ? makeDiffInstance(doc, panelId, src.text, diffSpec)
+      : makeInstance(doc, panelId, src.text);
     tabs.set(inst.tabId, inst);
     // 恢复 Markdown 视图模式（旧版 "split" 映射回 source；B399 起多一档 "edit"）
     if (
@@ -357,7 +373,7 @@ export async function restoreSession(): Promise<boolean> {
     if (!panel) continue;
     for (const st of spanel.tabs) {
       try {
-        const inst = buildInstance(st, panel.panelId);
+        const inst = await buildInstance(st, panel.panelId);
         if (!inst) continue;
         panel.tabs.push(inst.tabId);
         opened++;
@@ -381,7 +397,7 @@ export async function restoreSession(): Promise<boolean> {
       // 旧会话没有 `owner` 字段 → 整批归到同一组（退回「一个卫星窗口」的口径）
       const key = st.owner ?? "";
       try {
-        const inst = buildInstance(st, -1);
+        const inst = await buildInstance(st, -1);
         if (!inst) continue;
         const g = byOwner.get(key);
         if (g) g.push(inst.tabId);

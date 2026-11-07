@@ -36,6 +36,10 @@ export interface SessionTabRecord {
    * 同文档兄弟格那份对的记忆覆盖成顶部（B299 那一族）。落盘时只由**看得见那一侧**现采。
    */
   scrollV: number | null;
+  /** B461：`"diff"` = 差异编辑器标签；`null` = 普通编辑器标签（旧会话缺键也归这一档）。 */
+  kind: string | null;
+  /** B461：B 档左栏的文件路径；A 档与普通标签都是 `null`。 */
+  diffLeftPath: string | null;
 }
 
 /** 一个面板的会话记录：标签顺序 + 活动标签。 */
@@ -65,6 +69,8 @@ function blankRecord(tabId: number, docId: number): SessionTabRecord {
     backupId: null,
     syncMode: false,
     scrollV: null,
+    kind: null,
+    diffLeftPath: null,
   };
 }
 
@@ -80,6 +86,10 @@ function toDisk(r: SessionTabRecord): TabSession {
     docId: r.docId,
     syncMode: r.syncMode,
     scrollV: r.scrollV,
+    // B461：两格都**显式**落盘（普通标签落 null）—— 抹掉整格就是让「没记过」与
+    // 「记了是普通标签」在盘上长成一个样，下一次改判据时无从分辨（B392 那一族）。
+    kind: r.kind,
+    diffLeftPath: r.diffLeftPath,
   };
 }
 
@@ -153,6 +163,18 @@ class SessionStore {
   setViewMode(tabId: number, mode: string | null): void {
     const r = this.recs.get(tabId);
     if (r) r.viewMode = mode;
+  }
+
+  /**
+   * B461：这一条是哪种标签 + B 档左栏那条路径。**一颗写点同时写两格** —— 它们是同一件事
+   * （「这张差异面拿什么当对照物」）的两半，分开写就会出现「说是差异却没有左栏」的半条记录。
+   * 由 `session/persist.ts` 那圈同步从 `Tab.kind` / `Tab.diff.leftPath` 现推，不在别处各写一份。
+   */
+  setDiff(tabId: number, kind: string | null, leftPath: string | null): void {
+    const r = this.recs.get(tabId);
+    if (!r) return;
+    r.kind = kind;
+    r.diffLeftPath = leftPath;
   }
 
   /** B169：同步滚动开关（按文档记）。`docSyncModes` 是前端权威，退出前刷进记录即可落盘。 */

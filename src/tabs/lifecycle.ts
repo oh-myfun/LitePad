@@ -558,6 +558,13 @@ export async function closeTabById(tabId: number): Promise<void> {
     docs.delete(doc.tabId);
   }
 
+  // B461 Task 10（设计稿 ⑦⑥）：差异标签离开这一格时**先**把旁路拆掉。判据用 spec 的对象
+  // 身份（与 `syncDiffSurface` 同一把尺）：这颗对照物属于这张标签，标签摘掉之后它还挂在这里
+  // 就是一颗指向已不存在标签的 surface，下一发 reassert 会照它把左栏重画回来。
+  // 右栏那颗 view 不受牵连（它是那份文档本身）；sibling 判定与跨窗口问话都在上面，
+  // 原标签与 doc 天然不受影响 —— 不留孤儿 doc。
+  if (tab.kind === "diff" && panel.diffSurface?.spec() === tab.diff) disposeDiffSurface(panel);
+
   const idx = panel.tabs.indexOf(tabId);
   panel.tabs = panel.tabs.filter((id) => id !== tabId);
   tabs.delete(tabId);

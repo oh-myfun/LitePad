@@ -704,6 +704,20 @@ export interface TabSession {
    */
   scrollV?: number | null;
   /**
+   * B461：这一条记录是哪种标签 —— `"diff"` = 差异编辑器，`null` / 缺省 = 普通编辑器标签。
+   *
+   * ⚠️ 三态缺一不可（B392 同一课）：旧会话压根没这个键，读成 `"diff"` 就会让用户的全部
+   * 普通标签重启后长出一排对照物。前端只认显式的 `"diff"`（`diff/model.ts` 的 `diffKindOf`）。
+   */
+  kind?: string | null;
+  /**
+   * B461：B 档差异的**左栏文件路径**（右栏就是 `path` 那份文档）；A 档与普通标签都是 `null`。
+   *
+   * 恢复规则：`kind === "diff" && diffLeftPath` ⇒ B 档；`kind === "diff" && !diffLeftPath`
+   * ⇒ A 档（与这份文档上次保存的正文比较）。左栏只是只读对比缓冲，不进文档登记表。
+   */
+  diffLeftPath?: string | null;
+  /**
    * B193：**仅 `satelliteTabs` 段使用** —— 这个标签当时属于哪个卫星窗口（窗口 label 作分组键）。
    *
    * 会话里卫星标签是一份扁平列表，少了它就只能「全部并回主窗口」（v1 行为），

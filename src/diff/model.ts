@@ -175,6 +175,23 @@ function findFilesDiffTab(leftNorm: string, rightDocId: number): Tab | null {
 export const BASELINE_UNKNOWN_MESSAGE = "这份文档还没有可比对的已保存版本";
 
 /**
+ * A 档的输入描述（`openBaselineDiff` 与会话恢复**共用这一颗**）。
+ *
+ * 左栏是读取口不是快照（文件头那条纪律）：基线在保存/重载时被整体换掉，存完盘这一栏
+ * 自己就空了，不需要任何一处记得派发。写两份字面量就会有一份忘了这条。
+ */
+function baselineSpecOf(doc: Doc): DiffSpec {
+  return {
+    tier: "baseline",
+    docId: doc.tabId,
+    leftText: () => docs.get(doc.tabId)?.baseline ?? "",
+    leftName: doc.name,
+    rightName: doc.name,
+    leftPath: null,
+  };
+}
+
+/**
  * A 档：与上次保存比较，开到活动面板（设计稿 ⑥·A 档 + 用户拍板 ④·6「新开一张」）。
  *
  * 第一行就是那道闸：`doc.baseline === null` 时任何一行都无从判增删，打开只会把整屏刷成
@@ -197,17 +214,7 @@ export async function openBaselineDiff(docId: number): Promise<number | null> {
       hooks.switchTab(existing.panelId, existing.tabId);
     return existing.tabId;
   }
-  const spec: DiffSpec = {
-    tier: "baseline",
-    docId,
-    // 读取口，不是快照（文件头那条纪律）：基线在保存/重载时被整体换掉，
-    // 存完盘这一栏自己就空了，不需要任何一处记得派发。
-    leftText: () => docs.get(docId)?.baseline ?? "",
-    leftName: doc.name,
-    rightName: doc.name,
-    leftPath: null,
-  };
-  return attachDiffTab(doc, spec, activePanelId).tabId;
+  return attachDiffTab(doc, baselineSpecOf(doc), activePanelId).tabId;
 }
 
 /** 「两个路径指的是同一个文件」那句说明（判同看的是归一化后的写法，不是用户点进来的原样）。 */
@@ -301,6 +308,21 @@ async function compareLeftTextReader(
   };
 }
 
+/** B 档的输入描述（`openFileDiff` 与会话恢复共用；左栏那两条路由 `compareLeftTextReader` 定）。 */
+async function filesSpecOf(leftPath: string, rightDoc: Doc): Promise<DiffSpec | null> {
+  const left = await compareLeftTextReader(leftPath);
+  if (!left) return null;
+  return {
+    tier: "files",
+    docId: rightDoc.tabId,
+    leftText: left.leftText,
+    leftReload: left.leftReload,
+    leftName: baseName(leftPath),
+    rightName: rightDoc.name,
+    leftPath,
+  };
+}
+
 /**
  * B 档：任选两个文件开一张只读差异（设计稿 ⑩·1）。
  *
@@ -333,18 +355,43 @@ export async function openFileDiff(leftPath: string, rightPath: string): Promise
     return existing.tabId;
   }
 
-  const left = await compareLeftTextReader(leftPath);
-  if (!left) return null;
-  const spec: DiffSpec = {
-    tier: "files",
-    docId: rightDoc.tabId,
-    leftText: left.leftText,
-    leftReload: left.leftReload,
-    leftName: baseName(leftPath),
-    rightName: rightDoc.name,
-    leftPath,
-  };
+  const spec = await filesSpecOf(leftPath, rightDoc);
+  if (!spec) return null;
   return attachDiffTab(rightDoc, spec, activePanelId).tabId;
+}
+
+/**
+ * 一条会话记录说的是哪种标签（Task 10）。
+ *
+ * ⚠️ 只认**显式的** `"diff"`：旧会话压根没这个键（`undefined` / `null`），认不出的串也不算
+ * —— 会话是磁盘上的数据，不是枚举校验过的内存值。把缺失读成差异就是 B392 那一课的第二次
+ * （「没记过」被收成一个具体值，用户的全部普通标签重启后都长出一排对照物）。
+ */
+export function diffKindOf(rec: { kind?: string | null }): "editor" | "diff" {
+  return rec.kind === "diff" ? "diff" : "editor";
+}
+
+/**
+ * 会话恢复时这一条记录该吃哪份 spec；`null` = 恢复成**普通编辑器标签**。
+ *
+ * 三条回落各有其故，且都不许把用户的文件丢掉：
+ *   · A 档基线未知（热退出副本还原 ⇒ `doc.baseline === null`）—— 与 `openBaselineDiff`
+ *     同一道闸：没有「原样」可比时画出来就是一张全绿的脸（设计稿 ⑩·3）；
+ *   · B 档左栏读不成盘（文件被删 / 占用）—— 右栏那份文档还在，退回普通标签至少能看能改；
+ *   · B 档两条路径归一后相同 —— 与 `openFileDiff` 那句「两个文件相同，不必比较」同一判据。
+ *
+ * 不在这里开标签、不碰面板：恢复流程（`session/rebuild.ts`）自己建实例并恢复光标/视口，
+ * 走 `openBaselineDiff` / `openFileDiff` 会把那一整套恢复口径复制第二遍（还会落到活动格）。
+ */
+export async function restoreDiffSpec(
+  rec: { kind?: string | null; diffLeftPath?: string | null },
+  doc: Doc,
+): Promise<DiffSpec | null> {
+  if (diffKindOf(rec) !== "diff") return null;
+  const leftPath = rec.diffLeftPath ?? null;
+  if (!leftPath) return canOpenAgainstBaseline(doc) ? baselineSpecOf(doc) : null;
+  if (!doc.path || normPath(leftPath) === normPath(doc.path)) return null;
+  return filesSpecOf(leftPath, doc);
 }
 
 /**

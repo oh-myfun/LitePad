@@ -47,6 +47,11 @@ export interface TabViewData {
    * 缺省（没给）按「没有」处理 —— 宁可点不动并写明原因，也不开一张每行都刷绿的标签。
    */
   canDiffAgainstSaved?: boolean;
+  /**
+   * B461 Task 10：这是一张**差异编辑器**标签。跨面板 / 跨窗口搬移本轮没定义语义
+   * （设计稿 ⑧·3）⇒ 那五条右键项整组缺席、`draggable` 关掉；缺省按普通标签处理。
+   */
+  isDiff?: boolean;
 }
 
 export interface TabstripCallbacks {
@@ -391,7 +396,10 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
         label: "复制标签",
         onSelect: () => cb.onDuplicateTab?.(t.tabId),
       },
-      ...(t.hasSibling
+      // B461 Task 10：差异标签不参与跨面板 / 跨窗口搬移（设计稿 ⑧·3、Review Focus 3）。
+      // 五条整组缺席而不是置灰：搬过去会把这颗 view 连带搬走，`panel.diffSurface` 里
+      // 那份 panel/view 引用就悬了。缺席的分组边界由下面那圈分隔线清洗收掉。
+      ...(!t.isDiff && t.hasSibling
         ? [
             {
               label: "复制到相邻面板",
@@ -399,10 +407,14 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
             },
           ]
         : []),
-      ...(cb.onSplitH ? [{ label: "左右分屏", onSelect: () => cb.onSplitH?.(t.tabId) }] : []),
-      ...(cb.onSplitV ? [{ label: "上下分屏", onSelect: () => cb.onSplitV?.(t.tabId) }] : []),
+      ...(!t.isDiff && cb.onSplitH
+        ? [{ label: "左右分屏", onSelect: () => cb.onSplitH?.(t.tabId) }]
+        : []),
+      ...(!t.isDiff && cb.onSplitV
+        ? [{ label: "上下分屏", onSelect: () => cb.onSplitV?.(t.tabId) }]
+        : []),
       { separator: true },
-      ...(cb.onOpenInNewWindow
+      ...(!t.isDiff && cb.onOpenInNewWindow
         ? [
             {
               label: "在新窗口打开",
@@ -410,7 +422,7 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
             },
           ]
         : []),
-      ...(cb.onReturnToMain
+      ...(!t.isDiff && cb.onReturnToMain
         ? [{ label: "移回主窗口", onSelect: () => cb.onReturnToMain?.(t.tabId) }]
         : []),
       { separator: true },
@@ -468,7 +480,9 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   // B91-2：拖拽改回 HTML5 DnD。`draggable` 让浏览器接管整段手势（越过阈值自动进入
   // 拖拽、松手自动结束），影像由系统绘制后就能跟出窗口。传输与跨窗口交接见 tabdnd.ts。
   // ⚠️ 影像里的 × 是按钮：从它上面起拖会让用户「点关闭却拖走了标签」，显式挡掉。
-  el.draggable = true;
+  // B461 Task 10：差异标签整段手势关掉 —— 拖出去的每一条落点（别格 / 新窗口 / 桌面）
+  // 都是本轮没定义语义的搬移，右键那五条已经缺席，这里不留第二条偷偷走得通的路。
+  el.draggable = !t.isDiff;
   el.addEventListener("dragstart", (e) => {
     const onCloseBtn = e.target instanceof Element && e.target.closest(".tab-close") !== null;
     if (onCloseBtn) {

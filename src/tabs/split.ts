@@ -60,10 +60,26 @@ export let maximizedPanelId: number | null = null;
 /** 最大化前的各层比例快照（路径 + 原比例），用于原样还原。 */
 export let maximizeSnapshot: MaximizeSnapshot | null = null;
 
+/**
+ * B461 Task 10：差异标签不参与跨面板搬移（设计稿 ⑧·3 / Review Focus 3）。
+ *
+ * 四颗搬移入口共用这一句拒绝 —— 各写一遍中文就会有一遍改了另一遍没改。**说一次原因**
+ * 而不是静默 return：面板那颗分屏键与 `Ctrl+\` / `Ctrl+Alt+方向` 都还在，静默不动
+ * 用户学到的就是「按键坏了」（B314-8 那一族死键）。
+ */
+const DIFF_MOVE_MESSAGE = "差异编辑器暂不支持跨面板移动";
+function refusesDiffMove(tabId: number): boolean {
+  if (tabs.get(tabId)?.kind !== "diff") return false;
+  showMessage(DIFF_MOVE_MESSAGE, true);
+  return true;
+}
+
 /** 在指定面板旁分屏，新面板沿用当前活动标签。 */
 export function splitActivePanel(panelId: number, dir: "h" | "v"): void {
   const panel = getPanel(panelId);
   if (!panel) return;
+  // 这一颗是**搬移**（下面 `tab.panelId = newId`），不是复制：活动标签是差异面时整发拒绝。
+  if (refusesDiffMove(panel.activeTabId)) return;
   exitMaximize(); // 同 splitPanelWithTab：最大化态下不先还原就会分出 0 宽的新面板
   const newId = takePanelId();
   setLayout(treeSplitPanel(layout, panelId, dir, newId));
@@ -139,6 +155,7 @@ export function splitActivePanel(panelId: number, dir: "h" | "v"): void {
 /** 把标签移入目标面板（追加为最后一个标签）。源面板清空且非唯一时一并移除。
  *  copy=true 时改为同源复制：源面板不动，目标面板获得该文档的新实例。 */
 export function moveTabToPanel(tabId: number, hostId: number, copy = false): void {
+  if (refusesDiffMove(tabId)) return;
   if (copy) {
     duplicateTabToPanel(tabId, hostId);
     return;
@@ -255,6 +272,8 @@ export function moveGroupToPanel(
 ): void {
   const src = getPanel(srcId);
   if (!src || srcId === targetId || countLeaves(layout) < 2) return;
+  // 整组拖拽绕过单标签那几颗闸：组里只要有一张差异面，整发拒绝（`some` 短路 ⇒ 只说一次）。
+  if (src.tabs.some(refusesDiffMove)) return;
   exitMaximize();
   const newId = takePanelId();
   const moved = [...src.tabs];
@@ -325,6 +344,7 @@ export function splitPanelWithTab(
 ): void {
   const tab = tabs.get(tabId);
   if (!tab) return;
+  if (refusesDiffMove(tabId)) return;
   const doc = docs.get(tab.docId);
   if (!doc) return;
   // 最大化态下分屏会得到「一半 0 宽」的怪布局 → 先还原再分（见 exitMaximize）
