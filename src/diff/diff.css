@@ -180,8 +180,8 @@
   padding: 0;
   border: 0;
   border-radius: 4px;
-  background: var(--bg-hover);
-  color: var(--fg-muted);
+  background: var(--diff-revert-bg);
+  color: var(--diff-revert-fg);
   opacity: 0;
   transition: opacity 0.7s;
   pointer-events: auto;
@@ -246,6 +246,23 @@
   /* 对侧占位块的斜纹走上游 `diffEditor.diagonalFill` 的默认值（暗 #cccccc33 / 亮 #22222233；
      高对比档是 null ⇒ 不画，见下面的 `data-theme-family="hc"` 那条）。 */
   --diff-diagonal: #cccccc33;
+  /* 中间回退按钮照上游 `editorGutter.itemBackground` / `editorGutter.itemGlyphForeground`：
+     itemBackground = `opaque(list.inactiveSelectionBackground, editorBackground)`（要求不透明），
+     压在编辑器底色上即 `--list-inactive-bg`；itemGlyphForeground = editor.foreground。
+     HC 两档上游另给纯色（hcDark 白底黑字 / hcLight 黑底白字），而 `--list-inactive-bg`
+     在 HC 是 transparent ⇒ 下面单独覆盖。 */
+  --diff-revert-bg: var(--list-inactive-bg);
+  --diff-revert-fg: var(--fg);
+}
+
+:root[data-theme-family="hc"] {
+  --diff-revert-bg: #ffffff;
+  --diff-revert-fg: #000000;
+}
+
+:root[data-theme-family="hc"][data-theme="light"] {
+  --diff-revert-bg: #000000;
+  --diff-revert-fg: #ffffff;
 }
 
 /* 亮色档的字符底色比暗色高一档（上游 light = #9ccc2c40）；行底色明暗相同，不另开。

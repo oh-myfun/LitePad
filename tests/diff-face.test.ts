@@ -1194,6 +1194,21 @@ describe("B462 · 记号槽与右缘概览条样式", () => {
     expect(revert, "按钮本身 20×18（gutterItem 34×20 只是容器）").toContain("width: 20px");
     expect(revert).toContain("height: 18px");
     expect(revert, "上游 .actions-container 的 4px 圆角").toContain("border-radius: 4px");
+    // 底色 / 字形照上游 `editorGutter.itemBackground` / `itemGlyphForeground`（新增两颗 token）：
+    // itemBackground = opaque(list.inactiveSelectionBackground, editorBackground)，
+    // itemGlyphForeground = editor.foreground；HC 两档上游另给纯色。
+    expect(revert, "底色走 editorGutter.itemBackground 的口径").toContain("var(--diff-revert-bg)");
+    expect(revert, "字形走 editorGutter.itemGlyphForeground 的口径").toContain(
+      "var(--diff-revert-fg)",
+    );
+    expect(css(), "itemBackground 落到 list.inactiveSelectionBackground").toContain(
+      "--diff-revert-bg: var(--list-inactive-bg)",
+    );
+    expect(css(), "itemGlyphForeground = editor.foreground").toContain(
+      "--diff-revert-fg: var(--fg)",
+    );
+    expect(css(), "HC 档另给纯色（hcDark 白底黑字）").toContain("--diff-revert-bg: #ffffff");
+    expect(css(), "HC 亮档黑底白字").toContain("--diff-revert-bg: #000000");
 
     // 行号槽不承载差异底色（产品口径；上游 `marginClassName` 会给，见 `diff.css` 那段注释）：
     // 样式段里不许再有 `.diff-gutter-*` 这类给槽上色的规则 —— 有就说明那条口径被悄悄改回去了。
