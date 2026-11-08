@@ -947,7 +947,7 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     actions.applyDiffAction(0, "next");
     expect(caretLine(), "「下一个」落到那块改动行（第 20 行）").toBe(20);
     actions.applyDiffAction(0, "prev");
-    expect(caretLine(), "只有一块 ⇒ 往回走到头夹到首块，不环绕（与 `jumpTo` 同一口径）").toBe(20);
+    expect(caretLine(), "只有一块 ⇒ 环绕仍是它自己（上游 goToPreviousDiff 到头回另一头）").toBe(20);
   });
 
   it("B461 · 「刷新」把块表按现在的两份正文重算一遍（保存之后差异自己没）", async () => {

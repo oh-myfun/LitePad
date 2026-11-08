@@ -712,6 +712,18 @@ export function createDiffSurface(
   };
 
   /**
+   * 这一栏可视区半高能折几行（居中落位要往下让出的行数）。
+   *
+   * 没有布局时（jsdom / 刚挂上还没量）行高读作 0 ⇒ 退化成「落顶」，下一次跳块自然居中，
+   * 不会因为量不到就把目标算到文档外。
+   */
+  const centerOffsetLines = (view: EditorView): number => {
+    const lh = view.defaultLineHeight;
+    if (!(lh > 0)) return 0;
+    return Math.max(0, Math.floor(view.scrollDOM.clientHeight / lh / 2));
+  };
+
+  /**
    * 把某一栏落到第 `line` 行（裁决 R25 的落笔处，两颗 view 的落法**不一样**，这不是手滑）：
    *   · **左栏**（旁路那颗）走 `EditorView.scrollIntoView`：它不在同步滚动那套注册口里
    *     （两份**不同**的内容，见文件头），那一发晚一帧落位也没人记账 ⇒ 普通派发就够。
@@ -726,24 +738,28 @@ export function createDiffSurface(
    *     「我已经把位置写好了」，不许弯成「位置即将写好」⇒ 这条路里不用它，
    *     由上面那条真落位口自己登记（`tests/diff-surface.test.ts` 有守卫钉着这一手）。
    *
-   * 共享坐标 `v` 给的是落点那一行（整数 = 「那一行的行顶贴容器顶」，与 `y: "start"` 同一档
-   * 语义），`at` 给的是同一行的行首字符位置：两格宽度不同也能按字符对齐（B300），
-   * 量不到矩形时锚点自己退回按 `v` 的比例落位。
+   * 落位位置是**视野中央**（上游 `revealRangeInCenter`）：顶边那行 = 目标行 − 半屏行数。
+   * 因此共享坐标给的是 `centerV` 而不是目标行；两条路各自居中自己那一栏的目标行，
+   * 两格行高不同也仍然对齐（这正是 B300 那条「别拿一格的顶行当另一格的顶行」的居中版）。
    */
   const landSide = (side: DiffSide, line: number): void => {
     const view = side === "original" ? left : right;
     if (!view) return;
     const at = lineStartOf(view, line);
+    // 上游 `revealRangeInCenter`：跳块把目标行放到视野**中间**，不是贴顶。
+    const centerV = Math.max(1, view.state.doc.lineAt(at).number - centerOffsetLines(view));
     if (side === "original") {
       view.dispatch({
         selection: { anchor: at },
-        effects: EditorView.scrollIntoView(at, { y: "start" }),
+        effects: EditorView.scrollIntoView(at, { y: "center" }),
       });
       return;
     }
     view.dispatch({ selection: { anchor: at } });
     writeBackRight();
-    landVisibleSideAtV(panel, view.state.doc.lineAt(at).number, 0, at);
+    // 居中之后顶边不再是目标行 ⇒ 共享坐标给 `centerV`（行号口径），不再传 `at`：
+    // 传 `at` 会走「按字符对齐到顶」的那一支，把居中又按回顶部。
+    landVisibleSideAtV(panel, centerV, 0, null);
   };
 
   /**
@@ -1380,8 +1396,9 @@ export function createDiffSurface(
         }
       }
     }
-    // 走到头 ⇒ 夹到末块/首块（与 `jumpTo` 的越界同一口径），不环绕。
-    jumpTo(target < 0 ? (dir === 1 ? stored.length - 1 : 0) : target);
+    // 走到头 ⇒ **环绕**（上游 `goToNextDiff` / `goToPreviousDiff` 到头就回另一头）：
+    // 末块再点下一个回首块、首块往回点回末块。
+    jumpTo(target < 0 ? (dir === 1 ? 0 : stored.length - 1) : target);
   };
 
   // 键入期只映射不重算：`update.docChanged` 只重置定时器，停手 `DIFF_REFRESH_MS` 才走

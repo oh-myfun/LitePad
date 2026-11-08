@@ -681,18 +681,41 @@ describe("B461 · 跳块与步进（Task 4）", () => {
     // 那一档仍是 Task 11 真机台的验收项（设计稿 ⑩·3 的多视口那条）。
   });
 
-  it("B461 · step(1) 往后找、末块之后夹住；step(-1) 往回", () => {
+  it("B471 · 跳块落位在视野中央（上游 revealRangeInCenter），量不到半屏才退回贴顶", () => {
+    const { panel, s } = mountDiffPair("1\n2\n3\n4\n5\n6\n7\n8\n9", "1A\n2\n3\n4B\n5\n6\n7\n8C\n9");
+    s.syncBlocks();
+    const view = panel.view!.view;
+    const lay = installFakeLayout(view, 20);
+    registerPanel(panel);
+    const spy = vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(20);
+    try {
+      // 可视区 200px、行高 20px ⇒ 半屏 5 行。
+      Object.defineProperty(view.scrollDOM, "clientHeight", { configurable: true, value: 200 });
+      expect(s.blocks()[2].modifiedStart, "前置：第三块在右栏第 8 行").toBe(8);
+      s.jumpTo(2);
+      // 第 8 行居中 ⇒ 顶边是第 3 行 ⇒ scrollTop = (3-1)*20 = 40；贴顶则会是 (8-1)*20 = 140。
+      expect(lay.px(), "目标行放在视野中间，不是贴顶").toBe(40);
+      expect(
+        syncCoordinator.pendingExpectation(view.scrollDOM),
+        "账本登记的意图也是居中之后那个顶边行，不是目标行本身",
+      ).toBeCloseTo(3, 2);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("B471 · step 走到头环绕：末块再下一个回首块、首块往回回末块", () => {
     const { s } = mountedSurfaceWithThreeBlocks();
     s.jumpTo(0);
     expect(s.activeIndex()).toBe(0);
     s.step(1);
     expect(s.activeIndex()).toBe(1);
     s.step(1);
-    s.step(1);
-    s.step(1);
     expect(s.activeIndex()).toBe(2);
+    s.step(1);
+    expect(s.activeIndex(), "末块之后环绕回首块（上游 goToNextDiff 到头回头发）").toBe(0);
     s.step(-1);
-    expect(s.activeIndex()).toBe(1);
+    expect(s.activeIndex(), "首块往回环绕到末块").toBe(2);
   });
 
   it("B461 · activeIndex 只认右栏光标（左栏那一侧再点也不抢权威，设计稿 ⑩·2）", () => {
