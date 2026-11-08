@@ -39,6 +39,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { EditorView } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
+import { language } from "@codemirror/language";
 import { fnBody, ruleBlock, stripCssComments, stripLineComments } from "./static";
 import {
   docs,
@@ -50,6 +51,7 @@ import {
   type Tab,
 } from "../src/core/app-state";
 import { createEditor, makeTabState } from "../src/editor/editor";
+import { detectLanguage } from "../src/editor/language";
 import { perfProfileFor } from "../src/editor/perf";
 import { makeDoc, markClean } from "../src/doc-model";
 import { applyDarkToTabs, applyWrapToTabs } from "../src/appearance";
@@ -1372,5 +1374,47 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     expect(rightWrites, "超出对侧最大滚动量时写夹值").toEqual([200]);
     right.scrollDOM.dispatchEvent(new Event("scroll"));
     expect(leftWrites, "夹值后的回声不得回写驱动栏").toEqual([150, 180]);
+  });
+});
+
+describe("B461 · 两栏各按自己的文件类型解析", () => {
+  it("左栏按 leftName 的扩展名挂语言：.ts 有，无扩展名的显示名仍是纯文本", () => {
+    const hostEl = document.createElement("div");
+    hostEl.className = "panel-host";
+    document.body.appendChild(hostEl);
+    const panel = freshPanel();
+
+    const withLang = createDiffSurface(hostEl, panel, spec({ leftName: "left.ts" }));
+    expect(withLang.left.state.facet(language), "左栏 .ts 要挂上语言扩展").toBeTruthy();
+
+    const plain = createDiffSurface(hostEl, panel, spec({ leftName: "left" }));
+    expect(plain.left.state.facet(language), "认不出类型 ⇒ 与普通编辑器一样是纯文本").toBeNull();
+  });
+
+  it("两栏扩展名不同时各拿各的语言，谁也不从对侧借", () => {
+    const hostEl = document.createElement("div");
+    hostEl.className = "panel-host";
+    document.body.appendChild(hostEl);
+    const panel = freshPanel();
+
+    // 右栏那半的语言来自标签自己的 doc（`makeTabState` 的 lang 槽），这里拟成 .py。
+    const { state, comps } = makeTabState(
+      "x = 1\ny = 2",
+      detectLanguage("right.py").extension,
+      { dark: false, wrap: false, perf: perfProfileFor("normal") },
+      () => {},
+    );
+    const tab = tabWithKind("diff");
+    tab.state = state;
+    tab.comps = comps;
+    tab.diff = spec({ leftName: "left.ts" });
+    mount(hostEl, panel, tab);
+
+    const surface = diffSurfaceOf(panel)!;
+    const leftLang = surface.left.state.facet(language);
+    const rightLang = panel.view!.view.state.facet(language);
+    expect(leftLang, "左栏 .ts 有自己的语言").toBeTruthy();
+    expect(rightLang, "右栏 .py 有自己的语言").toBeTruthy();
+    expect(leftLang, "两栏不共用同一颗 Language（各自 token 化）").not.toBe(rightLang);
   });
 });

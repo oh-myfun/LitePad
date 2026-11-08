@@ -20,6 +20,7 @@
 
 import { Compartment, EditorState, StateEffect, type Extension } from "@codemirror/state";
 import { EditorView, BlockType, lineNumbers } from "@codemirror/view";
+import { detectLanguage } from "../editor/language";
 import { activePanelId, docs, isWrap, panels, tabs, type Panel } from "../core/app-state";
 import { landVisibleSideAtV } from "../sync-scroll/wire";
 import { DIFF_REFRESH_MS } from "./align";
@@ -217,6 +218,11 @@ function leftState(
   theme: Extension,
   wrap: Extension,
 ): EditorState {
+  // 左栏按**自己的文件类型**解析，不从右栏借语言（VS Code 的差异编辑器给两份 model 各挂
+  // 自己的 language id：`DiffEditorViewModel` 直接读 `originalModel.getLanguageId()` /
+  // `modifiedModel.getLanguageId()`，两侧 token 化互不影响）。B 档跨扩展名比较时（.md ↔ .ts），
+  // 两栏因此各是各的高亮；A 档两侧同名，自然同一套。
+  const language = detectLanguage(spec.leftName).extension;
   return EditorState.create({
     doc: spec.leftText(),
     extensions: [
@@ -225,6 +231,7 @@ function leftState(
       EditorView.contentAttributes.of({ tabindex: "0" }),
       EditorState.transactionFilter.of((tr) => (tr.docChanged ? [] : tr)),
       lineNumbers(),
+      ...(language ? [language] : []),
       theme,
       wrap,
       face,
