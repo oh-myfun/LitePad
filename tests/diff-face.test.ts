@@ -97,18 +97,14 @@ describe("B461 · sideLineMarks / gapZones：一块在两栏各落在哪些行",
       { line: 3, kind: "delete", whole: true },
     ]);
     expect(sideLineMarks(del, "modified")).toEqual([]);
-    expect(zonesOf(del, "modified", 2)).toEqual([
-      { afterLine: 1, height: 2 * LINE_HEIGHT, lines: 2 },
-    ]);
+    expect(zonesOf(del, "modified", 2)).toEqual([{ afterLine: 1, height: 2 * LINE_HEIGHT }]);
     expect(zonesOf(del, "original", 4)).toEqual([]);
   });
 
   it("B461 · 新增块反过来：右栏标行、左栏补空位", () => {
     const ins = diffBlocks("A\nZ", "A\n新1\n新2\nZ");
     expect(sideLineMarks(ins, "modified").map((m) => m.line)).toEqual([2, 3]);
-    expect(zonesOf(ins, "original", 2)).toEqual([
-      { afterLine: 1, height: 2 * LINE_HEIGHT, lines: 2 },
-    ]);
+    expect(zonesOf(ins, "original", 2)).toEqual([{ afterLine: 1, height: 2 * LINE_HEIGHT }]);
   });
 
   it("B462 · 混合区按 VS Code 分侧：左栏全算删除、右栏全算新增（没有第三种 modify 行）", () => {
@@ -116,9 +112,7 @@ describe("B461 · sideLineMarks / gapZones：一块在两栏各落在哪些行",
     // head=1；中段无 LCS 锚点 ⇒ 一个区 (aLen 2, bLen 1)；字符 diff 的起止都在行首/行尾
     // ⇒ 没有块内边界，整块一段：左 2 行 vs 右 1 行，缺的那行补在右栏块尾。
     const mixed = diffBlocks("丙一去\n丙一去\n丁后行", "丙一去\n丁后行改了");
-    expect(zonesOf(mixed, "modified", 2)).toEqual([
-      { afterLine: 2, height: LINE_HEIGHT, lines: 1 },
-    ]);
+    expect(zonesOf(mixed, "modified", 2)).toEqual([{ afterLine: 2, height: LINE_HEIGHT }]);
     expect(sideLineMarks(mixed, "original"), "改 = 先删：左栏两行都是删除色").toEqual([
       { line: 2, kind: "delete", whole: false },
       { line: 3, kind: "delete", whole: false },
@@ -138,9 +132,7 @@ describe("B461 · sideLineMarks / gapZones：一块在两栏各落在哪些行",
       { line: 4, kind: "delete", whole: false },
     ]);
     expect(sideLineMarks(both, "modified")).toEqual([{ line: 2, kind: "insert", whole: false }]);
-    expect(zonesOf(both, "modified", 3)).toEqual([
-      { afterLine: 2, height: 2 * LINE_HEIGHT, lines: 2 },
-    ]);
+    expect(zonesOf(both, "modified", 3)).toEqual([{ afterLine: 2, height: 2 * LINE_HEIGHT }]);
     // 多的一侧（左栏）自己不必补位
     expect(zonesOf(both, "original", 5)).toEqual([]);
   });
@@ -152,7 +144,7 @@ describe("B461 · sideLineMarks / gapZones：一块在两栏各落在哪些行",
       { line: 2, kind: "insert", whole: false },
       { line: 3, kind: "insert", whole: false },
     ]);
-    expect(zonesOf(grow, "original", 3)).toEqual([{ afterLine: 2, height: LINE_HEIGHT, lines: 1 }]);
+    expect(zonesOf(grow, "original", 3)).toEqual([{ afterLine: 2, height: LINE_HEIGHT }]);
     expect(zonesOf(grow, "modified", 4)).toEqual([]);
   });
 
@@ -162,7 +154,7 @@ describe("B461 · sideLineMarks / gapZones：一块在两栏各落在哪些行",
     const heightOf = (side: DiffSide, line: number): number =>
       side === "original" && line === 2 ? 2 * LINE_HEIGHT : LINE_HEIGHT;
     expect(gapZones(wrapDel, { original: 3, modified: 2 }, heightOf, [[]]).modified).toEqual([
-      { afterLine: 1, height: 2 * LINE_HEIGHT, lines: 1 },
+      { afterLine: 1, height: 2 * LINE_HEIGHT },
     ]);
   });
 
@@ -173,7 +165,7 @@ describe("B461 · sideLineMarks / gapZones：一块在两栏各落在哪些行",
       side === "original" && line === 2 ? 2 * LINE_HEIGHT : LINE_HEIGHT;
     const zones = gapZones(same, { original: 3, modified: 3 }, heightOf, []);
     expect(zones.original).toEqual([]);
-    expect(zones.modified).toEqual([{ afterLine: 2, height: LINE_HEIGHT, lines: 0 }]);
+    expect(zones.modified).toEqual([{ afterLine: 2, height: LINE_HEIGHT }]);
   });
 
   it("B463 · 块内对齐边界把块切成若干段，每段比两侧实测总高（含折行差与缺行数）", () => {
@@ -195,7 +187,7 @@ describe("B461 · sideLineMarks / gapZones：一块在两栏各落在哪些行",
       [{ originalLine: 3, modifiedLine: 3 }],
     ]);
     expect(zones.modified, "左 3 的折行差 + 左 5 的缺行，合并落在第 4 行之后").toEqual([
-      { afterLine: 4, height: 2 * LINE_HEIGHT, lines: 1 },
+      { afterLine: 4, height: 2 * LINE_HEIGHT },
     ]);
     expect(zones.original, "多的一侧自己不补位").toEqual([]);
   });
@@ -218,10 +210,34 @@ describe("B461 · sideLineMarks / gapZones：一块在两栏各落在哪些行",
       [{ originalLine: 3, modifiedLine: 4 }],
     ]);
     expect(zones.original).toEqual([
-      { afterLine: 2, height: LINE_HEIGHT, lines: 1 },
-      { afterLine: 3, height: LINE_HEIGHT, lines: 0 },
+      { afterLine: 2, height: LINE_HEIGHT },
+      { afterLine: 3, height: LINE_HEIGHT },
     ]);
     expect(zones.modified).toEqual([]);
+  });
+
+  it("B464 · 填充后两侧总高一致：缝把折行差与缺行一起补齐（等高的验收口径）", () => {
+    // 左 4 行（2..5）vs 右 3 行（2..4）；左第 3 行折成两个视觉行；边界在第 3 行 ↔ 第 3 行。
+    const b: DiffBlock = {
+      kind: "modify",
+      originalStart: 2,
+      originalEnd: 5,
+      modifiedStart: 2,
+      modifiedEnd: 4,
+      added: 0,
+      removed: 1,
+    };
+    const heightOf = (side: DiffSide, line: number): number =>
+      side === "original" && line === 3 ? 2 * LINE_HEIGHT : LINE_HEIGHT;
+    const totals = { original: 6, modified: 5 };
+    const zones = gapZones([b], totals, heightOf, [[{ originalLine: 3, modifiedLine: 3 }]]);
+    const total = (side: DiffSide): number => {
+      let h = 0;
+      for (let line = 1; line <= totals[side]; line++) h += heightOf(side, line);
+      for (const z of zones[side]) h += z.height;
+      return h;
+    };
+    expect(total("original"), "左栏的实际显示高度").toBe(total("modified"));
   });
 });
 
@@ -363,38 +379,43 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
     expect(placed?.widget.ignoreEvent(new MouseEvent("click")), "占位块不吃点击也不吃光标").toBe(
       true,
     );
-    // 缺口行也要有 `+`，且落在**行号槽**里：缺口行不是文档行，靠 CM6 gutter 的
-    // `widgetMarker` 给块 widget 单独开一格，行数 = 缺行数（两行 ⇒ 两颗，x 与真行记号一致）。
+    // 缝是**纯占位**：没有文档行，也就没有记号（VS Code 的 alignment view zone 同样不挂
+    // 行装饰）。这一侧（右栏）本身没有改动行 ⇒ 整栏一颗记号都不该有。
     expect(
       gapEls()[0].querySelector(".diff-sign"),
       "缺口 widget 里不许再画记号（那是内容区，会跟着正文横向滚）",
     ).toBeNull();
-    const rows = [...view.dom.querySelectorAll<HTMLElement>(".cm-diffSigns .diff-gap-sign-row")];
-    expect(rows, "缺两行 ⇒ 记号槽里两颗").toHaveLength(2);
-    expect(rows.map((row) => row.querySelector<HTMLElement>(".diff-sign")?.tagName)).toEqual([
-      "I",
-      "I",
-    ]);
-    expect(
-      rows.every((row) => row.querySelector(".codicon-add") !== null),
-      "新稿侧缺口 ⇒ `+`",
-    ).toBe(true);
-    expect(rows.every((row) => row.querySelector(".diff-sign-insert") !== null)).toBe(true);
+    expect(view.dom.querySelectorAll(".cm-diffSigns .diff-sign"), "缝不画记号").toHaveLength(0);
   });
 
-  it("B461 · 原稿侧缺口补 `−`：缺口记号跟所在栏的分侧语义走", () => {
-    // 新稿多出两行 ⇒ 缺口落在**原稿**栏
+  it("B464 · 记号按视觉行：一行折成三个视觉行 ⇒ 那一格竖排三颗", () => {
+    // 改块落在第 2 行；把那一行的实测行高桩成 3 × LINE_HEIGHT（jsdom 没有布局引擎，
+    // 折行只能从「行块高度」这一口径喂进去）。
+    const both = diffBlocks("A\n旧\nZ", "A\n新\nZ");
+    const real = EditorView.prototype.lineBlockAt;
+    vi.spyOn(EditorView.prototype, "lineBlockAt").mockImplementation(function (
+      this: EditorView,
+      pos: number,
+    ) {
+      const block = real.call(this, pos);
+      const line = this.state.doc.lineAt(pos).number;
+      return line === 2 ? ({ ...block, height: 3 * LINE_HEIGHT } as BlockInfo) : block;
+    });
+    const { view } = mountFace("modified", both, "A\n新\nZ");
+    const rows = [...view.dom.querySelectorAll<HTMLElement>(".cm-diffSigns .diff-sign-rows")];
+    expect(rows, "一个文档行只有一格，格内竖排").toHaveLength(1);
+    expect(rows[0].children, "三个视觉行 ⇒ 三颗").toHaveLength(3);
+    expect(rows[0].dataset.rows, "行数记在 dataset 上，几何没变就不重建").toBe("3");
+    expect(rows[0].querySelectorAll(".codicon-add").length, "每一颗都是新稿侧的 `+`").toBe(3);
+  });
+
+  it("B464 · 占位缝不画记号：原稿侧的缺口同样一颗都不出", () => {
+    // 新稿多出两行 ⇒ 缺口落在**原稿**栏；原稿这一侧没有真行可挂。
     const ins = diffBlocks("A\nZ", "A\n新1\n新2\nZ");
     const { view, gapEls } = mountFace("original", ins, "A\nZ");
     expect(gapEls()).toHaveLength(1);
     expect(gapEls()[0].querySelector(".diff-sign")).toBeNull();
-    const rows = [...view.dom.querySelectorAll<HTMLElement>(".cm-diffSigns .diff-gap-sign-row")];
-    expect(rows, "缺两行 ⇒ 两颗记号").toHaveLength(2);
-    expect(
-      rows.every((row) => row.querySelector(".codicon-remove") !== null),
-      "原稿侧缺口 ⇒ `−`",
-    ).toBe(true);
-    expect(rows.every((row) => row.querySelector(".diff-sign-delete") !== null)).toBe(true);
+    expect(view.dom.querySelectorAll(".cm-diffSigns .diff-sign"), "缝不画记号").toHaveLength(0);
   });
 
   it("B462 · 左栏删行涂真行底色 + Codicon `−` 记号；纯删块整行再叠一层字符色", () => {
@@ -440,15 +461,14 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
   it("B461 · 正文开头就缺行（缝落在第 0 行之后）⇒ 占位块插在第一行**之前**", () => {
     const top = diffBlocks("删1\n删2\nA", "A");
     expect(zonesOf(top, "modified", 1), "前置：纯函数报的是第 0 行之后").toEqual([
-      { afterLine: 0, height: 2 * LINE_HEIGHT, lines: 2 },
+      { afterLine: 0, height: 2 * LINE_HEIGHT },
     ]);
     const { view, gapEls } = mountFace("modified", top, "A");
     expect(gapEls()).toHaveLength(1);
     expect(rowOrder(view)).toEqual(["gap", "line"]);
     expect(gapEls()[0].style.height).toBe(`${2 * LINE_HEIGHT}px`);
-    // 第 0 行之后没有真行可挂：CM6 仍会给块 widget 开一格（在正文最上方），两颗 `+` 落在
-    // 与后续真行记号同一条竖线上。
-    expect(view.dom.querySelectorAll(".cm-diffSigns .diff-gap-sign-row")).toHaveLength(2);
+    // 第 0 行之后没有真行可挂：块 widget 在正文最上方，而缝本身不画记号。
+    expect(view.dom.querySelectorAll(".cm-diffSigns .diff-sign"), "缝不画记号").toHaveLength(0);
   });
 
   it("B461 · 键入期只跟着改动映射、不重算；refreshDiff 那一发才按 provider 重来", () => {
@@ -1185,23 +1205,12 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
     expect(srcOf("src/diff/surface.ts"), "铺槽那套实测变量一并清掉").not.toContain(
       "--diff-gutter-w",
     );
-    // 缺口行靠 CM6 的 `widgetMarker` 落进记号槽（与真行记号同一列、同高）；
-    // 缺口 widget 自己再摆一颗就是「画到内容区」的老问题。
+    // 缝是纯占位：没有文档行，不挂记号（上游 alignment view zone 同口径）。
     expect(gap, "缺口 widget 里不再自带记号").not.toMatch(/diff-sign/);
-    const gapSigns = ruleBlock(
-      css(),
-      ".panel-host.is-diff .cm-diffSigns .diff-gap-signs",
-      undefined,
-      true,
-    );
-    expect(gapSigns, "缺口记号按缺行数竖排").toContain("flex-direction: column");
-    const gapRow = ruleBlock(
-      css(),
-      ".panel-host.is-diff .cm-diffSigns .diff-gap-sign-row",
-      undefined,
-      true,
-    );
-    expect(gapRow, "每一行均分整格高度").toContain("flex: 1 1 0");
+    const signRows = ruleBlock(css(), ".panel-host.is-diff .diff-sign-rows", undefined, true);
+    expect(signRows, "一格内按视觉行竖排").toContain("flex-direction: column");
+    const signRow = ruleBlock(css(), ".panel-host.is-diff .diff-sign-row", undefined, true);
+    expect(signRow, "每一视觉行均分整格高度").toContain("flex: 1 1 0");
   });
 });
 
@@ -1507,6 +1516,24 @@ describe("B461 · 折叠未改动区（Task 7：默认不折 + 三颗动作）",
     expect(s.foldRanges()).toEqual([]);
     s.collapseAllUnchanged();
     expect(s.foldRanges()).toHaveLength(2);
+  });
+
+  it("B464 · 折区没变就不重发：反复 syncBlocks 不再派发 setFoldedRanges（闪烁的根因）", () => {
+    // 必须在建视图**之前**挂 spy：CM6 构造时会 `this.dispatch = this.dispatch.bind(this)`，
+    // 建完之后再换原型方法，已经绑好的那一颗不会经过 spy。
+    const spy = vi.spyOn(EditorView.prototype, "dispatch");
+    const s = mountedSurfaceWithThreeBlocks();
+    s.setCollapseUnchanged(true);
+    expect(s.foldRanges()).toHaveLength(2);
+    const before = spy.mock.calls.length;
+    s.syncBlocks();
+    s.syncBlocks();
+    const refolded = spy.mock.calls.slice(before).filter(([spec]) => {
+      const effects = (spec as { effects?: unknown }).effects;
+      const list = effects == null ? [] : Array.isArray(effects) ? effects : [effects];
+      return list.some((e) => (e as { is?: (t: unknown) => boolean }).is?.(setFoldedRanges));
+    });
+    expect(refolded, "同一批折区 ⇒ 装饰集不换、折条 DOM 不重建").toHaveLength(0);
   });
 
   it("B461 · 太短的未改动区不折（<= 3 行 ⇒ 折了反而更难读）", () => {

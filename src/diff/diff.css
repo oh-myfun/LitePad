@@ -393,8 +393,22 @@
 }
 
 /* 上游的记号元素自己是 flex（`.insert-sign { display: flex; align-items: center }`），
-   且**没有**水平居中 —— 这里照搬：去掉原来那句 `justify-content: center`。 */
+   且**没有**水平居中 —— 这里照搬：去掉原来那句 `justify-content: center`。
+   一格对应一个文档行；自动换行折出来的每个视觉行由 `.diff-sign-row` 等分那一格。 */
 .panel-host.is-diff .cm-diffSigns .cm-gutterElement {
+  display: flex;
+  align-items: stretch;
+}
+
+.panel-host.is-diff .diff-sign-rows {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.panel-host.is-diff .diff-sign-row {
+  flex: 1 1 0;
+  min-height: 0;
   display: flex;
   align-items: center;
 }
@@ -440,23 +454,6 @@
    底纹不画，占位行本身的高度与外框照旧（这也是上游 view zone 的行为）。 */
 :root[data-theme-family="hc"] .panel-host.is-diff .diff-gap {
   background-image: none;
-}
-
-/* 缺口行不是文档行，但 CM6 的 gutter 会给每个块 widget 单独一格（`widgetMarker`）：
-   那一格的高度 / 顶边直接取块的几何 ⇒ 记号与正文里那段斜纹同高、也落在与真行记号
-   同一个 x 上。行数按缺行数均分（`flex: 1 1 0`），每一行一颗 `+` / `−`。 */
-.panel-host.is-diff .cm-diffSigns .diff-gap-signs {
-  align-self: stretch;
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-}
-
-.panel-host.is-diff .cm-diffSigns .diff-gap-sign-row {
-  flex: 1 1 0;
-  min-height: 0;
-  display: flex;
-  align-items: center;
 }
 
 /* ---------- Task 7 · 折叠未改动区：折条替掉被折起来的那几行 ---------- */

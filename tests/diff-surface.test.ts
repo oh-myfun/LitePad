@@ -718,20 +718,23 @@ describe("B461 · 跳块与步进（Task 4）", () => {
     expect(s.activeIndex(), "首块往回环绕到末块").toBe(2);
   });
 
-  it("B461 · activeIndex 只认右栏光标（左栏那一侧再点也不抢权威，设计稿 ⑩·2）", () => {
+  it("B464 · activeIndex 跟最后落焦那一栏（回退列显隐不分左右）", () => {
     const { panel, s } = mountedSurfaceWithThreeBlocks();
-    const rightCaretTo = (line: number): void => {
-      panel.view!.view.dispatch({
-        selection: { anchor: panel.view!.view.state.doc.line(line).from },
-      });
+    const right = panel.view!.view;
+    const focusIn = (el: HTMLElement): void => {
+      el.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
     };
     s.jumpTo(1);
     expect(s.activeIndex()).toBe(1);
-    // 左栏光标跑到别的一块上：权威仍是右栏 ⇒ 读数不许变（⑩·2 那条闸门）
-    s.left.dispatch({ selection: { anchor: s.left.state.doc.line(9).from } });
-    expect(s.activeIndex(), "左栏光标不参与").toBe(1);
+    // 点进左栏（浏览器先发 focusin 再放光标）⇒ 权威换到左栏。
+    focusIn(s.left.dom);
+    s.left.dispatch({ selection: { anchor: s.left.state.doc.line(1).from } });
+    expect(s.activeIndex(), "最后落焦在左栏 ⇒ 按左栏光标算").toBe(0);
+    // 再点回右栏（光标仍在第 4 行那块）⇒ 权威还回右栏。
+    focusIn(right.dom);
+    expect(s.activeIndex(), "最后落焦在右栏 ⇒ 按右栏光标算").toBe(1);
     // 右栏光标挪到两块之间（谁都没包住）⇒ -1
-    rightCaretTo(2);
+    right.dispatch({ selection: { anchor: right.state.doc.line(2).from } });
     expect(s.activeIndex(), "光标在块外 ⇒ 没有那块").toBe(-1);
   });
 
@@ -904,7 +907,7 @@ describe("B461 · 键入期只映射不重算（Task 4 Step 3/4 + 裁决 R24）"
   it("B461 · 防抖只此一家（R24）：face.ts 不排定时器，块表也不拿全文串做比较", () => {
     const face = stripLineComments(srcOf("src/diff/face.ts"));
     expect(face, "臂内那颗 200ms 定时器已摘：重算只由 surface 那一处驱动").not.toMatch(
-      /setTimeout|setInterval|ViewPlugin/,
+      /setTimeout|setInterval/,
     );
     expect(face, "摘掉定时器之后 face.ts 连那颗常数都不需要了").not.toMatch(/from "\.\/align"/);
     const code = stripLineComments(srcOf("src/diff/surface.ts"));

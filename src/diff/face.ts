@@ -28,11 +28,14 @@ import {
   type Transaction,
 } from "@codemirror/state";
 import {
+  BlockType,
   Decoration,
   EditorView,
   gutter,
   GutterMarker,
   lineNumberMarkers,
+  ViewPlugin,
+  type ViewUpdate,
   WidgetType,
 } from "@codemirror/view";
 import { type DiffBlock, type DiffKind, type LineAlignment } from "./blocks";
@@ -56,13 +59,12 @@ export interface SideMark {
  * 上游的 `diffEditorViewZones.ts` 正是把两侧区间按 `lineHeight × 行数 + 折行额外高度`
  * 折算成像素再补差值 —— 这里沿用同一口径，行数只在「缝落在哪一行之后」这一件事上还用到。
  *
- * `lines` = 这条缝里有多少行是**对侧真的缺行**（不是折行高度差）：
- * 记号槽要按它逐行补 `+` / `−`（见 `DiffGapSignMarker`），折行差那几笔是 0。
+ * 缝是**纯占位**：不留记号（VS Code 的 alignment view zone 同样不挂行装饰）。加减号只画在
+ * 真的有文档行的那一侧，一个视觉行一颗（见 `DiffSignMarker`）。
  */
 export interface GapZone {
   afterLine: number;
   height: number;
-  lines: number;
 }
 
 /** 某一栏第 `line` 行的实测高度（1-based；已含该行折出来的所有视觉行）。 */
@@ -164,21 +166,8 @@ export function gapZones(
         heightOf,
       );
       const delta = modifiedHeight - originalHeight;
-      if (delta > 0) {
-        pushGap(
-          out.original,
-          point.originalLine - 1,
-          delta,
-          Math.max(modifiedCount - originalCount, 0),
-        );
-      } else if (delta < 0) {
-        pushGap(
-          out.modified,
-          point.modifiedLine - 1,
-          -delta,
-          Math.max(originalCount - modifiedCount, 0),
-        );
-      }
+      if (delta > 0) pushGap(out.original, point.originalLine - 1, delta);
+      else if (delta < 0) pushGap(out.modified, point.modifiedLine - 1, -delta);
       prev = point;
     }
 
@@ -200,14 +189,12 @@ function rangeHeight(
   return sum;
 }
 
-/** 缝按 `afterLine` 合并（同一落点的两笔高度/行数相加，别让 DOM 里挤出两颗同位置的块）。 */
-function pushGap(list: GapZone[], afterLine: number, height: number, lines = 0): void {
+/** 缝按 `afterLine` 合并（同一落点的两笔高度相加，别让 DOM 里挤出两颗同位置的块）。 */
+function pushGap(list: GapZone[], afterLine: number, height: number): void {
   if (!(height > 0)) return;
   const last = list[list.length - 1];
-  if (last && last.afterLine === afterLine) {
-    last.height += height;
-    last.lines += lines;
-  } else list.push({ afterLine, height, lines });
+  if (last && last.afterLine === afterLine) last.height += height;
+  else list.push({ afterLine, height });
 }
 
 /**
@@ -298,25 +285,20 @@ const faceSource = Facet.define<() => DiffFaceSource, () => DiffFaceSource>({
  * 天然只吃正文宽 —— 与上游同界，**不靠负偏移铺过 gutter**（那会把斜纹压到行号槽上）。
  *
  * 记号不在这个 widget 里画：缺口行不是文档行，CM6 的 gutter 里没有它的一格，而把它摆进
- * 内容区左缘（原先那条路）就会跟着正文横向滚走、也不在行号槽那一列上。CM6 的 gutter 对
- * **块 widget** 有专门的一格（`widgetMarker`，高度 = 块高），缺口记号因此由
- * `DiffGapSignMarker` 逐行补进记号槽 —— 与真行记号同一个 x，数量 = 缺行数。
+ * 内容区左缘（原先那条路）就会跟着正文横向滚走、也不在行号槽那一列上。VS Code 的
+ * alignment view zone 也不挂行装饰 —— 加减号只属于真有文档行的那一侧，所以这里不画。
  */
 export class DiffGapWidget extends WidgetType {
   constructor(
     readonly height: number,
     readonly kind: "insert" | "delete",
-    readonly lines: number,
   ) {
     super();
   }
 
   eq(other: WidgetType): boolean {
     return (
-      other instanceof DiffGapWidget &&
-      other.height === this.height &&
-      other.kind === this.kind &&
-      other.lines === this.lines
+      other instanceof DiffGapWidget && other.height === this.height && other.kind === this.kind
     );
   }
 
@@ -330,45 +312,6 @@ export class DiffGapWidget extends WidgetType {
   /** 占位块不吃点击也不吃光标：那里没有真行，选它与选相邻那行是两件事。 */
   ignoreEvent(): boolean {
     return true;
-  }
-}
-
-/**
- * 缺口行在记号槽里的那些 `+` / `−`：一颗 marker 管一整段缺行，DOM 里是 `lines` 行。
- *
- * 为什么能落进 gutter：CM6 的 gutter 会给每个块 widget 单独一格（`GutterConfig.widgetMarker`，
- * 高度 / 顶边直接取块几何），所以这一格的竖向范围与正文里那段斜纹完全重合。行数按缺行数
- * 均分那一格，于是每一行都有一颗记号、x 与真行记号一致；`lines === 0`（纯折行高度差）不出。
- */
-class DiffGapSignMarker extends GutterMarker {
-  constructor(
-    readonly kind: "insert" | "delete",
-    readonly lines: number,
-  ) {
-    super();
-  }
-
-  eq(other: GutterMarker): boolean {
-    return (
-      other instanceof DiffGapSignMarker && other.kind === this.kind && other.lines === this.lines
-    );
-  }
-
-  toDOM(): HTMLElement {
-    const wrap = document.createElement("div");
-    wrap.className = "diff-gap-signs";
-    wrap.setAttribute("aria-hidden", "true");
-    for (let i = 0; i < this.lines; i++) {
-      const row = document.createElement("span");
-      row.className = "diff-gap-sign-row";
-      row.appendChild(signIcon(this.kind));
-      wrap.appendChild(row);
-    }
-    return wrap;
-  }
-
-  toString(): string {
-    return `gap-sign-${this.kind}-${this.lines}`;
   }
 }
 
@@ -401,12 +344,7 @@ function buildFace(
   for (const gap of gaps) {
     if (!(gap.height > 0)) continue;
     const after = Math.min(Math.max(gap.afterLine, 0), doc.lines);
-    // 缺口落在哪一栏，记号就跟哪一栏的分侧语义走：原稿栏缺行 ⇒ `−`，新稿栏缺行 ⇒ `+`。
-    const widget = new DiffGapWidget(
-      gap.height,
-      side === "original" ? "delete" : "insert",
-      gap.lines,
-    );
+    const widget = new DiffGapWidget(gap.height, side === "original" ? "delete" : "insert");
     // 块 widget 要落在线界上：`after` 行之后 ⇒ 挂在该行行尾（side > 0 = 那一行之后）；
     // 第 0 行之后（正文开头就缺行）⇒ 挂在第 1 行行首（side < 0 = 那一行之前）。
     ranges.push(
@@ -429,30 +367,118 @@ function buildFace(
  *
  * 行号槽本身另由 `DiffGutterMarker` 上色（上游的 `marginClassName`），两者同源于
  * `sideLineMarks` —— 底色、记号与正文行号因此永远落在同一批行上。
+ *
+ * 记号按**视觉行**画：自动换行把一行折成几行，每个视觉行左边各一颗（用户口径）。CM6 的
+ * gutter 一格只对一个文档行，所以一格内部填成等高竖排（`fillSignRows`）。
+ *
+ * 占位缝（对侧缺行的那段斜纹）**不画记号**：那里没有文档行，VS Code 的 alignment view zone
+ * 同样不挂行装饰。
  */
 class DiffSignMarker extends GutterMarker {
-  constructor(readonly kind: "insert" | "delete") {
+  /** 最近一次渲染出来的竖排（CM6 重画时换成新元素；几何变了由插件回填）。 */
+  el: HTMLElement | null = null;
+
+  constructor(
+    readonly kind: "insert" | "delete",
+    readonly line: number,
+  ) {
     super();
   }
 
   eq(other: GutterMarker): boolean {
-    return other instanceof DiffSignMarker && other.kind === this.kind;
+    return other instanceof DiffSignMarker && other.kind === this.kind && other.line === this.line;
   }
 
-  toDOM(): HTMLElement {
-    return signIcon(this.kind);
+  toDOM(view: EditorView): HTMLElement {
+    const rows = document.createElement("div");
+    rows.className = "diff-sign-rows";
+    rows.setAttribute("aria-hidden", "true");
+    this.el = rows;
+    fillSignRows(rows, this.kind, visualRowsOf(view, this.line));
+    return rows;
+  }
+
+  /** 几何量准之后重填：`toDOM` 那一刻可能还是估算的行高（折行数要等 CM6 量完）。 */
+  sync(view: EditorView): void {
+    if (this.el) fillSignRows(this.el, this.kind, visualRowsOf(view, this.line));
   }
 
   toString(): string {
-    return `sign-${this.kind}`;
+    return `sign-${this.kind}-${this.line}`;
   }
 }
 
-const insertSign = new DiffSignMarker("insert");
-const deleteSign = new DiffSignMarker("delete");
+/**
+ * 一个文档行折成了几个**视觉行**（自动换行后每个视觉行都要各画一颗记号）。
+ *
+ * 只读行文本自己的块（`textBlockOf`）：贴着行尾的占位块会被 CM6 并进同一颗 composite，
+ * 算进去会把缝的高度也当成折行。行数按 `defaultLineHeight` 折算，至少 1。
+ */
+function visualRowsOf(view: EditorView, line: number): number {
+  const doc = view.state.doc;
+  if (line < 1 || line > doc.lines) return 1;
+  const lineHeight = view.defaultLineHeight;
+  if (!(lineHeight > 0)) return 1;
+  return Math.max(1, Math.round(textBlockOf(view, line).height / lineHeight));
+}
+
+/** 按视觉行数重填记号竖排（行数没变就不动 DOM，避免每帧重建）。 */
+function fillSignRows(el: HTMLElement, kind: "insert" | "delete", rows: number): void {
+  const key = String(rows);
+  if (el.dataset.rows === key) return;
+  el.dataset.rows = key;
+  const next: HTMLElement[] = [];
+  for (let i = 0; i < rows; i++) {
+    const row = document.createElement("div");
+    row.className = "diff-sign-row";
+    row.appendChild(signIcon(kind));
+    next.push(row);
+  }
+  el.replaceChildren(...next);
+}
 
 /**
- * 记号字形（行号槽与占位行共用）：VS Code 的记号是 Codicon（`diff-insert` → `add`、
+ * 一行文本自己的块（含折出来的视觉行，**不含**贴着行尾的块 widget）。
+ *
+ * `BlockInfo.type` 在 composite 上给的是子块的数组，`BlockType.Text` 那一颗才是这一行的
+ * 视觉高度；普通行直接就是 Text。surface 量缝高与记号槽折行数共用这一颗口径。
+ */
+export function textBlockOf(view: EditorView, line: number): { top: number; height: number } {
+  const doc = view.state.doc;
+  const n = Math.min(Math.max(line, 1), doc.lines);
+  const block = view.lineBlockAt(doc.line(n).from);
+  if (!Array.isArray(block.type)) return { top: block.top, height: block.height };
+  const text = block.type.find((part) => part.type === BlockType.Text);
+  return text ? { top: text.top, height: text.height } : { top: block.top, height: block.height };
+}
+
+/**
+ * 记号槽的兜底重填：CM6 的 gutter 一格对应一个文档行，折行出来的视觉行不会再开新格；
+ * 这里在几何变化后按真实行高把那一格填成等高竖排。
+ */
+const signRowFiller = ViewPlugin.fromClass(
+  class {
+    constructor(private readonly view: EditorView) {
+      this.sync();
+    }
+
+    update(update: ViewUpdate): void {
+      if (update.docChanged || update.geometryChanged || update.viewportChanged) this.sync();
+    }
+
+    private sync(): void {
+      const signs = this.view.state.field(diffFaceField, false)?.signs;
+      if (!signs) return;
+      const { from, to } = this.view.viewport;
+      signs.between(from, to, (_from, _to, marker) => {
+        if (marker instanceof DiffSignMarker) marker.sync(this.view);
+      });
+    }
+  },
+);
+
+/**
+ * 记号字形：VS Code 的记号是 Codicon（`diff-insert` → `add`、
  * `diff-remove` → `remove`，见 `registrations.contribution.ts`），不是手写的 `+` / `−`
  * 字符：字形、宽度与基线都归字体，11px 时才与行号同高且不抖。图标一律走 `CODICONS` 册。
  *
@@ -473,8 +499,7 @@ function buildSigns(doc: Text, side: DiffSide, blocks: DiffBlock[]): RangeSet<Gu
   const ranges: Range<GutterMarker>[] = [];
   for (const m of sideLineMarks(blocks, side)) {
     if (m.line < 1 || m.line > doc.lines) continue;
-    const marker = m.kind === "delete" ? deleteSign : insertSign;
-    ranges.push(marker.range(doc.line(m.line).from));
+    ranges.push(new DiffSignMarker(m.kind, m.line).range(doc.line(m.line).from));
   }
   return RangeSet.of(ranges, true);
 }
@@ -656,13 +681,9 @@ export function diffFace(side: DiffSide, source: () => DiffFaceSource): Extensio
     gutter({
       class: "cm-diffSigns",
       markers: (view) => view.state.field(diffFaceField, false)?.signs ?? RangeSet.empty,
-      // 缺口行没有文档行 ⇒ 常规 `markers` 里排不进它的一格；CM6 对块 widget 另有
-      // `widgetMarker`（格子高度/顶边取块几何），缺口记号因此与斜纹同高、同列。
-      widgetMarker: (_view, widget) =>
-        widget instanceof DiffGapWidget && widget.lines > 0
-          ? new DiffGapSignMarker(widget.kind, widget.lines)
-          : null,
     }),
+    // 一格对应一个文档行；折行出来的视觉行由插件按真实行高补成一列（见 `DiffSignMarker`）。
+    signRowFiller,
   ];
 }
 

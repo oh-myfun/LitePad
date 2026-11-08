@@ -21,7 +21,6 @@
 import { Compartment, EditorState, StateEffect, type Extension } from "@codemirror/state";
 import {
   EditorView,
-  BlockType,
   drawSelection,
   highlightActiveLine,
   highlightActiveLineGutter,
@@ -52,6 +51,7 @@ import {
   onFoldBarClick,
   refreshDiff,
   setFoldedRanges,
+  textBlockOf,
   type FoldPoint,
   type FoldRange,
   type FoldReveal,
@@ -671,11 +671,27 @@ export function createDiffSurface(
       };
     });
 
+  /** 上一次真画进两臂的折区（同一批就不重发 —— 折条 DOM 反复重建会整屏闪）。 */
+  const paintedFolds: Record<DiffSide, FoldPoint[]> = { original: [], modified: [] };
+
+  const sameFolds = (a: FoldPoint[], b: FoldPoint[]): boolean =>
+    a.length === b.length &&
+    a.every(
+      (p, i) =>
+        p.from === b[i].from &&
+        p.to === b[i].to &&
+        p.top === b[i].top &&
+        p.bottom === b[i].bottom &&
+        p.regionLength === b[i].regionLength,
+    );
+
   /**
    * 两栏一起点名：按现在的块表重画一次，并把「现在折着这些段」一起发进去。
    *
    * ⚠️ 两发必须在**同一次派发**里（`refreshDiff` 与 `setFoldedRanges`）：块表刚换、底色已经跟着
    * 新块走而折区还停在旧块上，那一帧画出来的就是错的那几行 —— 三处同刻跟上靠的是同一发事务。
+   * 折区没变时只发 `refreshDiff`：重发同一批折区会让 CM6 重建替换块（并重新量高），
+   * 与下一轮缝测量互相追着跑，就是用户看到的「一直重算、停不下来」。
    */
   const refreshArms = (): void => {
     // 先把缝按**此刻的行盒**重算一遍再派发：块表刚换（比如用户把删掉的行打回来了）时，
@@ -683,10 +699,15 @@ export function createDiffSurface(
     // 随后的 `scheduleAlign` 只保证下一帧收口，这一帧已经把旧缝画出去了。
     // 折行开着时这里量到的是上一帧的几何，`scheduleAlign` 落地后还会再校一次。
     applyGapPlans();
-    const foldOf = (side: DiffSide): StateEffect<unknown>[] => [
-      refreshDiff.of(null),
-      setFoldedRanges.of(foldPointsFor(side)),
-    ];
+    const foldOf = (side: DiffSide): StateEffect<unknown>[] => {
+      const folds = foldPointsFor(side);
+      const effects: StateEffect<unknown>[] = [refreshDiff.of(null)];
+      if (!sameFolds(folds, paintedFolds[side])) {
+        paintedFolds[side] = folds;
+        effects.push(setFoldedRanges.of(folds));
+      }
+      return effects;
+    };
     left.dispatch({ effects: foldOf("original") });
     right?.dispatch({ effects: foldOf("modified") });
     writeBackRight();
@@ -906,6 +927,8 @@ export function createDiffSurface(
     // 必须跟着走，否则左列的光标条停在挂上那一刻。差异色块与折叠走 `refreshArms` 那一发，
     // 这里只重画标记画布（不做块表重算）。
     EditorView.updateListener.of((update) => {
+      // 回退列的常显块跟「最后光标」走：光标在左栏里移动也要重画（此前只认右栏）。
+      if (update.selectionSet) renderReverts();
       if (
         update.selectionSet ||
         update.docChanged ||
@@ -932,51 +955,42 @@ export function createDiffSurface(
   let focused: DiffSide = "modified";
   const onLeftFocus = (): void => {
     focused = "original";
+    // 常显的那一颗按钮跟「最后光标」走，换栏即重画（纯显隐，不改任何文档）。
+    renderReverts();
   };
   const onRightFocus = (): void => {
     focused = "modified";
+    renderReverts();
   };
   left.dom.addEventListener("focusin", onLeftFocus);
   right?.dom.addEventListener("focusin", onRightFocus);
-
-  /**
-   * 某一行**文本本身**的文档坐标（去掉挂在它身上/前后的块 widget）。
-   *
-   * CM6 把行与紧贴它的块 widget 合成一颗 composite `BlockInfo`：`lineBlockAt(行首).height`
-   * 会连对齐占位块、折条的高度一起吃进去。直接拿它当「这一行有多高」，缝就会把上一轮的
-   * 占位块算进下一轮的测量里（量 → 补 → 再量还变），对齐永远收不了口。
-   * `BlockInfo.type` 在 composite 上给的是子块的数组，`BlockType.Text` 那一颗才是这一行的
-   * 视觉高度（含折行）；普通行直接就是 Text。
-   */
-  const textBlockOf = (view: EditorView, line: number): { top: number; height: number } => {
-    const doc = view.state.doc;
-    const n = Math.min(Math.max(line, 1), doc.lines);
-    const block = view.lineBlockAt(doc.line(n).from);
-    if (!Array.isArray(block.type)) return { top: block.top, height: block.height };
-    const text = block.type.find((part) => part.type === BlockType.Text);
-    return text ? { top: text.top, height: text.height } : { top: block.top, height: block.height };
-  };
 
   /**
    * 某一栏每一行的实测高度口。
    *
    * 折行关着时一个文档行恒等于一个视觉行 —— `defaultLineHeight` 就是那一行的高度（CM6 量过
    * 的，字号/行距改了它会跟着变），不必为整篇文档做 N 次 `lineBlockAt`。
-   * 折行打开后同一份正文可能折成任意多个视觉行，只能逐行问当前 view 的行盒。
+   * 折行打开后同一份正文可能折成任意多个视觉行，只能逐行问 `textBlockOf`（行文本自己的块）。
    *
-   * ⚠️ 只读**行文本自己的**块（`textBlockOf`）：贴着行尾的占位块会被 CM6 并进同一颗
-   * composite `BlockInfo`，把它的高度减出去，才有「补缝 → 行高不变 → 缝稳定」这条不动点，
-   * 不会 measure 自激。折起来的行被替换装饰整段收走，量出来 0 —— 两侧折的是同一批未改动区，
-   * 差值为 0，不补缝。
+   * ⚠️ 只读**行文本自己的**块：贴着行尾的占位块会被 CM6 并进同一颗 composite
+   * `BlockInfo`，把它的高度减出去，才有「补缝 → 行高不变 → 缝稳定」这条不动点。
+   *
+   * ⚠️ 折起来的行一律按 0 算 —— 它们已被替换装饰整段收走，不占正文高度；折条那一条
+   * 24px 两侧各一、位置同源，差值天然为 0、不参与补缝。若这里改读「替换块量出来多少」，
+   * 折条重画（estimated → measured）时这一格会在 20/24 之间跳，`applyGapPlans` 与下一次
+   * `measureGapPlans` 就会给出两份不同的缝，折条每重画一次画面就抖一次。
    */
   const lineHeights = (side: DiffSide): ((line: number) => number) => {
     const view = viewOf(side);
     if (!view) return () => 0;
+    const folds = foldedRangesIn(view.state);
+    const hidden = (line: number): boolean =>
+      folds.some((fold) => line >= fold.from && line <= fold.to);
     if (!wrapOn) {
       const h = view.defaultLineHeight;
-      return () => h;
+      return (line) => (hidden(line) ? 0 : h);
     }
-    return (line) => textBlockOf(view, line).height;
+    return (line) => (hidden(line) ? 0 : textBlockOf(view, line).height);
   };
 
   /** 现在这两栏该补哪些缝（纯计算在 `face.ts` 的 `gapZones`，这里只负责量）。 */
@@ -1421,13 +1435,18 @@ export function createDiffSurface(
       renderReverts();
     });
   };
-  /** 右栏光标行（权威侧 = 右栏，设计稿 ⑩·2：左栏有选区也不参与）。 */
+  /** 右栏光标行：跳块/步进的起算侧固定右栏（与回退列「最后光标」口径分开）。 */
   const rightCaretLine = (): number => caretLineOf("modified");
 
-  /** 右栏光标包住的那块；没有 ⇒ -1。 */
+  /**
+   * 最后落焦那一栏的光标包住的那块；没有 ⇒ -1。
+   *
+   * 显隐跟**最后光标**走、不分左右（用户口径）：只认右栏时，光标停在左栏，
+   * 常显的按钮却只认右栏那一段，看起来像"没跟着光标"。
+   */
   const activeIndex = (): number => {
     if (!right) return -1;
-    return blockAt(stored, "modified", rightCaretLine());
+    return blockAt(stored, focused, caretLineOf(focused));
   };
 
   /**
