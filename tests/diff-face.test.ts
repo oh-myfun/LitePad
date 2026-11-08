@@ -950,7 +950,8 @@ describe("B462 · 记号槽与右缘概览条样式", () => {
     expect(revert).toContain("height: 18px");
     expect(revert, "上游 .actions-container 的 4px 圆角").toContain("border-radius: 4px");
 
-    // 底色类会落到所有 gutter 上 ⇒ 只许行号槽与记号槽吃颜色，4px 差异列 / 折叠槽不许变色。
+    // 底色类会落到所有 gutter 上 ⇒ 只许行号槽与记号槽吃颜色，4px 差异列不许变色
+    // （折叠槽在差异格里根本不渲染，见 diff-surface 的 folding = false 那条）。
     const gutter = ruleBlock(
       css(),
       ".panel-host.is-diff .cm-lineNumbers .cm-gutterElement.diff-gutter-insert",

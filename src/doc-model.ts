@@ -18,7 +18,7 @@ import {
   layout,
 } from "./core/app-state";
 import { detectLanguage, languageInfoByLabel, type LanguageInfo } from "./editor/language";
-import { perfProfileForDoc, type SizeClass } from "./editor/perf";
+import { perfProfileForDoc, type PerfProfile, type SizeClass } from "./editor/perf";
 import { makeTabState } from "./editor/editor";
 import { eachLeaf } from "./core/layout";
 import { activeTab } from "./core/panels";
@@ -124,6 +124,19 @@ function makeInstance(doc: Doc, panelId: number, text: string): Tab {
 }
 
 /**
+ * 差异格里那一档性能档案：与普通实例同一档，**只把折叠关掉**。
+ *
+ * VS Code 的差异编辑器对两颗子编辑器都写死 `folding = false`
+ * （`diffEditorEditors.ts` 的 `_adjustOptionsForSubEditor`：`clonedOptions.folding = false;`），
+ * 于是折叠模型不建、折叠控件不画，`editor.fold*` 那组动作也因 `foldingEnabled` 上下文键
+ * 为 false 而不可达（`foldingAction.ts` 里 `precondition: CONTEXT_FOLDING_ENABLED`）。
+ * 两栏都按这一条给 ⇒ 差异格里没有那一列「没有差异行底色的孤立折槽」。
+ */
+export function perfOfDiffInstance(doc: Doc | undefined | null): PerfProfile {
+  return { ...perfProfileForDoc(doc?.sizeClass ?? "normal", isMdDoc(doc)), folding: false };
+}
+
+/**
  * B461 · `makeInstance` 的孪生：为**差异标签**在指定面板建一份实例（Task 5）。
  *
  * 与 `makeInstance` 只差两处，而这两处都是设计稿的指名：
@@ -135,11 +148,12 @@ function makeInstance(doc: Doc, panelId: number, text: string): Tab {
  *
  * 右栏这一份仍是**这份文档的可写实例**（`instanceOnUpdate` 照挂）：脏归文档、
  * Ctrl+S 走主干那条保存链，一行分支都不加（设计稿 ⑧·1 的落点）。
+ * 折叠也跟着 `perfOfDiffInstance` 关掉（上游的差异子编辑器就是这么建的）。
  */
 function makeDiffInstance(doc: Doc, panelId: number, text: string, spec: DiffSpec): Tab {
   const firstLine = text.split("\n", 1)[0] ?? "";
   const lang = languageOfDoc(doc, firstLine);
-  const perf = perfProfileForDoc(doc.sizeClass, isMdDoc(doc));
+  const perf = perfOfDiffInstance(doc);
   const { state, comps } = makeTabState(
     text,
     lang.extension,

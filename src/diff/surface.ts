@@ -22,8 +22,8 @@ import { Compartment, EditorState, StateEffect, type Extension } from "@codemirr
 import { EditorView, BlockType } from "@codemirror/view";
 import { detectLanguage } from "../editor/language";
 import { gutterExtensions } from "../editor/editor";
-import { perfProfileForDoc, type PerfProfile } from "../editor/perf";
-import { isMdDoc } from "../doc-model";
+import { perfOfDiffInstance } from "../doc-model";
+import type { PerfProfile } from "../editor/perf";
 import { activePanelId, docs, isWrap, panels, tabs, type Panel } from "../core/app-state";
 import { landVisibleSideAtV } from "../sync-scroll/wire";
 import { DIFF_REFRESH_MS } from "./align";
@@ -215,11 +215,10 @@ function lineStartOf(view: EditorView, line: number): number {
  * `wrap` 是这一栏的折行槽（B461 后续轮，见 `createDiffSurface` 的 `wrapOn`）：默认空扩展 =
  * 不折行。它与右栏那颗折行槽同步 reconfigure，两栏才可能同时折上。
  *
- * `perf` 与右栏**同一档**（右栏那颗 state 就是 `makeDiffInstance` 按 `perfProfileForDoc`
- * 造的）：差异格两半要么一起有折叠箭头 / 语法高亮，要么一起没有。VS Code 里这从来不是问题
- * （两半各是一颗真 `CodeEditorWidget`，`editor.folding` 默认 true，没有按体量裁剪那一说）；
- * LitePad 的档位是主编辑器自己的降级策略，照搬到这里时两半必须同档，否则用户看到的就是
- * 「左边有箭头、右边没有」——比两侧都没有更像 bug。
+ * `perf` 与右栏**同一档**（两栏都由 `perfOfDiffInstance` 给）：折叠在这一档里恒为关，
+ * 依据是上游的差异子编辑器写死 `folding = false`（`diffEditorEditors.ts` 的
+ * `_adjustOptionsForSubEditor`）—— 差异格里根本没有折叠槽，也就没有「一列没有差异行底色的
+ * 孤立折槽」这件事。其余档位（语法高亮的开关）两栏必须同档，否则一边有一边没有更像 bug。
  */
 function leftState(
   spec: DiffSpec,
@@ -240,10 +239,8 @@ function leftState(
       EditorView.editable.of(false),
       EditorView.contentAttributes.of({ tabindex: "0" }),
       EditorState.transactionFilter.of((tr) => (tr.docChanged ? [] : tr)),
-      // 行号 + 折叠槽走与右栏**同一颗**工厂（`gutterExtensions`，M4 档位口径也在那里）：
-      // 行号是导航底线，折叠槽按 `perf.folding` 给。次序照 `EditorLayoutInfo` —— 折叠箭头
-      // 画在行号槽的右缘、`+`/`−` 记号（`linesDecorationsClassName`）再靠右；CM6 的 gutter
-      // 次序就是 DOM 次序，所以先行号、后折叠、face 里的记号槽排最后。
+      // 行号走与右栏**同一颗**工厂（`gutterExtensions`）—— `perf` 已由 `perfOfDiffInstance`
+      // 把折叠关掉，所以这里只会给出行号槽，与上游差异子编辑器的 folding = false 同口径。
       ...gutterExtensions(perf),
       ...(perf.syntax && language ? [language] : []),
       theme,
@@ -339,14 +336,10 @@ export function createDiffSurface(
 
   const current = spec;
   /**
-   * 左栏吃哪一档性能档案 —— **与右栏那颗 state 同一档**（`makeDiffInstance` 就是按
-   * `perfProfileForDoc(doc.sizeClass, isMdDoc(doc))` 造的右栏）。档位只由文档决定、不随
-   * 交互变，因此在挂上时算一次即可。
+   * 左栏吃哪一档性能档案 —— **与右栏那颗 state 同一颗函数**（`perfOfDiffInstance`，
+   * `makeDiffInstance` 用它造右栏）。档位只由文档决定、不随交互变。
    */
-  const leftPerf = (): PerfProfile => {
-    const doc = docs.get(current.docId);
-    return perfProfileForDoc(doc?.sizeClass ?? "normal", isMdDoc(doc ?? null));
-  };
+  const leftPerf = (): PerfProfile => perfOfDiffInstance(docs.get(current.docId));
   /** 左栏那一臂的槽（随 state 进去；`reassert` 补基线换 state 时重新带上，见 `leftState`）。 */
   const leftFace = new Compartment();
   /** 左栏主题的槽（R22 取现值 + R23-2 换主题时 `reconfigure` 换掉，不重建整颗 state）。 */

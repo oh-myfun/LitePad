@@ -53,7 +53,7 @@ import {
 import { createEditor, makeTabState } from "../src/editor/editor";
 import { detectLanguage } from "../src/editor/language";
 import { perfProfileFor } from "../src/editor/perf";
-import { makeDoc, markClean } from "../src/doc-model";
+import { makeDiffInstance, makeDoc, markClean } from "../src/doc-model";
 import { applyDarkToTabs, applyWrapToTabs } from "../src/appearance";
 import {
   createDiffSurface,
@@ -1419,18 +1419,29 @@ describe("B461 · 两栏各按自己的文件类型解析", () => {
   });
 });
 
-describe("B461 · 差异编辑器里的折叠槽", () => {
-  it("左栏也挂折叠槽，且排在行号槽之后（VS Code 的折叠箭头在行号右缘）", () => {
+describe("B461 · 差异视图不挂折叠槽（上游 diff 子编辑器 folding = false）", () => {
+  // 依据：`diffEditorEditors.ts` 的 `_adjustOptionsForSubEditor` 对两颗子编辑器都写死
+  // `clonedOptions.folding = false;` ⇒ 折叠模型不建、折叠控件不画。此前照着普通编辑器给左栏
+  // 也挂了折叠槽，结果是那一列没有差异行底色、在差异格里成了一根孤立的柱子。
+  it("左栏只有行号槽，没有折叠槽", () => {
     const hostEl = document.createElement("div");
     hostEl.className = "panel-host";
     document.body.appendChild(hostEl);
-    const panel = freshPanel();
-    const surface = createDiffSurface(hostEl, panel, spec());
-    const gutters = [...surface.left.dom.querySelectorAll(".cm-gutter")].map((g) => g.className);
-    const num = gutters.findIndex((c) => c.includes("cm-lineNumbers"));
-    const fold = gutters.findIndex((c) => c.includes("cm-foldGutter"));
-    expect(num, "行号槽还在").toBeGreaterThanOrEqual(0);
-    expect(fold, "折叠槽在（右栏早就有一份，左栏此前没有）").toBeGreaterThanOrEqual(0);
-    expect(fold, "折叠槽紧跟在行号槽之后").toBe(num + 1);
+    const surface = createDiffSurface(hostEl, freshPanel(), spec());
+    expect(surface.left.dom.querySelector(".cm-lineNumbers"), "行号槽还在").toBeTruthy();
+    expect(surface.left.dom.querySelector(".cm-foldGutter"), "折叠槽不渲染").toBeNull();
+  });
+
+  it("右栏（生产路径 makeDiffInstance）同样没有折叠槽", () => {
+    const doc = makeDoc(101, "右栏正文\n它的第二行", "a.ts", null, "UTF-8", "LF", false);
+    doc.baseline = "左栏正文\n它的第二行";
+    docs.set(101, doc);
+    const tab = makeDiffInstance(doc, 0, "右栏正文\n它的第二行", spec({ docId: 101 }));
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    const view = new EditorView({ parent: el, state: tab.state });
+    expect(view.dom.querySelector(".cm-lineNumbers"), "行号槽还在").toBeTruthy();
+    expect(view.dom.querySelector(".cm-foldGutter"), "折叠槽不渲染").toBeNull();
+    view.destroy();
   });
 });
