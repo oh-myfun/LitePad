@@ -233,15 +233,16 @@
 }
 
 /* 行号槽底色（VS Code 的 `marginClassName: gutter-insert / gutter-delete`）：同一颗标记的
-   `elementClass` 会落到所有 gutter 元素上，这里只认行号槽与记号槽两处，免得 4px 差异列和
-   折叠槽跟着变色。行号槽用 `background-color`（不是 image）：那一格没有当前行高亮的层叠战争。 */
-.panel-host.is-diff .cm-lineNumbers .cm-gutterElement.diff-gutter-insert,
-.panel-host.is-diff .cm-diffSigns .cm-gutterElement.diff-gutter-insert {
+   `elementClass` 由 `gutterLineClass` 落到**所有** gutter 元素上，这里就按类铺满，不再点名
+   某几列 —— 差异格的右栏还有一条 4px 的 `cm-diffGutter`（`makeDiffInstance` 的 `gutterDiff()`
+   无基线 ⇒ 空列但恒占位），漏掉它就是行号槽与记号槽之间一条 4px 的底色断口。
+   行号槽用 `background-color`（不是 image）：那一格没有当前行高亮的层叠战争。
+   （折叠槽在差异格里不渲染，见 `perfOfDiffInstance`；不必再为它留排除项。） */
+.panel-host.is-diff .cm-gutterElement.diff-gutter-insert {
   background-color: color-mix(in srgb, var(--diff-add) 18%, transparent);
 }
 
-.panel-host.is-diff .cm-lineNumbers .cm-gutterElement.diff-gutter-delete,
-.panel-host.is-diff .cm-diffSigns .cm-gutterElement.diff-gutter-delete {
+.panel-host.is-diff .cm-gutterElement.diff-gutter-delete {
   background-color: color-mix(in srgb, var(--diff-del) 18%, transparent);
 }
 

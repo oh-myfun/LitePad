@@ -739,6 +739,23 @@ describe("B462 · 右缘差异概览（VS Code 的 diffOverview）", () => {
       "右栏这一侧没有真行 ⇒ 没有新增色格",
     ).toHaveLength(0);
   });
+
+  it("B462 · 右栏 4px 差异列也带底色类（行号与记号之间不留断口）", () => {
+    // 生产路径（makeDiffInstance / makeTabState）的 gutter 次序是
+    // 行号 24.4px → cm-diffGutter 4px（gutterDiff 空列）→ 记号 11px → 正文。
+    // 旧 CSS 只点名行号与记号两列 ⇒ 中间那 4px 透出 .cm-gutters 自己的底色，色带断开。
+    const { right } = mountSurfacePair({ left: "A\nZ", right: "A\n增1\nZ" });
+    expect(
+      right.dom.querySelectorAll(".cm-gutter.cm-diffGutter"),
+      "前置：4px 差异列得真的在（不在的话这条判据是空转）",
+    ).toHaveLength(1);
+    for (const gutter of [".cm-lineNumbers", ".cm-diffGutter", ".cm-diffSigns"]) {
+      expect(
+        right.dom.querySelector(`${gutter} .cm-gutterElement.diff-gutter-insert`),
+        `${gutter} 这一列也得带同一个底色类`,
+      ).not.toBeNull();
+    }
+  });
 });
 
 describe("B463 · 概览滑块 = 右栏滚动条（ScrollbarState.isNeeded 语义）", () => {
@@ -1086,19 +1103,23 @@ describe("B462 · 记号槽与右缘概览条样式", () => {
     expect(revert).toContain("height: 18px");
     expect(revert, "上游 .actions-container 的 4px 圆角").toContain("border-radius: 4px");
 
-    // 底色类会落到所有 gutter 上 ⇒ 只许行号槽与记号槽吃颜色，4px 差异列不许变色
-    // （折叠槽在差异格里根本不渲染，见 diff-surface 的 folding = false 那条）。
+    // 底色类会落到所有 gutter 上 ⇒ 按类铺满：右栏还多一条 4px 的 `cm-diffGutter`
+    // （`makeDiffInstance` 的 `gutterDiff()` 无基线 ⇒ 空列但恒占位），点名某几列就会在
+    // 行号槽与记号槽之间留下一条 4px 的底色断口。判据钉「不点名」这个口径本身。
     const gutter = ruleBlock(
       css(),
-      ".panel-host.is-diff .cm-lineNumbers .cm-gutterElement.diff-gutter-insert",
+      ".panel-host.is-diff .cm-gutterElement.diff-gutter-insert",
       undefined,
       true,
     );
     expect(gutter).toContain("color-mix(in srgb, var(--diff-add) 18%, transparent)");
     expect(
       css(),
-      "同一颗标记的另一半落在记号槽上（not.toMatch 判不到东西，这里要正面命中）",
-    ).toContain(".cm-diffSigns .cm-gutterElement.diff-gutter-insert");
+      "4px 差异列不许再被排除在外（旧写法点名 .cm-lineNumbers 与 .cm-diffSigns 两列）",
+    ).not.toContain(".cm-lineNumbers .cm-gutterElement.diff-gutter-insert");
+    expect(css(), "行背景与槽底色必须是同一颗 token、同一档 18%（同一颜色来源）").toContain(
+      "var(--diff-add) 18%",
+    );
   });
 
   it("B462 · 概览条 30px、两列各 15px；色块左删右增，视口滑块吃滚动条三档", () => {
