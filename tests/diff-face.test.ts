@@ -969,13 +969,13 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
     expect(s).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
     const tokens = new Set([...s.matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1]));
     // 行底色与字符底色是上游四个不同的 key（`editorColors.ts`）⇒ 各吃各的 token；
-    // 占位块的斜纹是外壳灰，走 `--fg-muted`。
+    // 占位块的斜纹走上游 `diffEditor.diagonalFill` 那一颗（也不是差异色）。
     expect([...tokens].sort()).toEqual([
       "--diff-char-add",
       "--diff-char-del",
+      "--diff-diagonal",
       "--diff-line-add",
       "--diff-line-del",
-      "--fg-muted",
     ]);
     expect(s, "不许再借 --warn / --danger（B458 续轮定死这两颗与明暗档无关）").not.toMatch(
       /--(warn|danger)\b/,
@@ -1067,11 +1067,18 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
     }
   });
 
-  it("B462 · 占位块走 VS Code 的 -45deg / 8px 中性斜纹，且不吃 em、不添竖向留白（R15）", () => {
+  it("B462 · 占位块走 VS Code 的 -45deg / 8px 斜纹，取上游 diagonalFill 默认值（HC 不画）", () => {
     const s = section();
     expect(s).toMatch(/linear-gradient\(\s*-45deg/);
     expect(s, "VS Code 的 `diagonal-fill` 是 8px 一格").toContain("8px 8px");
-    expect(s, "斜纹是外壳灰，不是某一侧的差异色").toContain("var(--fg-muted)");
+    expect(s, "斜纹是中性 fill，不是某一侧的差异色").toContain("var(--diff-diagonal)");
+    const all = css();
+    // 上游 `diffEditor.diagonalFill`：dark #cccccc33 / light #22222233，hcDark / hcLight 都是 null。
+    expect(all).toContain("--diff-diagonal: #cccccc33");
+    expect(all).toContain("--diff-diagonal: #22222233");
+    expect(all, "高对比档不画斜纹（上游该 key 是 null）").toContain(
+      ':root[data-theme-family="hc"] .panel-host.is-diff .diff-gap {',
+    );
     // `.diff-gap` 是 `.cm-content` 里的块 widget：继承 `pre-wrap`，而任何竖向 margin/padding
     // 与 em 制高都会把两栏的行盒推开（`src/preview/` 那些块 widget 栽过的坑）。
     // 行高一律由 widget 按 `view.defaultLineHeight` 写 inline ⇒ 这一段只许声明外观。

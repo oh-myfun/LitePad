@@ -243,6 +243,9 @@
      亮色新增 0.25×2 = 0.5。不是从 `--diff-add` / `--diff-del` 调百分比得来的。 */
   --diff-overview-add: #9ccc2c66;
   --diff-overview-del: #ff000066;
+  /* 对侧占位块的斜纹走上游 `diffEditor.diagonalFill` 的默认值（暗 #cccccc33 / 亮 #22222233；
+     高对比档是 null ⇒ 不画，见下面的 `data-theme-family="hc"` 那条）。 */
+  --diff-diagonal: #cccccc33;
 }
 
 /* 亮色档的字符底色比暗色高一档（上游 light = #9ccc2c40）；行底色明暗相同，不另开。
@@ -250,6 +253,7 @@
 :root[data-theme="light"] {
   --diff-char-add: #9ccc2c40;
   --diff-overview-add: #9ccc2c80;
+  --diff-diagonal: #22222233;
 }
 
 /* 底色：上游那两个 20% alpha 的值（明暗同一套 ⇒ HC 档也靠同一颗 token 自己跟上）。
@@ -325,7 +329,8 @@
 }
 
 /* 对侧占位块：VS Code 用 `diagonal-fill` 画中性斜纹（不是某一侧的差异色）——
-   `-45deg`、8px 一格，色走外壳的 `--fg-muted`，不引入第四颗差异色。
+   `-45deg`、8px 一格，色走上游 `diffEditor.diagonalFill` 的默认值（暗 #cccccc33 / 亮
+   #22222233），高对比档该 key 是 null ⇒ 下面单列一条不画纹的规则。
    几何照上游：`diffEditorViewZones.ts` 的 alignment view zone 用 `createFakeLinesDiv()`
    交出一颗裸 `.diagonal-fill`，落进 Monaco 的 `.view-zones`（`viewLines.css`：贴
    `contentLeft`、宽度 `max(scrollWidth, contentWidth)`）—— 即**只铺正文，不进行号槽**。
@@ -338,16 +343,22 @@
   z-index: 201;
   background-image: linear-gradient(
     -45deg,
-    color-mix(in srgb, var(--fg-muted) 20%, transparent) 12.5%,
+    var(--diff-diagonal) 12.5%,
     transparent 12.5%,
     transparent 50%,
-    color-mix(in srgb, var(--fg-muted) 20%, transparent) 50%,
-    color-mix(in srgb, var(--fg-muted) 20%, transparent) 62.5%,
+    var(--diff-diagonal) 50%,
+    var(--diff-diagonal) 62.5%,
     transparent 62.5%,
     transparent 100%
   );
   background-size: 8px 8px;
   background-repeat: repeat;
+}
+
+/* 上游 `diffEditor.diagonalFill` 在 hcDark / hcLight 都是 null ⇒ 占位块只剩空白。
+   底纹不画，占位行本身的高度与外框照旧（这也是上游 view zone 的行为）。 */
+:root[data-theme-family="hc"] .panel-host.is-diff .diff-gap {
+  background-image: none;
 }
 
 /* 占位行不是文档行，CM6 的 gutter 里没有它的一格 ⇒ 记号由 widget 摆在自己左缘（产品口径；
