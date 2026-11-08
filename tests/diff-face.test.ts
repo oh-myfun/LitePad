@@ -38,10 +38,11 @@ import {
   diffFace,
   foldCandidates,
   foldedRangesIn,
+  gapZones,
   refreshDiff,
   setFoldedRanges,
-  sideGaps,
   sideLineMarks,
+  type GapZone,
 } from "../src/diff/face";
 
 const srcOf = (p: string): string => readFileSync(p, "utf-8").replace(/\r\n/g, "\n");
@@ -52,21 +53,51 @@ const del = diffBlocks("A\n删1\n删2\nZ", "A\nZ");
 /** jsdom 里把 CM6 的行高桩成这个数（真取值口是 `view.defaultLineHeight`，无布局时恒为 0）。 */
 const LINE_HEIGHT = 20;
 
-describe("B461 · sideLineMarks / sideGaps：一块在两栏各落在哪些行", () => {
+/**
+ * 单测里的「实测行高」：那一行就是 `LINE_HEIGHT`。
+ *
+ * 真实现由 surface 把两栏 view 的行盒喂进 `gapZones`；这里只钉纯函数的分配口径，
+ * 所以行高是一颗常量。折行那一路的向量另外直接给「某一行 = 多个视觉行」的高度表。
+ */
+const uniformHeight = (): number => LINE_HEIGHT;
+
+/**
+ * 只算 **这一侧** 的缝（不经 surface）。
+ *
+ * `gapZones` 要两侧总行数才能给尾段收口；单侧现场只知道自己这份文档有多少行，
+ * 另一侧按「未改动段两侧行数相等」反推：`对侧末块行号 + (本侧总行数 - 本侧末块行号)`。
+ * 与生产的 `LineTotals` 同一口径，只是另一侧的数字由块表推出来。
+ */
+function zonesOf(blocks: DiffBlock[], side: DiffSide, docLines: number): GapZone[] {
+  const otherSide: DiffSide = side === "original" ? "modified" : "original";
+  const endOf = (b: DiffBlock, s: DiffSide): number =>
+    s === "original" ? b.originalEnd : b.modifiedEnd;
+  const last = blocks[blocks.length - 1];
+  const ownEnd = last ? endOf(last, side) : 0;
+  const otherEnd = last ? endOf(last, otherSide) : 0;
+  const otherLines = Math.max(otherEnd + (docLines - ownEnd), otherEnd, 0);
+  const totals =
+    side === "original"
+      ? { original: docLines, modified: otherLines }
+      : { original: otherLines, modified: docLines };
+  return gapZones(blocks, totals, uniformHeight)[side];
+}
+
+describe("B461 · sideLineMarks / gapZones：一块在两栏各落在哪些行", () => {
   it("B461 · 删除块：左栏标真行，右栏在 A 之后补 2 行空位", () => {
     expect(sideLineMarks(del, "original")).toEqual([
       { line: 2, kind: "delete" },
       { line: 3, kind: "delete" },
     ]);
     expect(sideLineMarks(del, "modified")).toEqual([]);
-    expect(sideGaps(del, "modified")).toEqual([{ afterLine: 1, count: 2 }]);
-    expect(sideGaps(del, "original")).toEqual([]);
+    expect(zonesOf(del, "modified", 2)).toEqual([{ afterLine: 1, height: 2 * LINE_HEIGHT }]);
+    expect(zonesOf(del, "original", 4)).toEqual([]);
   });
 
   it("B461 · 新增块反过来：右栏标行、左栏补空位", () => {
     const ins = diffBlocks("A\nZ", "A\n新1\n新2\nZ");
     expect(sideLineMarks(ins, "modified").map((m) => m.line)).toEqual([2, 3]);
-    expect(sideGaps(ins, "original")).toEqual([{ afterLine: 1, count: 2 }]);
+    expect(zonesOf(ins, "original", 2)).toEqual([{ afterLine: 1, height: 2 * LINE_HEIGHT }]);
   });
 
   it("B462 · 混合区按 VS Code 分侧：左栏全算删除、右栏全算新增（没有第三种 modify 行）", () => {
@@ -74,7 +105,7 @@ describe("B461 · sideLineMarks / sideGaps：一块在两栏各落在哪些行",
     // head=1；中段无 LCS 锚点 ⇒ 一个区 (aLen 2, bLen 1)；alignOffset 挑 o=1（丁后行 ↔ 丁后行改了 最像）
     // ⇒ 配对窗口吃掉 a 的第 2 行，多出来的 a 行（绝对第 2 行）在窗口**之前**被删
     const mixed = diffBlocks("丙一去\n丙一去\n丁后行", "丙一去\n丁后行改了");
-    expect(sideGaps(mixed, "modified")).toEqual([{ afterLine: 1, count: 1 }]);
+    expect(zonesOf(mixed, "modified", 2)).toEqual([{ afterLine: 1, height: LINE_HEIGHT }]);
     expect(sideLineMarks(mixed, "original"), "改 = 先删：左栏两行都是删除色").toEqual([
       { line: 2, kind: "delete" },
       { line: 3, kind: "delete" },
@@ -94,12 +125,12 @@ describe("B461 · sideLineMarks / sideGaps：一块在两栏各落在哪些行",
       { line: 4, kind: "delete" },
     ]);
     expect(sideLineMarks(both, "modified")).toEqual([{ line: 2, kind: "insert" }]);
-    expect(sideGaps(both, "modified")).toEqual([
-      { afterLine: 1, count: 1 },
-      { afterLine: 2, count: 1 },
+    expect(zonesOf(both, "modified", 3)).toEqual([
+      { afterLine: 1, height: LINE_HEIGHT },
+      { afterLine: 2, height: LINE_HEIGHT },
     ]);
     // 多的一侧（左栏）自己不必补位
-    expect(sideGaps(both, "original")).toEqual([]);
+    expect(zonesOf(both, "original", 5)).toEqual([]);
   });
 
   it("B462 · 当前比基线长的改块：左栏按同样的口径补位（缝在配对窗口之后）", () => {
@@ -109,8 +140,28 @@ describe("B461 · sideLineMarks / sideGaps：一块在两栏各落在哪些行",
       { line: 2, kind: "insert" },
       { line: 3, kind: "insert" },
     ]);
-    expect(sideGaps(grow, "original")).toEqual([{ afterLine: 2, count: 1 }]);
-    expect(sideGaps(grow, "modified")).toEqual([]);
+    expect(zonesOf(grow, "original", 3)).toEqual([{ afterLine: 2, height: LINE_HEIGHT }]);
+    expect(zonesOf(grow, "modified", 4)).toEqual([]);
+  });
+
+  it("B462 · 折行：缝高按实测像素，不按行数乘默认行高", () => {
+    const wrapDel = diffBlocks("A\nB\nC", "A\nC");
+    // 左栏第 2 行折成两个视觉行（2 × 行高），右栏在同高度上只有一行。
+    const heightOf = (side: DiffSide, line: number): number =>
+      side === "original" && line === 2 ? 2 * LINE_HEIGHT : LINE_HEIGHT;
+    expect(gapZones(wrapDel, { original: 3, modified: 2 }, heightOf).modified).toEqual([
+      { afterLine: 1, height: 2 * LINE_HEIGHT },
+    ]);
+  });
+
+  it("B462 · 未改动区也逐行对齐：两栏宽度不同，同一行折出的视觉行数不等就补缝", () => {
+    // 两侧正文一致（没有差异块），左栏第 2 行折成两个视觉行。
+    const same = diffBlocks("A\nB\nC", "A\nB\nC");
+    const heightOf = (side: DiffSide, line: number): number =>
+      side === "original" && line === 2 ? 2 * LINE_HEIGHT : LINE_HEIGHT;
+    const zones = gapZones(same, { original: 3, modified: 3 }, heightOf);
+    expect(zones.original).toEqual([]);
+    expect(zones.modified).toEqual([{ afterLine: 2, height: LINE_HEIGHT }]);
   });
 });
 
@@ -198,12 +249,22 @@ function mountFace(
   doc = side === "modified" ? "A\nZ" : "A\n删1\n删2\nZ",
 ): { view: EditorView; lineEl: (n: number) => HTMLElement; gapEls: () => HTMLElement[] } {
   const provider = typeof blocks === "function" ? blocks : () => blocks;
-  const view = new EditorView({
-    state: EditorState.create({ doc, extensions: [diffFace(side, provider)] }),
+  let view: EditorView | null = null;
+  // 缝与块同一颗读取口（生产里由 surface 交出来）；这里按固定行高现算，
+  // 于是「refreshDiff 之后重算」测的仍是同一份输入口径。
+  // 行数取**当前**文档（键入之后块表按新文档重算），首建时 view 还没赋值，退回初始行数。
+  const source = () => {
+    const list = provider();
+    const lines = view ? view.state.doc.lines : doc.split("\n").length;
+    return { blocks: list, gaps: zonesOf(list, side, lines) };
+  };
+  view = new EditorView({
+    state: EditorState.create({ doc, extensions: [diffFace(side, source)] }),
     parent: document.body,
   });
-  live.push(() => view.destroy());
-  return { view, lineEl: (n) => lineElOf(view, n), gapEls: () => gapElsOf(view) };
+  const created = view;
+  live.push(() => created.destroy());
+  return { view: created, lineEl: (n) => lineElOf(created, n), gapEls: () => gapElsOf(created) };
 }
 
 describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位块", () => {
@@ -276,8 +337,8 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
 
   it("B461 · 正文开头就缺行（缝落在第 0 行之后）⇒ 占位块插在第一行**之前**", () => {
     const top = diffBlocks("删1\n删2\nA", "A");
-    expect(sideGaps(top, "modified"), "前置：纯函数报的是第 0 行之后").toEqual([
-      { afterLine: 0, count: 2 },
+    expect(zonesOf(top, "modified", 1), "前置：纯函数报的是第 0 行之后").toEqual([
+      { afterLine: 0, height: 2 * LINE_HEIGHT },
     ]);
     const { view, gapEls } = mountFace("modified", top, "A");
     expect(gapEls()).toHaveLength(1);
@@ -291,7 +352,7 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
     const { view, lineEl, gapEls } = mountFace("modified", provider);
     expect(provider, "create 现算一次").toHaveBeenCalledTimes(1);
 
-    view.dispatch({ changes: { from: 0, insert: "X\n" } });
+    view.dispatch({ changes: { from: 2, insert: "新1\n新2\n" } });
     expect(
       provider,
       "停手之前不重算（B398 那条口径，与 gutterDiffField 同纪律）",
@@ -301,7 +362,7 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
     view.dispatch({ effects: refreshDiff.of(null) });
     expect(provider).toHaveBeenCalledTimes(2);
     expect(gapEls(), "新增块补的是**左栏**，右栏这一侧不该留空位").toHaveLength(0);
-    expect(lineEl(1).className, "第 1 行是新打进去的 X，不在任何块里").not.toContain("diff-line");
+    expect(lineEl(1).className, "第 1 行 A 没动，不在任何块里").not.toContain("diff-line");
     expect(lineEl(2).className).toContain("diff-line-insert");
     expect(lineEl(3).className).toContain("diff-line-insert");
   });
@@ -606,10 +667,16 @@ describe("B462 · 右缘差异概览（VS Code 的 diffOverview）", () => {
     surface.setCollapseUnchanged(true);
     expect(foldedRangesIn(right.state).length, "前置：够长的未改动区被折起来").toBeGreaterThan(0);
 
-    // 17 行里折掉 9 行 ⇒ 8 个视觉行；最后一行排到第 8 行：top 7/8、height 1/8。
+    // 折叠之后行轴按**实测内容高度**重算（不是 17 行那条旧估算）：色块坐标 = 该行的
+    // 文档像素 / 当前 contentHeight。jsdom 里 display:none 的行仍按估算行高计入，所以
+    // 这里不写死 87.5%，而是要求它与「此刻的实测轴」一致，且与折叠前不同。
     const after = marksOf(host, "original")[0];
-    expect(after.style.top, "行轴跟着折叠走，不许还吃折叠前的 17 行").toBe("87.5%");
-    expect(after.style.height).toBe("12.5%");
+    const lv = surface.left;
+    const last = lv.lineBlockAt(lv.state.doc.line(17).from);
+    const pct = (v: number): string => `${(v / lv.contentHeight) * 100}%`;
+    expect(after.style.top, "行轴跟着 contentHeight，不许还吃折叠前的 17 行").toBe(pct(last.top));
+    expect(after.style.height).toBe(pct(last.height));
+    expect(after.style.top, "折叠确实改了这支轴").not.toBe(before.style.top);
     expect(marksOf(host, "modified")).toHaveLength(1);
   });
 

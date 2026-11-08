@@ -19,7 +19,7 @@
 // `StateEffect.appendConfig`，并且把新 Compartment 一起并进去，好在拆旁路时精准摘掉这一臂。
 
 import { Compartment, EditorState, StateEffect, type Extension } from "@codemirror/state";
-import { EditorView, lineNumbers } from "@codemirror/view";
+import { EditorView, BlockType, lineNumbers } from "@codemirror/view";
 import { activePanelId, docs, isWrap, panels, tabs, type Panel } from "../core/app-state";
 import { landVisibleSideAtV } from "../sync-scroll/wire";
 import { DIFF_REFRESH_MS } from "./align";
@@ -30,11 +30,12 @@ import {
   diffFace,
   foldCandidates,
   foldedRangesIn,
+  gapZones,
   onFoldBarClick,
   refreshDiff,
   setFoldedRanges,
-  sideGaps,
   type FoldRange,
+  type GapZone,
 } from "./face";
 import { canOpenAgainstBaseline, notifyDiffBlocks, type DiffSide, type DiffSpec } from "./model";
 import { revertEdit } from "./revert";
@@ -128,6 +129,13 @@ export interface DiffSurface {
    * 看不出所以然（B458 那轮「基线换了而标注没换」的同形病）。
    */
   reassert(): void;
+  /**
+   * 外观（字号 / 代码字体 / 行距）或窗口尺寸变了之后，重新实测两栏行高并对齐。
+   *
+   * 与 `reassert` 分开：那一条是「补漂移」，可能整态重建左栏；这一条只排一次测量，
+   * 给 Ctrl+滚轮改字号那种高频动作一个便宜入口（`appearance.ts` 的三颗 setter 点它）。
+   */
+  remeasure(): void;
   dispose(): void;
 }
 
@@ -406,6 +414,14 @@ export function createDiffSurface(
         })
       : [];
   stored = computeBlocks();
+  /**
+   * 两侧当前的对齐缝（实测像素；`face.ts` 的占位块吃它）。
+   *
+   * 它是**测量结果**而不是块表的一部分：块表只说「哪几行对不上」，缝还要知道那几行各自
+   * 折成了几个视觉行 —— 后者只有持有两颗 view 的这里量得到。块表一换（`refreshArms`）
+   * 就重新量一次；折行/字号/窗口尺寸变了同理，见 `scheduleAlign`。
+   */
+  let gapPlans: Record<DiffSide, GapZone[]> = { original: [], modified: [] };
   const detachSash = attachSashDrag(hostEl, originalEl, sashEl);
 
   /** 右栏那颗 view 的 state 回写进标签快照（与 `handleUpdate` / `lifecycle` 同一个寻址）。 */
@@ -497,6 +513,11 @@ export function createDiffSurface(
    * 新块走而折区还停在旧块上，那一帧画出来的就是错的那几行 —— 三处同刻跟上靠的是同一发事务。
    */
   const refreshArms = (): void => {
+    // 先把缝按**此刻的行盒**重算一遍再派发：块表刚换（比如用户把删掉的行打回来了）时，
+    // 还拿着上一轮的缝去画，就会在「块已经没了」的那一帧留下一条没人认领的空位 ——
+    // 随后的 `scheduleAlign` 只保证下一帧收口，这一帧已经把旧缝画出去了。
+    // 折行开着时这里量到的是上一帧的几何，`scheduleAlign` 落地后还会再校一次。
+    applyGapPlans();
     const foldOf = (side: DiffSide): StateEffect<unknown>[] => [
       refreshDiff.of(null),
       setFoldedRanges.of(foldPointsFor(side)),
@@ -508,6 +529,9 @@ export function createDiffSurface(
     // 视口滑块顺便复算一帧。中间那列的按钮位置同样只跟块表/折叠走 ⇒ 一起重画。
     renderOverview();
     renderReverts();
+    // 块表/折叠换过之后，两栏的实测行高可能变了（块的边界变了，或折条换了位置）⇒ 排一次
+    // 重测。`scheduleAlign` 只在缝真的变了时才再派发，因此这一发不会自激。
+    scheduleAlign();
   };
 
   /**
@@ -671,7 +695,8 @@ export function createDiffSurface(
    * 挂 state 与 `resetLeftDoc` 换 state 都走这一处，两栏臂的组成只有一份定义。
    */
   const leftArm = (): Extension => [
-    diffFace("original", () => stored),
+    // 缝与块同一份来源：块表换了而缝还停在旧测量上，底色与占位块会互相打架。
+    diffFace("original", () => ({ blocks: stored, gaps: gapPlans.original })),
     onFoldBarClick(onOriginalFoldClick),
   ];
   const left = new EditorView({
@@ -685,40 +710,171 @@ export function createDiffSurface(
   });
 
   /**
-   * 概览条的行轴：VS Code 的 overview ruler 画在**视图坐标**里（对齐占位块与折叠都计入），
-   * 所以两列在同一高度上的色块才对得齐。这里同样把「文档行 → 视觉行」算出来：
-   *   · 占位块：`sideGaps` 每段吃掉 `count` 行（两侧总行数因此相等）；
-   *   · 折叠：被折的 `to - from` 行被一条折条顶替，净少 `to - from` 行。
-   * 未改动的块不会落进折区（折区候选本身就是未改动区），因此块的跨度不必再剪折叠。
+   * 某一行**文本本身**的文档坐标（去掉挂在它身上/前后的块 widget）。
+   *
+   * CM6 把行与紧贴它的块 widget 合成一颗 composite `BlockInfo`：`lineBlockAt(行首).height`
+   * 会连对齐占位块、折条的高度一起吃进去。直接拿它当「这一行有多高」，缝就会把上一轮的
+   * 占位块算进下一轮的测量里（量 → 补 → 再量还变），对齐永远收不了口。
+   * `BlockInfo.type` 在 composite 上给的是子块的数组，`BlockType.Text` 那一颗才是这一行的
+   * 视觉高度（含折行）；普通行直接就是 Text。
    */
-  const visualAxis = (side: DiffSide): { total: number; rowOf: (line: number) => number } => {
-    const view = viewOf(side);
-    const gaps = sideGaps(stored, side);
-    const folds = view ? foldedRangesIn(view.state) : [];
-    const total =
-      (view?.state.doc.lines ?? 0) +
-      gaps.reduce((n, g) => n + g.count, 0) -
-      folds.reduce((n, f) => n + Math.max(f.to - f.from, 0), 0);
-    const rowOf = (line: number): number =>
-      line +
-      gaps.reduce((n, g) => n + (g.afterLine < line ? g.count : 0), 0) -
-      folds.reduce((n, f) => n + (line > f.to ? Math.max(f.to - f.from, 0) : 0), 0);
-    return { total, rowOf };
+  const textBlockOf = (view: EditorView, line: number): { top: number; height: number } => {
+    const doc = view.state.doc;
+    const n = Math.min(Math.max(line, 1), doc.lines);
+    const block = view.lineBlockAt(doc.line(n).from);
+    if (!Array.isArray(block.type)) return { top: block.top, height: block.height };
+    const text = block.type.find((part) => part.type === BlockType.Text);
+    return text ? { top: text.top, height: text.height } : { top: block.top, height: block.height };
   };
 
+  /**
+   * 某一栏每一行的实测高度口。
+   *
+   * 折行关着时一个文档行恒等于一个视觉行 —— `defaultLineHeight` 就是那一行的高度（CM6 量过
+   * 的，字号/行距改了它会跟着变），不必为整篇文档做 N 次 `lineBlockAt`。
+   * 折行打开后同一份正文可能折成任意多个视觉行，只能逐行问当前 view 的行盒。
+   *
+   * ⚠️ 只读**行文本自己的**块（`textBlockOf`）：贴着行尾的占位块会被 CM6 并进同一颗
+   * composite `BlockInfo`，把它的高度减出去，才有「补缝 → 行高不变 → 缝稳定」这条不动点，
+   * 不会 measure 自激。折起来的行是 `display: none`，量出来 0 —— 两侧折的是同一批未改动区，
+   * 差值为 0，不补缝。
+   */
+  const lineHeights = (side: DiffSide): ((line: number) => number) => {
+    const view = viewOf(side);
+    if (!view) return () => 0;
+    if (!wrapOn) {
+      const h = view.defaultLineHeight;
+      return () => h;
+    }
+    return (line) => textBlockOf(view, line).height;
+  };
+
+  /** 现在这两栏该补哪些缝（纯计算在 `face.ts` 的 `gapZones`，这里只负责量）。 */
+  const measureGapPlans = (): Record<DiffSide, GapZone[]> => {
+    if (!right) return { original: [], modified: [] };
+    const heights: Record<DiffSide, (line: number) => number> = {
+      original: lineHeights("original"),
+      modified: lineHeights("modified"),
+    };
+    return gapZones(
+      stored,
+      { original: left.state.doc.lines, modified: right.state.doc.lines },
+      (side, line) => heights[side](line),
+    );
+  };
+
+  /** 两份缝计划是否「一样到不必再派发」（亚像素抖动不算变化，否则会 measure 自激）。 */
+  const sameGapPlans = (
+    a: Record<DiffSide, GapZone[]>,
+    b: Record<DiffSide, GapZone[]>,
+  ): boolean => {
+    for (const side of SIDES) {
+      if (a[side].length !== b[side].length) return false;
+      for (let i = 0; i < a[side].length; i++) {
+        const x = a[side][i];
+        const y = b[side][i];
+        if (x.afterLine !== y.afterLine || Math.abs(x.height - y.height) > 0.25) return false;
+      }
+    }
+    return true;
+  };
+
+  /** 量一次并收下结果；返回是否真的换了缝（换了就得重画两臂的占位块）。 */
+  const applyGapPlans = (): boolean => {
+    const next = measureGapPlans();
+    if (sameGapPlans(next, gapPlans)) return false;
+    gapPlans = next;
+    return true;
+  };
+
+  /** 这一颗 surface 已经拆掉 ⇒ 迟到的测量/帧回调一律空转。 */
+  let disposed = false;
+  /** 测量代号：晚到的旧结果不许盖掉新一轮（两颗 view 的回调不一定同帧到齐）。 */
+  let alignGen = 0;
+
+  /**
+   * 排一次「量两侧行高 → 重算缝」。
+   *
+   * 为什么用 `requestMeasure`：折行开关、字号、窗口尺寸一变，CM6 的 heightMap 还是旧的；
+   * 只有 measure 的 read 阶段拿到的是这一帧**已经落地**的几何。两颗 view 各挂一个 read，
+   * 两边都到齐才算数 —— 只等一边就可能拿左栏的新行高去比右栏的旧行高。
+   *
+   * 派发放到下一帧：read 阶段里改 state 会打进 CM6 的 measure 自检（它会把这次改动当成
+   * 又一次布局请求），而「read 只读、write 再写」是那套 API 的硬约定。
+   */
+  const scheduleAlign = (): void => {
+    if (disposed || !right) return;
+    const gen = ++alignGen;
+    let leftDone = false;
+    let rightDone = false;
+    const settle = (): void => {
+      if (disposed || gen !== alignGen || !leftDone || !rightDone) return;
+      // read 阶段只量不写。
+      const next = measureGapPlans();
+      requestAnimationFrame(() => {
+        if (disposed || gen !== alignGen) return;
+        if (!sameGapPlans(next, gapPlans)) {
+          gapPlans = next;
+          // 缝换了 ⇒ 两臂的占位块要重排；这一发同时带着新的块表/折叠态。
+          refreshArms();
+        }
+        // 占位块/折叠/换行都会挪色块与按钮的像素位置，落地后统一重画一次。
+        renderOverview();
+        renderReverts();
+        renderViewport();
+      });
+    };
+    left.requestMeasure({
+      read: () => {
+        leftDone = true;
+        settle();
+      },
+    });
+    right.requestMeasure({
+      read: () => {
+        rightDone = true;
+        settle();
+      },
+    });
+  };
+
+  /** 窗口尺寸变化（拖窗口 / 系统缩放）：两栏宽度与折行结果都可能变，必须重测。 */
+  const onWindowResize = (): void => scheduleAlign();
+  window.addEventListener("resize", onWindowResize);
+
+  /**
+   * 概览条：色块坐标走**实测像素**（B461 后续轮，照 VS Code 的 overview ruler）。
+   *
+   * 上游把色块画在视图坐标里（对齐占位块与折行都计入），这里同口径：`lineBlockAt` 给的是
+   * 文档坐标（块级 widget 与折行后的视觉行都已经算在里面），`contentHeight` 是这一栏的总高。
+   * 于是「块的第一行 / 最后一行」落在哪个像素，色条就落在同一比例处；两列在同一高度上的
+   * 色块天然对得齐 —— 不再按「一个文档行 = 一行高」估算（那种算法一折行就整体偏）。
+   *
+   * `contentHeight` 在首帧/隐藏格可能是 0：直接不画（ResizeObserver 落地后会补画）。
+   */
   const paintRuler = (side: DiffSide, ruler: HTMLElement): void => {
     ruler.replaceChildren();
-    const { total, rowOf } = visualAxis(side);
+    const view = viewOf(side);
+    if (!view) return;
+    const total = view.contentHeight;
     if (total <= 0) return;
+    const lines = view.state.doc.lines;
     for (const b of stored) {
       const start = side === "modified" ? b.modifiedStart : b.originalStart;
       const end = side === "modified" ? b.modifiedEnd : b.originalEnd;
-      const len = end - start + 1;
-      if (len <= 0) continue;
+      if (start > end) continue;
+      const a = Math.min(Math.max(start, 1), lines);
+      const z = Math.min(Math.max(end, 1), lines);
+      if (z < a) continue;
+      // 色块的上下界都取**行文本**的坐标：贴着块尾的占位块算作「缺口区」，不该染成改动色。
+      const top = textBlockOf(view, a).top;
+      const endBlock = textBlockOf(view, z);
+      const bottom = endBlock.top + endBlock.height;
+      if (!(bottom > top)) continue;
       const mark = document.createElement("div");
       mark.className = "diff-overview-mark";
-      mark.style.top = `${((rowOf(start) - 1) / total) * 100}%`;
-      mark.style.height = `${(len / total) * 100}%`;
+      mark.style.top = `${(top / total) * 100}%`;
+      mark.style.height = `${((bottom - top) / total) * 100}%`;
       ruler.appendChild(mark);
     }
   };
@@ -795,12 +951,13 @@ export function createDiffSurface(
     scroller.scrollTop += e.deltaY;
   };
   /**
-   * 两栏同步滚动（B461 后续轮，默认开）。
+   * 两栏同步滚动（B461 后续轮，默认开；B461 对齐轮改成**直接抄 scrollTop**）。
    *
-   * VS Code 的差异编辑器**恒同步**，没有用户开关；本项目做成开关，是为了在两栏视觉行对不齐
-   * （折行开着）时能手动脱钩。映射取**滚动比例**而不是直接抄 `scrollTop`：关折行时两栏高度由
-   * 占位块补齐、本来相等，两种写法结果一致；开折行时高度不等，比例至少保证「滚到 30% ≈ 对侧 30%」。
-   * `mirroring` 是防回声闸：写 scrollTop 会异步触发对方那一路的 scroll，不收口会差 1px 抖动。
+   * 对齐之后两栏的内容高度由占位块补齐（未改动区的折行差异也补），同一 `scrollTop` 落在
+   * 两栏里就是同一视觉行 —— 这正是 VS Code 差异编辑器恒同步的前提。上一版的「按比例映射」
+   * 是为高度不等留的兜底；那正是没对齐时的症状，现在对齐是真值，比例反而会把逐行对应拉开
+   * （高度差 1px 就整体漂一点）。因此去掉比例，只夹到对侧的最大滚动量，防止过冲。
+   * `mirroring` 是防回声闸：写 scrollTop 会异步触发对方那一路的 scroll，不收口会抖。
    */
   let syncOn = true;
   let mirroring = false;
@@ -808,11 +965,9 @@ export function createDiffSurface(
     if (!syncOn || mirroring || !from || !to) return;
     const a = from.scrollDOM;
     const b = to.scrollDOM;
-    const aMax = Math.max(a.scrollHeight - a.clientHeight, 0);
     const bMax = Math.max(b.scrollHeight - b.clientHeight, 0);
-    if (aMax <= 0) return;
     mirroring = true;
-    b.scrollTop = (a.scrollTop / aMax) * bMax;
+    b.scrollTop = Math.min(a.scrollTop, bMax);
     // scroll 事件异步到达；下一帧再放开，才不会把自己的回声当成用户滚动。
     requestAnimationFrame(() => {
       mirroring = false;
@@ -1008,8 +1163,9 @@ export function createDiffSurface(
     const ITEM_H = 20;
     for (let i = 0; i < stored.length; i++) {
       const b = stored[i];
-      const pos = lineStartOf(right, landingLine(b, "modified"));
-      const block = right.lineBlockAt(pos);
+      // 只取**行文本**的盒子（`textBlockOf` 的解）：这一行若紧贴着一条对齐缝，composite
+      // `BlockInfo` 会把缝一起算进来，按钮就被那颗高度顶到偏下一半的缝里去。
+      const block = textBlockOf(right, landingLine(b, "modified"));
       const centerY = right.documentTop + block.top + block.height / 2 - column.top;
       // 块在视口上下各留一个 item 的余量之外 ⇒ 这一颗不建。
       if (centerY < -ITEM_H || centerY > column.height + ITEM_H) continue;
@@ -1072,6 +1228,8 @@ export function createDiffSurface(
   let layoutRO: ResizeObserver | null = null;
   if (typeof ResizeObserver === "function") {
     layoutRO = new ResizeObserver(() => {
+      // 宽度变了 ⇒ 折行的视觉行数可能变，缝必须重测；高度变了只影响滑块，但一起重画最省。
+      scheduleAlign();
       renderOverview();
       renderReverts();
     });
@@ -1080,7 +1238,7 @@ export function createDiffSurface(
 
   /** 右栏那一臂的内容：装饰 + 折条出口 + 键入落点（`updateListener` 是 state facet，只能并进来）。 */
   const rightArm = (): Extension => [
-    diffFace("modified", () => stored),
+    diffFace("modified", () => ({ blocks: stored, gaps: gapPlans.modified })),
     onFoldBarClick(onModifiedFoldClick),
     // 仓库同形先例 `tests/preview-face-helpers.ts:71-76`：塞进 `state.update({extensions})`
     // 会被静默丢掉，必须走 effect。
@@ -1119,6 +1277,7 @@ export function createDiffSurface(
   // 换标签再换回来那一趟：`switchTab` 的同形回写会把**上一颗 surface 的折叠态**留在标签快照里
   //（`diffFoldField` 是模块级那颗，槽换挂时值不重建）⇒ 挂上这一刻必须按这一颗的口径重发一次
   // 折叠态（关着 ⇒ 两份空清单 = 把快照里那些 `display: none` 的行放回来）。
+  // `refreshArms` 自己会先量一发缝：左栏刚建好时首帧就有占位块（不会闪一下错位）。
   refreshArms();
 
   /**
@@ -1144,6 +1303,9 @@ export function createDiffSurface(
     }
     // ③ 基线：`doc.baseline` 被就地换掉 ⇒ 左栏那份文档得跟上，否则新基线的块画在旧正文上。
     if (left.state.doc.toString() !== current.leftText()) resetLeftDoc();
+    // ④ 几何：这一发挂在 `refreshAll` 上（设置页改字号/行距/主题也会经这里），行高可能刚变；
+    //    重测一发，缝与按钮/色块跟着新行高走。空转时这次测量只是一次 `requestMeasure`。
+    scheduleAlign();
   };
 
   const surface: DiffSurface = {
@@ -1172,7 +1334,10 @@ export function createDiffSurface(
     syncScrollEnabled: () => syncOn,
     setSyncScrollEnabled,
     reassert,
+    remeasure: scheduleAlign,
     dispose: () => {
+      disposed = true;
+      window.removeEventListener("resize", onWindowResize);
       cancelSync();
       // 折叠状态跟着这一格退场（那颗 view 上的 `display: none` 已经随臂摘掉了，读口再报着
       // 折区就是两份真相 —— 拆掉的 surface 从此只报「没折」）。
@@ -1287,4 +1452,14 @@ export function syncDiffSurface(panel: Panel): void {
  */
 export function refreshDiffSurfaces(): void {
   for (const panel of panels.values()) syncDiffSurface(panel);
+}
+
+/**
+ * 只重测几何（字号 / 代码字体 / 行距变了的时候）。
+ *
+ * 不走 `refreshDiffSurfaces`：那一条会判 spec 身份、必要时重建旁路，对 Ctrl+滚轮那种
+ * 每一格都生效的高频动作太重；这里只让在挂的 surface 各排一次 `requestMeasure`。
+ */
+export function remeasureDiffSurfaces(): void {
+  for (const panel of panels.values()) panel.diffSurface?.remeasure();
 }

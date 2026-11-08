@@ -8,8 +8,9 @@
 // （空段的落点在 `end` 行之后）—— 占位块据此落位。
 //
 // 分两半：
-//   · `sideLineMarks` / `sideGaps` 是纯函数（一栏 ↔ 一批行/缝），单测直接钉向量；
-//   · `diffFace(side, blocks)` 是挂到 view 上的那一臂（就一颗 `StateField`，装饰由它 provide），
+//   · `sideLineMarks` / `gapZones` 是纯函数（一栏 ↔ 一批行/缝），单测直接钉向量；缝的高度
+//     是**像素**，由 surface 把两栏的实测行高喂进来（`LineHeightOf`），本文件自己不量；
+//   · `diffFace(side, source)` 是挂到 view 上的那一臂（就一颗 `StateField`，装饰由它 provide），
 //     把纯函数的结果誊成 CM6 装饰。键入期不重算（只 `value.map(tr.changes)`），而
 //     「什么时候该重算」由持有两颗 view 的 `surface.ts` 定（停手 `DIFF_REFRESH_MS` 一发
 //     `refreshDiff`）—— 与 `gutterDiffField` 同一条纪律（B398），但**本文件自己不排定时器**
@@ -44,10 +45,26 @@ export interface SideMark {
   kind: Extract<DiffKind, "insert" | "delete">;
 }
 
-/** 这一侧要补出的空位：落在第 `afterLine` 行之后、占 `count` 行。 */
-export interface SideGap {
+/**
+ * 一条对齐缝：落在第 `afterLine` 行之后、占 `height` **像素**。
+ *
+ * 为什么是像素而不是行数（B461 后续轮，照 VS Code 的 alignment view zone）：
+ * 打开自动换行之后一个文档行会折成多个视觉行，两栏哪怕行数相等，视觉高度也不等。
+ * 上游的 `diffEditorViewZones.ts` 正是把两侧区间按 `lineHeight × 行数 + 折行额外高度`
+ * 折算成像素再补差值 —— 这里沿用同一口径，行数只在「缝落在哪一行之后」这一件事上还用到。
+ */
+export interface GapZone {
   afterLine: number;
-  count: number;
+  height: number;
+}
+
+/** 某一栏第 `line` 行的实测高度（1-based；已含该行折出来的所有视觉行）。 */
+export type LineHeightOf = (side: DiffSide, line: number) => number;
+
+/** 两侧各有多少行（尾段未改动区要靠它收口）。 */
+export interface LineTotals {
+  original: number;
+  modified: number;
 }
 
 /** 本侧区间（1-based 含端点；`start > end` ⇒ 空段）。 */
@@ -87,31 +104,112 @@ export function sideLineMarks(blocks: DiffBlock[], side: DiffSide): SideMark[] {
 }
 
 /**
- * 这一栏要补出的空位段（按 `afterLine` 升序）。
+ * 两侧各自要补出的对齐缝（按 `afterLine` 升序）。
  *
- * 只在**本侧段长比另一侧短**时有：短出来的那些行落在配对窗口的哪一头，由 `block.offset`
- * 定（offset = 少的一侧贴到多的一侧的错位 ⇒ 窗口**之前**有 `offset` 行没人配、
- * **之后**有剩下的那些）。空段那一侧没有窗口可言，整段都记在 `end`（= `start - 1`）之后。
+ * 分两段算，照 VS Code 的 `computeRangeAlignment`：
+ *   · **未改动区**（两块之间、首块之前、末块之后）：两侧行数相等，但同一行在两栏的宽度不同
+ *     （分割线一拖就不是等宽），折出来的视觉行数可能不同 ⇒ 逐行比实测高度，矮的一侧补缝。
+ *     上游的 `handleAlignmentsOutsideOfDiffs` 就是这件事，漏掉它，折行时两栏在未改动段
+ *     就会整体错开。
+ *   · **差异块**：两侧行数可能不等，整块比总高度；少出来的那些**行**落在配对窗口哪一头由
+ *     `block.offset` 定（窗口之前有 `offset` 行没人配，之后有剩下的），但补出去的**高度**
+ *     按对侧那几行的实测值取。首段缝不超过整块高差，剩下的归尾段 —— 这样块的**出口**
+ *     一定对齐，而块内配对的那几行也尽量贴住自己的搭档。
  *
- * `alignOffset` 交出来的 `offset` 恒在 `0 .. (otherLen - ownLen)` 之内；那颗 `Math.min`
- * 只是兜一手，别让内核哪天改出个越界的错位把占位行数放大 —— 少了它，多算的那些行会**画出来**，
- * 而两栏的行就错开了（错的方向要是「少画一行」，肉眼还能看出来，多画则是静默错位）。
+ * 高度只从 `heightOf` 来（surface 交进来的实测口）：本文件不认识 view，也不自己量。
  */
-export function sideGaps(blocks: DiffBlock[], side: DiffSide): SideGap[] {
-  const out: SideGap[] = [];
+export function gapZones(
+  blocks: DiffBlock[],
+  totals: LineTotals,
+  heightOf: LineHeightOf,
+): Record<DiffSide, GapZone[]> {
+  const out: Record<DiffSide, GapZone[]> = { original: [], modified: [] };
+  let po = 0;
+  let pm = 0;
   for (const b of blocks) {
-    const own = ownRange(b, side);
-    const other = otherRange(b, side);
-    const ownLen = segLen(own);
-    const otherLen = segLen(other);
-    if (ownLen >= otherLen) continue;
-    const total = otherLen - ownLen;
-    const before = ownLen === 0 ? 0 : Math.min(b.offset, total);
-    const after = total - before;
-    if (before > 0) out.push({ afterLine: own.start - 1, count: before });
-    if (after > 0) out.push({ afterLine: own.end, count: after });
+    const own = ownRange(b, "original");
+    const other = otherRange(b, "original");
+    alignUnchanged(out, po + 1, own.start - 1, pm + 1, other.start - 1, heightOf);
+
+    for (const side of ["original", "modified"] as const) {
+      const mine = ownRange(b, side);
+      const theirs = otherRange(b, side);
+      const ownLen = segLen(mine);
+      const otherLen = segLen(theirs);
+      if (ownLen >= otherLen) continue;
+      const delta =
+        rangeHeight(theirs, side === "original" ? "modified" : "original", heightOf) -
+        rangeHeight(mine, side, heightOf);
+      if (!(delta > 0)) continue;
+      // 配对窗口之前的行数（空段没有窗口：整段都在 `end = start - 1` 之后）。
+      const before = ownLen === 0 ? 0 : Math.min(Math.max(b.offset, 0), otherLen - ownLen);
+      const head =
+        before > 0
+          ? Math.min(
+              rangeHeight(
+                { start: theirs.start, end: theirs.start + before - 1 },
+                side === "original" ? "modified" : "original",
+                heightOf,
+              ),
+              delta,
+            )
+          : 0;
+      if (head > 0) pushGap(out[side], mine.start - 1, head);
+      if (delta - head > 0) pushGap(out[side], mine.end, delta - head);
+    }
+
+    po = Math.max(po, own.end);
+    pm = Math.max(pm, other.end);
   }
+  alignUnchanged(out, po + 1, totals.original, pm + 1, totals.modified, heightOf);
   return out;
+}
+
+/** 一段行区间的实测高度（`start > end` ⇒ 0）。 */
+function rangeHeight(
+  range: { start: number; end: number },
+  side: DiffSide,
+  heightOf: LineHeightOf,
+): number {
+  let sum = 0;
+  for (let line = range.start; line <= range.end; line++) sum += heightOf(side, line);
+  return sum;
+}
+
+/** 缝按 `afterLine` 合并（同一落点的两笔高度相加，别让 DOM 里挤出两颗同位置的块）。 */
+function pushGap(list: GapZone[], afterLine: number, height: number): void {
+  if (!(height > 0)) return;
+  const last = list[list.length - 1];
+  if (last && last.afterLine === afterLine) last.height += height;
+  else list.push({ afterLine, height });
+}
+
+/**
+ * 未改动区的逐行对齐：两侧同一「行序」的实测高度不等就补缝。
+ *
+ * 行数理论上是相等的（未改动区就是对齐器判为相同的那一摞）；真差出来时把多出来的部分
+ * 如实补到另一侧，**不许静默丢掉** —— 丢掉一行，后面所有行就整体错开，而屏上没有任何
+ * 迹象说明是从哪儿开始错的。
+ */
+function alignUnchanged(
+  out: Record<DiffSide, GapZone[]>,
+  oFrom: number,
+  oTo: number,
+  mFrom: number,
+  mTo: number,
+  heightOf: LineHeightOf,
+): void {
+  let o = oFrom;
+  let m = mFrom;
+  while (o <= oTo && m <= mTo) {
+    const delta = heightOf("modified", m) - heightOf("original", o);
+    if (delta > 0) pushGap(out.original, o, delta);
+    else if (delta < 0) pushGap(out.modified, m, -delta);
+    o++;
+    m++;
+  }
+  for (; o <= oTo; o++) pushGap(out.modified, m - 1, heightOf("original", o));
+  for (; m <= mTo; m++) pushGap(out.original, o - 1, heightOf("modified", m));
 }
 
 // --------------------------------------------------------------------------- #
@@ -137,27 +235,32 @@ export const refreshDiff = StateEffect.define<null>();
 const faceSide = Facet.define<DiffSide, DiffSide>({ combine: (values) => values[0] ?? "modified" });
 
 /**
- * 块的来源：一颗**读取口**，不是快照。
+ * 这一臂的输入：块 + **本栏**的对齐缝，一起从一颗读取口取。
  *
- * 与 `gutterDiff` 的 `baselineProvider` 同一手法：把「现在这批块是什么」留给持有数据的那一侧
- * （surface / Task 5 的基线读取口），于是装饰层不必认识文档模型，也不需要每个写点记得派发。
+ * 与 `gutterDiff` 的 `baselineProvider` 同一手法：把「现在这批块 / 这些缝是什么」留给持有
+ * 两颗 view 的那一侧（surface），于是装饰层不必认识文档模型，也不需要每个写点记得派发。
+ * 缝与块必须同一份来源：块表换了而缝还停在旧测量上，底色与占位块就会互相打架。
  */
-const faceBlocks = Facet.define<() => DiffBlock[], () => DiffBlock[]>({
-  combine: (values) => values[0] ?? (() => []),
+export interface DiffFaceSource {
+  blocks: DiffBlock[];
+  gaps: GapZone[];
+}
+
+const faceSource = Facet.define<() => DiffFaceSource, () => DiffFaceSource>({
+  combine: (values) => values[0] ?? (() => ({ blocks: [], gaps: [] })),
 });
 
 /**
- * 对侧的空位：一块占 `count` 行的**块级** widget。
+ * 对侧的空位：一条**实测像素**高的块级 widget。
  *
- * ⚠️ 高度只按 `view.defaultLineHeight` 写 inline（R15）：CM6 那套行盒量度才是权威，
- * 样式段里写 `em` 或写数字都会跟着字阶复利 —— 两栏的逐行对齐立刻分家（`src/preview/` 那些
- * 块 widget 栽过两次）。块级身份由装饰那颗 `block: true` 定（本版 CM6 的 `WidgetType`
- * 没有 `block` 口，装饰 spec 是唯一入口），并且不许带竖向 margin（同一条文档）。
+ * ⚠️ 高度由 surface 量好后交进来，这里只写 inline px：CM6 那套行盒量度才是权威，样式段里
+ * 写 `em` 或写数字都会跟着字阶复利 —— 两栏的逐行对齐立刻分家（`src/preview/` 那些块 widget
+ * 栽过两次）。块级身份由装饰那颗 `block: true` 定（本版 CM6 的 `WidgetType` 没有 `block` 口，
+ * 装饰 spec 是唯一入口），并且不许带竖向 margin（同一条文档）。
  *
- * ⚠️ 「`count` 行 = `count × 行高`」这条等式成立的前提是**一个文档行 = 一个视觉行**，
- * 也就是差异格两栏都不折行（`surface.ts` 的 `wrapOn` 默认关）。用户一旦打开折行，这几行
- * 在对侧折出来的视觉行比 `count` 多 ⇒ 占位块矮了，两栏的行就错开；那一头要靠按对侧实测
- * 行高来对齐（VS Code 的做法），B398 已经裁掉：「参考 vscode，不要弄这么复杂」。
+ * ⚠️ 为什么不再在这里乘行高：一个文档行打开折行后是多个视觉行，`count × defaultLineHeight`
+ * 只在「一文档行 = 一视觉行」时成立。VS Code 的 alignment view zone 存的是像素高度差
+ * （`diffEditorViewZones.ts` 的 `originalHeightInPx` / `modifiedHeightInPx`），本实现同口径。
  *
  * ⚠️ 缺口行**只有中性斜纹、行号槽没有对应色条**：VS Code 的 alignment view zone 会连
  * `marginDomNode` 一起染上 `gutter-delete` / `gutter-insert`，而 CM6 的块级 widget 只能
@@ -166,18 +269,18 @@ const faceBlocks = Facet.define<() => DiffBlock[], () => DiffBlock[]>({
  * 不再为此改渲染结构。
  */
 export class DiffGapWidget extends WidgetType {
-  constructor(readonly count: number) {
+  constructor(readonly height: number) {
     super();
   }
 
   eq(other: WidgetType): boolean {
-    return other instanceof DiffGapWidget && other.count === this.count;
+    return other instanceof DiffGapWidget && other.height === this.height;
   }
 
-  toDOM(view: EditorView): HTMLElement {
+  toDOM(): HTMLElement {
     const el = document.createElement("div");
     el.className = "diff-gap";
-    el.style.height = `${this.count * view.defaultLineHeight}px`;
+    el.style.height = `${this.height}px`;
     return el;
   }
 
@@ -194,7 +297,12 @@ export class DiffGapWidget extends WidgetType {
  * 先动了一步），一行只发一条 `Decoration.line`。没有块头横条，也没有第三种「修改行」配色：
  * VS Code 的分侧语义就是原稿删、新稿增。
  */
-function buildFace(doc: Text, side: DiffSide, blocks: DiffBlock[]): RangeSet<Decoration> {
+function buildFace(
+  doc: Text,
+  side: DiffSide,
+  blocks: DiffBlock[],
+  gaps: GapZone[],
+): RangeSet<Decoration> {
   const classes = new Map<number, string>();
   for (const m of sideLineMarks(blocks, side)) {
     if (m.line < 1 || m.line > doc.lines) continue;
@@ -205,10 +313,10 @@ function buildFace(doc: Text, side: DiffSide, blocks: DiffBlock[]): RangeSet<Dec
   for (const [line, cls] of classes) {
     ranges.push(Decoration.line({ class: cls }).range(doc.line(line).from));
   }
-  for (const gap of sideGaps(blocks, side)) {
-    if (gap.count <= 0) continue;
+  for (const gap of gaps) {
+    if (!(gap.height > 0)) continue;
     const after = Math.min(Math.max(gap.afterLine, 0), doc.lines);
-    const widget = new DiffGapWidget(gap.count);
+    const widget = new DiffGapWidget(gap.height);
     // 块 widget 要落在线界上：`after` 行之后 ⇒ 挂在该行行尾（side > 0 = 那一行之后）；
     // 第 0 行之后（正文开头就缺行）⇒ 挂在第 1 行行首（side < 0 = 那一行之前）。
     ranges.push(
@@ -324,9 +432,14 @@ interface FaceValue {
   signs: RangeSet<GutterMarker>;
 }
 
-function buildFaceValue(doc: Text, side: DiffSide, blocks: DiffBlock[]): FaceValue {
+function buildFaceValue(
+  doc: Text,
+  side: DiffSide,
+  blocks: DiffBlock[],
+  gaps: GapZone[],
+): FaceValue {
   return {
-    lines: buildFace(doc, side, blocks),
+    lines: buildFace(doc, side, blocks, gaps),
     gutterClasses: buildGutterClasses(doc, side, blocks),
     signs: buildSigns(doc, side, blocks),
   };
@@ -335,11 +448,15 @@ function buildFaceValue(doc: Text, side: DiffSide, blocks: DiffBlock[]): FaceVal
 const diffFaceField = StateField.define<FaceValue>({
   // 建 state 时按 provider 现算一次：这一臂只随差异标签而建，不像 `gutterDiffField`
   // 那样压在「每切一次标签都要过」的那条路上。
-  create: (state) => buildFaceValue(state.doc, state.facet(faceSide), state.facet(faceBlocks)()),
+  create: (state) => {
+    const src = state.facet(faceSource)();
+    return buildFaceValue(state.doc, state.facet(faceSide), src.blocks, src.gaps);
+  },
   update(value, tr) {
     for (const e of tr.effects) {
       if (e.is(refreshDiff)) {
-        return buildFaceValue(tr.state.doc, tr.state.facet(faceSide), tr.state.facet(faceBlocks)());
+        const src = tr.state.facet(faceSource)();
+        return buildFaceValue(tr.state.doc, tr.state.facet(faceSide), src.blocks, src.gaps);
       }
     }
     // 键入期：装饰跟着改动走，不重算（与 `gutterDiffField` 同一纪律）。
@@ -358,7 +475,7 @@ const diffFaceField = StateField.define<FaceValue>({
 });
 
 /**
- * 一臂装饰：装在**某一栏**那颗 view 上，吃 `blocks()` 交出来的块，并且带着折叠的那一臂。
+ * 一臂装饰：装在**某一栏**那颗 view 上，吃 `source()` 交出来的块与对齐缝，并且带着折叠的那一臂。
  *
  * 用法（预审 R1）：两颗 view 各装一臂、各自 `side`，由 `surface.ts` 在挂旁路那一刻通过自己
  * 创建的 `Compartment` 装上/拆掉。本文件不建 view、不认识文档模型，也**不排任何定时器**
@@ -368,10 +485,10 @@ const diffFaceField = StateField.define<FaceValue>({
  * 于是它进得了右栏那颗既有的 view，而不必再 `appendConfig` 一颗新槽 —— 那颗槽就是 Task 5
  * 抓过的「上一臂还活着」那一场病的病根（见 `surface.ts` 的 `rightFaceSlot` 注）。
  */
-export function diffFace(side: DiffSide, blocks: () => DiffBlock[]): Extension {
+export function diffFace(side: DiffSide, source: () => DiffFaceSource): Extension {
   return [
     faceSide.of(side),
-    faceBlocks.of(blocks),
+    faceSource.of(source),
     diffFaceField,
     diffFoldField,
     // 记号槽在 DOM 里排在行号之后，靠样式段的 `order: -1` 挪到行号左侧（VS Code 的

@@ -10,7 +10,7 @@ import type { PreviewWidth } from "./ipc/api";
 import type { ThemeFamily } from "./theme/theme";
 import { tabs, panels, setIsWrap } from "./core/app-state";
 import { rethemeWidgets, wysiwygInstalled } from "./preview/livePreview";
-import { refreshDiffSurfaces } from "./diff/surface";
+import { refreshDiffSurfaces, remeasureDiffSurfaces } from "./diff/surface";
 
 /**
  * 主题翻了 ⇒ 让每一块装饰面重建（mermaid 的 `theme:` 只在渲染那一刻读一次）。
@@ -65,6 +65,9 @@ export function applyWrapToTabs(wrap: boolean): void {
 
 export function applyFontSize(px: number): void {
   document.documentElement.style.setProperty("--font-size", `${px}px`);
+  // 差异格的对齐缝按实测行高算（VS Code 的 alignment view zone 同口径）：字号一换行高就变，
+  // 占位块得重测，否则两栏的逐行对应会随字号一起漂。
+  remeasureDiffSurfaces();
 }
 
 /** B235：预览**正文内容区**的宽度档 → 具体 px 值。
@@ -118,6 +121,8 @@ export function applyFontFamily(family: string): void {
 export function applyEditorLineHeight(value: number): void {
   const v = Math.min(2.5, Math.max(1, Number(value) || 1.5));
   document.documentElement.style.setProperty("--editor-line-height", String(v));
+  // 行距直接决定行高：差异格的对齐缝必须跟着重测。
+  remeasureDiffSurfaces();
 }
 
 /**
@@ -136,6 +141,8 @@ export function applyCodeFontFamily(family: string): void {
   } else {
     root.setProperty("--font-code", f.includes(" ") ? `"${f}"` : f);
   }
+  // 等宽字体换了 ⇒ 行宽与折行点会变：差异格的对齐缝按实测行高算，得重测。
+  remeasureDiffSurfaces();
 }
 
 /**

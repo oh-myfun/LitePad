@@ -1170,3 +1170,118 @@ describe("B461 · B 档左栏继承只读锁（Task 6 Step 6）", () => {
     s.dispose();
   });
 });
+
+/** 让一帧落地（CM6 的 measure 与 surface 的派发都排在 rAF 上）。 */
+async function frames(n = 4): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  }
+}
+
+/**
+ * 在 jsdom 里铺一套确定的行盒（真机由 CM6 量；这里 `getBoundingClientRect` 恒 0）。
+ *
+ * `heights[line-1]` 是那一行的视觉高度（折行后的多行就写大一点）；`gapsAfter[n]` 是
+ * **已经补上的**对齐缝（1-based：第 n 行之后），下一行的 top 要把它算进去 —— 与真实 DOM 一致。
+ */
+function fakeLineBoxes(
+  view: EditorView,
+  heights: number[],
+  gapsAfter: Record<number, number> = {},
+): void {
+  const tops: number[] = [];
+  let top = 0;
+  for (let i = 0; i < heights.length; i++) {
+    tops[i] = top + (i > 0 ? (gapsAfter[i] ?? 0) : 0);
+    top = tops[i] + heights[i];
+  }
+  const total = top;
+  const doc = view.state.doc;
+  view.lineBlockAt = ((pos: number) => {
+    const n = doc.lineAt(pos).number;
+    const t = tops[n - 1] ?? 0;
+    const h = heights[n - 1] ?? 0;
+    return {
+      from: doc.line(n).from,
+      to: doc.line(n).to,
+      top: t,
+      bottom: t + h,
+      height: h,
+      length: 1,
+      type: 0,
+      widgets: [],
+      widget: null,
+      widgetLineBreaks: 0,
+    };
+  }) as EditorView["lineBlockAt"];
+  Object.defineProperty(view, "contentHeight", { configurable: true, get: () => total });
+}
+
+describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () => {
+  it("B462 · 折行打开后按实测行高补缝，关掉换行后重算回单行高", async () => {
+    const spy = vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(20);
+    try {
+      const { panel, s } = mountDiffPair("A\nB\nC", "A\nC");
+      const right = panel.view!.view;
+      const gapHeights = (): string[] =>
+        [...panel.bodyEl!.querySelectorAll<HTMLElement>(".diff-gap")].map((el) => el.style.height);
+
+      // 换行关着：一行 = 一个视觉行，删掉的那一行补 20px。
+      s.syncBlocks();
+      expect(gapHeights()).toEqual(["20px"]);
+
+      // 打开换行：左栏被删的那一行折成两个视觉行 ⇒ 缝必须按实测 40px 补。
+      s.setWrapEnabled(true);
+      fakeLineBoxes(s.left, [20, 40, 20]);
+      fakeLineBoxes(right, [20, 20]);
+      await frames();
+      expect(gapHeights(), "折行打开后缝高跟着实测行高走").toEqual(["40px"]);
+
+      // 关掉换行：重测回单行高，缝也跟着收回去。
+      s.setWrapEnabled(false);
+      await frames();
+      expect(gapHeights(), "折行关掉后必须重算，不许留着上一轮的 40px").toEqual(["20px"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("B462 · 回退按钮跟着对齐后的实测位置走（块与按钮同一条行轴）", async () => {
+    const spy = vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(20);
+    try {
+      const { panel, s } = mountDiffPair("A\nB\nC", "A\nC");
+      const right = panel.view!.view;
+      const center = panel.bodyEl!.querySelector<HTMLElement>(".diff-center")!;
+      center.getBoundingClientRect = () =>
+        ({ top: 0, bottom: 400, height: 400, left: 0, right: 35, width: 35 }) as DOMRect;
+
+      s.setWrapEnabled(true);
+      fakeLineBoxes(s.left, [20, 40, 20]);
+      // 右栏只有 A/C 两行；删除块的对齐缝 40px 落在第 1 行之后 ⇒ 第 2 行的实测 top 是 60。
+      fakeLineBoxes(right, [20, 20], { 1: 40 });
+      await frames();
+
+      const btn = panel.bodyEl!.querySelector<HTMLElement>(".diff-revert");
+      expect(btn, "删除块在右栏有落点行，按钮该建出来").toBeTruthy();
+      // 落点行 top=60、行高 20 ⇒ 中心 = documentTop + 70；按钮高 20 ⇒ top = 中心 - 10。
+      const expected = right.documentTop + 60 + 20 / 2 - 20 / 2;
+      expect(btn!.style.top, "按钮位置吃的是实测行轴，不是行号 × 默认行高").toBe(`${expected}px`);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("B462 · 同步滚动直接抄 scrollTop（对齐之后逐行对应，不再按比例缩放）", () => {
+    const { panel } = mountDiffPair("A\nB\nC", "A\nC");
+    const right = panel.view!.view;
+    const left = diffSurfaceOf(panel)!.left;
+    Object.defineProperty(right.scrollDOM, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(right.scrollDOM, "scrollHeight", { configurable: true, value: 300 });
+    Object.defineProperty(left.scrollDOM, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(left.scrollDOM, "scrollHeight", { configurable: true, value: 400 });
+    right.scrollDOM.scrollTop = 150;
+    right.scrollDOM.dispatchEvent(new Event("scroll"));
+    // 按比例映射会得到 150/200*300 = 225；逐行对应就是同一个 scrollTop。
+    expect(left.scrollDOM.scrollTop).toBe(150);
+  });
+});
