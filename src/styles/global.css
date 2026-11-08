@@ -232,10 +232,11 @@
   --seti-pink: #f55385;
   --seti-purple: #a074c4;
   --seti-default: #d4d7d6;
-  /* 滚动条：scrollbarSlider.*（2026 是一组带 alpha 的浅灰）。 */
-  --sb-thumb: #a8a9aa85;
-  --sb-thumb-hover: #a8a9aa90;
-  --sb-thumb-active: #a8a9aa9c;
+  /* 滚动条：scrollbarSlider.*（2026 是一组带 alpha 的浅灰）。
+     三档照 VS Code 默认值：静止 40% → 悬停 70% → 拖动实色，层次要一眼分得开。 */
+  --sb-thumb: #79797966;
+  --sb-thumb-hover: #797979b3;
+  --sb-thumb-active: #797979;
   /* 查找命中高亮（B380 按 VS Code 的语义收口；B425 在这一族动了三档）：
        --find-match        = editor.findMatchBackground（当前项）
        --find-match-other  = editor.findMatchHighlightBackground（其余命中）
@@ -676,9 +677,10 @@
   --seti-pink: #dd4b78;
   --seti-purple: #9068b0;
   --seti-default: #bfc2c1;
-  --sb-thumb: #646464c0;
-  --sb-thumb-hover: #646464d0;
-  --sb-thumb-active: #646464e0;
+  /* 同深色档：VS Code 浅色默认值（40% → 70% → 实色）。 */
+  --sb-thumb: #64646466;
+  --sb-thumb-hover: #646464b3;
+  --sb-thumb-active: #646464;
   /* B425：同深色档 —— 其余命中跨到橙（2026 原值 #0069cc1a 与自动高亮 #0069cc15 只差 Δ5.9，
      而当前项 #0069cc40 干脆与选区同色），当前项一圈该族 focusBorder，范围带取 2026-light.json。 */
   --find-match: #0069cc40;
@@ -1053,8 +1055,8 @@
    标准属性本来是给 Firefox 的，本软件只跑 Windows + WebView2（Chromium），
    留着没有收益。 */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   background: transparent;
 }
 ::-webkit-scrollbar-track {
@@ -1078,9 +1080,9 @@
 }
 ::-webkit-scrollbar-thumb {
   background: var(--sb-thumb);
-  border-radius: 6px;
-  /* 内缩 2px 形成悬浮观感；background-clip 保证边框不显示 thumb 颜色 */
-  border: 2px solid transparent;
+  border-radius: 4px;
+  /* 内缩 1px 形成悬浮观感；background-clip 保证边框不显示 thumb 颜色 */
+  border: 1px solid transparent;
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {

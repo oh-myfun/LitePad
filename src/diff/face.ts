@@ -35,7 +35,7 @@ import {
   GutterMarker,
   WidgetType,
 } from "@codemirror/view";
-import type { DiffBlock, DiffKind } from "./blocks";
+import { blockPairing, type DiffBlock, type DiffKind } from "./blocks";
 import { CODICONS } from "../shell/codicons";
 import type { DiffSide } from "./model";
 
@@ -79,11 +79,6 @@ function otherRange(b: DiffBlock, side: DiffSide): { start: number; end: number 
   return ownRange(b, side === "modified" ? "original" : "modified");
 }
 
-/** 段长：空段（start > end）记 0。 */
-function segLen({ start, end }: { start: number; end: number }): number {
-  return Math.max(end - start + 1, 0);
-}
-
 /**
  * 这一栏要涂底色的那些行（按行号升序）。
  *
@@ -111,10 +106,10 @@ export function sideLineMarks(blocks: DiffBlock[], side: DiffSide): SideMark[] {
  *     （分割线一拖就不是等宽），折出来的视觉行数可能不同 ⇒ 逐行比实测高度，矮的一侧补缝。
  *     上游的 `handleAlignmentsOutsideOfDiffs` 就是这件事，漏掉它，折行时两栏在未改动段
  *     就会整体错开。
- *   · **差异块**：两侧行数可能不等，整块比总高度；少出来的那些**行**落在配对窗口哪一头由
- *     `block.offset` 定（窗口之前有 `offset` 行没人配，之后有剩下的），但补出去的**高度**
- *     按对侧那几行的实测值取。首段缝不超过整块高差，剩下的归尾段 —— 这样块的**出口**
- *     一定对齐，而块内配对的那几行也尽量贴住自己的搭档。
+ *   · **差异块**：先按 `blockPairing` 拆成「窗口前多出来的行 → 配对的每一行 → 窗口后多出来的
+ *     行」三段依次铺（上游 `computeRangeAlignment` 的 inner line alignment）。配对的那几行
+ *     逐行比实测高度，折行不同就在矮的一侧补差；窗口外没有搭档的行整段补到对侧。于是块内
+ *     每一对都从同一个视觉 y 起步，块的**出口**也一定对齐 —— 不再只保证整块总高相等。
  *
  * 高度只从 `heightOf` 来（surface 交进来的实测口）：本文件不认识 view，也不自己量。
  */
@@ -131,31 +126,50 @@ export function gapZones(
     const other = otherRange(b, "original");
     alignUnchanged(out, po + 1, own.start - 1, pm + 1, other.start - 1, heightOf);
 
-    for (const side of ["original", "modified"] as const) {
-      const mine = ownRange(b, side);
-      const theirs = otherRange(b, side);
-      const ownLen = segLen(mine);
-      const otherLen = segLen(theirs);
-      if (ownLen >= otherLen) continue;
-      const delta =
-        rangeHeight(theirs, side === "original" ? "modified" : "original", heightOf) -
-        rangeHeight(mine, side, heightOf);
-      if (!(delta > 0)) continue;
-      // 配对窗口之前的行数（空段没有窗口：整段都在 `end = start - 1` 之后）。
-      const before = ownLen === 0 ? 0 : Math.min(Math.max(b.offset, 0), otherLen - ownLen);
-      const head =
-        before > 0
-          ? Math.min(
-              rangeHeight(
-                { start: theirs.start, end: theirs.start + before - 1 },
-                side === "original" ? "modified" : "original",
-                heightOf,
-              ),
-              delta,
-            )
-          : 0;
-      if (head > 0) pushGap(out[side], mine.start - 1, head);
-      if (delta - head > 0) pushGap(out[side], mine.end, delta - head);
+    const p = blockPairing(b);
+    // 窗口之前只有一侧有的行：整段补到对侧，落在窗口起点之前。
+    if (p.originalBefore > 0) {
+      pushGap(
+        out.modified,
+        p.modifiedStart - 1,
+        rangeHeight(
+          { start: p.originalStart - p.originalBefore, end: p.originalStart - 1 },
+          "original",
+          heightOf,
+        ),
+      );
+    } else if (p.modifiedBefore > 0) {
+      pushGap(
+        out.original,
+        p.originalStart - 1,
+        rangeHeight(
+          { start: p.modifiedStart - p.modifiedBefore, end: p.modifiedStart - 1 },
+          "modified",
+          heightOf,
+        ),
+      );
+    }
+    // 窗口内：每一对逐行比高（折行让同一对的两行视觉高度不等，就在矮的一侧补差）。
+    for (let k = 0; k < p.count; k++) {
+      const o = p.originalStart + k;
+      const m = p.modifiedStart + k;
+      const delta = heightOf("modified", m) - heightOf("original", o);
+      if (delta > 0) pushGap(out.original, o, delta);
+      else if (delta < 0) pushGap(out.modified, m, -delta);
+    }
+    // 窗口之后多出来的行：整段补到对侧，落在窗口末行之后。
+    if (p.originalAfter > 0) {
+      pushGap(
+        out.modified,
+        p.modifiedStart + p.count - 1,
+        rangeHeight({ start: p.originalStart + p.count, end: b.originalEnd }, "original", heightOf),
+      );
+    } else if (p.modifiedAfter > 0) {
+      pushGap(
+        out.original,
+        p.originalStart + p.count - 1,
+        rangeHeight({ start: p.modifiedStart + p.count, end: b.modifiedEnd }, "modified", heightOf),
+      );
     }
 
     po = Math.max(po, own.end);

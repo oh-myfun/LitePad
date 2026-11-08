@@ -163,6 +163,54 @@ describe("B461 · sideLineMarks / gapZones：一块在两栏各落在哪些行",
     expect(zones.original).toEqual([]);
     expect(zones.modified).toEqual([{ afterLine: 2, height: LINE_HEIGHT }]);
   });
+
+  it("B463 · 块内逐行配对：窗口外多出的行整段补到对侧，窗口内每一对各补自己的折行差", () => {
+    // 左 4 行（2..5）vs 右 2 行（2..3），offset 1 ⇒ 窗口 左3↔右2、左4↔右3；
+    // 左 2 与左 5 没人配。左 3 折成两个视觉行（40），窗口第一对就得补 20。
+    const b: DiffBlock = {
+      kind: "modify",
+      originalStart: 2,
+      originalEnd: 5,
+      modifiedStart: 2,
+      modifiedEnd: 3,
+      added: 0,
+      removed: 2,
+      offset: 1,
+    };
+    const heightOf = (side: DiffSide, line: number): number =>
+      side === "original" && line === 3 ? 2 * LINE_HEIGHT : LINE_HEIGHT;
+    const zones = gapZones([b], { original: 6, modified: 4 }, heightOf);
+    expect(zones.modified, "窗口前的左2、窗口内左3的折行、窗口后的左5 各一笔").toEqual([
+      { afterLine: 1, height: LINE_HEIGHT },
+      { afterLine: 2, height: LINE_HEIGHT },
+      { afterLine: 3, height: LINE_HEIGHT },
+    ]);
+    expect(zones.original, "多的一侧自己不补位").toEqual([]);
+  });
+
+  it("B463 · 右栏是长的一侧：窗口前后的多余行与折行差都补到左栏", () => {
+    // 左 2 行（2..3）vs 右 4 行（2..5），offset 1 ⇒ 窗口 左2↔右3、左3↔右4；
+    // 右 2 与右 5 没人配。右 4 折成两个视觉行 ⇒ 窗口第二对补到左栏。
+    const b: DiffBlock = {
+      kind: "modify",
+      originalStart: 2,
+      originalEnd: 3,
+      modifiedStart: 2,
+      modifiedEnd: 5,
+      added: 2,
+      removed: 0,
+      offset: 1,
+    };
+    const heightOf = (side: DiffSide, line: number): number =>
+      side === "modified" && line === 4 ? 2 * LINE_HEIGHT : LINE_HEIGHT;
+    const zones = gapZones([b], { original: 4, modified: 6 }, heightOf);
+    // 窗口第二对（右4 折成 40）与窗口后的右5 都落在「原稿第 3 行之后」⇒ 两笔合并。
+    expect(zones.original).toEqual([
+      { afterLine: 1, height: LINE_HEIGHT },
+      { afterLine: 3, height: 2 * LINE_HEIGHT },
+    ]);
+    expect(zones.modified).toEqual([]);
+  });
 });
 
 // --------------------------------------------------------------------------- #
@@ -927,8 +975,13 @@ describe("B462 · 记号槽与右缘概览条样式", () => {
     ).toContain("var(--diff-add)");
     const viewport = ruleBlock(css(), ".panel-host.is-diff .diff-viewport", undefined, true);
     expect(viewport).toContain("var(--sb-thumb)");
-    // 圆角不是 VS Code 抄来的（上游 `.diffViewport` 是直角）——本项目按滚动条滑块的 6px 口径。
-    expect(viewport, "与本项目滚动条滑块同口径的圆角").toContain("border-radius: 6px");
+    // 滑块叠在色带上（用户要求与 VS Code 不同）：左右内缩留出描边位，圆角跟滚动条滑块同口径。
+    expect(viewport, "与滚动条滑块同一档圆角").toContain("border-radius: 4px");
+    expect(viewport, "叠在色带上而不是贴边铺满").toContain("left: 3px");
+    expect(viewport, "有描边，不是纯填充").toContain("box-shadow");
+    expect(viewport, "描一圈前景色，才不会被读成一块色块").toContain(
+      "color-mix(in srgb, var(--fg) 50%, transparent)",
+    );
     expect(css(), "右栏原生纵向滚动条收成 0 宽，概览条就是那一根").toContain(
       ".panel-host.is-diff .panel-editor .cm-scroller::-webkit-scrollbar",
     );

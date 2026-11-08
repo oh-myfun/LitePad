@@ -347,18 +347,19 @@
   background: color-mix(in srgb, var(--diff-add) 45%, transparent);
 }
 
-/* 视口滑块 = 滚动条滑块（VS Code 的 `.diffViewport` 同样吃 `scrollbarSlider.*` 那三档）。
+/* 视口滑块 = 滚动条滑块，**叠在色带上**（用户明确要合并；VS Code 是独立滚动条 + 独立色带）。
    top / height 由 `surface.ts` 按 `ScrollbarState` 的像素公式写 inline（最小 20px）。
-   ⚠️ 几何照抄 VS Code，但**圆角抄不到**：上游 `.diffViewport` 没有任何 `border-radius`（纯直角）。
-   这里取 6px，与本项目滚动条滑块（`::-webkit-scrollbar-thumb`）同一口径 —— 用户要的是
-   「圆角矩形」，仓库里唯一的滑块圆角就是这一颗。 */
+   左右各内缩 3px、圆角跟滚动条滑块同口径，再描一圈前景色：色带底下是删除/新增色的色块，
+   滑块的填充色与色块同为半透明灰/彩色，不描边就会读成「一块稍厚的色块」而不是可拖的滑块。
+   描边取 `--fg` 的一半（而不是 `--bg`）：后者与色带底色太接近，暗色主题下等于没描。 */
 .panel-host.is-diff .diff-viewport {
   position: absolute;
-  left: 0;
-  right: 0;
+  left: 3px;
+  right: 3px;
   z-index: 1;
-  border-radius: 6px;
+  border-radius: 4px;
   background: var(--sb-thumb);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 50%, transparent);
 }
 
 .panel-host.is-diff .diff-viewport:hover {

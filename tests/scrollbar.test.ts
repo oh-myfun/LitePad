@@ -20,6 +20,7 @@ describe("滚动条：全应用统一且随深浅色联动", () => {
     ] as const) {
       expect(block, `${name}主题必须定义 --sb-thumb`).toContain("--sb-thumb:");
       expect(block, `${name}主题必须定义 --sb-thumb-hover`).toContain("--sb-thumb-hover:");
+      expect(block, `${name}主题必须定义 --sb-thumb-active`).toContain("--sb-thumb-active:");
       expect(block, `${name}主题应声明 color-scheme（原生控件跟随主题）`).toContain(
         "color-scheme:",
       );
@@ -38,12 +39,16 @@ describe("滚动条：全应用统一且随深浅色联动", () => {
     const bar = ruleBlock(g, "::-webkit-scrollbar");
     expect(bar, "应有 ::-webkit-scrollbar 规则").toBeTruthy();
     expect(bar, "滚动条宽度必须显式声明（伪元素路径唯一的证据）").toMatch(/width:\s*\d+px/);
+    // B463 · 按 VS Code 观感收窄：比原先的 10px 更窄，圆角也一并收紧（原先 6px）。
+    expect(bar, "宽度收到 8px").toMatch(/width:\s*8px/);
+    expect(bar, "高度与宽度同口径").toMatch(/height:\s*8px/);
     expect(g, "不得双写标准属性 scrollbar-width（会抢渲染路径）").not.toMatch(/scrollbar-width:/);
     expect(g, "不得双写标准属性 scrollbar-color（会抢渲染路径）").not.toMatch(/scrollbar-color:/);
     const thumb = ruleBlock(g, "::-webkit-scrollbar-thumb");
     expect(thumb, "应有 ::-webkit-scrollbar-thumb 规则").toBeTruthy();
     expect(thumb, "滑块颜色必须引用 --sb-thumb 变量").toContain("var(--sb-thumb");
     expect(thumb, "滑块不得写死十六进制颜色").not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    expect(thumb, "圆角跟着收小（原先 6px）").toContain("border-radius: 4px");
     // 箭头：裸的那一条 + 按方向细分的 increment / decrement，三条都得 hide
     for (const [name, sel] of [
       ["裸 button", "::-webkit-scrollbar-button\\s*\\{"],

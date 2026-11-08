@@ -366,9 +366,9 @@ export function createDiffSurface(
    * 就这样漏进标签快照；下一次 attach 若从 state 读「他原来开着吗」，读到的是 `[]` —— 用户的
    * 自动换行设置在这个标签上就再也回不来了。设置的权威只有 `isWrap` 那一颗。
    *
-   * 已知限制（打开折行之后才成立）：`face.ts` 的占位块高度按「整数行 × 默认行高」估，折行让
-   * 一个文档行变成多个视觉行 ⇒ 缺口处两栏的视觉行不再严格对齐，同步滚动只能按滚动比例映射。
-   * 这是 VS Code 用实测行高的 alignment view zone 解决的那件事，本项目按 B398 的裁决不做。
+   * 已知限制：折行开着时左右两栏按**实测行高**逐行补缝（`face.ts` 的 `gapZones`），差异块内
+   * 按 `blockPairing` 的配对窗口逐行对齐，窗口外多出来的行整段补到对侧（B463）。同步滚动因此
+   * 是真正的逐行对应，不再按滚动比例映射。
    */
   let wrapOn = false;
   let wrapComp: Compartment | null = null;

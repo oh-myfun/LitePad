@@ -15,7 +15,8 @@ export type DiffKind = "insert" | "delete" | "modify";
 
 /**
  * 一次连续改动 = 一块。计数不另存：`added` / `removed` 由两段长度差推导（照 VS Code）。
- * `offset` 是少的一侧贴到多的一侧的错位（视图据此放占位块），来自对齐器就地算好的那颗。
+ * `offset` 是少的一侧贴到多的一侧的错位（`blockPairing` 据此交出块内配对窗口，
+ * 视图按窗口逐行补对齐缝），来自对齐器就地算好的那颗。
  */
 export interface DiffBlock {
   kind: DiffKind;
@@ -69,6 +70,60 @@ function spanOf(b: DiffBlock, side: DiffSide): { start: number; end: number } {
   return side === "modified"
     ? { start: b.modifiedStart, end: b.modifiedEnd }
     : { start: b.originalStart, end: b.originalEnd };
+}
+
+/**
+ * 块内的**逐行配对**（B463，照 VS Code 的 inner line alignment）。
+ *
+ * 对齐器只在替换区**外面**用 LCS 找锚点，区内的行谁也不等于谁；但区内仍有一个「谁最像谁」的
+ * 错位（`offset`，由 `alignOffset` 算好）。窗口就是把少的一侧整段贴到多的一侧的那一段：
+ * 长侧的第 `offset` 行 ↔ 短侧第 1 行，往后一一对应。窗口之外（前 `offset` 行、后 `长-短-offset`
+ * 行）没有搭档，只能整段补到对侧。
+ *
+ * 为什么给描述而不是行对数组：退化路径（LCS 预算外）一整段可以十万行，逐行对象在每次重算
+ * 时都要重新分配一遍；窗口是连续的，O(1) 就够下游铺缝。`start + k` ↔ `start + k` 即第 k 对。
+ */
+export interface BlockPairing {
+  /** 窗口在两侧的起点（绝对行号，1-based；`count = 0` 时无意义） */
+  originalStart: number;
+  modifiedStart: number;
+  /** 窗口里配成对的行数（= 两侧行数的较小者） */
+  count: number;
+  /** 窗口之前只有一侧有的行数 */
+  originalBefore: number;
+  modifiedBefore: number;
+  /** 窗口之后只有一侧有的行数 */
+  originalAfter: number;
+  modifiedAfter: number;
+}
+
+/** 这一块的配对窗口。空段（一侧 0 行）⇒ `count = 0`，整段都算窗口之后。 */
+export function blockPairing(b: DiffBlock): BlockPairing {
+  const aLen = Math.max(b.originalEnd - b.originalStart + 1, 0);
+  const bLen = Math.max(b.modifiedEnd - b.modifiedStart + 1, 0);
+  const count = Math.min(aLen, bLen);
+  // `offset` 只对长侧有意义；夹一下，免得块表与正文错位时把窗口推出去。
+  const offset = Math.min(Math.max(b.offset, 0), Math.abs(aLen - bLen));
+  if (aLen >= bLen) {
+    return {
+      originalStart: b.originalStart + offset,
+      modifiedStart: b.modifiedStart,
+      count,
+      originalBefore: offset,
+      modifiedBefore: 0,
+      originalAfter: aLen - offset - count,
+      modifiedAfter: 0,
+    };
+  }
+  return {
+    originalStart: b.originalStart,
+    modifiedStart: b.modifiedStart + offset,
+    count,
+    originalBefore: 0,
+    modifiedBefore: offset,
+    originalAfter: 0,
+    modifiedAfter: bLen - offset - count,
+  };
 }
 
 /** 这一侧是不是空段（这一侧根本没有真行）。 */
