@@ -1056,7 +1056,7 @@ describe("B461 · 基线实时与判据接全（Task 5 R13/R14 + R20）", () => 
     syncDiffSurface(panel); // 与 `applyPanelMode` 末尾同形：一致分支现在得把漂移补上
 
     expect(panel.view!.view.state.facet(EditorView.darkTheme), "前置：右栏真翻了暗色").toBeTruthy();
-    // 判据是**两栏同一颗**：18% 的改动色是透明的，叠在不同基色上就不是同一个颜色（R22）。
+    // 判据是**两栏同一颗**：20% 的改动色是透明的，叠在不同基色上就不是同一个颜色（R22）。
     expect(
       s.left.state.facet(EditorView.darkTheme),
       "右栏翻了暗色而左栏还停在亮色 ⇒ 半深半浅的一张脸",

@@ -9,8 +9,9 @@
 //      要在第几行之后补几行空位。它们只遍历 `blocks.ts` 交出来的块 ⇒ 与 4px 标注同源，
 //      这一层不看 DOM、不看 view，向量直接钉死。
 //   2) 装到 view 上的那一臂（`diffFace`）：行装饰 + 块 widget + 记号（行号槽不上色）。
-//   3) 样式段（`src/diff/diff.css`）：差异色只吃 `--diff-add` / `--diff-del`
-//      （VS Code 的分侧语义没有「修改行」），这一段里一个裸十六进制都不许出现。
+//   3) 样式段（`src/diff/diff.css`）：行底色 / 字符底色取上游 `editorColors.ts` 的默认值
+//      （分侧语义没有「修改行」），概览色带另吃 `--diff-add` / `--diff-del`；
+//      这一段里一个裸十六进制都不许出现。
 //
 // ⚠️ **像素**类判据（同一行在两栏的视觉 y 是否真的一致）不在这里：jsdom 没有布局引擎，
 // `view.defaultLineHeight`（CM6 的真取值口，`node_modules/@codemirror/view/dist/index.d.ts:1072`）
@@ -907,13 +908,30 @@ describe("B463 · 概览滑块 = 右栏滚动条（ScrollbarState.isNeeded 语�
     expect(viewport.style.height, "floor(100² / 800) = 12 ⇒ 抬到下限 20").toBe("20px");
   });
 
-  it("样式：隐藏态照上游 `.invisible`；概览条光标不靠继承", () => {
+  it("样式：隐藏态照上游 `.invisible`；概览条光标不靠继承；同类状态只留一条规则", () => {
     const css = stripCssComments(srcOf("src/diff/diff.css"));
     const hidden = ruleBlock(css, ".panel-host.is-diff .diff-viewport.is-hidden", undefined, true);
     expect(hidden).toContain("opacity: 0");
     expect(hidden).toContain("pointer-events: none");
     const overview = ruleBlock(css, ".panel-host.is-diff .diff-overview", undefined, true);
     expect(overview).toContain("cursor: default");
+    // 收敛：两栏滚动条原先各一条、滑块按下与拖动原先各一条 —— 同一份契约不许写成两处
+    // 「后写的覆盖前写的」。
+    const scroll = ruleBlock(
+      css,
+      ".panel-host.is-diff .diff-original .cm-scroller::-webkit-scrollbar:vertical, .panel-host.is-diff .panel-editor .cm-scroller::-webkit-scrollbar",
+    );
+    expect(scroll, "两栏纵向滚动条合成一条").toContain("width: 0");
+    // 右栏若被重新单写一条，`width: 0` 的滚动条规则会变成两条 —— 这里点数兜住。
+    const widthZeros = [...css.matchAll(/::-webkit-scrollbar[^{]*\{([^}]*)\}/g)].filter((m) =>
+      /width:\s*0/.test(m[1]),
+    );
+    expect(widthZeros.length, "两栏滚动条只保留一条 width: 0 的规则").toBe(1);
+    const active = ruleBlock(
+      css,
+      ".panel-host.is-diff .diff-viewport:active, .panel-host.is-diff .diff-viewport.is-dragging",
+    );
+    expect(active, "按下与拖动共一态").toContain("var(--sb-thumb-active)");
   });
 });
 
@@ -933,32 +951,56 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
     return end < 0 ? code.slice(at) : code.slice(at, end);
   };
 
-  it("B462 · 这一段一个裸十六进制都不许有，差异色只走 add / del 两颗 token", () => {
+  it("B462 · 这一段不许有裸十六进制、也不许借 --warn / --danger；着色只走两套 diff 底色与外壳灰", () => {
     const s = section();
     expect(s, "锚点选择器得真在文件里（截空了后面的判据全是假绿）").not.toBe("");
     expect(s).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
     const tokens = new Set([...s.matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1]));
-    // 分侧语义没有「修改行」⇒ 不该再有 `--diff-mod`；占位块的斜纹是外壳灰，走 `--fg-muted`。
-    // 斜纹只吃正文宽（照上游 alignment view zone），不再需要「铺过行号槽」的实测槽宽变量。
-    expect([...tokens].sort()).toEqual(["--diff-add", "--diff-del", "--fg-muted"]);
+    // 行底色与字符底色是上游四个不同的 key（`editorColors.ts`）⇒ 各吃各的 token；
+    // 占位块的斜纹是外壳灰，走 `--fg-muted`。
+    expect([...tokens].sort()).toEqual([
+      "--diff-char-add",
+      "--diff-char-del",
+      "--diff-line-add",
+      "--diff-line-del",
+      "--fg-muted",
+    ]);
     expect(s, "不许再借 --warn / --danger（B458 续轮定死这两颗与明暗档无关）").not.toMatch(
       /--(warn|danger)\b/,
     );
   });
 
-  it("B462 · 底色与行号槽 = add / del 的 18% color-mix（改块两侧各按自己那一侧上色）", () => {
+  it("B462 · 两套底色取上游默认值：行 20% + 字符 20%，两层叠加而不是字符色替换行底色", () => {
+    const all = css();
+    // 上游 `defaultInsertColor` / `defaultRemoveColor` = rgba(155,185,85,.2) / rgba(255,0,0,.2)。
+    expect(all).toContain("--diff-line-add: #9bb95533");
+    expect(all).toContain("--diff-line-del: #ff000033");
+    // 上游 `insertedTextBackground` 暗 #9ccc2c33 / 亮 #9ccc2c40，`removedTextBackground` #ff000033。
+    expect(all).toContain("--diff-char-add: #9ccc2c33");
+    expect(all).toContain("--diff-char-del: #ff000033");
+    expect(all, "亮色档字符底色照上游高一档").toContain("--diff-char-add: #9ccc2c40");
     const s = section();
-    for (const token of ["--diff-add", "--diff-del"]) {
-      expect(s).toContain(`color-mix(in srgb, var(${token}) 18%, transparent)`);
+    for (const token of [
+      "--diff-line-add",
+      "--diff-line-del",
+      "--diff-char-add",
+      "--diff-char-del",
+    ]) {
+      expect(s, "四条规则都得吃上面那颗 token（不许各自再调一遍百分比）").toContain(
+        `var(${token})`,
+      );
     }
+    expect(s, "上游默认深/浅主题没有描边（只有 HC 才给虚线框）").not.toMatch(
+      /(^|[\s;{])(border|outline)\s*:/,
+    );
     expect(s, "没有第三种「修改行」配色").not.toMatch(/--diff-mod|diff-line-modify/);
   });
 
   it("B461 · 底色不打特异度战：走 background-image 叠层，与当前行底色共存（R21）", () => {
     const code = css();
     const kindToToken: Record<string, string> = {
-      insert: "--diff-add",
-      delete: "--diff-del",
+      insert: "--diff-line-add",
+      delete: "--diff-line-del",
     };
     for (const [kind, token] of Object.entries(kindToToken)) {
       // 选择器 = `.panel-host.is-diff .cm-line.diff-line-X`（0-4-0，与 global.css 里 B425 那颗
@@ -966,7 +1008,7 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
       const block = ruleBlock(code, `.panel-host.is-diff .cm-line.diff-line-${kind}`);
       expect(block, `底色规则得真在（判不到东西的 not.toMatch 是假绿）`).not.toBe("");
       expect(block).toMatch(/background-image:\s*linear-gradient\(/);
-      expect(block).toContain(`color-mix(in srgb, var(${token}) 18%, transparent)`);
+      expect(block).toContain(`var(${token})`);
       // 关键的一条：这一族**不碰** `background` / `background-color`。那两个属性是
       // `.cm-activeLine` 的（0-3-0，global.css:4521）—— 同一条声明里抢同一个属性，就只能靠
       // 加码特异度压它，压赢的代价是光标停在哪一行、那一行的当前行高亮整个消失（2026 两档
@@ -995,7 +1037,7 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
 
   it("B461 · 左栏那半的底色归主题：CSS 里不硬写第二处真相（R22）", () => {
     const code = css();
-    // 原先左栏什么都没有 ⇒ 那一半画在页面底色上，18% 的改动色两栏叠的根本不是同一颗基色。
+    // 原先左栏什么都没有 ⇒ 那一半画在页面底色上，20% 的改动色两栏叠的根本不是同一颗基色。
     // 修法是把主题扩展装进左栏那颗 state（surface.ts），**不是**在这里补 `background` —— 硬写
     // 一份就等于埋下第二处「当前主题是什么」的真相，dark/HC 族必然跟着错。
     for (const sel of [".diff-original", ".diff-original .cm-editor"]) {
@@ -1131,9 +1173,11 @@ describe("B462 · 记号槽与右缘概览条样式", () => {
     // 行号槽不承载差异底色（产品口径；上游 `marginClassName` 会给，见 `diff.css` 那段注释）：
     // 样式段里不许再有 `.diff-gutter-*` 这类给槽上色的规则 —— 有就说明那条口径被悄悄改回去了。
     expect(css(), "行号槽不上色：不许有 .diff-gutter-* 规则").not.toContain(".diff-gutter-");
-    expect(css(), "行背景与主体色带必须是同一颗 token、同一档 18%（同一颜色来源）").toContain(
-      "var(--diff-add) 18%",
-    );
+    expect(
+      css(),
+      "行背景取上游 insertedLineBackground 的默认值（不是概览色带那颗 token）",
+    ).toContain("var(--diff-line-add)");
+    expect(css(), "不许再留 18% 的手调色").not.toContain("--diff-add) 18%");
   });
 
   it("B462 · 概览条 30px、两列各 15px；色块左删右增，视口滑块吃滚动条三档", () => {
@@ -1169,10 +1213,11 @@ describe("B462 · 记号槽与右缘概览条样式", () => {
     expect(viewport, "铺满色带宽度，不内缩").toContain("left: 0");
     expect(viewport, "铺满色带宽度，不内缩").toContain("right: 0");
     expect(viewport, "VS Code 的滑块没有描边/阴影").not.toContain("box-shadow");
-    // 拖动期间窗口级监听，`:active` 会随指针离开滑块失效 ⇒ 另钉一态，取 active 那颗 token。
+    // 拖动期间窗口级监听，`:active` 会随指针离开滑块失效 ⇒ 另钉一态；按下与拖动共一条
+    // 规则（同一个取值原先写了两遍）。
     const dragging = ruleBlock(
       css(),
-      ".panel-host.is-diff .diff-viewport.is-dragging",
+      ".panel-host.is-diff .diff-viewport:active, .panel-host.is-diff .diff-viewport.is-dragging",
       undefined,
       true,
     );
@@ -1624,11 +1669,14 @@ describe("B461 · 行内字符级差异的装饰与样式", () => {
     );
   });
 
-  it("行内底色比整行更深：35% 叠在 18% 之上，且不引入第三颗色", () => {
+  it("行内底色比整行更深：字符层叠在行底色之上，两层各吃上游对应的那一颗 key", () => {
     const insert = ruleBlock(css(), ".panel-host.is-diff .diff-char-insert", undefined, true);
-    expect(insert, "规则得真在").toContain("var(--diff-add) 35%");
+    expect(insert, "规则得真在").toContain("var(--diff-char-add)");
     const del = ruleBlock(css(), ".panel-host.is-diff .diff-char-delete", undefined, true);
-    expect(del).toContain("var(--diff-del) 35%");
+    expect(del).toContain("var(--diff-char-del)");
+    // 行底色与字符底色是上游四个不同的 key（`editorColors.ts`），不是把行色再调深一档；
+    // 两层都是带 alpha 的 background，叠出来的更深一档由 alpha 合成给出。
+    expect(insert + del).not.toContain("--diff-line-");
     expect(insert + del).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
   });
 });

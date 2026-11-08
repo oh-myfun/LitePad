@@ -4,9 +4,11 @@
  * Task 1 那一格是**两栏并排的骨架 + 一根只管这一栏之内的分割线**；Task 3 追加
  * 两侧改动行底色 / 行号槽记号 / 对侧占位块；Task 7 追加折叠未改动区的占位条与被折起来的行；
  * 右缘差异概览追加在最后（三段各按各的 token 清单判，见 `tests/diff-face.test.ts` 那几条 census）。
- * 侧栏条目行归 Task 9 —— 都往这个文件里加，不再另开一份（差异色一律吃 `global.css` 那两颗主题无关的
- * `--diff-add` / `--diff-del`：VS Code 的分侧语义里没有「修改行」这一档，也不许新增第三颗；
- * 折不折是**外壳**态，走 `--bg-hover` / `--border` / `--fg` / `--fg-muted` 那几颗既有的）。
+ * 侧栏条目行归 Task 9 —— 都往这个文件里加，不再另开一份。代码区的两套底色**照上游
+ * `editorColors.ts` 的默认值**取（行底色与字符底色是四个不同的 key，见 Task 3 那一段）；
+ * 概览色带仍吃 `global.css` 那两颗 `--diff-add` / `--diff-del`（分侧语义里没有「修改行」这一档，
+ * 也不许新增第三颗）。折不折是**外壳**态，走 `--bg-hover` / `--border` / `--fg` / `--fg-muted`
+ * 那几颗既有的。
  *
  * ⚠️ `.panel-host` 的基础规则（`global.css` 的 `.panel-host`）是**竖排** flex（编辑器在上、占位行在下），
  * 这里按 `.is-diff` 翻成横排；特异度 0-2-0 压得过基规则的 0-1-0，与 import 先后无关。
@@ -96,12 +98,15 @@
   overflow: auto;
 }
 
-/* 左栏不露自己的纵向滚动条（产品口径）：两栏恒同步（`surface.ts` 的 `mirrorScroll`），
-   右缘 `.diff-overview` 的视口滑块就是这一格唯一的纵向滚动条；左栏再挂一根会与它重复
+/* 两栏都不露自己的纵向滚动条（产品口径）：两栏恒同步（`surface.ts` 的 `mirrorScroll`），
+   右缘 `.diff-overview` 的视口滑块就是唯一那根纵向滚动条；栏内再挂一根会与它重复
    （同一段内容同一时刻两条滑块，拖动却只有一条真在改）。
-   只藏**纵向**：`::-webkit-scrollbar:vertical` 的 `width: 0` 不影响滚轮、键盘与程序化滚动，
-   长行仍可横向滚动；把整条 `::-webkit-scrollbar` 收掉会连横向一起抹掉。 */
-.panel-host.is-diff .diff-original .cm-scroller::-webkit-scrollbar:vertical {
+   只藏**纵向**：`width: 0` 不影响滚轮、键盘与程序化滚动，长行仍可横向滚动；把整条
+   `::-webkit-scrollbar` 收掉会连横向一起抹掉。
+   ⚠️ 左右两栏原先各写一条（左栏补丁 + 右栏补丁，同一个契约写了两遍），这里合成一条：
+   左右两栏都收纵向滚动条，没有「后写的覆盖前写的」那一层。 */
+.panel-host.is-diff .diff-original .cm-scroller::-webkit-scrollbar:vertical,
+.panel-host.is-diff .panel-editor .cm-scroller::-webkit-scrollbar {
   width: 0;
 }
 
@@ -213,7 +218,31 @@
 
 /* ---------- Task 3 · 两侧行底色 / 行号槽记号 / 对侧占位块 ---------- */
 
-/* 底色：两颗主题无关 token 的 18% 低透明度版（明暗同一套色 ⇒ HC 档靠既有 token 自己跟上）。
+/* 两套底色的**唯一取值点**，照上游默认主题（`editorColors.ts` 267-312 行）：
+   · 行底色 = `diffEditor.insertedLineBackground` / `removedLineBackground`
+     = `defaultInsertColor` / `defaultRemoveColor` = rgba(155,185,85,.2) / rgba(255,0,0,.2)
+     = `#9bb95533` / `#ff000033`（明暗同一套值）；
+   · 字符底色 = `diffEditor.insertedTextBackground` / `removedTextBackground`
+     = 暗 `#9ccc2c33` / `#ff000033`，亮 `#9ccc2c40` / `#ff000033`。
+   上游是**两层叠着画**的（整行一层 + 字符段一层，两层都是带 alpha 的 background），
+   不是拿字符色替换行底色 —— 这里同样两层同时存在，合成结果交给浏览器按 alpha 叠加。
+   ⚠️ 不再用 `--diff-add` / `--diff-del` 自己调百分比：那两颗是概览色带的 token，与上游这四个
+   key 不是一回事；继续在 18% / 35% 上微调只会离上游越来越远。
+   ⚠️ 默认深色/浅色**没有描边**：`insertedTextBorder` / `removedTextBorder` 在 dark/light 下是
+   null，只有 HC 主题才给虚线框（同文件 306-312 行）⇒ 代码区不画框、不加 outline。 */
+:root {
+  --diff-line-add: #9bb95533;
+  --diff-line-del: #ff000033;
+  --diff-char-add: #9ccc2c33;
+  --diff-char-del: #ff000033;
+}
+
+/* 亮色档的字符底色比暗色高一档（上游 light = #9ccc2c40）；行底色明暗相同，不另开。 */
+:root[data-theme="light"] {
+  --diff-char-add: #9ccc2c40;
+}
+
+/* 底色：上游那两个 20% alpha 的值（明暗同一套 ⇒ HC 档也靠同一颗 token 自己跟上）。
    分侧语义照 VS Code：**没有「修改行」这一档** —— 原稿侧涂 del、新稿侧涂 add，改块在两边
    各按自己那一侧上色。
    ⚠️ 底色走 `background-image`（`linear-gradient(c, c)` 是一颗纯色层），**不碰** `background`
@@ -228,38 +257,25 @@
    ⇒ 这一族的赢面靠 `diff.css` 排在 `global.css` **之后**（`src/main.ts` 的 import 顺序），
    那是 load-bearing 的先后，判据钉在 `tests/diff-face.test.ts` 里，不只写在这里。 */
 .panel-host.is-diff .cm-line.diff-line-insert {
-  background-image: linear-gradient(
-    color-mix(in srgb, var(--diff-add) 18%, transparent),
-    color-mix(in srgb, var(--diff-add) 18%, transparent)
-  );
+  background-image: linear-gradient(var(--diff-line-add), var(--diff-line-add));
 }
 
 .panel-host.is-diff .cm-line.diff-line-delete {
-  background-image: linear-gradient(
-    color-mix(in srgb, var(--diff-del) 18%, transparent),
-    color-mix(in srgb, var(--diff-del) 18%, transparent)
-  );
+  background-image: linear-gradient(var(--diff-line-del), var(--diff-line-del));
 }
 
 /* 行内字符级差异：只盖**真正变了**的那几个字符（`char-insert` / `char-delete`）。
    上游是两层叠着画的：整行 `line-insert` 的 `#9bb95533` 之上再叠字符段的
    `insertedTextBackground: #9ccc2c33` / `removedTextBackground: #ff000033`
-   （`editorColors.ts` 的默认值），所以字符段一定比整行更深。
-   这里同一口径：整行已经铺了 18% 的底，字符段再取 35%，叠出来的等效不透明度约 47%
-   —— 仍是 add / del 这两颗 token，不引入第三种颜色。
+   （`editorColors.ts` 的默认值），所以字符段一定比整行更深（合成约 36% 的等效不透明度）。
+   这里同一口径：行底色与字符底色各走各的 token，两层同时存在、由 alpha 叠加。
    装饰由 `face.ts` 发 `Decoration.mark`，落成行内 span ⇒ 底色只覆盖字符本身。 */
 .panel-host.is-diff .diff-char-insert {
-  background-image: linear-gradient(
-    color-mix(in srgb, var(--diff-add) 35%, transparent),
-    color-mix(in srgb, var(--diff-add) 35%, transparent)
-  );
+  background-image: linear-gradient(var(--diff-char-add), var(--diff-char-add));
 }
 
 .panel-host.is-diff .diff-char-delete {
-  background-image: linear-gradient(
-    color-mix(in srgb, var(--diff-del) 35%, transparent),
-    color-mix(in srgb, var(--diff-del) 35%, transparent)
-  );
+  background-image: linear-gradient(var(--diff-char-del), var(--diff-char-del));
 }
 
 /* 行号槽**不承载差异底色**：色带只留在代码区，行号文字与 `+` / `−` 记号照旧。
@@ -380,10 +396,7 @@
 
 /* VS Code 把整个差异编辑器的右缘留给 30px 的概览条：左列映射原稿（删除色），右列映射新稿
    （新增色）。新稿那颗原生纵向滚动条在差异格里是透明的（`.modified-in-monaco-diff-editor`），
-   滚动由概览条的视口滑块承担 —— 这里同样把右栏的纵向滚动条收掉，概览条就是那一根。 */
-.panel-host.is-diff .panel-editor .cm-scroller::-webkit-scrollbar {
-  width: 0;
-}
+   滚动由概览条的视口滑块承担 —— 两栏滚动条已在上面「两栏都不露纵向滚动条」那一条统一收掉。 */
 
 .panel-host.is-diff .diff-overview {
   position: relative;
@@ -463,13 +476,11 @@
   background: var(--sb-thumb-hover);
 }
 
-.panel-host.is-diff .diff-viewport:active {
-  background: var(--sb-thumb-active);
-}
-
-/* 拖动期间另钉一态：拖动走窗口级监听，指针一离开滑块 `:active` 就掉了，而拖动还在继续
-   —— 只剩静止态的 0.22 透明度，看起来像「按下就消失了」。
-   取值照上游 `scrollbarSlider.activeBackground`（即 `--sb-thumb-active`），与静止态明显拉开。 */
+/* 按下与拖动**共一态**，照上游 `scrollbarSlider.activeBackground`（即 `--sb-thumb-active`）。
+   拖动走窗口级监听，指针一离开滑块 `:active` 就掉了而拖动还在继续 —— 只剩静止态的 0.22
+   透明度，看起来像「按下就消失了」；`is-dragging` 就是在 `:active` 掉之后把状态续上。
+   两处原先各写一遍同一个取值，合成一条（同一份契约只留一处）。 */
+.panel-host.is-diff .diff-viewport:active,
 .panel-host.is-diff .diff-viewport.is-dragging {
   background: var(--sb-thumb-active);
 }
