@@ -2,7 +2,8 @@
  * B461 · 差异面样式。
  *
  * Task 1 那一格是**两栏并排的骨架 + 一根只管这一栏之内的分割线**；Task 3 追加
- * 两侧改动行底色 / 行号槽记号 / 对侧占位块；Task 7 追加折叠未改动区的占位条与被折起来的行；
+ * 两侧改动行底色 / 行号槽记号 / 对侧占位块；Task 7 追加折叠未改动区的折条（一条替换装饰
+ * 直接替掉被折起来的那几行）；
  * 右缘差异概览追加在最后（三段各按各的 token 清单判，见 `tests/diff-face.test.ts` 那几条 census）。
  * 侧栏条目行归 Task 9 —— 都往这个文件里加，不再另开一份。代码区的两套底色**照上游
  * `editorColors.ts` 的默认值**取（行底色与字符底色是四个不同的 key，见 Task 3 那一段）；
@@ -288,8 +289,7 @@
    `diffEditor.inserted/removedLineBackground`（缺口行的 `marginDomNode: gutter-delete /
    gutter-insert` 同理，见 `diffEditorViewZones.ts`）。即上游的行号槽与正文是同一条差异色。
    本项目按产品口径改成「色带只留在代码区」：`.diff-line-*` 的底色不越界进行号 / 记号槽，
-   这里也就没有任何 `.diff-gutter-*` 规则 —— `face.ts` 那一臂连类名都不再发（`gutterLineClass`
-   只剩折叠槽在用）。 */
+   这里也就没有任何 `.diff-gutter-*` 规则 —— `face.ts` 那一臂连类名都不再发。 */
 
 /* `+` / `−` 记号槽：VS Code 的 `linesDecorationsClassName` 落在**行号右侧**的 line decorations
    栏（`EditorLayoutInfo` 的层次：glyphMarginLeft → lineNumbersLeft → decorationsLeft → contentLeft）。
@@ -351,13 +351,16 @@
   transform: translateY(-50%);
 }
 
-/* ---------- Task 7 · 折叠未改动区：折条 + 被折起来的行 ---------- */
+/* ---------- Task 7 · 折叠未改动区：折条替掉被折起来的那几行 ---------- */
 
-/* 折条（占位条）：一行高的**外壳**条，点它 = 就地展开那一段。
+/* 折条：一行高的**外壳**条，点它 = 就地展开那一段。它由一条 `Decoration.replace({block:true})`
+   直接**替掉**被折掉的整段行（`face.ts` 的 `buildFoldFace`），行与行号槽由 CM6 从块几何里
+   一并收起 —— 这里不再需要 `display: none` 之类的补丁，也不再有「行被抹掉了、行号槽却还按
+   原行高记账」的错位。
    ⚠️ 三条纪律与上面那一族同规矩（R15/R18）：高度一律由 widget 按 `view.defaultLineHeight` 写
    inline，这一段里不许出现 `height` / `em` / 竖向 margin/padding —— 两栏各折**同样多**的行、
    各占一条折条，行盒才不分家（未改动区在两栏的行数天然相等：两块之间那些行是配对了的相同行）。
-   ⚠️ 色只吃外壳那四颗 token（底 `--bg-hover` + 描边 `--border` + 字色 `--fg` / `--fg-muted`，
+   ⚠️ 色只吃外壳那几颗 token（底 `--bg-hover` + 描边 `--border` + 字色 `--fg` / `--fg-muted`，
    五族各有各的取值 ⇒ 明暗与 HC 档自己就跟上了），**不吃 `--diff-*`**：折不折是界面态，
    不是「这一行是增 / 改 / 删」那三件事之一，而第四颗差异色是禁项。
    描边走 `outline` 不走 `border`：后者要从 widget 写下的那一格里再抠出线宽，两栏的折条就会
@@ -366,6 +369,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 5px;
   overflow: hidden;
   white-space: nowrap;
   cursor: pointer;
@@ -374,22 +378,14 @@
   outline: 1px solid var(--border);
 }
 
+/* 块头那颗 `unfold`（上游 `renderLabelWithIcons('$(unfold)')`）：跟着正文行高走，
+   16px 的默认字阶在一行高的折条里会顶到描边。 */
+.panel-host.is-diff .diff-fold-bar .diff-fold-icon {
+  font-size: 14px;
+}
+
 .panel-host.is-diff .diff-fold-bar:hover {
   color: var(--fg);
-}
-
-/* 折起来的行 = 这一行不占任何视觉高度（CM6 里它**仍在文档里**，光标能走进去 —— 所以
-   `surface.ts` 那一头有两条兜住：落位前 `unfoldAround`，右栏选区落进折区当场展开）。
-   只在这一格（`.is-diff`）内生效：差异面之外不许有任何行被这条规则抹掉。 */
-.panel-host.is-diff .cm-line.diff-folded {
-  display: none;
-}
-
-/* 行号栏那几格跟着消失：线装饰的类只落在 `.cm-line` 上，gutter 元素走的是自己那一套标记
-   （`face.ts` 用 `gutterLineClass` 发的 `diff-folded-gutter`）。不抹掉的话被折行的数字会留在
-   0 高的格子里挤成一坨（`.cm-gutter` 是竖排 flex + `overflow: hidden`）。 */
-.panel-host.is-diff .cm-gutterElement.diff-folded-gutter {
-  display: none;
 }
 
 /* ---------- 差异概览（VS Code 的 `diffOverview`：右缘 30px，两颗 15px 的 overview ruler） ---------- */

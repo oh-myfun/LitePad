@@ -27,14 +27,7 @@ import {
   type Text,
   type Transaction,
 } from "@codemirror/state";
-import {
-  Decoration,
-  EditorView,
-  gutter,
-  gutterLineClass,
-  GutterMarker,
-  WidgetType,
-} from "@codemirror/view";
+import { Decoration, EditorView, gutter, GutterMarker, WidgetType } from "@codemirror/view";
 import { blockPairing, type DiffBlock, type DiffKind } from "./blocks";
 import type { InnerChanges, InnerRange } from "./inline";
 import { CODICONS } from "../shell/codicons";
@@ -631,8 +624,10 @@ export function foldCandidates(
 }
 
 /**
- * 折起来的那一段之上的**占位条**：一行高（与它替掉的那些行不同，它自己必须占一格），
- * 文案「展开 N 行未改动的内容」，点它 = 展开这一段。
+ * 折起来的那一段之上的**占位条**：一行高，点它 = 展开这一段。
+ *
+ * 它由一条 `Decoration.replace({ block: true })` **替掉**被折掉的整段行（见 `buildFoldFace`），
+ * 所以块高只由这条占位条自己定 —— 不是被折掉那 N 行的高度。
  *
  * ⚠️ 高度与 `DiffGapWidget` 同一条纪律（R15/R18）：只按 `view.defaultLineHeight` 写 inline，
  * 样式段里不许出现 `height` / `em` / 竖向 margin —— 两栏各折同样多的行，折条也各占一行，
@@ -668,7 +663,17 @@ export class DiffFoldWidget extends WidgetType {
     const el = document.createElement("div");
     el.className = "diff-fold-bar";
     el.style.height = `${view.defaultLineHeight}px`;
-    el.textContent = `展开 ${this.hidden} 行未改动的内容`;
+    // 上游折叠块的块头是 `$(unfold)` + 隐藏行数（`hideUnchangedRegionsFeature.ts` 的
+    // `renderLabelWithIcons('$(unfold)')`，compact 文案 `{0} hidden lines`）——
+    // **不画 `+` / `−`**：那些记号只属于差异行，折起来的是两侧一字不差的未改动行。
+    const icon = document.createElement("span");
+    icon.innerHTML = CODICONS.unfold;
+    const glyph = icon.firstElementChild as HTMLElement | null;
+    if (glyph) {
+      glyph.classList.add("diff-fold-icon");
+      el.appendChild(glyph);
+    }
+    el.appendChild(document.createTextNode(`展开 ${this.hidden} 行未改动的内容`));
     el.addEventListener("click", (event) => {
       event.preventDefault();
       // 单独装一臂（不带出口）时点下去就是空转：折叠态的清单只由 surface 那一份真相发进来，
@@ -684,27 +689,23 @@ export class DiffFoldWidget extends WidgetType {
   }
 }
 
-/** 折起来的行在行号栏那一格上的类（线装饰的类**不会**自动落到 gutter 元素上，得自己发标记）。 */
-class FoldGutterMarker extends GutterMarker {
-  elementClass = "diff-folded-gutter";
-
-  eq(other: GutterMarker): boolean {
-    return other instanceof FoldGutterMarker;
-  }
-
-  toString(): string {
-    return "";
-  }
-}
-
-const foldGutterMarker = new FoldGutterMarker();
-
 /** 夹到本栏真实存在的行号（块是按 provider 那份正文算的，本栏正文可能先动了一步）。 */
 function clampLine(line: number, totalLines: number): number {
   return Math.min(Math.max(line, 1), totalLines);
 }
 
-/** 折区 → 一摞行装饰（`display: none` 的那些行）+ 起点的折条。 */
+/**
+ * 折区 → **一条替换装饰**：被折掉的整段行交给折条替掉。
+ *
+ * 照 CM6 的正规折叠口径用 `Decoration.replace({ block: true })`（`@codemirror/language` 的
+ * 折叠也是 `Decoration.replace`，只是不带 block、折条留在首行行内）。
+ *
+ * ⚠️ 为什么不是「折条 widget + 逐行 `Decoration.line { display: none }`」（原先那条补丁）：
+ * CSS 把行抹成 0 高，但 CM6 的块几何与行号槽仍按原行高记账 ⇒ 折条占掉一行、行号槽里却没有
+ * 对应的一格，折区之后的记号/行号整体错一行 ——「折叠后 ± 看不到」就是这一路的症状。
+ * 替换装饰把「哪几行不存在」交给 CM6：块表、行号槽、选区和光标用的是同一份几何，不会再错位。
+ * 上游折叠块本身就是一条 view zone 盖住被折区间，这里同口径。
+ */
 function buildFoldFace(
   doc: Text,
   folds: readonly FoldPoint[],
@@ -718,32 +719,13 @@ function buildFoldFace(
     // 折条恒发（出口没挂上时点下去是空转）：折叠态是**看得见的状态**，不该因为没人接就把
     // 那几行抹掉却连条都不留。
     ranges.push(
-      Decoration.widget({
+      Decoration.replace({
         widget: new DiffFoldWidget(from, to, onExpand),
         block: true,
-        side: -1,
-      }).range(doc.line(from).from),
+      }).range(doc.line(from).from, doc.line(to).to),
     );
-    for (let line = from; line <= to; line++) {
-      ranges.push(Decoration.line({ class: "diff-folded" }).range(doc.line(line).from));
-    }
   }
   return Decoration.set(ranges, true);
-}
-
-/** 折起来的行 → 行号栏的类（不抹掉的话那一串数字会在 0 高的格子里挤成一坨）。 */
-function buildFoldGutter(doc: Text, folds: readonly FoldPoint[]): RangeSet<GutterMarker> {
-  const ranges: Range<GutterMarker>[] = [];
-  for (const fold of folds) {
-    for (
-      let line = clampLine(fold.from, doc.lines);
-      line <= clampLine(fold.to, doc.lines);
-      line++
-    ) {
-      ranges.push(foldGutterMarker.range(doc.line(line).from));
-    }
-  }
-  return RangeSet.of(ranges, true);
 }
 
 /**
@@ -765,25 +747,24 @@ function mapFolds(value: FoldPoint[], tr: Transaction): FoldPoint[] {
 }
 
 /**
- * 折叠态那一臂的值：**清单**（行号）加上**由它算出来的两份画法**。
+ * 折叠态那一臂的值：**清单**（行号）加上**由它算出来的画法**。
  *
- * ⚠️ 画法只在 `setFoldedRanges` 那一发里重建（修复轮 Important 3）：`buildFoldFace` /
- * `buildFoldGutter` 每折一行分配一条 `Decoration.line`（外加一颗 gutter 标记），拿它当
- * `compute([f, "doc"])` 的函数体就等于**每键 O(折起来的行数)** 的分配，而 Tier A 是活着的
- * 编辑面 —— 与本文件头「键入期不重算（只 `value.map(tr.changes)`）」那条纪律直接对冲。
- * 键入期三份一起交给映射：清单按行号换算（`mapFolds`，几笔），画法由 CM6 映射（不重新分配），
- * 于是折条上那份行号清单与它替掉的那几行的行数要等下一次点名才跟着新块表走（已知限制）。
+ * ⚠️ 画法只在 `setFoldedRanges` 那一发里重建（修复轮 Important 3）：`buildFoldFace` 每段折区
+ * 分配一条替换装饰（外加一颗 widget），拿它当 `compute([f, "doc"])` 的函数体就等于
+ * **每次文档变化都重建全部折条**，而 Tier A 是活着的编辑面 —— 与本文件头「键入期不重算
+ * （只 `value.map(tr.changes)`）」那条纪律直接对冲。键入期两份一起交给映射：清单按行号换算
+ * （`mapFolds`，几笔），替换装饰由 CM6 映射（不重新分配），于是折条上那份行号清单与它替掉的
+ * 那几行的行数要等下一次点名才跟着新块表走（已知限制）。
  */
 interface FoldFace {
   folds: FoldPoint[];
-  lines: RangeSet<Decoration>;
-  gutter: RangeSet<GutterMarker>;
+  decorations: RangeSet<Decoration>;
 }
 
 /** 一份都没有 = 一段都没折（建 state 与拆臂之后都是这一份）。 */
-const emptyFoldFace: FoldFace = { folds: [], lines: RangeSet.empty, gutter: RangeSet.empty };
+const emptyFoldFace: FoldFace = { folds: [], decorations: RangeSet.empty };
 
-/** 清单 → 画法（只在点名那一发跑：这一发是 O(折起来的行数) 的分配）。 */
+/** 清单 → 画法（只在点名那一发跑：这一发是 O(折区数) 的分配）。 */
 function foldFaceOf(
   doc: Text,
   folds: readonly FoldPoint[],
@@ -791,8 +772,7 @@ function foldFaceOf(
 ): FoldFace {
   return {
     folds: folds.map(({ from, to }) => ({ from, to })),
-    lines: buildFoldFace(doc, folds, onExpand),
-    gutter: buildFoldGutter(doc, folds),
+    decorations: buildFoldFace(doc, folds, onExpand),
   };
 }
 
@@ -809,20 +789,16 @@ const diffFoldField = StateField.define<FoldFace>({
     // 键入期：清单与画法一起映射，不重算（画法这一头 CM6 自己管，见 `FoldFace` 那条 ⚠️）。
     return {
       folds: mapFolds(value.folds, tr),
-      lines: value.lines.map(tr.changes),
-      gutter: value.gutter.map(tr.changes),
+      decorations: value.decorations.map(tr.changes),
     };
   },
-  provide: (f) => [
-    EditorView.decorations.from(f, (v) => v.lines),
-    gutterLineClass.from(f, (v) => v.gutter),
-  ],
+  provide: (f) => EditorView.decorations.from(f, (v) => v.decorations),
 });
 
 /**
  * 某一栏**现在真的画着**哪几段折区（本栏行轴，跟着改动映射过 ⇒ 与屏幕同一份）。
  *
- * surface 查「光标掉进 `display: none` 的行没有」必须读这一份，而不是按候选清单现算：
+ * surface 查「光标掉进被替换掉的那几行没有」必须读这一份，而不是按候选清单现算：
  * 清单是按**上一份块表**的行号算的，画上去的那一段是跟着改动一路映射的，两者差的正是
  * 「上面插进去（或并上来）的那几行」—— 按清单查会读到「没盖住光标」，而屏幕上那一行
  * 就是看不见（修复轮 Important 1 抓的第二路）。

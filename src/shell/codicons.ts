@@ -223,9 +223,12 @@ const IDS = {
   save: "save",
   // —— 差异标题栏（B461 Task 8）——
   // 只补**真有调用点**的（本文件那条红线）：`arrow-up` / `arrow-down` 上方查找栏那族已有。
-  // 上游 `swapDiffEditors` 的 `arrow-swap`、折叠两颗的 `fold` / `unfold` 都**不进册**：
-  // 那三条只在「⋯」菜单里出现、靠中文标签认，LitePad 的菜单条目一律不带字形
-  // （`MenuItem.icon` 的口径是「同组每项都带、且标签认不出」才给）⇒ 写了就是零调用点的 id。
+  // 上游 `swapDiffEditors` 的 `arrow-swap`、折叠的 `fold` 都**不进册**：那两条只在「⋯」
+  // 菜单里出现、靠中文标签认，LitePad 的菜单条目一律不带字形（`MenuItem.icon` 的口径是
+  // 「同组每项都带、且标签认不出」才给）⇒ 写了就是零调用点的 id。
+  // `unfold` 是例外：折叠块头自己就要这颗（`hideUnchangedRegionsFeature.ts` 的
+  // `renderLabelWithIcons('$(unfold)')`），调用点在 `face.ts` 的折条上。
+  unfold: "unfold",
   whitespace: "whitespace", // 「忽略首尾空白」（带 toggled 状态的那颗）
   map: "map", // 「折叠 / 显示未改动的内容」
   // B461：差异格的三处字形，全部照 VS Code 源码取同名图标。

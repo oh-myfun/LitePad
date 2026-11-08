@@ -637,7 +637,7 @@ export function createDiffSurface(
    * 凡 `from <= line <= to + DIFF_REVEAL_LINES` 的段都摘掉）。
    *
    * ⚠️ 两栏的行轴各查各的（`SIDES` 那一圈）：同一行号在左右两栏指的是不同的行，
-   * 只按右栏摘 ⇒ 左栏的落点还能落进被 `display: none` 的行里。
+   * 只按右栏摘 ⇒ 左栏的落点还能落进被替换掉的折区里。
    */
   const unfoldAroundLines = (lines: number[]): void => {
     if (!foldOn) return;
@@ -659,9 +659,9 @@ export function createDiffSurface(
 
   /**
    * 三处「谁让光标走进折区」的兜底（简报 Step 3 那条 ⚠️ 风险的正面处理）：
-   * CM6 里 `display: none` 的行**仍在文档里** ⇒ 键入/点击/`ArrowDown` 都可能把插入符送进
-   * 被折起来的那几行。落位之前有 `unfoldAround`，而**用户自己走进去**这一路只能靠右栏的
-   * `updateListener` 检查 —— 那一段当场展开，别让它带着看不见的光标继续打字。
+   * CM6 里被 `Decoration.replace` 替掉的行**仍在文档里** ⇒ 键入/点击/`ArrowDown` 都可能把
+   * 插入符送进被折起来的那几行。落位之前有 `unfoldAround`，而**用户自己走进去**这一路只能靠
+   * 右栏的 `updateListener` 检查 —— 那一段当场展开，别让它带着看不见的光标继续打字。
    *
    * ⚠️ 两颗入口都得查（修复轮 Important 1）：翻开关/`collapseAllUnchanged` **不动选区**，
    * 而差异文件里未改动的行占绝大多数 ⇒ 「光标正停在那一段里」是最常见的落点，只听
@@ -848,7 +848,7 @@ export function createDiffSurface(
    *
    * ⚠️ 只读**行文本自己的**块（`textBlockOf`）：贴着行尾的占位块会被 CM6 并进同一颗
    * composite `BlockInfo`，把它的高度减出去，才有「补缝 → 行高不变 → 缝稳定」这条不动点，
-   * 不会 measure 自激。折起来的行是 `display: none`，量出来 0 —— 两侧折的是同一批未改动区，
+   * 不会 measure 自激。折起来的行被替换装饰整段收走，量出来 0 —— 两侧折的是同一批未改动区，
    * 差值为 0，不补缝。
    */
   const lineHeights = (side: DiffSide): ((line: number) => number) => {
@@ -1292,7 +1292,7 @@ export function createDiffSurface(
    * 索引越界夹到首/末块（不环绕 —— 走到头再按一次就是停在那一块，与「跳过头」比环绕好懂）。
    *
    * ⚠️ 落位之前先 `unfoldAroundLines` 两侧各自那一行（Task 7 那一发，位置就钉在这里）：
-   * 目标行被折进收起区时，`display: none` 的行仍在文档里 ⇒ 光标会「落到看不见的那一行」，
+   * 目标行被折进收起区时，被替换掉的折区行仍在文档里 ⇒ 光标会「落到看不见的那一行」，
    * 而用户看到的是停在别处。两栏的行轴不同 ⇒ 两侧各查一遍，别只查右栏。
    *
    * 两颗 view 的落法不一样（左栏普通派发 / 右栏同步写 + 同栈认领，裁决 R25）—— 那一手的
@@ -1461,7 +1461,7 @@ export function createDiffSurface(
     // 会被静默丢掉，必须走 effect。
     EditorView.updateListener.of((update) => {
       if (update.docChanged) scheduleSync();
-      // 折叠期光标可能走进 `display: none` 的那几行（简报 Step 3 那条 ⚠️ 风险的另一半：
+      // 折叠期光标可能走进被替换掉的那几行（简报 Step 3 那条 ⚠️ 风险的另一半：
       // 落位之前有 `unfoldAround`，用户自己走进去这一路只能在这里补）。
       // ⚠️ `selectionSet` **一颗不够**（修复轮 Important 1 抓的第二路）：CM6 那一颗只认「这一发
       // 事务显式换了选区」—— 打字与程序化改文档时选区是被**映射**的，它是 false，而一发把折区
@@ -1502,7 +1502,7 @@ export function createDiffSurface(
   }
   // 换标签再换回来那一趟：`switchTab` 的同形回写会把**上一颗 surface 的折叠态**留在标签快照里
   //（`diffFoldField` 是模块级那颗，槽换挂时值不重建）⇒ 挂上这一刻必须按这一颗的口径重发一次
-  // 折叠态（关着 ⇒ 两份空清单 = 把快照里那些 `display: none` 的行放回来）。
+  // 折叠态（关着 ⇒ 两份空清单 = 把快照里那些被替换掉的行放回来）。
   // `refreshArms` 自己会先量一发缝：左栏刚建好时首帧就有占位块（不会闪一下错位）。
   refreshArms();
 
@@ -1565,7 +1565,7 @@ export function createDiffSurface(
       disposed = true;
       window.removeEventListener("resize", onWindowResize);
       cancelSync();
-      // 折叠状态跟着这一格退场（那颗 view 上的 `display: none` 已经随臂摘掉了，读口再报着
+      // 折叠状态跟着这一格退场（那颗 view 上的替换装饰已经随臂摘掉了，读口再报着
       // 折区就是两份真相 —— 拆掉的 surface 从此只报「没折」）。
       foldOn = false;
       expandedRuns.clear();
