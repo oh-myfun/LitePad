@@ -352,7 +352,7 @@ export const COMMANDS: CommandDef[] = [
   //   · 抢一颗键位就得先证明本应用无人占用（上面那三条都配了 `owners()` 那条用例），
   //     而这几条的日常入口是图标键与组菜单，键盘不是主路。
   // 命令面板点得到 ⇒ `main.ts` 的分发必须认这些 id（表里躺着一条没人分发的命令 = 死键）。
-  { id: "diff.toggleWhitespace", label: "忽略首尾空白", group: "差异", keys: [] },
+  { id: "diff.toggleWhitespace", label: "显示首尾空白差异", group: "差异", keys: [] },
   { id: "diff.toggleCollapse", label: "折叠未改动的内容", group: "差异", keys: [] },
   { id: "diff.collapseAll", label: "全部折叠未改动的内容", group: "差异", keys: [] },
   { id: "diff.showAll", label: "全部展开未改动的内容", group: "差异", keys: [] },

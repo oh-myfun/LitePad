@@ -742,11 +742,12 @@ function buildPanelOps(data: PanelRenderData, cb: SplitviewCallbacks): HTMLEleme
         cb.onDiffAction?.(data.panelId, "next"),
       ),
       // toggled 判据**取反**（设计稿 ⑤ 那一行：上游那颗 action 的 `toggled` 就是
-      // `!config.diffEditor.ignoreTrimWhitespace`）：「忽略首尾空白」开着 ⇒ 这颗没按下；
-      // 把它关掉 ⇒ 按下态说的是「现在连空白都比」。
+      // `!config.diffEditor.ignoreTrimWhitespace`）：文案照上游叫「显示首尾空白差异」
+      // —— 默认忽略首尾空白 ⇒ 这颗不按下，读作「现在没显示、点它才会显示」；
+      // 按下则说的是「现在连空白都比」。
       mkOp(
         CODICONS.whitespace,
-        "忽略首尾空白",
+        "显示首尾空白差异",
         undefined,
         () => cb.onDiffAction?.(data.panelId, "whitespace"),
         !d.ignoreTrimWhitespace,

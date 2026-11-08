@@ -229,7 +229,7 @@ const IDS = {
   // `unfold` 是例外：折叠块头自己就要这颗（`hideUnchangedRegionsFeature.ts` 的
   // `renderLabelWithIcons('$(unfold)')`），调用点在 `face.ts` 的折条上。
   unfold: "unfold",
-  whitespace: "whitespace", // 「忽略首尾空白」（带 toggled 状态的那颗）
+  whitespace: "whitespace", // 「显示首尾空白差异」（带 toggled 状态的那颗）
   map: "map", // 「折叠 / 显示未改动的内容」
   // B461：差异格的三处字形，全部照 VS Code 源码取同名图标。
   // · add / remove = `registrations.contribution.ts` 的 `diff-insert` / `diff-remove`

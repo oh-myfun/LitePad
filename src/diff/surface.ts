@@ -336,7 +336,8 @@ function attachSashDrag(
  *
  * `opts.ignoreTrimWhitespace` 从 Task 3 起**消费**：它改变的是「同一份正文算出来的块」，
  * 而块只在这里算一次再交给两臂 ⇒ 开关一拨，两侧底色与侧栏条目自己跟上（设计稿 ⑥ 的同源）。
- * 开关本身归 Task 8 那颗图标键，缺省不设 = 不忽略，与 B458 那 4px 一列的口径一致。
+ * 开关本身归 Task 8 那颗图标键，缺省**忽略**首尾空白（与上游 `diffEditor.ignoreTrimWhitespace`
+ * 的默认值一致）；B458 那 4px 一列另有口径，不吃这颗开关。
  *
  * ⚠️ 一格**只许一排旁路**（裁决 R23-3）：进来先拆在任的那颗。不拆的话两颗 live surface 共用
  * 右栏那一槽与那颗 wrap Compartment，先 dispose 的那颗会把折行还成「它读到的现值」，把还挂着
@@ -473,10 +474,11 @@ export function createDiffSurface(
    * 「忽略首尾空白」的现值（设计稿 ⑥ 那颗开关）。
    *
    * 它改变的是「同一份正文算出来的块」，而块只在这里算一次再交给两臂 ⇒ 开关一拨，
-   * 两侧底色、占位块与侧栏条目自己跟上（同源口径）。缺省不设 = 不忽略，与 B458
-   * 那 4px 一列一致；那颗图标键归 Task 8。
+   * 两侧底色、占位块与侧栏条目自己跟上（同源口径）。**缺省忽略**：上游
+   * `diffEditor.ignoreTrimWhitespace` 的默认值就是 `true`，所以新建一张差异标签时
+   * 首尾空白差异不算改动（要连空白一起比就点标题栏那颗「显示首尾空白差异」）。
    */
-  let ignoreWs = opts.ignoreTrimWhitespace ?? false;
+  let ignoreWs = opts.ignoreTrimWhitespace ?? true;
   /**
    * 「现在这批块是什么」的唯一一份答案（设计稿 ⑥ 的同源口径）。
    *

@@ -4506,7 +4506,7 @@ button:focus-visible {
   color: var(--tab-fg-hover);
 }
 
-/* B461 Task 8：带 toggled 状态的两颗差异图标键（忽略首尾空白 / 折叠未改动区）的点亮态。
+/* B461 Task 8：带 toggled 状态的两颗差异图标键（显示首尾空白差异 / 折叠未改动区）的点亮态。
    取值与查找栏那三颗开关同一套 token（同款控件同一条规则，别在这儿自造一档）：底色 + 描边
    + 字色一起给，深色档与 HC 才不会「点亮态看着像 hover」。`aria-pressed` 由 `mkOp` 同批发，
    读屏器与眼睛拿到的是同一件事。

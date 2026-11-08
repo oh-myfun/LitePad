@@ -824,14 +824,17 @@ describe("B461 · 跳块与步进（Task 4）", () => {
   it("B461 · setIgnoreTrimWhitespace 一拨就立刻重算并广播（不等防抖）", () => {
     const { s } = mountDiffPair("1\n  2  \n3", "1\n2\n3");
     const calls = countSyncBlocks();
-    expect(s.ignoreTrimWhitespace(), "缺省不忽略，与 B458 那 4px 一列同口径").toBe(false);
+    expect(
+      s.ignoreTrimWhitespace(),
+      "缺省忽略首尾空白 —— 与上游 diffEditor.ignoreTrimWhitespace 的默认值一致",
+    ).toBe(true);
     s.syncBlocks();
-    expect(s.blocks(), "关着时那行缩进就是改动").toHaveLength(1);
-    s.setIgnoreTrimWhitespace(true);
-    expect(s.ignoreTrimWhitespace()).toBe(true);
-    expect(s.blocks(), "忽略首尾空白之后两份正文等价 ⇒ 没有块").toHaveLength(0);
+    expect(s.blocks(), "忽略着的时候，那行只差缩进 ⇒ 不算改动").toHaveLength(0);
+    s.setIgnoreTrimWhitespace(false);
+    expect(s.ignoreTrimWhitespace()).toBe(false);
+    expect(s.blocks(), "连空白一起比 ⇒ 那行缩进就是改动").toHaveLength(1);
     expect(calls(), "翻开关 = 用户的一发动作 ⇒ 立刻广播，不排定时器").toBe(2);
-    s.setIgnoreTrimWhitespace(true);
+    s.setIgnoreTrimWhitespace(false);
     expect(calls(), "同一个值再拨一次不重算").toBe(2);
   });
 });

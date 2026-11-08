@@ -687,7 +687,7 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
   const labelsOf = (items: MenuItem[]): Array<string | undefined> =>
     items.filter((i) => !i.separator).map((i) => i.label);
 
-  it("B461 · 差异档常驻只有四颗高频键：上/下差异、忽略首尾空白、折叠未改动区", () => {
+  it("B461 · 差异档常驻只有四颗高频键：上/下差异、显示首尾空白差异、折叠未改动区", () => {
     const { root } = mountOps(diffRenderData({ ignoreTrimWhitespace: true }));
     expect(iconIds(root)).toEqual(["arrow-up", "arrow-down", "whitespace", "map"]);
     // 键位提示取自 `keyHint(id)`（B389 的纪律：字面量只在 keymap.ts 一处）⇒ 用例也按那颗取。
@@ -716,7 +716,7 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
       "点亮态与 aria-pressed 同一颗键（explorer 那形同口径）",
     ).toBe(true);
     expect(b.getAttribute("aria-label"), "这颗键的文案不跟着状态翻（翻的是 map 那颗）").toBe(
-      "忽略首尾空白",
+      "显示首尾空白差异",
     );
   });
 
@@ -752,12 +752,15 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
 
   it("B461 · 渲染快照那三份读的是 surface 现值；旁路拆掉 ⇒ 一颗键都不给", () => {
     const m = mountDiffPanel("baseline");
-    expect(m.s.ignoreTrimWhitespace(), "挂上时的缺省：不忽略").toBe(false);
-    m.s.setIgnoreTrimWhitespace(true);
+    expect(
+      m.s.ignoreTrimWhitespace(),
+      "挂上时的缺省：忽略首尾空白（上游 diffEditor.ignoreTrimWhitespace 默认 true）",
+    ).toBe(true);
+    m.s.setIgnoreTrimWhitespace(false);
     m.s.setCollapseUnchanged(true);
     const data = render.panelDataOf(m.panel);
     expect(data.diff).toEqual({
-      ignoreTrimWhitespace: true,
+      ignoreTrimWhitespace: false,
       collapseUnchanged: true,
       wrap: false,
       syncScroll: true,
@@ -849,7 +852,7 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
 
   it("B461 · 六条动作命令进表：id / label / group 逐字，keys 全空（不给默认键位）", () => {
     const six: Array<[string, string]> = [
-      ["diff.toggleWhitespace", "忽略首尾空白"],
+      ["diff.toggleWhitespace", "显示首尾空白差异"],
       ["diff.toggleCollapse", "折叠未改动的内容"],
       ["diff.collapseAll", "全部折叠未改动的内容"],
       ["diff.showAll", "全部展开未改动的内容"],
@@ -906,15 +909,15 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     const m = mountDiffPanel("baseline");
     const { root } = mountOps(render.panelDataOf(m.panel));
     expect(iconIds(root)).toEqual(["arrow-up", "arrow-down", "whitespace", "map"]);
-    // 缺省不忽略（Task 3 的口径，与 B458 那 4px 一列一致）⇒ 这颗键进门就是按下态。
-    expect(opByIcon(root, "whitespace").getAttribute("aria-pressed")).toBe("true");
+    // 缺省忽略首尾空白（上游 diffEditor.ignoreTrimWhitespace 默认 true）⇒ 这颗键进门是未按下态。
+    expect(opByIcon(root, "whitespace").getAttribute("aria-pressed")).toBe("false");
 
     actions.applyDiffAction(0, "whitespace");
-    expect(m.s.ignoreTrimWhitespace()).toBe(true);
+    expect(m.s.ignoreTrimWhitespace()).toBe(false);
     expect(
       opByIcon(root, "whitespace").getAttribute("aria-pressed"),
       "点完一颗键，那一格的操作区自己换成新状态（不靠用户再切一次标签）",
-    ).toBe("false");
+    ).toBe("true");
 
     actions.applyDiffAction(0, "collapse");
     expect(m.s.collapseUnchanged()).toBe(true);
