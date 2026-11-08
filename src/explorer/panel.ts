@@ -86,8 +86,15 @@ import {
 
 type Kind = "file" | "dir";
 
-/** 上一次点中的行（新建的目标目录、`aria-selected` 都读它）。 */
+/** 焦点行：新建的目标目录、键盘移动、菜单动作的主语都读它。 */
 let selected: string | null = null;
+/**
+ * 多选的那一批（按**选中顺序**排）；焦点可以在这一批之外（Ctrl 点掉某条后焦点仍留在那一行，
+ * 与 VS Code 的 list 同形）。顺序不是摆设：右键「将已选择进行比较」时第一条当左栏。
+ */
+let picks: string[] = [];
+/** Shift 连选的锚点：最近一次无修饰点击或 Ctrl 点击落下的那一行。 */
+let anchor: string | null = null;
 /** 正在输入名字的创建：目标目录 + 建什么。非 null 时那一层下面多一个输入框。 */
 let creating: { dir: string; kind: Kind } | null = null;
 /** 正在改名那一条（路径 + 它所在层）。非 null 时它那一行的名字换成输入框。 */
@@ -157,6 +164,12 @@ export async function addFolder(path: string): Promise<boolean> {
 export async function removeFolder(path: string): Promise<void> {
   removeRoot(path);
   rootsCollapsed.delete(normPath(path));
+  // 这一根名下那些行可能正被选着（Ctrl 凑组时最容易被拖下水）：树里已经看不见它们了，
+  // 不留「选着一条谁也找不到的路径」的幽灵（否则右键还能对着它开出比较）。
+  const gone = (p: string): boolean => !rootOf(p);
+  picks = picks.filter((p) => !gone(p));
+  if (selected && gone(selected)) selected = null;
+  anchor = anchor && gone(anchor) ? null : anchor;
   await persistRoots();
 }
 
@@ -186,6 +199,9 @@ export async function closeFolder(): Promise<void> {
   if (windowKind === "satellite") return;
   setRoots([]);
   rootsCollapsed.clear();
+  picks = [];
+  anchor = null;
+  selected = null;
   await persistRoots();
 }
 
@@ -326,6 +342,8 @@ export function setupExplorer(): void {
     explorerFilterInput.focus();
   });
   explorerTree.addEventListener("click", (e) => onRowClick(e as MouseEvent));
+  // 多选之后树的选中态不再只有一条：读屏器要知道 Ctrl / Shift 那两种手势存在。
+  explorerTree.setAttribute("aria-multiselectable", "true");
   explorerTree.addEventListener("contextmenu", (e) => onRowContext(e as MouseEvent));
   // B316：拖到别的那一层 = 移动。五个事件都挂在树上（行是重绘出来的，逐行挂必漏）。
   explorerTree.addEventListener("dragstart", (e) => onRowDragStart(e as DragEvent));
@@ -575,7 +593,7 @@ function rowOf(
   row.style.setProperty("--depth", String(depth));
   row.setAttribute("role", "treeitem");
   row.setAttribute("aria-level", String(depth + 1));
-  row.setAttribute("aria-selected", String(selected === path));
+  row.setAttribute("aria-selected", String(picks.includes(path)));
   if (kind === "dir") row.setAttribute("aria-expanded", String(open));
   row.tabIndex = selected === path ? 0 : -1;
   // B316：树里每一行都可拖（根那一行不可 —— 它没有父亲，拖出去无处可放）。
@@ -848,6 +866,7 @@ function rootRow(root: string, open: boolean): HTMLElement {
   el.dataset.kind = "dir";
   el.setAttribute("role", "treeitem");
   el.setAttribute("aria-expanded", String(open));
+  el.setAttribute("aria-selected", String(picks.includes(root)));
   el.setAttribute("aria-level", "1");
   setTextTip(el, root, { group: "explorer" });
   el.tabIndex = selected === root || visible.length <= 1 ? 0 : -1;
@@ -906,10 +925,22 @@ function onRowClick(ev: MouseEvent): void {
   // 会同时刷这一根 + 把根行折叠/展开一遍（`activateDir` 当场 renderTree，键还会被重建）。
   if ((ev.target as HTMLElement | null)?.closest("button")) return;
   const row = rowFromEvent(ev);
-  if (!row) return;
+  if (!row) {
+    // 点空白 = 清干净选中（VS Code 的 list 同口径）。后来右键还对着一条「已选中」的
+    // 幽灵路径动手，正是这条手势要防的事。
+    clearSelection();
+    return;
+  }
   const path = row.dataset.path ?? "";
   if (!path) return;
-  select(path);
+  const additive = ev.ctrlKey || ev.metaKey;
+  const range = ev.shiftKey;
+  if (range) extendSelection(path);
+  else if (additive) togglePick(path);
+  else select(path);
+  // 多选手势只改选中，不展开、不打开：Ctrl / Shift 那两下是「凑一组」，不是「打开这一条」。
+  // 与 VS Code 的 list 一致（选中数不为 1 时资源管理器也不会顺手预览）。
+  if (additive || range) return;
   if (row.dataset.kind === "dir") void activateDir(path);
   else void doOpen(path);
 }
@@ -935,15 +966,89 @@ async function activateDir(path: string): Promise<void> {
   await toggleDir(path);
 }
 
-/** 点中一行：只重画 `aria-selected` 与 roving tabindex，不整棵树重绘（选中的代价不该是重读盘）。 */
+/**
+ * 普通点击（或程序里指定「就选这一条」）：选中收成一条，锚点跟着落到它。
+ * 只重画选中态与 roving tabindex，不整棵树重绘（选中的代价不该是重读盘）。
+ */
 function select(path: string | null): void {
+  picks = path ? [path] : [];
+  anchor = path;
   selected = path;
+  paintSelection();
+}
+
+/** Ctrl+点击：切换这一条的入组状态，焦点与锚点都落到这一条（VS Code 的 list 同形）。 */
+function togglePick(path: string): void {
+  picks = picks.includes(path) ? picks.filter((p) => p !== path) : [...picks, path];
+  anchor = path;
+  selected = path;
+  paintSelection();
+}
+
+/**
+ * Shift+点击：从锚点到这一条的那一段（含两端，按**屏幕上的可见顺序**）当选中。
+ * 锚点缺失（比如刚清空过）时退化成单选 —— 没有起点就没有区间。
+ */
+function extendSelection(path: string): void {
+  const start = anchor ? visible.indexOf(anchor) : -1;
+  const end = visible.indexOf(path);
+  if (start < 0 || end < 0) {
+    select(path);
+    return;
+  }
+  const [a, b] = start <= end ? [start, end] : [end, start];
+  picks = visible.slice(a, b + 1);
+  selected = path;
+  paintSelection();
+}
+
+/** 点空白：选中与锚点一起清掉（焦点也放开，否则下一发菜单还对着一条看不见的行）。 */
+function clearSelection(): void {
+  picks = [];
+  anchor = null;
+  selected = null;
+  paintSelection();
+}
+
+/**
+ * 这一条是不是选中的（渲染与增量重画共用这一颗判据）。
+ * 根那一行也走 `picks` —— 它同样能被 Ctrl / Shift 选进组里。
+ */
+function isPicked(path: string): boolean {
+  return picks.includes(path);
+}
+
+/**
+ * 只换选中态与 roving tabindex（不重绘树）。`selected` 是焦点行：它可以在选之外
+ * （Ctrl 点掉一条后焦点仍留在那一行），没有焦点时退到第一条可见行，树总得有个 tab 停靠点。
+ */
+function paintSelection(): void {
+  const tabStop = selected ?? visible[0] ?? null;
   for (const el of explorerTree.querySelectorAll<HTMLElement>("[data-path]")) {
-    const on = el.dataset.path === path;
-    el.setAttribute("aria-selected", String(on));
-    el.tabIndex = on ? 0 : -1;
+    const path = el.dataset.path ?? "";
+    el.setAttribute("aria-selected", String(isPicked(path)));
+    el.tabIndex = path === tabStop ? 0 : -1;
   }
   paintActiveGuides();
+}
+
+/** 路径或它的子孙都在这一批里去掉（删目录时不能留下它名下那些「幽灵选中」）。 */
+function dropPicks(path: string): void {
+  const key = normPath(path);
+  picks = picks.filter((p) => {
+    const k = normPath(p);
+    return !(k === key || k.startsWith(`${key}\\`));
+  });
+}
+
+/** 改名 / 移动之后选中态跟着走到新路径（子孙一并换，目录改名才有整串可跟）。 */
+function replacePick(from: string, to: string): void {
+  const key = normPath(from);
+  picks = picks.map((p) => {
+    const k = normPath(p);
+    if (k === key) return to;
+    return k.startsWith(`${key}\\`) ? to + p.slice(from.length) : p;
+  });
 }
 
 /** 按路径找那一行的元素。不写 `querySelector("[data-path=\"…\"]")`：Windows 路径里的 `\`
@@ -971,7 +1076,9 @@ function onTreeKey(ev: KeyboardEvent): void {
   const move = (delta: number): void => {
     const next = visible[Math.max(0, Math.min(visible.length - 1, i + delta))];
     if (!next) return;
-    select(next);
+    // Shift+上下 = 从锚点连选到新焦点（与鼠标那一手同一份区间算法）。
+    if (ev.shiftKey) extendSelection(next);
+    else select(next);
     rowEl(next)?.focus();
   };
   switch (ev.key) {
@@ -1083,6 +1190,8 @@ async function commitCreate(raw: string): Promise<void> {
     const made =
       plan.kind === "dir" ? await createDir(plan.dir, name) : await createFile(plan.dir, name);
     selected = made.path;
+    picks = [made.path];
+    anchor = made.path;
     await refreshDir(plan.dir);
     showMessage(plan.kind === "dir" ? `已创建 ${name}\\` : `已创建 ${name}`);
     // 建完就地选中，顺手把新建的文件打开 —— 用户的下一步十有八九是写它。
@@ -1118,9 +1227,24 @@ function onRowContext(ev: MouseEvent): void {
   if ((ev.target as HTMLElement | null)?.closest("button")) return;
   const row = rowFromEvent(ev);
   const path = row?.dataset.path ?? "";
-  // 先选中再弹菜单：菜单里那几项问的全是「选中了谁」，不选就会对着上一行的目标动手
-  if (path) select(path);
+  // 先选中再弹菜单：菜单里那几项问的全是「选中了谁」，不选就会对着上一行的目标动手。
+  // 多选已成组时右键组内的一条**不许把组打散**（VS Code 同口径）—— 否则「将已选择进行比较」
+  // 永远等不到那一发右键；焦点仍落到被右键的那一条（新建 / 粘贴的主语）。
+  if (path) {
+    if (picks.length > 1 && isPicked(path)) {
+      selected = path;
+      paintSelection();
+    } else select(path);
+  }
   showPopupMenu(null, menuFor(path), { x: ev.clientX, y: ev.clientY });
+}
+
+/**
+ * 多选里**文件**那几条（按选中顺序）。比较只对文件成立：目录没有正文可比。
+ * 用 `rows` 判种类而不是路径长相 —— 「是不是目录」只有盘上那份事实说了算。
+ */
+function pickedFiles(): string[] {
+  return picks.filter((p) => rows.get(p)?.kind === "file");
 }
 
 /**
@@ -1187,6 +1311,19 @@ function menuFor(path: string): MenuItem[] {
         },
       }),
     );
+    // 多选手势那一路（VS Code 的 Compare Selected）：**整组恰好两条、且都是文件**才给，
+    // 左右次序就是选中顺序。一条 / 三条 / 掺了目录一律不出现 —— 判据不成立，不是「置灰给人看」。
+    const pair = pickedFiles();
+    if (picks.length === 2 && pair.length === 2) {
+      push({
+        label: "将已选择进行比较",
+        onSelect: () => {
+          void openFileDiff(pair[0], pair[1]);
+          // 上一条两击手势留下的对照物顺手清掉：这一发已经真的开出了差异面。
+          clearCompareSelection();
+        },
+      });
+    }
   }
   push({ label: "复制路径", onSelect: () => doCopyPath(path) });
   push({ label: "在资源管理器中显示", onSelect: () => void doReveal(path) });
@@ -1257,7 +1394,10 @@ async function commitRename(raw: string): Promise<void> {
     showMessage(`已重命名为 ${made.name}`);
     // 选中态跟着走到新路径：`refreshDir` 已经按**旧**路径重画过一遍（那一格谁也不匹配 ⇒
     // 高亮凭空消失），用户刚改完名却看见选中没了，读作「改名把这一条弄丢了」。
-    select(made.path);
+    // 多选时只换那一条（其余同组的不受牵连），焦点落到新名字上。
+    replacePick(plan.path, made.path);
+    selected = made.path;
+    paintSelection();
   } catch (e: unknown) {
     renderTree();
     showMessage(String(e), true);
@@ -1305,7 +1445,10 @@ async function doDelete(): Promise<void> {
   const dir = rows.get(path)?.dir ?? rootOf(path) ?? "";
   try {
     await trashAt(dir, path);
-    selected = null;
+    // 焦点与选中一起收：删掉的那一条（以及它名下若有的）不许留在组里假装还选着。
+    dropPicks(path);
+    selected = picks[picks.length - 1] ?? null;
+    anchor = anchor && picks.includes(anchor) ? anchor : selected;
     renderTree();
     showMessage(`已送进回收站：${path.split(/[\\/]/).pop() ?? path}`);
   } catch (e: unknown) {

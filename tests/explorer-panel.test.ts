@@ -33,6 +33,8 @@ const h = vi.hoisted(() => ({
   filterHits: new Map<string, { name: string; path: string; rel: string; isDir: boolean }[]>(),
   /** 非空 ⇒ 每一发过滤都以这条错误拒绝（验「正则写坏了」那一档的呈现）。 */
   filterFail: "",
+  /** B462：`openFileDiff` 拿到的左右两条（顺序就是断言的对象）。 */
+  diffs: [] as [string, string][],
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -137,6 +139,14 @@ vi.mock("../src/io/files", () => ({
   },
 }));
 
+// 差异标签这一发只记「左右两条 + 顺序」：真正开标签的口径归 diff 那一族自己的测试。
+vi.mock("../src/diff/model", () => ({
+  openFileDiff: (left: string, right: string) => {
+    h.diffs.push([left, right]);
+    return Promise.resolve(null);
+  },
+}));
+
 let panel: typeof import("../src/explorer/panel");
 let store: typeof import("../src/explorer/store");
 let drawer: typeof import("../src/shell/drawer");
@@ -237,6 +247,7 @@ beforeEach(async () => {
   h.filtered.length = 0;
   h.filterHits.clear();
   h.filterFail = "";
+  h.diffs.length = 0;
   resetFilterBox();
   h.pick = null;
   store.clearClipboard();
@@ -1299,5 +1310,143 @@ describe("B427 · 顶部过滤框", () => {
     ui.explorerFilterInput.dispatchEvent(ev);
     await vi.waitFor(() => expect(ui.explorerCollapse.disabled).toBe(false));
     expect(ui.explorerCollapse.getAttribute("aria-label")).toBe("全部折叠");
+  });
+});
+
+describe("B462 · 资源管理器多选与「将已选择进行比较」", () => {
+  const modClick = (el: Element, init: MouseEventInit): void => {
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true, ...init }));
+  };
+
+  const selected = (): string[] =>
+    rows()
+      .filter((r) => r.getAttribute("aria-selected") === "true")
+      .map((r) => r.querySelector(".explorer-name")?.textContent ?? "");
+
+  function menuEl(): HTMLElement {
+    const el = document.querySelector<HTMLElement>(".popup-menu");
+    if (!el) throw new Error("菜单没弹出来");
+    return el;
+  }
+
+  function labels(): string[] {
+    return [...menuEl().querySelectorAll<HTMLButtonElement>("button")].map(
+      (b) => b.querySelector(".menu-label")?.textContent ?? "",
+    );
+  }
+
+  async function rightClick(el: Element): Promise<void> {
+    el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 30, clientY: 40 }));
+    await vi.waitFor(() => expect(document.querySelector(".popup-menu")).toBeTruthy());
+  }
+
+  async function pick(needle: string): Promise<void> {
+    const btn = [...menuEl().querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      (b.querySelector(".menu-label")?.textContent ?? "").includes(needle),
+    );
+    if (!btn) throw new Error(`菜单里没有「${needle}」（现有：${labels().join(" / ")}）`);
+    btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await vi.waitFor(() => expect(true).toBe(true));
+  }
+
+  it("Ctrl+点击切换入组状态；普通点击把这一组收成一条", async () => {
+    await click(rowAt("b.md"));
+    expect(selected()).toEqual(["b.md"]);
+
+    modClick(rowAt("a.md"), { ctrlKey: true });
+    expect(selected(), "Ctrl 是把这一条**加**进组，不是换掉前面那条").toEqual(["b.md", "a.md"]);
+    expect(h.opened, "多选手势只选不动：不顺手预览").toEqual([`${ROOT}\\b.md`]);
+
+    modClick(rowAt("a.md"), { ctrlKey: true });
+    expect(selected(), "再 Ctrl 点一下 = 从组里摘掉").toEqual(["b.md"]);
+
+    await click(rowAt("a.md"));
+    expect(selected(), "普通点击让整组塌成一条").toEqual(["a.md"]);
+  });
+
+  it("Shift+点击按可见顺序从锚点连选（锚点不随 Shift 移动，反向也能连）", async () => {
+    await click(rowAt("b.md"));
+    modClick(rowAt("a.md"), { shiftKey: true });
+    expect(selected()).toEqual(["b.md", "a.md"]);
+
+    modClick(rowAt("笔记"), { shiftKey: true });
+    expect(selected(), "锚点还在 b.md ⇒ 反向连到根，a.md 被让出").toEqual([
+      "笔记",
+      "notes",
+      "b.md",
+    ]);
+    expect(h.opened, "Shift 那一下同样不打开").toEqual([`${ROOT}\\b.md`]);
+  });
+
+  it("恰好两条文件：右键出现「将已选择进行比较」，左栏是选中顺序里的第一条", async () => {
+    await click(rowAt("a.md"));
+    modClick(rowAt("b.md"), { ctrlKey: true });
+    await rightClick(rowAt("b.md"));
+    expect(
+      rowAt("b.md").getAttribute("aria-selected"),
+      "右键组内那条不许把整组打散（否则这一项永远等不到右键）",
+    ).toBe("true");
+    expect(labels()).toContain("将已选择进行比较");
+
+    await pick("将已选择进行比较");
+    expect(h.diffs).toEqual([[`${ROOT}\\a.md`, `${ROOT}\\b.md`]]);
+
+    // 反过来选：次序就是左右，不是文件名/盘上顺序
+    await click(ui.explorerTree);
+    await click(rowAt("b.md"));
+    modClick(rowAt("a.md"), { ctrlKey: true });
+    await rightClick(rowAt("a.md"));
+    await pick("将已选择进行比较");
+    expect(h.diffs[1]).toEqual([`${ROOT}\\b.md`, `${ROOT}\\a.md`]);
+  });
+
+  it("一条 / 三条 / 掺了目录：不给这一项（判据不成立就不出现）", async () => {
+    await click(rowAt("a.md"));
+    await rightClick(rowAt("a.md"));
+    expect(labels()).not.toContain("将已选择进行比较");
+
+    await click(ui.explorerTree);
+    modClick(rowAt("a.md"), { ctrlKey: true });
+    modClick(rowAt("b.md"), { ctrlKey: true });
+    modClick(rowAt("notes"), { ctrlKey: true });
+    await rightClick(rowAt("a.md"));
+    expect(selected()).toHaveLength(3);
+    expect(labels(), "三条里两条是文件也不给：整组不是两条").not.toContain("将已选择进行比较");
+
+    await click(ui.explorerTree);
+    await click(rowAt("notes"));
+    modClick(rowAt("a.md"), { ctrlKey: true });
+    await rightClick(rowAt("a.md"));
+    expect(labels(), "目录没有正文可比").not.toContain("将已选择进行比较");
+  });
+
+  it("点空白清干净选中；切换目录把组收成新目录那一条", async () => {
+    await click(rowAt("a.md"));
+    modClick(rowAt("b.md"), { ctrlKey: true });
+    expect(selected()).toHaveLength(2);
+
+    await click(ui.explorerTree);
+    expect(selected(), "点空白不许留下幽灵选中").toEqual([]);
+    expect(rowAt("笔记").tabIndex, "清空后树仍要有个 tab 停靠点").toBe(0);
+
+    await click(rowAt("a.md"));
+    modClick(rowAt("b.md"), { ctrlKey: true });
+    await click(rowAt("notes"));
+    expect(selected()).toEqual(["notes"]);
+  });
+
+  it("删除后不留幽灵选中：同组剩下的那条接手，比较项随人数退场", async () => {
+    await click(rowAt("a.md"));
+    modClick(rowAt("b.md"), { ctrlKey: true });
+    // 走右键：组内那一条被删时整组还在（键盘 Delete 会先把焦点行变成唯一选中，见 onTreeKey）。
+    await rightClick(rowAt("b.md"));
+    await pick("删除");
+    await vi.waitFor(() => expect(h.deleted).toEqual([`${ROOT}\\b.md`]));
+
+    expect(names()).not.toContain("b.md");
+    expect(selected(), "焦点与选中一起收到剩下那条，不给一条不存在的路径留座").toEqual(["a.md"]);
+
+    await rightClick(rowAt("a.md"));
+    expect(labels(), "只剩一条，比较项退场").not.toContain("将已选择进行比较");
   });
 });
