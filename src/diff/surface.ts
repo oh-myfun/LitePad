@@ -1043,10 +1043,20 @@ export function createDiffSurface(
     scroller.scrollTop = ratio * Math.max(scroller.scrollHeight - scroller.clientHeight, 0);
   };
   let draggingOverview = false;
+  /**
+   * 按下点到滑块顶部的距离（像素）。
+   *
+   * 拖拽必须按**位移**走，不能让滑块顶部跳到指针：上游 `AbstractScrollbar` 的滑块拖动也是
+   * 记一个 `pointerOffset`（按下位置 − 滑块位置），移动时 `newSliderPosition = pointerPosition
+   * - pointerOffset`。没有这一份偏移，按下瞬间滑块会整体上跳半截，之后每次移动都在「重新对顶」，
+   * 手感像在拽一根弹簧。
+   */
+  let dragOffset = 0;
   /** 收尾：把窗口级监听全摘掉（松手 / 指针被系统取消 / 旁路拆掉都走这一条）。 */
   const endOverviewDrag = (): void => {
     if (!draggingOverview) return;
     draggingOverview = false;
+    viewportEl.classList.remove("is-dragging");
     window.removeEventListener("pointermove", onOverviewMove);
     window.removeEventListener("pointerup", endOverviewDrag);
     window.removeEventListener("pointercancel", endOverviewDrag);
@@ -1056,11 +1066,26 @@ export function createDiffSurface(
     if (e.button !== 0) return;
     // 不抢默认行为：否则按在概览条上会起一次文本选择 / 原生拖拽，拖动中途被它打断。
     e.preventDefault();
+    // 按在滑块上 ⇒ 记抓取点；按在轨道上 ⇒ 先跳到指针处，再从「顶部对齐指针」继续拖
+    // （与原来的轨道点击行为一致，只是随后拖动不再跳回）。
+    const thumb = viewportEl.getBoundingClientRect();
+    const onThumb =
+      !viewportEl.classList.contains("is-hidden") &&
+      thumb.height > 0 &&
+      e.clientY >= thumb.top &&
+      e.clientY <= thumb.bottom;
+    if (onThumb) {
+      dragOffset = e.clientY - thumb.top;
+    } else {
+      dragOffset = 0;
+      scrollToClientY(e.clientY);
+    }
     draggingOverview = true;
+    // 拖动期间窗口级监听，`:active` 会在指针离开滑块后失效 ⇒ 用类名钉住「正在拖」这一态。
+    viewportEl.classList.add("is-dragging");
     window.addEventListener("pointermove", onOverviewMove);
     window.addEventListener("pointerup", endOverviewDrag);
     window.addEventListener("pointercancel", endOverviewDrag);
-    scrollToClientY(e.clientY);
   };
   const onOverviewMove = (e: PointerEvent): void => {
     if (!draggingOverview) return;
@@ -1068,7 +1093,18 @@ export function createDiffSurface(
       endOverviewDrag();
       return;
     }
-    scrollToClientY(e.clientY);
+    const rect = overviewEl.getBoundingClientRect();
+    const thumb = viewportEl.getBoundingClientRect();
+    const travel = rect.height - thumb.height;
+    const maxScroll = Math.max(
+      (right?.scrollDOM.scrollHeight ?? 0) - (right?.scrollDOM.clientHeight ?? 0),
+      0,
+    );
+    if (!(travel > 0) || !(maxScroll > 0)) return;
+    // 指针位置 → 滑块顶部 → scrollTop：与 renderViewport 的 top = scrollTop × ratio 互逆，
+    // 因此一轮拖完再拖不会累积漂移（每轮都从实测的 getBoundingClientRect 重新起算）。
+    const top = Math.min(Math.max(e.clientY - rect.top - dragOffset, 0), travel);
+    if (right) right.scrollDOM.scrollTop = (top / travel) * maxScroll;
   };
   const onOverviewWheel = (e: WheelEvent): void => {
     const scroller = right?.scrollDOM;

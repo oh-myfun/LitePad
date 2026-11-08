@@ -1321,6 +1321,46 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     expect(left.scrollDOM.scrollTop).toBe(150);
   });
 
+  it("B461 · 概览滑块按抓取偏移跟手（按下点不跳到指针顶部），拖动期间单独一态", () => {
+    const { panel } = mountDiffPair("A\nB\nC", "A\nC");
+    const right = panel.view!.view;
+    Object.defineProperty(right.scrollDOM, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(right.scrollDOM, "scrollHeight", { configurable: true, value: 300 });
+    const surface = diffSurfaceOf(panel)!;
+    // 量度给上之后再画一次概览：滑块高度 max(20, floor(100×100/300)) = 33，轨道 100
+    surface.syncBlocks();
+    const overview = panel.bodyEl!.querySelector<HTMLElement>(".diff-overview")!;
+    const thumb = panel.bodyEl!.querySelector<HTMLElement>(".diff-viewport")!;
+    expect(thumb.style.height, "滑块高度按 clientHeight²/scrollHeight 实测").toBe("33px");
+    // jsdom 没有布局：给轨道与滑块各量一颗真矩形（拖动只认这两颗）
+    const rect = (height: number): DOMRect =>
+      ({
+        top: 0,
+        bottom: height,
+        height,
+        left: 0,
+        right: 15,
+        width: 15,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    overview.getBoundingClientRect = () => rect(100);
+    thumb.getBoundingClientRect = () => rect(33);
+
+    // 在滑块内距顶 10px 处按下：抓取偏移 = 10
+    overview.dispatchEvent(
+      new MouseEvent("pointerdown", { clientY: 10, button: 0, buttons: 1, bubbles: true }),
+    );
+    expect(thumb.classList.contains("is-dragging"), "拖动期间钉住可见态").toBe(true);
+    window.dispatchEvent(new MouseEvent("pointermove", { clientY: 60, buttons: 1 }));
+    // 滑块顶 = 60 − 10 = 50；travel = 100 − 33 = 67；maxScroll = 200
+    // 旧实现（顶部直接对指针）会得到 60/100×200 = 120，差别就是「按下点被当成顶」。
+    expect(right.scrollDOM.scrollTop).toBeCloseTo((50 / 67) * 200, 5);
+    window.dispatchEvent(new MouseEvent("pointerup", { buttons: 0 }));
+    expect(thumb.classList.contains("is-dragging"), "松手即收").toBe(false);
+  });
+
   it("B464 · 一次滚动只产生一次对侧写入（程序性写入的回声不回传）", () => {
     const { panel } = mountDiffPair("A\nB\nC", "A\nC");
     const right = panel.view!.view;

@@ -437,6 +437,13 @@
   background: var(--sb-thumb-active);
 }
 
+/* 拖动期间另钉一态：拖动走窗口级监听，指针一离开滑块 `:active` 就掉了，而拖动还在继续
+   —— 只剩静止态的 0.22 透明度，看起来像「按下就消失了」。
+   取值照上游 `scrollbarSlider.activeBackground`（即 `--sb-thumb-active`），与静止态明显拉开。 */
+.panel-host.is-diff .diff-viewport.is-dragging {
+  background: var(--sb-thumb-active);
+}
+
 /* 不需要滚动时整条收起来（`surface.ts` 的 `renderViewport` 按 `ScrollbarState.isNeeded()` 判）。
    照上游 `.monaco-scrollable-element > .invisible`：`opacity: 0` 之外还要 `pointer-events: none`
    —— 看不见但能按下是最糟的一档（按下去拖不动，还挡掉了下面的色带）。 */

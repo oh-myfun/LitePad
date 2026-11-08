@@ -1147,6 +1147,14 @@ describe("B462 · 记号槽与右缘概览条样式", () => {
     expect(viewport, "铺满色带宽度，不内缩").toContain("left: 0");
     expect(viewport, "铺满色带宽度，不内缩").toContain("right: 0");
     expect(viewport, "VS Code 的滑块没有描边/阴影").not.toContain("box-shadow");
+    // 拖动期间窗口级监听，`:active` 会随指针离开滑块失效 ⇒ 另钉一态，取 active 那颗 token。
+    const dragging = ruleBlock(
+      css(),
+      ".panel-host.is-diff .diff-viewport.is-dragging",
+      undefined,
+      true,
+    );
+    expect(dragging, "拖动态明显高于静止态").toContain("var(--sb-thumb-active)");
     expect(css(), "右栏原生纵向滚动条收成 0 宽，概览条就是那一根").toContain(
       ".panel-host.is-diff .panel-editor .cm-scroller::-webkit-scrollbar",
     );
