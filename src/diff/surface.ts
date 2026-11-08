@@ -37,6 +37,9 @@ import {
   type FoldRange,
 } from "./face";
 import { canOpenAgainstBaseline, notifyDiffBlocks, type DiffSide, type DiffSpec } from "./model";
+import { revertEdit } from "./revert";
+import { CODICONS } from "../shell/codicons";
+import { setTip } from "../shell/tooltip";
 
 /** 两栏的寻址口径（折叠态要按 `side` 各换算一份，见 `foldedFor`）。 */
 const SIDES: DiffSide[] = ["original", "modified"];
@@ -99,6 +102,19 @@ export interface DiffSurface {
   foldRanges(): Array<{ from: number; to: number }>;
   /** 落位/揭示前先把包住（或紧邻）这一行的折区展开 */
   unfoldAround(line: number): void;
+  /**
+   * 自动换行这一格现在开着没有。
+   *
+   * 与 `collapseUnchanged` 同一档：**surface 上的状态**，不进设置（默认关 —— VS Code 的
+   * `diffEditor.wordWrap` 默认继承 `editor.wordWrap`，出厂是 off）。
+   */
+  wrapEnabled(): boolean;
+  /** 两栏一起切（左栏的槽 + 右栏借用标签那颗 `comps.wrap`）。 */
+  setWrapEnabled(on: boolean): void;
+  /** 两栏同步滚动现在开着没有（默认开 —— VS Code 的差异编辑器恒同步）。 */
+  syncScrollEnabled(): boolean;
+  /** 关掉后两栏各滚各的；重新打开时立刻对齐一次。 */
+  setSyncScrollEnabled(on: boolean): void;
   /**
    * 把这一格**已经漂移**的三件事补回「差异格该有的样子」（裁决 R20 / R22 / R23，内部口）。
    *
@@ -184,9 +200,15 @@ function lineStartOf(view: EditorView, line: number): number {
  * state 若不含它，左栏就没有底色了。折叠（Task 7）也在这同一臂里
  * （`diffFace` 现在带着 `diffFoldField` + 折条出口 ⇒ 换 state 时折叠面跟着进去，不必另装）。
  *
- * ⚠️ 这一栏**不装折行**（R19，见 `createDiffSurface` 里那一手）：折行从一开始就不进来。
+ * `wrap` 是这一栏的折行槽（B461 后续轮，见 `createDiffSurface` 的 `wrapOn`）：默认空扩展 =
+ * 不折行。它与右栏那颗折行槽同步 reconfigure，两栏才可能同时折上。
  */
-function leftState(spec: DiffSpec, face: Extension, theme: Extension): EditorState {
+function leftState(
+  spec: DiffSpec,
+  face: Extension,
+  theme: Extension,
+  wrap: Extension,
+): EditorState {
   return EditorState.create({
     doc: spec.leftText(),
     extensions: [
@@ -196,6 +218,7 @@ function leftState(spec: DiffSpec, face: Extension, theme: Extension): EditorSta
       EditorState.transactionFilter.of((tr) => (tr.docChanged ? [] : tr)),
       lineNumbers(),
       theme,
+      wrap,
       face,
     ],
   });
@@ -206,13 +229,16 @@ function leftState(spec: DiffSpec, face: Extension, theme: Extension): EditorSta
  * 宽度不落设置 —— 本轮「记住宽度」不是需求。
  * @returns 解除 `pointerdown` 绑定的动作（dispose 时调用）
  */
-function attachSashDrag(originalEl: HTMLElement, sashEl: HTMLElement): () => void {
+function attachSashDrag(
+  hostEl: HTMLElement,
+  originalEl: HTMLElement,
+  sashEl: HTMLElement,
+): () => void {
   const onDown = (event: PointerEvent) => {
-    const host = sashEl.parentElement;
-    if (!host) return;
+    // 量的是**整格**的宽度：sash 现在住在 35px 的 `.diff-center` 里，父元素不再是那一格。
     // 量不到宽度（隐藏格 / jsdom 里 `getBoundingClientRect` 恒 0）就这一下不动手：
     // 拿 0 当基准会把 flex-basis 写成 NaN%，那一格从此不受控。
-    const total = host.getBoundingClientRect().width;
+    const total = hostEl.getBoundingClientRect().width;
     if (total <= 0) return;
     const startX = event.clientX;
     const startShare = (originalEl.getBoundingClientRect().width / total) * 100;
@@ -253,12 +279,21 @@ export function createDiffSurface(
   hostEl.classList.add("is-diff");
   const originalEl = document.createElement("div");
   originalEl.className = "diff-original";
+  // 中间那一列 = VS Code 的 `DiffEditorGutter`（35px）：分割线住在它里面，差异块的
+  // 「回退」按钮也绝对定位在这一列上。为什么要一整列而不是把按钮挂在某一次栏上：
+  // VS Code 的 gutter 是两栏**之间**的独立区域，item 的坐标只跟行高走，不跟哪一栏的
+  // 内边距走；单独一列才量得准、也不会被某一栏的横向滚动带走。
+  const centerEl = document.createElement("div");
+  centerEl.className = "diff-center";
   const sashEl = document.createElement("div");
   sashEl.className = "diff-sash";
+  const revertLayerEl = document.createElement("div");
+  revertLayerEl.className = "diff-reverts";
+  centerEl.append(sashEl, revertLayerEl);
   // `.diff-original` 恒为 hostEl 的第一个子节点（排在 `.panel-editor` 之前）：
   // 左右次序由 DOM 决定，`.panel-host.is-diff` 只管把这一格摊成 row-flex。
   hostEl.insertBefore(originalEl, hostEl.firstChild);
-  hostEl.insertBefore(sashEl, originalEl.nextSibling);
+  hostEl.insertBefore(centerEl, originalEl.nextSibling);
 
   // 右缘 30px 的差异概览（VS Code 的 `diffOverview`）：左列原稿（删除色）、右列新稿（新增色），
   // 外加一颗视口滑块。放在 `.panel-editor` 之后 ⇒ 是 host 的最后一个 flex 子项，不吃正文宽度。
@@ -278,6 +313,8 @@ export function createDiffSurface(
   const leftFace = new Compartment();
   /** 左栏主题的槽（R22 取现值 + R23-2 换主题时 `reconfigure` 换掉，不重建整颗 state）。 */
   const themeSlot = new Compartment();
+  /** 左栏折行的槽：开关一拨只换槽值，不重建整颗 state（与右栏 `comps.wrap` 同一口径）。 */
+  const leftWrap = new Compartment();
   /** 右栏那颗 view（`Panel.view` 的本身）：装上/摘掉这一臂都按它寻址，不跟着 `panel.view` 漂。 */
   const right = panel.view?.view ?? null;
   /**
@@ -305,33 +342,38 @@ export function createDiffSurface(
   let lastTheme: Extension = themeOf();
 
   /**
-   * 折行（R19：差异格两栏一律不折行）。
+   * 折行开关（B461 后续轮，用户点名「自动换行开关不能缺」）。
    *
-   * 为什么必须关：设计稿 ⑥ 的头条是**两侧行行对齐**。折行一开，一个文档行就不止一个视觉行，
-   * 而两栏宽度各自不同（还可拖）⇒ 同一行长文在两栏折出的行数天然不等，两栏的高度从第一条长行
-   * 起就分家 —— 跳块（Task 4）与肉眼比对同时错位。三条推论：
-   *   · **不给左栏镜像装上折行**（两栏宽度不同 ⇒ 「两边都折」永远不可能行行对齐）；
-   *   · **不做** VS Code 那套按对侧实测行高来对齐的机制（B398 用户定过「参考 vscode，
-   *     不要弄这么复杂」）；
-   *   · 关折行之后「一行 = 一个视觉行」严格成立 ⇒ `face.ts` 里 `count * view.defaultLineHeight`
-   *     那颗占位高度才是准的。
-   * 代价明写：差异格里长行要横向滚 —— 这是取舍，不是遗漏。
+   * VS Code 的口径：`diffEditor.wordWrap` 默认 `"inherit"`，而 `editor.wordWrap` 默认 off ⇒
+   * **出厂状态差异格不折行**；入口是 `View: Toggle Word Wrap` / `Alt+Z`，不是差异标题栏上的键。
+   * 这里沿用「默认关」，但把开关做成**这一格的运行时状态**（与 `foldOn` 同一档，不进设置）：
+   * 本应用的全局 `word_wrap` 默认是开，若把 diff 做成 inherit，出厂就会折行，反而偏离 VS Code。
    *
-   * 落点：那颗 wrap Compartment 在右栏的实例上，与设置项**同一个出口**（`applyWrapToTabs` 走的
-   * 就是它）⇒ attach 关掉、dispose 还回**设置**里的那一颗。
+   * 两栏各有自己的折行槽：左栏那颗 `leftWrap` 随 state 建（`leftState` 的第四参），右栏借用
+   * 标签自己的 `comps.wrap`（`applyWrapToTabs` 的同一个出口）。之所以不另给右栏配一颗：
+   * CM6 的 `EditorView.lineWrapping` 叠两次虽然无害，但「哪一颗说了算」会变成两处真相。
    *
    * ⚠️ 还值为什么读 `isWrap` 而不是读 attach 时那份现值（裁决 R23-1）：`switchTab` 切出时会把
-   * **当前 view state** 回写进 `tab.state`（`src/tabs/lifecycle.ts`），被差异格强制关掉的那一发
+   * **当前 view state** 回写进 `tab.state`（`src/tabs/lifecycle.ts`），被差异格关掉的那一发
    * 就这样漏进标签快照；下一次 attach 若从 state 读「他原来开着吗」，读到的是 `[]` —— 用户的
    * 自动换行设置在这个标签上就再也回不来了。设置的权威只有 `isWrap` 那一颗。
+   *
+   * 已知限制（打开折行之后才成立）：`face.ts` 的占位块高度按「整数行 × 默认行高」估，折行让
+   * 一个文档行变成多个视觉行 ⇒ 缺口处两栏的视觉行不再严格对齐，同步滚动只能按滚动比例映射。
+   * 这是 VS Code 用实测行高的 alignment view zone 解决的那件事，本项目按 B398 的裁决不做。
    */
+  let wrapOn = false;
   let wrapComp: Compartment | null = null;
   if (right && comps) {
     // 读出 `undefined` = 这颗 Compartment 根本不在那份配置里（面板显示的不是这张标签的 state）
     // ⇒ 这一手整段跳过：给配置里没有的 Compartment 发 reconfigure 等于凭空往 state 里装一颗。
     if (comps.wrap.get(right.state) !== undefined) wrapComp = comps.wrap;
   }
-  const wrapOff = wrapComp ? [wrapComp.reconfigure([])] : [];
+  /** 折行值 → 那颗槽的 reconfigure 效果（两栏共用同一份口径）。 */
+  const wrapTo = (on: boolean): StateEffect<unknown>[] => {
+    const value = on ? EditorView.lineWrapping : [];
+    return wrapComp ? [wrapComp.reconfigure(value)] : [];
+  };
   // ⚠️ **函数**而不是在 attach 那一刻算好的数组：这一发在 dispose 时才落地，而 `isWrap` 可能在
   // 差异面挂着期间被用户改掉（那颗设置 setter 会先 `applyWrapToTabs` 再 `refreshDiffSurfaces`）。
   // 提前捕获就等于还回一份过期值 —— 正是 R23-1 要避免的两口径病，只是换了个方向。
@@ -364,7 +406,7 @@ export function createDiffSurface(
         })
       : [];
   stored = computeBlocks();
-  const detachSash = attachSashDrag(originalEl, sashEl);
+  const detachSash = attachSashDrag(hostEl, originalEl, sashEl);
 
   /** 右栏那颗 view 的 state 回写进标签快照（与 `handleUpdate` / `lifecycle` 同一个寻址）。 */
   const writeBackRight = (): void => {
@@ -463,8 +505,9 @@ export function createDiffSurface(
     right?.dispatch({ effects: foldOf("modified") });
     writeBackRight();
     // 概览条的色块吃块表 + 折叠态，与两臂同一次收口；右栏的 scrollTop 可能刚被折条改掉，
-    // 视口滑块顺便复算一帧。
+    // 视口滑块顺便复算一帧。中间那列的按钮位置同样只跟块表/折叠走 ⇒ 一起重画。
     renderOverview();
+    renderReverts();
   };
 
   /**
@@ -633,7 +676,12 @@ export function createDiffSurface(
   ];
   const left = new EditorView({
     parent: originalEl,
-    state: leftState(current, leftFace.of(leftArm()), themeSlot.of(lastTheme)),
+    state: leftState(
+      current,
+      leftFace.of(leftArm()),
+      themeSlot.of(lastTheme),
+      leftWrap.of(wrapOn ? EditorView.lineWrapping : []),
+    ),
   });
 
   /**
@@ -675,6 +723,15 @@ export function createDiffSurface(
     }
   };
 
+  /**
+   * 视口滑块（B461 后续轮）：几何照 VS Code `ScrollbarState` 的取值，不用百分比。
+   *
+   * 上游（`scrollbarState.ts`）：
+   *   sliderSize = round(max(MINIMUM_SLIDER_SIZE=20, floor(visible² / scrollSize)))
+   *   ratio      = (representable - sliderSize) / (scrollSize - visible)
+   *   position   = round(scrollTop × ratio)
+   * 百分比写法在长文档里会缩成 1px 的线，而 VS Code 的下限是 20px —— 那正是「拖得住」的保证。
+   */
   const renderViewport = (): void => {
     const scroller = right?.scrollDOM;
     if (!scroller) return;
@@ -683,11 +740,19 @@ export function createDiffSurface(
       viewportEl.style.height = "0";
       return;
     }
-    const height = Math.max((clientHeight / scrollHeight) * 100, 2);
-    const span = Math.max(scrollHeight - clientHeight, 0);
-    const top = span > 0 ? (scrollTop / span) * Math.max(100 - height, 0) : 0;
-    viewportEl.style.top = `${top}%`;
-    viewportEl.style.height = `${height}%`;
+    // 不需要滚动时滑块铺满整条（`getSliderSize` 的 representableSize 那一支）。
+    if (scrollHeight <= clientHeight) {
+      viewportEl.style.top = "0px";
+      viewportEl.style.height = `${clientHeight}px`;
+      return;
+    }
+    const height = Math.round(
+      Math.max(20, Math.floor((clientHeight * clientHeight) / scrollHeight)),
+    );
+    const ratio = (clientHeight - height) / (scrollHeight - clientHeight);
+    const top = Math.round(scrollTop * ratio);
+    viewportEl.style.top = `${top}px`;
+    viewportEl.style.height = `${height}px`;
   };
 
   /** 概览条重画：批块、折叠、主题换壳都从这一颗口子收口（调用方统一在 `refreshArms`）。 */
@@ -729,12 +794,54 @@ export function createDiffSurface(
     e.preventDefault();
     scroller.scrollTop += e.deltaY;
   };
-  const onRightScroll = (): void => renderViewport();
+  /**
+   * 两栏同步滚动（B461 后续轮，默认开）。
+   *
+   * VS Code 的差异编辑器**恒同步**，没有用户开关；本项目做成开关，是为了在两栏视觉行对不齐
+   * （折行开着）时能手动脱钩。映射取**滚动比例**而不是直接抄 `scrollTop`：关折行时两栏高度由
+   * 占位块补齐、本来相等，两种写法结果一致；开折行时高度不等，比例至少保证「滚到 30% ≈ 对侧 30%」。
+   * `mirroring` 是防回声闸：写 scrollTop 会异步触发对方那一路的 scroll，不收口会差 1px 抖动。
+   */
+  let syncOn = true;
+  let mirroring = false;
+  const mirrorScroll = (from: EditorView | null, to: EditorView | null): void => {
+    if (!syncOn || mirroring || !from || !to) return;
+    const a = from.scrollDOM;
+    const b = to.scrollDOM;
+    const aMax = Math.max(a.scrollHeight - a.clientHeight, 0);
+    const bMax = Math.max(b.scrollHeight - b.clientHeight, 0);
+    if (aMax <= 0) return;
+    mirroring = true;
+    b.scrollTop = (a.scrollTop / aMax) * bMax;
+    // scroll 事件异步到达；下一帧再放开，才不会把自己的回声当成用户滚动。
+    requestAnimationFrame(() => {
+      mirroring = false;
+    });
+  };
+  const setSyncScrollEnabled = (on: boolean): void => {
+    if (syncOn === on) return;
+    syncOn = on;
+    // 打开时立刻对齐一次，否则要等用户滚一下才「生效」。
+    if (on) mirrorScroll(right, left);
+  };
+  const onRightScroll = (): void => {
+    renderViewport();
+    mirrorScroll(right, left);
+    renderReverts();
+  };
+  const onLeftScroll = (): void => mirrorScroll(left, right);
+  /** 点中间列的空白 = 把焦点交给右栏（VS Code 的 gutter 也是这个语义）。 */
+  const onCenterDown = (e: MouseEvent): void => {
+    if ((e.target as HTMLElement | null)?.closest(".diff-revert")) return;
+    right?.focus();
+  };
   overviewEl.addEventListener("pointerdown", onOverviewDown);
   overviewEl.addEventListener("pointermove", onOverviewMove);
   overviewEl.addEventListener("pointerup", onOverviewUp);
   overviewEl.addEventListener("pointercancel", onOverviewUp);
   overviewEl.addEventListener("wheel", onOverviewWheel, { passive: false });
+  centerEl.addEventListener("mousedown", onCenterDown);
+  left.scrollDOM.addEventListener("scroll", onLeftScroll, { passive: true });
   right?.scrollDOM.addEventListener("scroll", onRightScroll, { passive: true });
   const detachOverview = (): void => {
     overviewEl.removeEventListener("pointerdown", onOverviewDown);
@@ -742,6 +849,8 @@ export function createDiffSurface(
     overviewEl.removeEventListener("pointerup", onOverviewUp);
     overviewEl.removeEventListener("pointercancel", onOverviewUp);
     overviewEl.removeEventListener("wheel", onOverviewWheel);
+    centerEl.removeEventListener("mousedown", onCenterDown);
+    left.scrollDOM.removeEventListener("scroll", onLeftScroll);
     right?.scrollDOM.removeEventListener("scroll", onRightScroll);
     overviewEl.remove();
   };
@@ -767,10 +876,37 @@ export function createDiffSurface(
    */
   const resetLeftDoc = (): void => {
     lastTheme = themeOf();
-    left.setState(leftState(current, leftFace.of(leftArm()), themeSlot.of(lastTheme)));
+    left.setState(
+      leftState(
+        current,
+        leftFace.of(leftArm()),
+        themeSlot.of(lastTheme),
+        leftWrap.of(wrapOn ? EditorView.lineWrapping : []),
+      ),
+    );
     syncBlocks();
   };
 
+  /**
+   * 折行开关落到两栏（`Alt+Z` 与工具栏那颗键都走这一处）。
+   *
+   * 打开后视觉行数变了 ⇒ 概览轴与中间按钮要重算；块表本身不变。`lineBlock` 的几何在下一帧
+   * measure 后才更新，所以再补一帧位置（否则第一次打开时按钮会停在旧行高上）。
+   */
+  const setWrapEnabled = (on: boolean): void => {
+    if (wrapOn === on) return;
+    wrapOn = on;
+    left.dispatch({ effects: leftWrap.reconfigure(on ? EditorView.lineWrapping : []) });
+    if (right) {
+      right.dispatch({ effects: wrapTo(on) });
+      writeBackRight();
+    }
+    refreshArms();
+    requestAnimationFrame(() => {
+      renderOverview();
+      renderReverts();
+    });
+  };
   /** 右栏光标行（权威侧 = 右栏，设计稿 ⑩·2：左栏有选区也不参与）。 */
   const rightCaretLine = (): number => caretLineOf("modified");
 
@@ -855,6 +991,93 @@ export function createDiffSurface(
     }, DIFF_REFRESH_MS);
   };
 
+  /**
+   * 中间那列的「回退此块」按钮（VS Code `DiffEditorGutter` 的 hunk toolbar）。
+   *
+   * 位置：块在**右栏**的视觉中心（`documentTop + lineBlock.top + height / 2`），夹在这一列的
+   * 视口内；块完全在视口外就不建（上游的 `EditorGutter` 也只渲染当前可见的那些 item）。
+   * 显隐交给 CSS：默认 `opacity: 0`，`.diff-center:hover` 或 `.is-current`（光标所在块）时显示 ——
+   * 对应上游的 hover + `showAlways` 两档。
+   */
+  const renderReverts = (): void => {
+    revertLayerEl.replaceChildren();
+    if (!right) return;
+    const column = centerEl.getBoundingClientRect();
+    if (column.height <= 0) return;
+    const active = activeIndex();
+    const ITEM_H = 20;
+    for (let i = 0; i < stored.length; i++) {
+      const b = stored[i];
+      const pos = lineStartOf(right, landingLine(b, "modified"));
+      const block = right.lineBlockAt(pos);
+      const centerY = right.documentTop + block.top + block.height / 2 - column.top;
+      // 块在视口上下各留一个 item 的余量之外 ⇒ 这一颗不建。
+      if (centerY < -ITEM_H || centerY > column.height + ITEM_H) continue;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "diff-revert";
+      if (i === active) btn.classList.add("is-current");
+      btn.innerHTML = CODICONS.arrowRight;
+      // 提示走全应用统一的那一套（原生 `title` 由系统绘制、不吃主题，B2xx 起禁用）。
+      setTip(btn, "回退此块");
+      // 夹在视口里（与上游 EditorGutter 一样，item 不跑出那一列）。
+      btn.style.top = `${Math.min(Math.max(centerY - ITEM_H / 2, 0), Math.max(column.height - ITEM_H, 0))}px`;
+      // mousedown 只掐掉焦点转移：点这颗键不该清掉编辑器里的选区（上游 button 同款处理）。
+      btn.addEventListener("mousedown", (e) => e.preventDefault());
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        revertAt(i, b.modifiedStart);
+      });
+      revertLayerEl.appendChild(btn);
+    }
+  };
+
+  /**
+   * 点下「回退」：把这一块的原稿写回右栏（边界算术在 `revert.ts`，可单测）。
+   *
+   * 点之前若还有防抖中的重算 ⇒ 先按现在的正文重算一遍，再按**行号**重新认块：按钮的序号是
+   * 渲染那一刻的，用户打了一个字之后序号可能已经变了，照旧序号改文档会改错行。
+   */
+  const revertAt = (index: number, wantStart: number): void => {
+    if (!right) return;
+    if (syncTimer !== null) {
+      cancelSync();
+      syncBlocks();
+    }
+    if (!stored[index] || stored[index].modifiedStart !== wantStart) {
+      index = stored.findIndex((b) => b.modifiedStart === wantStart);
+      if (index < 0) return;
+    }
+    const edit = revertEdit(current.leftText(), right.state.doc.toString(), stored[index]);
+    if (!edit) return;
+    // 普通文档编辑：撤销栈、脏标记、防抖重算全部照旧，没有第二套写入机制。
+    right.dispatch({ changes: edit });
+    writeBackRight();
+    syncBlocks();
+    // 行高/折行层的几何在下一帧 measure 后才更新：补一帧，剩下的按钮才不会停在旧位置上。
+    requestAnimationFrame(() => renderReverts());
+    right.focus();
+  };
+
+  /**
+   * 布局落地之后再画一次（首帧 / 换面板 / 拖分屏 / 放大还原）。
+   *
+   * `createDiffSurface` 末尾那一发 `refreshArms()` 是同步跑的：那一刻这一格可能还没进文档，
+   * `scrollDOM.clientHeight` 与 `.diff-center` 的 `getBoundingClientRect()` 都量到 0 ⇒ 概览滑块
+   * 被收成 0 高、回退键一颗都不建，此后只有滚动或换选区才会补画（真机截图抓到过：首屏中间列空白）。
+   * 拖分屏同理 —— 两个几何都按像素算，尺寸不变就不会自己更正。
+   *
+   * jsdom 没有 ResizeObserver（与 `shell/findbar.ts` 同一口径）⇒ 整段跳过；测试路径靠显式调用。
+   */
+  let layoutRO: ResizeObserver | null = null;
+  if (typeof ResizeObserver === "function") {
+    layoutRO = new ResizeObserver(() => {
+      renderOverview();
+      renderReverts();
+    });
+    layoutRO.observe(centerEl);
+  }
+
   /** 右栏那一臂的内容：装饰 + 折条出口 + 键入落点（`updateListener` 是 state facet，只能并进来）。 */
   const rightArm = (): Extension => [
     diffFace("modified", () => stored),
@@ -871,6 +1094,8 @@ export function createDiffSurface(
       // 两颗都听：`unfoldUnderCaret` 一进来就按 `foldOn` 早退，关着折叠时键入那一头分文不花；
       // 开着折叠时它只读几段行号与一次 `lineAt`，真正的重算仍旧排在防抖那一发（R24 不动）。
       if (update.selectionSet || update.docChanged) unfoldUnderCaret();
+      // 光标走进另一块 ⇒ 中间那列的高亮跟着走（VS Code 的 `showAlways` 是同一口径）。
+      if (update.selectionSet) renderReverts();
       // 左栏没有这一颗监听：那颗 view 的文档被硬闸钉住、不会自己动，光标停进折区也只是
       // 「选区看不见」（读不动的栏，打字那一条害处不成立）⇒ 它那一头由 `guardCaretsUnderFolds`
       // （两颗开关入口）与 `unfoldAroundLines`（落位）兜住。
@@ -878,13 +1103,13 @@ export function createDiffSurface(
   ];
 
   if (right) {
-    // 一发事务里两件一起办：关掉这一栏的折行（R19）+ 把右栏那一槽换成本 surface 的臂。
+    // 一发事务里两件一起办：折行归位（默认关，见 `wrapOn`）+ 把右栏那一槽换成本 surface 的臂。
     // 槽已在配置里 ⇒ `reconfigure`（顺带把上一颗 surface 留在快照里的旧 provider 顶掉，
     // 见 `rightFaceSlot` 的注释）；第一次挂 ⇒ `appendConfig` 把槽本身带进配置。
     const slotPresent = rightFaceSlot.get(right.state) !== undefined;
     right.dispatch({
       effects: [
-        ...wrapOff,
+        ...wrapTo(wrapOn),
         ...(slotPresent
           ? [rightFaceSlot.reconfigure(rightArm())]
           : [StateEffect.appendConfig.of(rightFaceSlot.of(rightArm()))]),
@@ -902,10 +1127,14 @@ export function createDiffSurface(
    * 每次刷新都跑，空转必须是便宜的。
    */
   const reassert = (): void => {
-    // ① 折行：只有被重新打开时才压回去（设置那一发刚落地时 `applyWrapToTabs` 之后就是这一手）。
-    if (right && wrapComp && comps && comps.wrap.get(right.state) === EditorView.lineWrapping) {
-      right.dispatch({ effects: wrapOff });
-      writeBackRight();
+    // ① 折行：设置页那一发（`applyWrapToTabs`）会改同一颗槽 ⇒ 把它拉回这一格的开关值。
+    //   判据是「现值 ≠ wrapOn」，关着也要补（用户可能在设置页把折行打开，而这一格是关）。
+    if (right && wrapComp && comps) {
+      const wrapped = comps.wrap.get(right.state) === EditorView.lineWrapping;
+      if (wrapped !== wrapOn) {
+        right.dispatch({ effects: wrapTo(wrapOn) });
+        writeBackRight();
+      }
     }
     // ② 主题：右栏换了色，左栏必须吃同一颗 —— 两半的 18% 改动色叠在不同基色上就不是同一个颜色。
     const themeNow = themeOf();
@@ -938,6 +1167,10 @@ export function createDiffSurface(
       // 立刻重算（不等防抖）：这是用户点下来的一发动作，不是键入。
       syncBlocks();
     },
+    wrapEnabled: () => wrapOn,
+    setWrapEnabled,
+    syncScrollEnabled: () => syncOn,
+    setSyncScrollEnabled,
     reassert,
     dispose: () => {
       cancelSync();
@@ -948,13 +1181,15 @@ export function createDiffSurface(
       // 右栏那颗 view **不随旁路销毁**（它是那份文档本身）⇒ 这一臂必须精准摘掉，
       // 否则底色与占位块会留在一张普通编辑器标签上。槽值清成空 ⇒ 键入监听与两臂装饰一起走。
       // 那颗 view 已经 destroy 过的话这一发是空转（CM6 内部的 `destroyed` 分支），不抛错。
-      // 折行跟着还回**设置**里的那一颗（R19 + R23-1：读 `isWrap`，不读被同形回写污染的快照）。
+      // 折行跟着还回**设置**里的那一颗（B461 后续轮 + R23-1：读 `isWrap`，不读被同形回写污染的快照）。
       right?.dispatch({ effects: [rightFaceSlot.reconfigure([]), ...wrapBack()] });
       detachSash();
       detachOverview();
+      layoutRO?.disconnect();
       left.destroy();
       originalEl.remove();
-      sashEl.remove();
+      // 分割线与按钮层都在这一列里，拆它一并带走。
+      centerEl.remove();
       hostEl.classList.remove("is-diff");
       if (panel.diffSurface === surface) panel.diffSurface = null;
     },

@@ -96,10 +96,79 @@
   overflow: auto;
 }
 
+/* 中间列 = VS Code 的 `DiffEditorGutter`（`DEFAULT_DIFF_EDITOR_GUTTER_WIDTH = 35`）：
+   每个差异块一颗「回退」按钮，分割线也从这一列里走。尺寸照上游：
+     · item 34×20、圆角 4px（`gutterFeature.ts` 的 `width: 34, height: 20` + style.css 的
+       `.actions-container { border-radius: 4px }`）；
+     · 中线 2px（style.css 的 `.background { border-left: 2px solid ... }`）。
+   分割线不再是 flex 兄弟而住在这一列里：那一列是两栏**之间**的独立区域（上游同结构），
+   把线留在外面会变成第三根 flex 项，35px 的口径就对不上了。 */
+.diff-center {
+  position: relative;
+  flex: 0 0 35px;
+  min-width: 0;
+}
+
+.diff-center::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  border-left: 2px solid var(--border);
+  pointer-events: none;
+}
+
+/* 按钮层：铺满整列，按钮各自按右栏的行位置绝对定位（见 `surface.ts` 的 `renderReverts`）。 */
+.diff-reverts {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* 一块一颗：默认隐形，中间列悬停或光标所在块才现形（上游 item 的 `opacity: 0` +
+   `showAlways` / hover 两档，过渡时长也照 style.css 的 0.7s / 0.1s）。 */
+.diff-revert {
+  position: absolute;
+  left: 50%;
+  width: 34px;
+  height: 20px;
+  margin-left: -17px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  color: var(--fg-muted);
+  opacity: 0;
+  transition: opacity 0.7s;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.diff-center:hover .diff-revert,
+.diff-revert.is-current {
+  opacity: 1;
+  transition-duration: 0.1s;
+}
+
+.diff-revert:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  color: var(--fg);
+}
+
 /* 分割线只管**一栏之内**（splitview 那套 sash 管的是面板树，两者不复用）。
-   4px 与 B383 定稿的分屏线同宽，hover 才上色：常态要隐形，不抢内容的注意力。 */
+   4px 与 B383 定稿的分屏线同宽，hover 才上色：常态要隐形，不抢内容的注意力。
+   现在它是 `.diff-center` 的绝对定位子元素（贴右缘），不再是 flex 项。 */
 .diff-sash {
-  flex: 0 0 4px;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 4px;
+  z-index: 1;
   cursor: col-resize;
   background: transparent;
 }
@@ -151,21 +220,25 @@
   background-color: color-mix(in srgb, var(--diff-del) 18%, transparent);
 }
 
-/* `+` / `−` 记号槽：VS Code 把记号画在行号**左侧**的 line decorations margin 里。
-   CM6 的 gutter 摆在行号右侧 ⇒ 用 flex 的 `order` 挪到最左（只影响视觉次序，量宽仍按 DOM）。 */
+/* `+` / `−` 记号槽：VS Code 的 `linesDecorationsClassName` 落在**行号右侧**的 line decorations
+   栏（`EditorLayoutInfo` 的层次：glyphMarginLeft → lineNumbersLeft → decorationsLeft → contentLeft）。
+   CM6 的 gutter 次序就是 DOM 次序 ⇒ 不再用 `order` 挪位；宽度取 `lineDecorationsWidth` 的默认 10px。 */
 .panel-host.is-diff .cm-diffSigns {
-  order: -1;
   min-width: 10px;
 }
 
+/* 上游的记号元素自己是 flex（`.insert-sign { display: flex; align-items: center }`），
+   且**没有**水平居中 —— 这里照搬：去掉原来那句 `justify-content: center`。 */
 .panel-host.is-diff .cm-diffSigns .cm-gutterElement {
   display: flex;
   align-items: center;
-  justify-content: center;
 }
 
-/* 字号 / 透明度照 VS Code 的 `insert-sign` / `delete-sign`（11px、0.7）。 */
+/* 字号 / 透明度照 VS Code 的 `insert-sign` / `delete-sign`（11px、0.7），无背景、无圆角。
+   `.codicon` 自带 `font: 16px/1 codicon`（0-1-0），这条 0-3-0 的选择器才压得住那颗 16px。 */
 .panel-host.is-diff .diff-sign {
+  display: flex;
+  align-items: center;
   font-size: 11px;
   line-height: 1;
   opacity: 0.7;
@@ -274,12 +347,17 @@
   background: color-mix(in srgb, var(--diff-add) 45%, transparent);
 }
 
-/* 视口滑块 = 滚动条滑块（VS Code 的 `.diffViewport` 同样吃 `scrollbarSlider.*` 那三档）。 */
+/* 视口滑块 = 滚动条滑块（VS Code 的 `.diffViewport` 同样吃 `scrollbarSlider.*` 那三档）。
+   top / height 由 `surface.ts` 按 `ScrollbarState` 的像素公式写 inline（最小 20px）。
+   ⚠️ 几何照抄 VS Code，但**圆角抄不到**：上游 `.diffViewport` 没有任何 `border-radius`（纯直角）。
+   这里取 6px，与本项目滚动条滑块（`::-webkit-scrollbar-thumb`）同一口径 —— 用户要的是
+   「圆角矩形」，仓库里唯一的滑块圆角就是这一颗。 */
 .panel-host.is-diff .diff-viewport {
   position: absolute;
   left: 0;
   right: 0;
   z-index: 1;
+  border-radius: 6px;
   background: var(--sb-thumb);
 }
 

@@ -71,7 +71,7 @@ describe("B461 · 差异步进两条命令进表（Task 4 Step 5/6）", () => {
       keys: ["Shift+Alt+F5"],
     });
     // 表里 `diff.` 打头的命令到此为止：Task 4 那两条步进 + Task 5 的 A 档入口 +
-    // Task 8 那六条动作键（标题栏四颗与「⋯」里两条各有一条命令，交换/刷新也在这一族）。
+    // Task 8 那几条动作键 + 后续轮的换行/同步滚动两颗开关。
     // 多出一条没人认领的就要发红 —— 键位表里躺着一条没人分发的命令 = 命令面板里点不动的死键。
     expect(COMMANDS.filter((c) => c.id.startsWith("diff.")).map((c) => c.id)).toEqual([
       "diff.nextChange",
@@ -82,6 +82,8 @@ describe("B461 · 差异步进两条命令进表（Task 4 Step 5/6）", () => {
       "diff.collapseAll",
       "diff.showAll",
       "diff.swapSides",
+      "diff.toggleWrap",
+      "diff.toggleSyncScroll",
       "diff.refresh",
     ]);
   });
@@ -533,7 +535,14 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
       panelId: 1,
       active: true,
       tabs: [],
-      diff: { ignoreTrimWhitespace: true, collapseUnchanged: false, swappable: false, ...over },
+      diff: {
+        ignoreTrimWhitespace: true,
+        collapseUnchanged: false,
+        wrap: false,
+        syncScroll: true,
+        swappable: false,
+        ...over,
+      },
     };
   }
 
@@ -677,9 +686,16 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
   const labelsOf = (items: MenuItem[]): Array<string | undefined> =>
     items.filter((i) => !i.separator).map((i) => i.label);
 
-  it("B461 · 差异档图标键就四颗：上/下差异（arrow-up/arrow-down）、忽略首尾空白、折叠未改动区（map）", () => {
+  it("B461 · 差异档图标键六颗：上/下差异、忽略首尾空白、折叠未改动区、自动换行、同步滚动", () => {
     const { root } = mountOps(diffRenderData({ ignoreTrimWhitespace: true }));
-    expect(iconIds(root)).toEqual(["arrow-up", "arrow-down", "whitespace", "map"]);
+    expect(iconIds(root)).toEqual([
+      "arrow-up",
+      "arrow-down",
+      "whitespace",
+      "map",
+      "word-wrap",
+      "sync",
+    ]);
     // 键位提示取自 `keyHint(id)`（B389 的纪律：字面量只在 keymap.ts 一处）⇒ 用例也按那颗取。
     expect(opByIcon(root, "arrow-up").getAttribute("aria-label")).toBe(
       `上一个差异（${keyHint("diff.prevChange", {})}）`,
@@ -730,14 +746,22 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     // 生产里凑不出来的组合）⇒ 那一条由下面「渲染快照读的是 surface 现值」那条用例钉。
   });
 
-  it("B461 · 四颗都转调 onDiffAction(panelId, 动作)，动作与图标一一对上", () => {
+  it("B461 · 六颗都转调 onDiffAction(panelId, 动作)，动作与图标一一对上", () => {
     const { root, fired } = mountOps({ ...diffRenderData({}), panelId: 3 });
-    for (const id of ["arrow-up", "arrow-down", "whitespace", "map"]) opByIcon(root, id).click();
-    expect(fired.mock.calls.map((c) => c[1])).toEqual(["prev", "next", "whitespace", "collapse"]);
+    for (const id of ["arrow-up", "arrow-down", "whitespace", "map", "word-wrap", "sync"])
+      opByIcon(root, id).click();
+    expect(fired.mock.calls.map((c) => c[1])).toEqual([
+      "prev",
+      "next",
+      "whitespace",
+      "collapse",
+      "wrap",
+      "syncScroll",
+    ]);
     expect(
       fired.mock.calls.map((c) => c[0]),
       "panelId 必须是这颗键自己那一格（点左格的键不许把右格的动作拽过来，B228 同形）",
-    ).toEqual([3, 3, 3, 3]);
+    ).toEqual([3, 3, 3, 3, 3, 3]);
   });
 
   it("B461 · 渲染快照那三份读的是 surface 现值；旁路拆掉 ⇒ 一颗键都不给", () => {
@@ -749,6 +773,8 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     expect(data.diff).toEqual({
       ignoreTrimWhitespace: true,
       collapseUnchanged: true,
+      wrap: false,
+      syncScroll: true,
       swappable: false,
     });
     expect(data.md, "差异那张与原标签同 docId ⇒ isMdTab 天然为真，必须另外问一句 kind").toBe(false);
@@ -756,14 +782,17 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     surfaceMod.disposeDiffSurface(m.panel);
     expect(
       render.panelDataOf(m.panel).diff,
-      "没有旁路就没有那四颗键（不是画出来点不动）",
+      "没有旁路就没有那几颗键（不是画出来点不动）",
     ).toBeUndefined();
   });
 
-  it("B461 · 「⋯」里那三条：交换左右 / 全部折叠 / 刷新，没有 Diff View 子菜单；A 档交换置灰", () => {
+  it("B461 · 「⋯」里那几条：交换左右 / 全部折叠 / 换行 / 同步滚动 / 刷新，没有 Diff View 子菜单；A 档交换置灰", () => {
     const files = mountDiffPanel("files");
     const items = groupMenuOf(files.panel);
     expect(labelsOf(items)).toEqual(expect.arrayContaining(["交换左右", "全部折叠", "刷新"]));
+    // 两颗纯开关带 `checked`，且出厂值照 VS Code：换行关、同步滚动开。
+    expect(items.find((i) => i.label === "自动换行")).toMatchObject({ checked: false });
+    expect(items.find((i) => i.label === "同步滚动")).toMatchObject({ checked: true });
     expect(labelsOf(items), "④·7：并排⇄内联既不是图标键也不给子菜单").not.toContain("Diff View");
     expect(items.find((i) => i.label === "交换左右")).toMatchObject({ disabled: false });
 
@@ -857,7 +886,14 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
   it("B461 · applyDiffAction 落到 surface 的真状态，末尾只刷那一格的操作区", () => {
     const m = mountDiffPanel("baseline");
     const { root } = mountOps(render.panelDataOf(m.panel));
-    expect(iconIds(root)).toEqual(["arrow-up", "arrow-down", "whitespace", "map"]);
+    expect(iconIds(root)).toEqual([
+      "arrow-up",
+      "arrow-down",
+      "whitespace",
+      "map",
+      "word-wrap",
+      "sync",
+    ]);
     // 缺省不忽略（Task 3 的口径，与 B458 那 4px 一列一致）⇒ 这颗键进门就是按下态。
     expect(opByIcon(root, "whitespace").getAttribute("aria-pressed")).toBe("true");
 
@@ -876,6 +912,21 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     expect(m.s.foldRanges()).toEqual([]);
     actions.applyDiffAction(0, "collapseAll");
     expect(m.s.foldRanges().length).toBeGreaterThan(0);
+
+    // 后续轮的两颗开关：默认值照 VS Code（换行关、同步滚动开），点一下真翻面。
+    expect(m.s.wrapEnabled(), "VS Code 的 diffEditor.wordWrap 出厂是 off").toBe(false);
+    expect(opByIcon(root, "word-wrap").getAttribute("aria-pressed")).toBe("false");
+    actions.applyDiffAction(0, "wrap");
+    expect(m.s.wrapEnabled()).toBe(true);
+    expect(opByIcon(root, "word-wrap").getAttribute("aria-pressed")).toBe("true");
+    actions.applyDiffAction(0, "wrap");
+    expect(m.s.wrapEnabled()).toBe(false);
+
+    expect(m.s.syncScrollEnabled(), "VS Code 的差异编辑器恒同步").toBe(true);
+    expect(opByIcon(root, "sync").getAttribute("aria-pressed")).toBe("true");
+    actions.applyDiffAction(0, "syncScroll");
+    expect(m.s.syncScrollEnabled()).toBe(false);
+    expect(opByIcon(root, "sync").getAttribute("aria-pressed")).toBe("false");
 
     const caretLine = (): number => {
       const v = m.panel.view!.view;

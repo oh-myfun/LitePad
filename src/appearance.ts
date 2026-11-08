@@ -57,8 +57,9 @@ export function applyWrapToTabs(wrap: boolean): void {
       tab.state = tab.state.update({ effects: effect }).state;
     }
   }
-  // B461（裁决 R19 / R23-2）：差异格两栏一律不折行 —— 行行对齐是设计稿 ⑥ 的头条，而这一手
-  // 重配的正是同一颗 Compartment ⇒ 旁路还挂着时它会把右半重新打开、只有左半不跟着折。
+  // B461：差异格有自己的折行开关（默认关，见 `surface.ts` 的 `wrapOn`）。这一手重配的是
+  // 同一颗 Compartment ⇒ 旁路还挂着时由 `refreshDiffSurfaces` → `reassert` 把它拉回开关值，
+  // 不会出现「右半按设置折、左半不跟着折」的两口径。
   refreshDiffSurfaces();
 }
 

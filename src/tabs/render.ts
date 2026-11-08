@@ -245,6 +245,8 @@ function diffKeysOf(p: Panel): PanelRenderData["diff"] {
   return {
     ignoreTrimWhitespace: surface.ignoreTrimWhitespace(),
     collapseUnchanged: surface.collapseUnchanged(),
+    wrap: surface.wrapEnabled(),
+    syncScroll: surface.syncScrollEnabled(),
     swappable: surface.spec().tier === "files",
   };
 }
@@ -319,9 +321,10 @@ function groupMenuOf(p: Panel): MenuItem[] {
       onSelect: () => toggleMaximizePanel(p.panelId),
     });
   }
-  // B461 Task 8：这一格挂着旁路 ⇒ 「⋯」里多三条（顺序照 VS Code：交换左右 → 折叠一对 → 刷新，
-  // 都排在「解散组」那一节之前）。判据一律**现在**读 surface：整张菜单在点击那一刻才组装，
-  // 提前快照会把折叠开关的现状冻在重建操作区的那一刻（B422 那条教训的又一形）。
+  // B461 Task 8：这一格挂着旁路 ⇒ 「⋯」里多几条（顺序照 VS Code：交换左右 → 折叠一对 →
+  // 换行 / 同步滚动两档开关 → 刷新，都排在「解散组」那一节之前）。判据一律**现在**读 surface：
+  // 整张菜单在点击那一刻才组装，提前快照会把折叠开关的现状冻在重建操作区的那一刻
+  // （B422 那条教训的又一形）。
   const diffSurface = diffSurfaceOf(p);
   if (diffSurface) {
     const swappable = diffSurface.spec().tier === "files";
@@ -338,6 +341,17 @@ function groupMenuOf(p: Panel): MenuItem[] {
       // 两颗动作共用一颗入口：折着 ⇒「全部展开」，没折 ⇒「全部折叠」（explorer 那颗同口径）。
       label: folded ? "全部展开" : "全部折叠",
       onSelect: () => applyDiffAction(p.panelId, folded ? "showAll" : "collapseAll"),
+    });
+    // 两颗纯开关：`checked` 照 VS Code 的菜单口径显示当前状态（不是「点下去会怎样」）。
+    items.push({
+      label: "自动换行",
+      checked: diffSurface.wrapEnabled(),
+      onSelect: () => applyDiffAction(p.panelId, "wrap"),
+    });
+    items.push({
+      label: "同步滚动",
+      checked: diffSurface.syncScrollEnabled(),
+      onSelect: () => applyDiffAction(p.panelId, "syncScroll"),
     });
     items.push({ label: "刷新", onSelect: () => applyDiffAction(p.panelId, "refresh") });
   }

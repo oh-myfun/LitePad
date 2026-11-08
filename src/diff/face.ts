@@ -35,6 +35,7 @@ import {
   WidgetType,
 } from "@codemirror/view";
 import type { DiffBlock, DiffKind } from "./blocks";
+import { CODICONS } from "../shell/codicons";
 import type { DiffSide } from "./model";
 
 /** 一行之上的交代：落在第几行、在这一侧是删除行还是新增行。 */
@@ -154,10 +155,9 @@ const faceBlocks = Facet.define<() => DiffBlock[], () => DiffBlock[]>({
  * 没有 `block` 口，装饰 spec 是唯一入口），并且不许带竖向 margin（同一条文档）。
  *
  * ⚠️ 「`count` 行 = `count × 行高`」这条等式成立的前提是**一个文档行 = 一个视觉行**，
- * 也就是差异格两栏都不折行（R19，由 `surface.ts` 在挂旁路那一刻保证：右栏的折行被关掉、
- * 左栏从一开始就不装）。折行一开，这几行在对侧折出来的视觉行比 `count` 多 ⇒ 占位块矮了，
- * 两栏的行就错开；那一头要靠按对侧实测行高来对齐（VS Code 的做法），B398 已经裁掉：
- * 「参考 vscode，不要弄这么复杂」。
+ * 也就是差异格两栏都不折行（`surface.ts` 的 `wrapOn` 默认关）。用户一旦打开折行，这几行
+ * 在对侧折出来的视觉行比 `count` 多 ⇒ 占位块矮了，两栏的行就错开；那一头要靠按对侧实测
+ * 行高来对齐（VS Code 的做法），B398 已经裁掉：「参考 vscode，不要弄这么复杂」。
  *
  * ⚠️ 缺口行**只有中性斜纹、行号槽没有对应色条**：VS Code 的 alignment view zone 会连
  * `marginDomNode` 一起染上 `gutter-delete` / `gutter-insert`，而 CM6 的块级 widget 只能
@@ -223,7 +223,11 @@ function buildFace(doc: Text, side: DiffSide, blocks: DiffBlock[]): RangeSet<Dec
 }
 
 /**
- * 行号槽左侧的 `+` / `−` 记号（VS Code 的 `insert-sign` / `delete-sign`）。
+ * 行号槽**右侧**的 `+` / `−` 记号（VS Code 的 `insert-sign` / `delete-sign`）。
+ *
+ * 层次照 VS Code 的 `EditorLayoutInfo`（`glyphMarginLeft` → `lineNumbersLeft` →
+ * `decorationsLeft` → `contentLeft`）：记号走 `linesDecorationsClassName`，落在**行号与正文
+ * 之间**，不是行号左边。CM6 的 gutter 按 DOM 次序排 ⇒ 本槽不许再写 `order: -1`。
  *
  * VS Code 用两个 margin：`linesDecorationsClassName` 画记号、`marginClassName` 给行号槽上色。
  * 这里对应两颗标记：带 `toDOM` 的管记号槽，带 `elementClass` 的管行号槽；两者由同一份
@@ -239,10 +243,18 @@ class DiffSignMarker extends GutterMarker {
   }
 
   toDOM(): HTMLElement {
+    // VS Code 的记号是 Codicon（`diff-insert` → `add`、`diff-remove` → `remove`，
+    // 见 `registrations.contribution.ts`），不是手写的 `+` / `−` 字符：字形、宽度与基线
+    // 都归字体，11px 时才与行号同高且不抖。图标一律走 `CODICONS` 册（本项目红线）。
+    //
+    // 直接把返回的 `<i class="codicon codicon-add">` 当 gutter 元素：`CODICONS` 给的是整颗
+    // `<i>`，套一层 span 会让 `.codicon` 的 `font: 16px/1 codicon` 抢在 `.diff-sign` 的 11px
+    // 前面（`font` 简写在**内层**元素上，外层字号传不下去）。标记类因此加在这颗 `<i>` 上。
     const el = document.createElement("span");
-    el.className = `diff-sign diff-sign-${this.kind}`;
-    el.textContent = this.kind === "delete" ? "\u2212" : "+";
-    return el;
+    el.innerHTML = this.kind === "delete" ? CODICONS.remove : CODICONS.add;
+    const icon = el.firstElementChild as HTMLElement;
+    icon.classList.add("diff-sign", `diff-sign-${this.kind}`);
+    return icon;
   }
 
   toString(): string {

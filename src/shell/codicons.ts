@@ -228,6 +228,18 @@ const IDS = {
   // （`MenuItem.icon` 的口径是「同组每项都带、且标签认不出」才给）⇒ 写了就是零调用点的 id。
   whitespace: "whitespace", // 「忽略首尾空白」（带 toggled 状态的那颗）
   map: "map", // 「折叠 / 显示未改动的内容」
+  // B461：差异格的四处字形，全部照 VS Code 源码取同名图标。
+  // · add / remove = `registrations.contribution.ts` 的 `diff-insert` / `diff-remove`
+  //   （行号槽那两颗记号，11px）；
+  // · arrowRight = `revertButtonsFeature.ts` / `diffEditor.contribution.ts` 的
+  //   `Codicon.arrowRight`（中间那列的「回退此块」）；
+  // · wordWrap = `editorOptions.ts` 里 `wordWrap` 开关的官方字形；
+  // · sync = 同步滚动开关（VS Code 差异编辑器本身恒开、无此开关，字形取应用内既有的 sync）。
+  add: "add",
+  remove: "remove",
+  arrowRight: "arrow-right",
+  wordWrap: "word-wrap",
+  sync: "sync",
 } as const;
 
 /** 图标短名（上方 IDS 的键）。 */

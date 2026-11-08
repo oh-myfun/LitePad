@@ -290,6 +290,8 @@ describe("命令表自检", () => {
     "diff.collapseAll",
     "diff.showAll",
     "diff.swapSides",
+    // 同步滚动在 VS Code 里**恒开、没有设置也没有键位**；本项目的开关是额外入口。
+    "diff.toggleSyncScroll",
     "diff.refresh",
   ]);
 

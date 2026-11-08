@@ -230,7 +230,7 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
     );
   });
 
-  it("B462 · 左栏删行涂真行底色 + 行号槽底色 + `−` 记号（照 VS Code，不再有中线指示带）", () => {
+  it("B462 · 左栏删行涂真行底色 + 行号槽底色 + Codicon `−` 记号（照 VS Code，不再有中线指示带）", () => {
     const { view, lineEl, gapEls } = mountFace("original", del);
     expect(gapEls(), "删掉的行在左栏是**真行** ⇒ 这一侧不补位").toHaveLength(0);
     expect(lineEl(1).className).not.toContain("diff-line");
@@ -244,9 +244,13 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
     ).toHaveLength(2);
     const signs = [...view.dom.querySelectorAll<HTMLElement>(".cm-diffSigns .diff-sign")];
     expect(
-      signs.map((s) => s.textContent),
-      "记号是 `−`（U+2212，与侧栏同一颗）",
-    ).toEqual(["−", "−"]);
+      signs.map((s) => [s.tagName, s.classList.contains("codicon-remove")]),
+      // VS Code 的 `delete-sign` 取的就是 Codicon `remove`；字形元素（`<i>`）本身就是记号，
+      // 不再套一层 span —— 否则内层 `.codicon` 的 16px 会压过外层的 11px。
+    ).toEqual([
+      ["I", true],
+      ["I", true],
+    ]);
     expect(signs.every((s) => s.classList.contains("diff-sign-delete"))).toBe(true);
   });
 
@@ -440,21 +444,45 @@ describe("B461 · surface 给两颗 view 各装一臂（预审 R1）", () => {
     expect(right.state.doc.toString()).toBe("A\nZ");
   });
 
-  it("B461 · 差异格两栏一律不折行（R19）：attach 关掉右栏、左栏从一开始就不装、detach 原样还", () => {
-    // 设计稿 ⑥ 的头条约束（两侧行行对齐）靠这一条才成立：折行一开，一个文档行就不止一个
-    // 视觉行，而两栏**宽度各自不同** ⇒ 同一行长文的视觉行数天然不等（「两边都折」也救不回来），
-    // 两栏的高度从第一条长行起就分家 —— 跳块与肉眼比对同时错位。
-    // ⚠️ 「同一行在两栏的视觉 y 是否真的一致」是**像素**判据，jsdom 没有布局引擎 ⇒ 归 Task 11
-    // 真机台。这里钉的是「扩展在不在 state 里」—— 它恰恰是那条像素等式的前提。
+  it("B461 · 折行默认关（VS Code 差异格的出厂态），开关两栏一起开、detach 原样还", () => {
+    // 历史：R19 曾把「一律不折」写死，理由是两侧行行对齐。后续轮按用户点名补了开关，
+    // **默认仍是关**（VS Code 的 `diffEditor.wordWrap` 默认 inherit → `editor.wordWrap` 出厂 off），
+    // 于是「不折行才严格逐行对齐」的默认行为没变；打开折行是用户显式选择的取舍。
+    // ⚠️ 「同一行在两栏的视觉 y 是否真的一致」是**像素**判据，jsdom 没有布局引擎 ⇒ 归真机台。
+    // 这里钉的是「扩展在不在 state 里」—— 它恰恰是那条像素等式的前提。
     const { right, left, surface, initialState } = mountSurfacePair();
     expect(
       wrapsLines(initialState),
       "前置：出厂 `word_wrap: true` ⇒ 那颗初始 state 确实装了折行",
     ).toBe(true);
     expect(wrapsLines(right.state), "挂上旁路那一刻，右栏的折行被关掉").toBe(false);
-    expect(wrapsLines(left.state), "左栏从一开始就不装折行").toBe(false);
+    expect(wrapsLines(left.state), "左栏同样从「不折」起步").toBe(false);
+
+    surface.setWrapEnabled(true);
+    expect(wrapsLines(right.state), "开关打开 ⇒ 右栏折").toBe(true);
+    expect(wrapsLines(left.state), "开关打开 ⇒ 左栏一起折（两栏同口径）").toBe(true);
+    surface.setWrapEnabled(false);
+    expect(wrapsLines(right.state)).toBe(false);
+    expect(wrapsLines(left.state)).toBe(false);
+
     surface.dispose();
     expect(wrapsLines(right.state), "拆掉旁路把折行还回去（那颗 view 是文档本身）").toBe(true);
+  });
+
+  it("B463 · 中间回退键：点一下把原稿那一块写回右栏（普通编辑，不是第二套写入）", () => {
+    // 用户口径「要能真的点击生效，不是摆设」：这条从「按钮被建出来」一直钉到「文档真的变了」。
+    // jsdom 没有布局引擎 ⇒ 中间列高度恒 0，`renderReverts` 会整段跳过；这里先把量度伪装成可见，
+    // 之后走真机那条重画路径（换选区 → `updateListener` 的 `selectionSet` 分支）。
+    const { right } = mountSurfacePair({ left: "A\n删1\n删2\nZ", right: "A\nZ" });
+    const center = right.dom.closest(".panel-host")!.querySelector<HTMLElement>(".diff-center")!;
+    center.getBoundingClientRect = () =>
+      ({ top: 0, left: 0, bottom: 200, right: 35, width: 35, height: 200 }) as DOMRect;
+    right.dispatch({ selection: { anchor: 1 } });
+
+    const btn = center.querySelector<HTMLButtonElement>(".diff-revert");
+    expect(btn, "第一处改动（右栏第 2 行前缺了两行）要有一颗回退键").not.toBeNull();
+    btn!.click();
+    expect(right.state.doc.toString(), "原稿那两行被写回新稿").toBe("A\n删1\n删2\nZ");
   });
 
   it("B461 · 还原的是「用户那一颗设置」，不是无条件打开（设置里就关着的用户）", () => {
@@ -772,15 +800,28 @@ const caretLineOf = (view: EditorView): number =>
 describe("B462 · 记号槽与右缘概览条样式", () => {
   const css = (): string => stripCssComments(srcOf("src/diff/diff.css"));
 
-  it("B462 · 记号槽在行号左侧、11px / 0.7；行号槽底色只认行号槽与记号槽", () => {
+  it("B462 · 记号槽在行号右侧、10px、11px / 0.7；中间列 35px + 34×20 回退键", () => {
     const sign = ruleBlock(css(), ".panel-host.is-diff .cm-diffSigns", undefined, true);
     expect(sign, "规则得真在（判不到东西的 not.toMatch 是假绿）").not.toBe("");
-    expect(sign, "VS Code 的记号在行号左侧的 line decorations margin").toContain("order: -1");
+    expect(
+      sign,
+      // VS Code 的 `EditorLayoutInfo`：glyphMargin → 行号 → lineDecorations → content，
+      // 记号在行号**右侧**；CM6 的 gutter 次序就是 DOM 次序 ⇒ 不该再有 `order` 挪位。
+      "记号槽不再用 order 挪到行号左边",
+    ).not.toContain("order:");
     expect(sign, "lineDecorationsWidth 的默认 10px").toContain("min-width: 10px");
 
     const glyph = ruleBlock(css(), ".panel-host.is-diff .diff-sign", undefined, true);
-    expect(glyph).toContain("font-size: 11px");
+    expect(glyph, "上游 insert-sign / delete-sign 的字号").toContain("font-size: 11px");
     expect(glyph).toContain("opacity: 0.7");
+    expect(glyph, "上游的记号元素自己是 flex").toContain("display: flex");
+
+    const center = ruleBlock(css(), ".diff-center", undefined, true);
+    expect(center, "VS Code 的 DEFAULT_DIFF_EDITOR_GUTTER_WIDTH = 35").toContain("flex: 0 0 35px");
+    const revert = ruleBlock(css(), ".diff-revert", undefined, true);
+    expect(revert, "上游 gutterItem 的 34×20").toContain("width: 34px");
+    expect(revert).toContain("height: 20px");
+    expect(revert, "上游 .actions-container 的 4px 圆角").toContain("border-radius: 4px");
 
     // 底色类会落到所有 gutter 上 ⇒ 只许行号槽与记号槽吃颜色，4px 差异列 / 折叠槽不许变色。
     const gutter = ruleBlock(
@@ -819,6 +860,8 @@ describe("B462 · 记号槽与右缘概览条样式", () => {
     ).toContain("var(--diff-add)");
     const viewport = ruleBlock(css(), ".panel-host.is-diff .diff-viewport", undefined, true);
     expect(viewport).toContain("var(--sb-thumb)");
+    // 圆角不是 VS Code 抄来的（上游 `.diffViewport` 是直角）——本项目按滚动条滑块的 6px 口径。
+    expect(viewport, "与本项目滚动条滑块同口径的圆角").toContain("border-radius: 6px");
     expect(css(), "右栏原生纵向滚动条收成 0 宽，概览条就是那一根").toContain(
       ".panel-host.is-diff .panel-editor .cm-scroller::-webkit-scrollbar",
     );

@@ -572,7 +572,7 @@ function shortcutApplies(id: string): boolean {
       return !!t && isMdTab(t) && t.viewMode !== "source";
     }
     // B461：差异步进与标题栏那六条动作键，只在「这一格正显示一张差异标签」时成立
-    //（设计稿 ⑩·2 的权威侧那一格）。那六条没有默认键位 ⇒ 这道闸管的是**用户自己绑了键**
+    //（设计稿 ⑩·2 的权威侧那一格）。那几条动作没有默认键位 ⇒ 这道闸管的是**用户自己绑了键**
     // 那一发（`keymap.ts` 的表允许改键）：不成时不抢键，把事件原样还给编辑器。
     case "diff.nextChange":
     case "diff.prevChange":
@@ -581,6 +581,8 @@ function shortcutApplies(id: string): boolean {
     case "diff.collapseAll":
     case "diff.showAll":
     case "diff.swapSides":
+    case "diff.toggleWrap":
+    case "diff.toggleSyncScroll":
     case "diff.refresh":
       return diffTabActive();
     // B461 Task 5：A 档的入口。基线未知时**不抢键**（设计稿 ⑩·3：点不动的那一发要有个说法，
@@ -719,6 +721,8 @@ function runShortcut(id: string): void {
     case "diff.collapseAll":
     case "diff.showAll":
     case "diff.swapSides":
+    case "diff.toggleWrap":
+    case "diff.toggleSyncScroll":
     case "diff.refresh":
       applyDiffCommand(activePanelId, id);
       break;

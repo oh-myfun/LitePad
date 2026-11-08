@@ -213,10 +213,12 @@ RECIPES = [
     },
     {
         "name": "diff",
-        "what": "差异编辑器：before.ts ↔ after.ts（删/增行、对侧斜纹、右缘概览）",
+        "what": "差异编辑器：before.ts ↔ after.ts（删/增行、对侧斜纹、中间回退键、右缘概览）",
         "theme": "dark",
         "files": {"before.ts": DIFF_BEFORE_TEXT, "after.ts": DIFF_AFTER_TEXT},
-        "session": lambda: single_session([diff_tab(DIFF_AFTER, DIFF_BEFORE, 1, 1)]),
+        # 光标落在第一处改动（第 2 行）：中间那一列的「回退此块」键靠 `.is-current` 常显，
+        # 截图才拍得到它；停在未改动的第 1 行时那一列按 VS Code 的口径是空的（只有悬停才现形）。
+        "session": lambda: single_session([diff_tab(DIFF_AFTER, DIFF_BEFORE, 2, 1)]),
     },
 ]
 

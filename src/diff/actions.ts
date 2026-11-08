@@ -1,8 +1,8 @@
-// B461 · Task 8 —— 差异标题栏那八条动作的**唯一**落点。
+// B461 · Task 8 —— 差异标题栏那十条动作的**唯一**落点。
 //
 // 为什么要有这一颗独立的模块：三条入口都指向同一件事 ——
 //   · 图标键（`shell/splitview.ts` 的 `onDiffAction`，由 `tabs/lifecycle.ts` 接线）；
-//   · 命令与命令面板（`main.ts` 的 `runShortcut`，按 `keymap.ts` 里那六个 id）；
+//   · 命令与命令面板（`main.ts` 的 `runShortcut`，按 `keymap.ts` 里那些 id）；
 //   · 组菜单「⋯」里那三条（`tabs/render.ts` 的 `groupMenuOf`）。
 // 两处各写一份 switch 就会漂移（Task 6 那条「三个 producer 逐字复制」的教训同形），
 // 所以这里只留一份，别处只转调。
@@ -30,6 +30,8 @@ const DIFF_COMMAND_ACTION: Record<string, DiffAction> = {
   "diff.collapseAll": "collapseAll",
   "diff.showAll": "showAll",
   "diff.swapSides": "swap",
+  "diff.toggleWrap": "wrap",
+  "diff.toggleSyncScroll": "syncScroll",
   "diff.refresh": "refresh",
 };
 
@@ -74,6 +76,12 @@ export function applyDiffAction(panelId: number, action: DiffAction): void {
       break;
     case "showAll":
       surface.showAllUnchanged();
+      break;
+    case "wrap":
+      surface.setWrapEnabled(!surface.wrapEnabled());
+      break;
+    case "syncScroll":
+      surface.setSyncScrollEnabled(!surface.syncScrollEnabled());
       break;
     case "refresh":
       void refreshDiff(surface);

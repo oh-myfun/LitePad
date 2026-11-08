@@ -44,7 +44,16 @@ import { zoneOf, DropZone } from "../dnd/geometry";
  * 交出去，两处各写一份 switch 必然漂移（Task 6 那条逐字复制的教训同一个形状）。
  */
 export type DiffAction =
-  "prev" | "next" | "whitespace" | "collapse" | "collapseAll" | "showAll" | "swap" | "refresh";
+  | "prev"
+  | "next"
+  | "whitespace"
+  | "collapse"
+  | "collapseAll"
+  | "showAll"
+  | "swap"
+  | "wrap"
+  | "syncScroll"
+  | "refresh";
 
 export interface PanelRenderData {
   panelId: number;
@@ -71,15 +80,19 @@ export interface PanelRenderData {
   /** B224：活动标签当前是**预览态**（决定切换键画 `edit-code` 还是 `preview`） */
   mdPreview?: boolean;
   /**
-   * B461 Task 8：这一格**挂着差异旁路**时的三份现值（图标键的显隐与 toggled 态都从这儿来）。
+   * B461 Task 8：这一格**挂着差异旁路**时的几份现值（图标键的显隐与 toggled 态都从这儿来）。
    *
    * 为什么由调用方给而不是这里现算：`ignoreTrimWhitespace` / `collapseUnchanged` 的真相只有
    * surface 那一颗（R24 同口径），而 `swappable` 说的是「这一档能不能交换」—— 判据在模型那边。
-   * 不给 = 这一格没有那四颗键（旁路拆掉之后不许留一排点不动的按钮）。
+   * 不给 = 这一格没有那几颗键（旁路拆掉之后不许留一排点不动的按钮）。
    */
   diff?: {
     ignoreTrimWhitespace: boolean;
     collapseUnchanged: boolean;
+    /** 自动换行（B461 后续轮）：差异格自有开关，默认关。 */
+    wrap: boolean;
+    /** 两栏同步滚动（B461 后续轮）：默认开。 */
+    syncScroll: boolean;
     swappable: boolean;
   };
   /**
@@ -160,7 +173,7 @@ export interface SplitviewCallbacks {
   /** B224：活动标签在**源码 / 预览**之间切一次（复用 Ctrl+/ 那条路径）。 */
   onTogglePreview?: (panelId: number) => void;
   /**
-   * B461 Task 8：差异标题栏那四颗图标键的出口（动作名见 `DiffAction`，落点只有
+   * B461 Task 8：差异标题栏那一排图标键的出口（动作名见 `DiffAction`，落点只有
    * `src/diff/actions.ts` 那一份 switch）。
    *
    * ⚠️ 给的是**这颗键自己那一格**的 panelId：md 那两颗键踩过同一形（B228 —— 把 panelId
@@ -662,8 +675,9 @@ function buildPanel(
  * 面板操作区（`.panel-ops`）：
  *   ① md 两颗（B224）—— 打开侧边预览（`open-preview`）+ 源码/预览切换；只有活动面板且
  *      活动标签是 Markdown 才有；
- *   ② 差异四颗（B461 Task 8）—— `arrow-up` / `arrow-down`（上/下一个差异，**不是**左右箭头）、
- *      `whitespace` 与 `map`（两颗**带 toggled 状态**的开关，见 `mkOp` 的 `pressed`）；
+ *   ② 差异那几颗（B461 Task 8）—— `arrow-up` / `arrow-down`（上/下一个差异，**不是**左右箭头）、
+ *      `whitespace` 与 `map`（两颗**带 toggled 状态**的开关，见 `mkOp` 的 `pressed`）、
+ *      `word-wrap` / `sync`（后续轮的自动换行与同步滚动，同样带 toggled）；
  *   ③ 还原面板（仅最大化中）+ 组菜单「…」（B422，原先是移除分屏 ⨯）。
  * ⚠️ 顺序刻意：文档级操作**紧贴标签区**（VS Code 的 editor/title 动作也在那一头），
  *    「…」仍钉在最右 —— 文档级操作靠标签，系统级操作（关组）靠边。
@@ -715,7 +729,7 @@ function buildPanelOps(data: PanelRenderData, cb: SplitviewCallbacks): HTMLEleme
     );
   }
 
-  // B461 Task 8：差异旁路挂着的那一格给这四颗（`data.diff` 由 `panelDataOf` 从 surface 现读，
+  // B461 Task 8：差异旁路挂着的那一格给这六颗（`data.diff` 由 `panelDataOf` 从 surface 现读，
   // 旁路拆掉就不给 ⇒ 显隐走「建不建」，与 md 那一支同一手法）。
   if (data.diff) {
     const d = data.diff;
@@ -743,6 +757,22 @@ function buildPanelOps(data: PanelRenderData, cb: SplitviewCallbacks): HTMLEleme
         undefined,
         () => cb.onDiffAction?.(data.panelId, "collapse"),
         d.collapseUnchanged,
+      ),
+      // 自动换行 / 同步滚动（B461 后续轮）：两颗都是纯状态开关，toggled 直接吃现值。
+      // 换行那颗的快捷键照 VS Code `editor.action.toggleWordWrap` = Alt+Z（见 keymap）。
+      mkOp(
+        CODICONS.wordWrap,
+        "自动换行",
+        keyHint("diff.toggleWrap", keymapOverrides),
+        () => cb.onDiffAction?.(data.panelId, "wrap"),
+        d.wrap,
+      ),
+      mkOp(
+        CODICONS.sync,
+        "同步滚动",
+        undefined,
+        () => cb.onDiffAction?.(data.panelId, "syncScroll"),
+        d.syncScroll,
       ),
     );
   }

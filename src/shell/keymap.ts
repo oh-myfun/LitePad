@@ -347,16 +347,22 @@ export const COMMANDS: CommandDef[] = [
   // `owners()` 断过），与 VS Code 的「Compare with Saved」不同键但同族（VS Code 那两颗
   // 走的是命令面板，没有默认键位）。
   { id: "diff.openAgainstSaved", label: "与上次保存比较", group: "差异", keys: ["Ctrl+Shift+D"] },
-  // Task 8：标题栏与「⋯」里那六条。**全部不给默认键位**（`keys: []`）：
+  // Task 8：标题栏与「⋯」里那几条。**全部不给默认键位**（`keys: []`）：
   //   · VS Code 那几颗也是只有命令、没有默认键（`Alt+F5` 那一族已被上面两条步进占住）；
   //   · 抢一颗键位就得先证明本应用无人占用（上面那三条都配了 `owners()` 那条用例），
-  //     而这六条的日常入口是图标键与组菜单，键盘不是主路。
-  // 命令面板点得到 ⇒ `main.ts` 的分发必须认这六个 id（表里躺着一条没人分发的命令 = 死键）。
+  //     而这几条的日常入口是图标键与组菜单，键盘不是主路。
+  // 命令面板点得到 ⇒ `main.ts` 的分发必须认这些 id（表里躺着一条没人分发的命令 = 死键）。
   { id: "diff.toggleWhitespace", label: "忽略首尾空白", group: "差异", keys: [] },
   { id: "diff.toggleCollapse", label: "折叠未改动的内容", group: "差异", keys: [] },
   { id: "diff.collapseAll", label: "全部折叠未改动的内容", group: "差异", keys: [] },
   { id: "diff.showAll", label: "全部展开未改动的内容", group: "差异", keys: [] },
   { id: "diff.swapSides", label: "交换左右", group: "差异", keys: [] },
+  // B461 后续轮：自动换行与同步滚动。换行那颗按 VS Code 的 `editor.action.toggleWordWrap`
+  // 取 `Alt+Z`（这一颗在本应用此前无人占用，`owners()` 用例断过）；它只在差异格生效 ——
+  // 普通标签的换行仍归设置页那颗 `word_wrap`。同步滚动在 VS Code 里**恒开、没有键位**，
+  // 本项目的开关是额外的可见入口，同样 `keys: []`。
+  { id: "diff.toggleWrap", label: "自动换行", group: "差异", keys: ["Alt+Z"] },
+  { id: "diff.toggleSyncScroll", label: "同步滚动", group: "差异", keys: [] },
   { id: "diff.refresh", label: "刷新差异", group: "差异", keys: [] },
 
   // ---- 面板 ----
