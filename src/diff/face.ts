@@ -616,7 +616,7 @@ export function diffFace(side: DiffSide, source: () => DiffFaceSource): Extensio
  */
 export const DIFF_CONTEXT_LINES = 3;
 export const DIFF_MIN_UNCHANGED_LINES = 3;
-/** 点折条展开时，上下各揭示这么多行。 */
+/** 点折条上下 4px 揭示热区时，各揭示这么多行（上游 `revealLineCount` 默认 20）。 */
 export const DIFF_REVEAL_LINES = 20;
 
 /** 一段未改动行在本栏的位置（`run` = 它是第几段：首块之前 0，两块之间按前一块的序号，末块之后 = 块数）。 */
@@ -626,35 +626,60 @@ export interface UnchangedRun {
   end: number;
 }
 
-/** 一段**折起来**的行（`run` 带上是为了让 surface 能按段记账；`from`/`to` 含端点，本栏行轴）。 */
+/**
+ * 一段未改动区里**可折的部分**（`run` = 它是第几段：首块之前 0，两块之间按前一块的序号，
+ * 末块之后 = 块数；`start`/`end` 含端点，本栏行轴）。
+ *
+ * `start`/`end` 已经按上游 `UnchangedRegion.fromDiffs` 的口径裁掉了贴边/中间的 context：
+ * 靠近文件头/尾只保留**内侧**那一半 context（阈值 `context + minimum`），夹在两块之间才两端
+ * 各留 context（阈值 `2 × context + minimum`）。整篇一字不差的那一段不产出候选。
+ */
 export interface FoldRange {
   run: number;
-  from: number;
-  to: number;
+  start: number;
+  end: number;
 }
 
-/** 折起来的行在臂里的形态（只有行号：画法与段序号都不归装饰层管）。 */
+/**
+ * 揭示量（照上游 `CollapsedCodeOverlayWidget` 的三条交互）：
+ * 上下 4px 热区点一下 = 各揭示 `DIFF_REVEAL_LINES` 行，拖拽 = 连续揭示，中间双击/图标 = 全开。
+ */
+export type FoldReveal =
+  { above: number } | { below: number } | { all: true } | { top: number } | { bottom: number };
+
+/**
+ * 折起来的行在臂里的形态（本栏行轴的行号 + 揭示记账）。
+ *
+ * `regionLength` 是候选区总行数（未揭示前的整段），widget 靠它算 `maxTop = regionLength - bottom`
+ * / `maxBottom = regionLength - top`（上游 `getMaxVisibleLineCountTop/Bottom` 同口径）。
+ */
 export interface FoldPoint {
   from: number;
   to: number;
+  top: number;
+  bottom: number;
+  regionLength: number;
 }
 
-/** 发进某一臂的折叠态（只带行号：段序号是 surface 那一侧的记账口径，装饰层不认）。 */
-export const setFoldedRanges = StateEffect.define<Array<{ from: number; to: number }>>();
+/** 发进某一臂的折叠态（行号 + 揭示量：段序号是 surface 那一侧的记账口径，装饰层不认）。 */
+export const setFoldedRanges = StateEffect.define<FoldPoint[]>();
 
 /**
- * 折条被点（**每一栏一条**：臂里带上的是那一栏自己的回调）。
+ * 折条被操作（**每一栏一条**：臂里带上的是那一栏自己的回调）。
  *
- * 为什么交回调用而不是让 widget 自己发 `setFoldedRanges`：折起来的是哪些段只有 surface 知道
- * （它的开关状态 + 手动展开过的段号才是那一份真相）。装饰层自己摘一段就等于第二份真相 ——
- * 下一发 `syncBlocks` 按 surface 那份清单重发，被摘的那一段立刻又折回来。
+ * 为什么交回调用而不是让 widget 自己发 `setFoldedRanges`：折起来的是哪些段、已经揭示了几行
+ * 只有 surface 知道（它的开关状态 + 每段的揭示记账才是那一份真相）。装饰层自己改一段就等于
+ * 第二份真相 —— 下一发 `syncBlocks` 按 surface 那份清单重发，改过的那一段立刻又折回来。
  */
-const faceFoldClick = Facet.define<(from: number) => void, ((from: number) => void) | null>({
+const faceFoldClick = Facet.define<
+  (from: number, reveal: FoldReveal) => void,
+  ((from: number, reveal: FoldReveal) => void) | null
+>({
   combine: (values) => values[0] ?? null,
 });
 
-/** 挂上「折条被点了」的出口（与两臂一起进 state；拆臂就没了）。 */
-export function onFoldBarClick(fn: (from: number) => void): Extension {
+/** 挂上「折条被操作」的出口（与两臂一起进 state；拆臂就没了）。 */
+export function onFoldBarClick(fn: (from: number, reveal: FoldReveal) => void): Extension {
   return faceFoldClick.of(fn);
 }
 
@@ -686,8 +711,14 @@ export function unchangedRuns(
 }
 
 /**
- * 折叠候选（本栏行轴）：长度 **> `DIFF_MIN_UNCHANGED_LINES + 2 * DIFF_CONTEXT_LINES`** 才折，
- * 折掉中间、上下各留 `DIFF_CONTEXT_LINES` 行（阈值照源码那一组：3 + 2×3 ⇒ 9 行不折、10 行才折）。
+ * 折叠候选（本栏行轴）：照上游 `UnchangedRegion.fromDiffs` 的构造规则算**可折区**。
+ *
+ *   · 贴文件头/尾的未改动段：长度 ≥ `DIFF_CONTEXT_LINES + DIFF_MIN_UNCHANGED_LINES`
+ *     ⇒ 只裁掉内侧那一半 context（头段留底 3 行可见、尾段留顶 3 行可见）。
+ *   · 夹在两块之间的段：长度 ≥ `2 × DIFF_CONTEXT_LINES + DIFF_MIN_UNCHANGED_LINES`
+ *     ⇒ 两端各留 context。
+ *   · 整篇一字不差（唯一一段覆盖全文）⇒ 上游在 `hideUnchangedRegionsFeature` 里把这一份
+ *     regions 直接清空（不出折条），这里同样不产出候选。
  *
  * 两侧的**段长天然相等**（两块之间的那些行是配对了的相同行），所以「够不够长」这一问不分栏；
  * 分栏的是**行号**（两块之间一旦有长短不等的块，两栏的行轴就错开）⇒ 候选与折区必须按 `side`
@@ -696,39 +727,70 @@ export function unchangedRuns(
 export function foldCandidates(
   blocks: DiffBlock[],
   side: DiffSide,
-  totalLines: number,
+  lineCounts: Record<DiffSide, number>,
 ): FoldRange[] {
+  // 整篇一字不差 ⇒ 上游把唯一覆盖全文的 region 清空（不出折条）
+  if (blocks.length === 0) return [];
+  const other: DiffSide = side === "original" ? "modified" : "original";
+  const runs = unchangedRuns(blocks, side, lineCounts[side]);
+  // 贴边判定要看**两栏**（上游 `atStart = origStart === 1 && modStart === 1`；一侧贴边、
+  // 另一侧因为对侧多出几行而不贴，那一段仍要按「不贴边」裁法留两端 context）。
+  const mirrors = unchangedRuns(blocks, other, lineCounts[other]);
+  const mirrorOf = new Map(mirrors.map((r) => [r.run, r]));
   const out: FoldRange[] = [];
-  for (const run of unchangedRuns(blocks, side, totalLines)) {
-    if (run.end - run.start + 1 <= DIFF_MIN_UNCHANGED_LINES + 2 * DIFF_CONTEXT_LINES) continue;
-    out.push({
-      run: run.run,
-      from: run.start + DIFF_CONTEXT_LINES,
-      to: run.end - DIFF_CONTEXT_LINES,
-    });
+  for (const run of runs) {
+    // 键入之后、重算之前，块表与两栏正文可以是不同一代的：那一小段里对侧同一段可能算不出来
+    //（空段被 `unchangedRuns` 跳过）⇒ 退回本栏那一段，别让一次点击撞成 TypeError。
+    const mirror = mirrorOf.get(run.run) ?? run;
+    const length = run.end - run.start + 1;
+    const atStart = run.start === 1 && mirror.start === 1;
+    const atEnd = run.end === lineCounts[side] && mirror.end === lineCounts[other];
+    let start = run.start;
+    let keep = length;
+    if ((atStart || atEnd) && length >= DIFF_CONTEXT_LINES + DIFF_MIN_UNCHANGED_LINES) {
+      // 只有一端贴边：裁掉贴边那一侧的 context（顶/底留白本来就贴边可见，不必再留）
+      if (atEnd) {
+        start += DIFF_CONTEXT_LINES;
+        keep -= DIFF_CONTEXT_LINES;
+      } else {
+        keep -= DIFF_CONTEXT_LINES;
+      }
+    } else if (length >= 2 * DIFF_CONTEXT_LINES + DIFF_MIN_UNCHANGED_LINES) {
+      start += DIFF_CONTEXT_LINES;
+      keep -= 2 * DIFF_CONTEXT_LINES;
+    } else {
+      continue;
+    }
+    if (keep <= 0) continue;
+    out.push({ run: run.run, start, end: start + keep - 1 });
   }
   return out;
 }
 
 /**
- * 折起来的那一段之上的**占位条**：一行高，点它 = 展开这一段。
+ * 折起来的那一段之上的**占位条**：24px 高（上游 `PlaceholderViewZone(d, 24)`），
+ * 上下各 4px 揭示热区、中间一行说明文案（上游 `.diff-hidden-lines .center` 同结构）。
  *
  * 它由一条 `Decoration.replace({ block: true })` **替掉**被折掉的整段行（见 `buildFoldFace`），
  * 所以块高只由这条占位条自己定 —— 不是被折掉那 N 行的高度。
  *
- * ⚠️ 高度与 `DiffGapWidget` 同一条纪律（R15/R18）：只按 `view.defaultLineHeight` 写 inline，
- * 样式段里不许出现 `height` / `em` / 竖向 margin —— 两栏各折同样多的行，折条也各占一行，
- * 逐行对齐才不塌。
+ * ⚠️ 高度写 inline（与 `DiffGapWidget` 同一条纪律 R15/R18）：样式段里不许出现 `height` / `em` /
+ * 竖向 margin —— 两栏各折同样多的行，折条也各占 24px，逐行对齐才不塌。
  *
- * ⚠️ `eq` 比**回调身份**（除了 from/to）：右栏那一臂是跨 surface 共用的同一颗槽，换挂时
- * 装饰层不会自己重建；不比回调的话，新 surface 挂上后点折条会叫到上一颗（已 dispose 的）
- * surface 身上 —— 与 Task 5 那个「旧 provider 还闭包着旧块表」同形，只是换了个抓手。
+ * 三条交互照上游 `CollapsedCodeOverlayWidget`：
+ *   · 上/下 4px 热区：点一下 = 各揭示 `DIFF_REVEAL_LINES` 行；按住拖动 = 按行高连续揭示
+ *     （上区 `clamp(cur + round(dy/lh), 0, regionLength - bottom)`、下区反向）；
+ *   · 中间双击 / 展开图标单击 = 全开（上游 `showAll`）；
+ *   · 全开之后这一条不再存在（上游 `shouldHideControls`），重新折叠入口在工具栏那颗动作上。
  */
 export class DiffFoldWidget extends WidgetType {
   constructor(
     readonly from: number,
     readonly to: number,
-    readonly onExpand: ((from: number) => void) | null,
+    readonly top: number,
+    readonly bottom: number,
+    readonly regionLength: number,
+    readonly onReveal: ((from: number, reveal: FoldReveal) => void) | null,
   ) {
     super();
   }
@@ -742,37 +804,94 @@ export class DiffFoldWidget extends WidgetType {
       other instanceof DiffFoldWidget &&
       other.from === this.from &&
       other.to === this.to &&
-      other.onExpand === this.onExpand
+      other.top === this.top &&
+      other.bottom === this.bottom &&
+      other.regionLength === this.regionLength &&
+      other.onReveal === this.onReveal
     );
   }
 
   toDOM(view: EditorView): HTMLElement {
     const el = document.createElement("div");
     el.className = "diff-fold-bar";
-    el.style.height = `${view.defaultLineHeight}px`;
-    // 上游折叠块的块头是 `$(unfold)` + 隐藏行数（`hideUnchangedRegionsFeature.ts` 的
-    // `renderLabelWithIcons('$(unfold)')`，compact 文案 `{0} hidden lines`）——
-    // **不画 `+` / `−`**：那些记号只属于差异行，折起来的是两侧一字不差的未改动行。
-    const icon = document.createElement("span");
-    icon.innerHTML = CODICONS.unfold;
-    const glyph = icon.firstElementChild as HTMLElement | null;
-    if (glyph) {
-      glyph.classList.add("diff-fold-icon");
-      el.appendChild(glyph);
-    }
-    el.appendChild(document.createTextNode(`展开 ${this.hidden} 行未改动的内容`));
-    el.addEventListener("click", (event) => {
+    el.style.height = "24px";
+    const emit = (reveal: FoldReveal): void => this.onReveal?.(this.from, reveal);
+
+    const top = document.createElement("div");
+    top.className = "diff-fold-top";
+    top.setAttribute("data-tip", "单击或拖动以在上方显示更多内容");
+
+    const bottom = document.createElement("div");
+    bottom.className = "diff-fold-bottom";
+    bottom.setAttribute("data-tip", "单击或拖动以在下方显示更多内容");
+
+    const center = document.createElement("div");
+    center.className = "diff-fold-center";
+    const action = document.createElement("a");
+    action.className = "diff-fold-unfold";
+    action.setAttribute("role", "button");
+    action.setAttribute("aria-label", "展开全部未改动行");
+    action.setAttribute("data-tip", "展开全部未改动行");
+    action.innerHTML = CODICONS.unfold;
+    const glyph = action.firstElementChild as HTMLElement | null;
+    if (glyph) glyph.classList.add("diff-fold-icon");
+    const label = document.createElement("span");
+    label.className = "diff-fold-text";
+    label.textContent = `${this.hidden} 行未改动`;
+    center.append(action, label);
+
+    // 上下热区共用一套拖拽口径；`cur` 取按下那一刻的揭示量（拖拽中自己算增量，不回头读 DOM）。
+    const draggable = (strip: HTMLElement, dir: "top" | "bottom"): void => {
+      strip.addEventListener("mousedown", (event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        strip.classList.add("is-dragging");
+        const startY = event.clientY;
+        const cur = dir === "top" ? this.top : this.bottom;
+        const maxTop = this.regionLength - this.bottom;
+        const maxBottom = this.regionLength - this.top;
+        const lineHeight = Math.max(1, view.defaultLineHeight);
+        let moved = false;
+        const onMove = (e: MouseEvent): void => {
+          const dy = e.clientY - startY;
+          if (Math.abs(dy) > 2) moved = true;
+          const delta = Math.round(dy / lineHeight);
+          if (dir === "top") emit({ top: Math.min(Math.max(cur + delta, 0), maxTop) });
+          else emit({ bottom: Math.min(Math.max(cur - delta, 0), maxBottom) });
+        };
+        const onUp = (): void => {
+          strip.classList.remove("is-dragging");
+          win.removeEventListener("mousemove", onMove);
+          if (!moved)
+            emit(dir === "top" ? { above: DIFF_REVEAL_LINES } : { below: DIFF_REVEAL_LINES });
+        };
+        const win = view.dom.ownerDocument.defaultView ?? window;
+        win.addEventListener("mousemove", onMove);
+        win.addEventListener("mouseup", onUp, { once: true });
+      });
+    };
+    draggable(top, "top");
+    draggable(bottom, "bottom");
+
+    action.addEventListener("click", (event) => {
       event.preventDefault();
-      // 单独装一臂（不带出口）时点下去就是空转：折叠态的清单只由 surface 那一份真相发进来，
-      // 装饰层自己摘一段等于第二份真相（下一次重算又把它折回去）。
-      this.onExpand?.(this.from);
+      event.stopPropagation();
+      emit({ all: true });
     });
+    center.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      emit({ all: true });
+    });
+
+    el.append(top, center, bottom);
     return el;
   }
 
-  /** 折条吃点击，但**不吃光标**：点到它不该把插入符搬进被折起来的那几行里。 */
+  /** 折条吃点击/拖拽，但**不吃光标**：点到它不该把插入符搬进被折起来的那几行里。 */
   ignoreEvent(event: Event): boolean {
-    return event.type !== "click" && event.type !== "mousedown";
+    return event.type !== "click" && event.type !== "mousedown" && event.type !== "dblclick";
   }
 }
 
@@ -796,7 +915,7 @@ function clampLine(line: number, totalLines: number): number {
 function buildFoldFace(
   doc: Text,
   folds: readonly FoldPoint[],
-  onExpand: ((from: number) => void) | null,
+  onReveal: ((from: number, reveal: FoldReveal) => void) | null,
 ): RangeSet<Decoration> {
   const ranges: Range<Decoration>[] = [];
   for (const fold of folds) {
@@ -807,7 +926,14 @@ function buildFoldFace(
     // 那几行抹掉却连条都不留。
     ranges.push(
       Decoration.replace({
-        widget: new DiffFoldWidget(from, to, onExpand),
+        widget: new DiffFoldWidget(
+          from,
+          to,
+          fold.top,
+          fold.bottom,
+          Math.max(fold.regionLength, to - from + 1),
+          onReveal,
+        ),
         block: true,
       }).range(doc.line(from).from, doc.line(to).to),
     );
@@ -828,7 +954,7 @@ function mapFolds(value: FoldPoint[], tr: Transaction): FoldPoint[] {
     const b = tr.changes.mapPos(doc.line(clampLine(fold.to, doc.lines)).to, 1);
     const from = tr.newDoc.lineAt(a).number;
     const to = tr.newDoc.lineAt(b).number;
-    if (from <= to) out.push({ from, to });
+    if (from <= to) out.push({ ...fold, from, to });
   }
   return out;
 }
@@ -855,11 +981,11 @@ const emptyFoldFace: FoldFace = { folds: [], decorations: RangeSet.empty };
 function foldFaceOf(
   doc: Text,
   folds: readonly FoldPoint[],
-  onExpand: ((from: number) => void) | null,
+  onReveal: ((from: number, reveal: FoldReveal) => void) | null,
 ): FoldFace {
   return {
-    folds: folds.map(({ from, to }) => ({ from, to })),
-    decorations: buildFoldFace(doc, folds, onExpand),
+    folds: folds.map((fold) => ({ ...fold })),
+    decorations: buildFoldFace(doc, folds, onReveal),
   };
 }
 

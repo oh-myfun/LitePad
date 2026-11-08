@@ -9,7 +9,7 @@
  * `editorColors.ts` 的默认值**取（行底色与字符底色是四个不同的 key，见 Task 3 那一段）；
  * 概览色带另用 `--diff-overview-add` / `--diff-overview-del`（同样是上游
  * `diffEditorOverview.*Foreground` 的生效值，与 `global.css` 那两颗增删色无关）。
- * 折不折是**外壳**态，走 `--bg-hover` / `--border` / `--fg` / `--fg-muted` 那几颗既有的。
+ * 折不折是**外壳**态，折条底色另照上游 `unchangedRegion*` 三颗（见下面的 token 段）。
  *
  * ⚠️ `.panel-host` 的基础规则（`global.css` 的 `.panel-host`）是**竖排** flex（编辑器在上、占位行在下），
  * 这里按 `.is-diff` 翻成横排；特异度 0-2-0 压得过基规则的 0-1-0，与 import 先后无关。
@@ -253,6 +253,11 @@
      在 HC 是 transparent ⇒ 下面单独覆盖。 */
   --diff-revert-bg: var(--list-inactive-bg);
   --diff-revert-fg: var(--fg);
+  /* 未改动区折条照上游三颗 `unchangedRegion*`：背景 = `sideBar.background`、
+     前景 = `foreground`、内阴影暗档 #000000 / 亮档 #737373BF（HC 跟暗档）。 */
+  --diff-unchanged-bg: var(--sidebar-bg);
+  --diff-unchanged-fg: var(--fg);
+  --diff-unchanged-shadow: #000000;
 }
 
 :root[data-theme-family="hc"] {
@@ -271,6 +276,7 @@
   --diff-char-add: #9ccc2c40;
   --diff-overview-add: #9ccc2c80;
   --diff-diagonal: #22222233;
+  --diff-unchanged-shadow: #737373bf;
 }
 
 /* 底色：上游那两个 20% alpha 的值（明暗同一套 ⇒ HC 档也靠同一颗 token 自己跟上）。
@@ -410,39 +416,87 @@
 
 /* ---------- Task 7 · 折叠未改动区：折条替掉被折起来的那几行 ---------- */
 
-/* 折条：一行高的**外壳**条，点它 = 就地展开那一段。它由一条 `Decoration.replace({block:true})`
+/* 折条：24px 高（上游 `PlaceholderViewZone(d, 24)`），由一条 `Decoration.replace({block:true})`
    直接**替掉**被折掉的整段行（`face.ts` 的 `buildFoldFace`），行与行号槽由 CM6 从块几何里
    一并收起 —— 这里不再需要 `display: none` 之类的补丁，也不再有「行被抹掉了、行号槽却还按
    原行高记账」的错位。
-   ⚠️ 三条纪律与上面那一族同规矩（R15/R18）：高度一律由 widget 按 `view.defaultLineHeight` 写
-   inline，这一段里不许出现 `height` / `em` / 竖向 margin/padding —— 两栏各折**同样多**的行、
-   各占一条折条，行盒才不分家（未改动区在两栏的行数天然相等：两块之间那些行是配对了的相同行）。
-   ⚠️ 色只吃外壳那几颗 token（底 `--bg-hover` + 描边 `--border` + 字色 `--fg` / `--fg-muted`，
-   五族各有各的取值 ⇒ 明暗与 HC 档自己就跟上了），**不吃 `--diff-*`**：折不折是界面态，
-   不是「这一行是增 / 改 / 删」那三件事之一，而第四颗差异色是禁项。
-   描边走 `outline` 不走 `border`：后者要从 widget 写下的那一格里再抠出线宽，两栏的折条就会
-   因为字阶不同而差半格；`outline` 不占布局，画在盒子外沿。 */
+   ⚠️ 高度写 inline（widget 那一侧），这一段里不许出现 `height` / `em` / 竖向 margin/padding
+   去参与行盒计算 —— 两栏各折**同样多**的行、各占一条 24px 的折条，行盒才不分家。
+   ⚠️ 色照上游 `unchangedRegionBackground / Foreground / Shadow`：底 `--diff-unchanged-bg`
+   （= `sideBar.background`）、字 `--diff-unchanged-fg`（= `foreground`）、内阴影
+   `--diff-unchanged-shadow`（明 `#737373BF` / 暗 `#000000`，HC 跟暗）。上下 4px 揭示热区
+   平时透明，悬停/拖拽时铺 `focusBorder`（= `--accent`，上游 `.top:hover/.bottom:hover` 同口径）。 */
 .panel-host.is-diff .diff-fold-bar {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
   overflow: hidden;
   white-space: nowrap;
-  cursor: pointer;
-  color: var(--fg-muted);
-  background: var(--bg-hover);
-  outline: 1px solid var(--border);
+  color: var(--diff-unchanged-fg);
+  background: var(--diff-unchanged-bg);
+  box-shadow:
+    inset 0 5px 5px -7px var(--diff-unchanged-shadow),
+    inset 0 -5px 5px -7px var(--diff-unchanged-shadow);
 }
 
-/* 块头那颗 `unfold`（上游 `renderLabelWithIcons('$(unfold)')`）：跟着正文行高走，
-   16px 的默认字阶在一行高的折条里会顶到描边。 */
+/* 上下各 4px 的揭示热区：点一下揭示固定行数，按住能拖（游标按竖向缩放）。 */
+.panel-host.is-diff .diff-fold-top,
+.panel-host.is-diff .diff-fold-bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 4px;
+  z-index: 1;
+  cursor: ns-resize;
+}
+
+.panel-host.is-diff .diff-fold-top {
+  top: 0;
+}
+
+.panel-host.is-diff .diff-fold-bottom {
+  bottom: 0;
+}
+
+.panel-host.is-diff .diff-fold-top:hover,
+.panel-host.is-diff .diff-fold-top.is-dragging,
+.panel-host.is-diff .diff-fold-bottom:hover,
+.panel-host.is-diff .diff-fold-bottom.is-dragging {
+  background: var(--accent);
+}
+
+/* 中间那一行：展开图标 + 说明文案（上游 `.center` 的 `{0} hidden lines`）。 */
+.panel-host.is-diff .diff-fold-center {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--diff-unchanged-fg);
+}
+
+/* 块头那颗 `unfold`（上游 `renderLabelWithIcons('$(unfold)')`）：点它 = 全开。 */
+.panel-host.is-diff .diff-fold-unfold {
+  display: inline-flex;
+  align-items: center;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.panel-host.is-diff .diff-fold-unfold:hover {
+  color: var(--accent);
+}
+
 .panel-host.is-diff .diff-fold-bar .diff-fold-icon {
   font-size: 14px;
 }
 
-.panel-host.is-diff .diff-fold-bar:hover {
-  color: var(--fg);
+/* 说明文案：双击全开（上游 center 的 dblclick）。 */
+.panel-host.is-diff .diff-fold-text {
+  cursor: default;
+  user-select: none;
 }
 
 /* ---------- 差异概览（VS Code 的 `diffOverview`：右缘 30px，两颗 15px 的 overview ruler） ---------- */

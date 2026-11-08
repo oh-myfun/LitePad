@@ -44,7 +44,6 @@ import { DIFF_REFRESH_MS, splitLines } from "./align";
 import { blockAt, diffBlocks, type DiffBlock } from "./blocks";
 import { innerChanges, type InnerChanges } from "./inline";
 import {
-  DIFF_CONTEXT_LINES,
   DIFF_REVEAL_LINES,
   diffFace,
   foldCandidates,
@@ -53,7 +52,9 @@ import {
   onFoldBarClick,
   refreshDiff,
   setFoldedRanges,
+  type FoldPoint,
   type FoldRange,
+  type FoldReveal,
   type GapZone,
 } from "./face";
 import { canOpenAgainstBaseline, notifyDiffBlocks, type DiffSide, type DiffSpec } from "./model";
@@ -546,20 +547,29 @@ export function createDiffSurface(
     if (tab) tab.state = right.state;
   };
 
-  // ---- Task 7 · 折叠未改动区（默认不折；开关与「折着哪几段」只活在这一格） ----
+  // ---- Task 7 · 折叠未改动区（默认不折；开关与「每段揭示了几行」只活在这一格） ----
   /** 开关（缺省关 = 一段都不折）。不进设置，也不跨标签活：旁路拆掉就没了。 */
   let foldOn = false;
   /**
-   * 手动展开过的未改动区（按**段序号**记账：首块之前 0、两块之间按前一块的序号、末块之后 = 块数）。
+   * 每一段未改动区已经**揭示**了多少行（按段序号记账：首块之前 0、两块之间按前一块的序号、
+   * 末块之后 = 块数）。
    *
-   * 为什么记「展开过」而不是记「折起来」：开关开着 = 政策「够长的未改动区就折」，而键入之后
-   * 块表会变 —— 记展开过 ⇒ 新长出来的未改动区自己会折上（与开关的语义一致），而用户刚点开的那
-   * 一段不会被偷偷折回去。段序号会随块增减错位（块被拆成两块时展开记录跟着挪），这是本轮的
-   * 已知边界，写进结果文档的「已知限制」。
+   * 口径照上游 `UnchangedRegion.visibleLineCountTop / Bottom`：上下各自累计、各自收缩，
+   * 缺省 `{0,0}` = 整段可折；`top + bottom >= 段长` 的那一段不再出折条（上游
+   * `shouldHideControls`），但**记账留着** —— 删掉就等于回到 `{0,0}`，下一发重算又折回去。
+   *
+   * 段序号会随块增减错位（块被拆成两块时揭示记录跟着挪），这是本轮的已知边界，
+   * 写进结果文档的「已知限制」。
    */
-  const expandedRuns = new Set<number>();
+  const revealRuns = new Map<number, { top: number; bottom: number }>();
 
   const lineCountOf = (side: DiffSide): number => viewOf(side)?.state.doc.lines ?? 0;
+
+  /** 两栏各自的行数（贴边判定要看两栏：上游 `atStart/atEnd` 是成对的）。 */
+  const lineCounts = (): Record<DiffSide, number> => ({
+    original: lineCountOf("original"),
+    modified: lineCountOf("modified"),
+  });
 
   /** 某一栏那颗 view（右栏可能是「没有右栏」那条兜底路 ⇒ 调用处一律允许读不到）。 */
   const viewOf = (side: DiffSide): EditorView | null => (side === "original" ? left : right);
@@ -571,11 +581,36 @@ export function createDiffSurface(
     return view.state.doc.lineAt(view.state.selection.main.head).number;
   };
 
+  const regionLengthOf = (r: FoldRange): number => r.end - r.start + 1;
+
+  /** 这一段此刻的揭示量（夹进段长：正文改动之后旧记账可能已经越界）。 */
+  const revealOf = (r: FoldRange): { top: number; bottom: number } => {
+    const len = regionLengthOf(r);
+    const saved = revealRuns.get(r.run);
+    const top = Math.min(Math.max(saved?.top ?? 0, 0), len);
+    const bottom = Math.min(Math.max(saved?.bottom ?? 0, 0), len - top);
+    return { top, bottom };
+  };
+
+  /** 这一段此刻的隐藏区间（本栏行轴，含端点）。 */
+  const hiddenOf = (r: FoldRange): { from: number; to: number } => {
+    const { top, bottom } = revealOf(r);
+    return { from: r.start + top, to: r.end - bottom };
+  };
+
   /** 这一栏此刻真的折着哪几段（候选一律由 `diffBlocks` 交出来的块推出 —— 同源）。 */
-  const foldedFor = (side: DiffSide): FoldRange[] =>
-    foldOn
-      ? foldCandidates(stored, side, lineCountOf(side)).filter((r) => !expandedRuns.has(r.run))
-      : [];
+  const foldedFor = (side: DiffSide): FoldRange[] => {
+    if (!foldOn) return [];
+    return foldCandidates(stored, side, lineCounts()).filter((r) => {
+      const { top, bottom } = revealOf(r);
+      return top + bottom < regionLengthOf(r);
+    });
+  };
+
+  /** 整段全开（光标落进去 / 跳块经过时用）：上游 `showAll` 同口径。 */
+  const showAllRun = (r: FoldRange): void => {
+    revealRuns.set(r.run, { top: 0, bottom: regionLengthOf(r) });
+  };
 
   /**
    * 把「画面那一段」（一个行号或一段行号，本栏行轴）对回候选清单里的**那一段**。
@@ -590,21 +625,25 @@ export function createDiffSurface(
    */
   const matchRun = (side: DiffSide, from: number, to = from): FoldRange | null => {
     const cands = foldedFor(side);
-    const gapOf = (r: FoldRange): number => Math.max(r.from - to, from - r.to, 0);
+    const gapOf = (r: FoldRange): number => {
+      const hidden = hiddenOf(r);
+      return Math.max(hidden.from - to, from - hidden.to, 0);
+    };
     let best: FoldRange | null = null;
     for (const r of cands) {
-      if (r.from <= from && to <= r.to) return r;
+      const hidden = hiddenOf(r);
+      if (hidden.from <= from && to <= hidden.to) return r;
       if (best === null || gapOf(r) < gapOf(best)) best = r;
     }
     return best;
   };
 
   /**
-   * 画面上真的折着的那一段对回候选清单 ⇒ 记下**那一段**（`run`）。
+   * 画面上真的折着的那一段对回候选清单 ⇒ 整段全开。
    *
    * 查的是 `foldedRangesIn`（画法自己），不是候选清单：键入之后两者行号不同一份（见 `matchRun`）；
-   * 而「摘掉哪一段」还得回清单去记（`expandedRuns` 记的是段序号，不是行号）。
-   * @returns 有没有真摘掉一段（没有 ⇒ 调用方不必点名）
+   * 而「全开哪一段」还得回清单去记（记账口径是段序号，不是行号）。
+   * @returns 有没有真展开一段（没有 ⇒ 调用方不必点名）
    */
   const unfoldRunUnderLine = (side: DiffSide, line: number): boolean => {
     const view = viewOf(side);
@@ -612,14 +651,25 @@ export function createDiffSurface(
     const painted = foldedRangesIn(view.state);
     if (!painted.some((r) => line >= r.from && line <= r.to)) return false;
     const hit = matchRun(side, line);
-    if (!hit || expandedRuns.has(hit.run)) return false;
-    expandedRuns.add(hit.run);
+    if (!hit) return false;
+    const { top, bottom } = revealOf(hit);
+    if (top + bottom >= regionLengthOf(hit)) return false;
+    showAllRun(hit);
     return true;
   };
 
-  /** 发进那一臂的形态（只带本栏行轴的行号；`run` 是 surface 自己的记账抓手）。 */
-  const foldPointsFor = (side: DiffSide): Array<{ from: number; to: number }> =>
-    foldedFor(side).map(({ from, to }) => ({ from, to }));
+  /** 发进那一臂的形态（本栏行轴的行号 + 揭示量：段序号是 surface 自己的记账抓手）。 */
+  const foldPointsFor = (side: DiffSide): FoldPoint[] =>
+    foldedFor(side).map((r) => {
+      const { top, bottom } = revealOf(r);
+      return {
+        from: r.start + top,
+        to: r.end - bottom,
+        top,
+        bottom,
+        regionLength: regionLengthOf(r),
+      };
+    });
 
   /**
    * 两栏一起点名：按现在的块表重画一次，并把「现在折着这些段」一起发进去。
@@ -658,17 +708,18 @@ export function createDiffSurface(
    */
   const unfoldAroundLines = (lines: number[]): void => {
     if (!foldOn) return;
-    const drop: number[] = [];
+    const drop: FoldRange[] = [];
     for (const side of SIDES) {
       for (const r of foldedFor(side)) {
-        if (drop.includes(r.run)) continue;
-        if (lines.some((line) => r.from <= line && line <= r.to + DIFF_REVEAL_LINES)) {
-          drop.push(r.run);
+        if (drop.some((d) => d.run === r.run)) continue;
+        const hidden = hiddenOf(r);
+        if (lines.some((line) => hidden.from <= line && line <= hidden.to + DIFF_REVEAL_LINES)) {
+          drop.push(r);
         }
       }
     }
     if (drop.length === 0) return;
-    for (const run of drop) expandedRuns.add(run);
+    for (const r of drop) showAllRun(r);
     refreshArms();
   };
 
@@ -698,7 +749,7 @@ export function createDiffSurface(
 
   /**
    * 开关那两颗入口动手**之前**补的那一手（Important 1 的第一路）：按将要画出去的那份候选清单
-   * 查两侧各自的光标行，盖住光标那一段先记进 `expandedRuns`（只记账，不派发 —— 收口还是
+   * 查两侧各自的光标行，盖住光标那一段先记成「整段全开」（只记账，不派发 —— 收口还是
    * 调用方那一发 `refreshArms()`，两栏同一次派发这一条不许破）。
    *
    * 左栏也查：它硬只读、打字进不去，但它**可选可聚焦**（R12 那一手），光标同样会停在
@@ -708,8 +759,11 @@ export function createDiffSurface(
     if (!foldOn) return;
     for (const side of SIDES) {
       const line = caretLineOf(side);
-      const hit = foldedFor(side).find((r) => line >= r.from && line <= r.to);
-      if (hit) expandedRuns.add(hit.run);
+      const hit = foldedFor(side).find((r) => {
+        const hidden = hiddenOf(r);
+        return line >= hidden.from && line <= hidden.to;
+      });
+      if (hit) showAllRun(hit);
     }
   };
 
@@ -765,8 +819,11 @@ export function createDiffSurface(
   };
 
   /**
-   * 折条被点（两臂带进来的都是这一颗，各自认自己那一栏）：就地展开那一段，
-   * 再把「上下各 `DIFF_REVEAL_LINES` 行」的揭示窗口第一行落到视野顶上。
+   * 折条上的操作（两臂带进来的都是这一颗，各自认自己那一栏）：按揭示量改那一段的记账。
+   *
+   * 三条交互照上游 `CollapsedCodeOverlayWidget`：上下 4px 热区点一下各揭示
+   * `DIFF_REVEAL_LINES` 行、拖拽连续揭示（widget 自己按行高折算后交绝对量上来）、
+   * 中间双击/图标全开。全开 ⇒ `top + bottom === 段长` ⇒ 这一段不再出折条。
    *
    * ⚠️ 揭示只做**本栏**：左栏那颗不在同步滚动那套注册口里，两栏本来就是各滚各的
    * （点一栏的折条把另一栏也滚走，等于偷偷给它发明一条同步规则）。
@@ -775,17 +832,32 @@ export function createDiffSurface(
    * 的那一份，候选清单则是按现在的 `stored` 现算的 —— 两者中间隔着一发键入就差几行，
    * 按行号精确比对 ⇒ `undefined` ⇒ 点下去静默空转（不报错、不展开，什么也不发生）。
    */
-  const expandFold = (side: DiffSide, from: number): void => {
+  const revealFold = (side: DiffSide, from: number, reveal: FoldReveal): void => {
     const hit = matchRun(side, from);
     if (!hit) return;
-    expandedRuns.add(hit.run);
+    const len = regionLengthOf(hit);
+    const cur = revealOf(hit);
+    let next = cur;
+    if ("all" in reveal) next = { top: cur.top, bottom: len - cur.top };
+    else if ("above" in reveal) {
+      next = { top: Math.min(cur.top + reveal.above, len - cur.bottom), bottom: cur.bottom };
+    } else if ("below" in reveal) {
+      next = { top: cur.top, bottom: Math.min(cur.bottom + reveal.below, len - cur.top) };
+    } else if ("top" in reveal) {
+      next = { top: Math.min(Math.max(reveal.top, 0), len - cur.bottom), bottom: cur.bottom };
+    } else if ("bottom" in reveal) {
+      next = { top: cur.top, bottom: Math.min(Math.max(reveal.bottom, 0), len - cur.top) };
+    }
+    if (next.top === cur.top && next.bottom === cur.bottom) return;
+    revealRuns.set(hit.run, next);
     refreshArms();
-    landSide(side, Math.max(1, from - DIFF_CONTEXT_LINES - DIFF_REVEAL_LINES));
   };
 
   /** 两栏各自的折条出口（身份固定，见 `leftArm` 的那条 ⚠️）。 */
-  const onOriginalFoldClick = (from: number): void => expandFold("original", from);
-  const onModifiedFoldClick = (from: number): void => expandFold("modified", from);
+  const onOriginalFoldReveal = (from: number, reveal: FoldReveal): void =>
+    revealFold("original", from, reveal);
+  const onModifiedFoldReveal = (from: number, reveal: FoldReveal): void =>
+    revealFold("modified", from, reveal);
 
   /**
    * 三颗动作 + 开关（简报 Interfaces 的那四颗）。
@@ -798,22 +870,22 @@ export function createDiffSurface(
   const setCollapseUnchanged = (on: boolean): void => {
     if (foldOn === on) return;
     foldOn = on;
-    // 开关拨过去 = 重新按当前块表折一遍 / 全部放开；手动展开过的那几笔不跨开关记账
+    // 开关拨过去 = 重新按当前块表折一遍 / 全部放开；揭示记账不跨开关
     //（开着又关掉再打开，用户要的是「照现在的正文重来一次」，不是把上次那些段一条条对上）。
-    expandedRuns.clear();
+    revealRuns.clear();
     guardCaretsUnderFolds();
     refreshArms();
   };
   const collapseAllUnchanged = (): void => {
     foldOn = true;
-    expandedRuns.clear();
+    revealRuns.clear();
     guardCaretsUnderFolds();
     refreshArms();
   };
   const showAllUnchanged = (): void => {
     // 连开关一起关：只清空折区而开关留着的下一发，「全部展开」会被重算偷偷折回去。
     foldOn = false;
-    expandedRuns.clear();
+    revealRuns.clear();
     refreshArms();
   };
 
@@ -829,7 +901,7 @@ export function createDiffSurface(
     // 缝与行内区间同一份来源：块表换了而缝还停在旧测量上，底色与占位块会互相打架；
     // 行内区间若晚一拍，字符级标记就会短暂地落在新块的旧行号上。
     diffFace("original", () => ({ blocks: stored, gaps: gapPlans.original, inner })),
-    onFoldBarClick(onOriginalFoldClick),
+    onFoldBarClick(onOriginalFoldReveal),
     // 左栏没有文档更新，但**光标与选区会动**（R12：那颗 view 可选可聚焦）⇒ 概览标记层
     // 必须跟着走，否则左列的光标条停在挂上那一刻。差异色块与折叠走 `refreshArms` 那一发，
     // 这里只重画标记画布（不做块表重算）。
@@ -1354,7 +1426,7 @@ export function createDiffSurface(
    * 而用户看到的是停在别处。两栏的行轴不同 ⇒ 两侧各查一遍，别只查右栏。
    *
    * 两颗 view 的落法不一样（左栏普通派发 / 右栏同步写 + 同栈认领，裁决 R25）—— 那一手的
-   * 完整理由写在 `landSide` 上，跳块与点折条共用它，不各写一份。
+   * 完整理由写在 `landSide` 上，跳块与步进共用它，不各写一份。
    */
   const jumpTo = (index: number): void => {
     if (stored.length === 0) return;
@@ -1517,7 +1589,7 @@ export function createDiffSurface(
   /** 右栏那一臂的内容：装饰 + 折条出口 + 键入落点（`updateListener` 是 state facet，只能并进来）。 */
   const rightArm = (): Extension => [
     diffFace("modified", () => ({ blocks: stored, gaps: gapPlans.modified, inner })),
-    onFoldBarClick(onModifiedFoldClick),
+    onFoldBarClick(onModifiedFoldReveal),
     // 仓库同形先例 `tests/preview-face-helpers.ts:71-76`：塞进 `state.update({extensions})`
     // 会被静默丢掉，必须走 effect。
     EditorView.updateListener.of((update) => {
@@ -1632,7 +1704,7 @@ export function createDiffSurface(
       // 折叠状态跟着这一格退场（那颗 view 上的替换装饰已经随臂摘掉了，读口再报着
       // 折区就是两份真相 —— 拆掉的 surface 从此只报「没折」）。
       foldOn = false;
-      expandedRuns.clear();
+      revealRuns.clear();
       // 右栏那颗 view **不随旁路销毁**（它是那份文档本身）⇒ 这一臂必须精准摘掉，
       // 否则底色与占位块会留在一张普通编辑器标签上。槽值清成空 ⇒ 键入监听与两臂装饰一起走。
       // 那颗 view 已经 destroy 过的话这一发是空转（CM6 内部的 `destroyed` 分支），不抛错。
