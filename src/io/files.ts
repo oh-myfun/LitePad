@@ -106,7 +106,16 @@ function rebuildDocInstances(doc: Doc, text: string, keepCursor = false): void {
       lang.extension,
       // B458：与 makeInstance 同一个基线读取口（重载后 `doc.baseline` 由 markClean 换新，
       // 这一列下一次刷新就跟着清空）。
-      { dark: isDark, family: themeFamily, wrap: isWrap, perf, baseline: () => doc.baseline },
+      // 差异实例（与 `makeDiffInstance` 同口径）不挂普通编辑器那层右缘标尺：
+      // 那一格由 `.diff-overview` 自己画，否则新稿栏内部会多出一条盖住正文的列。
+      {
+        dark: isDark,
+        family: themeFamily,
+        wrap: isWrap,
+        perf,
+        baseline: () => doc.baseline,
+        overview: inst.kind !== "diff",
+      },
       getInstanceOnUpdate(),
     );
     inst.state = made.state;

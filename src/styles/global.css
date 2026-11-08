@@ -1042,6 +1042,41 @@
    里一次到位（见下面「未保存改动的行级标注」那段）。族覆盖与明暗基座表都不许再写这三颗 ——
    浅色的 `--warn` 是橄榄绿 #667309，借过来两档必然不一致（用户 2026-11-04 定稿）。 */
 
+/* ---------- 概览标尺（VS Code 的 overview ruler）的标记色 ----------
+   取的是上游 `editorOverviewRuler.*` 那几颗注册默认值，一个都没自拟：
+     · `findMatchForeground`  #d186167e（HC 档 #AB5A00，见下面那条族覆盖）
+     · `rangeHighlightForeground` #007acc99（当前查找命中，见 `overview.ts` 头注）
+     · `selectionHighlightForeground` / `wordHighlightForeground` #A0A0A0CC
+     · 光标 = `editorCursor.foreground` 的 70%（上游 `editorCursorForeground.transparent(0.7)`）
+   后三颗在注册表里是一个字符串 ⇒ 明暗与主题族同一个值；只有查找命中分族。
+   全部半透明：上游注册注释写明「不许不透明，否则会盖住下面的装饰」——
+   差异格里这些标记要压在删除/新增色条上仍可辨，正是靠这一点。 */
+:root {
+  --overview-find: #d186167e;
+  --overview-range: #007acc99;
+  --overview-selection: #a0a0a0cc;
+  --overview-word: #a0a0a0cc;
+  --overview-cursor: color-mix(in srgb, var(--editor-cursor) 70%, transparent);
+}
+:root[data-theme-family="hc"] {
+  --overview-find: #ab5a00;
+}
+
+/* 普通编辑器右缘那一列（`src/editor/overview.ts` 的 `overviewRuler()` 建画布）。
+   几何照上游：标尺与纵向滚动条**同一列**（`layoutInfo.overviewRuler` 的
+   `right: 0 / width: verticalScrollbarWidth`）。本应用的滚动条宽 8px ⇒ 画布也 8px 贴右缘。
+   层叠与上游的差别：上游滚动条是自己画的 DOM、能压在标尺上；这条是浏览器自绘的，压不下去
+   ⇒ 画布 `z-index: 2`。标记全半透明，滑块仍认得出；`pointer-events: none` 保拖拽。
+   高度由脚本按「编辑器高 − 横向滚动条」写 inline。 */
+.cm-overview-ruler {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  z-index: 2;
+  pointer-events: none;
+}
+
 /* ---------- 滚动条：全应用统一 + 随深浅色联动 ----------
    WebView2 默认滚动条是 Windows 系统样式，深色界面里会出现一条浅色亮条；
    Windows 10 那档还带**上下两端的三角形箭头**（VS Code 一律没有 —— 它自绘

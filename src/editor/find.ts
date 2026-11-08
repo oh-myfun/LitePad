@@ -222,6 +222,38 @@ export function findHighlight(): Extension {
   return [findField, findDecorations, findRangeField];
 }
 
+/** 概览标尺要的一行区间（1-based，闭区间）。 */
+export interface FindRulerRange {
+  fromLine: number;
+  toLine: number;
+  /** 当前命中（`activeFrom` 那一条） */
+  active: boolean;
+}
+
+/**
+ * 概览标尺那一层：读**已经算好**的命中装饰，不重复扫文档。
+ *
+ * 上游同样不另扫一遍：概览标尺吃的是 model 上已注册的装饰
+ * （`getAllOverviewRulerDecorations` 遍历 `decorationOptions`）。
+ * 命中上限、选区限制、当前命中都已由 `findDecorations` 兑现，这里只把位置换算成行号。
+ */
+export function findRulerRanges(state: EditorState): FindRulerRange[] {
+  const deco = state.field(findDecorations, false);
+  if (!deco) return [];
+  const doc = state.doc;
+  const out: FindRulerRange[] = [];
+  const iter = deco.iter();
+  while (iter.value) {
+    out.push({
+      fromLine: doc.lineAt(iter.from).number,
+      toLine: doc.lineAt(iter.to).number,
+      active: String(iter.value.spec.class ?? "").includes("cm-find-match-active"),
+    });
+    iter.next();
+  }
+  return out;
+}
+
 /** 把查询应用到视图（高亮 + 当前项）。 */
 export function applyFindQuery(
   view: EditorView,

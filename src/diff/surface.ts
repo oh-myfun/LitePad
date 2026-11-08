@@ -22,6 +22,7 @@ import { Compartment, EditorState, StateEffect, type Extension } from "@codemirr
 import { EditorView, BlockType } from "@codemirror/view";
 import { detectLanguage } from "../editor/language";
 import { gutterExtensions } from "../editor/editor";
+import { layoutOverview, overviewZones, paintOverview } from "../editor/overview";
 import { perfOfDiffInstance } from "../doc-model";
 import type { PerfProfile } from "../editor/perf";
 import { activePanelId, docs, isWrap, panels, tabs, type Panel } from "../core/app-state";
@@ -329,6 +330,17 @@ export function createDiffSurface(
   originalRulerEl.className = "diff-overview-ruler diff-overview-original";
   const modifiedRulerEl = document.createElement("div");
   modifiedRulerEl.className = "diff-overview-ruler diff-overview-modified";
+  // 标记层（选区/光标/查找命中/同词出现）单独一颗画布，压在差异色块之上、滑块之下。
+  // 色块仍是既有的 `.diff-overview-mark`（上面那段注释的像素口径不动），这一层只管新增标记：
+  // 命中可能有几千条，逐条 DOM 会抖，而画布一次 `paintOverview` 就够（合并规则见 overview.ts）。
+  const originalCanvasEl = document.createElement("canvas");
+  originalCanvasEl.className = "diff-overview-canvas";
+  originalCanvasEl.setAttribute("aria-hidden", "true");
+  originalRulerEl.appendChild(originalCanvasEl);
+  const modifiedCanvasEl = document.createElement("canvas");
+  modifiedCanvasEl.className = "diff-overview-canvas";
+  modifiedCanvasEl.setAttribute("aria-hidden", "true");
+  modifiedRulerEl.appendChild(modifiedCanvasEl);
   const viewportEl = document.createElement("div");
   viewportEl.className = "diff-viewport";
   overviewEl.append(originalRulerEl, modifiedRulerEl, viewportEl);
@@ -744,6 +756,18 @@ export function createDiffSurface(
     // 缝与块同一份来源：块表换了而缝还停在旧测量上，底色与占位块会互相打架。
     diffFace("original", () => ({ blocks: stored, gaps: gapPlans.original })),
     onFoldBarClick(onOriginalFoldClick),
+    // 左栏没有文档更新，但**光标与选区会动**（R12：那颗 view 可选可聚焦）⇒ 概览标记层
+    // 必须跟着走，否则左列的光标条停在挂上那一刻。差异色块与折叠走 `refreshArms` 那一发，
+    // 这里只重画标记画布（不做块表重算）。
+    EditorView.updateListener.of((update) => {
+      if (
+        update.selectionSet ||
+        update.docChanged ||
+        update.transactions.some((tr) => tr.effects.length > 0)
+      ) {
+        paintMarkers("original", originalRulerEl, originalCanvasEl);
+      }
+    }),
   ];
   const left = new EditorView({
     parent: originalEl,
@@ -900,7 +924,8 @@ export function createDiffSurface(
    * `contentHeight` 在首帧/隐藏格可能是 0：直接不画（ResizeObserver 落地后会补画）。
    */
   const paintRuler = (side: DiffSide, ruler: HTMLElement): void => {
-    ruler.replaceChildren();
+    // 只清色块，**别** `replaceChildren()`：标记层那颗画布是常驻子节点（见创建处）。
+    for (const old of ruler.querySelectorAll(".diff-overview-mark")) old.remove();
     const view = viewOf(side);
     if (!view) return;
     const total = view.contentHeight;
@@ -958,10 +983,44 @@ export function createDiffSurface(
     viewportEl.style.height = `${height}px`;
   };
 
+  /**
+   * 标记层：选区 / 光标 / 查找命中 / 同词出现。
+   *
+   * 上游的差异概览把这几类装饰与差异色块画在同一块画布上（`diffOverview.ruler`），
+   * 二者共用一套行→像素换算；这里分成两层——色块仍是 DOM（既有的像素口径与测试），
+   * 新标记在它上面的画布（`z-index: 1`），滑块仍压在最上层（`.diff-viewport` 的 `z-index: 10`）。
+   * 行高与 `contentHeight` 取**本栏**那份 view ⇒ 折行、占位块、折叠展开后的位移都跟着走。
+   */
+  const paintMarkers = (side: DiffSide, ruler: HTMLElement, canvas: HTMLCanvasElement): void => {
+    const view = viewOf(side);
+    if (!view) return;
+    const total = view.contentHeight;
+    const width = ruler.clientWidth;
+    const height = ruler.clientHeight;
+    if (!(total > 0) || !(width > 0) || !(height > 0)) return;
+    const rects = layoutOverview(
+      overviewZones(view.state),
+      {
+        height: total,
+        topOf: (line) => textBlockOf(view, line).top,
+        heightOf: (line) => textBlockOf(view, line).height,
+      },
+      width,
+      height,
+    );
+    paintOverview(canvas, rects);
+  };
+
+  const renderMarkers = (): void => {
+    paintMarkers("original", originalRulerEl, originalCanvasEl);
+    paintMarkers("modified", modifiedRulerEl, modifiedCanvasEl);
+  };
+
   /** 概览条重画：批块、折叠、主题换壳都从这一颗口子收口（调用方统一在 `refreshArms`）。 */
   const renderOverview = (): void => {
     paintRuler("original", originalRulerEl);
     paintRuler("modified", modifiedRulerEl);
+    renderMarkers();
     renderViewport();
   };
 
@@ -1334,6 +1393,15 @@ export function createDiffSurface(
       if (update.selectionSet || update.docChanged) unfoldUnderCaret();
       // 光标走进另一块 ⇒ 中间那列的高亮跟着走（VS Code 的 `showAlways` 是同一口径）。
       if (update.selectionSet) renderReverts();
+      // 概览标记层（选区/光标/查找命中/同词出现）只吃本栏 state ⇒ 选区、正文、查找查询
+      // 任一变化就重画这一块画布（差异色块与折叠仍由 `refreshArms` 统一收口）。
+      if (
+        update.selectionSet ||
+        update.docChanged ||
+        update.transactions.some((tr) => tr.effects.length > 0)
+      ) {
+        paintMarkers("modified", modifiedRulerEl, modifiedCanvasEl);
+      }
       // 左栏没有这一颗监听：那颗 view 的文档被硬闸钉住、不会自己动，光标停进折区也只是
       // 「选区看不见」（读不动的栏，打字那一条害处不成立）⇒ 它那一头由 `guardCaretsUnderFolds`
       // （两颗开关入口）与 `unfoldAroundLines`（落位）兜住。

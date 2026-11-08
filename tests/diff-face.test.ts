@@ -469,6 +469,9 @@ function mountSurfacePair(
       dark: env.dark ?? false,
       wrap: env.wrap ?? true,
       perf: perfProfileFor("normal"),
+      // 与 `makeDiffInstance` 同口径：差异实例不挂普通编辑器那层右缘标尺
+      // （那一格由 `.diff-overview` 自己画）。
+      overview: false,
     },
     () => {},
   );
@@ -1511,5 +1514,43 @@ describe("B461 · 折条样式（Task 7 追加那一段）", () => {
     );
     const gutter = ruleBlock(code(), ".panel-host.is-diff .cm-gutterElement.diff-folded-gutter");
     expect(gutter).toContain("display: none");
+  });
+});
+
+describe("B464 · 右缘概览的标记层（选区/光标/查找命中/同词出现）", () => {
+  const css = (): string => stripCssComments(srcOf("src/diff/diff.css"));
+
+  it("两列各一颗常驻画布：色块重画不许把它一起清掉", () => {
+    const { panel, surface } = mountSurfacePair();
+    const host = panel.bodyEl!;
+    const rulers = [...host.querySelectorAll<HTMLElement>(".diff-overview-ruler")];
+    expect(rulers).toHaveLength(2);
+    for (const ruler of rulers) {
+      expect(ruler.querySelector(".diff-overview-canvas"), "每列一颗标记画布").not.toBeNull();
+    }
+    surface.syncBlocks();
+    for (const ruler of rulers) {
+      expect(ruler.querySelector(".diff-overview-canvas"), "重画后画布还在").not.toBeNull();
+    }
+    // 差异色块照旧是 DOM 那几颗（画布只叠在上面，不接管它们）
+    expect(rulers[0].querySelectorAll(".diff-overview-mark").length).toBeGreaterThan(0);
+  });
+
+  it("差异实例的右栏不再挂普通编辑器那层（否则新稿栏里会多出一条盖住正文的列）", () => {
+    const { right } = mountSurfacePair();
+    expect(right.dom.querySelector(".cm-overview-ruler")).toBeNull();
+  });
+
+  it("层级三层：差异色块 → 标记画布（z-index 1）→ 视口滑块（z-index 10）", () => {
+    const canvas = ruleBlock(css(), ".panel-host.is-diff .diff-overview-canvas", undefined, true);
+    expect(canvas, "规则得真在").not.toBe("");
+    expect(canvas).toContain("z-index: 1");
+    expect(canvas).toContain("pointer-events: none");
+
+    const viewport = ruleBlock(css(), ".panel-host.is-diff .diff-viewport", undefined, true);
+    expect(viewport, "滑块永远最上层").toContain("z-index: 10");
+
+    const mark = ruleBlock(css(), ".panel-host.is-diff .diff-overview-mark", undefined, true);
+    expect(mark, "色块不自己开叠层 ⇒ 画布那层 1 就压得住").not.toContain("z-index");
   });
 });

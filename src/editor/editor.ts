@@ -21,6 +21,7 @@ import {
 } from "@codemirror/view";
 import { findHighlight } from "./find";
 import { gutterDiff } from "./gutterDiff";
+import { overviewRuler, overviewWordMatches } from "./overview";
 import { perfProfileFor, type PerfProfile } from "./perf";
 import { vscodeEditorTheme } from "./theme";
 import type { ThemeFamily } from "../theme/theme";
@@ -112,6 +113,9 @@ function baseExtensions(perf: PerfProfile): Extension[] {
   }
   if (perf.selectionMatches) {
     ext.push(highlightSelectionMatches());
+    // 概览标尺的「同词出现」跟着同一颗闸：正文不亮的时候右缘也不许亮，
+    // 否则大文件降档会出现「正文没有、标尺有」的错位。
+    ext.push(overviewWordMatches.of(true));
   }
   return ext;
 }
@@ -131,6 +135,14 @@ interface EditorStateEnv {
    * 差异编辑器本身就是那一格的展开（空着但仍占 4px：见 `gutterDiff.ts` 的既定行为）。
    */
   baseline?: () => string | null;
+  /**
+   * 右缘概览标尺（普通编辑器那一列标记）挂不挂。
+   *
+   * 差异实例必须显式给 `false`：差异格的右缘已经是「概览色带 + 滚动条合体」那一列
+   * （`.diff-overview`，30px 双列），`surface.ts` 自己把标记画进那两颗画布；
+   * 再让这颗 view 在 `.panel-editor` 内部贴一层，就会多出一条盖住正文右缘的列。
+   */
+  overview?: boolean;
 }
 
 export interface TabCompartments {
@@ -186,6 +198,8 @@ export function makeTabState(
       // 最右一列；挂在这里而不是 compartment 里，因为它的状态与刷新与档位无关。
       gutterDiff(env.baseline),
       comps.wrap.of(env.wrap ? EditorView.lineWrapping : []),
+      // 右缘那一列（见 `src/editor/overview.ts`）。差异实例传 `overview: false`。
+      env.overview === false ? [] : overviewRuler(),
       comps.theme.of(vscodeEditorTheme(env.dark, env.family ?? "2026")),
       comps.lang.of(perf.syntax ? (language ?? []) : []),
       // B397-1：两把档位的锁都从「空」起步 —— 唯一的刷点是 `applyPanelMode`
