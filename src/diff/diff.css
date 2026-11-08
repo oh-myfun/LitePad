@@ -401,16 +401,20 @@
 
 /* 视口滑块 = 滚动条滑块，**叠在色带上**（用户明确要合并；VS Code 是独立滚动条 + 独立色带）。
    top / height 由 `surface.ts` 按 `ScrollbarState` 的像素公式写 inline（最小 20px）。
-   外观逐项照 VS Code 的滚动条滑块（`scrollbars.css` + `scrollbarState.ts`）：**方角、无描边、
-   无内缩**（滑块宽度 = 轨道宽度），轨道透明，三态只换 `scrollbarSlider.*` 那三颗 token
+   外观照 VS Code 的滚动条滑块（`scrollbars.css` + `scrollbarState.ts`）：无描边、无内缩
+   （滑块宽度 = 轨道宽度），轨道透明，三态只换 `scrollbarSlider.*` 那三颗 token
    （`--sb-thumb` / `-hover` / `-active`，取值即 VS Code 默认深/浅主题的 #79797966 / #797979b3 /
    #797979 与 #64646466 / #646464b3 / #646464）。半透明中性灰压在删除/新增色带上本身就是
-   可辨的「另一种颜色」，不再另加圆角与描边。 */
+   可辨的「另一种颜色」，不再另加描边。圆角是用户点名的差异（「滑块要圆角」）。
+   ⚠️ 层级：VS Code 的 `.monaco-diff-editor .diffOverview .diffViewport` 是 `z-index: 10`，
+   色带（overview ruler 的装饰）在它下面 ⇒ 滑块**压住**色块；半透明的滑块又把下面的
+   删除/新增色透出来，既不会被行色块盖掉，也不会把色块上的差异色抹平。 */
 .panel-host.is-diff .diff-viewport {
   position: absolute;
   left: 0;
   right: 0;
-  z-index: 1;
+  z-index: 10;
+  border-radius: 4px;
   background: var(--sb-thumb);
 }
 

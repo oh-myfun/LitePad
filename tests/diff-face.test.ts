@@ -987,10 +987,13 @@ describe("B462 · 记号槽与右缘概览条样式", () => {
     ).toContain("var(--diff-add)");
     const viewport = ruleBlock(css(), ".panel-host.is-diff .diff-viewport", undefined, true);
     expect(viewport).toContain("var(--sb-thumb)");
-    // 滑块叠在色带上（用户要求与 VS Code 不同）：外观逐项照 VS Code 的滚动条滑块 ——
-    // 方角、无描边、无内缩（`scrollbars.css` 只给 background，几何由 `_createSlider` 居中摆放，
-    // 默认 slider 宽度 = 轨道宽度）。
-    expect(viewport, "方角，与 VS Code 滚动条滑块一致").not.toContain("border-radius");
+    // 滑块叠在色带上：几何与配色照 VS Code 的滚动条滑块（无描边、无内缩
+    // —— `scrollbars.css` 只给 background，几何由 `_createSlider` 居中摆放，
+    // 默认 slider 宽度 = 轨道宽度）；圆角是用户点名的差异。
+    expect(viewport, "滑块圆角（用户明确要求）").toContain("border-radius: 4px");
+    // VS Code 的 `.diffOverview .diffViewport` 是 z-index: 10 ⇒ 滑块压在色块上，
+    // 半透明让下面的删除/新增色透出来。
+    expect(viewport, "滑块压在色带上（上游 diffViewport 的层级）").toMatch(/z-index:\s*10/);
     expect(viewport, "铺满色带宽度，不内缩").toContain("left: 0");
     expect(viewport, "铺满色带宽度，不内缩").toContain("right: 0");
     expect(viewport, "VS Code 的滑块没有描边/阴影").not.toContain("box-shadow");

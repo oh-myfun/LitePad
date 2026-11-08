@@ -48,10 +48,11 @@ describe("滚动条：全应用统一且随深浅色联动", () => {
     expect(thumb, "应有 ::-webkit-scrollbar-thumb 规则").toBeTruthy();
     expect(thumb, "滑块颜色必须引用 --sb-thumb 变量").toContain("var(--sb-thumb");
     expect(thumb, "滑块不得写死十六进制颜色").not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
-    // B464 · 除宽度外逐项照 VS Code：`scrollbars.css` 只给 background（方角），几何由
+    // B464 · 除宽度与圆角外逐项照 VS Code：`scrollbars.css` 只给 background，几何由
     // `_createSlider` 居中摆（默认 slider 宽度 = 轨道宽度 ⇒ 无内缩），也没有描边。
-    expect(thumb, "VS Code 的滑块是方角").not.toContain("border-radius");
-    expect(thumb, "VS Code 的滑块无内缩/无描边").not.toMatch(/\bborder(-width)?\s*:/);
+    // 圆角是用户点名要的差异（「滑块要圆角」）：半径 = 8px 轨道的一半 ⇒ 胶囊两端。
+    expect(thumb, "滑块要圆角（用户明确要求）").toMatch(/border-radius:\s*4px/);
+    expect(thumb, "无内缩/无描边").not.toMatch(/\bborder(-width)?\s*:/);
     expect(g, "滑块最短 20px（VS Code 的 MINIMUM_SLIDER_SIZE）").toMatch(
       /::-webkit-scrollbar-thumb:vertical\s*\{[^}]*min-height:\s*20px/,
     );

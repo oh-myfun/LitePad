@@ -1085,6 +1085,9 @@
 }
 ::-webkit-scrollbar-thumb {
   background: var(--sb-thumb);
+  /* 圆角滑块：上游 `scrollbars.css` 的滑块是方的，这一条是用户明确点名的差异
+     （「滑块要圆角」）。半径取轨道宽度的一半 ⇒ 8px 窄条上是两端半圆的胶囊。 */
+  border-radius: 4px;
 }
 /* 最短 20px 只在各自那个轴上生效：两条都写会让竖滑块被撑成 20px 宽。 */
 ::-webkit-scrollbar-thumb:vertical {
