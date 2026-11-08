@@ -304,6 +304,16 @@
   background-repeat: repeat;
 }
 
+/* 占位行不是文档行，CM6 的 gutter 里没有它的一格 ⇒ 记号由 widget 摆在自己左缘（产品口径；
+   上游侧排模式对 alignment view zone 不画记号）。形状 / 字号 / 透明度复用行号槽那颗
+   `.diff-sign`，这里只补落位。 */
+.diff-gap .diff-sign {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
 /* ---------- Task 7 · 折叠未改动区：折条 + 被折起来的行 ---------- */
 
 /* 折条（占位条）：一行高的**外壳**条，点它 = 就地展开那一段。

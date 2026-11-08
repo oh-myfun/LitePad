@@ -338,6 +338,21 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
     expect(placed?.widget.ignoreEvent(new MouseEvent("click")), "占位块不吃点击也不吃光标").toBe(
       true,
     );
+    // 缺口行也要有 `+`（新稿侧缺的行 = 上游多出来的新增行），形状与行号槽那一颗同源。
+    const sign = gapEls()[0].querySelector<HTMLElement>(".diff-sign");
+    expect(sign?.tagName, "记号是 Codicon 字形元素本身").toBe("I");
+    expect(sign?.classList.contains("codicon-add"), "新稿侧缺口 ⇒ `+`").toBe(true);
+    expect(sign?.classList.contains("diff-sign-insert")).toBe(true);
+  });
+
+  it("B461 · 原稿侧缺口补 `−`：缺口记号跟所在栏的分侧语义走", () => {
+    // 新稿多出两行 ⇒ 缺口落在**原稿**栏
+    const ins = diffBlocks("A\nZ", "A\n新1\n新2\nZ");
+    const { gapEls } = mountFace("original", ins, "A\nZ");
+    expect(gapEls()).toHaveLength(1);
+    const sign = gapEls()[0].querySelector<HTMLElement>(".diff-sign");
+    expect(sign?.classList.contains("codicon-remove"), "原稿侧缺口 ⇒ `−`").toBe(true);
+    expect(sign?.classList.contains("diff-sign-delete")).toBe(true);
   });
 
   it("B462 · 左栏删行涂真行底色 + Codicon `−` 记号（行号槽不上色，不再有中线指示带）", () => {
@@ -1010,6 +1025,9 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
     expect(srcOf("src/diff/surface.ts"), "铺槽那套实测变量一并清掉").not.toContain(
       "--diff-gutter-w",
     );
+    // 缺口行在 gutter 里没有格子 ⇒ 记号由 widget 摆在自己左缘（产品口径；上游不画）。
+    const gapSign = ruleBlock(css(), ".diff-gap .diff-sign", undefined, true);
+    expect(gapSign, "缺口记号落位规则得真在").toContain("position: absolute");
   });
 });
 

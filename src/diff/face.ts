@@ -281,20 +281,31 @@ const faceSource = Facet.define<() => DiffFaceSource, () => DiffFaceSource>({
  * gutter-insert` 的边注），斜纹本身也只是落在 view zone 的内容区里；行号槽那一列由
  * margin 自己盖住，上游从不在那里铺纹。CM6 的块级 widget 是 `.cm-content` 的直接子元素，
  * 天然只吃正文宽 —— 与上游同界，**不靠负偏移铺过 gutter**（那会把斜纹压到行号槽上）。
+ *
+ * ⚠️ 记号是**按产品口径补的**，上游侧排模式对 alignment view zone 不画 `+` / `−`（它没有
+ * 行号槽边注，也没有 `linesDecorationsClassName`）。缺口行不是文档行，CM6 的 gutter 里
+ * 没有它的一格 ⇒ 记号只能由 widget 自己摆：粘在块左缘，形状/字号/透明度复用行号槽那一颗
+ * `.diff-sign`（不另造一套）。
  */
 export class DiffGapWidget extends WidgetType {
-  constructor(readonly height: number) {
+  constructor(
+    readonly height: number,
+    readonly kind: "insert" | "delete",
+  ) {
     super();
   }
 
   eq(other: WidgetType): boolean {
-    return other instanceof DiffGapWidget && other.height === this.height;
+    return (
+      other instanceof DiffGapWidget && other.height === this.height && other.kind === this.kind
+    );
   }
 
   toDOM(): HTMLElement {
     const el = document.createElement("div");
     el.className = "diff-gap";
     el.style.height = `${this.height}px`;
+    el.appendChild(signIcon(this.kind));
     return el;
   }
 
@@ -330,7 +341,8 @@ function buildFace(
   for (const gap of gaps) {
     if (!(gap.height > 0)) continue;
     const after = Math.min(Math.max(gap.afterLine, 0), doc.lines);
-    const widget = new DiffGapWidget(gap.height);
+    // 缺口落在哪一栏，记号就跟哪一栏的分侧语义走：原稿栏缺行 ⇒ `−`，新稿栏缺行 ⇒ `+`。
+    const widget = new DiffGapWidget(gap.height, side === "original" ? "delete" : "insert");
     // 块 widget 要落在线界上：`after` 行之后 ⇒ 挂在该行行尾（side > 0 = 那一行之后）；
     // 第 0 行之后（正文开头就缺行）⇒ 挂在第 1 行行首（side < 0 = 那一行之前）。
     ranges.push(
@@ -365,18 +377,7 @@ class DiffSignMarker extends GutterMarker {
   }
 
   toDOM(): HTMLElement {
-    // VS Code 的记号是 Codicon（`diff-insert` → `add`、`diff-remove` → `remove`，
-    // 见 `registrations.contribution.ts`），不是手写的 `+` / `−` 字符：字形、宽度与基线
-    // 都归字体，11px 时才与行号同高且不抖。图标一律走 `CODICONS` 册（本项目红线）。
-    //
-    // 直接把返回的 `<i class="codicon codicon-add">` 当 gutter 元素：`CODICONS` 给的是整颗
-    // `<i>`，套一层 span 会让 `.codicon` 的 `font: 16px/1 codicon` 抢在 `.diff-sign` 的 11px
-    // 前面（`font` 简写在**内层**元素上，外层字号传不下去）。标记类因此加在这颗 `<i>` 上。
-    const el = document.createElement("span");
-    el.innerHTML = this.kind === "delete" ? CODICONS.remove : CODICONS.add;
-    const icon = el.firstElementChild as HTMLElement;
-    icon.classList.add("diff-sign", `diff-sign-${this.kind}`);
-    return icon;
+    return signIcon(this.kind);
   }
 
   toString(): string {
@@ -386,6 +387,23 @@ class DiffSignMarker extends GutterMarker {
 
 const insertSign = new DiffSignMarker("insert");
 const deleteSign = new DiffSignMarker("delete");
+
+/**
+ * 记号字形（行号槽与占位行共用）：VS Code 的记号是 Codicon（`diff-insert` → `add`、
+ * `diff-remove` → `remove`，见 `registrations.contribution.ts`），不是手写的 `+` / `−`
+ * 字符：字形、宽度与基线都归字体，11px 时才与行号同高且不抖。图标一律走 `CODICONS` 册。
+ *
+ * 直接把返回的 `<i class="codicon codicon-add">` 当元素：`CODICONS` 给的是整颗 `<i>`，
+ * 套一层 span 会让 `.codicon` 的 `font: 16px/1 codicon` 抢在 `.diff-sign` 的 11px 前面
+ * （`font` 简写在**内层**元素上，外层字号传不下去）。标记类因此加在这颗 `<i>` 上。
+ */
+function signIcon(kind: "insert" | "delete"): HTMLElement {
+  const el = document.createElement("span");
+  el.innerHTML = kind === "delete" ? CODICONS.remove : CODICONS.add;
+  const icon = el.firstElementChild as HTMLElement;
+  icon.classList.add("diff-sign", `diff-sign-${kind}`);
+  return icon;
+}
 
 /** 这一栏的记号（与行底色同一份来源，越界丢弃口径同上）。 */
 function buildSigns(doc: Text, side: DiffSide, blocks: DiffBlock[]): RangeSet<GutterMarker> {
