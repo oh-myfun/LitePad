@@ -1021,14 +1021,16 @@ describe("B461 · 基线实时与判据接全（Task 5 R13/R14 + R20）", () => 
   });
 
   it("B461 · Step 5 同形路径：换标签不换面板也挂/拆；摘掉时折行还回**设置**的值而不是被回写漏掉的快照（R23-1）", () => {
-    setIsWrap(true); // 用户设置：开着折行（差异格里被强制关掉的那一发不许冒充他的设置）
-    const { panel } = mountLiveBaselinePair("甲\n乙\n丙", "甲\n乙改\n丙");
+    setIsWrap(true); // 用户设置：开着折行（格内 Alt+Z 临时关掉的那一发不许冒充他的设置）
+    const { panel, s } = mountLiveBaselinePair("甲\n乙\n丙", "甲\n乙改\n丙");
     const diffTab = tabs.get(panel.viewTabId!)!;
     expect(
       diffTab.comps.wrap.get(panel.view!.view.state),
-      "前置：旁路挂着时这一栏折行是关的",
-    ).toEqual([]);
-    // `switchTab` 切出时同形回写：强制关掉的折行就这样漏进了标签快照。
+      "前置：初值继承设置（开着） ⇒ 这一栏折行开着",
+    ).toBe(EditorView.lineWrapping);
+    // 用户在这一格里按 Alt+Z 临时关掉（不改设置）——
+    // `switchTab` 切出时同形回写：关掉的那一发就这样漏进了标签快照。
+    s.setWrapEnabled(false);
     diffTab.state = panel.view!.view.state;
     const editorTab = tabWithKind("editor");
     tabs.set(editorTab.tabId, editorTab);
@@ -1054,14 +1056,17 @@ describe("B461 · 基线实时与判据接全（Task 5 R13/R14 + R20）", () => 
     ).toBe(EditorView.lineWrapping);
   });
 
-  it("B461 · R23-2：差异格挂着时折行被重新打开 ⇒ 同一个 syncDiffSurface 入口把强制关压回去", () => {
-    const { panel } = mountLiveBaselinePair("甲\n乙\n丙", "甲\n乙改\n丙");
-    const diffTab = tabs.get(panel.viewTabId!)!;
+  it("B461 · R23-2：挂着期间全局折行被重新打开 ⇒ 格内临时关着的那一态不被拽走（Alt+Z 是格内切换）", () => {
     setIsWrap(true);
+    const { panel, s } = mountLiveBaselinePair("甲\n乙\n丙", "甲\n乙改\n丙");
+    const diffTab = tabs.get(panel.viewTabId!)!;
+    // 用户在这一格里按 Alt+Z 临时关掉（设置仍开着）。
+    s.setWrapEnabled(false);
+    expect(diffTab.comps.wrap.get(panel.view!.view.state), "前置：格内状态是关的").toEqual([]);
     applyWrapToTabs(true); // 设置那一发：同一颗 Compartment 在 live surface 之下被重配
     expect(
       diffTab.comps.wrap.get(panel.view!.view.state),
-      "设置那一发末尾补的那一遍要真的压回去（`refreshDiffSurfaces` 那条接线）",
+      "设置那一发末尾补的那一遍要真的压回这一格自己的状态（`refreshDiffSurfaces` 那条接线）",
     ).toEqual([]);
     // 再手动发一次**同样的漂移**（`applyWrapToTabs` 里就是这一手），但不跟着点
     // `refreshDiffSurfaces` —— 那一发的接线由上面那一条与下面的接线点位用例分别钉住；
@@ -1124,7 +1129,9 @@ describe("B461 · 基线实时与判据接全（Task 5 R13/R14 + R20）", () => 
     ).toBeNull();
     expect(panel.bodyEl!.querySelectorAll(".diff-original"), "一格只许一排旁路").toHaveLength(1);
     const diffTab = tabs.get(panel.viewTabId!)!;
-    expect(diffTab.comps.wrap.get(panel.view!.view.state), "新那一份的强制关还在").toEqual([]);
+    expect(diffTab.comps.wrap.get(panel.view!.view.state), "新那一份按设置继承折行").toBe(
+      EditorView.lineWrapping,
+    );
     second.dispose();
     expect(
       diffTab.comps.wrap.get(panel.view!.view.state),
@@ -1323,6 +1330,9 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     try {
       const { panel, s } = mountDiffPair("A\nB\nC", "A\nC");
       const right = panel.view!.view;
+      // 起手摆到不折行那一档（初值继承设置，见 surface 的 `wrapOn`）：这条钉的是「打开折行」
+      // 那次翻转前后的缝高，前提得先落在关着。
+      s.setWrapEnabled(false);
       const gapHeights = (): string[] =>
         [...panel.bodyEl!.querySelectorAll<HTMLElement>(".diff-gap")].map((el) => el.style.height);
 

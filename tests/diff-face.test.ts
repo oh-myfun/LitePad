@@ -465,6 +465,9 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
  *
  * `env` 四颗键：**折行缺省开**（与出厂 `word_wrap: true` 同形 —— 关掉才是异常路径）、
  * 明暗缺省浅（主题那条要能拿 dark 档当判别位）、左右两份正文（Task 7 的折叠用例要换正文）。
+ *
+ * `env.wrap` 同时写**全局设置**（差异格的折行初值继承它，见 `surface.ts` 的 `wrapOn`）：
+ * 只改标签快照不改设置的话，挂出来的那两栏与用例声称的前提就是两回事。
  */
 function mountSurfacePair(
   env: { left?: string; right?: string; dark?: boolean; wrap?: boolean } = {},
@@ -476,6 +479,7 @@ function mountSurfacePair(
   tab: Tab;
   initialState: EditorState;
 } {
+  setIsWrap(env.wrap ?? true);
   const leftText = env.left ?? "A\n删1\n删2\nZ";
   const rightText = env.right ?? "A\nZ";
   const spec: DiffSpec = {
@@ -542,7 +546,9 @@ describe("B461 · surface 给两颗 view 各装一臂（预审 R1）", () => {
   const mountHost = (env: { dark?: boolean; wrap?: boolean } = {}) => mountSurfacePair(env);
 
   it("B461 · 起手两侧就都有交代：左栏真行涂色、右栏补出同高的空位", () => {
-    const { left, right } = mountHost();
+    // 这一条钉的是不折行那一路的定值缝（`LINE_HEIGHT` 常量）；折行那一路按实测行高补，
+    // 由 B462 那几条覆盖 —— 出厂设置是开，这里显式摆到关，判据才不依赖 jsdom 的假量度。
+    const { left, right } = mountHost({ wrap: false });
     expect(gapElsOf(right), "删掉的行在右栏是占位块").toHaveLength(1);
     expect(gapElsOf(right)[0].style.height).toBe(`${2 * LINE_HEIGHT}px`);
     expect(lineElOf(left, 2).className).toContain("diff-line-delete");
@@ -585,10 +591,9 @@ describe("B461 · surface 给两颗 view 各装一臂（预审 R1）", () => {
     expect(right.state.doc.toString()).toBe("A\nZ");
   });
 
-  it("B461 · 折行默认关（VS Code 差异格的出厂态），开关两栏一起开、detach 原样还", () => {
-    // 历史：R19 曾把「一律不折」写死，理由是两侧行行对齐。后续轮按用户点名补了开关，
-    // **默认仍是关**（VS Code 的 `diffEditor.wordWrap` 默认 inherit → `editor.wordWrap` 出厂 off），
-    // 于是「不折行才严格逐行对齐」的默认行为没变；打开折行是用户显式选择的取舍。
+  it("B461 · 折行初值继承全局设置（上游 diffEditor.wordWrap: 'inherit'），开关两栏一起翻、detach 原样还", () => {
+    // 上游 `diffEditor.wordWrap` 默认 `"inherit"` ⇒ 差异格挂上时跟着 `editor.wordWrap` 的现值
+    // 走；之后 `Alt+Z` 只是格内临时切换，不改设置。本应用全局出厂是开 ⇒ 这里起手就该折行。
     // ⚠️ 「同一行在两栏的视觉 y 是否真的一致」是**像素**判据，jsdom 没有布局引擎 ⇒ 归真机台。
     // 这里钉的是「扩展在不在 state 里」—— 它恰恰是那条像素等式的前提。
     const { right, left, surface, initialState } = mountSurfacePair();
@@ -596,15 +601,16 @@ describe("B461 · surface 给两颗 view 各装一臂（预审 R1）", () => {
       wrapsLines(initialState),
       "前置：出厂 `word_wrap: true` ⇒ 那颗初始 state 确实装了折行",
     ).toBe(true);
-    expect(wrapsLines(right.state), "挂上旁路那一刻，右栏的折行被关掉").toBe(false);
-    expect(wrapsLines(left.state), "左栏同样从「不折」起步").toBe(false);
+    expect(wrapsLines(right.state), "初值继承设置 ⇒ 挂上旁路那一刻右栏就折行").toBe(true);
+    expect(wrapsLines(left.state), "左栏同一档起步").toBe(true);
+    expect(surface.wrapEnabled(), "读口报的也是继承来的现值").toBe(true);
 
-    surface.setWrapEnabled(true);
-    expect(wrapsLines(right.state), "开关打开 ⇒ 右栏折").toBe(true);
-    expect(wrapsLines(left.state), "开关打开 ⇒ 左栏一起折（两栏同口径）").toBe(true);
     surface.setWrapEnabled(false);
-    expect(wrapsLines(right.state)).toBe(false);
-    expect(wrapsLines(left.state)).toBe(false);
+    expect(wrapsLines(right.state), "格内临时关掉（Alt+Z）⇒ 右栏跟上").toBe(false);
+    expect(wrapsLines(left.state), "左栏一起关（两栏同口径）").toBe(false);
+    surface.setWrapEnabled(true);
+    expect(wrapsLines(right.state)).toBe(true);
+    expect(wrapsLines(left.state)).toBe(true);
 
     surface.dispose();
     expect(wrapsLines(right.state), "拆掉旁路把折行还回去（那颗 view 是文档本身）").toBe(true);
@@ -628,7 +634,7 @@ describe("B461 · surface 给两颗 view 各装一臂（预审 R1）", () => {
 
   it("B461 · 还原的是「用户那一颗设置」，不是无条件打开（设置里就关着的用户）", () => {
     // 裁决 R23-1（Task 3 评审抓出、Task 5 落地）把还值的权威从「attach 时 view 里的现值」换成
-    // **设置**那一颗：`switchTab` 切出时会把「差异格强制关掉」的那一发回写进标签快照，读现值就会
+    // **设置**那一颗：`switchTab` 切出时会把「格内 Alt+Z 临时关掉」的那一发回写进标签快照，读现值就会
     // 把开着换行的用户悄悄改成关着。生产里每一张标签的 wrap Compartment 都由 `isWrap` 派生
     //（`makeInstance` 的 `env.wrap` + `applyWrapToTabs` 的写回）⇒ 「本来就关着」这一形只能由
     // 设置来表达；「快照关着而设置开着」是一条到得了测试、到不了用户的路径。
@@ -902,7 +908,8 @@ describe("B463 · 概览滑块 = 右栏滚动条（ScrollbarState.isNeeded 语�
   });
 
   it("折行开关与窗口缩放之后都重算滑块（不靠滚一下才醒）", async () => {
-    const { panel, right, surface } = mountSurfacePair();
+    // 起手摆在不折行那一档，下面再翻到折行 —— 与「初值继承设置」不冲突（`env.wrap` 同时写设置）。
+    const { panel, right, surface } = mountSurfacePair({ wrap: false });
     const viewport = viewportOf(panel.bodyEl!);
     measure(right.scrollDOM, 200, 400);
     repaint(right);

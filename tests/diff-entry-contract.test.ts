@@ -12,9 +12,9 @@
 //
 // ⚠️ `Alt+F5` / `Shift+Alt+F5` 是 VS Code「Go to Next/Previous Change」的实拍键位，
 // 这条来历记在代码注释里就够了 —— 用户可见文案一律不写「复刻」二字（本产品的既定口径）。
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { type Doc, type Panel, type Tab } from "../src/core/app-state";
+import { setIsWrap, type Doc, type Panel, type Tab } from "../src/core/app-state";
 import { collectTextFiles, fnBody, stripLineComments } from "./static";
 import type { MenuItem } from "../src/shell/menu";
 // 只引类型：运行时这一发被擦掉，不会在本文件铺好 DOM 骨架之前把 shell/diff 那一族拉起来。
@@ -521,6 +521,10 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     live.length = 0;
     document.body.innerHTML = "";
   });
+
+  // 这一批钉的是菜单/标题栏**按现状求值**：把全局换行摆到 VS Code 的出厂档（off），
+  // 差异格的初值继承它 ⇒ 起手不折行；要开折行的用例自己翻。
+  beforeEach(() => setIsWrap(false));
 
   /** 够长出两段未改动区的输入（折叠三颗动作要数得出段数）。 */
   const LONG = {

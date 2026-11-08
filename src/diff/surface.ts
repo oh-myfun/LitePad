@@ -133,8 +133,8 @@ export interface DiffSurface {
   /**
    * 自动换行这一格现在开着没有。
    *
-   * 与 `collapseUnchanged` 同一档：**surface 上的状态**，不进设置（默认关 —— VS Code 的
-   * `diffEditor.wordWrap` 默认继承 `editor.wordWrap`，出厂是 off）。
+   * **初值继承全局设置**（上游 `diffEditor.wordWrap` 默认 `"inherit"`）：挂上旁路那一刻读
+   * `editor.wordWrap` 的现值，之后归这一格的开关管 —— `Alt+Z` 只是格内临时切换，不改设置。
    */
   wrapEnabled(): boolean;
   /** 两栏一起切（左栏的槽 + 右栏借用标签那颗 `comps.wrap`）。 */
@@ -434,10 +434,9 @@ export function createDiffSurface(
   /**
    * 折行开关（B461 后续轮，用户点名「自动换行开关不能缺」）。
    *
-   * VS Code 的口径：`diffEditor.wordWrap` 默认 `"inherit"`，而 `editor.wordWrap` 默认 off ⇒
-   * **出厂状态差异格不折行**；入口是 `View: Toggle Word Wrap` / `Alt+Z`，不是差异标题栏上的键。
-   * 这里沿用「默认关」，但把开关做成**这一格的运行时状态**（与 `foldOn` 同一档，不进设置）：
-   * 本应用的全局 `word_wrap` 默认是开，若把 diff 做成 inherit，出厂就会折行，反而偏离 VS Code。
+   * VS Code 的口径：`diffEditor.wordWrap` 默认 `"inherit"` ⇒ 差异格**初值跟着**
+   * `editor.wordWrap` 走；用户再按 `Alt+Z` 是格内临时切换，不改设置。
+   * 本应用的全局 `word_wrap` 出厂是开，于是差异标签挂上时也折行（与上游 inherit 一致）。
    *
    * 两栏各有自己的折行槽：左栏那颗 `leftWrap` 随 state 建（`leftState` 的第四参），右栏借用
    * 标签自己的 `comps.wrap`（`applyWrapToTabs` 的同一个出口）。之所以不另给右栏配一颗：
@@ -452,7 +451,7 @@ export function createDiffSurface(
    * 按 `blockPairing` 的配对窗口逐行对齐，窗口外多出来的行整段补到对侧（B463）。同步滚动因此
    * 是真正的逐行对应，不再按滚动比例映射。
    */
-  let wrapOn = false;
+  let wrapOn = isWrap;
   let wrapComp: Compartment | null = null;
   if (right && comps) {
     // 读出 `undefined` = 这颗 Compartment 根本不在那份配置里（面板显示的不是这张标签的 state）
@@ -1544,7 +1543,7 @@ export function createDiffSurface(
   ];
 
   if (right) {
-    // 一发事务里两件一起办：折行归位（默认关，见 `wrapOn`）+ 把右栏那一槽换成本 surface 的臂。
+    // 一发事务里两件一起办：折行归位（初值继承设置，见 `wrapOn`）+ 把右栏那一槽换成本 surface 的臂。
     // 槽已在配置里 ⇒ `reconfigure`（顺带把上一颗 surface 留在快照里的旧 provider 顶掉，
     // 见 `rightFaceSlot` 的注释）；第一次挂 ⇒ `appendConfig` 把槽本身带进配置。
     const slotPresent = rightFaceSlot.get(right.state) !== undefined;
