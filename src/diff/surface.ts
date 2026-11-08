@@ -39,8 +39,9 @@ import { perfOfDiffInstance } from "../doc-model";
 import type { PerfProfile } from "../editor/perf";
 import { activePanelId, docs, isWrap, panels, tabs, type Panel } from "../core/app-state";
 import { landVisibleSideAtV } from "../sync-scroll/wire";
-import { DIFF_REFRESH_MS } from "./align";
+import { DIFF_REFRESH_MS, splitLines } from "./align";
 import { blockAt, diffBlocks, type DiffBlock } from "./blocks";
+import { innerChanges, type InnerChanges } from "./inline";
 import {
   DIFF_CONTEXT_LINES,
   DIFF_REVEAL_LINES,
@@ -482,6 +483,28 @@ export function createDiffSurface(
       : [];
   stored = computeBlocks();
   /**
+   * 行内字符级差异（`inline.ts`）：块内配对行再跑一次词级 diff 的结果，两臂同一份。
+   *
+   * 与 `stored` 同一刻算：行内区间挂的是 `stored` 的行号，晚一拍就会落在新块的旧行号上。
+   * 取行文本用**块表所依据的那两份正文**（`leftText()` 与右栏文档）而不是左栏 view 的
+   * 当前文档 —— 基线被就地换掉、`resetLeftDoc` 还没跑的那一瞬，左栏 view 里还是旧正文。
+   */
+  const computeInner = (blocks: DiffBlock[]): InnerChanges => {
+    if (!right) return { original: [], modified: [] };
+    const original = splitLines(current.leftText());
+    const modified = splitLines(right.state.doc.toString());
+    return innerChanges(
+      blocks,
+      {
+        original: (line) => original[line - 1] ?? "",
+        modified: (line) => modified[line - 1] ?? "",
+      },
+      ignoreWs,
+    );
+  };
+  let inner = computeInner(stored);
+
+  /**
    * 两侧当前的对齐缝（实测像素；`face.ts` 的占位块吃它）。
    *
    * 它是**测量结果**而不是块表的一部分：块表只说「哪几行对不上」，缝还要知道那几行各自
@@ -770,8 +793,9 @@ export function createDiffSurface(
    * 挂 state 与 `resetLeftDoc` 换 state 都走这一处，两栏臂的组成只有一份定义。
    */
   const leftArm = (): Extension => [
-    // 缝与块同一份来源：块表换了而缝还停在旧测量上，底色与占位块会互相打架。
-    diffFace("original", () => ({ blocks: stored, gaps: gapPlans.original })),
+    // 缝与行内区间同一份来源：块表换了而缝还停在旧测量上，底色与占位块会互相打架；
+    // 行内区间若晚一拍，字符级标记就会短暂地落在新块的旧行号上。
+    diffFace("original", () => ({ blocks: stored, gaps: gapPlans.original, inner })),
     onFoldBarClick(onOriginalFoldClick),
     // 左栏没有文档更新，但**光标与选区会动**（R12：那颗 view 可选可聚焦）⇒ 概览标记层
     // 必须跟着走，否则左列的光标条停在挂上那一刻。差异色块与折叠走 `refreshArms` 那一发，
@@ -1202,6 +1226,7 @@ export function createDiffSurface(
   /** 现读左右两份正文 → diffBlocks → 给两颗 view 各发 refreshDiff（+ 折叠态）→ 广播新块表。 */
   const syncBlocks = (): void => {
     stored = computeBlocks();
+    inner = computeInner(stored);
     // 两颗都要点名：装饰层不会自己醒（`refreshDiff` 与 `refreshGutterDiff` 同形），
     // 而对栏那颗 view **看不见**这一栏的键入 ⇒ 只有持有两颗 view 的这一处能一起发。
     // 折叠态同一次派发跟上：候选来自**同一份** `stored`，两栏与侧栏才不会各说各话。
@@ -1430,7 +1455,7 @@ export function createDiffSurface(
 
   /** 右栏那一臂的内容：装饰 + 折条出口 + 键入落点（`updateListener` 是 state facet，只能并进来）。 */
   const rightArm = (): Extension => [
-    diffFace("modified", () => ({ blocks: stored, gaps: gapPlans.modified })),
+    diffFace("modified", () => ({ blocks: stored, gaps: gapPlans.modified, inner })),
     onFoldBarClick(onModifiedFoldClick),
     // 仓库同形先例 `tests/preview-face-helpers.ts:71-76`：塞进 `state.update({extensions})`
     // 会被静默丢掉，必须走 effect。

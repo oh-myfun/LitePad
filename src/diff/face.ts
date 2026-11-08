@@ -36,6 +36,7 @@ import {
   WidgetType,
 } from "@codemirror/view";
 import { blockPairing, type DiffBlock, type DiffKind } from "./blocks";
+import type { InnerChanges, InnerRange } from "./inline";
 import { CODICONS } from "../shell/codicons";
 import type { DiffSide } from "./model";
 
@@ -249,19 +250,22 @@ export const refreshDiff = StateEffect.define<null>();
 const faceSide = Facet.define<DiffSide, DiffSide>({ combine: (values) => values[0] ?? "modified" });
 
 /**
- * 这一臂的输入：块 + **本栏**的对齐缝，一起从一颗读取口取。
+ * 这一臂的输入：块 + **本栏**的对齐缝 + 两侧的行内改动，一起从一颗读取口取。
  *
- * 与 `gutterDiff` 的 `baselineProvider` 同一手法：把「现在这批块 / 这些缝是什么」留给持有
- * 两颗 view 的那一侧（surface），于是装饰层不必认识文档模型，也不需要每个写点记得派发。
- * 缝与块必须同一份来源：块表换了而缝还停在旧测量上，底色与占位块就会互相打架。
+ * 与 `gutterDiff` 的 `baselineProvider` 同一手法：把「现在这批块 / 这些缝 / 这些行内区间
+ * 是什么」留给持有两颗 view 的那一侧（surface），于是装饰层不必认识文档模型，也不需要每个
+ * 写点记得派发。三者必须同一份来源：块表换了而缝还停在旧测量上，底色与占位块就会互相打架；
+ * 行内区间若晚一拍，字符级标记就会短暂地落在新块的旧行号上。
  */
 export interface DiffFaceSource {
   blocks: DiffBlock[];
   gaps: GapZone[];
+  inner: InnerChanges;
 }
 
 const faceSource = Facet.define<() => DiffFaceSource, () => DiffFaceSource>({
-  combine: (values) => values[0] ?? (() => ({ blocks: [], gaps: [] })),
+  combine: (values) =>
+    values[0] ?? (() => ({ blocks: [], gaps: [], inner: { original: [], modified: [] } })),
 });
 
 /**
@@ -416,10 +420,11 @@ function buildSigns(doc: Text, side: DiffSide, blocks: DiffBlock[]): RangeSet<Gu
   return RangeSet.of(ranges, true);
 }
 
-/** 装饰那一臂的两份画法：整行底色 + 记号槽字形（行号槽不上色，见 `diff.css`）。 */
+/** 装饰那一臂的三份画法：整行底色 + 记号槽字形 + 行内字符差异（行号槽不上色，见 `diff.css`）。 */
 interface FaceValue {
   lines: RangeSet<Decoration>;
   signs: RangeSet<GutterMarker>;
+  chars: RangeSet<Decoration>;
 }
 
 function buildFaceValue(
@@ -427,11 +432,36 @@ function buildFaceValue(
   side: DiffSide,
   blocks: DiffBlock[],
   gaps: GapZone[],
+  inner: InnerChanges,
 ): FaceValue {
   return {
     lines: buildFace(doc, side, blocks, gaps),
     signs: buildSigns(doc, side, blocks),
+    chars: buildInner(doc, side, inner[side]),
   };
+}
+
+/**
+ * 行内字符级差异：块内配对行再跑一次词级 diff 的结果（`inline.ts`），两侧各标自己那侧。
+ *
+ * 类名照上游的 `char-insert` / `char-delete`（`registrations.contribution.ts`），本项目的
+ * 前缀是 `diff-char-*`（与 `diff-line-*` 同族）。装饰是**行内 mark**、不是整行线装饰：
+ * `Decoration.mark` 落在文字上，底色只覆盖真正变了的那几个字符。
+ * ⚠️ 越界丢弃、首尾夹到行长：块表可能比视图文档先动一步（换基线到 `setState` 之间）。
+ */
+function buildInner(doc: Text, side: DiffSide, ranges: InnerRange[]): RangeSet<Decoration> {
+  const out: Range<Decoration>[] = [];
+  if (ranges.length === 0) return RangeSet.empty;
+  const cls = side === "original" ? "diff-char-delete" : "diff-char-insert";
+  for (const r of ranges) {
+    if (r.line < 1 || r.line > doc.lines) continue;
+    const line = doc.line(r.line);
+    const from = line.from + Math.min(Math.max(r.from, 0), line.length);
+    const to = line.from + Math.min(Math.max(r.to, 0), line.length);
+    if (to <= from) continue;
+    out.push(Decoration.mark({ class: cls }).range(from, to));
+  }
+  return RangeSet.of(out, true);
 }
 
 const diffFaceField = StateField.define<FaceValue>({
@@ -439,13 +469,19 @@ const diffFaceField = StateField.define<FaceValue>({
   // 那样压在「每切一次标签都要过」的那条路上。
   create: (state) => {
     const src = state.facet(faceSource)();
-    return buildFaceValue(state.doc, state.facet(faceSide), src.blocks, src.gaps);
+    return buildFaceValue(state.doc, state.facet(faceSide), src.blocks, src.gaps, src.inner);
   },
   update(value, tr) {
     for (const e of tr.effects) {
       if (e.is(refreshDiff)) {
         const src = tr.state.facet(faceSource)();
-        return buildFaceValue(tr.state.doc, tr.state.facet(faceSide), src.blocks, src.gaps);
+        return buildFaceValue(
+          tr.state.doc,
+          tr.state.facet(faceSide),
+          src.blocks,
+          src.gaps,
+          src.inner,
+        );
       }
     }
     // 键入期：装饰跟着改动走，不重算（与 `gutterDiffField` 同一纪律）。
@@ -453,10 +489,14 @@ const diffFaceField = StateField.define<FaceValue>({
       ? {
           lines: value.lines.map(tr.changes),
           signs: value.signs.map(tr.changes),
+          chars: value.chars.map(tr.changes),
         }
       : value;
   },
-  provide: (f) => [EditorView.decorations.from(f, (v) => v.lines)],
+  provide: (f) => [
+    EditorView.decorations.from(f, (v) => v.lines),
+    EditorView.decorations.from(f, (v) => v.chars),
+  ],
 });
 
 /**

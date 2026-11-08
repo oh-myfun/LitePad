@@ -27,6 +27,7 @@ import { stripCssComments, stripLineComments, ruleBlock } from "./static";
 import { isWrap, setIsWrap, tabs, type Panel, type Tab } from "../src/core/app-state";
 import { createDiffSurface, type DiffSurface } from "../src/diff/surface";
 import { diffBlocks, type DiffBlock } from "../src/diff/blocks";
+import type { InnerChanges } from "../src/diff/inline";
 import type { DiffSide, DiffSpec } from "../src/diff/model";
 import { DIFF_REFRESH_MS } from "../src/diff/align";
 import {
@@ -295,6 +296,7 @@ function mountFace(
   side: DiffSide,
   blocks: DiffBlock[] | (() => DiffBlock[]),
   doc = side === "modified" ? "A\nZ" : "A\n删1\n删2\nZ",
+  inner: InnerChanges = { original: [], modified: [] },
 ): { view: EditorView; lineEl: (n: number) => HTMLElement; gapEls: () => HTMLElement[] } {
   const provider = typeof blocks === "function" ? blocks : () => blocks;
   let view: EditorView | null = null;
@@ -304,7 +306,7 @@ function mountFace(
   const source = () => {
     const list = provider();
     const lines = view ? view.state.doc.lines : doc.split("\n").length;
-    return { blocks: list, gaps: zonesOf(list, side, lines) };
+    return { blocks: list, gaps: zonesOf(list, side, lines), inner };
   };
   view = new EditorView({
     state: EditorState.create({ doc, extensions: [diffFace(side, source)] }),
@@ -1592,5 +1594,41 @@ describe("B464 · 右缘概览的标记层（选区/光标/查找命中/同词�
 
     const mark = ruleBlock(css(), ".panel-host.is-diff .diff-overview-mark", undefined, true);
     expect(mark, "色块不自己开叠层 ⇒ 画布那层 1 就压得住").not.toContain("z-index");
+  });
+});
+
+describe("B461 · 行内字符级差异的装饰与样式", () => {
+  const css = (): string => stripCssComments(srcOf("src/diff/diff.css"));
+
+  it("新稿侧只把改动的字符包进 .diff-char-insert（行底色照旧在）", () => {
+    const blocks = diffBlocks("const value = old;", "const value = new;");
+    const m = mountFace("modified", blocks, "const value = new;", {
+      original: [{ line: 1, from: 14, to: 17 }],
+      modified: [{ line: 1, from: 14, to: 17 }],
+    });
+    const span = m.view.contentDOM.querySelector<HTMLElement>(".diff-char-insert");
+    expect(span?.textContent, "字符级只盖真正变了的那几个字符").toBe("new");
+    expect(m.lineEl(1).className, "整行底色是外面那一层，不因为字符级标记而消失").toContain(
+      "diff-line-insert",
+    );
+  });
+
+  it("原稿侧用 .diff-char-delete，只盖删掉的字符", () => {
+    const blocks = diffBlocks("const value = old;", "const value = new;");
+    const o = mountFace("original", blocks, "const value = old;", {
+      original: [{ line: 1, from: 14, to: 17 }],
+      modified: [{ line: 1, from: 14, to: 17 }],
+    });
+    expect(o.view.contentDOM.querySelector<HTMLElement>(".diff-char-delete")?.textContent).toBe(
+      "old",
+    );
+  });
+
+  it("行内底色比整行更深：35% 叠在 18% 之上，且不引入第三颗色", () => {
+    const insert = ruleBlock(css(), ".panel-host.is-diff .diff-char-insert", undefined, true);
+    expect(insert, "规则得真在").toContain("var(--diff-add) 35%");
+    const del = ruleBlock(css(), ".panel-host.is-diff .diff-char-delete", undefined, true);
+    expect(del).toContain("var(--diff-del) 35%");
+    expect(insert + del).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
   });
 });

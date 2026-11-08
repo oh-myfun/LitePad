@@ -241,6 +241,27 @@
   );
 }
 
+/* 行内字符级差异：只盖**真正变了**的那几个字符（`char-insert` / `char-delete`）。
+   上游是两层叠着画的：整行 `line-insert` 的 `#9bb95533` 之上再叠字符段的
+   `insertedTextBackground: #9ccc2c33` / `removedTextBackground: #ff000033`
+   （`editorColors.ts` 的默认值），所以字符段一定比整行更深。
+   这里同一口径：整行已经铺了 18% 的底，字符段再取 35%，叠出来的等效不透明度约 47%
+   —— 仍是 add / del 这两颗 token，不引入第三种颜色。
+   装饰由 `face.ts` 发 `Decoration.mark`，落成行内 span ⇒ 底色只覆盖字符本身。 */
+.panel-host.is-diff .diff-char-insert {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--diff-add) 35%, transparent),
+    color-mix(in srgb, var(--diff-add) 35%, transparent)
+  );
+}
+
+.panel-host.is-diff .diff-char-delete {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--diff-del) 35%, transparent),
+    color-mix(in srgb, var(--diff-del) 35%, transparent)
+  );
+}
+
 /* 行号槽**不承载差异底色**：色带只留在代码区，行号文字与 `+` / `−` 记号照旧。
    ⚠️ 上游不是这样，事实是上游会给行号槽上色：`registrations.contribution.ts` 的
    `line-insert` / `line-delete` 都带 `marginClassName: 'gutter-insert' / 'gutter-delete'`，
