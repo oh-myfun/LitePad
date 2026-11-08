@@ -7,9 +7,9 @@
  * 右缘差异概览追加在最后（三段各按各的 token 清单判，见 `tests/diff-face.test.ts` 那几条 census）。
  * 侧栏条目行归 Task 9 —— 都往这个文件里加，不再另开一份。代码区的两套底色**照上游
  * `editorColors.ts` 的默认值**取（行底色与字符底色是四个不同的 key，见 Task 3 那一段）；
- * 概览色带仍吃 `global.css` 那两颗 `--diff-add` / `--diff-del`（分侧语义里没有「修改行」这一档，
- * 也不许新增第三颗）。折不折是**外壳**态，走 `--bg-hover` / `--border` / `--fg` / `--fg-muted`
- * 那几颗既有的。
+ * 概览色带另用 `--diff-overview-add` / `--diff-overview-del`（同样是上游
+ * `diffEditorOverview.*Foreground` 的生效值，与 `global.css` 那两颗增删色无关）。
+ * 折不折是**外壳**态，走 `--bg-hover` / `--border` / `--fg` / `--fg-muted` 那几颗既有的。
  *
  * ⚠️ `.panel-host` 的基础规则（`global.css` 的 `.panel-host`）是**竖排** flex（编辑器在上、占位行在下），
  * 这里按 `.is-diff` 翻成横排；特异度 0-2-0 压得过基规则的 0-1-0，与 import 先后无关。
@@ -227,8 +227,8 @@
      = 暗 `#9ccc2c33` / `#ff000033`，亮 `#9ccc2c40` / `#ff000033`。
    上游是**两层叠着画**的（整行一层 + 字符段一层，两层都是带 alpha 的 background），
    不是拿字符色替换行底色 —— 这里同样两层同时存在，合成结果交给浏览器按 alpha 叠加。
-   ⚠️ 不再用 `--diff-add` / `--diff-del` 自己调百分比：那两颗是概览色带的 token，与上游这四个
-   key 不是一回事；继续在 18% / 35% 上微调只会离上游越来越远。
+   ⚠️ 不再用 `--diff-add` / `--diff-del` 自己调百分比：那两颗是侧栏 / 预览那几处的强调色，
+   与上游这四个 key 不是一回事；继续在 18% / 35% 上微调只会离上游越来越远。
    ⚠️ 默认深色/浅色**没有描边**：`insertedTextBorder` / `removedTextBorder` 在 dark/light 下是
    null，只有 HC 主题才给虚线框（同文件 306-312 行）⇒ 代码区不画框、不加 outline。 */
 :root {
@@ -236,11 +236,20 @@
   --diff-line-del: #ff000033;
   --diff-char-add: #9ccc2c33;
   --diff-char-del: #ff000033;
+  /* 概览色带取上游 `diffEditorOverview.insertedForeground` / `removedForeground` 的**实际生效值**：
+     这两个 key 默认是 null ⇒ `overviewRulerFeature.ts:48` 退到
+     `diffEditor.insertedTextBackground` / `removedTextBackground` 再 `.transparent(2)`
+     （`base/common/color.ts:461-464` 是 `a * factor`）⇒ 暗色 0.2×2 = 0.4、
+     亮色新增 0.25×2 = 0.5。不是从 `--diff-add` / `--diff-del` 调百分比得来的。 */
+  --diff-overview-add: #9ccc2c66;
+  --diff-overview-del: #ff000066;
 }
 
-/* 亮色档的字符底色比暗色高一档（上游 light = #9ccc2c40）；行底色明暗相同，不另开。 */
+/* 亮色档的字符底色比暗色高一档（上游 light = #9ccc2c40）；行底色明暗相同，不另开。
+   概览色带跟着亮色的字符底色走（同样 ×2 ⇒ 0.5）。 */
 :root[data-theme="light"] {
   --diff-char-add: #9ccc2c40;
+  --diff-overview-add: #9ccc2c80;
 }
 
 /* 底色：上游那两个 20% alpha 的值（明暗同一套 ⇒ HC 档也靠同一颗 token 自己跟上）。
@@ -442,11 +451,11 @@
 }
 
 .panel-host.is-diff .diff-overview-original .diff-overview-mark {
-  background: color-mix(in srgb, var(--diff-del) 45%, transparent);
+  background: var(--diff-overview-del);
 }
 
 .panel-host.is-diff .diff-overview-modified .diff-overview-mark {
-  background: color-mix(in srgb, var(--diff-add) 45%, transparent);
+  background: var(--diff-overview-add);
 }
 
 /* 视口滑块 = 滚动条滑块，**叠在色带上**（用户明确要合并；VS Code 是独立滚动条 + 独立色带）。

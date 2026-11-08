@@ -991,6 +991,12 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
     expect(all).toContain("--diff-char-add: #9ccc2c33");
     expect(all).toContain("--diff-char-del: #ff000033");
     expect(all, "亮色档字符底色照上游高一档").toContain("--diff-char-add: #9ccc2c40");
+    // 概览色带：上游那两个 key 默认 null ⇒ 退到字符底色再 `.transparent(2)`（alpha × 2）
+    // ⇒ 暗 0.2×2 = 0.4，亮新增 0.25×2 = 0.5。不是从 --diff-add / --diff-del 调百分比。
+    expect(all).toContain("--diff-overview-add: #9ccc2c66");
+    expect(all).toContain("--diff-overview-del: #ff000066");
+    expect(all, "亮色档概览新增色跟着亮色字符底色 ×2").toContain("--diff-overview-add: #9ccc2c80");
+    expect(all, "概览色带不许再借增删色自己混").not.toContain("var(--diff-add) 45%");
     const s = section();
     for (const token of [
       "--diff-line-add",
@@ -1204,7 +1210,7 @@ describe("B462 · 记号槽与右缘概览条样式", () => {
         undefined,
         true,
       ),
-    ).toContain("var(--diff-del)");
+    ).toContain("var(--diff-overview-del)");
     expect(
       ruleBlock(
         css(),
@@ -1212,7 +1218,7 @@ describe("B462 · 记号槽与右缘概览条样式", () => {
         undefined,
         true,
       ),
-    ).toContain("var(--diff-add)");
+    ).toContain("var(--diff-overview-add)");
     const viewport = ruleBlock(css(), ".panel-host.is-diff .diff-viewport", undefined, true);
     expect(viewport).toContain("var(--sb-thumb)");
     // 滑块叠在色带上：几何与配色照 VS Code 的滚动条滑块（无描边、无内缩
