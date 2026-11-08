@@ -628,6 +628,9 @@ describe("B461 · surface 给两颗 view 各装一臂（预审 R1）", () => {
 
     const btn = center.querySelector<HTMLButtonElement>(".diff-revert");
     expect(btn, "第一处改动（右栏第 2 行前缺了两行）要有一颗回退键").not.toBeNull();
+    // 可访问名称与提示同源：字形本身是 `aria-hidden` 的 `<i>`，读屏器认的只有 aria-label。
+    expect(btn!.getAttribute("aria-label"), "回退键要有可访问名称").toBe("回退此块");
+    expect(btn!.dataset.tip, "悬浮提示与可访问名称同一句").toBe(btn!.getAttribute("aria-label"));
     btn!.click();
     expect(right.state.doc.toString(), "原稿那两行被写回新稿").toBe("A\n删1\n删2\nZ");
   });
@@ -704,6 +707,12 @@ describe("B462 · 右缘差异概览（VS Code 的 diffOverview）", () => {
     const overview = overviewOf(host);
     expect(overview, "概览条是 host 的最后一个 flex 子项").toBe(host.lastElementChild);
     expect(overview.querySelectorAll(".diff-overview-ruler")).toHaveLength(2);
+    // 标记画布是纯绘制层：里面没有可读文本，读屏器能拿到的差异信息不该从这儿来。
+    const canvases = [...host.querySelectorAll<HTMLElement>(".diff-overview-canvas")];
+    expect(canvases, "两列各一层标记画布").toHaveLength(2);
+    for (const canvas of canvases) {
+      expect(canvas.getAttribute("aria-hidden"), "画布对辅助技术隐藏").toBe("true");
+    }
 
     const dels = marksOf(host, "original");
     expect(dels, "删两行 = 左列一块").toHaveLength(1);

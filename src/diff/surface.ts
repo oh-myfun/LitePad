@@ -331,6 +331,9 @@ function attachSashDrag(
   return () => sashEl.removeEventListener("pointerdown", onDown);
 }
 
+/** 回退键的提示与可访问名称同源（上游那颗 `title` 的本地化那一句）。 */
+const REVERT_LABEL = "回退此块";
+
 /**
  * 在 `hostEl`（splitview 交下来的 `.panel-host`）里挂上差异旁路，并把 surface 记到 panel 上。
  *
@@ -1447,8 +1450,10 @@ export function createDiffSurface(
       btn.className = "diff-revert";
       if (i === active) btn.classList.add("is-current");
       btn.innerHTML = CODICONS.arrowRight;
+      // 可访问名称与提示同源：字形是 `aria-hidden` 的 `<i>`，读屏器认的只有这一句。
       // 提示走全应用统一的那一套（原生 `title` 由系统绘制、不吃主题，B2xx 起禁用）。
-      setTip(btn, "回退此块");
+      btn.setAttribute("aria-label", REVERT_LABEL);
+      setTip(btn, REVERT_LABEL);
       // 夹在视口里（与上游 EditorGutter 一样，item 不跑出那一列）。
       btn.style.top = `${Math.min(Math.max(centerY - ITEM_H / 2, 0), Math.max(column.height - ITEM_H, 0))}px`;
       // mousedown 只掐掉焦点转移：点这颗键不该清掉编辑器里的选区（上游 button 同款处理）。
