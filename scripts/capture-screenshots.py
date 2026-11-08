@@ -60,7 +60,7 @@ user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
 
 # 演示会话里引用的文件必须真实存在，否则会话恢复会开出一个错误标签
-MD = os.path.join(ROOT, "docs", "example.md")
+MD = os.path.join(ROOT, "test-data", "完整样例.md")
 TS = os.path.join(ROOT, "src", "shell", "findbar.ts")
 JSONFILE = os.path.join(ROOT, "src-tauri", "tauri.conf.json")
 
