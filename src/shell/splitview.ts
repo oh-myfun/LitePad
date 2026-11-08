@@ -675,9 +675,10 @@ function buildPanel(
  * 面板操作区（`.panel-ops`）：
  *   ① md 两颗（B224）—— 打开侧边预览（`open-preview`）+ 源码/预览切换；只有活动面板且
  *      活动标签是 Markdown 才有；
- *   ② 差异那几颗（B461 Task 8）—— `arrow-up` / `arrow-down`（上/下一个差异，**不是**左右箭头）、
- *      `whitespace` 与 `map`（两颗**带 toggled 状态**的开关，见 `mkOp` 的 `pressed`）、
- *      `word-wrap` / `sync`（后续轮的自动换行与同步滚动，同样带 toggled）；
+ *   ② 差异那几颗（B461 Task 8）—— 只看**看差异时高频**的：`arrow-up` / `arrow-down`
+ *      （上/下一个差异，**不是**左右箭头）、`whitespace`（带 toggled 状态的开关，见 `mkOp`
+ *      的 `pressed`）、`map`（折叠未改动区的开关）；全部折叠 / 换行 / 同步滚动 / 交换左右
+ *      这些偶尔才调一次的收在「…」里（组菜单带 `checked`，见 `tabs/render.ts`）；
  *   ③ 还原面板（仅最大化中）+ 组菜单「…」（B422，原先是移除分屏 ⨯）。
  * ⚠️ 顺序刻意：文档级操作**紧贴标签区**（VS Code 的 editor/title 动作也在那一头），
  *    「…」仍钉在最右 —— 文档级操作靠标签，系统级操作（关组）靠边。
@@ -757,22 +758,6 @@ function buildPanelOps(data: PanelRenderData, cb: SplitviewCallbacks): HTMLEleme
         undefined,
         () => cb.onDiffAction?.(data.panelId, "collapse"),
         d.collapseUnchanged,
-      ),
-      // 自动换行 / 同步滚动（B461 后续轮）：两颗都是纯状态开关，toggled 直接吃现值。
-      // 换行那颗的快捷键照 VS Code `editor.action.toggleWordWrap` = Alt+Z（见 keymap）。
-      mkOp(
-        CODICONS.wordWrap,
-        "自动换行",
-        keyHint("diff.toggleWrap", keymapOverrides),
-        () => cb.onDiffAction?.(data.panelId, "wrap"),
-        d.wrap,
-      ),
-      mkOp(
-        CODICONS.sync,
-        "同步滚动",
-        undefined,
-        () => cb.onDiffAction?.(data.panelId, "syncScroll"),
-        d.syncScroll,
       ),
     );
   }

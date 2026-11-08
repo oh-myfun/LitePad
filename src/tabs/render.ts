@@ -325,6 +325,9 @@ function groupMenuOf(p: Panel): MenuItem[] {
   // 换行 / 同步滚动两档开关 → 刷新，都排在「解散组」那一节之前）。判据一律**现在**读 surface：
   // 整张菜单在点击那一刻才组装，提前快照会把折叠开关的现状冻在重建操作区的那一刻
   // （B422 那条教训的又一形）。
+  // ⚠️ 分组口径（用户点名）：标签条只留看差异时**高频**的四颗（上/下差异、忽略空白、
+  //    折叠未改动区），剩下这些「偶尔才调一次」的收在这里；开关性质的条目必须带 `checked`，
+  //    不能只给一个点了不知道开没开的动作。快捷键不因此失效（命令 id 照旧在 `keymap.ts`）。
   const diffSurface = diffSurfaceOf(p);
   if (diffSurface) {
     const swappable = diffSurface.spec().tier === "files";
