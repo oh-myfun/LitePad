@@ -297,6 +297,18 @@ describe("B461 · 差异标签的落点（Task 1）", () => {
     expect(panel.diffSurface).toBeNull(); // dispose 自己把 panel 上的记账清掉（防悬空）
   });
 
+  it("B471 · 查找作用侧跟着焦点走：focusin 进哪一栏就记哪一栏（离开两栏保持原值）", () => {
+    const { panel, s } = mountDiffPair("左栏 aa\n第二行", "右栏 aa\n第二行");
+    expect(s.focusedSide(), "默认是正文那一栏").toBe("modified");
+    s.left.contentDOM.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    expect(s.focusedSide(), "点进左栏 ⇒ 查找该落在左栏").toBe("original");
+    // 焦点落到两栏之外（查找框、侧栏）不许改：上游也是「最后聚焦的那一颗」。
+    document.body.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    expect(s.focusedSide()).toBe("original");
+    panel.view!.view.contentDOM.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    expect(s.focusedSide(), "回到右栏 ⇒ 换回正文那一栏").toBe("modified");
+  });
+
   it("B461 · 左栏那一族与右栏 `.panel-editor` 吃同一套几何链（缺一样就是裁切 / 滚不动）", () => {
     const css = srcOf("src/diff/diff.css");
     // ① 列本身要成为竖排 flex 容器，且 `min-height: 0`（preview.css:1880-1883 原注：

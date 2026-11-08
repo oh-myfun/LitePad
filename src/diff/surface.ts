@@ -29,6 +29,7 @@ import {
 import { highlightSelectionMatches } from "@codemirror/search";
 import { detectLanguage } from "../editor/language";
 import { gutterExtensions } from "../editor/editor";
+import { findHighlight } from "../editor/find";
 import {
   layoutOverview,
   overviewWordMatches,
@@ -121,6 +122,14 @@ export interface DiffSurface {
   foldRanges(): Array<{ from: number; to: number }>;
   /** 落位/揭示前先把包住（或紧邻）这一行的折区展开 */
   unfoldAround(line: number): void;
+  /**
+   * 查找该作用在哪一栏：**最后一次聚焦的那一侧**（默认右栏）。
+   *
+   * 上游的查找挂在 `focusedEditor` 上（`diffEditorWidget` 的 `getFocusedCodeEditor()`），
+   * 切到左栏后 Ctrl+F 就在左栏里搜；这里暴露同一颗状态给 `find/findbar.ts` 取目标 view。
+   * 焦点落在两栏之外（查找输入框、侧栏）时保持上一次的值 —— 上游也是「最后聚焦的那一颗」。
+   */
+  focusedSide(): DiffSide;
   /**
    * 自动换行这一格现在开着没有。
    *
@@ -258,6 +267,10 @@ function leftState(
       ...(perf.activeLine ? [highlightActiveLineGutter(), highlightActiveLine()] : []),
       // 同词出现的正文层与概览标尺同闸（右栏 `editor.ts` 同一对）：正文不亮时右缘也不许亮。
       ...(perf.selectionMatches ? [highlightSelectionMatches(), overviewWordMatches.of(true)] : []),
+      // 查找命中（正文高亮 + 概览标记）也挂在这一栏：查找作用于**当前聚焦的那一侧**，
+      // 焦点在左栏时 `find/findbar.ts` 会把查询派给这颗 view。少了这些字段，派过来的
+      // `setFindQuery` 只会静默空转 ⇒ 左侧搜不到、也没有命中标记。
+      findHighlight(),
       // 行号走与右栏**同一颗**工厂（`gutterExtensions`）—— `perf` 已由 `perfOfDiffInstance`
       // 把折叠关掉，所以这里只会给出行号槽，与上游差异子编辑器的 folding = false 同口径。
       ...gutterExtensions(perf),
@@ -820,6 +833,19 @@ export function createDiffSurface(
       leftWrap.of(wrapOn ? EditorView.lineWrapping : []),
     ),
   });
+
+  // 查找作用于「最后聚焦的那一栏」（上游 `diffEditorWidget.getFocusedCodeEditor()`）：
+  // 焦点进哪一栏就记哪一栏；焦点离开两栏（查找框、侧栏）时不改 —— 打开查找那一刻还要靠它
+  // 决定目标 view。`focusin` 冒泡，点在行内任意节点都算。
+  let focused: DiffSide = "modified";
+  const onLeftFocus = (): void => {
+    focused = "original";
+  };
+  const onRightFocus = (): void => {
+    focused = "modified";
+  };
+  left.dom.addEventListener("focusin", onLeftFocus);
+  right?.dom.addEventListener("focusin", onRightFocus);
 
   /**
    * 某一行**文本本身**的文档坐标（去掉挂在它身上/前后的块 widget）。
@@ -1548,6 +1574,7 @@ export function createDiffSurface(
     showAllUnchanged,
     foldRanges: () => foldPointsFor("modified"),
     unfoldAround,
+    focusedSide: () => focused,
     ignoreTrimWhitespace: () => ignoreWs,
     setIgnoreTrimWhitespace: (on) => {
       if (ignoreWs === on) return;
@@ -1564,6 +1591,8 @@ export function createDiffSurface(
     dispose: () => {
       disposed = true;
       window.removeEventListener("resize", onWindowResize);
+      left.dom.removeEventListener("focusin", onLeftFocus);
+      right?.dom.removeEventListener("focusin", onRightFocus);
       cancelSync();
       // 折叠状态跟着这一格退场（那颗 view 上的替换装饰已经随臂摘掉了，读口再报着
       // 折区就是两份真相 —— 拆掉的 surface 从此只报「没折」）。

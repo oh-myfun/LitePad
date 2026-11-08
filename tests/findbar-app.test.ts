@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { EditorState, type TransactionSpec } from "@codemirror/state";
+import { findHighlight, findRulerRanges } from "../src/editor/find";
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -34,8 +35,15 @@ let findbar: typeof import("../src/find/findbar");
 
 /** 一个够用的 view 替身：`state` 可读、`dispatch(静) → 新 state`。 */
 function fakeView(text: string) {
-  let state = EditorState.create({ doc: text });
+  let state = EditorState.create({ doc: text, extensions: [findHighlight()] });
+  // B471：差异格的两栏各有一颗 dom —— 查找换侧的判据就是「focusin 落在哪颗 dom 里」。
+  const dom = document.createElement("div");
+  const contentDOM = document.createElement("span");
+  dom.appendChild(contentDOM);
+  document.body.appendChild(dom);
   const view = {
+    dom,
+    contentDOM,
     get state() {
       return state;
     },
@@ -300,5 +308,120 @@ describe("B419 · 在选区中查找：选区变化刷新结果", () => {
     expect(countText()).toBe("2 / 2");
     click(document.querySelector<HTMLButtonElement>(".find-next")!);
     expect(countText(), "到头环绕，范围没变").toBe("1 / 2");
+  });
+});
+
+// B471（用户）：差异格里的查找作用于**当前聚焦的那一栏**（上游 `getFocusedCodeEditor`）——
+// 切到左栏后 Ctrl+F 就在左栏里搜；命中高亮、概览标记、计数与替换入口一起换侧。
+describe("B471 · 差异格双栏查找：目标跟随焦点侧", () => {
+  /** 一颗差异格：右栏是标签正文，左栏是只读对照；`setSide` 模拟 surface 自己的 focusin 记账。 */
+  function openDiffDoc(leftText: string, rightText: string) {
+    const tabId = 20;
+    const right = fakeView(rightText);
+    const left = fakeView(leftText);
+    const tab = {
+      tabId,
+      docId: 2,
+      panelId: 0,
+      comps: {},
+      state: right.state,
+      viewMode: "source",
+    };
+    app.tabs.set(tabId, tab as never);
+    let side: "original" | "modified" = "modified";
+    app.panels.set(0, {
+      panelId: 0,
+      tabs: [tabId],
+      activeTabId: tabId,
+      view: { view: right } as never,
+      viewTabId: tabId,
+      bodyEl: null,
+      diffSurface: { left, focusedSide: () => side } as never,
+    });
+    app.setActivePanelId(0);
+    const setSide = (s: "original" | "modified"): void => {
+      side = s;
+    };
+    /** 模拟「用户点进某一栏」：surface 先记账，再让 focusin 冒到 document。 */
+    const focusSide = (s: "original" | "modified"): void => {
+      setSide(s);
+      const view = s === "original" ? left : right;
+      view.contentDOM.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    };
+    return { left, right, focusSide };
+  }
+
+  const lines = (v: ReturnType<typeof fakeView>): number[] =>
+    findRulerRanges(v.state).map((r) => r.fromLine);
+
+  it("默认（焦点在右栏）⇒ 只点亮右栏，计数按右栏正文算", () => {
+    const { left, right } = openDiffDoc("aa bb aa", "aa");
+    findbar.openFindBar();
+    typeFind("aa");
+    expect(countText()).toBe("1 / 1");
+    expect(lines(right)).toEqual([1]);
+    expect(lines(left), "没聚焦的左栏一个字都不许亮").toEqual([]);
+  });
+
+  it("切到左栏 ⇒ 计数与命中换侧、右栏高亮清除；再切回右栏又换回来", () => {
+    const { left, right, focusSide } = openDiffDoc("aa\nbb\naa", "aa");
+    findbar.openFindBar();
+    typeFind("aa");
+    expect(countText()).toBe("1 / 1");
+
+    focusSide("original");
+    expect(countText(), "左栏 2 处，右栏 1 处 —— 计数必须问当前那一栏").toBe("1 / 2");
+    expect(lines(left), "左栏点亮，且命中标记（概览标尺同一份装饰）在左侧").toEqual([1, 3]);
+    expect(lines(right), "旧侧高亮必须清掉").toEqual([]);
+
+    focusSide("modified");
+    expect(countText()).toBe("1 / 1");
+    expect(lines(right)).toEqual([1]);
+    expect(lines(left)).toEqual([]);
+  });
+
+  it("步进作用在当前侧：左栏两次「下一个」在左栏的两个命中之间走", () => {
+    const { left, right, focusSide } = openDiffDoc("aa\nbb\naa", "aa");
+    findbar.openFindBar();
+    typeFind("aa");
+    focusSide("original");
+    const next = document.querySelector<HTMLButtonElement>(".find-next")!;
+    // 第一发落在光标处那一个命中（`nextMatchIndex` 含端点），第二发才走到下一个命中。
+    click(next);
+    click(next);
+    expect(countText()).toBe("2 / 2");
+    expect(left.state.selection.main.from, "选区落在左栏第二个命中").toBe(6);
+    expect(right.state.selection.main.empty, "右栏选区不许被左栏的步进带走").toBe(true);
+  });
+
+  it("左栏只读：换到左栏后替换入口收掉，替换请求一字不改", () => {
+    const { left, focusSide } = openDiffDoc("aa bb aa", "aa");
+    findbar.openFindBar("replace");
+    expect(replaceRow().hidden, "右栏可替换").toBe(false);
+    focusSide("original");
+    expect(chevron().disabled, "左栏是只读对照 ⇒ 替换入口收掉").toBe(true);
+
+    findbar.replaceCurrent({
+      text: "aa",
+      replace: "cc",
+      caseSensitive: false,
+      wholeWord: false,
+      regexp: false,
+      inSelection: false,
+      preserveCase: false,
+    });
+    expect(left.state.doc.toString(), "对照栏正文不许被替换改写").toBe("aa bb aa");
+    expect(status().textContent).toBe("对照栏只读，不能在左侧替换");
+  });
+
+  it("关掉查找栏 ⇒ 两栏的高亮一起清（左栏不在 panels 表里，也要清）", () => {
+    const { left, right, focusSide } = openDiffDoc("aa bb aa", "aa");
+    findbar.openFindBar();
+    typeFind("aa");
+    focusSide("original");
+    expect(lines(left).length).toBe(2);
+    findbar.getFindBar()!.close();
+    expect(lines(left), "关掉后左栏不许留着命中").toEqual([]);
+    expect(lines(right)).toEqual([]);
   });
 });

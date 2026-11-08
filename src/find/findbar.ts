@@ -9,6 +9,7 @@
 
 import { panels, tabs } from "../core/app-state";
 import { activePanel } from "../core/panels";
+import { diffSurfaceOf } from "../diff/surface";
 import {
   buildFindQuery,
   clearFindQuery,
@@ -31,6 +32,23 @@ import { EditorView } from "@codemirror/view";
  * 按用户要求：范围不用下拉菜单，也不读盘 —— 跨文件那一条在侧栏搜索视图里（B389）。
  */
 let findBar: FindBarHandle | null = null;
+
+/** 差异格里查找**最后聚焦的那一栏**（焦点离开两栏时保持原值，与上游 `getFocusedCodeEditor` 同口径）。 */
+let lastFindSide: "original" | "modified" = "modified";
+
+/**
+ * 查找/计数/步进/替换该作用在哪颗 view。
+ *
+ * 差异格里是**当前聚焦的那一栏**：左栏（`surface.left`）与右栏（`panel.view.view`）
+ * 是两份不同的正文，上游的查找也挂在 `focusedEditor` 上。其余情况仍是活动面板那一颗。
+ */
+function findTargetView(): EditorView | null {
+  const panel = activePanel();
+  if (!panel) return null;
+  const surface = diffSurfaceOf(panel);
+  if (surface && surface.focusedSide() === "original") return surface.left;
+  return panel.view?.view ?? null;
+}
 
 /**
  * B419（用户）：本轮「已替换 N 处」的累计数 —— 单次替换连点要累加。
@@ -55,6 +73,27 @@ function ensureFindBar(): FindBarHandle {
     onReplaceAll: (q) => replaceAllInScope(q),
     onClose: () => clearFindHighlight(),
   });
+  // 差异格里「查找作用于当前聚焦的那一栏」：焦点换侧 ⇒ 目标 view、命中高亮、计数与
+  // 替换入口一起换（旧侧高亮在 `applyFindQuery` 里清掉）。浮层是单例，监听只挂这一处。
+  // `surface` 自己的 `focusin` 监听在 `view.dom` 上、比 document 先跑，读到的已是新的一侧。
+  document.addEventListener("focusin", (event) => {
+    const bar = findBar;
+    if (!bar?.isOpen()) return;
+    const panel = activePanel();
+    const surface = diffSurfaceOf(panel);
+    const right = panel?.view?.view ?? null;
+    const target = event.target as Node | null;
+    if (!surface || !right || !target) return;
+    let side: "original" | "modified" | null = null;
+    if (surface.left.dom.contains(target)) side = "original";
+    else if (right.dom.contains(target)) side = "modified";
+    if (!side || side === lastFindSide) return;
+    lastFindSide = side;
+    // 两侧不是同一份正文：勾着「在选区中查找」时锚点按文档偏移存，换侧必须重取。
+    if (findSelectionOn) seedFindSelectionAnchor();
+    syncFindBarReplaceable();
+    bar.retarget();
+  });
   return findBar;
 }
 
@@ -63,23 +102,34 @@ function openFindBar(focus: "find" | "replace" = "find"): void {
   const bar = ensureFindBar();
   const canReplace = replaceAllowedHere();
   bar.setReplaceEnabled(canReplace);
+  lastFindSide = diffSurfaceOf(activePanel())?.focusedSide() ?? "modified";
   // 重开时按当前选区重新播种（用户可能刚重新选了一段）
   if (findSelectionOn) seedFindSelectionAnchor();
   bar.open(selectedTextInActiveView(), focus === "replace" && canReplace);
   if (focus === "replace" && canReplace) bar.focusReplace();
   else bar.focusFind();
-  // B417：预览档里按「在文件中替换」只能落到查找，并说清楚为什么没掀开替换行
-  if (focus === "replace" && !canReplace) bar.setStatus("预览模式下不可替换");
+  // B417：预览档 / 差异格左栏里按「在文件中替换」只能落到查找，并说清楚为什么没掀开替换行
+  if (focus === "replace" && !canReplace) bar.setStatus(replaceBlockedReason());
 }
 
 /**
  * B417：这一档文档允不允许替换。预览档是「禁编辑的编辑模式」（B399）——文档锁着，
  * 替换没有落点；源码档与非 markdown 文档都照旧。
+ * 差异格的**左栏是只读对照**（transforms 被只读过滤挡掉）⇒ 焦点在左栏时同样不给替换。
  */
 function replaceAllowedHere(): boolean {
   const p = activePanel();
+  const surface = diffSurfaceOf(p);
+  if (surface && findTargetView() === surface.left) return false;
   const t = p && p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
   return t?.viewMode !== "preview";
+}
+
+/** 替换入口为什么收着（写进浮层状态栏；两条禁法给各自的理由，别一律说成预览档）。 */
+function replaceBlockedReason(): string {
+  const surface = diffSurfaceOf(activePanel());
+  if (surface && findTargetView() === surface.left) return "对照栏只读，不能在左侧替换";
+  return "预览模式下不可替换";
 }
 
 /**
@@ -92,7 +142,7 @@ function syncFindBarReplaceable(): void {
 
 /** 活动视图当前选中的文本（单行且非空才作为查找种子）。 */
 function selectedTextInActiveView(): string {
-  const view = activePanel()?.view?.view;
+  const view = findTargetView();
   if (!view) return "";
   const sel = view.state.selection.main;
   if (sel.empty) return "";
@@ -115,7 +165,7 @@ function findOptionsOf(q: FindBarQuery) {
  * 锚点 —— 别在这里实时读：步进会把选区换成命中本身。
  */
 function activeSelectionRange(): { from: number; to: number } | null {
-  const view = activePanel()?.view?.view;
+  const view = findTargetView();
   if (!view) return null;
   const sel = view.state.selection.main;
   if (sel.empty) return null;
@@ -191,11 +241,31 @@ function applyFindQuery(q: FindBarQuery): void {
   }
   const restrict = currentFindRestrict(q);
   const active = activePanel();
+  const target = findTargetView();
   for (const p of panels.values()) {
     if (!p.view) continue;
+    const view = p.view.view;
     // 选区限制只作用于活动编辑器（其余面板没有这份选区，按全文高亮）
     const r = p === active ? restrict : null;
-    p.view.view.dispatch({ effects: setFindQuery.of({ query, activeFrom: null, restrict: r }) });
+    // 差异格里只点亮**当前聚焦的那一栏**：两栏是两份正文，同一份查询派给两栏会让计数与
+    // 「当前命中」说不清属于哪一侧（上游 `findController` 也只挂在 `focusedEditor` 上）。
+    if (p === active && target && view !== target) {
+      clearFindQuery(view);
+      continue;
+    }
+    view.dispatch({ effects: setFindQuery.of({ query, activeFrom: null, restrict: r }) });
+  }
+  // 左栏不在 `panels` 那张表里（它是挂在右栏旁边的旁路）⇒ 单独按「是不是目标」派发/清除。
+  for (const p of panels.values()) {
+    const surface = diffSurfaceOf(p);
+    if (!surface) continue;
+    if (surface.left === target) {
+      surface.left.dispatch({
+        effects: setFindQuery.of({ query, activeFrom: null, restrict }),
+      });
+    } else {
+      clearFindQuery(surface.left);
+    }
   }
   refreshFindCount();
 }
@@ -224,13 +294,17 @@ function refreshFindOnSelectionChange(): void {
 }
 
 /**
- * 「步进与计数该问哪颗 view」：一格只有一颗 view，档位换的是 Compartment
- * ⇒ 调用点直接读 `panel.view.view`，它现形时就是看得见的那一面。
+ * 「步进与计数该问哪颗 view」统一走 `findTargetView()`：差异格里是**当前聚焦的那一栏**，
+ * 其余情况是活动面板那一颗。两栏是两份正文 ⇒ 计数、当前命中、横跨两侧的写回都要按这一颗分。
  */
 
 function clearFindHighlight(): void {
   for (const p of panels.values()) {
     if (p.view) clearFindQuery(p.view.view);
+    // 差异格的左栏不在 `panels` 那张表里（旁路），要单独清 —— 否则关掉查找栏后
+    // 左侧那层命中高亮会留在屏幕上，与「查找已关闭」自相矛盾。
+    const surface = diffSurfaceOf(p);
+    if (surface) clearFindQuery(surface.left);
   }
 }
 
@@ -251,8 +325,8 @@ function refreshFindCount(): void {
   const bar = findBar;
   if (!bar) return;
   const q = bar.getQuery();
-  const panel = activePanel();
-  const view = panel?.view?.view ?? null;
+  // 差异格里问的是**当前聚焦的那一栏**：两栏是两份正文，右栏的命中数不能冒充左栏的。
+  const view = findTargetView();
   if (!view) return;
   const query = buildFindQuery(findOptionsOf(q));
   const matches = restrictMatches(findMatches(view.state, query), q);
@@ -268,7 +342,7 @@ function refreshFindCount(): void {
 function stepFind(dir: 1 | -1, q: FindBarQuery): void {
   const panel = activePanel();
   if (!panel) return;
-  const view = panel.view?.view;
+  const view = findTargetView();
   if (!view) return;
   const query = buildFindQuery(findOptionsOf(q));
   const matches = restrictMatches(findMatches(view.state, query), q);
@@ -291,18 +365,24 @@ function stepFind(dir: 1 | -1, q: FindBarQuery): void {
     ],
   };
   dispatchOwn(view, step);
-  const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
-  if (tab) tab.state = view.state;
+  // 只有右栏那颗 view 才是标签的正文（左栏是只读对照）⇒ 别把对照文档的 state 写回标签。
+  if (panel.view?.view === view) {
+    const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
+    if (tab) tab.state = view.state;
+  }
   findBar?.setCount(`${idx + 1} / ${matches.length}`);
 }
 
 /** 替换当前命中（没有选中命中时，先跳到下一个再替换下一次点击生效）。 */
 function replaceCurrent(q: FindBarQuery): void {
+  // 左栏是只读对照、预览档文档锁着 —— 两处都改不动，先说清楚为什么不换。
+  if (!replaceAllowedHere()) {
+    findBar?.setStatus(replaceBlockedReason());
+    return;
+  }
   const panel = activePanel();
-  const view = panel?.view?.view;
+  const view = findTargetView();
   if (!panel || !view) return;
-  const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
-  if (!tab) return;
   const query = buildFindQuery(findOptionsOf(q));
   const matches = restrictMatches(findMatches(view.state, query), q);
   const sel = view.state.selection.main;
@@ -328,7 +408,10 @@ function replaceCurrent(q: FindBarQuery): void {
       }),
     ],
   });
-  if (tab) tab.state = view.state;
+  if (panel.view?.view === view) {
+    const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
+    if (tab) tab.state = view.state;
+  }
   refreshFindCount();
   // B419（用户）：单次替换连点要累计 —— 「已替换 1 处」→「已替换 2 处」…
   // 查询 / 替换串 / 范围 / 文档一变就由 clearReplaceStatus() 清零。
@@ -350,9 +433,13 @@ function replaceAllInScope(q: FindBarQuery): void {
     findBar?.setStatus("查找内容无效（正则语法错误？）");
     return;
   }
+  if (!replaceAllowedHere()) {
+    findBar?.setStatus(replaceBlockedReason());
+    return;
+  }
 
   const panel = activePanel();
-  const view = panel?.view?.view;
+  const view = findTargetView();
   if (!panel || !view) return;
   const matches = restrictMatches(findMatches(view.state, query), q);
   if (matches.length === 0) {
@@ -367,8 +454,10 @@ function replaceAllInScope(q: FindBarQuery): void {
       : q.replace,
   }));
   dispatchOwn(view, { changes });
-  const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
-  if (tab) tab.state = view.state;
+  if (panel.view?.view === view) {
+    const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
+    if (tab) tab.state = view.state;
+  }
   // B419：与单次替换同一个累计口径（这一发换了几处就加几处）。
   replacedCount += matches.length;
   findBar?.setStatus(`已替换 ${replacedCount} 处`);
@@ -377,6 +466,8 @@ function replaceAllInScope(q: FindBarQuery): void {
 
 /** 标签/面板切换后：浮层保持打开，把当前查询重新应用到新的活动视图。 */
 function retargetFindBar(): void {
+  // 换了文档 / 换了面板 → 焦点侧可能也变了（差异格换回来时默认右栏），重取一次。
+  lastFindSide = diffSurfaceOf(activePanel())?.focusedSide() ?? "modified";
   // 换了文档 → 旧锚点的偏移量作废，按新文档的选区重取；
   // 同一文档时**不动**锚点（否则 F3 步进后的「命中选区」会被当成新锚点）。
   if (findSelectionOn && findSelectionAnchor?.docId !== activeTabIdOf()) seedFindSelectionAnchor();
