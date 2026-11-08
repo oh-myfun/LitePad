@@ -1046,8 +1046,13 @@
    WebView2 默认滚动条是 Windows 系统样式，深色界面里会出现一条浅色亮条；
    Windows 10 那档还带**上下两端的三角形箭头**（VS Code 一律没有 —— 它自绘
    滚动条，压根没有 button 这回事）。
-   统一成细窄、圆角、**无箭头** overlapped 风格：轨道透明（露出区域背景），
-   thumb 走 --sb-* 变量随主题切换。
+   外观逐项照 VS Code 的默认取值（`scrollbars.css` + `scrollbarState.ts`）：
+     · 轨道透明（上游 `scrollbar.background` 在默认主题里不设色）；
+     · 滑块**方角、无描边、无内缩**（上游 CSS 只给 `background`，几何由
+       `_createSlider` 居中摆放，默认 `verticalSliderSize = verticalScrollbarSize`）；
+     · 三态只换 `scrollbarSlider.*`（`--sb-*` 的取值即上游默认深/浅主题）；
+     · 滑块最短 20px（上游 `MINIMUM_SLIDER_SIZE`），否则短文档里抓不住。
+   宽度保持本应用的窄版（8px）：用户明确要窄于 VS Code 的 14px。
    ⚠️ 这里**只留 Chromium 伪元素这一条路，不再双写标准属性**
    （`scrollbar-width` / `scrollbar-color` 那两条已删）：两边同时声明时，
    滚动条的渲染路径由 Chromium 挑，挑到系统那一路的话按钮伪元素就管不着了
@@ -1080,18 +1085,19 @@
 }
 ::-webkit-scrollbar-thumb {
   background: var(--sb-thumb);
-  border-radius: 4px;
-  /* 内缩 1px 形成悬浮观感；background-clip 保证边框不显示 thumb 颜色 */
-  border: 1px solid transparent;
-  background-clip: padding-box;
+}
+/* 最短 20px 只在各自那个轴上生效：两条都写会让竖滑块被撑成 20px 宽。 */
+::-webkit-scrollbar-thumb:vertical {
+  min-height: 20px;
+}
+::-webkit-scrollbar-thumb:horizontal {
+  min-width: 20px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--sb-thumb-hover);
-  background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:active {
   background: var(--sb-thumb-active);
-  background-clip: padding-box;
 }
 
 * {

@@ -507,12 +507,34 @@ export function createDiffSurface(
     foldedFor(side).map(({ from, to }) => ({ from, to }));
 
   /**
+   * 把两栏行号槽的**实测宽度**写到各自的 `.cm-editor` 上（`--diff-gutter-w`）。
+   *
+   * 为什么要这一颗：VS Code 的 alignment view zone 会把 `marginDomNode` 一起染成
+   * `gutter-delete` / `gutter-insert`，而 CM6 的块级 widget 只能落在 `.cm-content` 里。
+   * 样式段拿这颗变量把占位块向左铺过行号槽（`diff.css` 的 `.diff-gap`），缺口那一行在
+   * 行号列里也就有色条了。槽宽随行数位数变，所以每次重画都重新量一遍。
+   *
+   * 量不到（jsdom / 还没进文档）就写 0：`calc(100% + 0px)` 退化成原样，不会把块撑歪。
+   */
+  const syncGutterWidths = (): void => {
+    for (const side of SIDES) {
+      const view = viewOf(side);
+      if (!view) continue;
+      const gutter = view.dom.querySelector<HTMLElement>(".cm-gutters");
+      const w = gutter ? gutter.getBoundingClientRect().width : 0;
+      view.dom.style.setProperty("--diff-gutter-w", `${Math.round(w)}px`);
+    }
+  };
+
+  /**
    * 两栏一起点名：按现在的块表重画一次，并把「现在折着这些段」一起发进去。
    *
    * ⚠️ 两发必须在**同一次派发**里（`refreshDiff` 与 `setFoldedRanges`）：块表刚换、底色已经跟着
    * 新块走而折区还停在旧块上，那一帧画出来的就是错的那几行 —— 三处同刻跟上靠的是同一发事务。
    */
   const refreshArms = (): void => {
+    // 缺口块要铺过行号槽，槽宽先按实测写好，随后那一发装饰才量得对（见 syncGutterWidths）。
+    syncGutterWidths();
     // 先把缝按**此刻的行盒**重算一遍再派发：块表刚换（比如用户把删掉的行打回来了）时，
     // 还拿着上一轮的缝去画，就会在「块已经没了」的那一帧留下一条没人认领的空位 ——
     // 随后的 `scheduleAlign` 只保证下一帧收口，这一帧已经把旧缝画出去了。
@@ -957,21 +979,34 @@ export function createDiffSurface(
    * 两栏里就是同一视觉行 —— 这正是 VS Code 差异编辑器恒同步的前提。上一版的「按比例映射」
    * 是为高度不等留的兜底；那正是没对齐时的症状，现在对齐是真值，比例反而会把逐行对应拉开
    * （高度差 1px 就整体漂一点）。因此去掉比例，只夹到对侧的最大滚动量，防止过冲。
-   * `mirroring` 是防回声闸：写 scrollTop 会异步触发对方那一路的 scroll，不收口会抖。
+   *
+   * **单一驱动源**：只有用户真滚动的那一栏发起点名，对侧收到的是一次**程序性写入**；
+   * 那一发写入会异步触发对侧自己的 scroll 事件，必须认出来并丢掉，否则两边互相追改（抖动）。
+   * 上一版用「写的时候把布尔闸拉起来、下一帧放开」——scroll 事件是异步派发的，可能晚于
+   * rAF 回调到达，那时闸已放开，回声被当成用户滚动又写回去。这里改成**按值认领**：
+   * 写入前把「我要写多少」记在目标 scroller 上，事件来时只有落到那个值（±1px）才算回声；
+   * 用户中途滚走了（值对不上）就作废这一票、按用户滚动处理。于是「一次滚动只产生一次对侧写入」。
    */
   let syncOn = true;
-  let mirroring = false;
+  const pendingEcho = new WeakMap<HTMLElement, number>();
+  /** 这一发 scroll 是不是自己刚写下去的回声（是 ⇒ 消费掉票，不再对侧回传）。 */
+  const isEcho = (el: HTMLElement | undefined): boolean => {
+    if (!el) return false;
+    const want = pendingEcho.get(el);
+    if (want === undefined) return false;
+    pendingEcho.delete(el);
+    return Math.abs(el.scrollTop - want) <= 1;
+  };
   const mirrorScroll = (from: EditorView | null, to: EditorView | null): void => {
-    if (!syncOn || mirroring || !from || !to) return;
+    if (!syncOn || !from || !to) return;
     const a = from.scrollDOM;
     const b = to.scrollDOM;
     const bMax = Math.max(b.scrollHeight - b.clientHeight, 0);
-    mirroring = true;
-    b.scrollTop = Math.min(a.scrollTop, bMax);
-    // scroll 事件异步到达；下一帧再放开，才不会把自己的回声当成用户滚动。
-    requestAnimationFrame(() => {
-      mirroring = false;
-    });
+    const want = Math.min(Math.max(a.scrollTop, 0), bMax);
+    // 值没变就别写：写同一个值一样会排一发 scroll，白白多一条回声账。
+    if (Math.abs(b.scrollTop - want) < 0.5) return;
+    pendingEcho.set(b, want);
+    b.scrollTop = want;
   };
   const setSyncScrollEnabled = (on: boolean): void => {
     if (syncOn === on) return;
@@ -981,10 +1016,12 @@ export function createDiffSurface(
   };
   const onRightScroll = (): void => {
     renderViewport();
-    mirrorScroll(right, left);
+    if (!isEcho(right?.scrollDOM)) mirrorScroll(right, left);
     renderReverts();
   };
-  const onLeftScroll = (): void => mirrorScroll(left, right);
+  const onLeftScroll = (): void => {
+    if (!isEcho(left?.scrollDOM)) mirrorScroll(left, right);
+  };
   /** 点中间列的空白 = 把焦点交给右栏（VS Code 的 gutter 也是这个语义）。 */
   const onCenterDown = (e: MouseEvent): void => {
     if ((e.target as HTMLElement | null)?.closest(".diff-revert")) return;

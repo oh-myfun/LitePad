@@ -39,7 +39,7 @@ describe("滚动条：全应用统一且随深浅色联动", () => {
     const bar = ruleBlock(g, "::-webkit-scrollbar");
     expect(bar, "应有 ::-webkit-scrollbar 规则").toBeTruthy();
     expect(bar, "滚动条宽度必须显式声明（伪元素路径唯一的证据）").toMatch(/width:\s*\d+px/);
-    // B463 · 按 VS Code 观感收窄：比原先的 10px 更窄，圆角也一并收紧（原先 6px）。
+    // B463 · 按 VS Code 观感收窄：宽度比原先的 10px 更窄（用户要求保持窄版）。
     expect(bar, "宽度收到 8px").toMatch(/width:\s*8px/);
     expect(bar, "高度与宽度同口径").toMatch(/height:\s*8px/);
     expect(g, "不得双写标准属性 scrollbar-width（会抢渲染路径）").not.toMatch(/scrollbar-width:/);
@@ -48,7 +48,13 @@ describe("滚动条：全应用统一且随深浅色联动", () => {
     expect(thumb, "应有 ::-webkit-scrollbar-thumb 规则").toBeTruthy();
     expect(thumb, "滑块颜色必须引用 --sb-thumb 变量").toContain("var(--sb-thumb");
     expect(thumb, "滑块不得写死十六进制颜色").not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
-    expect(thumb, "圆角跟着收小（原先 6px）").toContain("border-radius: 4px");
+    // B464 · 除宽度外逐项照 VS Code：`scrollbars.css` 只给 background（方角），几何由
+    // `_createSlider` 居中摆（默认 slider 宽度 = 轨道宽度 ⇒ 无内缩），也没有描边。
+    expect(thumb, "VS Code 的滑块是方角").not.toContain("border-radius");
+    expect(thumb, "VS Code 的滑块无内缩/无描边").not.toMatch(/\bborder(-width)?\s*:/);
+    expect(g, "滑块最短 20px（VS Code 的 MINIMUM_SLIDER_SIZE）").toMatch(
+      /::-webkit-scrollbar-thumb:vertical\s*\{[^}]*min-height:\s*20px/,
+    );
     // 箭头：裸的那一条 + 按方向细分的 increment / decrement，三条都得 hide
     for (const [name, sel] of [
       ["裸 button", "::-webkit-scrollbar-button\\s*\\{"],

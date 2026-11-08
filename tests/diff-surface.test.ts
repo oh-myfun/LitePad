@@ -1318,4 +1318,59 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     // 按比例映射会得到 150/200*300 = 225；逐行对应就是同一个 scrollTop。
     expect(left.scrollDOM.scrollTop).toBe(150);
   });
+
+  it("B464 · 一次滚动只产生一次对侧写入（程序性写入的回声不回传）", () => {
+    const { panel } = mountDiffPair("A\nB\nC", "A\nC");
+    const right = panel.view!.view;
+    const left = diffSurfaceOf(panel)!.left;
+    Object.defineProperty(right.scrollDOM, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(right.scrollDOM, "scrollHeight", { configurable: true, value: 300 });
+    Object.defineProperty(left.scrollDOM, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(left.scrollDOM, "scrollHeight", { configurable: true, value: 400 });
+
+    // 把两栏的 scrollTop 换成带账本的存取器：谁被写、写了几次、写了多少都看得见。
+    let rightTop = 0;
+    let leftTop = 0;
+    const rightWrites: number[] = [];
+    const leftWrites: number[] = [];
+    Object.defineProperty(right.scrollDOM, "scrollTop", {
+      configurable: true,
+      get: () => rightTop,
+      set: (v: number) => {
+        rightTop = v;
+        rightWrites.push(v);
+      },
+    });
+    Object.defineProperty(left.scrollDOM, "scrollTop", {
+      configurable: true,
+      get: () => leftTop,
+      set: (v: number) => {
+        leftTop = v;
+        leftWrites.push(v);
+      },
+    });
+
+    // ① 用户滚右栏：只写左栏一次。
+    rightTop = 150;
+    right.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(leftWrites, "一次用户滚动只写对侧一次").toEqual([150]);
+    expect(rightWrites, "驱动栏自己不被回写").toEqual([]);
+
+    // ② 左栏那一发 scroll 是程序性写入的回声：不许再写回右栏（否则就是两栏互相追改）。
+    left.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(rightWrites, "回声不得回传").toEqual([]);
+
+    // ③ 再滚一次仍是各一次（账本不累积、也不重复）。
+    rightTop = 180;
+    right.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(leftWrites).toEqual([150, 180]);
+    expect(rightWrites).toEqual([]);
+
+    // ④ 超量时夹到对侧最大滚动量，但回声不许把驱动栏拉回夹过的值。
+    leftTop = 250;
+    left.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(rightWrites, "超出对侧最大滚动量时写夹值").toEqual([200]);
+    right.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(leftWrites, "夹值后的回声不得回写驱动栏").toEqual([150, 180]);
+  });
 });

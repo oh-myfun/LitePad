@@ -278,22 +278,28 @@ const faceSource = Facet.define<() => DiffFaceSource, () => DiffFaceSource>({
  *
  * ⚠️ 缺口行**只有中性斜纹、行号槽没有对应色条**：VS Code 的 alignment view zone 会连
  * `marginDomNode` 一起染上 `gutter-delete` / `gutter-insert`，而 CM6 的块级 widget 只能
- * 落在 `.cm-content` 里、伸不进 gutter。要补那根色条就得把缺口拆成逐行装饰 + 假行号，
- * 等于把「视觉行 ≠ 文档行」带进整条对齐链 —— 代价远大于一根色条，故按现状保留，
- * 不再为此改渲染结构。
+ * 落在 `.cm-content` 里、伸不进 gutter。样式段用 `--diff-gutter-w`（surface 按实测槽宽写的
+ * 自定义属性）把这颗块向左铺过行号槽：左半段填该侧的差异色（VS Code `gutter-*` 的同一档），
+ * 右半段仍是中性斜纹。**槽宽由实测来、不在这里量**（widget 不认识 view 的布局）。
  */
 export class DiffGapWidget extends WidgetType {
-  constructor(readonly height: number) {
+  constructor(
+    readonly height: number,
+    /** 缺的是哪一栏的行：原稿侧缺 ⇒ `delete`、新稿侧缺 ⇒ `insert`（行号槽的色条跟着这一侧）。 */
+    readonly side: DiffSide,
+  ) {
     super();
   }
 
   eq(other: WidgetType): boolean {
-    return other instanceof DiffGapWidget && other.height === this.height;
+    return (
+      other instanceof DiffGapWidget && other.height === this.height && other.side === this.side
+    );
   }
 
   toDOM(): HTMLElement {
     const el = document.createElement("div");
-    el.className = "diff-gap";
+    el.className = `diff-gap diff-gap-${this.side === "original" ? "delete" : "insert"}`;
     el.style.height = `${this.height}px`;
     return el;
   }
@@ -330,7 +336,7 @@ function buildFace(
   for (const gap of gaps) {
     if (!(gap.height > 0)) continue;
     const after = Math.min(Math.max(gap.afterLine, 0), doc.lines);
-    const widget = new DiffGapWidget(gap.height);
+    const widget = new DiffGapWidget(gap.height, side);
     // 块 widget 要落在线界上：`after` 行之后 ⇒ 挂在该行行尾（side > 0 = 那一行之后）；
     // 第 0 行之后（正文开头就缺行）⇒ 挂在第 1 行行首（side < 0 = 那一行之前）。
     ranges.push(

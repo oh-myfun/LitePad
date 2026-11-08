@@ -320,9 +320,10 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
     const { view, gapEls, lineEl } = mountFace("modified", del);
     expect(lineEl(1).className).not.toContain("diff-line-del"); // 右栏第 1 行本身没改
     expect(gapEls()).toHaveLength(1);
-    expect(gapEls()[0].getAttribute("class"), "占位块就这一颗类名（方向由所在栏的样式定）").toBe(
-      "diff-gap",
-    );
+    expect(
+      gapEls()[0].getAttribute("class"),
+      "占位块 = 中性斜纹 + 本侧方向类（行号槽色条用）",
+    ).toBe("diff-gap diff-gap-insert");
     expect(rowOrder(view), "空位是插在 A 与 Z 之间的那一整块").toEqual(["line", "gap", "line"]);
     // ⚠️ 简报这条写的是 `getBoundingClientRect().height > 0`，在 jsdom 里**不可能**绿
     // （无布局引擎 ⇒ 量出来恒为 0）。这一层的真主张是「占位块按行数 × 行高写了多高」⇒
@@ -762,7 +763,16 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
     expect(s).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
     const tokens = new Set([...s.matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1]));
     // 分侧语义没有「修改行」⇒ 不该再有 `--diff-mod`；占位块的斜纹是外壳灰，走 `--fg-muted`。
-    expect([...tokens].sort()).toEqual(["--diff-add", "--diff-del", "--fg-muted"]);
+    // `--diff-gap-gutter` 只是把「该侧差异色」带到行号槽那一段的载体（叠 `--bg` 合成不透明），
+    // `--diff-gutter-w` 是实测槽宽。
+    expect([...tokens].sort()).toEqual([
+      "--bg",
+      "--diff-add",
+      "--diff-del",
+      "--diff-gap-gutter",
+      "--diff-gutter-w",
+      "--fg-muted",
+    ]);
     expect(s, "不许再借 --warn / --danger（B458 续轮定死这两颗与明暗档无关）").not.toMatch(
       /--(warn|danger)\b/,
     );
@@ -832,7 +842,7 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
   it("B462 · 占位块走 VS Code 的 -45deg / 8px 中性斜纹，且不吃 em、不添竖向留白（R15）", () => {
     const s = section();
     expect(s).toMatch(/linear-gradient\(\s*-45deg/);
-    expect(s, "VS Code 的 `diagonal-fill` 是 8px 一格").toContain("background-size: 8px 8px");
+    expect(s, "VS Code 的 `diagonal-fill` 是 8px 一格").toContain("8px 8px");
     expect(s, "斜纹是外壳灰，不是某一侧的差异色").toContain("var(--fg-muted)");
     // `.diff-gap` 是 `.cm-content` 里的块 widget：继承 `pre-wrap`，而任何竖向 margin/padding
     // 与 em 制高都会把两栏的行盒推开（`src/preview/` 那些块 widget 栽过的坑）。
@@ -975,13 +985,13 @@ describe("B462 · 记号槽与右缘概览条样式", () => {
     ).toContain("var(--diff-add)");
     const viewport = ruleBlock(css(), ".panel-host.is-diff .diff-viewport", undefined, true);
     expect(viewport).toContain("var(--sb-thumb)");
-    // 滑块叠在色带上（用户要求与 VS Code 不同）：左右内缩留出描边位，圆角跟滚动条滑块同口径。
-    expect(viewport, "与滚动条滑块同一档圆角").toContain("border-radius: 4px");
-    expect(viewport, "叠在色带上而不是贴边铺满").toContain("left: 3px");
-    expect(viewport, "有描边，不是纯填充").toContain("box-shadow");
-    expect(viewport, "描一圈前景色，才不会被读成一块色块").toContain(
-      "color-mix(in srgb, var(--fg) 50%, transparent)",
-    );
+    // 滑块叠在色带上（用户要求与 VS Code 不同）：外观逐项照 VS Code 的滚动条滑块 ——
+    // 方角、无描边、无内缩（`scrollbars.css` 只给 background，几何由 `_createSlider` 居中摆放，
+    // 默认 slider 宽度 = 轨道宽度）。
+    expect(viewport, "方角，与 VS Code 滚动条滑块一致").not.toContain("border-radius");
+    expect(viewport, "铺满色带宽度，不内缩").toContain("left: 0");
+    expect(viewport, "铺满色带宽度，不内缩").toContain("right: 0");
+    expect(viewport, "VS Code 的滑块没有描边/阴影").not.toContain("box-shadow");
     expect(css(), "右栏原生纵向滚动条收成 0 宽，概览条就是那一根").toContain(
       ".panel-host.is-diff .panel-editor .cm-scroller::-webkit-scrollbar",
     );

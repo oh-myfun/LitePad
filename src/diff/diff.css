@@ -109,14 +109,34 @@
   min-width: 0;
 }
 
+/* 两栏之间那条分界照 VS Code 的 side-by-side：**两条 1px 的 `diffEditor.border`**，分别贴在
+   原稿栏的右边与新稿栏的左边（`style.css` 的 `.editor.original { border-right }` /
+   `.editor.modified { border-left }`），中间那 35px 回退列因此被两道线框住。
+   上游的默认色是 `#444444`（暗）/ `#cccccc`（亮），约等于 `--fg` 的 22% —— 这里按同一比例
+   取，五套主题（含 HC）都自己跟上；不再用 `--border`（#2a2b2c 在 #1e1e1e 上几乎看不见，
+   这正是「分割线消失」的根因）。 */
+.panel-host.is-diff .diff-original {
+  border-right: 1px solid color-mix(in srgb, var(--fg) 22%, transparent);
+}
+
+.panel-host.is-diff .panel-editor {
+  border-left: 1px solid color-mix(in srgb, var(--fg) 22%, transparent);
+}
+
 .diff-center::before {
   content: "";
   position: absolute;
   top: 0;
   bottom: 0;
   left: 50%;
-  border-left: 2px solid var(--border);
+  /* VS Code 的中线（`.gutterItem .background`）只在回退列可见时才现形：常态透明，
+     悬停这一列时给 2px 的 `menu-separatorBackground` 近似色。 */
+  border-left: 2px solid transparent;
   pointer-events: none;
+}
+
+.diff-center:hover::before {
+  border-left-color: color-mix(in srgb, var(--fg) 28%, transparent);
 }
 
 /* 按钮层：铺满整列，按钮各自按右栏的行位置绝对定位（见 `surface.ts` 的 `renderReverts`）。 */
@@ -245,19 +265,46 @@
 }
 
 /* 对侧占位块：VS Code 用 `diagonal-fill` 画中性斜纹（不是某一侧的差异色）——
-   `-45deg`、8px 一格，色走外壳的 `--fg-muted`，不引入第四颗差异色。 */
+   `-45deg`、8px 一格，色走外壳的 `--fg-muted`，不引入第四颗差异色。
+   铺法照 `diffEditorViewZones.ts` 的 alignment view zone：内容区整行铺满（块级 widget 是
+   `.cm-content` 的直接子元素，天然吃满内容宽），左缘再由下面那条负数偏移铺过行号槽。
+   **槽宽是实测值**（`--diff-gutter-w`，surface 写）：CM6 的块 widget 伸不进 gutter，只能靠
+   负偏移盖过去 —— 这一半填该侧的差异色（VS Code 的 `marginDomNode: gutter-delete/insert`），
+   右半仍是中性斜纹，收口是硬边（与上游一样不圆角、不渐隐）。 */
 .diff-gap {
-  background-image: linear-gradient(
-    -45deg,
-    color-mix(in srgb, var(--fg-muted) 20%, transparent) 12.5%,
-    transparent 12.5%,
-    transparent 50%,
-    color-mix(in srgb, var(--fg-muted) 20%, transparent) 50%,
-    color-mix(in srgb, var(--fg-muted) 20%, transparent) 62.5%,
-    transparent 62.5%,
-    transparent 100%
-  );
-  background-size: 8px 8px;
+  position: relative;
+  z-index: 201;
+  left: calc(-1 * var(--diff-gutter-w, 0px));
+  width: calc(100% + var(--diff-gutter-w, 0px));
+  background-image:
+    linear-gradient(var(--diff-gap-gutter, transparent), var(--diff-gap-gutter, transparent)),
+    linear-gradient(
+      -45deg,
+      color-mix(in srgb, var(--fg-muted) 20%, transparent) 12.5%,
+      transparent 12.5%,
+      transparent 50%,
+      color-mix(in srgb, var(--fg-muted) 20%, transparent) 50%,
+      color-mix(in srgb, var(--fg-muted) 20%, transparent) 62.5%,
+      transparent 62.5%,
+      transparent 100%
+    );
+  background-size:
+    var(--diff-gutter-w, 0px) 100%,
+    8px 8px;
+  background-repeat: no-repeat, repeat;
+  background-position:
+    0 0,
+    var(--diff-gutter-w, 0px) 0;
+}
+
+.diff-gap-delete {
+  /* 叠在 `--bg` 上合成**不透明**色：VS Code 的 margin 色块底下一层没有斜纹，半透明会让
+     下层那层斜纹透上来，行号槽看着像「斜纹染了色」而不是一块纯色条。 */
+  --diff-gap-gutter: color-mix(in srgb, var(--diff-del) 18%, var(--bg));
+}
+
+.diff-gap-insert {
+  --diff-gap-gutter: color-mix(in srgb, var(--diff-add) 18%, var(--bg));
 }
 
 /* ---------- Task 7 · 折叠未改动区：折条 + 被折起来的行 ---------- */
@@ -349,17 +396,17 @@
 
 /* 视口滑块 = 滚动条滑块，**叠在色带上**（用户明确要合并；VS Code 是独立滚动条 + 独立色带）。
    top / height 由 `surface.ts` 按 `ScrollbarState` 的像素公式写 inline（最小 20px）。
-   左右各内缩 3px、圆角跟滚动条滑块同口径，再描一圈前景色：色带底下是删除/新增色的色块，
-   滑块的填充色与色块同为半透明灰/彩色，不描边就会读成「一块稍厚的色块」而不是可拖的滑块。
-   描边取 `--fg` 的一半（而不是 `--bg`）：后者与色带底色太接近，暗色主题下等于没描。 */
+   外观逐项照 VS Code 的滚动条滑块（`scrollbars.css` + `scrollbarState.ts`）：**方角、无描边、
+   无内缩**（滑块宽度 = 轨道宽度），轨道透明，三态只换 `scrollbarSlider.*` 那三颗 token
+   （`--sb-thumb` / `-hover` / `-active`，取值即 VS Code 默认深/浅主题的 #79797966 / #797979b3 /
+   #797979 与 #64646466 / #646464b3 / #646464）。半透明中性灰压在删除/新增色带上本身就是
+   可辨的「另一种颜色」，不再另加圆角与描边。 */
 .panel-host.is-diff .diff-viewport {
   position: absolute;
-  left: 3px;
-  right: 3px;
+  left: 0;
+  right: 0;
   z-index: 1;
-  border-radius: 4px;
   background: var(--sb-thumb);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 50%, transparent);
 }
 
 .panel-host.is-diff .diff-viewport:hover {
