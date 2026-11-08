@@ -42,6 +42,7 @@ import {
   OpenedFile,
   newTab as ipcNewTab,
   openFile,
+  readCompareText,
   restoreBackup,
   loadSession,
   type RestoredBackup,
@@ -190,7 +191,7 @@ export async function restoreSession(): Promise<boolean> {
   // ⚠️ 这里必须跨面板去重，而不能每个面板各取一次——`restore_backup` 每次都新建
   // 一个标签，取两次就会得到两份**互不同步**的文档，把「同源多实例」悄悄破坏掉。
   type Restored =
-    | { kind: "backup"; data: RestoredBackup }
+    | { kind: "backup"; data: RestoredBackup; baseline: BaselineSnapshot | null }
     | { kind: "file"; data: OpenedFile }
     /** B69：空的未命名文档——会话里既没路径也没副本，内容本来就是空的 */
     | { kind: "empty"; data: OpenedFile };
@@ -208,6 +209,9 @@ export async function restoreSession(): Promise<boolean> {
     encoding: string | null;
     eol: string | null;
     backupId: string | null;
+    /** 这份脏内容对应的已保存磁盘版本（副本基线的对表凭据）。 */
+    diskMtimeMs: number | null;
+    diskSize: number | null;
   }> = [];
   // 主窗口各面板的标签 **+ B193 卫星标签**：按身份去重后统一下去预取，两边共用同一份
   // 缓存（同一个文件同时开在主窗口和卫星窗口时只读一次盘）。
@@ -222,6 +226,8 @@ export async function restoreSession(): Promise<boolean> {
         encoding: st.encoding ?? null,
         eol: st.eol ?? null,
         backupId,
+        diskMtimeMs: st.diskMtimeMs ?? null,
+        diskSize: st.diskSize ?? null,
       });
     }
   }
@@ -234,7 +240,9 @@ export async function restoreSession(): Promise<boolean> {
         try {
           const backup = await restoreBackup(p.backupId);
           if (backup) {
-            restoredCache.set(p.key, { kind: "backup", data: backup });
+            // 基线同批并行取回：盘上还是上次保存那一版时，盘上正文就是基线正文。
+            const baseline = await prefetchBaseline(p.path, p.diskMtimeMs, p.diskSize);
+            restoredCache.set(p.key, { kind: "backup", data: backup, baseline });
             return;
           }
           dropped.push(`${p.path || "未命名"}：副本读出来是空的，改按路径打开`);
@@ -319,11 +327,18 @@ export async function restoreSession(): Promise<boolean> {
         // 脏 + 已知副本存在，于是关窗依旧不需要确认框。
         doc.dirty = true;
         doc.backedUp = true;
-        // 副本里只有「改过之后」的正文，**原文件长什么样并不知道** ⇒ 没有基线，
-        // 只能等用户保存时重新钉（在此之前撤销多少次都不会自己转干净）。
+        // 副本里只有「改过之后」的正文，**原文件长什么样并不知道** ⇒ 先按未知处理。
+        // 基线由预取阶段按「已保存磁盘版本」对表补回（见 prefetchBaseline）：盘上若还停
+        // 在这一版，盘上正文就是上次保存的正文；补不回来（版本对不上 = 关闭期间被外部
+        // 改过 / 未命名从没落过盘）就维持未知，等保存时重新钉。
         doc.baseline = null;
-        // 已知版本无从得知（副本里不存 mtime），留 0：于是接下来的第一个
-        // file-changed 一定被判成外部改动 —— 这份本来就脏，正是要弹冲突框的情形。
+        const baseline = hit.baseline;
+        if (baseline) {
+          doc.baseline = baseline.text;
+          doc.baselineEncoding = baseline.encoding;
+          doc.baselineEol = baseline.eol;
+          markDiskVersion(doc, baseline.mtimeMs, baseline.size);
+        }
       } else if (hit.kind === "file") {
         markDiskVersion(doc, hit.data.mtimeMs, hit.data.size);
       }
@@ -479,4 +494,52 @@ export async function restoreSatelliteWindows(
   rebuildLayout();
   refreshAll();
   scheduleSessionSave();
+}
+
+/**
+ * 副本的基线：盘上仍停着「上次保存那一版」时，抓回来的那份正文与行尾 / 编码口径。
+ */
+type BaselineSnapshot = {
+  text: string;
+  encoding: string;
+  eol: string;
+  mtimeMs: number;
+  size: number;
+};
+
+/**
+ * 副本恢复的基线预取（与副本读取、文件打开同批并行，不拖慢启动）。
+ *
+ * 副本本身只存改过之后的正文；会话记录另记着这份内容对应的已保存磁盘版本
+ * （`diskMtimeMs` / `diskSize`）。盘上若还停在这一版，盘上正文就是基线正文 ——
+ * 恢复出来的脏文档于是能「与上次保存比较」，行号那列的差异标注也有得算。
+ *
+ * ⚠️ 版本对不上（关闭期间被外部改过）= 基线无从确定：返回 `null`，不拿现在盘上的
+ * 内容冒充基线，下一次 `file-changed` 照旧走冲突框。未命名 / 从没落过盘的文档没有
+ * 磁盘版本，同样返回 `null` —— 空的「已保存版本」不是已保存版本。
+ */
+async function prefetchBaseline(
+  path: string,
+  mtimeMs: number | null,
+  size: number | null,
+): Promise<BaselineSnapshot | null> {
+  if (!path || typeof mtimeMs !== "number" || typeof size !== "number") return null;
+  try {
+    const disk = await readCompareText(path);
+    if (disk.mtimeMs !== mtimeMs || disk.size !== size) {
+      logger.debug("session", `副本恢复 · 盘上版本已变，基线作废（${path}）`);
+      return null;
+    }
+    return {
+      text: disk.text,
+      encoding: disk.encoding,
+      eol: disk.eol,
+      mtimeMs: disk.mtimeMs,
+      size: disk.size,
+    };
+  } catch (e) {
+    // 读不到盘（被删 / 被占用）⇒ 基线维持未知，等保存时重新钉；不该让整个标签恢复失败。
+    logger.debug("session", `副本恢复 · 读不到磁盘基线（${path}）：${String(e)}`);
+    return null;
+  }
 }

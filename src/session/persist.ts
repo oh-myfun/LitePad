@@ -161,6 +161,11 @@ export function refreshSession(): void {
       encoding: d.encoding,
       eol: d.eol,
       backupId: d.backupId,
+      // 副本里没有基线。把这份文档「最后一次读/写盘时」的磁盘版本一并落盘：恢复时
+      // 盘上若还停在这一版，盘上正文就是上次保存的正文（`rebuild` 据此还原基线）。
+      // mtime 取不到（0）时整对留空 —— 只剩字节数认不出「是不是同一版」。
+      diskMtimeMs: d.diskMtimeMs > 0 ? d.diskMtimeMs : null,
+      diskSize: d.diskMtimeMs > 0 ? d.diskSize : null,
     });
     sessionStore.setViewMode(t.tabId, isMdTab(t) ? t.viewMode : null);
     // B461：差异标签的两格会话字段（唯一写点，与上面几颗同一圈同步）。`leftPath` 只有

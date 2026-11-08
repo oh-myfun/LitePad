@@ -40,6 +40,9 @@ export interface SessionTabRecord {
   kind: string | null;
   /** B461：B 档左栏的文件路径；A 档与普通标签都是 `null`。 */
   diffLeftPath: string | null;
+  /** 这份文档最后一次读/写盘时的磁盘版本（mtime 毫秒 + 字节数）；`null` = 未知。 */
+  diskMtimeMs: number | null;
+  diskSize: number | null;
 }
 
 /** 一个面板的会话记录：标签顺序 + 活动标签。 */
@@ -71,6 +74,8 @@ function blankRecord(tabId: number, docId: number): SessionTabRecord {
     scrollV: null,
     kind: null,
     diffLeftPath: null,
+    diskMtimeMs: null,
+    diskSize: null,
   };
 }
 
@@ -90,6 +95,8 @@ function toDisk(r: SessionTabRecord): TabSession {
     // 「记了是普通标签」在盘上长成一个样，下一次改判据时无从分辨（B392 那一族）。
     kind: r.kind,
     diffLeftPath: r.diffLeftPath,
+    diskMtimeMs: r.diskMtimeMs,
+    diskSize: r.diskSize,
   };
 }
 
@@ -143,10 +150,12 @@ class SessionStore {
     return this.recs.get(tabId) ?? null;
   }
 
-  /** 文档级字段（path / encoding / eol / backupId）由 `Doc` 的变化推过来。 */
+  /** 文档级字段（path / encoding / eol / backupId / 磁盘版本）由 `Doc` 的变化推过来。 */
   setDoc(
     tabId: number,
-    patch: Partial<Pick<SessionTabRecord, "path" | "encoding" | "eol" | "backupId">>,
+    patch: Partial<
+      Pick<SessionTabRecord, "path" | "encoding" | "eol" | "backupId" | "diskMtimeMs" | "diskSize">
+    >,
   ): void {
     const r = this.recs.get(tabId);
     if (!r) return;

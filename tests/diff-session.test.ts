@@ -38,6 +38,8 @@ const wire = vi.hoisted(() => ({
   session: null as unknown,
   backup: null as unknown,
   compare: new Map<string, string>(),
+  /** 「盘上版本」夹具：与 compare 里的文本同一份，恢复基线时按它对表。 */
+  compareVersion: new Map<string, { mtimeMs: number; size: number }>(),
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -107,13 +109,15 @@ vi.mock("../src/ipc/api", async (importOriginal) => {
     readCompareText: (path: string) => {
       const text = wire.compare.get(path);
       if (text === undefined) return Promise.reject(new Error(`读不到 ${path}`));
-      return Promise.resolve({ text, encoding: "UTF-8", eol: "LF" });
+      const v = wire.compareVersion.get(path) ?? { mtimeMs: 0, size: 0 };
+      return Promise.resolve({ text, encoding: "UTF-8", eol: "LF", ...v });
     },
   };
 });
 
 let model: typeof import("../src/diff/model");
 let rebuild: typeof import("../src/session/rebuild");
+let persist: typeof import("../src/session/persist");
 let split: typeof import("../src/tabs/split");
 let lifecycle: typeof import("../src/tabs/lifecycle");
 let tabstrip: typeof import("../src/shell/tabstrip");
@@ -126,9 +130,10 @@ beforeAll(async () => {
     "",
   );
   document.body.innerHTML = body;
-  [model, rebuild, split, lifecycle, tabstrip, ui] = await Promise.all([
+  [model, rebuild, persist, split, lifecycle, tabstrip, ui] = await Promise.all([
     import("../src/diff/model"),
     import("../src/session/rebuild"),
+    import("../src/session/persist"),
     import("../src/tabs/split"),
     import("../src/tabs/lifecycle"),
     import("../src/shell/tabstrip"),
@@ -144,6 +149,7 @@ beforeEach(() => {
   wire.session = null;
   wire.backup = null;
   wire.compare.clear();
+  wire.compareVersion.clear();
   ui.sbMessage.textContent = "";
   closePopupMenu();
   for (const el of document.querySelectorAll("body > .panel-host, body > .tabstrip-host")) {
@@ -299,6 +305,100 @@ describe("B461 · 差异标签进会话也恢复得回来", () => {
     expect(docs.get(197)!.baseline, "副本还原 ⇒ 没有基线").toBeNull();
     expect(tabs.size, "文件本身不许因为差异开不出来就丢掉").toBe(2);
     expect([...tabs.values()].every((t) => t.kind === "editor")).toBe(true);
+  });
+
+  /** 副本还原的夹具：盘上那份已保存正文 + 副本里改过之后的正文。 */
+  function backupRestorePair(opts: {
+    diskText: string;
+    diskVersion: { mtimeMs: number; size: number };
+    editedText: string;
+    recordVersion?: { mtimeMs: number; size: number };
+  }): void {
+    wire.compare.set("a.md", opts.diskText);
+    wire.compareVersion.set("a.md", opts.diskVersion);
+    wire.backup = {
+      tabId: 197,
+      path: "a.md",
+      name: "a.md",
+      text: opts.editedText,
+      encoding: "UTF-8",
+      eol: "LF",
+      mixedEol: false,
+      readonly: false,
+      sizeClass: "normal",
+      sizeHint: "",
+    };
+    const v = opts.recordVersion ?? opts.diskVersion;
+    wire.session = sessionWith([
+      rec({ path: "a.md", docId: 197, backupId: "bk1", diskMtimeMs: v.mtimeMs, diskSize: v.size }),
+      rec({
+        path: "a.md",
+        docId: 197,
+        backupId: "bk1",
+        kind: "diff",
+        diffLeftPath: null,
+        diskMtimeMs: v.mtimeMs,
+        diskSize: v.size,
+      }),
+    ]);
+  }
+
+  it("副本还原的未保存文档：盘上还是上次保存那一版 ⇒ 基线取磁盘正文，可与它比较", async () => {
+    backupRestorePair({
+      diskText: "上次保存的正文\n第二行",
+      diskVersion: { mtimeMs: 111, size: 20 },
+      editedText: "改过之后\n第二行",
+    });
+    expect(await rebuild.restoreSession()).toBe(true);
+    const doc = docs.get(197) as Doc;
+    expect(doc.dirty, "副本还原仍是未保存状态").toBe(true);
+    expect(doc.baseline, "基线该是盘上那份已保存正文").toBe("上次保存的正文\n第二行");
+    expect(doc.diskMtimeMs, "已知磁盘版本 = 盘上那一版").toBe(111);
+    const diff = [...tabs.values()].find((t) => t.kind === "diff");
+    expect(diff, "基线补回来了，A 档差异标签不该再回落").toBeTruthy();
+    expect(diff!.diff!.tier).toBe("baseline");
+    // 用户看到的那条症状：左侧必须是「上一次保存」那份，不是当前编辑内容、也不是空。
+    expect(diff!.diff!.leftText()).toBe("上次保存的正文\n第二行");
+    expect(diff!.diff!.leftText()).not.toBe("改过之后\n第二行");
+    expect(tabs.size).toBe(2);
+  });
+
+  it("关闭期间盘上被外部改过（版本对不上）⇒ 基线作废，仍回落普通编辑器标签", async () => {
+    backupRestorePair({
+      diskText: "外部改过的新内容",
+      diskVersion: { mtimeMs: 222, size: 9 },
+      editedText: "改过之后\n第二行",
+      recordVersion: { mtimeMs: 111, size: 20 },
+    });
+    expect(await rebuild.restoreSession()).toBe(true);
+    expect(docs.get(197)!.baseline, "版本对不上 ⇒ 不拿盘上新内容冒充基线").toBeNull();
+    expect([...tabs.values()].every((t) => t.kind === "editor")).toBe(true);
+  });
+
+  it("落盘前刷新会话时，把文档的磁盘版本一并写进记录", () => {
+    const doc = makeDoc(150, "改过之后", "a.md", "E:\\a.md", "UTF-8", "LF", false);
+    doc.diskMtimeMs = 111;
+    doc.diskSize = 20;
+    docs.set(150, doc);
+    tabs.set(1, {
+      tabId: 1,
+      docId: 150,
+      panelId: 0,
+      kind: "editor",
+      diff: null,
+      scrollV: 1,
+    } as unknown as Tab);
+    persist.refreshSession();
+    const saved = sessionStore.get(1)!;
+    expect(saved.diskMtimeMs).toBe(111);
+    expect(saved.diskSize).toBe(20);
+
+    // 反证：mtime 取不到（0）时整对留空，不许落成「看似有效」的 0 版本。
+    doc.diskMtimeMs = 0;
+    persist.refreshSession();
+    const unknown = sessionStore.get(1)!;
+    expect(unknown.diskMtimeMs).toBeNull();
+    expect(unknown.diskSize).toBeNull();
   });
 
   it("B 档左栏读不成盘 ⇒ 回落普通编辑器标签（右栏那份文件仍在）", async () => {

@@ -47,10 +47,11 @@ describe("B87 文件监听：外部修改要真的刷新内容（VS Code 三态 
   const handleFn = topLevelFnBody(main, "function handleFileChanged(payload: FileChangedPayload)");
 
   describe("A 档：磁盘版本号（回声抑制的唯一依据）", () => {
-    it("OpenedFile / SavedFile 都要带 mtime_ms（保存后必须拿得到新版本）", () => {
+    it("OpenedFile / SavedFile / CompareText 都要带 mtime_ms（保存后必须拿得到新版本）", () => {
       // ⚠️ 只断言「文件里出现过 mtime_ms」会假绿：open_file 给了、save_file 没给也照样命中。
       // 所以既按出现次数卡，也分别断言落进了对应的结构体里。
-      expect((rustCmds.match(/pub mtime_ms: i64,/g) ?? []).length, "两个结构体各一个").toBe(2);
+      // CompareText（只读快照）是第三个：会话恢复拿它的版本号认「盘上还是不是上次保存那一版」。
+      expect((rustCmds.match(/pub mtime_ms: i64,/g) ?? []).length, "三个结构体各一个").toBe(3);
 
       const opened = rustCmds.slice(
         rustCmds.indexOf("pub struct OpenedFile"),
@@ -60,8 +61,12 @@ describe("B87 文件监听：外部修改要真的刷新内容（VS Code 三态 
         rustCmds.indexOf("pub struct SavedFile"),
         rustCmds.indexOf("fn tab_info"),
       );
+      const compare = rustCmds.slice(rustCmds.indexOf("pub struct CompareText"));
       expect(opened, "OpenedFile 必须带 mtime_ms").toContain("pub mtime_ms: i64,");
       expect(saved, "SavedFile 必须带 mtime_ms（否则保存后前端拿不到新版本）").toContain(
+        "pub mtime_ms: i64,",
+      );
+      expect(compare, "CompareText 必须带 mtime_ms（恢复基线靠它对表）").toContain(
         "pub mtime_ms: i64,",
       );
 
@@ -78,11 +83,11 @@ describe("B87 文件监听：外部修改要真的刷新内容（VS Code 三态 
       expect(savedTs, "前端 SavedFile 必须有 mtimeMs").toContain("mtimeMs: number;");
     });
 
-    it("读盘 / 写盘之后都要真的取一次版本号", () => {
+    it("读盘 / 写盘 / 只读快照之后都要真的取一次版本号", () => {
       expect(
         (rustCmds.match(/let \(mtime_ms, _\) = disk_version\(&target\);/g) ?? []).length,
-        "open_file 与 save_file 各取一次",
-      ).toBe(2);
+        "open_file / save_file / read_compare_text 各取一次",
+      ).toBe(3);
       // 取不到 / 文件被删时回落 (0,0)：下次事件必然与 0 不同，于是不会被当成回声吞掉
       const ver = topLevelFnBody(rustCmds, "pub fn disk_version(path: &Path) -> (i64, u64)");
       expect(ver, "取不到 disk_version").toBeTruthy();

@@ -578,6 +578,13 @@ pub struct CompareText {
     pub text: String,
     pub encoding: String,
     pub size_class: String,
+    /// 文件主行尾（归一前的原始行尾），会话恢复要拿它还原基线
+    pub eol: String,
+    /// 读盘那一刻的磁盘版本（mtime 毫秒 + 字节数，取不到均为 0）。
+    ///
+    /// 会话恢复靠它与记录里的「已保存磁盘版本」对表：一致 ⇒ 盘上这份就是上次保存的正文。
+    pub mtime_ms: i64,
+    pub size: u64,
 }
 
 /// 只读地读一个文件的内容，供「选择以进行比较 / 与 X 比较」（tier B）使用。
@@ -605,8 +612,11 @@ pub async fn read_compare_text(path: String) -> Result<CompareText, String> {
 
     let enc = codec::detect(&bytes);
     let decoded = codec::decode(&bytes, enc);
-    // 只读快照：两边都归一到 LF 再比对，行尾信息无需回传前端。
+    // 先分析原始行尾，再归一到 LF 做比对；行尾本身也要回传（恢复基线要用）。
+    let info = eol::analyze(&decoded.text);
     let text = eol::to_lf(&decoded.text);
+    // 读完之后再取版本号：与装进快照的内容严格对应（与 `open_file` 同一口径）。
+    let (mtime_ms, _) = disk_version(&target);
 
     Ok(CompareText {
         path: target.to_string_lossy().into_owned(),
@@ -617,6 +627,9 @@ pub async fn read_compare_text(path: String) -> Result<CompareText, String> {
         text,
         encoding: enc.label().into(),
         size_class: class.as_str().into(),
+        eol: info.dominant.label().into(),
+        mtime_ms,
+        size: meta.len(),
     })
 }
 

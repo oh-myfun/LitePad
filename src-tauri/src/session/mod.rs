@@ -338,6 +338,15 @@ pub struct TabSession {
     /// B461：B 档差异的左栏文件路径（右栏就是 `path` 那份文档）；A 档与普通标签都是 `None`。
     /// 左栏只是只读对比缓冲，后端不读它、不校验它，原样透传给前端。
     pub diff_left_path: Option<String>,
+    /// 这份「有未保存修改」的内容对应的**已保存磁盘版本**（mtime 毫秒 + 字节数）。
+    ///
+    /// 热退出副本里只有改过之后的正文，恢复出来的脏文档因此没有基线、没法「与上次保存
+    /// 比较」。记下这一对版本：恢复时盘上若还停在这一版，盘上正文就是上次保存的正文。
+    /// `None` = 旧会话没记过 / 文档从未落过盘 —— 前端保持「基线未知」，不拿空正文冒充。
+    #[serde(alias = "disk_mtime_ms")]
+    pub disk_mtime_ms: Option<i64>,
+    #[serde(alias = "disk_size")]
+    pub disk_size: Option<u64>,
     /// B193：仅 `satellite_tabs` 段使用 —— 该标签当时属于哪个卫星窗口（label 作分组键）。
     /// `None` = 旧会话没写过这个字段，整批当作同一组。
     #[serde(alias = "owner")]
@@ -359,6 +368,8 @@ impl Default for TabSession {
             scroll_v: None,
             kind: None,
             diff_left_path: None,
+            disk_mtime_ms: None,
+            disk_size: None,
             owner: None,
         }
     }
@@ -686,6 +697,44 @@ mod tests {
         assert!(!out.contains("diff_left_path"), "不应落 snake_case：{out}");
         assert_eq!(TabSession::default().kind, None);
         assert_eq!(TabSession::default().diff_left_path, None);
+    }
+
+    /// 会话要带「这份脏内容对应的已保存磁盘版本」（mtime 毫秒 + 字节数）。
+    ///
+    /// 恢复端靠它判断盘上还是不是上次保存的那一份：对得上才能把盘上正文当基线，
+    /// 对不上（关闭期间被外部改过）基线就作废。旧会话缺这两个键 ⇒ `None`（基线未知）。
+    #[test]
+    fn session_carries_saved_disk_version() {
+        let json = r#"{
+          "panels": [
+            { "tabs": [
+                { "path": "a.md", "docId": 1, "diskMtimeMs": 1700000000123, "diskSize": 42 },
+                { "path": "b.md", "docId": 2, "diskMtimeMs": null, "diskSize": null },
+                { "path": "c.md", "docId": 3 }
+              ], "active": 0 }
+          ],
+          "layout": { "kind": "leaf", "panelId": 0 },
+          "activePanel": 0
+        }"#;
+        let state: SessionState =
+            serde_json::from_str(json).expect("磁盘版本应能按 camelCase 读入");
+        assert_eq!(state.panels[0].tabs[0].disk_mtime_ms, Some(1700000000123));
+        assert_eq!(state.panels[0].tabs[0].disk_size, Some(42));
+        assert_eq!(
+            state.panels[0].tabs[1].disk_mtime_ms, None,
+            "显式 null 透传"
+        );
+        assert_eq!(
+            state.panels[0].tabs[2].disk_mtime_ms, None,
+            "旧会话缺键 ⇒ None（基线未知），不能读成 0"
+        );
+
+        let out = serde_json::to_string(&state).unwrap();
+        assert!(out.contains("\"diskMtimeMs\""), "落盘应为 camelCase：{out}");
+        assert!(out.contains("\"diskSize\""), "落盘应为 camelCase：{out}");
+        assert!(!out.contains("disk_mtime_ms"), "不应落 snake_case：{out}");
+        assert_eq!(TabSession::default().disk_mtime_ms, None);
+        assert_eq!(TabSession::default().disk_size, None);
     }
 
     /// B392：`syncMode` **缺键不许读成「关着」**。

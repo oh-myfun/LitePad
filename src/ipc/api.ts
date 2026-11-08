@@ -63,6 +63,15 @@ export interface CompareText {
   text: string;
   encoding: string;
   sizeClass: string;
+  /** 文件主行尾（`CRLF` / `LF` …），与 `OpenedFile.eol` 同一取值口径 */
+  eol: string;
+  /**
+   * 读盘那一刻的磁盘版本号（mtime 毫秒 + 字节数，取不到均为 0）。
+   *
+   * 会话恢复时拿它与会话记录里的「已保存版本」对表：一致 ⇒ 盘上这份就是上次保存的正文。
+   */
+  mtimeMs: number;
+  size: number;
 }
 
 /**
@@ -717,6 +726,16 @@ export interface TabSession {
    * ⇒ A 档（与这份文档上次保存的正文比较）。左栏只是只读对比缓冲，不进文档登记表。
    */
   diffLeftPath?: string | null;
+  /**
+   * 这份「有未保存修改」的内容所对应的**已保存磁盘版本**（mtime 毫秒 + 字节数）。
+   *
+   * 热退出副本里只有改过之后的正文，没有基线 —— 恢复出来的脏文档于是没法「与上次保存
+   * 比较」。盘上若还停在这一版，盘上正文就是上次保存的正文，可以直接当基线；版本一变
+   * （关闭期间被外部改过）就作废。`null` / 缺省 = 旧会话没记过（或文档从未落过盘），
+   * 恢复端保持「基线未知」，不拿空正文冒充已保存版本。
+   */
+  diskMtimeMs?: number | null;
+  diskSize?: number | null;
   /**
    * B193：**仅 `satelliteTabs` 段使用** —— 这个标签当时属于哪个卫星窗口（窗口 label 作分组键）。
    *
