@@ -368,6 +368,10 @@
   min-width: 0;
   overflow: hidden;
   background: color-mix(in srgb, var(--fg) 3%, transparent);
+  /* 上游的滚动条不自带光标（`scrollbars.css` 只给箭头画 `cursor: pointer`），吃的是编辑器
+     容器的默认箭头。这里显式写死：概览条是 body 的后代，不声明就会继承到 `.cm-content` 的
+     `text` 或拖拽中的 `ew-resize` / `col-resize`，看起来像一个不该出现的「禁用」光标。 */
+  cursor: default;
 }
 
 .panel-host.is-diff .diff-overview-ruler {
@@ -424,4 +428,12 @@
 
 .panel-host.is-diff .diff-viewport:active {
   background: var(--sb-thumb-active);
+}
+
+/* 不需要滚动时整条收起来（`surface.ts` 的 `renderViewport` 按 `ScrollbarState.isNeeded()` 判）。
+   照上游 `.monaco-scrollable-element > .invisible`：`opacity: 0` 之外还要 `pointer-events: none`
+   —— 看不见但能按下是最糟的一档（按下去拖不动，还挡掉了下面的色带）。 */
+.panel-host.is-diff .diff-viewport.is-hidden {
+  opacity: 0;
+  pointer-events: none;
 }

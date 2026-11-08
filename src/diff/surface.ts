@@ -929,25 +929,25 @@ export function createDiffSurface(
    * 视口滑块（B461 后续轮）：几何照 VS Code `ScrollbarState` 的取值，不用百分比。
    *
    * 上游（`scrollbarState.ts`）：
+   *   isNeeded   = scrollSize > 0 && scrollSize > visibleSize
    *   sliderSize = round(max(MINIMUM_SLIDER_SIZE=20, floor(visible² / scrollSize)))
    *   ratio      = (representable - sliderSize) / (scrollSize - visible)
    *   position   = round(scrollTop × ratio)
    * 百分比写法在长文档里会缩成 1px 的线，而 VS Code 的下限是 20px —— 那正是「拖得住」的保证。
+   *
+   * 不需要滚动时**整条滑块收起来**，不是铺满：上游在 `isNeeded() === false` 时把滚动条元素换成
+   * `.invisible`（`scrollbars.css`：`opacity: 0; pointer-events: none;`）。以前这里照
+   * `getSliderSize()` 的 `representableSize` 那一支把滑块铺满整条，于是内容装得下时右缘是一根
+   * 整条都是滑块的灰柱：按下去拖不动（`scrollTop` 恒 0），看着就像一个「禁用」的控件。
+   * 视觉与命中区一起收掉 —— 透明但可点比看得见却拖不动更糟。
    */
   const renderViewport = (): void => {
     const scroller = right?.scrollDOM;
     if (!scroller) return;
     const { scrollTop, scrollHeight, clientHeight } = scroller;
-    if (scrollHeight <= 0 || clientHeight <= 0) {
-      viewportEl.style.height = "0";
-      return;
-    }
-    // 不需要滚动时滑块铺满整条（`getSliderSize` 的 representableSize 那一支）。
-    if (scrollHeight <= clientHeight) {
-      viewportEl.style.top = "0px";
-      viewportEl.style.height = `${clientHeight}px`;
-      return;
-    }
+    const needed = scrollHeight > 0 && clientHeight > 0 && scrollHeight > clientHeight;
+    viewportEl.classList.toggle("is-hidden", !needed);
+    if (!needed) return;
     const height = Math.round(
       Math.max(20, Math.floor((clientHeight * clientHeight) / scrollHeight)),
     );
@@ -968,6 +968,11 @@ export function createDiffSurface(
    * 概览条兼作右栏的纵向滚动条（原生那条已由 `diff.css` 收成 0 宽）。
    * 指针按下即跳到对应高度、拖动连续跟手；滚轮转发给右栏 —— VS Code 的 `diffOverview`
    * 也是把 pointerdown / wheel 直接交给 modified editor 的滚动机构。
+   *
+   * 拖动走**窗口级**监听，不靠元素上的指针捕获：上游 `GlobalPointerMoveMonitor` 也是全局监听。
+   * 捕获那条在真机上有个洞 —— 指针拖到窗口外再松手，`pointerup` 送不回这个元素，「正在拖」
+   * 的标记与捕获就永远留着，之后不按键移动鼠标也在改 `scrollTop`（看起来就是「拖不动 / 粘住」）。
+   * 收尾判据照上游：按键状态一变就停（`e.buttons !== initialButtons` ⇒ `stopMonitoring`）。
    */
   const scrollToClientY = (clientY: number): void => {
     const scroller = right?.scrollDOM;
@@ -978,17 +983,32 @@ export function createDiffSurface(
     scroller.scrollTop = ratio * Math.max(scroller.scrollHeight - scroller.clientHeight, 0);
   };
   let draggingOverview = false;
+  /** 收尾：把窗口级监听全摘掉（松手 / 指针被系统取消 / 旁路拆掉都走这一条）。 */
+  const endOverviewDrag = (): void => {
+    if (!draggingOverview) return;
+    draggingOverview = false;
+    window.removeEventListener("pointermove", onOverviewMove);
+    window.removeEventListener("pointerup", endOverviewDrag);
+    window.removeEventListener("pointercancel", endOverviewDrag);
+  };
   const onOverviewDown = (e: PointerEvent): void => {
+    // 只认左键（上游 `AbstractScrollbar._onPointerDown` 的 `isLeftClick` 同一判据）。
+    if (e.button !== 0) return;
+    // 不抢默认行为：否则按在概览条上会起一次文本选择 / 原生拖拽，拖动中途被它打断。
+    e.preventDefault();
     draggingOverview = true;
-    overviewEl.setPointerCapture?.(e.pointerId);
+    window.addEventListener("pointermove", onOverviewMove);
+    window.addEventListener("pointerup", endOverviewDrag);
+    window.addEventListener("pointercancel", endOverviewDrag);
     scrollToClientY(e.clientY);
   };
   const onOverviewMove = (e: PointerEvent): void => {
-    if (draggingOverview) scrollToClientY(e.clientY);
-  };
-  const onOverviewUp = (e: PointerEvent): void => {
-    draggingOverview = false;
-    if (overviewEl.hasPointerCapture?.(e.pointerId)) overviewEl.releasePointerCapture(e.pointerId);
+    if (!draggingOverview) return;
+    if (e.buttons !== 1) {
+      endOverviewDrag();
+      return;
+    }
+    scrollToClientY(e.clientY);
   };
   const onOverviewWheel = (e: WheelEvent): void => {
     const scroller = right?.scrollDOM;
@@ -1052,18 +1072,13 @@ export function createDiffSurface(
     right?.focus();
   };
   overviewEl.addEventListener("pointerdown", onOverviewDown);
-  overviewEl.addEventListener("pointermove", onOverviewMove);
-  overviewEl.addEventListener("pointerup", onOverviewUp);
-  overviewEl.addEventListener("pointercancel", onOverviewUp);
   overviewEl.addEventListener("wheel", onOverviewWheel, { passive: false });
   centerEl.addEventListener("mousedown", onCenterDown);
   left.scrollDOM.addEventListener("scroll", onLeftScroll, { passive: true });
   right?.scrollDOM.addEventListener("scroll", onRightScroll, { passive: true });
   const detachOverview = (): void => {
+    endOverviewDrag();
     overviewEl.removeEventListener("pointerdown", onOverviewDown);
-    overviewEl.removeEventListener("pointermove", onOverviewMove);
-    overviewEl.removeEventListener("pointerup", onOverviewUp);
-    overviewEl.removeEventListener("pointercancel", onOverviewUp);
     overviewEl.removeEventListener("wheel", onOverviewWheel);
     centerEl.removeEventListener("mousedown", onCenterDown);
     left.scrollDOM.removeEventListener("scroll", onLeftScroll);

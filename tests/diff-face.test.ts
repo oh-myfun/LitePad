@@ -741,6 +741,142 @@ describe("B462 · 右缘差异概览（VS Code 的 diffOverview）", () => {
   });
 });
 
+describe("B463 · 概览滑块 = 右栏滚动条（ScrollbarState.isNeeded 语义）", () => {
+  const viewportOf = (host: HTMLElement): HTMLElement => {
+    const el = host.querySelector<HTMLElement>(".diff-viewport");
+    expect(el, "视口滑块得真的挂上（拿不到就是空判据）").not.toBeNull();
+    return el!;
+  };
+  const overviewOf = (host: HTMLElement): HTMLElement => {
+    const el = host.querySelector<HTMLElement>(".diff-overview");
+    expect(el, "概览条得真的挂上").not.toBeNull();
+    return el!;
+  };
+  /** jsdom 没有布局引擎 ⇒ 这两颗量度按真机读数桩进来（`renderViewport` 只读它们）。 */
+  const measure = (el: HTMLElement, clientHeight: number, scrollHeight: number): void => {
+    Object.defineProperty(el, "clientHeight", { value: clientHeight, configurable: true });
+    Object.defineProperty(el, "scrollHeight", { value: scrollHeight, configurable: true });
+  };
+  /** 派发 `scroll` 就是 `renderViewport` 的生产重画入口（`onRightScroll`）。 */
+  const repaint = (right: EditorView): void => {
+    right.scrollDOM.dispatchEvent(new Event("scroll"));
+  };
+  const rectOf = (height: number): DOMRect =>
+    ({
+      top: 0,
+      bottom: height,
+      height,
+      left: 0,
+      right: 30,
+      width: 30,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }) as DOMRect;
+  /** 让一帧落地（CM6 的 measure 与 `scheduleAlign` 的派发都排在 rAF 上）。 */
+  const frames = async (n = 4): Promise<void> => {
+    for (let i = 0; i < n; i++) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    }
+  };
+
+  it("内容装得下：滑块带 `is-hidden`（opacity 0 + 不吃指针），不再铺满整条", () => {
+    const { panel, right } = mountSurfacePair();
+    const host = panel.bodyEl!;
+    const viewport = viewportOf(host);
+    measure(right.scrollDOM, 200, 200);
+    repaint(right);
+    expect(viewport.classList.contains("is-hidden"), "isNeeded() === false ⇒ 收起来").toBe(true);
+    // 旧实现走 `getSliderSize()` 的 representableSize 那一支，把高度写成 clientHeight
+    // ⇒ 右缘一根整条都是滑块的灰柱，按下去拖不动（scrollTop 恒 0）。
+    expect(viewport.style.height, "不再铺满整条").not.toBe("200px");
+
+    // 内容一变高，下一发重画就能拖 —— 不需要重建整条概览。
+    measure(right.scrollDOM, 200, 600);
+    repaint(right);
+    expect(viewport.classList.contains("is-hidden")).toBe(false);
+    expect(viewport.style.height, "floor(200² / 600) = 66").toBe("66px");
+  });
+
+  it("溢出时按 ScrollbarState 的像素公式：高度下限 20px，top = scrollTop × ratio", () => {
+    const { panel, right } = mountSurfacePair();
+    const viewport = viewportOf(panel.bodyEl!);
+    measure(right.scrollDOM, 100, 10_000);
+    right.scrollDOM.scrollTop = 0;
+    repaint(right);
+    expect(viewport.style.height, "floor(100² / 10000) = 1 ⇒ 抬到下限 20").toBe("20px");
+    expect(viewport.style.top).toBe("0px");
+
+    right.scrollDOM.scrollTop = 4_950;
+    repaint(right);
+    // ratio = (100 - 20) / (10000 - 100)
+    expect(viewport.style.top).toBe(`${Math.round(4950 * (80 / 9900))}px`);
+  });
+
+  it("拖动：窗口级监听跨出元素边界仍跟手；松手或按键状态变了就停", () => {
+    const { panel, right } = mountSurfacePair();
+    const host = panel.bodyEl!;
+    const overview = overviewOf(host);
+    overview.getBoundingClientRect = () => rectOf(200);
+    measure(right.scrollDOM, 200, 600);
+    repaint(right);
+
+    overview.dispatchEvent(
+      new MouseEvent("pointerdown", { clientY: 100, button: 0, bubbles: true }),
+    );
+    expect(right.scrollDOM.scrollTop, "按在轨道中点 ⇒ 跳到一半").toBe(200);
+
+    // 指针移出概览条（仍在窗口里）：监听挂在 window 上，靠元素内命中的写法这里会断。
+    window.dispatchEvent(new MouseEvent("pointermove", { clientY: 200, buttons: 1 }));
+    expect(right.scrollDOM.scrollTop, "跨出边界继续跟手").toBe(400);
+
+    // 指针在窗口外松开时浏览器不会补 pointerup ⇒ 用「按键状态变了」收尾（上游同一条判据）。
+    window.dispatchEvent(new MouseEvent("pointermove", { clientY: 0, buttons: 0 }));
+    window.dispatchEvent(new MouseEvent("pointermove", { clientY: 0, buttons: 1 }));
+    expect(right.scrollDOM.scrollTop, "已收尾，之后的移动不该再改滚动").toBe(400);
+
+    // 正常松手同样收尾；右键按下不启动拖动（上游只认左键）。
+    overview.dispatchEvent(
+      new MouseEvent("pointerdown", { clientY: 100, button: 0, bubbles: true }),
+    );
+    window.dispatchEvent(new MouseEvent("pointerup"));
+    window.dispatchEvent(new MouseEvent("pointermove", { clientY: 200, buttons: 1 }));
+    expect(right.scrollDOM.scrollTop, "pointerup 之后不再跟手").toBe(200);
+    overview.dispatchEvent(
+      new MouseEvent("pointerdown", { clientY: 200, button: 2, bubbles: true }),
+    );
+    expect(right.scrollDOM.scrollTop, "右键不启动拖动").toBe(200);
+  });
+
+  it("折行开关与窗口缩放之后都重算滑块（不靠滚一下才醒）", async () => {
+    const { panel, right, surface } = mountSurfacePair();
+    const viewport = viewportOf(panel.bodyEl!);
+    measure(right.scrollDOM, 200, 400);
+    repaint(right);
+    expect(viewport.style.height).toBe("100px");
+
+    // 打开折行：内容变高（真机的新读数这里直接喂进来），刷新跟着重画。
+    measure(right.scrollDOM, 200, 800);
+    surface.setWrapEnabled(true);
+    expect(viewport.style.height, "floor(200² / 800) = 50").toBe("50px");
+
+    // 窗口缩放走 `onWindowResize` → `scheduleAlign` 的 rAF 落地后才重画。
+    measure(right.scrollDOM, 100, 800);
+    window.dispatchEvent(new Event("resize"));
+    await frames();
+    expect(viewport.style.height, "floor(100² / 800) = 12 ⇒ 抬到下限 20").toBe("20px");
+  });
+
+  it("样式：隐藏态照上游 `.invisible`；概览条光标不靠继承", () => {
+    const css = stripCssComments(srcOf("src/diff/diff.css"));
+    const hidden = ruleBlock(css, ".panel-host.is-diff .diff-viewport.is-hidden", undefined, true);
+    expect(hidden).toContain("opacity: 0");
+    expect(hidden).toContain("pointer-events: none");
+    const overview = ruleBlock(css, ".panel-host.is-diff .diff-overview", undefined, true);
+    expect(overview).toContain("cursor: default");
+  });
+});
+
 describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
   const css = (): string => stripCssComments(srcOf("src/diff/diff.css"));
 
