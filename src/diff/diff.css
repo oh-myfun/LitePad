@@ -309,6 +309,19 @@
   background-image: linear-gradient(var(--diff-char-del), var(--diff-char-del));
 }
 
+/* 内联改动为空的那一侧：上游 `diff-range-empty`（`diffEditor/style.css` 的
+   `.char-delete.diff-range-empty` / `.char-insert.diff-range-empty`）—— 3px 竖条，颜色取
+   那一侧的字符底色。删除侧多 `margin-left: -1px`，于是净占 2px（上游同款）。
+   落点是**空区间**，`face.ts` 用行内 widget 画（CM6 的 mark 不渲染零长区间）。 */
+.panel-host.is-diff .diff-char-insert.diff-range-empty {
+  border-left: 3px solid var(--diff-char-add);
+}
+
+.panel-host.is-diff .diff-char-delete.diff-range-empty {
+  margin-left: -1px;
+  border-left: 3px solid var(--diff-char-del);
+}
+
 /* 行号槽**不承载差异底色**：色带只留在代码区，行号文字与 `+` / `−` 记号照旧。
    ⚠️ 上游不是这样，事实是上游会给行号槽上色：`registrations.contribution.ts` 的
    `line-insert` / `line-delete` 都带 `marginClassName: 'gutter-insert' / 'gutter-delete'`，

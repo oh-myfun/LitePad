@@ -1757,4 +1757,56 @@ describe("B461 · 行内字符级差异的装饰与样式", () => {
     expect(insert + del).not.toContain("--diff-line-");
     expect(insert + del).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
   });
+
+  it("纯插入行整行包进 .diff-char-insert（上游 diffWholeLineAddDecoration）", () => {
+    const blocks = diffBlocks("A\nZ", "A\nnew\nZ");
+    const m = mountFace("modified", blocks, "A\nnew\nZ", {
+      original: [],
+      modified: [{ line: 2, from: 0, to: 3 }],
+    });
+    const span = m.view.contentDOM.querySelector<HTMLElement>(".diff-char-insert");
+    expect(span?.textContent, "整行字符层盖满这一行的正文").toBe("new");
+    expect(m.lineEl(2).className, "行底色那一层照旧在").toContain("diff-line-insert");
+  });
+
+  it("内联改动为空的那一侧画 diff-range-empty 细条（行内 widget，零长区间）", () => {
+    const blocks = diffBlocks("A\nabc\nZ", "A\nabXc\nZ");
+    // 原稿侧：这一侧没有字符被改（零长），细条在「删」色上；改稿侧覆盖真正插入的 X。
+    const o = mountFace("original", blocks, "A\nabc\nZ", {
+      original: [{ line: 2, from: 2, to: 2 }],
+      modified: [{ line: 2, from: 2, to: 3 }],
+    });
+    const delBar = o.view.contentDOM.querySelector<HTMLElement>(".diff-range-empty");
+    expect(delBar, "原稿侧的零长落点要画出来").not.toBeNull();
+    expect(delBar!.className).toContain("diff-char-delete");
+    expect(delBar!.getAttribute("aria-hidden"), "纯装饰，不进无障碍树").toBe("true");
+    expect(o.view.contentDOM.querySelector(".diff-char-delete:not(.diff-range-empty)")).toBeNull();
+
+    // 反向：原稿多出 X 时，空的那一侧是改稿，细条换成「增」色。
+    const m = mountFace("modified", blocks, "A\nabXc\nZ", {
+      original: [{ line: 2, from: 2, to: 3 }],
+      modified: [{ line: 2, from: 2, to: 2 }],
+    });
+    const insBar = m.view.contentDOM.querySelector<HTMLElement>(".diff-range-empty");
+    expect(insBar, "改稿侧的零长落点要画出来").not.toBeNull();
+    expect(insBar!.className).toContain("diff-char-insert");
+  });
+
+  it("diff-range-empty 的几何照上游：3px 左边框、删除侧 margin-left: -1px（净 2px）", () => {
+    const insert = ruleBlock(
+      css(),
+      ".panel-host.is-diff .diff-char-insert.diff-range-empty",
+      undefined,
+      true,
+    );
+    expect(insert, "规则得真在").toContain("border-left: 3px solid var(--diff-char-add)");
+    const del = ruleBlock(
+      css(),
+      ".panel-host.is-diff .diff-char-delete.diff-range-empty",
+      undefined,
+      true,
+    );
+    expect(del).toContain("border-left: 3px solid var(--diff-char-del)");
+    expect(del, "删除侧负外边距（上游同款）").toContain("margin-left: -1px");
+  });
 });

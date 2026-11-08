@@ -440,6 +440,10 @@ function buildFaceValue(
  * 类名照上游的 `char-insert` / `char-delete`（`registrations.contribution.ts`），本项目的
  * 前缀是 `diff-char-*`（与 `diff-line-*` 同族）。装饰是**行内 mark**、不是整行线装饰：
  * `Decoration.mark` 落在文字上，底色只覆盖真正变了的那几个字符。
+ *
+ * 零长区间是上游的 `diff-range-empty`（`diffDeleteDecorationEmpty` / `diffAddDecorationEmpty`）：
+ * 这一侧没有字符被改，但另一侧有，要在落点上画一根 3px 细条。CM6 的 mark 不渲染零长区间，
+ * 所以走**行内 widget**（空 span + 边框），`side: 1` 让它落在该位置之后。
  * ⚠️ 越界丢弃、首尾夹到行长：块表可能比视图文档先动一步（换基线到 `setState` 之间）。
  */
 function buildInner(doc: Text, side: DiffSide, ranges: InnerRange[]): RangeSet<Decoration> {
@@ -451,10 +455,31 @@ function buildInner(doc: Text, side: DiffSide, ranges: InnerRange[]): RangeSet<D
     const line = doc.line(r.line);
     const from = line.from + Math.min(Math.max(r.from, 0), line.length);
     const to = line.from + Math.min(Math.max(r.to, 0), line.length);
-    if (to <= from) continue;
-    out.push(Decoration.mark({ class: cls }).range(from, to));
+    if (to > from) {
+      out.push(Decoration.mark({ class: cls }).range(from, to));
+    } else if (r.to === r.from) {
+      // 上游的零长落点：这一侧没有字符被改，画一根 3px 细条。
+      out.push(Decoration.widget({ widget: new EmptyRangeBar(cls), side: 1 }).range(from));
+    }
+    // 其余（越界夹取把真区间夹成零长）没有可画的东西，也不该冒出一根细条。
   }
   return RangeSet.of(out, true);
+}
+
+/** 上游 `diff-range-empty` 那根 3px 细条（样式在 `diff.css`，几何 0 宽 + 左边框）。 */
+class EmptyRangeBar extends WidgetType {
+  constructor(private readonly cls: string) {
+    super();
+  }
+  eq(other: EmptyRangeBar): boolean {
+    return other.cls === this.cls;
+  }
+  toDOM(): HTMLElement {
+    const span = document.createElement("span");
+    span.className = `${this.cls} diff-range-empty`;
+    span.setAttribute("aria-hidden", "true");
+    return span;
+  }
 }
 
 const diffFaceField = StateField.define<FaceValue>({

@@ -6,7 +6,8 @@
 //   · 一行里改一个词 / 改多处 / 改的词在行尾；
 //   · 空白差异在 `ignoreTrimWhitespace` 下不计入 inner change；
 // 另外钉词界扩展的两个阈值方向（改一半以下不扩、改到 2/3 以上扩整词）、
-// 纯增 / 纯删行不重复标，以及块内配对行的行号换算。
+// 纯增 / 纯删行补整行字符层（上游 `diffWholeLine*`），以及块内配对行的行号换算。
+// 「内联改动为空的那一侧」落在零长区间上（上游 `diff-range-empty` 那根 3px 细条）。
 import { describe, expect, it } from "vitest";
 import { diffBlocks } from "../src/diff/blocks";
 import { innerChanges, innerLineRanges } from "../src/diff/inline";
@@ -65,8 +66,11 @@ describe("B461 · innerLineRanges：空白与词边界", () => {
     expect(innerLineRanges("  foo", "  bar", true)).toEqual(both(2, 5));
   });
 
-  it("不忽略 trim 空白时，行首行尾的空白差异如实成段", () => {
-    expect(innerLineRanges("  foo", "foo", false)).toEqual({ original: [[0, 2]], modified: [] });
+  it("不忽略 trim 空白时，行首行尾的空白差异如实成段，另一侧落零长（diff-range-empty）", () => {
+    expect(innerLineRanges("  foo", "foo", false)).toEqual({
+      original: [[0, 2]],
+      modified: [[0, 0]],
+    });
   });
 
   it("词界：标点不并入改动", () => {
@@ -98,19 +102,27 @@ describe("B461 · innerChanges：块内配对行", () => {
     });
   });
 
-  it("纯插入行不重复做行内标记（整行已经有底色）", () => {
+  it("纯插入行补整行字符层（上游 diffWholeLineAddDecoration）", () => {
     const blocks = diffBlocks("A\nZ", "A\nnew\nZ");
     expect(innerChanges(blocks, linesOf(["A", "Z"], ["A", "new", "Z"]), false)).toEqual({
       original: [],
+      modified: [{ line: 2, from: 0, to: 3 }],
+    });
+  });
+
+  it("纯删除行同样补整行字符层（上游 diffWholeLineDeleteDecoration）", () => {
+    const blocks = diffBlocks("A\ngone\nZ", "A\nZ");
+    expect(innerChanges(blocks, linesOf(["A", "gone", "Z"], ["A", "Z"]), false)).toEqual({
+      original: [{ line: 2, from: 0, to: 4 }],
       modified: [],
     });
   });
 
-  it("纯删除行同样不重复标", () => {
-    const blocks = diffBlocks("A\ngone\nZ", "A\nZ");
-    expect(innerChanges(blocks, linesOf(["A", "gone", "Z"], ["A", "Z"]), false)).toEqual({
-      original: [],
-      modified: [],
+  it("配对行里一侧是空行：非空侧整行，空侧落零长（细条）", () => {
+    const blocks = diffBlocks("A\n\nZ", "A\nx\nZ");
+    expect(innerChanges(blocks, linesOf(["A", "", "Z"], ["A", "x", "Z"]), false)).toEqual({
+      original: [{ line: 2, from: 0, to: 0 }],
+      modified: [{ line: 2, from: 0, to: 1 }],
     });
   });
 });

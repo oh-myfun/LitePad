@@ -28,7 +28,11 @@
 import { blockPairing, type DiffBlock } from "./blocks";
 import type { DiffSide } from "./model";
 
-/** 一行之内被改动的一段：`line` 1-based；`from` / `to` 是行内 0-based 列，`to` 不含。 */
+/** 一行之内被改动的一段：`line` 1-based；`from` / `to` 是行内 0-based 列，`to` 不含。
+ *
+ * `from === to` ⇒ 上游 `diff-range-empty` 那个落点：这一段**这一侧**没有字符被改，
+ * 渲染层要在该处画一根 3px 细条（见 `face.ts` 的 `buildInner`）。
+ */
 export interface InnerRange {
   line: number;
   from: number;
@@ -72,8 +76,12 @@ interface SeqDiff {
  * 块内每一对配对行各跑一次词级 diff，交回两侧的行内改动。
  *
  * 「配对行」沿用 `blockPairing` 的窗口（块内「多的一侧贴到少的一侧」那一段）：窗口之外
- * 没有搭档的行本来就整行着色（纯增 / 纯删），不再做行内标记 —— 这正是用户要的
- * 「纯插入 / 纯删除行不重复标」。窗口内若一侧整行是空行，也按纯增删处理、跳过。
+ * 没有搭档的行是纯增 / 纯删，整行按上游 `diffWholeLineAdd/DeleteDecoration` 补一层字符底色
+ * （`isWholeLine`），与行底色两层叠加。
+ *
+ * 上游分两支（`diffEditorDecorations.ts`）：若块有一侧整段为空（纯增 / 纯删），只发整行
+ * `char-insert` / `char-delete`；否则逐段 inner change。两支都走，才不会出现「纯增行只有
+ * 行底色、别的行有字符层」这种一屏两种口径。
  */
 export function innerChanges(
   blocks: DiffBlock[],
@@ -83,7 +91,18 @@ export function innerChanges(
   if (blocks.length === 0) return EMPTY;
   const out: InnerChanges = { original: [], modified: [] };
   for (const b of blocks) {
-    // 纯增 / 纯删块没有配对窗口（`count = 0`），整块已在行级着色。
+    const originalLength = Math.max(b.originalEnd - b.originalStart + 1, 0);
+    const modifiedLength = Math.max(b.modifiedEnd - b.modifiedStart + 1, 0);
+    if (originalLength === 0 || modifiedLength === 0) {
+      // 纯增 / 纯删：非空侧逐行整行涂色。空行没有字符可盖（行底色本来就铺满整行），
+      // 跳过 —— 落成零长会变成 `diff-range-empty` 那根细条，语义是另一回事。
+      if (modifiedLength > 0) {
+        pushWholeLines(out.modified, lines.modified, b.modifiedStart, b.modifiedEnd);
+      } else {
+        pushWholeLines(out.original, lines.original, b.originalStart, b.originalEnd);
+      }
+      continue;
+    }
     const p = blockPairing(b);
     for (let k = 0; k < p.count; k++) {
       const oLine = p.originalStart + k;
@@ -100,6 +119,19 @@ export function innerChanges(
     }
   }
   return out;
+}
+
+/** 一整段行逐行补「整行字符层」（空行跳过）。 */
+function pushWholeLines(
+  target: InnerRange[],
+  textAt: (line: number) => string,
+  start: number,
+  end: number,
+): void {
+  for (let line = start; line <= end; line++) {
+    const text = textAt(line);
+    if (text.length > 0) target.push({ line, from: 0, to: text.length });
+  }
 }
 
 /**
@@ -125,8 +157,15 @@ export function innerLineRanges(
   const a = original.slice(aSpan.from, aSpan.to);
   const b = modified.slice(bSpan.from, bSpan.to);
 
-  // 一侧整行是空的：这一行本身就是纯增 / 纯删（行级底色已经说明了），行内不再重复标。
-  if (a.length === 0 || b.length === 0) return { original: [], modified: [] };
+  // 一侧整行是空的：这一对本身就是「整行新增 / 删除」。上游 `refineDiff` 照样产出一段
+  // inner change —— 空的那侧是零长区间（渲染成 `diff-range-empty` 细条），非空侧整行。
+  if (a.length === 0 || b.length === 0) {
+    if (a.length === 0 && b.length === 0) return { original: [], modified: [] };
+    return {
+      original: [[aSpan.from, aSpan.to]],
+      modified: [[bSpan.from, bSpan.to]],
+    };
+  }
 
   let diffs = lcsDiff(a, b);
   if (diffs.length === 0) return { original: [], modified: [] };
@@ -143,9 +182,10 @@ export function innerLineRanges(
     const a1 = Math.max(0, Math.min(d.a1, a.length));
     const b0 = Math.max(0, Math.min(d.b0, b.length));
     const b1 = Math.max(0, Math.min(d.b1, b.length));
-    // 列号平移回未裁剪的原行；只收**真变了**的那一侧（另一侧为空就是纯增 / 纯删）。
-    if (a1 > a0) originalRanges.push([a0 + aSpan.from, a1 + aSpan.from]);
-    if (b1 > b0) modifiedRanges.push([b0 + bSpan.from, b1 + bSpan.from]);
+    // 列号平移回未裁剪的原行；两侧都收 —— 空的那一侧零长，落渲染层那根细条
+    // （上游 `diffDeleteDecorationEmpty` / `diffAddDecorationEmpty`）。
+    originalRanges.push([a0 + aSpan.from, a1 + aSpan.from]);
+    modifiedRanges.push([b0 + bSpan.from, b1 + bSpan.from]);
   }
   return { original: mergeRanges(originalRanges), modified: mergeRanges(modifiedRanges) };
 }
