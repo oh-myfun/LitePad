@@ -1396,6 +1396,53 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     expect(left.scrollDOM.scrollTop).toBe(150);
   });
 
+  it("B471 · 同步滚动也镜像 scrollLeft（同一张认领票管两轴，超出的按对栏收口）", () => {
+    const { panel } = mountDiffPair("A\nB\nC", "A\nC");
+    const right = panel.view!.view;
+    const left = diffSurfaceOf(panel)!.left;
+    const track = (el: HTMLElement, width: number): void => {
+      let top = 0;
+      let leftPx = 0;
+      Object.defineProperty(el, "scrollTop", {
+        configurable: true,
+        get: () => top,
+        set: (v: number) => {
+          top = v;
+        },
+      });
+      Object.defineProperty(el, "scrollLeft", {
+        configurable: true,
+        get: () => leftPx,
+        set: (v: number) => {
+          leftPx = v;
+        },
+      });
+      Object.defineProperty(el, "clientHeight", { configurable: true, value: 100 });
+      Object.defineProperty(el, "scrollHeight", { configurable: true, value: 300 });
+      Object.defineProperty(el, "clientWidth", { configurable: true, value: 100 });
+      Object.defineProperty(el, "scrollWidth", { configurable: true, value: width });
+    };
+    track(right.scrollDOM, 300);
+    track(left.scrollDOM, 220);
+    // 右栏滚到 (top 50, left 80) ⇒ 左栏横向只能到 120（scrollWidth 220 - clientWidth 100）。
+    right.scrollDOM.scrollTop = 50;
+    right.scrollDOM.scrollLeft = 80;
+    right.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(left.scrollDOM.scrollTop).toBe(50);
+    expect(left.scrollDOM.scrollLeft).toBe(80);
+    // 对栏能滚到 120 时，多出来的那截夹住，不把超界值写进去。
+    right.scrollDOM.scrollLeft = 200;
+    right.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(left.scrollDOM.scrollLeft).toBe(120);
+    // 左栏这一发是刚才那次写入的回声：不许把右栏再绕回去（右栏仍在用户给的 200）。
+    left.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(right.scrollDOM.scrollLeft).toBe(200);
+    // 横向反过来也镜像：左栏滚到 30 ⇒ 右栏跟到 30。
+    left.scrollDOM.scrollLeft = 30;
+    left.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(right.scrollDOM.scrollLeft).toBe(30);
+  });
+
   it("B461 · 概览滑块按抓取偏移跟手（按下点不跳到指针顶部），拖动期间单独一态", () => {
     const { panel } = mountDiffPair("A\nB\nC", "A\nC");
     const right = panel.view!.view;

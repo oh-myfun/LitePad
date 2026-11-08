@@ -1197,14 +1197,21 @@ export function createDiffSurface(
    * 用户中途滚走了（值对不上）就作废这一票、按用户滚动处理。于是「一次滚动只产生一次对侧写入」。
    */
   let syncOn = true;
-  const pendingEcho = new WeakMap<HTMLElement, number>();
+  /**
+   * 一发程序性写入的「认领票」：**纵、横两个值一起记**。
+   *
+   * 横向（`scrollLeft`）与纵向同一条机制 —— 不另起闸：两栏的折行态一致时横向位置也应当
+   * 一致（上游的差异编辑器两栏共用一根水平滚动条的量度）。事件来时两个轴都落到票上的值
+   * （±1px）才算回声；用户中途往任一方向滚走 ⇒ 作废这一票、按用户滚动处理。
+   */
+  const pendingEcho = new WeakMap<HTMLElement, { top: number; left: number }>();
   /** 这一发 scroll 是不是自己刚写下去的回声（是 ⇒ 消费掉票，不再对侧回传）。 */
   const isEcho = (el: HTMLElement | undefined): boolean => {
     if (!el) return false;
     const want = pendingEcho.get(el);
     if (want === undefined) return false;
     pendingEcho.delete(el);
-    return Math.abs(el.scrollTop - want) <= 1;
+    return Math.abs(el.scrollTop - want.top) <= 1 && Math.abs(el.scrollLeft - want.left) <= 1;
   };
   const mirrorScroll = (from: EditorView | null, to: EditorView | null): void => {
     if (!syncOn || !from || !to) return;
@@ -1212,10 +1219,15 @@ export function createDiffSurface(
     const b = to.scrollDOM;
     const bMax = Math.max(b.scrollHeight - b.clientHeight, 0);
     const want = Math.min(Math.max(a.scrollTop, 0), bMax);
+    // 横向同样按「对栏能滚到哪」收口：两栏折行态一致时 scrollWidth 通常相同，
+    // 但长行 + 不同折行档时对侧可能短一截，写超了会被浏览器夹回去、留下一张对不上的票。
+    const bMaxX = Math.max(b.scrollWidth - b.clientWidth, 0);
+    const wantX = Math.min(Math.max(a.scrollLeft, 0), bMaxX);
     // 值没变就别写：写同一个值一样会排一发 scroll，白白多一条回声账。
-    if (Math.abs(b.scrollTop - want) < 0.5) return;
-    pendingEcho.set(b, want);
+    if (Math.abs(b.scrollTop - want) < 0.5 && Math.abs(b.scrollLeft - wantX) < 0.5) return;
+    pendingEcho.set(b, { top: want, left: wantX });
     b.scrollTop = want;
+    b.scrollLeft = wantX;
   };
   const setSyncScrollEnabled = (on: boolean): void => {
     if (syncOn === on) return;
