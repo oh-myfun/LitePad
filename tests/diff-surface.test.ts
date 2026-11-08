@@ -1372,20 +1372,25 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
       await frames();
 
       const btn = panel.bodyEl!.querySelector<HTMLElement>(".diff-revert");
+      const item = panel.bodyEl!.querySelector<HTMLElement>(".diff-revert-item");
       expect(btn, "删除块在右栏有落点行，按钮该建出来").toBeTruthy();
-      // 落点行 top=60、行高 20 ⇒ 中心 = documentTop + 70；按钮高 18 ⇒ top = 中心 - 9。
-      const expected = right.documentTop + 60 + 20 / 2 - 18 / 2;
-      expect(btn!.style.top, "按钮位置吃的是实测行轴，不是行号 × 默认行高").toBe(`${expected}px`);
+      // 空段（右栏没有真行）落在第 2 行行首：item 高 0，按钮跨在块边界上（上游
+      // `middleHeight = itemHeight / 2 - buttonHeight / 2` 在高度 0 时就是 -9）。
+      expect(item!.style.top, "item 吃的是实测行轴，不是行号 × 默认行高").toBe(
+        `${right.documentTop + 60}px`,
+      );
+      expect(item!.style.height).toBe("0px");
+      expect(btn!.style.top, "按钮相对 item 垂直居中").toBe("-9px");
     } finally {
       spy.mockRestore();
     }
   });
 
-  it("B463 · 块内逐行配对：窗口外那截折行时，块内配对行与回退按钮仍在同一条实测行轴上", async () => {
+  it("B463 · 块内对齐边界之后：缺行整段补在块尾，回退按钮仍按整块垂直居中", async () => {
     const spy = vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(20);
     try {
-      // 原稿 3 行 vs 新稿 2 行，中段错位 o=1 ⇒ 窗口是原稿第 3 行 ↔ 新稿第 2 行，
-      // 原稿第 2 行没人配（它在窗口之前）。那一行折成两个视觉行 ⇒ 右栏第 2 行之前补 40px。
+      // 原稿 3 行 vs 新稿 2 行；字符 diff 的起止都在行首/行尾 ⇒ 没有块内边界，
+      // 缺的那一行整段补在新稿块尾（第 2 行之后）。原稿第 2 行折成两个视觉行 ⇒ 缝 40px。
       const { panel, s } = mountDiffPair("丙一去\n丙一去\n丁后行", "丙一去\n丁后行改了");
       const right = panel.view!.view;
       const center = panel.bodyEl!.querySelector<HTMLElement>(".diff-center")!;
@@ -1394,8 +1399,8 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
 
       s.setWrapEnabled(true);
       fakeLineBoxes(s.left, [20, 40, 20]);
-      // 右栏第 2 行前有 40px 的对齐缝（块内窗口前那一截）⇒ 它的实测 top 是 60。
-      fakeLineBoxes(right, [20, 20], { 1: 40 });
+      // 缝落在改块之后（第 2 行之后）：右栏第 2 行仍是 top=20、height=20。
+      fakeLineBoxes(right, [20, 20], { 2: 40 });
       await frames();
 
       const leftGaps = [...panel.bodyEl!.querySelectorAll<HTMLElement>(".diff-original .diff-gap")];
@@ -1403,13 +1408,17 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
       expect(leftGaps, "多的一侧（原稿）自己不补位").toHaveLength(0);
       expect(
         rightGaps.map((el) => el.style.height),
-        "窗口前那一截整段补到新稿这一侧",
+        "缺行 + 折行差整段补在新稿块尾",
       ).toEqual(["40px"]);
 
+      const item = panel.bodyEl!.querySelector<HTMLElement>(".diff-revert-item");
       const btn = panel.bodyEl!.querySelector<HTMLElement>(".diff-revert");
-      expect(btn, "块内配对不影响回退按钮的落点").toBeTruthy();
-      const expected = right.documentTop + 60 + 20 / 2 - 18 / 2;
-      expect(btn!.style.top, "按钮落在配对窗口第一行的实测 top 上").toBe(`${expected}px`);
+      expect(btn, "块内对齐不影响回退按钮的落点规则").toBeTruthy();
+      // 首行「丙一去」两侧相同 ⇒ 块从第 2 行起（实测 top = 20）。
+      expect(item!.style.top, "item 顶 = 改块首行的实测 top").toBe(`${right.documentTop + 20}px`);
+      expect(item!.style.height, "item 高 = 整块的行文本（缝在块尾另算）").toBe("20px");
+      // 块高 20 ⇒ 居中 = 20/2 - 18/2 = 1。
+      expect(btn!.style.top, "按钮在整块里垂直居中").toBe("1px");
     } finally {
       spy.mockRestore();
     }

@@ -27,8 +27,15 @@ import {
   type Text,
   type Transaction,
 } from "@codemirror/state";
-import { Decoration, EditorView, gutter, GutterMarker, WidgetType } from "@codemirror/view";
-import { blockPairing, type DiffBlock, type DiffKind } from "./blocks";
+import {
+  Decoration,
+  EditorView,
+  gutter,
+  GutterMarker,
+  lineNumberMarkers,
+  WidgetType,
+} from "@codemirror/view";
+import { type DiffBlock, type DiffKind, type LineAlignment } from "./blocks";
 import type { InnerChanges, InnerRange } from "./inline";
 import { CODICONS } from "../shell/codicons";
 import type { DiffSide } from "./model";
@@ -37,6 +44,8 @@ import type { DiffSide } from "./model";
 export interface SideMark {
   line: number;
   kind: Extract<DiffKind, "insert" | "delete">;
+  /** 这一行整行都是「对侧没有」的（纯增 / 纯删块）：渲染层要铺满整行的字符底色。 */
+  whole: boolean;
 }
 
 /**
@@ -91,7 +100,9 @@ export function sideLineMarks(blocks: DiffBlock[], side: DiffSide): SideMark[] {
   const out: SideMark[] = [];
   for (const b of blocks) {
     const { start, end } = ownRange(b, side);
-    for (let line = start; line <= end; line++) out.push({ line, kind });
+    const other = ownRange(b, side === "original" ? "modified" : "original");
+    const whole = other.start > other.end;
+    for (let line = start; line <= end; line++) out.push({ line, kind, whole });
   }
   return out;
 }
@@ -104,10 +115,10 @@ export function sideLineMarks(blocks: DiffBlock[], side: DiffSide): SideMark[] {
  *     （分割线一拖就不是等宽），折出来的视觉行数可能不同 ⇒ 逐行比实测高度，矮的一侧补缝。
  *     上游的 `handleAlignmentsOutsideOfDiffs` 就是这件事，漏掉它，折行时两栏在未改动段
  *     就会整体错开。
- *   · **差异块**：先按 `blockPairing` 拆成「窗口前多出来的行 → 配对的每一行 → 窗口后多出来的
- *     行」三段依次铺（上游 `computeRangeAlignment` 的 inner line alignment）。配对的那几行
- *     逐行比实测高度，折行不同就在矮的一侧补差；窗口外没有搭档的行整段补到对侧。于是块内
- *     每一对都从同一个视觉 y 起步，块的**出口**也一定对齐 —— 不再只保证整块总高相等。
+ *   · **差异块**：块首、`innerChanges` 反推的对齐边界、块尾连成若干段（上游
+ *     `innerHunkAlignment`）。每段比两侧实测总高，差多少就补到矮的一侧、落在**段尾之后**
+ *     —— 与上游把 view zone 插在 `range.endLineNumberExclusive - 1` 之后完全同款。段内
+ *     行数不同时，缺口记号数量取行数差；只折行不差行时是 0（记号与折行缝分得开）。
  *
  * 高度只从 `heightOf` 来（surface 交进来的实测口）：本文件不认识 view，也不自己量。
  */
@@ -115,63 +126,60 @@ export function gapZones(
   blocks: DiffBlock[],
   totals: LineTotals,
   heightOf: LineHeightOf,
+  alignments: LineAlignment[][],
 ): Record<DiffSide, GapZone[]> {
   const out: Record<DiffSide, GapZone[]> = { original: [], modified: [] };
   let po = 0;
   let pm = 0;
-  for (const b of blocks) {
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
     const own = ownRange(b, "original");
     const other = otherRange(b, "original");
     alignUnchanged(out, po + 1, own.start - 1, pm + 1, other.start - 1, heightOf);
 
-    const p = blockPairing(b);
-    // 窗口之前只有一侧有的行：整段补到对侧，落在窗口起点之前。
-    if (p.originalBefore > 0) {
-      pushGap(
-        out.modified,
-        p.modifiedStart - 1,
-        rangeHeight(
-          { start: p.originalStart - p.originalBefore, end: p.originalStart - 1 },
-          "original",
-          heightOf,
-        ),
-        p.originalBefore,
+    // 块首 → 对齐边界 → 块尾。边界来自字符 diff（绝对行号），与块首尾连成一组相邻点。
+    const stops: LineAlignment[] = [
+      { originalLine: b.originalStart, modifiedLine: b.modifiedStart },
+      ...alignments[i],
+      { originalLine: b.originalEnd + 1, modifiedLine: b.modifiedEnd + 1 },
+    ];
+    let prev = stops[0];
+    for (let s = 1; s < stops.length; s++) {
+      const point = stops[s];
+      // 单调性守卫：越界/回退的边界一律跳过（上游 emitAlignment 同款）。
+      if (point.originalLine < prev.originalLine || point.modifiedLine < prev.modifiedLine) {
+        continue;
+      }
+      const originalCount = point.originalLine - prev.originalLine;
+      const modifiedCount = point.modifiedLine - prev.modifiedLine;
+      if (originalCount === 0 && modifiedCount === 0) continue;
+      const originalHeight = rangeHeight(
+        { start: prev.originalLine, end: point.originalLine - 1 },
+        "original",
+        heightOf,
       );
-    } else if (p.modifiedBefore > 0) {
-      pushGap(
-        out.original,
-        p.originalStart - 1,
-        rangeHeight(
-          { start: p.modifiedStart - p.modifiedBefore, end: p.modifiedStart - 1 },
-          "modified",
-          heightOf,
-        ),
-        p.modifiedBefore,
+      const modifiedHeight = rangeHeight(
+        { start: prev.modifiedLine, end: point.modifiedLine - 1 },
+        "modified",
+        heightOf,
       );
-    }
-    // 窗口内：每一对逐行比高（折行让同一对的两行视觉高度不等，就在矮的一侧补差）。
-    for (let k = 0; k < p.count; k++) {
-      const o = p.originalStart + k;
-      const m = p.modifiedStart + k;
-      const delta = heightOf("modified", m) - heightOf("original", o);
-      if (delta > 0) pushGap(out.original, o, delta);
-      else if (delta < 0) pushGap(out.modified, m, -delta);
-    }
-    // 窗口之后多出来的行：整段补到对侧，落在窗口末行之后。
-    if (p.originalAfter > 0) {
-      pushGap(
-        out.modified,
-        p.modifiedStart + p.count - 1,
-        rangeHeight({ start: p.originalStart + p.count, end: b.originalEnd }, "original", heightOf),
-        p.originalAfter,
-      );
-    } else if (p.modifiedAfter > 0) {
-      pushGap(
-        out.original,
-        p.originalStart + p.count - 1,
-        rangeHeight({ start: p.modifiedStart + p.count, end: b.modifiedEnd }, "modified", heightOf),
-        p.modifiedAfter,
-      );
+      const delta = modifiedHeight - originalHeight;
+      if (delta > 0) {
+        pushGap(
+          out.original,
+          point.originalLine - 1,
+          delta,
+          Math.max(modifiedCount - originalCount, 0),
+        );
+      } else if (delta < 0) {
+        pushGap(
+          out.modified,
+          point.modifiedLine - 1,
+          -delta,
+          Math.max(originalCount - modifiedCount, 0),
+        );
+      }
+      prev = point;
     }
 
     po = Math.max(po, own.end);
@@ -380,7 +388,10 @@ function buildFace(
   const classes = new Map<number, string>();
   for (const m of sideLineMarks(blocks, side)) {
     if (m.line < 1 || m.line > doc.lines) continue;
-    classes.set(m.line, `diff-line-${m.kind}`);
+    classes.set(
+      m.line,
+      m.whole ? `diff-line-${m.kind} diff-whole-${m.kind}` : `diff-line-${m.kind}`,
+    );
   }
 
   const ranges: Range<Decoration>[] = [];
@@ -416,9 +427,8 @@ function buildFace(
  * `decorationsLeft` → `contentLeft`）：记号走 `linesDecorationsClassName`，落在**行号与正文
  * 之间**，不是行号左边。CM6 的 gutter 按 DOM 次序排 ⇒ 本槽不许再写 `order: -1`。
  *
- * VS Code 用两个 margin：`linesDecorationsClassName` 画记号、`marginClassName` 给行号槽上色。
- * 本项目只复刻前者 —— 行号槽不承载差异色（上游确实会染，取舍见 `diff.css` 那一段），
- * 记号与正文行底色仍由同一份 `sideLineMarks` 生成，行号永远一致。
+ * 行号槽本身另由 `DiffGutterMarker` 上色（上游的 `marginClassName`），两者同源于
+ * `sideLineMarks` —— 底色、记号与正文行号因此永远落在同一批行上。
  */
 class DiffSignMarker extends GutterMarker {
   constructor(readonly kind: "insert" | "delete") {
@@ -469,10 +479,47 @@ function buildSigns(doc: Text, side: DiffSide, blocks: DiffBlock[]): RangeSet<Gu
   return RangeSet.of(ranges, true);
 }
 
-/** 装饰那一臂的三份画法：整行底色 + 记号槽字形 + 行内字符差异（行号槽不上色，见 `diff.css`）。 */
+/**
+ * 行号槽（margin）的差异底色：上游 `line-insert` / `line-delete` 同时带
+ * `marginClassName: 'gutter-insert' / 'gutter-delete'`（`registrations.contribution.ts`），
+ * 也就是行号那一列跟着代码区一起上色。CM6 的 `lineNumberMarkers` 把 `elementClass`
+ * 加在**整格**行号元素上，正好是这层 margin。
+ */
+class DiffGutterMarker extends GutterMarker {
+  readonly elementClass: string;
+
+  constructor(readonly kind: "insert" | "delete") {
+    super();
+    this.elementClass = `diff-gutter-${kind}`;
+  }
+
+  eq(other: GutterMarker): boolean {
+    return other instanceof DiffGutterMarker && other.kind === this.kind;
+  }
+
+  toString(): string {
+    return `gutter-${this.kind}`;
+  }
+}
+
+const insertGutter = new DiffGutterMarker("insert");
+const deleteGutter = new DiffGutterMarker("delete");
+
+/** 行号槽底色（每行一格；缺口行没有文档行 ⇒ 不上色，与上游 view zone 一致）。 */
+function buildGutters(doc: Text, side: DiffSide, blocks: DiffBlock[]): RangeSet<GutterMarker> {
+  const ranges: Range<GutterMarker>[] = [];
+  for (const m of sideLineMarks(blocks, side)) {
+    if (m.line < 1 || m.line > doc.lines) continue;
+    ranges.push((m.kind === "delete" ? deleteGutter : insertGutter).range(doc.line(m.line).from));
+  }
+  return RangeSet.of(ranges, true);
+}
+
+/** 装饰那一臂的四份画法：整行底色 + 记号槽字形 + 行号槽底色 + 行内字符差异。 */
 interface FaceValue {
   lines: RangeSet<Decoration>;
   signs: RangeSet<GutterMarker>;
+  gutters: RangeSet<GutterMarker>;
   chars: RangeSet<Decoration>;
 }
 
@@ -486,12 +533,16 @@ function buildFaceValue(
   return {
     lines: buildFace(doc, side, blocks, gaps),
     signs: buildSigns(doc, side, blocks),
+    gutters: buildGutters(doc, side, blocks),
     chars: buildInner(doc, side, inner[side]),
   };
 }
 
 /**
- * 行内字符级差异：块内配对行再跑一次词级 diff 的结果（`inline.ts`），两侧各标自己那侧。
+ * 行内字符级差异：整块字符 diff 的结果（`inline.ts`），两侧各标自己那侧。
+ *
+ * 纯增 / 纯删块由行级类 `diff-whole-*` 铺满整行（上游 `diffWholeLineAdd / Delete`），
+ * 这里只处理两侧都有行的块：字符改动标成行内 mark，跨行改动的非末段补到右缘。
  *
  * 类名照上游的 `char-insert` / `char-delete`（`registrations.contribution.ts`），本项目的
  * 前缀是 `diff-char-*`（与 `diff-line-*` 同族）。装饰是**行内 mark**、不是整行线装饰：
@@ -512,7 +563,10 @@ function buildInner(doc: Text, side: DiffSide, ranges: InnerRange[]): RangeSet<D
     const from = line.from + Math.min(Math.max(r.from, 0), line.length);
     const to = line.from + Math.min(Math.max(r.to, 0), line.length);
     if (to > from) {
-      out.push(Decoration.mark({ class: cls }).range(from, to));
+      // 跨行改动的非末段要补到右缘（上游 `shouldFillLineOnLineBreak`）：mark 只覆盖字符，
+      // 末尾那截空白与行程右缘之间由 `.diff-fill` 的 `::after` 续上。
+      const klass = r.fill ? `${cls} diff-fill` : cls;
+      out.push(Decoration.mark({ class: klass }).range(from, to));
     } else if (r.to === r.from) {
       // 上游的零长落点：这一侧没有字符被改，画一根 3px 细条。
       out.push(Decoration.widget({ widget: new EmptyRangeBar(cls), side: 1 }).range(from));
@@ -563,6 +617,7 @@ const diffFaceField = StateField.define<FaceValue>({
       ? {
           lines: value.lines.map(tr.changes),
           signs: value.signs.map(tr.changes),
+          gutters: value.gutters.map(tr.changes),
           chars: value.chars.map(tr.changes),
         }
       : value;
@@ -570,6 +625,12 @@ const diffFaceField = StateField.define<FaceValue>({
   provide: (f) => [
     EditorView.decorations.from(f, (v) => v.lines),
     EditorView.decorations.from(f, (v) => v.chars),
+    // 行号槽底色吃同一份 `gutters`。依赖写 `f`（provide 的回调参数 = 本字段），
+    // 不写外层变量名 —— 否则字段初始化自引用，TS 推不出类型。
+    lineNumberMarkers.compute(
+      [f],
+      (state: EditorState): RangeSet<GutterMarker> => state.field(f).gutters,
+    ),
   ],
 });
 

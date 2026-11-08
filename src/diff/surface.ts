@@ -42,7 +42,7 @@ import { activePanelId, docs, isWrap, panels, tabs, type Panel } from "../core/a
 import { landVisibleSideAtV } from "../sync-scroll/wire";
 import { DIFF_REFRESH_MS, splitLines } from "./align";
 import { blockAt, diffBlocks, type DiffBlock } from "./blocks";
-import { innerChanges, type InnerChanges } from "./inline";
+import { innerChanges, type InnerResult } from "./inline";
 import {
   DIFF_REVEAL_LINES,
   diffFace,
@@ -452,7 +452,7 @@ export function createDiffSurface(
    * 自动换行设置在这个标签上就再也回不来了。设置的权威只有 `isWrap` 那一颗。
    *
    * 已知限制：折行开着时左右两栏按**实测行高**逐行补缝（`face.ts` 的 `gapZones`），差异块内
-   * 按 `blockPairing` 的配对窗口逐行对齐，窗口外多出来的行整段补到对侧（B463）。同步滚动因此
+   * 按 `innerChanges` 反推的对齐边界逐段对齐（上游 `innerHunkAlignment`）。同步滚动因此
    * 是真正的逐行对应，不再按滚动比例映射。
    */
   let wrapOn = isWrap;
@@ -507,8 +507,8 @@ export function createDiffSurface(
    * 取行文本用**块表所依据的那两份正文**（`leftText()` 与右栏文档）而不是左栏 view 的
    * 当前文档 —— 基线被就地换掉、`resetLeftDoc` 还没跑的那一瞬，左栏 view 里还是旧正文。
    */
-  const computeInner = (blocks: DiffBlock[]): InnerChanges => {
-    if (!right) return { original: [], modified: [] };
+  const computeInner = (blocks: DiffBlock[]): InnerResult => {
+    if (!right) return { changes: { original: [], modified: [] }, alignments: [] };
     const original = splitLines(current.leftText());
     const modified = splitLines(right.state.doc.toString());
     return innerChanges(
@@ -900,7 +900,7 @@ export function createDiffSurface(
   const leftArm = (): Extension => [
     // 缝与行内区间同一份来源：块表换了而缝还停在旧测量上，底色与占位块会互相打架；
     // 行内区间若晚一拍，字符级标记就会短暂地落在新块的旧行号上。
-    diffFace("original", () => ({ blocks: stored, gaps: gapPlans.original, inner })),
+    diffFace("original", () => ({ blocks: stored, gaps: gapPlans.original, inner: inner.changes })),
     onFoldBarClick(onOriginalFoldReveal),
     // 左栏没有文档更新，但**光标与选区会动**（R12：那颗 view 可选可聚焦）⇒ 概览标记层
     // 必须跟着走，否则左列的光标条停在挂上那一刻。差异色块与折叠走 `refreshArms` 那一发，
@@ -990,6 +990,7 @@ export function createDiffSurface(
       stored,
       { original: left.state.doc.lines, modified: right.state.doc.lines },
       (side, line) => heights[side](line),
+      inner.alignments,
     );
   };
 
@@ -1338,9 +1339,21 @@ export function createDiffSurface(
     if ((e.target as HTMLElement | null)?.closest(".diff-revert")) return;
     right?.focus();
   };
+  /**
+   * 滚轮落在中间列 ⇒ 委托右栏滚动（上游 `DiffEditorGutter` 把 wheel 交给 modified 编辑器：
+   * `delegateScrollFromMouseWheelEvent`）。不委托的话，鼠标停在按钮列上滚轮完全不响应，
+   * 那一列就成了 35px 宽的死区。`passive: false` 才能 `preventDefault`（否则外层还会再滚一次）。
+   */
+  const onCenterWheel = (e: WheelEvent): void => {
+    if (!right) return;
+    e.preventDefault();
+    right.scrollDOM.scrollTop += e.deltaY;
+    right.scrollDOM.scrollLeft += e.deltaX;
+  };
   overviewEl.addEventListener("pointerdown", onOverviewDown);
   overviewEl.addEventListener("wheel", onOverviewWheel, { passive: false });
   centerEl.addEventListener("mousedown", onCenterDown);
+  centerEl.addEventListener("wheel", onCenterWheel, { passive: false });
   left.scrollDOM.addEventListener("scroll", onLeftScroll, { passive: true });
   right?.scrollDOM.addEventListener("scroll", onRightScroll, { passive: true });
   const detachOverview = (): void => {
@@ -1348,6 +1361,7 @@ export function createDiffSurface(
     overviewEl.removeEventListener("pointerdown", onOverviewDown);
     overviewEl.removeEventListener("wheel", onOverviewWheel);
     centerEl.removeEventListener("mousedown", onCenterDown);
+    centerEl.removeEventListener("wheel", onCenterWheel);
     left.scrollDOM.removeEventListener("scroll", onLeftScroll);
     right?.scrollDOM.removeEventListener("scroll", onRightScroll);
     overviewEl.remove();
@@ -1495,46 +1509,91 @@ export function createDiffSurface(
   /**
    * 中间那列的「回退此块」按钮（VS Code `DiffEditorGutter` 的 hunk toolbar）。
    *
-   * 位置：块在**右栏**的视觉中心（`documentTop + lineBlock.top + height / 2`），夹在这一列的
-   * 视口内；块完全在视口外就不建（上游的 `EditorGutter` 也只渲染当前可见的那些 item）。
-   * 显隐交给 CSS：默认 `opacity: 0`，`.diff-center:hover` 或 `.is-current`（光标所在块）时显示 ——
-   * 对应上游的 hover + `showAlways` 两档。
+   * 几何照上游两层：`EditorGutter.render` 给每个 item 的 `top/height` 取的是**整块**
+   * （`getTopForLineNumber(start, true)` → `getBottomForLineNumber(end, true)`，含缝），
+   * `DiffToolBar.layout` 再把按钮垂直居中于这一块、并按「视口 / 父区间」两级夹取：
+   *   · 视口：`[按钮高, 列高 - 2 × 按钮高]`；
+   *   · 父区间：`[块顶 + 按钮高, 块底 - 2 × 按钮高]`，只有块高 > 3 × 按钮高才生效
+   *     （照上游 `preferredParentRange.start < endExclusive` 那条门槛）。
+   * 块完全在视口外就不建（上游同样只渲染可见的 item）。显隐交给 CSS：默认 `opacity: 0`，
+   * `.diff-center:hover` 或 `.is-current`（光标所在块）时显示 —— 对应上游 hover + `showAlways`。
    */
   const renderReverts = (): void => {
     revertLayerEl.replaceChildren();
-    if (!right) return;
+    const view = right;
+    if (!view) return;
     const column = centerEl.getBoundingClientRect();
     if (column.height <= 0) return;
+    const doc = view.state.doc;
     const active = activeIndex();
-    // 与 `.diff-revert` 的 CSS 高度一致（VS Code `DiffEditorGutter` 那颗按钮：
-    // `.action-label` 的 1px 上下内边距 + 16px codicon = 18px）。
-    const ITEM_H = 18;
+    // 与 `.diff-revert` 的 CSS 高度一致（VS Code 那颗按钮：`.action-label` 的
+    // 1px 上下内边距 + 16px codicon = 18px）。
+    const BTN_H = 18;
+    /** 这一行（1-based）的顶：含它之前的缝；超过末行 ⇒ 末行底。 */
+    const topOf = (line: number): number => {
+      const n = Math.max(line, 1);
+      const block =
+        n <= doc.lines
+          ? view.lineBlockAt(doc.line(n).from)
+          : view.lineBlockAt(doc.line(doc.lines).from);
+      const y = n <= doc.lines ? block.top : block.bottom;
+      return view.documentTop + y - column.top;
+    };
+    /** 这一行的底：含它**之后**的缝（上游 `getBottomForLineNumber(…, true)` 同口径）。 */
+    const bottomOf = (line: number): number => {
+      if (line < doc.lines) return topOf(line + 1);
+      const block = view.lineBlockAt(doc.line(doc.lines).from);
+      return view.documentTop + block.bottom - column.top;
+    };
     for (let i = 0; i < stored.length; i++) {
       const b = stored[i];
-      // 只取**行文本**的盒子（`textBlockOf` 的解）：这一行若紧贴着一条对齐缝，composite
-      // `BlockInfo` 会把缝一起算进来，按钮就被那颗高度顶到偏下一半的缝里去。
-      const block = textBlockOf(right, landingLine(b, "modified"));
-      const centerY = right.documentTop + block.top + block.height / 2 - column.top;
-      // 块在视口上下各留一个 item 的余量之外 ⇒ 这一颗不建。
-      if (centerY < -ITEM_H || centerY > column.height + ITEM_H) continue;
+      const top = topOf(b.modifiedStart);
+      // 空段（这一侧没有真行）：上游 `max(top, getBottomForLineNumber(start - 1, true))`
+      // 里那一发含缝的底恰好等于 top（缝就在 start 之前）⇒ 高度 0，按钮跨在块边界上。
+      const bottom = b.modifiedStart > b.modifiedEnd ? top : bottomOf(b.modifiedEnd);
+      const height = Math.max(bottom - top, 0);
+      // 块完全在视口上下各一个按钮的余量之外 ⇒ 这一颗不建。
+      if (top + height < -BTN_H || top > column.height + BTN_H) continue;
+
+      // 居中 + 两级夹取（顺序也照上游：先视口、后父区间）。
+      let y = top + height / 2 - BTN_H / 2;
+      const viewStart = BTN_H;
+      const viewEnd = column.height - 2 * BTN_H;
+      const parentStart = top + BTN_H;
+      const parentEnd = top + height - 2 * BTN_H;
+      if (parentEnd > parentStart && viewEnd > viewStart) {
+        y = Math.min(Math.max(y, viewStart), viewEnd);
+        y = Math.min(Math.max(y, parentStart), parentEnd);
+      }
+
+      // 每块一条竖线（上游 `.gutterItem .background` 是相对 item 的 `height: 100%`），
+      // 与按钮同处一个 item ⇒ 显隐、透明度过渡都跟按钮走。
+      const item = document.createElement("div");
+      item.className = "diff-revert-item";
+      if (i === active) item.classList.add("is-current");
+      item.style.top = `${top}px`;
+      item.style.height = `${height}px`;
+      const rule = document.createElement("div");
+      rule.className = "diff-revert-line";
+
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "diff-revert";
-      if (i === active) btn.classList.add("is-current");
+      btn.style.top = `${y - top}px`;
       btn.innerHTML = CODICONS.arrowRight;
       // 可访问名称与提示同源：字形是 `aria-hidden` 的 `<i>`，读屏器认的只有这一句。
       // 提示走全应用统一的那一套（原生 `title` 由系统绘制、不吃主题，B2xx 起禁用）。
       btn.setAttribute("aria-label", REVERT_LABEL);
       setTip(btn, REVERT_LABEL);
-      // 夹在视口里（与上游 EditorGutter 一样，item 不跑出那一列）。
-      btn.style.top = `${Math.min(Math.max(centerY - ITEM_H / 2, 0), Math.max(column.height - ITEM_H, 0))}px`;
       // mousedown 只掐掉焦点转移：点这颗键不该清掉编辑器里的选区（上游 button 同款处理）。
       btn.addEventListener("mousedown", (e) => e.preventDefault());
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         revertAt(i, b.modifiedStart);
       });
-      revertLayerEl.appendChild(btn);
+
+      item.append(rule, btn);
+      revertLayerEl.appendChild(item);
     }
   };
 
@@ -1588,7 +1647,7 @@ export function createDiffSurface(
 
   /** 右栏那一臂的内容：装饰 + 折条出口 + 键入落点（`updateListener` 是 state facet，只能并进来）。 */
   const rightArm = (): Extension => [
-    diffFace("modified", () => ({ blocks: stored, gaps: gapPlans.modified, inner })),
+    diffFace("modified", () => ({ blocks: stored, gaps: gapPlans.modified, inner: inner.changes })),
     onFoldBarClick(onModifiedFoldReveal),
     // 仓库同形先例 `tests/preview-face-helpers.ts:71-76`：塞进 `state.update({extensions})`
     // 会被静默丢掉，必须走 effect。

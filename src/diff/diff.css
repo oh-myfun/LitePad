@@ -112,16 +112,17 @@
 }
 
 /* 中间列 = VS Code 的 `DiffEditorGutter`（`DEFAULT_DIFF_EDITOR_GUTTER_WIDTH = 35`）：
-   每个差异块一颗「回退」按钮，分割线也从这一列里走。尺寸照上游：
-     · item 34×20、圆角 4px（`gutterFeature.ts` 的 `width: 34, height: 20` + style.css 的
-       `.actions-container { border-radius: 4px }`）；
-     · 中线 2px（style.css 的 `.background { border-left: 2px solid ... }`）。
+   每个差异块一颗「回退」按钮 + 一条逐块竖线。尺寸照上游：
+     · 定位容器（item）34×20 是**虚的**，可见按钮是里面的 `.actions-container` 那一颗；
+     · 中线 2px（style.css 的 `.background { border-left: 2px solid ... }`）；
+     · 列本身 `overflow: hidden`（style.css 的 `.gutter { overflow: hidden }`）。
    分割线不再是 flex 兄弟而住在这一列里：那一列是两栏**之间**的独立区域（上游同结构），
    把线留在外面会变成第三根 flex 项，35px 的口径就对不上了。 */
 .diff-center {
   position: relative;
   flex: 0 0 35px;
   min-width: 0;
+  overflow: hidden;
 }
 
 /* 两栏之间那条分界照 VS Code 的 side-by-side：**两条 1px 的 `diffEditor.border`**，分别贴在
@@ -138,36 +139,47 @@
   border-left: 1px solid color-mix(in srgb, var(--fg) 22%, transparent);
 }
 
-.diff-center::before {
-  content: "";
+/* 每个 hunk 一条竖线：上游 `.gutterItem .background`（`style.css`）的 `height: 100%` 是相对的
+   **那一块**，不是整列 —— 也就是每块一条、只在回退列可见时现形。颜色走
+   `menu.separatorBackground`（`theme/colors/menuColors.ts`：foreground 的 20%，HC 用
+   contrastBorder）；以前这里是整列一条 `::before`，与上游的逐块竖线不是一回事。 */
+.diff-revert-item {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  /* VS Code 的中线（`.gutterItem .background`）只在回退列可见时才现形：常态透明，
-     悬停这一列时给 2px 的 `menu-separatorBackground` 近似色。 */
-  border-left: 2px solid transparent;
+  left: 0;
+  right: 0;
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.7s;
 }
 
-.diff-center:hover::before {
-  border-left-color: color-mix(in srgb, var(--fg) 28%, transparent);
+.diff-center:hover .diff-revert-item,
+.diff-revert-item.is-current {
+  opacity: 1;
+  transition-duration: 0.1s;
 }
 
-/* 按钮层：铺满整列，按钮各自按右栏的行位置绝对定位（见 `surface.ts` 的 `renderReverts`）。 */
+.diff-revert-line {
+  position: absolute;
+  height: 100%;
+  left: 50%;
+  width: 1px;
+  border-left: 2px solid var(--diff-gutter-line);
+}
+
+/* 按钮层：铺满整列，item 各自按右栏的行位置绝对定位（见 `surface.ts` 的 `renderReverts`）。 */
 .diff-reverts {
   position: absolute;
   inset: 0;
   pointer-events: none;
 }
 
-/* 一块一颗：默认隐形，中间列悬停或光标所在块才现形（上游 item 的 `opacity: 0` +
-   `showAlways` / hover 两档，过渡时长也照 style.css 的 0.7s / 0.1s）。
-   形状与尺寸照 VS Code `DiffEditorGutter` 那**颗按钮本身**，不是那一列：
-   `style.css` 的 `.monaco-diff-editor .gutterItem` 是 34×20 的**定位容器**，里面
-   `.actions-container` 才是可见的按钮（`width: fit-content`、`border-radius: 4px`），
-   而 `.action-label` 在差异格里是 `padding: 1px 2px` + 16px codicon ⇒ 20×18。
-   之前把容器尺寸（34×20）当成了按钮，画出来是一条横向长条。 */
+/* 一块一颗：显隐归 item（上面那一对 opacity 规则）。形状与尺寸照 VS Code `DiffEditorGutter`
+   那**颗按钮本身**，不是那一列：`style.css` 的 `.monaco-diff-editor .gutterItem` 是 34×20 的
+   **定位容器**，里面 `.actions-container` 才是可见的按钮（`width: fit-content`、
+   `border-radius: 4px`），而 `.action-label` 在差异格里是 `padding: 1px 2px` + 16px codicon
+   ⇒ 20×18。之前把容器尺寸（34×20）当成了按钮，画出来是一条横向长条。
+   底色走 `editorGutter.itemBackground`（不透明）：下面垫一层编辑器底色，再把
+   `--diff-revert-bg` 铺上去 —— 浅色档那颗 token 带 alpha，不垫底就会透出中间的竖线。 */
 .diff-revert {
   position: absolute;
   left: 50%;
@@ -180,23 +192,18 @@
   padding: 0;
   border: 0;
   border-radius: 4px;
-  background: var(--diff-revert-bg);
+  background-color: var(--bg);
+  background-image: linear-gradient(var(--diff-revert-bg), var(--diff-revert-bg));
   color: var(--diff-revert-fg);
-  opacity: 0;
-  transition: opacity 0.7s;
   pointer-events: auto;
   cursor: pointer;
 }
 
-.diff-center:hover .diff-revert,
-.diff-revert.is-current {
-  opacity: 1;
-  transition-duration: 0.1s;
-}
-
+/* 悬停 = 上游 `toolbar.hoverBackground` 压在 itemBackground 之上（两层都带 alpha）。 */
 .diff-revert:hover {
-  background: color-mix(in srgb, var(--accent) 24%, transparent);
-  color: var(--fg);
+  background-image:
+    linear-gradient(var(--toolbar-hover-bg), var(--toolbar-hover-bg)),
+    linear-gradient(var(--diff-revert-bg), var(--diff-revert-bg));
 }
 
 /* 分割线只管**一栏之内**（splitview 那套 sash 管的是面板树，两者不复用）。
@@ -253,6 +260,9 @@
      在 HC 是 transparent ⇒ 下面单独覆盖。 */
   --diff-revert-bg: var(--list-inactive-bg);
   --diff-revert-fg: var(--fg);
+  /* 回退列那条逐块竖线 = 上游 `menu.separatorBackground`（`menuColors.ts`：
+     `foreground` 的 20%；HC 档是 `contrastBorder` ⇒ 下面单独覆盖）。 */
+  --diff-gutter-line: color-mix(in srgb, var(--fg) 20%, transparent);
   /* 未改动区折条照上游三颗 `unchangedRegion*`：背景 = `sideBar.background`、
      前景 = `foreground`、内阴影暗档 #000000 / 亮档 #737373BF（HC 跟暗档）。 */
   --diff-unchanged-bg: var(--sidebar-bg);
@@ -263,6 +273,7 @@
 :root[data-theme-family="hc"] {
   --diff-revert-bg: #ffffff;
   --diff-revert-fg: #000000;
+  --diff-gutter-line: var(--border);
 }
 
 :root[data-theme-family="hc"][data-theme="light"] {
@@ -315,6 +326,38 @@
   background-image: linear-gradient(var(--diff-char-del), var(--diff-char-del));
 }
 
+/* 纯增 / 纯删块：上游 `diffWholeLineAdd / Delete` 就是 `char-insert / char-delete` 的整行版
+   （`isWholeLine: true`），与行底色**两层叠着画**。这里在同一元素的 `background-image` 里
+   叠两层（先写的在上层），整行吃满字符色 —— 不再只覆盖文字宽度。 */
+.panel-host.is-diff .cm-line.diff-line-insert.diff-whole-insert {
+  background-image:
+    linear-gradient(var(--diff-char-add), var(--diff-char-add)),
+    linear-gradient(var(--diff-line-add), var(--diff-line-add));
+}
+
+.panel-host.is-diff .cm-line.diff-line-delete.diff-whole-delete {
+  background-image:
+    linear-gradient(var(--diff-char-del), var(--diff-char-del)),
+    linear-gradient(var(--diff-line-del), var(--diff-line-del));
+}
+
+/* 跨行改动的非末段：上游 `shouldFillLineOnLineBreak` 会把底色补到编辑区右缘。
+   mark 只覆盖字符 ⇒ 由 `::after` 从段尾续到视野外（`.cm-scroller` 的 overflow 收口）。
+   `background: inherit` 取的是**这颗 span** 的字符底色层，抹到右侧仍是同一层颜色。 */
+.panel-host.is-diff .cm-line .diff-fill {
+  position: relative;
+}
+
+.panel-host.is-diff .cm-line .diff-fill::after {
+  content: "";
+  position: absolute;
+  left: 100%;
+  top: 0;
+  bottom: 0;
+  width: 100vw;
+  background: inherit;
+}
+
 /* 内联改动为空的那一侧：上游 `diff-range-empty`（`diffEditor/style.css` 的
    `.char-delete.diff-range-empty` / `.char-insert.diff-range-empty`）—— 3px 竖条，颜色取
    那一侧的字符底色。删除侧多 `margin-left: -1px`，于是净占 2px（上游同款）。
@@ -328,17 +371,19 @@
   border-left: 3px solid var(--diff-char-del);
 }
 
-/* 行号槽**不承载差异底色**：色带只留在代码区，行号文字与 `+` / `−` 记号照旧。
-   ⚠️ 上游不是这样，事实是上游会给行号槽上色：`registrations.contribution.ts` 的
-   `line-insert` / `line-delete` 都带 `marginClassName: 'gutter-insert' / 'gutter-delete'`，
-   `diffEditor/style.css` 给这两颗类写了 `background-color: var(--vscode-diffEditorGutter-*
-   LineBackground, var(--vscode-diffEditor-*LineBackground), ...)`；而 `diffEditorGutter.*`
-   在 `editorColors.ts` 注册时默认值是 `null`，`colorThemeCss.ts` 又只在 `getColor()` 拿得到
-   颜色时才输出那颗 CSS 变量 ⇒ 主题不覆盖时变量根本不存在，兜底链落到主题里定义了的
-   `diffEditor.inserted/removedLineBackground`（缺口行的 `marginDomNode: gutter-delete /
-   gutter-insert` 同理，见 `diffEditorViewZones.ts`）。即上游的行号槽与正文是同一条差异色。
-   本项目按产品口径改成「色带只留在代码区」：`.diff-line-*` 的底色不越界进行号 / 记号槽，
-   这里也就没有任何 `.diff-gutter-*` 规则 —— `face.ts` 那一臂连类名都不再发。 */
+/* 行号槽与正文同一条差异色：上游 `registrations.contribution.ts` 的 `line-insert` /
+   `line-delete` 都带 `marginClassName: 'gutter-insert' / 'gutter-delete'`，
+   `diffEditor/style.css` 给这两颗类铺 `diffEditorGutter.*LineBackground`，主题未覆盖时
+   落到 `diffEditor.inserted/removedLineBackground`（即上面的行底色）。CM6 侧由
+   `lineNumberMarkers`（`face.ts` 的 `DiffGutterMarker.elementClass`）加在整格行号元素上。
+   与正文行底色同一手法走 `background-image`，不碰当前行的 `background-color`。 */
+.panel-host.is-diff .cm-lineNumbers .cm-gutterElement.diff-gutter-insert {
+  background-image: linear-gradient(var(--diff-line-add), var(--diff-line-add));
+}
+
+.panel-host.is-diff .cm-lineNumbers .cm-gutterElement.diff-gutter-delete {
+  background-image: linear-gradient(var(--diff-line-del), var(--diff-line-del));
+}
 
 /* `+` / `−` 记号槽：VS Code 的 `linesDecorationsClassName` 落在**行号右侧**的 line decorations
    栏（`EditorLayoutInfo` 的层次：glyphMarginLeft → lineNumbersLeft → decorationsLeft → contentLeft）。

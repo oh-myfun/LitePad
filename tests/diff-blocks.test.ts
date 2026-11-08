@@ -6,7 +6,7 @@
 // （照 VS Code 的空段表示法，Task 3 的占位块据此落位）。
 // 对齐不在这里算 —— 与 4px gutter 列同源，都走 `alignLines`（设计稿约束 ⑥）。
 import { describe, expect, it } from "vitest";
-import { blockAt, blockPairing, diffBlocks, type DiffBlock } from "../src/diff/blocks";
+import { blockAt, diffBlocks, type DiffBlock } from "../src/diff/blocks";
 
 describe("B461 · diffBlocks：块级出口的六种形", () => {
   it("B461 · 连续改动并成一块；两块之间隔着未改动行就分成两块", () => {
@@ -64,99 +64,7 @@ describe("B461 · diffBlocks：块级出口的六种形", () => {
     const big = (tag: string) => Array.from({ length: 600 }, (_, i) => `${tag}${i}`).join("\n");
     const blocks = diffBlocks(big("甲"), "第0行改了\n" + big("乙"));
     expect(blocks.length).toBeGreaterThan(0);
-    expect(blocks[0]).toHaveProperty("offset");
-  });
-});
-
-describe("B463 · blockPairing：块内逐行配对的窗口（VS Code 的 inner line alignment）", () => {
-  it("B463 · 左长右短：窗口从左侧 offset 行起，窗口前后各剩一截没人配", () => {
-    const b: DiffBlock = {
-      kind: "modify",
-      originalStart: 2,
-      originalEnd: 5,
-      modifiedStart: 2,
-      modifiedEnd: 3,
-      added: 0,
-      removed: 2,
-      offset: 1,
-    };
-    expect(blockPairing(b)).toEqual({
-      originalStart: 3,
-      modifiedStart: 2,
-      count: 2,
-      originalBefore: 1,
-      modifiedBefore: 0,
-      originalAfter: 1,
-      modifiedAfter: 0,
-    });
-  });
-
-  it("B463 · 右长左短：错位落在右栏，窗口前后多出来的行也记在右栏", () => {
-    const b: DiffBlock = {
-      kind: "modify",
-      originalStart: 2,
-      originalEnd: 3,
-      modifiedStart: 2,
-      modifiedEnd: 5,
-      added: 2,
-      removed: 0,
-      offset: 1,
-    };
-    expect(blockPairing(b)).toEqual({
-      originalStart: 2,
-      modifiedStart: 3,
-      count: 2,
-      originalBefore: 0,
-      modifiedBefore: 1,
-      originalAfter: 0,
-      modifiedAfter: 1,
-    });
-  });
-
-  it("B463 · 纯删 / 纯增没有窗口：整段都算窗口之后", () => {
-    const del: DiffBlock = {
-      kind: "delete",
-      originalStart: 2,
-      originalEnd: 3,
-      modifiedStart: 2,
-      modifiedEnd: 1,
-      added: 0,
-      removed: 2,
-      offset: 0,
-    };
-    expect(blockPairing(del)).toMatchObject({
-      count: 0,
-      originalBefore: 0,
-      originalAfter: 2,
-    });
-    const ins: DiffBlock = {
-      kind: "insert",
-      originalStart: 2,
-      originalEnd: 1,
-      modifiedStart: 2,
-      modifiedEnd: 3,
-      added: 2,
-      removed: 0,
-      offset: 0,
-    };
-    expect(blockPairing(ins)).toMatchObject({
-      count: 0,
-      modifiedBefore: 0,
-      modifiedAfter: 2,
-    });
-  });
-
-  it("B463 · 真对齐器的产物：错位落在相似的那一行上（窗口 3↔2）", () => {
-    // 基线 [丙一去, 丙一去, 丁后行] vs 当前 [丙一去, 丁后行改了]：中段 aLen 2 / bLen 1，
-    // `alignOffset` 挑 o=1 ⇒ 窗口是原稿第 3 行 ↔ 新稿第 2 行，原稿第 2 行没人配。
-    const [b] = diffBlocks("丙一去\n丙一去\n丁后行", "丙一去\n丁后行改了");
-    expect(blockPairing(b)).toMatchObject({
-      originalStart: 3,
-      modifiedStart: 2,
-      count: 1,
-      originalBefore: 1,
-      originalAfter: 0,
-    });
+    expect(blocks.every((b) => b.added >= 0 && b.removed >= 0)).toBe(true);
   });
 });
 
@@ -223,7 +131,6 @@ describe("B461 · blockAt：包住这一行的块序号（Task 9 面板跟随光
       modifiedEnd: 2,
       added: 0,
       removed: 1,
-      offset: 0,
     };
     const real: DiffBlock = {
       kind: "modify",
@@ -233,7 +140,6 @@ describe("B461 · blockAt：包住这一行的块序号（Task 9 面板跟随光
       modifiedEnd: 4,
       added: 1,
       removed: 0,
-      offset: 0,
     };
     // 两块**谁都不让谁**：把空段那条摆前面也判给真包住它的那一块 ⇒ 相邻两块不会抢同一行。
     expect(blockAt([empty, real], "modified", 3)).toBe(1);

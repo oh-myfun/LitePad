@@ -18,7 +18,6 @@ function block(over: Partial<DiffBlock>): DiffBlock {
     modifiedEnd: 1,
     added: 1,
     removed: 1,
-    offset: 0,
     ...over,
   };
 }

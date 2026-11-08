@@ -8,7 +8,7 @@
 //   1) 纯函数 `sideLineMarks` / `sideGaps`：一块（`DiffBlock`）在**某一栏**落在哪些行、
 //      要在第几行之后补几行空位。它们只遍历 `blocks.ts` 交出来的块 ⇒ 与 4px 标注同源，
 //      这一层不看 DOM、不看 view，向量直接钉死。
-//   2) 装到 view 上的那一臂（`diffFace`）：行装饰 + 块 widget + 记号（行号槽不上色）。
+//   2) 装到 view 上的那一臂（`diffFace`）：行装饰 + 块 widget + 记号 + 行号槽底色。
 //   3) 样式段（`src/diff/diff.css`）：行底色 / 字符底色取上游 `editorColors.ts` 的默认值
 //      （分侧语义没有「修改行」），概览色带另吃 `--diff-add` / `--diff-del`；
 //      这一段里一个裸十六进制都不许出现。
@@ -27,7 +27,7 @@ import { perfProfileFor } from "../src/editor/perf";
 import { stripCssComments, stripLineComments, ruleBlock } from "./static";
 import { isWrap, setIsWrap, tabs, type Panel, type Tab } from "../src/core/app-state";
 import { createDiffSurface, type DiffSurface } from "../src/diff/surface";
-import { diffBlocks, type DiffBlock } from "../src/diff/blocks";
+import { diffBlocks, type DiffBlock, type LineAlignment } from "../src/diff/blocks";
 import type { InnerChanges } from "../src/diff/inline";
 import type { DiffSide, DiffSpec } from "../src/diff/model";
 import { DIFF_REFRESH_MS } from "../src/diff/align";
@@ -69,7 +69,12 @@ const uniformHeight = (): number => LINE_HEIGHT;
  * 另一侧按「未改动段两侧行数相等」反推：`对侧末块行号 + (本侧总行数 - 本侧末块行号)`。
  * 与生产的 `LineTotals` 同一口径，只是另一侧的数字由块表推出来。
  */
-function zonesOf(blocks: DiffBlock[], side: DiffSide, docLines: number): GapZone[] {
+function zonesOf(
+  blocks: DiffBlock[],
+  side: DiffSide,
+  docLines: number,
+  alignments: LineAlignment[][] = [],
+): GapZone[] {
   const otherSide: DiffSide = side === "original" ? "modified" : "original";
   const endOf = (b: DiffBlock, s: DiffSide): number =>
     s === "original" ? b.originalEnd : b.modifiedEnd;
@@ -81,14 +86,15 @@ function zonesOf(blocks: DiffBlock[], side: DiffSide, docLines: number): GapZone
     side === "original"
       ? { original: docLines, modified: otherLines }
       : { original: otherLines, modified: docLines };
-  return gapZones(blocks, totals, uniformHeight)[side];
+  const perBlock = alignments.length === blocks.length ? alignments : blocks.map(() => []);
+  return gapZones(blocks, totals, uniformHeight, perBlock)[side];
 }
 
 describe("B461 · sideLineMarks / gapZones：一块在两栏各落在哪些行", () => {
   it("B461 · 删除块：左栏标真行，右栏在 A 之后补 2 行空位", () => {
     expect(sideLineMarks(del, "original")).toEqual([
-      { line: 2, kind: "delete" },
-      { line: 3, kind: "delete" },
+      { line: 2, kind: "delete", whole: true },
+      { line: 3, kind: "delete", whole: true },
     ]);
     expect(sideLineMarks(del, "modified")).toEqual([]);
     expect(zonesOf(del, "modified", 2)).toEqual([
@@ -107,34 +113,33 @@ describe("B461 · sideLineMarks / gapZones：一块在两栏各落在哪些行",
 
   it("B462 · 混合区按 VS Code 分侧：左栏全算删除、右栏全算新增（没有第三种 modify 行）", () => {
     // 基线 [丙一去, 丙一去, 丁后行] vs 当前 [丙一去, 丁后行改了]
-    // head=1；中段无 LCS 锚点 ⇒ 一个区 (aLen 2, bLen 1)；alignOffset 挑 o=1（丁后行 ↔ 丁后行改了 最像）
-    // ⇒ 配对窗口吃掉 a 的第 2 行，多出来的 a 行（绝对第 2 行）在窗口**之前**被删
+    // head=1；中段无 LCS 锚点 ⇒ 一个区 (aLen 2, bLen 1)；字符 diff 的起止都在行首/行尾
+    // ⇒ 没有块内边界，整块一段：左 2 行 vs 右 1 行，缺的那行补在右栏块尾。
     const mixed = diffBlocks("丙一去\n丙一去\n丁后行", "丙一去\n丁后行改了");
     expect(zonesOf(mixed, "modified", 2)).toEqual([
-      { afterLine: 1, height: LINE_HEIGHT, lines: 1 },
+      { afterLine: 2, height: LINE_HEIGHT, lines: 1 },
     ]);
     expect(sideLineMarks(mixed, "original"), "改 = 先删：左栏两行都是删除色").toEqual([
-      { line: 2, kind: "delete" },
-      { line: 3, kind: "delete" },
+      { line: 2, kind: "delete", whole: false },
+      { line: 3, kind: "delete", whole: false },
     ]);
     expect(sideLineMarks(mixed, "modified"), "改 = 再增：右栏这一行是新增色").toEqual([
-      { line: 2, kind: "insert" },
+      { line: 2, kind: "insert", whole: false },
     ]);
   });
 
-  it("B462 · 配对窗口两头都多出行 ⇒ 前后各一段空位，按 afterLine 升序（两侧都按删除/新增上色）", () => {
-    // 基线 [x, B中, y] vs 当前 [B改了]：相似错位挑 o=1 ⇒ B中 ↔ B改了 配对，
-    // x 落在窗口之前、y 落在窗口之后 ⇒ 右栏要在第 1 行之后与第 2 行之后各补一行。
+  it("B462 · 改块两侧行数不同 ⇒ 缺的行整段补在块尾，按 afterLine 升序", () => {
+    // 基线 [A, x, B中, y, C] vs 当前 [A, B改了, C]：改块左侧 3 行 vs 右侧 1 行，
+    // 字符 diff 没有行内边界 ⇒ 整块一段，缺的 2 行补在右栏块尾（第 2 行之后）。
     const both = diffBlocks("A\nx\nB中\ny\nC", "A\nB改了\nC");
     expect(sideLineMarks(both, "original")).toEqual([
-      { line: 2, kind: "delete" },
-      { line: 3, kind: "delete" },
-      { line: 4, kind: "delete" },
+      { line: 2, kind: "delete", whole: false },
+      { line: 3, kind: "delete", whole: false },
+      { line: 4, kind: "delete", whole: false },
     ]);
-    expect(sideLineMarks(both, "modified")).toEqual([{ line: 2, kind: "insert" }]);
+    expect(sideLineMarks(both, "modified")).toEqual([{ line: 2, kind: "insert", whole: false }]);
     expect(zonesOf(both, "modified", 3)).toEqual([
-      { afterLine: 1, height: LINE_HEIGHT, lines: 1 },
-      { afterLine: 2, height: LINE_HEIGHT, lines: 1 },
+      { afterLine: 2, height: 2 * LINE_HEIGHT, lines: 2 },
     ]);
     // 多的一侧（左栏）自己不必补位
     expect(zonesOf(both, "original", 5)).toEqual([]);
@@ -142,10 +147,10 @@ describe("B461 · sideLineMarks / gapZones：一块在两栏各落在哪些行",
 
   it("B462 · 当前比基线长的改块：左栏按同样的口径补位（缝在配对窗口之后）", () => {
     const grow = diffBlocks("A\nB\nC", "A\nB1\nB2\nC");
-    expect(sideLineMarks(grow, "original")).toEqual([{ line: 2, kind: "delete" }]);
+    expect(sideLineMarks(grow, "original")).toEqual([{ line: 2, kind: "delete", whole: false }]);
     expect(sideLineMarks(grow, "modified")).toEqual([
-      { line: 2, kind: "insert" },
-      { line: 3, kind: "insert" },
+      { line: 2, kind: "insert", whole: false },
+      { line: 3, kind: "insert", whole: false },
     ]);
     expect(zonesOf(grow, "original", 3)).toEqual([{ afterLine: 2, height: LINE_HEIGHT, lines: 1 }]);
     expect(zonesOf(grow, "modified", 4)).toEqual([]);
@@ -156,7 +161,7 @@ describe("B461 · sideLineMarks / gapZones：一块在两栏各落在哪些行",
     // 左栏第 2 行折成两个视觉行（2 × 行高），右栏在同高度上只有一行。
     const heightOf = (side: DiffSide, line: number): number =>
       side === "original" && line === 2 ? 2 * LINE_HEIGHT : LINE_HEIGHT;
-    expect(gapZones(wrapDel, { original: 3, modified: 2 }, heightOf).modified).toEqual([
+    expect(gapZones(wrapDel, { original: 3, modified: 2 }, heightOf, [[]]).modified).toEqual([
       { afterLine: 1, height: 2 * LINE_HEIGHT, lines: 1 },
     ]);
   });
@@ -166,55 +171,55 @@ describe("B461 · sideLineMarks / gapZones：一块在两栏各落在哪些行",
     const same = diffBlocks("A\nB\nC", "A\nB\nC");
     const heightOf = (side: DiffSide, line: number): number =>
       side === "original" && line === 2 ? 2 * LINE_HEIGHT : LINE_HEIGHT;
-    const zones = gapZones(same, { original: 3, modified: 3 }, heightOf);
+    const zones = gapZones(same, { original: 3, modified: 3 }, heightOf, []);
     expect(zones.original).toEqual([]);
     expect(zones.modified).toEqual([{ afterLine: 2, height: LINE_HEIGHT, lines: 0 }]);
   });
 
-  it("B463 · 块内逐行配对：窗口外多出的行整段补到对侧，窗口内每一对各补自己的折行差", () => {
-    // 左 4 行（2..5）vs 右 2 行（2..3），offset 1 ⇒ 窗口 左3↔右2、左4↔右3；
-    // 左 2 与左 5 没人配。左 3 折成两个视觉行（40），窗口第一对就得补 20。
+  it("B463 · 块内对齐边界把块切成若干段，每段比两侧实测总高（含折行差与缺行数）", () => {
+    // 左 4 行（2..5）vs 右 3 行（2..4）；字符 diff 反推的边界在第 3 行 ↔ 第 3 行。
+    // 段 1 = 左2↔右2（等高）；段 2 = 左3..5 ↔ 右3..4：左 3 折成两个视觉行（40）、另两行各 20，
+    // 右两行各 20 ⇒ 左多 40，补到右栏（缝在第 4 行之后），缺 1 行。
     const b: DiffBlock = {
       kind: "modify",
       originalStart: 2,
       originalEnd: 5,
       modifiedStart: 2,
-      modifiedEnd: 3,
+      modifiedEnd: 4,
       added: 0,
-      removed: 2,
-      offset: 1,
+      removed: 1,
     };
     const heightOf = (side: DiffSide, line: number): number =>
       side === "original" && line === 3 ? 2 * LINE_HEIGHT : LINE_HEIGHT;
-    const zones = gapZones([b], { original: 6, modified: 4 }, heightOf);
-    expect(zones.modified, "窗口前的左2、窗口内左3的折行、窗口后的左5 各一笔").toEqual([
-      { afterLine: 1, height: LINE_HEIGHT, lines: 1 },
-      { afterLine: 2, height: LINE_HEIGHT, lines: 0 },
-      { afterLine: 3, height: LINE_HEIGHT, lines: 1 },
+    const zones = gapZones([b], { original: 6, modified: 5 }, heightOf, [
+      [{ originalLine: 3, modifiedLine: 3 }],
+    ]);
+    expect(zones.modified, "左 3 的折行差 + 左 5 的缺行，合并落在第 4 行之后").toEqual([
+      { afterLine: 4, height: 2 * LINE_HEIGHT, lines: 1 },
     ]);
     expect(zones.original, "多的一侧自己不补位").toEqual([]);
   });
 
-  it("B463 · 右栏是长的一侧：窗口前后的多余行与折行差都补到左栏", () => {
-    // 左 2 行（2..3）vs 右 4 行（2..5），offset 1 ⇒ 窗口 左2↔右3、左3↔右4；
-    // 右 2 与右 5 没人配。右 4 折成两个视觉行 ⇒ 窗口第二对补到左栏。
+  it("B463 · 右栏是长的一侧：边界之后的段把高差补到左栏", () => {
+    // 段 1 = 左2 ↔ 右2..3（右两行各 20），左 20 ⇒ 补 20（缺 1 行）到左栏；
+    // 段 2 = 左3 ↔ 右4（右第 4 行折成 40、左 20）⇒ 再补 20（只有折行差，缺行数 0）。
     const b: DiffBlock = {
       kind: "modify",
       originalStart: 2,
       originalEnd: 3,
       modifiedStart: 2,
-      modifiedEnd: 5,
-      added: 2,
+      modifiedEnd: 4,
+      added: 1,
       removed: 0,
-      offset: 1,
     };
     const heightOf = (side: DiffSide, line: number): number =>
       side === "modified" && line === 4 ? 2 * LINE_HEIGHT : LINE_HEIGHT;
-    const zones = gapZones([b], { original: 4, modified: 6 }, heightOf);
-    // 窗口第二对（右4 折成 40）与窗口后的右5 都落在「原稿第 3 行之后」⇒ 两笔合并。
+    const zones = gapZones([b], { original: 4, modified: 5 }, heightOf, [
+      [{ originalLine: 3, modifiedLine: 4 }],
+    ]);
     expect(zones.original).toEqual([
-      { afterLine: 1, height: LINE_HEIGHT, lines: 1 },
-      { afterLine: 3, height: 2 * LINE_HEIGHT, lines: 1 },
+      { afterLine: 2, height: LINE_HEIGHT, lines: 1 },
+      { afterLine: 3, height: LINE_HEIGHT, lines: 0 },
     ]);
     expect(zones.modified).toEqual([]);
   });
@@ -342,7 +347,7 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
     expect(gapEls()).toHaveLength(1);
     expect(
       gapEls()[0].getAttribute("class"),
-      "占位块 = 中性斜纹（不再带分侧类：行号槽不承载差异色）",
+      "占位块 = 中性斜纹（行号槽的差异色由行号那一格自己承载）",
     ).toBe("diff-gap");
     expect(rowOrder(view), "空位是插在 A 与 Z 之间的那一整块").toEqual(["line", "gap", "line"]);
     // ⚠️ 简报这条写的是 `getBoundingClientRect().height > 0`，在 jsdom 里**不可能**绿
@@ -392,16 +397,16 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
     expect(rows.every((row) => row.querySelector(".diff-sign-delete") !== null)).toBe(true);
   });
 
-  it("B462 · 左栏删行涂真行底色 + Codicon `−` 记号（行号槽不上色，不再有中线指示带）", () => {
+  it("B462 · 左栏删行涂真行底色 + Codicon `−` 记号；纯删块整行再叠一层字符色", () => {
     const { view, lineEl, gapEls } = mountFace("original", del);
     expect(gapEls(), "删掉的行在左栏是**真行** ⇒ 这一侧不补位").toHaveLength(0);
     expect(lineEl(1).className).not.toContain("diff-line");
     expect(lineEl(2).className).toContain("diff-line-delete");
     expect(lineEl(3).className).toContain("diff-line-delete");
     expect(lineEl(2).className, "VS Code 没有块头横条这一层").not.toContain("diff-edge-top");
-    // 行号槽不承载差异底色（产品口径）：上游的 `marginClassName: gutter-delete` 这一臂不再
-    // 复刻（取舍见 `diff.css` 那段注释）⇒ gutter 元素上连类名都没有，没有任何可上色的格子。
-    expect(view.dom.querySelectorAll(".cm-gutterElement.diff-gutter-delete")).toHaveLength(0);
+    // 纯删块的对侧没有行 ⇒ 上游 `diffWholeLineDelete` 是整行字符层（`isWholeLine: true`）。
+    expect(lineEl(2).className, "整行差异：字符色铺满整行").toContain("diff-whole-delete");
+    expect(lineEl(3).className).toContain("diff-whole-delete");
     const signs = [...view.dom.querySelectorAll<HTMLElement>(".cm-diffSigns .diff-sign")];
     expect(
       signs.map((s) => [s.tagName, s.classList.contains("codicon-remove")]),
@@ -414,19 +419,17 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
     expect(signs.every((s) => s.classList.contains("diff-sign-delete"))).toBe(true);
   });
 
-  it("B461 · 配对窗口两头都有空位 ⇒ 插两块 widget，各占自己那一行的高度", () => {
+  it("B461 · 改块缺行整段补在块尾 ⇒ 插一块 widget，占缺行的高度", () => {
     const both = diffBlocks("A\nx\nB中\ny\nC", "A\nB改了\nC");
     const { view, lineEl, gapEls } = mountFace("modified", both, "A\nB改了\nC");
-    expect(gapEls()).toHaveLength(2);
-    expect(rowOrder(view), "缝一段在配对窗口之前、一段之后").toEqual([
+    expect(gapEls()).toHaveLength(1);
+    expect(rowOrder(view), "缝整段落在改块之后（第 2 行与第 3 行之间）").toEqual([
       "line",
-      "gap",
       "line",
       "gap",
       "line",
     ]);
-    expect(gapEls()[0].style.height).toBe(`${LINE_HEIGHT}px`);
-    expect(gapEls()[1].style.height).toBe(`${LINE_HEIGHT}px`);
+    expect(gapEls()[0].style.height).toBe(`${2 * LINE_HEIGHT}px`);
     expect(lineEl(2).className, "新稿一侧的改块照 VS Code 标成新增行").toContain(
       "diff-line-insert",
     );
@@ -805,19 +808,57 @@ describe("B462 · 右缘差异概览（VS Code 的 diffOverview）", () => {
     expect(marksOf(host, "modified")).toHaveLength(1);
   });
 
-  it("B462 · 行号槽不带差异底色类：色带只留在代码行（行号与记号保持）", () => {
+  it("B462 · 行号槽与正文同色：上游 marginClassName 的 gutter-insert / gutter-delete", () => {
     const { left, right } = mountSurfacePair();
-    // 上游的 `marginClassName: gutter-insert / gutter-delete` 会染行号槽；本项目按产品口径
-    // 不复刻（见 `diff.css` 那段注释）⇒ gutter 元素上不该再有 `diff-gutter-*` 这类可上色的类。
-    expect(left.dom.querySelectorAll(".cm-gutterElement[class*='diff-gutter-']")).toHaveLength(0);
-    expect(right.dom.querySelectorAll(".cm-gutterElement[class*='diff-gutter-']")).toHaveLength(0);
+    // 上游 `registrations.contribution.ts` 的 line-insert / line-delete 都带
+    // `marginClassName: 'gutter-insert' / 'gutter-delete'` ⇒ 行号槽与正文同一条差异色。
+    // CM6 侧由 `lineNumberMarkers` 落在整格行号元素上。
+    const dels = [...left.dom.querySelectorAll<HTMLElement>(".cm-lineNumbers .cm-gutterElement")];
+    expect(
+      dels.filter((el) => el.classList.contains("diff-gutter-delete")).length,
+      "左栏删掉的两行，行号槽也上色",
+    ).toBe(2);
+    expect(
+      right.dom.querySelectorAll(".cm-lineNumbers .cm-gutterElement.diff-gutter-insert"),
+      "右栏这一侧没有真行（空位在缝里）",
+    ).toHaveLength(0);
     expect(
       left.dom.querySelectorAll(".cm-line.diff-line-delete").length,
       "正文色带照旧（左栏两行删除）",
-    ).toBeGreaterThan(0);
+    ).toBe(2);
   });
 
-  it("B462 · 4px 差异列照旧占位（列宽不变），但三列 gutter 都不带差异底色类", () => {
+  it("B462 · 纯增 / 纯删 = 整行字符层（上游 diffWholeLineAdd / Delete），行内不再散标", () => {
+    const { right, left } = mountSurfacePair({ left: "A\nZ", right: "A\n新\nZ" });
+    const line = right.dom.querySelectorAll<HTMLElement>(".cm-line")[1];
+    expect(line.className, "整行：行底色 + 字符色两层（类名由 face 发）").toContain(
+      "diff-line-insert",
+    );
+    expect(line.className).toContain("diff-whole-insert");
+    expect(
+      right.dom.querySelector(".diff-char-insert"),
+      "整行差异不再产出行内 mark（上游 isWholeLine 那一档）",
+    ).toBeNull();
+    expect(
+      left.dom.querySelector(".cm-line.diff-whole-delete"),
+      "对侧没有真行 ⇒ 没有整行字符层",
+    ).toBeNull();
+  });
+
+  it("B462 · 部分差异：只标行内改动；跨行改动的非末段带 diff-fill（shouldFillLineOnLineBreak）", () => {
+    const { right, left } = mountSurfacePair({ left: "p q\nr s", right: "p X\nY s" });
+    for (const view of [left, right]) {
+      const marks = [...view.dom.querySelectorAll<HTMLElement>(".cm-line .diff-fill")];
+      expect(marks, "两侧第一行都被换行截断 ⇒ 各一颗 fill").toHaveLength(1);
+      expect(marks[0].className).toMatch(/diff-char-(insert|delete)/);
+      expect(
+        view.dom.querySelector(".cm-line.diff-whole-insert, .cm-line.diff-whole-delete"),
+        "两侧都有行 ⇒ 不是整行块",
+      ).toBeNull();
+    }
+  });
+
+  it("B462 · 4px 差异列照旧占位（列宽不变），差异底色只落在行号槽那一列", () => {
     // 生产路径（makeDiffInstance / makeTabState）的 gutter 次序是
     // 行号 24.4px → cm-diffGutter 4px（gutterDiff 空列）→ 记号 11px → 正文。
     // 折叠槽关掉之后这几列的宽度也不该变（列宽与有没有标记无关），变的只有「谁上色」。
@@ -826,10 +867,14 @@ describe("B462 · 右缘差异概览（VS Code 的 diffOverview）", () => {
       right.dom.querySelectorAll(".cm-gutter.cm-diffGutter"),
       "前置：4px 差异列得真的在（不在的话这条判据是空转）",
     ).toHaveLength(1);
-    for (const gutter of [".cm-lineNumbers", ".cm-diffGutter", ".cm-diffSigns"]) {
+    expect(
+      right.dom.querySelectorAll(".cm-lineNumbers .cm-gutterElement.diff-gutter-insert"),
+      "行号槽这一列承载行底色类",
+    ).toHaveLength(1);
+    for (const gutter of [".cm-diffGutter", ".cm-diffSigns"]) {
       expect(
         right.dom.querySelector(`${gutter} .cm-gutterElement[class*='diff-gutter-']`),
-        `${gutter} 这一列不承载行底色类`,
+        `${gutter} 这一列不承载行底色类（上游只有 marginClassName 那一格）`,
       ).toBeNull();
     }
     expect(
@@ -1256,7 +1301,7 @@ const caretLineOf = (view: EditorView): number =>
 describe("B462 · 记号槽与右缘概览条样式", () => {
   const css = (): string => stripCssComments(srcOf("src/diff/diff.css"));
 
-  it("B462 · 记号槽在行号右侧、10px、11px / 0.7；中间列 35px + 34×20 回退键", () => {
+  it("B462 · 记号槽在行号右侧、10px、11px / 0.7；中间列 35px + 20×18 回退键", () => {
     const sign = ruleBlock(css(), ".panel-host.is-diff .cm-diffSigns", undefined, true);
     expect(sign, "规则得真在（判不到东西的 not.toMatch 是假绿）").not.toBe("");
     expect(
@@ -1296,9 +1341,34 @@ describe("B462 · 记号槽与右缘概览条样式", () => {
     expect(css(), "HC 档另给纯色（hcDark 白底黑字）").toContain("--diff-revert-bg: #ffffff");
     expect(css(), "HC 亮档黑底白字").toContain("--diff-revert-bg: #000000");
 
-    // 行号槽不承载差异底色（产品口径；上游 `marginClassName` 会给，见 `diff.css` 那段注释）：
-    // 样式段里不许再有 `.diff-gutter-*` 这类给槽上色的规则 —— 有就说明那条口径被悄悄改回去了。
-    expect(css(), "行号槽不上色：不许有 .diff-gutter-* 规则").not.toContain(".diff-gutter-");
+    // 行号槽与正文同色（上游 `marginClassName`）：`.diff-gutter-*` 那颗类现在真的落在
+    // 整格行号元素上，样式段必须给出与之配套的底色规则（吃同一对行底色 token）。
+    const gutterInsert = ruleBlock(
+      css(),
+      ".panel-host.is-diff .cm-lineNumbers .cm-gutterElement.diff-gutter-insert",
+      undefined,
+      true,
+    );
+    expect(gutterInsert, "行号槽新增色规则得真在").toContain("var(--diff-line-add)");
+    const gutterDelete = ruleBlock(
+      css(),
+      ".panel-host.is-diff .cm-lineNumbers .cm-gutterElement.diff-gutter-delete",
+      undefined,
+      true,
+    );
+    expect(gutterDelete, "行号槽删除色规则得真在").toContain("var(--diff-line-del)");
+
+    // 回退列：每块一条竖线（上游 `.gutterItem .background`）+ 按钮悬停走 toolbarBackground。
+    const rule = ruleBlock(css(), ".diff-revert-line", undefined, true);
+    expect(rule, "逐块竖线规则得真在").toContain("height: 100%");
+    expect(rule, "颜色走 menu.separatorBackground 那颗 token").toContain("var(--diff-gutter-line)");
+    const item = ruleBlock(css(), ".diff-revert-item", undefined, true);
+    expect(item, "item 默认隐形").toContain("opacity: 0");
+    expect(css(), "悬停这一列时 item 现形").toContain(".diff-center:hover .diff-revert-item");
+    const hover = ruleBlock(css(), ".diff-revert:hover", undefined, true);
+    expect(hover, "按钮悬停 = toolbar.hoverBackground 叠在 itemBackground 上").toContain(
+      "var(--toolbar-hover-bg)",
+    );
     expect(
       css(),
       "行背景取上游 insertedLineBackground 的默认值（不是概览色带那颗 token）",
