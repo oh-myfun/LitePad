@@ -582,35 +582,12 @@ export function createDiffSurface(
     foldedFor(side).map(({ from, to }) => ({ from, to }));
 
   /**
-   * 把两栏行号槽的**实测宽度**写到各自的 `.cm-editor` 上（`--diff-gutter-w`）。
-   *
-   * 为什么要这一颗：VS Code 的 alignment view zone 会把 `marginDomNode` 一起染成
-   * `gutter-delete` / `gutter-insert`，而 CM6 的块级 widget 只能落在 `.cm-content` 里。
-   * 样式段拿这颗变量把占位块向左铺过行号槽（`diff.css` 的 `.diff-gap`），缺口那一行在
-   * 行号列里也铺着同一条中性斜纹（本项目的行号槽不承载差异色，见 `diff.css` 那段取舍）。
-   * 槽宽随行数位数变，所以每次重画都重新量一遍。
-   *
-   * 量不到（jsdom / 还没进文档）就写 0：`calc(100% + 0px)` 退化成原样，不会把块撑歪。
-   */
-  const syncGutterWidths = (): void => {
-    for (const side of SIDES) {
-      const view = viewOf(side);
-      if (!view) continue;
-      const gutter = view.dom.querySelector<HTMLElement>(".cm-gutters");
-      const w = gutter ? gutter.getBoundingClientRect().width : 0;
-      view.dom.style.setProperty("--diff-gutter-w", `${Math.round(w)}px`);
-    }
-  };
-
-  /**
    * 两栏一起点名：按现在的块表重画一次，并把「现在折着这些段」一起发进去。
    *
    * ⚠️ 两发必须在**同一次派发**里（`refreshDiff` 与 `setFoldedRanges`）：块表刚换、底色已经跟着
    * 新块走而折区还停在旧块上，那一帧画出来的就是错的那几行 —— 三处同刻跟上靠的是同一发事务。
    */
   const refreshArms = (): void => {
-    // 缺口块要铺过行号槽，槽宽先按实测写好，随后那一发装饰才量得对（见 syncGutterWidths）。
-    syncGutterWidths();
     // 先把缝按**此刻的行盒**重算一遍再派发：块表刚换（比如用户把删掉的行打回来了）时，
     // 还拿着上一轮的缝去画，就会在「块已经没了」的那一帧留下一条没人认领的空位 ——
     // 随后的 `scheduleAlign` 只保证下一帧收口，这一帧已经把旧缝画出去了。

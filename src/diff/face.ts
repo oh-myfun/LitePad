@@ -276,12 +276,11 @@ const faceSource = Facet.define<() => DiffFaceSource, () => DiffFaceSource>({
  * 只在「一文档行 = 一视觉行」时成立。VS Code 的 alignment view zone 存的是像素高度差
  * （`diffEditorViewZones.ts` 的 `originalHeightInPx` / `modifiedHeightInPx`），本实现同口径。
  *
- * ⚠️ 缺口行只有中性斜纹：VS Code 会把 alignment view zone 的 `marginDomNode` 一起染成
- * `gutter-delete` / `gutter-insert`（`diffEditorViewZones.ts`），而本项目的行号槽不承载
- * 差异色（取舍见 `diff.css`）。CM6 的块级 widget 只能落在 `.cm-content` 里、伸不进 gutter，
- * 样式段用 `--diff-gutter-w`（surface 按实测槽宽写的自定义属性）把这颗块向左铺过行号槽，
- * 行号槽那一段也铺同一条斜纹 —— 缺口行整行一个中性底，不是「左半差异色 + 右半斜纹」两截。
- * **槽宽由实测来、不在这里量**（widget 不认识 view 的布局）。
+ * ⚠️ 缺口行只有正文里的中性斜纹：VS Code 的 alignment view zone 在**侧排**模式下没有
+ * `marginDomNode`（`diffEditorViewZones.ts` 只在 inline 模式才给 `gutter-delete /
+ * gutter-insert` 的边注），斜纹本身也只是落在 view zone 的内容区里；行号槽那一列由
+ * margin 自己盖住，上游从不在那里铺纹。CM6 的块级 widget 是 `.cm-content` 的直接子元素，
+ * 天然只吃正文宽 —— 与上游同界，**不靠负偏移铺过 gutter**（那会把斜纹压到行号槽上）。
  */
 export class DiffGapWidget extends WidgetType {
   constructor(readonly height: number) {

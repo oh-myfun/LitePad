@@ -922,13 +922,8 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
     expect(s).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
     const tokens = new Set([...s.matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1]));
     // 分侧语义没有「修改行」⇒ 不该再有 `--diff-mod`；占位块的斜纹是外壳灰，走 `--fg-muted`。
-    // `--diff-gutter-w` 只是把占位块铺过行号槽的实测槽宽（槽本身不上色 ⇒ 没有第二颗配色变量）。
-    expect([...tokens].sort()).toEqual([
-      "--diff-add",
-      "--diff-del",
-      "--diff-gutter-w",
-      "--fg-muted",
-    ]);
+    // 斜纹只吃正文宽（照上游 alignment view zone），不再需要「铺过行号槽」的实测槽宽变量。
+    expect([...tokens].sort()).toEqual(["--diff-add", "--diff-del", "--fg-muted"]);
     expect(s, "不许再借 --warn / --danger（B458 续轮定死这两颗与明暗档无关）").not.toMatch(
       /--(warn|danger)\b/,
     );
@@ -1008,6 +1003,13 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
     expect(gap).not.toMatch(/(^|[\s;{])(margin|padding)(-top|-bottom)?\s*:/);
     expect(gap).not.toMatch(/\d*\.?\d+em\b/);
     expect(gap, "高度是 widget 写 inline 的，样式段不钉死它").not.toMatch(/height\s*:/);
+    // 几何照上游 alignment view zone：斜纹只在正文内容区（`.view-zones` 由 margin 盖住左侧），
+    // 不许再用负 `left` / `width: 100% + gutter` 的补丁铺到行号槽上。
+    expect(gap, "不越界到行号槽").not.toMatch(/(^|[\s;{])left\s*:/);
+    expect(gap, "宽度不叠加 gutter，吃满 `.cm-content` 即可").not.toMatch(/width\s*:/);
+    expect(srcOf("src/diff/surface.ts"), "铺槽那套实测变量一并清掉").not.toContain(
+      "--diff-gutter-w",
+    );
   });
 });
 
