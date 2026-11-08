@@ -19,8 +19,11 @@
 // `StateEffect.appendConfig`，并且把新 Compartment 一起并进去，好在拆旁路时精准摘掉这一臂。
 
 import { Compartment, EditorState, StateEffect, type Extension } from "@codemirror/state";
-import { EditorView, BlockType, lineNumbers } from "@codemirror/view";
+import { EditorView, BlockType } from "@codemirror/view";
 import { detectLanguage } from "../editor/language";
+import { gutterExtensions } from "../editor/editor";
+import { perfProfileForDoc, type PerfProfile } from "../editor/perf";
+import { isMdDoc } from "../doc-model";
 import { activePanelId, docs, isWrap, panels, tabs, type Panel } from "../core/app-state";
 import { landVisibleSideAtV } from "../sync-scroll/wire";
 import { DIFF_REFRESH_MS } from "./align";
@@ -211,9 +214,16 @@ function lineStartOf(view: EditorView, line: number): number {
  *
  * `wrap` 是这一栏的折行槽（B461 后续轮，见 `createDiffSurface` 的 `wrapOn`）：默认空扩展 =
  * 不折行。它与右栏那颗折行槽同步 reconfigure，两栏才可能同时折上。
+ *
+ * `perf` 与右栏**同一档**（右栏那颗 state 就是 `makeDiffInstance` 按 `perfProfileForDoc`
+ * 造的）：差异格两半要么一起有折叠箭头 / 语法高亮，要么一起没有。VS Code 里这从来不是问题
+ * （两半各是一颗真 `CodeEditorWidget`，`editor.folding` 默认 true，没有按体量裁剪那一说）；
+ * LitePad 的档位是主编辑器自己的降级策略，照搬到这里时两半必须同档，否则用户看到的就是
+ * 「左边有箭头、右边没有」——比两侧都没有更像 bug。
  */
 function leftState(
   spec: DiffSpec,
+  perf: PerfProfile,
   face: Extension,
   theme: Extension,
   wrap: Extension,
@@ -230,8 +240,12 @@ function leftState(
       EditorView.editable.of(false),
       EditorView.contentAttributes.of({ tabindex: "0" }),
       EditorState.transactionFilter.of((tr) => (tr.docChanged ? [] : tr)),
-      lineNumbers(),
-      ...(language ? [language] : []),
+      // 行号 + 折叠槽走与右栏**同一颗**工厂（`gutterExtensions`，M4 档位口径也在那里）：
+      // 行号是导航底线，折叠槽按 `perf.folding` 给。次序照 `EditorLayoutInfo` —— 折叠箭头
+      // 画在行号槽的右缘、`+`/`−` 记号（`linesDecorationsClassName`）再靠右；CM6 的 gutter
+      // 次序就是 DOM 次序，所以先行号、后折叠、face 里的记号槽排最后。
+      ...gutterExtensions(perf),
+      ...(perf.syntax && language ? [language] : []),
       theme,
       wrap,
       face,
@@ -324,6 +338,15 @@ export function createDiffSurface(
   hostEl.appendChild(overviewEl);
 
   const current = spec;
+  /**
+   * 左栏吃哪一档性能档案 —— **与右栏那颗 state 同一档**（`makeDiffInstance` 就是按
+   * `perfProfileForDoc(doc.sizeClass, isMdDoc(doc))` 造的右栏）。档位只由文档决定、不随
+   * 交互变，因此在挂上时算一次即可。
+   */
+  const leftPerf = (): PerfProfile => {
+    const doc = docs.get(current.docId);
+    return perfProfileForDoc(doc?.sizeClass ?? "normal", isMdDoc(doc ?? null));
+  };
   /** 左栏那一臂的槽（随 state 进去；`reassert` 补基线换 state 时重新带上，见 `leftState`）。 */
   const leftFace = new Compartment();
   /** 左栏主题的槽（R22 取现值 + R23-2 换主题时 `reconfigure` 换掉，不重建整颗 state）。 */
@@ -732,6 +755,7 @@ export function createDiffSurface(
     parent: originalEl,
     state: leftState(
       current,
+      leftPerf(),
       leftFace.of(leftArm()),
       themeSlot.of(lastTheme),
       leftWrap.of(wrapOn ? EditorView.lineWrapping : []),
@@ -1078,6 +1102,7 @@ export function createDiffSurface(
     left.setState(
       leftState(
         current,
+        leftPerf(),
         leftFace.of(leftArm()),
         themeSlot.of(lastTheme),
         leftWrap.of(wrapOn ? EditorView.lineWrapping : []),

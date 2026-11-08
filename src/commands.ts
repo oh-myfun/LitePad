@@ -7,7 +7,7 @@
 // 查找替换命令入口（openFindReplace）、视图批处理方法（withView / findStep / tabStateWriteBack）。
 // 零外部函数依赖（无 DI）——依赖 core/* + ui + tabs + find/findbar + prefs + shell/* + editor/*。
 
-import { isWrap, panels, settings, tabs, windowKind, type Tab } from "./core/app-state";
+import { isWrap, panels, settings, tabs, windowKind, type Panel, type Tab } from "./core/app-state";
 import { logger } from "./core/logger";
 import { redo, selectAll, undo } from "@codemirror/commands";
 import { activePanel, activeTab, docOf, instancesOfDoc } from "./core/panels";
@@ -149,6 +149,20 @@ function deleteSelection(): void {
 // ---------------------------------------------------------------- 折叠全部 / 展开全部
 
 /**
+ * 折叠命令真正作用的那颗 view。
+ *
+ * VS Code 把 folding 动作注册成 `registerEditorAction`（`folding.ts` 的
+ * `FoldAction`/`UnfoldAction`），作用对象是**拿到焦点的那颗编辑器**；差异编辑器的两半
+ * 各是一颗真 `CodeEditorWidget` ⇒ 焦点落在左栏时折的是左栏。这里照同一口径：左栏有焦点
+ * 就把命令交给它，否则仍是右栏（`Panel.view`）。左栏那份 state 不写回标签 —— 它是旁路的
+ * 只读镜像，写回会把右栏那份文档的快照换成对照稿。
+ */
+function foldTargetOf(panel: Panel, right: EditorView): EditorView {
+  const left = panel.diffSurface?.left;
+  return left && left.hasFocus ? left : right;
+}
+
+/**
  * 对活动实例与同文件的其他可见实例执行折叠/展开全部。
  * 折叠状态存在 EditorState 里但不随同源广播——这里对可见实例显式同步；
  * 离屏实例无法运行命令（@codemirror/language 未导出折叠状态字段），保持各自状态。
@@ -163,17 +177,22 @@ function foldOperation(all: boolean): void {
     if (all) foldAll(v);
     else unfoldAll(v);
   };
-  run(view);
-  tab.state = view.state;
-  for (const inst of instancesOfDoc(docOf(tab).tabId)) {
-    if (inst.tabId === tab.tabId) continue;
-    const p = panels.get(inst.panelId);
-    if (p?.view && p.viewTabId === inst.tabId) {
-      run(p.view.view);
-      inst.state = p.view.view.state;
+  const target = foldTargetOf(panel, view);
+  run(target);
+  // 左栏聚焦时只折/展左栏：VS Code 的编辑器动作不跨到差异格另一侧的编辑器，
+  // 也不广播给同文档的其它视口（与「一次只有一颗编辑器吃这条命令」同一口径）。
+  if (target === view) {
+    tab.state = view.state;
+    for (const inst of instancesOfDoc(docOf(tab).tabId)) {
+      if (inst.tabId === tab.tabId) continue;
+      const p = panels.get(inst.panelId);
+      if (p?.view && p.viewTabId === inst.tabId) {
+        run(p.view.view);
+        inst.state = p.view.view.state;
+      }
     }
   }
-  view.focus();
+  target.focus();
 }
 
 /**
@@ -186,10 +205,11 @@ function foldCodeOperation(fold: boolean): void {
   if (!panel || !view) return;
   const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
   if (!tab) return;
-  if (fold) foldCode(view);
-  else unfoldCode(view);
-  tab.state = view.state;
-  view.focus();
+  const target = foldTargetOf(panel, view);
+  if (fold) foldCode(target);
+  else unfoldCode(target);
+  if (target === view) tab.state = view.state;
+  target.focus();
 }
 
 // ---------------------------------------------------------------- 转到行

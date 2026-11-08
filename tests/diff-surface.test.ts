@@ -1418,3 +1418,19 @@ describe("B461 · 两栏各按自己的文件类型解析", () => {
     expect(leftLang, "两栏不共用同一颗 Language（各自 token 化）").not.toBe(rightLang);
   });
 });
+
+describe("B461 · 差异编辑器里的折叠槽", () => {
+  it("左栏也挂折叠槽，且排在行号槽之后（VS Code 的折叠箭头在行号右缘）", () => {
+    const hostEl = document.createElement("div");
+    hostEl.className = "panel-host";
+    document.body.appendChild(hostEl);
+    const panel = freshPanel();
+    const surface = createDiffSurface(hostEl, panel, spec());
+    const gutters = [...surface.left.dom.querySelectorAll(".cm-gutter")].map((g) => g.className);
+    const num = gutters.findIndex((c) => c.includes("cm-lineNumbers"));
+    const fold = gutters.findIndex((c) => c.includes("cm-foldGutter"));
+    expect(num, "行号槽还在").toBeGreaterThanOrEqual(0);
+    expect(fold, "折叠槽在（右栏早就有一份，左栏此前没有）").toBeGreaterThanOrEqual(0);
+    expect(fold, "折叠槽紧跟在行号槽之后").toBe(num + 1);
+  });
+});
