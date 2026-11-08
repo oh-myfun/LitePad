@@ -944,8 +944,10 @@ describe("B462 · 记号槽与右缘概览条样式", () => {
     const center = ruleBlock(css(), ".diff-center", undefined, true);
     expect(center, "VS Code 的 DEFAULT_DIFF_EDITOR_GUTTER_WIDTH = 35").toContain("flex: 0 0 35px");
     const revert = ruleBlock(css(), ".diff-revert", undefined, true);
-    expect(revert, "上游 gutterItem 的 34×20").toContain("width: 34px");
-    expect(revert).toContain("height: 20px");
+    // 上游可见的是 `.actions-container` 那颗按钮，不是 34×20 的定位容器：
+    // `.action-label` 在差异格里 padding: 1px 2px + 16px codicon ⇒ 20×18。
+    expect(revert, "按钮本身 20×18（gutterItem 34×20 只是容器）").toContain("width: 20px");
+    expect(revert).toContain("height: 18px");
     expect(revert, "上游 .actions-container 的 4px 圆角").toContain("border-radius: 4px");
 
     // 底色类会落到所有 gutter 上 ⇒ 只许行号槽与记号槽吃颜色，4px 差异列 / 折叠槽不许变色。

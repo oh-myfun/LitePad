@@ -1229,7 +1229,9 @@ export function createDiffSurface(
     const column = centerEl.getBoundingClientRect();
     if (column.height <= 0) return;
     const active = activeIndex();
-    const ITEM_H = 20;
+    // 与 `.diff-revert` 的 CSS 高度一致（VS Code `DiffEditorGutter` 那颗按钮：
+    // `.action-label` 的 1px 上下内边距 + 16px codicon = 18px）。
+    const ITEM_H = 18;
     for (let i = 0; i < stored.length; i++) {
       const b = stored[i];
       // 只取**行文本**的盒子（`textBlockOf` 的解）：这一行若紧贴着一条对齐缝，composite

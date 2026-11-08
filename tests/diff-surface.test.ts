@@ -1265,8 +1265,8 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
 
       const btn = panel.bodyEl!.querySelector<HTMLElement>(".diff-revert");
       expect(btn, "删除块在右栏有落点行，按钮该建出来").toBeTruthy();
-      // 落点行 top=60、行高 20 ⇒ 中心 = documentTop + 70；按钮高 20 ⇒ top = 中心 - 10。
-      const expected = right.documentTop + 60 + 20 / 2 - 20 / 2;
+      // 落点行 top=60、行高 20 ⇒ 中心 = documentTop + 70；按钮高 18 ⇒ top = 中心 - 9。
+      const expected = right.documentTop + 60 + 20 / 2 - 18 / 2;
       expect(btn!.style.top, "按钮位置吃的是实测行轴，不是行号 × 默认行高").toBe(`${expected}px`);
     } finally {
       spy.mockRestore();
@@ -1300,7 +1300,7 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
 
       const btn = panel.bodyEl!.querySelector<HTMLElement>(".diff-revert");
       expect(btn, "块内配对不影响回退按钮的落点").toBeTruthy();
-      const expected = right.documentTop + 60 + 20 / 2 - 20 / 2;
+      const expected = right.documentTop + 60 + 20 / 2 - 18 / 2;
       expect(btn!.style.top, "按钮落在配对窗口第一行的实测 top 上").toBe(`${expected}px`);
     } finally {
       spy.mockRestore();
