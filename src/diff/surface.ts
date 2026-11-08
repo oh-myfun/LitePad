@@ -19,10 +19,22 @@
 // `StateEffect.appendConfig`，并且把新 Compartment 一起并进去，好在拆旁路时精准摘掉这一臂。
 
 import { Compartment, EditorState, StateEffect, type Extension } from "@codemirror/state";
-import { EditorView, BlockType } from "@codemirror/view";
+import {
+  EditorView,
+  BlockType,
+  drawSelection,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+} from "@codemirror/view";
+import { highlightSelectionMatches } from "@codemirror/search";
 import { detectLanguage } from "../editor/language";
 import { gutterExtensions } from "../editor/editor";
-import { layoutOverview, overviewZones, paintOverview } from "../editor/overview";
+import {
+  layoutOverview,
+  overviewWordMatches,
+  overviewZones,
+  paintOverview,
+} from "../editor/overview";
 import { perfOfDiffInstance } from "../doc-model";
 import type { PerfProfile } from "../editor/perf";
 import { activePanelId, docs, isWrap, panels, tabs, type Panel } from "../core/app-state";
@@ -240,6 +252,15 @@ function leftState(
       EditorView.editable.of(false),
       EditorView.contentAttributes.of({ tabindex: "0" }),
       EditorState.transactionFilter.of((tr) => (tr.docChanged ? [] : tr)),
+      // 只读 ≠ 看不见：VS Code 的原稿栏是一颗完整的子编辑器，只关编辑；当前行、选区、
+      // 同词出现这三层高亮照编辑器选项生效（`diffEditorEditors.ts` 的
+      // `_adjustOptionsForSubEditor` 不动 `selectionHighlight` / `occurrencesHighlight`）。
+      // `drawSelection()` 是选区高亮的地基（右栏 `baseExtensions` 那一颗同源）：少了它，
+      // 选中只走浏览器原生高亮，`.cm-selectionBackground` 这套主题色全不生效。
+      drawSelection(),
+      ...(perf.activeLine ? [highlightActiveLineGutter(), highlightActiveLine()] : []),
+      // 同词出现的正文层与概览标尺同闸（右栏 `editor.ts` 同一对）：正文不亮时右缘也不许亮。
+      ...(perf.selectionMatches ? [highlightSelectionMatches(), overviewWordMatches.of(true)] : []),
       // 行号走与右栏**同一颗**工厂（`gutterExtensions`）—— `perf` 已由 `perfOfDiffInstance`
       // 把折叠关掉，所以这里只会给出行号槽，与上游差异子编辑器的 folding = false 同口径。
       ...gutterExtensions(perf),

@@ -1171,6 +1171,25 @@ describe("B461 · B 档左栏继承只读锁（Task 6 Step 6）", () => {
     expect(s.left.contentDOM.getAttribute("tabindex"), "点得进焦点才选得了字").toBe("0");
     s.dispose();
   });
+
+  it("B461 · 左栏只读，但当前行 / 选区 / 同词出现三层高亮都在（照 VS Code 的原稿栏）", async () => {
+    const { panel } = mountDiffPair(
+      "const foo = 1;\nconst bar = 2;\nconst foo = 3;",
+      "const foo = 1;\nconst bar = 2;\nconst foo = 4;",
+    );
+    const left = diffSurfaceOf(panel)!.left;
+    // 选中第 1 行的 foo：选区落在 6..9
+    left.dispatch({ selection: { anchor: 6, head: 9 } });
+    await frames();
+    expect(left.dom.querySelector(".cm-activeLine"), "当前行高亮").toBeTruthy();
+    // 选区矩形由 `drawSelection` 的 selectionLayer 画（jsdom 无量度 ⇒ 断图层本身在，
+    // 不断 `.cm-selectionBackground` 的几何）
+    expect(left.dom.querySelector(".cm-selectionLayer"), "选区高亮层").toBeTruthy();
+    // 第 3 行那颗 foo 是同词出现（`highlightSelectionMatches` 的 cm-selectionMatch）
+    expect(left.dom.querySelector(".cm-selectionMatch"), "同词出现高亮").toBeTruthy();
+    // 三层高亮都不改只读：文档仍是一字不动
+    expect(left.state.doc.toString()).toBe("const foo = 1;\nconst bar = 2;\nconst foo = 3;");
+  });
 });
 
 /** 让一帧落地（CM6 的 measure 与 surface 的派发都排在 rAF 上）。 */
