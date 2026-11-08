@@ -889,9 +889,14 @@ export class DiffFoldWidget extends WidgetType {
     return el;
   }
 
-  /** 折条吃点击/拖拽，但**不吃光标**：点到它不该把插入符搬进被折起来的那几行里。 */
-  ignoreEvent(event: Event): boolean {
-    return event.type !== "click" && event.type !== "mousedown" && event.type !== "dblclick";
+  /**
+   * 编辑器**别碰**折条上的任何事件（`WidgetType.ignoreEvent` 返回 true = 编辑器忽略）：
+   * 点它不该把插入符搬进被折起来的那几行里（搬进去会被「光标落进折区就展开」那条守卫
+   * 当成用户要去那一行，于是整段被展开），也不该起选区拖拽。揭示/拖拽都由本 widget 自己的
+   * DOM 监听处理，与编辑器的派发无关。
+   */
+  ignoreEvent(): boolean {
+    return true;
   }
 }
 

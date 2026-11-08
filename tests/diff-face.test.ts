@@ -1540,6 +1540,17 @@ describe("B461 · 折叠未改动区（Task 7：默认不折 + 三颗动作）",
     expect(rangesOf(s)[0], "2 行 × 20px ⇒ 起点 25 + 2").toEqual({ from: 27, to: 118 });
   });
 
+  it("B461 · 点折条本体不动插入符、也不展开（编辑器不碰折条上的事件）", () => {
+    const s = mountedSurfaceWithThreeBlocks();
+    s.collapseAllUnchanged();
+    const before = caretLineOf(s.left);
+    const bar = foldBarOf(s, 0);
+    bar.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    bar.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(caretLineOf(s.left), "插入符留在原处").toBe(before);
+    expect(rangesOf(s), "单击中间不是揭示操作").toHaveLength(2);
+  });
+
   it("B461 · 折条文案「N 行未改动」，N = 这一段此刻被折起来的行数", () => {
     const { surface: s, right } = mountSurfacePair({ left: THREE_LEFT, right: THREE_RIGHT });
     s.collapseAllUnchanged();
