@@ -46,10 +46,14 @@ export interface SideMark {
  * 打开自动换行之后一个文档行会折成多个视觉行，两栏哪怕行数相等，视觉高度也不等。
  * 上游的 `diffEditorViewZones.ts` 正是把两侧区间按 `lineHeight × 行数 + 折行额外高度`
  * 折算成像素再补差值 —— 这里沿用同一口径，行数只在「缝落在哪一行之后」这一件事上还用到。
+ *
+ * `lines` = 这条缝里有多少行是**对侧真的缺行**（不是折行高度差）：
+ * 记号槽要按它逐行补 `+` / `−`（见 `DiffGapSignMarker`），折行差那几笔是 0。
  */
 export interface GapZone {
   afterLine: number;
   height: number;
+  lines: number;
 }
 
 /** 某一栏第 `line` 行的实测高度（1-based；已含该行折出来的所有视觉行）。 */
@@ -131,6 +135,7 @@ export function gapZones(
           "original",
           heightOf,
         ),
+        p.originalBefore,
       );
     } else if (p.modifiedBefore > 0) {
       pushGap(
@@ -141,6 +146,7 @@ export function gapZones(
           "modified",
           heightOf,
         ),
+        p.modifiedBefore,
       );
     }
     // 窗口内：每一对逐行比高（折行让同一对的两行视觉高度不等，就在矮的一侧补差）。
@@ -157,12 +163,14 @@ export function gapZones(
         out.modified,
         p.modifiedStart + p.count - 1,
         rangeHeight({ start: p.originalStart + p.count, end: b.originalEnd }, "original", heightOf),
+        p.originalAfter,
       );
     } else if (p.modifiedAfter > 0) {
       pushGap(
         out.original,
         p.originalStart + p.count - 1,
         rangeHeight({ start: p.modifiedStart + p.count, end: b.modifiedEnd }, "modified", heightOf),
+        p.modifiedAfter,
       );
     }
 
@@ -184,12 +192,14 @@ function rangeHeight(
   return sum;
 }
 
-/** 缝按 `afterLine` 合并（同一落点的两笔高度相加，别让 DOM 里挤出两颗同位置的块）。 */
-function pushGap(list: GapZone[], afterLine: number, height: number): void {
+/** 缝按 `afterLine` 合并（同一落点的两笔高度/行数相加，别让 DOM 里挤出两颗同位置的块）。 */
+function pushGap(list: GapZone[], afterLine: number, height: number, lines = 0): void {
   if (!(height > 0)) return;
   const last = list[list.length - 1];
-  if (last && last.afterLine === afterLine) last.height += height;
-  else list.push({ afterLine, height });
+  if (last && last.afterLine === afterLine) {
+    last.height += height;
+    last.lines += lines;
+  } else list.push({ afterLine, height, lines });
 }
 
 /**
@@ -279,22 +289,26 @@ const faceSource = Facet.define<() => DiffFaceSource, () => DiffFaceSource>({
  * margin 自己盖住，上游从不在那里铺纹。CM6 的块级 widget 是 `.cm-content` 的直接子元素，
  * 天然只吃正文宽 —— 与上游同界，**不靠负偏移铺过 gutter**（那会把斜纹压到行号槽上）。
  *
- * ⚠️ 记号是**按产品口径补的**，上游侧排模式对 alignment view zone 不画 `+` / `−`（它没有
- * 行号槽边注，也没有 `linesDecorationsClassName`）。缺口行不是文档行，CM6 的 gutter 里
- * 没有它的一格 ⇒ 记号只能由 widget 自己摆：粘在块左缘，形状/字号/透明度复用行号槽那一颗
- * `.diff-sign`（不另造一套）。
+ * 记号不在这个 widget 里画：缺口行不是文档行，CM6 的 gutter 里没有它的一格，而把它摆进
+ * 内容区左缘（原先那条路）就会跟着正文横向滚走、也不在行号槽那一列上。CM6 的 gutter 对
+ * **块 widget** 有专门的一格（`widgetMarker`，高度 = 块高），缺口记号因此由
+ * `DiffGapSignMarker` 逐行补进记号槽 —— 与真行记号同一个 x，数量 = 缺行数。
  */
 export class DiffGapWidget extends WidgetType {
   constructor(
     readonly height: number,
     readonly kind: "insert" | "delete",
+    readonly lines: number,
   ) {
     super();
   }
 
   eq(other: WidgetType): boolean {
     return (
-      other instanceof DiffGapWidget && other.height === this.height && other.kind === this.kind
+      other instanceof DiffGapWidget &&
+      other.height === this.height &&
+      other.kind === this.kind &&
+      other.lines === this.lines
     );
   }
 
@@ -302,13 +316,51 @@ export class DiffGapWidget extends WidgetType {
     const el = document.createElement("div");
     el.className = "diff-gap";
     el.style.height = `${this.height}px`;
-    el.appendChild(signIcon(this.kind));
     return el;
   }
 
   /** 占位块不吃点击也不吃光标：那里没有真行，选它与选相邻那行是两件事。 */
   ignoreEvent(): boolean {
     return true;
+  }
+}
+
+/**
+ * 缺口行在记号槽里的那些 `+` / `−`：一颗 marker 管一整段缺行，DOM 里是 `lines` 行。
+ *
+ * 为什么能落进 gutter：CM6 的 gutter 会给每个块 widget 单独一格（`GutterConfig.widgetMarker`，
+ * 高度 / 顶边直接取块几何），所以这一格的竖向范围与正文里那段斜纹完全重合。行数按缺行数
+ * 均分那一格，于是每一行都有一颗记号、x 与真行记号一致；`lines === 0`（纯折行高度差）不出。
+ */
+class DiffGapSignMarker extends GutterMarker {
+  constructor(
+    readonly kind: "insert" | "delete",
+    readonly lines: number,
+  ) {
+    super();
+  }
+
+  eq(other: GutterMarker): boolean {
+    return (
+      other instanceof DiffGapSignMarker && other.kind === this.kind && other.lines === this.lines
+    );
+  }
+
+  toDOM(): HTMLElement {
+    const wrap = document.createElement("div");
+    wrap.className = "diff-gap-signs";
+    wrap.setAttribute("aria-hidden", "true");
+    for (let i = 0; i < this.lines; i++) {
+      const row = document.createElement("span");
+      row.className = "diff-gap-sign-row";
+      row.appendChild(signIcon(this.kind));
+      wrap.appendChild(row);
+    }
+    return wrap;
+  }
+
+  toString(): string {
+    return `gap-sign-${this.kind}-${this.lines}`;
   }
 }
 
@@ -339,7 +391,11 @@ function buildFace(
     if (!(gap.height > 0)) continue;
     const after = Math.min(Math.max(gap.afterLine, 0), doc.lines);
     // 缺口落在哪一栏，记号就跟哪一栏的分侧语义走：原稿栏缺行 ⇒ `−`，新稿栏缺行 ⇒ `+`。
-    const widget = new DiffGapWidget(gap.height, side === "original" ? "delete" : "insert");
+    const widget = new DiffGapWidget(
+      gap.height,
+      side === "original" ? "delete" : "insert",
+      gap.lines,
+    );
     // 块 widget 要落在线界上：`after` 行之后 ⇒ 挂在该行行尾（side > 0 = 那一行之后）；
     // 第 0 行之后（正文开头就缺行）⇒ 挂在第 1 行行首（side < 0 = 那一行之前）。
     ranges.push(
@@ -539,6 +595,12 @@ export function diffFace(side: DiffSide, source: () => DiffFaceSource): Extensio
     gutter({
       class: "cm-diffSigns",
       markers: (view) => view.state.field(diffFaceField, false)?.signs ?? RangeSet.empty,
+      // 缺口行没有文档行 ⇒ 常规 `markers` 里排不进它的一格；CM6 对块 widget 另有
+      // `widgetMarker`（格子高度/顶边取块几何），缺口记号因此与斜纹同高、同列。
+      widgetMarker: (_view, widget) =>
+        widget instanceof DiffGapWidget && widget.lines > 0
+          ? new DiffGapSignMarker(widget.kind, widget.lines)
+          : null,
     }),
   ];
 }

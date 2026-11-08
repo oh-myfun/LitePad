@@ -391,14 +391,21 @@
   background-image: none;
 }
 
-/* 占位行不是文档行，CM6 的 gutter 里没有它的一格 ⇒ 记号由 widget 摆在自己左缘（产品口径；
-   上游侧排模式对 alignment view zone 不画记号）。形状 / 字号 / 透明度复用行号槽那颗
-   `.diff-sign`，这里只补落位。 */
-.diff-gap .diff-sign {
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
+/* 缺口行不是文档行，但 CM6 的 gutter 会给每个块 widget 单独一格（`widgetMarker`）：
+   那一格的高度 / 顶边直接取块的几何 ⇒ 记号与正文里那段斜纹同高、也落在与真行记号
+   同一个 x 上。行数按缺行数均分（`flex: 1 1 0`），每一行一颗 `+` / `−`。 */
+.panel-host.is-diff .cm-diffSigns .diff-gap-signs {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.panel-host.is-diff .cm-diffSigns .diff-gap-sign-row {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
 }
 
 /* ---------- Task 7 · 折叠未改动区：折条替掉被折起来的那几行 ---------- */
