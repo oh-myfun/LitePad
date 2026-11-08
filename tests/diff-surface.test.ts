@@ -181,6 +181,47 @@ describe("B461 · 差异标签的落点（Task 1）", () => {
     expect(hostEl.querySelector(".diff-original")).toBeNull();
   });
 
+  it("B461 · 分割线按指针位移一比一改宽（两支像素 basis，中间回退列不算进去）", () => {
+    const { panel } = mountDiffPair("A\nB", "A\nC");
+    const host = panel.bodyEl!;
+    const left = host.querySelector<HTMLElement>(".diff-original")!;
+    const right = host.querySelector<HTMLElement>(".panel-editor")!;
+    const sash = host.querySelector<HTMLElement>(".diff-sash")!;
+    const rect = (width: number): DOMRect =>
+      ({
+        top: 0,
+        bottom: 10,
+        height: 10,
+        left: 0,
+        right: width,
+        width,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    let leftW = 400;
+    let rightW = 400;
+    left.getBoundingClientRect = () => rect(leftW);
+    right.getBoundingClientRect = () => rect(rightW);
+    sash.dispatchEvent(
+      new MouseEvent("pointerdown", { clientX: 400, button: 0, buttons: 1, bubbles: true }),
+    );
+    window.dispatchEvent(new MouseEvent("pointermove", { clientX: 450, buttons: 1 }));
+    // 指针走 50px ⇒ 左栏宽 450px；旧口径（share 百分比 + flex-grow 对半分）只走 25px。
+    expect(left.style.flexBasis).toBe("450px");
+    expect(right.style.flexBasis).toBe("350px");
+    // 布局跟上之后再拖一轮：新一轮从实测 450 起算，指针走得动多少、宽度就变多少。
+    leftW = 450;
+    rightW = 350;
+    sash.dispatchEvent(
+      new MouseEvent("pointerdown", { clientX: 400, button: 0, buttons: 1, bubbles: true }),
+    );
+    window.dispatchEvent(new MouseEvent("pointermove", { clientX: 450, buttons: 1 }));
+    expect(left.style.flexBasis).toBe("500px");
+    expect(right.style.flexBasis).toBe("300px");
+    window.dispatchEvent(new MouseEvent("pointerup", { buttons: 0 }));
+  });
+
   it("B461 · 拆面板/换标签必须 dispose 左栏那颗 view，不留孤儿 DOM 也不留 surface", () => {
     const hostEl = document.createElement("div");
     hostEl.className = "panel-host";

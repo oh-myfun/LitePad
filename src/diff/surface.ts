@@ -160,10 +160,6 @@ export interface DiffSurface {
 const MIN_SHARE = 15;
 const MAX_SHARE = 85;
 
-function clampShare(share: number): number {
-  return Math.min(MAX_SHARE, Math.max(MIN_SHARE, share));
-}
-
 /**
  * 落位的那一行（1-based）：非空段落落自己那段的起始行；**空段**（`start > end`，
  * 即这一侧根本没有真行）落「块前缘那行的行首」= `end + 1`（设计稿 ⑥·面板，与
@@ -275,31 +271,46 @@ function leftState(
 /**
  * 挂起这一格之内的分割线（不复用 splitview 那套 sash：那一套管面板树，这一根只管一栏之内）。
  * 宽度不落设置 —— 本轮「记住宽度」不是需求。
+ *
+ * ⚠️ 按**像素位移**换算，不写百分比（旧实现写 `flexBasis = share%`，而两栏都是
+ * `flex: 1 1 50%`：百分比 basis 之外剩下的自由空间还会被 `flex-grow` 对半分，于是
+ * 指针走 1px、分割线只走 0.5px —— 既跟不上手，也让「按一次拖到哪儿」对不上指针）。
+ * 现在两侧各写一支像素 basis 且**和等于正文宽**，自由空间为 0 ⇒ 指针位移 1:1 落到宽度。
+ * 每轮都从实测宽度重新起算 ⇒ 反复拖不累积漂移；窗口尺寸变了以后下一次拖动照样准确。
+ *
+ * 中间那 35px 回退列与右缘 30px 概览**不参与**：正文宽取两栏实测宽度之和，不拿整格宽度
+ * 按比例折算（旧口径的第二个偏差来源）。
  * @returns 解除 `pointerdown` 绑定的动作（dispose 时调用）
  */
 function attachSashDrag(
-  hostEl: HTMLElement,
   originalEl: HTMLElement,
+  modifiedEl: HTMLElement | null,
   sashEl: HTMLElement,
 ): () => void {
   const onDown = (event: PointerEvent) => {
-    // 量的是**整格**的宽度：sash 现在住在 35px 的 `.diff-center` 里，父元素不再是那一格。
     // 量不到宽度（隐藏格 / jsdom 里 `getBoundingClientRect` 恒 0）就这一下不动手：
-    // 拿 0 当基准会把 flex-basis 写成 NaN%，那一格从此不受控。
-    const total = hostEl.getBoundingClientRect().width;
-    if (total <= 0) return;
+    // 拿 0 当基准会把 flex-basis 写成 NaN px，那一格从此不受控。
+    const left = originalEl.getBoundingClientRect().width;
+    const right = modifiedEl?.getBoundingClientRect().width ?? 0;
+    const content = left + right;
+    if (!(content > 0) || !(left > 0)) return;
     const startX = event.clientX;
-    const startShare = (originalEl.getBoundingClientRect().width / total) * 100;
+    const min = (MIN_SHARE / 100) * content;
+    const max = (MAX_SHARE / 100) * content;
     const onMove = (move: PointerEvent) => {
-      const share = clampShare(startShare + ((move.clientX - startX) / total) * 100);
-      originalEl.style.flexBasis = `${share}%`;
+      const next = Math.min(max, Math.max(min, left + (move.clientX - startX)));
+      // 两支 basis 之和恒等于正文宽 ⇒ 自由空间为 0，`flex-grow` 不再改写结果。
+      originalEl.style.flexBasis = `${next}px`;
+      if (modifiedEl) modifiedEl.style.flexBasis = `${content - next}px`;
     };
     const onUp = () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
     event.preventDefault();
   };
   sashEl.addEventListener("pointerdown", onDown);
@@ -478,7 +489,15 @@ export function createDiffSurface(
    * 就重新量一次；折行/字号/窗口尺寸变了同理，见 `scheduleAlign`。
    */
   let gapPlans: Record<DiffSide, GapZone[]> = { original: [], modified: [] };
-  const detachSash = attachSashDrag(hostEl, originalEl, sashEl);
+  // 右栏 = 面板自己那颗 `.panel-editor`（host 的直接子项，排在回退列之后）：分割线要同时写
+  // 两支像素 basis，才能让自由空间归零、指针位移 1:1 落到宽度上。
+  const detachSash = attachSashDrag(
+    originalEl,
+    Array.from(hostEl.children).find(
+      (el): el is HTMLElement => el instanceof HTMLElement && el.classList.contains("panel-editor"),
+    ) ?? null,
+    sashEl,
+  );
 
   /** 右栏那颗 view 的 state 回写进标签快照（与 `handleUpdate` / `lifecycle` 同一个寻址）。 */
   const writeBackRight = (): void => {
