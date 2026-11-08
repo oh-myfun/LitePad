@@ -1150,6 +1150,18 @@ describe("B462 · 记号槽与右缘概览条样式", () => {
     expect(css(), "右栏原生纵向滚动条收成 0 宽，概览条就是那一根").toContain(
       ".panel-host.is-diff .panel-editor .cm-scroller::-webkit-scrollbar",
     );
+    // 左栏只藏**纵向**：滚动能力（滚轮 / 键盘 / 同步）不受 width: 0 影响；
+    // 不能把整条 scrollbar 收掉，否则长行的横向滚动也没了。
+    const leftVScroll = ruleBlock(
+      css(),
+      ".panel-host.is-diff .diff-original .cm-scroller::-webkit-scrollbar:vertical",
+      undefined,
+      true,
+    );
+    expect(leftVScroll, "左栏纵向滚动条收成 0 宽").toMatch(/width:\s*0/);
+    expect(css(), "左栏横向滚动条保留（整条 scrollbar 不许收）").not.toMatch(
+      /\.panel-host\.is-diff \.diff-original \.cm-scroller::-webkit-scrollbar\s*\{/,
+    );
   });
 
   it("B462 · 中间指示带与块头横条已整段清除（VS Code 没有这两层）", () => {

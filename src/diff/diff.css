@@ -96,6 +96,15 @@
   overflow: auto;
 }
 
+/* 左栏不露自己的纵向滚动条（产品口径）：两栏恒同步（`surface.ts` 的 `mirrorScroll`），
+   右缘 `.diff-overview` 的视口滑块就是这一格唯一的纵向滚动条；左栏再挂一根会与它重复
+   （同一段内容同一时刻两条滑块，拖动却只有一条真在改）。
+   只藏**纵向**：`::-webkit-scrollbar:vertical` 的 `width: 0` 不影响滚轮、键盘与程序化滚动，
+   长行仍可横向滚动；把整条 `::-webkit-scrollbar` 收掉会连横向一起抹掉。 */
+.panel-host.is-diff .diff-original .cm-scroller::-webkit-scrollbar:vertical {
+  width: 0;
+}
+
 /* 中间列 = VS Code 的 `DiffEditorGutter`（`DEFAULT_DIFF_EDITOR_GUTTER_WIDTH = 35`）：
    每个差异块一颗「回退」按钮，分割线也从这一列里走。尺寸照上游：
      · item 34×20、圆角 4px（`gutterFeature.ts` 的 `width: 34, height: 20` + style.css 的
