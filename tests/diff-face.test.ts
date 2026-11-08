@@ -8,7 +8,7 @@
 //   1) 纯函数 `sideLineMarks` / `sideGaps`：一块（`DiffBlock`）在**某一栏**落在哪些行、
 //      要在第几行之后补几行空位。它们只遍历 `blocks.ts` 交出来的块 ⇒ 与 4px 标注同源，
 //      这一层不看 DOM、不看 view，向量直接钉死。
-//   2) 装到 view 上的那一臂（`diffFace`）：行装饰 + 块 widget + 行号槽底色与记号。
+//   2) 装到 view 上的那一臂（`diffFace`）：行装饰 + 块 widget + 记号（行号槽不上色）。
 //   3) 样式段（`src/diff/diff.css`）：差异色只吃 `--diff-add` / `--diff-del`
 //      （VS Code 的分侧语义没有「修改行」），这一段里一个裸十六进制都不许出现。
 //
@@ -322,8 +322,8 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
     expect(gapEls()).toHaveLength(1);
     expect(
       gapEls()[0].getAttribute("class"),
-      "占位块 = 中性斜纹 + 本侧方向类（行号槽色条用）",
-    ).toBe("diff-gap diff-gap-insert");
+      "占位块 = 中性斜纹（不再带分侧类：行号槽不承载差异色）",
+    ).toBe("diff-gap");
     expect(rowOrder(view), "空位是插在 A 与 Z 之间的那一整块").toEqual(["line", "gap", "line"]);
     // ⚠️ 简报这条写的是 `getBoundingClientRect().height > 0`，在 jsdom 里**不可能**绿
     // （无布局引擎 ⇒ 量出来恒为 0）。这一层的真主张是「占位块按行数 × 行高写了多高」⇒
@@ -340,18 +340,16 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
     );
   });
 
-  it("B462 · 左栏删行涂真行底色 + 行号槽底色 + Codicon `−` 记号（照 VS Code，不再有中线指示带）", () => {
+  it("B462 · 左栏删行涂真行底色 + Codicon `−` 记号（行号槽不上色，不再有中线指示带）", () => {
     const { view, lineEl, gapEls } = mountFace("original", del);
     expect(gapEls(), "删掉的行在左栏是**真行** ⇒ 这一侧不补位").toHaveLength(0);
     expect(lineEl(1).className).not.toContain("diff-line");
     expect(lineEl(2).className).toContain("diff-line-delete");
     expect(lineEl(3).className).toContain("diff-line-delete");
     expect(lineEl(2).className, "VS Code 没有块头横条这一层").not.toContain("diff-edge-top");
-    // 行号槽：VS Code 的 marginClassName（gutter-delete）+ delete-sign（Codicon.remove）。
-    expect(
-      view.dom.querySelectorAll(".cm-diffSigns .cm-gutterElement.diff-gutter-delete"),
-      "两行删除行各有一格带底色类",
-    ).toHaveLength(2);
+    // 行号槽不承载差异底色（产品口径）：上游的 `marginClassName: gutter-delete` 这一臂不再
+    // 复刻（取舍见 `diff.css` 那段注释）⇒ gutter 元素上连类名都没有，没有任何可上色的格子。
+    expect(view.dom.querySelectorAll(".cm-gutterElement.diff-gutter-delete")).toHaveLength(0);
     const signs = [...view.dom.querySelectorAll<HTMLElement>(".cm-diffSigns .diff-sign")];
     expect(
       signs.map((s) => [s.tagName, s.classList.contains("codicon-remove")]),
@@ -729,21 +727,22 @@ describe("B462 · 右缘差异概览（VS Code 的 diffOverview）", () => {
     expect(marksOf(host, "modified")).toHaveLength(1);
   });
 
-  it("B462 · 右栏行号槽也吃到同一份 gutter 底色类（左右各按自己那一侧）", () => {
+  it("B462 · 行号槽不带差异底色类：色带只留在代码行（行号与记号保持）", () => {
     const { left, right } = mountSurfacePair();
+    // 上游的 `marginClassName: gutter-insert / gutter-delete` 会染行号槽；本项目按产品口径
+    // 不复刻（见 `diff.css` 那段注释）⇒ gutter 元素上不该再有 `diff-gutter-*` 这类可上色的类。
+    expect(left.dom.querySelectorAll(".cm-gutterElement[class*='diff-gutter-']")).toHaveLength(0);
+    expect(right.dom.querySelectorAll(".cm-gutterElement[class*='diff-gutter-']")).toHaveLength(0);
     expect(
-      left.dom.querySelectorAll(".cm-lineNumbers .cm-gutterElement.diff-gutter-delete"),
-    ).toHaveLength(2);
-    expect(
-      right.dom.querySelectorAll(".cm-lineNumbers .cm-gutterElement.diff-gutter-insert"),
-      "右栏这一侧没有真行 ⇒ 没有新增色格",
-    ).toHaveLength(0);
+      left.dom.querySelectorAll(".cm-line.diff-line-delete").length,
+      "正文色带照旧（左栏两行删除）",
+    ).toBeGreaterThan(0);
   });
 
-  it("B462 · 右栏 4px 差异列也带底色类（行号与记号之间不留断口）", () => {
+  it("B462 · 4px 差异列照旧占位（列宽不变），但三列 gutter 都不带差异底色类", () => {
     // 生产路径（makeDiffInstance / makeTabState）的 gutter 次序是
     // 行号 24.4px → cm-diffGutter 4px（gutterDiff 空列）→ 记号 11px → 正文。
-    // 旧 CSS 只点名行号与记号两列 ⇒ 中间那 4px 透出 .cm-gutters 自己的底色，色带断开。
+    // 折叠槽关掉之后这几列的宽度也不该变（列宽与有没有标记无关），变的只有「谁上色」。
     const { right } = mountSurfacePair({ left: "A\nZ", right: "A\n增1\nZ" });
     expect(
       right.dom.querySelectorAll(".cm-gutter.cm-diffGutter"),
@@ -751,10 +750,14 @@ describe("B462 · 右缘差异概览（VS Code 的 diffOverview）", () => {
     ).toHaveLength(1);
     for (const gutter of [".cm-lineNumbers", ".cm-diffGutter", ".cm-diffSigns"]) {
       expect(
-        right.dom.querySelector(`${gutter} .cm-gutterElement.diff-gutter-insert`),
-        `${gutter} 这一列也得带同一个底色类`,
-      ).not.toBeNull();
+        right.dom.querySelector(`${gutter} .cm-gutterElement[class*='diff-gutter-']`),
+        `${gutter} 这一列不承载行底色类`,
+      ).toBeNull();
     }
+    expect(
+      right.dom.querySelectorAll(".cm-line.diff-line-insert"),
+      "色带只留在代码行",
+    ).toHaveLength(1);
   });
 });
 
@@ -916,13 +919,10 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
     expect(s).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
     const tokens = new Set([...s.matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1]));
     // 分侧语义没有「修改行」⇒ 不该再有 `--diff-mod`；占位块的斜纹是外壳灰，走 `--fg-muted`。
-    // `--diff-gap-gutter` 只是把「该侧差异色」带到行号槽那一段的载体（叠 `--bg` 合成不透明），
-    // `--diff-gutter-w` 是实测槽宽。
+    // `--diff-gutter-w` 只是把占位块铺过行号槽的实测槽宽（槽本身不上色 ⇒ 没有第二颗配色变量）。
     expect([...tokens].sort()).toEqual([
-      "--bg",
       "--diff-add",
       "--diff-del",
-      "--diff-gap-gutter",
       "--diff-gutter-w",
       "--fg-muted",
     ]);
@@ -1103,21 +1103,10 @@ describe("B462 · 记号槽与右缘概览条样式", () => {
     expect(revert).toContain("height: 18px");
     expect(revert, "上游 .actions-container 的 4px 圆角").toContain("border-radius: 4px");
 
-    // 底色类会落到所有 gutter 上 ⇒ 按类铺满：右栏还多一条 4px 的 `cm-diffGutter`
-    // （`makeDiffInstance` 的 `gutterDiff()` 无基线 ⇒ 空列但恒占位），点名某几列就会在
-    // 行号槽与记号槽之间留下一条 4px 的底色断口。判据钉「不点名」这个口径本身。
-    const gutter = ruleBlock(
-      css(),
-      ".panel-host.is-diff .cm-gutterElement.diff-gutter-insert",
-      undefined,
-      true,
-    );
-    expect(gutter).toContain("color-mix(in srgb, var(--diff-add) 18%, transparent)");
-    expect(
-      css(),
-      "4px 差异列不许再被排除在外（旧写法点名 .cm-lineNumbers 与 .cm-diffSigns 两列）",
-    ).not.toContain(".cm-lineNumbers .cm-gutterElement.diff-gutter-insert");
-    expect(css(), "行背景与槽底色必须是同一颗 token、同一档 18%（同一颜色来源）").toContain(
+    // 行号槽不承载差异底色（产品口径；上游 `marginClassName` 会给，见 `diff.css` 那段注释）：
+    // 样式段里不许再有 `.diff-gutter-*` 这类给槽上色的规则 —— 有就说明那条口径被悄悄改回去了。
+    expect(css(), "行号槽不上色：不许有 .diff-gutter-* 规则").not.toContain(".diff-gutter-");
+    expect(css(), "行背景与主体色带必须是同一颗 token、同一档 18%（同一颜色来源）").toContain(
       "var(--diff-add) 18%",
     );
   });

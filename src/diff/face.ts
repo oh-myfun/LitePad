@@ -276,30 +276,25 @@ const faceSource = Facet.define<() => DiffFaceSource, () => DiffFaceSource>({
  * 只在「一文档行 = 一视觉行」时成立。VS Code 的 alignment view zone 存的是像素高度差
  * （`diffEditorViewZones.ts` 的 `originalHeightInPx` / `modifiedHeightInPx`），本实现同口径。
  *
- * ⚠️ 缺口行**只有中性斜纹、行号槽没有对应色条**：VS Code 的 alignment view zone 会连
- * `marginDomNode` 一起染上 `gutter-delete` / `gutter-insert`，而 CM6 的块级 widget 只能
- * 落在 `.cm-content` 里、伸不进 gutter。样式段用 `--diff-gutter-w`（surface 按实测槽宽写的
- * 自定义属性）把这颗块向左铺过行号槽：左半段填该侧的差异色（VS Code `gutter-*` 的同一档），
- * 右半段仍是中性斜纹。**槽宽由实测来、不在这里量**（widget 不认识 view 的布局）。
+ * ⚠️ 缺口行只有中性斜纹：VS Code 会把 alignment view zone 的 `marginDomNode` 一起染成
+ * `gutter-delete` / `gutter-insert`（`diffEditorViewZones.ts`），而本项目的行号槽不承载
+ * 差异色（取舍见 `diff.css`）。CM6 的块级 widget 只能落在 `.cm-content` 里、伸不进 gutter，
+ * 样式段用 `--diff-gutter-w`（surface 按实测槽宽写的自定义属性）把这颗块向左铺过行号槽，
+ * 行号槽那一段也铺同一条斜纹 —— 缺口行整行一个中性底，不是「左半差异色 + 右半斜纹」两截。
+ * **槽宽由实测来、不在这里量**（widget 不认识 view 的布局）。
  */
 export class DiffGapWidget extends WidgetType {
-  constructor(
-    readonly height: number,
-    /** 缺的是哪一栏的行：原稿侧缺 ⇒ `delete`、新稿侧缺 ⇒ `insert`（行号槽的色条跟着这一侧）。 */
-    readonly side: DiffSide,
-  ) {
+  constructor(readonly height: number) {
     super();
   }
 
   eq(other: WidgetType): boolean {
-    return (
-      other instanceof DiffGapWidget && other.height === this.height && other.side === this.side
-    );
+    return other instanceof DiffGapWidget && other.height === this.height;
   }
 
   toDOM(): HTMLElement {
     const el = document.createElement("div");
-    el.className = `diff-gap diff-gap-${this.side === "original" ? "delete" : "insert"}`;
+    el.className = "diff-gap";
     el.style.height = `${this.height}px`;
     return el;
   }
@@ -336,7 +331,7 @@ function buildFace(
   for (const gap of gaps) {
     if (!(gap.height > 0)) continue;
     const after = Math.min(Math.max(gap.afterLine, 0), doc.lines);
-    const widget = new DiffGapWidget(gap.height, side);
+    const widget = new DiffGapWidget(gap.height);
     // 块 widget 要落在线界上：`after` 行之后 ⇒ 挂在该行行尾（side > 0 = 那一行之后）；
     // 第 0 行之后（正文开头就缺行）⇒ 挂在第 1 行行首（side < 0 = 那一行之前）。
     ranges.push(
@@ -358,8 +353,8 @@ function buildFace(
  * 之间**，不是行号左边。CM6 的 gutter 按 DOM 次序排 ⇒ 本槽不许再写 `order: -1`。
  *
  * VS Code 用两个 margin：`linesDecorationsClassName` 画记号、`marginClassName` 给行号槽上色。
- * 这里对应两颗标记：带 `toDOM` 的管记号槽，带 `elementClass` 的管行号槽；两者由同一份
- * `sideLineMarks` 生成，行号永远一致。
+ * 本项目只复刻前者 —— 行号槽不承载差异色（上游确实会染，取舍见 `diff.css` 那一段），
+ * 记号与正文行底色仍由同一份 `sideLineMarks` 生成，行号永远一致。
  */
 class DiffSignMarker extends GutterMarker {
   constructor(readonly kind: "insert" | "delete") {
@@ -390,36 +385,10 @@ class DiffSignMarker extends GutterMarker {
   }
 }
 
-/**
- * 只给行号槽上色的那颗标记（不带 `toDOM`）。
- *
- * 记号槽自己已经有一颗带字形的标记；若把「底色类」也做在同一颗上，`gutterLineClass` 会让
- * 记号槽再把同一颗标记渲染一次（CM6 把 `markers` 与行级类标记并在一起），一行就出两道 `−`。
- * 拆成两颗：一颗管字形、一颗管类名，行号槽与记号槽各拿到自己需要的那一半。
- */
-class DiffGutterMarker extends GutterMarker {
-  readonly elementClass: string;
-
-  constructor(readonly kind: "insert" | "delete") {
-    super();
-    this.elementClass = `diff-gutter-${kind}`;
-  }
-
-  eq(other: GutterMarker): boolean {
-    return other instanceof DiffGutterMarker && other.kind === this.kind;
-  }
-
-  toString(): string {
-    return `gutter-${this.kind}`;
-  }
-}
-
 const insertSign = new DiffSignMarker("insert");
 const deleteSign = new DiffSignMarker("delete");
-const insertGutter = new DiffGutterMarker("insert");
-const deleteGutter = new DiffGutterMarker("delete");
 
-/** 这一栏的记号（行号与底色同一份来源，越界丢弃口径同上）。 */
+/** 这一栏的记号（与行底色同一份来源，越界丢弃口径同上）。 */
 function buildSigns(doc: Text, side: DiffSide, blocks: DiffBlock[]): RangeSet<GutterMarker> {
   const ranges: Range<GutterMarker>[] = [];
   for (const m of sideLineMarks(blocks, side)) {
@@ -430,25 +399,9 @@ function buildSigns(doc: Text, side: DiffSide, blocks: DiffBlock[]): RangeSet<Gu
   return RangeSet.of(ranges, true);
 }
 
-/** 行号槽（以及记号槽）的底色类；与记号同一份行号。 */
-function buildGutterClasses(
-  doc: Text,
-  side: DiffSide,
-  blocks: DiffBlock[],
-): RangeSet<GutterMarker> {
-  const ranges: Range<GutterMarker>[] = [];
-  for (const m of sideLineMarks(blocks, side)) {
-    if (m.line < 1 || m.line > doc.lines) continue;
-    const marker = m.kind === "delete" ? deleteGutter : insertGutter;
-    ranges.push(marker.range(doc.line(m.line).from));
-  }
-  return RangeSet.of(ranges, true);
-}
-
-/** 装饰那一臂的三份画法：整行底色 + 行号槽底类 + 记号槽字形。 */
+/** 装饰那一臂的两份画法：整行底色 + 记号槽字形（行号槽不上色，见 `diff.css`）。 */
 interface FaceValue {
   lines: RangeSet<Decoration>;
-  gutterClasses: RangeSet<GutterMarker>;
   signs: RangeSet<GutterMarker>;
 }
 
@@ -460,7 +413,6 @@ function buildFaceValue(
 ): FaceValue {
   return {
     lines: buildFace(doc, side, blocks, gaps),
-    gutterClasses: buildGutterClasses(doc, side, blocks),
     signs: buildSigns(doc, side, blocks),
   };
 }
@@ -483,15 +435,11 @@ const diffFaceField = StateField.define<FaceValue>({
     return tr.docChanged
       ? {
           lines: value.lines.map(tr.changes),
-          gutterClasses: value.gutterClasses.map(tr.changes),
           signs: value.signs.map(tr.changes),
         }
       : value;
   },
-  provide: (f) => [
-    EditorView.decorations.from(f, (v) => v.lines),
-    gutterLineClass.from(f, (v) => v.gutterClasses),
-  ],
+  provide: (f) => [EditorView.decorations.from(f, (v) => v.lines)],
 });
 
 /**
@@ -511,8 +459,8 @@ export function diffFace(side: DiffSide, source: () => DiffFaceSource): Extensio
     faceSource.of(source),
     diffFaceField,
     diffFoldField,
-    // 记号槽在 DOM 里排在行号之后，靠样式段的 `order: -1` 挪到行号左侧（VS Code 的
-    // `linesDecorationsClassName` 也在行号左侧），不必为排序再拆一颗 Compartment。
+    // 记号槽在 DOM 里排在行号之后（= 行号**右侧**），与 VS Code `EditorLayoutInfo` 的
+    // decorationsLeft 同侧 ⇒ 不必为排序再拆一颗 Compartment，也不许写 `order` 往回挪。
     gutter({
       class: "cm-diffSigns",
       markers: (view) => view.state.field(diffFaceField, false)?.signs ?? RangeSet.empty,

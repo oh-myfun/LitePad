@@ -232,19 +232,18 @@
   );
 }
 
-/* 行号槽底色（VS Code 的 `marginClassName: gutter-insert / gutter-delete`）：同一颗标记的
-   `elementClass` 由 `gutterLineClass` 落到**所有** gutter 元素上，这里就按类铺满，不再点名
-   某几列 —— 差异格的右栏还有一条 4px 的 `cm-diffGutter`（`makeDiffInstance` 的 `gutterDiff()`
-   无基线 ⇒ 空列但恒占位），漏掉它就是行号槽与记号槽之间一条 4px 的底色断口。
-   行号槽用 `background-color`（不是 image）：那一格没有当前行高亮的层叠战争。
-   （折叠槽在差异格里不渲染，见 `perfOfDiffInstance`；不必再为它留排除项。） */
-.panel-host.is-diff .cm-gutterElement.diff-gutter-insert {
-  background-color: color-mix(in srgb, var(--diff-add) 18%, transparent);
-}
-
-.panel-host.is-diff .cm-gutterElement.diff-gutter-delete {
-  background-color: color-mix(in srgb, var(--diff-del) 18%, transparent);
-}
+/* 行号槽**不承载差异底色**：色带只留在代码区，行号文字与 `+` / `−` 记号照旧。
+   ⚠️ 上游不是这样，事实是上游会给行号槽上色：`registrations.contribution.ts` 的
+   `line-insert` / `line-delete` 都带 `marginClassName: 'gutter-insert' / 'gutter-delete'`，
+   `diffEditor/style.css` 给这两颗类写了 `background-color: var(--vscode-diffEditorGutter-*
+   LineBackground, var(--vscode-diffEditor-*LineBackground), ...)`；而 `diffEditorGutter.*`
+   在 `editorColors.ts` 注册时默认值是 `null`，`colorThemeCss.ts` 又只在 `getColor()` 拿得到
+   颜色时才输出那颗 CSS 变量 ⇒ 主题不覆盖时变量根本不存在，兜底链落到主题里定义了的
+   `diffEditor.inserted/removedLineBackground`（缺口行的 `marginDomNode: gutter-delete /
+   gutter-insert` 同理，见 `diffEditorViewZones.ts`）。即上游的行号槽与正文是同一条差异色。
+   本项目按产品口径改成「色带只留在代码区」：`.diff-line-*` 的底色不越界进行号 / 记号槽，
+   这里也就没有任何 `.diff-gutter-*` 规则 —— `face.ts` 那一臂连类名都不再发（`gutterLineClass`
+   只剩折叠槽在用）。 */
 
 /* `+` / `−` 记号槽：VS Code 的 `linesDecorationsClassName` 落在**行号右侧**的 line decorations
    栏（`EditorLayoutInfo` 的层次：glyphMarginLeft → lineNumbersLeft → decorationsLeft → contentLeft）。
@@ -275,42 +274,26 @@
    铺法照 `diffEditorViewZones.ts` 的 alignment view zone：内容区整行铺满（块级 widget 是
    `.cm-content` 的直接子元素，天然吃满内容宽），左缘再由下面那条负数偏移铺过行号槽。
    **槽宽是实测值**（`--diff-gutter-w`，surface 写）：CM6 的块 widget 伸不进 gutter，只能靠
-   负偏移盖过去 —— 这一半填该侧的差异色（VS Code 的 `marginDomNode: gutter-delete/insert`），
-   右半仍是中性斜纹，收口是硬边（与上游一样不圆角、不渐隐）。 */
+   负偏移盖过去。行号槽那一段也铺**同一条中性斜纹**、不填差异色（上游的 `marginDomNode`
+   会吃 `gutter-delete / gutter-insert`，本项目的行号槽不承载差异色，见上面那一段），
+   斜纹从左缘起算、一路铺到正文，缺口行整行一个中性底，收口是硬边（与上游一样不圆角、不渐隐）。 */
 .diff-gap {
   position: relative;
   z-index: 201;
   left: calc(-1 * var(--diff-gutter-w, 0px));
   width: calc(100% + var(--diff-gutter-w, 0px));
-  background-image:
-    linear-gradient(var(--diff-gap-gutter, transparent), var(--diff-gap-gutter, transparent)),
-    linear-gradient(
-      -45deg,
-      color-mix(in srgb, var(--fg-muted) 20%, transparent) 12.5%,
-      transparent 12.5%,
-      transparent 50%,
-      color-mix(in srgb, var(--fg-muted) 20%, transparent) 50%,
-      color-mix(in srgb, var(--fg-muted) 20%, transparent) 62.5%,
-      transparent 62.5%,
-      transparent 100%
-    );
-  background-size:
-    var(--diff-gutter-w, 0px) 100%,
-    8px 8px;
-  background-repeat: no-repeat, repeat;
-  background-position:
-    0 0,
-    var(--diff-gutter-w, 0px) 0;
-}
-
-.diff-gap-delete {
-  /* 叠在 `--bg` 上合成**不透明**色：VS Code 的 margin 色块底下一层没有斜纹，半透明会让
-     下层那层斜纹透上来，行号槽看着像「斜纹染了色」而不是一块纯色条。 */
-  --diff-gap-gutter: color-mix(in srgb, var(--diff-del) 18%, var(--bg));
-}
-
-.diff-gap-insert {
-  --diff-gap-gutter: color-mix(in srgb, var(--diff-add) 18%, var(--bg));
+  background-image: linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--fg-muted) 20%, transparent) 12.5%,
+    transparent 12.5%,
+    transparent 50%,
+    color-mix(in srgb, var(--fg-muted) 20%, transparent) 50%,
+    color-mix(in srgb, var(--fg-muted) 20%, transparent) 62.5%,
+    transparent 62.5%,
+    transparent 100%
+  );
+  background-size: 8px 8px;
+  background-repeat: repeat;
 }
 
 /* ---------- Task 7 · 折叠未改动区：折条 + 被折起来的行 ---------- */

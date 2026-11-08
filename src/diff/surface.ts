@@ -535,7 +535,8 @@ export function createDiffSurface(
    * 为什么要这一颗：VS Code 的 alignment view zone 会把 `marginDomNode` 一起染成
    * `gutter-delete` / `gutter-insert`，而 CM6 的块级 widget 只能落在 `.cm-content` 里。
    * 样式段拿这颗变量把占位块向左铺过行号槽（`diff.css` 的 `.diff-gap`），缺口那一行在
-   * 行号列里也就有色条了。槽宽随行数位数变，所以每次重画都重新量一遍。
+   * 行号列里也铺着同一条中性斜纹（本项目的行号槽不承载差异色，见 `diff.css` 那段取舍）。
+   * 槽宽随行数位数变，所以每次重画都重新量一遍。
    *
    * 量不到（jsdom / 还没进文档）就写 0：`calc(100% + 0px)` 退化成原样，不会把块撑歪。
    */
