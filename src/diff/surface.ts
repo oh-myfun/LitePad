@@ -1548,8 +1548,8 @@ export function createDiffSurface(
     // 与 `.diff-revert` 的 CSS 高度一致（VS Code 那颗按钮：`.action-label` 的
     // 1px 上下内边距 + 16px codicon = 18px）。
     const BTN_H = 18;
-    /** 这一行（1-based）的顶：含它之前的缝；超过末行 ⇒ 末行底。 */
-    const topOf = (line: number): number => {
+    /** 这一行行首的顶（含它上方的缝）；超过末行 ⇒ 末行底。 */
+    const boundaryOf = (line: number): number => {
       const n = Math.max(line, 1);
       const block =
         n <= doc.lines
@@ -1558,18 +1558,33 @@ export function createDiffSurface(
       const y = n <= doc.lines ? block.top : block.bottom;
       return view.documentTop + y - column.top;
     };
-    /** 这一行的底：含它**之后**的缝（上游 `getBottomForLineNumber(…, true)` 同口径）。 */
-    const bottomOf = (line: number): number => {
-      if (line < doc.lines) return topOf(line + 1);
-      const block = view.lineBlockAt(doc.line(doc.lines).from);
-      return view.documentTop + block.bottom - column.top;
+    /**
+     * 第 `line` 行**文本自己的**顶/底（剥掉紧贴行尾的缝，也不含它上方那条缝）。
+     *
+     * ⚠️ 回退按钮必须按「差异行自己」居中：`lineBlockAt(...).bottom` 会把紧贴行尾的
+     * 对齐缝并进 composite，单行块后面补一段 40px 时按钮就被推到缝里（用户抓到的
+     * 「单行 / 单行自动换行时没落在差异行中间」）。`textBlockOf` 只取 `BlockType.Text`
+     * 那一块，折行出来的视觉行仍算在行内（高度就是整条文本块）。
+     */
+    const textBox = (line: number): { top: number; bottom: number } => {
+      const n = Math.min(Math.max(line, 1), doc.lines);
+      const b = textBlockOf(view, n);
+      const top = view.documentTop + b.top - column.top;
+      return { top, bottom: top + b.height };
     };
     for (let i = 0; i < stored.length; i++) {
       const b = stored[i];
-      const top = topOf(b.modifiedStart);
-      // 空段（这一侧没有真行）：上游 `max(top, getBottomForLineNumber(start - 1, true))`
-      // 里那一发含缝的底恰好等于 top（缝就在 start 之前）⇒ 高度 0，按钮跨在块边界上。
-      const bottom = b.modifiedStart > b.modifiedEnd ? top : bottomOf(b.modifiedEnd);
+      // 块的可视纵向范围：
+      //   · 非空段 = 首行文本顶 → 末行文本底（块内的对齐缝天然落在中间，照样算进去）；
+      //   · 空段（删除块跨在右栏的落点行上）= 它面前那条缝的范围（上一行文本底 → 块边界），
+      //     否则 item 高 0，按钮停在缝的下沿、竖线根本画不出来。
+      const empty = b.modifiedStart > b.modifiedEnd;
+      const top = empty
+        ? b.modifiedStart > 1
+          ? textBox(Math.min(b.modifiedStart - 1, doc.lines)).bottom
+          : view.documentTop - column.top
+        : textBox(b.modifiedStart).top;
+      const bottom = empty ? boundaryOf(b.modifiedStart) : textBox(b.modifiedEnd).bottom;
       const height = Math.max(bottom - top, 0);
       // 块完全在视口上下各一个按钮的余量之外 ⇒ 这一颗不建。
       if (top + height < -BTN_H || top > column.height + BTN_H) continue;
@@ -1661,7 +1676,11 @@ export function createDiffSurface(
       renderOverview();
       renderReverts();
     });
+    // 三颗都要看：拖分屏改的是两栏**各占的宽度**，中心列（`.diff-center`）只挪位置、尺寸不动
+    // ⇒ 只盯中心列时，分屏比例一变两侧行高就各走各的，填充总高从此对不上。
     layoutRO.observe(centerEl);
+    layoutRO.observe(originalEl);
+    if (right) layoutRO.observe(right.dom);
   }
 
   /** 右栏那一臂的内容：装饰 + 折条出口 + 键入落点（`updateListener` 是 state facet，只能并进来）。 */

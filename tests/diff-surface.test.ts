@@ -37,7 +37,7 @@
 //     谁都判不中时兜底 ⇒ 跳过去之后 `activeIndex()` 不再读成 -1。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { EditorView } from "@codemirror/view";
+import { BlockType, EditorView } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { language } from "@codemirror/language";
 import { fnBody, ruleBlock, stripCssComments, stripLineComments } from "./static";
@@ -1359,6 +1359,58 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     }
   });
 
+  it("B464 · 拖分屏改的是两栏宽度：布局 RO 必须盯住两栏（不只盯中心列）", async () => {
+    class FakeRO {
+      static all: FakeRO[] = [];
+      observed: Element[] = [];
+      constructor(readonly cb: ResizeObserverCallback) {
+        FakeRO.all.push(this);
+      }
+      observe(el: Element): void {
+        this.observed.push(el);
+      }
+      unobserve(): void {}
+      disconnect(): void {}
+      fire(): void {
+        this.cb([], this as unknown as ResizeObserver);
+      }
+    }
+    vi.stubGlobal("ResizeObserver", FakeRO);
+    const spy = vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(20);
+    try {
+      const { panel, s } = mountDiffPair("A\nB\nC", "A\nC");
+      const right = panel.view!.view;
+      const gapHeights = (): string[] =>
+        [...panel.bodyEl!.querySelectorAll<HTMLElement>(".diff-gap")].map((el) => el.style.height);
+      // 差异面自己那颗 RO：观察清单里必须有左栏容器与右栏编辑器（中心列尺寸不变，拖分屏时
+      // 只有两栏的宽度在变；只盯中心列就等于整场都没收到通知）。
+      const ro = FakeRO.all.find((r) =>
+        r.observed.some((el) => el.classList.contains("diff-original")),
+      );
+      expect(ro, "差异面建了布局 RO").toBeTruthy();
+      expect(
+        ro!.observed.some((el) => el.classList.contains("diff-original")),
+        "左栏容器在观察里",
+      ).toBe(true);
+      expect(ro!.observed.includes(right.dom), "右栏编辑器在观察里").toBe(true);
+
+      s.setWrapEnabled(true);
+      fakeLineBoxes(s.left, [20, 60, 20]);
+      fakeLineBoxes(right, [20, 20]);
+      await frames();
+      expect(gapHeights()).toEqual(["60px"]);
+
+      // 模拟拖分屏：宽度变了，左栏那一行不再折行 ⇒ 再收一次 RO 通知就必须重算。
+      fakeLineBoxes(s.left, [20, 20, 20]);
+      ro!.fire();
+      await frames();
+      expect(gapHeights(), "宽度变了必须按新的实测行高重算").toEqual(["20px"]);
+    } finally {
+      vi.unstubAllGlobals();
+      spy.mockRestore();
+    }
+  });
+
   it("B462 · 回退按钮跟着对齐后的实测位置走（块与按钮同一条行轴）", async () => {
     const spy = vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(20);
     try {
@@ -1377,13 +1429,57 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
       const btn = panel.bodyEl!.querySelector<HTMLElement>(".diff-revert");
       const item = panel.bodyEl!.querySelector<HTMLElement>(".diff-revert-item");
       expect(btn, "删除块在右栏有落点行，按钮该建出来").toBeTruthy();
-      // 空段（右栏没有真行）落在第 2 行行首：item 高 0，按钮跨在块边界上（上游
-      // `middleHeight = itemHeight / 2 - buttonHeight / 2` 在高度 0 时就是 -9）。
-      expect(item!.style.top, "item 吃的是实测行轴，不是行号 × 默认行高").toBe(
-        `${right.documentTop + 60}px`,
-      );
-      expect(item!.style.height).toBe("0px");
-      expect(btn!.style.top, "按钮相对 item 垂直居中").toBe("-9px");
+      // 空段（右栏没有真行）代表删除块的就是它面前那条 40px 的缝：item 从上一行文本底
+      // 铺到块边界，按钮居中在缝里、竖线也画满这条缝（旧口径 item 高 0，按钮停在缝下沿）。
+      expect(item!.style.top, "item 顶 = 上一行文本底").toBe(`${right.documentTop + 20}px`);
+      expect(item!.style.height, "item 高 = 删除块那条缝").toBe("40px");
+      expect(btn!.style.top, "按钮在缝里垂直居中").toBe("11px");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("B464 · 单行块后面补缝时按钮仍居中在差异行（缝不把按钮推走）", async () => {
+    const spy = vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(20);
+    try {
+      // 第 2 行是单行改块；对侧那一行折成三个视觉行 ⇒ 40px 缝补在右栏第 2 行之后。
+      const { panel, s } = mountDiffPair("A\n乙", "A\n丙");
+      const right = panel.view!.view;
+      const center = panel.bodyEl!.querySelector<HTMLElement>(".diff-center")!;
+      center.getBoundingClientRect = () =>
+        ({ top: 0, bottom: 400, height: 400, left: 0, right: 35, width: 35 }) as DOMRect;
+
+      s.setWrapEnabled(true);
+      fakeLineBoxes(s.left, [20, 60]);
+      fakeLineBoxes(right, [20, 20]);
+      // 真机里紧贴行尾的块 widget 会被并进同一个 composite：`bottom` 含缝、`type` 是分段数组。
+      // jsdom 的假行盒不建模 composite，这里照那个形状补上末行。
+      const base = right.lineBlockAt.bind(right);
+      right.lineBlockAt = ((pos: number) => {
+        const b = base(pos);
+        if (right.state.doc.lineAt(pos).number !== 2) return b;
+        const text = { type: BlockType.Text, from: b.from, to: b.to, top: b.top, height: 20 };
+        const gap = {
+          type: BlockType.WidgetAfter,
+          from: b.to,
+          to: b.to,
+          top: b.top + 20,
+          height: 40,
+        };
+        return {
+          ...b,
+          bottom: b.top + 60,
+          height: 60,
+          type: [text, gap],
+        } as unknown as ReturnType<EditorView["lineBlockAt"]>;
+      }) as EditorView["lineBlockAt"];
+      await frames();
+
+      const item = panel.bodyEl!.querySelector<HTMLElement>(".diff-revert-item");
+      const btn = panel.bodyEl!.querySelector<HTMLElement>(".diff-revert");
+      expect(item!.style.top, "item 顶 = 差异行文本顶").toBe(`${right.documentTop + 20}px`);
+      expect(item!.style.height, "item 高只算差异行自己（40px 缝不算）").toBe("20px");
+      expect(btn!.style.top, "按钮居中在差异行").toBe("1px");
     } finally {
       spy.mockRestore();
     }
