@@ -296,6 +296,20 @@ export class DiffGapWidget extends WidgetType {
     super();
   }
 
+  /**
+   * 视口外的占位块按**自己的像素高度**记账，不能按一行估。
+   *
+   * CM6 对 `estimatedHeight === -1`（默认值）的块级 widget 用 `oracle.lineHeight` 当估值
+   * （`@codemirror/view` 的 `HeightMap.point()`：`if (height < 0) height = this.oracle.lineHeight`）。
+   * 缝的定值可能是 60px、也可能是 0，视口外却一律记成一行 ⇒ 文档总高、跳转落点、对栏的
+   * 逐像素同步全都差着这一截，只有滚到它被实测时才纠回来 —— 这正是「填充行要滚过才对齐」。
+   * 上游的 alignment view zone 高度是己方显式给的（`diffEditorViewZones.ts` 的
+   * `ViewZone.heightInPx`），不存在「按一行估」这一段。
+   */
+  get estimatedHeight(): number {
+    return this.height;
+  }
+
   eq(other: WidgetType): boolean {
     return (
       other instanceof DiffGapWidget && other.height === this.height && other.kind === this.kind
@@ -849,6 +863,9 @@ export function foldCandidates(
   return out;
 }
 
+/** 折条的高度（上游 `PlaceholderViewZone(d, 24)`）；DOM 与 `estimatedHeight` 共用这一份。 */
+const FOLD_BAR_HEIGHT = 24;
+
 /**
  * 折起来的那一段之上的**占位条**：24px 高（上游 `PlaceholderViewZone(d, 24)`），
  * 上下各 4px 揭示热区、中间一行说明文案（上游 `.diff-hidden-lines .center` 同结构）。
@@ -881,6 +898,16 @@ export class DiffFoldWidget extends WidgetType {
     return this.to - this.from + 1;
   }
 
+  /**
+   * 折条是定高 24px 的替换块 ⇒ 视口外也必须按 24px 记。
+   *
+   * 默认的 -1 会让 CM6 按一行（`oracle.lineHeight`，通常 20px）估：每折一条就少记 4px，
+   * 跳过几段未改动区之后两栏的累计位置就对不上，滚过去实测才纠回来（同 `DiffGapWidget`）。
+   */
+  get estimatedHeight(): number {
+    return FOLD_BAR_HEIGHT;
+  }
+
   eq(other: WidgetType): boolean {
     return (
       other instanceof DiffFoldWidget &&
@@ -896,7 +923,7 @@ export class DiffFoldWidget extends WidgetType {
   toDOM(view: EditorView): HTMLElement {
     const el = document.createElement("div");
     el.className = "diff-fold-bar";
-    el.style.height = "24px";
+    el.style.height = `${FOLD_BAR_HEIGHT}px`;
     const emit = (reveal: FoldReveal): void => this.onReveal?.(this.from, reveal);
 
     const top = document.createElement("div");

@@ -388,6 +388,22 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
     expect(view.dom.querySelectorAll(".cm-diffSigns .diff-sign"), "缝不画记号").toHaveLength(0);
   });
 
+  it("B465 · 占位块把真实高度交给高度表：视口外不许按一行估（填充行滚过才对齐的根因）", () => {
+    // CM6 对 `estimatedHeight === -1` 的块级 widget 用 `oracle.lineHeight`（约一行）当估值。
+    // 缝动辄 40/60px、也可能一条不补，按一行记 ⇒ 未渲染的那一段总高与实际差着这一截，
+    // 文档总高、跳转落点与对栏同步全都只有「滚过去被实测」之后才纠正 —— 用户看到的就是
+    // 「填充行要滚过才对得齐」。这里判的是**高度表读到的那个数**，不是 widget 的 DOM 声明。
+    const withGap = mountFace("modified", del);
+    const without = mountFace("modified", []);
+    expect(firstBlockWidget(withGap.view)?.widget.estimatedHeight, "CM6 读的就是这一颗").toBe(
+      2 * LINE_HEIGHT,
+    );
+    expect(
+      withGap.view.contentHeight - without.view.contentHeight,
+      "总高里那条缝必须整条算进去（默认 -1 ⇒ 只记一行）",
+    ).toBe(2 * LINE_HEIGHT);
+  });
+
   it("B464 · 记号按视觉行：一行折成三个视觉行 ⇒ 那一格竖排三颗", () => {
     // 改块落在第 2 行；把那一行的实测行高桩成 3 × LINE_HEIGHT（jsdom 没有布局引擎，
     // 折行只能从「行块高度」这一口径喂进去）。
@@ -1665,6 +1681,10 @@ describe("B461 · 折叠未改动区（Task 7：默认不折 + 三颗动作）",
     // 判边界：第 5 行行首到第 28 行行尾，CM6 的块表与行号槽用的是同一份几何。
     const fold = firstBlockWidget(s.left);
     expect(fold?.widget, "块头是 DiffFoldWidget").toBeInstanceOf(DiffFoldWidget);
+    expect(
+      fold?.widget.estimatedHeight,
+      "折条也把 24px 交给高度表：默认 -1 会让视口外按一行估，跳过几段之后两栏就对不上",
+    ).toBe(24);
     expect(fold?.block.from, "折区从第 5 行行首起").toBe(s.left.state.doc.line(5).from);
     expect(fold?.block.to, "到第 28 行行尾止").toBe(s.left.state.doc.line(28).to);
     expect(
