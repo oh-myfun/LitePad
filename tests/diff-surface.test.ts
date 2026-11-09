@@ -1452,6 +1452,58 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     }
   });
 
+  it("B465 · 填充按整篇量出来的折行高度算，不跟 CM6「滚到才准」的估值走", async () => {
+    const spy = vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(20);
+    const rect = (width: number, height: number): DOMRect =>
+      ({
+        left: 0,
+        right: width,
+        top: 0,
+        bottom: height,
+        width,
+        height,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    // jsdom 没有布局：给正文容器一个有宽度的矩形，量尺的探针行按「10 个字符折一行」给高。
+    const rectSpy = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: Element) {
+        const el = this as HTMLElement;
+        if (el.classList.contains("cm-content")) return rect(300, 400);
+        if (el.classList.contains("diff-wrap-probe-line")) {
+          const len = (el.textContent ?? "").length;
+          return rect(300, 20 * Math.max(1, Math.ceil(len / 10)));
+        }
+        return rect(0, 0);
+      });
+    try {
+      // 左栏第 1 行 30 字符 ⇒ 折 3 个视觉行（60px）；右栏同一行只有 1 个字符（20px）。
+      const { panel, s } = mountDiffPair(`${"L".repeat(30)}\nX`, "R\nX");
+      const right = panel.view!.view;
+      const gapHeights = (): string[] =>
+        [...panel.bodyEl!.querySelectorAll<HTMLElement>(".diff-gap")].map((el) => el.style.height);
+
+      s.setWrapEnabled(true);
+      // CM6 此刻只量过视口里的行，对没进过视口的折行行给的是「不折行」的估值：
+      // 旧实现照它算 ⇒ 缝是 0，要等滚过去才补上。
+      fakeLineBoxes(s.left, [20, 20]);
+      fakeLineBoxes(right, [20, 20]);
+      await frames();
+      expect(gapHeights(), "缝按整篇量出来的折行高度补，不等滚动").toEqual(["40px"]);
+
+      // 真机滚过去之后 CM6 的估值会变成实测 60 —— 答案不许因此再变一次。
+      fakeLineBoxes(s.left, [60, 20]);
+      s.remeasure();
+      await frames();
+      expect(gapHeights(), "CM6 的估值 / 实测怎么变，缝都不跟").toEqual(["40px"]);
+    } finally {
+      rectSpy.mockRestore();
+      spy.mockRestore();
+    }
+  });
+
   it("B462 · 回退按钮跟着对齐后的实测位置走（块与按钮同一条行轴）", async () => {
     const spy = vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(20);
     try {

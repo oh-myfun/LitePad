@@ -59,6 +59,7 @@ import {
 } from "./face";
 import { canOpenAgainstBaseline, notifyDiffBlocks, type DiffSide, type DiffSpec } from "./model";
 import { revertEdit } from "./revert";
+import { createWrapMeter, type WrapMeter } from "./wrap-measure";
 import { CODICONS } from "../shell/codicons";
 import { setTip } from "../shell/tooltip";
 
@@ -581,6 +582,13 @@ export function createDiffSurface(
   /** 某一栏那颗 view（右栏可能是「没有右栏」那条兜底路 ⇒ 调用处一律允许读不到）。 */
   const viewOf = (side: DiffSide): EditorView | null => (side === "original" ? left : right);
 
+  /**
+   * 两栏的折行量尺（用法见 `lineHeights`）：每栏一把，按行文本缓存。
+   * 视图在整个 surface 的寿命里只建一次（`reassert` 换的是 state，不是 view）。
+   */
+  const meters: Partial<Record<DiffSide, WrapMeter>> = {};
+  const meterOf = (side: DiffSide): WrapMeter => (meters[side] ??= createWrapMeter(viewOf(side)!));
+
   /** 某一栏的光标行（1-based；两栏的行轴各查各的）。 */
   const caretLineOf = (side: DiffSide): number => {
     const view = viewOf(side);
@@ -982,10 +990,13 @@ export function createDiffSurface(
    *
    * 折行关着时一个文档行恒等于一个视觉行 —— `defaultLineHeight` 就是那一行的高度（CM6 量过
    * 的，字号/行距改了它会跟着变），不必为整篇文档做 N 次 `lineBlockAt`。
-   * 折行打开后同一份正文可能折成任意多个视觉行，只能逐行问 `textBlockOf`（行文本自己的块）。
+   * 折行打开后同一份正文可能折成任意多个视觉行：**整篇一次性量**（`wrap-measure.ts`），
+   * 不读 CM6 的 `lineBlockAt` —— 那套只对进过视口的行给实测值、视口外按字符数估，
+   * 缝跟着它算就成了「滚到哪变到哪」（用户报的「填充行要全部滚过才稳定」）。
    *
-   * ⚠️ 只读**行文本自己的**块：贴着行尾的占位块会被 CM6 并进同一颗 composite
-   * `BlockInfo`，把它的高度减出去，才有「补缝 → 行高不变 → 缝稳定」这条不动点。
+   * ⚠️ 量尺量不出来时（面板还没有宽度 / 整栏不可见）才退回 `textBlockOf` 这条估值链；
+   * 退回时只能读**行文本自己的**块：贴着行尾的占位块会被 CM6 并进同一颗 composite
+   * `BlockInfo`，要把它的高度减出去，才有「补缝 → 行高不变 → 缝稳定」这条不动点。
    *
    * ⚠️ 折起来的行一律按 0 算 —— 它们已被替换装饰整段收走，不占正文高度；折条那一条
    * 24px 两侧各一、位置同源，差值天然为 0、不参与补缝。若这里改读「替换块量出来多少」，
@@ -1002,6 +1013,8 @@ export function createDiffSurface(
       const h = view.defaultLineHeight;
       return (line) => (hidden(line) ? 0 : h);
     }
+    const measured = meterOf(side).heights();
+    if (measured) return (line) => (hidden(line) ? 0 : (measured[line - 1] ?? 0));
     return (line) => (hidden(line) ? 0 : textBlockOf(view, line).height);
   };
 
@@ -1098,6 +1111,14 @@ export function createDiffSurface(
   /** 窗口尺寸变化（拖窗口 / 系统缩放）：两栏宽度与折行结果都可能变，必须重测。 */
   const onWindowResize = (): void => scheduleAlign();
   window.addEventListener("resize", onWindowResize);
+
+  // 内嵌字体是 `font-display: block`（fonts.css）：就绪前量到的是回落字形的折行结果。
+  // 就绪之后把两把量尺的缓存作废、重量一次，缝才不会停在「按错字体折出来的高度」上。
+  void document.fonts?.ready.then(() => {
+    if (disposed) return;
+    for (const meter of Object.values(meters)) meter.invalidate();
+    scheduleAlign();
+  });
 
   /**
    * 概览条：色块坐标走**实测像素**（B461 后续轮，照 VS Code 的 overview ruler）。
@@ -1825,6 +1846,7 @@ export function createDiffSurface(
       detachSash();
       detachOverview();
       layoutRO?.disconnect();
+      for (const meter of Object.values(meters)) meter.dispose();
       left.destroy();
       originalEl.remove();
       // 分割线与按钮层都在这一列里，拆它一并带走。
