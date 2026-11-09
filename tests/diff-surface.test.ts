@@ -37,7 +37,7 @@
 //     谁都判不中时兜底 ⇒ 跳过去之后 `activeIndex()` 不再读成 -1。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { BlockType, EditorView } from "@codemirror/view";
+import { BlockType, EditorView, type BlockInfo } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { language } from "@codemirror/language";
 import { fnBody, ruleBlock, stripCssComments, stripLineComments } from "./static";
@@ -219,7 +219,11 @@ describe("B461 · 差异标签的落点（Task 1）", () => {
     window.dispatchEvent(new MouseEvent("pointermove", { clientX: 450, buttons: 1 }));
     expect(left.style.flexBasis).toBe("500px");
     expect(right.style.flexBasis).toBe("300px");
+    // 松手必须按新栏宽重量一次（折行高度/占位缝都随宽度变）：不补这一发，拖完分屏就停在
+    // 旧宽度算出来的缝上 —— 用户看到的就是「调整分屏位置后行数对不齐」。
+    const measure = vi.spyOn(panel.view!.view, "requestMeasure");
     window.dispatchEvent(new MouseEvent("pointerup", { buttons: 0 }));
+    expect(measure, "松手后按新宽度重量").toHaveBeenCalled();
   });
 
   it("B461 · 拆面板/换标签必须 dispose 左栏那颗 view，不留孤儿 DOM 也不留 surface", () => {
@@ -1307,8 +1311,7 @@ function fakeLineBoxes(
   }
   const total = top;
   const doc = view.state.doc;
-  view.lineBlockAt = ((pos: number) => {
-    const n = doc.lineAt(pos).number;
+  const box = (n: number): BlockInfo => {
     const t = tops[n - 1] ?? 0;
     const h = heights[n - 1] ?? 0;
     return {
@@ -1319,11 +1322,18 @@ function fakeLineBoxes(
       height: h,
       length: 1,
       type: 0,
-      widgets: [],
       widget: null,
       widgetLineBreaks: 0,
     };
-  }) as EditorView["lineBlockAt"];
+  };
+  view.lineBlockAt = ((pos: number) => box(doc.lineAt(pos).number)) as EditorView["lineBlockAt"];
+  // 同步滚动的锚点走 `lineBlockAtHeight`：同一套行盒，按高度找顶行（真机由 CM6 的
+  // heightMap 回答，jsdom 里那份恒按默认行高估）。
+  view.lineBlockAtHeight = ((height: number) => {
+    let n = 1;
+    while (n < heights.length && (tops[n] ?? Infinity) <= height) n++;
+    return box(n);
+  }) as EditorView["lineBlockAtHeight"];
   Object.defineProperty(view, "contentHeight", { configurable: true, get: () => total });
 }
 
@@ -1675,18 +1685,51 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     }
   });
 
-  it("B462 · 同步滚动直接抄 scrollTop（对齐之后逐行对应，不再按比例缩放）", () => {
+  it("B462 · 同步滚动按内容锚点映射（两栏 scrollTop 可以不同，顶行是同一行）", () => {
     const { panel } = mountDiffPair("A\nB\nC", "A\nC");
     const right = panel.view!.view;
     const left = diffSurfaceOf(panel)!.left;
-    Object.defineProperty(right.scrollDOM, "clientHeight", { configurable: true, value: 100 });
-    Object.defineProperty(right.scrollDOM, "scrollHeight", { configurable: true, value: 300 });
-    Object.defineProperty(left.scrollDOM, "clientHeight", { configurable: true, value: 100 });
-    Object.defineProperty(left.scrollDOM, "scrollHeight", { configurable: true, value: 400 });
-    right.scrollDOM.scrollTop = 150;
+    // 两侧坐标系故意不一致：同一份内容（C）在左栏 top=40、在右栏 top=20 ——
+    // 真机上就是 CM6 对视口外折行的估值差（两栏 scrollHeight 对不上）。
+    fakeLineBoxes(left, [20, 20, 20]);
+    fakeLineBoxes(right, [20, 20]);
+    const track = (
+      el: HTMLElement,
+      scrollHeight: number,
+    ): { get top(): number; set top(v: number) } => {
+      let top = 0;
+      Object.defineProperty(el, "scrollTop", {
+        configurable: true,
+        get: () => top,
+        set: (v: number) => {
+          top = v;
+        },
+      });
+      Object.defineProperty(el, "clientHeight", { configurable: true, value: 100 });
+      Object.defineProperty(el, "scrollHeight", { configurable: true, value: scrollHeight });
+      return {
+        get top() {
+          return top;
+        },
+        set top(v: number) {
+          top = v;
+        },
+      };
+    };
+    const rt = track(right.scrollDOM, 300);
+    const lt = track(left.scrollDOM, 400);
+
+    rt.top = 20; // 右栏顶行 = C
     right.scrollDOM.dispatchEvent(new Event("scroll"));
-    // 按比例映射会得到 150/200*300 = 225；逐行对应就是同一个 scrollTop。
-    expect(left.scrollDOM.scrollTop).toBe(150);
+    expect(lt.top, "对栏顶行是同一行 C（它在本栏 top=40，不必是同一个 scrollTop）").toBe(40);
+
+    rt.top = 0; // 右栏回到文首 A
+    right.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(lt.top).toBe(0);
+
+    lt.top = 20; // 左栏顶行 = B（右栏没有这一行）
+    left.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(rt.top, "空段落到块前缘那一行（C，top=20）").toBe(20);
   });
 
   it("B471 · 同步滚动也镜像 scrollLeft（同一张认领票管两轴，超出的按对栏收口）", () => {
@@ -1717,37 +1760,49 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     };
     track(right.scrollDOM, 300);
     track(left.scrollDOM, 220);
-    // 右栏滚到 (top 50, left 80) ⇒ 左栏横向只能到 120（scrollWidth 220 - clientWidth 100）。
+    // 右栏滚到 (top 50, left 80)：纵向按锚点映射（两边坐标系不同，断言只看横向）。
     right.scrollDOM.scrollTop = 50;
     right.scrollDOM.scrollLeft = 80;
     right.scrollDOM.dispatchEvent(new Event("scroll"));
-    expect(left.scrollDOM.scrollTop).toBe(50);
     expect(left.scrollDOM.scrollLeft).toBe(80);
     // 对栏能滚到 120 时，多出来的那截夹住，不把超界值写进去。
     right.scrollDOM.scrollLeft = 200;
     right.scrollDOM.dispatchEvent(new Event("scroll"));
     expect(left.scrollDOM.scrollLeft).toBe(120);
-    // 左栏这一发是刚才那次写入的回声：固定点让它按自己到得了的 120 回抄驱动栏
-    // （上游的双向同步没有「回声抑制」，靠值相等终止）。
+    // 左栏这一发是刚才那次写入的回声：认领票消费掉，**不再**把驱动栏拽回对栏到得了的值
+    // （锚点映射下两栏本来就不要求同一个偏移；回抄会把用户滚到的位置拉走）。
     left.scrollDOM.dispatchEvent(new Event("scroll"));
-    expect(right.scrollDOM.scrollLeft).toBe(120);
+    expect(right.scrollDOM.scrollLeft, "回声不得回传").toBe(200);
     // 横向反过来也镜像：左栏滚到 30 ⇒ 右栏跟到 30。
     left.scrollDOM.scrollLeft = 30;
     left.scrollDOM.dispatchEvent(new Event("scroll"));
     expect(right.scrollDOM.scrollLeft).toBe(30);
   });
 
-  it("B461 · 概览滑块按抓取偏移跟手（按下点不跳到指针顶部），拖动期间单独一态", () => {
-    const { panel } = mountDiffPair("A\nB\nC", "A\nC");
+  it("B461 · 概览滑块吃实测轴：尺寸不随滚动变化，拖动与位置互逆", () => {
+    const text = Array.from({ length: 20 }, (_, i) => `L${i}`).join("\n");
+    const { panel } = mountDiffPair(text, text);
     const right = panel.view!.view;
-    Object.defineProperty(right.scrollDOM, "clientHeight", { configurable: true, value: 100 });
-    Object.defineProperty(right.scrollDOM, "scrollHeight", { configurable: true, value: 300 });
     const surface = diffSurfaceOf(panel)!;
-    // 量度给上之后再画一次概览：滑块高度 max(20, floor(100×100/300)) = 33，轨道 100
+    fakeLineBoxes(right, Array<number>(20).fill(20));
+    fakeLineBoxes(surface.left, Array<number>(20).fill(20));
+    let top = 0;
+    Object.defineProperty(right.scrollDOM, "scrollTop", {
+      configurable: true,
+      get: () => top,
+      set: (v: number) => {
+        top = v;
+      },
+    });
+    Object.defineProperty(right.scrollDOM, "clientHeight", { configurable: true, value: 100 });
+    // CM6 的 scrollHeight（估值 520）故意与实测轴（400）不同：这条链只许吃后者。
+    Object.defineProperty(right.scrollDOM, "scrollHeight", { configurable: true, value: 520 });
+    // 量度给上之后再画一次概览：轴总高 20×20=400，滑块 max(20, floor(100²/400)) = 25，轨道 100
     surface.syncBlocks();
     const overview = panel.bodyEl!.querySelector<HTMLElement>(".diff-overview")!;
     const thumb = panel.bodyEl!.querySelector<HTMLElement>(".diff-viewport")!;
-    expect(thumb.style.height, "滑块高度按 clientHeight²/scrollHeight 实测").toBe("33px");
+    expect(thumb.style.height, "滑块高度按实测轴总高").toBe("25px");
+    expect(thumb.style.top).toBe("0px");
     // jsdom 没有布局：给轨道与滑块各量一颗真矩形（拖动只认这两颗）
     const rect = (height: number): DOMRect =>
       ({
@@ -1762,7 +1817,13 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
         toJSON: () => ({}),
       }) as DOMRect;
     overview.getBoundingClientRect = () => rect(100);
-    thumb.getBoundingClientRect = () => rect(33);
+    thumb.getBoundingClientRect = () => rect(25);
+
+    // 滚到轴 100（第 6 行行首）：滑块顶 = 100/(400−100) × (100−25) = 25。
+    top = 100;
+    right.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(thumb.style.top).toBe("25px");
+    expect(thumb.style.height, "滚过一段后尺寸不变（scrollHeight 不再进这条链）").toBe("25px");
 
     // 在滑块内距顶 10px 处按下：抓取偏移 = 10
     overview.dispatchEvent(
@@ -1770,21 +1831,23 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     );
     expect(thumb.classList.contains("is-dragging"), "拖动期间钉住可见态").toBe(true);
     window.dispatchEvent(new MouseEvent("pointermove", { clientY: 60, buttons: 1 }));
-    // 滑块顶 = 60 − 10 = 50；travel = 100 − 33 = 67；maxScroll = 200
-    // 旧实现（顶部直接对指针）会得到 60/100×200 = 120，差别就是「按下点被当成顶」。
-    expect(right.scrollDOM.scrollTop).toBeCloseTo((50 / 67) * 200, 5);
+    // 滑块顶 = 60 − 10 = 50；travel = 100 − 25 = 75；轴跨 300 ⇒ 轴 200 = 第 11 行行首。
+    expect(top, "拖动落到同一颗轴上的目标行").toBeCloseTo(200, 5);
     window.dispatchEvent(new MouseEvent("pointerup", { buttons: 0 }));
     expect(thumb.classList.contains("is-dragging"), "松手即收").toBe(false);
   });
 
-  it("B464 · 一次滚动只产生一轮镜像（回声靠值相等终止，夹值由固定点收敛）", () => {
-    const { panel } = mountDiffPair("A\nB\nC", "A\nC");
+  it("B464 · 一次滚动只产生一轮镜像（回声靠认领票终止，夹值不回抄驱动栏）", () => {
+    const { panel } = mountDiffPair("L1\nL2\nL3", "L1\nL2\nL3");
     const right = panel.view!.view;
     const left = diffSurfaceOf(panel)!.left;
+    // 左栏行更高（模拟两栏折行结果不同）：同一行在左栏 top=80，在右栏 top=20。
+    fakeLineBoxes(left, [80, 80, 80]);
+    fakeLineBoxes(right, [20, 20, 20]);
     Object.defineProperty(right.scrollDOM, "clientHeight", { configurable: true, value: 100 });
     Object.defineProperty(right.scrollDOM, "scrollHeight", { configurable: true, value: 300 });
     Object.defineProperty(left.scrollDOM, "clientHeight", { configurable: true, value: 100 });
-    Object.defineProperty(left.scrollDOM, "scrollHeight", { configurable: true, value: 400 });
+    Object.defineProperty(left.scrollDOM, "scrollHeight", { configurable: true, value: 220 });
 
     // 把两栏的 scrollTop 换成带账本的存取器：谁被写、写了几次、写了多少都看得见。
     let rightTop = 0;
@@ -1808,35 +1871,35 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
       },
     });
 
-    // ① 用户滚右栏：只写左栏一次。
-    rightTop = 150;
+    // ① 用户滚右栏第 2 行：只写左栏一次，落到左栏第 2 行（top=80）。
+    rightTop = 20;
     right.scrollDOM.dispatchEvent(new Event("scroll"));
-    expect(leftWrites, "一次用户滚动只写对侧一次").toEqual([150]);
+    expect(leftWrites, "一次用户滚动只写对侧一次").toEqual([80]);
     expect(rightWrites, "驱动栏自己不被回写").toEqual([]);
 
-    // ② 左栏那一发 scroll 是程序性写入的回声：不许再写回右栏（否则就是两栏互相追改）。
+    // ② 左栏那一发 scroll 是程序性写入的回声：认领票消费掉，不许再写回右栏。
     left.scrollDOM.dispatchEvent(new Event("scroll"));
     expect(rightWrites, "回声不得回传").toEqual([]);
 
-    // ③ 再滚一次仍是各一次（账本不累积、也不重复）。
-    rightTop = 180;
+    // ③ 再滚到第 3 行：左栏要 top=160，但它最大只到 120 ⇒ 写入先夹住。
+    rightTop = 40;
     right.scrollDOM.dispatchEvent(new Event("scroll"));
-    expect(leftWrites).toEqual([150, 180]);
-    expect(rightWrites).toEqual([]);
+    expect(leftWrites, "超出对栏最大滚动量时写夹值").toEqual([80, 120]);
 
-    // ④ 超量时夹到对侧最大滚动量；对栏的回声按它到得了的值回抄驱动栏（固定点收敛）。
-    leftTop = 250;
+    // ④ 夹值后的回声同样只认领、不回抄：驱动栏停在用户滚到的位置，
+    //    不会被对栏「到不了 160」这件事拽回去（旧的固定点收敛会把它拉成 120）。
     left.scrollDOM.dispatchEvent(new Event("scroll"));
-    expect(rightWrites, "超出对侧最大滚动量时写夹值").toEqual([200]);
-    right.scrollDOM.dispatchEvent(new Event("scroll"));
-    expect(leftWrites, "夹值后的回声把驱动栏回抄到它到得了的位置").toEqual([150, 180, 200]);
-    expect(leftTop).toBe(200);
+    expect(rightWrites, "夹值后的回声也不回传").toEqual([]);
+    expect(rightTop, "驱动栏停在用户滚到的位置").toBe(40);
   });
 
-  it("B467 · 布局收口后按最后驱动侧把两栏落回同一偏移", async () => {
+  it("B467 · 布局收口后按最后驱动侧的锚点重落位（不强求两栏同一个 scrollTop）", async () => {
     const { panel, s } = mountDiffPair("A\nB\nC", "A\nC");
     const right = panel.view!.view;
     const left = s.left;
+    // 同一行在两栏的 top 不同（模拟折行估值差）：右栏 C 行 top=20，左栏 C 行 top=40。
+    fakeLineBoxes(right, [20, 20]);
+    fakeLineBoxes(left, [20, 20, 20]);
     let rightTop = 0;
     let leftTop = 0;
     const track = (el: HTMLElement, set: (v: number) => void): void => {
@@ -1854,23 +1917,25 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     track(left.scrollDOM, (v) => {
       leftTop = v;
     });
+    // 缝先按这套行盒落一次（否则第一轮收口会先因为缝变了而多绕一圈）。
+    s.syncBlocks();
 
-    // 挂载时的首轮对齐先收口（两栏都在 0）。
-    s.remeasure();
-    await frames();
     // 模拟布局变化：两栏被各自的锚定/夹取改到不同偏移，且**没有**任何 scroll 事件。
-    rightTop = 60;
+    rightTop = 20;
     leftTop = 0;
     s.remeasure();
-    await frames();
-    expect(leftTop, "收口时按最后驱动侧（默认右栏）重落位").toBe(60);
-    expect(rightTop, "驱动栏自己的位置不动").toBe(60);
+    await frames(8);
+    expect(leftTop, "收口时按最后驱动侧（默认右栏）的锚点映射").toBe(40);
+    expect(rightTop, "驱动栏自己的位置不动").toBe(20);
   });
 
   it("B468 · 驱动侧是最后一次用户滚动的那一栏，收口不把它推翻", async () => {
     const { panel, s } = mountDiffPair("A\nB\nC", "A\nC");
     const right = panel.view!.view;
     const left = s.left;
+    // 右栏 C 行 top=20；左栏 B 行 top=20、C 行 top=40。
+    fakeLineBoxes(right, [20, 20]);
+    fakeLineBoxes(left, [20, 20, 20]);
     let rightTop = 0;
     let leftTop = 0;
     Object.defineProperty(right.scrollDOM, "clientHeight", { configurable: true, value: 100 });
@@ -1891,31 +1956,32 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
         leftTop = v;
       },
     });
+    s.syncBlocks();
 
-    s.remeasure();
-    await frames();
-    // 用户先滚左栏（非回声）⇒ 右栏跟到 40，驱动侧记为左栏。
-    leftTop = 40;
+    // 用户先滚左栏第 2 行（B）：右栏没有这一行 ⇒ 落到块前缘 C（top=20）。
+    leftTop = 20;
     left.scrollDOM.dispatchEvent(new Event("scroll"));
-    expect(rightTop).toBe(40);
+    expect(rightTop).toBe(20);
     // 随后布局把右栏单独改到 5（不发事件）；收口必须按左栏落位，而不是按右栏。
     rightTop = 5;
     s.remeasure();
-    await frames();
-    expect(rightTop, "驱动栏仍是最后滚动的那一栏").toBe(40);
-    expect(leftTop).toBe(40);
+    await frames(8);
+    expect(rightTop, "驱动栏仍是最后滚动的那一栏（左栏）").toBe(20);
+    expect(leftTop).toBe(20);
   });
 
-  it("B469 · 对栏夹不住的值由对栏回抄（固定点收敛）", async () => {
+  it("B469 · 关掉同步后两栏各滚各的；重新打开按最后驱动侧立刻对齐", async () => {
     const { panel, s } = mountDiffPair("A\nB\nC", "A\nC");
     const right = panel.view!.view;
     const left = s.left;
+    fakeLineBoxes(right, [20, 20]);
+    fakeLineBoxes(left, [20, 20, 20]);
     let rightTop = 0;
     let leftTop = 0;
     Object.defineProperty(right.scrollDOM, "clientHeight", { configurable: true, value: 100 });
     Object.defineProperty(right.scrollDOM, "scrollHeight", { configurable: true, value: 300 });
     Object.defineProperty(left.scrollDOM, "clientHeight", { configurable: true, value: 100 });
-    Object.defineProperty(left.scrollDOM, "scrollHeight", { configurable: true, value: 220 });
+    Object.defineProperty(left.scrollDOM, "scrollHeight", { configurable: true, value: 300 });
     Object.defineProperty(right.scrollDOM, "scrollTop", {
       configurable: true,
       get: () => rightTop,
@@ -1930,16 +1996,58 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
         leftTop = v;
       },
     });
+    s.syncBlocks();
 
-    s.remeasure();
-    await frames();
-    // 右栏滚到 150：左栏最大只到 120 ⇒ 被夹住。
-    rightTop = 150;
+    s.setSyncScrollEnabled(false);
+    rightTop = 20;
     right.scrollDOM.dispatchEvent(new Event("scroll"));
-    expect(leftTop, "写入先夹到对栏的最大滚动量").toBe(120);
-    // 左栏那一发回声按自己到得了的 120 回抄驱动栏 ⇒ 两栏收敛到同一个偏移。
-    left.scrollDOM.dispatchEvent(new Event("scroll"));
-    expect(rightTop, "固定点把驱动栏拉回对栏到得了的值").toBe(120);
+    expect(leftTop, "关掉同步：对栏不跟").toBe(0);
+
+    s.setSyncScrollEnabled(true);
+    expect(leftTop, "重新打开：立刻按最后驱动侧（右栏）的锚点对齐").toBe(40);
+    expect(rightTop).toBe(20);
+  });
+
+  it("B472 · 块内按对齐段搬像素：多行对一行，行号锚会少滚，段锚不会", () => {
+    // 折行打开后同一文档行在两栏的视觉高度不同（栏宽不同），行内像素比例没有对应
+    // 关系；但每个对齐段两侧总高相等（gapZones 的产出）⇒ 段内偏移可以直接搬。
+    const { panel, s } = mountDiffPair("A\nX\nB", "A\nX1\nX2\nX3\nB");
+    const right = panel.view!.view;
+    const left = s.left;
+    expect(s.blocks().length, "A/B 未改动，中间三行对一行是同一个块").toBe(1);
+    // 左栏 X 行之后那条 40px 缝就是 gapZones 的真实产出：右栏这一段三行 60px，
+    // 左栏一行 20px + 缝 40px —— 段内两侧等高，偏移才搬得过去。
+    fakeLineBoxes(left, [20, 20, 20], { 2: 40 });
+    fakeLineBoxes(right, [20, 20, 20, 20, 20]);
+    let rightTop = 0;
+    let leftTop = 0;
+    Object.defineProperty(right.scrollDOM, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(right.scrollDOM, "scrollHeight", { configurable: true, value: 400 });
+    Object.defineProperty(left.scrollDOM, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(left.scrollDOM, "scrollHeight", { configurable: true, value: 400 });
+    Object.defineProperty(right.scrollDOM, "scrollTop", {
+      configurable: true,
+      get: () => rightTop,
+      set: (v: number) => {
+        rightTop = v;
+      },
+    });
+    Object.defineProperty(left.scrollDOM, "scrollTop", {
+      configurable: true,
+      get: () => leftTop,
+      set: (v: number) => {
+        leftTop = v;
+      },
+    });
+    s.syncBlocks();
+
+    rightTop = 40; // 右栏顶行 = 块内第 2 行（X2）
+    right.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(leftTop, "左栏段首（X，top=20）+ 段内偏移 20；按行号锚只会给 20").toBe(40);
+
+    rightTop = 60; // 块内第 3 行
+    right.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(leftTop, "段内偏移 40").toBe(60);
   });
 });
 

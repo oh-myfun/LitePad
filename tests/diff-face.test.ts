@@ -931,10 +931,41 @@ describe("B463 · 概览滑块 = 右栏滚动条（ScrollbarState.isNeeded 语�
     expect(el, "概览条得真的挂上").not.toBeNull();
     return el!;
   };
-  /** jsdom 没有布局引擎 ⇒ 这两颗量度按真机读数桩进来（`renderViewport` 只读它们）。 */
+  /** jsdom 没有布局引擎 ⇒ 这两颗量度按真机读数桩进来（clientHeight 进滑块几何，scrollHeight 只做对栏夹值）。 */
   const measure = (el: HTMLElement, clientHeight: number, scrollHeight: number): void => {
     Object.defineProperty(el, "clientHeight", { value: clientHeight, configurable: true });
     Object.defineProperty(el, "scrollHeight", { value: scrollHeight, configurable: true });
+  };
+  const linesOf = (n: number): string => Array.from({ length: n }, (_, i) => `L${i}`).join("\n");
+  /**
+   * 给一栏铺一套确定的行盒：概览轴（量尺在 jsdom 里量不出宽度 ⇒ `lineHeights` 退回
+   * `textBlockOf`）与滚动锚点（`lineBlockAtHeight`）读的是同一套 —— 真机由 CM6 的
+   * heightMap 回答，这里桩成已知像素。
+   */
+  const fakeLines = (view: EditorView, height: number): void => {
+    const doc = view.state.doc;
+    const lines = doc.lines;
+    const box = (n: number): BlockInfo => ({
+      from: doc.line(n).from,
+      to: doc.line(n).to,
+      top: (n - 1) * height,
+      bottom: n * height,
+      height,
+      length: 1,
+      type: 0,
+      widget: null,
+      widgetLineBreaks: 0,
+    });
+    view.lineBlockAt = ((pos: number) => box(doc.lineAt(pos).number)) as EditorView["lineBlockAt"];
+    view.lineBlockAtHeight = ((y: number) => {
+      const n = Math.min(Math.max(Math.floor(y / height) + 1, 1), lines);
+      return box(n);
+    }) as EditorView["lineBlockAtHeight"];
+    Object.defineProperty(view, "contentHeight", { configurable: true, get: () => lines * height });
+  };
+  /** 折行关着时 `lineHeights` 恒读这颗（真机由 CM6 实测，jsdom 里恒 0）。 */
+  const fakeDefaultLineHeight = (view: EditorView, height: number): void => {
+    Object.defineProperty(view, "defaultLineHeight", { configurable: true, get: () => height });
   };
   /** 派发 `scroll` 就是 `renderViewport` 的生产重画入口（`onRightScroll`）。 */
   const repaint = (right: EditorView): void => {
@@ -960,50 +991,59 @@ describe("B463 · 概览滑块 = 右栏滚动条（ScrollbarState.isNeeded 语�
   };
 
   it("内容装得下：滑块带 `is-hidden`（opacity 0 + 不吃指针），不再铺满整条", () => {
-    const { panel, right } = mountSurfacePair();
+    const { panel, right, surface } = mountSurfacePair({ left: "A\nZ", right: "A\nZ" });
     const host = panel.bodyEl!;
     const viewport = viewportOf(host);
-    measure(right.scrollDOM, 200, 200);
-    repaint(right);
-    expect(viewport.classList.contains("is-hidden"), "isNeeded() === false ⇒ 收起来").toBe(true);
+    fakeLines(right, 100);
+    fakeLines(surface.left, 100);
+    // scrollHeight 不再参与这条链：故意填一个与实测轴无关的值。
+    measure(right.scrollDOM, 200, 9_999);
+    surface.syncBlocks();
+    expect(viewport.classList.contains("is-hidden"), "轴总高 200 = 可视高 ⇒ 收起来").toBe(true);
     // 旧实现走 `getSliderSize()` 的 representableSize 那一支，把高度写成 clientHeight
     // ⇒ 右缘一根整条都是滑块的灰柱，按下去拖不动（scrollTop 恒 0）。
     expect(viewport.style.height, "不再铺满整条").not.toBe("200px");
 
-    // 内容一变高，下一发重画就能拖 —— 不需要重建整条概览。
-    measure(right.scrollDOM, 200, 600);
-    repaint(right);
+    // 内容一变高（实测行盒 300 ⇒ 轴 600），下一发重画就能拖 —— 不需要重建整条概览。
+    fakeLines(right, 300);
+    fakeLines(surface.left, 300);
+    surface.syncBlocks();
     expect(viewport.classList.contains("is-hidden")).toBe(false);
     expect(viewport.style.height, "floor(200² / 600) = 66").toBe("66px");
   });
 
-  it("溢出时按 ScrollbarState 的像素公式：高度下限 20px，top = scrollTop × ratio", () => {
-    const { panel, right } = mountSurfacePair();
+  it("溢出时按 ScrollbarState 的像素公式：高度下限 20px，top 由概览轴换算", () => {
+    const { panel, right, surface } = mountSurfacePair({ left: linesOf(20), right: linesOf(20) });
     const viewport = viewportOf(panel.bodyEl!);
-    measure(right.scrollDOM, 100, 10_000);
+    fakeLines(right, 100);
+    fakeLines(surface.left, 100);
+    measure(right.scrollDOM, 100, 9_999);
     right.scrollDOM.scrollTop = 0;
-    repaint(right);
-    expect(viewport.style.height, "floor(100² / 10000) = 1 ⇒ 抬到下限 20").toBe("20px");
+    surface.syncBlocks();
+    expect(viewport.style.height, "floor(100² / 2000) = 5 ⇒ 抬到下限 20").toBe("20px");
     expect(viewport.style.top).toBe("0px");
 
-    right.scrollDOM.scrollTop = 4_950;
+    // 轴 450 = 第 5 行（top 400）+ 半行（50）；travel = 80，轴跨 1900。
+    right.scrollDOM.scrollTop = 450;
     repaint(right);
-    // ratio = (100 - 20) / (10000 - 100)
-    expect(viewport.style.top).toBe(`${Math.round(4950 * (80 / 9900))}px`);
+    expect(viewport.style.top).toBe("19px");
   });
 
   it("拖动：窗口级监听跨出元素边界仍跟手；松手或按键状态变了就停", () => {
-    const { panel, right } = mountSurfacePair();
+    const { panel, right, surface } = mountSurfacePair({ left: linesOf(6), right: linesOf(6) });
     const host = panel.bodyEl!;
     const overview = overviewOf(host);
     overview.getBoundingClientRect = () => rectOf(200);
-    measure(right.scrollDOM, 200, 600);
-    repaint(right);
+    fakeLines(right, 100);
+    fakeLines(surface.left, 100);
+    measure(right.scrollDOM, 200, 9_999);
+    surface.syncBlocks();
+    expect(viewportOf(host).style.height).toBe("66px");
 
     overview.dispatchEvent(
       new MouseEvent("pointerdown", { clientY: 100, button: 0, bubbles: true }),
     );
-    expect(right.scrollDOM.scrollTop, "按在轨道中点 ⇒ 跳到一半").toBe(200);
+    expect(right.scrollDOM.scrollTop, "按在轨道中点 ⇒ 跳到轴的一半（第 4 行）").toBe(300);
 
     // 指针移出概览条（仍在窗口里）：监听挂在 window 上，靠元素内命中的写法这里会断。
     window.dispatchEvent(new MouseEvent("pointermove", { clientY: 200, buttons: 1 }));
@@ -1020,28 +1060,36 @@ describe("B463 · 概览滑块 = 右栏滚动条（ScrollbarState.isNeeded 语�
     );
     window.dispatchEvent(new MouseEvent("pointerup"));
     window.dispatchEvent(new MouseEvent("pointermove", { clientY: 200, buttons: 1 }));
-    expect(right.scrollDOM.scrollTop, "pointerup 之后不再跟手").toBe(200);
+    expect(right.scrollDOM.scrollTop, "pointerup 之后不再跟手").toBe(300);
     overview.dispatchEvent(
       new MouseEvent("pointerdown", { clientY: 200, button: 2, bubbles: true }),
     );
-    expect(right.scrollDOM.scrollTop, "右键不启动拖动").toBe(200);
+    expect(right.scrollDOM.scrollTop, "右键不启动拖动").toBe(300);
   });
 
   it("折行开关与窗口缩放之后都重算滑块（不靠滚一下才醒）", async () => {
     // 起手摆在不折行那一档，下面再翻到折行 —— 与「初值继承设置」不冲突（`env.wrap` 同时写设置）。
-    const { panel, right, surface } = mountSurfacePair({ wrap: false });
+    const { panel, right, surface } = mountSurfacePair({
+      left: linesOf(4),
+      right: linesOf(4),
+      wrap: false,
+    });
     const viewport = viewportOf(panel.bodyEl!);
-    measure(right.scrollDOM, 200, 400);
-    repaint(right);
-    expect(viewport.style.height).toBe("100px");
+    // 折行关着：一个文档行 = 一个视觉行，行高读 `defaultLineHeight`。
+    fakeDefaultLineHeight(right, 100);
+    fakeDefaultLineHeight(surface.left, 100);
+    measure(right.scrollDOM, 200, 9_999);
+    surface.syncBlocks();
+    expect(viewport.style.height, "floor(200² / 400) = 100").toBe("100px");
 
-    // 打开折行：内容变高（真机的新读数这里直接喂进来），刷新跟着重画。
-    measure(right.scrollDOM, 200, 800);
+    // 打开折行：实测行盒变 200/行（轴 800），刷新跟着重画。
+    fakeLines(right, 200);
+    fakeLines(surface.left, 200);
     surface.setWrapEnabled(true);
     expect(viewport.style.height, "floor(200² / 800) = 50").toBe("50px");
 
     // 窗口缩放走 `onWindowResize` → `scheduleAlign` 的 rAF 落地后才重画。
-    measure(right.scrollDOM, 100, 800);
+    measure(right.scrollDOM, 100, 9_999);
     window.dispatchEvent(new Event("resize"));
     await frames();
     expect(viewport.style.height, "floor(100² / 800) = 12 ⇒ 抬到下限 20").toBe("20px");

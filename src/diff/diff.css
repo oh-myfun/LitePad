@@ -358,6 +358,13 @@
   background: inherit;
 }
 
+/* `::after` 的 `100vw` 只该铺色，不该撑出横向滚动条：滚动条会吃掉 8px 可视高度，
+   两栏 `clientHeight` 从此不等，滚到底就永远差这 8px（占位缝只补内容，补不了视口）。
+   只在折行态收口：关掉折行时长行本来就要能横向滚。 */
+.panel-host.is-diff .cm-scroller:has(> .cm-content.cm-lineWrapping) {
+  overflow-x: hidden;
+}
+
 /* 内联改动为空的那一侧：上游 `diff-range-empty`（`diffEditor/style.css` 的
    `.char-delete.diff-range-empty` / `.char-insert.diff-range-empty`）—— 3px 竖条，颜色取
    那一侧的字符底色。删除侧多 `margin-left: -1px`，于是净占 2px（上游同款）。

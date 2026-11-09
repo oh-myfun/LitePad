@@ -297,12 +297,16 @@ function leftState(
  *
  * 中间那 35px 回退列与右缘 30px 概览**不参与**：正文宽取两栏实测宽度之和，不拿整格宽度
  * 按比例折算（旧口径的第二个偏差来源）。
+ *
+ * `onResize` 在松手（含 `pointercancel`）时点一次：栏宽一变换行结果全变，调用方要按新宽度
+ * 重量占位缝与概览轴。拖动途中不点 —— 每像素重测全文档折行会卡，且途中视觉本来就在变。
  * @returns 解除 `pointerdown` 绑定的动作（dispose 时调用）
  */
 function attachSashDrag(
   originalEl: HTMLElement,
   modifiedEl: HTMLElement | null,
   sashEl: HTMLElement,
+  onResize: () => void,
 ): () => void {
   const onDown = (event: PointerEvent) => {
     // 量不到宽度（隐藏格 / jsdom 里 `getBoundingClientRect` 恒 0）就这一下不动手：
@@ -324,6 +328,10 @@ function attachSashDrag(
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
+      // 栏宽变了 ⇒ 两栏的折行结果全变，占位缝与概览轴都必须按新宽度重量一遍；
+      // 不补这一发，拖完分屏就停在「旧宽度算出来的缝」上 —— 行数看着对不齐。
+      // 放在松手时只算一次：拖动途中每一像素都重量一遍全文档折行会卡。
+      onResize();
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -558,6 +566,9 @@ export function createDiffSurface(
       (el): el is HTMLElement => el instanceof HTMLElement && el.classList.contains("panel-editor"),
     ) ?? null,
     sashEl,
+    // 松手后重量：栏宽变了，两栏的折行高度与占位缝都要按新宽度重算（`scheduleAlign`
+    // 在函数后半段才声明，但这一发要到用户松手才执行）。
+    () => scheduleAlign(),
   );
 
   /** 右栏那颗 view 的 state 回写进标签快照（与 `handleUpdate` / `lifecycle` 同一个寻址）。 */
@@ -740,6 +751,8 @@ export function createDiffSurface(
     writeBackRight();
     // 概览条的色块吃块表 + 折叠态，与两臂同一次收口；右栏的 scrollTop 可能刚被折条改掉，
     // 视口滑块顺便复算一帧。中间那列的按钮位置同样只跟块表/折叠走 ⇒ 一起重画。
+    // 缝/折叠/行盒都可能在这一发里换过 ⇒ 概览轴作废（下一次读取按新行盒重算）。
+    invalidateAxis();
     renderOverview();
     renderReverts();
     // 块表/折叠换过之后，两栏的实测行高可能变了（块的边界变了，或折条换了位置）⇒ 排一次
@@ -1042,8 +1055,19 @@ export function createDiffSurface(
    *
    * ⚠️ 折行量不出来时 `lineHeights` 退回 `textBlockOf` 估值链，这条轴跟着退化成估算 ——
    * 与缝的口径一致，不在两处各估一遍。
+   *
+   * **缓存**：滚动只读轴（滑块、色带、标记层都吃它），不能每一发 scroll 都把整篇重算。
+   * 作废点只有「行盒真的换了」：缝/折叠/折行/文档/字号（见 `invalidateAxis` 的调用处）。
    */
+  let axisVersion = 0;
+  const axisCache = new Map<DiffSide, { version: number; axis: OverviewAxis | null }>();
+  const invalidateAxis = (): void => {
+    axisVersion++;
+  };
+
   const overviewAxis = (side: DiffSide): OverviewAxis | null => {
+    const cached = axisCache.get(side);
+    if (cached && cached.version === axisVersion) return cached.axis;
     const view = viewOf(side);
     if (!view) return null;
     const lines = view.state.doc.lines;
@@ -1060,11 +1084,13 @@ export function createDiffSurface(
       tops[line + 1] = tops[line] + heights[line] + (gapAfter.get(line) ?? 0);
     }
     const clamp = (line: number): number => Math.min(Math.max(line, 1), lines);
-    return {
+    const axis: OverviewAxis = {
       total: tops[lines + 1] ?? 0,
       topOf: (line) => tops[clamp(line)],
       heightOf: (line) => heights[clamp(line)],
     };
+    axisCache.set(side, { version: axisVersion, axis });
+    return axis;
   };
 
   /** 现在这两栏该补哪些缝（纯计算在 `face.ts` 的 `gapZones`，这里只负责量）。 */
@@ -1144,6 +1170,8 @@ export function createDiffSurface(
           resyncSharedOffset();
         }
         // 占位块/折叠/换行都会挪色块与按钮的像素位置，落地后统一重画一次。
+        // 这一轮 measure 可能换了行盒（字体/折行/宽度）⇒ 概览轴先作废再读。
+        invalidateAxis();
         renderOverview();
         renderReverts();
         renderViewport();
@@ -1213,6 +1241,54 @@ export function createDiffSurface(
   };
 
   /**
+   * 视口顶在概览轴上的位置：视口顶所在行 + 行内比例，换到 `overviewAxis` 的坐标系。
+   *
+   * 不能拿 `scrollTop` 直接比轴总高 —— 那是 CM6 的估值 heightMap，与轴（实测行高 + 缝）
+   * 差着视口外折行的估值误差。先按 `lineBlockAtHeight` 找到顶行，再用行号回轴里查位置。
+   */
+  const viewportAxisTop = (view: EditorView, axis: OverviewAxis): number => {
+    const top = Math.max(view.scrollDOM.scrollTop, 0);
+    const block = view.lineBlockAtHeight(top);
+    const lines = view.state.doc.lines;
+    const line = view.state.doc.lineAt(block.from).number;
+    const height = Math.max(block.height, 0);
+    const frac = height > 0 ? Math.min(Math.max((top - block.top) / height, 0), 1) : 0;
+    const from = axis.topOf(line);
+    const to = line < lines ? axis.topOf(line + 1) : axis.total;
+    return from + frac * Math.max(to - from, 0);
+  };
+
+  /**
+   * 轴坐标 → 右栏滚动位置：二分找到那一行，再按行内比例落到 `lineBlockAt` 的坐标上。
+   *
+   * 与 `viewportAxisTop` 互逆：拖滑块时读的是同一颗轴，松手后 `scroll` 那一发读回来
+   * 的滑块位置不会跳（写进去的是行盒坐标，CM6 渲染那一行时用的正是它）。
+   */
+  const scrollToAxisY = (axisY: number): void => {
+    const view = right;
+    const axis = overviewAxis("modified");
+    if (!view || !axis || !(axis.total > 0)) return;
+    const y = Math.min(Math.max(axisY, 0), axis.total);
+    const lines = view.state.doc.lines;
+    let lo = 1;
+    let hi = lines;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (axis.topOf(mid) <= y) lo = mid;
+      else hi = mid - 1;
+    }
+    const from = axis.topOf(lo);
+    const to = lo < lines ? axis.topOf(lo + 1) : axis.total;
+    const room = Math.max(to - from, 0);
+    const frac = room > 0 ? Math.min(Math.max((y - from) / room, 0), 1) : 0;
+    const block = view.lineBlockAt(view.state.doc.line(lo).from);
+    view.scrollDOM.scrollTop = Math.min(
+      block.top + frac * Math.max(block.height, 0),
+      Math.max(view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight, 0),
+    );
+  };
+
+  /**
    * 视口滑块（B461 后续轮）：几何照 VS Code `ScrollbarState` 的取值，不用百分比。
    *
    * 上游（`scrollbarState.ts`）：
@@ -1222,6 +1298,10 @@ export function createDiffSurface(
    *   position   = round(scrollTop × ratio)
    * 百分比写法在长文档里会缩成 1px 的线，而 VS Code 的下限是 20px —— 那正是「拖得住」的保证。
    *
+   * `scrollSize` / `position` 都取**概览轴**（实测行高 + 缝）而不是 CM6 的
+   * `scrollHeight` / `scrollTop`：后者视口外按字符数估，滚过一段就变一次，滑块会边滚边改宽。
+   * 视口顶的位置由 `viewportAxisTop` 从顶行行号换算，与拖拽的 `scrollToAxisY` 互逆。
+   *
    * 不需要滚动时**整条滑块收起来**，不是铺满：上游在 `isNeeded() === false` 时把滚动条元素换成
    * `.invisible`（`scrollbars.css`：`opacity: 0; pointer-events: none;`）。以前这里照
    * `getSliderSize()` 的 `representableSize` 那一支把滑块铺满整条，于是内容装得下时右缘是一根
@@ -1229,17 +1309,22 @@ export function createDiffSurface(
    * 视觉与命中区一起收掉 —— 透明但可点比看得见却拖不动更糟。
    */
   const renderViewport = (): void => {
-    const scroller = right?.scrollDOM;
-    if (!scroller) return;
-    const { scrollTop, scrollHeight, clientHeight } = scroller;
-    const needed = scrollHeight > 0 && clientHeight > 0 && scrollHeight > clientHeight;
+    const view = right;
+    if (!view) return;
+    const clientHeight = view.scrollDOM.clientHeight;
+    const axis = overviewAxis("modified");
+    const total = axis?.total ?? 0;
+    // 需不需要滑块看**实测轴**，不看 CM6 的 scrollHeight：后者随滚动逐段从估值变实测，
+    // 同一篇文档的滑块会一边滚一边变宽变窄 —— 用户报的「色条不稳定」正是这一条。
+    const needed = total > 0 && clientHeight > 0 && total > clientHeight;
     viewportEl.classList.toggle("is-hidden", !needed);
-    if (!needed) return;
-    const height = Math.round(
-      Math.max(20, Math.floor((clientHeight * clientHeight) / scrollHeight)),
+    if (!needed || !axis) return;
+    const height = Math.round(Math.max(20, Math.floor((clientHeight * clientHeight) / total)));
+    const travel = Math.max(clientHeight - height, 0);
+    const span = Math.max(total - clientHeight, 1);
+    const top = Math.round(
+      (Math.min(Math.max(viewportAxisTop(view, axis), 0), span) / span) * travel,
     );
-    const ratio = (clientHeight - height) / (scrollHeight - clientHeight);
-    const top = Math.round(scrollTop * ratio);
     viewportEl.style.top = `${top}px`;
     viewportEl.style.height = `${height}px`;
   };
@@ -1292,12 +1377,12 @@ export function createDiffSurface(
    * 收尾判据照上游：按键状态一变就停（`e.buttons !== initialButtons` ⇒ `stopMonitoring`）。
    */
   const scrollToClientY = (clientY: number): void => {
-    const scroller = right?.scrollDOM;
-    if (!scroller) return;
+    const axis = overviewAxis("modified");
+    if (!axis || !(axis.total > 0)) return;
     const rect = overviewEl.getBoundingClientRect();
     if (rect.height <= 0) return;
     const ratio = Math.min(Math.max((clientY - rect.top) / rect.height, 0), 1);
-    scroller.scrollTop = ratio * Math.max(scroller.scrollHeight - scroller.clientHeight, 0);
+    scrollToAxisY(ratio * axis.total);
   };
   let draggingOverview = false;
   /**
@@ -1350,18 +1435,17 @@ export function createDiffSurface(
       endOverviewDrag();
       return;
     }
+    const axis = overviewAxis("modified");
+    if (!axis) return;
     const rect = overviewEl.getBoundingClientRect();
     const thumb = viewportEl.getBoundingClientRect();
     const travel = rect.height - thumb.height;
-    const maxScroll = Math.max(
-      (right?.scrollDOM.scrollHeight ?? 0) - (right?.scrollDOM.clientHeight ?? 0),
-      0,
-    );
-    if (!(travel > 0) || !(maxScroll > 0)) return;
-    // 指针位置 → 滑块顶部 → scrollTop：与 renderViewport 的 top = scrollTop × ratio 互逆，
+    const span = Math.max(axis.total - (right?.scrollDOM.clientHeight ?? 0), 0);
+    if (!(travel > 0) || !(span > 0)) return;
+    // 指针位置 → 滑块顶部 → 轴坐标：与 renderViewport 的 top = axisTop / span × travel 互逆，
     // 因此一轮拖完再拖不会累积漂移（每轮都从实测的 getBoundingClientRect 重新起算）。
     const top = Math.min(Math.max(e.clientY - rect.top - dragOffset, 0), travel);
-    if (right) right.scrollDOM.scrollTop = (top / travel) * maxScroll;
+    scrollToAxisY((top / travel) * span);
   };
   const onOverviewWheel = (e: WheelEvent): void => {
     const scroller = right?.scrollDOM;
@@ -1370,40 +1454,32 @@ export function createDiffSurface(
     scroller.scrollTop += e.deltaY;
   };
   /**
-   * 两栏同步滚动（默认开）：**共享偏移的固定点**（照 VS Code 差异编辑器的双向 scroll 同步）。
+   * 两栏同步滚动（默认开）：**按内容锚点映射**（复刻 VS Code 差异编辑器的偏移校正，
+   * 不是裸比较 `scrollTop`）。
    *
-   * 对齐之后两栏的内容高度由占位缝补齐（未改动区的折行差异也补），同一 `scrollTop` 落在
-   * 两栏里就是同一视觉行 —— 这是 VS Code 差异编辑器恒同步的前提。于是同步只剩一条不变量：
-   * 两栏的 `scrollTop` / `scrollLeft` 始终相同（±1px）。
+   * 为什么不能裸比较：占位缝只保证「实测像素高度」相等（`gapZones` 吃量尺的实测值），
+   * 而 CM6 的 `scrollTop` 活在它自己的 heightMap 里 —— 视口外的折行按**字符数估值**
+   * （`HeightOracle.heightForLine`），中文/长行的估值与实际差得很远，两栏正文又不同 ⇒
+   * 同一份文稿两栏的 `scrollHeight` 可以差上千像素（实测初始就 1071px，拖分屏后 1680px）。
+   * 同一个 `scrollTop` 在窄栏与宽栏根本不在同一视觉行上；越往文档后面走错得越多，到底部
+   * 能整屏错开。
    *
-   * 上游 `diffEditorViewZones.ts` 用两颗 scroll observable + 两个 autorun 双向写，写之前
-   * 只判「值是否不同」；写入触发的对方事件会再算一次，发现已相等即停。这里同款：任一栏的
-   * scroll 事件都把该栏偏移抄给对栏，**回声照常进同一函数**，靠值相等自然终止。
-   * ⚠️ 不能把回声「认领后早退」：`mirrorScroll` 记的票是**夹过**的值，对栏写入后正好等于
-   * 票上的数 ⇒ 夹值这一发会被当成回声吞掉，驱动栏就永久停在对栏到不了的位置（拖分屏后
-   * 两栏对不上的直接来源）。固定点里对栏回抄驱动栏，两栏收敛到对栏到得了的那个值。
+   * VS Code 的差异编辑器能直接同步 `scrollTop`，是因为它对任意行都能算出确定的折行行数
+   * （`diffEditorViewZones.ts` 的 `getTopForLineNumber(line, true)`），两栏高度严格相等。
+   * CM6 没有这条 API，于是这里换一条等价的不变量：**驱动栏视口顶部那一行（+行内比例）
+   * 始终映射到对栏的对应行**。每一发都用两栏各自的 `lineBlockAt` 现算目标偏移 —— 它正是
+   * CM6 渲染该行时用的坐标系，估值误差因此不会漏进对齐。
    *
-   * `pendingEcho` 只剩一个用途：认出「这一发是我写的」，别把 `lastDriver` 记成对栏。
-   * 布局变化（CM6 measure 末尾的滚动锚定、浏览器夹取）可能在没有用户滚动的情况下改掉
-   * 某一栏的偏移；`scheduleAlign` 收口时用 `resyncSharedOffset()` 按 `lastDriver` 再落一次位。
+   * `pendingEcho` 只用来认出「这一发是我写的」：回声一律早退，不再反向映射。上一版固定点
+   * 同步要在回声里回抄，是为了让两栏收敛到「对栏到得了」的那个值；锚点映射下两侧本来
+   * 就不要求同一个 `scrollTop`，把驱动栏往回拽只会让用户滚不到自己的文末。
    */
   let syncOn = true;
-  /**
-   * 布局变化后以哪一栏为准：**最后一次非回声滚动的那一栏**（默认右栏 —— 那份可编辑正文）。
-   *
-   * 固定点同步本身是双向的，正常情况下两栏早已相等，这个值只在「没有滚动事件可依赖」的
-   * 收口时刻起作用（例如两栏被各自的锚定改了不同的量、随后又没再滚动）。
-   */
+  /** 布局变化后以哪一栏为准：最后一次非回声滚动的那一栏（默认右栏 —— 那份可编辑正文）。 */
   let lastDriver: DiffSide = "modified";
-  /**
-   * 一发程序性写入的「认领票」：**纵、横两个值一起记**。
-   *
-   * 横向（`scrollLeft`）与纵向同一条机制 —— 不另起闸：两栏的折行态一致时横向位置也应当
-   * 一致（上游的差异编辑器两栏共用一根水平滚动条的量度）。事件来时两个轴都落到票上的值
-   * （±1px）才算自己写下的那一发；否则按用户/布局驱动处理。
-   */
+  /** 一发程序性写入的「认领票」：纵、横两个值一起记（容差 1px，与浏览器夹取取整同量级）。 */
   const pendingEcho = new WeakMap<HTMLElement, { top: number; left: number }>();
-  /** 这一发 scroll 是不是自己刚写下去的回声（是 ⇒ 消费掉票，只影响 `lastDriver` 的记账）。 */
+  /** 这一发 scroll 是不是自己刚写下去的回声（是 ⇒ 消费掉票，且不再反向映射）。 */
   const isEcho = (el: HTMLElement | undefined): boolean => {
     if (!el) return false;
     const want = pendingEcho.get(el);
@@ -1411,24 +1487,112 @@ export function createDiffSurface(
     pendingEcho.delete(el);
     return Math.abs(el.scrollTop - want.top) <= 1 && Math.abs(el.scrollLeft - want.left) <= 1;
   };
+
+  /** 驱动栏视口顶落在哪个文档行（1-based）。 */
+  const topLine = (view: EditorView): number => {
+    const top = Math.max(view.scrollDOM.scrollTop, 0);
+    return view.state.doc.lineAt(view.lineBlockAtHeight(top).from).number;
+  };
+
+  /**
+   * 驱动栏第 `line` 行落在哪个**对齐段**里，以及对栏那一段的首/末行（1-based）。
+   *
+   * 为什么锚在「段」而不是「行」：折行打开后同一文档行在两栏的视觉高度不同（栏宽不同），
+   * 行内像素比例没有任何对应关系。但 `gapZones` 已经保证**每个对齐段两侧总高相等**
+   * （块首 → 字符级对齐边界 → 块尾，加上未改动区逐行对齐）—— 段内任意像素偏移在两栏
+   * 指向同一个视觉位置，这正是 VS Code 的 alignment view zone 语义。所以块内必须搬
+   * 「相对段首的像素」，行号只在未改动区还能当锚（那里两侧逐行等高）。
+   *
+   * 段首/段末都从 `stops` 取（与 `gapZones` 同一份 `inner.alignments`）：两处若各算一套
+   * 边界，缝补在一处、滚动锚在另一处，段内就会差出缝的那一截。
+   */
+  interface AlignSpan {
+    ownStart: number;
+    otherStart: number;
+    /** 对栏段的结束行（不含；未改动区就是 otherStart 自己） */
+    otherEnd: number;
+  }
+
+  const alignSpan = (side: DiffSide, line: number): AlignSpan => {
+    const other = viewOf(side === "original" ? "modified" : "original");
+    const clampLine = (n: number): number =>
+      other ? Math.min(Math.max(n, 1), other.state.doc.lines) : 1;
+    const ownSpan = (b: DiffBlock) =>
+      side === "original"
+        ? { start: b.originalStart, end: b.originalEnd }
+        : { start: b.modifiedStart, end: b.modifiedEnd };
+    const otherSpan = (b: DiffBlock) =>
+      side === "original"
+        ? { start: b.modifiedStart, end: b.modifiedEnd }
+        : { start: b.originalStart, end: b.originalEnd };
+    for (let i = 0; i < stored.length; i++) {
+      const b = stored[i];
+      const own = ownSpan(b);
+      const opp = otherSpan(b);
+      if (line < own.start) {
+        // 未改动区：两侧行数相等且逐行等高，行号平移即是像素平移。
+        const mapped = clampLine(line + (opp.start - own.start));
+        return { ownStart: line, otherStart: mapped, otherEnd: mapped };
+      }
+      if (line <= own.end) {
+        const stops = [
+          { originalLine: b.originalStart, modifiedLine: b.modifiedStart },
+          ...(inner.alignments[i] ?? []),
+          { originalLine: b.originalEnd + 1, modifiedLine: b.modifiedEnd + 1 },
+        ];
+        const at = (p: { originalLine: number; modifiedLine: number }): number =>
+          side === "original" ? p.originalLine : p.modifiedLine;
+        const to = (p: { originalLine: number; modifiedLine: number }): number =>
+          side === "original" ? p.modifiedLine : p.originalLine;
+        let k = 0;
+        while (k + 1 < stops.length && at(stops[k + 1]) <= line) k++;
+        const cur = stops[k];
+        return {
+          ownStart: at(cur),
+          otherStart: clampLine(to(cur)),
+          otherEnd: clampLine(to(stops[k + 1] ?? cur)),
+        };
+      }
+    }
+    const b = stored[stored.length - 1];
+    if (!b) return { ownStart: line, otherStart: clampLine(line), otherEnd: clampLine(line) };
+    const own = ownSpan(b);
+    const opp = otherSpan(b);
+    const mapped = clampLine(line + (opp.end - own.end));
+    return { ownStart: line, otherStart: mapped, otherEnd: mapped };
+  };
+
   const mirrorScroll = (from: EditorView | null, to: EditorView | null): void => {
-    if (!syncOn || !from || !to) return;
+    if (!syncOn || !from || !to || from === to) return;
     const a = from.scrollDOM;
     const b = to.scrollDOM;
-    const bMax = Math.max(b.scrollHeight - b.clientHeight, 0);
-    const want = Math.min(Math.max(a.scrollTop, 0), bMax);
-    // 横向同样按「对栏能滚到哪」收口：两栏折行态一致时 scrollWidth 通常相同，
-    // 但长行 + 不同折行档时对侧可能短一截。夹过的值写进去后对栏的 scroll 事件会按它的
-    // 实际位置回抄驱动栏 —— 固定点收敛，两栏不会停在两个不同的偏移上。
-    const bMaxX = Math.max(b.scrollWidth - b.clientWidth, 0);
-    const wantX = Math.min(Math.max(a.scrollLeft, 0), bMaxX);
+    const side: DiffSide = from === left ? "original" : "modified";
+    const line = topLine(from);
+    const span = alignSpan(side, line);
+    const ownLine = from.state.doc.line(Math.min(Math.max(span.ownStart, 1), from.state.doc.lines));
+    const otherLine = to.state.doc.line(span.otherStart);
+    const ownBlock = from.lineBlockAt(ownLine.from);
+    const otherBlock = to.lineBlockAt(otherLine.from);
+    // 段内偏移：段首已经补过缝，段内两侧等高 ⇒ 这个像素量在对栏指同一个位置。
+    const offset = Math.max(a.scrollTop - ownBlock.top, 0);
+    const otherEndTop =
+      span.otherEnd > span.otherStart
+        ? to.lineBlockAt(to.state.doc.line(span.otherEnd).from).top
+        : otherBlock.top + Math.max(otherBlock.height, 0);
+    // 段内偏移夹在段尾之前；再夹一次全局可滚范围（末段贴近文档尾时可能到不了段首）。
+    const want = Math.min(
+      Math.max(Math.min(otherBlock.top + offset, otherEndTop), 0),
+      Math.max(b.scrollHeight - b.clientHeight, 0),
+    );
+    // 横向按「对栏能滚到哪」夹：两栏折行态一致时通常同宽，长行时对侧可能短一截。
+    const wantX = Math.min(Math.max(a.scrollLeft, 0), Math.max(b.scrollWidth - b.clientWidth, 0));
     // 值没变就别写：写同一个值一样会排一发 scroll，白白多一条回声账。
     if (Math.abs(b.scrollTop - want) < 0.5 && Math.abs(b.scrollLeft - wantX) < 0.5) return;
     pendingEcho.set(b, { top: want, left: wantX });
     b.scrollTop = want;
     b.scrollLeft = wantX;
   };
-  /** 把 `lastDriver` 一侧的偏移抄给对栏：布局收口与重新打开同步都从这一颗走。 */
+  /** 把 `lastDriver` 一侧的锚点重新落给对栏：布局收口与重新打开同步都从这一颗走。 */
   const resyncSharedOffset = (): void => {
     if (!syncOn || disposed) return;
     if (lastDriver === "original") mirrorScroll(left, right);
@@ -1442,12 +1606,18 @@ export function createDiffSurface(
   };
   const onRightScroll = (): void => {
     renderViewport();
-    if (!isEcho(right?.scrollDOM)) lastDriver = "modified";
+    // 自己写下的回声：只认领、不再反向映射（见上面那段注释）。
+    if (isEcho(right?.scrollDOM)) {
+      renderReverts();
+      return;
+    }
+    lastDriver = "modified";
     mirrorScroll(right, left);
     renderReverts();
   };
   const onLeftScroll = (): void => {
-    if (!isEcho(left?.scrollDOM)) lastDriver = "original";
+    if (isEcho(left?.scrollDOM)) return;
+    lastDriver = "original";
     mirrorScroll(left, right);
   };
   /** 点中间列的空白 = 把焦点交给右栏（VS Code 的 gutter 也是这个语义）。 */
@@ -1792,7 +1962,11 @@ export function createDiffSurface(
     // 仓库同形先例 `tests/preview-face-helpers.ts:71-76`：塞进 `state.update({extensions})`
     // 会被静默丢掉，必须走 effect。
     EditorView.updateListener.of((update) => {
-      if (update.docChanged) scheduleSync();
+      if (update.docChanged) {
+        // 行数/正文换了 ⇒ 概览轴（按行记账）当场作废；缝的收口仍旧走防抖那一发。
+        invalidateAxis();
+        scheduleSync();
+      }
       // 折叠期光标可能走进被替换掉的那几行（简报 Step 3 那条 ⚠️ 风险的另一半：
       // 落位之前有 `unfoldAround`，用户自己走进去这一路只能在这里补）。
       // ⚠️ `selectionSet` **一颗不够**（修复轮 Important 1 抓的第二路）：CM6 那一颗只认「这一发
