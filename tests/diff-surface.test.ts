@@ -1411,6 +1411,47 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     }
   });
 
+  it("B464 · CM6 量完新宽度后才报 geometryChanged：那一发必须重算缝", async () => {
+    const spy = vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(20);
+    try {
+      const { panel, s } = mountDiffPair("A\nB\nC", "A\nC");
+      const right = panel.view!.view;
+      const gapHeights = (): string[] =>
+        [...panel.bodyEl!.querySelectorAll<HTMLElement>(".diff-gap")].map((el) => el.style.height);
+
+      s.setWrapEnabled(true);
+      fakeLineBoxes(s.left, [20, 60, 20]);
+      fakeLineBoxes(right, [20, 20]);
+      await frames();
+      expect(gapHeights()).toEqual(["60px"]);
+
+      // CM6 自己的 resize 量测有 50ms 防抖：RO 那一发回调时读到的还是旧宽度，等它真量完
+      // 又不会再补一发 RO 通知 ⇒ 只有 measure 之后的 geometryChanged 能把缝拉回来。
+      // jsdom 的矩形恒为 0（`inWindow` 直接早退，永远不会产生真正的几何更新），这里把
+      // contentDOM 撑成有宽度的矩形，再改宽一次，让下一轮 measure 真的报 Geometry。
+      fakeLineBoxes(s.left, [20, 20, 20]);
+      const rect = (width: number): DOMRect =>
+        ({
+          left: 0,
+          right: width,
+          top: 0,
+          bottom: 400,
+          width,
+          height: 400,
+          x: 0,
+          y: 0,
+          toJSON: () => ({}),
+        }) as DOMRect;
+      s.left.dom.getBoundingClientRect = () => rect(640);
+      s.left.contentDOM.getBoundingClientRect = () => rect(320);
+      s.left.requestMeasure();
+      await frames(6);
+      expect(gapHeights(), "CM6 量完新宽度后必须按新行高重算").toEqual(["20px"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("B462 · 回退按钮跟着对齐后的实测位置走（块与按钮同一条行轴）", async () => {
     const spy = vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(20);
     try {

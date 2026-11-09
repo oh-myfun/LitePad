@@ -399,6 +399,13 @@ export function createDiffSurface(
 
   const current = spec;
   /**
+   * 旁路是否已经挂完（`scheduleAlign` 在文件后半才声明）。
+   *
+   * 建视图时 CM6 会跑首轮 update，那时 `scheduleAlign` 还在 TDZ 里；几何回调只在挂完之后
+   * 有意义，这一颗把首轮挡掉。
+   */
+  let armed = false;
+  /**
    * 左栏吃哪一档性能档案 —— **与右栏那颗 state 同一颗函数**（`perfOfDiffInstance`，
    * `makeDiffInstance` 用它造右栏）。档位只由文档决定、不随交互变。
    */
@@ -929,6 +936,11 @@ export function createDiffSurface(
     EditorView.updateListener.of((update) => {
       // 回退列的常显块跟「最后光标」走：光标在左栏里移动也要重画（此前只认右栏）。
       if (update.selectionSet) renderReverts();
+      // 行盒几何变了（拖分屏 / 窗口尺寸 / 折行重排）⇒ 行高跟着变，缝必须按新行高重测。
+      // ⚠️ 不能只靠 ResizeObserver：CM6 自己的 resize 量测有 50ms 防抖，RO 那一发常常还是
+      // 旧宽度的行高，等它量完又不会再发一次通知 ⇒ 缝停在旧值。geometryChanged 是 CM6
+      // **量完之后**才发的，在这里重测读到的才是新行高。docChanged 交给下面那条防抖链路。
+      if (armed && update.geometryChanged && !update.docChanged) scheduleAlign();
       if (
         update.selectionSet ||
         update.docChanged ||
@@ -1699,6 +1711,9 @@ export function createDiffSurface(
       // 两颗都听：`unfoldUnderCaret` 一进来就按 `foldOn` 早退，关着折叠时键入那一头分文不花；
       // 开着折叠时它只读几段行号与一次 `lineAt`，真正的重算仍旧排在防抖那一发（R24 不动）。
       if (update.selectionSet || update.docChanged) unfoldUnderCaret();
+      // 同左栏：CM6 量完新宽度之后才发 geometryChanged，在这里重测缝才不会读到旧行高。
+      // docChanged 那一类交给 `scheduleSync` 的防抖链路，不在这里按每一次按键重算。
+      if (armed && update.geometryChanged && !update.docChanged) scheduleAlign();
       // 光标走进另一块 ⇒ 中间那列的高亮跟着走（VS Code 的 `showAlways` 是同一口径）。
       if (update.selectionSet) renderReverts();
       // 概览标记层（选区/光标/查找命中/同词出现）只吃本栏 state ⇒ 选区、正文、查找查询
@@ -1819,6 +1834,8 @@ export function createDiffSurface(
     },
   };
   panel.diffSurface = surface;
+  // 挂完之前，两颗 view 的几何回调一律不排测量（`scheduleAlign` 那时还在 TDZ 里）。
+  armed = true;
   return surface;
 }
 
