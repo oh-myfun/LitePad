@@ -863,8 +863,13 @@ export function foldCandidates(
   return out;
 }
 
-/** 折条的高度（上游 `PlaceholderViewZone(d, 24)`）；DOM 与 `estimatedHeight` 共用这一份。 */
-const FOLD_BAR_HEIGHT = 24;
+/**
+ * 折条的高度（上游 `PlaceholderViewZone(d, 24)`）。
+ *
+ * 三处共用这一份：折条的 DOM、交给 CM6 高度表的 `estimatedHeight`、概览色带的像素轴
+ * （`surface.ts` 的 `overviewAxis`）—— 任何一处另写一个数，折叠之后色带与正文就会差一截。
+ */
+export const FOLD_BAR_HEIGHT = 24;
 
 /**
  * 折起来的那一段之上的**占位条**：24px 高（上游 `PlaceholderViewZone(d, 24)`），

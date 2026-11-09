@@ -44,6 +44,7 @@ import { blockAt, diffBlocks, type DiffBlock } from "./blocks";
 import { innerChanges, type InnerResult } from "./inline";
 import {
   DIFF_REVEAL_LINES,
+  FOLD_BAR_HEIGHT,
   diffFace,
   foldCandidates,
   foldedRangesIn,
@@ -335,6 +336,17 @@ function attachSashDrag(
 
 /** 回退键的提示与可访问名称同源（上游那颗 `title` 的本地化那一句）。 */
 const REVERT_LABEL = "回退此块";
+
+/**
+ * 一栏在**实测像素轴**上的几何：第 `line` 行的行首位置、行高、整篇总高（1-based 行号）。
+ *
+ * 概览色带与标记层共用这一份：两处若各取一套，色带与光标条就会在同一条概览上错开。
+ */
+interface OverviewAxis {
+  total: number;
+  topOf(line: number): number;
+  heightOf(line: number): number;
+}
 
 /**
  * 在 `hostEl`（splitview 交下来的 `.panel-host`）里挂上差异旁路，并把 surface 记到 panel 上。
@@ -1018,6 +1030,43 @@ export function createDiffSurface(
     return (line) => (hidden(line) ? 0 : textBlockOf(view, line).height);
   };
 
+  /**
+   * 概览色带与标记层的「实测像素轴」。
+   *
+   * 行高与缝都走 `lineHeights` / `gapPlans` 这**同一份测量**，不读 `textBlockOf` /
+   * `contentHeight`：CM6 只对进过视口的折行给实测值，视口外按字符数估 ⇒ 色带会随着
+   * 「滚过」逐段挪位 —— 与填充行要滚过才稳定是同一个病根。
+   *
+   * 折叠行按 0 高（整段已被替换装饰收走），折条在段首记一颗 `FOLD_BAR_HEIGHT`（两侧各一条、
+   * 计数相同，总高仍相等）；缝按 `afterLine` 记在那一行之后。
+   *
+   * ⚠️ 折行量不出来时 `lineHeights` 退回 `textBlockOf` 估值链，这条轴跟着退化成估算 ——
+   * 与缝的口径一致，不在两处各估一遍。
+   */
+  const overviewAxis = (side: DiffSide): OverviewAxis | null => {
+    const view = viewOf(side);
+    if (!view) return null;
+    const lines = view.state.doc.lines;
+    const h = lineHeights(side);
+    const barStarts = new Set(foldedRangesIn(view.state).map((fold) => fold.from));
+    const gapAfter = new Map<number, number>();
+    for (const gap of gapPlans[side]) {
+      gapAfter.set(gap.afterLine, (gapAfter.get(gap.afterLine) ?? 0) + gap.height);
+    }
+    const tops = new Float64Array(lines + 2);
+    const heights = new Float64Array(lines + 2);
+    for (let line = 1; line <= lines; line++) {
+      heights[line] = h(line) + (barStarts.has(line) ? FOLD_BAR_HEIGHT : 0);
+      tops[line + 1] = tops[line] + heights[line] + (gapAfter.get(line) ?? 0);
+    }
+    const clamp = (line: number): number => Math.min(Math.max(line, 1), lines);
+    return {
+      total: tops[lines + 1] ?? 0,
+      topOf: (line) => tops[clamp(line)],
+      heightOf: (line) => heights[clamp(line)],
+    };
+  };
+
   /** 现在这两栏该补哪些缝（纯计算在 `face.ts` 的 `gapZones`，这里只负责量）。 */
   const measureGapPlans = (): Record<DiffSide, GapZone[]> => {
     if (!right) return { original: [], modified: [] };
@@ -1123,19 +1172,19 @@ export function createDiffSurface(
   /**
    * 概览条：色块坐标走**实测像素**（B461 后续轮，照 VS Code 的 overview ruler）。
    *
-   * 上游把色块画在视图坐标里（对齐占位块与折行都计入），这里同口径：`lineBlockAt` 给的是
-   * 文档坐标（块级 widget 与折行后的视觉行都已经算在里面），`contentHeight` 是这一栏的总高。
-   * 于是「块的第一行 / 最后一行」落在哪个像素，色条就落在同一比例处；两列在同一高度上的
-   * 色块天然对得齐 —— 不再按「一个文档行 = 一行高」估算（那种算法一折行就整体偏）。
+   * 轴取 `overviewAxis`（行高与缝同一份测量，折叠行 0 高、折条 `FOLD_BAR_HEIGHT`），
+   * **不读** `lineBlockAt` / `contentHeight`：那两把对视口外的折行按字符数估，色带会
+   * 随「滚过」逐段挪位，正是用户报的「右边滚动条的色带也要一致」。
    *
-   * `contentHeight` 在首帧/隐藏格可能是 0：直接不画（ResizeObserver 落地后会补画）。
+   * 首帧/隐藏格量不出总高（面板还没进文档）：直接不画（ResizeObserver 落地后会补画）。
    */
   const paintRuler = (side: DiffSide, ruler: HTMLElement): void => {
     // 只清色块，**别** `replaceChildren()`：标记层那颗画布是常驻子节点（见创建处）。
     for (const old of ruler.querySelectorAll(".diff-overview-mark")) old.remove();
+    const axis = overviewAxis(side);
     const view = viewOf(side);
-    if (!view) return;
-    const total = view.contentHeight;
+    if (!axis || !view) return;
+    const total = axis.total;
     if (total <= 0) return;
     const lines = view.state.doc.lines;
     for (const b of stored) {
@@ -1146,9 +1195,8 @@ export function createDiffSurface(
       const z = Math.min(Math.max(end, 1), lines);
       if (z < a) continue;
       // 色块的上下界都取**行文本**的坐标：贴着块尾的占位块算作「缺口区」，不该染成改动色。
-      const top = textBlockOf(view, a).top;
-      const endBlock = textBlockOf(view, z);
-      const bottom = endBlock.top + endBlock.height;
+      const top = axis.topOf(a);
+      const bottom = axis.topOf(z) + axis.heightOf(z);
       if (!(bottom > top)) continue;
       const mark = document.createElement("div");
       mark.className = "diff-overview-mark";
@@ -1196,22 +1244,18 @@ export function createDiffSurface(
    * 上游的差异概览把这几类装饰与差异色块画在同一块画布上（`diffOverview.ruler`），
    * 二者共用一套行→像素换算；这里分成两层——色块仍是 DOM（既有的像素口径与测试），
    * 新标记在它上面的画布（`z-index: 1`），滑块仍压在最上层（`.diff-viewport` 的 `z-index: 10`）。
-   * 行高与 `contentHeight` 取**本栏**那份 view ⇒ 折行、占位块、折叠展开后的位移都跟着走。
+   * 换算与色块**同一条轴**（`overviewAxis`）⇒ 色带与光标条不会在同一条概览上错开。
    */
   const paintMarkers = (side: DiffSide, ruler: HTMLElement, canvas: HTMLCanvasElement): void => {
     const view = viewOf(side);
-    if (!view) return;
-    const total = view.contentHeight;
+    const axis = overviewAxis(side);
+    if (!view || !axis) return;
     const width = ruler.clientWidth;
     const height = ruler.clientHeight;
-    if (!(total > 0) || !(width > 0) || !(height > 0)) return;
+    if (!(axis.total > 0) || !(width > 0) || !(height > 0)) return;
     const rects = layoutOverview(
       overviewZones(view.state),
-      {
-        height: total,
-        topOf: (line) => textBlockOf(view, line).top,
-        heightOf: (line) => textBlockOf(view, line).height,
-      },
+      { height: axis.total, topOf: axis.topOf, heightOf: axis.heightOf },
       width,
       height,
     );

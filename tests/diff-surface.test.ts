@@ -1504,6 +1504,65 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     }
   });
 
+  it("B466 · 概览色带与填充走同一把实测尺：CM6 的估值怎么变，色带都不挪位", async () => {
+    const spy = vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(20);
+    const rect = (width: number, height: number): DOMRect =>
+      ({
+        left: 0,
+        right: width,
+        top: 0,
+        bottom: height,
+        width,
+        height,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    // 同 B465：正文容器有宽度，量尺探针行按「10 个字符折一行」给高。
+    const rectSpy = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: Element) {
+        const el = this as HTMLElement;
+        if (el.classList.contains("cm-content")) return rect(300, 400);
+        if (el.classList.contains("diff-wrap-probe-line")) {
+          const len = (el.textContent ?? "").length;
+          return rect(300, 20 * Math.max(1, Math.ceil(len / 10)));
+        }
+        return rect(0, 0);
+      });
+    try {
+      // 左第 1 行 30 字符（折 3 个视觉行 = 60px）、右第 1 行 1 个字符（20px）⇒ 右栏补 40px 缝。
+      const { panel, s } = mountDiffPair(`${"L".repeat(30)}\nX`, "R\nX");
+      const marks = (side: "original" | "modified"): HTMLElement[] => [
+        ...panel.bodyEl!.querySelectorAll<HTMLElement>(
+          `.diff-overview-${side} .diff-overview-mark`,
+        ),
+      ];
+      s.setWrapEnabled(true);
+      await frames();
+
+      // CM6 此刻给的是「没滚过」的估值：每行 20px、两行总高 40px。色带若读它（旧实现），
+      // 左列高度会是 50%（20/40），滚动把折行实测成 60 之后又会跳成 75%。
+      fakeLineBoxes(s.left, [20, 20]);
+      fakeLineBoxes(panel.view!.view, [20, 20]);
+      s.remeasure();
+      await frames();
+
+      const dels = marks("original");
+      const ins = marks("modified");
+      expect(dels, "左列一块：第 1 行是改块").toHaveLength(1);
+      expect(ins, "右列一块：改写后的那一行").toHaveLength(1);
+      // 实测轴：左 60 + 20 = 80；右 20 + 20 + 缝 40 = 80 ⇒ 色带按这条轴取百分比。
+      expect(dels[0].style.top).toBe("0%");
+      expect(dels[0].style.height, "60/80").toBe("75%");
+      expect(ins[0].style.top).toBe("0%");
+      expect(ins[0].style.height, "20/80").toBe("25%");
+    } finally {
+      rectSpy.mockRestore();
+      spy.mockRestore();
+    }
+  });
+
   it("B462 · 回退按钮跟着对齐后的实测位置走（块与按钮同一条行轴）", async () => {
     const spy = vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(20);
     try {
