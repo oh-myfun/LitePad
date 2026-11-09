@@ -1136,6 +1136,12 @@ export function createDiffSurface(
           gapPlans = next;
           // 缝换了 ⇒ 两臂的占位块要重排；这一发同时带着新的块表/折叠态。
           refreshArms();
+          // ⚠️ 这一支**不能**紧接着落滚动位：新缝的 widget 要到下一轮 measure 才进 heightMap，
+          // 而那一轮 measure 末尾的滚动锚定会在写入之后再做一次补偿 ⇒ 写进去的值被叠两次。
+          // `refreshArms` 内部已再排一轮 `scheduleAlign`，落位交给那一轮的收口（那时缝已稳定）。
+        } else {
+          // 缝已稳定、两栏这一轮的锚定也都做完 ⇒ 这时按最后驱动侧重落一次才是终值。
+          resyncSharedOffset();
         }
         // 占位块/折叠/换行都会挪色块与按钮的像素位置，落地后统一重画一次。
         renderOverview();
@@ -1364,30 +1370,40 @@ export function createDiffSurface(
     scroller.scrollTop += e.deltaY;
   };
   /**
-   * 两栏同步滚动（B461 后续轮，默认开；B461 对齐轮改成**直接抄 scrollTop**）。
+   * 两栏同步滚动（默认开）：**共享偏移的固定点**（照 VS Code 差异编辑器的双向 scroll 同步）。
    *
-   * 对齐之后两栏的内容高度由占位块补齐（未改动区的折行差异也补），同一 `scrollTop` 落在
-   * 两栏里就是同一视觉行 —— 这正是 VS Code 差异编辑器恒同步的前提。上一版的「按比例映射」
-   * 是为高度不等留的兜底；那正是没对齐时的症状，现在对齐是真值，比例反而会把逐行对应拉开
-   * （高度差 1px 就整体漂一点）。因此去掉比例，只夹到对侧的最大滚动量，防止过冲。
+   * 对齐之后两栏的内容高度由占位缝补齐（未改动区的折行差异也补），同一 `scrollTop` 落在
+   * 两栏里就是同一视觉行 —— 这是 VS Code 差异编辑器恒同步的前提。于是同步只剩一条不变量：
+   * 两栏的 `scrollTop` / `scrollLeft` 始终相同（±1px）。
    *
-   * **单一驱动源**：只有用户真滚动的那一栏发起点名，对侧收到的是一次**程序性写入**；
-   * 那一发写入会异步触发对侧自己的 scroll 事件，必须认出来并丢掉，否则两边互相追改（抖动）。
-   * 上一版用「写的时候把布尔闸拉起来、下一帧放开」——scroll 事件是异步派发的，可能晚于
-   * rAF 回调到达，那时闸已放开，回声被当成用户滚动又写回去。这里改成**按值认领**：
-   * 写入前把「我要写多少」记在目标 scroller 上，事件来时只有落到那个值（±1px）才算回声；
-   * 用户中途滚走了（值对不上）就作废这一票、按用户滚动处理。于是「一次滚动只产生一次对侧写入」。
+   * 上游 `diffEditorViewZones.ts` 用两颗 scroll observable + 两个 autorun 双向写，写之前
+   * 只判「值是否不同」；写入触发的对方事件会再算一次，发现已相等即停。这里同款：任一栏的
+   * scroll 事件都把该栏偏移抄给对栏，**回声照常进同一函数**，靠值相等自然终止。
+   * ⚠️ 不能把回声「认领后早退」：`mirrorScroll` 记的票是**夹过**的值，对栏写入后正好等于
+   * 票上的数 ⇒ 夹值这一发会被当成回声吞掉，驱动栏就永久停在对栏到不了的位置（拖分屏后
+   * 两栏对不上的直接来源）。固定点里对栏回抄驱动栏，两栏收敛到对栏到得了的那个值。
+   *
+   * `pendingEcho` 只剩一个用途：认出「这一发是我写的」，别把 `lastDriver` 记成对栏。
+   * 布局变化（CM6 measure 末尾的滚动锚定、浏览器夹取）可能在没有用户滚动的情况下改掉
+   * 某一栏的偏移；`scheduleAlign` 收口时用 `resyncSharedOffset()` 按 `lastDriver` 再落一次位。
    */
   let syncOn = true;
+  /**
+   * 布局变化后以哪一栏为准：**最后一次非回声滚动的那一栏**（默认右栏 —— 那份可编辑正文）。
+   *
+   * 固定点同步本身是双向的，正常情况下两栏早已相等，这个值只在「没有滚动事件可依赖」的
+   * 收口时刻起作用（例如两栏被各自的锚定改了不同的量、随后又没再滚动）。
+   */
+  let lastDriver: DiffSide = "modified";
   /**
    * 一发程序性写入的「认领票」：**纵、横两个值一起记**。
    *
    * 横向（`scrollLeft`）与纵向同一条机制 —— 不另起闸：两栏的折行态一致时横向位置也应当
    * 一致（上游的差异编辑器两栏共用一根水平滚动条的量度）。事件来时两个轴都落到票上的值
-   * （±1px）才算回声；用户中途往任一方向滚走 ⇒ 作废这一票、按用户滚动处理。
+   * （±1px）才算自己写下的那一发；否则按用户/布局驱动处理。
    */
   const pendingEcho = new WeakMap<HTMLElement, { top: number; left: number }>();
-  /** 这一发 scroll 是不是自己刚写下去的回声（是 ⇒ 消费掉票，不再对侧回传）。 */
+  /** 这一发 scroll 是不是自己刚写下去的回声（是 ⇒ 消费掉票，只影响 `lastDriver` 的记账）。 */
   const isEcho = (el: HTMLElement | undefined): boolean => {
     if (!el) return false;
     const want = pendingEcho.get(el);
@@ -1402,7 +1418,8 @@ export function createDiffSurface(
     const bMax = Math.max(b.scrollHeight - b.clientHeight, 0);
     const want = Math.min(Math.max(a.scrollTop, 0), bMax);
     // 横向同样按「对栏能滚到哪」收口：两栏折行态一致时 scrollWidth 通常相同，
-    // 但长行 + 不同折行档时对侧可能短一截，写超了会被浏览器夹回去、留下一张对不上的票。
+    // 但长行 + 不同折行档时对侧可能短一截。夹过的值写进去后对栏的 scroll 事件会按它的
+    // 实际位置回抄驱动栏 —— 固定点收敛，两栏不会停在两个不同的偏移上。
     const bMaxX = Math.max(b.scrollWidth - b.clientWidth, 0);
     const wantX = Math.min(Math.max(a.scrollLeft, 0), bMaxX);
     // 值没变就别写：写同一个值一样会排一发 scroll，白白多一条回声账。
@@ -1411,19 +1428,27 @@ export function createDiffSurface(
     b.scrollTop = want;
     b.scrollLeft = wantX;
   };
+  /** 把 `lastDriver` 一侧的偏移抄给对栏：布局收口与重新打开同步都从这一颗走。 */
+  const resyncSharedOffset = (): void => {
+    if (!syncOn || disposed) return;
+    if (lastDriver === "original") mirrorScroll(left, right);
+    else mirrorScroll(right, left);
+  };
   const setSyncScrollEnabled = (on: boolean): void => {
     if (syncOn === on) return;
     syncOn = on;
     // 打开时立刻对齐一次，否则要等用户滚一下才「生效」。
-    if (on) mirrorScroll(right, left);
+    if (on) resyncSharedOffset();
   };
   const onRightScroll = (): void => {
     renderViewport();
-    if (!isEcho(right?.scrollDOM)) mirrorScroll(right, left);
+    if (!isEcho(right?.scrollDOM)) lastDriver = "modified";
+    mirrorScroll(right, left);
     renderReverts();
   };
   const onLeftScroll = (): void => {
-    if (!isEcho(left?.scrollDOM)) mirrorScroll(left, right);
+    if (!isEcho(left?.scrollDOM)) lastDriver = "original";
+    mirrorScroll(left, right);
   };
   /** 点中间列的空白 = 把焦点交给右栏（VS Code 的 gutter 也是这个语义）。 */
   const onCenterDown = (e: MouseEvent): void => {

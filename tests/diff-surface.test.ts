@@ -1727,9 +1727,10 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     right.scrollDOM.scrollLeft = 200;
     right.scrollDOM.dispatchEvent(new Event("scroll"));
     expect(left.scrollDOM.scrollLeft).toBe(120);
-    // 左栏这一发是刚才那次写入的回声：不许把右栏再绕回去（右栏仍在用户给的 200）。
+    // 左栏这一发是刚才那次写入的回声：固定点让它按自己到得了的 120 回抄驱动栏
+    // （上游的双向同步没有「回声抑制」，靠值相等终止）。
     left.scrollDOM.dispatchEvent(new Event("scroll"));
-    expect(right.scrollDOM.scrollLeft).toBe(200);
+    expect(right.scrollDOM.scrollLeft).toBe(120);
     // 横向反过来也镜像：左栏滚到 30 ⇒ 右栏跟到 30。
     left.scrollDOM.scrollLeft = 30;
     left.scrollDOM.dispatchEvent(new Event("scroll"));
@@ -1776,7 +1777,7 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     expect(thumb.classList.contains("is-dragging"), "松手即收").toBe(false);
   });
 
-  it("B464 · 一次滚动只产生一次对侧写入（程序性写入的回声不回传）", () => {
+  it("B464 · 一次滚动只产生一轮镜像（回声靠值相等终止，夹值由固定点收敛）", () => {
     const { panel } = mountDiffPair("A\nB\nC", "A\nC");
     const right = panel.view!.view;
     const left = diffSurfaceOf(panel)!.left;
@@ -1823,12 +1824,122 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     expect(leftWrites).toEqual([150, 180]);
     expect(rightWrites).toEqual([]);
 
-    // ④ 超量时夹到对侧最大滚动量，但回声不许把驱动栏拉回夹过的值。
+    // ④ 超量时夹到对侧最大滚动量；对栏的回声按它到得了的值回抄驱动栏（固定点收敛）。
     leftTop = 250;
     left.scrollDOM.dispatchEvent(new Event("scroll"));
     expect(rightWrites, "超出对侧最大滚动量时写夹值").toEqual([200]);
     right.scrollDOM.dispatchEvent(new Event("scroll"));
-    expect(leftWrites, "夹值后的回声不得回写驱动栏").toEqual([150, 180]);
+    expect(leftWrites, "夹值后的回声把驱动栏回抄到它到得了的位置").toEqual([150, 180, 200]);
+    expect(leftTop).toBe(200);
+  });
+
+  it("B467 · 布局收口后按最后驱动侧把两栏落回同一偏移", async () => {
+    const { panel, s } = mountDiffPair("A\nB\nC", "A\nC");
+    const right = panel.view!.view;
+    const left = s.left;
+    let rightTop = 0;
+    let leftTop = 0;
+    const track = (el: HTMLElement, set: (v: number) => void): void => {
+      Object.defineProperty(el, "clientHeight", { configurable: true, value: 100 });
+      Object.defineProperty(el, "scrollHeight", { configurable: true, value: 300 });
+      Object.defineProperty(el, "scrollTop", {
+        configurable: true,
+        get: () => (el === right.scrollDOM ? rightTop : leftTop),
+        set,
+      });
+    };
+    track(right.scrollDOM, (v) => {
+      rightTop = v;
+    });
+    track(left.scrollDOM, (v) => {
+      leftTop = v;
+    });
+
+    // 挂载时的首轮对齐先收口（两栏都在 0）。
+    s.remeasure();
+    await frames();
+    // 模拟布局变化：两栏被各自的锚定/夹取改到不同偏移，且**没有**任何 scroll 事件。
+    rightTop = 60;
+    leftTop = 0;
+    s.remeasure();
+    await frames();
+    expect(leftTop, "收口时按最后驱动侧（默认右栏）重落位").toBe(60);
+    expect(rightTop, "驱动栏自己的位置不动").toBe(60);
+  });
+
+  it("B468 · 驱动侧是最后一次用户滚动的那一栏，收口不把它推翻", async () => {
+    const { panel, s } = mountDiffPair("A\nB\nC", "A\nC");
+    const right = panel.view!.view;
+    const left = s.left;
+    let rightTop = 0;
+    let leftTop = 0;
+    Object.defineProperty(right.scrollDOM, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(right.scrollDOM, "scrollHeight", { configurable: true, value: 300 });
+    Object.defineProperty(left.scrollDOM, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(left.scrollDOM, "scrollHeight", { configurable: true, value: 300 });
+    Object.defineProperty(right.scrollDOM, "scrollTop", {
+      configurable: true,
+      get: () => rightTop,
+      set: (v: number) => {
+        rightTop = v;
+      },
+    });
+    Object.defineProperty(left.scrollDOM, "scrollTop", {
+      configurable: true,
+      get: () => leftTop,
+      set: (v: number) => {
+        leftTop = v;
+      },
+    });
+
+    s.remeasure();
+    await frames();
+    // 用户先滚左栏（非回声）⇒ 右栏跟到 40，驱动侧记为左栏。
+    leftTop = 40;
+    left.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(rightTop).toBe(40);
+    // 随后布局把右栏单独改到 5（不发事件）；收口必须按左栏落位，而不是按右栏。
+    rightTop = 5;
+    s.remeasure();
+    await frames();
+    expect(rightTop, "驱动栏仍是最后滚动的那一栏").toBe(40);
+    expect(leftTop).toBe(40);
+  });
+
+  it("B469 · 对栏夹不住的值由对栏回抄（固定点收敛）", async () => {
+    const { panel, s } = mountDiffPair("A\nB\nC", "A\nC");
+    const right = panel.view!.view;
+    const left = s.left;
+    let rightTop = 0;
+    let leftTop = 0;
+    Object.defineProperty(right.scrollDOM, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(right.scrollDOM, "scrollHeight", { configurable: true, value: 300 });
+    Object.defineProperty(left.scrollDOM, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(left.scrollDOM, "scrollHeight", { configurable: true, value: 220 });
+    Object.defineProperty(right.scrollDOM, "scrollTop", {
+      configurable: true,
+      get: () => rightTop,
+      set: (v: number) => {
+        rightTop = v;
+      },
+    });
+    Object.defineProperty(left.scrollDOM, "scrollTop", {
+      configurable: true,
+      get: () => leftTop,
+      set: (v: number) => {
+        leftTop = v;
+      },
+    });
+
+    s.remeasure();
+    await frames();
+    // 右栏滚到 150：左栏最大只到 120 ⇒ 被夹住。
+    rightTop = 150;
+    right.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(leftTop, "写入先夹到对栏的最大滚动量").toBe(120);
+    // 左栏那一发回声按自己到得了的 120 回抄驱动栏 ⇒ 两栏收敛到同一个偏移。
+    left.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(rightTop, "固定点把驱动栏拉回对栏到得了的值").toBe(120);
   });
 });
 
