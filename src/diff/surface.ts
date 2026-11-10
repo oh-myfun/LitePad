@@ -51,9 +51,13 @@ import {
   foldGaps,
   gapZones,
   onFoldBarClick,
+  onFoldMarkClick,
   refreshDiff,
   setFoldedRanges,
+  setFoldMarks,
   textBlockOf,
+  unchangedRuns,
+  type FoldMark,
   type FoldPoint,
   type FoldRange,
   type FoldReveal,
@@ -740,6 +744,32 @@ export function createDiffSurface(
         p.regionLength === b[i].regionLength,
     );
 
+  /** 上一次真画进两臂的行号区折叠点（同一批就不重发 —— 按钮 DOM 反复重建会闪）。 */
+  const paintedMarks: Record<DiffSide, FoldMark[]> = { original: [], modified: [] };
+
+  const sameMarks = (a: FoldMark[], b: FoldMark[]): boolean =>
+    a.length === b.length && a.every((m, i) => m.run === b[i].run && m.line === b[i].line);
+
+  /**
+   * 行号区该出现哪几颗「折叠这一段」按钮：只有**整段已展开**的候选才有（上游
+   * `hideUnchangedRegionsFeature` 的 `shouldHideControls` = 全部行都可见才挂 glyph）；
+   * 还折着、只揭示了一部分的，收起入口在折条自己的行号区按钮上。
+   *
+   * 行号取**整段未改动区的首行**（含上下 context），不是可折区首行 —— 上游 glyph 挂的是
+   * `UnchangedRegion.originalLineNumber`，与 `getHiddenOriginalRange()` 差着贴边 context。
+   */
+  const markPointsFor = (side: DiffSide): FoldMark[] => {
+    if (!foldOn) return [];
+    const counts = lineCounts();
+    const starts = new Map(unchangedRuns(stored, side, counts[side]).map((r) => [r.run, r.start]));
+    return foldCandidates(stored, side, counts)
+      .filter((r) => {
+        const { top, bottom } = revealOf(r);
+        return top + bottom >= regionLengthOf(r);
+      })
+      .map((r) => ({ run: r.run, line: starts.get(r.run) ?? r.start }));
+  };
+
   /**
    * 两栏一起点名：按现在的块表重画一次，并把「现在折着这些段」一起发进去。
    *
@@ -756,10 +786,15 @@ export function createDiffSurface(
     applyGapPlans();
     const foldOf = (side: DiffSide): StateEffect<unknown>[] => {
       const folds = foldPointsFor(side);
+      const marks = markPointsFor(side);
       const effects: StateEffect<unknown>[] = [refreshDiff.of(null)];
       if (!sameFolds(folds, paintedFolds[side])) {
         paintedFolds[side] = folds;
         effects.push(setFoldedRanges.of(folds));
+      }
+      if (!sameMarks(marks, paintedMarks[side])) {
+        paintedMarks[side] = marks;
+        effects.push(setFoldMarks.of(marks));
       }
       return effects;
     };
@@ -937,6 +972,53 @@ export function createDiffSurface(
   const onModifiedFoldReveal = (from: number, reveal: FoldReveal): void =>
     revealFold("modified", from, reveal);
 
+  /** 把停在 `run` 隐藏区里的光标挪到最近的可见行（段上下各一行，谁近取谁；两栏各查各的）。 */
+  const liftCaretsOutOfRun = (run: number): void => {
+    for (const side of SIDES) {
+      const view = viewOf(side);
+      if (!view) continue;
+      const r = foldCandidates(stored, side, lineCounts()).find((c) => c.run === run);
+      if (!r) continue;
+      const line = caretLineOf(side);
+      if (line < r.start || line > r.end) continue;
+      const above = r.start - 1;
+      const below = r.end + 1;
+      const target =
+        above < 1
+          ? below
+          : below > view.state.doc.lines
+            ? above
+            : line - above <= below - line
+              ? above
+              : below;
+      view.dispatch({ selection: { anchor: view.state.doc.line(target).from } });
+    }
+  };
+
+  /**
+   * 行号区那颗按钮：把**这一段**折回去（`top = bottom = 0`）。
+   *
+   * 与 `revealFold` 分开：那一颗按画面行号认段（折条画上去那一刻的行号），这一颗带着
+   * **段序号**来（按钮只在整段展开时存在，按行号回查会被键入后的行号漂移带偏）。
+   *
+   * 光标就在这一段里时**先挪出去再折**：这里不能走两颗开关入口那条 `guardCaretsUnderFolds`
+   * 的守卫（「保住光标所在那一段」）—— 用户点的就是这一段的按钮，原地不动等于点了没反应。
+   * 上游 `setHiddenAreas` → `cursor.onLineMappingChanged` 也是同一口径：隐藏区落地时把光标
+   * 夹到最近的可见行。
+   */
+  const collapseRun = (side: DiffSide, run: number): void => {
+    if (!foldOn) return;
+    const hit = foldCandidates(stored, side, lineCounts()).find((r) => r.run === run);
+    if (!hit) return;
+    revealRuns.set(run, { top: 0, bottom: 0 });
+    liftCaretsOutOfRun(run);
+    refreshArms();
+  };
+
+  /** 两栏各自的行号区折叠出口（身份固定，理由同折条那两颗）。 */
+  const onOriginalFoldMark = (run: number): void => collapseRun("original", run);
+  const onModifiedFoldMark = (run: number): void => collapseRun("modified", run);
+
   /**
    * 三颗动作 + 开关（简报 Interfaces 的那四颗）。
    *
@@ -980,6 +1062,7 @@ export function createDiffSurface(
     // 行内区间若晚一拍，字符级标记就会短暂地落在新块的旧行号上。
     diffFace("original", () => ({ blocks: stored, gaps: gapPlans.original, inner: inner.changes })),
     onFoldBarClick(onOriginalFoldReveal),
+    onFoldMarkClick(onOriginalFoldMark),
     // 左栏没有文档更新，但**光标与选区会动**（R12：那颗 view 可选可聚焦）⇒ 概览标记层
     // 必须跟着走，否则左列的光标条停在挂上那一刻。差异色块与折叠走 `refreshArms` 那一发，
     // 这里只重画标记画布（不做块表重算）。
@@ -1982,6 +2065,7 @@ export function createDiffSurface(
   const rightArm = (): Extension => [
     diffFace("modified", () => ({ blocks: stored, gaps: gapPlans.modified, inner: inner.changes })),
     onFoldBarClick(onModifiedFoldReveal),
+    onFoldMarkClick(onModifiedFoldMark),
     // 仓库同形先例 `tests/preview-face-helpers.ts:71-76`：塞进 `state.update({extensions})`
     // 会被静默丢掉，必须走 effect。
     EditorView.updateListener.of((update) => {
@@ -2014,7 +2098,7 @@ export function createDiffSurface(
       }
       // 左栏没有这一颗监听：那颗 view 的文档被硬闸钉住、不会自己动，光标停进折区也只是
       // 「选区看不见」（读不动的栏，打字那一条害处不成立）⇒ 它那一头由 `guardCaretsUnderFolds`
-      // （两颗开关入口）与 `unfoldAroundLines`（落位）兜住。
+      // （两颗开关入口）、`liftCaretsOutOfRun`（行号区收起）与 `unfoldAroundLines`（落位）兜住。
     }),
   ];
 

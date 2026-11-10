@@ -39,6 +39,7 @@ import {
   diffFace,
   foldCandidates,
   foldGaps,
+  foldMarksIn,
   foldedRangesIn,
   gapZones,
   refreshDiff,
@@ -1870,6 +1871,99 @@ describe("B461 · 折叠未改动区（Task 7：默认不折 + 三颗动作）",
     expect(rangesOf(s)[0].from, "摘掉的是点下去那一段，留下的是另一段").toBeGreaterThanOrEqual(30);
   });
 
+  it("B475 · 整段展开后行号区出现「折叠这一段」按钮；点它只折回这一段", () => {
+    const { surface: s } = mountSurfacePair({ left: THREE_LEFT, right: THREE_RIGHT });
+    s.collapseAllUnchanged();
+    expect(
+      s.left.dom.querySelectorAll(".cm-diffFold .diff-fold-toggle"),
+      "两段都折着 ⇒ 行号区没有收起按钮（入口在折条自己的行号区那颗 unfold 上）",
+    ).toHaveLength(0);
+
+    clickFoldIcon(s, 0);
+    expect(rangesOf(s), "前置：第一段整段展开，第二段照旧折着").toEqual([{ from: 36, to: 59 }]);
+    const toggles = [...s.left.dom.querySelectorAll<HTMLElement>(".cm-diffFold .diff-fold-toggle")];
+    expect(toggles, "展开的那一段在行号区挂一颗收起按钮（折着的那一段不挂）").toHaveLength(1);
+    // 按钮落在整段未改动区的首行（行 2，含贴边 context），不是可折区首行（行 5）：
+    // 上游 glyph 挂的是 `UnchangedRegion.originalLineNumber`。
+    expect(foldMarksIn(s.left.state)).toEqual([{ run: 1, line: 2 }]);
+
+    toggles[0].dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(rangesOf(s), "点下去只把这一段折回去，另一段不动").toEqual([
+      { from: 5, to: 28 },
+      { from: 36, to: 59 },
+    ]);
+    expect(
+      s.left.dom.querySelectorAll(".cm-diffFold .diff-fold-toggle"),
+      "收起之后按钮换回折条上的 unfold",
+    ).toHaveLength(0);
+  });
+
+  it("B475 · 光标就在这一段里时，点行号区按钮先把它挪到最近的可见行再折", () => {
+    const { surface: s, right } = mountSurfacePair({ left: THREE_LEFT, right: THREE_RIGHT });
+    s.collapseAllUnchanged();
+    clickFoldIcon(s, 0);
+    // 光标停在可折区（5..28）里：第二段折着，不挡这一行
+    right.dispatch({ selection: { anchor: right.state.doc.line(10).from } });
+    const toggles = [...right.dom.querySelectorAll<HTMLElement>(".cm-diffFold .diff-fold-toggle")];
+    expect(toggles, "前置：这一段整段展开后在行号区挂了收起按钮").toHaveLength(1);
+
+    toggles[0].dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(rangesOf(s), "点了就真折（不许因为光标在里面而原地不动）").toEqual([
+      { from: 5, to: 28 },
+      { from: 36, to: 59 },
+    ]);
+    expect(
+      right.state.doc.lineAt(right.state.selection.main.head).number,
+      "光标挪到最近的可见行（行 10 离 4 比离 29 近）",
+    ).toBe(4);
+  });
+
+  it("B475 · 折条的行号区那颗 unfold 是真按钮；折条底色往左铺满行号区", () => {
+    const { surface: s } = mountSurfacePair({ left: THREE_LEFT, right: THREE_RIGHT });
+    const gutter = s.left.scrollDOM.querySelector<HTMLElement>(".cm-gutters-before");
+    expect(gutter, "前置：左栏有行号那一列").not.toBeNull();
+    vi.spyOn(gutter!, "getBoundingClientRect").mockReturnValue({ width: 42 } as DOMRect);
+    s.collapseAllUnchanged();
+
+    const bar = foldBarOf(s, 0);
+    expect(
+      bar.querySelector(".diff-fold-center .diff-fold-unfold"),
+      "展开图标不许再挤在文案中间（上游 .first / .others 是两块）",
+    ).toBeNull();
+    expect(
+      bar.querySelector(":scope > .diff-fold-unfold"),
+      "它得是折条的直接子元素",
+    ).not.toBeNull();
+    expect(
+      bar.style.getPropertyValue("--diff-fold-gutter"),
+      "量到的行号区宽度写进自定义属性（折条底色与按钮都吃它）",
+    ).toBe("42px");
+
+    const css = (): string => stripCssComments(srcOf("src/diff/diff.css"));
+    const extend = ruleBlock(css(), ".panel-host.is-diff .diff-fold-bar::before", undefined, true);
+    expect(extend, "往左铺底那条规则得真在").not.toBe("");
+    expect(extend).toContain("left: calc(-1 * var(--diff-fold-gutter, 0px))");
+    expect(extend, "底色与折条本体同一颗 token（整行同色）").toContain(
+      "background: var(--diff-unchanged-bg)",
+    );
+    expect(extend, "高过 CM6 `.cm-gutters` 的 z-index 200，否则行号区压在上面").toMatch(
+      /z-index:\s*201/,
+    );
+    const unfold = ruleBlock(css(), ".panel-host.is-diff .diff-fold-unfold", undefined, true);
+    expect(unfold, "按钮绝对定位进行号区").toContain("position: absolute");
+    expect(unfold).toContain("width: var(--diff-fold-gutter, 0px)");
+    expect(unfold, "压过折条自己的 gutter 底色").toMatch(/z-index:\s*202/);
+    const toggle = ruleBlock(
+      css(),
+      ".panel-host.is-diff .cm-diffFold .diff-fold-toggle",
+      undefined,
+      true,
+    );
+    expect(toggle, "行号区那颗收起按钮的样式得真在").not.toBe("");
+    expect(toggle).toContain("width: 16px");
+    expect(toggle).toContain("cursor: pointer");
+  });
+
   it("B461 · 键入期折叠装饰只跟着改动映射、不逐键重建（face.ts 文件头那条纪律对折叠一样成立）", () => {
     // `diffFaceField` 守的是「键入期只 `value.map(tr.changes)`」；折叠那一臂原先每键都要
     // `buildFoldFace` / `buildFoldGutter`，那是**每键 O(折起来的行数)** 次 `Decoration.line`
@@ -1989,6 +2083,9 @@ describe("B461 · 折条样式（Task 7 追加那一段）", () => {
     const tokens = new Set([...s.matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1]));
     expect([...tokens].sort()).toEqual([
       "--accent",
+      // 折条往行号区铺底、行号区那颗展开按钮定位都吃这一颗：不是主题色，是 `toDOM`
+      // 现量出来的 gutter 宽（`--diff-fold-gutter`），不参与「折条只许吃哪几颗色」。
+      "--diff-fold-gutter",
       "--diff-unchanged-bg",
       "--diff-unchanged-fg",
       "--diff-unchanged-shadow",

@@ -723,11 +723,18 @@ export function diffFace(side: DiffSide, source: () => DiffFaceSource): Extensio
     faceSource.of(source),
     diffFaceField,
     diffFoldField,
+    diffFoldMarksField,
     // 记号槽在 DOM 里排在行号之后（= 行号**右侧**），与 VS Code `EditorLayoutInfo` 的
     // decorationsLeft 同侧 ⇒ 不必为排序再拆一颗 Compartment，也不许写 `order` 往回挪。
     gutter({
       class: "cm-diffSigns",
       markers: (view) => view.state.field(diffFaceField, false)?.signs ?? RangeSet.empty,
+    }),
+    // 行号区那颗「折叠这一段」按钮（整段展开时才有；上游的 `fold-unchanged` glyph）：
+    // 单独一列、排在行号与差异记号之后 —— `gutter()` 的 DOM 次序就是扩展声明次序。
+    gutter({
+      class: "cm-diffFold",
+      markers: (view) => foldMarkersIn(view),
     }),
     // 一格对应一个文档行；折行出来的视觉行由插件按真实行高补成一列（见 `DiffSignMarker`）。
     signRowFiller,
@@ -810,6 +817,108 @@ const faceFoldClick = Facet.define<
 /** 挂上「折条被操作」的出口（与两臂一起进 state；拆臂就没了）。 */
 export function onFoldBarClick(fn: (from: number, reveal: FoldReveal) => void): Extension {
   return faceFoldClick.of(fn);
+}
+
+/**
+ * 行号区那颗「折叠这一段」按钮的落点（本栏行轴）。
+ *
+ * `line` 取**整段未改动区的首行**（含上下 context），不是可折区首行：上游
+ * `hideUnchangedRegionsFeature` 把 glyph 挂在 `UnchangedRegion.originalLineNumber` 上，
+ * 真正收起来的是 `getHiddenOriginalRange()` 那一段 —— 两者本来就差着贴边 context。
+ */
+export interface FoldMark {
+  run: number;
+  line: number;
+}
+
+/** 发进某一臂的行号区折叠按钮（只在整段已展开时才有；折不折仍归 surface 记账）。 */
+export const setFoldMarks = StateEffect.define<FoldMark[]>();
+
+/**
+ * 行号区折叠按钮被点（**每一栏一条**，与 `faceFoldClick` 同一条纪律）。
+ *
+ * 与折条的回调分开：折条报的是「画面上那一段的行号 + 揭示量」，这颗报的是**段序号** ——
+ * 按钮只在整段展开时存在，按行号回查候选会被键入后的行号漂移带偏，按段序号不会。
+ */
+const faceFoldMarkClick = Facet.define<(run: number) => void, ((run: number) => void) | null>({
+  combine: (values) => values[0] ?? null,
+});
+
+/** 挂上「行号区折叠按钮被点」的出口（与两臂一起进 state；拆臂就没了）。 */
+export function onFoldMarkClick(fn: (run: number) => void): Extension {
+  return faceFoldMarkClick.of(fn);
+}
+
+/** 这一臂现在的行号区折叠点（`setFoldMarks` 那一发写入；拆臂 = 空）。 */
+const diffFoldMarksField = StateField.define<FoldMark[]>({
+  create: () => [],
+  update(value, tr) {
+    for (const e of tr.effects) if (e.is(setFoldMarks)) return e.value;
+    return value;
+  },
+});
+
+/** 某一颗 state 里现在挂着哪几颗行号区折叠按钮（与 `foldedRangesIn` 同形的读口）。 */
+export function foldMarksIn(state: EditorState): FoldMark[] {
+  return state.field(diffFoldMarksField, false) ?? [];
+}
+
+/**
+ * 行号区那颗「折叠未改动行」按钮：VS Code 的 `fold-unchanged` glyph（`codicon-fold`）。
+ *
+ * 上游把它放在 **glyph margin**（行号左边）；本仓库两侧的 gutter 次序是 行号 → 差异记号，
+ * 这颗作为第三列紧跟其后 —— 同一片行号区，不新开侧栏。用 GutterMarker 而不是正文 widget：
+ * 位置由 CM6 按文档行对齐，折行 / 滚动都免费跟上；点它只折叠**这一段**，不碰别的未改动区。
+ */
+class DiffFoldToggle extends GutterMarker {
+  constructor(
+    readonly run: number,
+    readonly onClick: ((run: number) => void) | null,
+  ) {
+    super();
+  }
+
+  eq(other: GutterMarker): boolean {
+    return (
+      other instanceof DiffFoldToggle && other.run === this.run && other.onClick === this.onClick
+    );
+  }
+
+  toDOM(): HTMLElement {
+    const el = document.createElement("span");
+    el.className = "diff-fold-toggle";
+    el.setAttribute("role", "button");
+    el.setAttribute("aria-label", "折叠未改动行");
+    el.setAttribute("data-tip", "折叠未改动行");
+    el.innerHTML = CODICONS.fold;
+    const glyph = el.firstElementChild as HTMLElement | null;
+    if (glyph) glyph.classList.add("diff-fold-mark-icon");
+    // 行号区在 contentDOM 之外，但按下那一发仍可能被编辑器当成「点了一下正文」⇒ 拦住默认行为。
+    el.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    el.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.onClick?.(this.run);
+    });
+    return el;
+  }
+}
+
+/** 这一臂现在的折叠按钮（行号 → 标记；越界丢弃的口径与记号槽同）。 */
+function foldMarkersIn(view: EditorView): RangeSet<GutterMarker> {
+  const marks = view.state.field(diffFoldMarksField, false) ?? [];
+  if (marks.length === 0) return RangeSet.empty;
+  const onClick = view.state.facet(faceFoldMarkClick);
+  const doc = view.state.doc;
+  const ranges: Range<GutterMarker>[] = [];
+  for (const m of marks) {
+    if (m.line < 1 || m.line > doc.lines) continue;
+    ranges.push(new DiffFoldToggle(m.run, onClick).range(doc.line(m.line).from));
+  }
+  return RangeSet.of(ranges, true);
 }
 
 /**
@@ -917,8 +1026,9 @@ export const FOLD_BAR_HEIGHT = 24;
  * 三条交互照上游 `CollapsedCodeOverlayWidget`：
  *   · 上/下 4px 热区：点一下 = 各揭示 `DIFF_REVEAL_LINES` 行；按住拖动 = 按行高连续揭示
  *     （上区 `clamp(cur + round(dy/lh), 0, regionLength - bottom)`、下区反向）；
- *   · 中间双击 / 展开图标单击 = 全开（上游 `showAll`）；
- *   · 全开之后这一条不再存在（上游 `shouldHideControls`），重新折叠入口在工具栏那颗动作上。
+ *   · 中间双击 / 行号区那颗展开图标单击 = 全开（上游 `showAll`）；
+ *   · 全开之后这一条不再存在（上游 `shouldHideControls`），重新折叠入口换成**行号区那颗
+ *     `DiffFoldToggle`**（只折这一段，不碰别的未改动区）。
  */
 export class DiffFoldWidget extends WidgetType {
   constructor(
@@ -962,6 +1072,14 @@ export class DiffFoldWidget extends WidgetType {
     const el = document.createElement("div");
     el.className = "diff-fold-bar";
     el.style.height = `${FOLD_BAR_HEIGHT}px`;
+    // 折条底色要一路铺到行号区、展开按钮也要落在行号区正中（照上游的整行同一片底色）：
+    // 两者的宽度都只能是这一列的真宽，量得到的时机只有 `toDOM` 这一发；行号位数变化时
+    // 折条会重画，再量一次。
+    const gutters =
+      view.scrollDOM.querySelector(".cm-gutters-before") ??
+      view.scrollDOM.querySelector(".cm-gutters");
+    const gutterWidth = Math.max(0, Math.round(gutters?.getBoundingClientRect().width ?? 0));
+    el.style.setProperty("--diff-fold-gutter", `${gutterWidth}px`);
     const emit = (reveal: FoldReveal): void => this.onReveal?.(this.from, reveal);
 
     const top = document.createElement("div");
@@ -985,7 +1103,10 @@ export class DiffFoldWidget extends WidgetType {
     const label = document.createElement("span");
     label.className = "diff-fold-text";
     label.textContent = `${this.hidden} 行未改动`;
-    center.append(action, label);
+    // 展开按钮不再跟文案挤在中间：它由 CSS 绝对定位到行号区那一片（宽度吃
+    // `--diff-fold-gutter`），文案单独在正文宽度里居中 —— 与上游
+    // `CollapsedCodeOverlayWidget` 的 `.first`（宽 = contentLeft）/ `.others` 同构。
+    center.append(label);
 
     // 上下热区共用一套拖拽口径；`cur` 取按下那一刻的揭示量（拖拽中自己算增量，不回头读 DOM）。
     const draggable = (strip: HTMLElement, dir: "top" | "bottom"): void => {
@@ -1032,7 +1153,7 @@ export class DiffFoldWidget extends WidgetType {
       emit({ all: true });
     });
 
-    el.append(top, center, bottom);
+    el.append(top, action, center, bottom);
     return el;
   }
 

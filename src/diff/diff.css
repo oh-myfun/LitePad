@@ -494,9 +494,26 @@
   align-items: center;
   justify-content: center;
   gap: 5px;
-  overflow: hidden;
   white-space: nowrap;
   color: var(--diff-unchanged-fg);
+  background: var(--diff-unchanged-bg);
+  box-shadow:
+    inset 0 5px 5px -7px var(--diff-unchanged-shadow),
+    inset 0 -5px 5px -7px var(--diff-unchanged-shadow);
+}
+
+/* 折起来的行是**整行**同一片底色（行号区 + 正文区）：折条本体只盖得住正文那一截，
+   这里按 `--diff-fold-gutter`（`toDOM` 现量 `.cm-gutters-before` 的宽）往左再铺一条。
+   `z-index` 要高过 CM6 基础主题给 `.cm-gutters` 的 200（那一列是 sticky 的），否则
+   行号区会压在折条底色上面，接缝就是两种颜色。 */
+.panel-host.is-diff .diff-fold-bar::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(-1 * var(--diff-fold-gutter, 0px));
+  width: var(--diff-fold-gutter, 0px);
+  z-index: 201;
   background: var(--diff-unchanged-bg);
   box-shadow:
     inset 0 5px 5px -7px var(--diff-unchanged-shadow),
@@ -529,19 +546,34 @@
   background: var(--accent);
 }
 
-/* 中间那一行：展开图标 + 说明文案（上游 `.center` 的 `{0} hidden lines`）。 */
+/* 中间那一行：说明文案（上游 `.center` 的 `{0} hidden lines`）。图标不在这里 ——
+   它在行号区那片（下面 `.diff-fold-unfold`），与上游 `.first` / `.others` 同构。 */
 .panel-host.is-diff .diff-fold-center {
   display: flex;
   align-items: center;
   gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   font-size: 12px;
   color: var(--diff-unchanged-fg);
 }
 
-/* 块头那颗 `unfold`（上游 `renderLabelWithIcons('$(unfold)')`）：点它 = 全开。 */
+/* 折条上那颗 `unfold`（上游 `renderLabelWithIcons('$(unfold)')`）：位置照
+   `CollapsedCodeOverlayWidget` 的 `.first`（宽 = contentLeft，内容居中）——
+   绝对定位到折条左侧的行号区里，点它 = 全开这一段。
+   宽度吃 `--diff-fold-gutter`（折条 `toDOM` 时量出来的那一列真宽）；`z-index` 压过
+   折条自己的 gutter 底色（201），不然按钮会被那条底色盖住。 */
 .panel-host.is-diff .diff-fold-unfold {
-  display: inline-flex;
+  position: absolute;
+  left: calc(-1 * var(--diff-fold-gutter, 0px));
+  top: 0;
+  bottom: 0;
+  width: var(--diff-fold-gutter, 0px);
+  z-index: 202;
+  display: flex;
   align-items: center;
+  justify-content: center;
   color: inherit;
   text-decoration: none;
   cursor: pointer;
@@ -559,6 +591,30 @@
 .panel-host.is-diff .diff-fold-text {
   cursor: default;
   user-select: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 行号区那颗「收起这一段」（上游 glyph margin 的 `fold-unchanged` / `codicon-fold`）：
+   只在整段已展开时出现，落在未改动区的首行。没有按钮时 `gutter()` 不产空元素 ⇒ 不占宽。 */
+.panel-host.is-diff .cm-diffFold .diff-fold-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 100%;
+  color: var(--diff-unchanged-fg);
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.panel-host.is-diff .cm-diffFold .diff-fold-toggle:hover {
+  color: var(--accent);
+  opacity: 1;
+}
+
+.panel-host.is-diff .cm-diffFold .diff-fold-toggle .codicon {
+  font-size: 14px;
 }
 
 /* ---------- 差异概览（VS Code 的 `diffOverview`：右缘 30px，两颗 15px 的 overview ruler） ---------- */

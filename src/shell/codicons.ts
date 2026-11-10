@@ -223,11 +223,13 @@ const IDS = {
   save: "save",
   // —— 差异标题栏（B461 Task 8）——
   // 只补**真有调用点**的（本文件那条红线）：`arrow-up` / `arrow-down` 上方查找栏那族已有。
-  // 上游 `swapDiffEditors` 的 `arrow-swap`、折叠的 `fold` 都**不进册**：那两条只在「⋯」
-  // 菜单里出现、靠中文标签认，LitePad 的菜单条目一律不带字形（`MenuItem.icon` 的口径是
-  // 「同组每项都带、且标签认不出」才给）⇒ 写了就是零调用点的 id。
-  // `unfold` 是例外：折叠块头自己就要这颗（`hideUnchangedRegionsFeature.ts` 的
-  // `renderLabelWithIcons('$(unfold)')`），调用点在 `face.ts` 的折条上。
+  // 上游 `swapDiffEditors` 的 `arrow-swap` **不进册**：那条只在「⋯」菜单里出现、靠中文标签认，
+  // LitePad 的菜单条目一律不带字形（`MenuItem.icon` 的口径是「同组每项都带、且标签认不出」
+  // 才给）⇒ 写了就是零调用点的 id。
+  // `fold` / `unfold` 是例外：折条自己就要 unfold（`hideUnchangedRegionsFeature.ts` 的
+  // `renderLabelWithIcons('$(unfold)')`），整段展开后行号区那颗收起按钮要 fold（上游
+  // `unchangedLinesDecorationShow` 的 `codicon-fold`）—— 两颗都有真调用点。
+  fold: "fold",
   unfold: "unfold",
   whitespace: "whitespace", // 「显示首尾空白差异」（带 toggled 状态的那颗）
   map: "map", // 「折叠 / 显示未改动的内容」
