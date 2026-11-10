@@ -1930,6 +1930,82 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     expect(rt.top, "空段落到块前缘那一行（C，top=20）").toBe(20);
   });
 
+  it("B479 · 视口顶落在占位缝里 ⇒ 两栏像素一一对应（左栏滚到底右栏也到底）", () => {
+    const { panel } = mountDiffPair("A\n", "A\nB\n");
+    const right = panel.view!.view;
+    const left = diffSurfaceOf(panel)!.left;
+    // 左栏：第 1 行行尾补一条 220px 的缝（对侧那条新行折成了 11 个视觉行）；
+    // 右栏三行合计 260px，与左栏同高 —— 缝的存在正是为了这个等式。
+    fakeLineBoxes(left, [20, 20], { 1: 220 });
+    fakeLineBoxes(right, [20, 220, 20]);
+    // 真机上 `lineBlockAtHeight` 在缝内部给的是 **composite**：第 1 行的文本块 + 行尾那条缝。
+    // jsdom 那份替身只按 top 找行，这里按真机的形状补上 —— 「视口顶落在缝里」就是它。
+    const doc = left.state.doc;
+    const composite = {
+      from: doc.line(1).from,
+      to: doc.line(1).to,
+      top: 0,
+      bottom: 240,
+      height: 240,
+      length: 1,
+      type: [
+        {
+          from: doc.line(1).from,
+          to: doc.line(1).to,
+          top: 0,
+          bottom: 20,
+          height: 20,
+          length: 1,
+          type: BlockType.Text,
+          widget: null,
+          widgetLineBreaks: 0,
+        },
+        {
+          from: doc.line(1).to,
+          to: doc.line(1).to,
+          top: 20,
+          bottom: 240,
+          height: 220,
+          length: 0,
+          type: BlockType.WidgetAfter,
+          widget: null,
+          widgetLineBreaks: 0,
+        },
+      ],
+      widget: null,
+      widgetLineBreaks: 0,
+    };
+    left.lineBlockAtHeight = (() => composite) as unknown as EditorView["lineBlockAtHeight"];
+    const track = (el: HTMLElement): { top: number } => {
+      let top = 0;
+      Object.defineProperty(el, "scrollTop", {
+        configurable: true,
+        get: () => top,
+        set: (v: number) => {
+          top = v;
+        },
+      });
+      Object.defineProperty(el, "clientHeight", { configurable: true, value: 100 });
+      Object.defineProperty(el, "scrollHeight", { configurable: true, value: 260 });
+      return {
+        get top(): number {
+          return top;
+        },
+        set top(v: number) {
+          top = v;
+        },
+      };
+    };
+    const rt = track(right.scrollDOM);
+    const lt = track(left.scrollDOM);
+    // 260 - 100 = 160：左栏滚到底，视口顶（160）落在缝里（20..240）。
+    lt.top = 160;
+    left.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(rt.top, "缝内像素一一对应 ⇒ 右栏也落在自己的底部，而不是被夹到第 1 行行尾（20）").toBe(
+      160,
+    );
+  });
+
   it("B471 · 同步滚动也镜像 scrollLeft（同一张认领票管两轴，超出的按对栏收口）", () => {
     const { panel } = mountDiffPair("A\nB\nC", "A\nC");
     const right = panel.view!.view;

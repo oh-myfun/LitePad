@@ -20,6 +20,7 @@
 
 import { Compartment, EditorState, StateEffect, type Extension } from "@codemirror/state";
 import {
+  BlockType,
   EditorView,
   drawSelection,
   highlightActiveLine,
@@ -1614,9 +1615,30 @@ export function createDiffSurface(
   };
 
   /** 驱动栏视口顶落在哪个文档行（1-based）。 */
-  const topLine = (view: EditorView): number => {
-    const top = Math.max(view.scrollDOM.scrollTop, 0);
-    return view.state.doc.lineAt(view.lineBlockAtHeight(top).from).number;
+  const topLine = (view: EditorView, top: number): number =>
+    view.state.doc.lineAt(view.lineBlockAtHeight(top).from).number;
+
+  /**
+   * 视口顶是不是落在**占位缝内部**。
+   *
+   * 缝（`face.ts` 的 `DiffGapWidget`）高 = 对侧同一段多出来的实测像素，且落在对齐段的尾部
+   * ⇒ 段的起点两侧同 y、总高相等，缝的像素区间与对侧那段内容严格同起点同高度，缝内任意
+   * y 在两栏指同一个位置。这一档必须按像素一一映射：继续走「锚点行 + 段内偏移」会被锚点行
+   * 的块高压住（`otherEndTop` 把整条缝缩成一行），用户看到的正是「左边滚到底了，右边还
+   * 有内容没滚到底」。
+   *
+   * 只认 `WidgetAfter` / `WidgetBefore`（缝的两种落法，见 `face.ts` 的 `buildGapFace`）；
+   * 折条是 `Decoration.replace` 的 `WidgetRange`，不是「对侧多出来的高度」，不在此列。
+   */
+  const inGap = (view: EditorView, top: number): boolean => {
+    const block = view.lineBlockAtHeight(top);
+    if (!Array.isArray(block.type)) return false;
+    return block.type.some(
+      (part) =>
+        (part.type === BlockType.WidgetAfter || part.type === BlockType.WidgetBefore) &&
+        top >= part.top &&
+        top < part.top + part.height,
+    );
   };
 
   /**
@@ -1692,23 +1714,31 @@ export function createDiffSurface(
     const a = from.scrollDOM;
     const b = to.scrollDOM;
     const side: DiffSide = from === left ? "original" : "modified";
-    const line = topLine(from);
-    const span = alignSpan(side, line);
-    const ownLine = from.state.doc.line(Math.min(Math.max(span.ownStart, 1), from.state.doc.lines));
-    const otherLine = to.state.doc.line(span.otherStart);
-    const ownBlock = from.lineBlockAt(ownLine.from);
-    const otherBlock = to.lineBlockAt(otherLine.from);
-    // 段内偏移：段首已经补过缝，段内两侧等高 ⇒ 这个像素量在对栏指同一个位置。
-    const offset = Math.max(a.scrollTop - ownBlock.top, 0);
-    const otherEndTop =
-      span.otherEnd > span.otherStart
-        ? to.lineBlockAt(to.state.doc.line(span.otherEnd).from).top
-        : otherBlock.top + Math.max(otherBlock.height, 0);
-    // 段内偏移夹在段尾之前；再夹一次全局可滚范围（末段贴近文档尾时可能到不了段首）。
-    const want = Math.min(
-      Math.max(Math.min(otherBlock.top + offset, otherEndTop), 0),
-      Math.max(b.scrollHeight - b.clientHeight, 0),
-    );
+    const top = Math.max(a.scrollTop, 0);
+    let want: number;
+    if (inGap(from, top)) {
+      // 视口顶落在缝里：缝与对侧那一段同起点同高 ⇒ 像素一一对应（见 `inGap`）。
+      want = top;
+    } else {
+      const line = topLine(from, top);
+      const span = alignSpan(side, line);
+      const ownLine = from.state.doc.line(
+        Math.min(Math.max(span.ownStart, 1), from.state.doc.lines),
+      );
+      const otherLine = to.state.doc.line(span.otherStart);
+      const ownBlock = from.lineBlockAt(ownLine.from);
+      const otherBlock = to.lineBlockAt(otherLine.from);
+      // 段内偏移：段首已经补过缝，段内两侧等高 ⇒ 这个像素量在对栏指同一个位置。
+      const offset = Math.max(top - ownBlock.top, 0);
+      const otherEndTop =
+        span.otherEnd > span.otherStart
+          ? to.lineBlockAt(to.state.doc.line(span.otherEnd).from).top
+          : otherBlock.top + Math.max(otherBlock.height, 0);
+      // 段内偏移夹在段尾之前。
+      want = Math.min(otherBlock.top + offset, otherEndTop);
+    }
+    // 再夹一次全局可滚范围（末段贴近文档尾时可能到不了目标位置）。
+    want = Math.min(Math.max(want, 0), Math.max(b.scrollHeight - b.clientHeight, 0));
     // 横向按「对栏能滚到哪」夹：两栏折行态一致时通常同宽，长行时对侧可能短一截。
     const wantX = Math.min(Math.max(a.scrollLeft, 0), Math.max(b.scrollWidth - b.clientWidth, 0));
     // 值没变就别写：写同一个值一样会排一发 scroll，白白多一条回声账。
