@@ -1192,9 +1192,30 @@ export function createDiffSurface(
     return axis;
   };
 
+  /** 这一栏的折行高度是不是**量出来的**（`wrap-measure.ts` 的量尺，逐行真折一遍）。 */
+  const heightsMeasured = (side: DiffSide): boolean => meterOf(side).heights() !== null;
+
+  /**
+   * 这一轮两栏的行高是不是**同一把尺**量出来的。
+   *
+   * 量不出来（面板还没有宽度 / 整栏不可见）时 `lineHeights` 退回 CM6 高度图的估值，而估值
+   * **不能跨栏比**：两栏的估值基数不同（新建左栏的高度图还用着默认行高，右栏已按实测重建；
+   * 两栏宽度又差着一条滚动条，折过之后的视觉行数也不同），逐行相减会得出「每行都差一点」。
+   * 补出去的缝又回头切碎那一栏的高度图（切碎后每一截按「行数 +1」重估），越推越高 ——
+   * 两栏 `scrollHeight` 因此差出上千像素，尾部补缝落在滚不到的地方（用户报的「左边填充不够、
+   * 两栏总行数对不上」）。所以折行开着时**只认量尺**；折行关着时一个文档行恒等于一行，
+   * 但也要两栏都量过（`defaultLineHeight` 相等）才敢比。
+   */
+  const heightsComparable = (): boolean => {
+    if (!right) return false;
+    if (wrapOn) return heightsMeasured("original") && heightsMeasured("modified");
+    return left.defaultLineHeight === right.defaultLineHeight;
+  };
+
   /** 现在这两栏该补哪些缝（纯计算在 `face.ts` 的 `gapZones`，这里只负责量）。 */
-  const measureGapPlans = (): Record<DiffSide, GapZone[]> => {
+  const measureGapPlans = (): Record<DiffSide, GapZone[]> | null => {
     if (!right) return { original: [], modified: [] };
+    if (!heightsComparable()) return null;
     const heights: Record<DiffSide, (line: number) => number> = {
       original: lineHeights("original"),
       modified: lineHeights("modified"),
@@ -1231,7 +1252,7 @@ export function createDiffSurface(
   /** 量一次并收下结果；返回是否真的换了缝（换了就得重画两臂的占位块）。 */
   const applyGapPlans = (): boolean => {
     const next = measureGapPlans();
-    if (sameGapPlans(next, gapPlans)) return false;
+    if (!next || sameGapPlans(next, gapPlans)) return false;
     gapPlans = next;
     return true;
   };
@@ -1262,7 +1283,7 @@ export function createDiffSurface(
       const next = measureGapPlans();
       requestAnimationFrame(() => {
         if (disposed || gen !== alignGen) return;
-        if (!sameGapPlans(next, gapPlans)) {
+        if (next && !sameGapPlans(next, gapPlans)) {
           gapPlans = next;
           // 缝换了 ⇒ 两臂的占位块要重排；这一发同时带着新的块表/折叠态。
           refreshArms();
