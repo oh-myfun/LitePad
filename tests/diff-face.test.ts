@@ -1883,9 +1883,9 @@ describe("B461 · 折叠未改动区（Task 7：默认不折 + 三颗动作）",
     expect(rangesOf(s), "前置：第一段整段展开，第二段照旧折着").toEqual([{ from: 36, to: 59 }]);
     const toggles = [...s.left.dom.querySelectorAll<HTMLElement>(".cm-diffFold .diff-fold-toggle")];
     expect(toggles, "展开的那一段在行号区挂一颗收起按钮（折着的那一段不挂）").toHaveLength(1);
-    // 按钮落在整段未改动区的首行（行 2，含贴边 context），不是可折区首行（行 5）：
-    // 上游 glyph 挂的是 `UnchangedRegion.originalLineNumber`。
-    expect(foldMarksIn(s.left.state)).toEqual([{ run: 1, line: 2 }]);
+    // 按钮落在**可折区首行**（行 5，裁掉贴边 context 之后真正收起来的第一行）：
+    // 上游 glyph 挂的 `UnchangedRegion.originalLineNumber` 正是 `fromDiffs` 加过 context 偏移的值。
+    expect(foldMarksIn(s.left.state)).toEqual([{ run: 1, line: 5 }]);
 
     toggles[0].dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     expect(rangesOf(s), "点下去只把这一段折回去，另一段不动").toEqual([
@@ -1962,6 +1962,29 @@ describe("B461 · 折叠未改动区（Task 7：默认不折 + 三颗动作）",
     expect(toggle, "行号区那颗收起按钮的样式得真在").not.toBe("");
     expect(toggle).toContain("width: 16px");
     expect(toggle).toContain("cursor: pointer");
+  });
+
+  it("B475 · 收起按钮列在行号左边（glyph margin 位，与上游 fold-unchanged 同层）", () => {
+    // 上游把 `fold-unchanged` 挂进 glyph margin（`EditorLayoutInfo` 的 glyphMarginLeft，
+    // 行号左边）；CM6 的 gutter 次序按扩展优先级排 ⇒ 折叠列必须是 `.cm-gutters-before` 的第一列。
+    const { surface: s } = mountSurfacePair({ left: THREE_LEFT, right: THREE_RIGHT });
+    s.collapseAllUnchanged();
+    clickFoldIcon(s, 0);
+    const gutter = s.left.scrollDOM.querySelector<HTMLElement>(".cm-gutters-before");
+    expect(gutter, "前置：左栏有 gutter 容器").not.toBeNull();
+    expect(
+      gutter!.querySelector(".cm-diffFold .diff-fold-toggle"),
+      "前置：按钮挂在折叠列里",
+    ).not.toBeNull();
+    const cols = [...gutter!.children].map((el) => el.className);
+    const at = (name: string): number => cols.findIndex((c) => c.includes(name));
+    expect(at("cm-diffFold"), "折叠列在 DOM 里").toBeGreaterThanOrEqual(0);
+    expect(at("cm-lineNumbers"), "行号列在 DOM 里").toBeGreaterThanOrEqual(0);
+    expect(at("cm-diffSigns"), "记号列在 DOM 里").toBeGreaterThanOrEqual(0);
+    expect(at("cm-diffFold"), "按钮列在行号左边").toBeLessThan(at("cm-lineNumbers"));
+    expect(at("cm-lineNumbers"), "记号列仍排在行号右边（顺带钉住原有次序）").toBeLessThan(
+      at("cm-diffSigns"),
+    );
   });
 
   it("B461 · 键入期折叠装饰只跟着改动映射、不逐键重建（face.ts 文件头那条纪律对折叠一样成立）", () => {

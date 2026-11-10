@@ -18,6 +18,7 @@
 
 import {
   Facet,
+  Prec,
   RangeSet,
   StateEffect,
   StateField,
@@ -730,12 +731,16 @@ export function diffFace(side: DiffSide, source: () => DiffFaceSource): Extensio
       class: "cm-diffSigns",
       markers: (view) => view.state.field(diffFaceField, false)?.signs ?? RangeSet.empty,
     }),
-    // 行号区那颗「折叠这一段」按钮（整段展开时才有；上游的 `fold-unchanged` glyph）：
-    // 单独一列、排在行号与差异记号之后 —— `gutter()` 的 DOM 次序就是扩展声明次序。
-    gutter({
-      class: "cm-diffFold",
-      markers: (view) => foldMarkersIn(view),
-    }),
+    // 行号区那颗「折叠这一段」按钮（整段展开时才有；上游的 `fold-unchanged` glyph）。
+    // 上游画在 **glyph margin**（行号左边，`EditorLayoutInfo` 的 glyphMarginLeft 那一段）；
+    // CM6 的 gutter 次序由扩展优先级决定（`GutterConfig` 文档：按扩展优先级排序）⇒ 提到最高，
+    // 成为 `.cm-gutters-before` 里最左的一列。
+    Prec.highest(
+      gutter({
+        class: "cm-diffFold",
+        markers: (view) => foldMarkersIn(view),
+      }),
+    ),
     // 一格对应一个文档行；折行出来的视觉行由插件按真实行高补成一列（见 `DiffSignMarker`）。
     signRowFiller,
   ];
@@ -822,9 +827,9 @@ export function onFoldBarClick(fn: (from: number, reveal: FoldReveal) => void): 
 /**
  * 行号区那颗「折叠这一段」按钮的落点（本栏行轴）。
  *
- * `line` 取**整段未改动区的首行**（含上下 context），不是可折区首行：上游
- * `hideUnchangedRegionsFeature` 把 glyph 挂在 `UnchangedRegion.originalLineNumber` 上，
- * 真正收起来的是 `getHiddenOriginalRange()` 那一段 —— 两者本来就差着贴边 context。
+ * `line` 取**可折区的首行**（裁掉贴边 context、真正要收起的第一行）：上游
+ * `hideUnchangedRegionsFeature` 把 glyph 挂在 `UnchangedRegion.originalLineNumber` 上，而
+ * `UnchangedRegion.fromDiffs` 给这个字段的正是加过 context 偏移的隐藏区首行。
  */
 export interface FoldMark {
   run: number;
@@ -866,9 +871,10 @@ export function foldMarksIn(state: EditorState): FoldMark[] {
 /**
  * 行号区那颗「折叠未改动行」按钮：VS Code 的 `fold-unchanged` glyph（`codicon-fold`）。
  *
- * 上游把它放在 **glyph margin**（行号左边）；本仓库两侧的 gutter 次序是 行号 → 差异记号，
- * 这颗作为第三列紧跟其后 —— 同一片行号区，不新开侧栏。用 GutterMarker 而不是正文 widget：
- * 位置由 CM6 按文档行对齐，折行 / 滚动都免费跟上；点它只折叠**这一段**，不碰别的未改动区。
+ * 上游把它放在 **glyph margin**（行号左边）；这里由 `Prec.highest` 把这一列提到 gutter 最左，
+ * 与上游同一层次（glyphMargin → lineNumbers → decorations → content）。用 GutterMarker 而不是
+ * 正文 widget：位置由 CM6 按文档行对齐，折行 / 滚动都免费跟上；点它只折叠**这一段**，
+ * 不碰别的未改动区。
  */
 class DiffFoldToggle extends GutterMarker {
   constructor(

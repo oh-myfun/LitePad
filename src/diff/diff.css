@@ -596,7 +596,8 @@
 }
 
 /* 行号区那颗「收起这一段」（上游 glyph margin 的 `fold-unchanged` / `codicon-fold`）：
-   只在整段已展开时出现，落在未改动区的首行。没有按钮时 `gutter()` 不产空元素 ⇒ 不占宽。 */
+   只在整段已展开时出现，落在可折区（裁掉 context 后真正收起来的那一段）的首行，
+   列位置由 `Prec.highest` 排在行号左边。没有按钮时 `gutter()` 不产空元素 ⇒ 不占宽。 */
 .panel-host.is-diff .cm-diffFold .diff-fold-toggle {
   display: flex;
   align-items: center;

@@ -56,7 +56,6 @@ import {
   setFoldedRanges,
   setFoldMarks,
   textBlockOf,
-  unchangedRuns,
   type FoldMark,
   type FoldPoint,
   type FoldRange,
@@ -755,19 +754,18 @@ export function createDiffSurface(
    * `hideUnchangedRegionsFeature` 的 `shouldHideControls` = 全部行都可见才挂 glyph）；
    * 还折着、只揭示了一部分的，收起入口在折条自己的行号区按钮上。
    *
-   * 行号取**整段未改动区的首行**（含上下 context），不是可折区首行 —— 上游 glyph 挂的是
-   * `UnchangedRegion.originalLineNumber`，与 `getHiddenOriginalRange()` 差着贴边 context。
+   * 行号取**可折区的首行**（裁掉贴边 context 之后、真正要收起的第一行）：上游 glyph 挂的是
+   * `UnchangedRegion.originalLineNumber`，而 `fromDiffs` 给这个字段的正是加过 context 偏移的
+   * 隐藏区首行 —— 不是整段未改动区的首行。
    */
   const markPointsFor = (side: DiffSide): FoldMark[] => {
     if (!foldOn) return [];
-    const counts = lineCounts();
-    const starts = new Map(unchangedRuns(stored, side, counts[side]).map((r) => [r.run, r.start]));
-    return foldCandidates(stored, side, counts)
+    return foldCandidates(stored, side, lineCounts())
       .filter((r) => {
         const { top, bottom } = revealOf(r);
         return top + bottom >= regionLengthOf(r);
       })
-      .map((r) => ({ run: r.run, line: starts.get(r.run) ?? r.start }));
+      .map((r) => ({ run: r.run, line: r.start }));
   };
 
   /**
