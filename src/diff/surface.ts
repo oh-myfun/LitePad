@@ -301,7 +301,7 @@ function leftState(
  *
  * `onResize` 在松手（含 `pointercancel`）时点一次：栏宽一变换行结果全变，调用方要按新宽度
  * 重量占位缝与概览轴。拖动途中不点 —— 每像素重测全文档折行会卡，且途中视觉本来就在变。
- * @returns 解除 `pointerdown` 绑定的动作（dispose 时调用）
+ * @returns 解除 `pointerdown` / `dblclick` 绑定的动作（dispose 时调用）
  */
 function attachSashDrag(
   originalEl: HTMLElement,
@@ -309,6 +309,18 @@ function attachSashDrag(
   sashEl: HTMLElement,
   onResize: () => void,
 ): () => void {
+  /** 两支 basis 都写成 `content / 2`：正文宽（两栏实测宽之和）对半分，中间列/概览不参与。 */
+  const resetToMiddle = () => {
+    const left = originalEl.getBoundingClientRect().width;
+    const right = modifiedEl?.getBoundingClientRect().width ?? 0;
+    const content = left + right;
+    if (!(content > 0) || !(left > 0)) return;
+    const half = content / 2;
+    originalEl.style.flexBasis = `${half}px`;
+    if (modifiedEl) modifiedEl.style.flexBasis = `${content - half}px`;
+    // 与松手同口径：栏宽换了一半，折行高度与占位缝都要按新宽度重算。
+    onResize();
+  };
   const onDown = (event: PointerEvent) => {
     // 量不到宽度（隐藏格 / jsdom 里 `getBoundingClientRect` 恒 0）就这一下不动手：
     // 拿 0 当基准会把 flex-basis 写成 NaN px，那一格从此不受控。
@@ -340,7 +352,11 @@ function attachSashDrag(
     event.preventDefault();
   };
   sashEl.addEventListener("pointerdown", onDown);
-  return () => sashEl.removeEventListener("pointerdown", onDown);
+  sashEl.addEventListener("dblclick", resetToMiddle);
+  return () => {
+    sashEl.removeEventListener("pointerdown", onDown);
+    sashEl.removeEventListener("dblclick", resetToMiddle);
+  };
 }
 
 /** 回退键的提示与可访问名称同源（上游那颗 `title` 的本地化那一句）。 */

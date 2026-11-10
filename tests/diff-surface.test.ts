@@ -227,6 +227,34 @@ describe("B461 · 差异标签的落点（Task 1）", () => {
     expect(measure, "松手后按新宽度重量").toHaveBeenCalled();
   });
 
+  it("B474 · 双击分割线恢复居中：正文宽对半分，中间回退列不算", () => {
+    const { panel } = mountDiffPair("A\nB", "A\nC");
+    const host = panel.bodyEl!;
+    const left = host.querySelector<HTMLElement>(".diff-original")!;
+    const right = host.querySelector<HTMLElement>(".panel-editor")!;
+    const sash = host.querySelector<HTMLElement>(".diff-sash")!;
+    const rect = (width: number): DOMRect =>
+      ({
+        top: 0,
+        bottom: 10,
+        height: 10,
+        left: 0,
+        right: width,
+        width,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    left.getBoundingClientRect = () => rect(450);
+    right.getBoundingClientRect = () => rect(350);
+    const measure = vi.spyOn(panel.view!.view, "requestMeasure");
+    sash.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(left.style.flexBasis, "左栏回到正文宽的一半").toBe("400px");
+    expect(right.style.flexBasis).toBe("400px");
+    // 栏宽变了 ⇒ 与松手同口径：折行高度与占位缝按新宽度重量。
+    expect(measure, "双击后按新宽度重量").toHaveBeenCalled();
+  });
+
   it("B461 · 拆面板/换标签必须 dispose 左栏那颗 view，不留孤儿 DOM 也不留 surface", () => {
     const hostEl = document.createElement("div");
     hostEl.className = "panel-host";

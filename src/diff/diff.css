@@ -224,6 +224,19 @@
   background: var(--accent);
 }
 
+/* 双击恢复居中要有个够得着的目标：可视线只有 4px，向左再铺 10px 透明命中区。
+   回退按钮那一层排在它后面（DOM 次序）且按钮上恢复了 `pointer-events: auto`，
+   所以按钮照旧可点，按钮之外的地方都能拖 / 双击。 */
+.diff-sash::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  left: -10px;
+  cursor: col-resize;
+}
+
 /* ---------- Task 3 · 两侧行底色 / 行号槽记号 / 对侧占位块 ---------- */
 
 /* 两套底色的**唯一取值点**，照上游默认主题（`editorColors.ts` 267-312 行）：
