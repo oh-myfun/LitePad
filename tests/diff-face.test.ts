@@ -2320,7 +2320,7 @@ describe("B461 · 行内字符级差异的装饰与样式", () => {
     expect(insBar!.className).toContain("diff-char-insert");
   });
 
-  it("diff-range-empty 的几何照上游：3px 左边框、删除侧 margin-left: -1px（净 2px）", () => {
+  it("diff-range-empty 的几何照上游，但净排版宽度必须是 0（装饰不许改折行）", () => {
     const insert = ruleBlock(
       css(),
       ".panel-host.is-diff .diff-char-insert.diff-range-empty",
@@ -2328,6 +2328,7 @@ describe("B461 · 行内字符级差异的装饰与样式", () => {
       true,
     );
     expect(insert, "规则得真在").toContain("border-left: 3px solid var(--diff-char-add)");
+    expect(insert, "正宽度由负外边距抵掉").toContain("margin-right: -3px");
     const del = ruleBlock(
       css(),
       ".panel-host.is-diff .diff-char-delete.diff-range-empty",
@@ -2336,5 +2337,18 @@ describe("B461 · 行内字符级差异的装饰与样式", () => {
     );
     expect(del).toContain("border-left: 3px solid var(--diff-char-del)");
     expect(del, "删除侧负外边距（上游同款）").toContain("margin-left: -1px");
+    expect(del, "正宽度由负外边距抵掉").toContain("margin-right: -2px");
+
+    // 折行量尺只量纯文本，缝计划按它算：竖条若真的占宽，窄栏那一行会多折一行，
+    // 左栏的补缝就永远短一行（缺在文档尾部）。净推进宽度必须两边都是 0。
+    const advance = (block: string): number => {
+      const px = (prop: string): number => {
+        const m = new RegExp(`${prop}\\s*:\\s*(-?[\\d.]+)px`).exec(block);
+        return m ? Number(m[1]) : 0;
+      };
+      return px("margin-left") + px("border-left") + px("margin-right");
+    };
+    expect(advance(insert)).toBe(0);
+    expect(advance(del)).toBe(0);
   });
 });
