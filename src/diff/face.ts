@@ -35,8 +35,6 @@ import {
   gutter,
   GutterMarker,
   lineNumberMarkers,
-  ViewPlugin,
-  type ViewUpdate,
   WidgetType,
 } from "@codemirror/view";
 import { type DiffBlock, type DiffKind, type LineAlignment } from "./blocks";
@@ -417,15 +415,18 @@ function buildFace(
  * `sideLineMarks` —— 底色、记号与正文行号因此永远落在同一批行上。
  *
  * 记号按**视觉行**画：自动换行把一行折成几行，每个视觉行左边各一颗（用户口径）。CM6 的
- * gutter 一格只对一个文档行，所以一格内部填成等高竖排（`fillSignRows`）。
+ * gutter 一格只对一个文档行，所以一格内部填成等高竖排（`fillSignRows`），行数跟着**这一格
+ * 自己的实际高度**走（`watchSignRows`）。
+ *
+ * ⚠️ 重填挂在**元素**上而不是 marker 实例上：CM6 的 gutter 按 `eq` 复用 DOM（`GutterElement`
+ * 只对 `compare` 为假的新 marker 调 `toDOM`），而每次 `refreshDiff` 都会重建一批 marker ——
+ * 新 marker 拿不到那颗已经渲染出来的 DOM。早期版本把「几何变了再填一次」挂在 marker 的
+ * `el` 上，于是拖分屏后永远停在首帧估值（`+` 变稀/变密），与视觉行对不上。
  *
  * 占位缝（对侧缺行的那段斜纹）**不画记号**：那里没有文档行，VS Code 的 alignment view zone
  * 同样不挂行装饰。
  */
 class DiffSignMarker extends GutterMarker {
-  /** 最近一次渲染出来的竖排（CM6 重画时换成新元素；几何变了由插件回填）。 */
-  el: HTMLElement | null = null;
-
   constructor(
     readonly kind: "insert" | "delete",
     readonly line: number,
@@ -441,14 +442,16 @@ class DiffSignMarker extends GutterMarker {
     const rows = document.createElement("div");
     rows.className = "diff-sign-rows";
     rows.setAttribute("aria-hidden", "true");
-    this.el = rows;
+    // 首帧还没有布局、量不到这一格自己的高度：先按行块高度估一版，布局落地后由
+    // `watchSignRows` 按实际高度校正（估高了/估低了都在那一发里收口）。
     fillSignRows(rows, this.kind, visualRowsOf(view, this.line));
+    watchSignRows(rows, this.kind, view);
     return rows;
   }
 
-  /** 几何量准之后重填：`toDOM` 那一刻可能还是估算的行高（折行数要等 CM6 量完）。 */
-  sync(view: EditorView): void {
-    if (this.el) fillSignRows(this.el, this.kind, visualRowsOf(view, this.line));
+  destroy(dom: HTMLElement): void {
+    rowObservers.get(dom)?.disconnect();
+    rowObservers.delete(dom);
   }
 
   toString(): string {
@@ -461,6 +464,9 @@ class DiffSignMarker extends GutterMarker {
  *
  * 只读行文本自己的块（`textBlockOf`）：贴着行尾的占位块会被 CM6 并进同一颗 composite，
  * 算进去会把缝的高度也当成折行。行数按 `defaultLineHeight` 折算，至少 1。
+ *
+ * 只用于首帧：CM6 对视口外的折行按字符数估，量出来之前这个数会偏；元素挂进 DOM 后由
+ * `watchSignRows` 按它的实际高度重填。
  */
 function visualRowsOf(view: EditorView, line: number): number {
   const doc = view.state.doc;
@@ -468,6 +474,32 @@ function visualRowsOf(view: EditorView, line: number): number {
   const lineHeight = view.defaultLineHeight;
   if (!(lineHeight > 0)) return 1;
   return Math.max(1, Math.round(textBlockOf(view, line).height / lineHeight));
+}
+
+/** 记号容器 → 它的尺寸观察器（元素被 CM6 收走时断开；WeakMap 不拦回收）。 */
+const rowObservers = new WeakMap<HTMLElement, ResizeObserver>();
+
+/**
+ * 让记号竖排跟着这一格**渲染出来的高度**走。
+ *
+ * gutter 那一格的高度就是 CM6 给这一行**文本块**记的高度（composite 里只取
+ * `BlockType.Text` 子块，缝不算）⇒ 用它除以 `defaultLineHeight` 得到的正是视觉行数，
+ * 与折行量尺、缝计划是同一份几何，抽稀与过密一起消掉。
+ *
+ * 为什么用尺寸观察器而不是在 view 更新时重算：DOM 会被 CM6 按 `eq` 复用，新的 marker
+ * 实例碰不到旧元素（见 `DiffSignMarker` 的注）；而尺寸观察器认的就是那颗元素本身，
+ * 高度一变（拖分屏 / 折行重排 / 字号）就重填，不依赖 marker 的身份。
+ */
+function watchSignRows(el: HTMLElement, kind: "insert" | "delete", view: EditorView): void {
+  if (typeof ResizeObserver !== "function") return;
+  const ro = new ResizeObserver(() => {
+    const height = el.getBoundingClientRect().height;
+    const lineHeight = view.defaultLineHeight;
+    if (!(height > 0) || !(lineHeight > 0)) return;
+    fillSignRows(el, kind, Math.max(1, Math.round(height / lineHeight)));
+  });
+  ro.observe(el);
+  rowObservers.set(el, ro);
 }
 
 /** 按视觉行数重填记号竖排（行数没变就不动 DOM，避免每帧重建）。 */
@@ -499,31 +531,6 @@ export function textBlockOf(view: EditorView, line: number): { top: number; heig
   const text = block.type.find((part) => part.type === BlockType.Text);
   return text ? { top: text.top, height: text.height } : { top: block.top, height: block.height };
 }
-
-/**
- * 记号槽的兜底重填：CM6 的 gutter 一格对应一个文档行，折行出来的视觉行不会再开新格；
- * 这里在几何变化后按真实行高把那一格填成等高竖排。
- */
-const signRowFiller = ViewPlugin.fromClass(
-  class {
-    constructor(private readonly view: EditorView) {
-      this.sync();
-    }
-
-    update(update: ViewUpdate): void {
-      if (update.docChanged || update.geometryChanged || update.viewportChanged) this.sync();
-    }
-
-    private sync(): void {
-      const signs = this.view.state.field(diffFaceField, false)?.signs;
-      if (!signs) return;
-      const { from, to } = this.view.viewport;
-      signs.between(from, to, (_from, _to, marker) => {
-        if (marker instanceof DiffSignMarker) marker.sync(this.view);
-      });
-    }
-  },
-);
 
 /**
  * 记号字形：VS Code 的记号是 Codicon（`diff-insert` → `add`、
@@ -741,8 +748,6 @@ export function diffFace(side: DiffSide, source: () => DiffFaceSource): Extensio
         markers: (view) => foldMarkersIn(view),
       }),
     ),
-    // 一格对应一个文档行；折行出来的视觉行由插件按真实行高补成一列（见 `DiffSignMarker`）。
-    signRowFiller,
   ];
 }
 

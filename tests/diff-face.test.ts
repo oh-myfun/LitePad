@@ -489,6 +489,57 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
     expect(rows[0].querySelectorAll(".codicon-add").length, "每一颗都是新稿侧的 `+`").toBe(3);
   });
 
+  it("B479 · 记号行数跟这一格的实际高度走（CM6 复用 DOM 也不会停在首帧估值）", () => {
+    // jsdom 没有 ResizeObserver：装一颗可控的假货，`observe` 记下元素，测试自己决定何时回调。
+    const made: FakeRowRO[] = [];
+    class FakeRowRO {
+      el: Element | null = null;
+      dead = false;
+      constructor(readonly cb: ResizeObserverCallback) {}
+      observe(el: Element): void {
+        this.el = el;
+        made.push(this);
+      }
+      unobserve(): void {}
+      disconnect(): void {
+        this.dead = true;
+      }
+      takeRecords(): ResizeObserverEntry[] {
+        return [];
+      }
+    }
+    const globals = globalThis as { ResizeObserver?: unknown };
+    const prev = globals.ResizeObserver;
+    globals.ResizeObserver = FakeRowRO;
+    try {
+      const { view } = mountFace("original", del);
+      const rows = view.dom.querySelector<HTMLElement>(".cm-diffSigns .diff-sign-rows");
+      expect(rows, "改块那一行有一格记号").not.toBeNull();
+      let height = 6 * LINE_HEIGHT;
+      Object.defineProperty(rows!, "getBoundingClientRect", {
+        configurable: true,
+        value: () => stubRect(10, height),
+      });
+      const fire = (): void => {
+        for (const ro of made) {
+          if (!ro.dead && ro.el === rows) ro.cb([], ro as unknown as ResizeObserver);
+        }
+      };
+      // 布局落地：这一格渲染出来六个视觉行高（首帧按行块估的那一版可能偏，这里校正）。
+      fire();
+      expect(rows!.dataset.rows, "120px ÷ 20px ⇒ 六颗").toBe("6");
+      // 拖分屏：块表重算 ⇒ 新 marker（`eq` 相同 ⇒ CM6 直接复用这颗 DOM，`toDOM` 不再调）。
+      // 格子高度随之变成三行，竖排必须跟着重填 —— 旧实现把重填挂在 marker 的 `el` 上，
+      // 新 marker 拿不到旧元素，这一步会断（拖完记号永远停在旧行数）。
+      view.dispatch({ effects: refreshDiff.of(null) });
+      height = 3 * LINE_HEIGHT;
+      fire();
+      expect(rows!.dataset.rows, "复用 DOM 之后仍按新高度重填").toBe("3");
+    } finally {
+      globals.ResizeObserver = prev;
+    }
+  });
+
   it("B464 · 占位缝不画记号：原稿侧的缺口同样一颗都不出", () => {
     // 新稿多出两行 ⇒ 缺口落在**原稿**栏；原稿这一侧没有真行可挂。
     const ins = diffBlocks("A\nZ", "A\n新1\n新2\nZ");
