@@ -2006,6 +2006,44 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     );
   });
 
+  it("B480 · 驱动栏落在对侧没有行的段里 ⇒ 也按像素一一对应（右栏滚多少左栏走多少）", () => {
+    const { panel } = mountDiffPair("A\n", "A\nB\n");
+    const right = panel.view!.view;
+    const left = diffSurfaceOf(panel)!.left;
+    // 与 B479 同一份几何，这次驱动栏是**有行**的那一栏（右栏第 2 行 220px），
+    // 对栏那一段全是缝（左栏第 1 行行尾 220px）。
+    fakeLineBoxes(left, [20, 20], { 1: 220 });
+    fakeLineBoxes(right, [20, 220, 20]);
+    const track = (el: HTMLElement): { top: number } => {
+      let top = 0;
+      Object.defineProperty(el, "scrollTop", {
+        configurable: true,
+        get: () => top,
+        set: (v: number) => {
+          top = v;
+        },
+      });
+      Object.defineProperty(el, "clientHeight", { configurable: true, value: 100 });
+      Object.defineProperty(el, "scrollHeight", { configurable: true, value: 260 });
+      return {
+        get top(): number {
+          return top;
+        },
+        set top(v: number) {
+          top = v;
+        },
+      };
+    };
+    const rt = track(right.scrollDOM);
+    const lt = track(left.scrollDOM);
+    // 右栏视口顶落在第 2 行（20..240）中段：对栏那一段是一条缝，应当落在同一个 y。
+    rt.top = 140;
+    right.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(lt.top, "对侧整段是缝 ⇒ 像素一一对应；不能因为缝后面那一行是锚点就跳到段尾（160）").toBe(
+      140,
+    );
+  });
+
   it("B471 · 同步滚动也镜像 scrollLeft（同一张认领票管两轴，超出的按对栏收口）", () => {
     const { panel } = mountDiffPair("A\nB\nC", "A\nC");
     const right = panel.view!.view;

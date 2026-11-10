@@ -1658,6 +1658,13 @@ export function createDiffSurface(
     otherStart: number;
     /** 对栏段的结束行（不含；未改动区就是 otherStart 自己） */
     otherEnd: number;
+    /**
+     * 这一段在对栏**一行都不占**（对栏整段是一条缝）。
+     *
+     * 此时 `otherStart` 是缝**后面**那一行，拿它当段首会把对栏直接推到段尾；调用方必须
+     * 改用像素一一对应（段首两侧同 y、段内总高相等，缝就是这段在对栏的全部内容）。
+     */
+    otherFlat: boolean;
   }
 
   const alignSpan = (side: DiffSide, line: number): AlignSpan => {
@@ -1679,7 +1686,7 @@ export function createDiffSurface(
       if (line < own.start) {
         // 未改动区：两侧行数相等且逐行等高，行号平移即是像素平移。
         const mapped = clampLine(line + (opp.start - own.start));
-        return { ownStart: line, otherStart: mapped, otherEnd: mapped };
+        return { ownStart: line, otherStart: mapped, otherEnd: mapped, otherFlat: false };
       }
       if (line <= own.end) {
         const stops = [
@@ -1694,19 +1701,27 @@ export function createDiffSurface(
         let k = 0;
         while (k + 1 < stops.length && at(stops[k + 1]) <= line) k++;
         const cur = stops[k];
+        const next = to(stops[k + 1] ?? cur);
         return {
           ownStart: at(cur),
           otherStart: clampLine(to(cur)),
-          otherEnd: clampLine(to(stops[k + 1] ?? cur)),
+          otherEnd: clampLine(next),
+          otherFlat: next <= to(cur),
         };
       }
     }
     const b = stored[stored.length - 1];
-    if (!b) return { ownStart: line, otherStart: clampLine(line), otherEnd: clampLine(line) };
+    if (!b)
+      return {
+        ownStart: line,
+        otherStart: clampLine(line),
+        otherEnd: clampLine(line),
+        otherFlat: false,
+      };
     const own = ownSpan(b);
     const opp = otherSpan(b);
     const mapped = clampLine(line + (opp.end - own.end));
-    return { ownStart: line, otherStart: mapped, otherEnd: mapped };
+    return { ownStart: line, otherStart: mapped, otherEnd: mapped, otherFlat: false };
   };
 
   const mirrorScroll = (from: EditorView | null, to: EditorView | null): void => {
@@ -1722,20 +1737,27 @@ export function createDiffSurface(
     } else {
       const line = topLine(from, top);
       const span = alignSpan(side, line);
-      const ownLine = from.state.doc.line(
-        Math.min(Math.max(span.ownStart, 1), from.state.doc.lines),
-      );
-      const otherLine = to.state.doc.line(span.otherStart);
-      const ownBlock = from.lineBlockAt(ownLine.from);
-      const otherBlock = to.lineBlockAt(otherLine.from);
-      // 段内偏移：段首已经补过缝，段内两侧等高 ⇒ 这个像素量在对栏指同一个位置。
-      const offset = Math.max(top - ownBlock.top, 0);
-      const otherEndTop =
-        span.otherEnd > span.otherStart
-          ? to.lineBlockAt(to.state.doc.line(span.otherEnd).from).top
-          : otherBlock.top + Math.max(otherBlock.height, 0);
-      // 段内偏移夹在段尾之前。
-      want = Math.min(otherBlock.top + offset, otherEndTop);
+      if (span.otherFlat) {
+        // 这一段对侧一行都没有（对侧整段是一条缝）：`otherStart` 是缝**后面**那一行，
+        // 当段首用会把对侧立刻推到段尾（右栏才滚 30px，左栏就跳到底）。缝就是这一段在
+        // 对侧的全部内容，段首两侧同 y ⇒ 像素一一对应。
+        want = top;
+      } else {
+        const ownLine = from.state.doc.line(
+          Math.min(Math.max(span.ownStart, 1), from.state.doc.lines),
+        );
+        const otherLine = to.state.doc.line(span.otherStart);
+        const ownBlock = from.lineBlockAt(ownLine.from);
+        const otherBlock = to.lineBlockAt(otherLine.from);
+        // 段内偏移：段首已经补过缝，段内两侧等高 ⇒ 这个像素量在对栏指同一个位置。
+        const offset = Math.max(top - ownBlock.top, 0);
+        const otherEndTop =
+          span.otherEnd > span.otherStart
+            ? to.lineBlockAt(to.state.doc.line(span.otherEnd).from).top
+            : otherBlock.top + Math.max(otherBlock.height, 0);
+        // 段内偏移夹在段尾之前。
+        want = Math.min(otherBlock.top + offset, otherEndTop);
+      }
     }
     // 再夹一次全局可滚范围（末段贴近文档尾时可能到不了目标位置）。
     want = Math.min(Math.max(want, 0), Math.max(b.scrollHeight - b.clientHeight, 0));
