@@ -1326,6 +1326,9 @@ async function frames(n = 4): Promise<void> {
  *
  * `heights[line-1]` 是那一行的视觉高度（折行后的多行就写大一点）；`gapsAfter[n]` 是
  * **已经补上的**对齐缝（1-based：第 n 行之后），下一行的 top 要把它算进去 —— 与真实 DOM 一致。
+ *
+ * `bottom` 也把紧贴行尾的缝算进去（真机上那条缝被并进同一个 composite，`boundaryOf` 读的
+ * 就是这个底）；`height` 仍是**文本自己**的高（`textBlockOf` 只认 `BlockType.Text` 子块）。
  */
 function fakeLineBoxes(
   view: EditorView,
@@ -1347,7 +1350,7 @@ function fakeLineBoxes(
       from: doc.line(n).from,
       to: doc.line(n).to,
       top: t,
-      bottom: t + h,
+      bottom: t + h + (gapsAfter[n] ?? 0),
       height: h,
       length: 1,
       type: 0,
@@ -1698,7 +1701,7 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
       const item = panel.bodyEl!.querySelector<HTMLElement>(".diff-revert-item");
       const btn = panel.bodyEl!.querySelector<HTMLElement>(".diff-revert");
       expect(item!.style.top, "item 顶 = 差异行文本顶").toBe(`${right.documentTop + 20}px`);
-      expect(item!.style.height, "item 高只算差异行自己（40px 缝不算）").toBe("20px");
+      expect(item!.style.height, "竖线盖到块尾那条缝的下沿（文本 20 + 缝 40）").toBe("60px");
       expect(btn!.style.top, "按钮居中在差异行").toBe("1px");
     } finally {
       spy.mockRestore();
@@ -1735,9 +1738,35 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
       expect(btn, "块内对齐不影响回退按钮的落点规则").toBeTruthy();
       // 首行「丙一去」两侧相同 ⇒ 块从第 2 行起（实测 top = 20）。
       expect(item!.style.top, "item 顶 = 改块首行的实测 top").toBe(`${right.documentTop + 20}px`);
-      expect(item!.style.height, "item 高 = 整块的行文本（缝在块尾另算）").toBe("20px");
+      expect(item!.style.height, "竖线盖到块尾那条缝的下沿（文本 20 + 缝 40）").toBe("60px");
       // 块高 20 ⇒ 居中 = 20/2 - 18/2 = 1。
       expect(btn!.style.top, "按钮在整块里垂直居中").toBe("1px");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("B476 · 块尾那条对齐缝也算进竖线的范围（按钮仍在差异行里居中）", async () => {
+    const spy = vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(20);
+    try {
+      // 第 2 行是改块（两侧各一行），第 3 行是未改动行；左栏第 2 行折成 3 个视觉行、
+      // 右栏 1 行 ⇒ 右栏块尾补 40px 缝，块的可视下沿落在第 3 行的顶上。
+      const { panel, s } = mountDiffPair("A\n乙乙乙乙\nB", "A\n丙\nB");
+      const right = panel.view!.view;
+      const center = panel.bodyEl!.querySelector<HTMLElement>(".diff-center")!;
+      center.getBoundingClientRect = () =>
+        ({ top: 0, bottom: 400, height: 400, left: 0, right: 35, width: 35 }) as DOMRect;
+
+      s.setWrapEnabled(true);
+      fakeLineBoxes(s.left, [20, 60, 20]);
+      fakeLineBoxes(right, [20, 20, 20], { 2: 40 });
+      await frames();
+
+      const item = panel.bodyEl!.querySelector<HTMLElement>(".diff-revert-item");
+      const btn = panel.bodyEl!.querySelector<HTMLElement>(".diff-revert");
+      expect(item!.style.top, "item 顶 = 差异行文本顶").toBe(`${right.documentTop + 20}px`);
+      expect(item!.style.height, "竖线盖到块尾缝的下沿（文本 20 + 缝 40）").toBe("60px");
+      expect(btn!.style.top, "按钮居中在这条差异行里，不被缝推走").toBe("1px");
     } finally {
       spy.mockRestore();
     }

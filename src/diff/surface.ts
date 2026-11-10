@@ -1939,8 +1939,8 @@ export function createDiffSurface(
     /**
      * 第 `line` 行**文本自己的**顶/底（剥掉紧贴行尾的缝，也不含它上方那条缝）。
      *
-     * ⚠️ 回退按钮必须按「差异行自己」居中：`lineBlockAt(...).bottom` 会把紧贴行尾的
-     * 对齐缝并进 composite，单行块后面补一段 40px 时按钮就被推到缝里（用户抓到的
+     * ⚠️ 这是**按钮的锚点**（竖线的上下沿另按块边界算）：`lineBlockAt(...).bottom` 会把
+     * 紧贴行尾的对齐缝并进 composite，单行块后面补一段 40px 时按钮就被推到缝里（用户抓到的
      * 「单行 / 单行自动换行时没落在差异行中间」）。`textBlockOf` 只取 `BlockType.Text`
      * 那一块，折行出来的视觉行仍算在行内（高度就是整条文本块）。
      */
@@ -1953,26 +1953,33 @@ export function createDiffSurface(
     for (let i = 0; i < stored.length; i++) {
       const b = stored[i];
       // 块的可视纵向范围：
-      //   · 非空段 = 首行文本顶 → 末行文本底（块内的对齐缝天然落在中间，照样算进去）；
+      //   · 非空段 = 首行文本顶 → 块尾边界。块尾那条紧贴末行行尾的对齐缝也算进来
+      //     （上游 `getBottomForLineNumber(end, true)` 同口径）：对侧折行 / 缺行多出来的
+      //     那一截正是这条缝，竖线要盖到这一块真正结束的地方，不能停在末行文本底；
       //   · 空段（删除块跨在右栏的落点行上）= 它面前那条缝的范围（上一行文本底 → 块边界），
       //     否则 item 高 0，按钮停在缝的下沿、竖线根本画不出来。
       const empty = b.modifiedStart > b.modifiedEnd;
+      const textTop = empty ? 0 : textBox(b.modifiedStart).top;
+      const textBottom = empty ? 0 : textBox(b.modifiedEnd).bottom;
       const top = empty
         ? b.modifiedStart > 1
           ? textBox(Math.min(b.modifiedStart - 1, doc.lines)).bottom
           : view.documentTop - column.top
-        : textBox(b.modifiedStart).top;
-      const bottom = empty ? boundaryOf(b.modifiedStart) : textBox(b.modifiedEnd).bottom;
+        : textTop;
+      const bottom = empty ? boundaryOf(b.modifiedStart) : boundaryOf(b.modifiedEnd + 1);
       const height = Math.max(bottom - top, 0);
       // 块完全在视口上下各一个按钮的余量之外 ⇒ 这一颗不建。
       if (top + height < -BTN_H || top > column.height + BTN_H) continue;
 
-      // 居中 + 两级夹取（顺序也照上游：先视口、后父区间）。
-      let y = top + height / 2 - BTN_H / 2;
+      // 居中 + 两级夹取（顺序也照上游：先视口、后父区间）。锚点用**差异行文本范围**：
+      // item 高现在含块尾缝，直接拿它居中会把按钮推进缝里（B464）。
+      const anchorTop = empty ? top : textTop;
+      const anchorHeight = empty ? height : textBottom - textTop;
+      let y = anchorTop + anchorHeight / 2 - BTN_H / 2;
       const viewStart = BTN_H;
       const viewEnd = column.height - 2 * BTN_H;
-      const parentStart = top + BTN_H;
-      const parentEnd = top + height - 2 * BTN_H;
+      const parentStart = anchorTop + BTN_H;
+      const parentEnd = anchorTop + anchorHeight - 2 * BTN_H;
       if (parentEnd > parentStart && viewEnd > viewStart) {
         y = Math.min(Math.max(y, viewStart), viewEnd);
         y = Math.min(Math.max(y, parentStart), parentEnd);
