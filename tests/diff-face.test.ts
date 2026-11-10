@@ -38,6 +38,7 @@ import {
   DiffGapWidget,
   diffFace,
   foldCandidates,
+  foldGaps,
   foldedRangesIn,
   gapZones,
   refreshDiff,
@@ -238,6 +239,25 @@ describe("B461 · sideLineMarks / gapZones：一块在两栏各落在哪些行",
       return h;
     };
     expect(total("original"), "左栏的实际显示高度").toBe(total("modified"));
+  });
+});
+
+describe("B473 · foldGaps：落进折区的缝挪到折条之后", () => {
+  const gap = (afterLine: number, height: number): GapZone => ({ afterLine, height });
+
+  it("折区内的缝挪到折区后沿，折区外的不动", () => {
+    expect(foldGaps([gap(2, 20), gap(4, 10), gap(5, 30), gap(9, 5)], [{ from: 3, to: 6 }])).toEqual(
+      [gap(2, 20), gap(6, 40), gap(9, 5)],
+    );
+  });
+
+  it("折区后沿原本就有缝 ⇒ 两笔并成一条（不许同落点两条）", () => {
+    expect(foldGaps([gap(4, 10), gap(6, 7)], [{ from: 3, to: 6 }])).toEqual([gap(6, 17)]);
+  });
+
+  it("没有折区时原样返回（反复重算不改计划，`sameGapPlans` 才判得平）", () => {
+    const gaps = [gap(2, 20), gap(4, 10)];
+    expect(foldGaps(gaps, [])).toBe(gaps);
   });
 });
 

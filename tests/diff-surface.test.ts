@@ -64,6 +64,7 @@ import {
   type DiffSurface,
 } from "../src/diff/surface";
 import { DIFF_REFRESH_MS } from "../src/diff/align";
+import { setFoldedRanges } from "../src/diff/face";
 import { setDiffBlocksListener } from "../src/diff/model";
 import type { DiffSpec } from "../src/diff/model";
 import type { ScrollAnchor } from "../src/sync-scroll/anchor";
@@ -1364,6 +1365,35 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
       s.setWrapEnabled(false);
       await frames();
       expect(gapHeights(), "折行关掉后必须重算，不许留着上一轮的 40px").toEqual(["20px"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("B473 · 折区段首按折条 24px 计高：另一栏补的缝不许按 0 算", async () => {
+    const spy = vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(20);
+    try {
+      // 左 3 行、右 8 行：右栏多出的 5 行是一颗插入块。把这块整段折上（用户报的「右边多出的
+      // 行被折叠」）：屏上它只占一条 24px 折条，左栏要补的缝就得是 24px 而不是 0。
+      const { panel, s } = mountDiffPair("A\nB\nC", "A\nB\nC\nX1\nX2\nX3\nX4\nX5");
+      const right = panel.view!.view;
+      s.setWrapEnabled(false);
+      right.dispatch({
+        effects: setFoldedRanges.of([{ from: 4, to: 8, top: 0, bottom: 0, regionLength: 5 }]),
+      });
+      s.remeasure();
+      await frames();
+      const leftGaps = [...panel.bodyEl!.querySelectorAll<HTMLElement>(".diff-original .diff-gap")];
+      expect(
+        leftGaps.map((el) => el.style.height),
+        "右栏折区屏上占 24px ⇒ 左栏补 24px",
+      ).toEqual(["24px"]);
+      // 反向闸：折区撤掉后回到整段 100px（5 行 × 20），说明上面那条不是恒等于 24px 蒙过去的。
+      right.dispatch({ effects: setFoldedRanges.of([]) });
+      s.remeasure();
+      await frames();
+      const after = [...panel.bodyEl!.querySelectorAll<HTMLElement>(".diff-original .diff-gap")];
+      expect(after.map((el) => el.style.height)).toEqual(["100px"]);
     } finally {
       spy.mockRestore();
     }

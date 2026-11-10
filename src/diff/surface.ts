@@ -48,6 +48,7 @@ import {
   diffFace,
   foldCandidates,
   foldedRangesIn,
+  foldGaps,
   gapZones,
   onFoldBarClick,
   refreshDiff,
@@ -1023,24 +1024,26 @@ export function createDiffSurface(
    * 退回时只能读**行文本自己的**块：贴着行尾的占位块会被 CM6 并进同一颗 composite
    * `BlockInfo`，要把它的高度减出去，才有「补缝 → 行高不变 → 缝稳定」这条不动点。
    *
-   * ⚠️ 折起来的行一律按 0 算 —— 它们已被替换装饰整段收走，不占正文高度；折条那一条
-   * 24px 两侧各一、位置同源，差值天然为 0、不参与补缝。若这里改读「替换块量出来多少」，
-   * 折条重画（estimated → measured）时这一格会在 20/24 之间跳，`applyGapPlans` 与下一次
-   * `measureGapPlans` 就会给出两份不同的缝，折条每重画一次画面就抖一次。
+   * ⚠️ 折区里**段首记 24px（折条），其余行记 0**：整段已被替换装饰收走，屏上只剩那一条折条。
+   * 段首必须认这 24px —— 少算它，另一栏给这段补的缝就短一截（用户报的「右边多出的行被折叠、
+   * 左边填充不够」正是这一格：右栏补缝按 0 算，屏上却占着折条那 24px，滚到底两栏差这一截）。
+   * 不读「替换块量出来多少」：折条重画（estimated → measured）时它会跳，缝跟着抖。
    */
   const lineHeights = (side: DiffSide): ((line: number) => number) => {
     const view = viewOf(side);
     if (!view) return () => 0;
     const folds = foldedRangesIn(view.state);
-    const hidden = (line: number): boolean =>
-      folds.some((fold) => line >= fold.from && line <= fold.to);
+    const at = (line: number): number | null => {
+      const fold = folds.find((f) => line >= f.from && line <= f.to);
+      return fold ? (line === fold.from ? FOLD_BAR_HEIGHT : 0) : null;
+    };
     if (!wrapOn) {
       const h = view.defaultLineHeight;
-      return (line) => (hidden(line) ? 0 : h);
+      return (line) => at(line) ?? h;
     }
     const measured = meterOf(side).heights();
-    if (measured) return (line) => (hidden(line) ? 0 : (measured[line - 1] ?? 0));
-    return (line) => (hidden(line) ? 0 : textBlockOf(view, line).height);
+    if (measured) return (line) => at(line) ?? measured[line - 1] ?? 0;
+    return (line) => at(line) ?? textBlockOf(view, line).height;
   };
 
   /**
@@ -1050,8 +1053,8 @@ export function createDiffSurface(
    * `contentHeight`：CM6 只对进过视口的折行给实测值，视口外按字符数估 ⇒ 色带会随着
    * 「滚过」逐段挪位 —— 与填充行要滚过才稳定是同一个病根。
    *
-   * 折叠行按 0 高（整段已被替换装饰收走），折条在段首记一颗 `FOLD_BAR_HEIGHT`（两侧各一条、
-   * 计数相同，总高仍相等）；缝按 `afterLine` 记在那一行之后。
+   * 折区按 `lineHeights` 的口径记（段首 24px、其余 0），这里不再单独加折条 —— 两处各记一份
+   * 就会在「单侧折叠」时把差值算成两倍。缝按 `afterLine` 记在那一行之后（已由 `foldGaps` 挪出折区）。
    *
    * ⚠️ 折行量不出来时 `lineHeights` 退回 `textBlockOf` 估值链，这条轴跟着退化成估算 ——
    * 与缝的口径一致，不在两处各估一遍。
@@ -1072,7 +1075,6 @@ export function createDiffSurface(
     if (!view) return null;
     const lines = view.state.doc.lines;
     const h = lineHeights(side);
-    const barStarts = new Set(foldedRangesIn(view.state).map((fold) => fold.from));
     const gapAfter = new Map<number, number>();
     for (const gap of gapPlans[side]) {
       gapAfter.set(gap.afterLine, (gapAfter.get(gap.afterLine) ?? 0) + gap.height);
@@ -1080,7 +1082,7 @@ export function createDiffSurface(
     const tops = new Float64Array(lines + 2);
     const heights = new Float64Array(lines + 2);
     for (let line = 1; line <= lines; line++) {
-      heights[line] = h(line) + (barStarts.has(line) ? FOLD_BAR_HEIGHT : 0);
+      heights[line] = h(line);
       tops[line + 1] = tops[line] + heights[line] + (gapAfter.get(line) ?? 0);
     }
     const clamp = (line: number): number => Math.min(Math.max(line, 1), lines);
@@ -1100,12 +1102,17 @@ export function createDiffSurface(
       original: lineHeights("original"),
       modified: lineHeights("modified"),
     };
-    return gapZones(
+    const zones = gapZones(
       stored,
       { original: left.state.doc.lines, modified: right.state.doc.lines },
       (side, line) => heights[side](line),
       inner.alignments,
     );
+    // 折区整段被替换装饰收走 ⇒ 落进去的缝渲染不出来，必须挪到折条之后（见 `foldGaps`）。
+    return {
+      original: foldGaps(zones.original, foldedRangesIn(left.state)),
+      modified: foldGaps(zones.modified, foldedRangesIn(right.state)),
+    };
   };
 
   /** 两份缝计划是否「一样到不必再派发」（亚像素抖动不算变化，否则会 measure 自激）。 */

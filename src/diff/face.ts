@@ -178,6 +178,39 @@ export function gapZones(
   return out;
 }
 
+/**
+ * 把落进折区的缝挪到折条之后（`afterLine` 落在 `[from, to - 1]` 的并到 `to`）。
+ *
+ * 折区由一条 `Decoration.replace({ block: true })` 整段收走（见 `buildFoldFace`）；缝是块级
+ * widget，挂在某一行行尾 —— 位置落进替换区间就随那几行一起不渲染，而高度已经被
+ * `lineHeights` 数进了行轴 ⇒ 屏上少一截，滚到底两栏对不齐（用户报的「右边多出的行被折叠、
+ * 左边填充不够」就是这一条：右栏折区屏上只占折条那 24px，左栏按 0 补缝自然短一截）。
+ *
+ * 折区后沿 `to` 那行的行尾正好是替换区右端：同位置上的块级 widget 排在替换块之后，还渲染得
+ * 出来，是唯一有效的落点。`to` 之后原本就有缝的，两笔并成一条；挪动只向右，产出仍按
+ * `afterLine` 升序（`gapZones` 的升序保证 + 同落点合并后重排）。
+ */
+export function foldGaps(
+  gaps: GapZone[],
+  folds: readonly { from: number; to: number }[],
+): GapZone[] {
+  if (folds.length === 0) return gaps;
+  const merged = new Map<number, number>();
+  for (const gap of gaps) {
+    let after = gap.afterLine;
+    for (const fold of folds) {
+      if (after >= fold.from && after < fold.to) {
+        after = fold.to;
+        break;
+      }
+    }
+    merged.set(after, (merged.get(after) ?? 0) + gap.height);
+  }
+  return [...merged.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([afterLine, height]) => ({ afterLine, height }));
+}
+
 /** 一段行区间的实测高度（`start > end` ⇒ 0）。 */
 function rangeHeight(
   range: { start: number; end: number },
