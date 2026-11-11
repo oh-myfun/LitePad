@@ -40,6 +40,13 @@ export interface TabViewData {
   lang?: string;
   /** 完整路径（右键「复制路径」用，可空） */
   path?: string;
+  /**
+   * 悬停提示正文；缺省退回 `path` / `name`。
+   *
+   * 差异标签要它：标题是「左 ↔ 右」，而 `path` 只是右栏那份文档 ——
+   * 气泡只报右栏就会与标题对不上（见 `tabs/render.ts` 的 `tabViewDataOf`）。
+   */
+  tip?: string;
   /** 存在其他分屏面板（右键「复制到相邻面板」的显示条件） */
   hasSibling?: boolean;
   /**
@@ -296,7 +303,7 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   // 这一档的出处（B127）：VS Code 的标签走 `iconLabel.ts` 的
   // `getDefaultHoverDelegate('mouse')` ⇒ 气泡跟鼠标、**不画小箭头**，且 `showHover()`
   // 写死紧凑档。B350 起这两个开关由 setTextTip 一处给，站点只留文案与 group。
-  const tip = t.path ?? t.name;
+  const tip = t.tip ?? t.path ?? t.name;
   setTextTip(el, t.readonly ? `${tip} [只读]` : tip, { group: "tabstrip" });
 
   // 文件类型图标（B57，参考 VS Code 的 .tab.has-icon；B367 换成 Seti 字形）：

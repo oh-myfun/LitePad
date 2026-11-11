@@ -515,6 +515,7 @@ function viewData(tabId: number, isDiff: boolean): import("../src/shell/tabstrip
     readonly: false,
     active: true,
     path: "E:\\a.md",
+    tip: isDiff ? "上次保存的 E:\\a.md ↔ E:\\a.md" : undefined,
     hasSibling: true,
     canDiffAgainstSaved: true,
     isDiff,
@@ -546,6 +547,27 @@ describe("B461 · 差异标签不许跨面板 / 跨窗口（Review Focus 3）", 
       expect(plainLabels, `对照：普通标签的「${label}」不许被一并抹掉`).toContain(label);
     }
     expect(diffLabels, "关闭这一组仍在（差异标签关得掉）").toContain("关闭");
+  });
+
+  it("悬停气泡与标题同源：差异标签用 tip（两侧），普通标签仍报 path", () => {
+    const host = addHost("tabstrip-host");
+    tabstrip.renderTabstrip(host, [viewData(1, true), viewData(2, false)], {
+      onActivate: () => {},
+      onClose: () => {},
+      onDuplicateToSibling: () => {},
+      onSplitH: () => {},
+      onSplitV: () => {},
+      onOpenInNewWindow: () => {},
+      onReturnToMain: () => {},
+    });
+    expect(
+      host.querySelector<HTMLElement>('[data-tab-id="1"]')!.dataset.tip,
+      "标题是「左 ↔ 右」，气泡只报右栏 path 就对不上",
+    ).toBe("上次保存的 E:\\a.md ↔ E:\\a.md");
+    expect(
+      host.querySelector<HTMLElement>('[data-tab-id="2"]')!.dataset.tip,
+      "对照：普通标签的提示仍是完整路径",
+    ).toBe("E:\\a.md");
   });
 
   it("moveTabToPanel 拒绝：标签还在原格，目标格没长出第二颗旁路", () => {

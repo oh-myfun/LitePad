@@ -117,6 +117,15 @@ describe("B461 · diffTitleOf（Task 5 Step 1）", () => {
       leftPath: null,
     };
     expect(diffTitleOf(same, true)).toBe("上次保存的 a.md ↔ a.md");
+    // 第三参是同一句话的全路径版（标签悬停提示用）：措辞仍只有这一份。
+    expect(
+      diffTitleOf(files, false, (side) => (side === "left" ? "D:/a.md" : "D:/b.md")),
+      "换的是取词口径，不是第二套措辞",
+    ).toBe("D:/a.md ↔ D:/b.md");
+    expect(
+      diffTitleOf(same, true, () => "D:/a.md"),
+      "A 档两侧是同一个文件 ⇒ 两侧都走全路径，描述前缀照旧",
+    ).toBe("上次保存的 D:/a.md ↔ D:/a.md");
   });
 });
 

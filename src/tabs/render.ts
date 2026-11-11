@@ -66,14 +66,25 @@ export function tabViewDataOf(p: Panel): TabViewData[] {
     .filter((t): t is Tab => !!t)
     .map((t) => {
       const doc = docs.get(t.docId);
+      const spec = t.kind === "diff" ? t.diff : undefined;
+      const sameName = !!spec && spec.leftName === spec.rightName;
+      // 悬停提示与标题说同一句话，只把名字换成全路径（见 `diffTitleOf` 的 `labelOf`）。
+      // 左栏是基线 / 快照时它没有自己的 path ⇒ 退回这份文档的 path，再退回名字。
+      const tip = spec
+        ? diffTitleOf(spec, sameName, (side) =>
+            side === "left"
+              ? (spec.leftPath ?? doc?.path ?? spec.leftName)
+              : (doc?.path ?? spec.rightName),
+          )
+        : undefined;
       return {
         tabId: t.tabId,
         // B461（裁决 R27）：差异标签的名字必须从它自己的 spec 现拼 —— 它和原文档共用
         // `docId`，照 `doc.name` 画就会出现两张一字不差的标签，谁也数不清哪颗是差异面。
-        name:
-          t.kind === "diff" && t.diff
-            ? diffTitleOf(t.diff, t.diff.leftName === t.diff.rightName)
-            : (doc?.name ?? "?"),
+        name: spec ? diffTitleOf(spec, sameName) : (doc?.name ?? "?"),
+        // 差异标签的路径信息是两栏（`path` 只是右栏那份文档）⇒ 提示走这一格，
+        // 否则气泡只报右栏、与标题的「左 ↔ 右」对不上。
+        tip,
         dirty: doc?.dirty ?? false,
         readonly: doc?.readonly ?? false,
         active: t.tabId === p.activeTabId,

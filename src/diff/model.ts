@@ -63,10 +63,18 @@ export function canOpenAgainstBaseline(doc: Doc | null): doc is Doc {
  * 两侧同名（A 档恒同名：对照的就是这份文档自己）时左栏补一句描述
  * ——「上次保存的 a.md ↔ a.md」，光看两个一样的名字分不出谁是基线谁是当前。
  * （补描述这一形在 VS Code 里叫 ForceDescription；用户可见文案不提工具名。）
+ *
+ * `labelOf` 是同一句话的**全路径版**：标签悬停提示与标题必须说同一件事，
+ * 只有「名字还是路径」这一处不同 ⇒ 措辞只留在这里，调用方换的是取词口径。
  */
-export function diffTitleOf(spec: DiffSpec, sameName: boolean): string {
-  const left = sameName ? `上次保存的 ${spec.leftName}` : spec.leftName;
-  return `${left} ↔ ${spec.rightName}`;
+export function diffTitleOf(
+  spec: DiffSpec,
+  sameName: boolean,
+  labelOf: (side: "left" | "right") => string = (side) =>
+    side === "left" ? spec.leftName : spec.rightName,
+): string {
+  const left = labelOf("left");
+  return `${sameName ? `上次保存的 ${left}` : left} ↔ ${labelOf("right")}`;
 }
 
 /**

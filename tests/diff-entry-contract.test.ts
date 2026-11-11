@@ -360,6 +360,10 @@ describe("B461 · A 档「与上次保存比较」进表与三条入口（Task 5
       rows.map((r) => r.name),
       "两张一字不差的标签 = 数不清的哪颗是差异面",
     ).toEqual(["note.md", "上次保存的 note.md ↔ note.md"]);
+    expect(
+      rows.map((r) => r.tip),
+      "悬停气泡与标题说同一句话：差异那张报两侧全路径，不是只报右栏那份文档",
+    ).toEqual([undefined, "上次保存的 D:\\note.md ↔ D:\\note.md"]);
     expect(rows.every((r) => r.canDiffAgainstSaved)).toBe(true);
     docModel.markClean(doc, "甲\n乙改\n丙");
     expect(
