@@ -31,6 +31,13 @@ export interface SyntaxPalette {
   heading: string;
   strong: string;
   emphasis: string;
+  /** Markdown 专属：引用正文 / 引用标记 / 列表标记 / 行内代码（对应 markup.quote、
+   *  punctuation.definition.quote.begin、punctuation.definition.list.begin、
+   *  markup.inline.raw）。VS Code 主题没给的是 `inherit`（落回正文色）。 */
+  quote: string;
+  quoteMark: string;
+  listMark: string;
+  inlineCode: string;
   inserted: string;
   deleted: string;
   changed: string;
@@ -60,6 +67,10 @@ const plusDark: SyntaxPalette = {
   heading: "#569cd6",
   strong: "#569cd6",
   emphasis: "#c586c0",
+  quote: "inherit",
+  quoteMark: "#6a9955",
+  listMark: "#6796e6",
+  inlineCode: "#ce9178",
   inserted: "#b5cea8",
   deleted: "#ce9178",
   changed: "#569cd6",
@@ -88,6 +99,10 @@ const plusLight: SyntaxPalette = {
   heading: "#800000",
   strong: "#000080",
   emphasis: "#800080",
+  quote: "inherit",
+  quoteMark: "#0451a5",
+  listMark: "#0451a5",
+  inlineCode: "#800000",
   inserted: "#098658",
   deleted: "#a31515",
   changed: "#0451a5",
@@ -120,6 +135,10 @@ const y2026Dark: SyntaxPalette = {
   heading: "#79c0ff",
   strong: "#c9d1d9",
   emphasis: "#c9d1d9",
+  quote: "#7ee787",
+  quoteMark: "#7ee787",
+  listMark: "#ffa657",
+  inlineCode: "#79c0ff",
   inserted: "#7ee787",
   deleted: "#ffa198",
   changed: "#ffa657",
@@ -149,6 +168,10 @@ const y2026Light: SyntaxPalette = {
   heading: "#0550ae",
   strong: "#1f2328",
   emphasis: "#1f2328",
+  quote: "#116329",
+  quoteMark: "#116329",
+  listMark: "#953800",
+  inlineCode: "#0550ae",
   inserted: "#116329",
   deleted: "#82071e",
   changed: "#953800",
@@ -194,6 +217,11 @@ const hcDark: SyntaxPalette = {
   heading: "#6796e6",
   strong: "#ffffff",
   emphasis: "#ffffff",
+  // hc_black 只给标题上色，引用 / 列表 / 行内代码都没有 token ⇒ 落回正文色。
+  quote: "inherit",
+  quoteMark: "inherit",
+  listMark: "inherit",
+  inlineCode: "inherit",
 };
 
 const hcLight: SyntaxPalette = {
@@ -216,6 +244,9 @@ const hcLight: SyntaxPalette = {
   escape: "#ee0000",
   link: "#0f4a85",
   heading: "#0f4a85",
+  // hc_light 没给 markup.quote；引用标记 / 列表标记沿用 plusLight 的 #0451a5。
+  quote: "inherit",
+  inlineCode: "#0f4a85",
   inserted: "#096d48",
   deleted: "#5a5a5a",
   changed: "#0451a5",

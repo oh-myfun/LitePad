@@ -1,6 +1,7 @@
 import type { Extension } from "@codemirror/state";
 import { foldService, StreamLanguage } from "@codemirror/language";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { MARKDOWN_TOKENS } from "./markdownTokens";
 import { MARK_SYNTAX } from "../preview/markSyntax";
 import { FOOTNOTE_SYNTAX } from "../preview/footnoteSyntax";
 import { markdownFormatExtensions } from "../preview/format";
@@ -207,7 +208,13 @@ const REGISTRY: Entry[] = [
     // B444 · `FOOTNOTE_SYNTAX` 同一处补：脚注引用被 inline Link 吞成引用式链接（下划线），
     // 脚注定义的缩进正文被判成缩进代码块（范围异常）。
     parser: [
-      markdown({ base: markdownLanguage, extensions: [MARK_SYNTAX, FOOTNOTE_SYNTAX] }),
+      markdown({
+        base: markdownLanguage,
+        // MARKDOWN_TOKENS：把 QuoteMark / ListMark / InlineCode 从 processingInstruction
+        // 拆成独立 tag —— VS Code 这几类各有自己的 scope（见 markdownTokens.ts）；
+        // 不拆的话语法高亮只能给它们同一种颜色。
+        extensions: [MARK_SYNTAX, FOOTNOTE_SYNTAX, MARKDOWN_TOKENS],
+      }),
       markdownFormatExtensions(),
     ],
   },

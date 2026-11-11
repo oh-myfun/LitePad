@@ -21,6 +21,7 @@ import {
   type ViewUpdate,
 } from "@codemirror/view";
 import { syntaxPalette, type SyntaxPalette } from "../theme/syntax";
+import { mdInlineCode, mdListMark, mdQuoteMark } from "./markdownTokens";
 import type { ThemeFamily } from "../theme/theme";
 
 /** 编辑器壳层（CM6 自己的 DOM）。颜色全部来自 global.css 的主题 token。 */
@@ -119,6 +120,13 @@ function styleOf(p: SyntaxPalette): HighlightStyle {
     { tag: tags.heading, color: p.heading, fontWeight: "bold" },
     { tag: tags.strong, color: p.strong, fontWeight: "bold" },
     { tag: tags.emphasis, color: p.emphasis, fontStyle: "italic" },
+    // Markdown 的引用正文 / 引用与列表标记 / 行内代码（tag 拆分见 markdownTokens.ts）。
+    // quoteMark 必须排在 quote 之后：QuoteMark 会从 Blockquote 继承 quote，同属性上
+    // 后出现的规则才能覆盖它（Plus 档的 quote 是 inherit，靠这条才能拿到绿色标记）。
+    { tag: tags.quote, color: p.quote },
+    { tag: mdQuoteMark, color: p.quoteMark },
+    { tag: mdListMark, color: p.listMark },
+    { tag: mdInlineCode, color: p.inlineCode },
     { tag: tags.strikethrough, textDecoration: "line-through" },
     { tag: tags.inserted, color: p.inserted },
     { tag: tags.deleted, color: p.deleted },
