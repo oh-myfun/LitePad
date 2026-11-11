@@ -1588,14 +1588,14 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     expect(gapHeights(), "实测 60 vs 20 ⇒ 右栏补 40").toEqual(["40px"]);
   });
 
-  it("B466 · 概览色带与填充走同一份几何：行盒一变色带跟着重算", async () => {
+  it("B466 · 量尺量不出时概览退回行盒（同源兜底）：行盒一变色带跟着重算", async () => {
     const { panel, s } = mountDiffPair(`${"L".repeat(30)}\nX`, "R\nX");
     const right = panel.view!.view;
     const marks = (side: "original" | "modified"): HTMLElement[] => [
       ...panel.bodyEl!.querySelectorAll<HTMLElement>(`.diff-overview-${side} .diff-overview-mark`),
     ];
     setGlobalWrap(true);
-    // 未实测：两栏每行 20px、轴 40px ⇒ 左列色带 20/40。
+    // jsdom 没有布局 ⇒ 量尺量不出（`getBoundingClientRect` 恒 0），概览轴退回行盒口径。
     fakeLineBoxes(s.left, [20, 20]);
     fakeLineBoxes(right, [20, 20]);
     s.remeasure();
@@ -1611,6 +1611,58 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     await frames();
     expect(marks("original")[0].style.height, "60/80").toBe("75%");
     expect(marks("modified")[0].style.height, "20/80").toBe("25%");
+  });
+
+  it("B481 · 量尺量得到时概览轴不跟着 CM6 的估值漂：调分屏后色带不再等滚动才定", async () => {
+    const long = "L".repeat(30);
+    const { panel, s } = mountDiffPair(`${long}\nX`, `${"R".repeat(30)}\nX`);
+    const right = panel.view!.view;
+    setGlobalWrap(true);
+    // 给量尺铺一套确定的矩形：正文宽 300，10 个字符折一行、每视觉行 20px。
+    const rect = (width: number, height: number): DOMRect =>
+      ({
+        left: 0,
+        right: width,
+        top: 0,
+        bottom: height,
+        width,
+        height,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    const spy = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      const el = this as HTMLElement;
+      if (el.classList.contains("cm-content")) return rect(300, 400);
+      if (el.classList.contains("diff-wrap-probe-line")) {
+        const len = (el.textContent ?? "").length;
+        return rect(300, 20 * Math.max(1, Math.ceil(len / 10)));
+      }
+      return rect(0, 0);
+    });
+    try {
+      fakeLineBoxes(s.left, [20, 20]);
+      fakeLineBoxes(right, [20, 20]);
+      s.remeasure();
+      await frames();
+      const mark = panel.bodyEl!.querySelector<HTMLElement>(
+        ".diff-overview-original .diff-overview-mark",
+      )!;
+      // 量尺：长行 60px；轴 = 60 + 20 = 80 ⇒ 改块 75%。
+      expect(mark.style.height, "按量尺记账").toBe("75%");
+
+      // CM6 的估值翻了一版（真实滚动/重测后估值会被实测替换）—— 概览轴只认量尺。
+      fakeLineBoxes(s.left, [40, 20]);
+      fakeLineBoxes(right, [40, 20]);
+      s.remeasure();
+      await frames();
+      expect(mark.style.height, "色带不随 CM6 估值漂").toBe("75%");
+      expect(mark.style.top).toBe("0%");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("B462 · 回退按钮跟着对齐后的实测位置走（块与按钮同一条行轴）", async () => {

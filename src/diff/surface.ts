@@ -65,6 +65,7 @@ import {
 } from "./face";
 import { canOpenAgainstBaseline, notifyDiffBlocks, type DiffSide, type DiffSpec } from "./model";
 import { revertEdit } from "./revert";
+import { createWrapMeter, type WrapMeter } from "./wrap-measure";
 import { CODICONS } from "../shell/codicons";
 import { setTip } from "../shell/tooltip";
 
@@ -1093,14 +1094,42 @@ export function createDiffSurface(
     return (line) => at(line) ?? textBlockOf(view, line).height;
   };
 
+  /** 两栏的折行量尺（只喂概览轴，见 `axisHeights`）：每栏一把，按行文本缓存。 */
+  const meters: Partial<Record<DiffSide, WrapMeter>> = {};
+  const meterOf = (side: DiffSide): WrapMeter => (meters[side] ??= createWrapMeter(viewOf(side)!));
+
+  /**
+   * 概览轴专用的行高：**不读 CM6 的高度图**。
+   *
+   * CM6 只对进过视口的行给实测值，视口外按字符数估；估值会随「又量到几行」而变 ⇒
+   * 概览的色带与滑块在调整分屏比例后还会继续漂，直到用户再碰一下滚动条才落到最终值
+   * （用户报的「滚动条区域要拖动才会刷新」）。这里改吃折行量尺：整篇一次量准，轴只随
+   * 宽度 / 排版 / 缝 / 折叠变。
+   *
+   * 量不出来（面板还没宽度、整栏不可见、jsdom）⇒ 退回行盒，与补缝同源。
+   */
+  const axisHeights = (side: DiffSide): ((line: number) => number) => {
+    const view = viewOf(side);
+    if (!view) return () => 0;
+    const folds = foldedRangesIn(view.state);
+    const at = (line: number): number | null => {
+      const fold = folds.find((f) => line >= f.from && line <= f.to);
+      return fold ? (line === fold.from ? FOLD_BAR_HEIGHT : 0) : null;
+    };
+    if (!isWrap) return lineHeights(side);
+    const measured = meterOf(side).heights();
+    if (measured) return (line) => at(line) ?? measured[line - 1] ?? 0;
+    return (line) => at(line) ?? textBlockOf(view, line).height;
+  };
+
   /**
    * 概览色带与标记层的「像素轴」。
    *
-   * 行高与缝都走 `lineHeights` / `gapPlans` 这**同一份几何** —— 也就是 CM6 自己的高度图：
-   * 色带、滑块与正文的滚动坐标必须是同一套数，否则拖动滑块落到的行与色带标出的行对不上。
-   *
-   * 折区按 `lineHeights` 的口径记（段首 24px、其余 0），这里不再单独加折条 —— 两处各记一份
-   * 就会在「单侧折叠」时把差值算成两倍。缝按 `afterLine` 记在那一行之后（已由 `foldGaps` 挪出折区）。
+   * 行高取 `axisHeights`（折行量尺实测），**不与补缝共用 CM6 的高度图**：补缝要的是
+   * 与滚动坐标同源，概览要的是不随视口漂移的稳定地图（两张图差着视口外折行的估值误差）。
+   * 折叠按 `axisHeights` 的口径记（段首 24px、其余 0），这里不再单独加折条 —— 两处各记
+   * 一份就会在「单侧折叠」时把差值算成两倍。缝按 `afterLine` 记在那一行之后（已由
+   * `foldGaps` 挪出折区）。
    *
    * **缓存**：滚动只读轴（滑块、色带、标记层都吃它），不能每一发 scroll 都把整篇重算。
    * 作废点只有「行盒真的换了」：缝/折叠/折行/文档/字号（见 `invalidateAxis` 的调用处）。
@@ -1117,7 +1146,7 @@ export function createDiffSurface(
     const view = viewOf(side);
     if (!view) return null;
     const lines = view.state.doc.lines;
-    const h = lineHeights(side);
+    const h = axisHeights(side);
     const gapAfter = new Map<number, number>();
     for (const gap of gapPlans[side]) {
       gapAfter.set(gap.afterLine, (gapAfter.get(gap.afterLine) ?? 0) + gap.height);
@@ -1246,17 +1275,18 @@ export function createDiffSurface(
   window.addEventListener("resize", onWindowResize);
 
   // 内嵌字体是 `font-display: block`（fonts.css）：就绪前量到的是回落字形的折行结果。
-  // 就绪之后重新量一次，缝才不会停在「按错字体折出来的高度」上。
+  // 就绪之后把两把量尺（概览轴）与缝一起重量一次，两张图才不会停在「按错字体折出来的高度」上。
   void document.fonts?.ready.then(() => {
     if (disposed) return;
+    for (const meter of Object.values(meters)) meter.invalidate();
     scheduleAlign();
   });
 
   /**
    * 概览条：色块坐标照 VS Code 的 overview ruler。
    *
-   * 轴取 `overviewAxis`（行高与缝同一份几何，折叠行 0 高、折条 `FOLD_BAR_HEIGHT`）——
-   * 与正文滚动坐标同源，滑块、色带和正文才指向同一行。
+   * 轴取 `overviewAxis`（行高走折行量尺，折叠行 0 高、折条 `FOLD_BAR_HEIGHT`）：整篇一次
+   * 量准，色带不会随「滚过 / 调分屏」一段段挪位。
    *
    * 首帧/隐藏格量不出总高（面板还没进文档）：直接不画（ResizeObserver 落地后会补画）。
    */
@@ -2161,6 +2191,7 @@ export function createDiffSurface(
       detachSash();
       detachOverview();
       layoutRO?.disconnect();
+      for (const meter of Object.values(meters)) meter.dispose();
       left.destroy();
       originalEl.remove();
       // 分割线与按钮层都在这一列里，拆它一并带走。
