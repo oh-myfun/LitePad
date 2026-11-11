@@ -57,21 +57,7 @@ const del = diffBlocks("A\n删1\n删2\nZ", "A\nZ");
 /** jsdom 里把 CM6 的行高桩成这个数（真取值口是 `view.defaultLineHeight`，无布局时恒为 0）。 */
 const LINE_HEIGHT = 20;
 
-/**
- * 折行量尺在 jsdom 里的替身（口径见 `testing.md`：「跨侧换算须覆写 `getBoundingClientRect`」）。
- *
- * 生产里折行开着时只按量尺对齐（`surface.ts` 的 `heightsComparable`）：量不到就不补缝，
- * 免得拿两栏不同的估值互相比较。jsdom 没有排版，量尺读到的宽度恒 0 ⇒ 整条路都不跑；
- * 这里把宽度与探针行高度补上，高度按视图注册（`fakeLines` 声明过的按声明，没声明的按
- * `defaultLineHeight`），保证概览轴与对齐读的是同一把尺。
- */
-const wrapViews = new WeakMap<Element, EditorView>();
-const wrapLineHeight = new WeakMap<Element, number>();
-
-/** 每次改假行高加一、以 0.01px 混进宽度：量尺的缓存按「宽度 + 排版」整批作废。 */
-let probeGeneration = 0;
-const probeWidth = (): number => 500 + probeGeneration / 100;
-
+/** jsdom 没有布局引擎：给元素桩一个确定的矩形（只答调用方真要量的那一颗）。 */
 function stubRect(width: number, height: number): DOMRect {
   return {
     width,
@@ -86,19 +72,40 @@ function stubRect(width: number, height: number): DOMRect {
   } as DOMRect;
 }
 
-// 只答量尺关心的两类元素，其余仍是 jsdom 的 0×0。`.cm-content` 的高度留 0 ⇒ CM6 自己的
-// `inView` / `measureContent` 与覆写前走同一条路径，不惊动它的量测。
-Element.prototype.getBoundingClientRect = function (this: Element): DOMRect {
-  if (this.classList.contains("diff-wrap-probe-line")) {
-    const root = this.closest(".cm-editor");
-    const view = root ? wrapViews.get(root) : undefined;
-    const h =
-      (root ? wrapLineHeight.get(root) : undefined) ?? view?.defaultLineHeight ?? LINE_HEIGHT;
-    return stubRect(probeWidth(), h);
+/**
+ * 在 jsdom 里铺一套确定的行盒（真机由 CM6 量）。
+ *
+ * 概览轴与滚动锚点（`lineBlockAtHeight`）读的是同一套 —— 真机由 CM6 的 heightMap 回答，
+ * 这里桩成已知像素。
+ */
+function fakeLines(view: EditorView, height: number): void {
+  const doc = view.state.doc;
+  const lines = doc.lines;
+  const box = (n: number): BlockInfo => ({
+    from: doc.line(n).from,
+    to: doc.line(n).to,
+    top: (n - 1) * height,
+    bottom: n * height,
+    height,
+    length: 1,
+    type: 0,
+    widget: null,
+    widgetLineBreaks: 0,
+  });
+  view.lineBlockAt = ((pos: number) => box(doc.lineAt(pos).number)) as EditorView["lineBlockAt"];
+  view.lineBlockAtHeight = ((y: number) => {
+    const n = Math.min(Math.max(Math.floor(y / height) + 1, 1), lines);
+    return box(n);
+  }) as EditorView["lineBlockAtHeight"];
+  Object.defineProperty(view, "contentHeight", { configurable: true, get: () => lines * height });
+}
+
+/** 让一帧落地（CM6 的 measure 与 `scheduleAlign` 的派发都排在 rAF 上）。 */
+async function frames(n = 4): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   }
-  if (this.classList.contains("cm-content")) return stubRect(probeWidth(), 0);
-  return stubRect(0, 0);
-};
+}
 
 /**
  * 单测里的「实测行高」：那一行就是 `LINE_HEIGHT`。
@@ -726,8 +733,6 @@ function mountSurfacePair(
   /* 登记进册：全局折行开关（`applyWrapToTabs`）遍历的是这份全局 panels。 */
   panels.set(panel.panelId, panel);
   const surface = createDiffSurface(hostEl, panel, spec);
-  wrapViews.set(surface.left.dom, surface.left);
-  wrapViews.set(view.view.dom, view.view);
   // 先拆旁路（它会往右栏发一发 reconfigure），再拆那颗 view —— 反过来的话
   // dispose 就只能在已经 destroy 的视图上派发。
   live.push(() => {
@@ -741,10 +746,16 @@ describe("B461 · surface 给两颗 view 各装一臂（预审 R1）", () => {
   /** Task 3 那一批用例的现场：正文沿用「删两行」那一对，一字不改。 */
   const mountHost = (env: { dark?: boolean; wrap?: boolean } = {}) => mountSurfacePair(env);
 
-  it("B461 · 起手两侧就都有交代：左栏真行涂色、右栏补出同高的空位", () => {
+  it("B461 · 起手两侧就都有交代：左栏真行涂色、右栏补出同高的空位", async () => {
     // 这一条钉的是不折行那一路的定值缝（`LINE_HEIGHT` 常量）；折行那一路按实测行高补，
     // 由 B462 那几条覆盖 —— 出厂设置是开，这里显式摆到关，判据才不依赖 jsdom 的假量度。
-    const { left, right } = mountHost({ wrap: false });
+    const { left, right, surface } = mountHost({ wrap: false });
+    // jsdom 里 CM6 的高度图按默认 14px 估行高：这条钉的是「不折行那一路的定值缝」，
+    // 先把两栏的行盒铺成真机读数（一行 `LINE_HEIGHT`），再让对齐按新行盒重算一轮。
+    fakeLines(left, LINE_HEIGHT);
+    fakeLines(right, LINE_HEIGHT);
+    surface.remeasure();
+    await frames();
     expect(gapElsOf(right), "删掉的行在右栏是占位块").toHaveLength(1);
     expect(gapElsOf(right)[0].style.height).toBe(`${2 * LINE_HEIGHT}px`);
     expect(lineElOf(left, 2).className).toContain("diff-line-delete");
@@ -930,11 +941,8 @@ describe("B462 · 右缘差异概览（VS Code 的 diffOverview）", () => {
       right: [...body.slice(0, -1), "Z改"].join("\n"),
     });
     const host = panel.bodyEl!;
-    // jsdom 里 CM6 的高度图仍按默认 14px 估行高（`defaultLineHeight` 的桩只改了取值口）；
-    // 量尺替身按同一个数答，概览轴与 `lineBlockAt` 才是同一把尺。
-    wrapLineHeight.set(surface.left.dom, 14);
-    wrapLineHeight.set(right.dom, 14);
-    probeGeneration++;
+    // jsdom 里 CM6 的高度图按默认 14px 估行高；这条用例不判绝对像素，只判「轴与
+    // lineBlockAt 读同一张图」，所以不铺假行盒。
     const before = marksOf(host, "original")[0];
     expect(before, "前置：最后一行是改块").not.toBeUndefined();
     expect(before.style.top).toBe(`${((17 - 1) / 17) * 100}%`);
@@ -1054,38 +1062,6 @@ describe("B463 · 概览滑块 = 右栏滚动条（ScrollbarState.isNeeded 语�
     Object.defineProperty(el, "scrollHeight", { value: scrollHeight, configurable: true });
   };
   const linesOf = (n: number): string => Array.from({ length: n }, (_, i) => `L${i}`).join("\n");
-  /**
-   * 给一栏铺一套确定的行盒：概览轴（量尺在 jsdom 里量不出宽度 ⇒ `lineHeights` 退回
-   * `textBlockOf`）与滚动锚点（`lineBlockAtHeight`）读的是同一套 —— 真机由 CM6 的
-   * heightMap 回答，这里桩成已知像素。
-   */
-  const fakeLines = (view: EditorView, height: number): void => {
-    const doc = view.state.doc;
-    const lines = doc.lines;
-    const box = (n: number): BlockInfo => ({
-      from: doc.line(n).from,
-      to: doc.line(n).to,
-      top: (n - 1) * height,
-      bottom: n * height,
-      height,
-      length: 1,
-      type: 0,
-      widget: null,
-      widgetLineBreaks: 0,
-    });
-    view.lineBlockAt = ((pos: number) => box(doc.lineAt(pos).number)) as EditorView["lineBlockAt"];
-    view.lineBlockAtHeight = ((y: number) => {
-      const n = Math.min(Math.max(Math.floor(y / height) + 1, 1), lines);
-      return box(n);
-    }) as EditorView["lineBlockAtHeight"];
-    Object.defineProperty(view, "contentHeight", { configurable: true, get: () => lines * height });
-    probeGeneration++;
-    wrapLineHeight.set(view.dom, height);
-  };
-  /** 折行关着时 `lineHeights` 恒读这颗（真机由 CM6 实测，jsdom 里恒 0）。 */
-  const fakeDefaultLineHeight = (view: EditorView, height: number): void => {
-    Object.defineProperty(view, "defaultLineHeight", { configurable: true, get: () => height });
-  };
   /** 派发 `scroll` 就是 `renderViewport` 的生产重画入口（`onRightScroll`）。 */
   const repaint = (right: EditorView): void => {
     right.scrollDOM.dispatchEvent(new Event("scroll"));
@@ -1102,12 +1078,6 @@ describe("B463 · 概览滑块 = 右栏滚动条（ScrollbarState.isNeeded 语�
       y: 0,
       toJSON: () => ({}),
     }) as DOMRect;
-  /** 让一帧落地（CM6 的 measure 与 `scheduleAlign` 的派发都排在 rAF 上）。 */
-  const frames = async (n = 4): Promise<void> => {
-    for (let i = 0; i < n; i++) {
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    }
-  };
 
   it("内容装得下：滑块带 `is-hidden`（opacity 0 + 不吃指针），不再铺满整条", () => {
     const { panel, right, surface } = mountSurfacePair({ left: "A\nZ", right: "A\nZ" });
@@ -1194,9 +1164,9 @@ describe("B463 · 概览滑块 = 右栏滚动条（ScrollbarState.isNeeded 语�
       wrap: false,
     });
     const viewport = viewportOf(panel.bodyEl!);
-    // 折行关着：一个文档行 = 一个视觉行，行高读 `defaultLineHeight`。
-    fakeDefaultLineHeight(right, 100);
-    fakeDefaultLineHeight(surface.left, 100);
+    // 折行关着：一个文档行 = 一个视觉行（行盒按真机读数桩进来）。
+    fakeLines(right, 100);
+    fakeLines(surface.left, 100);
     measure(right.scrollDOM, 200, 9_999);
     surface.syncBlocks();
     expect(viewport.style.height, "floor(200² / 400) = 100").toBe("100px");
@@ -2392,8 +2362,8 @@ describe("B461 · 行内字符级差异的装饰与样式", () => {
     expect(del, "删除侧负外边距（上游同款）").toContain("margin-left: -1px");
     expect(del, "正宽度由负外边距抵掉").toContain("margin-right: -2px");
 
-    // 折行量尺只量纯文本，缝计划按它算：竖条若真的占宽，窄栏那一行会多折一行，
-    // 左栏的补缝就永远短一行（缺在文档尾部）。净推进宽度必须两边都是 0。
+    // 竖条是纯装饰：它若真的占宽，窄栏那一行会多折一行，两栏的行数对应关系跟着变。
+    // 净推进宽度必须两边都是 0。
     const advance = (block: string): number => {
       const px = (prop: string): number => {
         const m = new RegExp(`${prop}\\s*:\\s*(-?[\\d.]+)px`).exec(block);

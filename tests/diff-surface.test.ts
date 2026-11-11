@@ -504,8 +504,6 @@ function mountDiffPair(leftText: string, rightText: string): { panel: Panel; s: 
   const s = createDiffSurface(hostEl, panel, diff);
   // 登记进册：全局折行开关（`applyWrapToTabs`）只认这份全局 panels，测试面板平时是手搓的。
   panels.set(panel.panelId, panel);
-  wrapViews.set(s.left.dom, s.left);
-  wrapViews.set(panel.view!.view.dom, panel.view!.view);
   // 走**生产的**拆法：用例里已经 `s.dispose()` 过的那一格，`panel.diffSurface` 早已归零，
   // 这里就是空转（不许在已经 destroy 的左栏上再 destroy 一次）。
   live.push(() => disposeDiffSurface(panel));
@@ -1313,53 +1311,6 @@ describe("B461 · B 档左栏继承只读锁（Task 6 Step 6）", () => {
   });
 });
 
-/**
- * 折行量尺在 jsdom 里的替身（口径见 `testing.md`：「跨侧换算须覆写 `getBoundingClientRect`」）。
- *
- * 生产里折行开着时只按量尺对齐（`surface.ts` 的 `heightsComparable`）：量不到就不补缝，
- * 免得拿两栏不同的估值互相比较。jsdom 没有排版，量尺读到的宽度恒 0 ⇒ 整条路都不跑；
- * 单测要判缝，就把量尺读的两样东西补上：`.cm-content` 给宽度，探针行给高度。
- * 高度以 `fakeLineBoxes` 声明的每行高度为准（同一份期望，不另立一套），没声明的按这一栏的
- * `defaultLineHeight`（一行一个视觉行）。
- *
- * `probeGeneration` 每次 `fakeLineBoxes` 加一、以 0.01px 混进宽度：量尺的缓存按「宽度 + 排版」
- * 整批作废，而假行盒只改高度、不改这两样 —— 不挪一点宽度，第二发 `fakeLineBoxes` 会读到
- * 上一发的缓存（真机上「同一段文本同一个宽度」折出来必然一样高，本来就不该重量）。
- */
-let probeGeneration = 0;
-const probeWidth = (): number => (meterUnavailable ? 0 : 500 + probeGeneration / 100);
-/** 模拟「面板还没有宽度」：量尺量到的宽度为 0 ⇒ `heights()` 恒 null（真机挂在隐藏标签上时同形）。 */
-let meterUnavailable = false;
-const wrapViews = new WeakMap<Element, EditorView>();
-const wrapMeterHeights = new WeakMap<Element, Map<string, number>>();
-
-function stubRect(width: number, height: number): DOMRect {
-  return {
-    width,
-    height,
-    top: 0,
-    left: 0,
-    right: width,
-    bottom: height,
-    x: 0,
-    y: 0,
-    toJSON: () => ({}),
-  } as DOMRect;
-}
-
-// 只答量尺关心的两类元素，其余仍是 jsdom 的 0×0。`.cm-content` 的高度留 0 ⇒ CM6 自己的
-// `inView` / `measureContent` 与覆写前走同一条路径，不惊动它的量测。
-Element.prototype.getBoundingClientRect = function (this: Element): DOMRect {
-  if (this.classList.contains("diff-wrap-probe-line")) {
-    const root = this.closest(".cm-editor");
-    const view = root ? wrapViews.get(root) : undefined;
-    const h = root ? wrapMeterHeights.get(root)?.get(this.textContent ?? "") : undefined;
-    return stubRect(probeWidth(), h ?? view?.defaultLineHeight ?? 20);
-  }
-  if (this.classList.contains("cm-content")) return stubRect(probeWidth(), 0);
-  return stubRect(0, 0);
-};
-
 /** 让一帧落地（CM6 的 measure 与 surface 的派发都排在 rAF 上）。 */
 async function frames(n = 4): Promise<void> {
   for (let i = 0; i < n; i++) {
@@ -1413,14 +1364,6 @@ function fakeLineBoxes(
     return box(n);
   }) as EditorView["lineBlockAtHeight"];
   Object.defineProperty(view, "contentHeight", { configurable: true, get: () => total });
-  // 量尺替身读的是同一份声明：这一栏每行文本折出来多高（空行按量具里的零宽空格记账）。
-  probeGeneration++;
-  wrapViews.set(view.dom, view);
-  const byText = new Map<string, number>();
-  for (let i = 0; i < heights.length && i < doc.lines; i++) {
-    byText.set(doc.line(i + 1).text || "\u200b", heights[i]);
-  }
-  wrapMeterHeights.set(view.dom, byText);
 }
 
 describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () => {
@@ -1429,6 +1372,9 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     try {
       const { panel, s } = mountDiffPair("A\nB\nC", "A\nC");
       const right = panel.view!.view;
+      // jsdom 没有排版：按真机的行盒铺一套（不折行时一行 20px）。
+      fakeLineBoxes(s.left, [20, 20, 20]);
+      fakeLineBoxes(right, [20, 20]);
       // 起手摆到不折行那一档（全局设置）：这条钉的是「打开折行」那次翻转前后的缝高，
       // 前提得先落在关着。
       setGlobalWrap(false);
@@ -1448,6 +1394,8 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
 
       // 关掉换行：重测回单行高，缝也跟着收回去。
       setGlobalWrap(false);
+      fakeLineBoxes(s.left, [20, 20, 20]);
+      fakeLineBoxes(right, [20, 20]);
       await frames();
       expect(gapHeights(), "折行关掉后必须重算，不许留着上一轮的 40px").toEqual(["20px"]);
     } finally {
@@ -1462,6 +1410,9 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
       // 行被折叠」）：屏上它只占一条 24px 折条，左栏要补的缝就得是 24px 而不是 0。
       const { panel, s } = mountDiffPair("A\nB\nC", "A\nB\nC\nX1\nX2\nX3\nX4\nX5");
       const right = panel.view!.view;
+      // jsdom 没有排版：两栏的行盒按真机那套铺（一行 20px）。
+      fakeLineBoxes(s.left, [20, 20, 20]);
+      fakeLineBoxes(right, [20, 20, 20, 20, 20, 20, 20, 20]);
       setGlobalWrap(false);
       right.dispatch({
         effects: setFoldedRanges.of([{ from: 4, to: 8, top: 0, bottom: 0, regionLength: 5 }]),
@@ -1503,36 +1454,24 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     }
   });
 
-  it("B478 · 量尺还没落地（面板没宽度）时一律不补缝：两栏的估值不许互相比较", async () => {
-    const spy = vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(20);
-    try {
-      meterUnavailable = true;
-      const { panel, s } = mountDiffPair("A\nB\nC", "A\nB\nC");
-      const right = panel.view!.view;
-      // 两栏的 CM6 估值必然不同源（左栏按 3 行假行盒、右栏第 2 行只有 20）——
-      // 旧实现会拿这两套估值逐行相减，给右栏补出一条 40px 的缝。
-      fakeLineBoxes(s.left, [20, 60, 20]);
-      fakeLineBoxes(right, [20, 20, 20]);
-      s.remeasure();
-      await frames();
-      expect(
-        panel.bodyEl!.querySelectorAll<HTMLElement>(".diff-gap"),
-        "量不出来就不补缝（等宽度落地后 measure 再排一轮）",
-      ).toHaveLength(0);
+  it("B478 · 面板还没布局（宽度为 0）也照样补缝：行高与滚动坐标同源，不等宽度落地", async () => {
+    // jsdom 的布局宽度恒 0：这条钉的是「不需要宽度换算也能补缝」，且补出来的缝与
+    // 滚动坐标是同一套数。
+    const { panel, s } = mountDiffPair("A\nB\nC", "A\nC");
+    const right = panel.view!.view;
+    const gapHeights = (): string[] =>
+      [...panel.bodyEl!.querySelectorAll<HTMLElement>(".diff-gap")].map((el) => el.style.height);
+    fakeLineBoxes(s.left, [20, 20, 20]);
+    fakeLineBoxes(right, [20, 20]);
+    s.remeasure();
+    await frames();
+    expect(gapHeights(), "删除块那一行按 20px 补").toEqual(["20px"]);
 
-      // 反向闸：量尺一落地，同一对行盒立刻补出那条 40px —— 说明上面不是恒空判据。
-      meterUnavailable = false;
-      s.remeasure();
-      await frames();
-      const gaps = [...panel.bodyEl!.querySelectorAll<HTMLElement>(".diff-gap")];
-      expect(
-        gaps.map((el) => el.style.height),
-        "左栏第 2 行 60 vs 右栏 20 ⇒ 右栏补 40",
-      ).toEqual(["40px"]);
-    } finally {
-      meterUnavailable = false;
-      spy.mockRestore();
-    }
+    // 反向闸：CM6 的行盒一变（这一行折成三行），缝跟着变 —— 不是恒 20px 的蒙值。
+    fakeLineBoxes(s.left, [20, 60, 20]);
+    s.remeasure();
+    await frames();
+    expect(gapHeights(), "行盒 60px ⇒ 缝跟着走").toEqual(["60px"]);
   });
 
   it("B464 · 拖分屏改的是两栏宽度：布局 RO 必须盯住两栏（不只盯中心列）", async () => {
@@ -1628,115 +1567,50 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     }
   });
 
-  it("B465 · 填充按整篇量出来的折行高度算，不跟 CM6「滚到才准」的估值走", async () => {
-    const spy = vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(20);
-    const rect = (width: number, height: number): DOMRect =>
-      ({
-        left: 0,
-        right: width,
-        top: 0,
-        bottom: height,
-        width,
-        height,
-        x: 0,
-        y: 0,
-        toJSON: () => ({}),
-      }) as DOMRect;
-    // jsdom 没有布局：给正文容器一个有宽度的矩形，量尺的探针行按「10 个字符折一行」给高。
-    const rectSpy = vi
-      .spyOn(Element.prototype, "getBoundingClientRect")
-      .mockImplementation(function (this: Element) {
-        const el = this as HTMLElement;
-        if (el.classList.contains("cm-content")) return rect(300, 400);
-        if (el.classList.contains("diff-wrap-probe-line")) {
-          const len = (el.textContent ?? "").length;
-          return rect(300, 20 * Math.max(1, Math.ceil(len / 10)));
-        }
-        return rect(0, 0);
-      });
-    try {
-      // 左栏第 1 行 30 字符 ⇒ 折 3 个视觉行（60px）；右栏同一行只有 1 个字符（20px）。
-      const { panel, s } = mountDiffPair(`${"L".repeat(30)}\nX`, "R\nX");
-      const right = panel.view!.view;
-      const gapHeights = (): string[] =>
-        [...panel.bodyEl!.querySelectorAll<HTMLElement>(".diff-gap")].map((el) => el.style.height);
+  it("B465 · 填充与 CM6 高度图同源：行盒一变缝跟着变（两栏共用一套滚动坐标）", async () => {
+    const { panel, s } = mountDiffPair(`${"L".repeat(30)}\nX`, "R\nX");
+    const right = panel.view!.view;
+    const gapHeights = (): string[] =>
+      [...panel.bodyEl!.querySelectorAll<HTMLElement>(".diff-gap")].map((el) => el.style.height);
+    setGlobalWrap(true);
+    // CM6 还没把那一长行折出来：两栏都按一行 20px 估 ⇒ 高度相同，不补缝。
+    fakeLineBoxes(s.left, [20, 20]);
+    fakeLineBoxes(right, [20, 20]);
+    s.remeasure();
+    await frames();
+    expect(gapHeights(), "两栏估值同高 ⇒ 不补").toEqual([]);
 
-      setGlobalWrap(true);
-      // CM6 此刻只量过视口里的行，对没进过视口的折行行给的是「不折行」的估值：
-      // 旧实现照它算 ⇒ 缝是 0，要等滚过去才补上。
-      fakeLineBoxes(s.left, [20, 20]);
-      fakeLineBoxes(right, [20, 20]);
-      await frames();
-      expect(gapHeights(), "缝按整篇量出来的折行高度补，不等滚动").toEqual(["40px"]);
-
-      // 真机滚过去之后 CM6 的估值会变成实测 60 —— 答案不许因此再变一次。
-      fakeLineBoxes(s.left, [60, 20]);
-      s.remeasure();
-      await frames();
-      expect(gapHeights(), "CM6 的估值 / 实测怎么变，缝都不跟").toEqual(["40px"]);
-    } finally {
-      rectSpy.mockRestore();
-      spy.mockRestore();
-    }
+    // 实测落地（左栏长行折成 60px）：缝必须立刻跟上 —— 它与 CM6 的滚动坐标是同一套数，
+    // 两栏的 scrollHeight 与逐行 top 因此一起收敛。
+    fakeLineBoxes(s.left, [60, 20]);
+    s.remeasure();
+    await frames();
+    expect(gapHeights(), "实测 60 vs 20 ⇒ 右栏补 40").toEqual(["40px"]);
   });
 
-  it("B466 · 概览色带与填充走同一把实测尺：CM6 的估值怎么变，色带都不挪位", async () => {
-    const spy = vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(20);
-    const rect = (width: number, height: number): DOMRect =>
-      ({
-        left: 0,
-        right: width,
-        top: 0,
-        bottom: height,
-        width,
-        height,
-        x: 0,
-        y: 0,
-        toJSON: () => ({}),
-      }) as DOMRect;
-    // 同 B465：正文容器有宽度，量尺探针行按「10 个字符折一行」给高。
-    const rectSpy = vi
-      .spyOn(Element.prototype, "getBoundingClientRect")
-      .mockImplementation(function (this: Element) {
-        const el = this as HTMLElement;
-        if (el.classList.contains("cm-content")) return rect(300, 400);
-        if (el.classList.contains("diff-wrap-probe-line")) {
-          const len = (el.textContent ?? "").length;
-          return rect(300, 20 * Math.max(1, Math.ceil(len / 10)));
-        }
-        return rect(0, 0);
-      });
-    try {
-      // 左第 1 行 30 字符（折 3 个视觉行 = 60px）、右第 1 行 1 个字符（20px）⇒ 右栏补 40px 缝。
-      const { panel, s } = mountDiffPair(`${"L".repeat(30)}\nX`, "R\nX");
-      const marks = (side: "original" | "modified"): HTMLElement[] => [
-        ...panel.bodyEl!.querySelectorAll<HTMLElement>(
-          `.diff-overview-${side} .diff-overview-mark`,
-        ),
-      ];
-      setGlobalWrap(true);
-      await frames();
+  it("B466 · 概览色带与填充走同一份几何：行盒一变色带跟着重算", async () => {
+    const { panel, s } = mountDiffPair(`${"L".repeat(30)}\nX`, "R\nX");
+    const right = panel.view!.view;
+    const marks = (side: "original" | "modified"): HTMLElement[] => [
+      ...panel.bodyEl!.querySelectorAll<HTMLElement>(`.diff-overview-${side} .diff-overview-mark`),
+    ];
+    setGlobalWrap(true);
+    // 未实测：两栏每行 20px、轴 40px ⇒ 左列色带 20/40。
+    fakeLineBoxes(s.left, [20, 20]);
+    fakeLineBoxes(right, [20, 20]);
+    s.remeasure();
+    await frames();
+    expect(marks("original"), "左列一块：第 1 行是改块").toHaveLength(1);
+    expect(marks("original")[0].style.top).toBe("0%");
+    expect(marks("original")[0].style.height, "20/40").toBe("50%");
+    expect(marks("modified")[0].style.height, "20/40").toBe("50%");
 
-      // CM6 此刻给的是「没滚过」的估值：每行 20px、两行总高 40px。色带若读它（旧实现），
-      // 左列高度会是 50%（20/40），滚动把折行实测成 60 之后又会跳成 75%。
-      fakeLineBoxes(s.left, [20, 20]);
-      fakeLineBoxes(panel.view!.view, [20, 20]);
-      s.remeasure();
-      await frames();
-
-      const dels = marks("original");
-      const ins = marks("modified");
-      expect(dels, "左列一块：第 1 行是改块").toHaveLength(1);
-      expect(ins, "右列一块：改写后的那一行").toHaveLength(1);
-      // 实测轴：左 60 + 20 = 80；右 20 + 20 + 缝 40 = 80 ⇒ 色带按这条轴取百分比。
-      expect(dels[0].style.top).toBe("0%");
-      expect(dels[0].style.height, "60/80").toBe("75%");
-      expect(ins[0].style.top).toBe("0%");
-      expect(ins[0].style.height, "20/80").toBe("25%");
-    } finally {
-      rectSpy.mockRestore();
-      spy.mockRestore();
-    }
+    // 实测：左栏长行 60px；右栏补出 40px 缝 ⇒ 两栏轴同为 80px。
+    fakeLineBoxes(s.left, [60, 20]);
+    s.remeasure();
+    await frames();
+    expect(marks("original")[0].style.height, "60/80").toBe("75%");
+    expect(marks("modified")[0].style.height, "20/80").toBe("25%");
   });
 
   it("B462 · 回退按钮跟着对齐后的实测位置走（块与按钮同一条行轴）", async () => {

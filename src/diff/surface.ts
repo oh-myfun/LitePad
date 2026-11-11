@@ -65,7 +65,6 @@ import {
 } from "./face";
 import { canOpenAgainstBaseline, notifyDiffBlocks, type DiffSide, type DiffSpec } from "./model";
 import { revertEdit } from "./revert";
-import { createWrapMeter, type WrapMeter } from "./wrap-measure";
 import { CODICONS } from "../shell/codicons";
 import { setTip } from "../shell/tooltip";
 
@@ -588,13 +587,6 @@ export function createDiffSurface(
   /** 某一栏那颗 view（右栏可能是「没有右栏」那条兜底路 ⇒ 调用处一律允许读不到）。 */
   const viewOf = (side: DiffSide): EditorView | null => (side === "original" ? left : right);
 
-  /**
-   * 两栏的折行量尺（用法见 `lineHeights`）：每栏一把，按行文本缓存。
-   * 视图在整个 surface 的寿命里只建一次（`reassert` 换的是 state，不是 view）。
-   */
-  const meters: Partial<Record<DiffSide, WrapMeter>> = {};
-  const meterOf = (side: DiffSide): WrapMeter => (meters[side] ??= createWrapMeter(viewOf(side)!));
-
   /** 某一栏的光标行（1-based；两栏的行轴各查各的）。 */
   const caretLineOf = (side: DiffSide): number => {
     const view = viewOf(side);
@@ -1072,16 +1064,17 @@ export function createDiffSurface(
   right?.dom.addEventListener("focusin", onRightFocus);
 
   /**
-   * 某一栏每一行的实测高度口。
+   * 某一栏每一行**屏上占多少像素**。
    *
-   * 折行关着时一个文档行恒等于一个视觉行 —— `defaultLineHeight` 就是那一行的高度（CM6 量过
-   * 的，字号/行距改了它会跟着变），不必为整篇文档做 N 次 `lineBlockAt`。
-   * 折行打开后同一份正文可能折成任意多个视觉行：**整篇一次性量**（`wrap-measure.ts`），
-   * 不读 CM6 的 `lineBlockAt` —— 那套只对进过视口的行给实测值、视口外按字符数估，
-   * 缝跟着它算就成了「滚到哪变到哪」（用户报的「填充行要全部滚过才稳定」）。
+   * 读的必须是 CM6 自己的高度图（`textBlockOf`），不能另配一把尺：补缝的目的是让两栏
+   * 「同一逻辑行落在同一个 y」，而滚动、`lineBlockAt`、原生滚动区全按 CM6 那张高度图算。
+   * 缝若按别的尺补，两栏的滚动区间就先差了一截（拖分屏后两栏宽度不同，同一段文本的折行
+   * 估值也不同），滚到哪都对不齐。同源之后缝计划与 CM6 的 `scrollHeight` 一起收敛：
+   * 未渲染的行被实测替换时两栏按同一份新高度重算，最终值与真实折行完全一致。
    *
-   * ⚠️ 量尺量不出来时（面板还没有宽度 / 整栏不可见）才退回 `textBlockOf` 这条估值链；
-   * 退回时只能读**行文本自己的**块：贴着行尾的占位块会被 CM6 并进同一颗 composite
+   * 折行关着时一个文档行 = 一个视觉行，读同一张图同样成立（CM6 给的就是 `defaultLineHeight`）。
+   *
+   * ⚠️ 只取**行文本自己的**块：贴着行尾的占位块会被 CM6 并进同一颗 composite
    * `BlockInfo`，要把它的高度减出去，才有「补缝 → 行高不变 → 缝稳定」这条不动点。
    *
    * ⚠️ 折区里**段首记 24px（折条），其余行记 0**：整段已被替换装饰收走，屏上只剩那一条折条。
@@ -1097,27 +1090,17 @@ export function createDiffSurface(
       const fold = folds.find((f) => line >= f.from && line <= f.to);
       return fold ? (line === fold.from ? FOLD_BAR_HEIGHT : 0) : null;
     };
-    if (!isWrap) {
-      const h = view.defaultLineHeight;
-      return (line) => at(line) ?? h;
-    }
-    const measured = meterOf(side).heights();
-    if (measured) return (line) => at(line) ?? measured[line - 1] ?? 0;
     return (line) => at(line) ?? textBlockOf(view, line).height;
   };
 
   /**
-   * 概览色带与标记层的「实测像素轴」。
+   * 概览色带与标记层的「像素轴」。
    *
-   * 行高与缝都走 `lineHeights` / `gapPlans` 这**同一份测量**，不读 `textBlockOf` /
-   * `contentHeight`：CM6 只对进过视口的折行给实测值，视口外按字符数估 ⇒ 色带会随着
-   * 「滚过」逐段挪位 —— 与填充行要滚过才稳定是同一个病根。
+   * 行高与缝都走 `lineHeights` / `gapPlans` 这**同一份几何** —— 也就是 CM6 自己的高度图：
+   * 色带、滑块与正文的滚动坐标必须是同一套数，否则拖动滑块落到的行与色带标出的行对不上。
    *
    * 折区按 `lineHeights` 的口径记（段首 24px、其余 0），这里不再单独加折条 —— 两处各记一份
    * 就会在「单侧折叠」时把差值算成两倍。缝按 `afterLine` 记在那一行之后（已由 `foldGaps` 挪出折区）。
-   *
-   * ⚠️ 折行量不出来时 `lineHeights` 退回 `textBlockOf` 估值链，这条轴跟着退化成估算 ——
-   * 与缝的口径一致，不在两处各估一遍。
    *
    * **缓存**：滚动只读轴（滑块、色带、标记层都吃它），不能每一发 scroll 都把整篇重算。
    * 作废点只有「行盒真的换了」：缝/折叠/折行/文档/字号（见 `invalidateAxis` 的调用处）。
@@ -1155,30 +1138,9 @@ export function createDiffSurface(
     return axis;
   };
 
-  /** 这一栏的折行高度是不是**量出来的**（`wrap-measure.ts` 的量尺，逐行真折一遍）。 */
-  const heightsMeasured = (side: DiffSide): boolean => meterOf(side).heights() !== null;
-
-  /**
-   * 这一轮两栏的行高是不是**同一把尺**量出来的。
-   *
-   * 量不出来（面板还没有宽度 / 整栏不可见）时 `lineHeights` 退回 CM6 高度图的估值，而估值
-   * **不能跨栏比**：两栏的估值基数不同（新建左栏的高度图还用着默认行高，右栏已按实测重建；
-   * 两栏宽度又差着一条滚动条，折过之后的视觉行数也不同），逐行相减会得出「每行都差一点」。
-   * 补出去的缝又回头切碎那一栏的高度图（切碎后每一截按「行数 +1」重估），越推越高 ——
-   * 两栏 `scrollHeight` 因此差出上千像素，尾部补缝落在滚不到的地方（用户报的「左边填充不够、
-   * 两栏总行数对不上」）。所以折行开着时**只认量尺**；折行关着时一个文档行恒等于一行，
-   * 但也要两栏都量过（`defaultLineHeight` 相等）才敢比。
-   */
-  const heightsComparable = (): boolean => {
-    if (!right) return false;
-    if (isWrap) return heightsMeasured("original") && heightsMeasured("modified");
-    return left.defaultLineHeight === right.defaultLineHeight;
-  };
-
   /** 现在这两栏该补哪些缝（纯计算在 `face.ts` 的 `gapZones`，这里只负责量）。 */
-  const measureGapPlans = (): Record<DiffSide, GapZone[]> | null => {
+  const measureGapPlans = (): Record<DiffSide, GapZone[]> => {
     if (!right) return { original: [], modified: [] };
-    if (!heightsComparable()) return null;
     const heights: Record<DiffSide, (line: number) => number> = {
       original: lineHeights("original"),
       modified: lineHeights("modified"),
@@ -1215,7 +1177,7 @@ export function createDiffSurface(
   /** 量一次并收下结果；返回是否真的换了缝（换了就得重画两臂的占位块）。 */
   const applyGapPlans = (): boolean => {
     const next = measureGapPlans();
-    if (!next || sameGapPlans(next, gapPlans)) return false;
+    if (sameGapPlans(next, gapPlans)) return false;
     gapPlans = next;
     return true;
   };
@@ -1246,7 +1208,7 @@ export function createDiffSurface(
       const next = measureGapPlans();
       requestAnimationFrame(() => {
         if (disposed || gen !== alignGen) return;
-        if (next && !sameGapPlans(next, gapPlans)) {
+        if (!sameGapPlans(next, gapPlans)) {
           gapPlans = next;
           // 缝换了 ⇒ 两臂的占位块要重排；这一发同时带着新的块表/折叠态。
           refreshArms();
@@ -1284,19 +1246,17 @@ export function createDiffSurface(
   window.addEventListener("resize", onWindowResize);
 
   // 内嵌字体是 `font-display: block`（fonts.css）：就绪前量到的是回落字形的折行结果。
-  // 就绪之后把两把量尺的缓存作废、重量一次，缝才不会停在「按错字体折出来的高度」上。
+  // 就绪之后重新量一次，缝才不会停在「按错字体折出来的高度」上。
   void document.fonts?.ready.then(() => {
     if (disposed) return;
-    for (const meter of Object.values(meters)) meter.invalidate();
     scheduleAlign();
   });
 
   /**
-   * 概览条：色块坐标走**实测像素**（B461 后续轮，照 VS Code 的 overview ruler）。
+   * 概览条：色块坐标照 VS Code 的 overview ruler。
    *
-   * 轴取 `overviewAxis`（行高与缝同一份测量，折叠行 0 高、折条 `FOLD_BAR_HEIGHT`），
-   * **不读** `lineBlockAt` / `contentHeight`：那两把对视口外的折行按字符数估，色带会
-   * 随「滚过」逐段挪位，正是用户报的「右边滚动条的色带也要一致」。
+   * 轴取 `overviewAxis`（行高与缝同一份几何，折叠行 0 高、折条 `FOLD_BAR_HEIGHT`）——
+   * 与正文滚动坐标同源，滑块、色带和正文才指向同一行。
    *
    * 首帧/隐藏格量不出总高（面板还没进文档）：直接不画（ResizeObserver 落地后会补画）。
    */
@@ -1545,18 +1505,11 @@ export function createDiffSurface(
    * 两栏同步滚动（默认开）：**按内容锚点映射**（复刻 VS Code 差异编辑器的偏移校正，
    * 不是裸比较 `scrollTop`）。
    *
-   * 为什么不能裸比较：占位缝只保证「实测像素高度」相等（`gapZones` 吃量尺的实测值），
-   * 而 CM6 的 `scrollTop` 活在它自己的 heightMap 里 —— 视口外的折行按**字符数估值**
-   * （`HeightOracle.heightForLine`），中文/长行的估值与实际差得很远，两栏正文又不同 ⇒
-   * 同一份文稿两栏的 `scrollHeight` 可以差上千像素（实测初始就 1071px，拖分屏后 1680px）。
-   * 同一个 `scrollTop` 在窄栏与宽栏根本不在同一视觉行上；越往文档后面走错得越多，到底部
-   * 能整屏错开。
-   *
-   * VS Code 的差异编辑器能直接同步 `scrollTop`，是因为它对任意行都能算出确定的折行行数
-   * （`diffEditorViewZones.ts` 的 `getTopForLineNumber(line, true)`），两栏高度严格相等。
-   * CM6 没有这条 API，于是这里换一条等价的不变量：**驱动栏视口顶部那一行（+行内比例）
-   * 始终映射到对栏的对应行**。每一发都用两栏各自的 `lineBlockAt` 现算目标偏移 —— 它正是
-   * CM6 渲染该行时用的坐标系，估值误差因此不会漏进对齐。
+   * 缝计划与 CM6 的高度图同源（见 `lineHeights`）⇒ 两栏的 `scrollHeight` 与逐行坐标
+   * 严格相等；但两栏仍是**两份不同的正文**，同一个 `scrollTop` 未必落在同一逻辑行上
+   * （块首尾与折区所在的段不同）。于是这里用一条更直接的不变量：**驱动栏视口顶部那一行
+   * （+行内比例）始终映射到对栏的对应行**。每一发都用两栏各自的 `lineBlockAt` 现算目标
+   * 偏移 —— 它正是 CM6 渲染该行时用的坐标系。
    *
    * `pendingEcho` 只用来认出「这一发是我写的」：回声一律早退，不再反向映射。上一版固定点
    * 同步要在回声里回抄，是为了让两栏收敛到「对栏到得了」的那个值；锚点映射下两侧本来
@@ -2208,7 +2161,6 @@ export function createDiffSurface(
       detachSash();
       detachOverview();
       layoutRO?.disconnect();
-      for (const meter of Object.values(meters)) meter.dispose();
       left.destroy();
       originalEl.remove();
       // 分割线与按钮层都在这一列里，拆它一并带走。

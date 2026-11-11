@@ -356,10 +356,9 @@
    那一侧的字符底色。删除侧多 `margin-left: -1px`，于是净占 2px（上游同款）。
    落点是**空区间**，`face.ts` 用行内 widget 画（CM6 的 mark 不渲染零长区间）。
 
-   ⚠️ 竖条的**净排版宽度必须为 0**：折行量尺（`wrap-measure.ts`）量的是纯文本，
-   而缝计划按它算。竖条若真的占 3px，窄栏里那一行会比分尺多折一行 —— 右栏独自变窄时
-   就凭空多出一行，左栏的补缝永远短一行，且缺在文档尾部（最后一块看着填不满）。
-   正边距由负的 `margin-right` 抵掉，竖条仍然画在原位。 */
+   ⚠️ 竖条的**净排版宽度必须为 0**：它是纯装饰，不该改变折行结果（否则同一段正文
+   有没有字符级标记会折出不同行数，两栏的行数对应关系也跟着变）。正边距由负的
+   `margin-right` 抵掉，竖条仍然画在原位。 */
 .panel-host.is-diff .diff-char-insert.diff-range-empty {
   border-left: 3px solid var(--diff-char-add);
   margin-right: -3px;

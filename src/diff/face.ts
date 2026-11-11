@@ -484,7 +484,7 @@ const rowObservers = new WeakMap<HTMLElement, ResizeObserver>();
  *
  * gutter 那一格的高度就是 CM6 给这一行**文本块**记的高度（composite 里只取
  * `BlockType.Text` 子块，缝不算）⇒ 用它除以 `defaultLineHeight` 得到的正是视觉行数，
- * 与折行量尺、缝计划是同一份几何，抽稀与过密一起消掉。
+ * 与缝计划是同一份几何，抽稀与过密一起消掉。
  *
  * 为什么用尺寸观察器而不是在 view 更新时重算：DOM 会被 CM6 按 `eq` 复用，新的 marker
  * 实例碰不到旧元素（见 `DiffSignMarker` 的注）；而尺寸观察器认的就是那颗元素本身，
