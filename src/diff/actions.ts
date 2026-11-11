@@ -30,7 +30,6 @@ const DIFF_COMMAND_ACTION: Record<string, DiffAction> = {
   "diff.collapseAll": "collapseAll",
   "diff.showAll": "showAll",
   "diff.swapSides": "swap",
-  "diff.toggleWrap": "wrap",
   "diff.toggleSyncScroll": "syncScroll",
   "diff.refresh": "refresh",
 };
@@ -47,7 +46,7 @@ export function applyDiffCommand(panelId: number, id: string): void {
 }
 
 /**
- * 八条动作落到 surface 的对应方法上，末尾**只刷那一格**的操作区。
+ * 这一组动作落到 surface 的对应方法上，末尾**只刷那一格**的操作区。
  *
  * ⚠️ 不是 `rebuildLayout`：B226 那条还挂着 —— 重建 ops 会把按钮节点换掉，浏览器合成的
  * 那一次 click 派发不到（真机抓到过「点了没反应」）。
@@ -76,9 +75,6 @@ export function applyDiffAction(panelId: number, action: DiffAction): void {
       break;
     case "showAll":
       surface.showAllUnchanged();
-      break;
-    case "wrap":
-      surface.setWrapEnabled(!surface.wrapEnabled());
       break;
     case "syncScroll":
       surface.setSyncScrollEnabled(!surface.syncScrollEnabled());

@@ -38,7 +38,7 @@ import { zoneOf, DropZone } from "../dnd/geometry";
  */
 
 /**
- * B461 Task 8：差异标题栏那八颗动作的**名字**（落点只有一份 —— `src/diff/actions.ts`）。
+ * B461 Task 8：差异标题栏那一组动作的**名字**（落点只有一份 —— `src/diff/actions.ts`）。
  *
  * 这里只声明"有哪几颗"，不判"点了做什么"：图标键、命令面板、组菜单三条入口都把这个 id
  * 交出去，两处各写一份 switch 必然漂移（Task 6 那条逐字复制的教训同一个形状）。
@@ -51,7 +51,6 @@ export type DiffAction =
   | "collapseAll"
   | "showAll"
   | "swap"
-  | "wrap"
   | "syncScroll"
   | "refresh";
 
@@ -89,8 +88,6 @@ export interface PanelRenderData {
   diff?: {
     ignoreTrimWhitespace: boolean;
     collapseUnchanged: boolean;
-    /** 自动换行（B461 后续轮）：差异格自有开关，默认关。 */
-    wrap: boolean;
     /** 两栏同步滚动（B461 后续轮）：默认开。 */
     syncScroll: boolean;
     swappable: boolean;

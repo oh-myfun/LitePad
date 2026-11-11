@@ -260,9 +260,9 @@ import {
 import { logViewport } from "./core/viewport";
 // B461 Task 4：差异步进按的那一格旁路（`step(±1)` 与上下文闸都从这颗寻址口走）。
 // Task 5 起这里还导出 `refreshDiffSurfaces` —— 外观那两颗 setter 只认识 main，
-// 而差异格的折行/主题必须跟着设置重新assert一次（裁决 R23-2）。
+// 而差异格的主题 / 基线（以及左栏那颗折行槽）必须跟着设置重新 assert 一次（裁决 R23-2）。
 import { diffSurfaceOf, refreshDiffSurfaces } from "./diff/surface";
-// B461 Task 8：那六条动作命令的分发口（八条动作的 switch 只有这一份，见该文件头注）。
+// B461 Task 8：差异那一组动作命令的分发口（动作 switch 只有这一份，见该文件头注）。
 import { applyDiffCommand } from "./diff/actions";
 // B461 Task 5：A 档的入口（建标签）与那道闸（不抢键的判据）。
 import {
@@ -581,7 +581,6 @@ function shortcutApplies(id: string): boolean {
     case "diff.collapseAll":
     case "diff.showAll":
     case "diff.swapSides":
-    case "diff.toggleWrap":
     case "diff.toggleSyncScroll":
     case "diff.refresh":
       return diffTabActive();
@@ -721,7 +720,6 @@ function runShortcut(id: string): void {
     case "diff.collapseAll":
     case "diff.showAll":
     case "diff.swapSides":
-    case "diff.toggleWrap":
     case "diff.toggleSyncScroll":
     case "diff.refresh":
       applyDiffCommand(activePanelId, id);

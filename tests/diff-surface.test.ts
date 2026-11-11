@@ -157,6 +157,8 @@ function mount(hostEl: HTMLElement, panel: Panel, tab: Tab): void {
 
 beforeEach(() => {
   tabs.clear();
+  // 折行是模块级设置：上一条用例把它翻过面就得摆回去，否则几何用例读到的是上一条的档位。
+  setIsWrap(true);
   document.body.innerHTML = "";
   document.body.className = "";
 });
@@ -433,6 +435,18 @@ describe("B461 · 差异标签的落点（Task 1）", () => {
  */
 const live: Array<() => void> = [];
 
+/** 全局折行开关的完整一发：设置值 + 各标签/旁路（`setWordWrap` 在测试里的替身，不落盘）。 */
+const setGlobalWrap = (on: boolean): void => {
+  setIsWrap(on);
+  applyWrapToTabs(on);
+};
+
+/** 这颗 state 里装没装 `EditorView.lineWrapping`（判的是那一颗内容属性，不是 DOM 类名）。 */
+const wrapsLines = (state: EditorState): boolean =>
+  state
+    .facet(EditorView.contentAttributes)
+    .some((attr) => typeof attr !== "function" && attr.class === "cm-lineWrapping");
+
 /** 左栏正文由调用方给死的一张差异标签的输入描述（右栏正文归那颗既有的 view）。 */
 function specOf(leftText: string): DiffSpec {
   return {
@@ -488,6 +502,8 @@ function mountDiffPair(leftText: string, rightText: string): { panel: Panel; s: 
     diffSurface: null,
   };
   const s = createDiffSurface(hostEl, panel, diff);
+  // 登记进册：全局折行开关（`applyWrapToTabs`）只认这份全局 panels，测试面板平时是手搓的。
+  panels.set(panel.panelId, panel);
   wrapViews.set(s.left.dom, s.left);
   wrapViews.set(panel.view!.view.dom, panel.view!.view);
   // 走**生产的**拆法：用例里已经 `s.dispose()` 过的那一格，`panel.diffSurface` 早已归零，
@@ -1058,18 +1074,14 @@ describe("B461 · 基线实时与判据接全（Task 5 R13/R14 + R20）", () => 
     ).toHaveLength(0);
   });
 
-  it("B461 · Step 5 同形路径：换标签不换面板也挂/拆；摘掉时折行还回**设置**的值而不是被回写漏掉的快照（R23-1）", () => {
-    setIsWrap(true); // 用户设置：开着折行（格内 Alt+Z 临时关掉的那一发不许冒充他的设置）
-    const { panel, s } = mountLiveBaselinePair("甲\n乙\n丙", "甲\n乙改\n丙");
+  it("B461 · 换标签不换面板：拆/挂之后折行仍跟全局设置（没有格内快照可漏）", () => {
+    setIsWrap(true); // 用户设置：开着折行
+    const { panel } = mountLiveBaselinePair("甲\n乙\n丙", "甲\n乙改\n丙");
     const diffTab = tabs.get(panel.viewTabId!)!;
     expect(
       diffTab.comps.wrap.get(panel.view!.view.state),
       "前置：初值继承设置（开着） ⇒ 这一栏折行开着",
     ).toBe(EditorView.lineWrapping);
-    // 用户在这一格里按 Alt+Z 临时关掉（不改设置）——
-    // `switchTab` 切出时同形回写：关掉的那一发就这样漏进了标签快照。
-    s.setWrapEnabled(false);
-    diffTab.state = panel.view!.view.state;
     const editorTab = tabWithKind("editor");
     tabs.set(editorTab.tabId, editorTab);
     panel.tabs.push(editorTab.tabId);
@@ -1078,49 +1090,34 @@ describe("B461 · 基线实时与判据接全（Task 5 R13/R14 + R20）", () => 
     panel.viewTabId = editorTab.tabId;
     syncDiffSurface(panel);
     expect(diffSurfaceOf(panel), "显示的不是差异标签 ⇒ 该无").toBeNull();
-    // 换回差异标签：view 切到那份**漏了折行关闭**的快照，再点名
+    // 换回差异标签：`setState` 吃的就是那份标签快照，再点名重挂
     panel.view!.setState(diffTab.state);
     panel.activeTabId = diffTab.tabId;
     panel.viewTabId = diffTab.tabId;
     syncDiffSurface(panel);
-    expect(diffSurfaceOf(panel), "换标签不换面板 ⇒ 该挂").not.toBeNull();
-    // 再换走、拆掉 ⇒ 旧判据（从 view.state 记现值）会还回「关着」，用户的折行再也回不来
-    panel.activeTabId = editorTab.tabId;
-    panel.viewTabId = editorTab.tabId;
-    syncDiffSurface(panel);
-    expect(
-      diffTab.comps.wrap.get(panel.view!.view.state),
-      "R23-1：还值的权威是设置，不是那颗被回写漏掉的快照",
-    ).toBe(EditorView.lineWrapping);
+    const s2 = diffSurfaceOf(panel);
+    expect(s2, "换标签不换面板 ⇒ 该挂").not.toBeNull();
+    expect(wrapsLines(s2!.left.state), "重挂后的左栏仍按全局设置折行").toBe(true);
+
+    // 全局关掉：右栏借标签那颗槽，左栏由 reassert 补 ⇒ 两栏一起关。
+    setGlobalWrap(false);
+    expect(wrapsLines(panel.view!.view.state), "右栏跟上全局设置").toBe(false);
+    expect(wrapsLines(s2!.left.state), "左栏也跟上（没有格内例外）").toBe(false);
   });
 
-  it("B461 · R23-2：挂着期间全局折行被重新打开 ⇒ 格内临时关着的那一态不被拽走（Alt+Z 是格内切换）", () => {
+  it("B461 · 全局折行开关是两栏唯一的真相：关/开都一起翻", () => {
     setIsWrap(true);
     const { panel, s } = mountLiveBaselinePair("甲\n乙\n丙", "甲\n乙改\n丙");
-    const diffTab = tabs.get(panel.viewTabId!)!;
-    // 用户在这一格里按 Alt+Z 临时关掉（设置仍开着）。
-    s.setWrapEnabled(false);
-    expect(diffTab.comps.wrap.get(panel.view!.view.state), "前置：格内状态是关的").toEqual([]);
-    applyWrapToTabs(true); // 设置那一发：同一颗 Compartment 在 live surface 之下被重配
-    expect(
-      diffTab.comps.wrap.get(panel.view!.view.state),
-      "设置那一发末尾补的那一遍要真的压回这一格自己的状态（`refreshDiffSurfaces` 那条接线）",
-    ).toEqual([]);
-    // 再手动发一次**同样的漂移**（`applyWrapToTabs` 里就是这一手），但不跟着点
-    // `refreshDiffSurfaces` —— 那一发的接线由上面那一条与下面的接线点位用例分别钉住；
-    // 这里要单独证的是 `reassert` 自己认不认得出这层漂移（`applyPanelMode` 那一条出口）。
-    panel.view!.view.dispatch({
-      effects: diffTab.comps.wrap.reconfigure(EditorView.lineWrapping),
-    });
-    expect(
-      diffTab.comps.wrap.get(panel.view!.view.state),
-      "前置：刚翻回来是开的（两栏又分家了）",
-    ).toBe(EditorView.lineWrapping);
-    syncDiffSurface(panel); // 与 `applyPanelMode` 末尾同形：一致分支现在得把漂移补上
-    expect(
-      diffTab.comps.wrap.get(panel.view!.view.state),
-      "翻设置之后差异格仍不许折行（行行对齐是设计稿 ⑥ 的头条）",
-    ).toEqual([]);
+    expect(wrapsLines(s.left.state)).toBe(true);
+    expect(wrapsLines(panel.view!.view.state)).toBe(true);
+
+    setGlobalWrap(false);
+    expect(wrapsLines(panel.view!.view.state), "右栏跟着关").toBe(false);
+    expect(wrapsLines(s.left.state), "左栏跟着关").toBe(false);
+
+    setGlobalWrap(true);
+    expect(wrapsLines(panel.view!.view.state), "右栏跟着开").toBe(true);
+    expect(wrapsLines(s.left.state), "左栏跟着开").toBe(true);
   });
 
   it("B461 · R23-2：差异格挂着时翻主题 ⇒ 左栏按现值重配，两栏不许叠在不同基色上", () => {
@@ -1167,13 +1164,13 @@ describe("B461 · 基线实时与判据接全（Task 5 R13/R14 + R20）", () => 
     ).toBeNull();
     expect(panel.bodyEl!.querySelectorAll(".diff-original"), "一格只许一排旁路").toHaveLength(1);
     const diffTab = tabs.get(panel.viewTabId!)!;
-    expect(diffTab.comps.wrap.get(panel.view!.view.state), "新那一份按设置继承折行").toBe(
+    expect(diffTab.comps.wrap.get(panel.view!.view.state), "新那一份按全局设置折行").toBe(
       EditorView.lineWrapping,
     );
     second.dispose();
     expect(
       diffTab.comps.wrap.get(panel.view!.view.state),
-      "还值的是新那一份（旧那一份若在，会把这一手踩成它的现值）",
+      "拆旁路不碰折行 —— 那颗槽归全局设置，不是旁路的私有状态",
     ).toBe(EditorView.lineWrapping);
   });
 
@@ -1432,9 +1429,9 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     try {
       const { panel, s } = mountDiffPair("A\nB\nC", "A\nC");
       const right = panel.view!.view;
-      // 起手摆到不折行那一档（初值继承设置，见 surface 的 `wrapOn`）：这条钉的是「打开折行」
-      // 那次翻转前后的缝高，前提得先落在关着。
-      s.setWrapEnabled(false);
+      // 起手摆到不折行那一档（全局设置）：这条钉的是「打开折行」那次翻转前后的缝高，
+      // 前提得先落在关着。
+      setGlobalWrap(false);
       const gapHeights = (): string[] =>
         [...panel.bodyEl!.querySelectorAll<HTMLElement>(".diff-gap")].map((el) => el.style.height);
 
@@ -1443,14 +1440,14 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
       expect(gapHeights()).toEqual(["20px"]);
 
       // 打开换行：左栏被删的那一行折成两个视觉行 ⇒ 缝必须按实测 40px 补。
-      s.setWrapEnabled(true);
+      setGlobalWrap(true);
       fakeLineBoxes(s.left, [20, 40, 20]);
       fakeLineBoxes(right, [20, 20]);
       await frames();
       expect(gapHeights(), "折行打开后缝高跟着实测行高走").toEqual(["40px"]);
 
       // 关掉换行：重测回单行高，缝也跟着收回去。
-      s.setWrapEnabled(false);
+      setGlobalWrap(false);
       await frames();
       expect(gapHeights(), "折行关掉后必须重算，不许留着上一轮的 40px").toEqual(["20px"]);
     } finally {
@@ -1465,7 +1462,7 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
       // 行被折叠」）：屏上它只占一条 24px 折条，左栏要补的缝就得是 24px 而不是 0。
       const { panel, s } = mountDiffPair("A\nB\nC", "A\nB\nC\nX1\nX2\nX3\nX4\nX5");
       const right = panel.view!.view;
-      s.setWrapEnabled(false);
+      setGlobalWrap(false);
       right.dispatch({
         effects: setFoldedRanges.of([{ from: 4, to: 8, top: 0, bottom: 0, regionLength: 5 }]),
       });
@@ -1573,7 +1570,7 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
       ).toBe(true);
       expect(ro!.observed.includes(right.dom), "右栏编辑器在观察里").toBe(true);
 
-      s.setWrapEnabled(true);
+      setGlobalWrap(true);
       fakeLineBoxes(s.left, [20, 60, 20]);
       fakeLineBoxes(right, [20, 20]);
       await frames();
@@ -1598,7 +1595,7 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
       const gapHeights = (): string[] =>
         [...panel.bodyEl!.querySelectorAll<HTMLElement>(".diff-gap")].map((el) => el.style.height);
 
-      s.setWrapEnabled(true);
+      setGlobalWrap(true);
       fakeLineBoxes(s.left, [20, 60, 20]);
       fakeLineBoxes(right, [20, 20]);
       await frames();
@@ -1664,7 +1661,7 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
       const gapHeights = (): string[] =>
         [...panel.bodyEl!.querySelectorAll<HTMLElement>(".diff-gap")].map((el) => el.style.height);
 
-      s.setWrapEnabled(true);
+      setGlobalWrap(true);
       // CM6 此刻只量过视口里的行，对没进过视口的折行行给的是「不折行」的估值：
       // 旧实现照它算 ⇒ 缝是 0，要等滚过去才补上。
       fakeLineBoxes(s.left, [20, 20]);
@@ -1717,7 +1714,7 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
           `.diff-overview-${side} .diff-overview-mark`,
         ),
       ];
-      s.setWrapEnabled(true);
+      setGlobalWrap(true);
       await frames();
 
       // CM6 此刻给的是「没滚过」的估值：每行 20px、两行总高 40px。色带若读它（旧实现），
@@ -1751,7 +1748,7 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
       center.getBoundingClientRect = () =>
         ({ top: 0, bottom: 400, height: 400, left: 0, right: 35, width: 35 }) as DOMRect;
 
-      s.setWrapEnabled(true);
+      setGlobalWrap(true);
       fakeLineBoxes(s.left, [20, 40, 20]);
       // 右栏只有 A/C 两行；删除块的对齐缝 40px 落在第 1 行之后 ⇒ 第 2 行的实测 top 是 60。
       fakeLineBoxes(right, [20, 20], { 1: 40 });
@@ -1780,7 +1777,7 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
       center.getBoundingClientRect = () =>
         ({ top: 0, bottom: 400, height: 400, left: 0, right: 35, width: 35 }) as DOMRect;
 
-      s.setWrapEnabled(true);
+      setGlobalWrap(true);
       fakeLineBoxes(s.left, [20, 60]);
       fakeLineBoxes(right, [20, 20]);
       // 真机里紧贴行尾的块 widget 会被并进同一个 composite：`bottom` 含缝、`type` 是分段数组。
@@ -1830,7 +1827,7 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
       center.getBoundingClientRect = () =>
         ({ top: 0, bottom: 400, height: 400, left: 0, right: 35, width: 35 }) as DOMRect;
 
-      s.setWrapEnabled(true);
+      setGlobalWrap(true);
       fakeLineBoxes(s.left, [20, 40, 20]);
       // 缝落在改块之后（第 2 行之后）：右栏第 2 行仍是 top=20、height=20。
       fakeLineBoxes(right, [20, 20], { 2: 40 });
@@ -1868,7 +1865,7 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
       center.getBoundingClientRect = () =>
         ({ top: 0, bottom: 400, height: 400, left: 0, right: 35, width: 35 }) as DOMRect;
 
-      s.setWrapEnabled(true);
+      setGlobalWrap(true);
       fakeLineBoxes(s.left, [20, 60, 20]);
       fakeLineBoxes(right, [20, 20, 20], { 2: 40 });
       await frames();

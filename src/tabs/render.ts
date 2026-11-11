@@ -245,7 +245,6 @@ function diffKeysOf(p: Panel): PanelRenderData["diff"] {
   return {
     ignoreTrimWhitespace: surface.ignoreTrimWhitespace(),
     collapseUnchanged: surface.collapseUnchanged(),
-    wrap: surface.wrapEnabled(),
     syncScroll: surface.syncScrollEnabled(),
     swappable: surface.spec().tier === "files",
   };
@@ -345,12 +344,7 @@ function groupMenuOf(p: Panel): MenuItem[] {
       label: folded ? "全部展开" : "全部折叠",
       onSelect: () => applyDiffAction(p.panelId, folded ? "showAll" : "collapseAll"),
     });
-    // 两颗纯开关：`checked` 照 VS Code 的菜单口径显示当前状态（不是「点下去会怎样」）。
-    items.push({
-      label: "自动换行",
-      checked: diffSurface.wrapEnabled(),
-      onSelect: () => applyDiffAction(p.panelId, "wrap"),
-    });
+    // 自动换行不在这里：差异格复用「查看 → 自动换行」那颗全局开关，没有格内入口。
     items.push({
       label: "同步滚动",
       checked: diffSurface.syncScrollEnabled(),

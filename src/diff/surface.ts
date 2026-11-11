@@ -138,15 +138,6 @@ export interface DiffSurface {
    * 焦点落在两栏之外（查找输入框、侧栏）时保持上一次的值 —— 上游也是「最后聚焦的那一颗」。
    */
   focusedSide(): DiffSide;
-  /**
-   * 自动换行这一格现在开着没有。
-   *
-   * **初值继承全局设置**（上游 `diffEditor.wordWrap` 默认 `"inherit"`）：挂上旁路那一刻读
-   * `editor.wordWrap` 的现值，之后归这一格的开关管 —— `Alt+Z` 只是格内临时切换，不改设置。
-   */
-  wrapEnabled(): boolean;
-  /** 两栏一起切（左栏的槽 + 右栏借用标签那颗 `comps.wrap`）。 */
-  setWrapEnabled(on: boolean): void;
   /** 两栏同步滚动现在开着没有（默认开 —— VS Code 的差异编辑器恒同步）。 */
   syncScrollEnabled(): boolean;
   /** 关掉后两栏各滚各的；重新打开时立刻对齐一次。 */
@@ -157,8 +148,8 @@ export interface DiffSurface {
    * 点它的两处：`syncDiffSurface`（每次刷新都跑）与「刷新」那颗动作（Task 8 · 裁决 R37，
    * 读口刚换过快照 ⇒ 靠这一手把左栏那份文档跟上）。那张标签还是这一格现在露出的那张
    * （`spec()` 对得上）时，旁路不重建，但下面三条可能在无人认领的期间被改坏 ——
-   *   · 右栏的**折行**被设置页重新打开（`applyWrapToTabs` 重配的是同一颗 Compartment）；
-   *   · 右栏的**主题**被换掉（`applyDarkToTabs` 同上），而左栏吃的是挂上那一刻的现值；
+   *   · 左栏的**折行**停在旧值（全局开关改的是右栏借用那颗 `comps.wrap`，左栏自己有一颗）；
+   *   · 右栏的**主题**被换掉（`applyDarkToTabs`），而左栏吃的是挂上那一刻的现值；
    *   · `doc.baseline` 被就地换成新正文（保存 / 以磁盘为准重载），而左栏那份**文档**还是旧的。
    * 第三条最狠：块表是按新基线算的、左栏正文还是旧基线 ⇒ 装饰会画在错的那几行上，且屏上
    * 看不出所以然（B458 那轮「基线换了而标注没换」的同形病）。
@@ -239,8 +230,8 @@ function lineStartOf(view: EditorView, line: number): number {
  * state 若不含它，左栏就没有底色了。折叠（Task 7）也在这同一臂里
  * （`diffFace` 现在带着 `diffFoldField` + 折条出口 ⇒ 换 state 时折叠面跟着进去，不必另装）。
  *
- * `wrap` 是这一栏的折行槽（B461 后续轮，见 `createDiffSurface` 的 `wrapOn`）：默认空扩展 =
- * 不折行。它与右栏那颗折行槽同步 reconfigure，两栏才可能同时折上。
+ * `wrap` 是这一栏的折行槽：值来自**全局设置** `isWrap`，「查看 → 自动换行」一变就由
+ * `reassert` 对着设置重配一次 —— 差异格没有自己的折行开关。
  *
  * `perf` 与右栏**同一档**（两栏都由 `perfOfDiffInstance` 给）：折叠在这一档里恒为关，
  * 依据是上游的差异子编辑器写死 `folding = false`（`diffEditorEditors.ts` 的
@@ -386,8 +377,8 @@ interface OverviewAxis {
  * 的默认值一致）；B458 那 4px 一列另有口径，不吃这颗开关。
  *
  * ⚠️ 一格**只许一排旁路**（裁决 R23-3）：进来先拆在任的那颗。不拆的话两颗 live surface 共用
- * 右栏那一槽与那颗 wrap Compartment，先 dispose 的那颗会把折行还成「它读到的现值」，把还挂着
- * 的那颗踩坏（底色与占位块也会在同一个 reconfigure 口上互相覆盖）。
+ * 右栏那一槽，先 dispose 的那颗会把还挂着的那颗的底色与占位块一起摘掉（同一个 reconfigure 口
+ * 上互相覆盖）。
  */
 export function createDiffSurface(
   hostEl: HTMLElement,
@@ -485,42 +476,13 @@ export function createDiffSurface(
   let lastTheme: Extension = themeOf();
 
   /**
-   * 折行开关（B461 后续轮，用户点名「自动换行开关不能缺」）。
+   * 折行只有**全局那一颗**开关（`isWrap` / 「查看 → 自动换行」），差异格不再自带一颗。
    *
-   * VS Code 的口径：`diffEditor.wordWrap` 默认 `"inherit"` ⇒ 差异格**初值跟着**
-   * `editor.wordWrap` 走；用户再按 `Alt+Z` 是格内临时切换，不改设置。
-   * 本应用的全局 `word_wrap` 出厂是开，于是差异标签挂上时也折行（与上游 inherit 一致）。
-   *
-   * 两栏各有自己的折行槽：左栏那颗 `leftWrap` 随 state 建（`leftState` 的第四参），右栏借用
-   * 标签自己的 `comps.wrap`（`applyWrapToTabs` 的同一个出口）。之所以不另给右栏配一颗：
-   * CM6 的 `EditorView.lineWrapping` 叠两次虽然无害，但「哪一颗说了算」会变成两处真相。
-   *
-   * ⚠️ 还值为什么读 `isWrap` 而不是读 attach 时那份现值（裁决 R23-1）：`switchTab` 切出时会把
-   * **当前 view state** 回写进 `tab.state`（`src/tabs/lifecycle.ts`），被差异格关掉的那一发
-   * 就这样漏进标签快照；下一次 attach 若从 state 读「他原来开着吗」，读到的是 `[]` —— 用户的
-   * 自动换行设置在这个标签上就再也回不来了。设置的权威只有 `isWrap` 那一颗。
-   *
-   * 已知限制：折行开着时左右两栏按**实测行高**逐行补缝（`face.ts` 的 `gapZones`），差异块内
-   * 按 `innerChanges` 反推的对齐边界逐段对齐（上游 `innerHunkAlignment`）。同步滚动因此
-   * 是真正的逐行对应，不再按滚动比例映射。
+   * 右栏借标签自己的 `comps.wrap`（`applyWrapToTabs` 的同一个出口）⇒ 设置一变它自己跟上；
+   * 左栏那颗 `leftWrap` 是旁路自己的 state，得在 `reassert` 里对着 `isWrap` 补一次
+   *（`applyWrapToTabs` 末尾会点 `refreshDiffSurfaces`）。
    */
-  let wrapOn = isWrap;
-  let wrapComp: Compartment | null = null;
-  if (right && comps) {
-    // 读出 `undefined` = 这颗 Compartment 根本不在那份配置里（面板显示的不是这张标签的 state）
-    // ⇒ 这一手整段跳过：给配置里没有的 Compartment 发 reconfigure 等于凭空往 state 里装一颗。
-    if (comps.wrap.get(right.state) !== undefined) wrapComp = comps.wrap;
-  }
-  /** 折行值 → 那颗槽的 reconfigure 效果（两栏共用同一份口径）。 */
-  const wrapTo = (on: boolean): StateEffect<unknown>[] => {
-    const value = on ? EditorView.lineWrapping : [];
-    return wrapComp ? [wrapComp.reconfigure(value)] : [];
-  };
-  // ⚠️ **函数**而不是在 attach 那一刻算好的数组：这一发在 dispose 时才落地，而 `isWrap` 可能在
-  // 差异面挂着期间被用户改掉（那颗设置 setter 会先 `applyWrapToTabs` 再 `refreshDiffSurfaces`）。
-  // 提前捕获就等于还回一份过期值 —— 正是 R23-1 要避免的两口径病，只是换了个方向。
-  const wrapBack = () =>
-    wrapComp ? [wrapComp.reconfigure(isWrap ? EditorView.lineWrapping : [])] : [];
+  const wrapValue = (): Extension => (isWrap ? EditorView.lineWrapping : []);
 
   /**
    * 「忽略首尾空白」的现值（设计稿 ⑥ 那颗开关）。
@@ -1089,7 +1051,7 @@ export function createDiffSurface(
       leftPerf(),
       leftFace.of(leftArm()),
       themeSlot.of(lastTheme),
-      leftWrap.of(wrapOn ? EditorView.lineWrapping : []),
+      leftWrap.of(wrapValue()),
     ),
   });
 
@@ -1135,7 +1097,7 @@ export function createDiffSurface(
       const fold = folds.find((f) => line >= f.from && line <= f.to);
       return fold ? (line === fold.from ? FOLD_BAR_HEIGHT : 0) : null;
     };
-    if (!wrapOn) {
+    if (!isWrap) {
       const h = view.defaultLineHeight;
       return (line) => at(line) ?? h;
     }
@@ -1209,7 +1171,7 @@ export function createDiffSurface(
    */
   const heightsComparable = (): boolean => {
     if (!right) return false;
-    if (wrapOn) return heightsMeasured("original") && heightsMeasured("modified");
+    if (isWrap) return heightsMeasured("original") && heightsMeasured("modified");
     return left.defaultLineHeight === right.defaultLineHeight;
   };
 
@@ -1858,32 +1820,12 @@ export function createDiffSurface(
         leftPerf(),
         leftFace.of(leftArm()),
         themeSlot.of(lastTheme),
-        leftWrap.of(wrapOn ? EditorView.lineWrapping : []),
+        leftWrap.of(wrapValue()),
       ),
     );
     syncBlocks();
   };
 
-  /**
-   * 折行开关落到两栏（`Alt+Z` 与工具栏那颗键都走这一处）。
-   *
-   * 打开后视觉行数变了 ⇒ 概览轴与中间按钮要重算；块表本身不变。`lineBlock` 的几何在下一帧
-   * measure 后才更新，所以再补一帧位置（否则第一次打开时按钮会停在旧行高上）。
-   */
-  const setWrapEnabled = (on: boolean): void => {
-    if (wrapOn === on) return;
-    wrapOn = on;
-    left.dispatch({ effects: leftWrap.reconfigure(on ? EditorView.lineWrapping : []) });
-    if (right) {
-      right.dispatch({ effects: wrapTo(on) });
-      writeBackRight();
-    }
-    refreshArms();
-    requestAnimationFrame(() => {
-      renderOverview();
-      renderReverts();
-    });
-  };
   /** 右栏光标行：跳块/步进的起算侧固定右栏（与回退列「最后光标」口径分开）。 */
   const rightCaretLine = (): number => caretLineOf("modified");
 
@@ -2181,16 +2123,16 @@ export function createDiffSurface(
   ];
 
   if (right) {
-    // 一发事务里两件一起办：折行归位（初值继承设置，见 `wrapOn`）+ 把右栏那一槽换成本 surface 的臂。
+    // 把右栏那一槽换成本 surface 的臂。折行不在这里碰：它归标签自己的 `comps.wrap`
+    //（全局开关的同一颗出口），旁路只借用、不改写。
     // 槽已在配置里 ⇒ `reconfigure`（顺带把上一颗 surface 留在快照里的旧 provider 顶掉，
     // 见 `rightFaceSlot` 的注释）；第一次挂 ⇒ `appendConfig` 把槽本身带进配置。
     const slotPresent = rightFaceSlot.get(right.state) !== undefined;
     right.dispatch({
       effects: [
-        ...wrapTo(wrapOn),
-        ...(slotPresent
-          ? [rightFaceSlot.reconfigure(rightArm())]
-          : [StateEffect.appendConfig.of(rightFaceSlot.of(rightArm()))]),
+        slotPresent
+          ? rightFaceSlot.reconfigure(rightArm())
+          : StateEffect.appendConfig.of(rightFaceSlot.of(rightArm())),
       ],
     });
   }
@@ -2206,15 +2148,10 @@ export function createDiffSurface(
    * 每次刷新都跑，空转必须是便宜的。
    */
   const reassert = (): void => {
-    // ① 折行：设置页那一发（`applyWrapToTabs`）会改同一颗槽 ⇒ 把它拉回这一格的开关值。
-    //   判据是「现值 ≠ wrapOn」，关着也要补（用户可能在设置页把折行打开，而这一格是关）。
-    if (right && wrapComp && comps) {
-      const wrapped = comps.wrap.get(right.state) === EditorView.lineWrapping;
-      if (wrapped !== wrapOn) {
-        right.dispatch({ effects: wrapTo(wrapOn) });
-        writeBackRight();
-      }
-    }
+    // ① 折行：全局开关改的是右栏借用的那颗 `comps.wrap`（`applyWrapToTabs` 自己会发），
+    //    左栏这颗旁路自己的槽要对着设置补一次。关着也要补（用户可能在设置页打开折行）。
+    const wrapped = leftWrap.get(left.state) === EditorView.lineWrapping;
+    if (wrapped !== isWrap) left.dispatch({ effects: leftWrap.reconfigure(wrapValue()) });
     // ② 主题：右栏换了色，左栏必须吃同一颗 —— 两半的 18% 改动色叠在不同基色上就不是同一个颜色。
     const themeNow = themeOf();
     if (themeNow !== lastTheme) {
@@ -2250,8 +2187,6 @@ export function createDiffSurface(
       // 立刻重算（不等防抖）：这是用户点下来的一发动作，不是键入。
       syncBlocks();
     },
-    wrapEnabled: () => wrapOn,
-    setWrapEnabled,
     syncScrollEnabled: () => syncOn,
     setSyncScrollEnabled,
     reassert,
@@ -2269,8 +2204,7 @@ export function createDiffSurface(
       // 右栏那颗 view **不随旁路销毁**（它是那份文档本身）⇒ 这一臂必须精准摘掉，
       // 否则底色与占位块会留在一张普通编辑器标签上。槽值清成空 ⇒ 键入监听与两臂装饰一起走。
       // 那颗 view 已经 destroy 过的话这一发是空转（CM6 内部的 `destroyed` 分支），不抛错。
-      // 折行跟着还回**设置**里的那一颗（B461 后续轮 + R23-1：读 `isWrap`，不读被同形回写污染的快照）。
-      right?.dispatch({ effects: [rightFaceSlot.reconfigure([]), ...wrapBack()] });
+      right?.dispatch({ effects: rightFaceSlot.reconfigure([]) });
       detachSash();
       detachOverview();
       layoutRO?.disconnect();

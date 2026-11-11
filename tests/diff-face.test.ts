@@ -1,15 +1,15 @@
 // @vitest-environment jsdom
-// B461 · Task 3 —— 两侧的行底色、中间指示带与对侧占位块（`src/diff/face.ts`）。
+// B461 · Task 3 —— 两侧的行内字符色、行号槽底色、中间指示带与对侧占位块（`src/diff/face.ts`）。
 //
-// 设计稿 ⑥：改动行画底色（复用三颗主题无关的 token）、删除行在右栏用占位块、左栏用真行 ——
-// **两侧必须行行对齐**，否则跳块与肉眼比对都会错位。
+// 设计稿 ⑥：改动由行号槽底色、`+`/`−` 记号与行内字符色表达（代码行区不铺整行底色）、
+// 删除行在右栏用占位块、左栏用真行 —— **两侧必须行行对齐**，否则跳块与肉眼比对都会错位。
 //
 // 本文件的分层（与 face.ts 的责任一一对应）：
 //   1) 纯函数 `sideLineMarks` / `sideGaps`：一块（`DiffBlock`）在**某一栏**落在哪些行、
 //      要在第几行之后补几行空位。它们只遍历 `blocks.ts` 交出来的块 ⇒ 与 4px 标注同源，
 //      这一层不看 DOM、不看 view，向量直接钉死。
 //   2) 装到 view 上的那一臂（`diffFace`）：行装饰 + 块 widget + 记号 + 行号槽底色。
-//   3) 样式段（`src/diff/diff.css`）：行底色 / 字符底色取上游 `editorColors.ts` 的默认值
+//   3) 样式段（`src/diff/diff.css`）：行号槽底色 / 字符底色取上游 `editorColors.ts` 的默认值
 //      （分侧语义没有「修改行」），概览色带另吃 `--diff-add` / `--diff-del`；
 //      这一段里一个裸十六进制都不许出现。
 //
@@ -25,7 +25,8 @@ import { BlockType, EditorView, type BlockInfo, type WidgetType } from "@codemir
 import { createEditor, makeTabState } from "../src/editor/editor";
 import { perfProfileFor } from "../src/editor/perf";
 import { stripCssComments, stripLineComments, ruleBlock } from "./static";
-import { isWrap, setIsWrap, tabs, type Panel, type Tab } from "../src/core/app-state";
+import { isWrap, panels, setIsWrap, tabs, type Panel, type Tab } from "../src/core/app-state";
+import { applyWrapToTabs } from "../src/appearance";
 import { createDiffSurface, type DiffSurface } from "../src/diff/surface";
 import { diffBlocks, type DiffBlock, type LineAlignment } from "../src/diff/blocks";
 import type { InnerChanges } from "../src/diff/inline";
@@ -326,6 +327,9 @@ beforeEach(() => {
   vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(LINE_HEIGHT);
   document.body.innerHTML = "";
   tabs.clear();
+  panels.clear();
+  // 折行是模块级设置：上一条用例把它翻过面就得摆回去。
+  setIsWrap(true);
 });
 
 afterEach(() => {
@@ -420,8 +424,8 @@ function mountFace(
   return { view: created, lineEl: (n) => lineElOf(created, n), gapEls: () => gapElsOf(created) };
 }
 
-describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位块", () => {
-  it("B461 · 改动行带底色类；对侧空位是块 widget 且高度按行数 × defaultLineHeight 撑出来", () => {
+describe("B461 · diffFace：行级语义类、块起点的指示带类与对侧占位块", () => {
+  it("B461 · 改动行带行级语义类；对侧空位是块 widget 且高度按行数 × defaultLineHeight 撑出来", () => {
     const { view, gapEls, lineEl } = mountFace("modified", del);
     expect(lineEl(1).className).not.toContain("diff-line-del"); // 右栏第 1 行本身没改
     expect(gapEls()).toHaveLength(1);
@@ -549,15 +553,17 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
     expect(view.dom.querySelectorAll(".cm-diffSigns .diff-sign"), "缝不画记号").toHaveLength(0);
   });
 
-  it("B462 · 左栏删行涂真行底色 + Codicon `−` 记号；纯删块整行再叠一层字符色", () => {
+  it("B462 · 左栏删行带行级语义类 + Codicon `−` 记号；纯删块标 `diff-whole-*`", () => {
     const { view, lineEl, gapEls } = mountFace("original", del);
     expect(gapEls(), "删掉的行在左栏是**真行** ⇒ 这一侧不补位").toHaveLength(0);
     expect(lineEl(1).className).not.toContain("diff-line");
     expect(lineEl(2).className).toContain("diff-line-delete");
     expect(lineEl(3).className).toContain("diff-line-delete");
     expect(lineEl(2).className, "VS Code 没有块头横条这一层").not.toContain("diff-edge-top");
-    // 纯删块的对侧没有行 ⇒ 上游 `diffWholeLineDelete` 是整行字符层（`isWholeLine: true`）。
-    expect(lineEl(2).className, "整行差异：字符色铺满整行").toContain("diff-whole-delete");
+    // 纯删块的对侧没有行 ⇒ 上游 `diffWholeLineDelete` 的整行身份（`isWholeLine: true`）。
+    expect(lineEl(2).className, "整行块：多带一颗 diff-whole-* 语义类").toContain(
+      "diff-whole-delete",
+    );
     expect(lineEl(3).className).toContain("diff-whole-delete");
     const signs = [...view.dom.querySelectorAll<HTMLElement>(".cm-diffSigns .diff-sign")];
     expect(
@@ -637,6 +643,12 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
 // 一挂就位的差异格（Task 3 的两臂用例与 Task 7 的折叠用例共用**同一份**现场搭法）
 // --------------------------------------------------------------------------- #
 
+/** 全局折行开关的完整一发：设置值 + 各标签/旁路（`setWordWrap` 在测试里的替身，不落盘）。 */
+const setGlobalWrap = (on: boolean): void => {
+  setIsWrap(on);
+  applyWrapToTabs(on);
+};
+
 /**
  * 复刻 `src/tabs/lifecycle.ts` 的 `mountView` 那几步（同 `tests/diff-surface.test.ts`）：
  * 建 `.panel-host` → 建 `.panel-editor` → 挂右栏那颗 view → 交给**生产的** `createDiffSurface`。
@@ -645,8 +657,8 @@ describe("B461 · diffFace：行底色、块起点的指示带类与对侧占位
  * `env` 四颗键：**折行缺省开**（与出厂 `word_wrap: true` 同形 —— 关掉才是异常路径）、
  * 明暗缺省浅（主题那条要能拿 dark 档当判别位）、左右两份正文（Task 7 的折叠用例要换正文）。
  *
- * `env.wrap` 同时写**全局设置**（差异格的折行初值继承它，见 `surface.ts` 的 `wrapOn`）：
- * 只改标签快照不改设置的话，挂出来的那两栏与用例声称的前提就是两回事。
+ * `env.wrap` 同时写**全局设置**（差异格的折行只跟它走）：只改标签快照不改设置的话，
+ * 挂出来的那两栏与用例声称的前提就是两回事。
  */
 function mountSurfacePair(
   env: { left?: string; right?: string; dark?: boolean; wrap?: boolean } = {},
@@ -662,7 +674,8 @@ function mountSurfacePair(
   const leftText = env.left ?? "A\n删1\n删2\nZ";
   const rightText = env.right ?? "A\nZ";
   const spec: DiffSpec = {
-    tier: "baseline",
+    // 这一组用例只关心 face / 几何；用 files 档避开 A 档的基线闸（测试里没有在册 Doc）。
+    tier: "files",
     docId: 100,
     leftText: () => leftText,
     leftName: "a.md（上次保存）",
@@ -710,6 +723,8 @@ function mountSurfacePair(
     bodyEl: hostEl,
     diffSurface: null,
   };
+  /* 登记进册：全局折行开关（`applyWrapToTabs`）遍历的是这份全局 panels。 */
+  panels.set(panel.panelId, panel);
   const surface = createDiffSurface(hostEl, panel, spec);
   wrapViews.set(surface.left.dom, surface.left);
   wrapViews.set(view.view.dom, view.view);
@@ -772,9 +787,8 @@ describe("B461 · surface 给两颗 view 各装一臂（预审 R1）", () => {
     expect(right.state.doc.toString()).toBe("A\nZ");
   });
 
-  it("B461 · 折行初值继承全局设置（上游 diffEditor.wordWrap: 'inherit'），开关两栏一起翻、detach 原样还", () => {
-    // 上游 `diffEditor.wordWrap` 默认 `"inherit"` ⇒ 差异格挂上时跟着 `editor.wordWrap` 的现值
-    // 走；之后 `Alt+Z` 只是格内临时切换，不改设置。本应用全局出厂是开 ⇒ 这里起手就该折行。
+  it("B461 · 折行只跟全局开关：设置一变两栏一起翻，拆旁路不拿它做手脚", () => {
+    // 差异格没有自己的折行开关 —— 「查看 → 自动换行」那颗全局设置是唯一真相。
     // ⚠️ 「同一行在两栏的视觉 y 是否真的一致」是**像素**判据，jsdom 没有布局引擎 ⇒ 归真机台。
     // 这里钉的是「扩展在不在 state 里」—— 它恰恰是那条像素等式的前提。
     const { right, left, surface, initialState } = mountSurfacePair();
@@ -782,19 +796,19 @@ describe("B461 · surface 给两颗 view 各装一臂（预审 R1）", () => {
       wrapsLines(initialState),
       "前置：出厂 `word_wrap: true` ⇒ 那颗初始 state 确实装了折行",
     ).toBe(true);
-    expect(wrapsLines(right.state), "初值继承设置 ⇒ 挂上旁路那一刻右栏就折行").toBe(true);
+    expect(wrapsLines(right.state), "右栏借标签那颗槽 ⇒ 起手就折行").toBe(true);
     expect(wrapsLines(left.state), "左栏同一档起步").toBe(true);
-    expect(surface.wrapEnabled(), "读口报的也是继承来的现值").toBe(true);
 
-    surface.setWrapEnabled(false);
-    expect(wrapsLines(right.state), "格内临时关掉（Alt+Z）⇒ 右栏跟上").toBe(false);
+    setGlobalWrap(false);
+    expect(wrapsLines(right.state), "全局关掉 ⇒ 右栏跟上").toBe(false);
     expect(wrapsLines(left.state), "左栏一起关（两栏同口径）").toBe(false);
-    surface.setWrapEnabled(true);
-    expect(wrapsLines(right.state)).toBe(true);
-    expect(wrapsLines(left.state)).toBe(true);
+
+    setGlobalWrap(true);
+    expect(wrapsLines(right.state), "全局打开 ⇒ 右栏跟上").toBe(true);
+    expect(wrapsLines(left.state), "左栏一起开").toBe(true);
 
     surface.dispose();
-    expect(wrapsLines(right.state), "拆掉旁路把折行还回去（那颗 view 是文档本身）").toBe(true);
+    expect(wrapsLines(right.state), "拆掉旁路不碰折行（那颗 view 是文档本身）").toBe(true);
   });
 
   it("B463 · 中间回退键：点一下把原稿那一块写回右栏（普通编辑，不是第二套写入）", () => {
@@ -816,12 +830,7 @@ describe("B461 · surface 给两颗 view 各装一臂（预审 R1）", () => {
     expect(right.state.doc.toString(), "原稿那两行被写回新稿").toBe("A\n删1\n删2\nZ");
   });
 
-  it("B461 · 还原的是「用户那一颗设置」，不是无条件打开（设置里就关着的用户）", () => {
-    // 裁决 R23-1（Task 3 评审抓出、Task 5 落地）把还值的权威从「attach 时 view 里的现值」换成
-    // **设置**那一颗：`switchTab` 切出时会把「格内 Alt+Z 临时关掉」的那一发回写进标签快照，读现值就会
-    // 把开着换行的用户悄悄改成关着。生产里每一张标签的 wrap Compartment 都由 `isWrap` 派生
-    //（`makeInstance` 的 `env.wrap` + `applyWrapToTabs` 的写回）⇒ 「本来就关着」这一形只能由
-    // 设置来表达；「快照关着而设置开着」是一条到得了测试、到不了用户的路径。
+  it("B461 · 拆旁路不替用户改折行：设置里关着，拆完仍关着", () => {
     const was = isWrap;
     setIsWrap(false);
     try {
@@ -829,22 +838,7 @@ describe("B461 · surface 给两颗 view 各装一臂（预审 R1）", () => {
       expect(wrapsLines(tab.state), "前置：这位用户本来就关着折行").toBe(false);
       expect(wrapsLines(right.state)).toBe(false);
       surface.dispose();
-      expect(wrapsLines(right.state), "detach 之后仍然是关着 —— 旁路不许替用户改设置").toBe(false);
-    } finally {
-      setIsWrap(was);
-    }
-  });
-
-  it("B461 · 差异面挂着期间改了设置 ⇒ detach 还的是**改过之后**那一颗（不许还过期值）", () => {
-    // 同一颗权威的另一面：`wrapBack` 若是在 attach 那一刻算好的数组，挂着期间用户把「自动换行」
-    // 打开，拆掉旁路时还回去的就是那份**过期**的关 ⇒ 设置说开着、这一格从此不折行（两口径，B458 同族）。
-    const was = isWrap;
-    setIsWrap(false);
-    try {
-      const { right, surface } = mountHost({ wrap: false });
-      setIsWrap(true); // 用户此刻在设置里打开换行（`applyWrapToTabs` 走的是同一颗 Compartment）
-      surface.dispose();
-      expect(wrapsLines(right.state), "还值必须在落笔那一刻读设置").toBe(true);
+      expect(wrapsLines(right.state), "折行归全局设置，旁路拆掉不碰它").toBe(false);
     } finally {
       setIsWrap(was);
     }
@@ -966,10 +960,11 @@ describe("B462 · 右缘差异概览（VS Code 的 diffOverview）", () => {
     expect(marksOf(host, "modified")).toHaveLength(1);
   });
 
-  it("B462 · 行号槽与正文同色：上游 marginClassName 的 gutter-insert / gutter-delete", () => {
+  it("B462 · 行号槽是行级差异色唯一落点：上游 marginClassName 的 gutter-insert / gutter-delete", () => {
     const { left, right } = mountSurfacePair();
     // 上游 `registrations.contribution.ts` 的 line-insert / line-delete 都带
-    // `marginClassName: 'gutter-insert' / 'gutter-delete'` ⇒ 行号槽与正文同一条差异色。
+    // `marginClassName: 'gutter-insert' / 'gutter-delete'` ⇒ 行号槽吃行级差异色；
+    // 代码行区不再铺整行底色（用户口径），行级类只留作语义标记。
     // CM6 侧由 `lineNumberMarkers` 落在整格行号元素上。
     const dels = [...left.dom.querySelectorAll<HTMLElement>(".cm-lineNumbers .cm-gutterElement")];
     expect(
@@ -982,14 +977,14 @@ describe("B462 · 右缘差异概览（VS Code 的 diffOverview）", () => {
     ).toHaveLength(0);
     expect(
       left.dom.querySelectorAll(".cm-line.diff-line-delete").length,
-      "正文色带照旧（左栏两行删除）",
+      "正文那两行仍带行级语义类（代码行区不再铺底色，判据在样式段）",
     ).toBe(2);
   });
 
-  it("B462 · 纯增 / 纯删 = 整行字符层（上游 diffWholeLineAdd / Delete），行内不再散标", () => {
+  it("B462 · 纯增 / 纯删 = 行级类（上游 diffWholeLineAdd / Delete），行内不再散标", () => {
     const { right, left } = mountSurfacePair({ left: "A\nZ", right: "A\n新\nZ" });
     const line = right.dom.querySelectorAll<HTMLElement>(".cm-line")[1];
-    expect(line.className, "整行：行底色 + 字符色两层（类名由 face 发）").toContain(
+    expect(line.className, "整行块：行级语义类（行号槽与记号的来源）").toContain(
       "diff-line-insert",
     );
     expect(line.className).toContain("diff-whole-insert");
@@ -999,7 +994,7 @@ describe("B462 · 右缘差异概览（VS Code 的 diffOverview）", () => {
     ).toBeNull();
     expect(
       left.dom.querySelector(".cm-line.diff-whole-delete"),
-      "对侧没有真行 ⇒ 没有整行字符层",
+      "对侧没有真行 ⇒ 没有整行语义类",
     ).toBeNull();
   });
 
@@ -1016,7 +1011,7 @@ describe("B462 · 右缘差异概览（VS Code 的 diffOverview）", () => {
     }
   });
 
-  it("B462 · 4px 差异列照旧占位（列宽不变），差异底色只落在行号槽那一列", () => {
+  it("B462 · 4px 差异列照旧占位（列宽不变），行级差异色只落在行号槽那一列", () => {
     // 生产路径（makeDiffInstance / makeTabState）的 gutter 次序是
     // 行号 24.4px → cm-diffGutter 4px（gutterDiff 空列）→ 记号 11px → 正文。
     // 折叠槽关掉之后这几列的宽度也不该变（列宽与有没有标记无关），变的只有「谁上色」。
@@ -1027,17 +1022,17 @@ describe("B462 · 右缘差异概览（VS Code 的 diffOverview）", () => {
     ).toHaveLength(1);
     expect(
       right.dom.querySelectorAll(".cm-lineNumbers .cm-gutterElement.diff-gutter-insert"),
-      "行号槽这一列承载行底色类",
+      "行号槽这一列承载行级差异色类",
     ).toHaveLength(1);
     for (const gutter of [".cm-diffGutter", ".cm-diffSigns"]) {
       expect(
         right.dom.querySelector(`${gutter} .cm-gutterElement[class*='diff-gutter-']`),
-        `${gutter} 这一列不承载行底色类（上游只有 marginClassName 那一格）`,
+        `${gutter} 这一列不承载行级差异色类（上游只有 marginClassName 那一格）`,
       ).toBeNull();
     }
     expect(
       right.dom.querySelectorAll(".cm-line.diff-line-insert"),
-      "色带只留在代码行",
+      "代码行只剩语义类（底色规则已由用户口径去掉）",
     ).toHaveLength(1);
   });
 });
@@ -1206,10 +1201,11 @@ describe("B463 · 概览滑块 = 右栏滚动条（ScrollbarState.isNeeded 语�
     surface.syncBlocks();
     expect(viewport.style.height, "floor(200² / 400) = 100").toBe("100px");
 
-    // 打开折行：实测行盒变 200/行（轴 800），刷新跟着重画。
+    // 打开折行：实测行盒变 200/行（轴 800），刷新跟着重画（全局开关走 scheduleAlign 的下一帧）。
     fakeLines(right, 200);
     fakeLines(surface.left, 200);
-    surface.setWrapEnabled(true);
+    setGlobalWrap(true);
+    await frames();
     expect(viewport.style.height, "floor(200² / 800) = 50").toBe("50px");
 
     // 窗口缩放走 `onWindowResize` → `scheduleAlign` 的 rAF 落地后才重画。
@@ -1250,13 +1246,13 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
   const css = (): string => stripCssComments(srcOf("src/diff/diff.css"));
 
   /**
-   * 只取 Task 3 那一段（`.diff-line-insert` → Task 7 的折条规则之前）：前面那一格是 Task 1
+   * 只取差异态那一段（`.diff-char-insert` → Task 7 的折条规则之前）：前面那一格是 Task 1
    * 的两栏骨架。折条是**外壳**不是差异态（它自己不许吃那三颗色），所以它的色由下面 Task 7
    * 那一条单独判 —— 两段的 token 清单天然不同， census 必须分段做，不许把整份文件一锅端。
    */
   const section = (): string => {
     const code = css();
-    const at = code.indexOf(".diff-line-insert");
+    const at = code.indexOf(".diff-char-insert");
     if (at < 0) return "";
     const end = code.indexOf(".diff-fold-bar");
     return end < 0 ? code.slice(at) : code.slice(at, end);
@@ -1267,7 +1263,7 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
     expect(s, "锚点选择器得真在文件里（截空了后面的判据全是假绿）").not.toBe("");
     expect(s).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
     const tokens = new Set([...s.matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1]));
-    // 行底色与字符底色是上游四个不同的 key（`editorColors.ts`）⇒ 各吃各的 token；
+    // 字符底色与行号槽底色是上游四个不同的 key（`editorColors.ts`）⇒ 各吃各的 token；
     // 占位块的斜纹走上游 `diffEditor.diagonalFill` 那一颗（也不是差异色）。
     expect([...tokens].sort()).toEqual([
       "--diff-char-add",
@@ -1281,7 +1277,7 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
     );
   });
 
-  it("B462 · 两套底色取上游默认值：行 20% + 字符 20%，两层叠加而不是字符色替换行底色", () => {
+  it("B462 · 两套底色取上游默认值：行号槽 20% + 字符 20%，各吃各的 token", () => {
     const all = css();
     // 上游 `defaultInsertColor` / `defaultRemoveColor` = rgba(155,185,85,.2) / rgba(255,0,0,.2)。
     expect(all).toContain("--diff-line-add: #9bb95533");
@@ -1307,23 +1303,28 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
         `var(${token})`,
       );
     }
-    expect(s, "上游默认深/浅主题没有描边（只有 HC 才给虚线框）").not.toMatch(
-      /(^|[\s;{])(border|outline)\s*:/,
-    );
+    const charRule = ruleBlock(css(), ".panel-host.is-diff .diff-char-insert");
+    expect(charRule, "字符色只铺底，不靠描边").not.toMatch(/(^|[\s;{])(border|outline)\s*:/);
     expect(s, "没有第三种「修改行」配色").not.toMatch(/--diff-mod|diff-line-modify/);
   });
 
-  it("B461 · 底色不打特异度战：走 background-image 叠层，与当前行底色共存（R21）", () => {
+  it("B461 · 代码行区不铺差异底色，字符色仍走 background-image（R21）", () => {
     const code = css();
+    // 用户口径：整行 red / green 会盖住语法高亮 ⇒ 代码行区只留字符级差异。
+    for (const kind of ["insert", "delete"]) {
+      expect(
+        ruleBlock(code, `.panel-host.is-diff .cm-line.diff-line-${kind}`),
+        "正文档不许再铺行底色（行号槽那一列另有规则）",
+      ).toBe("");
+    }
     const kindToToken: Record<string, string> = {
-      insert: "--diff-line-add",
-      delete: "--diff-line-del",
+      insert: "--diff-char-add",
+      delete: "--diff-char-del",
     };
     for (const [kind, token] of Object.entries(kindToToken)) {
-      // 选择器 = `.panel-host.is-diff .cm-line.diff-line-X`（0-4-0，与 global.css 里 B425 那颗
-      // `.panel-host .cm-editor .cm-line.cm-find-range` 同形 —— 仓库给「整行叠一层透明色」定的就是这一档）。
-      const block = ruleBlock(code, `.panel-host.is-diff .cm-line.diff-line-${kind}`);
-      expect(block, `底色规则得真在（判不到东西的 not.toMatch 是假绿）`).not.toBe("");
+      // 选择器 = `.panel-host.is-diff .diff-char-X`（0-3-0，落在行内 span 上）。
+      const block = ruleBlock(code, `.panel-host.is-diff .diff-char-${kind}`);
+      expect(block, `字符色规则得真在（判不到东西的 not.toMatch 是假绿）`).not.toBe("");
       expect(block).toMatch(/background-image:\s*linear-gradient\(/);
       expect(block).toContain(`var(${token})`);
       // 关键的一条：这一族**不碰** `background` / `background-color`。那两个属性是
@@ -2302,7 +2303,7 @@ describe("B464 · 右缘概览的标记层（选区/光标/查找命中/同词�
 describe("B461 · 行内字符级差异的装饰与样式", () => {
   const css = (): string => stripCssComments(srcOf("src/diff/diff.css"));
 
-  it("新稿侧只把改动的字符包进 .diff-char-insert（行底色照旧在）", () => {
+  it("新稿侧只把改动的字符包进 .diff-char-insert（代码行不再铺整行底色）", () => {
     const blocks = diffBlocks("const value = old;", "const value = new;");
     const m = mountFace("modified", blocks, "const value = new;", {
       original: [{ line: 1, from: 14, to: 17 }],
@@ -2310,7 +2311,7 @@ describe("B461 · 行内字符级差异的装饰与样式", () => {
     });
     const span = m.view.contentDOM.querySelector<HTMLElement>(".diff-char-insert");
     expect(span?.textContent, "字符级只盖真正变了的那几个字符").toBe("new");
-    expect(m.lineEl(1).className, "整行底色是外面那一层，不因为字符级标记而消失").toContain(
+    expect(m.lineEl(1).className, "行级语义类仍在，但不再带整行底色规则").toContain(
       "diff-line-insert",
     );
   });
@@ -2326,13 +2327,12 @@ describe("B461 · 行内字符级差异的装饰与样式", () => {
     );
   });
 
-  it("行内底色比整行更深：字符层叠在行底色之上，两层各吃上游对应的那一颗 key", () => {
+  it("行内字符色与行号槽底色各吃上游对应的那一颗 key，不互相借", () => {
     const insert = ruleBlock(css(), ".panel-host.is-diff .diff-char-insert", undefined, true);
     expect(insert, "规则得真在").toContain("var(--diff-char-add)");
     const del = ruleBlock(css(), ".panel-host.is-diff .diff-char-delete", undefined, true);
     expect(del).toContain("var(--diff-char-del)");
-    // 行底色与字符底色是上游四个不同的 key（`editorColors.ts`），不是把行色再调深一档；
-    // 两层都是带 alpha 的 background，叠出来的更深一档由 alpha 合成给出。
+    // 行号槽行级底色与字符底色是上游不同的 key（`editorColors.ts`），不是把行号槽色再调深一档。
     expect(insert + del).not.toContain("--diff-line-");
     expect(insert + del).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
   });
@@ -2345,7 +2345,9 @@ describe("B461 · 行内字符级差异的装饰与样式", () => {
     });
     const span = m.view.contentDOM.querySelector<HTMLElement>(".diff-char-insert");
     expect(span?.textContent, "整行字符层盖满这一行的正文").toBe("new");
-    expect(m.lineEl(2).className, "行底色那一层照旧在").toContain("diff-line-insert");
+    expect(m.lineEl(2).className, "行级语义类照旧在（不再铺整行底色）").toContain(
+      "diff-line-insert",
+    );
   });
 
   it("内联改动为空的那一侧画 diff-range-empty 细条（行内 widget，零长区间）", () => {

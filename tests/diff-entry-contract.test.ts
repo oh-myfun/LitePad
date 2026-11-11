@@ -71,7 +71,7 @@ describe("B461 · 差异步进两条命令进表（Task 4 Step 5/6）", () => {
       keys: ["Shift+Alt+F5"],
     });
     // 表里 `diff.` 打头的命令到此为止：Task 4 那两条步进 + Task 5 的 A 档入口 +
-    // Task 8 那几条动作键 + 后续轮的换行/同步滚动两颗开关。
+    // Task 8 那几条动作键 + 后续轮的同步滚动开关。折行没有格内命令 —— 它复用全局设置。
     // 多出一条没人认领的就要发红 —— 键位表里躺着一条没人分发的命令 = 命令面板里点不动的死键。
     expect(COMMANDS.filter((c) => c.id.startsWith("diff.")).map((c) => c.id)).toEqual([
       "diff.nextChange",
@@ -82,7 +82,6 @@ describe("B461 · 差异步进两条命令进表（Task 4 Step 5/6）", () => {
       "diff.collapseAll",
       "diff.showAll",
       "diff.swapSides",
-      "diff.toggleWrap",
       "diff.toggleSyncScroll",
       "diff.refresh",
     ]);
@@ -543,7 +542,6 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
       diff: {
         ignoreTrimWhitespace: true,
         collapseUnchanged: false,
-        wrap: false,
         syncScroll: true,
         swappable: false,
         ...over,
@@ -648,7 +646,7 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     const { state, comps } = editorMod.makeTabState(
       texts.right,
       null,
-      { dark: false, wrap: true, perf: perfMod.perfProfileFor("normal") },
+      { dark: false, wrap: false, perf: perfMod.perfProfileFor("normal") },
       () => {},
     );
     const mk = (kind: "editor" | "diff"): Tab => ({
@@ -766,7 +764,6 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     expect(data.diff).toEqual({
       ignoreTrimWhitespace: false,
       collapseUnchanged: true,
-      wrap: false,
       syncScroll: true,
       swappable: false,
     });
@@ -779,15 +776,15 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     ).toBeUndefined();
   });
 
-  it("B461 · 「⋯」收着低频的几条：交换左右 / 全部折叠 / 自动换行 / 同步滚动 / 刷新；A 档交换置灰", () => {
+  it("B461 · 「⋯」收着低频的几条：交换左右 / 全部折叠 / 同步滚动 / 刷新；A 档交换置灰", () => {
     const files = mountDiffPanel("files");
     const items = groupMenuOf(files.panel);
     expect(labelsOf(items)).toEqual(
-      expect.arrayContaining(["交换左右", "全部折叠", "自动换行", "同步滚动", "刷新"]),
+      expect.arrayContaining(["交换左右", "全部折叠", "同步滚动", "刷新"]),
     );
-    // 两颗纯开关带 `checked`，且出厂值照 VS Code：换行关、同步滚动开
-    // （用户点名：菜单里不能只有一个点了不知道开没开的动作）。
-    expect(items.find((i) => i.label === "自动换行")).toMatchObject({ checked: false });
+    // 自动换行不在这里：差异格复用「查看 → 自动换行」那颗全局开关。
+    expect(labelsOf(items)).not.toContain("自动换行");
+    // 同步滚动带 `checked`，出厂开（用户点名：菜单里不能只有一个点了不知道开没开的动作）。
     expect(items.find((i) => i.label === "同步滚动")).toMatchObject({ checked: true });
     expect(labelsOf(items), "④·7：并排⇄内联既不是图标键也不给子菜单").not.toContain("Diff View");
     expect(items.find((i) => i.label === "交换左右")).toMatchObject({ disabled: false });
@@ -803,17 +800,15 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     ).not.toBe("交换左右");
   });
 
-  it("B461 · 菜单里那两颗开关点了真翻面，`checked` 跟着现状走（不是画个死勾）", () => {
+  it("B461 · 菜单里那颗同步滚动开关点了真翻面，`checked` 跟着现状走（不是画个死勾）", () => {
     const m = mountDiffPanel("baseline");
     const pick = (label: string): (() => void) =>
       groupMenuOf(m.panel).find((i) => i.label === label)!.onSelect!;
 
-    pick("自动换行")();
-    expect(m.s.wrapEnabled(), "点下去走 surface，不是菜单自己记账").toBe(true);
     expect(
       groupMenuOf(m.panel).find((i) => i.label === "自动换行"),
-      "菜单每次点开按那一刻求值 ⇒ 勾跟着翻（B422 那条快照过期的教训）",
-    ).toMatchObject({ checked: true });
+      "差异格没有自己的自动换行条目 —— 折行复用「查看 → 自动换行」那颗全局开关",
+    ).toBeUndefined();
 
     pick("同步滚动")();
     expect(m.s.syncScrollEnabled()).toBe(false);
@@ -843,13 +838,9 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     );
   });
 
-  it("B461 · 收进菜单不碰快捷键：命令 id 照旧在表里，Alt+Z 仍能翻换行", () => {
+  it("B461 · 差异格没有自己的折行命令：`diff.toggleWrap` 不在表里，同步滚动照旧可分发", () => {
     const m = mountDiffPanel("baseline");
-    // 快捷键路径走的是 `applyDiffCommand`（main.ts 的 runShortcut ⇒ actions 的唯一 switch），
-    // 与图标键/菜单同一条落点 —— 按钮收进菜单后这条不许断路。
-    expect(effectiveKeys("diff.toggleWrap", {}), "换行的键位没被搬动").toEqual(["Alt+Z"]);
-    actions.applyDiffCommand(0, "diff.toggleWrap");
-    expect(m.s.wrapEnabled(), "Alt+Z 那条命令仍能真翻面").toBe(true);
+    expect(commandById("diff.toggleWrap"), "折行只有全局那一颗开关").toBeUndefined();
     actions.applyDiffCommand(0, "diff.toggleSyncScroll");
     expect(m.s.syncScrollEnabled()).toBe(false);
   });
@@ -886,7 +877,7 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     expect(run, "分发里不许抄第二份动作清单").not.toMatch(/case "collapseAll":/);
     expect(
       stripLineComments(fnBody(main, "shortcutApplies")),
-      "六条共用「这一格正显示差异标签」那道闸（不成时不抢键）",
+      "那几条共用「这一格正显示差异标签」那道闸（不成时不抢键）",
     ).toMatch(/case "diff\.toggleWhitespace":[\s\S]{0,240}?return diffTabActive\(\);/);
 
     expect(srcOf("src/shell/splitview.ts")).toMatch(
@@ -931,13 +922,6 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     expect(m.s.foldRanges()).toEqual([]);
     actions.applyDiffAction(0, "collapseAll");
     expect(m.s.foldRanges().length).toBeGreaterThan(0);
-
-    // 收进菜单的两颗开关：默认值照 VS Code（换行关、同步滚动开），动作本身照旧落账。
-    expect(m.s.wrapEnabled(), "VS Code 的 diffEditor.wordWrap 出厂是 off").toBe(false);
-    actions.applyDiffAction(0, "wrap");
-    expect(m.s.wrapEnabled()).toBe(true);
-    actions.applyDiffAction(0, "wrap");
-    expect(m.s.wrapEnabled()).toBe(false);
 
     expect(m.s.syncScrollEnabled(), "VS Code 的差异编辑器恒同步").toBe(true);
     actions.applyDiffAction(0, "syncScroll");

@@ -357,11 +357,8 @@ export const COMMANDS: CommandDef[] = [
   { id: "diff.collapseAll", label: "全部折叠未改动的内容", group: "差异", keys: [] },
   { id: "diff.showAll", label: "全部展开未改动的内容", group: "差异", keys: [] },
   { id: "diff.swapSides", label: "交换左右", group: "差异", keys: [] },
-  // B461 后续轮：自动换行与同步滚动。换行那颗按 VS Code 的 `editor.action.toggleWordWrap`
-  // 取 `Alt+Z`（这一颗在本应用此前无人占用，`owners()` 用例断过）；它只在差异格生效 ——
-  // 普通标签的换行仍归设置页那颗 `word_wrap`。同步滚动在 VS Code 里**恒开、没有键位**，
-  // 本项目的开关是额外的可见入口，同样 `keys: []`。
-  { id: "diff.toggleWrap", label: "自动换行", group: "差异", keys: ["Alt+Z"] },
+  // B461 后续轮：同步滚动。折行不单独给键 —— 差异格复用「查看 → 自动换行」那颗全局开关。
+  // 同步滚动在 VS Code 里**恒开、没有键位**，本项目的开关是额外的可见入口，`keys: []`。
   { id: "diff.toggleSyncScroll", label: "同步滚动", group: "差异", keys: [] },
   { id: "diff.refresh", label: "刷新差异", group: "差异", keys: [] },
 

@@ -1,4 +1,4 @@
-// B461 · Task 3 —— 差异面的装饰层（一栏之内的行底色 / 占位块 / 中间指示带）。
+// B461 · Task 3 —— 差异面的装饰层（一栏之内的行号槽底色 / 行内字符色 / 占位块 / 中间指示带）。
 //
 // 设计稿 ⑥ 的「同源」约束落在这里：**本文件只消费 `blocks.ts` 交出来的 `DiffBlock[]`，
 // 自己一行都不重新对齐**（对齐只在 `src/diff/align.ts` 算一遍，4px 标注与差异面共用那颗）。
@@ -46,7 +46,7 @@ import type { DiffSide } from "./model";
 export interface SideMark {
   line: number;
   kind: Extract<DiffKind, "insert" | "delete">;
-  /** 这一行整行都是「对侧没有」的（纯增 / 纯删块）：渲染层要铺满整行的字符底色。 */
+  /** 这一行整行都是「对侧没有」的（纯增 / 纯删块）：行级类多带一颗 `diff-whole-*`。 */
   whole: boolean;
 }
 
@@ -549,7 +549,7 @@ function signIcon(kind: "insert" | "delete"): HTMLElement {
   return icon;
 }
 
-/** 这一栏的记号（与行底色同一份来源，越界丢弃口径同上）。 */
+/** 这一栏的记号（与行号槽底色同一份来源，越界丢弃口径同上）。 */
 function buildSigns(doc: Text, side: DiffSide, blocks: DiffBlock[]): RangeSet<GutterMarker> {
   const ranges: Range<GutterMarker>[] = [];
   for (const m of sideLineMarks(blocks, side)) {
@@ -595,7 +595,7 @@ function buildGutters(doc: Text, side: DiffSide, blocks: DiffBlock[]): RangeSet<
   return RangeSet.of(ranges, true);
 }
 
-/** 装饰那一臂的四份画法：整行底色 + 记号槽字形 + 行号槽底色 + 行内字符差异。 */
+/** 装饰那一臂的四份画法：行级语义类 + 记号槽字形 + 行号槽底色 + 行内字符差异。 */
 interface FaceValue {
   lines: RangeSet<Decoration>;
   signs: RangeSet<GutterMarker>;
@@ -621,8 +621,9 @@ function buildFaceValue(
 /**
  * 行内字符级差异：整块字符 diff 的结果（`inline.ts`），两侧各标自己那侧。
  *
- * 纯增 / 纯删块由行级类 `diff-whole-*` 铺满整行（上游 `diffWholeLineAdd / Delete`），
- * 这里只处理两侧都有行的块：字符改动标成行内 mark，跨行改动的非末段补到右缘。
+ * 纯增 / 纯删块由行级类 `diff-whole-*` 标出（上游 `diffWholeLineAdd / Delete` 的整行身份；
+ * 用户口径下代码行区不再铺整行底色），这里只处理两侧都有行的块：字符改动标成行内 mark，
+ * 跨行改动的非末段补到右缘。
  *
  * 类名照上游的 `char-insert` / `char-delete`（`registrations.contribution.ts`），本项目的
  * 前缀是 `diff-char-*`（与 `diff-line-*` 同族）。装饰是**行内 mark**、不是整行线装饰：
