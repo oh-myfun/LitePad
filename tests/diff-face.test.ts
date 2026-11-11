@@ -1,15 +1,15 @@
 // @vitest-environment jsdom
-// B461 · Task 3 —— 两侧的行内字符色、行号槽底色、中间指示带与对侧占位块（`src/diff/face.ts`）。
+// B461 · Task 3 —— 两侧的行底色、行内字符色、记号槽与对侧占位块（`src/diff/face.ts`）。
 //
-// 设计稿 ⑥：改动由行号槽底色、`+`/`−` 记号与行内字符色表达（代码行区不铺整行底色）、
+// 设计稿 ⑥：改动由行底色、`+`/`−` 记号与行内字符色表达（行号槽不铺差异底色）、
 // 删除行在右栏用占位块、左栏用真行 —— **两侧必须行行对齐**，否则跳块与肉眼比对都会错位。
 //
 // 本文件的分层（与 face.ts 的责任一一对应）：
 //   1) 纯函数 `sideLineMarks` / `sideGaps`：一块（`DiffBlock`）在**某一栏**落在哪些行、
 //      要在第几行之后补几行空位。它们只遍历 `blocks.ts` 交出来的块 ⇒ 与 4px 标注同源，
 //      这一层不看 DOM、不看 view，向量直接钉死。
-//   2) 装到 view 上的那一臂（`diffFace`）：行装饰 + 块 widget + 记号 + 行号槽底色。
-//   3) 样式段（`src/diff/diff.css`）：行号槽底色 / 字符底色取上游 `editorColors.ts` 的默认值
+//   2) 装到 view 上的那一臂（`diffFace`）：行装饰 + 块 widget + 记号（行号槽不上色）。
+//   3) 样式段（`src/diff/diff.css`）：行底色 / 字符底色取上游 `editorColors.ts` 的默认值
 //      （分侧语义没有「修改行」），概览色带另吃 `--diff-add` / `--diff-del`；
 //      这一段里一个裸十六进制都不许出现。
 //
@@ -968,25 +968,24 @@ describe("B462 · 右缘差异概览（VS Code 的 diffOverview）", () => {
     expect(marksOf(host, "modified")).toHaveLength(1);
   });
 
-  it("B462 · 行号槽是行级差异色唯一落点：上游 marginClassName 的 gutter-insert / gutter-delete", () => {
+  it("B462 · 行号槽不承载差异底色：色带只落在正文行上", () => {
     const { left, right } = mountSurfacePair();
-    // 上游 `registrations.contribution.ts` 的 line-insert / line-delete 都带
-    // `marginClassName: 'gutter-insert' / 'gutter-delete'` ⇒ 行号槽吃行级差异色；
-    // 代码行区不再铺整行底色（用户口径），行级类只留作语义标记。
-    // CM6 侧由 `lineNumberMarkers` 落在整格行号元素上。
-    const dels = [...left.dom.querySelectorAll<HTMLElement>(".cm-lineNumbers .cm-gutterElement")];
+    // 用户口径：VS Code 的色带在代码行上，行号槽不上色。
+    // 两层判据：行号区 / 记号槽的 DOM 类里不许出现 `diff-gutter-*`（face.ts 不再发），
+    // 正文行仍带行级语义类（底色规则在样式段，另判）。
+    const gutterEls = [...left.dom.querySelectorAll<HTMLElement>(".cm-gutterElement")];
     expect(
-      dels.filter((el) => el.classList.contains("diff-gutter-delete")).length,
-      "左栏删掉的两行，行号槽也上色",
-    ).toBe(2);
-    expect(
-      right.dom.querySelectorAll(".cm-lineNumbers .cm-gutterElement.diff-gutter-insert"),
-      "右栏这一侧没有真行（空位在缝里）",
+      gutterEls.filter((el) => el.className.includes("diff-gutter-")),
+      "行号槽 / 记号槽都不带差异底色类",
     ).toHaveLength(0);
     expect(
       left.dom.querySelectorAll(".cm-line.diff-line-delete").length,
-      "正文那两行仍带行级语义类（代码行区不再铺底色，判据在样式段）",
+      "左栏删掉的两行在正文里带行级语义类",
     ).toBe(2);
+    expect(
+      right.dom.querySelectorAll(".cm-line.diff-line-insert").length,
+      "右栏这一侧没有真行（空位在缝里）",
+    ).toBe(0);
   });
 
   it("B462 · 纯增 / 纯删 = 行级类（上游 diffWholeLineAdd / Delete），行内不再散标", () => {
@@ -1019,29 +1018,25 @@ describe("B462 · 右缘差异概览（VS Code 的 diffOverview）", () => {
     }
   });
 
-  it("B462 · 4px 差异列照旧占位（列宽不变），行级差异色只落在行号槽那一列", () => {
+  it("B462 · 4px 差异列照旧占位（列宽不变），行级差异色只落在正文行", () => {
     // 生产路径（makeDiffInstance / makeTabState）的 gutter 次序是
     // 行号 24.4px → cm-diffGutter 4px（gutterDiff 空列）→ 记号 11px → 正文。
-    // 折叠槽关掉之后这几列的宽度也不该变（列宽与有没有标记无关），变的只有「谁上色」。
+    // 折叠槽关掉之后这几列的宽度也不该变（列宽与有没有标记无关）。
     const { right } = mountSurfacePair({ left: "A\nZ", right: "A\n增1\nZ" });
     expect(
       right.dom.querySelectorAll(".cm-gutter.cm-diffGutter"),
       "前置：4px 差异列得真的在（不在的话这条判据是空转）",
     ).toHaveLength(1);
     expect(
-      right.dom.querySelectorAll(".cm-lineNumbers .cm-gutterElement.diff-gutter-insert"),
-      "行号槽这一列承载行级差异色类",
+      right.dom.querySelectorAll(".cm-line.diff-line-insert"),
+      "正文行承载行级差异类",
     ).toHaveLength(1);
-    for (const gutter of [".cm-diffGutter", ".cm-diffSigns"]) {
+    for (const gutter of [".cm-lineNumbers", ".cm-diffGutter", ".cm-diffSigns"]) {
       expect(
-        right.dom.querySelector(`${gutter} .cm-gutterElement[class*='diff-gutter-']`),
-        `${gutter} 这一列不承载行级差异色类（上游只有 marginClassName 那一格）`,
+        right.dom.querySelector(`${gutter} [class*='diff-gutter-']`),
+        `${gutter} 这一列不承载行级差异色类（色带只留在正文）`,
       ).toBeNull();
     }
-    expect(
-      right.dom.querySelectorAll(".cm-line.diff-line-insert"),
-      "代码行只剩语义类（底色规则已由用户口径去掉）",
-    ).toHaveLength(1);
   });
 });
 
@@ -1233,7 +1228,7 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
     expect(s, "锚点选择器得真在文件里（截空了后面的判据全是假绿）").not.toBe("");
     expect(s).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
     const tokens = new Set([...s.matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1]));
-    // 字符底色与行号槽底色是上游四个不同的 key（`editorColors.ts`）⇒ 各吃各的 token；
+    // 字符底色与行底色是上游四个不同的 key（`editorColors.ts`）⇒ 各吃各的 token；
     // 占位块的斜纹走上游 `diffEditor.diagonalFill` 那一颗（也不是差异色）。
     expect([...tokens].sort()).toEqual([
       "--diff-char-add",
@@ -1247,7 +1242,7 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
     );
   });
 
-  it("B462 · 两套底色取上游默认值：行号槽 20% + 字符 20%，各吃各的 token", () => {
+  it("B462 · 两套底色取上游默认值：行底色 20% + 字符 20%，各吃各的 token", () => {
     const all = css();
     // 上游 `defaultInsertColor` / `defaultRemoveColor` = rgba(155,185,85,.2) / rgba(255,0,0,.2)。
     expect(all).toContain("--diff-line-add: #9bb95533");
@@ -1278,13 +1273,27 @@ describe("B461 · 差异段样式（Task 3 追加那一段）", () => {
     expect(s, "没有第三种「修改行」配色").not.toMatch(/--diff-mod|diff-line-modify/);
   });
 
-  it("B461 · 代码行区不铺差异底色，字符色仍走 background-image（R21）", () => {
+  it("B461 · 正文行铺差异底色、行号槽不铺，底色仍走 background-image（R21）", () => {
     const code = css();
-    // 用户口径：整行 red / green 会盖住语法高亮 ⇒ 代码行区只留字符级差异。
-    for (const kind of ["insert", "delete"]) {
+    // 用户口径：色带在代码行上（VS Code 同款），行号槽不上色。
+    const kindToLineToken: Record<string, string> = {
+      insert: "--diff-line-add",
+      delete: "--diff-line-del",
+    };
+    for (const [kind, token] of Object.entries(kindToLineToken)) {
+      const block = ruleBlock(code, `.panel-host.is-diff .cm-line.diff-line-${kind}`);
+      expect(block, "行底色规则得真在（判不到东西的 not.toMatch 是假绿）").not.toBe("");
+      expect(block).toMatch(/background-image:\s*linear-gradient\(/);
+      expect(block).toContain(`var(${token})`);
+      expect(block, "不许再声明 background 简写/长写：那才是与当前行抢同一个属性").not.toMatch(
+        /(^|[\s;{])background(-color)?\s*:/,
+      );
       expect(
-        ruleBlock(code, `.panel-host.is-diff .cm-line.diff-line-${kind}`),
-        "正文档不许再铺行底色（行号槽那一列另有规则）",
+        ruleBlock(
+          code,
+          `.panel-host.is-diff .cm-lineNumbers .cm-gutterElement.diff-gutter-${kind}`,
+        ),
+        "行号槽不许有差异底色规则（色带只留在正文）",
       ).toBe("");
     }
     const kindToToken: Record<string, string> = {
@@ -1509,22 +1518,25 @@ describe("B462 · 记号槽与右缘概览条样式", () => {
     expect(css(), "HC 档另给纯色（hcDark 白底黑字）").toContain("--diff-revert-bg: #ffffff");
     expect(css(), "HC 亮档黑底白字").toContain("--diff-revert-bg: #000000");
 
-    // 行号槽与正文同色（上游 `marginClassName`）：`.diff-gutter-*` 那颗类现在真的落在
-    // 整格行号元素上，样式段必须给出与之配套的底色规则（吃同一对行底色 token）。
-    const gutterInsert = ruleBlock(
+    // 行号槽不承载差异底色（用户口径）：样式段里不许有任何 `.diff-gutter-*` 规则；
+    // 正文行底色规则照旧在，吃同一对行底色 token。
+    expect(css(), "行号槽不许有差异底色规则（色带只留在正文）").not.toMatch(
+      /\.diff-gutter-(insert|delete)\s*\{/,
+    );
+    const lineInsert = ruleBlock(
       css(),
-      ".panel-host.is-diff .cm-lineNumbers .cm-gutterElement.diff-gutter-insert",
+      ".panel-host.is-diff .cm-line.diff-line-insert",
       undefined,
       true,
     );
-    expect(gutterInsert, "行号槽新增色规则得真在").toContain("var(--diff-line-add)");
-    const gutterDelete = ruleBlock(
+    expect(lineInsert, "正文行新增色规则得真在").toContain("var(--diff-line-add)");
+    const lineDelete = ruleBlock(
       css(),
-      ".panel-host.is-diff .cm-lineNumbers .cm-gutterElement.diff-gutter-delete",
+      ".panel-host.is-diff .cm-line.diff-line-delete",
       undefined,
       true,
     );
-    expect(gutterDelete, "行号槽删除色规则得真在").toContain("var(--diff-line-del)");
+    expect(lineDelete, "正文行删除色规则得真在").toContain("var(--diff-line-del)");
 
     // 回退列：每块一条竖线（上游 `.gutterItem .background`）+ 按钮悬停走 toolbarBackground。
     const rule = ruleBlock(css(), ".diff-revert-line", undefined, true);
@@ -2273,7 +2285,7 @@ describe("B464 · 右缘概览的标记层（选区/光标/查找命中/同词�
 describe("B461 · 行内字符级差异的装饰与样式", () => {
   const css = (): string => stripCssComments(srcOf("src/diff/diff.css"));
 
-  it("新稿侧只把改动的字符包进 .diff-char-insert（代码行不再铺整行底色）", () => {
+  it("新稿侧只把改动的字符包进 .diff-char-insert（行底色由行级类另铺）", () => {
     const blocks = diffBlocks("const value = old;", "const value = new;");
     const m = mountFace("modified", blocks, "const value = new;", {
       original: [{ line: 1, from: 14, to: 17 }],
@@ -2281,7 +2293,7 @@ describe("B461 · 行内字符级差异的装饰与样式", () => {
     });
     const span = m.view.contentDOM.querySelector<HTMLElement>(".diff-char-insert");
     expect(span?.textContent, "字符级只盖真正变了的那几个字符").toBe("new");
-    expect(m.lineEl(1).className, "行级语义类仍在，但不再带整行底色规则").toContain(
+    expect(m.lineEl(1).className, "行级语义类仍在，行底色由样式段那一族规则铺").toContain(
       "diff-line-insert",
     );
   });
@@ -2297,7 +2309,7 @@ describe("B461 · 行内字符级差异的装饰与样式", () => {
     );
   });
 
-  it("行内字符色与行号槽底色各吃上游对应的那一颗 key，不互相借", () => {
+  it("行内字符色与行底色各吃上游对应的那一颗 key，不互相借", () => {
     const insert = ruleBlock(css(), ".panel-host.is-diff .diff-char-insert", undefined, true);
     expect(insert, "规则得真在").toContain("var(--diff-char-add)");
     const del = ruleBlock(css(), ".panel-host.is-diff .diff-char-delete", undefined, true);
@@ -2315,7 +2327,7 @@ describe("B461 · 行内字符级差异的装饰与样式", () => {
     });
     const span = m.view.contentDOM.querySelector<HTMLElement>(".diff-char-insert");
     expect(span?.textContent, "整行字符层盖满这一行的正文").toBe("new");
-    expect(m.lineEl(2).className, "行级语义类照旧在（不再铺整行底色）").toContain(
+    expect(m.lineEl(2).className, "行级语义类照旧在（行底色由样式段铺）").toContain(
       "diff-line-insert",
     );
   });

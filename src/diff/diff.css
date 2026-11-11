@@ -294,7 +294,7 @@
   --diff-revert-fg: #ffffff;
 }
 
-/* 亮色档的字符底色比暗色高一档（上游 light = #9ccc2c40）；行号槽底色明暗相同，不另开。
+/* 亮色档的字符底色比暗色高一档（上游 light = #9ccc2c40）；行底色明暗相同，不另开。
    概览色带跟着亮色的字符底色走（同样 ×2 ⇒ 0.5）。 */
 :root[data-theme="light"] {
   --diff-char-add: #9ccc2c40;
@@ -303,9 +303,8 @@
   --diff-unchanged-shadow: #737373bf;
 }
 
-/* 代码行区**不铺**差异底色（用户口径）：整行 red / green 会盖住语法高亮，改动由行号槽
-   底色、`+` / `−` 记号与行内字符级差异表达。
-   ⚠️ 行内字符底色走 `background-image`（`linear-gradient(c, c)` 是一颗纯色层），**不碰**
+/* 行级差异色**只铺正文**（用户口径：VS Code 的色带在代码行上，行号槽不上色）。
+   ⚠️ 行底色与行内字符底色都走 `background-image`（`linear-gradient(c, c)` 是一颗纯色层），**不碰**
    `background` / `background-color`（R21）：那两个属性是当前行的 ——
    `.panel-host .cm-editor .cm-activeLine`（0-3-0），而 2026 两档的当前行**只有底色一种**指示
    （见 `global.css` 的 B381 分档注释）。在同一条声明里抢同一个属性，就只能靠加码特异度压它，
@@ -325,6 +324,32 @@
 
 .panel-host.is-diff .diff-char-delete {
   background-image: linear-gradient(var(--diff-char-del), var(--diff-char-del));
+}
+
+/* 行底色：整行一层 20% alpha 的增 / 删色（上游 `insertedLineBackground` /
+   `removedLineBackground`）。分侧语义照 VS Code：**没有「修改行」这一档** —— 原稿侧涂 del、
+   新稿侧涂 add，改块在两边各按自己那一侧上色。 */
+.panel-host.is-diff .cm-line.diff-line-insert {
+  background-image: linear-gradient(var(--diff-line-add), var(--diff-line-add));
+}
+
+.panel-host.is-diff .cm-line.diff-line-delete {
+  background-image: linear-gradient(var(--diff-line-del), var(--diff-line-del));
+}
+
+/* 纯增 / 纯删块：上游 `diffWholeLineAdd / Delete` 就是 `char-insert / char-delete` 的整行版
+   （`isWholeLine: true`），与行底色**两层叠着画**。这里在同一元素的 `background-image` 里
+   叠两层（先写的在上层），整行吃满字符色 —— 不再只覆盖文字宽度。 */
+.panel-host.is-diff .cm-line.diff-line-insert.diff-whole-insert {
+  background-image:
+    linear-gradient(var(--diff-char-add), var(--diff-char-add)),
+    linear-gradient(var(--diff-line-add), var(--diff-line-add));
+}
+
+.panel-host.is-diff .cm-line.diff-line-delete.diff-whole-delete {
+  background-image:
+    linear-gradient(var(--diff-char-del), var(--diff-char-del)),
+    linear-gradient(var(--diff-line-del), var(--diff-line-del));
 }
 
 /* 跨行改动的非末段：上游 `shouldFillLineOnLineBreak` 会把底色补到编辑区右缘。
@@ -370,19 +395,11 @@
   margin-right: -2px;
 }
 
-/* 行号槽是**行级**差异色唯一的落点（用户口径：代码行区不铺底色）：上游
-   `registrations.contribution.ts` 的 `line-insert` / `line-delete` 都带
-   `marginClassName: 'gutter-insert' / 'gutter-delete'`，`diffEditor/style.css` 给这两颗类铺
-   `diffEditorGutter.*LineBackground`，主题未覆盖时落到 `diffEditor.inserted/removedLineBackground`。
-   CM6 侧由 `lineNumberMarkers`（`face.ts` 的 `DiffGutterMarker.elementClass`）加在整格行号元素上。
-   同一手法走 `background-image`，不碰当前行的 `background-color`。 */
-.panel-host.is-diff .cm-lineNumbers .cm-gutterElement.diff-gutter-insert {
-  background-image: linear-gradient(var(--diff-line-add), var(--diff-line-add));
-}
-
-.panel-host.is-diff .cm-lineNumbers .cm-gutterElement.diff-gutter-delete {
-  background-image: linear-gradient(var(--diff-line-del), var(--diff-line-del));
-}
+/* 行号槽**不承载差异底色**：色带只留在正文，行号文字与 `+` / `−` 记号照旧。
+   ⚠️ 上游不是这样：`registrations.contribution.ts` 的 `line-insert` / `line-delete` 都带
+   `marginClassName: 'gutter-insert' / 'gutter-delete'`，但 `diffEditorGutter.*LineBackground`
+   注册时默认 `null`、主题不覆盖时那颗 CSS 变量不输出。本项目按产品口径不复刻 margin 上色，
+   `face.ts` 也不发 `.diff-gutter-*` 类 —— 这里刻意没有任何行号槽底色规则。 */
 
 /* `+` / `−` 记号槽：VS Code 的 `linesDecorationsClassName` 落在**行号右侧**的 line decorations
    栏（`EditorLayoutInfo` 的层次：glyphMarginLeft → lineNumbersLeft → decorationsLeft → contentLeft）。

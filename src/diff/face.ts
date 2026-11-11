@@ -1,4 +1,4 @@
-// B461 · Task 3 —— 差异面的装饰层（一栏之内的行号槽底色 / 行内字符色 / 占位块 / 中间指示带）。
+// B461 · Task 3 —— 差异面的装饰层（一栏之内的行底色 / 行内字符色 / 占位块 / 中间指示带）。
 //
 // 设计稿 ⑥ 的「同源」约束落在这里：**本文件只消费 `blocks.ts` 交出来的 `DiffBlock[]`，
 // 自己一行都不重新对齐**（对齐只在 `src/diff/align.ts` 算一遍，4px 标注与差异面共用那颗）。
@@ -34,7 +34,6 @@ import {
   EditorView,
   gutter,
   GutterMarker,
-  lineNumberMarkers,
   WidgetType,
 } from "@codemirror/view";
 import { type DiffBlock, type DiffKind, type LineAlignment } from "./blocks";
@@ -411,8 +410,8 @@ function buildFace(
  * `decorationsLeft` → `contentLeft`）：记号走 `linesDecorationsClassName`，落在**行号与正文
  * 之间**，不是行号左边。CM6 的 gutter 按 DOM 次序排 ⇒ 本槽不许再写 `order: -1`。
  *
- * 行号槽本身另由 `DiffGutterMarker` 上色（上游的 `marginClassName`），两者同源于
- * `sideLineMarks` —— 底色、记号与正文行号因此永远落在同一批行上。
+ * 行号槽**不承载差异底色**（用户口径：色带只留在正文，见 `diff.css`）；记号与正文行级类
+ * 同源于 `sideLineMarks` —— 记号与正文行号因此永远落在同一批行上。
  *
  * 记号按**视觉行**画：自动换行把一行折成几行，每个视觉行左边各一颗（用户口径）。CM6 的
  * gutter 一格只对一个文档行，所以一格内部填成等高竖排（`fillSignRows`），行数跟着**这一格
@@ -549,7 +548,7 @@ function signIcon(kind: "insert" | "delete"): HTMLElement {
   return icon;
 }
 
-/** 这一栏的记号（与行号槽底色同一份来源，越界丢弃口径同上）。 */
+/** 这一栏的记号（与行级类同一份来源，越界丢弃口径同上）。 */
 function buildSigns(doc: Text, side: DiffSide, blocks: DiffBlock[]): RangeSet<GutterMarker> {
   const ranges: Range<GutterMarker>[] = [];
   for (const m of sideLineMarks(blocks, side)) {
@@ -559,47 +558,10 @@ function buildSigns(doc: Text, side: DiffSide, blocks: DiffBlock[]): RangeSet<Gu
   return RangeSet.of(ranges, true);
 }
 
-/**
- * 行号槽（margin）的差异底色：上游 `line-insert` / `line-delete` 同时带
- * `marginClassName: 'gutter-insert' / 'gutter-delete'`（`registrations.contribution.ts`），
- * 也就是行号那一列跟着代码区一起上色。CM6 的 `lineNumberMarkers` 把 `elementClass`
- * 加在**整格**行号元素上，正好是这层 margin。
- */
-class DiffGutterMarker extends GutterMarker {
-  readonly elementClass: string;
-
-  constructor(readonly kind: "insert" | "delete") {
-    super();
-    this.elementClass = `diff-gutter-${kind}`;
-  }
-
-  eq(other: GutterMarker): boolean {
-    return other instanceof DiffGutterMarker && other.kind === this.kind;
-  }
-
-  toString(): string {
-    return `gutter-${this.kind}`;
-  }
-}
-
-const insertGutter = new DiffGutterMarker("insert");
-const deleteGutter = new DiffGutterMarker("delete");
-
-/** 行号槽底色（每行一格；缺口行没有文档行 ⇒ 不上色，与上游 view zone 一致）。 */
-function buildGutters(doc: Text, side: DiffSide, blocks: DiffBlock[]): RangeSet<GutterMarker> {
-  const ranges: Range<GutterMarker>[] = [];
-  for (const m of sideLineMarks(blocks, side)) {
-    if (m.line < 1 || m.line > doc.lines) continue;
-    ranges.push((m.kind === "delete" ? deleteGutter : insertGutter).range(doc.line(m.line).from));
-  }
-  return RangeSet.of(ranges, true);
-}
-
-/** 装饰那一臂的四份画法：行级语义类 + 记号槽字形 + 行号槽底色 + 行内字符差异。 */
+/** 装饰那一臂的三份画法：行级语义类 + 记号槽字形 + 行内字符差异。 */
 interface FaceValue {
   lines: RangeSet<Decoration>;
   signs: RangeSet<GutterMarker>;
-  gutters: RangeSet<GutterMarker>;
   chars: RangeSet<Decoration>;
 }
 
@@ -613,7 +575,6 @@ function buildFaceValue(
   return {
     lines: buildFace(doc, side, blocks, gaps),
     signs: buildSigns(doc, side, blocks),
-    gutters: buildGutters(doc, side, blocks),
     chars: buildInner(doc, side, inner[side]),
   };
 }
@@ -698,7 +659,6 @@ const diffFaceField = StateField.define<FaceValue>({
       ? {
           lines: value.lines.map(tr.changes),
           signs: value.signs.map(tr.changes),
-          gutters: value.gutters.map(tr.changes),
           chars: value.chars.map(tr.changes),
         }
       : value;
@@ -706,12 +666,6 @@ const diffFaceField = StateField.define<FaceValue>({
   provide: (f) => [
     EditorView.decorations.from(f, (v) => v.lines),
     EditorView.decorations.from(f, (v) => v.chars),
-    // 行号槽底色吃同一份 `gutters`。依赖写 `f`（provide 的回调参数 = 本字段），
-    // 不写外层变量名 —— 否则字段初始化自引用，TS 推不出类型。
-    lineNumberMarkers.compute(
-      [f],
-      (state: EditorState): RangeSet<GutterMarker> => state.field(f).gutters,
-    ),
   ],
 });
 
