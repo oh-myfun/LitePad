@@ -4,13 +4,15 @@
 // 这一轮最大的接线风险（设计稿 ⑧·1）是「两颗 EditorView 与 `Panel.view` 单颗模型冲突」。
 // 落点定的是：**`Panel.view` 继续是右栏那颗既有的 view**（那份文档本身 —— 脏标记、Ctrl+S、
 // 撤销栈、会话快照全按它寻址，一行分支都不用加）。差异标签只多一个**旁路**：挂在
-// `.panel-host` 内、`.panel-editor` 之前的一颗只读 `EditorView` + 一根只管这一栏之内的分割线。
+// `.panel-host` 内、`.panel-editor` 之前的一颗 `EditorView`（B 档与右栏同权可编辑，
+// A 档 / 旧会话是只读快照）+ 一根只管这一栏之内的分割线。
 // 于是风险从「几十处都要记得问 kind」降级成「一处挂、一处拆」—— 这里钉的就是这一挂一拆：
 //   1) 三个新字段在模型层就位，而且**默认值都是普通编辑器**（`kind: "editor"` / `diff: null` /
 //      `diffSurface: null`）—— 老路径一条都不许被改成「看起来像差异」；
 //   2) 挂上去 / 拆下来真的作用在 `.panel-host` 的子节点上，而右栏那颗 view 不受牵连；
-//   3) 左栏那颗**只读是硬的**：任何事务（含裸 `dispatch({changes})`）都改不动它的文档，
-//      同时又点得进焦点（选不中也就复制不了）—— 设计稿 ⑤ 的事实项 + ⑦·⑤ 的验收对象；
+//   3) 只读那一档（A 档基线 / 旧会话快照）**只读是硬的**：任何事务（含裸 `dispatch({changes})`）
+//      都改不动它的文档，同时又点得进焦点（选不中也就复制不了）—— 设计稿 ⑤ 的事实项 +
+//      ⑦·⑤ 的验收对象；B 档左栏是另一份文档，可编辑与写回见 Task 6 修订那一块；
 //   4) 左栏那一族与右栏 `.panel-editor` 吃同一套几何链与同一套字量度 token；
 //   5) 左栏那颗 view **绝不进**同步滚动协调器（两份内容不是同一文档的两个视口，反目标见 ②）；
 //   6) 接线只落在 `mountView` / `rebuildLayout` / `disposePanel` 这三处，`switchTab` 不加 kind 分支。
@@ -38,7 +40,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { BlockType, EditorView, type BlockInfo } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
+import { EditorState, ChangeSet, Text } from "@codemirror/state";
 import { language } from "@codemirror/language";
 import { fnBody, ruleBlock, stripCssComments, stripLineComments } from "./static";
 import {
@@ -59,13 +61,14 @@ import {
   createDiffSurface,
   disposeDiffSurface,
   diffSurfaceOf,
+  notifyDiffDocChanged,
   refreshDiffSurfaces,
   syncDiffSurface,
   type DiffSurface,
 } from "../src/diff/surface";
 import { DIFF_REFRESH_MS } from "../src/diff/align";
 import { setFoldedRanges } from "../src/diff/face";
-import { setDiffBlocksListener } from "../src/diff/model";
+import { setDiffBlocksListener, setDiffRenderHooks } from "../src/diff/model";
 import type { DiffSpec } from "../src/diff/model";
 import type { ScrollAnchor } from "../src/sync-scroll/anchor";
 import { reconcileSyncRegistrations, syncCoordinator } from "../src/sync-scroll/wire";
@@ -85,6 +88,7 @@ function spec(over: Partial<DiffSpec> = {}): DiffSpec {
   return {
     tier: "baseline",
     docId: 100,
+    leftDocId: null,
     leftText: () => "左栏正文\n它的第二行",
     leftName: "a.md（上次保存）",
     rightName: "a.md",
@@ -159,6 +163,15 @@ beforeEach(() => {
   tabs.clear();
   // 折行是模块级设置：上一条用例把它翻过面就得摆回去，否则几何用例读到的是上一条的档位。
   setIsWrap(true);
+  // 注入回调是模块级的：每条用例都从「什么也不做」起，免得上一条的记账漏到下一条。
+  setDiffRenderHooks({
+    rebuildLayout: () => {},
+    refreshAll: () => {},
+    renderPanelTabs: () => {},
+    showMessage: () => {},
+    switchTab: () => {},
+    applyDocEdit: () => {},
+  });
   document.body.innerHTML = "";
   document.body.className = "";
 });
@@ -452,6 +465,7 @@ function specOf(leftText: string): DiffSpec {
   return {
     tier: "baseline",
     docId: 100,
+    leftDocId: null,
     leftText: () => leftText,
     leftName: "a.md（上次保存）",
     rightName: "a.md",
@@ -999,6 +1013,7 @@ function mountLiveBaselinePair(
   const diff: DiffSpec = {
     tier: "baseline",
     docId: doc.tabId,
+    leftDocId: null,
     leftText: () => docs.get(doc.tabId)?.baseline ?? "",
     leftName: doc.name,
     rightName: doc.name,
@@ -1219,16 +1234,14 @@ describe("B461 · 基线实时与判据接全（Task 5 R13/R14 + R20）", () => 
 });
 
 // --------------------------------------------------------------------------- #
-// Task 6 —— B 档（files tier）：左栏那颗只读栏的锁**随旁路一起继承**，不分档位。
-//
-// 这条先写下来时就该是绿的：`createDiffSurface` 的只读锁（`EditorState.readOnly` +
-// `editable(false)` + `contentAttributes` + 丢 docChanged 的 `transactionFilter`）是
-// **spec 无关**的（Task 3 落地时就没按档位分叉）⇒ B 档不需要新代码，也**不许**需要。
-// 它钉的是这条不变量本身：以后谁给旁路加档位分叉、把 files 档的左栏做成可写的，这里发红。
+// Task 6 修订（用户口径 2026-11）—— **两侧都能编辑**，只有一种左栏只读：
+//   · A 档：左栏是「上次保存的正文」快照，没有文档可落 ⇒ 保持三道锁；
+//   · B 档：左栏背后有文档（`leftDocId`）⇒ 与右栏同权，敲字写回那份文档；
+//   · 旧会话恢复出来的 B 档没有文档可落（`leftDocId === null`）⇒ 退回只读快照。
 // --------------------------------------------------------------------------- #
 
-/** 与 `mountDiffPair` 同形的一格，但 spec 是 B 档（files tier：左栏来自另一条路径的只读快照）。 */
-function mountedBFilesSurface(): DiffSurface {
+/** 与 `mountDiffPair` 同形的一格，spec 是 B 档；`leftDocId` 由用例给（null = 旧会话那条只读路）。 */
+function mountedBFilesSurface(leftDocId: number | null): DiffSurface {
   const hostEl = document.createElement("div");
   hostEl.className = "panel-host";
   document.body.appendChild(hostEl);
@@ -1246,6 +1259,7 @@ function mountedBFilesSurface(): DiffSurface {
   const diff: DiffSpec = {
     tier: "files",
     docId: doc.tabId,
+    leftDocId,
     leftText: () => "左栏正文\n它的第二行",
     leftName: "a.md",
     rightName: "b.md",
@@ -1277,21 +1291,72 @@ function mountedBFilesSurface(): DiffSurface {
   return s;
 }
 
-describe("B461 · B 档左栏继承只读锁（Task 6 Step 6）", () => {
-  it("B461 · 左栏那颗视图真的写不进去，但选得了字", () => {
-    const s = mountedBFilesSurface();
+describe("B461 · 两边都能编辑，只有基线快照那一侧只读（Task 6 修订）", () => {
+  it("B461 · 旧会话 B 档没有文档可落 ⇒ 左栏仍是只读的，但选得了字", () => {
+    const s = mountedBFilesSurface(null);
     const before = s.left.state.doc.toString();
     expect(s.left.state.facet(EditorState.readOnly)).toBe(true);
     s.left.dispatch({ changes: { from: 0, insert: "X" } });
     expect(s.left.state.doc.toString(), "裸派发进不去（锁是行为，不只 facet）").toBe(before);
-    // `editable(false)` 写出的那颗属性必须是 false（`contentEditable` 属性读取不许是 "true"）
     expect(s.left.contentDOM.getAttribute("contenteditable")).toBe("false");
-    expect(s.left.contentDOM.contentEditable).not.toBe("true");
     expect(s.left.contentDOM.getAttribute("tabindex"), "点得进焦点才选得了字").toBe("0");
     s.dispose();
   });
 
-  it("B461 · 左栏只读，但当前行 / 选区 / 同词出现三层高亮都在（照 VS Code 的原稿栏）", async () => {
+  it("B461 · A 档左栏（基线快照）也保持只读：那是「上一次保存的正文」，改了就没有对照物", () => {
+    const { panel } = mountDiffPair("A\nB", "A\nC");
+    const left = diffSurfaceOf(panel)!.left;
+    expect(left.state.facet(EditorState.readOnly)).toBe(true);
+    expect(left.contentDOM.getAttribute("contenteditable")).toBe("false");
+  });
+
+  it("B461 · B 档左栏背后有文档 ⇒ 可编辑；敲字那笔变成「写回那份文档」的一发", () => {
+    const leftDoc = makeDoc(201, "左栏正文\n它的第二行", "a.md", "D:/a.md", "UTF-8", "LF", false);
+    docs.set(leftDoc.tabId, leftDoc);
+    const edits: Array<{ docId: number; text: string }> = [];
+    setDiffRenderHooks({
+      rebuildLayout: () => {},
+      refreshAll: () => {},
+      renderPanelTabs: () => {},
+      showMessage: () => {},
+      switchTab: () => {},
+      applyDocEdit: (docId, changes) => {
+        const start = Text.of(["左栏正文", "它的第二行"]);
+        edits.push({ docId, text: changes.apply(start).toString() });
+      },
+    });
+    const s = mountedBFilesSurface(leftDoc.tabId);
+    expect(s.left.state.facet(EditorState.readOnly), "左栏与右栏同权").toBe(false);
+    expect(s.left.contentDOM.getAttribute("contenteditable")).toBe("true");
+    s.left.dispatch({ changes: { from: 0, insert: "改" } });
+    expect(s.left.state.doc.toString()).toBe("改左栏正文\n它的第二行");
+    expect(edits, "这一笔写回它背后的文档（脏标记/保存由 main 那条链路负责）").toEqual([
+      { docId: leftDoc.tabId, text: "改左栏正文\n它的第二行" },
+    ]);
+    s.dispose();
+  });
+
+  it("B461 · 文档在别处改了 ⇒ 同一笔补进左栏；补进来那一笔不再回声给文档", () => {
+    const leftDoc = makeDoc(202, "左栏正文\n它的第二行", "a.md", "D:/a.md", "UTF-8", "LF", false);
+    docs.set(leftDoc.tabId, leftDoc);
+    let echoes = 0;
+    setDiffRenderHooks({
+      rebuildLayout: () => {},
+      refreshAll: () => {},
+      renderPanelTabs: () => {},
+      showMessage: () => {},
+      switchTab: () => {},
+      applyDocEdit: () => echoes++,
+    });
+    const s = mountedBFilesSurface(leftDoc.tabId);
+    const changes = ChangeSet.of({ from: 0, insert: "新" }, s.left.state.doc.length);
+    notifyDiffDocChanged(leftDoc.tabId, changes);
+    expect(s.left.state.doc.toString()).toBe("新左栏正文\n它的第二行");
+    expect(echoes, "补进来的这一笔是我方回声，不许再写回文档").toBe(0);
+    s.dispose();
+  });
+
+  it("B461 · 左栏只读时三层高亮照旧（当前行 / 选区 / 同词出现）", async () => {
     const { panel } = mountDiffPair(
       "const foo = 1;\nconst bar = 2;\nconst foo = 3;",
       "const foo = 1;\nconst bar = 2;\nconst foo = 4;",

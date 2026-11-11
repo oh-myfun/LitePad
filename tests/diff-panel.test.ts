@@ -63,6 +63,7 @@ function spec(over: Partial<DiffSpec> = {}): DiffSpec {
   return {
     tier: "baseline",
     docId: 100,
+    leftDocId: null,
     leftText: () => baseline,
     leftName: "a.md（上次保存）",
     rightName: "a.md",

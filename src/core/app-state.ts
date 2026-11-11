@@ -30,7 +30,7 @@ export interface Panel {
   /** splitview 传入的宿主元素（.panel-host） */
   bodyEl: HTMLElement | null;
   /**
-   * B461 · 这一格当前的**差异旁路**（左栏那颗只读 view + 分割线），没有则 `null`。
+   * B461 · 这一格当前的**差异旁路**（左栏那颗 view + 分割线），没有则 `null`。
    *
    * ⚠️ 它不是第二颗「面板的 view」：`view` 继续是右栏、继续是那份文档本身
    * （脏点 / Ctrl+S / 撤销栈 / 会话快照按它寻址的代码一行都不加分支 —— 设计稿 ⑧·1 的落点）。

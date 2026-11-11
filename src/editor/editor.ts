@@ -71,7 +71,7 @@ export function gutterExtensions(perf: PerfProfile): Extension[] {
  * 当前行高亮），见 `perf.ts`。撤销历史始终保留——它是安全的底线。
  * 行号与折叠**不在这里**：它们归 `comps.gutter`（见 `gutterExtensions`），要按实例切。
  */
-function baseExtensions(perf: PerfProfile): Extension[] {
+export function baseExtensions(perf: PerfProfile): Extension[] {
   const ext: Extension[] = [
     history(),
     drawSelection(),

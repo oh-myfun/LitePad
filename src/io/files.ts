@@ -5,7 +5,7 @@
 // （rebuildDocInstances）、文件拖入（showFileDropPreview / fileDropTargetAt /
 // dropPosOf / insertDroppedPath / landDroppedPaths）、面板文档形态判断（panelDocIsMarkdown）。
 // 落点判定**不在本模块**：与标签拖拽共用 `shell/splitview` 那一份（见下面那两个函数）。
-// 只依赖 core/* + ui + doc-model + tabs + session/session + ipc/api + editor/*，
+// 只依赖 core/* + ui + doc-model + tabs + session/session + ipc/api + editor/* + diff/surface，
 // 对 main.ts 零反向依赖。
 //
 // reclaimRemoted 已随 #415 换直接 import——本模块无 DI。
@@ -49,6 +49,7 @@ import {
 } from "../doc-model";
 import { normalizeSizeClass, perfProfileForDoc } from "../editor/perf";
 import { makeTabState } from "../editor/editor";
+import { diffSurfaceOf } from "../diff/surface";
 import {
   checkEncodable,
   isUnicodeEncoding,
@@ -386,6 +387,15 @@ async function doSave(forceDialog: boolean): Promise<boolean> {
   const panel = activePanel();
   const tab = activeTab();
   if (!panel || !tab) return false;
+  // 差异标签：焦点在左栏（B 档两侧都可编辑）时，Ctrl+S 存的是**左栏那份文档**，不是右栏。
+  // A 档左栏是基线快照（`leftDocId === null`），焦点在那儿也不会改文档 ⇒ 照旧存右栏。
+  const surface = diffSurfaceOf(panel);
+  if (tab.kind === "diff" && surface?.focusedSide() === "original") {
+    const leftDocId = surface.spec().leftDocId;
+    const leftDoc = leftDocId != null ? docs.get(leftDocId) : undefined;
+    const inst = leftDoc ? instancesOfDoc(leftDoc.tabId)[0] : undefined;
+    if (leftDoc && inst) return saveDocCore(leftDoc, inst, forceDialog);
+  }
   return saveDocCore(docOf(tab), tab, forceDialog);
 }
 

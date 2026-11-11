@@ -90,7 +90,7 @@ let renderedPanelId: number | null = null;
 /** 上一次画时亮的是第几块（-1 = 都没亮）。光标跟随的闸门比的就是它（B388）。 */
 let renderedActiveIndex = -1;
 
-/** 两侧正文的读数口：左栏吃旁路那颗只读 view，右栏吃这一格既有的 `Panel.view`（= 那份文档本身）。 */
+/** 两侧正文的读数口：左栏吃旁路那颗 view，右栏吃这一格既有的 `Panel.view`（= 那份文档本身）。 */
 function lineReaderOf(panel: Panel, surface: DiffSurface): (side: DiffSide, n: number) => string {
   const sides = [surface.left.state.doc, panel.view?.view.state.doc ?? null];
   return (side, n) => {

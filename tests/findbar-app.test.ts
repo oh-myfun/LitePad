@@ -7,7 +7,7 @@
 // 编辑器 view 用「state + dispatch」的替身就够了 —— 这两条契约都不需要 CM6 的布局。
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
-import { EditorState, type TransactionSpec } from "@codemirror/state";
+import { EditorState, type Extension, type TransactionSpec } from "@codemirror/state";
 import { findHighlight, findRulerRanges } from "../src/editor/find";
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -34,8 +34,8 @@ let app: typeof import("../src/core/app-state");
 let findbar: typeof import("../src/find/findbar");
 
 /** 一个够用的 view 替身：`state` 可读、`dispatch(静) → 新 state`。 */
-function fakeView(text: string) {
-  let state = EditorState.create({ doc: text, extensions: [findHighlight()] });
+function fakeView(text: string, extra: Extension[] = []) {
+  let state = EditorState.create({ doc: text, extensions: [findHighlight(), ...extra] });
   // B471：差异格的两栏各有一颗 dom —— 查找换侧的判据就是「focusin 落在哪颗 dom 里」。
   const dom = document.createElement("div");
   const contentDOM = document.createElement("span");
@@ -314,11 +314,11 @@ describe("B419 · 在选区中查找：选区变化刷新结果", () => {
 // B471（用户）：差异格里的查找作用于**当前聚焦的那一栏**（上游 `getFocusedCodeEditor`）——
 // 切到左栏后 Ctrl+F 就在左栏里搜；命中高亮、概览标记、计数与替换入口一起换侧。
 describe("B471 · 差异格双栏查找：目标跟随焦点侧", () => {
-  /** 一颗差异格：右栏是标签正文，左栏是只读对照；`setSide` 模拟 surface 自己的 focusin 记账。 */
-  function openDiffDoc(leftText: string, rightText: string) {
+  /** 一颗差异格：右栏是标签正文，左栏默认是另一份可编辑文档（B 档）；用例可切成只读快照。 */
+  function openDiffDoc(leftText: string, rightText: string, opts: { leftReadOnly?: boolean } = {}) {
     const tabId = 20;
     const right = fakeView(rightText);
-    const left = fakeView(leftText);
+    const left = fakeView(leftText, opts.leftReadOnly ? [EditorState.readOnly.of(true)] : []);
     const tab = {
       tabId,
       docId: 2,
@@ -394,12 +394,12 @@ describe("B471 · 差异格双栏查找：目标跟随焦点侧", () => {
     expect(right.state.selection.main.empty, "右栏选区不许被左栏的步进带走").toBe(true);
   });
 
-  it("左栏只读：换到左栏后替换入口收掉，替换请求一字不改", () => {
-    const { left, focusSide } = openDiffDoc("aa bb aa", "aa");
+  it("左栏只读（A 档基线 / 旧会话快照）：换到左栏后替换入口收掉，替换请求一字不改", () => {
+    const { left, focusSide } = openDiffDoc("aa bb aa", "aa", { leftReadOnly: true });
     findbar.openFindBar("replace");
     expect(replaceRow().hidden, "右栏可替换").toBe(false);
     focusSide("original");
-    expect(chevron().disabled, "左栏是只读对照 ⇒ 替换入口收掉").toBe(true);
+    expect(chevron().disabled, "只读快照 ⇒ 替换入口收掉").toBe(true);
 
     findbar.replaceCurrent({
       text: "aa",
@@ -412,6 +412,24 @@ describe("B471 · 差异格双栏查找：目标跟随焦点侧", () => {
     });
     expect(left.state.doc.toString(), "对照栏正文不许被替换改写").toBe("aa bb aa");
     expect(status().textContent).toBe("对照栏只读，不能在左侧替换");
+  });
+
+  it("B 档左栏可编辑：替换入口照常可用，替换写进左栏那份文档", () => {
+    const { left, focusSide } = openDiffDoc("aa bb aa", "aa");
+    findbar.openFindBar("replace");
+    focusSide("original");
+    expect(chevron().disabled, "左栏背后是另一份文档 ⇒ 与右栏同权").toBe(false);
+
+    findbar.replaceCurrent({
+      text: "aa",
+      replace: "cc",
+      caseSensitive: false,
+      wholeWord: false,
+      regexp: false,
+      inSelection: false,
+      preserveCase: false,
+    });
+    expect(left.state.doc.toString(), "左栏自己那份正文被替换").toBe("cc bb aa");
   });
 
   it("关掉查找栏 ⇒ 两栏的高亮一起清（左栏不在 panels 表里，也要清）", () => {

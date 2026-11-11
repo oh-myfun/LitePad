@@ -45,7 +45,7 @@ import { renderSplitview, type PanelRenderData } from "../shell/splitview";
 import { attachTabToPanel, makeDoc, makeInstance, registerDoc } from "../doc-model";
 // B461：差异面的入口（模型层；`src/diff/model.ts` 不回指渲染层，故此处不构成新循环）。
 // B461 Task 6 那一对「选择以进行比较」的回调在下面的 `compareTabCallbacks`（`tabs/render.ts`）。
-import { openBaselineDiff } from "../diff/model";
+import { freezeDiffLeftDoc, openBaselineDiff } from "../diff/model";
 import { updateTocDrawer } from "../toc";
 import { retargetFindBar, relayoutFindBar } from "../find/findbar";
 import { saveDocCore } from "../io/files";
@@ -54,9 +54,9 @@ import { dragTabAsFile } from "../io/filedrag";
 import { attachPasteHandler } from "../io/export";
 import { showSaveConfirmDialog } from "../shell/saveconfirm";
 import { createEditor } from "../editor/editor";
-// B461 · 差异旁路（挂在 `.panel-host` 里、`.panel-editor` 之前的那颗只读左栏）：
+// B461 · 差异旁路（挂在 `.panel-host` 里、`.panel-editor` 之前的那颗左栏 view）：
 // 一处挂、一处拆 —— 其余按 `panel.view` 寻址的代码一概不问 kind。
-import { disposeDiffSurface, syncDiffSurface } from "../diff/surface";
+import { disposeDiffSurface, refreshDiffSurfaces, syncDiffSurface } from "../diff/surface";
 // B461 Task 8：差异图标键的出口（八条动作的 switch 只在 `diff/actions.ts` 那一份）。
 import { applyDiffAction } from "../diff/actions";
 import { logViewport } from "../core/viewport";
@@ -284,7 +284,7 @@ export function rebuildLayout(): void {
 
       if (p.view) attachPasteHandler(p);
 
-      // B461 · 差异旁路（左栏那颗只读 view + 一栏之内的分割线）：判据收敛在
+      // B461 · 差异旁路（左栏那颗 view + 一栏之内的分割线）：判据收敛在
       // `syncDiffSurface` 那一处，「不一致才动手」。排在 `applyPanelMode` **之前**：
       // 档位落 DOM 与查找栏锚点都只认 `.panel-editor`，旁路先就位它们才量到最终形状。
       syncDiffSurface(p);
@@ -536,6 +536,9 @@ export async function closeTabById(tabId: number): Promise<void> {
   }
 
   if (siblings.length === 0) {
+    // 差异左栏可能正以「第二颗 view」的身份显示这份文档：先把它冻成只读快照，否则关掉之后
+    // 那一栏就是一颗写不到任何地方的幽灵视图（细节见 `freezeDiffLeftDoc`）。
+    if (freezeDiffLeftDoc(doc)) refreshDiffSurfaces();
     // 该文档要彻底离开了：无论是「已保存」还是「用户选了不保存」，
     // 备份区里的副本都不该再留着——热退出的承诺是「关窗才还原」，不是
     // 「关标签也还原」。用户明确丢弃的内容必须真的丢弃。

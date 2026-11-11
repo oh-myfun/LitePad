@@ -453,6 +453,7 @@ function mountTab(p: Panel, kind: "editor" | "diff", docId = 100): Tab {
   const spec: DiffSpec = {
     tier: "baseline",
     docId,
+    leftDocId: null,
     leftText: () => docs.get(docId)?.baseline ?? "",
     leftName: "a.md",
     rightName: "a.md",

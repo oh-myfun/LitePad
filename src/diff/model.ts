@@ -12,6 +12,7 @@
 // 分工：`tier: "baseline"` 归 Task 5（与上次保存比较），`tier: "files"` 归 Task 6（任选两文件）；
 // 块级计算与对齐归 Task 2；两侧底色与占位块归 Task 3。
 
+import type { ChangeSet } from "@codemirror/state";
 import { activePanelId, docs, panels, tabs, type Doc, type Tab } from "../core/app-state";
 import { activeTab, instancesOfDoc } from "../core/panels";
 import { attachTabToPanel, makeDiffInstance } from "../doc-model";
@@ -24,13 +25,43 @@ export type DiffTier = "baseline" | "files";
 /** 一栏的身份（`original` 恒为左、`modified` 恒为右；「交换左右」换的是输入，不换身份）。 */
 export type DiffSide = "original" | "modified";
 
+/**
+ * 左栏那份文档要彻底离开了（它在本窗口的最后一个标签被关）⇒ 把挂着它的差异左栏冻成只读快照。
+ *
+ * 不这么做的话：`docs` 里那条记录一删，差异左栏那颗 view 仍在、仍可编辑，但每一笔都写不回
+ * 任何地方（`applyDiffLeftEdit` 找不到 doc），下一发 `reassert` 还会用它手里那份基线把正文
+ * 盖掉 —— 用户看到的就是「改动凭空消失」。冻成快照至少诚实地留下关闭那一刻的正文，
+ * 形状与旧会话恢复出来的只读路一致。
+ *
+ * 返回是否真的冻了谁：调用方据此决定要不要 `refreshDiffSurfaces()`（换 spec 对象身份之后，
+ * `syncDiffSurface` 会把那一格旁路重建）。
+ */
+export function freezeDiffLeftDoc(doc: Doc): boolean {
+  const frozen = instancesOfDoc(doc.tabId)[0]?.state.doc.toString() ?? doc.baseline ?? "";
+  let hit = false;
+  for (const t of tabs.values()) {
+    if (t.kind !== "diff" || t.diff?.leftDocId !== doc.tabId) continue;
+    t.diff = { ...t.diff, leftDocId: null, leftText: () => frozen };
+    hit = true;
+  }
+  return hit;
+}
+
 /** 一张差异标签的输入描述 —— 差异标签本身不含正文，只含「怎么取到两侧正文」。 */
 export interface DiffSpec {
   tier: DiffTier;
   /** 右栏 = 这份文档的另一个实例（可编辑、脏归它） */
   docId: number;
-  /** 左栏正文的读取口。A 档实时读 `doc.baseline`；B 档按设计稿 ⑩·1：那条 path 开着就读
-   *  那份文档的现值，没开着才读一次盘（闭包持有的只读对比缓冲）。 */
+  /**
+   * 左栏背后那份**文档**（B 档两文件比较时恒有；A 档的基线不是文档 ⇒ null）。
+   *
+   * 这是「左栏能不能编辑」的唯一判据：有文档才有脏标记、保存与撤销栈可落；
+   * A 档左栏是「上次保存的正文」，只是快照，不能改。
+   * 历史会话恢复出来的 B 档可能没有它（旧版本不把左栏那个文件开成文档）——
+   * 那一路退回只读对比缓冲，不假装可编辑。
+   */
+  leftDocId: number | null;
+  /** 左栏正文的读取口。A 档实时读 `doc.baseline`；B 档读那份文档的现值。 */
   leftText: () => string;
   leftName: string;
   rightName: string;
@@ -40,8 +71,8 @@ export interface DiffSpec {
   /**
    * 「刷新」那颗键用：把上面那份**只读对比缓冲**重读一次盘（换掉闭包里的 holder）。
    *
-   * 只在「左栏那个 path 没在册」那一路才给：另外两条路（A 档的活基线、B 档那份已经开着的文档）
-   * 读的就是现值，没有第二份要刷 —— 不给，调用方就不必假装刷了。
+   * 只在「左栏那个 path 没在册」那一路才给（旧会话恢复）：另外两条路（A 档的活基线、B 档那份
+   * 已经开着的文档）读的就是现值，没有第二份要刷 —— 不给，调用方就不必假装刷了。
    */
   leftReload?: () => Promise<void>;
 }
@@ -93,6 +124,15 @@ interface DiffRenderHooks {
   showMessage(text: string, isError?: boolean): void;
   /** 把已在册的那张差异标签露出来（复用路径；模型不自己写 `activeTabId`，那条顺序纪律在 lifecycle）。 */
   switchTab(panelId: number, tabId: number): void;
+  /**
+   * 左栏那颗可编辑视图里发生了一笔改动，落到它背后那份文档上。
+   *
+   * 与「右栏那颗 view 就是文档本身」不同，左栏是旁路自己建的第二颗 view —— 它不在
+   * `panels` 的视图登记里，`handleUpdate` 的寻址够不到它。这条回调把「脏标记、同文档
+   * 其他实例、自动保存 / 热退出副本」那一整套仍交给 main 那条既有链路，
+   * 差异层不复制第二份脏判定。
+   */
+  applyDocEdit(docId: number, changes: ChangeSet): void;
 }
 let hooks: DiffRenderHooks = {
   rebuildLayout: () => {},
@@ -100,10 +140,16 @@ let hooks: DiffRenderHooks = {
   renderPanelTabs: () => {},
   showMessage: () => {},
   switchTab: () => {},
+  applyDocEdit: () => {},
 };
 
 export function setDiffRenderHooks(next: DiffRenderHooks): void {
   hooks = next;
+}
+
+/** 左栏那一笔改动写回文档（`surface` 的唯一入口；实现在 main 的更新链路上）。 */
+export function applyDiffDocEdit(docId: number, changes: ChangeSet): void {
+  hooks.applyDocEdit(docId, changes);
 }
 
 /**
@@ -192,6 +238,8 @@ function baselineSpecOf(doc: Doc): DiffSpec {
   return {
     tier: "baseline",
     docId: doc.tabId,
+    // A 档左栏是「上次保存的正文」快照，没有文档可写 ⇒ 那一栏恒只读。
+    leftDocId: null,
     leftText: () => docs.get(doc.tabId)?.baseline ?? "",
     leftName: doc.name,
     rightName: doc.name,
@@ -247,7 +295,7 @@ function findDocByPath(pathNorm: string): Doc | null {
 }
 
 /**
- * 读一次「只读对比缓冲」的正文（B 档左栏那一路）。
+ * 读一次「只读对比缓冲」的正文（旧会话恢复那条路的左栏）。
  *
  * 读不成把原因原样说出来并交回 `null`，由调用方决定「不开这一张 / 什么都不换」——
  * 两处调用方必须同一个口径：一处闷着不响、一处弹说明，用户学到的就是两套规矩。
@@ -316,13 +364,32 @@ async function compareLeftTextReader(
   };
 }
 
-/** B 档的输入描述（`openFileDiff` 与会话恢复共用；左栏那两条路由 `compareLeftTextReader` 定）。 */
-async function filesSpecOf(leftPath: string, rightDoc: Doc): Promise<DiffSpec | null> {
+/** B 档的输入描述：两侧都是**已开着的文档**（左栏因此可编辑，脏与保存都归那份文档）。 */
+function filesSpecOf(leftPath: string, rightDoc: Doc, leftDoc: Doc): DiffSpec {
+  return {
+    tier: "files",
+    docId: rightDoc.tabId,
+    leftDocId: leftDoc.tabId,
+    leftText: () => liveTextOf(leftDoc),
+    leftName: baseName(leftPath),
+    rightName: rightDoc.name,
+    leftPath,
+  };
+}
+
+/**
+ * 旧会话恢复出来的 B 档：左栏那个文件当时没开成文档，只有一次读盘的快照。
+ *
+ * 这条路上左栏没有可写的落点（`leftDocId: null`）⇒ 旁路保持只读；用户重新发起一次比较，
+ * 就会走 `openFileDiff` 那条「两侧都开成文档」的路。
+ */
+async function legacyFilesSpecOf(leftPath: string, rightDoc: Doc): Promise<DiffSpec | null> {
   const left = await compareLeftTextReader(leftPath);
   if (!left) return null;
   return {
     tier: "files",
     docId: rightDoc.tabId,
+    leftDocId: null,
     leftText: left.leftText,
     leftReload: left.leftReload,
     leftName: baseName(leftPath),
@@ -332,14 +399,12 @@ async function filesSpecOf(leftPath: string, rightDoc: Doc): Promise<DiffSpec | 
 }
 
 /**
- * B 档：任选两个文件开一张只读差异（设计稿 ⑩·1）。
+ * B 档：任选两个文件开一张差异（设计稿 ⑩·1；两侧可编辑由用户口径 2026-11 定下）。
  *
  * 口径：
- * - **右栏必须是那份文档本身**：`openDocForPath` —— 在册就复用它的 doc（不重读盘、不另立
- *   文档），不在册走主干那条 `doOpen`。
- * - **左栏是只读对比缓冲**（`compareLeftTextReader`）：那个 path 恰好已经开着就**直接复用
- *   它的正文**（读取口跟着那一格走，不再读一遍盘），没开着才 `readCompareText` 读一次盘。
- *   两条都不进文档登记表、不装监听 ⇒ 没有「外部已修改」那一路弹窗。
+ * - **两侧都必须是文档本身**：都走 `openDocForPath` —— 在册就复用它的 doc（不重读盘、不另
+ *   立文档），不在册走主干那条 `doOpen`。左栏原先只是一份读盘快照，改成文档之后才有
+ *   脏标记、保存与撤销栈可落；只开着右栏而让左栏当只读快照，就是「两边都能编辑」里的假话。
  * - 同一对文件只留一张（R32，与 A 档同形）：再点一次把它露出来。
  *
  * `io/files` 用动态 import：它顺着 `ui.ts` 摸 DOM，静态引会把 node 环境的模型层单测炸掉。
@@ -363,9 +428,9 @@ export async function openFileDiff(leftPath: string, rightPath: string): Promise
     return existing.tabId;
   }
 
-  const spec = await filesSpecOf(leftPath, rightDoc);
-  if (!spec) return null;
-  return attachDiffTab(rightDoc, spec, activePanelId).tabId;
+  const leftDoc = await openDocForPath(leftPath);
+  if (!leftDoc) return null;
+  return attachDiffTab(rightDoc, filesSpecOf(leftPath, rightDoc, leftDoc), activePanelId).tabId;
 }
 
 /**
@@ -399,7 +464,9 @@ export async function restoreDiffSpec(
   const leftPath = rec.diffLeftPath ?? null;
   if (!leftPath) return canOpenAgainstBaseline(doc) ? baselineSpecOf(doc) : null;
   if (!doc.path || normPath(leftPath) === normPath(doc.path)) return null;
-  return filesSpecOf(leftPath, doc);
+  // 新会话里左栏那个文件自己也是一条普通标签、已在 docs 登记；旧会话没开过它 ⇒ 退回只读快照。
+  const leftDoc = findDocByPath(normPath(leftPath));
+  return leftDoc ? filesSpecOf(leftPath, doc, leftDoc) : legacyFilesSpecOf(leftPath, doc);
 }
 
 /**

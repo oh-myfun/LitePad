@@ -218,7 +218,13 @@ RECIPES = [
         "files": {"before.ts": DIFF_BEFORE_TEXT, "after.ts": DIFF_AFTER_TEXT},
         # 光标落在第一处改动（第 2 行）：中间那一列的「回退此块」键靠 `.is-current` 常显，
         # 截图才拍得到它；停在未改动的第 1 行时那一列按 VS Code 的口径是空的（只有悬停才现形）。
-        "session": lambda: single_session([diff_tab(DIFF_AFTER, DIFF_BEFORE, 2, 1)]),
+        # 两侧文件都开成普通标签再挂差异：B 档左栏现在也是**文档本身**（两侧都能编辑），
+        # 只放一张差异记录的话还原出来是旧会话那条只读快照，拍到的就不是真实用法。
+        "session": lambda: single_session(
+            [tab(DIFF_BEFORE, "source", 1, 1), tab(DIFF_AFTER, "source", 2, 2),
+             diff_tab(DIFF_AFTER, DIFF_BEFORE, 2, 2)],
+            active=2,
+        ),
     },
 ]
 

@@ -684,6 +684,7 @@ function mountSurfacePair(
     // 这一组用例只关心 face / 几何；用 files 档避开 A 档的基线闸（测试里没有在册 Doc）。
     tier: "files",
     docId: 100,
+    leftDocId: null,
     leftText: () => leftText,
     leftName: "a.md（上次保存）",
     rightName: "a.md",

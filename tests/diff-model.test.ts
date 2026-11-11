@@ -17,8 +17,10 @@ import { gutterDiffBaseline, hasGutterDiff } from "../src/editor/gutterDiff";
 import {
   canOpenAgainstBaseline,
   diffTitleOf,
+  freezeDiffLeftDoc,
   notifyDiffBlocks,
   openFileDiff,
+  restoreDiffSpec,
   setDiffRenderHooks,
   setDiffBlocksListener,
   type DiffSpec,
@@ -33,17 +35,22 @@ import type { MenuItem } from "../src/shell/menu";
 
 // B 档要读盘（readCompareText）：桩掉 ipc/api 的这一颗，其余照旧（node 环境里
 // `@tauri-apps/api/core` 只加载不执行，与 explorer-store.test.ts 同一手法）。
-const { readCompareTextMock } = vi.hoisted(() => ({ readCompareTextMock: vi.fn() }));
+const { readCompareTextMock, doOpenMock } = vi.hoisted(() => ({
+  readCompareTextMock: vi.fn(),
+  doOpenMock: vi.fn(),
+}));
 vi.mock("../src/ipc/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/ipc/api")>()),
   readCompareText: readCompareTextMock,
 }));
+vi.mock("../src/io/files", () => ({ doOpen: doOpenMock }));
 
 const docWith = (baseline: string | null): Doc => ({ tabId: 1, baseline }) as unknown as Doc;
 
 const spec = (over: Partial<DiffSpec> = {}): DiffSpec => ({
   tier: "baseline",
   docId: 1,
+  leftDocId: null,
   leftText: () => "",
   leftName: "a.md（上次保存）",
   rightName: "a.md",
@@ -103,6 +110,7 @@ describe("B461 · diffTitleOf（Task 5 Step 1）", () => {
     const files: DiffSpec = {
       tier: "files",
       docId: 1,
+      leftDocId: null,
       leftText: () => "",
       leftName: "a.md",
       rightName: "b.md",
@@ -207,26 +215,38 @@ const compareSnap = (text: string) => ({
 });
 
 describe("B461 · openFileDiff（Task 6 Step 6）", () => {
-  it("B461 · 右路径已经开着就复用它的 doc，不再读一遍盘", async () => {
-    mountPanel0();
-    const bDoc = makeDoc(11, "乙\n正文", "b.md", "D:/b.md", "UTF-8", "LF", false);
-    docs.set(bDoc.tabId, bDoc);
+  const hooksNoop = (): void =>
     setDiffRenderHooks({
       rebuildLayout: () => {},
       refreshAll: () => {},
       renderPanelTabs: () => {},
       showMessage: () => {},
       switchTab: () => {},
+      applyDocEdit: () => {},
     });
-    readCompareTextMock.mockReset().mockResolvedValue(compareSnap("甲\n正文"));
+
+  it("B461 · 左路径没开着 ⇒ 也开成文档（左栏因此可编辑）；不再读一份只读快照", async () => {
+    mountPanel0();
+    const bDoc = makeDoc(11, "乙\n正文", "b.md", "D:/b.md", "UTF-8", "LF", false);
+    docs.set(bDoc.tabId, bDoc);
+    hooksNoop();
+    readCompareTextMock.mockReset();
+    doOpenMock.mockReset().mockImplementation(async (path: string) => {
+      const d = makeDoc(41, "甲\n正文", "a.md", path, "UTF-8", "LF", false);
+      docs.set(d.tabId, d);
+      const inst = makeInstance(d, 0, "甲\n正文");
+      tabs.set(inst.tabId, inst);
+      return inst.tabId;
+    });
     const id = (await openFileDiff("D:/a.md", "D:/b.md"))!;
-    expect(readCompareTextMock).toHaveBeenCalledTimes(1); // 只读了左栏那一份
-    expect(readCompareTextMock).toHaveBeenCalledWith("D:/a.md");
+    expect(readCompareTextMock, "两侧都是文档 ⇒ 没有读盘快照那条路").not.toHaveBeenCalled();
+    expect(doOpenMock).toHaveBeenCalledWith("D:/a.md");
     const tab = tabs.get(id)!;
     expect(tab.docId).toBe(bDoc.tabId); // 右栏 = 已在册的那份文档本身
     expect(tab.diff?.tier).toBe("files");
     expect(tab.diff?.leftPath).toBe("D:/a.md");
-    expect(tab.diff?.leftText(), "左栏闭包交出读到的快照").toBe("甲\n正文");
+    expect(tab.diff?.leftDocId, "左栏背后必须有文档，否则那一栏没法编辑").toBe(41);
+    expect(tab.diff?.leftText()).toBe("甲\n正文");
     expect(tab.diff?.leftName).toBe("a.md");
     expect(tab.diff?.rightName).toBe("b.md");
   });
@@ -240,6 +260,7 @@ describe("B461 · openFileDiff（Task 6 Step 6）", () => {
       renderPanelTabs: () => {},
       showMessage: (text, isError) => messages.push([text, isError]),
       switchTab: () => {},
+      applyDocEdit: () => {},
     });
     readCompareTextMock.mockReset();
     expect(await openFileDiff("D:/a.md", "D:\\A.MD")).toBeNull();
@@ -250,6 +271,8 @@ describe("B461 · openFileDiff（Task 6 Step 6）", () => {
 
   it("B461 · R32：同一对文件再开一次 ⇒ 复用那张差异标签并露出来（不叠两张）", async () => {
     mountPanel0();
+    const aDoc = makeDoc(13, "甲", "a.md", "D:/a.md", "UTF-8", "LF", false);
+    docs.set(aDoc.tabId, aDoc);
     const bDoc = makeDoc(12, "乙", "b.md", "D:/b.md", "UTF-8", "LF", false);
     docs.set(bDoc.tabId, bDoc);
     const switched: number[] = [];
@@ -259,13 +282,14 @@ describe("B461 · openFileDiff（Task 6 Step 6）", () => {
       renderPanelTabs: () => {},
       showMessage: () => {},
       switchTab: (_panelId, tabId) => switched.push(tabId),
+      applyDocEdit: () => {},
     });
-    readCompareTextMock.mockReset().mockResolvedValue(compareSnap("甲"));
+    doOpenMock.mockReset();
     const first = (await openFileDiff("D:/a.md", "D:/b.md"))!;
     panels.get(0)!.activeTabId = -1; // 用户切走了那张（模拟「没露出来」）
     const second = (await openFileDiff("D:/a.md", "D:/b.md"))!;
     expect(second).toBe(first);
-    expect(readCompareTextMock).toHaveBeenCalledTimes(1); // 复用路径不再读盘
+    expect(doOpenMock, "复用路径不再开文档").not.toHaveBeenCalled();
     expect(switched).toEqual([first]);
     expect(panels.get(0)!.tabs).toHaveLength(1); // 面板里仍只有那一张
   });
@@ -288,6 +312,7 @@ describe("B461 · R33：左栏那条已经开着 ⇒ 复用它的正文，不再
       renderPanelTabs: () => {},
       showMessage: () => {},
       switchTab: () => {},
+      applyDocEdit: () => {},
     });
     readCompareTextMock.mockReset().mockResolvedValue(compareSnap("甲\n盘上那份"));
 
@@ -296,6 +321,7 @@ describe("B461 · R33：左栏那条已经开着 ⇒ 复用它的正文，不再
       readCompareTextMock,
       "那个 path 已经开着 ⇒ 不许再读一遍盘（读到的还是用户屏幕上没有的那一份）",
     ).not.toHaveBeenCalled();
+    expect(tabs.get(id)!.diff!.leftDocId, "左栏就是那一份文档").toBe(aDoc.tabId);
     const leftText = tabs.get(id)!.diff!.leftText;
     expect(leftText(), "左栏 = 那一格此刻的正文，不是盘上那一份").toBe("甲\n改过还没存");
 
@@ -309,24 +335,26 @@ describe("B461 · R33：左栏那条已经开着 ⇒ 复用它的正文，不再
   });
 });
 
-describe("B461 · 只读对比缓冲那颗「刷新」（Task 8 Step 5）", () => {
-  const hooksNoop = () =>
+describe("B461 · 旧会话恢复出来的只读对比缓冲（Task 8 Step 5）", () => {
+  const hooksNoop = (): void =>
     setDiffRenderHooks({
       rebuildLayout: () => {},
       refreshAll: () => {},
       renderPanelTabs: () => {},
       showMessage: () => {},
       switchTab: () => {},
+      applyDocEdit: () => {},
     });
 
-  it("B461 · 左栏没开着 ⇒ spec 交出 leftReload；重读拿到新那份，盘读不成留着上一份", async () => {
-    mountPanel0();
+  it("B461 · 旧会话里左栏没开成文档 ⇒ spec 交出 leftReload；重读拿到新那份，盘读不成留着上一份", async () => {
+    docs.clear();
+    tabs.clear();
     const bDoc = makeDoc(31, "乙", "b.md", "D:/b.md", "UTF-8", "LF", false);
     docs.set(bDoc.tabId, bDoc);
     hooksNoop();
     readCompareTextMock.mockReset().mockResolvedValue(compareSnap("盘上第一版"));
-    const id = (await openFileDiff("D:/a.md", "D:/b.md"))!;
-    const spec = tabs.get(id)!.diff!;
+    const spec = (await restoreDiffSpec({ kind: "diff", diffLeftPath: "D:/a.md" }, bDoc))!;
+    expect(spec.leftDocId, "旧会话没有那份文档 ⇒ 左栏只能保持只读").toBeNull();
     expect(spec.leftText()).toBe("盘上第一版");
     expect(
       spec.leftReload,
@@ -345,8 +373,9 @@ describe("B461 · 只读对比缓冲那颗「刷新」（Task 8 Step 5）", () =
     ).toBe("盘上第二版");
   });
 
-  it("B461 · 左栏已经开着 ⇒ 不给 leftReload（现值就是那份文档，没有第二份真相可刷）", async () => {
-    mountPanel0();
+  it("B461 · 会话里那份文档已在册 ⇒ 左栏直接绑它，不给 leftReload", async () => {
+    docs.clear();
+    tabs.clear();
     const aDoc = makeDoc(32, "甲", "a.md", "D:/a.md", "UTF-8", "LF", false);
     docs.set(aDoc.tabId, aDoc);
     const aInst = makeInstance(aDoc, 0, "甲\n改过还没存");
@@ -356,11 +385,41 @@ describe("B461 · 只读对比缓冲那颗「刷新」（Task 8 Step 5）", () =
     hooksNoop();
     readCompareTextMock.mockReset();
 
-    const id = (await openFileDiff("D:/a.md", "D:/b.md"))!;
+    const spec = (await restoreDiffSpec({ kind: "diff", diffLeftPath: "D:/a.md" }, bDoc))!;
+    expect(spec.leftDocId).toBe(aDoc.tabId);
     expect(
-      tabs.get(id)!.diff!.leftReload,
+      spec.leftReload,
       "那一格正在被用户编辑 ⇒ 重读盘会把没存的那些行偷偷换掉，这颗不许给",
     ).toBeUndefined();
+    expect(spec.leftText()).toBe("甲\n改过还没存");
     expect(readCompareTextMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("B461 · 左栏那份文档的最后一个标签被关（用户口径 2026-11）", () => {
+  it("引用它的差异左栏冻成只读快照：关闭那一刻的正文留下来，改动不再写进虚空", () => {
+    docs.clear();
+    tabs.clear();
+    const leftDoc = makeDoc(51, "左栏\n现在的正文", "a.md", "D:/a.md", "UTF-8", "LF", false);
+    docs.set(leftDoc.tabId, leftDoc);
+    const leftInst = makeInstance(leftDoc, 0, "左栏\n现在的正文");
+    tabs.set(leftInst.tabId, leftInst);
+    const rightDoc = makeDoc(52, "右栏", "b.md", "D:/b.md", "UTF-8", "LF", false);
+    docs.set(rightDoc.tabId, rightDoc);
+    const diffTab = makeDiffInstance(rightDoc, 0, "右栏", {
+      tier: "files",
+      docId: rightDoc.tabId,
+      leftDocId: leftDoc.tabId,
+      leftText: () => "旧的那一份",
+      leftName: "a.md",
+      rightName: "b.md",
+      leftPath: "D:/a.md",
+    });
+    tabs.set(diffTab.tabId, diffTab);
+
+    expect(freezeDiffLeftDoc(leftDoc), "有差异左栏引用它 ⇒ 确实冻了").toBe(true);
+    expect(diffTab.diff!.leftDocId, "没有文档可写了 ⇒ 退回只读快照").toBeNull();
+    expect(diffTab.diff!.leftText()).toBe("左栏\n现在的正文");
+    expect(freezeDiffLeftDoc(leftDoc), "再关一次没有可冻的对象").toBe(false);
   });
 });

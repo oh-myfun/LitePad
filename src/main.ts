@@ -261,7 +261,7 @@ import { logViewport } from "./core/viewport";
 // B461 Task 4：差异步进按的那一格旁路（`step(±1)` 与上下文闸都从这颗寻址口走）。
 // Task 5 起这里还导出 `refreshDiffSurfaces` —— 外观那两颗 setter 只认识 main，
 // 而差异格的主题 / 基线（以及左栏那颗折行槽）必须跟着设置重新 assert 一次（裁决 R23-2）。
-import { diffSurfaceOf, refreshDiffSurfaces } from "./diff/surface";
+import { diffSurfaceOf, notifyDiffDocChanged, refreshDiffSurfaces } from "./diff/surface";
 // B461 Task 8：差异那一组动作命令的分发口（动作 switch 只有这一份，见该文件头注）。
 import { applyDiffCommand } from "./diff/actions";
 // B461 Task 5：A 档的入口（建标签）与那道闸（不抢键的判据）。
@@ -317,8 +317,9 @@ function handleUpdate(view: EditorView, update: ViewUpdate): void {
   // 只在活动面板上报，且真跨过章节才会重绘（闸在 toc.ts 的 refreshTocAtCursor）。
   if (update.selectionSet && panel.panelId === activePanelId) {
     refreshTocAtCursor(caretLine.number);
-    // B461 · Task 9：差异那一列跟的是**右栏**光标（左栏那颗只读 view 根本没有这一发监听，
-    // 所以「左栏有选区也不许抢高亮」是结构上成立，不是这里判出来的）。三条早退与那颗闸
+    // B461 · Task 9：差异那一列跟的是**右栏**光标。左栏那颗旁路 view 有自己的监听
+    // （镜像同步 / 回退列重画），但它不碰 `refreshDiffAtCursor` ⇒「左栏动光标不许抢高亮」
+    // 仍然成立，判据从「左栏根本没有监听」变成了这颗监听里的分工。三条早退与那颗闸
     // 都在 `diff/panel.ts` 的 `refreshDiffAtCursor` 里。
     refreshDiffAtCursor();
     // B419：查找栏开着且「在选区中查找」时，用户换选区 = 换了搜索范围，结果跟着刷新
@@ -397,6 +398,8 @@ setDiffRenderHooks({
   // 复用路径（评审 R31）：同一份文档的差异面只留一张，再点一次走既有那条激活链
   //（快照写回 + 落位 + 会话），模型不自己写 `activeTabId`。
   switchTab,
+  // B 档左栏可编辑（用户口径 2026-11）：那笔改动写回它背后那份文档，账目走 main 的更新链路。
+  applyDocEdit: applyDiffLeftEdit,
 });
 // 把 markdown / session 的动作注入 tabs（打破 tabs↔markdown / tabs↔session 循环依赖）
 setApplyPanelMode(applyPanelMode);
@@ -456,6 +459,9 @@ function syncDocInstances(src: Tab, changes: ChangeSet): void {
         other.state = other.state.update({ changes }).state;
       }
     }
+    // B 档差异左栏是那份文档的第二颗 view，但它不是 `Tab` 实例、进不了上面那个遍历 ⇒
+    // 单独补一发（差异层按 docId 登记了旁路；没有挂着它的差异格时是空转）。
+    notifyDiffDocChanged(src.docId, changes);
     // B397-1：这里**不再需要**给装饰预览面补一发桥 —— 所见即所得是每份实例自己的
     // `previewCompartment` 里的一档，跟着上面那个遍历一起变。原先那颗独立的只读镜像
     // 不是 `Tab` 实例、进不了这个遍历，才需要 `syncDecoMirrors` 补第二遍（连同它的
@@ -463,6 +469,43 @@ function syncDocInstances(src: Tab, changes: ChangeSet): void {
   } finally {
     setSyncingDocId(null);
   }
+}
+
+/**
+ * B 档差异左栏里的一笔改动落到它背后那份文档上（`diff/model` 的注入回调）。
+ *
+ * 左栏那颗 view 不在 `panels` 的视图登记里，`handleUpdate` 的寻址够不到它；这里把同一套账
+ * 补齐：有正挂在视图上的实例就派发过去（那边自己算脏、同步兄弟实例、广播跨窗口），
+ * 全部离屏才更新快照，并按**同一颗** `isDirtyVsBaseline` 补脏标记与三条排程。
+ * 差异层因此不需要认识脏判定，也不会长出第二份「什么算改过」。
+ */
+function applyDiffLeftEdit(docId: number, changes: ChangeSet): void {
+  if (changes.empty) return;
+  const doc = docs.get(docId);
+  if (!doc) return;
+  for (const inst of instancesOfDoc(docId)) {
+    const p = panels.get(inst.panelId);
+    if (p?.view && p.viewTabId === inst.tabId) {
+      p.view.view.dispatch({ changes });
+      return;
+    }
+  }
+  const insts = instancesOfDoc(docId);
+  if (insts.length === 0) return;
+  const startLen = insts[0].state.doc.length;
+  for (const inst of insts) inst.state = inst.state.update({ changes }).state;
+  const shouldDirty = isDirtyVsBaseline(doc, insts[0].state.doc.toString());
+  if (shouldDirty !== doc.dirty) {
+    doc.dirty = shouldDirty;
+    if (!shouldDirty) discardBackupFor(doc);
+    refreshTitle();
+    renderPanelTabs();
+  }
+  scheduleAutosave();
+  scheduleBackup();
+  scheduleSessionSave();
+  // 同一文档可能同时挂在另一个窗口上：那一头也要跟上（与 `handleUpdate` 同口径）。
+  broadcastDocChange(docId, changes, startLen);
 }
 
 // ------------------------------------------------------- 事件绑定

@@ -23,7 +23,7 @@
  * 两栏量度不同 ⇒ 逐行对齐全歪（Task 2/3 的地基），细节见那一族的头注。
  */
 
-/* 两栏并排：左 = 只读对照栏，右 = 那份文档本身（`.panel-editor`）。各占一半起步。 */
+/* 两栏并排：左 = 对照栏（A 档只读快照 / B 档另一份可编辑文档），右 = 那份文档本身（`.panel-editor`）。各占一半起步。 */
 .panel-host.is-diff {
   display: flex;
   flex-direction: row;

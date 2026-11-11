@@ -108,19 +108,21 @@ function openFindBar(focus: "find" | "replace" = "find"): void {
   bar.open(selectedTextInActiveView(), focus === "replace" && canReplace);
   if (focus === "replace" && canReplace) bar.focusReplace();
   else bar.focusFind();
-  // B417：预览档 / 差异格左栏里按「在文件中替换」只能落到查找，并说清楚为什么没掀开替换行
+  // B417：预览档、差异格里的只读对照栏（A 档基线 / 旧会话快照）按「在文件中替换」只能落到
+  // 查找，并说清楚为什么没掀开替换行
   if (focus === "replace" && !canReplace) bar.setStatus(replaceBlockedReason());
 }
 
 /**
  * B417：这一档文档允不允许替换。预览档是「禁编辑的编辑模式」（B399）——文档锁着，
  * 替换没有落点；源码档与非 markdown 文档都照旧。
- * 差异格的**左栏是只读对照**（transforms 被只读过滤挡掉）⇒ 焦点在左栏时同样不给替换。
+ * 差异格左栏按**它自己的只读闸**判（用户口径 2026-11）：B 档左栏背后是另一份文档，与右栏
+ * 同权可替换；A 档基线快照与旧会话快照仍只读（transforms 会被那道闸丢掉）。
  */
 function replaceAllowedHere(): boolean {
   const p = activePanel();
   const surface = diffSurfaceOf(p);
-  if (surface && findTargetView() === surface.left) return false;
+  if (surface && findTargetView() === surface.left) return !surface.left.state.readOnly;
   const t = p && p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
   return t?.viewMode !== "preview";
 }
@@ -365,7 +367,8 @@ function stepFind(dir: 1 | -1, q: FindBarQuery): void {
     ],
   };
   dispatchOwn(view, step);
-  // 只有右栏那颗 view 才是标签的正文（左栏是只读对照）⇒ 别把对照文档的 state 写回标签。
+  // 只有右栏那颗 view 才是标签的正文；左栏那颗是旁路（它背后是另一份文档）⇒
+  // 别把旁路的 state 写回标签。
   if (panel.view?.view === view) {
     const tab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
     if (tab) tab.state = view.state;
@@ -375,7 +378,7 @@ function stepFind(dir: 1 | -1, q: FindBarQuery): void {
 
 /** 替换当前命中（没有选中命中时，先跳到下一个再替换下一次点击生效）。 */
 function replaceCurrent(q: FindBarQuery): void {
-  // 左栏是只读对照、预览档文档锁着 —— 两处都改不动，先说清楚为什么不换。
+  // 左栏的只读快照、预览档文档锁着 —— 两处都改不动，先说清楚为什么不换。
   if (!replaceAllowedHere()) {
     findBar?.setStatus(replaceBlockedReason());
     return;

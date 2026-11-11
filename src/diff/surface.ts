@@ -2,12 +2,15 @@
 //
 // 落点（设计稿 ⑧·1 的裁决，本轮的地基）：**`Panel.view` 继续是右栏那颗既有的 EditorView**
 // （那份文档本身 —— 脏标记、Ctrl+S、撤销栈、会话快照全按它寻址，那一大片一行都不用加分支）。
-// 差异标签只多一个**旁路**：挂在 `.panel-host` 内、`.panel-editor` **之前**的一颗只读
-// `EditorView`，加一根只管这一栏之内的分割线。风险因此从「几十处都要记得问 kind」
+// 差异标签只多一个**旁路**：挂在 `.panel-host` 内、`.panel-editor` **之前**的一颗
+// `EditorView`（B 档两文件比较时它与右栏同权可编辑；A 档左栏是上次保存的快照，只读），
+// 加一根只管这一栏之内的分割线。风险因此从「几十处都要记得问 kind」
 // 降级成「一处挂、一处拆」。
 //
 // ⚠️ 左栏那颗 view **不进同步滚动那套注册口**：那套的语义是「同一文档的两个视口」，
 // 而这里是两份**不同**的内容（设计稿 ② 的反目标）；跳块的落位走既有「显式落位」那一类（Task 4）。
+// B 档左栏可编辑之后，它与那份文档的其余实例靠 `notifyDiffDocChanged` 互同步 ——
+// 那是「同一份文档的第二颗 view」，但仍不走同步滚动（滚动跟随是另一件事）。
 //
 // 两臂的装饰面（Task 3：两侧行底色 / 行号槽记号 / 对侧占位块）与右缘差异概览**在这里装上，
 // 但不在这里建**：
@@ -18,7 +21,13 @@
 // （预留 = 空转的抽象）⇒ 装它只能走 CM6 唯一可行的「先建视图、后加配置」那一发
 // `StateEffect.appendConfig`，并且把新 Compartment 一起并进去，好在拆旁路时精准摘掉这一臂。
 
-import { Compartment, EditorState, StateEffect, type Extension } from "@codemirror/state";
+import {
+  Compartment,
+  EditorState,
+  StateEffect,
+  type ChangeSet,
+  type Extension,
+} from "@codemirror/state";
 import {
   BlockType,
   EditorView,
@@ -28,7 +37,7 @@ import {
 } from "@codemirror/view";
 import { highlightSelectionMatches } from "@codemirror/search";
 import { detectLanguage } from "../editor/language";
-import { gutterExtensions } from "../editor/editor";
+import { baseExtensions, gutterExtensions } from "../editor/editor";
 import { findHighlight } from "../editor/find";
 import {
   layoutOverview,
@@ -63,7 +72,13 @@ import {
   type FoldReveal,
   type GapZone,
 } from "./face";
-import { canOpenAgainstBaseline, notifyDiffBlocks, type DiffSide, type DiffSpec } from "./model";
+import {
+  applyDiffDocEdit,
+  canOpenAgainstBaseline,
+  notifyDiffBlocks,
+  type DiffSide,
+  type DiffSpec,
+} from "./model";
 import { revertEdit } from "./revert";
 import { createWrapMeter, type WrapMeter } from "./wrap-measure";
 import { CODICONS } from "../shell/codicons";
@@ -87,7 +102,7 @@ const rightFaceSlot = new Compartment();
 
 /** 一张差异标签挂在面板上的旁路 surface。 */
 export interface DiffSurface {
-  /** 左栏那颗只读视图（测试与 Task 4/7 的落位都直接按它寻址） */
+  /** 左栏那颗视图（测试与 Task 4/7 的落位都直接按它寻址） */
   readonly left: EditorView;
   /** 当前输入描述（A/B 两档的读取口都从这儿取） */
   spec(): DiffSpec;
@@ -196,19 +211,24 @@ function lineStartOf(view: EditorView, line: number): number {
 }
 
 /**
- * 左栏那颗 view 的 state —— 只读**不是**「两手」，是三道一起给（R12：「左栏只读」是设计稿 ⑤
- * 的事实项、⑦·⑤ 的验收对象）：
- *   · `EditorView.editable(false)`：内容 DOM 落 `contenteditable="false"` ⇒ 敲字进不去。
- *   · `EditorState.readOnly`：CM6 的口径是「**commands 与扩展**在动手之前问这一颗」
- *     （`@codemirror/state` 的 `readOnly` 文档原话），它**不**否决裸 `view.dispatch`。
- *   · `EditorState.transactionFilter`（丢掉 `docChanged`）：这一道才兑现绑定约束那句
- *     「任何事务都不许改动它的文档」。少了它，前两道只是「看起来不能打字」——
- *     查找替换、脚本改文档、任何后来接上这颗 view 的写点都能直接重写基线正文。
+ * 左栏那颗 view 的 state。
  *
- * 加 `EditorView.contentAttributes` 那颗 `tabindex: "0"`：`editable(false)` 把 contentDOM 写成
+ * **能不能编辑只由「栏背后有没有文档」决定**（用户口径 2026-11）：
+ *   · B 档（`spec.leftDocId != null`）—— 左栏就是另一份文档，与右栏同权：带完整编辑扩展；
+ *   · A 档（基线快照）—— 只读**不是**「两手」，是三道一起给（R12：「左栏只读」是设计稿 ⑤
+ *     的事实项、⑦·⑤ 的验收对象）：
+ *     · `EditorView.editable(false)`：内容 DOM 落 `contenteditable="false"` ⇒ 敲字进不去。
+ *     · `EditorState.readOnly`：CM6 的口径是「**commands 与扩展**在动手之前问这一颗」，
+ *       它**不**否决裸 `view.dispatch`。
+ *     · `EditorState.transactionFilter`（丢掉 `docChanged`）：这一道才兑现绑定约束那句
+ *       「任何事务都不许改动基线正文」。少了它，前两道只是「看起来不能打字」——
+ *       查找替换、脚本改文档、任何后来接上这颗 view 的写点都能直接重写基线正文。
+ *
+ * `EditorView.contentAttributes` 那颗 `tabindex: "0"`：`editable(false)` 把 contentDOM 写成
  * `contenteditable=false`，而 CM6 聚焦靠的正是点下去那一下 `focus()` —— 不可编辑又没有
  * tabindex 的元素 `focus()` 是空操作 ⇒ 左栏点不进焦点、选不出字、复制不了（⑦·⑤ 要的正是
  * 「选得中才复制得了」）。`src/preview/wysiwyg.ts:44-48` 把「两道都必要」记过一遍，这里同方。
+ * 可编辑那一支也留着它：与右栏同一颗口径，且查找框把焦点交回来时行为一致。
  *
  * ⚠️ 闸只管「改文档」，非 `docChanged` 的事务原样放行：Task 3 的装饰走 effects、Task 4 的
  * 落位走 selection 与滚动 —— 整片 `[]` 等于把那两件事一起锁死。
@@ -244,6 +264,7 @@ function leftState(
   face: Extension,
   theme: Extension,
   wrap: Extension,
+  writable: boolean,
 ): EditorState {
   // 左栏按**自己的文件类型**解析，不从右栏借语言（VS Code 的差异编辑器给两份 model 各挂
   // 自己的 language id：`DiffEditorViewModel` 直接读 `originalModel.getLanguageId()` /
@@ -253,23 +274,31 @@ function leftState(
   return EditorState.create({
     doc: spec.leftText(),
     extensions: [
-      EditorState.readOnly.of(true),
-      EditorView.editable.of(false),
       EditorView.contentAttributes.of({ tabindex: "0" }),
-      EditorState.transactionFilter.of((tr) => (tr.docChanged ? [] : tr)),
-      // 只读 ≠ 看不见：VS Code 的原稿栏是一颗完整的子编辑器，只关编辑；当前行、选区、
-      // 同词出现这三层高亮照编辑器选项生效（`diffEditorEditors.ts` 的
-      // `_adjustOptionsForSubEditor` 不动 `selectionHighlight` / `occurrencesHighlight`）。
-      // `drawSelection()` 是选区高亮的地基（右栏 `baseExtensions` 那一颗同源）：少了它，
-      // 选中只走浏览器原生高亮，`.cm-selectionBackground` 这套主题色全不生效。
-      drawSelection(),
-      ...(perf.activeLine ? [highlightActiveLineGutter(), highlightActiveLine()] : []),
-      // 同词出现的正文层与概览标尺同闸（右栏 `editor.ts` 同一对）：正文不亮时右缘也不许亮。
-      ...(perf.selectionMatches ? [highlightSelectionMatches(), overviewWordMatches.of(true)] : []),
-      // 查找命中（正文高亮 + 概览标记）也挂在这一栏：查找作用于**当前聚焦的那一侧**，
-      // 焦点在左栏时 `find/findbar.ts` 会把查询派给这颗 view。少了这些字段，派过来的
-      // `setFindQuery` 只会静默空转 ⇒ 左侧搜不到、也没有命中标记。
-      findHighlight(),
+      ...(writable
+        ? // 与右栏同一套编辑扩展（历史、键位、括号、多选、查找命中……只差 gutter/语言/主题
+          // 那几颗由下面按本栏追加）—— 左栏可编辑之后，撤销栈与快捷键必须与右栏同款。
+          baseExtensions(perf)
+        : [
+            EditorState.readOnly.of(true),
+            EditorView.editable.of(false),
+            EditorState.transactionFilter.of((tr) => (tr.docChanged ? [] : tr)),
+            // 只读 ≠ 看不见：VS Code 的原稿栏是一颗完整的子编辑器，只关编辑；当前行、选区、
+            // 同词出现这三层高亮照编辑器选项生效（`diffEditorEditors.ts` 的
+            // `_adjustOptionsForSubEditor` 不动 `selectionHighlight` / `occurrencesHighlight`）。
+            // `drawSelection()` 是选区高亮的地基（右栏 `baseExtensions` 那一颗同源）：少了它，
+            // 选中只走浏览器原生高亮，`.cm-selectionBackground` 这套主题色全不生效。
+            drawSelection(),
+            ...(perf.activeLine ? [highlightActiveLineGutter(), highlightActiveLine()] : []),
+            // 同词出现的正文层与概览标尺同闸（右栏 `editor.ts` 同一对）：正文不亮时右缘也不许亮。
+            ...(perf.selectionMatches
+              ? [highlightSelectionMatches(), overviewWordMatches.of(true)]
+              : []),
+            // 查找命中（正文高亮 + 概览标记）也挂在这一栏：查找作用于**当前聚焦的那一侧**，
+            // 焦点在左栏时 `find/findbar.ts` 会把查询派给这颗 view。少了这些字段，派过来的
+            // `setFindQuery` 只会静默空转 ⇒ 左侧搜不到、也没有命中标记。
+            findHighlight(),
+          ]),
       // 行号走与右栏**同一颗**工厂（`gutterExtensions`）—— `perf` 已由 `perfOfDiffInstance`
       // 把折叠关掉，所以这里只会给出行号槽，与上游差异子编辑器的 folding = false 同口径。
       ...gutterExtensions(perf),
@@ -279,6 +308,26 @@ function leftState(
       face,
     ],
   });
+}
+
+/**
+ * 左栏那颗 view 与它背后文档的**双向链**的一半：文档在别处被改了，补进挂着它的左栏。
+ *
+ * 为什么需要：B 档左栏可编辑之后，它与那份文档自己的标签是两颗 view。`syncDocInstances`
+ * 只认 `tabs` 里的实例，够不到旁路这颗 view —— 不补这一发，另一格改同一份文件时
+ * 差异左栏会停在旧正文，而块表读的却是新正文（底色与正文错行）。
+ *
+ * 另一半（左栏 → 文档）在左栏的 `updateListener` 里，走 `applyDiffDocEdit`。两个方向都带
+ * 「别回声」的闸：本 surface 自己发出去的那一笔，回来时不再应用第二次。
+ */
+interface LeftMirror {
+  apply(changes: ChangeSet): void;
+}
+const leftMirrors = new Map<number, Set<LeftMirror>>();
+
+/** 文档正文在别处改了 ⇒ 把同一笔改动补进所有挂着它的左栏（`syncDocInstances` 末尾点名）。 */
+export function notifyDiffDocChanged(docId: number, changes: ChangeSet): void {
+  for (const mirror of leftMirrors.get(docId) ?? []) mirror.apply(changes);
 }
 
 /**
@@ -431,6 +480,12 @@ export function createDiffSurface(
   hostEl.appendChild(overviewEl);
 
   const current = spec;
+  /**
+   * 左栏能不能编辑：背后有文档、且那份文档不是只读（B 档两文件比较）。A 档的基线快照没有
+   * 落点 ⇒ 只读；旧会话恢复出来的 B 档同样（`leftDocId === null`，只有一次读盘快照）。
+   */
+  const leftDoc = current.leftDocId != null ? (docs.get(current.leftDocId) ?? null) : null;
+  const leftWritable = !!leftDoc && !leftDoc.readonly;
   /**
    * 旁路是否已经挂完（`scheduleAlign` 在文件后半才声明）。
    *
@@ -819,8 +874,9 @@ export function createDiffSurface(
    * 查两侧各自的光标行，盖住光标那一段先记成「整段全开」（只记账，不派发 —— 收口还是
    * 调用方那一发 `refreshArms()`，两栏同一次派发这一条不许破）。
    *
-   * 左栏也查：它硬只读、打字进不去，但它**可选可聚焦**（R12 那一手），光标同样会停在
-   * 未改动的那一段里；那一栏没有监听（文档不会自己动），就借这两颗入口与右栏那一发兜住。
+   * 左栏也查：A 档它恒只读（B 档可编辑，但那两种档位都会把光标停在未改动段里），
+   * 而它**可选可聚焦**（R12 那一手）；那一栏没有折叠开关的监听，就借这两颗入口与右栏
+   * 那一发兜住。
    */
   const guardCaretsUnderFolds = (): void => {
     if (!foldOn) return;
@@ -1003,6 +1059,11 @@ export function createDiffSurface(
     refreshArms();
   };
 
+  /** 本 surface 正把左栏的一笔改动写回文档（文档那一头回声进来时不再重复应用）。 */
+  let forwarding = false;
+  /** 正把文档在别处的一笔改动补进左栏（左栏这一头不再回声给文档）。 */
+  let applyingRemote = false;
+
   /**
    * 左栏那一臂（**排在折叠块之后**：`onFoldBarClick` 那颗回调得先有身份）。
    *
@@ -1017,12 +1078,28 @@ export function createDiffSurface(
     diffFace("original", () => ({ blocks: stored, gaps: gapPlans.original, inner: inner.changes })),
     onFoldBarClick(onOriginalFoldReveal),
     onFoldMarkClick(onOriginalFoldMark),
-    // 左栏没有文档更新，但**光标与选区会动**（R12：那颗 view 可选可聚焦）⇒ 概览标记层
-    // 必须跟着走，否则左列的光标条停在挂上那一刻。差异色块与折叠走 `refreshArms` 那一发，
-    // 这里只重画标记画布（不做块表重算）。
+    // 左栏的光标与选区会动（R12：那颗 view 可选可聚焦）⇒ 概览标记层必须跟着走，否则
+    // 左列的光标条停在挂上那一刻。差异色块与折叠走 `refreshArms` 那一发，标记画布另算。
     EditorView.updateListener.of((update) => {
       // 回退列的常显块跟「最后光标」走：光标在左栏里移动也要重画（此前只认右栏）。
       if (update.selectionSet) renderReverts();
+      // B 档左栏可编辑：这一笔（打字 / 查找替换 / 撤销）先写回它背后那份文档，脏标记与
+      // 同文档其他实例由 main 那条既有链路负责；块表重算仍走下面同一发防抖。
+      // `applyingRemote` 挡住「文档别处改 → 补进左栏 → 又回声给文档」那一圈。
+      if (armed && update.docChanged && leftWritable) {
+        if (!applyingRemote) {
+          forwarding = true;
+          try {
+            applyDiffDocEdit(current.leftDocId as number, update.changes);
+          } finally {
+            forwarding = false;
+          }
+        }
+        // 行数/正文换了 ⇒ 概览轴（按行记账）当场作废；缝的收口仍旧走防抖那一发。
+        invalidateAxis();
+        scheduleSync();
+        unfoldUnderCaret();
+      }
       // 行盒几何变了（拖分屏 / 窗口尺寸 / 折行重排）⇒ 行高跟着变，缝必须按新行高重测。
       // ⚠️ 不能只靠 ResizeObserver：CM6 自己的 resize 量测有 50ms 防抖，RO 那一发常常还是
       // 旧宽度的行高，等它量完又不会再发一次通知 ⇒ 缝停在旧值。geometryChanged 是 CM6
@@ -1045,8 +1122,31 @@ export function createDiffSurface(
       leftFace.of(leftArm()),
       themeSlot.of(lastTheme),
       leftWrap.of(wrapValue()),
+      leftWritable,
     ),
   });
+
+  /**
+   * 文档那一头的改动补进左栏（另一半在左栏的 `updateListener` 里，见 `LeftMirror`）。
+   * 只在可编辑时登记：A 档没有文档，什么也不用同步。
+   */
+  const leftMirror: LeftMirror = {
+    apply: (changes) => {
+      // 本 surface 刚把同一笔写回文档，回声回来时左栏已经是最新的。
+      if (forwarding) return;
+      applyingRemote = true;
+      try {
+        left.dispatch({ changes });
+      } finally {
+        applyingRemote = false;
+      }
+    },
+  };
+  if (leftWritable && current.leftDocId != null) {
+    let set = leftMirrors.get(current.leftDocId);
+    if (!set) leftMirrors.set(current.leftDocId, (set = new Set()));
+    set.add(leftMirror);
+  }
 
   // 查找作用于「最后聚焦的那一栏」（上游 `diffEditorWidget.getFocusedCodeEditor()`）：
   // 焦点进哪一栏就记哪一栏；焦点离开两栏（查找框、侧栏）时不改 —— 打开查找那一刻还要靠它
@@ -1834,7 +1934,8 @@ export function createDiffSurface(
    * `leftText` 是**读取口**，所以块表自己会跟上（`computeBlocks` 现读）；但左栏那颗 view 的
    * **文档**是挂上那一刻写进去的一份快照，基线被就地换掉（Ctrl+S / 以磁盘为准重载）之后它还是旧的
    * ⇒ 下一发 `refreshDiff` 会用**新基线**算出的块去给**旧正文**上色。换文档只有 `setState` 这一条
-   * 合法路（`dispatch({changes})` 会被 `leftState` 那道硬闸整发丢掉），换完再补一发 `syncBlocks()`。
+   * 合法路（A 档那道只读硬闸会把 `dispatch({changes})` 整发丢掉；B 档可编辑时这里走
+   * 「现值 ≠ 左栏正文」的漂移兜底），换完再补一发 `syncBlocks()`。
    */
   const resetLeftDoc = (): void => {
     lastTheme = themeOf();
@@ -1845,6 +1946,7 @@ export function createDiffSurface(
         leftFace.of(leftArm()),
         themeSlot.of(lastTheme),
         leftWrap.of(wrapValue()),
+        leftWritable,
       ),
     );
     syncBlocks();
@@ -2233,6 +2335,11 @@ export function createDiffSurface(
       detachOverview();
       layoutRO?.disconnect();
       for (const meter of Object.values(meters)) meter.dispose();
+      if (leftWritable && current.leftDocId != null) {
+        const set = leftMirrors.get(current.leftDocId);
+        set?.delete(leftMirror);
+        if (set && set.size === 0) leftMirrors.delete(current.leftDocId);
+      }
       left.destroy();
       originalEl.remove();
       // 分割线与按钮层都在这一列里，拆它一并带走。

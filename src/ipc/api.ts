@@ -723,7 +723,8 @@ export interface TabSession {
    * B461：B 档差异的**左栏文件路径**（右栏就是 `path` 那份文档）；A 档与普通标签都是 `null`。
    *
    * 恢复规则：`kind === "diff" && diffLeftPath` ⇒ B 档；`kind === "diff" && !diffLeftPath`
-   * ⇒ A 档（与这份文档上次保存的正文比较）。左栏只是只读对比缓冲，不进文档登记表。
+   * ⇒ A 档（与这份文档上次保存的正文比较）。旧会话恢复时左栏那个文件若没开成文档，
+   * 便退回只读对比缓冲（不进文档登记表）。
    */
   diffLeftPath?: string | null;
   /**

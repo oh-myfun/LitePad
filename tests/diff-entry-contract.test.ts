@@ -317,6 +317,7 @@ describe("B461 · A 档「与上次保存比较」进表与三条入口（Task 5
       renderPanelTabs: () => {},
       showMessage: (text) => seen.push(text),
       switchTab: (panelId, tabId) => switched.push(panelId, tabId),
+      applyDocEdit: () => {},
     });
     const doc = openDocWithBaseline("甲\n乙\n丙", "甲\n乙\n丙");
     // 磁盘上没这份文档的「原样」（新建/未保存）⇒ 那一档没有可比对的东西。
@@ -382,6 +383,7 @@ describe("B461 · A 档「与上次保存比较」进表与三条入口（Task 5
       renderPanelTabs: () => {},
       showMessage: () => {},
       switchTab: (_panelId, tabId) => switched.push(tabId),
+      applyDocEdit: () => {},
     });
     const doc = openDocWithBaseline("甲\n乙\n丙", "甲\n乙改\n丙");
     const first = (await diffModel.openBaselineDiff(doc.tabId))!;
@@ -633,6 +635,7 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
         ? {
             tier,
             docId: doc.tabId,
+            leftDocId: null,
             leftText: () => doc.baseline ?? "",
             leftName: "b.md（上次保存）",
             rightName: "b.md",
@@ -641,6 +644,7 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
         : {
             tier,
             docId: doc.tabId,
+            leftDocId: null,
             leftText: () => texts.left,
             leftName: "a.md",
             rightName: "b.md",
@@ -973,6 +977,7 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
       renderPanelTabs: () => {},
       showMessage: () => {},
       switchTab: () => {},
+      applyDocEdit: () => {},
     });
 
     actions.applyDiffAction(0, "swap");
@@ -1003,6 +1008,7 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
       renderPanelTabs: () => {},
       showMessage: () => {},
       switchTab: () => {},
+      applyDocEdit: () => {},
     });
 
     actions.applyDiffAction(0, "swap");
