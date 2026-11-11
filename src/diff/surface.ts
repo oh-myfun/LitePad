@@ -1123,13 +1123,53 @@ export function createDiffSurface(
   };
 
   /**
+   * 概览轴专用的缝计划：算法与 `measureGapPlans` 同一份，行高取**折行量尺**。
+   *
+   * 补缝必须吃 CM6 的高度图（与滚动坐标同源，见 `lineHeights`）；可那张图对视口外的
+   * 折行行只有估值，滚过一段就换一版 ⇒ 缝高跟着变，概览色带拖一下滚动条就跳一次长度
+   * （用户报的「拖拽时色条长度会变化」）。概览只要一张不漂的地图：行高与缝都从量尺来，
+   * 整篇一次量准，轴只随文档 / 折叠 / 折行 / 宽度 / 排版变。
+   *
+   * 量尺量不出（面板没宽度、整栏不可见、jsdom）或折行关着 ⇒ 用 `gapPlans`：折行关着时
+   * 一行 = 一个视觉行，CM6 给的是精确值，两张图本来就一致。
+   */
+  const axisGapPlans = (): Record<DiffSide, GapZone[]> => {
+    if (!right || !isWrap) return gapPlans;
+    const measured: Partial<Record<DiffSide, number[]>> = {};
+    for (const side of SIDES) {
+      const heights = meterOf(side).heights();
+      if (!heights) return gapPlans;
+      measured[side] = heights;
+    }
+    const folds: Record<DiffSide, readonly FoldPoint[]> = {
+      original: foldedRangesIn(left.state),
+      modified: foldedRangesIn(right.state),
+    };
+    const heightOf = (side: DiffSide, line: number): number => {
+      const fold = folds[side].find((f) => line >= f.from && line <= f.to);
+      if (fold) return line === fold.from ? FOLD_BAR_HEIGHT : 0;
+      return measured[side]?.[line - 1] ?? 0;
+    };
+    const zones = gapZones(
+      stored,
+      { original: left.state.doc.lines, modified: right.state.doc.lines },
+      heightOf,
+      inner.alignments,
+    );
+    return {
+      original: foldGaps(zones.original, folds.original),
+      modified: foldGaps(zones.modified, folds.modified),
+    };
+  };
+
+  /**
    * 概览色带与标记层的「像素轴」。
    *
-   * 行高取 `axisHeights`（折行量尺实测），**不与补缝共用 CM6 的高度图**：补缝要的是
-   * 与滚动坐标同源，概览要的是不随视口漂移的稳定地图（两张图差着视口外折行的估值误差）。
-   * 折叠按 `axisHeights` 的口径记（段首 24px、其余 0），这里不再单独加折条 —— 两处各记
-   * 一份就会在「单侧折叠」时把差值算成两倍。缝按 `afterLine` 记在那一行之后（已由
-   * `foldGaps` 挪出折区）。
+   * 行高与缝都取**折行量尺**（`axisHeights` / `axisGapPlans`），**不与补缝共用 CM6 的
+   * 高度图**：补缝要的是与滚动坐标同源，概览要的是不随视口漂移的稳定地图（两张图差着
+   * 视口外折行的估值误差）。折叠按同一口径记（段首 24px、其余 0），这里不再单独加折条
+   * —— 两处各记一份就会在「单侧折叠」时把差值算成两倍。缝按 `afterLine` 记在那一行
+   * 之后（已由 `foldGaps` 挪出折区）。
    *
    * **缓存**：滚动只读轴（滑块、色带、标记层都吃它），不能每一发 scroll 都把整篇重算。
    * 作废点只有「行盒真的换了」：缝/折叠/折行/文档/字号（见 `invalidateAxis` 的调用处）。
@@ -1147,8 +1187,9 @@ export function createDiffSurface(
     if (!view) return null;
     const lines = view.state.doc.lines;
     const h = axisHeights(side);
+    const gaps = axisGapPlans();
     const gapAfter = new Map<number, number>();
-    for (const gap of gapPlans[side]) {
+    for (const gap of gaps[side]) {
       gapAfter.set(gap.afterLine, (gapAfter.get(gap.afterLine) ?? 0) + gap.height);
     }
     const tops = new Float64Array(lines + 2);

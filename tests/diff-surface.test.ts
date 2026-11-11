@@ -1665,6 +1665,68 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     }
   });
 
+  it("B482 · 概览轴的缝也只吃量尺：拖滚动条让 CM6 新实测几行，色带长度不跟着跳", async () => {
+    // 左栏第 1 行折成 3 个视觉行（60px）、右栏 1 行（20px）⇒ 右栏要补 40px 的缝。
+    // CM6 对这两行先是按 20px 估，滚过（或重测）之后才换成实测 —— 补缝会跟着变，
+    // 概览轴不行：它吃的是同一把量尺，拖滚动条时色带长度必须一动不动。
+    const { panel, s } = mountDiffPair(`${"L".repeat(30)}\nX`, "R\nX");
+    const right = panel.view!.view;
+    setGlobalWrap(true);
+    const rect = (width: number, height: number): DOMRect =>
+      ({
+        left: 0,
+        right: width,
+        top: 0,
+        bottom: height,
+        width,
+        height,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    const spy = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      const el = this as HTMLElement;
+      if (el.classList.contains("cm-content")) return rect(300, 400);
+      if (el.classList.contains("diff-wrap-probe-line")) {
+        const len = (el.textContent ?? "").length;
+        return rect(300, 20 * Math.max(1, Math.ceil(len / 10)));
+      }
+      return rect(0, 0);
+    });
+    try {
+      const mark = (side: "original" | "modified"): HTMLElement =>
+        panel.bodyEl!.querySelector<HTMLElement>(`.diff-overview-${side} .diff-overview-mark`)!;
+      // 起手：CM6 还没实测（两栏都按 20px 估），缝计划此时是 0。
+      fakeLineBoxes(s.left, [20, 20]);
+      fakeLineBoxes(right, [20, 20]);
+      s.remeasure();
+      await frames();
+      // 量尺口径：左 60+20=80、右 20+40(缝)+20=80 ⇒ 改块 75% / 25%。
+      expect(mark("original").style.height, "起手就按量尺记账").toBe("75%");
+      expect(mark("modified").style.height).toBe("25%");
+
+      // 滚动让 CM6 把这两行实测了：补缝从 0 变 40（真机缝高确实会变），概览轴不许动。
+      fakeLineBoxes(s.left, [60, 20]);
+      fakeLineBoxes(right, [20, 20], { 1: 40 });
+      s.remeasure();
+      await frames();
+      expect(mark("original").style.height, "实测落地后色带长度不变").toBe("75%");
+      expect(mark("modified").style.height).toBe("25%");
+
+      // 再翻一版估值（拖分屏后的重估）：仍然不许跳。
+      fakeLineBoxes(s.left, [40, 20]);
+      fakeLineBoxes(right, [20, 20], { 1: 20 });
+      s.remeasure();
+      await frames();
+      expect(mark("original").style.height, "估值再翻一版也不跳").toBe("75%");
+      expect(mark("modified").style.height).toBe("25%");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("B462 · 回退按钮跟着对齐后的实测位置走（块与按钮同一条行轴）", async () => {
     const spy = vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(20);
     try {
