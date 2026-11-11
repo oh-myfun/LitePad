@@ -500,8 +500,9 @@ describe("B397-2 块级 widget：与正文左缘对齐，且一条纵向 margin 
     expect(header, "工具行不再绝对定位（否则会压在行号栏上）").not.toMatch(/position:\s*absolute/);
     // B409：语言按钮在左、复制键在右
     expect(header).toMatch(/justify-content:\s*space-between/);
-    expect(ruleBlock(css, ".md-preview-face .md-codeblock-copy")).toMatch(/opacity:\s*0/);
-    expect(css).toMatch(/\.md-codeblock-widget:hover \.md-codeblock-copy/);
+    // B462：复制键收成三种块共用的一颗图标键，仍按悬停 / 编辑显现
+    expect(ruleBlock(css, ".md-preview-face .md-block-copy")).toMatch(/opacity:\s*0/);
+    expect(css).toMatch(/\.md-codeblock-widget:hover \.md-block-copy/);
     const lang = ruleBlock(css, ".md-preview-face .md-codeblock-lang");
     // B404：`.dropdown-trigger` 那份 150px/28px 的大表单尺寸必须被压回去
     expect(lang).toMatch(/min-width:\s*0/);

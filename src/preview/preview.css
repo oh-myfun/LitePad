@@ -575,7 +575,10 @@
   position: relative;
   min-width: 0;
   padding: 8px 0;
-  cursor: text;
+  /* B462：根管的是「块」这一格 —— 工具行、行号栏、横向滚动条都不是输入面，
+     整块挂 I-beam 会让滚动条上也出现文本光标（用户点名）。可编辑面在 `<code>` 上，
+     下面单独给 `cursor: text`。 */
+  cursor: default;
 }
 .md-preview-face .md-codeblock-box {
   position: relative;
@@ -616,6 +619,8 @@
   padding: 0;
   overflow-x: auto;
   overflow-y: hidden;
+  /* 横向滚动条属于 pre 这一格，不是 code 的文本面（B462）。 */
+  cursor: default;
 }
 /* B405：语言按钮搬进顶部工具行 ⇒ 代码区不再需要 34px 的「预留位」。 */
 .md-preview-face .md-codeblock-widget code {
@@ -631,6 +636,7 @@
   font-size: 0.85em;
   line-height: 1.55;
   color: var(--md-fg);
+  cursor: text;
 }
 .md-preview-face .md-codeblock-widget code:focus {
   outline: none;
@@ -656,17 +662,20 @@
   background: transparent;
   user-select: none;
 }
-.md-preview-face .md-codeblock-copy {
+/* B462：代码 / 公式 / 图块右上角共用同一颗复制键（图标按钮，codicon copy）。
+   外观与图右上角那三颗缩放键同档；平时收着 —— 块悬停或正在就地编辑时出现。 */
+.md-preview-face .md-block-copy {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  width: 20px;
   height: 20px;
-  padding: 0 7px;
-  font-size: 11px;
-  font-family: var(--font-ui);
-  border: 0;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--md-panel-bg) 88%, var(--bg));
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  border: 1px solid var(--md-panel-border);
+  border-radius: var(--md-component-radius);
+  background: var(--md-panel-bg);
   color: var(--md-muted);
   box-shadow: none;
   cursor: pointer;
@@ -674,18 +683,42 @@
   pointer-events: none;
   transition: opacity 0.12s ease;
 }
-.md-preview-face .md-codeblock-widget:hover .md-codeblock-copy,
-.md-preview-face .md-codeblock-widget.md-block--editing .md-codeblock-copy {
+.md-preview-face .md-block-copy:hover {
+  color: var(--md-fg);
+}
+.md-preview-face .md-block-copy:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+  outline: none;
+}
+.md-preview-face .md-codeblock-widget:hover .md-block-copy,
+.md-preview-face .md-codeblock-widget.md-block--editing .md-block-copy,
+.md-preview-face .md-math-block:hover .md-block-copy,
+.md-preview-face .md-diagram-widget:hover .md-block-copy {
   opacity: 1;
   pointer-events: auto;
 }
-.md-preview-face .md-codeblock-copy:hover {
-  background: color-mix(in srgb, var(--md-panel-bg) 82%, var(--bg));
-  color: var(--md-fg);
+/* 公式 / 图块的源码框浮在块顶 ⇒ 悬浮键会压住第一行右端，编辑期间收掉。
+   代码块的键住在工具行里，不存在这层遮挡，所以仍随编辑显现。 */
+.md-preview-face .md-math-block.md-block--editing > .md-block-copy,
+.md-preview-face .md-diagram-widget.md-block--editing .md-block-copy {
+  /* 用 visibility 而不是 display：编辑态那条“不许藏渲染结果”的判据按 display 扫全表，
+     display:none 会被它当成“把图/公式藏了”。 */
+  visibility: hidden;
+  pointer-events: none;
 }
-.md-preview-face .md-codeblock-copy:focus {
-  outline: none;
-  box-shadow: none;
+/* 公式 / 图块没有工具行：钉在视觉盒右上角（与图右上角那三颗缩放键同一行）。 */
+.md-preview-face .md-math-block > .md-block-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+}
+.md-preview-face .md-diagram-box > .md-block-copy {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 1;
 }
 
 /* 语言选择：应用下拉（B108）的触发器，外观与复制键同一档按钮 —— 无边框、无常驻底色，
@@ -748,7 +781,9 @@
 .md-preview-face .md-table-widget {
   position: relative;
   padding: 5px 0 7px;
-  cursor: text;
+  /* B462：横向滚动条在 `.md-table-body` 上，不在文本格上 ⇒ 根与滚动容器的光标必须是
+     default；I-beam 由下面的 th/td 单独给。 */
+  cursor: default;
   /* B456 同类遗漏（真机对照量到的，不是图种）：宽表格同样按 max-content 把 `.cm-content` 撑宽
      （1294 vs 可视 1161）⇒ 同屏每张卡片跟着变宽。下面那颗 `.md-table-body` 本来就带
      `overflow-x: auto` 接这一格，只差把这一层的固有宽度关掉。 */
@@ -756,6 +791,7 @@
 }
 .md-preview-face .md-table-body {
   overflow-x: auto;
+  cursor: default;
   border: 1px solid var(--md-panel-border);
   border-radius: var(--md-component-radius);
   background: color-mix(in srgb, var(--bg) 96%, var(--code-bg));
@@ -940,11 +976,17 @@
   cursor: text;
 }
 .md-preview-face .md-math-widget.md-math-block {
+  position: relative;
   padding: 18px 14px;
   overflow-x: auto;
   border-radius: var(--md-component-radius);
   background: color-mix(in srgb, var(--md-panel-bg) 65%, transparent);
   text-align: center;
+  /* B462：块级公式的横向滚动条属于这一格；I-beam 只留给公式本体。 */
+  cursor: default;
+}
+.md-preview-face .md-math-block .md-math-render {
+  cursor: text;
 }
 .md-preview-face .math-inline,
 .md-preview-face .math-display {
@@ -967,12 +1009,16 @@
 .md-preview-face .md-diagram-widget {
   padding: 8px 0;
   text-align: center;
-  cursor: text;
+  /* B462：图卡片与它周围的留白都不是文本输入面（画布自己给 grab）。 */
+  cursor: default;
   /* B456 · 块 widget 的固有宽度必须与内容**脱钩**。图一宽（宽 mermaid / 40 类的 ECharts）就把
      `.cm-content` 撑到 3077px（可视才 1161）⇒ 同屏每张卡片都跟着变宽，钉在卡片右沿的三颗键跑到
      窗口外面（用户：「宽度超出编辑区，右边三键看不到，且连带同屏中的卡片都出现宽度异常」）。
      上面那条 `max-width: 100%` 顶不住 —— 那 100% 量的正是这张已经被撑宽的卡片。 */
   contain: inline-size;
+}
+.md-preview-face .md-diagram-box {
+  position: relative;
 }
 .md-preview-face .md-diagram-widget .md-diagram {
   display: block;
@@ -996,11 +1042,12 @@
   cursor: grabbing;
 }
 /* 右上角三颗键：放大 / 缩小 / 复位（用户点名）。刻意不做「悬停才出现」——
-   图一旦放大了，就得一直有路可退。 */
+   图一旦放大了，就得一直有路可退。
+   B462：最右一格留给复制键（`.md-diagram-box > .md-block-copy`）⇒ 三颗键整体左移一档。 */
 .md-preview-face .md-diagram-zoom {
   position: absolute;
   top: 6px;
-  right: 6px;
+  right: 33px;
   display: flex;
   gap: 2px;
 }
@@ -1226,6 +1273,8 @@
 }
 .md-preview-face .md-block-source {
   display: none;
+  /* B462：块根不再是 text 光标（滚动条/留白要 default），源码框这一格自己声明回来。 */
+  cursor: text;
   white-space: pre-wrap;
   word-break: break-word;
   font-family: var(--md-code-font);

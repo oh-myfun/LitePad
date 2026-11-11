@@ -26,6 +26,7 @@ import { diagramClass, type DiagramKind } from "../markdown/diagrams";
 import { enhanceMarkdown, nextEnhanceSeq } from "../markdown/enhance";
 import { LAZY_THRESHOLD_LINES } from "../editor/perf";
 import { bindBlockBoundaryCursor, bindBlockClickEdit, stampBlockRange } from "./blockRange";
+import { createCopyButton } from "./copyButton";
 import {
   attachSourceEditing,
   beginSourceEditing,
@@ -145,7 +146,10 @@ export class MathWidget extends WidgetType {
     render.className = "md-math-render";
     renderMathPlaceholder(render, this.tex, true, view);
 
-    wrap.append(source, render);
+    // B462：复制的是 LaTeX 源码，不是 KaTeX 画出来的那串字形。
+    const copyBtn = createCopyButton(() => sourceText(source) || this.tex, "md-math-copy");
+
+    wrap.append(source, render, copyBtn);
     bindBlockBoundaryCursor(wrap, render);
 
     attachSourceEditing(wrap, {
@@ -322,7 +326,9 @@ export class DiagramWidget extends WidgetType {
     // 外层只管留白，视觉盒放内层（根元素带 margin 会破坏高度测量）
     const box = document.createElement("div");
     box.className = diagramClass(this.kind, "md-diagram-box", "md-mermaid-box");
-    box.append(source, inner);
+    // B462：与代码 / 公式同一颗复制键；复制的是图源码，不是 SVG。
+    const copyBtn = createCopyButton(() => sourceText(source) || this.code, "md-diagram-copy");
+    box.append(source, inner, copyBtn);
     wrap.appendChild(box);
     bindBlockBoundaryCursor(wrap, box);
 

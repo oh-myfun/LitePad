@@ -151,6 +151,9 @@ const IDS = {
   // 切换键 B445 起改锁形一对（见下面 `lock` / `unlock`）—— `eye` 随之零调用点，
   // 按本文件的红线删掉（留着会在改版时静默腐坏）。
   edit: "edit",
+  // B462 · 预览块右上角的复制键（代码 / 公式 / 图块共用）。`copy` 是 VS Code
+  // notebook / markdown preview 那一族用的同一颗；反馈态换 `check`（上面已有）。
+  copy: "copy",
   // B418 · 面板最大化后的「还原面板」：取 `screen-normal`（两个错开的方框，
   // VS Code 给「还原编辑器组大小」用的就是它，见 auxiliaryEditorPart.ts 的
   // `icon: Codicon.screenNormal`）。窗口标题栏那颗「向下还原」仍用

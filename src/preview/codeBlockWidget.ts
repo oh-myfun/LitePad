@@ -22,6 +22,7 @@ import { fileIconHtml } from "../shell/fileicons";
 import { highlightCodeHtml } from "../markdown/highlight";
 import { LAZY_THRESHOLD_LINES } from "../editor/perf";
 import { currentBlockRange, stampBlockRange, bindBlockBoundaryCursor } from "./blockRange";
+import { createCopyButton } from "./copyButton";
 import {
   attachSourceEditing,
   clickedOnBlockPadding,
@@ -328,22 +329,13 @@ export class CodeBlockWidget extends WidgetType {
     languageLabel.className = "md-codeblock-language-label";
     languageLabel.textContent = langLabel(current);
 
-    const copyBtn = document.createElement("button");
-    copyBtn.type = "button";
-    copyBtn.className = "md-codeblock-copy";
-    copyBtn.textContent = "复制";
-    copyBtn.addEventListener("mousedown", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-    });
-    copyBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      void navigator.clipboard.writeText(sourceText(codeEl) || this.code);
-      copyBtn.textContent = "已复制";
-      window.setTimeout(() => {
-        copyBtn.textContent = "复制";
-      }, 1200);
-    });
+    // 现取块内源码：上色那一发会把 `<code>` 换成新的，闭包旧节点会复制到换色前的文本。
+    const copyBtn = createCopyButton(
+      () =>
+        sourceText(wrap.querySelector<HTMLElement>('[data-block-source="1"]') ?? codeEl) ||
+        this.code,
+      "md-codeblock-copy",
+    );
 
     // B405：照 vditor 的代码块 —— 顶部一条工具行，语言按钮与复制键并排放在右侧。
     // 工具行在行号栏**之上**（`.md-codeblock-body` 才是 行号栏 + 代码区），
