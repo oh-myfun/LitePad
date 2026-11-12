@@ -14,12 +14,15 @@ import { previewHooks } from "./hooks";
 import { previewKeymap } from "./keymap";
 import { livePreview } from "./livePreview";
 import { taskClick } from "./taskClick";
+import { widgetSelection } from "./widgetSelection";
 
 /** 预览档（源码档换成了空数组）。 */
 export function previewFace(): Extension {
   return [
     draftFences,
     livePreview(),
+    // B397-5 · 预览块（代码块 / 表格 …）里的原生选区也走正文那套圆角样式
+    widgetSelection(),
     taskClick({
       onToggleTask: (view, line) => previewHooks().onToggleTask(view, line),
       canToggleTask: (view) => previewHooks().canToggleTask(view),

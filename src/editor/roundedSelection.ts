@@ -202,6 +202,21 @@ function className(corners: RectCorners): string {
   return classes.join(" ");
 }
 
+function fillet(side: (typeof SIDES)[number]): HTMLElement {
+  const element = document.createElement("div");
+  element.className = `lp-sel-fillet lp-sel-fillet-${side}`;
+  return element;
+}
+
+/** 凸角只加 class（圆角归 CSS），凹角挂一颗渐变补块；调用方负责先把元素摆好位置。 */
+export function applyCorners(element: HTMLElement, corners: RectCorners): void {
+  for (const side of SIDES) {
+    const mode = corners[side];
+    if (mode === "round") element.classList.add(ROUND_CLASS[side]);
+    else if (mode === "concave") element.append(fillet(side));
+  }
+}
+
 function sameCorners(a: RectCorners, b: RectCorners): boolean {
   return SIDES.every((side) => a[side] === b[side]);
 }
@@ -227,10 +242,7 @@ class RoundedSelectionMarker implements LayerMarker {
   draw(): HTMLElement {
     const element = this.rect.draw();
     for (const side of SIDES) {
-      if (this.corners[side] !== "concave") continue;
-      const fillet = document.createElement("div");
-      fillet.className = `lp-sel-fillet lp-sel-fillet-${side}`;
-      element.append(fillet);
+      if (this.corners[side] === "concave") element.append(fillet(side));
     }
     return element;
   }

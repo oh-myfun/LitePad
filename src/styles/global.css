@@ -4683,10 +4683,39 @@ button:focus-visible {
   --lp-sel-radius: 0px;
 }
 
+/* 预览块（代码块 / 表格 / frontmatter …）里的文字是原生 contenteditable 选区：
+   浏览器只会画直角矩形，覆盖层按正文那套三档角补圆角（见 widgetSelection.ts）。
+   覆盖层塞进选区块级宿主里，靠负 z-index + isolation 落在「块底色之上、文字之下」，
+   半透明底色才不会盖在字上。 */
+.panel-host .cm-editor .lp-native-sel-host {
+  position: relative;
+  isolation: isolate;
+}
+.panel-host .cm-editor .lp-widget-selectionLayer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+.panel-host .cm-editor .lp-widget-selectionLayer > .cm-selectionBackground {
+  position: absolute;
+}
+/* 覆盖层真的画出来时才藏原生直角高亮；跨块拖选这类接管不了的情形保留浏览器画法。
+   `!important` 是必需的：CM6 基础主题给「聚焦的可编辑子元素」写了
+   `.cm-content :focus::selection { background-color: highlight !important }`，
+   不加就赢不了它（真机取证：选区仍是最亮的系统蓝，覆盖层被压在下面看不见）。 */
+.panel-host .cm-editor.lp-widget-selection .md-block::selection,
+.panel-host .cm-editor.lp-widget-selection .md-block ::selection {
+  background-color: transparent !important;
+}
+
 /* B380：与选中词相同的其它出现 = editor.selectionHighlightBackground；
-   HC 档底色为 null，只留一圈 activeContrastBorder。CM6 的类名是 .cm-selectionMatch。 */
+   HC 档底色为 null，只留一圈 activeContrastBorder。CM6 的类名是 .cm-selectionMatch。
+   形状跟正文选区同一档圆角（HC 下 --lp-sel-radius 归零）。 */
 .panel-host .cm-editor .cm-selectionMatch {
   background: var(--editor-selection-highlight);
+  border-radius: var(--lp-sel-radius);
   outline: 1px solid var(--editor-selection-highlight-border);
   outline-offset: -1px;
 }
