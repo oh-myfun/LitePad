@@ -292,10 +292,13 @@ export function attachSourceEditing(wrap: HTMLElement, opts: SourceEditingOption
   wrap.addEventListener("focusin", (event) => {
     if (!inSource(event)) return;
     const view = viewOf();
-    if (!view || view.state.readOnly) return;
+    if (!view) return;
+    // 只读档也要停：预览里 Ctrl+A 的整篇选区不会因为焦点进了组件而自己消失，
+    // 它和块内原生选区叠在一起就是「双重高亮 + 标签状反凹角」（用户报的那一帧）。
+    parkSelectionAtBlock(view, wrap);
+    if (view.state.readOnly) return;
     wrap.classList.add("md-block--editing");
     opts.onEditingChange?.(true);
-    parkSelectionAtBlock(view, wrap);
   });
 
   wrap.addEventListener("focusout", (event) => {

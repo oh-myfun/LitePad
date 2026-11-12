@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
 // 预览块里的原生选区覆盖层 + 同词高亮的圆角。
 //
-// 这一片守四件事：
+// 这一片守五件事：
 //   1. 行内碎片按视觉行合并成一条；横向隔开（表格单元格边框）不合并；
 //   2. 视口坐标换算到宿主、宿主外的矩形丢掉、相邻行的行距缝补齐；
-//   3. 覆盖层只会落在预览块里的块级宿主上（跨块 / 拖出块外交还浏览器）；
-//   4. 样式侧：同词高亮吃正文同一档圆角；覆盖层画在块底色之上、文字之下。
+//   3. 选区按 `.cm-content` 的直接子块逐块切分：全选 / 跨块时每块各画一层；
+//   4. 块内 `contenteditable="false"` 的装饰文字排除，但只读表格那样的整块不可编辑
+//      情形仍算正文；
+//   5. 样式侧：同词高亮吃正文同一档圆角；覆盖层画在块底色之上、文字之下；
+//      原生直角高亮只在覆盖层真的画出来的块上藏。
 
 import { readFileSync } from "node:fs";
 
@@ -15,9 +18,11 @@ import { describe, expect, it } from "vitest";
 
 import { applyCorners, type CornerRect } from "../src/editor/roundedSelection";
 import {
+  blockHost,
+  intersectText,
   mergeLineRects,
-  selectionHost,
   widgetSelection,
+  widgetSelectionPlans,
   widgetSelectionRects,
 } from "../src/preview/widgetSelection";
 import { ruleBlock, stripCssComments, stripLineComments } from "./static";
@@ -41,7 +46,33 @@ function fakeRange(rects: readonly CornerRect[]): Range {
   return { getClientRects: () => list } as unknown as Range;
 }
 
-/** 一棵预览块 DOM：contentDOM > .md-block > code > 文本。 */
+/** jsdom 不做布局：给 Range 的 `getClientRects` 与宿主的包围盒打桩，跑完还原。 */
+function withLayout(hosts: readonly HTMLElement[], run: () => void): void {
+  const original = Range.prototype.getClientRects;
+  Range.prototype.getClientRects = () =>
+    [
+      { left: 10, top: 0, width: 40, height: 18 },
+      { left: 10, top: 21, width: 40, height: 18 },
+    ] as unknown as DOMRectList;
+  for (const host of hosts) {
+    host.getBoundingClientRect = () =>
+      ({
+        left: 0,
+        top: 0,
+        right: 200,
+        bottom: 200,
+        width: 200,
+        height: 200,
+      }) as DOMRect;
+  }
+  try {
+    run();
+  } finally {
+    Range.prototype.getClientRects = original;
+  }
+}
+
+/** 一棵预览块 DOM：contentDOM > .md-block > 块级 code > 文本。 */
 function previewDom() {
   const content = document.createElement("div");
   const block = document.createElement("div");
@@ -54,6 +85,67 @@ function previewDom() {
   content.append(block);
   document.body.append(content);
   return { content, block, code, text };
+}
+
+/** 围栏代码块：根挂 `contenteditable="false"`（整颗组件不可编辑），行号槽装饰，
+ *  code 再用 plaintext-only 重新开编辑 —— 真机就是这三层叠一起。 */
+function codeBlockDom(content: HTMLElement) {
+  const block = document.createElement("div");
+  block.className = "md-block md-codeblock-widget";
+  block.setAttribute("contenteditable", "false");
+  const gutter = document.createElement("div");
+  gutter.className = "md-codeblock-gutter";
+  gutter.style.display = "block";
+  gutter.setAttribute("contenteditable", "false");
+  gutter.textContent = "1";
+  const pre = document.createElement("pre");
+  pre.style.display = "block";
+  const code = document.createElement("code");
+  code.style.display = "block";
+  code.setAttribute("contenteditable", "plaintext-only");
+  code.textContent = "alpha beta";
+  pre.append(code);
+  block.append(gutter, pre);
+  content.append(block);
+  return {
+    block,
+    gutter,
+    code,
+    text: code.firstChild as Text,
+    gutterText: gutter.firstChild as Text,
+  };
+}
+
+/** 表格块：根不是 `.md-block`，格子在只读档是 `contenteditable="false"`。 */
+function tableDom(content: HTMLElement, editable: boolean) {
+  const block = document.createElement("div");
+  block.className = "md-table-widget";
+  const table = document.createElement("table");
+  const row = document.createElement("tr");
+  const cells = ["alpha", "beta"].map((text) => {
+    const cell = document.createElement("td");
+    cell.style.display = "table-cell";
+    cell.setAttribute("contenteditable", editable ? "true" : "false");
+    cell.textContent = text;
+    row.append(cell);
+    return cell;
+  });
+  table.append(row);
+  block.append(table);
+  content.append(block);
+  return {
+    block,
+    cells,
+    first: cells[0].firstChild as Text,
+    last: cells[1].firstChild as Text,
+  };
+}
+
+function rangeBetween(start: Text, end: Text, from = 0, to = end.length): Range {
+  const range = document.createRange();
+  range.setStart(start, from);
+  range.setEnd(end, to);
+  return range;
 }
 
 describe("mergeLineRects：一条视觉行只留一块", () => {
@@ -98,43 +190,123 @@ describe("widgetSelectionRects：视口坐标 → 宿主坐标", () => {
   });
 });
 
-describe("selectionHost：只接管预览块内部", () => {
-  it("选区在预览块里 → 宿主是最近的块级元素", () => {
-    const { content, code, text } = previewDom();
+describe("intersectText：选区与一颗文字节点的交集", () => {
+  it("取中段", () => {
+    const node = document.createTextNode("abcdef");
     const range = document.createRange();
-    range.selectNodeContents(text);
-    expect(selectionHost(range, content)).toBe(code);
+    range.setStart(node, 2);
+    range.setEnd(node, 4);
+    expect(intersectText(range, node)?.toString()).toBe("cd");
   });
 
-  it("拖出预览块 → 不接管", () => {
-    const { content, text } = previewDom();
-    const outside = document.createElement("p");
-    outside.textContent = "outside";
-    content.append(outside);
+  it("选区包住整颗节点（起点是元素边界）时取全部", () => {
+    const parent = document.createElement("code");
+    const node = document.createTextNode("abcdef");
+    parent.append(node);
     const range = document.createRange();
-    range.setStart(text, 0);
-    range.setEnd(outside.firstChild!, 3);
-    expect(selectionHost(range, content)).toBeNull();
+    range.selectNodeContents(parent);
+    expect(intersectText(range, node)?.toString()).toBe("abcdef");
   });
 
-  it("整段跨在两个子块之间（公共祖先就是 .md-block）→ 不接管", () => {
-    const { content, block } = previewDom();
-    const first = block.querySelector("code")!;
-    const second = document.createElement("code");
-    second.style.display = "block";
-    second.textContent = "gamma";
-    block.append(second);
+  it("不相交或空节点返回 null", () => {
+    const node = document.createTextNode("abc");
+    const other = document.createTextNode("xyz");
+    document.body.append(node, other);
     const range = document.createRange();
-    range.setStart(first.firstChild!, 1);
-    range.setEnd(second.firstChild!, 2);
-    expect(selectionHost(range, content)).toBeNull();
+    range.selectNodeContents(other);
+    expect(intersectText(range, node)).toBeNull();
+    expect(intersectText(range, document.createTextNode(""))).toBeNull();
+  });
+});
+
+describe("blockHost：跳过行内盒，落到最近的块级祖先", () => {
+  it("span 里的文字挂到外层的块级 div", () => {
+    const block = document.createElement("div");
+    const inner = document.createElement("div");
+    inner.style.display = "block";
+    const span = document.createElement("span");
+    span.style.display = "inline";
+    const text = document.createTextNode("x");
+    span.append(text);
+    inner.append(span);
+    block.append(inner);
+    expect(blockHost(text, block)).toBe(inner);
   });
 
-  it("不在本编辑器的 contentDOM 里 → 不接管", () => {
-    const { text } = previewDom();
-    const range = document.createRange();
-    range.selectNodeContents(text);
-    expect(selectionHost(range, document.createElement("div"))).toBeNull();
+  it("code 自己是块级时就用它当宿主", () => {
+    const { block, code, text } = previewDom();
+    expect(blockHost(text, block)).toBe(code);
+  });
+});
+
+describe("widgetSelectionPlans：逐块切分、多宿主", () => {
+  it("选区跨两块时每块各一组矩形", () => {
+    const { content, block: first, text: firstText } = previewDom();
+    const second = codeBlockDom(content);
+    const range = rangeBetween(firstText, second.text, 1, 4);
+    withLayout([first.querySelector("code")!, second.code], () => {
+      const plan = widgetSelectionPlans(range, content, 21);
+      expect(plan.hosts.size).toBe(2);
+      expect(plan.blocks).toEqual([first, second.block]);
+      expect(plan.hosts.get(second.code)).toEqual([
+        rect(10, 0, 40, 19.5),
+        rect(10, 19.5, 40, 19.5),
+      ]);
+    });
+  });
+
+  it("块里有可编辑内容时排除 contenteditable=false 的装饰文字", () => {
+    const content = document.createElement("div");
+    const { block, gutterText, code } = codeBlockDom(content);
+    const range = rangeBetween(gutterText, code.firstChild as Text, 0, 5);
+    withLayout([block.querySelector<HTMLElement>(".md-codeblock-gutter")!, code], () => {
+      const plan = widgetSelectionPlans(range, content, 21);
+      // 行号槽整颗被排除；只有 code 这一颗宿主
+      expect(plan.hosts.size).toBe(1);
+      expect(plan.hosts.has(code)).toBe(true);
+      expect(plan.blocks).toEqual([block]);
+    });
+  });
+
+  it("整块都不可编辑（只读表格）时不排除，格子算正文", () => {
+    const content = document.createElement("div");
+    const { block, cells, first, last } = tableDom(content, false);
+    const range = rangeBetween(first, last, 0, 4);
+    withLayout(cells, () => {
+      const plan = widgetSelectionPlans(range, content, 21);
+      expect(plan.hosts.size).toBe(2);
+      expect(plan.hosts.has(cells[0])).toBe(true);
+      expect(plan.hosts.has(cells[1])).toBe(true);
+      expect(plan.blocks).toEqual([block]);
+    });
+  });
+
+  it("锁挂在块根上的渲染区（HTML / metadata 预览）算正文，不当装饰", () => {
+    const content = document.createElement("div");
+    // 真机：CM 给 widget 根挂 contenteditable=false；源码区自己重开编辑，
+    // 渲染区则继承块根的 false —— 但那是正文（旧规则按最近 false 一律叠层）。
+    const block = document.createElement("div");
+    block.className = "md-html-widget";
+    block.setAttribute("contenteditable", "false");
+    const source = document.createElement("div");
+    source.className = "md-block-source";
+    source.style.display = "block";
+    source.setAttribute("contenteditable", "plaintext-only");
+    source.textContent = "<b>alpha</b>";
+    const preview = document.createElement("div");
+    preview.className = "md-html-preview";
+    preview.style.display = "block";
+    preview.textContent = "alpha";
+    block.append(source, preview);
+    content.append(block);
+    const text = preview.firstChild as Text;
+    const range = rangeBetween(text, text, 0, 5);
+    withLayout([preview], () => {
+      const plan = widgetSelectionPlans(range, content, 21);
+      expect(plan.hosts.size).toBe(1);
+      expect(plan.hosts.has(preview)).toBe(true);
+      expect(plan.blocks).toEqual([block]);
+    });
   });
 });
 
@@ -164,6 +336,16 @@ describe("覆盖层扩展", () => {
     const src = stripLineComments(readFileSync("src/preview/wysiwyg.ts", "utf-8"));
     expect(src).toMatch(/widgetSelection\(\),/);
   });
+
+  it("焦点进块时先停编辑器选区，再判只读（否则整篇选区与块内选区叠加）", () => {
+    const src = stripLineComments(readFileSync("src/preview/editableSource.ts", "utf-8"));
+    const start = src.indexOf('wrap.addEventListener("focusin"');
+    const end = src.indexOf('wrap.addEventListener("focusout"');
+    const focusin = src.slice(start, end);
+    const park = focusin.indexOf("parkSelectionAtBlock(view, wrap)");
+    expect(park).toBeGreaterThan(-1);
+    expect(park).toBeLessThan(focusin.indexOf("view.state.readOnly"));
+  });
 });
 
 describe("样式：同词高亮圆角、覆盖层落在文字下面", () => {
@@ -182,10 +364,10 @@ describe("样式：同词高亮圆角、覆盖层落在文字下面", () => {
     expect(layer).toMatch(/pointer-events:\s*none/);
   });
 
-  it("原生直角高亮只在覆盖层生效时藏", () => {
+  it("原生直角高亮只在覆盖层生效时藏，且按块根类命中（不止 .md-block）", () => {
     const block = ruleBlock(
       CSS,
-      ".panel-host .cm-editor.lp-widget-selection .md-block ::selection",
+      ".panel-host .cm-editor.lp-widget-selection .lp-native-sel-block ::selection",
     );
     // CM6 基础主题给聚焦的可编辑子元素写了 `background-color: highlight !important`，
     // 这条必须同样带 !important 才压得住（真机未加时选区仍是系统蓝，覆盖层被盖住）。

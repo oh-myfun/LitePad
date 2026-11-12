@@ -4705,8 +4705,8 @@ button:focus-visible {
    `!important` 是必需的：CM6 基础主题给「聚焦的可编辑子元素」写了
    `.cm-content :focus::selection { background-color: highlight !important }`，
    不加就赢不了它（真机取证：选区仍是最亮的系统蓝，覆盖层被压在下面看不见）。 */
-.panel-host .cm-editor.lp-widget-selection .md-block::selection,
-.panel-host .cm-editor.lp-widget-selection .md-block ::selection {
+.panel-host .cm-editor.lp-widget-selection .lp-native-sel-block::selection,
+.panel-host .cm-editor.lp-widget-selection .lp-native-sel-block ::selection {
   background-color: transparent !important;
 }
 
