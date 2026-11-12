@@ -10,7 +10,7 @@
 import { readFileSync } from "node:fs";
 
 import { EditorState, Text } from "@codemirror/state";
-import { EditorView, drawSelection } from "@codemirror/view";
+import { Direction, EditorView, drawSelection, type RectangleMarker } from "@codemirror/view";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -19,6 +19,7 @@ import {
   selectionCorners,
   selectionSegments,
   stitchLines,
+  visualLineRect,
   type CornerRect,
 } from "../src/editor/roundedSelection";
 import { ruleBlock, stripCssComments, stripLineComments } from "./static";
@@ -28,6 +29,11 @@ const CSS = stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
 /** 一段选区的一块矩形：只写量角用得上的四个量。 */
 function rect(left: number, top: number, width: number, height: number): CornerRect {
   return { left, top, width, height };
+}
+
+/** 选区图层里的一颗矩形，同样只取四个量。 */
+function rectOfMarker(marker: RectangleMarker): CornerRect {
+  return { left: marker.left, top: marker.top, width: marker.width ?? 0, height: marker.height };
 }
 
 describe("selectionCorners：照 VS Code 的相邻缘判角", () => {
@@ -106,6 +112,46 @@ describe("selectionSegments：每行只画自己的字符区", () => {
 
   it("只量视口内的行，换行符的口径仍按整段判", () => {
     expect(selectionSegments(doc, 0, 21, 10, 17)).toEqual([{ from: 10, to: 17, newline: true }]);
+  });
+});
+
+describe("visualLineRect：单行内的段自己量，不等 forRange 的跨行判定", () => {
+  const start = { left: 53, right: 61, top: 100, bottom: 121 };
+  const end = { left: 183, right: 191, top: 100, bottom: 121 };
+
+  /** 只需要 lineBlockAt / coordsAtPos / 滚动区几何这几颗。 */
+  function fakeView(from: typeof start, to: typeof end, toTop = from.top): EditorView {
+    return {
+      textDirection: Direction.LTR,
+      scaleX: 1,
+      scaleY: 1,
+      scrollDOM: {
+        getBoundingClientRect: () => ({ left: 10, right: 1000, top: 50, bottom: 800 }),
+        clientWidth: 990,
+        scrollLeft: 0,
+        scrollTop: 0,
+      },
+      lineBlockAt: (pos: number) => ({ top: pos === 0 ? from.top : toTop }),
+      coordsAtPos: (pos: number) => (pos === 0 ? from : to),
+    } as unknown as EditorView;
+  }
+
+  it("同一行：一颗闭合矩形，止于字符终点而不是内容区右缘", () => {
+    const marker = visualLineRect(fakeView(start, end), 0, 7);
+    expect(marker && rectOfMarker(marker)).toEqual(rect(43, 50, 138, 21));
+  });
+
+  it("真折行（两端点行块顶线不同）交回 forRange 分段", () => {
+    expect(visualLineRect(fakeView(start, end, 121), 0, 7)).toBeNull();
+  });
+
+  it("方向相反（RTL / bidi）不猜", () => {
+    const reversed = { ...end, left: 40, right: 40 };
+    expect(visualLineRect(fakeView(start, reversed), 0, 7)).toBeNull();
+  });
+
+  it("空段返回 null，换行符补格仍走原路径", () => {
+    expect(visualLineRect(fakeView(start, end), 5, 5)).toBeNull();
   });
 });
 
