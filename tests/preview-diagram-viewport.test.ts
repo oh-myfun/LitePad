@@ -308,6 +308,18 @@ describe("B455-5 · 样式与接线", () => {
     expect(block).not.toMatch(/transform:\s*var\(--md-diagram-transform/);
   });
 
+  it("三颗缩放键平时收着，悬停图块或键盘聚焦才现形（复制键同款）", () => {
+    const block = ruleBlock(css(), ".md-preview-face .md-diagram-zoom");
+    expect(block).toMatch(/opacity:\s*0/);
+    expect(block).toMatch(/pointer-events:\s*none/);
+    expect(css()).toMatch(
+      /\.md-preview-face \.md-diagram-widget:hover \.md-diagram-zoom[^{]*\{[^}]*opacity:\s*1/,
+    );
+    expect(css()).toMatch(
+      /\.md-preview-face \.md-diagram-zoom:focus-within[^{]*\{[^}]*opacity:\s*1/,
+    );
+  });
+
   it("enhance 那一臂：渲染结果落在 .md-diagram-canvas 里，变换层挂在卡片上", () => {
     const src = readFileSync("src/markdown/enhance.ts", "utf-8");
     expect(src).toMatch(/class Name = "md-diagram-canvas"|className = "md-diagram-canvas"/);

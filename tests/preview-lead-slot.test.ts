@@ -57,7 +57,10 @@ describe("B459 · 色带左沿的不变量（CSS 侧）", () => {
       /--md-lead:\s*var\(--editor-list-marker-offset\)/,
     );
     expect(ruleBlock(src, ".md-preview-face .cm-line.md-blockquote", "--md-lead")).toMatch(
-      /--md-lead:\s*calc\(\s*var\(--editor-quote-bar\)\s*\+\s*var\(--editor-block-indent\)\s*\)/,
+      /--md-lead:\s*var\(--md-quote-lead\)/,
+    );
+    expect(ruleBlock(src, ".md-preview-face .cm-line.md-blockquote", "--md-quote-lead")).toMatch(
+      /--md-quote-lead:\s*calc\(\s*var\(--editor-quote-bar\)\s*\+\s*var\(--editor-block-indent\)\s*\)/,
     );
   });
 

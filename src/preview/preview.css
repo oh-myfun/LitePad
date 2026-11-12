@@ -381,21 +381,17 @@
 /* ---------- 引用：竖线与正文左缘对齐，文字右移（App.css:1399-1415） ---------- */
 .md-preview-face .cm-line.md-blockquote {
   color: var(--md-muted);
-  --md-lead: calc(var(--editor-quote-bar) + var(--editor-block-indent));
+  --md-quote-lead: calc(var(--editor-quote-bar) + var(--editor-block-indent));
+  --md-lead: var(--md-quote-lead);
   padding-left: calc(var(--editor-padding-x) + var(--md-lead));
-  background: none;
-}
-.md-preview-face .cm-line.md-blockquote::before {
-  content: "";
-  position: absolute;
-  left: var(--editor-padding-x);
-  /* 每个源码行都有一条行装饰；贴齐行盒上下边缘后，相邻行连成整条竖线 */
-  top: 0;
-  bottom: 0;
-  width: var(--editor-quote-bar);
-  background: var(--md-quote-border);
-  border-radius: 0;
-  pointer-events: none;
+  /* 竖线画在**背景层**，不再用 ::before：一颗行只有一个 ::before，列表符号/序号/
+     任务方框也住在那儿 —— 引用里的有序列表会把竖线顶成一块蓝底数字块（用户报的
+     「数字渲染有问题」）。相邻行各画一段、贴满行盒 ⇒ 仍连成整条竖线。 */
+  background-image: linear-gradient(var(--md-quote-border), var(--md-quote-border));
+  background-repeat: no-repeat;
+  background-origin: border-box;
+  background-position: var(--editor-padding-x) 0;
+  background-size: var(--editor-quote-bar) 100%;
 }
 
 /* B404 · 光标压住的这一行把 CSS 画的标记收掉，给刚显形的源码让位：
@@ -415,10 +411,11 @@
 .md-preview-face .cm-line.md-blockquote.md-reveal-marker {
   padding-left: var(--editor-padding-x);
   text-indent: 0;
+  /* 竖线住在背景层 ⇒ 显形档由这条让位给刚露出的 `>` */
+  background-image: none;
 }
 .md-preview-face .cm-line.md-list-item.md-reveal-marker::before,
-.md-preview-face .cm-line.md-task-item.md-reveal-marker::after,
-.md-preview-face .cm-line.md-blockquote.md-reveal-marker::before {
+.md-preview-face .cm-line.md-task-item.md-reveal-marker::after {
   display: none;
 }
 
@@ -477,19 +474,16 @@
 .md-preview-face .cm-line.md-list-item.md-bullet-list.md-bullet-3:not(.md-task-item)::before {
   border-radius: 0.03em;
 }
-.md-preview-face .cm-content {
-  counter-reset: md-olist;
-}
-.md-preview-face .cm-line.md-list-item.md-ordered-list:not(.md-task-item) {
-  counter-increment: md-olist;
-}
 .md-preview-face .cm-line.md-list-item.md-ordered-list:not(.md-task-item)::before {
-  /* 用源码里的真实序号（`3.` 显示 3），没有才退回计数器 */
-  content: var(--md-marker, counter(md-olist) ".");
+  /* 编号由 previewSets 按 Markdown 语义算好（首项定起点、后续 +1），CSS 只负责画。
+     右对齐 + 全列表统一槽宽：`9.` / `10.` / `11.` 的正文左缘才落在同一条线上。 */
+  content: var(--md-marker);
   position: absolute;
   left: var(--md-list-marker-left, var(--editor-padding-x));
   width: var(--md-list-marker-width, var(--editor-list-marker-offset));
-  text-align: left;
+  padding-right: 0.35em;
+  box-sizing: border-box;
+  text-align: right;
   color: var(--md-muted);
   font-variant-numeric: tabular-nums;
   pointer-events: none;
@@ -1041,8 +1035,8 @@
 .md-preview-face .md-diagram--panning .md-diagram-canvas {
   cursor: grabbing;
 }
-/* 右上角三颗键：放大 / 缩小 / 复位（用户点名）。刻意不做「悬停才出现」——
-   图一旦放大了，就得一直有路可退。
+/* 右上角三颗键：放大 / 缩小 / 复位（用户点名）。平时收着，悬停图块时与复制键一起
+   出现；键盘聚焦也现形（`:focus-within`），不靠鼠标才有路退。
    B462：最右一格留给复制键（`.md-diagram-box > .md-block-copy`）⇒ 三颗键整体左移一档。 */
 .md-preview-face .md-diagram-zoom {
   position: absolute;
@@ -1050,6 +1044,14 @@
   right: 33px;
   display: flex;
   gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.md-preview-face .md-diagram-widget:hover .md-diagram-zoom,
+.md-preview-face .md-diagram-zoom:focus-within {
+  opacity: 1;
+  pointer-events: auto;
 }
 .md-preview-face .md-diagram-zoom button {
   display: inline-flex;

@@ -14,7 +14,7 @@
 import { EditorState, type Range } from "@codemirror/state";
 import { Decoration, type DecorationSet } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
-import type { Tree, SyntaxNodeRef } from "@lezer/common";
+import type { SyntaxNode, Tree, SyntaxNodeRef } from "@lezer/common";
 import { frontMatterBody, frontMatterRange } from "./codeFence";
 import { CodeBlockWidget } from "./codeBlockWidget";
 import { FrontMatterWidget, looksLikeFrontMatter } from "./frontmatterWidget";
@@ -383,6 +383,50 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
     return depth;
   };
 
+  const inBlockquote = (node: SyntaxNodeRef): boolean => {
+    for (let p = node.node.parent; p; p = p.parent) {
+      if (p.name === "Blockquote") return true;
+    }
+    return false;
+  };
+
+  /**
+   * 有序列表的显示编号：Markdown 口径是「首项定起点，后续项忽略源码数字、依次 +1」
+   * （`1.` 写满一整列也渲染成 1、2、3）。
+   *
+   * 同一列表共用**一档**槽宽（按最大号算）——按各自位数算的话，`9.` 与 `10.`
+   * 会把正文左缘推到两条线上（用户报的「数字渲染有问题」）。
+   */
+  const orderedMarker = (node: SyntaxNodeRef): { marker: string; width: string } | null => {
+    const list = node.node.parent;
+    if (!list || list.name !== "OrderedList") return null;
+    let first: SyntaxNode | null = null;
+    let index = -1;
+    let count = 0;
+    for (let child = list.firstChild; child; child = child.nextSibling) {
+      if (child.name !== "ListItem") continue;
+      if (!first) first = child;
+      // Lezer 的 SyntaxNode 不是规范对象，不能比身份；同层起点唯一，用起点认项。
+      if (child.from === node.node.from) index = count;
+      count++;
+    }
+    if (!first || index < 0) return null;
+    let start = 1;
+    let delimiter = ".";
+    const firstMark = first.getChild("ListMark");
+    if (firstMark) {
+      const raw = doc.sliceString(firstMark.from, firstMark.to);
+      const parsed = Number.parseInt(raw, 10);
+      if (Number.isFinite(parsed)) start = parsed;
+      if (raw.endsWith(")")) delimiter = ")";
+    }
+    const widest = `${start + count - 1}${delimiter}`;
+    return {
+      marker: `${start + index}${delimiter}`,
+      width: Math.max(1.35, widest.length * 0.58 + 0.3).toFixed(2),
+    };
+  };
+
   syntax.iterate({
     enter(node) {
       const n = node.name;
@@ -610,33 +654,27 @@ export function buildPreviewSets(state: EditorState, tree?: Tree): PreviewSets {
         const depth = listDepth(node);
         const parent = node.node.parent;
         const indentExtra = depth > 1 ? (depth - 1) * 24 : 0;
+        // 引用里的列表：标记从竖线之后起画，槽宽也要把引用缩进算进去。
+        const quoteLead = inBlockquote(node) ? " + var(--md-quote-lead)" : "";
         // B459：嵌套档只报「槽有多宽」，padding-left / text-indent / 占位件宽都由 CSS 从
         // 这一颗数派生 —— 三处各写一份的话，色带左沿与正文左沿迟早错开一档。
         const indentStyle =
-          indentExtra > 0
-            ? `--md-list-marker-left: calc(var(--editor-padding-x) + ${indentExtra}px); --md-lead: calc(var(--md-list-marker-width, var(--editor-list-marker-offset)) + ${indentExtra}px);`
+          indentExtra > 0 || quoteLead
+            ? `--md-list-marker-left: calc(var(--editor-padding-x)${quoteLead} + ${indentExtra}px); --md-lead: calc(var(--md-list-marker-width, var(--editor-list-marker-offset))${quoteLead} + ${indentExtra}px);`
             : "";
 
         const firstLine = doc.lineAt(from);
         const lastLine = doc.lineAt(to);
         const ordered = parent?.name === "OrderedList";
-        const mark = node.node.getChild("ListMark");
 
         // 作者在标记前多打的空格由 `leadSlot` 一起收进槽里（B459）：这里再发一条 hide
         // 会与那颗 replace 区间交叠 ⇒ `Decoration.set` 直接抛。
         // 「2 空格 vs 4 空格 的同类项左沿对不齐」（B401 用户报的那条）现在由槽宽保证。
 
-        // 有序列表显示源码里真实的序号（`3.` 就该显示 3，而不是 CSS 计数器从 1 重排）
-        let markerStyle = "";
-        if (ordered && mark) {
-          const raw = doc.sliceString(mark.from, mark.to);
-          const safe = raw.replace(/[^0-9.)]/g, "");
-          if (safe) {
-            // 1.、10.、100. 不能共用固定宽度，否则两位数起会挤出正文左缘。
-            const markerWidth = Math.max(1.35, safe.length * 0.58 + 0.3).toFixed(2);
-            markerStyle = `--md-marker: "${safe}"; --md-list-marker-width: ${markerWidth}em;`;
-          }
-        }
+        const orderedInfo = ordered ? orderedMarker(node) : null;
+        const markerStyle = orderedInfo
+          ? `--md-marker: "${orderedInfo.marker}"; --md-list-marker-width: ${orderedInfo.width}em;`
+          : "";
 
         // 每行只挂一条带 style 的行装饰，避免多条装饰的 style 互相覆盖。
         // 无序列表的符号等级走类名（CSS 画形状）—— 字体里的 • ◦ ▪ 墨迹大小不一，

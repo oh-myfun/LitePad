@@ -318,21 +318,25 @@ describe("B397-2 行内构造：代码 chip、链接、引用竖线", () => {
     expect(css).toMatch(/\.cm-md-heading-mark \*[\s\S]{0,200}color:[^;]*--md-faint/);
   });
 
-  it("引用竖线画在 padding-x 处并贴满行盒上下（相邻行连成整条线，App.css:1404-1415）", () => {
-    const bar = ruleBlock(css, ".md-preview-face .cm-line.md-blockquote::before");
-    expect(bar).toMatch(/left:\s*var\(--editor-padding-x\)/);
-    expect(bar).toMatch(/top:\s*0/);
-    expect(bar).toMatch(/bottom:\s*0/);
-    expect(bar).toMatch(/width:\s*var\(--editor-quote-bar\)/);
-    expect(bar).toMatch(/background:\s*var\(--md-quote-border\)/);
-    const text = ruleBlock(css, ".md-preview-face .cm-line.md-blockquote");
-    expect(text).toMatch(/padding-left:/);
-    expect(text).toMatch(/color:\s*var\(--md-muted\)/);
+  it("引用竖线画在背景层 padding-x 处并贴满行盒上下（相邻行连成整条线，App.css:1404-1415）", () => {
+    // B463：竖线从 ::before 挪到背景层 —— 一颗行只有一个 ::before，列表符号/序号
+    // 也在那儿，引用里的有序列表曾把竖线顶成一块蓝底数字块
+    const bar = ruleBlock(css, ".md-preview-face .cm-line.md-blockquote");
+    expect(bar).toMatch(
+      /--md-quote-lead:\s*calc\(\s*var\(--editor-quote-bar\)\s*\+\s*var\(--editor-block-indent\)\s*\)/,
+    );
+    expect(bar).toMatch(/--md-lead:\s*var\(--md-quote-lead\)/);
+    expect(bar).toMatch(/padding-left:/);
+    expect(bar).toMatch(/color:\s*var\(--md-muted\)/);
+    expect(bar).toMatch(/background-image:\s*linear-gradient\(\s*var\(--md-quote-border\)/);
+    expect(bar).toMatch(/background-position:\s*var\(--editor-padding-x\)\s+0/);
+    expect(bar).toMatch(/background-size:\s*var\(--editor-quote-bar\)\s+100%/);
+    expect(css).not.toContain(".md-preview-face .cm-line.md-blockquote::before");
   });
 });
 
 describe("B397-2 列表与任务项：标记由 CSS 画", () => {
-  it("圆点画成 disc/circle/square 三档、序号用源码里的真实序号，都占 marker-width", () => {
+  it("圆点画成 disc/circle/square 三档、序号由 previewSets 算好、右对齐共用一档槽宽", () => {
     const bullet = ruleBlock(
       css,
       ".md-preview-face .cm-line.md-list-item.md-bullet-list:not(.md-task-item)::before",
@@ -359,12 +363,14 @@ describe("B397-2 列表与任务项：标记由 CSS 画", () => {
       css,
       ".md-preview-face .cm-line.md-list-item.md-ordered-list:not(.md-task-item)::before",
     );
-    expect(ordered).toMatch(/content:\s*var\(--md-marker,\s*counter\(md-olist\)\s*"\."\)/);
+    // B463：编号与槽宽由 previewSets 按 Markdown 语义算好（首项定起点、后续 +1），
+    // CSS 不再用 counter 兜底；右对齐 + 统一槽宽才能让 9./10./11. 的正文左缘对齐
+    expect(ordered).toMatch(/content:\s*var\(--md-marker\)/);
+    expect(ordered).toMatch(/text-align:\s*right/);
     expect(ordered).toMatch(/font-variant-numeric:\s*tabular-nums/);
-    expect(ruleBlock(css, ".md-preview-face .cm-content", "counter-reset")).toMatch(
-      /counter-reset:\s*md-olist/,
-    );
-    expect(css).toMatch(/counter-increment:\s*md-olist/);
+    expect(ordered).toMatch(/padding-right:\s*0\.35em/);
+    expect(css).not.toMatch(/counter-reset:\s*md-olist/);
+    expect(css).not.toMatch(/counter-increment:\s*md-olist/);
   });
 
   it("B401 任务方框跟正文同字号（1em）；B402 纵向贴**首行**中线（折行不再居中）", () => {
@@ -424,10 +430,13 @@ describe("B397-2 列表与任务项：标记由 CSS 画", () => {
     expect(ruleBlock(css, ".md-preview-face .cm-line.md-blockquote.md-reveal-marker")).toMatch(
       /padding-left:\s*var\(--editor-padding-x\)/,
     );
+    // B463：竖线在背景层 ⇒ 显形档把它关掉，给刚露出的 `>`
+    expect(ruleBlock(css, ".md-preview-face .cm-line.md-blockquote.md-reveal-marker")).toMatch(
+      /background-image:\s*none/,
+    );
     for (const sel of [
       ".md-preview-face .cm-line.md-list-item.md-reveal-marker::before",
       ".md-preview-face .cm-line.md-task-item.md-reveal-marker::after",
-      ".md-preview-face .cm-line.md-blockquote.md-reveal-marker::before",
     ]) {
       expect(ruleBlock(css, sel).replace(/\s+/g, " "), sel).toMatch(/display: none/);
     }

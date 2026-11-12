@@ -41,6 +41,17 @@ function lineClasses(set: DecorationSet, state: EditorState, lineNo: number): st
   return out;
 }
 
+/** 某一行的行装饰 style（编号/槽宽都挂在行内 style 上）。 */
+function lineStyle(set: DecorationSet, state: EditorState, lineNo: number): string {
+  const from = state.doc.line(lineNo).from;
+  let out = "";
+  set.between(from, from + 1, (_f, _t, value) => {
+    const style = (value.spec as { attributes?: { style?: string } }).attributes?.style;
+    if (style) out += style;
+  });
+  return out;
+}
+
 const MIXED = [
   "# 标题一",
   "",
@@ -90,9 +101,39 @@ describe("B391-1 装饰集构建", () => {
     expect(lineClasses(lines, state, 4)).toContain("md-blockquote");
     expect(lineClasses(lines, state, 6).join(" ")).toContain("md-list-item md-bullet-list");
     expect(lineClasses(lines, state, 9)).toContain("md-list-item md-ordered-list");
-    // 有序列表把源码里真实的序号交给 CSS（3. 就显示 3，不让计数器重排成 1）
+    // 编号由 previewSets 按 Markdown 语义算（3. 是第二项 ⇒ 显示 2.）
+    expect(lineStyle(lines, state, 10)).toContain('--md-marker: "2."');
     expect(lineClasses(lines, state, 10).join(" ")).toContain("md-ordered-list");
     expect(lineClasses(lines, state, 12)).toContain("md-task-item md-task-done");
+  });
+
+  it("有序列表按 Markdown 语义编号：首项定起点，后续忽略源码数字依次 +1", () => {
+    const state = docState(["3. 三", "7. 七", "1. 一", ""].join("\n"));
+    const { lines } = buildPreviewSets(state);
+    expect(lineStyle(lines, state, 1)).toContain('--md-marker: "3."');
+    expect(lineStyle(lines, state, 2)).toContain('--md-marker: "4."');
+    expect(lineStyle(lines, state, 3)).toContain('--md-marker: "5."');
+  });
+
+  it("同一有序列表共用一档槽宽：9. 与 10. 的正文左缘不漂", () => {
+    const state = docState(["8. 八", "9. 九", "10. 十", "11. 十一", ""].join("\n"));
+    const { lines } = buildPreviewSets(state);
+    const widths = [1, 2, 3, 4].map(
+      (n) => /--md-list-marker-width:\s*([\d.]+em)/.exec(lineStyle(lines, state, n))?.[1],
+    );
+    expect(new Set(widths).size).toBe(1);
+    expect(widths[0]).toBe("2.04em");
+  });
+
+  it("引用里的列表：标记从竖线之后起画，槽宽含引用缩进", () => {
+    const state = docState(["> 1. 甲", "> 2. 乙", ""].join("\n"));
+    const { lines } = buildPreviewSets(state);
+    const style = lineStyle(lines, state, 1);
+    expect(style).toContain(
+      "--md-list-marker-left: calc(var(--editor-padding-x) + var(--md-quote-lead)",
+    );
+    expect(style).toContain("--md-lead: calc(var(--md-list-marker-width");
+    expect(style).toContain("+ var(--md-quote-lead)");
   });
 
   it("块级替换必须整行覆盖，半行不替换", () => {
