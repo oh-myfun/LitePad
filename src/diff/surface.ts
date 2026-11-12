@@ -39,6 +39,7 @@ import { highlightSelectionMatches } from "@codemirror/search";
 import { detectLanguage } from "../editor/language";
 import { baseExtensions, gutterExtensions } from "../editor/editor";
 import { findHighlight } from "../editor/find";
+import { roundedSelection } from "../editor/roundedSelection";
 import {
   layoutOverview,
   overviewWordMatches,
@@ -288,7 +289,9 @@ function leftState(
             // `_adjustOptionsForSubEditor` 不动 `selectionHighlight` / `occurrencesHighlight`）。
             // `drawSelection()` 是选区高亮的地基（右栏 `baseExtensions` 那一颗同源）：少了它，
             // 选中只走浏览器原生高亮，`.cm-selectionBackground` 这套主题色全不生效。
+            // 圆角层跟着它走：右栏在 `baseExtensions` 里成对挂，这里也得成对。
             drawSelection(),
+            roundedSelection(),
             ...(perf.activeLine ? [highlightActiveLineGutter(), highlightActiveLine()] : []),
             // 同词出现的正文层与概览标尺同闸（右栏 `editor.ts` 同一对）：正文不亮时右缘也不许亮。
             ...(perf.selectionMatches

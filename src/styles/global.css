@@ -4594,9 +4594,93 @@ button:focus-visible {
 }
 
 /* B380：失焦时的选区取 editor.inactiveSelectionBackground（比聚焦时淡一档）。
-   drawSelection 画的层在 `.cm-selectionLayer` 里，聚焦与否看根节点的 `.cm-focused`。 */
+   选区标记住在圆角层 `.lp-selectionLayer` 里（见下面那块），聚焦与否看根节点的
+   `.cm-focused`。 */
 .panel-host .cm-editor:not(.cm-focused) .cm-selectionBackground {
   background: var(--editor-inactive-selection);
+}
+
+/* ---------- 选区圆角：VS Code `selections.ts` 的三档角 ----------
+   外转画圆角、对齐不画、内转反向补一小块（凹角）。角类型由
+   `editor/roundedSelection.ts` 按相邻矩形算好落到 class 上，这里只管画形状。
+   CM6 `drawSelection` 画的那层直角矩形让位 —— 但**不能删**：`:has(.cm-selectionBackground)`
+   （上面藏当前行高亮）与 diff 的守卫都拿它当锚点。 */
+.panel-host .cm-editor .cm-selectionLayer {
+  display: none;
+}
+
+/* `--lp-sel-radius` 是 3px 的唯一书写处（与 VS Code `selections.css` 同档），
+   凸角圆角与凹角补块边长都引用它；HC 档归零（VS Code 在 HC 下同样不吃圆角）。 */
+.panel-host .cm-editor {
+  --lp-sel-radius: 3px;
+  /* 凹角补块的填色：聚焦/失焦跟选区同源，补块作为子元素沿继承链取。 */
+  --lp-sel-bg: var(--editor-selection);
+}
+.panel-host .cm-editor:not(.cm-focused) {
+  --lp-sel-bg: var(--editor-inactive-selection);
+}
+
+.panel-host .cm-editor .lp-sel-tl {
+  border-top-left-radius: var(--lp-sel-radius);
+}
+.panel-host .cm-editor .lp-sel-tr {
+  border-top-right-radius: var(--lp-sel-radius);
+}
+.panel-host .cm-editor .lp-sel-bl {
+  border-bottom-left-radius: var(--lp-sel-radius);
+}
+.panel-host .cm-editor .lp-sel-br {
+  border-bottom-right-radius: var(--lp-sel-radius);
+}
+
+.panel-host .cm-editor .lp-sel-fillet {
+  position: absolute;
+  width: var(--lp-sel-radius);
+  height: var(--lp-sel-radius);
+  pointer-events: none;
+}
+/* 补块 = 方块减去四分之一圆：圆心钉在选区包住的那颗角上，圆内透明（露出底下的
+   行底色 / 差异底色），圆外才铺选区色。只能用径向渐变 —— `border-radius` 会把
+   补块自己切圆，方向正好相反。 */
+.panel-host .cm-editor .lp-sel-fillet-tl {
+  left: calc(-1 * var(--lp-sel-radius));
+  top: 0;
+  background: radial-gradient(
+    circle at 0 100%,
+    transparent calc(var(--lp-sel-radius) - 0.5px),
+    var(--lp-sel-bg) var(--lp-sel-radius)
+  );
+}
+.panel-host .cm-editor .lp-sel-fillet-tr {
+  right: calc(-1 * var(--lp-sel-radius));
+  top: 0;
+  background: radial-gradient(
+    circle at 100% 100%,
+    transparent calc(var(--lp-sel-radius) - 0.5px),
+    var(--lp-sel-bg) var(--lp-sel-radius)
+  );
+}
+.panel-host .cm-editor .lp-sel-fillet-bl {
+  left: calc(-1 * var(--lp-sel-radius));
+  bottom: 0;
+  background: radial-gradient(
+    circle at 0 0,
+    transparent calc(var(--lp-sel-radius) - 0.5px),
+    var(--lp-sel-bg) var(--lp-sel-radius)
+  );
+}
+.panel-host .cm-editor .lp-sel-fillet-br {
+  right: calc(-1 * var(--lp-sel-radius));
+  bottom: 0;
+  background: radial-gradient(
+    circle at 100% 0,
+    transparent calc(var(--lp-sel-radius) - 0.5px),
+    var(--lp-sel-bg) var(--lp-sel-radius)
+  );
+}
+
+:root[data-theme-family="hc"] .panel-host .cm-editor {
+  --lp-sel-radius: 0px;
 }
 
 /* B380：与选中词相同的其它出现 = editor.selectionHighlightBackground；

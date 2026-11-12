@@ -23,6 +23,7 @@ import { findHighlight } from "./find";
 import { gutterDiff } from "./gutterDiff";
 import { overviewRuler, overviewWordMatches } from "./overview";
 import { perfProfileFor, type PerfProfile } from "./perf";
+import { roundedSelection } from "./roundedSelection";
 import { vscodeEditorTheme } from "./theme";
 import type { ThemeFamily } from "../theme/theme";
 import { CODICONS } from "../shell/codicons";
@@ -75,6 +76,8 @@ export function baseExtensions(perf: PerfProfile): Extension[] {
   const ext: Extension[] = [
     history(),
     drawSelection(),
+    // 选区圆角：drawSelection 画直角矩形，这一层按段补 VS Code 的三档角（见 roundedSelection.ts）
+    roundedSelection(),
     dropCursor(),
     // 列编辑：Alt + 拖选
     rectangularSelection(),
