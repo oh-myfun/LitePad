@@ -17,10 +17,12 @@
 // `linesVisibleRangesForRange(range, true)`）—— 换行符是空白字符，包含它；它后面
 // 没有字符，就不该有底色。
 //
-// 单行内的段还要自己量（`visualLineRect`）：`forRange` 开着换行时会先用
+// 每段还要按**视觉行**自己量（`visualLineRects`）：`forRange` 开着换行时会先用
 // `wrappedLine()` 探两侧边缘判断「跨不跨视觉行」，预览档的标记槽行
 // （引用 / 列表：`padding-left` 67px + `text-indent` -19px）会被它误判成跨行，
-// 于是同一行同时出现「通栏色带 + 字符区色带」两层，角档位跟着变成反凹角。
+// 于是同一行同时出现「通栏色带 + 字符区色带」两层，角档位跟着变成反凹角；
+// 它判跨行时首段还会一路铺到内容区右缘，悬挂在右缘外的行尾标点（全角逗号等）
+// 就被切掉，末行右侧也白铺一截。
 //
 // 凹角不能用 `border-radius`（那只会把补块自身切圆，方向反了），所以补块是一颗
 // 3×3 子元素 + `radial-gradient` 画的「方块减去四分之一圆」。颜色走 `--lp-sel-bg`，
@@ -282,31 +284,47 @@ function layerBase(view: EditorView): { left: number; top: number } {
 }
 
 /**
- * 同一视觉行内的一段：自己量一颗闭合矩形。
+ * 一段选区在它经过的每个视觉行上的矩形，逐行自己量。
  *
- * 只要 `forRange` 判出「跨视觉行」，首段就铺到内容区右缘；它判跨不跨行靠的是
- * `wrappedLine()` 在编辑器左右缘各探一次坐标 —— 预览档的标记槽行（引用 / 列表：
- * `padding-left` 67px + `text-indent` -19px）会被探错，同一行返回同高的一颗
- * 「通栏」和一颗「字符区」矩形（真机取证：列表行 951px + 130px 叠在一起，
- * 关闭换行即消失）。用行块顶线自己判：同一行 ⇒ 字符起点到字符终点，一颗就够；
- * 真折行（顶线不同）返回 null，交回 `forRange` 按视觉行分段。
+ * 右缘不能取内容区边界（`forRange` 的 `rightSide`）：预览档的行尾标点会悬挂在
+ * 内容区右缘之外，铺到边界就把那半个字切掉了。折行点与视觉行末字符用
+ * `moveToLineBoundary(includeWrap)` / `coordsAtPos` 现取 —— tile 边界上
+ * `coordsAtPos` 返回零宽矩形，但它的 x 正是真实的闭合边界，左侧取 `side=1`、
+ * 右侧取 `side=-1` 就能把行首、折行点、行尾的墨迹完整框住。
+ *
+ * 任一视觉行量不出来（视口外、RTL / bidi、坐标缺失）就整体返回 null，交回
+ * `forRange` 走它自己的分段 —— 宁可退回直角，也不给错位的圆角。
  */
-export function visualLineRect(view: EditorView, from: number, to: number): RectangleMarker | null {
+export function visualLineRects(
+  view: EditorView,
+  from: number,
+  to: number,
+): RectangleMarker[] | null {
   if (from >= to) return null;
-  if (Math.abs(view.lineBlockAt(from).top - view.lineBlockAt(to).top) >= 0.5) return null;
-  const start = view.coordsAtPos(from, 1);
-  const end = view.coordsAtPos(to, -1);
-  // 方向相反（RTL / bidi）不猜，走原路径。
-  if (!start || !end || end.right <= start.left) return null;
   const base = layerBase(view);
-  const top = Math.min(start.top, end.top);
-  return new RectangleMarker(
-    SELECTION_CLASS,
-    start.left - base.left,
-    top - base.top,
-    end.right - start.left,
-    Math.max(start.bottom, end.bottom) - top,
-  );
+  const rects: RectangleMarker[] = [];
+  let start = from;
+  while (start < to) {
+    const head = view.moveToLineBoundary(EditorSelection.cursor(start, 1), true, true).head;
+    // 折行点必须在选区前方；不前进说明这行的排版形态不是「按视觉行折」，不猜。
+    if (head <= start) return null;
+    const next = Math.min(head, to);
+    const left = view.coordsAtPos(start, 1);
+    const right = view.coordsAtPos(next, -1);
+    if (!left || !right || right.right <= left.left) return null;
+    const top = Math.min(left.top, right.top);
+    rects.push(
+      new RectangleMarker(
+        SELECTION_CLASS,
+        left.left - base.left,
+        top - base.top,
+        right.right - left.left,
+        Math.max(left.bottom, right.bottom) - top,
+      ),
+    );
+    start = next;
+  }
+  return rects;
 }
 
 function markersFor(view: EditorView): LayerMarker[] {
@@ -323,16 +341,13 @@ function markersFor(view: EditorView): LayerMarker[] {
       view.viewport.from,
       view.viewport.to,
     )) {
-      const closed = visualLineRect(view, segment.from, segment.to);
-      const own = closed
-        ? [closed]
-        : [
-            ...RectangleMarker.forRange(
-              view,
-              SELECTION_CLASS,
-              EditorSelection.range(segment.from, segment.to),
-            ),
-          ];
+      const own = visualLineRects(view, segment.from, segment.to) ?? [
+        ...RectangleMarker.forRange(
+          view,
+          SELECTION_CLASS,
+          EditorSelection.range(segment.from, segment.to),
+        ),
+      ];
       if (!own.length) continue;
       const rtl = segment.newline && view.textDirectionAt(segment.to) === Direction.RTL;
       if (segment.from === segment.to) {

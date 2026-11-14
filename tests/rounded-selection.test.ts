@@ -19,7 +19,7 @@ import {
   selectionCorners,
   selectionSegments,
   stitchLines,
-  visualLineRect,
+  visualLineRects,
   type CornerRect,
 } from "../src/editor/roundedSelection";
 import { ruleBlock, stripCssComments, stripLineComments } from "./static";
@@ -115,12 +115,22 @@ describe("selectionSegments：每行只画自己的字符区", () => {
   });
 });
 
-describe("visualLineRect：单行内的段自己量，不等 forRange 的跨行判定", () => {
-  const start = { left: 53, right: 61, top: 100, bottom: 121 };
-  const end = { left: 183, right: 191, top: 100, bottom: 121 };
+describe("visualLineRects：逐视觉行自己量，不等 forRange 的跨行判定", () => {
+  // 一行 0..10，折行点在 5。首行右缘 199 已越过内容区右缘（180）：全角标点悬挂在外，
+  // 右缘必须量到墨迹终点，取内容区边界就会把它切掉。
+  const coords: Record<string, { left: number; right: number; top: number; bottom: number }> = {
+    "0:1": { left: 53, right: 61, top: 100, bottom: 121 },
+    "2:1": { left: 67, right: 75, top: 100, bottom: 121 },
+    "5:-1": { left: 199, right: 199, top: 100, bottom: 121 },
+    "5:1": { left: 45, right: 45, top: 121, bottom: 142 },
+    "7:-1": { left: 191, right: 191, top: 100, bottom: 121 },
+    "10:-1": { left: 113, right: 113, top: 121, bottom: 142 },
+  };
 
-  /** 只需要 lineBlockAt / coordsAtPos / 滚动区几何这几颗。 */
-  function fakeView(from: typeof start, to: typeof end, toTop = from.top): EditorView {
+  /** 只需要 moveToLineBoundary / coordsAtPos / 滚动区几何这几颗。 */
+  function fakeView(options: { wrap?: number | null; table?: typeof coords } = {}): EditorView {
+    const wrap = options.wrap === undefined ? 5 : options.wrap;
+    const table = options.table ?? coords;
     return {
       textDirection: Direction.LTR,
       scaleX: 1,
@@ -131,27 +141,35 @@ describe("visualLineRect：单行内的段自己量，不等 forRange 的跨行�
         scrollLeft: 0,
         scrollTop: 0,
       },
-      lineBlockAt: (pos: number) => ({ top: pos === 0 ? from.top : toTop }),
-      coordsAtPos: (pos: number) => (pos === 0 ? from : to),
+      // 视口内只有这一行（0..10）：折行点之后就是行尾。
+      moveToLineBoundary: (motion: { head: number }) => ({
+        head: wrap === null ? motion.head : motion.head < wrap ? wrap : 10,
+      }),
+      coordsAtPos: (pos: number, side: number) => table[`${pos}:${side}`] ?? null,
     } as unknown as EditorView;
   }
 
-  it("同一行：一颗闭合矩形，止于字符终点而不是内容区右缘", () => {
-    const marker = visualLineRect(fakeView(start, end), 0, 7);
-    expect(marker && rectOfMarker(marker)).toEqual(rect(43, 50, 138, 21));
+  it("同一视觉行：一颗闭合矩形，止于选中字符的终点", () => {
+    const markers = visualLineRects(fakeView({ wrap: 10 }), 2, 7);
+    expect((markers ?? []).map(rectOfMarker)).toEqual([rect(57, 50, 124, 21)]);
   });
 
-  it("真折行（两端点行块顶线不同）交回 forRange 分段", () => {
-    expect(visualLineRect(fakeView(start, end, 121), 0, 7)).toBeNull();
+  it("折成两个视觉行：一视觉行一颗，首行右缘量到悬挂标点之外", () => {
+    const markers = visualLineRects(fakeView(), 0, 10) ?? [];
+    expect(markers.map(rectOfMarker)).toEqual([rect(43, 50, 146, 21), rect(35, 71, 68, 21)]);
   });
 
   it("方向相反（RTL / bidi）不猜", () => {
-    const reversed = { ...end, left: 40, right: 40 };
-    expect(visualLineRect(fakeView(start, reversed), 0, 7)).toBeNull();
+    const reversed = { ...coords, "10:-1": { left: 40, right: 40, top: 121, bottom: 142 } };
+    expect(visualLineRects(fakeView({ wrap: 10, table: reversed }), 0, 10)).toBeNull();
   });
 
   it("空段返回 null，换行符补格仍走原路径", () => {
-    expect(visualLineRect(fakeView(start, end), 5, 5)).toBeNull();
+    expect(visualLineRects(fakeView(), 5, 5)).toBeNull();
+  });
+
+  it("折行点不前进（量不出视觉行）不猜", () => {
+    expect(visualLineRects(fakeView({ wrap: null }), 0, 10)).toBeNull();
   });
 });
 
