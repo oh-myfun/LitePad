@@ -14,6 +14,7 @@ import {
   takeInstId,
   isDark,
   isWrap,
+  showInvisibles,
   themeFamily,
   layout,
 } from "./core/app-state";
@@ -105,7 +106,14 @@ function makeInstance(doc: Doc, panelId: number, text: string): Tab {
     lang.extension,
     // B458：基线走**读取口**，不是快照 —— `doc.baseline` 在保存/重载后会被整体换掉，
     // gutter 那列 diff 每次刷新都来问一次，因此保存之后标记自然清空，不必在写点补派发。
-    { dark: isDark, family: themeFamily, wrap: isWrap, perf, baseline: () => doc.baseline },
+    {
+      dark: isDark,
+      family: themeFamily,
+      wrap: isWrap,
+      invisibles: showInvisibles,
+      perf,
+      baseline: () => doc.baseline,
+    },
     instanceOnUpdate,
   );
   return {
@@ -160,7 +168,14 @@ function makeDiffInstance(doc: Doc, panelId: number, text: string, spec: DiffSpe
     // ⚠️ env 里**没有** `baseline` 这一项（与上面 makeInstance 的唯一实质差别）。
     // `overview: false`：右缘那一列由差异格的 `.diff-overview` 自己画（普通编辑器那层
     // 贴边画布若也挂上，会在新稿栏内部再压出一条盖住正文的列）。
-    { dark: isDark, family: themeFamily, wrap: isWrap, perf, overview: false },
+    {
+      dark: isDark,
+      family: themeFamily,
+      wrap: isWrap,
+      invisibles: showInvisibles,
+      perf,
+      overview: false,
+    },
     instanceOnUpdate,
   );
   return {

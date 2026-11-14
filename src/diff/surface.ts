@@ -48,7 +48,16 @@ import {
 } from "../editor/overview";
 import { perfOfDiffInstance } from "../doc-model";
 import type { PerfProfile } from "../editor/perf";
-import { activePanelId, docs, isWrap, panels, tabs, type Panel } from "../core/app-state";
+import {
+  activePanelId,
+  docs,
+  isWrap,
+  panels,
+  showInvisibles,
+  tabs,
+  type Panel,
+} from "../core/app-state";
+import { invisibleChars } from "../editor/invisibleChars";
 import { landVisibleSideAtV } from "../sync-scroll/wire";
 import { DIFF_REFRESH_MS, splitLines } from "./align";
 import { blockAt, diffBlocks, type DiffBlock } from "./blocks";
@@ -254,6 +263,9 @@ function lineStartOf(view: EditorView, line: number): number {
  * `wrap` 是这一栏的折行槽：值来自**全局设置** `isWrap`，「查看 → 自动换行」一变就由
  * `reassert` 对着设置重配一次 —— 差异格没有自己的折行开关。
  *
+ * `invisibles` 是「显示不可见字符」那一档：同样是全局开关，右栏借标签自己的槽，
+ * 左栏这颗旁路由 `reassert` 补发（与折行同一发补齐）。
+ *
  * `perf` 与右栏**同一档**（两栏都由 `perfOfDiffInstance` 给）：折叠在这一档里恒为关，
  * 依据是上游的差异子编辑器写死 `folding = false`（`diffEditorEditors.ts` 的
  * `_adjustOptionsForSubEditor`）—— 差异格里根本没有折叠槽，也就没有「一列没有差异行底色的
@@ -265,6 +277,7 @@ function leftState(
   face: Extension,
   theme: Extension,
   wrap: Extension,
+  invisibles: Extension,
   writable: boolean,
 ): EditorState {
   // 左栏按**自己的文件类型**解析，不从右栏借语言（VS Code 的差异编辑器给两份 model 各挂
@@ -308,6 +321,7 @@ function leftState(
       ...(perf.syntax && language ? [language] : []),
       theme,
       wrap,
+      invisibles,
       face,
     ],
   });
@@ -507,6 +521,8 @@ export function createDiffSurface(
   const themeSlot = new Compartment();
   /** 左栏折行的槽：开关一拨只换槽值，不重建整颗 state（与右栏 `comps.wrap` 同一口径）。 */
   const leftWrap = new Compartment();
+  /** 左栏「显示不可见字符」的槽（全局开关，`reassert` 对着 `showInvisibles` 补一次）。 */
+  const leftInvisibles = new Compartment();
   /** 右栏那颗 view（`Panel.view` 的本身）：装上/摘掉这一臂都按它寻址，不跟着 `panel.view` 漂。 */
   const right = panel.view?.view ?? null;
   /**
@@ -541,6 +557,9 @@ export function createDiffSurface(
    *（`applyWrapToTabs` 末尾会点 `refreshDiffSurfaces`）。
    */
   const wrapValue = (): Extension => (isWrap ? EditorView.lineWrapping : []);
+
+  /** 与 `wrapValue` 同形：值来自全局开关，`reassert` 靠 `=== invisibleChars()` 判现值。 */
+  const invisiblesValue = (): Extension => (showInvisibles ? invisibleChars() : []);
 
   /**
    * 「忽略首尾空白」的现值（设计稿 ⑥ 那颗开关）。
@@ -1125,6 +1144,7 @@ export function createDiffSurface(
       leftFace.of(leftArm()),
       themeSlot.of(lastTheme),
       leftWrap.of(wrapValue()),
+      leftInvisibles.of(invisiblesValue()),
       leftWritable,
     ),
   });
@@ -1949,6 +1969,7 @@ export function createDiffSurface(
         leftFace.of(leftArm()),
         themeSlot.of(lastTheme),
         leftWrap.of(wrapValue()),
+        leftInvisibles.of(invisiblesValue()),
         leftWritable,
       ),
     );
@@ -2281,6 +2302,11 @@ export function createDiffSurface(
     //    左栏这颗旁路自己的槽要对着设置补一次。关着也要补（用户可能在设置页打开折行）。
     const wrapped = leftWrap.get(left.state) === EditorView.lineWrapping;
     if (wrapped !== isWrap) left.dispatch({ effects: leftWrap.reconfigure(wrapValue()) });
+    // ①-b 不可见字符：同一个道理 —— 右栏借用标签自己的槽，左栏这颗旁路要补自己的。
+    const showing = leftInvisibles.get(left.state) === invisibleChars();
+    if (showing !== showInvisibles) {
+      left.dispatch({ effects: leftInvisibles.reconfigure(invisiblesValue()) });
+    }
     // ② 主题：右栏换了色，左栏必须吃同一颗 —— 两半的 18% 改动色叠在不同基色上就不是同一个颜色。
     const themeNow = themeOf();
     if (themeNow !== lastTheme) {

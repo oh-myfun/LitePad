@@ -15,6 +15,7 @@ import {
   eolOptions,
   isDark,
   isWrap,
+  showInvisibles,
   keymapOverrides,
   settings,
   themeFamily,
@@ -39,6 +40,7 @@ import {
   applyEditorLineHeight,
   applyFontFamily,
   applyFontSize,
+  applyInvisiblesToTabs,
   applyPreviewWidth,
   applyTabActionReserve,
   applyTabStyle,
@@ -738,6 +740,16 @@ async function setWordWrap(on: boolean): Promise<void> {
   }
 }
 
+/** 显示不可见字符开关（绝对值；由「查看」菜单的勾选项切换）。 */
+async function setShowInvisibles(on: boolean): Promise<void> {
+  if (showInvisibles === on) return;
+  applyInvisiblesToTabs(on);
+  if (settings) {
+    settings.show_invisibles = on;
+    await persistSettings();
+  }
+}
+
 /** 打开统一设置页（文件 → 设置…）。 */
 async function openSettingsDialog(): Promise<void> {
   // B227：字体两栏的候选来自本机枚举 —— 先取回再开页，免得用户看到空列表。
@@ -899,6 +911,7 @@ export {
   setEditorLineHeight,
   setFontSizeValue,
   setWordWrap,
+  setShowInvisibles,
   setTabStyle,
   setTabActionReserve,
   setAutosave,

@@ -4633,6 +4633,38 @@ button:focus-visible {
   border-bottom-right-radius: var(--lp-sel-radius);
 }
 
+/* 「查看 → 显示不可见字符」：VS Code `editor.renderWhitespace = all` 的那两个字形
+   （`whitespace.ts` 只认空格 / Tab，这里同口径）。
+   · 空格：一个字符格一个中点。用 1ch 平铺的底色点阵画 —— 编辑器字体在设置里只允许
+     等宽，1ch 就是一个字符的宽度，点阵因此与字符格严格对齐。
+   · Tab：一个字符一个箭头（U+2192，与上游同一颗字形），绝对定位在自己那一段的首格，
+     不参与排版 —— 参与的话折行点会跟着漂。
+   颜色取 `editorWhitespace.foreground` 那一档（深色约 16% 白 / 浅色约 20% 黑），
+   这里从 currentColor 派生（整段 35% 不透明度），十套主题族自动落在同一档对比度。 */
+.panel-host .cm-editor .cm-ws-space,
+.panel-host .cm-editor .cm-ws-tab {
+  opacity: 0.35;
+}
+
+.panel-host .cm-editor .cm-ws-space {
+  background-image: radial-gradient(circle, currentColor 0.9px, transparent 1.1px);
+  background-size: 1ch 100%;
+  background-repeat: repeat-x;
+}
+
+.panel-host .cm-editor .cm-ws-tab {
+  position: relative;
+}
+
+.panel-host .cm-editor .cm-ws-tab::before {
+  content: "→";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
 .panel-host .cm-editor .lp-sel-fillet {
   position: absolute;
   width: var(--lp-sel-radius);

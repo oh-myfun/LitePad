@@ -223,6 +223,7 @@ import {
   setThemeModeState,
   setIsDark,
   setIsWrap,
+  setShowInvisiblesState,
   setWindowLabel,
   setWindowKind,
   setSyncingDocId,
@@ -1168,6 +1169,7 @@ async function setupShell(): Promise<void> {
   // 标签操作槽位空位写进 <html data-tab-reserve>（B115，同上）
   applyTabActionReserve(settings?.tab_action_reserve_space ?? true);
   setIsWrap(settings?.word_wrap ?? true);
+  setShowInvisiblesState(settings?.show_invisibles ?? false);
   applyFontSize(settings?.font_size ?? 14);
   applyFontFamily(settings?.font_family ?? "");
   applyCodeFontFamily(settings?.code_font_family ?? "");

@@ -205,6 +205,9 @@ export let suppressDirty = false;
 
 export let isWrap = true;
 
+/** 「查看 → 显示不可见字符」（VS Code 的 `editor.renderWhitespace = all`）。 */
+export let showInvisibles = false;
+
 export let isDark = false;
 
 export let themeMode: ThemeMode = "system";
@@ -295,6 +298,10 @@ export function setIsDark(v: typeof isDark): void {
 
 export function setIsWrap(v: typeof isWrap): void {
   isWrap = v;
+}
+
+export function setShowInvisiblesState(v: typeof showInvisibles): void {
+  showInvisibles = v;
 }
 
 export function setSuppressDirty(v: typeof suppressDirty): void {

@@ -41,6 +41,8 @@ pub struct Settings {
     /// 编辑器行距（1.0–2.5，默认 1.5），作用于 .cm-content
     pub editor_line_height: f64,
     pub word_wrap: bool,
+    /// 查看 → 显示不可见字符（VS Code 的 `editor.renderWhitespace = all`），默认关。
+    pub show_invisibles: bool,
     /// 自动保存：把脏文档写回**原文件**（对应 VS Code `files.autoSave`）。
     /// B68 起默认 **false**，对齐 VS Code 桌面版默认值——它和热退出是两件事，
     /// 详见 `backup` 模块头部注释。
@@ -145,6 +147,7 @@ impl Default for Settings {
             ui_font_family: String::new(),
             editor_line_height: 1.5,
             word_wrap: true,
+            show_invisibles: false,
             // B68：两个开关各管一件事，默认值对齐 VS Code 桌面版
             // （自动保存关、热退出开）。别顺手把 autosave 改回 true——
             // 自动保存会写脏用户的文件，热退出只写自己的备份区。

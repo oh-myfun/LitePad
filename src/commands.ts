@@ -7,7 +7,15 @@
 // 查找替换命令入口（openFindReplace）、视图批处理方法（withView / findStep / tabStateWriteBack）。
 // 零外部函数依赖（无 DI）——依赖 core/* + ui + tabs + find/findbar + prefs + shell/* + editor/*。
 
-import { isWrap, panels, settings, tabs, windowKind, type Tab } from "./core/app-state";
+import {
+  isWrap,
+  panels,
+  settings,
+  showInvisibles,
+  tabs,
+  windowKind,
+  type Tab,
+} from "./core/app-state";
 import { logger } from "./core/logger";
 import { redo, selectAll, undo } from "@codemirror/commands";
 import { activePanel, activeTab, docOf, instancesOfDoc } from "./core/panels";
@@ -25,6 +33,7 @@ import {
   keyHint,
   openSettingsDialog,
   scheduleFontSizeSave,
+  setShowInvisibles,
   setWordWrap,
 } from "./prefs";
 import { createMenuBar } from "./shell/menubar";
@@ -280,6 +289,10 @@ async function toggleWrapSetting(): Promise<void> {
   await setWordWrap(!isWrap);
 }
 
+async function toggleInvisiblesSetting(): Promise<void> {
+  await setShowInvisibles(!showInvisibles);
+}
+
 let statusbarVisible = true;
 
 function toggleStatusbar(): void {
@@ -523,6 +536,8 @@ function setupMenuBar(): void {
     onZoomReset: () => void changeFontSize(null),
     onToggleWrap: () => void toggleWrapSetting(),
     wrapChecked: () => isWrap,
+    onToggleInvisibles: () => void toggleInvisiblesSetting(),
+    invisiblesChecked: () => showInvisibles,
     onToggleStatusbar: () => toggleStatusbar(),
     statusbarChecked: () => statusbarVisible,
     // ---- 编码（B215/B374：主菜单「编码」三组 + 状态栏那颗键同取这一份；行尾归行尾键） ----
@@ -567,6 +582,7 @@ export {
   openGotoLine,
   changeFontSize,
   toggleWrapSetting,
+  toggleInvisiblesSetting,
   toggleStatusbar,
   togglePin,
   refreshPinButton,

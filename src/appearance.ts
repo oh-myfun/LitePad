@@ -8,7 +8,8 @@ import { EditorView } from "@codemirror/view";
 import { vscodeEditorTheme } from "./editor/theme";
 import type { PreviewWidth } from "./ipc/api";
 import type { ThemeFamily } from "./theme/theme";
-import { tabs, panels, setIsWrap } from "./core/app-state";
+import { tabs, panels, setIsWrap, setShowInvisiblesState } from "./core/app-state";
+import { invisibleChars } from "./editor/invisibleChars";
 import { rethemeWidgets, wysiwygInstalled } from "./preview/livePreview";
 import { refreshDiffSurfaces, remeasureDiffSurfaces } from "./diff/surface";
 
@@ -59,6 +60,23 @@ export function applyWrapToTabs(wrap: boolean): void {
   }
   // B461：差异格的右栏借用标签自己的 `comps.wrap`（上面这一手已经发到它），左栏那颗旁路
   // 自己的槽由 `refreshDiffSurfaces` → `reassert` 对着 `isWrap` 补上，两栏才不会一折一不折。
+  refreshDiffSurfaces();
+}
+
+export function applyInvisiblesToTabs(on: boolean): void {
+  setShowInvisiblesState(on);
+  for (const tab of tabs.values()) {
+    const effect = tab.comps.invisibles.reconfigure(on ? invisibleChars() : []);
+    const panel = panels.get(tab.panelId);
+    if (panel?.view && panel.viewTabId === tab.tabId) {
+      panel.view.view.dispatch({ effects: effect });
+      tab.state = panel.view.view.state;
+    } else {
+      tab.state = tab.state.update({ effects: effect }).state;
+    }
+  }
+  // 与折行同一发补齐：差异格右栏借用标签自己的槽（上面已经发到），左栏那颗旁路自己的槽
+  // 由 `refreshDiffSurfaces` → `reassert` 对着 `showInvisibles` 补上，两栏才不会一有一无。
   refreshDiffSurfaces();
 }
 

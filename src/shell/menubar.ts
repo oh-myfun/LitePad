@@ -93,6 +93,9 @@ export interface MenuBarCallbacks {
   onToggleWrap: () => void;
   /** 菜单展开时实时求值，决定 ✓ 勾选态 */
   wrapChecked: () => boolean;
+  /** 「查看 → 显示不可见字符」（VS Code 的 editor.renderWhitespace = all）。 */
+  onToggleInvisibles: () => void;
+  invisiblesChecked: () => boolean;
   onToggleStatusbar: () => void;
   /**
    * 「编码 → 解读 / 转换 / BOM」三组（B215；行尾自 B374 起归状态栏那颗行尾键）。
@@ -246,6 +249,7 @@ const MENUS: { label: string; items: (cb: MenuBarCallbacks) => MenuItem[] }[] = 
       { label: withKey("重置缩放", cb.keyHint("view.zoomReset")), onSelect: cb.onZoomReset },
       { separator: true },
       { label: "自动换行", checked: cb.wrapChecked(), onSelect: cb.onToggleWrap },
+      { label: "显示不可见字符", checked: cb.invisiblesChecked(), onSelect: cb.onToggleInvisibles },
       { label: "状态栏", checked: cb.statusbarChecked(), onSelect: cb.onToggleStatusbar },
     ],
   },

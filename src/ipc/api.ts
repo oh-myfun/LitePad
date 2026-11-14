@@ -160,6 +160,11 @@ export interface Settings {
   /** 编辑器行距（1.0–2.5，默认 1.5） */
   editor_line_height: number;
   word_wrap: boolean;
+  /**
+   * 查看 → 显示不可见字符（VS Code 的 `editor.renderWhitespace = all`）。
+   * 可空：老配置里没有这一格，缺省按关处理（与 Rust `Settings::default` 一致）。
+   */
+  show_invisibles?: boolean;
   /** 自动保存：把脏文档写回**原文件**（VS Code `files.autoSave`）。B68 起默认关。 */
   autosave: boolean;
   /**

@@ -125,6 +125,8 @@ function makeCb(): MenuBarCallbacks {
     onZoomReset: noop,
     onToggleWrap: noop,
     wrapChecked: () => true,
+    onToggleInvisibles: noop,
+    invisiblesChecked: () => false,
     onToggleStatusbar: noop,
     statusbarChecked: () => false,
     // 文件 → 设置
@@ -297,11 +299,13 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
   it("B42：查看菜单去掉主题/预览行距/大纲宽度/分屏，保留缩放与勾选态开关", async () => {
     let wrap = true;
     let statusbar = false;
+    let invisibles = false;
     const host = document.createElement("nav");
     document.body.appendChild(host);
     const cb = makeCb();
     cb.wrapChecked = () => wrap;
     cb.statusbarChecked = () => statusbar;
+    cb.invisiblesChecked = () => invisibles;
     createMenuBar(host, cb);
     await clickMenuBtn(host, "查看");
     const texts = rootTexts();
@@ -316,6 +320,7 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
     expect(texts).toContain("缩小\tCtrl+-");
     expect(texts).toContain("重置缩放\tCtrl+0");
     expect(joined).toContain("自动换行");
+    expect(joined).toContain("显示不可见字符");
     expect(joined).toContain("状态栏");
 
     // 移除项
@@ -330,8 +335,13 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
       (b.textContent ?? "").includes("自动换行"),
     );
     expect(wrapItem?.querySelector(".check")?.textContent, "自动换行应为勾选态").toBe("✓");
+    const invisItem = [...document.querySelectorAll(".popup-menu > button")].find((b) =>
+      (b.textContent ?? "").includes("显示不可见字符"),
+    );
+    expect(invisItem?.querySelector(".check")?.textContent, "默认不勾选").toBe("");
     wrap = false;
     statusbar = true;
+    invisibles = true;
     closePopupMenu();
     await flush();
     await clickMenuBtn(host, "查看");
@@ -339,6 +349,10 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
       (b.textContent ?? "").includes("自动换行"),
     );
     expect(wrap2?.querySelector(".check")?.textContent).toBe("");
+    const invis2 = [...document.querySelectorAll(".popup-menu > button")].find((b) =>
+      (b.textContent ?? "").includes("显示不可见字符"),
+    );
+    expect(invis2?.querySelector(".check")?.textContent, "勾选态应实时求值").toBe("✓");
   });
 
   it("B106：设置入口在「文件」菜单，不再有独立的「设置」菜单", async () => {
@@ -793,6 +807,7 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     expect(viewBlock).toContain("大纲 TOC");
     expect(viewBlock).toContain("折叠全部");
     expect(viewBlock).toContain("自动换行");
+    expect(viewBlock).toContain("显示不可见字符");
     expect(viewBlock).toContain("状态栏");
   });
 

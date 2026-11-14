@@ -21,6 +21,7 @@ import {
 } from "@codemirror/view";
 import { findHighlight } from "./find";
 import { gutterDiff } from "./gutterDiff";
+import { invisibleChars } from "./invisibleChars";
 import { overviewRuler, overviewWordMatches } from "./overview";
 import { perfProfileFor, type PerfProfile } from "./perf";
 import { roundedSelection } from "./roundedSelection";
@@ -128,6 +129,8 @@ interface EditorStateEnv {
   /** B377：VS Code 主题族；缺省 = 2026（测试里的最小 env 不必逐处补） */
   family?: ThemeFamily;
   wrap: boolean;
+  /** 「查看 → 显示不可见字符」；缺省 = 关（测试里的最小 env 不必逐处补） */
+  invisibles?: boolean;
   /** M4 大文件分级档位；缺省 normal（新建/未命名文档） */
   perf?: PerfProfile;
   /**
@@ -151,6 +154,8 @@ interface EditorStateEnv {
 export interface TabCompartments {
   theme: Compartment;
   wrap: Compartment;
+  /** 「查看 → 显示不可见字符」的空格 / Tab 装饰面（见 `invisibleChars.ts`）。 */
+  invisibles: Compartment;
   lang: Compartment;
   /** 左侧 gutter（行号 / 折叠槽） */
   gutter: Compartment;
@@ -187,6 +192,7 @@ export function makeTabState(
   const comps: TabCompartments = {
     theme: new Compartment(),
     wrap: new Compartment(),
+    invisibles: new Compartment(),
     lang: new Compartment(),
     gutter: new Compartment(),
     preview: new Compartment(),
@@ -201,6 +207,7 @@ export function makeTabState(
       // 最右一列；挂在这里而不是 compartment 里，因为它的状态与刷新与档位无关。
       gutterDiff(env.baseline),
       comps.wrap.of(env.wrap ? EditorView.lineWrapping : []),
+      comps.invisibles.of(env.invisibles ? invisibleChars() : []),
       // 右缘那一列（见 `src/editor/overview.ts`）。差异实例传 `overview: false`。
       env.overview === false ? [] : overviewRuler(),
       comps.theme.of(vscodeEditorTheme(env.dark, env.family ?? "2026")),
