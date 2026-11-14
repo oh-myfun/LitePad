@@ -48,7 +48,6 @@ import {
   applyFontSize,
   applyPreviewWidth,
   applyTabActionReserve,
-  applyTabStyle,
 } from "../../src/appearance";
 
 declare global {
@@ -365,7 +364,6 @@ function install(): void {
   // 排版变量必须按生产缺省落一遍，否则几何对不上：--font-size / --editor-line-height
   // 直接决定 CM6 的行块高度，而 v 的行内小数部分就是从它算出来的。
   // 下面这组值就是 main.ts:892-900 那批 `settings?.x ?? 缺省` 的缺省分支。
-  applyTabStyle("connected");
   applyTabActionReserve(true);
   applyFontSize(14);
   applyFontFamily("");

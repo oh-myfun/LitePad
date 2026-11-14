@@ -181,11 +181,6 @@ export function applyUiFontFamily(family: string): void {
   }
 }
 
-export function applyTabStyle(style: string): void {
-  // 写进 <html data-tab-style>；未知值一律按 "connected" 处理（与 Rust 回落一致）。
-  document.documentElement.dataset.tabStyle = style === "pill" ? "pill" : "connected";
-}
-
 export function applyTabActionReserve(on: boolean): void {
   document.documentElement.dataset.tabReserve = on ? "on" : "off";
 }

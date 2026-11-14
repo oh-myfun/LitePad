@@ -41,7 +41,6 @@ import {
   applyFontSize,
   applyPreviewWidth,
   applyTabActionReserve,
-  applyTabStyle,
   applyUiFontFamily,
   rethemePreviews,
 } from "./appearance";
@@ -1164,8 +1163,6 @@ async function setupShell(): Promise<void> {
   setIsDark(applyTheme(themeMode, themeFamily));
   // 档位写进 <html data-theme-mode>（B97 前由顶栏那颗主题按钮承担）
   publishThemeMode();
-  // 标签样式写进 <html data-tab-style>（B114；必须在任何标签渲染前落地）
-  applyTabStyle(settings?.tab_style ?? "connected");
   // 标签操作槽位空位写进 <html data-tab-reserve>（B115，同上）
   applyTabActionReserve(settings?.tab_action_reserve_space ?? true);
   setIsWrap(settings?.word_wrap ?? true);

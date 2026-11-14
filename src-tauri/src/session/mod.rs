@@ -28,7 +28,7 @@ pub struct Settings {
     pub default_encoding: String,
     /// B372：新建空白文档的默认语言（VS Code `files.defaultLanguage`）。
     /// 空串 = 不指定（未命名文档按纯文本起）；否则是前端语言注册表的标签。
-    /// 后端不校验取值 —— 未知标签由前端按自动处理（同 `tab_style` 的口径）。
+    /// 后端不校验取值 —— 未知标签由前端按自动处理（同 `keymap_preset` 的口径）。
     pub default_lang: String,
     pub recent_files: Vec<String>,
     pub font_size: f64,
@@ -67,7 +67,7 @@ pub struct Settings {
     /// B312：展开区摊开的是**哪一块**（`"toc"` 大纲 / `"recent"` 最近打开，默认 `"toc"`）。
     ///
     /// 与 `toc_open` 是一对：那颗管「开没开」，这颗管「开着的是谁」。后端不校验取值
-    /// —— 未知值由前端回落成 `"toc"`，理由同 `tab_style` / `keymap_preset`（枚举是前端概念，
+    /// —— 未知值由前端回落成 `"toc"`，理由同 `keymap_preset`（枚举是前端概念，
     /// 放到后端反而要跟着前端改）。旧配置文件缺这一格 ⇒ `#[serde(default)]` 给 `"toc"`。
     pub drawer_view: String,
     /// B198：整个左栏（按钮列 + 展开区 + 中间缝）是否**收起**（默认 false = 左栏在）。
@@ -119,9 +119,6 @@ pub struct Settings {
     /// 优先级：keymap 覆盖 > keymap_preset > 命令默认值。未知值由前端回落默认，
     /// 后端不校验——预设是前端概念，放到后端枚举反而要跟着前端改。
     pub keymap_preset: String,
-    /// 标签样式（"connected" | "pill"）。前端不识别的值按 "connected" 处理，
-    /// 后端不校验——理由同 keymap_preset。
-    pub tab_style: String,
     /// 标签右侧 ●/× 操作槽位是否**恒定预留空位**（B115，对齐 VS Code 1.139
     /// `workbench.editor.tabActionReserveSpace`，默认 true）。false = 紧凑档：
     /// 已保存标签收紧文字，悬停时按钮浮出；未保存标签的 ● 指示器恒预留。
@@ -169,7 +166,6 @@ impl Default for Settings {
             plantuml_server: String::new(),
             keymap: HashMap::new(),
             keymap_preset: "default".into(),
-            tab_style: "connected".into(),
             tab_action_reserve_space: true,
             log_level: String::new(),
         }
@@ -841,32 +837,6 @@ mod tests {
         );
     }
 
-    /// B114：Settings 新增 `tab_style`。
-    /// 老配置文件里没有这个字段——`#[serde(default)]` 必须让它回落 "connected"，
-    /// 否则 `load()` 会因为缺字段直接整体失败、用户所有偏好一起丢。
-    #[test]
-    fn settings_without_tab_style_falls_back_to_connected() {
-        let json = r#"{ "theme": "dark" }"#;
-
-        let s: Settings = serde_json::from_str(json).expect("缺 tab_style 也应能读入");
-        assert_eq!(s.tab_style, "connected", "未知/缺失应回落 connected");
-        assert_eq!(Settings::default().tab_style, "connected");
-    }
-
-    /// 落盘的字段名必须是 tab_style（前端按同名读取，理由同 keymap_preset）。
-    #[test]
-    fn settings_tab_style_round_trip() {
-        let s = Settings {
-            tab_style: "pill".into(),
-            ..Settings::default()
-        };
-        let out = serde_json::to_string(&s).unwrap();
-        assert!(
-            out.contains("\"tab_style\":\"pill\""),
-            "落盘字段应为 snake_case tab_style：{out}"
-        );
-    }
-
     /// B115：Settings 新增 `tab_action_reserve_space`。老配置缺字段必须回落
     /// true（对齐 VS Code 默认），否则 load() 整体失败、用户偏好一起丢。
     #[test]
@@ -936,7 +906,7 @@ mod tests {
     }
 
     /// B312：落盘字段名必须是 drawer_view（前端 Settings 按同名读写）。
-    /// 后端**不校验**取值 —— `"recent"` 原样存，未知串由前端回落 `"toc"`，理由同 tab_style。
+    /// 后端**不校验**取值 —— `"recent"` 原样存，未知串由前端回落 `"toc"`，理由同 keymap_preset。
     #[test]
     fn settings_drawer_view_round_trip() {
         let s = Settings {

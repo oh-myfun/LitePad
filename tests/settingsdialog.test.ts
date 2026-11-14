@@ -137,8 +137,6 @@ function makeOpts(): SettingsDialogOptions {
     onAutosave: noop,
     hotExit: () => true,
     onHotExit: noop,
-    tabStyle: () => "connected",
-    onTabStyle: noop,
     tabActionReserveSpace: () => true,
     onTabActionReserveSpace: noop,
     // B288：日志级别 —— 走独立的 log_level / set_log_level IPC（Rust 侧持有并即时生效），

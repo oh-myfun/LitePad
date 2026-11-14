@@ -43,7 +43,6 @@ import {
   applyInvisiblesToTabs,
   applyPreviewWidth,
   applyTabActionReserve,
-  applyTabStyle,
   applyUiFontFamily,
   applyWrapToTabs,
   normalizePreviewWidth,
@@ -453,18 +452,6 @@ function keyHint(id: string): string {
     .join(" / ");
 }
 
-/** 标签样式（设置页「外观 → 标签样式」的下拉）：立即生效。 */
-
-/** 标签样式切换（设置页）：立即生效 + 持久化。 */
-async function setTabStyle(style: string): Promise<void> {
-  applyTabStyle(style);
-  if (settings) {
-    settings.tab_style = style === "pill" ? "pill" : "connected";
-    await persistSettings();
-  }
-  showMessage(style === "pill" ? "标签样式：药丸" : "标签样式：相连");
-}
-
 /** 标签操作槽位空位（设置页「外观」开关）：立即生效。 */
 
 /** 标签操作槽位空位切换（设置页）：立即生效 + 持久化。 */
@@ -814,8 +801,6 @@ async function openSettingsDialog(): Promise<void> {
     onAutosave: (v) => void setAutosave(v),
     hotExit: () => settings?.hot_exit ?? true,
     onHotExit: (v) => void setHotExit(v),
-    tabStyle: () => settings?.tab_style ?? "connected",
-    onTabStyle: (v) => void setTabStyle(v),
     tabActionReserveSpace: () => settings?.tab_action_reserve_space ?? true,
     onTabActionReserveSpace: (v) => void setTabActionReserve(v),
     // B288：日志级别 —— **不读 `settings`**：级别由 Rust 侧 `session.log_level` 持有，
@@ -912,7 +897,6 @@ export {
   setFontSizeValue,
   setWordWrap,
   setShowInvisibles,
-  setTabStyle,
   setTabActionReserve,
   setAutosave,
   setHotExit,

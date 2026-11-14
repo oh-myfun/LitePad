@@ -238,11 +238,6 @@ export interface Settings {
    */
   keymap_preset: string;
   /**
-   * 标签样式（B114）："connected"（VS Code 1.139 相连标签，默认）| "pill"（经典药丸）。
-   * 未知值按 "connected" 处理；后端不校验。
-   */
-  tab_style: string;
-  /**
    * 标签右侧 ●/× 操作槽位是否恒定预留空位（B115，对齐 VS Code
    * `workbench.editor.tabActionReserveSpace`，默认 true）。false = 紧凑档。
    */

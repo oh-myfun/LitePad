@@ -109,8 +109,8 @@ export function stripCssComments(css: string): string {
 //     例：`.find-x` 先出现在扁平按钮列表里，自己还有一条定位规则 →
 //     `ruleBlock(css, ".find-x", "position")`
 //   · atLineStart = true：要求命中处**必须行首**（旧 `\n\.foo\s*\{` 写法的等价物）——
-//     复合覆盖块（如 `:root[data-tab-style="pill"] .panel-tabstrip`）的**尾段**与
-//     单选择器同名时，不加锚会抓到覆盖块的块体（B114 那批契约靠它区分）。
+//     复合覆盖块（如 `:root[data-tab-reserve="off"] .tab-action`）的**尾段**与
+//     单选择器同名时，不加锚会抓到覆盖块的块体。
 // ⚠️ 边界只认「紧跟 `{`」：同名选择器作为**列表成员**（后面跟 `,`）不命中 ——
 //   要取列表规则就把完整列表写进 selector。旧写法 `\{[^}]*\}` 的两个坑（注释里
 //   有 `}` 会截断、块内注释复述标识符会假绿）都靠剥注释 + 数花括号解决。

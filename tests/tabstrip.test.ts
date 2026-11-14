@@ -18,9 +18,8 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
     // strip 只负责被程序滚动（overflow hidden 下 scrollLeft 可编程设置），
     // 可见 thumb 由 tabstrip.ts 的 syncOverlayScrollbar 叠在底部。
     const css = readFileSync("src/styles/global.css", "utf-8");
-    // ⚠️ 必须 \n 锚定行首：pill 覆盖块（B114）的选择器是
-    //   :root[data-tab-style="pill"] .panel-tabstrip
-    // 无锚定时 \.panel-tabstrip\s*\{ 会命中它的尾段，抓回来的是 pill 块的块体。
+    // ⚠️ 行首锚定：`.panel-tabstrip` 还出现在 `.panel-tabstrip-scrollbar` 等复合
+    // 选择器里，行首 + 紧跟 `{` 才只命中基础规则本身。
     const strip = ruleBlock(css, ".panel-tabstrip", undefined, true);
     expect(strip, "应有 .panel-tabstrip 规则").toBeTruthy();
     expect(strip, "标签区不再吃原生滚动条（B117 悬浮化）").toContain("overflow-x: hidden");
@@ -541,7 +540,7 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
       expect(block, `${name}主题必须定义 --tab-strip-bg（标签条表面）`).toContain(
         "--tab-strip-bg:",
       );
-      for (const v of ["--tab-bg-hover:", "--tab-bg-active:", "--tab-bg-active-hover:"]) {
+      for (const v of ["--tab-bg-hover:", "--tab-bg-active:"]) {
         expect(block, `${name}主题必须定义 ${v}`).toContain(v);
       }
       // B119：hover 用 VS Code connected 的口径（connectedEditorTabs.css:77）
@@ -570,8 +569,7 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     // ⚠️ 这条线必须画在 head 盒**内**（::after + bottom:0），不能用 border-bottom：
     //    border 在盒外，被条带 overflow 裁掉的舌片够不着，「活动帽盖出开口」就做
     //    不出来 —— B121 当年踩的就是这个，判据把它钉住。
-    // ⚠️ atLineStart：pill 档那条覆盖（`:root[data-tab-style="pill"] .panel-head::after`）
-    //    在文件里排在前面，不带这个参数取到的是它、不是基础规则。
+    // ⚠️ atLineStart：只取独立规则本身（作为列表成员或复合选择器尾段时不命中）。
     const headLine = cssDecls(ruleBlock(css, ".panel-head::after", undefined, true));
     expect(headLine, "条带下沿必须有那条横贯线（B349，参考 VS Code 相连档）").toBeTruthy();
     expect(headLine, "线坐在 head 盒内的底缘").toMatch(/position:\s*absolute/);
@@ -591,20 +589,13 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     // 反向对照：把线挪回盒外（border-bottom 那一手）⇒ ::after 那条规则就没了，判据必须抓走
     const headLineBlocks = (src: string): number =>
       (src.match(/\.panel-head::after\s*\{[\s\S]*?\n\}/g) ?? []).length;
-    expect(headLineBlocks(css), "源里应有两条 `.panel-head::after`（基础画线 + pill 撤线）").toBe(
-      2,
-    );
+    expect(headLineBlocks(css), "源里应只有一条 `.panel-head::after`（条带下沿那条线）").toBe(1);
     const BAD_OUTER = css.replace(/\.panel-head::after\s*\{[\s\S]*?\n\}/g, "");
-    expect(headLineBlocks(BAD_OUTER), "替身必须真的把两条都摘掉").toBe(0);
+    expect(headLineBlocks(BAD_OUTER), "替身必须真的把这条规则摘掉").toBe(0);
     expect(
       ruleBlock(BAD_OUTER, ".panel-head::after", undefined, true),
       "摘掉后必须取不到规则",
     ).toBe("");
-    // 这条线只属于相连档：药丸是浮在条带上的胶囊，没有与编辑区衔接的开口可盖
-    expect(
-      cssDecls(ruleBlock(css, ':root[data-tab-style="pill"] .panel-head::after')),
-      "pill 档必须把这条线撤掉（否则胶囊行下多一道硬边）",
-    ).toMatch(/content:\s*none/);
     // B123：分屏分隔条静息恢复 --sep-line 细线、外框上移为大卡片 —— 契约见
     // 「编辑区大卡片外框（B123）」一节。
 
@@ -616,13 +607,10 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     expect(css, "--tab-fill-bg 必须注册成 color 类型").toMatch(
       /@property --tab-fill-bg\s*\{[^}]*syntax:\s*"<color>"/,
     );
-    // B119：connected 档活动标签悬停**不再提亮**（VS Code 的 hover fill 规则全带
-    // :not(.active)，活动标签悬停只亮关闭按钮）；pill 档保留提亮（activeHoverBackground）
-    expect(cssCode, "connected 档不得再有独立的活动标签悬停提亮规则").not.toMatch(
+    // B119：活动标签悬停**不再提亮**（VS Code 的 hover fill 规则全带 :not(.active)，
+    // 活动标签悬停只亮关闭按钮）
+    expect(cssCode, "不得再有独立的活动标签悬停提亮规则").not.toMatch(
       /\}\s*\.tab-active:hover \.tab-fill\s*\{/,
-    );
-    expect(cssCode, "pill 档保留悬停提亮（VS Code activeHoverBackground 同款）").toContain(
-      ':root[data-tab-style="pill"] .tab-active:hover .tab-fill',
     );
 
     // DOM 侧：CSS 写了但没渲染这个元素，标签就是全透明一片
@@ -651,7 +639,7 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     ).toMatch(/padding:\s*3px 4px 0 0/);
 
     // B123-6：条带统一 28px = 3(上) + 22(标签) + 3(下间隙=thumb 高度)（B334 随标签收档），
-    // 两档同高切档不抖；connected 的 fill 用 inset -3px 0 -3px 伸进上下间隙。
+    // 上下对称；标签的 fill 用 inset -3px 0 -3px 伸进上下间隙。
     const tabH = Number(
       cssDecls(ruleBlock(css, ".tab", undefined, true)).match(/height:\s*(\d+)px/)![1],
     );
@@ -662,18 +650,13 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
       /\.panel-tabstrip::-webkit-scrollbar/,
     );
 
-    // 拖拽插入线必须**贯穿整条标签带**：connected 档的 `.tab-fill` 是 `inset: -3px 0 -3px`，
+    // 拖拽插入线必须**贯穿整条标签带**：`.tab-fill` 是 `inset: -3px 0 -3px`，
     // 上下那 6px 间隙都被填成标签底色 ⇒ 线从 3px 起就比标签带短一截，用户读作
-    // 「线偏下、上面缺一小段」（B309）。pill 档相反：胶囊只占中间 22px，线跟着内缩。
-    // ⚠️ 锚定基础块一律用 `ruleBlock(..., atLineStart)`：pill 覆盖块的选择器尾段也是
-    //   `.tab-insert`，裸正则 `\.tab-insert\s*\{` 会命中它（B123-5 那次靠「带 top:3px
-    //   特征」绕过，这一版两档都有 top ⇒ 那个绕法自己就失效了）。
+    // 「线偏下、上面缺一小段」（B309）。
+    // ⚠️ 锚定基础块用 `ruleBlock(..., atLineStart)`：行首 + 紧跟 `{` 才只命中基础规则。
     const insert = ruleBlock(css, ".tab-insert", undefined, true);
-    expect(insert, "基础块（connected 档）必须贯穿条带上下沿").toMatch(/top:\s*0/);
+    expect(insert, "基础块必须贯穿条带上下沿").toMatch(/top:\s*0/);
     expect(insert).toMatch(/bottom:\s*0/);
-    const pillInsert = ruleBlock(css, ':root[data-tab-style="pill"] .tab-insert');
-    expect(pillInsert, "pill 档的线只贯穿胶囊行（上下 3px 是空白）").toMatch(/top:\s*3px/);
-    expect(pillInsert).toMatch(/bottom:\s*3px/);
   });
   it("B116 闪烁效果整体移除：CSS 无 tab-flash 规则、TS 无 flashTab（含反向验证）", () => {
     // B47 引入的「切换后闪一次」被用户要求整体移除（B116）。
@@ -740,107 +723,85 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
   });
 });
 
-describe("标签样式切换（B114：connected | pill）", () => {
-  // 契约集中成一个判定函数：正向用例断言真实样式零违规；
-  // 反向验证把「退化替身 CSS」（照抄 connected 的错误写法）喂给同一个函数，
-  // 断言它被咬住 —— 证明这些断言不是「怎么写都能过」的恒真假绿。
-  function pillViolations(css: string): string[] {
+describe("相连标签之间的分隔小竖线（对齐 VS Code connectedEditorTabs 的 .tab-divider）", () => {
+  const DIVIDER = ".tab:not(.tab-active) + .tab:not(.tab-active)::before";
+
+  // 契约集中成一个判定函数：正向用例断言真实样式零违规；反向验证把退化替身
+  // （删掉规则 / 改成顶满整条）喂给同一个函数，断言被咬住 —— 证明断言不是恒真假绿。
+  function dividerViolations(css: string): string[] {
     const v: string[] = [];
-    const get = (sel: string, filter?: string) => cssDecls(ruleBlock(css, sel, filter));
-    if (!get(':root[data-tab-style="pill"]').includes("--tab-bg-active: #2b2f34"))
-      v.push("深色档必须覆盖活动底色（#2b2f34，不再是编辑器背景）");
-    if (
-      !get(':root[data-tab-style="pill"][data-theme="light"]').includes("--tab-bg-active: #ffffff")
-    )
-      v.push("浅色档必须另设活动底色（纯白）");
-    const fill = get(':root[data-tab-style="pill"] .tab-fill');
-    if (!fill.includes("inset: 0")) v.push("pill 的 fill 必须收回标签框内（inset: 0）");
-    if (!fill.includes("border-radius: 4px")) v.push("pill 四角都是圆的（border-radius: 4px）");
-    if (!get(':root[data-tab-style="pill"] .tab-active .tab-fill').includes("border: none"))
-      v.push("pill 活动标签必须无边框（B55：只靠底色区分）");
-    if (
-      !get(':root[data-tab-style="pill"] .tab-active .tab-fill::before').includes("content: none")
-    )
-      v.push("pill 必须撤掉肩部（胶囊没有舌片）");
-    const strip = get(':root[data-tab-style="pill"] .panel-tabstrip');
-    if (!strip.includes("gap: 4px")) v.push("pill 恢复胶囊之间的 4px 缝隙");
-    // B123-6：条带高度统一 28px（基础规则），pill 只覆盖 padding —— 上下 3px
-    // 对称（= thumb 高度），左右 4px（B55 胶囊呼吸位）。
-    // ⚠️ padding 断言到分号：connected 的 "3px 4px 0 0" 是 "3px 4px" 的超集，
-    //   前缀 includes 会混过去；必须精确匹配两值形态。
-    if (!/padding:\s*3px 4px\s*;/.test(strip)) v.push("pill 条带留白上下 3px / 左右 4px");
-    if (/height:\s*\d+px/.test(strip)) v.push("pill 不得覆盖条带高度（统一 28px，B123-6）");
-    const pillInsertSel = ':root[data-tab-style="pill"] .tab-insert';
-    if (!get(pillInsertSel).includes("bottom: 3px"))
-      v.push("pill 插入线只贯穿胶囊行（bottom: 3px）");
-    if (!get(pillInsertSel).includes("top: 3px")) v.push("pill 插入线不许吃掉上间隙（top: 3px）");
+    const d = cssDecls(ruleBlock(css, DIVIDER));
+    if (!d) return ["缺少「两侧都未激活」时的分隔线规则"];
+    if (!d.includes("position: absolute")) v.push("分隔线必须绝对定位（不占标签排版）");
+    if (!/(?:^|\n)\s*left:\s*0\s*;/.test(d)) v.push("分隔线贴在后一个标签的左缘（left: 0）");
+    if (!/(?:^|\n)\s*top:\s*50%\s*;/.test(d)) v.push("分隔线必须纵向居中（top: 50%）");
+    if (!/transform:\s*translateY\(-50%\)/.test(d)) v.push("居中偏移走 translateY(-50%)");
+    if (!/width:\s*var\(--tab-stroke\)/.test(d)) v.push("线宽取描边 token（1px）");
+    if (!/(?:^|\n)\s*height:\s*16px\s*;/.test(d))
+      v.push("分隔线高 16px（VS Code spacing-size160）");
+    if (!/background:\s*var\(--tabstrip-border\)/.test(d))
+      v.push("颜色取 tab.border（--tabstrip-border）");
+    if (!d.includes("pointer-events: none")) v.push("分隔线不吃鼠标事件");
+    if (!/(?:^|\n)\s*z-index:\s*1\s*;/.test(d)) v.push("分隔线要压在 fill 底色上（z-index: 1）");
     return v;
   }
 
-  it("pill 档 CSS 契约：胶囊化 + 撤肩部描边 + 恢复缝隙（真实样式零违规）", () => {
+  it("真实样式满足分隔线契约（只在两侧都未激活时出现）", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
-    expect(pillViolations(css), "真实样式违反 pill 契约的条目").toEqual([]);
+    expect(dividerViolations(css), "真实样式违反分隔线契约的条目").toEqual([]);
+    // 选择器本身就是判据：任一侧是活动标签都不命中 ⇒ 活动标签两侧不画线
+    expect(css, "分隔线选择器必须排除活动标签").toContain(DIVIDER);
   });
 
-  it("反向验证：退化替身（connected 写法混进 pill 块）必须被咬住（防恒真）", () => {
-    // 替身 = 照抄 connected 的值冒充 pill 覆盖块：fill 外扩、只有上角圆、带描边、
-    // 无缝、不撤肩部、活动底色不变。退化用例先自证「替身确实跑了」（咬住的条目非空
-    // 且点名具体条目），再证明正向用例不恒真 —— 两者结果必须不同。
-    const BAD_PILL = `
-:root[data-tab-style="pill"] { --tab-bg-active: var(--bg); }
-:root[data-tab-style="pill"] .tab-fill { inset: -4px 0 -4px; border-radius: 5px 5px 0 0; }
-:root[data-tab-style="pill"] .tab-active .tab-fill { border: 1px solid var(--border); }
-:root[data-tab-style="pill"] .panel-tabstrip { gap: 0; padding: 4px 4px 0 0; }
-`;
-    const v = pillViolations(BAD_PILL);
-    expect(v.length, "退化替身必须至少被咬住一条").toBeGreaterThan(0);
-    expect(v, "替身的具体违规要被点名（自证判定函数真的在比对）").toEqual([
-      "深色档必须覆盖活动底色（#2b2f34，不再是编辑器背景）",
-      "浅色档必须另设活动底色（纯白）",
-      "pill 的 fill 必须收回标签框内（inset: 0）",
-      "pill 四角都是圆的（border-radius: 4px）",
-      "pill 活动标签必须无边框（B55：只靠底色区分）",
-      "pill 必须撤掉肩部（胶囊没有舌片）",
-      "pill 恢复胶囊之间的 4px 缝隙",
-      "pill 条带留白上下 3px / 左右 4px",
-      "pill 插入线只贯穿胶囊行（bottom: 3px）",
-      "pill 插入线不许吃掉上间隙（top: 3px）",
-    ]);
+  it("反向验证：删掉规则 / 改成顶满整条都咬住（防恒真）", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    const BAD_REMOVED = css.replace(
+      /\.tab:not\(\.tab-active\) \+ \.tab:not\(\.tab-active\)::before\s*\{[^}]*\}/,
+      "",
+    );
+    expect(BAD_REMOVED, "替身必须真的删掉了那条规则").not.toBe(css);
+    expect(dividerViolations(BAD_REMOVED), "删掉规则的替身必须被咬住").toContain(
+      "缺少「两侧都未激活」时的分隔线规则",
+    );
+    const BAD_TALL = css.replace(
+      /(\.tab:not\(\.tab-active\) \+ \.tab:not\(\.tab-active\)::before\s*\{[^}]*?)height:\s*16px/,
+      "$1height: 100%",
+    );
+    expect(BAD_TALL, "替身必须真的改过高").not.toBe(css);
+    expect(dividerViolations(BAD_TALL), "顶满整条的替身必须被咬住").toContain(
+      "分隔线高 16px（VS Code spacing-size160）",
+    );
   });
 
-  it("设置页与主流程接线：外观分类有「标签样式」下拉，切换立即生效并持久化", () => {
-    const dlg = readFileSync("src/shell/settingsdialog.ts", "utf-8");
-    expect(dlg, "选项接口必须有 tabStyle/onTabStyle").toContain("tabStyle: () => string");
-    expect(dlg).toContain("onTabStyle: (style: string) => void");
-    expect(dlg, "外观页必须有「标签样式」下拉").toContain('"标签样式"');
-    expect(dlg, "必须提供 connected 档").toContain('value: "connected"');
-    expect(dlg, "必须提供 pill 档").toContain('value: "pill"');
-
-    // main.ts：断言必须落在代码上（说明性注释里会复述这些标识符 —— B79 的教训）
-    const src = stripLineComments(
-      readFileSync("src/main.ts", "utf-8") +
-        "\n" +
-        readFileSync("src/prefs.ts", "utf-8") +
-        "\n" +
-        tabsAll(),
+  it("药丸档已整体移除：CSS / 前端 / Rust 都不再残留 tab_style / pill 痕迹", () => {
+    const traces = (src: string): string[] =>
+      ["data-tab-style", "tab_style", "tabStyle", "applyTabStyle", "pill"].filter((k) =>
+        src.includes(k),
+      );
+    const cssCode = stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
+    expect(traces(cssCode), "CSS 里不得再有药丸档痕迹").toEqual([]);
+    const tsCode = stripLineComments(
+      [
+        "src/appearance.ts",
+        "src/prefs.ts",
+        "src/main.ts",
+        "src/shell/settingsdialog.ts",
+        "src/ipc/api.ts",
+        "src/shell/tabstrip.ts",
+      ]
+        .map((p) => readFileSync(p, "utf-8"))
+        .join("\n"),
     );
-    const appearance = stripLineComments(readFileSync("src/appearance.ts", "utf-8"));
-    expect(appearance, "档位必须写进 html[data-tab-style]").toContain("dataset.tabStyle");
-    expect(appearance, "未知值必须回落 connected（与 Rust 回落一致）").toContain(
-      'style === "pill" ? "pill" : "connected"',
-    );
-    expect(src, "切换必须写回 settings 才能存盘（B79 同款教训）").toMatch(
-      /settings\.tab_style\s*=/,
-    );
-    expect(src, "启动时必须应用，否则重启样式回退").toContain(
-      'applyTabStyle(settings?.tab_style ?? "connected")',
-    );
-    expect(src, "设置对话框必须接线 onTabStyle").toContain(
-      "onTabStyle: (v) => void setTabStyle(v)",
-    );
-    expect(src, "设置对话框必须接线 tabStyle 取值").toContain(
-      'tabStyle: () => settings?.tab_style ?? "connected"',
-    );
+    expect(traces(tsCode), "前端不得再有药丸档痕迹").toEqual([]);
+    const rsCode = stripLineComments(readFileSync("src-tauri/src/session/mod.rs", "utf-8"));
+    expect(traces(rsCode), "Rust Settings 不得再有 tab_style 字段").toEqual([]);
+    // 设置页不再有「标签样式」那一行
+    expect(readFileSync("src/shell/settingsdialog.ts", "utf-8")).not.toContain("标签样式");
+    // 反向验证：退化替身把覆盖块塞回去必须被抓到（不是「怎么写都能过」）
+    expect(
+      traces(cssCode + '\n:root[data-tab-style="pill"] .tab-fill { inset: 0; }'),
+      "替身里必须抓到 pill 痕迹",
+    ).toEqual(["data-tab-style", "pill"]);
   });
 });
 
@@ -1018,24 +979,17 @@ describe("紧凑档悬浮 × 的渐变垫底（B118，对齐 VS Code）", () => 
       /linear-gradient\(to right, transparent, var\(--tab-bg-hover\)/,
     );
     // 活动垫 = 渐变到活动 fill 同色（B119 对齐 VS Code action-active-hover-background = surface；
-    // ⚠️ filter 用带停靠点的 var(--tab-bg-active) 14px)，否则会被 pill 垫的
-    //    active-hover 超集混过（它同样是 var(--tab-bg-active…) 的前缀）
+    // ⚠️ filter 带上停靠点 `var(--tab-bg-active) 14px`，只命中活动垫这一条）
     const activePad = cssDecls(ruleBlock(css, ".tab-action::before", "var(--tab-bg-active) 14px"));
-    expect(activePad, "活动垫用单层渐变到活动 fill 同色（connected 悬停不提亮）").toMatch(
+    expect(activePad, "活动垫用单层渐变到活动 fill 同色（悬停不提亮）").toMatch(
       /linear-gradient\(to right, transparent, var\(--tab-bg-active\)/,
     );
-    // pill 档悬停仍提亮一档 → 垫色跟着提（覆盖块）
-    const pillPad = cssDecls(ruleBlock(css, ".tab-action::before", "var(--tab-bg-active-hover)"));
-    expect(pillPad, "pill 档活动垫跟随提亮后的 fill").toMatch(
-      /linear-gradient\(to right, transparent, var\(--tab-bg-active-hover\)/,
-    );
 
-    // 三条垫的**实色停靠点**必须落在坡道末端、不得侵入 × 槽位（槽内全程实色）
+    // 两条垫的**实色停靠点**必须落在坡道末端、不得侵入 × 槽位（槽内全程实色）
     const ramp = padW - slotW;
     for (const [name, block, color] of [
       ["非活动垫", dimPad, "var(--tab-bg-hover)"],
       ["活动垫", activePad, "var(--tab-bg-active)"],
-      ["pill 活动垫", pillPad, "var(--tab-bg-active-hover)"],
     ] as const) {
       const stop = rampStop(block, color);
       expect(stop, `${name} 必须有「坡道末端到实色」的停靠点（槽内全不透明）`).toBeGreaterThan(0);
@@ -1118,7 +1072,7 @@ describe("非焦点面板里活动标签的 × 与垫色（B124-3）", () => {
     );
   });
 
-  it("非焦点面板活动标签的垫色跟随 fill 降档（connected=hover 档，pill=悬停提亮档）", () => {
+  it("非焦点面板活动标签的垫色跟随 fill 降档", () => {
     // 非焦点面板里活动标签的 fill 已被降到 --tab-bg-hover（见
     // .layout-panel:not(.layout-panel-active) .tab-active .tab-fill），
     // 垫色必须跟着降，否则垫是一块比标签底色亮的补丁。
@@ -1128,12 +1082,9 @@ describe("非焦点面板里活动标签的 × 与垫色（B124-3）", () => {
         /\.layout-panel:not\(\.layout-panel-active\)[\s\S]{0,200}?\.tab-action::before\s*\{[^}]*\}/g,
       ),
     ].map((m) => m[0]);
-    expect(pads.length, "非焦点面板的活动垫应有 connected / pill 两条").toBe(2);
-    expect(pads[0], "connected 非焦点垫跟随降档后的 fill（--tab-bg-hover）").toContain(
+    expect(pads.length, "非焦点面板的活动垫应有一条").toBe(1);
+    expect(pads[0], "非焦点垫跟随降档后的 fill（--tab-bg-hover）").toContain(
       "var(--tab-bg-hover) 14px",
-    );
-    expect(pads[1], "pill 非焦点垫仍是悬停提亮档（--tab-bg-active-hover）").toContain(
-      "var(--tab-bg-active-hover) 14px",
     );
     for (const p of pads) {
       expect(p, "非焦点垫同样要有实色停靠点（槽内全不透明）").toMatch(/\)\s+14px\)/);

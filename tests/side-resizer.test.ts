@@ -491,7 +491,7 @@ describe("B194 大纲开合状态：切一次要落盘、启动要回放", () =>
     expect(api, "Settings 类型需要 toc_open 字段").toContain("toc_open: boolean");
     expect(rs, "Rust Settings 需要 toc_open 字段").toContain("pub toc_open: bool");
     expect(rs, "默认应为关闭（与 index.html 的 hidden 初值一致）").toContain("toc_open: false");
-    // B312：「开着的是哪一块」是第二格。类型只在前端有（后端不校验枚举，理由同 tab_style），
+    // B312：「开着的是哪一块」是第二格。类型只在前端有（后端不校验枚举，理由同 keymap_preset），
     // Rust 侧存串 + 默认 "toc" ⇒ 旧配置文件缺这一格也不会读失败。
     expect(api, "Settings 类型需要 drawer_view 字段").toContain("drawer_view: DrawerViewName");
     expect(rs, "Rust Settings 需要 drawer_view 字段").toContain("pub drawer_view: String");
