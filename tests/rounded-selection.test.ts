@@ -128,22 +128,39 @@ describe("visualLineRects：逐视觉行自己量，不等 forRange 的跨行判
   };
 
   /** 只需要 moveToLineBoundary / coordsAtPos / 滚动区几何这几颗。 */
-  function fakeView(options: { wrap?: number | null; table?: typeof coords } = {}): EditorView {
+  function fakeView(
+    options: {
+      wrap?: number | null;
+      table?: typeof coords;
+      lineEnd?: number;
+      stuckAt?: number;
+    } = {},
+  ): EditorView {
     const wrap = options.wrap === undefined ? 5 : options.wrap;
     const table = options.table ?? coords;
+    const lineEnd = options.lineEnd ?? 10;
+    const stuckAt = options.stuckAt ?? null;
     return {
       textDirection: Direction.LTR,
       scaleX: 1,
       scaleY: 1,
+      defaultLineHeight: 21,
       scrollDOM: {
         getBoundingClientRect: () => ({ left: 10, right: 1000, top: 50, bottom: 800 }),
         clientWidth: 990,
         scrollLeft: 0,
         scrollTop: 0,
       },
-      // 视口内只有这一行（0..10）：折行点之后就是行尾。
+      // 视口内只有这一行：折行点之后就是行尾。`stuckAt` 模拟行尾隐藏小件把折行点卡住。
       moveToLineBoundary: (motion: { head: number }) => ({
-        head: wrap === null ? motion.head : motion.head < wrap ? wrap : 10,
+        head:
+          stuckAt !== null && motion.head >= stuckAt
+            ? motion.head
+            : wrap === null
+              ? motion.head
+              : motion.head < wrap
+                ? wrap
+                : lineEnd,
       }),
       coordsAtPos: (pos: number, side: number) => table[`${pos}:${side}`] ?? null,
     } as unknown as EditorView;
@@ -170,6 +187,32 @@ describe("visualLineRects：逐视觉行自己量，不等 forRange 的跨行判
 
   it("折行点不前进（量不出视觉行）不猜", () => {
     expect(visualLineRects(fakeView({ wrap: null }), 0, 10)).toBeNull();
+  });
+
+  // 行尾收尾反引号折成零宽小件：0..19 是一整行，18..19 是那颗小件，
+  // 折行点停在 18 不动。上一颗矩形止于最后一个可见字（220），小件自己带一截内距（228）。
+  const hiddenTail = {
+    "0:1": { left: 53, right: 53, top: 100, bottom: 120 },
+    "18:-1": { left: 220, right: 220, top: 107, bottom: 127 },
+    "18:1": { left: 228, right: 228, top: 100, bottom: 129 },
+    "19:-1": { left: 228, right: 228, top: 100, bottom: 129 },
+  };
+
+  it("行尾隐藏小件把折行点卡住：接到上一颗矩形，不落回 forRange 铺通栏", () => {
+    const view = fakeView({ wrap: 18, stuckAt: 18, lineEnd: 19, table: hiddenTail });
+    const markers = visualLineRects(view, 0, 19) ?? [];
+    expect(markers.map(rectOfMarker)).toEqual([rect(43, 50, 175, 29)]);
+  });
+
+  it("卡住的那一截落在下一颗视觉行：接不上就不猜", () => {
+    const nextRow = {
+      ...hiddenTail,
+      "18:-1": { left: 220, right: 220, top: 128, bottom: 148 },
+      "18:1": { left: 228, right: 228, top: 121, bottom: 150 },
+      "19:-1": { left: 228, right: 228, top: 121, bottom: 150 },
+    };
+    const view = fakeView({ wrap: 18, stuckAt: 18, lineEnd: 19, table: nextRow });
+    expect(visualLineRects(view, 0, 19)).toBeNull();
   });
 });
 

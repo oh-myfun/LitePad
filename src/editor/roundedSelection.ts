@@ -292,8 +292,11 @@ function layerBase(view: EditorView): { left: number; top: number } {
  * `coordsAtPos` 返回零宽矩形，但它的 x 正是真实的闭合边界，左侧取 `side=1`、
  * 右侧取 `side=-1` 就能把行首、折行点、行尾的墨迹完整框住。
  *
- * 任一视觉行量不出来（视口外、RTL / bidi、坐标缺失）就整体返回 null，交回
- * `forRange` 走它自己的分段 —— 宁可退回直角，也不给错位的圆角。
+ * 行尾的收尾语法（代码块那条收口反引号等）被折成零宽小件时，折行点会停在小件
+ * **前面**不动（`posAtCoords` 探不过它）。这一截跟上一颗矩形同处一行就接上去，
+ * 连同小件自己的内距一起盖住；落在别的行则说明真的量不出来 —— 两种都不是「量错
+ * 了硬画」，接不上就整体返回 null，交回 `forRange` 走它自己的分段：宁可退回直角，
+ * 也不给错位的圆角。
  */
 export function visualLineRects(
   view: EditorView,
@@ -306,8 +309,34 @@ export function visualLineRects(
   let start = from;
   while (start < to) {
     const head = view.moveToLineBoundary(EditorSelection.cursor(start, 1), true, true).head;
-    // 折行点必须在选区前方；不前进说明这行的排版形态不是「按视觉行折」，不猜。
-    if (head <= start) return null;
+    if (head <= start) {
+      const tailLeft = view.coordsAtPos(start, -1);
+      const tailRight = view.coordsAtPos(to, -1);
+      const last = rects.length ? rectOf(rects[rects.length - 1]) : null;
+      if (!last || !tailLeft || !tailRight) return null;
+      const tailX = tailRight.left - base.left;
+      const tailTop = tailRight.top - base.top;
+      const tailBottom = tailRight.bottom - base.top;
+      // 两端的字形盒顶端都得跟上一颗矩形同处一行（坐标是零宽的，x 就是边界本身）。
+      const tailLeftTop = tailLeft.top - base.top;
+      if (
+        !sameVisualRow(view, last.top, tailLeftTop) ||
+        !sameVisualRow(view, tailLeftTop, tailTop)
+      ) {
+        return null;
+      }
+      const right = Math.max(last.left + last.width, tailX);
+      const top = Math.min(last.top, tailTop);
+      const bottom = Math.max(last.top + last.height, tailBottom);
+      rects[rects.length - 1] = new RectangleMarker(
+        SELECTION_CLASS,
+        last.left,
+        top,
+        right - last.left,
+        bottom - top,
+      );
+      break;
+    }
     const next = Math.min(head, to);
     const left = view.coordsAtPos(start, 1);
     const right = view.coordsAtPos(next, -1);
@@ -325,6 +354,11 @@ export function visualLineRects(
     start = next;
   }
   return rects;
+}
+
+/** 同一颗视觉行才谈得上把行尾那一截接上去：字形盒顶端差不出半行。 */
+function sameVisualRow(view: EditorView, a: number, b: number): boolean {
+  return Math.abs(a - b) < view.defaultLineHeight / 2;
 }
 
 function markersFor(view: EditorView): LayerMarker[] {
