@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// B455-5 · 图表的「滚轮缩放 + 拖拽平移 + 右上角三颗键」。
+// B455-5 · 图表的「Ctrl+滚轮缩放 + 拖拽平移 + 右上角三颗键」。
 //
 // 用户拍板的两条口径：
 // 1. **统一外层变换** —— 八类图共用一层视口变换（画什么由各自的渲染器管，这一层只搬动成品），
@@ -91,26 +91,52 @@ function offsetsOf(canvas: HTMLElement): { x: number; y: number } {
   return { x: Number(m![1]), y: Number(m![2]) };
 }
 
-const wheel = (deltaY: number, clientX = 10, clientY = 20) =>
-  new WheelEvent("wheel", { deltaY, clientX, clientY, bubbles: true, cancelable: true });
+const wheel = (deltaY: number, clientX = 10, clientY = 20, ctrl = false) =>
+  new WheelEvent("wheel", {
+    deltaY,
+    clientX,
+    clientY,
+    ctrlKey: ctrl,
+    bubbles: true,
+    cancelable: true,
+  });
+
+/** 「视图缩放」那一发：按住 Ctrl 才算（2026-11-15 口径）。 */
+const zoomWheel = (deltaY: number, clientX = 10, clientY = 20) =>
+  wheel(deltaY, clientX, clientY, true);
 
 const mouse = (type: string, clientX: number, clientY: number) =>
   new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX, clientY });
 
-describe("B455-5 · 滚轮缩放", () => {
-  it("往上滚 = 放大，往下滚 = 缩小（步进 1.15×）", () => {
+describe("B455-5 · Ctrl+滚轮缩放", () => {
+  it("按住 Ctrl 往上滚 = 放大，往下滚 = 缩小（步进 1.15×）", () => {
     const { card, canvas } = mkCard();
     attachDiagramViewport(card);
-    canvas.dispatchEvent(wheel(-100));
+    canvas.dispatchEvent(zoomWheel(-100));
     expect(scaleOf(canvas)).toBeCloseTo(1.15);
-    canvas.dispatchEvent(wheel(100));
+    canvas.dispatchEvent(zoomWheel(100));
     expect(scaleOf(canvas), "放大之后再来一发往下 = 回到原样").toBeCloseTo(1);
   });
 
-  it("滚轮不许顺带把预览面板滚走（preventDefault）", () => {
+  it("不按 Ctrl 的滚轮：不缩放、不拦默认滚动（交回文档）", () => {
     const { card, canvas } = mkCard();
     attachDiagramViewport(card);
+    const svg = canvas.querySelector("svg")!;
+    // 脑图的 d3-zoom 就挂在图内的 SVG 上（B455-6）：这一发必须被外面的捕获相截住，
+    // 否则 CSS transform 缩一次、d3-zoom 再缩一次。
+    const reached: string[] = [];
+    svg.addEventListener("wheel", () => reached.push("svg"));
     const event = wheel(-100);
+    svg.dispatchEvent(event);
+    expect(scaleOf(canvas), "普通滚轮不该缩放图表（2026-11-15 用户口径）").toBe(1);
+    expect(event.defaultPrevented, "不按 Ctrl 就必须放行默认滚动").toBe(false);
+    expect(reached, "没截住 ⇒ 脑图自带的 d3-zoom 会自己放大").toEqual([]);
+  });
+
+  it("Ctrl+滚轮缩放时不许顺带把预览面板滚走（preventDefault）", () => {
+    const { card, canvas } = mkCard();
+    attachDiagramViewport(card);
+    const event = zoomWheel(-100);
     canvas.dispatchEvent(event);
     expect(event.defaultPrevented, "没拦 ⇒ 缩一张图的同时整篇文档在跑").toBe(true);
   });
@@ -119,7 +145,7 @@ describe("B455-5 · 滚轮缩放", () => {
     const { card, canvas } = mkCard();
     attachDiagramViewport(card);
     // 指针落在卡片里 (200, 100) 处（rect 是 10/20 起）
-    canvas.dispatchEvent(wheel(-100, 210, 120));
+    canvas.dispatchEvent(zoomWheel(-100, 210, 120));
     expect(scaleOf(canvas)).toBeCloseTo(1.15);
     const { x, y } = offsetsOf(canvas);
     expect(x).toBeCloseTo(200 - 200 * 1.15);
@@ -129,9 +155,9 @@ describe("B455-5 · 滚轮缩放", () => {
   it("已经放到最大还往上滚 ⇒ 不许一路飘走（偏移也不动）", () => {
     const { card, canvas } = mkCard();
     attachDiagramViewport(card);
-    for (let i = 0; i < 40; i++) canvas.dispatchEvent(wheel(-100, 210, 120));
+    for (let i = 0; i < 40; i++) canvas.dispatchEvent(zoomWheel(-100, 210, 120));
     const before = offsetsOf(canvas);
-    canvas.dispatchEvent(wheel(-100, 210, 120));
+    canvas.dispatchEvent(zoomWheel(-100, 210, 120));
     expect(scaleOf(canvas)).toBe(ZOOM_MAX);
     expect(offsetsOf(canvas)).toEqual(before);
   });
@@ -364,7 +390,7 @@ describe("B456-2 · 双击复位", () => {
     attachDiagramViewport(card);
     const seen: string[] = [];
     card.addEventListener("md-diagram-reset", () => seen.push("reset"));
-    canvas.dispatchEvent(wheel(-100)); // 放大一档
+    canvas.dispatchEvent(zoomWheel(-100)); // 放大一档
     canvas.dispatchEvent(mouse("mousedown", 100, 100));
     card.dispatchEvent(mouse("mousemove", 160, 120));
     card.dispatchEvent(mouse("mouseup", 160, 120)); // 拖过阈值 = 平移
@@ -383,7 +409,7 @@ describe("B456-2 · 双击复位", () => {
     const { card, canvas } = mkCard();
     attachDiagramViewport(card);
     const zoomIn = card.querySelector<HTMLElement>(".md-diagram-zoom-in")!;
-    canvas.dispatchEvent(wheel(-100)); // 先离开工位，否则「没动」永远成立（判据自证）
+    canvas.dispatchEvent(zoomWheel(-100)); // 先离开工位，否则「没动」永远成立（判据自证）
     canvas.dispatchEvent(mouse("mousedown", 100, 100));
     card.dispatchEvent(mouse("mousemove", 160, 120));
     card.dispatchEvent(mouse("mouseup", 160, 120));

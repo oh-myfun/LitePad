@@ -1,4 +1,4 @@
-// B455-5 · 图表的视口变换层：滚轮缩放 + 拖拽平移 + 右上角三颗键。
+// B455-5 · 图表的视口变换层：Ctrl+滚轮缩放 + 拖拽平移 + 右上角三颗键。
 //
 // 用户拍板的两条口径：
 // · **统一外层变换** —— 八类图（mermaid / 脑图 / Graphviz / Flowchart / PlantUML / ECharts /
@@ -81,7 +81,7 @@ function pointerAt(
   };
 }
 
-/** 给画好的图装上「滚轮缩放 + 拖拽平移 + 右上角三颗键」。同一张卡片重复调用只生效一次。 */
+/** 给画好的图装上「Ctrl+滚轮缩放 + 拖拽平移 + 右上角三颗键」。同一张卡片重复调用只生效一次。 */
 export function attachDiagramViewport(card: HTMLElement): void {
   const canvas = card.querySelector<HTMLElement>(".md-diagram-canvas");
   if (!canvas || card.querySelector(".md-diagram-zoom")) return;
@@ -123,15 +123,18 @@ export function attachDiagramViewport(card: HTMLElement): void {
   card.append(bar);
   draw();
 
-  // ---- 滚轮：以光标为锚缩放，顺带把这一发从「翻文档」里收走 ----
+  // ---- 滚轮：按住 Ctrl 才缩放；不按就交回文档滚动 ----
   card.addEventListener(
     "wheel",
     (event) => {
       const wheel = event as WheelEvent;
       if (!wheel.deltaY) return; // 纯横向的触控板手势留给它原来的意思
-      wheel.preventDefault();
-      // 捕获相 + stopPropagation：脑图那颗 d3-zoom 收到同一发会自己再缩放一遍（B455-6）
+      // 捕获相 + stopPropagation：脑图那颗 d3-zoom 收到同一发会自己再缩放一遍（B455-6）。
+      // 不按 Ctrl 时**只拦人不拦默认动作** —— 停滚动的是 preventDefault，这里不调它，
+      // 滚轮照常翻文档（2026-11-15 用户口径：图表区块滚轮不缩放，Ctrl+滚轮才缩放）。
       wheel.stopPropagation();
+      if (!wheel.ctrlKey) return;
+      wheel.preventDefault();
       view = zoomAt(
         view,
         wheel.deltaY < 0 ? WHEEL_STEP : 1 / WHEEL_STEP,
