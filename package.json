@@ -1,7 +1,7 @@
 {
   "name": "litepad",
   "private": true,
-  "version": "0.26.67",
+  "version": "0.26.68",
   "type": "module",
   "description": "极度轻量的 Markdown 文本编辑器",
   "scripts": {
