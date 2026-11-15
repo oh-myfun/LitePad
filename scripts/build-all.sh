@@ -50,8 +50,9 @@ else
   echo "    （npm 不可用，改直调 node_modules 入口）"
 fi
 
-# 智能体会话的 safe-delete 钩子会拦截 vite 清空 dist/assets（>50 个文件），
-# 导致会话内构建失败；此开关在本脚本进程树内禁用该钩子（用户桌面环境无钩子，无副作用）
+# 本机删除守卫会把被删文件搬进回收站（下面这个开关只关掉它的**交互拦截**，不改变归档行为）
+# ⇒ 构建不能靠「删掉旧产物再写新的」：vite 走 emptyOutDir:false + 固定产物名原地覆盖
+# （见 vite.config.ts 的 build 注释），dist 不再成批消失。
 export CODEBUDDY_SAFE_DELETE_ENABLED=0
 
 cd "$(dirname "$0")/.."

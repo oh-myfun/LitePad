@@ -52,5 +52,18 @@ export default defineConfig({
     target: "chrome105",
     minify: !process.env.TAURI_ENV_DEBUG ? "esbuild" : false,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
+    // 构建只覆盖、不清空（用户 2026-11-15：每次编译都把旧产物删进回收站，堆得太多）。
+    // 默认的 emptyOutDir 会在 Node 里递归删 dist，本机安全删除把每个文件都搬进回收站
+    // （一次四百多个）。关掉清空后，产物名不能带内容哈希 —— 否则新名字永远写不到旧路径上、
+    // 旧文件只能靠删；改成固定名原地覆盖。模块增删改名时会留下个别无人引用的旧文件，
+    // 不再被打包路径需要，也不影响运行。
+    emptyOutDir: false,
+    rollupOptions: {
+      output: {
+        entryFileNames: "assets/[name].js",
+        chunkFileNames: "assets/[name].js",
+        assetFileNames: "assets/[name][extname]",
+      },
+    },
   },
 });

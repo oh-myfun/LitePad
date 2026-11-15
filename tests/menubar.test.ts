@@ -1059,7 +1059,7 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
       hook,
       "必须置空 beforeBuildCommand，否则 tauri 会把 vite 再跑一遍（build-all.sh 里卡死过）",
     ).toContain('{"build":{"beforeBuildCommand":""}}');
-    expect(hook, "vite 清 dist/assets 会被 safe-delete 钩子拦，必须关掉").toContain(
+    expect(hook, "会话里的删除守卫要显式关掉（构建/临时清理会撞上）").toContain(
       "CODEBUDDY_SAFE_DELETE_ENABLED=0",
     );
     // 「构建命令返回 0 却没写出 exe」出现过，光看退出码不够
@@ -1175,6 +1175,28 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     expect(guard, "判档权已交还用户：不许保留 feat 自动升 minor 的开关").not.toContain(
       "FEAT_BLOCK",
     );
+  });
+
+  it("构建只覆盖、不清空 dist（用户 2026-11-15：回收站别堆旧产物）", () => {
+    // 用户原话：「不要每次编译都反复进行文件删除，直接让编译流程自动覆盖旧产物好了」。
+    // 默认的 emptyOutDir 会在 Node 里递归删 dist，本机安全删除把每个文件都送进回收站
+    // （一次四百多个）⇒ 关掉清空，产物名去掉内容哈希，同名文件原地覆盖。
+    // ⚠️ 先剥 `//` 注释再断言：上面那条注释里也写着 emptyOutDir / [hash]。
+    const raw = readFileSync("vite.config.ts", "utf-8");
+    const cfg = stripLineComments(raw);
+    expect(cfg, "必须关掉 outDir 清空（默认会递归删 dist）").toMatch(/emptyOutDir:\s*false/);
+    for (const key of ["entryFileNames", "chunkFileNames", "assetFileNames"]) {
+      const pattern = new RegExp(`${key}:\\s*"([^"]+)"`).exec(cfg)?.[1] ?? "";
+      expect(pattern, `${key} 必须给出固定产物名`).toBeTruthy();
+      expect(
+        pattern,
+        `${key} 不许带内容哈希（新名字写不到旧路径上，旧文件就只能靠删）`,
+      ).not.toContain("[hash]");
+    }
+    // 反向验证：把 emptyOutDir 那行挖掉必须被咬住（防恒真）
+    const noFlag = cfg.replace(/emptyOutDir:\s*false,?/, "");
+    expect(noFlag, "替身必须真的改到配置").not.toBe(cfg);
+    expect(() => expect(noFlag).toMatch(/emptyOutDir:\s*false/)).toThrow();
   });
 
   it("B86 两种查找范围共用同一套触发与计数逻辑（不再靠回车触发搜索）", () => {
