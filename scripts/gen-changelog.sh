@@ -24,7 +24,9 @@ fi
 git rev-parse -q --verify "$PREV" >/dev/null || { echo "✗ 基准 tag 不存在：$PREV" >&2; exit 1; }
 
 mkdir -p .tmp
-TMP=".tmp/changelog-$$.md"
+# ⚠️ 不能用 `changelog-$$.md`：PID 会复用，`.tmp/` 里只要有个同名目录（实测撞过一次），
+#    重定向就报 `Is a directory`，发布流程在第 1.5 步直接死掉。随机名才是唯一可靠做法。
+TMP="$(mktemp .tmp/changelog-XXXXXX.md)"
 
 # —— 按类型归类（保持 git log 的新→旧顺序）——
 #

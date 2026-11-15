@@ -1024,6 +1024,18 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     expect(sh, '读循环必须补 EOF 兜底（|| [ -n "$sha" ]），否则吞提交').toContain(
       'read -r sha subj || [ -n "$sha" ]',
     );
+    // 事故（2026-11-15 发布 1.0.0 实测）：临时文件按 PID 命名，`.tmp/changelog-120.md`
+    // 恰好是个目录 ⇒ 重定向报 `Is a directory`，release.sh 还没进构建就退出。
+    // PID 会复用，只有随机名才不会再撞上。
+    expect(sh, "临时文件必须用 mktemp 随机命名，不能按 PID 拼").toContain(
+      "mktemp .tmp/changelog-XXXXXX.md",
+    );
+    const BY_PID = sh.replace(
+      'TMP="$(mktemp .tmp/changelog-XXXXXX.md)"',
+      'TMP=".tmp/changelog-$$.md"',
+    );
+    expect(BY_PID, "替身必须真的改回 PID 命名").not.toBe(sh);
+    expect(BY_PID, "旧写法（PID 命名）必须被咬住").not.toContain("mktemp .tmp/changelog-");
   });
 
   it("B83 pre-push 的 windres 目录必须归一成 POSIX 路径（Windows 风格条目是死路）", () => {
