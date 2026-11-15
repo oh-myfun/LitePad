@@ -3929,9 +3929,14 @@ button:focus-visible {
         各自的**边**，不是「为了分割而画的一条线」，别再当多余的一条抹掉。
      ⚠️ 想改卡片轮廓：改这一处就要同时改 .side-shell 那一处，两个要**成对**改
         （border 与 border-radius 已逐字同步，见 .side-shell 上方的注释）。
+        例外是**顶边**：只有编辑区卡片顶着标签帽，顶边线改由 `.panel-head::before` 画（见下）。
      缝中央那条 hover 才亮的亮条 = VS Code sash 的 hover 反馈（见 preview.css 的 .side-resizer）。 */
   border: 1px solid var(--editor-card-border);
-  border-top-color: var(--editor-card-border-top); /* B390：HC 档这颗 = transparent */
+  /* B390 的顶边色由 `.panel-head::before` 接手（见那条的注释）。这里顶边**零宽**：
+     卡片自己再占一行 border 的话，活动标签帽的上沿（fill 从条带顶 -3px 上探，
+     落在头部第一行）就会与它上下并排 —— 两条 1px 叠成一条 2px 的粗线
+     （2026-11-15 用户实拍）。零宽后帽上沿与补画的顶边线落在同一行，只出现一条。 */
+  border-top-width: 0;
   border-radius: 8px;
   background: var(--bg);
 }
@@ -4220,6 +4225,27 @@ button:focus-visible {
      舌片才盖得住。B122 一度把这条线整个撤掉，B349 按用户点名的 VS Code 相连档补回。
      ⚠️ 因此 head 必须是定位基准（::after 绝对定位贴底），且 ops 段不必再自己补线。 */
   position: relative;
+}
+
+/* 卡片顶边那条线：`.layout-area` 的 border-top 让位给这里（零宽），
+   画进 head 盒内的**第一行**。活动标签 fill 的 inset-top 也是 -3px（顶到条带最上沿），
+   帽的上描边同样落在这一行 ⇒ 顶边只有 1px，不再是「卡片边框 + 帽描边」两条并排。
+   颜色沿用编辑器卡片顶边那颗 token（B390：HC 档 transparent = 不画线）。
+   z-index 1：要压住条带自身底色与非活动悬停 fill（0），又必须低于活动帽（1，后画）。 */
+.panel-head::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  /* 用 border 画、不用 height + background：1.5× 屏上 1px 高的**背景块**会被铺成两个
+     设备行（一行实色 + 一行半透明），而帽的上描边是 border，取整成 1 个设备行 ——
+     同一根线在活动标签处反而比空条带处细一半（2026-11-15 实拍对比）。
+     border 与帽描边走同一条取整路径，两边都只占 1 个设备行。 */
+  height: 0;
+  border-top: var(--tab-stroke) solid var(--editor-card-border-top);
+  z-index: 1;
+  pointer-events: none;
 }
 
 /* B349：条带下沿那条横贯线（标签段 + 右侧 ops 段一条线走完，对应 VS Code 的

@@ -752,14 +752,30 @@ describe("B380 · 中间区域背景 / HC 边框 / 编辑器交互状态", () =>
     // 标题栏自己的下沿线（B380 的 box-shadow）这一轮已整个摘掉，肉眼看到的那根其实是
     // `.side-shell` / `.layout-area` 的**上沿边框** —— 两张卡的顶边正贴在 34px 标题栏下沿，
     // 非 HC 档那颗与底同色系看不出来，HC 档是 contrastBorder，一眼读成「标题栏带了一圈框」。
-    for (const sel of [".side-shell", ".layout-area"]) {
-      const block = stripCssComments(ruleBlock(source, sel, "border-top-color"));
-      expect(block, `${sel} 必须存在且消费上沿键`).toBeTruthy();
-      expect(block, `${sel} 的上沿取 --editor-card-border-top`).toContain(
+    //
+    // 编辑区卡片（.layout-area）的顶边线后来挪进了 `.panel-head::before`：卡片顶边零宽、
+    // 线画在头部第一行，才和活动标签帽的上沿落在同一行（见 tabstrip.test.ts 的几何契约）。
+    // 颜色仍然只认这颗 token ⇒ HC 的 transparent 依旧等于「不画线」。
+    {
+      const side = stripCssComments(ruleBlock(source, ".side-shell", "border-top-color"));
+      expect(side, ".side-shell 必须存在且消费上沿键").toBeTruthy();
+      expect(side, ".side-shell 的上沿取 --editor-card-border-top").toContain(
         "border-top-color: var(--editor-card-border-top)",
       );
-      expect(block, `${sel} 的其余三边仍走 --editor-card-border（B201 的完整轮廓）`).toContain(
+      expect(side, ".side-shell 的其余三边仍走 --editor-card-border（B201 的完整轮廓）").toContain(
         "border: 1px solid var(--editor-card-border)",
+      );
+
+      const area = stripCssComments(ruleBlock(source, ".layout-area", "border"));
+      expect(area, ".layout-area 必须存在").toBeTruthy();
+      expect(area, ".layout-area 的其余三边仍走 --editor-card-border（B201 的完整轮廓）").toContain(
+        "border: 1px solid var(--editor-card-border)",
+      );
+
+      const topLine = stripCssComments(ruleBlock(source, ".panel-head::before", "border-top"));
+      expect(topLine, "编辑区卡片的顶边线必须存在且消费上沿键").toBeTruthy();
+      expect(topLine, "顶边线取 --editor-card-border-top").toContain(
+        "border-top: var(--tab-stroke) solid var(--editor-card-border-top)",
       );
     }
     // 表：默认档（2026/Modern/Plus/Classic）的上沿 = 外框同色，靠 var() 引用不各抄一份
@@ -769,7 +785,7 @@ describe("B380 · 中间区域背景 / HC 边框 / 编辑器交互状态", () =>
         "var(--editor-card-border)",
       );
     }
-    // HC：上沿透明。只去颜色、留 1px 边框盒 ⇒ 卡片内容与几何一点不动（改成 0 宽会把整张卡上提 1px）
+    // HC：上沿线透明 ⇒ 标题栏下不画线（线由 .panel-head::before 补，颜色只认这颗 token）
     for (const [mode, color] of [
       ["dark", "#6fc3df"],
       ["light", "#0f4a85"],

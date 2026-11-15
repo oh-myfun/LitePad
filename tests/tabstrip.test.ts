@@ -1410,3 +1410,66 @@ describe("B418 标签条右侧按钮与标签之间的渐变过渡", () => {
     expect(ops, "抬一层盖住标签内容").toMatch(/z-index:\s*1/);
   });
 });
+
+describe("卡片顶边与活动帽上沿同一行（2026-11-15 用户实拍「边框加粗」）", () => {
+  // 现象：活动标签帽的上沿描边落在头部第一行，卡片又自己占一行顶边 border
+  // ⇒ 两条 1px 上下并排，用户读成一条 2px 的粗线。
+  // 口径：顶边零宽，改成 `.panel-head::before` 画在头部第一行 —— 和帽上沿同行。
+  const css = readFileSync("src/styles/global.css", "utf-8");
+
+  it("卡片顶边零宽，顶边线由 .panel-head::before 补在头部第一行", () => {
+    const area = cssDecls(ruleBlock(css, ".layout-area", undefined, true));
+    expect(area, "应有 .layout-area 规则").toBeTruthy();
+    expect(area, "顶边必须零宽（不然和帽上沿并排成 2px）").toMatch(/border-top-width:\s*0/);
+    expect(area, "顶边不许再写颜色（透明边框照样占一行）").not.toMatch(/border-top-color/);
+
+    const line = cssDecls(ruleBlock(css, ".panel-head::before", undefined, true));
+    expect(line, "补画的顶边线必须存在").toBeTruthy();
+    expect(line, "线贴 head 第一行（top:0）").toMatch(/top:\s*0/);
+    // 必须走 border：1.5× 下 height + background 的 1px 会铺成两个设备行（一行实色 +
+    // 一行半透明），而帽上描边是 border、只占一个设备行 —— 同一根线粗细会跳变。
+    expect(line, "线厚与颜色都取帽描边同款 token，且走 border 取整").toMatch(
+      /border-top:\s*var\(--tab-stroke\)\s+solid\s+var\(--editor-card-border-top\)/,
+    );
+    expect(line, "不许退回 height + background（1.5× 下占两个设备行）").not.toMatch(/background:/);
+    expect(line, "不吃鼠标事件").toMatch(/pointer-events:\s*none/);
+
+    const lineZ = Number(/z-index:\s*(-?\d+)/.exec(line)?.[1] ?? NaN);
+    const fillZ = Number(
+      /z-index:\s*(-?\d+)/.exec(cssDecls(ruleBlock(css, ".tab-active .tab-fill")))?.[1] ?? NaN,
+    );
+    expect(lineZ, "顶边线要压住条带底色与非活动悬停 fill（z-index 0）").toBeGreaterThan(0);
+    expect(lineZ, "顶边线不许反压活动帽（帽 z-index 1 且后画）").toBeLessThanOrEqual(fillZ);
+  });
+
+  it("帽上沿确实顶到头部第一行（条带上间距 = fill 的上探量）", () => {
+    const strip = cssDecls(ruleBlock(css, ".panel-tabstrip", undefined, true));
+    const padTop = Number(/padding:\s*(\d+)px/.exec(strip)?.[1] ?? NaN);
+    const fill = cssDecls(ruleBlock(css, ".tab-fill", undefined, true));
+    const insetTop = -Number(/inset:\s*-(\d+)px/.exec(fill)?.[1] ?? NaN);
+    expect(padTop, "条带上间距应能读到").not.toBeNaN();
+    expect(insetTop, "fill 的上探量应能读到").not.toBeNaN();
+    expect(padTop + insetTop, "fill 上沿必须正好顶到条带最上沿").toBe(0);
+  });
+
+  it("反向验证：顶边改回 1px、或顶边线挪下一行，判据必须转红", () => {
+    const areaShadow = css.replace(
+      /(\.layout-area \{[\s\S]*?)border-top-width:\s*0;/,
+      "$1border-top-width: 1px;",
+    );
+    expect(areaShadow, "替身必须真的改到卡片顶边").not.toBe(css);
+    expect(() => {
+      expect(cssDecls(ruleBlock(areaShadow, ".layout-area", undefined, true))).toMatch(
+        /border-top-width:\s*0/,
+      );
+    }).toThrow();
+
+    const lineShadow = css.replace(/(\.panel-head::before \{[\s\S]*?)top:\s*0;/, "$1top: 1px;");
+    expect(lineShadow, "替身必须真的改到顶边线").not.toBe(css);
+    expect(() => {
+      expect(cssDecls(ruleBlock(lineShadow, ".panel-head::before", undefined, true))).toMatch(
+        /top:\s*0/,
+      );
+    }).toThrow();
+  });
+});
