@@ -4409,22 +4409,35 @@ button:focus-visible {
 }
 
 /* B418（用户）：标签条右侧按钮与左侧标签之间的过渡 —— 照紧凑档关闭键那颗
-   渐变垫底（B118）的同一手法：条带最后 14px 铺「透明 → 条带底色」，
+   渐变垫底（B118）的同一手法：条带右缘铺「透明 → 条带底色」，
    被裁半截的标签在按钮前渐隐，而不是一刀切断。
    ⚠️ 只在**右侧还有内容被裁着**时出现（`is-overflow-right`，由 scrollbar.ts 的
       syncOverlayScrollbar 维护）：标签放得下、或已经滚到最右时收掉 —— 否则会把
       最后一个完整标签自己的右缘咬掉一截。与 B118「× 悬浮在文字上时才有垫」同口径。
-   ⚠️ bottom 让出 1px：`.panel-head::after` 那条通铺线不许被渐变吃掉。
+   ⚠️ 上下各让出 1px（top / bottom 都是 var(--tab-stroke)）：头顶的卡片顶边线
+      （.panel-head::before）和条带下沿的通铺线（::after）都是结构线，渐变压上去
+      会把线吃成半透明 —— 用户 2026-11-15 实拍「border 断开」正是顶边被吃。
    ⚠️ 渐变住在 .panel-ops 的左侧（right: 100%），不放进标签条：条带是滚动容器，
      绝对定位子元素会随内容滚走（B117 同款坑）。 */
 .panel-ops::before {
   content: "";
   position: absolute;
-  top: 0;
+  top: var(--tab-stroke);
   bottom: var(--tab-stroke);
   right: 100%;
-  width: 14px;
-  background: linear-gradient(to right, transparent, var(--tab-strip-bg));
+  /* 24px：条带右内边距 4px 也盖在这段里（滚动容器的 padding 算内容），
+     旧的 14px 真正落在标签上的坡道只剩 10px，收得太急。 */
+  width: 24px;
+  /* alpha 走缓动（15% / 50% / 85%）：两头平、中间快，比线性坡道更像自然渐隐；
+     颜色始终只有条带底色一种，只换透明度曲线。 */
+  background: linear-gradient(
+    to right,
+    transparent,
+    color-mix(in srgb, var(--tab-strip-bg) 15%, transparent) 25%,
+    color-mix(in srgb, var(--tab-strip-bg) 50%, transparent) 50%,
+    color-mix(in srgb, var(--tab-strip-bg) 85%, transparent) 75%,
+    var(--tab-strip-bg)
+  );
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--transition);
