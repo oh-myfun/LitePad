@@ -2335,6 +2335,126 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     expect(leftTop).toBe(20);
   });
 
+  it("B483 · 布局自己写下的滚动位置不是用户滚动：不翻驱动侧、不镜像", async () => {
+    const { panel, s } = mountDiffPair("L1\nL2\nL3", "L1\nL2\nL3");
+    const right = panel.view!.view;
+    const left = s.left;
+    fakeLineBoxes(right, [20, 20, 20]);
+    fakeLineBoxes(left, [20, 20, 20]);
+    let rightTop = 0;
+    let leftTop = 0;
+    const rightWrites: number[] = [];
+    const leftWrites: number[] = [];
+    Object.defineProperty(right.scrollDOM, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(right.scrollDOM, "scrollHeight", { configurable: true, value: 300 });
+    Object.defineProperty(left.scrollDOM, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(left.scrollDOM, "scrollHeight", { configurable: true, value: 300 });
+    Object.defineProperty(right.scrollDOM, "scrollTop", {
+      configurable: true,
+      get: () => rightTop,
+      set: (v) => {
+        rightTop = v;
+        rightWrites.push(v);
+      },
+    });
+    Object.defineProperty(left.scrollDOM, "scrollTop", {
+      configurable: true,
+      get: () => leftTop,
+      set: (v) => {
+        leftTop = v;
+        leftWrites.push(v);
+      },
+    });
+
+    // 用户滚右栏 ⇒ 驱动侧 = 右栏，左栏被镜像到同一行。左栏那一发 scroll 还没送回来，
+    // 认领票还留在账上（真机上它会在渲染步到达）。
+    rightTop = 20;
+    right.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(leftWrites).toEqual([20]);
+    leftWrites.length = 0;
+
+    // 布局变化：CM6 量测时为保住锚点自己把左栏写到了 30（这一笔不经过本模块）。
+    leftTop = 30;
+    const rect = (width: number): DOMRect =>
+      ({
+        left: 0,
+        right: width,
+        top: 0,
+        bottom: 400,
+        width,
+        height: 400,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    left.dom.getBoundingClientRect = () => rect(640);
+    left.contentDOM.getBoundingClientRect = () => rect(320);
+    left.requestMeasure();
+    await frames(1);
+    // 浏览器随后把那一发送回来：它是布局写的，不是用户滚的。
+    left.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(rightWrites, "布局写的滚动不许镜像回驱动栏").toEqual([]);
+  });
+
+  it("B484 · 布局通知一到滑块就按新几何重画（不用等滚动事件）", () => {
+    class FakeRO {
+      static all: FakeRO[] = [];
+      observed: Element[] = [];
+      constructor(readonly cb: ResizeObserverCallback) {
+        FakeRO.all.push(this);
+      }
+      observe(el: Element): void {
+        this.observed.push(el);
+      }
+      unobserve(): void {}
+      disconnect(): void {}
+      fire(): void {
+        this.cb([], this as unknown as ResizeObserver);
+      }
+    }
+    vi.stubGlobal("ResizeObserver", FakeRO);
+    const spy = vi.spyOn(EditorView.prototype, "defaultLineHeight", "get").mockReturnValue(20);
+    try {
+      const text = Array.from({ length: 20 }, (_, i) => `L${i}`).join("\n");
+      const { panel } = mountDiffPair(text, text);
+      const right = panel.view!.view;
+      const surface = diffSurfaceOf(panel)!;
+      fakeLineBoxes(right, Array<number>(20).fill(20));
+      fakeLineBoxes(surface.left, Array<number>(20).fill(20));
+      let top = 0;
+      Object.defineProperty(right.scrollDOM, "scrollTop", {
+        configurable: true,
+        get: () => top,
+        set: (v) => {
+          top = v;
+        },
+      });
+      Object.defineProperty(right.scrollDOM, "clientHeight", { configurable: true, value: 100 });
+      // CM6 的估值（520）与实测轴（400）不同：这条链只许吃后者。
+      Object.defineProperty(right.scrollDOM, "scrollHeight", { configurable: true, value: 520 });
+      surface.syncBlocks();
+      const thumb = panel.bodyEl!.querySelector<HTMLElement>(".diff-viewport")!;
+      expect(thumb.style.height, "轴 20×20=400 ⇒ 滑块 max(20, 100²/400)=25").toBe("25px");
+      top = 100;
+      right.scrollDOM.dispatchEvent(new Event("scroll"));
+      expect(thumb.style.top).toBe("25px");
+
+      // 拖分屏让每行折成两行（20px → 40px）：轴总高 800、滑块缩到 20。
+      // 只送一发布局通知、**不**滚任何一栏 —— 滑块必须当场按新几何重画。
+      fakeLineBoxes(right, Array<number>(20).fill(40));
+      const ro = FakeRO.all.find((r) =>
+        r.observed.some((el) => el.classList.contains("diff-original")),
+      );
+      expect(ro, "差异面建了布局 RO").toBeTruthy();
+      ro!.fire();
+      expect(thumb.style.height, "新轴 800 ⇒ 滑块 20").toBe("20px");
+      expect(thumb.style.top, "滚动位置在新轴上的比例位置").toBe("11px");
+    } finally {
+      vi.unstubAllGlobals();
+      spy.mockRestore();
+    }
+  });
+
   it("B469 · 关掉同步后两栏各滚各的；重新打开按最后驱动侧立刻对齐", async () => {
     const { panel, s } = mountDiffPair("A\nB\nC", "A\nC");
     const right = panel.view!.view;

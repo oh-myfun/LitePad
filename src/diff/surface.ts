@@ -1126,7 +1126,12 @@ export function createDiffSurface(
       // ⚠️ 不能只靠 ResizeObserver：CM6 自己的 resize 量测有 50ms 防抖，RO 那一发常常还是
       // 旧宽度的行高，等它量完又不会再发一次通知 ⇒ 缝停在旧值。geometryChanged 是 CM6
       // **量完之后**才发的，在这里重测读到的才是新行高。docChanged 交给下面那条防抖链路。
-      if (armed && update.geometryChanged && !update.docChanged) scheduleAlign();
+      if (armed && update.geometryChanged) {
+        // 量测里 CM6 会为了保住滚动锚点自己改 `scrollTop`：那一发不是用户滚动，
+        // 不记账就会被当成用户滚的、镜像给对栏（见 `noteLayoutScroll`）。
+        noteLayoutScroll();
+        if (!update.docChanged) scheduleAlign();
+      }
       if (
         update.selectionSet ||
         update.docChanged ||
@@ -1714,13 +1719,45 @@ export function createDiffSurface(
   let lastDriver: DiffSide = "modified";
   /** 一发程序性写入的「认领票」：纵、横两个值一起记（容差 1px，与浏览器夹取取整同量级）。 */
   const pendingEcho = new WeakMap<HTMLElement, { top: number; left: number }>();
-  /** 这一发 scroll 是不是自己刚写下去的回声（是 ⇒ 消费掉票，且不再反向映射）。 */
+  /**
+   * 布局**量完之后**两栏各自落在哪（CM6 的滚动锚定会直接改 `scrollTop`）。
+   *
+   * 拖分屏 / 改窗口宽度时，CM6 为了不让视口里的内容跳，会在量测里给 `scrollTop` 补一个
+   * 高度差；内容变矮时浏览器还会再夹一次。两条都不是用户滚动，却都会送出一发 scroll
+   * 事件：认不出来的话那一发就被当成「用户滚了这一栏」，驱动侧翻过去、再镜像回对栏 ——
+   * 布局变化期间两栏来回拽，就是用户看到的滚动位置反复抖。
+   *
+   * 记账必须放微任务：锚定写在量测回调（rAF）里，scroll 事件在渲染步派发，中间只有
+   * 这个空隙能读到**写完**的值；监听器里同步读到的还是锚定之前的。
+   */
+  const layoutEcho = new WeakMap<HTMLElement, { top: number; left: number }>();
+  const noteLayoutScroll = (): void => {
+    queueMicrotask(() => {
+      if (disposed) return;
+      for (const view of [left, right]) {
+        const el = view?.scrollDOM;
+        if (!el) continue;
+        layoutEcho.set(el, { top: el.scrollTop, left: el.scrollLeft });
+      }
+    });
+  };
+  /**
+   * 这一发 scroll 是不是自己写下去的回声（是 ⇒ 消费掉票，且不再反向映射）。
+   *
+   * 两本账：`pendingEcho` 是程序性写入（写之前登记），`layoutEcho` 是布局量完之后的位置。
+   * 写入落下之后又被浏览器夹取或 CM6 锚定改过的那一发，落点与票面不同，但仍是内部写的
+   * —— 只查第一本就会把它判成用户滚动。
+   */
   const isEcho = (el: HTMLElement | undefined): boolean => {
     if (!el) return false;
     const want = pendingEcho.get(el);
-    if (want === undefined) return false;
     pendingEcho.delete(el);
-    return Math.abs(el.scrollTop - want.top) <= 1 && Math.abs(el.scrollLeft - want.left) <= 1;
+    if (want && Math.abs(el.scrollTop - want.top) <= 1 && Math.abs(el.scrollLeft - want.left) <= 1)
+      return true;
+    const laid = layoutEcho.get(el);
+    if (laid === undefined) return false;
+    layoutEcho.delete(el);
+    return Math.abs(el.scrollTop - laid.top) <= 1 && Math.abs(el.scrollLeft - laid.left) <= 1;
   };
 
   /** 驱动栏视口顶落在哪个文档行（1-based）。 */
@@ -2220,6 +2257,10 @@ export function createDiffSurface(
   if (typeof ResizeObserver === "function") {
     layoutRO = new ResizeObserver(() => {
       // 宽度变了 ⇒ 折行的视觉行数可能变，缝必须重测；高度变了只影响滑块，但一起重画最省。
+      // 概览轴也要当场作废：连续拖动分屏时 `scheduleAlign` 每一轮都会被下一轮取代，收口里
+      // 那次作废永远轮不到 ⇒ 滑块与色带一直画在旧宽度的地图上（用户报的「位置要拖动滚动条
+      // 才刷新」）。RO 在 CM6 量完之后才来，这里读到的是新宽度的行盒。
+      invalidateAxis();
       scheduleAlign();
       renderOverview();
       renderReverts();
@@ -2254,7 +2295,10 @@ export function createDiffSurface(
       if (update.selectionSet || update.docChanged) unfoldUnderCaret();
       // 同左栏：CM6 量完新宽度之后才发 geometryChanged，在这里重测缝才不会读到旧行高。
       // docChanged 那一类交给 `scheduleSync` 的防抖链路，不在这里按每一次按键重算。
-      if (armed && update.geometryChanged && !update.docChanged) scheduleAlign();
+      if (armed && update.geometryChanged) {
+        noteLayoutScroll();
+        if (!update.docChanged) scheduleAlign();
+      }
       // 光标走进另一块 ⇒ 中间那列的高亮跟着走（VS Code 的 `showAlways` 是同一口径）。
       if (update.selectionSet) renderReverts();
       // 概览标记层（选区/光标/查找命中/同词出现）只吃本栏 state ⇒ 选区、正文、查找查询
