@@ -4,11 +4,12 @@
 // CSS 把 `.panel-editor` 整格藏掉。区别只在内容 —— 这里用的是 WebView2 原生的
 // `<img>` / `<video>`，容器与解码都交给浏览器，没有任何查看器 / 播放器依赖。
 //
-// 挂与拆的唯一出口是 `markdown.ts` 的 `applyPanelMode`：换标签、重建布局、分屏
-// 都收敛在那里（与 HTML 面同一档位出口）。
+// 挂与拆的出口：`markdown.ts` 的 `applyPanelMode` 管挂与显示，`tabs/lifecycle.ts`
+// 在标签关闭 / 面板销毁 / 整棵布局重建前调 `disposeMediaFace(s)` 拆。
 //
-// 图片的视野（缩放 + 平移）记在 `tab.media` 上：切走再切回来这张面会重建，
-// 视野得原样回来；视频不记（原生 controls 自带进度，且切换标签时并不销毁播放）。
+// ⚠️ 切到别的标签时**只隐藏不拆**：`<video>` 一旦移出文档就停播，进度也没了。
+// 面按标签缓存在 `.panel-host` 里（`data-tab-id`），同面板再切回来复用同一颗节点。
+// 图片的视野记在 `tab.media` 上；视频的进度与播放态也记在那里，供布局重建后接上。
 
 import { docs, type MediaViewState, type Panel, type Tab } from "../core/app-state";
 import { mediaKindOf } from "../io/media";
@@ -299,11 +300,40 @@ function buildVideoFace(tab: Tab, path: string, name: string, size: number): HTM
   video.controls = true;
   video.preload = "metadata";
   video.addEventListener("error", () => showError(face, name));
+
+  // 进度与播放态写回实例：布局重建（分屏 / 拖标签）会把面拆掉重挂，
+  // 没有这份快照就只能从头播。切标签不走路重建（面不拆），原生进度不受影响。
+  const saved = tab.media;
+  let released = false;
+  const remember = (): void => {
+    if (released) return;
+    tab.media = {
+      zoom: 1,
+      x: 0,
+      y: 0,
+      fit: true,
+      time: video.currentTime,
+      playing: !video.paused && !video.ended,
+    };
+  };
+  video.addEventListener("timeupdate", remember);
+  video.addEventListener("play", remember);
+  video.addEventListener("pause", remember);
+  video.addEventListener("loadedmetadata", () => {
+    const time = saved?.time ?? 0;
+    if (time > 0 && (!Number.isFinite(video.duration) || time < video.duration)) {
+      video.currentTime = time;
+    }
+    if (saved?.playing) void video.play().catch(() => {});
+  });
+
   stage.appendChild(video);
   face.append(bar, stage);
   video.src = assetUrl(path);
 
   disposers.set(face, () => {
+    remember(); // 先抄进度：下一发 pause / load 会把状态改掉
+    released = true;
     video.pause();
     video.removeAttribute("src");
     video.load();
@@ -331,24 +361,48 @@ function disposeFace(face: HTMLElement): void {
 }
 
 /**
- * 档位出口（`markdown.applyPanelMode` 调用）：媒体标签挂出原生面，其余标签收掉。
+ * 档位出口（`markdown.applyPanelMode` 调用）：媒体标签挂出原生面并把其余面收档。
  *
  * 判据与 HTML 面同形：`panel.viewTabId === tab.tabId` —— 接班在途时挂别人的面
  * 等于把上一份文档的图钉在这一格上。
+ *
+ * ⚠️ 不在显示 ≠ 销毁：这里只切 `.is-active`。切到文本标签时视频面留在 DOM 里继续播，
+ * 再切回来进度原样；真正拆面的只有关闭标签 / 面板销毁 / 布局重建（见下方 dispose）。
  */
 export function applyMediaFace(panel: Panel, tab: Tab | undefined): void {
   const host = panel.bodyEl;
   if (!host) return;
   const on = !!tab && tab.kind === "media" && panel.viewTabId === tab.tabId;
   host.classList.toggle("preview-kind-media", on);
-  const existing = host.querySelector<HTMLElement>(`:scope > .${FACE_CLASS}`);
-  if (!on || !tab) {
-    if (existing) disposeFace(existing);
-    return;
+  const activeId = on && tab ? String(tab.tabId) : null;
+  for (const face of host.querySelectorAll<HTMLElement>(`:scope > .${FACE_CLASS}`)) {
+    face.classList.toggle("is-active", face.dataset.tabId === activeId);
   }
-  // 同一张标签不重建：视频正在播，图片的缩放也不用重算
-  if (existing && existing.dataset.tabId === String(tab.tabId)) return;
-  if (existing) disposeFace(existing);
+  if (!activeId || !tab) return;
+  if (host.querySelector(`:scope > .${FACE_CLASS}[data-tab-id="${activeId}"]`)) return;
+  // 同文档在别的标签上也有一张面时各自独立（同图多开互不影响）
   const face = buildFace(tab);
-  if (face) host.appendChild(face);
+  if (face) {
+    face.classList.add("is-active");
+    host.appendChild(face);
+  }
+}
+
+/** 一张媒体标签离开这个面板（关闭标签）：拆掉它的面，视频停播并释放解码器。 */
+export function disposeMediaFace(panel: Panel, tabId: number): void {
+  const host = panel.bodyEl;
+  if (!host) return;
+  const face = host.querySelector<HTMLElement>(
+    `:scope > .${FACE_CLASS}[data-tab-id="${String(tabId)}"]`,
+  );
+  if (face) disposeFace(face);
+}
+
+/** 面板销毁 / 整棵布局重建前：拆掉这一格的全部媒体面（视频不停播就会留在后台响）。 */
+export function disposeMediaFaces(panel: Panel): void {
+  const host = panel.bodyEl;
+  if (!host) return;
+  for (const face of [...host.querySelectorAll<HTMLElement>(`:scope > .${FACE_CLASS}`)]) {
+    disposeFace(face);
+  }
 }

@@ -57,6 +57,7 @@ import { createEditor } from "../editor/editor";
 // B461 · 差异旁路（挂在 `.panel-host` 里、`.panel-editor` 之前的那颗左栏 view）：
 // 一处挂、一处拆 —— 其余按 `panel.view` 寻址的代码一概不问 kind。
 import { disposeDiffSurface, refreshDiffSurfaces, syncDiffSurface } from "../diff/surface";
+import { disposeMediaFace, disposeMediaFaces } from "../preview/mediaPreview";
 // B461 Task 8：差异图标键的出口（八条动作的 switch 只在 `diff/actions.ts` 那一份）。
 import { applyDiffAction } from "../diff/actions";
 import { logViewport } from "../core/viewport";
@@ -122,6 +123,9 @@ export function rebuildLayout(): void {
     // 反过来依赖 `p.view` 在不在 —— `disposeDiffSurface` 自己把 DOM、`is-diff` 类与
     // `panel.diffSurface` 一并归零，没有旁路时是空转。
     disposeDiffSurface(p);
+    // 媒体面同款：切标签只隐藏（视频继续播），但整棵树要换掉时得停播并释放解码器；
+    // 进度已按 timeupdate 记在 `tab.media` 上，重挂时接回。
+    disposeMediaFaces(p);
     if (p.view) {
       const shown = p.viewTabId !== null ? tabs.get(p.viewTabId) : undefined;
       if (shown) {
@@ -561,6 +565,9 @@ export async function closeTabById(tabId: number): Promise<void> {
   // 右栏那颗 view 不受牵连（它是那份文档本身）；sibling 判定与跨窗口问话都在上面，
   // 原标签与 doc 天然不受影响 —— 不留孤儿 doc。
   if (tab.kind === "diff" && panel.diffSurface?.spec() === tab.diff) disposeDiffSurface(panel);
+  // 媒体面是「切走只隐藏」的缓存：这张标签真的走了，它那张面也得跟着走，
+  // 否则视频在后台继续响、解码器一直占着。
+  if (tab.kind === "media") disposeMediaFace(panel, tabId);
 
   const idx = panel.tabs.indexOf(tabId);
   panel.tabs = panel.tabs.filter((id) => id !== tabId);
@@ -661,6 +668,7 @@ export function disposePanel(panelId: number): void {
   }
   // B461 · 这一格的差异旁路跟着一起拆（不留指向已销毁 view 的 surface，也不留孤儿 DOM）
   disposeDiffSurface(panel);
+  disposeMediaFaces(panel);
   panel.view = null;
   panel.viewTabId = null;
   panels.delete(panelId);

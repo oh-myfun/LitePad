@@ -5,7 +5,14 @@
 // 视频重建 = 播放位置归零、暂停；而 `applyPanelMode` 会在换档、重排、聚焦等一串时机被调。
 import { beforeEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { applyMediaFace, clampPan, fitZoom, zoomAround } from "../src/preview/mediaPreview";
+import {
+  applyMediaFace,
+  clampPan,
+  disposeMediaFace,
+  disposeMediaFaces,
+  fitZoom,
+  zoomAround,
+} from "../src/preview/mediaPreview";
 import { mediaKindOf } from "../src/io/media";
 import { makeMediaDoc, makeMediaInstance } from "../src/doc-model";
 import { docs, panels, tabs, type Panel } from "../src/core/app-state";
@@ -115,26 +122,28 @@ describe("图片视野计算", () => {
 });
 
 describe("媒体面挂载", () => {
-  it("图片标签挂出原生 img，换回文本标签整张收掉", () => {
+  it("图片标签挂出原生 img；换回文本标签只收档，面留原地", () => {
     const tab = newMediaTab("a.png", "C:\\pics\\a.png");
     const panel = newPanel(tab.tabId);
 
     applyMediaFace(panel, tab);
 
     expect(panel.bodyEl.classList.contains("preview-kind-media")).toBe(true);
-    const face = panel.bodyEl.querySelector(":scope > .media-preview");
+    const face = panel.bodyEl.querySelector(":scope > .media-preview") as HTMLElement;
     expect(face, "媒体面必须挂在 .panel-host 的直接子层（CSS 靠这一层藏编辑器）").toBeTruthy();
-    const img = face!.querySelector("img.media-image") as HTMLImageElement;
+    expect(face.classList.contains("is-active"), "当前这张标签才是可见面").toBe(true);
+    const img = face.querySelector("img.media-image") as HTMLImageElement;
     expect(img).toBeTruthy();
     expect(img.getAttribute("src")).toBe("C:\\pics\\a.png");
-    expect(face!.querySelector(".media-name")?.textContent).toBe("a.png");
+    expect(face.querySelector(".media-name")?.textContent).toBe("a.png");
 
-    // 换到普通标签：面与类都要收掉
+    // 换到普通标签：类收掉、面隐藏，但节点还在（视频靠这条活着）
     panel.viewTabId = 424242;
     panel.activeTabId = 424242;
     applyMediaFace(panel, undefined);
     expect(panel.bodyEl.classList.contains("preview-kind-media")).toBe(false);
-    expect(panel.bodyEl.querySelector(".media-preview")).toBe(null);
+    expect(panel.bodyEl.querySelector(".media-preview")).toBe(face);
+    expect(face.classList.contains("is-active")).toBe(false);
   });
 
   it("同一张标签重复应用不重建 DOM（视频不被打断）", () => {
@@ -173,6 +182,69 @@ describe("媒体面挂载", () => {
     applyMediaFace(panel, tab);
 
     expect(panel.bodyEl.classList.contains("preview-kind-media")).toBe(false);
+    expect(panel.bodyEl.querySelector(".media-preview")).toBe(null);
+  });
+
+  it("切到文本标签不拆视频面：同一颗 video 接着播，进度留在 tab.media", () => {
+    const tab = newMediaTab("clip.mp4", "C:\\v\\clip.mp4");
+    const panel = newPanel(tab.tabId);
+    applyMediaFace(panel, tab);
+    const face = panel.bodyEl.querySelector(":scope > .media-preview") as HTMLElement;
+    const video = face.querySelector("video.media-video") as HTMLVideoElement;
+
+    Object.defineProperty(video, "currentTime", { configurable: true, value: 12, writable: true });
+    video.dispatchEvent(new Event("timeupdate"));
+    expect(tab.media?.time, "进度按 timeupdate 写回实例").toBe(12);
+
+    panel.viewTabId = 424242;
+    applyMediaFace(panel, undefined);
+    expect(panel.bodyEl.querySelector(".media-preview"), "切走不拆面").toBe(face);
+    expect(face.classList.contains("is-active")).toBe(false);
+
+    panel.viewTabId = tab.tabId;
+    applyMediaFace(panel, tab);
+    expect(panel.bodyEl.querySelector(".media-preview"), "切回复用同一颗面").toBe(face);
+    expect(panel.bodyEl.querySelector("video.media-video"), "video 没有被重建").toBe(video);
+    expect(face.classList.contains("is-active")).toBe(true);
+  });
+
+  it("关闭标签才拆面：disposeMediaFace 停播并摘掉 src", () => {
+    const tab = newMediaTab("clip.mp4", "C:\\v\\clip.mp4");
+    const panel = newPanel(tab.tabId);
+    applyMediaFace(panel, tab);
+    const video = panel.bodyEl.querySelector("video.media-video") as HTMLVideoElement;
+    expect(video.hasAttribute("src")).toBe(true);
+
+    disposeMediaFace(panel, tab.tabId);
+
+    expect(panel.bodyEl.querySelector(".media-preview")).toBe(null);
+    expect(video.hasAttribute("src"), "释放解码器：src 必须摘掉").toBe(false);
+  });
+
+  it("布局重建后按 tab.media 接回视频进度", () => {
+    const tab = newMediaTab("clip.mp4", "C:\\v\\clip.mp4");
+    tab.media = { zoom: 1, x: 0, y: 0, fit: true, time: 12, playing: false };
+    const panel = newPanel(tab.tabId);
+
+    applyMediaFace(panel, tab);
+    const video = panel.bodyEl.querySelector("video.media-video") as HTMLVideoElement;
+    video.dispatchEvent(new Event("loadedmetadata"));
+
+    expect(video.currentTime, "元数据就绪后跳到上次进度").toBe(12);
+  });
+
+  it("面板销毁时一次拆掉全部媒体面（多个标签各一张）", () => {
+    const a = newMediaTab("a.png", "C:\\pics\\a.png");
+    const b = newMediaTab("b.mp4", "C:\\v\\b.mp4");
+    const panel = newPanel(a.tabId);
+    applyMediaFace(panel, a);
+    panel.viewTabId = b.tabId;
+    panel.tabs.push(b.tabId);
+    applyMediaFace(panel, b);
+    expect(panel.bodyEl.querySelectorAll(".media-preview").length).toBe(2);
+
+    disposeMediaFaces(panel);
+
     expect(panel.bodyEl.querySelector(".media-preview")).toBe(null);
   });
 });

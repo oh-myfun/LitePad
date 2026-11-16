@@ -1744,7 +1744,8 @@ body.layout-dragging .toc-grip {
   flex-direction: column;
   background: var(--bg, #ffffff);
 }
-.panel-host.preview-kind-media > .media-preview {
+/* 切标签只换 `.is-active`：媒体面留在 DOM 里，视频继续播、进度不丢 */
+.panel-host.preview-kind-media > .media-preview.is-active {
   display: flex;
 }
 .media-toolbar {

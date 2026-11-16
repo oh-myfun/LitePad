@@ -40,7 +40,7 @@ export interface Panel {
   diffSurface: DiffSurface | null;
 }
 
-/** 媒体标签里图片的视野（缩放 + 相对居中位置的平移量，单位 CSS 像素）。 */
+/** 媒体标签的视图状态：图片的缩放/平移与视频的播放进度都存在这里。 */
 export interface MediaViewState {
   /** 缩放倍数（1 = 原始像素） */
   zoom: number;
@@ -49,6 +49,10 @@ export interface MediaViewState {
   y: number;
   /** true = 跟随窗口（适应窗口），false = 用户指定的缩放 */
   fit: boolean;
+  /** 视频播放进度（秒）；布局重建后据此接上，图片面不写 */
+  time?: number;
+  /** 视频是否正在播放；布局重建后恢复播放态 */
+  playing?: boolean;
 }
 
 /** 标签实例：文档在某面板中的一份视图（独立光标/撤销历史/视图模式）。
