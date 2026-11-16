@@ -629,9 +629,15 @@ describe("Connected 相连标签（B113，对齐 VS Code 1.139）", () => {
     expect(strip, "标签必须相连（gap 0），不能留缝隙").toMatch(/gap:\s*0/);
     // B122 曾把条带下沿的渐变细线整个撤掉；B349 按用户点名的 VS Code 相连档把线补回，
     // 但**不补回渐变**（线是 `.panel-head::after` 的一格实色，见上一节判据）。
-    expect(strip, "条带表面必须是纯底色").toContain("background: var(--tab-strip-bg)");
-    expect(strip, "条带自己不许画底部细线（线在 head 的 ::after 上，通铺到 ops 段）").not.toContain(
-      "linear-gradient",
+    // B418：表面色归 `.panel-head`（那一层由 theme-areas 的契约盯着）。条带自己再铺一层
+    // 不透明底色，在它抬成独立叠层后会把顶边线整条遮掉 —— 这里禁止重复声明。
+    expect(strip, "条带自己不铺表面色（head 统一铺，重复一层会遮掉顶边线）").not.toMatch(
+      /background:\s*var\(--tab-strip-bg\)/,
+    );
+    // ⚠️ 只禁**画线**用的渐变：B418 的右缘渐隐是一条 mask-image，那是淡化内容、不落任何
+    //    颜色/结构线，与「条带自己画底部细线」是两件事（判全文会把它误伤成假红）。
+    expect(strip, "条带自己不许画底部细线（线在 head 的 ::after 上，通铺到 ops 段）").not.toMatch(
+      /background(-image)?:\s*linear-gradient|border-image/,
     );
     expect(
       strip,
@@ -1379,39 +1385,70 @@ describe("状态栏按 statusBar.* 取色（B379，推翻 B204 的同源裁决�
   });
 });
 
-describe("B418 标签条右侧按钮与标签之间的渐变过渡", () => {
+describe("B418 标签条右缘渐隐（遮罩方案，2026-11-15 用户实拍后重做）", () => {
   const css = readFileSync("src/styles/global.css", "utf-8");
 
-  it("右缘铺「透明 → 条带底色」的渐变，且只在右侧还有标签被裁时出现", () => {
-    // 用户口径：照紧凑档关闭键那颗渐变垫底（B118），让被裁的半截标签在按钮前渐隐。
-    const fade = cssDecls(ruleBlock(css, ".panel-ops::before"));
-    expect(fade, "应有 .panel-ops::before 规则").toBeTruthy();
-    expect(fade, "渐变从透明过渡到条带底色（同 B118 的手法）").toMatch(
-      /linear-gradient\(\s*to right,\s*transparent/,
+  it("只淡条带内容：结构线住在 .panel-head 里，不参与遮罩", () => {
+    // 用户原话：「标签区按键左边正好是激活的标签时，下 border 看起来也像是被截断了，
+    // 另外渐变背景和上边缘之间出现了 1px 空隙」—— 旧叠加层为了避开两条结构线，上下
+    // 各让 1px，让出的那一行露出激活标签的深色填充。新方案改用条带自身的遮罩。
+    const prop = cssDecls(ruleBlock(css, "@property --tab-edge-fade"));
+    expect(prop, "应有 @property --tab-edge-fade 注册").toBeTruthy();
+    expect(prop, "宽度必须是可插值的长量").toContain('syntax: "<length>"');
+    expect(prop, "默认不淡").toContain("initial-value: 0px");
+
+    const strip = cssDecls(ruleBlock(css, ".panel-tabstrip", undefined, true));
+    expect(strip, "应有 .panel-tabstrip 规则").toBeTruthy();
+    expect(strip, "基础档不淡（完整标签的右缘不许被咬）").toMatch(/--tab-edge-fade:\s*0px/);
+    expect(strip, "遮罩挂在条带自身（结构线不在它的盒里，才不会被一起淡掉）").toMatch(
+      /mask-image:\s*linear-gradient\(\s*to right/,
     );
-    expect(fade, "终点必须是条带底色（颜色只有一种）").toContain("var(--tab-strip-bg)");
-    expect(fade, "渐变铺在按钮左侧（right: 100%），不压按钮本身").toMatch(/right:\s*100%/);
-    expect(fade, "未触发时不可见").toMatch(/opacity:\s*0/);
-    expect(fade, "不吃点击").toContain("pointer-events: none");
-    // 用户 2026-11-15 实拍：顶边线被渐变压成半透明，看起来 border「断开」。
-    expect(fade, "顶边线不许被渐变吃掉").toMatch(/top:\s*var\(--tab-stroke\)/);
-    expect(fade, "让出条带下沿那 1px 通铺线").toMatch(/bottom:\s*var\(--tab-stroke\)/);
-    expect(fade, "坡道要比旧的 14px 长（条带右内边距也吃在渐变里）").toMatch(/width:\s*24px/);
-    expect(fade, "淡入淡出走共用档位").toMatch(/transition:\s*opacity\s+var\(--transition\)/);
-    // 反向：基础规则里不许是常显 —— 常显会把最后一个完整标签自己的右缘咬掉一截。
-    expect(fade, "不得在基础规则里常显").not.toMatch(/opacity:\s*1/);
+    expect(strip, "坡道从 100% 往回退、宽度跟着变量走（不写死 px）").toMatch(
+      /calc\(100% - var\(--tab-edge-fade\)\)/,
+    );
+    expect(strip, "终点透明（被裁的那半截标签淡进条带底）").toMatch(/transparent 100%/);
+    expect(strip, "0 ↔ 24px 的收放走注册属性才不闪").toMatch(
+      /transition:\s*--tab-edge-fade var\(--transition\)/,
+    );
+    // 遮罩让条带自成叠层（fill 出不去），必须抬到下沿通铺线之上，活动帽的开口才还在。
+    expect(strip, "抬到下沿通铺线之上（保住活动帽盖出的开口）").toMatch(/z-index:\s*1/);
 
     const shown = cssDecls(
-      ruleBlock(css, ".panel-tabstrip-wrap.is-overflow-right + .panel-ops::before"),
+      ruleBlock(css, ".panel-tabstrip-wrap.is-overflow-right .panel-tabstrip"),
     );
-    expect(shown, "溢出到右侧（还有标签被裁）时才挂出来").toMatch(/opacity:\s*1/);
+    expect(shown, "只有右侧还有标签被裁着时才淡").toMatch(/--tab-edge-fade:\s*24px/);
+
+    // 旧叠加层整体退场：它上下让位的那 1px 正是「空隙 / 断线」的根因。
+    const code = stripCssComments(css);
+    expect(code, "旧渐变叠加层不得残留").not.toMatch(/\.panel-ops::before/);
+    expect(code, "显隐开关也不许再挂在 ops 上").not.toMatch(/is-overflow-right\s*\+\s*\.panel-ops/);
   });
 
-  it("渐变要有定位基准、且不被标签的 fill / 文件名压住", () => {
+  it("反向验证①：把溢出档改回 0px 必须被咬住（渐隐整个消失）", () => {
+    const BAD = css.replace(
+      /(\.panel-tabstrip-wrap\.is-overflow-right \.panel-tabstrip\s*\{[^}]*--tab-edge-fade:\s*)24px/,
+      "$10px",
+    );
+    expect(BAD, "替身必须真的改掉 24px").not.toBe(css);
+    expect(() => {
+      expect(
+        cssDecls(ruleBlock(BAD, ".panel-tabstrip-wrap.is-overflow-right .panel-tabstrip")),
+        "替身必须不再有 24px",
+      ).toMatch(/--tab-edge-fade:\s*24px/);
+    }).toThrow();
+  });
+
+  it("反向验证②：把旧叠加层加回来必须被咬住", () => {
+    const BAD = `${css}\n.panel-ops::before { content: ""; opacity: 0; }\n`;
+    expect(() => {
+      expect(stripCssComments(BAD), "旧叠加层必须被抓到").not.toMatch(/\.panel-ops::before/);
+    }).toThrow();
+  });
+
+  it("按钮区仍压在标签内容之上（fill / 文件名的 z-index 1 不许盖住按钮）", () => {
     const ops = cssDecls(ruleBlock(css, ".panel-ops"));
-    expect(ops, "::before 以 .panel-ops 为定位基准").toMatch(/position:\s*relative/);
-    // 标签内部的 fill / 文件名各自 z-index: 1；ops 后画 + 抬到 1 保证盖得住。
-    expect(ops, "抬一层盖住标签内容").toMatch(/z-index:\s*1/);
+    expect(ops, "按钮区要有自己的层").toMatch(/position:\s*relative/);
+    expect(ops, "抬到与标签内部同层，靠 DOM 顺序后画").toMatch(/z-index:\s*1/);
   });
 });
 

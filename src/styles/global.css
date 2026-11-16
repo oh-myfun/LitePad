@@ -4264,6 +4264,22 @@ button:focus-visible {
   pointer-events: none;
 }
 
+/* B418 · 条带右缘渐隐的宽度。
+   ⚠️ 这件事**不能**再用叠加层做（旧版是 `.panel-ops::before` 铺一层「透明 → 条带底色」）：
+     叠加层要避开 head 上下那两条结构线，于是各让 1px，而让出的那一行正好露出**激活
+     标签的深色填充** —— 用户实拍读成「顶上多出 1px 空隙、下 border 断了」，激活标签
+     紧挨按钮时最明显。
+     改对条带**自身**下遮罩：结构线住在 `.panel-head` 的伪元素里、不在条带盒内，
+     遮罩只淡标签内容，线整条通铺、不参与淡化。这是从根上换机制，不是又调一遍让位。
+   ⚠️ 必须挂在 `.panel-tabstrip` 上：遮罩按**条带的 border box** 定位（标签在里面滚动、
+     遮罩不动）。挂到会随内容滚动的那一层，渐隐会跟着标签跑。
+   ⚠️ 宽度走注册过的自定义属性：不注册的话 0 ↔ 24px 是离散跳变，收放会闪。 */
+@property --tab-edge-fade {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
 .panel-tabstrip {
   flex: 1 1 auto;
   display: flex;
@@ -4282,14 +4298,19 @@ button:focus-visible {
      fill 由 inset: -3px 0 -3px 上下延伸补齐（对齐 VS Code 的 fill bottom 伸进
      gutter 的做法）：活动标签仍与编辑区融合，非活动区下沿仍无线。 */
   padding: 3px 4px 0 0;
-  /* 标签条**表面色**（VS Code 的 editorGroupHeader.tabsBackground）：比编辑器背景差一档，
-     活动标签则取编辑器背景色（见 .tab-active .tab-fill）——「哪块与编辑器连着」一眼可辨。
-     B122 曾按用户裁决把条带下沿那条线整个撤掉；B349 又按用户点名的 VS Code 相连档补回，
-     线住在 `.panel-head::after`（画在盒内，才盖得住活动帽的开口），这里只留背景声明。 */
-  background: var(--tab-strip-bg);
+  /* B418：条带**不画自己的表面色** —— 那一层由 `.panel-head` 统一铺（B113-4 起就搬去了），
+     两处都写只是同色的重复。这里不能自己铺还有一个硬理由：下面那条遮罩让条带成了
+     独立叠层，不透明底色会把 `.panel-head::before` 的顶边线整条遮掉。
+     表面色仍取 `editorGroupHeader.tabsBackground`（比编辑器背景差一档，活动标签则取
+     编辑器背景色，见 .tab-active .tab-fill）——「哪块与编辑器连着」一眼可辨。 */
   min-width: 0;
   /* 拖拽 tab 的插入指示线（.tab-insert）以 strip 为定位基准 */
   position: relative;
+  /* B418：遮罩（下面的 mask-image）会让条带自成一个叠层 —— 活动标签的 fill 从此出不去，
+     而 `.panel-head::after`（下沿通铺线，z-index 0）树序排在条带之后，不抬这一层就会
+     盖住活动帽的舌片、「开口」消失。抬到 1 之后：活动帽照旧压住线，没有 fill 的地方
+     （线在下、条带不在这一层铺底色）照旧把线透出来。 */
+  z-index: 1;
   /* B117：滚动条改自绘悬浮（见 .panel-tabstrip-scrollbar）—— 原生横向滚动条
      在 Chromium 里永远占布局空间（哪怕 1px 也把内容区压矮，B55 因此预留过
      4px 底间隙），做不出「悬浮、不占高度」的 VS Code 形态。
@@ -4301,6 +4322,29 @@ button:focus-visible {
   overflow-x: hidden;
   overflow-y: hidden;
   height: 28px;
+  /* B418：右缘渐隐。0 = 不淡（右侧没有标签被裁时，最后那个完整标签的右缘不许被咬掉）；
+     只有「右侧还有被裁的标签」时才抬到 24px（见下面 is-overflow-right 那条）。
+     坡道四等分：1 / .85 / .5 / .15 / 0，摊满这段宽度 —— 等距档位是照着实际观感调的，
+     换更陡的曲线反而在渐变开头看出「一跳」。 */
+  --tab-edge-fade: 0px;
+  -webkit-mask-image: linear-gradient(
+    to right,
+    #000 calc(100% - var(--tab-edge-fade)),
+    rgba(0, 0, 0, 0.85) calc(100% - var(--tab-edge-fade) * 0.75),
+    rgba(0, 0, 0, 0.5) calc(100% - var(--tab-edge-fade) * 0.5),
+    rgba(0, 0, 0, 0.15) calc(100% - var(--tab-edge-fade) * 0.25),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    #000 calc(100% - var(--tab-edge-fade)),
+    rgba(0, 0, 0, 0.85) calc(100% - var(--tab-edge-fade) * 0.75),
+    rgba(0, 0, 0, 0.5) calc(100% - var(--tab-edge-fade) * 0.5),
+    rgba(0, 0, 0, 0.15) calc(100% - var(--tab-edge-fade) * 0.25),
+    transparent 100%
+  );
+  /* 0px 时五档全落在 100%，等效于不淡 —— 基础规则不必再写第二条「无遮罩」的分支。 */
+  transition: --tab-edge-fade var(--transition);
 }
 
 /* B117 自绘悬浮滚动条：轨道叠在标签条底部（悬浮、不占布局、透明轨道），
@@ -4312,6 +4356,13 @@ button:focus-visible {
   /* 悬浮条热区（6px）叠在标签底缘上：pointer-events 只在 thumb 上开启，
      轨道保持穿透，不挡标签点击 */
   min-width: 0;
+}
+
+/* 右侧还有被裁的标签时挂出渐隐（开关由 src/shell/scrollbar.ts 维护：
+   有溢出 + 没滚到最右）。滚到最右时最后一个标签完整露出，渐隐必须收掉，
+   否则它自己的右缘会被淡掉一截。 */
+.panel-tabstrip-wrap.is-overflow-right .panel-tabstrip {
+  --tab-edge-fade: 24px;
 }
 
 .panel-tabstrip-scrollbar {
@@ -4399,51 +4450,11 @@ button:focus-visible {
   padding: 0 4px;
   /* 不被标签栏挤扁：标签栏滚动，操作按钮恒定可见 */
   flex: 0 0 auto;
-  /* B122：B121 的 border-bottom 补线随条带细线一并移除 —— 条带与内容之间
-     不再有任何线（见 .panel-tabstrip 的 B122 注释）。 */
-  /* B418：给左侧那条渐变（::before）一个定位基准，并抬到标签的 fill / 文件名
-     之上（标签内部那些 z-index 1 与 ops 同层，DOM 顺序让 ops 后画 —— 抬一层更稳）。
-     ⚠️ 抬到 1 仍低于滚动条（2）与拖拽插入线（6）：渐变不吃 thumb、也不压插入线。 */
+  /* 按钮区压在标签内容之上：标签内部的 fill / 文件名带 z-index 1，
+     这里抬到同一层并靠 DOM 顺序后画（条带本身是独立叠层，见 .panel-tabstrip 的 B418）。
+     ⚠️ 低于滚动条（2）：不压 thumb。 */
   position: relative;
   z-index: 1;
-}
-
-/* B418（用户）：标签条右侧按钮与左侧标签之间的过渡 —— 照紧凑档关闭键那颗
-   渐变垫底（B118）的同一手法：条带右缘铺「透明 → 条带底色」，
-   被裁半截的标签在按钮前渐隐，而不是一刀切断。
-   ⚠️ 只在**右侧还有内容被裁着**时出现（`is-overflow-right`，由 scrollbar.ts 的
-      syncOverlayScrollbar 维护）：标签放得下、或已经滚到最右时收掉 —— 否则会把
-      最后一个完整标签自己的右缘咬掉一截。与 B118「× 悬浮在文字上时才有垫」同口径。
-   ⚠️ 上下各让出 1px（top / bottom 都是 var(--tab-stroke)）：头顶的卡片顶边线
-      （.panel-head::before）和条带下沿的通铺线（::after）都是结构线，渐变压上去
-      会把线吃成半透明 —— 用户 2026-11-15 实拍「border 断开」正是顶边被吃。
-   ⚠️ 渐变住在 .panel-ops 的左侧（right: 100%），不放进标签条：条带是滚动容器，
-     绝对定位子元素会随内容滚走（B117 同款坑）。 */
-.panel-ops::before {
-  content: "";
-  position: absolute;
-  top: var(--tab-stroke);
-  bottom: var(--tab-stroke);
-  right: 100%;
-  /* 24px：条带右内边距 4px 也盖在这段里（滚动容器的 padding 算内容），
-     旧的 14px 真正落在标签上的坡道只剩 10px，收得太急。 */
-  width: 24px;
-  /* alpha 走缓动（15% / 50% / 85%）：两头平、中间快，比线性坡道更像自然渐隐；
-     颜色始终只有条带底色一种，只换透明度曲线。 */
-  background: linear-gradient(
-    to right,
-    transparent,
-    color-mix(in srgb, var(--tab-strip-bg) 15%, transparent) 25%,
-    color-mix(in srgb, var(--tab-strip-bg) 50%, transparent) 50%,
-    color-mix(in srgb, var(--tab-strip-bg) 85%, transparent) 75%,
-    var(--tab-strip-bg)
-  );
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--transition);
-}
-.panel-tabstrip-wrap.is-overflow-right + .panel-ops::before {
-  opacity: 1;
 }
 
 /* 面板操作按钮：B54 起只剩「移除分屏」⨯（左右/上下分屏按钮已去掉，

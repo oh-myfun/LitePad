@@ -80,8 +80,8 @@ function hideScrollbar(host: HTMLElement): void {
 
 /** B117：溢出状态变化时同步 thumb 几何（scroll / resize / 重绘都调它）。
  *  B125：不溢出时连「可见」类一起摘 —— 免得下次溢出时带着上一次的可见态闪一下。
- *  B418：顺带维护 `.is-overflow-right` —— 「右侧还有标签被裁着」时给条带右缘
- *  （与 .panel-ops 交界处）铺那条渐变的开关（见 global.css 的同名规则）。 */
+ *  B418：顺带维护 `.is-overflow-right` —— 「右侧还有标签被裁着」时打开条带右缘的
+ *  渐隐遮罩（见 global.css 的同名规则）。 */
 export function syncOverlayScrollbar(host: HTMLElement): void {
   const wrap = host.parentElement;
   const bar = wrap?.querySelector<HTMLElement>(":scope > .panel-tabstrip-scrollbar");
