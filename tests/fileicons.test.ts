@@ -91,6 +91,10 @@ describe("标签前置文件类型图标（B57 → B367 Seti）", () => {
     // B371：Ignore 取 Seti languageIds.ignore 的 `_git`，Dotenv 取 `_config`。
     expect(iconOf("Ignore")).toEqual({ ch: "E034", tone: "gray" });
     expect(iconOf("Dotenv")).toEqual({ ch: "E019", tone: "gray" });
+    // 媒体标签档：图片 / 视频 / 音频与 Seti 的 _image / _video / _audio 同形同色
+    expect(iconOf("Image")).toEqual({ ch: "E04C", tone: "purple" });
+    expect(iconOf("Video")).toEqual({ ch: "E09B", tone: "pink" });
+    expect(iconOf("Audio")).toEqual({ ch: "E005", tone: "purple" });
     expect(iconOf("Plain Text"), "Seti 没有纯文本字形，用其缺省文件").toEqual({
       ch: "E023",
       tone: "default",

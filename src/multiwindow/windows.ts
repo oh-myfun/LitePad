@@ -212,7 +212,7 @@ async function openTabsInNewWindow(tabIds: number[], spot?: WindowSpot | null): 
   // 媒体标签同一口径：卫星载荷是「文本快照」，而媒体预览靠本机路径取流，
   // 搬过去既没有语义也没有载荷可带。
   if (tabIds.some((id) => tabs.get(id)?.kind === "diff" || tabs.get(id)?.kind === "media")) {
-    showMessage("差异编辑器与图片/视频预览暂不支持跨窗口搬移", true);
+    showMessage("差异编辑器与图片/视频/音频预览暂不支持跨窗口搬移", true);
     return;
   }
   const snapshots = tabIds

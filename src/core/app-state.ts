@@ -49,9 +49,9 @@ export interface MediaViewState {
   y: number;
   /** true = 跟随窗口（适应窗口），false = 用户指定的缩放 */
   fit: boolean;
-  /** 视频播放进度（秒）；布局重建后据此接上，图片面不写 */
+  /** 音视频播放进度（秒）；布局重建后据此接上，图片面不写 */
   time?: number;
-  /** 视频是否正在播放；布局重建后恢复播放态 */
+  /** 音视频是否正在播放；布局重建后恢复播放态 */
   playing?: boolean;
 }
 

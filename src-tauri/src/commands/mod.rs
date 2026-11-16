@@ -344,8 +344,8 @@ pub struct OpenedFile {
 
 /// 媒体文件的元数据：`open_media` 的返回。
 ///
-/// 与 `OpenedFile` 的唯一实质差别是**没有正文** —— 图片/视频由前端的 `<img>` / `<video>`
-/// 按 asset 协议的 URL 自己取流解码，命令这边读字节只会把整个文件塞进 IPC。
+/// 与 `OpenedFile` 的唯一实质差别是**没有正文** —— 图片/视频/音频由前端的
+/// `<img>` / `<video>` / `<audio>` 按 asset 协议的 URL 自己取流解码，命令这边读字节只会把整个文件塞进 IPC。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaFile {
@@ -582,7 +582,7 @@ pub async fn open_file(
 
 /// 以「媒体」身份打开一个文件：只登记元数据，不读内容。
 ///
-/// 必须单开一条命令：`open_file` 的读管线会拒掉二进制，而图片/视频本来就是二进制。
+/// 必须单开一条命令：`open_file` 的读管线会拒掉二进制，而图片/视频/音频本来就是二进制。
 /// **不挂 `watch_file`** —— 前端对 `file-changed` 的处理是「按文本重载」，媒体标签没有
 /// 那条链；盘上被改过时重新打开一次即可。
 #[tauri::command]

@@ -1,15 +1,15 @@
-// 媒体预览面：直接打开图片 / 视频时，盖在编辑器那一格上的原生 DOM 面。
+// 媒体预览面：直接打开图片 / 视频 / 音频时，盖在编辑器那一格上的原生 DOM 面。
 //
 // 与 HTML 预览同一范式（见 `htmlPreview.ts`）：`.panel-host` 上挂一张旁路面，
 // CSS 把 `.panel-editor` 整格藏掉。区别只在内容 —— 这里用的是 WebView2 原生的
-// `<img>` / `<video>`，容器与解码都交给浏览器，没有任何查看器 / 播放器依赖。
+// `<img>` / `<video>` / `<audio>`，容器与解码都交给浏览器，没有任何查看器 / 播放器依赖。
 //
 // 挂与拆的出口：`markdown.ts` 的 `applyPanelMode` 管挂与显示，`tabs/lifecycle.ts`
 // 在标签关闭 / 面板销毁 / 整棵布局重建前调 `disposeMediaFace(s)` 拆。
 //
-// ⚠️ 切到别的标签时**只隐藏不拆**：`<video>` 一旦移出文档就停播，进度也没了。
+// ⚠️ 切到别的标签时**只隐藏不拆**：`<video>` / `<audio>` 一旦移出文档就停播，进度也没了。
 // 面按标签缓存在 `.panel-host` 里（`data-tab-id`），同面板再切回来复用同一颗节点。
-// 图片的视野记在 `tab.media` 上；视频的进度与播放态也记在那里，供布局重建后接上。
+// 图片的视野记在 `tab.media` 上；音视频的进度与播放态也记在那里，供布局重建后接上。
 
 import { docs, type MediaViewState, type Panel, type Tab } from "../core/app-state";
 import { mediaKindOf } from "../io/media";
@@ -89,7 +89,7 @@ function humanSize(bytes: number): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
-/** 每张面自己的拆除动作（视频要停播并清 src，图片只有 ResizeObserver）。 */
+/** 每张面自己的拆除动作（音视频要停播并清 src，图片只有 ResizeObserver）。 */
 const disposers = new WeakMap<HTMLElement, () => void>();
 
 function iconButton(icon: CodiconName, label: string, onClick: () => void): HTMLButtonElement {
@@ -286,20 +286,32 @@ function buildImageFace(tab: Tab, path: string, name: string, size: number): HTM
   return face;
 }
 
-function buildVideoFace(tab: Tab, path: string, name: string, size: number): HTMLElement {
+/**
+ * 视频 / 音频共用的播放面：原生 `<video>` 或 `<audio>` + 原生控件。
+ *
+ * 两者的生命周期逻辑一字不差（进度写回、重建接回、拆面释放解码器），差别只有
+ * 元素标签、CSS 类与舞台底色 —— 复制一份只会让两条链各自长毛。
+ */
+function buildPlayerFace(
+  tab: Tab,
+  path: string,
+  name: string,
+  size: number,
+  kind: "video" | "audio",
+): HTMLElement {
   const face = document.createElement("div");
   face.className = FACE_CLASS;
   face.dataset.tabId = String(tab.tabId);
-  face.dataset.kind = "video";
+  face.dataset.kind = kind;
 
   const { bar } = buildToolbar(name, humanSize(size));
   const stage = document.createElement("div");
-  stage.className = "media-stage media-stage-video";
-  const video = document.createElement("video");
-  video.className = "media-video";
-  video.controls = true;
-  video.preload = "metadata";
-  video.addEventListener("error", () => showError(face, name));
+  stage.className = `media-stage media-stage-${kind}`;
+  const media = document.createElement(kind);
+  media.className = kind === "video" ? "media-video" : "media-audio";
+  media.controls = true;
+  media.preload = "metadata";
+  media.addEventListener("error", () => showError(face, name));
 
   // 进度与播放态写回实例：布局重建（分屏 / 拖标签）会把面拆掉重挂，
   // 没有这份快照就只能从头播。切标签不走路重建（面不拆），原生进度不受影响。
@@ -312,31 +324,31 @@ function buildVideoFace(tab: Tab, path: string, name: string, size: number): HTM
       x: 0,
       y: 0,
       fit: true,
-      time: video.currentTime,
-      playing: !video.paused && !video.ended,
+      time: media.currentTime,
+      playing: !media.paused && !media.ended,
     };
   };
-  video.addEventListener("timeupdate", remember);
-  video.addEventListener("play", remember);
-  video.addEventListener("pause", remember);
-  video.addEventListener("loadedmetadata", () => {
+  media.addEventListener("timeupdate", remember);
+  media.addEventListener("play", remember);
+  media.addEventListener("pause", remember);
+  media.addEventListener("loadedmetadata", () => {
     const time = saved?.time ?? 0;
-    if (time > 0 && (!Number.isFinite(video.duration) || time < video.duration)) {
-      video.currentTime = time;
+    if (time > 0 && (!Number.isFinite(media.duration) || time < media.duration)) {
+      media.currentTime = time;
     }
-    if (saved?.playing) void video.play().catch(() => {});
+    if (saved?.playing) void media.play().catch(() => {});
   });
 
-  stage.appendChild(video);
+  stage.appendChild(media);
   face.append(bar, stage);
-  video.src = assetUrl(path);
+  media.src = assetUrl(path);
 
   disposers.set(face, () => {
     remember(); // 先抄进度：下一发 pause / load 会把状态改掉
     released = true;
-    video.pause();
-    video.removeAttribute("src");
-    video.load();
+    media.pause();
+    media.removeAttribute("src");
+    media.load();
   });
   return face;
 }
@@ -346,9 +358,13 @@ function buildFace(tab: Tab): HTMLElement | null {
   const path = doc?.path ?? null;
   const kind = mediaKindOf(path ?? doc?.name);
   if (!doc || !path || !kind) return null;
-  return kind === "image"
-    ? buildImageFace(tab, path, doc.name, doc.diskSize)
-    : buildVideoFace(tab, path, doc.name, doc.diskSize);
+  switch (kind) {
+    case "image":
+      return buildImageFace(tab, path, doc.name, doc.diskSize);
+    case "video":
+    case "audio":
+      return buildPlayerFace(tab, path, doc.name, doc.diskSize, kind);
+  }
 }
 
 function disposeFace(face: HTMLElement): void {
@@ -366,7 +382,7 @@ function disposeFace(face: HTMLElement): void {
  * 判据与 HTML 面同形：`panel.viewTabId === tab.tabId` —— 接班在途时挂别人的面
  * 等于把上一份文档的图钉在这一格上。
  *
- * ⚠️ 不在显示 ≠ 销毁：这里只切 `.is-active`。切到文本标签时视频面留在 DOM 里继续播，
+ * ⚠️ 不在显示 ≠ 销毁：这里只切 `.is-active`。切到文本标签时媒体面留在 DOM 里继续播，
  * 再切回来进度原样；真正拆面的只有关闭标签 / 面板销毁 / 布局重建（见下方 dispose）。
  */
 export function applyMediaFace(panel: Panel, tab: Tab | undefined): void {
@@ -388,7 +404,7 @@ export function applyMediaFace(panel: Panel, tab: Tab | undefined): void {
   }
 }
 
-/** 一张媒体标签离开这个面板（关闭标签）：拆掉它的面，视频停播并释放解码器。 */
+/** 一张媒体标签离开这个面板（关闭标签）：拆掉它的面，音视频停播并释放解码器。 */
 export function disposeMediaFace(panel: Panel, tabId: number): void {
   const host = panel.bodyEl;
   if (!host) return;
@@ -398,7 +414,7 @@ export function disposeMediaFace(panel: Panel, tabId: number): void {
   if (face) disposeFace(face);
 }
 
-/** 面板销毁 / 整棵布局重建前：拆掉这一格的全部媒体面（视频不停播就会留在后台响）。 */
+/** 面板销毁 / 整棵布局重建前：拆掉这一格的全部媒体面（音视频不停播就会留在后台响）。 */
 export function disposeMediaFaces(panel: Panel): void {
   const host = panel.bodyEl;
   if (!host) return;

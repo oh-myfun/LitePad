@@ -53,7 +53,7 @@ export interface OpenedFile {
 /**
  * 媒体文件的元数据（对应 Rust `MediaFile`，`rename_all = "camelCase"`）。
  *
- * 没有 `text` —— 图片/视频由 `<img>` / `<video>` 按 asset URL 自己取流解码。
+ * 没有 `text` —— 图片/视频/音频由 `<img>` / `<video>` / `<audio>` 按 asset URL 自己取流解码。
  */
 export interface MediaFile {
   tabId: number;

@@ -27,6 +27,7 @@
 import argparse
 import ctypes
 import hashlib
+import io
 import json
 import math
 import os
@@ -35,6 +36,7 @@ import struct
 import subprocess
 import sys
 import time
+import wave
 import zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -346,6 +348,23 @@ def demo_png(w=720, h=460):
 MEDIA_IMAGE = os.path.join(DEMO_DIR, "cover.png")
 
 
+# 音频预览配方的演示音频：8 秒 440Hz 正弦，标准库直写 WAV（仓库里同样不存二进制素材）。
+def demo_wav(seconds=8, rate=22050):
+    frames = bytearray()
+    for i in range(rate * seconds):
+        frames += struct.pack("<h", int(12000 * math.sin(2 * math.pi * 440 * i / rate)))
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(bytes(frames))
+    return buf.getvalue()
+
+
+MEDIA_AUDIO = os.path.join(DEMO_DIR, "tone.wav")
+
+
 # 根 README 开头只放 main.png；差异编辑器那张 diff.png 归 `docs/screenshots/README.md`
 # 的表格，两处都要提到（改配方就同步改那份 README 的复现命令）。
 # 要补拍「设置」里的弹窗，加一条 recipe 并用 clicks 摆状态即可，例如：
@@ -411,6 +430,14 @@ RECIPES = [
         "files": {"cover.png": demo_png},
         "session": lambda: single_session(
             [tab(MD, "source", 8, 1), media_tab(MEDIA_IMAGE, 2)], active=1),
+    },
+    {
+        "name": "audio",
+        "what": "音频预览：原生 audio 控件（播放 / 进度 / 音量）+ 工具条",
+        "theme": "dark",
+        "files": {"tone.wav": demo_wav},
+        "session": lambda: single_session(
+            [tab(MD, "source", 8, 1), media_tab(MEDIA_AUDIO, 2)], active=1),
     },
 ]
 

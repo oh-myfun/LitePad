@@ -273,10 +273,10 @@ async function doOpen(
 }
 
 /**
- * 媒体文件（图片 / 视频）的打开分支：只建元数据文档 + 旁路预览面，不读内容。
+ * 媒体文件（图片 / 视频 / 音频）的打开分支：只建元数据文档 + 旁路预览面，不读内容。
  *
  * 为什么单开这条支：`open_file` 会读全部字节并拒二进制，媒体文件过不去；
- * 而预览面用的是原生 `<img>` / `<video>`，有路径就够了（见 `preview/mediaPreview`）。
+ * 而预览面用的是原生 `<img>` / `<video>` / `<audio>`，有路径就够了（见 `preview/mediaPreview`）。
  *
  * 复用口径与文本一致：同一路径已在标签中 ⇒ 激活它；指定了落点面板而它开在别处时，
  * 在落点再开一个同源实例（媒体没有正文，多实例不会分叉）。
@@ -323,7 +323,9 @@ async function openMediaTab(path: string, targetPanelId?: number): Promise<numbe
     rebuildLayout();
     refreshAll();
     renderPanelTabs(panel.panelId);
-    showMessage(`已打开 ${file.name}（${kind === "image" ? "图片" : "视频"}预览）`);
+    showMessage(
+      `已打开 ${file.name}（${kind === "image" ? "图片" : kind === "video" ? "视频" : "音频"}预览）`,
+    );
     scheduleSessionSave();
     return tab.tabId;
   } catch (err) {
@@ -476,7 +478,7 @@ async function doSave(forceDialog: boolean): Promise<boolean> {
 async function saveDocCore(doc: Doc, inst: Tab, forceDialog: boolean): Promise<boolean> {
   // 媒体标签没有可写正文：拦在写盘之前，否则 Ctrl+S / 另存会把空缓冲写回原图
   if (inst.kind === "media") {
-    showMessage(`${doc.name} 是图片/视频预览，不支持保存`, true);
+    showMessage(`${doc.name} 是媒体预览，不支持保存`, true);
     return false;
   }
   const panel = panels.get(inst.panelId);

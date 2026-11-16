@@ -1744,7 +1744,7 @@ body.layout-dragging .toc-grip {
   flex-direction: column;
   background: var(--bg, #ffffff);
 }
-/* 切标签只换 `.is-active`：媒体面留在 DOM 里，视频继续播、进度不丢 */
+/* 切标签只换 `.is-active`：媒体面留在 DOM 里，音视频继续播、进度不丢 */
 .panel-host.preview-kind-media > .media-preview.is-active {
   display: flex;
 }
@@ -1854,6 +1854,18 @@ body.layout-dragging .toc-grip {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  outline: none;
+}
+/* 音频没有画面：去掉棋盘底，只留原生控件居中 */
+.media-stage-audio {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-image: none;
+  cursor: default;
+}
+.media-audio {
+  width: min(560px, 80%);
   outline: none;
 }
 .media-error {

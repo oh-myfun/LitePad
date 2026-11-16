@@ -198,7 +198,7 @@ export async function restoreSession(): Promise<boolean> {
   type Restored =
     | { kind: "backup"; data: RestoredBackup; baseline: BaselineSnapshot | null }
     | { kind: "file"; data: OpenedFile }
-    /** 媒体标签：只取元数据，不读内容（图片 / 视频由预览面自己取流解码） */
+    /** 媒体标签：只取元数据，不读内容（图片 / 视频 / 音频由预览面自己取流解码） */
     | { kind: "media"; data: MediaFile }
     /** B69：空的未命名文档——会话里既没路径也没副本，内容本来就是空的 */
     | { kind: "empty"; data: OpenedFile };
@@ -327,7 +327,7 @@ export async function restoreSession(): Promise<boolean> {
     if (!hit) return null;
     if (hit.kind === "media") {
       // 媒体标签：文档只是元数据载体（空正文 + 只读），实例建空 state，
-      // 预览面由 `applyPanelMode` 挂原生 `<img>` / `<video>`。
+      // 预览面由 `applyPanelMode` 挂原生 `<img>` / `<video>` / `<audio>`。
       // 光标 / 视口 / 同步开关一概不恢复 —— 那一格没有文本可定位。
       let doc = docs.get(hit.data.tabId);
       if (!doc) {

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// 媒体预览（图片 / 视频）：扩展名判定、图片视野数学、面的挂载与收档。
+// 媒体预览（图片 / 视频 / 音频）：扩展名判定、图片视野数学、面的挂载与收档。
 //
 // 这一面不比其它预览面多风险，但有一条独有的判据要钉住：**同一张标签重复应用不许重建**。
 // 视频重建 = 播放位置归零、暂停；而 `applyPanelMode` 会在换档、重排、聚焦等一串时机被调。
@@ -58,18 +58,23 @@ beforeEach(() => {
 });
 
 describe("媒体扩展名判定", () => {
-  it("图片 / 视频按后缀认，大小写无关", () => {
+  it("图片 / 视频 / 音频按后缀认，大小写无关", () => {
     expect(mediaKindOf("C:\\pics\\a.PNG")).toBe("image");
     expect(mediaKindOf("C:\\pics\\b.jpeg")).toBe("image");
     expect(mediaKindOf("/home/u/c.webp")).toBe("image");
     expect(mediaKindOf("C:\\v\\clip.MP4")).toBe("video");
     expect(mediaKindOf("C:\\v\\b.webm")).toBe("video");
     expect(mediaKindOf("C:\\v\\c.mov")).toBe("video");
+    expect(mediaKindOf("C:\\a\\voice.mp3")).toBe("audio");
+    expect(mediaKindOf("C:\\a\\take.FLAC")).toBe("audio");
+    expect(mediaKindOf("C:\\a\\track.m4a")).toBe("audio");
+    expect(mediaKindOf("C:\\a\\podcast.ogg")).toBe("audio");
   });
 
-  it("svg 仍按文本、tiff 解不了、无后缀与目录里的点都不算媒体", () => {
+  it("svg 仍按文本、tiff 与 wma 解不了、无后缀与目录里的点都不算媒体", () => {
     expect(mediaKindOf("C:\\icons\\a.svg")).toBe(null);
     expect(mediaKindOf("C:\\pics\\a.tiff")).toBe(null);
+    expect(mediaKindOf("C:\\a\\voice.wma")).toBe(null);
     expect(mediaKindOf("C:\\docs\\notes.md")).toBe(null);
     expect(mediaKindOf("C:\\docs\\README")).toBe(null);
     // 目录名里的点不参与判定：最后一段没有后缀
@@ -137,7 +142,7 @@ describe("媒体面挂载", () => {
     expect(img.getAttribute("src")).toBe("C:\\pics\\a.png");
     expect(face.querySelector(".media-name")?.textContent).toBe("a.png");
 
-    // 换到普通标签：类收掉、面隐藏，但节点还在（视频靠这条活着）
+    // 换到普通标签：类收掉、面隐藏，但节点还在（音视频靠这条活着）
     panel.viewTabId = 424242;
     panel.activeTabId = 424242;
     applyMediaFace(panel, undefined);
@@ -172,6 +177,22 @@ describe("媒体面挂载", () => {
     expect(video.controls).toBe(true);
     expect(video.getAttribute("preload")).toBe("metadata");
     expect(video.getAttribute("src")).toBe("C:\\v\\clip.webm");
+  });
+
+  it("音频标签用原生 audio controls（播放/进度/音量都由它自带）", () => {
+    const tab = newMediaTab("voice.mp3", "C:\\a\\voice.mp3");
+    const panel = newPanel(tab.tabId);
+
+    applyMediaFace(panel, tab);
+
+    const face = panel.bodyEl.querySelector(":scope > .media-preview") as HTMLElement;
+    expect(face.dataset.kind).toBe("audio");
+    const audio = face.querySelector("audio.media-audio") as HTMLAudioElement;
+    expect(audio).toBeTruthy();
+    expect(audio.controls).toBe(true);
+    expect(audio.getAttribute("preload")).toBe("metadata");
+    expect(audio.getAttribute("src")).toBe("C:\\a\\voice.mp3");
+    expect(face.querySelector(".media-stage-audio"), "音频舞台不铺棋盘底").toBeTruthy();
   });
 
   it("面板当前挂的不是这张媒体标签时不挂（接班在途的防护）", () => {
