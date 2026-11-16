@@ -27,9 +27,8 @@ import { doOpen } from "../io/files";
 import { clearCompareSelection, compareMenuItems, toggleCompareSelection } from "../diff/compare";
 import { openFileDiff } from "../diff/model";
 import { noteOpened } from "../recents/store";
-import { detectLanguage } from "../editor/language";
 import { CODICONS } from "../shell/codicons";
-import { fileIconHtml } from "../shell/fileicons";
+import { fileIconHtml, fileIconHtmlOfFile } from "../shell/fileicons";
 import { activeDrawer, registerDrawerView, setDrawer } from "../shell/drawer";
 import { showPopupMenu, type MenuItem } from "../shell/menu";
 import { setTip, setTextTip } from "../shell/tooltip";
@@ -612,7 +611,8 @@ function rowOf(
   const slot = document.createElement("span");
   slot.className = kind === "dir" ? "explorer-twisty" : "explorer-glyph";
   if (kind === "dir") slot.innerHTML = open ? CODICONS.chevronDown : CODICONS.chevronRight;
-  else slot.innerHTML = fileIconHtml(detectLanguage(name).label);
+  // 资源管理器按文件名取 Seti 图标（fileNames / fileExtensions 两档），与 VS Code 同序
+  else slot.innerHTML = fileIconHtmlOfFile(name);
   parts.push(slot, nameEl);
   row.append(...parts);
   return row;

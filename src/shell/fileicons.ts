@@ -9,9 +9,13 @@
  * 字形是图标字体的码位（`&#xE060;` 这类 HTML 实体），不是手绘 SVG；
  * `tests/fileicons.test.ts` 守着「注册表里每个语言都有条目」与字体/许可文件存在。
  *
- * 消费方：标签（`tabstrip.ts`）与状态栏语言浮层（`language-mode.ts`）共用本出口。
+ * 消费方：标签（`tabstrip.ts`）与状态栏语言浮层（`language-mode.ts`）共用语言出口；
+ * 资源管理器（`explorer/panel.ts`）按文件名走 `fileIconHtmlOfFile`（fileNames /
+ * fileExtensions 两档，VS Code 的解析顺序）。
  * 尺寸与配色都由 `.seti-icon` 的 CSS 统一给（`font-size: 150%`，与 VS Code 同口径）。
  */
+
+import { detectLanguage } from "../editor/language";
 
 /** Seti 的九档色调。深浅主题各一套色值，字形不随主题变。 */
 export type IconTone =
@@ -109,12 +113,228 @@ export function iconOf(langLabel: string | null | undefined): SetiIcon {
 }
 
 /**
+ * Seti 的 `fileNames` 档（小写文件名 → 图标）。
+ *
+ * VS Code 解析顺序是 fileNames → fileExtensions → languageIds；资源管理器只有文件名和
+ * 扩展名，没有语言 id，所以前两档只能在这里补。这张表与上面语言表同源（同一份
+ * `vs-seti-icon-theme.json`），只收主题里真有的名字，大小写按 VS Code 的 lower-case 口径。
+ */
+const ICON_OF_NAME: Record<string, SetiIcon> = {
+  "babel.config.cjs": { ch: "E006", tone: "yellow" },
+  "babel.config.js": { ch: "E006", tone: "yellow" },
+  "babel.config.json": { ch: "E006", tone: "yellow" },
+  "bower.json": { ch: "E009", tone: "orange" },
+  build: { ch: "E007", tone: "green" },
+  "build.bazel": { ch: "E007", tone: "green" },
+  changelog: { ch: "E012", tone: "blue" },
+  "changelog.md": { ch: "E012", tone: "blue" },
+  "changelog.txt": { ch: "E012", tone: "blue" },
+  changes: { ch: "E012", tone: "blue" },
+  "changes.md": { ch: "E012", tone: "blue" },
+  "changes.txt": { ch: "E012", tone: "blue" },
+  "cmakelists.txt": { ch: "E05F", tone: "blue" },
+  compiling: { ch: "E05A", tone: "orange" },
+  "compiling.md": { ch: "E05A", tone: "orange" },
+  "compiling.txt": { ch: "E05A", tone: "orange" },
+  contributing: { ch: "E05A", tone: "red" },
+  "contributing.md": { ch: "E05A", tone: "red" },
+  "contributing.txt": { ch: "E05A", tone: "red" },
+  copying: { ch: "E05A", tone: "yellow" },
+  "copying.md": { ch: "E05A", tone: "yellow" },
+  "copying.txt": { ch: "E05A", tone: "yellow" },
+  "docker-healthcheck": { ch: "E025", tone: "green" },
+  "eslint.config.js": { ch: "E02C", tone: "purple" },
+  "firebase.json": { ch: "E030", tone: "orange" },
+  geckodriver: { ch: "E031", tone: "orange" },
+  "gruntfile.babel.js": { ch: "E03F", tone: "orange" },
+  "gruntfile.coffee": { ch: "E03F", tone: "orange" },
+  "gruntfile.js": { ch: "E03F", tone: "orange" },
+  gulpfile: { ch: "E040", tone: "red" },
+  "gulpfile.js": { ch: "E040", tone: "red" },
+  "ionic.config.json": { ch: "E04E", tone: "blue" },
+  "ionic.project": { ch: "E04E", tone: "blue" },
+  jenkinsfile: { ch: "E052", tone: "red" },
+  "karma.conf.cjs": { ch: "E057", tone: "green" },
+  "karma.conf.coffee": { ch: "E057", tone: "green" },
+  "karma.conf.js": { ch: "E057", tone: "green" },
+  "karma.conf.mjs": { ch: "E057", tone: "green" },
+  licence: { ch: "E05A", tone: "yellow" },
+  "licence.md": { ch: "E05A", tone: "yellow" },
+  "licence.txt": { ch: "E05A", tone: "yellow" },
+  license: { ch: "E05A", tone: "yellow" },
+  "license.md": { ch: "E05A", tone: "yellow" },
+  "license.txt": { ch: "E05A", tone: "yellow" },
+  "mime.types": { ch: "E019", tone: "gray" },
+  mix: { ch: "E047", tone: "red" },
+  mvnw: { ch: "E061", tone: "red" },
+  "npm-debug.log": { ch: "E068", tone: "gray" },
+  omakefile: { ch: "E05F", tone: "gray" },
+  "platformio.ini": { ch: "E073", tone: "orange" },
+  "pom.xml": { ch: "E061", tone: "red" },
+  procfile: { ch: "E046", tone: "purple" },
+  qmakefile: { ch: "E05F", tone: "purple" },
+  readme: { ch: "E04D", tone: "blue" },
+  "readme.md": { ch: "E04D", tone: "blue" },
+  "readme.txt": { ch: "E04D", tone: "blue" },
+  "rollup.config.js": { ch: "E080", tone: "red" },
+  "sass-lint.yml": { ch: "E084", tone: "pink" },
+  "stylelint.config.cjs": { ch: "E08D", tone: "default" },
+  "stylelint.config.js": { ch: "E08D", tone: "default" },
+  "stylelint.config.mjs": { ch: "E08D", tone: "default" },
+  "swagger.json": { ch: "E055", tone: "green" },
+  "swagger.yaml": { ch: "E055", tone: "green" },
+  "swagger.yml": { ch: "E055", tone: "green" },
+  todo: { ch: "E096", tone: "default" },
+  "todo.md": { ch: "E096", tone: "default" },
+  "todo.txt": { ch: "E096", tone: "default" },
+  "tsconfig.json": { ch: "E097", tone: "blue" },
+  version: { ch: "E012", tone: "blue" },
+  "version.md": { ch: "E012", tone: "blue" },
+  "version.txt": { ch: "E012", tone: "blue" },
+  "vite.config.cjs": { ch: "E09C", tone: "yellow" },
+  "vite.config.cts": { ch: "E09C", tone: "yellow" },
+  "vite.config.js": { ch: "E09C", tone: "yellow" },
+  "vite.config.mjs": { ch: "E09C", tone: "yellow" },
+  "vite.config.mts": { ch: "E09C", tone: "yellow" },
+  "vite.config.ts": { ch: "E09C", tone: "yellow" },
+  "webpack.common.cjs": { ch: "E0A0", tone: "blue" },
+  "webpack.common.js": { ch: "E0A0", tone: "blue" },
+  "webpack.common.mjs": { ch: "E0A0", tone: "blue" },
+  "webpack.common.ts": { ch: "E0A0", tone: "blue" },
+  "webpack.config.build.cjs": { ch: "E0A0", tone: "blue" },
+  "webpack.config.build.js": { ch: "E0A0", tone: "blue" },
+  "webpack.config.build.mjs": { ch: "E0A0", tone: "blue" },
+  "webpack.config.build.ts": { ch: "E0A0", tone: "blue" },
+  "webpack.config.cjs": { ch: "E0A0", tone: "blue" },
+  "webpack.config.js": { ch: "E0A0", tone: "blue" },
+  "webpack.config.mjs": { ch: "E0A0", tone: "blue" },
+  "webpack.config.ts": { ch: "E0A0", tone: "blue" },
+  "webpack.dev.cjs": { ch: "E0A0", tone: "blue" },
+  "webpack.dev.js": { ch: "E0A0", tone: "blue" },
+  "webpack.dev.mjs": { ch: "E0A0", tone: "blue" },
+  "webpack.dev.ts": { ch: "E0A0", tone: "blue" },
+  "webpack.prod.cjs": { ch: "E0A0", tone: "blue" },
+  "webpack.prod.js": { ch: "E0A0", tone: "blue" },
+  "webpack.prod.mjs": { ch: "E0A0", tone: "blue" },
+  "webpack.prod.ts": { ch: "E0A0", tone: "blue" },
+  workspace: { ch: "E007", tone: "green" },
+  "workspace.bazel": { ch: "E007", tone: "green" },
+  "yarn.clean": { ch: "E0A6", tone: "blue" },
+  "yarn.lock": { ch: "E0A6", tone: "blue" },
+};
+
+/**
+ * Seti 的 `fileExtensions` 档里**语言表不管**的那些（图片 / 音视频 / 压缩包 / 办公文档 /
+ * 字体 / 证书 / 笔记本 / wasm / 3D 模型 / 设计稿 / 字节码）。文本类后缀故意不收：
+ * 它们回落到语言表，与标签口径一致。
+ *
+ * 少数 LitePad 能预览、但主题没收录的后缀（bmp / apng / m4v…）按同族补齐，理由是资源管理器
+ * 里它们一眼就是图片或视频，落成缺省文件反而像坏了；其余未收录的一律走缺省。
+ */
+const ICON_OF_EXT: Record<string, SetiIcon> = {
+  avi: { ch: "E09B", tone: "pink" },
+  avif: { ch: "E04C", tone: "purple" },
+  cer: { ch: "E05D", tone: "green" },
+  cert: { ch: "E05D", tone: "green" },
+  crt: { ch: "E05D", tone: "green" },
+  csv: { ch: "E01E", tone: "green" },
+  doc: { ch: "E0A3", tone: "blue" },
+  docx: { ch: "E0A3", tone: "blue" },
+  eot: { ch: "E033", tone: "red" },
+  flac: { ch: "E005", tone: "purple" },
+  gif: { ch: "E04C", tone: "purple" },
+  ico: { ch: "E02F", tone: "yellow" },
+  ipynb: { ch: "E066", tone: "blue" },
+  jar: { ch: "E0A9", tone: "red" },
+  jpeg: { ch: "E04C", tone: "purple" },
+  jpg: { ch: "E04C", tone: "purple" },
+  key: { ch: "E05D", tone: "green" },
+  mov: { ch: "E09B", tone: "pink" },
+  mp3: { ch: "E005", tone: "purple" },
+  mp4: { ch: "E09B", tone: "pink" },
+  mpg: { ch: "E09B", tone: "pink" },
+  ogg: { ch: "E005", tone: "purple" },
+  ogv: { ch: "E09B", tone: "pink" },
+  otf: { ch: "E033", tone: "red" },
+  pdf: { ch: "E06D", tone: "red" },
+  pem: { ch: "E05D", tone: "green" },
+  png: { ch: "E04C", tone: "purple" },
+  pxm: { ch: "E04C", tone: "purple" },
+  svg: { ch: "E091", tone: "purple" },
+  svgx: { ch: "E04C", tone: "purple" },
+  tiff: { ch: "E04C", tone: "purple" },
+  ttf: { ch: "E033", tone: "red" },
+  wasm: { ch: "E09E", tone: "purple" },
+  wav: { ch: "E005", tone: "purple" },
+  webm: { ch: "E09B", tone: "pink" },
+  webp: { ch: "E04C", tone: "purple" },
+  woff: { ch: "E033", tone: "red" },
+  woff2: { ch: "E033", tone: "red" },
+  xls: { ch: "E0A4", tone: "green" },
+  xlsx: { ch: "E0A4", tone: "green" },
+  zip: { ch: "E0A9", tone: "gray" },
+  // 主题里归在其它键下的非文本类型：3D 模型 / 设计稿 / 字节码 / 系统垃圾 / 临时文件
+  "3dm": { ch: "E091", tone: "blue" },
+  "3ds": { ch: "E091", tone: "blue" },
+  dae: { ch: "E091", tone: "blue" },
+  obj: { ch: "E091", tone: "blue" },
+  stl: { ch: "E091", tone: "blue" },
+  ai: { ch: "E04B", tone: "yellow" },
+  psd: { ch: "E06F", tone: "blue" },
+  class: { ch: "E050", tone: "blue" },
+  ds_store: { ch: "E04A", tone: "gray" },
+  tmp: { ch: "E012", tone: "gray" },
+  wgt: { ch: "E0A1", tone: "blue" },
+  // 主题未收录、但 LitePad 自己能预览 / 常见的同族后缀
+  bmp: { ch: "E04C", tone: "purple" },
+  apng: { ch: "E04C", tone: "purple" },
+  jfif: { ch: "E04C", tone: "purple" },
+  tif: { ch: "E04C", tone: "purple" },
+  m4v: { ch: "E09B", tone: "pink" },
+  mkv: { ch: "E09B", tone: "pink" },
+  m4a: { ch: "E005", tone: "purple" },
+  aac: { ch: "E005", tone: "purple" },
+  opus: { ch: "E005", tone: "purple" },
+  wma: { ch: "E005", tone: "purple" },
+};
+
+/**
+ * 按文件名取 Seti 图标：fileNames → fileExtensions（最长后缀优先）→ null。
+ *
+ * 返回 null 表示主题没给条目，调用方回落到语言表。目录名里的点不参与匹配
+ * （只取最后一段），与 `detectLanguage` / VS Code 的口径一致。
+ */
+export function iconOfFile(name: string | null | undefined): SetiIcon | null {
+  const base = (name ?? "").replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? "";
+  if (!base) return null;
+  const named = ICON_OF_NAME[base];
+  if (named) return named;
+  const parts = base.split(".");
+  for (let i = 1; i < parts.length; i++) {
+    const hit = ICON_OF_EXT[parts.slice(i).join(".")];
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function renderIcon(icon: SetiIcon): string {
+  return `<i class="seti-icon" data-tone="${icon.tone}" aria-hidden="true">&#x${icon.ch};</i>`;
+}
+
+/**
  * 16px 的 Seti 字形元素。颜色走 `data-tone`（`.seti-icon[data-tone]` 取 `--seti-*`），
  * 尺寸走 `.seti-icon` 的 `font-size: 150%`（VS Code 图标主题同款）。
  */
 export function fileIconHtml(langLabel: string | null | undefined): string {
-  const icon = iconOf(langLabel);
-  return `<i class="seti-icon" data-tone="${icon.tone}" aria-hidden="true">&#x${icon.ch};</i>`;
+  return renderIcon(iconOf(langLabel));
+}
+
+/**
+ * 按文件名给图标：资源管理器只有路径，没有语言标签 —— 先查 Seti 的 fileNames /
+ * fileExtensions，查不到再按语言检测回落（与标签、状态栏共用同一份语言表）。
+ */
+export function fileIconHtmlOfFile(name: string | null | undefined): string {
+  return renderIcon(iconOfFile(name) ?? iconOf(detectLanguage(name ?? "").label));
 }
 
 /** 有专属条目的语言（供测试核对注册表覆盖度） */

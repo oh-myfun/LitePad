@@ -246,7 +246,9 @@ EditorView，大纲跳转与「转到行」也落在同一颗 view 上；HTML �
 - **文件类型图标是这条红线的唯一例外（B367/B368，用户确认）**：标签、资源管理器的文件行与
   状态栏语言浮层使用 VS Code 默认的 **Seti 文件图标主题**（`seti.woff` + 逐语言码位/色调，
   MIT，许可见 `src/assets/fonts/seti-ui-LICENSE.txt`）。它仍然是**上游字体字形**、不是手绘；
-  出口只有 `src/shell/fileicons.ts` 的 `fileIconHtml()`，消费方不得写死码位。
+  出口只有 `src/shell/fileicons.ts` 的 `fileIconHtml()`（按语言标签）与
+  `fileIconHtmlOfFile()`（按文件名：fileNames → fileExtensions 最长后缀 → 语言表，
+  与 VS Code 图标主题同序），消费方不得写死码位。
   九档色调走 `--seti-*`（浅深两套），字号 150% 与 VS Code 图标主题同口径。
   目录/文件夹**不挂图标**：Seti 主题本来就不定义文件夹图标，VS Code 的资源管理器里
   文件夹行只有折叠箭头 + 名字（B370 对齐）；按钮类图标**仍一律 codicon**。

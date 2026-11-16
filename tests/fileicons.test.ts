@@ -107,4 +107,64 @@ describe("标签前置文件类型图标（B57 → B367 Seti）", () => {
     expect(new Set(glyphs).size, "不能退化成同一颗缺省图标").toBeGreaterThanOrEqual(35);
     expect(glyphs.filter((ch) => ch === "E023").length, "缺省图标只覆盖少数语言").toBeLessThan(20);
   });
+
+  it("资源管理器按文件名解析：fileNames → fileExtensions 最长后缀 → 语言表", async () => {
+    const { iconOfFile, fileIconHtml, fileIconHtmlOfFile } = await import("../src/shell/fileicons");
+
+    // 图片 / 视频 / 音频 / 文档 / 压缩包：VS Code Seti 的 fileExtensions 档
+    for (const [name, icon] of [
+      ["cover.png", { ch: "E04C", tone: "purple" }],
+      ["photo.JPG", { ch: "E04C", tone: "purple" }],
+      ["anim.webp", { ch: "E04C", tone: "purple" }],
+      ["clip.mp4", { ch: "E09B", tone: "pink" }],
+      ["clip.MOV", { ch: "E09B", tone: "pink" }],
+      ["song.mp3", { ch: "E005", tone: "purple" }],
+      ["voice.wav", { ch: "E005", tone: "purple" }],
+      ["report.pdf", { ch: "E06D", tone: "red" }],
+      ["notes.doc", { ch: "E0A3", tone: "blue" }],
+      ["table.xlsx", { ch: "E0A4", tone: "green" }],
+      ["data.csv", { ch: "E01E", tone: "green" }],
+      ["archive.zip", { ch: "E0A9", tone: "gray" }],
+      ["lib.jar", { ch: "E0A9", tone: "red" }],
+      ["seti.woff2", { ch: "E033", tone: "red" }],
+      ["book.ipynb", { ch: "E066", tone: "blue" }],
+      ["mod.wasm", { ch: "E09E", tone: "purple" }],
+      ["logo.svg", { ch: "E091", tone: "purple" }],
+      ["favicon.ico", { ch: "E02F", tone: "yellow" }],
+    ] as const) {
+      expect(iconOfFile(name), name).toEqual(icon);
+    }
+
+    // 主题里挂在其它键下的非文本类型也要跟：3D 模型 / 设计稿 / 字节码 / 系统垃圾
+    expect(iconOfFile("scene.obj")).toEqual({ ch: "E091", tone: "blue" });
+    expect(iconOfFile("mockup.psd")).toEqual({ ch: "E06F", tone: "blue" });
+    expect(iconOfFile("App.class")).toEqual({ ch: "E050", tone: "blue" });
+    expect(iconOfFile(".DS_Store")).toEqual({ ch: "E04A", tone: "gray" });
+
+    // 主题没收录、但 LitePad 能预览的同族后缀按同族补齐
+    expect(iconOfFile("scan.bmp")).toEqual({ ch: "E04C", tone: "purple" });
+    expect(iconOfFile("shot.mkv")).toEqual({ ch: "E09B", tone: "pink" });
+    expect(iconOfFile("track.m4a")).toEqual({ ch: "E005", tone: "purple" });
+
+    // fileNames 优先：同名文件按主题给专属字形，而不是后缀那颗
+    expect(iconOfFile("README.md")).toEqual({ ch: "E04D", tone: "blue" });
+    expect(iconOfFile("License.txt")).toEqual({ ch: "E05A", tone: "yellow" });
+    expect(iconOfFile("tsconfig.json")).toEqual({ ch: "E097", tone: "blue" });
+    expect(iconOfFile("yarn.lock")).toEqual({ ch: "E0A6", tone: "blue" });
+    expect(iconOfFile("vite.config.ts")).toEqual({ ch: "E09C", tone: "yellow" });
+
+    // 路径只取最后一段；目录名里的点不参与
+    expect(iconOfFile("C:\\proj\\sub\\cover.png")).toEqual({ ch: "E04C", tone: "purple" });
+    expect(iconOfFile("dir.with.dots/notes.txt")).toBeNull();
+
+    // 主题没有条目 → null，由语言表兜底（文本类与未知后缀都走这条）
+    expect(iconOfFile("notes.md")).toBeNull();
+    expect(iconOfFile("lib.d.ts")).toBeNull();
+    expect(iconOfFile("app.exe")).toBeNull();
+    expect(iconOfFile("")).toBeNull();
+    expect(fileIconHtmlOfFile("notes.md"), "回落口径必须与标签一致").toBe(fileIconHtml("Markdown"));
+    expect(fileIconHtmlOfFile("cover.png")).toBe(
+      '<i class="seti-icon" data-tone="purple" aria-hidden="true">&#xE04C;</i>',
+    );
+  });
 });

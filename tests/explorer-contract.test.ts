@@ -589,11 +589,10 @@ describe("B370/B373 资源管理器行对齐 VS Code 的 Seti 树", () => {
     expect(panel, "根行只剩箭头 + 名字 + 自己那颗刷新键（B424）").toContain(
       "el.append(rt, rn, rootRefreshBtn(root))",
     );
-    // B427：画行抽成了 `rowOf(path, name, …)`（常规树与过滤结果共用一份几何），
-    // 所以这里按它的形参名判 —— 「文件行按**文件名**检测语言」这一条意图不变。
-    expect(panel, "文件行仍走 Seti（按文件名检测语言）").toContain(
-      "fileIconHtml(detectLanguage(name).label)",
-    );
+    // B427：画行抽成了 `rowOf(path, name, …)`（常规树与过滤结果共用一份几何）。
+    // 图标解析改走 `fileIconHtmlOfFile`：VS Code 先查 Seti 的 fileNames / fileExtensions，
+    // 查不到才按语言检测回落 —— 资源管理器里图片/视频/音频与 package/锁文件才有专属字形。
+    expect(panel, "文件行按文件名走 Seti 两档解析").toContain("fileIconHtmlOfFile(name)");
     // 一行只放一格 22px 槽：目录行是箭头、文件行是图标 —— 文件行不再垫空箭头槽。
     expect(panel, "文件行与目录行各自只放一格 22px 槽").toContain(
       'slot.className = kind === "dir" ? "explorer-twisty" : "explorer-glyph"',
