@@ -739,6 +739,11 @@ export interface TabSession {
    */
   kind?: string | null;
   /**
+   * 预览标签（VS Code 的 preview tab）：资源管理器单击打开的那一张，下一次单击会把它
+   * 原位替换。缺省 / `false` = 永久标签（旧会话没有这个键，按永久处理）。
+   */
+  preview?: boolean | null;
+  /**
    * B461：B 档差异的**左栏文件路径**（右栏就是 `path` 那份文档）；A 档与普通标签都是 `null`。
    *
    * 恢复规则：`kind === "diff" && diffLeftPath` ⇒ B 档；`kind === "diff" && !diffLeftPath`

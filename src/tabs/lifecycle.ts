@@ -237,6 +237,8 @@ export function rebuildLayout(): void {
     // B71：右键「左右/上下分屏」与双击标签最大化（splitview 首次构建标签栏时也要有）
     onSplitTab: (panelId, tabId, dir) => splitPanelWithTab(panelId, dir, tabId, false, true),
     onToggleMaximizePanel: (panelId) => toggleMaximizePanel(panelId),
+    // 预览标签双击 = 转正（与 `tabs/render.ts` 的标签条接线同一颗动作）
+    onPinPreview: (tabId) => pinPreviewTab(tabId),
     onOpenTabInNewWindow: (tabId) => void openTabsInNewWindow([tabId]),
     onReturnTabToMain: windowKind === "satellite" ? (tabId) => returnTabToMain(tabId) : undefined,
     // B71：拖标签栏空白处 = 拖整组。并入 = 「关掉这个分屏但指定并入目标」
@@ -341,6 +343,20 @@ export function rebuildLayout(): void {
 // updateRatio 已移到 src/core/layout.ts（与 build 的路径约定对齐，B26 修复）
 
 // ---------------------------------------------------------------- 标签操作
+
+/**
+ * 把一张预览标签转正（VS Code 的 pin）：清掉 `preview` 标记并重绘标签条。
+ *
+ * 三处会调它：双击标签本身、双击资源管理器命中已有实例、编辑预览文档（`main.ts` 的
+ * handleUpdate 置脏时）。转正之后下一次单击会另开新的预览标签，而不是把它换掉。
+ */
+export function pinPreviewTab(tabId: number): void {
+  const t = tabs.get(tabId);
+  if (!t?.preview) return;
+  delete t.preview;
+  renderPanelTabs(t.panelId);
+  scheduleSessionSave();
+}
 
 export function switchTab(panelId: number, tabId: number): void {
   const panel = getPanel(panelId);

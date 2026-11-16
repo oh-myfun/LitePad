@@ -480,8 +480,8 @@ describe("B91 接线（静态断言）", () => {
     expect(main, "落地必须按面板+分区打开（边缘分屏走 splitPanelWithTab）").toMatch(
       /splitPanelWithTab\(target\.panelId, dir, tabId, newFirst, false\)/,
     );
-    expect(main, "doOpen 必须支持指定落点面板").toContain(
-      "async function doOpen(\n  presetPath?: string,\n  encoding?: string,\n  targetPanelId?: number,\n)",
+    expect(main, "doOpen 必须支持指定落点面板").toMatch(
+      /async function doOpen\(\s*presetPath\?: string,\s*encoding\?: string,\s*targetPanelId\?: number,/,
     );
     expect(main, "必须把落点面板的 md 判据传进去").toMatch(/needsChoice\(paths,/);
     expect(main, "判据问的是落点面板的活动文档，不是拖进来的文件名").toContain(

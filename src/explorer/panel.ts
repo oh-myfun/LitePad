@@ -341,6 +341,9 @@ export function setupExplorer(): void {
     explorerFilterInput.focus();
   });
   explorerTree.addEventListener("click", (e) => onRowClick(e as MouseEvent));
+  // 单击开预览标签、双击转正（VS Code 口径）：两次 click 已经把它开出来了，
+  // 这一发只负责命中同一张时把它钉住。
+  explorerTree.addEventListener("dblclick", (e) => onRowDblClick(e as MouseEvent));
   // 多选之后树的选中态不再只有一条：读屏器要知道 Ctrl / Shift 那两种手势存在。
   explorerTree.setAttribute("aria-multiselectable", "true");
   explorerTree.addEventListener("contextmenu", (e) => onRowContext(e as MouseEvent));
@@ -942,7 +945,21 @@ function onRowClick(ev: MouseEvent): void {
   // 与 VS Code 的 list 一致（选中数不为 1 时资源管理器也不会顺手预览）。
   if (additive || range) return;
   if (row.dataset.kind === "dir") void activateDir(path);
-  else void doOpen(path);
+  // 单击 = 预览标签（下一次单击会原位替换它）；双击在 onRowDblClick 里转正。
+  else void doOpen(path, undefined, undefined, { preview: true });
+}
+
+/**
+ * 双击文件 = 永久打开（VS Code 同口径）。单击那一下已经把预览标签开出来了，
+ * 这里命中同一张就由 `doOpen` 的复用分支把它**转正**，不会多开一张同名标签。
+ * 目录不参与：开合由单击的 `activateDir` 负责。
+ */
+function onRowDblClick(ev: MouseEvent): void {
+  if ((ev.target as HTMLElement | null)?.closest("button")) return;
+  const row = rowFromEvent(ev);
+  const path = row?.dataset.path ?? "";
+  if (!path || row?.dataset.kind === "dir") return;
+  void doOpen(path);
 }
 
 async function activateDir(path: string): Promise<void> {

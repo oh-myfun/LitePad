@@ -337,6 +337,13 @@ pub struct TabSession {
     /// B461：B 档差异的左栏文件路径（右栏就是 `path` 那份文档）；A 档与普通标签都是 `None`。
     /// 后端不读它、不校验它，原样透传给前端。
     pub diff_left_path: Option<String>,
+    /// 预览标签（VS Code 的 preview tab）：资源管理器单击打开的那一张，下一次单击会原位
+    /// 替换它（前端画斜体）。
+    ///
+    /// ⚠️ 必须是 `Option<bool>`：旧会话压根没这个键（B392 同一课），收成 `bool` 会被容器级
+    /// `#[serde(default)]` 读成 `false` —— 恰好也是「永久标签」的缺省口径，但「没记过」与
+    /// 「记了不是预览」就分不开了。Rust 只透传，不解释取值。
+    pub preview: Option<bool>,
     /// 这份「有未保存修改」的内容对应的**已保存磁盘版本**（mtime 毫秒 + 字节数）。
     ///
     /// 热退出副本里只有改过之后的正文，恢复出来的脏文档因此没有基线、没法「与上次保存
@@ -367,6 +374,7 @@ impl Default for TabSession {
             scroll_v: None,
             kind: None,
             diff_left_path: None,
+            preview: None,
             disk_mtime_ms: None,
             disk_size: None,
             owner: None,
@@ -599,6 +607,34 @@ mod tests {
             "落盘应为 activePanel：{out}"
         );
         assert!(!out.contains("cursor_line"), "不应再落盘 snake_case：{out}");
+    }
+
+    /// 预览标签（VS Code 的 preview tab）：`preview` 键两头都要活着。
+    ///
+    /// 这个字段纯透传，最容易犯的错是「前端加了、Rust 结构体没加」—— serde 会把多余字段
+    /// 丢掉，落盘一次就没了，于是重启后斜体预览标签悄悄变成永久标签。
+    #[test]
+    fn session_carries_preview_flag() {
+        let json = r#"{
+          "panels": [
+            { "tabs": [
+                { "path": "a.md", "preview": true },
+                { "path": "b.md" }
+            ], "active": 0 }
+          ],
+          "layout": { "kind": "leaf", "panelId": 0 },
+          "activePanel": 0
+        }"#;
+
+        let state: SessionState = serde_json::from_str(json).expect("应能读入 preview");
+        assert_eq!(state.panels[0].tabs[0].preview, Some(true));
+        assert_eq!(
+            state.panels[0].tabs[1].preview, None,
+            "没记过的标签必须保持 None，不能读成 false"
+        );
+
+        let out = serde_json::to_string(&state).unwrap();
+        assert!(out.contains("\"preview\":true"), "落盘要带 preview：{out}");
     }
 
     /// B302：会话要带每格自己的视口位置 `scrollV`（共享坐标 `v`）。

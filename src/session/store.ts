@@ -40,6 +40,8 @@ export interface SessionTabRecord {
   kind: string | null;
   /** B461：B 档左栏的文件路径；A 档与普通标签都是 `null`。 */
   diffLeftPath: string | null;
+  /** 预览标签（VS Code 的 preview tab）：下一次单击会被原位替换。 */
+  preview: boolean;
   /** 这份文档最后一次读/写盘时的磁盘版本（mtime 毫秒 + 字节数）；`null` = 未知。 */
   diskMtimeMs: number | null;
   diskSize: number | null;
@@ -74,6 +76,7 @@ function blankRecord(tabId: number, docId: number): SessionTabRecord {
     scrollV: null,
     kind: null,
     diffLeftPath: null,
+    preview: false,
     diskMtimeMs: null,
     diskSize: null,
   };
@@ -95,6 +98,7 @@ function toDisk(r: SessionTabRecord): TabSession {
     // 「记了是普通标签」在盘上长成一个样，下一次改判据时无从分辨（B392 那一族）。
     kind: r.kind,
     diffLeftPath: r.diffLeftPath,
+    preview: r.preview,
     diskMtimeMs: r.diskMtimeMs,
     diskSize: r.diskSize,
   };
@@ -190,6 +194,12 @@ class SessionStore {
   setSyncMode(tabId: number, on: boolean): void {
     const r = this.recs.get(tabId);
     if (r) r.syncMode = on;
+  }
+
+  /** 预览标签标记（`Tab.preview` 的唯一落盘写点，与 `setTabKind` 同一圈同步）。 */
+  setPreview(tabId: number, on: boolean): void {
+    const r = this.recs.get(tabId);
+    if (r) r.preview = on;
   }
 
   /**

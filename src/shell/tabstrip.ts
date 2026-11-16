@@ -64,6 +64,11 @@ export interface TabViewData {
    * 但「在新窗口打开」「设成比较选择」缺席：卫星载荷是文本快照，比较读的是文本。
    */
   isMedia?: boolean;
+  /**
+   * 预览标签（VS Code 的 preview tab）：资源管理器单击打开、下一次单击会被原位替换。
+   * 画成**斜体**（`.tab-preview`），双击标签本身把它转正。
+   */
+  preview?: boolean;
 }
 
 export interface TabstripCallbacks {
@@ -103,6 +108,11 @@ export interface TabstripCallbacks {
    *  `doubleClickTabToToggleEditorGroupSizes = 'maximize'`，LitePad 无「固定标签」，
    *  双击标签原本空闲）。给了这个回调才会接管双击，否则保持无行为。 */
   onToggleMaximize?: () => void;
+  /**
+   * 双击一张**预览**标签 = 把它转正（VS Code 的 pin）。给预览标签的双击用，
+   * 优先于 `onToggleMaximize` —— 转正之后的双击才回到最大化手势。
+   */
+  onPinPreview?: (tabId: number) => void;
   /** B71 ④：把该标签放到新窗口（多窗口）。主窗口与卫星窗口都可用。 */
   onOpenInNewWindow?: (tabId: number) => void;
   /** B71 ④：把该标签交回主窗口（只在卫星窗口给；主窗口给了没有意义）。 */
@@ -297,7 +307,11 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
   const el = document.createElement("div");
   // tab-dirty 供 CSS 决定槽位里显示 ● 还是空（VS Code 式）：
   // 未保存 → 平时 ●，指针进到关闭区才换 ×；已保存 → 平时留空，悬停标签 / 活动标签给 ×。
-  el.className = "tab" + (t.active ? " tab-active" : "") + (t.dirty ? " tab-dirty" : "");
+  el.className =
+    "tab" +
+    (t.active ? " tab-active" : "") +
+    (t.dirty ? " tab-dirty" : "") +
+    (t.preview ? " tab-preview" : "");
   el.dataset.tabId = String(t.tabId);
   // B123-4（用户裁决）：标签提示只留**一行完整路径** —— 文件名在标签上本来就
   // 看得见，提示里再重复一遍是冗余；路径才是唯一增量信息（同目录同名文件的
@@ -477,11 +491,18 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
     showPopupMenu(el, out);
   });
 
-  // B71：双击标签 = 最大化 / 还原本面板。
-  // ⚠️ 只在 main 传了 onToggleMaximize（= 存在多个面板）时才接管：单面板时双击
-  // 必须保持「什么都不做」，否则会得到一个永远按不出效果的手势。
+  // B71：双击标签 = 最大化 / 还原本面板；**预览标签例外** —— 双击它 = 转正（VS Code 的
+  // pin），转正之后的双击才回到最大化手势。
+  // ⚠️ 只在 main 传了 onToggleMaximize（= 存在多个面板）时才接管最大化：单面板时那双击
+  // 必须保持「什么都不做」，否则会得到一个永远按不出效果的手势。转正不受面板数限制。
   // 不能挂在 host 上（那里的双击是「空白处新建」），也不能阻止冒泡以外的行为。
-  if (cb.onToggleMaximize) {
+  if (t.preview && cb.onPinPreview) {
+    el.addEventListener("dblclick", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      cb.onPinPreview?.(t.tabId);
+    });
+  } else if (cb.onToggleMaximize) {
     el.addEventListener("dblclick", (e) => {
       e.preventDefault();
       e.stopPropagation();

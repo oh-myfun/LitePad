@@ -31,6 +31,7 @@ import {
   closeTabsSequentially,
   closePanelById,
   newUntitled,
+  pinPreviewTab,
 } from "./lifecycle";
 import {
   duplicateTabToPanel,
@@ -99,6 +100,8 @@ export function tabViewDataOf(p: Panel): TabViewData[] {
         // B461 Task 10：搬移那五条与拖拽手势的显隐判据（设计稿 ⑧·3）。
         isDiff: t.kind === "diff",
         isMedia: t.kind === "media",
+        // 预览标签（资源管理器单击打开）：标签文字画斜体，下一次单击原位替换它。
+        preview: t.preview === true,
       };
     });
 }
@@ -185,6 +188,8 @@ export function tabstripCallbacks(p: Panel): TabstripCallbacks {
     onSplitV: (tabId) => splitPanelWithTab(p.panelId, "v", tabId, false, true),
     // 双击标签 = 最大化/还原。仅多面板时给（单面板给了就是个永远没反应的手势）。
     onToggleMaximize: countLeaves(layout) > 1 ? () => toggleMaximizePanel(p.panelId) : undefined,
+    // 双击预览标签 = 转正（不占最大化那一发；转正之后双击才回到最大化）。
+    onPinPreview: (tabId) => pinPreviewTab(tabId),
     // B71 ④：把标签交给新窗口。主窗口与卫星窗口都可用 —— 卫星窗口里再开一个窗口，
     // 对用户来说就是「再拎出去一份」，没有理由禁止。
     onOpenInNewWindow: (tabId) => void openTabsInNewWindow([tabId]),

@@ -1974,6 +1974,12 @@ button:focus-visible {
   white-space: nowrap;
 }
 
+/* 预览标签（VS Code 的 preview tab，资源管理器单击打开的那一张）：标签文字画斜体，
+   提示「下一次单击会把它原位换掉」。双击标签 / 编辑内容即转正，斜体随之消失。 */
+.tab-preview .tab-name {
+  font-style: italic;
+}
+
 /* 文件类型图标（B57 → B367，对应 VS Code 的 `.tab.has-icon`）：
    名字左边一个 16px 槽位，里面是 Seti 文件图标字体（见 shell/fileicons.ts）。 */
 .tab-icon {

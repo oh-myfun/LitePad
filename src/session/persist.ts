@@ -176,6 +176,11 @@ export function refreshSession(): void {
       t.kind === "diff" ? "diff" : t.kind === "media" ? "media" : null,
       t.diff?.leftPath ?? null,
     );
+    // 预览标签跟着落盘：重启后仍画斜体、下一次单击仍会原位替换它。
+    // 脏文档一律落**非**预览 —— 编辑即转正的判据在 `main.ts`，这里把没走到那条路的
+    // 置脏入口（搜索替换 / 资源管理器改名等）也收进同一口径，免得重启后一张带未保存
+    // 内容的标签又变回「下一次单击就换掉」。
+    sessionStore.setPreview(t.tabId, t.preview === true && !d.dirty);
     // B169：同步滚动开关是 `docSyncModes`（按文档记，B152）里的值，退出前刷进记录，
     // 落盘后重开时由 `restoreSession` 写回，让同步键点亮态与退出前一致。
     sessionStore.setSyncMode(t.tabId, docSyncOn(t.docId));

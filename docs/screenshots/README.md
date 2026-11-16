@@ -1,8 +1,9 @@
 # 界面截图
 
-本目录保存五张截图：`main.png` 供根 `README.md` 开头展示（`docs/conventions.md`：README
+本目录保存六张截图：`main.png` 供根 `README.md` 开头展示（`docs/conventions.md`：README
 使用者向，开头只放一张 `main.png`）；`diff.png` 展示差异编辑器；`html.png` 展示 HTML 的
-源码 / 预览切换；`media.png` 展示图片预览；`audio.png` 展示音频预览。
+源码 / 预览切换；`media.png` 展示图片预览；`audio.png` 展示音频预览；`preview-tab.png`
+展示资源管理器单击打开的预览标签（斜体）。
 图片由 `scripts/capture-screenshots.py` 驱动**真实运行的 LitePad** 抓取，不含手绘、拼接或后期修饰。
 
 ## ⚠️ 维护约定（硬性）
@@ -10,7 +11,8 @@
 **任何会改变界面观感的改动，必须在同一个提交里同步刷新 `main.png`；差异编辑器（行内字符色、
 行号槽底色、记号槽、右缘概览、缺口斜纹）有变化时同时刷新 `diff.png`；HTML 预览（iframe 渲染、
 相对资源加载）有变化时同时刷新 `html.png`；图片 / 视频 / 音频预览（媒体面、工具条、棋盘底）有变化时
-同时刷新 `media.png` 与 `audio.png`。**
+同时刷新 `media.png` 与 `audio.png`；预览标签（标签文字斜体、单击复用）有变化时同时刷新
+`preview-tab.png`。**
 
 需要刷新的情形包括但不限于：
 
@@ -25,29 +27,32 @@
 
 ## 当前截图
 
-| 文件        | 内容                                                                                                                                              | 配方    |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `main.png`  | 主界面：左右分屏，左侧 Markdown 源码（三个标签）+ 右侧实时预览（深色主题）                                                                        | `main`  |
-| `diff.png`  | 差异编辑器：`before.ts ↔ after.ts`，含改行、纯插入（左栏斜纹）、纯删除（右栏斜纹）、行号槽记号、中间回退列与右缘差异概览                          | `diff`  |
-| `html.png`  | HTML 预览：左侧 `preview.html` 源码 + 右侧沙箱 iframe 渲染，外链 `preview.css` / `preview.js` / `logo.svg` 证明相对样式、脚本与图片按文档目录加载 | `html`  |
-| `media.png` | 图片预览：标签栏里一张 720×460 的 PNG（小图按 1:1 摆，四周露出棋盘底），媒体面工具条（文件名 / 真实尺寸 / 适应窗口 / 1:1）                        | `media` |
-| `audio.png` | 音频预览：标签栏里一段 8 秒 WAV，舞台居中一颗原生音频控件（播放 / 进度 / 音量），工具条显示文件名与大小                                           | `audio` |
+| 文件              | 内容                                                                                                                                              | 配方          |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| `main.png`        | 主界面：左右分屏，左侧 Markdown 源码（三个标签）+ 右侧实时预览（深色主题）                                                                        | `main`        |
+| `diff.png`        | 差异编辑器：`before.ts ↔ after.ts`，含改行、纯插入（左栏斜纹）、纯删除（右栏斜纹）、行号槽记号、中间回退列与右缘差异概览                          | `diff`        |
+| `html.png`        | HTML 预览：左侧 `preview.html` 源码 + 右侧沙箱 iframe 渲染，外链 `preview.css` / `preview.js` / `logo.svg` 证明相对样式、脚本与图片按文档目录加载 | `html`        |
+| `media.png`       | 图片预览：标签栏里一张 720×460 的 PNG（小图按 1:1 摆，四周露出棋盘底），媒体面工具条（文件名 / 真实尺寸 / 适应窗口 / 1:1）                        | `media`       |
+| `audio.png`       | 音频预览：标签栏里一段 8 秒 WAV，舞台居中一颗原生音频控件（播放 / 进度 / 音量），工具条显示文件名与大小                                           | `audio`       |
+| `preview-tab.png` | 预览标签：活动标签 `findbar.ts` 文字为斜体（资源管理器单击打开），旁边一张常规标签作对照                                                          | `preview-tab` |
 
 约定（与配方一致，改配方就改这里）：1600×1000、深色主题。`main` 的左面板活动标签是
 `test-data/完整样例.md` 且光标在第 8 行、右面板同一文件的预览；`diff` 的两个演示文件由脚本按顶部常量
 重建到 `.tmp/shot/demo/`（`before.ts` / `after.ts`），不依赖仓库里某个恰好改过几行的文件；
 `html` 同样把 `preview.html` / `preview.css` / `preview.js` / `logo.svg` 重建到 `.tmp/shot/demo/`；
 `media` 的 `cover.png` 由脚本用标准库现画（仓库里不存二进制素材）；`audio` 的 `tone.wav` 同样由
-标准库写出一段 8 秒正弦波。
+标准库写出一段 8 秒正弦波；`preview-tab` 用会话里的 `preview: true` 还原出斜体标签
+（与「资源管理器单击」落到盘上的是同一格），不靠鼠标去点树里那一行。
 
 ## 怎么拍
 
 ```sh
-bash scripts/shot.sh                 # 拍全部配方（main + diff + html + media + audio；唯一入口，自带所需环境）
+bash scripts/shot.sh                 # 拍全部配方（main + diff + html + media + audio + preview-tab；唯一入口，自带所需环境）
 bash scripts/shot.sh diff            # 只重拍差异编辑器
 bash scripts/shot.sh html            # 只重拍 HTML 预览
 bash scripts/shot.sh media           # 只重拍图片预览
 bash scripts/shot.sh audio           # 只重拍音频预览
+bash scripts/shot.sh preview-tab     # 只重拍预览标签
 bash scripts/shot.sh --list          # 看有哪些配方
 bash scripts/shot.sh --size 1440x900
 bash scripts/shot.sh --inset 1       # 圆角混进桌面时四边各切 1px
@@ -104,7 +109,7 @@ AdditionalBrowserArguments` 写不进去（`New-Item` 报成功但 `Test-Path` �
 
 ## 拍完检查
 
-- `git status docs/screenshots/` 只应有这次重拍那张（`main.png` / `diff.png` / `html.png` / `media.png` / `audio.png`）的改动；
+- `git status docs/screenshots/` 只应有这次重拍那张（`main.png` / `diff.png` / `html.png` / `media.png` / `audio.png` / `preview-tab.png`）的改动；
 - 打开看一眼：**四边没有桌面背景**、没有鼠标、没有半截别的窗口、内容不是全黑；
 - 真实配置未被改写（脚本会打印隔离目录与「真实配置从未被改写」）。
 

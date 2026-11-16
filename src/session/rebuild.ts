@@ -342,6 +342,8 @@ export async function restoreSession(): Promise<boolean> {
         registerDoc(doc);
       }
       const inst = makeMediaInstance(doc, panelId);
+      // 预览标签（单击打开的那一类）：重启后仍是斜体，下一次单击仍会替换它。
+      if (st.preview === true) inst.preview = true;
       tabs.set(inst.tabId, inst);
       return inst;
     }
@@ -389,6 +391,9 @@ export async function restoreSession(): Promise<boolean> {
     const inst = diffSpec
       ? makeDiffInstance(doc, panelId, src.text, diffSpec)
       : makeInstance(doc, panelId, src.text);
+    // 预览标签（单击打开的那一类）。差异标签不参与预览态 —— 它不会从资源管理器单击打开，
+    // 落盘也不会写出这种组合，这里挡住只防旧数据被误读成「可替换的差异面」。
+    if (st.preview === true && !diffSpec) inst.preview = true;
     tabs.set(inst.tabId, inst);
     // 恢复预览视图模式（旧版 "split" 映射回 source；B399 起 Markdown 多一档 "edit"）
     if (

@@ -348,6 +348,10 @@ function handleUpdate(view: EditorView, update: ViewUpdate): void {
       const shouldDirty = isDirtyVsBaseline(doc, now);
       if (shouldDirty !== doc.dirty) {
         doc.dirty = shouldDirty;
+        // VS Code 口径：预览标签一旦被编辑就转正 —— 否则下一次单击会把它连带未保存
+        // 内容一起原位替换掉。清标记放这里，下面那发 renderPanelTabs 一并画出效果
+        // （`session/persist` 另有同口径兜底，覆盖不经过本函数的置脏入口）。
+        if (shouldDirty) tab.preview = undefined;
         // 刚转干净：备份区那份副本现在存的是「与磁盘一致的内容」，留着会让下次启动
         // 拿它冒充未保存修改（与保存成功后丢弃副本是同一个道理）。
         if (!shouldDirty) discardBackupFor(doc);

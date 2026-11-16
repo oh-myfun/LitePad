@@ -121,6 +121,11 @@ def media_tab(path, doc_id=1):
     return dict(tab(path, "source", 1, doc_id), kind="media")
 
 
+def preview_tab(path, view="source", line=1, doc_id=1):
+    """预览标签（资源管理器单击打开的那一张）：标签文字斜体，下一次单击会被原位替换。"""
+    return dict(tab(path, view, line, doc_id), preview=True)
+
+
 # 差异配方的演示文件：写进项目内 `.tmp/shot/demo`，每次重拍都重建 —— 内容即真相，
 # 不依赖仓库里某个恰好「改过几行」的文件。左边 before.ts、右边 after.ts，四类块都齐：
 #   改行（两侧同色）、纯插入（左栏斜纹）、纯删除（右栏斜纹）、函数整体替换。
@@ -438,6 +443,15 @@ RECIPES = [
         "files": {"tone.wav": demo_wav},
         "session": lambda: single_session(
             [tab(MD, "source", 8, 1), media_tab(MEDIA_AUDIO, 2)], active=1),
+    },
+    {
+        "name": "preview-tab",
+        "what": "预览标签：资源管理器单击打开的那张（标签文字斜体），下一次单击会被原位替换",
+        "theme": "dark",
+        # 预览态由会话里的 `preview: true` 还原 —— 与单击打开后落盘的是同一格。
+        # 不用鼠标去点资源管理器树里那一行：坐标会随目录内容漂移，配方就脆了。
+        "session": lambda: single_session(
+            [tab(MD, "source", 8, 1), preview_tab(TS, "source", 40, 2)], active=1),
     },
 ]
 

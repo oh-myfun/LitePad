@@ -15,6 +15,7 @@ import {
   docs,
   isDark,
   isWrap,
+  loanedDocIds,
   showInvisibles,
   themeFamily,
   panels,
@@ -22,7 +23,9 @@ import {
   tabs,
   setActivePanelId,
   setSuppressDirty,
+  windowKind,
   type Doc,
+  type Panel,
   type Tab,
 } from "../core/app-state";
 import { claimVisibleHere } from "../sync-scroll/wire";
@@ -52,9 +55,12 @@ import {
 } from "../doc-model";
 import { normalizeSizeClass, perfProfileForDoc } from "../editor/perf";
 import { makeTabState } from "../editor/editor";
-import { diffSurfaceOf } from "../diff/surface";
+import { diffSurfaceOf, refreshDiffSurfaces } from "../diff/surface";
+import { freezeDiffLeftDoc } from "../diff/model";
+import { disposeMediaFace } from "../preview/mediaPreview";
 import {
   checkEncodable,
+  closeTab as ipcCloseTab,
   isUnicodeEncoding,
   openFile,
   openMedia,
@@ -72,12 +78,13 @@ import {
   applyPanelMode,
   freshTextOfDoc,
   moveTabToStrip,
+  pinPreviewTab,
   rebuildLayout,
   renderPanelTabs,
   splitPanelWithTab,
   switchTab,
 } from "../tabs";
-import { LOSSY_ABORT, refreshAll, showMessage } from "../ui";
+import { LOSSY_ABORT, broadcastDocPresence, refreshAll, showMessage } from "../ui";
 import { OPEN_FILTERS, TEXT_FILTERS } from "./filters";
 import { mediaKindOf } from "./media";
 import { reclaimRemoted } from "../multiwindow/windows";
@@ -155,11 +162,68 @@ function rebuildDocInstances(doc: Doc, text: string, keepCursor = false): void {
   }
 }
 
+/** 打开选项。`preview: true` = 资源管理器单击那一路：开成可被下一次单击替换的预览标签。 */
+interface OpenOptions {
+  preview?: boolean;
+}
+
+/**
+ * 让出一格给新的预览标签：把面板里现有那张预览标签摘掉，返回它原来的位置。
+ *
+ * VS Code 的 `EditorGroupModel.doOpenPreviewEditor` 就是这个动作：同一组至多一张预览，
+ * 新的一张**原位**顶替旧的一张（不是排到末尾）。
+ *
+ * 为什么不用 `closeTabById`：那条链会为「面板被关空」补一张未命名标签，而这里紧接着
+ * 就要在同一格开新文件，补出来的标签纯属闪一下；保存确认也不需要 —— 预览标签一旦被
+ * 编辑就转正（`main.ts` 的 handleUpdate），留在这里的必定是干净的。
+ */
+function takePreviewSlot(panel: Panel): number {
+  const old = panel.tabs.map((id) => tabs.get(id)).find((t): t is Tab => !!t?.preview);
+  if (!old) return -1;
+  const doc = docs.get(old.docId);
+  // 脏文档绝不能让位：编辑即转正那条路漏了的话（搜索替换 / 资源管理器改名等别的置脏
+  // 入口），这里再挡一次 —— 代价只是这次不替换，换成未保存内容被顶掉就不可接受了。
+  if (doc?.dirty) return -1;
+  const idx = panel.tabs.indexOf(old.tabId);
+  if (old.kind === "media") disposeMediaFace(panel, old.tabId);
+  panel.tabs = panel.tabs.filter((id) => id !== old.tabId);
+  tabs.delete(old.tabId);
+  if (panel.viewTabId === old.tabId) panel.viewTabId = null;
+  if (panel.activeTabId === old.tabId) panel.activeTabId = panel.tabs[0] ?? -1;
+  // 这份文档在本窗口不再可见 → 别的窗口据此收起同步键（与 closeTabById 同口径）。
+  broadcastDocPresence();
+  if (doc && instancesOfDoc(doc.tabId).length === 0) {
+    // 与关闭标签同款：差异左栏若正显示这份文档，先冻成只读快照，别留一颗写不到
+    // 任何地方的幽灵视图。
+    if (freezeDiffLeftDoc(doc)) refreshDiffSurfaces();
+    discardBackupFor(doc);
+    docs.delete(doc.tabId);
+    // B161 同款：Rust 文档是进程级的，这一份可能正挂在别的窗口上 —— 那种情况只摘本地，
+    // 不替别人关。正常预览（单窗口）走下面那一支，不在 Rust 侧留下没人认领的文档。
+    if (windowKind !== "satellite" && !loanedDocIds.has(doc.tabId)) {
+      void ipcCloseTab(doc.tabId).catch((err) => {
+        logger.warn("open", `关闭被替换的预览文档失败：${String(err)}`);
+      });
+    }
+  }
+  return idx;
+}
+
+/** 把刚 attach 的标签挪到预览标签留下的位置（`slot < 0` = 不挪，排到末尾）。 */
+function placeTabAt(panel: Panel, tabId: number, slot: number): void {
+  if (slot < 0) return;
+  const at = panel.tabs.indexOf(tabId);
+  if (at < 0) return;
+  panel.tabs.splice(at, 1);
+  panel.tabs.splice(Math.min(slot, panel.tabs.length), 0, tabId);
+}
+
 /** 打开文件。targetPanelId 指定落点面板（文件拖入分屏用）；返回新开/激活的 tabId。 */
 async function doOpen(
   presetPath?: string,
   encoding?: string,
   targetPanelId?: number,
+  opts?: OpenOptions,
 ): Promise<number | null> {
   let target = presetPath;
   if (!target) {
@@ -174,7 +238,7 @@ async function doOpen(
 
   // 图片 / 视频不走文本管线（`open_file` 会读全部字节并拒绝二进制）。
   // 判定只按扩展名，复用与路径归一化在 Rust 的 `open_media` 里做。
-  if (mediaKindOf(target)) return openMediaTab(target, targetPanelId);
+  if (mediaKindOf(target)) return openMediaTab(target, targetPanelId, opts);
 
   try {
     const file = await openFile(target, encoding ?? null);
@@ -199,6 +263,9 @@ async function doOpen(
       const instPanel = inst ? panelOfTab(inst.tabId) : undefined;
       // 只有「本来就开在这个面板」或「压根没指定落点」才算复用成功
       if (inst && instPanel && (inTarget !== undefined || targetPanelId === undefined)) {
+        // 双击 / 回车这类「永久打开」命中一张预览标签 ⇒ 转正，而不是另开一张
+        // （VS Code 同口径：pin 已有的那个，不再多出一张同名标签）。
+        if (opts?.preview !== true) pinPreviewTab(inst.tabId);
         setActivePanelId(instPanel.panelId);
         switchTab(instPanel.panelId, inst.tabId);
         rebuildLayout();
@@ -244,7 +311,12 @@ async function doOpen(
     markDiskVersion(doc, file.mtimeMs, file.size);
     registerDoc(doc);
     const tab = makeInstance(doc, panel.panelId, file.text);
+    // 预览打开：同一面板至多一张预览标签，新的一张原位顶替旧的一张。
+    const preview = opts?.preview === true;
+    const slot = preview ? takePreviewSlot(panel) : -1;
+    if (preview) tab.preview = true;
     attachTabToPanel(tab, panel);
+    placeTabAt(panel, tab.tabId, slot);
     if (panel.panelId !== activePanelId) setActivePanelId(panel.panelId);
     // 重建挂载（应用 md 视图模式 + 预览）并聚焦
     rebuildLayout();
@@ -281,7 +353,11 @@ async function doOpen(
  * 复用口径与文本一致：同一路径已在标签中 ⇒ 激活它；指定了落点面板而它开在别处时，
  * 在落点再开一个同源实例（媒体没有正文，多实例不会分叉）。
  */
-async function openMediaTab(path: string, targetPanelId?: number): Promise<number | null> {
+async function openMediaTab(
+  path: string,
+  targetPanelId?: number,
+  opts?: OpenOptions,
+): Promise<number | null> {
   try {
     const file = await openMedia(path);
     noteOpened(file.path);
@@ -294,6 +370,7 @@ async function openMediaTab(path: string, targetPanelId?: number): Promise<numbe
       const inst = inTarget ?? all[0];
       const instPanel = inst ? panelOfTab(inst.tabId) : undefined;
       if (inst && instPanel && (inTarget !== undefined || targetPanelId === undefined)) {
+        if (opts?.preview !== true) pinPreviewTab(inst.tabId);
         setActivePanelId(instPanel.panelId);
         switchTab(instPanel.panelId, inst.tabId);
         rebuildLayout();
@@ -318,7 +395,12 @@ async function openMediaTab(path: string, targetPanelId?: number): Promise<numbe
       registerDoc(doc);
     }
     const tab = makeMediaInstance(doc, panel.panelId);
+    // 预览打开：与文本同一口径 —— 同一面板至多一张预览，原位顶替。
+    const preview = opts?.preview === true;
+    const slot = preview ? takePreviewSlot(panel) : -1;
+    if (preview) tab.preview = true;
     attachTabToPanel(tab, panel);
+    placeTabAt(panel, tab.tabId, slot);
     if (panel.panelId !== activePanelId) setActivePanelId(panel.panelId);
     rebuildLayout();
     refreshAll();

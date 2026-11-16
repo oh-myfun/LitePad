@@ -143,6 +143,8 @@ export interface SplitviewCallbacks {
   ) => void;
   /** B71：最大化 / 还原该面板（双击标签、操作栏「还原」按钮都走这里） */
   onToggleMaximizePanel?: (panelId: number) => void;
+  /** 双击**预览**标签 = 转正（VS Code 的 pin；见 tabstrip.ts 的同名字段）。 */
+  onPinPreview?: (tabId: number) => void;
   /** B71 ④：把标签放到新窗口 / 从卫星窗口交回主窗口 */
   onOpenTabInNewWindow?: (tabId: number) => void;
   onReturnTabToMain?: (tabId: number) => void;
@@ -609,9 +611,11 @@ function buildPanel(
     onSplitH: (tabId) => cb.onSplitTab?.(panelId, tabId, "h"),
     onSplitV: (tabId) => cb.onSplitTab?.(panelId, tabId, "v"),
     // B71：双击标签 = 最大化/还原本面板（对标 VS Code 的
-    // doubleClickTabToToggleEditorGroupSizes = 'maximize'；LitePad 无「固定标签」，
-    // 双击标签本来没有其它用途）。仅多面板时 main 才会传这个回调。
+    // doubleClickTabToToggleEditorGroupSizes = 'maximize'）。仅多面板时 main 才会传这个
+    // 回调；**预览标签**的双击由下面那颗接管去转正，两回事。
     onToggleMaximize: () => cb.onToggleMaximizePanel?.(panelId),
+    // 预览标签双击 = 转正；条件转发（没接这一路时 tabstrip 退回最大化手势）
+    onPinPreview: cb.onPinPreview ? (tabId) => cb.onPinPreview?.(tabId) : undefined,
     onOpenInNewWindow: cb.onOpenTabInNewWindow
       ? (tabId) => cb.onOpenTabInNewWindow?.(tabId)
       : undefined,
