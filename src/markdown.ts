@@ -4,8 +4,9 @@
 // togglePreviewEdit / openPreviewToSide）、装饰面（CM6 decorations）的装卸与锁、
 // 视图模式按钮呈现（refreshViewModeButton）、路径工具（dirname）。
 //
-// B412：旧的派生 DOM 预览臂已整体删除 —— 除源码档外只有这一张面：
+// B412：Markdown 的派生 DOM 预览臂已整体删除 —— 除源码档外只有这一张面：
 // `preview`（禁编辑）与 `edit`（可写）是同一颗 view、同一张装饰脸，差别只在锁。
+// HTML 的预览面另走 `preview/htmlPreview` 的 iframe（同一档位出口，不同 DOM 面）。
 //
 // 只依赖 core/* + ui + shell/* + doc-model + editor/* + preview/*，对 main.ts 零反向依赖。
 
@@ -20,7 +21,7 @@ import {
   type Tab,
 } from "./core/app-state";
 import { activeTab, docOf, getPanel } from "./core/panels";
-import { isMdTab, makeInstance } from "./doc-model";
+import { isHtmlTab, isMdTab, isPreviewableTab, makeInstance } from "./doc-model";
 import { markActivePanel, sbLang } from "./ui";
 import { flippedTaskMark, taskLineAt } from "./markdown/tasks";
 import { rightNeighborOf } from "./core/layout";
@@ -30,6 +31,7 @@ import { scheduleSessionSave } from "./session/session";
 import { EditorState } from "@codemirror/state";
 import { previewFace, previewLock } from "./preview/wysiwyg";
 import { shouldMountPreview } from "./preview/eligibility";
+import { applyHtmlPreviewFace } from "./preview/htmlPreview";
 import { wysiwygInstalled } from "./preview/livePreview";
 import { assetBase, setAssetBase } from "./preview/assets";
 import { gutterDiffBaseline, refreshGutterDiff } from "./editor/gutterDiff";
@@ -67,8 +69,9 @@ import { syncFindBarReplaceable } from "./find/findbar";
 function applyPreviewFace(panel: Panel, tab: Tab | undefined, mode: string): void {
   const handle = panel.view;
   if (!handle || !tab || panel.viewTabId !== tab.tabId) return;
-  // B412：只剩这一张面。非 md / 不具备条件的文档在 `shouldMountPreview` 之外，
-  // 而调用方只在 md 标签上问到这里（applyPanelMode 已按 isMdTab 判过）。
+  // B412：只剩这一张面。非 md / 不具备条件的文档在 `shouldMountPreview` 之外；
+  // HTML 预览走另一张 iframe 面（preview/htmlPreview），这里对它 `on=false`，
+  // 只负责把之前可能挂着的 Markdown 装饰面与锁收干净。
   //
   // B399：两种所见即所得档（`preview` / `edit`）是**同一张脸** —— 都装 `previewFace()`，
   // 差别只在锁。用户口径：「预览模式只是禁止编辑的编辑模式」。
@@ -143,16 +146,18 @@ export function refreshGutterDiffBaselines(): void {
   }
 }
 
-/** 应用面板视图模式：源码 / 预览 / 编辑（非 md 标签强制源码）。 */
+/** 应用面板视图模式：源码 / 预览 / 编辑（非可预览标签强制源码）。 */
 function applyPanelMode(panel: Panel): void {
   if (!panel.bodyEl) return;
   const tab = tabs.get(panel.activeTabId);
-  const mode = tab && isMdTab(tab) ? tab.viewMode : "source";
+  const mode = tab && isPreviewableTab(tab) ? tab.viewMode : "source";
   panel.bodyEl.classList.remove("mode-source", "mode-preview");
   // B399：`preview` 与 `edit` 是同一张脸（装饰面），DOM 上都落 `mode-preview`；
   // 两档的差别只在 `tab.comps.lock`（见 applyPreviewFace）。
   panel.bodyEl.classList.add("mode-" + (mode === "edit" ? "preview" : mode));
   applyPreviewFace(panel, tab, mode);
+  // HTML 的预览不是那颗 view 的装饰脸：它是一张独立的 iframe 面，同一档位出口装卸。
+  applyHtmlPreviewFace(panel, tab, mode);
   // B399：页面内那颗悬浮的「预览 ↔ 编辑」切换键，跟着同一份档位状态刷
   syncPreviewEditFab(panel, tab, mode);
   renderPanelOps(panel.panelId);
@@ -200,7 +205,7 @@ function dirname(p: string): string {
 }
 
 /**
- * 切换 Markdown 源码 / 预览（Ctrl+/、工具栏与菜单共用）。
+ * 切换源码 / 预览（Markdown 三档、HTML 两档；Ctrl+/、工具栏与菜单共用）。
  *
  * ⚠️ B228：可以**指定**切哪一份标签，不指定才退回活动标签。切换的落点永远是
  * 「这份标签**所在的那块面板**」，而不是「全局活动面板」 —— 标签区那颗键点的是它自己
@@ -210,7 +215,7 @@ function dirname(p: string): string {
  */
 function toggleViewMode(target?: Tab): void {
   const tab = target ?? activeTab();
-  if (!tab || !isMdTab(tab)) return;
+  if (!tab || !isPreviewableTab(tab)) return;
   const panel = getPanel(tab.panelId);
   if (!panel || !panel.bodyEl) return;
   // B399：三档之后这颗键仍按 InkNote 的口径「源码 ↔ 预览」：
@@ -230,6 +235,12 @@ function toggleViewMode(target?: Tab): void {
   // 注释里写的「必须赶在换类之前读」是这个意思，但代码以前只把读放在了换**类**之前、
   // 却排在换**状态**之后，于是这句话一直是空的。
   const keepV = readVisibleV(panel);
+  const htmlPreview = isHtmlTab(tab);
+  // HTML 预览是独立 iframe，没有编辑器滚动面（`readVisibleV` 在预览档恒 null）：
+  // 进档前先把源码位置记在标签上，出档时据此把编辑器扶回原处；Markdown 两档共用
+  // 同一颗 view，仍走下面 keepV 的同栈接力。
+  if (htmlPreview && keepV !== null) tab.scrollV = keepV;
+  const landingV = htmlPreview ? (toPreview ? null : tab.scrollV) : keepV;
   tab.viewMode = toPreview ? "preview" : "source";
   try {
     applyPanelMode(panel);
@@ -241,7 +252,7 @@ function toggleViewMode(target?: Tab): void {
     // 刚现形的那一侧此刻持有的是它自己的残值：预览被 `display:none` 归零（弹回文档开头），
     // 源码被上面那发 `focus()` 滚到**光标**那一行 —— 两者都不是用户切走之前看到的那一行，
     // 这就是「预览模式切换位置跳变」。扶回同一个 v，并同栈向账本认领这一写。
-    if (keepV !== null) landVisibleSideAtV(panel, keepV);
+    if (landingV !== null) landVisibleSideAtV(panel, landingV);
     // 显隐变了 ⇒ 在册的滚动面也跟着变。这条路以前一次都不重注册：切换后在册的还是
     // **被藏起来**那一侧，它 `getV()` 恒 1.0、现形时又补发滚动 ⇒ 幽灵锚点把对栏拽走
     //（B285 那一族）。
@@ -397,7 +408,7 @@ function syncPreviewEditFab(panel: Panel, tab: Tab | undefined, mode: string): v
 }
 
 /**
- * 把当前 Markdown 文档的预览开到**右侧分屏**（B224，VS Code `markdown.showPreviewToSide`）。
+ * 把当前可预览文档的预览开到**右侧分屏**（B224，VS Code `markdown.showPreviewToSide`）。
  *
  * 落点（用户拍定）：右侧已有面板就**复用**它 —— 那边已有这份文档就接管那一份，没有就
  * 复制一份同源实例塞进去；右侧没有面板才在右边新开一个分屏。
@@ -410,7 +421,7 @@ function syncPreviewEditFab(panel: Panel, tab: Tab | undefined, mode: string): v
 function openPreviewToSide(panelId: number): void {
   const p = getPanel(panelId);
   const tab = p ? tabs.get(p.activeTabId) : undefined;
-  if (!p || !tab || !isMdTab(tab)) return; // 键只在 md 活动标签上出现，这里只是兜底
+  if (!p || !tab || !isPreviewableTab(tab)) return; // 键只在可预览活动标签上出现，这里只是兜底
   const doc = docs.get(tab.docId);
   if (!doc) return;
   // 源实例快照回写（与 splitPanelWithTab 的 copy 分支同口径）：
@@ -424,7 +435,7 @@ function openPreviewToSide(panelId: number): void {
     splitPanelWithTab(panelId, "h", tab.tabId, false, true);
     const np = panels.get(activePanelId);
     const nt = np ? tabs.get(np.activeTabId) : undefined;
-    if (np && nt && isMdTab(nt)) {
+    if (np && nt && isPreviewableTab(nt)) {
       nt.viewMode = "preview";
       // B228：把「预览分屏是活动面板」这件事显式落一次。splitPanelWithTab 里已经
       // 设过 activePanelId，但那份活动态是**分屏那一刻**的；这里再标一次，用户要的

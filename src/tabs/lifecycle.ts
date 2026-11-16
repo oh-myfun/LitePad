@@ -403,15 +403,11 @@ export function switchTab(panelId: number, tabId: number): void {
   applyPanelMode(panel);
   // B181：类切完**再补一次焦点** —— 否则「从预览态的标签切走」之后编辑器没有焦点。
   //
-  // ⚠️ 上面那次 `view.focus()` 排在 `applyPanelMode` **之前**，而 `mode-preview` 会把
-  //    `.panel-editor` 设成 `display:none`（preview.css）—— 上一份标签是预览态时，
-  //    那一刻编辑器还是隐藏的，对隐藏元素调 `contentDOM.focus()` **静默失败**：
-  //    不报错、也不聚焦。等 `applyPanelMode` 把类切回 `mode-source`，编辑器可见了
-  //    却没人聚焦 ⇒ 用户看到「光标消失了、按方向键没反应、得先点一下编辑区才能输入」。
-  //
-  // ⚠️ 那第一次 focus **不能删也不能挪**：它紧跟着 setState —— 换完文档立刻把焦点
-  //    拉回编辑器（B145 立下的顺序：先聚焦、后切视图模式）。所以这里是**补第二次**
-  //    —— 此刻类已切好、编辑器可见，`focus()` 才真能拿到焦点。
+  // ⚠️ 上面那次 `view.focus()` 排在 `applyPanelMode` **之前**：Markdown 的预览档与源码共用
+  //    同一颗 view（编辑器不会被藏），但 HTML 预览档会把 `.panel-editor` 设成
+  //    `display:none`（preview.css）—— 上一份标签是 HTML 预览态时，那一刻对隐藏元素调
+  //    `contentDOM.focus()` **静默失败**。所以这里是**补第二次**：此刻档位类已切好，
+  //    编辑器该可见时已经可见；若新标签仍是 HTML 预览档，这一发是无副作用的空操作。
   //    `focus()` 内部走 `focusPreventScroll`（`preventScroll: true`，拿不到就回滚滚动栈），
   //    不会把刚钉好的视口位置顶掉；已经聚焦过时它就是个空操作。
   view.focus();
@@ -424,13 +420,11 @@ export function switchTab(panelId: number, tabId: number): void {
   // 用户滚的 ⇒ 同 docId 的其它视口跟着跳回顶部。这就是 B254/B277/B288 那一路的根。
   //
   // `landVisibleSideAtV` 扶的是**现在看得见那一侧**，并向账本同栈登记（意图 + 真实落点）。
-  // 两端都必须按可见侧走：只写编辑器的话，接班标签若是预览态，`applyPanelMode` 刚把
-  // `.panel-editor` 藏起来 ⇒ 那一写是空操作，预览停在 `setBlocks` 复原出来的 0 ⇒
-  // 「预览态标签之间互切，每次都没回到自己那一份的位置」（台子 S19 / 真机 视图=0）。
+  // HTML 预览档没有编辑器滚动面（`sideOfPanel` 答 preview，landing 直接跳过，iframe 自管
+  // 滚动）；Markdown 的预览 / 编辑档就是编辑器本身，照常按 `scrollV` 落位。
   landVisibleSideAtV(panel, tab.scrollV);
-  // 「切标签位置跳」的判定证据必须取在**落位之后**。上一版这条诊断打在 `applyPanelMode`
-  // 之前，那会儿这一格还在旧文档旧侧上 ⇒ 预览态恒打 `视图=0`，连续两轮把它读成
-  // 「修复没生效」，其实是探针放错了地方。
+  // 「切标签位置跳」的判定证据必须取在**落位之后**：这条诊断排在 `applyPanelMode` 之前时
+  // 读到的还是旧文档旧侧，连续两轮把「修复没生效」误判成真。
   logViewport("切换 · 落位后", panel);
   syncTrace(`切入 tab=${tab.tabId} 意图=${tab.scrollV.toFixed(2)}`);
   if (panelId === activePanelId) {

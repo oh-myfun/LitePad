@@ -52,11 +52,10 @@ export interface Tab {
   comps: TabCompartments;
   state: EditorState;
   /**
-   * Markdown 视图（仅 .md 有效），三档（B399）：
-   *   · `source`  源码模式（无装饰，可写）；
-   *   · `preview` 预览模式（装饰面 + 禁止编辑，与 VS Code 的 Markdown 预览同义）；
-   *   · `edit`    编辑模式（同一张装饰面，只是把锁解开）。
-   * 后两档是**同一张脸**：DOM 上都落 `mode-preview`，差别只在 `tab.comps.lock`。
+   * 视图档位（仅可预览文档有效）：
+   *   · Markdown 三档（B399）：`source` 源码 / `preview` 装饰面禁编辑 / `edit` 同一张脸解锁；
+   *   · HTML 两档：`source` 源码 / `preview` 网页渲染面（iframe，见 preview/htmlPreview）。
+   * Markdown 的后两档是**同一张脸**：DOM 上都落 `mode-preview`，差别只在 `tab.comps.lock`。
    */
   viewMode: "source" | "preview" | "edit";
   /**

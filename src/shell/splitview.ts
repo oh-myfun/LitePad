@@ -70,14 +70,14 @@ export interface PanelRenderData {
   /** B71：被最大化挤成 0 的那一侧（仍留在 DOM 里，只是不占地方） */
   collapsed?: boolean;
   /**
-   * B224：该面板**活动标签**是 Markdown —— 只有它为真，标签区右侧才挂那两颗
-   * Markdown 键（侧边预览 + 源码/预览切换）。非 md 面板一颗都不给（用户点名隐藏）。
+   * B224：该面板**活动标签可预览**（Markdown 或静态 HTML）—— 只有它为真，标签区右侧
+   * 才挂那两颗键（侧边预览 + 源码/预览切换）。其余类型一颗都不给（用户点名隐藏）。
    * ⚠️ 这个标记由调用方**只给活动面板**（VS Code 的 editor/title 动作也只出现在
    * 活动组），分屏时才不会两排都挂着同样的键。
    */
-  md?: boolean;
+  previewable?: boolean;
   /** B224：活动标签当前是**预览态**（决定切换键画 `edit-code` 还是 `preview`） */
-  mdPreview?: boolean;
+  previewing?: boolean;
   /**
    * B461 Task 8：这一格**挂着差异旁路**时的几份现值（图标键的显隐与 toggled 态都从这儿来）。
    *
@@ -645,7 +645,7 @@ function buildPanel(
     );
   });
 
-  // B224：操作区整体抽成 `buildPanelOps`（md 两颗键的显隐挂在 `data.md` 上，
+  // B224：操作区整体抽成 `buildPanelOps`（两颗预览键的显隐挂在 `data.previewable` 上，
   // 切标签 / 切视图时由 `refreshPanelOps` 单独重建这一小块，不动标签条与编辑器）。
   const ops = buildPanelOps(data, cb);
 
@@ -710,17 +710,17 @@ function buildPanelOps(data: PanelRenderData, cb: SplitviewCallbacks): HTMLEleme
     return b;
   };
 
-  // B224：非 md 一颗都不渲染（显隐走「建不建」，不是「建了再 display:none」——
+  // B224：不可预览的类型一颗都不渲染（显隐走「建不建」，不是「建了再 display:none」——
   // 后者占着 flex 槽位，还会在无障碍树里躺着两颗无意义按钮）。
-  // 活动面板这个条件由调用方给 data.md 时一并决定，这里不再重复判。
-  if (data.md) {
+  // 活动面板这个条件由调用方给 data.previewable 时一并决定，这里不再重复判。
+  if (data.previewable) {
     ops.append(
       mkOp(CODICONS.openPreview, "打开侧边预览", "在右侧分屏中打开预览", () =>
         cb.onOpenPreviewToSide?.(data.panelId),
       ),
       mkOp(
-        data.mdPreview ? CODICONS.editCode : CODICONS.preview,
-        data.mdPreview ? "切换到源码" : "切换到预览",
+        data.previewing ? CODICONS.editCode : CODICONS.preview,
+        data.previewing ? "切换到源码" : "切换到预览",
         "Ctrl+/",
         () => cb.onTogglePreview?.(data.panelId),
       ),
@@ -728,7 +728,7 @@ function buildPanelOps(data: PanelRenderData, cb: SplitviewCallbacks): HTMLEleme
   }
 
   // B461 Task 8：差异旁路挂着的那一格给这六颗（`data.diff` 由 `panelDataOf` 从 surface 现读，
-  // 旁路拆掉就不给 ⇒ 显隐走「建不建」，与 md 那一支同一手法）。
+  // 旁路拆掉就不给 ⇒ 显隐走「建不建」，与预览那一支同一手法）。
   if (data.diff) {
     const d = data.diff;
     ops.append(

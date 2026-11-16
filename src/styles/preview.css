@@ -1702,6 +1702,29 @@ body.layout-dragging .toc-grip {
   /* B399：页面内那颗「预览 ↔ 编辑」悬浮键的定位基准 */
   position: relative;
 }
+
+/* HTML 预览档（preview/htmlPreview）：这一档不是那颗 EditorView 的装饰脸，而是一张独立
+   iframe 面 —— 编辑器整格让位，iframe 吃满宿主高度。源码档 iframe 收在容器里不显示
+   （内容在收档时已清空，不留页面在后台继续跑）。 */
+.panel-host.preview-kind-html > .panel-editor {
+  display: none;
+}
+.panel-host .html-preview {
+  display: none;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+}
+.panel-host.preview-kind-html > .html-preview {
+  display: flex;
+}
+.html-preview-frame {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: #fff;
+}
 /* B442 · 编辑档：外壳改竖排 —— 工具条占一行（整宽 = 编辑区宽），编辑器吃剩下的高度。
    条在 `.cm-scroller` **之外** ⇒ 首行天然落在它下面，不必再量「让位距离」。 */
 .panel-host.md-bar-docked {

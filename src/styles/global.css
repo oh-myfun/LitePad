@@ -4855,6 +4855,13 @@ body.layout-dragging.layout-dragging-corner {
   cursor: all-scroll;
 }
 
+/* 拖分隔条期间 iframe 不参与命中测试：指针一滑进 HTML 预览，mousemove 就被 iframe
+   自己的文档接走，宿主 document 上的监听当场断流（分割条卡住、光标变回默认）。
+   松手即恢复；预览里的链接点击与选区不受影响。 */
+body.layout-dragging iframe {
+  pointer-events: none;
+}
+
 /* B59 S4：缩放期间抑制布局内的过渡 —— 拖动时面板几何每次 mousemove 都在变，
    再叠一层缓动会让拖动显得「发飘」。与 layout-dragging 同生命周期（开始加、结束移除），
    不引入新的失败模式。 */

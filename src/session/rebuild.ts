@@ -26,7 +26,7 @@ import { logViewport } from "../core/viewport";
 import { logger } from "../core/logger";
 import { LayoutNode, leaf } from "../core/layout";
 import {
-  isMdTab,
+  isPreviewableTab,
   makeDiffInstance,
   makeDoc,
   makeInstance,
@@ -352,9 +352,9 @@ export async function restoreSession(): Promise<boolean> {
       ? makeDiffInstance(doc, panelId, src.text, diffSpec)
       : makeInstance(doc, panelId, src.text);
     tabs.set(inst.tabId, inst);
-    // 恢复 Markdown 视图模式（旧版 "split" 映射回 source；B399 起多一档 "edit"）
+    // 恢复预览视图模式（旧版 "split" 映射回 source；B399 起 Markdown 多一档 "edit"）
     if (
-      isMdTab(inst) &&
+      isPreviewableTab(inst) &&
       (st.viewMode === "source" || st.viewMode === "preview" || st.viewMode === "edit")
     ) {
       inst.viewMode = st.viewMode;

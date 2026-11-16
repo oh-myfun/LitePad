@@ -284,6 +284,29 @@ function isMdActive(): boolean {
   return !!t && isMdTab(t);
 }
 
+/** 可按网页渲染的静态 HTML 文档判定（手动类型优先，其次按文件名后缀）。 */
+function isHtmlDoc(doc: Doc | undefined | null): boolean {
+  if (!doc) return false;
+  if (doc.langOverride && languageInfoByLabel(doc.langOverride)) {
+    return doc.langOverride === "HTML";
+  }
+  return /\.(html?|xhtml|xht)$/i.test(doc.name);
+}
+
+function isHtmlTab(tab: Tab): boolean {
+  return isHtmlDoc(docs.get(tab.docId));
+}
+
+/** 有「源码 / 预览」两档的标签：Markdown 与静态 HTML。差异档恒源码，不走预览。 */
+function isPreviewableTab(tab: Tab): boolean {
+  return tab.kind !== "diff" && (isMdTab(tab) || isHtmlTab(tab));
+}
+
+function isPreviewableActive(): boolean {
+  const t = activeTab();
+  return !!t && isPreviewableTab(t);
+}
+
 export {
   makeDoc,
   makeInstance,
@@ -297,5 +320,9 @@ export {
   isMdDoc,
   isMdTab,
   isMdActive,
+  isHtmlDoc,
+  isHtmlTab,
+  isPreviewableTab,
+  isPreviewableActive,
   languageOfDoc,
 };

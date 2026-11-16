@@ -16,7 +16,7 @@ import {
   windowKind,
 } from "../core/app-state";
 import { activeTab } from "../core/panels";
-import { isMdTab } from "../doc-model";
+import { isPreviewableTab } from "../doc-model";
 import { countLeaves } from "../core/layout";
 import { renderTabstrip, type TabViewData, type TabstripCallbacks } from "../shell/tabstrip";
 import { refreshPanelOps, type PanelRenderData } from "../shell/splitview";
@@ -206,18 +206,17 @@ export function tabstripCallbacks(p: Panel): TabstripCallbacks {
 }
 
 /**
- * 面板渲染快照（B224 起含 Markdown 键的显隐 / 字形标记）。
+ * 面板渲染快照（B224 起含预览键的显隐 / 字形标记）。
  * `rebuildLayout`（整树重建）与 `renderPanelOps`（只刷操作区）共用这一份口径 ——
  * 两边各写一遍必然漂移，操作区那两颗键就会跟标签条各说各话。
  */
 export function panelDataOf(p: Panel): PanelRenderData {
-  // md 两颗键只给**活动面板**（用户拍定，对齐 VS Code 的 editor/title 动作只出现在
-  // 活动组）：非活动面板不给 md 标记，splitview 那边就一颗都不建。
+  // 两颗预览键只给**活动面板**（用户拍定，对齐 VS Code 的 editor/title 动作只出现在
+  // 活动组）：非活动面板不给 previewable 标记，splitview 那边就一颗都不建。
   const act = p.panelId === activePanelId ? activeTab() : undefined;
-  // B461：差异档不给 md 那两颗键 —— 差异视图**恒源码档**（设计稿 ⑥），而它的 `docId`
-  // 就是原标签那份文档，`isMdTab` 天然为真 ⇒ 必须另外问一句 kind，否则「查看」那颗键
-  // 会在一张差异标签上出现，点下去把这一格换回预览、旁路就悬在半空。
-  const md = !!act && isMdTab(act) && act.kind !== "diff";
+  // B461：差异档不给那两颗键 —— 差异视图**恒源码档**（设计稿 ⑥）。`isPreviewableTab`
+  // 已排除 `kind === "diff"`，这里不用再问一遍。
+  const previewable = !!act && isPreviewableTab(act);
   // B161 / B422：这一格能不能解散、解散等不等于关窗 —— 口径在 `panelCloseFact`
   // （渲染快照与组菜单同源，别处不再算一遍）。
   const { canClose, closeDetail } = panelCloseFact();
@@ -230,10 +229,11 @@ export function panelDataOf(p: Panel): PanelRenderData {
     // B71：被最大化挤扁的一侧要真的收成 0（CSS 里 .layout-panel 有 min-width）
     maximized: maximizedPanelId === p.panelId,
     collapsed: maximizedPanelId !== null && maximizedPanelId !== p.panelId,
-    // B224：标签区右侧那两颗 Markdown 键。mdPreview 决定切换键的字形与文案。
-    // B399：预览 / 编辑两档都是装饰面 ⇒ 那颗键都画 `edit-code`（点了回源码）。
-    md,
-    mdPreview: md && act!.viewMode !== "source",
+    // B224：标签区右侧那两颗预览键。previewing 决定切换键的字形与文案。
+    // B399：Markdown 的预览 / 编辑两档都是装饰面 ⇒ 那颗键都画 `edit-code`（点了回源码）；
+    // HTML 预览档同理（点了回源码）。
+    previewable,
+    previewing: previewable && act!.viewMode !== "source",
     // B461 Task 8：差异图标键的三份现值（没有旁路 ⇒ `undefined` ⇒ 那一支一颗都不建）。
     diff: diffKeysOf(p),
   };

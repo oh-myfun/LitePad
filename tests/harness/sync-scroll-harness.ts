@@ -28,7 +28,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { createEditor, makeTabState } from "../../src/editor/editor";
 import { perfProfileFor } from "../../src/editor/perf";
 import { panels, tabs, type Panel, type Tab } from "../../src/core/app-state";
-import { isMdTab, makeDoc, registerDoc } from "../../src/doc-model";
+import { isPreviewableTab, makeDoc, registerDoc } from "../../src/doc-model";
 import {
   applySharedVFromRemote,
   faceOf,
@@ -285,7 +285,7 @@ function applyPanelModeMirror(panel: Panel): void {
   const host = panel.bodyEl;
   if (!host) return;
   const tab = tabs.get(panel.activeTabId);
-  const mode = tab && isMdTab(tab) ? tab.viewMode : "source";
+  const mode = tab && isPreviewableTab(tab) ? tab.viewMode : "source";
   host.classList.remove("mode-source", "mode-preview");
   host.classList.add(`mode-${mode === "edit" ? "preview" : mode}`);
 }
@@ -349,8 +349,8 @@ function renderTabstripMirror(panel: Panel): void {
 }
 
 function install(): void {
-  // 文档必须先登记进 `docs`：面板可见性按应用状态判（`isMdTab(tab)` →
-  // `docs.get(tab.docId)`，src/doc-model.ts:171-173）。没登记就全都退化成 mode-source，
+  // 文档必须先登记进 `docs`：面板可见性按应用状态判（`isPreviewableTab(tab)` →
+  // `docs.get(tab.docId)`，src/doc-model.ts）。没登记就全都退化成 mode-source，
   // 预览侧锚点一个也不注册 —— 验证台会变成在测一根拔掉的线。
   const fx = fixtureText();
   registerDoc(makeDoc(docLongId, fx.long, "sync-scroll.md", null, "utf-8", "LF", false));

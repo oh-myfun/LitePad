@@ -7,8 +7,9 @@
  *
  * B412：每个面板只剩**一颗** EditorView —— 源码 / 预览 / 编辑三档是同一颗 view 的三种装束
  * （`tab.viewMode` + `previewFace`），旧派生 DOM 预览面已删。于是这里也**不再有**「藏起来
- * 的那一侧」：那类被藏的面只会报 1.0、现形时补发滚动（B285 的幽灵锚点）随第二面一起消失，
- * `sideOfPanel()` 恒答 editor。
+ * 的那一侧」：那类被藏的面只会报 1.0、现形时补发滚动（B285 的幽灵锚点）随第二面一起消失。
+ * 例外是 HTML 预览档：它是一张独立 iframe（自管滚动），没有编辑器滚动面，`sideOfPanel()`
+ * 对它答 `preview` 让注册 / 落位都跳过这一格。
  * 可见性按**状态**判（与 `applyPanelMode` 同源那条规则），不按 DOM 矩形判，理由写在
  * `reconcileSyncRegistrations` 的注释里。
  *
@@ -32,6 +33,7 @@ import {
   type Panel,
 } from "../core/app-state";
 import { logger } from "../core/logger";
+import { isHtmlTab } from "../doc-model";
 import { sessionStore } from "../session/store";
 import type { WindowScrollPosition } from "../core/events";
 import { EditorScrollAnchor, type ScrollAnchor } from "./anchor";
@@ -92,14 +94,16 @@ const LAND_RETRY_LIMIT = 3;
 const owedLanding = new Map<number, number>();
 
 /**
- * 这一格**当前看得见**的是哪一侧。唯一口径：按应用状态判（`isMdTab` + `viewMode`），
+ * 这一格**当前看得见**的是哪一侧。唯一口径：按应用状态判（文档类型 + `viewMode`），
  * 与 `applyPanelMode` 写 `mode-*` 类那条规则同源；不按 DOM 矩形判（理由见
  * `reconcileSyncRegistrations` 的注释）。
  */
-export function sideOfPanel(_panel: Panel): SyncSide {
-  // B412：旧的派生 DOM 预览臂已删除，预览 / 编辑两档与源码共用同一颗 view
-  // ⇒ 一格只有一个滚动面（编辑器那颗），不存在第二侧。
-  return "editor";
+export function sideOfPanel(panel: Panel): SyncSide {
+  // B412：Markdown 的预览 / 编辑两档与源码共用同一颗 view ⇒ 一格只有一个滚动面。
+  // HTML 预览档是另一张 iframe 面（自己管滚动），编辑器此刻 display:none ⇒ 这一格没有
+  // 可登记的滚动面，返回 `preview` 让上层跳过（faceOf 对该侧恒 null）。
+  const tab = tabs.get(panel.viewTabId ?? panel.activeTabId);
+  return tab && isHtmlTab(tab) && tab.viewMode !== "source" ? "preview" : "editor";
 }
 
 /**
@@ -435,7 +439,7 @@ export function sharedVByDoc(): Map<string, number> {
  * 解绑旧锚点、按当前可见视口重注册。应在以下时机调用：面板挂载（mountView）、
  * 切换标签（switchTab，docId 会变）、视图模式切换、分屏/关闭、文件打开/会话恢复。
  *
- * ⚠️ 「这一格看得见吗」按**应用状态**判（`isMdTab` + `viewMode`，与 `applyPanelMode`
+ * ⚠️ 「这一格看得见吗」按**应用状态**判（文档类型 + `viewMode`，与 `applyPanelMode`
  * 写 `mode-*` 类那条规则同源），不按 DOM 矩形判。两个原因：
  *   1. 状态才是显隐的**因**，CSS 只是它的果——按果判会随样式表改动而漂。
  *   2. 按矩形判在单测环境里恒为「不可见」（jsdom 无布局，`getClientRects()` 恒空），

@@ -775,7 +775,10 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
       syncScroll: true,
       swappable: false,
     });
-    expect(data.md, "差异那张与原标签同 docId ⇒ isMdTab 天然为真，必须另外问一句 kind").toBe(false);
+    expect(
+      data.previewable,
+      "差异那张与原标签同 docId ⇒ isMdTab 天然为真，但差异档恒源码，预览标记必须为假",
+    ).toBe(false);
 
     surfaceMod.disposeDiffSurface(m.panel);
     expect(

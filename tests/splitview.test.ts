@@ -1327,8 +1327,8 @@ describe("B224：标签区右侧的 Markdown 操作键", () => {
     expect(CODICONS.editCode).toMatch(/codicon-edit-code/);
   });
 
-  it("md 活动面板：两颗键都在，且排在组菜单「…」之前", () => {
-    const { root } = mountMd({ ...base, md: true });
+  it("可预览活动面板（Markdown / HTML）：两颗键都在，且排在组菜单「…」之前", () => {
+    const { root } = mountMd({ ...base, previewable: true });
     const btns = [...opsOf(root, 1).querySelectorAll("button")];
     const labels = btns.map((b) => b.getAttribute("aria-label"));
     expect(labels, JSON.stringify(labels)).toContain("打开侧边预览（在右侧分屏中打开预览）");
@@ -1341,11 +1341,11 @@ describe("B224：标签区右侧的 Markdown 操作键", () => {
     // B422：最右那颗从「移除该分屏」× 换成了组菜单「…」（关组进菜单里叫「解散组」）
     const idxClose = labels.findIndex((l) => l === "更多操作");
     expect(idxClose, "组菜单键要在").toBeGreaterThan(-1);
-    expect(idxOpen, "md 键要贴着标签区").toBeLessThan(idxClose);
+    expect(idxOpen, "预览键要贴着标签区").toBeLessThan(idxClose);
     expect(idxToggle).toBeLessThan(idxClose);
   });
 
-  it("非 md 一颗都不渲染（不是 display:none 藏着）", () => {
+  it("不可预览的类型一颗都不渲染（不是 display:none 藏着）", () => {
     const { root } = mountMd(base);
     const btns = [...opsOf(root, 1).querySelectorAll("button")];
     expect(btns.every((b) => !b.querySelector(".codicon-open-preview"))).toBe(true);
@@ -1354,7 +1354,7 @@ describe("B224：标签区右侧的 Markdown 操作键", () => {
   });
 
   it("预览态：切换键换 edit-code 字形、文案换「切换到源码」", () => {
-    const { root } = mountMd({ ...base, md: true, mdPreview: true });
+    const { root } = mountMd({ ...base, previewable: true, previewing: true });
     const btns = [...opsOf(root, 1).querySelectorAll("button")];
     expect(btns.some((b) => b.querySelector(".codicon-edit-code"))).toBe(true);
     expect(btns.some((b) => b.querySelector(".codicon-preview"))).toBe(false);
@@ -1364,7 +1364,7 @@ describe("B224：标签区右侧的 Markdown 操作键", () => {
   });
 
   it("点击回调带上 panelId（回调拿它定 toggle 的作用面板）", () => {
-    const { root, cb } = mountMd({ ...base, md: true });
+    const { root, cb } = mountMd({ ...base, previewable: true });
     const btns = [...opsOf(root, 1).querySelectorAll("button")];
     const toggle = btns.find((b) => b.getAttribute("aria-label")?.startsWith("切换到预览"))!;
     toggle.click();
@@ -1443,7 +1443,7 @@ describe("B224：标签区右侧的 Markdown 操作键", () => {
   });
 
   it("refreshPanelOps 局部重建：显隐 / 字形都能翻面，且不重建标签条", () => {
-    const { root } = mountMd({ ...base, md: true });
+    const { root } = mountMd({ ...base, previewable: true });
     // 标签条里塞个探针：ops 重建绝不能把它一起洗掉（那会销毁光标下的 .tab）
     const marker = document.createElement("div");
     marker.dataset.probe = "1";
@@ -1453,20 +1453,20 @@ describe("B224：标签区右侧的 Markdown 操作键", () => {
     expect(opsOf(root, 1).querySelector(".codicon-open-preview")).toBeNull();
     expect(root.querySelector("[data-probe='1']"), "标签条必须原封不动").not.toBeNull();
 
-    refreshPanelOps(1, { ...base, md: true, mdPreview: true });
+    refreshPanelOps(1, { ...base, previewable: true, previewing: true });
     expect(opsOf(root, 1).querySelector(".codicon-edit-code")).not.toBeNull();
     expect(opsOf(root, 1).querySelector(".codicon-preview")).toBeNull();
   });
 
-  it("main 侧口径：md 只给活动面板；侧边预览用辨方向的右邻 + 复用分支", () => {
+  it("main 侧口径：可预览标记只给活动面板；侧边预览用辨方向的右邻 + 复用分支", () => {
     const main =
       readFileSync("src/main.ts", "utf-8") +
       "\n" +
       tabsAll() +
       "\n" +
       readFileSync("src/markdown.ts", "utf-8");
-    expect(main, "md 标记必须判活动面板（键只挂活动面板，用户拍定）").toMatch(
-      /const md = !!act && isMdTab\(act\)/,
+    expect(main, "previewable 标记必须判活动面板（键只挂活动面板，用户拍定）").toMatch(
+      /const previewable = !!act && isPreviewableTab\(act\)/,
     );
     expect(main, "活动标签必须先按面板过滤").toMatch(
       /const act = p\.panelId === activePanelId \? activeTab\(\) : undefined;/,

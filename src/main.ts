@@ -72,7 +72,7 @@ import {
   registerDoc,
   attachTabToPanel,
   isMdTab,
-  isMdActive,
+  isPreviewableActive,
   setInstanceOnUpdate,
 } from "./doc-model";
 import {
@@ -106,6 +106,7 @@ import {
 } from "./markdown";
 // B397-1：所见即所得档交回宿主的动作（点勾 / 许不许写 / 本地链接开标签）在这里注入。
 import { setPreviewHooks } from "./preview/hooks";
+import { refreshHtmlPreviewsOf } from "./preview/htmlPreview";
 import { openFindBar, refreshFindOnSelectionChange } from "./find/findbar";
 import {
   setupSideBar,
@@ -360,6 +361,8 @@ function handleUpdate(view: EditorView, update: ViewUpdate): void {
       scheduleBackup();
     }
     syncDocInstances(tab, update.changes);
+    // HTML 预览是独立 iframe，不跟着 CM6 状态走：同源另一格改了正文就把可见预览重渲染。
+    if (textChanged) refreshHtmlPreviewsOf(tab.docId);
     // B71 ④：同一文档可能同时挂在另一个窗口上（拖出去过、或两个窗口各开了一份），
     // 变更要广播过去，否则两个窗口各编各的、最后谁保存谁赢。
     if (textChanged) broadcastDocChange(tab.docId, update.changes, update.startState.doc.length);
@@ -603,12 +606,12 @@ function diffTabActive(): boolean {
 /**
  * 少数命令只在特定上下文成立；不成立时**不抢键**，把事件还给编辑器。
  * 典型是 Ctrl+/：CodeMirror 用它切换注释（JSON/JS 等格式很有用），
- * 只有 Markdown 才把它当「源码 / 预览切换」。
+ * 只有可预览文档（Markdown / HTML）才把它当「源码 / 预览切换」。
  */
 function shortcutApplies(id: string): boolean {
   switch (id) {
     case "view.toggle":
-      return isMdActive();
+      return isPreviewableActive();
     // B399：只在「装饰面」里成立（源码档没有预览/编辑之分）；不成时不抢键。
     case "view.toggleEdit": {
       const t = activeTab();

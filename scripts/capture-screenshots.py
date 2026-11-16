@@ -187,6 +187,119 @@ DIFF_AFTER_TEXT = "\n".join([
 ])
 
 
+# HTML 预览配方的演示文件：同样写进项目内 `.tmp/shot/demo`（每次重建）。
+# 页面故意外链 `preview.css` / `logo.svg` / `preview.js` —— 截图要能证明 iframe 的 `<base>`
+# 指到了文档目录（否则相对资源全丢、脚本也不跑，页面只剩裸文本）。
+HTML_PREVIEW = os.path.join(DEMO_DIR, "preview.html")
+HTML_PREVIEW_HTML = """<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LitePad · HTML 预览</title>
+  <link rel="stylesheet" href="preview.css">
+</head>
+<body>
+  <header class="hero">
+    <img class="logo" src="logo.svg" alt="LitePad">
+    <div>
+      <p class="eyebrow">LitePad</p>
+      <h1>HTML 源码 / 预览</h1>
+      <p class="lede">预览是沙箱 iframe：网页按自己的样式渲染，相对样式 / 图片 / 脚本照常加载。</p>
+    </div>
+  </header>
+  <main>
+    <section class="cards">
+      <article>
+        <h2>源码档</h2>
+        <p>CodeMirror 6 编辑，语法按需高亮。</p>
+      </article>
+      <article>
+        <h2>预览档</h2>
+        <p>浏览器排版引擎出图，不改写页面 CSS。</p>
+      </article>
+      <article>
+        <h2>切换</h2>
+        <p><kbd>Ctrl</kbd> + <kbd>/</kbd> 或标题区预览键。</p>
+      </article>
+    </section>
+    <section class="note">
+      <h2>安全边界</h2>
+      <p>页面脚本在沙箱里运行，拿不到宿主与 Tauri IPC；链接由宿主接管。</p>
+      <p id="script-state">外部脚本尚未运行</p>
+    </section>
+  </main>
+  <footer>这是 <code>preview.html</code> 的真实渲染结果</footer>
+  <script src="preview.js"></script>
+</body>
+</html>
+"""
+HTML_PREVIEW_JS = """// 截图要证明的是「相对 JS 被加载并执行」，所以这里只改一处可见文案。
+document.getElementById("script-state").textContent = "外部脚本 preview.js 已加载并执行";
+"""
+HTML_PREVIEW_CSS = """* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  min-height: 100vh;
+  padding: 24px 28px 18px;
+  font: 14px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: #1f2937;
+  background:
+    radial-gradient(900px 420px at 12% -10%, #dbeafe 0%, transparent 62%),
+    radial-gradient(700px 360px at 96% 0%, #fae8ff 0%, transparent 58%),
+    #f8fafc;
+}
+.hero { display: flex; gap: 16px; align-items: center; margin-bottom: 20px; }
+.logo { width: 54px; height: 54px; flex: none; filter: drop-shadow(0 10px 18px rgba(37, 99, 235, .28)); }
+.eyebrow { margin: 0 0 2px; font-size: 11px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: #2563eb; }
+h1 { margin: 0; font-size: 27px; line-height: 1.2; letter-spacing: -.02em; }
+.lede { margin: 6px 0 0; max-width: 640px; color: #4b5563; }
+.cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.cards article {
+  padding: 14px 14px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .82);
+  box-shadow: 0 12px 30px -22px rgba(15, 23, 42, .45);
+}
+.cards h2, .note h2 { margin: 0 0 6px; font-size: 14px; color: #0f172a; }
+.cards p, .note p { margin: 0; color: #52606d; font-size: 12.5px; }
+.note {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-left: 4px solid #7c3aed;
+  border-radius: 0 12px 12px 0;
+  background: rgba(124, 58, 237, .07);
+}
+.note h2 { color: #6d28d9; }
+#script-state { margin-top: 6px; font-weight: 600; color: #047857; }
+kbd {
+  padding: 1px 6px;
+  border: 1px solid #cbd5e1;
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: #fff;
+  font: 600 12px/1.5 "Segoe UI", sans-serif;
+  color: #334155;
+}
+footer { margin-top: 24px; color: #94a3b8; font-size: 12.5px; }
+code { padding: 1px 5px; border-radius: 5px; background: #eef2ff; color: #4338ca; }
+"""
+HTML_PREVIEW_LOGO = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset=".55" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="16" fill="url(#g)"/>
+  <path d="M20 43V21h7v15.5h11V43H20z" fill="#fff"/>
+  <circle cx="44" cy="24" r="5" fill="#fff" opacity=".9"/>
+</svg>
+"""
+
+
 # 根 README 开头只放 main.png；差异编辑器那张 diff.png 归 `docs/screenshots/README.md`
 # 的表格，两处都要提到（改配方就同步改那份 README 的复现命令）。
 # 要补拍「设置」里的弹窗，加一条 recipe 并用 clicks 摆状态即可，例如：
@@ -225,6 +338,24 @@ RECIPES = [
              diff_tab(DIFF_AFTER, DIFF_BEFORE, 2, 2)],
             active=2,
         ),
+    },
+    {
+        "name": "html",
+        "what": "HTML 源码 / 预览：左侧源码、右侧沙箱 iframe 渲染（相对样式 / 图片 / 脚本照常加载）",
+        "theme": "dark",
+        # 相对资源还要经 asset 协议再取一轮（CSS / 图片 / 脚本），冷 profile 下默认 3 秒不够。
+        "settle": 8,
+        # 演示文件写进 `.tmp/shot/demo`：`preview.html` 外链同目录的 `preview.css`、
+        # `logo.svg` 与 `preview.js`，截图也就顺带验证了 iframe 的 `<base>` 真的指到了文档目录。
+        "files": {
+            "preview.html": HTML_PREVIEW_HTML,
+            "preview.css": HTML_PREVIEW_CSS,
+            "preview.js": HTML_PREVIEW_JS,
+            "logo.svg": HTML_PREVIEW_LOGO,
+        },
+        "session": lambda: {**split_session([tab(HTML_PREVIEW, "source", 6, 1)],
+                                            tab(HTML_PREVIEW, "preview", 1, 2)),
+                            "activePanel": 1},
     },
 ]
 
@@ -435,6 +566,7 @@ def capture_recipe(recipe, size, settle, inset, shot_each):
     `%LOCALAPPDATA%` 里，每刷一次截图就删一遍。真正需要移开 profile 的只有
     「硬杀留下的残留让新 webview 起不来」这一种情况，正常路径根本用不到。
     """
+    settle = recipe.get("settle", settle)
     for attempt in (1, 2):
         # 顺序要紧：先杀干净再写演示配置——否则退出中的旧实例会把自己的会话写回来，
         # 把演示配置覆盖掉（表现就是新实例「启动了但一直没内容」）。

@@ -8,11 +8,12 @@
 //   · `doc.langOverride` 手动值优先，`null` 回到按后缀/首行自动检测（见 doc-model.languageOfDoc）；
 //   · 语言扩展走每个实例的 `comps.lang` Compartment 热替换 —— 与保存改名那条路同款，
 //     不用重建 EditorState，撤销历史、选区、滚动位置都不动；
-//   · 从 Markdown 切走时，把该文档的预览实例退回源码：预览格是 md 专用面，留着会显示旧渲染。
+//   · 从可预览类型（Markdown / HTML）切走时，把该文档的预览实例退回源码：
+//     预览面跟着语言类型走，留着会显示旧渲染。
 
 import { activePanelId, docs, panels, tabs } from "./core/app-state";
 import { activeTab, docOf, getPanel, instancesOfDoc } from "./core/panels";
-import { isMdDoc, isMdTab, languageOfDoc } from "./doc-model";
+import { isMdDoc, isPreviewableTab, languageOfDoc } from "./doc-model";
 import { perfProfileForDoc } from "./editor/perf";
 import { AUTO_LANGUAGE, languageChoices, languageInfoByLabel } from "./editor/language";
 import { applyPanelMode } from "./markdown";
@@ -63,10 +64,10 @@ export function applyLanguageMode(docId: number, label: string | null): void {
     } else {
       inst.state = inst.state.update({ effects: effect }).state;
     }
-    if (!isMdTab(inst) && inst.viewMode !== "source") inst.viewMode = "source";
+    if (!isPreviewableTab(inst) && inst.viewMode !== "source") inst.viewMode = "source";
   }
 
-  // 面板形态按新语言重算（离开 Markdown 必须退回源码；进入 Markdown 时挂出预览键）
+  // 面板形态按新语言重算（离开可预览类型必须退回源码；进入时挂出对应的预览面 / 预览键）
   for (const panel of panels.values()) {
     if (panel.tabs.some((id) => tabs.get(id)?.docId === docId)) applyPanelMode(panel);
   }

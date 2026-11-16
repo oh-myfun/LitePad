@@ -63,7 +63,7 @@ import { ChangeSet } from "@codemirror/state";
 import {
   attachTabToPanel,
   isDirtyVsBaseline,
-  isMdTab,
+  isPreviewableTab,
   makeDoc,
   makeInstance,
   registerDoc,
@@ -145,7 +145,7 @@ function transferSnapshotOf(tabId: number): SatelliteTab | null {
     eol: doc.eol,
     readonly: doc.readonly,
     dirty: doc.dirty,
-    viewMode: isMdTab(tab) ? tab.viewMode : "source",
+    viewMode: isPreviewableTab(tab) ? tab.viewMode : "source",
     cursorLine: line.number,
     cursorCol: pos - line.from + 1,
     scrollV,
@@ -332,8 +332,9 @@ function adoptTransferredTabs(incoming: SatelliteTab[], panelId = activePanelId)
     }
     doc.backedUp = st.backedUp;
     const inst = makeInstance(doc, panel.panelId, st.text);
-    // B399：三档都要带过去（"edit" 也是装饰面的一种档位，漏掉它就等于降级成源码）
-    if (isMdTab(inst) && (st.viewMode === "preview" || st.viewMode === "edit")) {
+    // B399：Markdown 的 "edit" 与 "preview" 都是装饰面档位，漏掉它就等于降级成源码；
+    // HTML 的 "preview" 同理（iframe 面）。
+    if (isPreviewableTab(inst) && (st.viewMode === "preview" || st.viewMode === "edit")) {
       inst.viewMode = st.viewMode;
     }
     const lineNo = Math.min(Math.max(1, st.cursorLine || 1), inst.state.doc.lines);

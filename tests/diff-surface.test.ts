@@ -1229,7 +1229,10 @@ describe("B461 · 基线实时与判据接全（Task 5 R13/R14 + R20）", () => 
     const main = srcOf("src/main.ts");
     expect(main).toContain("setRefreshDiffSurfaces(refreshDiffSurfaces)");
     expect(main).toContain("setDiffRenderHooks(");
-    expect(srcOf("src/tabs/render.ts")).toMatch(/act\.kind !== "diff"/);
+    // B461：差异档恒源码、不给预览键。口径收在 `isPreviewableTab`（差异档一并排除），
+    // 标签区只消费那一份判定，别在渲染侧再散落一次 kind 判断。
+    expect(fnBody(srcOf("src/doc-model.ts"), "isPreviewableTab")).toContain('tab.kind !== "diff"');
+    expect(srcOf("src/tabs/render.ts")).toContain("isPreviewableTab(act)");
   });
 });
 

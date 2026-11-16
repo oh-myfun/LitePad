@@ -190,8 +190,10 @@
 
 现状（B302 之后重做的）：滚动位置由同步滚动账本管（`src/sync-scroll/*`）—— 每格记
 `scrollV`（与宽度无关的块高比例），切标签 / 重建布局 / 跨窗口 / 会话恢复都走同一条落位链
-（`landVisibleSideAtV`）。B412 起预览不再是派生 DOM，源码 / 预览 / 编辑三档共用一颗
-EditorView，大纲跳转与「转到行」也落在同一颗 view 上。
+（`landVisibleSideAtV`）。B412 起 Markdown 预览不再是派生 DOM，源码 / 预览 / 编辑三档共用一颗
+EditorView，大纲跳转与「转到行」也落在同一颗 view 上；HTML 的预览档则是独立沙箱 iframe
+（`src/preview/htmlPreview.ts`）：页面脚本在 opaque origin 里执行（拿不到宿主 / Tauri IPC），
+相对样式、图片、脚本按文档目录加载，但不参与这颗 view 的滚动接力。
 
 若将来要重做「位置记忆」，这是全新设计（用户已明确「换个思路」），不要参照本节旧口径。
 
