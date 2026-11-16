@@ -44,6 +44,8 @@ import {
   languageOfDoc,
   makeDoc,
   makeInstance,
+  makeMediaDoc,
+  makeMediaInstance,
   markClean,
   markDiskVersion,
   registerDoc,
@@ -55,6 +57,7 @@ import {
   checkEncodable,
   isUnicodeEncoding,
   openFile,
+  openMedia,
   reloadFile,
   saveFile,
   type LossyChar,
@@ -75,7 +78,8 @@ import {
   switchTab,
 } from "../tabs";
 import { LOSSY_ABORT, refreshAll, showMessage } from "../ui";
-import { TEXT_FILTERS } from "./filters";
+import { OPEN_FILTERS, TEXT_FILTERS } from "./filters";
+import { mediaKindOf } from "./media";
 import { reclaimRemoted } from "../multiwindow/windows";
 import {
   applyDiskContent,
@@ -162,11 +166,15 @@ async function doOpen(
     const picked = await openDialog({
       multiple: false,
       directory: false,
-      filters: TEXT_FILTERS,
+      filters: OPEN_FILTERS,
     });
     if (!picked || Array.isArray(picked)) return null;
     target = picked;
   }
+
+  // 图片 / 视频不走文本管线（`open_file` 会读全部字节并拒绝二进制）。
+  // 判定只按扩展名，复用与路径归一化在 Rust 的 `open_media` 里做。
+  if (mediaKindOf(target)) return openMediaTab(target, targetPanelId);
 
   try {
     const file = await openFile(target, encoding ?? null);
@@ -257,6 +265,66 @@ async function doOpen(
     );
     scheduleSessionSave();
     logViewport("加载 · 打开文件后", getPanel(panel.panelId) ?? undefined);
+    return tab.tabId;
+  } catch (err) {
+    showMessage(String(err), true);
+    return null;
+  }
+}
+
+/**
+ * 媒体文件（图片 / 视频）的打开分支：只建元数据文档 + 旁路预览面，不读内容。
+ *
+ * 为什么单开这条支：`open_file` 会读全部字节并拒二进制，媒体文件过不去；
+ * 而预览面用的是原生 `<img>` / `<video>`，有路径就够了（见 `preview/mediaPreview`）。
+ *
+ * 复用口径与文本一致：同一路径已在标签中 ⇒ 激活它；指定了落点面板而它开在别处时，
+ * 在落点再开一个同源实例（媒体没有正文，多实例不会分叉）。
+ */
+async function openMediaTab(path: string, targetPanelId?: number): Promise<number | null> {
+  try {
+    const file = await openMedia(path);
+    noteOpened(file.path);
+    const existingDoc = docs.get(file.tabId);
+
+    if (file.reused && existingDoc) {
+      const all = instancesOfDoc(existingDoc.tabId);
+      const inTarget =
+        targetPanelId !== undefined ? all.find((t) => t.panelId === targetPanelId) : undefined;
+      const inst = inTarget ?? all[0];
+      const instPanel = inst ? panelOfTab(inst.tabId) : undefined;
+      if (inst && instPanel && (inTarget !== undefined || targetPanelId === undefined)) {
+        setActivePanelId(instPanel.panelId);
+        switchTab(instPanel.panelId, inst.tabId);
+        rebuildLayout();
+        refreshAll();
+        scheduleSessionSave();
+        showMessage(`${file.name} 已在标签中打开`);
+        return inst.tabId;
+      }
+    }
+
+    const panel =
+      (targetPanelId !== undefined ? getPanel(targetPanelId) : undefined) ??
+      activePanel() ??
+      [...panels.values()][0];
+    if (!panel) return null;
+
+    const kind = mediaKindOf(file.path) ?? "image";
+    const doc = existingDoc ?? makeMediaDoc(file.tabId, file.name, file.path, kind);
+    if (!existingDoc) {
+      // 媒体不挂监视 ⇒ 没有回声要抑制，`diskMtimeMs` 留 0（未知）；大小给工具条显示
+      doc.diskSize = file.size;
+      registerDoc(doc);
+    }
+    const tab = makeMediaInstance(doc, panel.panelId);
+    attachTabToPanel(tab, panel);
+    if (panel.panelId !== activePanelId) setActivePanelId(panel.panelId);
+    rebuildLayout();
+    refreshAll();
+    renderPanelTabs(panel.panelId);
+    showMessage(`已打开 ${file.name}（${kind === "image" ? "图片" : "视频"}预览）`);
+    scheduleSessionSave();
     return tab.tabId;
   } catch (err) {
     showMessage(String(err), true);
@@ -406,6 +474,11 @@ async function doSave(forceDialog: boolean): Promise<boolean> {
  * 文本取该实例快照；若实例正显示在所属面板上则先从视图写回。
  */
 async function saveDocCore(doc: Doc, inst: Tab, forceDialog: boolean): Promise<boolean> {
+  // 媒体标签没有可写正文：拦在写盘之前，否则 Ctrl+S / 另存会把空缓冲写回原图
+  if (inst.kind === "media") {
+    showMessage(`${doc.name} 是图片/视频预览，不支持保存`, true);
+    return false;
+  }
   const panel = panels.get(inst.panelId);
   if (panel?.view && panel.viewTabId === inst.tabId) inst.state = panel.view.view.state;
 

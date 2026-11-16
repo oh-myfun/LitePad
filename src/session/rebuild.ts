@@ -30,6 +30,8 @@ import {
   makeDiffInstance,
   makeDoc,
   makeInstance,
+  makeMediaDoc,
+  makeMediaInstance,
   markDiskVersion,
   registerDoc,
 } from "../doc-model";
@@ -42,13 +44,16 @@ import {
   OpenedFile,
   newTab as ipcNewTab,
   openFile,
+  openMedia,
   readCompareText,
   restoreBackup,
   loadSession,
+  type MediaFile,
   type RestoredBackup,
   type SessionState,
   type TabSession,
 } from "../ipc/api";
+import { mediaKindOf } from "../io/media";
 import { rebuildLayout } from "../tabs";
 import { refreshAll } from "../ui";
 import { scheduleSessionSave } from "./persist";
@@ -193,6 +198,8 @@ export async function restoreSession(): Promise<boolean> {
   type Restored =
     | { kind: "backup"; data: RestoredBackup; baseline: BaselineSnapshot | null }
     | { kind: "file"; data: OpenedFile }
+    /** 媒体标签：只取元数据，不读内容（图片 / 视频由预览面自己取流解码） */
+    | { kind: "media"; data: MediaFile }
     /** B69：空的未命名文档——会话里既没路径也没副本，内容本来就是空的 */
     | { kind: "empty"; data: OpenedFile };
   /** 认不出身份返回空串（旧版本落盘的会话不会写出这种标签，直接跳过）。 */
@@ -212,6 +219,8 @@ export async function restoreSession(): Promise<boolean> {
     /** 这份脏内容对应的已保存磁盘版本（副本基线的对表凭据）。 */
     diskMtimeMs: number | null;
     diskSize: number | null;
+    /** 媒体标签：预取只取元数据，不走文本读取（`open_file` 会拒二进制） */
+    media: boolean;
   }> = [];
   // 主窗口各面板的标签 **+ B193 卫星标签**：按身份去重后统一下去预取，两边共用同一份
   // 缓存（同一个文件同时开在主窗口和卫星窗口时只读一次盘）。
@@ -228,6 +237,7 @@ export async function restoreSession(): Promise<boolean> {
         backupId,
         diskMtimeMs: st.diskMtimeMs ?? null,
         diskSize: st.diskSize ?? null,
+        media: st.kind === "media",
       });
     }
   }
@@ -236,6 +246,14 @@ export async function restoreSession(): Promise<boolean> {
   const dropped: string[] = [];
   await Promise.all(
     pending.map(async (p) => {
+      if (p.media) {
+        try {
+          restoredCache.set(p.key, { kind: "media", data: await openMedia(p.path) });
+        } catch (e) {
+          dropped.push(`${p.path}：媒体文件读不了（${String(e)}）`);
+        }
+        return;
+      }
       if (p.backupId) {
         try {
           const backup = await restoreBackup(p.backupId);
@@ -307,6 +325,26 @@ export async function restoreSession(): Promise<boolean> {
   async function buildInstance(st: TabSession, panelId: number): Promise<Tab | null> {
     const hit = restoredCache.get(identityOf(st));
     if (!hit) return null;
+    if (hit.kind === "media") {
+      // 媒体标签：文档只是元数据载体（空正文 + 只读），实例建空 state，
+      // 预览面由 `applyPanelMode` 挂原生 `<img>` / `<video>`。
+      // 光标 / 视口 / 同步开关一概不恢复 —— 那一格没有文本可定位。
+      let doc = docs.get(hit.data.tabId);
+      if (!doc) {
+        doc = makeMediaDoc(
+          hit.data.tabId,
+          hit.data.name,
+          hit.data.path,
+          mediaKindOf(hit.data.path) ?? "image",
+        );
+        // 媒体不挂 watcher，没有回声要抑制；`diskSize` 只作元数据展示用。
+        doc.diskSize = hit.data.size;
+        registerDoc(doc);
+      }
+      const inst = makeMediaInstance(doc, panelId);
+      tabs.set(inst.tabId, inst);
+      return inst;
+    }
     const src = hit.data;
     let doc = docs.get(src.tabId);
     if (!doc) {

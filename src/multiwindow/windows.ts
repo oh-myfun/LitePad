@@ -209,8 +209,10 @@ async function openTabsInNewWindow(tabIds: number[], spot?: WindowSpot | null): 
   // B461 Task 10（设计稿 ⑧·3）：差异标签跨窗口认领/搬移本轮没定义语义 ⇒ 整发拒绝。
   // 右键那两条与单标签拖拽已经缺席，这里挡的是**整组**拖到桌面那一路（它绕过标签自己的
   // draggable）。说一次原因，不做静默死键。
-  if (tabIds.some((id) => tabs.get(id)?.kind === "diff")) {
-    showMessage("差异编辑器暂不支持跨窗口搬移", true);
+  // 媒体标签同一口径：卫星载荷是「文本快照」，而媒体预览靠本机路径取流，
+  // 搬过去既没有语义也没有载荷可带。
+  if (tabIds.some((id) => tabs.get(id)?.kind === "diff" || tabs.get(id)?.kind === "media")) {
+    showMessage("差异编辑器与图片/视频预览暂不支持跨窗口搬移", true);
     return;
   }
   const snapshots = tabIds

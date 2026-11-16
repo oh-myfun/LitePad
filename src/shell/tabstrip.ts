@@ -59,6 +59,11 @@ export interface TabViewData {
    * （设计稿 ⑧·3）⇒ 那五条右键项整组缺席、`draggable` 关掉；缺省按普通标签处理。
    */
   isDiff?: boolean;
+  /**
+   * 图片 / 视频预览标签。分屏 / 复制照常（同一份路径多开一张面没有分叉风险），
+   * 但「在新窗口打开」「设成比较选择」缺席：卫星载荷是文本快照，比较读的是文本。
+   */
+  isMedia?: boolean;
 }
 
 export interface TabstripCallbacks {
@@ -421,7 +426,7 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
         ? [{ label: "上下分屏", onSelect: () => cb.onSplitV?.(t.tabId) }]
         : []),
       { separator: true },
-      ...(!t.isDiff && cb.onOpenInNewWindow
+      ...(!t.isDiff && !t.isMedia && cb.onOpenInNewWindow
         ? [
             {
               label: "在新窗口打开",
@@ -438,7 +443,7 @@ function createTabEl(t: TabViewData, cb: TabstripCallbacks): HTMLElement {
       // 两颗回调**都给**这一组才存在 —— 卫星窗口没接（比较选择是窗口级状态，子窗口没有
       // 资源管理器树跟它配对）⇒ 整组退场，与 A 档那条同一手法；没落盘的标签（`t.path`
       // 缺省）盘上无文件可读，同样不给。
-      ...(t.path && cb.onSelectToCompare && cb.onCompareWith
+      ...(t.path && !t.isMedia && cb.onSelectToCompare && cb.onCompareWith
         ? compareMenuItems(t.path, {
             onSelectToCompare: () => cb.onSelectToCompare?.(t.tabId),
             onCompareWith: () => cb.onCompareWith?.(t.tabId),

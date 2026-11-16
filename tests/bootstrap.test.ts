@@ -16,7 +16,9 @@ describe("B50 会话恢复必须并行读盘（而不是逐个 await）", () => 
     const src = concatSrc(MAIN_SESSION);
     const start = src.indexOf("async function restoreSession");
     expect(start, "必须能定位 restoreSession").toBeGreaterThan(-1);
-    const body = src.slice(start, start + 8000);
+    // 切片只是把「restoreSession 函数体」框进来，不走 topLevelFnBody 是因为它自己
+    // 就包含嵌套函数；媒体标签分支把预取那一段推远了，上限跟着放宽。
+    const body = src.slice(start, start + 16000);
     expect(body, "必须并行预取（Promise.all）").toContain("Promise.all");
     expect(body, "必须有预取缓存 restoredCache").toContain("restoredCache");
     expect(body, "组装阶段应读缓存而不是再读盘").toContain("restoredCache.get(");

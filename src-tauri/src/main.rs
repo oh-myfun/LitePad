@@ -318,6 +318,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::new_tab,
             commands::open_file,
+            commands::open_media,
             commands::read_compare_text,
             commands::reload_file,
             commands::save_file,

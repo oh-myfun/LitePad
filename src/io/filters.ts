@@ -5,6 +5,8 @@
  * 放进 io 后 files.ts 直接 import，不必绕道 ui 的服务桶。
  */
 
+import { MEDIA_EXTENSIONS } from "./media";
+
 export const TEXT_FILTERS = [
   {
     name: "文本文件",
@@ -30,4 +32,16 @@ export const TEXT_FILTERS = [
     ],
   },
   { name: "所有文件", extensions: ["*"] },
+];
+
+/**
+ * 打开对话框的过滤器：在文本档旁多给一档「图片与视频」。
+ *
+ * 只给**打开**用 —— 保存/另存的目标永远是文本，媒体标签没有另存语义
+ * （见 `saveDocCore` 的拦截），那边继续用 `TEXT_FILTERS`。
+ */
+export const OPEN_FILTERS = [
+  TEXT_FILTERS[0],
+  { name: "图片与视频", extensions: MEDIA_EXTENSIONS },
+  TEXT_FILTERS[1],
 ];

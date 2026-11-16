@@ -175,11 +175,11 @@ class SessionStore {
   }
 
   /**
-   * B461：这一条是哪种标签 + B 档左栏那条路径。**一颗写点同时写两格** —— 它们是同一件事
-   * （「这张差异面拿什么当对照物」）的两半，分开写就会出现「说是差异却没有左栏」的半条记录。
+   * B461：这一条是哪种标签（普通 / 差异 / 媒体）+ B 档左栏那条路径。**一颗写点同时写两格** ——
+   * 它们是同一件事（「这张面拿什么当底」）的两半，分开写就会出现「说是差异却没有左栏」的半条记录。
    * 由 `session/persist.ts` 那圈同步从 `Tab.kind` / `Tab.diff.leftPath` 现推，不在别处各写一份。
    */
-  setDiff(tabId: number, kind: string | null, leftPath: string | null): void {
+  setTabKind(tabId: number, kind: string | null, leftPath: string | null): void {
     const r = this.recs.get(tabId);
     if (!r) return;
     r.kind = kind;

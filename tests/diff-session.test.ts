@@ -191,7 +191,7 @@ describe("B461 · 会话字段（Review Focus 2）", () => {
     expect(JSON.parse(JSON.stringify(plain))).toHaveProperty("kind", null);
     expect(JSON.parse(JSON.stringify(plain))).toHaveProperty("diffLeftPath", null);
 
-    sessionStore.setDiff(1, "diff", "E:\\cmp\\left.md");
+    sessionStore.setTabKind(1, "diff", "E:\\cmp\\left.md");
     const diff = sessionStore.toSessionState(() => true).panels[0].tabs[0];
     expect(diff.kind).toBe("diff");
     expect(diff.diffLeftPath).toBe("E:\\cmp\\left.md");

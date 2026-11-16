@@ -32,6 +32,7 @@ import { EditorState } from "@codemirror/state";
 import { previewFace, previewLock } from "./preview/wysiwyg";
 import { shouldMountPreview } from "./preview/eligibility";
 import { applyHtmlPreviewFace } from "./preview/htmlPreview";
+import { applyMediaFace } from "./preview/mediaPreview";
 import { wysiwygInstalled } from "./preview/livePreview";
 import { assetBase, setAssetBase } from "./preview/assets";
 import { gutterDiffBaseline, refreshGutterDiff } from "./editor/gutterDiff";
@@ -158,6 +159,8 @@ function applyPanelMode(panel: Panel): void {
   applyPreviewFace(panel, tab, mode);
   // HTML 的预览不是那颗 view 的装饰脸：它是一张独立的 iframe 面，同一档位出口装卸。
   applyHtmlPreviewFace(panel, tab, mode);
+  // 媒体标签（图片 / 视频）同样是一张旁路面：原生 `<img>` / `<video>`，与视图档位无关
+  applyMediaFace(panel, tab);
   // B399：页面内那颗悬浮的「预览 ↔ 编辑」切换键，跟着同一份档位状态刷
   syncPreviewEditFab(panel, tab, mode);
   renderPanelOps(panel.panelId);

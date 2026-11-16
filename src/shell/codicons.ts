@@ -244,6 +244,10 @@ const IDS = {
   add: "add",
   remove: "remove",
   arrowRight: "arrow-right",
+  // 媒体预览（preview/mediaPreview）图片工具条那三颗：缩放与适应窗口
+  zoomIn: "zoom-in",
+  zoomOut: "zoom-out",
+  screenFull: "screen-full",
 } as const;
 
 /** 图标短名（上方 IDS 的键）。 */

@@ -229,20 +229,35 @@ export class EditableMetadataWidget extends WidgetType {
   }
 }
 
-/** HTML 块里的 `<img src>`：相对路径按文档目录拼成可加载地址（B409）。
+/** 选择器 → 要换的属性。`video` 的 `src` 与 `poster` 各算一条（两者可同时存在）。 */
+const MEDIA_SRC_ATTRS: ReadonlyArray<readonly [string, string]> = [
+  ["img[src]", "src"],
+  ["video[src]", "src"],
+  ["video[poster]", "poster"],
+  ["audio[src]", "src"],
+  ["source[src]", "src"],
+];
+
+/** HTML 块里的媒体地址（`<img>` / `<video>` / `<audio>` / `<source>`）：相对路径按文档
+ *  目录拼成可加载地址（B409）。
  *
  *  HTML 块里的 `<img src="./screenshots/a.png">` 是照文档目录写的，WebView 会把它
  *  当成「应用自身的相对地址」去加载 ⇒ 一路 404。与 Markdown 图片同一口径
  *  （`resolveAssetPath` + `assetUrl`）。已带协议的地址不碰：`asset:` / `blob:` 是
  *  别处（或上一发）已经处理好的，http/data 本来就不该拼。
+ *
+ *  `<video>` 的封面（`poster`）与 `<source>` 的子项同一条链 —— 视频要能放出来，
+ *  这三处都得换成本地可加载地址。
  */
-function resolveHtmlImages(root: HTMLElement, mdPath: string | null): void {
-  root.querySelectorAll<HTMLImageElement>("img[src]").forEach((img) => {
-    const src = img.getAttribute("src") ?? "";
-    // ⚠️ 只放过「已经是可加载地址」的那几种：`C:\shots\a.png` 也带冒号，别一刀切掉
-    if (!src || /^(?:https?|data|blob|asset):/i.test(src) || src.startsWith("//")) return;
-    img.setAttribute("src", assetUrl(resolveAssetPath(mdPath, src)));
-  });
+function resolveHtmlMedia(root: HTMLElement, mdPath: string | null): void {
+  for (const [selector, attr] of MEDIA_SRC_ATTRS) {
+    root.querySelectorAll<HTMLElement>(selector).forEach((el) => {
+      const src = el.getAttribute(attr) ?? "";
+      // ⚠️ 只放过「已经是可加载地址」的那几种：`C:\shots\a.png` 也带冒号，别一刀切掉
+      if (!src || /^(?:https?|data|blob|asset):/i.test(src) || src.startsWith("//")) return;
+      el.setAttribute(attr, assetUrl(resolveAssetPath(mdPath, src)));
+    });
+  }
 }
 
 /** HTML 块：默认显示渲染结果（已消毒），点它改源码。 */
@@ -282,7 +297,7 @@ export class HtmlBlockWidget extends WidgetType {
     preview.className = "md-html-preview md-rendered";
     const renderPreview = (html: string): void => {
       sanitizeHtmlInto(preview, html);
-      resolveHtmlImages(preview, this.mdPath);
+      resolveHtmlMedia(preview, this.mdPath);
     };
     renderPreview(this.html);
     wrap.append(source, preview);
@@ -329,7 +344,7 @@ export class HtmlBlockWidget extends WidgetType {
     }
     // 换文档（assetBase 变了）而 HTML 文本没变：eq() 判不等走进 updateDOM，
     // 这里把图片地址按新文档目录重解析一次（已解析过的 asset: 地址会被跳过）。
-    resolveHtmlImages(preview, this.mdPath);
+    resolveHtmlMedia(preview, this.mdPath);
     EditorView.findFromDOM(dom)?.requestMeasure();
     return true;
   }

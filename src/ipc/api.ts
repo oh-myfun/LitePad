@@ -51,6 +51,20 @@ export interface OpenedFile {
 }
 
 /**
+ * 媒体文件的元数据（对应 Rust `MediaFile`，`rename_all = "camelCase"`）。
+ *
+ * 没有 `text` —— 图片/视频由 `<img>` / `<video>` 按 asset URL 自己取流解码。
+ */
+export interface MediaFile {
+  tabId: number;
+  /** true 表示该路径已在某标签打开（前端应激活既有标签，不新建） */
+  reused: boolean;
+  path: string;
+  name: string;
+  size: number;
+}
+
+/**
  * 「与文件比较」（B461 · B 档）用的只读文本快照（对应 Rust `CompareText`，`rename_all = "camelCase"`）。
  *
  * 与 `OpenedFile` 的区别：这是临时对照缓冲 —— 没有 `tabId`、不注册文档、不装文件监听。
@@ -501,6 +515,11 @@ export function newTab(encoding?: string | null): Promise<TabInfo> {
 
 export function openFile(path: string, encoding?: string | null): Promise<OpenedFile> {
   return invoke<OpenedFile>("open_file", { path, encoding: encoding ?? null });
+}
+
+/** 以媒体身份打开文件：只取元数据，不读内容（见 Rust `open_media`）。 */
+export function openMedia(path: string): Promise<MediaFile> {
+  return invoke<MediaFile>("open_media", { path });
 }
 
 /** 只读地读一个文件当对照缓冲（B461 · B 档「与文件比较」），不注册文档、不装监听。 */

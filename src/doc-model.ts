@@ -25,6 +25,7 @@ import { eachLeaf } from "./core/layout";
 import { activeTab } from "./core/panels";
 import type { EditorView, ViewUpdate } from "@codemirror/view";
 import type { DiffSpec } from "./diff/model";
+import type { MediaKind } from "./io/media";
 
 /** makeInstance 创建 CM6 状态时用的更新回调（由 main 在启动时注入）。 */
 let instanceOnUpdate: (view: EditorView, update: ViewUpdate) => void = () => {};
@@ -192,6 +193,56 @@ function makeDiffInstance(doc: Doc, panelId: number, text: string, spec: DiffSpe
 }
 
 /**
+ * 媒体标签的文档载体：空正文 + 只读，`langLabel` 记成媒体档。
+ *
+ * 媒体文件不需要正文（`<img>` / `<video>` 按 asset URL 自己取流解码），但文档记录仍是
+ * 所有标签逻辑的公共锚点（名字、路径、路径标题、最近文件、会话、关闭）。把它建成
+ * 「空且只读」的文本档，老链路上每一处都不用问「这是不是媒体」。
+ *
+ * `baseline` 跟着是空串（`makeDoc` 的既定行为）⇒ 永远不脏、不写热退出副本。
+ */
+function makeMediaDoc(tabId: number, name: string, path: string, kind: MediaKind): Doc {
+  const doc = makeDoc(tabId, "", name, path, "UTF-8", "CRLF", true);
+  // 标签图标按语言档查表（`shell/tabstrip`），给媒体档才画得出图片/视频图形
+  doc.langLabel = kind === "image" ? "Image" : "Video";
+  return doc;
+}
+
+/**
+ * 为媒体标签在指定面板建一份实例：空 `EditorState` + `kind: "media"`。
+ *
+ * 为什么仍要建一个（空的）编辑器状态：`panel.view` 非空是整条落位/切换/尺寸链的前提
+ * （见 `tabs/lifecycle` 的 `mountView`），媒体面只是盖在它上面的一张旁路 DOM。
+ * 语言扩展、右缘标尺、gutter diff 都不装 —— 那一格整块被 CSS 藏掉，装了也不会显示。
+ */
+function makeMediaInstance(doc: Doc, panelId: number): Tab {
+  const { state, comps } = makeTabState(
+    "",
+    null,
+    {
+      dark: isDark,
+      family: themeFamily,
+      wrap: isWrap,
+      invisibles: showInvisibles,
+      perf: perfProfileForDoc("normal", false),
+      overview: false,
+    },
+    instanceOnUpdate,
+  );
+  return {
+    tabId: takeInstId(),
+    docId: doc.tabId,
+    panelId,
+    comps,
+    state,
+    viewMode: "source",
+    kind: "media",
+    diff: null,
+    scrollV: 1,
+  };
+}
+
+/**
  * 文档当前**应当**是脏的吗（B112）。
  *
  * 「改过就永远脏」是错的：用户改了几个字又撤销回去、或者手动改回原文，内容已经
@@ -311,6 +362,8 @@ export {
   makeDoc,
   makeInstance,
   makeDiffInstance,
+  makeMediaDoc,
+  makeMediaInstance,
   isDirtyVsBaseline,
   markClean,
   markDiskVersion,

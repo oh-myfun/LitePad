@@ -342,6 +342,21 @@ pub struct OpenedFile {
     pub mtime_ms: i64,
 }
 
+/// 媒体文件的元数据：`open_media` 的返回。
+///
+/// 与 `OpenedFile` 的唯一实质差别是**没有正文** —— 图片/视频由前端的 `<img>` / `<video>`
+/// 按 asset 协议的 URL 自己取流解码，命令这边读字节只会把整个文件塞进 IPC。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaFile {
+    pub tab_id: u64,
+    /// true 表示该路径已在某个标签中打开（前端应激活既有标签，不新建）
+    pub reused: bool,
+    pub path: String,
+    pub name: String,
+    pub size: u64,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LossyChar {
@@ -562,6 +577,54 @@ pub async fn open_file(
         size_class: class.as_str().into(),
         size_hint: doc::size_class_hint(class).into(),
         mtime_ms,
+    })
+}
+
+/// 以「媒体」身份打开一个文件：只登记元数据，不读内容。
+///
+/// 必须单开一条命令：`open_file` 的读管线会拒掉二进制，而图片/视频本来就是二进制。
+/// **不挂 `watch_file`** —— 前端对 `file-changed` 的处理是「按文本重载」，媒体标签没有
+/// 那条链；盘上被改过时重新打开一次即可。
+#[tauri::command]
+pub async fn open_media(path: String, state: State<'_, AppState>) -> Result<MediaFile, String> {
+    let target = PathBuf::from(&path);
+    let meta = fs::metadata(&target).map_err(|e| format!("无法访问文件：{}", e))?;
+    if !meta.is_file() {
+        return Err("只能打开文件（不是文件夹）。".into());
+    }
+    let abs = normalize_path(fs::canonicalize(&target).unwrap_or(target.clone()));
+    let name = target
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    let mut guard = state.docs.lock().map_err(|e| e.to_string())?;
+    if let Some(existing) = guard.iter().find(|d| d.path == abs) {
+        return Ok(MediaFile {
+            tab_id: existing.id,
+            reused: true,
+            path: abs.to_string_lossy().into_owned(),
+            name,
+            size: meta.len(),
+        });
+    }
+
+    let tab_id = alloc_id(&state)?;
+    // 正文留在前端（空的）；这里这一条只为了让 `close_tab` / 会话对账有据可依。
+    guard.push(doc::Doc {
+        id: tab_id,
+        path: abs.clone(),
+        encoding: codec::Encoding::Utf8,
+        eol: eol::Eol::from_label("CRLF"),
+        readonly: true,
+    });
+
+    Ok(MediaFile {
+        tab_id,
+        reused: false,
+        path: abs.to_string_lossy().into_owned(),
+        name,
+        size: meta.len(),
     })
 }
 

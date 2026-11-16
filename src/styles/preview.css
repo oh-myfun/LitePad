@@ -1731,6 +1731,143 @@ body.layout-dragging .toc-grip {
   flex-direction: column;
 }
 
+/* 媒体预览档（preview/mediaPreview）：直接打开的图片 / 视频。与 HTML 档同形 ——
+   编辑器整格让位，原生 `<img>` / `<video>` 吃满剩下的高度；工具条一行（标题 +
+   元信息 + 右侧操作）。图片的缩放/平移由 transform 完成，舞台只负责裁剪。 */
+.panel-host.preview-kind-media > .panel-editor {
+  display: none;
+}
+.panel-host .media-preview {
+  display: none;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--bg, #ffffff);
+}
+.panel-host.preview-kind-media > .media-preview {
+  display: flex;
+}
+.media-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border, #e5e5e5);
+  font-size: var(--fs-ui, 12px);
+  color: var(--fg-muted, #606060);
+  user-select: none;
+}
+.media-name {
+  color: var(--editor-fg, #202020);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.media-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.media-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+.media-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-muted, #606060);
+  font-size: var(--fs-meta, 11px);
+  cursor: pointer;
+}
+.media-btn:hover {
+  background: var(--code-bg, #eaeaea);
+  color: var(--editor-fg, #202020);
+}
+.media-btn .codicon {
+  font-size: 14px;
+}
+.media-btn-text {
+  width: auto;
+  padding: 0 6px;
+}
+.media-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  /* 棋盘底：透明 PNG / GIF 才看得出图的实际边界（深浅主题共用一组半透明灰） */
+  background-color: transparent;
+  background-image:
+    linear-gradient(
+      45deg,
+      rgba(127, 127, 127, 0.12) 25%,
+      transparent 25%,
+      transparent 75%,
+      rgba(127, 127, 127, 0.12) 75%
+    ),
+    linear-gradient(
+      45deg,
+      rgba(127, 127, 127, 0.12) 25%,
+      transparent 25%,
+      transparent 75%,
+      rgba(127, 127, 127, 0.12) 75%
+    );
+  background-size: 16px 16px;
+  background-position:
+    0 0,
+    8px 8px;
+}
+.media-stage.is-panning {
+  cursor: grabbing;
+}
+.media-image {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  user-select: none;
+  -webkit-user-drag: none;
+  will-change: transform;
+}
+.media-stage-video {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  cursor: default;
+}
+.media-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  outline: none;
+}
+.media-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  font-size: var(--fs-ui, 12px);
+  color: var(--fg-muted, #606060);
+  pointer-events: none;
+}
+
 /* B399 · 预览档（禁编辑）↔ 编辑档的页面内切换键（用户口径 2026-10-28）。
    B401：搬到编辑区左上角，字形改 eye / edit。只在装饰面（两种所见即所得档）
    里出现，不进标签条（标签条那颗双字形开关管的是源码 ↔ 预览）。字形/提示由

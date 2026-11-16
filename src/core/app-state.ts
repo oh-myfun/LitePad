@@ -40,6 +40,17 @@ export interface Panel {
   diffSurface: DiffSurface | null;
 }
 
+/** 媒体标签里图片的视野（缩放 + 相对居中位置的平移量，单位 CSS 像素）。 */
+export interface MediaViewState {
+  /** 缩放倍数（1 = 原始像素） */
+  zoom: number;
+  /** 相对「居中」的平移量；`fit` 为 true 时由面自己重算，这两个值仅作占位 */
+  x: number;
+  y: number;
+  /** true = 跟随窗口（适应窗口），false = 用户指定的缩放 */
+  fit: boolean;
+}
+
 /** 标签实例：文档在某面板中的一份视图（独立光标/撤销历史/视图模式）。
  *  同一文档可在多个面板各有一个实例，编辑内容通过变更集实时同步，
  *  内存中的文档数据只有一份（docs）。 */
@@ -59,19 +70,29 @@ export interface Tab {
    */
   viewMode: "source" | "preview" | "edit";
   /**
-   * B461 · 这份实例是普通编辑器还是差异标签。**建实例时给死，之后不改**。
+   * B461 · 这份实例是普通编辑器、差异标签，还是媒体预览（图片/视频）。
+   * **建实例时给死，之后不改**。
    *
    * `diff` 这一支只是「这一格挂着旁路」的记账位：所有按 `panel.view` 寻址的老逻辑
    * （脏点、保存、落位、会话）走的仍是**右栏那份文档本身**，因此不需要问 kind；
    * 只有「该不该挂 / 拆左栏旁路」「标签标题怎么拼」这一类才读它。
-   * 会话里的旧标签缺这个键 ⇒ 一律按 `"editor"`（B392 纪律：没记过不许读成任何一种状态）。
+   * `media` 同理：文档只做元数据载体（空正文、只读），正文面由 `preview/mediaPreview`
+   * 挂一张原生 `<img>` / `<video>` 覆盖。会话里的旧标签缺这个键 ⇒ 一律按 `"editor"`
+   * （B392 纪律：没记过不许读成任何一种状态）。
    */
-  kind: "editor" | "diff";
+  kind: "editor" | "diff" | "media";
   /**
    * B461 · 差异标签的输入描述（`kind === "diff"` 时非空，其余恒 `null`）。
    * 存的是「两侧正文怎么取到」，不是正文本身 —— 见 `src/diff/model.ts` 的 `DiffSpec`。
    */
   diff: DiffSpec | null;
+  /**
+   * 媒体标签（`kind === "media"`）的图片视野：缩放倍数与相对居中的平移量。
+   *
+   * 挂在实例上而不是预览面的 DOM 上：切走再切回来会重建那张面，视野得原样回来。
+   * 视频不用它（原生 controls 自带播放位置，且不打断播放）。
+   */
+  media?: MediaViewState | null;
   /**
    * 这份实例自己的视口位置，用同步滚动的共享坐标 `v`（源码行号 + 小数）。
    *

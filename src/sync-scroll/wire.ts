@@ -462,7 +462,8 @@ export function reconcileSyncRegistrations(): void {
     // 另一个视口把位置广播出去，把普通标签的记忆改写成差异栏的位置。真机取证：
     // 12:58:24 差异栏 Ctrl+End ⇒ `外发 doc=1 v=33.00`；随后关掉差异标签，接班标签
     // 按被改写的 scrollV 落到 664.7px（⑦⑥「不触发同步滚动」正是这一条）。
-    if (tab.kind === "diff") continue;
+    // 媒体标签同理不注册：那一格是隐藏的空编辑器，注册进去只是个读不准的幽灵锚点。
+    if (tab.kind !== "editor") continue;
     const docId = String(tab.docId);
     // 走 `faceOf` 而不是在这里自己 new 锚点：预览锚点那条「未铺开 ⇒ 下一帧补定位」的异步
     // 支线需要回登记口，两处必须用同一个构造方式，否则注册出来的锚点没有这个口。

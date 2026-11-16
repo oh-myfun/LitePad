@@ -168,9 +168,14 @@ export function refreshSession(): void {
       diskSize: d.diskMtimeMs > 0 ? d.diskSize : null,
     });
     sessionStore.setViewMode(t.tabId, isPreviewableTab(t) ? t.viewMode : null);
-    // B461：差异标签的两格会话字段（唯一写点，与上面几颗同一圈同步）。`leftPath` 只有
+    // B461：标签类型与差异左栏（唯一写点，与上面几颗同一圈同步）。`leftPath` 只有
     // B 档有值；A 档与普通标签都落 null ⇒ 恢复时靠它分清「与上次保存比较」和「任选两文件」。
-    sessionStore.setDiff(t.tabId, t.kind === "diff" ? "diff" : null, t.diff?.leftPath ?? null);
+    // 媒体标签同样靠这一格分清：恢复时不能拿它去读文本。
+    sessionStore.setTabKind(
+      t.tabId,
+      t.kind === "diff" ? "diff" : t.kind === "media" ? "media" : null,
+      t.diff?.leftPath ?? null,
+    );
     // B169：同步滚动开关是 `docSyncModes`（按文档记，B152）里的值，退出前刷进记录，
     // 落盘后重开时由 `restoreSession` 写回，让同步键点亮态与退出前一致。
     sessionStore.setSyncMode(t.tabId, docSyncOn(t.docId));

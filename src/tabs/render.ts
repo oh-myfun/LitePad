@@ -94,9 +94,11 @@ export function tabViewDataOf(p: Panel): TabViewData[] {
         path: doc?.path ?? undefined,
         hasSibling: countLeaves(layout) > 1,
         // B461：右键那条的置灰判据随快照走 —— 菜单点开那一刻的基线才是要显示的基线。
-        canDiffAgainstSaved: canOpenAgainstBaseline(doc ?? null),
+        // 媒体标签没有文本基线，那条整条按「没有」处理（见 tabstrip 的 `isMedia`）。
+        canDiffAgainstSaved: t.kind !== "media" && canOpenAgainstBaseline(doc ?? null),
         // B461 Task 10：搬移那五条与拖拽手势的显隐判据（设计稿 ⑧·3）。
         isDiff: t.kind === "diff",
+        isMedia: t.kind === "media",
       };
     });
 }

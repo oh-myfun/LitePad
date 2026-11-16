@@ -28,11 +28,14 @@ import argparse
 import ctypes
 import hashlib
 import json
+import math
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import time
+import zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
@@ -109,6 +112,11 @@ def diff_tab(path, left_path, line=1, doc_id=1):
     （`diff/model.ts:diffKindOf` 的三态口径）。
     """
     return dict(tab(path, "source", line, doc_id), kind="diff", diffLeftPath=left_path)
+
+
+def media_tab(path, doc_id=1):
+    """媒体标签：`kind` 走 `"media"`，恢复时按 `openMedia` 取元数据而不是读文本。"""
+    return dict(tab(path, "source", 1, doc_id), kind="media")
 
 
 # 差异配方的演示文件：写进项目内 `.tmp/shot/demo`，每次重拍都重建 —— 内容即真相，
@@ -299,6 +307,44 @@ HTML_PREVIEW_LOGO = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 6
 </svg>
 """
 
+# 图片预览配方的演示图：纯 stdlib 现画（zlib + struct），不往仓库里塞二进制素材。
+# 对角渐变 + 右上高光 + 左下深色圆角块 —— 缩放 / 平移时这几层能看出图像真的在动。
+def demo_png(w=720, h=460):
+    def in_round_rect(x, y, x0, y0, x1, y1, r):
+        if not (x0 <= x <= x1 and y0 <= y <= y1):
+            return False
+        cx = min(max(x, x0 + r), x1 - r)
+        cy = min(max(y, y0 + r), y1 - r)
+        return (x - cx) ** 2 + (y - cy) ** 2 <= r * r
+
+    raw = bytearray()
+    for y in range(h):
+        raw.append(0)  # PNG 行过滤类型 0
+        for x in range(w):
+            t = (x / w) * 0.65 + (y / h) * 0.35
+            r = int(38 + 150 * t)
+            g = int(64 + 120 * t)
+            b = int(150 + 80 * t)
+            glow = max(0.0, 1 - math.hypot(x - w * 0.68, y - h * 0.34) / (h * 0.42)) ** 2
+            r = int(r + (255 - r) * glow * 0.5)
+            g = int(g + (255 - g) * glow * 0.5)
+            b = int(b + (255 - b) * glow * 0.5)
+            if in_round_rect(x, y, int(w * 0.08), int(h * 0.55), int(w * 0.46), int(h * 0.9), 34):
+                r, g, b = max(0, r - 46), max(0, g - 46), max(0, b - 40)
+            raw += bytes((r, g, b))
+
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(
+            ">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+            + chunk(b"IEND", b""))
+
+
+MEDIA_IMAGE = os.path.join(DEMO_DIR, "cover.png")
+
 
 # 根 README 开头只放 main.png；差异编辑器那张 diff.png 归 `docs/screenshots/README.md`
 # 的表格，两处都要提到（改配方就同步改那份 README 的复现命令）。
@@ -356,6 +402,15 @@ RECIPES = [
         "session": lambda: {**split_session([tab(HTML_PREVIEW, "source", 6, 1)],
                                             tab(HTML_PREVIEW, "preview", 1, 2)),
                             "activePanel": 1},
+    },
+    {
+        "name": "media",
+        "what": "图片预览：原生 img 渲染 + 工具条（文件名 / 真实尺寸 / 适应窗口 / 1:1）",
+        "theme": "dark",
+        # `files` 的值可以是 bytes 或无参函数（演示图纯 stdlib 现画，仓库里不存二进制素材）。
+        "files": {"cover.png": demo_png},
+        "session": lambda: single_session(
+            [tab(MD, "source", 8, 1), media_tab(MEDIA_IMAGE, 2)], active=1),
     },
 ]
 
@@ -448,13 +503,21 @@ def write_demo_config(recipe):
         json.dump(base, f, ensure_ascii=False, indent=2)
     with open(SESSION, "w", encoding="utf-8") as f:
         json.dump(recipe["session"](), f, ensure_ascii=False, indent=2)
-    # 配方自带的演示文件（差异格要一对真实文件）：每次重写，内容以脚本里的常量为准。
+    # 配方自带的演示文件（差异格要一对真实文件、图片格要一张真图）：每次重写，
+    # 内容以脚本里的常量为准；bytes / 无参函数当二进制写，字符串按 UTF-8 + LF 写。
     files = recipe.get("files") or {}
     if files:
         os.makedirs(DEMO_DIR, exist_ok=True)
-        for name, text in files.items():
-            with open(os.path.join(DEMO_DIR, name), "w", encoding="utf-8", newline="\n") as f:
-                f.write(text)
+        for name, content in files.items():
+            if callable(content):
+                content = content()
+            out = os.path.join(DEMO_DIR, name)
+            if isinstance(content, bytes):
+                with open(out, "wb") as f:
+                    f.write(content)
+            else:
+                with open(out, "w", encoding="utf-8", newline="\n") as f:
+                    f.write(content)
 
 
 # ---------------------------------------------------------------- 窗口操作

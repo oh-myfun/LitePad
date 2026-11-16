@@ -434,7 +434,8 @@ describe("B461 · B 档标签右键两条的接线（Task 6 Step 5）", () => {
     const ts = srcOf("src/shell/tabstrip.ts");
     expect(ts).toMatch(/onSelectToCompare\?:\s*\(tabId: number\) => void/);
     expect(ts).toMatch(/onCompareWith\?:\s*\(tabId: number\) => void/);
-    expect(ts).toMatch(/t\.path && cb\.onSelectToCompare && cb\.onCompareWith/);
+    // 媒体标签（`isMedia`）那条是同一闸门上的第二个缺席理由：比较读的是文本，媒体没有基线
+    expect(ts).toMatch(/t\.path && !t\.isMedia && cb\.onSelectToCompare && cb\.onCompareWith/);
     expect(ts, "标签与显隐的真相只许在 diff/compare.ts 一处").toMatch(/compareMenuItems\(/);
 
     // ② 那颗共享构造器 + 两个 producer 各展开一次（Task 6 评审 Important 1：这一段
@@ -1039,15 +1040,17 @@ describe("B461 · Task 10 会话字段与禁搬移的跨文件接线", () => {
 
   it("两格会话字段只有**一处**写点，且问的是 Tab 自己的 kind / diff.leftPath", () => {
     const writers = collectTextFiles("src").filter((p) =>
-      read(p).includes("sessionStore.setDiff("),
+      read(p).includes("sessionStore.setTabKind("),
     );
     expect(
       writers.map((p) => p.replace(/\\/g, "/")),
       "写点分裂就是 B304 那一课",
     ).toEqual(["src/session/persist.ts"]);
-    const call = read("src/session/persist.ts").match(/sessionStore\.setDiff\(([^;]*)\);/)?.[1];
-    expect(call, "取不到那一发 setDiff").toBeTruthy();
+    const call = read("src/session/persist.ts").match(/sessionStore\.setTabKind\(([^;]*)\);/)?.[1];
+    expect(call, "取不到那一发 setTabKind").toBeTruthy();
     expect(call).toContain('t.kind === "diff"');
+    // 媒体标签也走同一格（恢复时不能拿它去读文本）
+    expect(call).toContain('"media"');
     expect(call).toContain("t.diff?.leftPath");
   });
 

@@ -96,6 +96,10 @@ const ICON_OF: Record<string, SetiIcon> = {
   Makefile: { ch: "E05F", tone: "orange" },
   Vue: { ch: "E09D", tone: "green" },
   "Plain Text": { ch: "E023", tone: "default" },
+  // 媒体标签（`preview/mediaPreview`）：VS Code Seti 对 png/jpg… 取 `_image`，
+  // 对 mp4/webm… 取 `_video`；码位与配色与主题表逐字对得上。
+  Image: { ch: "E04C", tone: "purple" },
+  Video: { ch: "E09B", tone: "pink" },
 };
 
 /** 语言标签 → 图标。未知语言（含 null）回落到 Seti 缺省文件图标。 */
