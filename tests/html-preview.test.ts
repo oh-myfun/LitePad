@@ -145,11 +145,12 @@ describe("buildHtmlPreviewDocument：<base> 与 bridge 的落点", () => {
     expect(out).toContain('<base href="D:\\a&amp;b&quot;c\\">');
   });
 
-  it("bridge 自己带链接 / 按键 / 右键三条转发", () => {
+  it("bridge 自己带链接 / 按键 / 右键 / 点击激活四条转发", () => {
     const out = buildHtmlPreviewDocument("<h1>x</h1>", base);
     expect(out).toContain("closest('a[href]')");
     expect(out).toContain('send("key"');
     expect(out).toContain('send("link"');
+    expect(out).toContain('send("activate"');
     expect(out).toContain('addEventListener("contextmenu"');
   });
 });
@@ -261,6 +262,31 @@ describe("applyHtmlPreviewFace：预览面的挂载 / 收档", () => {
       }),
     );
     expect(openLocal).toHaveBeenCalledWith("D:\\docs\\notes.txt");
+  });
+
+  it("点中预览内容：向所属分屏补发 mousedown，激活面板与标签", () => {
+    const docId = newDoc("index.html", "D:\\docs\\index.html", "<h1>x</h1>");
+    const tab = newTab(docId, 28, "<h1>x</h1>");
+    tab.viewMode = "preview";
+    const panel = newPanel(28, tab.tabId);
+    // 真实结构：.layout-panel > .panel-host > .html-preview > iframe
+    const layoutPanel = document.createElement("div");
+    layoutPanel.className = "layout-panel";
+    layoutPanel.dataset.panelId = "28";
+    layoutPanel.appendChild(panel.bodyEl!);
+    document.body.appendChild(layoutPanel);
+    const activated = vi.fn();
+    layoutPanel.addEventListener("mousedown", activated);
+
+    applyHtmlPreviewFace(panel, tab, "preview");
+    const frame = panel.bodyEl!.querySelector<HTMLIFrameElement>(".html-preview iframe")!;
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { __litepadPreview: 1, type: "activate" },
+        source: frame.contentWindow!,
+      }),
+    );
+    expect(activated).toHaveBeenCalledTimes(1);
   });
 
   it("阅读位置按文档记：切到另一份 HTML 不继承上一份的滚动量", () => {

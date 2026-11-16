@@ -7,9 +7,9 @@
 //     直接打开本地文件；fetch / ES module / webfont 这类需要 CORS 的读取会被 opaque origin
 //     拦下。**绝不能**再加 `allow-same-origin`：同源 iframe 能摸到宿主的
 //     `__TAURI_INTERNALS__`，等于把读写任意文件的能力交给这份 HTML。
-//   · **不许把 WebView 导航走**：脚本与宿主隔着文档边界，链接点击 / 快捷键 / 右键菜单由
-//     注入的 bridge 走 `postMessage` 交回宿主（B401 口径）。纯锚点在页内滚，本地文件开成
-//     标签，http(s) 交给系统浏览器。
+//   · **不许把 WebView 导航走**：脚本与宿主隔着文档边界，链接点击 / 快捷键 / 右键菜单 /
+//     点击激活由注入的 bridge 走 `postMessage` 交回宿主（B401 口径）。纯锚点在页内滚，
+//     本地文件开成标签，http(s) 交给系统浏览器。
 //   · 相对资源按文档目录解析：`<base>` 指向该目录的 asset 地址（`assetUrl`）。
 //     未保存的文档没有目录，只能按无基准渲染。
 
@@ -38,6 +38,8 @@ const PREVIEW_BRIDGE = [
   '    try { parent.postMessage(Object.assign({ __litepadPreview: 1, type: type }, data), "*"); } catch (e) {}',
   "  }",
   '  document.addEventListener("contextmenu", function (e) { e.preventDefault(); }, true);',
+  // iframe 里的 mousedown 冒泡不到宿主，面板自己的「点谁激活谁」监听永远收不到。
+  '  document.addEventListener("mousedown", function () { send("activate", {}); }, true);',
   "  var scrollPending = false;",
   '  window.addEventListener("scroll", function () {',
   "    if (scrollPending) return;",
@@ -172,6 +174,11 @@ interface PreviewScrollMessage {
   top: number;
 }
 
+interface PreviewActivateMessage {
+  __litepadPreview: 1;
+  type: "activate";
+}
+
 /**
  * bridge 的回执。`event.source` 是唯一可信的身份：页面脚本能伪造消息内容，但改变不了
  * 自己来自哪张 iframe；认不出源的消息一律丢掉。
@@ -179,10 +186,18 @@ interface PreviewScrollMessage {
 function onPreviewMessage(event: MessageEvent): void {
   const frame = event.source ? frameByWindow.get(event.source as Window) : undefined;
   if (!frame) return;
-  const data = event.data as PreviewKeyMessage | PreviewLinkMessage | PreviewScrollMessage | null;
+  const data = event.data as
+    PreviewKeyMessage | PreviewLinkMessage | PreviewScrollMessage | PreviewActivateMessage | null;
   if (!data || data.__litepadPreview !== 1) return;
   if (data.type === "scroll") {
     previewScrollByDoc.set(Number(frame.dataset.docId ?? ""), data.top);
+    return;
+  }
+  if (data.type === "activate") {
+    // 面板的「点谁激活谁」挂在 `.layout-panel` 的 mousedown 上，而 iframe 里的点击
+    // 跨不过文档边界。补一次 mousedown 走同一条激活路径（标题 / 状态 / 大纲 / 查找栏
+    // 都跟着刷新）；预览档里编辑器是 display:none，激活时那次 focus 落空，网页不会失焦。
+    frame.closest(".layout-panel")?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     return;
   }
   if (data.type === "key") {
