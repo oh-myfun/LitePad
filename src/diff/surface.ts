@@ -29,6 +29,7 @@ import {
   type Extension,
 } from "@codemirror/state";
 import {
+  BlockType,
   EditorView,
   drawSelection,
   highlightActiveLine,
@@ -167,10 +168,10 @@ export interface DiffSurface {
   /** 关掉后两栏各滚各的；重新打开时立刻对齐一次。 */
   setSyncScrollEnabled(on: boolean): void;
   /**
-   * 显式落位（`landVisibleSideAtV`）收口后调用：把左栏扶到右栏当前的同一像素。
+   * 显式落位（`landVisibleSideAtV`）收口后调用：把左栏扶到右栏视口顶对应的内容位置。
    *
    * 落位的那一栏是权威，不按「最后驱动侧」反推 —— 用户上一次可能滚的是左栏，而落位
-   * 刚把右栏明确放到另一个位置。扶完左栏才算「这一格」收口（见 `revealLeftWhenAligned`）。
+   * 刚把右栏明确放到另一个位置。扶完左栏才算「这一格」收口（见 `revealLeft`）。
    */
   syncLeftToRight(): void;
   /**
@@ -1160,8 +1161,8 @@ export function createDiffSurface(
     ),
   });
   /**
-   * 新 view 的 `scrollTop` 从 0 起、行高地图还全是估值：先藏着，等第一次和右栏逐像素对上
-   * 再露（`revealLeftWhenAligned`）。不藏的话，切到差异标签的头两帧会先画出基线开头，
+   * 新 view 的 `scrollTop` 从 0 起、行高地图还全是估值：先藏着，等第一次被右栏的映射
+   * 落过位再露（`revealLeft`）。不藏的话，切到差异标签的头两帧会先画出基线开头，
    * 随后才被镜像到真正的位置 —— 用户看到的就是内容区上下抖。
    */
   left.scrollDOM.style.visibility = "hidden";
@@ -1432,11 +1433,9 @@ export function createDiffSurface(
           // `refreshArms` 内部已再排一轮 `scheduleAlign`，落位交给那一轮的收口（那时缝已稳定）。
         } else {
           // 缝已稳定、两栏这一轮的锚定也都做完 ⇒ 这时按最后驱动侧重落一次才是终值。
+          // 左栏第一次「露出来」也挂在这一发上（见 `resyncSharedOffset`）。
           resyncSharedOffset();
         }
-        // 两栏在这一轮都量完了：左栏若还藏着，趁这里判一次能不能露（文首那一格没有滚动
-        // 事件可等，只能靠收口这一发）。
-        revealLeftWhenAligned();
         // 占位块/折叠/换行都会挪色块与按钮的像素位置，落地后统一重画一次。
         // 这一轮 measure 可能换了行盒（字体/折行/宽度）⇒ 概览轴先作废再读。
         invalidateAxis();
@@ -1721,11 +1720,12 @@ export function createDiffSurface(
     scroller.scrollTop += e.deltaY;
   };
   /**
-   * 两栏同步滚动（默认开）：**同一个 `scrollTop`**。
+   * 两栏同步滚动（默认开）：**把驱动栏的视口顶换成对栏同一个内容位置**。
    *
-   * 缝计划取整篇一次量准的实测行高（`meterGapPlans`）⇒ 每个对齐段两侧等高、段首同 y，
-   * 于是两栏的坐标系是同一套，驱动栏的像素位置原样交给对栏就是正确位置。这里不按行号
-   * 二次换算 —— 行号换算要读视口外的估值，测量一变结果就变，两栏会被来回拽。
+   * 缝计划取整篇一次量准的实测行高（`meterGapPlans`）⇒ 每个对齐段两侧等高、段首同 y；
+   * 两栏各自的 `scrollTop` 却不一定相等 —— 行高地图的视口外部分是估值，两侧估值差多少，
+   * 同一像素就错开多少（切标签后实测能差半屏）。所以按「段首行 + 段内偏移」换算
+   * （`alignSpan`），而不是照搬像素。
    *
    * `pendingEcho` 只用来认出「这一发是我写的」：回声一律早退，不再反向映射。
    */
@@ -1776,53 +1776,198 @@ export function createDiffSurface(
   };
 
   /**
-   * 左栏是否已经露出来（见 `revealLeftWhenAligned`）。
+   * 左栏是否已经露出来（见 `revealLeft`）。
    */
   let leftShown = false;
   /**
-   * 左栏第一次对上右栏之前先藏着，对上且右栏不在落位隐藏期时**同一同步栈里**露出来
-   * （与 `landVisibleSideAtV` 的 hide-then-reveal 同一手法：藏/露之间没有绘制机会）。
+   * 左栏第一次被右栏的映射落过位之前先藏着，落过且右栏不在落位隐藏期时**同一同步栈里**
+   * 露出来（与 `landVisibleSideAtV` 的 hide-then-reveal 同一手法：藏/露之间没有绘制机会）。
    *
-   * 「对上」的判据就是两栏 `scrollTop` 逐像素相等 —— 与同步滚动本身同一个口径，不另立标准。
-   * 新 view 的首帧两栏天然都是 0（都停在文首、没有待落的位置），所以文首那一格不会多藏一帧。
+   * 判据是「右栏→左栏的那一发映射已经写进且落定」，不是「两栏 scrollTop 相等」——
+   * 两栏的行高地图各含视口外估值，对齐位置本来就不一定同像素（见 `mirrorScroll`）。
    */
-  const revealLeftWhenAligned = (): void => {
+  const revealLeft = (): void => {
     if (leftShown || !right) return;
     // 右栏正在落位链里藏着：那一侧的中间态本来就不许画出来，这一栏跟着等。
     if (right.scrollDOM.style.visibility === "hidden") return;
-    if (Math.abs(left.scrollDOM.scrollTop - right.scrollDOM.scrollTop) > 1) return;
     leftShown = true;
     left.scrollDOM.style.visibility = "";
   };
+  /** 驱动栏视口顶落在哪个文档行（1-based）。 */
+  const topLine = (view: EditorView, top: number): number =>
+    view.state.doc.lineAt(view.lineBlockAtHeight(top).from).number;
   /**
-   * 两栏的滚动**逐像素相同**：`gapZones` 用同一张实测行高地图保证每个对齐段两侧等高
-   * （见 `meterGapPlans`），段首同 y、段内总高相等，所以同一个 `scrollTop` 在两栏
-   * 指的就是同一个视觉位置。这里不再按「顶行 → 对栏对应行」二次换算：那一套要读
-   * 两栏各自的 `lineBlockAt`（视口外仍是估值），换算结果随测量变，反倒把两栏来回拽。
+   * 视口顶是不是落在**占位缝内部**。
+   *
+   * 缝（`face.ts` 的 `DiffGapWidget`）高 = 对侧同一段多出来的实测像素，且落在对齐段的尾部
+   * ⇒ 段的起点两侧同 y、总高相等，缝的像素区间与对侧那段内容严格同起点同高度，缝内任意
+   * y 在两栏指同一个位置。这一档必须按像素一一映射：继续走「锚点行 + 段内偏移」会被锚点行
+   * 的块高压住（`otherEndTop` 把整条缝缩成一行）。
+   *
+   * 只认 `WidgetAfter` / `WidgetBefore`（缝的两种落法，见 `face.ts` 的 `buildGapFace`）；
+   * 折条是 `Decoration.replace` 的 `WidgetRange`，不是「对侧多出来的高度」，不在此列。
    */
-  const mirrorScroll = (from: EditorView | null, to: EditorView | null, reveal = true): void => {
-    if (!syncOn || !from || !to || from === to) return;
+  const inGap = (view: EditorView, top: number): boolean => {
+    const block = view.lineBlockAtHeight(top);
+    if (!Array.isArray(block.type)) return false;
+    return block.type.some(
+      (part) =>
+        (part.type === BlockType.WidgetAfter || part.type === BlockType.WidgetBefore) &&
+        top >= part.top &&
+        top < part.top + part.height,
+    );
+  };
+  /**
+   * 驱动栏第 `line` 行落在哪个**对齐段**里，以及对栏那一段的首/末行（1-based）。
+   *
+   * 为什么锚在「段」而不是「行」：折行打开后同一文档行在两栏的视觉高度不同（栏宽不同），
+   * 行内像素比例没有任何对应关系。但 `gapZones` 已经保证**每个对齐段两侧总高相等**
+   * （块首 → 字符级对齐边界 → 块尾，加上未改动区逐行对齐）—— 段内任意像素偏移在两栏
+   * 指向同一个视觉位置，这正是 VS Code 的 alignment view zone 语义。所以块内必须搬
+   * 「相对段首的像素」，行号只在未改动区还能当锚（那里两侧逐行等高）。
+   *
+   * 段首/段末都从 `stops` 取（与 `gapZones` 同一份 `inner.alignments`）：两处若各算一套
+   * 边界，缝补在一处、滚动锚在另一处，段内就会差出缝的那一截。
+   */
+  interface AlignSpan {
+    ownStart: number;
+    otherStart: number;
+    /** 对栏段的结束行（不含；未改动区就是 otherStart 自己） */
+    otherEnd: number;
+    /**
+     * 这一段在对栏**一行都不占**（对栏整段是一条缝）。
+     *
+     * 此时 `otherStart` 是缝**后面**那一行，拿它当段首会把对栏直接推到段尾；调用方必须
+     * 改用像素一一对应（段首两侧同 y、段内总高相等，缝就是这段在对栏的全部内容）。
+     */
+    otherFlat: boolean;
+  }
+
+  const alignSpan = (side: DiffSide, line: number): AlignSpan => {
+    const other = viewOf(side === "original" ? "modified" : "original");
+    const clampLine = (n: number): number =>
+      other ? Math.min(Math.max(n, 1), other.state.doc.lines) : 1;
+    const ownSpan = (b: DiffBlock) =>
+      side === "original"
+        ? { start: b.originalStart, end: b.originalEnd }
+        : { start: b.modifiedStart, end: b.modifiedEnd };
+    const otherSpan = (b: DiffBlock) =>
+      side === "original"
+        ? { start: b.modifiedStart, end: b.modifiedEnd }
+        : { start: b.originalStart, end: b.originalEnd };
+    for (let i = 0; i < stored.length; i++) {
+      const b = stored[i];
+      const own = ownSpan(b);
+      const opp = otherSpan(b);
+      if (line < own.start) {
+        // 未改动区：两侧行数相等且逐行等高，行号平移即是像素平移。
+        const mapped = clampLine(line + (opp.start - own.start));
+        return { ownStart: line, otherStart: mapped, otherEnd: mapped, otherFlat: false };
+      }
+      if (line <= own.end) {
+        const stops = [
+          { originalLine: b.originalStart, modifiedLine: b.modifiedStart },
+          ...(inner.alignments[i] ?? []),
+          { originalLine: b.originalEnd + 1, modifiedLine: b.modifiedEnd + 1 },
+        ];
+        const at = (p: { originalLine: number; modifiedLine: number }): number =>
+          side === "original" ? p.originalLine : p.modifiedLine;
+        const to = (p: { originalLine: number; modifiedLine: number }): number =>
+          side === "original" ? p.modifiedLine : p.originalLine;
+        let k = 0;
+        while (k + 1 < stops.length && at(stops[k + 1]) <= line) k++;
+        const cur = stops[k];
+        const next = to(stops[k + 1] ?? cur);
+        return {
+          ownStart: at(cur),
+          otherStart: clampLine(to(cur)),
+          otherEnd: clampLine(next),
+          otherFlat: next <= to(cur),
+        };
+      }
+    }
+    const b = stored[stored.length - 1];
+    if (!b)
+      return {
+        ownStart: line,
+        otherStart: clampLine(line),
+        otherEnd: clampLine(line),
+        otherFlat: false,
+      };
+    const own = ownSpan(b);
+    const opp = otherSpan(b);
+    const mapped = clampLine(line + (opp.end - own.end));
+    return { ownStart: line, otherStart: mapped, otherEnd: mapped, otherFlat: false };
+  };
+
+  /**
+   * 把驱动栏的视口顶换成对栏的**同一个内容位置**；返回对栏是否真的落到了算出来的位置
+   * （被浏览器夹住时是 false —— 对栏还没量完，这一发不算数）。
+   *
+   * 不能直接搬 `scrollTop`：两栏的行高地图都含视口外估值，估值差多少，同一像素就错开多少
+   * （实测切标签后能差半屏）。这里按「段首行 + 段内偏移」换算：段首两侧同 y、段内总高相等
+   * （`gapZones` 的产出），所以段内偏移原样搬即可；视口顶落在缝里时缝与对侧同起点同高，
+   * 直接按像素。
+   *
+   * 只从驱动侧往对侧算，回写不会反过来再触发一次（回声票见 `isEcho`）。
+   */
+  const mirrorScroll = (from: EditorView | null, to: EditorView | null): boolean => {
+    if (!syncOn || !from || !to || from === to) return false;
     const a = from.scrollDOM;
     const b = to.scrollDOM;
-    // 夹一次全局可滚范围（两栏实测总高相同，末段也到得了同一个位置）。
-    const want = Math.min(Math.max(a.scrollTop, 0), Math.max(b.scrollHeight - b.clientHeight, 0));
+    const side: DiffSide = from === left ? "original" : "modified";
+    const top = Math.max(a.scrollTop, 0);
+    let want: number;
+    if (inGap(from, top)) {
+      // 视口顶落在缝里：缝与对侧那一段同起点同高 ⇒ 像素一一对应（见 `inGap`）。
+      want = top;
+    } else {
+      const line = topLine(from, top);
+      const span = alignSpan(side, line);
+      if (span.otherFlat) {
+        // 这一段对侧一行都没有（对侧整段是一条缝）：`otherStart` 是缝**后面**那一行，
+        // 当段首用会把对栏立刻推到段尾。缝就是这一段在对侧的全部内容，段首两侧同 y
+        // ⇒ 像素一一对应。
+        want = top;
+      } else {
+        const ownLine = from.state.doc.line(
+          Math.min(Math.max(span.ownStart, 1), from.state.doc.lines),
+        );
+        const otherLine = to.state.doc.line(span.otherStart);
+        const ownBlock = from.lineBlockAt(ownLine.from);
+        const otherBlock = to.lineBlockAt(otherLine.from);
+        // 段内偏移：段首已经补过缝，段内两侧等高 ⇒ 这个像素量在对栏指同一个位置。
+        const offset = Math.max(top - ownBlock.top, 0);
+        const otherEndTop =
+          span.otherEnd > span.otherStart
+            ? to.lineBlockAt(to.state.doc.line(span.otherEnd).from).top
+            : otherBlock.top + Math.max(otherBlock.height, 0);
+        // 段内偏移夹在段尾之前。
+        want = Math.min(otherBlock.top + offset, otherEndTop);
+      }
+    }
+    // 再夹一次全局可滚范围（末段贴近文档尾时可能到不了目标位置）。
+    want = Math.min(Math.max(want, 0), Math.max(b.scrollHeight - b.clientHeight, 0));
     // 横向按「对栏能滚到哪」夹：两栏折行态一致时通常同宽，长行时对侧可能短一截。
     const wantX = Math.min(Math.max(a.scrollLeft, 0), Math.max(b.scrollWidth - b.clientWidth, 0));
     // 值没变就别写：写同一个值一样会排一发 scroll，白白多一条回声账。
-    if (Math.abs(b.scrollTop - want) < 0.5 && Math.abs(b.scrollLeft - wantX) < 0.5) {
-      if (reveal) revealLeftWhenAligned();
-      return;
-    }
+    if (Math.abs(b.scrollTop - want) < 0.5 && Math.abs(b.scrollLeft - wantX) < 0.5) return true;
     pendingEcho.set(b, { top: want, left: wantX });
     b.scrollTop = want;
     b.scrollLeft = wantX;
-    if (reveal) revealLeftWhenAligned();
+    // 浏览器把写入夹住了（对栏还没量完）⇒ 这一发不算落定，下一轮收口会再算一次。
+    return Math.abs(b.scrollTop - want) <= 1;
   };
-  /** 把 `lastDriver` 一侧的锚点重新落给对栏：布局收口与重新打开同步都从这一颗走。 */
+  /**
+   * 把 `lastDriver` 一侧的位置重新落给对栏：布局收口与重新打开同步都从这一颗走。
+   *
+   * 左栏「能不能露出来」也在这里判（`revealLeft`）：收口是唯一保证两栏都按**实测行盒**
+   * 量过一轮的时机；滚动事件里的映射可能还赶在左栏量完之前，那时露出会看到一帧错位。
+   */
   const resyncSharedOffset = (): void => {
     if (!syncOn || disposed) return;
     if (lastDriver === "original") mirrorScroll(left, right);
-    else mirrorScroll(right, left);
+    else if (mirrorScroll(right, left)) revealLeft();
   };
   const setSyncScrollEnabled = (on: boolean): void => {
     if (syncOn === on) return;
@@ -2297,10 +2442,9 @@ export function createDiffSurface(
     },
     syncScrollEnabled: () => syncOn,
     setSyncScrollEnabled,
-    // 落位收口这一发可能赶在左栏量完之前（它的 scrollHeight 还是估值，写进去会被裁）⇒
-    // 这里只写不露，露出交给下一轮测量收口（那时两栏都量过了，`revealLeftWhenAligned` 的
-    // 「逐像素相等」才是真判据）。
-    syncLeftToRight: () => mirrorScroll(right, left, false),
+    // 落位收口这一发可能赶在左栏量完之前（它的行高地图还全是估值）⇒ 这里只写不露，
+    // 露出交给下一轮测量收口（那时映射已按实测行盒重新算过一遍，见 `resyncSharedOffset`）。
+    syncLeftToRight: () => mirrorScroll(right, left),
     reassert,
     remeasure: scheduleAlign,
     dispose: () => {
