@@ -8,15 +8,16 @@
  *
  * 三条刷新路，全部收在 `updateDiffDrawer` 一处：
  *   · 摊开这一块（外壳的 `onShow`）；
- *   · 块表变了（`setDiffBlocksListener` —— surface 的 `syncBlocks` 末尾与挂上旁路那一刻广播）；
+ *   · 当前显示的那张标签换了 / 块表变了（`setDiffBlocksListener` —— `syncDiffSurface` 每次收口
+ *     都广播，挂上、拆掉、原地补漂移都在内；surface 的 `syncBlocks` 末尾也走同一格）；
  *   · 右栏光标跨过了一块（`refreshDiffAtCursor`，闸在下面那条 ⚠️）。
  *
  * ⚠️ 高亮的**权威只有右栏**（设计稿 ⑩·2）：左栏只是对照物，它里面有选区也不许抢这一列的高亮 ——
  *    所以这里问的是 `surface.activeIndex()`（它按右栏光标行算，见 `surface.ts`），不读左栏。
  * ⚠️ 光标跟随**要装闸**（B388 那条纪律）：比的是「活动块序号变没变」而不是「有没有选区事件」——
  *    方向键每按一下都会走到这里，无闸就是每键一次全量重建 DOM。
- * ⚠️ 那一列行是**上一次画的那一格**的（`renderedPanelId`）：分屏下点另一格面板不会重画这里，
- *    所以点击按它寻址、并把那一格设为活动格 —— 否则就是「两侧都动了、那一格还不是活动格」的半跳。
+ * ⚠️ 那一列行属于**最近一次画的那一格**（`renderedPanelId`）：点击按它寻址、并把那一格设为活动格 ——
+ *    否则就是「两侧都动了、那一格还不是活动格」的半跳。
  * ⚠️ 这颗键的点击**必须在这里挂**：`registerDrawerView` 只管显隐与亮灭（B314-8 那颗死键）。
  */
 import { activePanelId, panels, windowKind, type Panel } from "../core/app-state";
@@ -177,14 +178,14 @@ export function updateDiffDrawer(): void {
  *
  * 三条早退各有其故：
  *   · `diffPanel.hidden` —— 轮不到这一块（含整栏收起）时一个字都不画，口径同 `toc.ts` 的 `tocPanel.hidden`；
- *   · 没有旁路 —— 光标已经离开差异标签（切标签 / 切面板），高亮**保持最后那块**（设计稿 ⑩·2）；
+ *   · 没有旁路 —— 这一列已由 `syncDiffSurface` 的广播换成空态（切标签 / 切面板），光标无事可跟；
  *   · 序号没变 —— 方向键走过同一块内的每一列都不该重建这一列（B388）。
  */
 export function refreshDiffAtCursor(): void {
   if (diffPanel.hidden) return;
   const panel = activePanel();
   const surface = diffSurfaceOf(panel);
-  // 没有旁路 = 光标已经离开差异标签（切标签 / 切面板）⇒ 高亮保持最后那块，不清。
+  // 没有旁路 = 当前标签不是差异编辑器：列表已被广播换成空态，这里再画就是白做。
   if (!surface || panel?.panelId !== renderedPanelId) return;
   const next = surface.activeIndex();
   if (next === renderedActiveIndex) return;

@@ -1036,7 +1036,7 @@ Expected: FAIL —— `emptyTextFor is not defined`（HTML 那条也红，因为
 
 照 `src/toc.ts:232-235` 的口径写 `refreshDiffAtCursor()`：`isDrawerOpen()` 为假 ⇒ 直接返回；模块级 `let renderedActiveIndex`，只有 `surface.activeIndex()` 变了才重绘（B388 那条「选区驱动重绘要装闸」：问结果不问事件）。调用点接在 `src/main.ts:296-303` 那段 `update.selectionSet` 之后，与 `refreshTocAtCursor(line)` 并排。
 
-**设计稿 ⑩·2 的两条必须实现并各配一条测试**：只有**右栏**那颗（`panel.viewTabId === tab.tabId`）的光标才算权威 —— 左栏里有选区也不许抢面板高亮；差异标签被切走（切标签/切面板）时高亮**保持最后那块**，不清 `renderedActiveIndex`。
+**设计稿 ⑩·2 的两条必须实现并各配一条测试**：只有**右栏**那颗（`panel.viewTabId === tab.tabId`）的光标才算权威 —— 左栏里有选区也不许抢面板高亮；切到别的标签时列表跟过去（2026-11 修订：不是差异标签就换空态，旧口径「保持最后那块」已废止）。
 
 - [ ] **Step 7: 写会失败的测试 —— Review Focus 4：三处同源**
 

@@ -255,13 +255,14 @@ describe("B461 · 第五块的行为", () => {
     expect(activeRow()).toBe(2);
   });
 
-  it("B461 · 画的是哪一格要记账：那一格不是活动格时，点一条先把它设为活动格", () => {
+  it("B461 · 画的是哪一格要记账：列是上一格画的时，点一条先把它设为活动格", () => {
     setupDiff();
     const drawn = panels.get(0)!;
     const other = freshPanel(1);
     panels.set(1, other);
-    // 面板 1 挂一张普通标签（没有旁路）⇒ 抽屉里那三行仍属于面板 0。
+    // 面板 1 挂一张普通标签（没有旁路）。它挂载那一刻不是活动格 ⇒ 不广播，抽屉仍画着面板 0。
     mount(addHost(), other, makeTab("editor", 1));
+    // 只点面板 1 的正文（`markActivePanel` 那条路）：没有切标签，抽屉不会自动重画。
     setActivePanelId(1);
     expect(activePanelId).toBe(1);
     rows()[1].click();
@@ -296,25 +297,25 @@ describe("B461 · 第五块的行为", () => {
     expect(document.querySelector("#diff-list .diff-item")).toBe(first);
   });
 
-  it("设计稿 ⑩·2 · 切走那张差异标签：高亮保持最后那块，不清空", () => {
+  it("B486 · 切走那张差异标签：列表当场换成空态，不留在上一张的块上", () => {
     setupDiff();
     rows()[2].click();
-    const before = document.querySelector("#diff-list .diff-item");
     const p = panels.get(0)!;
     swapShownTab(p, makeTab("editor"));
     expect(p.diffSurface, "前置：旁路已被生产判据拆掉").toBeNull();
+    expect(rows(), "切到普通标签后还画着上一张差异标签的块").toHaveLength(0);
+    expect(emptyText()).toBe(mod.emptyTextFor("notDiff"));
+    expect(ui.diffCount.textContent, "计数也得跟着走").toBe("");
+    // 光标跟随那条路不许把旧行重新画回来。
     mod.refreshDiffAtCursor();
-    expect(document.querySelector("#diff-list .diff-item"), "旁路拆了就抹高亮 = 用户丢了参照").toBe(
-      before,
-    );
-    expect(document.querySelectorAll("#diff-list .diff-active")).toHaveLength(1);
+    expect(rows()).toHaveLength(0);
   });
 
-  it("B461 · 点一条陈旧的（旁路已拆）：当场换成那句空态，不许留一颗点不动的行", () => {
+  it("B461 · 点一条陈旧的（那一格已经没了）：当场换成那句空态，不许留一颗点不动的行", () => {
     setupDiff();
-    const p = panels.get(0)!;
-    swapShownTab(p, makeTab("editor"));
-    expect(rows(), "前置：⑩·2 说保持，所以列表还是那三行").toHaveLength(3);
+    // 模拟「最后一格被关掉、没有别的面板接棒」：条目还在，旁路与面板都没了。
+    panels.delete(0);
+    setActivePanelId(-1);
     rows()[0].click();
     expect(rows()).toHaveLength(0);
     expect(emptyText()).toBe(mod.emptyTextFor("notDiff"));
@@ -343,7 +344,7 @@ describe("B461 · 第五块的行为", () => {
     expect(ui.diffCount.textContent).toBe("");
   });
 
-  it("B461 · 挂上旁路那一刻就画：切回差异标签不等下一次键入（拆那一头不广播，见上两条）", () => {
+  it("B461 · 挂上旁路那一刻就画：切回差异标签不等下一次键入", () => {
     const p = freshPanel(0);
     panels.set(0, p);
     setActivePanelId(0);

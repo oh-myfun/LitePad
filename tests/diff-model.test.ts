@@ -77,16 +77,19 @@ describe("B461 · canOpenAgainstBaseline（A 档那道闸）", () => {
 });
 
 describe("B461 · 块数变化的通知槽", () => {
-  it("注册后广播送到它，注销后广播是空转（不许抛）", () => {
-    const seen: DiffSpec[] = [];
+  it("注册后广播送到它（含「没有旁路」的 null），注销后广播是空转（不许抛）", () => {
+    const seen: Array<DiffSpec | null> = [];
     setDiffBlocksListener((s) => seen.push(s));
     const s = spec();
     notifyDiffBlocks(s);
-    expect(seen).toEqual([s]);
+    // null = 这一格现在没有差异面（当前标签不是差异编辑器），侧栏据此换空态。
+    notifyDiffBlocks(null);
+    expect(seen).toEqual([s, null]);
 
     setDiffBlocksListener(null);
     expect(() => notifyDiffBlocks(spec())).not.toThrow();
-    expect(seen).toHaveLength(1);
+    expect(() => notifyDiffBlocks(null)).not.toThrow();
+    expect(seen).toHaveLength(2);
   });
 
   it("只有一个槽：后注册的顶掉前一个（多播是给还不存在的需求付账 —— 预审 R6）", () => {

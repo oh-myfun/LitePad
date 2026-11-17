@@ -473,15 +473,16 @@ export async function restoreDiffSpec(
  * 块数变化的唯一通知槽（单槽，不是多播 —— 目前只有侧栏那一块视图消费它）。
  *
  * 谁注册：侧栏差异面板（Task 9）。谁广播：持有 surface 的那一侧（Task 2/4 的重算点）。
- * 传 `null` 是注销（抽屉收起 / 测试收尾），不是「关掉通知」。
+ * 注册时传 `null` 是注销（抽屉收起 / 测试收尾），不是「关掉通知」；
+ * 广播时传 `null` 是「这一格现在没有差异面」（当前标签不是差异编辑器）。
  */
-let blocksListener: ((spec: DiffSpec) => void) | null = null;
+let blocksListener: ((spec: DiffSpec | null) => void) | null = null;
 
-export function setDiffBlocksListener(fn: ((spec: DiffSpec) => void) | null): void {
+export function setDiffBlocksListener(fn: ((spec: DiffSpec | null) => void) | null): void {
   blocksListener = fn;
 }
 
-/** 广播一次「这张标签的块数/内容变了」。没人注册就是空转，不许抛。 */
-export function notifyDiffBlocks(spec: DiffSpec): void {
+/** 广播一次「这一格现在是谁的块表」（`null` = 没有旁路）。没人注册就是空转，不许抛。 */
+export function notifyDiffBlocks(spec: DiffSpec | null): void {
   blocksListener?.(spec);
 }

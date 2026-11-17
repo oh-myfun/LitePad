@@ -2548,20 +2548,16 @@ export function syncDiffSurface(panel: Panel): void {
   const have = panel.diffSurface;
   if (!want) {
     if (have) disposeDiffSurface(panel);
-    return;
+  } else if (have && have.spec() === want) {
+    have.reassert();
+  } else {
+    if (have) disposeDiffSurface(panel);
+    createDiffSurface(panel.bodyEl as HTMLElement, panel, want);
   }
-  if (have) {
-    if (have.spec() === want) {
-      have.reassert();
-      return;
-    }
-    disposeDiffSurface(panel);
-  }
-  createDiffSurface(panel.bodyEl as HTMLElement, panel, want);
-  // B461 · Task 9（裁决 R41）：**挂上**旁路那一刻就广播一次。
-  // 不等下一次 `syncBlocks` 的理由：切回那张差异标签走的是「重建旁路」，块表在构造那一刻已经
-  // 算好而没人再广播 ⇒ 侧栏那一列要等用户打一个字才回来。**拆**那一头不广播 —— 设计稿 ⑩·2
-  // 定的是「光标离开差异标签时高亮保持最后那块」，抹掉它就是让用户丢了参照。
+  // 侧栏那一列永远跟着**此刻显示的那张标签**走（2026-11 修订，取代设计稿 ⑩·2 的「保持最后
+  // 那块」）：挂上/拆掉/原地补漂移都要广播这一发，否则分屏下切到另一格时，列表画的还是
+  // 上一格的东西（`syncDiffSurface` 是「这一格有没有旁路」的唯一判据入口，广播留在这里
+  // 才不会漏掉某一条切标签的路）。
   if (panel.panelId === activePanelId) notifyDiffBlocks(want);
 }
 
