@@ -2443,8 +2443,14 @@ export function createDiffSurface(
     syncScrollEnabled: () => syncOn,
     setSyncScrollEnabled,
     // 落位收口这一发可能赶在左栏量完之前（它的行高地图还全是估值）⇒ 这里只写不露，
-    // 露出交给下一轮测量收口（那时映射已按实测行盒重新算过一遍，见 `resyncSharedOffset`）。
-    syncLeftToRight: () => mirrorScroll(right, left),
+    // 露出交给测量收口（那时映射已按实测行盒重新算过一遍，见 `resyncSharedOffset`）。
+    // 但那一发**必须由这里排**：切标签时上一轮收口往往赶在右栏隐藏期（`revealLeft` 让路），
+    // 之后没有任何东西保证收口再来一次 —— 不补这一排，左栏就一直藏着，
+    // 直到用户滚动（用户报的「左边空白，滚一下才出来」）。
+    syncLeftToRight: () => {
+      mirrorScroll(right, left);
+      scheduleAlign();
+    },
     reassert,
     remeasure: scheduleAlign,
     dispose: () => {

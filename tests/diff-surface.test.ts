@@ -2014,6 +2014,24 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     expect(left.scrollDOM.style.visibility, "映射落定就露，不等两栏像素相等").toBe("");
   });
 
+  it("B487 · 落位收口时右栏还藏着 ⇒ 收口后补排测量，左栏一定露出来", async () => {
+    const { panel } = mountDiffPair("A\nB\nC", "A\nC");
+    const right = panel.view!.view;
+    const surface = diffSurfaceOf(panel)!;
+    const left = surface.left;
+    // 复刻 `landVisibleSideAtV` 的在途期：右栏还藏着时，测量收口不许露左栏
+    //（那一帧两栏都还没按实测行盒对齐，露出来就是一次错位）。
+    right.scrollDOM.style.visibility = "hidden";
+    await frames(6);
+    expect(left.scrollDOM.style.visibility, "右栏藏着时左栏继续等").toBe("hidden");
+    // 落位链收口：右栏先露，再调 `syncLeftToRight`（生产路径同此顺序）。
+    right.scrollDOM.style.visibility = "";
+    surface.syncLeftToRight();
+    await frames(6);
+    // 修复前：唯一的一轮收口已经过去，之后没人再排测量 ⇒ 左栏一直藏着，直到用户滚动。
+    expect(left.scrollDOM.style.visibility, "落位收口后必须自己把左栏露出来").toBe("");
+  });
+
   it("B479 · 视口顶落在占位缝里 ⇒ 两栏像素一一对应（左栏滚到底右栏也到底）", () => {
     const { panel } = mountDiffPair("A\n", "A\nB\n");
     const right = panel.view!.view;
