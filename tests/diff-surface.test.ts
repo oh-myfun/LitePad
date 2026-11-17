@@ -1936,12 +1936,10 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     }
   });
 
-  it("B462 · 同步滚动按内容锚点映射（两栏 scrollTop 可以不同，顶行是同一行）", () => {
+  it("B462 · 同步滚动逐像素一致（两栏同一个 scrollTop，不按行号二次换算）", () => {
     const { panel } = mountDiffPair("A\nB\nC", "A\nC");
     const right = panel.view!.view;
     const left = diffSurfaceOf(panel)!.left;
-    // 两侧坐标系故意不一致：同一份内容（C）在左栏 top=40、在右栏 top=20 ——
-    // 真机上就是 CM6 对视口外折行的估值差（两栏 scrollHeight 对不上）。
     fakeLineBoxes(left, [20, 20, 20]);
     fakeLineBoxes(right, [20, 20]);
     const track = (
@@ -1970,17 +1968,17 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     const rt = track(right.scrollDOM, 300);
     const lt = track(left.scrollDOM, 400);
 
-    rt.top = 20; // 右栏顶行 = C
+    rt.top = 20;
     right.scrollDOM.dispatchEvent(new Event("scroll"));
-    expect(lt.top, "对栏顶行是同一行 C（它在本栏 top=40，不必是同一个 scrollTop）").toBe(40);
+    expect(lt.top, "驱动栏的像素位置原样交给对栏（缝已保证两侧等高）").toBe(20);
 
-    rt.top = 0; // 右栏回到文首 A
+    rt.top = 0;
     right.scrollDOM.dispatchEvent(new Event("scroll"));
     expect(lt.top).toBe(0);
 
-    lt.top = 20; // 左栏顶行 = B（右栏没有这一行）
+    lt.top = 20;
     left.scrollDOM.dispatchEvent(new Event("scroll"));
-    expect(rt.top, "空段落到块前缘那一行（C，top=20）").toBe(20);
+    expect(rt.top, "反方向驱动同样一比一").toBe(20);
   });
 
   it("B479 · 视口顶落在占位缝里 ⇒ 两栏像素一一对应（左栏滚到底右栏也到底）", () => {
@@ -2206,7 +2204,7 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     const { panel } = mountDiffPair("L1\nL2\nL3", "L1\nL2\nL3");
     const right = panel.view!.view;
     const left = diffSurfaceOf(panel)!.left;
-    // 左栏行更高（模拟两栏折行结果不同）：同一行在左栏 top=80，在右栏 top=20。
+    // 行盒只进缝与概览轴；镜像只看像素，与两侧行高无关。
     fakeLineBoxes(left, [80, 80, 80]);
     fakeLineBoxes(right, [20, 20, 20]);
     Object.defineProperty(right.scrollDOM, "clientHeight", { configurable: true, value: 100 });
@@ -2236,33 +2234,32 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
       },
     });
 
-    // ① 用户滚右栏第 2 行：只写左栏一次，落到左栏第 2 行（top=80）。
+    // ① 用户滚右栏到 20：只写左栏一次，写的就是同一个像素位置。
     rightTop = 20;
     right.scrollDOM.dispatchEvent(new Event("scroll"));
-    expect(leftWrites, "一次用户滚动只写对侧一次").toEqual([80]);
+    expect(leftWrites, "一次用户滚动只写对侧一次").toEqual([20]);
     expect(rightWrites, "驱动栏自己不被回写").toEqual([]);
 
     // ② 左栏那一发 scroll 是程序性写入的回声：认领票消费掉，不许再写回右栏。
     left.scrollDOM.dispatchEvent(new Event("scroll"));
     expect(rightWrites, "回声不得回传").toEqual([]);
 
-    // ③ 再滚到第 3 行：左栏要 top=160，但它最大只到 120 ⇒ 写入先夹住。
-    rightTop = 40;
+    // ③ 再滚到 200：左栏最大只到 120 ⇒ 写入先夹住。
+    rightTop = 200;
     right.scrollDOM.dispatchEvent(new Event("scroll"));
-    expect(leftWrites, "超出对栏最大滚动量时写夹值").toEqual([80, 120]);
+    expect(leftWrites, "超出对栏最大滚动量时写夹值").toEqual([20, 120]);
 
     // ④ 夹值后的回声同样只认领、不回抄：驱动栏停在用户滚到的位置，
-    //    不会被对栏「到不了 160」这件事拽回去（旧的固定点收敛会把它拉成 120）。
+    //    不会被对栏「到不了 200」这件事拽回去。
     left.scrollDOM.dispatchEvent(new Event("scroll"));
     expect(rightWrites, "夹值后的回声也不回传").toEqual([]);
-    expect(rightTop, "驱动栏停在用户滚到的位置").toBe(40);
+    expect(rightTop, "驱动栏停在用户滚到的位置").toBe(200);
   });
 
-  it("B467 · 布局收口后按最后驱动侧的锚点重落位（不强求两栏同一个 scrollTop）", async () => {
+  it("B467 · 布局收口后把对栏拉回最后驱动侧的同一个 scrollTop", async () => {
     const { panel, s } = mountDiffPair("A\nB\nC", "A\nC");
     const right = panel.view!.view;
     const left = s.left;
-    // 同一行在两栏的 top 不同（模拟折行估值差）：右栏 C 行 top=20，左栏 C 行 top=40。
     fakeLineBoxes(right, [20, 20]);
     fakeLineBoxes(left, [20, 20, 20]);
     let rightTop = 0;
@@ -2290,7 +2287,7 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     leftTop = 0;
     s.remeasure();
     await frames(8);
-    expect(leftTop, "收口时按最后驱动侧（默认右栏）的锚点映射").toBe(40);
+    expect(leftTop, "收口时对栏落到驱动侧的同一个 scrollTop").toBe(20);
     expect(rightTop, "驱动栏自己的位置不动").toBe(20);
   });
 
@@ -2489,11 +2486,48 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     expect(leftTop, "关掉同步：对栏不跟").toBe(0);
 
     s.setSyncScrollEnabled(true);
-    expect(leftTop, "重新打开：立刻按最后驱动侧（右栏）的锚点对齐").toBe(40);
+    expect(leftTop, "重新打开：立刻对上最后驱动侧的同一个 scrollTop").toBe(20);
     expect(rightTop).toBe(20);
   });
 
-  it("B472 · 块内按对齐段搬像素：多行对一行，行号锚会少滚，段锚不会", () => {
+  it("B485 · 左栏首帧先藏着、对上才露；显式落位收口把它扶到右栏同一像素", async () => {
+    const { panel, s } = mountDiffPair("A\nB\nC", "A\nC");
+    const right = panel.view!.view;
+    const left = s.left;
+    expect(left.scrollDOM.style.visibility, "新旁路的左栏先藏着（等第一次对上）").toBe("hidden");
+    await frames(6);
+    expect(left.scrollDOM.style.visibility, "两栏都在文首 ⇒ 收口后露出来").toBe("");
+
+    fakeLineBoxes(right, [20, 20]);
+    fakeLineBoxes(left, [20, 20, 20]);
+    let rightTop = 0;
+    let leftTop = 0;
+    Object.defineProperty(right.scrollDOM, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(right.scrollDOM, "scrollHeight", { configurable: true, value: 300 });
+    Object.defineProperty(left.scrollDOM, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(left.scrollDOM, "scrollHeight", { configurable: true, value: 300 });
+    Object.defineProperty(right.scrollDOM, "scrollTop", {
+      configurable: true,
+      get: () => rightTop,
+      set: (v: number) => {
+        rightTop = v;
+      },
+    });
+    Object.defineProperty(left.scrollDOM, "scrollTop", {
+      configurable: true,
+      get: () => leftTop,
+      set: (v: number) => {
+        leftTop = v;
+      },
+    });
+
+    // 落位链的收口那一发（`landVisibleSideAtV` → `syncLeftToRight`）：不经过 scroll 事件。
+    rightTop = 40;
+    s.syncLeftToRight();
+    expect(leftTop, "左栏被扶到右栏同一像素").toBe(40);
+  });
+
+  it("B472 · 块内偏移一比一搬运（多行对一行，换个算法也到同一个位置）", () => {
     // 折行打开后同一文档行在两栏的视觉高度不同（栏宽不同），行内像素比例没有对应
     // 关系；但每个对齐段两侧总高相等（gapZones 的产出）⇒ 段内偏移可以直接搬。
     const { panel, s } = mountDiffPair("A\nX\nB", "A\nX1\nX2\nX3\nB");
@@ -2528,7 +2562,7 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
 
     rightTop = 40; // 右栏顶行 = 块内第 2 行（X2）
     right.scrollDOM.dispatchEvent(new Event("scroll"));
-    expect(leftTop, "左栏段首（X，top=20）+ 段内偏移 20；按行号锚只会给 20").toBe(40);
+    expect(leftTop, "左栏段首（X，top=20）+ 段内偏移 20 = 同一个像素").toBe(40);
 
     rightTop = 60; // 块内第 3 行
     right.scrollDOM.dispatchEvent(new Event("scroll"));

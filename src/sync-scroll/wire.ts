@@ -396,6 +396,9 @@ export function landVisibleSideAtV(
       face.el.style.visibility = "";
       syncTrace(`落位收口·露出 意图=${v.toFixed(2)} 读回=${landed.toFixed(2)}`);
     }
+    // 差异旁路的左栏不在协调器在册里（它跟这一栏的像素走，不是另一份文档的视口）
+    // ⇒ 这一发收口要显式把它扶过来：否则要等下一个测量收口（几帧后才跟上）。
+    panel.diffSurface?.syncLeftToRight();
   }
   return true;
 }
