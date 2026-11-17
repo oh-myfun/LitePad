@@ -54,7 +54,9 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 /** 每个路径一个稳定 tabId；第二次打开同一路径时 `reused: true`（与 Rust 侧同口径）。 */
 const h = vi.hoisted(() => {
   const ids = new Map<string, number>();
+  const mediaIds = new Map<string, number>();
   let next = 100;
+  let nextMedia = 900;
   const text = "第一行\n\n第二行\n";
   return {
     ids,
@@ -77,6 +79,18 @@ const h = vi.hoisted(() => {
         mtimeMs: 1000,
         size: text.length,
         lossy: false,
+      });
+    },
+    openMedia(path: string) {
+      const key = path.replace(/\\/g, "/");
+      const reused = mediaIds.has(key);
+      if (!reused) mediaIds.set(key, nextMedia++);
+      return Promise.resolve({
+        tabId: mediaIds.get(key)!,
+        reused,
+        path: key,
+        name: key.split("/").pop() ?? key,
+        size: 8,
       });
     },
   };
@@ -134,6 +148,7 @@ vi.mock("../src/ipc/api", () => ({
   newTab: () =>
     Promise.resolve({ tabId: 1, name: "未命名", readonly: false, encoding: "UTF-8", eol: "CRLF" }),
   openFile: h.openFile,
+  openMedia: h.openMedia,
   reloadFile: () =>
     Promise.resolve({
       tabId: 1,
@@ -275,6 +290,47 @@ describe("VS Code 预览标签", () => {
     expect(tabEls().length).toBe(before + 1);
     expect(previewEl()!.querySelector(".tab-name")!.textContent).toBe("g.md");
     expect(names()).toContain("f.md");
+  });
+
+  it("打开别的文件不重建面板树：媒体面 / 编辑器 / 宿主节点都原样保留（防图片闪一下）", async () => {
+    const host = document.querySelector(".panel-host");
+    const cm = document.querySelector(".cm-editor");
+    // 图片先开成一张标签：它的媒体面挂在面板里。
+    await doOpen("D:/pic.png", undefined, undefined, { preview: true });
+    await wait(20);
+    expect(document.querySelector(".panel-host"), "打开图片不该重建面板宿主").toBe(host);
+    expect(document.querySelector(".cm-editor"), "打开图片不该重建编辑器").toBe(cm);
+    const face = document.querySelector(".media-preview");
+    expect(face, "图片标签应挂出媒体面").not.toBeNull();
+
+    // 再打开一份文本（永久标签）：只是换前台标签，不该把面板树连媒体面一起拆了重挂。
+    await doOpen("D:/h.md");
+    await wait(20);
+    expect(names()).toContain("h.md");
+    expect(document.querySelector(".media-preview"), "媒体面节点必须是原来那颗").toBe(face);
+    expect(document.querySelector(".panel-host"), "面板宿主节点不该重建").toBe(host);
+    expect(document.querySelector(".cm-editor"), "编辑器 DOM 不该重建").toBe(cm);
+  });
+
+  it("单击图片后再单击文本：替换预览标签不得把旧视图状态写进新标签", async () => {
+    // 真机症状：预览标签从图片换成文本后，编辑区一片空白、状态栏 0 个字符。
+    // 根因是 `switchTab` 在 `viewTabId` 已为 null（旧预览标签刚被 `takePreviewSlot` 摘掉）
+    // 时回落到 `activeTabId` 找旧快照 —— 而它早已被 `attachTabToPanel` 指到新标签，
+    // 等于拿旧视图的空媒体状态盖掉新标签刚建好的正文。
+    await doOpen("D:/swap.png", undefined, undefined, { preview: true });
+    await wait(20);
+    expect(previewEl()!.querySelector(".tab-name")!.textContent).toBe("swap.png");
+    expect(document.querySelector(".media-preview"), "图片标签应挂出媒体面").not.toBeNull();
+
+    await doOpen("D:/swap.md", undefined, undefined, { preview: true });
+    await wait(20);
+    expect(previewEl()!.querySelector(".tab-name")!.textContent).toBe("swap.md");
+    const v = view();
+    expect(v, "文本标签应挂上编辑器").toBeTruthy();
+    expect(v!.state.doc.toString(), "换进来的文本标签必须是它自己的正文").toBe(
+      "第一行\n\n第二行\n",
+    );
+    expect(document.querySelector(".media-preview"), "被替换的媒体面应已拆除").toBeNull();
   });
 
   it("会话记录带上预览标记（preview 是落盘的显式一格）", async () => {

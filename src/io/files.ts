@@ -21,7 +21,6 @@ import {
   panels,
   remotedTabs,
   tabs,
-  setActivePanelId,
   setSuppressDirty,
   windowKind,
   type Doc,
@@ -84,7 +83,7 @@ import {
   splitPanelWithTab,
   switchTab,
 } from "../tabs";
-import { LOSSY_ABORT, broadcastDocPresence, refreshAll, showMessage } from "../ui";
+import { LOSSY_ABORT, broadcastDocPresence, markActivePanel, refreshAll, showMessage } from "../ui";
 import { OPEN_FILTERS, TEXT_FILTERS } from "./filters";
 import { mediaKindOf } from "./media";
 import { reclaimRemoted } from "../multiwindow/windows";
@@ -266,9 +265,11 @@ async function doOpen(
         // 双击 / 回车这类「永久打开」命中一张预览标签 ⇒ 转正，而不是另开一张
         // （VS Code 同口径：pin 已有的那个，不再多出一张同名标签）。
         if (opts?.preview !== true) pinPreviewTab(inst.tabId);
-        setActivePanelId(instPanel.panelId);
+        // 只切前台标签，布局结构没变 —— 走 `switchTab` 就地换文档。以前这里还跟一发
+        // `rebuildLayout()`：整棵面板树连编辑器 / 媒体面一起重建，打开一张图会把它自己
+        // 的面拆了重挂（图片重新解码闪一下），别的面板里开着的图 / 播着的视频也陪着重来。
+        markActivePanel(instPanel.panelId);
         switchTab(instPanel.panelId, inst.tabId);
-        rebuildLayout();
         refreshAll();
         scheduleSessionSave();
         showMessage(`${file.name} 已在标签中打开`);
@@ -317,9 +318,10 @@ async function doOpen(
     if (preview) tab.preview = true;
     attachTabToPanel(tab, panel);
     placeTabAt(panel, tab.tabId, slot);
-    if (panel.panelId !== activePanelId) setActivePanelId(panel.panelId);
-    // 重建挂载（应用 md 视图模式 + 预览）并聚焦
-    rebuildLayout();
+    if (panel.panelId !== activePanelId) markActivePanel(panel.panelId);
+    // 同上面「已在标签中」那条：加标签不改布局结构，`switchTab` 就地接班即可。
+    // 新面板还没挂载时它会自己走一次全量重建（见 `switchTab` 的早退分支）。
+    switchTab(panel.panelId, tab.tabId);
     refreshAll();
     getPanel(panel.panelId)?.view?.focus();
     renderPanelTabs(panel.panelId);
@@ -371,9 +373,9 @@ async function openMediaTab(
       const instPanel = inst ? panelOfTab(inst.tabId) : undefined;
       if (inst && instPanel && (inTarget !== undefined || targetPanelId === undefined)) {
         if (opts?.preview !== true) pinPreviewTab(inst.tabId);
-        setActivePanelId(instPanel.panelId);
+        // 同上：媒体标签已在面板里，只切前台 —— 别再整树重建把媒体面拆了重挂。
+        markActivePanel(instPanel.panelId);
         switchTab(instPanel.panelId, inst.tabId);
-        rebuildLayout();
         refreshAll();
         scheduleSessionSave();
         showMessage(`${file.name} 已在标签中打开`);
@@ -401,10 +403,11 @@ async function openMediaTab(
     if (preview) tab.preview = true;
     attachTabToPanel(tab, panel);
     placeTabAt(panel, tab.tabId, slot);
-    if (panel.panelId !== activePanelId) setActivePanelId(panel.panelId);
-    rebuildLayout();
+    if (panel.panelId !== activePanelId) markActivePanel(panel.panelId);
+    // 加标签不改布局结构：`switchTab` 就地接管（媒体面由它里的 applyPanelMode 挂上）。
+    // 以前这里 `rebuildLayout()` 会把整棵面板树重建 —— 媒体面拆掉重挂 = 图片闪一下。
+    switchTab(panel.panelId, tab.tabId);
     refreshAll();
-    renderPanelTabs(panel.panelId);
     showMessage(
       `已打开 ${file.name}（${kind === "image" ? "图片" : kind === "video" ? "视频" : "音频"}预览）`,
     );

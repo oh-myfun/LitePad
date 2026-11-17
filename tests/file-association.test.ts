@@ -81,8 +81,9 @@ describe("B313 双击关联文件：主窗口回前台", () => {
 
   it("开新标签与复用已有标签都要把落点激活（「激活对应标签」那一半）", () => {
     // 新文件：attachTabToPanel 把面板的 activeTabId 指到新那枚（doc-model.ts 那一处）；
-    // 已开：doOpen 的复用分支显式 setActivePanelId + switchTab。
-    expect(files, "复用分支要切面板").toContain("setActivePanelId(instPanel.panelId)");
+    // 已开：doOpen 的复用分支显式 markActivePanel + switchTab（就地切面板 / 切标签，
+    // 不整树重建 —— 否则媒体面会被拆了重挂，图片闪一下）。
+    expect(files, "复用分支要切面板").toContain("markActivePanel(instPanel.panelId)");
     expect(files, "复用分支要切标签").toContain("switchTab(instPanel.panelId, inst.tabId)");
     const dm = readFileSync("src/doc-model.ts", "utf-8");
     expect(dm, "新建实例要把面板的活动标签指过去").toContain("panel.activeTabId = tab.tabId;");

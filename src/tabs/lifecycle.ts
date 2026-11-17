@@ -381,7 +381,12 @@ export function switchTab(panelId: number, tabId: number): void {
   // 旧 tab 快照写回：必须按视图实际显示的实例（viewTabId）寻址。
   // 调用方可能已改 activeTabId 而视图仍显示旧标签——按 activeTabId 回写
   // 会把视图当前内容写进错误的标签（内容串档/被覆写为空白的同源缺陷）。
-  const shownTab = tabs.get(panel.viewTabId ?? panel.activeTabId);
+  //
+  // viewTabId 为 null = 视图眼下没有归属标签（原来那张预览标签刚被 `takePreviewSlot`
+  // 摘掉是常态）。此时**什么都不回写**：调用方多半已把 activeTabId 指到新标签
+  // （attachTabToPanel 就会），回落到它等于拿旧视图的空 state 盖掉新标签刚建好的正文
+  // （真机症状：单击图片后再单击文本，编辑区一片空白、状态栏 0 个字符）。
+  const shownTab = panel.viewTabId !== null ? tabs.get(panel.viewTabId) : undefined;
   if (shownTab) {
     // 换走之前先把**这一份**的视口位置按 `v`（源码行轴，宽度无关）快照下来，
     // 切回来时原样扶回去。必须在读 `getV()` 之后才写 state：两者取的是同一个当前视图。
