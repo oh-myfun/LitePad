@@ -172,6 +172,9 @@ export interface DiffSurface {
    *
    * 落位的那一栏是权威，不按「最后驱动侧」反推 —— 用户上一次可能滚的是左栏，而落位
    * 刚把右栏明确放到另一个位置。扶完左栏才算「这一格」收口（见 `revealLeft`）。
+   *
+   * 左栏还没被量准过（首次落位、还没露过）时不写，只排一轮测量：那一发会被浏览器夹到
+   * 当前可滚上限，回声还会把驱动侧翻走。扶位与露出改由两栏测量同时收口的那一发完成。
    */
   syncLeftToRight(): void;
   /**
@@ -1779,6 +1782,8 @@ export function createDiffSurface(
    * 左栏是否已经露出来（见 `revealLeft`）。
    */
   let leftShown = false;
+  /** 左栏露出前是否已经按估值预定位过一轮（见 `resyncSharedOffset` 的露出判据）。 */
+  let leftProbed = false;
   /**
    * 左栏第一次被右栏的映射落过位之前先藏着，落过且右栏不在落位隐藏期时**同一同步栈里**
    * 露出来（与 `landVisibleSideAtV` 的 hide-then-reveal 同一手法：藏/露之间没有绘制机会）。
@@ -1977,8 +1982,25 @@ export function createDiffSurface(
    */
   const resyncSharedOffset = (): void => {
     if (!syncOn || disposed) return;
-    if (lastDriver === "original") mirrorScroll(left, right);
-    else if (mirrorScroll(right, left)) revealLeft();
+    if (lastDriver === "original") {
+      mirrorScroll(left, right);
+      return;
+    }
+    // 写不进去（对栏还没量完，被浏览器夹住）⇒ 这一发不算落定，下一轮收口再算。
+    if (!mirrorScroll(right, left)) {
+      scheduleAlign();
+      return;
+    }
+    if (leftShown) return;
+    // 左栏还没露过：它的视口此前停在别处（首帧在顶部），CM6 还没实测目标那一段，
+    // 这一轮写进去的只是按估值算出的位置。再排一轮测量，等目标区被实测后再写一次，
+    // 第二轮落定才露出 —— 否则露出的是估值的错位帧（探针实测会差几百像素）。
+    if (!leftProbed) {
+      leftProbed = true;
+      scheduleAlign();
+      return;
+    }
+    revealLeft();
   };
   const setSyncScrollEnabled = (on: boolean): void => {
     if (syncOn === on) return;
@@ -2453,14 +2475,19 @@ export function createDiffSurface(
     },
     syncScrollEnabled: () => syncOn,
     setSyncScrollEnabled,
-    // 落位收口这一发可能赶在左栏量完之前（它的行高地图还全是估值）⇒ 这里只写不露，
-    // 露出交给测量收口（那时映射已按实测行盒重新算过一遍，见 `resyncSharedOffset`）。
-    // 但那一发**必须由这里排**：切标签时上一轮收口往往赶在右栏隐藏期（`revealLeft` 让路），
-    // 之后没有任何东西保证收口再来一次 —— 不补这一排，左栏就一直藏着，
-    // 直到用户滚动（用户报的「左边空白，滚一下才出来」）。
+    // 左栏还没露过 ⇒ 它的行高地图还没按这一格的实测落过一遍，这一发写进去会被浏览器
+    // 夹到当前可滚上限。不写：等下一轮「两栏 requestMeasure 都到齐 + 缝稳定」的收口
+    // （`resyncSharedOffset` 里的映射，成功才 `revealLeft`）。那一轮**必须由这里排**：
+    // 切标签时上一轮收口往往赶在右栏隐藏期（`revealLeft` 让路），之后没有东西保证收口
+    // 再来一次 —— 不补这一排，左栏就一直藏着，直到用户滚动（用户报的「左边空白，
+    // 滚一下才出来」）。
     syncLeftToRight: () => {
-      mirrorScroll(right, left);
-      scheduleAlign();
+      if (!leftShown) {
+        scheduleAlign();
+        return;
+      }
+      // 已露过：直接扶；被夹住（对栏又进了未量完的窗口）就再排一轮测量收口。
+      if (!mirrorScroll(right, left)) scheduleAlign();
     },
     reassert,
     remeasure: scheduleAlign,

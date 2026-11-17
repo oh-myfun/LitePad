@@ -2032,7 +2032,7 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     expect(left.scrollDOM.style.visibility, "落位收口后必须自己把左栏露出来").toBe("");
   });
 
-  it("B488 · 程序性写入被浏览器夹住 ⇒ 回声仍认成自己的，不把驱动侧翻给左栏", async () => {
+  it("B488 · 测量窗口里用户滚右栏 ⇒ 被夹住的写入回声仍认成自己的，不翻驱动侧", async () => {
     const { panel } = mountDiffPair("A\nB\nC", "A\nC");
     const right = panel.view!.view;
     const surface = diffSurfaceOf(panel)!;
@@ -2057,18 +2057,58 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     track(left.scrollDOM, () => leftMax);
     track(right.scrollDOM, () => 200);
 
+    // 用户在测量窗口里滚右栏：镜像写入 40，被夹到 20。
     right.scrollDOM.scrollTop = 20; // 右栏顶行 = C
-    surface.syncLeftToRight(); // 写左栏 40 ⇒ 被夹到 20
+    right.scrollDOM.dispatchEvent(new Event("scroll"));
     expect(left.scrollDOM.scrollTop, "前置：这一发确实被夹住了").toBe(20);
-    // 这一发 scroll 是刚才那次写入的回声。修复前票面记的是意图值 40、与回声的 20 对不上，
-    // 于是判成「用户滚了左栏」⇒ `lastDriver` 翻过去，左栏的露出口（只在右栏驱动时执行）
-    // 再也不跑 —— 用户看到的就是「左栏空白、滚动条位置也变了，滚一下才恢复」。
+    // 浏览器随后派发左栏的 scroll：这是刚才那次写入的回声。修复前票面记的是意图值 40，
+    // 与回声的 20 对不上 ⇒ 判成「用户滚了左栏」、`lastDriver` 翻过去，左栏的露出口
+    // （只在右栏驱动时执行）再也不跑 —— 用户看到的就是「左栏空白、滚动条位置也变了，
+    // 滚一下才恢复」。
     left.scrollDOM.dispatchEvent(new Event("scroll"));
     leftMax = 200; // 量完了，可滚范围恢复正常
-    surface.syncLeftToRight();
+    surface.syncLeftToRight(); // 落位收口（左栏还没露 ⇒ 只排测量）
     await frames(6);
     expect(left.scrollDOM.style.visibility, "驱动侧还在右栏 ⇒ 收口把左栏露出来").toBe("");
     expect(right.scrollDOM.scrollTop, "右栏没被左栏的回声拽走").toBe(20);
+  });
+
+  it("B489 · 落位收口时左栏还没量完 ⇒ 不写左栏，等两栏测量收口再扶正并露出", async () => {
+    const { panel } = mountDiffPair("A\nB\nC", "A\nC");
+    const right = panel.view!.view;
+    const surface = diffSurfaceOf(panel)!;
+    const left = surface.left;
+    fakeLineBoxes(left, [20, 20, 20]);
+    fakeLineBoxes(right, [20, 20]);
+    const track = (el: HTMLElement, clamp: () => number): void => {
+      let top = 0;
+      Object.defineProperty(el, "scrollTop", {
+        configurable: true,
+        get: () => top,
+        set: (v: number) => {
+          top = Math.min(Math.max(v, 0), clamp());
+        },
+      });
+      Object.defineProperty(el, "clientHeight", { configurable: true, value: 100 });
+      Object.defineProperty(el, "scrollHeight", { configurable: true, value: 300 });
+    };
+    let leftMax = 20; // 左栏还没量完
+    track(left.scrollDOM, () => leftMax);
+    track(right.scrollDOM, () => 200);
+
+    right.scrollDOM.scrollTop = 20; // 右栏顶行 = C
+    surface.syncLeftToRight();
+    // 修复前：这一发会立刻写 40，被浏览器夹成 20，随后回声与票面对不上（B488 的病灶）。
+    // 修复后：左栏没露过就一个字节都不写，等两栏测量同时收口再扶。
+    expect(left.scrollDOM.scrollTop, "测量期间不写左栏").toBe(0);
+    leftMax = 200; // 量完了
+    // 第一轮收口只做「预定位」：左栏视口此前在别处，CM6 还没实测目标那一段，
+    // 这一发按估值写进去的位置还不是最终位置 —— 不许当场露出。
+    for (let i = 0; i < 6 && left.scrollDOM.scrollTop !== 40; i++) await frames(1);
+    expect(left.scrollDOM.scrollTop, "预定位把视口挪到目标附近").toBe(40);
+    expect(left.scrollDOM.style.visibility, "预定位那一轮先藏着，等实测收口").toBe("hidden");
+    await frames(4);
+    expect(left.scrollDOM.style.visibility, "第二轮落定后才露出来").toBe("");
   });
 
   it("B479 · 视口顶落在占位缝里 ⇒ 两栏像素一一对应（左栏滚到底右栏也到底）", () => {
