@@ -89,10 +89,19 @@ pub struct Settings {
     /// （空表 = 没开文件夹）。
     ///
     /// 与 `toc_open` / `drawer_view` 同一层：窗口级外观状态归设置，不归某份文档的会话。
-    /// 只存根、不存展开态 —— 展开态是这一轮浏览的临时足迹，存下来下次启动要先画半屏
-    /// 再挨个读每层目录，得不偿失。旧配置缺这格 ⇒ 容器级 `#[serde(default)]` 给空表。
+    /// 展开到哪一层见下面 `explorer_expanded`；根行收没收起见 `explorer_collapsed_roots`。
+    /// 旧配置缺这格 ⇒ 容器级 `#[serde(default)]` 给空表。
     #[serde(default)]
     pub folder_roots: Vec<String>,
+    /// 资源管理器里**展开着**的目录绝对路径（不含根那一行）。
+    ///
+    /// 与 `folder_roots` 同一层：它描述「上次把这几个文件夹看到哪一层」，不属于某份文档。
+    /// 空表 = 全部收起。旧配置缺这格 ⇒ 容器级 `#[serde(default)]` 给空表，行为与加字段前一致。
+    #[serde(default)]
+    pub explorer_expanded: Vec<String>,
+    /// 资源管理器里**根那一行被收起**的黑名单（空表 = 全部摊开，与前端默认一致）。
+    #[serde(default)]
+    pub explorer_collapsed_roots: Vec<String>,
     /// B426（用户「搜索的排除设置和忽略文件要能在设置窗口中进行设置」）：**应用级**排除模式，
     /// 逗号 / 换行分隔的 glob。定位照 VS Code 的 `search.exclude`：它与搜索面板「⋯」里那框
     /// **叠加**（那框是这一次搜索的临时追加，VS Code 也只把它存进视图状态、不写设置）。
@@ -158,6 +167,8 @@ impl Default for Settings {
             sidebar_off: false,
             folder_root: String::new(),
             folder_roots: Vec::new(),
+            explorer_expanded: Vec::new(),
+            explorer_collapsed_roots: Vec::new(),
             // B426：默认「不额外排除、跟随忽略文件」。`None` 是「没记过」，前端按开处理 ——
             // 写 `Some(true)` 会让落盘文件凭空多一格且与缺键等价（两套口径，B304 那一族）。
             search_exclude: String::new(),
@@ -1012,6 +1023,40 @@ mod tests {
             one.contains("\"folder_roots\":[\"C:\\\\甲\"]"),
             "落盘字段应为 snake_case folder_roots：{one}"
         );
+    }
+
+    /// 资源管理器的展开表 / 根行黑名单与 `folder_roots` 同一层：旧配置缺格回落空表，
+    /// 新配置原样往返（前端拿这两格回放「上次看到哪一层」）。
+    #[test]
+    fn settings_carry_explorer_fold_state() {
+        let bare: Settings =
+            serde_json::from_str(r#"{ "theme": "dark" }"#).expect("缺展开表也应能读入");
+        assert!(
+            bare.explorer_expanded.is_empty(),
+            "缺失应回落空表（全部收起）"
+        );
+        assert!(
+            bare.explorer_collapsed_roots.is_empty(),
+            "缺失应回落空表（全部摊开）"
+        );
+
+        let out = serde_json::to_string(&Settings {
+            explorer_expanded: vec![r"C:\笔记\子目录".into()],
+            explorer_collapsed_roots: vec![r"C:\笔记".into()],
+            ..Settings::default()
+        })
+        .unwrap();
+        assert!(
+            out.contains("\"explorer_expanded\":[\"C:\\\\笔记\\\\子目录\"]"),
+            "落盘字段应为 snake_case explorer_expanded：{out}"
+        );
+        assert!(
+            out.contains("\"explorer_collapsed_roots\":[\"C:\\\\笔记\"]"),
+            "落盘字段应为 snake_case explorer_collapsed_roots：{out}"
+        );
+        let back: Settings = serde_json::from_str(&out).unwrap();
+        assert_eq!(back.explorer_expanded, vec![r"C:\笔记\子目录".to_string()]);
+        assert_eq!(back.explorer_collapsed_roots, vec![r"C:\笔记".to_string()]);
     }
 
     /// B68：会话必须带上热退出副本 ID。

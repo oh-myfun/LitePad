@@ -186,6 +186,23 @@ export function expandedPaths(): string[] {
   return [...expanded];
 }
 
+/**
+ * 启动回放：把设置里那张展开表装回来（整表替换，与快照语义一致 —— 回放不是「再展开一层」）。
+ *
+ * 只认还归某一根管的路径 —— 移除过的根留下的旧路径在这里直接丢（不回写设置：回放不该
+ * 产生一次落盘，残留会在下一次用户操作落盘时自然清掉）。逐层重读仍走 `loadDir`，
+ * 所以「懒加载」不变：只有上次真展开过的那几层会被读一遍。
+ */
+export function restoreExpanded(paths: string[]): void {
+  expanded.clear();
+  for (const p of paths) {
+    if (!p || !rootOf(p)) continue;
+    expanded.add(p);
+  }
+  notify();
+  for (const p of [...expanded]) void loadDir(p);
+}
+
 /** 读一层并写进缓存。同一层并发只发一次；回包只认「这条路径还在某根名下」。 */
 export async function loadDir(path: string): Promise<void> {
   if (loading.has(path)) return;

@@ -260,6 +260,9 @@ beforeEach(async () => {
   ]);
   h.dirs.set(`${ROOT}\\notes`, [["deeper.md", false]]);
   store.setRoots([]);
+  // 根行的折叠黑名单是模块级的：上一条用例（折叠状态保存那条）收起过根，这里要按回默认，
+  // 否则后面每一条都只画出一行「笔记」。
+  panel.restoreExplorerState([], []);
   await vi.waitFor(() => expect(ui.explorerTree.textContent).toContain("还没有打开文件夹"));
   store.setRoots([ROOT]);
   await vi.waitFor(() => expect(names()).toContain("a.md"));
@@ -1114,6 +1117,56 @@ describe("B331 关闭文件夹（B424 后 = 移除全部目录）", () => {
     } finally {
       appState.setWindowKind("main");
     }
+  });
+});
+
+describe("资源管理器折叠状态保存 / 恢复", () => {
+  it("展开目录 ⇒ 设置里记下它；收起 ⇒ 从表里摘掉", async () => {
+    const appState = await import("../src/core/app-state");
+    appState.setSettings({ folder_roots: [ROOT] } as never);
+
+    await click(rowAt("notes"));
+    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    expect(appState.settings?.explorer_expanded, "展开的那一层要落进设置").toEqual([
+      `${ROOT}\\notes`,
+    ]);
+
+    await click(rowAt("notes"));
+    await vi.waitFor(() => expect(names()).not.toContain("deeper.md"));
+    expect(appState.settings?.explorer_expanded, "收起后不许留旧值").toEqual([]);
+  });
+
+  it("收起根那一行 ⇒ 记进黑名单；再点开 ⇒ 摘掉", async () => {
+    const appState = await import("../src/core/app-state");
+    appState.setSettings({ folder_roots: [ROOT] } as never);
+    const rootRow = (): HTMLElement => {
+      const row = ui.explorerTree.querySelector<HTMLElement>(".explorer-root");
+      if (!row) throw new Error("没有根那一行");
+      return row;
+    };
+
+    await click(rootRow());
+    await vi.waitFor(() => expect(names()).not.toContain("a.md"));
+    expect(appState.settings?.explorer_collapsed_roots, "收起的根要落进黑名单").toEqual([ROOT]);
+
+    await click(rootRow());
+    await vi.waitFor(() => expect(names()).toContain("a.md"));
+    expect(appState.settings?.explorer_collapsed_roots, "重新摊开就该出表").toEqual([]);
+  });
+
+  it("启动回放：展开表与根黑名单装回 store / 面板，且不回写设置", async () => {
+    const appState = await import("../src/core/app-state");
+    appState.setSettings({ folder_roots: [ROOT] } as never);
+    const before = JSON.stringify(appState.settings);
+
+    panel.restoreExplorerState([`${ROOT}\\notes`], []);
+    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    expect(store.isExpanded(`${ROOT}\\notes`), "回放要真进 store（不只是画一层）").toBe(true);
+
+    panel.restoreExplorerState([], [ROOT]);
+    await vi.waitFor(() => expect(names()).not.toContain("a.md"));
+    expect(store.isExpanded(`${ROOT}\\notes`), "回放是整表替换，旧的展开态要清掉").toBe(false);
+    expect(JSON.stringify(appState.settings), "回放不是用户操作，不许顺手落盘").toBe(before);
   });
 });
 

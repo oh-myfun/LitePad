@@ -239,6 +239,7 @@ import {
   closeFolder,
   markExplorerDropHover,
   promptOpenFolder,
+  restoreExplorerState,
   setupExplorer,
   toggleExplorer,
 } from "./explorer/panel";
@@ -1458,6 +1459,14 @@ async function bootstrap(): Promise<void> {
     // 把刚读到的值再写一遍（口径同 B312 的 `persist = false`），也不该把它记进最近名单。
     const folderRoots = settings?.folder_roots ?? [];
     if (folderRoots.length > 0) setExplorerRoots(folderRoots);
+    // 资源管理器的展开态 / 根行折叠与根名单同一处回放。没有根就没有树，空表不必调用；
+    // 旧配置缺这两格 ⇒ 空表 = 全部收起 / 全部摊开（加字段之前的样子）。
+    if (folderRoots.length > 0) {
+      restoreExplorerState(
+        settings?.explorer_expanded ?? [],
+        settings?.explorer_collapsed_roots ?? [],
+      );
+    }
     // B389：搜索排在同一处、同样只给主窗口。它排在 `setExplorerRoots` 之后不是偶然 ——
     // 搜索的范围判据问的就是资源管理器缓存里那几根（`store.ts` 的 `searchRoots`），
     // 根先搬进来，第一次重绘才知道该说「搜文件夹」还是「只搜已打开的文档」。

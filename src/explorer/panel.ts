@@ -55,6 +55,7 @@ import {
   childrenOf,
   collapseAll,
   errorOf,
+  expandedPaths,
   getClipboard,
   getRoots,
   hasRoot,
@@ -67,6 +68,7 @@ import {
   refreshRoot,
   removeRoot,
   renameEntryAt,
+  restoreExpanded,
   rootOf,
   setClipboard,
   setRoots,
@@ -128,13 +130,29 @@ let filterTimer: ReturnType<typeof setTimeout> | undefined;
 /** 每敲一下都发一次 IPC 太重（实盘整棵扫），攒一小段再发；回车不等，直接发。 */
 const FILTER_DEBOUNCE_MS = 180;
 
-/** 设置里那张表的唯一写点：store 是权威，落盘只抄它一份。 */
-async function persistRoots(): Promise<void> {
+/**
+ * 设置里资源管理器那三格的唯一写点：store / 面板是权威，落盘只抄它们各一份
+ * （`folder_roots` 来自 store；展开表来自 store 的 `expanded`；根行黑名单来自本面板）。
+ * 展开表按「还归某一根管」过滤 —— 移除过的根留下的旧路径不该跟着这张表一代代传下去。
+ */
+async function persistExplorer(): Promise<void> {
   if (!settings) return;
   settings.folder_roots = getRoots();
+  settings.explorer_expanded = expandedPaths().filter((p) => rootOf(p));
+  settings.explorer_collapsed_roots = getRoots().filter((r) => rootsCollapsed.has(normPath(r)));
   await saveSettings(settings).catch(() => {
     // 持久化失败不影响本次生效（与展开区开合同一口径）
   });
+}
+
+/**
+ * 启动回放：设置里那两格装回 store / 面板（根名单由调用方先交给 `setRoots`）。
+ * 不回写设置 —— 回放不是用户操作（口径同 `setRoots` 那一路「恢复不算打开」）。
+ */
+export function restoreExplorerState(expandedList: string[], collapsedRoots: string[]): void {
+  rootsCollapsed.clear();
+  for (const p of collapsedRoots) if (p) rootsCollapsed.add(normPath(p));
+  restoreExpanded(expandedList);
 }
 
 /**
@@ -148,7 +166,7 @@ async function persistRoots(): Promise<void> {
 export async function addFolder(path: string): Promise<boolean> {
   if (!addRoot(path)) return false;
   noteOpened(path, "folder");
-  await persistRoots();
+  await persistExplorer();
   return true;
 }
 
@@ -169,7 +187,7 @@ export async function removeFolder(path: string): Promise<void> {
   picks = picks.filter((p) => !gone(p));
   if (selected && gone(selected)) selected = null;
   anchor = anchor && gone(anchor) ? null : anchor;
-  await persistRoots();
+  await persistExplorer();
 }
 
 /** 「打开文件夹…」：系统目录选择器。多选（B424）；取消什么都不做。 */
@@ -201,7 +219,7 @@ export async function closeFolder(): Promise<void> {
   picks = [];
   anchor = null;
   selected = null;
-  await persistRoots();
+  await persistExplorer();
 }
 
 /**
@@ -977,10 +995,12 @@ async function activateDir(path: string): Promise<void> {
     const key = normPath(path);
     if (rootsCollapsed.has(key)) rootsCollapsed.delete(key);
     else rootsCollapsed.add(key);
+    void persistExplorer();
     renderTree();
     return;
   }
   await toggleDir(path);
+  void persistExplorer();
 }
 
 /**
@@ -1188,8 +1208,12 @@ function startCreate(kind: Kind): void {
   if (isRootCollapsed(dir)) {
     rootsCollapsed.delete(normPath(dir));
     renderTree();
+    void persistExplorer();
   } else if (!isRootPath(dir) && !isExpanded(dir)) {
-    void toggleDir(dir).then(() => renderTree());
+    void toggleDir(dir).then(() => {
+      renderTree();
+      void persistExplorer();
+    });
     renderTree();
   } else renderTree();
 }
@@ -1384,6 +1408,7 @@ function collapseAllHere(): void {
   }
   collapseAll();
   rootsCollapsed.clear();
+  void persistExplorer();
   renderTree();
 }
 
@@ -1462,6 +1487,8 @@ async function doDelete(): Promise<void> {
   const dir = rows.get(path)?.dir ?? rootOf(path) ?? "";
   try {
     await trashAt(dir, path);
+    // 被删的如果正展开着，store 已经把那条从展开表里摘掉了 —— 顺手落盘，别让旧路径留到下次启动。
+    void persistExplorer();
     // 焦点与选中一起收：删掉的那一条（以及它名下若有的）不许留在组里假装还选着。
     dropPicks(path);
     selected = picks[picks.length - 1] ?? null;
