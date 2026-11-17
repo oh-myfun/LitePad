@@ -2032,6 +2032,45 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     expect(left.scrollDOM.style.visibility, "落位收口后必须自己把左栏露出来").toBe("");
   });
 
+  it("B488 · 程序性写入被浏览器夹住 ⇒ 回声仍认成自己的，不把驱动侧翻给左栏", async () => {
+    const { panel } = mountDiffPair("A\nB\nC", "A\nC");
+    const right = panel.view!.view;
+    const surface = diffSurfaceOf(panel)!;
+    const left = surface.left;
+    // 两栏坐标系与真机同形（视口外折行估值差）：同一行 C 在左栏 top=40、右栏 top=20。
+    fakeLineBoxes(left, [20, 20, 20]);
+    fakeLineBoxes(right, [20, 20]);
+    const track = (el: HTMLElement, clamp: () => number): void => {
+      let top = 0;
+      Object.defineProperty(el, "scrollTop", {
+        configurable: true,
+        get: () => top,
+        set: (v: number) => {
+          top = Math.min(Math.max(v, 0), clamp());
+        },
+      });
+      Object.defineProperty(el, "clientHeight", { configurable: true, value: 100 });
+      Object.defineProperty(el, "scrollHeight", { configurable: true, value: 300 });
+    };
+    // 左栏「还没量完」：浏览器的可滚上限暂时只有 20，写 40 会被夹成 20。
+    let leftMax = 20;
+    track(left.scrollDOM, () => leftMax);
+    track(right.scrollDOM, () => 200);
+
+    right.scrollDOM.scrollTop = 20; // 右栏顶行 = C
+    surface.syncLeftToRight(); // 写左栏 40 ⇒ 被夹到 20
+    expect(left.scrollDOM.scrollTop, "前置：这一发确实被夹住了").toBe(20);
+    // 这一发 scroll 是刚才那次写入的回声。修复前票面记的是意图值 40、与回声的 20 对不上，
+    // 于是判成「用户滚了左栏」⇒ `lastDriver` 翻过去，左栏的露出口（只在右栏驱动时执行）
+    // 再也不跑 —— 用户看到的就是「左栏空白、滚动条位置也变了，滚一下才恢复」。
+    left.scrollDOM.dispatchEvent(new Event("scroll"));
+    leftMax = 200; // 量完了，可滚范围恢复正常
+    surface.syncLeftToRight();
+    await frames(6);
+    expect(left.scrollDOM.style.visibility, "驱动侧还在右栏 ⇒ 收口把左栏露出来").toBe("");
+    expect(right.scrollDOM.scrollTop, "右栏没被左栏的回声拽走").toBe(20);
+  });
+
   it("B479 · 视口顶落在占位缝里 ⇒ 两栏像素一一对应（左栏滚到底右栏也到底）", () => {
     const { panel } = mountDiffPair("A\n", "A\nB\n");
     const right = panel.view!.view;

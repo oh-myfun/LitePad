@@ -1952,11 +1952,22 @@ export function createDiffSurface(
     const wantX = Math.min(Math.max(a.scrollLeft, 0), Math.max(b.scrollWidth - b.clientWidth, 0));
     // 值没变就别写：写同一个值一样会排一发 scroll，白白多一条回声账。
     if (Math.abs(b.scrollTop - want) < 0.5 && Math.abs(b.scrollLeft - wantX) < 0.5) return true;
-    pendingEcho.set(b, { top: want, left: wantX });
+    const beforeTop = b.scrollTop;
+    const beforeLeft = b.scrollLeft;
     b.scrollTop = want;
     b.scrollLeft = wantX;
+    // 票面记**写下去之后读回的值**，不是意图值：对栏还没量完时浏览器会把越界的写入夹到
+    // 当前可滚上限，回声带着夹后的值回来。记意图值的话这一发与票面对不上，就会被当成
+    // 「用户滚了这一栏」—— `lastDriver` 翻成对栏、右栏被拽到夹后位置，而且左栏的露出口
+    // （`revealLeft` 只在右栏驱动的收口里）此后再不执行，用户看到的就是「左栏空白、
+    // 滚动条位置也变了，滚一下才恢复」。没真的动过（夹成原值）就不留票，免得吞掉下一发真滚动。
+    const landedTop = b.scrollTop;
+    const landedLeft = b.scrollLeft;
+    if (Math.abs(landedTop - beforeTop) > 0.5 || Math.abs(landedLeft - beforeLeft) > 0.5) {
+      pendingEcho.set(b, { top: landedTop, left: landedLeft });
+    }
     // 浏览器把写入夹住了（对栏还没量完）⇒ 这一发不算落定，下一轮收口会再算一次。
-    return Math.abs(b.scrollTop - want) <= 1;
+    return Math.abs(landedTop - want) <= 1;
   };
   /**
    * 把 `lastDriver` 一侧的位置重新落给对栏：布局收口与重新打开同步都从这一颗走。
