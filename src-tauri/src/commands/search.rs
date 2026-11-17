@@ -1250,6 +1250,24 @@ mod tests {
         fs::write(&path, bytes).unwrap();
     }
 
+    /// 收尾清临时目录。Windows 上目录项的删除是**延迟**生效的（杀软 / 过滤驱动会短暂
+    /// 持有刚写完的文件），紧接着 `remove_dir_all` 会报 `ERROR_DIR_NOT_EMPTY`(145)，
+    /// 重试一次就成功。11-17 用「空文件 + 嵌套目录、不含任何项目代码」的最小复现确认：
+    /// 第一发必红、第二发必绿 —— 这是环境行为，不是被测逻辑。清理失败不该把一条
+    /// 已经通过的用例判红，但也不能吞掉别的错误（权限 / 真被占用照旧 panic）。
+    fn clean(dir: &Path) {
+        for _ in 0..5 {
+            match fs::remove_dir_all(dir) {
+                Ok(()) => return,
+                Err(e) if matches!(e.raw_os_error(), Some(145) | Some(32)) => {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(e) => panic!("清理临时目录失败：{e}"),
+            }
+        }
+        panic!("清理临时目录失败：重试后仍报非空/占用 {dir:?}");
+    }
+
     fn req(dir: &Path, query: &str) -> SearchRequest {
         SearchRequest {
             root: dir.to_path_buf(),
@@ -1351,7 +1369,7 @@ mod tests {
         assert_ne!(m.start, 100, "预览里那个起点已经不是行内列号了");
         assert_eq!(m.column, 101, "整行里的字符列号，1 起");
         assert_eq!(m.length, 6, "长度两边同一口径（被裁时才是 min）");
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     /// 中文列号按**字符**算，不按字节：VS Code 那边也是码位/字符口径，字节数会把光标
@@ -1367,7 +1385,7 @@ mod tests {
             "「第一章 」= 4 个字符，命中在第 5 个字符上（不是 10 字节）"
         );
         assert_eq!(m.preview.chars().nth(m.start as usize), Some('n'));
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -1426,7 +1444,7 @@ mod tests {
         assert_eq!(rep.files[2].matches[0].line, 1);
         assert!(!rep.limit_hit);
         assert_eq!(rep.scanned, 4, "二进制要读出来才认得出，走目录时拦不住");
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -1450,7 +1468,7 @@ mod tests {
         let mut no_md = req(&dir, "标题");
         no_md.exclude = Some("*.md".into());
         assert_eq!(rels(&search_folder(no_md).unwrap()), vec!["c.txt"]);
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -1468,7 +1486,7 @@ mod tests {
             "`out/` 整目录剪掉、`*.log` 命中后被 `!keep.log` 翻回来"
         );
         assert_eq!(rep.matches, 2);
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -1484,7 +1502,7 @@ mod tests {
         );
         let rep = search_folder(req(&dir, "针")).expect("搜得到");
         assert_eq!(rels(&rep), vec!["docs/keep.md", "draft.md"]);
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -1504,7 +1522,7 @@ mod tests {
             vec![".env", "ignored.md", "node_modules/pkg.md"],
             "关掉后点文件 / 忽略文件 / 噪声目录一起放回来（路径序）"
         );
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     /// B426（用户「搜索的排除设置和忽略文件要能在设置窗口中进行设置」）：
@@ -1527,7 +1545,7 @@ mod tests {
             vec!["note.md", "secret.md"],
             "忽略清单不再挡路（点文件仍按总闸处理）"
         );
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -1541,7 +1559,7 @@ mod tests {
         let rep = search_folder(req(&dir, "测试标题")).expect("GBK 也要搜得到");
         assert_eq!(rep.matches, 1, "命中数 {:?}", rep.files);
         assert_eq!(rep.files[0].matches[0].preview, "第一章 测试标题");
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -1581,7 +1599,7 @@ mod tests {
             before_none,
             "没命中就不许动文件（连修改时间都不该改）"
         );
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -1672,7 +1690,7 @@ mod tests {
         assert_eq!(rep.files_changed, 1, "坏一条不许连坐");
         assert_eq!(rep.errors.len(), 1, "{:?}", rep.errors);
         assert!(rep.errors[0].contains("读不了"));
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     // ---------------------------- B427 · 资源管理器过滤框（按名字整棵找）
@@ -1708,7 +1726,7 @@ mod tests {
         let scan = filter_names(name_req(&dir, "孙")).unwrap();
         assert_eq!(named(&scan), vec!["子/孙"], "目录名也算");
         assert!(scan.hits[0].is_dir);
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -1745,7 +1763,7 @@ mod tests {
             vec!["第10篇.md", "第2篇.md"],
             "正则按名字匹配"
         );
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -1786,7 +1804,7 @@ mod tests {
         );
         assert!(!got.contains(&".点文件.md"), "点文件仍归总闸管");
         assert!(!got.iter().any(|r| r.starts_with("node_modules/")));
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -1809,7 +1827,7 @@ mod tests {
             vec!["keep-note.md", "src/内层-note.md"],
             "后缀与整目录两形都要挡住，别的目录不受牵连"
         );
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -1827,6 +1845,6 @@ mod tests {
             0,
             "空查询不扫"
         );
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 }

@@ -519,6 +519,24 @@ mod tests {
         dir
     }
 
+    /// 收尾清临时目录。Windows 上目录项的删除是**延迟**生效的（杀软 / 过滤驱动会短暂
+    /// 持有刚写完的文件），紧接着 `remove_dir_all` 会报 `ERROR_DIR_NOT_EMPTY`(145)，
+    /// 重试一次就成功。11-17 用「空文件 + 嵌套目录、不含任何项目代码」的最小复现确认：
+    /// 第一发必红、第二发必绿 —— 这是环境行为，不是被测逻辑。清理失败不该把一条
+    /// 已经通过的用例判红，但也不能吞掉别的错误（权限 / 真被占用照旧 panic）。
+    fn clean(dir: &Path) {
+        for _ in 0..5 {
+            match fs::remove_dir_all(dir) {
+                Ok(()) => return,
+                Err(e) if matches!(e.raw_os_error(), Some(145) | Some(32)) => {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(e) => panic!("清理临时目录失败：{e}"),
+            }
+        }
+        panic!("清理临时目录失败：重试后仍报非空/占用 {dir:?}");
+    }
+
     fn names(list: &[FsEntry]) -> Vec<&str> {
         list.iter().map(|e| e.name.as_str()).collect()
     }
@@ -577,7 +595,7 @@ mod tests {
             "目录在前，同组自然序"
         );
         assert!(!out.truncated, "五条不该判成裁过");
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -590,7 +608,7 @@ mod tests {
         assert_eq!(e.size, 5, "字节数要带上（新那格的提示用）");
         assert!(!e.is_dir);
         assert!(e.mtime_ms > 0, "mtime 该取到");
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -604,7 +622,7 @@ mod tests {
             vec![".git"],
             "系统那坨藏掉，点文件照实显示"
         );
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -614,7 +632,7 @@ mod tests {
         fs::write(&file, "x").unwrap();
         let err = list_dir(file.to_string_lossy().into_owned()).unwrap_err();
         assert!(err.contains("不是目录"), "错误要能读：{err}");
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -630,7 +648,7 @@ mod tests {
         let cut = cap(made(5), 3);
         assert!(cut.truncated, "越界才算裁过");
         assert_eq!(cut.entries.len(), 3, "留下的是前 limit 条");
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -676,7 +694,7 @@ mod tests {
         let err = create_file(dir.to_string_lossy().into_owned(), "新笔记.md".into()).unwrap_err();
         assert!(err.contains("已经存在"), "重名要拒而不是覆盖：{err}");
         assert_eq!(fs::read_to_string(dir.join("新笔记.md")).unwrap(), "");
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -692,7 +710,7 @@ mod tests {
             !dir.parent().unwrap().join("escape").exists(),
             "不许跑到外面建"
         );
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -701,7 +719,7 @@ mod tests {
         let gone = dir.join("没这个");
         let err = create_file(gone.to_string_lossy().into_owned(), "a.md".into()).unwrap_err();
         assert!(err.contains("父目录不存在"), "错误要能读：{err}");
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     // ---------------------------- B315
@@ -740,7 +758,7 @@ mod tests {
         );
         fs::write(dir.join("无扩展"), "").unwrap();
         assert_eq!(unique_in(&dir, "无扩展"), "无扩展 (2)");
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -782,10 +800,10 @@ mod tests {
             guard_within(&root, &outside).is_err(),
             "折好 .. 之后的绝对路径同样要拦"
         );
-        fs::remove_dir_all(&sibling).unwrap();
+        clean(&sibling);
         assert!(guard_within(&root, Path::new("C:\\windows")).is_err());
         assert!(guard_within("", &dir).is_err(), "没根的时候一句都不许写");
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -817,7 +835,7 @@ mod tests {
             rename_entry(root, e.path, "a/b".into()).is_err(),
             "非法名字要拒"
         );
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     // ⚠️ 下面这几条都是**单根**夹具 ⇒ 第四发 `dest_root` 传的就是同一根。
@@ -849,7 +867,7 @@ mod tests {
             "C",
             "目录要整棵跟着复制"
         );
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -870,7 +888,7 @@ mod tests {
         assert!(err.contains("它自己里面"), "错误要能读：{err}");
         let err = move_entry(root.clone(), notes, into_own_child, root).unwrap_err();
         assert!(err.contains("它自己里面"), "移动那条同拒：{err}");
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -894,7 +912,7 @@ mod tests {
             move_entry(root.clone(), src, into, root).is_err(),
             "同层挪动没有意义"
         );
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -909,7 +927,7 @@ mod tests {
         )
         .unwrap();
         assert!(made.path.ends_with("a.md"), "notes 里没有 a.md");
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     #[test]
@@ -933,7 +951,7 @@ mod tests {
         );
         assert!(escape.exists(), "被拒的那条要原样留在盘上");
         let _ = fs::remove_file(&escape);
-        fs::remove_dir_all(&dir).unwrap();
+        clean(&dir);
     }
 
     // ---------------------------- B427 · 跨根复制 / 移动
@@ -967,8 +985,8 @@ mod tests {
             ra.join("a.md").exists(),
             "复制不是移动：甲根那条一个字都不许动"
         );
-        fs::remove_dir_all(&ra).unwrap();
-        fs::remove_dir_all(&rb).unwrap();
+        clean(&ra);
+        clean(&rb);
     }
 
     #[test]
@@ -986,8 +1004,8 @@ mod tests {
             "挪走之后甲根那处该空（剪切不是复制）"
         );
         assert_eq!(fs::read_to_string(&made.path).unwrap(), "A");
-        fs::remove_dir_all(&ra).unwrap();
-        fs::remove_dir_all(&rb).unwrap();
+        clean(&ra);
+        clean(&rb);
     }
 
     #[test]
@@ -1024,8 +1042,8 @@ mod tests {
         )
         .expect_err("认不出归属的一律按界外拒");
         assert!(err.contains("已打开的文件夹"), "错误要能读：{err}");
-        fs::remove_dir_all(&ra).unwrap();
-        fs::remove_dir_all(&rb).unwrap();
+        clean(&ra);
+        clean(&rb);
     }
 
     #[test]
@@ -1042,7 +1060,7 @@ mod tests {
         .expect_err("带 .. 的目标跨根也要拦");
         assert!(err.contains("已打开的文件夹"), "错误要能读：{err}");
         assert!(!escape.exists(), "被拒的那条不许顺手在根外建出来");
-        fs::remove_dir_all(&ra).unwrap();
-        fs::remove_dir_all(&rb).unwrap();
+        clean(&ra);
+        clean(&rb);
     }
 }
