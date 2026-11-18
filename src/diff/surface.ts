@@ -2178,10 +2178,46 @@ export function createDiffSurface(
   const jumpTo = (index: number): void => {
     if (stored.length === 0) return;
     const b = stored[Math.min(Math.max(index, 0), stored.length - 1)];
-    const lines = [landingLine(b, "original"), landingLine(b, "modified")];
+    const lines: [number, number] = [landingLine(b, "original"), landingLine(b, "modified")];
     unfoldAroundLines(lines);
     landSide("original", lines[0]);
     landSide("modified", lines[1]);
+    settleJump(lines);
+  };
+
+  /** 最近一次跳块的代号：晚到的补跳回调只认自己那一发（连点两下不互相打架）。 */
+  let jumpSeq = 0;
+
+  /**
+   * 跳块之后按**实测几何**补落一次（用户报的「要点两下才最终定位」）。
+   *
+   * 第一次落位按行号折算像素，用的是 CM6 行高地图里**此刻**的几何。目标区还没被渲染过
+   * （远跳 / 折叠刚展开 / 刚换基线）时那一截只有按字符数估出来的高度，落到位之后再没有
+   * 任何一环按刚量准的几何重算 ⇒ 目标行停在视口下缘甚至屏外；用户的第二下之所以管用，
+   * 正是因为那时这一区已经量过。这里把「第二下」自动补上：排一轮 measure，在 read 阶段
+   * （这一轮几何已落地）之后重落一发 —— 与第二下走的是同一条 `landSide`。
+   *
+   * 不先判「偏没偏」再补：判据得给出容差，而目标行落点与行号折算是整行量化的（软折行的
+   * 块高不参与折算），任何写死的容差都可能把「确实偏了」判成居中。重落一发在已经落准时
+   * 是空写：`setV` 算出同一个像素、`writeScroll` 差分不到 0.5px 不写 DOM。
+   *
+   * 只补一次：下一发用的就是这一轮量准的 heightMap（真机探针：第一帧目标行偏在
+   * 视口下缘、补跳后回到中央）。快速连跳由 `jumpSeq` 作废旧回调；拆旁路 / 换 view 同理。
+   */
+  const settleJump = (lines: readonly [number, number]): void => {
+    const view = right;
+    if (!view) return;
+    const seq = ++jumpSeq;
+    view.requestMeasure({
+      read: () => {
+        if (disposed || seq !== jumpSeq || right !== view) return;
+        requestAnimationFrame(() => {
+          if (disposed || seq !== jumpSeq || right !== view) return;
+          landSide("original", lines[0]);
+          landSide("modified", lines[1]);
+        });
+      },
+    });
   };
 
   /**

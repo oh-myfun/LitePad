@@ -579,9 +579,11 @@ const spyHandles: Array<ReturnType<typeof syncCoordinator.register>> = [];
 function installFakeLayout(
   view: EditorView,
   linePx: number,
-): { px: () => number; put: (px: number) => void } {
+): { px: () => number; put: (px: number) => void; putLineHeight: (px: number) => void } {
   const el = view.scrollDOM;
   let px = 0;
+  // 可变：跳块补落那条用例要模拟「目标区被渲染后行高才量准」（估值 ≠ 实测）。
+  let lh = linePx;
   Object.defineProperty(el, "scrollTop", {
     configurable: true,
     get: () => px,
@@ -592,7 +594,7 @@ function installFakeLayout(
   const block = (line: number) => {
     const doc = view.state.doc;
     const n = Math.min(Math.max(line, 1), doc.lines);
-    return { from: doc.line(n).from, top: (n - 1) * linePx, height: linePx, bottom: n * linePx };
+    return { from: doc.line(n).from, top: (n - 1) * lh, height: lh, bottom: n * lh };
   };
   // 生产的 `EditorScrollAnchor` 只读 `from` / `top` / `height`（`src/sync-scroll/anchor.ts:104-152`），
   // 这里交的就是那一小撮字段 —— CM6 那颗 `BlockInfo` 是带 getter 的类，伪造不出完整一颗，
@@ -600,8 +602,12 @@ function installFakeLayout(
   const asBlockFn = (fn: (arg: number) => ReturnType<typeof block>) =>
     fn as unknown as EditorView["lineBlockAt"];
   view.lineBlockAt = asBlockFn((pos: number) => block(view.state.doc.lineAt(pos).number));
-  view.lineBlockAtHeight = asBlockFn((height: number) => block(Math.floor(height / linePx) + 1));
-  return { px: () => px, put: (next: number) => (px = next) };
+  view.lineBlockAtHeight = asBlockFn((height: number) => block(Math.floor(height / lh) + 1));
+  return {
+    px: () => px,
+    put: (next: number) => (px = next),
+    putLineHeight: (next: number) => (lh = next),
+  };
 }
 
 /**
@@ -703,6 +709,22 @@ describe("B461 · 跳块与步进（Task 4）", () => {
       syncCoordinator.pendingExpectation(view.scrollDOM),
       "账本里那笔意图必须是写完之后的落点（第 5 行），不是跳之前的第 2 行",
     ).toBeCloseTo(5, 2);
+  });
+
+  it("B461 · 跳块后按实测几何补落一次（远跳不再要点第二下）", async () => {
+    const { panel, s } = mountDiffPair("1\n2\n3\n4\n5", "1\n2\n3A\n4\n5B");
+    s.syncBlocks();
+    const view = panel.view!.view;
+    const lay = installFakeLayout(view, 10);
+    registerPanel(panel);
+    s.jumpTo(1);
+    expect(lay.px(), "第一发按跳之前那份几何落位（目标第 5 行 × 10px）").toBe(40);
+    // 目标区被渲染之后行高才量准（估值 10px → 实测 20px）：第一次落位因此偏了一截。
+    // 没有任何一环会按新几何重算 ⇒ 用户得点第二下。补落就是把这一下自动补上。
+    lay.putLineHeight(20);
+    await nextFrame(); // CM6 这一轮 measure：read 里排下补跳
+    await nextFrame(); // 补跳落位
+    expect(lay.px(), "补跳用刚量准的几何重落（5 行 × 20px）").toBe(80);
   });
 
   it("B461 · 差异标签不进同步滚动在册（设计稿反目标；⑦⑥ 真机抓到的外发）", () => {
