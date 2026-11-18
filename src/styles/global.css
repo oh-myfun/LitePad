@@ -1527,7 +1527,6 @@ html[data-window-kind="satellite"] #sidebar-toggle {
       同特异度下写在前头就会被 46px 与悬停底色压回去。 */
 .sync-btn,
 .title-btn.pin-btn,
-.title-btn.upd-btn,
 .title-btn.layout-btn {
   flex: 0 0 auto;
   width: 24px;
@@ -3483,48 +3482,103 @@ button:focus-visible {
 }
 
 /* ---------- 更新键（B107：src/shell/updater.ts；B311 起钉在「左栏开关」左边） ----------
-   ⚠️ B158 起它的**尺寸 / 悬停 / 铺底都跟着上面那一族走**（`.title-btn.upd-btn` 就在
-      那条共享规则里），所以这里只留这颗键自己的三样：定位上下文、提示点、圆环。
-      下面两个数值也是**按 24×24 重算**的：46px 方键上的 26px 进度条与
-      top/right: 5/7 的提示点，直接搬过来会把键撑破、点还会掉到角外。 */
+   2026-11-19 用户在三套样例里选了 InkNote 文字条：一颗随阶段变宽的胶囊 ——
+   可用 / 就绪整条填 accent，下载中给「下载中 42%」+ 底部 2px 进度线。
+   为什么不沿用圆环：24px 的环只说得清「在下」，说不清百分比；文字条把状态摊开写。
+   尺寸不再跟 24×24 那族走（已从上面的共享列表摘出），宽随文字、上限 168px；
+   窗口再窄只截文字（.upd-label 走省略号），不许把后面的键顶出标题栏。 */
 
 .title-btn.upd-btn {
   position: relative;
+  flex: 0 1 auto;
+  width: auto;
+  max-width: 168px;
+  height: 24px;
+  margin-left: 3px;
+  margin-right: 3px;
+  padding: 0 8px;
+  gap: 4px;
+  border-radius: var(--radius);
+  background: transparent;
+  overflow: hidden;
 }
 
-/* 有更新时的提示点：accent 小圆点钉在按钮右上角（VS Code 的 badge 语言，
-   但按 LitePad 的单色 accent 出，不引入新色）。24px 键上贴角放：6px 点 → 2px 边距。 */
-.title-btn.upd-btn.has-update::after {
-  content: "";
+/* 图标 14px（与标题栏其它 codicon 同观感）；文字走 11px 元信息档、一行不折。 */
+.title-btn.upd-btn .upd-ico {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.title-btn.upd-btn .upd-ico .codicon {
+  font-size: 14px;
+}
+
+.title-btn.upd-btn .upd-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* 下载中的底部进度线：贴胶囊内沿（左右各 8px），2px 高。
+   轨道用 accent 的 30% 淡化，免得跟上面的百分比文字抢读。 */
+.title-btn.upd-btn .upd-track {
+  display: none;
   position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
+  left: 8px;
+  right: 8px;
+  bottom: 3px;
+  height: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  overflow: hidden;
+}
+
+.title-btn.upd-btn[data-phase="downloading"] .upd-track {
+  display: block;
+}
+
+.title-btn.upd-btn .upd-track i {
+  display: block;
+  width: 0;
+  height: 100%;
   background: var(--accent);
 }
 
-/* 检查中 / 下载中：一颗圆环（B311，取代原来那条 18×4 横进度条 —— 键挪到左栏开关旁边之后，
-   横条在那儿读起来像一条没对齐的下划线；圆环自带「围绕中心推进」的语义，旋转档也共用同一画法）。
-   画法是纯 CSS：conic-gradient 画「已完成的扇形 + 剩下的暗轨」，radial mask 把中间掏空成
-   2.5px 的环。⚠️ 不许换成手绘 <svg>：图标一律走 codicon，那条守卫还在。
-   完成度由 JS 写在元素的 `--p`（0–100）上，每 1% 更新一发。
-   ⚠️ 不给它加 transition：没经 `@property` 注册的自定义属性不可插值，硬加只会让人以为在平滑。 */
-.title-btn.upd-btn .upd-ring {
-  display: block;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: conic-gradient(var(--accent) calc(var(--p, 0) * 1%), var(--bg-hover) 0);
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 0);
-  mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 0);
+/* 可用 / 就绪：整条填 accent（InkNote 的「可操作」语言）。
+   悬停保持填色 —— 上面 `.title-btn:hover` 的灰底会把 accent 盖掉，这里按更高特异度压住。 */
+.title-btn.upd-btn[data-phase="available"],
+.title-btn.upd-btn[data-phase="ready"] {
+  background: var(--accent);
+  color: var(--accent-fg);
 }
 
-/* 检查中：没有「完成度」可画 ⇒ 固定一截 28% 的弧转起来（进度未知就说未知，
-   别拿一条不动的满环冒充 0%）。 */
-.title-btn.upd-btn.is-spin .upd-ring {
-  background: conic-gradient(var(--accent) 28%, transparent 0);
+.title-btn.upd-btn[data-phase="available"]:hover,
+.title-btn.upd-btn[data-phase="ready"]:hover {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* 检查中 / 下载中没有可点的动作：原生 disabled（光标回箭头），但保留文字与进度线。 */
+.title-btn.upd-btn:disabled {
+  cursor: default;
+}
+
+.title-btn.upd-btn:disabled:hover {
+  background: transparent;
+  color: var(--titlebar-fg);
+}
+
+.title-btn.upd-btn[data-phase="downloading"]:disabled:hover {
+  background: transparent;
+}
+
+/* 检查中：图标转起来（文字条已经说明在查什么）；下载中不转 ——
+   底部线在推进，再转一个图标就成了两套进度。减少动效时只留静止的字。 */
+.title-btn.upd-btn.is-spin .codicon {
   animation: upd-spin 0.9s linear infinite;
 }
 
@@ -3534,9 +3588,8 @@ button:focus-visible {
   }
 }
 
-/* 系统要求减少动效时不转，但弧长留着 —— 状态还得看得见，只是不动。 */
 @media (prefers-reduced-motion: reduce) {
-  .title-btn.upd-btn.is-spin .upd-ring {
+  .title-btn.upd-btn.is-spin .codicon {
     animation: none;
   }
 }

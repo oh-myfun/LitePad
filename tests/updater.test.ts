@@ -86,7 +86,7 @@ describe("B107 更新状态机", () => {
     expect(updBtn().style.display).toBe("none");
   });
 
-  it("发现更新：按钮出现（cloud-download + 提示点），状态栏报新版本号", async () => {
+  it("发现更新：按钮出现（cloud-download + 文字条），状态栏报新版本号", async () => {
     vi.mocked(check).mockResolvedValue(fakeUpdate("0.14.0"));
     const messages: string[] = [];
     const handle = init(messages, []);
@@ -94,7 +94,8 @@ describe("B107 更新状态机", () => {
     const btn = updBtn();
     expect(btn.style.display).not.toBe("none");
     expect(btn.innerHTML, "发现更新 = cloud-download 字形").toContain("codicon-cloud-download");
-    expect(btn.classList.contains("has-update"), "提示点应点亮").toBe(true);
+    expect(btn.dataset.phase, "可用态走文字条").toBe("available");
+    expect(btn.querySelector(".upd-label")?.textContent).toBe("更新到 v0.14.0");
     expect(btn.getAttribute("aria-label")).toContain("0.14.0");
     expect(messages.join("\n")).toContain("0.14.0");
   });
@@ -109,13 +110,15 @@ describe("B107 更新状态机", () => {
     // 反向验证前置：替身确实被调用（否则「没拦」与「拦不住」分不开）
     expect(update.downloadAndInstall).toHaveBeenCalledTimes(1);
     expect(updBtn().innerHTML, "就绪 = refresh 字形").toContain("codicon-refresh");
+    expect(updBtn().dataset.phase).toBe("ready");
+    expect(updBtn().querySelector(".upd-label")?.textContent).toBe("重启以更新");
     // persist 在下载前与 relaunch 前各一次（都走 opts.persist）
     // relaunch 只由安装完成链路触发一次；就绪后再点一次会再次 relaunch（真实场景 = 用户延迟重启）
     updBtn().dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await vi.waitFor(() => expect(vi.mocked(relaunch)).toHaveBeenCalledTimes(2));
   });
 
-  it("下载中：进度圆环 + 百分比写进 aria-label 与 `--p`", async () => {
+  it("下载中：文字条报百分比 + 底部进度线按同一节点推进", async () => {
     let captured: DownloadCb | undefined;
     const update = fakeUpdate("0.14.0");
     (update.downloadAndInstall as ReturnType<typeof vi.fn>).mockImplementation(
@@ -132,16 +135,19 @@ describe("B107 更新状态机", () => {
     await vi.waitFor(() => expect(captured).toBeTruthy());
     captured?.({ event: "Started", data: { contentLength: 100 } });
     captured?.({ event: "Progress", data: { chunkLength: 40 } });
-    const ring = updBtn().querySelector<HTMLElement>(".upd-ring");
-    expect(ring, "下载中 = 进度圆环（B311 取代横进度条）").toBeTruthy();
-    expect(ring!.style.getPropertyValue("--p"), "完成度写在 --p 上").toBe("40");
-    expect(updBtn().innerHTML, "圆环是 CSS 画的，不许混进手绘 SVG").not.toContain("<svg");
+    const fill = updBtn().querySelector<HTMLElement>(".upd-track i");
+    expect(fill, "下载中 = 底部进度线").toBeTruthy();
+    expect(updBtn().dataset.phase).toBe("downloading");
+    expect(updBtn().querySelector(".upd-label")?.textContent).toBe("下载中 40%");
+    expect(fill!.style.width, "线宽跟着同一百分比走").toBe("40%");
+    expect(updBtn().innerHTML, "进度线是 DOM 画的，不许混进手绘 SVG").not.toContain("<svg");
     expect(updBtn().getAttribute("aria-label")).toContain("40%");
     // 同一发里再进一格：必须复用那个节点，不能重建（重建 = 每 1% 闪一次）
-    const same = ring!;
+    const same = fill!;
     captured?.({ event: "Progress", data: { chunkLength: 20 } });
-    expect(updBtn().querySelector(".upd-ring")).toBe(same);
-    expect(same.style.getPropertyValue("--p")).toBe("60");
+    expect(updBtn().querySelector(".upd-track i")).toBe(same);
+    expect(same.style.width).toBe("60%");
+    expect(updBtn().querySelector(".upd-label")?.textContent).toBe("下载中 60%");
   });
 
   it("B311 位置：更新键插在 .title-actions 最左边（= 左栏开关那颗的左侧）", async () => {
@@ -160,7 +166,7 @@ describe("B107 更新状态机", () => {
     expect(kids[2], "置顶键仍在最后").toBe("win-pin");
   });
 
-  it("手动检查在途：按钮亮起来转圆环；查完没更新就收回（自动检查不许亮）", async () => {
+  it("手动检查在途：按钮亮起来转图标；查完没更新就收回（自动检查不许亮）", async () => {
     let settle: (u: Update | null) => void = () => {};
     vi.mocked(check).mockImplementation(
       () => new Promise<Update | null>((r) => (settle = r)) as ReturnType<typeof check>,
@@ -170,8 +176,9 @@ describe("B107 更新状态机", () => {
     await vi.waitFor(() => expect(vi.mocked(check)).toHaveBeenCalledTimes(1));
     const btn = updBtn();
     expect(btn.style.display, "检查中按钮要出现").toBe("");
-    expect(btn.classList.contains("is-spin"), "检查中 = 旋转那一档").toBe(true);
-    expect(btn.querySelector(".upd-ring"), "旋转档画的也是圆环").toBeTruthy();
+    expect(btn.classList.contains("is-spin"), "检查中 = 图标旋转那一档").toBe(true);
+    expect(btn.dataset.phase, "检查中走文字条").toBe("checking");
+    expect(btn.querySelector(".upd-label")?.textContent).toBe("正在检查更新…");
     expect(btn.getAttribute("aria-label")).toBe("正在检查更新");
 
     settle(null);
@@ -189,7 +196,7 @@ describe("B107 更新状态机", () => {
     await vi.waitFor(() => expect(errs.join("\n")).toContain("更新安装失败"));
     const btn = updBtn();
     expect(btn.innerHTML).toContain("codicon-cloud-download");
-    expect(btn.classList.contains("has-update")).toBe(true);
+    expect(btn.dataset.phase).toBe("available");
     expect(vi.mocked(relaunch)).not.toHaveBeenCalled();
   });
 
@@ -279,7 +286,7 @@ describe("B107 更新链路静态守卫", () => {
     const upd = readSrc("src/shell/updater.ts");
     expect(upd, "自动检查失败必须静默（console.warn）").toContain("console.warn");
     expect(upd, "安装前必须 persist 落盘现场").toContain("await opts.persist()");
-    expect(upd, "不得手绘 SVG（图标走 codicon，圆环走 CSS）").not.toContain("<svg");
+    expect(upd, "不得手绘 SVG（图标走 codicon，进度线走 CSS）").not.toContain("<svg");
     expect(upd, "更新键必须插成容器的第一个孩子（= 左栏开关左边），别再按 id 找置顶键").toContain(
       "opts.host.insertBefore(btn, opts.host.firstElementChild)",
     );

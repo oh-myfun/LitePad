@@ -67,11 +67,10 @@ const IDS = {
   pinned: "pinned",
   pin: "pin",
   // —— 更新键（B107，B311 起钉在「左栏开关」左边）——
-  // 一颗键按阶段换画法：发现新版本 = cloud-download（点击下载安装），就绪待重启 = refresh
-  // （点击 relaunch），这两档是字形；检查中 / 下载中是**圆环**（CSS 画的，见 global.css 的
-  // `.upd-ring`：下载按 percent 走，检查中是固定弧长旋转）。
-  // 沿革：B107 原本是 loading 旋转 → 换成横进度条 → B311 键搬家后统一成圆环
-  // （横条在新位置读起来像一条没对齐的下划线；旋转又回到了「检查中」这一档，但只在手动检查时）。
+  // 一颗键按阶段换内容：可用 = cloud-download（点击下载安装），就绪 = refresh（点击 relaunch），
+  // 检查中 = refresh 转起来；下载中也用 cloud-download，进度交给旁边的百分比文字与底部线
+  // （global.css 的 `.upd-track`）。沿革：B107 loading → 横进度条 → B311 圆环 →
+  // 2026-11-19 用户拍板 InkNote 式文字条（圆环读不出百分比）。
   cloudDownload: "cloud-download",
   refresh: "refresh",
   // —— 标题栏文档名后的同步滚动键（B152 / B154 / B166）——
