@@ -2111,6 +2111,118 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
     expect(left.scrollDOM.style.visibility, "第二轮落定后才露出来").toBe("");
   });
 
+  it("B490 · 左栏没露过面时收到一条非回声 scroll ⇒ 收口仍以右栏为准并露出左栏", async () => {
+    const { panel, s } = mountDiffPair("A\nB\nC", "A\nC");
+    const right = panel.view!.view;
+    const left = s.left;
+    fakeLineBoxes(left, [20, 20, 20]);
+    fakeLineBoxes(right, [20, 20]);
+    const track = (el: HTMLElement): void => {
+      let top = 0;
+      Object.defineProperty(el, "scrollTop", {
+        configurable: true,
+        get: () => top,
+        set: (v: number) => {
+          top = v;
+        },
+      });
+      Object.defineProperty(el, "clientHeight", { configurable: true, value: 100 });
+      Object.defineProperty(el, "scrollHeight", { configurable: true, value: 300 });
+    };
+    track(right.scrollDOM);
+    track(left.scrollDOM);
+    // 左栏还没露过面就收到一条**不是我们写的** scroll（真机上这条来自 CM6 测量里的滚动
+    // 锚定 / `resetLeftDoc` 的 `setState` 归零）：`ownPos` 里没票 ⇒ 被判成「用户滚了左栏」。
+    left.scrollDOM.scrollTop = 40;
+    left.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(left.scrollDOM.style.visibility, "前置：这一发不露出左栏").toBe("hidden");
+    // 右栏顶在 C（top=20）。这一发只排一轮量，不经过宿主落位那一声。
+    right.scrollDOM.scrollTop = 20;
+    s.remeasure();
+    await frames(6);
+    // 修复前：`lastDriver` 已经是 original，收口走「左 → 右」那一支并直接 return —— 左栏的
+    // 露出口（只在右栏驱动时执行）再也不跑，用户看到的就是「左栏空白，滚一下才恢复」。
+    expect(left.scrollDOM.style.visibility, "没露过面的左栏不许当驱动侧，必须露出来").toBe("");
+    expect(right.scrollDOM.scrollTop, "右栏没被左栏那条野生滚动拽走").toBe(20);
+    expect(left.scrollDOM.scrollTop, "左栏扶到与右栏同一内容位置（C 在左栏 top=40）").toBe(40);
+  });
+
+  it("B491 · 宿主把右栏落到左栏够不着的位置之后，收口不按左栏旧锚点把右栏拽回来", async () => {
+    const { panel, s } = mountLiveBaselinePair("A\nB\nC", "A\nB\nC\nD\nE\nF\nG");
+    const right = panel.view!.view;
+    const left = s.left;
+    fakeLineBoxes(left, [20, 20, 20]);
+    fakeLineBoxes(right, [20, 20, 20, 20, 20, 20, 20]);
+    const track = (el: HTMLElement, clientH: number, scrollH: number): void => {
+      let top = 0;
+      Object.defineProperty(el, "scrollTop", {
+        configurable: true,
+        get: () => top,
+        set: (v: number) => {
+          top = v;
+        },
+      });
+      Object.defineProperty(el, "clientHeight", { configurable: true, value: clientH });
+      Object.defineProperty(el, "scrollHeight", { configurable: true, value: scrollH });
+    };
+    // 左栏 content 60 / 视口 40 ⇒ 最多滚 20；右栏 content 140 / 视口 40 ⇒ 最多滚 100。
+    track(right.scrollDOM, 40, 140);
+    track(left.scrollDOM, 40, 60);
+    s.syncBlocks();
+    await frames(6);
+    expect(left.scrollDOM.style.visibility, "前置：左栏已露出").toBe("");
+    // 用户把左栏滚到底（20）⇒ 右栏跟到 B（20），驱动侧是左栏。
+    left.scrollDOM.scrollTop = 20;
+    left.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(right.scrollDOM.scrollTop).toBe(20);
+    // 宿主把右栏落到插入段里（top=100）—— 左栏没有这一段，够不着。
+    right.scrollDOM.scrollTop = 100;
+    s.syncLeftToRight();
+    s.remeasure();
+    await frames(6);
+    // 修复前：驱动侧还是左栏，下一轮收口按左栏那个旧锚点（B）反推右栏 ⇒ 右栏从 100 被拽回 20。
+    expect(right.scrollDOM.scrollTop, "右栏停在宿主落下的位置，不被左栏旧锚点拽回 20").toBe(100);
+    expect(left.scrollDOM.scrollTop, "左栏够不着就停在它能到的位置").toBe(20);
+  });
+
+  it("B492 · 重设左栏正文（存盘换基线）之后右栏仍是权威，不被归零回声拽回顶部", async () => {
+    const { panel, s, doc } = mountLiveBaselinePair("A\nB\nC", "A\nB改\nC");
+    const right = panel.view!.view;
+    const left = s.left;
+    fakeLineBoxes(left, [20, 20, 20]);
+    fakeLineBoxes(right, [20, 20, 20]);
+    const track = (el: HTMLElement): void => {
+      let top = 0;
+      Object.defineProperty(el, "scrollTop", {
+        configurable: true,
+        get: () => top,
+        set: (v: number) => {
+          top = v;
+        },
+      });
+      Object.defineProperty(el, "clientHeight", { configurable: true, value: 100 });
+      Object.defineProperty(el, "scrollHeight", { configurable: true, value: 300 });
+    };
+    track(right.scrollDOM);
+    track(left.scrollDOM);
+    s.syncBlocks();
+    await frames(6);
+    expect(left.scrollDOM.style.visibility, "前置：左栏已露出").toBe("");
+    // 用户先滚左栏到第 3 行（40）⇒ 右栏跟到 40，驱动侧是左栏。
+    left.scrollDOM.scrollTop = 40;
+    left.scrollDOM.dispatchEvent(new Event("scroll"));
+    expect(right.scrollDOM.scrollTop).toBe(40);
+    // 存盘换基线：`setState` 把左栏 scrollTop 归零（真机上浏览器随后补一发 scroll）。
+    left.scrollDOM.scrollTop = 0;
+    markClean(doc, "A\nB改\nC");
+    refreshDiffSurfaces();
+    left.scrollDOM.dispatchEvent(new Event("scroll"));
+    s.remeasure();
+    await frames(6);
+    // 修复前：那一发回声判成「用户滚了左栏」，或驱动侧仍停在左栏 ⇒ 右栏被拽到顶部。
+    expect(right.scrollDOM.scrollTop, "右栏不被左栏归零的回声拽回顶部").toBe(40);
+  });
+
   it("B479 · 视口顶落在占位缝里 ⇒ 两栏像素一一对应（左栏滚到底右栏也到底）", () => {
     const { panel } = mountDiffPair("A\n", "A\nB\n");
     const right = panel.view!.view;
@@ -2450,6 +2562,9 @@ describe("B462 · 实测行高对齐（VS Code 的 alignment view zone）", () =
       },
     });
     s.syncBlocks();
+    // 前置：先等首轮收口把左栏露出来 —— 用户只可能滚一栏**看得见**的栏。
+    await frames(6);
+    expect(left.scrollDOM.style.visibility, "前置：左栏已露出").toBe("");
 
     // 用户先滚左栏第 2 行（B）：右栏没有这一行 ⇒ 落到块前缘 C（top=20）。
     leftTop = 20;

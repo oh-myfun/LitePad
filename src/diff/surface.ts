@@ -55,8 +55,10 @@ import {
   panels,
   showInvisibles,
   tabs,
+  windowLabel,
   type Panel,
 } from "../core/app-state";
+import { logger } from "../core/logger";
 import { invisibleChars } from "../editor/invisibleChars";
 import { landVisibleSideAtV } from "../sync-scroll/wire";
 import { DIFF_REFRESH_MS, splitLines } from "./align";
@@ -442,6 +444,18 @@ interface OverviewAxis {
   total: number;
   topOf(line: number): number;
   heightOf(line: number): number;
+}
+
+/**
+ * 这一格滚动收口链的日志出口。
+ *
+ * 这套链路的故障（左栏一直藏着 / 位置被拽走）在无头探针里复现不出来 —— 它依赖真机的
+ * 测量节奏与面板尺寸。链上看不见的每一步都打一条 trace，用户复现时能从日志里读出
+ * 「链停在哪一步」，而不是只剩「位置最终不对」这一个事实。
+ * 前缀带窗口身份：多窗口共用同一个 `litepad.log`（与 `sync-scroll/wire.ts` 的 `syncTrace` 同因）。
+ */
+function diffTrace(panel: Panel, msg: string): void {
+  logger.trace("diff", `[${windowLabel}] P${panel.panelId}: ${msg}`);
 }
 
 /**
@@ -1423,6 +1437,7 @@ export function createDiffSurface(
     let rightDone = false;
     const settle = (): void => {
       if (disposed || gen !== alignGen || !leftDone || !rightDone) return;
+      diffTrace(panel, `量齐 gen=${gen}`);
       // read 阶段只量不写。
       const next = measureGapPlans();
       requestAnimationFrame(() => {
@@ -1768,7 +1783,18 @@ export function createDiffSurface(
     if (Math.abs(landedTop - beforeTop) > 0.5 || Math.abs(landedLeft - beforeLeft) > 0.5) {
       ownPos.set(el, { top: landedTop, left: landedLeft });
     }
+    if (Math.abs(landedTop - top) > 1) {
+      diffTrace(
+        panel,
+        `写[${panel.view?.view === view ? "右" : "左"}]被夹住 目标=${top.toFixed(1)} 读回=${landedTop.toFixed(1)} 可滚=${(el.scrollHeight - el.clientHeight).toFixed(1)}`,
+      );
+    }
     return Math.abs(landedTop - top) <= 1;
+  };
+  /** 把某一格此刻的位置直接登记成自己人（不写、不移动）。 */
+  const claimScroll = (view: EditorView): void => {
+    const el = view.scrollDOM;
+    ownPos.set(el, { top: el.scrollTop, left: el.scrollLeft });
   };
   /**
    * 布局收口：两栏此刻停在哪，就登记成「自己人」的位置。
@@ -1780,8 +1806,7 @@ export function createDiffSurface(
     queueMicrotask(() => {
       if (disposed) return;
       for (const view of [left, right]) {
-        const el = view?.scrollDOM;
-        if (el) ownPos.set(el, { top: el.scrollTop, left: el.scrollLeft });
+        if (view) claimScroll(view);
       }
     });
   };
@@ -1810,9 +1835,16 @@ export function createDiffSurface(
   const revealLeft = (): void => {
     if (leftShown || !right) return;
     // 右栏正在落位链里藏着：那一侧的中间态本来就不许画出来，这一栏跟着等。
-    if (right.scrollDOM.style.visibility === "hidden") return;
+    if (right.scrollDOM.style.visibility === "hidden") {
+      diffTrace(panel, "露出让路：右栏还在落位链里藏着");
+      return;
+    }
     leftShown = true;
     left.scrollDOM.style.visibility = "";
+    diffTrace(
+      panel,
+      `左栏露出 左=${left.scrollDOM.scrollTop.toFixed(1)} 右=${right.scrollDOM.scrollTop.toFixed(1)}`,
+    );
   };
   /** 驱动栏视口顶落在哪个文档行（1-based）。 */
   const topLine = (view: EditorView, top: number): number =>
@@ -1984,16 +2016,25 @@ export function createDiffSurface(
    */
   const resyncSharedOffset = (): void => {
     if (!syncOn || disposed) return;
-    if (lastDriver === "original") {
+    // 没露过面的左栏不可能是驱动侧：它没有用户滚动，落点只可能是我们写进去的。
+    // 认它当驱动侧会拿一栏没实测的位置去拽右栏，而且这一支在露出之前就 return ——
+    // 左栏从此一直藏着（用户报的「左边空白，滚一下才出来」）。
+    if (lastDriver === "original" && leftShown) {
+      diffTrace(panel, "收口 驱动=左");
       mirrorScroll(left, right);
       return;
     }
     // 写不进去（对栏还没量完，被浏览器夹住）⇒ 这一发不算落定，下一轮收口再算。
     if (!mirrorScroll(right, left)) {
+      diffTrace(panel, "收口 驱动=右·被夹住 ⇒ 再排一轮");
       scheduleAlign();
       return;
     }
     if (leftShown) return;
+    diffTrace(
+      panel,
+      `收口 驱动=右 左未露 探=${leftProbed} 右=${right?.scrollDOM.scrollTop.toFixed(1)} 左=${left.scrollDOM.scrollTop.toFixed(1)}`,
+    );
     // 左栏还没露过：它的视口此前停在别处（首帧在顶部），CM6 还没实测目标那一段，
     // 这一轮写进去的只是按估值算出的位置。再排一轮测量，等目标区被实测后再写一次，
     // 第二轮落定才露出 —— 否则露出的是估值的错位帧（探针实测会差几百像素）。
@@ -2099,6 +2140,12 @@ export function createDiffSurface(
         leftWritable,
       ),
     );
+    // `setState` 会把 `scrollTop` 归零，随之而来的那一发 scroll 不是用户滚的。
+    // 不登记就会被判成「用户滚了左栏」⇒ 驱动侧翻过去，右栏被拽到顶部。
+    claimScroll(left);
+    // 左栏那份正文刚被换掉（存盘 / 以磁盘为准重载）：它上一次的位置指的不再是同一份内容，
+    // 留着它当驱动侧只会把右栏拽到新正文的某一行上。此刻右栏是唯一还站着的内容。
+    lastDriver = "modified";
     syncBlocks();
   };
 
@@ -2484,6 +2531,13 @@ export function createDiffSurface(
     // 再来一次 —— 不补这一排，左栏就一直藏着，直到用户滚动（用户报的「左边空白，
     // 滚一下才出来」）。
     syncLeftToRight: () => {
+      // 宿主刚把右栏明确落到某个位置（切标签 / 重建落位）⇒ 此后以右栏为准，直到用户
+      // 真的去滚某一栏。留着左栏上一次的位置当驱动侧，下一轮收口就会把右栏拽回旧位置。
+      lastDriver = "modified";
+      diffTrace(
+        panel,
+        `落位收口左露=${leftShown} 右=${right?.scrollDOM.scrollTop.toFixed(1)} 左=${left.scrollDOM.scrollTop.toFixed(1)}`,
+      );
       if (!leftShown) {
         scheduleAlign();
         return;
@@ -2527,6 +2581,10 @@ export function createDiffSurface(
   panel.diffSurface = surface;
   // 挂完之前，两颗 view 的几何回调一律不排测量（`scheduleAlign` 那时还在 TDZ 里）。
   armed = true;
+  diffTrace(
+    panel,
+    `挂上 左=${left.state.doc.lines} 行 右=${right?.state.doc.lines ?? 0} 行 右藏=${right?.scrollDOM.style.visibility === "hidden"}`,
+  );
   return surface;
 }
 
