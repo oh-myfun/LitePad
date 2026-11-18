@@ -1138,8 +1138,8 @@ export function createDiffSurface(
       // **量完之后**才发的，在这里重测读到的才是新行高。docChanged 交给下面那条防抖链路。
       if (armed && update.geometryChanged) {
         // 量测里 CM6 会为了保住滚动锚点自己改 `scrollTop`：那一发不是用户滚动，
-        // 不记账就会被当成用户滚的、镜像给对栏（见 `noteLayoutScroll`）。
-        noteLayoutScroll();
+        // 不记账就会被当成用户滚的、镜像给对栏（见 `settleScroll`）。
+        settleScroll();
         if (!update.docChanged) scheduleAlign();
       }
       if (
@@ -1730,52 +1730,68 @@ export function createDiffSurface(
    * 同一像素就错开多少（切标签后实测能差半屏）。所以按「段首行 + 段内偏移」换算
    * （`alignSpan`），而不是照搬像素。
    *
-   * `pendingEcho` 只用来认出「这一发是我写的」：回声一律早退，不再反向映射。
+   * `ownPos` 只用来认出「这一发是我写的」：回声一律早退，不再反向映射。
    */
   let syncOn = true;
-  /** 布局变化后以哪一栏为准：最后一次非回声滚动的那一栏（默认右栏 —— 那份可编辑正文）。 */
+  /** 布局变化后以哪一栏为准：最后一次**用户**滚动的那一栏（默认右栏 —— 那份可编辑正文）。 */
   let lastDriver: DiffSide = "modified";
-  /** 一发程序性写入的「认领票」：纵、横两个值一起记（容差 1px，与浏览器夹取取整同量级）。 */
-  const pendingEcho = new WeakMap<HTMLElement, { top: number; left: number }>();
   /**
-   * 布局**量完之后**两栏各自落在哪（CM6 的滚动锚定会直接改 `scrollTop`）。
+   * 每一格「此刻应在的位置」：只记我们自己造成的、或布局刚收口的那一个点。
    *
-   * 拖分屏 / 改窗口宽度时，CM6 为了不让视口里的内容跳，会在量测里给 `scrollTop` 补一个
-   * 高度差；内容变矮时浏览器还会再夹一次。两条都不是用户滚动，却都会送出一发 scroll
-   * 事件：认不出来的话那一发就被当成「用户滚了这一栏」，驱动侧翻过去、再镜像回对栏 ——
-   * 布局变化期间两栏来回拽，就是用户看到的滚动位置反复抖。
+   * 判据只有一条：scroll 读数与它差在 1px 内 ⇒ 这一发是我们造成的（程序写入的回声，或
+   * CM6 测量里的滚动锚定），吞掉；否则 ⇒ 用户滚的。
    *
-   * 记账必须放微任务：锚定写在量测回调（rAF）里，scroll 事件在渲染步派发，中间只有
-   * 这个空隙能读到**写完**的值；监听器里同步读到的还是锚定之前的。
+   * 为什么程序写入必须记**写后读回值**而不是意图值：对栏还没量完时浏览器会把越界的写入
+   * 夹到当前可滚上限，回声带着夹后的值回来。记意图的话这一发与登记对不上，就会被当成
+   * 「用户滚了这一栏」—— 驱动侧翻转、右栏被拽到夹后位置，而左栏的露出口（只在右栏驱动的
+   * 收口里）此后再不执行，用户看到的就是「左栏空白、滚动条位置也变了，滚一下才恢复」。
+   *
+   * 测量期间的锚定写入与程序写入**共用这一本**：两者要回答的是同一个问题，分开记就必然
+   * 有一边漏判（布局变化期间两栏来回拽，就是用户看到的滚动位置反复抖）。
    */
-  const layoutEcho = new WeakMap<HTMLElement, { top: number; left: number }>();
-  const noteLayoutScroll = (): void => {
+  const ownPos = new WeakMap<HTMLElement, { top: number; left: number }>();
+  /**
+   * 差异面里**唯一**允许直接写两栏 `scrollTop/scrollLeft` 的地方。
+   *
+   * 写后立刻读回：只有真的移动过才登记（没移动就没有 scroll 事件，留登记会吞掉下一发真
+   * 滚动）；登记的是读回值（见 `ownPos`）。返回值是「这一发是否落到了目标」，被夹住 ⇒
+   * false ⇒ 调用方排下一轮测量收口再映射一次。
+   */
+  const writeScroll = (view: EditorView, top: number, left: number): boolean => {
+    const el = view.scrollDOM;
+    const beforeTop = el.scrollTop;
+    const beforeLeft = el.scrollLeft;
+    el.scrollTop = top;
+    el.scrollLeft = left;
+    const landedTop = el.scrollTop;
+    const landedLeft = el.scrollLeft;
+    if (Math.abs(landedTop - beforeTop) > 0.5 || Math.abs(landedLeft - beforeLeft) > 0.5) {
+      ownPos.set(el, { top: landedTop, left: landedLeft });
+    }
+    return Math.abs(landedTop - top) <= 1;
+  };
+  /**
+   * 布局收口：两栏此刻停在哪，就登记成「自己人」的位置。
+   *
+   * 必须在微任务里跑：锚定写在量测回调（rAF）里，scroll 事件在渲染步派发，中间只有这个
+   * 空隙能读到**写完**的值；监听器里同步读到的还是锚定之前的。
+   */
+  const settleScroll = (): void => {
     queueMicrotask(() => {
       if (disposed) return;
       for (const view of [left, right]) {
         const el = view?.scrollDOM;
-        if (!el) continue;
-        layoutEcho.set(el, { top: el.scrollTop, left: el.scrollLeft });
+        if (el) ownPos.set(el, { top: el.scrollTop, left: el.scrollLeft });
       }
     });
   };
-  /**
-   * 这一发 scroll 是不是自己写下去的回声（是 ⇒ 消费掉票，且不再反向映射）。
-   *
-   * 两本账：`pendingEcho` 是程序性写入（写之前登记），`layoutEcho` 是布局量完之后的位置。
-   * 写入落下之后又被浏览器夹取或 CM6 锚定改过的那一发，落点与票面不同，但仍是内部写的
-   * —— 只查第一本就会把它判成用户滚动。
-   */
-  const isEcho = (el: HTMLElement | undefined): boolean => {
+  /** 这一发 scroll 是不是我们自己造成的（是 ⇒ 消费掉登记，且不再反向映射）。 */
+  const isOwnScroll = (el: HTMLElement | undefined): boolean => {
     if (!el) return false;
-    const want = pendingEcho.get(el);
-    pendingEcho.delete(el);
-    if (want && Math.abs(el.scrollTop - want.top) <= 1 && Math.abs(el.scrollLeft - want.left) <= 1)
-      return true;
-    const laid = layoutEcho.get(el);
-    if (laid === undefined) return false;
-    layoutEcho.delete(el);
-    return Math.abs(el.scrollTop - laid.top) <= 1 && Math.abs(el.scrollLeft - laid.left) <= 1;
+    const want = ownPos.get(el);
+    ownPos.delete(el);
+    if (!want) return false;
+    return Math.abs(el.scrollTop - want.top) <= 1 && Math.abs(el.scrollLeft - want.left) <= 1;
   };
 
   /**
@@ -1914,7 +1930,7 @@ export function createDiffSurface(
    * （`gapZones` 的产出），所以段内偏移原样搬即可；视口顶落在缝里时缝与对侧同起点同高，
    * 直接按像素。
    *
-   * 只从驱动侧往对侧算，回写不会反过来再触发一次（回声票见 `isEcho`）。
+   * 只从驱动侧往对侧算，回写不会反过来再触发一次（回声判定见 `isOwnScroll`）。
    */
   const mirrorScroll = (from: EditorView | null, to: EditorView | null): boolean => {
     if (!syncOn || !from || !to || from === to) return false;
@@ -1955,24 +1971,10 @@ export function createDiffSurface(
     want = Math.min(Math.max(want, 0), Math.max(b.scrollHeight - b.clientHeight, 0));
     // 横向按「对栏能滚到哪」夹：两栏折行态一致时通常同宽，长行时对侧可能短一截。
     const wantX = Math.min(Math.max(a.scrollLeft, 0), Math.max(b.scrollWidth - b.clientWidth, 0));
-    // 值没变就别写：写同一个值一样会排一发 scroll，白白多一条回声账。
+    // 值没变就别写：写同一个值一样会排一发 scroll，白白多记一条回声。
     if (Math.abs(b.scrollTop - want) < 0.5 && Math.abs(b.scrollLeft - wantX) < 0.5) return true;
-    const beforeTop = b.scrollTop;
-    const beforeLeft = b.scrollLeft;
-    b.scrollTop = want;
-    b.scrollLeft = wantX;
-    // 票面记**写下去之后读回的值**，不是意图值：对栏还没量完时浏览器会把越界的写入夹到
-    // 当前可滚上限，回声带着夹后的值回来。记意图值的话这一发与票面对不上，就会被当成
-    // 「用户滚了这一栏」—— `lastDriver` 翻成对栏、右栏被拽到夹后位置，而且左栏的露出口
-    // （`revealLeft` 只在右栏驱动的收口里）此后再不执行，用户看到的就是「左栏空白、
-    // 滚动条位置也变了，滚一下才恢复」。没真的动过（夹成原值）就不留票，免得吞掉下一发真滚动。
-    const landedTop = b.scrollTop;
-    const landedLeft = b.scrollLeft;
-    if (Math.abs(landedTop - beforeTop) > 0.5 || Math.abs(landedLeft - beforeLeft) > 0.5) {
-      pendingEcho.set(b, { top: landedTop, left: landedLeft });
-    }
     // 浏览器把写入夹住了（对栏还没量完）⇒ 这一发不算落定，下一轮收口会再算一次。
-    return Math.abs(landedTop - want) <= 1;
+    return writeScroll(to, want, wantX);
   };
   /**
    * 把 `lastDriver` 一侧的位置重新落给对栏：布局收口与重新打开同步都从这一颗走。
@@ -2011,7 +2013,7 @@ export function createDiffSurface(
   const onRightScroll = (): void => {
     renderViewport();
     // 自己写下的回声：只认领、不再反向映射（见上面那段注释）。
-    if (isEcho(right?.scrollDOM)) {
+    if (isOwnScroll(right?.scrollDOM)) {
       // 布局锚定改的是**非驱动栏**的 scrollTop：那一栏没有自己的意志，立刻贴回驱动栏。
       // 不贴的话要等下一个收口（1–2 帧后）才被拉回，用户能看到一帧的错位。
       if (syncOn && lastDriver === "original") mirrorScroll(left, right);
@@ -2023,7 +2025,7 @@ export function createDiffSurface(
     renderReverts();
   };
   const onLeftScroll = (): void => {
-    if (isEcho(left?.scrollDOM)) {
+    if (isOwnScroll(left?.scrollDOM)) {
       if (syncOn && lastDriver === "modified") mirrorScroll(right, left);
       return;
     }
@@ -2383,7 +2385,7 @@ export function createDiffSurface(
       // 同左栏：CM6 量完新宽度之后才发 geometryChanged，在这里重测缝才不会读到旧行高。
       // docChanged 那一类交给 `scheduleSync` 的防抖链路，不在这里按每一次按键重算。
       if (armed && update.geometryChanged) {
-        noteLayoutScroll();
+        settleScroll();
         if (!update.docChanged) scheduleAlign();
       }
       // 光标走进另一块 ⇒ 中间那列的高亮跟着走（VS Code 的 `showAlways` 是同一口径）。
