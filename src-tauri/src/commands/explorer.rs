@@ -265,10 +265,23 @@ pub fn create_dir(dir: String, name: String) -> Result<FsEntry, String> {
 /// `\\?\`」（见 `commands::normalize_path` 那段），留着它一旦顺着某条 return 溜到
 /// 前端，用户看到的就是 `\\?\D:\笔记\a.md`。
 fn norm(path: &Path) -> PathBuf {
-    match path.canonicalize() {
-        Ok(p) => crate::commands::normalize_path(p),
-        Err(_) => path.to_path_buf(),
+    if let Ok(p) = path.canonicalize() {
+        return crate::commands::normalize_path(p);
     }
+    // 目标还不存在（粘贴的目标层常常就是这种「还没建」的一层）：不能直接退回原始串。
+    // 根会 canonicalize、这层不会，于是 8.3 短名（CI 的 `RUNNER~1`）或带尾点这类
+    // 「同一目录、两种写法」就被比成两棵不同的树 ⇒ 正常粘贴被误拒。
+    // 从最近一个存在的祖先前缀出发，把剩下没建出来的分量原样拼回去再比。
+    for anc in path.ancestors().skip(1) {
+        if let Ok(p) = anc.canonicalize() {
+            let mut out = crate::commands::normalize_path(p);
+            if let Ok(rest) = path.strip_prefix(anc) {
+                out.push(rest);
+            }
+            return out;
+        }
+    }
+    path.to_path_buf()
 }
 
 /// 这条路径在不在当前根之内（含根本身）。
@@ -803,6 +816,28 @@ mod tests {
         clean(&sibling);
         assert!(guard_within(&root, Path::new("C:\\windows")).is_err());
         assert!(guard_within("", &dir).is_err(), "没根的时候一句都不许写");
+        clean(&dir);
+    }
+
+    /// 「同一目录、两种写法」不许被误判越界（CI 红的就是这一条）。
+    ///
+    /// 根会 canonicalize、还没建出来的子层不会；旧实现把子层退回原始串去比，
+    /// Windows 的别名写法（CI 上是 `RUNNER~1` 这种 8.3 短名）就被当成根外的另一棵树，
+    /// 粘贴到新层直接拒。这里用「目录名带尾点」做同类复现：Win32 会把它折回原目录，
+    /// 能 canonicalize 成功，而原始串按分量比必失败。
+    #[test]
+    fn guard_within_allows_missing_child_under_an_aliased_root() {
+        let dir = fixture("guard-alias");
+        let root = dir.to_string_lossy().into_owned();
+        let alias = PathBuf::from(format!("{}.", dir.to_string_lossy()));
+        assert!(
+            alias.canonicalize().is_ok(),
+            "别名要先自证能被系统折回原目录，否则这条用例没有鉴别力"
+        );
+        assert!(
+            guard_within(&root, &alias.join("没建出来的层")).is_ok(),
+            "别名写法下还没建的一层要放行"
+        );
         clean(&dir);
     }
 
