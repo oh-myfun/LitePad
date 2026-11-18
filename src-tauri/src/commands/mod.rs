@@ -228,8 +228,8 @@ fn openable_ext(exts: &std::collections::HashSet<String>, name: &str) -> bool {
     exts.iter().any(|e| lower.ends_with(&format!(".{e}")))
 }
 
-/// 从命令行参数里挑出「应被 LitePad 接管的文档」：扩展名匹配且确实是存在的文件，
-/// 相对路径按 cwd 展开为绝对路径。纯函数，便于单测。
+/// 从命令行参数里挑出「应被 LitePad 接管的文档」：扩展名匹配（或没有扩展名）且
+/// 确实是存在的文件，相对路径按 cwd 展开为绝对路径。纯函数，便于单测。
 ///
 /// ⚠️ 存在性检查必须对「解析后的真实路径」做，而不是原始参数：相对路径的基准是 `cwd`，
 /// 若直接 `Path::new(a).is_file()` 会按**进程**当前目录判断，与下面用 `cwd` 拼出的输出路径
@@ -239,7 +239,12 @@ pub fn assoc_args_to_open(argv: &[String], cwd: &str) -> Vec<String> {
     let exts = assoc::openable_exts();
     argv.iter()
         .filter_map(|a| {
-            if !openable_ext(&exts, a) {
+            // 没有扩展名（README / .gitignore）也要接：Explorer 对这类文件只能走
+            // 「打开方式 → LitePad」，用户点名就是明确意图；是否真是文本交给
+            // `open_file` 的二进制探测（与拖放入口同一条读管线）。
+            // ⚠️ 放宽只到「没有扩展名」：带后缀的仍按名单筛，否则命令行里任何存在的
+            // 文件（包括 argv[0] 指向的 exe）都会被当成待打开文档。
+            if std::path::Path::new(a).extension().is_some() && !openable_ext(&exts, a) {
                 return None;
             }
             let p = std::path::Path::new(a.as_str());
@@ -284,7 +289,7 @@ pub fn list_fonts() -> Vec<fonts::FontItem> {
 }
 
 /// 把启动命令行里的关联文档塞进待打开队列（接受参数，便于单测）。
-/// 空手而归（没有 .md/.markdown 参数）时不写队列。
+/// 空手而归（没有可接管的文档参数）时不写队列。
 pub fn push_boot_assoc_files(argv: &[String], cwd: &str) {
     let files = assoc_args_to_open(argv, cwd);
     if !files.is_empty() {
@@ -295,7 +300,7 @@ pub fn push_boot_assoc_files(argv: &[String], cwd: &str) {
 /// 首次启动（无运行中实例）时补抓命令行里的关联文档。
 ///
 /// 单实例插件的 `on_args` 回调只在「已有实例」时触发，首启不会触发，
-/// 这里手动把 `std::env::args()` 里的 `.md/.markdown` 路径塞进队列，
+/// 这里手动把 `std::env::args()` 里的关联文档路径塞进队列，
 /// 交给前端在就绪时取走 —— 见本文件 `PENDING_OPEN` 说明里的路径 2。
 pub fn capture_boot_assoc_files() {
     let cwd = std::env::current_dir()
@@ -1374,6 +1379,44 @@ mod tests {
             &cwd,
         );
         assert_eq!(got2, vec![md_abs], "非 md / 不存在的文件应被剔除");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 无后缀文件必须接得住：Explorer 对没有扩展名的文件只能走「打开方式 → LitePad」，
+    /// 命令行入口与关联双击是同一条。此前按后缀名单筛会把 README / .gitignore 整个丢掉，
+    /// 表现为「进程起来了、文件没打开」。放宽只到「没有扩展名」——带后缀的仍按名单筛，
+    /// 是否真是文本交给 `open_file` 的二进制探测（与拖放入口同一条读管线）。
+    #[test]
+    fn assoc_args_accepts_extensionless_files() {
+        let dir = std::env::temp_dir().join("litepad_assoc_noext_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let readme = dir.join("README");
+        let dotfile = dir.join(".gitignore");
+        let other = dir.join("note.zzz");
+        std::fs::write(&readme, "hello").unwrap();
+        std::fs::write(&dotfile, "target\n").unwrap();
+        std::fs::write(&other, "x").unwrap();
+        let cwd = dir.to_string_lossy().into_owned();
+
+        let got = assoc_args_to_open(&["litepad.exe".into(), "README".into()], &cwd);
+        assert_eq!(
+            got,
+            vec![readme.to_string_lossy().into_owned()],
+            "无后缀文件要接住并按 cwd 展开"
+        );
+
+        let got2 = assoc_args_to_open(&["litepad.exe".into(), ".gitignore".into()], &cwd);
+        assert_eq!(
+            got2,
+            vec![dotfile.to_string_lossy().into_owned()],
+            "以点开头、没有扩展名的文件同属此类"
+        );
+
+        assert!(
+            assoc_args_to_open(&["litepad.exe".into(), "note.zzz".into()], &cwd).is_empty(),
+            "未注册的后缀不许因为这次放宽而混进来"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
