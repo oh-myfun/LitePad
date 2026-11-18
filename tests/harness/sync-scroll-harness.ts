@@ -35,6 +35,7 @@ import {
   landVisibleSideAtV,
   readVisibleV,
   reconcileSyncRegistrations,
+  sharesDocScroll,
   sharedVByDoc,
   sideOfPanel,
   syncCoordinator,
@@ -439,9 +440,11 @@ function install(): void {
       panel.view.focus();
       applyPanelModeMirror(panel);
       panel.view.focus();
-      // B292 · 方案 A 的镜像（与生产 switchTab 同步：接班标签跟随当前共享 v）。
-      // B292 · 方案 A 的镜像（与生产 switchTab 同步：接班标签跟随当前共享 v）。
-      const followV = syncCoordinator.currentV(String(nextTab.docId));
+      // B292 · 方案 A 的镜像（与生产 switchTab 同步：接班标签跟随当前共享 v；
+      // B461：差异 / 媒体标签不吃这条共享值）。
+      const followV = sharesDocScroll(nextTab)
+        ? syncCoordinator.currentV(String(nextTab.docId))
+        : null;
       if (followV !== null) nextTab.scrollV = followV;
       landVisibleSideAtV(panel, nextTab.scrollV);
       panel.bodyEl

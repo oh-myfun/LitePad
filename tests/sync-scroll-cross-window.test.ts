@@ -236,6 +236,7 @@ describe("收端：把对端推来的 v 落到本窗口", () => {
       docId: 3,
       panelId: -1, // 借给别的窗口之后本地留的那份隐藏实例
       viewMode: "source",
+      kind: "editor",
       scrollV: 1,
     } as unknown as Tab;
     tabs.set(13, hidden);
@@ -287,6 +288,7 @@ describe("本地滚动也要给「没在显示的那一份」记账（B344）", 
       docId: 3,
       panelId: 0, // 同一条标签带里那张**没在显示**的标签（B344 用户拖的就是它）
       viewMode: "source",
+      kind: "editor",
       scrollV: 7,
     } as unknown as Tab;
     tabs.set(13, hidden);
@@ -300,6 +302,36 @@ describe("本地滚动也要给「没在显示的那一份」记账（B344）", 
     );
   });
 
+  it("差异 / 媒体标签的位置归它们自己：共享账不得改写（B461 的写入侧）", () => {
+    panelWith(0, 11, 3);
+    const diff = {
+      tabId: 14,
+      docId: 3,
+      panelId: 0,
+      viewMode: "source",
+      kind: "diff",
+      diff: null,
+      scrollV: 72.94,
+    } as unknown as Tab;
+    const media = {
+      tabId: 15,
+      docId: 3,
+      panelId: 0,
+      viewMode: "source",
+      kind: "media",
+      diff: null,
+      scrollV: 5,
+    } as unknown as Tab;
+    tabs.set(14, diff);
+    tabs.set(15, media);
+    sessionStore.register(14, 3);
+    sessionStore.setScrollV(14, 72.94);
+    memoVToHiddenInstances("3", 25.5);
+    expect(diff.scrollV, "差异栏自己的位置才算数（切走再切回要回原处）").toBe(72.94);
+    expect(media.scrollV).toBe(5);
+    expect(sessionStore.get(14)?.scrollV, "会话记录也不许被共享账改写").toBe(72.94);
+  });
+
   it("关着同步：一个字都不改（B303「每格各存各的」不许被这条新通道破掉）", () => {
     panelWith(0, 11, 3);
     const hidden = {
@@ -307,6 +339,7 @@ describe("本地滚动也要给「没在显示的那一份」记账（B344）", 
       docId: 3,
       panelId: 0,
       viewMode: "source",
+      kind: "editor",
       scrollV: 7,
     } as unknown as Tab;
     tabs.set(13, hidden);

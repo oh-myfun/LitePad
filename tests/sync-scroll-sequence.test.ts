@@ -364,6 +364,21 @@ describe("方案 A · 接班标签跟随共享位置（B292）· 生产与宿主
       expect(b.indexOf(needle)).toBeLessThan(b.indexOf("landVisibleSideAtV("));
     });
   }
+
+  // 差异 / 媒体标签的位置不属于这份文档的共享坐标（B461 的写入侧）：同文档的普通标签
+  // 在旁边时，`currentV` 读到的是它的位置；灌进差异标签，切回来就落在那边、而不是用户
+  // 离开差异栏时那一处（真机 72.94 → 146.89）。行为判据在 `tests/diff-session.test.ts`。
+  it("共享 v 只喂普通编辑器标签", () => {
+    expect(bodyOf(wire, "export function sharesDocScroll(")).toContain('tab.kind === "editor"');
+    for (const [label, src, header] of [
+      ["生产 switchTab", life, "export function switchTab("],
+      ["宿主 switchTab 镜像", host, "switchTab(panelId, index)"],
+    ] as const) {
+      expect(bodyOf(src, header), `${label}：followV 必须过 sharesDocScroll 的闸`).toContain(
+        "sharesDocScroll(",
+      );
+    }
+  });
 });
 
 describe("落位没进去要自己重试（B294）", () => {

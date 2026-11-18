@@ -31,6 +31,7 @@ import {
   tabs,
   windowLabel,
   type Panel,
+  type Tab,
 } from "../core/app-state";
 import { logger } from "../core/logger";
 import { isHtmlTab } from "../doc-model";
@@ -216,6 +217,18 @@ export function applySharedVFromRemote(docId: string, v: number, at: number | nu
 }
 
 /**
+ * 这一张标签的滚动位置是否属于「同文档共享坐标」体系（B461 / B292）。
+ *
+ * 只有普通编辑器标签是。差异标签是「对照」语境（右栏与左栏成对），媒体标签没有文本滚动面
+ * —— 二者既不进协调器（不广播），也不吃共享 v 的注入。若拿别处的 v 往它们身上灌，用户在
+ * 差异栏滚到某处、切去同文档的普通标签再切回来时，`scrollV` 已被那一边的位置改写，切回
+ * 就回不到自己那一处（真机：差异栏 72.94 被普通标签的 146.89 顶掉）。
+ */
+export function sharesDocScroll(tab: Tab): boolean {
+  return tab.kind === "editor";
+}
+
+/**
  * 把共享坐标 `v` 记进「这份文档里此刻**没在显示**的那些实例」（B344）。
  *
  * 隐藏的那一份没有面，`scrollTop` 写不进去，它的位置就只有这份记忆 —— 而「把标签拖出新窗口」
@@ -236,6 +249,9 @@ export function memoVToHiddenInstances(docId: string | number, v: number): numbe
   let memoed = 0;
   for (const t of tabs.values()) {
     if (t.docId !== id) continue;
+    // B461：差异 / 媒体标签的位置不属于这份文档的共享坐标 —— 它们有自己的滚动语境，
+    // 拿别处的 v 改写它，切回来就会落到普通标签当时的位置。
+    if (!sharesDocScroll(t)) continue;
     const p = panels.get(t.panelId);
     if (p && (p.viewTabId ?? p.activeTabId) === t.tabId) continue; // 正在显示的那张由落位/现采负责
     t.scrollV = v;
@@ -466,7 +482,7 @@ export function reconcileSyncRegistrations(): void {
     // 12:58:24 差异栏 Ctrl+End ⇒ `外发 doc=1 v=33.00`；随后关掉差异标签，接班标签
     // 按被改写的 scrollV 落到 664.7px（⑦⑥「不触发同步滚动」正是这一条）。
     // 媒体标签同理不注册：那一格是隐藏的空编辑器，注册进去只是个读不准的幽灵锚点。
-    if (tab.kind !== "editor") continue;
+    if (!sharesDocScroll(tab)) continue;
     const docId = String(tab.docId);
     // 走 `faceOf` 而不是在这里自己 new 锚点：预览锚点那条「未铺开 ⇒ 下一帧补定位」的异步
     // 支线需要回登记口，两处必须用同一个构造方式，否则注册出来的锚点没有这个口。

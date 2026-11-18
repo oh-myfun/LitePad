@@ -25,6 +25,7 @@ import {
   landVisibleSideAtV,
   readVisibleV,
   reconcileSyncRegistrations,
+  sharesDocScroll,
   sharedVByDoc,
   syncCoordinator,
   syncTrace,
@@ -406,7 +407,11 @@ export function switchTab(panelId: number, tabId: number): void {
   // 协调器（B285「幽灵锚点」的取舍），所以同步走过的这一段它一个字都没收到，`scrollV` 停在
   // 上一次被显示时的位置 ⇒ 真机 03:45:43：`切入 tab=3 意图=1.00`，而右栏预览那侧已经在 20.67。
   // 取不到共享值（同文档没有别的视口在册 / 该文档的同步关着）⇒ 回落到这张标签自己的记忆。
-  const followV = syncCoordinator.currentV(String(tab.docId));
+  //
+  // B461：差异 / 媒体标签**不**跟这条共享值 —— 它们的滚动是独立语境（差异栏还牵着左栏），
+  // 共享 v 属于普通编辑器视口。同文档的普通标签在旁边时，`currentV` 读到的正是它的位置；
+  // 灌进差异标签就把用户离开差异栏时那一处覆盖掉，切回来自然「没恢复滚动位置」。
+  const followV = sharesDocScroll(tab) ? syncCoordinator.currentV(String(tab.docId)) : null;
   if (followV !== null) tab.scrollV = followV;
   panel.activeTabId = tabId;
   // ⚠️ 下面几步的顺序是 B146 二轮改出来的，别再随手调回去。CM6 的 `setState` 末尾

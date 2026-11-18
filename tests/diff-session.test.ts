@@ -30,6 +30,8 @@ import { perfProfileFor } from "../src/editor/perf";
 import { makeDoc } from "../src/doc-model";
 import { syncDiffSurface } from "../src/diff/surface";
 import { sessionStore } from "../src/session/store";
+import { syncCoordinator } from "../src/sync-scroll/wire";
+import type { ScrollAnchor } from "../src/sync-scroll/anchor";
 import { closePopupMenu } from "../src/shell/menu";
 import type { DiffSpec } from "../src/diff/model";
 
@@ -651,5 +653,42 @@ describe("B461 · 关掉差异标签只销毁这个实例（⑦⑥）", () => {
     expect(tabs.has(original.tabId), "原标签还在").toBe(true);
     expect(p0.diffSurface, "旁路跟着这张标签退场").toBeNull();
     expect(p0.tabs).toEqual([original.tabId]);
+  });
+});
+
+// ---------------------------------------------------------------- 切走再切回
+
+describe("B461 续 · 差异标签的滚动位置归它自己", () => {
+  it("切回差异标签时不拿同文档普通标签的共享 v 覆盖它的 scrollV", () => {
+    const p0 = freshPanel(0);
+    panels.set(0, p0);
+    setLayout(leaf(0));
+    setActivePanelId(0);
+    const original = mountTab(p0, "editor");
+    const diff = mountTab(p0, "diff");
+    // 把这一格摆回「正显示普通标签」的状态（同上面那条关差异标签的前置，方向相反）。
+    p0.tabs = [original.tabId, diff.tabId];
+    p0.activeTabId = original.tabId;
+    p0.viewTabId = original.tabId;
+    p0.view!.setState(original.state);
+    syncDiffSurface(p0);
+    original.scrollV = 146.89;
+    diff.scrollV = 72.94;
+    // 普通标签此刻在册且停在 146.89：生产里 `currentV` 读到的就是它（同 docId）。
+    const anchor: ScrollAnchor = {
+      getV: () => 146.89,
+      setV: () => 146.89,
+      hasPosition: () => true,
+    };
+    const handle = syncCoordinator.register(anchor, "100", {
+      events: document.createElement("div"),
+      label: "P0:editor",
+    });
+    try {
+      lifecycle.switchTab(0, diff.tabId);
+      expect(diff.scrollV, "差异栏自己记的位置才是切回来的落点").toBeCloseTo(72.94, 5);
+    } finally {
+      syncCoordinator.unregister(handle);
+    }
   });
 });
