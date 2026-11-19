@@ -2297,3 +2297,21 @@ body.layout-dragging .toc-grip {
     break-inside: avoid;
   }
 }
+
+/* 边栏列表行的共用行面（对标 VS Code `.monaco-list-row`）：满宽、方角、无外边距，
+   底色不做过渡。缩进/槽位各列表自己定，但悬停与选中的底色必须整行铺满，
+   不能继承全局 `button` 的圆角与渐变。 */
+.recent-row,
+.explorer-row,
+.explorer-root,
+.explorer-note,
+.search-file,
+.search-line,
+.toc-item,
+.diff-item {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  border-radius: 0;
+  transition: none;
+}

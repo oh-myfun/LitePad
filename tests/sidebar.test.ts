@@ -707,6 +707,46 @@ describe("B207 `display` 压过 UA 的 `[hidden]`：凡写 display 又靠 hidden
   }
 });
 
-// B363（用户：「边栏的按钮图标改到 20px，不要影响其他按钮」）：
-// codicon 基座是 16px（官方 codicon.css 的 `font: 16px/1 codicon`），
-// 只有按钮列这一族要放大 —— 必须挂在 `.side-btn .codicon` 上，不许去动基座或全站选择器。
+// 用户（2026-11-20）：「边栏中列表项的高亮和选中效果和宽度要统一，参考 vscode」。
+// VS Code 的列表行（`.monaco-list-row`）满宽、方角、无外边距，悬停/选中底色铺满整行。
+// LitePad 的列表行两种控件都有：资源管理器是 div，其余是 button —— button 会继承全局
+// `border-radius: var(--radius)` 和背景过渡，所以必须有共用规则把行面拉平。
+describe("边栏列表行：悬停/选中的行面与宽度统一", () => {
+  const ROWS = [
+    ".recent-row",
+    ".explorer-row",
+    ".explorer-root",
+    ".explorer-note",
+    ".search-file",
+    ".search-line",
+    ".toc-item",
+    ".diff-item",
+  ];
+
+  it("所有列表行共用同一条行面：满宽、方角、无外边距、无底色过渡", () => {
+    const block = cssDecls(ruleBlock(preview, ROWS.join(", ")));
+    expect(block, "必须有一条覆盖全部列表行的共用行面规则").toBeTruthy();
+    for (const decl of [
+      "box-sizing: border-box",
+      "width: 100%",
+      "margin: 0",
+      "border-radius: 0",
+      "transition: none",
+    ]) {
+      expect(block, `共用行面缺 ${decl}`).toContain(decl);
+    }
+  });
+
+  it("反向验证：任一列表行漏出共用选择器 ⇒ 契约必须落空", () => {
+    const selector = ROWS.join(", ");
+    // 选择器组在源文件里是逐行排的，先按 ruleBlock 的口径归一成一行
+    const flat = preview.replace(/,\s*\n\s*/g, ", ");
+    const at = flat.indexOf(selector);
+    expect(at, "共用选择器组必须存在").toBeGreaterThanOrEqual(0);
+    for (const row of ROWS) {
+      const withoutRow = ROWS.filter((r) => r !== row).join(", ");
+      const BAD = flat.slice(0, at) + withoutRow + flat.slice(at + selector.length);
+      expect(ruleBlock(BAD, selector), `摘掉 ${row} 后不得再取到完整行面`).toBe("");
+    }
+  });
+});
