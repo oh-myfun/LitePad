@@ -52,10 +52,16 @@ describe("标签栏静态契约（从 regressions 拆出）", () => {
     expect(tsCode, "ResizeObserver 只能用于同步 thumb 几何（B125），不得拿去重算可见区间").toMatch(
       /new ResizeObserver\(\(\) => syncOverlayScrollbar\(host\)\)/,
     );
+    // 同一套判据现在服务两条滚动条：标签条（横向）+ 边栏列表（纵向）。两处回调必须是
+    // 同一句几何同步；总数仍锁死，防止又长出第三种用途（记账 / 重算可见区间）。
+    expect(
+      (tsCode.match(/new ResizeObserver\(\(\) => syncOverlayScrollbar\(host\)\)/g) ?? []).length,
+      "标签条 + 边栏列表，两处都必须只同步 thumb 几何",
+    ).toBe(2);
     expect(
       (tsCode.match(/new ResizeObserver/g) ?? []).length,
-      "只允许这一处 ResizeObserver（多一处就要问是不是又在记账）",
-    ).toBe(1);
+      "只允许上面两处 ResizeObserver，多一处就要问是不是又在记账",
+    ).toBe(2);
     expect(tsCode, "必须挂载滚轮滚动").toContain('addEventListener("wheel"');
     expect(tsCode, "滚轮需用 passive:false 才能 preventDefault").toContain("passive: false");
     expect(tsCode, "Ctrl+滚轮要让位给字号缩放").toContain("if (e.ctrlKey) return;");

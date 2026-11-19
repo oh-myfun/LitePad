@@ -336,7 +336,12 @@ describe("大纲（TOC）静态契约", () => {
     const hover = ruleBlock(preview, ".toc-item:hover");
     expect(hover, "TOC hover 必须用 list.hoverBackground（B379）").toContain("var(--list-hover-bg");
     const active = ruleBlock(preview, ".toc-item.toc-active");
-    expect(active, "TOC 活动项必须用 --accent").toContain("var(--accent");
+    // 选中档与资源管理器 / 搜索统一（用户 2026-11-19 拍板）：当前章节不再用 accent 字色 +
+    // 加粗，改用 list.* 的选中底 —— 同一块侧栏里几种「当前项」必须同款。
+    expect(active, "TOC 活动项必须用 list.inactiveSelectionBackground").toContain(
+      "var(--list-inactive-bg",
+    );
+    expect(active, "旧的 accent 字色必须收掉").not.toContain("--accent");
     const empty = ruleBlock(preview, ".toc-empty");
     expect(empty, "TOC 空态必须用 --fg-muted").toContain("var(--fg-muted");
     const g = readFileSync("src/styles/global.css", "utf-8");

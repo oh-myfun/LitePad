@@ -19,7 +19,8 @@
   python scripts/capture-screenshots.py --list          # 看有哪些配方
   python scripts/capture-screenshots.py --size 1440x900
   python scripts/capture-screenshots.py --keep          # 保留演示会话（排查用）
-  python scripts/capture-screenshots.py --inset 1       # 圆角混进桌面时四边各切 1px
+  python scripts/capture-screenshots.py --inset 1       # 四边各再切 1px（改用遮罩后一般不需要）
+  python scripts/capture-screenshots.py --corner-radius 0   # 关闭四角透明遮罩
 
 依赖：`scripts/screenshot.py`（只提供 PNG 编码、窗口查找、BitBlt 抓图这些底层件）。
 """
@@ -623,7 +624,7 @@ def wait_window(exe, want_title, timeout):
 
 # ---------------------------------------------------------------- 抓图
 
-def shoot(recipe, size, settle, inset, shot_each=None):
+def shoot(recipe, size, settle, inset, corner_radius, shot_each=None):
     w, h = size
     say("  起 app ...")
     proc = subprocess.Popen([EXE], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -647,14 +648,14 @@ def shoot(recipe, size, settle, inset, shot_each=None):
                 click(cx, cy)
                 if shot_each:
                     park_cursor(rect)
-                    png_i, dim_i = sc.capture(hwnd, inset)
+                    png_i, dim_i = sc.capture(hwnd, inset, corner_radius)
                     p = shot_each % i
                     open(p, "wb").write(png_i)
                     say("    中间图 -> %s %dx%d" % (p, dim_i[0], dim_i[1]))
             if recipe.get("clicks"):
                 time.sleep(0.8)
                 park_cursor(rect)  # 点击后光标在窗口里，抓图前再挪出去
-            png, dim = sc.capture(hwnd, inset)
+            png, dim = sc.capture(hwnd, inset, corner_radius)
         finally:
             user32.SetCursorPos(*saved)
     finally:
@@ -662,7 +663,7 @@ def shoot(recipe, size, settle, inset, shot_each=None):
     return png, dim
 
 
-def capture_recipe(recipe, size, settle, inset, shot_each):
+def capture_recipe(recipe, size, settle, inset, corner_radius, shot_each):
     """抓一张；**只有首轮没拿到内容时**才移开 WebView2 用户数据再试一次。
 
     ⚠️ 为什么改成「按需」：以前无条件调 `clear_webview_profile()`，而它第一件事就是
@@ -676,7 +677,7 @@ def capture_recipe(recipe, size, settle, inset, shot_each):
         # 把演示配置覆盖掉（表现就是新实例「启动了但一直没内容」）。
         stop_app()
         write_demo_config(recipe)
-        got = shoot(recipe, size, settle, inset, shot_each)
+        got = shoot(recipe, size, settle, inset, corner_radius, shot_each)
         if got:
             png, dim = got
             # 空白自检：webview 没渲染内容时整片同色，PNG 会被压得极小。
@@ -698,7 +699,11 @@ def main():
     parser = argparse.ArgumentParser(description="一键补拍 docs/screenshots/ 截图")
     parser.add_argument("--size", default="1600x1000", help="输出尺寸 WxH（物理像素）")
     parser.add_argument("--settle", type=float, default=3.0, help="定尺寸后等布局稳定（秒）")
-    parser.add_argument("--inset", type=int, default=0, help="四边各再切掉几像素（圆角用）")
+    parser.add_argument("--inset", type=int, default=0, help="四边各再切掉几像素")
+    parser.add_argument(
+        "--corner-radius", type=int, default=12,
+        help="四角透明遮罩的半径（物理像素；本机 150%% 缩放实测 12，0 = 关闭）",
+    )
     parser.add_argument("--shot-each", default=None, help="每次点击后也存一张，如 .tmp/step-%%d.png")
     parser.add_argument("--list", action="store_true", help="列出配方后退出")
     parser.add_argument("names", nargs="*", help="要拍的配方名（默认全部）")
@@ -730,7 +735,8 @@ def main():
     try:
         for recipe in recipes:
             say("\n【%s】%s" % (recipe["name"], recipe["what"]))
-            got = capture_recipe(recipe, (w, h), args.settle, args.inset, args.shot_each)
+            got = capture_recipe(recipe, (w, h), args.settle, args.inset,
+                                 args.corner_radius, args.shot_each)
             if not got:
                 failed += 1
                 continue

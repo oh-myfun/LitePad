@@ -345,6 +345,62 @@
   display: none;
 }
 
+/* ---------------------------------------------------------------- 边栏列表的悬浮滚动条
+   原生纵向滚动条在 Chromium 里**永远占布局空间**：列表比标题栏窄 8px，行的高亮底色在
+   右缘缺一截，常驻的条子也把侧栏切出一道硬边。这里把原生条收成 0 宽，改贴一条不占布局的
+   浮层，行为对齐 VS Code 的 ScrollbarVisibility.Auto：指针进列表 / 滚动 / 拖 thumb 才出现，
+   离开或停手 500ms 后淡出（状态机见 shell/scrollbar.ts）。
+   ⚠️ 隐藏原生条只走 webkit 伪元素：全局契约禁止 scrollbar-width / scrollbar-color
+      （标准属性会抢 Chromium 的渲染路径，见 tests/scrollbar.test.ts）。
+   ⚠️ bar 是列表的**兄弟**：滚动容器的 absolute 子元素会随内容滚走，钉不住可视区右缘；
+      包含块由下面那条给面板加 position:relative 的类提供。 */
+.toc-list::-webkit-scrollbar,
+.recent-list::-webkit-scrollbar,
+.explorer-tree::-webkit-scrollbar,
+.search-results::-webkit-scrollbar,
+.diff-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.side-scroll-anchor {
+  position: relative;
+}
+
+/* 默认隐藏、只在可见态吃事件 —— 与标签条那条同款（global.css 的
+   .panel-tabstrip-scrollbar）：隐藏时 pointer-events 必须让出，否则看不见的细条会挡住
+   最右侧几像素的行点击。 */
+.side-scrollbar {
+  position: absolute;
+  width: 6px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 800ms linear;
+}
+.side-scrollbar.is-visible {
+  opacity: 1;
+  transition: none;
+}
+.side-scrollbar-thumb {
+  position: absolute;
+  left: 0;
+  width: 6px;
+  border-radius: 3px;
+  background: var(--sb-thumb, rgba(128, 128, 128, 0.4));
+  pointer-events: none;
+  /* 与原生滚动条同款：拖拽把手不换 hand，指针进来也还是普通箭头 */
+  cursor: default;
+}
+.side-scrollbar.is-visible .side-scrollbar-thumb {
+  pointer-events: auto;
+}
+.side-scrollbar-thumb:hover {
+  background: var(--sb-thumb-hover, rgba(128, 128, 128, 0.6));
+}
+.side-scrollbar-thumb:active {
+  background: var(--sb-thumb-active, rgba(191, 191, 191, 0.4));
+}
+
 /* 两块视图并排待在壳里，**同一刻只露一块**（`setDrawer(view)` 按「轮到我没」写 hidden）。
    宽度交给壳（`width: 100%` 跟着壳走），自己只管「标题栏常驻 + 列表滚动」这一套内部排布。 */
 .toc-panel {
@@ -1165,6 +1221,9 @@
 .search-results:focus-within .search-line[aria-selected="true"] {
   background: var(--list-active-bg);
   color: var(--list-active-fg);
+  /* 与资源管理器同口径：HC 族的选中态没有底色的那一半靠这圈描边区分。 */
+  outline: 1px solid var(--list-selection-border, transparent);
+  outline-offset: -1px;
 }
 .search-file:focus-visible,
 .search-line:focus-visible {
@@ -1614,9 +1673,23 @@ body.layout-dragging .toc-grip {
   background: var(--list-hover-bg, #eee);
   color: var(--list-hover-fg, inherit);
 }
+/* 当前章节与资源管理器 / 搜索的选中行同一口径：inactive 打底、列表持有焦点时换 active
+   （token 见 global.css 的 list.* 一档）。不再用 accent 字色 + 加粗 —— 同一块侧栏里
+   「当前项」长得不一样，正是这一步要收掉的漂移；HC 族的选中态没有底色的那一半靠
+   `--list-selection-border` 那圈描边区分，与资源管理器同源。 */
 .toc-item.toc-active {
-  color: var(--accent, #06c);
-  font-weight: 600;
+  background: var(--list-inactive-bg);
+  color: var(--list-inactive-fg);
+}
+.toc-list:focus-within .toc-item.toc-active {
+  background: var(--list-active-bg);
+  color: var(--list-active-fg);
+  outline: 1px solid var(--list-selection-border, transparent);
+  outline-offset: -1px;
+}
+.toc-item:focus-visible {
+  outline: 1px solid var(--accent, #0969da);
+  outline-offset: -1px;
 }
 /* 扭角（chevron）：只有**有子节点**的标题才挂这一颗 —— 叶子不给（VS Code 的 twisty
    只挂在有子的节点上，给叶子留一颗空扭角只会把每行往右顶一格、还点不动）。
@@ -2148,9 +2221,17 @@ body.layout-dragging .toc-grip {
   outline: 1px solid var(--accent, #06c);
   outline-offset: -1px;
 }
+/* 与大纲 / 资源管理器的选中行同一口径（inactive 打底、列表持有焦点时换 active + HC 描边），
+   不再用 accent 字色 + 加粗。 */
 .diff-item.diff-active {
-  color: var(--accent, #06c);
-  font-weight: 600;
+  background: var(--list-inactive-bg);
+  color: var(--list-inactive-fg);
+}
+.diff-list:focus-within .diff-item.diff-active {
+  background: var(--list-active-bg);
+  color: var(--list-active-fg);
+  outline: 1px solid var(--list-selection-border, transparent);
+  outline-offset: -1px;
 }
 .diff-icon {
   flex: 0 0 auto;

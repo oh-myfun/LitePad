@@ -5,6 +5,8 @@
 源码 / 预览切换；`media.png` 展示图片预览；`audio.png` 展示音频预览；`preview-tab.png`
 展示资源管理器单击打开的预览标签（斜体）。
 图片由 `scripts/capture-screenshots.py` 驱动**真实运行的 LitePad** 抓取，不含手绘、拼接或后期修饰。
+唯一例外：BitBlt 只能抓矩形，窗口圆角外那几格桌面背景会一起进来，脚本按圆角给四角做
+**alpha 透明遮罩**（`--corner-radius`，只影响圆角外的像素，应用界面内容不动）。
 
 ## ⚠️ 维护约定（硬性）
 
@@ -55,7 +57,8 @@ bash scripts/shot.sh audio           # 只重拍音频预览
 bash scripts/shot.sh preview-tab     # 只重拍预览标签
 bash scripts/shot.sh --list          # 看有哪些配方
 bash scripts/shot.sh --size 1440x900
-bash scripts/shot.sh --inset 1       # 圆角混进桌面时四边各切 1px
+bash scripts/shot.sh --corner-radius 0   # 关闭四角透明遮罩（默认按圆角遮掉桌面像素）
+bash scripts/shot.sh --inset 1           # 四边各切 1px
 ```
 
 > 为什么不直接调 `python scripts/capture-screenshots.py`：那一层要自带
@@ -83,7 +86,8 @@ bash scripts/shot.sh --inset 1       # 圆角混进桌面时四边各切 1px
    **抢前台**（裸 `SetForegroundWindow` 会被焦点窃取防护静默拒掉，这是「经常失败」的根因）；
 6. **只抓窗口的可见外框**（DWM `DWMWA_EXTENDED_FRAME_BOUNDS`）。`GetWindowRect` 会把
    Win10/11 那圈**不可见**的调整边框（左右下各约 8px）算进去，按它抓就会在图四周留一圈
-   桌面背景；
+   桌面背景；抓完再按窗口圆角给四角做 alpha 遮罩（BitBlt 是矩形抓图，圆角外的那几格是桌面），
+   半径默认取本机 150% 缩放下实测的 12 物理像素；
 7. 抓到图后做**空白自检**：PNG 压缩后小于 0.04 字节/像素（实测全黑图约 0.011、正常界面约
    0.13）就报错退出，**不写出**，免得白图进仓库；
 8. 最后杀进程；**真实配置全程只读**，没有「还原」这一步。
@@ -110,7 +114,7 @@ AdditionalBrowserArguments` 写不进去（`New-Item` 报成功但 `Test-Path` �
 ## 拍完检查
 
 - `git status docs/screenshots/` 只应有这次重拍那张（`main.png` / `diff.png` / `html.png` / `media.png` / `audio.png` / `preview-tab.png`）的改动；
-- 打开看一眼：**四边没有桌面背景**、没有鼠标、没有半截别的窗口、内容不是全黑；
+- 打开看一眼：**四边与四角没有桌面背景**、没有鼠标、没有半截别的窗口、内容不是全黑；
 - 真实配置未被改写（脚本会打印隔离目录与「真实配置从未被改写」）。
 
 ## 排错
@@ -120,7 +124,9 @@ AdditionalBrowserArguments` 写不进去（`New-Item` 报成功但 `Test-Path` �
 2. **webview 起不来（白窗）**：任务管理器里确认 `litepad.exe` 与它自己的
    `msedgewebview2.exe` 都没了（硬杀会留孤儿进程占住用户数据目录）；`EBWebView` 挪走即可，
    纯缓存会自动重建（脚本首轮失败时会自动重试一次）。
-3. **边上还有一小圈桌面背景**：圆角窗口的角落会混进背景，加 `--inset 1`。
+3. **圆角处还有一小圈桌面背景**：遮罩半径与窗口实际圆角不符，调 `--corner-radius`
+   （换缩放比或系统主题后按实测调；`0` = 不遮罩）。`--inset` 是四边整体裁切的备用手段，
+   会把图裁小，一般不再需要。
 4. **菜单点不开**：本机**合成键盘事件到不了 WebView2**（Alt+S 助记符无效），只能用鼠标
    点击；菜单栏按钮坐标随字体/缩放变化，用 `--shot-each .tmp/step-%d.png` 逐步截图重测。
 

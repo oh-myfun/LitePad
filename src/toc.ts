@@ -12,13 +12,18 @@ import { docs, settings, windowKind } from "./core/app-state";
 import { activeTab, activePanel } from "./core/panels";
 import { CODICONS } from "./shell/codicons";
 import { activeDrawer, registerDrawerView, setDrawer } from "./shell/drawer";
+import { ensureListScrollbar } from "./shell/scrollbar";
 import { setTip } from "./shell/tooltip";
 import { saveSettings } from "./ipc/api";
 import { extractOutline } from "./markdown/outline";
 import { syncCoordinator } from "./sync-scroll/wire";
 import { EditorView } from "@codemirror/view";
 import {
+  diffList,
+  explorerTree,
   mainRow,
+  recentList,
+  searchResults,
   sideOutline,
   sidebarToggle,
   tocGrip,
@@ -64,6 +69,11 @@ const tocListView: TocListHandle = createTocList(tocList, refreshTocToggleAll);
 function setupSideBar(): void {
   sideOutline.innerHTML = CODICONS.outline;
   tocGrip.innerHTML = CODICONS.grip;
+  // 五块视图的列表共用同一条悬浮滚动条：原生纵向条永远占布局空间，列表会比标题栏窄 8px，
+  // 行的高亮底色在右缘缺一截。面板此刻可能收着（尺寸 0），露出时由 ResizeObserver 补同步。
+  for (const list of [tocList, recentList, explorerTree, searchResults, diffList]) {
+    ensureListScrollbar(list);
+  }
   sideOutline.addEventListener("click", () => toggleToc());
   sidebarToggle.addEventListener("click", () => toggleSidebar());
   // B307：把大纲这一块**登记进外壳**。点亮态与 `hidden` 都由 `setDrawer` 写，这里只交

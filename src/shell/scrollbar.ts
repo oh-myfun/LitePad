@@ -1,10 +1,14 @@
 // 标签栏滚动交互 + B117 自绘悬浮滚动条（从 tabstrip.ts 拆出，P2 余下内聚拆分）。
 //
 // 职责：横向滚轮（bindWheel / onWheel / deltaMode 归一）与自绘悬浮滚动条
-// （ensureOverlayScrollbar / syncOverlayScrollbar / revealScrollbar / hideScrollbar /
-// bindThumbDrag），以及各自的模块级状态（wheelBound / scrollbars WeakMap）。
+// （ensureOverlayScrollbar / ensureListScrollbar / syncOverlayScrollbar / revealScrollbar /
+// hideScrollbar / bindThumbDrag），以及各自的模块级状态（wheelBound / scrollbars WeakMap）。
 // 纯叶子：只碰 DOM 与自身状态，对 tabstrip.ts 零反向依赖；tabstrip.ts 在
 // renderTabstrip 里调 bindWheel / ensureOverlayScrollbar / syncOverlayScrollbar 三个出口。
+//
+// 两种方向共用同一套「出现 / 淡出 / 拖拽」状态机（ScrollbarState.axis 分派）：
+//   · 横向 —— 标签条底部（B117/B125）；
+//   · 纵向 —— 边栏列表右缘（原生纵向滚动条永远占布局空间，不悬停时行就比标题栏窄 8px）。
 
 /** wheel 监听只挂一次（同一 host 会被反复重绘）。 */
 const wheelBound = new WeakSet<HTMLElement>();
@@ -40,9 +44,13 @@ export function bindWheel(host: HTMLElement): void {
 const SCROLLBAR_VISIBLE = "is-visible";
 /** B125：出现后多久淡出 = VS Code `scrollableElement.ts` 的 HIDE_TIMEOUT（500ms）。 */
 const SCROLLBAR_HIDE_DELAY = 500;
+/** 边栏纵向滚动条的轨道宽：比全局原生滚动条（8px）窄一档，悬浮时不压正文。 */
+const SIDE_SCROLLBAR_SIZE = 6;
 
 interface ScrollbarState {
   bar: HTMLElement;
+  /** 标签条是横向，边栏列表是纵向 —— 两条路共用「出现 / 淡出 / 拖拽」的同一套状态机。 */
+  axis: "x" | "y";
   timer: number;
   hovering: boolean;
   dragging: boolean;
@@ -83,9 +91,16 @@ function hideScrollbar(host: HTMLElement): void {
  *  B418：顺带维护 `.is-overflow-right` —— 「右侧还有标签被裁着」时打开条带右缘的
  *  渐隐遮罩（见 global.css 的同名规则）。 */
 export function syncOverlayScrollbar(host: HTMLElement): void {
+  const st = scrollbars.get(host);
+  if (!st) return;
+  if (st.axis === "x") syncHorizontal(host, st);
+  else syncVertical(host, st);
+}
+
+function syncHorizontal(host: HTMLElement, st: ScrollbarState): void {
   const wrap = host.parentElement;
-  const bar = wrap?.querySelector<HTMLElement>(":scope > .panel-tabstrip-scrollbar");
-  if (!wrap || !bar) return; // 尚未包裹（首帧前），renderTabstrip 末尾会再同步一次
+  const bar = st.bar;
+  if (!wrap) return; // 尚未包裹（首帧前），renderTabstrip 末尾会再同步一次
   const max = host.scrollWidth - host.clientWidth;
   // 有溢出、且没滚到最右 ⇒ 右缘至少还有一个半截标签。滚到最右时最后一个标签
   // 完整露出来，渐变必须收掉（否则会咬掉它自己的右缘）。
@@ -104,6 +119,40 @@ export function syncOverlayScrollbar(host: HTMLElement): void {
   const x = Math.round((host.scrollLeft / max) * (track - w));
   thumb.style.width = `${w}px`;
   thumb.style.transform = `translateX(${x}px)`;
+}
+
+/**
+ * 边栏列表的纵向滚动条：轨道盖在列表右缘（宽度见 `SIDE_SCROLLBAR_SIZE`，不占布局），
+ * 几何跟着**列表自己的盒子**走 —— 面板里还有标题栏 / 筛选行，按父容器整块算会把轨道拉长一截。
+ * 盒子取 `offsetTop/offsetHeight`：`left` 落到「列表右缘 - 轨道宽」，与原生纵向滚动条的位置
+ * 一致（列表没有边框，两者等价）。
+ */
+function syncVertical(host: HTMLElement, st: ScrollbarState): void {
+  const parent = host.parentElement;
+  if (!parent) return;
+  const bar = st.bar;
+  bar.style.top = `${host.offsetTop}px`;
+  bar.style.height = `${host.clientHeight}px`;
+  bar.style.left = `${host.offsetLeft + host.offsetWidth - SIDE_SCROLLBAR_SIZE}px`;
+  const max = host.scrollHeight - host.clientHeight;
+  if (max <= 1) {
+    bar.style.display = "none";
+    bar.classList.remove(SCROLLBAR_VISIBLE);
+    return;
+  }
+  bar.style.display = "";
+  const thumb = bar.firstElementChild as HTMLElement | null;
+  if (!thumb) return;
+  const track = host.clientHeight;
+  // VS Code 的 MINIMUM_SLIDER_SIZE（与 ::-webkit-scrollbar-thumb 的 min-height 同值），
+  // 但再短的列表也不能让 thumb 比轨道还长（否则 translateY 会算出负位移）。
+  const h = Math.min(
+    track,
+    Math.max(20, Math.round(track * (host.clientHeight / host.scrollHeight))),
+  );
+  const y = Math.round((host.scrollTop / max) * (track - h));
+  thumb.style.height = `${h}px`;
+  thumb.style.transform = `translateY(${y}px)`;
 }
 
 /**
@@ -126,7 +175,7 @@ export function ensureOverlayScrollbar(host: HTMLElement): void {
     thumb.className = "panel-tabstrip-scrollbar-thumb";
     bar.append(thumb);
     wrap.append(bar);
-    scrollbars.set(host, { bar, timer: 0, hovering: false, dragging: false });
+    scrollbars.set(host, { bar, axis: "x", timer: 0, hovering: false, dragging: false });
     // 程序滚动（ensureVisible / 滚轮 / 重绘恢复）也会触发 scroll 事件，
     // 一处监听覆盖全部来源；拖拽 thumb 与 resize 时再手动同步。
     host.addEventListener("scroll", () => {
@@ -152,26 +201,99 @@ export function ensureOverlayScrollbar(host: HTMLElement): void {
       if (st) st.hovering = false;
       hideScrollbar(host);
     });
-    bindThumbDrag(host, bar, thumb);
+    bindThumbDrag(host, bar, thumb, "x");
   }
 }
 
-/** B117：thumb 拖拽 —— pointer 换算成 scrollLeft，与原生滚动条手感一致。 */
-function bindThumbDrag(host: HTMLElement, bar: HTMLElement, thumb: HTMLElement): void {
+/**
+ * 边栏列表的纵向悬浮滚动条。
+ *
+ * 原生纵向滚动条在 Chromium 里**永远占布局空间**：列表比标题栏窄 8px，行的高亮底色
+ * 在右缘缺一截。这里把原生条收成 0 宽（见 preview.css 的 `::-webkit-scrollbar` 覆盖），
+ * 改贴一条不占布局的浮层，行为对齐 VS Code 的 ScrollbarVisibility.Auto：
+ * 指针进列表 / 滚动 / 拖 thumb 才出现，离开或停手 500ms 后淡出。
+ *
+ * 与 `ensureOverlayScrollbar` 共用 scrollbars 表与状态机，差别只在几何轴：
+ * bar 是列表的**兄弟**（滚动容器的 absolute 子元素会随内容滚走），包含块由
+ * 面板上的 `.side-scroll-anchor` 提供（见 preview.css）。
+ */
+export function ensureListScrollbar(host: HTMLElement): void {
+  if (scrollbars.has(host)) return;
+  const parent = host.parentElement;
+  if (!parent) return;
+  parent.classList.add("side-scroll-anchor");
+  const bar = document.createElement("div");
+  bar.className = "side-scrollbar";
+  const thumb = document.createElement("div");
+  thumb.className = "side-scrollbar-thumb";
+  bar.append(thumb);
+  parent.append(bar);
+  scrollbars.set(host, { bar, axis: "y", timer: 0, hovering: false, dragging: false });
+
+  const sync = (): void => syncOverlayScrollbar(host);
+  host.addEventListener("scroll", () => {
+    sync();
+    revealScrollbar(host, true);
+  });
+  // 拖抽屉宽度 / 窗口缩放 / 面板显隐（隐藏时尺寸归零，再露出时恢复）都会改 host 盒子。
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(() => syncOverlayScrollbar(host)).observe(host);
+  }
+  // 列表重绘只换子节点、不改 host 自身尺寸，ResizeObserver 收不到 —— 由它补「内容变高变矮」。
+  if (typeof MutationObserver !== "undefined") {
+    new MutationObserver(sync).observe(host, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+  }
+  // 悬停即现 / 离开即收（与标签条同一判据）。指针在列表 ↔ thumb 之间挪动不算离开：
+  // thumb 是列表的兄弟，pointerleave 的 relatedTarget 会指到另一边。
+  const enter = (): void => {
+    const st = scrollbars.get(host);
+    if (st) st.hovering = true;
+    revealScrollbar(host);
+  };
+  const leave = (to: EventTarget | null): void => {
+    if (to instanceof Node && (host.contains(to) || bar.contains(to))) return;
+    const st = scrollbars.get(host);
+    if (st) st.hovering = false;
+    hideScrollbar(host);
+  };
+  host.addEventListener("pointerenter", enter);
+  host.addEventListener("pointerleave", (e) => leave(e.relatedTarget));
+  bar.addEventListener("pointerenter", enter);
+  bar.addEventListener("pointerleave", (e) => leave(e.relatedTarget));
+  bindThumbDrag(host, bar, thumb, "y");
+  sync();
+}
+
+/** 自绘滚动条 thumb 拖拽 —— pointer 位移换算成 scrollLeft / scrollTop，与原生手感一致。 */
+function bindThumbDrag(
+  host: HTMLElement,
+  bar: HTMLElement,
+  thumb: HTMLElement,
+  axis: "x" | "y",
+): void {
   thumb.addEventListener("pointerdown", (e) => {
     e.preventDefault();
-    const max = host.scrollWidth - host.clientWidth;
+    const horizontal = axis === "x";
+    const max = horizontal
+      ? host.scrollWidth - host.clientWidth
+      : host.scrollHeight - host.clientHeight;
     if (max <= 0) return;
-    const track = bar.clientWidth;
-    const w = thumb.offsetWidth;
-    const startX = e.clientX;
-    const startScroll = host.scrollLeft;
+    const track = horizontal ? bar.clientWidth : bar.clientHeight;
+    const size = horizontal ? thumb.offsetWidth : thumb.offsetHeight;
+    const start = horizontal ? e.clientX : e.clientY;
+    const startScroll = horizontal ? host.scrollLeft : host.scrollTop;
     const st = scrollbars.get(host);
     if (st) st.dragging = true;
     revealScrollbar(host); // 拖拽期间常显（VS Code 的 _isDragging 同判据）
     const move = (ev: PointerEvent): void => {
-      const dx = ev.clientX - startX;
-      host.scrollLeft = Math.max(0, Math.min(max, startScroll + (dx / (track - w)) * max));
+      const delta = (horizontal ? ev.clientX : ev.clientY) - start;
+      const next = Math.max(0, Math.min(max, startScroll + (delta / (track - size)) * max));
+      if (horizontal) host.scrollLeft = next;
+      else host.scrollTop = next;
     };
     const up = (): void => {
       window.removeEventListener("pointermove", move);

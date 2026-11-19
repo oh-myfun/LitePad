@@ -22,12 +22,14 @@ PNG 编码、窗口查找、BitBlt 抓图，也能单独当命令行用（见下
   python scripts/screenshot.py --screen <输出路径>
       抓全屏。
 
-可选参数：`--size WxH` 先把窗口可见外框调成该尺寸；`--inset N` 四边各再切 N 像素。
+可选参数：`--size WxH` 先把窗口可见外框调成该尺寸；`--inset N` 四边各再切 N 像素；
+`--corner-radius N` 把窗口四角的圆角外像素改成透明（见 `mask_rounded_corners`）。
 默认输出 scripts 同级的 smoke-window.png。
 """
 
 import ctypes
 import ctypes.wintypes as wt
+import math
 import struct
 import sys
 import time
@@ -176,10 +178,11 @@ class BMIHEADER(ctypes.Structure):
                 ("biClrImportant", ctypes.c_uint32)]
 
 
-def capture(hwnd, inset: int = 0) -> bytes:
+def capture(hwnd, inset: int = 0, corner_radius: int = 0) -> bytes:
     """截取窗口**可见外框**，返回 (PNG 字节, (宽, 高))。
 
-    `inset` 会从四边再各切掉几个像素（取整像素用；圆角窗口的四个角若混进桌面可给 1-2）。
+    `inset` 会从四边再各切掉几个像素；`corner_radius` 给四角做 alpha 遮罩
+    （BitBlt 只能抓矩形，圆角外的那几格是桌面背景）。
     """
     user32.SetProcessDPIAware()
     user32.ShowWindow(hwnd, SW_RESTORE)
@@ -224,7 +227,56 @@ def capture(hwnd, inset: int = 0) -> bytes:
             b, g, r = row[x * 4], row[x * 4 + 1], row[x * 4 + 2]
             raw += bytes((r, g, b, 255))
 
+    mask_rounded_corners(raw, width, height, corner_radius)
     return encode_png(width, height, bytes(raw)), (width, height)
+
+
+# 4×4 子采样点（像素内部坐标，取每格中心）；覆盖率 = 落在圆弧内的样本数 / 16。
+_SUBS = (0.125, 0.375, 0.625, 0.875)
+
+
+def mask_rounded_corners(raw: bytearray, width: int, height: int, radius: int) -> None:
+    """把矩形抓到的四角改成圆角：圆弧外 alpha 归零，边缘按覆盖率抗锯齿。
+
+    Win11 的窗口外框是圆角，BitBlt 抓的却是矩形，圆角外那几格是桌面背景。
+    这里只动四角 `radius × radius` 的方块：圆弧外的像素设为透明，压在弧上的
+    像素按覆盖率给 alpha。RGB 同时换成沿「像素 → 圆心」方向内缩到弧内的像素 ——
+    否则半透明的边缘像素仍是桌面色，压在浅色背景上会泛出一圈脏边。
+    """
+    radius = min(radius, width // 2, height // 2)
+    if radius <= 0:
+        return
+    stride = width * 4
+    for bottom in (False, True):
+        for right in (False, True):
+            for y in range(radius):
+                py = height - 1 - y if bottom else y
+                for x in range(radius):
+                    px = width - 1 - x if right else x
+                    dx0 = radius - (x + 0.5)
+                    dy0 = radius - (y + 0.5)
+                    inside = 0
+                    for sy in _SUBS:
+                        for sx in _SUBS:
+                            dx = dx0 - (sx - 0.5)
+                            dy = dy0 - (sy - 0.5)
+                            if dx * dx + dy * dy <= radius * radius:
+                                inside += 1
+                    if inside == 16:
+                        continue
+                    i = py * stride + px * 4
+                    raw[i + 3] = inside * 255 // 16
+                    # 沿像素到圆心的连线缩到弧内 1px 处取样：那里是窗口边线本身
+                    dist = math.hypot(dx0, dy0)
+                    k = (radius - 1.0) / dist if dist else 0.0
+                    ix = int(radius - dx0 * k)
+                    iy = int(radius - dy0 * k)
+                    if right:
+                        ix = width - 1 - ix
+                    if bottom:
+                        iy = height - 1 - iy
+                    j = min(max(iy, 0), height - 1) * stride + min(max(ix, 0), width - 1) * 4
+                    raw[i], raw[i + 1], raw[i + 2] = raw[j], raw[j + 1], raw[j + 2]
 
 
 def encode_png(width: int, height: int, rgba: bytes) -> bytes:
@@ -258,6 +310,7 @@ def main() -> int:
     value = "LitePad"
     size = None
     inset = 0
+    corner_radius = 0
     rest: list[str] = []
 
     i = 0
@@ -277,6 +330,13 @@ def main() -> int:
                 inset = int(args[i])
             except (IndexError, ValueError):
                 print("--inset 需要整数")
+                return 2
+        elif a == "--corner-radius":
+            i += 1
+            try:
+                corner_radius = int(args[i])
+            except (IndexError, ValueError):
+                print("--corner-radius 需要整数")
                 return 2
         elif a == "--size":
             i += 1
@@ -357,7 +417,7 @@ def main() -> int:
     if size:
         resize_window(hwnd, size[0], size[1])
 
-    png, dim = capture(hwnd, inset)
+    png, dim = capture(hwnd, inset, corner_radius)
     with open(out, "wb") as f:
         f.write(png)
     print(f"已捕获 {title!r} ({dim[0]}x{dim[1]}) -> {out}")
