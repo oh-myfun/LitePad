@@ -273,7 +273,13 @@ function refreshSyncButton(tab: Tab | undefined): void {
   // B178：跨窗口多开也算「多份」—— 本窗口可见实例 > 1，或任一别的窗口也可见地开着这份。
   // 状态一致性随卫星标签载荷一起搬运（`syncMode`，见 multiwindow/windows.ts），这里只补
   // 显隐：两个窗口都数到 ≥2 份，同步键就都露脸。仍只数**可见**实例（B171/B173 口径不变）。
-  const multi = !!tab && (visibleInstancesOfDoc(tab.docId).length > 1 || remoteHasDoc(tab.docId));
+  // 差异标签不算「另一份」：它和原标签共享同一个 `docId`，但不参与共享坐标
+  // （`sync-scroll/wire.ts` 的 `sharesDocScroll` 只认 `kind === "editor"`）。
+  // 只开一份文档 + 它的差异编辑器时，按实例总数会凑出「2 份」，摆一颗点了也没反应的键。
+  const multi =
+    !!tab &&
+    (visibleInstancesOfDoc(tab.docId).filter((t) => t.kind === "editor").length > 1 ||
+      remoteHasDoc(tab.docId));
   syncScrollBtn.hidden = !multi;
   if (!multi) return;
   const on = docSyncOn(tab.docId);
