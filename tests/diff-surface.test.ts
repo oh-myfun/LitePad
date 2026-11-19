@@ -26,7 +26,7 @@
 //     （读源码文本即可），缺一条就是真机上的裁切 / 滚不动 / 两栏字量度不一致。
 //
 // ⚠️ 「拿源码文本当结构判据」是本仓库的既定契约层（`explorer-contract` / `gutter-diff-wiring` /
-// `sync-scroll-sequence` / `gutter-diff-style` 同形），钉的是跨文件不变量，不是实现细节。
+// `sync-scroll-sequence` 同形），钉的是跨文件不变量，不是实现细节。
 //
 // Task 4 在下面追加的那一块钉的是**跳块与步进**：两侧同时落位到各自那段的起始行、落位走
 // 既有「显式落位」那一类（认领这一发造成的滚动，绝不 `syncTo` 广播给同文档的别的面板）、
@@ -75,7 +75,7 @@ import { reconcileSyncRegistrations, syncCoordinator } from "../src/sync-scroll/
 
 const srcOf = (p: string): string => readFileSync(p, "utf-8").replace(/\r\n/g, "\n");
 
-/** 块体里某颗属性的**最后一个**声明值（同 `gutter-diff-style` 的口径：后写的顶掉前面的）。 */
+/** 块体里某颗属性的**最后一个**声明值（后写的顶掉前面的）。 */
 function lastDecl(block: string, name: string): string {
   const code = stripCssComments(block);
   const hits = [...code.matchAll(new RegExp(`${name}\\s*:\\s*([^;]+);`, "g"))];

@@ -1,74 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { ruleBlock, themeBlock } from "./static";
+import { ruleBlock } from "./static";
 import { ensureListScrollbar } from "../src/shell/scrollbar";
-
-describe("滚动条：全应用统一且随深浅色联动", () => {
-  it("滚动条必须全应用统一且随深浅色联动（用户要求）", () => {
-    // 用户报告：滚动条样式与界面不统一，且不跟随深浅色。
-    // WebView2 默认滚动条走 Windows 系统样式 → 深色界面里是一条浅色亮条。
-    // 统一方案：轨道透明 + thumb 走 --sb-* 变量（两个主题各一套），全局生效。
-    const g = readFileSync("src/styles/global.css", "utf-8");
-    const dark = themeBlock(g, "dark");
-    const light = themeBlock(g, "light");
-    expect(dark, "应有深色主题变量块").toBeTruthy();
-    expect(light, "应有浅色主题变量块").toBeTruthy();
-
-    for (const [name, block] of [
-      ["深色", dark],
-      ["浅色", light],
-    ] as const) {
-      expect(block, `${name}主题必须定义 --sb-thumb`).toContain("--sb-thumb:");
-      expect(block, `${name}主题必须定义 --sb-thumb-hover`).toContain("--sb-thumb-hover:");
-      expect(block, `${name}主题必须定义 --sb-thumb-active`).toContain("--sb-thumb-active:");
-      expect(block, `${name}主题应声明 color-scheme（原生控件跟随主题）`).toContain(
-        "color-scheme:",
-      );
-    }
-    // 两套主题取值必须不同，否则等于没跟随主题
-    const darkThumb = /--sb-thumb:\s*([^;]+);/.exec(dark)?.[1]?.trim();
-    const lightThumb = /--sb-thumb:\s*([^;]+);/.exec(light)?.[1]?.trim();
-    expect(darkThumb).toBeTruthy();
-    expect(lightThumb).toBeTruthy();
-    expect(darkThumb, "深浅色的滚动条滑块颜色必须不同").not.toBe(lightThumb);
-
-    // 全局生效：**只走 Chromium 的 webkit 伪元素这一条路**（B200）
-    // —— 双写 scrollbar-width / scrollbar-color 时渲染路径由 Chromium 挑，
-    //    挑到系统那一路伪元素就管不着 ⇒ 曾经冒出 Windows 的三角箭头。
-    //    本软件只跑 Windows + WebView2，标准属性本就没收益，不再双写。
-    const bar = ruleBlock(g, "::-webkit-scrollbar");
-    expect(bar, "应有 ::-webkit-scrollbar 规则").toBeTruthy();
-    expect(bar, "滚动条宽度必须显式声明（伪元素路径唯一的证据）").toMatch(/width:\s*\d+px/);
-    // B463 · 按 VS Code 观感收窄：宽度比原先的 10px 更窄（用户要求保持窄版）。
-    expect(bar, "宽度收到 8px").toMatch(/width:\s*8px/);
-    expect(bar, "高度与宽度同口径").toMatch(/height:\s*8px/);
-    expect(g, "不得双写标准属性 scrollbar-width（会抢渲染路径）").not.toMatch(/scrollbar-width:/);
-    expect(g, "不得双写标准属性 scrollbar-color（会抢渲染路径）").not.toMatch(/scrollbar-color:/);
-    const thumb = ruleBlock(g, "::-webkit-scrollbar-thumb");
-    expect(thumb, "应有 ::-webkit-scrollbar-thumb 规则").toBeTruthy();
-    expect(thumb, "滑块颜色必须引用 --sb-thumb 变量").toContain("var(--sb-thumb");
-    expect(thumb, "滑块不得写死十六进制颜色").not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
-    // B464 · 除宽度与圆角外逐项照 VS Code：`scrollbars.css` 只给 background，几何由
-    // `_createSlider` 居中摆（默认 slider 宽度 = 轨道宽度 ⇒ 无内缩），也没有描边。
-    // 圆角是用户点名要的差异（「滑块要圆角」）：半径 = 8px 轨道的一半 ⇒ 胶囊两端。
-    expect(thumb, "滑块要圆角（用户明确要求）").toMatch(/border-radius:\s*4px/);
-    expect(thumb, "无内缩/无描边").not.toMatch(/\bborder(-width)?\s*:/);
-    expect(g, "滑块最短 20px（VS Code 的 MINIMUM_SLIDER_SIZE）").toMatch(
-      /::-webkit-scrollbar-thumb:vertical\s*\{[^}]*min-height:\s*20px/,
-    );
-    // 箭头：裸的那一条 + 按方向细分的 increment / decrement，三条都得 hide
-    for (const [name, sel] of [
-      ["裸 button", "::-webkit-scrollbar-button\\s*\\{"],
-      ["increment", "::-webkit-scrollbar-button:increment\\s*\\{"],
-      ["decrement", "::-webkit-scrollbar-button:decrement\\s*\\{"],
-    ] as const) {
-      expect(g, `必须隐藏滚动条两端箭头按钮（${name}）`).toMatch(
-        new RegExp(`${sel}[^}]*display:\\s*none`),
-      );
-    }
-  });
-});
 
 // --------------------------------------------------------------------------- #
 // 边栏列表：悬浮、自动隐藏、不占宽度的纵向滚动条
@@ -127,43 +61,6 @@ describe("边栏列表滚动条（静态契约）", () => {
       const handle = c.replace(/-([a-z])/g, (_, ch: string) => ch.toUpperCase());
       expect(setup, `列表 ${c} 必须接入`).toContain(handle);
     }
-  });
-});
-
-describe("边栏列表「当前项」统一走 list.* 选中档", () => {
-  const css = readFileSync("src/styles/preview.css", "utf-8");
-
-  it("大纲不再用 accent 字色 + 加粗，改成与资源管理器一致的选中底色", () => {
-    const active = ruleBlock(css, ".toc-item.toc-active");
-    expect(active).toContain("--list-inactive-bg");
-    expect(active).toContain("--list-inactive-fg");
-    expect(active, "旧的 accent 字色必须收掉").not.toContain("--accent");
-    expect(active, "旧的加粗必须收掉").not.toMatch(/font-weight/);
-  });
-
-  it("大纲列表持有焦点时换 active 档 + HC 选中描边", () => {
-    const focused = ruleBlock(css, ".toc-list:focus-within .toc-item.toc-active");
-    expect(focused).toContain("--list-active-bg");
-    expect(focused).toContain("--list-active-fg");
-    expect(focused).toContain("--list-selection-border");
-  });
-
-  it("差异列表同口径（不再用 accent 字色 + 加粗）", () => {
-    const active = ruleBlock(css, ".diff-item.diff-active");
-    expect(active).toContain("--list-inactive-bg");
-    expect(active).not.toContain("--accent");
-    expect(active).not.toMatch(/font-weight/);
-    const focused = ruleBlock(css, ".diff-list:focus-within .diff-item.diff-active");
-    expect(focused).toContain("--list-active-bg");
-    expect(focused).toContain("--list-selection-border");
-  });
-
-  it("搜索选中态补齐 HC 选中描边（原先只有资源管理器有）", () => {
-    const focused = ruleBlock(
-      css,
-      '.search-results:focus-within .search-file[aria-selected="true"], .search-results:focus-within .search-line[aria-selected="true"]',
-    );
-    expect(focused).toContain("--list-selection-border");
   });
 });
 

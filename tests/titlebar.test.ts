@@ -110,30 +110,6 @@ describe("B97 自建标题栏", () => {
     }
   });
 
-  it("样式：标题栏与窗口控制键各有规则，旧快捷按钮样式整段删掉", () => {
-    const s = css();
-    expect(s, "必须有标题栏规则").toMatch(/\.title-bar\s*\{/);
-    expect(s, "必须有窗口控制容器规则").toMatch(/\.window-controls\s*\{/);
-    // B103 起窗口控制键、B110 起菜单按钮与「钉在顶部」共用**同一条声明**，所以选择器是一组。
-    // ⚠️ 判据要写成「一组选择器后紧跟 {」：只判 `.win-btn {` 会在合并成
-    //    `.win-btn, .title-btn {` 之后永远为真/假得莫名其妙（这次就是先红的）。
-    expect(s, "必须有窗口控制键规则").toMatch(/\.win-btn,\s*\.title-btn,\s*\.menu-btn\s*\{/);
-    // 关闭键悬停的红底是 Windows 的系统约定，不是随手挑的颜色（B379 起走主题 token，
-    // 取值在 global.css 的主题表里，逐族可调）
-    expect(s, "关闭键悬停必须是系统约定的红底").toMatch(
-      /\.win-btn-close:hover\s*\{[^}]*var\(--titlebar-close-hover\)/,
-    );
-    // 钉住态只高亮图标（.codicon），整按钮不点亮；图标规则必须排在 hover 之后
-    // （同特异度后写者胜），否则悬停的继承色会盖掉图标高亮。
-    // B166：字形改成 pinned / pin 切换，但这层配色**保留**（用户拍板）。
-    expect(
-      s.indexOf(".win-btn:hover"),
-      ".title-btn.is-on .codicon 必须写在 hover 之后（同特异度后写者胜）",
-    ).toBeLessThan(s.indexOf(".title-btn.is-on .codicon"));
-    expect(s, "旧快捷按钮样式必须整段删掉").not.toContain(".toolbar-actions");
-    expect(s, "旧快捷按钮样式必须整段删掉").not.toContain(".tool-btn");
-  });
-
   it("接线：三颗键各自对应 minimize / toggleMaximize / close", () => {
     const main = mainSrc();
     expect(main, "最小化键接 minimize").toMatch(

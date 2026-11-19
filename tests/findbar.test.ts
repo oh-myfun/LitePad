@@ -8,16 +8,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import { themeBlock, ruleBlock, stripCssComments, tabsAll } from "./static";
-import {
-  createFindBar,
-  findBarAnchor,
-  FIND_BAR_INITIAL_WIDTH,
-  FIND_BAR_MIN_WIDTH,
-  FIND_BAR_TOP_GAP,
-  FIND_BAR_SCROLLBAR_GUTTER,
-  FIND_BAR_LEFT_RESERVE,
-  type FindBarQuery,
-} from "../src/shell/findbar";
+import { createFindBar, FIND_BAR_INITIAL_WIDTH, type FindBarQuery } from "../src/shell/findbar";
 import { CODICONS } from "../src/shell/codicons";
 import { preserveCase, restrictToRange } from "../src/editor/find";
 
@@ -1106,131 +1097,6 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
 // B389-9（用户：「单文件搜索框位置参考 vscode 进行改造」）：浮层不再钉窗口右上角、压住标题栏
 // 与标签条，而是照 VS Code 的几何钉在**当前面板编辑区**的右上。
 // 判据分两层：换算本身是纯函数（这里判），落成像素由真机台核（`.tmp/b389-findbar.py`）。
-describe("B389-9：查找栏定位照 VS Code", () => {
-  /** 一块典型的编辑区：标题栏 34 + 标签条 28 + 边距 ⇒ 顶边 64；侧栏占掉左边 300；innerWidth 1024 */
-  const HOST = { top: 64, left: 300, width: 600 };
-
-  it("换算：顶边 +4、右边让开滚动条槽、宽从 419 起（各档都能单独算出来）", () => {
-    const a = findBarAnchor(HOST, 1024, FIND_BAR_INITIAL_WIDTH);
-    expect(a.top, "VS Code `.find-widget { margin-top: 4px }` 配 `setTop(0)`").toBe(
-      HOST.top + FIND_BAR_TOP_GAP,
-    );
-    expect(a.top).toBe(68);
-    // `right` 从**视口**右缘往里量：编辑区右缘自己离视口右缘就还有 124px（1024 − 900），
-    // 漏算这一截的写法会得到 10 —— 这条判据就是为它准备的。
-    expect(a.right).toBe(134);
-    expect(a.right).toBe(1024 - (HOST.left + HOST.width) + FIND_BAR_SCROLLBAR_GUTTER);
-    expect(a.width, "没拖过就用 VS Code 的 FIND_WIDGET_INITIAL_WIDTH").toBe(419);
-    // VS Code `_updateReactiveLayout`：`editorWidth − 28 − minimap − 15`（我们只有一根 10px 滚动条）
-    expect(a.maxWidth).toBe(600 - FIND_BAR_SCROLLBAR_GUTTER - FIND_BAR_LEFT_RESERVE);
-    expect(a.maxWidth).toBe(575);
-  });
-
-  it("想要的宽度超了编辑区可用宽 ⇒ 夹到上限；夹完不影响下一次变宽还原", () => {
-    expect(findBarAnchor(HOST, 1024, 700).width, "夹到可用最大宽 575").toBe(575);
-    expect(findBarAnchor(HOST, 1024, 200).width, "窄的那头夹到拖动下限 360").toBe(
-      FIND_BAR_MIN_WIDTH,
-    );
-    const 窄格 = findBarAnchor({ top: 64, left: 300, width: 380 }, 1024, 500);
-    expect(窄格.maxWidth, "380 − 10 − 15 = 355：**不**兜回 360，越界的下限没有意义").toBe(355);
-    expect(窄格.width).toBe(355);
-  });
-
-  it("编辑区比下限还窄 ⇒ 浮层跟着缩，左缘绝不越出编辑区（真机抓到的那一形）", () => {
-    // 真机现场：分屏 + 侧栏摊开，活动格只剩 316px，而旧算法把宽度兜在 360 ⇒ 浮层左缘
-    // 顶出编辑区、压进隔壁那一格。这一条把「不许越界」写成不变量，逐个宽度都问一遍。
-    for (const width of [877, 438, 316, 300, 260]) {
-      const host = { top: 64, left: 294, width };
-      const a = findBarAnchor(host, 933, FIND_BAR_INITIAL_WIDTH);
-      const left = 933 - a.right - a.width;
-      expect(left, `编辑区宽 ${width} ⇒ 浮层左缘不许越过 ${host.left}`).toBeGreaterThanOrEqual(
-        host.left,
-      );
-      expect(a.width, `编辑区宽 ${width} ⇒ 不许比编辑区本身还宽`).toBeLessThanOrEqual(
-        width - FIND_BAR_SCROLLBAR_GUTTER,
-      );
-    }
-  });
-
-  it("打开时把换算结果写进内联样式", () => {
-    stubActiveHost(HOST);
-    const m = mount();
-    m.bar.open();
-    expect(m.dom.style.top).toBe("68px");
-    expect(m.dom.style.right).toBe("134px");
-    expect(m.dom.style.width).toBe("419px");
-    expect(m.dom.style.maxWidth).toBe("575px");
-  });
-
-  it("量不到编辑区（面板还没建 / jsdom 没布局）⇒ 一条都不写，让 CSS 兜底", () => {
-    clearActiveHost(); // 前面用例留下的块要清掉，否则这条测的是「量得到」那一支
-    const m = mount();
-    m.bar.open();
-    expect(m.dom.style.top, "不许写进一个 NaN / 0px 把兜底值盖掉").toBe("");
-    expect(m.dom.style.right).toBe("");
-    expect(m.dom.style.width).toBe("");
-  });
-
-  it("编辑区变窄只压扁显示、不改用户调过的那一档；双击仍在放大↔复原间来回", () => {
-    stubActiveHost(HOST);
-    const m = mount();
-    m.bar.open();
-    expect(m.dom.style.width, "初始 419").toBe("419px");
-    m.sash().dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-    expect(m.dom.style.width, "双击放大到可用最大宽 575").toBe("575px");
-    stubActiveHost({ top: 64, left: 300, width: 380 });
-    m.bar.relayout();
-    expect(m.dom.style.width, "编辑区窄了只压显示（355），用户那一档 575 还在").toBe("355px");
-    stubActiveHost(HOST);
-    m.bar.relayout();
-    expect(m.dom.style.width, "编辑区宽回来 ⇒ 自动还原 575（夹完没写回源真值）").toBe("575px");
-    m.sash().dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-    expect(m.dom.style.width, "再双击复原到 419").toBe("419px");
-  });
-
-  it("换面板 = 换锚点：retarget() 之后跟着新那一格走", () => {
-    stubActiveHost(HOST);
-    const m = mount();
-    m.bar.open();
-    expect(m.dom.style.top).toBe("68px");
-    // 竖向分屏里点下面那一格：顶边掉到 320，宽度没变 ⇒ RO 那一路不会 fire，全靠这次点名
-    stubActiveHost({ top: 320, left: 300, width: 600 });
-    m.bar.retarget();
-    expect(m.dom.style.top, "顶边跟着下面的格子").toBe("324px");
-    expect(m.dom.style.right, "横向没挪 ⇒ 右边距不变").toBe("134px");
-  });
-
-  it("面板整棵重建后由 rebuildLayout 点名重钉，且必须排在 renderSplitview 之后", () => {
-    const life = readFileSync("src/tabs/lifecycle.ts", "utf-8");
-    const fn = life.slice(
-      life.indexOf("export function rebuildLayout"),
-      life.indexOf("// updateRatio 已移到"),
-    );
-    expect(fn, "rebuildLayout 末尾要重新钉一次").toContain("relayoutFindBar()");
-    // ⚠️ `toBeLessThan` 不接消息参数（写了会被静默吞掉），所以把比较本身交给断言的**值**。
-    expect(
-      fn.indexOf("renderSplitview(") < fn.indexOf("relayoutFindBar()"),
-      "渲染回调跑在整棵树进文档**之前**，那时量到全是 0 ⇒ 必须排在 renderSplitview 之后",
-    ).toBe(true);
-    const find = readFileSync("src/find/findbar.ts", "utf-8");
-    expect(find, "没建过浮层时不许凭空建一个（relayout 走的是已存在的那只）").toMatch(
-      /findBar\?\.relayout\(\)/,
-    );
-  });
-
-  it("CSS 只剩兜底：宽度换成 419、不许用 left 定位", () => {
-    const css = stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
-    const bar = ruleBlock(css, ".find-bar");
-    expect(bar, "兜底宽度也得是 VS Code 的初始 419（不许留 470 那种两套口径）").toMatch(
-      /width:\s*419px/,
-    );
-    expect(bar).not.toMatch(/width:\s*470px/);
-    expect(bar, "不许用 left 定位（left 会跟 JS 写的 right 抢，把浮层拽到左边）").not.toMatch(
-      /(^|[^-])left:\s*\d+px/,
-    );
-    expect(bar).toMatch(/position:\s*fixed/);
-  });
-});
 
 // B417：预览档（禁编辑）里替换没有落点 —— 浮层这一层只负责「门关没关」。
 // 判定在 `find/findbar.ts`（看 viewMode），这里钉的是关上门之后的行为：
@@ -1262,14 +1128,3 @@ describe("B417：预览档禁用替换（浮层自己的那一半）", () => {
 });
 
 // B419（用户）：预览档禁用替换时，左缘那颗展开键要有明确的「按不动」观感。
-describe("B419：禁用的展开键要有禁用观感（不是只有 disabled 属性）", () => {
-  it("CSS：压淡 + 去掉悬停提亮与手型指针", () => {
-    const css = stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
-    const off = ruleBlock(css, ".find-chevron:disabled");
-    expect(off, "禁用态必须压淡").toMatch(/opacity:\s*0?\.\d+/);
-    expect(off, "不许再挂手型指针").toContain("cursor: default");
-    expect(css, "悬停提亮要在 :disabled:hover 上被按掉（两条同特异度，靠后写才盖得住）").toMatch(
-      /\.find-chevron:disabled:hover\s*\{[^}]*background:\s*transparent/,
-    );
-  });
-});

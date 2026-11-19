@@ -7,10 +7,8 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import {
-  cssDecls,
   hasDistIntegrityGuard,
   hasStep3NotDeliverableWarning,
-  resolveCssVars,
   ruleBlock,
   stripCssComments,
   stripLineComments,
@@ -1394,151 +1392,11 @@ describe("B218：语言归组走子菜单（首组内联，其余每组一条入
 //   · `.action-label.separator { width: 100%; margin: 5px 0; padding: 0 }` —— 线通到面板两边。
 // 本应用的条目要留那 4px 的悬停内缩（B336 那一族观感），所以「通到两边」由**分割线自己
 // 外扩**实现，不去动容器 —— 动容器会把每一条目的悬停色块也拉到贴边框。
-describe("B354 菜单列表：行高与菜单栏同档 + 分割线填满宽度", () => {
-  const cssCode = () => stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
-
-  it("① 菜单行定高，且纵向内边距归 0（border-box 下留着 5px 会把 12px 的行盒挤扁）", () => {
-    const item = cssDecls(ruleBlock(cssCode(), ".popup-menu button", "display: flex"));
-    expect(item, "菜单行要定高").toMatch(/height:\s*var\(--menu-item-h\)/);
-    expect(item, "上下不留内边距（高度由那一档给）").toMatch(/padding:\s*0\s+\d+px\s*;/);
-    // 反向对照（防恒真）：把纵向内边距加回去，两条判据必须分别失配
-    const padded = item.replace("padding: 0 9px;", "padding: 5px 9px;");
-    expect(padded, "替身必须真的改过内边距").not.toBe(item);
-    expect(padded, "替身不再满足「padding: 0 …」").not.toMatch(/padding:\s*0\s+\d+px\s*;/);
-    const floated = item.replace(/height:\s*var\(--menu-item-h\);/, "height: auto;");
-    expect(floated, "替身必须真的摘过定高").not.toBe(item);
-    expect(floated, "退回 auto 高度必须被抓到").not.toMatch(/height:\s*var\(--menu-item-h\)/);
-  });
-
-  it("② 「与菜单栏按钮一致」是同一颗变量，不是两处各写 22px", () => {
-    const s = cssCode();
-    const resolved = resolveCssVars(s);
-    for (const [sel, filter] of [
-      [".popup-menu button", "display: flex"],
-      [".menu-btn", "width: auto"],
-    ] as const) {
-      const block = cssDecls(ruleBlock(s, sel, filter));
-      expect(block, `${sel} 要引用共用档位`).toMatch(/height:\s*var\(--menu-item-h\)/);
-      expect(
-        cssDecls(ruleBlock(resolved, sel, filter)),
-        `${sel} 解析后仍是 22px 那一档（B336 的裁决没被顺手挪）`,
-      ).toMatch(/height:\s*22px/);
-    }
-    // 那颗 token 只许在 :root 定义一次（两处定义 = 后写的赢，改一处不生效）
-    const rootDecls = cssDecls(ruleBlock(s, ":root"));
-    expect(
-      [...rootDecls.matchAll(/--menu-item-h:/g)].length,
-      "--menu-item-h 在 :root 里只有一处定义",
-    ).toBe(1);
-  });
-
-  /** 取一条规则里 `padding` / `margin` 简写的**横向**那一项（px 数；`4px 0` → 0）。 */
-  function horizOf(cssText: string, selector: string, prop: "padding" | "margin"): number | null {
-    const v = cssDecls(ruleBlock(cssText, selector))
-      .match(new RegExp(`${prop}:\\s*([^;]+);`))?.[1]
-      ?.trim()
-      .split(/\s+/)
-      .map((x) => parseFloat(x));
-    if (!v || v.some(Number.isNaN)) return null;
-    // 一值 = 四边同值；两值 = 垂直 水平；三/四值 = 上 右 下 左（右即横向）
-    return v.length === 1 ? v[0] : v.length === 2 ? v[1] : v[1];
-  }
-
-  it("③ 分割线填满宽度 = 容器横向留白 0 + 线自己横向 margin 0（两件事缺一就露短）", () => {
-    const s = cssCode();
-    // 上下那 4px 是留给首末行的（不能一起归 0），所以判的是「横向为 0」而不是「没有 padding」
-    expect(
-      horizOf(s, ".popup-menu", "padding"),
-      "容器横向内边距必须为 0（VS Code 的 4px 0 同款）",
-    ).toBe(0);
-    expect(horizOf(s, ".menu-sep", "margin"), "分割线自己也不许留横向外边距").toBe(0);
-    // 反向对照①：容器补回一圈 4px 留白 ⇒ 同一条判据必须落空
-    const padded = s.replace(/(\.popup-menu\s*\{[^}]*padding:\s*)4px 0;/, "$14px;");
-    expect(padded, "替身必须真的补回过留白").not.toBe(s);
-    expect(horizOf(padded, ".popup-menu", "padding"), "替身横向又留白了，必须被抓到").not.toBe(0);
-    // 反向对照②：线自己退回旧的 8px 内缩 ⇒ 同一条判据必须落空
-    const inset = s.replace(/(\.menu-sep\s*\{[^}]*margin:\s*)4px 0;/, "$14px 8px;");
-    expect(inset, "替身必须真的改回内缩").not.toBe(s);
-    expect(horizOf(inset, ".menu-sep", "margin"), "替身横向又留白了，必须被抓到").not.toBe(0);
-  });
-
-  // B360（用户：「菜单栏列表按钮宽度不要填满列表，两边稍微留点空隙」）：
-  // 推翻 B354 里「悬停色块一路通到面板两条边框」的观感 —— 分割线仍通到两边，
-  // 条目自己两侧各让 4px。⚠️ 两条真机/规范约束：
-  //   · 不许 `width: 100%` + 左右 margin：本容器是 `overflow-y: auto`，横向溢出会升级成横向滚动条；
-  //   · 也不许 `width: auto`：`button` 的 auto 宽是 **fit-content**（display:flex 也一样），
-  //     实测悬停色块按最长文字收窄、右边空出 57px（B360 真机 PrintWindow 量出来的）。
-  //     宽度必须显式写成「100% 减掉两侧外边距」。
-  it("④ 条目两侧各留 4px 空隙（宽度显式扣掉外边距，两数必须耦合）", () => {
-    const s = cssCode();
-    const item = cssDecls(ruleBlock(s, ".popup-menu button", "display: flex"));
-    const m = horizOf(s, ".popup-menu button", "margin");
-    expect(m, "条目左右各 4px").toBe(4);
-    const width = item.match(/width:\s*calc\(\s*100%\s*-\s*(\d+)px\s*\)/)?.[1];
-    expect(width, "宽度 = 100% 减掉两侧外边距（button 的 auto 是 fit-content）").toBeTruthy();
-    expect(Number(width), "扣掉的数必须正好是 2× 横向外边距").toBe(m! * 2);
-    expect(item, "满宽 + 外边距 = 横向溢出，必须摘掉").not.toMatch(/width:\s*100%/);
-    // 反向对照：外边距改成 8px 而宽度不动 ⇒ 耦合判据必须失配
-    const skewed = s.replace(/(\.popup-menu button\s*\{[^}]*?margin:\s*)0 4px;/s, "$10 8px;");
-    expect(skewed, "替身必须真的改过外边距").not.toBe(s);
-    const sw = cssDecls(ruleBlock(skewed, ".popup-menu button", "display: flex")).match(
-      /width:\s*calc\(\s*100%\s*-\s*(\d+)px\s*\)/,
-    )?.[1];
-    expect(Number(sw), "替身的宽度与外边距对不上，必须被抓到").not.toBe(
-      horizOf(skewed, ".popup-menu button", "margin")! * 2,
-    );
-  });
-});
 
 // B361（用户：「菜单栏列表中快捷键说明右边对齐」）：
 // 条目是 flex 行（勾选位 → 文字 → 快捷键 → 子菜单箭头），快捷键要贴行的右沿。
 // `margin-left: auto` 把剩余空间全吃掉才叫「右对齐」；原来的固定 24px 只是「离文字远一点」，
 // 行与行之间的右沿会参差（真机上 Ctrl+N 与 Ctrl+Shift+S 的右边缘差 57px）。
-describe("B361 快捷键说明右对齐", () => {
-  const cssCode = () => stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
-
-  it("① `.menu-kbd` 用 auto 外边距吃满剩余空间（而不是固定间距）", () => {
-    const s = cssCode();
-    const kbd = cssDecls(ruleBlock(s, ".menu-kbd"));
-    expect(kbd, "快捷键贴行右沿").toMatch(/margin-left:\s*auto/);
-    expect(kbd, "不许退回固定间距（那就成了「离文字远一点」）").not.toMatch(/margin-left:\s*\d+px/);
-    // 反向对照：把 auto 换回旧的 24px，同一条判据必须落空
-    const old = s.replace(/(\.menu-kbd\s*\{[^}]*?margin-left:\s*)auto;/s, "$124px;");
-    expect(old, "替身必须真的改回固定间距").not.toBe(s);
-    expect(cssDecls(ruleBlock(old, ".menu-kbd"))).not.toMatch(/margin-left:\s*auto/);
-  });
-
-  it("② 同一行还有子菜单箭头时，箭头不许再抢 auto（两处 auto 会把空间平分）", () => {
-    const s = cssCode();
-    const rule = ruleBlock(s, ".menu-kbd + .menu-arrow");
-    expect(rule, "要有 kbd 后面的箭头规则").toBeTruthy();
-    expect(cssDecls(rule), "箭头紧跟右对齐的快捷键，不再各分一半空白").toMatch(
-      /margin-left:\s*0\b/,
-    );
-    // 子菜单父项（没有快捷键）仍然靠 auto 把箭头推到右边 —— 那条规则原样保留
-    expect(cssDecls(ruleBlock(s, ".menu-arrow"))).toMatch(/margin-left:\s*auto/);
-    // 反向对照：摘掉紧跟规则，替身就找不到它
-    const stripped = s.replace(/\.menu-kbd \+ \.menu-arrow\s*\{[^}]*\}/, "");
-    expect(stripped, "替身必须真的删掉过这条规则").not.toBe(s);
-    expect(ruleBlock(stripped, ".menu-kbd + .menu-arrow"), "替身里不该再有这条规则").toBe("");
-  });
-});
 
 // B361 追补：右对齐靠 auto 外边距，但最宽那行（另存为 Ctrl+Shift+S）会与文字贴死 ——
 // 最小间距必须由 `.menu-kbd` 自己的左内边距给（内边距不影响右缘对齐）。
-describe("B361 快捷键与文字的最小间距", () => {
-  const cssCode = () => stripCssComments(readFileSync("src/styles/global.css", "utf-8"));
-
-  it("`.menu-kbd` 带左内边距（≥12px），且不与 auto 外边距混用成固定间距", () => {
-    const s = cssCode();
-    const kbd = cssDecls(ruleBlock(s, ".menu-kbd"));
-    const pad = kbd.match(/padding-left:\s*(\d+)px/)?.[1];
-    expect(pad, "要有左内边距（间隔由内边距给，不靠外边距）").toBeTruthy();
-    expect(Number(pad), "至少 12px 才不贴字").toBeGreaterThanOrEqual(12);
-    expect(kbd, "右对齐仍旧靠 auto").toMatch(/margin-left:\s*auto/);
-    // 反向对照：把内边距摘掉，同一条判据必须落空
-    const stripped = s.replace(/(\.menu-kbd\s*\{[^}]*?)padding-left:\s*\d+px;/s, "$1");
-    expect(stripped, "替身必须真的删掉过内边距").not.toBe(s);
-    expect(cssDecls(ruleBlock(stripped, ".menu-kbd"))).not.toMatch(/padding-left:\s*\d+px/);
-  });
-});

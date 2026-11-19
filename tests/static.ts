@@ -183,7 +183,7 @@ export function cssDecls(block: string): string {
  *
  * 为什么要这一层（B337）：字号统一成字阶 token 后，样式里不再写字面 px。而行高预算、
  * 胶囊高度这类契约判的是「用户实际拿到多大一行」，那是产品事实，token 名只是实现细节
- * ⇒ 判像素的先过这层展开，判 token 的（tests/type-scale.test.ts）读原文。
+ * ⇒ 判像素的先过这层展开，判 token 的读原文。
  * 少了这层，改一处 token 取值就得手写着同步七八条守卫里的 px —— 那些守卫恰恰是靠
  * 「像素变了要红」来防回归的，把它们改成只认 token 名就等于把闸拆了。
  *

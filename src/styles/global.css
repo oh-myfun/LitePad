@@ -22,7 +22,7 @@
   --font-mono:
     "Cascadia Code", "JetBrains Mono", "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace;
   --font-size: 14px;
-  /* B337 · UI 字阶。chrome 只准引用这五颗，别再写裸数值 —— 判据见 tests/type-scale.test.ts。
+  /* B337 · UI 字阶。chrome 只准引用这五颗，别再写裸数值。
      meta  次级说明（快捷键串 / 分组头 / 计数 / 路径行 / 面板标题行）
      ui    主 UI 文本（菜单与弹层列表 / 标签 / 树 / 最近打开 / 状态栏 / 设置页正文）
      input 命令面板那种大输入场（打字要看清的地方）
