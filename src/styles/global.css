@@ -5472,10 +5472,20 @@ body.tab-drag-active * {
   border-radius: 3px;
 }
 
+/* 勾选位对齐 VS Code `menu.ts` 的 `.menu-item-check`：定宽字形格、颜色随行前景，
+   字形用 codicon check（不写死 ✓ 字符）。codicon.css 的 font 简写自带 16px，
+   这里按菜单字阶收到 12px，勾选块才不会比文字抢眼。 */
 .popup-menu button .check {
   width: 16px;
   flex: 0 0 16px;
-  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+}
+
+.check .codicon {
+  font-size: var(--fs-ui);
 }
 
 /* B447 · 菜单项行首的字形格（工具条折进下拉的那些子项）。

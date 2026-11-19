@@ -215,7 +215,8 @@ function fillMenu(menu: HTMLElement, items: MenuItem[], opts?: PopupMenuOptions)
     // 当前项（B47）：不打 ✓，改整行观感（与活动标签一致），见 .menu-item-current
     const check = document.createElement("span");
     check.className = "check";
-    check.textContent = !item.active && item.checked ? "✓" : "";
+    check.setAttribute("aria-hidden", "true");
+    check.innerHTML = !item.active && item.checked ? CODICONS.check : "";
     if (item.active) btn.classList.add("menu-item-current");
 
     const [text, shortcut] = (item.label ?? "").split("\t");
@@ -341,10 +342,11 @@ function positionSubmenu(menu: HTMLElement, btn: HTMLElement): void {
   const parentMenu = btn.closest(".popup-menu") as HTMLElement | null;
   const pr = parentMenu?.getBoundingClientRect();
 
-  // 优先贴父项右侧；右边界不够则翻到父菜单左侧
-  let left = r.right - 2;
+  // 与 VS Code `menu.ts` 同口径：子菜单贴父菜单的外沿展开，不做像素重叠。
+  // 父项按钮两侧各让 4px（B360），按按钮右缘定位会让子面板压进父面板 6px。
+  let left = pr ? pr.right : r.right;
   if (left + w > window.innerWidth - 8) {
-    left = pr ? pr.left - w + 2 : window.innerWidth - w - 8;
+    left = pr ? pr.left - w : window.innerWidth - w - 8;
   }
   left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
 

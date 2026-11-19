@@ -332,11 +332,14 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
     const wrapItem = [...document.querySelectorAll(".popup-menu > button")].find((b) =>
       (b.textContent ?? "").includes("自动换行"),
     );
-    expect(wrapItem?.querySelector(".check")?.textContent, "自动换行应为勾选态").toBe("✓");
+    expect(
+      wrapItem?.querySelector(".check .codicon-check"),
+      "自动换行应为勾选态（codicon check，不是文字 ✓）",
+    ).toBeTruthy();
     const invisItem = [...document.querySelectorAll(".popup-menu > button")].find((b) =>
       (b.textContent ?? "").includes("显示不可见字符"),
     );
-    expect(invisItem?.querySelector(".check")?.textContent, "默认不勾选").toBe("");
+    expect(invisItem?.querySelector(".check .codicon"), "默认不勾选").toBeNull();
     wrap = false;
     statusbar = true;
     invisibles = true;
@@ -346,11 +349,11 @@ describe("菜单栏（文件 / 编辑 / 查看 / 帮助）", () => {
     const wrap2 = [...document.querySelectorAll(".popup-menu > button")].find((b) =>
       (b.textContent ?? "").includes("自动换行"),
     );
-    expect(wrap2?.querySelector(".check")?.textContent).toBe("");
+    expect(wrap2?.querySelector(".check .codicon"), "取消勾选后字形也要撤掉").toBeNull();
     const invis2 = [...document.querySelectorAll(".popup-menu > button")].find((b) =>
       (b.textContent ?? "").includes("显示不可见字符"),
     );
-    expect(invis2?.querySelector(".check")?.textContent, "勾选态应实时求值").toBe("✓");
+    expect(invis2?.querySelector(".check .codicon-check"), "勾选态应实时求值").toBeTruthy();
   });
 
   it("B106：设置入口在「文件」菜单，不再有独立的「设置」菜单", async () => {
@@ -1337,6 +1340,45 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
       "那枚必须是右向 chevron（类名是 codicon-chevron-right，不是 chevron-right）",
     ).toBe(true);
     expect(arrow!.textContent, "字形不承载文字（<i> 是空的，靠字体画）").toBe("");
+    closePopupMenu();
+  });
+
+  it("子菜单贴父菜单外沿展开，不压进父面板", () => {
+    showPopupMenu(null, [{ label: "父项", submenu: [{ label: "子项" }] }]);
+    const root = document.querySelector(".popup-menu") as HTMLElement;
+    const pr = {
+      left: 100,
+      right: 250,
+      top: 100,
+      bottom: 300,
+      width: 150,
+      height: 200,
+      x: 100,
+      y: 100,
+      toJSON: () => ({}),
+    } as DOMRect;
+    root.getBoundingClientRect = () => pr;
+
+    const btn = root.querySelector("button.has-submenu") as HTMLElement;
+    // 父项按钮两侧各让 4px（B360）：按按钮右缘 246 定位会压进父面板 4px。
+    btn.getBoundingClientRect = () =>
+      ({
+        ...pr,
+        left: 104,
+        right: 246,
+        top: 112,
+        bottom: 134,
+        width: 142,
+        height: 22,
+        x: 104,
+        y: 112,
+      }) as DOMRect;
+
+    btn.dispatchEvent(new MouseEvent("mouseenter"));
+
+    const child = document.querySelectorAll(".popup-menu")[1] as HTMLElement;
+    expect(child, "子菜单应已展开").toBeTruthy();
+    expect(parseFloat(child.style.left), "子菜单左缘必须贴父菜单右边框").toBe(250);
     closePopupMenu();
   });
 });
