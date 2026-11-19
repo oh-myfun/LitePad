@@ -14,6 +14,9 @@ import { initUpdater, type UpdaterHandle } from "../src/shell/updater";
 
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn() }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
+vi.mock("../src/markdown/links", () => ({ openExternalUrl: vi.fn() }));
+
+import { openExternalUrl } from "../src/markdown/links";
 
 import type { Update } from "@tauri-apps/plugin-updater";
 
@@ -68,6 +71,7 @@ function updBtn(): HTMLButtonElement {
 beforeEach(() => {
   vi.mocked(check).mockReset();
   vi.mocked(relaunch).mockReset();
+  vi.mocked(openExternalUrl).mockReset();
 });
 
 afterEach(() => {
@@ -150,6 +154,43 @@ describe("B107 更新状态机", () => {
     expect(updBtn().querySelector(".upd-label")?.textContent).toBe("下载中 60%");
   });
 
+  it("下载中：悬停展开详情面板（字节/百分比/版本 + 发布页入口）", async () => {
+    let captured: DownloadCb | undefined;
+    const update = fakeUpdate("0.14.0");
+    (update.downloadAndInstall as ReturnType<typeof vi.fn>).mockImplementation(
+      async (cb?: DownloadCb) => {
+        captured = cb;
+        await new Promise(() => {});
+      },
+    );
+    vi.mocked(check).mockResolvedValue(update);
+    const handle = init([], []);
+    await handle.checkNow();
+    updBtn().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await vi.waitFor(() => expect(captured).toBeTruthy());
+    captured?.({ event: "Started", data: { contentLength: 100 } });
+    captured?.({ event: "Progress", data: { chunkLength: 40 } });
+
+    const pop = document.querySelector<HTMLElement>(".upd-pop");
+    expect(pop, "面板应在初始化时建好，只是默认收起").toBeTruthy();
+    updBtn().dispatchEvent(new MouseEvent("mouseenter"));
+    expect(pop!.classList.contains("is-open"), "悬停下载中的键应展开面板").toBe(true);
+    expect(pop!.querySelector(".upd-pop-pct")?.textContent).toBe("40%");
+    expect(pop!.querySelector(".upd-pop-bytes")?.textContent).toBe("40 B / 100 B");
+    expect(pop!.querySelector(".upd-pop-ver")?.textContent).toContain("0.14.0");
+    expect(pop!.querySelector(".upd-pop-speed")?.textContent).toBe("计算速度…");
+
+    // 悬停能生效的前提：不能用原生 disabled（禁用控件不派发 mouseenter）
+    expect(updBtn().disabled).toBe(false);
+    expect(updBtn().getAttribute("aria-disabled")).toBe("true");
+
+    pop!.querySelector<HTMLButtonElement>(".upd-pop-link")!.click();
+    expect(vi.mocked(openExternalUrl)).toHaveBeenCalledWith(
+      "https://github.com/oh-myfun/LitePad/releases/latest",
+    );
+    expect(pop!.classList.contains("is-open"), "点完发布页应收起面板").toBe(false);
+  });
+
   it("B311 位置：更新键插在 .title-actions 最左边（= 左栏开关那颗的左侧）", async () => {
     vi.mocked(check).mockResolvedValue(fakeUpdate("0.14.0"));
     const host = makeHost();
@@ -160,7 +201,10 @@ describe("B107 更新状态机", () => {
       initialDelayMs: 0,
       intervalMs: 0,
     });
-    const kids = [...host.children].map((el) => el.id || el.className);
+    // 面板是固定定位的浮层，紧跟键只为 Tab 顺序，不参与标题栏排布；比位置时先剔掉
+    const kids = [...host.children]
+      .filter((el) => !el.classList.contains("upd-pop"))
+      .map((el) => el.id || el.className);
     expect(kids[0], "更新键必须是第一个孩子").toContain("upd-btn");
     expect(kids[1], "紧跟其后才是左栏开关").toBe("sidebar-toggle");
     expect(kids[2], "置顶键仍在最后").toBe("win-pin");

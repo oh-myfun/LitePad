@@ -3562,17 +3562,18 @@ button:focus-visible {
   color: var(--accent-fg);
 }
 
-/* 检查中 / 下载中没有可点的动作：原生 disabled（光标回箭头），但保留文字与进度线。 */
-.title-btn.upd-btn:disabled {
+/* 检查中 / 下载中没有可点的动作。⚠️ 不用原生 :disabled —— 禁用控件不派发
+   mouseenter，下载中的详情面板就弹不出来；.is-disabled 同时是光标约定的白名单。 */
+.title-btn.upd-btn.is-disabled {
   cursor: default;
 }
 
-.title-btn.upd-btn:disabled:hover {
+.title-btn.upd-btn.is-disabled:hover {
   background: transparent;
   color: var(--titlebar-fg);
 }
 
-.title-btn.upd-btn[data-phase="downloading"]:disabled:hover {
+.title-btn.upd-btn[data-phase="downloading"].is-disabled:hover {
   background: transparent;
 }
 
@@ -3592,6 +3593,95 @@ button:focus-visible {
   .title-btn.upd-btn.is-spin .codicon {
     animation: none;
   }
+}
+
+/* 下载中的详情面板（2026-11-19 用户选定 B 档）：标题带百分比、版本一行、
+   4px 进度条、单行字节/速度/剩余、一个发布页入口。挂在键后、固定定位，
+   不参与标题栏布局；宽 264 是实测能放下「1.4 MB / 3.3 MB + 1.2 MB/s · 剩余 2 秒」
+   且不挤掉标题的一档。 */
+.upd-pop {
+  position: fixed;
+  z-index: 1100;
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  width: 264px;
+  max-width: calc(100vw - 16px);
+  padding: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  color: var(--fg);
+}
+
+.upd-pop.is-open {
+  display: flex;
+}
+
+.upd-pop-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.upd-pop-title {
+  font-size: var(--fs-ui);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.upd-pop-pct {
+  font-family: var(--font-mono);
+  font-size: var(--fs-ui);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.upd-pop-ver {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--fg-muted);
+}
+
+.upd-pop-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  overflow: hidden;
+}
+
+.upd-pop-bar i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+}
+
+.upd-pop-stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--fs-meta);
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.upd-pop-link {
+  align-self: flex-end;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+}
+
+.upd-pop-link:hover {
+  background: var(--bg-hover);
 }
 
 /* ---------- 开关（B111：设置页布尔项用自绘 switch 取代原生 checkbox） ----------

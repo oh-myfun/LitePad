@@ -24,8 +24,12 @@
 
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { openExternalUrl } from "../markdown/links";
 import { CODICONS } from "./codicons";
-import { setTip } from "./tooltip";
+import { clearTip, setTip } from "./tooltip";
+
+/** 发布页：与 tauri.conf.json 的 updater endpoint 同仓，固定指向最新 release。 */
+const RELEASES_URL = "https://github.com/oh-myfun/LitePad/releases/latest";
 
 export type UpdatePhase = "idle" | "checking" | "available" | "downloading" | "ready";
 
@@ -62,6 +66,12 @@ export function initUpdater(opts: UpdaterOptions): UpdaterHandle {
   let version = "";
   let percent = 0;
   let busy = false; // 检查/安装共用的防重入锁
+  // 下载面板要的原始量：字节总数、下载量、平滑后的速度（事件里只有 chunkLength）
+  let downloaded = 0;
+  let totalBytes = 0;
+  let speed = 0;
+  let lastSampleAt = 0;
+  let lastSampleBytes = 0;
 
   // 键的骨架只建一次：图标 / 文字 / 底部进度线。下载时每 1% 只改文字与线宽，
   // 不重建 DOM（重建会让胶囊闪一下，也会丢掉正在进行的悬停与焦点）。
@@ -71,22 +81,114 @@ export function initUpdater(opts: UpdaterOptions): UpdaterHandle {
   const label = btn.querySelector<HTMLElement>(".upd-label")!;
   const fill = btn.querySelector<HTMLElement>(".upd-track i")!;
 
+  // 下载中的详情面板（用户 2026-11-19 选定 B 档：标题带百分比、版本一行、
+  // 进度条 + 单行统计、一个发布页入口）。挂在键的**紧后面**是为了 Tab 顺序：
+  // 固定定位不参与标题栏布局，但 DOM 上紧跟键，键盘用户 Tab 一下就能进到发布页按钮。
+  const pop = document.createElement("div");
+  pop.className = "upd-pop";
+  pop.innerHTML =
+    '<div class="upd-pop-head"><span class="upd-pop-title">正在下载更新</span><span class="upd-pop-pct"></span></div>' +
+    '<div class="upd-pop-ver"></div>' +
+    '<div class="upd-pop-bar"><i></i></div>' +
+    '<div class="upd-pop-stats"><span class="upd-pop-bytes"></span><span class="upd-pop-speed"></span></div>' +
+    '<button type="button" class="upd-pop-link">打开发布页</button>';
+  opts.host.insertBefore(pop, btn.nextSibling);
+  const popPct = pop.querySelector<HTMLElement>(".upd-pop-pct")!;
+  const popVer = pop.querySelector<HTMLElement>(".upd-pop-ver")!;
+  const popFill = pop.querySelector<HTMLElement>(".upd-pop-bar i")!;
+  const popBytes = pop.querySelector<HTMLElement>(".upd-pop-bytes")!;
+  const popSpeed = pop.querySelector<HTMLElement>(".upd-pop-speed")!;
+  const popLink = pop.querySelector<HTMLButtonElement>(".upd-pop-link")!;
+
+  let hideTimer: number | undefined;
+
   function setIcon(code: string): void {
     if (ico.innerHTML !== code) ico.innerHTML = code;
+  }
+
+  function formatBytes(n: number): string {
+    if (n < 1024) return `${n} B`;
+    const kb = n / 1024;
+    if (kb < 1024) return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} KB`;
+    return `${(kb / 1024).toFixed(1)} MB`;
+  }
+
+  function formatSpeed(bps: number): string {
+    const kb = bps / 1024;
+    if (kb < 1024) return `${Math.max(1, Math.round(kb))} KB/s`;
+    return `${(kb / 1024).toFixed(1)} MB/s`;
+  }
+
+  function formatEta(sec: number): string {
+    if (sec < 1) return "不到 1 秒";
+    if (sec < 60) return `${Math.ceil(sec)} 秒`;
+    return `${Math.ceil(sec / 60)} 分钟`;
+  }
+
+  /** 面板只在「下载中」出现；内容随每次 Progress 更新，但 DOM 不重建。 */
+  function updatePanel(): void {
+    const pct = `${percent}%`;
+    popPct.textContent = pct;
+    popFill.style.width = pct;
+    const from = pending?.currentVersion;
+    popVer.textContent = from ? `v${from} → v${version}` : `更新到 v${version}`;
+    popBytes.textContent =
+      totalBytes > 0
+        ? `${formatBytes(downloaded)} / ${formatBytes(totalBytes)}`
+        : formatBytes(downloaded);
+    popSpeed.textContent =
+      speed > 0
+        ? `${formatSpeed(speed)}${
+            totalBytes > downloaded ? ` · 剩余 ${formatEta((totalBytes - downloaded) / speed)}` : ""
+          }`
+        : "计算速度…";
+  }
+
+  /** 先亮出来再量尺寸：display:none 时 offsetWidth 为 0，量不出面板宽度。 */
+  function showPanel(): void {
+    if (phase !== "downloading") return;
+    updatePanel();
+    pop.classList.add("is-open");
+    const r = btn.getBoundingClientRect();
+    const w = pop.offsetWidth;
+    const h = pop.offsetHeight;
+    const left = Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w));
+    let top = r.bottom + 6;
+    if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
+    pop.style.left = `${left}px`;
+    pop.style.top = `${top}px`;
+  }
+
+  function hidePanel(): void {
+    pop.classList.remove("is-open");
+  }
+
+  function cancelHide(): void {
+    if (hideTimer !== undefined) window.clearTimeout(hideTimer);
+    hideTimer = undefined;
+  }
+
+  function scheduleHide(): void {
+    cancelHide();
+    hideTimer = window.setTimeout(hidePanel, 150);
   }
 
   /** 按阶段渲染按钮：文字条即状态（InkNote 款，百分比 + 底部细线）。 */
   function render(): void {
     btn.classList.toggle("is-spin", phase === "checking");
     btn.dataset.phase = phase;
+    if (phase !== "downloading") hidePanel();
     if (phase === "idle") {
       btn.style.display = "none";
       return;
     }
     btn.style.display = "";
-    // 检查中 / 下载中没有可点的动作：用原生 disabled，光标自然回到箭头，
-    // 也免得连点触发第二轮。点击处理器只认 available 与 ready 两档。
-    btn.disabled = phase === "checking" || phase === "downloading";
+    // 检查中 / 下载中没有可点的动作。⚠️ 不用原生 disabled：禁用控件不派发
+    // mouseenter，下载中的悬停面板就永远弹不出来；用 .is-disabled（光标约定
+    // 也认这个类）+ aria-disabled，点击由下面的处理器只认 available / ready。
+    const inert = phase === "checking" || phase === "downloading";
+    btn.classList.toggle("is-disabled", inert);
+    btn.setAttribute("aria-disabled", String(inert));
     if (phase === "available") {
       setIcon(CODICONS.cloudDownload);
       label.textContent = `更新到 v${version}`;
@@ -101,7 +203,9 @@ export function initUpdater(opts: UpdaterOptions): UpdaterHandle {
       setIcon(CODICONS.cloudDownload);
       label.textContent = `下载中 ${percent}%`;
       fill.style.width = `${percent}%`;
-      setTip(btn, `正在下载 v${version}…`, { detail: `${percent}%` });
+      // 下载中改由详情面板承载字节/速度，普通 tooltip 会和面板叠在一起
+      clearTip(btn);
+      updatePanel();
       btn.setAttribute("aria-label", `正在下载更新 v${version}，已完成 ${percent}%`);
     } else {
       setIcon(CODICONS.refresh);
@@ -157,19 +261,36 @@ export function initUpdater(opts: UpdaterOptions): UpdaterHandle {
     busy = true;
     phase = "downloading";
     percent = 0;
+    downloaded = 0;
+    totalBytes = 0;
+    speed = 0;
+    lastSampleAt = 0;
+    lastSampleBytes = 0;
     render();
     try {
       // 安装会杀掉当前进程：先把会话现场落盘（热退出同款），重启后靠会话恢复回原样
       await opts.persist();
-      let downloaded = 0;
-      let total = 0;
       let lastPercent = -1;
       await pending.downloadAndInstall((event) => {
         if (event.event === "Started") {
-          total = event.data.contentLength ?? 0;
+          totalBytes = event.data.contentLength ?? 0;
+          lastSampleAt = performance.now();
+          lastSampleBytes = 0;
+          updatePanel();
         } else if (event.event === "Progress") {
           downloaded += event.data.chunkLength;
-          percent = total > 0 ? Math.min(100, Math.floor((downloaded / total) * 100)) : 0;
+          percent = totalBytes > 0 ? Math.min(100, Math.floor((downloaded / totalBytes) * 100)) : 0;
+          // 速度按 200ms 以上的间隔采样并做 EMA：太密的 chunk 会让瞬时值乱跳
+          const now = performance.now();
+          const dt = now - lastSampleAt;
+          if (dt >= 200) {
+            const inst = (downloaded - lastSampleBytes) / (dt / 1000);
+            speed = speed > 0 ? speed * 0.7 + inst * 0.3 : inst;
+            lastSampleAt = now;
+            lastSampleBytes = downloaded;
+          }
+          // 面板跟着每个 chunk 更新字节/速度；按钮只在整数百分比变化时重画
+          updatePanel();
           if (percent !== lastPercent) {
             lastPercent = percent;
             render();
@@ -177,6 +298,7 @@ export function initUpdater(opts: UpdaterOptions): UpdaterHandle {
         } else if (event.event === "Finished") {
           phase = "ready";
           percent = 100;
+          speed = 0;
           render();
         }
       });
@@ -202,6 +324,50 @@ export function initUpdater(opts: UpdaterOptions): UpdaterHandle {
         await relaunch();
       })();
   });
+
+  // 面板的悬停/焦点闭环：离开键 150ms 后才收，给指针跨过 6px 间隙进面板留时间；
+  // 焦点从键移到面板里的按钮时保持展开，Tab 出去或 Esc 才收。
+  let skipFocusShow = false;
+  btn.addEventListener("mouseenter", () => {
+    cancelHide();
+    showPanel();
+  });
+  btn.addEventListener("mouseleave", scheduleHide);
+  pop.addEventListener("mouseenter", cancelHide);
+  pop.addEventListener("mouseleave", scheduleHide);
+  btn.addEventListener("focus", () => {
+    if (skipFocusShow) {
+      skipFocusShow = false;
+      return;
+    }
+    showPanel();
+  });
+  btn.addEventListener("blur", (e) => {
+    const to = e.relatedTarget as Node | null;
+    if (!to || !pop.contains(to)) hidePanel();
+  });
+  pop.addEventListener("focusout", (e) => {
+    const to = e.relatedTarget as Node | null;
+    if (to && (to === btn || pop.contains(to))) return;
+    hidePanel();
+  });
+  const onPanelKey = (e: KeyboardEvent): void => {
+    if (e.key !== "Escape" || !pop.classList.contains("is-open")) return;
+    // 收面板并把焦点还给键；这次 focus 不能再把面板弹开
+    skipFocusShow = true;
+    hidePanel();
+    btn.focus();
+    window.setTimeout(() => {
+      skipFocusShow = false;
+    }, 0);
+  };
+  btn.addEventListener("keydown", onPanelKey);
+  pop.addEventListener("keydown", onPanelKey);
+  popLink.addEventListener("click", () => {
+    void openExternalUrl(RELEASES_URL);
+    hidePanel();
+  });
+  window.addEventListener("resize", hidePanel);
 
   render();
 
