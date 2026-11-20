@@ -435,15 +435,28 @@ describe("B314 资源管理器面板", () => {
     );
   });
 
-  it("刷新重读根与展开着的层；全部折叠收掉子目录但留着根", async () => {
+  it("刷新重读根与展开着的层；全部折叠连根目录一起收，再点一下全展开", async () => {
     await click(rowAt("notes"));
     h.calls.length = 0;
     await click(rowAt("笔记").querySelector<HTMLElement>(".explorer-root-refresh")!);
     await vi.waitFor(() => expect(h.calls).toContain(`${ROOT}\\notes`));
 
     await click(ui.explorerCollapse);
-    expect(names(), "折叠之后只剩根与顶层").toEqual(["笔记", "notes", "b.md", "a.md"]);
+    expect(names(), "B493：根行也一起收，树上只剩根名").toEqual(["笔记"]);
     expect(store.expandedPaths()).toEqual([]);
+    expect(ui.explorerCollapse.getAttribute("aria-label"), "全收着 ⇒ 键说「全部展开」").toBe(
+      "全部展开",
+    );
+    expect(ui.explorerCollapse.getAttribute("aria-pressed")).toBe("true");
+
+    await click(ui.explorerCollapse);
+    expect(names(), "再点一下：根行放回顶层（子目录保持收起）").toEqual([
+      "笔记",
+      "notes",
+      "b.md",
+      "a.md",
+    ]);
+    expect(ui.explorerCollapse.getAttribute("aria-label")).toBe("全部折叠");
   });
 
   it("读不了的那一层画一句能读的话，别层照旧", async () => {

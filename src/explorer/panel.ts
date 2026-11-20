@@ -104,7 +104,8 @@ let renaming: { path: string; dir: string } | null = null;
  * B424：哪些根那一行**被收起**了（存折叠的那几根，不是存展开的）。
  * 空表 = 全都摊开 —— 新加的一根、启动回放的一根都默认摊开（VS Code / InkNote 都是这样：
  * 「加进来就该看得见里面」）。不跟 `store.expanded` 混一格：那一格记的是树里的目录，
- * 「全部折叠」要清得掉它，而根那一行必须留着（清掉就没法把整块收干净了）。
+ * 「全部折叠」本来只清得掉它；B493（用户点名）之后连根行也要一起收，两册都动、但各记各的
+ * —— 根行收着时依旧必须能凭这册把它放回来。
  */
 const rootsCollapsed = new Set<string>();
 /** 每一行的父亲与类型：渲染时顺手记下，新建目标目录靠它算，**不做路径字符串手术**。 */
@@ -717,17 +718,28 @@ function filterDirPaths(): string[] {
   return out;
 }
 
+/** 常规树里「全都收着」= 每一根根行都收着（子目录那一册由 `collapseAll` 清空）。 */
+function rootsAllCollapsed(): boolean {
+  const roots = getRoots();
+  return roots.length > 0 && roots.every((r) => rootsCollapsed.has(normPath(r)));
+}
+
 /** 顶部那颗键与菜单那一项共用的现状：可折的目录有哪些、是不是已经全收着。 */
 function foldState(): { dirs: string[]; folded: boolean } {
-  const dirs = filterOn() ? filterDirPaths() : [];
-  return { dirs, folded: dirs.length > 0 && dirs.every((p) => filterCollapsed.has(p)) };
+  if (filterOn()) {
+    const dirs = filterDirPaths();
+    return { dirs, folded: dirs.length > 0 && dirs.every((p) => filterCollapsed.has(p)) };
+  }
+  // B493：常规树也按「根行全收着」翻 —— 全收之后再按一下就是全部展开（只放根行）。
+  return { dirs: [], folded: rootsAllCollapsed() };
 }
 
 /**
  * 头部那颗折叠键当下该说哪句话（B428，用户点名：「过滤后顶部折叠展开要能对过滤后
  * 文件/目录进行折叠展开」）。
  *
- * · 常规树：永远是「全部折叠」、永远可点（没根时整排键由 `.no-root` 收起）；
+ * · 常规树：按键当下的状态翻 —— 没收干净就是「全部折叠」（连根行一起收），
+ *   已经全收着就是「全部展开」（只放根行，不递归读盘）；没根时整排键由 `.no-root` 收起；
  * · 过滤态：主语换成**命中树**；命中里一个可折的目录都没有时**禁用** ——
  *   不做「按下去没反应」的死键。收放只动 `filterCollapsed` 那一册，常规树的
  *   展开缓存（store 的 `expanded`）不归它管，也不许被它改。
@@ -1431,13 +1443,14 @@ function blankMenu(): MenuItem[] {
     { label: "打开文件夹", onSelect: () => void promptOpenFolder() },
     { label: "移除全部目录", onSelect: () => void closeFolder() },
     { separator: true },
-    { label: "全部折叠", onSelect: () => collapseAllHere() },
+    { label: foldState().folded ? "全部展开" : "全部折叠", onSelect: () => collapseAllHere() },
   ];
 }
 
 /**
  * 头部那颗键与菜单里那一条**共用**：
- * · 常规树：收的是子目录，各根行自己留着（否则整块像被清空了）；
+ * · 常规树：B493（用户点名）**连根行一起收**；已经全收着时再按一下 = 全部展开根行。
+ *   子目录那一册同时清空（收起来就该连里面一起收），展开时不递归读盘，只放根行那层。
  * · 过滤态（B428，用户点名）：主语换成**命中树** —— 所有带子项的目录一起收；
  *   全收着时再按一下 = 全部展开（连手动收起的根行一起放开）。只动 `filterCollapsed`，
  *   常规树的展开缓存一个不碰。
@@ -1451,8 +1464,12 @@ function collapseAllHere(): void {
     renderTree();
     return;
   }
-  collapseAll();
-  rootsCollapsed.clear();
+  if (rootsAllCollapsed()) {
+    rootsCollapsed.clear();
+  } else {
+    collapseAll();
+    for (const r of getRoots()) rootsCollapsed.add(normPath(r));
+  }
   void persistExplorer();
   renderTree();
 }
