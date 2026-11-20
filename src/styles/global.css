@@ -5464,20 +5464,22 @@ body.tab-drag-active * {
   /* B354（用户点名「紧凑一点，高度与菜单栏按钮一致」）：行高与菜单栏那颗键同取
      `--menu-item-h`。纵向内边距必须归 0 —— 这一档是 border-box，留着 `5px` 就等于
      把 12px 的字挤进 22−10=12px 的内容盒里（正好卡住行盒，中文会被削上下沿）。
-     横向 9px 保留：文字要离悬停色块左沿有一点距离（VS Code 那边是 `padding: 0 2em`，
-     因为它把勾选位算在 padding 里）。 */
+     横向只留右侧 9px：左侧的留白由勾选格那 2em 槽自己给（VS Code 同款口径）。 */
   height: var(--menu-item-h);
-  padding: 0 9px;
+  padding: 0 9px 0 0;
   text-align: left;
   border-radius: 3px;
 }
 
-/* 勾选位对齐 VS Code `menu.ts` 的 `.menu-item-check`：定宽字形格、颜色随行前景，
-   字形用 codicon check（不写死 ✓ 字符）。codicon.css 的 font 简写自带 16px，
+/* 勾选位对齐 VS Code `menu.ts` 的 `.menu-item-check`：2em 宽的格子、字形在格内居中，
+   标签从格子右沿起排（那边 `.action-label` 的 `padding: 0 2em` 就是这层留白）。
+   格子内的半格空白让钩子不贴左沿，右半格把钩子和文字隔开 —— 两边各 0.5em，
+   1em 字形正好居中；宽度跟随菜单字阶，不写死像素。
+   字形用 codicon check（不写死 ✓ 字符）；codicon.css 的 font 简写自带 16px，
    这里按菜单字阶收到 12px，勾选块才不会比文字抢眼。 */
 .popup-menu button .check {
-  width: 16px;
-  flex: 0 0 16px;
+  width: 2em;
+  flex: 0 0 2em;
   display: inline-flex;
   align-items: center;
   justify-content: center;

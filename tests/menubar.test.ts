@@ -7,6 +7,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import {
+  cssDecls,
   hasDistIntegrityGuard,
   hasStep3NotDeliverableWarning,
   ruleBlock,
@@ -1307,6 +1308,30 @@ describe("B42：菜单重组为 文件/编辑/查看/设置/帮助", () => {
     const css = readFileSync("src/styles/global.css", "utf-8");
     expect(css, "子菜单箭头样式").toContain(".menu-arrow");
     expect(css, "长菜单必须自身滚动").toMatch(/\.popup-menu\s*\{[\s\S]*?overflow-y:\s*auto/);
+  });
+
+  it("勾选格按 VS Code 的 2em 槽排版：钩子不贴左沿，与文字之间留半格", () => {
+    const css = readFileSync("src/styles/global.css", "utf-8");
+    // 2em 格 + 1em 字形居中 ⇒ 钩子左右各 0.5em（12px 字阶下即 6px）。
+    // 行首内边距必须归零，否则那半格会被撑成一整格（用户点名「钩子左边空白太多」）。
+    expect(cssDecls(ruleBlock(css, ".popup-menu button")), "条目左内边距必须归零").toMatch(
+      /padding:\s*0 9px 0 0;/,
+    );
+    const check = cssDecls(ruleBlock(css, ".popup-menu button .check"));
+    expect(check, "勾选格宽度 = VS Code .menu-item-check 的 2em").toMatch(/width:\s*2em;/);
+    expect(check, "flex 基准同步 2em（不许被文字挤扁）").toMatch(/flex:\s*0 0 2em;/);
+    expect(check, "字形在格内居中（左右各半格）").toMatch(/justify-content:\s*center;/);
+
+    // 反向验证：退回「16px 格 + 行首 9px 内边距」——钩子左空白多、与文字粘连，必须被咬住
+    const BAD = css
+      .replace(/(\.popup-menu button\s*\{[^}]*?)padding:\s*0 9px 0 0;/, "$1padding: 0 9px;")
+      .replace(/(\.popup-menu button \.check\s*\{[^}]*?)width:\s*2em;/, "$1width: 16px;")
+      .replace(/(\.popup-menu button \.check\s*\{[^}]*?)flex:\s*0 0 2em;/, "$1flex: 0 0 16px;");
+    expect(BAD, "替身必须真的改回旧排版").not.toBe(css);
+    expect(cssDecls(ruleBlock(BAD, ".popup-menu button")), "旧排版必须被咬住").not.toMatch(
+      /padding:\s*0 9px 0 0;/,
+    );
+    expect(cssDecls(ruleBlock(BAD, ".popup-menu button .check"))).not.toMatch(/width:\s*2em;/);
   });
 
   it("子菜单父项的箭头是一枚 chevron codicon（不是写死的三角字符）", () => {
