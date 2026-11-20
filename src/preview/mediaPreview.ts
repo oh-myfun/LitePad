@@ -12,7 +12,8 @@
 // 图片的视野记在 `tab.media` 上；音视频的进度与播放态也记在那里，供布局重建后接上。
 
 import { docs, type MediaViewState, type Panel, type Tab } from "../core/app-state";
-import { mediaKindOf } from "../io/media";
+import { listDir } from "../ipc/api";
+import { mediaKindOf, parentDirOf, siblingImagePath } from "../io/media";
 import { CODICONS, type CodiconName } from "../shell/codicons";
 import { setTip } from "../shell/tooltip";
 import { assetUrl } from "./assets";
@@ -157,7 +158,44 @@ function buildImageFace(tab: Tab, path: string, name: string, size: number): HTM
   img.draggable = false;
   img.alt = name;
   stage.appendChild(img);
+
+  // 同目录翻页：先禁用，拿到目录清单后才知道两边还有没有图（列不出就保持禁用）。
+  let stepping = false;
+  async function step(dir: 1 | -1): Promise<void> {
+    if (stepping) return;
+    stepping = true;
+    try {
+      const { openSiblingImage } = await import("../io/files");
+      await openSiblingImage(tab.tabId, dir);
+    } finally {
+      stepping = false;
+    }
+  }
+  const prevBtn = iconButton("chevronLeft", "上一张（同目录）", () => void step(-1));
+  const nextBtn = iconButton("chevronRight", "下一张（同目录）", () => void step(1));
+  prevBtn.classList.add("media-nav-btn", "media-nav-prev");
+  nextBtn.classList.add("media-nav-btn", "media-nav-next");
+  prevBtn.disabled = true;
+  nextBtn.disabled = true;
+  stage.append(prevBtn, nextBtn);
   face.append(bar, stage);
+
+  /** 翻页键浮在舞台上：点它 / 双击它不许被当成拖拽或缩放（见下面几个舞台手势）。 */
+  const onNavButton = (target: EventTarget | null): boolean =>
+    target instanceof Element && target.closest(".media-nav-btn") !== null;
+
+  const dirPath = parentDirOf(path);
+  if (dirPath) {
+    void (async () => {
+      try {
+        const { entries } = await listDir(dirPath);
+        prevBtn.disabled = siblingImagePath(entries, path, -1) === null;
+        nextBtn.disabled = siblingImagePath(entries, path, 1) === null;
+      } catch {
+        // 目录读不到（权限 / 盘符已拔）→ 保持禁用，翻页键不装样子
+      }
+    })();
+  }
 
   let natural = { w: 0, h: 0 };
   let view: MediaViewState = tab.media ? { ...tab.media } : { zoom: 1, x: 0, y: 0, fit: true };
@@ -216,7 +254,7 @@ function buildImageFace(tab: Tab, path: string, name: string, size: number): HTM
   stage.addEventListener(
     "wheel",
     (e) => {
-      if (!natural.w) return;
+      if (onNavButton(e.target) || !natural.w) return;
       e.preventDefault();
       const rect = stage.getBoundingClientRect();
       const factor = Math.exp(-e.deltaY * 0.0015);
@@ -234,7 +272,7 @@ function buildImageFace(tab: Tab, path: string, name: string, size: number): HTM
 
   let drag: { id: number; x: number; y: number; ox: number; oy: number } | null = null;
   stage.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0 || !natural.w) return;
+    if (onNavButton(e.target) || e.button !== 0 || !natural.w) return;
     drag = { id: e.pointerId, x: e.clientX, y: e.clientY, ox: view.x, oy: view.y };
     stage.setPointerCapture(e.pointerId);
     stage.classList.add("is-panning");
@@ -262,7 +300,8 @@ function buildImageFace(tab: Tab, path: string, name: string, size: number): HTM
   stage.addEventListener("pointerup", endDrag);
   stage.addEventListener("pointercancel", endDrag);
 
-  stage.addEventListener("dblclick", () => {
+  stage.addEventListener("dblclick", (e) => {
+    if (onNavButton(e.target)) return;
     if (view.fit) {
       view = { ...view, fit: false };
       setZoom(1);

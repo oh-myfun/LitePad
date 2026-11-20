@@ -1916,6 +1916,35 @@ body.layout-dragging .toc-grip {
   -webkit-user-drag: none;
   will-change: transform;
 }
+/* 同目录翻页键：浮在舞台两侧，不抢画面；到边那颗禁用（不轮播）。 */
+.media-nav-btn {
+  position: absolute;
+  top: 50%;
+  z-index: 1;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  transform: translateY(-50%);
+  background: rgba(127, 127, 127, 0.18);
+  color: var(--editor-fg, #202020);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+.media-nav-btn:hover:not(:disabled) {
+  background: rgba(127, 127, 127, 0.32);
+}
+.media-nav-btn:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+.media-nav-btn .codicon {
+  font-size: 16px;
+}
+.media-nav-prev {
+  left: 12px;
+}
+.media-nav-next {
+  right: 12px;
+}
 .media-stage-video {
   display: flex;
   align-items: center;

@@ -61,6 +61,7 @@ import {
   checkEncodable,
   closeTab as ipcCloseTab,
   isUnicodeEncoding,
+  listDir,
   openFile,
   openMedia,
   reloadFile,
@@ -85,7 +86,7 @@ import {
 } from "../tabs";
 import { LOSSY_ABORT, broadcastDocPresence, markActivePanel, refreshAll, showMessage } from "../ui";
 import { OPEN_FILTERS, TEXT_FILTERS } from "./filters";
-import { mediaKindOf } from "./media";
+import { mediaKindOf, parentDirOf, siblingImagePath } from "./media";
 import { reclaimRemoted } from "../multiwindow/windows";
 import {
   applyDiskContent,
@@ -164,6 +165,8 @@ function rebuildDocInstances(doc: Doc, text: string, keepCursor = false): void {
 /** 打开选项。`preview: true` = 资源管理器单击那一路：开成可被下一次单击替换的预览标签。 */
 interface OpenOptions {
   preview?: boolean;
+  /** 原位接替这张标签（图片预览翻页用）：位置与固定/预览态都跟着它。 */
+  replaceTabId?: number;
 }
 
 /**
@@ -178,12 +181,21 @@ interface OpenOptions {
  */
 function takePreviewSlot(panel: Panel): number {
   const old = panel.tabs.map((id) => tabs.get(id)).find((t): t is Tab => !!t?.preview);
-  if (!old) return -1;
+  return old ? takeTabSlot(panel, old) : -1;
+}
+
+/**
+ * 把面板里的一张标签摘掉，返回它原来的位置（`-1` = 没动）。
+ *
+ * 预览顶替与图片翻页共用这一份摘除口径：脏文档绝不能让位 —— 编辑即转正那条路漏了的
+ * 话（搜索替换 / 资源管理器改名等别的置脏入口），这里再挡一次；代价只是这次不替换，
+ * 换成未保存内容被顶掉就不可接受了。
+ */
+function takeTabSlot(panel: Panel, old: Tab): number {
   const doc = docs.get(old.docId);
-  // 脏文档绝不能让位：编辑即转正那条路漏了的话（搜索替换 / 资源管理器改名等别的置脏
-  // 入口），这里再挡一次 —— 代价只是这次不替换，换成未保存内容被顶掉就不可接受了。
   if (doc?.dirty) return -1;
   const idx = panel.tabs.indexOf(old.tabId);
+  if (idx < 0) return -1;
   if (old.kind === "media") disposeMediaFace(panel, old.tabId);
   panel.tabs = panel.tabs.filter((id) => id !== old.tabId);
   tabs.delete(old.tabId);
@@ -365,7 +377,9 @@ async function openMediaTab(
     noteOpened(file.path);
     const existingDoc = docs.get(file.tabId);
 
-    if (file.reused && existingDoc) {
+    // 翻页（replaceTabId）要求**原位接替当前标签**：跳到已经在别处打开的同一张图，
+    // 会把被翻走的那张留在原地，看起来不像换图。这种情况一律新挂一份实例（媒体多实例不分叉）。
+    if (file.reused && existingDoc && opts?.replaceTabId === undefined) {
       const all = instancesOfDoc(existingDoc.tabId);
       const inTarget =
         targetPanelId !== undefined ? all.find((t) => t.panelId === targetPanelId) : undefined;
@@ -398,8 +412,17 @@ async function openMediaTab(
     }
     const tab = makeMediaInstance(doc, panel.panelId);
     // 预览打开：与文本同一口径 —— 同一面板至多一张预览，原位顶替。
-    const preview = opts?.preview === true;
-    const slot = preview ? takePreviewSlot(panel) : -1;
+    // 翻页（replaceTabId）则原位接替**被翻走的那一张**，固定 / 预览态跟着它走。
+    const replaced = opts?.replaceTabId !== undefined ? tabs.get(opts.replaceTabId) : undefined;
+    const replacing = replaced && replaced.panelId === panel.panelId ? replaced : undefined;
+    let preview = opts?.preview === true;
+    let slot = -1;
+    if (replacing) {
+      preview = replacing.preview === true;
+      slot = takeTabSlot(panel, replacing);
+    } else if (preview) {
+      slot = takePreviewSlot(panel);
+    }
     if (preview) tab.preview = true;
     attachTabToPanel(tab, panel);
     placeTabAt(panel, tab.tabId, slot);
@@ -416,6 +439,36 @@ async function openMediaTab(
   } catch (err) {
     showMessage(String(err), true);
     return null;
+  }
+}
+
+/**
+ * 图片预览的同目录翻页：按资源管理器同一份排序找上一张 / 下一张，把当前标签**原位**
+ * 换成它 —— 不新增标签，固定态 / 预览态跟着原来的标签。
+ *
+ * 只在图片之间走（视频 / 音频 / 目录不参与）；到边、读目录失败或当前不是图片时返回
+ * `false`，调用方据此让翻页键保持禁用。
+ */
+export async function openSiblingImage(currentTabId: number, dir: 1 | -1): Promise<boolean> {
+  const tab = tabs.get(currentTabId);
+  const panel = tab ? panels.get(tab.panelId) : undefined;
+  const doc = tab ? docs.get(tab.docId) : undefined;
+  if (!tab || !panel || !doc?.path || tab.kind !== "media") return false;
+  if (mediaKindOf(doc.path) !== "image") return false;
+  const dirPath = parentDirOf(doc.path);
+  if (!dirPath) return false;
+  try {
+    const { entries } = await listDir(dirPath);
+    const next = siblingImagePath(entries, doc.path, dir);
+    if (!next) return false;
+    const opened = await openMediaTab(next, panel.panelId, {
+      preview: tab.preview === true,
+      replaceTabId: tab.tabId,
+    });
+    return opened !== null;
+  } catch (err) {
+    logger.warn("open", `切换同目录图片失败：${String(err)}`);
+    return false;
   }
 }
 

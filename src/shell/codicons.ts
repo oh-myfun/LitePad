@@ -32,6 +32,7 @@
  */
 const IDS = {
   // —— 查找栏 ——
+  chevronLeft: "chevron-left",
   chevronRight: "chevron-right",
   chevronDown: "chevron-down",
   arrowUp: "arrow-up",

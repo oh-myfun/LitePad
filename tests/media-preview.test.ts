@@ -13,7 +13,8 @@ import {
   fitZoom,
   zoomAround,
 } from "../src/preview/mediaPreview";
-import { mediaKindOf } from "../src/io/media";
+import { mediaKindOf, parentDirOf, siblingImagePath } from "../src/io/media";
+import type { FsEntry } from "../src/ipc/api";
 import { makeMediaDoc, makeMediaInstance } from "../src/doc-model";
 import { docs, panels, tabs, type Panel } from "../src/core/app-state";
 import { sessionStore } from "../src/session/store";
@@ -267,6 +268,82 @@ describe("媒体面挂载", () => {
     disposeMediaFaces(panel);
 
     expect(panel.bodyEl.querySelector(".media-preview")).toBe(null);
+  });
+});
+
+describe("同目录上一张 / 下一张", () => {
+  const file = (name: string): FsEntry => ({
+    name,
+    path: `C:\\pics\\${name}`,
+    isDir: false,
+    size: 1,
+    mtimeMs: 0,
+  });
+
+  it("只在图片之间前后移动：跳过视频与子目录，到边不绕回", () => {
+    const entries: FsEntry[] = [
+      { name: "sub", path: "C:\\pics\\sub", isDir: true, size: 0, mtimeMs: 0 },
+      file("a.png"),
+      file("b.mp4"),
+      file("c.JPG"),
+      file("d.webp"),
+    ];
+    expect(siblingImagePath(entries, "c:\\pics\\a.png", 1), "大小写不同的当前路径也要认").toBe(
+      "C:\\pics\\c.JPG",
+    );
+    expect(siblingImagePath(entries, "C:\\pics\\c.JPG", 1)).toBe("C:\\pics\\d.webp");
+    expect(siblingImagePath(entries, "C:\\pics\\d.webp", 1), "最后一张没有下一张").toBeNull();
+    expect(siblingImagePath(entries, "C:\\pics\\a.png", -1), "第一张没有上一张").toBeNull();
+    expect(siblingImagePath(entries, "C:\\pics\\b.mp4", 1), "视频不在翻页序列里").toBeNull();
+    expect(siblingImagePath(entries, "C:\\pics\\missing.png", 1), "不在这一层则不动").toBeNull();
+  });
+
+  it("目录层保留末尾分隔符：盘符根不能被削成 C:", () => {
+    expect(parentDirOf("C:\\pics\\a.png")).toBe("C:\\pics\\");
+    expect(parentDirOf("C:\\a.png")).toBe("C:\\");
+    expect(parentDirOf("a.png")).toBeNull();
+  });
+
+  it("图片面带上一张 / 下一张键；目录清单没回来前先禁用", () => {
+    const tab = newMediaTab("b.png", "C:\\pics\\b.png");
+    const panel = newPanel(tab.tabId);
+
+    applyMediaFace(panel, tab);
+
+    const prev = panel.bodyEl.querySelector(".media-nav-prev") as HTMLButtonElement;
+    const next = panel.bodyEl.querySelector(".media-nav-next") as HTMLButtonElement;
+    expect(prev, "左键必须挂出来").toBeTruthy();
+    expect(next, "右键必须挂出来").toBeTruthy();
+    expect(prev.getAttribute("aria-label")).toContain("上一张");
+    expect(next.getAttribute("aria-label")).toContain("下一张");
+    expect(prev.disabled, "清单未回来 → 左键禁用").toBe(true);
+    expect(next.disabled, "清单未回来 → 右键禁用").toBe(true);
+  });
+
+  it("换图走原位替换：带上 replaceTabId，由 openMediaTab 接替原标签的位置与状态", () => {
+    const src = stripLineComments(readFileSync("src/io/files.ts", "utf-8"));
+    const open = topLevelFnBody(src, "async function openSiblingImage(");
+    expect(open, "取不到 openSiblingImage").toBeTruthy();
+    expect(open, "按当前文件所在目录列目录").toContain("listDir(dirPath)");
+    expect(open, "相邻图由纯函数挑").toContain("siblingImagePath(entries, doc.path, dir)");
+    expect(open, "原位接替当前标签").toContain("replaceTabId: tab.tabId");
+    expect(open, "新标签继承原来的预览态").toContain("preview: tab.preview === true");
+
+    const media = topLevelFnBody(src, "async function openMediaTab(");
+    expect(media, "取不到 openMediaTab").toBeTruthy();
+    expect(media, "替换时摘掉原标签并接住它的位置").toContain(
+      "slot = takeTabSlot(panel, replacing)",
+    );
+    expect(media, "带 replaceTabId 时不许走「已在标签中打开」的复用分支").toMatch(
+      /file\.reused && existingDoc && opts\?\.replaceTabId === undefined/,
+    );
+
+    // 反向验证：抹掉 replaceTabId 那一行，契约必须咬住
+    const BAD = open.replace("replaceTabId: tab.tabId,", "");
+    expect(BAD, "替身必须真的删掉原位替换").not.toBe(open);
+    expect(() => {
+      expect(BAD).toContain("replaceTabId: tab.tabId");
+    }).toThrow();
   });
 });
 

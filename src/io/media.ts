@@ -14,6 +14,8 @@
  *    报错，留在「所有文件」里由用户自行决定是否打开更诚实。
  */
 
+import type { FsEntry } from "../ipc/api";
+
 export type MediaKind = "image" | "video" | "audio";
 
 const IMAGE_EXTENSIONS = [
@@ -49,4 +51,34 @@ export function mediaKindOf(path: string | null | undefined): MediaKind | null {
   if (VIDEO_EXTENSIONS.includes(ext)) return "video";
   if (AUDIO_EXTENSIONS.includes(ext)) return "audio";
   return null;
+}
+
+/**
+ * 路径所在的那一层目录（**保留末尾分隔符**），给 `list_dir` 用。
+ *
+ * 不能用 `markdown/links` 的 `dirOf`：它会去掉末尾的 `\`，而盘符根 `C:\` 去掉后成了
+ * `C:` —— Windows 会把它当「C 盘的当前目录」，列的就不是根了。
+ * 例：`C:\pics\a.png` → `C:\pics\`，`C:\a.png` → `C:\`。
+ */
+export function parentDirOf(path: string): string | null {
+  const cut = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
+  return cut > 0 ? path.slice(0, cut + 1) : null;
+}
+
+/**
+ * 同目录里的相邻图片（图片预览的「上一张 / 下一张」）。
+ *
+ * `entries` 直接用资源管理器那一份排序（Rust `list_dir` 已排好），这里不再重排；
+ * 只在**图片**之间移动（视频 / 音频 / 目录跳过），到边返回 `null` —— 不绕回第一张。
+ * 路径按 Windows 口径小写比对：打开时传进来的大小写未必与读目录给的一致。
+ */
+export function siblingImagePath(
+  entries: readonly FsEntry[],
+  currentPath: string,
+  dir: 1 | -1,
+): string | null {
+  const images = entries.filter((e) => !e.isDir && mediaKindOf(e.path) === "image");
+  const key = currentPath.toLowerCase();
+  const at = images.findIndex((e) => e.path.toLowerCase() === key);
+  return at < 0 ? null : (images[at + dir]?.path ?? null);
 }

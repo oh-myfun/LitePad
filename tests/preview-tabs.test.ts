@@ -55,11 +55,18 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 const h = vi.hoisted(() => {
   const ids = new Map<string, number>();
   const mediaIds = new Map<string, number>();
+  /** 目录清单（按路径给）：图片翻页只认这里面的条目，默认空目录。 */
+  const dirs = new Map<
+    string,
+    { name: string; path: string; isDir: boolean; size: number; mtimeMs: number }[]
+  >();
   let next = 100;
   let nextMedia = 900;
   const text = "第一行\n\n第二行\n";
   return {
     ids,
+    mediaIds,
+    dirs,
     openFile(path: string) {
       const key = path.replace(/\\/g, "/");
       const reused = ids.has(key);
@@ -93,6 +100,10 @@ const h = vi.hoisted(() => {
         size: 8,
       });
     },
+    listDir(path: string) {
+      const key = path.replace(/\\/g, "/").replace(/\/$/, "");
+      return Promise.resolve({ entries: dirs.get(key) ?? [], truncated: false });
+    },
   };
 });
 
@@ -111,6 +122,7 @@ vi.mock("../src/ipc/api", () => ({
   isUnicodeEncoding: () => true,
   listEncodings: () => Promise.resolve([{ label: "UTF-8", group: "Unicode（统一码）" }]),
   listEols: () => Promise.resolve(["CRLF", "LF"]),
+  listDir: h.listDir,
   loadSession: () =>
     Promise.resolve({
       activePanel: 0,
@@ -345,5 +357,76 @@ describe("VS Code 预览标签", () => {
     sessionStore.setPreview(501, false);
     const off = sessionStore.toSessionState(() => true);
     expect(off.panels[0].tabs[0].preview).toBe(false);
+  });
+});
+
+describe("图片预览的同目录翻页（行为）", () => {
+  const entry = (name: string) => ({
+    name,
+    path: `D:/album/${name}`,
+    isDir: false,
+    size: 1,
+    mtimeMs: 0,
+  });
+
+  /** 按路径找**标签实例** id（`openSiblingImage` 收的是标签 id，不是文档 id）。 */
+  async function tabIdOf(path: string): Promise<number> {
+    const { tabs, docs } = await import("../src/core/app-state");
+    const found = [...tabs.values()].find((t) => docs.get(t.docId)?.path === path);
+    if (!found) throw new Error(`找不到标签：${path}`);
+    return found.tabId;
+  }
+
+  beforeAll(() => {
+    h.dirs.set("D:/album", [
+      { name: "sub", path: "D:/album/sub", isDir: true, size: 0, mtimeMs: 0 },
+      entry("a.png"),
+      entry("b.png"),
+      entry("c.png"),
+      entry("d.png"),
+      entry("clip.mp4"),
+      entry("notes.txt"),
+    ]);
+  });
+
+  it("预览标签原位换成下一张：不新增标签、位置不变、预览态跟着走", async () => {
+    const { openSiblingImage } = await import("../src/io/files");
+    await doOpen("D:/album/b.png", undefined, undefined, { preview: true });
+    await wait(20);
+    const at = names().indexOf("b.png");
+    expect(at, "b.png 应作为预览标签打开").toBeGreaterThan(-1);
+    const total = tabEls().length;
+    const bId = await tabIdOf("D:/album/b.png");
+
+    expect(await openSiblingImage(bId, 1), "b 的下一张是 c（跳过 mp4 / txt / 目录）").toBe(true);
+    await wait(40);
+    expect(tabEls().length, "翻页不得新增标签").toBe(total);
+    expect(names().indexOf("c.png"), "c.png 必须接替 b.png 那一格").toBe(at);
+    expect(previewEl()?.querySelector(".tab-name")?.textContent, "预览态跟着翻页").toBe("c.png");
+
+    const dId = await (async () => {
+      expect(await openSiblingImage(await tabIdOf("D:/album/c.png"), 1)).toBe(true);
+      await wait(40);
+      return tabIdOf("D:/album/d.png");
+    })();
+    expect(names().indexOf("d.png"), "继续往右仍占同一格").toBe(at);
+    expect(await openSiblingImage(dId, 1), "最后一张没有下一张（不轮播）").toBe(false);
+  });
+
+  it("固定标签翻页后仍是固定标签；第一张没有上一张", async () => {
+    const { openSiblingImage } = await import("../src/io/files");
+    await doOpen("D:/album/a.png");
+    await wait(20);
+    const at = names().indexOf("a.png");
+    expect(at).toBeGreaterThan(-1);
+    const aId = await tabIdOf("D:/album/a.png");
+    expect(await openSiblingImage(aId, -1), "第一张没有上一张").toBe(false);
+
+    expect(await openSiblingImage(aId, 1)).toBe(true);
+    await wait(40);
+    const active = document.querySelector(".tab.tab-active");
+    expect(active?.querySelector(".tab-name")?.textContent).toBe("b.png");
+    expect(active?.classList.contains("tab-preview"), "固定标签翻页不得变成预览").toBe(false);
+    expect(names().indexOf("b.png"), "仍要接替 a.png 那一格").toBe(at);
   });
 });
