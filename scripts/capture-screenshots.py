@@ -4,12 +4,13 @@
 以前这里有两套流程：`capture-screenshots.mjs`（走 CDP 调试端口）+ `screenshot.py`
 （BitBlt 抓屏），前者在**开不出调试端口的环境**里会「启动了但一直没内容」，两套还各有一半
 逻辑，容易用错。现在只留这一套：**BitBlt 抓真实窗口 + 可见外框裁剪**，启动/摆状态/抓图/
-还原都在同一个进程里跑完（本机实测：spawn 出来的 GUI 进程活不过一次工具调用，
+收尾都在同一个进程里跑完（本机实测：spawn 出来的 GUI 进程活不过一次工具调用，
 所以「起 → 抓 → 杀」必须一口气做完）。
 
 它做四件事：
-  1. 备份真实 `session.json` / `settings.json`，写一份演示会话（拍完原样还原）；
-  2. 清 WebView2 用户数据（硬杀留下的残留会让新 webview 起不来，表现是整窗全黑）；
+  1. 把演示会话写到项目内 `.tmp/shot/config`（经 `LITEPAD_CONFIG_DIR` 指过去），真实配置只读；
+  2. 首轮没拿到内容时，才把 WebView2 用户数据挪开重试一次（硬杀留下的残留会让新 webview
+     起不来，表现是整窗全黑）；
   3. 起 app，**等窗口标题带上演示文件名**再抓（标题还是裸 `LitePad` 说明会话没恢复，
      这时候抓到的就是全黑图）；抓前把系统光标挪到窗口外、用 AttachThreadInput 抢前台；
   4. 空白自检（PNG 压得太小 → 报错而不是把白图写进 docs/）。
@@ -22,11 +23,12 @@
   python scripts/capture-screenshots.py --inset 1       # 四边各再切 1px（改用遮罩后一般不需要）
   python scripts/capture-screenshots.py --corner-radius 0   # 关闭四角透明遮罩
 
-依赖：`scripts/screenshot.py`（只提供 PNG 编码、窗口查找、BitBlt 抓图这些底层件）。
+依赖：无（窗口查找 / BitBlt / PNG 编码都在本文件内，纯标准库）。
 """
 
 import argparse
 import ctypes
+import ctypes.wintypes as wt
 import hashlib
 import io
 import json
@@ -41,8 +43,8 @@ import wave
 import zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, "scripts"))
-import screenshot as sc  # noqa: E402
+# 以前由 shot.sh 在进程外设这一格；合成一个入口后在这里设，子进程照样继承。
+os.environ.setdefault("CODEBUDDY_SAFE_DELETE_ENABLED", "0")
 
 # ⚠️ 演示会话一律写在**项目内** `SHOT_DIR/config`，靠 `LITEPAD_CONFIG_DIR` 告诉应用。
 #    以前这里直接指向真实的 `%APPDATA%\LitePad`，于是脚本得「备份真实配置 → 覆盖成演示 →
@@ -63,7 +65,13 @@ EXE = os.path.join(ROOT, "src-tauri", "target", "release", "litepad.exe")
 WEBVIEW_UDD = os.path.join(os.environ["LOCALAPPDATA"], "com.litepad.app", "EBWebView")
 
 user32 = ctypes.windll.user32
+gdi32 = ctypes.windll.gdi32
 kernel32 = ctypes.windll.kernel32
+
+SRCCOPY = 0x00CC0020
+SW_RESTORE = 9
+TH32CS_SNAPPROCESS = 0x00000002
+MAX_PATH = 260
 
 # 演示会话里引用的文件必须真实存在，否则会话恢复会开出一个错误标签
 MD = os.path.join(ROOT, "test-data", "完整样例.md")
@@ -468,7 +476,7 @@ def active_basename(recipe):
 # ---------------------------------------------------------------- 进程 / 配置
 
 def pids_alive(exe="litepad.exe"):
-    return sc.pids_by_exe(exe)
+    return pids_by_exe(exe)
 
 
 def litepad_webview_pids():
@@ -603,11 +611,11 @@ def wait_window(exe, want_title, timeout):
     last = None
     t0 = time.time()
     while time.time() < deadline:
-        pids = set(sc.pids_by_exe(exe))
+        pids = set(pids_by_exe(exe))
         if pids:
-            hwnd, title = sc.find_window("", pids)
+            hwnd, title = find_window("", pids)
             if hwnd:
-                r = sc.visible_rect(hwnd)
+                r = visible_rect(hwnd)
                 if r.right > r.left and r.bottom > r.top and want_title in title:
                     return hwnd, title
                 if title != last:
@@ -633,9 +641,9 @@ def shoot(recipe, size, settle, inset, corner_radius, shot_each=None):
         if not hwnd:
             return None
         say("  窗口: %r" % title)
-        sc.resize_window(hwnd, w, h)  # 可见外框 = (0,0)-(w,h)，于是窗口坐标 = 屏幕坐标
+        resize_window(hwnd, w, h)  # 可见外框 = (0,0)-(w,h)，于是窗口坐标 = 屏幕坐标
         time.sleep(settle)
-        rect = sc.visible_rect(hwnd)
+        rect = visible_rect(hwnd)
         say("  可见外框 (%d,%d)-(%d,%d)" % (rect.left, rect.top, rect.right, rect.bottom))
         saved = park_cursor(rect)
         force_foreground(hwnd)
@@ -648,14 +656,14 @@ def shoot(recipe, size, settle, inset, corner_radius, shot_each=None):
                 click(cx, cy)
                 if shot_each:
                     park_cursor(rect)
-                    png_i, dim_i = sc.capture(hwnd, inset, corner_radius)
+                    png_i, dim_i = capture(hwnd, inset, corner_radius)
                     p = shot_each % i
                     open(p, "wb").write(png_i)
                     say("    中间图 -> %s %dx%d" % (p, dim_i[0], dim_i[1]))
             if recipe.get("clicks"):
                 time.sleep(0.8)
                 park_cursor(rect)  # 点击后光标在窗口里，抓图前再挪出去
-            png, dim = sc.capture(hwnd, inset, corner_radius)
+            png, dim = capture(hwnd, inset, corner_radius)
         finally:
             user32.SetCursorPos(*saved)
     finally:
@@ -696,6 +704,262 @@ def capture_recipe(recipe, size, settle, inset, corner_radius, shot_each):
             clear_webview_profile()
     return None
 
+
+# ---------------------------------------------------------------- 窗口抓图底层件
+# 原 scripts/screenshot.py 的全部内容（窗口查找、可见外框、BitBlt、圆角遮罩、PNG 编码）。
+class PROCESSENTRY32(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", ctypes.c_uint32),
+        ("cntUsage", ctypes.c_uint32),
+        ("th32ProcessID", ctypes.c_uint32),
+        ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+        ("th32ModuleID", ctypes.c_uint32),
+        ("cntThreads", ctypes.c_uint32),
+        ("th32ParentProcessID", ctypes.c_uint32),
+        ("pcPriClassBase", ctypes.c_long),
+        ("dwFlags", ctypes.c_uint32),
+        ("szExeFile", ctypes.c_char * MAX_PATH),
+    ]
+
+
+def pids_by_exe(exe_name: str) -> list[int]:
+    """按镜像名（如 litepad.exe）枚举进程 pid，不依赖 OpenProcess 权限。"""
+    snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if snap == -1:
+        return []
+    entry = PROCESSENTRY32()
+    entry.dwSize = ctypes.sizeof(PROCESSENTRY32)
+    pids: list[int] = []
+    ok = kernel32.Process32First(snap, ctypes.byref(entry))
+    while ok:
+        name = entry.szExeFile.decode("mbcs", "ignore").lower()
+        if name == exe_name.lower():
+            pids.append(int(entry.th32ProcessID))
+        ok = kernel32.Process32Next(snap, ctypes.byref(entry))
+    kernel32.CloseHandle(snap)
+    return pids
+
+
+def find_window(keyword: str = "", pids: set[int] | None = None):
+    """返回标题含 keyword（或属于 pids）的第一个可见顶层窗口。"""
+    result = []
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)
+    def callback(hwnd, _lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        if pids is not None:
+            owner = wt.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+            if owner.value not in pids:
+                return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return True
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        if keyword and keyword not in buf.value:
+            return True
+        rect = RECT()
+        area = 0
+        if user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            area = max(0, rect.right - rect.left) * max(0, rect.bottom - rect.top)
+        result.append((hwnd, buf.value, length, area))
+        return True
+
+    user32.EnumWindows(callback, 0)
+    if not result:
+        return (None, None)
+    # ⚠️ 按**可见面积最大**选，不再按标题最长（B100 实测翻车）：
+    #    进程里有个 WebView2 的 `com.litepad.app-siw` 窗口，只有 22x22，标题却有 19 字符 ——
+    #    比 `LitePad - todo.md`（17 字符）还长。于是「取最长标题」会抓到那个小窗口：
+    #    抓图区域变成 22x22，且永远等不到演示文件名（表现是「会话没恢复」的假象）。
+    #    面积是稳定的判据（主窗口 ~1700x1100），标题长度会随文档名长短漂移。
+    result.sort(key=lambda r: (-r[3], -r[2]))
+    return result[0][0], result[0][1]
+
+
+class RECT(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+
+DWMWA_EXTENDED_FRAME_BOUNDS = 9
+
+
+def visible_rect(hwnd, inset: int = 0):
+    """窗口**可见**外框。
+
+    为什么不用 `GetWindowRect`：Win10/11 会给窗口套一圈**不可见**的调整边框（左右下各约
+    7-8px），`GetWindowRect` 把它算在内，直接照这个矩形 BitBlt 就会在图四周留一圈
+    桌面背景（实测左边和上边各约 7px）。DWM 的 extended frame bounds 才是眼睛看到的框。
+    """
+    rect = RECT()
+    ok = -1
+    try:
+        ok = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+            hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, ctypes.byref(rect), ctypes.sizeof(rect)
+        )
+    except Exception:
+        ok = -1
+    if ok != 0 or rect.right <= rect.left or rect.bottom <= rect.top:
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    if inset:
+        rect.left += inset
+        rect.top += inset
+        rect.right -= inset
+        rect.bottom -= inset
+    return rect
+
+
+def resize_window_to_frame(hwnd, width: int, height: int, inset: int = 0) -> None:
+    """把**可见外框**调成 width×height 并贴到屏幕 (0,0)。
+
+    对 `SetWindowPos` 来说尺寸含那圈不可见边框，所以先设一次、量一次实际可见框，
+    再按差值补一次——两次就收敛。这样导出的 PNG 正好是 width×height，
+    且窗口坐标 = 屏幕坐标（点击时不用换算）。
+    """
+    SWP_NOZORDER = 0x0004
+    user32.SetWindowPos(hwnd, 0, 0, 0, width, height, SWP_NOZORDER)
+    time.sleep(0.5)
+    r = visible_rect(hwnd, inset)
+    dx, dy = r.left, r.top
+    # 可见框比外框小一圈（左右下各约 8px），所以要**补上**差值，不是减掉
+    dw = width - (r.right - r.left)
+    dh = height - (r.bottom - r.top)
+    user32.SetWindowPos(hwnd, 0, -dx, -dy, width + dw, height + dh, SWP_NOZORDER)
+    time.sleep(0.6)
+
+
+class BMIHEADER(ctypes.Structure):
+    _fields_ = [("biSize", ctypes.c_uint32), ("biWidth", ctypes.c_int32),
+                ("biHeight", ctypes.c_int32), ("biPlanes", ctypes.c_uint16),
+                ("biBitCount", ctypes.c_uint16), ("biCompression", ctypes.c_uint32),
+                ("biSizeImage", ctypes.c_uint32), ("biXPelsPerMeter", ctypes.c_int32),
+                ("biYPelsPerMeter", ctypes.c_int32), ("biClrUsed", ctypes.c_uint32),
+                ("biClrImportant", ctypes.c_uint32)]
+
+
+def capture(hwnd, inset: int = 0, corner_radius: int = 0) -> bytes:
+    """截取窗口**可见外框**，返回 (PNG 字节, (宽, 高))。
+
+    `inset` 会从四边再各切掉几个像素；`corner_radius` 给四角做 alpha 遮罩
+    （BitBlt 只能抓矩形，圆角外的那几格是桌面背景）。
+    """
+    user32.SetProcessDPIAware()
+    user32.ShowWindow(hwnd, SW_RESTORE)
+    user32.SetForegroundWindow(hwnd)
+    time.sleep(0.4)  # 等待窗口置顶与重绘
+
+    rect = visible_rect(hwnd, inset)
+    width = rect.right - rect.left
+    height = rect.bottom - rect.top
+    if width <= 0 or height <= 0:
+        raise RuntimeError(f"窗口尺寸异常: {width}x{height}")
+
+    screen_dc = user32.GetDC(0)
+    mem_dc = gdi32.CreateCompatibleDC(screen_dc)
+    bitmap = gdi32.CreateCompatibleBitmap(screen_dc, width, height)
+    gdi32.SelectObject(mem_dc, bitmap)
+    gdi32.BitBlt(mem_dc, 0, 0, width, height, screen_dc, rect.left, rect.top, SRCCOPY)
+
+    header = BMIHEADER()
+    header.biSize = ctypes.sizeof(BMIHEADER)
+    header.biWidth = width
+    # 负高度 = 自顶向下的行序，免去逐行翻转
+    header.biHeight = -height
+    header.biPlanes = 1
+    header.biBitCount = 32
+    header.biCompression = 0  # BI_RGB
+
+    row_bytes = width * 4
+    buf = ctypes.create_string_buffer(row_bytes * height)
+    gdi32.GetDIBits(mem_dc, bitmap, 0, height, buf, ctypes.byref(header), 0)
+
+    gdi32.DeleteObject(bitmap)
+    gdi32.DeleteDC(mem_dc)
+    user32.ReleaseDC(0, screen_dc)
+
+    # BGRA -> RGBA
+    raw = bytearray()
+    data = buf.raw
+    for y in range(height):
+        row = data[y * row_bytes:(y + 1) * row_bytes]
+        for x in range(width):
+            b, g, r = row[x * 4], row[x * 4 + 1], row[x * 4 + 2]
+            raw += bytes((r, g, b, 255))
+
+    mask_rounded_corners(raw, width, height, corner_radius)
+    return encode_png(width, height, bytes(raw)), (width, height)
+
+
+# 4×4 子采样点（像素内部坐标，取每格中心）；覆盖率 = 落在圆弧内的样本数 / 16。
+_SUBS = (0.125, 0.375, 0.625, 0.875)
+
+
+def mask_rounded_corners(raw: bytearray, width: int, height: int, radius: int) -> None:
+    """把矩形抓到的四角改成圆角：圆弧外 alpha 归零，边缘按覆盖率抗锯齿。
+
+    Win11 的窗口外框是圆角，BitBlt 抓的却是矩形，圆角外那几格是桌面背景。
+    这里只动四角 `radius × radius` 的方块：圆弧外的像素设为透明，压在弧上的
+    像素按覆盖率给 alpha。RGB 同时换成沿「像素 → 圆心」方向内缩到弧内的像素 ——
+    否则半透明的边缘像素仍是桌面色，压在浅色背景上会泛出一圈脏边。
+    """
+    radius = min(radius, width // 2, height // 2)
+    if radius <= 0:
+        return
+    stride = width * 4
+    for bottom in (False, True):
+        for right in (False, True):
+            for y in range(radius):
+                py = height - 1 - y if bottom else y
+                for x in range(radius):
+                    px = width - 1 - x if right else x
+                    dx0 = radius - (x + 0.5)
+                    dy0 = radius - (y + 0.5)
+                    inside = 0
+                    for sy in _SUBS:
+                        for sx in _SUBS:
+                            dx = dx0 - (sx - 0.5)
+                            dy = dy0 - (sy - 0.5)
+                            if dx * dx + dy * dy <= radius * radius:
+                                inside += 1
+                    if inside == 16:
+                        continue
+                    i = py * stride + px * 4
+                    raw[i + 3] = inside * 255 // 16
+                    # 沿像素到圆心的连线缩到弧内 1px 处取样：那里是窗口边线本身
+                    dist = math.hypot(dx0, dy0)
+                    k = (radius - 1.0) / dist if dist else 0.0
+                    ix = int(radius - dx0 * k)
+                    iy = int(radius - dy0 * k)
+                    if right:
+                        ix = width - 1 - ix
+                    if bottom:
+                        iy = height - 1 - iy
+                    j = min(max(iy, 0), height - 1) * stride + min(max(ix, 0), width - 1) * 4
+                    raw[i], raw[i + 1], raw[i + 2] = raw[j], raw[j + 1], raw[j + 2]
+
+
+def encode_png(width: int, height: int, rgba: bytes) -> bytes:
+    raw = bytearray()
+    stride = width * 4
+    for y in range(height):
+        raw.append(0)  # filter 0
+        raw += rgba[y * stride:(y + 1) * stride]
+
+    def chunk(tag: bytes, payload: bytes) -> bytes:
+        return (struct.pack(">I", len(payload)) + tag + payload
+                + struct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF))
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
+            + chunk(b"IDAT", zlib.compress(bytes(raw), 6)) + chunk(b"IEND", b""))
+
+
+def resize_window(hwnd, width: int, height: int) -> None:
+    """把窗口的**可见外框**调成 width×height 并贴到 (0,0)（物理像素，需先 DPI aware）。"""
+    resize_window_to_frame(hwnd, width, height)
 
 def main():
     parser = argparse.ArgumentParser(description="一键补拍 docs/screenshots/ 截图")

@@ -66,7 +66,7 @@ echo "== 推荐命令 =="
 echo "  全量构建+测试+打包：  bash scripts/build-all.sh"
 echo "  只跑类型检查：        npm run typecheck"
 echo "  只跑测试：            node scripts/run-vitest.cjs"
-echo "  重拍截图：            CODEBUDDY_SAFE_DELETE_ENABLED=0 python scripts/capture-screenshots.py"
+echo "  重拍截图：            python scripts/capture-screenshots.py"
 echo "  快照 .agents：       bash scripts/backup-agents.sh"
 echo "  记忆卫生自检：        bash scripts/memory-hygiene.sh        （判据见 .agents/rules/memory-hygiene.md）"
 echo

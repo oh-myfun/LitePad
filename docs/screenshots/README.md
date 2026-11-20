@@ -49,21 +49,21 @@
 ## 怎么拍
 
 ```sh
-bash scripts/shot.sh                 # 拍全部配方（main + diff + html + media + audio + preview-tab；唯一入口，自带所需环境）
-bash scripts/shot.sh diff            # 只重拍差异编辑器
-bash scripts/shot.sh html            # 只重拍 HTML 预览
-bash scripts/shot.sh media           # 只重拍图片预览
-bash scripts/shot.sh audio           # 只重拍音频预览
-bash scripts/shot.sh preview-tab     # 只重拍预览标签
-bash scripts/shot.sh --list          # 看有哪些配方
-bash scripts/shot.sh --size 1440x900
-bash scripts/shot.sh --corner-radius 0   # 关闭四角透明遮罩（默认按圆角遮掉桌面像素）
-bash scripts/shot.sh --inset 1           # 四边各切 1px
+python scripts/capture-screenshots.py    # 拍全部配方（main + diff + html + media + audio + preview-tab；唯一入口，自带所需环境）
+python scripts/capture-screenshots.py diff        # 只重拍差异编辑器
+python scripts/capture-screenshots.py html        # 只重拍 HTML 预览
+python scripts/capture-screenshots.py media       # 只重拍图片预览
+python scripts/capture-screenshots.py audio       # 只重拍音频预览
+python scripts/capture-screenshots.py preview-tab # 只重拍预览标签
+python scripts/capture-screenshots.py --list      # 看有哪些配方
+python scripts/capture-screenshots.py --size 1440x900
+python scripts/capture-screenshots.py --corner-radius 0   # 关闭四角透明遮罩（默认按圆角遮掉桌面像素）
+python scripts/capture-screenshots.py --inset 1           # 四边各切 1px
 ```
 
-> 为什么不直接调 `python scripts/capture-screenshots.py`：那一层要自带
-> `CODEBUDDY_SAFE_DELETE_ENABLED=0` 与正确的 python 路径，两件都在会话里手敲过，
-> 漏一件不会报错、只会让截图停在旧图。入口统一到 `scripts/shot.sh`。
+> 唯一入口就是这一个文件：窗口查找 / BitBlt / PNG 编码与 safe-delete 开关都已并进来，
+> 不再包一层 `shot.sh`、也不再依赖 `screenshot.py`。只需 `python` 在 PATH 上
+> （Windows 用 `py` 启动器的话，把命令里的 `python` 换成 `py -3`）。
 
 **演示会话是隔离的**：脚本通过 `LITEPAD_CONFIG_DIR` 把应用指向项目内的
 `.tmp/shot/config`，你自己的配置（`%APPDATA%\LitePad`）**一次都不会被写**——
@@ -88,8 +88,8 @@ bash scripts/shot.sh --inset 1           # 四边各切 1px
    Win10/11 那圈**不可见**的调整边框（左右下各约 8px）算进去，按它抓就会在图四周留一圈
    桌面背景；抓完再按窗口圆角给四角做 alpha 遮罩（BitBlt 是矩形抓图，圆角外的那几格是桌面），
    半径默认取本机 150% 缩放下实测的 12 物理像素；
-7. 抓到图后做**空白自检**：PNG 压缩后小于 0.04 字节/像素（实测全黑图约 0.011、正常界面约
-   0.13）就报错退出，**不写出**，免得白图进仓库；
+7. 抓到图后做**空白自检**：PNG 压缩后小于 0.02 字节/像素（实测全黑图约 0.011、
+   正常界面约 0.13、大半是空舞台的音频预览约 0.034）就报错退出，**不写出**，免得白图进仓库；
 8. 最后杀进程；**真实配置全程只读**，没有「还原」这一步。
 
 配方的演示状态（哪个文件、什么主题、要不要点菜单）写在脚本顶部的 `RECIPES` 里。
@@ -109,7 +109,8 @@ bash scripts/shot.sh --inset 1           # 四边各切 1px
 AdditionalBrowserArguments` 写不进去（`New-Item` 报成功但 `Test-Path` 仍是 false）。
 
 所以最终只保留 BitBlt 这一套（`scripts/cdp-shot.mjs`、`scripts/capture-screenshots.mjs`
-已删除）。代价是**图里含系统标题栏**，换来的是在任何有桌面会话的机器上都能一条命令重拍。
+已删除；底层件 `screenshot.py` 也已并进 `capture-screenshots.py`，全仓只剩这一个截图脚本）。
+代价是**图里含系统标题栏**，换来的是在任何有桌面会话的机器上都能一条命令重拍。
 
 ## 拍完检查
 

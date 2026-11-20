@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 
 const SESSION_RS = "src-tauri/src/session/mod.rs";
 const BACKUP_RS = "src-tauri/src/backup/mod.rs";
@@ -97,5 +97,25 @@ describe("配置目录隔离（截图不碰用户目录）", () => {
     // ⚠️ 偏移量要用**整段匹配**的长度：`m.index` 指向前导换行，只 +1 会重新命中同一处。
     const second = py.indexOf("clear_webview_profile()", call + m![0].length);
     expect(second, "按需移开只能有一处调用").toBe(-1);
+  });
+
+  it("B100 截图脚本只有一个入口：底层件已并入，包装层已删除", () => {
+    const py = readFileSync(SHOT_PY, "utf-8");
+    // 曾经靠 shot.sh 挑 python 并设 safe-delete 开关；合并后必须由脚本自己设，
+    // 否则 npm run screenshot 会因 safe-delete 钩子误杀 vite/webview 文件。
+    expect(py, "脚本要自己设 safe-delete 开关").toContain(
+      'os.environ.setdefault("CODEBUDDY_SAFE_DELETE_ENABLED", "0")',
+    );
+    expect(py, "不得再 import 底层件").not.toContain("import screenshot");
+    expect(py, "不得再改 sys.path").not.toContain("sys.path.insert");
+    // 并入的底层件必须真在：窗口查找 / 可见外框 / BitBlt / PNG 编码
+    for (const fn of ["find_window", "visible_rect", "capture", "encode_png"]) {
+      expect(py, `并入后应有 ${fn}`).toContain(`def ${fn}(`);
+    }
+    expect(existsSync("scripts/shot.sh"), "shot.sh 包装层应已删除").toBe(false);
+    expect(existsSync("scripts/screenshot.py"), "screenshot.py 底层件应已删除").toBe(false);
+    expect(JSON.parse(readFileSync("package.json", "utf-8")).scripts.screenshot).toBe(
+      "python scripts/capture-screenshots.py",
+    );
   });
 });

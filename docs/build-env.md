@@ -106,28 +106,21 @@ Rust 构建缓存里烙死了绝对路径。改目录名后 `cargo build/test` �
 
 ## 界面截图（README / docs）
 
-唯一入口是 `bash scripts/shot.sh`（包装 `scripts/capture-screenshots.py`，负责挑 Python
-解释器并设好 safe-delete 环境）：
+唯一入口是 `scripts/capture-screenshots.py`（窗口查找、BitBlt、PNG 编码都在同一文件里，
+safe-delete 开关自己设，只需 `python` 在 PATH 上）：
 
 ```sh
-bash scripts/shot.sh                # 拍默认配方 → docs/screenshots/
-bash scripts/shot.sh --list         # 看有哪些配方
-bash scripts/shot.sh --keep         # 保留演示会话（排查用）
+python scripts/capture-screenshots.py            # 拍默认配方 → docs/screenshots/
+python scripts/capture-screenshots.py --list     # 看有哪些配方
+python scripts/capture-screenshots.py --keep     # 保留演示会话（排查用）
 ```
 
 前提：`src-tauri/target/release/litepad.exe` 必须是**当前代码**编译出来的。任何一次 `git push`
 都会由 pre-push 自动重建它；手动构建用 `npm run tauri -- build`。
 
-它自己会**先杀干净旧实例、再**备份/写入演示会话（顺序反了会被退出中的旧实例覆盖），
-启动后等窗口标题带上演示文件名才抓图，最后还原真实的 `session.json` / `settings.json`
-（字段 camelCase）；抓到全黑图会直接报错而不是写出。界面改动必须在同一提交刷新
-`docs/screenshots/`。
-
-底层件在 `scripts/screenshot.py`（PNG 编码、窗口查找、BitBlt），也能单独用：
-
-```sh
-python scripts/screenshot.py --exe litepad.exe --out x.png --size 1600x1000
-```
+它自己会**先杀干净旧实例、再**写演示会话（顺序反了会被退出中的旧实例覆盖；演示会话隔离在
+项目内 `.tmp/shot/config`，真实配置只读），启动后等窗口标题带上演示文件名才抓图；
+抓到全黑图会直接报错而不是写出。界面改动必须在同一提交刷新 `docs/screenshots/`。
 
 **为什么不用 CDP**：曾经走 `Page.captureScreenshot`（引擎 `cdp-shot.mjs`），它能免掉系统
 标题栏、不怕遮挡，但要求 WebView2 开出调试端口；在本机沙箱里调试端口开得出来、抓图却不
