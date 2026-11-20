@@ -341,7 +341,7 @@ describe("B315 路径改写的跨层契约", () => {
     expect(box, "取不到根行动作组").toBeTruthy();
     expect(box).toMatch(/position:\s*absolute/);
     expect(box).toMatch(/right:\s*6px/);
-    expect(box, "行自己的 hover / 选中底色要透上来").toMatch(/background:\s*inherit/);
+    expect(box, "按钮区不自带底色（用户点名：行自己的底色已经够了）").not.toMatch(/background\s*:/);
     expect(box, "默认不显形").toMatch(/visibility:\s*hidden/);
     expect(css, "悬停根行 / 焦点在行内才显形").toMatch(
       /\.explorer-root:hover \.explorer-root-actions,\s*\.explorer-root:focus-within \.explorer-root-actions\s*\{[^}]*visibility:\s*visible/,

@@ -711,8 +711,9 @@
 }
 /* B429（用户点名）：新建文件 / 新建目录 / 刷新三颗键贴在根行右侧，**悬停那一行才显形**。
    绝对定位而不是 `margin-left: auto`（B424 那版）：这三颗常驻占位时，名字那截的省略号会
-   提前一截；而且换档时宽度一变，行内文字会跟着跳。贴右浮层 + `background: inherit`
-   把行自己的 hover / 选中底色透上来，字从键底下过也不穿帮。 */
+   提前一截；而且换档时宽度一变，行内文字会跟着跳。
+   按钮区**不自带底色**（用户点名）：行自己的 hover / 选中底色已经在它下面，再刷一层
+   `inherit` 会把半透明 token 叠成一块更深的补丁。 */
 .explorer-root-actions {
   position: absolute;
   top: 50%;
@@ -722,7 +723,6 @@
   align-items: center;
   gap: 2px;
   padding-left: 8px;
-  background: inherit;
   visibility: hidden;
 }
 .explorer-root:hover .explorer-root-actions,
