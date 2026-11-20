@@ -33,7 +33,7 @@ export default tseslint.config(
   },
   {
     // Node 侧脚本（构建/测试基建）：CommonJS require 合法，未用变量多为平台兼容桩。
-    // 必须同时覆盖 .mjs —— 漏掉时 cdp_diag.mjs 会落到 recommended 分支，
+    // 必须同时覆盖 .mjs —— 漏掉时会落到 recommended 分支，
     // 因缺 node 全局而报 console/process no-undef（B35 配置缺口）。
     files: ["scripts/**/*.cjs", "scripts/**/*.mjs", "*.config.ts"],
     languageOptions: {
