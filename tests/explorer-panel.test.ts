@@ -209,6 +209,28 @@ async function click(el: Element): Promise<void> {
   await vi.waitFor(() => expect(true).toBe(true));
 }
 
+/** 根行右侧动作组里的某一颗（B429：新建文件 / 新建目录 / 刷新）。 */
+function rootAction(root: string, kind: "file" | "dir" | "refresh"): HTMLElement {
+  const row = rows().find((r) => r.dataset.path === root);
+  if (!row) throw new Error(`没有这一根：${root}`);
+  const sel =
+    kind === "refresh" ? ".explorer-root-refresh" : `.explorer-root-new[data-kind="${kind}"]`;
+  const btn = row.querySelector<HTMLElement>(sel);
+  if (!btn) throw new Error(`根行里没有「${kind}」那颗键`);
+  return btn;
+}
+
+/** 走右键菜单里的「新建文件 / 新建目录」（叶子目录仍是这几条动作的主语）。 */
+async function createFromMenu(row: HTMLElement, label: "新建文件" | "新建目录"): Promise<void> {
+  row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 30, clientY: 40 }));
+  await vi.waitFor(() => expect(document.querySelector(".popup-menu")).toBeTruthy());
+  const item = [...document.querySelectorAll<HTMLButtonElement>(".popup-menu button")].find((b) =>
+    (b.querySelector(".menu-label")?.textContent ?? "").includes(label),
+  );
+  if (!item) throw new Error(`菜单里没有「${label}」`);
+  await click(item);
+}
+
 /**
  * B427：把过滤框按回「空 + 三档关 + 两层开」。
  * 过滤态是**模块级**的 —— 上一条用例留下的字或开关会把这一条画成过滤结果。
@@ -230,6 +252,10 @@ function resetFilterBox(): void {
 }
 
 beforeEach(async () => {
+  // 过滤框的开合也是模块级状态：上一条用例留着打开，这一条一敲字就画成命中树。
+  if (!ui.explorerFilter.hidden) {
+    ui.explorerFilterToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }
   // 上一条用例如果在中途断言失败，`creating` / `renaming` 就漏在模块里 —— 于是整棵树被画成
   // 输入框，下面 `setRoot` 那句等「a.md」会超时，一条真失败变成三十条噪音。先把输入框按掉。
   for (const input of ui.explorerTree.querySelectorAll<HTMLInputElement>(".explorer-input")) {
@@ -271,8 +297,7 @@ beforeEach(async () => {
 describe("B314 资源管理器面板", () => {
   it("装配：那颗键填了字形、登记进外壳、摊开时轮得到它", () => {
     expect(ui.sideExplorer.innerHTML, "按钮列那颗要有字形").toContain("codicon");
-    expect(ui.explorerNewFile.innerHTML).toContain("codicon-new-file");
-    expect(ui.explorerNewDir.innerHTML).toContain("codicon-new-folder");
+    expect(ui.explorerFilterToggle.innerHTML, "头部过滤键要走 codicon").toContain("codicon-search");
     drawer.setDrawer("explorer", false);
     expect(ui.explorerPanel.hidden).toBe(false);
     expect(ui.tocPanel.hidden, "互斥是结构性的").toBe(true);
@@ -443,9 +468,9 @@ describe("B314 资源管理器面板", () => {
     expect(rowAt(evil).title, "不许再写原生 title").toBe("");
   });
 
-  it("新建文件：输入框长在目标那一层，回车后建、刷那一层并打开", async () => {
+  it("右键目录新建文件：输入框长在目标那一层，回车后建、刷那一层并打开", async () => {
     await click(rowAt("notes")); // 选中一个目录 ⇒ 新建的目标就是它
-    await click(ui.explorerNewFile);
+    await createFromMenu(rowAt("notes"), "新建文件");
     const input = ui.explorerTree.querySelector<HTMLInputElement>(".explorer-input");
     expect(input, "没画出输入框").toBeTruthy();
     // B373：输入框落在它将成为的那一层，结构也跟同层的文件行一致（图标槽 + 输入框，
@@ -467,11 +492,12 @@ describe("B314 资源管理器面板", () => {
     expect(ui.explorerTree.querySelector(".explorer-input"), "提交之后输入框要收掉").toBeNull();
   });
 
-  it("新建态不该把同层其余条目一起藏掉（输入框排在该层最前）", async () => {
-    await click(ui.explorerNewFile); // 什么都没选 ⇒ 建在根那一层
+  it("B429：根行新建键的主语是那一根（不看当前选中了谁）", async () => {
+    await click(rowAt("b.md")); // 选中一个文件：旧口径会建进它的父亲目录
+    await click(rootAction(ROOT, "file"));
     const input = ui.explorerTree.querySelector<HTMLInputElement>(".explorer-input");
     expect(input, "没画出输入框").toBeTruthy();
-    // 输入框长在 `is-creating` 那一行里，「同层」判据要问的是**那一行的父容器**
+    // 输入框排在该层最前，且同层其余条目照旧画着（不被新建态整层藏掉）
     const host = input!.closest(".explorer-row")!.parentElement!;
     expect(host.classList.contains("explorer-children"), "父容器应是那一层的 children 容器").toBe(
       true,
@@ -483,16 +509,17 @@ describe("B314 资源管理器面板", () => {
     expect(host.firstElementChild?.classList.contains("is-creating"), "输入框应排在最前").toBe(
       true,
     );
-    // ⚠️ 必须收掉新建态再走：`creating` 是模块级状态，漏着它就会把后面每一条用例都画成新建态
-    // （口径同本文件 F2 改名用例结尾那发 Escape）。
-    input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    await vi.waitFor(() => expect(ui.explorerTree.querySelector(".explorer-input")).toBeNull());
+    input!.value = "根层.md";
+    input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await vi.waitFor(() =>
+      expect(h.created).toEqual([{ kind: "file", dir: ROOT, name: "根层.md" }]),
+    );
   });
 
   it("空目录进入新建态：只画输入框，不再挂一条「（空）」", async () => {
     h.dirs.set(`${ROOT}\\notes`, []);
     await click(rowAt("notes"));
-    await click(ui.explorerNewFile);
+    await createFromMenu(rowAt("notes"), "新建文件");
     const input = ui.explorerTree.querySelector<HTMLInputElement>(".explorer-input");
     expect(input, "空目录里也要画出输入框").toBeTruthy();
     expect(ui.explorerTree.textContent, "新建态下不该再挂「（空）」").not.toContain("（空）");
@@ -501,9 +528,9 @@ describe("B314 资源管理器面板", () => {
   });
 
   it("新建目录走 createDir；空名字 = 取消，不发 IPC", async () => {
-    await click(ui.explorerNewDir);
+    await click(rootAction(ROOT, "dir"));
     const input = ui.explorerTree.querySelector<HTMLInputElement>(".explorer-input");
-    expect(input, "什么都没选时该在根那一层建").toBeTruthy();
+    expect(input, "根行那颗键该在根那一层建").toBeTruthy();
     input!.value = "   ";
     input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     await vi.waitFor(() => expect(ui.explorerTree.textContent).toContain("a.md"));
@@ -1501,5 +1528,63 @@ describe("B462 · 资源管理器多选与「将已选择进行比较」", () =>
 
     await rightClick(rowAt("a.md"));
     expect(labels(), "只剩一条，比较项退场").not.toContain("将已选择进行比较");
+  });
+});
+
+// B429 · 用户点名：新建 / 刷新搬到根行右侧、悬停那行才显形；头部加一颗过滤开关。
+describe("B429 · 过滤开关与根行动作组", () => {
+  const onlyHit = { name: "only.md", path: `${ROOT}\\only.md`, rel: "only.md", isDir: false };
+
+  it("头部搜索键开合过滤框：开时可直接敲字，收起时清空并回常规树", async () => {
+    expect(ui.explorerFilter.hidden, "默认收起").toBe(true);
+    expect(ui.explorerFilterToggle.getAttribute("aria-expanded")).toBe("false");
+    await click(ui.explorerFilterToggle);
+    expect(ui.explorerFilter.hidden).toBe(false);
+    expect(ui.explorerFilterToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement, "打开就让人能直接敲字").toBe(ui.explorerFilterInput);
+
+    h.filterHits.set(ROOT, [onlyHit]);
+    ui.explorerFilterInput.value = "only";
+    ui.explorerFilterInput.dispatchEvent(new Event("input"));
+    await vi.waitFor(() => expect(names()).toContain("only.md"));
+    expect(names(), "过滤生效：常规树里的 a.md 退场").not.toContain("a.md");
+
+    await click(ui.explorerFilterToggle);
+    expect(ui.explorerFilter.hidden, "再点一下收起").toBe(true);
+    expect(ui.explorerFilterToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(ui.explorerFilterInput.value, "收起时清空，不留看不见的过滤").toBe("");
+    await vi.waitFor(() => expect(names()).toContain("a.md"));
+  });
+
+  it("根行动作组：新建文件 → 新建目录 → 刷新，每根各一组", async () => {
+    const 第二根 = "E:\\工作";
+    h.dirs.set(第二根, [["q.md", false]]);
+    openRoots(ROOT, 第二根);
+    await vi.waitFor(() => expect(names()).toContain("q.md"));
+    for (const root of [ROOT, 第二根]) {
+      const row = rows().find((r) => r.dataset.path === root);
+      const box = row?.querySelector(".explorer-root-actions");
+      expect(box, `根「${root}」要有一组动作键`).not.toBeNull();
+      const kinds = [...box!.querySelectorAll("button")].map((b) =>
+        b.classList.contains("explorer-root-refresh") ? "refresh" : (b.dataset.kind ?? "?"),
+      );
+      expect(kinds, "刷新在最后（用户点名的位置）").toEqual(["file", "dir", "refresh"]);
+    }
+  });
+
+  it("过滤态里点根行新建：先收起过滤，输入框才画得出来", async () => {
+    h.filterHits.set(ROOT, [onlyHit]);
+    await click(ui.explorerFilterToggle);
+    ui.explorerFilterInput.value = "only";
+    ui.explorerFilterInput.dispatchEvent(new Event("input"));
+    await vi.waitFor(() => expect(names()).toContain("only.md"));
+
+    await click(rootAction(ROOT, "file"));
+    expect(ui.explorerFilter.hidden, "新建要让位给常规树").toBe(true);
+    expect(ui.explorerFilterInput.value).toBe("");
+    const input = ui.explorerTree.querySelector<HTMLInputElement>(".explorer-input");
+    expect(input, "过滤收起后输入框才画得出来").toBeTruthy();
+    input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await vi.waitFor(() => expect(ui.explorerTree.querySelector(".explorer-input")).toBeNull());
   });
 });

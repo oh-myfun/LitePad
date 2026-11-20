@@ -336,31 +336,28 @@
             <!-- B314：资源管理器。结构与上面两块同形（标题栏常驻 + 列表重绘），
                  差异都在「行」上：树的一行要带**层级缩进**与**折叠箭头**，所以这里是一棵
                  `role="tree"` 的树，不是清单。
-                 标题栏四颗键：新建文件 / 新建目录 / 打开文件夹 / 全部折叠 —— 全部只用 codicon
-                 + aria-label（口径同上两块的垃圾桶与全量键）。刷新不在这排里：多根之后它有主语，
-                 长在**每一根那一行**的最右（B424）。
+                 标题栏三颗键：过滤文件 / 打开文件夹 / 全部折叠 —— 全部只用 codicon
+                 + aria-label（口径同上两块的垃圾桶与全量键）。新建与刷新不在这排里：
+                 它们的主语是某一根，长在**每一根那一行**的右侧（B424 搬走刷新，B429 搬走新建）。
                  首屏 `hidden`：轮不到这块时由外壳 `setDrawer` 写 hidden（B307 那条纪律），
                  HTML 里的初值只是「还没回放」的临时态。 -->
             <aside id="explorer-panel" class="explorer-panel" hidden>
               <div class="explorer-head">
                 <span id="explorer-title" class="explorer-title">资源管理器</span>
-                <!-- B315 排这一排的动线是「造东西 → 整理当前这棵树」。
+                <!-- B315 初版这一排的动线是「造东西 → 整理当前这棵树」；B429 起改成
+                     「过滤（找到）→ 打开（加根）→ 整理这棵树」—— 新建两颗已搬进根行。
                      B424（用户点名「刷新按钮和打开文件夹按钮互换」）：「打开文件夹」回到这一排
                      —— 多根之后它不再跟着某一棵根行走（有好几根，挂哪一根都不对），而**每根行
-                     自带一颗刷新**（刷新得有主语：点哪根刷哪根）。这一排因此只剩四颗。 -->
+                     自带一颗刷新**（刷新得有主语：点哪根刷哪根）。
+                     B429（用户点名）：新建两颗也搬进**根那一行**（刷新键左边），头部只留
+                     「过滤 / 打开文件夹 / 全部折叠」三颗 —— 过滤键点开收起下面那条过滤框。 -->
                 <button
-                  id="explorer-new-file"
+                  id="explorer-filter-toggle"
                   class="toc-head-btn"
                   type="button"
-                  data-tip="新建文件"
-                  aria-label="新建文件"
-                ></button>
-                <button
-                  id="explorer-new-dir"
-                  class="toc-head-btn"
-                  type="button"
-                  data-tip="新建目录"
-                  aria-label="新建目录"
+                  data-tip="过滤文件"
+                  aria-label="过滤文件"
+                  aria-expanded="false"
                 ></button>
                 <button
                   id="explorer-open"
@@ -380,8 +377,9 @@
               <!-- B427：顶部「按名字过滤」（用户点名「参考搜索输入框」）。五颗键全在框内：
                    三颗匹配开关 + 排除键（B428：忽略文件并进这一颗，不再另设独立开关）
                    + 清除（有字才显形）。
-                   框里 Esc：有字先清字，没字才让按键冒泡（与侧栏搜索框同口径）。 -->
-              <div class="explorer-filter" role="search">
+                   框里 Esc：有字先清字，没字才让按键冒泡（与侧栏搜索框同口径）。
+                   B429：默认收起，由头部那颗搜索键点开 / 收起（收起时清空，不留看不见的过滤）。 -->
+              <div id="explorer-filter" class="explorer-filter" role="search" hidden>
                 <span class="find-field explorer-filter-field">
                   <input
                     id="explorer-filter-input"

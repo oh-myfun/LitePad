@@ -115,8 +115,9 @@ const explorerTree = el("explorer-tree");
 const explorerOpen = el<HTMLButtonElement>("explorer-open");
 // B424：头部那一排的「刷新」没有了 —— 多根之下刷新得有主语，改成每根行自带一颗（JS 造）。
 const explorerCollapse = el<HTMLButtonElement>("explorer-collapse");
-const explorerNewFile = el<HTMLButtonElement>("explorer-new-file");
-const explorerNewDir = el<HTMLButtonElement>("explorer-new-dir");
+// B429：新建两颗搬进根行（刷新键左边）；头部这颗搜索键只负责开合下面的过滤框。
+const explorerFilterToggle = el<HTMLButtonElement>("explorer-filter-toggle");
+const explorerFilter = el("explorer-filter");
 // B427：头部下面那条「按名字过滤」：输入框 + 三颗匹配开关 + 排除键 + 清除。
 // B428（用户点名）：排除键旁那颗独立的「跟随 .gitignore / .ignore」删了 —— 语义被
 // 「使用排除设置与忽略文件」整颗包含。
@@ -497,8 +498,8 @@ export {
   explorerTree,
   explorerOpen,
   explorerCollapse,
-  explorerNewFile,
-  explorerNewDir,
+  explorerFilterToggle,
+  explorerFilter,
   explorerFilterInput,
   explorerFilterCase,
   explorerFilterWord,

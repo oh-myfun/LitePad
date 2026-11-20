@@ -24,16 +24,17 @@ const menubar = read("src/shell/menubar.ts");
 const boot = read("src/main.ts");
 
 // B424：`explorer-refresh` 不在这份名单里了 —— 刷新从头部搬进**每一根那一行**（由 JS 现造，
-// 所以它既没有骨架 id，也不该有：头部只留一颗「打开文件夹」）。
+// 所以它既没有骨架 id，也不该有：头部只留「过滤 / 打开文件夹 / 全部折叠」三颗）。
+// B429：新建两颗也跟着搬进根行（刷新键左边）；头部那颗过滤键开合下面那条过滤框。
 const IDS = [
   "side-explorer",
   "explorer-panel",
   "explorer-title",
   "explorer-tree",
+  "explorer-filter-toggle",
+  "explorer-filter",
   "explorer-open",
   "explorer-collapse",
-  "explorer-new-file",
-  "explorer-new-dir",
 ];
 
 describe("B314 资源管理器跨层契约", () => {
@@ -86,10 +87,10 @@ describe("B314 资源管理器跨层契约", () => {
       ["explorer-panel", "explorerPanel"],
       ["explorer-title", "explorerTitle"],
       ["explorer-tree", "explorerTree"],
+      ["explorer-filter-toggle", "explorerFilterToggle"],
+      ["explorer-filter", "explorerFilter"],
       ["explorer-open", "explorerOpen"],
       ["explorer-collapse", "explorerCollapse"],
-      ["explorer-new-file", "explorerNewFile"],
-      ["explorer-new-dir", "explorerNewDir"],
     ];
     expect(
       pairs.map(([id]) => id),
@@ -278,8 +279,8 @@ describe("B315 路径改写的跨层契约", () => {
     );
   });
 
-  it("顶部那一排：造东西 → 加一根 → 整理这棵树（B424 起刷新不在这排里，打开键回来了）", () => {
-    const order = ["explorer-new-file", "explorer-new-dir", "explorer-open", "explorer-collapse"];
+  it("顶部那一排：过滤 → 加一根 → 整理这棵树（B429 起新建两颗在根行，刷新同理）", () => {
+    const order = ["explorer-filter-toggle", "explorer-open", "explorer-collapse"];
     const inOrder = (src: string): boolean => {
       let prev = -1;
       for (const id of order) {
@@ -291,29 +292,39 @@ describe("B315 路径改写的跨层契约", () => {
     };
     // 这一排是常驻的一排，屏上的左右位置就是唯一读法：DOM 次序即顺序。
     expect(inOrder(html), "顶部那一排次序漂了").toBe(true);
-    // 自证判据有鉴别力：把「新建文件」那一颗抹掉，上面那条必须落空
-    expect(inOrder(html.replace('id="explorer-new-file"', 'id="explorer-zzz"'))).toBe(false);
-    // 反向闸：头部那一排不许还挂着一颗刷新 —— 多根之后「刷新」得有主语（点哪根刷哪根），
-    // 一颗没有主语的刷新键会退化成「只刷第一根」或「刷整棵树」，两者都不是用户点它时想要的。
-    // ⚠️ 先抹掉 HTML 注释：上面那段散文里「刷新」二字出现了好几回，留着它这条就能被喂假。
+    // 自证判据有鉴别力：把过滤键抹掉，上面那条必须落空
+    expect(inOrder(html.replace('id="explorer-filter-toggle"', 'id="explorer-zzz"'))).toBe(false);
+    // 反向闸：头部那一排不许还挂着一颗刷新 / 新建 —— 多根之后它们的主语是某一根，
+    // 长在那一行上（点哪根刷哪根、建进哪根）。一颗没有主语的键只能猜目标，猜哪根都不对。
+    // ⚠️ 先抹掉 HTML 注释：上面那段散文里「新建」「刷新」都出现了，留着它这条就能被喂假。
     // B427 起头部下面多了一条过滤框（`class="explorer-filter"`）—— 切片止在它那里，
     // 否则过滤框里那六颗开关会被数进「头部那一排」。
     const head = html
       .slice(html.indexOf('class="explorer-head"'), html.indexOf('class="explorer-filter"'))
       .replace(/<!--[\s\S]*?-->/g, "");
-    expect(head, "头部的刷新键已搬进每一根那一行").not.toMatch(/刷新/);
-    expect(head.match(/<button/g) ?? [], "头部就是四颗键，第五颗多半是漏搬回来的刷新").toHaveLength(
-      4,
-    );
+    expect(head, "头部的刷新 / 新建键都已搬进每一根那一行").not.toMatch(/刷新|新建/);
+    expect(head.match(/<button/g) ?? [], "头部就是三颗键").toHaveLength(3);
   });
 
-  it("B424：刷新键搬进每一根那一行的最右，而打开键常驻头部（两枚键换了个主语）", () => {
+  it("B424/B429：刷新与新建都搬进每一根那一行，而打开键常驻头部（键的主语各归各）", () => {
     const panel = read("src/explorer/panel.ts");
-    // 1) 每根一行、每根自带一颗刷新：刷新的主语就是它所在那一根。
-    expect(panel, "根行要挂自己那颗刷新键").toMatch(
-      /el\.append\(\s*rt,\s*rn,\s*rootRefreshBtn\(root\)\s*\)/,
+    // 1) 每根一行、每根自带一组动作：新建文件 / 新建目录 / 刷新的主语就是它所在那一根。
+    expect(panel, "根行要挂右侧动作组").toMatch(
+      /el\.append\(\s*rt,\s*rn,\s*rootActions\(root\)\s*\)/,
+    );
+    const actions = fnBody(panel, "rootActions");
+    expect(actions, "动作组要取到").toContain("explorer-root-actions");
+    expect(actions.indexOf('rootCreateBtn(root, "file")'), "新建文件在最左").toBeGreaterThan(-1);
+    expect(actions.indexOf('rootCreateBtn(root, "dir")'), "新建目录居中").toBeGreaterThan(
+      actions.indexOf('rootCreateBtn(root, "file")'),
+    );
+    expect(actions.indexOf("rootRefreshBtn(root)"), "刷新在最右（用户点名的位置）").toBeGreaterThan(
+      actions.indexOf('rootCreateBtn(root, "dir")'),
     );
     expect(panel, "那颗键刷的是这一根（不是整棵树）").toContain("refreshRoot(root)");
+    expect(panel, "新建的目标是根行自己那一根（不是当下选中的那一行）").toContain(
+      "startCreate(kind, root)",
+    );
     expect(panel, "逐根画行：名单顺序 = 屏幕顺序").toContain(
       "explorerTree.append(rootRow(root, open), rootChildren(root, open))",
     );
@@ -324,10 +335,16 @@ describe("B315 路径改写的跨层契约", () => {
     expect(panel, "目录选择器要开多选（一次加几根是常态）").toContain(
       "openDialog({ directory: true, multiple: true })",
     );
-    // 3) 贴右靠一条 margin-left:auto（根行是 flex，名字那截 flex:1 已经吃掉余量，
-    //    但省略号一收就漏出空隙 —— 只有 auto 边距能保证「永远在最右」）
-    expect(css, "根行里那颗键要贴右").toMatch(
-      /\.explorer-root \.toc-head-btn\s*\{[^}]*margin-left:\s*auto/,
+    // 3) 那组键贴右浮在名字上面、默认藏起来，悬停根行（或焦点在行内）才显形。
+    //    不用 margin-left:auto 常驻占位：名字那截的省略号会提前一截、换档时整行文字跟着跳。
+    const box = ruleBlock(css, ".explorer-root-actions");
+    expect(box, "取不到根行动作组").toBeTruthy();
+    expect(box).toMatch(/position:\s*absolute/);
+    expect(box).toMatch(/right:\s*6px/);
+    expect(box, "行自己的 hover / 选中底色要透上来").toMatch(/background:\s*inherit/);
+    expect(box, "默认不显形").toMatch(/visibility:\s*hidden/);
+    expect(css, "悬停根行 / 焦点在行内才显形").toMatch(
+      /\.explorer-root:hover \.explorer-root-actions,\s*\.explorer-root:focus-within \.explorer-root-actions\s*\{[^}]*visibility:\s*visible/,
     );
     // 4) 树是**委托**点击（`explorerTree.addEventListener("click", onRowClick)`），按钮搬进来
     //    之后一发点击会同时命中「刷新这一根」与「折叠根」两件事 ⇒ 委托那一路必须先挡掉按钮。
@@ -352,6 +369,26 @@ describe("B315 路径改写的跨层契约", () => {
     expect(rootMenu, "移除走的是 panel.removeFolder，不在菜单里另写一份").toContain(
       "removeFolder(path)",
     );
+  });
+
+  it("B429：头部过滤键开合过滤框，收起时清空（不留看不见的过滤）", () => {
+    const panel = read("src/explorer/panel.ts");
+    expect(panel, "头部那颗要挂点击").toContain(
+      'explorerFilterToggle.addEventListener("click", () => setFilterShown(explorerFilter.hidden))',
+    );
+    expect(panel, "装配时就按收起态同步一次").toContain("setFilterShown(false)");
+    // 收起 = 写 hidden + aria-expanded + 清字：三件缺一条都会留下「看得见树、但树是假的」。
+    const body = fnBody(panel, "setFilterShown");
+    expect(body).toContain("explorerFilter.hidden = !shown");
+    expect(body).toContain('explorerFilterToggle.setAttribute("aria-expanded", String(shown))');
+    expect(body, "收起时清空文字（否则过滤仍生效、框却藏了）").toContain('setFilterText("")');
+    // 作者样式表的 display:flex 会压过 UA 的 [hidden]，必须显式兜底（jsdom 跑不出级联）。
+    const hidden = ruleBlock(css, ".explorer-filter[hidden]");
+    expect(hidden, "过滤框收起要有 display:none 兜底").toMatch(/display:\s*none/);
+    // 从根行新建时先收起过滤：命中树里没有输入框的容身之处，否则点下去毫无反应。
+    const create = fnBody(panel, "startCreate");
+    expect(create, "过滤态里点新建要先收起过滤").toContain("setFilterShown(false)");
+    expect(create, "根行按钮带进来的目标是根自己").toContain("dirOverride ?? targetDir()");
   });
 
   it("名单只由发起方改，回收站那条走「删掉」而不是「改写成空」", () => {
@@ -586,8 +623,8 @@ describe("B370/B373 资源管理器行对齐 VS Code 的 Seti 树", () => {
   it("目录行不再写 codicon 文件夹；文件行仍走 Seti，且不再垫空箭头槽", () => {
     const panel = read("src/explorer/panel.ts");
     expect(panel, "目录行 / 根行的 folder 字形已撤").not.toMatch(/CODICONS\.folder\b/);
-    expect(panel, "根行只剩箭头 + 名字 + 自己那颗刷新键（B424）").toContain(
-      "el.append(rt, rn, rootRefreshBtn(root))",
+    expect(panel, "根行只剩箭头 + 名字 + 右侧动作组（B424/B429）").toContain(
+      "el.append(rt, rn, rootActions(root))",
     );
     // B427：画行抽成了 `rowOf(path, name, …)`（常规树与过滤结果共用一份几何）。
     // 图标解析改走 `fileIconHtmlOfFile`：VS Code 先查 Seti 的 fileNames / fileExtensions，

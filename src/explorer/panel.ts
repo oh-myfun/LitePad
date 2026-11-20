@@ -36,13 +36,13 @@ import { isTreeDrag, TREE_DRAG_FILE_MIME, TREE_DRAG_MIME } from "../shell/filedr
 import {
   explorerCollapse,
   explorerFilterCase,
+  explorerFilter,
   explorerFilterClear,
   explorerFilterExcludes,
   explorerFilterInput,
   explorerFilterRegex,
+  explorerFilterToggle,
   explorerFilterWord,
-  explorerNewDir,
-  explorerNewFile,
   explorerOpen,
   explorerPanel,
   explorerTitle,
@@ -288,8 +288,8 @@ export function setupExplorer(): void {
   sideExplorer.innerHTML = CODICONS.files;
   explorerOpen.innerHTML = CODICONS.folderOpened;
   explorerCollapse.innerHTML = CODICONS.collapseAll;
-  explorerNewFile.innerHTML = CODICONS.newFile;
-  explorerNewDir.innerHTML = CODICONS.newFolder;
+  explorerFilterToggle.innerHTML = CODICONS.search;
+  setFilterShown(false);
   registerDrawerView("explorer", {
     panel: explorerPanel,
     button: sideExplorer,
@@ -306,13 +306,12 @@ export function setupExplorer(): void {
   //   真机验收抓到过：漏这一句时那颗键看着正常、点下去毫无反应，而用例全是
   //   「程序里调 `setDrawer` 再断言亮灭」，永远照不出来。
   sideExplorer.addEventListener("click", () => toggleExplorer());
-  // B424：头部这一排**只有一颗「打开文件夹」**（追加一根）。刷新键从头部搬走了 ——
-  // 多根之后「刷新」得有主语，一颗管整排的键要么刷全部（慢、且不是用户点的那一棵），
-  // 要么猜哪一棵，都不如把键放回每一根那一行。
+  // B424：刷新键不在头部 —— 多根之后「刷新」得有主语，一颗管整排的键要么刷全部（慢、且不是
+  // 用户点的那一棵），要么猜哪一棵，都不如把键放回每一根那一行（B429 又并进了新建两颗）。
   explorerOpen.addEventListener("click", () => void promptOpenFolder());
   explorerCollapse.addEventListener("click", () => collapseAllHere());
-  explorerNewFile.addEventListener("click", () => startCreate("file"));
-  explorerNewDir.addEventListener("click", () => startCreate("dir"));
+  // B429（用户点名）：头部这颗搜索键只管开合下面那条过滤框 —— 不另开一块视图。
+  explorerFilterToggle.addEventListener("click", () => setFilterShown(explorerFilter.hidden));
   // B427 · 过滤框：输入（攒 180ms）/ 回车（立刻）/ Esc（有字先清、没字放手）/ 五颗开关 / 清除。
   explorerFilterCase.innerHTML = CODICONS.caseSensitive;
   explorerFilterWord.innerHTML = CODICONS.wholeWord;
@@ -683,6 +682,26 @@ function filterOn(): boolean {
   return filterActive(filter);
 }
 
+/**
+ * B429：过滤框的开合（头部那颗搜索键点开 / 收起）。
+ *
+ * 收起时**必须清空**：过滤态会把整棵树换成命中树，框一藏、字还在，用户看到的就是
+ * 「文件怎么少了」。文字与开关一起回默认，下次点开是一张干净的框。
+ */
+function setFilterShown(shown: boolean): void {
+  explorerFilter.hidden = !shown;
+  explorerFilterToggle.setAttribute("aria-expanded", String(shown));
+  const label = shown ? "收起过滤" : "过滤文件";
+  explorerFilterToggle.setAttribute("aria-label", label);
+  setTip(explorerFilterToggle, label, { group: "explorer" });
+  if (shown) {
+    explorerFilterInput.focus();
+    explorerFilterInput.select();
+    return;
+  }
+  if (filter.text !== "" || explorerFilterInput.value !== "") setFilterText("");
+}
+
 /** 命中树里所有「可折的层」：带子项的目录（各根的根行不在内 —— 全折不碰根行）。 */
 function filterDirPaths(): string[] {
   const out: string[] = [];
@@ -879,7 +898,30 @@ function rootRefreshBtn(root: string): HTMLElement {
   return btn;
 }
 
-/** 某一根的那一行：箭头 + 名字 + 刷新键（B370：根行与目录行同口径，不挂文件夹图标）。 */
+/** 根行里的新建键（B429：从头部搬进来，和刷新一起只在悬停那一行时显形）。 */
+function rootCreateBtn(root: string, kind: Kind): HTMLElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "toc-head-btn explorer-root-new";
+  btn.dataset.kind = kind;
+  btn.innerHTML = kind === "dir" ? CODICONS.newFolder : CODICONS.newFile;
+  const label = kind === "dir" ? "新建目录" : "新建文件";
+  btn.setAttribute("aria-label", label);
+  setTip(btn, label, { group: "explorer" });
+  // 目标就是这一根（不是当下选中的那一行）：键长在根行上，主语由它所在那一行说了算。
+  btn.addEventListener("click", () => startCreate(kind, root));
+  return btn;
+}
+
+/** 根行右侧那组动作：新建文件 / 新建目录 / 刷新（B429 起三颗同组，悬停才显形）。 */
+function rootActions(root: string): HTMLElement {
+  const box = document.createElement("span");
+  box.className = "explorer-root-actions";
+  box.append(rootCreateBtn(root, "file"), rootCreateBtn(root, "dir"), rootRefreshBtn(root));
+  return box;
+}
+
+/** 某一根的那一行：箭头 + 名字 + 右侧动作组（B370：根行与目录行同口径，不挂文件夹图标）。 */
 function rootRow(root: string, open: boolean): HTMLElement {
   const el = document.createElement("div");
   el.className = "explorer-root";
@@ -897,7 +939,7 @@ function rootRow(root: string, open: boolean): HTMLElement {
   const rn = document.createElement("span");
   rn.className = "explorer-name";
   rn.textContent = nameOf(root);
-  el.append(rt, rn, rootRefreshBtn(root));
+  el.append(rt, rn, rootActions(root));
   return el;
 }
 
@@ -1195,8 +1237,11 @@ function targetDir(): string | null {
   return rootOf(selected) ?? list[0];
 }
 
-function startCreate(kind: Kind): void {
-  const dir = targetDir();
+function startCreate(kind: Kind, dirOverride?: string): void {
+  // 过滤态的树是合成出来的命中行，输入框没有容身之处 —— 先收起过滤（顺带清字）再建，
+  // 否则从根行点下去什么也不会出现（B429 起这两颗键在过滤态里同样看得见）。
+  if (filterOn()) setFilterShown(false);
+  const dir = dirOverride ?? targetDir();
   if (!dir) {
     showMessage("还没有打开文件夹");
     return;

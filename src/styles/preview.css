@@ -650,6 +650,11 @@
 .explorer-panel.no-root .explorer-filter {
   display: none;
 }
+/* B429：收起态由头部那颗搜索键写 `hidden`。作者样式表里的 `display: flex` 会压过 UA 的
+   `[hidden]`（与 `.side-drawer[hidden]` 同坑），必须在这里补一条。 */
+.explorer-filter[hidden] {
+  display: none;
+}
 /* B428（用户点名「文件过滤输入框边框缺失」）：与侧栏搜索那个框同款 —— 这一截跟面板
    一个底色，没 1px `--border` 就看不出哪一截是能打字的。`box-sizing: border-box` 在
    `.find-field` 那儿已经定了 ⇒ 加边框不改总高（26px 是总高）。 */
@@ -704,11 +709,25 @@
   cursor: pointer;
   white-space: nowrap;
 }
-/* B424：每根行自带那颗**刷新**贴右（键由 `rootRefreshBtn` 造）。
-   B327 立的规矩照用：根行是 flex、名字那截 `flex: 1 1 auto` + 省略号，路径一长就把余量吃干，
-   写固定 margin 会跟着漂 —— 只有 auto 边距能保证「永远在最右」。 */
-.explorer-root .toc-head-btn {
-  margin-left: auto;
+/* B429（用户点名）：新建文件 / 新建目录 / 刷新三颗键贴在根行右侧，**悬停那一行才显形**。
+   绝对定位而不是 `margin-left: auto`（B424 那版）：这三颗常驻占位时，名字那截的省略号会
+   提前一截；而且换档时宽度一变，行内文字会跟着跳。贴右浮层 + `background: inherit`
+   把行自己的 hover / 选中底色透上来，字从键底下过也不穿帮。 */
+.explorer-root-actions {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 8px;
+  background: inherit;
+  visibility: hidden;
+}
+.explorer-root:hover .explorer-root-actions,
+.explorer-root:focus-within .explorer-root-actions {
+  visibility: visible;
 }
 .explorer-row:hover,
 .explorer-root:hover {

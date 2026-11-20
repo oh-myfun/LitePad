@@ -681,9 +681,11 @@ def capture_recipe(recipe, size, settle, inset, corner_radius, shot_each):
         if got:
             png, dim = got
             # 空白自检：webview 没渲染内容时整片同色，PNG 会被压得极小。
-            # 实测 1600x1000 全黑图 ~18KB（0.011 字节/像素），正常界面 ~200KB（0.13）。
+            # 实测 1600x1000 全黑图 ~18KB（0.011 字节/像素）；而音频预览本来就大半是空舞台，
+            # B429 收起过滤框后又少了一块细节，实测 0.034 —— 阈值定 0.02：仍拦得住全黑图，
+            # 不把合法的空舞台误判成白图。
             ratio = len(png) / (dim[0] * dim[1])
-            if ratio >= 0.04:
+            if ratio >= 0.02:
                 return png, dim
             say("  ✗ 疑似空白图（%d 字节 / %dx%d，%.3f 字节每像素）—— 重试"
                 % (len(png), dim[0], dim[1], ratio))
