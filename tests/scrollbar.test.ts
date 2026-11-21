@@ -71,7 +71,12 @@ describe("边栏列表滚动条行为（jsdom 桩几何）", () => {
 
   beforeAll(() => {
     const proto = HTMLElement.prototype;
+    // jsdom 自己在 HTMLElement.prototype 上实现了这些几何属性（默认返回 0）。
+    // 只删不还原会把 jsdom 的实现一起抹掉，后续文件读 offsetLeft/scrollHeight 就成了
+    // undefined（文件级隔离时看不出来，worker 复用环境时会连锁污染）。
+    const originals = new Map<string, PropertyDescriptor | undefined>();
     const def = (prop: string, desc: PropertyDescriptor): void => {
+      if (!originals.has(prop)) originals.set(prop, Object.getOwnPropertyDescriptor(proto, prop));
       Object.defineProperty(proto, prop, { configurable: true, ...desc });
     };
     const isHost = (n: HTMLElement): boolean => n.classList.contains("toc-list");
@@ -109,16 +114,9 @@ describe("边栏列表滚动条行为（jsdom 桩几何）", () => {
       },
     });
     restore = () => {
-      for (const p of [
-        "clientHeight",
-        "scrollHeight",
-        "scrollTop",
-        "offsetTop",
-        "offsetLeft",
-        "offsetWidth",
-        "offsetHeight",
-      ]) {
-        delete (proto as unknown as Record<string, unknown>)[p];
+      for (const [p, d] of originals) {
+        if (d) Object.defineProperty(proto, p, d);
+        else delete (proto as unknown as Record<string, unknown>)[p];
       }
     };
   });

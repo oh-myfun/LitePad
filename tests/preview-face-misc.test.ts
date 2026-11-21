@@ -12,7 +12,7 @@
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CodeBlockWidget } from "../src/preview/codeBlockWidget";
 import { assetBase, setAssetBase } from "../src/preview/assets";
 import { HtmlBlockWidget } from "../src/preview/miscWidgets";
@@ -46,7 +46,9 @@ function atomicTexts(doc: string): string[] {
     .map((r) => doc.slice(r.from, r.to));
 }
 
-const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
+/** 等回写落到文档：轮询而不是睡固定毫秒数，机器忙时不会假红。 */
+const waitDoc = (view: EditorView, expected: string) =>
+  vi.waitFor(() => expect(view.state.doc.toString()).toBe(expected));
 
 const press = (el: Element) =>
   el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
@@ -89,9 +91,8 @@ describe("B397-4a 缩进代码块", () => {
 
     code.textContent = "const z = 3;";
     code.dispatchEvent(new InputEvent("input", { bubbles: true }));
-    await tick();
+    await waitDoc(view, ["    const z = 3;", "", "乙"].join("\n"));
 
-    expect(view.state.doc.toString()).toBe(["    const z = 3;", "", "乙"].join("\n"));
     expect(view.state.doc.toString()).not.toContain("```");
   });
 
@@ -103,9 +104,7 @@ describe("B397-4a 缩进代码块", () => {
 
     code.textContent = "const z = 3;";
     code.dispatchEvent(new InputEvent("input", { bubbles: true }));
-    await tick();
-
-    expect(view.state.doc.toString()).toBe(["```ts", "const z = 3;", "```", "", "乙"].join("\n"));
+    await waitDoc(view, ["```ts", "const z = 3;", "```", "", "乙"].join("\n"));
   });
 
   it("缩进式与围栏式是两种组件（eq 判不等 ⇒ 换形必须重建）", () => {
@@ -224,8 +223,7 @@ describe("B397-4a HTML 块", () => {
     source.dispatchEvent(new InputEvent("input", { bubbles: true }));
     expect(preview.querySelector("em")!.textContent).toBe("改");
 
-    await tick();
-    expect(view.state.doc.toString()).toContain("<em>改</em>");
+    await vi.waitFor(() => expect(view.state.doc.toString()).toContain("<em>改</em>"));
   });
 
   it("预览模式（只读锁）点预览不进入编辑", () => {

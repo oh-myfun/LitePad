@@ -132,7 +132,13 @@ describe("tooltip 层行为（jsdom）", () => {
       toJSON: () => ({}),
     }) as DOMRect;
 
-  const origRect = HTMLElement.prototype.getBoundingClientRect;
+  // 记描述符而不是值：原来 getBoundingClientRect 并不挂在 HTMLElement.prototype 上
+  // （继承自 Element.prototype）。用 { value } 定义会留下一个**只读**的同名属性，
+  // 后续文件再给元素实例赋值就会抛 "Cannot assign to read only property"。
+  const origRectDesc = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    "getBoundingClientRect",
+  );
   const origW = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth");
   const origH = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
 
@@ -157,10 +163,12 @@ describe("tooltip 层行为（jsdom）", () => {
   });
 
   afterAll(() => {
-    Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", {
-      configurable: true,
-      value: origRect,
-    });
+    if (origRectDesc) {
+      Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", origRectDesc);
+    } else {
+      // 原本没有自有属性 ⇒ 删掉，别留个只读影子挡住 Element.prototype 上的可写方法
+      delete (HTMLElement.prototype as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+    }
     if (origW) Object.defineProperty(HTMLElement.prototype, "offsetWidth", origW);
     if (origH) Object.defineProperty(HTMLElement.prototype, "offsetHeight", origH);
   });

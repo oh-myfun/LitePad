@@ -39,12 +39,18 @@ let restore: (() => void) | null = null;
 
 beforeAll(() => {
   const proto = HTMLElement.prototype;
+  // jsdom 自己在 HTMLElement.prototype 上实现了这些几何属性（默认返回 0）。
+  // 只删不还原会把 jsdom 的实现一起抹掉，后续文件读 offsetLeft/scrollLeft 就成了
+  // undefined（文件级隔离时看不出来，worker 复用环境时会连锁污染）。
+  const originals = new Map<string, PropertyDescriptor | undefined>();
   // 块体：Object.defineProperty 返回传入对象，箭头简写会把返回值塞给 void 声明（TS2322）。
   const def = (prop: string, desc: PropertyDescriptor): void => {
+    if (!originals.has(prop)) originals.set(prop, Object.getOwnPropertyDescriptor(proto, prop));
     Object.defineProperty(proto, prop, { configurable: true, ...desc });
   };
 
   // B125：装在渲染之前，tabstrip 里 `typeof ResizeObserver !== "undefined"` 才成立
+  const originalResizeObserver = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
   (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = FakeResizeObserver;
 
   // ⚠️ B125：轨道（.panel-tabstrip-scrollbar）也要有宽度，否则 syncOverlayScrollbar
@@ -87,10 +93,15 @@ beforeAll(() => {
   });
 
   restore = () => {
-    for (const p of ["clientWidth", "scrollWidth", "offsetLeft", "offsetWidth", "scrollLeft"]) {
-      delete (proto as unknown as Record<string, unknown>)[p];
+    for (const [p, d] of originals) {
+      if (d) Object.defineProperty(proto, p, d);
+      else delete (proto as unknown as Record<string, unknown>)[p];
     }
-    delete (globalThis as unknown as Record<string, unknown>).ResizeObserver;
+    if (originalResizeObserver) {
+      Object.defineProperty(globalThis, "ResizeObserver", originalResizeObserver);
+    } else {
+      delete (globalThis as unknown as Record<string, unknown>).ResizeObserver;
+    }
   };
 });
 

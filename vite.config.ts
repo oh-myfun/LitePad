@@ -38,9 +38,18 @@ export default defineConfig({
     // jsdom 与 WebView2(Chromium) 的环境差距统一在 tests/setup.ts 打桩；
     // 缺桩会让 CM6 的 mousedown 链路抛未捕获异常 → vitest 非 0 退出、pre-push 误拦推送。
     setupFiles: ["tests/setup.ts"],
+    // 文件间复用同一个 worker 环境：147 个文件各自起一次 jsdom 是墙钟的大头
+    // （实测 environment 汇总近 2000s）。复用后由 tests/setup.ts 在每个文件开头
+    // 还原模块注册表、DOM/存储、全局监听与原型量测桩，等价于「换一间干净房间」。
+    // 改动前后全量墙钟降到约四成；若新增的测试依赖文件级天然隔离（直接改
+    // globalThis / 原型且不还原），必须把清理逻辑补进 setup.ts，而不是关掉这一项。
+    isolate: false,
     // 走真实 bootstrap 的集成用例（jsdom 内 import ../src/main）本身就要 3-4s，
     // 机器负载高时会压过默认 5s → 偶发失败并拦住推送。给足余量，真挂死仍会失败。
     testTimeout: 20000,
+    // 同上：bootstrap 的 beforeAll 要 import 整份 main，并发高时能压过默认 10s
+    // （实测乱序跑时偶发 hook 超时）。真挂死仍会被有限超时拦下。
+    hookTimeout: 30000,
     // ⚠️ 排查用的临时取证用例一律落在 `.tmp/probe/`（见 pitfalls 那条规矩）。这些文件
     //    名字照旧是 `*.test.ts`，不排除就会被默认收集规则抓进来 ⇒ 全量里随手混两只
     //    永远红的文件，还会把真正的失败淹没掉（B254 那轮就栽在这：3 个红文件里
