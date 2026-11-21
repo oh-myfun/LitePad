@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 // B87：文件监听 —— 外部修改要真的刷新内容（VS Code 三态 + 回声抑制）。
 //
 // 从 `tests/regressions.test.ts` 按模块拆出（09-22）。

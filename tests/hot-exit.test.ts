@@ -10,7 +10,7 @@
 //
 // 副本的落盘格式、魔数、路径穿越防护、孤儿清理由 Rust 单测覆盖
 // （src-tauri/src/backup/mod.rs）；本文件只管前端编排。
-import { describe, it, expect, vi, beforeAll } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { topLevelFnBody, sessionAll } from "./static";
 import { EditorView } from "@codemirror/view";
@@ -145,13 +145,16 @@ vi.mock("../src/ipc/api", () => ({
   discardOrphanBackups: () => Promise.resolve(0),
 }));
 
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// 会话 / 备份都是 setTimeout 防抖：整组用假定时器把「到点」一次推过去。
+const wait = (ms: number) => vi.advanceTimersByTimeAsync(ms);
 
 describe("B68 热退出（自动保存关 / 热退出开）", () => {
   beforeAll(async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     await import("../src/main");
     await wait(300);
   });
+  afterAll(() => vi.useRealTimers());
 
   it("新建的空文档也要进会话（带 docId），下次启动才回得来", async () => {
     // B69：冷启动出的空文档既没有 path、也不脏（没输入过内容 → 不会写副本），

@@ -144,6 +144,30 @@ vi.mock("../src/ipc/api", () => ({
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** 排空两拍宏任务：rAF 在 tests/setup.ts 里就是 setTimeout(0)。 */
+async function settle(): Promise<void> {
+  await wait(0);
+  await wait(0);
+}
+
+/** bootstrap 只发生一次；等两个面板与编辑器都挂出来，别用固定 300ms 睡眠。 */
+let booted: Promise<void> | null = null;
+function boot(): Promise<void> {
+  booted ??= (async () => {
+    await import("../src/main");
+    const started = Date.now();
+    const ready = () =>
+      document.querySelectorAll(".layout-panel").length === 2 &&
+      document.querySelector(".cm-editor") !== null;
+    while (!ready()) {
+      if (Date.now() - started > 3000) throw new Error("bootstrap 未在 3s 内恢复出两个面板");
+      await wait(10);
+    }
+    await settle();
+  })();
+  return booted;
+}
+
 /** 面板激活由 .layout-panel 的 mousedown 触发（splitview 指针编排）。 */
 function activatePanel(panel: HTMLElement): void {
   panel.dispatchEvent(
@@ -184,14 +208,13 @@ async function toggleTocViaMenu(): Promise<void> {
 
 describe("大纲必须跟随活动面板的当前文档", () => {
   it("分屏下在 md 与纯文本之间切换面板，大纲随之切换/清空", async () => {
-    await import("../src/main");
-    await wait(300);
+    await boot();
 
     const panels = Array.from(document.querySelectorAll(".layout-panel")) as HTMLElement[];
     expect(panels.length, "应恢复两个面板").toBe(2);
 
     await toggleTocViaMenu();
-    await wait(50);
+    await settle();
 
     const tocTexts = () =>
       Array.from(document.querySelectorAll("#toc-panel .toc-item")).map((e) => e.textContent ?? "");
@@ -199,19 +222,19 @@ describe("大纲必须跟随活动面板的当前文档", () => {
 
     // 左面板（md）
     activatePanel(panels[0]);
-    await wait(50);
+    await settle();
     expect(tocTexts(), "活动面板是 md 时应显示其大纲").toEqual(["A标题", "A二级"]);
     expect(tocEmpty(), "md 面板不应显示空态").toBe(false);
 
     // 右面板（纯文本）→ 大纲必须清空，而不是继续挂着 md 的大纲
     activatePanel(panels[1]);
-    await wait(50);
+    await settle();
     expect(tocTexts(), "切到纯文本文档后不应再有标题项").toEqual([]);
     expect(tocEmpty(), "纯文本文档应显示空态").toBe(true);
 
     // 切回 md 面板 → 大纲回来
     activatePanel(panels[0]);
-    await wait(50);
+    await settle();
     expect(tocTexts(), "切回 md 面板应恢复大纲").toEqual(["A标题", "A二级"]);
   });
 
@@ -219,13 +242,12 @@ describe("大纲必须跟随活动面板的当前文档", () => {
     // 用户报告：带大纲文件 → 不带大纲文件（跨面板、点击文档内容激活），
     // 左侧大纲仍残留。内容点击会冒泡到 .layout-panel 触发 onActivatePanel；
     // 该路径必须有幂等的大纲刷新兜底。
-    await import("../src/main");
-    await wait(300);
+    await boot();
 
     const tocPanelEl = document.getElementById("toc-panel") as HTMLElement;
     // 用例间共享模块状态：前一个用例可能已把抽屉打开/关闭，这里确保打开
     if (tocPanelEl.hidden) await toggleTocViaMenu();
-    await wait(50);
+    await settle();
     const tocItems = () =>
       Array.from(document.querySelectorAll("#toc-panel .toc-item")).map((e) => e.textContent ?? "");
     const panels = Array.from(document.querySelectorAll(".layout-panel")) as HTMLElement[];
@@ -245,37 +267,36 @@ describe("大纲必须跟随活动面板的当前文档", () => {
       );
 
     click(content(1));
-    await wait(50);
+    await settle();
     expect(tocItems(), "点击纯文本面板内容后大纲应清空").toEqual([]);
 
     click(content(0));
-    await wait(50);
+    await settle();
     expect(tocItems(), "点回 md 面板内容应恢复大纲").toEqual(["A标题", "A二级"]);
 
     click(content(1));
-    await wait(50);
+    await settle();
     expect(tocItems(), "再次点击文本内容应再次清空").toEqual([]);
   });
 });
 
 describe("B388：光标落进正文，大纲也要点亮所在那一节", () => {
   it("编辑器选区变化带着高亮走，而不是只认「光标正好站在标题行上」", async () => {
-    await import("../src/main");
-    await wait(300);
+    await boot();
 
     const panels = Array.from(document.querySelectorAll(".layout-panel")) as HTMLElement[];
     expect(panels.length, "应恢复两个面板").toBe(2);
     // 用例之间共享模块状态：先把活动面板切回 md 那一格，再把抽屉重新摊开一次
     // （摊开那一下走 onShow=updateTocDrawer，高亮的初值才算数）
     activatePanel(panels[0]);
-    await wait(30);
+    await settle();
     const tocPanelEl = document.getElementById("toc-panel") as HTMLElement;
     if (!tocPanelEl.hidden) {
       await toggleTocViaMenu();
-      await wait(30);
+      await settle();
     }
     await toggleTocViaMenu();
-    await wait(50);
+    await settle();
     expect(tocPanelEl.hidden, "大纲抽屉应已摊开").toBe(false);
 
     const view = EditorView.findFromDOM(panels[0].querySelector(".cm-editor") as HTMLElement);
@@ -288,15 +309,15 @@ describe("B388：光标落进正文，大纲也要点亮所在那一节", () => 
       );
 
     view!.dispatch({ selection: { anchor: view!.state.doc.line(5).from } });
-    await wait(30);
+    await settle();
     expect(activeTexts(), "光标在「## A二级」那一行 ⇒ 亮它自己").toEqual(["A二级"]);
 
     view!.dispatch({ selection: { anchor: view!.state.doc.line(3).from } });
-    await wait(30);
+    await settle();
     expect(activeTexts(), "光标移到「正文A」⇒ 亮包住它的那一节「# A标题」").toEqual(["A标题"]);
 
     view!.dispatch({ selection: { anchor: view!.state.doc.line(2).from } });
-    await wait(30);
+    await settle();
     expect(activeTexts(), "同一节里再挪一格 ⇒ 高亮仍是那一条（不跟着光标一闪一闪）").toEqual([
       "A标题",
     ]);

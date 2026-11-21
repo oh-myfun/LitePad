@@ -105,22 +105,17 @@ function stubActiveHost(box: { top: number; left: number; width: number }): void
 }
 
 describe("悬浮查找栏：入口与范围", () => {
-  it("未打开时不可见，open() 后可见", () => {
+  it("入口：open 前不可见、开后可关闭；无标题栏/范围下拉/文件夹与跨文档控件", () => {
     const m = mount();
     expect(m.bar.isOpen(), "初始应关闭").toBe(false);
     m.bar.open();
     expect(m.bar.isOpen()).toBe(true);
     expect(m.dom.hidden).toBe(false);
-  });
 
-  it("方案 C：不再有可拖动的标题栏，改为钉右上角", () => {
-    const m = mount();
-    m.bar.open();
+    // 方案 C：钉右上角，不再有可拖动的标题栏
     expect(m.dom.querySelector(".find-bar-title"), "标题栏与拖动把手应已移除").toBeNull();
-  });
 
-  it("范围不是下拉菜单，也不再有文件夹搜索控件", () => {
-    const m = mount();
+    // 范围不是下拉菜单，也不再有文件夹搜索控件
     expect(m.dom.querySelector(".find-scope"), "不得有范围下拉").toBeNull();
     expect(m.dom.querySelector("select"), "查找栏内不应有任何下拉菜单").toBeNull();
     expect(m.dom.querySelector(".find-folder"), "不得再有搜索目录输入").toBeNull();
@@ -143,7 +138,7 @@ describe("悬浮查找栏：入口与范围", () => {
     ]);
   });
 
-  it("主行是查找：回车为下一个 / Shift+回车为上一个", () => {
+  it("主行回车：有文本 Next/Shift+Prev；空文本仍只是一次步进，不写底部提示", () => {
     const m = mount();
     m.bar.open();
     const input = m.q<HTMLInputElement>(".find-input");
@@ -154,16 +149,14 @@ describe("悬浮查找栏：入口与范围", () => {
     // open() 先同步一次查询（刷新高亮），随后输入变更再同步一次
     expect(m.calls).toEqual(["change", "change", "step:1", "step:-1"]);
     expect(m.lastQuery()?.text).toBe("abc");
-  });
 
-  it("空文本时回车仍只是一次步进，不往底部状态行写提示", () => {
     // B389 之前这条挂在「点亮文档图标」上：跨文档剥离后行为没变 —— 有没有命中由主程序
     // 用计数区表达，查找栏不许自己往底部写一句「请输入查找内容」（另外两种范围也没写）。
-    const m = mount();
-    m.bar.open();
-    key(m.q<HTMLElement>(".find-input"), "Enter");
-    expect(m.calls).toContain("step:1");
-    expect(m.q(".find-status").hidden, "不再写底部状态行提示").toBe(true);
+    const empty = mount();
+    empty.bar.open();
+    key(empty.q<HTMLElement>(".find-input"), "Enter");
+    expect(empty.calls).toContain("step:1");
+    expect(empty.q(".find-status").hidden, "不再写底部状态行提示").toBe(true);
   });
 
   it("种子文本在 open() 时写入并只同步一次查询", () => {
@@ -176,7 +169,7 @@ describe("悬浮查找栏：入口与范围", () => {
 });
 
 describe("悬浮查找栏：方案 C 的折叠替换行与图标开关", () => {
-  it("替换行默认折叠，点 chevron 展开/收起", () => {
+  it("替换行默认折叠，点 chevron 展开/收起；以「替换」入口打开时自动展开", () => {
     const m = mount();
     m.bar.open();
     expect(m.replaceRow().hidden, "默认折叠").toBe(true);
@@ -184,12 +177,10 @@ describe("悬浮查找栏：方案 C 的折叠替换行与图标开关", () => {
     expect(m.replaceRow().hidden).toBe(false);
     m.chevron().click();
     expect(m.replaceRow().hidden).toBe(true);
-  });
 
-  it("以「替换」入口打开时自动展开替换行", () => {
-    const m = mount();
-    m.bar.open("", true);
-    expect(m.replaceRow().hidden, "替换入口应展开替换行").toBe(false);
+    const viaReplace = mount();
+    viaReplace.bar.open("", true);
+    expect(viaReplace.replaceRow().hidden, "替换入口应展开替换行").toBe(false);
   });
 
   it("focusReplace 展开替换行并聚焦替换框", () => {
@@ -200,7 +191,7 @@ describe("悬浮查找栏：方案 C 的折叠替换行与图标开关", () => {
     expect(document.activeElement).toBe(m.q(".find-replace-input"));
   });
 
-  it("图标开关（大小写/全词/正则/保留大小写）进入查询对象，选区开关在箭头之后", () => {
+  it("图标开关进出查询对象、用 aria-pressed 表状态，选区开关排在箭头之后", () => {
     const m = mount();
     m.bar.open();
     // 输入框内嵌开关 3 个 + 替换行 1 个；选区那个已挪出输入框（B78）
@@ -235,16 +226,14 @@ describe("悬浮查找栏：方案 C 的折叠替换行与图标开关", () => {
                     : "?",
     );
     expect(order).toEqual(["chevron", "field", "count", "prev", "next", "sel", "close"]);
-  });
 
-  it("图标开关用 aria-pressed 表达激活态", () => {
-    const m = mount();
-    m.bar.open();
-    const b = m.tgl("全词匹配");
-    expect(b.getAttribute("aria-pressed")).toBe("false");
-    b.click();
-    expect(b.getAttribute("aria-pressed")).toBe("true");
-    expect(b.classList.contains("on")).toBe(true);
+    // 开关的激活态统一用 aria-pressed（.on 只是配色那一半）
+    const w = m.tgl("全词匹配");
+    expect(w.getAttribute("aria-pressed")).toBe("false");
+    w.click();
+    expect(w.getAttribute("aria-pressed")).toBe("true");
+    expect(w.classList.contains("on")).toBe(true);
+    expect(m.lastQuery()?.wholeWord, "点下去要真的进查询对象").toBe(true);
   });
 
   it("替换控件在展开后可用（不做文件夹搜索，故无「不能写回」禁用态）", () => {
@@ -259,18 +248,14 @@ describe("悬浮查找栏：方案 C 的折叠替换行与图标开关", () => {
 });
 
 describe("悬浮查找栏：不绑定文件/面板", () => {
-  it("切换文档（retarget）后仍然打开，并把查询重新应用到新视图", () => {
+  it("retarget 后仍打开并重新应用查询；只有 close / Esc / × 才关闭", () => {
     const m = mount();
     m.bar.open();
     m.q<HTMLInputElement>(".find-input").value = "keep";
     m.bar.retarget();
     expect(m.bar.isOpen(), "切文档后查找栏不能被关掉").toBe(true);
     expect(m.lastQuery()?.text).toBe("keep");
-  });
 
-  it("只有当调用 close / Esc / × 时才关闭，并回调 onClose", () => {
-    const m = mount();
-    m.bar.open();
     m.bar.close();
     expect(m.bar.isOpen()).toBe(false);
     expect(m.calls).toContain("close");
@@ -284,33 +269,25 @@ describe("悬浮查找栏：不绑定文件/面板", () => {
     expect(m.bar.isOpen()).toBe(false);
   });
 
-  it("紧凑计数写入，且「无匹配」置警示色", () => {
+  it("紧凑计数三态：有命中点亮、空内容「无内容」、无匹配置灰变红", () => {
     const m = mount();
     m.bar.open();
-    m.bar.setCount("3 / 12");
+    m.bar.setCount("3 / 12"); // 有命中
     m.bar.setStatus("已替换 12 处");
     expect(m.q(".find-count").textContent).toBe("3 / 12");
     expect(m.q(".find-count").classList.contains("find-count-bad")).toBe(false);
     expect(m.q(".find-status").textContent).toContain("12 处");
+    expect(m.q<HTMLButtonElement>(".find-prev").disabled).toBe(false);
+    expect(m.q<HTMLButtonElement>(".find-next").disabled).toBe(false);
 
-    m.bar.setCount("无匹配");
-    expect(m.q(".find-count").classList.contains("find-count-bad"), "无匹配变红").toBe(true);
-  });
-
-  it("计数区：空内容显示「无内容」且 prev/next 置灰；有命中点亮；无匹配置警示色", () => {
-    const m = mount();
-    m.bar.open();
     m.bar.setCount(""); // 模拟「没有搜索内容」
     expect(m.q(".find-count").textContent).toBe("无内容");
     expect(m.q<HTMLButtonElement>(".find-prev").disabled).toBe(true);
     expect(m.q<HTMLButtonElement>(".find-next").disabled).toBe(true);
-    m.bar.setCount("3 / 12"); // 有命中
-    expect(m.q(".find-count").textContent).toBe("3 / 12");
-    expect(m.q<HTMLButtonElement>(".find-prev").disabled).toBe(false);
-    expect(m.q<HTMLButtonElement>(".find-next").disabled).toBe(false);
+
     m.bar.setCount("无匹配"); // 无匹配仍置灰 + 警示色
+    expect(m.q(".find-count").classList.contains("find-count-bad"), "无匹配变红").toBe(true);
     expect(m.q<HTMLButtonElement>(".find-prev").disabled).toBe(true);
-    expect(m.q(".find-count").classList.contains("find-count-bad")).toBe(true);
   });
 
   it("B80：查找栏不再有底部结果区（对齐 VS Code 的查找浮层）", () => {
@@ -1102,7 +1079,7 @@ describe("查找栏静态契约（从 regressions 拆出）", () => {
 // 判定在 `find/findbar.ts`（看 viewMode），这里钉的是关上门之后的行为：
 // 替换行收起、chevron 压住并换提示、Ctrl+H 的 focusReplace 退回查找框。
 describe("B417：预览档禁用替换（浮层自己的那一半）", () => {
-  it("setReplaceEnabled(false)：收起 + 压住 + 换提示；focusReplace 落回查找框", () => {
+  it("setReplaceEnabled(false) 收起 + 压住 + 换提示，focusReplace 落回查找框；取回可写档后恢复", () => {
     const m = mount();
     m.bar.open();
     m.bar.setReplaceEnabled(false);
@@ -1113,12 +1090,7 @@ describe("B417：预览档禁用替换（浮层自己的那一半）", () => {
     expect(m.replaceRow().hidden).toBe(true);
     m.bar.focusReplace();
     expect(document.activeElement).toBe(m.q(".find-input"));
-  });
 
-  it("取回可写档 ⇒ 展开键恢复、替换行照旧能开", () => {
-    const m = mount();
-    m.bar.open();
-    m.bar.setReplaceEnabled(false);
     m.bar.setReplaceEnabled(true);
     expect(m.chevron().disabled).toBe(false);
     expect(m.chevron().dataset.tip).toBe("展开或折叠替换");

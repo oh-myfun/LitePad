@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 // 反向验证：**静态断言工具自身**不得失真。
 //
 // 为什么单独一个文件：`tests/static.ts` 里的 themeBlock / ruleBlock / cssDecls /
@@ -35,21 +34,19 @@ const CSS = `:root[data-theme="dark"] {
 `;
 
 describe("反向验证：themeBlock 不得被块内注释截断（守卫基建）", () => {
-  it("基准：注释之后声明的变量仍取得到（含花括号的注释不影响配对）", () => {
+  it("基准 vs 退化：含花括号的注释不影响配对，旧 `\\{[^}]*\\}` 会从注释处截断", () => {
     const block = themeBlock(CSS, "dark");
     expect(block, "应取到完整块体").toBeTruthy();
     expect(block, "注释之前的变量要取到").toContain("--bg");
     expect(block, "注释之后的变量也要取到").toContain("--tip-bg");
-  });
 
-  it("退化：旧的 `\\{[^}]*\\}` 写法会被注释里的花括号截断 → 后面的变量整片消失", () => {
     const naive = /:root\[data-theme="dark"\]\s*\{([^}]*)\}/.exec(CSS)?.[1] ?? "";
     // ⚠️ 先自证退化写法**确实跑了**：它得先取到东西，才有资格谈「取少了」。
     //    否则「取不到」也可能只是正则没匹配上，证明不了截断这回事。
     expect(naive, "退化写法应当匹配上了（这样才能谈它取少了）").toContain("--bg");
     expect(naive, "截断之后注释后面的变量就没了 —— 这正是旧写法的失真点").not.toContain("--tip-bg");
     // 与基准对照：两者结果不同 ⇒ 「块内含 --tip-bg」这条正向断言不是恒真。
-    expect(themeBlock(CSS, "dark")).not.toBe(naive);
+    expect(block).not.toBe(naive);
   });
 
   it("退化对照：变量被挖掉时，块体必须如实反映缺失（否则 toContain 是恒真）", () => {
@@ -72,20 +69,15 @@ describe("反向验证：themeBlock 不得被块内注释截断（守卫基建�
 });
 
 describe("反向验证：cssDecls / ruleBlock 的取值边界", () => {
-  it("cssDecls 剥掉块注释（注释里写的旧值不得影响断言）", () => {
-    const block = "  flex: 0 1 auto; /* 旧值：flex: 1 */";
-    expect(cssDecls(block), "注释必须剥掉").not.toContain("旧值");
-    expect(cssDecls(block), "声明本身要留着").toContain("flex: 0 1 auto");
-  });
-
-  it("退化：不剥注释时，`not.toMatch(旧值)` 会被自己的文档误伤（静默通过）", () => {
+  it("cssDecls 剥块注释：退化写法会把注释里的旧值当成声明（`not.toMatch` 被自己误伤）", () => {
     const block = "  flex: 0 1 auto; /* 旧值：flex: 1 */";
     // 不剥注释：断言「不得再出现 flex: 1」会命中**注释里的旧值** → 假红；
-    // 反过来，若断言的是 `not.toContain("flex: 0 1 auto")` 之类就会因注释兜底而假绿。
     expect(block, "退化写法仍能在注释里看到旧值（这就是失真的来源）").toContain("flex: 1");
+    expect(cssDecls(block), "注释必须剥掉").not.toContain("旧值");
     expect(cssDecls(block), "剥掉之后旧值消失 —— 两者结果不同，说明剥离是有效的").not.toContain(
       "flex: 1",
     );
+    expect(cssDecls(block), "声明本身要留着").toContain("flex: 0 1 auto");
   });
 
   it("ruleBlock 不会误命中「属性值里提到的同名选择器」", () => {
@@ -97,15 +89,13 @@ describe("反向验证：cssDecls / ruleBlock 的取值边界", () => {
 });
 
 describe("反向验证：stripLineComments / topLevelFnBody 的截断点", () => {
-  it("剥整行注释，但行内的 //（如 URL）保留", () => {
+  it("剥整行注释但保留行内 //（URL）；不剥时注释里复述的标识符会让源码断言假绿", () => {
     const src = '// 整行注释：persistSettings()\nconst url = "https://x/";\ncode();\n';
     const stripped = stripLineComments(src);
     expect(stripped, "整行注释必须剥掉").not.toContain("整行注释");
     expect(stripped, "URL 里的 // 是行内内容，不得误剥").toContain("https://x/");
     expect(stripped, "代码行要留着").toContain("code();");
-  });
 
-  it("退化：不剥注释时，注释里复述的标识符会让源码断言假绿", () => {
     // B79 的真实坑：注释里原样写了 `persistSettings()`，挖掉真正的调用后
     // 比对整份文件照样通过 —— 断言的是注释，不是代码。
     const gutted = "// 记得调 persistSettings()\nfunction boot() {\n}\n";
@@ -127,28 +117,29 @@ describe("反向验证：stripLineComments / topLevelFnBody 的截断点", () =>
 });
 
 describe("反向验证：stripCssComments 不得被「删除说明」注释误伤", () => {
-  it("基准：块注释剥掉，规则文本留着（注释里提过的选择器不再出现）", () => {
+  it("stripCssComments 剥块注释、留规则：说明注释不得把「旧类名已删」判成假红", () => {
     const css = [".title-bar {", "  height: 34px;", "}", "", "/* 原来的 .tool-btn 已删 */"].join(
       "\n",
     );
     const stripped = stripCssComments(css);
     expect(stripped, "规则要留着").toContain(".title-bar {");
     expect(stripped, "注释里提到的旧类名必须随注释一起消失").not.toContain(".tool-btn");
-  });
 
-  it("退化：不剥注释时，「旧类名必须已删除」会被自己的说明注释判成假红", () => {
     // B97 的真实坑：删掉顶栏快捷按钮那套样式后，交付里**留了一行注释**交代去向
     // （「原先 .toolbar-actions / .tool-btn 一套规则只服务于那 8 颗按钮……直接删掉」）。
     // 规则确实删干净了（只剩这一处提及），但断言比对原文 → 报红，指向一行无害的注释。
-    const css =
+    const commentOnly =
       "button { color: red; }\n/* 原先 .tool-btn 一套规则只服务于那 8 颗按钮，直接删掉 */\n";
-    expect(css, "退化写法：原文里仍搜得到那个类名（其实只是注释）").toContain(".tool-btn");
-    expect(stripCssComments(css), "过一层剥离后才如实反映「规则已删」").not.toContain(".tool-btn");
-    expect(stripCssComments(css), "真规则不能一起剥掉").toContain("color: red");
-  });
+    expect(commentOnly, "退化写法：原文里仍搜得到那个类名（其实只是注释）").toContain(".tool-btn");
+    expect(stripCssComments(commentOnly), "过一层剥离后才如实反映「规则已删」").not.toContain(
+      ".tool-btn",
+    );
+    expect(stripCssComments(commentOnly), "真规则不能一起剥掉").toContain("color: red");
 
-  it("退化对照：规则真的还在时，剥离后必须仍搜得到（否则 not.toContain 是恒真）", () => {
-    const css = "/* 说明 */\n.tool-btn { width: 28px; }\n";
-    expect(stripCssComments(css), "规则尚存时断言必须咬得住").toContain(".tool-btn");
+    // 退化对照：规则真的还在时，剥离后必须仍搜得到（否则 not.toContain 是恒真）。
+    expect(
+      stripCssComments("/* 说明 */\n.tool-btn { width: 28px; }\n"),
+      "规则尚存时断言必须咬得住",
+    ).toContain(".tool-btn");
   });
 });

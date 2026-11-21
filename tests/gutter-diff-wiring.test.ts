@@ -10,7 +10,7 @@
 // ⚠️ 按下标寻行成立的前提是「可见行 = 全部行」：jsdom 没有真布局，CM6 的视口兜底会把这一小篇
 // 全画出来。这条前提由 `rowAt` 自己守着 —— 它先数格数，不够就报「前提不成立」而不是判个假绿。
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import type { EditorView } from "@codemirror/view";
 import { fnBody } from "./static";
@@ -18,7 +18,12 @@ import { createEditor, makeTabState } from "../src/editor/editor";
 import { perfProfileFor } from "../src/editor/perf";
 import { refreshGutterDiff } from "../src/editor/gutterDiff";
 
-const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+// gutter 重算是防抖排程：假定时器把「到点」一次推过去，比每条真睡 300ms 快且更准。
+const wait = async (ms: number): Promise<void> => {
+  await vi.advanceTimersByTimeAsync(ms);
+};
+beforeAll(() => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }));
+afterAll(() => vi.useRealTimers());
 
 interface Harness {
   view: EditorView;

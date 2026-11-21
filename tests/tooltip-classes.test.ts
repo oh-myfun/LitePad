@@ -46,37 +46,29 @@ function callOf(src: string, fn: string, firstArg: string): string {
 afterEach(() => resetTooltipsForTest());
 
 describe("两档只差在选项上（真 DOM）", () => {
-  it("setTip = 按钮档：不写 follow ⇒ 按元素定位、画小尖尖", () => {
+  it("setTip 按钮档 / setTextTip 文本档：同一套机制的两个取值", () => {
     const btn = document.createElement("button");
-    document.body.appendChild(btn);
+    const row = document.createElement("div");
+    const same = document.createElement("div");
+    document.body.append(btn, row, same);
     setTip(btn, "关闭", { key: "Ctrl+W" });
     expect(btn.dataset.tip).toBe("关闭");
     expect(btn.dataset.tipFollow, "按钮档不许跟鼠标").toBeUndefined();
-    btn.remove();
-  });
 
-  it("setTextTip = 文本档：follow + compact 自动带上，opts 只补差异", () => {
-    const row = document.createElement("div");
-    document.body.appendChild(row);
     setTextTip(row, "D:\\笔记\\a.md", { group: "explorer", detail: "2 分钟前" });
     expect(row.dataset.tip).toBe("D:\\笔记\\a.md");
     expect(row.dataset.tipFollow, "跟鼠标 ⇒ 提示层 data-pointer=false ⇒ 不画尖尖").toBe("1");
     expect(row.dataset.tipCompact, "12px 紧凑档").toBe("1");
     expect(row.dataset.tipGroup, "group 由调用方给").toBe("explorer");
     expect(row.dataset.tipDetail).toBe("2 分钟前");
-    row.remove();
-  });
 
-  it("两档是同一套机制的两个取值，不是两套实现", () => {
-    const a = document.createElement("div");
-    const b = document.createElement("div");
-    document.body.append(a, b);
-    setTip(a, "x", { follow: true, compact: true });
-    setTextTip(b, "x");
-    expect(b.dataset.tipFollow).toBe(a.dataset.tipFollow);
-    expect(b.dataset.tipCompact).toBe(a.dataset.tipCompact);
-    a.remove();
-    b.remove();
+    // 文本档不是另写一套：手写同等选项必须落到同一组 data 上。
+    setTip(same, "x", { follow: true, compact: true });
+    expect(same.dataset.tipFollow).toBe(row.dataset.tipFollow);
+    expect(same.dataset.tipCompact).toBe(row.dataset.tipCompact);
+    btn.remove();
+    row.remove();
+    same.remove();
   });
 });
 
@@ -115,16 +107,16 @@ describe("文本类逐个经 setTextTip", () => {
     ["src/shell/keymapdialog.ts", "name", "cmd.note"], // 键位表那列命令说明
   ];
 
-  for (const [file, arg, text] of TEXT_SITES) {
-    it(`${file} 的 ${arg} 走文本档，文案仍是 ${text}`, () => {
+  it("每一处文本类都走 setTextTip，文案仍是全称；退回 setTip 的替身必须抠不到", () => {
+    for (const [file, arg, text] of TEXT_SITES) {
       const src = readFileSync(file, "utf-8");
       const c = callOf(src, "setTextTip", arg);
-      expect(c, `没找到 setTextTip(${arg}, …)`).not.toBe("");
-      expect(c, "文案被改动了").toContain(text);
-    });
-  }
+      // 逐处断言仍带文件名：合并成一条用例后，红的时候照样能指认是哪一处漏了。
+      expect(c, `${file}：没找到 setTextTip(${arg}, …)`).not.toBe("");
+      expect(c, `${file}：文案被改动了`).toContain(text);
+    }
 
-  it("反向：退回 setTip 的替身必须抠不到", () => {
+    // 反向替身：把资源管理器树行的文本档退回按钮档，上面的判据必须抠不到。
     const src = readFileSync("src/explorer/panel.ts", "utf-8");
     const regressed = src.replace("setTextTip(row, path", 'setTip(row, path, { group: "x" ');
     expect(regressed, "替身必须真的替换过").not.toBe(src);
@@ -133,7 +125,7 @@ describe("文本类逐个经 setTextTip", () => {
 });
 
 describe("全应用不再有原生 title", () => {
-  it("src 下每个 .ts 都不许再写 title 属性（document.title 除外）", () => {
+  it("src 下每个 .ts 都不许再写 title 属性；对话框按钮走按钮档而非文本档", () => {
     const offenders = SRC_TS.map(
       (f) => [f.replace(/\\/g, "/"), nativeTitleHits(readFileSync(f, "utf-8"))] as const,
     )
@@ -149,9 +141,8 @@ describe("全应用不再有原生 title", () => {
     ]);
     // 同一段里 document.title 不算命中（那是窗口标题，与提示无关）。
     expect(nativeTitleHits("document.title = name;")).toEqual([]);
-  });
 
-  it("对话框按钮走按钮档（带尖尖），不许顺手升成文本档", () => {
+    // 对话框按钮是「按钮档」：复用 setTip，不许顺手升成文本档（否则带尖尖的样式丢了）。
     for (const f of ["src/shell/conflictdialog.ts", "src/shell/saveconfirm.ts"]) {
       const src = codeOnly(readFileSync(f, "utf-8"));
       expect(src, `${f} 应引用 setTip`).toMatch(/import\s*\{[^}]*\bsetTip\b[^}]*\}\s*from/);
@@ -174,12 +165,11 @@ describe("B427 · 侧栏搜索里每一颗 .find-toggle 都自带提示", () => 
       .map((b) => b.id || "(无 id)");
   const tipOf = (id: string): string => doc.getElementById(id)?.getAttribute("data-tip") ?? "";
 
-  it("侧栏里每一颗开关都有提示（先数一遍夹具，免得对着空集放行）", () => {
+  it("每一颗都有提示、三颗与悬浮栏同字；抠掉一颗必须被抓到", () => {
+    // 先数一遍夹具，免得对着空集放行。
     expect(toggles.length, "侧栏搜索至少五颗 .find-toggle").toBeGreaterThanOrEqual(5);
     expect(tipsOf(doc), "这几颗没有提示（悬停什么也不会出现）").toEqual([]);
-  });
 
-  it("三颗匹配开关的提示与悬浮查找栏同字（同一颗开关，两处口径不许分家）", () => {
     // 悬浮查找栏那三颗在 `findbar.ts` 里是 `toggle(图标, aria 名, 提示)`；按**图标**配对，
     // 不按顺序也不按 aria 名 —— 那边正则那颗的 aria 名叫「正则」，这边叫「使用正则表达式」。
     const bar = readFileSync("src/shell/findbar.ts", "utf-8");
@@ -196,9 +186,8 @@ describe("B427 · 侧栏搜索里每一颗 .find-toggle 都自带提示", () => 
       expect(fromBar, `findbar.ts 里找不到图标 ${icon} 那颗`).toBeTruthy();
       expect(tipOf(id), `${id} 的提示要与悬浮查找栏那颗 ${icon} 同字`).toBe(fromBar);
     }
-  });
 
-  it("反向：把一颗的 data-tip 抠掉，判据必须抓到（证明它真有鉴别力）", () => {
+    // 反向：把一颗的 data-tip 抠掉，判据必须抓到（证明它真有鉴别力）。
     // B427 之后「使用正则表达式」这句提示在 index.html 里有两处（侧栏搜索 + 资源管理器过滤框），
     // 所以替身要**锚在那颗 id 上**抠，按文案裸替换会抠错行、把判据验成另一颗。
     const broken = html.replace(/(id="search-regex"[\s\S]*?)data-tip="使用正则表达式"/, "$1");

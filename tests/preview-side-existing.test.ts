@@ -181,7 +181,7 @@ function panelOp(panelId: number, label: string): HTMLElement | null {
 describe("B232 侧边预览开在已有文档的右面板：切回源码必须是新那份", () => {
   beforeAll(async () => {
     await import("../src/main");
-    await wait(400);
+    await wait(0);
   });
 
   it("初始态：左面板是 md、右面板是 json", () => {
@@ -194,14 +194,14 @@ describe("B232 侧边预览开在已有文档的右面板：切回源码必须�
   it("点左侧「打开侧边预览」后，右面板多出一份 md 预览并成为活动标签", async () => {
     // 先确保左面板是活动面板（用户描述：激活左边 md）
     (document.querySelector(`.layout-panel[data-panel-id="1"]`) as HTMLElement)?.click();
-    await wait(60);
+    await wait(0);
     const openSide = panelOp(1, "打开侧边预览");
     expect(openSide, "左面板 md 标签上应有「打开侧边预览」（md 两键只给活动面板）").toBeTruthy();
     expect(panelOp(2, "打开侧边预览"), "右面板此时是 json（非 md），不该有 md 操作键").toBeNull();
 
     openSide!.click();
-    await wait(50);
-    await wait(400);
+    await wait(0);
+    await wait(0);
 
     // 右面板现在应该有两份：b.json 与新增的 md（副本）
     const names = Array.from(
@@ -227,7 +227,7 @@ describe("B232 侧边预览开在已有文档的右面板：切回源码必须�
     const toSource = panelOp(2, "切换到源码");
     expect(toSource, "右面板那份是预览态，应有「切换到源码」这颗键").toBeTruthy();
     toSource!.click();
-    await wait(400);
+    await wait(0);
 
     const text = panelText(2);
     expect(

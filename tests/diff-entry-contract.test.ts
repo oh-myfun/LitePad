@@ -56,8 +56,8 @@ function owners(spec: string): string[] {
   return COMMANDS.filter((c) => c.keys.some((k) => normalizeSpec(k) === spec)).map((c) => c.id);
 }
 
-describe("B461 · 差异步进两条命令进表（Task 4 Step 5/6）", () => {
-  it("B461 · 表里就是那两条：id / label / group / 键位逐字", () => {
+describe("B461 · 差异命令进表（Task 4/5 Step 5/6）", () => {
+  it("B461 · 三条命令与整张 diff.* 清单：id / label / group / 键位逐字，且键位无人占、可改键", () => {
     expect(commandById("diff.nextChange")).toMatchObject({
       id: "diff.nextChange",
       label: "下一个差异",
@@ -85,9 +85,7 @@ describe("B461 · 差异步进两条命令进表（Task 4 Step 5/6）", () => {
       "diff.toggleSyncScroll",
       "diff.refresh",
     ]);
-  });
 
-  it("B461 · effectiveKeys 交出那两颗键，且 duplicateKeys 仍为空（键位没撞车）", () => {
     expect(effectiveKeys("diff.nextChange", {})).toEqual(["Alt+F5"]);
     expect(effectiveKeys("diff.prevChange", {})).toEqual(["Shift+Alt+F5"]);
     // 提示语走的是**规范化**那一档：`formatBinding` 的修饰键次序是 Ctrl→Alt→Shift
@@ -95,11 +93,10 @@ describe("B461 · 差异步进两条命令进表（Task 4 Step 5/6）", () => {
     // `Alt+Shift+F5`。表里声明的仍是 VS Code 那串写法 —— 两处都是那颗键，只是拼法不同。
     expect(keyHint("diff.nextChange", {})).toBe("Alt+F5");
     expect(keyHint("diff.prevChange", {})).toBe("Alt+Shift+F5");
-    // 整张表自我检查：加了这两条之后仍然一处重复都没有 ⇒ 这两颗键本来就是空的
+    // 整张表自我检查：加了这几条之后仍然一处重复都没有 ⇒ 这些键位本来就是空的
     expect(duplicateKeys({})).toEqual([]);
-  });
 
-  it("B461 · F5 一族三家各占一档，互不越界（裸 F5 仍是插入时间/日期）", () => {
+    // F5 一族三家各占一档，互不越界（裸 F5 仍是插入时间/日期）
     expect(owners("Alt+F5")).toEqual(["diff.nextChange"]);
     expect(owners("Alt+Shift+F5")).toEqual(["diff.prevChange"]);
     expect(owners("F5")).toEqual(["edit.timeDate"]);
@@ -108,6 +105,20 @@ describe("B461 · 差异步进两条命令进表（Task 4 Step 5/6）", () => {
       expect(commandById(id)?.editable, `${id} 是应用自己的命令`).not.toBe(false);
       expect(parseKey(commandById(id)!.keys[0]), "键位串必须可解析").toBeTruthy();
     }
+
+    // A 档第三条：id / label / group / 键位逐字，且这颗键位本应用没人占
+    expect(commandById("diff.openAgainstSaved")).toMatchObject({
+      id: "diff.openAgainstSaved",
+      label: "与上次保存比较",
+      group: "差异",
+      keys: ["Ctrl+Shift+D"],
+    });
+    expect(effectiveKeys("diff.openAgainstSaved", {})).toEqual(["Ctrl+Shift+D"]);
+    expect(owners("Ctrl+Shift+D")).toEqual(["diff.openAgainstSaved"]);
+    expect(duplicateKeys({}), "加了第三条之后整张表仍一处重复都没有").toEqual([]);
+    expect(resolveCommand(key({ code: "D", key: "D", ctrlKey: true, shiftKey: true }), {})).toBe(
+      "diff.openAgainstSaved",
+    );
   });
 
   it("B461 · 事件真按得出这两条（分发口），修饰键多一颗少一颗都不算", () => {
@@ -132,9 +143,8 @@ describe("B461 · 差异步进两条命令进表（Task 4 Step 5/6）", () => {
     expect(
       resolveCommand(key({ code: "F5", key: "F5", altKey: true }), { "diff.nextChange": "" }),
     ).toBeNull();
-  });
 
-  it("B461 · 上下文闸与分发接在 main.ts：不成时不抢键，成时走 surface 的 step(±1)", () => {
+    // 上下文闸与分发接在 main.ts：不成时不抢键，成时走 surface 的 step(±1)
     const main = srcOf("src/main.ts");
     // 注释里那些「与置灰/不抢键同源」的话不许进判据 ⇒ 先剥行注释再按形状匹配。
     const gate = stripLineComments(fnBody(main, "shortcutApplies"));
@@ -154,16 +164,16 @@ describe("B461 · 差异步进两条命令进表（Task 4 Step 5/6）", () => {
   });
 
   it("B461 · 键位字面量只许出现在 keymap.ts 这一处（B389 的纪律）", () => {
-    const hits = collectTextFiles("src")
-      .filter((p) => p.endsWith(".ts"))
-      .map((p) => p.replace(/\\/g, "/"))
-      .filter((p) => {
-        const text = readFileSync(p, "utf-8").replace(/\r\n/g, "\n");
-        return /Alt\+F5|Shift\+Alt\+F5/.test(text);
-      });
-    expect(hits, "分发那处只按 id 走、菜单那处只按 keyHint(id) 取 ⇒ 改一颗键只用改这张表").toEqual([
-      "src/shell/keymap.ts",
-    ]);
+    for (const pattern of [/Alt\+F5|Shift\+Alt\+F5/, /Ctrl\+Shift\+D/]) {
+      const hits = collectTextFiles("src")
+        .filter((p) => p.endsWith(".ts"))
+        .map((p) => p.replace(/\\/g, "/"))
+        .filter((p) => pattern.test(readFileSync(p, "utf-8").replace(/\r\n/g, "\n")));
+      expect(
+        hits,
+        "分发那处只按 id 走、菜单那处只按 keyHint(id) 取 ⇒ 改一颗键只用改这张表",
+      ).toEqual(["src/shell/keymap.ts"]);
+    }
   });
 });
 
@@ -247,31 +257,6 @@ function openDocWithBaseline(baseline: string, text: string, name = "note.md"): 
 }
 
 describe("B461 · A 档「与上次保存比较」进表与三条入口（Task 5 Step 6/7）", () => {
-  it("B461 · 表里多出第三条：id / label / group / 键位逐字，且这颗键位本应用没人占", () => {
-    expect(commandById("diff.openAgainstSaved")).toMatchObject({
-      id: "diff.openAgainstSaved",
-      label: "与上次保存比较",
-      group: "差异",
-      keys: ["Ctrl+Shift+D"],
-    });
-    expect(effectiveKeys("diff.openAgainstSaved", {})).toEqual(["Ctrl+Shift+D"]);
-    expect(owners("Ctrl+Shift+D")).toEqual(["diff.openAgainstSaved"]);
-    expect(duplicateKeys({}), "加了第三条之后整张表仍一处重复都没有").toEqual([]);
-    expect(resolveCommand(key({ code: "D", key: "D", ctrlKey: true, shiftKey: true }), {})).toBe(
-      "diff.openAgainstSaved",
-    );
-  });
-
-  it("B461 · Ctrl+Shift+D 的字面量也只许出现在 keymap.ts 这一处", () => {
-    const hits = collectTextFiles("src")
-      .filter((p) => p.endsWith(".ts"))
-      .map((p) => p.replace(/\\/g, "/"))
-      .filter((p) => /Ctrl\+Shift\+D/.test(readFileSync(p, "utf-8").replace(/\r\n/g, "\n")));
-    expect(hits, "分发按 id、菜单按 keyHint(id) 取 ⇒ 改这颗键只用改这张表").toEqual([
-      "src/shell/keymap.ts",
-    ]);
-  });
-
   it("B461 · 三条入口共用同一颗判据：键盘闸 / 菜单置灰 / 标签右键都问 baselineDiffTarget", () => {
     // ① 键盘：不成时**不抢键**（把 Ctrl+Shift+D 还给系统），成时按活动标签的 docId 开。
     // 命令面板那一路不经过这道闸 ⇒ 分发自己必须把「开不出」说出来，否则用户只看到没反应。
@@ -304,6 +289,19 @@ describe("B461 · A 档「与上次保存比较」进表与三条入口（Task 5
     expect(srcOf("src/shell/splitview.ts")).toMatch(
       /onDiffAgainstSaved:\s*\(tabId\)\s*=>\s*cb\.onDiffAgainstSaved\?\.\(tabId\)/,
     );
+
+    // 差异面的接线点：hooks 从 main.ts 注入（模型层不许 import 渲染层）。
+    // `src/ui.ts` 在模块求值时取 DOM ⇒ 数据层一旦 import 它，任何 node 环境的纯函数测试
+    // 都加载不起来（Task 5 真踩过）。渲染出口全部由装配层**注入**：模型只认那颗缝。
+    expect(main).toMatch(
+      /setDiffRenderHooks\(\{[\s\S]{0,160}?rebuildLayout[\s\S]{0,160}?showMessage/,
+    );
+    expect(main).toMatch(/setRefreshDiffSurfaces\(refreshDiffSurfaces\)/);
+    const model = stripLineComments(srcOf("src/diff/model.ts"));
+    expect(model, "模型层的 import 表里不许出现 ui / tabs / markdown").not.toMatch(
+      /from "\.\.\/(ui|tabs|markdown)"/,
+    );
+    expect(model).toMatch(/hooks\.rebuildLayout\(\)/);
   });
 
   it("Review Focus 1 · 基线未知 ⇒ 闸为假；openBaselineDiff 一句说明、不新开一张", async () => {
@@ -331,26 +329,36 @@ describe("B461 · A 档「与上次保存比较」进表与三条入口（Task 5
       "不许悄悄开出一张空的差异标签（面板那排还是原来那一颗）",
     ).toBe(1);
     expect(switched, "开不出 ⇒ 谁也不许被切过去").toEqual([]);
-  });
 
-  it("B461 · 存盘后 diffBlocks 收到的是新基线 ⇒ 块数归零（不靠任何一处手动派发）", async () => {
-    const doc = openDocWithBaseline("甲\n乙\n丙", "甲\n乙改\n丙");
-    const newTabId = await diffModel.openBaselineDiff(doc.tabId);
+    // 基线已知时，存盘后 diffBlocks 收到的就是新基线 ⇒ 块数归零（不靠任何一处手动派发）
+    const liveDoc = openDocWithBaseline("甲\n乙\n丙", "甲\n乙改\n丙");
+    const newTabId = await diffModel.openBaselineDiff(liveDoc.tabId);
     expect(newTabId, "基线已知 ⇒ 开得出这一张").not.toBeNull();
     const tab = appState.tabs.get(newTabId!)!;
     expect(tab.kind).toBe("diff");
     expect(diffBlocksMod.diffBlocks(tab.diff!.leftText(), "甲\n乙改\n丙")).toHaveLength(1);
-    docModel.markClean(doc, "甲\n乙改\n丙"); // 保存成功那一步（主干那条链，无差异面分支）
+    docModel.markClean(liveDoc, "甲\n乙改\n丙"); // 保存成功那一步（主干那条链，无差异面分支）
     expect(
       diffBlocksMod.diffBlocks(tab.diff!.leftText(), "甲\n乙改\n丙"),
       "左栏那颗读取口吃的是活的 `doc.baseline` ⇒ 保存之后不必有人记得补派发",
     ).toEqual([]);
   });
 
-  it("B461 · A 档两张标签：脏点同源，标题各说各话（差异那张写「上次保存的 …」）", async () => {
+  it("B461 · A 档两张标签同源、标题各说各话；同 docId 再开一次复用那一张", async () => {
+    // 「新开一张」（用户拍板 ④·6）说的是**相对原文标签**新开，不是每点一次多一张。
+    // 复用时若那张还没露出来，走 `switchTab` 那同一条激活路（模型不自己写 activeTabId）。
+    const switched: number[] = [];
+    diffModel.setDiffRenderHooks({
+      rebuildLayout: () => {},
+      refreshAll: () => {},
+      renderPanelTabs: () => {},
+      showMessage: () => {},
+      switchTab: (_panelId, tabId) => switched.push(tabId),
+      applyDocEdit: () => {},
+    });
     const doc = openDocWithBaseline("甲\n乙\n丙", "甲\n乙改\n丙");
-    const newTabId = (await diffModel.openBaselineDiff(doc.tabId))!;
-    const tab = appState.tabs.get(newTabId)!;
+    const first = (await diffModel.openBaselineDiff(doc.tabId))!;
+    const tab = appState.tabs.get(first)!;
     expect(tab.docId, "差异那张不另立文档：它和原标签同指一份 `docs` 条目").toBe(doc.tabId);
     const rows = render.tabViewDataOf(appState.panels.get(0)!);
     expect(
@@ -366,27 +374,7 @@ describe("B461 · A 档「与上次保存比较」进表与三条入口（Task 5
       "悬停气泡与标题说同一句话：差异那张报两侧全路径，不是只报右栏那份文档",
     ).toEqual([undefined, "上次保存的 D:\\note.md ↔ D:\\note.md"]);
     expect(rows.every((r) => r.canDiffAgainstSaved)).toBe(true);
-    docModel.markClean(doc, "甲\n乙改\n丙");
-    expect(
-      render.tabViewDataOf(appState.panels.get(0)!).map((r) => r.dirty),
-      "保存 ⇒ 两颗点一起没（同源才可能同步）",
-    ).toEqual([false, false]);
-  });
 
-  it("B461 · 同一个 docId 第二次「与上次保存比较」⇒ 复用那一张，不叠两张同名标签", async () => {
-    // 「新开一张」（用户拍板 ④·6）说的是**相对原文标签**新开，不是每点一次多一张。
-    // 复用时若那张还没露出来，走 `switchTab` 那同一条激活路（模型不自己写 activeTabId）。
-    const switched: number[] = [];
-    diffModel.setDiffRenderHooks({
-      rebuildLayout: () => {},
-      refreshAll: () => {},
-      renderPanelTabs: () => {},
-      showMessage: () => {},
-      switchTab: (_panelId, tabId) => switched.push(tabId),
-      applyDocEdit: () => {},
-    });
-    const doc = openDocWithBaseline("甲\n乙\n丙", "甲\n乙改\n丙");
-    const first = (await diffModel.openBaselineDiff(doc.tabId))!;
     // 用户切回原文标签再按一次：那一颗差异标签还在册，只是没露出来。
     // 按 `tabs[0]` 回指而不是 `doc.tabId` —— 夹具把 Doc 的 id 写死成 7，它会和新分配的
     // 差异标签撞号，用 docId 当「另一颗标签」是假的前提。
@@ -400,21 +388,12 @@ describe("B461 · A 档「与上次保存比较」进表与三条入口（Task 5
       "复用的那颗仍然就是差异那颗（不是把原标签改了个 kind）",
     ).toBe("diff");
     expect(switched, "复用要把它露出来，而不是原地不动让用户以为没反应").toEqual([first]);
-  });
 
-  it("B461 · 差异面的接线点：hooks 从 main.ts 注入（模型层不许 import 渲染层）", () => {
-    // `src/ui.ts` 在模块求值时取 DOM ⇒ 数据层一旦 import 它，任何 node 环境的纯函数测试
-    // 都加载不起来（Task 5 真踩过）。渲染出口全部由装配层**注入**：模型只认那颗缝。
-    const main = srcOf("src/main.ts");
-    expect(main).toMatch(
-      /setDiffRenderHooks\(\{[\s\S]{0,160}?rebuildLayout[\s\S]{0,160}?showMessage/,
-    );
-    expect(main).toMatch(/setRefreshDiffSurfaces\(refreshDiffSurfaces\)/);
-    const model = stripLineComments(srcOf("src/diff/model.ts"));
-    expect(model, "模型层的 import 表里不许出现 ui / tabs / markdown").not.toMatch(
-      /from "\.\.\/(ui|tabs|markdown)"/,
-    );
-    expect(model).toMatch(/hooks\.rebuildLayout\(\)/);
+    docModel.markClean(doc, "甲\n乙改\n丙");
+    expect(
+      render.tabViewDataOf(appState.panels.get(0)!).map((r) => r.dirty),
+      "保存 ⇒ 两颗点一起没（同源才可能同步）",
+    ).toEqual([false, false]);
   });
 });
 
@@ -428,7 +407,7 @@ describe("B461 · A 档「与上次保存比较」进表与三条入口（Task 5
 // 配对（「先选一条再点另一条」的两击手势凑不齐）⇒ 两条按现有那形（回调没给）整组缺席，
 // 不是「出现但点不动」。
 describe("B461 · B 档标签右键两条的接线（Task 6 Step 5）", () => {
-  it("B461 · 两个 producer + splitview 条件转发都接上；卫星窗口整组缺席走 windowKind 闸", () => {
+  it("B461 · 两个 producer + splitview 条件转发接上；真调时卫星窗口整组缺席、主窗口两颗都在", () => {
     // ① tabstrip：两颗回调都是**可选**，那一对只在两颗都给时存在；标签走 compare.ts 那颗
     //    真相（不许在标签条这一处再写一遍「选择以进行比较」）。
     const ts = srcOf("src/shell/tabstrip.ts");
@@ -472,10 +451,8 @@ describe("B461 · B 档标签右键两条的接线（Task 6 Step 5）", () => {
     expect(sv).toMatch(
       /onCompareWith:\s*cb\.onCompareWith\s*\?\s*\(tabId\) =>\s*cb\.onCompareWith\?\.\(tabId\)\s*:\s*undefined/,
     );
-  });
 
-  it("B461 · 真调 tabstripCallbacks：卫星窗口两颗都是 undefined，主窗口两颗都在", () => {
-    // ① 与 ② 的静态判据只说明形状，这一发跑的是真产物：缺席必须是**机制**上的缺席。
+    // ④ 静态判据只说明形状，这一发跑的是真产物：缺席必须是**机制**上的缺席。
     const bare = { panelId: 0, tabs: [], activeTabId: -1 } as never;
     appState.setWindowKind("satellite");
     try {
@@ -698,8 +675,9 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
   const labelsOf = (items: MenuItem[]): Array<string | undefined> =>
     items.filter((i) => !i.separator).map((i) => i.label);
 
-  it("B461 · 差异档常驻只有四颗高频键：上/下差异、显示首尾空白差异、折叠未改动区", () => {
-    const { root } = mountOps(diffRenderData({ ignoreTrimWhitespace: true }));
+  it("B461 · 常驻四颗：顺序、键位提示、空白/折叠状态、不捎带 md 键", () => {
+    const ignoring = mountOps(diffRenderData({ ignoreTrimWhitespace: true }));
+    const { root } = ignoring;
     expect(iconIds(root)).toEqual(["arrow-up", "arrow-down", "whitespace", "map"]);
     // 键位提示取自 `keyHint(id)`（B389 的纪律：字面量只在 keymap.ts 一处）⇒ 用例也按那颗取。
     expect(opByIcon(root, "arrow-up").getAttribute("aria-label")).toBe(
@@ -712,13 +690,10 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
       opsButtons(root).at(-1)!.getAttribute("aria-label"),
       "B224：文档级操作贴标签区，「…」仍钉最右",
     ).toBe("更多操作");
-  });
 
-  it("B461 · 忽略空白那颗按 ignoreTrimWhitespace == false 才算按下（上游的 toggled 就是取反）", () => {
-    const ignoring = mountOps(diffRenderData({ ignoreTrimWhitespace: true }));
-    expect(opByIcon(ignoring.root, "whitespace").getAttribute("aria-pressed")).toBe("false");
-    expect(opByIcon(ignoring.root, "whitespace").classList.contains("on")).toBe(false);
-
+    // 忽略空白那颗按 ignoreTrimWhitespace == false 才算按下（上游的 toggled 就是取反）
+    expect(opByIcon(root, "whitespace").getAttribute("aria-pressed")).toBe("false");
+    expect(opByIcon(root, "whitespace").classList.contains("on")).toBe(false);
     const notIgnoring = mountOps(diffRenderData({ ignoreTrimWhitespace: false }));
     const b = opByIcon(notIgnoring.root, "whitespace");
     expect(b.getAttribute("aria-pressed")).toBe("true");
@@ -729,24 +704,20 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     expect(b.getAttribute("aria-label"), "这颗键的文案不跟着状态翻（翻的是 map 那颗）").toBe(
       "显示首尾空白差异",
     );
-  });
 
-  it("B461 · map 那颗的文案跟着折叠现状翻：折着 ⇒「显示未改动的内容」，没折 ⇒「折叠未改动的内容」", () => {
+    // map 那颗的文案跟着折叠现状翻
     const folded = mountOps(diffRenderData({ collapseUnchanged: true }));
     expect(opByIcon(folded.root, "map").getAttribute("aria-label")).toBe("显示未改动的内容");
     expect(opByIcon(folded.root, "map").getAttribute("aria-pressed")).toBe("true");
-
     const plain = mountOps(diffRenderData({ collapseUnchanged: false }));
     expect(opByIcon(plain.root, "map").getAttribute("aria-label")).toBe("折叠未改动的内容");
     expect(opByIcon(plain.root, "map").getAttribute("aria-pressed")).toBe("false");
-  });
 
-  it("B461 · 差异那一支不捎带 md 那两颗键（显隐走「建不建」，不是建了再藏）", () => {
-    const { root } = mountOps(diffRenderData({}));
+    // 差异那一支不捎带 md 那两颗键（显隐走「建不建」，不是建了再藏）
     const btns = opsButtons(root);
-    expect(btns.some((b) => b.querySelector(".codicon-open-preview"))).toBe(false);
-    expect(btns.some((b) => b.querySelector(".codicon-preview"))).toBe(false);
-    expect(btns.some((b) => b.querySelector(".codicon-edit-code"))).toBe(false);
+    expect(btns.some((x) => x.querySelector(".codicon-open-preview"))).toBe(false);
+    expect(btns.some((x) => x.querySelector(".codicon-preview"))).toBe(false);
+    expect(btns.some((x) => x.querySelector(".codicon-edit-code"))).toBe(false);
     // 「差异档不画 md 键」这条判据的真正落点在 `panelDataOf`（`md` 与 `diff` 同时为真是
     // 生产里凑不出来的组合）⇒ 那一条由下面「渲染快照读的是 surface 现值」那条用例钉。
   });
@@ -812,7 +783,7 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     ).not.toBe("交换左右");
   });
 
-  it("B461 · 菜单里那颗同步滚动开关点了真翻面，`checked` 跟着现状走（不是画个死勾）", () => {
+  it("B461 · 低频菜单点了真翻面：同步滚动、全部折叠/展开，且没有 diff.toggleWrap", () => {
     const m = mountDiffPanel("baseline");
     const pick = (label: string): (() => void) =>
       groupMenuOf(m.panel).find((i) => i.label === label)!.onSelect!;
@@ -821,16 +792,17 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
       groupMenuOf(m.panel).find((i) => i.label === "自动换行"),
       "差异格没有自己的自动换行条目 —— 折行复用「查看 → 自动换行」那颗全局开关",
     ).toBeUndefined();
+    expect(commandById("diff.toggleWrap"), "折行只有全局那一颗开关").toBeUndefined();
 
-    pick("同步滚动")();
+    // 命令入口也能翻同步滚动（与菜单同一颗动作）。
+    actions.applyDiffCommand(0, "diff.toggleSyncScroll");
     expect(m.s.syncScrollEnabled()).toBe(false);
+    pick("同步滚动")();
+    expect(m.s.syncScrollEnabled()).toBe(true);
     expect(groupMenuOf(m.panel).find((i) => i.label === "同步滚动")).toMatchObject({
-      checked: false,
+      checked: true,
     });
-  });
 
-  it("B461 · 「全部折叠」真折上、文案自己换成「全部展开」；再点真展开", () => {
-    const m = mountDiffPanel("baseline");
     const first = groupMenuOf(m.panel).find((i) => i.label === "全部折叠");
     expect(first?.onSelect, "现场：这一格折叠没开 ⇒ 条目该是「全部折叠」").toBeTruthy();
     first!.onSelect!();
@@ -848,13 +820,6 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     expect(m.s.collapseUnchanged(), "「全部展开」连开关一起关（下一次重算不许偷偷折回来）").toBe(
       false,
     );
-  });
-
-  it("B461 · 差异格没有自己的折行命令：`diff.toggleWrap` 不在表里，同步滚动照旧可分发", () => {
-    const m = mountDiffPanel("baseline");
-    expect(commandById("diff.toggleWrap"), "折行只有全局那一颗开关").toBeUndefined();
-    actions.applyDiffCommand(0, "diff.toggleSyncScroll");
-    expect(m.s.syncScrollEnabled()).toBe(false);
   });
 
   it("B461 · 六条动作命令进表：id / label / group 逐字，keys 全空（不给默认键位）", () => {
@@ -880,9 +845,8 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     }
     expect(duplicateKeys({}), "空键位不许把这张表自己判成重复").toEqual([]);
     expect(keyHint("diff.refresh", {}), "没键位 ⇒ 提示串是空（菜单不许画出「()」）").toBe("");
-  });
 
-  it("B461 · 八条动作只有一份 switch：图标键、命令分发、组菜单三条入口都转调 applyDiffAction", () => {
+    // 八条动作只有一份 switch：图标键、命令分发、组菜单三条入口都转调 applyDiffAction。
     const main = srcOf("src/main.ts");
     const run = stripLineComments(fnBody(main, "runShortcut"));
     expect(run).toMatch(/applyDiffCommand\(activePanelId, id\)/);
@@ -912,7 +876,7 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     ]);
   });
 
-  it("B461 · applyDiffAction 落到 surface 的真状态，末尾只刷那一格的操作区", () => {
+  it("B461 · applyDiffAction 落到 surface 真状态；「刷新」按活的基线重算块表", async () => {
     const m = mountDiffPanel("baseline");
     const { root } = mountOps(render.panelDataOf(m.panel));
     expect(iconIds(root)).toEqual(["arrow-up", "arrow-down", "whitespace", "map"]);
@@ -948,24 +912,21 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     expect(caretLine(), "「下一个」落到那块改动行（第 20 行）").toBe(20);
     actions.applyDiffAction(0, "prev");
     expect(caretLine(), "只有一块 ⇒ 环绕仍是它自己（上游 goToPreviousDiff 到头回另一头）").toBe(20);
-  });
 
-  it("B461 · 「刷新」把块表按现在的两份正文重算一遍（保存之后差异自己没）", async () => {
-    const m = mountDiffPanel("baseline");
+    // 「刷新」把块表按现在的两份正文重算一遍（保存之后差异自己没）。
     expect(m.s.blocks()).toHaveLength(1);
     docModel.markClean(m.doc, LONG.right); // 保存成功那一步：基线就地换成右栏正文
     expect(
       m.s.blocks(),
       "块表是**重算**出来的，不是键入时顺手改的 ⇒ 没点刷新之前还是旧的那份",
     ).toHaveLength(1);
-
     actions.applyDiffAction(0, "refresh");
     await vi.waitFor(() => {
       expect(m.s.blocks(), "刷新那一发读的是活的基线 ⇒ 差异清零").toEqual([]);
     });
   });
 
-  it("B461 · B 档「交换左右」= 用反过来的那一对重开一张，原来那张关掉", async () => {
+  it("B461 · 「交换左右」：B 档反向重开一张；A 档什么都不换", async () => {
     // 为什么不是「就地换 spec」：右栏那颗 view 就是 `Panel.view`（那份文档本身，Task 1 定死的
     // 落点），就地只换得动左栏 ⇒ 两栏读同一份内容、差异清零。真就地换要把 `tab.docId` /
     // `tab.state` / `panel.view` 一起搬到另一份文档上（脏标记 / 存盘 / 撤销栈 / 孤儿 doc 那
@@ -1001,20 +962,10 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
         [...appState.tabs.values()].some((t) => t.docId === m.doc.tabId),
       "原右栏那份文档不许被这一发注销（它还留着那颗普通实例）",
     ).toBe(true);
-  });
 
-  it("B461 · A 档点「交换左右」什么都不换（对照物是上次保存的正文，不是另一份文件）", async () => {
-    const m = mountDiffPanel("baseline");
+    // A 档点「交换左右」什么都不换（对照物是上次保存的正文，不是另一份文件）。
+    const a = mountDiffPanel("baseline");
     const before = [...appState.tabs.keys()].sort();
-    diffModel.setDiffRenderHooks({
-      rebuildLayout: () => {},
-      refreshAll: () => {},
-      renderPanelTabs: () => {},
-      showMessage: () => {},
-      switchTab: () => {},
-      applyDocEdit: () => {},
-    });
-
     actions.applyDiffAction(0, "swap");
     // 这一发进门就退（`tier !== "files"`），但它是 async 的 ⇒ 让微任务队列跑完再判，
     // 免得「没换」只是因为还没换完。
@@ -1022,8 +973,8 @@ describe("B461 · 编辑器标题栏动作键与「⋯」那三条（Task 8 Step
     expect([...appState.tabs.keys()].sort(), "不许开出一张新的，也不许关掉原来那张").toEqual(
       before,
     );
-    expect(m.s.spec(), "spec 原样（就地 retarget 会把两栏变成同一份内容 ⇒ 差异清零）").toBe(
-      m.diffTab.diff,
+    expect(a.s.spec(), "spec 原样（就地 retarget 会把两栏变成同一份内容 ⇒ 差异清零）").toBe(
+      a.diffTab.diff,
     );
   });
 });
@@ -1038,7 +989,7 @@ describe("B461 · Task 10 会话字段与禁搬移的跨文件接线", () => {
   // 会被变更史喂成假绿（tests/static.ts 那条纪律的同一形）。
   const read = (p: string) => stripLineComments(readFileSync(p, "utf-8"));
 
-  it("两格会话字段只有**一处**写点，且问的是 Tab 自己的 kind / diff.leftPath", () => {
+  it("两格会话字段：一处写点、toDisk/blankRecord 同形、恢复问模型层要 spec", () => {
     const writers = collectTextFiles("src").filter((p) =>
       read(p).includes("sessionStore.setTabKind("),
     );
@@ -1052,9 +1003,7 @@ describe("B461 · Task 10 会话字段与禁搬移的跨文件接线", () => {
     // 媒体标签也走同一格（恢复时不能拿它去读文本）
     expect(call).toContain('"media"');
     expect(call).toContain("t.diff?.leftPath");
-  });
 
-  it("toDisk 两格都带上，blankRecord 初值是 null（不许 undefined 混进落盘形状）", () => {
     const store = read("src/session/store.ts");
     const disk = fnBody(store, "toDisk");
     expect(disk).toContain("kind: r.kind");
@@ -1064,9 +1013,7 @@ describe("B461 · Task 10 会话字段与禁搬移的跨文件接线", () => {
     expect(blank).toContain("diffLeftPath: null");
     // 退化自证：把 toDisk 里那一格摘掉，上面那条必须落空。
     expect(disk.replace("kind: r.kind,", "")).not.toContain("kind: r.kind");
-  });
 
-  it("恢复问模型层要 spec，按它选孪生构造器（不自己拼第二份 spec 字面量）", () => {
     const rebuild = read("src/session/rebuild.ts");
     const body = fnBody(rebuild, "buildInstance");
     expect(body, "取不到 buildInstance").toBeTruthy();
@@ -1083,7 +1030,7 @@ describe("B461 · Task 10 会话字段与禁搬移的跨文件接线", () => {
     expect(rebuild).toContain("await buildInstance(st, -1)");
   });
 
-  it("标签条那五条搬移项与拖拽手势都问 isDiff，判据由 render 一处产出", () => {
+  it("禁搬移：标签条五条搬移项问 isDiff，四颗跨面板入口共用一句拒绝", () => {
     const strip = read("src/shell/tabstrip.ts");
     expect(strip).toContain("el.draggable = !t.isDiff");
     for (const label of ["复制到相邻面板", "左右分屏", "上下分屏", "在新窗口打开", "移回主窗口"]) {
@@ -1108,9 +1055,8 @@ describe("B461 · Task 10 会话字段与禁搬移的跨文件接线", () => {
       });
     expect(gated(strip)).toBe(true);
     expect(gated(degraded), "闸摘掉之后判据必须落空").toBe(false);
-  });
 
-  it("四颗跨面板搬移入口共用一句拒绝，跨窗口那颗也有闸", () => {
+    // 四颗跨面板搬移入口共用一句拒绝，跨窗口那颗也有闸。
     const split = read("src/tabs/split.ts");
     for (const name of [
       "splitActivePanel",
@@ -1126,8 +1072,8 @@ describe("B461 · Task 10 会话字段与禁搬移的跨文件接线", () => {
     expect(guard, "拒绝要说一次原因（静默不动 = 死键）").toContain("showMessage(");
     expect(guard).toContain('tabs.get(tabId)?.kind !== "diff"');
     const windows = read("src/multiwindow/windows.ts");
-    const lend = fnBody(windows, "openTabsInNewWindow");
-    expect(lend, "整组拖到桌面绕过标签自己的 draggable ⇒ 这颗漏斗也要有闸").toContain(
+    const lendBody = fnBody(windows, "openTabsInNewWindow");
+    expect(lendBody, "整组拖到桌面绕过标签自己的 draggable ⇒ 这颗漏斗也要有闸").toContain(
       'tabs.get(id)?.kind === "diff"',
     );
   });

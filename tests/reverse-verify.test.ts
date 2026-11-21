@@ -100,33 +100,36 @@ describe("反向验证：文件拖入的拦截必须『捕获阶段 + stopPropag
     expect(e.defaultPrevented, "默认动作必须由文件通道拦掉").toBe(true);
   });
 
-  it("退化①：监听挂冒泡阶段 → 编辑器照样收到 drop", () => {
+  it("退化①②③：缺「捕获 / stopPropagation / preventDefault」任一半都拦不住", () => {
+    // 三份退化替身各自只缺一半；每条都先自证处理器确实跑了，再证明那一半不是装饰。
+    // 每次装完都要拆掉，否则前一份替身的 preventDefault 会污染后一份的事件。
+    const reset = () => {
+      while (teardowns.length) teardowns.pop()!();
+      document.body.innerHTML = "";
+    };
+
     installBubble();
-    const { el, heard } = editorProbe();
-    const e = fireDrag("drop", el, makeDataTransfer(["Files"]), { clientX: 5, clientY: 6 });
-    // ⚠️ 先自证处理器**确实跑了**：否则「编辑器收到」可能只是因为根本没人拦 ——
-    //    那这条退化用例就成了恒真，证明不了任何事（同「退出码 0 ≠ 生效」那类假象）。
-    expect(e.defaultPrevented, "处理器跑了、preventDefault 也执行了，仍然拦不住").toBe(true);
-    expect(
-      heard,
-      "冒泡阶段拦不住：等我们跑到，CM6 已经把文件内容插进正文，preventDefault 救不回来",
-    ).toContain("drop");
-  });
+    const bubble = editorProbe();
+    const e1 = fireDrag("drop", bubble.el, makeDataTransfer(["Files"]), { clientX: 5, clientY: 6 });
+    expect(e1.defaultPrevented, "退化①：处理器跑了、preventDefault 也执行了仍拦不住").toBe(true);
+    expect(bubble.heard, "冒泡阶段拦不住：轮到我们时 CM6 已经把文件内容插进正文").toContain("drop");
+    reset();
 
-  it("退化②：挂了捕获但不 stopPropagation → 编辑器仍能收到 drop", () => {
     installCaptureNoStop();
-    const { el, heard } = editorProbe();
-    const e = fireDrag("drop", el, makeDataTransfer(["Files"]), { clientX: 5, clientY: 6 });
-    expect(e.defaultPrevented, "同上：处理器确实跑了，只是没截断传播").toBe(true);
-    expect(heard, "光 preventDefault 不够：事件还是会走到编辑器上").toContain("drop");
-  });
+    const noStop = editorProbe();
+    const e2 = fireDrag("drop", noStop.el, makeDataTransfer(["Files"]), { clientX: 5, clientY: 6 });
+    expect(e2.defaultPrevented, "退化②：处理器确实跑了，只是没截断传播").toBe(true);
+    expect(noStop.heard, "光 preventDefault 不够：事件还是走到编辑器上").toContain("drop");
+    reset();
 
-  it("退化③：stopPropagation 但不 preventDefault → 默认动作照跑（两件事缺一不可）", () => {
     installCaptureNoPrevent();
-    const { el, heard } = editorProbe();
-    const e = fireDrag("drop", el, makeDataTransfer(["Files"]), { clientX: 5, clientY: 6 });
-    expect(heard, "stopPropagation 这一半是有效的：编辑器确实收不到").toEqual([]);
-    expect(e.defaultPrevented, "不拦默认动作 = 浏览器自己处理这次 drop").toBe(false);
+    const noPrevent = editorProbe();
+    const e3 = fireDrag("drop", noPrevent.el, makeDataTransfer(["Files"]), {
+      clientX: 5,
+      clientY: 6,
+    });
+    expect(noPrevent.heard, "退化③：stopPropagation 这一半有效，编辑器确实收不到").toEqual([]);
+    expect(e3.defaultPrevented, "不拦默认动作 = 浏览器自己处理这次 drop").toBe(false);
   });
 });
 
@@ -147,23 +150,24 @@ function textEditorProbe(): { el: HTMLElement; text: () => string } {
 }
 
 describe("反向验证：标签拖拽的两条防线（不放可读正文 / 事件不漏下去）", () => {
-  it("防线①：只放私有 MIME —— 就算事件漏到编辑器，也没有可读正文可插", () => {
-    const { el, text } = textEditorProbe();
+  it("正反两档：只放私有 MIME 时无正文可插；顺手写 text/plain 就会插进正文", () => {
+    const clean = textEditorProbe();
     const dt = makeDataTransfer();
     dt.setData(TAB_MIME, "tab-payload");
-    fireDrag("drop", el, dt);
-    expect(text(), "dataTransfer 里没有可读正文 → 正文不该被改").toBe("");
-  });
+    fireDrag("drop", clean.el, dt);
+    expect(clean.text(), "dataTransfer 里没有可读正文 → 正文不该被改").toBe("");
 
-  it("退化：顺手写一份 text/plain —— 漏下去就把文件名插进正文", () => {
-    const { el, text } = textEditorProbe();
-    const dt = makeDataTransfer();
-    dt.setData(TAB_MIME, "tab-payload");
-    dt.setData("text/plain", "note.md"); // ← 退化点：内部协议对外提供了可读正文
-    fireDrag("drop", el, dt);
-    expect(text(), "有可读正文就会被 contenteditable/CM6 当「拖进来的文本」插进正文").toContain(
-      "note.md",
-    );
+    // 退化点：内部协议对外提供了可读正文；先证明漏下去确实会改正文，
+    // 上面那条「正文为空」才不是恒真。
+    const leaky = textEditorProbe();
+    const dt2 = makeDataTransfer();
+    dt2.setData(TAB_MIME, "tab-payload");
+    dt2.setData("text/plain", "note.md");
+    fireDrag("drop", leaky.el, dt2);
+    expect(
+      leaky.text(),
+      "有可读正文就会被 contenteditable/CM6 当「拖进来的文本」插进正文",
+    ).toContain("note.md");
   });
 });
 
@@ -177,28 +181,22 @@ describe("反向验证：查找的范围过滤与保留大小写（退化实现�
   ];
   const range = { from: 4, to: 8 };
 
-  it("基准：restrictToRange 把命中收敛到选区内", () => {
+  it("restrictToRange：基准收敛到选区；去掉 range 判据就一条都不收敛", () => {
     const got = restrictToRange(matches, range);
     expect(got, "选区外的命中应被剔除").toEqual([{ from: 4, to: 6 }]);
-  });
 
-  it("退化：去掉 range 判据（一律原样返回）→ 命中数不降 ⇒ 正向断言不恒真", () => {
     const degenerate = (m: typeof matches, _r: typeof range | null) => m; // 退化点：永不过滤
-    const got = degenerate(matches, range);
+    const raw = degenerate(matches, range);
     // ⚠️ 先自证退化实现**确实跑了**：它得返回原始三命中，才有资格谈「没收敛」。
-    expect(got, "退化实现确实返回了全部命中（没被别处吃掉）").toHaveLength(3);
-    expect(got, "与基准对照：不收敛 ⇒ 收敛用例不是恒真").not.toEqual(
-      restrictToRange(matches, range),
-    );
+    expect(raw, "退化实现确实返回了全部命中（没被别处吃掉）").toHaveLength(3);
+    expect(raw, "与基准对照：不收敛 ⇒ 收敛用例不是恒真").not.toEqual(got);
   });
 
-  it("基准：preserveCase 按命中词大小写迁移替换串", () => {
+  it("preserveCase：按命中词迁移大小写；原样返回就一条都迁不动", () => {
     expect(preserveCase("Foo", "baz"), "Title Case → 首字母大写").toBe("Baz");
     expect(preserveCase("FOO", "baz"), "全大写 → 全大写").toBe("BAZ");
     expect(preserveCase("foo", "BAZ"), "全小写 → 全小写").toBe("baz");
-  });
 
-  it("退化：preserveCase 原样返回 → 不迁移大小写", () => {
     const degenerate = (_m: string, r: string) => r; // 退化点：永不迁移
     // ⚠️ 先自证退化实现**确实跑了**：它得把替换串原样吐出来。
     expect(degenerate("Foo", "baz"), "退化实现确实原样返回了").toBe("baz");
@@ -218,32 +216,30 @@ describe("反向验证：build-all.sh 的交付物守卫咬得住（空壳 dist 
     expect(hasStep3NotDeliverableWarning(real), "第 3 步标注不可交付").toBe(true);
   });
 
-  it("退化：只有『点数』没有『阻断』→ 空壳 dist 照样放行（判据的后半截不是装饰）", () => {
+  it("退化：只点数不阻断 / 删掉第 3 步警示，两条判据各自落空", () => {
     // 事故形状：断言只看「有没有自检」时，把 exit 1 删掉也照样绿 —— 而脚本此时
     // 只会打印一行日志就继续 `tauri build`，打出来的仍是一片空白的 exe。
-    const degenerate = [
+    const noBlock = [
       "ASSET_N=$(find dist/assets -type f 2>/dev/null | wc -l | tr -d ' ')",
       'echo "    dist/assets: $ASSET_N 个文件"', // 退化点：不判断、不阻断
       'echo "==> [4/4] release 发布构建"',
     ].join("\n");
     // ⚠️ 先自证「点数」这一半确实在 —— 否则这条用例只是证明了字符串不相等，等于恒真。
-    expect(degenerate, "退化脚本确实保留了点数动作").toContain("find dist/assets -type f");
+    expect(noBlock, "退化脚本确实保留了点数动作").toContain("find dist/assets -type f");
     expect(
-      hasDistIntegrityGuard(degenerate),
+      hasDistIntegrityGuard(noBlock),
       "少了 exit 1 就只打印日志、照样带着空壳打包 ⇒ 正向用例不是恒真",
     ).toBe(false);
-  });
 
-  it("退化：删掉第 3 步的警示 → 判据为假（且 127.0.0.1 指纹同样会丢）", () => {
-    const degenerate = real
+    const noWarning = real
       .split("\n")
       .filter((l) => !l.includes("不可交付") && !l.includes("127.0.0.1"))
       .join("\n");
     // 先自证退化脚本**确实少了那几行**：原文里有，退化后没有。
     expect(real.includes("127.0.0.1"), "原文本来就有这条指纹").toBe(true);
-    expect(degenerate.includes("127.0.0.1"), "退化脚本里已经没有了").toBe(false);
+    expect(noWarning.includes("127.0.0.1"), "退化脚本里已经没有了").toBe(false);
     expect(
-      hasStep3NotDeliverableWarning(degenerate),
+      hasStep3NotDeliverableWarning(noWarning),
       "缺了警示 ⇒ 后来人又会把第 3 步的 dev 模式 exe 当交付物发出去",
     ).toBe(false);
   });

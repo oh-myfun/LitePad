@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { cssDecls, ruleBlock, tabsAll, themeBlock } from "./static";

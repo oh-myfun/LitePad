@@ -1240,12 +1240,6 @@ describe("B457-2 · 卡片宽度变了要按新宽度重画（abc / echarts）",
     };
   }
 
-  /** 比防抖那一档长一点，再把异步渲染跑完。 */
-  async function settle() {
-    await new Promise((r) => setTimeout(r, 250));
-    await flush();
-  }
-
   beforeEach(() => {
     abcLedger.drawsStaff = true;
     globalThis.ResizeObserver = FakeRO as unknown as typeof ResizeObserver;
@@ -1278,53 +1272,73 @@ describe("B457-2 · 卡片宽度变了要按新宽度重画（abc / echarts）",
   it("第一发只记账：刚挂上时量到的宽度就是渲染用的那个，不许因此重画", async () => {
     const { ro } = await mountAbc();
     expect(abcLedger.calls, "挂载本身就画了一发").toBe(1);
-    ro.fire(900);
-    await settle();
-    expect(abcLedger.calls, "`observe()` 立刻发来的那一发是初始值，不是「变了」").toBe(1);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      ro.fire(900);
+      await vi.advanceTimersByTimeAsync(250); // 越过宽度防抖那一档
+      expect(abcLedger.calls, "`observe()` 立刻发来的那一发是初始值，不是「变了」").toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("宽度变了 ⇒ 按新宽度重画一发（谱表跟着改到 700 那一格）", async () => {
     const { ro } = await mountAbc();
-    ro.fire(900);
-    await settle();
-    ro.fire(700);
-    await settle();
-    expect(abcLedger.calls, "缩了一格却没重画 ⇒ 旧版式留在原地").toBe(2);
-    const p = abcLedger.params! as {
-      staffwidth: number;
-      paddingleft: number;
-      paddingright: number;
-    };
-    expect(
-      p.staffwidth + p.paddingleft + p.paddingright,
-      "重画要按当前宽度算（SVG 总宽 = 卡片那一格扣掉它自己那 20px 内边距）",
-    ).toBe(660);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      ro.fire(900);
+      await vi.advanceTimersByTimeAsync(250);
+      ro.fire(700);
+      await vi.advanceTimersByTimeAsync(250);
+      expect(abcLedger.calls, "缩了一格却没重画 ⇒ 旧版式留在原地").toBe(2);
+      const p = abcLedger.params! as {
+        staffwidth: number;
+        paddingleft: number;
+        paddingright: number;
+      };
+      expect(
+        p.staffwidth + p.paddingleft + p.paddingright,
+        "重画要按当前宽度算（SVG 总宽 = 卡片那一格扣掉它自己那 20px 内边距）",
+      ).toBe(660);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("拖分屏线是连发的 ⇒ 停手只重画一次", async () => {
     const { ro } = await mountAbc();
-    ro.fire(900); // 初始那一发只记账
-    ro.fire(800);
-    ro.fire(750);
-    ro.fire(700);
-    await settle();
-    expect(abcLedger.calls, "每发信号画一次 = 拖一下条要重画几十次").toBe(2);
-    const p = abcLedger.params! as {
-      staffwidth: number;
-      paddingleft: number;
-      paddingright: number;
-    };
-    expect(p.staffwidth + p.paddingleft + p.paddingright, "防抖之后要用最后那个宽度").toBe(660);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      ro.fire(900); // 初始那一发只记账
+      ro.fire(800);
+      ro.fire(750);
+      ro.fire(700);
+      await vi.advanceTimersByTimeAsync(250);
+      expect(abcLedger.calls, "每发信号画一次 = 拖一下条要重画几十次").toBe(2);
+      const p = abcLedger.params! as {
+        staffwidth: number;
+        paddingleft: number;
+        paddingright: number;
+      };
+      expect(p.staffwidth + p.paddingleft + p.paddingright, "防抖之后要用最后那个宽度").toBe(660);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("组件卸载：观察器摘掉，且防抖里那一发不能留（漏一颗 = 之后每发重画多一个幽灵）", async () => {
     const { widget, dom, ro } = await mountAbc();
-    ro.fire(900); // 初始那一发只记账
-    ro.fire(600); // 变更：防抖里等着
-    widget.destroy!(dom);
-    expect(ro.disconnected, "没调 disconnect ⇒ 这块已经不在文档里了，观察器还挂着").toBe(true);
-    await settle();
-    expect(abcLedger.calls, "摘掉时没清那颗延时 ⇒ 卸载后还会画一次").toBe(1);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      ro.fire(900); // 初始那一发只记账
+      ro.fire(600); // 变更：防抖里等着
+      widget.destroy!(dom);
+      expect(ro.disconnected, "没调 disconnect ⇒ 这块已经不在文档里了，观察器还挂着").toBe(true);
+      await vi.advanceTimersByTimeAsync(250);
+      expect(abcLedger.calls, "摘掉时没清那颗延时 ⇒ 卸载后还会画一次").toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

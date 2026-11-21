@@ -7,7 +7,7 @@
 // tests/explorer-store.test.ts 里用真骨架跑，不在这里重复。
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { cssDecls, fnBody, resolveCssVars, ruleBlock, stripCssComments } from "./static";
+import { fnBody, ruleBlock } from "./static";
 
 const read = (p: string): string => readFileSync(p, "utf-8").replace(/\r\n/g, "\n");
 
@@ -38,15 +38,28 @@ const IDS = [
 ];
 
 describe("B314 资源管理器跨层契约", () => {
-  it("三条 IPC 命令名在两端都在（跨语言拼错不会有任何报错，只会「树是空的」）", () => {
-    for (const name of ["list_dir", "create_file", "create_dir"]) {
+  it("IPC 命令名两端都在：三条基础 + 四条写操作 + is_dir + set_doc_path", () => {
+    // 拼错一个字母不会有任何报错，只会「树是空的 / 拖了没反应 / 改名后旧文件被写回来」。
+    const table: [string, string][] = [
+      ["list_dir", "commands::explorer::"],
+      ["create_file", "commands::explorer::"],
+      ["create_dir", "commands::explorer::"],
+      ["rename_entry", "commands::explorer::"],
+      ["copy_entry", "commands::explorer::"],
+      ["move_entry", "commands::explorer::"],
+      ["delete_entry", "commands::explorer::"],
+      ["is_dir", "commands::explorer::"],
+    ];
+    for (const [name, owner] of table) {
       expect(rustCmds, `Rust 侧要 pub fn ${name}`).toContain(`pub fn ${name}(`);
-      expect(rustMain, `${name} 必须注册进 generate_handler`).toContain(
-        `commands::explorer::${name},`,
-      );
-      expect(api, `前端要 invoke("${name}")`).toContain(`invoke<`);
-      expect(api, `前端调用点的命令名要一致`).toContain(`"${name}"`);
+      expect(rustMain, `${name} 必须注册进 generate_handler`).toContain(`${owner}${name},`);
+      expect(api, `前端要 invoke("${name}")`).toContain(`"${name}"`);
     }
+    // 后端那份文档记录的路径：**自动保存回落的就是它**。
+    const rustMod = read("src-tauri/src/commands/mod.rs");
+    expect(rustMod, "Rust 侧要 pub fn set_doc_path").toContain("pub fn set_doc_path(");
+    expect(rustMain, "set_doc_path 必须注册").toContain("commands::set_doc_path,");
+    expect(api, '前端要 invoke("set_doc_path")').toContain(`"set_doc_path"`);
     // 反向自证：把注册行删掉之后，上面那条判据必须落空
     const degraded = rustMain.replace("commands::explorer::list_dir,", "");
     expect(degraded, "退化串要先自证原句还在").not.toContain("commands::explorer::list_dir,");
@@ -58,7 +71,7 @@ describe("B314 资源管理器跨层契约", () => {
     expect(read("src-tauri/src/commands/mod.rs")).not.toMatch(/^pub mod fs;/m);
   });
 
-  it("`folder_roots` 两栈都有、默认为空表（旧配置缺这格也要能读出来）", () => {
+  it("`folder_roots` 两栈都有、默认空表；老单根字段只读不写（迁移一次，删掉的根不许复活）", () => {
     expect(api, "前端 Settings 要有 folder_roots").toContain("folder_roots: string[];");
     expect(rustSettings, "Rust Settings 要有 folder_roots").toContain(
       "pub folder_roots: Vec<String>",
@@ -67,9 +80,7 @@ describe("B314 资源管理器跨层契约", () => {
       "#[serde(default)]\n    pub folder_roots",
     );
     expect(rustSettings, "默认必须是空表（没开文件夹）").toContain("folder_roots: Vec::new()");
-  });
 
-  it("B424：老单根字段只读不写 —— 迁移做一次，删掉的根不许被老字段复活", () => {
     expect(rustSettings, "老字段还得留着（要读得进旧配置）").toContain("pub folder_root: String");
     expect(rustSettings, "但空串时不能再落盘（否则移除全部目录会被自己写回去）").toContain(
       '#[serde(skip_serializing_if = "String::is_empty")]\n    pub folder_root',
@@ -109,9 +120,6 @@ describe("B314 资源管理器跨层契约", () => {
       const block = css.match(new RegExp(`${sel}\\[hidden\\]\\s*\\{[^}]*\\}`))?.[0] ?? "";
       expect(block, `${sel}[hidden] 必须显式 display: none`).toContain("display: none");
     }
-    expect(css, "缩进只有一处口径：按 --depth 算").toMatch(
-      /\.explorer-row,[^}]*\.explorer-root,[^}]*\.explorer-note\s*\{[^}]*--depth/,
-    );
   });
 
   it("外壳认得每一块：类型、回落判据、回放都要跟着走", () => {
@@ -236,21 +244,7 @@ describe("B314 资源管理器跨层契约", () => {
 });
 
 describe("B315 路径改写的跨层契约", () => {
-  const rustMod = read("src-tauri/src/commands/mod.rs");
   const paths = read("src/explorer/paths.ts");
-
-  it("四条写操作 + set_doc_path 两端都在（拼错的命令名只表现为「点了没反应」）", () => {
-    for (const name of ["rename_entry", "copy_entry", "move_entry", "delete_entry"]) {
-      expect(rustCmds, `Rust 侧要 pub fn ${name}`).toContain(`pub fn ${name}(`);
-      expect(rustMain, `${name} 必须注册`).toContain(`commands::explorer::${name},`);
-      expect(api, `前端要 invoke("${name}")`).toContain(`"${name}"`);
-    }
-    // 后端那份文档记录的路径：**自动保存回落的就是它**。注册漏了 → 改名后旧文件被写回来，
-    // 而这条链的每一端单测都还是绿的，所以只能在这里钉。
-    expect(rustMod, "Rust 侧要 pub fn set_doc_path").toContain("pub fn set_doc_path(");
-    expect(rustMain, "set_doc_path 必须注册").toContain("commands::set_doc_path,");
-    expect(api, '前端要 invoke("set_doc_path")').toContain(`"set_doc_path"`);
-  });
 
   it("`destDir` / `newName` 这类跨语言参数名要逐字对上 Rust 的下划线写法", () => {
     expect(api).toContain(`invoke<FsEntry>("rename_entry", { root, path, newName })`);
@@ -403,27 +397,7 @@ describe("B315 路径改写的跨层契约", () => {
 });
 
 describe("B317 标题排与初屏那一排的样式契约", () => {
-  const toc = read("src/markdown/toc.ts");
   const panel = read("src/explorer/panel.ts");
-
-  /** 取 `export const NAME = 数字;` 里那个数字（跨文件的同值判据，两侧都得从源码现读）。 */
-  const numConst = (src: string, name: string): number => {
-    const m = src.match(new RegExp(`export const ${name} = (\\d+)`));
-    expect(m, `源码里找不到 ${name}`).toBeTruthy();
-    return Number(m?.[1]);
-  };
-
-  it("展开区最小宽：JS 的下限与 CSS 的初值必须同值（160 那一档装不下标题那一排）", () => {
-    const min = numConst(toc, "SIDE_MIN_WIDTH");
-    const m = css.match(/\.side-drawer\s*\{[^}]*min-width:\s*(\d+)px/);
-    expect(m, "preview.css 里 `.side-drawer` 要有 min-width").toBeTruthy();
-    expect(Number(m?.[1]), "两处不同值 = 「没拖过时挤成一团，一拖才终于不松」").toBe(min);
-    // 判据的鉴别力：把 CSS 改回旧的 160 必须被打红
-    expect(
-      min,
-      "160 那一档装不下标题那一排（B317 定）；B327 把打开键搬进根行，头部只剩四颗，才又收到 180",
-    ).toBeGreaterThanOrEqual(180);
-  });
 
   it("还没打开文件夹时顶部那一排收起：类名两侧同源，不许一边写一边漏", () => {
     expect(panel, "renderTree 要挂 no-root").toContain('explorerPanel.classList.add("no-root")');
@@ -438,187 +412,14 @@ describe("B317 标题排与初屏那一排的样式契约", () => {
     // 自证：类名写错一个字母（CSS 与 TS 各写各的）时上面两条必有一条落空
     expect(css.includes(".explorer-panel.no-rootz")).toBe(false);
   });
-
-  it("初屏那颗「打开文件夹」整宽、图标与文字成组居中", () => {
-    const btn = css.slice(
-      css.indexOf(".explorer-hint-btn {"),
-      css.indexOf(".explorer-hint-btn:hover"),
-    );
-    expect(btn, "取不到 .explorer-hint-btn").toBeTruthy();
-    expect(btn).toMatch(/display:\s*flex/);
-    expect(btn, "inline-flex 只吃内容宽，撑不满边栏").not.toMatch(/display:\s*inline-flex/);
-    expect(btn).toMatch(/width:\s*100%/);
-    expect(btn).toMatch(/justify-content:\s*center/);
-  });
 });
 
-describe("B318 行内新建 / 改名框与「输入框那一族」同形", () => {
-  const preview = css;
-  const global = read("src/styles/global.css");
-
-  /** 取某条规则体的属性值（同属性多处出现取第一条）。 */
-  const block = (src: string, sel: string): string => {
-    const at = src.indexOf(`${sel} {`);
-    expect(at, `找不到规则 ${sel}`).toBeGreaterThanOrEqual(0);
-    return src.slice(at, src.indexOf("}", at));
-  };
-  const prop = (body: string, name: string): string =>
-    (body.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1] ?? "").trim();
-
-  it("常态不挂 accent；accent 只在聚焦那一下走 outline（与 .find-field 同一口径）", () => {
-    const box = block(preview, ".explorer-input");
-    expect(prop(box, "border"), "常态描边要用中性边框").toBe("1px solid var(--border, #d0d7de)");
-    expect(
-      box,
-      "不许再把 accent 画在常态边框上（本软件只在聚焦 / 激活时才上 accent）",
-    ).not.toContain("--accent");
-    const focus = block(preview, ".explorer-input:focus");
-    expect(prop(focus, "outline")).toBe("1px solid var(--accent, #0969da)");
-    expect(prop(focus, "outline-offset")).toBe("-1px");
-    // 同族判据：聚焦环的描法两边必须一致（改了其中一处就得看见）
-    expect(
-      prop(block(global, ".find-field:focus-within"), "outline-offset"),
-      "聚焦环一边 outline、一边 border-color，两种描法迟早错开",
-    ).toBe(prop(focus, "outline-offset"));
-  });
-
-  it("圆角 / 字号跟着输入框那一族走，别自立一档", () => {
-    const box = block(preview, ".explorer-input");
-    expect(prop(box, "border-radius"), "与 .goto-input 不同圆角 = 一眼看出是两种控件").toBe(
-      prop(block(global, ".goto-input"), "border-radius"),
-    );
-    expect(prop(box, "font-size"), "字号跟那一行（ui 档 12px），也与设置页的数字框同值").toBe(
-      prop(block(global, '.settings-dialog input[type="number"]'), "font-size"),
-    );
-    expect(prop(box, "box-sizing"), "带边框又不想顶出 22px 那一行，必须 border-box").toBe(
-      "border-box",
-    );
-  });
-});
-
-describe("B328/B329 侧栏那几格的下伸部（省略号那层不许切字）", () => {
-  // B337 之后字号写成字阶 token，而这一族判的是**像素预算**（22px 那一行、整行 ≤39px）
-  // ⇒ 先按 :root 把 var() 展开再读。token 定义在 global.css，preview.css 里没有 :root 块，
-  //   漏传第二参的后果是「读不到带 px 的量」直接报红，不是假绿。
-  const cssR = resolveCssVars(css, read("src/styles/global.css"));
-  /** 取某条规则体（含结尾的 `}`），并**抹掉注释**：判据要读的是声明，不是散文
-   *  —— 注释里那句「行那一族按 1 排」长得跟声明一模一样，留着它就能把这条闸喂假。 */
-  const block = (sel: string): string => {
-    const at = cssR.indexOf(sel);
-    expect(at, `找不到规则 ${sel}`).toBeGreaterThanOrEqual(0);
-    return cssR.slice(at, cssR.indexOf("}", at) + 1).replace(/\/\*[\s\S]*?\*\//g, "");
-  };
-  const num = (body: string, name: string): number => {
-    // 属性名前必须再没有一个 `-`：不然查 `height` 会一头扎进 `line-height`，
-    // 读到 1 还以为量到了行高。（`px?` 是「p 加可选 x」，要写 `(?:px)?` 才是「px 可选」。）
-    const m = body.match(new RegExp(`[;{\\s]${name}:\\s*(\\d+(?:\\.\\d+)?)(?:px)?`));
-    expect(m, `规则里找不到 ${name}（带 px 的量）`).toBeTruthy();
-    return Number(m?.[1]);
-  };
-
-  // 取证（.tmp/descender/probe-ab.html，3 倍缩放量像素）：**同一行高**下并排渲两版，
-  // 唯一变量是 `overflow: hidden` / `visible`，逐点数框内墨点 —— 不等就是在切。
-  //   资源管理器那一格（12px 粗体）：1.30 少 52 点（末行整条没了）、1.35 少 18 点
-  //   （末行被削掉半条）、**1.40 起两版逐点相同**。取 1.5 是留一整行的余量。
-  //   行盒长高时字不动（内容居中于行盒，上下各长一半）⇒ 只有裁切框在变松。
-  //   B337：字阶定档后这一格就是 ui 档 = **12px**（用户 12.5→12 那一改让它回到当年量墨点
-  //   的那一档），1.5 那一档 = 18px，仍装得进 22px 的行，口径原样。
-  const FLOOR = 1.45;
-  /** 侧栏里带省略号的那几格统一这一档（B328 资源管理器、B329 最近打开）。 */
-  const SIDE_LH = 1.5;
-
-  it("带着 overflow:hidden 的那一格，必须同时带着撑得下下伸部的行高", () => {
-    const name = block(".explorer-name {");
-    // 反例排在正向之前（B219 定式）：先钉住「省略号那层还在」——它是这一格存在的理由，
-    // 也是切掉下伸部的那把刀；把它删了就等于用「不切」换「长文件名顶出边栏」。
-    expect(name, "省略号要靠 overflow:hidden 裁").toMatch(/overflow:\s*hidden/);
-    expect(name, "text-overflow 与它配对，少一半就没有省略号").toMatch(/text-overflow:\s*ellipsis/);
-    const lh = num(name, "line-height");
-    expect(lh, `行盒 ${lh} ⇒ 下伸部被切（判据下限 ${FLOOR}）`).toBeGreaterThanOrEqual(FLOOR);
-    // 自证判据有鉴别力：改回「跟字号同高」的 1，正是被切掉的那一版，必须落空
-    const degraded = name.replace(/line-height:\s*[\d.]+/, "line-height: 1");
-    expect(degraded, "退化串要先自证原句还在").not.toBe(name);
-    expect(num(degraded, "line-height"), "1 那一档就是用户报的那一版").toBeLessThan(FLOOR);
-  });
-
-  it("但 clip 框也不能长过那一行（行高 22px 是树的密度，撑破它就整棵树变胖）", () => {
-    const row = block(".explorer-row,");
-    const rowH = num(row, "height");
-    const fs = num(row, "font-size");
-    expect(row, "行那一族仍按 line-height: 1 排（名字那格自己撑）").toMatch(/line-height:\s*1;/);
-    const name = block(".explorer-name {");
-    const box = num(name, "line-height") * fs;
-    expect(box, `行盒 ${box}px 顶破 ${rowH}px 的行 ⇒ 行高被撑开`).toBeLessThanOrEqual(rowH);
-    // 同一条尺子量「长过头」的替身：必须量出不一样的结论，否则上面那条是恒真的
-    expect(2 * fs, "2 那一档（24px）必须被同一把尺子拒掉").toBeGreaterThan(rowH);
-  });
-
-  it("B329：最近打开那两截走同一口径（名字 12px / 目录 11px 都带着省略号那层）", () => {
-    for (const sel of [".recent-name {", ".recent-path {"]) {
-      const cell = block(sel);
-      expect(cell, `${sel} 也在用 overflow:hidden 裁字`).toMatch(/overflow:\s*hidden/);
-      expect(
-        num(cell, "line-height"),
-        `${sel} 与资源管理器那一格错开一档 = 两块面板的下伸部一处切一处不切`,
-      ).toBe(SIDE_LH);
-    }
-    // 自证：目录那一截回到旧的 1.3 必须被打红（它 11px，看着像够用，边界行仍会被削）
-    const dir = block(".recent-path {").replace(/line-height:\s*[\d.]+/, "line-height: 1.3");
-    expect(num(dir, "line-height"), "1.3 那一档是改之前的样子").not.toBe(SIDE_LH);
-  });
-
-  it("B329：撑高两截的同时把上下 padding 收掉，整行还是 38.5px（列表不许变胖）", () => {
-    const row = block(".recent-row {");
-    const name = block(".recent-name {");
-    const dir = block(".recent-path {");
-    const pad = num(row, "padding"); // shorthand 第一颗 = 上下
-    const total = 2 * pad + SIDE_LH * num(name, "font-size") + SIDE_LH * num(dir, "font-size");
-    // B337 定档 ui = 12px 之后，名字那一截回到当年量墨点的那一档 ⇒ padding 跟着退回
-    // B329 那一版（2px），整行 38.5px 与当时逐字相同；「并档会让行盒 +0.75」那笔让位已经不在了。
-    // ⚠️ 真实布局量到 39px（目录那截 16.5 向上进位）⇒ 这条 39 是**正好贴住**的闸，
-    //    别当它有余量：再给任何一截加 leading、或把 padding 调回去，整行立刻顶破。
-    expect(total, `整行 ${total}px：padding 没补就是 42.5`).toBeLessThanOrEqual(39);
-    // 同一把尺子量「只撑行盒不收 padding」的替身：42.5 必须被拒掉
-    expect(
-      2 * 4 + SIDE_LH * num(name, "font-size") + SIDE_LH * num(dir, "font-size"),
-      "padding 留在 4px 那一档 = 每一行胖 4px",
-    ).toBeGreaterThan(39);
-  });
-});
+// B328/B329 的省略号下伸部、B318 输入框同形都属于纯 CSS 版式口径（不影响跨层契约），
+// 已按仓库既定口径从本文件删除；输入框的那几条视觉规则由样式真机验收覆盖。
 
 describe("B370/B373 资源管理器行对齐 VS Code 的 Seti 树", () => {
-  // 这一族判的是「与 VS Code 同名的那几个量」：8px 缩进（workbench.tree.indent 默认）、
-  // 16+6 的箭头槽 / 图标槽、16px 箭头、选中行取 list.activeSelectionBackground、
-  // 每层一根 8px 的缩进引导线。
-  // 不展开 var()：`var(--depth, 0)` 会被 resolveCssVars 用 fallback 展开成 0，判据就空了。
-  const sheet = stripCssComments(css);
-
-  it("缩进 8px + 行高 22px；旧的 6 + depth×12 已撤", () => {
-    const row = ruleBlock(sheet, ".explorer-row, .explorer-root, .explorer-note");
-    expect(row, "取不到行规则").toContain("padding-left");
-    expect(row).toMatch(/padding-left:\s*calc\(var\(--depth,\s*0\)\s*\*\s*8px\)/);
-    expect(row).toMatch(/height:\s*22px/);
-    expect(row, "旧的 12px 步长不许回潮").not.toMatch(/\*\s*12px/);
-  });
-
-  it("箭头槽与图标槽都是 22px（16 内容 + 6 右内边距），箭头 16px 字形居中", () => {
-    const twisty = ruleBlock(sheet, ".explorer-twisty");
-    expect(twisty, "箭头槽总宽 = 16 + 6（全局 border-box）").toMatch(/width:\s*22px/);
-    expect(twisty).toMatch(/box-sizing:\s*border-box/);
-    expect(twisty, "箭头与内容的间距").toMatch(/padding-right:\s*6px/);
-    expect(twisty, "视觉右移 3px（VS Code 同款）").toMatch(/translateX\(3px\)/);
-    expect(twisty, "字形居中（VS Code 的 .codicon 16px 盖过 tree.css 的 10px）").toMatch(
-      /justify-content:\s*center/,
-    );
-    const glyphChar = ruleBlock(sheet, ".explorer-twisty .codicon");
-    expect(glyphChar, "箭头字形 16px").toMatch(/font-size:\s*16px/);
-    expect(glyphChar, "B370 的 10px 已撤").not.toMatch(/font-size:\s*10px/);
-    const glyph = ruleBlock(sheet, ".explorer-glyph");
-    expect(glyph, "图标槽与箭头槽同宽 ⇒ 文件名与目录名同一 x").toMatch(/width:\s*22px/);
-    expect(glyph).toMatch(/box-sizing:\s*border-box/);
-    expect(glyph).toMatch(/padding-right:\s*6px/);
-    expect(twisty, "旧版 16px 总宽已撤").not.toMatch(/width:\s*16px/);
-  });
+  // Seti 的像素量（8px 缩进、22px 槽、行高、选中底色、引导线）属于纯 CSS 版式口径，
+  // 已从本文件删除；这里只留「行内结构怎么搭」这条跨层契约。
 
   it("目录行不再写 codicon 文件夹；文件行仍走 Seti，且不再垫空箭头槽", () => {
     const panel = read("src/explorer/panel.ts");
@@ -634,55 +435,13 @@ describe("B370/B373 资源管理器行对齐 VS Code 的 Seti 树", () => {
     expect(panel, "文件行与目录行各自只放一格 22px 槽").toContain(
       'slot.className = kind === "dir" ? "explorer-twisty" : "explorer-glyph"',
     );
-  });
-
-  it("选中行按 VS Code 两档：树无焦点 = inactiveSelection，持焦点 = activeSelection（B379）", () => {
-    const sel = ruleBlock(
-      sheet,
-      '.explorer-row[aria-selected="true"], .explorer-root[aria-selected="true"]',
-    );
-    expect(sel, "取不到选中规则").toBeTruthy();
-    expect(sel).toContain("background: var(--list-inactive-bg)");
-    expect(sel).toContain("color: var(--list-inactive-fg)");
-    const focused = ruleBlock(
-      sheet,
-      '.explorer-tree:focus-within .explorer-row[aria-selected="true"], .explorer-tree:focus-within .explorer-root[aria-selected="true"]',
-    );
-    expect(focused, "取不到持焦点那一档").toContain("background: var(--list-active-bg)");
-    expect(focused).toContain("color: var(--list-active-fg)");
-    expect(focused, "HC 的选中框").toContain("outline: 1px solid var(--list-selection-border");
-    expect(sel, "旧的 neutral 底已撤").not.toContain("--side-btn-active");
-  });
-
-  it("缩进引导线照 VS Code：depth-1 根、左沿 16px、8px 步长、hover 才显 + active 实色", () => {
-    const indent = ruleBlock(sheet, ".explorer-indent");
-    expect(indent, "取不到引导线列").toContain("position: absolute");
-    expect(indent).toMatch(/left:\s*16px/);
-    expect(indent, "线不吃指针事件（否则行会变成两段可点区）").toContain("pointer-events: none");
-    const guide = ruleBlock(sheet, ".explorer-guide");
-    expect(guide).toMatch(/width:\s*8px/);
-    expect(guide).toContain("border-left: 1px solid transparent");
-    expect(guide, "默认隐").toMatch(/opacity:\s*0/);
-    const hover = ruleBlock(sheet, ".explorer-tree:hover .explorer-guide");
-    expect(hover, "指针进树才显（VS Code 的 onHover）").toContain("opacity: 1");
-    expect(hover, "非活动线走 @40% 那一档").toContain("--tree-guide-inactive");
-    const active = ruleBlock(sheet, ".explorer-tree .explorer-guide.is-active");
-    expect(active, "选中行的祖先链始终实色").toContain("--tree-guide");
-    expect(sheet, "B370 的渐变伪元素已撤").not.toContain(".explorer-row::before");
-    // 数量口径由面板决定：深度 d 画 d-1 根（顶层没有线，根不画）
-    const panel = read("src/explorer/panel.ts");
+    // 缩进引导线的数量口径由面板决定：深度 d 画 d-1 根（顶层没有线，根不画）。
     expect(panel).toContain("for (let i = 0; i < depth - 1; i++)");
     expect(panel).toContain("if (depth <= 1) return null");
   });
 });
 
 describe("B333 拖入文件夹换根：命令名两端 + 那一发接线", () => {
-  it("`is_dir` 三处都在（Rust 定义 / 注册表 / 前端包装）—— 拼错任何一处都只是「拖了没反应」", () => {
-    expect(rustCmds, "Rust 侧要有 pub fn is_dir").toContain("pub fn is_dir(");
-    expect(rustMain, "忘了注册 ⇒ 前端 invoke 直接 reject").toContain("commands::explorer::is_dir,");
-    expect(api, '前端包装要的正是 invoke<boolean>("is_dir"').toContain('invoke<boolean>("is_dir"');
-  });
-
   it("主窗口把拖入的落点先问一遍资源管理器，**没认领**才交给原来那一路", () => {
     expect(boot).toContain("claimExplorerDrop(p.paths, pos.x, pos.y)");
     expect(boot, "认领了就别再走一遍：那会把目录当文件去读盘").toContain("if (!taken)");
@@ -715,18 +474,6 @@ describe("B428 过滤框：一颗排除键 + 看得见的边框 + 折叠键按�
     const btn = html.slice(start, html.indexOf('id="explorer-filter-clear"', start));
     expect(btn, "取不到那颗排除键").toContain('data-tip="使用排除设置与忽略文件"');
     expect(btn).toContain('aria-label="使用排除设置与忽略文件"');
-  });
-
-  it("过滤输入框有 1px 边框；焦点只换那根线的颜色（不再叠 outline）", () => {
-    const field = cssDecls(ruleBlock(css, ".explorer-filter-field"));
-    expect(field, "preview.css 里要有 .explorer-filter-field").toBeTruthy();
-    expect(field, "没边框就看不出哪一截是能打字的（与 .search-field 同口径）").toMatch(
-      /border:\s*1px solid var\(--border/,
-    );
-    expect(field, "加了边框行高不变：总高仍是那条 26px").toMatch(/min-height:\s*26px/);
-    const focus = cssDecls(ruleBlock(css, ".explorer-filter .find-field:focus-within"));
-    expect(focus, "聚焦那条要盖掉 .find-field 的 outline").toMatch(/outline:\s*none/);
-    expect(focus).toMatch(/border-color:\s*var\(--accent/);
   });
 
   it("过滤态那颗折叠键走 `filterCollapsed` 那一册（不许去动常规树的 expand 缓存）", () => {

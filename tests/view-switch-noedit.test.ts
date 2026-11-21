@@ -136,52 +136,76 @@ const dirty = (): boolean =>
     (t) => t.querySelector(".tab-mark i.codicon") !== null,
   );
 
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** bootstrap 的会话恢复是异步的：等第一颗编辑器真挂出来，别用固定睡眠撞运气。 */
+async function waitForEditor(): Promise<EditorView> {
+  const started = Date.now();
+  for (;;) {
+    const el = document.querySelector(".cm-editor") as HTMLElement | null;
+    const view = el ? EditorView.findFromDOM(el) : null;
+    if (view) return view;
+    if (Date.now() - started > 3000) throw new Error("bootstrap 未在 3s 内挂出编辑器");
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
 
 describe("切换视图 / 点击内容区不得改动文件", () => {
   it("移动光标、点击内容区、文本等价事务都不置脏也不写盘；真实编辑才会", async () => {
     await import("../src/main");
-    await wait(300);
-    const view = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement)!;
+    const view = await waitForEditor();
     const before = view.state.doc.toString();
     expect(dirty(), "初始不应有脏标记").toBe(false);
     expect(saved.length, "初始不应写盘").toBe(0);
 
-    // ---- 1) 点击内容区（mousedown + 选区变化）----
-    const content = document.querySelector(".cm-content") as HTMLElement;
-    content.dispatchEvent(
-      new MouseEvent("mousedown", { bubbles: true, clientX: 10, clientY: 10, button: 0 }),
-    );
-    view.dispatch({ selection: { anchor: 3 } });
-    await wait(200);
-    expect(dirty(), "点击/移动光标不得置脏").toBe(false);
-    expect(saved.length, "点击/移动光标不得写盘").toBe(0);
+    // 自动保存是 1.5s 防抖：只等 200ms 根本证明不了「没排程写盘」。
+    // 假定时器把这一整段时间一次性推过去，既更快也更严。
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const tick = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
 
-    // ---- 2) 文本完全等价的事务（docChanged 但内容一致）----
-    const same = view.state.doc.sliceString(0, 5);
-    view.dispatch({ changes: { from: 0, to: 5, insert: same } });
-    await wait(200);
-    expect(view.state.doc.toString(), "文本应保持一致").toBe(before);
-    expect(dirty(), "文本等价事务不得置脏").toBe(false);
-    expect(saved.length, "文本等价事务不得写盘").toBe(0);
-
-    // ---- 3) 切换 源码/预览 两次 ----
-    for (let i = 0; i < 2; i++) {
-      window.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "/", ctrlKey: true, bubbles: true, cancelable: true }),
+      // ---- 1) 点击内容区（mousedown + 选区变化）----
+      const content = document.querySelector(".cm-content") as HTMLElement;
+      content.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, clientX: 10, clientY: 10, button: 0 }),
       );
-      await wait(120);
-    }
-    expect(view.state.doc.toString(), "切换视图后内容必须原样保留").toBe(before);
-    expect(dirty(), "切换视图不得置脏").toBe(false);
-    expect(saved.length, "切换视图不得写盘").toBe(0);
+      view.dispatch({ selection: { anchor: 3 } });
+      await tick(1600); // 越过自动保存防抖，证明一次都没排程
+      expect(dirty(), "点击/移动光标不得置脏").toBe(false);
+      expect(saved.length, "点击/移动光标不得写盘").toBe(0);
 
-    // ---- 4) 真正的编辑：应置脏并自动保存（证明没有误伤正常保存）----
-    view.dispatch({ changes: { from: 0, insert: "X" } });
-    await wait(50);
-    expect(dirty(), "真实编辑必须置脏").toBe(true);
-    await wait(1800);
-    expect(saved.length, "真实编辑应触发自动保存").toBeGreaterThan(0);
+      // ---- 2) 文本完全等价的事务（docChanged 但内容一致）----
+      const same = view.state.doc.sliceString(0, 5);
+      view.dispatch({ changes: { from: 0, to: 5, insert: same } });
+      await tick(1600);
+      expect(view.state.doc.toString(), "文本应保持一致").toBe(before);
+      expect(dirty(), "文本等价事务不得置脏").toBe(false);
+      expect(saved.length, "文本等价事务不得写盘").toBe(0);
+
+      // ---- 3) 切换 源码/预览 两次 ----
+      for (let i = 0; i < 2; i++) {
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "/",
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+        await tick();
+      }
+      await tick(1600); // 同样是「整段防抖窗口内不许写盘」
+      expect(view.state.doc.toString(), "切换视图后内容必须原样保留").toBe(before);
+      expect(dirty(), "切换视图不得置脏").toBe(false);
+      expect(saved.length, "切换视图不得写盘").toBe(0);
+
+      // ---- 4) 真正的编辑：应置脏并自动保存（证明没有误伤正常保存）----
+      view.dispatch({ changes: { from: 0, insert: "X" } });
+      await tick();
+      expect(dirty(), "真实编辑必须置脏").toBe(true);
+      await tick(1600);
+      expect(saved.length, "真实编辑应触发自动保存").toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

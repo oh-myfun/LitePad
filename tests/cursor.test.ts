@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 // B111 光标约定：**有点击效果的元素一律是手型（hand）**。
 //
 // 起因（用户反馈）：设置页左栏的分类按钮 `cursor: default`，悬停有高亮、点得动，

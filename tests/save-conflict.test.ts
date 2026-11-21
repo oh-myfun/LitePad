@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 // B88：保存时的**脏写检查** —— 磁盘上的版本比我们读取时更新时，选择权必须交回用户
 // （对齐 VS Code 的 FILE_MODIFIED_SINCE）。
 //

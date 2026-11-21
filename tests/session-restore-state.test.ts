@@ -6,7 +6,7 @@
 // `cursorLine: 1` —— 于是「只恢复了活动标签」和「每个标签都恢复」在那些断言里长得
 // 一模一样，等于没在测。这里给每个标签安排**不同的**行/列/位置，任何一处只恢复
 // 一份、或大家共用同一份，都会当场露馅。
-import { describe, it, expect, vi, beforeAll } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { sessionAll } from "./static";
 import { EditorView } from "@codemirror/view";
@@ -26,7 +26,11 @@ beforeAll(() => {
     "",
   );
   document.body.innerHTML = body;
+  // 会话落盘防抖是 setTimeout：整份文件用假定时器「推时钟」而不是真睡，
+  // 必须在 import main 之前打开，否则 bootstrap 排下的真实定时器抓不进来。
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 });
+afterAll(() => vi.useRealTimers());
 
 /** 落盘记录（反向契约用：滚动事件不再触发会话落盘）。 */
 const wired = vi.hoisted(() => ({
@@ -274,7 +278,9 @@ function installRectStubs(): () => void {
   };
 }
 
-const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const wait = async (ms: number): Promise<void> => {
+  await vi.advanceTimersByTimeAsync(ms);
+};
 // 命中测试桩在整个文件里都要有效（会话恢复后的挂载、切标签都靠它），
 // 所以只在模块加载时装一次，不在某个用例里装了又卸。
 installRectStubs();

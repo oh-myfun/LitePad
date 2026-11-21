@@ -176,13 +176,33 @@ const dirty = (): boolean =>
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** 排空两拍宏任务：rAF 在 tests/setup.ts 里就是 setTimeout(0)，足够让排程的活儿跑完。 */
+async function settle(): Promise<void> {
+  await wait(0);
+  await wait(0);
+}
+
+/** bootstrap 只发生一次；轮询等到面板编辑器真挂出来，后续调用直接复用。 */
+let booted: Promise<void> | null = null;
+function boot(): Promise<void> {
+  booted ??= (async () => {
+    await import("../src/main");
+    const started = Date.now();
+    while (!document.querySelector(".panel-editor .cm-editor")) {
+      if (Date.now() - started > 3000) throw new Error("bootstrap 未在 3s 内挂出编辑器");
+      await wait(10);
+    }
+  })();
+  return booted;
+}
+
 /** 每按一次 Ctrl+/ 切一回视图模式。 */
 async function toggleView(times: number): Promise<void> {
   for (let i = 0; i < times; i++) {
     window.dispatchEvent(
       new KeyboardEvent("keydown", { key: "/", ctrlKey: true, bubbles: true, cancelable: true }),
     );
-    await wait(60);
+    await settle();
   }
 }
 
@@ -203,8 +223,7 @@ const panelEditor = (): EditorView =>
  * 真实用户手势（Ctrl+/）切档，不直接 dispatch 扩展，免得测的是我自己搭的架子。
  */
 async function mdPanelInPreview() {
-  await import("../src/main");
-  await wait(200);
+  await boot();
   const { panels, tabs } = await import("../src/core/app-state");
   const p = [...panels.values()].find((x) => x.view);
   expect(p, "应有一颗带编辑器实例的面板").toBeTruthy();
@@ -246,12 +265,28 @@ describe("B397-1 一颗 view 两档：deco 形态下没有第二颗 view", () =>
     const view = panelEditor();
     const before = view.state.doc.toString();
     saved.length = 0;
-    await toggleView(2); // 预览 → 源码 → 预览（一整圈）
-    for (let i = 0; i < 9; i++) await toggleView(2);
-    await wait(1800);
-    expect(view.state.doc.toString(), "切换视图不得改内容").toBe(before);
-    expect(dirty(), "切换 20 次视图不得置脏").toBe(false);
-    expect(saved.length, "切换视图不得写盘（幽灵 docChanged 必须被判掉）").toBe(0);
+    // 自动保存防抖 1.5s：假定时器把整段窗口一次推完，且能抓住任何排程（真等 1.8s 也行，
+    // 但那是纯睡）。换档事件本身是同步的，推进 0ms 只为排空 rAF / requestMeasure。
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      for (let i = 0; i < 20; i++) {
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "/",
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      await vi.advanceTimersByTimeAsync(1600);
+      expect(view.state.doc.toString(), "切换视图不得改内容").toBe(before);
+      expect(dirty(), "切换 20 次视图不得置脏").toBe(false);
+      expect(saved.length, "切换视图不得写盘（幽灵 docChanged 必须被判掉）").toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("乙 换档不换 view：源码档与预览档是同一个 EditorView 对象", async () => {
@@ -355,7 +390,7 @@ describe("B397-1 一颗 view 两档：deco 形态下没有第二颗 view", () =>
       changes: { from: view.state.doc.length, insert: "\n- [ ] 打勾行\n" },
       userEvent: "input.type",
     });
-    await wait(60);
+    await settle();
     const row = view.dom.querySelector<HTMLElement>(".cm-line.md-task-item");
     const seen = Array.from(view.dom.querySelectorAll<HTMLElement>(".cm-line")).map(
       (el) => el.className,
@@ -367,7 +402,7 @@ describe("B397-1 一颗 view 两档：deco 形态下没有第二颗 view", () =>
       )} 行=${JSON.stringify(seen)}`,
     ).toBeTruthy();
     clickTaskBox(row!, "40px", 20);
-    await wait(60);
+    await settle();
     expect(view.state.doc.toString(), "点勾必须落在显示的那颗 view 上").toContain("- [x] 打勾行");
   });
 
@@ -471,7 +506,7 @@ describe("B399 预览 / 编辑两档与那颗悬浮键", () => {
     expect(view.state.facet(EditorState.readOnly), "预览 = 禁编辑").toBe(true);
 
     el!.click();
-    await wait(60);
+    await settle();
     expect(tab.viewMode, "点一下进编辑档").toBe("edit");
     expect(fab()!.dataset.mode).toBe("edit");
     expect(fab()!.getAttribute("aria-label"), "编辑档画的是回预览").toContain("预览");
@@ -484,11 +519,11 @@ describe("B399 预览 / 编辑两档与那颗悬浮键", () => {
   it("乙 编辑档再点一下回预览档：不换 view、写不进去", async () => {
     const { tab, view } = await mdPanelInPreview();
     fab()!.click();
-    await wait(60);
+    await settle();
     expect(tab.viewMode).toBe("edit");
     const before = view.state.doc.toString();
     fab()!.click();
-    await wait(60);
+    await settle();
     expect(tab.viewMode, "回到预览档").toBe("preview");
     expect(panelEditor(), "换档不换 view（这颗键换的只是锁）").toBe(view);
     expect(view.state.facet(EditorState.readOnly), "预览档又锁上了").toBe(true);
@@ -511,10 +546,10 @@ describe("B399 预览 / 编辑两档与那颗悬浮键", () => {
         new KeyboardEvent("keydown", { key: "e", ctrlKey: true, bubbles: true, cancelable: true }),
       );
     ctrlE();
-    await wait(60);
+    await settle();
     expect(tab.viewMode, "Ctrl+E 进编辑档").toBe("edit");
     ctrlE();
-    await wait(60);
+    await settle();
     expect(tab.viewMode, "再按一下回预览档").toBe("preview");
   });
 

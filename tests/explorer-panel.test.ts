@@ -11,6 +11,15 @@ import { fireDrag, makeDataTransfer, type FakeDataTransfer } from "./dnd";
 // 只取那两条常量：`shell/filedrop` 与 `shell/menu` 都不在模块顶层碰 DOM，静态 import 安全。
 import { TREE_DRAG_FILE_MIME, TREE_DRAG_MIME } from "../src/shell/filedrop";
 
+/**
+ * 条件等待统一 5ms 轮询：默认间隔 50ms 在这份文件里被几十条用例逐条放大，
+ * 明明一拍就能过的条件也要睡满一个间隔。超时语义不变。
+ */
+const waitFor = (
+  fn: () => void | Promise<void>,
+  opts?: { timeout?: number; interval?: number },
+): Promise<void> => vi.waitFor(fn, { interval: 5, ...opts });
+
 const h = vi.hoisted(() => ({
   /** 目录路径 → 该回的那一层子项（`[名, 是不是目录]`）。 */
   dirs: new Map<string, [string, boolean][]>(),
@@ -206,7 +215,7 @@ function rowAt(name: string): HTMLElement {
 
 async function click(el: Element): Promise<void> {
   el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  await vi.waitFor(() => expect(true).toBe(true));
+  await waitFor(() => expect(true).toBe(true));
 }
 
 /** 根行右侧动作组里的某一颗（B429：新建文件 / 新建目录 / 刷新）。 */
@@ -223,7 +232,7 @@ function rootAction(root: string, kind: "file" | "dir" | "refresh"): HTMLElement
 /** 走右键菜单里的「新建文件 / 新建目录」（叶子目录仍是这几条动作的主语）。 */
 async function createFromMenu(row: HTMLElement, label: "新建文件" | "新建目录"): Promise<void> {
   row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 30, clientY: 40 }));
-  await vi.waitFor(() => expect(document.querySelector(".popup-menu")).toBeTruthy());
+  await waitFor(() => expect(document.querySelector(".popup-menu")).toBeTruthy());
   const item = [...document.querySelectorAll<HTMLButtonElement>(".popup-menu button")].find((b) =>
     (b.querySelector(".menu-label")?.textContent ?? "").includes(label),
   );
@@ -289,9 +298,9 @@ beforeEach(async () => {
   // 根行的折叠黑名单是模块级的：上一条用例（折叠状态保存那条）收起过根，这里要按回默认，
   // 否则后面每一条都只画出一行「笔记」。
   panel.restoreExplorerState([], []);
-  await vi.waitFor(() => expect(ui.explorerTree.textContent).toContain("还没有打开文件夹"));
+  await waitFor(() => expect(ui.explorerTree.textContent).toContain("还没有打开文件夹"));
   store.setRoots([ROOT]);
-  await vi.waitFor(() => expect(names()).toContain("a.md"));
+  await waitFor(() => expect(names()).toContain("a.md"));
 });
 
 describe("B314 资源管理器面板", () => {
@@ -385,7 +394,7 @@ describe("B314 资源管理器面板", () => {
 
   it("没打开过文件夹时给一句提示加一颗入口键，点了走目录选择器", async () => {
     store.setRoots([]);
-    await vi.waitFor(() => expect(ui.explorerTree.textContent).toContain("还没有打开文件夹"));
+    await waitFor(() => expect(ui.explorerTree.textContent).toContain("还没有打开文件夹"));
     expect(theRoot(), "空串不该发一次注定失败的读盘").toBe("");
     expect(
       h.calls.filter((c) => c === ""),
@@ -399,7 +408,7 @@ describe("B314 资源管理器面板", () => {
     expect(ui.explorerPanel.classList.contains("no-root")).toBe(true);
     h.pick = ROOT;
     await click(btn!);
-    await vi.waitFor(() => expect(theRoot()).toBe(ROOT));
+    await waitFor(() => expect(theRoot()).toBe(ROOT));
     expect(names()).toContain("a.md");
     expect(ui.explorerPanel.classList.contains("no-root"), "有了根就得把那排放回来").toBe(false);
   });
@@ -415,7 +424,7 @@ describe("B314 资源管理器面板", () => {
     const expandedBefore = rowAt("笔记").getAttribute("aria-expanded");
 
     await click(btn!);
-    await vi.waitFor(() => expect(h.calls).toContain(ROOT));
+    await waitFor(() => expect(h.calls).toContain(ROOT));
     expect(
       rowAt("笔记").getAttribute("aria-expanded"),
       "树是委托点击 —— 没挡掉按钮的话，这一发会顺带把根折叠/展开一遍",
@@ -426,9 +435,7 @@ describe("B314 资源管理器面板", () => {
     const 第二根 = "E:\\工作";
     h.dirs.set(第二根, [["q.md", false]]);
     openRoots(ROOT, 第二根);
-    await vi.waitFor(() =>
-      expect(names()).toEqual(["笔记", "notes", "b.md", "a.md", "工作", "q.md"]),
-    );
+    await waitFor(() => expect(names()).toEqual(["笔记", "notes", "b.md", "a.md", "工作", "q.md"]));
     expect(ui.explorerTree.querySelectorAll(".explorer-root"), "每根一行").toHaveLength(2);
     expect(ui.explorerTree.querySelectorAll(".explorer-root-refresh"), "每根一颗刷新").toHaveLength(
       2,
@@ -439,7 +446,7 @@ describe("B314 资源管理器面板", () => {
     await click(rowAt("notes"));
     h.calls.length = 0;
     await click(rowAt("笔记").querySelector<HTMLElement>(".explorer-root-refresh")!);
-    await vi.waitFor(() => expect(h.calls).toContain(`${ROOT}\\notes`));
+    await waitFor(() => expect(h.calls).toContain(`${ROOT}\\notes`));
 
     await click(ui.explorerCollapse);
     expect(names(), "B493：根行也一起收，树上只剩根名").toEqual(["笔记"]);
@@ -463,7 +470,7 @@ describe("B314 资源管理器面板", () => {
     await click(rowAt("notes"));
     h.dirs.delete(`${ROOT}\\notes`);
     await store.refreshDir(`${ROOT}\\notes`);
-    await vi.waitFor(() => expect(ui.explorerTree.textContent).toContain("读不了："));
+    await waitFor(() => expect(ui.explorerTree.textContent).toContain("读不了："));
     expect(names(), "根与顶层不许被邻居的失败带崩").toEqual(["笔记", "notes", "b.md", "a.md"]);
   });
 
@@ -471,7 +478,7 @@ describe("B314 资源管理器面板", () => {
     const evil = `<img src=x onerror=alert(1)>.md`;
     h.dirs.set(ROOT, [[evil, false]]);
     await store.refreshDir(ROOT);
-    await vi.waitFor(() => expect(ui.explorerTree.textContent).toContain("onerror"));
+    await waitFor(() => expect(ui.explorerTree.textContent).toContain("onerror"));
     expect(ui.explorerTree.querySelector("img"), "拼 innerHTML 就是给自己造注入点").toBeNull();
     expect(rowAt(evil).querySelector(".explorer-name")?.textContent).toBe(evil);
     expect(rowAt(evil).dataset.tip, "完整路径进自绘提示层（B350：原生 title 撤了）").toBe(
@@ -498,10 +505,10 @@ describe("B314 资源管理器面板", () => {
     expect(row.querySelectorAll(".explorer-guide").length, "深度 2 画 1 根祖先线").toBe(1);
     input!.value = "新笔记.md";
     input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(h.created).toEqual([{ kind: "file", dir: `${ROOT}\\notes`, name: "新笔记.md" }]),
     );
-    await vi.waitFor(() => expect(h.opened).toEqual([`${ROOT}\\notes\\新笔记.md`]));
+    await waitFor(() => expect(h.opened).toEqual([`${ROOT}\\notes\\新笔记.md`]));
     expect(ui.explorerTree.querySelector(".explorer-input"), "提交之后输入框要收掉").toBeNull();
   });
 
@@ -524,9 +531,7 @@ describe("B314 资源管理器面板", () => {
     );
     input!.value = "根层.md";
     input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    await vi.waitFor(() =>
-      expect(h.created).toEqual([{ kind: "file", dir: ROOT, name: "根层.md" }]),
-    );
+    await waitFor(() => expect(h.created).toEqual([{ kind: "file", dir: ROOT, name: "根层.md" }]));
   });
 
   it("空目录进入新建态：只画输入框，不再挂一条「（空）」", async () => {
@@ -537,7 +542,7 @@ describe("B314 资源管理器面板", () => {
     expect(input, "空目录里也要画出输入框").toBeTruthy();
     expect(ui.explorerTree.textContent, "新建态下不该再挂「（空）」").not.toContain("（空）");
     input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    await vi.waitFor(() => expect(ui.explorerTree.querySelector(".explorer-input")).toBeNull());
+    await waitFor(() => expect(ui.explorerTree.querySelector(".explorer-input")).toBeNull());
   });
 
   it("新建目录走 createDir；空名字 = 取消，不发 IPC", async () => {
@@ -546,7 +551,7 @@ describe("B314 资源管理器面板", () => {
     expect(input, "根行那颗键该在根那一层建").toBeTruthy();
     input!.value = "   ";
     input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    await vi.waitFor(() => expect(ui.explorerTree.textContent).toContain("a.md"));
+    await waitFor(() => expect(ui.explorerTree.textContent).toContain("a.md"));
     expect(h.created, "空名字不该建出个没名字的东西").toEqual([]);
   });
 
@@ -623,12 +628,12 @@ describe("B315 右键菜单与常规操作", () => {
 
   async function rightClick(el: Element): Promise<void> {
     el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 30, clientY: 40 }));
-    await vi.waitFor(() => expect(document.querySelector(".popup-menu")).toBeTruthy());
+    await waitFor(() => expect(document.querySelector(".popup-menu")).toBeTruthy());
   }
 
   async function pick(needle: string): Promise<void> {
     menuItem(needle).dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    await vi.waitFor(() => expect(true).toBe(true));
+    await waitFor(() => expect(true).toBe(true));
   }
 
   function press(el: Element, key: string, mods: KeyboardEventInit = {}): void {
@@ -675,12 +680,12 @@ describe("B315 右键菜单与常规操作", () => {
     const 第二根 = "E:\\工作";
     h.dirs.set(第二根, [["q.md", false]]);
     openRoots(ROOT, 第二根);
-    await vi.waitFor(() => expect(names()).toContain("q.md"));
+    await waitFor(() => expect(names()).toContain("q.md"));
 
     await rightClick(rowAt("笔记"));
     await pick("移除目录");
 
-    await vi.waitFor(() => expect(store.getRoots()).toEqual([第二根]));
+    await waitFor(() => expect(store.getRoots()).toEqual([第二根]));
     expect(names(), "另一根照旧画着").toEqual(expect.arrayContaining(["工作", "q.md"]));
     expect(h.opened, "移除目录不发任何开文件/关标签的动作").toEqual([]);
   });
@@ -689,7 +694,7 @@ describe("B315 右键菜单与常规操作", () => {
     await rightClick(rowAt("b.md"));
     await pick("删除");
     expect(h.deleted).toEqual([`${ROOT}\\b.md`]);
-    await vi.waitFor(() => expect(names()).not.toContain("b.md"));
+    await waitFor(() => expect(names()).not.toContain("b.md"));
     expect(names(), "别的行不受牵连").toEqual(expect.arrayContaining(["笔记", "a.md"]));
   });
 
@@ -703,7 +708,7 @@ describe("B315 右键菜单与常规操作", () => {
     expect(h.copied).toEqual([[`${ROOT}\\a.md`, `${ROOT}\\notes`]]);
     expect(names(), "复制不动源").toContain("a.md");
     await click(rowAt("notes")); // 展开看那一层真收到了副本
-    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    await waitFor(() => expect(names()).toContain("deeper.md"));
     expect(names(), "副本画进了目标那一层").toContain("a.md");
   });
 
@@ -737,8 +742,8 @@ describe("B315 右键菜单与常规操作", () => {
     expect(input!.value, "预填的是当前那一个名字").toBe("a.md");
     input!.value = "改好的.md";
     press(input!, "Enter");
-    await vi.waitFor(() => expect(h.renamed).toEqual([[`${ROOT}\\a.md`, "改好的.md"]]));
-    await vi.waitFor(() => expect(names()).toContain("改好的.md"));
+    await waitFor(() => expect(h.renamed).toEqual([[`${ROOT}\\a.md`, "改好的.md"]]));
+    await waitFor(() => expect(names()).toContain("改好的.md"));
     // 选中态要跟着走到新那一条：重绘是按**旧**路径做的，不补这一发就是「改完名选中凭空没了」。
     expect(rowAt("改好的.md").getAttribute("aria-selected"), "选中态没跟着改名走").toBe("true");
     expect(ui.explorerTree.querySelector(".explorer-input"), "提交后输入框要收掉").toBeNull();
@@ -765,12 +770,12 @@ describe("B315 右键菜单与常规操作", () => {
     expect(store.getClipboard()?.mode, "带 Shift 的组合不该被当成复制").toBe("copy");
 
     press(rowAt("notes"), "v", { ctrlKey: true });
-    await vi.waitFor(() => expect(h.copied).toEqual([[`${ROOT}\\a.md`, `${ROOT}\\notes`]]));
+    await waitFor(() => expect(h.copied).toEqual([[`${ROOT}\\a.md`, `${ROOT}\\notes`]]));
   });
 
   it("Delete 键与菜单那条同一条路；根那一行按 Delete 什么都不发", async () => {
     press(rowAt("b.md"), "Delete");
-    await vi.waitFor(() => expect(h.deleted).toEqual([`${ROOT}\\b.md`]));
+    await waitFor(() => expect(h.deleted).toEqual([`${ROOT}\\b.md`]));
     press(rowAt("笔记"), "Delete");
     expect(h.deleted, "根不许删").toHaveLength(1);
   });
@@ -782,7 +787,7 @@ describe("B315 右键菜单与常规操作", () => {
     input.value = "撞了.md";
     press(input, "Enter");
     const bar = document.getElementById("sb-message")!;
-    await vi.waitFor(() => expect(bar.textContent).toContain("已经有"));
+    await waitFor(() => expect(bar.textContent).toContain("已经有"));
     expect(bar.classList.contains("sb-message-error"), "报错那条要走错误色").toBe(true);
     expect(names()).toContain("a.md");
     expect(names()).not.toContain("撞了.md");
@@ -796,7 +801,7 @@ describe("B315 右键菜单与常规操作", () => {
     });
     await rightClick(rowAt("b.md"));
     await pick("复制路径");
-    await vi.waitFor(() => expect(writes).toEqual([`${ROOT}\\b.md`]));
+    await waitFor(() => expect(writes).toEqual([`${ROOT}\\b.md`]));
     await rightClick(rowAt("notes"));
     await pick("在资源管理器中显示");
     expect(h.revealed).toEqual([`${ROOT}\\notes`]);
@@ -835,7 +840,6 @@ describe("B316 树内拖拽 = 移动", () => {
       (el) => el.querySelector(".explorer-name")?.textContent ?? el.dataset.path ?? "?",
     );
   }
-  const waitHover = (): Promise<void> => new Promise((r) => setTimeout(r, 750));
 
   it("每一行都可拖，根那一行不可（它没有父亲）；拖起来只交出自家 MIME", () => {
     expect(rowAt("a.md").draggable).toBe(true);
@@ -877,16 +881,16 @@ describe("B316 树内拖拽 = 移动", () => {
     expect(dt.dropEffect).toBe("move");
     expect(marked("explorer-drop-on")).toEqual(["notes"]);
     drop("notes", dt);
-    await vi.waitFor(() => expect(h.moved).toEqual([[`${ROOT}\\a.md`, `${ROOT}\\notes`]]));
+    await waitFor(() => expect(h.moved).toEqual([[`${ROOT}\\a.md`, `${ROOT}\\notes`]]));
     const bar = document.getElementById("sb-message")!;
     // 状态栏那句要单独等：`h.moved` 在假实现里是**同步**记的，而报话那句排在整条
     // 刷新链（挪 → 刷两层 → 重绘）之后，拿它当「渲染完了」的信号会读到上一单的残留。
-    await vi.waitFor(() => expect(bar.textContent).toContain("已移动 a.md"));
+    await waitFor(() => expect(bar.textContent).toContain("已移动 a.md"));
     expect(bar.classList.contains("sb-message-error")).toBe(false);
     expect(marked("explorer-dragging"), "松手就收摊").toEqual([]);
 
     await click(rowAt("notes"));
-    await vi.waitFor(() => expect(names()).toContain("a.md"));
+    await waitFor(() => expect(names()).toContain("a.md"));
     expect(
       names().filter((n) => n === "a.md"),
       "根那一层里不该还留着一份",
@@ -896,13 +900,13 @@ describe("B316 树内拖拽 = 移动", () => {
 
   it("落点 = 文件行：移到那个文件所在的那一层（与新建/粘贴同一判据）", async () => {
     await click(rowAt("notes"));
-    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    await waitFor(() => expect(names()).toContain("deeper.md"));
     const dt = start("deeper.md");
     expect(over("b.md", dt).defaultPrevented, "落点是 b.md 所在那一层，不是 b.md 自己").toBe(true);
     drop("b.md", dt);
     // 按**层级**等：`deeper.md` 挪到根之前也在屏幕上（notes 是展开着的），
     // 拿「有没有这一行」当信号会立刻结算，然后读到一半重绘的树。
-    await vi.waitFor(() => expect(rowAt("deeper.md").getAttribute("aria-level")).toBe("2"));
+    await waitFor(() => expect(rowAt("deeper.md").getAttribute("aria-level")).toBe("2"));
     expect(h.moved).toEqual([[`${ROOT}\\notes\\deeper.md`, ROOT]]);
     expect(
       names().filter((n) => n === "deeper.md"),
@@ -912,13 +916,13 @@ describe("B316 树内拖拽 = 移动", () => {
 
   it("落点 = 根那一行：移到根", async () => {
     await click(rowAt("notes"));
-    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    await waitFor(() => expect(names()).toContain("deeper.md"));
     const dt = start("deeper.md");
     expect(marked("explorer-drop-on"), "还没移动指针时没有落点").toEqual([]);
     expect(over("笔记", dt).defaultPrevented).toBe(true);
     expect(marked("explorer-drop-on")).toEqual(["笔记"]);
     drop("笔记", dt);
-    await vi.waitFor(() => expect(h.moved).toEqual([[`${ROOT}\\notes\\deeper.md`, ROOT]]));
+    await waitFor(() => expect(h.moved).toEqual([[`${ROOT}\\notes\\deeper.md`, ROOT]]));
   });
 
   it("同层 = 空操作：不拦 dragover（于是光标显示禁止）、松手什么都不发", () => {
@@ -941,9 +945,9 @@ describe("B316 树内拖拽 = 移动", () => {
     ]);
     h.dirs.set(`${ROOT}\\notes\\sub`, [["x.md", false]]);
     await click(rowAt("notes"));
-    await vi.waitFor(() => expect(names()).toContain("sub"));
+    await waitFor(() => expect(names()).toContain("sub"));
     await click(rowAt("sub"));
-    await vi.waitFor(() => expect(names()).toContain("x.md"));
+    await waitFor(() => expect(names()).toContain("x.md"));
 
     const dt = start("notes");
     expect(over("notes", dt).defaultPrevented, "落在自己身上").toBe(false);
@@ -966,51 +970,66 @@ describe("B316 树内拖拽 = 移动", () => {
   });
 
   it("悬停在折叠的目录上约 0.6 秒自动摊开，两层高亮跟着重绘后的新行重贴", async () => {
-    const dt = start("a.md");
-    over("notes", dt);
-    expect(store.isExpanded(`${ROOT}\\notes`), "刚到那一格不该立刻展开").toBe(false);
-    await vi.waitFor(() => expect(store.isExpanded(`${ROOT}\\notes`)).toBe(true), {
-      timeout: 2000,
-    });
-    expect(marked("explorer-dragging"), "重绘把源行换成了新元素，高亮得按路径重贴").toEqual([
-      "a.md",
-    ]);
-    expect(marked("explorer-drop-on")).toEqual(["notes"]);
-    expect(names()).toContain("deeper.md");
-    // 摊开之后落点仍是那一层：同层判据要用**当下**的源目录，展开前后不能变成两套。
-    drop("notes", dt);
-    await vi.waitFor(() => expect(h.moved).toEqual([[`${ROOT}\\a.md`, `${ROOT}\\notes`]]));
+    // 悬停展开是 600ms 定时器：假定时器比真睡 750ms 更快，也更能证明「到点才展开」。
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const dt = start("a.md");
+      over("notes", dt);
+      expect(store.isExpanded(`${ROOT}\\notes`), "刚到那一格不该立刻展开").toBe(false);
+      await vi.advanceTimersByTimeAsync(650); // 越过 600ms 那一档
+      expect(store.isExpanded(`${ROOT}\\notes`), "到点必须自动摊开").toBe(true);
+      expect(marked("explorer-dragging"), "重绘把源行换成了新元素，高亮得按路径重贴").toEqual([
+        "a.md",
+      ]);
+      expect(marked("explorer-drop-on")).toEqual(["notes"]);
+      expect(names()).toContain("deeper.md");
+      // 摊开之后落点仍是那一层：同层判据要用**当下**的源目录，展开前后不能变成两套。
+      drop("notes", dt);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.moved).toEqual([[`${ROOT}\\a.md`, `${ROOT}\\notes`]]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("同一行里挪一格不算离开（不然悬停展开的计时每帧被重置，永远等不到）", async () => {
-    const dt = start("a.md");
-    const notes = rowAt("notes");
-    over("notes", dt);
-    fireDrag("dragleave", notes.querySelector(".explorer-name")!, dt, {
-      relatedTarget: notes.querySelector(".explorer-name"),
-    });
-    await vi.waitFor(() => expect(store.isExpanded(`${ROOT}\\notes`)).toBe(true), {
-      timeout: 2000,
-    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const dt = start("a.md");
+      const notes = rowAt("notes");
+      over("notes", dt);
+      fireDrag("dragleave", notes.querySelector(".explorer-name")!, dt, {
+        relatedTarget: notes.querySelector(".explorer-name"),
+      });
+      await vi.advanceTimersByTimeAsync(650);
+      expect(store.isExpanded(`${ROOT}\\notes`)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("离开落点那一行就取消排队中的展开；dragend 之后高亮与松手一并作废", async () => {
-    const dt = start("a.md");
-    over("notes", dt);
-    leave("notes", dt, rowAt("b.md"));
-    expect(marked("explorer-drop-on")).toEqual([]);
-    await waitHover();
-    expect(store.isExpanded(`${ROOT}\\notes`), "那一发悬停展开作废了").toBe(false);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const dt = start("a.md");
+      over("notes", dt);
+      leave("notes", dt, rowAt("b.md"));
+      expect(marked("explorer-drop-on")).toEqual([]);
+      await vi.advanceTimersByTimeAsync(750);
+      expect(store.isExpanded(`${ROOT}\\notes`), "那一发悬停展开作废了").toBe(false);
 
-    const dir = start("b.md");
-    over("notes", dir);
-    fireDrag("dragend", rowAt("notes"), dir);
-    expect(marked("explorer-dragging")).toEqual([]);
-    expect(marked("explorer-drop-on")).toEqual([]);
-    await waitHover();
-    expect(store.isExpanded(`${ROOT}\\notes`)).toBe(false);
-    drop("notes", dir);
-    expect(h.moved, "拖拽已经结束了，迟到的 drop 不该再搬一次家").toEqual([]);
+      const dir = start("b.md");
+      over("notes", dir);
+      fireDrag("dragend", rowAt("notes"), dir);
+      expect(marked("explorer-dragging")).toEqual([]);
+      expect(marked("explorer-drop-on")).toEqual([]);
+      await vi.advanceTimersByTimeAsync(750);
+      expect(store.isExpanded(`${ROOT}\\notes`)).toBe(false);
+      drop("notes", dir);
+      expect(h.moved, "拖拽已经结束了，迟到的 drop 不该再搬一次家").toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("外部文件拖过树时不抢：自家 MIME 不在载荷里，dragover / drop 一概不接手", () => {
@@ -1041,7 +1060,7 @@ describe("B316 树内拖拽 = 移动", () => {
     over("notes", dt);
     drop("notes", dt);
     const bar = document.getElementById("sb-message")!;
-    await vi.waitFor(() => expect(bar.textContent).toContain("就在这层里"));
+    await waitFor(() => expect(bar.textContent).toContain("就在这层里"));
     expect(bar.classList.contains("sb-message-error"), "报错那条要走错误色").toBe(true);
     expect(names()).toContain("a.md");
     expect(marked("explorer-dragging")).toEqual([]);
@@ -1069,7 +1088,7 @@ describe("B333 拖一条目录落到资源管理器那一块 = 打开这个文�
     expect(store.getRoots(), "B424：拖进来是**追加**，原来那根不许被换掉").toEqual([ROOT, OTHER]);
     expect(drawer.activeDrawer(), "VS Code 的口径：加完根要把资源管理器摊开").toBe("explorer");
     expect(h.opened, "目录不该被当成文件去读盘").toEqual([]);
-    await vi.waitFor(() => expect(names()).toContain("x.md"));
+    await waitFor(() => expect(names()).toContain("x.md"));
   });
 
   it("落点不在那一块 ⇒ 不认领、根不动：瞄准的是编辑区，就该按开文件办", async () => {
@@ -1139,7 +1158,7 @@ describe("B331 关闭文件夹（B424 后 = 移除全部目录）", () => {
     expect(appState.settings?.folder_roots, "设置里留着的还是旧根 ⇒ 下次启动又回放回来").toEqual(
       [],
     );
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(ui.explorerPanel.classList.contains("no-root"), "回初屏那颗整宽「打开文件夹」").toBe(
         true,
       ),
@@ -1166,13 +1185,13 @@ describe("资源管理器折叠状态保存 / 恢复", () => {
     appState.setSettings({ folder_roots: [ROOT] } as never);
 
     await click(rowAt("notes"));
-    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    await waitFor(() => expect(names()).toContain("deeper.md"));
     expect(appState.settings?.explorer_expanded, "展开的那一层要落进设置").toEqual([
       `${ROOT}\\notes`,
     ]);
 
     await click(rowAt("notes"));
-    await vi.waitFor(() => expect(names()).not.toContain("deeper.md"));
+    await waitFor(() => expect(names()).not.toContain("deeper.md"));
     expect(appState.settings?.explorer_expanded, "收起后不许留旧值").toEqual([]);
   });
 
@@ -1186,11 +1205,11 @@ describe("资源管理器折叠状态保存 / 恢复", () => {
     };
 
     await click(rootRow());
-    await vi.waitFor(() => expect(names()).not.toContain("a.md"));
+    await waitFor(() => expect(names()).not.toContain("a.md"));
     expect(appState.settings?.explorer_collapsed_roots, "收起的根要落进黑名单").toEqual([ROOT]);
 
     await click(rootRow());
-    await vi.waitFor(() => expect(names()).toContain("a.md"));
+    await waitFor(() => expect(names()).toContain("a.md"));
     expect(appState.settings?.explorer_collapsed_roots, "重新摊开就该出表").toEqual([]);
   });
 
@@ -1200,11 +1219,11 @@ describe("资源管理器折叠状态保存 / 恢复", () => {
     const before = JSON.stringify(appState.settings);
 
     panel.restoreExplorerState([`${ROOT}\\notes`], []);
-    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    await waitFor(() => expect(names()).toContain("deeper.md"));
     expect(store.isExpanded(`${ROOT}\\notes`), "回放要真进 store（不只是画一层）").toBe(true);
 
     panel.restoreExplorerState([], [ROOT]);
-    await vi.waitFor(() => expect(names()).not.toContain("a.md"));
+    await waitFor(() => expect(names()).not.toContain("a.md"));
     expect(store.isExpanded(`${ROOT}\\notes`), "回放是整表替换，旧的展开态要清掉").toBe(false);
     expect(JSON.stringify(appState.settings), "回放不是用户操作，不许顺手落盘").toBe(before);
   });
@@ -1229,7 +1248,7 @@ describe("B427 · 顶部过滤框", () => {
   it("敲字 ⇒ 攒一小段就发一发，命中按树画（深层命中把祖先补出来）", async () => {
     h.filterHits.set(ROOT, [hit("notes/deeper.md")]);
     type("deep");
-    await vi.waitFor(() => expect(h.filtered.length).toBe(1));
+    await waitFor(() => expect(h.filtered.length).toBe(1));
     expect(h.filtered[0].query).toBe("deep");
     expect(h.filtered[0].root).toBe(ROOT);
     expect(h.filtered[0].opts).toMatchObject({
@@ -1239,7 +1258,7 @@ describe("B427 · 顶部过滤框", () => {
       useExcludes: true,
       useIgnoreFiles: true,
     });
-    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    await waitFor(() => expect(names()).toContain("deeper.md"));
     expect(names(), "祖先补出来了").toContain("notes");
     expect(h.calls, "过滤不读 list_dir（命中树是合成出来的）").not.toContain(`${ROOT}\\notes`);
   });
@@ -1247,7 +1266,7 @@ describe("B427 · 顶部过滤框", () => {
   it("点过滤结果里的文件 = 打开它（行是真能用的，不是贴图）", async () => {
     h.filterHits.set(ROOT, [hit("notes/deeper.md")]);
     type("deep");
-    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    await waitFor(() => expect(names()).toContain("deeper.md"));
     await click(rowAt("deeper.md"));
     expect(h.opened).toContain(`${ROOT}\\notes\\deeper.md`);
   });
@@ -1255,7 +1274,7 @@ describe("B427 · 顶部过滤框", () => {
   it("点目录收起 ⇒ 子孙藏掉；再点就回来（纯视图，不读盘）", async () => {
     h.filterHits.set(ROOT, [hit("notes/deeper.md")]);
     type("deep");
-    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    await waitFor(() => expect(names()).toContain("deeper.md"));
     await click(rowAt("notes"));
     expect(names(), "收起 notes 之后只剩它自己").toEqual(["笔记", "notes"]);
     await click(rowAt("notes"));
@@ -1266,14 +1285,14 @@ describe("B427 · 顶部过滤框", () => {
   it("三颗匹配开关点亮后，下一发查询带上开关（点一下就重跑）", async () => {
     h.filterHits.set(ROOT, [hit("notes/deeper.md")]);
     type("deep");
-    await vi.waitFor(() => expect(h.filtered.length).toBe(1));
+    await waitFor(() => expect(h.filtered.length).toBe(1));
     await click(ui.explorerFilterCase);
-    await vi.waitFor(() => expect(h.filtered.length).toBe(2));
+    await waitFor(() => expect(h.filtered.length).toBe(2));
     expect(h.filtered[1].opts).toMatchObject({ caseSensitive: true });
     expect(ui.explorerFilterCase.getAttribute("aria-pressed")).toBe("true");
     expect(ui.explorerFilterCase.classList.contains("on")).toBe(true);
     await click(ui.explorerFilterRegex);
-    await vi.waitFor(() => expect(h.filtered.length).toBe(3));
+    await waitFor(() => expect(h.filtered.length).toBe(3));
     expect(h.filtered[2].opts).toMatchObject({ regex: true });
   });
 
@@ -1284,10 +1303,10 @@ describe("B427 · 顶部过滤框", () => {
     ).toBeNull();
     h.filterHits.set(ROOT, []);
     type("deep");
-    await vi.waitFor(() => expect(h.filtered.length).toBe(1));
+    await waitFor(() => expect(h.filtered.length).toBe(1));
     expect(h.filtered[0].opts).toMatchObject({ useExcludes: true, useIgnoreFiles: true });
     await click(ui.explorerFilterExcludes);
-    await vi.waitFor(() => expect(h.filtered.length).toBe(2));
+    await waitFor(() => expect(h.filtered.length).toBe(2));
     expect(
       h.filtered[1].opts,
       "一颗键管两层：关掉时忽略文件也跟着停（不再有独立开关）",
@@ -1303,13 +1322,13 @@ describe("B427 · 顶部过滤框", () => {
     try {
       h.filterHits.set(ROOT, []);
       type("note");
-      await vi.waitFor(() => expect(h.filtered.length).toBe(1));
+      await waitFor(() => expect(h.filtered.length).toBe(1));
       expect(h.filtered[0].opts).toMatchObject({
         exclude: "*.log, excl",
         useExcludes: true,
       });
       await click(ui.explorerFilterExcludes);
-      await vi.waitFor(() => expect(h.filtered.length).toBe(2));
+      await waitFor(() => expect(h.filtered.length).toBe(2));
       expect(h.filtered[1].opts).toMatchObject({
         exclude: "",
         useExcludes: false,
@@ -1323,12 +1342,12 @@ describe("B427 · 顶部过滤框", () => {
   it("Esc：有字先清字并回到常规树；没字那一下不吞掉", async () => {
     h.filterHits.set(ROOT, [hit("notes/deeper.md")]);
     type("deep");
-    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    await waitFor(() => expect(names()).toContain("deeper.md"));
     const ev = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
     ui.explorerFilterInput.dispatchEvent(ev);
     expect(ev.defaultPrevented, "有字 ⇒ 这一下归框管").toBe(true);
     expect(ui.explorerFilterInput.value).toBe("");
-    await vi.waitFor(() => expect(names()).toContain("a.md"));
+    await waitFor(() => expect(names()).toContain("a.md"));
     const ev2 = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
     ui.explorerFilterInput.dispatchEvent(ev2);
     expect(ev2.defaultPrevented, "空框上的 Esc 让给外层").toBe(false);
@@ -1338,21 +1357,21 @@ describe("B427 · 顶部过滤框", () => {
     h.filterHits.set(ROOT, [hit("notes/deeper.md")]);
     expect(ui.explorerFilterClear.hidden).toBe(true);
     type("deep");
-    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    await waitFor(() => expect(names()).toContain("deeper.md"));
     expect(ui.explorerFilterClear.hidden).toBe(false);
     await click(ui.explorerFilterClear);
     expect(ui.explorerFilterInput.value).toBe("");
     expect(ui.explorerFilterClear.hidden).toBe(true);
-    await vi.waitFor(() => expect(names()).toContain("a.md"));
+    await waitFor(() => expect(names()).toContain("a.md"));
   });
 
   it("没有命中就直说；正则写坏了把 Rust 那句原话贴出来", async () => {
     h.filterHits.set(ROOT, []);
     type("zzz");
-    await vi.waitFor(() => expect(ui.explorerTree.textContent).toContain("没有匹配的名字"));
+    await waitFor(() => expect(ui.explorerTree.textContent).toContain("没有匹配的名字"));
     h.filterFail = "正则无效：regex parse error";
     type("([");
-    await vi.waitFor(() => expect(ui.explorerTree.textContent).toContain("过滤失败：正则无效"));
+    await waitFor(() => expect(ui.explorerTree.textContent).toContain("过滤失败：正则无效"));
     h.filterFail = "";
   });
 
@@ -1364,18 +1383,18 @@ describe("B427 · 顶部过滤框", () => {
       { name: "other.md", path: `${R2}\\other.md`, rel: "other.md", isDir: false },
     ]);
     openRoots(ROOT, R2);
-    await vi.waitFor(() => expect(store.getRoots()).toHaveLength(2));
+    await waitFor(() => expect(store.getRoots()).toHaveLength(2));
     type("deep");
-    await vi.waitFor(() => expect(h.filtered.length).toBe(2));
+    await waitFor(() => expect(h.filtered.length).toBe(2));
     expect(h.filtered.map((f) => f.root).sort()).toEqual([R2, ROOT].sort());
-    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    await waitFor(() => expect(names()).toContain("deeper.md"));
     expect(names()).toContain("另一根");
   });
 
   it("过滤态里顶部「全部折叠」收的是命中树；再点一下全展开（图标/文案跟着换）", async () => {
     h.filterHits.set(ROOT, [hit("notes/deeper.md")]);
     type("deep");
-    await vi.waitFor(() => expect(names()).toContain("deeper.md"));
+    await waitFor(() => expect(names()).toContain("deeper.md"));
     const foldLabel = (): string | null => ui.explorerCollapse.getAttribute("aria-label");
     expect(foldLabel(), "起手是「全部折叠」口径").toBe("全部折叠");
 
@@ -1395,13 +1414,13 @@ describe("B427 · 顶部过滤框", () => {
     // 会立刻放行（还在常规态），断言就对着上一帧的按钮放空了。用一个只活在命中里的名字。
     h.filterHits.set(ROOT, [hit("only.md")]);
     type("only");
-    await vi.waitFor(() => expect(names()).toContain("only.md"));
+    await waitFor(() => expect(names()).toContain("only.md"));
     expect(ui.explorerCollapse.disabled, "全是根级文件，没东西可折").toBe(true);
 
     // 回到常规树 ⇒ 有目录了，键要活过来；文案也回到「全部折叠」
     const ev = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
     ui.explorerFilterInput.dispatchEvent(ev);
-    await vi.waitFor(() => expect(ui.explorerCollapse.disabled).toBe(false));
+    await waitFor(() => expect(ui.explorerCollapse.disabled).toBe(false));
     expect(ui.explorerCollapse.getAttribute("aria-label")).toBe("全部折叠");
   });
 });
@@ -1430,7 +1449,7 @@ describe("B462 · 资源管理器多选与「将已选择进行比较」", () =>
 
   async function rightClick(el: Element): Promise<void> {
     el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 30, clientY: 40 }));
-    await vi.waitFor(() => expect(document.querySelector(".popup-menu")).toBeTruthy());
+    await waitFor(() => expect(document.querySelector(".popup-menu")).toBeTruthy());
   }
 
   async function pick(needle: string): Promise<void> {
@@ -1439,7 +1458,7 @@ describe("B462 · 资源管理器多选与「将已选择进行比较」", () =>
     );
     if (!btn) throw new Error(`菜单里没有「${needle}」（现有：${labels().join(" / ")}）`);
     btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    await vi.waitFor(() => expect(true).toBe(true));
+    await waitFor(() => expect(true).toBe(true));
   }
 
   it("Ctrl+点击切换入组状态；普通点击把这一组收成一条", async () => {
@@ -1534,7 +1553,7 @@ describe("B462 · 资源管理器多选与「将已选择进行比较」", () =>
     // 走右键：组内那一条被删时整组还在（键盘 Delete 会先把焦点行变成唯一选中，见 onTreeKey）。
     await rightClick(rowAt("b.md"));
     await pick("删除");
-    await vi.waitFor(() => expect(h.deleted).toEqual([`${ROOT}\\b.md`]));
+    await waitFor(() => expect(h.deleted).toEqual([`${ROOT}\\b.md`]));
 
     expect(names()).not.toContain("b.md");
     expect(selected(), "焦点与选中一起收到剩下那条，不给一条不存在的路径留座").toEqual(["a.md"]);
@@ -1559,21 +1578,21 @@ describe("B429 · 过滤开关与根行动作组", () => {
     h.filterHits.set(ROOT, [onlyHit]);
     ui.explorerFilterInput.value = "only";
     ui.explorerFilterInput.dispatchEvent(new Event("input"));
-    await vi.waitFor(() => expect(names()).toContain("only.md"));
+    await waitFor(() => expect(names()).toContain("only.md"));
     expect(names(), "过滤生效：常规树里的 a.md 退场").not.toContain("a.md");
 
     await click(ui.explorerFilterToggle);
     expect(ui.explorerFilter.hidden, "再点一下收起").toBe(true);
     expect(ui.explorerFilterToggle.getAttribute("aria-expanded")).toBe("false");
     expect(ui.explorerFilterInput.value, "收起时清空，不留看不见的过滤").toBe("");
-    await vi.waitFor(() => expect(names()).toContain("a.md"));
+    await waitFor(() => expect(names()).toContain("a.md"));
   });
 
   it("根行动作组：新建文件 → 新建目录 → 刷新，每根各一组", async () => {
     const 第二根 = "E:\\工作";
     h.dirs.set(第二根, [["q.md", false]]);
     openRoots(ROOT, 第二根);
-    await vi.waitFor(() => expect(names()).toContain("q.md"));
+    await waitFor(() => expect(names()).toContain("q.md"));
     for (const root of [ROOT, 第二根]) {
       const row = rows().find((r) => r.dataset.path === root);
       const box = row?.querySelector(".explorer-root-actions");
@@ -1590,7 +1609,7 @@ describe("B429 · 过滤开关与根行动作组", () => {
     await click(ui.explorerFilterToggle);
     ui.explorerFilterInput.value = "only";
     ui.explorerFilterInput.dispatchEvent(new Event("input"));
-    await vi.waitFor(() => expect(names()).toContain("only.md"));
+    await waitFor(() => expect(names()).toContain("only.md"));
 
     await click(rootAction(ROOT, "file"));
     expect(ui.explorerFilter.hidden, "新建要让位给常规树").toBe(true);
@@ -1598,6 +1617,6 @@ describe("B429 · 过滤开关与根行动作组", () => {
     const input = ui.explorerTree.querySelector<HTMLInputElement>(".explorer-input");
     expect(input, "过滤收起后输入框才画得出来").toBeTruthy();
     input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    await vi.waitFor(() => expect(ui.explorerTree.querySelector(".explorer-input")).toBeNull());
+    await waitFor(() => expect(ui.explorerTree.querySelector(".explorer-input")).toBeNull());
   });
 });
