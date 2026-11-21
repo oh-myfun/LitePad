@@ -235,6 +235,9 @@ export class CodeBlockWidget extends WidgetType {
     void highlightCodeHtml(code, normalized).then((html) => {
       if (!html || !codeEl.isConnected) return;
       if (wrap.contains(document.activeElement)) return;
+      // 上色是异步的：回来时源码可能已经被就地编辑改过（也可能是别的写入路径改的）。
+      // 拿出发时那份旧文本替换，会把用户刚打的字吞掉 —— 源码变了就让下一次渲染去上色。
+      if (sourceText(codeEl) !== code) return;
       const holder = document.createElement("div");
       holder.innerHTML = html;
       const pre = holder.firstElementChild as HTMLElement | null;
