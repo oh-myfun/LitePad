@@ -915,6 +915,7 @@
      · 替换行上边距 6px（`.replace-container { margin-top:6px }`）；
      · 「⋯」那一截 = `.query-details`（左 18px）+ `.more`（25×16，贴在右缘 -2px），
        两行 glob 平时 `display:none`，容器挂 `.more` 才露（`.query-details.more .file-types`）；
+       那一截与上面的输入框留 6px 上距（VS Code 原版贴齐，折叠态看着像挂在输入框下沿）；
      · 计数行 = `.messages { margin-top:-5px }` + `.message { padding:0 22px 8px }`，
        颜色是 `search.resultsInfoForeground` —— 本应用没有这一格 token，落到「次要文本」
        那一档 `--fg-muted`（同一读法：这不是正文，是说明）；
@@ -1062,7 +1063,9 @@
 .search-details {
   position: relative;
   min-height: 16px;
-  margin: 0 0 0 18px;
+  /* 上距与替换行同档（6px）：VS Code 原版让「⋯」直接贴住搜索框下沿，折叠态看起来
+     像输入框自己长出来的一截；用户反馈太挤，这里让开一行呼吸。 */
+  margin: 6px 0 0 18px;
 }
 .search-more {
   position: absolute;
