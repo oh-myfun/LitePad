@@ -394,6 +394,24 @@ describe("B471 · 差异格双栏查找：目标跟随焦点侧", () => {
     expect(right.state.selection.main.empty, "右栏选区不许被左栏的步进带走").toBe(true);
   });
 
+  it("上一个：从当前命中退回前一个，到头环绕到最后一个", () => {
+    const { view } = openDoc("source", "aa\nbb\naa\naa");
+    findbar.openFindBar();
+    typeFind("aa");
+    const next = document.querySelector<HTMLButtonElement>(".find-next")!;
+    const prev = document.querySelector<HTMLButtonElement>(".find-prev")!;
+    click(next);
+    click(next);
+    expect(countText()).toBe("2 / 3");
+    click(prev);
+    // 步进刚把选区换成命中本身：若仍拿 head 往前找，找到的就是这一条 ⇒ 原地不动。
+    expect(countText()).toBe("1 / 3");
+    expect(view.state.selection.main.from).toBe(0);
+    click(prev);
+    expect(countText(), "第一个再往前 ⇒ 环绕到最后一个命中").toBe("3 / 3");
+    expect(view.state.selection.main.from).toBe(9);
+  });
+
   it("左栏只读（A 档基线 / 旧会话快照）：换到左栏后替换入口收掉，替换请求一字不改", () => {
     const { left, focusSide } = openDiffDoc("aa bb aa", "aa", { leftReadOnly: true });
     findbar.openFindBar("replace");

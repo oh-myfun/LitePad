@@ -352,7 +352,10 @@ function stepFind(dir: 1 | -1, q: FindBarQuery): void {
     findBar?.setCount(q.text ? "无匹配" : "");
     return;
   }
-  const idx = nextMatchIndex(matches, view.state.selection.main.head, dir);
+  const sel = view.state.selection.main;
+  // 往后从光标（head）找；往前必须从选区**起点**找 —— 步进刚把选区换成命中本身，
+  // 它的 from 永远小于 head，拿 head 往前找只会落回自己（用户报的「上一个」死键）。
+  const idx = nextMatchIndex(matches, dir === 1 ? sel.head : sel.from, dir);
   const m = matches[idx];
   const step = {
     selection: { anchor: m.from, head: m.to },
