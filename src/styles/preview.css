@@ -915,7 +915,7 @@
      · 替换行上边距 6px（`.replace-container { margin-top:6px }`）；
      · 「⋯」那一截 = `.query-details`（左 18px）+ `.more`（25×16，贴在右缘 -2px），
        两行 glob 平时 `display:none`，容器挂 `.more` 才露（`.query-details.more .file-types`）；
-       那一截与上面的输入框留 6px 上距（VS Code 原版贴齐，折叠态看着像挂在输入框下沿）；
+       按钮在**自己那一行内**下移 4px（整块不加上距，否则会把搜索框与首行筛选框的间距撑开）；
      · 计数行 = `.messages { margin-top:-5px }` + `.message { padding:0 22px 8px }`，
        颜色是 `search.resultsInfoForeground` —— 本应用没有这一格 token，落到「次要文本」
        那一档 `--fg-muted`（同一读法：这不是正文，是说明）；
@@ -1063,13 +1063,16 @@
 .search-details {
   position: relative;
   min-height: 16px;
-  /* 上距与替换行同档（6px）：VS Code 原版让「⋯」直接贴住搜索框下沿，折叠态看起来
-     像输入框自己长出来的一截；用户反馈太挤，这里让开一行呼吸。 */
-  margin: 6px 0 0 18px;
+  /* 整块不加上距：加了会把「搜索框 → 首行筛选框」的间距撑开（用户第二轮反馈）。
+     让按钮在自己那一行里下移（见 `.search-more` 的 top），溢出的 4px 落在
+     `.search-widgets` 的 6px 底部内距里，折叠态不会压到下方的计数行。 */
+  margin: 0 0 0 18px;
 }
 .search-more {
   position: absolute;
-  top: 0;
+  /* 下移 4px：VS Code 原版贴住输入框下沿，折叠态看着像输入框长出来的一截（用户反馈）。
+     整块加上距会撑开输入框之间的间距，所以只挪按钮自己。展开态它正好与首行 h4 同一行。 */
+  top: 4px;
   right: -2px;
   width: 25px;
   height: 16px;
