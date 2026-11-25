@@ -913,7 +913,7 @@
      · 展开替换那根键 = `.toggle-replace-button`：绝对定位贴在输入区**左缘**、16px 宽、
        整列高，两行各让 18px（`.search-container / .replace-container { margin-left:18px }`）；
      · 替换行上边距 6px（`.replace-container { margin-top:6px }`）；
-     · 「⋯」那一截 = `.query-details`（左 18px）+ `.more`（25×16，贴在右缘 -2px），
+     · 「⋯」那一截 = `.query-details`（左 18px）+ `.more`（25×16，右缘与输入框对齐），
        两行 glob 平时 `display:none`，容器挂 `.more` 才露（`.query-details.more .file-types`）；
        按钮在**自己那一行内**下移 4px（整块不加上距，否则会把搜索框与首行筛选框的间距撑开）；
      · 计数行 = `.messages { margin-top:-5px }` + `.message { padding:0 22px 8px }`，
@@ -1073,7 +1073,8 @@
   /* 下移 4px：VS Code 原版贴住输入框下沿，折叠态看着像输入框长出来的一截（用户反馈）。
      整块加上距会撑开输入框之间的间距，所以只挪按钮自己。展开态它正好与首行 h4 同一行。 */
   top: 4px;
-  right: -2px;
+  /* 与输入框右边框齐平：VS Code 原版 right:-2px 会探出输入框 2px（用户指出右边缘没对齐）。 */
+  right: 0;
   width: 25px;
   height: 16px;
   display: flex;
